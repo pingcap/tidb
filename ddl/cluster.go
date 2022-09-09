@@ -517,6 +517,7 @@ func finishFlashbackCluster(w *worker, job *model.Job) error {
 	return nil
 }
 
+// CheckFlashbackHistoryTSRange checks flashbackTS overlapped with history time ranges or not.
 func CheckFlashbackHistoryTSRange(m *meta.Meta, flashbackTS uint64) error {
 	tsRanges, err := m.GetFlashbackHistoryTSRange()
 	if err != nil {
@@ -531,17 +532,18 @@ func CheckFlashbackHistoryTSRange(m *meta.Meta, flashbackTS uint64) error {
 	return nil
 }
 
+// UpdateFlashbackHistoryTSRanges insert [startTS, endTS] into FlashbackHistoryTSRange.
 func UpdateFlashbackHistoryTSRanges(m *meta.Meta, startTS uint64, endTS uint64, gcSafePoint uint64) error {
 	tsRanges, err := m.GetFlashbackHistoryTSRange()
 	if err != nil {
 		return err
 	}
-	if len(tsRanges) != 0 && tsRanges[len(tsRanges)-1].EndTS > endTS {
+	if len(tsRanges) != 0 && tsRanges[len(tsRanges)-1].EndTS >= endTS {
 		return errors.Errorf("Invalid flashback ts range, last flashback end time: %s, now: %s",
 			oracle.GetTimeFromTS(tsRanges[len(tsRanges)-1].EndTS), oracle.GetTimeFromTS(endTS))
 	}
 
-	newTsRange := make([]meta.TsRange, 0, len(tsRanges))
+	newTsRange := make([]meta.TSRange, 0, len(tsRanges))
 
 	for _, tsRange := range tsRanges {
 		if tsRange.EndTS < gcSafePoint {
@@ -550,7 +552,7 @@ func UpdateFlashbackHistoryTSRanges(m *meta.Meta, startTS uint64, endTS uint64, 
 		if startTS > tsRange.EndTS {
 			newTsRange = append(newTsRange, tsRange)
 		} else if startTS < tsRange.StartTS {
-			newTsRange = append(newTsRange, meta.TsRange{StartTS: startTS, EndTS: endTS})
+			newTsRange = append(newTsRange, meta.TSRange{StartTS: startTS, EndTS: endTS})
 			break
 		} else {
 			// If startTS in range [tsRange.StartTs, tsRange.EndTs], it's an impossible startTS.
@@ -558,7 +560,7 @@ func UpdateFlashbackHistoryTSRanges(m *meta.Meta, startTS uint64, endTS uint64, 
 		}
 	}
 	if len(newTsRange) == 0 || newTsRange[len(newTsRange)-1].EndTS != endTS {
-		newTsRange = append(newTsRange, meta.TsRange{StartTS: startTS, EndTS: endTS})
+		newTsRange = append(newTsRange, meta.TSRange{StartTS: startTS, EndTS: endTS})
 	}
 	return m.SetFlashbackHistoryTSRange(newTsRange)
 }

@@ -609,13 +609,14 @@ func (m *Meta) GetFlashbackClusterJobID() (int64, error) {
 	return int64(binary.BigEndian.Uint64(val)), nil
 }
 
-type TsRange struct {
+// TSRange store a range time
+type TSRange struct {
 	StartTS uint64
 	EndTS   uint64
 }
 
 // SetFlashbackHistoryTSRange store flashback time range to TiKV
-func (m *Meta) SetFlashbackHistoryTSRange(timeRange []TsRange) error {
+func (m *Meta) SetFlashbackHistoryTSRange(timeRange []TSRange) error {
 	timeRangeByte, err := json.Marshal(timeRange)
 	if err != nil {
 		return err
@@ -624,13 +625,13 @@ func (m *Meta) SetFlashbackHistoryTSRange(timeRange []TsRange) error {
 }
 
 // GetFlashbackHistoryTSRange get flashback time range from TiKV
-func (m *Meta) GetFlashbackHistoryTSRange() (timeRange []TsRange, err error) {
+func (m *Meta) GetFlashbackHistoryTSRange() (timeRange []TSRange, err error) {
 	timeRangeByte, err := m.txn.Get(mFlashbackHistoryTSRange)
 	if err != nil {
 		return nil, err
 	}
 	if len(timeRangeByte) == 0 {
-		return []TsRange{}, nil
+		return []TSRange{}, nil
 	}
 	err = json.Unmarshal(timeRangeByte, &timeRange)
 	if err != nil {
