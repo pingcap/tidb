@@ -6,6 +6,7 @@ go_test(
     srcs = [
         "backup_restore_test.go",
         "binlog_test.go",
+        "flashback_test.go",
         "main_test.go",
     ],
     flaky = True,
