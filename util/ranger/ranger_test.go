@@ -2109,8 +2109,8 @@ func getSelectionFromQuery(t *testing.T, sctx sessionctx.Context, sql string) *p
 	require.NoError(t, err)
 	p, _, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
 	require.NoError(t, err)
-	selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
-	require.NotNil(t, selection)
+	selection, isSelection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
+	require.True(t, isSelection)
 	return selection
 }
 
