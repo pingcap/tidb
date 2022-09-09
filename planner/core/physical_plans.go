@@ -1251,6 +1251,26 @@ func (p *basePhysicalAgg) ExtractCorrelatedCols() []*expression.CorrelatedColumn
 	return corCols
 }
 
+// MemoryUsage return the memory usage of basePhysicalAgg
+func (p *basePhysicalAgg) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.physicalSchemaProducer.MemoryUsage() + size.SizeOfInt
+
+	for _, agg := range p.AggFuncs {
+		sum += agg.MemoryUsage()
+	}
+	for _, expr := range p.GroupByItems {
+		sum += expr.MemoryUsage()
+	}
+	for _, mppCol := range p.MppPartitionCols {
+		sum += mppCol.MemoryUsage()
+	}
+	return
+}
+
 // PhysicalHashAgg is hash operator of aggregate.
 type PhysicalHashAgg struct {
 	basePhysicalAgg

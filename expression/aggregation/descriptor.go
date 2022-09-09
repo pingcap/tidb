@@ -17,6 +17,7 @@ package aggregation
 import (
 	"bytes"
 	"fmt"
+	"github.com/pingcap/tidb/util/size"
 	"math"
 	"strconv"
 
@@ -330,4 +331,16 @@ func (a *AggFuncDesc) UpdateNotNullFlag4RetType(hasGroupBy, allAggsFirstRow bool
 		a.RetTp.DelFlag(mysql.NotNullFlag)
 	}
 	return nil
+}
+
+// MemoryUsage the memory usage of AggFuncDesc
+func (a *AggFuncDesc) MemoryUsage()(sum int64){
+	if a == nil {
+		return
+	}
+
+	sum = a.baseFuncDesc.MemoryUsage() + size.SizeOfInt + size.SizeOfBool
+	for _, item := range a.OrderByItems {
+		sum += item.MemoryUsage()
+	}return
 }

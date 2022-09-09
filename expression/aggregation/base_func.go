@@ -17,6 +17,7 @@ package aggregation
 import (
 	"bytes"
 	"fmt"
+	"github.com/pingcap/tidb/util/size"
 	"math"
 	"strings"
 
@@ -430,4 +431,20 @@ func (a *baseFuncDesc) WrapCastForAggArgs(ctx sessionctx.Context) {
 		}
 		a.Args[i] = castFunc(ctx, a.Args[i])
 	}
+}
+
+// MemoryUsage return the memory usage of baseFuncDesc
+func (a *baseFuncDesc) MemoryUsage() (sum int64) {
+	if a == nil {
+		return
+	}
+
+	sum = size.SizeOfString + int64(len(a.Name))
+	if a.RetTp != nil {
+		sum += a.RetTp.MemoryUsage()
+	}
+	for _, expr := range a.Args {
+		sum += expr.MemoryUsage()
+	}
+	return
 }
