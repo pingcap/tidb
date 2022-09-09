@@ -189,7 +189,7 @@ func (s *Server) newConn(conn net.Conn) *clientConn {
 
 func setTLSCertificates(s *Server) error {
 	// CheckCertificates will auto generate certificates if autoTLS is enabled.
-	err, key, cert, autoReload := util.CheckCertificates(
+	key, cert, autoReload, err := util.CheckCertificates(
 		s.cfg.Security.SSLKey,
 		s.cfg.Security.SSLCert,
 		s.cfg.Security.AutoTLS,

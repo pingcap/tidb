@@ -446,7 +446,7 @@ type SequenceTable interface {
 }
 
 // CheckCertificates checks and update the paths of key file and cert.
-func CheckCertificates(rawKey, rawCert string, autoTLS bool, rsaKeySize int) (err error, key, cert string, autoReload bool) {
+func CheckCertificates(rawKey, rawCert string, autoTLS bool, rsaKeySize int) (key, cert string, autoReload bool, err error) {
 	key, cert = rawKey, rawCert
 	if len(key) == 0 || len(cert) == 0 {
 		if !autoTLS {
