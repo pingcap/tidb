@@ -540,7 +540,7 @@ func UpdateFlashbackHistoryTSRanges(m *meta.Meta, startTS uint64, endTS uint64, 
 	}
 	if len(tsRanges) != 0 && tsRanges[len(tsRanges)-1].EndTS >= endTS {
 		// It's impossible, endTS should always greater than all TS in history TS ranges.
-		return errors.Errorf("Maybe TSO fallback, last flashback endTS: %s, now: %s", tsRanges[len(tsRanges)-1].EndTS, endTS)
+		return errors.Errorf("Maybe TSO fallback, last flashback endTS: %d, now: %d", tsRanges[len(tsRanges)-1].EndTS, endTS)
 	}
 
 	newTsRange := make([]meta.TSRange, 0, len(tsRanges))
@@ -560,7 +560,7 @@ func UpdateFlashbackHistoryTSRanges(m *meta.Meta, startTS uint64, endTS uint64, 
 		} else {
 			// tsRange.StartTS < startTS < tsRange.EndTS.
 			// It's impossible reach here, we checked it before start flashback cluster.
-			return errors.Errorf("It's an unreachable branch, flashbackTS (%s) in old ts range: [%s, %s]",
+			return errors.Errorf("It's an unreachable branch, flashbackTS (%d) in old ts range: [%d, %d]",
 				startTS, tsRange.StartTS, tsRange.EndTS)
 		}
 	}
