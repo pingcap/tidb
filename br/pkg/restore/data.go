@@ -4,16 +4,12 @@ package restore
 import (
 	"context"
 	"io"
-	"sort"
-	"time"
 
-	"github.com/emirpasic/gods/maps/treemap"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	recovpb "github.com/pingcap/kvproto/pkg/recoverdatapb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/conn"
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/util/mathutil"
@@ -22,12 +18,11 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/keepalive"
 )
 
-// in future, num of tikv may extend to a large number, this is limitation of connection pool to tikv
-// per our knowledge, in present, 128 may a good enough.
 const (
+	// in future, num of tikv may extend to a large number, this is limitation of connection pool to tikv
+	// per our knowledge, in present, 128 may a good enough.
 	maxStoreConcurrency = 128
 )
 
@@ -38,20 +33,20 @@ const (
 // 4. ensure all region apply to last log
 // 5. send the resolvedTs to tikv for deleting data.
 func RecoverData(ctx context.Context, resolvedTs uint64, allStores []*metapb.Store, mgr *conn.Mgr, progress glue.Progress) (int, error) {
-	var recovery = NewRecovery(allStores, mgr, progress)
 
+	var recovery = NewRecovery(allStores, mgr, progress)
 	if err := recovery.ReadRegionMeta(ctx); err != nil {
 		return 0, errors.Trace(err)
 	}
 
-	totalRegions := recovery.getTotalRegions()
+	totalRegions := recovery.GetTotalRegions()
 
-	if err := recovery.makeRecoveryPlan(); err != nil {
+	if err := recovery.MakeRecoveryPlan(); err != nil {
 		return totalRegions, errors.Trace(err)
 	}
 
-	log.Info("recover the alloc id to pd", zap.Uint64("max alloc id", recovery.maxAllocID))
-	if err := recovery.mgr.RecoverBaseAllocID(ctx, recovery.maxAllocID); err != nil {
+	log.Info("recover the alloc id to pd", zap.Uint64("max alloc id", recovery.MaxAllocID))
+	if err := recovery.mgr.RecoverBaseAllocID(ctx, recovery.MaxAllocID); err != nil {
 		return totalRegions, errors.Trace(err)
 	}
 
@@ -71,8 +66,8 @@ func RecoverData(ctx context.Context, resolvedTs uint64, allStores []*metapb.Sto
 }
 
 type StoreMeta struct {
-	storeId     uint64
-	regionMetas []*recovpb.RegionMeta
+	StoreId     uint64
+	RegionMetas []*recovpb.RegionMeta
 }
 
 func NewStoreMeta(storeId uint64) StoreMeta {
@@ -80,24 +75,25 @@ func NewStoreMeta(storeId uint64) StoreMeta {
 	return StoreMeta{storeId, meta}
 }
 
+// for test
 type Recovery struct {
 	allStores    []*metapb.Store
-	storeMetas   []StoreMeta
-	recoveryPlan map[uint64][]*recovpb.RecoverRegionRequest
-	maxAllocID   uint64
+	StoreMetas   []StoreMeta
+	RecoveryPlan map[uint64][]*recovpb.RecoverRegionRequest
+	MaxAllocID   uint64
 	mgr          *conn.Mgr
 	progress     glue.Progress
 }
 
 func NewRecovery(allStores []*metapb.Store, mgr *conn.Mgr, progress glue.Progress) Recovery {
 	totalStores := len(allStores)
-	var storeMetas = make([]StoreMeta, totalStores)
+	var StoreMetas = make([]StoreMeta, totalStores)
 	var regionRecovers = make(map[uint64][]*recovpb.RecoverRegionRequest, totalStores)
 	return Recovery{
 		allStores:    allStores,
-		storeMetas:   storeMetas,
-		recoveryPlan: regionRecovers,
-		maxAllocID:   0,
+		StoreMetas:   StoreMetas,
+		RecoveryPlan: regionRecovers,
+		MaxAllocID:   0,
 		mgr:          mgr,
 		progress:     progress}
 }
@@ -119,10 +115,7 @@ func (recovery *Recovery) newRecoveryClient(ctx context.Context, storeAddr strin
 		grpc.WithBlock(),
 		grpc.FailOnNonTempDialError(true),
 		grpc.WithConnectParams(grpc.ConnectParams{Backoff: bfConf}),
-		grpc.WithKeepaliveParams(keepalive.ClientParameters{
-			Time:    time.Duration(10) * time.Second,
-			Timeout: time.Duration(300) * time.Second,
-		}),
+		grpc.WithKeepaliveParams(recovery.mgr.GetKeepalive()),
 	)
 	if err != nil {
 		return nil, conn, errors.Trace(err)
@@ -184,7 +177,7 @@ func (recovery *Recovery) ReadRegionMeta(ctx context.Context) error {
 			for {
 				var meta *recovpb.RegionMeta
 				if meta, err = stream.Recv(); err == nil {
-					storeMeta.regionMetas = append(storeMeta.regionMetas, meta)
+					storeMeta.RegionMetas = append(storeMeta.RegionMetas, meta)
 				} else if err == io.EOF {
 					//read to end of stream or server close the connection.
 					break
@@ -203,8 +196,8 @@ func (recovery *Recovery) ReadRegionMeta(ctx context.Context) error {
 		case <-ectx.Done(): // err or cancel, eg.wait will catch the error
 			break
 		case storeMeta := <-metaChan:
-			recovery.storeMetas[i] = storeMeta
-			log.Info("received region meta from", zap.Int("store", int(storeMeta.storeId)))
+			recovery.StoreMetas[i] = storeMeta
+			log.Info("received region meta from", zap.Int("store", int(storeMeta.StoreId)))
 		}
 
 		recovery.progress.Inc()
@@ -214,11 +207,12 @@ func (recovery *Recovery) ReadRegionMeta(ctx context.Context) error {
 }
 
 // TODO: map may be more suitable for this function
-func (recovery *Recovery) getTotalRegions() int {
+
+func (recovery *Recovery) GetTotalRegions() int {
 	// Group region peer info by region id.
 	var regions = make(map[uint64]struct{}, 0)
-	for _, v := range recovery.storeMetas {
-		for _, m := range v.regionMetas {
+	for _, v := range recovery.StoreMetas {
+		for _, m := range v.RegionMetas {
 			if _, ok := regions[m.RegionId]; !ok {
 				regions[m.RegionId] = struct{}{}
 			}
@@ -231,10 +225,10 @@ func (recovery *Recovery) getTotalRegions() int {
 // only tikvs have regions whose have to recover be sent
 func (recovery *Recovery) RecoverRegions(ctx context.Context) (err error) {
 	eg, ectx := errgroup.WithContext(ctx)
-	totalRecoveredStores := len(recovery.recoveryPlan)
+	totalRecoveredStores := len(recovery.RecoveryPlan)
 	workers := utils.NewWorkerPool(uint(mathutil.Min(totalRecoveredStores, maxStoreConcurrency)), "Recover Regions")
 
-	for storeId, plan := range recovery.recoveryPlan {
+	for storeId, plan := range recovery.RecoveryPlan {
 		if err := ectx.Err(); err != nil {
 			break
 		}
@@ -259,7 +253,7 @@ func (recovery *Recovery) RecoverRegions(ctx context.Context) (err error) {
 			// for a TiKV, send the stream
 			for _, s := range recoveryPlan {
 				if err = stream.Send(s); err != nil {
-					log.Error("send region recovery region failed", zap.Error(err))
+					log.Error("send recover region failed", zap.Error(err))
 					return errors.Trace(err)
 				}
 			}
@@ -270,7 +264,7 @@ func (recovery *Recovery) RecoverRegions(ctx context.Context) (err error) {
 				return errors.Trace(err)
 			}
 			recovery.progress.Inc()
-			log.Info("recovery region execution success", zap.Uint64("store id", reply.GetStoreId()))
+			log.Info("recover region execution success", zap.Uint64("store id", reply.GetStoreId()))
 			return nil
 		})
 	}
@@ -306,7 +300,7 @@ func (recovery *Recovery) WaitApply(ctx context.Context) (err error) {
 			}
 
 			recovery.progress.Inc()
-			log.Info("recovery wait apply execution success", zap.Uint64("store id", storeId))
+			log.Info("wait apply execution success", zap.Uint64("store id", storeId))
 			return nil
 		})
 	}
@@ -334,7 +328,7 @@ func (recovery *Recovery) ResolveData(ctx context.Context, resolvedTs uint64) (e
 				return errors.Trace(err)
 			}
 			defer conn.Close()
-			log.Info("resolved data to tikv", zap.String("tikv address", storeAddr), zap.Uint64("store id", storeId))
+			log.Info("resolve data to tikv", zap.String("tikv address", storeAddr), zap.Uint64("store id", storeId))
 			req := &recovpb.ResolveKvDataRequest{ResolvedTs: resolvedTs}
 			stream, err := recoveryClient.ResolveKvData(ectx, req)
 			if err != nil {
@@ -353,203 +347,74 @@ func (recovery *Recovery) ResolveData(ctx context.Context, resolvedTs uint64) (e
 				}
 			}
 			recovery.progress.Inc()
-			log.Info("resolved kv data done", zap.String("tikv address", storeAddr), zap.Uint64("store id", storeId))
+			log.Info("resolve kv data done", zap.String("tikv address", storeAddr), zap.Uint64("store id", storeId))
 			return nil
 		})
 	}
-	// Wait for all TiKV instances finished
+	// Wait for all TiKV instances force leader and wait apply to last log.
 	return eg.Wait()
 }
 
-type Regions struct {
+type RecoverRegion struct {
 	*recovpb.RegionMeta
-	storeId uint64
+	StoreId uint64
 }
 
 // generate the related the recovery plan to tikvs:
 // 1. check overlap the region, make a recovery decision
 // 2. build a leader list for all region during the tikv startup
 // 3. get max allocate id
-func (recovery *Recovery) makeRecoveryPlan() error {
-	// Group region peer info by region id. find the max allcateId
+func (recovery *Recovery) MakeRecoveryPlan() error {
+
+	// Group region peer info by region id. find the max allocateId
 	// region [id] [peer[0-n]]
-	var regions = make(map[uint64][]Regions, 0)
-	for _, v := range recovery.storeMetas {
-		storeId := v.storeId
+	var regions = make(map[uint64][]*RecoverRegion, 0)
+	for _, v := range recovery.StoreMetas {
+		storeId := v.StoreId
 		maxId := storeId
-		for _, m := range v.regionMetas {
+		for _, m := range v.RegionMetas {
 			if regions[m.RegionId] == nil {
-				regions[m.RegionId] = make([]Regions, 0, len(recovery.allStores))
+				regions[m.RegionId] = make([]*RecoverRegion, 0, len(recovery.allStores))
 			}
-			regions[m.RegionId] = append(regions[m.RegionId], Regions{m, storeId})
+			regions[m.RegionId] = append(regions[m.RegionId], &RecoverRegion{m, storeId})
 			maxId = mathutil.Max(maxId, mathutil.Max(m.RegionId, m.PeerId))
 		}
-		recovery.maxAllocID = mathutil.Max(recovery.maxAllocID, maxId)
+		recovery.MaxAllocID = mathutil.Max(recovery.MaxAllocID, maxId)
 	}
 
-	// last log term -> last index -> commit index
-	cmps := []func(a, b *Regions) int{
-		func(a, b *Regions) int {
-			return int(a.GetLastLogTerm() - b.GetLastLogTerm())
-		},
-		func(a, b *Regions) int {
-			return int(a.GetLastIndex() - b.GetLastIndex())
-		},
-		func(a, b *Regions) int {
-			return int(a.GetCommitIndex() - b.GetCommitIndex())
-		},
+	regionInfos := SortRecoverRegions(regions)
+
+	validPeers, err := CheckConsistencyAndValidPeer(regionInfos)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
-	// TODO: the following code may need a refactoring, at least struct Region and RegionEndKey may merge into one struct
-	type Region struct {
-		regionId      uint64
-		regionVersion uint64
-	}
-	// Sort region peer by last log term -> last index -> commit index, and collect all regions' version.
-	var versions = make([]Region, 0, len(regions))
-	for regionId, peers := range regions {
-		sort.Slice(peers, func(i, j int) bool {
-			for _, cmp := range cmps {
-				if v := cmp(&peers[i], &peers[j]); v != 0 {
-					return v > 0
-				}
-			}
-			return false
-		})
-		var v = peers[0].Version
-		versions = append(versions, Region{regionId, v})
-	}
-
-	sort.Slice(versions, func(i, j int) bool { return versions[i].regionVersion > versions[j].regionVersion })
-
-	type RegionEndKey struct {
-		endKey []byte
-		rid    uint64
-	}
-	// split and merge in progressing during the backup, there may some overlap region, we have to handle it
-	// Resolve version conflicts.
-	var topo = treemap.NewWith(keyCmpInterface)
-	for _, p := range versions {
-		var sk = prefixStartKey(regions[p.regionId][0].StartKey)
-		var ek = prefixEndKey(regions[p.regionId][0].EndKey)
-		var fk, fv interface{}
-		fk, _ = topo.Ceiling(sk)
-		// keyspace overlap sk within ceiling - fk
-		if fk != nil && (keyEq(fk.([]byte), sk) || keyCmp(fk.([]byte), ek) < 0) {
-			continue
-		}
-
-		// keyspace overlap sk within floor - fk.end_key
-		fk, fv = topo.Floor(sk)
-		if fk != nil && keyCmp(fv.(RegionEndKey).endKey, sk) > 0 {
-			continue
-		}
-		topo.Put(sk, RegionEndKey{ek, p.regionId})
-	}
-
-	// After resolved, all validPeer regions shouldn't be tombstone.
-	// do some sanity check
-	var validPeer = make(map[uint64]struct{}, 0)
-	var iter = topo.Iterator()
-	var prevEndKey = prefixStartKey([]byte{})
-	var prevR uint64 = 0
-	for iter.Next() {
-		v := iter.Value().(RegionEndKey)
-		if regions[v.rid][0].Tombstone {
-			log.Error("validPeer shouldn't be tombstone", zap.Uint64("regionID", v.rid))
-			// TODO, some enhancement may need, a PoC or test may need for decision
-			return errors.Annotatef(berrors.ErrRestoreInvalidPeer,
-				"Peer shouldn't be tombstone")
-		}
-		if !keyEq(prevEndKey, iter.Key().([]byte)) {
-			log.Error("region doesn't conject to region", zap.Uint64("preRegion", prevR), zap.Uint64("curRegion", v.rid))
-			// TODO, some enhancement may need, a PoC or test may need for decision
-			return errors.Annotatef(berrors.ErrRestoreInvalidRange,
-				"invalid region range")
-		}
-		prevEndKey = v.endKey
-		prevR = v.rid
-		validPeer[v.rid] = struct{}{}
-	}
-
-	// all plans per region key=storeId, value=reqs stream
+	// all plans per region key=StoreId, value=reqs stream
 	//regionsPlan := make(map[uint64][]*recovmetapb.RecoveryCmdRequest, 0)
 	// Generate recover commands.
 	for regionId, peers := range regions {
-		if _, ok := validPeer[regionId]; !ok {
+		if _, ok := validPeers[regionId]; !ok {
 			// TODO: Generate a tombstone command.
-			// 1, peer is tomebstone
-			// 2, split region in progressing, old one can be a tomebstone
+			// 1, peer is tombstone
+			// 2, split region in progressing, old one can be a tombstone
+			log.Warn("detected tombstone peer for region", zap.Uint64("region id", regionId))
 			for _, peer := range peers {
 				plan := &recovpb.RecoverRegionRequest{Tombstone: true, AsLeader: false}
-				recovery.recoveryPlan[peer.storeId] = append(recovery.recoveryPlan[peer.storeId], plan)
+				recovery.RecoveryPlan[peer.StoreId] = append(recovery.RecoveryPlan[peer.StoreId], plan)
 			}
 		} else {
 			// Generate normal commands.
-			log.Debug("valid peer", zap.Uint64("peer", regionId))
+			log.Debug("detected valid peer", zap.Uint64("region id", regionId))
 			for i, peer := range peers {
-				log.Debug("make plan", zap.Uint64("storeid", peer.storeId), zap.Uint64("regionid", peer.RegionId))
-				plan := &recovpb.RecoverRegionRequest{RegionId: peer.RegionId, AsLeader: (i == 0)}
+				log.Debug("make plan", zap.Uint64("store id", peer.StoreId), zap.Uint64("region id", peer.RegionId))
+				plan := &recovpb.RecoverRegionRequest{RegionId: peer.RegionId, AsLeader: i == 0}
 				// sorted by log term -> last index -> commit index in a region
 				if plan.AsLeader {
-					log.Debug("as leader peer", zap.Uint64("storeid", peer.storeId), zap.Uint64("regionid", peer.RegionId))
-					recovery.recoveryPlan[peer.storeId] = append(recovery.recoveryPlan[peer.storeId], plan)
+					log.Debug("as leader peer", zap.Uint64("store id", peer.StoreId), zap.Uint64("region id", peer.RegionId))
+					recovery.RecoveryPlan[peer.StoreId] = append(recovery.RecoveryPlan[peer.StoreId], plan)
 				}
 			}
 		}
 	}
-
 	return nil
-}
-
-func prefixStartKey(key []byte) []byte {
-	var sk = make([]byte, 0, len(key)+1)
-	sk = append(sk, 'z')
-	sk = append(sk, key...)
-	return sk
-}
-
-func prefixEndKey(key []byte) []byte {
-	if len(key) == 0 {
-		return []byte{'z' + 1}
-	}
-	return prefixStartKey(key)
-}
-
-func keyEq(a, b []byte) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := 0; i < len(a); i++ {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
-}
-
-func keyCmp(a, b []byte) int {
-	var length, chosen int
-	if len(a) < len(b) {
-		length = len(a)
-		chosen = -1
-	} else if len(a) == len(b) {
-		length = len(a)
-		chosen = 0
-	} else {
-		length = len(b)
-		chosen = 1
-	}
-	for i := 0; i < length; i++ {
-		if a[i] < b[i] {
-			return -1
-		} else if a[i] > b[i] {
-			return 1
-		}
-	}
-	return chosen
-}
-
-func keyCmpInterface(a, b interface{}) int {
-	return keyCmp(a.([]byte), b.([]byte))
 }

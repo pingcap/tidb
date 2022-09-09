@@ -26,6 +26,7 @@ import (
 
 const (
 	flagBackupVolumeFile = "volume-file"
+	flagProgressFile     = "progress-file"
 )
 
 // BackupEBSConfig is the configuration specific for backup tasks.
@@ -35,6 +36,7 @@ type BackupEBSConfig struct {
 	VolumeFile          string `json:"volume-file"`
 	SkipAWS             bool   `json:"skip-aws"`
 	CloudAPIConcurrency uint   `json:"cloud-api-concurrency"`
+	ProgressFile        string `json:"progress-file"`
 }
 
 // ParseFromFlags parses the backup-related flags from the flag set.
@@ -49,6 +51,11 @@ func (cfg *BackupEBSConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 	cfg.VolumeFile, err = flags.GetString(flagBackupVolumeFile)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	cfg.ProgressFile, err = flags.GetString(flagProgressFile)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -68,6 +75,7 @@ func DefineBackupEBSFlags(flags *pflag.FlagSet) {
 	flags.String(flagBackupVolumeFile, "./backup.json", "the file path of volume infos of TiKV node")
 	flags.Bool(flagSkipAWS, false, "don't access to aws environment if set to true")
 	flags.Uint(flagCloudAPIConcurrency, defaultCloudAPIConcurrency, "concurrency of calling cloud api")
+	flags.String(flagProgressFile, "progress.txt", "the file name of progress file")
 }
 
 // RunBackupEBS starts a backup task to backup volume vai EBS snapshot.
@@ -185,7 +193,7 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 	// NOTE: we should start snapshot in specify order.
 
 	progress := g.StartProgress(ctx, cmdName, int64(storeCount), !cfg.LogProgress)
-	go progressFileWriterRoutine(ctx, progress, int64(storeCount))
+	go progressFileWriterRoutine(ctx, progress, int64(storeCount), cfg.ProgressFile)
 
 	ec2Session, err := aws.NewEC2Session(cfg.CloudAPIConcurrency)
 	if err != nil {

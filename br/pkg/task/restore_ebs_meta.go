@@ -51,6 +51,8 @@ func DefineRestoreEBSMetaFlags(command *cobra.Command) {
 	command.Flags().String(flagVolumeType, string(config.GP3Volume), "volume type: gp3, io1, io2")
 	command.Flags().Int64(flagVolumeIOPS, 0, "volume iops(0 means default for that volume type)")
 	command.Flags().Int64(flagVolumeThroughput, 0, "volume throughout in MiB/s(0 means default for that volume type)")
+	command.Flags().String(flagProgressFile, "progress.txt", "the file name of progress file")
+
 }
 
 type RestoreEBSConfig struct {
@@ -61,6 +63,7 @@ type RestoreEBSConfig struct {
 	VolumeType          config.EBSVolumeType `json:"volume-type"`
 	VolumeIOPS          int64                `json:"volume-iops"`
 	VolumeThroughput    int64                `json:"volume-throughput"`
+	ProgressFile        string               `json:"progress-file"`
 }
 
 // ParseFromFlags parses the restore-related flags from the flag set.
@@ -92,6 +95,12 @@ func (cfg *RestoreEBSConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	if cfg.VolumeThroughput, err = flags.GetInt64(flagVolumeThroughput); err != nil {
 		return errors.Trace(err)
 	}
+
+	cfg.ProgressFile, err = flags.GetString(flagProgressFile)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	// iops: gp3 [3,000-16,000]; io1/io2 [100-32,000]
 	// throughput: gp3 [125, 1000]; io1/io2 cannot set throughput
 	// io1 and io2 volumes support up to 64,000 IOPS only on Instances built on the Nitro System.
@@ -211,26 +220,10 @@ func (h *restoreEBSMetaHelper) restore() error {
 		return errors.Trace(err)
 	}
 
-	// stop scheduler before recover data
-	log.Info("starting to remove some PD schedulers")
-	restoreFunc, e := h.pdc.RemoveAllPDSchedulers(ctx)
-	if e != nil {
-		return errors.Trace(err)
-	}
-	defer func() {
-		if ctx.Err() != nil {
-			log.Warn("context canceled, doing clean work with background context")
-			ctx = context.Background()
-		}
-		if restoreE := restoreFunc(ctx); restoreE != nil {
-			log.Warn("failed to restore removed schedulers, you may need to restore them manually", zap.Error(restoreE))
-		}
-	}()
-
 	storeCount := h.metaInfo.GetStoreCount()
 	progress := h.g.StartProgress(ctx, h.cmdName, int64(storeCount), !h.cfg.LogProgress)
 	defer progress.Close()
-	go progressFileWriterRoutine(ctx, progress, int64(storeCount))
+	go progressFileWriterRoutine(ctx, progress, int64(storeCount), h.cfg.ProgressFile)
 
 	resolvedTs = h.metaInfo.ClusterInfo.ResolvedTS
 	if totalSize, err = h.doRestore(ctx, progress); err != nil {
@@ -243,7 +236,6 @@ func (h *restoreEBSMetaHelper) restore() error {
 	finished = true
 	return nil
 }
-
 func (h *restoreEBSMetaHelper) doRestore(ctx context.Context, progress glue.Progress) (int64, error) {
 	log.Info("mark recovering")
 	if err := h.pdc.MarkRecovering(ctx); err != nil {
