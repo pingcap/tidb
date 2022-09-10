@@ -83,26 +83,25 @@ type HashAggPartialWorker struct {
 	partialResultsMap aggPartialResultMapper
 	// chk stores the input data from child,
 	// and is reused by childExec and partial worker.
-	chk *chunk.Chunk
-	baseHashAggWorker
+	chk          *chunk.Chunk
 	outputChs    []chan *HashAggIntermData
 	groupByItems []expression.Expression
 	groupKey     [][]byte
+	baseHashAggWorker
 }
 
 // HashAggFinalWorker indicates the final workers of parallel hash agg execution,
 // the number of the worker can be set by `tidb_hashagg_final_concurrency`.
 type HashAggFinalWorker struct {
-	baseHashAggWorker
-
-	rowBuffer           []types.Datum
-	mutableRow          chunk.MutRow
-	partialResultMap    aggPartialResultMapper
 	groupSet            set.StringSetWithMemoryUsage
+	partialResultMap    aggPartialResultMapper
 	inputCh             chan *HashAggIntermData
 	outputCh            chan *AfFinalResult
 	finalResultHolderCh chan *chunk.Chunk
+	mutableRow          chunk.MutRow
+	rowBuffer           []types.Datum
 	groupKeys           [][]byte
+	baseHashAggWorker
 }
 
 // AfFinalResult indicates aggregation functions final result.
