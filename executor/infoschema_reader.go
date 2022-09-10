@@ -332,7 +332,8 @@ func (c *statsCache) GetColLength(id tableHistID) uint64 {
 
 func (c *statsCache) update(ctx context.Context, sctx sessionctx.Context) error {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
-	if time.Since(c.modifyTime.Load().(time.Time)) < TableStatsCacheExpiry {
+	now := c.modifyTime.Load()
+	if now == nil || time.Since(now.(time.Time)) < TableStatsCacheExpiry {
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		if len(c.dirtyIDs) > 0 {
