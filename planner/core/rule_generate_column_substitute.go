@@ -63,7 +63,7 @@ func collectGenerateColumn(lp LogicalPlan, exprToColumn ExprColumnMap) {
 		}
 		for _, idxPart := range p.Index.Columns {
 			colInfo := ds.tableInfo.Columns[idxPart.Offset]
-			if colInfo.IsGenerated() && !colInfo.GeneratedStored {
+			if colInfo.IsGenerated() {
 				s := ds.schema.Columns
 				col := expression.ColInfo2Col(s, colInfo)
 				if col != nil && col.GetType().Equal(col.VirtualExpr.GetType()) {
