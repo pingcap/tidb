@@ -107,6 +107,36 @@ func TestRcTSOCmdCountForPrepareExecuteNormal(t *testing.T) {
 	require.Equal(t, uint64(398), countTsoRequest.(uint64))
 	require.Equal(t, uint64(594), countTsoUseConstant.(uint64))
 	require.Equal(t, uint64(198), countWaitTsoOracle.(uint64))
+
+	tk.MustExec("set session tidb_rc_write_check_ts = false")
+	tk.MustExec("delete from t1")
+	tk.MustExec("delete from t2")
+	tk.MustExec("insert into t1 values (1, 1, 1)")
+	tk.MustExec("insert into t2 values (1, 1, 1)")
+	tk.MustExec("insert into t2 values (5, 5, 5)")
+	sctx.SetValue(sessiontxn.TsoRequestCount, 0)
+	for i := 1; i < 100; i++ {
+		tk.MustExec("begin pessimistic")
+		stmt, err := tk.Session().ExecutePreparedStmt(ctx, sqlSelectID, expression.Args2Expressions4Test(1))
+		require.NoError(t, err)
+		require.NoError(t, stmt.Close())
+		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlUpdateID, expression.Args2Expressions4Test(1))
+		require.NoError(t, err)
+		require.Nil(t, stmt)
+		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlUpdateID2, expression.Args2Expressions4Test(1))
+		require.NoError(t, err)
+		require.Nil(t, stmt)
+		val := i * 10
+		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlInsertID, expression.Args2Expressions4Test(val, val, val))
+		require.NoError(t, err)
+		require.Nil(t, stmt)
+		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlDeleteID, expression.Args2Expressions4Test(val))
+		require.NoError(t, err)
+		require.Nil(t, stmt)
+		tk.MustExec("commit")
+	}
+	count := sctx.Value(sessiontxn.TsoRequestCount)
+	require.Equal(t, uint64(594), count)
 }
 
 func TestRcTSOCmdCountForPrepareExecuteExtra(t *testing.T) {
@@ -732,6 +762,25 @@ func TestConflictErrorsUseRcWriteCheckTs(t *testing.T) {
 	records, ok = se.Value(sessiontxn.AssertLockErr).(map[string]int)
 	require.Equal(t, true, ok)
 	require.Equal(t, records["errWriteConflict"], 1)
+
+	tk.MustExec("set session tidb_rc_write_check_ts = false")
+	tk2.MustExec("set session tidb_rc_write_check_ts = false")
+	se.SetValue(sessiontxn.AssertLockErr, nil)
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("update t1 set id3 = id3 + 1 where id1 = 1")
+	tk.MustExec("select * from t1 where id1 = 1 for update")
+	tk.MustExec("commit")
+	records, ok = se.Value(sessiontxn.AssertLockErr).(map[string]int)
+	require.Equal(t, false, ok)
+
+	tk.MustExec("insert into t1 values(20, 20, 20)")
+	se.SetValue(sessiontxn.AssertLockErr, nil)
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("update t1 set id1 = 200 where id1 = 20")
+	tk.MustQuery("select * from t1 where id1 = 200 for update").Check(testkit.Rows("200 20 20"))
+	tk.MustExec("commit")
+	records, ok = se.Value(sessiontxn.AssertLockErr).(map[string]int)
+	require.Equal(t, false, ok)
 
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertPessimisticLockErr"))
 }

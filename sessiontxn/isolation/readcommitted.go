@@ -242,7 +242,7 @@ func (p *PessimisticRCTxnContextProvider) AdviseWarmup() error {
 func planSkipGetTsoFromPD(sctx sessionctx.Context, plan plannercore.Plan, inLockOrWriteStmt bool) bool {
 	switch v := plan.(type) {
 	case *plannercore.PointGetPlan:
-		return v.Lock || inLockOrWriteStmt
+		return sctx.GetSessionVars().RcWriteCheckTS && (v.Lock || inLockOrWriteStmt)
 	case plannercore.PhysicalPlan:
 		if len(v.Children()) == 0 {
 			return false
