@@ -58,7 +58,7 @@ type baseHashAggWorker struct {
 	memTracker   *memory.Tracker
 	aggFuncs     []aggfuncs.AggFunc
 	maxChunkSize int
-	BInMap       int
+	BInMap       int // indicate there are 2^BInMap buckets in Golang Map.
 }
 
 func newBaseHashAggWorker(ctx sessionctx.Context, finishCh <-chan struct{}, aggFuncs []aggfuncs.AggFunc,
@@ -81,7 +81,9 @@ type HashAggPartialWorker struct {
 	globalOutputCh    chan *AfFinalResult
 	giveBackCh        chan<- *HashAggInput
 	partialResultsMap aggPartialResultMapper
-	chk               *chunk.Chunk
+	// chk stores the input data from child,
+	// and is reused by childExec and partial worker.
+	chk *chunk.Chunk
 	baseHashAggWorker
 	outputChs    []chan *HashAggIntermData
 	groupByItems []expression.Expression
@@ -154,40 +156,54 @@ type AfFinalResult struct {
 */
 type HashAggExec struct {
 	baseExecutor
-	groupSet                set.StringSetWithMemoryUsage
-	finalOutputCh           chan *AfFinalResult
-	partialResultMap        aggPartialResultMapper
-	memTracker              *memory.Tracker
-	spillAction             *AggSpillDiskAction
-	stats                   *HashAggRuntimeStats
-	listInDisk              *chunk.ListInDisk
-	sc                      *stmtctx.StatementContext
-	tmpChkForSpill          *chunk.Chunk
-	inputCh                 chan *HashAggInput
-	finishCh                chan struct{}
-	diskTracker             *disk.Tracker
-	childResult             *chunk.Chunk
-	defaultVal              *chunk.Chunk
-	partialInputChs         []chan *chunk.Chunk
-	partialWorkers          []HashAggPartialWorker
-	finalWorkers            []HashAggFinalWorker
-	groupKeyBuffer          [][]byte
-	FinalAggFuncs           []aggfuncs.AggFunc
-	GroupByItems            []expression.Expression
-	groupKeys               []string
-	PartialAggFuncs         []aggfuncs.AggFunc
-	partialOutputChs        []chan *HashAggIntermData
-	cursor4GroupKey         int
-	numOfSpilledChks        int
-	offsetOfSpilledChks     int
-	bInMap                  int64
+	groupSet         set.StringSetWithMemoryUsage
+	finalOutputCh    chan *AfFinalResult
+	partialResultMap aggPartialResultMapper
+	memTracker       *memory.Tracker // track memory usage.
+	// spillAction save the Action for spilling.
+	spillAction *AggSpillDiskAction
+	stats       *HashAggRuntimeStats
+	// listInDisk is the chunks to store row values for spilled data.
+	// The HashAggExec may be set to `spill mode` multiple times, and all spilled data will be appended to ListInDisk.
+	listInDisk *chunk.ListInDisk
+	sc         *stmtctx.StatementContext
+	// tmpChkForSpill is the temp chunk for spilling.
+	tmpChkForSpill   *chunk.Chunk
+	inputCh          chan *HashAggInput
+	finishCh         chan struct{}
+	diskTracker      *disk.Tracker
+	childResult      *chunk.Chunk
+	defaultVal       *chunk.Chunk
+	partialInputChs  []chan *chunk.Chunk
+	partialWorkers   []HashAggPartialWorker
+	finalWorkers     []HashAggFinalWorker
+	groupKeyBuffer   [][]byte
+	FinalAggFuncs    []aggfuncs.AggFunc
+	GroupByItems     []expression.Expression
+	groupKeys        []string
+	PartialAggFuncs  []aggfuncs.AggFunc
+	partialOutputChs []chan *HashAggIntermData
+	cursor4GroupKey  int
+	// numOfSpilledChks indicates the number of all the spilled chunks.
+	numOfSpilledChks int
+	// offsetOfSpilledChks indicates the offset of the chunk be read from the disk.
+	// In each round of processing, we need to re-fetch all the chunks spilled in the last one.
+	offsetOfSpilledChks int
+	bInMap              int64
+	// inSpillMode indicates whether HashAgg is in `spill mode`.
+	// When HashAgg is in `spill mode`, the size of `partialResultMap` is no longer growing and all the data fetched
+	// from the child executor is spilled to the disk.
 	inSpillMode             uint32
 	executed                bool
 	prepared                bool
 	parallelExecInitialized bool
-	isUnparallelExec        bool
-	isChildReturnEmpty      bool
-	isChildDrained          bool
+	// After we support parallel execution for aggregation functions with distinct,
+	// we can remove this attribute.
+	isUnparallelExec bool
+	// isChildReturnEmpty indicates whether the child executor only returns an empty input.
+	isChildReturnEmpty bool
+	// isChildDrained indicates whether the all data from child has been taken out.
+	isChildDrained bool
 }
 
 // HashAggInput indicates the input of hash agg exec.
@@ -1216,18 +1232,22 @@ func (*HashAggRuntimeStats) Tp() int {
 // When Next() is called, it will return a result for the same group.
 type StreamAggExec struct {
 	baseExecutor
-	memTracker                     *memory.Tracker
-	childResult                    *chunk.Chunk
-	defaultVal                     *chunk.Chunk
-	groupChecker                   *vecGroupChecker
-	inputIter                      *chunk.Iterator4Chunk
-	inputRow                       chunk.Row
-	aggFuncs                       []aggfuncs.AggFunc
-	partialResults                 []aggfuncs.PartialResult
-	groupRows                      []chunk.Row
+	memTracker     *memory.Tracker // track memory usage.
+	childResult    *chunk.Chunk
+	defaultVal     *chunk.Chunk
+	groupChecker   *vecGroupChecker
+	inputIter      *chunk.Iterator4Chunk
+	inputRow       chunk.Row
+	aggFuncs       []aggfuncs.AggFunc
+	partialResults []aggfuncs.PartialResult
+	groupRows      []chunk.Row
+	// memUsageOfInitialPartialResult indicates the memory usage of all partial results after initialization.
+	// All partial results will be reset after processing one group data, and the memory usage should also be reset.
+	// We can't get memory delta from ResetPartialResult, so record the memory usage here.
 	memUsageOfInitialPartialResult int64
-	isChildReturnEmpty             bool
-	executed                       bool
+	// isChildReturnEmpty indicates whether the child executor only returns an empty input.
+	isChildReturnEmpty bool
+	executed           bool
 }
 
 // Open implements the Executor Open interface.
@@ -1409,19 +1429,28 @@ func (e *StreamAggExec) appendResult2Chunk(chk *chunk.Chunk) error {
 // vecGroupChecker is used to split a given chunk according to the `group by` expression in a vectorized manner
 // It is usually used for streamAgg
 type vecGroupChecker struct {
-	ctx                   sessionctx.Context
-	releaseBuffer         func(buf *chunk.Column)
-	allocateBuffer        func(evalType types.EvalType, capacity int) (*chunk.Column, error)
-	lastRowDatums         []types.Datum
+	ctx           sessionctx.Context
+	releaseBuffer func(buf *chunk.Column)
+	// set these functions for testing
+	allocateBuffer func(evalType types.EvalType, capacity int) (*chunk.Column, error)
+	lastRowDatums  []types.Datum
+	// lastGroupKeyOfPrevChk is the groupKey of the last group of the previous chunk
 	lastGroupKeyOfPrevChk []byte
-	firstGroupKey         []byte
-	lastGroupKey          []byte
-	firstRowDatums        []types.Datum
-	sameGroup             []bool
-	groupOffset           []int
-	GroupByItems          []expression.Expression
-	nextGroupID           int
-	groupCount            int
+	// firstGroupKey and lastGroupKey are used to store the groupKey of the first and last group of the current chunk
+	firstGroupKey []byte
+	lastGroupKey  []byte
+	// firstRowDatums and lastRowDatums store the results of the expression evaluation for the first and last rows of the current chunk in datum
+	// They are used to encode to get firstGroupKey and lastGroupKey
+	firstRowDatums []types.Datum
+	// sameGroup is used to check whether the current row belongs to the same group as the previous row
+	sameGroup []bool
+	// groupOffset holds the offset of the last row in each group of the current chunk
+	groupOffset  []int
+	GroupByItems []expression.Expression
+	// nextGroupID records the group id of the next group to be consumed
+	nextGroupID int
+	// groupCount is the count of groups in the current chunk
+	groupCount int
 }
 
 func newVecGroupChecker(ctx sessionctx.Context, items []expression.Expression) *vecGroupChecker {
