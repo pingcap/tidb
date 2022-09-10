@@ -7297,3 +7297,7 @@ func TestPlanCacheForTableRangeFallback(t *testing.T) {
 	// The plan with range fallback is not cached.
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
+
+func TestPlanCacheForIndexRangeFallback(t *testing.T) {
+	// TODO
+}

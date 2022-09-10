@@ -136,7 +136,7 @@ func (s *partitionProcessor) findUsedPartitions(ctx sessionctx.Context, tbl tabl
 		partIdx[i].Index = i
 		colLen = append(colLen, types.UnspecifiedLength)
 	}
-	detachedResult, err := ranger.DetachCondAndBuildRangeForPartition(ctx, conds, partIdx, colLen)
+	detachedResult, err := ranger.DetachCondAndBuildRangeForPartition(ctx, conds, partIdx, colLen, ctx.GetSessionVars().RangeMaxSize)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -531,7 +531,7 @@ func (l *listPartitionPruner) detachCondAndBuildRange(conds []expression.Express
 		colLen = append(colLen, types.UnspecifiedLength)
 	}
 
-	detachedResult, err := ranger.DetachCondAndBuildRangeForPartition(l.ctx, conds, cols, colLen)
+	detachedResult, err := ranger.DetachCondAndBuildRangeForPartition(l.ctx, conds, cols, colLen, l.ctx.GetSessionVars().RangeMaxSize)
 	if err != nil {
 		return nil, err
 	}

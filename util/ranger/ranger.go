@@ -60,7 +60,7 @@ func validInterval(sctx sessionctx.Context, low, high *point) (bool, error) {
 // Only one column is built there. If there're multiple columns, use appendPoints2Ranges.
 // rangeMaxSize is the max memory limit for ranges. O indicates no memory limit.
 // If the second return value is true, it means that the estimated memory usage of ranges exceeds rangeMaxSize and it falls back to full range.
-func points2Ranges(sctx sessionctx.Context, rangePoints []*point, tp *types.FieldType, rangeMaxSize int64) ([]*Range, bool, error) {
+func points2Ranges(sctx sessionctx.Context, rangePoints []*point, tp *types.FieldType, rangeMaxSize int64) (Ranges, bool, error) {
 	ranges := make(Ranges, 0, len(rangePoints)/2)
 	for i := 0; i < len(rangePoints); i += 2 {
 		startPoint, err := convertPoint(sctx, rangePoints[i], tp)
@@ -178,13 +178,51 @@ func convertPoint(sctx sessionctx.Context, point *point, tp *types.FieldType) (*
 	return npoint, nil
 }
 
-// appendPoints2Ranges appends additional column ranges for multi-column index.
-// The additional column ranges can only be appended to point ranges.
-// for example we have an index (a, b), if the condition is (a > 1 and b = 2)
-// then we can not build a conjunctive ranges for this index.
-func appendPoints2Ranges(sctx sessionctx.Context, origin []*Range, rangePoints []*point,
-	ft *types.FieldType) ([]*Range, error) {
-	var newIndexRanges []*Range
+func appendPoint2Range(origin *Range, startPoint, endPoint *point, ft *types.FieldType) *Range {
+	lowVal := make([]types.Datum, len(origin.LowVal)+1)
+	copy(lowVal, origin.LowVal)
+	lowVal[len(origin.LowVal)] = startPoint.value
+
+	highVal := make([]types.Datum, len(origin.HighVal)+1)
+	copy(highVal, origin.HighVal)
+	highVal[len(origin.HighVal)] = endPoint.value
+
+	collators := make([]collate.Collator, len(origin.Collators)+1)
+	copy(collators, origin.Collators)
+	collators[len(origin.Collators)] = collate.GetCollator(ft.GetCollate())
+	return &Range{
+		LowVal:      lowVal,
+		LowExclude:  startPoint.excl,
+		HighVal:     highVal,
+		HighExclude: endPoint.excl,
+		Collators:   collators,
+	}
+}
+
+// appendPoints2Ranges appends additional column ranges for multi-column index. The additional column ranges can only be
+// appended to point ranges. For example, we have an index (a, b), if the condition is (a > 1 and b = 2), then we can not
+// build a conjunctive ranges for this index.
+// rangeMaxSize is the max memory limit for ranges. O indicates no memory limit.
+// If the second return value is true, it means that the estimated memory usage of ranges after appending points exceeds
+// rangeMaxSize and the function rejects appending points to ranges.
+func appendPoints2Ranges(sctx sessionctx.Context, origin Ranges, rangePoints []*point,
+	ft *types.FieldType, rangeMaxSize int64) (Ranges, bool, error) {
+	// Estimate whether rangeMaxSize will be exceeded first before appending points to ranges.
+	if rangeMaxSize > 0 && len(origin) > 0 && len(rangePoints) > 0 {
+		startPoint, err := convertPoint(sctx, rangePoints[0], ft)
+		if err != nil {
+			return nil, false, errors.Trace(err)
+		}
+		endPoint, err := convertPoint(sctx, rangePoints[1], ft)
+		if err != nil {
+			return nil, false, errors.Trace(err)
+		}
+		ran := appendPoint2Range(origin[0], startPoint, endPoint, ft)
+		if ran.MemUsage()*int64(len(origin))*int64(len(rangePoints))/2 > rangeMaxSize {
+			return origin, true, nil
+		}
+	}
+	var newIndexRanges Ranges
 	for i := 0; i < len(origin); i++ {
 		oRange := origin[i]
 		if !oRange.IsPoint(sctx) {
@@ -192,17 +230,17 @@ func appendPoints2Ranges(sctx sessionctx.Context, origin []*Range, rangePoints [
 		} else {
 			newRanges, err := appendPoints2IndexRange(sctx, oRange, rangePoints, ft)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, false, errors.Trace(err)
 			}
 			newIndexRanges = append(newIndexRanges, newRanges...)
 		}
 	}
-	return newIndexRanges, nil
+	return newIndexRanges, false, nil
 }
 
 func appendPoints2IndexRange(sctx sessionctx.Context, origin *Range, rangePoints []*point,
-	ft *types.FieldType) ([]*Range, error) {
-	newRanges := make([]*Range, 0, len(rangePoints)/2)
+	ft *types.FieldType) (Ranges, error) {
+	newRanges := make(Ranges, 0, len(rangePoints)/2)
 	for i := 0; i < len(rangePoints); i += 2 {
 		startPoint, err := convertPoint(sctx, rangePoints[i], ft)
 		if err != nil {
@@ -219,40 +257,35 @@ func appendPoints2IndexRange(sctx sessionctx.Context, origin *Range, rangePoints
 		if !less {
 			continue
 		}
-
-		lowVal := make([]types.Datum, len(origin.LowVal)+1)
-		copy(lowVal, origin.LowVal)
-		lowVal[len(origin.LowVal)] = startPoint.value
-
-		highVal := make([]types.Datum, len(origin.HighVal)+1)
-		copy(highVal, origin.HighVal)
-		highVal[len(origin.HighVal)] = endPoint.value
-
-		collators := make([]collate.Collator, len(origin.Collators)+1)
-		copy(collators, origin.Collators)
-		collators[len(origin.Collators)] = collate.GetCollator(ft.GetCollate())
-		ir := &Range{
-			LowVal:      lowVal,
-			LowExclude:  startPoint.excl,
-			HighVal:     highVal,
-			HighExclude: endPoint.excl,
-			Collators:   collators,
-		}
+		ir := appendPoint2Range(origin, startPoint, endPoint, ft)
 		newRanges = append(newRanges, ir)
 	}
 	return newRanges, nil
 }
 
-func appendRanges2PointRanges(pointRanges []*Range, ranges []*Range) []*Range {
+// appendRanges2PointRanges appends additional ranges to point ranges.
+// rangeMaxSize is the max memory limit for ranges. O indicates no memory limit.
+// If the second return value is true, it means that the estimated memory after appending additional ranges to point ranges
+// exceeds rangeMaxSize and the function rejects appending additional ranges to point ranges.
+func appendRanges2PointRanges(pointRanges Ranges, ranges Ranges, rangeMaxSize int64) (Ranges, bool) {
 	if len(ranges) == 0 {
-		return pointRanges
+		return pointRanges, false
 	}
-	newRanges := make([]*Range, 0, len(pointRanges)*len(ranges))
+	newRanges := make(Ranges, 0, len(pointRanges)*len(ranges))
 	for _, pointRange := range pointRanges {
 		for _, r := range ranges {
-			lowVal := append(pointRange.LowVal, r.LowVal...)
-			highVal := append(pointRange.HighVal, r.HighVal...)
-			collators := append(pointRange.Collators, r.Collators...)
+			lowVal := make([]types.Datum, 0, len(pointRange.LowVal)+len(r.LowVal))
+			lowVal = append(lowVal, pointRange.LowVal...)
+			lowVal = append(lowVal, r.LowVal...)
+
+			highVal := make([]types.Datum, 0, len(pointRange.HighVal)+len(r.HighVal))
+			highVal = append(highVal, pointRange.HighVal...)
+			highVal = append(highVal, r.HighVal...)
+
+			collators := make([]collate.Collator, 0, len(pointRange.Collators)+len(r.Collators))
+			collators = append(collators, pointRange.Collators...)
+			collators = append(collators, r.Collators...)
+
 			newRange := &Range{
 				LowVal:      lowVal,
 				LowExclude:  r.LowExclude,
@@ -260,17 +293,20 @@ func appendRanges2PointRanges(pointRanges []*Range, ranges []*Range) []*Range {
 				HighExclude: r.HighExclude,
 				Collators:   collators,
 			}
+			if len(newRanges) == 0 && rangeMaxSize > 0 && newRange.MemUsage()*int64(len(pointRanges))*int64(len(ranges)) > rangeMaxSize {
+				return ranges, true
+			}
 			newRanges = append(newRanges, newRange)
 		}
 	}
-	return newRanges
+	return newRanges, false
 }
 
 // points2TableRanges build ranges for table scan from range points.
 // It will remove the nil and convert MinNotNull and MaxValue to MinInt64 or MinUint64 and MaxInt64 or MaxUint64.
 // rangeMaxSize is the max memory limit for ranges. O indicates no memory limit.
 // If the second return value is true, it means that the estimated memory usage of ranges exceeds rangeMaxSize and it falls back to full range.
-func points2TableRanges(sctx sessionctx.Context, rangePoints []*point, tp *types.FieldType, rangeMaxSize int64) ([]*Range, bool, error) {
+func points2TableRanges(sctx sessionctx.Context, rangePoints []*point, tp *types.FieldType, rangeMaxSize int64) (Ranges, bool, error) {
 	ranges := make(Ranges, 0, len(rangePoints)/2)
 	var minValueDatum, maxValueDatum types.Datum
 	// Currently, table's kv range cannot accept encoded value of MaxValueDatum. we need to convert it.
@@ -376,22 +412,22 @@ func buildColumnRange(accessConditions []expression.Expression, sctx sessionctx.
 }
 
 // BuildTableRange builds range of PK column for PhysicalTableScan.
-// rangeMaxSize is the max memory limit for ranges. O indicates no memory limit.
+// rangeMaxSize is the max memory limit for ranges. O indicates no memory limit. If you ask that all conds must be used
+// for building ranges, set rangeMemQuota to 0 to avoid range fallback.
 // The second return value is the conditions used to build ranges and the third return value is the remained conditions.
 // If you use the function to build ranges for some access path, you need to update the path's access conditions and filter
 // conditions by the second and third return values respectively.
-// If you ask that all conds must be used for building ranges, set rangeMemQuota to 0 to avoid range fallback.
 func BuildTableRange(accessConditions []expression.Expression, sctx sessionctx.Context, tp *types.FieldType,
 	rangeMaxSize int64) (Ranges, []expression.Expression, []expression.Expression, error) {
 	return buildColumnRange(accessConditions, sctx, tp, true, types.UnspecifiedLength, rangeMaxSize)
 }
 
 // BuildColumnRange builds range from access conditions for general columns.
-// rangeMaxSize is the max memory limit for ranges. O indicates no memory limit.
+// rangeMaxSize is the max memory limit for ranges. O indicates no memory limit. If you ask that all conds must be used
+// for building ranges, set rangeMemQuota to 0 to avoid range fallback.
 // The second return value is the conditions used to build ranges and the third return value is the remained conditions.
 // If you use the function to build ranges for some access path, you need to update the path's access conditions and filter
 // conditions by the second and third return values respectively.
-// If you ask that all conds must be used for building ranges, set rangeMemQuota to 0 to avoid range fallback.
 func BuildColumnRange(conds []expression.Expression, sctx sessionctx.Context, tp *types.FieldType, colLen int,
 	rangeMemQuota int64) (Ranges, []expression.Expression, []expression.Expression, error) {
 	if len(conds) == 0 {
@@ -400,56 +436,63 @@ func BuildColumnRange(conds []expression.Expression, sctx sessionctx.Context, tp
 	return buildColumnRange(conds, sctx, tp, false, colLen, rangeMemQuota)
 }
 
-func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType,
-	eqAndInCount int, accessCondition []expression.Expression) ([]*Range, error) {
+func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType, eqAndInCount int,
+	accessConds []expression.Expression) (Ranges, []expression.Expression, []expression.Expression, error) {
 	rb := builder{sc: d.sctx.GetSessionVars().StmtCtx}
 	var (
-		ranges []*Range
-		err    error
+		ranges        Ranges
+		rangeFallback bool
+		err           error
 	)
 	for i := 0; i < eqAndInCount; i++ {
 		// Build ranges for equal or in access conditions.
-		point := rb.build(accessCondition[i], collate.GetCollator(newTp[i].GetCollate()))
+		point := rb.build(accessConds[i], collate.GetCollator(newTp[i].GetCollate()))
 		if rb.err != nil {
-			return nil, errors.Trace(rb.err)
+			return nil, nil, nil, errors.Trace(rb.err)
 		}
 		if i == 0 {
-			// TODO: restrict the mem usage of ranges
-			ranges, _, err = points2Ranges(d.sctx, point, newTp[i], 0)
+			ranges, rangeFallback, err = points2Ranges(d.sctx, point, newTp[i], d.rangeMaxSize)
 		} else {
-			ranges, err = appendPoints2Ranges(d.sctx, ranges, point, newTp[i])
+			ranges, rangeFallback, err = appendPoints2Ranges(d.sctx, ranges, point, newTp[i], d.rangeMaxSize)
 		}
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, nil, nil, errors.Trace(err)
+		}
+		if rangeFallback {
+			d.sctx.GetSessionVars().StmtCtx.RecordRangeFallback(d.rangeMaxSize)
+			return ranges, accessConds[:i], accessConds[i:], nil
 		}
 	}
 	rangePoints := getFullRange()
 	// Build rangePoints for non-equal access conditions.
-	for i := eqAndInCount; i < len(accessCondition); i++ {
+	for i := eqAndInCount; i < len(accessConds); i++ {
 		collator := collate.GetCollator(newTp[eqAndInCount].GetCollate())
-		rangePoints = rb.intersection(rangePoints, rb.build(accessCondition[i], collator), collator)
+		rangePoints = rb.intersection(rangePoints, rb.build(accessConds[i], collator), collator)
 		if rb.err != nil {
-			return nil, errors.Trace(rb.err)
+			return nil, nil, nil, errors.Trace(rb.err)
 		}
 	}
 	if eqAndInCount == 0 {
-		// TODO: restrict the mem usage of ranges
-		ranges, _, err = points2Ranges(d.sctx, rangePoints, newTp[0], 0)
-	} else if eqAndInCount < len(accessCondition) {
-		ranges, err = appendPoints2Ranges(d.sctx, ranges, rangePoints, newTp[eqAndInCount])
+		ranges, rangeFallback, err = points2Ranges(d.sctx, rangePoints, newTp[0], d.rangeMaxSize)
+	} else if eqAndInCount < len(accessConds) {
+		ranges, rangeFallback, err = appendPoints2Ranges(d.sctx, ranges, rangePoints, newTp[eqAndInCount], d.rangeMaxSize)
 	}
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, nil, nil, errors.Trace(err)
 	}
-	return ranges, nil
+	if rangeFallback {
+		d.sctx.GetSessionVars().StmtCtx.RecordRangeFallback(d.rangeMaxSize)
+		return ranges, accessConds[:eqAndInCount], accessConds[eqAndInCount:], nil
+	}
+	return ranges, accessConds, nil, nil
 }
 
 // buildCNFIndexRange builds the range for index where the top layer is CNF.
-func (d *rangeDetacher) buildCNFIndexRange(newTp []*types.FieldType,
-	eqAndInCount int, accessCondition []expression.Expression) ([]*Range, error) {
-	ranges, err := d.buildRangeOnColsByCNFCond(newTp, eqAndInCount, accessCondition)
+func (d *rangeDetacher) buildCNFIndexRange(newTp []*types.FieldType, eqAndInCount int,
+	accessConds []expression.Expression) (Ranges, []expression.Expression, []expression.Expression, error) {
+	ranges, newAccessConds, remainedConds, err := d.buildRangeOnColsByCNFCond(newTp, eqAndInCount, accessConds)
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
 
 	// Take prefix index into consideration.
@@ -457,12 +500,12 @@ func (d *rangeDetacher) buildCNFIndexRange(newTp []*types.FieldType,
 		if fixPrefixColRange(ranges, d.lengths, newTp) {
 			ranges, err = UnionRanges(d.sctx, ranges, d.mergeConsecutive)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, nil, nil, errors.Trace(err)
 			}
 		}
 	}
 
-	return ranges, nil
+	return ranges, newAccessConds, remainedConds, nil
 }
 
 type sortRange struct {
@@ -545,7 +588,7 @@ func hasPrefix(lengths []int) bool {
 //	whose the first two key is `a` and `xxx`. It read all data whose index value begins with `a` and `xxx` and the third
 //	value less than `b`, covering the values begin with `a` and `xxxxx` and the third value less than `b` perfectly.
 //	So in this case we don't need to reset its exclude status. The right endpoint case can be proved in the same way.
-func fixPrefixColRange(ranges []*Range, lengths []int, tp []*types.FieldType) bool {
+func fixPrefixColRange(ranges Ranges, lengths []int, tp []*types.FieldType) bool {
 	var hasCut bool
 	for _, ran := range ranges {
 		lowTail := len(ran.LowVal) - 1
@@ -657,22 +700,8 @@ func points2EqOrInCond(ctx sessionctx.Context, points []*point, col *expression.
 	return expression.NewFunctionInternal(ctx, funcName, col.GetType(), args...)
 }
 
-// DetachCondAndBuildRangeForPartition will detach the index filters from table filters.
-// The returned values are encapsulated into a struct DetachRangeResult, see its comments for explanation.
-func DetachCondAndBuildRangeForPartition(sctx sessionctx.Context, conditions []expression.Expression, cols []*expression.Column,
-	lengths []int) (*DetachRangeResult, error) {
-	d := &rangeDetacher{
-		sctx:             sctx,
-		allConds:         conditions,
-		cols:             cols,
-		lengths:          lengths,
-		mergeConsecutive: false,
-	}
-	return d.detachCondAndBuildRangeForCols()
-}
-
 // RangesToString print a list of Ranges into a string which can appear in an SQL as a condition.
-func RangesToString(sc *stmtctx.StatementContext, rans []*Range, colNames []string) (string, error) {
+func RangesToString(sc *stmtctx.StatementContext, rans Ranges, colNames []string) (string, error) {
 	for _, ran := range rans {
 		if len(ran.LowVal) != len(ran.HighVal) {
 			return "", errors.New("range length mismatch")
