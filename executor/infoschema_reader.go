@@ -25,7 +25,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -301,7 +300,7 @@ func getDataAndIndexLength(info *model.TableInfo, physicalID int64, rowCount uin
 
 type statsCache struct {
 	mu         sync.RWMutex
-	modifyTime atomic.Value //time.Time
+	modifyTime time.Time
 	tableRows  map[int64]uint64
 	colLength  map[tableHistID]uint64
 	dirtyIDs   []int64
@@ -331,11 +330,10 @@ func (c *statsCache) GetColLength(id tableHistID) uint64 {
 }
 
 func (c *statsCache) update(ctx context.Context, sctx sessionctx.Context) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
-	now := c.modifyTime.Load()
-	if now != nil && time.Since(now.(time.Time)) < TableStatsCacheExpiry {
-		c.mu.Lock()
-		defer c.mu.Unlock()
+	if time.Since(c.modifyTime) < TableStatsCacheExpiry {
 		if len(c.dirtyIDs) > 0 {
 			tableRows, err := getRowCountTables(ctx, sctx, c.dirtyIDs...)
 			if err != nil {
@@ -363,12 +361,10 @@ func (c *statsCache) update(ctx context.Context, sctx sessionctx.Context) error 
 	if err != nil {
 		return err
 	}
-	c.mu.Lock()
 	c.tableRows = tableRows
 	c.colLength = colLength
-	c.modifyTime.Store(time.Now())
+	c.modifyTime = time.Now()
 	c.dirtyIDs = nil
-	c.mu.Unlock()
 	return nil
 }
 
