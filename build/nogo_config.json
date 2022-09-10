@@ -150,6 +150,7 @@
       ".*_test\\.go$": "ignore test code"
     },
     "only_files": {
+      "executor/aggregate.go": "executor/aggregate.go",
       "util/checksum": "util/checksum code",
       "util/processinfo.go": "util/processinfo.go code",
       "util/cpuprofile/": "util/cpuprofile/ code",
