@@ -81,9 +81,7 @@ type HashAggPartialWorker struct {
 	globalOutputCh    chan *AfFinalResult
 	giveBackCh        chan<- *HashAggInput
 	partialResultsMap aggPartialResultMapper
-	// chk stores the input data from child,
-	// and is reused by childExec and partial worker.
-	chk *chunk.Chunk
+	chk               *chunk.Chunk
 	baseHashAggWorker
 	outputChs    []chan *HashAggIntermData
 	groupByItems []expression.Expression
@@ -94,6 +92,7 @@ type HashAggPartialWorker struct {
 // the number of the worker can be set by `tidb_hashagg_final_concurrency`.
 type HashAggFinalWorker struct {
 	baseHashAggWorker
+
 	rowBuffer           []types.Datum
 	mutableRow          chunk.MutRow
 	partialResultMap    aggPartialResultMapper
