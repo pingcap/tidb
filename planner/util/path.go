@@ -85,7 +85,17 @@ func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx sessionctx.Context,
 	for i := eqOrInCount; i < len(path.IdxCols); i++ {
 		matched := false
 		for j, filter := range path.TableFilters {
-			if used[j] || !isColEqCorColOrConstant(ctx, filter, path.IdxCols[i]) {
+			if used[j] {
+				continue
+			}
+			colEqConstant := isColEqConstant(filter, path.IdxCols[i])
+			if i == eqOrInCount && colEqConstant {
+				// If there is a col-eq-constant condition for path.IdxCols[eqOrInCount], it means that range fallback happens
+				// in DetachCondAndBuildRangeForIndex. In this case we don't consider adding access conditions.
+				return nil, path.TableFilters
+			}
+			colEqCorCol := isColEqCorCol(filter, path.IdxCols[i])
+			if !colEqConstant && !colEqCorCol {
 				continue
 			}
 			matched = true
@@ -108,10 +118,27 @@ func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx sessionctx.Context,
 	return access, remained
 }
 
-// isColEqCorColOrConstant checks if the expression is a eq function that one side is constant or correlated column
-// and another is column.
-func isColEqCorColOrConstant(_ sessionctx.Context, filter expression.Expression, col *expression.Column) bool {
-	f, ok := filter.(*expression.ScalarFunction)
+// isColEqConstant checks if the expression is eq function that one side is column and the other side is constant.
+func isColEqConstant(expr expression.Expression, col *expression.Column) bool {
+	isConstant := func(arg expression.Expression) bool {
+		_, ok := arg.(*expression.Constant)
+		return ok
+	}
+	return isColEqExpr(expr, col, isConstant)
+}
+
+// isColEqCorCol checks if the expression is eq function that one side is column and the other side is correlated column.
+func isColEqCorCol(expr expression.Expression, col *expression.Column) bool {
+	isCorCol := func(arg expression.Expression) bool {
+		_, ok := arg.(*expression.CorrelatedColumn)
+		return ok
+	}
+	return isColEqExpr(expr, col, isCorCol)
+}
+
+// isColEqExpr checks if the expression is eq function that one side is column and the other side passes checkFn.
+func isColEqExpr(expr expression.Expression, col *expression.Column, checkFn func(expression.Expression) bool) bool {
+	f, ok := expr.(*expression.ScalarFunction)
 	if !ok || f.FuncName.L != ast.EQ {
 		return false
 	}
@@ -120,12 +147,7 @@ func isColEqCorColOrConstant(_ sessionctx.Context, filter expression.Expression,
 		if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(collation, c.RetType.GetCollate()) {
 			return false
 		}
-		if _, ok := f.GetArgs()[1].(*expression.Constant); ok {
-			if col.Equal(nil, c) {
-				return true
-			}
-		}
-		if _, ok := f.GetArgs()[1].(*expression.CorrelatedColumn); ok {
+		if checkFn(f.GetArgs()[1]) {
 			if col.Equal(nil, c) {
 				return true
 			}
@@ -135,12 +157,7 @@ func isColEqCorColOrConstant(_ sessionctx.Context, filter expression.Expression,
 		if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(collation, c.RetType.GetCollate()) {
 			return false
 		}
-		if _, ok := f.GetArgs()[0].(*expression.Constant); ok {
-			if col.Equal(nil, c) {
-				return true
-			}
-		}
-		if _, ok := f.GetArgs()[0].(*expression.CorrelatedColumn); ok {
+		if checkFn(f.GetArgs()[0]) {
 			if col.Equal(nil, c) {
 				return true
 			}
