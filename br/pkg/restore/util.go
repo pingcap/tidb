@@ -6,13 +6,11 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/emirpasic/gods/maps/treemap"
 	"regexp"
 	"sort"
 	"strings"
 
 	"github.com/emirpasic/gods/maps/treemap"
-
 	_ "github.com/go-sql-driver/mysql" // mysql driver
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
