@@ -33,7 +33,6 @@ const (
 // 4. ensure all region apply to last log
 // 5. send the resolvedTs to tikv for deleting data.
 func RecoverData(ctx context.Context, resolvedTs uint64, allStores []*metapb.Store, mgr *conn.Mgr, progress glue.Progress) (int, error) {
-
 	var recovery = NewRecovery(allStores, mgr, progress)
 	if err := recovery.ReadRegionMeta(ctx); err != nil {
 		return 0, errors.Trace(err)
@@ -365,7 +364,6 @@ type RecoverRegion struct {
 // 2. build a leader list for all region during the tikv startup
 // 3. get max allocate id
 func (recovery *Recovery) MakeRecoveryPlan() error {
-
 	// Group region peer info by region id. find the max allocateId
 	// region [id] [peer[0-n]]
 	var regions = make(map[uint64][]*RecoverRegion, 0)
