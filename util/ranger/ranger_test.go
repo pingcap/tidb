@@ -2189,6 +2189,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 	checkRangeFallbackAndReset(t, sctx, false)
 	quota = res.Ranges.MemUsage() - 1
 	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, quota)
+	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
 		"[]",
 		"[or(or(eq(test.t1.a, 10), eq(test.t1.a, 20)), eq(test.t1.a, 30))]",
@@ -2208,6 +2209,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 	checkRangeFallbackAndReset(t, sctx, false)
 	quota = res.Ranges.MemUsage() - 1
 	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, quota)
+	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
 		"[]",
 		"[or(or(and(eq(test.t1.a, 10), eq(test.t1.b, 40)), and(eq(test.t1.a, 20), eq(test.t1.b, 50))), and(eq(test.t1.a, 30), eq(test.t1.b, 60)))]",
@@ -2274,6 +2276,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 	checkRangeFallbackAndReset(t, sctx, false)
 	quota = res.Ranges.MemUsage() - 1
 	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, quota)
+	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
 		"[]",
 		"[or(or(eq(test.t2.a, aaa), eq(test.t2.a, bbb)), eq(test.t2.a, ccc))]",
@@ -2293,6 +2296,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 	checkRangeFallbackAndReset(t, sctx, false)
 	quota = res.Ranges.MemUsage() - 1
 	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, quota)
+	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
 		"[]",
 		"[or(or(and(eq(test.t2.a, aaa), eq(test.t2.b, ddd)), and(eq(test.t2.a, bbb), eq(test.t2.b, eee))), and(eq(test.t2.a, ccc), eq(test.t2.b, fff)))]",
