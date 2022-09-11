@@ -155,7 +155,6 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 	err = utils.WithRetry(
 		ctx,
 		func() error {
-
 			allStores, err = conn.GetAllTiKVStoresWithRetry(ctx, mgr.GetPDClient(), util.SkipTiFlash)
 			if err != nil {
 				return errors.Trace(err)
@@ -179,11 +178,11 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 	log.Debug("total tikv", zap.Int("total", numBackupStore), zap.Int64("int", int64(numBackupStore)), zap.String("progress file", cfg.ProgressFile))
 	// progress = read meta + send recovery + iterate tikv + resolve kv data.
 	progress := g.StartProgress(ctx, cmdName, int64(numBackupStore*4), !cfg.LogProgress)
-
 	go progressFileWriterRoutine(ctx, progress, int64(numBackupStore*4), cfg.ProgressFile)
 
 	// restore tikv data from a snapshot volume
 	var totalRegions int
+
 	totalRegions, err = restore.RecoverData(ctx, resolveTs, allStores, mgr, progress)
 	if err != nil {
 		return errors.Trace(err)
