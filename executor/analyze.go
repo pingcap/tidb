@@ -107,11 +107,8 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	close(taskCh)
 	e.wg.Wait()
 	close(resultsCh)
-	pruneMode := variable.PartitionPruneMode(e.ctx.GetSessionVars().PartitionPruneMode.Load())
-	// needGlobalStats used to indicate whether we should merge the partition-level stats to global-level stats.
-	needGlobalStats := pruneMode == variable.Dynamic
 	globalStatsMap := make(map[globalStatsKey]globalStatsInfo)
-	err = e.handleResultsError(ctx, concurrency, needGlobalStats, globalStatsMap, resultsCh)
+	err = e.handleResultsError(ctx, concurrency, globalStatsMap, resultsCh)
 	for _, task := range e.tasks {
 		if task.colExec != nil && task.colExec.memTracker != nil {
 			task.colExec.memTracker.Detach()
@@ -125,8 +122,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		dom.SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID(dom.ServerID))
 	})
 
-	// If we enabled dynamic prune mode, then we need to generate global stats here for partition tables.
-	err = e.handleGlobalStats(ctx, needGlobalStats, globalStatsMap)
+	err = e.handleGlobalStats(ctx, globalStatsMap)
 	if err != nil {
 		return err
 	}
@@ -215,7 +211,7 @@ func (e *AnalyzeExec) recordHistoricalStats(tableID int64) error {
 }
 
 // handleResultsError will handle the error fetch from resultsCh and record it in log
-func (e *AnalyzeExec) handleResultsError(ctx context.Context, concurrency int, needGlobalStats bool,
+func (e *AnalyzeExec) handleResultsError(ctx context.Context, concurrency int,
 	globalStatsMap globalStatsMap, resultsCh <-chan *statistics.AnalyzeResults) error {
 	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
 	panicCnt := 0
@@ -235,7 +231,7 @@ func (e *AnalyzeExec) handleResultsError(ctx context.Context, concurrency int, n
 			finishJobWithLog(e.ctx, results.Job, err)
 			continue
 		}
-		if results.TableID.IsPartitionTable() && needGlobalStats {
+		if results.TableID.IsPartitionTable() {
 			for _, result := range results.Ars {
 				if result.IsIndex == 0 {
 					// If it does not belong to the statistics of index, we need to set it to -1 to distinguish.
