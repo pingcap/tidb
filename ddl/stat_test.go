@@ -20,12 +20,15 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -175,5 +178,10 @@ func buildCreateIdxJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, unique bo
 			[]*ast.IndexPartSpecification{{
 				Column: &ast.ColumnName{Name: model.NewCIStr(colName)},
 				Length: types.UnspecifiedLength}}},
+		ReorgMeta: &model.DDLReorgMeta{ // Add index job must have this field.
+			SQLMode:       mysql.SQLMode(0),
+			Warnings:      make(map[errors.ErrorID]*terror.Error),
+			WarningsCount: make(map[errors.ErrorID]int64),
+		},
 	}
 }

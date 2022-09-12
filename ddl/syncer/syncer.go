@@ -50,8 +50,6 @@ var (
 	// CheckVersFirstWaitTime is a waitting time before the owner checks all the servers of the schema version,
 	// and it's an exported variable for testing.
 	CheckVersFirstWaitTime = 50 * time.Millisecond
-	// sessionTTL is the etcd session's TTL in seconds.
-	sessionTTL = 90
 )
 
 // SchemaSyncer is used to synchronize schema version between the DDL worker leader and followers through etcd.
@@ -72,8 +70,8 @@ type SchemaSyncer interface {
 	// Restart restarts the syncer when it's on longer being refreshed.
 	Restart(ctx context.Context) error
 	// OwnerCheckAllVersions checks whether all followers' schema version are equal to
-	// the latest schema version. If the result is false, wait for a while and check again util the processing time reach 2 * lease.
-	// It returns until all servers' versions are equal to the latest version or the ctx is done.
+	// the latest schema version. (exclude the isolated TiDB)
+	// It returns until all servers' versions are equal to the latest version.
 	OwnerCheckAllVersions(ctx context.Context, latestVer int64) error
 	// Close ends SchemaSyncer.
 	Close()
@@ -113,7 +111,7 @@ func (s *schemaVersionSyncer) Init(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	logPrefix := fmt.Sprintf("[%s] %s", ddlPrompt, s.selfSchemaVerPath)
-	session, err := tidbutil.NewSession(ctx, logPrefix, s.etcdCli, tidbutil.NewSessionDefaultRetryCnt, sessionTTL)
+	session, err := tidbutil.NewSession(ctx, logPrefix, s.etcdCli, tidbutil.NewSessionDefaultRetryCnt, util.SessionTTL)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -158,7 +156,7 @@ func (s *schemaVersionSyncer) Restart(ctx context.Context) error {
 
 	logPrefix := fmt.Sprintf("[%s] %s", ddlPrompt, s.selfSchemaVerPath)
 	// NewSession's context will affect the exit of the session.
-	session, err := tidbutil.NewSession(ctx, logPrefix, s.etcdCli, tidbutil.NewSessionRetryUnlimited, sessionTTL)
+	session, err := tidbutil.NewSession(ctx, logPrefix, s.etcdCli, tidbutil.NewSessionRetryUnlimited, util.SessionTTL)
 	if err != nil {
 		return errors.Trace(err)
 	}

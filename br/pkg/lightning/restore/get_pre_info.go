@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/glue"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
+	ropts "github.com/pingcap/tidb/br/pkg/lightning/restore/opts"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -68,7 +69,7 @@ type EstimateSourceDataSizeResult struct {
 type PreRestoreInfoGetter interface {
 	TargetInfoGetter
 	// GetAllTableStructures gets all the table structures with the information from both the source and the target.
-	GetAllTableStructures(ctx context.Context) (map[string]*checkpoints.TidbDBInfo, error)
+	GetAllTableStructures(ctx context.Context, opts ...ropts.GetPreInfoOption) (map[string]*checkpoints.TidbDBInfo, error)
 	// ReadFirstNRowsByTableName reads the first N rows of data of an importing source table.
 	ReadFirstNRowsByTableName(ctx context.Context, schemaName string, tableName string, n int) (cols []string, rows [][]types.Datum, err error)
 	// ReadFirstNRowsByFileMeta reads the first N rows of an data file.
@@ -79,7 +80,7 @@ type PreRestoreInfoGetter interface {
 	//   which might include some extra index data to generate besides the source file data
 	// * the total data size of all the source files,
 	// * whether there are some unsorted big tables
-	EstimateSourceDataSize(ctx context.Context) (*EstimateSourceDataSizeResult, error)
+	EstimateSourceDataSize(ctx context.Context, opts ...ropts.GetPreInfoOption) (*EstimateSourceDataSizeResult, error)
 }
 
 // TargetInfoGetter defines the operations to get information from target.
@@ -91,7 +92,7 @@ type TargetInfoGetter interface {
 	// IsTableEmpty checks whether the specified table on the target DB contains data or not.
 	IsTableEmpty(ctx context.Context, schemaName string, tableName string) (*bool, error)
 	// GetTargetSysVariablesForImport gets some important systam variables for importing on the target.
-	GetTargetSysVariablesForImport(ctx context.Context) map[string]string
+	GetTargetSysVariablesForImport(ctx context.Context, opts ...ropts.GetPreInfoOption) map[string]string
 	// GetReplicationConfig gets the replication config on the target.
 	GetReplicationConfig(ctx context.Context) (*pdtypes.ReplicationConfig, error)
 	// GetStorageInfo gets the storage information on the target.
@@ -103,26 +104,11 @@ type TargetInfoGetter interface {
 type preInfoGetterKey string
 
 const (
-	preInfoGetterKeyDBMetas                  preInfoGetterKey = "PRE_INFO_GETTER/DB_METAS"
-	preInfoGetterKeyTableStructsCache        preInfoGetterKey = "PRE_INFO_GETTER/TABLE_STRUCTS_CACHE"
-	preInfoGetterKeySysVarsCache             preInfoGetterKey = "PRE_INFO_GETTER/SYS_VARS_CACHE"
-	preInfoGetterKeyEstimatedSourceSizeCache preInfoGetterKey = "PRE_INFO_GETTER/ESTIMATED_SOURCE_SIZE_CACHE"
+	preInfoGetterKeyDBMetas preInfoGetterKey = "PRE_INFO_GETTER/DB_METAS"
 )
 
 func WithPreInfoGetterDBMetas(ctx context.Context, dbMetas []*mydump.MDDatabaseMeta) context.Context {
 	return context.WithValue(ctx, preInfoGetterKeyDBMetas, dbMetas)
-}
-
-func WithPreInfoGetterTableStructuresCache(ctx context.Context, dbInfos map[string]*checkpoints.TidbDBInfo) context.Context {
-	return context.WithValue(ctx, preInfoGetterKeyTableStructsCache, dbInfos)
-}
-
-func WithPreInfoGetterSysVarsCache(ctx context.Context, sysVars map[string]string) context.Context {
-	return context.WithValue(ctx, preInfoGetterKeySysVarsCache, sysVars)
-}
-
-func WithPreInfoGetterEstimatedSrcSizeCache(ctx context.Context, sizeResult *EstimateSourceDataSizeResult) context.Context {
-	return context.WithValue(ctx, preInfoGetterKeyEstimatedSourceSizeCache, sizeResult)
 }
 
 // TargetInfoGetterImpl implements the operations to get information from the target.
@@ -228,7 +214,7 @@ func (g *TargetInfoGetterImpl) IsTableEmpty(ctx context.Context, schemaName stri
 // GetTargetSysVariablesForImport gets some important system variables for importing on the target.
 // It implements the TargetInfoGetter interface.
 // It uses the SQL to fetch sys variables from the target.
-func (g *TargetInfoGetterImpl) GetTargetSysVariablesForImport(ctx context.Context) map[string]string {
+func (g *TargetInfoGetterImpl) GetTargetSysVariablesForImport(ctx context.Context, _ ...ropts.GetPreInfoOption) map[string]string {
 	sysVars := ObtainImportantVariables(ctx, g.targetDBGlue.GetSQLExecutor(), !isTiDBBackend(g.cfg))
 	// override by manually set vars
 	maps.Copy(sysVars, g.cfg.TiDB.Vars)
@@ -271,7 +257,7 @@ func (g *TargetInfoGetterImpl) GetEmptyRegionsInfo(ctx context.Context) (*pdtype
 // PreRestoreInfoGetterImpl implements the operations to get information used in importing preparation.
 type PreRestoreInfoGetterImpl struct {
 	cfg              *config.Config
-	getPreInfoCfg    *GetPreInfoConfig
+	getPreInfoCfg    *ropts.GetPreInfoConfig
 	srcStorage       storage.ExternalStorage
 	ioWorkers        *worker.Pool
 	encBuilder       backend.EncodingBuilder
@@ -280,6 +266,10 @@ type PreRestoreInfoGetterImpl struct {
 	dbMetas          []*mydump.MDDatabaseMeta
 	mdDBMetaMap      map[string]*mydump.MDDatabaseMeta
 	mdDBTableMetaMap map[string]map[string]*mydump.MDTableMeta
+
+	dbInfosCache       map[string]*checkpoints.TidbDBInfo
+	sysVarsCache       map[string]string
+	estimatedSizeCache *EstimateSourceDataSizeResult
 }
 
 // NewPreRestoreInfoGetter creates a PreRestoreInfoGetterImpl object.
@@ -290,7 +280,7 @@ func NewPreRestoreInfoGetter(
 	targetInfoGetter TargetInfoGetter,
 	ioWorkers *worker.Pool,
 	encBuilder backend.EncodingBuilder,
-	opts ...GetPreInfoOption,
+	opts ...ropts.GetPreInfoOption,
 ) (*PreRestoreInfoGetterImpl, error) {
 	if ioWorkers == nil {
 		ioWorkers = worker.NewPool(context.Background(), cfg.App.IOConcurrency, "pre_info_getter_io")
@@ -306,9 +296,9 @@ func NewPreRestoreInfoGetter(
 		}
 	}
 
-	getPreInfoCfg := NewDefaultGetPreInfoConfig()
+	getPreInfoCfg := ropts.NewDefaultGetPreInfoConfig()
 	for _, o := range opts {
-		o.Apply(getPreInfoCfg)
+		o(getPreInfoCfg)
 	}
 	result := &PreRestoreInfoGetterImpl{
 		cfg:              cfg,
@@ -347,34 +337,34 @@ func (p *PreRestoreInfoGetterImpl) Init() {
 // GetAllTableStructures gets all the table structures with the information from both the source and the target.
 // It implements the PreRestoreInfoGetter interface.
 // It has a caching mechanism: the table structures will be obtained from the source only once.
-func (p *PreRestoreInfoGetterImpl) GetAllTableStructures(ctx context.Context) (map[string]*checkpoints.TidbDBInfo, error) {
+func (p *PreRestoreInfoGetterImpl) GetAllTableStructures(ctx context.Context, opts ...ropts.GetPreInfoOption) (map[string]*checkpoints.TidbDBInfo, error) {
 	var (
 		dbInfos map[string]*checkpoints.TidbDBInfo
 		err     error
 	)
-	dbInfosVal := ctx.Value(preInfoGetterKeyTableStructsCache)
-	if dbInfosVal != nil {
-		if v, ok := dbInfosVal.(map[string]*checkpoints.TidbDBInfo); ok {
-			dbInfos = v
-		}
+	getPreInfoCfg := p.getPreInfoCfg.Clone()
+	for _, o := range opts {
+		o(getPreInfoCfg)
 	}
-	if dbInfos != nil {
+	dbInfos = p.dbInfosCache
+	if dbInfos != nil && !getPreInfoCfg.ForceReloadCache {
 		return dbInfos, nil
 	}
 	dbInfos, err = LoadSchemaInfo(ctx, p.dbMetas, func(ctx context.Context, dbName string) ([]*model.TableInfo, error) {
-		return p.getTableStructuresByFileMeta(ctx, p.mdDBMetaMap[dbName])
+		return p.getTableStructuresByFileMeta(ctx, p.mdDBMetaMap[dbName], getPreInfoCfg)
 	})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	p.dbInfosCache = dbInfos
 	return dbInfos, nil
 }
 
-func (p *PreRestoreInfoGetterImpl) getTableStructuresByFileMeta(ctx context.Context, dbSrcFileMeta *mydump.MDDatabaseMeta) ([]*model.TableInfo, error) {
+func (p *PreRestoreInfoGetterImpl) getTableStructuresByFileMeta(ctx context.Context, dbSrcFileMeta *mydump.MDDatabaseMeta, getPreInfoCfg *ropts.GetPreInfoConfig) ([]*model.TableInfo, error) {
 	dbName := dbSrcFileMeta.Name
 	currentTableInfosFromDB, err := p.targetInfoGetter.FetchRemoteTableModels(ctx, dbName)
 	if err != nil {
-		if p.getPreInfoCfg != nil && p.getPreInfoCfg.IgnoreDBNotExist {
+		if getPreInfoCfg != nil && getPreInfoCfg.IgnoreDBNotExist {
 			dbNotExistErr := dbterror.ClassSchema.NewStd(errno.ErrBadDB).FastGenByArgs(dbName)
 			// The returned error is an error showing get info request error,
 			// and attaches the detailed error response as a string.
@@ -503,22 +493,25 @@ func (p *PreRestoreInfoGetterImpl) ReadFirstNRowsByFileMeta(ctx context.Context,
 			}
 			break
 		}
-		rows = append(rows, parser.LastRow().Row)
+		lastRowDatums := append([]types.Datum{}, parser.LastRow().Row...)
+		rows = append(rows, lastRowDatums)
 	}
 	return parser.Columns(), rows, nil
 }
 
 // EstimateSourceDataSize estimates the datasize to generate during the import as well as some other sub-informaiton.
 // It implements the PreRestoreInfoGetter interface.
-func (p *PreRestoreInfoGetterImpl) EstimateSourceDataSize(ctx context.Context) (*EstimateSourceDataSizeResult, error) {
+// It has a cache mechanism.  The estimated size will only calculated once.
+// The caching behavior can be changed by appending the `ForceReloadCache(true)` option.
+func (p *PreRestoreInfoGetterImpl) EstimateSourceDataSize(ctx context.Context, opts ...ropts.GetPreInfoOption) (*EstimateSourceDataSizeResult, error) {
 	var result *EstimateSourceDataSizeResult
-	resultVal := ctx.Value(preInfoGetterKeyEstimatedSourceSizeCache)
-	if resultVal != nil {
-		if v, ok := resultVal.(*EstimateSourceDataSizeResult); ok {
-			result = v
-		}
+
+	getPreInfoCfg := p.getPreInfoCfg.Clone()
+	for _, o := range opts {
+		o(getPreInfoCfg)
 	}
-	if result != nil {
+	result = p.estimatedSizeCache
+	if result != nil && !getPreInfoCfg.ForceReloadCache {
 		return result, nil
 	}
 	sizeWithIndex := int64(0)
@@ -575,6 +568,7 @@ func (p *PreRestoreInfoGetterImpl) EstimateSourceDataSize(ctx context.Context) (
 		SizeWithoutIndex:     sourceTotalSize,
 		HasUnsortedBigTables: (unSortedBigTableCount > 0),
 	}
+	p.estimatedSizeCache = result
 	return result, nil
 }
 
@@ -777,16 +771,18 @@ func (p *PreRestoreInfoGetterImpl) CheckVersionRequirements(ctx context.Context)
 // GetTargetSysVariablesForImport gets some important systam variables for importing on the target.
 // It implements the PreRestoreInfoGetter interface.
 // It has caching mechanism.
-func (p *PreRestoreInfoGetterImpl) GetTargetSysVariablesForImport(ctx context.Context) map[string]string {
+func (p *PreRestoreInfoGetterImpl) GetTargetSysVariablesForImport(ctx context.Context, opts ...ropts.GetPreInfoOption) map[string]string {
 	var sysVars map[string]string
-	sysVarsVal := ctx.Value(preInfoGetterKeySysVarsCache)
-	if sysVarsVal != nil {
-		if v, ok := sysVarsVal.(map[string]string); ok {
-			sysVars = v
-		}
+
+	getPreInfoCfg := p.getPreInfoCfg.Clone()
+	for _, o := range opts {
+		o(getPreInfoCfg)
 	}
-	if sysVars != nil {
+	sysVars = p.sysVarsCache
+	if sysVars != nil && !getPreInfoCfg.ForceReloadCache {
 		return sysVars
 	}
-	return p.targetInfoGetter.GetTargetSysVariablesForImport(ctx)
+	sysVars = p.targetInfoGetter.GetTargetSysVariablesForImport(ctx)
+	p.sysVarsCache = sysVars
+	return sysVars
 }

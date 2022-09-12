@@ -437,7 +437,7 @@
       },
       {
         "SQL": "select * from ((SELECT 1 a,6 b) UNION (SELECT 2,5) UNION (SELECT 2, 4) ORDER BY 1) t order by 1, 2",
-        "Best": "UnionAll{Dual->Projection->Dual->Projection->Dual->Projection}->HashAgg->Sort->Sort"
+        "Best": "UnionAll{Dual->Projection->Projection->Dual->Projection->Projection->Dual->Projection->Projection}->HashAgg->Projection->Sort"
       },
       {
         "SQL": "select * from (select *, NULL as xxx from t) t order by xxx",
@@ -1597,170 +1597,170 @@
   {
     "Name": "TestCTEMergeHint",
     "Cases": [
-  {
-    "SQL": "with cte as (select /*+ MERGE()*/ * from tc where tc.a < 60) select * from cte where cte.a <18",
-    "Plan": [
-      "TableReader 4.00 root  data:Selection",
-      "└─Selection 4.00 cop[tikv]  lt(test.tc.a, 18), lt(test.tc.a, 60)",
-      "  └─TableFullScan 7.00 cop[tikv] table:tc keep order:false"
-    ],
-    "Warning": null
-  },
-  {
-    "SQL": "with cte as (select * from tc where tc.a < 60) select * from cte where cte.a <18",
-    "Plan": [
-      "Selection 3.20 root  lt(test.tc.a, 18)",
-      "└─CTEFullScan 4.00 root CTE:cte data:CTE_0",
-      "CTE_0 4.00 root  Non-Recursive CTE",
-      "└─TableReader(Seed Part) 4.00 root  data:Selection",
-      "  └─Selection 4.00 cop[tikv]  lt(test.tc.a, 18), lt(test.tc.a, 60)",
-      "    └─TableFullScan 7.00 cop[tikv] table:tc keep order:false"
-    ],
-    "Warning": null
-  },
-  {
-    "SQL": "with cte as (select /*+ MERGE() */ * from v) select * from cte",
-    "Plan": [
-      "TableReader 7.00 root  data:TableFullScan",
-      "└─TableFullScan 7.00 cop[tikv] table:tc keep order:false"
-    ],
-    "Warning": null
-  },
-  {
-    "SQL": "WITH cte1 AS (SELECT /*+ MERGE()*/ a FROM tc), cte2 AS (SELECT /*+ MERGE()*/ c FROM te) SELECT * FROM cte1 JOIN cte2 WHERE cte1.a = cte2.c;",
-    "Plan": [
-      "HashJoin 7.00 root  inner join, equal:[eq(test.tc.a, test.te.c)]",
-      "├─TableReader(Build) 7.00 root  data:Selection",
-      "│ └─Selection 7.00 cop[tikv]  not(isnull(test.te.c))",
-      "│   └─TableFullScan 7.00 cop[tikv] table:te keep order:false",
-      "└─TableReader(Probe) 7.00 root  data:Selection",
-      "  └─Selection 7.00 cop[tikv]  not(isnull(test.tc.a))",
-      "    └─TableFullScan 7.00 cop[tikv] table:tc keep order:false"
-    ],
-    "Warning": null
-  },
-  {
-    "SQL": "WITH cte1 AS (SELECT a FROM tc), cte2 AS (SELECT /*+ MERGE()*/ c FROM te) SELECT * FROM cte1 JOIN cte2 WHERE cte1.a = cte2.c;",
-    "Plan": [
-      "Projection 4.48 root  test.tc.a, test.te.c",
-      "└─HashJoin 4.48 root  inner join, equal:[eq(test.te.c, test.tc.a)]",
-      "  ├─Selection(Build) 4.48 root  not(isnull(test.tc.a))",
-      "  │ └─CTEFullScan 5.60 root CTE:cte1 data:CTE_0",
-      "  └─TableReader(Probe) 7.00 root  data:Selection",
-      "    └─Selection 7.00 cop[tikv]  not(isnull(test.te.c))",
-      "      └─TableFullScan 7.00 cop[tikv] table:te keep order:false",
-      "CTE_0 5.60 root  Non-Recursive CTE",
-      "└─Selection(Seed Part) 5.60 root  not(isnull(test.tc.a))",
-      "  └─TableReader 7.00 root  data:TableFullScan",
-      "    └─TableFullScan 7.00 cop[tikv] table:tc keep order:false"
+      {
+        "SQL": "with cte as (select /*+ MERGE() */ * from tc where tc.a < 60) select * from cte where cte.a <18",
+        "Plan": [
+          "TableReader 4.00 root  data:Selection",
+          "└─Selection 4.00 cop[tikv]  lt(test.tc.a, 18), lt(test.tc.a, 60)",
+          "  └─TableFullScan 7.00 cop[tikv] table:tc keep order:false"
         ],
-    "Warning": null
-  },
-  {
-    "SQL": "with recursive cte1(c1) as (select 1 union select /*+ MERGE() */ c1 + 1 c1 from cte1 where c1 < 100) select * from cte1;",
-    "Plan": [
-      "CTEFullScan 2.00 root CTE:cte1 data:CTE_0",
-      "CTE_0 2.00 root  Recursive CTE",
-      "├─Projection(Seed Part) 1.00 root  1->Column#2",
-      "│ └─TableDual 1.00 root  rows:1",
-      "└─Projection(Recursive Part) 0.80 root  cast(plus(Column#3, 1), bigint(1) BINARY)->Column#5",
-      "  └─Selection 0.80 root  lt(Column#3, 100)",
-      "    └─CTETable 1.00 root  Scan on CTE_0"
-    ],
-    "Warning": [
-      "[planner:1815]Hint merge() is inapplicable. Please check whether the CTE use recursive."
-    ]
-  },
-  {
-    "SQL": "WITH cte1 AS (SELECT * FROM t1) SELECT /*+ MERGE() */ * FROM cte1 join t2 on cte1.a = t2.b;",
-    "Plan": [
-      "Projection 4.48 root  test.t1.a, test.t2.b",
-      "└─HashJoin 4.48 root  inner join, equal:[eq(test.t2.b, test.t1.a)]",
-      "  ├─Selection(Build) 4.48 root  not(isnull(test.t1.a))",
-      "  │ └─CTEFullScan 5.60 root CTE:cte1 data:CTE_0",
-      "  └─TableReader(Probe) 7.00 root  data:Selection",
-      "    └─Selection 7.00 cop[tikv]  not(isnull(test.t2.b))",
-      "      └─TableFullScan 7.00 cop[tikv] table:t2 keep order:false",
-      "CTE_0 5.60 root  Non-Recursive CTE",
-      "└─Selection(Seed Part) 5.60 root  not(isnull(test.t1.a))",
-      "  └─TableReader 7.00 root  data:TableFullScan",
-      "    └─TableFullScan 7.00 cop[tikv] table:t1 keep order:false"
-    ],
-    "Warning": [
-      "[planner:1815]Hint merge() is inapplicable. Please check whether the hint is using in the right place, you should use this hint in CTE inner query."
-    ]
-  },
-  {
-    "SQL": "with cte1 as (with cte3 as (select /*+ MERGE() */  * from t1),cte4 as (select /*+ MERGE() */ * from t2) select /*+ MERGE() */  * from cte3,cte4) ,cte2 as (select /*+ MERGE() */  * from t3) select * from cte1,cte2;",
-    "Plan": [
-      "HashJoin 343.00 root  CARTESIAN inner join",
-      "├─TableReader(Build) 7.00 root  data:TableFullScan",
-      "│ └─TableFullScan 7.00 cop[tikv] table:t3 keep order:false",
-      "└─HashJoin(Probe) 49.00 root  CARTESIAN inner join",
-      "  ├─TableReader(Build) 7.00 root  data:TableFullScan",
-      "  │ └─TableFullScan 7.00 cop[tikv] table:t2 keep order:false",
-      "  └─TableReader(Probe) 7.00 root  data:TableFullScan",
-      "    └─TableFullScan 7.00 cop[tikv] table:t1 keep order:false"
-    ],
-    "Warning": null
-  },
-  {
-    "SQL": "with cte1 as (select * from tc), cte2 as (with cte3 as (select /*+ MERGE() */ * from te) ,cte4 as (select * from tc) select * from cte3,cte4) select * from cte2;",
-    "Plan": [
-      "CTEFullScan 49.00 root CTE:cte2 data:CTE_1",
-      "CTE_1 49.00 root  Non-Recursive CTE",
-      "└─HashJoin(Seed Part) 49.00 root  CARTESIAN inner join",
-      "  ├─CTEFullScan(Build) 7.00 root CTE:cte4 data:CTE_3",
-      "  └─TableReader(Probe) 7.00 root  data:TableFullScan",
-      "    └─TableFullScan 7.00 cop[tikv] table:te keep order:false",
-      "CTE_3 7.00 root  Non-Recursive CTE",
-      "└─TableReader(Seed Part) 7.00 root  data:TableFullScan",
-      "  └─TableFullScan 7.00 cop[tikv] table:tc keep order:false"
-    ],
-    "Warning": null
-  },
- {
-   "SQL": "with cte1 as (with cte2 as (select /*+ MERGE() */ * from te) ,cte3 as (select /*+ MERGE() */ * from tc) select /*+ MERGE() */ * from cte2,cte3) select * from cte1;",
-   "Plan": [
-     "HashJoin 49.00 root  CARTESIAN inner join",
-     "├─TableReader(Build) 7.00 root  data:TableFullScan",
-     "│ └─TableFullScan 7.00 cop[tikv] table:tc keep order:false",
-     "└─TableReader(Probe) 7.00 root  data:TableFullScan",
-     "  └─TableFullScan 7.00 cop[tikv] table:te keep order:false"
-   ],
-   "Warning": null
- },
-  {
-    "SQL": "with cte1 as (select * from t1), cte2 as (with cte3 as (with cte5 as (select * from t2),cte6 as (select * from t3) select * from cte5,cte6) ,cte4 as (select * from t4) select * from cte3,cte4) select * from cte1,cte2;",
-    "Plan": [
-      "HashJoin 1920.80 root  CARTESIAN inner join",
-      "├─CTEFullScan(Build) 5.60 root CTE:cte1 data:CTE_0",
-      "└─CTEFullScan(Probe) 343.00 root CTE:cte2 data:CTE_1",
-      "CTE_0 5.60 root  Non-Recursive CTE",
-      "└─Selection(Seed Part) 5.60 root  1",
-      "  └─TableReader 7.00 root  data:TableFullScan",
-      "    └─TableFullScan 7.00 cop[tikv] table:t1 keep order:false",
-      "CTE_1 343.00 root  Non-Recursive CTE",
-      "└─Projection(Seed Part) 343.00 root  test.t2.b, test.t3.c, test.t4.d",
-      "  └─HashJoin 343.00 root  CARTESIAN inner join",
-      "    ├─CTEFullScan(Build) 7.00 root CTE:cte4 data:CTE_5",
-      "    └─CTEFullScan(Probe) 49.00 root CTE:cte3 data:CTE_2",
-      "CTE_5 7.00 root  Non-Recursive CTE",
-      "└─TableReader(Seed Part) 7.00 root  data:TableFullScan",
-      "  └─TableFullScan 7.00 cop[tikv] table:t4 keep order:false",
-      "CTE_2 49.00 root  Non-Recursive CTE",
-      "└─HashJoin(Seed Part) 49.00 root  CARTESIAN inner join",
-      "  ├─CTEFullScan(Build) 7.00 root CTE:cte6 data:CTE_4",
-      "  └─CTEFullScan(Probe) 7.00 root CTE:cte5 data:CTE_3",
-      "CTE_4 7.00 root  Non-Recursive CTE",
-      "└─TableReader(Seed Part) 7.00 root  data:TableFullScan",
-      "  └─TableFullScan 7.00 cop[tikv] table:t3 keep order:false",
-      "CTE_3 7.00 root  Non-Recursive CTE",
-      "└─TableReader(Seed Part) 7.00 root  data:TableFullScan",
-      "  └─TableFullScan 7.00 cop[tikv] table:t2 keep order:false"
-    ],
-    "Warning": null
-  },
+        "Warning": null
+      },
+      {
+        "SQL": "with cte as (select * from tc where tc.a < 60) select * from cte where cte.a <18",
+        "Plan": [
+          "Selection 3.20 root  lt(test.tc.a, 18)",
+          "└─CTEFullScan 4.00 root CTE:cte data:CTE_0",
+          "CTE_0 4.00 root  Non-Recursive CTE",
+          "└─TableReader(Seed Part) 4.00 root  data:Selection",
+          "  └─Selection 4.00 cop[tikv]  lt(test.tc.a, 18), lt(test.tc.a, 60)",
+          "    └─TableFullScan 7.00 cop[tikv] table:tc keep order:false"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "with cte as (select /*+ MERGE() */ * from v) select * from cte",
+        "Plan": [
+          "TableReader 7.00 root  data:TableFullScan",
+          "└─TableFullScan 7.00 cop[tikv] table:tc keep order:false"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "WITH cte1 AS (SELECT /*+ MERGE() */ a FROM tc), cte2 AS (SELECT /*+ MERGE()*/ c FROM te) SELECT * FROM cte1 JOIN cte2 WHERE cte1.a = cte2.c;",
+        "Plan": [
+          "HashJoin 7.00 root  inner join, equal:[eq(test.tc.a, test.te.c)]",
+          "├─TableReader(Build) 7.00 root  data:Selection",
+          "│ └─Selection 7.00 cop[tikv]  not(isnull(test.te.c))",
+          "│   └─TableFullScan 7.00 cop[tikv] table:te keep order:false",
+          "└─TableReader(Probe) 7.00 root  data:Selection",
+          "  └─Selection 7.00 cop[tikv]  not(isnull(test.tc.a))",
+          "    └─TableFullScan 7.00 cop[tikv] table:tc keep order:false"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "WITH cte1 AS (SELECT a FROM tc), cte2 AS (SELECT /*+ MERGE() */ c FROM te) SELECT * FROM cte1 JOIN cte2 WHERE cte1.a = cte2.c;",
+        "Plan": [
+          "Projection 4.48 root  test.tc.a, test.te.c",
+          "└─HashJoin 4.48 root  inner join, equal:[eq(test.te.c, test.tc.a)]",
+          "  ├─Selection(Build) 4.48 root  not(isnull(test.tc.a))",
+          "  │ └─CTEFullScan 5.60 root CTE:cte1 data:CTE_0",
+          "  └─TableReader(Probe) 7.00 root  data:Selection",
+          "    └─Selection 7.00 cop[tikv]  not(isnull(test.te.c))",
+          "      └─TableFullScan 7.00 cop[tikv] table:te keep order:false",
+          "CTE_0 5.60 root  Non-Recursive CTE",
+          "└─Selection(Seed Part) 5.60 root  not(isnull(test.tc.a))",
+          "  └─TableReader 7.00 root  data:TableFullScan",
+          "    └─TableFullScan 7.00 cop[tikv] table:tc keep order:false"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "with recursive cte1(c1) as (select 1 union select /*+ MERGE() */ c1 + 1 c1 from cte1 where c1 < 100) select * from cte1;",
+        "Plan": [
+          "CTEFullScan 2.00 root CTE:cte1 data:CTE_0",
+          "CTE_0 2.00 root  Recursive CTE",
+          "├─Projection(Seed Part) 1.00 root  1->Column#2",
+          "│ └─TableDual 1.00 root  rows:1",
+          "└─Projection(Recursive Part) 0.80 root  cast(plus(Column#3, 1), bigint(1) BINARY)->Column#5",
+          "  └─Selection 0.80 root  lt(Column#3, 100)",
+          "    └─CTETable 1.00 root  Scan on CTE_0"
+        ],
+        "Warning": [
+          "[planner:1815]Recursive CTE can not be inlined."
+        ]
+      },
+      {
+        "SQL": "WITH cte1 AS (SELECT * FROM t1) SELECT /*+ MERGE() */ * FROM cte1 join t2 on cte1.a = t2.b;",
+        "Plan": [
+          "Projection 4.48 root  test.t1.a, test.t2.b",
+          "└─HashJoin 4.48 root  inner join, equal:[eq(test.t2.b, test.t1.a)]",
+          "  ├─Selection(Build) 4.48 root  not(isnull(test.t1.a))",
+          "  │ └─CTEFullScan 5.60 root CTE:cte1 data:CTE_0",
+          "  └─TableReader(Probe) 7.00 root  data:Selection",
+          "    └─Selection 7.00 cop[tikv]  not(isnull(test.t2.b))",
+          "      └─TableFullScan 7.00 cop[tikv] table:t2 keep order:false",
+          "CTE_0 5.60 root  Non-Recursive CTE",
+          "└─Selection(Seed Part) 5.60 root  not(isnull(test.t1.a))",
+          "  └─TableReader 7.00 root  data:TableFullScan",
+          "    └─TableFullScan 7.00 cop[tikv] table:t1 keep order:false"
+        ],
+        "Warning": [
+          "[planner:1815]Hint merge() is inapplicable. Please check whether the hint is used in the right place, you should use this hint inside the CTE."
+        ]
+      },
+      {
+        "SQL": "with cte1 as (with cte3 as (select /*+ MERGE() */  * from t1),cte4 as (select /*+ MERGE() */ * from t2) select /*+ MERGE() */  * from cte3,cte4) ,cte2 as (select /*+ MERGE() */  * from t3) select * from cte1,cte2;",
+        "Plan": [
+          "HashJoin 343.00 root  CARTESIAN inner join",
+          "├─TableReader(Build) 7.00 root  data:TableFullScan",
+          "│ └─TableFullScan 7.00 cop[tikv] table:t3 keep order:false",
+          "└─HashJoin(Probe) 49.00 root  CARTESIAN inner join",
+          "  ├─TableReader(Build) 7.00 root  data:TableFullScan",
+          "  │ └─TableFullScan 7.00 cop[tikv] table:t2 keep order:false",
+          "  └─TableReader(Probe) 7.00 root  data:TableFullScan",
+          "    └─TableFullScan 7.00 cop[tikv] table:t1 keep order:false"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "with cte1 as (select * from tc), cte2 as (with cte3 as (select /*+ MERGE() */ * from te) ,cte4 as (select * from tc) select * from cte3,cte4) select * from cte2;",
+        "Plan": [
+          "CTEFullScan 49.00 root CTE:cte2 data:CTE_1",
+          "CTE_1 49.00 root  Non-Recursive CTE",
+          "└─HashJoin(Seed Part) 49.00 root  CARTESIAN inner join",
+          "  ├─CTEFullScan(Build) 7.00 root CTE:cte4 data:CTE_3",
+          "  └─TableReader(Probe) 7.00 root  data:TableFullScan",
+          "    └─TableFullScan 7.00 cop[tikv] table:te keep order:false",
+          "CTE_3 7.00 root  Non-Recursive CTE",
+          "└─TableReader(Seed Part) 7.00 root  data:TableFullScan",
+          "  └─TableFullScan 7.00 cop[tikv] table:tc keep order:false"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "with cte1 as (with cte2 as (select /*+ MERGE() */ * from te) ,cte3 as (select /*+ MERGE() */ * from tc) select /*+ MERGE() */ * from cte2,cte3) select * from cte1;",
+        "Plan": [
+          "HashJoin 49.00 root  CARTESIAN inner join",
+          "├─TableReader(Build) 7.00 root  data:TableFullScan",
+          "│ └─TableFullScan 7.00 cop[tikv] table:tc keep order:false",
+          "└─TableReader(Probe) 7.00 root  data:TableFullScan",
+          "  └─TableFullScan 7.00 cop[tikv] table:te keep order:false"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "with cte1 as (select * from t1), cte2 as (with cte3 as (with cte5 as (select * from t2),cte6 as (select * from t3) select * from cte5,cte6) ,cte4 as (select * from t4) select * from cte3,cte4) select * from cte1,cte2;",
+        "Plan": [
+          "HashJoin 1920.80 root  CARTESIAN inner join",
+          "├─CTEFullScan(Build) 5.60 root CTE:cte1 data:CTE_0",
+          "└─CTEFullScan(Probe) 343.00 root CTE:cte2 data:CTE_1",
+          "CTE_0 5.60 root  Non-Recursive CTE",
+          "└─Selection(Seed Part) 5.60 root  1",
+          "  └─TableReader 7.00 root  data:TableFullScan",
+          "    └─TableFullScan 7.00 cop[tikv] table:t1 keep order:false",
+          "CTE_1 343.00 root  Non-Recursive CTE",
+          "└─Projection(Seed Part) 343.00 root  test.t2.b, test.t3.c, test.t4.d",
+          "  └─HashJoin 343.00 root  CARTESIAN inner join",
+          "    ├─CTEFullScan(Build) 7.00 root CTE:cte4 data:CTE_5",
+          "    └─CTEFullScan(Probe) 49.00 root CTE:cte3 data:CTE_2",
+          "CTE_5 7.00 root  Non-Recursive CTE",
+          "└─TableReader(Seed Part) 7.00 root  data:TableFullScan",
+          "  └─TableFullScan 7.00 cop[tikv] table:t4 keep order:false",
+          "CTE_2 49.00 root  Non-Recursive CTE",
+          "└─HashJoin(Seed Part) 49.00 root  CARTESIAN inner join",
+          "  ├─CTEFullScan(Build) 7.00 root CTE:cte6 data:CTE_4",
+          "  └─CTEFullScan(Probe) 7.00 root CTE:cte5 data:CTE_3",
+          "CTE_4 7.00 root  Non-Recursive CTE",
+          "└─TableReader(Seed Part) 7.00 root  data:TableFullScan",
+          "  └─TableFullScan 7.00 cop[tikv] table:t3 keep order:false",
+          "CTE_3 7.00 root  Non-Recursive CTE",
+          "└─TableReader(Seed Part) 7.00 root  data:TableFullScan",
+          "  └─TableFullScan 7.00 cop[tikv] table:t2 keep order:false"
+        ],
+        "Warning": null
+      },
       {
         "SQL": "with cte1 as (select /*+ MERGE() */  * from t1), cte2 as (with cte3 as (with cte5 as (select * from t2),cte6 as (select * from t3) select * from cte5,cte6) ,cte4 as (select * from t4) select * from cte3,cte4) select * from cte1,cte2;",
         "Plan": [
@@ -1847,34 +1847,34 @@
         ],
         "Warning": null
       },
-  {
-    "SQL": "with cte2 as (with cte4 as (select * from tc) select * from te, cte4) select * from cte2;",
-    "Plan": [
-      "CTEFullScan 49.00 root CTE:cte2 data:CTE_0",
-      "CTE_0 49.00 root  Non-Recursive CTE",
-      "└─HashJoin(Seed Part) 49.00 root  CARTESIAN inner join",
-      "  ├─CTEFullScan(Build) 7.00 root CTE:cte4 data:CTE_1",
-      "  └─TableReader(Probe) 7.00 root  data:TableFullScan",
-      "    └─TableFullScan 7.00 cop[tikv] table:te keep order:false",
-      "CTE_1 7.00 root  Non-Recursive CTE",
-      "└─TableReader(Seed Part) 7.00 root  data:TableFullScan",
-      "  └─TableFullScan 7.00 cop[tikv] table:tc keep order:false"
-    ],
-    "Warning": null
-  },
-  {
-    "SQL": "with cte2 as (with cte4 as (select /*+ merge() */  * from tc) select * from te, cte4) select * from cte2;",
-    "Plan": [
-      "CTEFullScan 49.00 root CTE:cte2 data:CTE_0",
-      "CTE_0 49.00 root  Non-Recursive CTE",
-      "└─HashJoin(Seed Part) 49.00 root  CARTESIAN inner join",
-      "  ├─TableReader(Build) 7.00 root  data:TableFullScan",
-      "  │ └─TableFullScan 7.00 cop[tikv] table:tc keep order:false",
-      "  └─TableReader(Probe) 7.00 root  data:TableFullScan",
-      "    └─TableFullScan 7.00 cop[tikv] table:te keep order:false"
-    ],
-    "Warning": null
-  },
+      {
+        "SQL": "with cte2 as (with cte4 as (select * from tc) select * from te, cte4) select * from cte2;",
+        "Plan": [
+          "CTEFullScan 49.00 root CTE:cte2 data:CTE_0",
+          "CTE_0 49.00 root  Non-Recursive CTE",
+          "└─HashJoin(Seed Part) 49.00 root  CARTESIAN inner join",
+          "  ├─CTEFullScan(Build) 7.00 root CTE:cte4 data:CTE_1",
+          "  └─TableReader(Probe) 7.00 root  data:TableFullScan",
+          "    └─TableFullScan 7.00 cop[tikv] table:te keep order:false",
+          "CTE_1 7.00 root  Non-Recursive CTE",
+          "└─TableReader(Seed Part) 7.00 root  data:TableFullScan",
+          "  └─TableFullScan 7.00 cop[tikv] table:tc keep order:false"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "with cte2 as (with cte4 as (select /*+ merge() */ * from tc) select * from te, cte4) select * from cte2;",
+        "Plan": [
+          "CTEFullScan 49.00 root CTE:cte2 data:CTE_0",
+          "CTE_0 49.00 root  Non-Recursive CTE",
+          "└─HashJoin(Seed Part) 49.00 root  CARTESIAN inner join",
+          "  ├─TableReader(Build) 7.00 root  data:TableFullScan",
+          "  │ └─TableFullScan 7.00 cop[tikv] table:tc keep order:false",
+          "  └─TableReader(Probe) 7.00 root  data:TableFullScan",
+          "    └─TableFullScan 7.00 cop[tikv] table:te keep order:false"
+        ],
+        "Warning": null
+      },
       {
         "SQL": "with cte1 as (with cte2 as (with cte3 as (select  /*+ MERGE() */  * from t2) select  /*+ MERGE() */  * from cte3) select * from cte2,(select  /*+ MERGE() */ * from t1) ttt) select * from cte1;",
         "Plan": [
@@ -1887,7 +1887,7 @@
           "    └─TableFullScan 7.00 cop[tikv] table:t2 keep order:false"
         ],
         "Warning": [
-          "[planner:1815]Hint merge() is inapplicable. Please check whether the hint is using in the right place, you should use this hint in CTE inner query."
+          "[planner:1815]Hint merge() is inapplicable. Please check whether the hint is used in the right place, you should use this hint inside the CTE."
         ]
       },
       {
@@ -1906,7 +1906,7 @@
           "    └─TableFullScan 7.00 cop[tikv] table:t2 keep order:false"
         ],
         "Warning": [
-          "[planner:1815]Hint merge() is inapplicable. Please check whether the hint is using in the right place, you should use this hint in CTE inner query."
+          "[planner:1815]Hint merge() is inapplicable. Please check whether the hint is used in the right place, you should use this hint inside the CTE."
         ]
       },
       {
@@ -1923,6 +1923,187 @@
           "  │ └─TableFullScan 7.00 cop[tikv] table:t1 keep order:false",
           "  └─TableReader(Probe) 7.00 root  data:TableFullScan",
           "    └─TableFullScan 7.00 cop[tikv] table:t2 keep order:false"
+        ],
+        "Warning": null
+      }
+    ]
+  },
+  {
+    "Name": "TestForceInlineCTE",
+    "Cases": [
+      {
+        "SQL": "set tidb_opt_force_inline_cte=1; -- enable force inline CTE",
+        "Plan": null,
+        "Warning": null
+      },
+      {
+        "SQL": "with cte as (select * from t) select * from cte; -- inline",
+        "Plan": [
+          "TableReader 10000.00 root  data:TableFullScan",
+          "└─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "with cte as (select /*+ MERGE() */ * from t) select * from cte; -- inline",
+        "Plan": [
+          "TableReader 10000.00 root  data:TableFullScan",
+          "└─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "with cte as (select * from t) select * from cte cte1, cte cte2; -- inline CTEs is used by multi consumers",
+        "Plan": [
+          "HashJoin 100000000.00 root  CARTESIAN inner join",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "with cte1 as (select * from t), cte2 as (select a from cte1 group by a) select * from cte1, cte2; -- multi inline CTEs",
+        "Plan": [
+          "HashJoin 80000000.00 root  CARTESIAN inner join",
+          "├─HashAgg(Build) 8000.00 root  group by:test.t.a, funcs:firstrow(test.t.a)->test.t.a",
+          "│ └─TableReader 10000.00 root  data:TableFullScan",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "with recursive cte1(c1) as (select 1 union select c1 + 1 c1 from cte1 where c1 < 100) select * from cte1; -- Recursive CTE can not be inlined",
+        "Plan": [
+          "CTEFullScan 2.00 root CTE:cte1 data:CTE_0",
+          "CTE_0 2.00 root  Recursive CTE",
+          "├─Projection(Seed Part) 1.00 root  1->Column#2",
+          "│ └─TableDual 1.00 root  rows:1",
+          "└─Projection(Recursive Part) 0.80 root  cast(plus(Column#3, 1), bigint(1) BINARY)->Column#5",
+          "  └─Selection 0.80 root  lt(Column#3, 100)",
+          "    └─CTETable 1.00 root  Scan on CTE_0"
+        ],
+        "Warning": [
+          "[planner:1815]Recursive CTE can not be inlined."
+        ]
+      },
+      {
+        "SQL": "with cte1 as (with cte2 as (select * from t) select * from cte2) select * from cte1; -- non-recursive 'cte2' definition inside another non-recursive 'cte1'",
+        "Plan": [
+          "TableReader 10000.00 root  data:TableFullScan",
+          "└─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "with recursive cte2(c1) as (with cte1 as (select * from t) select a c1 from cte1 union select c1+1 c1 from cte2 where c1 < 100) select * from cte2; -- non-recursive 'cte1' inside recursive 'cte2'",
+        "Plan": [
+          "CTEFullScan 8001.00 root CTE:cte2 data:CTE_0",
+          "CTE_0 8001.00 root  Recursive CTE",
+          "├─TableReader(Seed Part) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "└─Projection(Recursive Part) 8000.00 root  cast(plus(test.t.a, 1), int(11))->test.t.a",
+          "  └─Selection 8000.00 root  lt(test.t.a, 100)",
+          "    └─CTETable 10000.00 root  Scan on CTE_0"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "with cte1 as (with recursive cte2(c1) as (select 1 union select c1 + 1 c1 from cte2 where c1 < 100) select * from cte2) select * from cte1; -- recursive 'cte2' inside non-recursive 'cte1'",
+        "Plan": [
+          "CTEFullScan 2.00 root CTE:cte2 data:CTE_2",
+          "CTE_2 2.00 root  Recursive CTE",
+          "├─Projection(Seed Part) 1.00 root  1->Column#9",
+          "│ └─TableDual 1.00 root  rows:1",
+          "└─Projection(Recursive Part) 0.80 root  cast(plus(Column#10, 1), bigint(1) BINARY)->Column#12",
+          "  └─Selection 0.80 root  lt(Column#10, 100)",
+          "    └─CTETable 1.00 root  Scan on CTE_2"
+        ],
+        "Warning": [
+          "[planner:1815]Recursive CTE can not be inlined.",
+          "[planner:1815]Recursive CTE can not be inlined."
+        ]
+      },
+      {
+        "SQL": "set tidb_opt_force_inline_cte=0; -- disable force inline CTE",
+        "Plan": null,
+        "Warning": null
+      },
+      {
+        "SQL": "with cte as (select * from t) select * from cte; -- cannot be inlined",
+        "Plan": [
+          "CTEFullScan 10000.00 root CTE:cte data:CTE_0",
+          "CTE_0 10000.00 root  Non-Recursive CTE",
+          "└─TableReader(Seed Part) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "with cte as (select /*+ MERGE() */ * from t) select * from cte; -- inline, merge hint override session variable",
+        "Plan": [
+          "TableReader 10000.00 root  data:TableFullScan",
+          "└─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "with recursive cte1(c1) as (select 1 union select /*+ MERGE() */ c1 + 1 c1 from cte1 where c1 < 100) select * from cte1; -- Recursive CTE can not be inlined",
+        "Plan": [
+          "CTEFullScan 2.00 root CTE:cte1 data:CTE_0",
+          "CTE_0 2.00 root  Recursive CTE",
+          "├─Projection(Seed Part) 1.00 root  1->Column#2",
+          "│ └─TableDual 1.00 root  rows:1",
+          "└─Projection(Recursive Part) 0.80 root  cast(plus(Column#3, 1), bigint(1) BINARY)->Column#5",
+          "  └─Selection 0.80 root  lt(Column#3, 100)",
+          "    └─CTETable 1.00 root  Scan on CTE_0"
+        ],
+        "Warning": [
+          "[planner:1815]Recursive CTE can not be inlined."
+        ]
+      },
+      {
+        "SQL": "with cte1 as (with cte2 as (select * from t) select * from cte2) select * from cte1; -- non-recursive 'cte2' definition inside another non-recursive 'cte1'",
+        "Plan": [
+          "CTEFullScan 10000.00 root CTE:cte1 data:CTE_0",
+          "CTE_0 10000.00 root  Non-Recursive CTE",
+          "└─CTEFullScan(Seed Part) 10000.00 root CTE:cte2 data:CTE_1",
+          "CTE_1 10000.00 root  Non-Recursive CTE",
+          "└─TableReader(Seed Part) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "with recursive cte2(c1) as (with cte1 as (select * from t) select a c1 from cte1 union select c1+1 c1 from cte2 where c1 < 100) select * from cte2; -- non-recursive 'cte1' inside recursive 'cte2'",
+        "Plan": [
+          "CTEFullScan 8001.00 root CTE:cte2 data:CTE_0",
+          "CTE_0 8001.00 root  Recursive CTE",
+          "├─CTEFullScan(Seed Part) 10000.00 root CTE:cte1 data:CTE_1",
+          "└─Projection(Recursive Part) 8000.00 root  cast(plus(test.t.a, 1), int(11))->test.t.a",
+          "  └─Selection 8000.00 root  lt(test.t.a, 100)",
+          "    └─CTETable 10000.00 root  Scan on CTE_0",
+          "CTE_1 10000.00 root  Non-Recursive CTE",
+          "└─TableReader(Seed Part) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "with cte1 as (with recursive cte2(c1) as (select 1 union select c1 + 1 c1 from cte2 where c1 < 100) select * from cte2) select * from cte1; -- recursive 'cte2' inside non-recursive 'cte1'",
+        "Plan": [
+          "CTEFullScan 2.00 root CTE:cte1 data:CTE_0",
+          "CTE_0 2.00 root  Non-Recursive CTE",
+          "└─CTEFullScan(Seed Part) 2.00 root CTE:cte2 data:CTE_1",
+          "CTE_1 2.00 root  Recursive CTE",
+          "├─Projection(Seed Part) 1.00 root  1->Column#2",
+          "│ └─TableDual 1.00 root  rows:1",
+          "└─Projection(Recursive Part) 0.80 root  cast(plus(Column#3, 1), bigint(1) BINARY)->Column#5",
+          "  └─Selection 0.80 root  lt(Column#3, 100)",
+          "    └─CTETable 1.00 root  Scan on CTE_1"
         ],
         "Warning": null
       }
@@ -3056,6 +3237,25 @@
     "Name": "TestMPPSinglePartitionType",
     "Cases": [
       {
+        "SQL": "select * from employee where deptid>1",
+        "Plan": [
+          "TableReader 3333.33 root  data:ExchangeSender",
+          "└─ExchangeSender 3333.33 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Selection 3333.33 mpp[tiflash]  gt(test.employee.deptid, 1)",
+          "    └─TableFullScan 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select deptid+5, empid*10  from employee where deptid>1",
+        "Plan": [
+          "TableReader 3333.33 root  data:ExchangeSender",
+          "└─ExchangeSender 3333.33 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 3333.33 mpp[tiflash]  plus(test.employee.deptid, 5)->Column#5, mul(test.employee.empid, 10)->Column#6",
+          "    └─Selection 3333.33 mpp[tiflash]  gt(test.employee.deptid, 1)",
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
+        ]
+      },
+      {
         "SQL": "select count(*) from employee group by deptid+1",
         "Plan": [
           "TableReader 8000.00 root  data:ExchangeSender",
@@ -3531,6 +3731,1426 @@
           "    └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warning": "[planner:1815]SEMI_JOIN_REWRITE() is inapplicable for SemiJoin with left conditions or other conditions."
+      }
+    ]
+  },
+  {
+    "Name": "TestHJBuildAndProbeHint",
+    "Cases": [
+      {
+        "SQL": "select /*+ hash_join_build(t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ hash_join_probe(t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ hash_join_build(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ hash_join_probe(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ hash_join_build(t2), hash_join_probe(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ hash_join_probe(t2), hash_join_build(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ hash_join_build(t2) */ t1.a, t2.a from t1 left join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  left outer join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "2 <nil>"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ hash_join_probe(t2) */ t1.a, t2.a from t1 left join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  left outer join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "2 <nil>"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ hash_join_build(t1) */ t1.a, t2.a from t1 left join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  left outer join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "2 <nil>"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ hash_join_probe(t1) */ t1.a, t2.a from t1 left join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  left outer join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "2 <nil>"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ hash_join_build(t2) */ t1.a, t2.a from t1 right join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  right outer join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "<nil> 2"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ hash_join_probe(t2) */ t1.a, t2.a from t1 right join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  right outer join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "<nil> 2"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ hash_join_build(t1) */ t1.a, t2.a from t1 right join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  right outer join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "<nil> 2"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ hash_join_probe(t1) */ t1.a, t2.a from t1 right join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  right outer join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "<nil> 2"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ hash_join_build(t2) */ t1.a, t2.a from t1 straight_join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ hash_join_probe(t2) */ t1.a, t2.a from t1 straight_join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ hash_join_build(t1) */ t1.a, t2.a from t1 straight_join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ hash_join_probe(t1) */ t1.a, t2.a from t1 straight_join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ hash_join_build(t2) */ t1.a, t2.a from t1 cross join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ hash_join_probe(t2) */ t1.a, t2.a from t1 cross join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ hash_join_build(t1) */ t1.a, t2.a from t1 cross join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ hash_join_probe(t1) */ t1.a, t2.a from t1 cross join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ hash_join_build(t1) */ * from t1 where t1.a in (select t2.a from t2 where t1.b = t2.b)",
+        "Plan": [
+          "HashJoin 8000.00 root  semi join, equal:[eq(test.t1.b, test.t2.b) eq(test.t1.a, test.t2.a)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": [
+          "Warning 1815 We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for semi join, please check the hint"
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join_probe(t1) */ * from t1 where t1.a in (select t2.a from t2 where t1.b = t2.b)",
+        "Plan": [
+          "HashJoin 8000.00 root  semi join, equal:[eq(test.t1.b, test.t2.b) eq(test.t1.a, test.t2.a)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": [
+          "Warning 1815 We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for semi join, please check the hint"
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join_build(t2@sel_2) */ * from t1 where t1.a in (select t2.a from t2 where t1.b = t2.b)",
+        "Plan": [
+          "HashJoin 8000.00 root  semi join, equal:[eq(test.t1.b, test.t2.b) eq(test.t1.a, test.t2.a)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": [
+          "Warning 1815 We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for semi join, please check the hint"
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join_probe(t2@sel_2) */ * from t1 where t1.a in (select t2.a from t2 where t1.b = t2.b)",
+        "Plan": [
+          "HashJoin 8000.00 root  semi join, equal:[eq(test.t1.b, test.t2.b) eq(test.t1.a, test.t2.a)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": [
+          "Warning 1815 We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for semi join, please check the hint"
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join_build(t1) */ * from t1 where t1.a not in (select t2.a from t2 where t1.b = t2.b)",
+        "Plan": [
+          "HashJoin 8000.00 root  anti semi join, equal:[eq(test.t1.b, test.t2.b) eq(test.t1.a, test.t2.a)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "2 2"
+        ],
+        "Warning": [
+          "Warning 1815 We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for anti semi join, please check the hint"
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join_probe(t1) */ * from t1 where t1.a not in (select t2.a from t2 where t1.b = t2.b)",
+        "Plan": [
+          "HashJoin 8000.00 root  anti semi join, equal:[eq(test.t1.b, test.t2.b) eq(test.t1.a, test.t2.a)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "2 2"
+        ],
+        "Warning": [
+          "Warning 1815 We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for anti semi join, please check the hint"
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join_build(t2@sel_2) */ * from t1 where t1.a not in (select t2.a from t2 where t1.b = t2.b)",
+        "Plan": [
+          "HashJoin 8000.00 root  anti semi join, equal:[eq(test.t1.b, test.t2.b) eq(test.t1.a, test.t2.a)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "2 2"
+        ],
+        "Warning": [
+          "Warning 1815 We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for anti semi join, please check the hint"
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join_probe(t2@sel_2) */ * from t1 where t1.a not in (select t2.a from t2 where t1.b = t2.b)",
+        "Plan": [
+          "HashJoin 8000.00 root  anti semi join, equal:[eq(test.t1.b, test.t2.b) eq(test.t1.a, test.t2.a)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "2 2"
+        ],
+        "Warning": [
+          "Warning 1815 We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for anti semi join, please check the hint"
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join_build(t1) */ sum(t1.a in (select a from t2)) from t1",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:sum(Column#9)->Column#8",
+          "└─Projection 10000.00 root  cast(Column#7, decimal(3,0) BINARY)->Column#9",
+          "  └─MergeJoin 10000.00 root  left outer semi join, left key:test.t1.a, right key:test.t2.a",
+          "    ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "    │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:true, stats:pseudo",
+          "    └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "2"
+        ],
+        "Warning": [
+          "Warning 1815 We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for left outer semi join, please check the hint",
+          "Warning 1815 We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for left outer semi join, please check the hint"
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join_probe(t1) */ sum(t1.a in (select a from t2)) from t1",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:sum(Column#9)->Column#8",
+          "└─Projection 10000.00 root  cast(Column#7, decimal(3,0) BINARY)->Column#9",
+          "  └─MergeJoin 10000.00 root  left outer semi join, left key:test.t1.a, right key:test.t2.a",
+          "    ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "    │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:true, stats:pseudo",
+          "    └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "2"
+        ],
+        "Warning": [
+          "Warning 1815 We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for left outer semi join, please check the hint",
+          "Warning 1815 We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for left outer semi join, please check the hint"
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join_build(t2@sel_2) */ sum(t1.a in (select a from t2)) from t1",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:sum(Column#9)->Column#8",
+          "└─Projection 10000.00 root  cast(Column#7, decimal(3,0) BINARY)->Column#9",
+          "  └─MergeJoin 10000.00 root  left outer semi join, left key:test.t1.a, right key:test.t2.a",
+          "    ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "    │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:true, stats:pseudo",
+          "    └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "2"
+        ],
+        "Warning": [
+          "Warning 1815 We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for left outer semi join, please check the hint",
+          "Warning 1815 We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for left outer semi join, please check the hint"
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join_probe(t2@sel_2) */ sum(t1.a in (select a from t2)) from t1",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:sum(Column#9)->Column#8",
+          "└─Projection 10000.00 root  cast(Column#7, decimal(3,0) BINARY)->Column#9",
+          "  └─MergeJoin 10000.00 root  left outer semi join, left key:test.t1.a, right key:test.t2.a",
+          "    ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "    │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:true, stats:pseudo",
+          "    └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "2"
+        ],
+        "Warning": [
+          "Warning 1815 We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for left outer semi join, please check the hint",
+          "Warning 1815 We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for left outer semi join, please check the hint"
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join_build(t1) */ sum(t1.a not in (select a from t2)) from t1",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:sum(Column#9)->Column#8",
+          "└─Projection 10000.00 root  cast(Column#7, decimal(3,0) BINARY)->Column#9",
+          "  └─MergeJoin 10000.00 root  anti left outer semi join, left key:test.t1.a, right key:test.t2.a",
+          "    ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "    │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:true, stats:pseudo",
+          "    └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "0"
+        ],
+        "Warning": [
+          "Warning 1815 We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for anti left outer semi join, please check the hint",
+          "Warning 1815 We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for anti left outer semi join, please check the hint"
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join_probe(t1) */ sum(t1.a not in (select a from t2)) from t1",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:sum(Column#9)->Column#8",
+          "└─Projection 10000.00 root  cast(Column#7, decimal(3,0) BINARY)->Column#9",
+          "  └─MergeJoin 10000.00 root  anti left outer semi join, left key:test.t1.a, right key:test.t2.a",
+          "    ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "    │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:true, stats:pseudo",
+          "    └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "0"
+        ],
+        "Warning": [
+          "Warning 1815 We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for anti left outer semi join, please check the hint",
+          "Warning 1815 We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for anti left outer semi join, please check the hint"
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join_build(t2@sel_2) */ sum(t1.a not in (select a from t2)) from t1",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:sum(Column#9)->Column#8",
+          "└─Projection 10000.00 root  cast(Column#7, decimal(3,0) BINARY)->Column#9",
+          "  └─MergeJoin 10000.00 root  anti left outer semi join, left key:test.t1.a, right key:test.t2.a",
+          "    ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "    │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:true, stats:pseudo",
+          "    └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "0"
+        ],
+        "Warning": [
+          "Warning 1815 We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for anti left outer semi join, please check the hint",
+          "Warning 1815 We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for anti left outer semi join, please check the hint"
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join_probe(t2@sel_2) */ sum(t1.a not in (select a from t2)) from t1",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:sum(Column#9)->Column#8",
+          "└─Projection 10000.00 root  cast(Column#7, decimal(3,0) BINARY)->Column#9",
+          "  └─MergeJoin 10000.00 root  anti left outer semi join, left key:test.t1.a, right key:test.t2.a",
+          "    ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "    │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:true, stats:pseudo",
+          "    └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "0"
+        ],
+        "Warning": [
+          "Warning 1815 We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for anti left outer semi join, please check the hint",
+          "Warning 1815 We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for anti left outer semi join, please check the hint"
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join_probe(t2, t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t2) in optimizer hint /*+ HASH_JOIN_PROBE(t2, t2) */. Maybe you can use the table alias name"
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join_build(t1, t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t1) in optimizer hint /*+ HASH_JOIN_BUILD(t1, t1) */. Maybe you can use the table alias name"
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join_probe(tt) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (tt) in optimizer hint /*+ HASH_JOIN_PROBE(tt) */. Maybe you can use the table alias name"
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join_build(tt) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (tt) in optimizer hint /*+ HASH_JOIN_BUILD(tt) */. Maybe you can use the table alias name"
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join_probe(tt) */ tt.a, t2.a from t1 as tt join t2 on tt.a=t2.a and tt.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:tt keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ hash_join_build(tt) */ tt.a, t2.a from t1 as tt join t2 on tt.a=t2.a and tt.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:tt keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ hash_join_probe(t2, t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": [
+          "Warning 1815 Join hints are conflict, you can only specify one type of join"
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join_build(t1, t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": [
+          "Warning 1815 Join hints are conflict, you can only specify one type of join"
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join_build(t1) hash_join_probe(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": [
+          "Warning 1815 Join hints are conflict, you can only specify one type of join"
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join_build(t2) hash_join_probe(t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": [
+          "Warning 1815 Join hints are conflict, you can only specify one type of join"
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join_build(t1) leading(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b join t3 on t2.a = t3.a",
+        "Plan": [
+          "HashJoin 15625.00 root  inner join, equal:[eq(test.t3.a, test.t2.a)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "  │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": [
+          "Warning 1815 leading hint is inapplicable, check the join type or the join algorithm hint",
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join_build(t1) leading(t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b join t3 on t2.a = t3.a",
+        "Plan": [
+          "HashJoin 15625.00 root  inner join, equal:[eq(test.t3.a, test.t2.a)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "  │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": [
+          "Warning 1815 leading hint is inapplicable, check the join type or the join algorithm hint",
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join_probe(t1) leading(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b join t3 on t2.a = t3.a",
+        "Plan": [
+          "HashJoin 15625.00 root  inner join, equal:[eq(test.t3.a, test.t2.a)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "  │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": [
+          "Warning 1815 leading hint is inapplicable, check the join type or the join algorithm hint",
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join_probe(t1) leading(t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b join t3 on t2.a = t3.a",
+        "Plan": [
+          "HashJoin 15625.00 root  inner join, equal:[eq(test.t3.a, test.t2.a)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "  │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": [
+          "Warning 1815 leading hint is inapplicable, check the join type or the join algorithm hint",
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join_build(t1) straight_join() */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b join t3 on t2.a = t3.a",
+        "Plan": [
+          "HashJoin 15625.00 root  inner join, equal:[eq(test.t2.a, test.t3.a)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "  │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ hash_join_build(t1) straight_join() */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b join t3 on t2.a = t3.a",
+        "Plan": [
+          "HashJoin 15625.00 root  inner join, equal:[eq(test.t2.a, test.t3.a)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "  │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ hash_join_probe(t1) straight_join() */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b join t3 on t2.a = t3.a",
+        "Plan": [
+          "HashJoin 15625.00 root  inner join, equal:[eq(test.t2.a, test.t3.a)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "  │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ hash_join_probe(t1) straight_join() */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b join t3 on t2.a = t3.a",
+        "Plan": [
+          "HashJoin 15625.00 root  inner join, equal:[eq(test.t2.a, test.t3.a)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "  │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ hash_join_build(t2) hash_join(t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": [
+          "Warning 1815 Join hints are conflict, you can only specify one type of join"
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join_probe(t2) hash_join(t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": [
+          "Warning 1815 Join hints are conflict, you can only specify one type of join"
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join_build(t2) hash_join(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": [
+          "Warning 1815 Join hints are conflict, you can only specify one type of join"
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join_probe(t2) hash_join(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": [
+          "Warning 1815 Join hints are conflict, you can only specify one type of join"
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join_build(t2) hash_join(t2, t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": [
+          "Warning 1815 Join hints are conflict, you can only specify one type of join"
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join_probe(t2) hash_join(t2, t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": [
+          "Warning 1815 Join hints are conflict, you can only specify one type of join"
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join_build(t2) index_join(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": [
+          "Warning 1064 Optimizer hint syntax error at line 1 column 41 near \"index_join(t1) */\" "
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join_probe(t2) index_join(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": [
+          "Warning 1064 Optimizer hint syntax error at line 1 column 41 near \"index_join(t1) */\" "
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join_build(t1) index_join(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": [
+          "Warning 1064 Optimizer hint syntax error at line 1 column 41 near \"index_join(t1) */\" "
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join_probe(t1) index_join(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": [
+          "Warning 1064 Optimizer hint syntax error at line 1 column 41 near \"index_join(t1) */\" "
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join_build(t2) merge_join(t1, t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": [
+          "Warning 1815 Join hints are conflict, you can only specify one type of join"
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join_probe(t2) merge_join(t1, t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": [
+          "Warning 1815 Join hints are conflict, you can only specify one type of join"
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join_build(t1) merge_join(t1, t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": [
+          "Warning 1815 Join hints are conflict, you can only specify one type of join"
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join_probe(t1) merge_join(t1, t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": [
+          "Warning 1815 Join hints are conflict, you can only specify one type of join"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestHJBuildAndProbeHint4StaticPartitionTable",
+    "Cases": [
+      {
+        "SQL": "select /*+ hash_join_build(t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 49900.05 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─PartitionUnion(Build) 49900.05 root  ",
+          "│ ├─TableReader 9980.01 root  data:Selection",
+          "│ │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p0 keep order:false, stats:pseudo",
+          "│ ├─TableReader 9980.01 root  data:Selection",
+          "│ │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p1 keep order:false, stats:pseudo",
+          "│ ├─TableReader 9980.01 root  data:Selection",
+          "│ │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p2 keep order:false, stats:pseudo",
+          "│ ├─TableReader 9980.01 root  data:Selection",
+          "│ │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p3 keep order:false, stats:pseudo",
+          "│ └─TableReader 9980.01 root  data:Selection",
+          "│   └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "│     └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p4 keep order:false, stats:pseudo",
+          "└─PartitionUnion(Probe) 39920.04 root  ",
+          "  ├─TableReader 9980.01 root  data:Selection",
+          "  │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t1, partition:p0 keep order:false, stats:pseudo",
+          "  ├─TableReader 9980.01 root  data:Selection",
+          "  │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t1, partition:p1 keep order:false, stats:pseudo",
+          "  ├─TableReader 9980.01 root  data:Selection",
+          "  │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t1, partition:p2 keep order:false, stats:pseudo",
+          "  └─TableReader 9980.01 root  data:Selection",
+          "    └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t1, partition:p3 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ hash_join_probe(t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 49900.05 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─PartitionUnion(Build) 39920.04 root  ",
+          "│ ├─TableReader 9980.01 root  data:Selection",
+          "│ │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t1, partition:p0 keep order:false, stats:pseudo",
+          "│ ├─TableReader 9980.01 root  data:Selection",
+          "│ │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t1, partition:p1 keep order:false, stats:pseudo",
+          "│ ├─TableReader 9980.01 root  data:Selection",
+          "│ │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t1, partition:p2 keep order:false, stats:pseudo",
+          "│ └─TableReader 9980.01 root  data:Selection",
+          "│   └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "│     └─TableFullScan 10000.00 cop[tikv] table:t1, partition:p3 keep order:false, stats:pseudo",
+          "└─PartitionUnion(Probe) 49900.05 root  ",
+          "  ├─TableReader 9980.01 root  data:Selection",
+          "  │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p0 keep order:false, stats:pseudo",
+          "  ├─TableReader 9980.01 root  data:Selection",
+          "  │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p1 keep order:false, stats:pseudo",
+          "  ├─TableReader 9980.01 root  data:Selection",
+          "  │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p2 keep order:false, stats:pseudo",
+          "  ├─TableReader 9980.01 root  data:Selection",
+          "  │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p3 keep order:false, stats:pseudo",
+          "  └─TableReader 9980.01 root  data:Selection",
+          "    └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p4 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ hash_join_build(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 49900.05 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─PartitionUnion(Build) 39920.04 root  ",
+          "│ ├─TableReader 9980.01 root  data:Selection",
+          "│ │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t1, partition:p0 keep order:false, stats:pseudo",
+          "│ ├─TableReader 9980.01 root  data:Selection",
+          "│ │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t1, partition:p1 keep order:false, stats:pseudo",
+          "│ ├─TableReader 9980.01 root  data:Selection",
+          "│ │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t1, partition:p2 keep order:false, stats:pseudo",
+          "│ └─TableReader 9980.01 root  data:Selection",
+          "│   └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "│     └─TableFullScan 10000.00 cop[tikv] table:t1, partition:p3 keep order:false, stats:pseudo",
+          "└─PartitionUnion(Probe) 49900.05 root  ",
+          "  ├─TableReader 9980.01 root  data:Selection",
+          "  │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p0 keep order:false, stats:pseudo",
+          "  ├─TableReader 9980.01 root  data:Selection",
+          "  │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p1 keep order:false, stats:pseudo",
+          "  ├─TableReader 9980.01 root  data:Selection",
+          "  │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p2 keep order:false, stats:pseudo",
+          "  ├─TableReader 9980.01 root  data:Selection",
+          "  │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p3 keep order:false, stats:pseudo",
+          "  └─TableReader 9980.01 root  data:Selection",
+          "    └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p4 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ hash_join_probe(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 49900.05 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─PartitionUnion(Build) 49900.05 root  ",
+          "│ ├─TableReader 9980.01 root  data:Selection",
+          "│ │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p0 keep order:false, stats:pseudo",
+          "│ ├─TableReader 9980.01 root  data:Selection",
+          "│ │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p1 keep order:false, stats:pseudo",
+          "│ ├─TableReader 9980.01 root  data:Selection",
+          "│ │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p2 keep order:false, stats:pseudo",
+          "│ ├─TableReader 9980.01 root  data:Selection",
+          "│ │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p3 keep order:false, stats:pseudo",
+          "│ └─TableReader 9980.01 root  data:Selection",
+          "│   └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "│     └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p4 keep order:false, stats:pseudo",
+          "└─PartitionUnion(Probe) 39920.04 root  ",
+          "  ├─TableReader 9980.01 root  data:Selection",
+          "  │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t1, partition:p0 keep order:false, stats:pseudo",
+          "  ├─TableReader 9980.01 root  data:Selection",
+          "  │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t1, partition:p1 keep order:false, stats:pseudo",
+          "  ├─TableReader 9980.01 root  data:Selection",
+          "  │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t1, partition:p2 keep order:false, stats:pseudo",
+          "  └─TableReader 9980.01 root  data:Selection",
+          "    └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t1, partition:p3 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": null
+      }
+    ]
+  },
+  {
+    "Name": "TestHJBuildAndProbeHint4DynamicPartitionTable",
+    "Cases": [
+      {
+        "SQL": "select /*+ hash_join_build(t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12475.01 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 9980.01 root partition:all data:Selection",
+          "│ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 9980.01 root partition:all data:Selection",
+          "  └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ hash_join_probe(t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12475.01 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 9980.01 root partition:all data:Selection",
+          "│ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 9980.01 root partition:all data:Selection",
+          "  └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ hash_join_build(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12475.01 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 9980.01 root partition:all data:Selection",
+          "│ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 9980.01 root partition:all data:Selection",
+          "  └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ hash_join_probe(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12475.01 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 9980.01 root partition:all data:Selection",
+          "│ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 9980.01 root partition:all data:Selection",
+          "  └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ],
+        "Warning": null
+      }
+    ]
+  },
+  {
+    "Name": "TestHJBuildAndProbeHint4TiFlash",
+    "Cases": [
+      {
+        "SQL": "select /*+ hash_join_build(t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tiflash] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tiflash] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1105 MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.",
+          "Warning 1105 MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now."
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join_probe(t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tiflash] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tiflash] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1105 MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.",
+          "Warning 1105 MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now."
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join_build(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tiflash] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tiflash] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1105 MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.",
+          "Warning 1105 MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now."
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join_probe(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tiflash] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tiflash] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1105 MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.",
+          "Warning 1105 MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now."
+        ]
       }
     ]
   }

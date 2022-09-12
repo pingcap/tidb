@@ -162,7 +162,8 @@ func TestParquetVariousTypes(t *testing.T) {
 	writer, err = writer2.NewParquetWriter(pf, td, 2)
 	require.NoError(t, err)
 	for i, testCase := range cases {
-		val := testCase[0].(int32)
+		val, ok := testCase[0].(int32)
+		require.True(t, ok)
 		td.Decimal1 = val
 		if i%2 == 0 {
 			td.DecimalRef = &val
@@ -182,7 +183,9 @@ func TestParquetVariousTypes(t *testing.T) {
 
 	for i, testCase := range cases {
 		assert.NoError(t, reader.ReadRow())
-		vals := []types.Datum{types.NewCollationStringDatum(testCase[1].(string), "")}
+		strDatum, ok := testCase[1].(string)
+		require.True(t, ok)
+		vals := []types.Datum{types.NewCollationStringDatum(strDatum, "")}
 		if i%2 == 0 {
 			vals = append(vals, vals[0])
 		} else {
