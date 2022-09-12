@@ -344,10 +344,8 @@ func TestGlobalStats(t *testing.T) {
 	// When we set the mode to `static`, using analyze will not report an error and will not generate global-stats.
 	// In addition, when using explain to view the plan of the related query, it was found that `Union` was used.
 	tk.MustExec("analyze table t;")
-	result := tk.MustQuery("show stats_meta where table_name = 't'").Sort()
-	require.Len(t, result.Rows(), 2)
-	require.Equal(t, "2", result.Rows()[0][5])
-	require.Equal(t, "3", result.Rows()[1][5])
+	tk.MustQuery("show stats_meta where table_name = 't'").Sort().CheckAt([]int{2, 4, 5},
+		[][]interface{}{{"global", "0", "5"}, {"p0", "0", "2"}, {"p1", "0", "3"}})
 	tk.MustQuery("explain format = 'brief' select a from t where a > 3;").Check(testkit.Rows(
 		"PartitionUnion 2.00 root  ",
 		"├─IndexReader 1.00 root  index:IndexRangeScan",
@@ -355,16 +353,15 @@ func TestGlobalStats(t *testing.T) {
 		"└─IndexReader 1.00 root  index:IndexRangeScan",
 		"  └─IndexRangeScan 1.00 cop[tikv] table:t, partition:p1, index:a(a) range:(3,+inf], keep order:false"))
 
-	// When we turned on the switch, we found that pseudo-stats will be used in the plan instead of `Union`.
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic';")
 	tk.MustQuery("explain format = 'brief' select a from t where a > 3;").Check(testkit.Rows(
-		"IndexReader 3333.33 root partition:all index:IndexRangeScan",
-		"└─IndexRangeScan 3333.33 cop[tikv] table:t, index:a(a) range:(3,+inf], keep order:false, stats:pseudo"))
+		"IndexReader 2.00 root partition:all index:IndexRangeScan",
+		"└─IndexRangeScan 2.00 cop[tikv] table:t, index:a(a) range:(3,+inf], keep order:false"))
 
 	// Execute analyze again without error and can generate global-stats.
 	// And when executing related queries, neither Union nor pseudo-stats are used.
 	tk.MustExec("analyze table t;")
-	result = tk.MustQuery("show stats_meta where table_name = 't'").Sort()
+	result := tk.MustQuery("show stats_meta where table_name = 't'").Sort()
 	require.Len(t, result.Rows(), 3)
 	require.Equal(t, "5", result.Rows()[0][5])
 	require.Equal(t, "2", result.Rows()[1][5])
