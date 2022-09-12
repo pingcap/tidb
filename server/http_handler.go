@@ -973,7 +973,7 @@ func (h flashReplicaHandler) handleStatusReport(w http.ResponseWriter, req *http
 	if available {
 		err = infosync.DeleteTiFlashTableSyncProgress(status.ID)
 	} else {
-		err = infosync.UpdateTiFlashTableSyncProgress(context.Background(), status.ID, float64(status.FlashRegionCount)/float64(status.RegionCount))
+		err = infosync.UpdateTiFlashTableSyncProgress(context.Background(), status.ID, "invalid")
 	}
 	if err != nil {
 		writeError(w, err)

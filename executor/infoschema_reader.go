@@ -2221,21 +2221,15 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(ctx sessionctx.Context, s
 			if tbl.TiFlashReplica == nil {
 				continue
 			}
-			progress := 1.0
-			if !tbl.TiFlashReplica.Available {
-				if pi := tbl.GetPartitionInfo(); pi != nil && len(pi.Definitions) > 0 {
-					progress = 0
-					for _, p := range pi.Definitions {
-						if tbl.TiFlashReplica.IsPartitionAvailable(p.ID) {
-							progress += 1
-						} else {
-							progress += progressMap[p.ID]
-						}
-					}
-					progress = progress / float64(len(pi.Definitions))
-				} else {
-					progress = progressMap[tbl.ID]
+			var progress float64
+			if pi := tbl.GetPartitionInfo(); pi != nil && len(pi.Definitions) > 0 {
+				progress = 0
+				for _, p := range pi.Definitions {
+					progress += progressMap[p.ID]
 				}
+				progress = progress / float64(len(pi.Definitions))
+			} else {
+				progress = progressMap[tbl.ID]
 			}
 			record := types.MakeDatums(
 				schema.Name.O,                   // TABLE_SCHEMA

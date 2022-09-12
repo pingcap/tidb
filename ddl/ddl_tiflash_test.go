@@ -77,6 +77,7 @@ func createTiFlashContext(t *testing.T) (*tiflashContext, func()) {
 				store2 := c.AllocID()
 				peer2 := c.AllocID()
 				addr2 := fmt.Sprintf("tiflash%d", tiflashIdx)
+				s.tiflash.AddStore(store2, addr2)
 				mockCluster.AddStore(store2, addr2, &metapb.StoreLabel{Key: "engine", Value: "tiflash"})
 				mockCluster.AddPeer(region1, store2, peer2)
 				tiflashIdx++
@@ -978,17 +979,17 @@ func TestTiFlashProgress(t *testing.T) {
 		_, ok := pm[tb.Meta().ID]
 		require.False(t, ok)
 	}
-	_ = infosync.UpdateTiFlashTableSyncProgress(context.TODO(), tb.Meta().ID, 5.0)
+	_ = infosync.UpdateTiFlashTableSyncProgress(context.TODO(), tb.Meta().ID, "5.0")
 	mustExist(tb.Meta().ID)
 	_ = infosync.DeleteTiFlashTableSyncProgress(tb.Meta().ID)
 	mustAbsent(tb.Meta().ID)
 
-	_ = infosync.UpdateTiFlashTableSyncProgress(context.TODO(), tb.Meta().ID, 5.0)
+	_ = infosync.UpdateTiFlashTableSyncProgress(context.TODO(), tb.Meta().ID, "5.0")
 	tk.MustExec("truncate table tiflash_d.t")
 	mustAbsent(tb.Meta().ID)
 
 	tb, _ = s.dom.InfoSchema().TableByName(model.NewCIStr("tiflash_d"), model.NewCIStr("t"))
-	_ = infosync.UpdateTiFlashTableSyncProgress(context.TODO(), tb.Meta().ID, 5.0)
+	_ = infosync.UpdateTiFlashTableSyncProgress(context.TODO(), tb.Meta().ID, "5.0")
 	tk.MustExec("drop table tiflash_d.t")
 	mustAbsent(tb.Meta().ID)
 
