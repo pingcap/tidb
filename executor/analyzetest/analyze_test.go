@@ -1785,6 +1785,7 @@ func TestAnalyzeColumnsWithStaticPartitionTable(t *testing.T) {
 			tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 			require.NoError(t, err)
 			defs := tbl.Meta().Partition.Definitions
+			tblID := tbl.Meta().ID
 			p0ID := defs[0].ID
 			p1ID := defs[1].ID
 
@@ -1811,11 +1812,13 @@ func TestAnalyzeColumnsWithStaticPartitionTable(t *testing.T) {
 			}
 
 			rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_analyzed_at is not null").Sort().Rows()
-			require.Equal(t, 4, len(rows))
-			require.Equal(t, []interface{}{"test", "t", "p0", "a"}, rows[0][:4])
-			require.Equal(t, []interface{}{"test", "t", "p0", "c"}, rows[1][:4])
-			require.Equal(t, []interface{}{"test", "t", "p1", "a"}, rows[2][:4])
-			require.Equal(t, []interface{}{"test", "t", "p1", "c"}, rows[3][:4])
+			require.Equal(t, 6, len(rows))
+			require.Equal(t, []interface{}{"test", "t", "global", "a"}, rows[0][:4])
+			require.Equal(t, []interface{}{"test", "t", "global", "c"}, rows[1][:4])
+			require.Equal(t, []interface{}{"test", "t", "p0", "a"}, rows[2][:4])
+			require.Equal(t, []interface{}{"test", "t", "p0", "c"}, rows[3][:4])
+			require.Equal(t, []interface{}{"test", "t", "p1", "a"}, rows[4][:4])
+			require.Equal(t, []interface{}{"test", "t", "p1", "c"}, rows[5][:4])
 
 			rows = tk.MustQuery("show stats_meta where db_name = 'test' and table_name = 't'").Sort().Rows()
 			require.Equal(t, 2, len(rows))
@@ -1859,14 +1862,18 @@ func TestAnalyzeColumnsWithStaticPartitionTable(t *testing.T) {
 					"test t p1 idx 1 1 6 1 11 12 0"))
 
 			tk.MustQuery("select table_id, is_index, hist_id, distinct_count, null_count, tot_col_size, stats_ver, truncate(correlation,2) from mysql.stats_histograms order by table_id, is_index, hist_id asc").Check(
-				testkit.Rows(fmt.Sprintf("%d 0 1 5 1 8 2 1", p0ID), // p0, a
-					fmt.Sprintf("%d 0 2 0 0 8 0 0", p0ID),  // p0, b, not analyzed
-					fmt.Sprintf("%d 0 3 6 0 9 2 1", p0ID),  // p0, c
-					fmt.Sprintf("%d 1 1 6 0 9 2 0", p0ID),  // p0, idx
-					fmt.Sprintf("%d 0 1 7 0 11 2 1", p1ID), // p1, a
-					fmt.Sprintf("%d 0 2 0 0 11 0 0", p1ID), // p1, b, not analyzed
-					fmt.Sprintf("%d 0 3 8 0 11 2 1", p1ID), // p1, c
-					fmt.Sprintf("%d 1 1 8 0 11 2 0", p1ID), // p1, idx
+				testkit.Rows(
+					fmt.Sprintf("%d 0 1 12 1 19 2 0", tblID), // tbl, a
+					fmt.Sprintf("%d 0 3 14 0 20 2 0", tblID), // tbl, b, not analyzed
+					fmt.Sprintf("%d 1 1 14 0 0 2 0", tblID),  // tbl, c
+					fmt.Sprintf("%d 0 1 5 1 8 2 1", p0ID),    // p0, a
+					fmt.Sprintf("%d 0 2 0 0 8 0 0", p0ID),    // p0, b, not analyzed
+					fmt.Sprintf("%d 0 3 6 0 9 2 1", p0ID),    // p0, c
+					fmt.Sprintf("%d 1 1 6 0 9 2 0", p0ID),    // p0, idx
+					fmt.Sprintf("%d 0 1 7 0 11 2 1", p1ID),   // p1, a
+					fmt.Sprintf("%d 0 2 0 0 11 0 0", p1ID),   // p1, b, not analyzed
+					fmt.Sprintf("%d 0 3 8 0 11 2 1", p1ID),   // p1, c
+					fmt.Sprintf("%d 1 1 8 0 11 2 0", p1ID),   // p1, idx
 				))
 		}(val)
 	}
