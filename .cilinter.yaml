@@ -4,14 +4,10 @@ linters:
   disable-all: true
   enable:
     - rowserrcheck
-    - prealloc
 
 issues:
   exclude-rules:
     - path: _test\.go
       linters:
-        - errcheck
-        - gosec
         - rowserrcheck
-        - makezero
 
