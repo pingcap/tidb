@@ -142,10 +142,9 @@ func (e *AnalyzeExec) saveV2AnalyzeOpts() error {
 		return nil
 	}
 	// only to save table options if dynamic prune mode
-	dynamicPrune := variable.PartitionPruneMode(e.ctx.GetSessionVars().PartitionPruneMode.Load()) == variable.Dynamic
 	toSaveMap := make(map[int64]core.V2AnalyzeOptions)
 	for id, opts := range e.OptionsMap {
-		if !opts.IsPartition || !dynamicPrune {
+		if !opts.IsPartition {
 			toSaveMap[id] = opts
 		}
 	}
