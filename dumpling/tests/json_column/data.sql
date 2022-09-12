@@ -25,7 +25,7 @@ insert into t(j)values ('{
       "atomic",
       true
     ],
-    "weather": 1056506954.57938
+    "weather": 1056506954
   }
 }');
 
@@ -39,13 +39,13 @@ insert into t(j)values ('[
       "label": true,
       "wore": -406186071,
       "smile": true,
-      "exchange": -1014990079.4359617,
-      "hung": 2042967716.35775
+      "exchange": -1014990079,
+      "hung": 2042967716
     },
     "word": -54511405,
     "tall": -724260188,
     "light": "mud",
-    "kept": -1796997460.1243253
+    "kept": -1796997460
   }
 ]');
 
@@ -62,14 +62,14 @@ insert into t (j) values ('{
     },
     "package": "little",
     "cap": false,
-    "wire": -1407286819.3892212,
+    "wire": -1407286819,
     "sail": 238820588,
     "sound": "refer"
   },
   "a": "1",
   "b": false,
   "public": "boy",
-  "settlers": 463147044.95204353
+  "settlers": 463147044
 }');
 
 insert into t (j) values ('{
@@ -89,10 +89,10 @@ insert into t (j) values ('{
     false
   ],
   "depend": -605591161,
-  "organization": -146926736.93140602,
+  "organization": -146926736,
   "a": "3",
   "country": false,
-  "close": -10999699.591890812
+  "close": -10999699
 }');
 
 insert into t(j) values ('{
@@ -106,12 +106,12 @@ insert into t(j) values ('{
       "war": 427469005,
       "women": -1531675093,
       "win": true,
-      "traffic": -1572011015.863554,
+      "traffic": -1572011015,
       "who": true,
       "establish": false
     },
-    -649939334.6679158,
-    2136689538.1209803
+    -649939334,
+    2136689538
   ],
   "push": "pot",
   "a": 0,
@@ -120,11 +120,11 @@ insert into t(j) values ('{
 
 insert into t (j)
 values ('[
-  1718710205.3502188,
+  1718710205,
   {
-    "wing": -130388407.01911354,
+    "wing": -130388407,
     "people": true,
-    "mile": 334993717.4304991
+    "mile": 334993717
   },
   false
 ]');
@@ -149,8 +149,8 @@ insert into t (j) values ('{
   "badly": "due",
   "arrangement": [
     false,
-    850510874.2187676,
-    425258001.5952878
+    850510874,
+    425258001
   ],
   "a": 1
 }');

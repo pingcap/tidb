@@ -18,7 +18,7 @@ run_sql "drop database if exists \`$DB_NAME\`;"
 
 # build data on mysql
 run_sql "create database \`$DB_NAME\` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;"
-run_sql "create table \`$DB_NAME\`.\`$TABLE_NAME\`(id int primary key auto_increment,j json,j1 json as (json_extract(j, '$.a')),j2 json as (json_extract(j1, '$.b')),a int as (j ->> '$.a'),b char(255) as (j ->> '$.b'),c char(255) as (j2 ->> '\$[0].a'));"
+run_sql "create table \`$DB_NAME\`.\`$TABLE_NAME\`(id int primary key auto_increment,j json,j1 json as (json_extract(j, '$.a')),j2 json as (json_extract(j1, '$.b')),a int as (j ->> '$.a'),b char(255) as (j2 ->> '$.b'),c char(255) as (j2 ->> '\$[0].a'));"
 
 # insert 100 records
 run_sql_file "$cur/data.sql"
