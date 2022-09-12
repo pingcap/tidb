@@ -800,13 +800,23 @@ func testAnalyzeIncremental(tk *testkit.TestKit, t *testing.T, dom *domain.Domai
 	tk.MustExec("analyze incremental table t index")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 8244 Build table: `t` column: `b` global-level stats failed due to missing partition-level column stats, please run analyze table to refresh columns of all partitions"))
 	require.NoError(t, h.LoadNeededHistograms())
-	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t p0 a 0 0 1 1 1 1 0", "test t p0 idx 1 0 1 1 1 1 0"))
+	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t global idx 1 0 1 1 1 1 0", "test t p0 a 0 0 1 1 1 1 0", "test t p0 idx 1 0 1 1 1 1 0"))
 	tk.MustExec(`analyze table t`)
 	tk.MustExec("insert into t values (2,2)")
 	tk.MustExec("analyze incremental table t index")
 	tk.MustQuery("show warnings").Check(testkit.Rows()) // no warnings
 	require.NoError(t, h.LoadNeededHistograms())
-	tk.MustQuery("show stats_buckets").Sort().Check(testkit.Rows("test t p0 a 0 0 1 1 1 1 0", "test t p0 a 0 1 2 1 2 2 0", "test t p0 b 0 0 1 1 1 1 0", "test t p0 idx 1 0 1 1 1 1 0", "test t p0 idx 1 1 2 1 2 2 0"))
+	tk.MustQuery("show stats_buckets").Sort().Check(testkit.Rows(
+		"test t global a 0 0 1 1 1 1 0",
+		"test t global a 0 1 2 1 1 2 0",
+		"test t global b 0 0 1 1 1 1 0",
+		"test t global idx 1 0 1 1 1 1 0",
+		"test t global idx 1 1 2 1 1 2 0",
+		"test t p0 a 0 0 1 1 1 1 0",
+		"test t p0 a 0 1 2 1 2 2 0",
+		"test t p0 b 0 0 1 1 1 1 0",
+		"test t p0 idx 1 0 1 1 1 1 0",
+		"test t p0 idx 1 1 2 1 2 2 0"))
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic';")
 	tk.MustExec("insert into t values (11,11)")
 	err = tk.ExecToErr("analyze incremental table t index")
@@ -1823,13 +1833,19 @@ func TestAnalyzeColumnsWithStaticPartitionTable(t *testing.T) {
 			require.Equal(t, []interface{}{"test", "t", "p1", "c"}, rows[5][:4])
 
 			rows = tk.MustQuery("show stats_meta where db_name = 'test' and table_name = 't'").Sort().Rows()
-			require.Equal(t, 2, len(rows))
-			require.Equal(t, []interface{}{"test", "t", "p0", "0", "9"}, append(rows[0][:3], rows[0][4:]...))
-			require.Equal(t, []interface{}{"test", "t", "p1", "0", "11"}, append(rows[1][:3], rows[1][4:]...))
+			require.Equal(t, 3, len(rows))
+			require.Equal(t, []interface{}{"test", "t", "global", "0", "20"}, append(rows[0][:3], rows[0][4:]...))
+			require.Equal(t, []interface{}{"test", "t", "p0", "0", "9"}, append(rows[1][:3], rows[1][4:]...))
+			require.Equal(t, []interface{}{"test", "t", "p1", "0", "11"}, append(rows[2][:3], rows[2][4:]...))
 
 			tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't' and is_index = 0").Sort().Check(
 				// db, tbl, part, col, is_idx, value, count
-				testkit.Rows("test t p0 a 0 4 2",
+				testkit.Rows(
+					"test t global a 0 16 4",
+					"test t global a 0 5 3",
+					"test t global c 0 1 3",
+					"test t global c 0 14 3",
+					"test t p0 a 0 4 2",
 					"test t p0 a 0 5 3",
 					"test t p0 c 0 1 3",
 					"test t p0 c 0 2 2",
@@ -1840,14 +1856,22 @@ func TestAnalyzeColumnsWithStaticPartitionTable(t *testing.T) {
 
 			tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't' and is_index = 1").Sort().Check(
 				// db, tbl, part, col, is_idx, value, count
-				testkit.Rows("test t p0 idx 1 1 3",
+				testkit.Rows(
+					"test t global idx 1 1 3",
+					"test t global idx 1 14 3",
+					"test t p0 idx 1 1 3",
 					"test t p0 idx 1 2 2",
 					"test t p1 idx 1 13 2",
 					"test t p1 idx 1 14 3"))
 
 			tk.MustQuery("show stats_buckets where db_name = 'test' and table_name = 't' and is_index = 0").Sort().Check(
 				// db, tbl, part, col, is_index, bucket_id, count, repeats, lower, upper, ndv
-				testkit.Rows("test t p0 a 0 0 2 1 1 2 0",
+				testkit.Rows(
+					"test t global a 0 0 5 2 1 4 0",
+					"test t global a 0 1 12 2 17 17 0",
+					"test t global c 0 0 6 1 2 6 0",
+					"test t global c 0 1 14 2 13 13 0",
+					"test t p0 a 0 0 2 1 1 2 0",
 					"test t p0 a 0 1 3 1 3 3 0",
 					"test t p0 c 0 0 3 1 3 5 0",
 					"test t p0 c 0 1 4 1 6 6 0",
@@ -1858,7 +1882,10 @@ func TestAnalyzeColumnsWithStaticPartitionTable(t *testing.T) {
 
 			tk.MustQuery("show stats_buckets where db_name = 'test' and table_name = 't' and is_index = 1").Sort().Check(
 				// db, tbl, part, col, is_index, bucket_id, count, repeats, lower, upper, ndv
-				testkit.Rows("test t p0 idx 1 0 3 1 3 5 0",
+				testkit.Rows(
+					"test t global idx 1 0 6 1 2 6 0",
+					"test t global idx 1 1 14 2 13 13 0",
+					"test t p0 idx 1 0 3 1 3 5 0",
 					"test t p0 idx 1 1 4 1 6 6 0",
 					"test t p1 idx 1 0 4 1 7 10 0",
 					"test t p1 idx 1 1 6 1 11 12 0"))
