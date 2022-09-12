@@ -798,13 +798,15 @@ func testAnalyzeIncremental(tk *testkit.TestKit, t *testing.T, dom *domain.Domai
 	tk.MustQuery("show stats_buckets").Check(testkit.Rows())
 	tk.MustExec("insert into t values (1,1)")
 	tk.MustExec("analyze incremental table t index")
-	tk.MustQuery("show warnings").Check(testkit.Rows()) // no warning
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 8244 Build table: `t` column: `b` global-level stats failed due to missing partition-level column stats, please run analyze table to refresh columns of all partitions"))
 	require.NoError(t, h.LoadNeededHistograms())
 	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t p0 a 0 0 1 1 1 1 0", "test t p0 idx 1 0 1 1 1 1 0"))
+	tk.MustExec(`analyze table t`)
 	tk.MustExec("insert into t values (2,2)")
 	tk.MustExec("analyze incremental table t index")
+	tk.MustQuery("show warnings").Check(testkit.Rows()) // no warnings
 	require.NoError(t, h.LoadNeededHistograms())
-	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t p0 a 0 0 1 1 1 1 0", "test t p0 a 0 1 2 1 2 2 0", "test t p0 idx 1 0 1 1 1 1 0", "test t p0 idx 1 1 2 1 2 2 0"))
+	tk.MustQuery("show stats_buckets").Sort().Check(testkit.Rows("test t p0 a 0 0 1 1 1 1 0", "test t p0 a 0 1 2 1 2 2 0", "test t p0 b 0 0 1 1 1 1 0", "test t p0 idx 1 0 1 1 1 1 0", "test t p0 idx 1 1 2 1 2 2 0"))
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic';")
 	tk.MustExec("insert into t values (11,11)")
 	err = tk.ExecToErr("analyze incremental table t index")
