@@ -215,7 +215,7 @@ type TxnUsage struct {
 	MutationCheckerUsed       bool                     `json:"mutationCheckerUsed"`
 	AssertionLevel            string                   `json:"assertionLevel"`
 	RcCheckTS                 bool                     `json:"rcCheckTS"`
-	RCWriteCheckTS            int64                    `json:"rcWriteCheckTS"`
+	RCWriteCheckTS            bool                     `json:"rcWriteCheckTS"`
 	SavepointCounter          int64                    `json:"SavepointCounter"`
 	LazyUniqueCheckSetCounter int64                    `json:"lazyUniqueCheckSetCounter"`
 }
@@ -228,7 +228,6 @@ var initialMultiSchemaChangeCounter m.MultiSchemaChangeUsageCounter
 var initialTablePartitionCounter m.TablePartitionUsageCounter
 var initialSavepointStmtCounter int64
 var initialLazyPessimisticUniqueCheckSetCount int64
-var initialRCWriteCheckTsSetCount int64
 
 // getTxnUsageInfo gets the usage info of transaction related features. It's exported for tests.
 func getTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
@@ -254,14 +253,16 @@ func getTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
 	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(variable.TiDBRCReadCheckTS); err == nil {
 		rcCheckTSUsed = val == variable.On
 	}
+	rcWriteCheckTSUsed := false
+	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(variable.TiDBRCWriteCheckTs); err == nil {
+		rcCheckTSUsed = val == variable.On
+	}
 	currSavepointCount := m.GetSavepointStmtCounter()
 	diffSavepointCount := currSavepointCount - initialSavepointStmtCounter
 	currLazyUniqueCheckSetCount := m.GetLazyPessimisticUniqueCheckSetCounter()
 	diffLazyUniqueCheckSetCount := currLazyUniqueCheckSetCount - initialLazyPessimisticUniqueCheckSetCount
-	currRCWriteCheckTsSetCount := m.GetRCWriteCheckTsSetCounter()
-	diffRCWriteCheckTsSetCount := currRCWriteCheckTsSetCount - initialRCWriteCheckTsSetCount
 	return &TxnUsage{asyncCommitUsed, onePCUsed, diff,
-		mutationCheckerUsed, assertionUsed, rcCheckTSUsed, diffRCWriteCheckTsSetCount,
+		mutationCheckerUsed, assertionUsed, rcCheckTSUsed, rcWriteCheckTSUsed,
 		diffSavepointCount, diffLazyUniqueCheckSetCount,
 	}
 }
@@ -285,10 +286,6 @@ func PostSavepointCount() {
 
 func postReportLazyPessimisticUniqueCheckSetCount() {
 	initialLazyPessimisticUniqueCheckSetCount = m.GetLazyPessimisticUniqueCheckSetCounter()
-}
-
-func postReportRCWriteCheckTsSetCount() {
-	initialRCWriteCheckTsSetCount = m.GetRCWriteCheckTsSetCounter()
 }
 
 // getCTEUsageInfo gets the CTE usages.

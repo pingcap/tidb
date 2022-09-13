@@ -254,8 +254,3 @@ func GetSavepointStmtCounter() int64 {
 func GetLazyPessimisticUniqueCheckSetCounter() int64 {
 	return readCounter(LazyPessimisticUniqueCheckSetCount)
 }
-
-// GetRCWriteCheckTsSetCounter returns the counter of setting tidb_rc_write_check_ts to true.
-func GetRCWriteCheckTsSetCounter() int64 {
-	return readCounter(RcWriteCheckTsSetCount)
-}

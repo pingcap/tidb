@@ -1714,10 +1714,7 @@ var defaultSysVars = []*SysVar{
 		s.RcReadCheckTS = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBRcWriteCheckTs, Type: TypeBool, Value: BoolToOnOff(DefTiDBRcWriteCheckTs), SetSession: func(s *SessionVars, val string) error {
-		if !s.RcWriteCheckTS {
-			metrics.RcWriteCheckTsSetCount.Inc()
-		}
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBRCWriteCheckTs, Type: TypeBool, Value: BoolToOnOff(DefTiDBRcWriteCheckTs), SetSession: func(s *SessionVars, val string) error {
 		s.RcWriteCheckTS = TiDBOptOn(val)
 		return nil
 	}},
