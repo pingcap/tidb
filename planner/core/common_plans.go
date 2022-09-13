@@ -659,13 +659,13 @@ func logPlanCacheInfo(sctx sessionctx.Context) {
 		totKeys += 1
 		heap.Push(top10, numVals)
 		if top10.Len() > 10 {
-			top10.Pop()
+			heap.Pop(top10)
 		}
 	})
 
 	top10List := make([]int, 0, 10)
 	for top10.Len() > 0 {
-		top10List = append(top10List, top10.Pop().(int))
+		top10List = append(top10List, heap.Pop(top10).(int))
 	}
 	sort.Ints(top10List)
 
