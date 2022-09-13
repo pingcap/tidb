@@ -37,12 +37,14 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	storeerr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/tests/realtikvtest"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/stretchr/testify/require"
@@ -3384,10 +3386,12 @@ func TestLazyUniquenessCheckWithStatementRetry(t *testing.T) {
 }
 
 func TestRCPointWriteLockIfExists(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertPessimisticLockErr", "return"))
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
+	se := tk.Session()
 
 	tk.MustExec("use test")
 	tk2.MustExec("use test")
@@ -3400,9 +3404,12 @@ func TestRCPointWriteLockIfExists(t *testing.T) {
 	tk.MustExec("insert into t1 values (1, 1, 1)")
 	tk.MustExec("insert into t1 values (10, 10, 10)")
 	tk.MustQuery("show variables like 'transaction_isolation'").Check(testkit.Rows("transaction_isolation READ-COMMITTED"))
+
 	tableID := external.GetTableByName(t, tk, "test", "t1").Meta().ID
+	idxVal, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx, nil, types.NewIntDatum(1))
+	require.NoError(t, err)
+	secIdxKey1 := tablecodec.EncodeIndexSeekKey(tableID, 1, idxVal)
 	key1 := tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(1))
-	fmt.Println("key1", key1, "tableID", tableID)
 
 	// cluster index, lock wait
 	tk.MustExec("begin pessimistic")
@@ -3410,9 +3417,8 @@ func TestRCPointWriteLockIfExists(t *testing.T) {
 	tk.MustQuery("select * from t1 where id1 = 1 for update").Check(testkit.Rows("1 1 1"))
 	txnCtx := tk.Session().GetSessionVars().TxnCtx
 	val, ok := txnCtx.GetKeyInPessimisticLockCache(key1)
-	fmt.Println("val1", val)
 	require.True(t, ok)
-	_, err := tk2.Exec("update t1 set id3 = 100 where id1 = 1")
+	_, err = tk2.Exec("update t1 set id3 = 100 where id1 = 1")
 	require.Equal(t, storeerr.ErrLockWaitTimeout.Error(), err.Error())
 	tk.MustExec("rollback")
 	tk2.MustExec("rollback")
@@ -3465,4 +3471,75 @@ func TestRCPointWriteLockIfExists(t *testing.T) {
 	tk.MustExec("rollback")
 	tk2.MustExec("rollback")
 
+	// write conflict
+	se.SetValue(sessiontxn.AssertLockErr, nil)
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("update t1 set id3 = 100 where id1 = 10")
+	tk.MustQuery("SELECT * FROM t1 WHERE id1 = 10 for update").Check(testkit.Rows("10 10 100"))
+	tk.MustExec("commit")
+	_, ok = se.Value(sessiontxn.AssertLockErr).(map[string]int)
+	require.Equal(t, false, ok)
+
+	// secondary unique index, lock wait
+	tk.MustExec("update t1 set id3 = 1 where id1 = 1")
+	tk.MustExec("update t1 set id3 = 10 where id1 = 10")
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+	tk.MustQuery("select * from t1 where id2 = 1 for update").Check(testkit.Rows("1 1 1"))
+	txnCtx = tk.Session().GetSessionVars().TxnCtx
+	val, ok = txnCtx.GetKeyInPessimisticLockCache(secIdxKey1)
+	require.Equal(t, true, ok)
+	handle, err := tablecodec.DecodeHandleInUniqueIndexValue(val, false)
+	require.NoError(t, err)
+	require.Equal(t, kv.IntHandle(1), handle)
+	val, ok = txnCtx.GetKeyInPessimisticLockCache(key1)
+	require.Equal(t, true, ok)
+	_, err = tk2.Exec("update t1 set id3 = 100 where id2 = 1")
+	require.Equal(t, storeerr.ErrLockWaitTimeout.Error(), err.Error())
+	tk.MustExec("rollback")
+	tk2.MustExec("rollback")
+
+	// unique index, select ... for update + update
+	tk.MustExec("begin pessimistic")
+	tk.MustQuery("select * from t1 where id2 = 1 for update").Check(testkit.Rows("1 1 1"))
+	tk.MustExec("update t1 set id3 = 1000 where id1 = 1")
+	tk.MustExec("commit")
+	tk2.MustQuery("select * from t1 where id2 = 1").Check(testkit.Rows("1 1 1000"))
+
+	// unique index, covered index
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+	tk.MustQuery("select id2 from t1 where id2 = 1 for update").Check(testkit.Rows("1"))
+	_, err = tk2.Exec("update t1 set id3 = 10000 where id2 = 1")
+	require.Equal(t, storeerr.ErrLockWaitTimeout.Error(), err.Error())
+	tk.MustExec("rollback")
+	tk2.MustExec("rollback")
+
+	// unique index, need projection
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+	tk.MustQuery("select id2*2 from t1 where id2 = 1 for update").Check(testkit.Rows("2"))
+	_, err = tk2.Exec("update t1 set id3 = 10000 where id2 = 1")
+	require.Equal(t, storeerr.ErrLockWaitTimeout.Error(), err.Error())
+	tk.MustExec("rollback")
+	tk2.MustExec("rollback")
+
+	// unique index, cluster index
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+	tk.MustQuery("select * from t1 where id2 = 1 for update")
+	_, err = tk2.Exec("update t1 set id3 = 10000 where id1 = 1")
+	require.Equal(t, storeerr.ErrLockWaitTimeout.Error(), err.Error())
+	tk.MustExec("rollback")
+	tk2.MustExec("rollback")
+
+	// unique index, key doesn't exist
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+	tk.MustQuery("select * from t1 where id2 = 20 for update")
+	tk2.MustQuery("select * from t1 where id2 = 20 for update")
+	tk.MustExec("rollback")
+	tk2.MustExec("rollback")
+
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertPessimisticLockErr"))
 }

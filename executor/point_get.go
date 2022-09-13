@@ -254,38 +254,42 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				if err != nil {
 					return err
 				}
-			}
-
-			e.handleVal, err = e.get(ctx, e.idxKey)
-			if err != nil {
-				if !kv.ErrNotExist.Equal(err) {
-					return err
-				}
-			}
-
-			// also lock key if read consistency read a value
-			// TODO: pessimistic lock support lock-if-exist.
-			if lockNonExistIdxKey || len(e.handleVal) > 0 {
-				if !lockNonExistIdxKey {
-					err = e.lockKeyIfNeeded(ctx, e.idxKey)
-					if err != nil {
+				e.handleVal, err = e.get(ctx, e.idxKey)
+				if err != nil {
+					if !kv.ErrNotExist.Equal(err) {
 						return err
 					}
 				}
-				// Change the unique index LOCK into PUT record.
-				if e.lock && len(e.handleVal) > 0 {
-					if !e.txn.Valid() {
-						return kv.ErrInvalidTxn
-					}
-					memBuffer := e.txn.GetMemBuffer()
-					err = memBuffer.Set(e.idxKey, e.handleVal)
+			} else {
+				if e.lock {
+					e.handleVal, err = e.lockKeyIfExists(ctx, e.idxKey)
 					if err != nil {
 						return err
 					}
+				} else {
+					e.handleVal, err = e.get(ctx, e.idxKey)
+					if err != nil {
+						if !kv.ErrNotExist.Equal(err) {
+							return err
+						}
+					}
 				}
 			}
+
 			if len(e.handleVal) == 0 {
 				return nil
+			}
+
+			// Change the unique index LOCK into PUT record.
+			if e.lock {
+				if !e.txn.Valid() {
+					return kv.ErrInvalidTxn
+				}
+				memBuffer := e.txn.GetMemBuffer()
+				err = memBuffer.Set(e.idxKey, e.handleVal)
+				if err != nil {
+					return err
+				}
 			}
 
 			var iv kv.Handle
