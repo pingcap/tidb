@@ -1098,7 +1098,6 @@ func TestCheckFailReport(t *testing.T) {
 		res, err := tk.Exec(ctx, "admin check table admin_test")
 		require.Error(t, err)
 		require.Equal(t, "[admin:8223]data inconsistency in table: admin_test, index: uk1, handle: 1, index-values:\"\" != record-values:\"handle: 1, values: [KindInt64 1]\"", err.Error())
-		require.NoError(t, res.Close())
 		hook.checkLogCount(t, 1)
 		hook.logs[0].checkMsg(t, "admin check found data inconsistency")
 		hook.logs[0].checkField(t,
@@ -1107,6 +1106,7 @@ func TestCheckFailReport(t *testing.T) {
 			zap.Stringer("row_id", kv.IntHandle(1)),
 		)
 		hook.logs[0].checkFieldNotEmpty(t, "row_mvcc")
+		require.NoError(t, res.Close())
 	}()
 
 	// row more than plain index
