@@ -841,5 +841,37 @@
       "select /*+ hash_join_build(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
       "select /*+ hash_join_probe(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b"
     ]
+  },
+  {
+    "name": "TestNoDecorrelateHint",
+    "cases": [
+      "select /*+ no_decorrelate() */ * from t1",
+      "select * from t1, (select /*+ no_decorrelate() */ * from t2) n",
+      "select a+1, b-1 from (select /*+ no_decorrelate() */ * from t1) n",
+
+      "select t1.a, (select t2.b from t2 where t2.a = t1.b) from t1",
+      "select t1.a, (select /*+ no_decorrelate() */ t2.b from t2 where t2.a = t1.b) from t1",
+
+      "select t1.a, t1.b not in (select t3.b from t3) from t1",
+      "select t1.a, t1.b not in (select /*+ no_decorrelate() */ t3.b from t3) from t1",
+
+      "select exists (select t3.b from t3 where t3.a = t1.b limit 2) from t1",
+      "select exists (select /*+ no_decorrelate() */ t3.b from t3 where t3.a = t1.b limit 2) from t1",
+
+      "select t1.a, (select sum(t1.a) from t2 where t2.a = 10) from t1",
+      "select t1.a, (select /*+ no_decorrelate() */ sum(t1.a) from t2 where t2.a = 10) from t1",
+
+      "select (select count(t3.a) from t3 where t3.b = t1.b) from t1;",
+      "select (select /*+ no_decorrelate() */ count(t3.a) from t3 where t3.b = t1.b) from t1;",
+
+      "SELECT ta.NAME,(SELECT sum(tb.CODE) FROM tb WHERE ta.id = tb.id) tb_sum_code FROM ta WHERE ta.NAME LIKE 'chad999%'",
+      "SELECT ta.NAME,(SELECT /*+ no_decorrelate() */ sum(tb.CODE) FROM tb WHERE ta.id = tb.id) tb_sum_code FROM ta WHERE ta.NAME LIKE 'chad999%'",
+
+      "SELECT ta.NAME,(SELECT sum(tb.CODE) FROM tb WHERE ta.id = tb.id and exists (select 1 from tc where tb.name=tc.name and tc.`code` like '999%')) tb_sum_code FROM ta WHERE ta.NAME LIKE 'chad999%'",
+      "SELECT ta.NAME,(SELECT /*+ no_decorrelate() */ sum(tb.CODE) FROM tb WHERE ta.id = tb.id and exists (select 1 from tc where tb.name=tc.name and tc.`code` like '999%')) tb_sum_code FROM ta WHERE ta.NAME LIKE 'chad999%'",
+      "SELECT ta.NAME,(SELECT sum(tb.CODE) FROM tb WHERE ta.id = tb.id and exists (select /*+ no_decorrelate() */ 1 from tc where tb.name=tc.name and tc.`code` like '999%')) tb_sum_code FROM ta WHERE ta.NAME LIKE 'chad999%'",
+      "SELECT ta.NAME,(SELECT /*+ no_decorrelate() */ sum(tb.CODE) FROM tb WHERE ta.id = tb.id and exists (select /*+ no_decorrelate() */ 1 from tc where tb.name=tc.name and tc.`code` like '999%')) tb_sum_code FROM ta WHERE ta.NAME LIKE 'chad999%'"
+
+    ]
   }
 ]
