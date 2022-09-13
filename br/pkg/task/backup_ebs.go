@@ -278,13 +278,11 @@ func waitAllScheduleStoppedAndNoRegionHole(ctx context.Context, cfg Config, mgr 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// we wait for 15*40 = 600s = 10m at least
-	for retryIdx := 0; retryIdx < 40; retryIdx++ {
+	// we wait for nearly 15*40 = 600s = 10m
+	backoffer := utils.InitialRetryState(40, 5*time.Second, waitAllScheduleStoppedInterval)
+	for backoffer.Attempt() > 0 {
 		if ctx.Err() != nil {
 			return ctx.Err()
-		}
-		if retryIdx > 0 {
-			time.Sleep(waitAllScheduleStoppedInterval)
 		}
 		allRegions, err2 := waitUntilAllScheduleStopped(ctx, cfg, allStores, mgr)
 		if err2 != nil {
@@ -306,7 +304,8 @@ func waitAllScheduleStoppedAndNoRegionHole(ctx context.Context, cfg Config, mgr 
 		var hasHole bool
 		for j := 0; j < len(allRegions)-1; j++ {
 			left, right := allRegions[j], allRegions[j+1]
-			// todo: do we need to prefix every key with 'z'?, seems doesn't affect sorting and checking
+			// we don't need to handle the empty end key specially, since
+			// we sort by start key of region, and the end key of the last region is not checked
 			if bytes.Compare(left.EndKey, right.StartKey) != 0 {
 				log.Info("region hole found", zap.Reflect("left-region", left), zap.Reflect("right-region", right))
 				hasHole = true
@@ -316,6 +315,7 @@ func waitAllScheduleStoppedAndNoRegionHole(ctx context.Context, cfg Config, mgr 
 		if !hasHole {
 			return nil
 		}
+		time.Sleep(backoffer.ExponentialBackoff())
 	}
 	return errors.New("failed to wait all schedule stopped")
 }
