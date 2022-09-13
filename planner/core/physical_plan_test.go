@@ -2086,7 +2086,7 @@ func TestHJBuildAndProbeHint(t *testing.T) {
 		})
 		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery(ts).Sort().Check(testkit.Rows(output[i].Result...))
-		tk.MustQuery("show warnings").Sort().Check(testkit.Rows(output[i].Warning...))
+		tk.MustQuery("show warnings").Check(testkit.Rows(output[i].Warning...))
 	}
 }
 
@@ -2339,6 +2339,6 @@ func TestNoDecorrelateHint(t *testing.T) {
 		})
 		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery(ts).Sort().Check(testkit.Rows(output[i].Result...))
-		tk.MustQuery("show warnings").Sort().Check(testkit.Rows(output[i].Warning...))
+		tk.MustQuery("show warnings").Check(testkit.Rows(output[i].Warning...))
 	}
 }

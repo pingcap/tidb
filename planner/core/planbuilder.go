@@ -450,6 +450,9 @@ type cteInfo struct {
 type subQueryCtx = uint64
 
 const (
+	// notHandlingSubquery means that we are not in building plan for a subquery.
+	// Note: "subquery" here only contains subqueries that are handled by the expression rewriter, i.e., [NOT] IN,
+	// [NOT] EXISTS, compare + ANY/ALL and scalar subquery. Derived table doesn't belong to this.
 	notHandlingSubquery subQueryCtx = iota
 	rewritingExistsSubquery
 	rewritingCompareSubquery
