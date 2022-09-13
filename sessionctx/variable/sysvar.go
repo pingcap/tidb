@@ -693,6 +693,40 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{Scope: ScopeGlobal, Name: TiDBServerMemoryQuota, Value: strconv.FormatUint(DefTiDBServerMemoryQuota, 10), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint64,
+		GetGlobal: func(s *SessionVars) (string, error) {
+			return memory.ServerMemoryQuota.String(), nil
+		},
+		SetGlobal: func(s *SessionVars, val string) error {
+			intVal, err := strconv.ParseUint(val, 10, 64)
+			if err != nil {
+				intVal = DefTiDBServerMemoryQuota
+			}
+			if intVal > 0 && intVal < (512<<20) { // 512 MB
+				s.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(TiDBServerMemoryQuota, val))
+				intVal = 512 << 20
+			}
+			memory.ServerMemoryQuota.Store(intVal)
+			return nil
+		},
+	},
+	{Scope: ScopeGlobal, Name: TiDBServerMemoryLimitSessMinSize, Value: strconv.FormatUint(DefTiDBServerMemoryLimitSessMinSize, 10), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint64,
+		GetGlobal: func(s *SessionVars) (string, error) {
+			return memory.ServerMemoryLimitSessMinSize.String(), nil
+		},
+		SetGlobal: func(s *SessionVars, val string) error {
+			intVal, err := strconv.ParseUint(val, 10, 64)
+			if err != nil {
+				intVal = DefTiDBServerMemoryLimitSessMinSize
+			}
+			if intVal > 0 && intVal < 128 {
+				s.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(TiDBServerMemoryLimitSessMinSize, val))
+				intVal = 512 << 20
+			}
+			memory.ServerMemoryLimitSessMinSize.Store(intVal)
+			return nil
+		},
+	},
 	{Scope: ScopeGlobal, Name: TiDBEnableColumnTracking, Value: BoolToOnOff(DefTiDBEnableColumnTracking), Type: TypeBool, GetGlobal: func(s *SessionVars) (string, error) {
 		return BoolToOnOff(EnableColumnTracking.Load()), nil
 	}, SetGlobal: func(s *SessionVars, val string) error {

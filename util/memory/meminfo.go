@@ -32,6 +32,14 @@ var MemTotal func() (uint64, error)
 // MemUsed returns the total used amount of RAM on this system
 var MemUsed func() (uint64, error)
 
+// GetMemTotalIgnoreErr returns the total amount of RAM on this system/container. If error occurs, return 0.
+func GetMemTotalIgnoreErr() uint64 {
+	if memTotal, err := MemTotal(); err == nil {
+		return memTotal
+	}
+	return 0
+}
+
 // MemTotalNormal returns the total amount of RAM on this system in non-container environment.
 func MemTotalNormal() (uint64, error) {
 	total, t := memLimit.get()

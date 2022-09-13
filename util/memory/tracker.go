@@ -33,7 +33,6 @@ const TrackMemWhenExceeds = 104857600 // 100MB
 // Process global variables for memory limit.
 var (
 	ServerMemoryQuota            = atomicutil.NewUint64(0)
-	ServerMemoryGCTrigger        = atomicutil.NewFloat64(0)
 	ServerMemoryLimitSessMinSize = atomicutil.NewUint64(128 << 20)
 )
 
@@ -420,7 +419,7 @@ func (t *Tracker) Consume(bs int64) {
 		}
 		// Update the Top1 session
 		memUsage := sessionTracker.BytesConsumed()
-		if memUsage < int64(ServerMemoryLimitSessMinSize.Load()) {
+		if limitSessMinSize := ServerMemoryLimitSessMinSize.Load(); limitSessMinSize > 0 && uint64(memUsage) < limitSessMinSize {
 			return
 		}
 		oldTracker := MemUsageTop1Tracker.Load()

@@ -20,6 +20,8 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable/featuretag/concurrencyddl"
+	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/paging"
 	"go.uber.org/atomic"
 )
@@ -803,6 +805,10 @@ const (
 	TiDBDDLEnableFastReorg = "tidb_ddl_enable_fast_reorg"
 	// TiDBDDLDiskQuota used to set disk quota for lightning add index.
 	TiDBDDLDiskQuota = "tidb_ddl_disk_quota"
+	// TiDBServerMemoryQuota indicates the memory limit of the tidb-server instance.
+	TiDBServerMemoryQuota = "tidb_server_memory_quota"
+	// TiDBServerMemoryLimitSessMinSize indicates the minimum memory usage of the session that can be controlled.
+	TiDBServerMemoryLimitSessMinSize = "tidb_server_memory_limit_sess_min_size"
 )
 
 // TiDB intentional limits
@@ -1028,6 +1034,7 @@ const (
 	MinDDLReorgBatchSize                     int32  = 32
 	MinExpensiveQueryTimeThreshold           uint64 = 10 // 10s
 	DefTiDBConstraintCheckInPlacePessimistic        = true
+	DefTiDBServerMemoryLimitSessMinSize             = 128 << 20
 )
 
 // Process global variables.
@@ -1074,6 +1081,10 @@ var (
 	EnableFastReorg = atomic.NewBool(DefTiDBEnableFastReorg)
 	// DDLDiskQuota is the temporary variable for set disk quota for lightning
 	DDLDiskQuota = atomic.NewInt64(DefTiDBDDLDiskQuota)
+
+	// DefTiDBServerMemoryQuota indicates the default value of TiDBServerMemoryQuota(TotalMem * 80%).
+	// It should be a const and shouldn't be modified after tidb is started.
+	DefTiDBServerMemoryQuota = mathutil.Max(memory.GetMemTotalIgnoreErr()/10*8, 512<<20)
 )
 
 var (
