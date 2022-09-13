@@ -1385,12 +1385,8 @@ func (b *builtinJSONStorageSizeSig) evalInt(row chunk.Row) (res int64, isNull bo
 		return res, isNull, err
 	}
 
-	buf, err := obj.MarshalJSON()
-	if err != nil {
-		return res, isNull, err
-	}
-
-	return int64(len(buf)), false, nil
+	// returns the length of obj value plus 1 (the TypeCode)
+	return int64(len(obj.Value)) + 1, false, nil
 }
 
 type jsonDepthFunctionClass struct {
