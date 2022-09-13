@@ -177,3 +177,19 @@ func TestStatementErrorInTransaction(t *testing.T) {
 	tk.MustExec("rollback")
 	tk.MustQuery("select * from test where a = 1 and b = 11").Check(testkit.Rows())
 }
+
+func TestWriteConflictReason(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c int primary key)")
+	tk.MustExec("begin optimistic")
+	tk2.MustExec("insert into t values (1)")
+	tk.MustExec("insert into t values (1)")
+	err := tk.ExecToErr("commit")
+	require.Contains(t, err.Error(), "Write conflict")
+	require.Contains(t, err.Error(), "reason=Optimistic")
+}
