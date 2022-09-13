@@ -726,7 +726,7 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 		ver, err = updateVersionAndTableInfo(d, t, job, tbl.Meta(), true)
 		return false, ver, errors.Trace(err)
 	case model.BackfillStateReadyToMerge:
-		logutil.BgLogger().Info("index backfill state merge sync", zap.Int64("job ID", job.ID),
+		logutil.BgLogger().Info("[ddl] index backfill state merge sync", zap.Int64("job ID", job.ID),
 			zap.String("table", tbl.Meta().Name.O), zap.String("index", indexInfo.Name.O))
 		indexInfo.BackfillState = model.BackfillStateMerging
 		job.SnapshotVer = 0 // Reset the snapshot version for merge index reorg.
