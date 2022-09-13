@@ -493,7 +493,8 @@ func (p *PreRestoreInfoGetterImpl) ReadFirstNRowsByFileMeta(ctx context.Context,
 			}
 			break
 		}
-		rows = append(rows, parser.LastRow().Row)
+		lastRowDatums := append([]types.Datum{}, parser.LastRow().Row...)
+		rows = append(rows, lastRowDatums)
 	}
 	return parser.Columns(), rows, nil
 }
