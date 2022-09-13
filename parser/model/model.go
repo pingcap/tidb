@@ -1248,6 +1248,30 @@ func (ci *PartitionDefinition) Clone() PartitionDefinition {
 	return nci
 }
 
+const emptyPartitionDefinitionSize = int64(unsafe.Sizeof(PartitionState{}))
+
+// MemoryUsage return the memory usage of PartitionDefinition
+func (ci *PartitionDefinition) MemoryUsage() (sum int64) {
+	if ci == nil {
+		return
+	}
+
+	sum = emptyPartitionDefinitionSize + ci.Name.MemoryUsage()
+	if ci.PlacementPolicyRef != nil {
+		sum += int64(unsafe.Sizeof(ci.PlacementPolicyRef.ID)) + ci.PlacementPolicyRef.Name.MemoryUsage()
+	}
+
+	for _, str := range ci.LessThan {
+		sum += int64(len(str))
+	}
+	for _, strs := range ci.InValues {
+		for _, str := range strs {
+			sum += int64(len(str))
+		}
+	}
+	return
+}
+
 // FindPartitionDefinitionByName finds PartitionDefinition by name.
 func (t *TableInfo) FindPartitionDefinitionByName(partitionDefinitionName string) *PartitionDefinition {
 	lowConstrName := strings.ToLower(partitionDefinitionName)
