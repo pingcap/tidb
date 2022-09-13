@@ -850,6 +850,7 @@ const (
 	ErrInvalidJSONPathWildcard                               = 3149
 	ErrInvalidJSONContainsPathType                           = 3150
 	ErrJSONUsedAsKey                                         = 3152
+	ErrJSONDocumentTooDeep                                   = 3157
 	ErrJSONDocumentNULLKey                                   = 3158
 	ErrSecureTransportRequired                               = 3159
 	ErrBadUser                                               = 3162

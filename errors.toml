@@ -1631,6 +1631,11 @@ error = '''
 The second argument can only be either 'one' or 'all'.
 '''
 
+["json:3157"]
+error = '''
+The JSON document exceeds the maximum depth.
+'''
+
 ["json:3158"]
 error = '''
 JSON documents may not contain NULL member names.
