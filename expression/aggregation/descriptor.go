@@ -334,7 +334,7 @@ func (a *AggFuncDesc) UpdateNotNullFlag4RetType(hasGroupBy, allAggsFirstRow bool
 }
 
 // MemoryUsage the memory usage of AggFuncDesc
-func (a *AggFuncDesc) MemoryUsage()(sum int64){
+func (a *AggFuncDesc) MemoryUsage() (sum int64) {
 	if a == nil {
 		return
 	}
@@ -342,5 +342,6 @@ func (a *AggFuncDesc) MemoryUsage()(sum int64){
 	sum = a.baseFuncDesc.MemoryUsage() + size.SizeOfInt + size.SizeOfBool
 	for _, item := range a.OrderByItems {
 		sum += item.MemoryUsage()
-	}return
+	}
+	return
 }
