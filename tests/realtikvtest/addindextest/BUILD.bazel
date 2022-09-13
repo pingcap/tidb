@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "common.go",
         "workload.go",
+        "compatibility.go",
     ],
     importpath = "github.com/pingcap/tidb/tests/realtikvtest/addindextest",
     visibility = ["//visibility:public"],
@@ -22,6 +23,9 @@ go_test(
     srcs = [
         "add_index_test.go",
         "main_test.go",
+        "concurrentDDL_test.go"
+        "multischemachange_test.go"
+        "pitr_test.go"
     ],
     embed = [":addindextest"],
     deps = [
