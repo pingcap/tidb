@@ -71,7 +71,7 @@ func buildFKCheckExec(sctx sessionctx.Context, tbl table.Table, fkCheck *planner
 	} else if fkCheck.ReferredFK != nil {
 		cols = fkCheck.ReferredFK.Cols
 	}
-	colsOffsets, err := getColumnsOffsets(tbl.Meta(), cols)
+	colsOffsets, err := getFKColumnsOffsets(tbl.Meta(), cols)
 	if err != nil {
 		return nil, err
 	}
@@ -271,7 +271,7 @@ func (fkc *FKCheckExec) checkPrefixKey(ctx context.Context, memBuffer kv.MemBuff
 		return fkc.checkPrefixKeyExist(key, value)
 	}
 	if len(value) > 0 {
-		// If check not exist, by the key is exist, return failedErr.
+		// If check not exist, but the key is exist, return failedErr.
 		return fkc.FailedErr
 	}
 	return nil
@@ -389,7 +389,7 @@ func (h *fkValueHelper) hasNullValue(vals []types.Datum) bool {
 	// > select * from t2;
 	// 	+----+--------+--------+
 	// 	| id | a      | b      |
-	// 		+----+--------+--------+
+	// 	+----+--------+--------+
 	// 	| 4  | <null> | <null> |
 	// 	| 2  | <null> | 1      |
 	// 	| 3  | 1      | <null> |
@@ -402,7 +402,7 @@ func (h *fkValueHelper) hasNullValue(vals []types.Datum) bool {
 	return false
 }
 
-func getColumnsOffsets(tbInfo *model.TableInfo, cols []model.CIStr) ([]int, error) {
+func getFKColumnsOffsets(tbInfo *model.TableInfo, cols []model.CIStr) ([]int, error) {
 	colsOffsets := make([]int, len(cols))
 	for i, col := range cols {
 		offset := -1
