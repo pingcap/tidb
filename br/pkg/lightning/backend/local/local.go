@@ -87,6 +87,8 @@ const (
 	// lower the max-key-count to avoid tikv trigger region auto split
 	regionMaxKeyCount      = 1_280_000
 	defaultRegionSplitSize = 96 * units.MiB
+	// The max ranges count in a batch to split and scatter.
+	maxBatchSplitRanges = 4096
 
 	propRangeIndex = "tikv.range_index"
 
@@ -1347,7 +1349,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 		needSplit := len(unfinishedRanges) > 1 || lfTotalSize > regionSplitSize || lfLength > regionSplitKeys
 		// split region by given ranges
 		for i := 0; i < maxRetryTimes; i++ {
-			err = local.SplitAndScatterRegionByRanges(ctx, unfinishedRanges, lf.tableInfo, needSplit, regionSplitSize)
+			err = local.SplitAndScatterRegionInBatches(ctx, unfinishedRanges, lf.tableInfo, needSplit, regionSplitSize, maxBatchSplitRanges)
 			if err == nil || common.IsContextCanceledError(err) {
 				break
 			}
