@@ -33,6 +33,8 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/util/kvcache"
 	"math/rand"
 	"net"
 	"net/http"
@@ -609,6 +611,28 @@ func (s *Server) checkConnectionCount() error {
 		return errConCount
 	}
 	return nil
+}
+
+// PlanCacheInfo ...
+func (s *Server) PlanCacheInfo() (totSession, totKeys, totVals int) {
+	s.rwlock.RLock()
+	defer s.rwlock.RUnlock()
+	for _, client := range s.clients {
+		if atomic.LoadInt32(&client.status) == connStatusWaitShutdown {
+			continue
+		}
+		totSession += 1
+		planCache := client.ctx.PreparedPlanCache()
+		if planCache == nil {
+			continue
+		}
+
+		planCache.ForEach(func(k kvcache.Key, value kvcache.Value) {
+			totKeys += 1
+			totVals += len(value.([]*core.PlanCacheValue))
+		})
+	}
+	return totSession, totKeys, totVals
 }
 
 // ShowProcessList implements the SessionManager interface.

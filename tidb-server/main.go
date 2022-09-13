@@ -201,6 +201,7 @@ func main() {
 
 	storage, dom := createStoreAndDomain()
 	svr := createServer(storage, dom)
+	go planCacheInfo(svr)
 
 	// Register error API is not thread-safe, the caller MUST NOT register errors after initialization.
 	// To prevent misuse, set a flag to indicate that register new error will panic immediately.
@@ -218,6 +219,23 @@ func main() {
 	terror.MustNil(svr.Run())
 	<-exited
 	syncLog()
+}
+
+func planCacheInfo(svr *server.Server) {
+	defer func() {
+		if r := recover(); r != nil {
+			logutil.BgLogger().Warn("[Plan-Cache-Patch] server plan cache info panic", zap.Any("panic", r))
+		}
+	}()
+
+	for {
+		time.After(time.Second * 30)
+		totSess, totKeys, totVals := svr.PlanCacheInfo()
+		logutil.BgLogger().Warn("[Plan-Cache-Patch] server plan cache info",
+			zap.Int("tot-sessions", totSess),
+			zap.Int("tot-keys", totKeys),
+			zap.Int("tot-vals", totVals))
+	}
 }
 
 func syncLog() {
