@@ -98,6 +98,9 @@ func (l *SimpleLRUCache) Get(key Key) (value Value, ok bool) {
 
 // ForEach ...
 func (l *SimpleLRUCache) ForEach(f func(Key, Value)) {
+	if l == nil || l.cache == nil || f == nil {
+		return
+	}
 	for ele := l.cache.Front(); ele != nil; ele = ele.Next() {
 		key := ele.Value.(*cacheEntry).key
 		val := ele.Value.(*cacheEntry).value
