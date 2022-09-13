@@ -5432,6 +5432,9 @@ func (d *ddl) dropTableObject(
 			if tableInfo.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 				return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Drop Table")
 			}
+			if referredFK := checkTableHasForeignKeyReferred(ctx, is, tn.Schema, tn.Name, objects); referredFK != nil {
+				return errors.Trace(dbterror.ErrForeignKeyCannotDropParent.GenWithStackByArgs(tn.Name, referredFK.ChildFKName, referredFK.ChildTable))
+			}
 		case viewObject:
 			if !tableInfo.Meta().IsView() {
 				return dbterror.ErrWrongObject.GenWithStackByArgs(fullti.Schema, fullti.Name, "VIEW")
@@ -5499,6 +5502,29 @@ func (d *ddl) DropView(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err err
 	return d.dropTableObject(ctx, stmt.Tables, stmt.IfExists, viewObject)
 }
 
+func checkTableHasForeignKeyReferred(ctx sessionctx.Context, is infoschema.InfoSchema, schema, tbl model.CIStr, ignoreTables []*ast.TableName) *model.ReferredFKInfo {
+	if !ctx.GetSessionVars().ForeignKeyChecks {
+		return nil
+	}
+	referredFKs := is.GetTableReferredForeignKeys(schema.L, tbl.L)
+	for _, referredFK := range referredFKs {
+		found := false
+		for _, tb := range ignoreTables {
+			if referredFK.ChildSchema.L == tb.Schema.L && referredFK.ChildTable.L == tb.Name.L {
+				found = true
+				break
+			}
+		}
+		if found {
+			continue
+		}
+		if is.TableExists(referredFK.ChildSchema, referredFK.ChildTable) {
+			return referredFK
+		}
+	}
+	return nil
+}
+
 func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ti)
 	if err != nil {
@@ -5509,6 +5535,10 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	}
 	if tb.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 		return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Truncate Table")
+	}
+	if referredFK := checkTableHasForeignKeyReferred(ctx, d.GetInfoSchemaWithInterceptor(ctx), ti.Schema, ti.Name, []*ast.TableName{{Name: ti.Name, Schema: ti.Schema}}); referredFK != nil {
+		msg := fmt.Sprintf("`%s`.`%s` CONSTRAINT `%s`", referredFK.ChildSchema, referredFK.ChildTable, referredFK.ChildFKName)
+		return errors.Trace(dbterror.ErrTruncateIllegalFk.GenWithStackByArgs(msg))
 	}
 
 	genIDs, err := d.genGlobalIDs(1)

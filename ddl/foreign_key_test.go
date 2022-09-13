@@ -16,6 +16,7 @@ package ddl_test
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -758,6 +759,141 @@ func TestCreateTableWithForeignKeyError(t *testing.T) {
 	for _, ca := range passCases {
 		tk.MustExec("drop table if exists t2")
 		tk.MustExec("drop table if exists t1")
+		for _, sql := range ca {
+			tk.MustExec(sql)
+		}
+	}
+}
+
+func TestDropChildTableForeignKeyMetaInfo(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int key, a int, b int, CONSTRAINT fk foreign key (a) references t1(id))")
+	tb1ReferredFKs := getTableInfoReferredForeignKeys(t, dom, "test", "t1")
+	require.Equal(t, 1, len(tb1ReferredFKs))
+	tk.MustExec("drop table t1")
+	tb1ReferredFKs = getTableInfoReferredForeignKeys(t, dom, "test", "t1")
+	require.Equal(t, 0, len(tb1ReferredFKs))
+
+	tk.MustExec("create table t1 (id int key, b int, index(b))")
+	tk.MustExec("create table t2 (a int, b int, foreign key fk (a) references t1(b));")
+	tb1ReferredFKs = getTableInfoReferredForeignKeys(t, dom, "test", "t1")
+	require.Equal(t, 1, len(tb1ReferredFKs))
+	tk.MustExec("drop table t2")
+	tb1ReferredFKs = getTableInfoReferredForeignKeys(t, dom, "test", "t1")
+	require.Equal(t, 0, len(tb1ReferredFKs))
+}
+
+func TestDropForeignKeyMetaInfo(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int key, a int, b int, CONSTRAINT fk foreign key (a) references t1(id))")
+	tb1ReferredFKs := getTableInfoReferredForeignKeys(t, dom, "test", "t1")
+	require.Equal(t, 1, len(tb1ReferredFKs))
+	tk.MustExec("alter table t1 drop foreign key fk")
+	tbl1Info := getTableInfo(t, dom, "test", "t1")
+	tb1ReferredFKs = getTableInfoReferredForeignKeys(t, dom, "test", "t1")
+	require.Equal(t, 0, len(tbl1Info.ForeignKeys))
+	require.Equal(t, 0, len(tb1ReferredFKs))
+
+	tk.MustExec("drop table t1")
+	tk.MustExec("create table t1 (id int key, b int, index(b))")
+	tk.MustExec("create table t2 (a int, b int, foreign key fk (a) references t1(b));")
+	tb1ReferredFKs = getTableInfoReferredForeignKeys(t, dom, "test", "t1")
+	require.Equal(t, 1, len(tb1ReferredFKs))
+	tk.MustExec("alter table t2 drop foreign key fk")
+	tb1ReferredFKs = getTableInfoReferredForeignKeys(t, dom, "test", "t1")
+	require.Equal(t, 0, len(tb1ReferredFKs))
+	tbl2Info := getTableInfo(t, dom, "test", "t2")
+	require.Equal(t, 0, len(tbl2Info.ForeignKeys))
+}
+
+func TestTruncateOrDropTableWithForeignKeyReferred(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("use test")
+
+	cases := []struct {
+		prepares    []string
+		tbl         string
+		truncateErr string
+		dropErr     string
+	}{
+		{
+			prepares: []string{
+				"create table t1 (id int key, b int not null, index(b))",
+				"create table t2 (a int, b int, foreign key fk_b(b) references t1(b));",
+			},
+			tbl:         "t1",
+			truncateErr: "[ddl:1701]Cannot truncate a table referenced in a foreign key constraint (`test`.`t2` CONSTRAINT `fk_b`)",
+			dropErr:     "[ddl:3730]Cannot drop table 't1' referenced by a foreign key constraint 'fk_b' on table 't2'.",
+		},
+		{
+			prepares: []string{
+				"create table t1 (id int key, a varchar(10), index(a));",
+				"create table t2 (a int, b varchar(20), foreign key fk_b(b) references t1(a));",
+			},
+			tbl:         "t1",
+			truncateErr: "[ddl:1701]Cannot truncate a table referenced in a foreign key constraint (`test`.`t2` CONSTRAINT `fk_b`)",
+			dropErr:     "[ddl:3730]Cannot drop table 't1' referenced by a foreign key constraint 'fk_b' on table 't2'.",
+		},
+		{
+			prepares: []string{
+				"create table t1 (id int key, a varchar(10), index (a(10)));",
+				"create table t2 (a int, b varchar(20), foreign key fk_b(b) references t1(a));",
+			},
+			tbl:         "t1",
+			truncateErr: "[ddl:1701]Cannot truncate a table referenced in a foreign key constraint (`test`.`t2` CONSTRAINT `fk_b`)",
+			dropErr:     "[ddl:3730]Cannot drop table 't1' referenced by a foreign key constraint 'fk_b' on table 't2'.",
+		},
+	}
+
+	for _, ca := range cases {
+		tk.MustExec("drop table if exists t2")
+		tk.MustExec("drop table if exists t1")
+		for _, sql := range ca.prepares {
+			tk.MustExec(sql)
+		}
+		truncateSQL := fmt.Sprintf("truncate table %v", ca.tbl)
+		tk.MustExec("set @@foreign_key_checks=1;")
+		err := tk.ExecToErr(truncateSQL)
+		require.Error(t, err)
+		require.Equal(t, ca.truncateErr, err.Error())
+		dropSQL := fmt.Sprintf("drop table %v", ca.tbl)
+		err = tk.ExecToErr(dropSQL)
+		require.Error(t, err)
+		require.Equal(t, ca.dropErr, err.Error())
+
+		tk.MustExec("set @@foreign_key_checks=0;")
+		tk.MustExec(truncateSQL)
+	}
+	passCases := [][]string{
+		{
+			"create table t1 (id int key, a int, b int, foreign key fk(a) references t1(id))",
+			"truncate table t1",
+			"drop table t1",
+		},
+		{
+			"create table t1 (id int key, a varchar(10), index (a(10)));",
+			"create table t2 (a int, b varchar(20), foreign key fk_b(b) references t1(a));",
+			"drop table t1, t2",
+		},
+		{
+			"set @@foreign_key_checks=0;",
+			"create table t1 (id int key, a varchar(10), index (a(10)));",
+			"create table t2 (a int, b varchar(20), foreign key fk_b(b) references t1(a));",
+			"truncate table t1",
+			"drop table t1",
+		},
+	}
+	for _, ca := range passCases {
+		tk.MustExec("drop table if exists t1, t2")
+		tk.MustExec("set @@foreign_key_checks=1;")
 		for _, sql := range ca {
 			tk.MustExec(sql)
 		}
