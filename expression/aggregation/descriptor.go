@@ -17,7 +17,6 @@ package aggregation
 import (
 	"bytes"
 	"fmt"
-	"github.com/pingcap/tidb/util/size"
 	"math"
 	"strconv"
 
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/size"
 )
 
 // AggFuncDesc describes an aggregation function signature, only used in planner.
