@@ -15,11 +15,12 @@
 package addindextest
 
 import (
+	"strconv"
+
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
-	"strconv"
 )
 
 var compCtx = CompatibilityContext{}
@@ -27,13 +28,19 @@ var compCtx = CompatibilityContext{}
 type testType int8
 
 const (
+	// TestNonUnique test type of create none unique index.
 	TestNonUnique testType = iota
+	// TestUnique test type of create unique index.
 	TestUnique
+	// TestPK test type of create Primary key.
 	TestPK
+	// TestGenIndex test type of create generated col index.
 	TestGenIndex
+	// TestMultiCols test type of multi columns in one index.
 	TestMultiCols
 )
 
+// CompatibilityContext is context of compatibility test.
 type CompatibilityContext struct {
 	isMultiSchemaChange bool
 	isConcurrentDDL     bool
@@ -129,15 +136,12 @@ func testOneColFramePara(ctx *suiteContext, tableID int, colIDs [][]int, f func(
 				require.Contains(ctx.t, err.Error(), "Duplicate entry")
 				err = nil
 				continue
-			} else {
-				logutil.BgLogger().Error("[add index test] add index failed", zap.Error(err))
-				require.NoError(ctx.t, err)
 			}
-			if err == nil {
-				checkResult(ctx, tableName, i, tableID)
-			}
+			logutil.BgLogger().Error("[add index test] add index failed", zap.Error(err))
+			require.NoError(ctx.t, err)
 			break
 		}
+		checkResult(ctx, tableName, i, tableID)
 	}
 	return err
 }
