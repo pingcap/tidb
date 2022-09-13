@@ -225,7 +225,7 @@ type ddl struct {
 	// used in the concurrency ddl.
 	reorgWorkerPool      *workerPool
 	generalDDLWorkerPool *workerPool
-	backfillWorkerPool   *backfilWorkerPool
+	backfillWorkerPool   *backfillWorkerPool
 	// get notification if any DDL coming.
 	ddlJobCh chan struct{}
 	// get notification if any backfill jobs coming.
@@ -298,6 +298,12 @@ type ddlCtx struct {
 		sync.RWMutex
 		// reorgCtxMap maps job ID to reorg context.
 		reorgCtxMap map[int64]*reorgCtx
+	}
+	// backfillCtx is used for backfill workers.
+	backfillCtx struct {
+		sync.RWMutex
+		jobCtxMap      map[int64]*JobContext
+		backfillCtxMap map[int64]struct{}
 	}
 
 	jobCtx struct {
@@ -395,10 +401,10 @@ func (dc *ddlCtx) setDDLSourceForDiagnosis(job *model.Job) {
 	}
 }
 
-func (dc *ddlCtx) getResourceGroupTaggerForTopSQL(job *model.Job) tikvrpc.ResourceGroupTagger {
+func (dc *ddlCtx) getResourceGroupTaggerForTopSQL(jobID int64) tikvrpc.ResourceGroupTagger {
 	dc.jobCtx.Lock()
 	defer dc.jobCtx.Unlock()
-	ctx, exists := dc.jobCtx.jobCtxMap[job.ID]
+	ctx, exists := dc.jobCtx.jobCtxMap[jobID]
 	if !exists {
 		return nil
 	}
@@ -420,10 +426,10 @@ func (dc *ddlCtx) jobContext(jobID int64) *JobContext {
 	return NewJobContext()
 }
 
-func (dc *ddlCtx) getReorgCtx(job *model.Job) *reorgCtx {
+func (dc *ddlCtx) getReorgCtx(jobID int64) *reorgCtx {
 	dc.reorgCtx.RLock()
 	defer dc.reorgCtx.RUnlock()
-	return dc.reorgCtx.reorgCtxMap[job.ID]
+	return dc.reorgCtx.reorgCtxMap[jobID]
 }
 
 func (dc *ddlCtx) newReorgCtx(r *reorgInfo) *reorgCtx {
@@ -448,7 +454,7 @@ func (dc *ddlCtx) removeReorgCtx(job *model.Job) {
 }
 
 func (dc *ddlCtx) notifyReorgCancel(job *model.Job) {
-	rc := dc.getReorgCtx(job)
+	rc := dc.getReorgCtx(job.ID)
 	if rc == nil {
 		return
 	}
@@ -637,13 +643,14 @@ func (d *ddl) prepareBackfillWorkers() {
 				return nil, err
 			}
 			sessForJob.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
-			bk := newBackfillWorker(sessForJob, int(genBackfillWorkerID()), nil, nil)
+			// TODO: Set sess variables.
+			bk := newBackfillWorker(sessForJob, int(genBackfillWorkerID()), nil, d.ddlCtx)
 			metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_%s", metrics.CreateDDL, bk.String())).Inc()
 			return bk, nil
 		}
 	}
 	d.backfillWorkerPool = newBackfillWorkerPool(pools.NewResourcePool(workerFactory(), backfillWorkerCnt, backfillWorkerCnt, 0))
-	d.wg.Run(d.startDispatchLoop)
+	d.wg.Run(d.startDispatchBackfillJobsLoop)
 }
 
 func (d *ddl) prepareWorkers4legacyDDL() {
@@ -669,6 +676,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 
 	d.wg.Run(d.limitDDLJobs)
 	d.sessPool = newSessionPool(ctxPool, d.store)
+	logutil.BgLogger().Info("[ddl] start -----------------" + fmt.Sprintf("pool:%v", d.sessPool))
 	d.ownerManager.SetBeOwnerHook(func() {
 		var err error
 		d.ddlSeqNumMu.seqNum, err = d.GetNextDDLSeqNum()

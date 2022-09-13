@@ -2626,8 +2626,8 @@ var (
 		{ddl.JobTableSQL, ddl.JobTableID},
 		{ddl.ReorgTableSQL, ddl.ReorgTableID},
 		{ddl.HistoryTableSQL, ddl.HistoryTableID},
-		{ddl.BackfillTable, ddl.BackfillTableID},
-		{ddl.BackfillHistoryTable, ddl.BackfillHistoryID},
+		{ddl.BackfillTableSQL, ddl.BackfillTableID},
+		{ddl.BackfillHistoryTableSQL, ddl.BackfillHistoryTableID},
 	}
 )
 
@@ -2645,7 +2645,8 @@ func InitDDLJobTables(store kv.Storage) error {
 		}
 		p := parser.New()
 		for _, tbl := range DDLJobTables {
-			if tableVer == meta.DDLTableVersion1 && tbl.id < ddl.BackfillTableID {
+			logutil.BgLogger().Info(fmt.Sprintf("tbl:%#v, tbl ver:%v", tbl, tableVer))
+			if tableVer == meta.DDLTableVersion1 && tbl.id > ddl.BackfillTableID {
 				continue
 			}
 			id, err := t.GetGlobalID()

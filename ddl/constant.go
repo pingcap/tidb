@@ -48,23 +48,29 @@ const (
 	// HistoryTableSQL is the CREATE TABLE SQL of `tidb_ddl_history`.
 	HistoryTableSQL = "create table " + HistoryTable + "(job_id bigint not null, job_meta longblob, db_name char(64), table_name char(64), schema_ids text(65535), table_ids text(65535), create_time datetime, primary key(job_id))"
 	// BackfillTableSQL is the CREATE TABLE SQL of `tidb_ddl_backfill`.
+	// TODO: section id, global or in a job
+	// TODO: add service ID?
 	BackfillTableSQL = "create table " + BackfillTable + `(
 		section_id bigint not null,
 		job_id bigint not null,
 		ele_id bigint not null,
+		ele_key blob,
 		physical_id bigint,
-		type blob,
-		exec_id blob,
+		type int,
+		exec_id blob default null,
 		exec_lease Time,
 		state int,
 		backfill_meta longblob,
-		unique key(job_id, ele_id, section_id))`
+		unique key(job_id, ele_id, section_id, ele_key(20)))`
 	// BackfillHistoryTableSQL is the CREATE TABLE SQL of `tidb_ddl_backfill_history`.
 	BackfillHistoryTableSQL = "create table " + BackfillHistoryTable + `(
 		section_id bigint not null,
 		job_id bigint not null,
-		type blob,
-		exec_id blob,
+		ele_id bigint not null,
+		ele_key blob,
+		physical_id bigint,
+		type int,
+		exec_id blob default null,
 		exec_lease Time,
 		state int,
 		backfill_meta longblob,

@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
-	"github.com/pingcap/tidb/types"
 )
 
 // ActionType is the type for DDL action.
@@ -360,15 +359,35 @@ func (sub *SubJob) FromProxyJob(proxyJob *Job, ver int64) {
 
 type BackfillType byte
 
+const (
+	TypeAddIndexBackfill     BackfillType = 1
+	TypeUpdateColumnBackfill BackfillType = 2
+	TypeCleanUpIndexBackfill BackfillType = 3
+)
+
+func (bt BackfillType) String() string {
+	switch bt {
+	case TypeAddIndexBackfill:
+		return "add index"
+	case TypeUpdateColumnBackfill:
+		return "update column"
+	case TypeCleanUpIndexBackfill:
+		return "clean up index"
+	default:
+		return "unknown"
+	}
+}
+
 type BackfillJob struct {
 	ID             int64
 	JobID          int64
 	EleID          int64
+	EleKey         []byte
 	PhysicalID     int64
 	Tp             BackfillType
 	State          JobState
-	Instance_ID    []byte
-	Instance_Lease types.Time
+	Instance_ID    string
+	Instance_Lease time.Time
 	Mate           *BackfillMeta
 }
 
@@ -380,19 +399,36 @@ func (bj *BackfillJob) IsRunning() bool {
 	return bj.State == JobStateRunning
 }
 
+func (bj *BackfillJob) IDStr() string {
+	return fmt.Sprintf("ID:%d, JobID:%d, EleID:%d, EleKey:%v", bj.ID, bj.JobID, bj.EleID, bj.EleKey)
+}
+
 type BackfillMeta struct {
-	CurrKey  []byte `json:"curr_key"`
-	StartKey []byte `json:"start_key"`
-	EndKey   []byte `json:"end_key"`
-	StartTS  uint64 `json:"start_ts"`
-	FinishTS uint64 `json:"finish_ts"`
-	RowCount int64  `json:"row_count"`
-	ErrMsg   string `json:"err_msg"`
+	CurrKey    []byte `json:"curr_key"`
+	StartKey   []byte `json:"start_key"`
+	EndKey     []byte `json:"end_key"`
+	EndInclude bool   `json:"end_include"`
+	StartTS    uint64 `json:"start_ts"`
+	FinishTS   uint64 `json:"finish_ts"`
+	RowCount   int64  `json:"row_count"`
+	ErrMsg     string `json:"err_msg"`
 
 	SQLMode       mysql.SQLMode                    `json:"sql_mode"`
 	Warnings      map[errors.ErrorID]*terror.Error `json:"warnings"`
 	WarningsCount map[errors.ErrorID]int64         `json:"warnings_count"`
 	Location      *TimeZoneLocation                `json:"location"`
+}
+
+// Encode encodes BackfillMeta with json format.
+func (bm *BackfillMeta) Encode() ([]byte, error) {
+	b, err := json.Marshal(bm)
+	return b, errors.Trace(err)
+}
+
+// Decode decodes BackfillMeta from the json buffer.
+func (bm *BackfillMeta) Decode(b []byte) error {
+	err := json.Unmarshal(b, bm)
+	return errors.Trace(err)
 }
 
 // Job is for a DDL operation.

@@ -4000,3 +4000,17 @@ func TestDDLLastInfo(t *testing.T) {
 	tk.MustExec("drop table t, t2")
 	tk.MustQuery("select json_extract(@@tidb_last_ddl_info, '$.query'), json_extract(@@tidb_last_ddl_info, '$.seq_num')").Check(testkit.Rows(fmt.Sprintf("\"drop table t, t2\" %d", firstSequence+3)))
 }
+
+func TestAddIndexX(t *testing.T) {
+	// TODO: store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table test_add_index(a int, b int not null default '0')")
+	tk.MustExec("insert into test_add_index values(1, 2),(2,2)")
+	tk.MustExec("alter table test_add_index add index idx(b)")
+	tk.MustExec("admin check table test_add_index")
+	// tk.MustExec("alter table test_add_index add unique index idx1(b)")
+}

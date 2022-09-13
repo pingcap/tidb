@@ -104,6 +104,7 @@ type worker struct {
 
 // JobContext is the ddl job execution context.
 type JobContext struct {
+	backfillJobCnt int
 	// below fields are cache for top sql
 	ddlJobCtx          context.Context
 	cacheSQL           string
@@ -123,6 +124,17 @@ func NewJobContext() *JobContext {
 	}
 }
 
+// NewJobContextWithArgs returns a new ddl job context with args.
+func NewJobContextWithArgs(sql string) *JobContext {
+	return &JobContext{
+		ddlJobCtx:          context.Background(),
+		cacheSQL:           sql,
+		cacheNormalizedSQL: "",
+		cacheDigest:        nil,
+		tp:                 "unknown",
+	}
+}
+
 func newWorker(ctx context.Context, tp workerType, sessPool *sessionPool, delRangeMgr delRangeManager, dCtx *ddlCtx, concurrentDDL bool) *worker {
 	worker := &worker{
 		id:              ddlWorkerID.Add(1),
@@ -134,6 +146,7 @@ func newWorker(ctx context.Context, tp workerType, sessPool *sessionPool, delRan
 		delRangeManager: delRangeMgr,
 		concurrentDDL:   concurrentDDL,
 	}
+	logutil.BgLogger().Info("[ddl] new worker -----------------" + fmt.Sprintf("pool:%v", sessPool))
 	worker.addingDDLJobKey = addingDDLJobPrefix + worker.typeStr()
 	worker.logCtx = logutil.WithKeyValue(context.Background(), "worker", worker.String())
 	return worker
@@ -733,7 +746,7 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) error {
 	w.setDDLLabelForTopSQL(job.ID, job.Query)
 	w.setDDLSourceForDiagnosis(job)
 	jobContext := w.jobContext(job.ID)
-	if tagger := w.getResourceGroupTaggerForTopSQL(job); tagger != nil {
+	if tagger := w.getResourceGroupTaggerForTopSQL(job.ID); tagger != nil {
 		txn.SetOption(kv.ResourceGroupTagger, tagger)
 	}
 	t := meta.NewMeta(txn)
@@ -894,7 +907,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			w.setDDLLabelForTopSQL(job.ID, job.Query)
 			w.setDDLSourceForDiagnosis(job)
 			jobContext := w.jobContext(job.ID)
-			if tagger := w.getResourceGroupTaggerForTopSQL(job); tagger != nil {
+			if tagger := w.getResourceGroupTaggerForTopSQL(job.ID); tagger != nil {
 				txn.SetOption(kv.ResourceGroupTagger, tagger)
 			}
 			if isDone, err1 := isDependencyJobDone(t, job); err1 != nil || !isDone {
