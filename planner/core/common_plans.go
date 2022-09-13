@@ -640,6 +640,7 @@ func dumpHeap(sctx sessionctx.Context) {
 	if time.Since(heapDumpTime) < heapDumpInterval {
 		return
 	}
+	heapDumpTime = time.Now()
 
 	memTot, err := memory.MemTotal()
 	if err != nil {
@@ -685,7 +686,6 @@ func dumpHeap(sctx sessionctx.Context) {
 	if err == nil {
 		logutil.BgLogger().Warn("[Plan-Cache-Patch] dump heap successfully",
 			zap.String("heap-file", fileName))
-		heapDumpTime = time.Now()
 	} else {
 		logutil.BgLogger().Warn("[Plan-Cache-Patch] dump heap error",
 			zap.String("heap-file", fileName), zap.Error(err))
