@@ -2198,5 +2198,4 @@ func TestBuildColumnRangeFallback(t *testing.T) {
 	require.Equal(t, "[[-inf,+inf]]", fmt.Sprintf("%v", ranges))
 	require.Equal(t, "[]", fmt.Sprintf("%v", access))
 	require.Equal(t, "[in(test.t.b, 10, 20, 30)]", fmt.Sprintf("%v", remained))
-
 }
