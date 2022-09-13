@@ -1825,10 +1825,10 @@ func TestCompareBuiltin(t *testing.T) {
 		"21 0 0 0 1 <nil> <nil> 0 0 1 1 0 <nil> <nil> 0 0 0 0 <nil>",
 		"22 0 0 0 1 <nil> <nil> 0 0 0 1 0 <nil> <nil> 0 0 0 0 <nil>",
 		"23 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
-		"24 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 1 0 <nil>",
-		"25 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 1 0 0 <nil>",
-		"26 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 1 0 0 0 <nil>",
-		"27 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 1 0 <nil>",
+		"24 0 0 0 0 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 1 0 <nil>",
+		"25 0 0 0 0 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 1 0 0 <nil>",
+		"26 0 0 0 0 <nil> <nil> 0 0 0 0 0 <nil> <nil> 1 0 0 0 <nil>",
+		"27 0 0 0 0 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 1 0 <nil>",
 		"28 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>"))
 
 	// for coalesce
@@ -2124,11 +2124,11 @@ func TestAggregationBuiltinJSONArrayagg(t *testing.T) {
 	result = tk.MustQuery("select b, json_arrayagg(c) from t group by b order by b;")
 	result.Check(testkit.Rows(`ab [5.5]`))
 	result = tk.MustQuery("select e, json_arrayagg(f) from t group by e order by e;")
-	result.Check(testkit.Rows(`2020-01-10 ["11:12:13"]`))
+	result.Check(testkit.Rows(`2020-01-10 ["11:12:13.000000"]`))
 	result = tk.MustQuery("select f, json_arrayagg(g) from t group by f order by f;")
-	result.Check(testkit.Rows(`11:12:13 ["2020-01-11 00:00:00"]`))
+	result.Check(testkit.Rows(`11:12:13 ["2020-01-11 00:00:00.000000"]`))
 	result = tk.MustQuery("select g, json_arrayagg(h) from t group by g order by g;")
-	result.Check(testkit.Rows(`2020-01-11 00:00:00 ["2020-10-18 00:00:00"]`))
+	result.Check(testkit.Rows(`2020-01-11 00:00:00 ["2020-10-18 00:00:00.000000"]`))
 	result = tk.MustQuery("select h, json_arrayagg(i) from t group by h order by h;")
 	result.Check(testkit.Rows(`2020-10-18 00:00:00 ["first"]`))
 	result = tk.MustQuery("select i, json_arrayagg(j) from t group by i order by i;")
@@ -2165,11 +2165,11 @@ func TestAggregationBuiltinJSONObjectAgg(t *testing.T) {
 	result = tk.MustQuery("select json_objectagg(b, c) from t group by b order by b;")
 	result.Check(testkit.Rows(`{"ab": 5.5}`))
 	result = tk.MustQuery("select json_objectagg(e, f) from t group by e order by e;")
-	result.Check(testkit.Rows(`{"2020-01-10": "11:12:13"}`))
+	result.Check(testkit.Rows(`{"2020-01-10": "11:12:13.000000"}`))
 	result = tk.MustQuery("select json_objectagg(f, g) from t group by f order by f;")
-	result.Check(testkit.Rows(`{"11:12:13": "2020-01-11 00:00:00"}`))
+	result.Check(testkit.Rows(`{"11:12:13": "2020-01-11 00:00:00.000000"}`))
 	result = tk.MustQuery("select json_objectagg(g, h) from t group by g order by g;")
-	result.Check(testkit.Rows(`{"2020-01-11 00:00:00": "2020-10-18 00:00:00"}`))
+	result.Check(testkit.Rows(`{"2020-01-11 00:00:00": "2020-10-18 00:00:00.000000"}`))
 	result = tk.MustQuery("select json_objectagg(h, i) from t group by h order by h;")
 	result.Check(testkit.Rows(`{"2020-10-18 00:00:00": "first"}`))
 	result = tk.MustQuery("select json_objectagg(i, j) from t group by i order by i;")
@@ -3210,7 +3210,7 @@ func TestCastAsTime(t *testing.T) {
 	tk.MustExec(`insert into t values (1, 1, 1, "1", "1");`)
 	tk.MustExec(`insert into t values (null, null, null, null, null);`)
 	tk.MustQuery(`select cast(col1 as time), cast(col2 as time), cast(col3 as time), cast(col4 as time), cast(col5 as time) from t where col1 = 1;`).Check(testkit.Rows(
-		`00:00:01 00:00:01 00:00:01 00:00:01 00:00:01`,
+		`00:00:01 00:00:01 00:00:01 00:00:01 <nil>`,
 	))
 	tk.MustQuery(`select cast(col1 as time), cast(col2 as time), cast(col3 as time), cast(col4 as time), cast(col5 as time) from t where col1 is null;`).Check(testkit.Rows(
 		`<nil> <nil> <nil> <nil> <nil>`,
@@ -7530,4 +7530,67 @@ func TestCastRealAsTime(t *testing.T) {
 		"<nil> <nil> <nil>",
 		"<nil> <nil> <nil>",
 		"<nil> <nil> <nil>"))
+}
+
+func TestJSONDepth(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a JSON)")
+	tk.MustGetErrCode(`insert into t
+with recursive c1 as (select cast(1 as signed) c, json_array(1) as a
+                      union
+                      select c + 1, json_array_insert(a, concat('$', repeat('[0]', c)), json_array(1))
+                      from c1
+                      where c < 101)
+select a from c1 where c > 100;`, errno.ErrJSONDocumentTooDeep)
+	tk.MustExec(`insert into t
+with recursive c1 as (select cast(1 as signed) c, json_array(1) as a
+                      union
+                      select c + 1, json_array_insert(a, concat('$', repeat('[0]', c)), json_array(1))
+                      from c1
+                      where c < 100)
+select a from c1 where c > 99;`)
+
+	err := tk.QueryToErr(`select json_array(a, 1) from t`)
+	require.Error(t, err)
+	// FIXME: mysql client shows the error.
+	//err = tk.QueryToErr(`select json_objectagg(1, a) from t;`)
+	//require.Error(t, err)
+	err = tk.QueryToErr(`select json_object(1, a) from t;`)
+	require.Error(t, err)
+	err = tk.QueryToErr(`select json_set(a, concat('$', repeat('[0]', 100)), json_array(json_array(3))) from t;`)
+	require.Error(t, err)
+	err = tk.QueryToErr(`select json_array_append(a, concat('$', repeat('[0]', 100)), 1) from t;`)
+	require.Error(t, err)
+	// FIXME: mysql client shows the error.
+	//err = tk.QueryToErr(`select json_arrayagg(a) from t;`)
+	//require.Error(t, err)
+}
+
+func TestCastJSONTimeDuration(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(i INT, j JSON)")
+
+	nowDate := time.Now().Format("2006-01-02")
+
+	// DATE/DATETIME/TIME will be automatically converted to json date/datetime/duration
+	tk.MustExec("insert into t values (0, DATE('1998-06-13'))")
+	tk.MustExec("insert into t values (1, CAST('1998-06-13 12:12:12' as DATETIME))")
+	tk.MustExec("insert into t values (2, DATE('1596-03-31'))")
+	tk.MustExec("insert into t values (3, CAST('1596-03-31 12:12:12' as DATETIME))")
+	tk.MustExec(`insert into t values (4, '"1596-03-31 12:12:12"')`)
+	tk.MustExec(`insert into t values (5, '"12:12:12"')`)
+	tk.MustExec("insert into t values (6, CAST('12:12:12' as TIME))")
+	tk.MustQuery("select i, cast(j as date), cast(j as datetime), cast(j as time), json_type(j) from t").Check(testkit.Rows(
+		"0 1998-06-13 1998-06-13 00:00:00 00:00:00 DATE",
+		"1 1998-06-13 1998-06-13 12:12:12 12:12:12 DATETIME",
+		"2 1596-03-31 1596-03-31 00:00:00 00:00:00 DATE",
+		"3 1596-03-31 1596-03-31 12:12:12 12:12:12 DATETIME",
+		"4 1596-03-31 1596-03-31 12:12:12 12:12:12 STRING",
+		"5 2012-12-12 2012-12-12 00:00:00 12:12:12 STRING",
+		fmt.Sprintf("6 %s %s 12:12:12 12:12:12 TIME", nowDate, nowDate),
+	))
 }
