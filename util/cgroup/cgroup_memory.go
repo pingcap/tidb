@@ -27,7 +27,7 @@ import (
 )
 
 // GetMemoryLimit attempts to retrieve the cgroup memory limit for the current
-// process
+// process.
 func GetMemoryLimit() (limit uint64, err error) {
 	return getCgroupMemLimit("/")
 }
