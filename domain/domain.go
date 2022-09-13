@@ -1770,7 +1770,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 			if cgroup.InContainer() {
 				_, err := cgroup.SetGOMAXPROCS()
 				if err != nil {
-					logutil.BgLogger().Error("fail to sync GOMAXPROCS with instance", zap.Error(err))
+					logutil.BgLogger().Debug("fail to sync GOMAXPROCS with instance", zap.Error(err))
 				}
 			}
 		}

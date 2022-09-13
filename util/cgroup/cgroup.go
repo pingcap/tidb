@@ -73,7 +73,6 @@ const (
 )
 
 // CPUUsage returns CPU usage and quotas for an entire cgroup.
-// CPUUsage returns CPU usage and quotas for an entire cgroup.
 type CPUUsage struct {
 	// System time and user time taken by this cgroup or process. In nanoseconds.
 	Stime, Utime uint64
@@ -211,12 +210,11 @@ func getCgroupDetails(mountInfoPath string, cRoot string, controller string) (st
 			// It is possible that the controller mount and the cgroup path are not the same (both are relative to the NS root).
 			// So start with the mount and construct the relative path of the cgroup.
 			// To test:
-			//   cgcreate -t $USER:$USER -a $USER:$USER -g memory:crdb_test
-			//   echo 3999997952 > /sys/fs/cgroup/memory/crdb_test/memory.limit_in_bytes
-			//   cgexec -g memory:crdb_test ./cockroach start-single-node
-			// cockroach.log -> server/config.go:433 ⋮ system total memory: ‹3.7 GiB›
-			//   without constructing the relative path
-			// cockroach.log -> server/config.go:433 ⋮ system total memory: ‹63 GiB›
+			//  1、start a docker to run unit test or tidb-server
+			//   > docker run -it --cpus=8 --memory=8g --name test --rm ubuntu:18.04 bash
+			//
+			//  2、change the limit when the container is running
+			//	docker update --cpus=8 <containers>
 			nsRelativePath := string(fields[3])
 			if !strings.Contains(nsRelativePath, "..") {
 				// We don't expect to see err here ever but in case that it happens

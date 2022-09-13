@@ -73,7 +73,7 @@ func getCgroupMemInactiveFileUsage(root string) (usage uint64, err error) {
 	return usage, err
 }
 
-// getCgroupMemUsage reads the memory cgroup's current memory usage (in bytes)
+// getCgroupMemUsage reads the memory cgroup's current memory usage (in bytes).
 func getCgroupMemUsage(root string) (usage uint64, err error) {
 	path, err := detectControlPath(filepath.Join(root, procPathCGroup), "memory")
 	if err != nil {
