@@ -2721,6 +2721,16 @@ error = '''
 Build table: %s global-level stats failed due to missing partition-level column stats, please run analyze table to refresh columns of all partitions
 '''
 
+["variable:1018"]
+error = '''
+Can't read dir of '%-.192s' (errno: %d - %s)
+'''
+
+["variable:1026"]
+error = '''
+Error writing file '%-.200s' (errno: %d - %s)
+'''
+
 ["variable:1193"]
 error = '''
 Unknown system variable '%-.64s'
