@@ -274,20 +274,6 @@ var tableStatsCache = &statsCache{}
 // TableStatsCacheExpiry is the expiry time for table stats cache.
 var TableStatsCacheExpiry = 3 * time.Second
 
-<<<<<<< HEAD
-func (c *statsCache) get(ctx context.Context, sctx sessionctx.Context) (map[int64]uint64, map[tableHistID]uint64, error) {
-	c.mu.RLock()
-	if time.Since(c.modifyTime) < TableStatsCacheExpiry {
-		tableRows, colLength := c.tableRows, c.colLength
-		c.mu.RUnlock()
-		return tableRows, colLength, nil
-=======
-func invalidInfoSchemaStatCache(tblID int64) {
-	tableStatsCache.mu.Lock()
-	defer tableStatsCache.mu.Unlock()
-	tableStatsCache.dirtyIDs = append(tableStatsCache.dirtyIDs, tblID)
-}
-
 func (c *statsCache) GetTableRows(id int64) uint64 {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -301,36 +287,17 @@ func (c *statsCache) GetColLength(id tableHistID) uint64 {
 }
 
 func (c *statsCache) update(ctx context.Context, sctx sessionctx.Context) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
+	c.mu.RLock()
 	if time.Since(c.modifyTime) < TableStatsCacheExpiry {
-		if len(c.dirtyIDs) > 0 {
-			tableRows, err := getRowCountTables(ctx, sctx, c.dirtyIDs...)
-			if err != nil {
-				return err
-			}
-			for id, tr := range tableRows {
-				c.tableRows[id] = tr
-			}
-			colLength, err := getColLengthTables(ctx, sctx, c.dirtyIDs...)
-			if err != nil {
-				return err
-			}
-			for id, cl := range colLength {
-				c.colLength[id] = cl
-			}
-			c.dirtyIDs = nil
-		}
+		c.mu.RUnlock()
 		return nil
->>>>>>> 04a564ee4... *: fix data race in the statsCache (#37753)
 	}
 	c.mu.RUnlock()
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if time.Since(c.modifyTime) < TableStatsCacheExpiry {
-		return c.tableRows, c.colLength, nil
+		return nil
 	}
 	tableRows, err := getRowCountAllTable(ctx, sctx)
 	if err != nil {
@@ -340,15 +307,11 @@ func (c *statsCache) update(ctx context.Context, sctx sessionctx.Context) error 
 	if err != nil {
 		return err
 	}
+
 	c.tableRows = tableRows
 	c.colLength = colLength
 	c.modifyTime = time.Now()
-<<<<<<< HEAD
-	return tableRows, colLength, nil
-=======
-	c.dirtyIDs = nil
 	return nil
->>>>>>> 04a564ee4... *: fix data race in the statsCache (#37753)
 }
 
 func getAutoIncrementID(ctx sessionctx.Context, schema *model.DBInfo, tblInfo *model.TableInfo) (int64, error) {
