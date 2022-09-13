@@ -16,11 +16,15 @@ package core
 
 import (
 	"bytes"
+	"container/heap"
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/util/memory"
+	"os"
+	"path/filepath"
+	"runtime/pprof"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/bindinfo"
@@ -42,10 +46,12 @@ import (
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/texttree"
 	"github.com/tikv/client-go/v2/oracle"
@@ -546,7 +552,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	}
 
 REBUILD:
-	defer logPlanCacheInfo(sctx)
+	defer debugPlanCacheInfo(sctx)
 
 	stmt := prepared.Stmt
 	p, names, err := OptimizeAstNode(ctx, sctx, stmt, is)
@@ -594,7 +600,17 @@ REBUILD:
 	return err
 }
 
-func logPlanCacheInfo(sctx sessionctx.Context) {
+var (
+	heapDumpInterval = time.Minute * 3
+	heapDumpTime     = time.Now()
+	debugThreshold   = 0.6 // 60%
+)
+
+func debugPlanCacheInfo(sctx sessionctx.Context) {
+	// step 1: dump plan cache info: tot-keys, tot-vals, top10-vals
+	logPlanCacheInfo(sctx)
+
+	// step 2: dump heap if the current memory usage is larger than 60%.
 	memTot, err := memory.MemTotal()
 	if err != nil {
 		logutil.BgLogger().Warn("[Plan-Cache-Patch] get total memory usage error", zap.Error(err))
@@ -610,9 +626,86 @@ func logPlanCacheInfo(sctx sessionctx.Context) {
 			zap.Uint64("mem-tot", memTot), zap.Uint64("mem-use", memUse))
 		return
 	}
-	const debugThreshold = 0.6 // 60%
 	if float64(memUse)/float64(memTot) < debugThreshold {
 		return
+	}
+	dumpHeap(sctx)
+}
+
+type intHeap []int
+
+func (h intHeap) Len() int            { return len(h) }
+func (h intHeap) Less(i, j int) bool  { return h[i] > h[j] }
+func (h intHeap) Swap(i, j int)       { h[i], h[j] = h[j], h[i] }
+func (h *intHeap) Push(x interface{}) { *h = append(*h, x.(int)) }
+func (h *intHeap) Pop() interface{} {
+	old := *h
+	n := len(old)
+	x := old[n-1]
+	*h = old[0 : n-1]
+	return x
+}
+
+func logPlanCacheInfo(sctx sessionctx.Context) {
+	c := sctx.PreparedPlanCache()
+	var totVals, totKeys int
+	top10 := new(intHeap)
+	heap.Init(top10)
+
+	c.ForEach(func(k kvcache.Key, v kvcache.Value) {
+		numVals := len(v.([]*PlanCacheValue))
+		totVals += numVals
+		totKeys += 1
+		heap.Push(top10, numVals)
+		if top10.Len() > 10 {
+			top10.Pop()
+		}
+	})
+
+	top10List := make([]int, 0, 10)
+	for top10.Len() > 0 {
+		top10List = append(top10List, top10.Pop().(int))
+	}
+
+	logutil.BgLogger().Warn("[Plan-Cache-Patch] plan cache info",
+		zap.Uint64("connID", sctx.GetSessionVars().ConnectionID),
+		zap.Int("tot-keys", totKeys), zap.Int("tot-vals", totVals),
+		zap.Any("top10", top10List))
+}
+
+func dumpHeap(sctx sessionctx.Context) {
+	if time.Since(heapDumpTime) < heapDumpInterval {
+		return
+	}
+	tmpDir := filepath.Join(config.GetGlobalConfig().TempStoragePath, "plan-cache-patch")
+	if err := disk.CheckAndCreateDir(tmpDir); err != nil {
+		logutil.BgLogger().Warn("[Plan-Cache-Patch] create tmpDir error",
+			zap.String("tmp-dir", tmpDir), zap.Error(err))
+		return
+	}
+	fileName := filepath.Join(tmpDir, "heap"+time.Now().Format(time.RFC3339))
+	f, err := os.Create(fileName)
+	if err != nil {
+		logutil.BgLogger().Warn("[Plan-Cache-Patch] create heap file error",
+			zap.String("heap-file", fileName), zap.Error(err))
+		return
+	}
+	defer func() {
+		err := f.Close()
+		if err != nil {
+			logutil.BgLogger().Warn("[Plan-Cache-Patch] close heap file error",
+				zap.String("heap-file", fileName), zap.Error(err))
+		}
+	}()
+	pf := pprof.Lookup("heap")
+	err = pf.WriteTo(f, 0)
+	if err == nil {
+		logutil.BgLogger().Warn("[Plan-Cache-Patch] dump heap successfully",
+			zap.String("heap-file", fileName))
+		heapDumpTime = time.Now()
+	} else {
+		logutil.BgLogger().Warn("[Plan-Cache-Patch] dump heap error",
+			zap.String("heap-file", fileName), zap.Error(err))
 	}
 }
 

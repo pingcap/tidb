@@ -96,6 +96,15 @@ func (l *SimpleLRUCache) Get(key Key) (value Value, ok bool) {
 	return element.Value.(*cacheEntry).value, true
 }
 
+// ForEach ...
+func (l *SimpleLRUCache) ForEach(f func(Key, Value)) {
+	for ele := l.cache.Front(); ele != nil; ele = ele.Next() {
+		key := ele.Value.(*cacheEntry).key
+		val := ele.Value.(*cacheEntry).value
+		f(key, val)
+	}
+}
+
 // Put puts the (key, value) pair into the LRU Cache.
 func (l *SimpleLRUCache) Put(key Key, value Value) {
 	hash := string(key.Hash())
