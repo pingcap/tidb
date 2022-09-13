@@ -17,7 +17,6 @@ package aggregation
 import (
 	"bytes"
 	"fmt"
-	"github.com/pingcap/tidb/util/size"
 	"math"
 	"strings"
 
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/util/size"
 )
 
 // baseFuncDesc describes an function signature, only used in planner.
