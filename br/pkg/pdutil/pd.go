@@ -660,16 +660,22 @@ func (p *PdController) RemoveAllPDSchedulers(ctx context.Context) (undo UndoFunc
 	// so there's no leader or region schedule initially. when phase-2 start force setting leaders, schedule may begin.
 	// we don't want pd do any leader or region schedule during this time, so we set those params to 0
 	// before we force setting leaders
+	const enableTiKVSplitRegion = "enable-tikv-split-region"
 	scheduleLimitParams := []string{
 		"hot-region-schedule-limit",
 		"leader-schedule-limit",
 		"merge-schedule-limit",
 		"region-schedule-limit",
 		"replica-schedule-limit",
+		enableTiKVSplitRegion,
 	}
 	pdConfigGenerators := DefaultExpectPDCfgGenerators()
 	for _, param := range scheduleLimitParams {
-		pdConfigGenerators[param] = func(int, interface{}) interface{} { return 0 }
+		if param == enableTiKVSplitRegion {
+			pdConfigGenerators[param] = func(int, interface{}) interface{} { return false }
+		} else {
+			pdConfigGenerators[param] = func(int, interface{}) interface{} { return 0 }
+		}
 	}
 
 	oldPDConfig, _, err1 := p.RemoveSchedulersWithConfigGenerator(ctx, pdConfigGenerators)

@@ -78,6 +78,11 @@ func (sp *simpleProgress) Inc() {
 	atomic.AddInt64(&sp.counter, 1)
 }
 
+// IncBy implements glue.Progress
+func (sp *simpleProgress) IncBy(cnt int64) {
+	atomic.AddInt64(&sp.counter, cnt)
+}
+
 func (sp *simpleProgress) GetCurrent() int64 {
 	return 0
 }

@@ -77,6 +77,11 @@ func (p *brieTaskProgress) Inc() {
 	atomic.AddInt64(&p.current, 1)
 }
 
+// IncBy implements glue.Progress
+func (p *brieTaskProgress) IncBy(cnt int64) {
+	atomic.AddInt64(&p.current, cnt)
+}
+
 // GetCurrent implements glue.Progress
 func (p *brieTaskProgress) GetCurrent() int64 {
 	return atomic.LoadInt64(&p.current)

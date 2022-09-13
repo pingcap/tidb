@@ -3,31 +3,49 @@
 package task
 
 import (
+	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
+	"fmt"
+	"io"
+	"sort"
 	"time"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	brpb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/aws"
 	"github.com/pingcap/tidb/br/pkg/backup"
+	"github.com/pingcap/tidb/br/pkg/common"
 	"github.com/pingcap/tidb/br/pkg/config"
 	"github.com/pingcap/tidb/br/pkg/conn"
+	"github.com/pingcap/tidb/br/pkg/conn/util"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/backoff"
+	"google.golang.org/grpc/keepalive"
 )
 
 const (
-	flagBackupVolumeFile = "volume-file"
-	flagProgressFile     = "progress-file"
+	flagBackupVolumeFile           = "volume-file"
+	flagProgressFile               = "progress-file"
+	waitAllScheduleStoppedInterval = 15 * time.Second
 )
+
+// todo: need a better name
+var hasPendingAdminErr = errors.New("has pending admin")
 
 // BackupEBSConfig is the configuration specific for backup tasks.
 type BackupEBSConfig struct {
@@ -177,7 +195,9 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 		}
 	}()
 
-	// TODO: suggest to wait ongoing change peer finish, otherwise restore may face long time waitapply to last log.
+	if err := waitAllScheduleStoppedAndNoRegionHole(ctx, cfg.Config, mgr); err != nil {
+		return errors.Trace(err)
+	}
 
 	// Step.1.3 backup the key info to recover cluster. e.g. PD alloc_id/cluster_id
 	clusterVersion, err := mgr.GetClusterVersion(ctx)
@@ -193,7 +213,7 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 	// NOTE: we should start snapshot in specify order.
 
 	progress := g.StartProgress(ctx, cmdName, int64(storeCount), !cfg.LogProgress)
-	go progressFileWriterRoutine(ctx, progress, int64(storeCount), cfg.ProgressFile)
+	go progressFileWriterRoutine(ctx, progress, int64(storeCount)*100, cfg.ProgressFile)
 
 	ec2Session, err := aws.NewEC2Session(cfg.CloudAPIConcurrency)
 	if err != nil {
@@ -230,7 +250,7 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 		log.Info("async snapshots finished.")
 	} else {
 		for i := 0; i < int(storeCount); i++ {
-			progress.Inc()
+			progress.IncBy(100)
 			totalSize = 1024
 			log.Info("mock snapshot finished.", zap.Int("index", i))
 			time.Sleep(800 * time.Millisecond)
@@ -251,6 +271,124 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 	}
 	finished = true
 	return nil
+}
+
+func waitAllScheduleStoppedAndNoRegionHole(ctx context.Context, cfg Config, mgr *conn.Mgr) error {
+	allStores, err := conn.GetAllTiKVStoresWithRetry(ctx, mgr.GetPDClient(), util.SkipTiFlash)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// we wait for nearly 15*40 = 600s = 10m
+	backoffer := utils.InitialRetryState(40, 5*time.Second, waitAllScheduleStoppedInterval)
+	for backoffer.Attempt() > 0 {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		allRegions, err2 := waitUntilAllScheduleStopped(ctx, cfg, allStores, mgr)
+		if err2 != nil {
+			if causeErr := errors.Cause(err2); causeErr == hasPendingAdminErr {
+				log.Info("schedule ongoing on tikv, will retry later", zap.Error(err2))
+			} else {
+				log.Warn("failed to wait schedule, will retry later", zap.Error(err2))
+			}
+			continue
+		}
+
+		log.Info("all leader regions got, start checking hole", zap.Int("len", len(allRegions)))
+		// sort by start key
+		sort.Slice(allRegions, func(i, j int) bool {
+			left, right := allRegions[i], allRegions[j]
+			return bytes.Compare(left.StartKey, right.StartKey) < 0
+		})
+
+		var hasHole bool
+		for j := 0; j < len(allRegions)-1; j++ {
+			left, right := allRegions[j], allRegions[j+1]
+			// we don't need to handle the empty end key specially, since
+			// we sort by start key of region, and the end key of the last region is not checked
+			if bytes.Compare(left.EndKey, right.StartKey) != 0 {
+				log.Info("region hole found", zap.Reflect("left-region", left), zap.Reflect("right-region", right))
+				hasHole = true
+				break
+			}
+		}
+		if !hasHole {
+			return nil
+		}
+		time.Sleep(backoffer.ExponentialBackoff())
+	}
+	return errors.New("failed to wait all schedule stopped")
+}
+
+func waitUntilAllScheduleStopped(ctx context.Context, cfg Config, allStores []*metapb.Store, mgr *conn.Mgr) ([]*metapb.Region, error) {
+	concurrency := mathutil.Min(len(allStores), common.MaxStoreConcurrency)
+	workerPool := utils.NewWorkerPool(uint(concurrency), "collect schedule info")
+	eg, ectx := errgroup.WithContext(ctx)
+
+	// init this slice with guess that there are 100 leaders on each store
+	allRegions := make([]*metapb.Region, 0, len(allStores)*100)
+	for i := range allStores {
+		store := allStores[i]
+		if ectx.Err() != nil {
+			break
+		}
+		workerPool.ApplyOnErrorGroup(eg, func() error {
+			backupClient, connection, err := newBackupClient(ctx, store.Address, cfg, mgr.GetTLSConfig())
+			if err != nil {
+				return errors.Trace(err)
+			}
+			defer func() {
+				_ = connection.Close()
+			}()
+			checkAdminClient, err := backupClient.CheckPendingAdminOp(ectx, &brpb.CheckAdminRequest{})
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			for {
+				response, err2 := checkAdminClient.Recv()
+				if err2 != nil {
+					causeErr := errors.Cause(err2)
+					// other check routines may have HasPendingAdmin=true, so Recv() may receive canceled.
+					// skip it to avoid error overriding
+					if causeErr == io.EOF || causeErr == context.Canceled {
+						break
+					}
+					return errors.Trace(err2)
+				}
+				if response.Error != nil {
+					return errors.New(response.Error.String())
+				}
+				if response.Region == nil {
+					return errors.New("region is nil")
+				}
+				if response.HasPendingAdmin {
+					return errors.WithMessage(hasPendingAdminErr, fmt.Sprintf("store-id=%d", store.Id))
+				}
+				allRegions = append(allRegions, response.Region)
+			}
+			return nil
+		})
+	}
+	return allRegions, eg.Wait()
+}
+
+func newBackupClient(ctx context.Context, storeAddr string, cfg Config, tlsConfig *tls.Config) (
+	brpb.BackupClient, *grpc.ClientConn, error) {
+	bfConf := backoff.DefaultConfig
+	bfConf.MaxDelay = 3 * time.Second
+
+	connection, err := utils.GRPCConn(ctx, storeAddr, tlsConfig,
+		grpc.WithConnectParams(grpc.ConnectParams{Backoff: bfConf}),
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{
+			Time:    cfg.GRPCKeepaliveTime,
+			Timeout: cfg.GRPCKeepaliveTimeout,
+		}),
+	)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	return brpb.NewBackupClient(connection), connection, nil
 }
 
 func saveMetaFile(c context.Context, backupInfo *config.EBSBasedBRMeta, externalStorage storage.ExternalStorage) error {
