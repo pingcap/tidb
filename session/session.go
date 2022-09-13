@@ -3511,12 +3511,11 @@ func RemoveLockDDLJobs(s Session, job2ver map[int64]int64, job2ids map[int64]str
 		return
 	}
 	s.GetSessionVars().GetRelatedTableForMDL().Range(func(tblID, value any) bool {
-		logutil.BgLogger().Debug("CheckOldRunningTxn", zap.Any("tblID", tblID), zap.Int64("schemaVer", sessiontxn.GetTxnManager(s).GetTxnInfoSchema().SchemaMetaVersion()))
 		for jobID, ver := range job2ver {
 			ids := util.Str2Int64Map(job2ids[jobID])
 			if _, ok := ids[tblID.(int64)]; ok && sessiontxn.GetTxnManager(s).GetTxnInfoSchema().SchemaMetaVersion() < ver {
 				delete(job2ver, jobID)
-				logutil.BgLogger().Debug("delete table ID from old running transaction", zap.Int64("table ID", tblID.(int64)), zap.String("txn", s.GetSessionVars().LastTxnInfo))
+				logutil.BgLogger().Info("old running transaction block DDL", zap.Int64("table ID", tblID.(int64)), zap.Uint64("conn ID", s.GetSessionVars().ConnectionID))
 			}
 		}
 		return true

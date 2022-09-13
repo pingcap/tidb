@@ -4909,7 +4909,6 @@ func TestSchemaDMLNotChange(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
-	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 	tk.MustExec("use test")
 	tk.MustExec("set global tidb_enable_metadata_lock=0")
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
