@@ -229,7 +229,7 @@ func planCacheInfo(svr *server.Server) {
 	}()
 
 	for {
-		time.After(time.Second * 30)
+		<-time.After(time.Second * 30)
 		totSess, totKeys, totVals := svr.PlanCacheInfo()
 		logutil.BgLogger().Warn("[Plan-Cache-Patch] server plan cache info",
 			zap.Int("tot-sessions", totSess),
