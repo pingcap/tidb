@@ -280,14 +280,12 @@ func checkIntervalIsSubset(toCheck []kv.KeyRange, subsetOf []kv.KeyRange) error 
 				StartKey: checking.EndKey,
 				EndKey:   next,
 			})
-		} else {
-			// checking: |________________|
-			// probing:  |_____________|
-			// The current checking range fills the current probing range,
-			// or the current checking range is out of the current range.
-			// let's move the probing forward.
-			si += 1
-			continue
 		}
+		// checking: |________________|
+		// probing:  |_____________|
+		// The current checking range fills the current probing range,
+		// or the current checking range is out of the current range.
+		// let's move the probing forward.
+		si += 1
 	}
 }
