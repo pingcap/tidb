@@ -39,7 +39,7 @@ func IsEnableFastReorg() bool {
 func (w *mergeIndexWorker) batchCheckTemporaryUniqueKey(txn kv.Transaction, idxRecords []*temporaryIndexRecord) error {
 	idxInfo := w.index.Meta()
 	if !idxInfo.Unique {
-		// non-unique key need not check, just overwrite it,
+		// non-unique key need no check, just overwrite it,
 		// because in most case, backfilling indices is not exists.
 		return nil
 	}
