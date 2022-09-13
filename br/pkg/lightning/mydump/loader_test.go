@@ -912,3 +912,66 @@ func TestInputWithSpecialChars(t *testing.T) {
 		},
 	}, mdl.GetDatabases())
 }
+
+func TestExternalDataRoutes(t *testing.T) {
+	s := newTestMydumpLoaderSuite(t)
+
+	s.touch(t, "test_1-schema-create.sql")
+	s.touch(t, "test_1.t1-schema.sql")
+	s.touch(t, "test_1.t1.sql")
+	s.touch(t, "test_2-schema-create.sql")
+	s.touch(t, "test_2.t2-schema.sql")
+	s.touch(t, "test_2.t2.sql")
+	s.touch(t, "test_3-schema-create.sql")
+	s.touch(t, "test_3.t1-schema.sql")
+	s.touch(t, "test_3.t1.sql")
+	s.touch(t, "test_3.t3-schema.sql")
+	s.touch(t, "test_3.t3.sql")
+
+	s.cfg.Mydumper.SourceID = "mysql-01"
+	s.cfg.Routes = []*router.TableRule{
+		{
+			TableExtractor: &router.TableExtractor{
+				TargetColumn: "c_table",
+				TableRegexp:  "t(.*)",
+			},
+			SchemaExtractor: &router.SchemaExtractor{
+				TargetColumn: "c_schema",
+				SchemaRegexp: "test_(.*)",
+			},
+			SourceExtractor: &router.SourceExtractor{
+				TargetColumn: "c_source",
+				SourceRegexp: "mysql-(.*)",
+			},
+			SchemaPattern: "test_*",
+			TablePattern:  "t*",
+			TargetSchema:  "test",
+			TargetTable:   "t",
+		},
+	}
+
+	mdl, err := md.NewMyDumpLoader(context.Background(), s.cfg)
+
+	require.NoError(t, err)
+	var database *md.MDDatabaseMeta
+	for _, db := range mdl.GetDatabases() {
+		if db.Name == "test" {
+			require.Nil(t, database)
+			database = db
+		}
+	}
+	require.NotNil(t, database)
+	require.Len(t, database.Tables, 1)
+	require.Len(t, database.Tables[0].DataFiles, 4)
+	expectExtendCols := []string{"c_table", "c_schema", "c_source"}
+	expectedExtendVals := [][]string{
+		{"1", "1", "01"},
+		{"2", "2", "01"},
+		{"1", "3", "01"},
+		{"3", "3", "01"},
+	}
+	for i, fileInfo := range database.Tables[0].DataFiles {
+		require.Equal(t, expectExtendCols, fileInfo.FileMeta.ExtendData.Columns)
+		require.Equal(t, expectedExtendVals[i], fileInfo.FileMeta.ExtendData.Values)
+	}
+}

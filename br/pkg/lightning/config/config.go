@@ -437,6 +437,7 @@ type MydumperRuntime struct {
 	ReadBlockSize    ByteSize         `toml:"read-block-size" json:"read-block-size"`
 	BatchSize        ByteSize         `toml:"batch-size" json:"batch-size"`
 	BatchImportRatio float64          `toml:"batch-import-ratio" json:"batch-import-ratio"`
+	SourceID         string           `toml:"source-id" json:"source-id"`
 	SourceDir        string           `toml:"data-source-dir" json:"data-source-dir"`
 	CharacterSet     string           `toml:"character-set" json:"character-set"`
 	CSV              CSVConfig        `toml:"csv" json:"csv"`

@@ -154,6 +154,10 @@ func NewFileRouter(cfg []*config.FileRouteRule, logger log.Logger) (FileRouter, 
 	return chainRouters(res), nil
 }
 
+func NewDefaultFileRouter(logger log.Logger) (FileRouter, error) {
+	return NewFileRouter(defaultFileRouteRules, logger)
+}
+
 // `RegexRouter` is a `FileRouter` implement that apply specific regex pattern to filepath.
 // if regex pattern match, then each extractors with capture the matched regexp pattern and
 // set value to target field in `RouteResult`

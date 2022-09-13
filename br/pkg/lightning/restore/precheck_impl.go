@@ -749,11 +749,19 @@ func (ci *schemaCheckItem) SchemaIsValid(ctx context.Context, tableInfo *mydump.
 	}
 	igCols := igCol.ColumnsMap()
 
+	extendColsMap := make(map[string]struct{})
+	for _, fileInfo := range tableInfo.DataFiles {
+		for _, col := range fileInfo.FileMeta.ExtendData.Columns {
+			extendColsMap[col] = struct{}{}
+		}
+	}
+
 	colCountFromTiDB := len(info.Core.Columns)
 	core := info.Core
 	defaultCols := make(map[string]struct{})
 	for _, col := range core.Columns {
-		if hasDefault(col) || (info.Core.ContainsAutoRandomBits() && mysql.HasPriKeyFlag(col.GetFlag())) {
+		// we can extend column the same with columns with default values
+		if _, isExtendCol := extendColsMap[col.Name.O]; isExtendCol || hasDefault(col) || (info.Core.ContainsAutoRandomBits() && mysql.HasPriKeyFlag(col.GetFlag())) {
 			// this column has default value or it's auto random id, so we can ignore it
 			defaultCols[col.Name.L] = struct{}{}
 		}

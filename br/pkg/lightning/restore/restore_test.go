@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	tmock "github.com/pingcap/tidb/util/mock"
+	router "github.com/pingcap/tidb/util/table-router"
 	"github.com/stretchr/testify/require"
 )
 
@@ -257,4 +258,68 @@ func TestPreCheckFailed(t *testing.T) {
 	err1 := ctl.Run(context.Background())
 	require.Equal(t, err.Error(), err1.Error())
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestAddExtendDataForCheckpoint(t *testing.T) {
+	cfg := config.NewConfig()
+
+	cfg.Mydumper.SourceID = "mysql-01"
+	cfg.Routes = []*router.TableRule{
+		{
+			TableExtractor: &router.TableExtractor{
+				TargetColumn: "c_table",
+				TableRegexp:  "t(.*)",
+			},
+			SchemaExtractor: &router.SchemaExtractor{
+				TargetColumn: "c_schema",
+				SchemaRegexp: "test_(.*)",
+			},
+			SourceExtractor: &router.SourceExtractor{
+				TargetColumn: "c_source",
+				SourceRegexp: "mysql-(.*)",
+			},
+			SchemaPattern: "test_*",
+			TablePattern:  "t*",
+			TargetSchema:  "test",
+			TargetTable:   "t",
+		},
+	}
+
+	cp := &checkpoints.TableCheckpoint{
+		Engines: map[int32]*checkpoints.EngineCheckpoint{
+			-1: {
+				Status: checkpoints.CheckpointStatusLoaded,
+				Chunks: []*checkpoints.ChunkCheckpoint{},
+			},
+			0: {
+				Status: checkpoints.CheckpointStatusImported,
+				Chunks: []*checkpoints.ChunkCheckpoint{{
+					FileMeta: mydump.SourceFileMeta{
+						Path: "tmp/test_1.t1.000000000.sql",
+					},
+				}, {
+					FileMeta: mydump.SourceFileMeta{
+						Path: "./test/tmp/test_1.t2.000000000.sql",
+					},
+				}, {
+					FileMeta: mydump.SourceFileMeta{
+						Path: "test_2.t3.000000000.sql",
+					},
+				}},
+			},
+		},
+	}
+	require.NoError(t, addExtendDataForCheckpoint(context.Background(), cfg, cp))
+	expectExtendCols := []string{"c_table", "c_schema", "c_source"}
+	expectedExtendVals := [][]string{
+		{"1", "1", "01"},
+		{"2", "1", "01"},
+		{"3", "2", "01"},
+	}
+	chunks := cp.Engines[0].Chunks
+	require.Len(t, chunks, 3)
+	for i, chunk := range chunks {
+		require.Equal(t, expectExtendCols, chunk.FileMeta.ExtendData.Columns)
+		require.Equal(t, expectedExtendVals[i], chunk.FileMeta.ExtendData.Values)
+	}
 }

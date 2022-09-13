@@ -21,6 +21,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -57,8 +58,10 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/store/driver"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mathutil"
+	regexprrouter "github.com/pingcap/tidb/util/regexpr-router"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/atomic"
 	"go.uber.org/multierr"
@@ -1633,6 +1636,48 @@ func (rc *Controller) restoreTables(ctx context.Context) (finalErr error) {
 	return nil
 }
 
+func addExtendDataForCheckpoint(
+	ctx context.Context,
+	cfg *config.Config,
+	cp *checkpoints.TableCheckpoint,
+) error {
+	if len(cfg.Routes) == 0 {
+		return nil
+	}
+	hasExtractor := false
+	for _, route := range cfg.Routes {
+		hasExtractor = hasExtractor || route.TableExtractor != nil || route.SchemaExtractor != nil || route.SourceExtractor != nil
+		if hasExtractor {
+			break
+		}
+	}
+	if !hasExtractor {
+		return nil
+	}
+
+	// Use default file router directly because fileRouter and router are not compatible
+	fileRouter, err := mydump.NewDefaultFileRouter(log.FromContext(ctx))
+	if err != nil {
+		return err
+	}
+	router, err := regexprrouter.NewRegExprRouter(cfg.Mydumper.CaseSensitive, cfg.Routes)
+	for _, engine := range cp.Engines {
+		for _, chunk := range engine.Chunks {
+			_, file := filepath.Split(chunk.FileMeta.Path)
+			res, err := fileRouter.Route(file)
+			if err != nil {
+				return err
+			}
+			extendCols, extendData := router.FetchExtendColumn(res.Schema, res.Name, cfg.Mydumper.SourceID)
+			chunk.FileMeta.ExtendData = mydump.ExtendColumnData{
+				Columns: extendCols,
+				Values:  extendData,
+			}
+		}
+	}
+	return nil
+}
+
 func (tr *TableRestore) restoreTable(
 	ctx context.Context,
 	rc *Controller,
@@ -1652,6 +1697,10 @@ func (tr *TableRestore) restoreTable(
 			zap.Int("enginesCnt", len(cp.Engines)),
 			zap.Int("filesCnt", cp.CountChunks()),
 		)
+		err := addExtendDataForCheckpoint(ctx, rc.cfg, cp)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
 	} else if cp.Status < checkpoints.CheckpointStatusAllWritten {
 		if err := tr.populateChunks(ctx, rc, cp); err != nil {
 			return false, errors.Trace(err)
@@ -2441,12 +2490,15 @@ func (cr *chunkRestore) encodeLoop(
 	}
 
 	pauser, maxKvPairsCnt := rc.pauser, rc.cfg.TikvImporter.MaxKVPairs
-	initializedColumns, reachEOF := false, false
+	initializedColumns, initilizedEntendPerm, reachEOF := false, false, false
 	// filteredColumns is column names that excluded ignored columns
 	// WARN: this might be not correct when different SQL statements contains different fields,
 	// but since ColumnPermutation also depends on the hypothesis that the columns in one source file is the same
 	// so this should be ok.
-	var filteredColumns []string
+	var (
+		filteredColumns, extendCols []string
+		extendVals                  []types.Datum
+	)
 	ignoreColumns, err1 := rc.cfg.Mydumper.IgnoreColumns.GetIgnoreColumns(t.dbInfo.Name, t.tableInfo.Core.Name.O, rc.cfg.Mydumper.CaseSensitive)
 	if err1 != nil {
 		err = err1
@@ -2483,12 +2535,21 @@ func (cr *chunkRestore) encodeLoop(
 						}
 					}
 					filteredColumns = columnNames
+					extendCols = cr.chunk.FileMeta.ExtendData.Columns
+					extendColsMap := make(map[string]struct{})
+					for _, extendCol := range extendCols {
+						extendColsMap[extendCol] = struct{}{}
+					}
 					if ignoreColumns != nil && len(ignoreColumns.Columns) > 0 {
 						filteredColumns = make([]string, 0, len(columnNames))
 						ignoreColsMap := ignoreColumns.ColumnsMap()
+						for c := range ignoreColsMap {
+							delete(extendColsMap, c)
+						}
 						if len(columnNames) > 0 {
 							for _, c := range columnNames {
 								if _, ok := ignoreColsMap[c]; !ok {
+									delete(extendColsMap, c)
 									filteredColumns = append(filteredColumns, c)
 								}
 							}
@@ -2497,9 +2558,25 @@ func (cr *chunkRestore) encodeLoop(
 							// after filtered out some columns, we must explicitly set the columns for TiDB backend
 							for _, col := range t.tableInfo.Core.Columns {
 								if _, ok := ignoreColsMap[col.Name.L]; !col.Hidden && !ok {
+									// don't delete columns here. if users want to assign extend data through
+									// data files, they must
 									filteredColumns = append(filteredColumns, col.Name.O)
 								}
 							}
+						}
+					} else if len(extendCols) > 0 {
+						// init column names by table schema
+						// if we want to add extend values, we must explicitly set the columns for TiDB backend
+						for _, col := range t.tableInfo.Core.Columns {
+							if _, ok := extendColsMap[col.Name.O]; !ok {
+								filteredColumns = append(filteredColumns, col.Name.O)
+							}
+						}
+					}
+					for i, c := range extendCols {
+						if _, ok := extendColsMap[c]; ok {
+							filteredColumns = append(filteredColumns, c)
+							extendVals = append(extendVals, types.NewStringDatum(cr.chunk.FileMeta.ExtendData.Values[i]))
 						}
 					}
 					initializedColumns = true
@@ -2514,6 +2591,20 @@ func (cr *chunkRestore) encodeLoop(
 			readDur += time.Since(readDurStart)
 			encodeDurStart := time.Now()
 			lastRow := cr.parser.LastRow()
+			if !initilizedEntendPerm {
+				initilizedEntendPerm = true
+				lastRowLen := len(lastRow.Row)
+				extendColsMap := make(map[string]int)
+				for i, c := range extendCols {
+					extendColsMap[c] = lastRowLen + i
+				}
+				for i, col := range t.tableInfo.Core.Columns {
+					if p, ok := extendColsMap[col.Name.O]; ok {
+						cr.chunk.ColumnPermutation[i] = p
+					}
+				}
+			}
+			lastRow.Row = append(lastRow.Row, extendVals...)
 			// sql -> kv
 			kvs, encodeErr := kvEncoder.Encode(logger, lastRow.Row, lastRow.RowID, cr.chunk.ColumnPermutation, cr.chunk.Key.Path, curOffset)
 			encodeDur += time.Since(encodeDurStart)

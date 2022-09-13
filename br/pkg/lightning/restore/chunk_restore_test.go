@@ -36,7 +36,12 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/types"
+	tmock "github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
@@ -266,6 +271,69 @@ func (s *chunkRestoreSuite) TestEncodeLoop() {
 	require.Equal(s.T(), int64(19), kvs[0].rowID)
 	require.Equal(s.T(), int64(36), kvs[0].offset)
 	require.Equal(s.T(), []string(nil), kvs[0].columns)
+
+	kvs = <-kvsCh
+	require.Equal(s.T(), 1, len(kvs))
+	require.Nil(s.T(), kvs[0].kvs)
+	require.Equal(s.T(), s.cr.chunk.Chunk.EndOffset, kvs[0].offset)
+}
+
+func (s *chunkRestoreSuite) TestEncodeLoopWithExtendData() {
+	ctx := context.Background()
+	kvsCh := make(chan []deliveredKVs, 2)
+	deliverCompleteCh := make(chan deliverResult)
+
+	p := parser.New()
+	se := tmock.NewContext()
+
+	lastTi := s.tr.tableInfo
+	defer func() {
+		s.tr.tableInfo = lastTi
+	}()
+
+	node, err := p.ParseOneStmt("CREATE TABLE `t1` (`c1` varchar(5) NOT NULL, `c_table` varchar(5), `c_schema` varchar(5), `c_source` varchar(5))", "utf8mb4", "utf8mb4_bin")
+	require.NoError(s.T(), err)
+	tableInfo, err := ddl.MockTableInfo(se, node.(*ast.CreateTableStmt), int64(1))
+	require.NoError(s.T(), err)
+	tableInfo.State = model.StatePublic
+
+	schema := "test_1"
+	tb := "t1"
+	ti := &checkpoints.TidbTableInfo{
+		ID:   tableInfo.ID,
+		DB:   schema,
+		Name: tb,
+		Core: tableInfo,
+	}
+	s.tr.tableInfo = ti
+	for i := 0; i < len(s.tr.tableMeta.DataFiles); i++ {
+		s.tr.tableMeta.DataFiles[i].FileMeta.ExtendData = mydump.ExtendColumnData{
+			Columns: []string{"c_table", "c_schema", "c_source"},
+			Values:  []string{"1", "1", "01"},
+		}
+	}
+	defer func() {
+		for i := 0; i < len(s.tr.tableMeta.DataFiles); i++ {
+			s.tr.tableMeta.DataFiles[i].FileMeta.ExtendData = mydump.ExtendColumnData{}
+		}
+	}()
+
+	kvEncoder, err := kv.NewTableKVEncoder(s.tr.encTable, &kv.SessionOptions{
+		SQLMode:   s.cfg.TiDB.SQLMode,
+		Timestamp: 1234567895,
+	}, nil, log.L())
+	require.NoError(s.T(), err)
+	cfg := config.NewConfig()
+	rc := &Controller{pauser: DeliverPauser, cfg: cfg}
+	_, _, err = s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, rc)
+	require.NoError(s.T(), err)
+	require.Len(s.T(), kvsCh, 2)
+
+	kvs := <-kvsCh
+	require.Len(s.T(), kvs, 1)
+	require.Equal(s.T(), int64(19), kvs[0].rowID)
+	require.Equal(s.T(), int64(36), kvs[0].offset)
+	require.Equal(s.T(), []string{"c1", "c_table", "c_schema", "c_source"}, kvs[0].columns)
 
 	kvs = <-kvsCh
 	require.Equal(s.T(), 1, len(kvs))

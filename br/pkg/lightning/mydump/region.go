@@ -39,9 +39,10 @@ const (
 type TableRegion struct {
 	EngineID int32
 
-	DB       string
-	Table    string
-	FileMeta SourceFileMeta
+	DB         string
+	Table      string
+	FileMeta   SourceFileMeta
+	ExtendData ExtendColumnData
 
 	Chunk Chunk
 }
