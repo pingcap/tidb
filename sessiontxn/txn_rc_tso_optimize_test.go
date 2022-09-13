@@ -770,7 +770,7 @@ func TestConflictErrorsUseRcWriteCheckTs(t *testing.T) {
 	tk2.MustExec("update t1 set id3 = id3 + 1 where id1 = 1")
 	tk.MustExec("select * from t1 where id1 = 1 for update")
 	tk.MustExec("commit")
-	records, ok = se.Value(sessiontxn.AssertLockErr).(map[string]int)
+	_, ok = se.Value(sessiontxn.AssertLockErr).(map[string]int)
 	require.Equal(t, false, ok)
 
 	tk.MustExec("insert into t1 values(20, 20, 20)")
@@ -779,7 +779,7 @@ func TestConflictErrorsUseRcWriteCheckTs(t *testing.T) {
 	tk2.MustExec("update t1 set id1 = 200 where id1 = 20")
 	tk.MustQuery("select * from t1 where id1 = 200 for update").Check(testkit.Rows("200 20 20"))
 	tk.MustExec("commit")
-	records, ok = se.Value(sessiontxn.AssertLockErr).(map[string]int)
+	_, ok = se.Value(sessiontxn.AssertLockErr).(map[string]int)
 	require.Equal(t, false, ok)
 
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertPessimisticLockErr"))
