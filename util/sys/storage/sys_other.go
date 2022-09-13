@@ -22,3 +22,8 @@ import "math"
 func GetTargetDirectoryCapacity(path string) (uint64, error) {
 	return math.MaxInt64, nil
 }
+
+// Writable checks whether the tidb-server has permission to write the file of the given path.
+func Writable(path string) bool {
+	return false
+}

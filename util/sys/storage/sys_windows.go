@@ -29,3 +29,15 @@ func GetTargetDirectoryCapacity(path string) (uint64, error) {
 	}
 	return freeBytes, nil
 }
+
+// Writable checks whether the tidb-server has permission to write the file of the given path.
+func Writable(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	if info.Mode().Perm()&(1<<(uint(7))) == 0 {
+		return false
+	}
+	return true
+}

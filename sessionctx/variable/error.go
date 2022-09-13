@@ -44,4 +44,6 @@ var (
 	// It needs to be public for tests.
 	ErrFunctionsNoopImpl         = dbterror.ClassVariable.NewStdErr(mysql.ErrNotSupportedYet, pmysql.Message("function %s has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions", nil))
 	ErrVariableNoLongerSupported = dbterror.ClassVariable.NewStd(mysql.ErrVariableNoLongerSupported)
+	ErrCantReadDir               = dbterror.ClassVariable.NewStd(mysql.ErrCantReadDir)
+	ErrErrorOnWrite              = dbterror.ClassVariable.NewStd(mysql.ErrErrorOnWrite)
 )

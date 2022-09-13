@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"os"
 	"runtime"
 	"strconv"
 	"strings"
@@ -41,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/stmtsummary"
+	"github.com/pingcap/tidb/util/sys/storage"
 	"github.com/pingcap/tidb/util/tikvutil"
 	"github.com/pingcap/tidb/util/tls"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
@@ -473,6 +475,27 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}, GetGlobal: func(s *SessionVars) (string, error) {
 		return config.GetGlobalConfig().Instance.TmpDir, nil
+	}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		var (
+			fileInfo os.FileInfo
+			err      error
+		)
+		if fileInfo, err = os.Stat(normalizedValue); err != nil {
+			if !os.IsNotExist(err) {
+				return normalizedValue, err
+			}
+			os.Mkdir(normalizedValue, 0o755)
+			defer os.Remove(normalizedValue)
+			fileInfo, err = os.Stat(normalizedValue)
+			return normalizedValue, err
+		}
+		if !fileInfo.IsDir() {
+			return "", ErrCantReadDir.FastGenByArgs(normalizedValue, ErrCantReadDir.Code(), "TmpDir should be a directory.")
+		}
+		if !storage.Writable(normalizedValue) {
+			return "", ErrCantReadDir.FastGenByArgs(normalizedValue, ErrCantReadDir.Code(), "Write permission denied.")
+		}
+		return normalizedValue, nil
 	}},
 	{Scope: ScopeInstance, Name: TiDBTmpStorageQuota, Value: strconv.FormatInt(config.GetGlobalConfig().Instance.TmpStorageQuota, 10), Type: TypeInt, MinValue: -1, AllowAutoValue: true, SetGlobal: func(s *SessionVars, val string) error {
 		newVal, err := strconv.ParseInt(val, 10, 64)

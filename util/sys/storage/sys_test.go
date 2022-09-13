@@ -15,6 +15,7 @@
 package storage_test
 
 import (
+	"os"
 	"testing"
 
 	"github.com/pingcap/tidb/util/sys/storage"
@@ -27,4 +28,8 @@ func TestGetTargetDirectoryCapacity(t *testing.T) {
 	require.GreaterOrEqual(t, r, uint64(1), "couldn't get capacity")
 
 	//TODO: check the value of r with `df` in linux
+}
+
+func TestWritable(t *testing.T) {
+	require.True(t, storage.Writable(os.TempDir()))
 }

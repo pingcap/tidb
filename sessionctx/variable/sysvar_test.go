@@ -17,6 +17,7 @@ package variable
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"strconv"
 	"sync/atomic"
 	"testing"
@@ -40,6 +41,24 @@ func TestSQLSelectLimit(t *testing.T) {
 
 	require.Nil(t, sv.SetSessionFromHook(vars, "9999")) // sets
 	require.Equal(t, uint64(9999), vars.SelectLimit)
+}
+
+func TestTmpDir(t *testing.T) {
+	sv := GetSysVar(TmpDir)
+	vars := NewSessionVars()
+
+	val, err := sv.Validate(vars, os.TempDir(), ScopeInstance)
+	require.NoError(t, err)
+	require.Equal(t, os.TempDir(), val)
+
+	invalidTmpFile, err := os.CreateTemp("", "invalid_tmpdir*.txt")
+	require.NoError(t, err, "Error happened when creating temp file")
+	defer func() {
+		require.NoError(t, invalidTmpFile.Close())
+		require.NoError(t, os.Remove(invalidTmpFile.Name()))
+	}()
+	val, err = sv.Validate(vars, invalidTmpFile.Name(), ScopeInstance)
+	require.Error(t, err)
 }
 
 func TestSQLModeVar(t *testing.T) {

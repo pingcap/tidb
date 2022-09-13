@@ -16,7 +16,11 @@
 
 package storage
 
-import "syscall"
+import (
+	"syscall"
+
+	"golang.org/x/sys/unix"
+)
 
 // GetTargetDirectoryCapacity get the capacity (bytes) of directory
 func GetTargetDirectoryCapacity(path string) (uint64, error) {
@@ -27,4 +31,9 @@ func GetTargetDirectoryCapacity(path string) (uint64, error) {
 	}
 	c := stat.Bavail * uint64(stat.Bsize)
 	return c, nil
+}
+
+// Writable checks whether the tidb-server has permission to write the file of the given path.
+func Writable(path string) bool {
+	return unix.Access(path, unix.W_OK) == nil
 }
