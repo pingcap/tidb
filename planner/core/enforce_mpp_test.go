@@ -493,7 +493,7 @@ func TestMPPSingleDistinct3Stage(t *testing.T) {
 	// test table
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b bigint not null, c bigint, d date, e varchar(20))")
+	tk.MustExec("create table t(a int, b bigint not null, c bigint, d date, e varchar(20) collate utf8mb4_general_ci)")
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())

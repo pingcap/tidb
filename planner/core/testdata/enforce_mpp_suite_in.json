@@ -119,7 +119,12 @@
     "cases": [
       "set @@tidb_allow_mpp=1;set @@tidb_enforce_mpp=1;",
       "EXPLAIN select count(distinct c) from t;",
+      "EXPLAIN select count(distinct e) from t;",
+      "EXPLAIN select count(distinct a,b,c,e) from t;",
       "EXPLAIN select count(distinct c), count(a), count(*) from t;",
+      "EXPLAIN select sum(b), count(a), count(*), count(distinct c) from t;",
+      "EXPLAIN select sum(b+a), count(*), count(distinct c), count(a) from t having count(distinct c) > 2;",
+      "EXPLAIN select sum(b), count(distinct a, b, e), count(a+b) from t;",
       "EXPLAIN select count(distinct c+a), count(a) from t;",
       "EXPLAIN select sum(b), count(distinct c+a, b, e), count(a+b) from t;"
     ]

@@ -1436,7 +1436,7 @@ func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType, isMPPTas
 	return partialAgg, finalAgg
 }
 
-// can this agg use 3 stage for distinct aggregation
+// canUse3StageDistinctAgg returns true if this agg can use 3 stage for distinct aggregation
 func (p *basePhysicalAgg) canUse3StageDistinctAgg() bool {
 	num := 0
 	if !p.ctx.GetSessionVars().Enable3StageDistinctAgg || len(p.GroupByItems) > 0 {
@@ -1447,6 +1447,12 @@ func (p *basePhysicalAgg) canUse3StageDistinctAgg() bool {
 			num++
 			if num > 1 || fun.Name != ast.AggFuncCount {
 				return false
+			}
+			for _, arg := range fun.Args {
+				// bail out when args are not simple column, see GitHub issue #35417
+				if _, ok := arg.(*expression.Column); !ok {
+					return false
+				}
 			}
 		} else if len(fun.Args) > 1 {
 			return false
