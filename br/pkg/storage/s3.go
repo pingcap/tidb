@@ -5,8 +5,6 @@ package storage
 import (
 	"bytes"
 	"context"
-	"crypto/md5"
-	"encoding/base64"
 	"fmt"
 	"io"
 	"net/url"
@@ -138,7 +136,7 @@ type S3BackendOptions struct {
 	UseAccelerateEndpoint bool   `json:"use-accelerate-endpoint" toml:"use-accelerate-endpoint"`
 	RoleARN               string `json:"role-arn" toml:"role-arn"`
 	ExternalID            string `json:"external-id" toml:"external-id"`
-	ObjectLockEnabled     bool   `json:"object-lock-enabled" toml:"object-lock_enabled"`
+	ObjectLockEnabled     bool   `json:"object-lock-enabled" toml:"object-lock-enabled"`
 }
 
 // Apply apply s3 options on backuppb.S3.
@@ -486,13 +484,13 @@ func (rs *S3Storage) WriteFile(ctx context.Context, file string, data []byte) er
 	if rs.options.StorageClass != "" {
 		input = input.SetStorageClass(rs.options.StorageClass)
 	}
-	if rs.objectLockEnabled {
-		// we need to calculate contentMD5 if s3 object lock enabled.
-		// otherwise we will get en missing content_md5 error from s3.
-		hash := md5.Sum(data)
-		contentMD5 := base64.StdEncoding.EncodeToString(hash[:])
-		input.SetContentMD5(contentMD5)
-	}
+	// if rs.objectLockEnabled {
+	// 	// we need to calculate contentMD5 if s3 object lock enabled.
+	// 	// otherwise we will get en missing content_md5 error from s3.
+	// 	hash := md5.Sum(data)
+	// 	contentMD5 := base64.StdEncoding.EncodeToString(hash[:])
+	// 	input.SetContentMD5(contentMD5)
+	// }
 	_, err := rs.svc.PutObjectWithContext(ctx, input)
 	if err != nil {
 		return errors.Trace(err)
