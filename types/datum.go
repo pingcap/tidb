@@ -1477,7 +1477,7 @@ func ProduceDecWithSpecifiedTp(dec *MyDecimal, tp *FieldType, sc *stmtctx.Statem
 		} else {
 			decimal = fless
 		}
-		if decimal < int(dec.GetDigitsFrac()) {
+		if decimal > int(dec.GetDigitsFrac()) {
 			decimal = int(dec.GetDigitsFrac())
 		}
 	}
