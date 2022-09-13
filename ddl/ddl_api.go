@@ -5538,7 +5538,7 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	}
 	if referredFK := checkTableHasForeignKeyReferred(ctx, d.GetInfoSchemaWithInterceptor(ctx), ti.Schema, ti.Name, []*ast.TableName{{Name: ti.Name, Schema: ti.Schema}}); referredFK != nil {
 		msg := fmt.Sprintf("`%s`.`%s` CONSTRAINT `%s`", referredFK.ChildSchema, referredFK.ChildTable, referredFK.ChildFKName)
-		return errors.Trace(dbterror.ErrTruncateIllegalFk.GenWithStackByArgs(msg))
+		return errors.Trace(dbterror.ErrTruncateIllegalForeignKey.GenWithStackByArgs(msg))
 	}
 
 	genIDs, err := d.genGlobalIDs(1)

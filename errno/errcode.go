@@ -682,7 +682,7 @@ const (
 	ErrAccessDeniedNoPassword                                = 1698
 	ErrSetPasswordAuthPlugin                                 = 1699
 	ErrGrantPluginUserExists                                 = 1700
-	ErrTruncateIllegalFk                                     = 1701
+	ErrTruncateIllegalForeignKey                             = 1701
 	ErrPluginIsPermanent                                     = 1702
 	ErrStmtCacheFull                                         = 1705
 	ErrMultiUpdateKeyConflict                                = 1706
