@@ -16,12 +16,12 @@ package core
 
 import (
 	"bytes"
-	"container/heap"
 	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"runtime/pprof"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -614,42 +614,21 @@ func debugPlanCacheInfo(sctx sessionctx.Context) {
 	dumpHeap(sctx)
 }
 
-type intHeap []int
-
-func (h intHeap) Len() int            { return len(h) }
-func (h intHeap) Less(i, j int) bool  { return h[i] > h[j] }
-func (h intHeap) Swap(i, j int)       { h[i], h[j] = h[j], h[i] }
-func (h *intHeap) Push(x interface{}) { *h = append(*h, x.(int)) }
-func (h *intHeap) Pop() interface{} {
-	old := *h
-	n := len(old)
-	x := old[n-1]
-	*h = old[0 : n-1]
-	return x
-}
-
 func logPlanCacheInfo(sctx sessionctx.Context) {
 	c := sctx.PreparedPlanCache()
 	var totVals, totKeys int
-	top10 := new(intHeap)
-	heap.Init(top10)
-
+	valNumList := make([]int, 0, 16)
 	c.ForEach(func(k kvcache.Key, v kvcache.Value) {
 		numVals := len(v.([]*PlanCacheValue))
 		totVals += numVals
 		totKeys += 1
-		heap.Push(top10, numVals)
-		if top10.Len() > 10 {
-			heap.Pop(top10)
-		}
+		valNumList = append(valNumList, numVals)
 	})
 
+	sort.Ints(valNumList)
 	top10List := make([]int, 0, 10)
-	for top10.Len() > 0 {
-		top10List = append(top10List, heap.Pop(top10).(int))
-	}
-	for i, j := 0, len(top10List)-1; i < j; i, j = i+1, j-1 {
-		top10List[i], top10List[j] = top10List[j], top10List[i]
+	for i := len(valNumList) - 1; i > 0 && len(top10List) < 10; i-- {
+		top10List = append(top10List, valNumList[i])
 	}
 	logutil.BgLogger().Warn("[Plan-Cache-Patch] plan cache info",
 		zap.Uint64("connID", sctx.GetSessionVars().ConnectionID),
