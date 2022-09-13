@@ -51,6 +51,7 @@ go_library(
         "//util/size",
         "//util/stmtsummary",
         "//util/stringutil",
+        "//util/sys/storage",
         "//util/tableutil",
         "//util/tikvutil",
         "//util/timeutil",
