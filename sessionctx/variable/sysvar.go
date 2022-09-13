@@ -701,14 +701,21 @@ var defaultSysVars = []*SysVar{
 		GetGlobal: func(s *SessionVars) (string, error) {
 			return memory.ServerMemoryQuota.String(), nil
 		},
+		Validation: func(s *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+			intVal, err := strconv.ParseUint(normalizedValue, 10, 64)
+			if err != nil {
+				return "", err
+			}
+			if intVal > 0 && intVal < (512<<20) { // 512 MB
+				s.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(TiDBServerMemoryQuota, originalValue))
+				intVal = 512 << 20
+			}
+			return strconv.FormatUint(intVal, 10), nil
+		},
 		SetGlobal: func(s *SessionVars, val string) error {
 			intVal, err := strconv.ParseUint(val, 10, 64)
 			if err != nil {
-				intVal = DefTiDBServerMemoryQuota
-			}
-			if intVal > 0 && intVal < (512<<20) { // 512 MB
-				s.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(TiDBServerMemoryQuota, val))
-				intVal = 512 << 20
+				return err
 			}
 			memory.ServerMemoryQuota.Store(intVal)
 			return nil
@@ -718,14 +725,21 @@ var defaultSysVars = []*SysVar{
 		GetGlobal: func(s *SessionVars) (string, error) {
 			return memory.ServerMemoryLimitSessMinSize.String(), nil
 		},
+		Validation: func(s *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+			intVal, err := strconv.ParseUint(normalizedValue, 10, 64)
+			if err != nil {
+				return "", err
+			}
+			if intVal > 0 && intVal < 128 { // 128 Bytes
+				s.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(TiDBServerMemoryLimitSessMinSize, originalValue))
+				intVal = 128
+			}
+			return strconv.FormatUint(intVal, 10), nil
+		},
 		SetGlobal: func(s *SessionVars, val string) error {
 			intVal, err := strconv.ParseUint(val, 10, 64)
 			if err != nil {
-				intVal = DefTiDBServerMemoryLimitSessMinSize
-			}
-			if intVal > 0 && intVal < 128 {
-				s.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(TiDBServerMemoryLimitSessMinSize, val))
-				intVal = 512 << 20
+				return err
 			}
 			memory.ServerMemoryLimitSessMinSize.Store(intVal)
 			return nil
