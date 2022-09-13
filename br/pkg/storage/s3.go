@@ -73,8 +73,6 @@ type S3Storage struct {
 	session *session.Session
 	svc     s3iface.S3API
 	options *backuppb.S3
-
-	objectLockEnabled bool
 }
 
 // S3Uploader does multi-part upload to s3.
@@ -401,8 +399,7 @@ func newS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (obj *S3St
 		svc:     c,
 		options: &qs,
 	}
-	objectLock := s3Storage.checkObjectLockEnabled()
-	backend.ObjectLockEnabled = objectLock
+	backend.ObjectLockEnabled = s3Storage.isObjectLockEnabled()
 	return s3Storage, nil
 }
 
@@ -448,7 +445,7 @@ func getObject(svc *s3.S3, qs *backuppb.S3) error {
 	return nil
 }
 
-func (rs *S3Storage) checkObjectLockEnabled() bool {
+func (rs *S3Storage) isObjectLockEnabled() bool {
 	input := &s3.GetObjectLockConfigurationInput{
 		Bucket: aws.String(rs.options.Bucket),
 	}
@@ -459,10 +456,10 @@ func (rs *S3Storage) checkObjectLockEnabled() bool {
 	}
 	if resp.ObjectLockConfiguration != nil {
 		if s3.ObjectLockEnabledEnabled == *resp.ObjectLockConfiguration.ObjectLockEnabled {
-			rs.objectLockEnabled = true
+			return true
 		}
 	}
-	return rs.objectLockEnabled
+	return false
 }
 
 // WriteFile writes data to a file to storage.
@@ -484,13 +481,9 @@ func (rs *S3Storage) WriteFile(ctx context.Context, file string, data []byte) er
 	if rs.options.StorageClass != "" {
 		input = input.SetStorageClass(rs.options.StorageClass)
 	}
-	// if rs.objectLockEnabled {
-	// 	// we need to calculate contentMD5 if s3 object lock enabled.
-	// 	// otherwise we will get en missing content_md5 error from s3.
-	// 	hash := md5.Sum(data)
-	// 	contentMD5 := base64.StdEncoding.EncodeToString(hash[:])
-	// 	input.SetContentMD5(contentMD5)
-	// }
+	// we don't need to calculate contentMD5 if s3 object lock enabled.
+	// since aws-go-sdk already did it in #computeBodyHashes
+	// https://github.com/aws/aws-sdk-go/blob/bcb2cf3fc2263c8c28b3119b07d2dbb44d7c93a0/service/s3/body_hash.go#L30
 	_, err := rs.svc.PutObjectWithContext(ctx, input)
 	if err != nil {
 		return errors.Trace(err)
