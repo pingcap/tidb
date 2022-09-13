@@ -1340,7 +1340,7 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 		}
 	})
 
-	needMerge := w.index.Meta().BackfillState != model.BackfillStateInapplicable
+	needMergeTmpIdx := w.index.Meta().BackfillState != model.BackfillStateInapplicable
 
 	oprStartTime := time.Now()
 	ctx := kv.WithInternalSourceType(context.Background(), w.jobContext.ddlJobSourceType())
@@ -1374,7 +1374,7 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 
 			// When the backfill-merge process is used, the writes from DML are redirected to a temp index.
 			// The write-conflict will be handled by the merge worker. Thus, the locks are unnecessary.
-			if !needMerge {
+			if !needMergeTmpIdx {
 				// We need to add this lock to make sure pessimistic transaction can realize this operation.
 				// For the normal pessimistic transaction, it's ok. But if async commit is used, it may lead to inconsistent data and index.
 				err := txn.LockKeys(context.Background(), new(kv.LockCtx), idxRecord.key)
