@@ -22,7 +22,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/pprof"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -649,8 +648,9 @@ func logPlanCacheInfo(sctx sessionctx.Context) {
 	for top10.Len() > 0 {
 		top10List = append(top10List, heap.Pop(top10).(int))
 	}
-	sort.Ints(top10List)
-
+	for i, j := 0, len(top10List)-1; i < j; i, j = i+1, j-1 {
+		top10List[i], top10List[j] = top10List[j], top10List[i]
+	}
 	logutil.BgLogger().Warn("[Plan-Cache-Patch] plan cache info",
 		zap.Uint64("connID", sctx.GetSessionVars().ConnectionID),
 		zap.Int("tot-keys", totKeys), zap.Int("tot-vals", totVals),
