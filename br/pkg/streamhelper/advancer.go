@@ -183,16 +183,6 @@ func (c *CheckpointAdvancer) recordTimeCost(message string, fields ...zap.Field)
 	}
 }
 
-func overlaps(a, b kv.KeyRange) bool {
-	if len(b.EndKey) == 0 {
-		return len(a.EndKey) == 0 || bytes.Compare(a.EndKey, b.StartKey) > 0
-	}
-	if len(a.EndKey) == 0 {
-		return len(b.EndKey) == 0 || bytes.Compare(b.EndKey, a.StartKey) > 0
-	}
-	return bytes.Compare(a.StartKey, b.EndKey) < 0 && bytes.Compare(b.StartKey, a.EndKey) < 0
-}
-
 // tryAdvance tries to advance the checkpoint ts of a set of ranges which shares the same checkpoint.
 func (c *CheckpointAdvancer) tryAdvance(ctx context.Context, rst RangesSharesTS) (err error) {
 	defer c.recordTimeCost("try advance", zap.Uint64("checkpoint", rst.TS), zap.Int("len", len(rst.Ranges)))()
