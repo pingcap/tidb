@@ -5383,7 +5383,11 @@ func (d *ddl) dropTableObject(
 		dropExistErr = infoschema.ErrSequenceDropExists
 		jobType = model.ActionDropSequence
 	}
-
+	objectIdents := make([]ast.Ident, len(objects))
+	for i, tn := range objects {
+		objectIdents[i] = ast.Ident{Schema: tn.Schema, Name: tn.Name}
+	}
+	var jobArgs []interface{}
 	for _, tn := range objects {
 		fullti := ast.Ident{Schema: tn.Schema, Name: tn.Name}
 		schema, ok := is.SchemaByName(tn.Schema)
@@ -5432,9 +5436,11 @@ func (d *ddl) dropTableObject(
 			if tableInfo.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 				return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Drop Table")
 			}
-			if referredFK := checkTableHasForeignKeyReferred(ctx, is, tn.Schema, tn.Name, objects); referredFK != nil {
+			fkCheck := ctx.GetSessionVars().ForeignKeyChecks
+			if referredFK := checkTableHasForeignKeyReferred(is, tn.Schema.L, tn.Name.L, objectIdents, fkCheck); referredFK != nil {
 				return errors.Trace(dbterror.ErrForeignKeyCannotDropParent.GenWithStackByArgs(tn.Name, referredFK.ChildFKName, referredFK.ChildTable))
 			}
+			jobArgs = []interface{}{objectIdents, fkCheck}
 		case viewObject:
 			if !tableInfo.Meta().IsView() {
 				return dbterror.ErrWrongObject.GenWithStackByArgs(fullti.Schema, fullti.Name, "VIEW")
@@ -5458,6 +5464,7 @@ func (d *ddl) dropTableObject(
 			TableName:   tableInfo.Meta().Name.L,
 			Type:        jobType,
 			BinlogInfo:  &model.HistoryInfo{},
+			Args:        jobArgs,
 		}
 
 		err = d.DoDDLJob(ctx, job)
@@ -5502,29 +5509,6 @@ func (d *ddl) DropView(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err err
 	return d.dropTableObject(ctx, stmt.Tables, stmt.IfExists, viewObject)
 }
 
-func checkTableHasForeignKeyReferred(ctx sessionctx.Context, is infoschema.InfoSchema, schema, tbl model.CIStr, ignoreTables []*ast.TableName) *model.ReferredFKInfo {
-	if !ctx.GetSessionVars().ForeignKeyChecks {
-		return nil
-	}
-	referredFKs := is.GetTableReferredForeignKeys(schema.L, tbl.L)
-	for _, referredFK := range referredFKs {
-		found := false
-		for _, tb := range ignoreTables {
-			if referredFK.ChildSchema.L == tb.Schema.L && referredFK.ChildTable.L == tb.Name.L {
-				found = true
-				break
-			}
-		}
-		if found {
-			continue
-		}
-		if is.TableExists(referredFK.ChildSchema, referredFK.ChildTable) {
-			return referredFK
-		}
-	}
-	return nil
-}
-
 func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ti)
 	if err != nil {
@@ -5536,7 +5520,9 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	if tb.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 		return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Truncate Table")
 	}
-	if referredFK := checkTableHasForeignKeyReferred(ctx, d.GetInfoSchemaWithInterceptor(ctx), ti.Schema, ti.Name, []*ast.TableName{{Name: ti.Name, Schema: ti.Schema}}); referredFK != nil {
+	fkCheck := ctx.GetSessionVars().ForeignKeyChecks
+	referredFK := checkTableHasForeignKeyReferred(d.GetInfoSchemaWithInterceptor(ctx), ti.Schema.L, ti.Name.L, []ast.Ident{{Name: ti.Name, Schema: ti.Schema}}, fkCheck)
+	if referredFK != nil {
 		msg := fmt.Sprintf("`%s`.`%s` CONSTRAINT `%s`", referredFK.ChildSchema, referredFK.ChildTable, referredFK.ChildFKName)
 		return errors.Trace(dbterror.ErrTruncateIllegalForeignKey.GenWithStackByArgs(msg))
 	}
@@ -5553,7 +5539,7 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 		TableName:  tb.Meta().Name.L,
 		Type:       model.ActionTruncateTable,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{newTableID},
+		Args:       []interface{}{newTableID, fkCheck},
 	}
 	if ok, _ := ctx.CheckTableLocked(tb.Meta().ID); ok && config.TableLockEnabled() {
 		// AddTableLock here to avoid this ddl job was executed successfully but the session was been kill before return.

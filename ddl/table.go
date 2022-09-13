@@ -330,6 +330,12 @@ func onDropTableOrView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ er
 	switch tblInfo.State {
 	case model.StatePublic:
 		// public -> write only
+		if job.Type == model.ActionDropTable {
+			err = checkDropTableHasForeignKeyReferredInOwner(d, t, job)
+			if err != nil {
+				return ver, err
+			}
+		}
 		tblInfo.State = model.StateWriteOnly
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != tblInfo.State)
 		if err != nil {
@@ -666,7 +672,8 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 	schemaID := job.SchemaID
 	tableID := job.TableID
 	var newTableID int64
-	err := job.DecodeArgs(&newTableID)
+	var fkCheck bool
+	err := job.DecodeArgs(&newTableID, &fkCheck)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -678,6 +685,15 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 	if tblInfo.IsView() || tblInfo.IsSequence() {
 		job.State = model.JobStateCancelled
 		return ver, infoschema.ErrTableNotExists.GenWithStackByArgs(job.SchemaName, tblInfo.Name.O)
+	}
+	referredFK, err := checkTableHasForeignKeyReferredInOwner(d, t, job.SchemaName, job.TableName, []ast.Ident{{Name: tblInfo.Name, Schema: model.NewCIStr(job.SchemaName)}}, fkCheck)
+	if err != nil {
+		return ver, err
+	}
+	if referredFK != nil {
+		job.State = model.JobStateCancelled
+		msg := fmt.Sprintf("`%s`.`%s` CONSTRAINT `%s`", referredFK.ChildSchema, referredFK.ChildTable, referredFK.ChildFKName)
+		return ver, errors.Trace(dbterror.ErrTruncateIllegalForeignKey.GenWithStackByArgs(msg))
 	}
 
 	err = t.DropTableOrView(schemaID, tblInfo.ID)

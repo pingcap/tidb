@@ -20,6 +20,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl"
@@ -898,6 +899,67 @@ func TestTruncateOrDropTableWithForeignKeyReferred(t *testing.T) {
 			tk.MustExec(sql)
 		}
 	}
+}
+
+func TestTruncateOrDropTableWithForeignKeyReferred2(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
+	d := dom.DDL()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1;")
+	tk.MustExec("use test")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk2.MustExec("set @@foreign_key_checks=1;")
+	tk2.MustExec("use test")
+	tk3 := testkit.NewTestKit(t, store)
+	tk3.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk3.MustExec("set @@foreign_key_checks=1;")
+	tk3.MustExec("use test")
+
+	tk.MustExec("create table t1 (id int key, a int);")
+
+	var wg sync.WaitGroup
+	var truncateErr, dropErr error
+	testTruncate := true
+	tc := &ddl.TestDDLCallback{}
+	tc.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.SchemaState != model.StateNone {
+			return
+		}
+		if job.Type != model.ActionCreateTable {
+			return
+		}
+		wg.Add(1)
+		if testTruncate {
+			go func() {
+				defer wg.Done()
+				truncateErr = tk2.ExecToErr("truncate table t1")
+			}()
+		} else {
+			go func() {
+				defer wg.Done()
+				dropErr = tk2.ExecToErr("drop table t1")
+			}()
+		}
+		// make sure tk2's ddl job already put into ddl job queue.
+		time.Sleep(time.Millisecond * 100)
+	}
+	originalHook := d.GetHook()
+	defer d.SetHook(originalHook)
+	d.SetHook(tc)
+
+	tk.MustExec("create table t2 (a int, b int, foreign key fk(b) references t1(id));")
+	wg.Wait()
+	require.Error(t, truncateErr)
+	require.Equal(t, "[ddl:1701]Cannot truncate a table referenced in a foreign key constraint (`test`.`t2` CONSTRAINT `fk`)", truncateErr.Error())
+
+	tk.MustExec("drop table t2")
+	testTruncate = false
+	tk.MustExec("create table t2 (a int, b int, foreign key fk(b) references t1(id));")
+	wg.Wait()
+	require.Error(t, dropErr)
+	require.Equal(t, "[ddl:1701]Cannot truncate a table referenced in a foreign key constraint (`test`.`t2` CONSTRAINT `fk`)", dropErr.Error())
 }
 
 func getTableInfo(t *testing.T, dom *domain.Domain, db, tb string) *model.TableInfo {
