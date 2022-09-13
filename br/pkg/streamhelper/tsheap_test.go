@@ -2,7 +2,9 @@
 package streamhelper_test
 
 import (
+	"fmt"
 	"math"
+	"math/rand"
 	"testing"
 
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
@@ -160,5 +162,77 @@ func TestInsertRanges(t *testing.T) {
 		for i, rs := range ranges {
 			require.ElementsMatch(t, c.Expected[i].Ranges, rs.Ranges, "case = %#v", c)
 		}
+	}
+}
+
+func TestConsistencyCheckOverRange(t *testing.T) {
+	r := func(a, b string) kv.KeyRange {
+		return kv.KeyRange{StartKey: []byte(a), EndKey: []byte(b)}
+	}
+	type Case struct {
+		checking []kv.KeyRange
+		probing  []kv.KeyRange
+		isSubset bool
+	}
+
+	cases := []Case{
+		// basic: exactly match.
+		{
+			checking: []kv.KeyRange{r("0001", "0002"), r("0002", "0003"), r("0004", "0005")},
+			probing:  []kv.KeyRange{r("0001", "0003"), r("0004", "0005")},
+			isSubset: true,
+		},
+		// not fully match, probing longer.
+		{
+			checking: []kv.KeyRange{r("0001", "0002"), r("0002", "0003"), r("0004", "0005")},
+			probing:  []kv.KeyRange{r("0000", "0003"), r("0004", "00051")},
+			isSubset: false,
+		},
+		// with infinity end keys.
+		{
+			checking: []kv.KeyRange{r("0001", "0002"), r("0002", "0003"), r("0004", "")},
+			probing:  []kv.KeyRange{r("0001", "0003"), r("0004", "")},
+			isSubset: true,
+		},
+		{
+			checking: []kv.KeyRange{r("0001", "0002"), r("0002", "0003"), r("0004", "")},
+			probing:  []kv.KeyRange{r("0001", "0003"), r("0004", "0005")},
+			isSubset: true,
+		},
+		{
+			checking: []kv.KeyRange{r("0001", "0002"), r("0002", "0003"), r("0004", "0005")},
+			probing:  []kv.KeyRange{r("0001", "0003"), r("0004", "")},
+			isSubset: false,
+		},
+		// overlapped probe.
+		{
+			checking: []kv.KeyRange{r("0001", "0002"), r("0002", "0003"), r("0004", "0007")},
+			probing:  []kv.KeyRange{r("0001", "0008")},
+			isSubset: false,
+		},
+		{
+			checking: []kv.KeyRange{r("0001", "0008")},
+			probing:  []kv.KeyRange{r("0001", "0002"), r("0002", "0003"), r("0004", "0007")},
+			isSubset: true,
+		},
+	}
+
+	run := func(t *testing.T, c Case) {
+		tree := streamhelper.NewCheckpoints()
+		for _, r := range c.checking {
+			tree.InsertRange(rand.Uint64()%10, r)
+		}
+		err := tree.ConsistencyCheck(c.probing)
+		if c.isSubset {
+			require.NoError(t, err)
+		} else {
+			require.Error(t, err)
+		}
+	}
+
+	for i, c := range cases {
+		t.Run(fmt.Sprintf("#%d", i), func(tc *testing.T) {
+			run(tc, c)
+		})
 	}
 }

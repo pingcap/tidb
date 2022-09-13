@@ -19,6 +19,7 @@ import (
 	logbackup "github.com/pingcap/kvproto/pkg/logbackuppb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/kv"
 	"google.golang.org/grpc"
 )
@@ -375,6 +376,19 @@ func (f *fakeCluster) flushAll() {
 	}
 }
 
+func (f *fakeCluster) flushAllExcept(keys ...string) {
+	for _, r := range f.regions {
+		// Note: can we make it faster?
+		for _, key := range keys {
+			if utils.CompareBytesExt(r.rng.StartKey, false, []byte(key), false) <= 0 &&
+				utils.CompareBytesExt([]byte(key), false, r.rng.EndKey, true) < 0 {
+				continue
+			}
+		}
+		r.flush()
+	}
+}
+
 func (f *fakeStore) flush() {
 	for _, r := range f.regions {
 		if r.leader == f.id {
@@ -400,17 +414,23 @@ type testEnv struct {
 	*fakeCluster
 	checkpoint uint64
 	testCtx    *testing.T
+	ranges     []kv.KeyRange
 
 	mu sync.Mutex
 }
 
 func (t *testEnv) Begin(ctx context.Context, ch chan<- streamhelper.TaskEvent) error {
+	rngs := t.ranges
+	if len(rngs) == 0 {
+		rngs = []kv.KeyRange{{}}
+	}
 	tsk := streamhelper.TaskEvent{
 		Type: streamhelper.EventAdd,
 		Name: "whole",
 		Info: &backup.StreamBackupTaskInfo{
 			Name: "whole",
 		},
+		Ranges: rngs,
 	}
 	ch <- tsk
 	return nil

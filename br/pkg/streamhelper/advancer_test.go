@@ -12,6 +12,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/config"
+	"github.com/pingcap/tidb/kv"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zapcore"
 	"google.golang.org/grpc/codes"
@@ -184,4 +185,20 @@ func TestOneStoreFailure(t *testing.T) {
 	c.flushAll()
 	require.NoError(t, adv.OnTick(ctx))
 	require.Equal(t, cp, env.checkpoint)
+}
+
+func TestTaskRanges(t *testing.T) {
+	log.SetLevel(zapcore.DebugLevel)
+	c := createFakeCluster(t, 4, true)
+	ctx := context.Background()
+	c.splitAndScatter("0001", "0002", "0012", "0034", "0048")
+	c.advanceCheckpoints()
+	c.flushAllExcept("0000", "0049")
+	env := &testEnv{fakeCluster: c, testCtx: t, ranges: []kv.KeyRange{{StartKey: []byte("0002"), EndKey: []byte("0048")}}}
+	adv := streamhelper.NewCheckpointAdvancer(env)
+	adv.StartTaskListener(ctx)
+
+	shouldFinishInTime(t, 10*time.Second, "first advancing", func() { require.NoError(t, adv.OnTick(ctx)) })
+	// Don't check the return value of advance checkpoints here -- we didn't
+	require.Greater(t, env.getCheckpoint(), uint64(0))
 }

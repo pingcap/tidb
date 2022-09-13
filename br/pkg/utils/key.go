@@ -89,3 +89,21 @@ func CompareEndKey(a, b []byte) int {
 
 	return bytes.Compare(a, b)
 }
+
+// CompareBytesExt compare two byte sequences.
+// different from `bytes.Compare`, we can provide whether to treat the key as inf when meet empty key to this.
+func CompareBytesExt(a []byte, aEmptyAsInf bool, b []byte, bEmptyAsInf bool) int {
+	// Inf = Inf
+	if len(a) == 0 && aEmptyAsInf && len(b) == 0 && bEmptyAsInf {
+		return 0
+	}
+	// Inf > anything
+	if len(a) == 0 && aEmptyAsInf {
+		return 1
+	}
+	// anything < Inf
+	if len(b) == 0 && bEmptyAsInf {
+		return -1
+	}
+	return bytes.Compare(a, b)
+}
