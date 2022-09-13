@@ -236,6 +236,9 @@ const (
 	// TiFlashFastScan indicates whether use fast scan in tiflash.
 	TiFlashFastScan = "tiflash_fastscan"
 
+	// TiDBEnableUnsafeSubstitute indicates whether to enable generate column takes unsafe substitute.
+	TiDBEnableUnsafeSubstitute = "tidb_enable_unsafe_substitute"
+
 	// TiDBEnableTiFlashReadForWriteStmt indicates whether to enable TiFlash to read for write statements.
 	TiDBEnableTiFlashReadForWriteStmt = "tidb_enable_tiflash_read_for_write_stmt"
 )

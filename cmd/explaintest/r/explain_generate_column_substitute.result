@@ -642,3 +642,35 @@ HashJoin	9.99	root		inner join, equal:[eq(test.t2.c_decimal, test.t1.c_decimal)]
     └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 drop table t1;
 drop table t2;
+set @@tidb_enable_unsafe_substitute=1;
+CREATE TABLE person (id INT PRIMARY KEY,address_info JSON,city VARCHAR(2) AS (JSON_UNQUOTE(address_info->"$.city")),KEY (city));
+INSERT INTO `person` (`id`, `address_info`) VALUES('1','{\"city\": \"Beijing\"}');
+desc SELECT id FROM person ignore index(`city`) WHERE address_info->>"$.city" = 'Beijing';
+id	estRows	task	access object	operator info
+Projection_4	8000.00	root		test.person.id
+└─TableReader_7	8000.00	root		data:Selection_6
+  └─Selection_6	8000.00	cop[tikv]		eq(json_unquote(cast(json_extract(test.person.address_info, "$.city"), var_string(16777216))), "Beijing")
+    └─TableFullScan_5	10000.00	cop[tikv]	table:person	keep order:false, stats:pseudo
+desc SELECT id FROM person force index(`city`) WHERE address_info->>"$.city" = 'Beijing';
+id	estRows	task	access object	operator info
+Projection_4	10.00	root		test.person.id
+└─IndexReader_6	10.00	root		index:IndexRangeScan_5
+  └─IndexRangeScan_5	10.00	cop[tikv]	table:person, index:city(city)	range:["Beijing","Beijing"], keep order:false, stats:pseudo
+drop table person;
+create table t(a char(5), b char(6) as (concat(a, a)), index bx(b));
+insert into t(a) values ('aaaaa');
+select * from t;
+a	b
+aaaaa	aaaaaa
+desc select * from t ignore index(bx) where concat(a, a) = 'aaaaaaaaaa';
+id	estRows	task	access object	operator info
+TableReader_7	8000.00	root		data:Selection_6
+└─Selection_6	8000.00	cop[tikv]		eq(concat(test.t.a, test.t.a), "aaaaaaaaaa")
+  └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+desc select * from t force index(bx) where concat(a, a) = 'aaaaaaaaaa';
+id	estRows	task	access object	operator info
+IndexLookUp_7	10.00	root		
+├─IndexRangeScan_5(Build)	10.00	cop[tikv]	table:t, index:bx(b)	range:["aaaaaaaaaa","aaaaaaaaaa"], keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+set @@tidb_enable_unsafe_substitute=0;
+drop table t;

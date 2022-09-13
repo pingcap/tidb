@@ -273,6 +273,24 @@ func (ft *FieldType) Equal(other *FieldType) bool {
 	return true
 }
 
+// UnsafeEqual checks whether two string FieldType objects are equal without flen.
+func (ft *FieldType) UnsafeEqual(other *FieldType, unsafe bool) bool {
+	if !unsafe || ft.EvalType() != ETString || other.EvalType() != ETString {
+		return ft.Equal(other)
+	}
+
+	partialEqual := ft.charset == other.charset && ft.collate == other.collate && mysql.HasUnsignedFlag(ft.flag) == mysql.HasUnsignedFlag(other.flag)
+	if !partialEqual || len(ft.elems) != len(other.elems) {
+		return false
+	}
+	for i := range ft.elems {
+		if ft.elems[i] != other.elems[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // EvalType gets the type in evaluation.
 func (ft *FieldType) EvalType() EvalType {
 	switch ft.tp {
