@@ -612,6 +612,13 @@ func (do *Domain) mdlCheckLoop() {
 	var saveMaxSchemaVersion int64
 	jobNeedToSync := false
 	jobCache := make(map[int64]int64, 1000)
+	se, err := do.sysSessionPool.Get()
+	if err != nil {
+		logutil.Logger(context.Background()).Error("get sys session failed", zap.Error(err))
+		return
+	}
+	exec := se.(sqlexec.RestrictedSQLExecutor)
+
 	for {
 		select {
 		case <-ticker:
@@ -626,14 +633,6 @@ func (do *Domain) mdlCheckLoop() {
 				continue
 			}
 			// Get job to check.
-			se, err := do.sysSessionPool.Get()
-			if err != nil {
-				logutil.Logger(context.Background()).Error("get sys session failed", zap.Error(err))
-				return
-			}
-			do.sysSessionPool.Put(se)
-
-			exec := se.(sqlexec.RestrictedSQLExecutor)
 			rows, _, err := exec.ExecRestrictedSQL(kv.WithInternalSourceType(context.Background(), kv.InternalTxnTelemetry), nil, "select * from mysql.tidb_mdl_info")
 			if err != nil {
 				continue
