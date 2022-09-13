@@ -23,9 +23,9 @@ go_test(
     srcs = [
         "add_index_test.go",
         "main_test.go",
-        "concurrentDDL_test.go"
-        "multischemachange_test.go"
-        "pitr_test.go"
+        "concurrentDDL_test.go",
+        "multischemachange_test.go",
+        "pitr_test.go",
     ],
     embed = [":addindextest"],
     deps = [
