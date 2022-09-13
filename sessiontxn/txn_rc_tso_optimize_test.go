@@ -45,9 +45,9 @@ func TestRcTSOCmdCountForPrepareExecuteNormal(t *testing.T) {
 
 	tk.MustExec("set global transaction_isolation = 'READ-COMMITTED'")
 	tk.MustExec("set global tx_isolation = 'READ-COMMITTED'")
-	tk.MustExec("set session tidb_rc_write_check_ts = on")
 	tk.RefreshSession()
 	sctx := tk.Session()
+	tk.MustExec("set session tidb_rc_write_check_ts = on")
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -156,9 +156,9 @@ func TestRcTSOCmdCountForPrepareExecuteExtra(t *testing.T) {
 
 	tk.MustExec("set global transaction_isolation = 'READ-COMMITTED'")
 	tk.MustExec("set global tx_isolation = 'READ-COMMITTED'")
-	tk.MustExec("set session tidb_rc_write_check_ts = on")
 	tk.RefreshSession()
 	sctx := tk.Session()
+	tk.MustExec("set session tidb_rc_write_check_ts = on")
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -431,9 +431,9 @@ func TestRcTSOCmdCountForTextSQLExecuteNormal(t *testing.T) {
 
 	tk.MustExec("set global transaction_isolation = 'READ-COMMITTED'")
 	tk.MustExec("set global tx_isolation = 'READ-COMMITTED'")
-	tk.MustExec("set session tidb_rc_write_check_ts = on")
 	tk.RefreshSession()
 	sctx := tk.Session()
+	tk.MustExec("set session tidb_rc_write_check_ts = on")
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -499,9 +499,9 @@ func TestRcTSOCmdCountForTextSQLExecuteExtra(t *testing.T) {
 
 	tk.MustExec("set global transaction_isolation = 'READ-COMMITTED'")
 	tk.MustExec("set global tx_isolation = 'READ-COMMITTED'")
-	tk.MustExec("set session tidb_rc_write_check_ts = on")
 	tk.RefreshSession()
 	sctx := tk.Session()
+	tk.MustExec("set session tidb_rc_write_check_ts = on")
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
