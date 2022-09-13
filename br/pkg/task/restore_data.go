@@ -175,7 +175,7 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 		return errors.Trace(err)
 	}
 
-	log.Debug("total tikv", zap.Int("total", numBackupStore), zap.Int64("int", int64(numBackupStore)), zap.String("progress file", cfg.ProgressFile))
+	log.Debug("total tikv", zap.Int("total", numBackupStore), zap.String("progress file", cfg.ProgressFile))
 	// progress = read meta + send recovery + iterate tikv + resolve kv data.
 	progress := g.StartProgress(ctx, cmdName, int64(numBackupStore*4), !cfg.LogProgress)
 	go progressFileWriterRoutine(ctx, progress, int64(numBackupStore*4), cfg.ProgressFile)
