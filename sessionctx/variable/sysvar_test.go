@@ -57,7 +57,7 @@ func TestTmpDir(t *testing.T) {
 		require.NoError(t, invalidTmpFile.Close())
 		require.NoError(t, os.Remove(invalidTmpFile.Name()))
 	}()
-	val, err = sv.Validate(vars, invalidTmpFile.Name(), ScopeInstance)
+	_, err = sv.Validate(vars, invalidTmpFile.Name(), ScopeInstance)
 	require.Error(t, err)
 }
 
