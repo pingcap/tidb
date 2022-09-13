@@ -1095,7 +1095,7 @@ func TestCheckFailReport(t *testing.T) {
 		require.NoError(t, txn.Commit(tk.ctx))
 
 		ctx, hook := withLogHook(tk.ctx, t, "inconsistency")
-		_, err := tk.Exec(ctx, "admin check table admin_test")
+		_, err = tk.Exec(ctx, "admin check table admin_test")
 		require.Error(t, err)
 		require.Equal(t, "[admin:8223]data inconsistency in table: admin_test, index: uk1, handle: 1, index-values:\"\" != record-values:\"handle: 1, values: [KindInt64 1]\"", err.Error())
 		hook.checkLogCount(t, 1)
