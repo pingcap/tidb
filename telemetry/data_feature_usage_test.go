@@ -63,6 +63,10 @@ func TestTxnUsageInfo(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("set global %s = 1", variable.TiDBRCReadCheckTS))
 		txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
 		require.True(t, txnUsage.RcCheckTS)
+
+		tk.MustExec(fmt.Sprintf("set global %s = 1", variable.TiDBRCWriteCheckTs))
+		txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
+		require.True(t, txnUsage.RCWriteCheckTS)
 	})
 
 	t.Run("Count", func(t *testing.T) {

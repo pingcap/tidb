@@ -564,7 +564,11 @@ func (b *builtinJSONObjectSig) evalJSON(row chunk.Row) (res types.BinaryJSON, is
 			jsons[key] = value
 		}
 	}
-	return types.CreateBinaryJSON(jsons), false, nil
+	bj, err := types.CreateBinaryJSONWithCheck(jsons)
+	if err != nil {
+		return res, true, err
+	}
+	return bj, false, nil
 }
 
 type jsonArrayFunctionClass struct {
@@ -613,7 +617,11 @@ func (b *builtinJSONArraySig) evalJSON(row chunk.Row) (res types.BinaryJSON, isN
 		}
 		jsons = append(jsons, j)
 	}
-	return types.CreateBinaryJSON(jsons), false, nil
+	bj, err := types.CreateBinaryJSONWithCheck(jsons)
+	if err != nil {
+		return res, true, err
+	}
+	return bj, false, nil
 }
 
 type jsonContainsPathFunctionClass struct {
@@ -996,7 +1004,10 @@ func (b *builtinJSONArrayAppendSig) appendJSONArray(res types.BinaryJSON, p stri
 		// res.Extract will return a json object instead of an array if there is an object at path pathExpr.
 		// JSON_ARRAY_APPEND({"a": "b"}, "$", {"b": "c"}) => [{"a": "b"}, {"b", "c"}]
 		// We should wrap them to a single array first.
-		obj = types.CreateBinaryJSON([]interface{}{obj})
+		obj, err = types.CreateBinaryJSONWithCheck([]interface{}{obj})
+		if err != nil {
+			return res, true, err
+		}
 	}
 
 	obj = types.MergeBinaryJSON([]types.BinaryJSON{obj, v})
