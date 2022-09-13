@@ -1138,9 +1138,9 @@ func IndexKey2TempIndexKey(indexID int64, key []byte) {
 }
 
 // TempIndexKey2IndexKey generates an index key from temporary index key.
-func TempIndexKey2IndexKey(indexID int64, key []byte) {
-	eid := codec.EncodeIntToCmpUint(indexID)
-	binary.BigEndian.PutUint64(key[11:], eid)
+func TempIndexKey2IndexKey(originIdxID int64, tempIdxKey []byte) {
+	eid := codec.EncodeIntToCmpUint(originIdxID)
+	binary.BigEndian.PutUint64(tempIdxKey[11:], eid)
 }
 
 // GenIndexValuePortal is the portal for generating index value.
