@@ -484,8 +484,12 @@ var defaultSysVars = []*SysVar{
 			if !os.IsNotExist(err) {
 				return normalizedValue, err
 			}
-			os.Mkdir(normalizedValue, 0o755)
-			defer os.Remove(normalizedValue)
+			if err = os.Mkdir(normalizedValue, 0o750); err != nil {
+				return normalizedValue, err
+			}
+			defer func() {
+				_ = os.Remove(normalizedValue)
+			}()
 			fileInfo, err = os.Stat(normalizedValue)
 			return normalizedValue, err
 		}
