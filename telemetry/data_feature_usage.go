@@ -255,7 +255,7 @@ func getTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
 	}
 	rcWriteCheckTSUsed := false
 	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(variable.TiDBRCWriteCheckTs); err == nil {
-		rcCheckTSUsed = val == variable.On
+		rcWriteCheckTSUsed = val == variable.On
 	}
 	currSavepointCount := m.GetSavepointStmtCounter()
 	diffSavepointCount := currSavepointCount - initialSavepointStmtCounter
