@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"unsafe"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/parser/charset"
@@ -600,4 +601,21 @@ func (ft *FieldType) MarshalJSON() ([]byte, error) {
 	r.Elems = ft.elems
 	r.ElemsIsBinaryLit = ft.elemsIsBinaryLit
 	return json.Marshal(r)
+}
+
+const emptyFieldTypeSize = int64(unsafe.Sizeof(FieldType{}))
+
+// MemoryUsage return the memory usage of FieldType
+func (ft *FieldType) MemoryUsage() (sum int64) {
+	if ft == nil {
+		return
+	}
+	sum = emptyFieldTypeSize + int64(len(ft.charset)+len(ft.collate))
+
+	for _, s := range ft.elems {
+		sum += int64(len(s))
+	}
+	sum += int64(cap(ft.elems)) * int64(unsafe.Sizeof(*new(string)))
+	sum += int64(cap(ft.elemsIsBinaryLit)) * int64(unsafe.Sizeof(*new(bool)))
+	return
 }

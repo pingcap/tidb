@@ -19,7 +19,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -54,7 +54,7 @@ func (e *jsonArrayagg) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Parti
 		return nil
 	}
 
-	chk.AppendJSON(e.ordinal, json.CreateBinary(p.entries))
+	chk.AppendJSON(e.ordinal, types.CreateBinaryJSON(p.entries))
 	return nil
 }
 
@@ -72,11 +72,11 @@ func (e *jsonArrayagg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup 
 		}
 
 		switch x := realItem.(type) {
-		case nil, bool, int64, uint64, float64, string, json.BinaryJSON, json.Opaque:
+		case nil, bool, int64, uint64, float64, string, types.BinaryJSON, types.Opaque, types.Time, types.Duration:
 			p.entries = append(p.entries, realItem)
 			memDelta += getValMemDelta(realItem)
 		default:
-			return 0, json.ErrUnsupportedSecondArgumentType.GenWithStackByArgs(x)
+			return 0, types.ErrUnsupportedSecondArgumentType.GenWithStackByArgs(x)
 		}
 	}
 	return memDelta, nil

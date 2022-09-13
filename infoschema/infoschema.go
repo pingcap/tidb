@@ -62,6 +62,8 @@ type InfoSchema interface {
 	AllPlacementPolicies() []*model.PolicyInfo
 	// HasTemporaryTable returns whether information schema has temporary table
 	HasTemporaryTable() bool
+	// GetTableReferredForeignKeys gets the table's ReferredFKInfo by lowercase schema and table name.
+	GetTableReferredForeignKeys(schema, table string) []*model.ReferredFKInfo
 }
 
 type sortedTables []table.Table
@@ -101,6 +103,16 @@ type infoSchema struct {
 
 	// schemaMetaVersion is the version of schema, and we should check version when change schema.
 	schemaMetaVersion int64
+
+	// referredForeignKeyMap records all table's ReferredFKInfo.
+	// referredSchemaAndTableName => child SchemaAndTableAndForeignKeyName => *model.ReferredFKInfo
+	referredForeignKeyMap map[SchemaAndTableName][]*model.ReferredFKInfo
+}
+
+// SchemaAndTableName contains the lower-case schema name and table name.
+type SchemaAndTableName struct {
+	schema string
+	table  string
 }
 
 // MockInfoSchema only serves for test.
@@ -417,9 +429,76 @@ func (is *infoSchema) deletePolicy(name string) {
 	delete(is.policyMap, name)
 }
 
+func (is *infoSchema) addReferredForeignKeys(schema model.CIStr, tbInfo *model.TableInfo) {
+	for _, fk := range tbInfo.ForeignKeys {
+		if fk.Version < model.FKVersion1 {
+			continue
+		}
+		refer := SchemaAndTableName{schema: fk.RefSchema.L, table: fk.RefTable.L}
+		referredFKList := is.referredForeignKeyMap[refer]
+		found := false
+		for _, referredFK := range referredFKList {
+			if referredFK.ChildSchema.L == schema.L && referredFK.ChildTable.L == tbInfo.Name.L && referredFK.ChildFKName.L == fk.Name.L {
+				referredFK.Cols = fk.RefCols
+				found = true
+				break
+			}
+		}
+		if found {
+			continue
+		}
+
+		newReferredFKList := make([]*model.ReferredFKInfo, 0, len(referredFKList)+1)
+		newReferredFKList = append(newReferredFKList, referredFKList...)
+		newReferredFKList = append(newReferredFKList, &model.ReferredFKInfo{
+			Cols:        fk.RefCols,
+			ChildSchema: schema,
+			ChildTable:  tbInfo.Name,
+			ChildFKName: fk.Name,
+		})
+		sort.Slice(newReferredFKList, func(i, j int) bool {
+			if newReferredFKList[i].ChildSchema.L != newReferredFKList[j].ChildSchema.L {
+				return newReferredFKList[i].ChildSchema.L < newReferredFKList[j].ChildSchema.L
+			}
+			if newReferredFKList[i].ChildTable.L != newReferredFKList[j].ChildTable.L {
+				return newReferredFKList[i].ChildTable.L < newReferredFKList[j].ChildTable.L
+			}
+			return newReferredFKList[i].ChildFKName.L != newReferredFKList[j].ChildFKName.L
+		})
+		is.referredForeignKeyMap[refer] = newReferredFKList
+	}
+}
+
+func (is *infoSchema) deleteReferredForeignKeys(schema model.CIStr, tbInfo *model.TableInfo) {
+	for _, fk := range tbInfo.ForeignKeys {
+		if fk.Version < model.FKVersion1 {
+			continue
+		}
+		refer := SchemaAndTableName{schema: fk.RefSchema.L, table: fk.RefTable.L}
+		referredFKList := is.referredForeignKeyMap[refer]
+		if len(referredFKList) == 0 {
+			continue
+		}
+		newReferredFKList := make([]*model.ReferredFKInfo, 0, len(referredFKList)-1)
+		for _, referredFK := range referredFKList {
+			if referredFK.ChildSchema.L == schema.L && referredFK.ChildTable.L == tbInfo.Name.L && referredFK.ChildFKName.L == fk.Name.L {
+				continue
+			}
+			newReferredFKList = append(newReferredFKList, referredFK)
+		}
+		is.referredForeignKeyMap[refer] = newReferredFKList
+	}
+}
+
+// GetTableReferredForeignKeys gets the table's ReferredFKInfo by lowercase schema and table name.
+func (is *infoSchema) GetTableReferredForeignKeys(schema, table string) []*model.ReferredFKInfo {
+	name := SchemaAndTableName{schema: schema, table: table}
+	return is.referredForeignKeyMap[name]
+}
+
 // SessionTables store local temporary tables
 type SessionTables struct {
-	// Local temporary tables can be accessed after the db is dropped, so there needs a way to retain the DBInfo.
+	// Session tables can be accessed after the db is dropped, so there needs a way to retain the DBInfo.
 	// schemaTables.dbInfo will only be used when the db is dropped and it may be stale after the db is created again.
 	// But it's fine because we only need its name.
 	schemaMap map[string]*schemaTables

@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/util/size"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
@@ -523,6 +525,22 @@ func (*basePhysicalPlan) ExtractCorrelatedCols() []*expression.CorrelatedColumn 
 	return nil
 }
 
+// MemoryUsage return the memory usage of basePhysicalPlan
+func (p *basePhysicalPlan) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.basePlan.MemoryUsage() + size.SizeOfSlice + int64(cap(p.childrenReqProps))*size.SizeOfPointer +
+		size.SizeOfSlice + int64(cap(p.children)+1)*size.SizeOfInterface + size.SizeOfFloat64*2 +
+		size.SizeOfUint64 + size.SizeOfBool
+	for _, prop := range p.childrenReqProps {
+		sum += prop.MemoryUsage()
+	}
+	//todo: memtrace: add children's memory
+	return
+}
+
 // GetLogicalTS4TaskMap get the logical TimeStamp now to help rollback the TaskMap changes after that.
 func (p *baseLogicalPlan) GetLogicalTS4TaskMap() uint64 {
 	p.ctx.GetSessionVars().StmtCtx.TaskMapBakTS++
@@ -724,6 +742,19 @@ func (p *basePlan) SelectBlockOffset() int {
 // Stats implements Plan Stats interface.
 func (p *basePlan) Stats() *property.StatsInfo {
 	return p.stats
+}
+
+// basePlanSize is the size of basePlan.
+const basePlanSize = int64(unsafe.Sizeof(basePlan{}))
+
+// MemoryUsage return the memory usage of basePlan
+func (p *basePlan) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = basePlanSize + int64(len(p.tp))
+	return sum
 }
 
 // Schema implements Plan Schema interface.

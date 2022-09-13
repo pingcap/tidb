@@ -216,10 +216,11 @@ func getGeneralPlan(sctx sessionctx.Context, isGeneralPlanCache bool, cacheKey k
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 
-	cachedVal, exist := getValidPlanFromCache(sctx, isGeneralPlanCache, cacheKey, paramTypes)
+	candidate, exist := sctx.GetPlanCache(isGeneralPlanCache).Get(cacheKey, paramTypes)
 	if !exist {
 		return nil, nil, false, nil
 	}
+	cachedVal := candidate.(*PlanCacheValue)
 	if err := CheckPreparedPriv(sctx, stmt, is); err != nil {
 		return nil, nil, false, err
 	}
@@ -261,7 +262,9 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isGeneralPlan
 	stmtCtx := sessVars.StmtCtx
 
 	planCacheMissCounter.Inc()
+	sctx.GetSessionVars().StmtCtx.InPreparedPlanBuilding = true
 	p, names, err := OptimizeAstNode(ctx, sctx, stmtAst.Stmt, is)
+	sctx.GetSessionVars().StmtCtx.InPreparedPlanBuilding = false
 	if err != nil {
 		return nil, nil, err
 	}
@@ -288,7 +291,7 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isGeneralPlan
 		stmt.NormalizedPlan, stmt.PlanDigest = NormalizePlan(p)
 		stmtCtx.SetPlan(p)
 		stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
-		putPlanIntoCache(sctx, isGeneralPlanCache, cacheKey, cached)
+		sctx.GetPlanCache(isGeneralPlanCache).Put(cacheKey, cached, paramTypes)
 	}
 	sessVars.FoundInPlanCache = false
 	return p, names, err

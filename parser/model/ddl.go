@@ -777,6 +777,10 @@ func (job *Job) IsRollbackable() bool {
 		return job.SchemaState == StateNone
 	case ActionMultiSchemaChange:
 		return job.MultiSchemaInfo.Revertible
+	case ActionFlashbackCluster:
+		if job.SchemaState == StateWriteReorganization {
+			return false
+		}
 	}
 	return true
 }

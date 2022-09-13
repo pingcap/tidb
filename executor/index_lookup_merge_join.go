@@ -29,6 +29,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/channel"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -719,8 +720,7 @@ func (e *IndexLookUpMergeJoin) Close() error {
 		e.cancelFunc = nil
 	}
 	if e.resultCh != nil {
-		for range e.resultCh {
-		}
+		channel.Clear(e.resultCh)
 		e.resultCh = nil
 	}
 	e.joinChkResourceCh = nil
