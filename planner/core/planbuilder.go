@@ -4371,6 +4371,14 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 				authErr = ErrTableaccessDenied.GenWithStackByArgs("CREATE", b.ctx.GetSessionVars().User.AuthUsername,
 					b.ctx.GetSessionVars().User.AuthHostname, v.Table.Name.L)
 			}
+			for _, cons := range v.Constraints {
+				if cons.Tp == ast.ConstraintForeignKey && cons.Refer != nil {
+					authErr = ErrTableaccessDenied.GenWithStackByArgs("REFERENCES", b.ctx.GetSessionVars().User.AuthUsername,
+						b.ctx.GetSessionVars().User.AuthHostname, cons.Refer.Table.Name.L)
+					b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ReferencesPriv, cons.Refer.Table.Schema.L,
+						cons.Refer.Table.Name.L, "", authErr)
+				}
+			}
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreatePriv, v.Table.Schema.L,
 			v.Table.Name.L, "", authErr)

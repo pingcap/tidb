@@ -18,12 +18,15 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/dbterror"
@@ -113,10 +116,17 @@ func TestFlashbackCloseAndResetPDSchedule(t *testing.T) {
 	originHook := dom.DDL().GetHook()
 	tk := testkit.NewTestKit(t, store)
 
+	injectSafeTS := oracle.GoTimeToTS(time.Now().Add(10 * time.Second))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockFlashbackTest", `return(true)`))
+	require.NoError(t, failpoint.Enable("tikvclient/injectSafeTS",
+		fmt.Sprintf("return(%v)", injectSafeTS)))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/expression/injectSafeTS",
+		fmt.Sprintf("return(%v)", injectSafeTS)))
+
 	oldValue := map[string]interface{}{
 		"hot-region-schedule-limit": 1,
 	}
-	infosync.SetPDScheduleConfig(context.Background(), oldValue)
+	require.NoError(t, infosync.SetPDScheduleConfig(context.Background(), oldValue))
 
 	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
 	defer resetGC()
@@ -145,6 +155,74 @@ func TestFlashbackCloseAndResetPDSchedule(t *testing.T) {
 	finishValue, err := infosync.GetPDScheduleConfig(context.Background())
 	require.NoError(t, err)
 	require.EqualValues(t, finishValue["hot-region-schedule-limit"], 1)
+
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockFlashbackTest"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS"))
+	require.NoError(t, failpoint.Disable("tikvclient/injectSafeTS"))
+}
+
+func TestGlobalVariablesOnFlashback(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	originHook := dom.DDL().GetHook()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+
+	ts, err := tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
+	require.NoError(t, err)
+
+	injectSafeTS := oracle.GoTimeToTS(oracle.GetTimeFromTS(ts).Add(10 * time.Second))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockFlashbackTest", `return(true)`))
+	require.NoError(t, failpoint.Enable("tikvclient/injectSafeTS",
+		fmt.Sprintf("return(%v)", injectSafeTS)))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/expression/injectSafeTS",
+		fmt.Sprintf("return(%v)", injectSafeTS)))
+
+	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
+	defer resetGC()
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+
+	hook := &ddl.TestDDLCallback{Do: dom}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		assert.Equal(t, model.ActionFlashbackCluster, job.Type)
+		if job.SchemaState == model.StateWriteReorganization {
+			rs, err := tk.Exec("show variables like 'tidb_super_read_only'")
+			assert.NoError(t, err)
+			assert.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.On)
+			rs, err = tk.Exec("show variables like 'tidb_gc_enable'")
+			assert.NoError(t, err)
+			assert.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.Off)
+		}
+	}
+	dom.DDL().SetHook(hook)
+	// first try with `tidb_gc_enable` = on and `tidb_super_read_only` = off
+	tk.MustExec("set global tidb_gc_enable = on")
+	tk.MustExec("set global tidb_super_read_only = off")
+
+	tk.MustExec(fmt.Sprintf("flashback cluster as of timestamp '%s'", oracle.GetTimeFromTS(ts)))
+	rs, err := tk.Exec("show variables like 'tidb_super_read_only'")
+	require.NoError(t, err)
+	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.Off)
+	rs, err = tk.Exec("show variables like 'tidb_gc_enable'")
+	require.NoError(t, err)
+	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.On)
+
+	// second try with `tidb_gc_enable` = off and `tidb_super_read_only` = on
+	tk.MustExec("set global tidb_gc_enable = off")
+	tk.MustExec("set global tidb_super_read_only = on")
+
+	tk.MustExec(fmt.Sprintf("flashback cluster as of timestamp '%s'", oracle.GetTimeFromTS(ts)))
+	rs, err = tk.Exec("show variables like 'tidb_super_read_only'")
+	require.NoError(t, err)
+	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.On)
+	rs, err = tk.Exec("show variables like 'tidb_gc_enable'")
+	require.NoError(t, err)
+	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.Off)
+
+	dom.DDL().SetHook(originHook)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockFlashbackTest"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS"))
+	require.NoError(t, failpoint.Disable("tikvclient/injectSafeTS"))
 }
 
 func TestCancelFlashbackCluster(t *testing.T) {
@@ -153,6 +231,13 @@ func TestCancelFlashbackCluster(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	ts, err := tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
 	require.NoError(t, err)
+
+	injectSafeTS := oracle.GoTimeToTS(oracle.GetTimeFromTS(ts).Add(10 * time.Second))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockFlashbackTest", `return(true)`))
+	require.NoError(t, failpoint.Enable("tikvclient/injectSafeTS",
+		fmt.Sprintf("return(%v)", injectSafeTS)))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/expression/injectSafeTS",
+		fmt.Sprintf("return(%v)", injectSafeTS)))
 
 	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
 	defer resetGC()
@@ -175,4 +260,8 @@ func TestCancelFlashbackCluster(t *testing.T) {
 	hook.MustCancelFailed(t)
 
 	dom.DDL().SetHook(originHook)
+
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockFlashbackTest"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS"))
+	require.NoError(t, failpoint.Disable("tikvclient/injectSafeTS"))
 }

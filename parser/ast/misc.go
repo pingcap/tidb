@@ -1332,8 +1332,8 @@ func (n *UserSpec) EncodedPassword() (string, bool) {
 	opt := n.AuthOpt
 	if opt.ByAuthString {
 		switch opt.AuthPlugin {
-		case mysql.AuthCachingSha2Password:
-			return auth.NewSha2Password(opt.AuthString), true
+		case mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:
+			return auth.NewHashPassword(opt.AuthString, opt.AuthPlugin), true
 		case mysql.AuthSocket:
 			return "", true
 		default:
@@ -1350,6 +1350,10 @@ func (n *UserSpec) EncodedPassword() (string, bool) {
 	switch opt.AuthPlugin {
 	case mysql.AuthCachingSha2Password:
 		if len(opt.HashString) != mysql.SHAPWDHashLen {
+			return "", false
+		}
+	case mysql.AuthTiDBSM3Password:
+		if len(opt.HashString) != mysql.SM3PWDHashLen {
 			return "", false
 		}
 	case "", mysql.AuthNativePassword:
