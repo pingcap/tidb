@@ -2404,6 +2404,10 @@ func TestJSONBuiltin(t *testing.T) {
 	tk.MustGetErrCode(`select json_merge(1, 2);`, mysql.ErrInvalidTypeForJSON)
 	tk.MustGetErrCode(`select json_merge_preserve(1, 2);`, mysql.ErrInvalidTypeForJSON)
 	tk.MustGetErrCode(`select json_merge_patch(1, 2);`, mysql.ErrInvalidTypeForJSON)
+	tk.MustGetErrCode(`select JSON_CONTAINS_PATH(1, 'one', '$.a');`, mysql.ErrInvalidTypeForJSON)
+	tk.MustGetErrCode(`select json_search(1, 'one', '$.a');`, mysql.ErrInvalidTypeForJSON)
+	tk.MustGetErrCode(`select json_keys(1, '$.a');`, mysql.ErrInvalidTypeForJSON)
+	tk.MustGetErrCode(`select JSON_extract(1, '$.a');`, mysql.ErrInvalidTypeForJSON)
 }
 
 func TestTimeLiteral(t *testing.T) {

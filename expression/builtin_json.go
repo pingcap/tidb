@@ -138,6 +138,16 @@ func (b *builtinJSONExtractSig) Clone() builtinFunc {
 	return newSig
 }
 
+func (c *jsonExtractFunctionClass) verifyArgs(args []Expression) error {
+	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
+		return err
+	}
+	if evalType := args[0].GetType().EvalType(); evalType != types.ETString && evalType != types.ETJson {
+		return ErrInvalidTypeForJSON.GenWithStackByArgs(0, "json_extract")
+	}
+	return nil
+}
+
 func (c *jsonExtractFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
@@ -618,6 +628,16 @@ func (b *builtinJSONContainsPathSig) Clone() builtinFunc {
 	newSig := &builtinJSONContainsPathSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
+}
+
+func (c *jsonContainsPathFunctionClass) verifyArgs(args []Expression) error {
+	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
+		return err
+	}
+	if evalType := args[0].GetType().EvalType(); evalType != types.ETString && evalType != types.ETJson {
+		return ErrInvalidTypeForJSON.GenWithStackByArgs(0, "json_contains_path")
+	}
+	return nil
 }
 
 func (c *jsonContainsPathFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
@@ -1272,6 +1292,16 @@ func (b *builtinJSONSearchSig) Clone() builtinFunc {
 	return newSig
 }
 
+func (c *jsonSearchFunctionClass) verifyArgs(args []Expression) error {
+	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
+		return err
+	}
+	if evalType := args[0].GetType().EvalType(); evalType != types.ETString && evalType != types.ETJson {
+		return ErrInvalidTypeForJSON.GenWithStackByArgs(0, "json_search")
+	}
+	return nil
+}
+
 func (c *jsonSearchFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
@@ -1428,6 +1458,16 @@ func (b *builtinJSONDepthSig) evalInt(row chunk.Row) (res int64, isNull bool, er
 
 type jsonKeysFunctionClass struct {
 	baseFunctionClass
+}
+
+func (c *jsonKeysFunctionClass) verifyArgs(args []Expression) error {
+	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
+		return err
+	}
+	if evalType := args[0].GetType().EvalType(); evalType != types.ETString && evalType != types.ETJson {
+		return ErrInvalidTypeForJSON.GenWithStackByArgs(0, "json_keys")
+	}
+	return nil
 }
 
 func (c *jsonKeysFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
