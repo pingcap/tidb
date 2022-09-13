@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -92,7 +93,7 @@ func (eqh *Handle) Run() {
 			if record.err == nil {
 				record.alarm4ExcessiveMemUsage(sm)
 			}
-			serverMemoryQuota.Check(variable.ServerMemoryQuota.Load())
+			serverMemoryQuota.CheckQuotaAndKill(memory.ServerMemoryQuota.Load())
 		case <-eqh.exitCh:
 			return
 		}

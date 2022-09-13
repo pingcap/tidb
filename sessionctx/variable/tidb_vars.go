@@ -1050,7 +1050,6 @@ var (
 	MaxOfMaxAllowedPacket       uint64 = 1073741824
 	ExpensiveQueryTimeThreshold uint64 = DefTiDBExpensiveQueryTimeThreshold
 	MemoryUsageAlarmRatio              = atomic.NewFloat64(config.GetGlobalConfig().Instance.MemoryUsageAlarmRatio)
-	ServerMemoryQuota                  = atomic.NewUint64(0)
 	EnableLocalTxn                     = atomic.NewBool(DefTiDBEnableLocalTxn)
 	MaxTSOBatchWaitInterval            = atomic.NewFloat64(DefTiDBTSOClientBatchMaxWaitTime)
 	EnableTSOFollowerProxy             = atomic.NewBool(DefTiDBEnableTSOFollowerProxy)

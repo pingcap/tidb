@@ -30,6 +30,13 @@ import (
 // TrackMemWhenExceeds is the threshold when memory usage needs to be tracked.
 const TrackMemWhenExceeds = 104857600 // 100MB
 
+// Process global variables for memory limit.
+var (
+	ServerMemoryQuota            = atomicutil.NewUint64(0)
+	ServerMemoryGCTrigger        = atomicutil.NewFloat64(0)
+	ServerMemoryLimitSessMinSize = atomicutil.NewUint64(128 << 20)
+)
+
 // Tracker is used to track the memory usage during query execution.
 // It contains an optional limit and can be arranged into a tree structure
 // such that the consumption tracked by a Tracker is also tracked by
@@ -76,7 +83,7 @@ type Tracker struct {
 	bytesReleased int64            // Released bytes.
 	maxConsumed   atomicutil.Int64 // max number of bytes consumed during execution.
 	isGlobal      bool             // isGlobal indicates whether this tracker is global tracker
-	isSession     bool             // isSession indicates whether this tracker is bound for session
+	IsSession     bool             // IsSession indicates whether this tracker is bound for session
 	IsKilled      atomic.Bool      // IsKilled indicates whether this session is killed because OOM
 }
 
@@ -361,7 +368,7 @@ func (t *Tracker) Consume(bs int64) {
 	}
 	var rootExceed, rootExceedForSoftLimit, sessionTracker *Tracker
 	for tracker := t; tracker != nil; tracker = tracker.getParent() {
-		if tracker.isSession {
+		if tracker.IsSession {
 			sessionTracker = tracker
 		}
 		bytesConsumed := atomic.AddInt64(&tracker.bytesConsumed, bs)
@@ -398,23 +405,24 @@ func (t *Tracker) Consume(bs int64) {
 		}
 	}
 
-	if bs > 0 && rootExceedForSoftLimit != nil {
-		tryAction(&rootExceedForSoftLimit.actionMuForSoftLimit, rootExceedForSoftLimit)
-	}
 	if bs > 0 && rootExceed != nil {
 		tryAction(&rootExceed.actionMuForHardLimit, rootExceed)
 	}
 
+	if bs > 0 && rootExceedForSoftLimit != nil {
+		tryAction(&rootExceedForSoftLimit.actionMuForSoftLimit, rootExceedForSoftLimit)
+	}
+
 	if sessionTracker != nil {
-		// Kill
+		// Kill the Top1 session
 		if sessionTracker.IsKilled.Load() {
 			tryAction(&sessionTracker.actionMuForHardLimit, sessionTracker)
 		}
+		// Update the Top1 session
 		memUsage := sessionTracker.BytesConsumed()
-		if memUsage < TrackMemWhenExceeds {
+		if memUsage < int64(ServerMemoryLimitSessMinSize.Load()) {
 			return
 		}
-		// Update Top1
 		oldTracker := MemUsageTop1Tracker.Load()
 		for oldTracker.Compare(sessionTracker) {
 			if MemUsageTop1Tracker.CompareAndSwap(oldTracker, sessionTracker) {

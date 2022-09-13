@@ -15,14 +15,15 @@
 package expensivequery
 
 import (
-	"github.com/pingcap/tidb/util/memory"
 	"runtime"
+
+	"github.com/pingcap/tidb/util/memory"
 )
 
 type serverMemoryQuota struct {
 }
 
-func (s *serverMemoryQuota) Check(bt uint64) {
+func (s *serverMemoryQuota) CheckQuotaAndKill(bt uint64) {
 	if bt == 0 {
 		return
 	}
