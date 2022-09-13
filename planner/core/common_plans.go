@@ -627,7 +627,7 @@ func logPlanCacheInfo(sctx sessionctx.Context) {
 
 	sort.Ints(valNumList)
 	top10List := make([]int, 0, 10)
-	for i := len(valNumList) - 1; i > 0 && len(top10List) < 10; i-- {
+	for i := len(valNumList) - 1; i >= 0 && len(top10List) < 10; i-- {
 		top10List = append(top10List, valNumList[i])
 	}
 	logutil.BgLogger().Warn("[Plan-Cache-Patch] plan cache info",
