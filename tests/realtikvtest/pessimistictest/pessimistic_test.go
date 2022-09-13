@@ -3416,7 +3416,7 @@ func TestRCPointWriteLockIfExists(t *testing.T) {
 	tk2.MustExec("begin pessimistic")
 	tk.MustQuery("select * from t1 where id1 = 1 for update").Check(testkit.Rows("1 1 1"))
 	txnCtx := tk.Session().GetSessionVars().TxnCtx
-	val, ok := txnCtx.GetKeyInPessimisticLockCache(key1)
+	_, ok := txnCtx.GetKeyInPessimisticLockCache(key1)
 	require.True(t, ok)
 	_, err = tk2.Exec("update t1 set id3 = 100 where id1 = 1")
 	require.Equal(t, storeerr.ErrLockWaitTimeout.Error(), err.Error())
@@ -3435,7 +3435,7 @@ func TestRCPointWriteLockIfExists(t *testing.T) {
 	tk2.MustExec("begin pessimistic")
 	tk.MustQuery("select id1+id2, id3*id3 from t1 where id1 = 1 for update")
 	txnCtx = tk.Session().GetSessionVars().TxnCtx
-	val, ok = txnCtx.GetKeyInPessimisticLockCache(key1)
+	_, ok = txnCtx.GetKeyInPessimisticLockCache(key1)
 	require.True(t, ok)
 	_, err = tk2.Exec("update t1 set id3 = 1000 where id1 = 1")
 	require.Equal(t, storeerr.ErrLockWaitTimeout.Error(), err.Error())
@@ -3450,7 +3450,7 @@ func TestRCPointWriteLockIfExists(t *testing.T) {
 	tk.MustExec("rollback")
 	tk2.MustExec("rollback")
 
-	// cluster index, the record is flitered out by selection exection
+	// cluster index, the record is filtered out by selection execution
 	tk.MustExec("begin pessimistic")
 	tk2.MustExec("begin pessimistic")
 	tk.MustExec("select * from t1 where id1 = 1 and id2 = 2 for update")
@@ -3459,7 +3459,7 @@ func TestRCPointWriteLockIfExists(t *testing.T) {
 	tk.MustExec("rollback")
 	tk2.MustExec("rollback")
 
-	// cluster index, the record is flitered out by selection exection
+	// cluster index, the record is filtered out by selection execution
 	tk.MustExec("begin pessimistic")
 	tk2.MustExec("begin pessimistic")
 	tk.MustExec("insert into t1 values(15, 15, 15)")
@@ -3487,12 +3487,12 @@ func TestRCPointWriteLockIfExists(t *testing.T) {
 	tk2.MustExec("begin pessimistic")
 	tk.MustQuery("select * from t1 where id2 = 1 for update").Check(testkit.Rows("1 1 1"))
 	txnCtx = tk.Session().GetSessionVars().TxnCtx
-	val, ok = txnCtx.GetKeyInPessimisticLockCache(secIdxKey1)
+	val, ok := txnCtx.GetKeyInPessimisticLockCache(secIdxKey1)
 	require.Equal(t, true, ok)
 	handle, err := tablecodec.DecodeHandleInUniqueIndexValue(val, false)
 	require.NoError(t, err)
 	require.Equal(t, kv.IntHandle(1), handle)
-	val, ok = txnCtx.GetKeyInPessimisticLockCache(key1)
+	_, ok = txnCtx.GetKeyInPessimisticLockCache(key1)
 	require.Equal(t, true, ok)
 	_, err = tk2.Exec("update t1 set id3 = 100 where id2 = 1")
 	require.Equal(t, storeerr.ErrLockWaitTimeout.Error(), err.Error())
