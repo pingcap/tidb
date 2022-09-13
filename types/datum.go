@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/zap"
 )
 
@@ -1473,8 +1472,14 @@ func ProduceDecWithSpecifiedTp(dec *MyDecimal, tp *FieldType, sc *stmtctx.Statem
 	//If it is a string to decimal, the length of the decimal place can be determined now
 	if (tp.GetFlag() & mysql.StringcastdecimalFlag) == mysql.StringcastdecimalFlag {
 		fless := flen - int(dec.GetDigitsInt())
-		decimal = mathutil.Min(fless, mysql.MaxDecimalScale)
-		decimal = mathutil.Min(decimal, int(dec.GetDigitsFrac()))
+		if fless > mysql.MaxDecimalScale {
+			decimal = mysql.MaxDecimalScale
+		} else {
+			decimal = fless
+		}
+		if decimal < int(dec.GetDigitsFrac()) {
+			decimal = int(dec.GetDigitsFrac())
+		}
 	}
 
 	if flen != UnspecifiedLength && decimal != UnspecifiedLength {
