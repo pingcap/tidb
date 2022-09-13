@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/pprof"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -666,6 +667,7 @@ func logPlanCacheInfo(sctx sessionctx.Context) {
 	for top10.Len() > 0 {
 		top10List = append(top10List, top10.Pop().(int))
 	}
+	sort.Ints(top10List)
 
 	logutil.BgLogger().Warn("[Plan-Cache-Patch] plan cache info",
 		zap.Uint64("connID", sctx.GetSessionVars().ConnectionID),
