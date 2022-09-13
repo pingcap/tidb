@@ -159,6 +159,14 @@ var (
 			Help:      "Counter of setting tidb_constraint_check_in_place to false",
 		},
 	)
+	RcWriteCheckTsSetCount = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "session",
+			Name:      "rc_write_check_ts_set_count",
+			Help:      "Counter of setting tidb_rc_write_check_ts to true",
+		},
+	)
 )
 
 // Label constants.

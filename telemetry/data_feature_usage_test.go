@@ -404,3 +404,21 @@ func TestLazyPessimisticUniqueCheck(t *testing.T) {
 	usage = telemetry.GetTxnUsageInfo(tk.Session())
 	require.Equal(t, int64(2), usage.LazyUniqueCheckSetCounter)
 }
+
+func TestRCWriteCheckTs(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	usage := telemetry.GetTxnUsageInfo(tk.Session())
+	require.Equal(t, int64(0), usage.RCWriteCheckTS)
+
+	tk2.MustExec("set tidb_rc_write_check_ts = true")
+	tk2.MustExec("set tidb_rc_write_check_ts = false")
+	tk2.MustExec("set tidb_rc_write_check_ts = true")
+	tk.MustExec("set tidb_rc_write_check_ts = true")
+	usage = telemetry.GetTxnUsageInfo(tk.Session())
+	require.Equal(t, int64(3), usage.RCWriteCheckTS)
+}
