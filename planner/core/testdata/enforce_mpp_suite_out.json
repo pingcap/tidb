@@ -1106,6 +1106,46 @@
         "Warn": null
       },
       {
+        "SQL": "EXPLAIN select sum(b+a), count(*), count(a) from t having count(distinct c) > 2;",
+        "Plan": [
+          "TableReader_41 0.80 root  data:ExchangeSender_40",
+          "└─ExchangeSender_40 0.80 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection_7 0.80 mpp[tiflash]  Column#7, Column#8, Column#9",
+          "    └─Selection_39 0.80 mpp[tiflash]  gt(Column#10, 2)",
+          "      └─Projection_31 1.00 mpp[tiflash]  Column#7, Column#8, Column#9, Column#10",
+          "        └─HashAgg_32 1.00 mpp[tiflash]  funcs:sum(Column#24)->Column#7, funcs:sum(Column#25)->Column#8, funcs:sum(Column#26)->Column#9, funcs:sum(Column#27)->Column#10",
+          "          └─ExchangeReceiver_36 1.00 mpp[tiflash]  ",
+          "            └─ExchangeSender_35 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "              └─HashAgg_32 1.00 mpp[tiflash]  funcs:sum(Column#21)->Column#24, funcs:sum(Column#22)->Column#25, funcs:sum(Column#23)->Column#26, funcs:count(distinct test.t.c)->Column#27",
+          "                └─ExchangeReceiver_34 1.00 mpp[tiflash]  ",
+          "                  └─ExchangeSender_33 1.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.c, collate: binary]",
+          "                    └─HashAgg_30 1.00 mpp[tiflash]  group by:Column#30, funcs:sum(Column#28)->Column#21, funcs:count(1)->Column#22, funcs:count(Column#29)->Column#23",
+          "                      └─Projection_42 10000.00 mpp[tiflash]  cast(plus(test.t.b, test.t.a), decimal(20,0) BINARY)->Column#28, test.t.a, test.t.c",
+          "                        └─TableFullScan_17 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "EXPLAIN select sum(b+a), max(b), count(distinct c), count(*) from t having count(a) > 2;",
+        "Plan": [
+          "TableReader_41 0.80 root  data:ExchangeSender_40",
+          "└─ExchangeSender_40 0.80 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection_7 0.80 mpp[tiflash]  Column#7, Column#8, Column#9, Column#10",
+          "    └─Selection_39 0.80 mpp[tiflash]  gt(Column#11, 2)",
+          "      └─Projection_31 1.00 mpp[tiflash]  Column#7, Column#8, Column#9, Column#10, Column#11",
+          "        └─HashAgg_32 1.00 mpp[tiflash]  funcs:sum(Column#29)->Column#7, funcs:max(Column#30)->Column#8, funcs:sum(Column#31)->Column#9, funcs:sum(Column#32)->Column#10, funcs:sum(Column#33)->Column#11",
+          "          └─ExchangeReceiver_36 1.00 mpp[tiflash]  ",
+          "            └─ExchangeSender_35 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "              └─HashAgg_32 1.00 mpp[tiflash]  funcs:sum(Column#25)->Column#29, funcs:max(Column#26)->Column#30, funcs:count(distinct test.t.c)->Column#31, funcs:sum(Column#27)->Column#32, funcs:sum(Column#28)->Column#33",
+          "                └─ExchangeReceiver_34 1.00 mpp[tiflash]  ",
+          "                  └─ExchangeSender_33 1.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.c, collate: binary]",
+          "                    └─HashAgg_30 1.00 mpp[tiflash]  group by:Column#37, funcs:sum(Column#34)->Column#25, funcs:max(Column#35)->Column#26, funcs:count(1)->Column#27, funcs:count(Column#36)->Column#28",
+          "                      └─Projection_42 10000.00 mpp[tiflash]  cast(plus(test.t.b, test.t.a), decimal(20,0) BINARY)->Column#34, test.t.b, test.t.a, test.t.c",
+          "                        └─TableFullScan_17 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
         "SQL": "EXPLAIN select sum(b), count(distinct a, b, e), count(a+b) from t;",
         "Plan": [
           "TableReader_34 1.00 root  data:ExchangeSender_33",

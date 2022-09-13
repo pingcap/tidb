@@ -5869,11 +5869,14 @@
           "TableReader 1.00 root  data:ExchangeSender",
           "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 1.00 mpp[tiflash]  Column#4",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct test.t.value)->Column#4",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#6)->Column#4",
           "      └─ExchangeReceiver 1.00 mpp[tiflash]  ",
           "        └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "          └─HashAgg 1.00 mpp[tiflash]  group by:test.t.value, ",
-          "            └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "          └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct test.t.value)->Column#6",
+          "            └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "              └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.value, collate: binary]",
+          "                └─HashAgg 1.00 mpp[tiflash]  group by:test.t.value, ",
+          "                  └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -5884,11 +5887,14 @@
           "  └─Projection 1.00 mpp[tiflash]  Column#5",
           "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct Column#4)->Column#5",
           "      └─Projection 1.00 mpp[tiflash]  Column#4",
-          "        └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct test.t.value)->Column#4",
+          "        └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#7)->Column#4",
           "          └─ExchangeReceiver 1.00 mpp[tiflash]  ",
           "            └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "              └─HashAgg 1.00 mpp[tiflash]  group by:test.t.value, ",
-          "                └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "              └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct test.t.value)->Column#7",
+          "                └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "                  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.value, collate: binary]",
+          "                    └─HashAgg 1.00 mpp[tiflash]  group by:test.t.value, ",
+          "                      └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -5896,12 +5902,15 @@
         "Plan": [
           "TableReader 1.00 root  data:ExchangeSender",
           "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection 1.00 mpp[tiflash]  Column#4, Column#5, div(Column#6, cast(case(eq(Column#11, 0), 1, Column#11), decimal(20,0) BINARY))->Column#6",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct test.t.value)->Column#4, funcs:sum(Column#12)->Column#5, funcs:sum(Column#13)->Column#11, funcs:sum(Column#14)->Column#6",
+          "  └─Projection 1.00 mpp[tiflash]  Column#4, Column#5, div(Column#6, cast(case(eq(Column#15, 0), 1, Column#15), decimal(20,0) BINARY))->Column#6",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#19)->Column#4, funcs:sum(Column#20)->Column#5, funcs:sum(Column#21)->Column#15, funcs:sum(Column#22)->Column#6",
           "      └─ExchangeReceiver 1.00 mpp[tiflash]  ",
           "        └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "          └─HashAgg 1.00 mpp[tiflash]  group by:test.t.value, funcs:count(test.t.value)->Column#12, funcs:count(test.t.value)->Column#13, funcs:sum(test.t.value)->Column#14",
-          "            └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "          └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct test.t.value)->Column#19, funcs:sum(Column#16)->Column#20, funcs:sum(Column#17)->Column#21, funcs:sum(Column#18)->Column#22",
+          "            └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "              └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.value, collate: binary]",
+          "                └─HashAgg 1.00 mpp[tiflash]  group by:test.t.value, funcs:count(test.t.value)->Column#16, funcs:count(test.t.value)->Column#17, funcs:sum(test.t.value)->Column#18",
+          "                  └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       }
     ]
