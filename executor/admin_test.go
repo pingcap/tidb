@@ -497,7 +497,7 @@ func TestAdminCleanupIndex(t *testing.T) {
 	tk.MustExec("insert admin_test (c1, c3) values (7, 100), (9, 100), (11, NULL)")
 
 	// pk is handle, no need to cleanup
-	_, err := tk.Exec("admin cleanup index admin_test `primary`")
+	err := tk.ExecToErr("admin cleanup index admin_test `primary`")
 	require.Error(t, err)
 	r := tk.MustQuery("admin cleanup index admin_test c2")
 	r.Check(testkit.Rows("0"))
@@ -1095,9 +1095,10 @@ func TestCheckFailReport(t *testing.T) {
 		require.NoError(t, txn.Commit(tk.ctx))
 
 		ctx, hook := withLogHook(tk.ctx, t, "inconsistency")
-		_, err = tk.Exec(ctx, "admin check table admin_test")
+		res, err := tk.Exec(ctx, "admin check table admin_test")
 		require.Error(t, err)
 		require.Equal(t, "[admin:8223]data inconsistency in table: admin_test, index: uk1, handle: 1, index-values:\"\" != record-values:\"handle: 1, values: [KindInt64 1]\"", err.Error())
+		require.NoError(t, res.Close())
 		hook.checkLogCount(t, 1)
 		hook.logs[0].checkMsg(t, "admin check found data inconsistency")
 		hook.logs[0].checkField(t,
