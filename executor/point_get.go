@@ -357,7 +357,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func (e *PointGetExecutor) getAndLock(ctx context.Context, key kv.Key) (val []byte, err error) {
 	if e.ctx.GetSessionVars().IsPessimisticReadConsistency() {
-		// Only Lock the exist keys in RC isolation.
+		// Only Lock the existing keys in RC isolation.
 		if e.lock {
 			val, err = e.lockKeyIfExists(ctx, key)
 			if err != nil {
