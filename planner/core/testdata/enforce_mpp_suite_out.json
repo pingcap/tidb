@@ -984,6 +984,23 @@
         "Warn": null
       },
       {
+        "SQL": "EXPLAIN select count(distinct b) from t;",
+        "Plan": [
+          "TableReader_34 1.00 root  data:ExchangeSender_33",
+          "└─ExchangeSender_33 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection_27 1.00 mpp[tiflash]  Column#7",
+          "    └─HashAgg_28 1.00 mpp[tiflash]  funcs:sum(Column#9)->Column#7",
+          "      └─ExchangeReceiver_32 1.00 mpp[tiflash]  ",
+          "        └─ExchangeSender_31 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "          └─HashAgg_28 1.00 mpp[tiflash]  funcs:count(distinct test.t.b)->Column#9",
+          "            └─ExchangeReceiver_30 1.00 mpp[tiflash]  ",
+          "              └─ExchangeSender_29 1.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.b, collate: binary]",
+          "                └─HashAgg_26 1.00 mpp[tiflash]  group by:test.t.b, ",
+          "                  └─TableFullScan_13 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
         "SQL": "EXPLAIN select count(distinct c) from t;",
         "Plan": [
           "TableReader_34 1.00 root  data:ExchangeSender_33",
@@ -1105,6 +1122,19 @@
           "                    └─TableFullScan_13 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
+      },
+      {
+        "SQL": "EXPLAIN select count(distinct b), json_objectagg(d,c) from t;",
+        "Plan": [
+          "StreamAgg_7 1.00 root  funcs:count(distinct Column#9)->Column#7, funcs:json_objectagg(Column#10, Column#11)->Column#8",
+          "└─Projection_16 10000.00 root  test.t.b, cast(test.t.d, var_string(10))->Column#10, test.t.c",
+          "  └─TableReader_15 10000.00 root  data:TableFullScan_14",
+          "    └─TableFullScan_14 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "Aggregation can not be pushed to tiflash because AggFunc `json_objectagg` is not supported now",
+          "Aggregation can not be pushed to tiflash because AggFunc `json_objectagg` is not supported now"
+        ]
       },
       {
         "SQL": "EXPLAIN select count(distinct c+a), count(a) from t;",
