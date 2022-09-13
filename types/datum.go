@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/zap"
 )
 
@@ -1468,6 +1469,14 @@ func (d *Datum) convertToMysqlDecimal(sc *stmtctx.StatementContext, target *Fiel
 // ProduceDecWithSpecifiedTp produces a new decimal according to `flen` and `decimal`.
 func ProduceDecWithSpecifiedTp(dec *MyDecimal, tp *FieldType, sc *stmtctx.StatementContext) (_ *MyDecimal, err error) {
 	flen, decimal := tp.GetFlen(), tp.GetDecimal()
+
+	//If it is a string to decimal, the length of the decimal place can be determined now
+	if (tp.GetFlag() & mysql.StringcastdecimalFlag) == mysql.StringcastdecimalFlag {
+		fless := flen - int(dec.GetDigitsInt())
+		decimal = mathutil.Min(fless, mysql.MaxDecimalScale)
+		decimal = mathutil.Min(decimal, int(dec.GetDigitsFrac()))
+	}
+
 	if flen != UnspecifiedLength && decimal != UnspecifiedLength {
 		if flen < decimal {
 			return nil, ErrMBiggerThanD.GenWithStackByArgs("")

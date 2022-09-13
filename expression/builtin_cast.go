@@ -2007,6 +2007,17 @@ func minimalDecimalLenForHoldingInteger(tp byte) int {
 	}
 }
 
+//typeString returns true if the number of decimal places cannot be determined
+func typeString(mysqltype byte) bool {
+	switch mysqltype {
+	case mysql.TypeString, mysql.TypeVarchar, mysql.TypeTinyBlob,
+		mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
+		return true
+	}
+	return false
+
+}
+
 // WrapWithCastAsDecimal wraps `expr` with `cast` if the return type of expr is
 // not type decimal, otherwise, returns `expr` directly.
 func WrapWithCastAsDecimal(ctx sessionctx.Context, expr Expression) Expression {
@@ -2016,6 +2027,12 @@ func WrapWithCastAsDecimal(ctx sessionctx.Context, expr Expression) Expression {
 	tp := types.NewFieldType(mysql.TypeNewDecimal)
 	tp.SetFlenUnderLimit(expr.GetType().GetFlen())
 	tp.SetDecimalUnderLimit(expr.GetType().GetDecimal())
+
+	//If it is str to Decimal, need to wait for the string to be parsed to
+	//determine the precision
+	if typeString(expr.GetType().GetType()) && (tp.GetDecimal() == 0) {
+		tp.AddFlag(mysql.StringcastdecimalFlag)
+	}
 
 	if expr.GetType().EvalType() == types.ETInt {
 		tp.SetFlen(minimalDecimalLenForHoldingInteger(expr.GetType().GetType()))

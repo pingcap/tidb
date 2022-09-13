@@ -33,6 +33,9 @@ const UnspecifiedLength = -1
 // ErrorLength is error length for blob or text.
 const ErrorLength = 0
 
+//UnspecifiedFrac is Decimal places not confirmed
+const UnspecifiedFrac = -2
+
 // FieldType records field type information.
 type FieldType = ast.FieldType
 

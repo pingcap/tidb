@@ -74,6 +74,7 @@ const (
 	PreventNullInsertFlag uint = 1 << 20 /* Prevent this Field from inserting NULL values */
 	EnumSetAsIntFlag      uint = 1 << 21 /* Internal: Used for inferring enum eval type. */
 	DropColumnIndexFlag   uint = 1 << 22 /* Internal: Used for indicate the column is being dropped with index */
+	StringcastdecimalFlag uint = 1 << 23 /* Internal: Used for convert the token str to decimal */
 )
 
 // TypeInt24 bounds.
