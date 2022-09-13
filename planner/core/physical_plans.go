@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/size"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
@@ -128,6 +129,30 @@ type PartitionInfo struct {
 	PartitionNames []model.CIStr
 	Columns        []*expression.Column
 	ColumnNames    types.NameSlice
+}
+
+const emptyPartitionInfoSize = int64(unsafe.Sizeof(PartitionInfo{}))
+
+// MemoryUsage return the memory usage of PartitionInfo
+func (pi *PartitionInfo) MemoryUsage() (sum int64) {
+	if pi == nil {
+		return
+	}
+
+	sum = emptyPartitionInfoSize
+	for _, cond := range pi.PruningConds {
+		sum += cond.MemoryUsage()
+	}
+	for _, cis := range pi.PartitionNames {
+		sum += cis.MemoryUsage()
+	}
+	for _, col := range pi.Columns {
+		sum += col.MemoryUsage()
+	}
+	for _, colName := range pi.ColumnNames {
+		sum += colName.MemoryUsage()
+	}
+	return
 }
 
 // GetTablePlan exports the tablePlan.
@@ -576,6 +601,41 @@ func (p *PhysicalIndexScan) ExtractCorrelatedCols() []*expression.CorrelatedColu
 	return corCols
 }
 
+const emptyPhysicalIndexScanSize = int64(unsafe.Sizeof(PhysicalIndexScan{}))
+
+// MemoryUsage return the memory usage of PhysicalIndexScan
+func (p *PhysicalIndexScan) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = emptyPhysicalIndexScanSize + p.physicalSchemaProducer.MemoryUsage() + int64(cap(p.IdxColLens))*size.SizeOfInt +
+		p.DBName.MemoryUsage() + int64(len(p.rangeInfo))
+	if p.TableAsName != nil {
+		sum += p.TableAsName.MemoryUsage()
+	}
+	if p.pkIsHandleCol != nil {
+		sum += p.pkIsHandleCol.MemoryUsage()
+	}
+	if p.prop != nil {
+		sum += p.prop.MemoryUsage()
+	}
+	// slice memory usage
+	for _, cond := range p.AccessCondition {
+		sum += cond.MemoryUsage()
+	}
+	for _, col := range p.IdxCols {
+		sum += col.MemoryUsage()
+	}
+	for _, rang := range p.Ranges {
+		sum += rang.MemoryUsage()
+	}
+	for iid, expr := range p.GenExprs {
+		sum += int64(unsafe.Sizeof(iid)) + expr.MemoryUsage()
+	}
+	return
+}
+
 // PhysicalMemTable reads memory table.
 type PhysicalMemTable struct {
 	physicalSchemaProducer
@@ -680,7 +740,9 @@ func (ts *PhysicalTableScan) IsPartition() (bool, int64) {
 	return ts.isPartition, ts.physicalTableID
 }
 
-// ResolveCorrelatedColumns resolves the correlated columns in range access
+// ResolveCorrelatedColumns resolves the correlated columns in range access.
+// We already limit range mem usage when building ranges in optimizer phase, so we don't need and shouldn't limit range
+// mem usage when rebuilding ranges during the execution phase.
 func (ts *PhysicalTableScan) ResolveCorrelatedColumns() ([]*ranger.Range, error) {
 	access := ts.AccessCondition
 	if ts.Table.IsCommonHandle {
@@ -701,7 +763,7 @@ func (ts *PhysicalTableScan) ResolveCorrelatedColumns() ([]*ranger.Range, error)
 	} else {
 		var err error
 		pkTP := ts.Table.GetPkColInfo().FieldType
-		ts.Ranges, err = ranger.BuildTableRange(access, ts.SCtx(), &pkTP)
+		ts.Ranges, _, _, err = ranger.BuildTableRange(access, ts.SCtx(), &pkTP, 0)
 		if err != nil {
 			return nil, err
 		}
@@ -746,6 +808,44 @@ func ExpandVirtualColumn(columns []*model.ColumnInfo, schema *expression.Schema,
 // SetIsChildOfIndexLookUp is to set the bool if is a child of IndexLookUpReader
 func (ts *PhysicalTableScan) SetIsChildOfIndexLookUp(isIsChildOfIndexLookUp bool) {
 	ts.isChildOfIndexLookUp = isIsChildOfIndexLookUp
+}
+
+const emptyPhysicalTableScanSize = int64(unsafe.Sizeof(PhysicalTableScan{}))
+
+// MemoryUsage return the memory usage of PhysicalTableScan
+func (ts *PhysicalTableScan) MemoryUsage() (sum int64) {
+	if ts == nil {
+		return
+	}
+
+	sum = emptyPhysicalTableScanSize + ts.physicalSchemaProducer.MemoryUsage() + ts.DBName.MemoryUsage() +
+		int64(cap(ts.HandleIdx))*size.SizeOfInt + ts.PartitionInfo.MemoryUsage()
+	if ts.TableAsName != nil {
+		sum += ts.TableAsName.MemoryUsage()
+	}
+	if ts.HandleCols != nil {
+		sum += ts.HandleCols.MemoryUsage()
+	}
+	if ts.prop != nil {
+		sum += ts.prop.MemoryUsage()
+	}
+	// slice memory usage
+	for _, cond := range ts.AccessCondition {
+		sum += cond.MemoryUsage()
+	}
+	for _, cond := range ts.filterCondition {
+		sum += cond.MemoryUsage()
+	}
+	for _, rang := range ts.Ranges {
+		sum += rang.MemoryUsage()
+	}
+	for _, col := range ts.rangeDecidedBy {
+		sum += col.MemoryUsage()
+	}
+	for _, col := range ts.tblCols {
+		sum += col.MemoryUsage()
+	}
+	return
 }
 
 // PhysicalProjection is the physical operator of projection.
@@ -1315,6 +1415,20 @@ func (ls *PhysicalSort) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	return corCols
 }
 
+// MemoryUsage return the memory usage of PhysicalSort
+func (ls *PhysicalSort) MemoryUsage() (sum int64) {
+	if ls == nil {
+		return
+	}
+
+	sum = ls.basePhysicalPlan.MemoryUsage() + size.SizeOfSlice + int64(cap(ls.ByItems))*size.SizeOfPointer +
+		size.SizeOfBool
+	for _, byItem := range ls.ByItems {
+		sum += byItem.MemoryUsage()
+	}
+	return
+}
+
 // NominalSort asks sort properties for its child. It is a fake operator that will not
 // appear in final physical operator tree. It will be eliminated or converted to Projection.
 type NominalSort struct {
@@ -1325,6 +1439,20 @@ type NominalSort struct {
 	// are out of bounds. (issue #11653)
 	ByItems    []*util.ByItems
 	OnlyColumn bool
+}
+
+// MemoryUsage return the memory usage of NominalSort
+func (ns *NominalSort) MemoryUsage() (sum int64) {
+	if ns == nil {
+		return
+	}
+
+	sum = ns.basePhysicalPlan.MemoryUsage() + size.SizeOfSlice + int64(cap(ns.ByItems))*size.SizeOfPointer +
+		size.SizeOfBool
+	for _, byItem := range ns.ByItems {
+		sum += byItem.MemoryUsage()
+	}
+	return
 }
 
 // PhysicalUnionScan represents a union scan operator.
@@ -1343,6 +1471,19 @@ func (p *PhysicalUnionScan) ExtractCorrelatedCols() []*expression.CorrelatedColu
 		corCols = append(corCols, expression.ExtractCorColumns(cond)...)
 	}
 	return corCols
+}
+
+// MemoryUsage return the memory usage of PhysicalUnionScan
+func (p *PhysicalUnionScan) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.basePhysicalPlan.MemoryUsage() + size.SizeOfSlice + p.HandleCols.MemoryUsage()
+	for _, cond := range p.Conditions {
+		sum += cond.MemoryUsage()
+	}
+	return
 }
 
 // IsPartition returns true and partition ID if it works on a partition.
@@ -1709,5 +1850,5 @@ func appendChildCandidate(origin PhysicalPlan, pp PhysicalPlan, op *physicalOpti
 	}
 	op.tracer.AppendCandidate(candidate)
 	pp.appendChildCandidate(op)
-	op.tracer.Candidates[origin.ID()].ChildrenID = append(op.tracer.Candidates[origin.ID()].ChildrenID, pp.ID())
+	op.tracer.Candidates[origin.ID()].AppendChildrenID(pp.ID())
 }

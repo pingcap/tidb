@@ -63,6 +63,10 @@ func TestTxnUsageInfo(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("set global %s = 1", variable.TiDBRCReadCheckTS))
 		txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
 		require.True(t, txnUsage.RcCheckTS)
+
+		tk.MustExec(fmt.Sprintf("set global %s = 1", variable.TiDBRCWriteCheckTs))
+		txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
+		require.True(t, txnUsage.RCWriteCheckTS)
 	})
 
 	t.Run("Count", func(t *testing.T) {
@@ -122,6 +126,33 @@ func TestCachedTable(t *testing.T) {
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
 	require.False(t, usage.CachedTable)
+}
+
+func TestAccountLock(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	usage, err := telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(0), usage.AccountLock.LockUser)
+	require.Equal(t, int64(0), usage.AccountLock.UnlockUser)
+	require.Equal(t, int64(0), usage.AccountLock.CreateOrAlterUser)
+
+	tk.MustExec("drop user if exists testUser")
+	tk.MustExec("create user testUser account lock")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(1), usage.AccountLock.LockUser)
+	require.Equal(t, int64(0), usage.AccountLock.UnlockUser)
+	require.Equal(t, int64(1), usage.AccountLock.CreateOrAlterUser)
+	tk.MustExec("alter user testUser account unlock")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(1), usage.AccountLock.LockUser)
+	require.Equal(t, int64(1), usage.AccountLock.UnlockUser)
+	require.Equal(t, int64(2), usage.AccountLock.CreateOrAlterUser)
 }
 
 func TestMultiSchemaChange(t *testing.T) {
