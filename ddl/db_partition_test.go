@@ -272,7 +272,6 @@ func TestCreateTableWithPartition(t *testing.T) {
 		);`)
 
 	tk.MustExec("set @@tidb_enable_table_partition = 1")
-	tk.MustExec("set @@tidb_enable_table_partition = 1")
 	tk.MustExec(`create table t30 (
 		  a int,
 		  b varchar(20),
@@ -482,14 +481,6 @@ create table log_message_1 (
 			dbterror.ErrRangeNotIncreasing,
 		},
 		{
-			"create table t(a time) partition by range columns (a) (partition p1 values less than ('202020'), partition p2 values less than ('20:20:10'));",
-			dbterror.ErrWrongTypeColumnValue,
-		},
-		{
-			"create table t(a time) partition by range columns (a) (partition p1 values less than ('202090'));",
-			dbterror.ErrWrongTypeColumnValue,
-		},
-		{
 			"create table t (id int) partition by range columns (id) (partition p0 values less than (1, 2));",
 			ast.ErrPartitionColumnList,
 		},
@@ -684,6 +675,38 @@ create table log_message_1 (
 	tk.MustExec(`alter table t add partition (partition p1 values less than (X'0D'), partition p2 values less than (X'0E'));`)
 	tk.MustExec(`insert into t values (X'0B'), (X'0C'), (X'0D')`)
 	tk.MustQuery(`select * from t where a < X'0D' order by a`).Check(testkit.Rows("\x0B", "\x0C"))
+	tk.MustExec(`drop table t`)
+
+	tk.MustExec(`create table t(a time) partition by range columns (a) (partition p1 values less than ('2020'))`)
+	tk.MustExec(`insert into t values ('2019')`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `a` time DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			"PARTITION BY RANGE COLUMNS(`a`)\n" +
+			"(PARTITION `p1` VALUES LESS THAN ('2020'))"))
+	tk.MustExec(`drop table t`)
+	tk.MustExec(`create table t (a time, b time) partition by range columns (a) (partition p1 values less than ('2020'), partition p2 values less than ('20:20:10'))`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `a` time DEFAULT NULL,\n" +
+			"  `b` time DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			"PARTITION BY RANGE COLUMNS(`a`)\n" +
+			"(PARTITION `p1` VALUES LESS THAN ('2020'),\n" +
+			" PARTITION `p2` VALUES LESS THAN ('20:20:10'))"))
+	tk.MustExec(`insert into t values ('2019','2019'),('20:20:09','20:20:09')`)
+	tk.MustExec(`drop table t`)
+	tk.MustExec(`create table t (a time, b time) partition by range columns (a,b) (partition p1 values less than ('2020','2020'), partition p2 values less than ('20:20:10','20:20:10'))`)
+	tk.MustExec(`insert into t values ('2019','2019'),('20:20:09','20:20:09')`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `a` time DEFAULT NULL,\n" +
+			"  `b` time DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			"PARTITION BY RANGE COLUMNS(`a`,`b`)\n" +
+			"(PARTITION `p1` VALUES LESS THAN ('00:20:20','00:20:20'),\n" +
+			" PARTITION `p2` VALUES LESS THAN ('20:20:10','20:20:10'))"))
 }
 
 func TestPartitionRangeColumnsCollate(t *testing.T) {

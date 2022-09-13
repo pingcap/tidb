@@ -1190,12 +1190,13 @@ func buildRangePartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partitio
 			if exprChecker.err != nil {
 				return nil, exprChecker.err
 			}
-			if len(partValStrings) > i {
+			// If multi-column use new evaluated+normalized output, instead of just formatted expression
+			if len(partValStrings) > i && len(colTypes) > 1 {
 				partVal := partValStrings[i]
 				switch colTypes[i].EvalType() {
 				case types.ETInt:
 					// no wrapping
-				case types.ETDatetime, types.ETString:
+				case types.ETDatetime, types.ETString, types.ETDuration:
 					if _, ok := clause.Exprs[i].(*ast.MaxValueExpr); !ok {
 						// Don't wrap MAXVALUE
 						partVal = driver.WrapInSingleQuotes(partVal)
