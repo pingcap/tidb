@@ -1128,7 +1128,7 @@ func GenIndexKey(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo
 // TempIndexPrefix used to generate temporary index ID from index ID.
 const TempIndexPrefix = 0x7fff000000000000
 
-// IndexIDMask used to get index id from index id/temp index id.
+// IndexIDMask used to get index id from index ID/temp index ID.
 const IndexIDMask = 0xffffffffffff
 
 // IndexKey2TempIndexKey generates a temporary index key.
