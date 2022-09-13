@@ -962,14 +962,17 @@
       {
         "SQL": "EXPLAIN select count(b), count(distinct c) from t; -- single distinct func but no group key, bail out",
         "Plan": [
-          "TableReader_30 1.00 root  data:ExchangeSender_29",
-          "└─ExchangeSender_29 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection_25 1.00 mpp[tiflash]  Column#7, Column#8",
-          "    └─HashAgg_26 1.00 mpp[tiflash]  funcs:sum(Column#10)->Column#7, funcs:count(distinct test.t.c)->Column#8",
-          "      └─ExchangeReceiver_28 1.00 mpp[tiflash]  ",
-          "        └─ExchangeSender_27 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "          └─HashAgg_24 1.00 mpp[tiflash]  group by:test.t.c, funcs:count(test.t.b)->Column#10",
-          "            └─TableFullScan_13 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "TableReader_34 1.00 root  data:ExchangeSender_33",
+          "└─ExchangeSender_33 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection_27 1.00 mpp[tiflash]  Column#7, Column#8",
+          "    └─HashAgg_28 1.00 mpp[tiflash]  funcs:sum(Column#13)->Column#7, funcs:sum(Column#14)->Column#8",
+          "      └─ExchangeReceiver_32 1.00 mpp[tiflash]  ",
+          "        └─ExchangeSender_31 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "          └─HashAgg_28 1.00 mpp[tiflash]  funcs:sum(Column#12)->Column#13, funcs:count(distinct test.t.c)->Column#14",
+          "            └─ExchangeReceiver_30 1.00 mpp[tiflash]  ",
+          "              └─ExchangeSender_29 1.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.c, collate: binary]",
+          "                └─HashAgg_26 1.00 mpp[tiflash]  group by:test.t.c, funcs:count(test.t.b)->Column#12",
+          "                  └─TableFullScan_13 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       }
