@@ -1737,8 +1737,8 @@ func (ds *DataSource) crossEstimateRowCount(path *util.AccessPath, conds []expre
 	if len(accessConds) == 0 {
 		return 0, false, corr
 	}
-	ranges, err := ranger.BuildColumnRange(accessConds, ds.ctx, col.RetType, types.UnspecifiedLength)
-	if len(ranges) == 0 || err != nil {
+	ranges, accessConds, _, err := ranger.BuildColumnRange(accessConds, ds.ctx, col.RetType, types.UnspecifiedLength, ds.ctx.GetSessionVars().RangeMaxSize)
+	if len(ranges) == 0 || len(accessConds) == 0 || err != nil {
 		return 0, err == nil, corr
 	}
 	idxID, idxExists := ds.stats.HistColl.ColID2IdxID[colID]
