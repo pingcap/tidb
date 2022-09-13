@@ -2641,7 +2641,7 @@ func InitDDLJobTables(store kv.Storage) error {
 				return errors.Trace(err)
 			}
 			if id >= meta.MaxGlobalID {
-				return errors.Errorf("It is unreasonable that the global ID grows such a big value: %d, please concat TiDB team", id)
+				return errors.Errorf("It is unreasonable that the global ID grows such a big value: %d, please contact TiDB team", id)
 			}
 			stmt, err := p.ParseOneStmt(tbl.SQL, "", "")
 			if err != nil {
@@ -2663,7 +2663,7 @@ func InitDDLJobTables(store kv.Storage) error {
 	})
 }
 
-// InitMDLTable is to create tidb_ddl_job, tidb_ddl_reorg and tidb_ddl_history.
+// InitMDLTable is to create tidb_mdl_info, which is used for metadata lock.
 func InitMDLTable(store kv.Storage) error {
 	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
@@ -2681,7 +2681,7 @@ func InitMDLTable(store kv.Storage) error {
 			return errors.Trace(err)
 		}
 		if id >= meta.MaxGlobalID {
-			return errors.Errorf("It is unreasonable that the global ID grows such a big value: %d, please concat TiDB team", id)
+			return errors.Errorf("It is unreasonable that the global ID grows such a big value: %d, please contact TiDB team", id)
 		}
 		stmt, err := p.ParseOneStmt(mdlTable, "", "")
 		if err != nil {

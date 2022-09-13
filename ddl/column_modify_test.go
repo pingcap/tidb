@@ -1041,7 +1041,7 @@ func TestWriteReorgForColumnTypeChangeOnAmendTxn(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, columnModifyLease)
 
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set global tidb_enable_mdl=0")
+	tk.MustExec("set global tidb_enable_metadata_lock=0")
 	tk.MustExec("set global tidb_enable_amend_pessimistic_txn = ON")
 	defer tk.MustExec("set global tidb_enable_amend_pessimistic_txn = OFF")
 

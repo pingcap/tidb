@@ -244,7 +244,7 @@ func TestIssue22819(t *testing.T) {
 	store := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
 
 	tk1 := testkit.NewTestKit(t, store)
-	tk1.MustExec("set global tidb_enable_mdl=0")
+	tk1.MustExec("set global tidb_enable_metadata_lock=0")
 	tk1.MustExec("use test;")
 	tk1.MustExec("create table t1 (v int) partition by hash (v) partitions 2")
 	tk1.MustExec("insert into t1 values (1)")
@@ -985,7 +985,7 @@ func TestCommitTxnWithIndexChange(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
 	// Prepare work.
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set global tidb_enable_mdl=0")
+	tk.MustExec("set global tidb_enable_metadata_lock=0")
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (c1 int primary key, c2 int, c3 int, index ok2(c2))")
@@ -1331,7 +1331,7 @@ func TestTxnSavepointWithDDL(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	tk.MustExec("set global tidb_enable_mdl=0")
+	tk.MustExec("set global tidb_enable_metadata_lock=0")
 	tk2.MustExec("use test;")
 
 	prepareFn := func() {
@@ -1383,7 +1383,7 @@ func TestAmendTxnSavepointWithDDL(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	tk.MustExec("set global tidb_enable_mdl=0")
+	tk.MustExec("set global tidb_enable_metadata_lock=0")
 	tk2.MustExec("use test;")
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 

@@ -45,7 +45,7 @@ func TestConcurrentDDLSwitch(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set global tidb_enable_mdl=0")
+	tk.MustExec("set global tidb_enable_metadata_lock=0")
 	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt=1")
 	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size=32")
 

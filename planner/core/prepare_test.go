@@ -2565,7 +2565,7 @@ func TestPlanCacheWithRCWhenInfoSchemaChange(t *testing.T) {
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
-	tk1.MustExec("set global tidb_enable_mdl=0")
+	tk1.MustExec("set global tidb_enable_metadata_lock=0")
 	tk2.MustExec("use test")
 	tk1.MustExec("drop table if exists t1")
 	tk1.MustExec("create table t1(id int primary key, c int, index ic (c))")
@@ -2605,7 +2605,7 @@ func TestConsistencyBetweenPrepareExecuteAndNormalSql(t *testing.T) {
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
-	tk1.MustExec("set global tidb_enable_mdl=0")
+	tk1.MustExec("set global tidb_enable_metadata_lock=0")
 	tk1.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 	tk2.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 	tk1.MustExec("use test")
@@ -2680,7 +2680,7 @@ func TestCacheHitInRc(t *testing.T) {
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
-	tk1.MustExec("set global tidb_enable_mdl=0")
+	tk1.MustExec("set global tidb_enable_metadata_lock=0")
 	tk1.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 	tk2.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 	tk1.MustExec("use test")

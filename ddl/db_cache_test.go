@@ -145,7 +145,7 @@ func TestAlterTableCache(t *testing.T) {
 	checkTableCacheStatus(t, tk, "test", "t1", model.TableCacheStatusEnable)
 	tk.MustExec("alter table t1 nocache")
 	tk.MustExec("drop table if exists t1")
-	tk.MustExec("set global tidb_enable_mdl=0")
+	tk.MustExec("set global tidb_enable_metadata_lock=0")
 	/*Test can't skip schema checker*/
 	tk.MustExec("drop table if exists t1,t2")
 	tk.MustExec("CREATE TABLE t1 (a int)")

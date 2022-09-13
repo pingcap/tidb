@@ -205,7 +205,7 @@ func TestSkipSchemaChecker(t *testing.T) {
 	store := testkit.CreateMockStoreWithSchemaLease(t, tiflashReplicaLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set global tidb_enable_mdl=0")
+	tk.MustExec("set global tidb_enable_metadata_lock=0")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a int)")
 	tk2 := testkit.NewTestKit(t, store)

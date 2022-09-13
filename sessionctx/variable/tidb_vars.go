@@ -635,7 +635,7 @@ const (
 	TiDBEnableLocalTxn = "tidb_enable_local_txn"
 
 	// TiDBEnableMDL indicates whether to enable MDL.
-	TiDBEnableMDL = "tidb_enable_mdl"
+	TiDBEnableMDL = "tidb_enable_metadata_lock"
 
 	// TiDBTSOClientBatchMaxWaitTime indicates the max value of the TSO Batch Wait interval time of PD client.
 	TiDBTSOClientBatchMaxWaitTime = "tidb_tso_client_batch_max_wait_time"

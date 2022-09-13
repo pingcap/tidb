@@ -603,7 +603,7 @@ func TestLockTables(t *testing.T) {
 	store := testkit.CreateMockStoreWithSchemaLease(t, time.Microsecond*500)
 	setTxnTk := testkit.NewTestKit(t, store)
 	setTxnTk.MustExec("set global tidb_txn_mode=''")
-	setTxnTk.MustExec("set global tidb_enable_mdl=0")
+	setTxnTk.MustExec("set global tidb_enable_metadata_lock=0")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1,t2")

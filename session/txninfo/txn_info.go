@@ -17,6 +17,7 @@ package txninfo
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/pingcap/tidb/metrics"
@@ -234,17 +235,17 @@ var columnValueGetterMap = map[string]func(*TxnInfo) types.Datum{
 	},
 	RelatedTableIDsStr: func(info *TxnInfo) types.Datum {
 		relatedTableIDs := info.RelatedTableIDs
-		str := ""
+		str := strings.Builder{}
 		first := true
 		for tblID := range relatedTableIDs {
 			if !first {
-				str += ","
+				str.Write([]byte(","))
 			} else {
 				first = false
 			}
-			str += fmt.Sprintf("%d", tblID)
+			str.WriteString(fmt.Sprintf("%d", tblID))
 		}
-		return types.NewDatum(str)
+		return types.NewDatum(str.String())
 	},
 }
 
