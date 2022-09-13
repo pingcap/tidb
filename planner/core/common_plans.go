@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/util/memory"
 	"strconv"
 	"strings"
 
@@ -545,6 +546,8 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	}
 
 REBUILD:
+	defer logPlanCacheInfo(sctx)
+
 	stmt := prepared.Stmt
 	p, names, err := OptimizeAstNode(ctx, sctx, stmt, is)
 	if err != nil {
@@ -589,6 +592,28 @@ REBUILD:
 	}
 	err = e.setFoundInPlanCache(sctx, false)
 	return err
+}
+
+func logPlanCacheInfo(sctx sessionctx.Context) {
+	memTot, err := memory.MemTotal()
+	if err != nil {
+		logutil.BgLogger().Warn("[Plan-Cache-Patch] get total memory usage error", zap.Error(err))
+		return
+	}
+	memUse, err := memory.MemUsed()
+	if err != nil {
+		logutil.BgLogger().Warn("[Plan-Cache-Patch] get used memory usage error", zap.Error(err))
+		return
+	}
+	if memTot == 0 || memUse == 0 {
+		logutil.BgLogger().Warn("[Plan-Cache-Patch] invalid memory usage values",
+			zap.Uint64("mem-tot", memTot), zap.Uint64("mem-use", memUse))
+		return
+	}
+	const debugThreshold = 0.6 // 60%
+	if float64(memUse)/float64(memTot) < debugThreshold {
+		return
+	}
 }
 
 func containTableDual(p Plan) bool {
