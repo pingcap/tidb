@@ -305,6 +305,15 @@ func RebuildPlan4CachedPlan(p Plan) error {
 	return rebuildRange(p)
 }
 
+// rebuildRange doesn't set mem limit for building ranges. There are two reasons why we don't restrict range mem usage here.
+//  1. The cached plan must be able to build complete ranges under mem limit when it is generated. Hence we can just build
+//     ranges from x.AccessConditions. The only difference between the last ranges and new ranges is the change of parameter
+//     values, which doesn't cause much change on the mem usage of complete ranges.
+//  2. Different parameter values can change the mem usage of complete ranges. If we set range mem limit here, range fallback
+//     may heppen and cause correctness problem. For example, a in (?, ?, ?) is the access condition. When the plan is firstly
+//     generated, its complete ranges are ['a','a'], ['b','b'], ['c','c'], whose mem usage is under range mem limit 100B.
+//     When the cached plan is hit, the complete ranges may become ['aaa','aaa'], ['bbb','bbb'], ['ccc','ccc'], whose mem
+//     usage exceeds range mem limit 100B, and range fallback happens and tidb may fetch more rows than users expect.
 func rebuildRange(p Plan) error {
 	sctx := p.SCtx()
 	sc := p.SCtx().GetSessionVars().StmtCtx
@@ -371,7 +380,7 @@ func rebuildRange(p Plan) error {
 					}
 				}
 				if pkCol != nil {
-					ranges, err := ranger.BuildTableRange(x.AccessConditions, x.ctx, pkCol.RetType)
+					ranges, _, _, err := ranger.BuildTableRange(x.AccessConditions, x.ctx, pkCol.RetType, 0)
 					if err != nil {
 						return err
 					}
@@ -432,7 +441,7 @@ func rebuildRange(p Plan) error {
 					}
 				}
 				if pkCol != nil {
-					ranges, err := ranger.BuildTableRange(x.AccessConditions, x.ctx, pkCol.RetType)
+					ranges, _, _, err := ranger.BuildTableRange(x.AccessConditions, x.ctx, pkCol.RetType, 0)
 					if err != nil {
 						return err
 					}
@@ -562,7 +571,7 @@ func buildRangeForTableScan(sctx sessionctx.Context, ts *PhysicalTableScan) (err
 			}
 		}
 		if pkCol != nil {
-			ts.Ranges, err = ranger.BuildTableRange(ts.AccessCondition, sctx, pkCol.RetType)
+			ts.Ranges, _, _, err = ranger.BuildTableRange(ts.AccessCondition, sctx, pkCol.RetType, 0)
 			if err != nil {
 				return err
 			}

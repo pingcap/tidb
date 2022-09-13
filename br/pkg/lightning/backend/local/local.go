@@ -279,6 +279,9 @@ func checkTiDBVersion(_ context.Context, versionStr string, requiredMinVersion, 
 
 var tiFlashReplicaQuery = "SELECT TABLE_SCHEMA, TABLE_NAME FROM information_schema.TIFLASH_REPLICA WHERE REPLICA_COUNT > 0;"
 
+// TiFlashReplicaQueryForTest is only used for tests.
+var TiFlashReplicaQueryForTest = tiFlashReplicaQuery
+
 type tblName struct {
 	schema string
 	name   string
@@ -298,6 +301,9 @@ func (t tblNames) String() string {
 	b.WriteByte(']')
 	return b.String()
 }
+
+// CheckTiFlashVersionForTest is only used for tests.
+var CheckTiFlashVersionForTest = checkTiFlashVersion
 
 // check TiFlash replicas.
 // local backend doesn't support TiFlash before tidb v4.0.5
