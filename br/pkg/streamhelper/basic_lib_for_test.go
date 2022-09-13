@@ -358,7 +358,14 @@ func createFakeCluster(t *testing.T, n int, simEnabled bool) *fakeCluster {
 }
 
 func (r *region) String() string {
-	return fmt.Sprintf("%d(%d):[%s,%s);%dL%d", r.id, r.epoch, hex.EncodeToString(r.rng.StartKey), hex.EncodeToString(r.rng.EndKey), r.checkpoint, r.leader)
+	return fmt.Sprintf("%d(%d):[%s,%s);%dL%dF%d",
+		r.id,
+		r.epoch,
+		hex.EncodeToString(r.rng.StartKey),
+		hex.EncodeToString(r.rng.EndKey),
+		r.checkpoint,
+		r.leader,
+		r.fsim.flushedEpoch)
 }
 
 func (f *fakeStore) String() string {
@@ -377,12 +384,13 @@ func (f *fakeCluster) flushAll() {
 }
 
 func (f *fakeCluster) flushAllExcept(keys ...string) {
+outer:
 	for _, r := range f.regions {
 		// Note: can we make it faster?
 		for _, key := range keys {
 			if utils.CompareBytesExt(r.rng.StartKey, false, []byte(key), false) <= 0 &&
 				utils.CompareBytesExt([]byte(key), false, r.rng.EndKey, true) < 0 {
-				continue
+				continue outer
 			}
 		}
 		r.flush()

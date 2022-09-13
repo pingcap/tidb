@@ -190,6 +190,7 @@ func TestOneStoreFailure(t *testing.T) {
 func TestTaskRanges(t *testing.T) {
 	log.SetLevel(zapcore.DebugLevel)
 	c := createFakeCluster(t, 4, true)
+	defer fmt.Println(c)
 	ctx := context.Background()
 	c.splitAndScatter("0001", "0002", "0012", "0034", "0048")
 	c.advanceCheckpoints()
@@ -201,4 +202,5 @@ func TestTaskRanges(t *testing.T) {
 	shouldFinishInTime(t, 10*time.Second, "first advancing", func() { require.NoError(t, adv.OnTick(ctx)) })
 	// Don't check the return value of advance checkpoints here -- we didn't
 	require.Greater(t, env.getCheckpoint(), uint64(0))
+	t.Fail()
 }
