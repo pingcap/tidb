@@ -504,7 +504,7 @@ func TestConflictErrorsInRC(t *testing.T) {
 	se.SetValue(sessiontxn.AssertLockErr, nil)
 	tk.MustExec("delete from t where id = 1")
 	_, ok = se.Value(sessiontxn.AssertLockErr).(map[string]int)
-	require.Equal(t, ok, true)
+	require.False(t, ok)
 	tk.MustQuery("select * from t for update").Check(testkit.Rows())
 
 	tk.MustExec("rollback")
@@ -528,7 +528,7 @@ func TestConflictErrorsInRC(t *testing.T) {
 	tk2.MustExec("update t set v = v + 10 where id = 1")
 	tk.MustExec("update t set v = v + 10 where id = 1")
 	_, ok = se.Value(sessiontxn.AssertLockErr).(map[string]int)
-	require.Equal(t, ok, true)
+	require.False(t, ok)
 	tk.MustQuery("select * from t for update").Check(testkit.Rows("1 41", "2 22"))
 
 	tk.MustExec("rollback")
