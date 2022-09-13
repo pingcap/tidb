@@ -279,11 +279,11 @@ func waitAllScheduleStoppedAndNoRegionHole(ctx context.Context, cfg Config, mgr 
 		return errors.Trace(err)
 	}
 	// we wait for 15*40 = 600s = 10m at least
-	for i := 0; i < 40; i++ {
+	for retryIdx := 0; retryIdx < 40; retryIdx++ {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		if i > 0 {
+		if retryIdx > 0 {
 			time.Sleep(waitAllScheduleStoppedInterval)
 		}
 		allRegions, err2 := waitUntilAllScheduleStopped(ctx, cfg, allStores, mgr)
@@ -304,7 +304,7 @@ func waitAllScheduleStoppedAndNoRegionHole(ctx context.Context, cfg Config, mgr 
 
 		var hasHole bool
 		for j := 0; j < len(allRegions)-1; j++ {
-			left, right := allRegions[i], allRegions[j]
+			left, right := allRegions[j], allRegions[j+1]
 			// todo: do we need to prefix every key with 'z'?, seems doesn't affect sorting and checking
 			if bytes.Compare(left.EndKey, right.StartKey) != 0 {
 				log.Info("region hole found", zap.Reflect("left-region", left), zap.Reflect("right-region", right))
@@ -334,14 +334,14 @@ func waitUntilAllScheduleStopped(ctx context.Context, cfg Config, allStores []*m
 		workerPool.ApplyOnErrorGroup(eg, func() error {
 			backupClient, connection, err := newBackupClient(ctx, store.Address, cfg, mgr.GetTLSConfig())
 			if err != nil {
-				return err
+				return errors.Trace(err)
 			}
 			defer func() {
 				_ = connection.Close()
 			}()
 			checkAdminClient, err := backupClient.CheckPendingAdminOp(ectx, &brpb.CheckAdminRequest{})
 			if err != nil {
-				return err
+				return errors.Trace(err)
 			}
 
 			for {
