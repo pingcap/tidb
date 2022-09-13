@@ -8,6 +8,7 @@ import (
 	"io"
 	"math/big"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
@@ -453,6 +454,15 @@ func setDatumByString(d *types.Datum, v string, meta *parquet.SchemaElement) {
 	if meta.LogicalType != nil && meta.LogicalType.DECIMAL != nil {
 		v = binaryToDecimalStr([]byte(v), int(meta.LogicalType.DECIMAL.Scale))
 	}
+	if meta != nil && *meta.Type == parquet.Type_BYTE_ARRAY && meta.LogicalType == nil {
+		// for string that isn't logically string
+		// we should treat it as bit string.
+		// introduce to solve this issue: https://github.com/pingcap/tidb/issues/37774
+		ret, err := bitStringToByteSlice(v)
+		if err == nil {
+			v = string(ret)
+		}
+	}
 	if meta.Type != nil && *meta.Type == parquet.Type_INT96 && len(v) == 96/8 {
 		ts := int96ToTime([]byte(v))
 		ts = ts.UTC()
@@ -589,11 +599,11 @@ func jdToTime(jd int32, nsec int64) time.Time {
 
 // FYI: https://github.com/apache/spark/blob/d66a4e82eceb89a274edeb22c2fb4384bed5078b/sql/core/src/main/scala/org/apache/spark/sql/execution/datasources/parquet/ParquetWriteSupport.scala#L171-L178
 // INT96 timestamp layout
-// --------------------------
-// |   64 bit   |   32 bit   |
-// ---------------------------
-// |  nano sec  |  julian day  |
-// ---------------------------
+// ----------------------------
+// |   64 bit   |   32 bit    |
+// ----------------------------
+// |  nano sec  |  julian day |
+// ----------------------------
 // NOTE: parquet date can be less than 1970-01-01 that is not supported by TiDB,
 // where dt is a negative number but still legal in the context of Go.
 // But it will cause errors or potential data inconsistency when importing.
@@ -601,4 +611,29 @@ func int96ToTime(parquetDate []byte) time.Time {
 	nano := binary.LittleEndian.Uint64(parquetDate[:8])
 	dt := binary.LittleEndian.Uint32(parquetDate[8:])
 	return jdToTime(int32(dt), int64(nano))
+}
+
+func bitStringToByteSlice(v string) ([]byte, error) {
+	ret := make([]byte, 0)
+	// traverse byte reversely
+	for i := len(v); i > 0; i -= 8 {
+		var str string
+		if i-8 < 0 {
+			str = v[0:i]
+			diff := 8 - len(str)
+			for j := 0; j < diff; j++ {
+				// padding with 0
+				str = "0" + str
+			}
+		} else {
+			str = v[i-8 : i]
+		}
+		b, err := strconv.ParseUint(str, 2, 8)
+		if err != nil {
+			return nil, err
+		}
+		// append to the result reversely
+		ret = append([]byte{byte(b)}, ret...)
+	}
+	return ret, nil
 }

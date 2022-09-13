@@ -327,3 +327,29 @@ func TestNsecOutSideRange(t *testing.T) {
 	// carry operation. i.e. 1000000000 nsec => 1 sec
 	require.Equal(t, a.Add(1*time.Second), b)
 }
+
+func TestParquetImportBitString(t *testing.T) {
+	// Test for: https://github.com/pingcap/tidb/issues/37774
+	name := "import.jxtest.parquet"
+	dir := "./parquet/"
+	store, err := storage.NewLocalStorage(dir)
+	require.NoError(t, err)
+	r, err := store.Open(context.TODO(), name)
+	require.NoError(t, err)
+	reader, err := NewParquetParser(context.TODO(), store, r, name)
+	require.NoError(t, err)
+	defer reader.Close()
+	expected := [][][]byte{
+		{{0x01, 0xff}, {0x03, 0xff}, {0x01, 0xff}},
+		{{0x07, 0xff, 0xff, 0xff, 0xff}, {0xff, 0xff, 0xff, 0xff}, {0x3f, 0xff, 0xff, 0xff}},
+		{{0x0}, {0x0}, {0x0}},
+	}
+	for i := 0; i < 3; i++ {
+		err = reader.ReadRow()
+		require.NoError(t, err)
+		row := reader.LastRow()
+		require.Equal(t, expected[i][0], row.Row[28].GetBytes())
+		require.Equal(t, expected[i][1], row.Row[29].GetBytes())
+		require.Equal(t, expected[i][2], row.Row[30].GetBytes())
+	}
+}

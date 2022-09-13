@@ -60,4 +60,17 @@ for BACKEND in local tidb; do
     check_contains "ts: 1995-12-31 23:00:01"
     check_contains "ts: 2020-02-29 23:00:00"
     check_contains "ts: 2038-01-19 00:00:00"
+
+    run_sql "select p=b'111111111' as p, pp=b'1111111111' as pp, q=b'111111111' as q from test.jxtest where a='18446744073709551615'"
+    check_contains "p: 1"
+    check_contains "pp: 1"
+    check_contains "q: 1"
+    run_sql "select p=b'11111111111111111111111111111111111' as p, pp=b'11111111111111111111111111111111' as pp, q=b'111111111111111111111111111111' as q from test.jxtest where a='0'"
+    check_contains "p: 1"
+    check_contains "pp: 1"
+    check_contains "q: 1"
+    run_sql "select p=b'0' as p, pp=b'0' as pp, q=b'0' as q from test.jxtest where a='4294967295'"
+    check_contains "p: 1"
+    check_contains "pp: 1"
+    check_contains "q: 1"
 done
