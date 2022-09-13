@@ -385,7 +385,7 @@ func newBackupClient(ctx context.Context, storeAddr string, cfg Config, tlsConfi
 		}),
 	)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, errors.Trace(err)
 	}
 	return brpb.NewBackupClient(connection), connection, nil
 }
