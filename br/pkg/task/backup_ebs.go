@@ -296,6 +296,7 @@ func waitAllScheduleStoppedAndNoRegionHole(ctx context.Context, cfg Config, mgr 
 			continue
 		}
 
+		log.Info("all leader regions got, start checking hole", zap.Int("len", len(allRegions)))
 		// sort by start key
 		sort.Slice(allRegions, func(i, j int) bool {
 			left, right := allRegions[i], allRegions[j]
