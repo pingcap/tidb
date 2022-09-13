@@ -6,11 +6,11 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/emirpasic/gods/maps/treemap"
 	"regexp"
 	"sort"
 	"strings"
 
+	"github.com/emirpasic/gods/maps/treemap"
 	_ "github.com/go-sql-driver/mysql" // mysql driver
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
@@ -629,8 +629,8 @@ func keyEq(a, b []byte) bool {
 }
 
 func keyCmp(a, b []byte) int {
-	var length = 0
-	var chosen = 0
+	var length int
+	var chosen int
 	if len(a) < len(b) {
 		length = len(a)
 		chosen = -1

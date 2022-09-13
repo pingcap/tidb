@@ -97,8 +97,6 @@ const (
 	crypterAES256KeyLen = 32
 
 	tidbNewCollationEnabled = "new_collation_enabled"
-
-	ebsProgressFilename = "progress.txt"
 )
 
 // TLSConfig is the common configuration for TLS connection.
