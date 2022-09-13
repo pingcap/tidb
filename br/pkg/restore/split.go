@@ -363,6 +363,9 @@ func (rs *RegionSplitter) ScatterRegions(ctx context.Context, newRegions []*spli
 				})
 			return nil
 		}
+		if err != nil {
+			log.Warn("scatter region meet error", logutil.ShortError(err))
+		}
 		return err
 	}, &split.ExponentialBackoffer{Attempts: 3, BaseBackoff: 500 * time.Millisecond})
 

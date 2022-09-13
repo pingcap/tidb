@@ -36,6 +36,7 @@ const (
 	largeCSVLowerThresholdRation = 10
 )
 
+// TableRegion contains information for a table region during import.
 type TableRegion struct {
 	EngineID int32
 
@@ -47,22 +48,27 @@ type TableRegion struct {
 	Chunk Chunk
 }
 
+// RowIDMin returns the minimum row ID of this table region.
 func (reg *TableRegion) RowIDMin() int64 {
 	return reg.Chunk.PrevRowIDMax + 1
 }
 
+// Rows returns the row counts of this table region.
 func (reg *TableRegion) Rows() int64 {
 	return reg.Chunk.RowIDMax - reg.Chunk.PrevRowIDMax
 }
 
+// Offset gets the offset in the file of this table region.
 func (reg *TableRegion) Offset() int64 {
 	return reg.Chunk.Offset
 }
 
+// Size gets the size of this table region.
 func (reg *TableRegion) Size() int64 {
 	return reg.Chunk.EndOffset - reg.Chunk.Offset
 }
 
+// AllocateEngineIDs allocates the table engine IDs.
 func AllocateEngineIDs(
 	filesRegions []*TableRegion,
 	dataFileSizes []float64,
@@ -134,6 +140,7 @@ func AllocateEngineIDs(
 	}
 }
 
+// MakeTableRegions create a new table region.
 func MakeTableRegions(
 	ctx context.Context,
 	meta *MDTableMeta,

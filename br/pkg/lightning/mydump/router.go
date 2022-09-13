@@ -14,35 +14,56 @@ import (
 	"go.uber.org/zap"
 )
 
+// SourceType specifies the source file types.
 type SourceType int
 
 const (
+	// SourceTypeIgnore means this source file is ignored.
 	SourceTypeIgnore SourceType = iota
+	// SourceTypeSchemaSchema means this source file is a schema file for the DB.
 	SourceTypeSchemaSchema
+	// SourceTypeTableSchema means this source file is a schema file for the table.
 	SourceTypeTableSchema
+	// SourceTypeSQL means this source file is a SQL data file.
 	SourceTypeSQL
+	// SourceTypeCSV means this source file is a CSV data file.
 	SourceTypeCSV
+	// SourceTypeParquet means this source file is a parquet data file.
 	SourceTypeParquet
+	// SourceTypeViewSchema means this source file is a schema file for the view.
 	SourceTypeViewSchema
 )
 
 const (
+	// SchemaSchema is the source type value for schema file for DB.
 	SchemaSchema = "schema-schema"
-	TableSchema  = "table-schema"
-	ViewSchema   = "view-schema"
-	TypeSQL      = "sql"
-	TypeCSV      = "csv"
-	TypeParquet  = "parquet"
-	TypeIgnore   = "ignore"
+	// TableSchema is the source type value for schema file for table.
+	TableSchema = "table-schema"
+	// ViewSchema is the source type value for schema file for view.
+	ViewSchema = "view-schema"
+	// TypeSQL is the source type value for sql data file.
+	TypeSQL = "sql"
+	// TypeCSV is the source type value for csv data file.
+	TypeCSV = "csv"
+	// TypeParquet is the source type value for parquet data file.
+	TypeParquet = "parquet"
+	// TypeIgnore is the source type value for a ignored data file.
+	TypeIgnore = "ignore"
 )
 
+// Compression specifies the compression type.
 type Compression int
 
 const (
+	// CompressionNone is the compression type that with no compression.
 	CompressionNone Compression = iota
+	// CompressionGZ is the compression type that uses GZ algorithm.
 	CompressionGZ
+	// CompressionLZ4 is the compression type that uses LZ4 algorithm.
 	CompressionLZ4
+	// CompressionZStd is the compression type that uses ZStd algorithm.
 	CompressionZStd
+	// CompressionXZ is the compression type that uses XZ algorithm.
 	CompressionXZ
 )
 
@@ -118,7 +139,7 @@ var defaultFileRouteRules = []*config.FileRouteRule{
 	{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)\.(.*?)(?:\.([0-9]+))?\.(sql|csv|parquet)$`, Schema: "$1", Table: "$2", Type: "$4", Key: "$3", Unescape: true},
 }
 
-// // RouteRule is a rule to route file path to target schema/table
+// FileRouter provides some operations to apply a rule to route file path to target schema/table
 type FileRouter interface {
 	// Route apply rule to path. Return nil if path doesn't match route rule;
 	// return error if path match route rule but the captured value for field is invalid
@@ -141,6 +162,7 @@ func (c chainRouters) Route(path string) (*RouteResult, error) {
 	return nil, nil
 }
 
+// NewFileRouter creates a new file router with the rule.
 func NewFileRouter(cfg []*config.FileRouteRule, logger log.Logger) (FileRouter, error) {
 	res := make([]FileRouter, 0, len(cfg))
 	p := regexRouterParser{}
@@ -158,7 +180,7 @@ func NewDefaultFileRouter(logger log.Logger) (FileRouter, error) {
 	return NewFileRouter(defaultFileRouteRules, logger)
 }
 
-// `RegexRouter` is a `FileRouter` implement that apply specific regex pattern to filepath.
+// RegexRouter is a `FileRouter` implement that apply specific regex pattern to filepath.
 // if regex pattern match, then each extractors with capture the matched regexp pattern and
 // set value to target field in `RouteResult`
 type RegexRouter struct {
@@ -166,6 +188,7 @@ type RegexRouter struct {
 	extractors []patExpander
 }
 
+// Route routes a file path to a source file type.
 func (r *RegexRouter) Route(path string) (*RouteResult, error) {
 	indexes := r.pattern.FindStringSubmatchIndex(path)
 	if len(indexes) == 0 {
@@ -310,7 +333,7 @@ func (p regexRouterParser) parseFieldExtractor(
 	return nil
 }
 
-func (p regexRouterParser) checkSubPatterns(pat *regexp.Regexp, t string) error {
+func (regexRouterParser) checkSubPatterns(pat *regexp.Regexp, t string) error {
 	subPats := expandVariablePattern.FindAllString(t, -1)
 	for _, subVar := range subPats {
 		var tmplName string
@@ -348,6 +371,7 @@ func (p *patExpander) Expand(pattern *regexp.Regexp, path string, matchIndex []i
 	return p.applyFn(result, string(value))
 }
 
+// RouteResult contains the information for a file routing.
 type RouteResult struct {
 	filter.Table
 	Key         string
