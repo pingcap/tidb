@@ -93,7 +93,7 @@ func (eqh *Handle) Run() {
 			if record.err == nil {
 				record.alarm4ExcessiveMemUsage(sm)
 			}
-			serverMemoryQuota.CheckQuotaAndKill(memory.ServerMemoryQuota.Load())
+			serverMemoryQuota.CheckQuotaAndKill(memory.ServerMemoryQuota.Load(), sm)
 		case <-eqh.exitCh:
 			return
 		}

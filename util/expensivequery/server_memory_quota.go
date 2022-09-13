@@ -16,14 +16,29 @@ package expensivequery
 
 import (
 	"runtime"
+	"time"
 
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/memory"
 )
 
 type serverMemoryQuota struct {
+	sessionID    uint64
+	sqlStartTime time.Time
 }
 
-func (s *serverMemoryQuota) CheckQuotaAndKill(bt uint64) {
+func (s *serverMemoryQuota) CheckQuotaAndKill(bt uint64, sm util.SessionManager) {
+	if s.sessionID != 0 {
+		if info, ok := sm.GetProcessInfo(s.sessionID); ok {
+			if info.Time == s.sqlStartTime {
+				return // Wait killing finished.
+			}
+		}
+		s.sessionID = 0
+		s.sqlStartTime = time.Time{}
+		runtime.GC()
+	}
+
 	if bt == 0 {
 		return
 	}
@@ -31,8 +46,12 @@ func (s *serverMemoryQuota) CheckQuotaAndKill(bt uint64) {
 	runtime.ReadMemStats(instanceStats)
 	if instanceStats.HeapInuse > bt {
 		t := memory.MemUsageTop1Tracker.Load()
-		if t != nil {
-			t.IsKilled.Store(true)
+		if t != nil && uint64(t.BytesConsumed()) > memory.ServerMemoryLimitSessMinSize.Load() {
+			if info, ok := sm.GetProcessInfo(t.SessionID); ok {
+				s.sessionID = t.SessionID
+				s.sqlStartTime = info.Time
+				t.IsKilled.Store(true)
+			}
 		}
 	}
 }

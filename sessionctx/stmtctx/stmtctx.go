@@ -500,7 +500,6 @@ func (sc *StatementContext) InitDiskTracker(label int, bytesLimit int64) {
 func (sc *StatementContext) InitMemTracker(label int, bytesLimit int64) {
 	memory.InitTracker(&sc.cache.MemTracker, label, bytesLimit, &sc.cache.LogOnExceed[1])
 	sc.MemTracker = &sc.cache.MemTracker
-	sc.MemTracker.IsSession = true
 }
 
 // SetPlanHint sets the hint for the plan.

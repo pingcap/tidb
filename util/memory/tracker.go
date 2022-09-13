@@ -83,6 +83,7 @@ type Tracker struct {
 	maxConsumed   atomicutil.Int64 // max number of bytes consumed during execution.
 	isGlobal      bool             // isGlobal indicates whether this tracker is global tracker
 	IsSession     bool             // IsSession indicates whether this tracker is bound for session
+	SessionID     uint64           // SessionID indicates the sessionID the tracker is bound.
 	IsKilled      atomic.Bool      // IsKilled indicates whether this session is killed because OOM
 }
 
@@ -404,14 +405,6 @@ func (t *Tracker) Consume(bs int64) {
 		}
 	}
 
-	if bs > 0 && rootExceed != nil {
-		tryAction(&rootExceed.actionMuForHardLimit, rootExceed)
-	}
-
-	if bs > 0 && rootExceedForSoftLimit != nil {
-		tryAction(&rootExceedForSoftLimit.actionMuForSoftLimit, rootExceedForSoftLimit)
-	}
-
 	if sessionTracker != nil {
 		// Kill the Top1 session
 		if sessionTracker.IsKilled.Load() {
@@ -428,6 +421,14 @@ func (t *Tracker) Consume(bs int64) {
 				break
 			}
 		}
+	}
+
+	if bs > 0 && rootExceed != nil {
+		tryAction(&rootExceed.actionMuForHardLimit, rootExceed)
+	}
+
+	if bs > 0 && rootExceedForSoftLimit != nil {
+		tryAction(&rootExceedForSoftLimit.actionMuForSoftLimit, rootExceedForSoftLimit)
 	}
 }
 
