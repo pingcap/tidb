@@ -1523,11 +1523,11 @@ func TestPartitionRangePrunerDate(t *testing.T) {
 			"  `a` date DEFAULT NULL\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 			"PARTITION BY RANGE COLUMNS(`a`)\n" +
-			"(PARTITION `p0` VALUES LESS THAN ('1999-06-01'),\n" +
+			"(PARTITION `p0` VALUES LESS THAN ('19990601'),\n" +
 			" PARTITION `p1` VALUES LESS THAN ('2000-05-01'),\n" +
-			" PARTITION `p2` VALUES LESS THAN ('2008-04-01'),\n" +
+			" PARTITION `p2` VALUES LESS THAN ('20080401'),\n" +
 			" PARTITION `p3` VALUES LESS THAN ('2010-03-01'),\n" +
-			" PARTITION `p4` VALUES LESS THAN ('2016-02-01'),\n" +
+			" PARTITION `p4` VALUES LESS THAN ('20160201'),\n" +
 			" PARTITION `p5` VALUES LESS THAN ('2020-01-01'),\n" +
 			" PARTITION `p6` VALUES LESS THAN (MAXVALUE))"))
 	tk.MustExec(`insert into t values ('19990101'),('1999-06-01'),('2000-05-01'),('20080401'),('2010-03-01'),('2016-02-01'),('2020-01-01')`)

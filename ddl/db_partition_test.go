@@ -4477,7 +4477,7 @@ func TestPartitionTableWithAnsiQuotes(t *testing.T) {
 		` PARTITION "p1" VALUES LESS THAN ('""'),` + "\n" +
 		` PARTITION "p2" VALUES LESS THAN (''''),` + "\n" +
 		` PARTITION "p3" VALUES LESS THAN (''''''),` + "\n" +
-		` PARTITION "p4" VALUES LESS THAN ('\\''\t\n'),` + "\n" +
+		` PARTITION "p4" VALUES LESS THAN (x'5c27090a'),` + "\n" +
 		` PARTITION "pMax" VALUES LESS THAN (MAXVALUE))`))
 
 	tk.MustExec("drop table t")

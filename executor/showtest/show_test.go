@@ -482,7 +482,7 @@ func TestShowCreateTable(t *testing.T) {
 			"  `a` varchar(255) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 			"PARTITION BY RANGE COLUMNS(`a`)\n" +
-			"(PARTITION `p` VALUES LESS THAN (0x7f))"))
+			"(PARTITION `p` VALUES LESS THAN (x'7f'))"))
 }
 
 func TestShowCreateTablePlacement(t *testing.T) {
