@@ -720,11 +720,9 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 		if err != nil {
 			return false, ver, errors.Trace(err)
 		}
-		if !done {
-			ver, err = updateVersionAndTableInfo(d, t, job, tbl.Meta(), true)
-			return false, ver, errors.Trace(err)
+		if done {
+			indexInfo.BackfillState = model.BackfillStateReadyToMerge
 		}
-		indexInfo.BackfillState = model.BackfillStateReadyToMerge
 		ver, err = updateVersionAndTableInfo(d, t, job, tbl.Meta(), true)
 		return false, ver, errors.Trace(err)
 	case model.BackfillStateReadyToMerge:
