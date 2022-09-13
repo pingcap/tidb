@@ -202,5 +202,27 @@ func TestTaskRanges(t *testing.T) {
 	shouldFinishInTime(t, 10*time.Second, "first advancing", func() { require.NoError(t, adv.OnTick(ctx)) })
 	// Don't check the return value of advance checkpoints here -- we didn't
 	require.Greater(t, env.getCheckpoint(), uint64(0))
-	t.Fail()
+}
+
+func TestTaskRangesWithSplit(t *testing.T) {
+	log.SetLevel(zapcore.DebugLevel)
+	c := createFakeCluster(t, 4, true)
+	defer fmt.Println(c)
+	ctx := context.Background()
+	c.splitAndScatter("0012", "0034", "0048")
+	c.advanceCheckpoints()
+	c.flushAllExcept("0049")
+	env := &testEnv{fakeCluster: c, testCtx: t, ranges: []kv.KeyRange{{StartKey: []byte("0002"), EndKey: []byte("0048")}}}
+	adv := streamhelper.NewCheckpointAdvancer(env)
+	adv.StartTaskListener(ctx)
+
+	shouldFinishInTime(t, 10*time.Second, "first advancing", func() { require.NoError(t, adv.OnTick(ctx)) })
+	fstCheckpoint := env.getCheckpoint()
+	require.Greater(t, fstCheckpoint, uint64(0))
+
+	c.splitAndScatter("0002")
+	c.advanceCheckpoints()
+	c.flushAllExcept("0000", "0049")
+	shouldFinishInTime(t, 10*time.Second, "second advancing", func() { require.NoError(t, adv.OnTick(ctx)) })
+	require.Greater(t, env.getCheckpoint(), fstCheckpoint)
 }

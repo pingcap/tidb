@@ -193,27 +193,6 @@ func overlaps(a, b kv.KeyRange) bool {
 	return bytes.Compare(a.StartKey, b.EndKey) < 0 && bytes.Compare(b.StartKey, a.EndKey) < 0
 }
 
-func emptyRange() kv.KeyRange {
-	// we cannot use ["", "") here, which means the full key space.
-	magicalSlice := []byte{42}
-	return kv.KeyRange{
-		StartKey: magicalSlice,
-		EndKey:   magicalSlice,
-	}
-}
-
-func (c *CheckpointAdvancer) rangeIsOverlapping(r kv.KeyRange) bool {
-	// A naive algorithm for checking whether we should backup the range :).
-	// For now, we always have 2 ranges for each task. Once we support more ranges,
-	// we'd better use advanced algorithm to reduce the complexity.
-	for _, rng := range c.taskRange {
-		if overlaps(rng, r) {
-			return true
-		}
-	}
-	return false
-}
-
 // tryAdvance tries to advance the checkpoint ts of a set of ranges which shares the same checkpoint.
 func (c *CheckpointAdvancer) tryAdvance(ctx context.Context, rst RangesSharesTS) (err error) {
 	defer c.recordTimeCost("try advance", zap.Uint64("checkpoint", rst.TS), zap.Int("len", len(rst.Ranges)))()
@@ -226,19 +205,13 @@ func (c *CheckpointAdvancer) tryAdvance(ctx context.Context, rst RangesSharesTS)
 	defer utils.PanicToErr(&err)
 
 	ranges := CollapseRanges(len(rst.Ranges), func(i int) kv.KeyRange {
-		if !c.rangeIsOverlapping(rst.Ranges[i]) {
-			// filter out all ranges we don't need.
-			log.Info("[log backup advancer] skipping a range which is fully out of the task range.",
-				zap.Stringer("range", logutil.StringifyRange(rst.Ranges[i])))
-			return emptyRange()
-		}
 		return rst.Ranges[i]
 	})
 	workers := utils.NewWorkerPool(4, "sub ranges")
 	eg, cx := errgroup.WithContext(ctx)
 	collector := NewClusterCollector(ctx, c.env)
 	collector.setOnSuccessHook(c.cache.InsertRange)
-	for _, r := range ranges {
+	for _, r := range utils.ClampRanges(c.taskRange, ranges) {
 		r := r
 		workers.ApplyOnErrorGroup(eg, func() (e error) {
 			defer c.recordTimeCost("get regions in range", zap.Uint64("checkpoint", rst.TS))()
@@ -450,7 +423,7 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 	switch e.Type {
 	case EventAdd:
 		c.task = e.Info
-		c.taskRange = e.Ranges
+		c.taskRange = CollapseRanges(len(e.Ranges), func(i int) kv.KeyRange { return e.Ranges[i] })
 	case EventDel:
 		c.task = nil
 		c.taskRange = nil

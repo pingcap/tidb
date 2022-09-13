@@ -10,7 +10,11 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/kv"
+	"go.uber.org/zap"
 )
 
 // ParseKey parse key by given format.
@@ -76,6 +80,7 @@ func unescapedKey(text string) ([]byte, error) {
 // end, so an empty key is greater than any other keys.
 // Please note that this function is not applicable if any one argument is not an EXCLUSIVE ending of a range.
 func CompareEndKey(a, b []byte) int {
+	// NOTE: maybe CompareBytesExt(a, true, b, true)?
 	if len(a) == 0 {
 		if len(b) == 0 {
 			return 0
@@ -106,4 +111,75 @@ func CompareBytesExt(a []byte, aEmptyAsInf bool, b []byte, bEmptyAsInf bool) int
 		return -1
 	}
 	return bytes.Compare(a, b)
+}
+
+type failedToClampReason int
+
+const (
+	successClamp failedToClampReason = iota
+	// ToClamp :              |_________|
+	// Range:       |______|
+	leftNotOverlapped
+	// ToClamp :    |_________|
+	// Range:                    |______|
+	rightNotOverlapped
+	buggyUnknown
+)
+
+func clampInOneRange(rng kv.KeyRange, clampIn kv.KeyRange) (kv.KeyRange, failedToClampReason) {
+	possibleFailureReason := buggyUnknown
+	if bytes.Compare(rng.StartKey, clampIn.StartKey) < 0 {
+		rng.StartKey = clampIn.StartKey
+		possibleFailureReason = leftNotOverlapped
+	}
+	if CompareBytesExt(rng.EndKey, true, clampIn.EndKey, true) > 0 {
+		rng.EndKey = clampIn.EndKey
+		possibleFailureReason = rightNotOverlapped
+	}
+	// We treat empty region as "failed" too.
+	if CompareBytesExt(rng.StartKey, false, rng.EndKey, true) >= 0 {
+		return kv.KeyRange{}, possibleFailureReason
+	}
+	return rng, successClamp
+}
+
+// ClampRanges clamps the `ranges` into `toClampIn`.
+// Example:
+// ranges:    |___________|    |________________|
+// toClampIn:   |_____| |____|   |________________|
+// result:      |_____| |_|      |______________|
+// we are assuming the arguments are sorted by the start key and no overlaps.
+// you can call CollapseRanges to get key ranges fits this requirements.
+// Note: this algorithm is pretty like the `checkIntervalIsSubset`, can we get them together?
+func ClampRanges(ranges []kv.KeyRange, toClampIn []kv.KeyRange) []kv.KeyRange {
+	currentClamping := 0
+	currentClampTarget := 0
+	clamped := make([]kv.KeyRange, 0, len(ranges))
+	for currentClampTarget < len(toClampIn) && currentClamping < len(ranges) {
+		cin := toClampIn[currentClampTarget]
+		crg := ranges[currentClamping]
+		rng, result := clampInOneRange(crg, cin)
+		switch result {
+		case successClamp:
+			clamped = append(clamped, rng)
+			// Not fully consumed the clamp range.
+			if CompareBytesExt(crg.EndKey, true, cin.EndKey, true) <= 0 {
+				currentClamping++
+			} else {
+				ranges[currentClamping].StartKey = cin.EndKey
+			}
+		case leftNotOverlapped:
+			currentClamping++
+		case rightNotOverlapped:
+			currentClampTarget++
+		case buggyUnknown:
+			log.L().DPanic("Unreachable path reached",
+				zap.Stringer("over-ranges", logutil.StringifyKeys(ranges)),
+				zap.Stringer("clamp-into", logutil.StringifyKeys(toClampIn)),
+				zap.Stringer("current-clamping", logutil.StringifyRange(crg)),
+				zap.Stringer("current-target", logutil.StringifyRange(cin)),
+			)
+		}
+	}
+	return clamped
 }
