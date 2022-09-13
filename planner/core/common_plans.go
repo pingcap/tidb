@@ -602,9 +602,9 @@ REBUILD:
 }
 
 var (
-	heapDumpInterval = time.Minute * 3
-	heapDumpTime     = time.Now()
-	debugThreshold   = 0.6 // 60%
+	heapDumpInterval  = time.Minute * 3
+	heapDumpTime      = time.Now()
+	heapDumpThreshold = 0.4 // 40%
 )
 
 func debugPlanCacheInfo(sctx sessionctx.Context) {
@@ -612,24 +612,6 @@ func debugPlanCacheInfo(sctx sessionctx.Context) {
 	logPlanCacheInfo(sctx)
 
 	// step 2: dump heap if the current memory usage is larger than 60%.
-	memTot, err := memory.MemTotal()
-	if err != nil {
-		logutil.BgLogger().Warn("[Plan-Cache-Patch] get total memory usage error", zap.Error(err))
-		return
-	}
-	memUse, err := memory.MemUsed()
-	if err != nil {
-		logutil.BgLogger().Warn("[Plan-Cache-Patch] get used memory usage error", zap.Error(err))
-		return
-	}
-	if memTot == 0 || memUse == 0 {
-		logutil.BgLogger().Warn("[Plan-Cache-Patch] invalid memory usage values",
-			zap.Uint64("mem-tot", memTot), zap.Uint64("mem-use", memUse))
-		return
-	}
-	if float64(memUse)/float64(memTot) < debugThreshold {
-		return
-	}
 	dumpHeap(sctx)
 }
 
@@ -679,6 +661,26 @@ func dumpHeap(sctx sessionctx.Context) {
 	if time.Since(heapDumpTime) < heapDumpInterval {
 		return
 	}
+
+	memTot, err := memory.MemTotal()
+	if err != nil {
+		logutil.BgLogger().Warn("[Plan-Cache-Patch] get total memory usage error", zap.Error(err))
+		return
+	}
+	memUse, err := memory.MemUsed()
+	if err != nil {
+		logutil.BgLogger().Warn("[Plan-Cache-Patch] get used memory usage error", zap.Error(err))
+		return
+	}
+	if memTot == 0 || memUse == 0 {
+		logutil.BgLogger().Warn("[Plan-Cache-Patch] invalid memory usage values",
+			zap.Uint64("mem-tot", memTot), zap.Uint64("mem-use", memUse))
+		return
+	}
+	if float64(memUse)/float64(memTot) < heapDumpThreshold {
+		return
+	}
+
 	tmpDir := filepath.Join(config.GetGlobalConfig().TempStoragePath, "plan-cache-patch")
 	if err := disk.CheckAndCreateDir(tmpDir); err != nil {
 		logutil.BgLogger().Warn("[Plan-Cache-Patch] create tmpDir error",
