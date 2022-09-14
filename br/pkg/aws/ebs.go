@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -210,7 +211,7 @@ func (e *EC2Session) DeleteSnapshots(snapIDMap map[string]string) {
 		pendingSnaps = append(pendingSnaps, &snapID)
 	}
 
-	var deletedCnt int
+	var deletedCnt atomic.Int32
 	eg, _ := errgroup.WithContext(context.Background())
 	workerPool := utils.NewWorkerPool(e.concurrency, "delete snapshot")
 	for i := range pendingSnaps {
@@ -224,13 +225,13 @@ func (e *EC2Session) DeleteSnapshots(snapIDMap map[string]string) {
 				// todo: we can only retry for a few times, might fail still, need to handle error from outside.
 				// we don't return error if it fails to make sure all snapshot got chance to delete.
 			} else {
-				deletedCnt++
+				deletedCnt.Add(1)
 			}
 			return nil
 		})
 	}
 	_ = eg.Wait()
-	log.Info("delete snapshot end", zap.Int("need-to-del", len(snapIDMap)), zap.Int("deleted", deletedCnt))
+	log.Info("delete snapshot end", zap.Int("need-to-del", len(snapIDMap)), zap.Int32("deleted", deletedCnt.Load()))
 }
 
 // CreateVolumes create volumes from snapshots
@@ -330,7 +331,7 @@ func (e *EC2Session) DeleteVolumes(volumeIDMap map[string]string) {
 		pendingVolumes = append(pendingVolumes, &volumeID)
 	}
 
-	var deletedCnt int
+	var deletedCnt atomic.Int32
 	eg, _ := errgroup.WithContext(context.Background())
 	workerPool := utils.NewWorkerPool(e.concurrency, "delete volume")
 	for i := range pendingVolumes {
@@ -344,13 +345,13 @@ func (e *EC2Session) DeleteVolumes(volumeIDMap map[string]string) {
 				// todo: we can only retry for a few times, might fail still, need to handle error from outside.
 				// we don't return error if it fails to make sure all volume got chance to delete.
 			} else {
-				deletedCnt++
+				deletedCnt.Add(0)
 			}
 			return nil
 		})
 	}
 	_ = eg.Wait()
-	log.Info("delete volume end", zap.Int("need-to-del", len(volumeIDMap)), zap.Int("deleted", deletedCnt))
+	log.Info("delete volume end", zap.Int("need-to-del", len(volumeIDMap)), zap.Int32("deleted", deletedCnt.Load()))
 }
 
 func ec2Tag(key, val string) *ec2.Tag {
