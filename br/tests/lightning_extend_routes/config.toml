@@ -2,9 +2,6 @@
 [mydumper]
 source-id = "mysql-01"
 
-[tikv-importer]
-backend = "backend-placeholder"
-
 # the complicated routing rules should be tested in tidb-tools repo already
 # here we're just verifying the basic things do work.
 [[routes]]

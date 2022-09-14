@@ -4,8 +4,7 @@
 
 set -eux
 
-backends=("local" "tidb")
-for backend in ${backends[@]}; do
+for BACKEND in tidb local; do
   run_sql 'DROP DATABASE IF EXISTS routes_a0;'
   run_sql 'DROP DATABASE IF EXISTS routes_a1;'
   run_sql 'DROP DATABASE IF EXISTS routes_b;'
@@ -13,10 +12,8 @@ for backend in ${backends[@]}; do
   run_sql 'CREATE DATABASE routes_b;'
   run_sql 'CREATE TABLE u (x real primary key, c_source varchar(11) not null, c_schema varchar(11) not null, c_table varchar(11) not null);'
 
-  cp "tests/$TEST_NAME/config.toml" "$TEST_DIR/lightning-config-tmp.toml"
-	sed -i "s/backend-placeholder/$backend/g" "$TEST_DIR/lightning-config-tmp.toml"
-
-  run_lightning --config "$TEST_DIR/lightning-config-tmp.toml"
+  run_lightning --config "tests/$TEST_NAME/config.toml" --backend $BACKEND
+  echo Import using $BACKEND finished
 
   run_sql 'SELECT count(1), sum(x) FROM routes_b.u;'
   check_contains 'count(1): 4'
