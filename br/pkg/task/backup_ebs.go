@@ -166,23 +166,7 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 		return errors.Trace(err)
 	}
 
-	// Step.1.1 get global resolved ts and stop gc until all volumes ebs snapshot starts.
-	resolvedTs, err = mgr.GetMinResolvedTS(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	sp := utils.BRServiceSafePoint{
-		BackupTS: resolvedTs,
-		TTL:      utils.DefaultBRGCSafePointTTL,
-		ID:       utils.MakeSafePointID(),
-	}
-	log.Info("safe point will be stuck during ebs backup", zap.Object("safePoint", sp))
-	err = utils.StartServiceSafePointKeeper(ctx, mgr.GetPDClient(), sp)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	// Step.1.2 stop scheduler as much as possible.
+	// Step.1.1 stop scheduler as much as possible.
 	log.Info("starting to remove some PD schedulers")
 	restoreFunc, e := mgr.RemoveAllPDSchedulers(ctx)
 	if e != nil {
@@ -206,9 +190,18 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 		return errors.Trace(err)
 	}
 
-	// update resolvedTs. stop scheduler will take some time, resolved ts may move forward.
-	// using the latest resolvedTs, it save time of restore and backup more data for customer.
+	// Step.1.2 get global resolved ts and stop gc until all volumes ebs snapshot starts.
 	resolvedTs, err = mgr.GetMinResolvedTS(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	sp := utils.BRServiceSafePoint{
+		BackupTS: resolvedTs,
+		TTL:      utils.DefaultBRGCSafePointTTL,
+		ID:       utils.MakeSafePointID(),
+	}
+	log.Info("safe point will be stuck during ebs backup", zap.Object("safePoint", sp))
+	err = utils.StartServiceSafePointKeeper(ctx, mgr.GetPDClient(), sp)
 	if err != nil {
 		return errors.Trace(err)
 	}
