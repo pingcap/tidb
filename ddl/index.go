@@ -211,7 +211,7 @@ func getIndexColumnLength(col *model.ColumnInfo, colLen int) (int, error) {
 	switch col.GetType() {
 	case mysql.TypeBit:
 		return (length + 7) >> 3, nil
-	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeBlob, mysql.TypeLongBlob:
+	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeBlob, mysql.TypeLongBlob:
 		// Different charsets occupy different numbers of bytes on each character.
 		desc, err := charset.GetCharsetInfo(col.GetCharset())
 		if err != nil {
