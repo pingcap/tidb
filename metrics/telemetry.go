@@ -71,6 +71,13 @@ var (
 			Name:      "table_partition_range_columns_usage",
 			Help:      "Counter of CREATE TABLE which includes RANGE COLUMNS partitioning",
 		})
+	TelemetryTablePartitionRangeMultiColumnsCnt = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "telemetry",
+			Name:      "table_partition_range_multi_columns_usage",
+			Help:      "Counter of CREATE TABLE which includes RANGE COLUMNS partitioning with more than one partitioning column",
+		})
 	TelemetryTablePartitionListColumnsCnt = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
@@ -204,6 +211,7 @@ type TablePartitionUsageCounter struct {
 	TablePartitionRangeCnt                    int64 `json:"table_partition_range_cnt"`
 	TablePartitionHashCnt                     int64 `json:"table_partition_hash_cnt"`
 	TablePartitionRangeColumnsCnt             int64 `json:"table_partition_range_columns_cnt"`
+	TablePartitionRangeMultiColumnsCnt        int64 `json:"table_partition_range_multi_columns_cnt"`
 	TablePartitionListColumnsCnt              int64 `json:"table_partition_list_columns_cnt"`
 	TablePartitionMaxPartitionsCnt            int64 `json:"table_partition_max_partitions_cnt"`
 	TablePartitionCreateIntervalPartitionsCnt int64 `json:"table_partition_create_interval_partitions_cnt"`
@@ -219,6 +227,7 @@ func (c TablePartitionUsageCounter) Cal(rhs TablePartitionUsageCounter) TablePar
 		TablePartitionRangeCnt:                    c.TablePartitionRangeCnt - rhs.TablePartitionRangeCnt,
 		TablePartitionHashCnt:                     c.TablePartitionHashCnt - rhs.TablePartitionHashCnt,
 		TablePartitionRangeColumnsCnt:             c.TablePartitionRangeColumnsCnt - rhs.TablePartitionRangeColumnsCnt,
+		TablePartitionRangeMultiColumnsCnt:        c.TablePartitionRangeMultiColumnsCnt - rhs.TablePartitionRangeMultiColumnsCnt,
 		TablePartitionListColumnsCnt:              c.TablePartitionListColumnsCnt - rhs.TablePartitionListColumnsCnt,
 		TablePartitionMaxPartitionsCnt:            mathutil.Max(c.TablePartitionMaxPartitionsCnt-rhs.TablePartitionMaxPartitionsCnt, rhs.TablePartitionMaxPartitionsCnt),
 		TablePartitionCreateIntervalPartitionsCnt: c.TablePartitionCreateIntervalPartitionsCnt - rhs.TablePartitionCreateIntervalPartitionsCnt,
@@ -230,13 +239,14 @@ func (c TablePartitionUsageCounter) Cal(rhs TablePartitionUsageCounter) TablePar
 // ResetTablePartitionCounter gets the TxnCommitCounter.
 func ResetTablePartitionCounter(pre TablePartitionUsageCounter) TablePartitionUsageCounter {
 	return TablePartitionUsageCounter{
-		TablePartitionCnt:              readCounter(TelemetryTablePartitionCnt),
-		TablePartitionListCnt:          readCounter(TelemetryTablePartitionListCnt),
-		TablePartitionRangeCnt:         readCounter(TelemetryTablePartitionRangeCnt),
-		TablePartitionHashCnt:          readCounter(TelemetryTablePartitionHashCnt),
-		TablePartitionRangeColumnsCnt:  readCounter(TelemetryTablePartitionRangeColumnsCnt),
-		TablePartitionListColumnsCnt:   readCounter(TelemetryTablePartitionListColumnsCnt),
-		TablePartitionMaxPartitionsCnt: mathutil.Max(readCounter(TelemetryTablePartitionMaxPartitionsCnt)-pre.TablePartitionMaxPartitionsCnt, pre.TablePartitionMaxPartitionsCnt),
+		TablePartitionCnt:                  readCounter(TelemetryTablePartitionCnt),
+		TablePartitionListCnt:              readCounter(TelemetryTablePartitionListCnt),
+		TablePartitionRangeCnt:             readCounter(TelemetryTablePartitionRangeCnt),
+		TablePartitionHashCnt:              readCounter(TelemetryTablePartitionHashCnt),
+		TablePartitionRangeColumnsCnt:      readCounter(TelemetryTablePartitionRangeColumnsCnt),
+		TablePartitionRangeMultiColumnsCnt: readCounter(TelemetryTablePartitionRangeMultiColumnsCnt),
+		TablePartitionListColumnsCnt:       readCounter(TelemetryTablePartitionListColumnsCnt),
+		TablePartitionMaxPartitionsCnt:     mathutil.Max(readCounter(TelemetryTablePartitionMaxPartitionsCnt)-pre.TablePartitionMaxPartitionsCnt, pre.TablePartitionMaxPartitionsCnt),
 	}
 }
 
@@ -248,6 +258,7 @@ func GetTablePartitionCounter() TablePartitionUsageCounter {
 		TablePartitionRangeCnt:                    readCounter(TelemetryTablePartitionRangeCnt),
 		TablePartitionHashCnt:                     readCounter(TelemetryTablePartitionHashCnt),
 		TablePartitionRangeColumnsCnt:             readCounter(TelemetryTablePartitionRangeColumnsCnt),
+		TablePartitionRangeMultiColumnsCnt:        readCounter(TelemetryTablePartitionRangeMultiColumnsCnt),
 		TablePartitionListColumnsCnt:              readCounter(TelemetryTablePartitionListColumnsCnt),
 		TablePartitionMaxPartitionsCnt:            readCounter(TelemetryTablePartitionMaxPartitionsCnt),
 		TablePartitionCreateIntervalPartitionsCnt: readCounter(TelemetryTablePartitionCreateIntervalPartitionsCnt),

@@ -200,16 +200,17 @@ type TelemetryInfo struct {
 
 // PartitionTelemetryInfo records table partition telemetry information during execution.
 type PartitionTelemetryInfo struct {
-	UseTablePartition              bool
-	UseTablePartitionList          bool
-	UseTablePartitionRange         bool
-	UseTablePartitionHash          bool
-	UseTablePartitionRangeColumns  bool
-	UseTablePartitionListColumns   bool
-	TablePartitionMaxPartitionsNum uint64
-	UseCreateIntervalPartition     bool
-	UseAddIntervalPartition        bool
-	UseDropIntervalPartition       bool
+	UseTablePartition                  bool
+	UseTablePartitionList              bool
+	UseTablePartitionRange             bool
+	UseTablePartitionHash              bool
+	UseTablePartitionRangeColumns      bool
+	UseTablePartitionRangeMultiColumns bool
+	UseTablePartitionListColumns       bool
+	TablePartitionMaxPartitionsNum     uint64
+	UseCreateIntervalPartition         bool
+	UseAddIntervalPartition            bool
+	UseDropIntervalPartition           bool
 }
 
 // AccountLockTelemetryInfo records account lock/unlock information during execution
