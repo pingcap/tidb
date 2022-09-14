@@ -368,7 +368,7 @@ func GetTailSpaceCount(str string) int64 {
 	return int64(len(str) - length)
 }
 
-// Utf8Len calculates how many bytes the utf8 character taks.
+// Utf8Len calculates how many bytes the utf8 character takes.
 // This b parameter should be the first byte of utf8 character
 func Utf8Len(b byte) int {
 	flag := uint8(128)

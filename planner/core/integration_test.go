@@ -5034,6 +5034,8 @@ func TestIncrementalAnalyzeStatsVer2(t *testing.T) {
 }
 
 func TestConflictReadFromStorage(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -7243,4 +7245,57 @@ func TestEnableTiFlashReadForWriteStmt(t *testing.T) {
 	// CTE
 	rs = tk.MustQuery("explain update t set a=a+1 where b in (select a from t2 where t.a > t2.a)").Rows()
 	checkMpp(rs)
+}
+
+func TestTableRangeFallback(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (a int primary key, b int)")
+	tk.MustExec("create table t2 (c int)")
+	tk.MustQuery("explain format='brief' select * from t1 where a in (10, 20, 30, 40, 50) and b > 1").Check(testkit.Rows(
+		"Selection 1.67 root  gt(test.t1.b, 1)",
+		"└─Batch_Point_Get 5.00 root table:t1 handle:[10 20 30 40 50], keep order:false, desc:false"))
+	tk.MustQuery("explain format='brief' select * from t1 join t2 on t1.b = t2.c where t1.a in (10, 20, 30, 40, 50)").Check(testkit.Rows(
+		"HashJoin 6.24 root  inner join, equal:[eq(test.t1.b, test.t2.c)]",
+		"├─Selection(Build) 5.00 root  not(isnull(test.t1.b))",
+		"│ └─Batch_Point_Get 5.00 root table:t1 handle:[10 20 30 40 50], keep order:false, desc:false",
+		"└─TableReader(Probe) 9990.00 root  data:Selection",
+		"  └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.c))",
+		"    └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"))
+	tk.MustExec("set @@tidb_opt_range_max_size=10")
+	tk.MustQuery("explain format='brief' select * from t1 where a in (10, 20, 30, 40, 50) and b > 1").Check(testkit.Rows(
+		"TableReader 8000.00 root  data:Selection",
+		"└─Selection 8000.00 cop[tikv]  gt(test.t1.b, 1), in(test.t1.a, 10, 20, 30, 40, 50)",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Memory capacity of 10 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen"))
+	tk.MustQuery("explain format='brief' select * from t1 join t2 on t1.b = t2.c where t1.a in (10, 20, 30, 40, 50)").Check(testkit.Rows(
+		"HashJoin 10000.00 root  inner join, equal:[eq(test.t1.b, test.t2.c)]",
+		"├─TableReader(Build) 8000.00 root  data:Selection",
+		"│ └─Selection 8000.00 cop[tikv]  not(isnull(test.t2.c))",
+		"│   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+		"└─TableReader(Probe) 8000.00 root  data:Selection",
+		"  └─Selection 8000.00 cop[tikv]  in(test.t1.a, 10, 20, 30, 40, 50), not(isnull(test.t1.b))",
+		"    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Memory capacity of 10 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen"))
+}
+
+func TestPlanCacheForTableRangeFallback(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("set @@tidb_enable_prepared_plan_cache=1")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int primary key, b int)")
+	tk.MustExec("set @@tidb_opt_range_max_size=10")
+	tk.MustExec("prepare stmt from 'select * from t where a in (?, ?, ?, ?, ?) and b > 1'")
+	tk.MustExec("set @a=10, @b=20, @c=30, @d=40, @e=50")
+	tk.MustExec("execute stmt using @a, @b, @c, @d, @e")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Memory capacity of 10 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen"))
+	tk.MustExec("execute stmt using @a, @b, @c, @d, @e")
+	// The plan with range fallback is not cached.
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
