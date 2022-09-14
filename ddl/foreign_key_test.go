@@ -19,6 +19,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl"
@@ -764,7 +765,7 @@ func TestCreateTableWithForeignKeyError(t *testing.T) {
 	}
 }
 
-func TestDropIndexUsedByForeignKey(t *testing.T) {
+func TestDropIndexNeededInForeignKey(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
@@ -846,6 +847,49 @@ func TestDropIndexUsedByForeignKey(t *testing.T) {
 			tk.MustExec(sql)
 		}
 	}
+}
+
+func TestDropIndexNeededInForeignKey2(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
+	d := dom.DDL()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1;")
+	tk.MustExec("use test")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk2.MustExec("set @@foreign_key_checks=1;")
+	tk2.MustExec("use test")
+	tk3 := testkit.NewTestKit(t, store)
+	tk3.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk3.MustExec("set @@foreign_key_checks=1;")
+	tk3.MustExec("use test")
+	tk.MustExec("create table t1 (id int key, b int)")
+	tk.MustExec("create table t2 (a int, b int, index idx1 (b),index idx2 (b), foreign key (b) references t1(id));")
+
+	var wg sync.WaitGroup
+	var dropErr error
+	tc := &ddl.TestDDLCallback{}
+	tc.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.SchemaState != model.StatePublic || job.Type != model.ActionDropIndex {
+			return
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			dropErr = tk2.ExecToErr("alter table t2 drop index idx2")
+		}()
+		// make sure tk2's ddl job already put into ddl job queue.
+		time.Sleep(time.Millisecond * 100)
+	}
+	originalHook := d.GetHook()
+	defer d.SetHook(originalHook)
+	d.SetHook(tc)
+
+	tk.MustExec("alter table t2 drop index idx1")
+	wg.Wait()
+	require.Error(t, dropErr)
+	require.Equal(t, "[ddl:1553]Cannot drop index 'idx2': needed in a foreign key constraint", dropErr.Error())
 }
 
 func getTableInfo(t *testing.T, dom *domain.Domain, db, tb string) *model.TableInfo {

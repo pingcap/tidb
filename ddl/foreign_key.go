@@ -300,6 +300,9 @@ func checkIndexNeededInForeignKey(is infoschema.InfoSchema, dbName string, tbInf
 		return dbterror.ErrDropIndexNeededInForeignKey.GenWithStackByArgs(idxInfo.Name)
 	}
 	for _, fk := range tbInfo.ForeignKeys {
+		if fk.Version < model.FKVersion1 {
+			continue
+		}
 		err := checkFn(fk.Cols)
 		if err != nil {
 			return err
@@ -310,6 +313,26 @@ func checkIndexNeededInForeignKey(is infoschema.InfoSchema, dbName string, tbInf
 		if err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func checkIndexNeededInForeignKeyInOwner(d *ddlCtx, t *meta.Meta, job *model.Job, dbName string, tbInfo *model.TableInfo, idxInfo *model.IndexInfo) error {
+	if !variable.EnableForeignKey.Load() {
+		return nil
+	}
+	currVer, err := t.GetSchemaVersion()
+	if err != nil {
+		return err
+	}
+	is := d.infoCache.GetLatest()
+	if is.SchemaMetaVersion() != currVer {
+		return errors.New("need wait owner to load latest schema")
+	}
+	err = checkIndexNeededInForeignKey(is, dbName, tbInfo, idxInfo)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return err
 	}
 	return nil
 }
