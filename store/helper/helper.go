@@ -1196,7 +1196,7 @@ func ComputeTiFlashStatus(reader *bufio.Reader, regionReplica *map[int64]int) er
 			continue
 		}
 		realN++
-		r, err := strconv.ParseInt(s, 10, 32)
+		r, err := strconv.ParseInt(s, 10, 64)
 		if err != nil {
 			return errors.Trace(err)
 		}

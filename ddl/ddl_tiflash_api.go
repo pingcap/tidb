@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/helper"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/gcutil"
@@ -126,6 +127,12 @@ type TiFlashManagementContext struct {
 	ProgressCache             map[int64]string
 	Backoff                   *PollTiFlashBackoffContext
 	AvailableTables           *list.List
+}
+
+// AvailableTableID is the table id info of available table for wating to update TiFlash replica progress.
+type AvailableTableID struct {
+	ID          int64
+	IsPartition bool
 }
 
 // Tick will first check increase Counter.
@@ -403,46 +410,65 @@ func getTiFlashTableSyncProgress(pollTiFlashContext *TiFlashManagementContext, t
 	return types.TruncateFloatToString(progress, 2), nil
 }
 
-func poolAvailableTableProgress(schemas infoschema.InfoSchema, ctx sessionctx.Context, pollTiFlashContext *TiFlashManagementContext) {
+func pollAvailableTableProgress(schemas infoschema.InfoSchema, ctx sessionctx.Context, pollTiFlashContext *TiFlashManagementContext) {
 	pollMaxCount := PollAvailableTableProgressCount
 	for element := pollTiFlashContext.AvailableTables.Front(); element != nil && pollMaxCount > 0; pollMaxCount-- {
-		availableTableID := element.Value.(int64)
-		table, ok := schemas.TableByID(availableTableID)
-		if !ok {
-			logutil.BgLogger().Info("get table id failed, may be dropped or truncated",
-				zap.Int64("tableID", availableTableID),
-			)
-			pollTiFlashContext.AvailableTables.Remove(element)
-			element = element.Next()
-			continue
+		availableTableID := element.Value.(AvailableTableID)
+		var table table.Table
+		if availableTableID.IsPartition {
+			table, _, _ = schemas.FindTableByPartitionID(availableTableID.ID)
+			if table == nil {
+				logutil.BgLogger().Info("get table by partition failed, may be dropped or truncated",
+					zap.Int64("partitionID", availableTableID.ID),
+				)
+				pollTiFlashContext.AvailableTables.Remove(element)
+				element = element.Next()
+				continue
+			}
+		} else {
+			var ok bool
+			table, ok = schemas.TableByID(availableTableID.ID)
+			if !ok {
+				logutil.BgLogger().Info("get table id failed, may be dropped or truncated",
+					zap.Int64("tableID", availableTableID.ID),
+				)
+				pollTiFlashContext.AvailableTables.Remove(element)
+				element = element.Next()
+				continue
+			}
 		}
+
 		tableInfo := table.Meta()
 		if tableInfo.TiFlashReplica == nil {
-			logutil.BgLogger().Info("get table id failed, may be dropped or truncated",
-				zap.Int64("tableID", availableTableID),
+			logutil.BgLogger().Info("table has no TiFlash replica",
+				zap.Int64("tableID or partitionID", availableTableID.ID),
+				zap.Bool("IsPartition", availableTableID.IsPartition),
 			)
 			pollTiFlashContext.AvailableTables.Remove(element)
 			element = element.Next()
 			continue
 		}
-		progress, err := getTiFlashTableSyncProgress(pollTiFlashContext, availableTableID, tableInfo.TiFlashReplica.Count)
+		progress, err := getTiFlashTableSyncProgress(pollTiFlashContext, availableTableID.ID, tableInfo.TiFlashReplica.Count)
 		if err != nil {
 			logutil.BgLogger().Error("get tiflash sync progress failed",
 				zap.Error(err),
-				zap.Int64("tableID", availableTableID),
+				zap.Int64("tableID", availableTableID.ID),
+				zap.Bool("IsPartition", availableTableID.IsPartition),
 			)
+			continue
 		}
-		if pollTiFlashContext.ProgressCache[availableTableID] != progress {
-			err = infosync.UpdateTiFlashTableSyncProgress(context.Background(), availableTableID, progress)
+		if pollTiFlashContext.ProgressCache[availableTableID.ID] != progress {
+			err = infosync.UpdateTiFlashTableSyncProgress(context.Background(), availableTableID.ID, progress)
 			if err != nil {
 				logutil.BgLogger().Error("updating TiFlash replica process failed",
 					zap.Error(err),
-					zap.Int64("tableID", availableTableID),
+					zap.Int64("tableID or partitionID", availableTableID.ID),
+					zap.Bool("IsPartition", availableTableID.IsPartition),
 					zap.String("progress", progress),
 				)
 				continue
 			}
-			pollTiFlashContext.ProgressCache[availableTableID] = progress
+			pollTiFlashContext.ProgressCache[availableTableID.ID] = progress
 		}
 		pollTiFlashContext.AvailableTables.Remove(element)
 		element = element.Next()
@@ -459,6 +485,7 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 			for k := range pollTiFlashContext.ProgressCache {
 				delete(pollTiFlashContext.ProgressCache, k)
 			}
+			pollTiFlashContext.PollCounter = 0
 		}
 	}()
 
@@ -479,7 +506,7 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 		return errors.New("Schema is nil")
 	}
 
-	poolAvailableTableProgress(schema, ctx, pollTiFlashContext)
+	pollAvailableTableProgress(schema, ctx, pollTiFlashContext)
 
 	var tableList = make([]TiFlashReplicaStatus, 0)
 
@@ -518,6 +545,7 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 					zap.Error(err),
 					zap.Int64("tableID", tb.ID),
 				)
+				continue
 			}
 			if pollTiFlashContext.ProgressCache[tb.ID] != progress {
 				err = infosync.UpdateTiFlashTableSyncProgress(context.Background(), tb.ID, progress)
@@ -558,7 +586,7 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 			}
 		} else {
 			if needPushPending {
-				pollTiFlashContext.AvailableTables.PushFront(tb.ID)
+				pollTiFlashContext.AvailableTables.PushFront(AvailableTableID{tb.ID, tb.IsPartition})
 			}
 		}
 	}

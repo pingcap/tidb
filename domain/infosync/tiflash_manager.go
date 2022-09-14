@@ -422,6 +422,25 @@ func (tiflash *MockTiFlash) HandleSetPlacementRule(rule placement.TiFlashRule) e
 	return nil
 }
 
+// ResetSyncStatus is mock function for reset sync status.
+func (tiflash *MockTiFlash) ResetSyncStatus(tableID int, canAvailable bool) {
+	tiflash.Lock()
+	defer tiflash.Unlock()
+	if canAvailable {
+		if z, ok := tiflash.SyncStatus[tableID]; ok {
+			z.Regions = []int{1}
+			tiflash.SyncStatus[tableID] = z
+		} else {
+			tiflash.SyncStatus[tableID] = mockTiFlashTableInfo{
+				Regions: []int{1},
+				Accel:   false,
+			}
+		}
+	} else {
+		delete(tiflash.SyncStatus, tableID)
+	}
+}
+
 // HandleDeletePlacementRule is mock function for DeleteTiFlashPlacementRule.
 func (tiflash *MockTiFlash) HandleDeletePlacementRule(group string, ruleID string) {
 	tiflash.Lock()

@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
@@ -1013,4 +1014,86 @@ func TestTiFlashGroupIndexWhenStartup(t *testing.T) {
 	require.Equal(t, placement.RuleIndexTiFlash, tiflash.GetRuleGroupIndex(), errMsg)
 	require.Greater(t, tiflash.GetRuleGroupIndex(), placement.RuleIndexTable)
 	require.Greater(t, tiflash.GetRuleGroupIndex(), placement.RuleIndexPartition)
+}
+
+func TestTiFlashProgressAfterAvailable(t *testing.T) {
+	s, teardown := createTiFlashContext(t)
+	defer teardown()
+	tk := testkit.NewTestKit(t, s.store)
+
+	integration.BeforeTest(t, integration.WithoutGoLeakDetection())
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	defer cluster.Terminate(t)
+
+	save := infosync.GetEtcdClient()
+	defer infosync.SetEtcdClient(save)
+	infosync.SetEtcdClient(cluster.Client(0))
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists ddltiflash")
+	tk.MustExec("create table ddltiflash(z int)")
+	tk.MustExec("alter table ddltiflash set tiflash replica 1")
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
+	CheckTableAvailable(s.dom, t, 1, []string{})
+
+	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
+	require.NoError(t, err)
+	require.NotNil(t, tb)
+	// after available, progress should can be updated.
+	s.tiflash.ResetSyncStatus(int(tb.Meta().ID), false)
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
+	pm, err := infosync.GetTiFlashTableSyncProgress(context.TODO())
+	require.NoError(t, err)
+	progress, ok := pm[tb.Meta().ID]
+	require.True(t, ok)
+	require.Equal(t, types.TruncateFloatToString(progress, 2), "0")
+
+	s.tiflash.ResetSyncStatus(int(tb.Meta().ID), true)
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
+	pm, err = infosync.GetTiFlashTableSyncProgress(context.TODO())
+	require.NoError(t, err)
+	progress, ok = pm[tb.Meta().ID]
+	require.True(t, ok)
+	require.Equal(t, types.TruncateFloatToString(progress, 2), "1")
+}
+
+func TestTiFlashProgressAfterAvailableForPartitionTable(t *testing.T) {
+	s, teardown := createTiFlashContext(t)
+	defer teardown()
+	tk := testkit.NewTestKit(t, s.store)
+
+	integration.BeforeTest(t, integration.WithoutGoLeakDetection())
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	defer cluster.Terminate(t)
+
+	save := infosync.GetEtcdClient()
+	defer infosync.SetEtcdClient(save)
+	infosync.SetEtcdClient(cluster.Client(0))
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists ddltiflash")
+	tk.MustExec("create table ddltiflash(z int) PARTITION BY RANGE(z) (PARTITION p0 VALUES LESS THAN (10))")
+	tk.MustExec("alter table ddltiflash set tiflash replica 1")
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
+	CheckTableAvailable(s.dom, t, 1, []string{})
+
+	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
+	require.NoError(t, err)
+	require.NotNil(t, tb)
+	// after available, progress should can be updated.
+	s.tiflash.ResetSyncStatus(int(tb.Meta().Partition.Definitions[0].ID), false)
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
+	pm, err := infosync.GetTiFlashTableSyncProgress(context.TODO())
+	require.NoError(t, err)
+	progress, ok := pm[tb.Meta().Partition.Definitions[0].ID]
+	require.True(t, ok)
+	require.Equal(t, types.TruncateFloatToString(progress, 2), "0")
+
+	s.tiflash.ResetSyncStatus(int(tb.Meta().Partition.Definitions[0].ID), true)
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
+	pm, err = infosync.GetTiFlashTableSyncProgress(context.TODO())
+	require.NoError(t, err)
+	progress, ok = pm[tb.Meta().Partition.Definitions[0].ID]
+	require.True(t, ok)
+	require.Equal(t, types.TruncateFloatToString(progress, 2), "1")
 }
