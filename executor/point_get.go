@@ -394,15 +394,15 @@ func (e *PointGetExecutor) lockKeyIfNeeded(ctx context.Context, key []byte) erro
 	return err
 }
 
-// lockKeyIfExists lock the key if need and the key exists. If lock the key successfully,
-// return the value of the key.
+// lockKeyIfExists locks the key if needed, but won't lock the key if it doesn't exis.
+// Returns the value of the key if the key exist.
 func (e *PointGetExecutor) lockKeyIfExists(ctx context.Context, key []byte) ([]byte, error) {
 	return e.lockKeyBase(ctx, key, true)
 }
 
 func (e *PointGetExecutor) lockKeyBase(ctx context.Context,
 	key []byte,
-	lockExistedKey bool) ([]byte, error) {
+	LockOnlyIfExists bool) ([]byte, error) {
 	if len(key) == 0 {
 		return nil, nil
 	}
@@ -413,7 +413,7 @@ func (e *PointGetExecutor) lockKeyBase(ctx context.Context,
 		if err != nil {
 			return nil, err
 		}
-		lockCtx.LockOnlyIfExists = lockExistedKey
+		lockCtx.LockOnlyIfExists = LockOnlyIfExists
 		lockCtx.InitReturnValues(1)
 		err = doLockKeys(ctx, e.ctx, lockCtx, key)
 		if err != nil {
@@ -425,7 +425,7 @@ func (e *PointGetExecutor) lockKeyBase(ctx context.Context,
 		if len(e.handleVal) > 0 {
 			seVars.TxnCtx.SetPessimisticLockCache(e.idxKey, e.handleVal)
 		}
-		if lockExistedKey {
+		if LockOnlyIfExists {
 			return e.getValueFromLockCtx(ctx, lockCtx, key)
 		}
 	}
