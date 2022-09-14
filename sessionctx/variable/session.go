@@ -1202,8 +1202,6 @@ type SessionVars struct {
 	CostModelVersion int
 	// BatchPendingTiFlashCount shows the threshold of pending TiFlash tables when batch adding.
 	BatchPendingTiFlashCount int
-	// RcReadCheckTS indicates if ts check optimization is enabled for current session.
-	RcReadCheckTS bool
 	// RcWriteCheckTS indicates whether some special write statements don't get latest tso from PD at RC
 	RcWriteCheckTS bool
 	// RemoveOrderbyInSubquery indicates whether to remove ORDER BY in subquery.
