@@ -46,6 +46,17 @@ func GetDDLReorgWorkerCounter() int32 {
 	return atomic.LoadInt32(&ddlReorgWorkerCounter)
 }
 
+// SetDDLFlashbackConcurrency sets ddlFlashbackConcurrency count.
+// Sysvar validation enforces the range to already be correct.
+func SetDDLFlashbackConcurrency(cnt int32) {
+	atomic.StoreInt32(&ddlFlashbackConcurrency, cnt)
+}
+
+// GetDDLFlashbackConcurrency gets ddlFlashbackConcurrency count.
+func GetDDLFlashbackConcurrency() int32 {
+	return atomic.LoadInt32(&ddlFlashbackConcurrency)
+}
+
 // SetDDLReorgBatchSize sets ddlReorgBatchSize size.
 // Sysvar validation enforces the range to already be correct.
 func SetDDLReorgBatchSize(cnt int32) {
@@ -312,6 +323,15 @@ func TidbOptInt(opt string, defaultVal int) int {
 // TidbOptInt64 converts a string to an int64
 func TidbOptInt64(opt string, defaultVal int64) int64 {
 	val, err := strconv.ParseInt(opt, 10, 64)
+	if err != nil {
+		return defaultVal
+	}
+	return val
+}
+
+// TidbOptUint64 converts a string to an uint64.
+func TidbOptUint64(opt string, defaultVal uint64) uint64 {
+	val, err := strconv.ParseUint(opt, 10, 64)
 	if err != nil {
 		return defaultVal
 	}

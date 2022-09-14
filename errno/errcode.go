@@ -781,15 +781,15 @@ const (
 	ErrNotValidPassword                                      = 1819
 	ErrMustChangePassword                                    = 1820
 	ErrFkNoIndexChild                                        = 1821
-	ErrFkNoIndexParent                                       = 1822
+	ErrForeignKeyNoIndexInParent                             = 1822
 	ErrFkFailAddSystem                                       = 1823
-	ErrFkCannotOpenParent                                    = 1824
+	ErrForeignKeyCannotOpenParent                            = 1824
 	ErrFkIncorrectOption                                     = 1825
 	ErrFkDupName                                             = 1826
 	ErrPasswordFormat                                        = 1827
 	ErrFkColumnCannotDrop                                    = 1828
 	ErrFkColumnCannotDropChild                               = 1829
-	ErrFkColumnNotNull                                       = 1830
+	ErrForeignKeyColumnNotNull                               = 1830
 	ErrDupIndex                                              = 1831
 	ErrFkColumnCannotChange                                  = 1832
 	ErrFkColumnCannotChangeChild                             = 1833
@@ -850,6 +850,7 @@ const (
 	ErrInvalidJSONPathWildcard                               = 3149
 	ErrInvalidJSONContainsPathType                           = 3150
 	ErrJSONUsedAsKey                                         = 3152
+	ErrJSONDocumentTooDeep                                   = 3157
 	ErrJSONDocumentNULLKey                                   = 3158
 	ErrSecureTransportRequired                               = 3159
 	ErrBadUser                                               = 3162
@@ -890,6 +891,9 @@ const (
 	ErrIllegalPrivilegeLevel                                 = 3619
 	ErrCTEMaxRecursionDepth                                  = 3636
 	ErrNotHintUpdatable                                      = 3637
+	ErrForeignKeyCannotDropParent                            = 3730
+	ErrForeignKeyCannotUseVirtualColumn                      = 3733
+	ErrForeignKeyNoColumnInParent                            = 3734
 	ErrDataTruncatedFunctionalIndex                          = 3751
 	ErrDataOutOfRangeFunctionalIndex                         = 3752
 	ErrFunctionalIndexOnJSONOrGeometryFunction               = 3753
@@ -1028,6 +1032,7 @@ const (
 	ErrSettingNoopVariable                 = 8144
 	ErrGettingNoopVariable                 = 8145
 	ErrCannotMigrateSession                = 8146
+	ErrLazyUniquenessCheckFailure          = 8147
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200
