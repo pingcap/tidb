@@ -936,7 +936,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 		var hashPartColName *ast.ColumnName
 		if tblInfo := ds.table.Meta(); canConvertPointGet && tblInfo.GetPartitionInfo() != nil {
 			// We do not build [batch] point get for dynamic table partitions now. This can be optimized.
-			if ds.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+			if ds.ctx.GetSessionVars().UseDynamicPartitionPrune() {
 				canConvertPointGet = false
 			}
 			if canConvertPointGet && len(path.Ranges) > 1 {

@@ -1452,8 +1452,6 @@ func TestPartitionTableStats(t *testing.T) {
 }
 
 func TestPartitionPruningForInExpr(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -1479,8 +1477,6 @@ func TestPartitionPruningForInExpr(t *testing.T) {
 }
 
 func TestPartitionPruningWithDateType(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -3413,8 +3409,6 @@ func TestExplainAnalyzeDML2(t *testing.T) {
 }
 
 func TestPartitionExplain(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3589,8 +3583,6 @@ func TestPartitionUnionWithPPruningColumn(t *testing.T) {
 }
 
 func TestIssue20139(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -6561,9 +6553,6 @@ func TestIssue32632(t *testing.T) {
 }
 
 func TestTiFlashPartitionTableScan(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
-
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

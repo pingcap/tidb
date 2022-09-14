@@ -3321,7 +3321,7 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 	sctx := b.ctx.GetSessionVars().StmtCtx
 	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
 
-	if !b.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+	if !b.ctx.GetSessionVars().UseDynamicPartitionPrune() {
 		return ret
 	}
 	// When isPartition is set, it means the union rewriting is done, so a partition reader is preferred.
@@ -3525,7 +3525,7 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, is.Desc)
 	} else {
 		tblID := e.physicalTableID
-		if b.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+		if b.ctx.GetSessionVars().UseDynamicPartitionPrune() {
 			tblID = e.table.Meta().ID
 		}
 		e.feedback = statistics.NewQueryFeedback(tblID, is.Hist, int64(is.StatsCount()), is.Desc)
@@ -3568,7 +3568,7 @@ func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) E
 	sctx := b.ctx.GetSessionVars().StmtCtx
 	sctx.IndexNames = append(sctx.IndexNames, is.Table.Name.O+":"+is.Index.Name.O)
 
-	if !b.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+	if !b.ctx.GetSessionVars().UseDynamicPartitionPrune() {
 		return ret
 	}
 	// When isPartition is set, it means the union rewriting is done, so a partition reader is preferred.
@@ -3744,7 +3744,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 	sctx.IndexNames = append(sctx.IndexNames, is.Table.Name.O+":"+is.Index.Name.O)
 	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
 
-	if !b.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+	if !b.ctx.GetSessionVars().UseDynamicPartitionPrune() {
 		return ret
 	}
 
@@ -3881,7 +3881,7 @@ func (b *executorBuilder) buildIndexMergeReader(v *plannercore.PhysicalIndexMerg
 	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
 	executorCounterIndexMergeReaderExecutor.Inc()
 
-	if !b.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+	if !b.ctx.GetSessionVars().UseDynamicPartitionPrune() {
 		return ret
 	}
 
@@ -3999,7 +3999,7 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 		return nil, err
 	}
 	tbInfo := e.table.Meta()
-	if tbInfo.GetPartitionInfo() == nil || !builder.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+	if tbInfo.GetPartitionInfo() == nil || !builder.ctx.GetSessionVars().UseDynamicPartitionPrune() {
 		if v.IsCommonHandle {
 			kvRanges, err := buildKvRangesForIndexJoin(e.ctx, getPhysicalTableID(e.table), -1, lookUpContents, indexRanges, keyOff2IdxOff, cwc, memTracker, interruptSignal)
 			if err != nil {
@@ -4247,7 +4247,7 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 		return nil, err
 	}
 	tbInfo := e.table.Meta()
-	if tbInfo.GetPartitionInfo() == nil || !builder.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+	if tbInfo.GetPartitionInfo() == nil || !builder.ctx.GetSessionVars().UseDynamicPartitionPrune() {
 		kvRanges, err := buildKvRangesForIndexJoin(e.ctx, e.physicalTableID, e.index.ID, lookUpContents, indexRanges, keyOff2IdxOff, cwc, memoryTracker, interruptSignal)
 		if err != nil {
 			return nil, err
@@ -4294,7 +4294,7 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 	}
 
 	tbInfo := e.table.Meta()
-	if tbInfo.GetPartitionInfo() == nil || !builder.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+	if tbInfo.GetPartitionInfo() == nil || !builder.ctx.GetSessionVars().UseDynamicPartitionPrune() {
 		e.kvRanges, err = buildKvRangesForIndexJoin(e.ctx, getPhysicalTableID(e.table), e.index.ID, lookUpContents, indexRanges, keyOff2IdxOff, cwc, memTracker, interruptSignal)
 		if err != nil {
 			return nil, err
@@ -4880,7 +4880,7 @@ func getPhysicalTableID(t table.Table) int64 {
 }
 
 func getFeedbackStatsTableID(ctx sessionctx.Context, t table.Table) int64 {
-	if p, ok := t.(table.PhysicalTable); ok && !ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+	if p, ok := t.(table.PhysicalTable); ok && !ctx.GetSessionVars().UseDynamicPartitionPrune() {
 		return p.GetPhysicalID()
 	}
 	return t.Meta().ID

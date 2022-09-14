@@ -26,7 +26,6 @@ import (
 	"unicode"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -4173,7 +4172,7 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 	}
 
 	var statsTbl *statistics.Table
-	if pid == tblInfo.ID || ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+	if pid == tblInfo.ID || ctx.GetSessionVars().UseDynamicPartitionPrune() {
 		statsTbl = statsHandle.GetTableStats(tblInfo, handle.WithTableStatsByQuery())
 	} else {
 		statsTbl = statsHandle.GetPartitionStats(tblInfo, pid, handle.WithTableStatsByQuery())
@@ -4390,24 +4389,9 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	}
 
 	if tableInfo.GetPartitionInfo() != nil {
-		h := domain.GetDomain(b.ctx).StatsHandle()
-		tblStats := h.GetTableStats(tableInfo)
-		isDynamicEnabled := b.ctx.GetSessionVars().IsDynamicPartitionPruneEnabled()
-		globalStatsReady := tblStats.IsInitialized()
-		// If dynamic partition prune isn't enabled or global stats is not ready, we won't enable dynamic prune mode in query
-		usePartitionProcessor := !isDynamicEnabled || !globalStatsReady
-
-		failpoint.Inject("forceDynamicPrune", func(val failpoint.Value) {
-			if val.(bool) {
-				if isDynamicEnabled {
-					usePartitionProcessor = false
-				}
-			}
-		})
-
-		if usePartitionProcessor {
+		// Use the new partition implementation, clean up the code here when it's full implemented.
+		if !b.ctx.GetSessionVars().UseDynamicPartitionPrune() {
 			b.optFlag = b.optFlag | flagPartitionProcessor
-			b.ctx.GetSessionVars().StmtCtx.UseDynamicPruneMode = false
 		}
 
 		pt := tbl.(table.PartitionedTable)

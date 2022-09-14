@@ -2849,8 +2849,6 @@ PARTITION BY RANGE ( a ) (
 }
 
 func TestAnalyzePartitionStaticToDynamic(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	originalVal := tk.MustQuery("select @@tidb_persist_analyze_options").Rows()[0][0].(string)
@@ -2919,7 +2917,7 @@ PARTITION BY RANGE ( a ) (
 	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1 and d > 1")
 	require.NoError(t, h.LoadNeededHistograms())
 	tbl := h.GetTableStats(tableInfo)
-	require.Equal(t, 4, len(tbl.Columns))
+	require.Equal(t, 0, len(tbl.Columns))
 
 	// ignore both p0's 3 buckets, persisted-partition-options' 1 bucket, just use table-level 2 buckets
 	tk.MustExec("analyze table t partition p0")

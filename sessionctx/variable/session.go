@@ -1341,10 +1341,8 @@ func (s *SessionVars) CheckAndGetTxnScope() string {
 	return kv.GlobalTxnScope
 }
 
-// IsDynamicPartitionPruneEnabled indicates whether dynamic partition prune enabled
-// Note that: IsDynamicPartitionPruneEnabled only indicates whether dynamic partition prune mode is enabled according to
-// session variable, it isn't guaranteed to be used during query due to other conditions checking.
-func (s *SessionVars) IsDynamicPartitionPruneEnabled() bool {
+// UseDynamicPartitionPrune indicates whether use new dynamic partition prune.
+func (s *SessionVars) UseDynamicPartitionPrune() bool {
 	return PartitionPruneMode(s.PartitionPruneMode.Load()) == Dynamic
 }
 

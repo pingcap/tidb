@@ -291,8 +291,6 @@ func TestPushLimitDownIndexLookUpReader(t *testing.T) {
 }
 
 func TestPartitionTableIndexLookUpReader(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 

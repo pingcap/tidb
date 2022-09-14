@@ -317,8 +317,6 @@ type StatementContext struct {
 	StatsLoadStatus map[model.TableItemID]string
 	// IsSyncStatsFailed indicates whether any failure happened during sync stats
 	IsSyncStatsFailed bool
-	// UseDynamicPruneMode indicates whether use UseDynamicPruneMode in query stmt
-	UseDynamicPruneMode bool
 	// ColRefFromPlan mark the column ref used by assignment in update statement.
 	ColRefFromUpdatePlan []int64
 
@@ -998,11 +996,6 @@ func (sc *StatementContext) RecordRangeFallback(rangeMaxSize int64) {
 		sc.AppendWarning(errors.Errorf("Memory capacity of %v bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen", rangeMaxSize))
 		sc.RangeFallback = true
 	}
-}
-
-// UseDynamicPartitionPrune indicates whether dynamic partition is used during the query
-func (sc *StatementContext) UseDynamicPartitionPrune() bool {
-	return sc.UseDynamicPruneMode
 }
 
 // CopTasksDetails collects some useful information of cop-tasks during execution.
