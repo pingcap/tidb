@@ -2573,12 +2573,10 @@ RecoverTableStmt:
  *
  *******************************************************************/
 FlashbackClusterStmt:
-	"FLASHBACK" "CLUSTER" asof "TIMESTAMP" stringLit
+	"FLASHBACK" "CLUSTER" "TO" "TIMESTAMP" stringLit
 	{
 		$$ = &ast.FlashBackClusterStmt{
-			AsOf: ast.AsOfClause{
-				TsExpr: ast.NewValueExpr($5, "", ""),
-			},
+			FlashbackTS: ast.NewValueExpr($5, "", ""),
 		}
 	}
 
