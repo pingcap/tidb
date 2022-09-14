@@ -1507,6 +1507,9 @@ func (ds *DataSource) fillIndexPath(path *util.AccessPath, conds []expression.Ex
 // conds is the conditions used to generate the DetachRangeResult for path.
 // isIm indicates whether this function is called to generate the partial path for IndexMerge.
 func (ds *DataSource) deriveIndexPathStats(path *util.AccessPath, _ []expression.Expression, isIm bool) {
+	if ds.TableInfo().Name.L == "t3" {
+		logutil.BgLogger().Warn("derive index path", )
+	}
 	if path.EqOrInCondCount == len(path.AccessConds) {
 		accesses, remained := path.SplitCorColAccessCondFromFilters(ds.ctx, path.EqOrInCondCount)
 		path.AccessConds = append(path.AccessConds, accesses...)

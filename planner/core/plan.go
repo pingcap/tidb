@@ -143,11 +143,11 @@ func optimizeByShuffle4Window(pp *PhysicalWindow, ctx sessionctx.Context) *Physi
 	for _, item := range pp.PartitionBy {
 		partitionBy = append(partitionBy, item.Col)
 	}
-	ndv := int(getColsNDV(partitionBy, dataSource.Schema(), dataSource.statsInfo()))
+	ndv, _ := getColsNDVWithMatchedLen(partitionBy, dataSource.Schema(), dataSource.statsInfo())
 	if ndv <= 1 {
 		return nil
 	}
-	concurrency = mathutil.Min(concurrency, ndv)
+	concurrency = mathutil.Min(concurrency, int(ndv))
 
 	byItems := make([]expression.Expression, 0, len(pp.PartitionBy))
 	for _, item := range pp.PartitionBy {
@@ -184,11 +184,11 @@ func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx sessionctx.Context) 
 			partitionBy = append(partitionBy, col)
 		}
 	}
-	ndv := int(getColsNDV(partitionBy, dataSource.Schema(), dataSource.statsInfo()))
+	ndv, _ := getColsNDVWithMatchedLen(partitionBy, dataSource.Schema(), dataSource.statsInfo())
 	if ndv <= 1 {
 		return nil
 	}
-	concurrency = mathutil.Min(concurrency, ndv)
+	concurrency = mathutil.Min(concurrency, int(ndv))
 
 	reqProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
 	shuffle := PhysicalShuffle{

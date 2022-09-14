@@ -15,10 +15,14 @@
 package core
 
 import (
+	"fmt"
 	"math/bits"
+	"strconv"
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 type joinReorderDPSolver struct {
@@ -155,6 +159,7 @@ func (s *joinReorderDPSolver) bfsGraph(startNode int, visited []bool, adjacents 
 			visited[adjNodeID] = true
 		}
 	}
+	logutil.BgLogger().Warn("join reorder dp", zap.Ints("the id map", visitID2NodeID))
 	return visitID2NodeID
 }
 
@@ -168,6 +173,7 @@ func (s *joinReorderDPSolver) dpGraph(visitID2NodeID, nodeID2VisitID []int, _ []
 	bestPlan := make([]*jrNode, 1<<nodeCnt)
 	// bestPlan[s] is nil can be treated as bestCost[s] = +inf.
 	for i := uint(0); i < nodeCnt; i++ {
+		logutil.BgLogger().Warn("join reorder dp", zap.Uint("the node id", i), zap.Float64("the cost of the basic node", s.curJoinGroup[visitID2NodeID[i]].cumCost))
 		bestPlan[1<<i] = s.curJoinGroup[visitID2NodeID[i]]
 	}
 	// Enumerate the nodeBitmap from small to big, make sure that S1 must be enumerated before S2 if S1 belongs to S2.
@@ -198,11 +204,21 @@ func (s *joinReorderDPSolver) dpGraph(visitID2NodeID, nodeID2VisitID []int, _ []
 			curCost := s.calcJoinCumCost(join, bestPlan[sub], bestPlan[remain])
 			tracer.appendLogicalJoinCost(join, curCost)
 			if bestPlan[nodeBitmap] == nil {
+				logutil.BgLogger().Warn("join reorder dp",
+					zap.String("the child", fmt.Sprintf("%v", strconv.FormatUint(uint64(sub), 2))),
+					zap.String("the other child", fmt.Sprintf("%v", strconv.FormatUint(uint64(remain), 2))),
+					zap.Float64("joined cost", curCost),
+				)
 				bestPlan[nodeBitmap] = &jrNode{
 					p:       join,
 					cumCost: curCost,
 				}
 			} else if bestPlan[nodeBitmap].cumCost > curCost {
+				logutil.BgLogger().Warn("join reorder dp",
+					zap.String("the child", fmt.Sprintf("%v", strconv.FormatUint(uint64(sub), 2))),
+					zap.String("the other child", fmt.Sprintf("%v", strconv.FormatUint(uint64(remain), 2))),
+					zap.Float64("joined cost", curCost),
+				)
 				bestPlan[nodeBitmap].p = join
 				bestPlan[nodeBitmap].cumCost = curCost
 			}
