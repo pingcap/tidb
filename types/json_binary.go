@@ -120,6 +120,8 @@ import (
 
 var jsonZero = CreateBinaryJSON(uint64(0))
 
+const maxJSONDepth = 100
+
 // BinaryJSON represents a binary encoded JSON object.
 // It can be randomly accessed without deserialization.
 type BinaryJSON struct {
@@ -514,14 +516,12 @@ func (bj *BinaryJSON) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	buf := make([]byte, 0, len(data))
-	var typeCode JSONTypeCode
-	typeCode, buf, err = appendBinaryJSON(buf, in)
+	newBj, err := CreateBinaryJSONWithCheck(in)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	bj.TypeCode = typeCode
-	bj.Value = buf
+	bj.TypeCode = newBj.TypeCode
+	bj.Value = newBj.Value
 	return nil
 }
 
@@ -557,11 +557,25 @@ func (bj BinaryJSON) HashValue(buf []byte) []byte {
 
 // CreateBinaryJSON creates a BinaryJSON from interface.
 func CreateBinaryJSON(in interface{}) BinaryJSON {
-	typeCode, buf, err := appendBinaryJSON(nil, in)
+	bj, err := CreateBinaryJSONWithCheck(in)
 	if err != nil {
 		panic(err)
 	}
-	return BinaryJSON{TypeCode: typeCode, Value: buf}
+	return bj
+}
+
+// CreateBinaryJSONWithCheck creates a BinaryJSON from interface with error check.
+func CreateBinaryJSONWithCheck(in interface{}) (BinaryJSON, error) {
+	typeCode, buf, err := appendBinaryJSON(nil, in)
+	if err != nil {
+		return BinaryJSON{}, err
+	}
+	bj := BinaryJSON{TypeCode: typeCode, Value: buf}
+	// GetElemDepth always returns +1.
+	if bj.GetElemDepth()-1 > maxJSONDepth {
+		return BinaryJSON{}, ErrJSONDocumentTooDeep
+	}
+	return bj, nil
 }
 
 func appendBinaryJSON(buf []byte, in interface{}) (JSONTypeCode, []byte, error) {
