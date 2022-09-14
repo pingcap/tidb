@@ -82,10 +82,10 @@ func checkFileName(s string) bool {
 		"schema/test.t_dump_single.schema.txt",
 		"table_tiflash_replica.txt",
 		"variables.toml",
-		"sqls.sql",
 		"session_bindings.sql",
 		"global_bindings.sql",
-		"explain.txt",
+		"sql/sql0.sql",
+		"explain/sql0.txt",
 	}
 	for _, f := range files {
 		if strings.Compare(f, s) == 0 {
