@@ -390,9 +390,9 @@ func TestFKOnGeneratedColumns(t *testing.T) {
 
 	// foreign key constraint cannot be defined on a virtual generated column.
 	tk.MustExec("create table t1 (a int primary key);")
-	tk.MustGetErrCode("create table t2 (a int, b int as (a+1) virtual, foreign key (b) references t1(a));", errno.ErrCannotAddForeign)
+	tk.MustGetErrCode("create table t2 (a int, b int as (a+1) virtual, foreign key (b) references t1(a));", errno.ErrForeignKeyCannotUseVirtualColumn)
 	tk.MustExec("create table t2 (a int, b int generated always as (a+1) virtual);")
-	tk.MustGetErrCode("alter table t2 add foreign key (b) references t1(a);", errno.ErrCannotAddForeign)
+	tk.MustGetErrCode("alter table t2 add foreign key (b) references t1(a);", errno.ErrForeignKeyCannotUseVirtualColumn)
 	tk.MustExec("drop table t1, t2;")
 
 	// foreign key constraint can be defined on a stored generated column.
@@ -1713,4 +1713,18 @@ func TestBuildMaxLengthIndexWithNonRestrictedSqlMode(t *testing.T) {
 			tk.MustGetErrCode(sql, errno.ErrTooLongKey)
 		}
 	}
+}
+
+func TestTiDBDownBeforeUpdateGlobalVersion(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockDownBeforeUpdateGlobalVersion", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/checkDownBeforeUpdateGlobalVersion", `return(true)`))
+	tk.MustExec("alter table t add column b int")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockDownBeforeUpdateGlobalVersion"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/checkDownBeforeUpdateGlobalVersion"))
 }

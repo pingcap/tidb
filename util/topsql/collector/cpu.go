@@ -54,12 +54,11 @@ type SQLCPUTimeRecord struct {
 // SQLCPUCollector uses to consume cpu profile from globalCPUProfiler, then parse the SQL CPU usage from the cpu profile data.
 // It is not thread-safe, should only be used in one goroutine.
 type SQLCPUCollector struct {
-	started bool
-	ctx     context.Context
-	cancel  context.CancelFunc
-	wg      sync.WaitGroup
-
+	ctx        context.Context
 	collector  Collector
+	cancel     context.CancelFunc
+	wg         sync.WaitGroup
+	started    bool
 	registered bool
 }
 

@@ -936,7 +936,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 		var hashPartColName *ast.ColumnName
 		if tblInfo := ds.table.Meta(); canConvertPointGet && tblInfo.GetPartitionInfo() != nil {
 			// We do not build [batch] point get for dynamic table partitions now. This can be optimized.
-			if ds.ctx.GetSessionVars().UseDynamicPartitionPrune() {
+			if ds.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 				canConvertPointGet = false
 			}
 			if canConvertPointGet && len(path.Ranges) > 1 {
@@ -1737,8 +1737,8 @@ func (ds *DataSource) crossEstimateRowCount(path *util.AccessPath, conds []expre
 	if len(accessConds) == 0 {
 		return 0, false, corr
 	}
-	ranges, err := ranger.BuildColumnRange(accessConds, ds.ctx, col.RetType, types.UnspecifiedLength)
-	if len(ranges) == 0 || err != nil {
+	ranges, accessConds, _, err := ranger.BuildColumnRange(accessConds, ds.ctx, col.RetType, types.UnspecifiedLength, ds.ctx.GetSessionVars().RangeMaxSize)
+	if len(ranges) == 0 || len(accessConds) == 0 || err != nil {
 		return 0, err == nil, corr
 	}
 	idxID, idxExists := ds.stats.HistColl.ColID2IdxID[colID]
@@ -1888,7 +1888,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		return invalidTask, nil
 	}
 	ts, cost, _ := ds.getOriginalPhysicalTableScan(prop, candidate.path, candidate.isMatchProp)
-	if ts.KeepOrder && ts.StoreType == kv.TiFlash && (ts.Desc || ts.Table.TiFlashMode == model.TiFlashModeFast) {
+	if ts.KeepOrder && ts.StoreType == kv.TiFlash && (ts.Desc || ds.SCtx().GetSessionVars().TiFlashFastScan) {
 		// TiFlash fast mode(https://github.com/pingcap/tidb/pull/35851) does not keep order in TableScan
 		return invalidTask, nil
 	}

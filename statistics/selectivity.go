@@ -209,12 +209,11 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 			continue
 		}
 
-		if colHist := coll.Columns[c.UniqueID]; colHist == nil || colHist.IsInvalid(ctx, coll.Pseudo) {
+		colHist := coll.Columns[c.UniqueID]
+		if colHist == nil || colHist.IsInvalid(ctx, coll.Pseudo) {
 			ret *= 1.0 / pseudoEqualRate
 			continue
 		}
-
-		colHist := coll.Columns[c.UniqueID]
 		if colHist.Histogram.NDV > 0 {
 			ret *= 1 / float64(colHist.Histogram.NDV)
 		} else {
@@ -500,7 +499,7 @@ func getMaskAndRanges(ctx sessionctx.Context, exprs []expression.Expression, ran
 	switch rangeType {
 	case ranger.ColumnRangeType:
 		accessConds = ranger.ExtractAccessConditionsForColumn(exprs, cols[0])
-		ranges, err = ranger.BuildColumnRange(accessConds, ctx, cols[0].RetType, types.UnspecifiedLength)
+		ranges, accessConds, _, err = ranger.BuildColumnRange(accessConds, ctx, cols[0].RetType, types.UnspecifiedLength, ctx.GetSessionVars().RangeMaxSize)
 	case ranger.IndexRangeType:
 		if cachedPath != nil {
 			ranges, accessConds, remainedConds, isDNF = cachedPath.Ranges, cachedPath.AccessConds, cachedPath.TableFilters, cachedPath.IsDNFCond

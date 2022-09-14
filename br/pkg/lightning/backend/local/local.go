@@ -58,6 +58,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/engine"
 	"github.com/pingcap/tidb/util/mathutil"
@@ -278,6 +279,9 @@ func checkTiDBVersion(_ context.Context, versionStr string, requiredMinVersion, 
 
 var tiFlashReplicaQuery = "SELECT TABLE_SCHEMA, TABLE_NAME FROM information_schema.TIFLASH_REPLICA WHERE REPLICA_COUNT > 0;"
 
+// TiFlashReplicaQueryForTest is only used for tests.
+var TiFlashReplicaQueryForTest = tiFlashReplicaQuery
+
 type tblName struct {
 	schema string
 	name   string
@@ -297,6 +301,9 @@ func (t tblNames) String() string {
 	b.WriteByte(']')
 	return b.String()
 }
+
+// CheckTiFlashVersionForTest is only used for tests.
+var CheckTiFlashVersionForTest = checkTiFlashVersion
 
 // check TiFlash replicas.
 // local backend doesn't support TiFlash before tidb v4.0.5
@@ -1692,6 +1699,10 @@ func (local *local) ResolveDuplicateRows(ctx context.Context, tbl table.Table, t
 				err := local.deleteDuplicateRows(ctx, logger, handleRows, decoder)
 				if err == nil {
 					return nil
+				}
+				if types.ErrBadNumber.Equal(err) {
+					logger.Warn("delete duplicate rows encounter error", log.ShortError(err))
+					return common.ErrResolveDuplicateRows.Wrap(err).GenWithStackByArgs(tableName)
 				}
 				if log.IsContextCanceledError(err) {
 					return err

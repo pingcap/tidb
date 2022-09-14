@@ -29,6 +29,7 @@ import (
 
 	"github.com/golang/protobuf/proto"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
@@ -79,6 +80,7 @@ func checkFileName(s string) bool {
 		"meta.txt",
 		"stats/test.t_dump_single.json",
 		"schema/test.t_dump_single.schema.txt",
+		"table_tiflash_replica.txt",
 		"variables.toml",
 		"sqls.sql",
 		"session_bindings.sql",
@@ -140,17 +142,27 @@ func TestLoadStats(t *testing.T) {
 }
 
 func TestPlanReplayer(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount"))
+	}()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, index idx_a(a))")
+	tk.MustExec("alter table t set tiflash replica 1")
 	tk.MustExec("plan replayer dump explain select * from t where a=10")
+	tk.MustExec("plan replayer dump explain select /*+ read_from_storage(tiflash[t]) */ * from t")
 
 	tk.MustExec("create table t1 (a int)")
 	tk.MustExec("create table t2 (a int)")
+	tk.MustExec("create definer=`root`@`127.0.0.1` view v1 as select * from t1")
+	tk.MustExec("create definer=`root`@`127.0.0.1` view v2 as select * from v1")
 	tk.MustExec("plan replayer dump explain with tmp as (select a from t1 group by t1.a) select * from tmp, t2 where t2.a=tmp.a;")
 	tk.MustExec("plan replayer dump explain select * from t1 where t1.a > (with cte1 as (select 1) select count(1) from cte1);")
+	tk.MustExec("plan replayer dump explain select * from v1")
+	tk.MustExec("plan replayer dump explain select * from v2")
 }
 
 func TestShow(t *testing.T) {
@@ -4295,6 +4307,7 @@ func TestAdminShowDDLJobs(t *testing.T) {
 	require.NoError(t, err)
 	err = meta.NewMeta(txn).AddHistoryDDLJob(job, true)
 	require.NoError(t, err)
+	tk.Session().StmtCommit()
 
 	re = tk.MustQuery("admin show ddl jobs 1")
 	row = re.Rows()[0]
@@ -5925,7 +5938,7 @@ func TestSummaryFailedUpdate(t *testing.T) {
 	dom.ExpensiveQueryHandle().SetSessionManager(sm)
 	defer tk.MustExec("SET GLOBAL tidb_mem_oom_action = DEFAULT")
 	tk.MustExec("SET GLOBAL tidb_mem_oom_action='CANCEL'")
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk.MustExec("set @@tidb_mem_quota_query=1")
 	tk.MustMatchErrMsg("update t set t.a = t.a - 1 where t.a in (select a from t where a < 4)", "Out Of Memory Quota!.*")
 	tk.MustExec("set @@tidb_mem_quota_query=1000000000")
