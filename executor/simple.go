@@ -745,6 +745,9 @@ func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 			return errSavepointNotExists.GenWithStackByArgs("SAVEPOINT", s.SavepointName)
 		}
 		savepointRecord := sessVars.TxnCtx.RollbackToSavepoint(s.SavepointName)
+		if !sessVars.ConstraintCheckInPlacePessimistic && sessVars.TxnCtx.IsPessimistic {
+			return errors.New("savepoint is not supported in pessimistic transactions when in-place constraint check is disabled")
+		}
 		if savepointRecord == nil {
 			return errSavepointNotExists.GenWithStackByArgs("SAVEPOINT", s.SavepointName)
 		}
@@ -1397,7 +1400,7 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 					break
 				}
 			}
-		} //TODO: need delete columns_priv once we implement columns_priv functionality.
+		} // TODO: need delete columns_priv once we implement columns_priv functionality.
 	}
 
 	if len(failedUsers) == 0 {
