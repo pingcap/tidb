@@ -576,8 +576,15 @@ func GetFsp(s string) int {
 // GetFracIndex finds the last '.' for get fracStr, index = -1 means fracStr not found.
 // but for format like '2019.01.01 00:00:00', the index should be -1.
 func GetFracIndex(s string) (index int) {
+	tzIndex, _, _, _, _ := GetTimezone(s)
+	var end int
+	if tzIndex != -1 {
+		end = tzIndex
+	} else {
+		end = len(s) - 1
+	}
 	index = -1
-	for i := len(s) - 1; i >= 0; i-- {
+	for i := end; i >= 0; i-- {
 		if unicode.IsPunct(rune(s[i])) {
 			if s[i] == '.' {
 				index = i
