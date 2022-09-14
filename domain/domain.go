@@ -617,6 +617,7 @@ func (do *Domain) mdlCheckLoop() {
 		logutil.BgLogger().Error("get system session failed", zap.Error(err))
 		return
 	}
+	defer do.sysSessionPool.Put(se)
 	exec := se.(sqlexec.RestrictedSQLExecutor)
 
 	for {
