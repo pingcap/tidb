@@ -633,7 +633,7 @@ func (do *Domain) mdlCheckLoop() {
 				continue
 			}
 			// Get job to check.
-			rows, _, err := exec.ExecRestrictedSQL(kv.WithInternalSourceType(context.Background(), kv.InternalTxnTelemetry), nil, "select job_id, version from mysql.tidb_mdl_info")
+			rows, _, err := exec.ExecRestrictedSQL(kv.WithInternalSourceType(context.Background(), kv.InternalTxnTelemetry), nil, "select job_id, version, table_ids from mysql.tidb_mdl_info")
 			if err != nil {
 				continue
 			}
