@@ -4024,7 +4024,13 @@ func (n *FlashBackClusterStmt) Accept(v Visitor) (Node, bool) {
 	if skipChildren {
 		return v.Leave(newNode)
 	}
-	return v.Leave(newNode.(*FlashBackClusterStmt))
+	n = newNode.(*FlashBackClusterStmt)
+	node, ok := n.FlashbackTS.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.FlashbackTS = node.(ExprNode)
+	return v.Leave(n)
 }
 
 // FlashBackTableStmt is a statement to restore a dropped/truncate table.
