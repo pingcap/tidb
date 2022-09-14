@@ -1104,6 +1104,19 @@ func (p *PhysicalHashJoin) ExtractCorrelatedCols() []*expression.CorrelatedColum
 	return corCols
 }
 
+// MemoryUsage return the memory usage of PhysicalHashJoin
+func (p *PhysicalHashJoin) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+	sum = p.basePhysicalJoin.MemoryUsage() + size.SizeOfUint + size.SizeOfBool*2 + size.SizeOfUint8 + size.SizeOfSlice
+
+	for _, expr := range p.EqualConditions {
+		sum += expr.MemoryUsage()
+	}
+	return
+}
+
 // NewPhysicalHashJoin creates a new PhysicalHashJoin from LogicalJoin.
 func NewPhysicalHashJoin(p *LogicalJoin, innerIdx int, useOuterToBuild bool, newStats *property.StatsInfo, prop ...*property.PhysicalProperty) *PhysicalHashJoin {
 	leftJoinKeys, rightJoinKeys, isNullEQ, _ := p.GetJoinKeys()
