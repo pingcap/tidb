@@ -99,6 +99,8 @@ func (smj *semiJoinRewriter) recursivePlan(p LogicalPlan) (LogicalPlan, error) {
 
 	innerJoin := LogicalJoin{
 		JoinType:        InnerJoin,
+		preferJoinType:  join.preferJoinType,
+		preferJoinOrder: join.preferJoinOrder,
 		EqualConditions: make([]*expression.ScalarFunction, 0, len(join.EqualConditions)),
 	}.Init(p.SCtx(), p.SelectBlockOffset())
 	innerJoin.SetChildren(join.Children()[0], subAgg)
