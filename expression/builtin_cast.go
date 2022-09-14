@@ -2008,8 +2008,8 @@ func minimalDecimalLenForHoldingInteger(tp byte) int {
 }
 
 // typeString returns true if precision cannot be determined
-func typeString(Type byte) bool {
-	switch Type {
+func typeString(fieldType byte) bool {
+	switch fieldType {
 	case mysql.TypeString, mysql.TypeVarchar, mysql.TypeTinyBlob,
 		mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
 		return true
