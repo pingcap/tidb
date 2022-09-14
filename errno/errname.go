@@ -686,7 +686,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrAccessDeniedNoPassword:                                mysql.Message("Access denied for user '%-.48s'@'%-.255s'", nil),
 	ErrSetPasswordAuthPlugin:                                 mysql.Message("SET PASSWORD has no significance for user '%-.48s'@'%-.255s' as authentication plugin does not support it.", nil),
 	ErrGrantPluginUserExists:                                 mysql.Message("GRANT with IDENTIFIED WITH is illegal because the user %-.*s already exists", nil),
-	ErrTruncateIllegalFk:                                     mysql.Message("Cannot truncate a table referenced in a foreign key constraint (%.192s)", nil),
+	ErrTruncateIllegalForeignKey:                             mysql.Message("Cannot truncate a table referenced in a foreign key constraint (%.192s)", nil),
 	ErrPluginIsPermanent:                                     mysql.Message("Plugin '%s' is forcePlusPermanent and can not be unloaded", nil),
 	ErrStmtCacheFull:                                         mysql.Message("Multi-row statements required more than 'maxBinlogStmtCacheSize' bytes of storage; increase this mysqld variable and try again", nil),
 	ErrMultiUpdateKeyConflict:                                mysql.Message("Primary key/partition key update is not allowed since the table is updated both as '%-.192s' and '%-.192s'.", nil),

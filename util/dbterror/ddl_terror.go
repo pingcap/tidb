@@ -404,4 +404,8 @@ var (
 
 	// ErrDropIndexNeededInForeignKey returns when drop index which is needed in foreign key.
 	ErrDropIndexNeededInForeignKey = ClassDDL.NewStd(mysql.ErrDropIndexNeededInForeignKey)
+	// ErrForeignKeyCannotDropParent returns when drop table which has foreign key referred.
+	ErrForeignKeyCannotDropParent = ClassDDL.NewStd(mysql.ErrForeignKeyCannotDropParent)
+	// ErrTruncateIllegalForeignKey returns when truncate table which has foreign key referred.
+	ErrTruncateIllegalForeignKey = ClassDDL.NewStd(mysql.ErrTruncateIllegalForeignKey)
 )
