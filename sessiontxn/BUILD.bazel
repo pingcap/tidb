@@ -24,6 +24,7 @@ go_test(
     srcs = [
         "txn_context_test.go",
         "txn_manager_test.go",
+        "txn_rc_tso_optimize_test.go",
     ],
     flaky = True,
     deps = [

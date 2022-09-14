@@ -23,6 +23,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/parser/model"
@@ -819,6 +820,8 @@ func TestLimitIndexEstimation(t *testing.T) {
 }
 
 func TestBatchPointGetTablePartition(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
