@@ -14,7 +14,7 @@
 
 //go:build !featuretag
 
-package ddl_test
+package metadatalocktest
 
 import (
 	"fmt"
@@ -29,7 +29,7 @@ import (
 )
 
 func TestMDLBasicSelect(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	sv := server.CreateMockServer(t, store)
 
 	sv.SetDomain(dom)
@@ -67,7 +67,7 @@ func TestMDLBasicSelect(t *testing.T) {
 }
 
 func TestMDLBasicInsert(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	sv := server.CreateMockServer(t, store)
 
 	sv.SetDomain(dom)
@@ -105,7 +105,7 @@ func TestMDLBasicInsert(t *testing.T) {
 }
 
 func TestMDLBasicUpdate(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	sv := server.CreateMockServer(t, store)
 
 	sv.SetDomain(dom)
@@ -143,7 +143,7 @@ func TestMDLBasicUpdate(t *testing.T) {
 }
 
 func TestMDLBasicDelete(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	sv := server.CreateMockServer(t, store)
 
 	sv.SetDomain(dom)
@@ -181,7 +181,7 @@ func TestMDLBasicDelete(t *testing.T) {
 }
 
 func TestMDLBasicPointGet(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	sv := server.CreateMockServer(t, store)
 
 	sv.SetDomain(dom)
@@ -219,7 +219,7 @@ func TestMDLBasicPointGet(t *testing.T) {
 }
 
 func TestMDLBasicBatchPointGet(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	sv := server.CreateMockServer(t, store)
 
 	sv.SetDomain(dom)
@@ -258,7 +258,7 @@ func TestMDLBasicBatchPointGet(t *testing.T) {
 }
 
 func TestMDLRRUpdateSchema(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	sv := server.CreateMockServer(t, store)
 
 	sv.SetDomain(dom)
@@ -305,7 +305,7 @@ func TestMDLRRUpdateSchema(t *testing.T) {
 }
 
 func TestMDLRCUpdateSchema(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	sv := server.CreateMockServer(t, store)
 
 	sv.SetDomain(dom)
@@ -354,7 +354,7 @@ func TestMDLRCUpdateSchema(t *testing.T) {
 }
 
 func TestMDLAutoCommitReadOnly(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	sv := server.CreateMockServer(t, store)
 
 	sv.SetDomain(dom)
@@ -392,7 +392,7 @@ func TestMDLAutoCommitReadOnly(t *testing.T) {
 }
 
 func TestMDLAutoCommitNonReadOnly(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	sv := server.CreateMockServer(t, store)
 
 	sv.SetDomain(dom)
@@ -430,7 +430,7 @@ func TestMDLAutoCommitNonReadOnly(t *testing.T) {
 }
 
 func TestMDLLocalTemporaryTable(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	sv := server.CreateMockServer(t, store)
 
 	sv.SetDomain(dom)
@@ -475,7 +475,7 @@ func TestMDLLocalTemporaryTable(t *testing.T) {
 }
 
 func TestMDLGlobalTemporaryTable(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	sv := server.CreateMockServer(t, store)
 
 	sv.SetDomain(dom)
@@ -522,7 +522,7 @@ func TestMDLGlobalTemporaryTable(t *testing.T) {
 }
 
 func TestMDLCacheTable(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	sv := server.CreateMockServer(t, store)
 
 	sv.SetDomain(dom)
@@ -565,7 +565,7 @@ func TestMDLCacheTable(t *testing.T) {
 }
 
 func TestMDLStealRead(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	sv := server.CreateMockServer(t, store)
 
 	sv.SetDomain(dom)
@@ -607,7 +607,7 @@ func TestMDLStealRead(t *testing.T) {
 }
 
 func TestMDLTiDBSnapshot(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	sv := server.CreateMockServer(t, store)
 
 	sv.SetDomain(dom)
@@ -659,7 +659,7 @@ func TestMDLTiDBSnapshot(t *testing.T) {
 }
 
 func TestMDLPartitionTable(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	sv := server.CreateMockServer(t, store)
 
 	sv.SetDomain(dom)
@@ -697,7 +697,7 @@ func TestMDLPartitionTable(t *testing.T) {
 }
 
 func TestMDLPreparePlanBlockDDL(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	sv := server.CreateMockServer(t, store)
 
 	sv.SetDomain(dom)
@@ -742,7 +742,7 @@ func TestMDLPreparePlanBlockDDL(t *testing.T) {
 }
 
 func TestMDLPreparePlanCacheInvalid(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	sv := server.CreateMockServer(t, store)
 
 	sv.SetDomain(dom)
@@ -785,7 +785,7 @@ func TestMDLPreparePlanCacheInvalid(t *testing.T) {
 }
 
 func TestMDLDisable2Enable(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	sv := server.CreateMockServer(t, store)
 
 	sv.SetDomain(dom)
@@ -825,7 +825,7 @@ func TestMDLDisable2Enable(t *testing.T) {
 }
 
 func TestMDLEnable2Disable(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	sv := server.CreateMockServer(t, store)
 
 	sv.SetDomain(dom)
@@ -865,7 +865,7 @@ func TestMDLEnable2Disable(t *testing.T) {
 }
 
 func TestMDLViewItself(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	sv := server.CreateMockServer(t, store)
 
 	sv.SetDomain(dom)
@@ -904,7 +904,7 @@ func TestMDLViewItself(t *testing.T) {
 }
 
 func TestMDLViewBaseTable(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	sv := server.CreateMockServer(t, store)
 
 	sv.SetDomain(dom)
@@ -943,7 +943,7 @@ func TestMDLViewBaseTable(t *testing.T) {
 }
 
 func TestMDLSavePoint(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	sv := server.CreateMockServer(t, store)
 
 	sv.SetDomain(dom)

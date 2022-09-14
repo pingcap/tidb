@@ -1,0 +1,19 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "metadatalocktest_test",
+    srcs = [
+        "mdl_test.go",
+        "mian_test.go",
+    ],
+    deps = [
+        "//config",
+        "//ddl",
+        "//errno",
+        "//server",
+        "//testkit",
+        "//testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)
