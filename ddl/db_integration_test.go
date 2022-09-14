@@ -2511,6 +2511,7 @@ func TestCreateExpressionIndexWithJSONFunction(t *testing.T) {
 	tk.MustGetErrCode(`alter table t add index idx_wrong((json_array_append(b, '$.a', 1)));`, errno.ErrFunctionalIndexOnJSONOrGeometryFunction)
 	tk.MustGetErrCode(`alter table t add index idx_wrong((json_merge_patch(b, '{"k": "v"}')));`, errno.ErrFunctionalIndexOnJSONOrGeometryFunction)
 	tk.MustGetErrCode(`alter table t add index idx_wrong((json_search(b, 'one', 'a')));`, errno.ErrFunctionalIndexOnJSONOrGeometryFunction)
+	tk.MustGetErrCode(`alter table t add index idx_wrong((json_keys(b)));`, errno.ErrFunctionalIndexOnJSONOrGeometryFunction)
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a int, b json);")
@@ -2525,6 +2526,11 @@ func TestCreateExpressionIndexWithJSONFunction(t *testing.T) {
 	tk.MustExec(`alter table t add index idx7((json_type(json_remove(b, '$.a'))));`)
 	tk.MustExec(`alter table t add index idx8((json_type(json_array_append(b, '$.a', 1))));`)
 	tk.MustExec(`alter table t add index idx9((json_type(json_merge_patch(b, '{"k": "v"}'))));`)
+	tk.MustExec(`alter table t add index idx10((json_type(json_keys(b))));`)
+	tk.MustExec(`alter table t add index idx11((cast(json_quote(cast(a as char(10))) as char(64))));`)
+	tk.MustExec(`alter table t add index idx12((json_storage_size(b)));`)
+	tk.MustExec(`alter table t add index idx13((json_depth(b)));`)
+	tk.MustExec(`alter table t add index idx14((json_length(b)));`)
 
 	tk.MustQuery(`select * from t force index(idx0) where json_type(json_search(b, 'one', 'a')) is NULL;`).Check(testkit.Rows("1 {\"a\": 1}"))
 	tk.MustQuery(`select * from t force index(idx1) where json_type(json_array(b)) = 'ARRAY';`).Check(testkit.Rows("1 {\"a\": 1}"))
@@ -2536,6 +2542,11 @@ func TestCreateExpressionIndexWithJSONFunction(t *testing.T) {
 	tk.MustQuery(`select * from t force index(idx7) where json_type(json_remove(b, '$.a')) = 'OBJECT';`).Check(testkit.Rows("1 {\"a\": 1}"))
 	tk.MustQuery(`select * from t force index(idx8) where json_type(json_array_append(b, '$.a', 1)) = 'OBJECT';`).Check(testkit.Rows("1 {\"a\": 1}"))
 	tk.MustQuery(`select * from t force index(idx9) where json_type(json_merge_patch(b, '{"k": "v"}')) = 'OBJECT';`).Check(testkit.Rows("1 {\"a\": 1}"))
+	tk.MustQuery(`select * from t force index(idx10) where json_type(json_keys(b)) = 'ARRAY';`).Check(testkit.Rows("1 {\"a\": 1}"))
+	tk.MustQuery(`select * from t force index(idx11) where cast(json_quote(cast(a as char(10))) as char(64)) = '"1"';`).Check(testkit.Rows("1 {\"a\": 1}"))
+	tk.MustQuery(`select * from t force index(idx12) where json_storage_size(b) > 1;`).Check(testkit.Rows("1 {\"a\": 1}"))
+	tk.MustQuery(`select * from t force index(idx13) where json_depth(b) > 0;`).Check(testkit.Rows("1 {\"a\": 1}"))
+	tk.MustQuery(`select * from t force index(idx14) where json_length(b) > 0;`).Check(testkit.Rows("1 {\"a\": 1}"))
 
 	tk.MustQuery(`select * from t ignore index(idx0) where json_type(json_search(b, 'one', 'a')) is NULL;`).Check(testkit.Rows("1 {\"a\": 1}"))
 	tk.MustQuery(`select * from t ignore index(idx1) where json_type(json_array(b)) = 'ARRAY';`).Check(testkit.Rows("1 {\"a\": 1}"))
@@ -2547,6 +2558,11 @@ func TestCreateExpressionIndexWithJSONFunction(t *testing.T) {
 	tk.MustQuery(`select * from t ignore index(idx7) where json_type(json_remove(b, '$.a')) = 'OBJECT';`).Check(testkit.Rows("1 {\"a\": 1}"))
 	tk.MustQuery(`select * from t ignore index(idx8) where json_type(json_array_append(b, '$.a', 1)) = 'OBJECT';`).Check(testkit.Rows("1 {\"a\": 1}"))
 	tk.MustQuery(`select * from t ignore index(idx9) where json_type(json_merge_patch(b, '{"k": "v"}')) = 'OBJECT';`).Check(testkit.Rows("1 {\"a\": 1}"))
+	tk.MustQuery(`select * from t ignore index(idx10) where json_type(json_keys(b)) = 'ARRAY';`).Check(testkit.Rows("1 {\"a\": 1}"))
+	tk.MustQuery(`select * from t ignore index(idx11) where cast(json_quote(cast(a as char(10))) as char(64)) = '"1"';`).Check(testkit.Rows("1 {\"a\": 1}"))
+	tk.MustQuery(`select * from t ignore index(idx12) where json_storage_size(b) > 1;`).Check(testkit.Rows("1 {\"a\": 1}"))
+	tk.MustQuery(`select * from t ignore index(idx13) where json_depth(b) > 0;`).Check(testkit.Rows("1 {\"a\": 1}"))
+	tk.MustQuery(`select * from t ignore index(idx14) where json_length(b) > 0;`).Check(testkit.Rows("1 {\"a\": 1}"))
 }
 
 func TestCreateExpressionIndexError(t *testing.T) {
