@@ -46,7 +46,7 @@ import (
 	"go.uber.org/zap"
 )
 
-var _ Executor = &PlanReplayerSingleExec{}
+var _ Executor = &PlanReplayerExec{}
 var _ Executor = &PlanReplayerLoadExec{}
 
 const (
@@ -58,8 +58,8 @@ const (
 	globalBindingFile   = "global_bindings.sql"
 )
 
-// PlanReplayerSingleExec represents a plan replayer executor.
-type PlanReplayerSingleExec struct {
+// PlanReplayerExec represents a plan replayer executor.
+type PlanReplayerExec struct {
 	baseExecutor
 	ExecStmts []ast.StmtNode
 	Analyze   bool
@@ -141,7 +141,7 @@ func (tne *tableNameExtractor) handleIsView(t *ast.TableName) (bool, error) {
 }
 
 // Next implements the Executor Next interface.
-func (e *PlanReplayerSingleExec) Next(ctx context.Context, req *chunk.Chunk) error {
+func (e *PlanReplayerExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(e.maxChunkSize)
 	if e.endFlag {
 		return nil
@@ -187,7 +187,7 @@ func (e *PlanReplayerSingleExec) Next(ctx context.Context, req *chunk.Chunk) err
      |-explain2.txt
      |-....
 */
-func (e *PlanReplayerSingleExec) dumpSingle(ctx context.Context, path string) (fileName string, err error) {
+func (e *PlanReplayerExec) dumpSingle(ctx context.Context, path string) (fileName string, err error) {
 	// Create path
 	err = os.MkdirAll(path, os.ModePerm)
 	if err != nil {
@@ -497,7 +497,7 @@ func dumpExplain(ctx sessionctx.Context, zw *zip.Writer, execStmts []ast.StmtNod
 	return nil
 }
 
-func (e *PlanReplayerSingleExec) extractTableNames(ctx context.Context,
+func (e *PlanReplayerExec) extractTableNames(ctx context.Context,
 	ExecStmts []ast.StmtNode, curDB model.CIStr) (map[tableNamePair]struct{}, error) {
 	tableExtractor := &tableNameExtractor{
 		ctx:      ctx,

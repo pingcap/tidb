@@ -975,7 +975,7 @@ func (b *executorBuilder) buildPlanReplayer(v *plannercore.PlanReplayer) Executo
 		}
 		return e
 	}
-	e := &PlanReplayerSingleExec{
+	e := &PlanReplayerExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		ExecStmts:    []ast.StmtNode{v.ExecStmt},
 		Analyze:      v.Analyze,
