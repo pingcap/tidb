@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/auth"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
@@ -66,6 +67,25 @@ func TestExplainPrivileges(t *testing.T) {
 
 	err = tk1.ExecToErr("explain format = 'brief' select * from v")
 	require.Equal(t, plannercore.ErrTableaccessDenied.GenWithStackByArgs("SELECT", "explain", "%", "v").Error(), err.Error())
+
+	// https://github.com/pingcap/tidb/issues/34326
+	tk.MustExec("create table t1 (i int)")
+	tk.MustExec("create table t2 (j int)")
+	tk.MustExec("create table t3 (k int, secret int)")
+
+	tk.MustExec("create view v1 as select * from t1")
+	tk.MustExec("create view v2 as select * from v1, t2")
+	tk.MustExec("create view v3 as select k from t3")
+
+	tk.MustExec("grant select, show view on explaindatabase.v2 to 'explain'@'%'")
+	tk.MustExec("grant         show view on explaindatabase.v1 to 'explain'@'%'")
+	tk.MustExec("grant select, show view on explaindatabase.t3 to 'explain'@'%'")
+	tk.MustExec("grant select, show view on explaindatabase.v3 to 'explain'@'%'")
+
+	tk1.MustGetErrMsg("explain select * from v1", "[planner:1142]SELECT command denied to user 'explain'@'%' for table 'v1'")
+	tk1.MustGetErrCode("explain select * from v2", errno.ErrViewNoExplain)
+	tk1.MustQuery("explain select * from t3")
+	tk1.MustQuery("explain select * from v3")
 }
 
 func TestExplainCartesianJoin(t *testing.T) {

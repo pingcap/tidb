@@ -47,6 +47,7 @@ func checkVariable(t *testing.T, db *sql.DB, variable string, on bool) {
 	var name, status string
 	rs, err := db.Query(fmt.Sprintf("show variables like '%s'", variable))
 	require.NoError(t, err)
+	require.NoError(t, rs.Err())
 	require.True(t, rs.Next())
 
 	require.NoError(t, rs.Scan(&name, &status))
@@ -154,6 +155,12 @@ func TestRestriction(t *testing.T) {
 	err = setVariable(t, s.rdb, TiDBSuperReadOnly, 0)
 	require.Error(t, err)
 	require.Equal(t, err.Error(), PriviledgedErrMsg)
+
+	// can do some Admin stmts
+	_, err = s.udb.Exec("admin show ddl jobs")
+	require.NoError(t, err)
+	_, err = s.udb.Exec("admin show slow recent 1")
+	require.NoError(t, err)
 
 	// turn off tidb_restricted_read_only does not affect tidb_super_read_only
 	setVariableNoError(t, s.db, TiDBRestrictedReadOnly, 0)

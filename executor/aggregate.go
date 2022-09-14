@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/channel"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
@@ -1827,7 +1826,7 @@ func (e *vecGroupChecker) evalGroupItemsAndResolveGroups(item expression.Express
 			previousIsNull = isNull
 		}
 	case types.ETJson:
-		var previousKey, key json.BinaryJSON
+		var previousKey, key types.BinaryJSON
 		if !previousIsNull {
 			previousKey = col.GetJSON(0)
 		}
@@ -1838,7 +1837,7 @@ func (e *vecGroupChecker) evalGroupItemsAndResolveGroups(item expression.Express
 			}
 			if e.sameGroup[i] {
 				if isNull == previousIsNull {
-					if !isNull && json.CompareBinary(previousKey, key) != 0 {
+					if !isNull && types.CompareBinaryJSON(previousKey, key) != 0 {
 						e.sameGroup[i] = false
 					}
 				} else {

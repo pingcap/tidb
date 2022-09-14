@@ -421,6 +421,11 @@ error = '''
 table route error
 '''
 
+["Lightning:Loader:ErrTooManySourceFiles"]
+error = '''
+too many source files
+'''
+
 ["Lightning:MetaMgr:ErrMetaMgrUnknown"]
 error = '''
 unknown error occur on meta manager
@@ -1098,7 +1103,7 @@ Default value expression of column '%s' contains a disallowed function: `%s`.
 
 ["ddl:3780"]
 error = '''
-Referencing column '%s' in foreign key constraint '%s' are incompatible
+Referencing column '%s' and referenced column '%s' in foreign key constraint '%s' are incompatible.
 '''
 
 ["ddl:3800"]
@@ -1511,6 +1516,11 @@ error = '''
 setting %s has no effect in TiDB
 '''
 
+["executor:8147"]
+error = '''
+transaction aborted because lazy uniqueness check is enabled and an error occurred: %s
+'''
+
 ["executor:8212"]
 error = '''
 Failed to split region ranges: %s
@@ -1571,6 +1581,11 @@ error = '''
 Incorrect type for argument %s in function %s.
 '''
 
+["expression:3146"]
+error = '''
+Invalid data type for JSON data in argument %d to function %s; a JSON string or JSON type is required.
+'''
+
 ["expression:8128"]
 error = '''
 Invalid TABLESAMPLE: %s
@@ -1604,6 +1619,11 @@ In this situation, path expressions may not contain the * and ** tokens.
 ["json:3150"]
 error = '''
 The second argument can only be either 'one' or 'all'.
+'''
+
+["json:3157"]
+error = '''
+The JSON document exceeds the maximum depth.
 '''
 
 ["json:3158"]
@@ -2266,6 +2286,21 @@ error = '''
 Changing schema from '%-.192s' to '%-.192s' is not allowed.
 '''
 
+["schema:1822"]
+error = '''
+Failed to add the foreign key constraint. Missing index for constraint '%s' in the referenced table '%s'
+'''
+
+["schema:1824"]
+error = '''
+Failed to open the referenced table '%s'
+'''
+
+["schema:1830"]
+error = '''
+Column '%-.192s' cannot be NOT NULL: needed in a foreign key constraint '%-.192s' SET NULL
+'''
+
 ["schema:1831"]
 error = '''
 Duplicate index '%-.64s' defined on the table '%-.64s.%-.64s'. This is deprecated and will be disallowed in a future release.
@@ -2279,6 +2314,16 @@ User %s does not exist.
 ["schema:3163"]
 error = '''
 User %s already exists.
+'''
+
+["schema:3733"]
+error = '''
+Foreign key '%s' uses virtual column '%s' which is not supported.
+'''
+
+["schema:3734"]
+error = '''
+Failed to add the foreign key constraint. Missing column '%s' for constraint '%s' in the referenced table '%s'
 '''
 
 ["schema:3750"]
