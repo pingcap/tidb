@@ -138,11 +138,11 @@ func buildIntParam(bf *baseBuiltinFunc, id int, input *chunk.Chunk, notProvided 
 // bool return value: return true when we get a const null parameter
 func getColumnConstValString(col *chunk.Column, n int) (string, bool) {
 	// Precondition: col is generated from a constant expression
-	for i := 0; i < n; i++ {
-		if col.IsNull(i) {
+	if i > 0 {
+		if col.IsNull(0) {
 			return "", true
 		}
-		return col.GetString(i), false
+		return col.GetString(0), false
 	}
 	return "", true
 }
