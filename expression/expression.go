@@ -1151,7 +1151,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		default:
 			return false
 		}
-	case ast.Upper, ast.Ucase, ast.Lower, ast.Lcase:
+	case ast.Upper, ast.Ucase, ast.Lower, ast.Lcase, ast.Space:
 		return true
 	case ast.Sysdate:
 		return true
