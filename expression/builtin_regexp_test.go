@@ -204,7 +204,7 @@ func setBinaryCollation(tp *types.FieldType) {
 	tp.SetCollate(charset.CollationBin)
 }
 
-func TestRegexpLikeConst(t *testing.T) {
+func TestRegexpLike(t *testing.T) {
 	ctx := createContext(t)
 
 	// test Regexp_like without match type
@@ -349,7 +349,7 @@ func TestRegexpLikeFunctionVec(t *testing.T) {
 	testVectorizedBuiltinFunc(t, vecBuiltinRegexpLikeCases)
 }
 
-func TestRegexpSubstrConst(t *testing.T) {
+func TestRegexpSubstr(t *testing.T) {
 	ctx := createContext(t)
 
 	// test regexp_substr(expr, pat)
@@ -603,7 +603,7 @@ func TestRegexpSubstrVec(t *testing.T) {
 	testVectorizedBuiltinFunc(t, vecBuiltinRegexpSubstrCases)
 }
 
-func TestRegexpInStrConst(t *testing.T) {
+func TestRegexpInStr(t *testing.T) {
 	ctx := createContext(t)
 
 	// test regexp_instr(expr, pat)
@@ -915,7 +915,7 @@ func TestRegexpInStrVec(t *testing.T) {
 	testVectorizedBuiltinFunc(t, vecBuiltinRegexpInStrCases)
 }
 
-func TestRegexpReplaceConst(t *testing.T) {
+func TestRegexpReplace(t *testing.T) {
 	ctx := createContext(t)
 
 	// test regexp_replace(expr, pat, repl)

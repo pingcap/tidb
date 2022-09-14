@@ -83,7 +83,7 @@ func buildStringParam(bf *baseBuiltinFunc, idx int, input *chunk.Chunk, notProvi
 	if pa.isConst {
 		// Initialize the const
 		var isConstNull bool
-		pa.defaultStrVal, isConstNull = getColumnConstValString(pa.getCol(), input.NumRows())
+		pa.defaultStrVal, isConstNull, err = bf.args[idx].EvalString(bf.ctx, chunk.Row{})
 		if isConstNull {
 			return nil, isConstNull, nil
 		}
@@ -118,37 +118,14 @@ func buildIntParam(bf *baseBuiltinFunc, idx int, input *chunk.Chunk, notProvided
 	if pa.isConst {
 		// Initialize the const
 		var isConstNull bool
-		pa.defaultIntVal, isConstNull = getColumnConstValInt(pa.getCol(), input.NumRows())
+		pa.defaultIntVal, isConstNull, err = bf.args[idx].EvalInt(bf.ctx, chunk.Row{})
+		// pa.defaultIntVal, isConstNull = getColumnConstValInt(pa.getCol(), input.NumRows())
 		if isConstNull {
 			return nil, isConstNull, nil
 		}
 	}
 
 	return &pa, false, nil
-}
-
-// bool return value: return true when we get a const null parameter
-func getColumnConstValString(col *chunk.Column, n int) (string, bool) {
-	// Precondition: col is generated from a constant expression
-	if n > 0 {
-		if col.IsNull(0) {
-			return "", true
-		}
-		return col.GetString(0), false
-	}
-	return "", true
-}
-
-// bool return value: return true when we get a const null parameter
-func getColumnConstValInt(col *chunk.Column, n int) (int64, bool) {
-	// Precondition: col is generated from a constant expression
-	if n > 0 {
-		if col.IsNull(0) {
-			return 0, true
-		}
-		return col.GetInt64(0), false
-	}
-	return 0, true
 }
 
 // memorized regexp means the constant pattern.
