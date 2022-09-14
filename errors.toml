@@ -1693,7 +1693,7 @@ not implemented
 
 ["kv:9007"]
 error = '''
-Write conflict, txnStartTS=%d, conflictStartTS=%d, conflictCommitTS=%d, key=%s [try again later]
+Write conflict, txnStartTS=%d, conflictStartTS=%d, conflictCommitTS=%d, key=%s, reason=%s [try again later]
 '''
 
 ["meta:1007"]
