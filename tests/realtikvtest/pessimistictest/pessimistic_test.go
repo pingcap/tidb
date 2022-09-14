@@ -3155,8 +3155,7 @@ func TestLazyUniquenessCheckForSimpleInserts(t *testing.T) {
 	tk2.MustExec("insert into t values (1, 1)")
 	tk2.MustExec("commit")
 	_, err := tk.Exec("commit")
-	require.NotNil(t, err)
-	require.Contains(t, err.Error(), "[kv:9007]Write conflict")
+	require.ErrorContains(t, err, "[kv:9007]Write conflict")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 1"))
 	tk.MustExec("admin check table t")
 
@@ -3168,8 +3167,7 @@ func TestLazyUniquenessCheckForSimpleInserts(t *testing.T) {
 	tk2.MustExec("insert into t2 values (2, 0)")
 	tk2.MustExec("commit")
 	_, err = tk.Exec("commit")
-	require.NotNil(t, err)
-	require.Contains(t, err.Error(), "[kv:9007]Write conflict")
+	require.ErrorContains(t, err, "[kv:9007]Write conflict")
 	tk.MustQuery("select * from t2").Check(testkit.Rows("2 0"))
 	tk.MustExec("admin check table t2")
 }
@@ -3205,20 +3203,6 @@ func TestLazyUniquenessCheck(t *testing.T) {
 	tk.MustExec("commit")
 	tk.MustExec("admin check table t")
 
-	// case: constraint check failure
-	tk.MustExec("create table t2 (id int primary key, uk int, unique key i1(uk))")
-	tk.MustExec("insert into t2 values (1, 1)")
-	tk.MustExec("begin pessimistic")
-	tk.MustExec("insert into t2 values (2, 1), (3, 3)")
-	// NOTE: this read breaks constraint, but we are not able to return an error here.
-	// We can only guarantee the txn should not commit
-	tk.MustQuery("select * from t2 use index(primary) for update").Check(testkit.Rows("1 1", "2 1", "3 3"))
-	err := tk.ExecToErr("commit")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "Duplicate entry '1' for key 'i1'")
-	tk.MustQuery("select * from t2 use index(primary)").Check(testkit.Rows("1 1"))
-	tk.MustExec("admin check table t2")
-
 	// case: a modification of a lazy-checked key will compensate the lock
 	tk.MustExec("truncate table t2")
 	tk.MustExec("begin pessimistic")
@@ -3232,7 +3216,7 @@ func TestLazyUniquenessCheck(t *testing.T) {
 	}()
 	time.Sleep(500 * time.Millisecond)
 	tk.MustExec("commit")
-	err = <-ch
+	err := <-ch
 	require.NoError(t, err)
 	tk.MustQuery("select * from t2").Check(testkit.Rows("1 12"))
 	tk.MustExec("admin check table t")
@@ -3243,9 +3227,8 @@ func TestLazyUniquenessCheck(t *testing.T) {
 	tk.MustExec("insert into t3 values (1, 1)")
 	tk2.MustExec("insert into t3 values (1, 2)")
 	err = tk.ExecToErr("commit")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "[kv:9007]Write conflict")
-	require.Contains(t, err.Error(), "reason=LazyUniquenessCheck")
+	require.ErrorContains(t, err, "[kv:9007]Write conflict")
+	require.ErrorContains(t, err, "reason=LazyUniquenessCheck")
 
 	// case: DML returns error => abort txn
 	tk.MustExec("create table t4 (id int primary key, v int, key i1(v))")
@@ -3254,8 +3237,7 @@ func TestLazyUniquenessCheck(t *testing.T) {
 	tk.MustExec("insert into t4 values (1, 2), (2, 2)")
 	tk.MustQuery("select * from t4 order by id").Check(testkit.Rows("1 2", "2 2"))
 	err = tk.ExecToErr("delete from t4 where id = 1")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "transaction aborted because lazy uniqueness check is enabled and an error occurred: [kv:1062]Duplicate entry '1' for key 'PRIMARY'")
+	require.ErrorContains(t, err, "transaction aborted because lazy uniqueness check is enabled and an error occurred: [kv:1062]Duplicate entry '1' for key 'PRIMARY'")
 	tk.MustExec("commit")
 	tk.MustExec("admin check table t4")
 	tk.MustQuery("select * from t4 order by id").Check(testkit.Rows("1 1"))
@@ -3268,7 +3250,7 @@ func TestLazyUniquenessCheck(t *testing.T) {
 	tk2.MustExec("delete from t5 where uk = 2")
 	tk.MustExec("select * from t5 for update")
 	err = tk.ExecToErr("commit")
-	require.Contains(t, err.Error(), "[kv:9007]Write conflict")
+	require.ErrorContains(t, err, "[kv:9007]Write conflict")
 
 	// case: delete your own insert that should've returned error
 	tk.MustExec("truncate table t5")
@@ -3276,8 +3258,7 @@ func TestLazyUniquenessCheck(t *testing.T) {
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into t5 values (2, 1)")
 	err = tk.ExecToErr("delete from t5")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "transaction aborted because lazy uniqueness check is enabled and an error occurred: [kv:1062]Duplicate entry '1' for key 'i1'")
+	require.ErrorContains(t, err, "transaction aborted because lazy uniqueness check is enabled and an error occurred: [kv:1062]Duplicate entry '1' for key 'i1'")
 	require.False(t, tk.Session().GetSessionVars().InTxn())
 
 	// case: update unique key, but conflict exists before the txn
@@ -3286,8 +3267,7 @@ func TestLazyUniquenessCheck(t *testing.T) {
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("update t5 set uk = 3 where id = 1")
 	err = tk.ExecToErr("commit")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "Duplicate entry '3' for key 'i1'")
+	require.ErrorContains(t, err, "Duplicate entry '3' for key 'i1'")
 	tk.MustExec("admin check table t5")
 
 	// case: update unique key, but conflict with concurrent write
@@ -3297,8 +3277,7 @@ func TestLazyUniquenessCheck(t *testing.T) {
 	tk.MustExec("update t5 set uk = 3 where id = 1")
 	tk2.MustExec("insert into t5 values (2, 3)")
 	err = tk.ExecToErr("commit")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "[kv:9007]Write conflict")
+	require.ErrorContains(t, err, "[kv:9007]Write conflict")
 	tk.MustExec("admin check table t5")
 
 	// case: insert on duplicate update unique key, but conflict exists before the txn
@@ -3307,8 +3286,7 @@ func TestLazyUniquenessCheck(t *testing.T) {
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into t5 values (3, 1) on duplicate key update uk = 3")
 	err = tk.ExecToErr("commit")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "Duplicate entry '3' for key 'i1'")
+	require.ErrorContains(t, err, "Duplicate entry '3' for key 'i1'")
 	tk.MustExec("admin check table t5")
 
 	// case: insert on duplicate update unique key, but conflict with concurrent write
@@ -3318,12 +3296,12 @@ func TestLazyUniquenessCheck(t *testing.T) {
 	tk.MustExec("insert into t5 values (3, 1) on duplicate key update uk = 3")
 	tk2.MustExec("insert into t5 values (2, 3)")
 	err = tk.ExecToErr("commit")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "[kv:9007]Write conflict")
+	require.ErrorContains(t, err, "[kv:9007]Write conflict")
 	tk.MustExec("admin check table t5")
 }
 
 func TestLazyUniquenessCheckForInsertIgnore(t *testing.T) {
+	// lazy uniqueness check doesn't affect INSERT IGNORE
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3365,8 +3343,8 @@ func TestLazyUniquenessCheckWithStatementRetry(t *testing.T) {
 	tk.MustExec("insert into t5 values (3, 3)") // skip handle=3, uk=3
 	tk2.MustExec("insert into t5 values (2, 3)")
 	err := tk.ExecToErr("update t5 set id = 10 where uk = 3") // write conflict -> unset PresumeKNE -> retry
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "Duplicate entry '3' for key 'i1'")
+	require.ErrorContains(t, err, "transaction aborted because lazy uniqueness")
+	require.ErrorContains(t, err, "Duplicate entry '3' for key 'i1'")
 	require.False(t, tk.Session().GetSessionVars().InTxn())
 	tk.MustExec("admin check table t5")
 
@@ -3377,8 +3355,42 @@ func TestLazyUniquenessCheckWithStatementRetry(t *testing.T) {
 	tk.MustExec("insert into t5 values (3, 3)") // skip handle=3, uk=3
 	tk2.MustExec("insert into t5 values (2, 3)")
 	err = tk.ExecToErr("update t5 set id = id + 10") // write conflict -> unset PresumeKNE -> retry
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "Duplicate entry '3' for key 'i1'")
+	require.ErrorContains(t, err, "Duplicate entry '3' for key 'i1'")
 	require.False(t, tk.Session().GetSessionVars().InTxn())
 	tk.MustExec("admin check table t5")
+}
+
+func TestLazyUniquenessCheckWithInconsistentReadResult(t *testing.T) {
+	// If any read breaks constraint, we guarantee the txn cannot commit
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+	tk.MustExec("set @@tidb_constraint_check_in_place_pessimistic=0")
+	// TiKV will perform a constraint check before reporting assertion failure.
+	// And constraint violation precedes assertion failure.
+	if !*realtikvtest.WithRealTiKV {
+		tk.MustExec("set @@tidb_txn_assertion_level=off")
+	}
+
+	// case: conflict data has been there before current txn
+	tk.MustExec("create table t2 (id int primary key, uk int, unique key i1(uk))")
+	tk.MustExec("insert into t2 values (1, 1)")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t2 values (2, 1), (3, 3)")
+	tk.MustQuery("select * from t2 use index(primary) for update").Check(testkit.Rows("1 1", "2 1", "3 3"))
+	err := tk.ExecToErr("commit")
+	require.ErrorContains(t, err, "Duplicate entry '1' for key 'i1'")
+	tk.MustQuery("select * from t2 use index(primary)").Check(testkit.Rows("1 1"))
+	tk.MustExec("admin check table t2")
+
+	// case: conflict data is written concurrently
+	tk.MustExec("truncate table t2")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t2 values (1, 1)")
+	tk2.MustExec("insert into t2 values (2, 1)")
+	tk.MustQuery("select * from t2 use index(primary) for update").Check(testkit.Rows("1 1", "2 1"))
+	err = tk.ExecToErr("commit")
+	require.ErrorContains(t, err, "reason=LazyUniquenessCheck")
 }
