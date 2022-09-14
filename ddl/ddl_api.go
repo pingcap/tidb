@@ -4335,8 +4335,10 @@ func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*
 			col.DelFlag(mysql.NotNullFlag)
 		case ast.ColumnOptionAutoIncrement:
 			col.AddFlag(mysql.AutoIncrementFlag)
-		case ast.ColumnOptionPrimaryKey, ast.ColumnOptionUniqKey:
-			return dbterror.ErrUnsupportedModifyColumn.GenWithStack("can't change column constraint - %v", opt.Tp)
+		case ast.ColumnOptionPrimaryKey:
+			return errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStack("can't change column constraint (PRIMARY KEY)"))
+		case ast.ColumnOptionUniqKey:
+			return errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStack("can't change column constraint (UNIQUE KEY)"))
 		case ast.ColumnOptionOnUpdate:
 			// TODO: Support other time functions.
 			if col.GetType() == mysql.TypeTimestamp || col.GetType() == mysql.TypeDatetime {
