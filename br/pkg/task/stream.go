@@ -883,10 +883,11 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 
 	readMetaDone := console.ShowTask("Reading Metadata... ", glue.WithTimeCost())
 	metas := restore.StreamMetadataSet{
+		Helper: stream.NewMetadataHelper(),
 		BeforeDoWriteBack: func(path string, last, current *backuppb.Metadata) (skip bool) {
 			log.Info("Updating metadata.", zap.String("file", path),
-				zap.Int("data-file-before", len(last.GetFiles())),
-				zap.Int("data-file-after", len(current.GetFiles())))
+				zap.Int("data-file-before", len(last.GetFileGroups())),
+				zap.Int("data-file-after", len(current.GetFileGroups())))
 			return cfg.DryRun
 		},
 	}
@@ -902,10 +903,12 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 		shiftUntilTS        = metas.CalculateShiftTS(cfg.Until)
 	)
 
-	metas.IterateFilesFullyBefore(shiftUntilTS, func(d *backuppb.DataFileInfo) (shouldBreak bool) {
+	metas.IterateFilesFullyBefore(shiftUntilTS, func(d *backuppb.DataFileGroup) (shouldBreak bool) {
 		fileCount++
 		totalSize += d.Length
-		kvCount += d.NumberOfEntries
+		for _, f := range d.DataFilesInfo {
+			kvCount += f.NumberOfEntries
+		}
 		return
 	})
 	console.Printf("We are going to remove %s files, until %s.\n",
@@ -1247,6 +1250,9 @@ func createRestoreClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, m
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	client.InitMetadataHelper()
+
 	return client, nil
 }
 
@@ -1365,13 +1371,18 @@ func getFullBackupTS(
 func getGlobalResolvedTS(
 	ctx context.Context,
 	s storage.ExternalStorage,
+	helper *stream.MetadataHelper,
 ) (uint64, error) {
 	storeMap := struct {
 		sync.Mutex
 		resolvedTSMap map[int64]uint64
 	}{}
 	storeMap.resolvedTSMap = make(map[int64]uint64)
-	err := stream.FastUnmarshalMetaData(ctx, s, func(path string, m *backuppb.Metadata) error {
+	err := stream.FastUnmarshalMetaData(ctx, s, func(path string, raw []byte) error {
+		m, err := helper.ParseToMetadata(raw)
+		if err != nil {
+			return err
+		}
 		storeMap.Lock()
 		if resolveTS, exist := storeMap.resolvedTSMap[m.StoreId]; !exist || resolveTS < m.ResolvedTs {
 			storeMap.resolvedTSMap[m.StoreId] = m.ResolvedTs
