@@ -1036,6 +1036,7 @@ func convertToKeyError(err error) *kvrpcpb.KeyError {
 				ConflictTs:       x.ConflictTS,
 				ConflictCommitTs: x.ConflictCommitTS,
 				Key:              x.Key,
+				Reason:           x.Reason,
 			},
 		}
 	case *kverrors.ErrDeadlock:
