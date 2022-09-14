@@ -4507,7 +4507,7 @@ func GetModifiableColumnJob(
 	decodeEnumSetBinaryLiteralToUTF8(&newCol.FieldType, chs)
 
 	// Check the column with foreign key, waiting for the default flen and decimal.
-	if fkInfo := GetColumnForeignKeyInfo(originalColName.L, t.Meta().ForeignKeys); fkInfo != nil {
+	if fkInfo, _ := GetColumnForeignKeyInfo(originalColName.L, t.Meta().ForeignKeys); fkInfo != nil {
 		// For now we strongly ban the all column type change for column with foreign key.
 		// Actually MySQL support change column with foreign key from varchar(m) -> varchar(m+t) and t > 0.
 		if newCol.GetType() != col.GetType() || newCol.GetFlen() != col.GetFlen() || newCol.GetDecimal() != col.GetDecimal() {
@@ -4811,8 +4811,8 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 		return infoschema.ErrColumnExists.GenWithStackByArgs(newColName)
 	}
 
-	if fkInfo := GetColumnForeignKeyInfo(oldColName.L, tbl.Meta().ForeignKeys); fkInfo != nil {
-		return dbterror.ErrFKIncompatibleColumns.GenWithStackByArgs(oldColName, fkInfo.Name)
+	if fkInfo, refCol := GetColumnForeignKeyInfo(oldColName.L, tbl.Meta().ForeignKeys); fkInfo != nil {
+		return dbterror.ErrFKIncompatibleColumns.GenWithStackByArgs(oldColName, refCol, fkInfo.Name)
 	}
 
 	// Check generated expression.
@@ -6367,7 +6367,7 @@ func isDroppableColumn(tblInfo *model.TableInfo, colName model.CIStr) error {
 		return err
 	}
 	// Check the column with foreign key.
-	if fkInfo := GetColumnForeignKeyInfo(colName.L, tblInfo.ForeignKeys); fkInfo != nil {
+	if fkInfo, _ := GetColumnForeignKeyInfo(colName.L, tblInfo.ForeignKeys); fkInfo != nil {
 		return dbterror.ErrFkColumnCannotDrop.GenWithStackByArgs(colName, fkInfo.Name)
 	}
 	return nil

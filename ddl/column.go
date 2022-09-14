@@ -913,6 +913,16 @@ func updateNewIdxColsNameOffset(changingIdxs []*model.IndexInfo,
 	}
 }
 
+func updateFKInfoWhenModifyColumn(tblInfo *model.TableInfo, oldCol, newCol model.CIStr) {
+	for _, fk := range tblInfo.ForeignKeys {
+		for i := range fk.Cols {
+			if fk.Cols[i].L == oldCol.L {
+				fk.Cols[i] = newCol
+			}
+		}
+	}
+}
+
 // filterIndexesToRemove filters out the indexes that can be removed.
 func filterIndexesToRemove(changingIdxs []*model.IndexInfo, colName model.CIStr, tblInfo *model.TableInfo) []*model.IndexInfo {
 	indexesToRemove := make([]*model.IndexInfo, 0, len(changingIdxs))
@@ -1426,6 +1436,7 @@ func adjustTableInfoAfterModifyColumn(
 	tblInfo.Columns[oldCol.Offset] = newCol
 	tblInfo.MoveColumnInfo(oldCol.Offset, destOffset)
 	updateNewIdxColsNameOffset(tblInfo.Indices, oldCol.Name, newCol)
+	updateFKInfoWhenModifyColumn(tblInfo, oldCol.Name, newCol.Name)
 	return nil
 }
 
@@ -1622,15 +1633,15 @@ func listIndicesWithColumn(colName string, indices []*model.IndexInfo) []*model.
 }
 
 // GetColumnForeignKeyInfo returns the wanted foreign key info
-func GetColumnForeignKeyInfo(colName string, fkInfos []*model.FKInfo) *model.FKInfo {
+func GetColumnForeignKeyInfo(colName string, fkInfos []*model.FKInfo) (*model.FKInfo, string) {
 	for _, fkInfo := range fkInfos {
-		for _, col := range fkInfo.Cols {
+		for i, col := range fkInfo.Cols {
 			if col.L == colName {
-				return fkInfo
+				return fkInfo, fkInfo.RefCols[i].O
 			}
 		}
 	}
-	return nil
+	return nil, ""
 }
 
 // AllocateColumnID allocates next column ID from TableInfo.
