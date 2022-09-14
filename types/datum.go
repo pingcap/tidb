@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/zap"
 )
 
@@ -1469,17 +1470,11 @@ func (d *Datum) convertToMysqlDecimal(sc *stmtctx.StatementContext, target *Fiel
 func ProduceDecWithSpecifiedTp(dec *MyDecimal, tp *FieldType, sc *stmtctx.StatementContext) (_ *MyDecimal, err error) {
 	flen, decimal := tp.GetFlen(), tp.GetDecimal()
 
-	//If it is a string to decimal, the length of the decimal place can be determined now
-	if (tp.GetFlag() & mysql.StringcastdecimalFlag) == mysql.StringcastdecimalFlag {
-		fless := flen - int(dec.GetDigitsInt())
-		if fless > mysql.MaxDecimalScale {
-			decimal = mysql.MaxDecimalScale
-		} else {
-			decimal = fless
-		}
-		if decimal > int(dec.GetDigitsFrac()) {
-			decimal = int(dec.GetDigitsFrac())
-		}
+	//If string to decimal, determine the precision for each string
+	if (tp.GetFlag() & mysql.StringToDecimalFlag) == mysql.StringToDecimalFlag {
+		decimal = flen - int(dec.GetDigitsInt())
+		//remaining length of the string, the maximum length of decmail decimal places, the actual decimal length
+		decimal = mathutil.Min(decimal, mysql.MaxDecimalScale, int(dec.GetDigitsFrac()))
 	}
 
 	if flen != UnspecifiedLength && decimal != UnspecifiedLength {
