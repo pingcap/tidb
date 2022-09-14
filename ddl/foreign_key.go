@@ -269,3 +269,47 @@ func checkTableForeignKey(referTblInfo, tblInfo *model.TableInfo, fkInfo *model.
 	}
 	return nil
 }
+
+func checkIndexNeededInForeignKey(is infoschema.InfoSchema, dbName string, tbInfo *model.TableInfo, idxInfo *model.IndexInfo) error {
+	referredFKs := is.GetTableReferredForeignKeys(dbName, tbInfo.Name.L)
+	if len(tbInfo.ForeignKeys) == 0 && len(referredFKs) == 0 {
+		return nil
+	}
+	remainIdxs := make([]*model.IndexInfo, 0, len(tbInfo.Indices))
+	for _, idx := range tbInfo.Indices {
+		if idx.ID == idxInfo.ID {
+			continue
+		}
+		remainIdxs = append(remainIdxs, idx)
+	}
+	checkFn := func(cols []model.CIStr) error {
+		if !model.IsIndexPrefixCovered(tbInfo, idxInfo, cols...) {
+			return nil
+		}
+		if tbInfo.PKIsHandle && len(cols) == 1 {
+			refColInfo := model.FindColumnInfo(tbInfo.Columns, cols[0].L)
+			if refColInfo != nil && mysql.HasPriKeyFlag(refColInfo.GetFlag()) {
+				return nil
+			}
+		}
+		for _, index := range remainIdxs {
+			if model.IsIndexPrefixCovered(tbInfo, index, cols...) {
+				return nil
+			}
+		}
+		return dbterror.ErrDropIndexNeededInForeignKey.GenWithStackByArgs(idxInfo.Name)
+	}
+	for _, fk := range tbInfo.ForeignKeys {
+		err := checkFn(fk.Cols)
+		if err != nil {
+			return err
+		}
+	}
+	for _, referredFK := range referredFKs {
+		err := checkFn(referredFK.Cols)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}

@@ -551,7 +551,7 @@ const (
 	ErrEventCompile                                          = 1550
 	ErrEventSameName                                         = 1551
 	ErrEventDataTooLong                                      = 1552
-	ErrDropIndexFk                                           = 1553
+	ErrDropIndexNeededInForeignKey                           = 1553
 	ErrWarnDeprecatedSyntaxWithVer                           = 1554
 	ErrCantWriteLockLogTable                                 = 1555
 	ErrCantLockLogTable                                      = 1556

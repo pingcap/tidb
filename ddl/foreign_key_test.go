@@ -764,6 +764,90 @@ func TestCreateTableWithForeignKeyError(t *testing.T) {
 	}
 }
 
+func TestDropIndexUsedByForeignKey(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+
+	cases := []struct {
+		prepares []string
+		drops    []string
+		err      string
+	}{
+		{
+			prepares: []string{
+				"create table t1 (id int key, b int, index idx (b))",
+				"create table t2 (a int, b int, index idx (b), foreign key fk_b(b) references t1(b));",
+			},
+			drops: []string{
+				"alter table t1 drop index idx",
+				"alter table t2 drop index idx",
+			},
+			err: "[ddl:1553]Cannot drop index 'idx': needed in a foreign key constraint",
+		},
+		{
+			prepares: []string{
+				"create table t1 (id int, b int, index idx (id, b))",
+				"create table t2 (a int, b int, index idx (b, a), foreign key fk_b(b) references t1(id));",
+			},
+			drops: []string{
+				"alter table t1 drop index idx",
+				"alter table t2 drop index idx",
+			},
+			err: "[ddl:1553]Cannot drop index 'idx': needed in a foreign key constraint",
+		},
+	}
+
+	for _, ca := range cases {
+		tk.MustExec("drop table if exists t2")
+		tk.MustExec("drop table if exists t1")
+		for _, sql := range ca.prepares {
+			tk.MustExec(sql)
+		}
+		for _, drop := range ca.drops {
+			// even disable foreign key check, still can't drop the index used by foreign key.
+			tk.MustExec("set @@foreign_key_checks=0;")
+			err := tk.ExecToErr(drop)
+			require.Error(t, err)
+			require.Equal(t, ca.err, err.Error())
+			tk.MustExec("set @@foreign_key_checks=1;")
+			err = tk.ExecToErr(drop)
+			require.Error(t, err)
+			require.Equal(t, ca.err, err.Error())
+		}
+	}
+	passCases := [][]string{
+		{
+			"create table t1 (id int key, b int, index idxb (b))",
+			"create table t2 (a int, b int key, index idxa (a),index idxb (b), foreign key fk_b(b) references t1(id));",
+			"alter table t1 drop index idxb",
+			"alter table t2 drop index idxa",
+			"alter table t2 drop index idxb",
+		},
+		{
+			"create table t1 (id int key, b int, index idxb (b), unique index idx(b, id))",
+			"create table t2 (a int, b int key, index idx (b, a),index idxb (b), index idxab(a, b), foreign key fk_b(b) references t1(b));",
+			"alter table t1 drop index idxb",
+			"alter table t1 add index idxb (b)",
+			"alter table t1 drop index idx",
+			"alter table t2 drop index idx",
+			"alter table t2 add index idx (b, a)",
+			"alter table t2 drop index idxb",
+			"alter table t2 drop index idxab",
+		},
+	}
+	tk.MustExec("set @@foreign_key_checks=1;")
+	for _, ca := range passCases {
+		tk.MustExec("drop table if exists t2")
+		tk.MustExec("drop table if exists t1")
+		for _, sql := range ca {
+			tk.MustExec(sql)
+		}
+	}
+}
+
 func getTableInfo(t *testing.T, dom *domain.Domain, db, tb string) *model.TableInfo {
 	err := dom.Reload()
 	require.NoError(t, err)

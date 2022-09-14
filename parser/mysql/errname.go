@@ -579,7 +579,7 @@ var MySQLErrName = map[uint16]*ErrMessage{
 	ErrEventCompile:                             Message("Error during compilation of event's body", nil),
 	ErrEventSameName:                            Message("Same old and new event name", nil),
 	ErrEventDataTooLong:                         Message("Data for column '%s' too long", nil),
-	ErrDropIndexFk:                              Message("Cannot drop index '%-.192s': needed in a foreign key constraint", nil),
+	ErrDropIndexNeededInForeignKey:              Message("Cannot drop index '%-.192s': needed in a foreign key constraint", nil),
 	ErrWarnDeprecatedSyntaxWithVer:              Message("The syntax '%s' is deprecated and will be removed in MySQL %s. Please use %s instead", nil),
 	ErrCantWriteLockLogTable:                    Message("You can't write-lock a log table. Only read access is possible", nil),
 	ErrCantLockLogTable:                         Message("You can't use locks with log tables.", nil),

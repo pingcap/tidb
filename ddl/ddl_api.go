@@ -6285,6 +6285,10 @@ func (d *ddl) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 	if err != nil {
 		return errors.Trace(err)
 	}
+	err = checkIndexNeededInForeignKey(is, schema.Name.L, t.Meta(), indexInfo)
+	if err != nil {
+		return err
+	}
 
 	jobTp := model.ActionDropIndex
 	if isPK {
