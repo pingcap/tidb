@@ -30,8 +30,7 @@ import (
 //	select regexp_like("123", "123", "m"), here notProvided field is false for the third parameter
 //	select regexp_like("123", "123"), here notProvided field is true for the third parameter
 type regexpParam struct {
-	constStrVal   string
-	constIntVal   int64
+	defaultStrVal string
 	defaultIntVal int64 // default value when notProvided is true
 	isConst       bool
 	notProvided   bool
@@ -43,36 +42,29 @@ func (re *regexpParam) getCol() *chunk.Column {
 }
 
 func (re *regexpParam) getStringVal(id int) string {
-	if re.notProvided {
-		return ""
-	}
-
-	if re.isConst {
-		return re.constStrVal
+	if re.notProvided || re.isConst {
+		return re.defaultStrVal
 	}
 
 	return re.getCol().GetString(id)
 }
 
 func (re *regexpParam) getIntVal(id int) int64 {
-	if re.notProvided {
+	if re.notProvided || re.isConst {
 		return re.defaultIntVal
-	}
-
-	if re.isConst {
-		return re.constIntVal
 	}
 
 	return re.getCol().GetInt64(id)
 }
 
 // bool return value: return true when we get a const null parameter
-func buildStringParam(bf *baseBuiltinFunc, id int, input *chunk.Chunk, notProvided bool) (*regexpParam, bool, error) {
+func buildStringParam(bf *baseBuiltinFunc, idx int, input *chunk.Chunk, notProvided bool) (*regexpParam, bool, error) {
 	var pa regexpParam
 	var err error
 
 	pa.notProvided = notProvided
 	if pa.notProvided {
+		pa.defaultStrVal = ""
 		return &pa, false, nil
 	}
 
@@ -82,16 +74,16 @@ func buildStringParam(bf *baseBuiltinFunc, id int, input *chunk.Chunk, notProvid
 	}
 
 	// Get values from input
-	if err := bf.args[id].VecEvalString(bf.ctx, input, pa.getCol()); err != nil {
+	if err := bf.args[idx].VecEvalString(bf.ctx, input, pa.getCol()); err != nil {
 		return nil, false, err
 	}
 
 	// Check if this is a const value
-	pa.isConst = bf.args[id].ConstItem(bf.ctx.GetSessionVars().StmtCtx)
+	pa.isConst = bf.args[idx].ConstItem(bf.ctx.GetSessionVars().StmtCtx)
 	if pa.isConst {
 		// Initialize the const
 		var isConstNull bool
-		pa.constStrVal, isConstNull = getColumnConstValString(pa.getCol(), input.NumRows())
+		pa.defaultStrVal, isConstNull = getColumnConstValString(pa.getCol(), input.NumRows())
 		if isConstNull {
 			return nil, isConstNull, nil
 		}
@@ -101,7 +93,7 @@ func buildStringParam(bf *baseBuiltinFunc, id int, input *chunk.Chunk, notProvid
 }
 
 // bool return value: return true when we get a const null parameter
-func buildIntParam(bf *baseBuiltinFunc, id int, input *chunk.Chunk, notProvided bool, defaultIntVal int64) (*regexpParam, bool, error) {
+func buildIntParam(bf *baseBuiltinFunc, idx int, input *chunk.Chunk, notProvided bool, defaultIntVal int64) (*regexpParam, bool, error) {
 	var pa regexpParam
 	var err error
 
@@ -117,16 +109,16 @@ func buildIntParam(bf *baseBuiltinFunc, id int, input *chunk.Chunk, notProvided 
 	}
 
 	// Get values from input
-	if err := bf.args[id].VecEvalInt(bf.ctx, input, pa.getCol()); err != nil {
+	if err := bf.args[idx].VecEvalInt(bf.ctx, input, pa.getCol()); err != nil {
 		return nil, false, err
 	}
 
 	// Check if this is a const value
-	pa.isConst = bf.args[id].ConstItem(bf.ctx.GetSessionVars().StmtCtx)
+	pa.isConst = bf.args[idx].ConstItem(bf.ctx.GetSessionVars().StmtCtx)
 	if pa.isConst {
 		// Initialize the const
 		var isConstNull bool
-		pa.constIntVal, isConstNull = getColumnConstValInt(pa.getCol(), input.NumRows())
+		pa.defaultIntVal, isConstNull = getColumnConstValInt(pa.getCol(), input.NumRows())
 		if isConstNull {
 			return nil, isConstNull, nil
 		}

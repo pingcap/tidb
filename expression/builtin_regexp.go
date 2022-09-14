@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -54,7 +55,7 @@ const (
 	invalidReturnOption = "Incorrect arguments to regexp_instr: return_option must be 1 or 0"
 )
 
-var validMatchType = map[string]empty{
+var validMatchType = set.StringSet{
 	flagI: {}, // Case-insensitive matching
 	flagC: {}, // Case-sensitive matching
 	flagM: {}, // Multiple-line mode
@@ -71,21 +72,23 @@ func (re *regexpBaseFuncSig) isBinaryCollation() bool {
 	return re.collation == charset.CollationBin && re.charset == charset.CharsetBin
 }
 
-func (re *regexpBaseFuncSig) clone(from *regexpBaseFuncSig) {
-	if from.memorizedRegexp != nil {
-		re.memorizedRegexp = from.memorizedRegexp.Copy()
+func (re *regexpBaseFuncSig) clone() *regexpBaseFuncSig {
+	newSig := &regexpBaseFuncSig{regexpMemorizedSig: regexpMemorizedSig{lock: sync.Mutex{}}, once: sync.Once{}}
+	if re.memorizedRegexp != nil {
+		newSig.memorizedRegexp = re.memorizedRegexp.Copy()
 	}
-	re.memorizedErr = from.memorizedErr
-	re.cloneFrom(&from.baseBuiltinFunc)
+	newSig.memorizedErr = re.memorizedErr
+	newSig.cloneFrom(&re.baseBuiltinFunc)
+	return newSig
 }
 
 // If characters specifying contradictory options are specified
 // within match_type, the rightmost one takes precedence.
-func (re *regexpBaseFuncSig) getMatchType(bf *baseBuiltinFunc, userInputMatchType string) (string, error) {
+func (re *regexpBaseFuncSig) getMatchType(userInputMatchType string) (string, error) {
 	flag := ""
-	matchTypeSet := make(map[string]empty)
+	matchTypeSet := set.NewStringSet()
 
-	if collate.IsCICollation(bf.collation) {
+	if collate.IsCICollation(re.baseBuiltinFunc.collation) {
 		matchTypeSet[flagI] = empty{}
 	}
 
@@ -118,7 +121,7 @@ func (re *regexpBaseFuncSig) getMatchType(bf *baseBuiltinFunc, userInputMatchTyp
 
 // To get a unified compile interface in initMemoizedRegexp, we need to process many things in genCompile
 func (re *regexpBaseFuncSig) genCompile(matchType string) (func(string) (*regexp.Regexp, error), error) {
-	matchType, err := re.getMatchType(&re.baseBuiltinFunc, matchType)
+	matchType, err := re.getMatchType(matchType)
 	if err != nil {
 		return nil, err
 	}
@@ -225,8 +228,7 @@ type builtinRegexpLikeFuncSig struct {
 
 func (re *builtinRegexpLikeFuncSig) Clone() builtinFunc {
 	newSig := &builtinRegexpLikeFuncSig{}
-	newSig.cloneFrom(&re.baseBuiltinFunc)
-	newSig.clone(&re.regexpBaseFuncSig)
+	newSig.regexpBaseFuncSig = *re.regexpBaseFuncSig.clone()
 	return newSig
 }
 
@@ -385,8 +387,7 @@ func (re *builtinRegexpSubstrFuncSig) vectorized() bool {
 
 func (re *builtinRegexpSubstrFuncSig) Clone() builtinFunc {
 	newSig := &builtinRegexpSubstrFuncSig{}
-	newSig.cloneFrom(&re.baseBuiltinFunc)
-	newSig.clone(&re.regexpBaseFuncSig)
+	newSig.regexpBaseFuncSig = *re.regexpBaseFuncSig.clone()
 	return newSig
 }
 
@@ -695,8 +696,7 @@ type builtinRegexpInStrFuncSig struct {
 
 func (re *builtinRegexpInStrFuncSig) Clone() builtinFunc {
 	newSig := &builtinRegexpInStrFuncSig{}
-	newSig.cloneFrom(&re.baseBuiltinFunc)
-	newSig.clone(&re.regexpBaseFuncSig)
+	newSig.regexpBaseFuncSig = *re.regexpBaseFuncSig.clone()
 	return newSig
 }
 
@@ -1058,8 +1058,7 @@ func (re *builtinRegexpReplaceFuncSig) vectorized() bool {
 
 func (re *builtinRegexpReplaceFuncSig) Clone() builtinFunc {
 	newSig := &builtinRegexpReplaceFuncSig{}
-	newSig.cloneFrom(&re.baseBuiltinFunc)
-	newSig.clone(&re.regexpBaseFuncSig)
+	newSig.regexpBaseFuncSig = *re.regexpBaseFuncSig.clone()
 	return newSig
 }
 
