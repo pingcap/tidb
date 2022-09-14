@@ -51,14 +51,8 @@ require (
 	github.com/pingcap/log v1.1.0
 	github.com/pingcap/sysutil v0.0.0-20220114020952-ea68d2dbf5b4
 	github.com/pingcap/tidb/parser v0.0.0-20211011031125-9b13dc409c5e
-<<<<<<< HEAD
 	github.com/pingcap/tipb v0.0.0-20220314125451-bfb5c2c55188
 	github.com/prometheus/client_golang v1.11.0
-=======
-	github.com/pingcap/tipb v0.0.0-20220824081009-0714a57aff1d
-	github.com/pkg/errors v0.9.1
-	github.com/prometheus/client_golang v1.13.0
->>>>>>> 796fb1f0a... *: adjust TLS behaviour for dumpling and lightning (#37479)
 	github.com/prometheus/client_model v0.2.0
 	github.com/prometheus/common v0.32.1
 	github.com/shirou/gopsutil/v3 v3.21.12
@@ -167,6 +161,7 @@ require (
 	github.com/pierrec/lz4 v2.6.1+incompatible // indirect
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989 // indirect
 	github.com/pkg/browser v0.0.0-20180916011732-0a3d74bf9ce4 // indirect
+	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/power-devops/perfstat v0.0.0-20210106213030-5aafc221ea8c // indirect
 	github.com/prometheus/procfs v0.6.0 // indirect
