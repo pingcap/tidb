@@ -23,8 +23,8 @@ go_test(
     srcs = [
         "add_index_test.go",
         "main_test.go",
-        "concurrentDDL_test.go",
-        "multischemachange_test.go",
+        "concurrent_ddlL_test.go",
+        "multi_schema_change_test.go",
         "pitr_test.go",
     ],
     embed = [":addindextest"],
