@@ -2007,7 +2007,7 @@ func minimalDecimalLenForHoldingInteger(tp byte) int {
 	}
 }
 
-//typeString returns true if the number of decimal places cannot be determined
+// typeString returns true if the number of decimal places cannot be determined
 func typeString(mysqltype byte) bool {
 	switch mysqltype {
 	case mysql.TypeString, mysql.TypeVarchar, mysql.TypeTinyBlob,
