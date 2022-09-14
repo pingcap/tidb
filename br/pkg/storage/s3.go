@@ -297,7 +297,13 @@ func newS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (obj *S3St
 	} else {
 		awsConfig.WithRegion(qs.Region)
 	}
-	request.WithRetryer(awsConfig, defaultS3Retryer())
+
+	if opts.S3Retryer != nil {
+		request.WithRetryer(awsConfig, opts.S3Retryer)
+	} else {
+		request.WithRetryer(awsConfig, defaultS3Retryer())
+	}
+
 	if qs.Endpoint != "" {
 		awsConfig.WithEndpoint(qs.Endpoint)
 	}
