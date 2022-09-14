@@ -26,7 +26,7 @@ func TestGenLightningDataDir(t *testing.T) {
 	tmpDir := t.TempDir()
 	port, iPort := "5678", uint(5678)
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TempDir = tmpDir
+		conf.Instance.TmpDir = tmpDir
 		conf.Port = iPort
 	})
 	sPath, err := ingest.GenLightningDataDirForTest()

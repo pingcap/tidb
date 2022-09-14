@@ -109,7 +109,7 @@ const (
 	nmPluginLoad       = "plugin-load"
 	nmRepairMode       = "repair-mode"
 	nmRepairList       = "repair-list"
-	nmTempDir          = "temp-dir"
+	nmTmpDir           = "tmpdir"
 
 	nmProxyProtocolNetworks      = "proxy-protocol-networks"
 	nmProxyProtocolHeaderTimeout = "proxy-protocol-header-timeout"
@@ -142,7 +142,7 @@ var (
 	affinityCPU      = flag.String(nmAffinityCPU, "", "affinity cpu (cpu-no. separated by comma, e.g. 1,2,3)")
 	repairMode       = flagBoolean(nmRepairMode, false, "enable admin repair mode")
 	repairList       = flag.String(nmRepairList, "", "admin repair table list")
-	tempDir          = flag.String(nmTempDir, config.DefTempDir, "tidb temporary directory")
+	tmpDir           = flag.String(nmTmpDir, config.DefTmpDir, "tidb temporary directory")
 
 	// Log
 	logLevel     = flag.String(nmLogLevel, "info", "log level: info, debug, warn, error, fatal")
@@ -460,8 +460,8 @@ func overrideConfig(cfg *config.Config) {
 			cfg.RepairTableList = stringToList(*repairList)
 		}
 	}
-	if actualFlags[nmTempDir] {
-		cfg.TempDir = *tempDir
+	if actualFlags[nmTmpDir] {
+		cfg.Instance.TmpDir = *tmpDir
 	}
 
 	// Log

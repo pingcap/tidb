@@ -28,9 +28,6 @@ split-table = true
 # The limit of concurrent executed sessions.
 token-limit = 1000
 
-# The temporary directory to store the intermediate compute results.
-temp-dir = "/tmp/tidb"
-
 # Make "kill query" behavior compatible with MySQL. It's not recommend to
 # turn on this option when TiDB server is behind a proxy.
 compatible-kill-query = false

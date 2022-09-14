@@ -85,8 +85,8 @@ const (
 	DefExpensiveQueryTimeThreshold = 60
 	// DefMemoryUsageAlarmRatio is the threshold triggering an alarm which the memory usage of tidb-server instance exceeds.
 	DefMemoryUsageAlarmRatio = 0.8
-	// DefTempDir is the default temporary directory path for TiDB.
-	DefTempDir = "/tmp/tidb"
+	// DefTmpDir is the default temporary directory path for TiDB.
+	DefTmpDir = "/tmp/tidb"
 )
 
 // Valid config maps
@@ -173,7 +173,6 @@ type Config struct {
 	Lease                      string                  `toml:"lease" json:"lease"`
 	SplitTable                 bool                    `toml:"split-table" json:"split-table"`
 	TokenLimit                 uint                    `toml:"token-limit" json:"token-limit"`
-	TempDir                    string                  `toml:"temp-dir" json:"temp-dir"`
 	TxnLocalLatches            tikvcfg.TxnLocalLatches `toml:"-" json:"-"`
 	ServerVersion              string                  `toml:"server-version" json:"server-version"`
 	VersionComment             string                  `toml:"version-comment" json:"version-comment"`
@@ -819,7 +818,6 @@ var defaultConf = Config{
 	Lease:                        "45s",
 	TokenLimit:                   1000,
 	OOMUseTmpStorage:             true,
-	TempDir:                      DefTempDir,
 	TempStorageQuota:             -1,
 	TempStoragePath:              TempStorageDirName,
 	MemQuotaQuery:                1 << 30,
