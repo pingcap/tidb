@@ -3204,7 +3204,7 @@ func TestLazyUniquenessCheck(t *testing.T) {
 	tk.MustExec("admin check table t")
 
 	// case: a modification of a lazy-checked key will compensate the lock
-	tk.MustExec("truncate table t2")
+	tk.MustExec("create table t2 (id int primary key, uk int, unique key i1(uk))")
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into t2 values (1, 1)") // skip lock
 	tk.MustExec("update t2 set uk = uk + 1")    // compensate the lock
