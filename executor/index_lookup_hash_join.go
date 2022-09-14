@@ -543,6 +543,7 @@ func (iw *indexHashJoinInnerWorker) getNewJoinResult(ctx context.Context) (*inde
 
 func (iw *indexHashJoinInnerWorker) buildHashTableForOuterResult(ctx context.Context, task *indexHashJoinTask, h hash.Hash64) {
 	failpoint.Inject("IndexHashJoinBuildHashTablePanic", nil)
+	failpoint.Inject("ConsumeRandomPanic", nil)
 	if iw.stats != nil {
 		start := time.Now()
 		defer func() {
@@ -628,10 +629,10 @@ func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexH
 
 	iw.wg = &sync.WaitGroup{}
 	iw.wg.Add(1)
+	iw.lookup.workerWg.Add(1)
 	// TODO(XuHuaiyu): we may always use the smaller side to build the hashtable.
 	go util.WithRecovery(
 		func() {
-			iw.lookup.workerWg.Add(1)
 			iw.buildHashTableForOuterResult(ctx, task, h)
 		},
 		func(r interface{}) {
@@ -649,6 +650,7 @@ func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexH
 	failpoint.Inject("IndexHashJoinFetchInnerResultsErr", func() {
 		err = errors.New("IndexHashJoinFetchInnerResultsErr")
 	})
+	failpoint.Inject("ConsumeRandomPanic", nil)
 	if err != nil {
 		return err
 	}
