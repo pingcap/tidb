@@ -90,6 +90,8 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...mockstore.MockTiKVSt
 	var dom *domain.Domain
 	var err error
 
+	session.SetSchemaLease(500 * time.Millisecond)
+
 	if *WithRealTiKV {
 		var d driver.TiKVDriver
 		config.UpdateGlobal(func(conf *config.Config) {
@@ -100,6 +102,8 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...mockstore.MockTiKVSt
 
 		dom, err = session.BootstrapSession(store)
 		require.NoError(t, err)
+		sm := testkit.MockSessionManager{}
+		dom.InfoSyncer().SetSessionManager(&sm)
 		tk := testkit.NewTestKit(t, store)
 		// set it to default value.
 		tk.MustExec(fmt.Sprintf("set global innodb_lock_wait_timeout = %d", variable.DefInnodbLockWaitTimeout))
@@ -113,6 +117,8 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...mockstore.MockTiKVSt
 		require.NoError(t, err)
 		session.DisableStats4Test()
 		dom, err = session.BootstrapSession(store)
+		sm := testkit.MockSessionManager{}
+		dom.InfoSyncer().SetSessionManager(&sm)
 		require.NoError(t, err)
 	}
 

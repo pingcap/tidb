@@ -52,6 +52,10 @@ func (m *memBuffer) DeleteWithFlags(k kv.Key, ops ...kv.FlagsOp) error {
 	return derr.ToTiDBErr(err)
 }
 
+func (m *memBuffer) UpdateFlags(k kv.Key, ops ...kv.FlagsOp) {
+	m.MemDB.UpdateFlags(k, getTiKVFlagsOps(ops)...)
+}
+
 func (m *memBuffer) Get(_ context.Context, key kv.Key) ([]byte, error) {
 	data, err := m.MemDB.Get(key)
 	return data, derr.ToTiDBErr(err)
@@ -182,6 +186,8 @@ func getTiKVFlagsOp(op kv.FlagsOp) tikvstore.FlagsOp {
 		return tikvstore.SetAssertNone
 	case kv.SetNeedConstraintCheckInPrewrite:
 		return tikvstore.SetNeedConstraintCheckInPrewrite
+	case kv.SetPreviousPresumeKeyNotExists:
+		return tikvstore.SetPreviousPresumeKNE
 	}
 	return 0
 }
