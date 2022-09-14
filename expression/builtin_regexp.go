@@ -67,8 +67,8 @@ type regexpBaseFuncSig struct {
 	once sync.Once
 }
 
-func (re *regexpBaseFuncSig) isBinCollation() bool {
-	return re.collation == charset.CollationBin
+func (re *regexpBaseFuncSig) isBinaryCollation() bool {
+	return re.collation == charset.CollationBin && re.charset == charset.CharsetBin
 }
 
 func (re *regexpBaseFuncSig) clone(from *regexpBaseFuncSig) {
@@ -425,7 +425,7 @@ func (re *builtinRegexpSubstrFuncSig) evalString(row chunk.Row) (string, bool, e
 	argNum := len(re.args)
 	var bexpr []byte
 
-	if re.isBinCollation() {
+	if re.isBinaryCollation() {
 		bexpr = []byte(expr)
 	}
 
@@ -436,7 +436,7 @@ func (re *builtinRegexpSubstrFuncSig) evalString(row chunk.Row) (string, bool, e
 		}
 
 		// Check position and trim expr
-		if re.isBinCollation() {
+		if re.isBinaryCollation() {
 			if pos < 1 || pos > int64(len(bexpr)) {
 				if len(expr) != 0 || (len(expr) == 0 && pos != 1) {
 					return "", true, ErrRegexp.GenWithStackByArgs(invalidIndex)
@@ -496,7 +496,7 @@ func (re *builtinRegexpSubstrFuncSig) evalString(row chunk.Row) (string, bool, e
 			return "", true, ErrRegexp.GenWithStackByArgs(err)
 		}
 
-		if re.isBinCollation() {
+		if re.isBinaryCollation() {
 			return re.findBinString(reg, bexpr, occurrence)
 		}
 		return re.findString(reg, expr, occurrence)
@@ -506,7 +506,7 @@ func (re *builtinRegexpSubstrFuncSig) evalString(row chunk.Row) (string, bool, e
 		return "", true, ErrRegexp.GenWithStackByArgs(re.memorizedErr)
 	}
 
-	if re.isBinCollation() {
+	if re.isBinaryCollation() {
 		return re.findBinString(re.memorizedRegexp, bexpr, occurrence)
 	}
 
@@ -591,13 +591,13 @@ func (re *builtinRegexpSubstrFuncSig) vecEvalString(input *chunk.Chunk, result *
 		expr := params[0].getStringVal(i)
 		var bexpr []byte
 
-		if re.isBinCollation() {
+		if re.isBinaryCollation() {
 			bexpr = []byte(expr)
 		}
 
 		// Check position and trim expr
 		pos := params[2].getIntVal(i)
-		if re.isBinCollation() {
+		if re.isBinaryCollation() {
 			if pos < 1 || pos > int64(len(bexpr)) {
 				if len(bexpr) != 0 || (len(bexpr) == 0 && pos != 1) {
 					return ErrRegexp.GenWithStackByArgs(invalidIndex)
@@ -629,7 +629,7 @@ func (re *builtinRegexpSubstrFuncSig) vecEvalString(input *chunk.Chunk, result *
 		}
 
 		// Find string
-		if re.isBinCollation() {
+		if re.isBinaryCollation() {
 			matches := reg.FindAll(bexpr, -1)
 			length := int64(len(matches))
 			if length == 0 || occurrence > length {
@@ -748,7 +748,7 @@ func (re *builtinRegexpInStrFuncSig) evalInt(row chunk.Row) (int64, bool, error)
 	argNum := len(re.args)
 	var bexpr []byte
 
-	if re.isBinCollation() {
+	if re.isBinaryCollation() {
 		bexpr = []byte(expr)
 	}
 
@@ -759,7 +759,7 @@ func (re *builtinRegexpInStrFuncSig) evalInt(row chunk.Row) (int64, bool, error)
 		}
 
 		// Check position and trim expr
-		if re.isBinCollation() {
+		if re.isBinaryCollation() {
 			if pos < 1 || pos > int64(len(bexpr)) {
 				if len(bexpr) != 0 || (len(bexpr) == 0 && pos != 1) {
 					return 0, true, ErrRegexp.GenWithStackByArgs(invalidIndex)
@@ -830,7 +830,7 @@ func (re *builtinRegexpInStrFuncSig) evalInt(row chunk.Row) (int64, bool, error)
 			return 0, true, ErrRegexp.GenWithStackByArgs(err)
 		}
 
-		if re.isBinCollation() {
+		if re.isBinaryCollation() {
 			return re.findBinIndex(reg, bexpr, pos, occurrence, returnOption)
 		}
 		return re.findIndex(reg, expr, pos, occurrence, returnOption)
@@ -840,7 +840,7 @@ func (re *builtinRegexpInStrFuncSig) evalInt(row chunk.Row) (int64, bool, error)
 		return 0, true, ErrRegexp.GenWithStackByArgs(re.memorizedErr)
 	}
 
-	if re.isBinCollation() {
+	if re.isBinaryCollation() {
 		return re.findBinIndex(re.memorizedRegexp, bexpr, pos, occurrence, returnOption)
 	}
 
@@ -936,13 +936,13 @@ func (re *builtinRegexpInStrFuncSig) vecEvalInt(input *chunk.Chunk, result *chun
 		expr := params[0].getStringVal(i)
 		var bexpr []byte
 
-		if re.isBinCollation() {
+		if re.isBinaryCollation() {
 			bexpr = []byte(expr)
 		}
 
 		// Check position and trim expr
 		pos := params[2].getIntVal(i)
-		if re.isBinCollation() {
+		if re.isBinaryCollation() {
 			if pos < 1 || pos > int64(len(bexpr)) {
 				if len(bexpr) != 0 || (len(bexpr) == 0 && pos != 1) {
 					return ErrRegexp.GenWithStackByArgs(invalidIndex)
@@ -979,7 +979,7 @@ func (re *builtinRegexpInStrFuncSig) vecEvalInt(input *chunk.Chunk, result *chun
 		}
 
 		// Find index
-		if re.isBinCollation() {
+		if re.isBinaryCollation() {
 			matches := reg.FindAllIndex(bexpr, -1)
 			length := int64(len(matches))
 			if length == 0 || occurrence > length {
@@ -1126,7 +1126,7 @@ func (re *builtinRegexpReplaceFuncSig) evalString(row chunk.Row) (string, bool, 
 	var bexpr []byte
 	var trimmedBexpr []byte
 
-	if re.isBinCollation() {
+	if re.isBinaryCollation() {
 		bexpr = []byte(expr)
 		trimmedBexpr = bexpr
 	}
@@ -1139,7 +1139,7 @@ func (re *builtinRegexpReplaceFuncSig) evalString(row chunk.Row) (string, bool, 
 		}
 
 		// Check position and trim expr
-		if re.isBinCollation() {
+		if re.isBinaryCollation() {
 			if pos < 1 || pos > int64(len(trimmedBexpr)) {
 				if len(trimmedBexpr) != 0 || (len(trimmedBexpr) == 0 && pos != 1) {
 					return "", true, ErrRegexp.GenWithStackByArgs(invalidIndex)
@@ -1177,7 +1177,7 @@ func (re *builtinRegexpReplaceFuncSig) evalString(row chunk.Row) (string, bool, 
 	}
 
 	if len(expr) == 0 {
-		if re.isBinCollation() {
+		if re.isBinaryCollation() {
 			return "0x", false, nil
 		}
 		return "", false, nil
@@ -1206,7 +1206,7 @@ func (re *builtinRegexpReplaceFuncSig) evalString(row chunk.Row) (string, bool, 
 			return "", true, ErrRegexp.GenWithStackByArgs(err)
 		}
 
-		if re.isBinCollation() {
+		if re.isBinaryCollation() {
 			return re.getReplacedBinStr(reg, bexpr, trimmedBexpr, repl, pos, occurrence)
 		}
 		return re.getReplacedStr(reg, expr, trimmedExpr, repl, trimmedLen, occurrence)
@@ -1216,7 +1216,7 @@ func (re *builtinRegexpReplaceFuncSig) evalString(row chunk.Row) (string, bool, 
 		return "", true, ErrRegexp.GenWithStackByArgs(re.memorizedErr)
 	}
 
-	if re.isBinCollation() {
+	if re.isBinaryCollation() {
 		return re.getReplacedBinStr(re.memorizedRegexp, bexpr, trimmedBexpr, repl, pos, occurrence)
 	}
 	return re.getReplacedStr(re.memorizedRegexp, expr, trimmedExpr, repl, trimmedLen, occurrence)
@@ -1314,7 +1314,7 @@ func (re *builtinRegexpReplaceFuncSig) vecEvalString(input *chunk.Chunk, result 
 		var bexpr []byte
 		var trimmedBexpr []byte
 
-		if re.isBinCollation() {
+		if re.isBinaryCollation() {
 			bexpr = []byte(expr)
 			trimmedBexpr = bexpr
 		}
@@ -1324,7 +1324,7 @@ func (re *builtinRegexpReplaceFuncSig) vecEvalString(input *chunk.Chunk, result 
 		// Check position and trim expr
 		pos := params[3].getIntVal(i)
 		trimmedLen := int64(0)
-		if re.isBinCollation() {
+		if re.isBinaryCollation() {
 			if pos < 1 || pos > int64(len(trimmedBexpr)) {
 				if len(trimmedBexpr) != 0 || (len(trimmedBexpr) == 0 && pos != 1) {
 					return ErrRegexp.GenWithStackByArgs(invalidIndex)
@@ -1356,7 +1356,7 @@ func (re *builtinRegexpReplaceFuncSig) vecEvalString(input *chunk.Chunk, result 
 		}
 
 		if len(expr) == 0 {
-			if re.isBinCollation() {
+			if re.isBinaryCollation() {
 				result.AppendString("0x")
 			} else {
 				result.AppendString("")
@@ -1366,7 +1366,7 @@ func (re *builtinRegexpReplaceFuncSig) vecEvalString(input *chunk.Chunk, result 
 
 		// Start to replace
 		count := occurrence
-		if re.isBinCollation() {
+		if re.isBinaryCollation() {
 			repFunc := func(matchedStr []byte) []byte {
 				if occurrence == 0 {
 					return []byte(repl)
