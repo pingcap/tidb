@@ -1053,6 +1053,7 @@ const (
 	DefTiDBConstraintCheckInPlacePessimistic        = true
 	DefTiDBForeignKeyChecks                         = false
 	DefTiDBOptRangeMaxSize                          = 64 * int64(size.MB) // 64 MB
+	DefTiDBCostModelVer                             = 1
 )
 
 // Process global variables.
