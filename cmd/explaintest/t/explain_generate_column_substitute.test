@@ -305,14 +305,36 @@ drop table t2;
 set @@tidb_enable_unsafe_substitute=1;
 CREATE TABLE person (id INT PRIMARY KEY,address_info JSON,city VARCHAR(2) AS (JSON_UNQUOTE(address_info->"$.city")),KEY (city));
 INSERT INTO `person` (`id`, `address_info`) VALUES('1','{\"city\": \"Beijing\"}');
-desc SELECT id FROM person ignore index(`city`) WHERE address_info->>"$.city" = 'Beijing';
-desc SELECT id FROM person force index(`city`) WHERE address_info->>"$.city" = 'Beijing';
+SELECT id FROM person ignore index(`city`) WHERE address_info->>"$.city" = 'Beijing';
+desc format = 'brief' SELECT id FROM person ignore index(`city`) WHERE address_info->>"$.city" = 'Beijing';
+SELECT id FROM person force index(`city`) WHERE address_info->>"$.city" = 'Beijing';
+desc format = 'brief' SELECT id FROM person force index(`city`) WHERE address_info->>"$.city" = 'Beijing';
 drop table person;
 
 create table t(a char(5), b char(6) as (concat(a, a)), index bx(b));
 insert into t(a) values ('aaaaa');
 select * from t;
-desc select * from t ignore index(bx) where concat(a, a) = 'aaaaaaaaaa';
-desc select * from t force index(bx) where concat(a, a) = 'aaaaaaaaaa';
-set @@tidb_enable_unsafe_substitute=0;
+select * from t ignore index(bx) where concat(a, a) = 'aaaaaaaaaa';
+desc format = 'brief' select * from t ignore index(bx) where concat(a, a) = 'aaaaaaaaaa';
+select * from t force index(bx) where concat(a, a) = 'aaaaaaaaaa';
+desc format = 'brief' select * from t force index(bx) where concat(a, a) = 'aaaaaaaaaa';
 drop table t;
+
+CREATE TABLE person (id INT PRIMARY KEY,address_info JSON,city VARCHAR(64) AS (JSON_UNQUOTE(address_info->"$.city")),KEY (city));
+INSERT INTO `person` (`id`, `address_info`) VALUES('1','{\"city\": \"Beijing\"}');
+SELECT id FROM person ignore index(`city`) WHERE address_info->>"$.city" = 'Beijing';
+desc format = 'brief' SELECT id FROM person ignore index(`city`) WHERE address_info->>"$.city" = 'Beijing';
+SELECT id FROM person force index(`city`) WHERE address_info->>"$.city" = 'Beijing';
+desc format = 'brief' SELECT id FROM person force index(`city`) WHERE address_info->>"$.city" = 'Beijing';
+drop table person;
+
+create table t(a char(5), b char(10) as (concat(a, a)), index bx(b));
+insert into t(a) values ('aaaaa');
+select * from t;
+select * from t ignore index(bx) where concat(a, a) = 'aaaaaaaaaa';
+desc format = 'brief' select * from t ignore index(bx) where concat(a, a) = 'aaaaaaaaaa';
+select * from t force index(bx) where concat(a, a) = 'aaaaaaaaaa';
+desc format = 'brief' select * from t force index(bx) where concat(a, a) = 'aaaaaaaaaa';
+drop table t;
+set @@tidb_enable_unsafe_substitute=0;
+
