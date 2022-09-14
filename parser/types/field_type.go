@@ -273,8 +273,9 @@ func (ft *FieldType) Equal(other *FieldType) bool {
 	return true
 }
 
-// UnsafeEqual checks whether two string FieldType objects are equal without flen.
-func (ft *FieldType) UnsafeEqual(other *FieldType, unsafe bool) bool {
+// PartialEqual checks whether two FieldType objects are equal.
+// If unsafe is true and the objects is string type, PartialEqual will ignore flen.
+func (ft *FieldType) PartialEqual(other *FieldType, unsafe bool) bool {
 	if !unsafe || ft.EvalType() != ETString || other.EvalType() != ETString {
 		return ft.Equal(other)
 	}
