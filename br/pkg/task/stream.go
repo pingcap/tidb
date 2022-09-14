@@ -1120,6 +1120,10 @@ func restoreStream(
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if len(dmlFiles) == 0 && len(ddlFiles) == 0 {
+		log.Info("nothing to restore.")
+		return nil
+	}
 
 	// get full backup meta to generate rewrite rules.
 	fullBackupTables, err := initFullBackupTables(ctx, cfg)
