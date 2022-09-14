@@ -1662,6 +1662,9 @@ func addExtendDataForCheckpoint(
 	}
 	var router *regexprrouter.RouteTable
 	router, err = regexprrouter.NewRegExprRouter(cfg.Mydumper.CaseSensitive, cfg.Routes)
+	if err != nil {
+		return err
+	}
 	for _, engine := range cp.Engines {
 		for _, chunk := range engine.Chunks {
 			_, file := filepath.Split(chunk.FileMeta.Path)
