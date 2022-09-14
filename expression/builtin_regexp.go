@@ -55,12 +55,12 @@ const (
 	invalidReturnOption = "Incorrect arguments to regexp_instr: return_option must be 1 or 0"
 )
 
-var validMatchType = set.StringSet{
-	flagI: {}, // Case-insensitive matching
-	flagC: {}, // Case-sensitive matching
-	flagM: {}, // Multiple-line mode
-	flagS: {}, // The . character matches line terminators
-}
+var validMatchType = set.NewStringSet(
+	flagI, // Case-insensitive matching
+	flagC, // Case-sensitive matching
+	flagM, // Multiple-line mode
+	flagS, // The . character matches line terminators
+)
 
 type regexpBaseFuncSig struct {
 	baseBuiltinFunc
@@ -90,7 +90,7 @@ func (re *regexpBaseFuncSig) getMatchType(userInputMatchType string) (string, er
 	matchTypeSet := set.NewStringSet()
 
 	if collate.IsCICollation(re.baseBuiltinFunc.collation) {
-		matchTypeSet[flagI] = empty{}
+		matchTypeSet.Insert(flagI)
 	}
 
 	for _, val := range userInputMatchType {
