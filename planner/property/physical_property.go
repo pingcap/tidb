@@ -118,6 +118,10 @@ func (partitionCol *MPPPartitionColumn) Equal(other *MPPPartitionColumn) bool {
 
 // MemoryUsage return the memory usage of MPPPartitionColumn
 func (partitionCol *MPPPartitionColumn) MemoryUsage() (sum int64) {
+	if partitionCol == nil {
+		return
+	}
+
 	sum = size.SizeOfInt32
 	if partitionCol.Col != nil {
 		sum += partitionCol.Col.MemoryUsage()
