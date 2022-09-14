@@ -481,8 +481,8 @@ func (s *mdLoaderSetup) route() error {
 				newInfo.count++
 				knownDBNames[targetDB] = newInfo
 			}
-			extendCols, extendVals := r.FetchExtendColumn(rawDB, rawTable, s.sourceID)
 			arr[i].TableName = filter.Table{Schema: targetDB, Name: targetTable}
+			extendCols, extendVals := r.FetchExtendColumn(rawDB, rawTable, s.sourceID)
 			if len(extendCols) > 0 {
 				arr[i].FileMeta.ExtendData = ExtendColumnData{
 					Columns: extendCols,
