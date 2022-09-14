@@ -270,7 +270,7 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, jobID i
 			return err
 		}
 
-		// Prepare some variables.
+		// Prepare path and updatedMap.
 		path := util.DDLAllSchemaVersions
 		if variable.EnableMDL.Load() {
 			path = fmt.Sprintf("%s/%d/", util.DDLAllSchemaVersionsByJob, jobID)

@@ -1177,7 +1177,7 @@ func (d *ddl) SwitchMDL(enable bool) error {
 	}
 	defer d.sessPool.put(sess)
 	se := newSession(sess)
-	rows, err := se.execute(ctx, "select * from mysql.tidb_ddl_job", "check job")
+	rows, err := se.execute(ctx, "select 1 from mysql.tidb_ddl_job", "check job")
 	if err != nil {
 		return err
 	}
@@ -1186,7 +1186,7 @@ func (d *ddl) SwitchMDL(enable bool) error {
 	}
 
 	variable.EnableMDL.Store(enable)
-	logutil.BgLogger().Info("[ddl] SwitchMDL", zap.Bool("toMDL", enable), zap.Error(err))
+	logutil.BgLogger().Info("[ddl] switch metadata lock feature", zap.Bool("enable", enable), zap.Error(err))
 	return nil
 }
 

@@ -2619,7 +2619,7 @@ var (
 		{ddl.ReorgTableSQL, ddl.ReorgTableID},
 		{ddl.HistoryTableSQL, ddl.HistoryTableID},
 	}
-	mdlTable = "create table mysql.tidb_mdl_info(job_id BIGINT(64) NOT NULL, version BIGINT(64) NOT NULL, table_ids text(65535), PRIMARY KEY (job_id));"
+	mdlTable = "create table mysql.tidb_mdl_info(job_id BIGINT NOT NULL PRIMARY KEY, version BIGINT NOT NULL, table_ids text(65535));"
 )
 
 // InitDDLJobTables is to create tidb_ddl_job, tidb_ddl_reorg and tidb_ddl_history.

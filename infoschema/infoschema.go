@@ -677,11 +677,10 @@ func (ts *SessionExtendedInfoSchema) SchemaByTable(tableInfo *model.TableInfo) (
 }
 
 // UpdateTableInfo implements InfoSchema.SchemaByTable.
-func (ts *SessionExtendedInfoSchema) UpdateTableInfo(id int64, db *model.DBInfo, tableInfo table.Table) error {
+func (ts *SessionExtendedInfoSchema) UpdateTableInfo(db *model.DBInfo, tableInfo table.Table) error {
 	if ts.MdlTables == nil {
 		ts.MdlTables = NewSessionTables()
 	}
-	ts.MdlTables.RemoveTable(db.Name, tableInfo.Meta().Name)
 	err := ts.MdlTables.AddTable(db, tableInfo)
 	if err != nil {
 		return err
@@ -694,7 +693,7 @@ func (ts *SessionExtendedInfoSchema) HasTemporaryTable() bool {
 	return ts.LocalTemporaryTables != nil && ts.LocalTemporaryTables.Count() > 0 || ts.InfoSchema.HasTemporaryTable()
 }
 
-// AttachMDLTableInfoSchema attach local temporary table information schema to is
+// AttachMDLTableInfoSchema attach MDL related table information schema to is
 func AttachMDLTableInfoSchema(is InfoSchema) InfoSchema {
 	mdlTables := NewSessionTables()
 	if iss, ok := is.(*SessionExtendedInfoSchema); ok {

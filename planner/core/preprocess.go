@@ -1785,7 +1785,7 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.
 
 		if se, ok := is.(*infoschema.SessionExtendedInfoSchema); ok {
 			db, _ := domain.GetDomain(sctx).InfoSchema().SchemaByTable(tbl.Meta())
-			err = se.UpdateTableInfo(tbl.Meta().ID, db, tbl)
+			err = se.UpdateTableInfo(db, tbl)
 			if err != nil {
 				return nil, err
 			}

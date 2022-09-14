@@ -614,7 +614,7 @@ func (do *Domain) mdlCheckLoop() {
 	jobCache := make(map[int64]int64, 1000)
 	se, err := do.sysSessionPool.Get()
 	if err != nil {
-		logutil.Logger(context.Background()).Error("get sys session failed", zap.Error(err))
+		logutil.BgLogger().Error("get system session failed", zap.Error(err))
 		return
 	}
 	exec := se.(sqlexec.RestrictedSQLExecutor)
@@ -633,7 +633,7 @@ func (do *Domain) mdlCheckLoop() {
 				continue
 			}
 			// Get job to check.
-			rows, _, err := exec.ExecRestrictedSQL(kv.WithInternalSourceType(context.Background(), kv.InternalTxnTelemetry), nil, "select * from mysql.tidb_mdl_info")
+			rows, _, err := exec.ExecRestrictedSQL(kv.WithInternalSourceType(context.Background(), kv.InternalTxnTelemetry), nil, "select job_id, version from mysql.tidb_mdl_info")
 			if err != nil {
 				continue
 			}
@@ -667,7 +667,7 @@ func (do *Domain) mdlCheckLoop() {
 					// Already update, skip it.
 					continue
 				}
-				logutil.Logger(context.Background()).Warn("mdl check job", zap.Int64("jobID", jobID), zap.Int64("version", ver))
+				logutil.BgLogger().Warn("mdl gets lock, update to owner", zap.Int64("jobID", jobID), zap.Int64("version", ver))
 				err := do.ddl.SchemaSyncer().UpdateSelfVersion(context.Background(), jobID, ver)
 				if err != nil {
 					logutil.BgLogger().Info("update self version failed")

@@ -852,8 +852,7 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}, GetGlobal: func(vars *SessionVars) (string, error) {
 		return BoolToOnOff(EnableMDL.Load()), nil
-	},
-	},
+	}},
 	{Scope: ScopeGlobal, Name: TiDBEnableNoopVariables, Value: BoolToOnOff(DefTiDBEnableNoopVariables), Type: TypeEnum, PossibleValues: []string{Off, On}, SetGlobal: func(s *SessionVars, val string) error {
 		EnableNoopVariables.Store(TiDBOptOn(val))
 		return nil
