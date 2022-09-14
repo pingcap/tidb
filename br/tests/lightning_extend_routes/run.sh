@@ -36,7 +36,7 @@ for backend in ${backends[@]}; do
   check_contains 'count(1): 3'
   run_sql 'SELECT count(1) FROM routes_b.u where c_schema = "1";'
   check_contains 'count(1): 1'
-  run_sql 'SELECT count(1) FROM routes_b.u where c_schema = "01";'
+  run_sql 'SELECT count(1) FROM routes_b.u where c_source = "01";'
   check_contains 'count(1): 4'
 
   run_sql 'SHOW TABLES IN routes_a1;'

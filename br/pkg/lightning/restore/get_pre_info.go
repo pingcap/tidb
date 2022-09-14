@@ -716,6 +716,7 @@ outloop:
 			}
 		}
 		rowCount++
+		lastRow.Row = append(lastRow.Row, extendVals...)
 
 		var dataChecksum, indexChecksum verification.KVChecksum
 		kvs, encodeErr := kvEncoder.Encode(logTask.Logger, lastRow.Row, lastRow.RowID, columnPermutation, sampleFile.Path, offset)
