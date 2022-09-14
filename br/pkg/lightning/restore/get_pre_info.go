@@ -648,9 +648,13 @@ func (p *PreRestoreInfoGetterImpl) sampleDataFromTable(
 	}
 
 	initializedColumns := false
-	var columnPermutation []int
-	var kvSize uint64 = 0
-	var rowSize uint64 = 0
+	var (
+		columnPermutation []int
+		kvSize            uint64 = 0
+		rowSize           uint64 = 0
+		extendCols        []string
+		extendVals        []types.Datum
+	)
 	rowCount := 0
 	dataKVs := p.encBuilder.MakeEmptyRows()
 	indexKVs := p.encBuilder.MakeEmptyRows()
@@ -675,6 +679,21 @@ outloop:
 						return 0.0, false, errors.Trace(err)
 					}
 				}
+				extendCols = sampleFile.ExtendData.Columns
+				extendColsMap := make(map[string]struct{})
+				for _, extendCol := range extendCols {
+					extendColsMap[extendCol] = struct{}{}
+				}
+				if len(columnNames) > 0 && len(extendCols) > 0 {
+					for _, c := range columnNames {
+						delete(extendColsMap, c)
+					}
+				}
+				for i, c := range extendCols {
+					if _, ok := extendColsMap[c]; ok {
+						extendVals = append(extendVals, types.NewStringDatum(sampleFile.ExtendData.Values[i]))
+					}
+				}
 				initializedColumns = true
 			}
 		case io.EOF:
@@ -684,6 +703,18 @@ outloop:
 			return 0.0, false, errors.Trace(err)
 		}
 		lastRow := parser.LastRow()
+		if rowCount == 0 {
+			lastRowLen := len(lastRow.Row)
+			extendColsMap := make(map[string]int)
+			for i, c := range extendCols {
+				extendColsMap[c] = lastRowLen + i
+			}
+			for i, col := range tableInfo.Columns {
+				if p, ok := extendColsMap[col.Name.O]; ok {
+					columnPermutation[i] = p
+				}
+			}
+		}
 		rowCount++
 
 		var dataChecksum, indexChecksum verification.KVChecksum

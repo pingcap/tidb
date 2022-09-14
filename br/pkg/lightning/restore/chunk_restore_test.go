@@ -306,16 +306,12 @@ func (s *chunkRestoreSuite) TestEncodeLoopWithExtendData() {
 		Core: tableInfo,
 	}
 	s.tr.tableInfo = ti
-	for i := 0; i < len(s.tr.tableMeta.DataFiles); i++ {
-		s.tr.tableMeta.DataFiles[i].FileMeta.ExtendData = mydump.ExtendColumnData{
-			Columns: []string{"c_table", "c_schema", "c_source"},
-			Values:  []string{"1", "1", "01"},
-		}
+	s.cr.chunk.FileMeta.ExtendData = mydump.ExtendColumnData{
+		Columns: []string{"c_table", "c_schema", "c_source"},
+		Values:  []string{"1", "1", "01"},
 	}
 	defer func() {
-		for i := 0; i < len(s.tr.tableMeta.DataFiles); i++ {
-			s.tr.tableMeta.DataFiles[i].FileMeta.ExtendData = mydump.ExtendColumnData{}
-		}
+		s.cr.chunk.FileMeta.ExtendData = mydump.ExtendColumnData{}
 	}()
 
 	kvEncoder, err := kv.NewTableKVEncoder(s.tr.encTable, &kv.SessionOptions{
