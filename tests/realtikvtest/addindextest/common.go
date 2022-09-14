@@ -233,7 +233,7 @@ func createIndexOneCol(ctx *suiteContext, tableID int, colID int) (err error) {
 			ddlStr = "alter table addindex.t" + strconv.Itoa(tableID) + addIndexStr + strconv.Itoa(colID) + "(c0, c" + strconv.Itoa(colID) + ")"
 		}
 	}
-	if ctx.CompCtx.isMultiSchemaChange {
+	if ctx.CompCtx != nil && ctx.CompCtx.isMultiSchemaChange {
 		colID += 60
 		ddlStr += " , add column c" + strconv.Itoa(colID) + " int;"
 	}
@@ -272,7 +272,7 @@ func createIndexTwoCols(ctx *suiteContext, tableID int, indexID int, colID1 int,
 		colID2Str = strconv.Itoa(colID2)
 	}
 	ddlStr := "alter table addindex.t" + strconv.Itoa(tableID) + addIndexStr + strconv.Itoa(indexID) + "(c" + colID1Str + ", c" + colID2Str + ")"
-	if ctx.CompCtx.isMultiSchemaChange {
+	if ctx.CompCtx != nil && ctx.CompCtx.isMultiSchemaChange {
 		colID1 += 60
 		ddlStr += " , add column c" + strconv.Itoa(colID1) + " varchar(10);"
 	}
