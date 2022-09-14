@@ -659,7 +659,7 @@ func physicalOptimize(logic LogicalPlan, planCounter *PlanCounterTp) (plan Physi
 	if err = t.plan().ResolveIndices(); err != nil {
 		return nil, 0, err
 	}
-	cost, err = t.plan().GetPlanCost(property.RootTaskType, nil)
+	cost, err = t.plan().GetPlanCost(property.RootTaskType, NewDefaultPlanCostOption())
 	return t.plan(), cost, err
 }
 
