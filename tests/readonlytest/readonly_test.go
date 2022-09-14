@@ -47,6 +47,7 @@ func checkVariable(t *testing.T, db *sql.DB, variable string, on bool) {
 	var name, status string
 	rs, err := db.Query(fmt.Sprintf("show variables like '%s'", variable))
 	require.NoError(t, err)
+	require.NoError(t, rs.Err())
 	require.True(t, rs.Next())
 
 	require.NoError(t, rs.Scan(&name, &status))
