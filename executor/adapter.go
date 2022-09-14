@@ -936,9 +936,14 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 	return e, nil
 }
 
-func (a *ExecStmt) openExecutor(ctx context.Context, e Executor) error {
+func (a *ExecStmt) openExecutor(ctx context.Context, e Executor) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = errors.New(fmt.Sprint(r))
+		}
+	}()
 	start := time.Now()
-	err := e.Open(ctx)
+	err = e.Open(ctx)
 	a.phaseOpenDurations[0] += time.Since(start)
 	return err
 }
