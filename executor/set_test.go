@@ -677,9 +677,11 @@ func TestSetVar(t *testing.T) {
 	// test for tidb_enable_new_cost_interface
 	tk.MustQuery("select @@global.tidb_enable_new_cost_interface").Check(testkit.Rows("1")) // default value is 1
 	tk.MustExec("set global tidb_enable_new_cost_interface=0")
-	tk.MustQuery("select @@global.tidb_enable_new_cost_interface").Check(testkit.Rows("0"))
-	tk.MustExec("set global tidb_enable_new_cost_interface=1")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1287 'OFF' is deprecated and will be removed in a future release. Please use ON instead"))
 	tk.MustQuery("select @@global.tidb_enable_new_cost_interface").Check(testkit.Rows("1"))
+	tk.MustExec("set tidb_enable_new_cost_interface=0")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1287 'OFF' is deprecated and will be removed in a future release. Please use ON instead"))
+	tk.MustQuery("select @@session.tidb_enable_new_cost_interface").Check(testkit.Rows("1"))
 
 	// test for tidb_remove_orderby_in_subquery
 	tk.MustQuery("select @@session.tidb_remove_orderby_in_subquery").Check(testkit.Rows("0")) // default value is 0

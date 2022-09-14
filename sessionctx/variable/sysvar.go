@@ -1699,8 +1699,14 @@ var defaultSysVars = []*SysVar{
 		},
 	},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableNewCostInterface, Value: BoolToOnOff(true), Hidden: false, Type: TypeBool,
+		Validation: func(vars *SessionVars, s string, s2 string, flag ScopeFlag) (string, error) {
+			if s == Off {
+				vars.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(Off, On))
+			}
+			return On, nil
+		},
 		SetSession: func(vars *SessionVars, s string) error {
-			vars.StmtCtx.AppendWarning(errors.Errorf("%v is deprecated", TiDBEnableNewCostInterface))
+			vars.EnableNewCostInterface = TiDBOptOn(s)
 			return nil
 		},
 	},
