@@ -1173,7 +1173,10 @@ func (p *PhysicalIndexJoin) MemoryUsage() (sum int64) {
 	}
 
 	sum = p.basePhysicalJoin.MemoryUsage() + size.SizeOfInterface*2 +
-		int64(cap(p.KeyOff2IdxOff)+cap(p.IdxColLens))*size.SizeOfInt + p.CompareFilters.MemoryUsage()
+		int64(cap(p.KeyOff2IdxOff)+cap(p.IdxColLens))*size.SizeOfInt
+	if p.CompareFilters != nil {
+		sum += p.CompareFilters.MemoryUsage()
+	}
 
 	for _, col := range p.OuterHashKeys {
 		sum += col.MemoryUsage()
@@ -1199,6 +1202,17 @@ type PhysicalIndexMergeJoin struct {
 	NeedOuterSort bool
 	// Desc means whether inner child keep desc order.
 	Desc bool
+}
+
+// MemoryUsage return the memory usage of PhysicalIndexMergeJoin
+func (p *PhysicalIndexMergeJoin) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.PhysicalIndexJoin.MemoryUsage() + int64(cap(p.KeyOff2KeyOffOrderByIdx))*size.SizeOfInt +
+		int64(cap(p.CompareFuncs)+cap(p.OuterCompareFuncs))*size.SizeOfFunc + size.SizeOfBool*2
+	return
 }
 
 // PhysicalIndexHashJoin represents the plan of index look up hash join.
