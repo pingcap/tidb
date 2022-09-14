@@ -1191,6 +1191,15 @@ type PhysicalIndexHashJoin struct {
 	KeepOuterOrder bool
 }
 
+// MemoryUsage return the memory usage of PhysicalIndexHashJoin
+func (p *PhysicalIndexHashJoin) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	return p.PhysicalIndexJoin.MemoryUsage() + size.SizeOfBool
+}
+
 // PhysicalMergeJoin represents merge join implementation of LogicalJoin.
 type PhysicalMergeJoin struct {
 	basePhysicalJoin
@@ -1198,6 +1207,15 @@ type PhysicalMergeJoin struct {
 	CompareFuncs []expression.CompareFunc
 	// Desc means whether inner child keep desc order.
 	Desc bool
+}
+
+// MemoryUsage return the memory usage of PhysicalMergeJoin
+func (p *PhysicalMergeJoin) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	return p.basePhysicalJoin.MemoryUsage() + int64(cap(p.CompareFuncs))*size.SizeOfFunc + size.SizeOfBool
 }
 
 // PhysicalExchangeReceiver accepts connection and receives data passively.

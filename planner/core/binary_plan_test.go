@@ -17,12 +17,6 @@ package core_test
 import (
 	"encoding/base64"
 	"fmt"
-	"io/ioutil"
-	"os"
-	"regexp"
-	"strings"
-	"testing"
-
 	"github.com/golang/snappy"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/auth"
@@ -34,6 +28,11 @@ import (
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
+	"io/ioutil"
+	"os"
+	"regexp"
+	"strings"
+	"testing"
 )
 
 func simplifyAndCheckBinaryPlan(t *testing.T, pb *tipb.ExplainData) {
