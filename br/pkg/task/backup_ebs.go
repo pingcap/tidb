@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/opentracing/opentracing-go"
@@ -326,7 +327,13 @@ func waitUntilAllScheduleStopped(ctx context.Context, cfg Config, allStores []*m
 	eg, ectx := errgroup.WithContext(ctx)
 
 	// init this slice with guess that there are 100 leaders on each store
+	var mutex sync.Mutex
 	allRegions := make([]*metapb.Region, 0, len(allStores)*100)
+	addRegionsFunc := func(regions []*metapb.Region) {
+		mutex.Lock()
+		defer mutex.Unlock()
+		allRegions = append(allRegions, regions...)
+	}
 	for i := range allStores {
 		store := allStores[i]
 		if ectx.Err() != nil {
@@ -345,6 +352,7 @@ func waitUntilAllScheduleStopped(ctx context.Context, cfg Config, allStores []*m
 				return errors.Trace(err)
 			}
 
+			storeLeaderRegions := make([]*metapb.Region, 0, 100)
 			for {
 				response, err2 := checkAdminClient.Recv()
 				if err2 != nil {
@@ -365,8 +373,9 @@ func waitUntilAllScheduleStopped(ctx context.Context, cfg Config, allStores []*m
 				if response.HasPendingAdmin {
 					return errors.WithMessage(hasPendingAdminErr, fmt.Sprintf("store-id=%d", store.Id))
 				}
-				allRegions = append(allRegions, response.Region)
+				storeLeaderRegions = append(storeLeaderRegions, response.Region)
 			}
+			addRegionsFunc(storeLeaderRegions)
 			return nil
 		})
 	}
