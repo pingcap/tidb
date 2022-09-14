@@ -149,7 +149,7 @@ func (e *PlanReplayerExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.ExecStmts == nil {
 		return errors.New("plan replayer: sql is empty")
 	}
-	res, err := e.dumpSingle(ctx, domain.GetPlanReplayerDirName())
+	res, err := e.dump(ctx, domain.GetPlanReplayerDirName())
 	if err != nil {
 		return err
 	}
@@ -158,7 +158,7 @@ func (e *PlanReplayerExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
-// dumpSingle will dump the information about a single sql.
+// dumpSingle will dump the information about sqls.
 // The files will be organized into the following format:
 /*
  |-meta.txt
@@ -187,7 +187,7 @@ func (e *PlanReplayerExec) Next(ctx context.Context, req *chunk.Chunk) error {
      |-explain2.txt
      |-....
 */
-func (e *PlanReplayerExec) dumpSingle(ctx context.Context, path string) (fileName string, err error) {
+func (e *PlanReplayerExec) dump(ctx context.Context, path string) (fileName string, err error) {
 	// Create path
 	err = os.MkdirAll(path, os.ModePerm)
 	if err != nil {
@@ -203,7 +203,7 @@ func (e *PlanReplayerExec) dumpSingle(ctx context.Context, path string) (fileNam
 		return "", err
 	}
 	key := base64.URLEncoding.EncodeToString(b)
-	fileName = fmt.Sprintf("replayer_single_%v_%v.zip", key, time)
+	fileName = fmt.Sprintf("replayer_%v_%v.zip", key, time)
 	zf, err := os.Create(filepath.Join(path, fileName))
 	if err != nil {
 		return "", errors.AddStack(err)
