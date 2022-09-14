@@ -277,6 +277,7 @@ type FileInfo struct {
 	FileMeta  SourceFileMeta
 }
 
+// ExtendColumnData contains the extended column names and values information for a file.
 type ExtendColumnData struct {
 	Columns []string
 	Values  []string

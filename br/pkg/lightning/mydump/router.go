@@ -176,6 +176,7 @@ func NewFileRouter(cfg []*config.FileRouteRule, logger log.Logger) (FileRouter, 
 	return chainRouters(res), nil
 }
 
+// NewDefaultFileRouter creates a new file router with the default file route rules.
 func NewDefaultFileRouter(logger log.Logger) (FileRouter, error) {
 	return NewFileRouter(defaultFileRouteRules, logger)
 }
