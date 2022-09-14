@@ -849,8 +849,8 @@ const (
 	ErrFkColumnCannotDropChild                               = 1829
 	ErrForeignKeyColumnNotNull                               = 1830
 	ErrDupIndex                                              = 1831
-	ErrFkColumnCannotChange                                  = 1832
-	ErrFkColumnCannotChangeChild                             = 1833
+	ErrForeignKeyColumnCannotChange                          = 1832
+	ErrForeignKeyColumnCannotChangeChild                     = 1833
 	ErrFkCannotDeleteParent                                  = 1834
 	ErrMalformedPacket                                       = 1835
 	ErrReadOnlyMode                                          = 1836

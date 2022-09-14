@@ -401,4 +401,7 @@ var (
 
 	// ErrUnsupportedTiFlashOperationForUnsupportedCharsetTable is used when alter alter tiflash related action(e.g. set tiflash mode, set tiflash replica) with unsupported charset.
 	ErrUnsupportedTiFlashOperationForUnsupportedCharsetTable = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "ALTER TiFlash settings for tables not supported by TiFlash: table contains %s charset"), nil))
+
+	ErrForeignKeyColumnCannotChange      = ClassDDL.NewStd(mysql.ErrForeignKeyColumnCannotChange)
+	ErrForeignKeyColumnCannotChangeChild = ClassDDL.NewStd(mysql.ErrForeignKeyColumnCannotChangeChild)
 )
