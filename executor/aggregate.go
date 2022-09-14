@@ -300,8 +300,6 @@ func (e *HashAggExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
-	// If panic here, the children executor should be closed because they are open.
-	defer closeBaseExecutor(&e.baseExecutor)
 	e.prepared = false
 
 	e.memTracker = memory.NewTracker(e.id, -1)
