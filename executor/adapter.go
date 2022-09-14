@@ -206,6 +206,9 @@ type PartitionTelemetryInfo struct {
 	UseTablePartitionRangeColumns  bool
 	UseTablePartitionListColumns   bool
 	TablePartitionMaxPartitionsNum uint64
+	UseCreateIntervalPartition     bool
+	UseAddIntervalPartition        bool
+	UseDropIntervalPartition       bool
 }
 
 // AccountLockTelemetryInfo records account lock/unlock information during execution
