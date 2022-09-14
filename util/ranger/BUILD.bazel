@@ -50,6 +50,7 @@ go_test(
         "//config",
         "//expression",
         "//parser/ast",
+        "//parser/model",
         "//parser/mysql",
         "//planner/core",
         "//session",
