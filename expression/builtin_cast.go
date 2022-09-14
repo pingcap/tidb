@@ -2013,9 +2013,9 @@ func typeString(mysqltype byte) bool {
 	case mysql.TypeString, mysql.TypeVarchar, mysql.TypeTinyBlob,
 		mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
 		return true
+	default:
+		return false
 	}
-	return false
-
 }
 
 // WrapWithCastAsDecimal wraps `expr` with `cast` if the return type of expr is
