@@ -375,6 +375,7 @@ func TestFlashbackWithSafeTs(t *testing.T) {
 	// Set GC safe point.
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 
+	time.Sleep(time.Second)
 	ts, _ := tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
 	flashbackTs := oracle.GetTimeFromTS(ts)
 	testcases := []struct {
