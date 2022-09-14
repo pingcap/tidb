@@ -102,9 +102,10 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 	var finished bool
 	var totalSize int64
 	var resolvedTs uint64
+	var backupStartTs uint64
 	defer func() {
 		if finished {
-			summary.Log("EBS backup success", zap.Int64("size", totalSize), zap.Uint64("resolved_ts", resolvedTs))
+			summary.Log("EBS backup success", zap.Int64("size", totalSize), zap.Uint64("resolved_ts", resolvedTs), zap.Uint64("backup_start_ts", backupStartTs))
 		} else {
 			summary.Log("EBS backup failed, please check the log for details.")
 		}
@@ -160,23 +161,12 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 		return errors.Trace(err)
 	}
 
-	// Step.1.1 get global resolved ts and stop gc until all volumes ebs snapshot starts.
-	resolvedTs, err = mgr.GetMinResolvedTS(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	sp := utils.BRServiceSafePoint{
-		BackupTS: resolvedTs,
-		TTL:      utils.DefaultBRGCSafePointTTL,
-		ID:       utils.MakeSafePointID(),
-	}
-	log.Info("safe point will be stuck during ebs backup", zap.Object("safePoint", sp))
-	err = utils.StartServiceSafePointKeeper(ctx, mgr.GetPDClient(), sp)
+	backupStartTs, err = client.GetCurerntTS(c)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	// Step.1.2 stop scheduler as much as possible.
+	// Step.1.1 stop scheduler as much as possible.
 	log.Info("starting to remove some PD schedulers")
 	restoreFunc, e := mgr.RemoveAllPDSchedulers(ctx)
 	if e != nil {
@@ -197,6 +187,22 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 	}()
 
 	if err := waitAllScheduleStoppedAndNoRegionHole(ctx, cfg.Config, mgr); err != nil {
+		return errors.Trace(err)
+	}
+
+	// Step.1.2 get global resolved ts and stop gc until all volumes ebs snapshot starts.
+	resolvedTs, err = mgr.GetMinResolvedTS(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	sp := utils.BRServiceSafePoint{
+		BackupTS: resolvedTs,
+		TTL:      utils.DefaultBRGCSafePointTTL,
+		ID:       utils.MakeSafePointID(),
+	}
+	log.Info("safe point will be stuck during ebs backup", zap.Object("safePoint", sp))
+	err = utils.StartServiceSafePointKeeper(ctx, mgr.GetPDClient(), sp)
+	if err != nil {
 		return errors.Trace(err)
 	}
 
