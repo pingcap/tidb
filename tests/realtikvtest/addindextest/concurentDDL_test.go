@@ -15,8 +15,9 @@
 package addindextest
 
 import (
-	"github.com/stretchr/testify/require"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func initConcurrentDDLTest(t *testing.T, colIIDs [][]int, colJIDs [][]int, tType testType) *suiteContext {
