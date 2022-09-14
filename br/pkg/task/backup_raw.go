@@ -149,8 +149,8 @@ func RunBackupRaw(c context.Context, g glue.Glue, cmdName string, cfg *RawKvConf
 		return errors.Trace(err)
 	}
 	opts := storage.ExternalStorageOptions{
-		NoCredentials:   cfg.NoCreds,
-		SendCredentials: cfg.SendCreds,
+		NoCredentials:            cfg.NoCreds,
+		SendCredentials:          cfg.SendCreds,
 		CheckS3ObjectLockOptions: true,
 	}
 	if err = client.SetStorage(ctx, u, &opts); err != nil {
