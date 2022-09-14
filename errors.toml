@@ -896,6 +896,11 @@ error = '''
 Duplicate partition name %-.192s
 '''
 
+["ddl:1553"]
+error = '''
+Cannot drop index '%-.192s': needed in a foreign key constraint
+'''
+
 ["ddl:1562"]
 error = '''
 Cannot create temporary table with partitions
