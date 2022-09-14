@@ -242,24 +242,24 @@ func (h *Checkpoints) ConsistencyCheck(rangesIn []kv.KeyRange) error {
 // It maintains the "current" probe, and let the ranges to check "consume" it.
 // For example:
 // toCheck:  |_____________________| |_____________|
-//           ^checking
+// .         ^checking
 // subsetOf: |_________| |_______|    |__________|
-//           ^probing
+// .         ^probing
 // probing is the subrange of checking, consume it and move forward the probe.
 // toCheck:  |_____________________| |_____________|
-//           ^checking
+// .         ^checking
 // subsetOf: |_________| |_______|    |__________|
-//                       ^probing
+// .                     ^probing
 // consume it, too.
 // toCheck:  |_____________________| |_____________|
-//           ^checking
+// .         ^checking
 // subsetOf: |_________| |_______|    |__________|
-//                                    ^probing
+// .                                  ^probing
 // checking is at the left of probing and no overlaps, moving it forward.
 // toCheck:  |_____________________| |_____________|
-//                                   ^checking
+// .                                 ^checking
 // subsetOf: |_________| |_______|    |__________|
-//                                    ^probing
+// .                                  ^probing
 // consume it. all subset ranges are consumed, check passed.
 func checkIntervalIsSubset(toCheck []kv.KeyRange, subsetOf []kv.KeyRange) error {
 	i := 0
