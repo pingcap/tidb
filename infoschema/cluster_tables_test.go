@@ -23,6 +23,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -81,6 +82,7 @@ func TestClusterTables(t *testing.T) {
 	t.Run("SelectClusterTablePrivilege", SubTestSelectClusterTablePrivilege(s))
 	t.Run("StmtSummaryEvictedCountTable", SubTestStmtSummaryEvictedCountTable(s))
 	t.Run("StmtSummaryHistoryTable", SubTestStmtSummaryHistoryTable(s))
+	t.Run("SubTestStmtSummaryIssue35340", SubTestStmtSummaryIssue35340(s))
 	t.Run("Issue26379", SubTestIssue26379(s))
 	t.Run("SubTestStmtSummaryResultRows", SubTestStmtSummaryResultRows(s))
 }
@@ -322,7 +324,6 @@ func SubTestStmtSummaryEvictedCountTable(s *clusterTablesSuite) func(*testing.T)
 		// statements_summary is off, statements_summary_evicted is empty.
 		tk.MustQuery("select count(*) from information_schema.cluster_statements_summary_evicted;").Check(testkit.Rows("0"))
 		tk.MustExec("set global tidb_enable_stmt_summary=1")
-
 		// make a new session for test...
 		tk = s.newTestKitWithRoot(t)
 		// first sql
@@ -334,28 +335,54 @@ func SubTestStmtSummaryEvictedCountTable(s *clusterTablesSuite) func(*testing.T)
 		tk.MustQuery("select evicted_count from information_schema.cluster_statements_summary_evicted;").
 			Check(testkit.Rows("2"))
 		// TODO: Add more tests.
-
 		tk.MustExec("create user 'testuser'@'localhost'")
 		tk.MustExec("create user 'testuser2'@'localhost'")
 		tk.MustExec("grant process on *.* to 'testuser2'@'localhost'")
 		tk1 := s.newTestKitWithRoot(t)
 		defer tk1.MustExec("drop user 'testuser'@'localhost'")
 		defer tk1.MustExec("drop user 'testuser2'@'localhost'")
-
 		require.True(t, tk.Session().Auth(&auth.UserIdentity{
 			Username: "testuser",
 			Hostname: "localhost",
 		}, nil, nil))
-
 		err := tk.QueryToErr("select * from information_schema.CLUSTER_STATEMENTS_SUMMARY_EVICTED")
 		// This error is come from cop(TiDB) fetch from rpc server.
 		require.EqualError(t, err, "other error: [planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
-
 		require.True(t, tk.Session().Auth(&auth.UserIdentity{
 			Username: "testuser2",
 			Hostname: "localhost",
 		}, nil, nil))
 		require.NoError(t, tk.QueryToErr("select * from information_schema.CLUSTER_STATEMENTS_SUMMARY_EVICTED"))
+	}
+}
+
+func SubTestStmtSummaryIssue35340(s *clusterTablesSuite) func(t *testing.T) {
+	return func(t *testing.T) {
+		tk := s.newTestKitWithRoot(t)
+		tk.MustExec("set global tidb_stmt_summary_refresh_interval=1800")
+		tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 3000")
+		for i := 0; i < 100; i++ {
+			user := "user" + strconv.Itoa(i)
+			tk.MustExec(fmt.Sprintf("create user '%v'@'localhost'", user))
+		}
+		tk.MustExec("flush privileges")
+		var wg sync.WaitGroup
+		for i := 0; i < 10; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				tk := s.newTestKitWithRoot(t)
+				for j := 0; j < 100; j++ {
+					user := "user" + strconv.Itoa(j)
+					require.True(t, tk.Session().Auth(&auth.UserIdentity{
+						Username: user,
+						Hostname: "localhost",
+					}, nil, nil))
+					tk.MustQuery("select count(*) from information_schema.statements_summary;")
+				}
+			}()
+		}
+		wg.Wait()
 	}
 }
 

@@ -128,6 +128,25 @@ func (s *tiflashTestSuite) TestReadPartitionTable(c *C) {
 	tk.MustExec("commit")
 }
 
+func (s *tiflashTestSuite) TestAggPushDownApplyAll(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists foo")
+	tk.MustExec("drop table if exists bar")
+	tk.MustExec("create table foo(a int, b int)")
+	tk.MustExec("create table bar(a double not null, b decimal(65,0) not null)")
+	tk.MustExec("alter table foo set tiflash replica 1")
+	tk.MustExec("alter table bar set tiflash replica 1")
+	tk.MustExec("insert into foo values(0, NULL)")
+	tk.MustExec("insert into bar values(0, 0)")
+
+	tk.MustExec("set @@session.tidb_allow_mpp=1")
+	tk.MustExec("set @@session.tidb_enforce_mpp=1")
+
+	tk.MustQuery("select * from foo where a=all(select a from bar where bar.b=foo.b)").Check(testkit.Rows("0 <nil>"))
+}
+
 func (s *tiflashTestSuite) TestReadUnsigedPK(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1070,4 +1089,49 @@ func (s *tiflashTestSuite) TestForbidTiflashDuringStaleRead(c *C) {
 	res = resBuff.String()
 	c.Assert(strings.Contains(res, "tiflash"), IsFalse)
 	c.Assert(strings.Contains(res, "tikv"), IsTrue)
+}
+
+func (s *tiflashTestSuite) TestAggPushDownCountStar(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists c")
+	tk.MustExec("drop table if exists o")
+	tk.MustExec("create table c(c_id bigint primary key)")
+	tk.MustExec("create table o(o_id bigint primary key, c_id bigint not null)")
+	tk.MustExec("alter table c set tiflash replica 1")
+	tb := testGetTableByName(c, tk.Se, "test", "c")
+	err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+	tk.MustExec("alter table o set tiflash replica 1")
+	tb = testGetTableByName(c, tk.Se, "test", "o")
+	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+	tk.MustExec("insert into c values(1),(2),(3),(4),(5)")
+	tk.MustExec("insert into o values(1,1),(2,1),(3,2),(4,2),(5,2)")
+
+	tk.MustExec("set @@tidb_enforce_mpp=1")
+	tk.MustExec("set @@tidb_opt_agg_push_down=1")
+
+	tk.MustQuery("select count(*) from c, o where c.c_id=o.c_id").Check(testkit.Rows("5"))
+}
+
+func (s *tiflashTestSuite) TestTiflashEmptyDynamicPruneResult(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `IDT_RP24833` (  `COL1` bigint(16) DEFAULT '15' COMMENT 'NUMERIC UNIQUE INDEX',\n  `COL2` varchar(20) DEFAULT NULL,\n  `COL4` datetime DEFAULT NULL,\n  `COL3` bigint(20) DEFAULT NULL,\n  `COL5` float DEFAULT NULL,\n  KEY `UK_COL1` (`COL1`) /*!80000 INVISIBLE */\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\nPARTITION BY RANGE ((`COL1`-57))\n(PARTITION `P0` VALUES LESS THAN (-3503857335115112215),\n PARTITION `P1` VALUES LESS THAN (-2987877108151063747),\n PARTITION `P2` VALUES LESS THAN (-1981049919102122710),\n PARTITION `P3` VALUES LESS THAN (-1635802972727465681),\n PARTITION `P4` VALUES LESS THAN (1186020639986357714),\n PARTITION `P5` VALUES LESS THAN (1220018677454711359),\n PARTITION `PMX` VALUES LESS THAN (MAXVALUE));")
+	tk.MustExec("alter table IDT_RP24833 set tiflash replica 1")
+	tb := testGetTableByName(c, tk.Se, "test", "IDT_RP24833")
+	err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+
+	tk.MustExec("insert into IDT_RP24833 values(-8448770111093677011, \"郇鋺篤堯擈斥鍮啸赠璭饱磟朅闑傒聎疫ᛄ怖霃\", \"8781-05-02 04:23:03\", -27252736532807028, -1.34554e38);")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic';")
+	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\";")
+	tk.MustExec("set @@session.tidb_allow_mpp=ON;")
+	tk.MustExec("set @@session.tidb_enforce_mpp = on;")
+	tk.MustQuery("select /*+ read_from_storage(tiflash[t1]) */  * from IDT_RP24833 partition(p3, p4) t1 where t1. col1 between -8448770111093677011 and -8448770111093677011;").Check(testkit.Rows())
+	tk.MustQuery("select /*+ read_from_storage(tiflash[t2]) */  * from IDT_RP24833 partition(p2) t2 where t2. col1 <= -8448770111093677011;").Check(testkit.Rows())
+	tk.MustQuery("select /*+ read_from_storage(tiflash[t1, t2]) */  * from IDT_RP24833 partition(p3, p4) t1 join IDT_RP24833 partition(p2) t2 on t1.col1 = t2.col1 where t1. col1 between -8448770111093677011 and -8448770111093677011 and t2. col1 <= -8448770111093677011;").Check(testkit.Rows())
 }
