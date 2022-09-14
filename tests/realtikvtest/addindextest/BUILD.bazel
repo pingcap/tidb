@@ -4,8 +4,8 @@ go_library(
     name = "addindextest",
     srcs = [
         "common.go",
-        "workload.go",
         "compatibility.go",
+        "workload.go",
     ],
     importpath = "github.com/pingcap/tidb/tests/realtikvtest/addindextest",
     visibility = ["//visibility:public"],
@@ -20,10 +20,11 @@ go_library(
 
 go_test(
     name = "addindextest_test",
+    timeout = "moderate",
     srcs = [
         "add_index_test.go",
+        "concurrent_ddl_test.go",
         "main_test.go",
-        "concurrent_ddlL_test.go",
         "multi_schema_change_test.go",
         "pitr_test.go",
     ],
@@ -31,5 +32,6 @@ go_test(
     deps = [
         "//testkit",
         "//tests/realtikvtest",
+        "@com_github_stretchr_testify//require",
     ],
 )
