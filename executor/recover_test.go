@@ -375,6 +375,7 @@ func TestFlashbackWithSafeTs(t *testing.T) {
 	// Set GC safe point.
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 
+	time.Sleep(time.Second)
 	ts, _ := tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
 	flashbackTs := oracle.GetTimeFromTS(ts)
 	testcases := []struct {
@@ -385,8 +386,15 @@ func TestFlashbackWithSafeTs(t *testing.T) {
 		compareWithSafeTS int
 	}{
 		{
-			name:              "10 seconds ago to now, safeTS 5 secs ago",
+			name:              "5 seconds ago to now, safeTS 5 secs ago",
 			sql:               fmt.Sprintf("flashback cluster as of timestamp '%s'", flashbackTs),
+			injectSafeTS:      oracle.GoTimeToTS(flashbackTs),
+			compareWithSafeTS: 0,
+		},
+		{
+			name: "10 seconds ago to now, safeTS 5 secs ago",
+			// Add flashbackTs.Add(-500*time.Millisecond) to avoid flashback time range overlapped.
+			sql:               fmt.Sprintf("flashback cluster as of timestamp '%s'", flashbackTs.Add(-500*time.Millisecond)),
 			injectSafeTS:      oracle.GoTimeToTS(flashbackTs.Add(10 * time.Second)),
 			compareWithSafeTS: -1,
 		},
@@ -395,12 +403,6 @@ func TestFlashbackWithSafeTs(t *testing.T) {
 			sql:               fmt.Sprintf("flashback cluster as of timestamp '%s'", flashbackTs),
 			injectSafeTS:      oracle.GoTimeToTS(flashbackTs.Add(-10 * time.Second)),
 			compareWithSafeTS: 1,
-		},
-		{
-			name:              "5 seconds ago to now, safeTS 5 secs ago",
-			sql:               fmt.Sprintf("flashback cluster as of timestamp '%s'", flashbackTs),
-			injectSafeTS:      oracle.GoTimeToTS(flashbackTs),
-			compareWithSafeTS: 0,
 		},
 	}
 	for _, testcase := range testcases {
