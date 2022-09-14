@@ -3401,7 +3401,6 @@ func TestLazyUniquenessCheckWithSavepoint(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_constraint_check_in_place_pessimistic=0")
 	tk.MustExec("begin pessimistic")
-	tk.MustExec("savepoint s1")
-	err := tk.ExecToErr("rollback to s1")
-	require.ErrorContains(t, err, "savepoint is not supported in pessimistic transactions when in-place constraint check is disabled.")
+	err := tk.ExecToErr("savepoint s1")
+	require.ErrorContains(t, err, "savepoint is not supported in pessimistic transactions when in-place constraint check is disabled")
 }
