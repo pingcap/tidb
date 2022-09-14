@@ -2110,6 +2110,121 @@
     ]
   },
   {
+    "Name": "TestSingleConsumerCTE",
+    "Cases": [
+      {
+        "SQL": "with cte as (select 1) select * from cte; -- inline cte",
+        "Plan": [
+          "Projection 1.00 root  1->Column#3",
+          "└─TableDual 1.00 root  rows:1"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "with cte1 as (select 1), cte2 as (select 2) select * from cte1 union select * from cte2; -- inline cte1, cte2",
+        "Plan": [
+          "HashAgg 2.00 root  group by:Column#7, funcs:firstrow(Column#7)->Column#7",
+          "└─Union 2.00 root  ",
+          "  ├─Projection 1.00 root  1->Column#7",
+          "  │ └─TableDual 1.00 root  rows:1",
+          "  └─Projection 1.00 root  2->Column#7",
+          "    └─TableDual 1.00 root  rows:1"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "with cte as (select 1) select * from cte union select * from cte; -- cannot be inlined",
+        "Plan": [
+          "HashAgg 2.00 root  group by:Column#4, funcs:firstrow(Column#4)->Column#4",
+          "└─Union 2.00 root  ",
+          "  ├─CTEFullScan 1.00 root CTE:cte data:CTE_0",
+          "  └─CTEFullScan 1.00 root CTE:cte data:CTE_0",
+          "CTE_0 1.00 root  Non-Recursive CTE",
+          "└─Projection(Seed Part) 1.00 root  1->Column#1",
+          "  └─TableDual 1.00 root  rows:1"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "with cte as (with cte as (select 1) select * from cte) select * from cte; -- inline nested cte",
+        "Plan": [
+          "Projection 1.00 root  1->Column#7",
+          "└─TableDual 1.00 root  rows:1"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "with cte as (with cte as (select 1) select * from cte) select * from cte a, cte b; -- inline inner cte, cannot be inlined outer cte",
+        "Plan": [
+          "HashJoin 0.64 root  CARTESIAN inner join",
+          "├─CTEFullScan(Build) 0.80 root CTE:b data:CTE_0",
+          "└─CTEFullScan(Probe) 0.80 root CTE:a data:CTE_0",
+          "CTE_0 0.80 root  Non-Recursive CTE",
+          "└─Selection(Seed Part) 0.80 root  1",
+          "  └─Projection 1.00 root  1->Column#3",
+          "    └─TableDual 1.00 root  rows:1"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "with cte1 as (select 1), cte2 as (with cte3 as (select * from cte1) select * from cte3) select * from cte1, cte2; -- inline cte2, cte3, cannot be inlined cte1",
+        "Plan": [
+          "HashJoin 0.64 root  CARTESIAN inner join",
+          "├─CTEFullScan(Build) 0.80 root CTE:cte1 data:CTE_0",
+          "└─CTEFullScan(Probe) 0.80 root CTE:cte1 data:CTE_0",
+          "CTE_0 0.80 root  Non-Recursive CTE",
+          "└─Selection(Seed Part) 0.80 root  1",
+          "  └─Projection 1.00 root  1->Column#1",
+          "    └─TableDual 1.00 root  rows:1"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "with cte1 as (select 1), cte2 as (with cte3 as (select * from cte1) select * from cte3) select * from cte2; -- inline cte1, cte2, cte3",
+        "Plan": [
+          "Projection 1.00 root  1->Column#12",
+          "└─TableDual 1.00 root  rows:1"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "set tidb_opt_force_inline_cte=1; -- enable force inline CTE",
+        "Plan": null,
+        "Warning": null
+      },
+      {
+        "SQL": "with cte as (select 1) select * from cte union select * from cte; -- force inline cte while multi-consumer",
+        "Plan": [
+          "HashAgg 2.00 root  group by:Column#6, funcs:firstrow(Column#6)->Column#6",
+          "└─Union 2.00 root  ",
+          "  ├─Projection 1.00 root  1->Column#6",
+          "  │ └─TableDual 1.00 root  rows:1",
+          "  └─Projection 1.00 root  1->Column#6",
+          "    └─TableDual 1.00 root  rows:1"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "set tidb_opt_force_inline_cte=0; -- disable force inline CTE",
+        "Plan": null,
+        "Warning": null
+      },
+      {
+        "SQL": "with cte as (select 1) select /*+ MERGE() */ * from cte union select * from cte; -- firstly inline cte, secondly cannot be inlined",
+        "Plan": [
+          "HashAgg 2.00 root  group by:Column#4, funcs:firstrow(Column#4)->Column#4",
+          "└─Union 2.00 root  ",
+          "  ├─CTEFullScan 1.00 root CTE:cte data:CTE_0",
+          "  └─CTEFullScan 1.00 root CTE:cte data:CTE_0",
+          "CTE_0 1.00 root  Non-Recursive CTE",
+          "└─Projection(Seed Part) 1.00 root  1->Column#1",
+          "  └─TableDual 1.00 root  rows:1"
+        ],
+        "Warning": null
+      }
+    ]
+  },
+  {
     "Name": "TestPushdownDistinctEnable",
     "Cases": [
       {
