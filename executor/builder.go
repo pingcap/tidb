@@ -112,6 +112,7 @@ func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *Te
 		ctx:              ctx,
 		is:               is,
 		Ti:               ti,
+		snapshotTSCached: isStaleness,
 		snapshotTS:       snapshotTS,
 		isStaleness:      isStaleness,
 		readReplicaScope: replicaReadScope,
@@ -729,7 +730,7 @@ func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		is:           b.is,
 		name:         v.Name,
-		usingVars:    v.UsingVars,
+		usingVars:    v.TxtProtoVars,
 		id:           v.ExecID,
 		stmt:         v.Stmt,
 		plan:         v.Plan,
@@ -1349,7 +1350,9 @@ func (b *executorBuilder) buildHashAgg(v *plannercore.PhysicalHashAgg) Executor 
 	if len(v.GroupByItems) != 0 || aggregation.IsAllFirstRow(v.AggFuncs) {
 		e.defaultVal = nil
 	} else {
-		e.defaultVal = chunk.NewChunkWithCapacity(retTypes(e), 1)
+		if v.IsFinalAgg() {
+			e.defaultVal = chunk.NewChunkWithCapacity(retTypes(e), 1)
+		}
 	}
 	for _, aggDesc := range v.AggFuncs {
 		if aggDesc.HasDistinct || len(aggDesc.OrderByItems) > 0 {
@@ -1405,10 +1408,14 @@ func (b *executorBuilder) buildStreamAgg(v *plannercore.PhysicalStreamAgg) Execu
 		groupChecker: newVecGroupChecker(b.ctx, v.GroupByItems),
 		aggFuncs:     make([]aggfuncs.AggFunc, 0, len(v.AggFuncs)),
 	}
+
 	if len(v.GroupByItems) != 0 || aggregation.IsAllFirstRow(v.AggFuncs) {
 		e.defaultVal = nil
 	} else {
-		e.defaultVal = chunk.NewChunkWithCapacity(retTypes(e), 1)
+		// Only do this for final agg, see issue #35295, #30923
+		if v.IsFinalAgg() {
+			e.defaultVal = chunk.NewChunkWithCapacity(retTypes(e), 1)
+		}
 	}
 	for i, aggDesc := range v.AggFuncs {
 		aggFunc := aggfuncs.Build(b.ctx, aggDesc, i)
@@ -1722,6 +1729,8 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			}
 
 		case strings.ToLower(infoschema.TableSlowQuery), strings.ToLower(infoschema.ClusterTableSlowLog):
+			memTracker := memory.NewTracker(v.ID(), -1)
+			memTracker.AttachTo(b.ctx.GetSessionVars().StmtCtx.MemTracker)
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
@@ -1729,6 +1738,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 					table:      v.Table,
 					outputCols: v.Columns,
 					extractor:  v.Extractor.(*plannercore.SlowQueryExtractor),
+					memTracker: memTracker,
 				},
 			}
 		case strings.ToLower(infoschema.TableStorageStats):
@@ -1902,6 +1912,17 @@ func (b *executorBuilder) buildMaxOneRow(v *plannercore.PhysicalMaxOneRow) Execu
 }
 
 func (b *executorBuilder) buildUnionAll(v *plannercore.PhysicalUnionAll) Executor {
+	// A quick fix for avoiding a race mentioned in issue #30468.
+	// Fetch the snapshot ts to make the transaction's state ready. Otherwise, multiple threads in the Union executor
+	// may change the transaction's state concurrently, which causes race.
+	// This fix is a hack, but with minimal change to the current code and works. Actually, the usage of the transaction
+	// states and the logic to access the snapshot ts should all be refactored.
+	_, err := b.getSnapshotTS()
+	if err != nil {
+		b.err = err
+		return nil
+	}
+
 	childExecs := make([]Executor, len(v.Children()))
 	for i, child := range v.Children() {
 		childExecs[i] = b.build(child)

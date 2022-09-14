@@ -96,7 +96,7 @@ func (e *UpdateExec) prepare(row []types.Datum) (err error) {
 				break
 			}
 		}
-		if e.unmatchedOuterRow(content, row) {
+		if unmatchedOuterRow(content, row) {
 			updatable = false
 		}
 		e.tableUpdatable = append(e.tableUpdatable, updatable)
@@ -211,7 +211,7 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema, row, n
 // the inner handle field is filled with a NULL value.
 //
 // This fixes: https://github.com/pingcap/tidb/issues/7176.
-func (e *UpdateExec) unmatchedOuterRow(tblPos plannercore.TblColPosInfo, waitUpdateRow []types.Datum) bool {
+func unmatchedOuterRow(tblPos plannercore.TblColPosInfo, waitUpdateRow []types.Datum) bool {
 	firstHandleIdx := tblPos.HandleCols.GetCol(0)
 	return waitUpdateRow[firstHandleIdx.Index].IsNull()
 }

@@ -102,6 +102,7 @@ func CheckClusterVersion(ctx context.Context, client pd.Client, checker VerCheck
 			if err := checkTiFlashVersion(s); err != nil {
 				return errors.Trace(err)
 			}
+			continue
 		}
 
 		tikvVersionString := removeVAndHash(s.Version)

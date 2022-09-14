@@ -116,9 +116,9 @@ func encode(sc *stmtctx.StatementContext, b []byte, vals []types.Datum, comparab
 				err = sc.HandleOverflow(err, err)
 			}
 		case types.KindMysqlEnum:
-			b = encodeUnsignedInt(b, uint64(vals[i].GetMysqlEnum().ToNumber()), comparable)
+			b = encodeUnsignedInt(b, vals[i].GetMysqlEnum().Value, comparable)
 		case types.KindMysqlSet:
-			b = encodeUnsignedInt(b, uint64(vals[i].GetMysqlSet().ToNumber()), comparable)
+			b = encodeUnsignedInt(b, vals[i].GetMysqlSet().Value, comparable)
 		case types.KindMysqlBit, types.KindBinaryLiteral:
 			// We don't need to handle errors here since the literal is ensured to be able to store in uint64 in convertToMysqlBit.
 			var val uint64
@@ -159,9 +159,9 @@ func EstimateValueSize(sc *stmtctx.StatementContext, val types.Datum) (int, erro
 	case types.KindMysqlDecimal:
 		l = valueSizeOfDecimal(val.GetMysqlDecimal(), val.Length(), val.Frac()) + 1
 	case types.KindMysqlEnum:
-		l = valueSizeOfUnsignedInt(uint64(val.GetMysqlEnum().ToNumber()))
+		l = valueSizeOfUnsignedInt(val.GetMysqlEnum().Value)
 	case types.KindMysqlSet:
-		l = valueSizeOfUnsignedInt(uint64(val.GetMysqlSet().ToNumber()))
+		l = valueSizeOfUnsignedInt(val.GetMysqlSet().Value)
 	case types.KindMysqlBit, types.KindBinaryLiteral:
 		val, err := val.GetBinaryLiteral().ToInt(sc)
 		terror.Log(errors.Trace(err))
@@ -355,11 +355,11 @@ func encodeHashChunkRowIdx(sc *stmtctx.StatementContext, row chunk.Row, tp *type
 	case mysql.TypeEnum:
 		if mysql.HasEnumSetAsIntFlag(tp.Flag) {
 			flag = uvarintFlag
-			v := uint64(row.GetEnum(idx).ToNumber())
+			v := row.GetEnum(idx).Value
 			b = (*[sizeUint64]byte)(unsafe.Pointer(&v))[:]
 		} else {
 			flag = compactBytesFlag
-			v := uint64(row.GetEnum(idx).ToNumber())
+			v := row.GetEnum(idx).Value
 			str := ""
 			if enum, err := types.ParseEnumValue(tp.Elems, v); err == nil {
 				// str will be empty string if v out of definition of enum.
@@ -570,11 +570,11 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 				isNull[i] = !ignoreNull
 			} else if mysql.HasEnumSetAsIntFlag(tp.Flag) {
 				buf[0] = uvarintFlag
-				v := uint64(column.GetEnum(i).ToNumber())
+				v := column.GetEnum(i).Value
 				b = (*[sizeUint64]byte)(unsafe.Pointer(&v))[:]
 			} else {
 				buf[0] = compactBytesFlag
-				v := uint64(column.GetEnum(i).ToNumber())
+				v := column.GetEnum(i).Value
 				str := ""
 				if enum, err := types.ParseEnumValue(tp.Elems, v); err == nil {
 					// str will be empty string if v out of definition of enum.
@@ -762,6 +762,8 @@ func DecodeRange(b []byte, size int, idxColumnTypes []byte, loc *time.Location) 
 			if types.IsTypeTime(idxColumnTypes[i]) {
 				// handle datetime values specially since they are encoded to int and we'll get int values if using DecodeOne.
 				b, d, err = DecodeAsDateTime(b, idxColumnTypes[i], loc)
+			} else if types.IsTypeFloat(idxColumnTypes[i]) {
+				b, d, err = DecodeAsFloat32(b, idxColumnTypes[i])
 			} else {
 				b, d, err = DecodeOne(b)
 			}
@@ -894,6 +896,22 @@ func DecodeAsDateTime(b []byte, tp byte, loc *time.Location) (remain []byte, d t
 	if err != nil {
 		return b, d, errors.Trace(err)
 	}
+	return b, d, nil
+}
+
+// DecodeAsFloat32 decodes value for mysql.TypeFloat
+func DecodeAsFloat32(b []byte, tp byte) (remain []byte, d types.Datum, err error) {
+	if len(b) < 1 || tp != mysql.TypeFloat {
+		return nil, d, errors.New("invalid encoded key")
+	}
+	flag := b[0]
+	b = b[1:]
+	if flag != floatFlag {
+		return b, d, errors.Errorf("invalid encoded key flag %v for DecodeAsFloat32", flag)
+	}
+	var v float64
+	b, v, err = DecodeFloat(b)
+	d.SetFloat32FromF64(v)
 	return b, d, nil
 }
 
@@ -1326,9 +1344,9 @@ func HashCode(b []byte, d types.Datum) []byte {
 		decStr := d.GetMysqlDecimal().ToString()
 		b = encodeBytes(b, decStr, false)
 	case types.KindMysqlEnum:
-		b = encodeUnsignedInt(b, uint64(d.GetMysqlEnum().ToNumber()), false)
+		b = encodeUnsignedInt(b, d.GetMysqlEnum().Value, false)
 	case types.KindMysqlSet:
-		b = encodeUnsignedInt(b, uint64(d.GetMysqlSet().ToNumber()), false)
+		b = encodeUnsignedInt(b, d.GetMysqlSet().Value, false)
 	case types.KindMysqlBit, types.KindBinaryLiteral:
 		val := d.GetBinaryLiteral()
 		b = encodeBytes(b, val, false)

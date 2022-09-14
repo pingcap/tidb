@@ -855,6 +855,7 @@ func (e *NestedLoopApplyExec) Close() error {
 		} else {
 			runtimeStats.setCacheInfo(false, 0)
 		}
+		runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", 0))
 	}
 	return e.outerExec.Close()
 }

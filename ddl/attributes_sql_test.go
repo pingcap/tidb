@@ -107,6 +107,42 @@ PARTITION BY RANGE (c) (
 	c.Assert(err, IsNil)
 	_, err = tk.Exec(`alter table alter_p partition p1 attributes " merge_option=allow , key=value ";`)
 	c.Assert(err, IsNil)
+
+	// reset all
+	tk.MustExec(`alter table alter_p partition p0 attributes default;`)
+	tk.MustExec(`alter table alter_p partition p1 attributes default;`)
+	tk.MustExec(`alter table alter_p partition p2 attributes default;`)
+	tk.MustExec(`alter table alter_p partition p3 attributes default;`)
+
+	// add table level attribute
+	tk.MustExec(`alter table alter_p attributes="merge_option=deny";`)
+	rows := tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
+	c.Assert(len(rows), Equals, 1)
+
+	// add a new partition p4
+	tk.MustExec(`alter table alter_p add partition (PARTITION p4 VALUES LESS THAN (60));`)
+	rows1 := tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
+	c.Assert(len(rows1), Equals, 1)
+	c.Assert(rows[0][3], Not(Equals), rows1[0][3])
+
+	// drop the new partition p4
+	tk.MustExec(`alter table alter_p drop partition p4;`)
+	rows2 := tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
+	c.Assert(len(rows2), Equals, 1)
+	c.Assert(rows[0][3], Equals, rows2[0][3])
+
+	// add a new partition p5
+	tk.MustExec(`alter table alter_p add partition (PARTITION p5 VALUES LESS THAN (80));`)
+	rows3 := tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
+	c.Assert(len(rows3), Equals, 1)
+	c.Assert(rows[0][3], Not(Equals), rows3[0][3])
+
+	// truncate the new partition p5
+	tk.MustExec(`alter table alter_p truncate partition p5;`)
+	rows4 := tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
+	c.Assert(len(rows4), Equals, 1)
+	c.Assert(rows3[0][3], Not(Equals), rows4[0][3])
+	c.Assert(rows[0][3], Not(Equals), rows4[0][3])
 }
 
 func (s *testAttributesDDLSerialSuite) TestTruncateTable(c *C) {
@@ -523,7 +559,7 @@ PARTITION BY RANGE (c) (
 	c.Assert(len(rows1), Equals, 2)
 	c.Assert(rows1[0][0], Equals, "schema/test/part")
 	c.Assert(rows1[0][2], Equals, `"key=value"`)
-	c.Assert(rows1[0][3], Equals, rows[0][3])
+	c.Assert(rows1[0][3], Not(Equals), rows[0][3])
 	c.Assert(rows1[1][0], Equals, "schema/test/part/p1")
 	c.Assert(rows1[1][2], Equals, `"key2=value2"`)
 	c.Assert(rows1[1][3], Equals, rows[2][3])
