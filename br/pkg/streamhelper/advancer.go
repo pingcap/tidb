@@ -201,7 +201,8 @@ func (c *CheckpointAdvancer) tryAdvance(ctx context.Context, rst RangesSharesTS)
 	eg, cx := errgroup.WithContext(ctx)
 	collector := NewClusterCollector(ctx, c.env)
 	collector.setOnSuccessHook(c.cache.InsertRange)
-	for _, r := range utils.ClampRanges(c.taskRange, ranges) {
+	clampedRanges := utils.ClampRanges(ranges, c.taskRange)
+	for _, r := range clampedRanges {
 		r := r
 		workers.ApplyOnErrorGroup(eg, func() (e error) {
 			defer c.recordTimeCost("get regions in range", zap.Uint64("checkpoint", rst.TS))()
@@ -414,6 +415,7 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 	case EventAdd:
 		c.task = e.Info
 		c.taskRange = CollapseRanges(len(e.Ranges), func(i int) kv.KeyRange { return e.Ranges[i] })
+		log.Info("added event", zap.Stringer("task", e.Info), zap.Stringer("ranges", logutil.StringifyKeys(c.taskRange)))
 	case EventDel:
 		c.task = nil
 		c.taskRange = nil

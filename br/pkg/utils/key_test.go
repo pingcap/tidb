@@ -153,6 +153,11 @@ func TestClampKeyRanges(t *testing.T) {
 			clampIn: []kv.KeyRange{r("0001", "0100"), r("0150", "0200")},
 			result:  []kv.KeyRange{r("0001", "0050"), r("0051", "0095"), r("0098", "0100"), r("0150", "0200")},
 		},
+		{
+			ranges:  []kv.KeyRange{r("", "0050")},
+			clampIn: []kv.KeyRange{r("", "")},
+			result:  []kv.KeyRange{r("", "0050")},
+		},
 	}
 	run := func(t *testing.T, c Case) {
 		require.ElementsMatch(

@@ -18,9 +18,11 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	logbackup "github.com/pingcap/kvproto/pkg/logbackuppb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/kv"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
 
@@ -156,6 +158,7 @@ func (f *fakeStore) GetLastFlushTSOfRegion(ctx context.Context, in *logbackup.Ge
 			},
 		})
 	}
+	log.Debug("Get last flush ts of region", zap.Stringer("in", in), zap.Stringer("out", resp))
 	return resp, nil
 }
 
@@ -319,6 +322,7 @@ func (f *fakeCluster) advanceCheckpoints() uint64 {
 			r.fsim.flushedEpoch = 0
 		})
 	}
+	log.Info("checkpoint updated", zap.Uint64("to", minCheckpoint))
 	return minCheckpoint
 }
 
