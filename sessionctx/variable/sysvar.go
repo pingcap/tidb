@@ -1700,7 +1700,7 @@ var defaultSysVars = []*SysVar{
 	},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableNewCostInterface, Value: BoolToOnOff(true), Hidden: false, Type: TypeBool,
 		SetSession: func(vars *SessionVars, s string) error {
-			vars.EnableNewCostInterface = TiDBOptOn(s)
+			vars.StmtCtx.AppendWarning(errors.Errorf("%v is deprecated", TiDBEnableNewCostInterface))
 			return nil
 		},
 	},
