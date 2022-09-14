@@ -32,6 +32,8 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner"
 	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -1154,6 +1156,61 @@ func TestCTEMergeHint(t *testing.T) {
 	}
 }
 
+func TestForceInlineCTE(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE `t` (`a` int(11));")
+	tk.MustExec("insert into t values (1), (5), (10), (15), (20), (30), (50);")
+
+	var (
+		input  []string
+		output []struct {
+			SQL     string
+			Plan    []string
+			Warning []string
+		}
+	)
+	planSuiteData := core.GetPlanSuiteData()
+	planSuiteData.LoadTestCases(t, &input, &output)
+
+	for i, ts := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = ts
+		})
+		if strings.HasPrefix(ts, "set") {
+			tk.MustExec(ts)
+			continue
+		}
+		testdata.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format='brief' " + ts).Rows())
+		})
+		tk.MustQuery("explain format='brief' " + ts).Check(testkit.Rows(output[i].Plan...))
+
+		comment := fmt.Sprintf("case:%v sql:%s", i, ts)
+		warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
+		testdata.OnRecord(func() {
+			if len(warnings) > 0 {
+				output[i].Warning = make([]string, len(warnings))
+				for j, warning := range warnings {
+					output[i].Warning[j] = warning.Err.Error()
+				}
+			}
+		})
+		if len(output[i].Warning) == 0 {
+			require.Len(t, warnings, 0)
+		} else {
+			require.Len(t, warnings, len(output[i].Warning), comment)
+			for j, warning := range warnings {
+				require.Equal(t, stmtctx.WarnLevelWarning, warning.Level, comment)
+				require.Equal(t, output[i].Warning[j], warning.Err.Error(), comment)
+			}
+		}
+	}
+}
+
 func TestPushdownDistinctEnable(t *testing.T) {
 	var (
 		input  []string
@@ -2229,4 +2286,18 @@ func TestMPPSinglePartitionType(t *testing.T) {
 		})
 		tk.MustQuery("explain format='brief' " + ts).Check(testkit.Rows(output[i].Plan...))
 	}
+}
+
+func TestPhysicalPlanMemoryTrace(t *testing.T) {
+	// PhysicalSort
+	ls := core.PhysicalSort{}
+	size := ls.MemoryUsage()
+	ls.ByItems = append(ls.ByItems, &util.ByItems{})
+	require.Greater(t, ls.MemoryUsage(), size)
+
+	//PhysicalProperty
+	pp := property.PhysicalProperty{}
+	size = pp.MemoryUsage()
+	pp.MPPPartitionCols = append(pp.MPPPartitionCols, &property.MPPPartitionColumn{})
+	require.Greater(t, pp.MemoryUsage(), size)
 }

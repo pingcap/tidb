@@ -620,6 +620,32 @@ func TestTiDBCommitterConcurrency(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestTiDBDDLFlashbackConcurrency(t *testing.T) {
+	sv := GetSysVar(TiDBDDLFlashbackConcurrency)
+	vars := NewSessionVars()
+
+	newVal := 128
+	val, err := sv.Validate(vars, fmt.Sprintf("%d", newVal), ScopeGlobal)
+	require.Equal(t, val, "128")
+	require.NoError(t, err)
+
+	// out of range
+	newVal = MaxConfigurableConcurrency + 1
+	expected := MaxConfigurableConcurrency
+	val, err = sv.Validate(vars, fmt.Sprintf("%d", newVal), ScopeGlobal)
+	// expected to truncate
+	require.Equal(t, val, fmt.Sprintf("%d", expected))
+	require.NoError(t, err)
+
+	// min value out of range
+	newVal = 0
+	expected = 1
+	val, err = sv.Validate(vars, fmt.Sprintf("%d", newVal), ScopeGlobal)
+	// expected to set to min value
+	require.Equal(t, val, fmt.Sprintf("%d", expected))
+	require.NoError(t, err)
+}
+
 func TestDefaultMemoryDebugModeValue(t *testing.T) {
 	vars := NewSessionVars()
 	val, err := vars.GetSessionOrGlobalSystemVar(TiDBMemoryDebugModeMinHeapInUse)

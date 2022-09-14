@@ -218,6 +218,7 @@ type TxnUsage struct {
 	MutationCheckerUsed       bool                     `json:"mutationCheckerUsed"`
 	AssertionLevel            string                   `json:"assertionLevel"`
 	RcCheckTS                 bool                     `json:"rcCheckTS"`
+	RCWriteCheckTS            bool                     `json:"rcWriteCheckTS"`
 	SavepointCounter          int64                    `json:"SavepointCounter"`
 	LazyUniqueCheckSetCounter int64                    `json:"lazyUniqueCheckSetCounter"`
 }
@@ -256,12 +257,16 @@ func getTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
 	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(variable.TiDBRCReadCheckTS); err == nil {
 		rcCheckTSUsed = val == variable.On
 	}
+	rcWriteCheckTSUsed := false
+	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(variable.TiDBRCWriteCheckTs); err == nil {
+		rcWriteCheckTSUsed = val == variable.On
+	}
 	currSavepointCount := m.GetSavepointStmtCounter()
 	diffSavepointCount := currSavepointCount - initialSavepointStmtCounter
 	currLazyUniqueCheckSetCount := m.GetLazyPessimisticUniqueCheckSetCounter()
 	diffLazyUniqueCheckSetCount := currLazyUniqueCheckSetCount - initialLazyPessimisticUniqueCheckSetCount
 	return &TxnUsage{asyncCommitUsed, onePCUsed, diff,
-		mutationCheckerUsed, assertionUsed, rcCheckTSUsed,
+		mutationCheckerUsed, assertionUsed, rcCheckTSUsed, rcWriteCheckTSUsed,
 		diffSavepointCount, diffLazyUniqueCheckSetCount,
 	}
 }
