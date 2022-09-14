@@ -56,33 +56,72 @@ func validInterval(sctx sessionctx.Context, low, high *point) (bool, error) {
 	return bytes.Compare(l, r) < 0, nil
 }
 
+func convertPoints(sctx sessionctx.Context, rangePoints []*point, tp *types.FieldType, skipNull bool, tableRange bool) ([]*point, error) {
+	i := 0
+	numPoints := len(rangePoints)
+	var minValueDatum, maxValueDatum types.Datum
+	if tableRange {
+		// Currently, table's kv range cannot accept encoded value of MaxValueDatum. we need to convert it.
+		isUnsigned := mysql.HasUnsignedFlag(tp.GetFlag())
+		if isUnsigned {
+			minValueDatum.SetUint64(0)
+			maxValueDatum.SetUint64(math.MaxUint64)
+		} else {
+			minValueDatum.SetInt64(math.MinInt64)
+			maxValueDatum.SetInt64(math.MaxInt64)
+		}
+	}
+	for j := 0; j < numPoints; j += 2 {
+		startPoint, err := convertPoint(sctx, rangePoints[j], tp)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if tableRange {
+			if startPoint.value.Kind() == types.KindNull {
+				startPoint.value = minValueDatum
+				startPoint.excl = false
+			} else if startPoint.value.Kind() == types.KindMinNotNull {
+				startPoint.value = minValueDatum
+			}
+		}
+		endPoint, err := convertPoint(sctx, rangePoints[j+1], tp)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if tableRange {
+			if endPoint.value.Kind() == types.KindMaxValue {
+				endPoint.value = maxValueDatum
+			}
+		}
+		if skipNull && endPoint.value.Kind() == types.KindNull {
+			continue
+		}
+		less, err := validInterval(sctx, startPoint, endPoint)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if !less {
+			continue
+		}
+		rangePoints[i] = startPoint
+		rangePoints[i+1] = endPoint
+		i += 2
+	}
+	return rangePoints[:i], nil
+}
+
 // points2Ranges build index ranges from range points.
 // Only one column is built there. If there're multiple columns, use appendPoints2Ranges.
 // rangeMaxSize is the max memory limit for ranges. O indicates no memory limit.
 // If the second return value is true, it means that the estimated memory usage of ranges exceeds rangeMaxSize and it falls back to full range.
 func points2Ranges(sctx sessionctx.Context, rangePoints []*point, tp *types.FieldType, rangeMaxSize int64) ([]*Range, bool, error) {
-	ranges := make(Ranges, 0, len(rangePoints)/2)
-	for i := 0; i < len(rangePoints); i += 2 {
-		startPoint, err := convertPoint(sctx, rangePoints[i], tp)
-		if err != nil {
-			return nil, false, errors.Trace(err)
-		}
-		endPoint, err := convertPoint(sctx, rangePoints[i+1], tp)
-		if err != nil {
-			return nil, false, errors.Trace(err)
-		}
-		less, err := validInterval(sctx, startPoint, endPoint)
-		if err != nil {
-			return nil, false, errors.Trace(err)
-		}
-		if !less {
-			continue
-		}
-		// If column has not null flag, [null, null] should be removed.
-		if mysql.HasNotNullFlag(tp.GetFlag()) && endPoint.value.Kind() == types.KindNull {
-			continue
-		}
-
+	convertedPoints, err := convertPoints(sctx, rangePoints, tp, mysql.HasNotNullFlag(tp.GetFlag()), false)
+	if err != nil {
+		return nil, false, errors.Trace(err)
+	}
+	ranges := make(Ranges, 0, len(convertedPoints)/2)
+	for i := 0; i < len(convertedPoints); i += 2 {
+		startPoint, endPoint := convertedPoints[i], convertedPoints[i+1]
 		ran := &Range{
 			LowVal:      []types.Datum{startPoint.value},
 			LowExclude:  startPoint.excl,
@@ -90,7 +129,7 @@ func points2Ranges(sctx sessionctx.Context, rangePoints []*point, tp *types.Fiel
 			HighExclude: endPoint.excl,
 			Collators:   []collate.Collator{collate.GetCollator(tp.GetCollate())},
 		}
-		if len(ranges) == 0 && rangeMaxSize > 0 && ran.MemUsage()*int64(len(rangePoints))/2 > rangeMaxSize {
+		if len(ranges) == 0 && rangeMaxSize > 0 && ran.MemUsage()*int64(len(convertedPoints))/2 > rangeMaxSize {
 			var fullRange Ranges
 			if mysql.HasNotNullFlag(tp.GetFlag()) {
 				fullRange = FullNotNullRange()
@@ -190,13 +229,17 @@ func convertPoint(sctx sessionctx.Context, point *point, tp *types.FieldType) (*
 // then we can not build a conjunctive ranges for this index.
 func appendPoints2Ranges(sctx sessionctx.Context, origin []*Range, rangePoints []*point,
 	ft *types.FieldType) ([]*Range, error) {
+	convertedPoints, err := convertPoints(sctx, rangePoints, ft, false, false)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	var newIndexRanges []*Range
 	for i := 0; i < len(origin); i++ {
 		oRange := origin[i]
 		if !oRange.IsPoint(sctx) {
 			newIndexRanges = append(newIndexRanges, oRange)
 		} else {
-			newRanges, err := appendPoints2IndexRange(sctx, oRange, rangePoints, ft)
+			newRanges, err := appendPoints2IndexRange(oRange, convertedPoints, ft)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -206,25 +249,10 @@ func appendPoints2Ranges(sctx sessionctx.Context, origin []*Range, rangePoints [
 	return newIndexRanges, nil
 }
 
-func appendPoints2IndexRange(sctx sessionctx.Context, origin *Range, rangePoints []*point,
-	ft *types.FieldType) ([]*Range, error) {
+func appendPoints2IndexRange(origin *Range, rangePoints []*point, ft *types.FieldType) ([]*Range, error) {
 	newRanges := make([]*Range, 0, len(rangePoints)/2)
 	for i := 0; i < len(rangePoints); i += 2 {
-		startPoint, err := convertPoint(sctx, rangePoints[i], ft)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		endPoint, err := convertPoint(sctx, rangePoints[i+1], ft)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		less, err := validInterval(sctx, startPoint, endPoint)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if !less {
-			continue
-		}
+		startPoint, endPoint := rangePoints[i], rangePoints[i+1]
 
 		lowVal := make([]types.Datum, len(origin.LowVal)+1)
 		copy(lowVal, origin.LowVal)
@@ -277,44 +305,13 @@ func appendRanges2PointRanges(pointRanges []*Range, ranges []*Range) []*Range {
 // rangeMaxSize is the max memory limit for ranges. O indicates no memory limit.
 // If the second return value is true, it means that the estimated memory usage of ranges exceeds rangeMaxSize and it falls back to full range.
 func points2TableRanges(sctx sessionctx.Context, rangePoints []*point, tp *types.FieldType, rangeMaxSize int64) ([]*Range, bool, error) {
-	ranges := make(Ranges, 0, len(rangePoints)/2)
-	var minValueDatum, maxValueDatum types.Datum
-	// Currently, table's kv range cannot accept encoded value of MaxValueDatum. we need to convert it.
-	isUnsigned := mysql.HasUnsignedFlag(tp.GetFlag())
-	if isUnsigned {
-		minValueDatum.SetUint64(0)
-		maxValueDatum.SetUint64(math.MaxUint64)
-	} else {
-		minValueDatum.SetInt64(math.MinInt64)
-		maxValueDatum.SetInt64(math.MaxInt64)
+	convertedPoints, err := convertPoints(sctx, rangePoints, tp, true, true)
+	if err != nil {
+		return nil, false, errors.Trace(err)
 	}
-	for i := 0; i < len(rangePoints); i += 2 {
-		startPoint, err := convertPoint(sctx, rangePoints[i], tp)
-		if err != nil {
-			return nil, false, errors.Trace(err)
-		}
-		if startPoint.value.Kind() == types.KindNull {
-			startPoint.value = minValueDatum
-			startPoint.excl = false
-		} else if startPoint.value.Kind() == types.KindMinNotNull {
-			startPoint.value = minValueDatum
-		}
-		endPoint, err := convertPoint(sctx, rangePoints[i+1], tp)
-		if err != nil {
-			return nil, false, errors.Trace(err)
-		}
-		if endPoint.value.Kind() == types.KindMaxValue {
-			endPoint.value = maxValueDatum
-		} else if endPoint.value.Kind() == types.KindNull {
-			continue
-		}
-		less, err := validInterval(sctx, startPoint, endPoint)
-		if err != nil {
-			return nil, false, errors.Trace(err)
-		}
-		if !less {
-			continue
-		}
+	ranges := make(Ranges, 0, len(convertedPoints)/2)
+	for i := 0; i < len(convertedPoints); i += 2 {
+		startPoint, endPoint := convertedPoints[i], convertedPoints[i+1]
 		ran := &Range{
 			LowVal:      []types.Datum{startPoint.value},
 			LowExclude:  startPoint.excl,
@@ -323,7 +320,7 @@ func points2TableRanges(sctx sessionctx.Context, rangePoints []*point, tp *types
 			Collators:   []collate.Collator{collate.GetCollator(tp.GetCollate())},
 		}
 		if len(ranges) == 0 && rangeMaxSize > 0 && ran.MemUsage()*int64(len(rangePoints))/2 > rangeMaxSize {
-			return FullIntRange(isUnsigned), true, nil
+			return FullIntRange(mysql.HasUnsignedFlag(tp.GetFlag())), true, nil
 		}
 		ranges = append(ranges, ran)
 	}
