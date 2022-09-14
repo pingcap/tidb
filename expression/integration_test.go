@@ -7659,5 +7659,4 @@ func TestIssue35184(t *testing.T) {
 	tk.MustExec("insert into ft values(1234567890,123467890.1234,123467890.1234,'11111123467890.1234');")
 	result = tk.MustQuery("SELECT FROM_UNIXTIME(tchar) from ft;")
 	result.Check(testkit.Rows("<nil>"))
-
 }
