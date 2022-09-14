@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -211,6 +212,8 @@ func TestGlobalVariablesOnFlashback(t *testing.T) {
 	tk.MustExec("set global tidb_gc_enable = off")
 	tk.MustExec("set global tidb_super_read_only = on")
 
+	ts, err = tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
+	require.NoError(t, err)
 	tk.MustExec(fmt.Sprintf("flashback cluster as of timestamp '%s'", oracle.GetTimeFromTS(ts)))
 	rs, err = tk.Exec("show variables like 'tidb_super_read_only'")
 	require.NoError(t, err)
@@ -264,4 +267,61 @@ func TestCancelFlashbackCluster(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockFlashbackTest"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS"))
 	require.NoError(t, failpoint.Disable("tikvclient/injectSafeTS"))
+}
+
+func TestFlashbackTimeRange(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+	txn, err := se.GetStore().Begin()
+	require.NoError(t, err)
+
+	m := meta.NewMeta(txn)
+	flashbackTime := oracle.GetTimeFromTS(m.StartTS).Add(-10 * time.Minute)
+
+	// No flashback history, shouldn't return err.
+	require.NoError(t, ddl.CheckFlashbackHistoryTSRange(m, oracle.GoTimeToTS(flashbackTime)))
+
+	// Insert a time range to flashback history ts ranges.
+	require.NoError(t, ddl.UpdateFlashbackHistoryTSRanges(m, oracle.GoTimeToTS(flashbackTime), m.StartTS, 0))
+
+	historyTS, err := m.GetFlashbackHistoryTSRange()
+	require.NoError(t, err)
+	require.Len(t, historyTS, 1)
+	require.NoError(t, txn.Commit(context.Background()))
+
+	se, err = session.CreateSession4Test(store)
+	require.NoError(t, err)
+	txn, err = se.GetStore().Begin()
+	require.NoError(t, err)
+
+	m = meta.NewMeta(txn)
+	require.NoError(t, err)
+	// Flashback history time range is [m.StartTS - 10min, m.StartTS]
+	require.Error(t, ddl.CheckFlashbackHistoryTSRange(m, oracle.GoTimeToTS(flashbackTime.Add(5*time.Minute))))
+
+	// Check add insert a new time range
+	require.NoError(t, ddl.CheckFlashbackHistoryTSRange(m, oracle.GoTimeToTS(flashbackTime.Add(-5*time.Minute))))
+	require.NoError(t, ddl.UpdateFlashbackHistoryTSRanges(m, oracle.GoTimeToTS(flashbackTime.Add(-5*time.Minute)), m.StartTS, 0))
+
+	historyTS, err = m.GetFlashbackHistoryTSRange()
+	require.NoError(t, err)
+	// history time range still equals to 1, because overlapped
+	require.Len(t, historyTS, 1)
+
+	require.NoError(t, ddl.UpdateFlashbackHistoryTSRanges(m, oracle.GoTimeToTS(flashbackTime.Add(15*time.Minute)), oracle.GoTimeToTS(flashbackTime.Add(20*time.Minute)), 0))
+	historyTS, err = m.GetFlashbackHistoryTSRange()
+	require.NoError(t, err)
+	require.Len(t, historyTS, 2)
+
+	// GCSafePoint updated will clean some history TS ranges
+	require.NoError(t, ddl.UpdateFlashbackHistoryTSRanges(m,
+		oracle.GoTimeToTS(flashbackTime.Add(25*time.Minute)),
+		oracle.GoTimeToTS(flashbackTime.Add(30*time.Minute)),
+		oracle.GoTimeToTS(flashbackTime.Add(22*time.Minute))))
+	historyTS, err = m.GetFlashbackHistoryTSRange()
+	require.NoError(t, err)
+	require.Len(t, historyTS, 1)
+	require.NoError(t, txn.Commit(context.Background()))
 }
