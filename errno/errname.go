@@ -852,6 +852,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrInvalidJSONPathWildcard:                               mysql.Message("In this situation, path expressions may not contain the * and ** tokens.", nil),
 	ErrInvalidJSONContainsPathType:                           mysql.Message("The second argument can only be either 'one' or 'all'.", nil),
 	ErrJSONUsedAsKey:                                         mysql.Message("JSON column '%-.192s' cannot be used in key specification.", nil),
+	ErrJSONDocumentTooDeep:                                   mysql.Message("The JSON document exceeds the maximum depth.", nil),
 	ErrJSONDocumentNULLKey:                                   mysql.Message("JSON documents may not contain NULL member names.", nil),
 	ErrSecureTransportRequired:                               mysql.Message("Connections using insecure transport are prohibited while --require_secure_transport=ON.", nil),
 	ErrBadUser:                                               mysql.Message("User %s does not exist.", nil),

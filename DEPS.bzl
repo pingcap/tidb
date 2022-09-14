@@ -4298,8 +4298,8 @@ def go_deps():
         name = "org_golang_x_sys",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/sys",
-        sum = "h1:UiNENfZ8gDvpiWw7IpOMQ27spWmThO1RwwdQVbJahJM=",
-        version = "v0.0.0-20220825204002-c680a09ffe64",
+        sum = "h1:wM1k/lXfpc5HdkJJyW9GELpd8ERGdnh8sMGL6Gzq3Ho=",
+        version = "v0.0.0-20220909162455-aba9fc2a8ff2",
     )
     go_repository(
         name = "org_golang_x_term",
