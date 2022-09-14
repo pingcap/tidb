@@ -462,6 +462,23 @@ func (tk *TestKit) MustNoGlobalStats(table string) bool {
 	return true
 }
 
+// MustGlobalStats checks if there is no global stats.
+func (tk *TestKit) MustGlobalStats(table string) bool {
+	if !containGlobal(tk.MustQuery("show stats_meta where table_name like '" + table + "'")) {
+		return false
+	}
+	// may be empty
+	/*
+		if !containGlobal(tk.MustQuery("show stats_buckets where table_name like '" + table + "'")) {
+			return false
+		}
+	*/
+	if !containGlobal(tk.MustQuery("show stats_histograms where table_name like '" + table + "'")) {
+		return false
+	}
+	return true
+}
+
 // CheckLastMessage checks last message after executing MustExec
 func (tk *TestKit) CheckLastMessage(msg string) {
 	tk.require.Equal(tk.Session().LastMessage(), msg)

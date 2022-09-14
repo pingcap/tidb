@@ -42,10 +42,7 @@ type globalStatsInfo struct {
 // The meaning of value in map is some additional information needed to build global-level stats.
 type globalStatsMap map[globalStatsKey]globalStatsInfo
 
-func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, needGlobalStats bool, globalStatsMap globalStatsMap) error {
-	if !needGlobalStats {
-		return nil
-	}
+func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, globalStatsMap globalStatsMap) error {
 	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
 	for globalStatsID, info := range globalStatsMap {
 		globalOpts := e.opts

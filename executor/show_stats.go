@@ -108,18 +108,12 @@ func (e *ShowExec) fetchShowStatsMeta() error {
 	for _, db := range dbs {
 		for _, tbl := range db.Tables {
 			pi := tbl.GetPartitionInfo()
-			if pi == nil || e.ctx.GetSessionVars().UseDynamicPartitionPrune() {
-				partitionName := ""
-				if pi != nil {
-					partitionName = "global"
-				}
-				e.appendTableForStatsMeta(db.Name.O, tbl.Name.O, partitionName, h.GetTableStats(tbl))
-				if pi != nil {
-					for _, def := range pi.Definitions {
-						e.appendTableForStatsMeta(db.Name.O, tbl.Name.O, def.Name.O, h.GetPartitionStats(tbl, def.ID))
-					}
-				}
-			} else {
+			partitionName := ""
+			if pi != nil {
+				partitionName = "global"
+			}
+			e.appendTableForStatsMeta(db.Name.O, tbl.Name.O, partitionName, h.GetTableStats(tbl))
+			if pi != nil {
 				for _, def := range pi.Definitions {
 					e.appendTableForStatsMeta(db.Name.O, tbl.Name.O, def.Name.O, h.GetPartitionStats(tbl, def.ID))
 				}
@@ -150,18 +144,12 @@ func (e *ShowExec) fetchShowStatsHistogram() error {
 	for _, db := range dbs {
 		for _, tbl := range db.Tables {
 			pi := tbl.GetPartitionInfo()
-			if pi == nil || e.ctx.GetSessionVars().UseDynamicPartitionPrune() {
-				partitionName := ""
-				if pi != nil {
-					partitionName = "global"
-				}
-				e.appendTableForStatsHistograms(db.Name.O, tbl.Name.O, partitionName, h.GetTableStats(tbl))
-				if pi != nil {
-					for _, def := range pi.Definitions {
-						e.appendTableForStatsHistograms(db.Name.O, tbl.Name.O, def.Name.O, h.GetPartitionStats(tbl, def.ID))
-					}
-				}
-			} else {
+			partitionName := ""
+			if pi != nil {
+				partitionName = "global"
+			}
+			e.appendTableForStatsHistograms(db.Name.O, tbl.Name.O, partitionName, h.GetTableStats(tbl))
+			if pi != nil {
 				for _, def := range pi.Definitions {
 					e.appendTableForStatsHistograms(db.Name.O, tbl.Name.O, def.Name.O, h.GetPartitionStats(tbl, def.ID))
 				}
@@ -224,22 +212,14 @@ func (e *ShowExec) fetchShowStatsBuckets() error {
 	for _, db := range dbs {
 		for _, tbl := range db.Tables {
 			pi := tbl.GetPartitionInfo()
-			if pi == nil || e.ctx.GetSessionVars().UseDynamicPartitionPrune() {
-				partitionName := ""
-				if pi != nil {
-					partitionName = "global"
-				}
-				if err := e.appendTableForStatsBuckets(db.Name.O, tbl.Name.O, partitionName, h.GetTableStats(tbl)); err != nil {
-					return err
-				}
-				if pi != nil {
-					for _, def := range pi.Definitions {
-						if err := e.appendTableForStatsBuckets(db.Name.O, tbl.Name.O, def.Name.O, h.GetPartitionStats(tbl, def.ID)); err != nil {
-							return err
-						}
-					}
-				}
-			} else {
+			partitionName := ""
+			if pi != nil {
+				partitionName = "global"
+			}
+			if err := e.appendTableForStatsBuckets(db.Name.O, tbl.Name.O, partitionName, h.GetTableStats(tbl)); err != nil {
+				return err
+			}
+			if pi != nil {
 				for _, def := range pi.Definitions {
 					if err := e.appendTableForStatsBuckets(db.Name.O, tbl.Name.O, def.Name.O, h.GetPartitionStats(tbl, def.ID)); err != nil {
 						return err
@@ -283,22 +263,14 @@ func (e *ShowExec) fetchShowStatsTopN() error {
 	for _, db := range dbs {
 		for _, tbl := range db.Tables {
 			pi := tbl.GetPartitionInfo()
-			if pi == nil || e.ctx.GetSessionVars().UseDynamicPartitionPrune() {
-				partitionName := ""
-				if pi != nil {
-					partitionName = "global"
-				}
-				if err := e.appendTableForStatsTopN(db.Name.O, tbl.Name.O, partitionName, h.GetTableStats(tbl)); err != nil {
-					return err
-				}
-				if pi != nil {
-					for _, def := range pi.Definitions {
-						if err := e.appendTableForStatsTopN(db.Name.O, tbl.Name.O, def.Name.O, h.GetPartitionStats(tbl, def.ID)); err != nil {
-							return err
-						}
-					}
-				}
-			} else {
+			partitionName := ""
+			if pi != nil {
+				partitionName = "global"
+			}
+			if err := e.appendTableForStatsTopN(db.Name.O, tbl.Name.O, partitionName, h.GetTableStats(tbl)); err != nil {
+				return err
+			}
+			if pi != nil {
 				for _, def := range pi.Definitions {
 					if err := e.appendTableForStatsTopN(db.Name.O, tbl.Name.O, def.Name.O, h.GetPartitionStats(tbl, def.ID)); err != nil {
 						return err
@@ -415,18 +387,12 @@ func (e *ShowExec) fetchShowStatsHealthy() {
 	for _, db := range dbs {
 		for _, tbl := range db.Tables {
 			pi := tbl.GetPartitionInfo()
-			if pi == nil || e.ctx.GetSessionVars().UseDynamicPartitionPrune() {
-				partitionName := ""
-				if pi != nil {
-					partitionName = "global"
-				}
-				e.appendTableForStatsHealthy(db.Name.O, tbl.Name.O, partitionName, h.GetTableStats(tbl))
-				if pi != nil {
-					for _, def := range pi.Definitions {
-						e.appendTableForStatsHealthy(db.Name.O, tbl.Name.O, def.Name.O, h.GetPartitionStats(tbl, def.ID))
-					}
-				}
-			} else {
+			partitionName := ""
+			if pi != nil {
+				partitionName = "global"
+			}
+			e.appendTableForStatsHealthy(db.Name.O, tbl.Name.O, partitionName, h.GetTableStats(tbl))
+			if pi != nil {
 				for _, def := range pi.Definitions {
 					e.appendTableForStatsHealthy(db.Name.O, tbl.Name.O, def.Name.O, h.GetPartitionStats(tbl, def.ID))
 				}
