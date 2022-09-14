@@ -150,11 +150,11 @@ func getColumnConstValString(col *chunk.Column, n int) (string, bool) {
 // bool return value: return true when we get a const null parameter
 func getColumnConstValInt(col *chunk.Column, n int) (int64, bool) {
 	// Precondition: col is generated from a constant expression
-	for i := 0; i < n; i++ {
-		if col.IsNull(i) {
+	if n > 0 {
+		if col.IsNull(0) {
 			return 0, true
 		}
-		return col.GetInt64(i), false
+		return col.GetInt64(0), false
 	}
 	return 0, true
 }
