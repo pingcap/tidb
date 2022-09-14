@@ -962,6 +962,22 @@ func TestTruncateOrDropTableWithForeignKeyReferred2(t *testing.T) {
 	require.Equal(t, "[ddl:1701]Cannot truncate a table referenced in a foreign key constraint (`test`.`t2` CONSTRAINT `fk`)", dropErr.Error())
 }
 
+func TestDropTableWithForeignKeyReferred(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1;")
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t1 (id int key, b int, index(b));")
+	tk.MustExec("create table t2 (id int key, b int, foreign key fk_b(b) references t1(id));")
+	tk.MustExec("create table t3 (id int key, b int, foreign key fk_b(b) references t2(id));")
+	err := tk.ExecToErr("drop table if exists t1,t2;")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:3730]Cannot drop table 't2' referenced by a foreign key constraint 'fk_b' on table 't3'.", err.Error())
+	tk.MustQuery("show tables").Check(testkit.Rows("t1", "t2", "t3"))
+}
+
 func getTableInfo(t *testing.T, dom *domain.Domain, db, tb string) *model.TableInfo {
 	err := dom.Reload()
 	require.NoError(t, err)
