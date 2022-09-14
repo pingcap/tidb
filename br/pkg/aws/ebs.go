@@ -345,7 +345,7 @@ func (e *EC2Session) DeleteVolumes(volumeIDMap map[string]string) {
 				// todo: we can only retry for a few times, might fail still, need to handle error from outside.
 				// we don't return error if it fails to make sure all volume got chance to delete.
 			} else {
-				deletedCnt.Add(0)
+				deletedCnt.Add(1)
 			}
 			return nil
 		})
