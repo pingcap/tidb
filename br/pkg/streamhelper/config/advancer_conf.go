@@ -32,7 +32,7 @@ type Config struct {
 	BackoffTime time.Duration `toml:"backoff-time" json:"backoff-time"`
 	// The gap between calculating checkpoints.
 	TickDuration time.Duration `toml:"tick-interval" json:"tick-interval"`
-	// The backoff time of 	full scan.
+	// The backoff time of full scan.
 	FullScanTick int `toml:"full-scan-tick" json:"full-scan-tick"`
 
 	// Whether enable the optimization -- use a cached heap to advancing the global checkpoint.
