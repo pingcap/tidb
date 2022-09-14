@@ -688,3 +688,46 @@ func TestBinaryJSONOpaque(t *testing.T) {
 		require.Equal(t, string(buf), test.expectedOutput)
 	}
 }
+
+func TestMarshalFloat64(t *testing.T) {
+	var tests = []struct {
+		json           string
+		expectedOutput string
+	}{
+		{
+			"1.0",
+			"1.0",
+		},
+		{
+			"123.456",
+			"123.456",
+		},
+		{
+			"1e20",
+			"100000000000000000000.0",
+		},
+		{
+			"1e21",
+			"1e21",
+		},
+		{
+			"[5, 6.0, 7.0, 6.32, 1e20, 1e21]",
+			"[5, 6.0, 7.0, 6.32, 100000000000000000000.0, 1e21]",
+		},
+		{
+			`{"a": 5, "b": 6.0, "c": 7.0, "d": 6.32, "e": 1e20, "f": 1e21}`,
+			`{"a": 5, "b": 6.0, "c": 7.0, "d": 6.32, "e": 100000000000000000000.0, "f": 1e21}`,
+		},
+	}
+
+	for _, test := range tests {
+		buf := []byte{}
+
+		bj, err := ParseBinaryJSONFromString(test.json)
+		require.NoError(t, err)
+
+		buf, err = bj.marshalTo(buf)
+		require.NoError(t, err)
+		require.Equal(t, string(buf), test.expectedOutput)
+	}
+}

@@ -278,7 +278,9 @@ func (bj BinaryJSON) valEntryGet(valEntryOff int) BinaryJSON {
 }
 
 func (bj BinaryJSON) marshalFloat64To(buf []byte) ([]byte, error) {
-	// NOTE: copied from Go standard library.
+	// NOTE: copied from Go standard library with two modification:
+	// 1. Removed `+` in the exponent part of the scientific representation
+	// 2. Add extra `.0` for integers
 	f := bj.GetFloat64()
 	if math.IsInf(f, 0) || math.IsNaN(f) {
 		return buf, &json.UnsupportedValueError{Str: strconv.FormatFloat(f, 'g', -1, 64)}
@@ -297,13 +299,46 @@ func (bj BinaryJSON) marshalFloat64To(buf []byte) ([]byte, error) {
 			ffmt = 'e'
 		}
 	}
+	bufStart := len(buf)
 	buf = strconv.AppendFloat(buf, f, ffmt, -1, 64)
 	if ffmt == 'e' {
-		// clean up e-09 to e-9
+		// clean up e+n to en
 		n := len(buf)
+		startedShift := false
+		if n-1-bufStart > 0 {
+			for i := bufStart; i < n-1; i += 1 {
+				if buf[i] == '+' {
+					startedShift = true
+				}
+				if startedShift {
+					buf[i] = buf[i+1]
+				}
+			}
+		}
+		buf = buf[:len(buf)-1]
+
+		// clean up e-09 to e-9
+		n = len(buf)
 		if n >= 4 && buf[n-4] == 'e' && buf[n-3] == '-' && buf[n-2] == '0' {
 			buf[n-2] = buf[n-1]
 			buf = buf[:n-1]
+		}
+	}
+
+	if ffmt == 'f' {
+		n := len(buf)
+		hasFractionalPart := false
+		if n-bufStart > 0 {
+			for i := bufStart; i < n; i += 1 {
+				if buf[i] == '.' {
+					hasFractionalPart = true
+				}
+			}
+		}
+
+		// appending `.0` for an integer
+		if !hasFractionalPart {
+			buf = append(buf, '.', '0')
 		}
 	}
 	return buf, nil
