@@ -286,6 +286,10 @@ func (n *PlanReplayerStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("ANALYZE ")
 	}
 	if n.Stmt == nil {
+		if len(n.File) > 0 {
+			ctx.WriteString(n.File)
+			return nil
+		}
 		ctx.WriteKeyWord("SLOW QUERY")
 		if n.Where != nil {
 			ctx.WriteKeyWord(" WHERE ")
