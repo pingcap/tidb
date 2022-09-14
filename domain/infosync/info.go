@@ -92,20 +92,6 @@ var ErrPrometheusAddrIsNotSet = dbterror.ClassDomain.NewStd(errno.ErrPrometheusA
 
 // InfoSyncer stores server info to etcd when the tidb-server starts and delete when tidb-server shuts down.
 type InfoSyncer struct {
-<<<<<<< HEAD
-	etcdCli          *clientv3.Client
-	info             *ServerInfo
-	serverInfoPath   string
-	minStartTS       uint64
-	minStartTSPath   string
-	manager          util2.SessionManager
-	session          *concurrency.Session
-	topologySession  *concurrency.Session
-	prometheusAddr   string
-	modifyTime       time.Time
-	labelRuleManager LabelRuleManager
-	placementManager PlacementManager
-=======
 	etcdCli        *clientv3.Client
 	info           *ServerInfo
 	serverInfoPath string
@@ -115,14 +101,12 @@ type InfoSyncer struct {
 		mu sync.RWMutex
 		util2.SessionManager
 	}
-	session                 *concurrency.Session
-	topologySession         *concurrency.Session
-	prometheusAddr          string
-	modifyTime              time.Time
-	labelRuleManager        LabelRuleManager
-	placementManager        PlacementManager
-	tiflashPlacementManager TiFlashPlacementManager
->>>>>>> 8af7a4d4c... domain: sync the access of InfoSyncer.SessionManager (#33924)
+	session          *concurrency.Session
+	topologySession  *concurrency.Session
+	prometheusAddr   string
+	modifyTime       time.Time
+	labelRuleManager LabelRuleManager
+	placementManager PlacementManager
 }
 
 // ServerInfo is server static information.
@@ -619,12 +603,7 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 	if sm == nil {
 		return
 	}
-<<<<<<< HEAD
-	pl := is.manager.ShowProcessList()
-=======
 	pl := sm.ShowProcessList()
-	innerSessionStartTSList := sm.GetInternalSessionStartTSList()
->>>>>>> 8af7a4d4c... domain: sync the access of InfoSyncer.SessionManager (#33924)
 
 	// Calculate the lower limit of the start timestamp to avoid extremely old transaction delaying GC.
 	currentVer, err := store.CurrentVersion(kv.GlobalTxnScope)
