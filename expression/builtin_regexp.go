@@ -68,6 +68,7 @@ type regexpBaseFuncSig struct {
 	once sync.Once
 }
 
+// check binary collation, not xxx_bin collation!
 func (re *regexpBaseFuncSig) isBinaryCollation() bool {
 	return re.collation == charset.CollationBin && re.charset == charset.CharsetBin
 }
@@ -191,8 +192,7 @@ func (re *regexpBaseFuncSig) tryToMemorize(params []*regexpParam, matchTypeIdx i
 	return re.initMemoizedRegexp(params, matchTypeIdx)
 }
 
-// ---------------------------------- regexp_like ----------------------------------
-
+// https://dev.mysql.com/doc/refman/8.0/en/regexp.html#function_regexp-like
 type regexpLikeFunctionClass struct {
 	baseFunctionClass
 }
@@ -341,8 +341,7 @@ func (re *builtinRegexpLikeFuncSig) vecEvalInt(input *chunk.Chunk, result *chunk
 	return nil
 }
 
-// ---------------------------------- regexp_substr ----------------------------------
-
+// https://dev.mysql.com/doc/refman/8.0/en/regexp.html#function_regexp-substr
 type regexpSubstrFunctionClass struct {
 	baseFunctionClass
 }
@@ -653,8 +652,7 @@ func (re *builtinRegexpSubstrFuncSig) vecEvalString(input *chunk.Chunk, result *
 	return nil
 }
 
-// ---------------------------------- regexp_instr ----------------------------------
-
+// https://dev.mysql.com/doc/refman/8.0/en/regexp.html#function_regexp-instr
 type regexpInStrFunctionClass struct {
 	baseFunctionClass
 }
@@ -1010,8 +1008,7 @@ func (re *builtinRegexpInStrFuncSig) vecEvalInt(input *chunk.Chunk, result *chun
 	return nil
 }
 
-// ---------------------------------- regexp_replace ----------------------------------
-
+// https://dev.mysql.com/doc/refman/8.0/en/regexp.html#function_regexp-replace
 type regexpReplaceFunctionClass struct {
 	baseFunctionClass
 }
