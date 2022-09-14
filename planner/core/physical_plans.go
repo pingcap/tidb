@@ -1018,6 +1018,43 @@ func (p *basePhysicalJoin) ExtractCorrelatedCols() []*expression.CorrelatedColum
 	return corCols
 }
 
+const emptyBasePhysicalJoinSize = int64(unsafe.Sizeof(basePhysicalJoin{}))
+
+// MemoryUsage return the memory usage of basePhysicalJoin
+func (p *basePhysicalJoin) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = emptyPartitionInfoSize + p.physicalSchemaProducer.MemoryUsage() + int64(cap(p.IsNullEQ))*size.SizeOfBool
+
+	for _, cond := range p.LeftConditions {
+		sum += cond.MemoryUsage()
+	}
+	for _, cond := range p.RightConditions {
+		sum += cond.MemoryUsage()
+	}
+	for _, cond := range p.OtherConditions {
+		sum += cond.MemoryUsage()
+	}
+	for _, col := range p.LeftJoinKeys {
+		sum += col.MemoryUsage()
+	}
+	for _, col := range p.RightJoinKeys {
+		sum += col.MemoryUsage()
+	}
+	for _, col := range p.InnerJoinKeys {
+		sum += col.MemoryUsage()
+	}
+	for _, col := range p.OuterJoinKeys {
+		sum += col.MemoryUsage()
+	}
+	for _, datum := range p.DefaultValues {
+		sum += datum.MemUsage()
+	}
+	return
+}
+
 // PhysicalHashJoin represents hash join implementation of LogicalJoin.
 type PhysicalHashJoin struct {
 	basePhysicalJoin
