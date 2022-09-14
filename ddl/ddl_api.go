@@ -4335,8 +4335,10 @@ func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*
 			col.DelFlag(mysql.NotNullFlag)
 		case ast.ColumnOptionAutoIncrement:
 			col.AddFlag(mysql.AutoIncrementFlag)
-		case ast.ColumnOptionPrimaryKey, ast.ColumnOptionUniqKey:
-			return dbterror.ErrUnsupportedModifyColumn.GenWithStack("can't change column constraint - %v", opt.Tp)
+		case ast.ColumnOptionPrimaryKey:
+			return errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStack("can't change column constraint (PRIMARY KEY)"))
+		case ast.ColumnOptionUniqKey:
+			return errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStack("can't change column constraint (UNIQUE KEY)"))
 		case ast.ColumnOptionOnUpdate:
 			// TODO: Support other time functions.
 			if col.GetType() == mysql.TypeTimestamp || col.GetType() == mysql.TypeDatetime {
@@ -5372,10 +5374,22 @@ func (d *ddl) dropTableObject(
 		jobType        model.ActionType
 	)
 
+	var jobArgs []interface{}
 	switch tableObjectType {
 	case tableObject:
 		dropExistErr = infoschema.ErrTableDropExists
 		jobType = model.ActionDropTable
+		objectIdents := make([]ast.Ident, len(objects))
+		fkCheck := ctx.GetSessionVars().ForeignKeyChecks
+		jobArgs = []interface{}{objectIdents, fkCheck}
+		for i, tn := range objects {
+			objectIdents[i] = ast.Ident{Schema: tn.Schema, Name: tn.Name}
+		}
+		for _, tn := range objects {
+			if referredFK := checkTableHasForeignKeyReferred(is, tn.Schema.L, tn.Name.L, objectIdents, fkCheck); referredFK != nil {
+				return errors.Trace(dbterror.ErrForeignKeyCannotDropParent.GenWithStackByArgs(tn.Name, referredFK.ChildFKName, referredFK.ChildTable))
+			}
+		}
 	case viewObject:
 		dropExistErr = infoschema.ErrTableDropExists
 		jobType = model.ActionDropView
@@ -5383,7 +5397,6 @@ func (d *ddl) dropTableObject(
 		dropExistErr = infoschema.ErrSequenceDropExists
 		jobType = model.ActionDropSequence
 	}
-
 	for _, tn := range objects {
 		fullti := ast.Ident{Schema: tn.Schema, Name: tn.Name}
 		schema, ok := is.SchemaByName(tn.Schema)
@@ -5455,6 +5468,7 @@ func (d *ddl) dropTableObject(
 			TableName:   tableInfo.Meta().Name.L,
 			Type:        jobType,
 			BinlogInfo:  &model.HistoryInfo{},
+			Args:        jobArgs,
 		}
 
 		err = d.DoDDLJob(ctx, job)
@@ -5510,6 +5524,12 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	if tb.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 		return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Truncate Table")
 	}
+	fkCheck := ctx.GetSessionVars().ForeignKeyChecks
+	referredFK := checkTableHasForeignKeyReferred(d.GetInfoSchemaWithInterceptor(ctx), ti.Schema.L, ti.Name.L, []ast.Ident{{Name: ti.Name, Schema: ti.Schema}}, fkCheck)
+	if referredFK != nil {
+		msg := fmt.Sprintf("`%s`.`%s` CONSTRAINT `%s`", referredFK.ChildSchema, referredFK.ChildTable, referredFK.ChildFKName)
+		return errors.Trace(dbterror.ErrTruncateIllegalForeignKey.GenWithStackByArgs(msg))
+	}
 
 	genIDs, err := d.genGlobalIDs(1)
 	if err != nil {
@@ -5523,7 +5543,7 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 		TableName:  tb.Meta().Name.L,
 		Type:       model.ActionTruncateTable,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{newTableID},
+		Args:       []interface{}{newTableID, fkCheck},
 	}
 	if ok, _ := ctx.CheckTableLocked(tb.Meta().ID); ok && config.TableLockEnabled() {
 		// AddTableLock here to avoid this ddl job was executed successfully but the session was been kill before return.

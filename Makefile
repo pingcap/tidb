@@ -31,7 +31,7 @@ dev: checklist check explaintest gogenerate br_unit_test test_part_parser_dev ut
 # Install the check tools.
 check-setup:tools/bin/revive
 
-check: check-parallel lint tidy testSuite errdoc bazel_golangcilinter bazel_all_build
+check: check-parallel lint tidy testSuite errdoc bazel_all_build
 
 fmt:
 	@echo "gofmt (simplify)"
@@ -435,7 +435,7 @@ bazel_golangcilinter:
 	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) \
 		--run_under="cd $(CURDIR) && " \
 		@com_github_golangci_golangci_lint//cmd/golangci-lint:golangci-lint \
-	-- run  $$($(PACKAGE_DIRECTORIES)) --config ./.cilinter.yaml
+	-- run  $$($(PACKAGE_DIRECTORIES)) --config ./.golangci.yaml
 
 bazel_brietest: failpoint-enable bazel_ci_prepare
 	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv \

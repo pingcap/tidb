@@ -138,6 +138,16 @@ func (b *builtinJSONExtractSig) Clone() builtinFunc {
 	return newSig
 }
 
+func (c *jsonExtractFunctionClass) verifyArgs(args []Expression) error {
+	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
+		return err
+	}
+	if evalType := args[0].GetType().EvalType(); evalType != types.ETString && evalType != types.ETJson {
+		return ErrInvalidTypeForJSON.GenWithStackByArgs(0, "json_extract")
+	}
+	return nil
+}
+
 func (c *jsonExtractFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
@@ -554,7 +564,11 @@ func (b *builtinJSONObjectSig) evalJSON(row chunk.Row) (res types.BinaryJSON, is
 			jsons[key] = value
 		}
 	}
-	return types.CreateBinaryJSON(jsons), false, nil
+	bj, err := types.CreateBinaryJSONWithCheck(jsons)
+	if err != nil {
+		return res, true, err
+	}
+	return bj, false, nil
 }
 
 type jsonArrayFunctionClass struct {
@@ -603,7 +617,11 @@ func (b *builtinJSONArraySig) evalJSON(row chunk.Row) (res types.BinaryJSON, isN
 		}
 		jsons = append(jsons, j)
 	}
-	return types.CreateBinaryJSON(jsons), false, nil
+	bj, err := types.CreateBinaryJSONWithCheck(jsons)
+	if err != nil {
+		return res, true, err
+	}
+	return bj, false, nil
 }
 
 type jsonContainsPathFunctionClass struct {
@@ -618,6 +636,16 @@ func (b *builtinJSONContainsPathSig) Clone() builtinFunc {
 	newSig := &builtinJSONContainsPathSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
+}
+
+func (c *jsonContainsPathFunctionClass) verifyArgs(args []Expression) error {
+	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
+		return err
+	}
+	if evalType := args[0].GetType().EvalType(); evalType != types.ETString && evalType != types.ETJson {
+		return ErrInvalidTypeForJSON.GenWithStackByArgs(0, "json_contains_path")
+	}
+	return nil
 }
 
 func (c *jsonContainsPathFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
@@ -976,7 +1004,10 @@ func (b *builtinJSONArrayAppendSig) appendJSONArray(res types.BinaryJSON, p stri
 		// res.Extract will return a json object instead of an array if there is an object at path pathExpr.
 		// JSON_ARRAY_APPEND({"a": "b"}, "$", {"b": "c"}) => [{"a": "b"}, {"b", "c"}]
 		// We should wrap them to a single array first.
-		obj = types.CreateBinaryJSON([]interface{}{obj})
+		obj, err = types.CreateBinaryJSONWithCheck([]interface{}{obj})
+		if err != nil {
+			return res, true, err
+		}
 	}
 
 	obj = types.MergeBinaryJSON([]types.BinaryJSON{obj, v})
@@ -1272,6 +1303,16 @@ func (b *builtinJSONSearchSig) Clone() builtinFunc {
 	return newSig
 }
 
+func (c *jsonSearchFunctionClass) verifyArgs(args []Expression) error {
+	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
+		return err
+	}
+	if evalType := args[0].GetType().EvalType(); evalType != types.ETString && evalType != types.ETJson {
+		return ErrInvalidTypeForJSON.GenWithStackByArgs(0, "json_search")
+	}
+	return nil
+}
+
 func (c *jsonSearchFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
@@ -1428,6 +1469,16 @@ func (b *builtinJSONDepthSig) evalInt(row chunk.Row) (res int64, isNull bool, er
 
 type jsonKeysFunctionClass struct {
 	baseFunctionClass
+}
+
+func (c *jsonKeysFunctionClass) verifyArgs(args []Expression) error {
+	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
+		return err
+	}
+	if evalType := args[0].GetType().EvalType(); evalType != types.ETString && evalType != types.ETJson {
+		return ErrInvalidTypeForJSON.GenWithStackByArgs(0, "json_keys")
+	}
+	return nil
 }
 
 func (c *jsonKeysFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {

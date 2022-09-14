@@ -740,7 +740,9 @@ func (ts *PhysicalTableScan) IsPartition() (bool, int64) {
 	return ts.isPartition, ts.physicalTableID
 }
 
-// ResolveCorrelatedColumns resolves the correlated columns in range access
+// ResolveCorrelatedColumns resolves the correlated columns in range access.
+// We already limit range mem usage when building ranges in optimizer phase, so we don't need and shouldn't limit range
+// mem usage when rebuilding ranges during the execution phase.
 func (ts *PhysicalTableScan) ResolveCorrelatedColumns() ([]*ranger.Range, error) {
 	access := ts.AccessCondition
 	if ts.Table.IsCommonHandle {
@@ -761,7 +763,7 @@ func (ts *PhysicalTableScan) ResolveCorrelatedColumns() ([]*ranger.Range, error)
 	} else {
 		var err error
 		pkTP := ts.Table.GetPkColInfo().FieldType
-		ts.Ranges, err = ranger.BuildTableRange(access, ts.SCtx(), &pkTP)
+		ts.Ranges, _, _, err = ranger.BuildTableRange(access, ts.SCtx(), &pkTP, 0)
 		if err != nil {
 			return nil, err
 		}
@@ -875,6 +877,19 @@ func (p *PhysicalProjection) ExtractCorrelatedCols() []*expression.CorrelatedCol
 		corCols = append(corCols, expression.ExtractCorColumns(expr)...)
 	}
 	return corCols
+}
+
+// MemoryUsage return the memory usage of PhysicalProjection
+func (p *PhysicalProjection) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.basePhysicalPlan.MemoryUsage() + size.SizeOfBool*2
+	for _, expr := range p.Exprs {
+		sum += expr.MemoryUsage()
+	}
+	return
 }
 
 // PhysicalTopN is the physical operator of topN.
@@ -1226,6 +1241,16 @@ func (p *PhysicalLimit) Clone() (PhysicalPlan, error) {
 	return cloned, nil
 }
 
+// MemoryUsage return the memory usage of PhysicalLimit
+func (p *PhysicalLimit) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.physicalSchemaProducer.MemoryUsage() + size.SizeOfUint64*2
+	return
+}
+
 // PhysicalUnionAll is the physical operator of UnionAll.
 type PhysicalUnionAll struct {
 	physicalSchemaProducer
@@ -1338,6 +1363,26 @@ func (p *basePhysicalAgg) ExtractCorrelatedCols() []*expression.CorrelatedColumn
 	return corCols
 }
 
+// MemoryUsage return the memory usage of basePhysicalAgg
+func (p *basePhysicalAgg) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.physicalSchemaProducer.MemoryUsage() + size.SizeOfInt
+
+	for _, agg := range p.AggFuncs {
+		sum += agg.MemoryUsage()
+	}
+	for _, expr := range p.GroupByItems {
+		sum += expr.MemoryUsage()
+	}
+	for _, mppCol := range p.MppPartitionCols {
+		sum += mppCol.MemoryUsage()
+	}
+	return
+}
+
 // PhysicalHashAgg is hash operator of aggregate.
 type PhysicalHashAgg struct {
 	basePhysicalAgg
@@ -1352,6 +1397,15 @@ func (p *PhysicalHashAgg) Clone() (PhysicalPlan, error) {
 	}
 	cloned.basePhysicalAgg = *base
 	return cloned, nil
+}
+
+// MemoryUsage return the memory usage of PhysicalHashAgg
+func (p *PhysicalHashAgg) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	return p.basePhysicalAgg.MemoryUsage()
 }
 
 // NewPhysicalHashAgg creates a new PhysicalHashAgg from a LogicalAggregation.
@@ -1377,6 +1431,15 @@ func (p *PhysicalStreamAgg) Clone() (PhysicalPlan, error) {
 	}
 	cloned.basePhysicalAgg = *base
 	return cloned, nil
+}
+
+// MemoryUsage return the memory usage of PhysicalStreamAgg
+func (p *PhysicalStreamAgg) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	return p.basePhysicalAgg.MemoryUsage()
 }
 
 // PhysicalSort is the physical operator of sort, which implements a memory sort.
@@ -1528,6 +1591,19 @@ func (p *PhysicalSelection) ExtractCorrelatedCols() []*expression.CorrelatedColu
 		corCols = append(corCols, expression.ExtractCorColumns(cond)...)
 	}
 	return corCols
+}
+
+// MemoryUsage return the memory usage of PhysicalSelection
+func (p *PhysicalSelection) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.basePhysicalPlan.MemoryUsage() + size.SizeOfBool
+	for _, expr := range p.Conditions {
+		sum += expr.MemoryUsage()
+	}
+	return
 }
 
 // PhysicalMaxOneRow is the physical operator of maxOneRow.
