@@ -215,6 +215,16 @@ func TestConsistencyCheckOverRange(t *testing.T) {
 			probing:  []kv.KeyRange{r("0001", "0002"), r("0002", "0003"), r("0004", "0007")},
 			isSubset: true,
 		},
+		{
+			checking: []kv.KeyRange{r("0100", "0120"), r("0130", "0141")},
+			probing:  []kv.KeyRange{r("0000", "0001")},
+			isSubset: false,
+		},
+		{
+			checking: []kv.KeyRange{r("0100", "0120")},
+			probing:  []kv.KeyRange{r("0090", "0110"), r("0115", "0120")},
+			isSubset: false,
+		},
 	}
 
 	run := func(t *testing.T, c Case) {

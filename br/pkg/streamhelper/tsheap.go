@@ -238,8 +238,30 @@ func (h *Checkpoints) ConsistencyCheck(rangesIn []kv.KeyRange) error {
 		logutil.StringifyKeys(ri))
 }
 
+// A simple algorithm to detect non-overlapped ranges.
+// It maintains the "current" probe, and let the ranges to check "consume" it.
+// For example:
+// toCheck:  |_____________________| |_____________|
+//           ^checking
+// subsetOf: |_________| |_______|    |__________|
+//           ^probing
+// probing is the subrange of checking, consume it and move forward the probe.
+// toCheck:  |_____________________| |_____________|
+//           ^checking
+// subsetOf: |_________| |_______|    |__________|
+//                       ^probing
+// consume it, too.
+// toCheck:  |_____________________| |_____________|
+//           ^checking
+// subsetOf: |_________| |_______|    |__________|
+//                                    ^probing
+// checking is at the left of probing and no overlaps, moving it forward.
+// toCheck:  |_____________________| |_____________|
+//                                   ^checking
+// subsetOf: |_________| |_______|    |__________|
+//                                    ^probing
+// consume it. all subset ranges are consumed, check passed.
 func checkIntervalIsSubset(toCheck []kv.KeyRange, subsetOf []kv.KeyRange) error {
-	// A simple algorithm to detach non-overlapped ranges.
 	i := 0
 	si := 0
 
@@ -257,6 +279,19 @@ func checkIntervalIsSubset(toCheck []kv.KeyRange, subsetOf []kv.KeyRange) error 
 
 		checking := toCheck[i]
 		probing := subsetOf[si]
+		// checking:         |___________|
+		// probing:  |_________|
+		// A rare case: the "first" range is out of bound or not fully covers the probing range.
+		if utils.CompareBytesExt(checking.StartKey, false, probing.StartKey, false) > 0 {
+			holeEnd := checking.StartKey
+			if utils.CompareBytesExt(holeEnd, false, probing.EndKey, true) > 0 {
+				holeEnd = probing.EndKey
+			}
+			return errors.Annotatef(berrors.ErrPiTRMalformedMetadata, "probably a hole in key ranges: %s", logutil.StringifyRange{
+				StartKey: probing.StartKey,
+				EndKey:   holeEnd,
+			})
+		}
 
 		// checking: |_____|
 		// probing:           |_______|
