@@ -23,8 +23,8 @@ import (
 )
 
 type serverMemoryQuota struct {
-	sessionID    uint64
 	sqlStartTime time.Time
+	sessionID    uint64
 }
 
 func (s *serverMemoryQuota) CheckQuotaAndKill(bt uint64, sm util.SessionManager) {
@@ -36,6 +36,7 @@ func (s *serverMemoryQuota) CheckQuotaAndKill(bt uint64, sm util.SessionManager)
 		}
 		s.sessionID = 0
 		s.sqlStartTime = time.Time{}
+		//nolint: all_revive,revive
 		runtime.GC()
 	}
 

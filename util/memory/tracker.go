@@ -81,10 +81,10 @@ type Tracker struct {
 	bytesConsumed int64            // Consumed bytes.
 	bytesReleased int64            // Released bytes.
 	maxConsumed   atomicutil.Int64 // max number of bytes consumed during execution.
-	isGlobal      bool             // isGlobal indicates whether this tracker is global tracker
-	IsSession     bool             // IsSession indicates whether this tracker is bound for session
 	SessionID     uint64           // SessionID indicates the sessionID the tracker is bound.
 	IsKilled      atomic.Bool      // IsKilled indicates whether this session is killed because OOM
+	IsSession     bool             // IsSession indicates whether this tracker is bound for session
+	isGlobal      bool             // isGlobal indicates whether this tracker is global tracker
 }
 
 type actionMu struct {

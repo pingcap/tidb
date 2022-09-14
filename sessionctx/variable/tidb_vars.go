@@ -828,7 +828,6 @@ const (
 	TiDBServerMemoryQuota = "tidb_server_memory_quota"
 	// TiDBServerMemoryLimitSessMinSize indicates the minimum memory usage of the session that can be controlled.
 	TiDBServerMemoryLimitSessMinSize = "tidb_server_memory_limit_sess_min_size"
-
 )
 
 // TiDB intentional limits
