@@ -55,7 +55,7 @@ const (
 	TiDBOptSkewDistinctAgg = "tidb_opt_skew_distinct_agg"
 
 	// TiDBOpt3StageDistinctAgg is used to indicate whether to plan and execute the distinct agg in 3 stages
-	TiDBOpt3StageDistinctAgg = "tidb_opt_3stage_distinct_agg"
+	TiDBOpt3StageDistinctAgg = "tidb_opt_three_stage_distinct_agg"
 
 	// TiDBBCJThresholdSize is used to limit the size of small table for mpp broadcast join.
 	// Its unit is bytes, if the size of small table is larger than it, we will not use bcj.
