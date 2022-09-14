@@ -1270,6 +1270,9 @@ type SessionVars struct {
 	// ranges would exceed the limit, it chooses less accurate ranges such as full range. 0 indicates that there is no
 	// memory limit for ranges.
 	RangeMaxSize int64
+
+	// EnableAdvancedJoinHInt indicates whether the join method hint is compatible with join order hint.
+	EnableAdvancedJoinHInt bool
 }
 
 // GetPreparedStmtByName returns the prepared statement specified by stmtName.

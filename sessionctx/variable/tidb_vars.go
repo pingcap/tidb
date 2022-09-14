@@ -746,6 +746,9 @@ const (
 	// TiDBEnableForeignKey indicates whether to enable foreign key feature.
 	// TODO(crazycs520): remove this after foreign key GA.
 	TiDBEnableForeignKey = "tidb_enable_foreign_key"
+
+	// TiDBOptAdvancedJoinHint indicates whether the join method hint is compatible with join order hint.
+	TiDBOptAdvancedJoinHint = "tidb_opt_advanced_join_hint"
 )
 
 // TiDB vars that have only global scope
@@ -1053,6 +1056,7 @@ const (
 	DefTiDBConstraintCheckInPlacePessimistic        = true
 	DefTiDBForeignKeyChecks                         = false
 	DefTiDBOptRangeMaxSize                          = 64 * int64(size.MB) // 64 MB
+	DefTiDBOptAdvancedJoinHint                      = true
 )
 
 // Process global variables.
