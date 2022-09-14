@@ -112,6 +112,7 @@ func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *Te
 		ctx:              ctx,
 		is:               is,
 		Ti:               ti,
+		snapshotTSCached: isStaleness,
 		snapshotTS:       snapshotTS,
 		isStaleness:      isStaleness,
 		readReplicaScope: replicaReadScope,
