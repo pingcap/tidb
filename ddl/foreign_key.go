@@ -274,6 +274,7 @@ func checkModifyColumnWithForeignKeyConstraint(is infoschema.InfoSchema, dbName 
 	if newCol.GetType() == originalCol.GetType() && newCol.GetFlen() == originalCol.GetFlen() && newCol.GetDecimal() == originalCol.GetDecimal() {
 		return nil
 	}
+	// WARN: is maybe nil.
 	if is == nil {
 		return nil
 	}

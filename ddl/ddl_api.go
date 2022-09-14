@@ -4424,7 +4424,7 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, sctx sessionctx.Contex
 func GetModifiableColumnJob(
 	ctx context.Context,
 	sctx sessionctx.Context,
-	is infoschema.InfoSchema,
+	is infoschema.InfoSchema, // WARN: is maybe nil here.
 	ident ast.Ident,
 	originalColName model.CIStr,
 	schema *model.DBInfo,
@@ -4507,7 +4507,6 @@ func GetModifiableColumnJob(
 	}
 	decodeEnumSetBinaryLiteralToUTF8(&newCol.FieldType, chs)
 
-	// Check the column with foreign key
 	if err = checkModifyColumnWithForeignKeyConstraint(is, schema.Name.L, t.Meta(), col.ColumnInfo, newCol.ColumnInfo); err != nil {
 		return nil, err
 	}
