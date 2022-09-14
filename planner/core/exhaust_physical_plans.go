@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"fmt"
 	"math"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -38,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
+	"github.com/pingcap/tidb/util/size"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
@@ -1276,6 +1278,31 @@ func (cwc *ColWithCmpFuncManager) String() string {
 		}
 	}
 	return buffer.String()
+}
+
+const emptyColWithCmpFuncManagerSize = int64(unsafe.Sizeof(ColWithCmpFuncManager{}))
+
+// MemoryUsage return the memory usage of ColWithCmpFuncManager
+func (cwc *ColWithCmpFuncManager) MemoryUsage() (sum int64) {
+	if cwc == nil {
+		return
+	}
+
+	sum = emptyColWithCmpFuncManagerSize + int64(cap(cwc.compareFuncs))*size.SizeOfFunc
+	if cwc.TargetCol != nil {
+		sum += cwc.TargetCol.MemoryUsage()
+	}
+
+	for _, str := range cwc.OpType {
+		sum += int64(len(str))
+	}
+	for _, expr := range cwc.opArg {
+		sum += expr.MemoryUsage()
+	}
+	for _, cst := range cwc.TmpConstant {
+		sum += cst.MemoryUsage()
+	}
+	return
 }
 
 func (ijHelper *indexJoinBuildHelper) resetContextForIndex(innerKeys []*expression.Column, idxCols []*expression.Column, colLens []int, outerKeys []*expression.Column) {

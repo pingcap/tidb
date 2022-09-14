@@ -1166,6 +1166,24 @@ type PhysicalIndexJoin struct {
 	InnerHashKeys []*expression.Column
 }
 
+// MemoryUsage return the memory usage of PhysicalIndexJoin
+func (p *PhysicalIndexJoin) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.basePhysicalJoin.MemoryUsage() + size.SizeOfInterface*2 +
+		int64(cap(p.KeyOff2IdxOff)+cap(p.IdxColLens))*size.SizeOfInt + p.CompareFilters.MemoryUsage()
+
+	for _, col := range p.OuterHashKeys {
+		sum += col.MemoryUsage()
+	}
+	for _, col := range p.InnerHashKeys {
+		sum += col.MemoryUsage()
+	}
+	return
+}
+
 // PhysicalIndexMergeJoin represents the plan of index look up merge join.
 type PhysicalIndexMergeJoin struct {
 	PhysicalIndexJoin
