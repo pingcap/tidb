@@ -20,7 +20,7 @@ go_library(
 
 go_test(
     name = "addindextest_test",
-    timeout = "moderate",
+    timeout = "long",
     srcs = [
         "add_index_test.go",
         "concurrent_ddl_test.go",

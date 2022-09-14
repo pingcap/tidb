@@ -36,16 +36,16 @@ func TestMultiSchemaChangeCreateNonUniqueIndex(t *testing.T) {
 
 func TestMultiSchemaChangeCreateUniqueIndex(t *testing.T) {
 	var colIDs = [][]int{
-		{1, 6, 7, 8},
-		{2, 9},
-		{3},
+		{1, 6, 8},
+		{2, 19},
+		{11},
 	}
 	ctx := initCompCtx(t)
 	ctx.CompCtx.isMultiSchemaChange = true
 	testOneColFrame(ctx, colIDs, addIndexUnique)
 }
 
-func TestMultiSchemaChangeCreatePrimaryKeyFailpoints(t *testing.T) {
+func TestMultiSchemaChangeCreatePrimaryKey(t *testing.T) {
 	ctx := initCompCtx(t)
 	ctx.CompCtx.isMultiSchemaChange = true
 	testOneIndexFrame(ctx, 0, addIndexPK)
