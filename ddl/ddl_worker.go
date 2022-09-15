@@ -516,7 +516,10 @@ func cleanMDLInfo(pool *sessionPool, jobID int64) {
 	defer pool.put(sctx)
 	sess := newSession(sctx)
 	sess.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
-	_, _ = sess.execute(context.Background(), sql, "delete-mdl-info")
+	_, err := sess.execute(context.Background(), sql, "delete-mdl-info")
+	if err != nil {
+		logutil.BgLogger().Warn("unexpected error when clean mdl info", zap.Error(err))
+	}
 }
 
 // checkMDLInfo checks if metadata lock info exists. It means the schema is locked by some TiDBs if exists.
