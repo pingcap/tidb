@@ -896,6 +896,11 @@ error = '''
 Duplicate partition name %-.192s
 '''
 
+["ddl:1553"]
+error = '''
+Cannot drop index '%-.192s': needed in a foreign key constraint
+'''
+
 ["ddl:1562"]
 error = '''
 Cannot create temporary table with partitions
@@ -1004,6 +1009,16 @@ Duplicate foreign key constraint name '%s'
 ["ddl:1828"]
 error = '''
 Cannot drop column '%-.192s': needed in a foreign key constraint '%-.192s'
+'''
+
+["ddl:1832"]
+error = '''
+Cannot change column '%-.192s': used in a foreign key constraint '%-.192s'
+'''
+
+["ddl:1833"]
+error = '''
+Cannot change column '%-.192s': used in a foreign key constraint '%-.192s' of table '%-.192s'
 '''
 
 ["ddl:1846"]
