@@ -555,7 +555,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrEventCompile:                             mysql.Message("Error during compilation of event's body", nil),
 	ErrEventSameName:                            mysql.Message("Same old and new event name", nil),
 	ErrEventDataTooLong:                         mysql.Message("Data for column '%s' too long", nil),
-	ErrDropIndexFk:                              mysql.Message("Cannot drop index '%-.192s': needed in a foreign key constraint", nil),
+	ErrDropIndexNeededInForeignKey:              mysql.Message("Cannot drop index '%-.192s': needed in a foreign key constraint", nil),
 	ErrWarnDeprecatedSyntaxWithVer:              mysql.Message("The syntax '%s' is deprecated and will be removed in MySQL %s. Please use %s instead", nil),
 	ErrCantWriteLockLogTable:                    mysql.Message("You can't write-lock a log table. Only read access is possible", nil),
 	ErrCantLockLogTable:                         mysql.Message("You can't use locks with log tables.", nil),
