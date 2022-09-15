@@ -155,6 +155,7 @@ func (e *PlanReplayerExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	req.AppendString(0, res)
 	e.endFlag = true
+	e.ctx.GetSessionVars().LastPlanReplayerToken = res
 	return nil
 }
 
