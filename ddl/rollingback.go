@@ -207,8 +207,8 @@ func rollingbackDropColumn(t *meta.Meta, job *model.Job) (ver int64, err error) 
 	return ver, nil
 }
 
-func rollingbackDropIndex(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	_, indexInfo, _, err := checkDropIndex(t, job)
+func rollingbackDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
+	_, indexInfo, _, err := checkDropIndex(d, t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -368,7 +368,7 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 	case model.ActionDropColumn:
 		ver, err = rollingbackDropColumn(t, job)
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
-		ver, err = rollingbackDropIndex(t, job)
+		ver, err = rollingbackDropIndex(d, t, job)
 	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
 		err = rollingbackDropTableOrView(t, job)
 	case model.ActionDropTablePartition:
