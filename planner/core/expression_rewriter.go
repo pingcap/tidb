@@ -528,7 +528,7 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, v *ast.
 		er.err = errors.Errorf("Unknown compare type %T", v.R)
 		return v, true
 	}
-	np, hintFlags, err := er.buildSubquery(ctx, subq, rewritingCompareSubquery)
+	np, hintFlags, err := er.buildSubquery(ctx, subq, handlingCompareSubquery)
 	if err != nil {
 		er.err = err
 		return v, true
@@ -829,7 +829,7 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, v *ast.Ex
 		er.err = errors.Errorf("Unknown exists type %T", v.Sel)
 		return v, true
 	}
-	np, hintFlags, err := er.buildSubquery(ctx, subq, rewritingExistsSubquery)
+	np, hintFlags, err := er.buildSubquery(ctx, subq, handlingExistsSubquery)
 	if err != nil {
 		er.err = err
 		return v, true
@@ -918,7 +918,7 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 		er.err = errors.Errorf("Unknown compare type %T", v.Sel)
 		return v, true
 	}
-	np, hintFlags, err := er.buildSubquery(ctx, subq, rewritingInSubquery)
+	np, hintFlags, err := er.buildSubquery(ctx, subq, handlingInSubquery)
 	if err != nil {
 		er.err = err
 		return v, true
@@ -1035,7 +1035,7 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.SubqueryExpr) (ast.Node, bool) {
 	ci := er.b.prepareCTECheckForSubQuery()
 	defer resetCTECheckForSubQuery(ci)
-	np, hintFlags, err := er.buildSubquery(ctx, v, rewritingScalarSubquery)
+	np, hintFlags, err := er.buildSubquery(ctx, v, handlingScalarSubquery)
 	if err != nil {
 		er.err = err
 		return v, true

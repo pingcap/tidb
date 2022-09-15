@@ -450,14 +450,11 @@ type cteInfo struct {
 type subQueryCtx = uint64
 
 const (
-	// notHandlingSubquery means that we are not in building plan for a subquery.
-	// Note: "subquery" here only contains subqueries that are handled by the expression rewriter, i.e., [NOT] IN,
-	// [NOT] EXISTS, compare + ANY/ALL and scalar subquery. Derived table doesn't belong to this.
 	notHandlingSubquery subQueryCtx = iota
-	rewritingExistsSubquery
-	rewritingCompareSubquery
-	rewritingInSubquery
-	rewritingScalarSubquery
+	handlingExistsSubquery
+	handlingCompareSubquery
+	handlingInSubquery
+	handlingScalarSubquery
 )
 
 // Hint flags listed here are used by PlanBuilder.subQueryHintFlags.
@@ -544,6 +541,8 @@ type PlanBuilder struct {
 	isCTE bool
 
 	// subQueryCtx and subQueryHintFlags are for handling subquery related hints.
+	// Note: "subquery" here only contains subqueries that are handled by the expression rewriter, i.e., [NOT] IN,
+	// [NOT] EXISTS, compare + ANY/ALL and scalar subquery. Derived table doesn't belong to this.
 	// We need these fields to passing information because:
 	//   1. We know what kind of subquery is this only when we're in the outer query block.
 	//   2. We know if there are such hints only when we're in the subquery block.

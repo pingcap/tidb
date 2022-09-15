@@ -3684,7 +3684,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 			}
 			leadingHintCnt++
 		case HintSemiJoinRewrite:
-			if b.subQueryCtx != rewritingExistsSubquery {
+			if b.subQueryCtx != handlingExistsSubquery {
 				b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("The SEMI_JOIN_REWRITE hint is not used correctly, maybe it's not in a subquery or the subquery is not EXISTS clause."))
 				continue
 			}
