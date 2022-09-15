@@ -408,4 +408,8 @@ var (
 	ErrForeignKeyCannotDropParent = ClassDDL.NewStd(mysql.ErrForeignKeyCannotDropParent)
 	// ErrTruncateIllegalForeignKey returns when truncate table which has foreign key referred.
 	ErrTruncateIllegalForeignKey = ClassDDL.NewStd(mysql.ErrTruncateIllegalForeignKey)
+	// ErrForeignKeyColumnCannotChange returns when change column which used by foreign key.
+	ErrForeignKeyColumnCannotChange = ClassDDL.NewStd(mysql.ErrForeignKeyColumnCannotChange)
+	// ErrForeignKeyColumnCannotChangeChild returns when change child table's column which used by foreign key.
+	ErrForeignKeyColumnCannotChangeChild = ClassDDL.NewStd(mysql.ErrForeignKeyColumnCannotChangeChild)
 )
