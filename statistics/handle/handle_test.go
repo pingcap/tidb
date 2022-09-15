@@ -828,12 +828,13 @@ func TestBuildGlobalLevelStats(t *testing.T) {
 	testKit.MustExec("create index idx_t_b on t(b);")
 	testKit.MustExec("analyze table t, t1;")
 	result := testKit.MustQuery("show stats_meta where table_name = 't';").Sort()
-	require.Len(t, result.Rows(), 3)
-	require.Equal(t, "1", result.Rows()[0][5])
-	require.Equal(t, "2", result.Rows()[1][5])
+	require.Len(t, result.Rows(), 4)
+	require.Equal(t, "5", result.Rows()[0][5])
+	require.Equal(t, "1", result.Rows()[1][5])
 	require.Equal(t, "2", result.Rows()[2][5])
+	require.Equal(t, "2", result.Rows()[3][5])
 	result = testKit.MustQuery("show stats_histograms where table_name = 't';").Sort()
-	require.Len(t, result.Rows(), 15)
+	require.Len(t, result.Rows(), 20)
 
 	result = testKit.MustQuery("show stats_meta where table_name = 't1';").Sort()
 	require.Len(t, result.Rows(), 1)
@@ -843,6 +844,8 @@ func TestBuildGlobalLevelStats(t *testing.T) {
 
 	// Test the 'dynamic' mode
 	testKit.MustExec("set @@tidb_partition_prune_mode = 'dynamic';")
+	testKit.MustExec("drop stats t1")
+	testKit.MustExec("drop stats t")
 	testKit.MustExec("analyze table t, t1;")
 	result = testKit.MustQuery("show stats_meta where table_name = 't'").Sort()
 	require.Len(t, result.Rows(), 4)
@@ -1665,7 +1668,7 @@ partition by range (a) (
 	tk.MustExec("set @@tidb_partition_prune_mode='static'")
 	tk.MustExec("set @@session.tidb_analyze_version=1")
 	tk.MustExec("analyze table t") // both p0 and p1 are in ver1
-	require.Len(t, tk.MustQuery("show stats_meta").Rows(), 2)
+	require.Len(t, tk.MustQuery("show stats_meta").Rows(), 3)
 
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	tk.MustExec("set @@session.tidb_analyze_version=1")
