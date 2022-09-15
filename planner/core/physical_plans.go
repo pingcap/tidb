@@ -1269,6 +1269,15 @@ func (p *PhysicalUnionAll) Clone() (PhysicalPlan, error) {
 	return cloned, nil
 }
 
+// MemoryUsage return the memory usage of PhysicalUnionAll
+func (p *PhysicalUnionAll) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	return p.physicalSchemaProducer.MemoryUsage() + size.SizeOfBool
+}
+
 // AggMppRunMode defines the running mode of aggregation in MPP
 type AggMppRunMode int
 
@@ -1884,9 +1893,32 @@ func (p *PhysicalCTE) ExplainID() fmt.Stringer {
 	})
 }
 
+// MemoryUsage return the memory usage of PhysicalCTE
+func (p *PhysicalCTE) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.physicalSchemaProducer.MemoryUsage() + p.cteAsName.MemoryUsage()
+	if p.CTE != nil {
+		sum += p.CTE.MemoryUsage()
+	}
+	return
+	//todo: memtrace: p.SeedPlan p.RecurPlan
+}
+
 // ExplainInfo overrides the ExplainInfo
 func (p *PhysicalCTETable) ExplainInfo() string {
 	return "Scan on CTE_" + strconv.Itoa(p.IDForStorage)
+}
+
+// MemoryUsage return the memory usage of PhysicalCTETable
+func (p *PhysicalCTETable) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	return p.physicalSchemaProducer.MemoryUsage() + size.SizeOfInt
 }
 
 // CTEDefinition is CTE definition for explain.
@@ -1911,6 +1943,20 @@ func (p *CTEDefinition) ExplainID() fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
 		return "CTE_" + strconv.Itoa(p.CTE.IDForStorage)
 	})
+}
+
+// MemoryUsage return the memory usage of CTEDefinition
+func (p *CTEDefinition) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.physicalSchemaProducer.MemoryUsage() + p.cteAsName.MemoryUsage()
+	if p.CTE != nil {
+		sum += p.CTE.MemoryUsage()
+	}
+	return
+	//todo: memtrace: p.SeedPlan p.RecurPlan
 }
 
 func appendChildCandidate(origin PhysicalPlan, pp PhysicalPlan, op *physicalOptimizeOp) {

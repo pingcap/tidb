@@ -15,6 +15,7 @@
 package expression
 
 import (
+	"github.com/pingcap/tidb/util/size"
 	"strings"
 )
 
@@ -205,6 +206,30 @@ func (s *Schema) ExtractColGroups(colGroups [][]*Column) ([][]int, []int) {
 		}
 	}
 	return extracted, offsets
+}
+
+// MemoryUsage return the memory usage of Schema
+func (s *Schema) MemoryUsage() (sum int64) {
+	if s == nil {
+		return
+	}
+
+	sum = size.SizeOfSlice * 3
+
+	for _, col := range s.Columns {
+		sum += col.MemoryUsage()
+	}
+	for _, cols := range s.Keys {
+		for _, col := range cols {
+			sum += col.MemoryUsage()
+		}
+	}
+	for _, cols := range s.UniqueKeys {
+		for _, col := range cols {
+			sum += col.MemoryUsage()
+		}
+	}
+	return
 }
 
 // MergeSchema will merge two schema into one schema. We shouldn't need to consider unique keys.

@@ -16,6 +16,7 @@ package core
 
 import (
 	"math"
+	"unsafe"
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -1908,6 +1909,25 @@ type CTEClass struct {
 	// pushDownPredicates may be push-downed by different references.
 	pushDownPredicates []expression.Expression
 	ColumnMap          map[string]*expression.Column
+}
+
+const emptyCTEClassSize = int64(unsafe.Sizeof(CTEClass{}))
+
+// MemoryUsage return the memory usage of CTEClass
+func (cc *CTEClass) MemoryUsage() (sum int64) {
+	if cc == nil {
+		return
+	}
+
+	sum = emptyCTEClassSize
+	// todo: memtrace: p.seedPartPhysicalPlan p.recursivePartPhysicalPlan
+	for _, expr := range cc.pushDownPredicates {
+		sum += expr.MemoryUsage()
+	}
+	for key, val := range cc.ColumnMap {
+		sum += int64(len(key)) + val.MemoryUsage()
+	}
+	return
 }
 
 // LogicalCTE is for CTE.
