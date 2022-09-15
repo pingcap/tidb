@@ -352,6 +352,69 @@ func checkTableHasForeignKeyReferredInOwner(d *ddlCtx, t *meta.Meta, schema, tbl
 	return referredFK, nil
 }
 
+func checkIndexNeededInForeignKey(is infoschema.InfoSchema, dbName string, tbInfo *model.TableInfo, idxInfo *model.IndexInfo) error {
+	referredFKs := is.GetTableReferredForeignKeys(dbName, tbInfo.Name.L)
+	if len(tbInfo.ForeignKeys) == 0 && len(referredFKs) == 0 {
+		return nil
+	}
+	remainIdxs := make([]*model.IndexInfo, 0, len(tbInfo.Indices))
+	for _, idx := range tbInfo.Indices {
+		if idx.ID == idxInfo.ID {
+			continue
+		}
+		remainIdxs = append(remainIdxs, idx)
+	}
+	checkFn := func(cols []model.CIStr) error {
+		if !model.IsIndexPrefixCovered(tbInfo, idxInfo, cols...) {
+			return nil
+		}
+		if tbInfo.PKIsHandle && len(cols) == 1 {
+			refColInfo := model.FindColumnInfo(tbInfo.Columns, cols[0].L)
+			if refColInfo != nil && mysql.HasPriKeyFlag(refColInfo.GetFlag()) {
+				return nil
+			}
+		}
+		for _, index := range remainIdxs {
+			if model.IsIndexPrefixCovered(tbInfo, index, cols...) {
+				return nil
+			}
+		}
+		return dbterror.ErrDropIndexNeededInForeignKey.GenWithStackByArgs(idxInfo.Name)
+	}
+	for _, fk := range tbInfo.ForeignKeys {
+		if fk.Version < model.FKVersion1 {
+			continue
+		}
+		err := checkFn(fk.Cols)
+		if err != nil {
+			return err
+		}
+	}
+	for _, referredFK := range referredFKs {
+		err := checkFn(referredFK.Cols)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func checkIndexNeededInForeignKeyInOwner(d *ddlCtx, t *meta.Meta, job *model.Job, dbName string, tbInfo *model.TableInfo, idxInfo *model.IndexInfo) error {
+	if !variable.EnableForeignKey.Load() {
+		return nil
+	}
+	is, err := getAndCheckLatestInfoSchema(d, t)
+	if err != nil {
+		return err
+	}
+	err = checkIndexNeededInForeignKey(is, dbName, tbInfo, idxInfo)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return err
+	}
+	return nil
+}
+
 func checkDropColumnWithForeignKeyConstraint(is infoschema.InfoSchema, dbName string, tbInfo *model.TableInfo, colName string) error {
 	for _, fkInfo := range tbInfo.ForeignKeys {
 		for _, col := range fkInfo.Cols {

@@ -978,22 +978,131 @@ func TestDropTableWithForeignKeyReferred(t *testing.T) {
 	tk.MustQuery("show tables").Check(testkit.Rows("t1", "t2", "t3"))
 }
 
-func TestDropColumnWithForeignKey(t *testing.T) {
+func TestDropIndexNeededInForeignKey(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+
+	cases := []struct {
+		prepares []string
+		drops    []string
+		err      string
+	}{
+		{
+			prepares: []string{
+				"create table t1 (id int key, b int, index idx (b))",
+				"create table t2 (a int, b int, index idx (b), foreign key fk_b(b) references t1(b));",
+			},
+			drops: []string{
+				"alter table t1 drop index idx",
+				"alter table t2 drop index idx",
+			},
+			err: "[ddl:1553]Cannot drop index 'idx': needed in a foreign key constraint",
+		},
+		{
+			prepares: []string{
+				"create table t1 (id int, b int, index idx (id, b))",
+				"create table t2 (a int, b int, index idx (b, a), foreign key fk_b(b) references t1(id));",
+			},
+			drops: []string{
+				"alter table t1 drop index idx",
+				"alter table t2 drop index idx",
+			},
+			err: "[ddl:1553]Cannot drop index 'idx': needed in a foreign key constraint",
+		},
+	}
+
+	for _, ca := range cases {
+		tk.MustExec("drop table if exists t2")
+		tk.MustExec("drop table if exists t1")
+		for _, sql := range ca.prepares {
+			tk.MustExec(sql)
+		}
+		for _, drop := range ca.drops {
+			// even disable foreign key check, still can't drop the index used by foreign key.
+			tk.MustExec("set @@foreign_key_checks=0;")
+			err := tk.ExecToErr(drop)
+			require.Error(t, err)
+			require.Equal(t, ca.err, err.Error())
+			tk.MustExec("set @@foreign_key_checks=1;")
+			err = tk.ExecToErr(drop)
+			require.Error(t, err)
+			require.Equal(t, ca.err, err.Error())
+		}
+	}
+	passCases := [][]string{
+		{
+			"create table t1 (id int key, b int, index idxb (b))",
+			"create table t2 (a int, b int key, index idxa (a),index idxb (b), foreign key fk_b(b) references t1(id));",
+			"alter table t1 drop index idxb",
+			"alter table t2 drop index idxa",
+			"alter table t2 drop index idxb",
+		},
+		{
+			"create table t1 (id int key, b int, index idxb (b), unique index idx(b, id))",
+			"create table t2 (a int, b int key, index idx (b, a),index idxb (b), index idxab(a, b), foreign key fk_b(b) references t1(b));",
+			"alter table t1 drop index idxb",
+			"alter table t1 add index idxb (b)",
+			"alter table t1 drop index idx",
+			"alter table t2 drop index idx",
+			"alter table t2 add index idx (b, a)",
+			"alter table t2 drop index idxb",
+			"alter table t2 drop index idxab",
+		},
+	}
+	tk.MustExec("set @@foreign_key_checks=1;")
+	for _, ca := range passCases {
+		tk.MustExec("drop table if exists t2")
+		tk.MustExec("drop table if exists t1")
+		for _, sql := range ca {
+			tk.MustExec(sql)
+		}
+	}
+}
+
+func TestDropIndexNeededInForeignKey2(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
+	d := dom.DDL()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk.MustExec("set @@foreign_key_checks=1;")
 	tk.MustExec("use test")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk2.MustExec("set @@foreign_key_checks=1;")
+	tk2.MustExec("use test")
+	tk3 := testkit.NewTestKit(t, store)
+	tk3.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk3.MustExec("set @@foreign_key_checks=1;")
+	tk3.MustExec("use test")
+	tk.MustExec("create table t1 (id int key, b int)")
+	tk.MustExec("create table t2 (a int, b int, index idx1 (b),index idx2 (b), foreign key (b) references t1(id));")
 
-	tk.MustExec("create table t1 (id int key, a int, b int, index(b), CONSTRAINT fk foreign key (a) references t1(b))")
-	tk.MustGetErrMsg("alter table t1 drop column a;", "[ddl:1828]Cannot drop column 'a': needed in a foreign key constraint 'fk'")
-	tk.MustGetErrMsg("alter table t1 drop column b;", "[ddl:1829]Cannot drop column 'b': needed in a foreign key constraint 'fk' of table 't1'")
+	var wg sync.WaitGroup
+	var dropErr error
+	tc := &ddl.TestDDLCallback{}
+	tc.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.SchemaState != model.StatePublic || job.Type != model.ActionDropIndex {
+			return
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			dropErr = tk2.ExecToErr("alter table t2 drop index idx2")
+		}()
+		// make sure tk2's ddl job already put into ddl job queue.
+		time.Sleep(time.Millisecond * 100)
+	}
+	originalHook := d.GetHook()
+	defer d.SetHook(originalHook)
+	d.SetHook(tc)
 
-	tk.MustExec("drop table t1")
-	tk.MustExec("create table t1 (id int key, b int, index(b));")
-	tk.MustExec("create table t2 (a int, b int, constraint fk foreign key (a) references t1(b));")
-	tk.MustGetErrMsg("alter table t1 drop column b;", "[ddl:1829]Cannot drop column 'b': needed in a foreign key constraint 'fk' of table 't2'")
-	tk.MustGetErrMsg("alter table t2 drop column a;", "[ddl:1828]Cannot drop column 'a': needed in a foreign key constraint 'fk'")
+	tk.MustExec("alter table t2 drop index idx1")
+	wg.Wait()
+	require.Error(t, dropErr)
+	require.Equal(t, "[ddl:1553]Cannot drop index 'idx2': needed in a foreign key constraint", dropErr.Error())
 }
 
 func getTableInfo(t *testing.T, dom *domain.Domain, db, tb string) *model.TableInfo {
@@ -1011,4 +1120,22 @@ func getTableInfoReferredForeignKeys(t *testing.T, dom *domain.Domain, db, tb st
 	err := dom.Reload()
 	require.NoError(t, err)
 	return dom.InfoSchema().GetTableReferredForeignKeys(db, tb)
+}
+
+func TestDropColumnWithForeignKey(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1;")
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t1 (id int key, a int, b int, index(b), CONSTRAINT fk foreign key (a) references t1(b))")
+	tk.MustGetErrMsg("alter table t1 drop column a;", "[ddl:1828]Cannot drop column 'a': needed in a foreign key constraint 'fk'")
+	tk.MustGetErrMsg("alter table t1 drop column b;", "[ddl:1829]Cannot drop column 'b': needed in a foreign key constraint 'fk' of table 't1'")
+
+	tk.MustExec("drop table t1")
+	tk.MustExec("create table t1 (id int key, b int, index(b));")
+	tk.MustExec("create table t2 (a int, b int, constraint fk foreign key (a) references t1(b));")
+	tk.MustGetErrMsg("alter table t1 drop column b;", "[ddl:1829]Cannot drop column 'b': needed in a foreign key constraint 'fk' of table 't2'")
+	tk.MustGetErrMsg("alter table t2 drop column a;", "[ddl:1828]Cannot drop column 'a': needed in a foreign key constraint 'fk'")
 }
