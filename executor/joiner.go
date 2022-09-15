@@ -437,6 +437,7 @@ func (j *semiJoiner) Clone() joiner {
 	return &semiJoiner{baseJoiner: j.baseJoiner.Clone()}
 }
 
+// NAAJType is the runtime status for null-aware left outer semi join.
 type NAAJType byte
 
 const (
