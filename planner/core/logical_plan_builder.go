@@ -4413,6 +4413,10 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		if usePartitionProcessor {
 			b.optFlag = b.optFlag | flagPartitionProcessor
 			b.ctx.GetSessionVars().StmtCtx.UseDynamicPruneMode = false
+			if isDynamicEnabled {
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(
+					fmt.Errorf("disable dynamic pruning due to %s has no global stats", tableInfo.Name.String()))
+			}
 		}
 
 		pt := tbl.(table.PartitionedTable)

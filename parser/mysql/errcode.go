@@ -570,7 +570,7 @@ const (
 	ErrEventCompile                                          = 1550
 	ErrEventSameName                                         = 1551
 	ErrEventDataTooLong                                      = 1552
-	ErrDropIndexFk                                           = 1553
+	ErrDropIndexNeededInForeignKey                           = 1553
 	ErrWarnDeprecatedSyntaxWithVer                           = 1554
 	ErrCantWriteLockLogTable                                 = 1555
 	ErrCantLockLogTable                                      = 1556
@@ -718,7 +718,7 @@ const (
 	ErrAccessDeniedNoPassword                                = 1698
 	ErrSetPasswordAuthPlugin                                 = 1699
 	ErrGrantPluginUserExists                                 = 1700
-	ErrTruncateIllegalFk                                     = 1701
+	ErrTruncateIllegalForeignKey                             = 1701
 	ErrPluginIsPermanent                                     = 1702
 	ErrSlaveHeartbeatValueOutOfRangeMin                      = 1703
 	ErrSlaveHeartbeatValueOutOfRangeMax                      = 1704
