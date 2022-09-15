@@ -237,6 +237,9 @@ func (store *MVCCStore) PessimisticLock(reqCtx *requestCtx, req *kvrpcpb.Pessimi
 	regCtx.AcquireLatches(hashVals)
 	defer regCtx.ReleaseLatches(hashVals)
 
+	if req.LockOnlyIfExists && !req.ReturnValues {
+		return nil, errors.New("LockOnlyIfExists is set for LockKeys but ReturnValues is not set")
+	}
 	batch := store.dbWriter.NewWriteBatch(startTS, 0, reqCtx.rpcCtx)
 	var dup bool
 	for _, m := range mutations {
@@ -278,6 +281,9 @@ func (store *MVCCStore) PessimisticLock(reqCtx *requestCtx, req *kvrpcpb.Pessimi
 			lock, err1 := store.buildPessimisticLock(m, items[i], req)
 			if err1 != nil {
 				return nil, err1
+			}
+			if lock == nil {
+				continue
 			}
 			batch.PessimisticLock(m.Key, lock)
 		}
@@ -587,6 +593,12 @@ func (store *MVCCStore) buildPessimisticLock(m *kvrpcpb.Mutation, item *badger.I
 		if m.Assertion == kvrpcpb.Assertion_NotExist && !item.IsEmpty() {
 			return nil, &kverrors.ErrKeyAlreadyExists{Key: m.Key}
 		}
+	}
+	if ok, err := doesNeedLock(item, req); !ok {
+		if err != nil {
+			return nil, err
+		}
+		return nil, nil
 	}
 	lock := &mvcc.Lock{
 		LockHdr: mvcc.LockHdr{
@@ -1821,4 +1833,21 @@ func (f *GCCompactionFilter) Guards() []badger.Guard {
 	return []badger.Guard{
 		baseGuard, raftGuard, metaGuard, metaExtraGuard, tableIndexGuard, tableExtraGuard,
 	}
+}
+
+func doesNeedLock(item *badger.Item,
+	req *kvrpcpb.PessimisticLockRequest) (bool, error) {
+	if req.LockOnlyIfExists {
+		if item == nil {
+			return false, nil
+		}
+		val, err := item.Value()
+		if err != nil {
+			return false, err
+		}
+		if len(val) == 0 {
+			return false, nil
+		}
+	}
+	return true, nil
 }
