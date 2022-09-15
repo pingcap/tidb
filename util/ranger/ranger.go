@@ -56,6 +56,8 @@ func validInterval(sctx sessionctx.Context, low, high *point) (bool, error) {
 	return bytes.Compare(l, r) < 0, nil
 }
 
+// convertPoints does some preprocessing on rangePoints to make them ready to build ranges. Preprocessing includes converting
+// points to the specified type, validating intervals and skipping impossible intervals.
 func convertPoints(sctx sessionctx.Context, rangePoints []*point, tp *types.FieldType, skipNull bool, tableRange bool) ([]*point, error) {
 	i := 0
 	numPoints := len(rangePoints)
