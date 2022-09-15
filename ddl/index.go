@@ -690,7 +690,7 @@ func pickBackfillType(w *worker, job *model.Job) model.ReorgType {
 			return model.ReorgTypeLitMerge
 		}
 		// The lightning environment is unavailable, but we can still use the txn-merge backfill.
-		logutil.BgLogger().Info("fallback to txn-merge backfill process",
+		logutil.BgLogger().Info("[ddl] fallback to txn-merge backfill process",
 			zap.Bool("lightning env initialized", ingest.LitInitialized),
 			zap.Bool("PiTR enabled", piTREnabled))
 		job.ReorgMeta.ReorgTp = model.ReorgTypeTxnMerge
