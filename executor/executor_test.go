@@ -6048,7 +6048,12 @@ func TestGlobalMemoryControl(t *testing.T) {
 	require.False(t, tracker2.IsKilled.Load())
 	// Kill Finished
 	tracker3.Consume(-(300 << 20))
-	tk3.Session().ShowProcess().Time = time.Now()
+	// Simulated SQL is Canceled and the time is updated
+	sm.PSMu.Lock()
+	ps := *sm.PS[2]
+	ps.Time = time.Now()
+	sm.PS[2] = &ps
+	sm.PSMu.Unlock()
 	time.Sleep(500 * time.Millisecond)
 	// Kill the Next SQL
 	util.WithRecovery( // Next Consume() will panic and cancel the SQL

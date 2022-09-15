@@ -26,6 +26,7 @@ import (
 // MockSessionManager is a mocked session manager which is used for test.
 type MockSessionManager struct {
 	PS      []*util.ProcessInfo
+	PSMu    sync.RWMutex
 	SerID   uint64
 	TxnInfo []*txninfo.TxnInfo
 	conn    map[uint64]session.Session
@@ -39,6 +40,8 @@ func (msm *MockSessionManager) ShowTxnList() []*txninfo.TxnInfo {
 
 // ShowProcessList implements the SessionManager.ShowProcessList interface.
 func (msm *MockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo {
+	msm.PSMu.RLock()
+	defer msm.PSMu.RUnlock()
 	ret := make(map[uint64]*util.ProcessInfo)
 	for _, item := range msm.PS {
 		ret[item.ID] = item
@@ -48,6 +51,8 @@ func (msm *MockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo {
 
 // GetProcessInfo implements the SessionManager.GetProcessInfo interface.
 func (msm *MockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
+	msm.PSMu.RLock()
+	defer msm.PSMu.RUnlock()
 	for _, item := range msm.PS {
 		if item.ID == id {
 			return item, true
