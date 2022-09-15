@@ -162,7 +162,11 @@ func TestClampKeyRanges(t *testing.T) {
 	run := func(t *testing.T, c Case) {
 		require.ElementsMatch(
 			t,
-			ClampRanges(c.ranges, c.clampIn),
+			IntersectAll(CloneSlice(c.ranges), CloneSlice(c.clampIn)),
+			c.result)
+		require.ElementsMatch(
+			t,
+			IntersectAll(c.clampIn, c.ranges),
 			c.result)
 	}
 

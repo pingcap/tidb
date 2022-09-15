@@ -143,7 +143,21 @@ func clampInOneRange(rng kv.KeyRange, clampIn kv.KeyRange) (kv.KeyRange, failedT
 	return rng, successClamp
 }
 
-// ClampRanges clamps the `ranges` into `toClampIn`.
+// CloneSlice sallowly clones a slice.
+func CloneSlice[T any](s []T) []T {
+	r := make([]T, len(s))
+	copy(r, s)
+	return r
+}
+
+// IntersectAll returns the intersect of two set of segments.
+// OWNERSHIP INFORMATION:
+// For running faster, this function would MUTATE the input slice. (i.e. takes its ownership.)
+// (But it is promised that this function won't change the `start key` and `end key` slice)
+// If you want to use the input slice after, call `CloneSlice` over arguments before passing them.
+//
+// You can treat "set of segments" as points maybe not adjacent.
+// in this way, IntersectAll(s1, s2) = { point | point in both s1 and s2 }
 // Example:
 // ranges:    |___________|    |________________|
 // toClampIn:   |_____| |____|   |________________|
@@ -151,22 +165,22 @@ func clampInOneRange(rng kv.KeyRange, clampIn kv.KeyRange) (kv.KeyRange, failedT
 // we are assuming the arguments are sorted by the start key and no overlaps.
 // you can call CollapseRanges to get key ranges fits this requirements.
 // Note: this algorithm is pretty like the `checkIntervalIsSubset`, can we get them together?
-func ClampRanges(ranges []kv.KeyRange, toClampIn []kv.KeyRange) []kv.KeyRange {
+func IntersectAll(s1 []kv.KeyRange, s2 []kv.KeyRange) []kv.KeyRange {
 	currentClamping := 0
 	currentClampTarget := 0
-	clamped := make([]kv.KeyRange, 0, len(ranges))
-	for currentClampTarget < len(toClampIn) && currentClamping < len(ranges) {
-		cin := toClampIn[currentClampTarget]
-		crg := ranges[currentClamping]
+	rs := make([]kv.KeyRange, 0, len(s1))
+	for currentClampTarget < len(s2) && currentClamping < len(s1) {
+		cin := s2[currentClampTarget]
+		crg := s1[currentClamping]
 		rng, result := clampInOneRange(crg, cin)
 		switch result {
 		case successClamp:
-			clamped = append(clamped, rng)
+			rs = append(rs, rng)
 			if CompareBytesExt(crg.EndKey, true, cin.EndKey, true) <= 0 {
 				currentClamping++
 			} else {
 				// Not fully consumed the clamped range.
-				ranges[currentClamping].StartKey = cin.EndKey
+				s1[currentClamping].StartKey = cin.EndKey
 			}
 		case leftNotOverlapped:
 			currentClamping++
@@ -174,12 +188,12 @@ func ClampRanges(ranges []kv.KeyRange, toClampIn []kv.KeyRange) []kv.KeyRange {
 			currentClampTarget++
 		case buggyUnknown:
 			log.L().DPanic("Unreachable path reached",
-				zap.Stringer("over-ranges", logutil.StringifyKeys(ranges)),
-				zap.Stringer("clamp-into", logutil.StringifyKeys(toClampIn)),
+				zap.Stringer("over-ranges", logutil.StringifyKeys(s1)),
+				zap.Stringer("clamp-into", logutil.StringifyKeys(s2)),
 				zap.Stringer("current-clamping", logutil.StringifyRange(crg)),
 				zap.Stringer("current-target", logutil.StringifyRange(cin)),
 			)
 		}
 	}
-	return clamped
+	return rs
 }

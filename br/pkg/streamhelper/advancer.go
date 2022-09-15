@@ -201,7 +201,7 @@ func (c *CheckpointAdvancer) tryAdvance(ctx context.Context, rst RangesSharesTS)
 	eg, cx := errgroup.WithContext(ctx)
 	collector := NewClusterCollector(ctx, c.env)
 	collector.setOnSuccessHook(c.cache.InsertRange)
-	clampedRanges := utils.ClampRanges(ranges, c.taskRange)
+	clampedRanges := utils.IntersectAll(ranges, utils.CloneSlice(c.taskRange))
 	for _, r := range clampedRanges {
 		r := r
 		workers.ApplyOnErrorGroup(eg, func() (e error) {
