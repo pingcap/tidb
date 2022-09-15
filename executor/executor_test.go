@@ -163,6 +163,7 @@ func TestPlanReplayer(t *testing.T) {
 	tk.MustExec("plan replayer dump explain select * from t1 where t1.a > (with cte1 as (select 1) select count(1) from cte1);")
 	tk.MustExec("plan replayer dump explain select * from v1")
 	tk.MustExec("plan replayer dump explain select * from v2")
+	require.True(t, len(tk.Session().GetSessionVars().LastPlanReplayerToken) > 0)
 }
 
 func TestShow(t *testing.T) {
