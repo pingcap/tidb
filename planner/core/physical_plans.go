@@ -963,6 +963,20 @@ func (la *PhysicalApply) ExtractCorrelatedCols() []*expression.CorrelatedColumn 
 	return corCols
 }
 
+// MemoryUsage return the memory usage of PhysicalApply
+func (la *PhysicalApply) MemoryUsage() (sum int64) {
+	if la == nil {
+		return
+	}
+
+	sum = la.PhysicalHashJoin.MemoryUsage() + size.SizeOfBool + size.SizeOfBool
+
+	for _, corrCol := range la.OuterSchema {
+		sum += corrCol.MemoryUsage()
+	}
+	return
+}
+
 type basePhysicalJoin struct {
 	physicalSchemaProducer
 
