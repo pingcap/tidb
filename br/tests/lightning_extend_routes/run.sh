@@ -10,7 +10,7 @@ for BACKEND in tidb local; do
   run_sql 'DROP DATABASE IF EXISTS routes_b;'
 
   run_sql 'CREATE DATABASE routes_b;'
-  run_sql 'CREATE TABLE u (x real primary key, c_source varchar(11) not null, c_schema varchar(11) not null, c_table varchar(11) not null);'
+  run_sql 'CREATE TABLE routes_b.u (x real primary key, c_source varchar(11) not null, c_schema varchar(11) not null, c_table varchar(11) not null);'
 
   run_lightning --config "tests/$TEST_NAME/config.toml" --backend $BACKEND
   echo Import using $BACKEND finished
