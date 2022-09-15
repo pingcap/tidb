@@ -1720,6 +1720,7 @@ func TestCoprocessorOOMAction(t *testing.T) {
 	// Assert Coprocessor OOMAction
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_enable_rate_limit_action=true")
 	tk.MustExec("create database testoom")
 	tk.MustExec("use testoom")
 	tk.MustExec(`set @@tidb_wait_split_region_finish=1`)
@@ -2093,6 +2094,7 @@ func TestSetEnableRateLimitAction(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
+	tk.MustExec("set @@tidb_enable_rate_limit_action=true")
 	// assert default value
 	result := tk.MustQuery("select @@tidb_enable_rate_limit_action;")
 	result.Check(testkit.Rows("1"))

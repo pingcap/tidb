@@ -967,7 +967,7 @@ const (
 	DefTiDBEnableParallelApply                     = false
 	DefTiDBEnableAmendPessimisticTxn               = false
 	DefTiDBPartitionPruneMode                      = "dynamic"
-	DefTiDBEnableRateLimitAction                   =  false
+	DefTiDBEnableRateLimitAction                   = false
 	DefTiDBEnableAsyncCommit                       = false
 	DefTiDBEnable1PC                               = false
 	DefTiDBGuaranteeLinearizability                = true
