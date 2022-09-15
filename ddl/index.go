@@ -684,15 +684,15 @@ func pickBackfillType(w *worker, job *model.Job) model.ReorgType {
 		return job.ReorgMeta.ReorgTp
 	}
 	if IsEnableFastReorg() {
-		piTREnabled := isPiTREnable(w)
-		if ingest.LitInitialized && !piTREnabled {
+		canUseIngest := canUseIngest(w)
+		if ingest.LitInitialized && canUseIngest {
 			job.ReorgMeta.ReorgTp = model.ReorgTypeLitMerge
 			return model.ReorgTypeLitMerge
 		}
 		// The lightning environment is unavailable, but we can still use the txn-merge backfill.
 		logutil.BgLogger().Info("[ddl] fallback to txn-merge backfill process",
 			zap.Bool("lightning env initialized", ingest.LitInitialized),
-			zap.Bool("PiTR enabled", piTREnabled))
+			zap.Bool("can use ingest", canUseIngest))
 		job.ReorgMeta.ReorgTp = model.ReorgTypeTxnMerge
 		return model.ReorgTypeTxnMerge
 	}
@@ -700,18 +700,19 @@ func pickBackfillType(w *worker, job *model.Job) model.ReorgType {
 	return model.ReorgTypeTxn
 }
 
-// Check if PiTR is enabled in cluster.
-func isPiTREnable(w *worker) bool {
+// canUseIngest indicates whether it can use ingest way to backfill index.
+func canUseIngest(w *worker) bool {
 	ctx, err := w.sessPool.get()
 	if err != nil {
-		return true
+		return false
 	}
 	defer w.sessPool.put(ctx)
 	failpoint.Inject("EnablePiTR", func() {
 		logutil.BgLogger().Info("lightning: mock enable PiTR")
 		failpoint.Return(true)
 	})
-	return utils.CheckLogBackupEnabled(ctx)
+	// Ingest way is not compatible with PiTR.
+	return !utils.CheckLogBackupEnabled(ctx)
 }
 
 // tryFallbackToTxnMerge changes the reorg type to txn-merge if the lightning backfill meets something wrong.
