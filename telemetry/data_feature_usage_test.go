@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/telemetry"
 	"github.com/pingcap/tidb/testkit"
@@ -418,4 +419,34 @@ func TestLazyPessimisticUniqueCheck(t *testing.T) {
 	tk2.MustExec("set @@tidb_constraint_check_in_place_pessimistic = 0")
 	usage = telemetry.GetTxnUsageInfo(tk.Session())
 	require.Equal(t, int64(2), usage.LazyUniqueCheckSetCounter)
+}
+
+func TestAddIndexLightning(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	usage, err := telemetry.GetFeatureUsage(tk.Session())
+	require.Equal(t, int64(0), usage.AddIndexLightning.AddIndexLightningUsed)
+
+	allow := ddl.IsEnableFastReorg()
+	require.Equal(t, false, allow)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tele_t")
+	tk.MustExec("create table tele_t(id int, b int)")
+	tk.MustExec("insert into tele_t values(1,1),(2,2);")
+	tk.MustExec("alter table tele_t add index idx_org(b)")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(0), usage.AddIndexLightning.AddIndexLightningUsed)
+
+	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = on")
+	allow = ddl.IsEnableFastReorg()
+	require.Equal(t, true, allow)
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	// Because we have check once ddl.IsEnableFastReorg() so we get two as result.
+	require.Equal(t, int64(0), usage.AddIndexLightning.AddIndexLightningUsed)
+	tk.MustExec("alter table tele_t add index idx_new(b)")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(1), usage.AddIndexLightning.AddIndexLightningUsed)
 }

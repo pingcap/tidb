@@ -113,6 +113,13 @@ var (
 			Name:      "table_partition_drop_interval_partition_usage",
 			Help:      "Counter of partitions added by ALTER TABLE FIRST PARTITION statements",
 		})
+	TelemetryAddIndexLightningCnt = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "telemetry",
+			Name:      "add_index_lightning_usage",
+			Help:      "Counter of usage of add index lightning",
+		})
 )
 
 // readCounter reads the value of a prometheus.Counter.
@@ -283,4 +290,23 @@ func GetSavepointStmtCounter() int64 {
 // GetLazyPessimisticUniqueCheckSetCounter returns the counter of setting tidb_constraint_check_in_place_pessimistic to false.
 func GetLazyPessimisticUniqueCheckSetCounter() int64 {
 	return readCounter(LazyPessimisticUniqueCheckSetCount)
+}
+
+// AddIndexLightning records the usages of Add Index with Lightning solution.
+type AddIndexLightningUsageCounter struct {
+	AddIndexLightningUsed int64 `json:"add_index_lightning_used"`
+}
+
+// Sub returns the difference of two counters.
+func (a AddIndexLightningUsageCounter) Sub(rhs AddIndexLightningUsageCounter) AddIndexLightningUsageCounter {
+	return AddIndexLightningUsageCounter{
+		AddIndexLightningUsed: a.AddIndexLightningUsed - rhs.AddIndexLightningUsed,
+	}
+}
+
+// GetAddIndexLightningCounter gets the add index lightning counts.
+func GetAddIndexLightningCounter() AddIndexLightningUsageCounter {
+	return AddIndexLightningUsageCounter{
+		AddIndexLightningUsed: readCounter(TelemetryAddIndexLightningCnt),
+	}
 }
