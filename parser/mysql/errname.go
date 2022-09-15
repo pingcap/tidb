@@ -727,7 +727,7 @@ var MySQLErrName = map[uint16]*ErrMessage{
 	ErrAccessDeniedNoPassword:                                Message("Access denied for user '%-.48s'@'%-.64s'", nil),
 	ErrSetPasswordAuthPlugin:                                 Message("SET PASSWORD has no significance for user '%-.48s'@'%-.255s' as authentication plugin does not support it.", nil),
 	ErrGrantPluginUserExists:                                 Message("GRANT with IDENTIFIED WITH is illegal because the user %-.*s already exists", nil),
-	ErrTruncateIllegalFk:                                     Message("Cannot truncate a table referenced in a foreign key constraint (%.192s)", nil),
+	ErrTruncateIllegalForeignKey:                             Message("Cannot truncate a table referenced in a foreign key constraint (%.192s)", nil),
 	ErrPluginIsPermanent:                                     Message("Plugin '%s' is forcePlusPermanent and can not be unloaded", nil),
 	ErrSlaveHeartbeatValueOutOfRangeMin:                      Message("The requested value for the heartbeat period is less than 1 millisecond. The value is reset to 0, meaning that heartbeating will effectively be disabled.", nil),
 	ErrSlaveHeartbeatValueOutOfRangeMax:                      Message("The requested value for the heartbeat period exceeds the value of `slaveNetTimeout' seconds. A sensible value for the period should be less than the timeout.", nil),

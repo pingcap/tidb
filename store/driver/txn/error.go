@@ -162,7 +162,7 @@ func newWriteConflictError(conflict *kvrpcpb.WriteConflict) error {
 	prettyWriteKey(&buf, conflict.Key)
 	buf.WriteString(" primary=")
 	prettyWriteKey(&buf, conflict.Primary)
-	return kv.ErrWriteConflict.FastGenByArgs(conflict.StartTs, conflict.ConflictTs, conflict.ConflictCommitTs, buf.String())
+	return kv.ErrWriteConflict.FastGenByArgs(conflict.StartTs, conflict.ConflictTs, conflict.ConflictCommitTs, buf.String(), conflict.Reason.String())
 }
 
 func prettyWriteKey(buf *bytes.Buffer, key []byte) {

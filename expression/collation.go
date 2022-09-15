@@ -279,6 +279,10 @@ func deriveCollation(ctx sessionctx.Context, funcName string, args []Expression,
 		ec = &ExprCollation{Coer: CoercibilityCoercible, Repe: ASCII}
 		ec.Charset, ec.Collation = ctx.GetSessionVars().GetCharsetInfo()
 		return ec, nil
+	case ast.JSONPretty, ast.JSONQuote:
+		// JSON function always return utf8mb4 and utf8mb4_bin.
+		ec = &ExprCollation{Coer: CoercibilityCoercible, Repe: UNICODE, Charset: charset.CharsetUTF8MB4, Collation: charset.CollationUTF8MB4}
+		return ec, nil
 	}
 
 	ec = &ExprCollation{CoercibilityNumeric, ASCII, charset.CharsetBin, charset.CollationBin}
