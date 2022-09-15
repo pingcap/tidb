@@ -125,6 +125,7 @@ var (
 	telemetryCTEUsageNonRecurCTE               = metrics.TelemetrySQLCTECnt.WithLabelValues("nonRecurCTE")
 	telemetryCTEUsageNotCTE                    = metrics.TelemetrySQLCTECnt.WithLabelValues("notCTE")
 	telemetryMultiSchemaChangeUsage            = metrics.TelemetryMultiSchemaChangeCnt
+	telemetryExchangePartitionUsage            = metrics.TelemetryExchangePartitionCnt
 	telemetryTablePartitionUsage               = metrics.TelemetryTablePartitionCnt
 	telemetryTablePartitionListUsage           = metrics.TelemetryTablePartitionListCnt
 	telemetryTablePartitionRangeUsage          = metrics.TelemetryTablePartitionRangeCnt
@@ -3291,6 +3292,10 @@ func (s *session) updateTelemetryMetric(es *executor.ExecStmt) {
 
 	if ti.UseMultiSchemaChange {
 		telemetryMultiSchemaChangeUsage.Inc()
+	}
+
+	if ti.UesExchangePartition {
+		telemetryExchangePartitionUsage.Inc()
 	}
 
 	if ti.PartitionTelemetry != nil {

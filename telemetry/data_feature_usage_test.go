@@ -241,6 +241,18 @@ func TestTablePartition(t *testing.T) {
 	require.Equal(t, int64(1), usage.TablePartition.TablePartitionCreateIntervalPartitionsCnt)
 	require.Equal(t, int64(1), usage.TablePartition.TablePartitionAddIntervalPartitionsCnt)
 	require.Equal(t, int64(1), usage.TablePartition.TablePartitionDropIntervalPartitionsCnt)
+
+	tk.MustExec("drop table if exists pt2")
+	tk.MustExec("create table pt2 (a int,b int) partition by range(a) (" +
+		"partition p0 values less than (10)," +
+		"partition p1 values less than (20))")
+
+	tk.MustExec("drop table if exists nt")
+	tk.MustExec("create table nt (a int,b int)")
+	tk.MustExec(`alter table pt2 exchange partition p1 with table nt`)
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.Equal(t, int64(1), usage.ExchangePartition.ExchangePartitionCnt)
+
 }
 
 func TestPlacementPolicies(t *testing.T) {
