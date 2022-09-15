@@ -1777,9 +1777,9 @@ func (rc *Client) ReadStreamDataFiles(
 	mFiles := make([]*backuppb.DataFileInfo, 0)
 
 	for _, m := range metas {
-		if m.MetaVersion > backuppb.MetaVersion_V2 {
-			log.Info("metaversion too new, skip", zap.Reflect("version id", m.MetaVersion))
-			continue
+		_, exsits := backuppb.MetaVersion_name[int32(m.MetaVersion)]
+		if !exsits {
+			log.Warn("metaversion too new, skip", zap.Reflect("version id", m.MetaVersion))
 		}
 		for _, ds := range m.FileGroups {
 			metaRef := 0
@@ -1793,7 +1793,8 @@ func (rc *Client) ReadStreamDataFiles(
 				}
 
 				// If ds.Path is empty, it is MetadataV1.
-				if m.MetaVersion == backuppb.MetaVersion_V2 {
+				// Try to be compatible with newer metadata version
+				if m.MetaVersion > backuppb.MetaVersion_V1 {
 					d.Path = ds.Path
 				}
 
@@ -1806,7 +1807,8 @@ func (rc *Client) ReadStreamDataFiles(
 				log.Debug("backup stream collect data partition", zap.Uint64("offset", d.RangeOffset), zap.Uint64("length", d.Length))
 			}
 			// metadatav1 doesn't use cache
-			if m.MetaVersion == backuppb.MetaVersion_V2 {
+			// Try to be compatible with newer metadata version
+			if m.MetaVersion > backuppb.MetaVersion_V1 {
 				rc.helper.InitCacheEntry(ds.Path, metaRef)
 			}
 		}
