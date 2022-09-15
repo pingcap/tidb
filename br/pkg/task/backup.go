@@ -80,10 +80,11 @@ type BackupConfig struct {
 	CompressionConfig
 
 	// for ebs-based backup
-	VolumeFile          string `json:"volume-file"`
-	SkipAWS             bool   `json:"skip-aws"`
-	CloudAPIConcurrency uint   `json:"cloud-api-concurrency"`
-	ProgressFile        string `json:"progress-file"`
+	FullBRType          FullBRType `json:"full-br-type" toml:"full-br-type"`
+	VolumeFile          string     `json:"volume-file"`
+	SkipAWS             bool       `json:"skip-aws"`
+	CloudAPIConcurrency uint       `json:"cloud-api-concurrency"`
+	ProgressFile        string     `json:"progress-file"`
 }
 
 // DefineBackupFlags defines common flags for the backup command.
@@ -174,6 +175,14 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	}
 	cfg.UseBackupMetaV2, err = flags.GetBool(flagUseBackupMetaV2)
 
+	fullBRType, err := flags.GetString(flagFullBRType)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if !FullBRType(fullBRType).Valid() {
+		return errors.New("invalid full backup/restore type")
+	}
+	cfg.FullBRType = FullBRType(fullBRType)
 	cfg.SkipAWS, err = flags.GetBool(flagSkipAWS)
 	if err != nil {
 		return errors.Trace(err)

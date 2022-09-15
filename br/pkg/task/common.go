@@ -234,8 +234,6 @@ type Config struct {
 
 	// whether there's explicit filter
 	ExplicitFilter bool `json:"-" toml:"-"`
-
-	FullBRType FullBRType `json:"full-br-type" toml:"full-br-type"`
 }
 
 // DefineCommonFlags defines the flags common to all BRIE commands.
@@ -580,14 +578,6 @@ func (cfg *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err = cfg.parseCipherInfo(flags); err != nil {
 		return errors.Trace(err)
 	}
-	fullBRType, err := flags.GetString(flagFullBRType)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if !FullBRType(fullBRType).Valid() {
-		return errors.New("invalid full backup/restore type")
-	}
-	cfg.FullBRType = FullBRType(fullBRType)
 
 	return cfg.normalizePDURLs()
 }

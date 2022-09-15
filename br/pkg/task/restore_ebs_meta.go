@@ -31,20 +31,23 @@ import (
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
 
 const (
+	flagMetaPhase        = "meta-phase"
+	flagDataPhase        = "data-phase"
 	flagOutputMetaFile   = "output-file"
 	flagVolumeType       = "volume-type"
 	flagVolumeIOPS       = "volume-iops"
 	flagVolumeThroughput = "volume-throughput"
 )
 
-// DefineRestoreEBSMetaFlags defines common flags for the backup command.
-func DefineRestoreEBSMetaFlags(command *cobra.Command) {
+// DefineRestoreSnapshotFlags defines common flags for the backup command.
+func DefineRestoreSnapshotFlags(command *cobra.Command) {
+	command.Flags().Bool(flagMetaPhase, false, "restore meta phase for snapshot based restore")
+	command.Flags().Bool(flagDataPhase, false, "restore data phase for snapshot based restore")
 	command.Flags().String(flagOutputMetaFile, "output.json", "the file path of output meta file")
 	command.Flags().Bool(flagSkipAWS, false, "don't access to aws environment if set to true")
 	command.Flags().Uint(flagCloudAPIConcurrency, defaultCloudAPIConcurrency, "concurrency of calling cloud api")
@@ -52,74 +55,21 @@ func DefineRestoreEBSMetaFlags(command *cobra.Command) {
 	command.Flags().Int64(flagVolumeIOPS, 0, "volume iops(0 means default for that volume type)")
 	command.Flags().Int64(flagVolumeThroughput, 0, "volume throughout in MiB/s(0 means default for that volume type)")
 	command.Flags().String(flagProgressFile, "progress.txt", "the file name of progress file")
-}
 
-type RestoreEBSConfig struct {
-	Config
-	OutputFile          string               `json:"output-file"`
-	SkipAWS             bool                 `json:"skip-aws"`
-	CloudAPIConcurrency uint                 `json:"cloud-api-concurrency"`
-	VolumeType          config.EBSVolumeType `json:"volume-type"`
-	VolumeIOPS          int64                `json:"volume-iops"`
-	VolumeThroughput    int64                `json:"volume-throughput"`
-	ProgressFile        string               `json:"progress-file"`
-}
-
-// ParseFromFlags parses the restore-related flags from the flag set.
-func (cfg *RestoreEBSConfig) ParseFromFlags(flags *pflag.FlagSet) error {
-	var err error
-	cfg.SkipAWS, err = flags.GetBool(flagSkipAWS)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	cfg.CloudAPIConcurrency, err = flags.GetUint(flagCloudAPIConcurrency)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	cfg.OutputFile, err = flags.GetString(flagOutputMetaFile)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	volumeType, err := flags.GetString(flagVolumeType)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	cfg.VolumeType = config.EBSVolumeType(volumeType)
-	if !cfg.VolumeType.Valid() {
-		return errors.New("invalid volume type: " + volumeType)
-	}
-	if cfg.VolumeIOPS, err = flags.GetInt64(flagVolumeIOPS); err != nil {
-		return errors.Trace(err)
-	}
-	if cfg.VolumeThroughput, err = flags.GetInt64(flagVolumeThroughput); err != nil {
-		return errors.Trace(err)
-	}
-
-	cfg.ProgressFile, err = flags.GetString(flagProgressFile)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	// iops: gp3 [3,000-16,000]; io1/io2 [100-32,000]
-	// throughput: gp3 [125, 1000]; io1/io2 cannot set throughput
-	// io1 and io2 volumes support up to 64,000 IOPS only on Instances built on the Nitro System.
-	// Other instance families support performance up to 32,000 IOPS.
-	// https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_CreateVolume.html
-	// todo: check lower/upper bound
-
-	return cfg.Config.ParseFromFlags(flags)
-}
-
-func (cfg *RestoreEBSConfig) adjust() {
-	if cfg.CloudAPIConcurrency == 0 {
-		cfg.CloudAPIConcurrency = defaultCloudAPIConcurrency
-	}
-	cfg.Config.adjust()
+	_ = command.Flags().MarkHidden(flagMetaPhase)
+	_ = command.Flags().MarkHidden(flagDataPhase)
+	_ = command.Flags().MarkHidden(flagOutputMetaFile)
+	_ = command.Flags().MarkHidden(flagSkipAWS)
+	_ = command.Flags().MarkHidden(flagCloudAPIConcurrency)
+	_ = command.Flags().MarkHidden(flagVolumeType)
+	_ = command.Flags().MarkHidden(flagVolumeIOPS)
+	_ = command.Flags().MarkHidden(flagVolumeThroughput)
+	_ = command.Flags().MarkHidden(flagProgressFile)
 }
 
 // RunRestoreEBSMeta phase 1 of EBS based restore
-func RunRestoreEBSMeta(c context.Context, g glue.Glue, cmdName string, cfg *RestoreEBSConfig) error {
-	cfg.adjust()
+func RunRestoreEBSMeta(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) error {
+	cfg.Adjust()
 	helper := restoreEBSMetaHelper{
 		rootCtx: c,
 		g:       g,
@@ -134,7 +84,7 @@ type restoreEBSMetaHelper struct {
 	rootCtx context.Context
 	g       glue.Glue
 	cmdName string
-	cfg     *RestoreEBSConfig
+	cfg     *RestoreConfig
 
 	metaInfo *config.EBSBasedBRMeta
 	pdc      *pdutil.PdController
@@ -146,6 +96,17 @@ func (h *restoreEBSMetaHelper) preRestore(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	// read meta from s3
+	metaInfo, err := config.NewMetaFromStorage(ctx, externStorage)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if FullBRType(metaInfo.GetFullBRType()) != FullBRTypeEBS {
+		log.Error("invalid meta file", zap.Reflect("meta", metaInfo))
+		return errors.New("invalid meta file, only support aws-ebs now")
+	}
+	h.metaInfo = metaInfo
 
 	var (
 		tlsConf *tls.Config
@@ -173,13 +134,6 @@ func (h *restoreEBSMetaHelper) preRestore(ctx context.Context) error {
 	}
 
 	h.pdc = controller
-
-	// read meta from s3
-	metaInfo, err := config.NewMetaFromStorage(ctx, externStorage)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	h.metaInfo = metaInfo
 
 	// todo: check whether target cluster is compatible with the backup
 	// but cluster hasn't bootstrapped, we cannot get cluster version from pd now.
@@ -238,10 +192,6 @@ func (h *restoreEBSMetaHelper) restore() error {
 func (h *restoreEBSMetaHelper) doRestore(ctx context.Context, progress glue.Progress) (int64, error) {
 	log.Info("mark recovering")
 	if err := h.pdc.MarkRecovering(ctx); err != nil {
-		return 0, errors.Trace(err)
-	}
-	log.Info("recover base alloc id", zap.Uint64("alloc id", h.metaInfo.ClusterInfo.MaxAllocID))
-	if err := h.pdc.RecoverBaseAllocID(ctx, h.metaInfo.ClusterInfo.MaxAllocID); err != nil {
 		return 0, errors.Trace(err)
 	}
 	log.Info("set pd ts = max(resolved_ts, current pd ts)", zap.Uint64("resolved ts", h.metaInfo.ClusterInfo.ResolvedTS))
