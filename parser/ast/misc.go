@@ -265,7 +265,10 @@ type PlanReplayerStmt struct {
 	Stmt    StmtNode
 	Analyze bool
 	Load    bool
-	File    string
+	// File is used to store 2 cases:
+	// 1. plan replayer load 'file';
+	// 2. plan replayer dump explain <analyze> 'file'
+	File string
 	// Where is the where clause in select statement.
 	Where ExprNode
 	// OrderBy is the ordering expression list.
@@ -286,6 +289,10 @@ func (n *PlanReplayerStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("ANALYZE ")
 	}
 	if n.Stmt == nil {
+		if len(n.File) > 0 {
+			ctx.WriteString(n.File)
+			return nil
+		}
 		ctx.WriteKeyWord("SLOW QUERY")
 		if n.Where != nil {
 			ctx.WriteKeyWord(" WHERE ")
