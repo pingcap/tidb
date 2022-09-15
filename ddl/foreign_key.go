@@ -351,3 +351,41 @@ func checkTableHasForeignKeyReferredInOwner(d *ddlCtx, t *meta.Meta, schema, tbl
 	referredFK := checkTableHasForeignKeyReferred(is, schema, tbl, ignoreTables, fkCheck)
 	return referredFK, nil
 }
+
+type foreignKeyHelper struct {
+	loaded map[schemaAndTable]schemaIDAndTableInfo
+}
+
+type schemaAndTable struct {
+	schema string
+	table  string
+}
+
+func newForeignKeyHelper(schema string, schemaID int64, tblInfo *model.TableInfo) foreignKeyHelper {
+	h := foreignKeyHelper{loaded: make(map[schemaAndTable]schemaIDAndTableInfo)}
+	k := schemaAndTable{schema: schema, table: tblInfo.Name.L}
+	h.loaded[k] = schemaIDAndTableInfo{schemaID: schemaID, tblInfo: tblInfo}
+	return h
+}
+
+func (h *foreignKeyHelper) getTableFromStorage(is infoschema.InfoSchema, t *meta.Meta, schema, table model.CIStr) (result schemaIDAndTableInfo, _ error) {
+	k := schemaAndTable{schema: schema.L, table: table.L}
+	if info, ok := h.loaded[k]; ok {
+		return info, nil
+	}
+	db, ok := is.SchemaByName(schema)
+	if !ok {
+		return result, errors.Trace(infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schema))
+	}
+	tb, err := is.TableByName(schema, table)
+	if err != nil {
+		return result, errors.Trace(err)
+	}
+	tbInfo, err := getTableInfo(t, tb.Meta().ID, db.ID)
+	if err != nil {
+		return result, errors.Trace(err)
+	}
+	result.schemaID, result.tblInfo = db.ID, tbInfo
+	h.loaded[k] = result
+	return result, nil
+}

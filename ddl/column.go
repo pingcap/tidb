@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"math/bits"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -39,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -1407,7 +1409,16 @@ func (w *worker) doModifyColumn(
 		return ver, errors.Trace(err)
 	}
 
-	ver, err := updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, true)
+	tblInfos, err := adjustForeignKeyChildTableInfoAfterModifyColumn(d, t, job, tblInfo, newCol, oldCol)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	if len(tblInfos) > 0 {
+		ver, err = updateVersionAndMultiTableInfosWithCheck(d, t, job, tblInfos, true)
+	} else {
+		ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, true)
+	}
+
 	if err != nil {
 		// Modified the type definition of 'null' to 'not null' before this, so rollBack the job when an error occurs.
 		job.State = model.JobStateRollingback
@@ -1438,6 +1449,47 @@ func adjustTableInfoAfterModifyColumn(
 	updateNewIdxColsNameOffset(tblInfo.Indices, oldCol.Name, newCol)
 	updateFKInfoWhenModifyColumn(tblInfo, oldCol.Name, newCol.Name)
 	return nil
+}
+
+func adjustForeignKeyChildTableInfoAfterModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, newCol, oldCol *model.ColumnInfo) ([]schemaIDAndTableInfo, error) {
+	if !variable.EnableForeignKey.Load() {
+		return nil, nil
+	}
+	is, err := getAndCheckLatestInfoSchema(d, t)
+	if err != nil {
+		return nil, err
+	}
+	referredFKs := is.GetTableReferredForeignKeys(job.SchemaName, tblInfo.Name.L)
+	if newCol.Name.L == oldCol.Name.L || len(referredFKs) == 0 {
+		return nil, nil
+	}
+	fkh := newForeignKeyHelper(job.SchemaName, job.SchemaID, tblInfo)
+	for _, referredFK := range referredFKs {
+		info, err := fkh.getTableFromStorage(is, t, referredFK.ChildSchema, referredFK.ChildTable)
+		if err != nil {
+			if infoschema.ErrTableNotExists.Equal(err) || infoschema.ErrDatabaseNotExists.Equal(err) {
+				continue
+			}
+			return nil, err
+		}
+		fkInfo := model.FindFKInfoByName(info.tblInfo.ForeignKeys, referredFK.ChildFKName.L)
+		if fkInfo == nil {
+			continue
+		}
+		for i := range fkInfo.RefCols {
+			if fkInfo.RefCols[i].L == oldCol.Name.L {
+				fkInfo.RefCols[i] = newCol.Name
+			}
+		}
+	}
+	InfoList := make([]schemaIDAndTableInfo, 0, len(fkh.loaded))
+	for _, info := range fkh.loaded {
+		InfoList = append(InfoList, info)
+	}
+	sort.Slice(InfoList, func(i, j int) bool {
+		return InfoList[i].tblInfo.ID < InfoList[j].tblInfo.ID
+	})
+	return InfoList, nil
 }
 
 func checkAndApplyAutoRandomBits(d *ddlCtx, m *meta.Meta, dbInfo *model.DBInfo, tblInfo *model.TableInfo,

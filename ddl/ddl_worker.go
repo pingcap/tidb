@@ -1348,6 +1348,34 @@ func buildPlacementAffects(oldIDs []int64, newIDs []int64) []*model.AffectedOpti
 	return affects
 }
 
+func updateMultiSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job, infos []schemaIDAndTableInfo) (int64, error) {
+	schemaVersion, err := d.setSchemaVersion(job, d.store)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	diff := &model.SchemaDiff{
+		Version:  schemaVersion,
+		Type:     job.Type,
+		SchemaID: job.SchemaID,
+		TableID:  job.TableID,
+	}
+
+	diff.AffectedOpts = make([]*model.AffectedOption, 0, len(infos))
+	for _, info := range infos {
+		if info.tblInfo.ID == job.TableID {
+			continue
+		}
+		diff.AffectedOpts = append(diff.AffectedOpts, &model.AffectedOption{
+			SchemaID:    info.schemaID,
+			OldSchemaID: info.schemaID,
+			TableID:     info.tblInfo.ID,
+			OldTableID:  info.tblInfo.ID,
+		})
+	}
+	err = t.SetSchemaDiff(diff)
+	return schemaVersion, errors.Trace(err)
+}
+
 // updateSchemaVersion increments the schema version by 1 and sets SchemaDiff.
 func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, error) {
 	schemaVersion, err := d.setSchemaVersion(job, d.store)

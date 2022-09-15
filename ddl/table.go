@@ -1385,6 +1385,44 @@ func updateVersionAndTableInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo 
 	return ver, t.UpdateTable(job.SchemaID, tblInfo)
 }
 
+type schemaIDAndTableInfo struct {
+	schemaID int64
+	tblInfo  *model.TableInfo
+}
+
+func updateVersionAndMultiTableInfosWithCheck(d *ddlCtx, t *meta.Meta, job *model.Job, infos []schemaIDAndTableInfo, shouldUpdateVer bool) (
+	ver int64, err error) {
+	for _, info := range infos {
+		err = checkTableInfoValid(info.tblInfo)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+	}
+	return updateVersionAndMultiTableInfos(d, t, job, infos, shouldUpdateVer)
+}
+
+func updateVersionAndMultiTableInfos(d *ddlCtx, t *meta.Meta, job *model.Job, infos []schemaIDAndTableInfo, shouldUpdateVer bool) (
+	ver int64, err error) {
+	if shouldUpdateVer {
+		ver, err = updateMultiSchemaVersion(d, t, job, infos)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+	}
+
+	for _, info := range infos {
+		if info.tblInfo.State == model.StatePublic {
+			info.tblInfo.UpdateTS = t.StartTS
+		}
+		err = t.UpdateTable(info.schemaID, info.tblInfo)
+		if err != nil {
+			return ver, err
+		}
+	}
+	return ver, nil
+}
+
 func onRepairTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	tblInfo := &model.TableInfo{}
