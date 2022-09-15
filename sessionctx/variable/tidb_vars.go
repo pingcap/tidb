@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable/featuretag/concurrencyddl"
 	"github.com/pingcap/tidb/util/paging"
-	"github.com/pingcap/tidb/util/size"
 	"go.uber.org/atomic"
 )
 
@@ -746,6 +745,11 @@ const (
 	// TiDBEnableForeignKey indicates whether to enable foreign key feature.
 	// TODO(crazycs520): remove this after foreign key GA.
 	TiDBEnableForeignKey = "tidb_enable_foreign_key"
+
+	// TiDBOptRangeMaxSize is the max memory limit for ranges. When the optimizer estimates that the memory usage of complete
+	// ranges would exceed the limit, it chooses less accurate ranges such as full range. 0 indicates that there is no memory
+	// limit for ranges.
+	TiDBOptRangeMaxSize = "tidb_opt_range_max_size"
 )
 
 // TiDB vars that have only global scope
@@ -818,10 +822,6 @@ const (
 	TiDBDDLEnableFastReorg = "tidb_ddl_enable_fast_reorg"
 	// TiDBDDLDiskQuota used to set disk quota for lightning add index.
 	TiDBDDLDiskQuota = "tidb_ddl_disk_quota"
-	// TiDBOptRangeMaxSize is the max memory limit for ranges. When the optimizer estimates that the memory usage of complete
-	// ranges would exceed the limit, it chooses less accurate ranges such as full range. 0 indicates that there is no memory
-	// limit for ranges.
-	TiDBOptRangeMaxSize = "tidb_opt_range_max_size"
 )
 
 // TiDB intentional limits
@@ -1052,7 +1052,8 @@ const (
 	DefTiDBRcWriteCheckTs                           = false
 	DefTiDBConstraintCheckInPlacePessimistic        = true
 	DefTiDBForeignKeyChecks                         = false
-	DefTiDBOptRangeMaxSize                          = 64 * int64(size.MB) // 64 MB
+	DefTiDBOptRangeMaxSize                          = 0
+	DefTiDBCostModelVer                             = 1
 )
 
 // Process global variables.
