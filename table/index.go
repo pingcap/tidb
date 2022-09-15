@@ -35,6 +35,7 @@ type CreateIdxOpt struct {
 	Ctx             context.Context
 	Untouched       bool // If true, the index key/value is no need to commit.
 	IgnoreAssertion bool
+	FromBackFill    bool
 }
 
 // CreateIdxOptFunc is defined for the Create() method of Index interface.
@@ -50,6 +51,14 @@ var IndexIsUntouched CreateIdxOptFunc = func(opt *CreateIdxOpt) {
 // WithIgnoreAssertion uses to indicate the process can ignore assertion.
 var WithIgnoreAssertion = func(opt *CreateIdxOpt) {
 	opt.IgnoreAssertion = true
+}
+
+// FromBackfill indicates that the index is created by DDL backfill worker.
+// In the backfill-merge process, the index KVs from DML will be redirected to
+// the temp index. On the other hand, the index KVs from DDL backfill worker should
+// never be redirected to the temp index.
+var FromBackfill = func(opt *CreateIdxOpt) {
+	opt.FromBackFill = true
 }
 
 // WithCtx returns a CreateIdxFunc.

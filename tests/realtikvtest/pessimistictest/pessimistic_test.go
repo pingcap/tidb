@@ -3394,3 +3394,13 @@ func TestLazyUniquenessCheckWithInconsistentReadResult(t *testing.T) {
 	err = tk.ExecToErr("commit")
 	require.ErrorContains(t, err, "reason=LazyUniquenessCheck")
 }
+
+func TestLazyUniquenessCheckWithSavepoint(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_constraint_check_in_place_pessimistic=0")
+	tk.MustExec("begin pessimistic")
+	err := tk.ExecToErr("savepoint s1")
+	require.ErrorContains(t, err, "savepoint is not supported in pessimistic transactions when in-place constraint check is disabled")
+}
