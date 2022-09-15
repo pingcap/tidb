@@ -1073,10 +1073,6 @@ func TestDropIndexNeededInForeignKey2(t *testing.T) {
 	tk2.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk2.MustExec("set @@foreign_key_checks=1;")
 	tk2.MustExec("use test")
-	tk3 := testkit.NewTestKit(t, store)
-	tk3.MustExec("set @@global.tidb_enable_foreign_key=1")
-	tk3.MustExec("set @@foreign_key_checks=1;")
-	tk3.MustExec("use test")
 	tk.MustExec("create table t1 (id int key, b int)")
 	tk.MustExec("create table t2 (a int, b int, index idx1 (b),index idx2 (b), foreign key (b) references t1(id));")
 
