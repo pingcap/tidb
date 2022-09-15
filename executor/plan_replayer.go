@@ -130,6 +130,7 @@ func (e *PlanReplayerExec) createFile(path string) error {
 	}
 	e.DumpInfo.File = zf
 	e.DumpInfo.FileName = fileName
+	e.ctx.GetSessionVars().LastPlanReplayerToken = e.DumpInfo.FileName
 	return nil
 }
 
