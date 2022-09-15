@@ -76,7 +76,7 @@ func (hc *hashContext) initHash(rows int) {
 		} else {
 			for i := 0; i < rows; i++ {
 				hc.naHasNull[i] = false
-				hc.naColNullBitMap[i].Reset(rows)
+				hc.naColNullBitMap[i].Reset(len(hc.naKeyColIdx))
 			}
 		}
 	}
@@ -130,6 +130,8 @@ func newHashRowContainer(sCtx sessionctx.Context, estCount int, hCtx *hashContex
 func (c *hashRowContainer) ShallowCopy() *hashRowContainer {
 	newHRC := *c
 	newHRC.rowContainer = c.rowContainer.ShallowCopyWithNewMutex()
+	// multi hashRowContainer ref to one single NA-NULL bucket slice.
+	// newHRC.hashNANullBucket = c.hashNANullBucket
 	return &newHRC
 }
 
@@ -157,10 +159,10 @@ func (c *hashRowContainer) GetAllMatchedRows(probeHCtx *hashContext, probeSideRo
 				entryAddr = entryAddr.next
 			}
 		})
+	matched = matched[:0]
 	if len(innerPtrs) == 0 {
 		return matched, nil
 	}
-	matched = matched[:0]
 	var mayMatchedRow chunk.Row
 	for _, ptr := range innerPtrs {
 		mayMatchedRow, c.chkBuf, err = c.rowContainer.GetRowAndAppendToChunk(ptr, c.chkBuf)
@@ -242,6 +244,7 @@ func (c *hashRowContainer) GetNullBucketRows(probeHCtx *hashContext, probeSideRo
 		err           error
 		mayMatchedRow chunk.Row
 	)
+	matched = matched[:0]
 	for _, nullEntry := range c.hashNANullBucket {
 		mayMatchedRow, c.chkBuf, err = c.rowContainer.GetRowAndAppendToChunk(nullEntry.ptr, c.chkBuf)
 		if err != nil {
@@ -269,7 +272,6 @@ func (c *hashRowContainer) GetNullBucketRows(probeHCtx *hashContext, probeSideRo
 			// 1 0 0 0 means right join key : null ?   ?  ?
 			// ---------------------------------------------
 			// left & right: 1 0 1 0: just do the explicit column value check for whose bit is 0. (means no null from both side)
-
 			for i := 0; i < keyColLen; i++ {
 				if probeKeyNullBits.UnsafeIsSet(i) || nullEntry.nullBitMap.UnsafeIsSet(i) {
 					continue
@@ -285,14 +287,12 @@ func (c *hashRowContainer) GetNullBucketRows(probeHCtx *hashContext, probeSideRo
 			if !ok {
 				continue
 			}
-			// once ok. just append the (maybe) valid build row for latter other conditions check if any.
 		} else {
 			// when the probeKeyNullBits is nil, it means the probe key is not null. But in the process of matching the null bucket,
 			// we still need to do the non-null (explicit) value check.
 			//
 			// eg: the probe key is <1,2>, we only get <2, null> in the null bucket, even we can take the null as a wildcard symbol,
 			// the first value of this two tuple is obviously not a match. So we need filter it here.
-
 			for i := 0; i < keyColLen; i++ {
 				if nullEntry.nullBitMap.UnsafeIsSet(i) {
 					continue
@@ -308,8 +308,8 @@ func (c *hashRowContainer) GetNullBucketRows(probeHCtx *hashContext, probeSideRo
 			if !ok {
 				continue
 			}
-			// once ok. just append the (maybe) valid build row for latter other conditions check if any.
 		}
+		// once ok. just append the (maybe) valid build row for latter other conditions check if any.
 		matched = append(matched, mayMatchedRow)
 	}
 	return matched, err
@@ -362,7 +362,6 @@ func (c *hashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected, ignoreNu
 	}
 	// 2: write the row data of NA join key to hashVals. (NA EQ key should collect all rows including null value as one bucket.)
 	isNAAJ := len(c.hCtx.naKeyColIdx) > 0
-	hasNullMark := make([]bool, len(hCtx.hasNull))
 	for keyIdx, colIdx := range c.hCtx.naKeyColIdx {
 		// NAAJ won't ignore any null values, but collect them as one hash bucket.
 		err := codec.HashChunkSelected(c.sc, hCtx.hashVals, chk, hCtx.allTypes[keyIdx], colIdx, hCtx.buf, hCtx.hasNull, selected, false)
@@ -378,7 +377,7 @@ func (c *hashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected, ignoreNu
 				// clean and try fetch next NA join col.
 				hCtx.hasNull[rowIdx] = false
 				// just a mark variable for whether there is a null in at least one NA join column.
-				hasNullMark[rowIdx] = true
+				hCtx.naHasNull[rowIdx] = true
 			}
 		}
 	}
@@ -387,10 +386,11 @@ func (c *hashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected, ignoreNu
 			if selected != nil && !selected[i] {
 				continue
 			}
-			if hasNullMark[i] {
+			if hCtx.naHasNull[i] {
 				// collect the null rows to slice.
 				rowPtr := chunk.RowPtr{ChkIdx: chkIdx, RowIdx: uint32(i)}
-				c.hashNANullBucket = append(c.hashNANullBucket, &naEntry{rowPtr, c.hCtx.naColNullBitMap[i]})
+				// do not directly ref the null bits map here, because the bit map will be reset and reused in next batch of chunk data.
+				c.hashNANullBucket = append(c.hashNANullBucket, &naEntry{rowPtr, c.hCtx.naColNullBitMap[i].Clone()})
 			} else {
 				// insert the not-null rows to hash table.
 				key := c.hCtx.hashVals[i].Sum64()

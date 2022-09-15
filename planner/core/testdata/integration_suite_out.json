@@ -3182,13 +3182,11 @@
         "SQL": "explain format = 'brief' select count(*) from fact_t where d1_k not in (select d1_k from d1_t)",
         "Plan": [
           "StreamAgg 1.00 root  funcs:count(1)->Column#11",
-          "└─TableReader 6.40 root  data:ExchangeSender",
-          "  └─ExchangeSender 6.40 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashJoin 6.40 mpp[tiflash]  CARTESIAN anti semi join, other cond:eq(test.fact_t.d1_k, test.d1_t.d1_k)",
-          "      ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
-          "      │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast",
-          "      │   └─TableFullScan 2.00 mpp[tiflash] table:d1_t keep order:false",
-          "      └─TableFullScan(Probe) 8.00 mpp[tiflash] table:fact_t keep order:false"
+          "└─HashJoin 6.40 root  Null-aware anti semi join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
+          "  ├─TableReader(Build) 2.00 root  data:TableFullScan",
+          "  │ └─TableFullScan 2.00 cop[tiflash] table:d1_t keep order:false",
+          "  └─TableReader(Probe) 8.00 root  data:TableFullScan",
+          "    └─TableFullScan 8.00 cop[tiflash] table:fact_t keep order:false"
         ]
       }
     ]
@@ -3289,30 +3287,26 @@
       {
         "SQL": "explain format = 'brief' select * from test.t t1 where t1.a>1 or t1.b not in (select a from test.t); -- cartesian left anti",
         "Plan": [
-          "TableReader 8000.00 root  data:ExchangeSender",
-          "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection 8000.00 mpp[tiflash]  test.t.a, test.t.b",
-          "    └─Selection 8000.00 mpp[tiflash]  or(gt(test.t.a, 1), Column#7)",
-          "      └─HashJoin 10000.00 mpp[tiflash]  CARTESIAN anti left outer semi join, other cond:eq(test.t.b, test.t.a)",
-          "        ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
-          "        │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast",
-          "        │   └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
-          "        └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+          "Projection 8000.00 root  test.t.a, test.t.b",
+          "└─Selection 8000.00 root  or(gt(test.t.a, 1), Column#7)",
+          "  └─HashJoin 10000.00 root  Null-aware anti left outer semi join, equal:[eq(test.t.b, test.t.a)]",
+          "    ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "    │ └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "      └─TableFullScan 10000.00 cop[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format = 'brief' select * from test.t t1 where t1.a>1 or t1.b not in (select a from test.t where b<t1.b);",
         "Plan": [
-          "TableReader 8000.00 root  data:ExchangeSender",
-          "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection 8000.00 mpp[tiflash]  test.t.a, test.t.b",
-          "    └─Selection 8000.00 mpp[tiflash]  or(gt(test.t.a, 1), Column#7)",
-          "      └─HashJoin 10000.00 mpp[tiflash]  CARTESIAN anti left outer semi join, other cond:eq(test.t.b, test.t.a), lt(test.t.b, test.t.b)",
-          "        ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
-          "        │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast",
-          "        │   └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
-          "        └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+          "Projection 8000.00 root  test.t.a, test.t.b",
+          "└─Selection 8000.00 root  or(gt(test.t.a, 1), Column#7)",
+          "  └─HashJoin 10000.00 root  Null-aware anti left outer semi join, equal:[eq(test.t.b, test.t.a)], other cond:lt(test.t.b, test.t.b)",
+          "    ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "    │ └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "      └─TableFullScan 10000.00 cop[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -3337,75 +3331,66 @@
       {
         "SQL": "explain format = 'brief' select a in (select b from test.t), a not in (select b from test.t) from test.t;",
         "Plan": [
-          "TableReader 10000.00 root  data:ExchangeSender",
-          "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection 10000.00 mpp[tiflash]  Column#13, Column#17",
-          "    └─HashJoin 10000.00 mpp[tiflash]  CARTESIAN anti left outer semi join, other cond:eq(test.t.a, test.t.b)",
+          "HashJoin 10000.00 root  Null-aware anti left outer semi join, equal:[eq(test.t.a, test.t.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashJoin 10000.00 mpp[tiflash]  CARTESIAN left outer semi join, other cond:eq(test.t.a, test.t.b)",
           "      ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
           "      │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast",
           "      │   └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
-          "      └─HashJoin(Probe) 10000.00 mpp[tiflash]  CARTESIAN left outer semi join, other cond:eq(test.t.a, test.t.b)",
-          "        ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
-          "        │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast",
-          "        │   └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
-          "        └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "      └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format = 'brief' select b in (select a from test.t), b not in (select a from test.t) from test.t;",
         "Plan": [
-          "TableReader 10000.00 root  data:ExchangeSender",
-          "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection 10000.00 mpp[tiflash]  Column#13, Column#17",
-          "    └─HashJoin 10000.00 mpp[tiflash]  CARTESIAN anti left outer semi join, other cond:eq(test.t.b, test.t.a)",
+          "HashJoin 10000.00 root  Null-aware anti left outer semi join, equal:[eq(test.t.b, test.t.a)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashJoin 10000.00 mpp[tiflash]  CARTESIAN left outer semi join, other cond:eq(test.t.b, test.t.a)",
           "      ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
           "      │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast",
           "      │   └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
-          "      └─HashJoin(Probe) 10000.00 mpp[tiflash]  CARTESIAN left outer semi join, other cond:eq(test.t.b, test.t.a)",
-          "        ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
-          "        │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast",
-          "        │   └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
-          "        └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "      └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format = 'brief' select b in (select b from test.t), b not in (select b from test.t) from test.t;",
         "Plan": [
-          "TableReader 10000.00 root  data:ExchangeSender",
-          "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection 10000.00 mpp[tiflash]  Column#13, Column#17",
-          "    └─HashJoin 10000.00 mpp[tiflash]  CARTESIAN anti left outer semi join, other cond:eq(test.t.b, test.t.b)",
+          "HashJoin 10000.00 root  Null-aware anti left outer semi join, equal:[eq(test.t.b, test.t.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashJoin 10000.00 mpp[tiflash]  CARTESIAN left outer semi join, other cond:eq(test.t.b, test.t.b)",
           "      ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
           "      │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast",
           "      │   └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
-          "      └─HashJoin(Probe) 10000.00 mpp[tiflash]  CARTESIAN left outer semi join, other cond:eq(test.t.b, test.t.b)",
-          "        ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
-          "        │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast",
-          "        │   └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
-          "        └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "      └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format = 'brief' select a, b, a in (select a from test.t), a in (select b from test.t), b in (select a from test.t), b in (select b from test.t), a not in (select a from test.t), a not in (select b from test.t), b not in (select a from test.t), b not in (select b from test.t) from test.t;",
         "Plan": [
-          "TableReader 10000.00 root  data:ExchangeSender",
-          "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin 10000.00 mpp[tiflash]  CARTESIAN anti left outer semi join, other cond:eq(test.t.b, test.t.b)",
-          "    ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast",
-          "    │   └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
-          "    └─HashJoin(Probe) 10000.00 mpp[tiflash]  CARTESIAN anti left outer semi join, other cond:eq(test.t.b, test.t.a)",
-          "      ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
-          "      │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast",
-          "      │   └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
-          "      └─HashJoin(Probe) 10000.00 mpp[tiflash]  CARTESIAN anti left outer semi join, other cond:eq(test.t.a, test.t.b)",
-          "        ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
-          "        │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast",
-          "        │   └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
-          "        └─HashJoin(Probe) 10000.00 mpp[tiflash]  anti left outer semi join, equal:[eq(test.t.a, test.t.a)]",
+          "HashJoin 10000.00 root  Null-aware anti left outer semi join, equal:[eq(test.t.b, test.t.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 10000.00 root  Null-aware anti left outer semi join, equal:[eq(test.t.b, test.t.a)]",
+          "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "  │ └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 10000.00 root  Null-aware anti left outer semi join, equal:[eq(test.t.a, test.t.b)]",
+          "    ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "    │ └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 10000.00 root  data:ExchangeSender",
+          "      └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "        └─HashJoin 10000.00 mpp[tiflash]  anti left outer semi join, equal:[eq(test.t.a, test.t.a)]",
           "          ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
           "          │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast",
           "          │   └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",

@@ -1327,11 +1327,12 @@ loopOtherConds:
 }
 
 // removeUselessEqAndInFunc removes the useless eq/in conditions. It's designed for the following case:
-//   t1 join t2 on t1.a=t2.a and t1.c=t2.c where t1.b > t2.b-10 and t1.b < t2.b+10 there's index(a, b, c) on t1.
-//   In this case the curIdxOff2KeyOff is [0 -1 1] and the notKeyEqAndIn is [].
-//   It's clearly that the column c cannot be used to access data. So we need to remove it and reset the IdxOff2KeyOff to
-//   [0 -1 -1].
-//   So that we can use t1.a=t2.a and t1.b > t2.b-10 and t1.b < t2.b+10 to build ranges then access data.
+//
+//	t1 join t2 on t1.a=t2.a and t1.c=t2.c where t1.b > t2.b-10 and t1.b < t2.b+10 there's index(a, b, c) on t1.
+//	In this case the curIdxOff2KeyOff is [0 -1 1] and the notKeyEqAndIn is [].
+//	It's clearly that the column c cannot be used to access data. So we need to remove it and reset the IdxOff2KeyOff to
+//	[0 -1 -1].
+//	So that we can use t1.a=t2.a and t1.b > t2.b-10 and t1.b < t2.b+10 to build ranges then access data.
 func (ijHelper *indexJoinBuildHelper) removeUselessEqAndInFunc(idxCols []*expression.Column, notKeyEqAndIn []expression.Expression, outerJoinKeys []*expression.Column) (usefulEqAndIn, uselessOnes []expression.Expression) {
 	ijHelper.curPossibleUsedKeys = make([]*expression.Column, 0, len(idxCols))
 	for idxColPos, notKeyColPos := 0, 0; idxColPos < len(idxCols); idxColPos++ {
@@ -1779,6 +1780,11 @@ func (p *LogicalJoin) shouldUseMPPBCJ() bool {
 	return checkChildFitBC(p.children[0]) || checkChildFitBC(p.children[1])
 }
 
+// canPushToCop checks if it can be pushed to some stores.
+func (p *LogicalJoin) canPushToCop(storeTp kv.StoreType) bool {
+	return len(p.NAEQConditions) == 0 && p.baseLogicalPlan.canPushToCop(storeTp)
+}
+
 // LogicalJoin can generates hash join, index join and sort merge join.
 // Firstly we check the hint, if hint is figured by user, we force to choose the corresponding physical plan.
 // If the hint is not matched, it will get other candidates.
@@ -1916,6 +1922,7 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 		return nil
 	}
 	lkeys, rkeys, _, _ := p.GetJoinKeys()
+	lNAkeys, rNAKeys := p.GetNAJoinKeys()
 	// todo: mpp na-keys.
 	// check match property
 	baseJoin := basePhysicalJoin{
@@ -1926,6 +1933,8 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 		DefaultValues:   p.DefaultValues,
 		LeftJoinKeys:    lkeys,
 		RightJoinKeys:   rkeys,
+		LeftNAJoinKeys:  lNAkeys,
+		RightNAJoinKeys: rNAKeys,
 	}
 	// It indicates which side is the build side.
 	preferredBuildIndex := 0

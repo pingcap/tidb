@@ -47,6 +47,16 @@ func NewConcurrentBitmap(bitLen int) *ConcurrentBitmap {
 	}
 }
 
+// Clone clones a new bitmap with the old bit set.
+func (cb *ConcurrentBitmap) Clone() *ConcurrentBitmap {
+	cp := NewConcurrentBitmap(cb.bitLen)
+	needLen := len(cp.segments)
+	for i := 0; i < needLen; i++ {
+		cp.segments[i] = cb.segments[i]
+	}
+	return cp
+}
+
 // Reset clean the bitmap if the length is suitable, otherwise renewing one.
 func (cb *ConcurrentBitmap) Reset(bitLen int) {
 	segmentLen := (bitLen + segmentWidth - 1) >> segmentWidthPower

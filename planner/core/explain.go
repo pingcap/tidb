@@ -482,7 +482,7 @@ func (p *PhysicalHashJoin) explainInfo(normalized bool) string {
 		if len(p.NAEqualConditions) == 0 {
 			buffer.WriteString("CARTESIAN ")
 		} else {
-			buffer.WriteString("NAAJ ")
+			buffer.WriteString("Null-aware ")
 		}
 	}
 

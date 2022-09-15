@@ -825,7 +825,9 @@ type basePhysicalJoin struct {
 	IsNullEQ      []bool
 	DefaultValues []types.Datum
 
-	LeftNAJoinKeys  []*expression.Column
+	// LeftNAJoinKeys is the null-aware left join keys (for anti join)
+	LeftNAJoinKeys []*expression.Column
+	// RightNAJoinKeys is the null-aware right join keys (for anti join)
 	RightNAJoinKeys []*expression.Column
 }
 
@@ -875,6 +877,7 @@ type PhysicalHashJoin struct {
 	Concurrency     uint
 	EqualConditions []*expression.ScalarFunction
 
+	// for null-aware anti join
 	NAEqualConditions []*expression.ScalarFunction
 
 	// use the outer table to build a hash table when the outer table is smaller.
@@ -1470,12 +1473,15 @@ func (p *PhysicalWindow) Clone() (PhysicalPlan, error) {
 
 // PhysicalShuffle represents a shuffle plan.
 // `Tails` and `DataSources` are the last plan within and the first plan following the "shuffle", respectively,
-//  to build the child executors chain.
+//
+//	to build the child executors chain.
+//
 // Take `Window` operator for example:
-//  Shuffle -> Window -> Sort -> DataSource, will be separated into:
-//    ==> Shuffle: for main thread
-//    ==> Window -> Sort(:Tail) -> shuffleWorker: for workers
-//    ==> DataSource: for `fetchDataAndSplit` thread
+//
+//	Shuffle -> Window -> Sort -> DataSource, will be separated into:
+//	  ==> Shuffle: for main thread
+//	  ==> Window -> Sort(:Tail) -> shuffleWorker: for workers
+//	  ==> DataSource: for `fetchDataAndSplit` thread
 type PhysicalShuffle struct {
 	basePhysicalPlan
 
