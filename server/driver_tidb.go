@@ -237,9 +237,11 @@ func (tc *TiDBContext) ExecuteStmt(ctx context.Context, stmt ast.StmtNode) (Resu
 	if rs == nil {
 		return nil, nil
 	}
-	return &tidbResultSet{
-		recordSet: rs,
-	}, nil
+	result := &tidbResultSet{recordSet: rs}
+	if execStmt, ok := stmt.(*ast.ExecuteStmt); ok {
+		result.preparedStmt = execStmt.PrepStmt.(*core.PlanCacheStmt)
+	}
+	return result, nil
 }
 
 // Close implements QueryCtx Close method.
