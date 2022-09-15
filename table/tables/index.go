@@ -115,7 +115,7 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 	)
 	if !opt.FromBackFill {
 		key, tempKey, keyVer = genTempIdxKeyByState(c.idxInfo, key)
-		if keyVer == tempKeyVerBackfill {
+		if keyVer == TempIndexKeyTypeBackfill {
 			key, tempKey = tempKey, nil
 			keyIsRewritten = true
 		}
@@ -255,6 +255,13 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 	return handle, kv.ErrKeyExists
 }
 
+var (
+	// DeleteMarker is a marker that the key is deleted.
+	DeleteMarker = []byte("delete")
+	// DeleteMarkerUnique is a marker that the unique index key is deleted.
+	DeleteMarkerUnique = []byte("deleteu")
+)
+
 // Delete removes the entry for handle h and indexedValues from KV index.
 func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle) error {
 	key, distinct, err := c.GenIndexKey(sc, indexedValues, h, nil)
@@ -272,8 +279,9 @@ func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexed
 			}
 		}
 		if len(tempKey) > 0 {
-			val := []byte("deleteu?")
-			val[len(val)-1] = tempKeyVer
+			val := make([]byte, 0, len(DeleteMarkerUnique)+1)
+			val = append(val, DeleteMarkerUnique...)
+			val = append(val, tempKeyVer)
 			err = txn.GetMemBuffer().Set(tempKey, val)
 			if err != nil {
 				return err
@@ -287,8 +295,9 @@ func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexed
 			}
 		}
 		if len(tempKey) > 0 {
-			val := []byte("delete?")
-			val[len(val)-1] = tempKeyVer
+			val := make([]byte, 0, len(DeleteMarker)+1)
+			val = append(val, DeleteMarker...)
+			val = append(val, tempKeyVer)
 			err = txn.GetMemBuffer().Set(tempKey, val)
 			if err != nil {
 				return err
@@ -303,9 +312,12 @@ func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexed
 }
 
 const (
-	tempKeyVerNone     = byte(0)
-	tempKeyVerBackfill = 'b' // The backfill version.
-	tempKeyVerMerge    = 'm' // The merge version.
+	// TempIndexKeyTypeNone means the key is not a temporary index key.
+	TempIndexKeyTypeNone byte = 0
+	// TempIndexKeyTypeBackfill indicates this value is written in the backfill stage.
+	TempIndexKeyTypeBackfill byte = 'b'
+	// TempIndexKeyTypeMerge indicates this value is written in the merge stage.
+	TempIndexKeyTypeMerge byte = 'm'
 )
 
 // genTempIdxKeyByState is used to get the key version and the temporary key.
@@ -314,20 +326,20 @@ func genTempIdxKeyByState(indexInfo *model.IndexInfo, indexKey kv.Key) (key, tem
 	if indexInfo.State != model.StatePublic {
 		switch indexInfo.BackfillState {
 		case model.BackfillStateInapplicable:
-			return indexKey, nil, tempKeyVerNone
+			return indexKey, nil, TempIndexKeyTypeNone
 		case model.BackfillStateRunning:
 			// Write to the temporary index.
 			tablecodec.IndexKey2TempIndexKey(indexInfo.ID, indexKey)
-			return nil, indexKey, tempKeyVerBackfill
+			return nil, indexKey, TempIndexKeyTypeBackfill
 		case model.BackfillStateReadyToMerge, model.BackfillStateMerging:
 			// Double write
 			tmp := make([]byte, len(indexKey))
 			copy(tmp, indexKey)
 			tablecodec.IndexKey2TempIndexKey(indexInfo.ID, tmp)
-			return indexKey, tmp, tempKeyVerMerge
+			return indexKey, tmp, TempIndexKeyTypeMerge
 		}
 	}
-	return indexKey, nil, tempKeyVerNone
+	return indexKey, nil, TempIndexKeyTypeNone
 }
 
 func (c *index) Exist(sc *stmtctx.StatementContext, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle) (bool, kv.Handle, error) {

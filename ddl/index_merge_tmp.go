@@ -128,6 +128,7 @@ func (w *mergeIndexWorker) BackfillDataInTxn(taskRange reorgBackfillTask) (taskC
 		}
 
 		for i, idxRecord := range tmpIdxRecords {
+			taskCtx.scanCount++
 			// The index is already exists, we skip it, no needs to backfill it.
 			// The following update, delete, insert on these rows, TiDB can handle it correctly.
 			// If all batch are skipped, update first index key to make txn commit to release lock.
@@ -146,6 +147,7 @@ func (w *mergeIndexWorker) BackfillDataInTxn(taskRange reorgBackfillTask) (taskC
 			if err != nil {
 				return err
 			}
+			taskCtx.addedCount++
 		}
 		return nil
 	})
@@ -184,22 +186,18 @@ func (w *mergeIndexWorker) fetchTempIndexVals(txn kv.Transaction, taskRange reor
 
 			isDelete := false
 			unique := false
-			var keyVer []byte
 			length := len(rawValue)
-			keyVer = append(keyVer, rawValue[length-1:]...)
-			rawValue = rawValue[:length-1]
-			length--
-			if bytes.Equal(keyVer, []byte("m")) {
+			keyVer := rawValue[length-1]
+			if keyVer == tables.TempIndexKeyTypeMerge {
 				// The kv is written in the merging state. It has been written to the origin index, we can skip it.
 				return true, nil
 			}
-			if bytes.Equal(rawValue, []byte("delete")) {
+			rawValue = rawValue[:length-1]
+			if bytes.Equal(rawValue, tables.DeleteMarker) {
 				isDelete = true
-				rawValue = rawValue[:length-6]
-			} else if bytes.Equal(rawValue, []byte("deleteu")) {
+			} else if bytes.Equal(rawValue, tables.DeleteMarkerUnique) {
 				isDelete = true
 				unique = true
-				rawValue = rawValue[:length-7]
 			}
 
 			originIdxKey := make([]byte, len(indexKey))
