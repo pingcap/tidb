@@ -953,6 +953,8 @@ func TestGetSchema(t *testing.T) {
 	require.NoError(t, err)
 	decoder = json.NewDecoder(resp.Body)
 	err = decoder.Decode(&ti)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
 	require.Equal(t, "t1", ti.Name.L)
 	require.Equal(t, ti, ti)
 }
