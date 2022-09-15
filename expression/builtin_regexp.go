@@ -76,7 +76,7 @@ func (re *regexpBaseFuncSig) isBinaryCollation() bool {
 func (re *regexpBaseFuncSig) clone() *regexpBaseFuncSig {
 	newSig := &regexpBaseFuncSig{once: sync.Once{}}
 	if re.memorizedRegexp != nil {
-		newSig.memorizedRegexp = re.memorizedRegexp.Copy()
+		newSig.memorizedRegexp = re.memorizedRegexp
 	}
 	newSig.memorizedErr = re.memorizedErr
 	newSig.cloneFrom(&re.baseBuiltinFunc)
