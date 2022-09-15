@@ -948,6 +948,13 @@ func TestGetSchema(t *testing.T) {
 	require.Equal(t, "t1", dbtbl.TableInfo.Name.L)
 	require.Equal(t, "test", dbtbl.DBInfo.Name.L)
 	require.Equal(t, ti, dbtbl.TableInfo)
+
+	resp, err = ts.fetchStatus(fmt.Sprintf("/schema?table_id=%v", ti.GetPartitionInfo().Definitions[0].ID))
+	require.NoError(t, err)
+	decoder = json.NewDecoder(resp.Body)
+	err = decoder.Decode(&ti)
+	require.Equal(t, "t1", ti.Name.L)
+	require.Equal(t, ti, ti)
 }
 
 func TestAllHistory(t *testing.T) {
