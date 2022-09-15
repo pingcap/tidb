@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
@@ -286,6 +287,16 @@ type Simple struct {
 type PhysicalSimpleWrapper struct {
 	basePhysicalPlan
 	Inner Simple
+}
+
+// MemoryUsage return the memory usage of PhysicalSimpleWrapper
+func (p *PhysicalSimpleWrapper) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.basePhysicalPlan.MemoryUsage() + int64(unsafe.Sizeof(Simple{})) + p.Inner.baseSchemaProducer.MemoryUsage()
+	return
 }
 
 // InsertGeneratedColumns is for completing generated columns in Insert.

@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util/size"
 	"github.com/stretchr/testify/require"
 )
 
@@ -134,6 +135,16 @@ func (p *mockPhysicalPlan4Test) attach2Task(tasks ...task) task {
 		t.addCost(1)
 	}
 	return t
+}
+
+// MemoryUsage return the memory usage of mockPhysicalPlan4Test
+func (p *mockPhysicalPlan4Test) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.basePhysicalPlan.MemoryUsage() + size.SizeOfInt + size.SizeOfBool
+	return
 }
 
 func TestCostOverflow(t *testing.T) {

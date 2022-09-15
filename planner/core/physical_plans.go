@@ -647,6 +647,16 @@ type PhysicalMemTable struct {
 	QueryTimeRange QueryTimeRange
 }
 
+func (p *PhysicalMemTable) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.physicalSchemaProducer.MemoryUsage() + p.DBName.MemoryUsage() + size.SizeOfSlice + size.SizeOfInterface +
+		p.QueryTimeRange.MemoryUsage()
+	return
+}
+
 // PhysicalTableScan represents a table scan plan.
 type PhysicalTableScan struct {
 	physicalSchemaProducer

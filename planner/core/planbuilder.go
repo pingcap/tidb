@@ -23,6 +23,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/bindinfo"
@@ -171,6 +172,17 @@ type QueryTimeRange struct {
 // Condition returns a WHERE clause base on it's value
 func (tr *QueryTimeRange) Condition() string {
 	return fmt.Sprintf("where time>='%s' and time<='%s'", tr.From.Format(MetricTableTimeFormat), tr.To.Format(MetricTableTimeFormat))
+}
+
+const emptyQueryTimeRangeSize = int64(unsafe.Sizeof(QueryTimeRange{}))
+
+// MemoryUsage return the memory usage of QueryTimeRange
+func (tr *QueryTimeRange) MemoryUsage() (sum int64) {
+	if tr == nil {
+		return
+	}
+
+	return emptyQueryTimeRangeSize
 }
 
 func tableNames2HintTableInfo(ctx sessionctx.Context, hintName string, hintTables []ast.HintTable, p *hint.BlockHintProcessor, currentOffset int) []hintTableInfo {
