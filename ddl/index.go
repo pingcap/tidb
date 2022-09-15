@@ -604,7 +604,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		// none -> delete only
 		reorgTp := pickBackfillType(job)
 		if reorgTp.NeedMergeProcess() {
-			// Increase TelemetryAddIndexIngestUsage
+			// Increase telemetryAddIndexIngestUsage
 			telemetryAddIndexIngestUsage.Inc()
 			indexInfo.BackfillState = model.BackfillStateRunning
 		}
