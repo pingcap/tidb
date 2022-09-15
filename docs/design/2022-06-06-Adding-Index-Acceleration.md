@@ -92,7 +92,7 @@ As an optimization, this proposal does not lead to any semantic change so theore
 1. Use tidb_ddl_enable_fast_reorg to enable and disable new solution, default value is off.
 ```TiDB> set global tidb_ddl_enable_fast_reorg = on/off;```
 
-2. Use tidb_ddl_disk_quota to set a threshold of local disk max usage by new backfiller, the range of this variable is from 100 GB to 1 PB, default value is 100 GB.
+2. Use tidb_ddl_disk_quota to set a threshold of local disk max usage by new backfiller, the range of this variable is from 100 GiB to 1 PiB, default value is 100 GiB.
 ```TiDB> set global tidb_ddl_disk_quota = 107374182400;```
 
 3. Use one config parameter fast-reorg-local-path to specify the sort path for lightning when it used in add index reorg stage. The default value is /tmp/tidb, please change it to your own disk path for the new backfiller could work properly.
