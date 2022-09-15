@@ -16,7 +16,6 @@ package expression
 
 import (
 	"regexp"
-	"sync"
 
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -135,7 +134,6 @@ func buildIntParam(bf *baseBuiltinFunc, idx int, input *chunk.Chunk, notProvided
 type regexpMemorizedSig struct {
 	memorizedRegexp *regexp.Regexp
 	memorizedErr    error
-	lock            sync.Mutex
 }
 
 func (reg *regexpMemorizedSig) isMemorizedRegexpInitialized() bool {

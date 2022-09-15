@@ -74,7 +74,7 @@ func (re *regexpBaseFuncSig) isBinaryCollation() bool {
 }
 
 func (re *regexpBaseFuncSig) clone() *regexpBaseFuncSig {
-	newSig := &regexpBaseFuncSig{regexpMemorizedSig: regexpMemorizedSig{lock: sync.Mutex{}}, once: sync.Once{}}
+	newSig := &regexpBaseFuncSig{once: sync.Once{}}
 	if re.memorizedRegexp != nil {
 		newSig.memorizedRegexp = re.memorizedRegexp.Copy()
 	}
@@ -182,14 +182,19 @@ func (re *regexpBaseFuncSig) tryToMemorize(params []*regexpParam, matchTypeIdx i
 		return nil
 	}
 
-	re.lock.Lock()
-	defer re.lock.Unlock()
+	var err error
+	memorize := func() {
+		if re.isMemorizedRegexpInitialized() {
+			err = nil
+			return
+		}
 
-	if re.isMemorizedRegexpInitialized() {
-		return nil // It's needless to memorize again
+		err = re.initMemoizedRegexp(params, matchTypeIdx)
 	}
 
-	return re.initMemoizedRegexp(params, matchTypeIdx)
+	re.once.Do(memorize)
+
+	return err
 }
 
 // https://dev.mysql.com/doc/refman/8.0/en/regexp.html#function_regexp-like
