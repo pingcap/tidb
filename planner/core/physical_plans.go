@@ -1026,7 +1026,7 @@ func (p *basePhysicalJoin) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = emptyPartitionInfoSize + p.physicalSchemaProducer.MemoryUsage() + int64(cap(p.IsNullEQ))*size.SizeOfBool
+	sum = emptyBasePhysicalJoinSize + p.physicalSchemaProducer.MemoryUsage() + int64(cap(p.IsNullEQ))*size.SizeOfBool
 
 	for _, cond := range p.LeftConditions {
 		sum += cond.MemoryUsage()
