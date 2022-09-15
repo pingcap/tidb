@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/testkit"
@@ -68,11 +67,7 @@ func runInterruptedJob(t *testing.T, store kv.Storage, d ddl.DDL, job *model.Job
 		endlessLoopTime := time.Now().Add(time.Minute)
 		for history == nil {
 			// imitate DoDDLJob's logic, quit only find history
-			err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, false, func(ctx context.Context, txn kv.Transaction) error {
-				history, err = meta.NewMeta(txn).GetHistoryDDLJob(job.ID)
-				return err
-			})
-			require.NoError(t, err)
+			history, _ = ddl.GetHistoryJobByID(testkit.NewTestKit(t, store).Session(), job.ID)
 			if history != nil {
 				err = history.Error
 			}
@@ -106,8 +101,7 @@ func testRunInterruptedJob(t *testing.T, store kv.Storage, d *domain.Domain, job
 }
 
 func TestSchemaResume(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
 
 	require.True(t, dom.DDL().OwnerManager().IsOwner())
 
@@ -132,8 +126,7 @@ func TestSchemaResume(t *testing.T) {
 }
 
 func TestStat(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
 
 	dbInfo, err := testSchemaInfo(store, "test_restart")
 	require.NoError(t, err)
@@ -174,8 +167,7 @@ LOOP:
 }
 
 func TestTableResume(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
 
 	dbInfo, err := testSchemaInfo(store, "test_table")
 	require.NoError(t, err)

@@ -19,6 +19,7 @@ go_test(
         "simple_lru_test.go",
     ],
     embed = [":kvcache"],
+    flaky = True,
     deps = [
         "//testkit/testsetup",
         "//util/memory",

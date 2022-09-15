@@ -23,5 +23,6 @@ go_test(
         "schema_test.go",
     ],
     embed = [":filter"],
+    flaky = True,
     deps = ["@com_github_stretchr_testify//require"],
 )

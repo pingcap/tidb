@@ -18,6 +18,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/engine"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
@@ -70,16 +72,6 @@ func checkTiFlashVersion(store *metapb.Store) error {
 	return nil
 }
 
-// IsTiFlash tests whether the store is based on tiflash engine.
-func IsTiFlash(store *metapb.Store) bool {
-	for _, label := range store.Labels {
-		if label.Key == "engine" && label.Value == "tiflash" {
-			return true
-		}
-	}
-	return false
-}
-
 // VerChecker is a callback for the CheckClusterVersion, decides whether the cluster is suitable to execute restore.
 // See also: CheckVersionForBackup and CheckVersionForBR.
 type VerChecker func(store *metapb.Store, ver *semver.Version) error
@@ -91,7 +83,7 @@ func CheckClusterVersion(ctx context.Context, client pd.Client, checker VerCheck
 		return errors.Trace(err)
 	}
 	for _, s := range stores {
-		isTiFlash := IsTiFlash(s)
+		isTiFlash := engine.IsTiFlash(s)
 		log.Debug("checking compatibility of store in cluster",
 			zap.Uint64("ID", s.GetId()),
 			zap.Bool("TiFlash?", isTiFlash),
@@ -157,6 +149,18 @@ func CheckVersionForBRPiTR(s *metapb.Store, tikvVersion *semver.Version) error {
 		}
 	}
 
+	return nil
+}
+
+// CheckVersionForDDL checks whether we use queue or table to execute ddl during restore.
+func CheckVersionForDDL(s *metapb.Store, tikvVersion *semver.Version) error {
+	// use tikvVersion instead of tidbVersion since br doesn't have mysql client to connect tidb.
+	requireVersion := semver.New("6.2.0-alpha")
+	if tikvVersion.Compare(*requireVersion) < 0 {
+		log.Info("detected the old version of tidb cluster. set enable concurrent ddl to false")
+		variable.EnableConcurrentDDL.Store(false)
+		return nil
+	}
 	return nil
 }
 
@@ -289,7 +293,7 @@ func FetchVersion(ctx context.Context, db utils.QueryExecutor) (string, error) {
 	const queryTiDB = "SELECT tidb_version();"
 	tidbRow := db.QueryRowContext(ctx, queryTiDB)
 	err := tidbRow.Scan(&versionInfo)
-	if err == nil {
+	if err == nil && tidbReleaseVersionFullRegex.FindString(versionInfo) != "" {
 		return versionInfo, nil
 	}
 	log.L().Warn("select tidb_version() failed, will fallback to 'select version();'", logutil.ShortError(err))
@@ -346,6 +350,8 @@ var (
 	tidbVersionRegex = regexp.MustCompile(`-[v]?\d+\.\d+\.\d+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?`)
 	// `select tidb_version()` result
 	tidbReleaseVersionRegex = regexp.MustCompile(`v\d+\.\d+\.\d+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?`)
+	// `select tidb_version()` result with full release version
+	tidbReleaseVersionFullRegex = regexp.MustCompile(`Release Version:\s*v\d+\.\d+\.\d+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?`)
 )
 
 // ParseServerInfo parses exported server type and version info from version string
@@ -373,7 +379,8 @@ func ParseServerInfo(src string) ServerInfo {
 		if isReleaseVersion {
 			versionStr = tidbReleaseVersionRegex.FindString(src)
 		} else {
-			versionStr = tidbVersionRegex.FindString(src)[1:]
+			versionStr = tidbVersionRegex.FindString(src)
+			versionStr = strings.TrimPrefix(versionStr, "-")
 		}
 		versionStr = strings.TrimPrefix(versionStr, "v")
 	} else {
@@ -383,16 +390,14 @@ func ParseServerInfo(src string) ServerInfo {
 	var err error
 	serverInfo.ServerVersion, err = semver.NewVersion(versionStr)
 	if err != nil {
-		log.L().Warn("fail to parse version",
+		log.L().Warn("fail to parse version, fallback to 0.0.0",
 			zap.String("version", versionStr))
+		serverInfo.ServerVersion = semver.New("0.0.0")
 	}
-	var version string
-	if serverInfo.ServerVersion != nil {
-		version = serverInfo.ServerVersion.String()
-	}
+
 	log.L().Info("detect server version",
 		zap.String("type", serverInfo.ServerType.String()),
-		zap.String("version", version))
+		zap.String("version", serverInfo.ServerVersion.String()))
 
 	return serverInfo
 }

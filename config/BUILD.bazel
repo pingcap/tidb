@@ -12,7 +12,6 @@ go_library(
     deps = [
         "//br/pkg/streamhelper/config",
         "//parser/terror",
-        "//types/json",
         "//util/logutil",
         "//util/tikvutil",
         "//util/versioninfo",
@@ -28,6 +27,7 @@ go_library(
 
 go_test(
     name = "config_test",
+    timeout = "short",
     srcs = [
         "config_test.go",
         "config_util_test.go",
@@ -35,6 +35,7 @@ go_test(
     ],
     data = glob(["**"]),
     embed = [":config"],
+    flaky = True,
     deps = [
         "//testkit/testsetup",
         "//util/logutil",

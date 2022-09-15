@@ -22,14 +22,14 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/slices"
 )
 
 func TestGetDDLJobs(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	sess := testkit.NewTestKit(t, store).Session()
 	_, err := sess.Execute(context.Background(), "begin")
@@ -47,15 +47,15 @@ func TestGetDDLJobs(t *testing.T) {
 			SchemaID: 1,
 			Type:     model.ActionCreateTable,
 		}
-		err := addDDLJobs(txn, jobs[i])
+		err := addDDLJobs(sess, txn, jobs[i])
 		require.NoError(t, err)
 
-		currJobs, err := ddl.GetAllDDLJobs(meta.NewMeta(txn))
+		currJobs, err := ddl.GetAllDDLJobs(sess, meta.NewMeta(txn))
 		require.NoError(t, err)
 		require.Len(t, currJobs, i+1)
 
 		currJobs2 = currJobs2[:0]
-		err = ddl.IterAllDDLJobs(txn, func(jobs []*model.Job) (b bool, e error) {
+		err = ddl.IterAllDDLJobs(sess, txn, func(jobs []*model.Job) (b bool, e error) {
 			for _, job := range jobs {
 				if job.NotStarted() {
 					currJobs2 = append(currJobs2, job)
@@ -69,7 +69,7 @@ func TestGetDDLJobs(t *testing.T) {
 		require.Len(t, currJobs2, i+1)
 	}
 
-	currJobs, err := ddl.GetAllDDLJobs(meta.NewMeta(txn))
+	currJobs, err := ddl.GetAllDDLJobs(sess, meta.NewMeta(txn))
 	require.NoError(t, err)
 
 	for i, job := range jobs {
@@ -84,8 +84,7 @@ func TestGetDDLJobs(t *testing.T) {
 }
 
 func TestGetDDLJobsIsSort(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	sess := testkit.NewTestKit(t, store).Session()
 	_, err := sess.Execute(context.Background(), "begin")
@@ -95,15 +94,15 @@ func TestGetDDLJobsIsSort(t *testing.T) {
 	require.NoError(t, err)
 
 	// insert 5 drop table jobs to DefaultJobListKey queue
-	enQueueDDLJobs(t, txn, model.ActionDropTable, 10, 15)
+	enQueueDDLJobs(t, sess, txn, model.ActionDropTable, 10, 15)
 
 	// insert 5 create table jobs to DefaultJobListKey queue
-	enQueueDDLJobs(t, txn, model.ActionCreateTable, 0, 5)
+	enQueueDDLJobs(t, sess, txn, model.ActionCreateTable, 0, 5)
 
 	// insert add index jobs to AddIndexJobListKey queue
-	enQueueDDLJobs(t, txn, model.ActionAddIndex, 5, 10)
+	enQueueDDLJobs(t, sess, txn, model.ActionAddIndex, 5, 10)
 
-	currJobs, err := ddl.GetAllDDLJobs(meta.NewMeta(txn))
+	currJobs, err := ddl.GetAllDDLJobs(sess, meta.NewMeta(txn))
 	require.NoError(t, err)
 	require.Len(t, currJobs, 15)
 
@@ -117,15 +116,14 @@ func TestGetDDLJobsIsSort(t *testing.T) {
 }
 
 func TestGetHistoryDDLJobs(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	// delete the internal DDL record.
 	err := kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, false, func(ctx context.Context, txn kv.Transaction) error {
 		return meta.NewMeta(txn).ClearAllHistoryJob()
 	})
-
 	require.NoError(t, err)
+	testkit.NewTestKit(t, store).MustExec("delete from mysql.tidb_ddl_history")
 
 	tk := testkit.NewTestKit(t, store)
 	sess := tk.Session()
@@ -143,7 +141,7 @@ func TestGetHistoryDDLJobs(t *testing.T) {
 			SchemaID: 1,
 			Type:     model.ActionCreateTable,
 		}
-		err = ddl.AddHistoryDDLJob(m, jobs[i], true)
+		err = ddl.AddHistoryDDLJobForTest(sess, m, jobs[i], true)
 		require.NoError(t, err)
 
 		historyJobs, err := ddl.GetLastNHistoryDDLJobs(m, ddl.DefNumHistoryJobs)
@@ -204,14 +202,14 @@ func TestIsJobRollbackable(t *testing.T) {
 	}
 }
 
-func enQueueDDLJobs(t *testing.T, txn kv.Transaction, jobType model.ActionType, start, end int) {
+func enQueueDDLJobs(t *testing.T, sess session.Session, txn kv.Transaction, jobType model.ActionType, start, end int) {
 	for i := start; i < end; i++ {
 		job := &model.Job{
 			ID:       int64(i),
 			SchemaID: 1,
 			Type:     jobType,
 		}
-		err := addDDLJobs(txn, job)
+		err := addDDLJobs(sess, txn, job)
 		require.NoError(t, err)
 	}
 }

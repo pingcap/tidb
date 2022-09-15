@@ -15,15 +15,23 @@ package restore
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 	"testing"
 
+	"github.com/DATA-DOG/go-sqlmock"
+	mysql_sql_driver "github.com/go-sql-driver/mysql"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/restore/mock"
+	ropts "github.com/pingcap/tidb/br/pkg/lightning/restore/opts"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
+	pqt_buf_src "github.com/xitongsys/parquet-go-source/buffer"
+	pqtwriter "github.com/xitongsys/parquet-go/writer"
 )
 
 type colDef struct {
@@ -121,44 +129,39 @@ func TestGetPreInfoHasDefault(t *testing.T) {
 
 func TestGetPreInfoAutoRandomBits(t *testing.T) {
 	subCases := []struct {
-		ColDef               string
-		ExpectAutoRandomBits uint64
+		ColDef                    string
+		ExpectAutoRandomBits      uint64
+		ExpectAutoRandomRangeBits uint64
 	}{
 		{
-			ColDef:               "varchar(16)",
-			ExpectAutoRandomBits: 0,
+			ColDef:                    "varchar(16)",
+			ExpectAutoRandomBits:      0,
+			ExpectAutoRandomRangeBits: 0,
 		},
 		{
-			ColDef:               "varchar(16) AUTO_RANDOM",
-			ExpectAutoRandomBits: 0,
+			ColDef:                    "BIGINT PRIMARY KEY AUTO_RANDOM",
+			ExpectAutoRandomBits:      5,
+			ExpectAutoRandomRangeBits: 64,
 		},
 		{
-			ColDef:               "INTEGER PRIMARY KEY AUTO_RANDOM",
-			ExpectAutoRandomBits: 0,
+			ColDef:                    "BIGINT PRIMARY KEY AUTO_RANDOM(3)",
+			ExpectAutoRandomBits:      3,
+			ExpectAutoRandomRangeBits: 64,
 		},
 		{
-			ColDef:               "BIGINT PRIMARY KEY AUTO_RANDOM AUTO_INCREMENT",
-			ExpectAutoRandomBits: 0,
+			ColDef:                    "BIGINT PRIMARY KEY AUTO_RANDOM",
+			ExpectAutoRandomBits:      5,
+			ExpectAutoRandomRangeBits: 64,
 		},
 		{
-			ColDef:               "BIGINT PRIMARY KEY AUTO_RANDOM(3)",
-			ExpectAutoRandomBits: 3,
+			ColDef:                    "BIGINT PRIMARY KEY AUTO_RANDOM(5, 64)",
+			ExpectAutoRandomBits:      5,
+			ExpectAutoRandomRangeBits: 64,
 		},
 		{
-			ColDef:               "BIGINT PRIMARY KEY AUTO_RANDOM",
-			ExpectAutoRandomBits: 5,
-		},
-		{
-			ColDef:               "BIGINT PRIMARY KEY AUTO_RANDOM(20)",
-			ExpectAutoRandomBits: 0,
-		},
-		{
-			ColDef:               "BIGINT PRIMARY KEY AUTO_RANDOM(0)",
-			ExpectAutoRandomBits: 0,
-		},
-		{
-			ColDef:               "BIGINT AUTO_RANDOM",
-			ExpectAutoRandomBits: 0,
+			ColDef:                    "BIGINT PRIMARY KEY AUTO_RANDOM(2, 32)",
+			ExpectAutoRandomBits:      2,
+			ExpectAutoRandomRangeBits: 32,
 		},
 	}
 	for _, subCase := range subCases {
@@ -166,6 +169,7 @@ func TestGetPreInfoAutoRandomBits(t *testing.T) {
 		tblInfo, err := newTableInfo(createTblSQL, 1)
 		require.Nil(t, err)
 		require.Equal(t, subCase.ExpectAutoRandomBits, tblInfo.AutoRandomBits, subCase.ColDef)
+		require.Equal(t, subCase.ExpectAutoRandomRangeBits, tblInfo.AutoRandomRangeBits, subCase.ColDef)
 	}
 }
 
@@ -222,7 +226,7 @@ func TestGetPreInfoGetAllTableStructures(t *testing.T) {
 
 	cfg := config.NewConfig()
 	cfg.TikvImporter.Backend = config.BackendLocal
-	ig, err := NewPreRestoreInfoGetter(cfg, mockSrc.GetAllDBFileMetas(), mockSrc.GetStorage(), mockTarget, nil, nil)
+	ig, err := NewPreRestoreInfoGetter(cfg, mockSrc.GetAllDBFileMetas(), mockSrc.GetStorage(), mockTarget, nil, nil, ropts.WithIgnoreDBNotExist(true))
 	require.NoError(t, err)
 	tblStructMap, err := ig.GetAllTableStructures(ctx)
 	require.Nil(t, err)
@@ -244,18 +248,41 @@ func TestGetPreInfoGetAllTableStructures(t *testing.T) {
 	}
 }
 
+func generateParquetData(t *testing.T) []byte {
+	type parquetStruct struct {
+		Id   int64  `parquet:"name=id, type=INT64"`
+		Name string `parquet:"name=name, type=BYTE_ARRAY"`
+	}
+	pf, err := pqt_buf_src.NewBufferFile(make([]byte, 0))
+	require.NoError(t, err)
+	pw, err := pqtwriter.NewParquetWriter(pf, new(parquetStruct), 4)
+	require.NoError(t, err)
+	for i := 0; i < 10; i++ {
+		require.NoError(t, pw.Write(parquetStruct{
+			Id:   int64(i + 1),
+			Name: fmt.Sprintf("name_%d", i+1),
+		}))
+	}
+	require.NoError(t, pw.WriteStop())
+	require.NoError(t, pf.Close())
+	bf, ok := pf.(pqt_buf_src.BufferFile)
+	require.True(t, ok)
+	return append([]byte(nil), bf.Bytes()...)
+}
+
 func TestGetPreInfoReadFirstRow(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	const testCSVData01 string = `ival,sval
+	var testCSVData01 []byte = []byte(`ival,sval
 111,"aaa"
 222,"bbb"
-`
+`)
+	pqtData := generateParquetData(t)
 	const testSQLData01 string = `INSERT INTO db01.tbl01 (ival, sval) VALUES (333, 'ccc');
 INSERT INTO db01.tbl01 (ival, sval) VALUES (444, 'ddd');`
 	testDataInfos := []struct {
 		FileName             string
-		Data                 string
+		Data                 []byte
 		FirstN               int
 		CSVConfig            *config.CSVConfig
 		ExpectFirstRowDatums [][]types.Datum
@@ -291,7 +318,7 @@ INSERT INTO db01.tbl01 (ival, sval) VALUES (444, 'ddd');`
 		},
 		{
 			FileName: "/db01/tbl01/data.001.sql",
-			Data:     testSQLData01,
+			Data:     []byte(testSQLData01),
 			FirstN:   1,
 			ExpectFirstRowDatums: [][]types.Datum{
 				{
@@ -303,17 +330,37 @@ INSERT INTO db01.tbl01 (ival, sval) VALUES (444, 'ddd');`
 		},
 		{
 			FileName:             "/db01/tbl01/data.003.csv",
-			Data:                 "",
+			Data:                 []byte(""),
 			FirstN:               1,
 			ExpectFirstRowDatums: [][]types.Datum{},
 			ExpectColumns:        nil,
 		},
 		{
 			FileName:             "/db01/tbl01/data.004.csv",
-			Data:                 "ival,sval",
+			Data:                 []byte("ival,sval"),
 			FirstN:               1,
 			ExpectFirstRowDatums: [][]types.Datum{},
 			ExpectColumns:        []string{"ival", "sval"},
+		},
+		{
+			FileName: "/db01/tbl01/data.005.parquet",
+			Data:     pqtData,
+			FirstN:   3,
+			ExpectFirstRowDatums: [][]types.Datum{
+				{
+					types.NewIntDatum(1),
+					types.NewCollationStringDatum("name_1", ""),
+				},
+				{
+					types.NewIntDatum(2),
+					types.NewCollationStringDatum("name_2", ""),
+				},
+				{
+					types.NewIntDatum(3),
+					types.NewCollationStringDatum("name_3", ""),
+				},
+			},
+			ExpectColumns: []string{"id", "name"},
 		},
 	}
 	tblMockSourceData := &mock.MockTableSourceData{
@@ -328,7 +375,7 @@ INSERT INTO db01.tbl01 (ival, sval) VALUES (444, 'ddd');`
 	for _, testInfo := range testDataInfos {
 		tblMockSourceData.DataFiles = append(tblMockSourceData.DataFiles, &mock.MockSourceFile{
 			FileName: testInfo.FileName,
-			Data:     []byte(testInfo.Data),
+			Data:     testInfo.Data,
 		})
 	}
 	mockDataMap := map[string]*mock.MockDBSourceData{
@@ -395,7 +442,7 @@ func TestGetPreInfoSampleSource(t *testing.T) {
 	mockTarget := mock.NewMockTargetInfo()
 	cfg := config.NewConfig()
 	cfg.TikvImporter.Backend = config.BackendLocal
-	ig, err := NewPreRestoreInfoGetter(cfg, mockSrc.GetAllDBFileMetas(), mockSrc.GetStorage(), mockTarget, nil, nil)
+	ig, err := NewPreRestoreInfoGetter(cfg, mockSrc.GetAllDBFileMetas(), mockSrc.GetStorage(), mockTarget, nil, nil, ropts.WithIgnoreDBNotExist(true))
 	require.NoError(t, err)
 
 	mdDBMeta := mockSrc.GetAllDBFileMetas()[0]
@@ -485,7 +532,7 @@ func TestGetPreInfoEstimateSourceSize(t *testing.T) {
 	mockTarget := mock.NewMockTargetInfo()
 	cfg := config.NewConfig()
 	cfg.TikvImporter.Backend = config.BackendLocal
-	ig, err := NewPreRestoreInfoGetter(cfg, mockSrc.GetAllDBFileMetas(), mockSrc.GetStorage(), mockTarget, nil, nil)
+	ig, err := NewPreRestoreInfoGetter(cfg, mockSrc.GetAllDBFileMetas(), mockSrc.GetStorage(), mockTarget, nil, nil, ropts.WithIgnoreDBNotExist(true))
 	require.NoError(t, err)
 
 	sizeResult, err := ig.EstimateSourceDataSize(ctx)
@@ -494,4 +541,49 @@ func TestGetPreInfoEstimateSourceSize(t *testing.T) {
 	require.GreaterOrEqual(t, sizeResult.SizeWithIndex, sizeResult.SizeWithoutIndex)
 	require.Equal(t, int64(len(testData)), sizeResult.SizeWithoutIndex)
 	require.False(t, sizeResult.HasUnsortedBigTables)
+}
+
+func TestGetPreInfoIsTableEmpty(t *testing.T) {
+	ctx := context.TODO()
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	lnConfig := config.NewConfig()
+	lnConfig.TikvImporter.Backend = config.BackendLocal
+	targetGetter, err := NewTargetInfoGetterImpl(lnConfig, db)
+	require.NoError(t, err)
+	require.Equal(t, lnConfig, targetGetter.cfg)
+
+	mock.ExpectQuery("SELECT 1 FROM `test_db`.`test_tbl` LIMIT 1").
+		WillReturnError(&mysql_sql_driver.MySQLError{
+			Number:  errno.ErrNoSuchTable,
+			Message: "Table 'test_db.test_tbl' doesn't exist",
+		})
+	pIsEmpty, err := targetGetter.IsTableEmpty(ctx, "test_db", "test_tbl")
+	require.NoError(t, err)
+	require.NotNil(t, pIsEmpty)
+	require.Equal(t, true, *pIsEmpty)
+
+	mock.ExpectQuery("SELECT 1 FROM `test_db`.`test_tbl` LIMIT 1").
+		WillReturnRows(
+			sqlmock.NewRows([]string{"1"}).
+				RowError(0, sql.ErrNoRows),
+		)
+	pIsEmpty, err = targetGetter.IsTableEmpty(ctx, "test_db", "test_tbl")
+	require.NoError(t, err)
+	require.NotNil(t, pIsEmpty)
+	require.Equal(t, true, *pIsEmpty)
+
+	mock.ExpectQuery("SELECT 1 FROM `test_db`.`test_tbl` LIMIT 1").
+		WillReturnRows(
+			sqlmock.NewRows([]string{"1"}).AddRow(1),
+		)
+	pIsEmpty, err = targetGetter.IsTableEmpty(ctx, "test_db", "test_tbl")
+	require.NoError(t, err)
+	require.NotNil(t, pIsEmpty)
+	require.Equal(t, false, *pIsEmpty)
+
+	mock.ExpectQuery("SELECT 1 FROM `test_db`.`test_tbl` LIMIT 1").
+		WillReturnError(errors.New("some dummy error"))
+	_, err = targetGetter.IsTableEmpty(ctx, "test_db", "test_tbl")
+	require.Error(t, err)
 }

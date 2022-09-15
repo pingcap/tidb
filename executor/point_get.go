@@ -71,6 +71,9 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 		b.err = err
 		return nil
 	}
+	if b.ctx.GetSessionVars().IsReplicaReadClosestAdaptive() {
+		e.snapshot.SetOption(kv.ReplicaReadAdjuster, newReplicaReadAdjuster(e.ctx, p.GetAvgRowSize()))
+	}
 	if e.runtimeStats != nil {
 		snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}
 		e.stats = &runtimeStatsWithSnapshot{
@@ -78,6 +81,11 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 		}
 		e.snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
 		b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+	}
+
+	if p.IndexInfo != nil {
+		sctx := b.ctx.GetSessionVars().StmtCtx
+		sctx.IndexNames = append(sctx.IndexNames, p.TblInfo.Name.O+":"+p.IndexInfo.Name.O)
 	}
 
 	failpoint.Inject("assertPointReplicaOption", func(val failpoint.Value) {

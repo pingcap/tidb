@@ -67,7 +67,6 @@ func TestAddStrictFunctionalDependency(t *testing.T) {
 	fd.AddStrictFunctionalDependency(fe1.from, fe1.to)
 	fd.AddStrictFunctionalDependency(fe3.from, fe3.to)
 	assertF()
-
 	// TODO:
 	// test reduce col
 	// test more edges

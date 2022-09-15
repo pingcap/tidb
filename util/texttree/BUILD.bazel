@@ -15,6 +15,7 @@ go_test(
         "texttree_test.go",
     ],
     embed = [":texttree"],
+    flaky = True,
     deps = [
         "//testkit/testsetup",
         "@com_github_stretchr_testify//require",

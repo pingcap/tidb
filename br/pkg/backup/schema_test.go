@@ -24,15 +24,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func createMockCluster(t *testing.T) (m *mock.Cluster, clean func()) {
+func createMockCluster(t *testing.T) *mock.Cluster {
 	var err error
-	m, err = mock.NewCluster()
+	m, err := mock.NewCluster()
 	require.NoError(t, err)
 	require.NoError(t, m.Start())
-	clean = func() {
+	t.Cleanup(func() {
 		m.Stop()
-	}
-	return
+	})
+	return m
 }
 
 func GetRandomStorage(t *testing.T) storage.ExternalStorage {
@@ -89,8 +89,7 @@ func (sp *simpleProgress) get() int64 {
 }
 
 func TestBuildBackupRangeAndSchema(t *testing.T) {
-	m, clean := createMockCluster(t)
-	defer clean()
+	m := createMockCluster(t)
 
 	tk := testkit.NewTestKit(t, m.Storage)
 
@@ -189,8 +188,7 @@ func TestBuildBackupRangeAndSchema(t *testing.T) {
 }
 
 func TestBuildBackupRangeAndSchemaWithBrokenStats(t *testing.T) {
-	m, clean := createMockCluster(t)
-	defer clean()
+	m := createMockCluster(t)
 
 	tk := testkit.NewTestKit(t, m.Storage)
 	tk.MustExec("use test")
@@ -270,8 +268,7 @@ func TestBuildBackupRangeAndSchemaWithBrokenStats(t *testing.T) {
 }
 
 func TestBackupSchemasForSystemTable(t *testing.T) {
-	m, clean := createMockCluster(t)
-	defer clean()
+	m := createMockCluster(t)
 
 	tk := testkit.NewTestKit(t, m.Storage)
 	es2 := GetRandomStorage(t)

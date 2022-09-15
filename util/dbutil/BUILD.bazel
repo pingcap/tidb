@@ -48,6 +48,7 @@ go_test(
         "variable_test.go",
     ],
     embed = [":dbutil"],
+    flaky = True,
     deps = [
         "//errno",
         "//infoschema",

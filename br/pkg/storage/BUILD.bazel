@@ -29,6 +29,7 @@ go_library(
         "@com_github_aws_aws_sdk_go//aws/awserr",
         "@com_github_aws_aws_sdk_go//aws/client",
         "@com_github_aws_aws_sdk_go//aws/credentials",
+        "@com_github_aws_aws_sdk_go//aws/credentials/stscreds",
         "@com_github_aws_aws_sdk_go//aws/request",
         "@com_github_aws_aws_sdk_go//aws/session",
         "@com_github_aws_aws_sdk_go//service/s3",
@@ -52,6 +53,7 @@ go_library(
 
 go_test(
     name = "storage_test",
+    timeout = "short",
     srcs = [
         "azblob_test.go",
         "compress_test.go",
@@ -63,6 +65,7 @@ go_test(
         "writer_test.go",
     ],
     embed = [":storage"],
+    flaky = True,
     deps = [
         "//br/pkg/mock",
         "@com_github_aws_aws_sdk_go//aws",

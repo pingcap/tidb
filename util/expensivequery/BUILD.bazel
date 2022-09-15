@@ -28,6 +28,7 @@ go_test(
     timeout = "short",
     srcs = ["expensivequerey_test.go"],
     embed = [":expensivequery"],
+    flaky = True,
     deps = [
         "//sessionctx/stmtctx",
         "//testkit/testsetup",

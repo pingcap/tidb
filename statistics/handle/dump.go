@@ -302,17 +302,20 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 			}
 			hist := statistics.HistogramFromProto(jsonCol.Histogram)
 			sc := &stmtctx.StatementContext{TimeZone: time.UTC}
-			// Deal with sortKey, the length of sortKey maybe longer than the column's length.
-			orgLen := colInfo.FieldType.GetFlen()
-			if types.IsString(colInfo.FieldType.GetType()) {
-				colInfo.SetFlen(types.UnspecifiedLength)
+			tmpFT := colInfo.FieldType
+			// For new collation data, when storing the bounds of the histogram, we store the collate key instead of the
+			// original value.
+			// But there's additional conversion logic for new collation data, and the collate key might be longer than
+			// the FieldType.flen.
+			// If we use the original FieldType here, there might be errors like "Invalid utf8mb4 character string"
+			// or "Data too long".
+			// So we change it to TypeBlob to bypass those logics here.
+			if colInfo.FieldType.EvalType() == types.ETString && colInfo.FieldType.GetType() != mysql.TypeEnum && colInfo.FieldType.GetType() != mysql.TypeSet {
+				tmpFT = *types.NewFieldType(mysql.TypeBlob)
 			}
-			hist, err := hist.ConvertTo(sc, &colInfo.FieldType)
+			hist, err := hist.ConvertTo(sc, &tmpFT)
 			if err != nil {
 				return nil, errors.Trace(err)
-			}
-			if types.IsString(colInfo.FieldType.GetType()) {
-				colInfo.SetFlen(orgLen)
 			}
 			cm, topN := statistics.CMSketchAndTopNFromProto(jsonCol.CMSketch)
 			fms := statistics.FMSketchFromProto(jsonCol.FMSketch)

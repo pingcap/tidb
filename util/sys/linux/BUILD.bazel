@@ -19,6 +19,7 @@ go_test(
         "main_test.go",
         "sys_test.go",
     ],
+    flaky = True,
     deps = [
         ":linux",
         "//testkit/testsetup",

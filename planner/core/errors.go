@@ -110,4 +110,9 @@ var (
 	ErrSubqueryMoreThan1Row     = dbterror.ClassOptimizer.NewStd(mysql.ErrSubqueryNo1Row)
 	ErrKeyPart0                 = dbterror.ClassOptimizer.NewStd(mysql.ErrKeyPart0)
 	ErrGettingNoopVariable      = dbterror.ClassOptimizer.NewStd(mysql.ErrGettingNoopVariable)
+
+	ErrPrepareMulti  = dbterror.ClassExecutor.NewStd(mysql.ErrPrepareMulti)
+	ErrUnsupportedPs = dbterror.ClassExecutor.NewStd(mysql.ErrUnsupportedPs)
+	ErrPsManyParam   = dbterror.ClassExecutor.NewStd(mysql.ErrPsManyParam)
+	ErrPrepareDDL    = dbterror.ClassExecutor.NewStd(mysql.ErrPrepareDDL)
 )

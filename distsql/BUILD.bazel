@@ -84,6 +84,7 @@ go_test(
         "//util/mathutil",
         "//util/memory",
         "//util/mock",
+        "//util/paging",
         "//util/ranger",
         "@com_github_pingcap_tipb//go-tipb",
         "@com_github_stretchr_testify//require",

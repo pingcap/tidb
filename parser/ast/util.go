@@ -55,6 +55,15 @@ func IsReadOnly(node Node) bool {
 			}
 		}
 		return true
+	case *AdminStmt:
+		switch node.(*AdminStmt).Tp {
+		case AdminShowTelemetry, AdminShowDDL, AdminShowDDLJobs, AdminShowSlow,
+			AdminCaptureBindings, AdminShowNextRowID, AdminShowDDLJobQueries,
+			AdminShowDDLJobQueriesWithRange:
+			return true
+		default:
+			return false
+		}
 	default:
 		return false
 	}
@@ -70,8 +79,7 @@ type readOnlyChecker struct {
 
 // Enter implements Visitor interface.
 func (checker *readOnlyChecker) Enter(in Node) (out Node, skipChildren bool) {
-	switch node := in.(type) {
-	case *VariableExpr:
+	if node, ok := in.(*VariableExpr); ok {
 		// like func rewriteVariable(), this stands for SetVar.
 		if !node.IsSystem && node.Value != nil {
 			checker.readOnly = false

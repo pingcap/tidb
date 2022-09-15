@@ -13,7 +13,9 @@ go_library(
 
 go_test(
     name = "verification_test",
+    timeout = "short",
     srcs = ["checksum_test.go"],
+    flaky = True,
     deps = [
         ":verification",
         "//br/pkg/lightning/common",

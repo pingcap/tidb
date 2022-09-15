@@ -20,7 +20,6 @@ go_library(
         "//sessionctx/variable",
         "//util",
         "//util/disk",
-        "//util/kvcache",
         "//util/memory",
         "//util/sli",
         "//util/sqlexec",
@@ -44,6 +43,7 @@ go_test(
         "mock_test.go",
     ],
     embed = [":mock"],
+    flaky = True,
     deps = [
         "//kv",
         "//testkit/testsetup",

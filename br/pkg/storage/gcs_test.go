@@ -158,7 +158,7 @@ func TestGCS(t *testing.T) {
 
 	// test 1003 files
 	var totalSize int64 = 0
-	for i := 0; i < 1000; i += 1 {
+	for i := 0; i < 1000; i++ {
 		err = stg.WriteFile(ctx, fmt.Sprintf("f%d", i), []byte("data"))
 		require.NoError(t, err)
 	}
@@ -176,7 +176,7 @@ func TestGCS(t *testing.T) {
 	require.True(t, ok)
 	_, ok = filesSet["key2"]
 	require.True(t, ok)
-	for i := 0; i < 1000; i += 1 {
+	for i := 0; i < 1000; i++ {
 		_, ok = filesSet[fmt.Sprintf("f%d", i)]
 		require.True(t, ok)
 	}

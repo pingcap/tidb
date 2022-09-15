@@ -131,6 +131,7 @@
                     "operator_info": "CARTESIAN inner join"
                   }
                 ],
+                "cost": 120107882,
                 "est_rows": 100000000,
                 "act_rows": 8,
                 "task_type": 1,
@@ -228,7 +229,7 @@
                 "labels": [
                   2
                 ],
-                "cost": 108852.66666666666,
+                "cost": 24000,
                 "est_rows": 6400,
                 "act_rows": 2,
                 "task_type": 1,
@@ -250,7 +251,7 @@
                 "labels": [
                   1
                 ],
-                "cost": 108852.66666666666,
+                "cost": 24000,
                 "est_rows": 6400,
                 "act_rows": 4,
                 "task_type": 1,
@@ -258,7 +259,7 @@
                 "operator_info": "not(isnull(test.t2.a))"
               }
             ],
-            "cost": 241729.7333333333,
+            "cost": 72024.4,
             "est_rows": 8000,
             "task_type": 1,
             "store_type": 1,

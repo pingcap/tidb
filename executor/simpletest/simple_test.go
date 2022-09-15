@@ -36,8 +36,7 @@ import (
 )
 
 func TestFlushTables(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("FLUSH TABLES")
@@ -46,8 +45,7 @@ func TestFlushTables(t *testing.T) {
 }
 
 func TestUseDB(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test")
 	err := tk.ExecToErr("USE ``")
@@ -55,8 +53,7 @@ func TestUseDB(t *testing.T) {
 }
 
 func TestStmtAutoNewTxn(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	// Some statements are like DDL, they commit the previous txn automically.
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -87,8 +84,7 @@ func TestStmtAutoNewTxn(t *testing.T) {
 }
 
 func TestIssue9111(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	// CREATE USER / DROP USER fails if admin doesn't have insert privilege on `mysql.user` table.
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create user 'user_admin'@'localhost';")
@@ -98,7 +94,7 @@ func TestIssue9111(t *testing.T) {
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	defer se.Close()
-	require.True(t, se.Auth(&auth.UserIdentity{Username: "user_admin", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "user_admin", Hostname: "localhost"}, nil, nil))
 
 	ctx := context.Background()
 	_, err = se.Execute(ctx, `create user test_create_user`)
@@ -123,8 +119,7 @@ func TestIssue9111(t *testing.T) {
 }
 
 func TestRoleAtomic(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("create role r2;")
@@ -142,8 +137,7 @@ func TestRoleAtomic(t *testing.T) {
 }
 
 func TestExtendedStatsPrivileges(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -152,7 +146,7 @@ func TestExtendedStatsPrivileges(t *testing.T) {
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	defer se.Close()
-	require.True(t, se.Auth(&auth.UserIdentity{Username: "u1", Hostname: "%"}, nil, nil))
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "u1", Hostname: "%"}, nil, nil))
 	ctx := context.Background()
 	_, err = se.Execute(ctx, "set session tidb_enable_extended_stats = on")
 	require.NoError(t, err)
@@ -183,15 +177,14 @@ func TestExtendedStatsPrivileges(t *testing.T) {
 }
 
 func TestIssue17247(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create user 'issue17247'")
 	tk.MustExec("grant CREATE USER on *.* to 'issue17247'")
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
-	require.True(t, tk1.Session().Auth(&auth.UserIdentity{Username: "issue17247", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "issue17247", Hostname: "%"}, nil, nil))
 	tk1.MustExec("ALTER USER USER() IDENTIFIED BY 'xxx'")
 	tk1.MustExec("ALTER USER CURRENT_USER() IDENTIFIED BY 'yyy'")
 	tk1.MustExec("ALTER USER CURRENT_USER IDENTIFIED BY 'zzz'")
@@ -205,8 +198,7 @@ func TestIssue17247(t *testing.T) {
 // Close issue #23649.
 // See https://github.com/pingcap/tidb/issues/23649
 func TestIssue23649(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("DROP USER IF EXISTS issue23649;")
 	tk.MustExec("CREATE USER issue23649;")
@@ -217,25 +209,23 @@ func TestIssue23649(t *testing.T) {
 }
 
 func TestSetCurrentUserPwd(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE USER issue28534;")
 	defer func() {
 		tk.MustExec("DROP USER IF EXISTS issue28534;")
 	}()
 
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "issue28534", Hostname: "localhost", CurrentUser: true, AuthUsername: "issue28534", AuthHostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "issue28534", Hostname: "localhost", CurrentUser: true, AuthUsername: "issue28534", AuthHostname: "%"}, nil, nil))
 	tk.MustExec(`SET PASSWORD FOR CURRENT_USER() = "43582eussi"`)
 
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	result := tk.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="issue28534"`)
 	result.Check(testkit.Rows(auth.EncodePassword("43582eussi")))
 }
 
 func TestShowGrantsAfterDropRole(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE USER u29473")
 	defer tk.MustExec("DROP USER IF EXISTS u29473")
@@ -251,8 +241,7 @@ func TestShowGrantsAfterDropRole(t *testing.T) {
 }
 
 func TestPrivilegesAfterDropUser(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1(id int, v int)")
@@ -289,8 +278,7 @@ func TestPrivilegesAfterDropUser(t *testing.T) {
 }
 
 func TestDropRoleAfterRevoke(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	// issue 29781
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -305,8 +293,7 @@ func TestDropRoleAfterRevoke(t *testing.T) {
 }
 
 func TestUserWithSetNames(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("set names gbk;")
@@ -329,8 +316,7 @@ func TestUserWithSetNames(t *testing.T) {
 func TestStatementsCauseImplicitCommit(t *testing.T) {
 	// Test some of the implicit commit statements.
 	// See https://dev.mysql.com/doc/refman/5.7/en/implicit-commit.html
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("create table ic (id int primary key)")
@@ -353,8 +339,7 @@ func TestStatementsCauseImplicitCommit(t *testing.T) {
 }
 
 func TestDo(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("do 1, @a:=1")
 	tk.MustQuery("select @a").Check(testkit.Rows("1"))
@@ -371,8 +356,7 @@ func TestDo(t *testing.T) {
 }
 
 func TestDoWithAggFunc(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -382,8 +366,7 @@ func TestDoWithAggFunc(t *testing.T) {
 }
 
 func TestSetRoleAllCorner(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	// For user with no role, `SET ROLE ALL` should active
 	// a empty slice, rather than nil.
 	tk := testkit.NewTestKit(t, store)
@@ -391,7 +374,7 @@ func TestSetRoleAllCorner(t *testing.T) {
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	defer se.Close()
-	require.True(t, se.Auth(&auth.UserIdentity{Username: "set_role_all", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "set_role_all", Hostname: "localhost"}, nil, nil))
 	ctx := context.Background()
 	_, err = se.Execute(ctx, `set role all`)
 	require.NoError(t, err)
@@ -400,15 +383,14 @@ func TestSetRoleAllCorner(t *testing.T) {
 }
 
 func TestCreateRole(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create user testCreateRole;")
 	tk.MustExec("grant CREATE USER on *.* to testCreateRole;")
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	defer se.Close()
-	require.True(t, se.Auth(&auth.UserIdentity{Username: "testCreateRole", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "testCreateRole", Hostname: "localhost"}, nil, nil))
 
 	ctx := context.Background()
 	_, err = se.Execute(ctx, `create role test_create_role;`)
@@ -425,8 +407,7 @@ func TestCreateRole(t *testing.T) {
 }
 
 func TestDropRole(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create user testCreateRole;")
 	tk.MustExec("create user test_create_role;")
@@ -434,7 +415,7 @@ func TestDropRole(t *testing.T) {
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	defer se.Close()
-	require.True(t, se.Auth(&auth.UserIdentity{Username: "testCreateRole", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "testCreateRole", Hostname: "localhost"}, nil, nil))
 
 	ctx := context.Background()
 	_, err = se.Execute(ctx, `drop role test_create_role;`)
@@ -452,8 +433,7 @@ func TestDropRole(t *testing.T) {
 }
 
 func TestTransaction(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("begin")
 	ctx := tk.Session()
@@ -487,8 +467,7 @@ func inTxn(ctx sessionctx.Context) bool {
 }
 
 func TestRole(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	// Make sure user test not in mysql.User.
 	result := tk.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="test" and Host="localhost"`)
@@ -585,8 +564,7 @@ func TestRole(t *testing.T) {
 }
 
 func TestRoleAdmin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE USER 'testRoleAdmin';")
 	tk.MustExec("CREATE ROLE 'targetRole';")
@@ -595,7 +573,7 @@ func TestRoleAdmin(t *testing.T) {
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	defer se.Close()
-	require.True(t, se.Auth(&auth.UserIdentity{Username: "testRoleAdmin", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "testRoleAdmin", Hostname: "localhost"}, nil, nil))
 
 	ctx := context.Background()
 	_, err = se.Execute(ctx, "GRANT `targetRole` TO `testRoleAdmin`;")
@@ -612,8 +590,7 @@ func TestRoleAdmin(t *testing.T) {
 }
 
 func TestDefaultRole(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	createRoleSQL := `CREATE ROLE r_1, r_2, r_3, u_1;`
@@ -664,14 +641,13 @@ func TestDefaultRole(t *testing.T) {
 }
 
 func TestSetDefaultRoleAll(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create user test_all;")
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	defer se.Close()
-	require.True(t, se.Auth(&auth.UserIdentity{Username: "test_all", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "test_all", Hostname: "localhost"}, nil, nil))
 
 	ctx := context.Background()
 	_, err = se.Execute(ctx, "set default role all to test_all;")
@@ -679,8 +655,7 @@ func TestSetDefaultRoleAll(t *testing.T) {
 }
 
 func TestUser(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	// Make sure user test not in mysql.User.
 	result := tk.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="test" and Host="localhost"`)
@@ -858,8 +833,7 @@ func TestUser(t *testing.T) {
 }
 
 func TestSetPwd(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	createUserSQL := `CREATE USER 'testpwd'@'localhost' IDENTIFIED BY '';`
@@ -895,12 +869,10 @@ func TestSetPwd(t *testing.T) {
 	tk.MustExec(setPwdSQL)
 	result = tk.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="testpwd" and Host="localhost"`)
 	result.Check(testkit.Rows(auth.EncodePassword("pwd")))
-
 }
 
 func TestFlushPrivileges(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec(`CREATE USER 'testflush'@'localhost' IDENTIFIED BY '';`)
@@ -910,7 +882,7 @@ func TestFlushPrivileges(t *testing.T) {
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	defer se.Close()
-	require.True(t, se.Auth(&auth.UserIdentity{Username: "testflush", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "testflush", Hostname: "localhost"}, nil, nil))
 
 	ctx := context.Background()
 	// Before flush.
@@ -922,7 +894,6 @@ func TestFlushPrivileges(t *testing.T) {
 	// After flush.
 	_, err = se.Execute(ctx, `SELECT authentication_string FROM mysql.User WHERE User="testflush" and Host="localhost"`)
 	require.NoError(t, err)
-
 }
 
 func TestFlushPrivilegesPanic(t *testing.T) {
@@ -948,8 +919,7 @@ func TestFlushPrivilegesPanic(t *testing.T) {
 }
 
 func TestDropPartitionStats(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	// Use the testSerialSuite to fix the unstable test
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`create database if not exists test_drop_gstats`)
@@ -1007,8 +977,7 @@ partition by range (a) (
 }
 
 func TestDropStats(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int)")

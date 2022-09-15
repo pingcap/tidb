@@ -17,27 +17,16 @@ package telemetry_test
 import (
 	"fmt"
 	"testing"
-	"time"
 
-	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/domain/infosync"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/telemetry"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/testutils"
 )
 
 func TestTxnUsageInfo(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	t.Run("Used", func(t *testing.T) {
 		tk := testkit.NewTestKit(t, store)
@@ -74,6 +63,10 @@ func TestTxnUsageInfo(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("set global %s = 1", variable.TiDBRCReadCheckTS))
 		txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
 		require.True(t, txnUsage.RcCheckTS)
+
+		tk.MustExec(fmt.Sprintf("set global %s = 1", variable.TiDBRCWriteCheckTs))
+		txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
+		require.True(t, txnUsage.RCWriteCheckTS)
 	})
 
 	t.Run("Count", func(t *testing.T) {
@@ -99,8 +92,7 @@ func TestTxnUsageInfo(t *testing.T) {
 }
 
 func TestTemporaryTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -116,8 +108,7 @@ func TestTemporaryTable(t *testing.T) {
 }
 
 func TestCachedTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -137,9 +128,35 @@ func TestCachedTable(t *testing.T) {
 	require.False(t, usage.CachedTable)
 }
 
+func TestAccountLock(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	usage, err := telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(0), usage.AccountLock.LockUser)
+	require.Equal(t, int64(0), usage.AccountLock.UnlockUser)
+	require.Equal(t, int64(0), usage.AccountLock.CreateOrAlterUser)
+
+	tk.MustExec("drop user if exists testUser")
+	tk.MustExec("create user testUser account lock")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(1), usage.AccountLock.LockUser)
+	require.Equal(t, int64(0), usage.AccountLock.UnlockUser)
+	require.Equal(t, int64(1), usage.AccountLock.CreateOrAlterUser)
+	tk.MustExec("alter user testUser account unlock")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(1), usage.AccountLock.LockUser)
+	require.Equal(t, int64(1), usage.AccountLock.UnlockUser)
+	require.Equal(t, int64(2), usage.AccountLock.CreateOrAlterUser)
+}
+
 func TestMultiSchemaChange(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -171,9 +188,63 @@ func TestMultiSchemaChange(t *testing.T) {
 	require.Equal(t, int64(2), usage.MultiSchemaChange.MultiSchemaChangeUsed)
 }
 
+func TestTablePartition(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	usage, err := telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(0), usage.TablePartition.TablePartitionCnt)
+	require.Equal(t, int64(0), usage.TablePartition.TablePartitionListCnt)
+	require.Equal(t, int64(0), usage.TablePartition.TablePartitionMaxPartitionsCnt)
+
+	tk.MustExec("drop table if exists pt")
+	tk.MustExec("create table pt (a int,b int) partition by hash(a) partitions 4")
+
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(1), usage.TablePartition.TablePartitionCnt)
+	require.Equal(t, int64(1), usage.TablePartition.TablePartitionHashCnt)
+	require.Equal(t, int64(4), usage.TablePartition.TablePartitionMaxPartitionsCnt)
+	require.Equal(t, int64(0), usage.TablePartition.TablePartitionListCnt)
+	require.Equal(t, int64(0), usage.TablePartition.TablePartitionRangeCnt)
+	require.Equal(t, int64(0), usage.TablePartition.TablePartitionRangeColumnsCnt)
+	require.Equal(t, int64(0), usage.TablePartition.TablePartitionListColumnsCnt)
+	require.Equal(t, int64(0), usage.TablePartition.TablePartitionCreateIntervalPartitionsCnt)
+	require.Equal(t, int64(0), usage.TablePartition.TablePartitionAddIntervalPartitionsCnt)
+	require.Equal(t, int64(0), usage.TablePartition.TablePartitionDropIntervalPartitionsCnt)
+
+	telemetry.PostReportTelemetryDataForTest()
+	tk.MustExec("drop table if exists pt1")
+	tk.MustExec("create table pt1 (a int,b int) partition by range(a) (" +
+		"partition p0 values less than (3)," +
+		"partition p1 values less than (6), " +
+		"partition p2 values less than (9)," +
+		"partition p3 values less than (12)," +
+		"partition p4 values less than (15))")
+	tk.MustExec("alter table pt1 first partition less than (9)")
+	tk.MustExec("alter table pt1 last partition less than (21)")
+	tk.MustExec("drop table if exists pt1")
+	tk.MustExec("create table pt1 (d datetime primary key, v varchar(255)) partition by range columns(d)" +
+		" interval (1 day) first partition less than ('2022-01-01') last partition less than ('2022-02-22')")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(2), usage.TablePartition.TablePartitionCnt)
+	require.Equal(t, int64(0), usage.TablePartition.TablePartitionHashCnt)
+	require.Equal(t, int64(5), usage.TablePartition.TablePartitionMaxPartitionsCnt)
+	require.Equal(t, int64(0), usage.TablePartition.TablePartitionListCnt)
+	require.Equal(t, int64(1), usage.TablePartition.TablePartitionRangeCnt)
+	require.Equal(t, int64(1), usage.TablePartition.TablePartitionRangeColumnsCnt)
+	require.Equal(t, int64(0), usage.TablePartition.TablePartitionListColumnsCnt)
+	require.Equal(t, int64(1), usage.TablePartition.TablePartitionCreateIntervalPartitionsCnt)
+	require.Equal(t, int64(1), usage.TablePartition.TablePartitionAddIntervalPartitionsCnt)
+	require.Equal(t, int64(1), usage.TablePartition.TablePartitionDropIntervalPartitionsCnt)
+}
+
 func TestPlacementPolicies(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -215,8 +286,7 @@ func TestPlacementPolicies(t *testing.T) {
 }
 
 func TestAutoCapture(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -235,8 +305,7 @@ func TestAutoCapture(t *testing.T) {
 }
 
 func TestClusterIndexUsageInfo(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -251,8 +320,7 @@ func TestClusterIndexUsageInfo(t *testing.T) {
 }
 
 func TestNonTransactionalUsage(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -269,8 +337,7 @@ func TestNonTransactionalUsage(t *testing.T) {
 }
 
 func TestGlobalKillUsageInfo(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	usage, err := telemetry.GetFeatureUsage(tk.Session())
@@ -290,99 +357,8 @@ func TestGlobalKillUsageInfo(t *testing.T) {
 	require.False(t, usage.GlobalKill)
 }
 
-type tiflashContext struct {
-	store   kv.Storage
-	dom     *domain.Domain
-	tiflash *infosync.MockTiFlash
-	cluster *unistore.Cluster
-}
-
-func createTiFlashContext(t *testing.T) (*tiflashContext, func()) {
-	s := &tiflashContext{}
-	var err error
-
-	ddl.PollTiFlashInterval = 1000 * time.Millisecond
-	ddl.PullTiFlashPdTick.Store(60)
-	s.tiflash = infosync.NewMockTiFlash()
-	s.store, err = mockstore.NewMockStore(
-		mockstore.WithClusterInspector(func(c testutils.Cluster) {
-			mockCluster := c.(*unistore.Cluster)
-			_, _, region1 := mockstore.BootstrapWithSingleStore(c)
-			tiflashIdx := 0
-			for tiflashIdx < 2 {
-				store2 := c.AllocID()
-				peer2 := c.AllocID()
-				addr2 := fmt.Sprintf("tiflash%d", tiflashIdx)
-				mockCluster.AddStore(store2, addr2, &metapb.StoreLabel{Key: "engine", Value: "tiflash"})
-				mockCluster.AddPeer(region1, store2, peer2)
-				tiflashIdx++
-			}
-			s.cluster = mockCluster
-		}),
-		mockstore.WithStoreType(mockstore.EmbedUnistore),
-	)
-
-	require.NoError(t, err)
-	session.SetSchemaLease(0)
-	session.DisableStats4Test()
-	s.dom, err = session.BootstrapSession(s.store)
-	infosync.SetMockTiFlash(s.tiflash)
-	require.NoError(t, err)
-	s.dom.SetStatsUpdating(true)
-
-	tearDown := func() {
-		s.tiflash.Lock()
-		s.tiflash.StatusServer.Close()
-		s.tiflash.Unlock()
-		s.dom.Close()
-		require.NoError(t, s.store.Close())
-		ddl.PollTiFlashInterval = 2 * time.Second
-	}
-	return s, tearDown
-}
-
-func TestTiFlashModeStatistics(t *testing.T) {
-	s, teardown := createTiFlashContext(t)
-	defer teardown()
-
-	tk := testkit.NewTestKit(t, s.store)
-	tk.MustExec("use test")
-
-	usage, err := telemetry.GetFeatureUsage(tk.Session())
-	require.NoError(t, err)
-	require.Equal(t, int64(0), usage.TiFlashModeStatistics.FastModeTableCount)
-	require.Equal(t, int64(0), usage.TiFlashModeStatistics.NormalModeTableCount)
-
-	tk.MustExec(`create table t1(a int);`)
-	tk.MustExec(`alter table t1 set tiflash replica 1;`)
-	tk.MustExec(`alter table t1 set tiflash mode fast;`)
-
-	tk.MustExec(`create table t2(a int);`)
-	tk.MustExec(`alter table t2 set tiflash replica 1;`)
-	tk.MustExec(`alter table t2 set tiflash mode normal;`)
-
-	tk.MustExec(`create table t3(a int);`)
-	tk.MustExec(`alter table t3 set tiflash replica 1;`)
-
-	tk.MustExec(`create table t4(a int);`)
-
-	usage, err = telemetry.GetFeatureUsage(tk.Session())
-	require.NoError(t, err)
-	require.Equal(t, int64(1), usage.TiFlashModeStatistics.FastModeTableCount)
-	require.Equal(t, int64(2), usage.TiFlashModeStatistics.NormalModeTableCount)
-
-	tk.MustExec("drop table t1;")
-	tk.MustExec(`alter table t2 set tiflash mode fast;`)
-
-	usage, err = telemetry.GetFeatureUsage(tk.Session())
-	require.NoError(t, err)
-	require.Equal(t, int64(1), usage.TiFlashModeStatistics.FastModeTableCount)
-	require.Equal(t, int64(1), usage.TiFlashModeStatistics.NormalModeTableCount)
-}
-
 func TestPagingUsageInfo(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	usage, err := telemetry.GetFeatureUsage(tk.Session())
@@ -393,4 +369,53 @@ func TestPagingUsageInfo(t *testing.T) {
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
 	require.False(t, usage.EnablePaging)
+}
+
+func TestCostModelVer2UsageInfo(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	usage, err := telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.False(t, usage.EnableCostModelVer2)
+
+	tk.Session().GetSessionVars().CostModelVersion = 2
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.True(t, usage.EnableCostModelVer2)
+}
+
+func TestTxnSavepointUsageInfo(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("savepoint sp1")
+	tk.MustExec("savepoint sp2")
+	txnUsage := telemetry.GetTxnUsageInfo(tk.Session())
+	require.Equal(t, int64(2), txnUsage.SavepointCounter)
+
+	tk.MustExec("savepoint sp3")
+	txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
+	require.Equal(t, int64(3), txnUsage.SavepointCounter)
+
+	telemetry.PostSavepointCount()
+	tk.MustExec("savepoint sp1")
+	txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
+	require.Equal(t, int64(1), txnUsage.SavepointCounter)
+}
+
+func TestLazyPessimisticUniqueCheck(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	usage := telemetry.GetTxnUsageInfo(tk.Session())
+	require.Equal(t, int64(0), usage.LazyUniqueCheckSetCounter)
+
+	tk2.MustExec("set @@tidb_constraint_check_in_place_pessimistic = 0")
+	tk2.MustExec("set @@tidb_constraint_check_in_place_pessimistic = 0")
+	usage = telemetry.GetTxnUsageInfo(tk.Session())
+	require.Equal(t, int64(2), usage.LazyUniqueCheckSetCounter)
 }

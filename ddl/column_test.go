@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -155,8 +156,8 @@ func testDropColumns(tk *testkit.TestKit, t *testing.T, ctx sessionctx.Context, 
 }
 
 func TestColumnBasic(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithDDLChecker())
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (c1 int, c2 int, c3 int);")
@@ -640,8 +641,10 @@ func testGetColumn(t table.Table, name string, isExist bool) error {
 }
 
 func TestAddColumn(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithDDLChecker())
+
+	d := dom.DDL()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (c1 int, c2 int, c3 int);")
@@ -669,7 +672,6 @@ func TestAddColumn(t *testing.T) {
 
 	checkOK := false
 
-	d := dom.DDL()
 	tc := &ddl.TestDDLCallback{Do: dom}
 	tc.OnJobUpdatedExported = func(job *model.Job) {
 		if checkOK {
@@ -701,8 +703,10 @@ func TestAddColumn(t *testing.T) {
 }
 
 func TestAddColumns(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithDDLChecker())
+
+	d := dom.DDL()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (c1 int, c2 int, c3 int);")
@@ -736,7 +740,6 @@ func TestAddColumns(t *testing.T) {
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 
-	d := dom.DDL()
 	tc := &ddl.TestDDLCallback{Do: dom}
 	tc.OnJobUpdatedExported = func(job *model.Job) {
 		mu.Lock()
@@ -777,8 +780,7 @@ func TestAddColumns(t *testing.T) {
 }
 
 func TestDropColumnInColumnTest(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (c1 int, c2 int, c3 int, c4 int);")
@@ -839,8 +841,7 @@ func TestDropColumnInColumnTest(t *testing.T) {
 }
 
 func TestDropColumns(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (c1 int, c2 int, c3 int, c4 int);")
@@ -911,8 +912,7 @@ func testGetTable(t *testing.T, dom *domain.Domain, tableID int64) table.Table {
 }
 
 func TestGetDefaultValueOfColumn(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (da date default '1962-03-03 23:33:34', dt datetime default '1962-03-03'," +

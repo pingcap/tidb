@@ -15,6 +15,7 @@ go_test(
         "main_test.go",
     ],
     embed = [":bitmap"],
+    flaky = True,
     deps = [
         "//testkit/testsetup",
         "@com_github_stretchr_testify//assert",

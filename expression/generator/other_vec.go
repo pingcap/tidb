@@ -52,7 +52,6 @@ const newLine = "\n"
 const builtinOtherImports = `import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 )
@@ -109,7 +108,7 @@ var builtinInTmpl = template.Must(template.New("builtinInTmpl").Parse(`
 	{{- else if eq .Input.TypeName "Duration" -}}
 		compareResult = types.CompareDuration(arg0, arg1)
 	{{- else if eq .Input.TypeName "JSON" -}}
-		compareResult = json.CompareBinary(arg0, arg1)
+		compareResult = types.CompareBinaryJSON(arg0, arg1)
 	{{- else if eq .Input.TypeName "String" -}}
 		compareResult = types.CompareString(arg0, arg1, b.collation)
 	{{- else -}}
@@ -286,7 +285,6 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 )
 
 type inGener struct {
@@ -323,7 +321,7 @@ func (g inGener) gen() interface{} {
 	case types.ETDuration:
 		return types.Duration{ Duration: time.Duration(randNum) }
 	case types.ETJson:
-		j := new(json.BinaryJSON)
+		j := new(types.BinaryJSON)
 		jsonStr := fmt.Sprintf("{\"key\":%v}", randNum)
 		if err := j.UnmarshalJSON([]byte(jsonStr)); err != nil {
 			panic(err)
@@ -380,8 +378,8 @@ var vecBuiltin{{ .Category }}GeneratedCases = map[string][]vecExprBenchCase {
 					{Value: types.NewTimeDatum(dateTimeFromString("2019-01-01")), RetType: types.NewFieldType(mysql.TypeDatetime)},
 				{{- end }}
 				{{- if eq .Input.ETName "Json" }}
-					{Value: types.NewJSONDatum(json.CreateBinary("aaaa")), RetType: types.NewFieldType(mysql.TypeJSON)},
-					{Value: types.NewJSONDatum(json.CreateBinary("bbbb")), RetType: types.NewFieldType(mysql.TypeJSON)},
+					{Value: types.NewJSONDatum(types.CreateBinaryJSON("aaaa")), RetType: types.NewFieldType(mysql.TypeJSON)},
+					{Value: types.NewJSONDatum(types.CreateBinaryJSON("bbbb")), RetType: types.NewFieldType(mysql.TypeJSON)},
 				{{- end }}
 				{{- if eq .Input.ETName "Duration" }}
 					{Value: types.NewDurationDatum(types.Duration{Duration: time.Duration(1000)}), RetType: types.NewFieldType(mysql.TypeDuration)},

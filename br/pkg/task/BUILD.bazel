@@ -16,6 +16,7 @@ go_library(
         "//br/pkg/backup",
         "//br/pkg/checksum",
         "//br/pkg/conn",
+        "//br/pkg/conn/util",
         "//br/pkg/errors",
         "//br/pkg/glue",
         "//br/pkg/httputil",
@@ -23,6 +24,7 @@ go_library(
         "//br/pkg/metautil",
         "//br/pkg/pdutil",
         "//br/pkg/restore",
+        "//br/pkg/restore/tiflashrec",
         "//br/pkg/rtree",
         "//br/pkg/storage",
         "//br/pkg/stream",
@@ -33,11 +35,13 @@ go_library(
         "//br/pkg/version",
         "//config",
         "//kv",
+        "//parser/model",
         "//parser/mysql",
         "//sessionctx/stmtctx",
         "//sessionctx/variable",
         "//statistics/handle",
         "//types",
+        "//util",
         "//util/mathutil",
         "//util/sqlexec",
         "//util/table-filter",
@@ -69,6 +73,7 @@ go_library(
 
 go_test(
     name = "task_test",
+    timeout = "short",
     srcs = [
         "backup_test.go",
         "common_test.go",
@@ -76,6 +81,7 @@ go_test(
         "stream_test.go",
     ],
     embed = [":task"],
+    flaky = True,
     deps = [
         "//br/pkg/conn",
         "//br/pkg/metautil",

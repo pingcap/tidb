@@ -37,26 +37,26 @@ var (
 // joiner is used to generate join results according to the join type.
 // A typical instruction flow is:
 //
-//     hasMatch, hasNull := false, false
-//     for innerIter.Current() != innerIter.End() {
-//         matched, isNull, err := j.tryToMatchInners(outer, innerIter, chk)
-//         // handle err
-//         hasMatch = hasMatch || matched
-//         hasNull = hasNull || isNull
-//     }
-//     if !hasMatch {
-//         j.onMissMatch(hasNull, outer, chk)
-//     }
+//	hasMatch, hasNull := false, false
+//	for innerIter.Current() != innerIter.End() {
+//	    matched, isNull, err := j.tryToMatchInners(outer, innerIter, chk)
+//	    // handle err
+//	    hasMatch = hasMatch || matched
+//	    hasNull = hasNull || isNull
+//	}
+//	if !hasMatch {
+//	    j.onMissMatch(hasNull, outer, chk)
+//	}
 //
 // NOTE: This interface is **not** thread-safe.
 // TODO: unit test
 // for all join type
-//     1. no filter, no inline projection
-//     2. no filter, inline projection
-//     3. no filter, inline projection to empty column
-//     4. filter, no inline projection
-//     5. filter, inline projection
-//     6. filter, inline projection to empty column
+//  1. no filter, no inline projection
+//  2. no filter, inline projection
+//  3. no filter, inline projection to empty column
+//  4. filter, no inline projection
+//  5. filter, inline projection
+//  6. filter, inline projection to empty column
 type joiner interface {
 	// tryToMatchInners tries to join an outer row with a batch of inner rows. When
 	// 'inners.Len != 0' but all the joined rows are filtered, the outer row is
@@ -251,10 +251,7 @@ func (j *baseJoiner) makeShallowJoinRow(isRightJoin bool, inner, outer chunk.Row
 // filter is used to filter the result constructed by tryToMatchInners, the result is
 // built by one outer row and multiple inner rows. The returned bool value
 // indicates whether the outer row matches any inner rows.
-func (j *baseJoiner) filter(
-	input, output *chunk.Chunk, outerColLen int,
-	lUsed, rUsed []int) (bool, error) {
-
+func (j *baseJoiner) filter(input, output *chunk.Chunk, outerColLen int, lUsed, rUsed []int) (bool, error) {
 	var err error
 	j.selected, err = expression.VectorizedFilter(j.ctx, j.conditions, chunk.NewIterator4Chunk(input), j.selected)
 	if err != nil {
@@ -284,7 +281,6 @@ func (j *baseJoiner) filter(
 			innerColOffset, outerColOffset = len(lUsed), 0
 			innerColLen, outerColLen = outerColLen, innerColLen
 		}
-
 	}
 	return chunk.CopySelectedJoinRowsWithSameOuterRows(input, innerColOffset, innerColLen, outerColOffset, outerColLen, j.selected, output)
 }
@@ -296,7 +292,6 @@ func (j *baseJoiner) filter(
 func (j *baseJoiner) filterAndCheckOuterRowStatus(
 	input, output *chunk.Chunk, innerColsLen int, outerRowStatus []outerRowStatusFlag,
 	lUsed, rUsed []int) ([]outerRowStatusFlag, error) {
-
 	var err error
 	j.selected, j.isNull, err = expression.VectorizedFilterConsiderNull(j.ctx, j.conditions, chunk.NewIterator4Chunk(input), j.selected, j.isNull)
 	if err != nil {

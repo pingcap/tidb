@@ -18,10 +18,14 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
+	ropts "github.com/pingcap/tidb/br/pkg/lightning/restore/opts"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/store/pdtypes"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/filter"
 )
 
@@ -109,6 +113,8 @@ func NewMockImportSource(dbSrcDataMap map[string]*MockDBSourceData) (*MockImport
 					fileInfo.FileMeta.Type = mydump.SourceTypeCSV
 				case strings.HasSuffix(tblDataFile.FileName, ".sql"):
 					fileInfo.FileMeta.Type = mydump.SourceTypeSQL
+				case strings.HasSuffix(tblDataFile.FileName, ".parquet"):
+					fileInfo.FileMeta.Type = mydump.SourceTypeParquet
 				default:
 					return nil, errors.Errorf("unsupported file type: %s", tblDataFile.FileName)
 				}
@@ -155,6 +161,7 @@ type StorageInfo struct {
 	TotalSize     uint64
 	UsedSize      uint64
 	AvailableSize uint64
+	RegionCount   int
 }
 
 // MockTableInfo defines a mock table structure information for a mock target.
@@ -166,7 +173,7 @@ type MockTableInfo struct {
 // MockTableInfo defines a mock target information.
 type MockTargetInfo struct {
 	MaxReplicasPerRegion int
-	EmptyRegionCount     int
+	EmptyRegionCountMap  map[uint64]int
 	StorageInfos         []StorageInfo
 	sysVarMap            map[string]string
 	dbTblInfoMap         map[string]map[string]*MockTableInfo
@@ -200,7 +207,8 @@ func (t *MockTargetInfo) FetchRemoteTableModels(ctx context.Context, schemaName 
 	resultInfos := []*model.TableInfo{}
 	tblMap, ok := t.dbTblInfoMap[schemaName]
 	if !ok {
-		return resultInfos, nil
+		dbNotExistErr := dbterror.ClassSchema.NewStd(errno.ErrBadDB).FastGenByArgs(schemaName)
+		return nil, errors.Errorf("get xxxxxx http status code != 200, message %s", dbNotExistErr.Error())
 	}
 	for _, tblInfo := range tblMap {
 		resultInfos = append(resultInfos, tblInfo.TableModel)
@@ -210,7 +218,7 @@ func (t *MockTargetInfo) FetchRemoteTableModels(ctx context.Context, schemaName 
 
 // GetTargetSysVariablesForImport gets some important systam variables for importing on the target.
 // It implements the TargetInfoGetter interface.
-func (t *MockTargetInfo) GetTargetSysVariablesForImport(ctx context.Context) map[string]string {
+func (t *MockTargetInfo) GetTargetSysVariablesForImport(ctx context.Context, _ ...ropts.GetPreInfoOption) map[string]string {
 	result := make(map[string]string)
 	for k, v := range t.sysVarMap {
 		result[k] = v
@@ -221,8 +229,12 @@ func (t *MockTargetInfo) GetTargetSysVariablesForImport(ctx context.Context) map
 // GetReplicationConfig gets the replication config on the target.
 // It implements the TargetInfoGetter interface.
 func (t *MockTargetInfo) GetReplicationConfig(ctx context.Context) (*pdtypes.ReplicationConfig, error) {
+	replCount := t.MaxReplicasPerRegion
+	if replCount <= 0 {
+		replCount = 1
+	}
 	return &pdtypes.ReplicationConfig{
-		MaxReplicas: uint64(t.MaxReplicasPerRegion),
+		MaxReplicas: uint64(replCount),
 	}, nil
 }
 
@@ -232,10 +244,17 @@ func (t *MockTargetInfo) GetStorageInfo(ctx context.Context) (*pdtypes.StoresInf
 	resultStoreInfos := make([]*pdtypes.StoreInfo, len(t.StorageInfos))
 	for i, storeInfo := range t.StorageInfos {
 		resultStoreInfos[i] = &pdtypes.StoreInfo{
+			Store: &pdtypes.MetaStore{
+				Store: &metapb.Store{
+					Id: uint64(i + 1),
+				},
+				StateName: "Up",
+			},
 			Status: &pdtypes.StoreStatus{
-				Capacity:  pdtypes.ByteSize(storeInfo.TotalSize),
-				Available: pdtypes.ByteSize(storeInfo.AvailableSize),
-				UsedSize:  pdtypes.ByteSize(storeInfo.UsedSize),
+				Capacity:    pdtypes.ByteSize(storeInfo.TotalSize),
+				Available:   pdtypes.ByteSize(storeInfo.AvailableSize),
+				UsedSize:    pdtypes.ByteSize(storeInfo.UsedSize),
+				RegionCount: storeInfo.RegionCount,
 			},
 		}
 	}
@@ -248,13 +267,27 @@ func (t *MockTargetInfo) GetStorageInfo(ctx context.Context) (*pdtypes.StoresInf
 // GetEmptyRegionsInfo gets the region information of all the empty regions on the target.
 // It implements the TargetInfoGetter interface.
 func (t *MockTargetInfo) GetEmptyRegionsInfo(ctx context.Context) (*pdtypes.RegionsInfo, error) {
-	regions := make([]pdtypes.RegionInfo, t.EmptyRegionCount)
-	for i := 0; i < t.EmptyRegionCount; i++ {
-		regions[i] = pdtypes.RegionInfo{}
+	totalEmptyRegions := []pdtypes.RegionInfo{}
+	totalEmptyRegionCount := 0
+	for storeID, storeEmptyRegionCount := range t.EmptyRegionCountMap {
+		regions := make([]pdtypes.RegionInfo, storeEmptyRegionCount)
+		for i := 0; i < storeEmptyRegionCount; i++ {
+			regions[i] = pdtypes.RegionInfo{
+				Peers: []pdtypes.MetaPeer{
+					{
+						Peer: &metapb.Peer{
+							StoreId: storeID,
+						},
+					},
+				},
+			}
+		}
+		totalEmptyRegions = append(totalEmptyRegions, regions...)
+		totalEmptyRegionCount += storeEmptyRegionCount
 	}
 	return &pdtypes.RegionsInfo{
-		Count:   t.EmptyRegionCount,
-		Regions: regions,
+		Count:   totalEmptyRegionCount,
+		Regions: totalEmptyRegions,
 	}, nil
 }
 

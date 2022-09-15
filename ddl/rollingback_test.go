@@ -30,8 +30,7 @@ import (
 
 // TestCancelJobMeetError is used to test canceling ddl job failure when convert ddl job to a rolling back job.
 func TestCancelAddIndexJobError(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk1 := testkit.NewTestKit(t, store)

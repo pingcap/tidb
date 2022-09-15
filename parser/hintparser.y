@@ -61,7 +61,8 @@ import (
 	hintBNL                 "BNL"
 	hintNoBNL               "NO_BNL"
 	hintHashJoin            "HASH_JOIN"
-	hintOrderedHashJoin     "ORDERED_HASH_JOIN"
+	hintHashJoinBuild       "HASH_JOIN_BUILD"
+	hintHashJoinProbe       "HASH_JOIN_PROBE"
 	hintNoHashJoin          "NO_HASH_JOIN"
 	hintMerge               "MERGE"
 	hintNoMerge             "NO_MERGE"
@@ -531,19 +532,20 @@ UnsupportedTableLevelOptimizerHintName:
 |	"NO_BNL"
 /* HASH_JOIN is supported by TiDB */
 |	"NO_HASH_JOIN"
-|	"MERGE"
 |	"NO_MERGE"
 
 SupportedTableLevelOptimizerHintName:
 	"MERGE_JOIN"
 |	"BROADCAST_JOIN"
 |	"INL_JOIN"
+|	"MERGE"
 |	"INL_HASH_JOIN"
 |	"SWAP_JOIN_INPUTS"
 |	"NO_SWAP_JOIN_INPUTS"
 |	"INL_MERGE_JOIN"
 |	"HASH_JOIN"
-|	"ORDERED_HASH_JOIN"
+|	"HASH_JOIN_BUILD"
+|	"HASH_JOIN_PROBE"
 |	"LEADING"
 
 UnsupportedIndexLevelOptimizerHintName:
@@ -608,7 +610,8 @@ Identifier:
 |	"BNL"
 |	"NO_BNL"
 |	"HASH_JOIN"
-|	"ORDERED_HASH_JOIN"
+|	"HASH_JOIN_BUILD"
+|	"HASH_JOIN_PROBE"
 |	"NO_HASH_JOIN"
 |	"MERGE"
 |	"NO_MERGE"

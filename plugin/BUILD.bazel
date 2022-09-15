@@ -27,6 +27,7 @@ go_library(
 
 go_test(
     name = "plugin_test",
+    timeout = "short",
     srcs = [
         "const_test.go",
         "helper_test.go",
@@ -36,6 +37,7 @@ go_test(
         "spi_test.go",
     ],
     embed = [":plugin"],
+    flaky = True,
     deps = [
         "//kv",
         "//parser/mysql",

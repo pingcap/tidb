@@ -29,6 +29,7 @@ go_test(
         "pattern_test.go",
     ],
     embed = [":memo"],
+    flaky = True,
     deps = [
         "//domain",
         "//expression",

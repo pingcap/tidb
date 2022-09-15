@@ -36,6 +36,8 @@ type TaskStatus struct {
 	Info backuppb.StreamBackupTaskInfo
 	// paused checks whether the task is paused.
 	paused bool
+	// global checkpoint from storage
+	globalCheckpoint uint64
 	// Checkpoints collects the checkpoints.
 	Checkpoints []Checkpoint
 	// Total QPS of the task in recent seconds.
@@ -117,9 +119,9 @@ func (p *printByTable) AddTask(task TaskStatus) {
 	table := p.console.CreateTable()
 	table.Add("name", task.Info.Name)
 	table.Add("status", task.colorfulStatusString())
-	table.Add("start", fmt.Sprint(oracle.GetTimeFromTS(task.Info.StartTs)))
+	table.Add("start", fmt.Sprint(FormatDate(oracle.GetTimeFromTS(task.Info.StartTs))))
 	if task.Info.EndTs > 0 {
-		table.Add("end", fmt.Sprint(oracle.GetTimeFromTS(task.Info.EndTs)))
+		table.Add("end", fmt.Sprint(FormatDate(oracle.GetTimeFromTS(task.Info.EndTs))))
 	}
 	s := storage.FormatBackendURL(task.Info.GetStorage())
 	table.Add("storage", s.String())
@@ -130,14 +132,13 @@ func (p *printByTable) AddTask(task TaskStatus) {
 		pTime := oracle.GetTimeFromTS(ts)
 		gap := now.Sub(pTime).Round(time.Second)
 		gapColor := color.New(color.FgGreen)
-		if gap > 5*time.Minute {
+		if gap > 10*time.Minute {
 			gapColor = color.New(color.FgRed)
 		}
-		info := fmt.Sprintf("%s; gap=%s", pTime, gapColor.Sprint(gap))
+		info := fmt.Sprintf("%s; gap=%s", FormatDate(pTime), gapColor.Sprint(gap))
 		return info
 	}
-	cp := task.GetMinStoreCheckpoint()
-	table.Add("checkpoint[global]", formatTS(cp.TS))
+	table.Add("checkpoint[global]", formatTS(task.globalCheckpoint))
 	p.addCheckpoints(&task, table, formatTS)
 	for store, e := range task.LastErrors {
 		table.Add(fmt.Sprintf("error[store=%d]", store), e.ErrorCode)
@@ -157,7 +158,6 @@ func (p *printByTable) addCheckpoints(task *TaskStatus, table *glue.Table, forma
 			}
 		}
 	}
-
 }
 
 func (p *printByTable) PrintTasks() {
@@ -191,16 +191,15 @@ func (p *printByJSON) PrintTasks() {
 		LastError backuppb.StreamBackupError `json:"last_error"`
 	}
 	type jsonTask struct {
-		Name           string           `json:"name"`
-		StartTS        uint64           `json:"start_ts,omitempty"`
-		EndTS          uint64           `json:"end_ts,omitempty"`
-		TableFilter    []string         `json:"table_filter"`
-		Progress       []storeProgress  `json:"progress"`
-		Storage        string           `json:"storage"`
-		CheckpointTS   uint64           `json:"checkpoint"`
-		EstQPS         float64          `json:"estimate_qps"`
-		LastErrors     []storeLastError `json:"last_errors"`
-		AllCheckpoints []Checkpoint     `json:"all_checkpoints"`
+		Name         string           `json:"name"`
+		StartTS      uint64           `json:"start_ts,omitempty"`
+		EndTS        uint64           `json:"end_ts,omitempty"`
+		TableFilter  []string         `json:"table_filter"`
+		Progress     []storeProgress  `json:"progress"`
+		Storage      string           `json:"storage"`
+		CheckpointTS uint64           `json:"checkpoint"`
+		EstQPS       float64          `json:"estimate_qps"`
+		LastErrors   []storeLastError `json:"last_errors"`
 	}
 	taskToJSON := func(t TaskStatus) jsonTask {
 		s := storage.FormatBackendURL(t.Info.GetStorage())
@@ -220,18 +219,16 @@ func (p *printByJSON) PrintTasks() {
 				LastError: lastError,
 			})
 		}
-		cp := t.GetMinStoreCheckpoint()
 		return jsonTask{
-			Name:           t.Info.GetName(),
-			StartTS:        t.Info.GetStartTs(),
-			EndTS:          t.Info.GetEndTs(),
-			TableFilter:    t.Info.GetTableFilter(),
-			Progress:       sp,
-			Storage:        s.String(),
-			CheckpointTS:   cp.TS,
-			EstQPS:         t.QPS,
-			LastErrors:     se,
-			AllCheckpoints: t.Checkpoints,
+			Name:         t.Info.GetName(),
+			StartTS:      t.Info.GetStartTs(),
+			EndTS:        t.Info.GetEndTs(),
+			TableFilter:  t.Info.GetTableFilter(),
+			Progress:     sp,
+			Storage:      s.String(),
+			CheckpointTS: t.globalCheckpoint,
+			EstQPS:       t.QPS,
+			LastErrors:   se,
 		}
 	}
 	mustMarshal := func(i interface{}) string {
@@ -249,7 +246,7 @@ func (p *printByJSON) PrintTasks() {
 	p.console.Println(mustMarshal(tasks))
 }
 
-var logCountSumRe = regexp.MustCompile(`tikv_stream_handle_kv_batch_sum ([0-9]+)`)
+var logCountSumRe = regexp.MustCompile(`tikv_(?:stream|log_backup)_handle_kv_batch_sum ([0-9]+)`)
 
 type PDInfoProvider interface {
 	GetPDClient() pd.Client
@@ -258,7 +255,8 @@ type PDInfoProvider interface {
 
 // MaybeQPS get a number like the QPS of last seconds for each store via the prometheus interface.
 // TODO: this is a temporary solution(aha, like in a Hackthon),
-//       we MUST find a better way for providing this information.
+//
+//	we MUST find a better way for providing this information.
 func MaybeQPS(ctx context.Context, mgr PDInfoProvider) (float64, error) {
 	c := mgr.GetPDClient()
 	prefix := "http://"
@@ -281,10 +279,10 @@ func MaybeQPS(ctx context.Context, mgr PDInfoProvider) (float64, error) {
 			return 0, err
 		}
 		matches := logCountSumRe.FindSubmatch(data)
+		log.Info("get qps", zap.ByteStrings("matches", matches), logutil.Redact(zap.String("addr", statusAddr)))
 		if len(matches) < 2 {
 			return 42, nil
 		}
-		log.Info("get qps", zap.ByteStrings("matches", matches), logutil.Redact(zap.String("addr", statusAddr)))
 		return strconv.ParseUint(string(matches[1]), 10, 64)
 	}
 	qpsMap := new(sync.Map)
@@ -305,7 +303,7 @@ func MaybeQPS(ctx context.Context, mgr PDInfoProvider) (float64, error) {
 			return errors.Annotatef(err, "failed to get count from %s", statusAddr)
 		}
 		elapsed := float64(time.Since(start)) / float64(time.Second)
-		log.Info("calc qps", zap.Uint64("diff", c1-c0), zap.Float64("elapsed", elapsed))
+		log.Info("calc qps", zap.Uint64("diff", c1-c0), zap.Float64("elapsed", elapsed), zap.Uint64("c0", c0), zap.Uint64("c1", c1))
 
 		qpsMap.Store(s.GetId(), float64(c1-c0)/elapsed)
 		return nil
@@ -357,6 +355,10 @@ func (ctl *StatusController) fillTask(ctx context.Context, task Task) (TaskStatu
 
 	if s.Checkpoints, err = task.NextBackupTSList(ctx); err != nil {
 		return s, errors.Annotatef(err, "failed to get progress of task %s", s.Info.Name)
+	}
+
+	if s.globalCheckpoint, err = task.GetStorageCheckpoint(ctx); err != nil {
+		return s, errors.Annotatef(err, "failed to get storage checkpoint of task %s", s.Info.Name)
 	}
 
 	s.LastErrors, err = task.LastError(ctx)

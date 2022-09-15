@@ -33,6 +33,7 @@ go_test(
         "tablecodec_test.go",
     ],
     embed = [":tablecodec"],
+    flaky = True,
     deps = [
         "//kv",
         "//parser/mysql",

@@ -24,6 +24,7 @@ go_test(
         "util_test.go",
     ],
     embed = [":tracing"],
+    flaky = True,
     deps = [
         "//testkit/testsetup",
         "@com_github_opentracing_basictracer_go//:basictracer-go",

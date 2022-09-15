@@ -23,7 +23,6 @@ import (
 
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/stretchr/testify/require"
 )
 
@@ -271,7 +270,6 @@ func TestMyDecimal(t *testing.T) {
 
 		types.DecimalAdd(&ds[i], d, &ds[i])
 		require.NoError(t, err)
-
 	}
 
 	it := NewIterator4Chunk(chk)
@@ -333,7 +331,7 @@ func TestJSONColumn(t *testing.T) {
 	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeJSON)}, 1024)
 	col := chk.Column(0)
 	for i := 0; i < 1024; i++ {
-		j := new(json.BinaryJSON)
+		j := new(types.BinaryJSON)
 		err := j.UnmarshalJSON([]byte(fmt.Sprintf(`{"%v":%v}`, i, i)))
 		require.NoError(t, err)
 		col.AppendJSON(*j)
@@ -971,4 +969,27 @@ func BenchmarkMergeNullsNonVectorized(b *testing.B) {
 			cols[0].SetNull(i, cols[1].IsNull(i) || cols[2].IsNull(i))
 		}
 	}
+}
+
+func TestColumnResizeInt64(t *testing.T) {
+	var col = NewColumn(types.NewFieldType(mysql.TypeLonglong), 2)
+	col.AppendUint64(11)
+	col.AppendUint64(11)
+
+	col.ResizeInt64(4, false)
+	require.Equal(t, col.nullBitmap, []byte{0b1111})
+	col.AppendUint64(11)
+	require.Equal(t, col.nullBitmap, []byte{0b11111})
+	col.AppendNull()
+	require.Equal(t, col.nullBitmap, []byte{0b011111})
+
+	col.ResizeUint64(11, false)
+	require.Equal(t, col.nullBitmap, []byte{0b11111111, 0b111})
+
+	col.ResizeUint64(7, true)
+	require.Equal(t, col.nullBitmap, []byte{0})
+
+	col.AppendUint64(32)
+	col.AppendUint64(32)
+	require.Equal(t, col.nullBitmap, []byte{0b10000000, 0b1})
 }

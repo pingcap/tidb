@@ -28,7 +28,7 @@ import (
 
 func getBuildStatsConcurrency(ctx sessionctx.Context) (int, error) {
 	sessionVars := ctx.GetSessionVars()
-	concurrency, err := variable.GetSessionOrGlobalSystemVar(sessionVars, variable.TiDBBuildStatsConcurrency)
+	concurrency, err := sessionVars.GetSessionOrGlobalSystemVar(variable.TiDBBuildStatsConcurrency)
 	if err != nil {
 		return 0, err
 	}

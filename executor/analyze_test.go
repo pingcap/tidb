@@ -224,6 +224,7 @@ func TestFastAnalyze(t *testing.T) {
 		"IndexReader 2.00 root  index:IndexRangeScan",
 		"└─IndexRangeScan 2.00 cop[tikv] table:t3, partition:p1, index:k(v) range:[3,3], keep order:false",
 	))
+	//nolint:revive,all_revive
 	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Dynamic) + `'`)
 
 	// global-stats depends on stats-ver2, but stats-ver2 is not compatible with fast-analyze, so forbid using global-stats with fast-analyze now.
@@ -320,8 +321,7 @@ func TestAnalyzeIndexExtractTopN(t *testing.T) {
 }
 
 func TestAnalyzePartitionTableForFloat(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	tk.MustExec("use test")

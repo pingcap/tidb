@@ -27,6 +27,7 @@ go_test(
         "only_full_group_by_test.go",
     ],
     embed = [":funcdep"],
+    flaky = True,
     deps = [
         "//domain",
         "//infoschema",

@@ -20,6 +20,7 @@ go_test(
         "sem_test.go",
     ],
     embed = [":sem"],
+    flaky = True,
     deps = [
         "//parser/mysql",
         "//sessionctx/variable",

@@ -223,15 +223,18 @@ func TestPreCheckFailed(t *testing.T) {
 		targetInfoGetter: targetInfoGetter,
 		dbMetas:          make([]*mydump.MDDatabaseMeta, 0),
 	}
+	cpdb := panicCheckpointDB{}
+	theCheckBuilder := NewPrecheckItemBuilder(cfg, make([]*mydump.MDDatabaseMeta, 0), preInfoGetter, cpdb)
 	ctl := &Controller{
-		cfg:            cfg,
-		saveCpCh:       make(chan saveCp),
-		checkpointsDB:  panicCheckpointDB{},
-		metaMgrBuilder: failMetaMgrBuilder{},
-		checkTemplate:  NewSimpleTemplate(),
-		tidbGlue:       g,
-		errorMgr:       errormanager.New(nil, cfg, log.L()),
-		preInfoGetter:  preInfoGetter,
+		cfg:                 cfg,
+		saveCpCh:            make(chan saveCp),
+		checkpointsDB:       cpdb,
+		metaMgrBuilder:      failMetaMgrBuilder{},
+		checkTemplate:       NewSimpleTemplate(),
+		tidbGlue:            g,
+		errorMgr:            errormanager.New(nil, cfg, log.L()),
+		preInfoGetter:       preInfoGetter,
+		precheckItemBuilder: theCheckBuilder,
 	}
 
 	mock.ExpectBegin()
@@ -244,6 +247,8 @@ func TestPreCheckFailed(t *testing.T) {
 	require.Regexp(t, ".*mock init meta failure", err.Error())
 	require.NoError(t, mock.ExpectationsWereMet())
 
+	// clear the sys variable cache
+	preInfoGetter.sysVarsCache = nil
 	mock.ExpectBegin()
 	mock.ExpectQuery("SHOW VARIABLES WHERE Variable_name IN .*").
 		WillReturnRows(sqlmock.NewRows([]string{"Variable_name", "Value"}).
