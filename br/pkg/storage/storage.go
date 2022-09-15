@@ -140,6 +140,10 @@ type ExternalStorageOptions struct {
 	// S3Retryer is the retryer for create s3 storage, if it is nil,
 	// defaultS3Retryer() will be used.
 	S3Retryer request.Retryer
+
+	// CheckObjectLockOptions check the s3 bucket has enabled the ObjectLock.
+	// if enabled. it will send the options to tikv.
+	CheckS3ObjectLockOptions bool
 }
 
 // Create creates ExternalStorage.
