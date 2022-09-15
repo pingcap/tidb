@@ -709,10 +709,6 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 		return runReorgJobAndHandleErr(w, d, t, job, tbl, indexInfo, false)
 	}
 	switch indexInfo.BackfillState {
-	case model.BackfillStateInapplicable:
-		indexInfo.BackfillState = model.BackfillStateRunning
-		ver, err = updateVersionAndTableInfo(d, t, job, tbl.Meta(), true)
-		return false, ver, errors.Trace(err)
 	case model.BackfillStateRunning:
 		done, ver, err = runReorgJobAndHandleErr(w, d, t, job, tbl, indexInfo, false)
 		if err != nil {
@@ -1384,7 +1380,7 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 			}
 
 			// Create the index.
-			handle, err := w.index.Create(w.sessCtx, txn, idxRecord.vals, idxRecord.handle, idxRecord.rsData, table.WithIgnoreAssertion)
+			handle, err := w.index.Create(w.sessCtx, txn, idxRecord.vals, idxRecord.handle, idxRecord.rsData, table.WithIgnoreAssertion, table.FromBackfill)
 			if err != nil {
 				if kv.ErrKeyExists.Equal(err) && idxRecord.handle.Equal(handle) {
 					// Index already exists, skip it.
