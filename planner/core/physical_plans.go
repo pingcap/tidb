@@ -982,7 +982,7 @@ func (la *PhysicalApply) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = la.PhysicalHashJoin.MemoryUsage() + size.SizeOfBool + size.SizeOfBool
+	sum = la.PhysicalHashJoin.MemoryUsage() + size.SizeOfBool + size.SizeOfBool + size.SizeOfSlice
 
 	for _, corrCol := range la.OuterSchema {
 		sum += corrCol.MemoryUsage()
