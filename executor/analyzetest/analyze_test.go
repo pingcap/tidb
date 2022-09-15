@@ -910,6 +910,8 @@ func TestAnalyzeSamplingWorkPanic(t *testing.T) {
 }
 
 func TestSmallTableAnalyzeV2(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -935,6 +937,20 @@ create table small_table_inject_pd_with_partition(
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.small_table_inject_pd_with_partition's partition p1",
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.small_table_inject_pd_with_partition's partition p2",
 	))
+	rows := [][]interface{}{
+		{"global", "a"},
+		{"p0", "a"},
+		{"p1", "a"},
+		{"p2", "a"},
+	}
+	tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 'small_table_inject_pd_with_partition' and last_analyzed_at is not null").Sort().CheckAt([]int{2, 3}, rows)
+	rows = [][]interface{}{
+		{"global", "0", "3"},
+		{"p0", "0", "1"},
+		{"p1", "0", "1"},
+		{"p2", "0", "1"},
+	}
+	tk.MustQuery("show stats_meta where db_name = 'test' and table_name = 'small_table_inject_pd_with_partition'").Sort().CheckAt([]int{2, 4, 5}, rows)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/calcSampleRateByStorageCount"))
 }
 
