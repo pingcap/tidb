@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/structure"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
 
@@ -653,6 +654,59 @@ func (m *Meta) GetFlashbackHistoryTSRange() (timeRange []TSRange, err error) {
 		return nil, err
 	}
 	return timeRange, nil
+}
+
+// CheckFlashbackHistoryTSRange checks flashbackTS overlapped with history time ranges or not.
+func CheckFlashbackHistoryTSRange(m *Meta, targetTS uint64) error {
+	tsRanges, err := m.GetFlashbackHistoryTSRange()
+	if err != nil {
+		return err
+	}
+	for _, tsRange := range tsRanges {
+		if tsRange.StartTS <= targetTS && targetTS <= tsRange.EndTS {
+			return errors.Errorf("Can't get snapshot value from flashback time range [%s, %s]",
+				oracle.GetTimeFromTS(tsRange.StartTS), oracle.GetTimeFromTS(tsRange.EndTS))
+		}
+	}
+	return nil
+}
+
+// UpdateFlashbackHistoryTSRanges insert [startTS, endTS] into FlashbackHistoryTSRange.
+func UpdateFlashbackHistoryTSRanges(m *Meta, startTS uint64, endTS uint64, gcSafePoint uint64) error {
+	tsRanges, err := m.GetFlashbackHistoryTSRange()
+	if err != nil {
+		return err
+	}
+	if len(tsRanges) != 0 && tsRanges[len(tsRanges)-1].EndTS >= endTS {
+		// It's impossible, endTS should always greater than all TS in history TS ranges.
+		return errors.Errorf("Maybe TSO fallback, last flashback endTS: %d, now: %d", tsRanges[len(tsRanges)-1].EndTS, endTS)
+	}
+
+	newTsRange := make([]TSRange, 0, len(tsRanges))
+
+	for _, tsRange := range tsRanges {
+		if tsRange.EndTS < gcSafePoint {
+			continue
+		}
+		if startTS > tsRange.EndTS {
+			// tsRange.StartTS < tsRange.EndTS < startTS.
+			// We should keep tsRange in slices.
+			newTsRange = append(newTsRange, tsRange)
+		} else if startTS < tsRange.StartTS {
+			// startTS < tsRange.StartTS < tsRange.EndTS.
+			// The remained ts ranges are useless, [startTS, endTS] will cover them, so break.
+			break
+		} else {
+			// tsRange.StartTS < startTS < tsRange.EndTS.
+			// It's impossible reach here, we checked it before start flashback cluster.
+			return errors.Errorf("It's an unreachable branch, flashbackTS (%d) in old ts range: [%d, %d]",
+				startTS, tsRange.StartTS, tsRange.EndTS)
+		}
+	}
+
+	// Store the new tsRange.
+	newTsRange = append(newTsRange, TSRange{StartTS: startTS, EndTS: endTS})
+	return m.SetFlashbackHistoryTSRange(newTsRange)
 }
 
 // SetConcurrentDDL set the concurrent DDL flag.

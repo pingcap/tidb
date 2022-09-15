@@ -193,6 +193,12 @@ func TestGlobalVariablesOnFlashback(t *testing.T) {
 			rs, err = tk.Exec("show variables like 'tidb_gc_enable'")
 			assert.NoError(t, err)
 			assert.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.Off)
+			rs, err = tk.Exec("show variables like 'tidb_enable_auto_analyze'")
+			assert.NoError(t, err)
+			assert.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.Off)
+			rs, err = tk.Exec("show variables like 'tidb_max_auto_analyze_time'")
+			assert.NoError(t, err)
+			assert.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], "1")
 		}
 	}
 	dom.DDL().SetHook(hook)
@@ -281,15 +287,29 @@ func TestFlashbackTimeRange(t *testing.T) {
 	flashbackTime := oracle.GetTimeFromTS(m.StartTS).Add(-10 * time.Minute)
 
 	// No flashback history, shouldn't return err.
-	require.NoError(t, ddl.CheckFlashbackHistoryTSRange(m, oracle.GoTimeToTS(flashbackTime)))
+	require.NoError(t, meta.CheckFlashbackHistoryTSRange(m, oracle.GoTimeToTS(flashbackTime)))
 
 	// Insert a time range to flashback history ts ranges.
-	require.NoError(t, ddl.UpdateFlashbackHistoryTSRanges(m, oracle.GoTimeToTS(flashbackTime), m.StartTS, 0))
+	require.NoError(t, meta.UpdateFlashbackHistoryTSRanges(m, oracle.GoTimeToTS(flashbackTime), m.StartTS, 0))
 
 	historyTS, err := m.GetFlashbackHistoryTSRange()
 	require.NoError(t, err)
 	require.Len(t, historyTS, 1)
 	require.NoError(t, txn.Commit(context.Background()))
+
+	// check tidb_snapshot and stale read timestamp
+	tk := testkit.NewTestKit(t, store)
+	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
+	defer resetGC()
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+	sql := fmt.Sprintf("set tidb_snapshot='%v'", flashbackTime.Add(5*time.Minute).Format("2006-01-02 15:04:05"))
+	tk.MustGetErrMsg(sql, fmt.Sprintf("Can't get snapshot value from flashback time range [%s, %s]",
+		flashbackTime, oracle.GetTimeFromTS(m.StartTS)))
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+	sql = fmt.Sprintf("select * from t as of timestamp '%v'", flashbackTime.Add(5*time.Minute).Format("2006-01-02 15:04:05"))
+	tk.MustGetErrMsg(sql, fmt.Sprintf("Can't get snapshot value from flashback time range [%s, %s]",
+		flashbackTime, oracle.GetTimeFromTS(m.StartTS)))
 
 	se, err = session.CreateSession4Test(store)
 	require.NoError(t, err)
@@ -299,24 +319,24 @@ func TestFlashbackTimeRange(t *testing.T) {
 	m = meta.NewMeta(txn)
 	require.NoError(t, err)
 	// Flashback history time range is [m.StartTS - 10min, m.StartTS]
-	require.Error(t, ddl.CheckFlashbackHistoryTSRange(m, oracle.GoTimeToTS(flashbackTime.Add(5*time.Minute))))
+	require.Error(t, meta.CheckFlashbackHistoryTSRange(m, oracle.GoTimeToTS(flashbackTime.Add(5*time.Minute))))
 
 	// Check add insert a new time range
-	require.NoError(t, ddl.CheckFlashbackHistoryTSRange(m, oracle.GoTimeToTS(flashbackTime.Add(-5*time.Minute))))
-	require.NoError(t, ddl.UpdateFlashbackHistoryTSRanges(m, oracle.GoTimeToTS(flashbackTime.Add(-5*time.Minute)), m.StartTS, 0))
+	require.NoError(t, meta.CheckFlashbackHistoryTSRange(m, oracle.GoTimeToTS(flashbackTime.Add(-5*time.Minute))))
+	require.NoError(t, meta.UpdateFlashbackHistoryTSRanges(m, oracle.GoTimeToTS(flashbackTime.Add(-5*time.Minute)), m.StartTS, 0))
 
 	historyTS, err = m.GetFlashbackHistoryTSRange()
 	require.NoError(t, err)
 	// history time range still equals to 1, because overlapped
 	require.Len(t, historyTS, 1)
 
-	require.NoError(t, ddl.UpdateFlashbackHistoryTSRanges(m, oracle.GoTimeToTS(flashbackTime.Add(15*time.Minute)), oracle.GoTimeToTS(flashbackTime.Add(20*time.Minute)), 0))
+	require.NoError(t, meta.UpdateFlashbackHistoryTSRanges(m, oracle.GoTimeToTS(flashbackTime.Add(15*time.Minute)), oracle.GoTimeToTS(flashbackTime.Add(20*time.Minute)), 0))
 	historyTS, err = m.GetFlashbackHistoryTSRange()
 	require.NoError(t, err)
 	require.Len(t, historyTS, 2)
 
 	// GCSafePoint updated will clean some history TS ranges
-	require.NoError(t, ddl.UpdateFlashbackHistoryTSRanges(m,
+	require.NoError(t, meta.UpdateFlashbackHistoryTSRanges(m,
 		oracle.GoTimeToTS(flashbackTime.Add(25*time.Minute)),
 		oracle.GoTimeToTS(flashbackTime.Add(30*time.Minute)),
 		oracle.GoTimeToTS(flashbackTime.Add(22*time.Minute))))

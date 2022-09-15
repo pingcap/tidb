@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/sessionstates"
@@ -225,7 +226,11 @@ func ValidateSnapshotReadTS(ctx context.Context, sctx Context, readTS uint64) er
 			return errors.Errorf("cannot set read timestamp to a future time")
 		}
 	}
-	return nil
+	txn, err := sctx.Txn(true)
+	if err != nil {
+		return err
+	}
+	return meta.CheckFlashbackHistoryTSRange(meta.NewMeta(txn), readTS)
 }
 
 // How far future from now ValidateStaleReadTS allows at most
@@ -246,7 +251,11 @@ func ValidateStaleReadTS(ctx context.Context, sctx Context, readTS uint64) error
 	if oracle.GetTimeFromTS(readTS).After(oracle.GetTimeFromTS(currentTS).Add(allowedTimeFromNow)) {
 		return errors.Errorf("cannot set read timestamp to a future time")
 	}
-	return nil
+	txn, err := sctx.Txn(true)
+	if err != nil {
+		return err
+	}
+	return meta.CheckFlashbackHistoryTSRange(meta.NewMeta(txn), readTS)
 }
 
 // SysProcTracker is used to track background sys processes
