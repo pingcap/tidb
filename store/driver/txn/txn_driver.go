@@ -299,6 +299,7 @@ func (txn *tikvTxn) extractKeyExistsErr(key kv.Key) error {
 	if err != nil {
 		return genKeyExistsError("UNKNOWN", key.String(), err)
 	}
+	indexID = tablecodec.IndexIDMask & indexID
 
 	tblInfo := txn.GetTableInfo(tableID)
 	if tblInfo == nil {
