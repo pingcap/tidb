@@ -926,6 +926,19 @@ func (lt *PhysicalTopN) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	return corCols
 }
 
+// MemoryUsage return the memory usage of PhysicalTopN
+func (lt *PhysicalTopN) MemoryUsage() (sum int64) {
+	if lt == nil {
+		return
+	}
+
+	sum = lt.basePhysicalPlan.MemoryUsage() + size.SizeOfSlice + size.SizeOfUint64*2
+	for _, byItem := range lt.ByItems {
+		sum += byItem.MemoryUsage()
+	}
+	return
+}
+
 // PhysicalApply represents apply plan, only used for subquery.
 type PhysicalApply struct {
 	PhysicalHashJoin
