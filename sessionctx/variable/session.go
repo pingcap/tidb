@@ -223,7 +223,7 @@ type TxnCtxNoNeedToRestore struct {
 	TemporaryTables map[int64]tableutil.TempTable
 	// EnableMDL indicates whether to enable the MDL lock for the transaction.
 	EnableMDL bool
-	// relatedTableForMDL records the `lock` table for metadata lock. It maps from int64 to struct{}.
+	// relatedTableForMDL records the `lock` table for metadata lock. It maps from int64 to int64(version).
 	relatedTableForMDL *sync.Map
 }
 

@@ -671,7 +671,7 @@ func (do *Domain) mdlCheckLoop() {
 				logutil.BgLogger().Info("mdl gets lock, update to owner", zap.Int64("jobID", jobID), zap.Int64("version", ver))
 				err := do.ddl.SchemaSyncer().UpdateSelfVersion(context.Background(), jobID, ver)
 				if err != nil {
-					logutil.BgLogger().Info("update self version failed")
+					logutil.BgLogger().Warn("update self version failed", zap.Error(err))
 				} else {
 					jobCache[jobID] = ver
 				}

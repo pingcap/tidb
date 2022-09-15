@@ -1733,7 +1733,8 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.
 			}
 		}
 		var err error
-		tbl, err = domain.GetDomain(sctx).InfoSchema().TableByName(dbName, tableInfo.Name)
+		domainSchema := domain.GetDomain(sctx).InfoSchema()
+		tbl, err = domainSchema.TableByName(dbName, tableInfo.Name)
 		if err != nil {
 			return nil, err
 		}
@@ -1756,7 +1757,7 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.
 						copyTableInfo = tbl.Meta().Clone()
 					}
 					copyTableInfo.Indices[i].State = model.StateWriteReorganization
-					dbInfo, _ := domain.GetDomain(sctx).InfoSchema().SchemaByName(dbName)
+					dbInfo, _ := domainSchema.SchemaByName(dbName)
 					allocs := autoid.NewAllocatorsFromTblInfo(sctx.GetStore(), dbInfo.ID, copyTableInfo)
 					tbl, err = table.TableFromMeta(allocs, copyTableInfo)
 					if err != nil {
@@ -1784,14 +1785,14 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.
 		}
 
 		if se, ok := is.(*infoschema.SessionExtendedInfoSchema); ok {
-			db, _ := domain.GetDomain(sctx).InfoSchema().SchemaByTable(tbl.Meta())
+			db, _ := domainSchema.SchemaByTable(tbl.Meta())
 			err = se.UpdateTableInfo(db, tbl)
 			if err != nil {
 				return nil, err
 			}
 		}
 		if !skipLock {
-			sctx.GetSessionVars().GetRelatedTableForMDL().Store(tableInfo.ID, struct{}{})
+			sctx.GetSessionVars().GetRelatedTableForMDL().Store(tableInfo.ID, domainSchema.SchemaMetaVersion())
 		}
 		return tbl, nil
 	}
