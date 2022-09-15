@@ -640,7 +640,7 @@ func registerTLSConfig(conf *Config) error {
 		return nil
 	}
 
-	conf.Security.DriveTLSName = "dumpling" + uuid.NewString()
+	conf.Security.DriveTLSName = "dumpling" + uuid.New().String()
 	err = mysql.RegisterTLSConfig(conf.Security.DriveTLSName, tlsConfig)
 	return errors.Trace(err)
 }

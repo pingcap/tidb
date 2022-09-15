@@ -160,7 +160,7 @@ func TestCA(t *testing.T) {
 	resp, err := util.ClientWithTLS(clientTLS1).Get(url)
 	require.NoError(t, err)
 	defer resp.Body.Close()
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	require.Equal(t, "This an example server", string(body))
 
