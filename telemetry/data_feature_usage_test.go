@@ -63,6 +63,10 @@ func TestTxnUsageInfo(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("set global %s = 1", variable.TiDBRCReadCheckTS))
 		txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
 		require.True(t, txnUsage.RcCheckTS)
+
+		tk.MustExec(fmt.Sprintf("set global %s = 1", variable.TiDBRCWriteCheckTs))
+		txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
+		require.True(t, txnUsage.RCWriteCheckTS)
 	})
 
 	t.Run("Count", func(t *testing.T) {
@@ -208,6 +212,9 @@ func TestTablePartition(t *testing.T) {
 	require.Equal(t, int64(0), usage.TablePartition.TablePartitionRangeCnt)
 	require.Equal(t, int64(0), usage.TablePartition.TablePartitionRangeColumnsCnt)
 	require.Equal(t, int64(0), usage.TablePartition.TablePartitionListColumnsCnt)
+	require.Equal(t, int64(0), usage.TablePartition.TablePartitionCreateIntervalPartitionsCnt)
+	require.Equal(t, int64(0), usage.TablePartition.TablePartitionAddIntervalPartitionsCnt)
+	require.Equal(t, int64(0), usage.TablePartition.TablePartitionDropIntervalPartitionsCnt)
 
 	telemetry.PostReportTelemetryDataForTest()
 	tk.MustExec("drop table if exists pt1")
@@ -217,15 +224,23 @@ func TestTablePartition(t *testing.T) {
 		"partition p2 values less than (9)," +
 		"partition p3 values less than (12)," +
 		"partition p4 values less than (15))")
+	tk.MustExec("alter table pt1 first partition less than (9)")
+	tk.MustExec("alter table pt1 last partition less than (21)")
+	tk.MustExec("drop table if exists pt1")
+	tk.MustExec("create table pt1 (d datetime primary key, v varchar(255)) partition by range columns(d)" +
+		" interval (1 day) first partition less than ('2022-01-01') last partition less than ('2022-02-22')")
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
-	require.Equal(t, int64(1), usage.TablePartition.TablePartitionCnt)
+	require.Equal(t, int64(2), usage.TablePartition.TablePartitionCnt)
 	require.Equal(t, int64(0), usage.TablePartition.TablePartitionHashCnt)
 	require.Equal(t, int64(5), usage.TablePartition.TablePartitionMaxPartitionsCnt)
 	require.Equal(t, int64(0), usage.TablePartition.TablePartitionListCnt)
 	require.Equal(t, int64(1), usage.TablePartition.TablePartitionRangeCnt)
-	require.Equal(t, int64(0), usage.TablePartition.TablePartitionRangeColumnsCnt)
+	require.Equal(t, int64(1), usage.TablePartition.TablePartitionRangeColumnsCnt)
 	require.Equal(t, int64(0), usage.TablePartition.TablePartitionListColumnsCnt)
+	require.Equal(t, int64(1), usage.TablePartition.TablePartitionCreateIntervalPartitionsCnt)
+	require.Equal(t, int64(1), usage.TablePartition.TablePartitionAddIntervalPartitionsCnt)
+	require.Equal(t, int64(1), usage.TablePartition.TablePartitionDropIntervalPartitionsCnt)
 }
 
 func TestPlacementPolicies(t *testing.T) {

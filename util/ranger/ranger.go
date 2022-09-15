@@ -91,7 +91,13 @@ func points2Ranges(sctx sessionctx.Context, rangePoints []*point, tp *types.Fiel
 			Collators:   []collate.Collator{collate.GetCollator(tp.GetCollate())},
 		}
 		if len(ranges) == 0 && rangeMaxSize > 0 && ran.MemUsage()*int64(len(rangePoints))/2 > rangeMaxSize {
-			return FullRange(), true, nil
+			var fullRange Ranges
+			if mysql.HasNotNullFlag(tp.GetFlag()) {
+				fullRange = FullNotNullRange()
+			} else {
+				fullRange = FullRange()
+			}
+			return fullRange, true, nil
 		}
 		ranges = append(ranges, ran)
 	}
@@ -274,7 +280,8 @@ func points2TableRanges(sctx sessionctx.Context, rangePoints []*point, tp *types
 	ranges := make(Ranges, 0, len(rangePoints)/2)
 	var minValueDatum, maxValueDatum types.Datum
 	// Currently, table's kv range cannot accept encoded value of MaxValueDatum. we need to convert it.
-	if mysql.HasUnsignedFlag(tp.GetFlag()) {
+	isUnsigned := mysql.HasUnsignedFlag(tp.GetFlag())
+	if isUnsigned {
 		minValueDatum.SetUint64(0)
 		maxValueDatum.SetUint64(math.MaxUint64)
 	} else {
@@ -316,7 +323,7 @@ func points2TableRanges(sctx sessionctx.Context, rangePoints []*point, tp *types
 			Collators:   []collate.Collator{collate.GetCollator(tp.GetCollate())},
 		}
 		if len(ranges) == 0 && rangeMaxSize > 0 && ran.MemUsage()*int64(len(rangePoints))/2 > rangeMaxSize {
-			return FullRange(), true, nil
+			return FullIntRange(isUnsigned), true, nil
 		}
 		ranges = append(ranges, ran)
 	}
@@ -353,7 +360,7 @@ func buildColumnRange(accessConditions []expression.Expression, sctx sessionctx.
 	}
 	if rangeFallback {
 		sctx.GetSessionVars().StmtCtx.RecordRangeFallback(rangeMaxSize)
-		return FullRange(), nil, accessConditions, nil
+		return ranges, nil, accessConditions, nil
 	}
 	if colLen != types.UnspecifiedLength {
 		for _, ran := range ranges {
