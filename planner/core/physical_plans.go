@@ -1919,6 +1919,7 @@ func appendChildCandidate(origin PhysicalPlan, pp PhysicalPlan, op *physicalOpti
 			ID:          pp.ID(),
 			TP:          pp.TP(),
 			ExplainInfo: pp.ExplainInfo(),
+			// TODO: trace the cost
 		},
 	}
 	op.tracer.AppendCandidate(candidate)
