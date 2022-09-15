@@ -497,7 +497,7 @@ func TestAdminCleanupIndex(t *testing.T) {
 	tk.MustExec("insert admin_test (c1, c3) values (7, 100), (9, 100), (11, NULL)")
 
 	// pk is handle, no need to cleanup
-	_, err := tk.Exec("admin cleanup index admin_test `primary`")
+	err := tk.ExecToErr("admin cleanup index admin_test `primary`")
 	require.Error(t, err)
 	r := tk.MustQuery("admin cleanup index admin_test c2")
 	r.Check(testkit.Rows("0"))

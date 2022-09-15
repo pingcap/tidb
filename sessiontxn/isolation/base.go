@@ -415,7 +415,9 @@ func (p *baseTxnContextProvider) getSnapshotByTS(snapshotTS uint64) (kv.Snapshot
 	)
 
 	replicaReadType := sessVars.GetReplicaRead()
-	if replicaReadType.IsFollowerRead() && !sessVars.StmtCtx.RCCheckTS {
+	if replicaReadType.IsFollowerRead() &&
+		!sessVars.StmtCtx.RCCheckTS &&
+		!sessVars.RcWriteCheckTS {
 		snapshot.SetOption(kv.ReplicaRead, replicaReadType)
 	}
 
