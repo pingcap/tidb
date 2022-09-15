@@ -121,7 +121,6 @@ func NewPollTiFlashBackoffContext(MinThreshold, MaxThreshold TiFlashTick, Capaci
 // TiFlashManagementContext is the context for TiFlash Replica Management
 type TiFlashManagementContext struct {
 	TiFlashStores             map[int64]helper.StoreStat
-	HandlePdCounter           uint64
 	UpdateTiFlashStoreCounter uint64
 	PollCounter               uint64
 	ProgressCache             map[int64]string
@@ -216,7 +215,6 @@ func NewTiFlashManagementContext() (*TiFlashManagementContext, error) {
 		return nil, err
 	}
 	return &TiFlashManagementContext{
-		HandlePdCounter:           0,
 		UpdateTiFlashStoreCounter: 0,
 		PollCounter:               0,
 		TiFlashStores:             make(map[int64]helper.StoreStat),
@@ -412,6 +410,9 @@ func getTiFlashTableSyncProgress(pollTiFlashContext *TiFlashManagementContext, t
 
 func pollAvailableTableProgress(schemas infoschema.InfoSchema, ctx sessionctx.Context, pollTiFlashContext *TiFlashManagementContext) {
 	pollMaxCount := PollAvailableTableProgressCount
+	failpoint.Inject("PollAvailableTableProgressMaxCount", func(val failpoint.Value) {
+		pollMaxCount = uint64(val.(int))
+	})
 	for element := pollTiFlashContext.AvailableTables.Front(); element != nil && pollMaxCount > 0; pollMaxCount-- {
 		availableTableID := element.Value.(AvailableTableID)
 		var table table.Table
@@ -477,8 +478,9 @@ func pollAvailableTableProgress(schemas infoschema.InfoSchema, ctx sessionctx.Co
 
 func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContext *TiFlashManagementContext) error {
 	defer func() {
-		pollTiFlashContext.HandlePdCounter++
-		pollTiFlashContext.HandlePdCounter %= PullTiFlashPdTick.Load()
+		failpoint.Inject("PollTiFlashReplicaStatusCleanProgressCache", func() {
+			pollTiFlashContext.PollCounter = PollCleanProgressCacheInteal
+		})
 		pollTiFlashContext.PollCounter++
 		// 5min clean progress cache to avoid data race
 		if pollTiFlashContext.PollCounter > PollCleanProgressCacheInteal {
