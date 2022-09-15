@@ -53,7 +53,7 @@ type featureUsage struct {
 	LogBackup             bool                             `json:"logBackup"`
 	EnablePaging          bool                             `json:"enablePaging"`
 	EnableCostModelVer2   bool                             `json:"enableCostModelVer2"`
-	AddIndexIngest        *m.AddIndexIngestUsageCounter    `json:"AddIndexIngest"`
+	AddIndexIngest        *m.AddIndexIngestUsageCounter    `json:"addIndexIngest"`
 }
 
 type placementPolicyUsage struct {
