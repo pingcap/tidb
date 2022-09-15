@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
@@ -58,86 +59,29 @@ const (
 	globalBindingFile   = "global_bindings.sql"
 )
 
+type planReplayerDumpKeyType int
+
+func (k planReplayerDumpKeyType) String() string {
+	return "plan_replayer_dump_var"
+}
+
+// PlanReplayerDumpVarKey is a variable key for plan replayer dump.
+const PlanReplayerDumpVarKey planReplayerDumpKeyType = 0
+
 // PlanReplayerExec represents a plan replayer executor.
 type PlanReplayerExec struct {
 	baseExecutor
+	DumpInfo *PlanReplayerDumpInfo
+	endFlag  bool
+}
+
+type PlanReplayerDumpInfo struct {
 	ExecStmts []ast.StmtNode
 	Analyze   bool
-
-	endFlag bool
-}
-
-type tableNamePair struct {
-	DBName    string
-	TableName string
-	IsView    bool
-}
-
-type tableNameExtractor struct {
-	ctx      context.Context
-	executor sqlexec.RestrictedSQLExecutor
-	is       infoschema.InfoSchema
-	curDB    model.CIStr
-	names    map[tableNamePair]struct{}
-	cteNames map[string]struct{}
-	err      error
-}
-
-func (tne *tableNameExtractor) Enter(in ast.Node) (ast.Node, bool) {
-	if _, ok := in.(*ast.TableName); ok {
-		return in, true
-	}
-	return in, false
-}
-
-func (tne *tableNameExtractor) Leave(in ast.Node) (ast.Node, bool) {
-	if tne.err != nil {
-		return in, true
-	}
-	if t, ok := in.(*ast.TableName); ok {
-		isView, err := tne.handleIsView(t)
-		if err != nil {
-			tne.err = err
-			return in, true
-		}
-		tp := tableNamePair{DBName: t.Schema.L, TableName: t.Name.L, IsView: isView}
-		if tp.DBName == "" {
-			tp.DBName = tne.curDB.L
-		}
-		if _, ok := tne.names[tp]; !ok {
-			tne.names[tp] = struct{}{}
-		}
-	} else if s, ok := in.(*ast.SelectStmt); ok {
-		if s.With != nil && len(s.With.CTEs) > 0 {
-			for _, cte := range s.With.CTEs {
-				tne.cteNames[cte.Name.L] = struct{}{}
-			}
-		}
-	}
-	return in, true
-}
-
-func (tne *tableNameExtractor) handleIsView(t *ast.TableName) (bool, error) {
-	schema := t.Schema
-	if schema.L == "" {
-		schema = tne.curDB
-	}
-	table := t.Name
-	isView := tne.is.TableIsView(schema, table)
-	if !isView {
-		return false, nil
-	}
-	viewTbl, err := tne.is.TableByName(schema, table)
-	if err != nil {
-		return false, err
-	}
-	sql := viewTbl.Meta().View.SelectStmt
-	node, err := tne.executor.ParseWithParams(tne.ctx, sql)
-	if err != nil {
-		return false, err
-	}
-	node.Accept(tne)
-	return true, nil
+	Path      string
+	File      *os.File
+	FileName  string
+	ctx       sessionctx.Context
 }
 
 // Next implements the Executor Next interface.
@@ -146,15 +90,53 @@ func (e *PlanReplayerExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.endFlag {
 		return nil
 	}
-	if e.ExecStmts == nil {
-		return errors.New("plan replayer: sql is empty")
-	}
-	res, err := e.dump(ctx, domain.GetPlanReplayerDirName())
+	err := e.createFile(domain.GetPlanReplayerDirName())
 	if err != nil {
 		return err
 	}
-	req.AppendString(0, res)
+	if len(e.DumpInfo.Path) > 0 {
+		err = e.setKey()
+		if err != nil {
+			return err
+		}
+		e.endFlag = true
+		return nil
+	}
+	if e.DumpInfo.ExecStmts == nil {
+		return errors.New("plan replayer: sql is empty")
+	}
+	err = e.DumpInfo.dump(ctx)
+	if err != nil {
+		return err
+	}
+	req.AppendString(0, e.DumpInfo.FileName)
 	e.endFlag = true
+	return nil
+}
+
+func (e *PlanReplayerExec) createFile(path string) error {
+	// Create path
+	err := os.MkdirAll(path, os.ModePerm)
+	if err != nil {
+		return errors.AddStack(err)
+	}
+
+	// Generate key and create zip file
+	time := time.Now().UnixNano()
+	b := make([]byte, 16)
+	//nolint: gosec
+	_, err = rand.Read(b)
+	if err != nil {
+		return err
+	}
+	key := base64.URLEncoding.EncodeToString(b)
+	fileName := fmt.Sprintf("replayer_%v_%v.zip", key, time)
+	zf, err := os.Create(filepath.Join(path, fileName))
+	if err != nil {
+		return errors.AddStack(err)
+	}
+	e.DumpInfo.File = zf
+	e.DumpInfo.FileName = fileName
 	return nil
 }
 
@@ -187,28 +169,9 @@ func (e *PlanReplayerExec) Next(ctx context.Context, req *chunk.Chunk) error {
      |-explain2.txt
      |-....
 */
-func (e *PlanReplayerExec) dump(ctx context.Context, path string) (fileName string, err error) {
-	// Create path
-	err = os.MkdirAll(path, os.ModePerm)
-	if err != nil {
-		return "", errors.AddStack(err)
-	}
-
-	// Generate key and create zip file
-	time := time.Now().UnixNano()
-	b := make([]byte, 16)
-	//nolint: gosec
-	_, err = rand.Read(b)
-	if err != nil {
-		return "", err
-	}
-	key := base64.URLEncoding.EncodeToString(b)
-	fileName = fmt.Sprintf("replayer_%v_%v.zip", key, time)
-	zf, err := os.Create(filepath.Join(path, fileName))
-	if err != nil {
-		return "", errors.AddStack(err)
-	}
-
+func (e *PlanReplayerDumpInfo) dump(ctx context.Context) (err error) {
+	fileName := e.FileName
+	zf := e.File
 	// Create zip writer
 	zw := zip.NewWriter(zf)
 	defer func() {
@@ -224,12 +187,12 @@ func (e *PlanReplayerExec) dump(ctx context.Context, path string) (fileName stri
 
 	// Dump config
 	if err = dumpConfig(zw); err != nil {
-		return "", err
+		return err
 	}
 
 	// Dump meta
 	if err = dumpMeta(zw); err != nil {
-		return "", err
+		return err
 	}
 
 	// Retrieve current DB
@@ -240,50 +203,50 @@ func (e *PlanReplayerExec) dump(ctx context.Context, path string) (fileName stri
 	// Retrieve all tables
 	pairs, err := e.extractTableNames(ctx, e.ExecStmts, dbName)
 	if err != nil {
-		return "", errors.AddStack(fmt.Errorf("plan replayer: invalid SQL text, err: %v", err))
+		return errors.AddStack(fmt.Errorf("plan replayer: invalid SQL text, err: %v", err))
 	}
 
 	// Dump Schema and View
 	if err = dumpSchemas(e.ctx, zw, pairs); err != nil {
-		return "", err
+		return err
 	}
 
 	// Dump tables tiflash replicas
 	if err = dumpTiFlashReplica(e.ctx, zw, pairs); err != nil {
-		return "", err
+		return err
 	}
 
 	// Dump stats
 	if err = dumpStats(zw, pairs, do); err != nil {
-		return "", err
+		return err
 	}
 
 	// Dump variables
 	if err = dumpVariables(e.ctx, zw); err != nil {
-		return "", err
+		return err
 	}
 
 	// Dump sql
 	if err = dumpSQLs(e.ExecStmts, zw); err != nil {
-		return "", err
+		return err
 	}
 
 	// Dump session bindings
 	if err = dumpSessionBindings(e.ctx, zw); err != nil {
-		return "", err
+		return err
 	}
 
 	// Dump global bindings
 	if err = dumpGlobalBindings(e.ctx, zw); err != nil {
-		return "", err
+		return err
 	}
 
 	// Dump explain
 	if err = dumpExplain(e.ctx, zw, e.ExecStmts, e.Analyze); err != nil {
-		return "", err
+		return err
 	}
 
-	return fileName, nil
+	return nil
 }
 
 func dumpConfig(zw *zip.Writer) error {
@@ -497,7 +460,7 @@ func dumpExplain(ctx sessionctx.Context, zw *zip.Writer, execStmts []ast.StmtNod
 	return nil
 }
 
-func (e *PlanReplayerExec) extractTableNames(ctx context.Context,
+func (e *PlanReplayerDumpInfo) extractTableNames(ctx context.Context,
 	ExecStmts []ast.StmtNode, curDB model.CIStr) (map[tableNamePair]struct{}, error) {
 	tableExtractor := &tableNameExtractor{
 		ctx:      ctx,
@@ -526,6 +489,40 @@ func (e *PlanReplayerExec) extractTableNames(ctx context.Context,
 		}
 	}
 	return r, nil
+}
+
+func (e *PlanReplayerExec) setKey() error {
+	if len(e.DumpInfo.Path) == 0 {
+		return errors.New("plan replayer: file path is empty")
+	}
+	val := e.ctx.Value(PlanReplayerDumpVarKey)
+	if val != nil {
+		e.ctx.SetValue(PlanReplayerDumpVarKey, nil)
+		return errors.New("plan replayer: previous plan replayer dump option isn't closed normally, please try again")
+	}
+	e.ctx.SetValue(PlanReplayerDumpVarKey, e.DumpInfo)
+	logutil.BgLogger().Info("plan replayer dump", zap.String("filename", e.DumpInfo.FileName))
+	return nil
+}
+
+// DumpSQLsFromFile dumps plan replayer results for sqls from file
+func (e *PlanReplayerDumpInfo) DumpSQLsFromFile(ctx context.Context, b []byte) error {
+	sqls := strings.Split(string(b), ";")
+	p := parser.New()
+	e.ExecStmts = make([]ast.StmtNode, 0)
+	for _, sql := range sqls {
+		s := strings.Trim(sql, "\n")
+		if len(s) < 1 {
+			continue
+		}
+		node, err := p.ParseOneStmt(s, "", "")
+		if err != nil {
+			// TODO: add error info
+			return err
+		}
+		e.ExecStmts = append(e.ExecStmts, node)
+	}
+	return e.dump(ctx)
 }
 
 func getStatsForTable(do *domain.Domain, pair tableNamePair) (*handle.JSONTable, error) {
@@ -924,4 +921,77 @@ func (e *PlanReplayerLoadInfo) Update(data []byte) error {
 		e.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("load bindings failed, err:%v", err))
 	}
 	return nil
+}
+
+type tableNamePair struct {
+	DBName    string
+	TableName string
+	IsView    bool
+}
+
+type tableNameExtractor struct {
+	ctx      context.Context
+	executor sqlexec.RestrictedSQLExecutor
+	is       infoschema.InfoSchema
+	curDB    model.CIStr
+	names    map[tableNamePair]struct{}
+	cteNames map[string]struct{}
+	err      error
+}
+
+func (tne *tableNameExtractor) Enter(in ast.Node) (ast.Node, bool) {
+	if _, ok := in.(*ast.TableName); ok {
+		return in, true
+	}
+	return in, false
+}
+
+func (tne *tableNameExtractor) Leave(in ast.Node) (ast.Node, bool) {
+	if tne.err != nil {
+		return in, true
+	}
+	if t, ok := in.(*ast.TableName); ok {
+		isView, err := tne.handleIsView(t)
+		if err != nil {
+			tne.err = err
+			return in, true
+		}
+		tp := tableNamePair{DBName: t.Schema.L, TableName: t.Name.L, IsView: isView}
+		if tp.DBName == "" {
+			tp.DBName = tne.curDB.L
+		}
+		if _, ok := tne.names[tp]; !ok {
+			tne.names[tp] = struct{}{}
+		}
+	} else if s, ok := in.(*ast.SelectStmt); ok {
+		if s.With != nil && len(s.With.CTEs) > 0 {
+			for _, cte := range s.With.CTEs {
+				tne.cteNames[cte.Name.L] = struct{}{}
+			}
+		}
+	}
+	return in, true
+}
+
+func (tne *tableNameExtractor) handleIsView(t *ast.TableName) (bool, error) {
+	schema := t.Schema
+	if schema.L == "" {
+		schema = tne.curDB
+	}
+	table := t.Name
+	isView := tne.is.TableIsView(schema, table)
+	if !isView {
+		return false, nil
+	}
+	viewTbl, err := tne.is.TableByName(schema, table)
+	if err != nil {
+		return false, err
+	}
+	sql := viewTbl.Meta().View.SelectStmt
+	node, err := tne.executor.ParseWithParams(tne.ctx, sql)
+	if err != nil {
+		return false, err
+	}
+	node.Accept(tne)
+	return true, nil
 }
