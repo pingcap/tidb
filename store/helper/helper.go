@@ -862,6 +862,17 @@ func requestPDForOneHost(host, apiName, method, uri string, body io.Reader, res 
 				zap.String("url", urlVar), zap.Error(err))
 		}
 	}()
+
+	if resp.StatusCode/100 != 2 {
+		bs, _ := io.ReadAll(resp.Body)
+		logutil.BgLogger().Warn("requestPDForOneHost failed with non 2xx status",
+			zap.String("url", urlVar), zap.Error(err),
+			zap.String("status", resp.Status),
+			zap.ByteString("body", bs),
+		)
+		return errors.Errorf("PD request failed with status: '%s'", resp.Status)
+	}
+
 	err = json.NewDecoder(resp.Body).Decode(res)
 	if err != nil {
 		return errors.Trace(err)
