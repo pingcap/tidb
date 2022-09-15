@@ -426,6 +426,7 @@ func TestAddIndexAcceleration(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	usage, err := telemetry.GetFeatureUsage(tk.Session())
 	require.Equal(t, int64(0), usage.AddIndexIngest.AddIndexIngestUsed)
+	require.NoError(t, err)
 
 	allow := ddl.IsEnableFastReorg()
 	require.Equal(t, false, allow)
