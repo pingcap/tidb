@@ -302,29 +302,32 @@ func waitAllScheduleStoppedAndNoRegionHole(ctx context.Context, cfg Config, mgr 
 		}
 
 		log.Info("all leader regions got, start checking hole", zap.Int("len", len(allRegions)))
-		// sort by start key
-		sort.Slice(allRegions, func(i, j int) bool {
-			left, right := allRegions[i], allRegions[j]
-			return bytes.Compare(left.StartKey, right.StartKey) < 0
-		})
 
-		var hasHole bool
-		for j := 0; j < len(allRegions)-1; j++ {
-			left, right := allRegions[j], allRegions[j+1]
-			// we don't need to handle the empty end key specially, since
-			// we sort by start key of region, and the end key of the last region is not checked
-			if !bytes.Equal(left.EndKey, right.StartKey) {
-				log.Info("region hole found", zap.Reflect("left-region", left), zap.Reflect("right-region", right))
-				hasHole = true
-				break
-			}
-		}
-		if !hasHole {
+		if !isRegionsHasHole(allRegions) {
 			return nil
 		}
 		time.Sleep(backoffer.ExponentialBackoff())
 	}
 	return errors.New("failed to wait all schedule stopped")
+}
+
+func isRegionsHasHole(allRegions []*metapb.Region) bool {
+	// sort by start key
+	sort.Slice(allRegions, func(i, j int) bool {
+		left, right := allRegions[i], allRegions[j]
+		return bytes.Compare(left.StartKey, right.StartKey) < 0
+	})
+
+	for j := 0; j < len(allRegions)-1; j++ {
+		left, right := allRegions[j], allRegions[j+1]
+		// we don't need to handle the empty end key specially, since
+		// we sort by start key of region, and the end key of the last region is not checked
+		if !bytes.Equal(left.EndKey, right.StartKey) {
+			log.Info("region hole found", zap.Reflect("left-region", left), zap.Reflect("right-region", right))
+			return true
+		}
+	}
+	return false
 }
 
 func waitUntilAllScheduleStopped(ctx context.Context, cfg Config, allStores []*metapb.Store, mgr *conn.Mgr) ([]*metapb.Region, error) {
