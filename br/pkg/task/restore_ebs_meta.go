@@ -52,7 +52,6 @@ func DefineRestoreEBSMetaFlags(command *cobra.Command) {
 	command.Flags().Int64(flagVolumeIOPS, 0, "volume iops(0 means default for that volume type)")
 	command.Flags().Int64(flagVolumeThroughput, 0, "volume throughout in MiB/s(0 means default for that volume type)")
 	command.Flags().String(flagProgressFile, "progress.txt", "the file name of progress file")
-
 }
 
 type RestoreEBSConfig struct {

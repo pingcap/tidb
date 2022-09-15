@@ -46,7 +46,7 @@ const (
 )
 
 // todo: need a better name
-var hasPendingAdminErr = errors.New("has pending admin")
+var errHasPendingAdmin = errors.New("has pending admin")
 
 // BackupEBSConfig is the configuration specific for backup tasks.
 type BackupEBSConfig struct {
@@ -293,7 +293,7 @@ func waitAllScheduleStoppedAndNoRegionHole(ctx context.Context, cfg Config, mgr 
 		}
 		allRegions, err2 := waitUntilAllScheduleStopped(ctx, cfg, allStores, mgr)
 		if err2 != nil {
-			if causeErr := errors.Cause(err2); causeErr == hasPendingAdminErr {
+			if causeErr := errors.Cause(err2); causeErr == errHasPendingAdmin {
 				log.Info("schedule ongoing on tikv, will retry later", zap.Error(err2))
 			} else {
 				log.Warn("failed to wait schedule, will retry later", zap.Error(err2))
@@ -313,7 +313,7 @@ func waitAllScheduleStoppedAndNoRegionHole(ctx context.Context, cfg Config, mgr 
 			left, right := allRegions[j], allRegions[j+1]
 			// we don't need to handle the empty end key specially, since
 			// we sort by start key of region, and the end key of the last region is not checked
-			if bytes.Compare(left.EndKey, right.StartKey) != 0 {
+			if !bytes.Equal(left.EndKey, right.StartKey) {
 				log.Info("region hole found", zap.Reflect("left-region", left), zap.Reflect("right-region", right))
 				hasHole = true
 				break
@@ -377,7 +377,7 @@ func waitUntilAllScheduleStopped(ctx context.Context, cfg Config, allStores []*m
 					return errors.New("region is nil")
 				}
 				if response.HasPendingAdmin {
-					return errors.WithMessage(hasPendingAdminErr, fmt.Sprintf("store-id=%d", store.Id))
+					return errors.WithMessage(errHasPendingAdmin, fmt.Sprintf("store-id=%d", store.Id))
 				}
 				storeLeaderRegions = append(storeLeaderRegions, response.Region)
 			}
