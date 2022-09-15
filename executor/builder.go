@@ -1058,7 +1058,13 @@ func (b *executorBuilder) setTelemetryInfo(v *plannercore.DDL) {
 				if len(p.ColumnNames) > 0 {
 					b.Ti.PartitionTelemetry.UseTablePartitionRangeColumns = true
 					if len(p.ColumnNames) > 1 {
-						b.Ti.PartitionTelemetry.UseTablePartitionRangeMultiColumns = true
+						b.Ti.PartitionTelemetry.UseTablePartitionRangeColumnsGt1 = true
+					}
+					if len(p.ColumnNames) > 2 {
+						b.Ti.PartitionTelemetry.UseTablePartitionRangeColumnsGt2 = true
+					}
+					if len(p.ColumnNames) > 3 {
+						b.Ti.PartitionTelemetry.UseTablePartitionRangeColumnsGt3 = true
 					}
 				} else {
 					b.Ti.PartitionTelemetry.UseTablePartitionRange = true
