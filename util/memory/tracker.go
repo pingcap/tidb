@@ -405,7 +405,7 @@ func (t *Tracker) Consume(bs int64) {
 		}
 	}
 
-	if sessionTracker != nil {
+	if bs > 0 && sessionTracker != nil {
 		// Kill the Top1 session
 		if sessionTracker.IsKilled.Load() {
 			tryAction(&sessionTracker.actionMuForHardLimit, sessionTracker)

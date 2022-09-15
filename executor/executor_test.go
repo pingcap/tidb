@@ -6001,3 +6001,61 @@ func TestBinaryStrNumericOperator(t *testing.T) {
 	// there should be no warning.
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 }
+
+func TestGlobalMemoryControl(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk0 := testkit.NewTestKit(t, store)
+	tk0.MustExec("set global tidb_mem_oom_action = 'cancel'")
+	tk0.MustExec("set global tidb_server_memory_quota = 512 << 20")
+	tk0.MustExec("set global tidb_server_memory_limit_sess_min_size = 128")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tracker1 := tk1.Session().GetSessionVars().StmtCtx.MemTracker
+
+	tk2 := testkit.NewTestKit(t, store)
+	tracker2 := tk2.Session().GetSessionVars().StmtCtx.MemTracker
+
+	tk3 := testkit.NewTestKit(t, store)
+	tracker3 := tk3.Session().GetSessionVars().StmtCtx.MemTracker
+
+	sm := &testkit.MockSessionManager{
+		PS: []*util.ProcessInfo{tk1.Session().ShowProcess(), tk2.Session().ShowProcess(), tk3.Session().ShowProcess()},
+	}
+	dom.ExpensiveQueryHandle().SetSessionManager(sm)
+	go dom.ExpensiveQueryHandle().Run()
+
+	tracker1.Consume(100 << 20) // 100 MB
+	tracker2.Consume(200 << 20) // 200 MB
+	tracker3.Consume(300 << 20) // 300 MB
+
+	test := make([]int, 128<<20) // Keep 1GB HeapInUse
+	time.Sleep(500 * time.Millisecond)
+
+	// Kill Top1
+	require.False(t, tracker1.IsKilled.Load())
+	require.False(t, tracker2.IsKilled.Load())
+	require.True(t, tracker3.IsKilled.Load())
+	require.Equal(t, memory.MemUsageTop1Tracker.Load(), tracker3)
+	util.WithRecovery( // Next Consume() will panic and cancel the SQL
+		func() {
+			tracker3.Consume(1)
+		}, func(r interface{}) {
+			require.True(t, strings.Contains(r.(string), "Out Of Memory Quota!"))
+		})
+	tracker2.Consume(300 << 20) // Sum 500MB, Not Panic, Waiting t3 cancel finish.
+	time.Sleep(500 * time.Millisecond)
+	require.False(t, tracker2.IsKilled.Load())
+	// Kill Finished
+	tracker3.Consume(-(300 << 20))
+	tk3.Session().ShowProcess().Time = time.Now()
+	time.Sleep(500 * time.Millisecond)
+	// Kill the Next SQL
+	util.WithRecovery( // Next Consume() will panic and cancel the SQL
+		func() {
+			tracker2.Consume(1)
+		}, func(r interface{}) {
+			require.True(t, strings.Contains(r.(string), "Out Of Memory Quota!"))
+		})
+	require.Equal(t, test[0], 0) // Keep 1GB HeapInUse
+}
