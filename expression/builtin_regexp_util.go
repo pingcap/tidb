@@ -23,16 +23,18 @@ import (
 // Parameters may be const or ignored by the user, so different situations should be considered
 // We can handle parameters more easily with this struct.
 //
-// notProvided field shows if user ignores this param in sql
+// When a parameter is not provided by user or is const, col field will be nil and we should
+// provide this parameter with defaultxxx field.
+//
 // for example:
 //
-//	select regexp_like("123", "123", "m"), here notProvided field is false for the third parameter
-//	select regexp_like("123", "123"), here notProvided field is true for the third parameter
+//	select regexp_like(t.a, "123", "m") from t, here col == nil for the second and third parameter
+//	select regexp_like(t.a, "123", "123"), here col != nil for the second and third parameter
+//
+// defaultxxx: When a parameter is not provided or const, defaultxxx field should be it's value.
 type regexpParam struct {
 	defaultStrVal string
-	defaultIntVal int64 // default value when notProvided is true
-	isConst       bool
-	notProvided   bool
+	defaultIntVal int64
 	col           *chunk.Column
 }
 
@@ -41,7 +43,7 @@ func (re *regexpParam) getCol() *chunk.Column {
 }
 
 func (re *regexpParam) getStringVal(id int) string {
-	if re.notProvided || re.isConst {
+	if re.col == nil {
 		return re.defaultStrVal
 	}
 
@@ -49,7 +51,7 @@ func (re *regexpParam) getStringVal(id int) string {
 }
 
 func (re *regexpParam) getIntVal(id int) int64 {
-	if re.notProvided || re.isConst {
+	if re.col == nil {
 		return re.defaultIntVal
 	}
 
@@ -61,15 +63,13 @@ func buildStringParam(bf *baseBuiltinFunc, idx int, input *chunk.Chunk, notProvi
 	var pa regexpParam
 	var err error
 
-	pa.notProvided = notProvided
-	if pa.notProvided {
+	if notProvided {
 		pa.defaultStrVal = ""
 		return &pa, false, nil
 	}
 
 	// Check if this is a const value
-	pa.isConst = bf.args[idx].ConstItem(bf.ctx.GetSessionVars().StmtCtx)
-	if pa.isConst {
+	if bf.args[idx].ConstItem(bf.ctx.GetSessionVars().StmtCtx) {
 		// Initialize the const
 		var isConstNull bool
 		pa.defaultStrVal, isConstNull, err = bf.args[idx].EvalString(bf.ctx, chunk.Row{})
@@ -97,15 +97,13 @@ func buildIntParam(bf *baseBuiltinFunc, idx int, input *chunk.Chunk, notProvided
 	var pa regexpParam
 	var err error
 
-	pa.notProvided = notProvided
-	if pa.notProvided {
+	if notProvided {
 		pa.defaultIntVal = defaultIntVal
 		return &pa, false, nil
 	}
 
 	// Check if this is a const value
-	pa.isConst = bf.args[idx].ConstItem(bf.ctx.GetSessionVars().StmtCtx)
-	if pa.isConst {
+	if bf.args[idx].ConstItem(bf.ctx.GetSessionVars().StmtCtx) {
 		// Initialize the const
 		var isConstNull bool
 		pa.defaultIntVal, isConstNull, err = bf.args[idx].EvalInt(bf.ctx, chunk.Row{})
