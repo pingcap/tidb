@@ -54,10 +54,8 @@ func (w *mergeIndexWorker) batchCheckTemporaryUniqueKey(txn kv.Transaction, idxR
 	// 3. non-unique-key is duplicate, skip it.
 	for i, key := range w.originIdxKeys {
 		if val, found := batchVals[string(key)]; found {
-			if idxRecords[i].distinct {
-				if !bytes.Equal(val, idxRecords[i].vals) {
-					return kv.ErrKeyExists
-				}
+			if idxRecords[i].distinct && !bytes.Equal(val, idxRecords[i].vals) {
+				return kv.ErrKeyExists
 			}
 			if !idxRecords[i].delete {
 				idxRecords[i].skip = true
