@@ -7,12 +7,11 @@ import (
 	"encoding/binary"
 	"testing"
 
-	recover_data "github.com/pingcap/kvproto/pkg/recoverdatapb"
-
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	recover_data "github.com/pingcap/kvproto/pkg/recoverdatapb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
