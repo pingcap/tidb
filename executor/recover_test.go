@@ -298,7 +298,7 @@ func TestRecoverClusterMeetError(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
-	tk.MustContainErrMsg(fmt.Sprintf("flashback cluster as of timestamp '%s'", time.Now().Add(30*time.Second)), "Not support flashback cluster in non-TiKV env")
+	tk.MustContainErrMsg(fmt.Sprintf("flashback cluster to timestamp '%s'", time.Now().Add(30*time.Second)), "Not support flashback cluster in non-TiKV env")
 
 	ts, _ := tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
 	flashbackTs := oracle.GetTimeFromTS(ts)
@@ -311,8 +311,8 @@ func TestRecoverClusterMeetError(t *testing.T) {
 		fmt.Sprintf("return(%v)", injectSafeTS)))
 
 	// Get GC safe point error.
-	tk.MustContainErrMsg(fmt.Sprintf("flashback cluster as of timestamp '%s'", time.Now().Add(30*time.Second)), "cannot set flashback timestamp to future time")
-	tk.MustContainErrMsg(fmt.Sprintf("flashback cluster as of timestamp '%s'", time.Now().Add(0-30*time.Second)), "can not get 'tikv_gc_safe_point'")
+	tk.MustContainErrMsg(fmt.Sprintf("flashback cluster to timestamp '%s'", time.Now().Add(30*time.Second)), "cannot set flashback timestamp to future time")
+	tk.MustContainErrMsg(fmt.Sprintf("flashback cluster to timestamp '%s'", time.Now().Add(0-30*time.Second)), "can not get 'tikv_gc_safe_point'")
 
 	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
 	defer resetGC()
@@ -321,19 +321,19 @@ func TestRecoverClusterMeetError(t *testing.T) {
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 
 	// out of GC safe point range.
-	tk.MustGetErrCode(fmt.Sprintf("flashback cluster as of timestamp '%s'", time.Now().Add(0-60*60*60*time.Second)), int(variable.ErrSnapshotTooOld.Code()))
+	tk.MustGetErrCode(fmt.Sprintf("flashback cluster to timestamp '%s'", time.Now().Add(0-60*60*60*time.Second)), int(variable.ErrSnapshotTooOld.Code()))
 
 	// Flashback without super privilege.
 	tk.MustExec("CREATE USER 'testflashback'@'localhost';")
 	newTk := testkit.NewTestKit(t, store)
 	require.NoError(t, newTk.Session().Auth(&auth.UserIdentity{Username: "testflashback", Hostname: "localhost"}, nil, nil))
-	newTk.MustGetErrCode(fmt.Sprintf("flashback cluster as of timestamp '%s'", time.Now().Add(0-30*time.Second)), int(core.ErrSpecificAccessDenied.Code()))
+	newTk.MustGetErrCode(fmt.Sprintf("flashback cluster to timestamp '%s'", time.Now().Add(0-30*time.Second)), int(core.ErrSpecificAccessDenied.Code()))
 	tk.MustExec("drop user 'testflashback'@'localhost';")
 
 	// Flashback failed because of ddl history.
 	tk.MustExec("use test;")
 	tk.MustExec("create table t(a int);")
-	tk.MustContainErrMsg(fmt.Sprintf("flashback cluster as of timestamp '%s'", flashbackTs), "schema version not same, have done ddl during [flashbackTS, now)")
+	tk.MustContainErrMsg(fmt.Sprintf("flashback cluster to timestamp '%s'", flashbackTs), "schema version not same, have done ddl during [flashbackTS, now)")
 
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS"))
 	require.NoError(t, failpoint.Disable("tikvclient/injectSafeTS"))
@@ -356,7 +356,7 @@ func TestRecoverClusterWithTiFlash(t *testing.T) {
 	// Set GC safe point
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 
-	tk.MustContainErrMsg(fmt.Sprintf("flashback cluster as of timestamp '%s'", time.Now().Add(0-30*time.Second)),
+	tk.MustContainErrMsg(fmt.Sprintf("flashback cluster to timestamp '%s'", time.Now().Add(0-30*time.Second)),
 		"not support flash back cluster with TiFlash stores")
 
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS"))
@@ -387,20 +387,20 @@ func TestFlashbackWithSafeTs(t *testing.T) {
 	}{
 		{
 			name:              "5 seconds ago to now, safeTS 5 secs ago",
-			sql:               fmt.Sprintf("flashback cluster as of timestamp '%s'", flashbackTs),
+			sql:               fmt.Sprintf("flashback cluster to timestamp '%s'", flashbackTs),
 			injectSafeTS:      oracle.GoTimeToTS(flashbackTs),
 			compareWithSafeTS: 0,
 		},
 		{
 			name: "10 seconds ago to now, safeTS 5 secs ago",
 			// Add flashbackTs.Add(-500*time.Millisecond) to avoid flashback time range overlapped.
-			sql:               fmt.Sprintf("flashback cluster as of timestamp '%s'", flashbackTs.Add(-500*time.Millisecond)),
+			sql:               fmt.Sprintf("flashback cluster to timestamp '%s'", flashbackTs.Add(-500*time.Millisecond)),
 			injectSafeTS:      oracle.GoTimeToTS(flashbackTs.Add(10 * time.Second)),
 			compareWithSafeTS: -1,
 		},
 		{
 			name:              "5 seconds ago to now, safeTS 10 secs ago",
-			sql:               fmt.Sprintf("flashback cluster as of timestamp '%s'", flashbackTs),
+			sql:               fmt.Sprintf("flashback cluster to timestamp '%s'", flashbackTs),
 			injectSafeTS:      oracle.GoTimeToTS(flashbackTs.Add(-10 * time.Second)),
 			compareWithSafeTS: 1,
 		},
