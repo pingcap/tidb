@@ -812,7 +812,7 @@ func TestSetVar(t *testing.T) {
 	tk.MustExec("set global tidb_opt_force_inline_cte=1")
 	tk.MustQuery("select @@global.tidb_opt_force_inline_cte").Check(testkit.Rows("1"))
 
-	// test variable 'tidb_opt_force_inline_cte'
+	// test variable 'tidb_opt_advanced_join_hint'
 	tk.MustQuery("select @@session.tidb_opt_advanced_join_hint").Check(testkit.Rows("1")) // default value is 1
 	tk.MustExec("set session tidb_opt_advanced_join_hint=0")
 	tk.MustQuery("select @@session.tidb_opt_advanced_join_hint").Check(testkit.Rows("0"))
