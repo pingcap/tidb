@@ -13,7 +13,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/util/mathutil"
+	tikvstore "github.com/tikv/client-go/v2/kv"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
@@ -51,9 +54,12 @@ func RecoverData(ctx context.Context, resolvedTs uint64, allStores []*metapb.Sto
 		return totalRegions, errors.Trace(err)
 	}
 
-	if err := recovery.ResolveData(ctx, resolvedTs); err != nil {
+	if err := recovery.FlashBack(ctx, resolvedTs); err != nil {
 		return totalRegions, errors.Trace(err)
 	}
+	// if err := recovery.ResolveData(ctx, resolvedTs); err != nil {
+	// 	return totalRegions, errors.Trace(err)
+	// }
 
 	return totalRegions, nil
 }
@@ -290,6 +296,11 @@ func (recovery *Recovery) WaitApply(ctx context.Context) (err error) {
 	}
 	// Wait for all TiKV instances force leader and wait apply to last log.
 	return eg.Wait()
+}
+
+func (recovery *Recovery) FlashBack(ctx context.Context, resolvedTs uint64) (err error) {
+	_, err = ddl.SendFlashbackToVersionRPC(ctx, recovery.mgr.GetStorage().(tikv.Storage), resolvedTs, tikvstore.KeyRange{[]byte(""), []byte("")})
+	return err
 }
 
 // ResolveData a worker pool to all tikv for execute delete all data whose has ts > resolvedTs

@@ -262,7 +262,7 @@ func GetFlashbackKeyRanges(sess sessionctx.Context, startKey kv.Key) ([]kv.KeyRa
 	return keyRanges, nil
 }
 
-func sendFlashbackToVersionRPC(
+func SendFlashbackToVersionRPC(
 	ctx context.Context,
 	s tikv.Storage,
 	version uint64,
@@ -342,7 +342,7 @@ func flashbackToVersion(
 		d.store.(tikv.Storage),
 		int(variable.GetDDLFlashbackConcurrency()),
 		func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
-			return sendFlashbackToVersionRPC(ctx, d.store.(tikv.Storage), version, r)
+			return SendFlashbackToVersionRPC(ctx, d.store.(tikv.Storage), version, r)
 		},
 	).RunOnRange(ctx, startKey, endKey)
 }
