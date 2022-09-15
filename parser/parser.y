@@ -2573,12 +2573,10 @@ RecoverTableStmt:
  *
  *******************************************************************/
 FlashbackClusterStmt:
-	"FLASHBACK" "CLUSTER" asof "TIMESTAMP" stringLit
+	"FLASHBACK" "CLUSTER" "TO" "TIMESTAMP" stringLit
 	{
 		$$ = &ast.FlashBackClusterStmt{
-			AsOf: ast.AsOfClause{
-				TsExpr: ast.NewValueExpr($5, "", ""),
-			},
+			FlashbackTS: ast.NewValueExpr($5, "", ""),
 		}
 	}
 
@@ -14168,6 +14166,7 @@ RowStmt:
  *			  [ORDER BY {col_name | expr | position}
  *    			[ASC | DESC], ... [WITH ROLLUP]]
  *  		  [LIMIT {[offset,] row_count | row_count OFFSET offset}]}
+ *			| 'file_name'
  *		| LOAD 'file_name']
  *******************************************************************/
 PlanReplayerStmt:
@@ -14241,6 +14240,26 @@ PlanReplayerStmt:
 			x.Limit = $10.(*ast.Limit)
 		}
 
+		$$ = x
+	}
+|	"PLAN" "REPLAYER" "DUMP" "EXPLAIN" stringLit
+	{
+		x := &ast.PlanReplayerStmt{
+			Stmt:    nil,
+			Analyze: false,
+			Load:    false,
+			File:    $5,
+		}
+		$$ = x
+	}
+|	"PLAN" "REPLAYER" "DUMP" "EXPLAIN" "ANALYZE" stringLit
+	{
+		x := &ast.PlanReplayerStmt{
+			Stmt:    nil,
+			Analyze: true,
+			Load:    false,
+			File:    $6,
+		}
 		$$ = x
 	}
 |	"PLAN" "REPLAYER" "LOAD" stringLit
