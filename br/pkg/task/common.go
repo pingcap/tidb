@@ -97,7 +97,22 @@ const (
 	crypterAES256KeyLen = 32
 
 	tidbNewCollationEnabled = "new_collation_enabled"
+
+	flagFullBRType = "type"
 )
+
+// FullBRType type when doing full backup or restore
+type FullBRType string
+
+const (
+	FullBRTypeKV  FullBRType = "kv" // default type
+	FullBRTypeEBS            = "aws-ebs"
+)
+
+// Valid whether the type is valid
+func (t FullBRType) Valid() bool {
+	return t == FullBRTypeKV || t == FullBRTypeEBS
+}
 
 // TLSConfig is the common configuration for TLS connection.
 type TLSConfig struct {
@@ -219,6 +234,8 @@ type Config struct {
 
 	// whether there's explicit filter
 	ExplicitFilter bool `json:"-" toml:"-"`
+
+	FullBRType FullBRType `json:"full-br-type" toml:"full-br-type"`
 }
 
 // DefineCommonFlags defines the flags common to all BRIE commands.
@@ -563,6 +580,14 @@ func (cfg *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err = cfg.parseCipherInfo(flags); err != nil {
 		return errors.Trace(err)
 	}
+	fullBRType, err := flags.GetString(flagFullBRType)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if !FullBRType(fullBRType).Valid() {
+		return errors.New("invalid full backup/restore type")
+	}
+	cfg.FullBRType = FullBRType(fullBRType)
 
 	return cfg.normalizePDURLs()
 }
