@@ -459,5 +459,4 @@ func TestCheckConsistencyAndValidPeer(t *testing.T) {
 	_, err = restore.CheckConsistencyAndValidPeer(invalidRegionInfos)
 	require.Error(t, err)
 	require.Regexp(t, ".*invalid restore range.*", err.Error())
-
 }
