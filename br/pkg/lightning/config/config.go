@@ -1167,7 +1167,7 @@ func (cfg *Config) CheckAndAdjustSecurity() error {
 			len(cfg.TiDB.Security.CertPath) > 0 || len(cfg.TiDB.Security.CertBytes) > 0 ||
 			len(cfg.TiDB.Security.KeyPath) > 0 || len(cfg.TiDB.Security.KeyBytes) > 0 {
 			if cfg.TiDB.Security.TLSConfigName == "" {
-				cfg.TiDB.Security.TLSConfigName = uuid.NewString() // adjust this the default value
+				cfg.TiDB.Security.TLSConfigName = uuid.New().String() // adjust this the default value
 			}
 			cfg.TiDB.TLS = cfg.TiDB.Security.TLSConfigName
 		} else {
