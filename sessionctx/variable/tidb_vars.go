@@ -1053,6 +1053,7 @@ const (
 	DefTiDBConstraintCheckInPlacePessimistic        = true
 	DefTiDBForeignKeyChecks                         = false
 	DefTiDBOptRangeMaxSize                          = 0
+	DefTiDBCostModelVer                             = 1
 )
 
 // Process global variables.
