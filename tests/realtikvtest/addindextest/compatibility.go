@@ -72,6 +72,10 @@ func newExecutor(tableID int) *executor {
 
 func initCompCtxParams(ctx *suiteContext) {
 	ctx.CompCtx = &compCtx
+	compCtx.isConcurrentDDL = false
+	compCtx.isMultiSchemaChange = false
+	compCtx.isPiTR = false
+
 }
 
 func (cCtx *CompatibilityContext) start(ctx *suiteContext) {
