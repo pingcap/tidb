@@ -213,6 +213,7 @@ func (e *HashJoinExec) fetchProbeSideChunks(ctx context.Context) {
 			probeSideResult.SetRequiredRows(required, e.maxChunkSize)
 		}
 		err := Next(ctx, e.probeSideExec, probeSideResult)
+		failpoint.Inject("ConsumeRandomPanic", nil)
 		if err != nil {
 			e.joinResultCh <- &hashjoinWorkerResult{
 				err: err,
@@ -286,6 +287,7 @@ func (e *HashJoinExec) fetchBuildSideRows(ctx context.Context, chkCh chan<- *chu
 			return
 		}
 		failpoint.Inject("errorFetchBuildSideRowsMockOOMPanic", nil)
+		failpoint.Inject("ConsumeRandomPanic", nil)
 		if chk.NumRows() == 0 {
 			return
 		}
@@ -463,6 +465,7 @@ func (e *HashJoinExec) runJoinWorker(workerID uint, probeKeyColIdx []int) {
 			return
 		case probeSideResult, ok = <-e.probeResultChs[workerID]:
 		}
+		failpoint.Inject("ConsumeRandomPanic", nil)
 		if !ok {
 			break
 		}
@@ -805,6 +808,7 @@ func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chu
 				err = e.rowContainer.PutChunkSelected(chk, selected, e.isNullEQ)
 			}
 		}
+		failpoint.Inject("ConsumeRandomPanic", nil)
 		if err != nil {
 			return err
 		}

@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/auth"
@@ -73,6 +74,41 @@ func (s SchemaState) String() string {
 		return "global txn only"
 	default:
 		return "none"
+	}
+}
+
+// BackfillState is the state used by the backfill-merge process.
+type BackfillState byte
+
+const (
+	// BackfillStateInapplicable means the backfill-merge process is not used.
+	BackfillStateInapplicable BackfillState = iota
+	// BackfillStateRunning is the state that the backfill process is running.
+	// In this state, the index's write and delete operations are redirected to a temporary index.
+	BackfillStateRunning
+	// BackfillStateReadyToMerge is the state that the temporary index's records are ready to be merged back
+	// to the origin index.
+	// In this state, the index's write and delete operations are copied to a temporary index.
+	// This state is used to make sure that all the TiDB instances are aware of the copy during the merge(BackfillStateMerging).
+	BackfillStateReadyToMerge
+	// BackfillStateMerging is the state that the temp index is merging back to the origin index.
+	// In this state, the index's write and delete operations are copied to a temporary index.
+	BackfillStateMerging
+)
+
+// String implements fmt.Stringer interface.
+func (s BackfillState) String() string {
+	switch s {
+	case BackfillStateRunning:
+		return "backfill state running"
+	case BackfillStateReadyToMerge:
+		return "backfill state ready to merge"
+	case BackfillStateMerging:
+		return "backfill state merging"
+	case BackfillStateInapplicable:
+		return "backfill state inapplicable"
+	default:
+		return "backfill state unknown"
 	}
 }
 
@@ -1328,17 +1364,18 @@ const (
 // It corresponds to the statement `CREATE INDEX Name ON Table (Column);`
 // See https://dev.mysql.com/doc/refman/5.7/en/create-index.html
 type IndexInfo struct {
-	ID        int64          `json:"id"`
-	Name      CIStr          `json:"idx_name"` // Index name.
-	Table     CIStr          `json:"tbl_name"` // Table name.
-	Columns   []*IndexColumn `json:"idx_cols"` // Index columns.
-	State     SchemaState    `json:"state"`
-	Comment   string         `json:"comment"`      // Comment
-	Tp        IndexType      `json:"index_type"`   // Index type: Btree, Hash or Rtree
-	Unique    bool           `json:"is_unique"`    // Whether the index is unique.
-	Primary   bool           `json:"is_primary"`   // Whether the index is primary key.
-	Invisible bool           `json:"is_invisible"` // Whether the index is invisible.
-	Global    bool           `json:"is_global"`    // Whether the index is global.
+	ID            int64          `json:"id"`
+	Name          CIStr          `json:"idx_name"` // Index name.
+	Table         CIStr          `json:"tbl_name"` // Table name.
+	Columns       []*IndexColumn `json:"idx_cols"` // Index columns.
+	State         SchemaState    `json:"state"`
+	BackfillState BackfillState  `json:"backfill_state"`
+	Comment       string         `json:"comment"`      // Comment
+	Tp            IndexType      `json:"index_type"`   // Index type: Btree, Hash or Rtree
+	Unique        bool           `json:"is_unique"`    // Whether the index is unique.
+	Primary       bool           `json:"is_primary"`   // Whether the index is primary key.
+	Invisible     bool           `json:"is_invisible"` // Whether the index is invisible.
+	Global        bool           `json:"is_global"`    // Whether the index is global.
 }
 
 // Clone clones IndexInfo.
@@ -1615,6 +1652,15 @@ func (cis *CIStr) UnmarshalJSON(b []byte) error {
 	}
 	cis.L = strings.ToLower(cis.O)
 	return nil
+}
+
+// MemoryUsage return the memory usage of CIStr
+func (cis *CIStr) MemoryUsage() (sum int64) {
+	if cis == nil {
+		return
+	}
+
+	return int64(unsafe.Sizeof(cis.O))*2 + int64(len(cis.O)+len(cis.L))
 }
 
 // TableItemID is composed by table ID and column/index ID

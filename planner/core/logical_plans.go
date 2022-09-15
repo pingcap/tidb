@@ -1459,7 +1459,9 @@ func (ds *DataSource) deriveTablePathStats(path *util.AccessPath, conds []expres
 		path.CountAfterAccess = 1
 		return nil
 	}
-	path.Ranges, err = ranger.BuildTableRange(path.AccessConds, ds.ctx, pkCol.RetType)
+	var remainedConds []expression.Expression
+	path.Ranges, path.AccessConds, remainedConds, err = ranger.BuildTableRange(path.AccessConds, ds.ctx, pkCol.RetType, ds.ctx.GetSessionVars().RangeMaxSize)
+	path.TableFilters = append(path.TableFilters, remainedConds...)
 	if err != nil {
 		return err
 	}
@@ -1916,7 +1918,6 @@ type LogicalCTE struct {
 	cteAsName      model.CIStr
 	seedStat       *property.StatsInfo
 	isOuterMostCTE bool
-	MergeHints     MergeHintInfo
 }
 
 // LogicalCTETable is for CTE table

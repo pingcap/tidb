@@ -121,17 +121,23 @@ var (
 	sessionExecuteParseDurationInternal   = metrics.SessionExecuteParseDuration.WithLabelValues(metrics.LblInternal)
 	sessionExecuteParseDurationGeneral    = metrics.SessionExecuteParseDuration.WithLabelValues(metrics.LblGeneral)
 
-	telemetryCTEUsageRecurCTE                 = metrics.TelemetrySQLCTECnt.WithLabelValues("recurCTE")
-	telemetryCTEUsageNonRecurCTE              = metrics.TelemetrySQLCTECnt.WithLabelValues("nonRecurCTE")
-	telemetryCTEUsageNotCTE                   = metrics.TelemetrySQLCTECnt.WithLabelValues("notCTE")
-	telemetryMultiSchemaChangeUsage           = metrics.TelemetryMultiSchemaChangeCnt
-	telemetryTablePartitionUsage              = metrics.TelemetryTablePartitionCnt
-	telemetryTablePartitionListUsage          = metrics.TelemetryTablePartitionListCnt
-	telemetryTablePartitionRangeUsage         = metrics.TelemetryTablePartitionRangeCnt
-	telemetryTablePartitionHashUsage          = metrics.TelemetryTablePartitionHashCnt
-	telemetryTablePartitionRangeColumnsUsage  = metrics.TelemetryTablePartitionRangeColumnsCnt
-	telemetryTablePartitionListColumnsUsage   = metrics.TelemetryTablePartitionListColumnsCnt
-	telemetryTablePartitionMaxPartitionsUsage = metrics.TelemetryTablePartitionMaxPartitionsCnt
+	telemetryCTEUsageRecurCTE                  = metrics.TelemetrySQLCTECnt.WithLabelValues("recurCTE")
+	telemetryCTEUsageNonRecurCTE               = metrics.TelemetrySQLCTECnt.WithLabelValues("nonRecurCTE")
+	telemetryCTEUsageNotCTE                    = metrics.TelemetrySQLCTECnt.WithLabelValues("notCTE")
+	telemetryMultiSchemaChangeUsage            = metrics.TelemetryMultiSchemaChangeCnt
+	telemetryTablePartitionUsage               = metrics.TelemetryTablePartitionCnt
+	telemetryTablePartitionListUsage           = metrics.TelemetryTablePartitionListCnt
+	telemetryTablePartitionRangeUsage          = metrics.TelemetryTablePartitionRangeCnt
+	telemetryTablePartitionHashUsage           = metrics.TelemetryTablePartitionHashCnt
+	telemetryTablePartitionRangeColumnsUsage   = metrics.TelemetryTablePartitionRangeColumnsCnt
+	telemetryTablePartitionListColumnsUsage    = metrics.TelemetryTablePartitionListColumnsCnt
+	telemetryTablePartitionMaxPartitionsUsage  = metrics.TelemetryTablePartitionMaxPartitionsCnt
+	telemetryLockUserUsage                     = metrics.TelemetryAccountLockCnt.WithLabelValues("lockUser")
+	telemetryUnlockUserUsage                   = metrics.TelemetryAccountLockCnt.WithLabelValues("unlockUser")
+	telemetryCreateOrAlterUserUsage            = metrics.TelemetryAccountLockCnt.WithLabelValues("createOrAlterUser")
+	telemetryTablePartitionCreateIntervalUsage = metrics.TelemetryTablePartitionCreateIntervalPartitionsCnt
+	telemetryTablePartitionAddIntervalUsage    = metrics.TelemetryTablePartitionAddIntervalPartitionsCnt
+	telemetryTablePartitionDropIntervalUsage   = metrics.TelemetryTablePartitionDropIntervalPartitionsCnt
 )
 
 // Session context, it is consistent with the lifecycle of a client connection.
@@ -1265,6 +1271,10 @@ func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.R
 			return nil, err
 		}
 		err = se.sessionVars.SetSystemVar(variable.MaxExecutionTime, "0")
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		err = se.sessionVars.SetSystemVar(variable.MaxAllowedPacket, strconv.FormatUint(variable.DefMaxAllowedPacket, 10))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -3303,6 +3313,21 @@ func (s *session) updateTelemetryMetric(es *executor.ExecStmt) {
 		if ti.PartitionTelemetry.UseTablePartitionListColumns {
 			telemetryTablePartitionListColumnsUsage.Inc()
 		}
+		if ti.PartitionTelemetry.UseCreateIntervalPartition {
+			telemetryTablePartitionCreateIntervalUsage.Inc()
+		}
+		if ti.PartitionTelemetry.UseAddIntervalPartition {
+			telemetryTablePartitionAddIntervalUsage.Inc()
+		}
+		if ti.PartitionTelemetry.UseDropIntervalPartition {
+			telemetryTablePartitionDropIntervalUsage.Inc()
+		}
+	}
+
+	if ti.AccountLockTelemetry != nil {
+		telemetryLockUserUsage.Add(float64(ti.AccountLockTelemetry.LockUser))
+		telemetryUnlockUserUsage.Add(float64(ti.AccountLockTelemetry.UnlockUser))
+		telemetryCreateOrAlterUserUsage.Add(float64(ti.AccountLockTelemetry.CreateOrAlterUser))
 	}
 }
 
