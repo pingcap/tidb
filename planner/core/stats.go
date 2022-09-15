@@ -1129,7 +1129,7 @@ func (h *fullJoinRowCountHelper) estimate() float64 {
 		return count
 	}
 	// If we enable the DP choice, we multiple the 0.9 for each remained join key supposing that 0.9 is the correlation factor between them.
-	// This estimation logic is refered to Presto.
+	// This estimation logic is referred to Presto.
 	return count * math.Pow(0.9, float64(len(h.leftJoinKeys)-mathutil.Max(leftColCnt, rightColCnt)))
 }
 
