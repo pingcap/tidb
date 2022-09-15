@@ -2461,6 +2461,56 @@ func saveCheckpoint(rc *Controller, t *TableRestore, engineID int32, chunk *chec
 	}
 }
 
+func filterColumns(columnNames []string, extendData mydump.ExtendColumnData, ignoreColsMap map[string]struct{}, tableInfo *model.TableInfo) ([]string, []string, []types.Datum) {
+	extendCols, extendVals := extendData.Columns, extendData.Values
+	extendColsMap := make(map[string]struct{})
+	for _, extendCol := range extendCols {
+		extendColsMap[extendCol] = struct{}{}
+	}
+	for c := range ignoreColsMap {
+		delete(extendColsMap, c)
+	}
+	filteredColumns := make([]string, 0, len(columnNames))
+	if len(columnNames) > 0 {
+		for _, c := range columnNames {
+			ok := false
+			if ignoreColsMap != nil {
+				_, ok = ignoreColsMap[c]
+			}
+			if !ok {
+				delete(extendColsMap, c)
+				filteredColumns = append(filteredColumns, c)
+			}
+		}
+	} else {
+		// init column names by table schema
+		// after filtered out some columns, we must explicitly set the columns for TiDB backend
+		for _, col := range tableInfo.Columns {
+			ok := false
+			if ignoreColsMap != nil {
+				_, ok = ignoreColsMap[col.Name.L]
+			}
+			// ignore all extend row values specified by users
+			_, isExtendCol := extendColsMap[col.Name.O]
+			if !col.Hidden && !ok && !isExtendCol {
+				filteredColumns = append(filteredColumns, col.Name.O)
+			}
+		}
+	}
+	var (
+		filteredExtendCols []string
+		extendValueDatums  []types.Datum
+	)
+	for i, c := range extendCols {
+		if _, ok := extendColsMap[c]; ok {
+			filteredColumns = append(filteredColumns, c)
+			filteredExtendCols = append(filteredExtendCols, c)
+			extendValueDatums = append(extendValueDatums, types.NewStringDatum(extendVals[i]))
+		}
+	}
+	return filteredColumns, filteredExtendCols, extendValueDatums
+}
+
 //nolint:nakedret // TODO: refactor
 func (cr *chunkRestore) encodeLoop(
 	ctx context.Context,
@@ -2537,49 +2587,9 @@ func (cr *chunkRestore) encodeLoop(
 						}
 					}
 					filteredColumns = columnNames
-					extendCols = cr.chunk.FileMeta.ExtendData.Columns
-					extendColsMap := make(map[string]struct{})
-					for _, extendCol := range extendCols {
-						extendColsMap[extendCol] = struct{}{}
-					}
-					if ignoreColumns != nil && len(ignoreColumns.Columns) > 0 {
-						filteredColumns = make([]string, 0, len(columnNames))
-						ignoreColsMap := ignoreColumns.ColumnsMap()
-						for c := range ignoreColsMap {
-							delete(extendColsMap, c)
-						}
-						if len(columnNames) > 0 {
-							for _, c := range columnNames {
-								if _, ok := ignoreColsMap[c]; !ok {
-									delete(extendColsMap, c)
-									filteredColumns = append(filteredColumns, c)
-								}
-							}
-						} else {
-							// init column names by table schema
-							// after filtered out some columns, we must explicitly set the columns for TiDB backend
-							for _, col := range t.tableInfo.Core.Columns {
-								if _, ok := ignoreColsMap[col.Name.L]; !col.Hidden && !ok {
-									// don't delete columns here. if users want to assign extend data through
-									// data files, they must
-									filteredColumns = append(filteredColumns, col.Name.O)
-								}
-							}
-						}
-					} else if len(extendCols) > 0 {
-						// init column names by table schema
-						// if we want to add extend values, we must explicitly set the columns for TiDB backend
-						for _, col := range t.tableInfo.Core.Columns {
-							if _, ok := extendColsMap[col.Name.O]; !ok {
-								filteredColumns = append(filteredColumns, col.Name.O)
-							}
-						}
-					}
-					for i, c := range extendCols {
-						if _, ok := extendColsMap[c]; ok {
-							filteredColumns = append(filteredColumns, c)
-							extendVals = append(extendVals, types.NewStringDatum(cr.chunk.FileMeta.ExtendData.Values[i]))
-						}
+					ignoreColsMap := ignoreColumns.ColumnsMap()
+					if len(ignoreColsMap) > 0 || len(cr.chunk.FileMeta.ExtendData.Columns) > 0 {
+						filteredColumns, extendCols, extendVals = filterColumns(columnNames, cr.chunk.FileMeta.ExtendData, ignoreColsMap, t.tableInfo.Core)
 					}
 					initializedColumns = true
 				}

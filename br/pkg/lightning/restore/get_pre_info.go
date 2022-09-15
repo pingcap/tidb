@@ -669,30 +669,19 @@ outloop:
 		switch errors.Cause(err) {
 		case nil:
 			if !initializedColumns {
+				ignoreColsMap := igCols.ColumnsMap()
 				if len(columnPermutation) == 0 {
 					columnPermutation, err = createColumnPermutation(
 						columnNames,
-						igCols.ColumnsMap(),
+						ignoreColsMap,
 						tableInfo,
 						log.FromContext(ctx))
 					if err != nil {
 						return 0.0, false, errors.Trace(err)
 					}
 				}
-				extendCols = sampleFile.ExtendData.Columns
-				extendColsMap := make(map[string]struct{})
-				for _, extendCol := range extendCols {
-					extendColsMap[extendCol] = struct{}{}
-				}
-				if len(columnNames) > 0 && len(extendCols) > 0 {
-					for _, c := range columnNames {
-						delete(extendColsMap, c)
-					}
-				}
-				for i, c := range extendCols {
-					if _, ok := extendColsMap[c]; ok {
-						extendVals = append(extendVals, types.NewStringDatum(sampleFile.ExtendData.Values[i]))
-					}
+				if len(ignoreColsMap) > 0 || len(sampleFile.ExtendData.Columns) > 0 {
+					_, extendCols, extendVals = filterColumns(columnNames, sampleFile.ExtendData, ignoreColsMap, tableInfo)
 				}
 				initializedColumns = true
 			}
