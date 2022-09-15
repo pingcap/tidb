@@ -66,6 +66,7 @@ type PlanReplayerExec struct {
 	endFlag  bool
 }
 
+// PlanReplayerDumpInfo indicates dump info
 type PlanReplayerDumpInfo struct {
 	ExecStmts []ast.StmtNode
 	Analyze   bool
@@ -73,6 +74,79 @@ type PlanReplayerDumpInfo struct {
 	File      *os.File
 	FileName  string
 	ctx       sessionctx.Context
+}
+
+type tableNamePair struct {
+	DBName    string
+	TableName string
+	IsView    bool
+}
+
+type tableNameExtractor struct {
+	ctx      context.Context
+	executor sqlexec.RestrictedSQLExecutor
+	is       infoschema.InfoSchema
+	curDB    model.CIStr
+	names    map[tableNamePair]struct{}
+	cteNames map[string]struct{}
+	err      error
+}
+
+func (tne *tableNameExtractor) Enter(in ast.Node) (ast.Node, bool) {
+	if _, ok := in.(*ast.TableName); ok {
+		return in, true
+	}
+	return in, false
+}
+
+func (tne *tableNameExtractor) Leave(in ast.Node) (ast.Node, bool) {
+	if tne.err != nil {
+		return in, true
+	}
+	if t, ok := in.(*ast.TableName); ok {
+		isView, err := tne.handleIsView(t)
+		if err != nil {
+			tne.err = err
+			return in, true
+		}
+		tp := tableNamePair{DBName: t.Schema.L, TableName: t.Name.L, IsView: isView}
+		if tp.DBName == "" {
+			tp.DBName = tne.curDB.L
+		}
+		if _, ok := tne.names[tp]; !ok {
+			tne.names[tp] = struct{}{}
+		}
+	} else if s, ok := in.(*ast.SelectStmt); ok {
+		if s.With != nil && len(s.With.CTEs) > 0 {
+			for _, cte := range s.With.CTEs {
+				tne.cteNames[cte.Name.L] = struct{}{}
+			}
+		}
+	}
+	return in, true
+}
+
+func (tne *tableNameExtractor) handleIsView(t *ast.TableName) (bool, error) {
+	schema := t.Schema
+	if schema.L == "" {
+		schema = tne.curDB
+	}
+	table := t.Name
+	isView := tne.is.TableIsView(schema, table)
+	if !isView {
+		return false, nil
+	}
+	viewTbl, err := tne.is.TableByName(schema, table)
+	if err != nil {
+		return false, err
+	}
+	sql := viewTbl.Meta().View.SelectStmt
+	node, err := tne.executor.ParseWithParams(tne.ctx, sql)
+	if err != nil {
+		return false, err
+	}
+	node.Accept(tne)
+	return true, nil
 }
 
 // Next implements the Executor Next interface.
@@ -917,77 +991,4 @@ func (e *PlanReplayerLoadInfo) Update(data []byte) error {
 		e.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("load bindings failed, err:%v", err))
 	}
 	return nil
-}
-
-type tableNamePair struct {
-	DBName    string
-	TableName string
-	IsView    bool
-}
-
-type tableNameExtractor struct {
-	ctx      context.Context
-	executor sqlexec.RestrictedSQLExecutor
-	is       infoschema.InfoSchema
-	curDB    model.CIStr
-	names    map[tableNamePair]struct{}
-	cteNames map[string]struct{}
-	err      error
-}
-
-func (tne *tableNameExtractor) Enter(in ast.Node) (ast.Node, bool) {
-	if _, ok := in.(*ast.TableName); ok {
-		return in, true
-	}
-	return in, false
-}
-
-func (tne *tableNameExtractor) Leave(in ast.Node) (ast.Node, bool) {
-	if tne.err != nil {
-		return in, true
-	}
-	if t, ok := in.(*ast.TableName); ok {
-		isView, err := tne.handleIsView(t)
-		if err != nil {
-			tne.err = err
-			return in, true
-		}
-		tp := tableNamePair{DBName: t.Schema.L, TableName: t.Name.L, IsView: isView}
-		if tp.DBName == "" {
-			tp.DBName = tne.curDB.L
-		}
-		if _, ok := tne.names[tp]; !ok {
-			tne.names[tp] = struct{}{}
-		}
-	} else if s, ok := in.(*ast.SelectStmt); ok {
-		if s.With != nil && len(s.With.CTEs) > 0 {
-			for _, cte := range s.With.CTEs {
-				tne.cteNames[cte.Name.L] = struct{}{}
-			}
-		}
-	}
-	return in, true
-}
-
-func (tne *tableNameExtractor) handleIsView(t *ast.TableName) (bool, error) {
-	schema := t.Schema
-	if schema.L == "" {
-		schema = tne.curDB
-	}
-	table := t.Name
-	isView := tne.is.TableIsView(schema, table)
-	if !isView {
-		return false, nil
-	}
-	viewTbl, err := tne.is.TableByName(schema, table)
-	if err != nil {
-		return false, err
-	}
-	sql := viewTbl.Meta().View.SelectStmt
-	node, err := tne.executor.ParseWithParams(tne.ctx, sql)
-	if err != nil {
-		return false, err
-	}
-	node.Accept(tne)
-	return true, nil
 }
