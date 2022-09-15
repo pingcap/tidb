@@ -1016,6 +1016,16 @@ error = '''
 Cannot drop column '%-.192s': needed in a foreign key constraint '%-.192s' of table '%-.192s'
 '''
 
+["ddl:1832"]
+error = '''
+Cannot change column '%-.192s': used in a foreign key constraint '%-.192s'
+'''
+
+["ddl:1833"]
+error = '''
+Cannot change column '%-.192s': used in a foreign key constraint '%-.192s' of table '%-.192s'
+'''
+
 ["ddl:1846"]
 error = '''
 %s is not supported. Reason: %s. Try %s.
