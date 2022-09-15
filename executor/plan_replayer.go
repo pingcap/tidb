@@ -584,8 +584,7 @@ func (e *PlanReplayerDumpInfo) DumpSQLsFromFile(ctx context.Context, b []byte) e
 		}
 		node, err := p.ParseOneStmt(s, "", "")
 		if err != nil {
-			// TODO: add error info
-			return err
+			return fmt.Errorf("parse sql error, sql:%v, err:%v", s, err)
 		}
 		e.ExecStmts = append(e.ExecStmts, node)
 	}
