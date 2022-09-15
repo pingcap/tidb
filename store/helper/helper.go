@@ -866,7 +866,7 @@ func requestPDForOneHost(host, apiName, method, uri string, body io.Reader, res 
 	if resp.StatusCode != http.StatusOK {
 		bs, _ := io.ReadAll(resp.Body)
 		logutil.BgLogger().Warn("requestPDForOneHost failed with non 200 status",
-			zap.String("url", urlVar), zap.Error(err),
+			zap.String("url", urlVar),
 			zap.String("status", resp.Status),
 			zap.ByteString("body", bs),
 		)
