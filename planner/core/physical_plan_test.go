@@ -2326,9 +2326,10 @@ func TestNoDecorrelateHint(t *testing.T) {
 	tk.MustExec("insert into t2 values(1,1),(2,1)")
 	tk.MustExec("insert into t3 values(1,1),(2,1)")
 
-	tk.MustExec("create table ta(id int, code int, name varchar(20), index idx_ta_id(id),index idx_ta_name(name))")
+	tk.MustExec("create table ta(id int, code int, name varchar(20), index idx_ta_id(id),index idx_ta_name(name), index idx_ta_code(code))")
 	tk.MustExec("create table tb(id int, code int, name varchar(20), index idx_tb_id(id),index idx_tb_name(name))")
 	tk.MustExec("create table tc(id int, code int, name varchar(20), index idx_tc_id(id),index idx_tc_name(name))")
+	tk.MustExec("create table td(id int, code int, name varchar(20), index idx_tc_id(id),index idx_tc_name(name))")
 
 	for i, ts := range input {
 		testdata.OnRecord(func() {

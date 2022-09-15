@@ -840,10 +840,18 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, v *ast.Ex
 	if noDecorrelate && len(extractCorColumnsBySchema4LogicalPlan(np, er.p.Schema())) == 0 {
 		er.sctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(
 			"NO_DECORRELATE() is inapplicable because there are no correlated columns."))
+		noDecorrelate = false
+	}
+	semiJoinRewrite := hintFlags&HintFlagSemiJoinRewrite > 0
+	if semiJoinRewrite && noDecorrelate {
+		er.sctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(
+			"NO_DECORRELATE() and SEMI_JOIN_REWRITE() are in conflict. Both will be ineffective."))
+		noDecorrelate = false
+		semiJoinRewrite = false
 	}
 
 	if er.b.disableSubQueryPreprocessing || len(ExtractCorrelatedCols4LogicalPlan(np)) > 0 {
-		er.p, er.err = er.b.buildSemiApply(er.p, np, nil, er.asScalar, v.Not, hintFlags&HintFlagSemiJoinRewrite > 0, noDecorrelate)
+		er.p, er.err = er.b.buildSemiApply(er.p, np, nil, er.asScalar, v.Not, semiJoinRewrite, noDecorrelate)
 		if er.err != nil || !er.asScalar {
 			return v, true
 		}
