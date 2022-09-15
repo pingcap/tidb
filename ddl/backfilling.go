@@ -714,7 +714,6 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 			zap.String("startKey", hex.EncodeToString(startKey)),
 			zap.String("endKey", hex.EncodeToString(endKey)))
 		if bfWorkerType == typeAddIndexWorker && job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
-			// Do lightning flush data to make checkpoint.
 			if bc, ok := ingest.LitBackCtxMgr.Load(job.ID); ok {
 				err := bc.Flush(reorgInfo.currElement.ID)
 				if err != nil {
