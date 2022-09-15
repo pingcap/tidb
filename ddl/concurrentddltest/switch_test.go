@@ -94,7 +94,7 @@ func TestConcurrentDDLSwitch(t *testing.T) {
 		ch <- struct{}{}
 	}()
 
-	ticker := time.NewTicker(time.Second * 2)
+	ticker := time.NewTicker(time.Second)
 	count := 0
 	done := false
 	for !done {
