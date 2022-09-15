@@ -212,7 +212,7 @@ func (cfg *RestoreConfig) ParseStreamRestoreFlags(flags *pflag.FlagSet) error {
 	}
 
 	if cfg.StartTS > 0 && len(cfg.FullBackupStorage) > 0 {
-		return errors.Annotatef(berrors.ErrInvalidArgument, "just need fill one for %v and %v.",
+		return errors.Annotatef(berrors.ErrInvalidArgument, "%v and %v are mutually exclusive",
 			FlagStreamStartTS, FlagStreamFullBackupStorage)
 	}
 
