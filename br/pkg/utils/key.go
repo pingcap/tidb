@@ -128,7 +128,7 @@ const (
 
 func clampInOneRange(rng kv.KeyRange, clampIn kv.KeyRange) (kv.KeyRange, failedToClampReason) {
 	possibleFailureReason := buggyUnknown
-	if bytes.Compare(rng.StartKey, clampIn.StartKey) < 0 {
+	if CompareBytesExt(rng.StartKey, false, clampIn.StartKey, false) < 0 {
 		rng.StartKey = clampIn.StartKey
 		possibleFailureReason = leftNotOverlapped
 	}
@@ -162,10 +162,10 @@ func ClampRanges(ranges []kv.KeyRange, toClampIn []kv.KeyRange) []kv.KeyRange {
 		switch result {
 		case successClamp:
 			clamped = append(clamped, rng)
-			// Not fully consumed the clamp range.
 			if CompareBytesExt(crg.EndKey, true, cin.EndKey, true) <= 0 {
 				currentClamping++
 			} else {
+				// Not fully consumed the clamped range.
 				ranges[currentClamping].StartKey = cin.EndKey
 			}
 		case leftNotOverlapped:
