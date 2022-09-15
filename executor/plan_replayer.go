@@ -59,15 +59,6 @@ const (
 	globalBindingFile   = "global_bindings.sql"
 )
 
-type planReplayerDumpKeyType int
-
-func (k planReplayerDumpKeyType) String() string {
-	return "plan_replayer_dump_var"
-}
-
-// PlanReplayerDumpVarKey is a variable key for plan replayer dump.
-const PlanReplayerDumpVarKey planReplayerDumpKeyType = 0
-
 // PlanReplayerExec represents a plan replayer executor.
 type PlanReplayerExec struct {
 	baseExecutor
@@ -95,11 +86,12 @@ func (e *PlanReplayerExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return err
 	}
 	if len(e.DumpInfo.Path) > 0 {
-		err = e.setKey()
+		err = e.prepare()
 		if err != nil {
 			return err
 		}
 		e.endFlag = true
+		e.ctx.GetSessionVars().LastPlanReplayerToken = e.DumpInfo.FileName
 		return nil
 	}
 	if e.DumpInfo.ExecStmts == nil {
@@ -111,7 +103,7 @@ func (e *PlanReplayerExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	req.AppendString(0, e.DumpInfo.FileName)
 	e.endFlag = true
-	e.ctx.GetSessionVars().LastPlanReplayerToken = res
+	e.ctx.GetSessionVars().LastPlanReplayerToken = e.DumpInfo.FileName
 	return nil
 }
 
@@ -492,7 +484,7 @@ func (e *PlanReplayerDumpInfo) extractTableNames(ctx context.Context,
 	return r, nil
 }
 
-func (e *PlanReplayerExec) setKey() error {
+func (e *PlanReplayerExec) prepare() error {
 	if len(e.DumpInfo.Path) == 0 {
 		return errors.New("plan replayer: file path is empty")
 	}
@@ -502,7 +494,6 @@ func (e *PlanReplayerExec) setKey() error {
 		return errors.New("plan replayer: previous plan replayer dump option isn't closed normally, please try again")
 	}
 	e.ctx.SetValue(PlanReplayerDumpVarKey, e.DumpInfo)
-	logutil.BgLogger().Info("plan replayer dump", zap.String("filename", e.DumpInfo.FileName))
 	return nil
 }
 
@@ -641,14 +632,17 @@ type PlanReplayerLoadInfo struct {
 	Ctx  sessionctx.Context
 }
 
-type planReplayerLoadKeyType int
+type planReplayerKeyType int
 
-func (k planReplayerLoadKeyType) String() string {
+func (k planReplayerKeyType) String() string {
 	return "plan_replayer_load_var"
 }
 
 // PlanReplayerLoadVarKey is a variable key for plan replayer load.
-const PlanReplayerLoadVarKey planReplayerLoadKeyType = 0
+const PlanReplayerLoadVarKey planReplayerKeyType = 0
+
+// PlanReplayerDumpVarKey is a variable key for plan replayer dump.
+const PlanReplayerDumpVarKey planReplayerKeyType = 1
 
 // Next implements the Executor Next interface.
 func (e *PlanReplayerLoadExec) Next(ctx context.Context, req *chunk.Chunk) error {
