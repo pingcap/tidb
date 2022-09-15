@@ -68,16 +68,6 @@ func buildStringParam(bf *baseBuiltinFunc, idx int, input *chunk.Chunk, notProvi
 		return &pa, false, nil
 	}
 
-	pa.col, err = bf.bufAllocator.get()
-	if err != nil {
-		return nil, false, err
-	}
-
-	// Get values from input
-	if err := bf.args[idx].VecEvalString(bf.ctx, input, pa.getCol()); err != nil {
-		return nil, false, err
-	}
-
 	// Check if this is a const value
 	pa.isConst = bf.args[idx].ConstItem(bf.ctx.GetSessionVars().StmtCtx)
 	if pa.isConst {
@@ -87,6 +77,17 @@ func buildStringParam(bf *baseBuiltinFunc, idx int, input *chunk.Chunk, notProvi
 		if isConstNull {
 			return nil, isConstNull, nil
 		}
+		return &pa, false, nil
+	}
+
+	pa.col, err = bf.bufAllocator.get()
+	if err != nil {
+		return nil, false, err
+	}
+
+	// Get values from input
+	if err := bf.args[idx].VecEvalString(bf.ctx, input, pa.getCol()); err != nil {
+		return nil, false, err
 	}
 
 	return &pa, false, nil
@@ -103,6 +104,18 @@ func buildIntParam(bf *baseBuiltinFunc, idx int, input *chunk.Chunk, notProvided
 		return &pa, false, nil
 	}
 
+	// Check if this is a const value
+	pa.isConst = bf.args[idx].ConstItem(bf.ctx.GetSessionVars().StmtCtx)
+	if pa.isConst {
+		// Initialize the const
+		var isConstNull bool
+		pa.defaultIntVal, isConstNull, err = bf.args[idx].EvalInt(bf.ctx, chunk.Row{})
+		if isConstNull {
+			return nil, isConstNull, nil
+		}
+		return &pa, false, nil
+	}
+
 	pa.col, err = bf.bufAllocator.get()
 	if err != nil {
 		return nil, false, err
@@ -111,18 +124,6 @@ func buildIntParam(bf *baseBuiltinFunc, idx int, input *chunk.Chunk, notProvided
 	// Get values from input
 	if err := bf.args[idx].VecEvalInt(bf.ctx, input, pa.getCol()); err != nil {
 		return nil, false, err
-	}
-
-	// Check if this is a const value
-	pa.isConst = bf.args[idx].ConstItem(bf.ctx.GetSessionVars().StmtCtx)
-	if pa.isConst {
-		// Initialize the const
-		var isConstNull bool
-		pa.defaultIntVal, isConstNull, err = bf.args[idx].EvalInt(bf.ctx, chunk.Row{})
-		// pa.defaultIntVal, isConstNull = getColumnConstValInt(pa.getCol(), input.NumRows())
-		if isConstNull {
-			return nil, isConstNull, nil
-		}
 	}
 
 	return &pa, false, nil

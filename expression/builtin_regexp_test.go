@@ -291,7 +291,7 @@ func TestRegexpLike(t *testing.T) {
 	}
 }
 
-func TestRegexpLikeFunctionVec(t *testing.T) {
+func TestRegexpLikeVec(t *testing.T) {
 	var expr []string = []string{"abc", "aBc", "Good\nday", "\n"}
 	var pattern []string = []string{"abc", "od$", "^day", "day$", "."}
 	var matchType []string = []string{"m", "i", "icc", "cii", "s", "msi"}
