@@ -4807,10 +4807,6 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 		return infoschema.ErrColumnExists.GenWithStackByArgs(newColName)
 	}
 
-	if fkInfo, refCol := GetColumnForeignKeyInfo(oldColName.L, tbl.Meta().ForeignKeys); fkInfo != nil {
-		return dbterror.ErrFKIncompatibleColumns.GenWithStackByArgs(oldColName, refCol, fkInfo.Name)
-	}
-
 	// Check generated expression.
 	for _, col := range allCols {
 		if col.GeneratedExpr == nil {
@@ -6367,7 +6363,7 @@ func isDroppableColumn(tblInfo *model.TableInfo, colName model.CIStr) error {
 		return err
 	}
 	// Check the column with foreign key.
-	if fkInfo, _ := GetColumnForeignKeyInfo(colName.L, tblInfo.ForeignKeys); fkInfo != nil {
+	if fkInfo := GetColumnForeignKeyInfo(colName.L, tblInfo.ForeignKeys); fkInfo != nil {
 		return dbterror.ErrFkColumnCannotDrop.GenWithStackByArgs(colName, fkInfo.Name)
 	}
 	return nil

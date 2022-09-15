@@ -1165,7 +1165,7 @@ func TestRenameColumnWithForeignKeyMetaInfo(t *testing.T) {
 
 	tk.MustExec("create table t1 (id int key, a int, b int, foreign key fk(a) references t1(id))")
 	tk.MustExec("alter table t1 change id kid int")
-	tk.MustExec("alter table t1 change a aa int")
+	tk.MustExec("alter table t1 rename column a to aa")
 	tbl1Info := getTableInfo(t, dom, "test", "t1")
 	tb1ReferredFKs := getTableInfoReferredForeignKeys(t, dom, "test", "t1")
 	require.Equal(t, 1, len(tbl1Info.ForeignKeys))
@@ -1231,7 +1231,7 @@ func TestRenameColumnWithForeignKeyMetaInfo(t *testing.T) {
 	require.Equal(t, 1, len(tbl2Info.ForeignKeys[1].RefCols))
 	require.Equal(t, "b", tbl2Info.ForeignKeys[1].Cols[0].L)
 	require.Equal(t, "bb", tbl2Info.ForeignKeys[1].RefCols[0].L)
-	tk.MustExec("alter table t2 change a aa int")
+	tk.MustExec("alter table t2 rename column a to aa")
 	tk.MustExec("alter table t2 change b bb int")
 	tk.MustQuery("show create table t2").
 		Check(testkit.Rows("t2 CREATE TABLE `t2` (\n" +

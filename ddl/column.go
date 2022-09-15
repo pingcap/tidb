@@ -1686,15 +1686,15 @@ func listIndicesWithColumn(colName string, indices []*model.IndexInfo) []*model.
 }
 
 // GetColumnForeignKeyInfo returns the wanted foreign key info
-func GetColumnForeignKeyInfo(colName string, fkInfos []*model.FKInfo) (*model.FKInfo, string) {
+func GetColumnForeignKeyInfo(colName string, fkInfos []*model.FKInfo) *model.FKInfo {
 	for _, fkInfo := range fkInfos {
-		for i, col := range fkInfo.Cols {
+		for _, col := range fkInfo.Cols {
 			if col.L == colName {
-				return fkInfo, fkInfo.RefCols[i].O
+				return fkInfo
 			}
 		}
 	}
-	return nil, ""
+	return nil
 }
 
 // AllocateColumnID allocates next column ID from TableInfo.

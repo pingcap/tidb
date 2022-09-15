@@ -567,10 +567,6 @@ func (d SchemaTracker) renameColumn(ctx sessionctx.Context, ident ast.Ident, spe
 		return infoschema.ErrColumnExists.GenWithStackByArgs(newColName)
 	}
 
-	if fkInfo, refCol := ddl.GetColumnForeignKeyInfo(oldColName.L, tbl.Meta().ForeignKeys); fkInfo != nil {
-		return dbterror.ErrFKIncompatibleColumns.GenWithStackByArgs(oldColName, refCol, fkInfo.Name)
-	}
-
 	// Check generated expression.
 	for _, col := range allCols {
 		if col.GeneratedExpr == nil {
