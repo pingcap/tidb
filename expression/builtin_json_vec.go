@@ -238,7 +238,11 @@ func (b *builtinJSONArraySig) vecEvalJSON(input *chunk.Chunk, result *chunk.Colu
 	}
 	result.ReserveJSON(nr)
 	for i := 0; i < nr; i++ {
-		result.AppendJSON(types.CreateBinaryJSON(jsons[i]))
+		bj, err := types.CreateBinaryJSONWithCheck(jsons[i])
+		if err != nil {
+			return err
+		}
+		result.AppendJSON(bj)
 	}
 	return nil
 }
@@ -537,7 +541,11 @@ func (b *builtinJSONObjectSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Col
 	}
 
 	for i := 0; i < nr; i++ {
-		result.AppendJSON(types.CreateBinaryJSON(jsons[i]))
+		bj, err := types.CreateBinaryJSONWithCheck(jsons[i])
+		if err != nil {
+			return err
+		}
+		result.AppendJSON(bj)
 	}
 	return nil
 }

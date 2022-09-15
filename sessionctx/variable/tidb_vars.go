@@ -781,6 +781,8 @@ const (
 	TiDBMemQuotaBindingCache = "tidb_mem_quota_binding_cache"
 	// TiDBRCReadCheckTS indicates the tso optimization for read-consistency read is enabled.
 	TiDBRCReadCheckTS = "tidb_rc_read_check_ts"
+	// TiDBRCWriteCheckTs indicates whether some special write statements don't get latest tso from PD at RC
+	TiDBRCWriteCheckTs = "tidb_rc_write_check_ts"
 	// TiDBCommitterConcurrency controls the number of running concurrent requests in the commit phase.
 	TiDBCommitterConcurrency = "tidb_committer_concurrency"
 	// TiDBEnableBatchDML enables batch dml.
@@ -964,7 +966,7 @@ const (
 	DefTiDBEnableTelemetry                         = true
 	DefTiDBEnableParallelApply                     = false
 	DefTiDBEnableAmendPessimisticTxn               = false
-	DefTiDBPartitionPruneMode                      = "static"
+	DefTiDBPartitionPruneMode                      = "dynamic"
 	DefTiDBEnableRateLimitAction                   = true
 	DefTiDBEnableAsyncCommit                       = false
 	DefTiDBEnable1PC                               = false
@@ -1047,6 +1049,7 @@ const (
 	MaxDDLReorgBatchSize                     int32  = 10240
 	MinDDLReorgBatchSize                     int32  = 32
 	MinExpensiveQueryTimeThreshold           uint64 = 10 // 10s
+	DefTiDBRcWriteCheckTs                           = false
 	DefTiDBConstraintCheckInPlacePessimistic        = true
 	DefTiDBForeignKeyChecks                         = false
 	DefTiDBOptRangeMaxSize                          = 64 * int64(size.MB) // 64 MB
