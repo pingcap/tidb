@@ -42,6 +42,7 @@ type featureUsage struct {
 	NewClusterIndex       *NewClusterIndexUsage            `json:"newClusterIndex"`
 	TemporaryTable        bool                             `json:"temporaryTable"`
 	CTE                   *m.CTEUsageCounter               `json:"cte"`
+	AccountLock           *m.AccountLockCounter            `json:"accountLock"`
 	CachedTable           bool                             `json:"cachedTable"`
 	AutoCapture           bool                             `json:"autoCapture"`
 	PlacementPolicyUsage  *placementPolicyUsage            `json:"placementPolicy"`
@@ -75,6 +76,8 @@ func getFeatureUsage(ctx context.Context, sctx sessionctx.Context) (*featureUsag
 	usage.Txn = getTxnUsageInfo(sctx)
 
 	usage.CTE = getCTEUsageInfo()
+
+	usage.AccountLock = getAccountLockUsageInfo()
 
 	usage.MultiSchemaChange = getMultiSchemaChangeUsageInfo()
 
@@ -212,12 +215,14 @@ type TxnUsage struct {
 	MutationCheckerUsed       bool                     `json:"mutationCheckerUsed"`
 	AssertionLevel            string                   `json:"assertionLevel"`
 	RcCheckTS                 bool                     `json:"rcCheckTS"`
+	RCWriteCheckTS            bool                     `json:"rcWriteCheckTS"`
 	SavepointCounter          int64                    `json:"SavepointCounter"`
 	LazyUniqueCheckSetCounter int64                    `json:"lazyUniqueCheckSetCounter"`
 }
 
 var initialTxnCommitCounter metrics.TxnCommitCounter
 var initialCTECounter m.CTEUsageCounter
+var initialAccountLockCounter m.AccountLockCounter
 var initialNonTransactionalCounter m.NonTransactionalStmtCounter
 var initialMultiSchemaChangeCounter m.MultiSchemaChangeUsageCounter
 var initialTablePartitionCounter m.TablePartitionUsageCounter
@@ -248,12 +253,16 @@ func getTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
 	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(variable.TiDBRCReadCheckTS); err == nil {
 		rcCheckTSUsed = val == variable.On
 	}
+	rcWriteCheckTSUsed := false
+	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(variable.TiDBRCWriteCheckTs); err == nil {
+		rcWriteCheckTSUsed = val == variable.On
+	}
 	currSavepointCount := m.GetSavepointStmtCounter()
 	diffSavepointCount := currSavepointCount - initialSavepointStmtCounter
 	currLazyUniqueCheckSetCount := m.GetLazyPessimisticUniqueCheckSetCounter()
 	diffLazyUniqueCheckSetCount := currLazyUniqueCheckSetCount - initialLazyPessimisticUniqueCheckSetCount
 	return &TxnUsage{asyncCommitUsed, onePCUsed, diff,
-		mutationCheckerUsed, assertionUsed, rcCheckTSUsed,
+		mutationCheckerUsed, assertionUsed, rcCheckTSUsed, rcWriteCheckTSUsed,
 		diffSavepointCount, diffLazyUniqueCheckSetCount,
 	}
 }
@@ -264,6 +273,10 @@ func postReportTxnUsage() {
 
 func postReportCTEUsage() {
 	initialCTECounter = m.GetCTECounter()
+}
+
+func postReportAccountLockUsage() {
+	initialAccountLockCounter = m.GetAccountLockCounter()
 }
 
 // PostSavepointCount exports for testing.
@@ -279,6 +292,13 @@ func postReportLazyPessimisticUniqueCheckSetCount() {
 func getCTEUsageInfo() *m.CTEUsageCounter {
 	curr := m.GetCTECounter()
 	diff := curr.Sub(initialCTECounter)
+	return &diff
+}
+
+// getAccountLockUsageInfo gets the AccountLock usages.
+func getAccountLockUsageInfo() *m.AccountLockCounter {
+	curr := m.GetAccountLockCounter()
+	diff := curr.Sub(initialAccountLockCounter)
 	return &diff
 }
 

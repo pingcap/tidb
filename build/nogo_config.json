@@ -205,7 +205,7 @@
       "ddl/backfilling.go": "ddl/backfilling.go",
       "ddl/column.go": "ddl/column.go",
       "ddl/index.go": "ddl/index.go",
-      "ddl/lightning/": "ddl/lightning/",
+      "ddl/ingest/": "ddl/ingest/",
       "server/conn.go": "server/conn.go",
       "server/conn_stmt.go": "server/conn_stmt.go",
       "server/conn_test.go": "server/conn_test.go",
@@ -360,7 +360,7 @@
       "ddl/backfilling.go": "ddl/backfilling.go",
       "ddl/column.go": "ddl/column.go",
       "ddl/index.go": "ddl/index.go",
-      "ddl/lightning/": "ddl/lightning/",
+      "ddl/ingest/": "ddl/ingest/",
       "expression/builtin_cast.go": "expression/builtin_cast code",
       "server/conn.go": "server/conn.go",
       "server/conn_stmt.go": "server/conn_stmt.go",
@@ -456,6 +456,18 @@
       "/external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
       "parser/digester_test.go": "ignore code"
+    }
+  },
+  "rowserrcheck": {
+    "exclude_files": {
+      "/external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
+      "server/tidb_test.go": "ignore test code",
+      "server/tidb_serial_test.go": "ignore test code",
+      "server/statistics_handler_test.go": "ignore test code",
+      "server/server_test.go": "ignore test code",
+      "server/optimize_trace_test.go": "ignore test code",
+      "server/plan_replayer_test.go": "ignore test code"
     }
   },
   "S1000": {

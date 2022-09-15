@@ -14,7 +14,7 @@
 
 include Makefile.common
 
-.PHONY: all clean test server dev benchkv benchraw check checklist parser tidy ddltest build_br build_lightning build_lightning-ctl build_dumpling ut bazel_build bazel_prepare bazel_test
+.PHONY: all clean test server dev benchkv benchraw check checklist parser tidy ddltest build_br build_lightning build_lightning-ctl build_dumpling ut bazel_build bazel_prepare bazel_test check-file-perm
 
 default: server buildsucc
 
@@ -25,13 +25,13 @@ buildsucc:
 
 all: dev server benchkv
 
-dev: checklist check explaintest gogenerate br_unit_test test_part_parser_dev ut
+dev: checklist check explaintest gogenerate br_unit_test test_part_parser_dev ut check-file-perm
 	@>&2 echo "Great, all tests passed."
 
 # Install the check tools.
 check-setup:tools/bin/revive
 
-check: check-file-perm check-parallel lint tidy testSuite errdoc bazel_golangcilinter bazel_all_build
+check: check-parallel lint tidy testSuite errdoc bazel_all_build
 
 fmt:
 	@echo "gofmt (simplify)"
@@ -55,10 +55,6 @@ errdoc:tools/bin/errdoc-gen
 lint:tools/bin/revive
 	@echo "linting"
 	@tools/bin/revive -formatter friendly -config tools/check/revive.toml $(FILES_TIDB_TESTS)
-
-vet:
-	@echo "vet"
-	$(GO) vet -all $(PACKAGES_TIDB_TESTS) 2>&1 | $(FAIL_ON_STDOUT)
 
 tidy:
 	@echo "go mod tidy"
@@ -442,7 +438,7 @@ bazel_golangcilinter:
 	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) \
 		--run_under="cd $(CURDIR) && " \
 		@com_github_golangci_golangci_lint//cmd/golangci-lint:golangci-lint \
-	-- run  $$($(PACKAGE_DIRECTORIES)) --config ./.cilinter.yaml
+	-- run  $$($(PACKAGE_DIRECTORIES)) --config ./.golangci.yaml
 
 bazel_brietest: failpoint-enable bazel_ci_prepare
 	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv \

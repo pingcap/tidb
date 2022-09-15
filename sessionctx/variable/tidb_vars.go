@@ -289,6 +289,8 @@ const (
 	TiDBOptDiskFactor = "tidb_opt_disk_factor"
 	// TiDBOptConcurrencyFactor is the CPU cost of additional one goroutine.
 	TiDBOptConcurrencyFactor = "tidb_opt_concurrency_factor"
+	// TiDBOptForceInlineCTE is used to enable/disable inline CTE
+	TiDBOptForceInlineCTE = "tidb_opt_force_inline_cte"
 
 	// Variables for the Cost Model Ver2
 	// TiDBOptCPUFactorV2 is the CPU factor for the Cost Model Ver2
@@ -443,6 +445,9 @@ const (
 
 	// TiDBDDLReorgWorkerCount defines the count of ddl reorg workers.
 	TiDBDDLReorgWorkerCount = "tidb_ddl_reorg_worker_cnt"
+
+	// TiDBDDLFlashbackConcurrency defines the count of ddl flashback workers.
+	TiDBDDLFlashbackConcurrency = "tidb_ddl_flashback_concurrency"
 
 	// TiDBDDLReorgBatchSize defines the transaction batch size of ddl reorg workers.
 	TiDBDDLReorgBatchSize = "tidb_ddl_reorg_batch_size"
@@ -736,6 +741,15 @@ const (
 
 	// TiDBConstraintCheckInPlacePessimistic controls whether to skip certain kinds of pessimistic locks.
 	TiDBConstraintCheckInPlacePessimistic = "tidb_constraint_check_in_place_pessimistic"
+
+	// TiDBEnableForeignKey indicates whether to enable foreign key feature.
+	// TODO(crazycs520): remove this after foreign key GA.
+	TiDBEnableForeignKey = "tidb_enable_foreign_key"
+
+	// TiDBOptRangeMaxSize is the max memory limit for ranges. When the optimizer estimates that the memory usage of complete
+	// ranges would exceed the limit, it chooses less accurate ranges such as full range. 0 indicates that there is no memory
+	// limit for ranges.
+	TiDBOptRangeMaxSize = "tidb_opt_range_max_size"
 )
 
 // TiDB vars that have only global scope
@@ -771,6 +785,8 @@ const (
 	TiDBMemQuotaBindingCache = "tidb_mem_quota_binding_cache"
 	// TiDBRCReadCheckTS indicates the tso optimization for read-consistency read is enabled.
 	TiDBRCReadCheckTS = "tidb_rc_read_check_ts"
+	// TiDBRCWriteCheckTs indicates whether some special write statements don't get latest tso from PD at RC
+	TiDBRCWriteCheckTs = "tidb_rc_write_check_ts"
 	// TiDBCommitterConcurrency controls the number of running concurrent requests in the commit phase.
 	TiDBCommitterConcurrency = "tidb_committer_concurrency"
 	// TiDBEnableBatchDML enables batch dml.
@@ -864,6 +880,7 @@ const (
 	DefOptMemoryFactorV2                           = 0.001
 	DefOptDiskFactorV2                             = 1.5
 	DefOptConcurrencyFactorV2                      = 3.0
+	DefOptForceInlineCTE                           = false
 	DefOptInSubqToJoinAndAgg                       = true
 	DefOptPreferRangeScan                          = false
 	DefBatchInsert                                 = false
@@ -902,6 +919,7 @@ const (
 	DefTiDBRowFormatV2                             = 2
 	DefTiDBDDLReorgWorkerCount                     = 4
 	DefTiDBDDLReorgBatchSize                       = 256
+	DefTiDBDDLFlashbackConcurrency                 = 64
 	DefTiDBDDLErrorCountLimit                      = 512
 	DefTiDBMaxDeltaSchemaCount                     = 1024
 	DefTiDBPlacementMode                           = PlacementModeStrict
@@ -948,7 +966,7 @@ const (
 	DefTiDBEnableTelemetry                         = true
 	DefTiDBEnableParallelApply                     = false
 	DefTiDBEnableAmendPessimisticTxn               = false
-	DefTiDBPartitionPruneMode                      = "static"
+	DefTiDBPartitionPruneMode                      = "dynamic"
 	DefTiDBEnableRateLimitAction                   = true
 	DefTiDBEnableAsyncCommit                       = false
 	DefTiDBEnable1PC                               = false
@@ -963,7 +981,7 @@ const (
 	DefTiDBTSOClientBatchMaxWaitTime               = 0.0 // 0ms
 	DefTiDBEnableTSOFollowerProxy                  = false
 	DefTiDBEnableOrderedResultMode                 = false
-	DefTiDBEnablePseudoForOutdatedStats            = true
+	DefTiDBEnablePseudoForOutdatedStats            = false
 	DefTiDBRegardNULLAsPoint                       = true
 	DefEnablePlacementCheck                        = true
 	DefTimestamp                                   = "0"
@@ -1031,23 +1049,27 @@ const (
 	MaxDDLReorgBatchSize                     int32  = 10240
 	MinDDLReorgBatchSize                     int32  = 32
 	MinExpensiveQueryTimeThreshold           uint64 = 10 // 10s
+	DefTiDBRcWriteCheckTs                           = false
 	DefTiDBConstraintCheckInPlacePessimistic        = true
+	DefTiDBForeignKeyChecks                         = false
+	DefTiDBOptRangeMaxSize                          = 0
 )
 
 // Process global variables.
 var (
-	ProcessGeneralLog           = atomic.NewBool(false)
-	RunAutoAnalyze              = atomic.NewBool(DefTiDBEnableAutoAnalyze)
-	GlobalLogMaxDays            = atomic.NewInt32(int32(config.GetGlobalConfig().Log.File.MaxDays))
-	QueryLogMaxLen              = atomic.NewInt32(DefTiDBQueryLogMaxLen)
-	EnablePProfSQLCPU           = atomic.NewBool(false)
-	EnableBatchDML              = atomic.NewBool(false)
-	EnableTmpStorageOnOOM       = atomic.NewBool(DefTiDBEnableTmpStorageOnOOM)
-	ddlReorgWorkerCounter int32 = DefTiDBDDLReorgWorkerCount
-	ddlReorgBatchSize     int32 = DefTiDBDDLReorgBatchSize
-	ddlErrorCountLimit    int64 = DefTiDBDDLErrorCountLimit
-	ddlReorgRowFormat     int64 = DefTiDBRowFormatV2
-	maxDeltaSchemaCount   int64 = DefTiDBMaxDeltaSchemaCount
+	ProcessGeneralLog             = atomic.NewBool(false)
+	RunAutoAnalyze                = atomic.NewBool(DefTiDBEnableAutoAnalyze)
+	GlobalLogMaxDays              = atomic.NewInt32(int32(config.GetGlobalConfig().Log.File.MaxDays))
+	QueryLogMaxLen                = atomic.NewInt32(DefTiDBQueryLogMaxLen)
+	EnablePProfSQLCPU             = atomic.NewBool(false)
+	EnableBatchDML                = atomic.NewBool(false)
+	EnableTmpStorageOnOOM         = atomic.NewBool(DefTiDBEnableTmpStorageOnOOM)
+	ddlReorgWorkerCounter   int32 = DefTiDBDDLReorgWorkerCount
+	ddlReorgBatchSize       int32 = DefTiDBDDLReorgBatchSize
+	ddlFlashbackConcurrency int32 = DefTiDBDDLFlashbackConcurrency
+	ddlErrorCountLimit      int64 = DefTiDBDDLErrorCountLimit
+	ddlReorgRowFormat       int64 = DefTiDBRowFormatV2
+	maxDeltaSchemaCount     int64 = DefTiDBMaxDeltaSchemaCount
 	// DDLSlowOprThreshold is the threshold for ddl slow operations, uint is millisecond.
 	DDLSlowOprThreshold                = config.GetGlobalConfig().Instance.DDLSlowOprThreshold
 	ForcePriority                      = int32(DefTiDBForcePriority)
@@ -1078,6 +1100,8 @@ var (
 	EnableFastReorg = atomic.NewBool(DefTiDBEnableFastReorg)
 	// DDLDiskQuota is the temporary variable for set disk quota for lightning
 	DDLDiskQuota = atomic.NewUint64(DefTiDBDDLDiskQuota)
+	// EnableForeignKey indicates whether to enable foreign key feature.
+	EnableForeignKey = atomic.NewBool(false)
 )
 
 var (

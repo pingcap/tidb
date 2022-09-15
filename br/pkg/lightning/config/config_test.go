@@ -279,6 +279,7 @@ func TestAdjustWillBatchImportRatioInvalid(t *testing.T) {
 }
 
 func TestAdjustSecuritySection(t *testing.T) {
+	uuidHolder := "<uuid>"
 	testCases := []struct {
 		input       string
 		expectedCA  string
@@ -302,7 +303,7 @@ func TestAdjustSecuritySection(t *testing.T) {
 				ca-path = "/path/to/ca.pem"
 			`,
 			expectedCA:  "/path/to/ca.pem",
-			expectedTLS: "cluster",
+			expectedTLS: uuidHolder,
 		},
 		{
 			input: `
@@ -321,7 +322,7 @@ func TestAdjustSecuritySection(t *testing.T) {
 				ca-path = "/path/to/ca2.pem"
 			`,
 			expectedCA:  "/path/to/ca2.pem",
-			expectedTLS: "cluster",
+			expectedTLS: uuidHolder,
 		},
 		{
 			input: `
@@ -330,7 +331,7 @@ func TestAdjustSecuritySection(t *testing.T) {
 				ca-path = "/path/to/ca2.pem"
 			`,
 			expectedCA:  "/path/to/ca2.pem",
-			expectedTLS: "cluster",
+			expectedTLS: uuidHolder,
 		},
 		{
 			input: `
@@ -356,7 +357,11 @@ func TestAdjustSecuritySection(t *testing.T) {
 		err = cfg.Adjust(context.Background())
 		require.NoError(t, err, comment)
 		require.Equal(t, tc.expectedCA, cfg.TiDB.Security.CAPath, comment)
-		require.Equal(t, tc.expectedTLS, cfg.TiDB.TLS, comment)
+		if tc.expectedTLS == uuidHolder {
+			require.NotEmpty(t, cfg.TiDB.TLS, comment)
+		} else {
+			require.Equal(t, tc.expectedTLS, cfg.TiDB.TLS, comment)
+		}
 	}
 	// test different tls config name
 	cfg := config.NewConfig()

@@ -785,6 +785,30 @@ func TestSetVar(t *testing.T) {
 	tk.MustExec("set session tidb_general_plan_cache_size = -1") // underflow
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_general_plan_cache_size value: '-1'"))
 	tk.MustQuery("select @@session.tidb_general_plan_cache_size").Check(testkit.Rows("1"))
+
+	// test variable 'foreign_key_checks'
+	// global scope
+	tk.MustQuery("select @@global.foreign_key_checks").Check(testkit.Rows("0")) // default value
+	tk.MustExec("set global foreign_key_checks = 1")
+	tk.MustQuery("select @@global.foreign_key_checks").Check(testkit.Rows("1"))
+	// session scope
+	tk.MustQuery("select @@session.foreign_key_checks").Check(testkit.Rows("0")) // default value
+	tk.MustExec("set session foreign_key_checks = 1")
+	tk.MustQuery("select @@session.foreign_key_checks").Check(testkit.Rows("1"))
+
+	// test variable 'foreign_key_checks'
+	// global scope
+	tk.MustQuery("select @@global.tidb_enable_foreign_key").Check(testkit.Rows("0")) // default value
+	tk.MustExec("set global tidb_enable_foreign_key = 1")
+	tk.MustQuery("select @@global.tidb_enable_foreign_key").Check(testkit.Rows("1"))
+
+	// test variable 'tidb_opt_force_inline_cte'
+	tk.MustQuery("select @@session.tidb_opt_force_inline_cte").Check(testkit.Rows("0")) // default value is 0
+	tk.MustExec("set session tidb_opt_force_inline_cte=1")
+	tk.MustQuery("select @@session.tidb_opt_force_inline_cte").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@global.tidb_opt_force_inline_cte").Check(testkit.Rows("0")) // default value is 0
+	tk.MustExec("set global tidb_opt_force_inline_cte=1")
+	tk.MustQuery("select @@global.tidb_opt_force_inline_cte").Check(testkit.Rows("1"))
 }
 
 func TestGetSetNoopVars(t *testing.T) {
@@ -818,6 +842,15 @@ func TestGetSetNoopVars(t *testing.T) {
 	err = tk.ExecToErr("SET GLOBAL tidb_enable_noop_variables = 'warn'")
 	require.Error(t, err)
 	require.Equal(t, "[variable:1231]Variable 'tidb_enable_noop_variables' can't be set to the value of 'warn'", err.Error())
+
+	tk.MustQuery("select @@tidb_opt_range_max_size").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_opt_range_max_size = 1048576")
+	tk.MustQuery("select @@global.tidb_opt_range_max_size").Check(testkit.Rows("1048576"))
+	tk.MustExec("set global tidb_opt_range_max_size = -1")
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_opt_range_max_size value: '-1'"))
+	tk.MustQuery("select @@global.tidb_opt_range_max_size").Check(testkit.Rows("0"))
+	tk.MustExec("set session tidb_opt_range_max_size = 2097152")
+	tk.MustQuery("select @@session.tidb_opt_range_max_size").Check(testkit.Rows("2097152"))
 }
 
 func TestTruncateIncorrectIntSessionVar(t *testing.T) {

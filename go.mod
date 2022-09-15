@@ -19,7 +19,6 @@ require (
 	github.com/charithe/durationcheck v0.0.9
 	github.com/cheggaaa/pb/v3 v3.0.8
 	github.com/cheynewallace/tabby v1.1.1
-	github.com/cockroachdb/errors v1.8.1
 	github.com/cockroachdb/pebble v0.0.0-20210719141320-8c3bd06debb5
 	github.com/coocood/freecache v1.2.1
 	github.com/coreos/go-semver v0.3.0
@@ -38,11 +37,10 @@ require (
 	github.com/golang/protobuf v1.5.2
 	github.com/golang/snappy v0.0.4
 	github.com/golangci/gofmt v0.0.0-20190930125516-244bba706f1a
-	github.com/golangci/golangci-lint v1.48.0
+	github.com/golangci/golangci-lint v1.49.0
 	github.com/golangci/gosec v0.0.0-20180901114220-8afd9cbb6cfb
 	github.com/golangci/misspell v0.3.5
 	github.com/golangci/prealloc v0.0.0-20180630174525-215b22d4de21
-	github.com/golangci/unconvert v0.0.0-20180507085042-28b1c447d1f4
 	github.com/google/btree v1.1.2
 	github.com/google/pprof v0.0.0-20211122183932-1daafda22083
 	github.com/google/uuid v1.3.0
@@ -52,8 +50,10 @@ require (
 	github.com/grpc-ecosystem/go-grpc-middleware v1.3.0
 	github.com/iancoleman/strcase v0.2.0
 	github.com/jedib0t/go-pretty/v6 v6.2.2
+	github.com/jingyugao/rowserrcheck v1.1.1
 	github.com/joho/sqltocsv v0.0.0-20210428211105-a6d6801d59df
 	github.com/kisielk/errcheck v1.6.2
+	github.com/klauspost/compress v1.15.1
 	github.com/kyoh86/exportloopref v0.1.8
 	github.com/mgechev/revive v1.2.4-0.20220827111817-553604eaced5
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
@@ -83,7 +83,7 @@ require (
 	github.com/stretchr/testify v1.8.0
 	github.com/tdakkota/asciicheck v0.1.1
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.1-0.20220906094532-f867f498456f
+	github.com/tikv/client-go/v2 v2.0.1-0.20220913051514-ffaaf7131a8d
 	github.com/tikv/pd/client v0.0.0-20220725055910-7187a7ab72db
 	github.com/timakin/bodyclose v0.0.0-20210704033933-f49887972144
 	github.com/twmb/murmur3 v1.1.3
@@ -105,7 +105,7 @@ require (
 	golang.org/x/net v0.0.0-20220722155237-a158d28d115b
 	golang.org/x/oauth2 v0.0.0-20220411215720-9780585627b5
 	golang.org/x/sync v0.0.0-20220722155255-886fb9371eb4
-	golang.org/x/sys v0.0.0-20220825204002-c680a09ffe64
+	golang.org/x/sys v0.0.0-20220909162455-aba9fc2a8ff2
 	golang.org/x/term v0.0.0-20210927222741-03fcf44c2211
 	golang.org/x/text v0.3.7
 	golang.org/x/time v0.0.0-20220224211638-0e9765cccd65
@@ -134,6 +134,7 @@ require (
 	github.com/cespare/xxhash v1.1.0 // indirect
 	github.com/cespare/xxhash/v2 v2.1.2 // indirect
 	github.com/chavacava/garif v0.0.0-20220630083739-93517212f375 // indirect
+	github.com/cockroachdb/errors v1.8.1 // indirect
 	github.com/cockroachdb/logtags v0.0.0-20190617123548-eb05cc24525f // indirect
 	github.com/cockroachdb/redact v1.0.8 // indirect
 	github.com/cockroachdb/sentry-go v0.6.1-cockroachdb.2 // indirect
@@ -173,8 +174,6 @@ require (
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/jonboulle/clockwork v0.2.2 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
-	github.com/kisielk/gotool v1.0.0 // indirect
-	github.com/klauspost/compress v1.15.1 // indirect
 	github.com/klauspost/cpuid v1.3.1 // indirect
 	github.com/kr/pretty v0.3.0 // indirect
 	github.com/kr/text v0.2.0 // indirect
