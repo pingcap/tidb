@@ -77,8 +77,7 @@ for BACKEND in tidb local; do
 
   run_sql 'SELECT count(pk), count(DISTINCT js) FROM vt.json'
   check_contains 'count(pk): 92'
-  # FIXME: block this test because of kv encoder bug
-  # check_contains 'count(DISTINCT js): 92'
+  check_contains 'count(DISTINCT js): 92'
   run_sql 'SELECT pk FROM vt.json WHERE js = json_array(1, 2, 3)'
   check_contains 'pk: 1089'
   run_sql 'SELECT js FROM vt.json WHERE pk = 2000'
