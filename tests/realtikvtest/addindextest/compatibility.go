@@ -75,7 +75,6 @@ func initCompCtxParams(ctx *suiteContext) {
 	compCtx.isConcurrentDDL = false
 	compCtx.isMultiSchemaChange = false
 	compCtx.isPiTR = false
-
 }
 
 func (cCtx *CompatibilityContext) start(ctx *suiteContext) {
