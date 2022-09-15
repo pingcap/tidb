@@ -15,9 +15,12 @@
 package ddl
 
 import (
+	"fmt"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -182,17 +185,25 @@ func checkTableForeignKeyValid(is infoschema.InfoSchema, schema string, tbInfo *
 	return checkTableForeignKey(referTblInfo, tbInfo, fk)
 }
 
+func getAndCheckLatestInfoSchema(d *ddlCtx, t *meta.Meta) (infoschema.InfoSchema, error) {
+	currVer, err := t.GetSchemaVersion()
+	if err != nil {
+		return nil, err
+	}
+	is := d.infoCache.GetLatest()
+	if is.SchemaMetaVersion() != currVer {
+		return nil, errors.New("need wait owner to load latest schema")
+	}
+	return is, nil
+}
+
 func checkTableForeignKeyValidInOwner(d *ddlCtx, t *meta.Meta, job *model.Job, tbInfo *model.TableInfo, fkCheck bool) (retryable bool, _ error) {
 	if !variable.EnableForeignKey.Load() {
 		return false, nil
 	}
-	currVer, err := t.GetSchemaVersion()
+	is, err := getAndCheckLatestInfoSchema(d, t)
 	if err != nil {
 		return true, err
-	}
-	is := d.infoCache.GetLatest()
-	if is.SchemaMetaVersion() != currVer {
-		return true, errors.New("need wait owner to load latest schema")
 	}
 	for _, fk := range tbInfo.ForeignKeys {
 		if fk.Version < model.FKVersion1 {
@@ -266,6 +277,140 @@ func checkTableForeignKey(referTblInfo, tblInfo *model.TableInfo, fkInfo *model.
 	// check refer columns should have index.
 	if model.FindIndexByColumns(referTblInfo, fkInfo.RefCols...) == nil {
 		return infoschema.ErrForeignKeyNoIndexInParent.GenWithStackByArgs(fkInfo.Name, fkInfo.RefTable)
+	}
+	return nil
+}
+
+func checkTableHasForeignKeyReferred(is infoschema.InfoSchema, schema, tbl string, ignoreTables []ast.Ident, fkCheck bool) *model.ReferredFKInfo {
+	if !fkCheck {
+		return nil
+	}
+	referredFKs := is.GetTableReferredForeignKeys(schema, tbl)
+	for _, referredFK := range referredFKs {
+		found := false
+		for _, tb := range ignoreTables {
+			if referredFK.ChildSchema.L == tb.Schema.L && referredFK.ChildTable.L == tb.Name.L {
+				found = true
+				break
+			}
+		}
+		if found {
+			continue
+		}
+		if is.TableExists(referredFK.ChildSchema, referredFK.ChildTable) {
+			return referredFK
+		}
+	}
+	return nil
+}
+
+func checkDropTableHasForeignKeyReferredInOwner(d *ddlCtx, t *meta.Meta, job *model.Job) error {
+	if !variable.EnableForeignKey.Load() {
+		return nil
+	}
+	var objectIdents []ast.Ident
+	var fkCheck bool
+	err := job.DecodeArgs(&objectIdents, &fkCheck)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return errors.Trace(err)
+	}
+	referredFK, err := checkTableHasForeignKeyReferredInOwner(d, t, job.SchemaName, job.TableName, objectIdents, fkCheck)
+	if err != nil {
+		return err
+	}
+	if referredFK != nil {
+		job.State = model.JobStateCancelled
+		msg := fmt.Sprintf("`%s`.`%s` CONSTRAINT `%s`", referredFK.ChildSchema, referredFK.ChildTable, referredFK.ChildFKName)
+		return errors.Trace(dbterror.ErrTruncateIllegalForeignKey.GenWithStackByArgs(msg))
+	}
+	return nil
+}
+
+func checkTruncateTableHasForeignKeyReferredInOwner(d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, fkCheck bool) error {
+	referredFK, err := checkTableHasForeignKeyReferredInOwner(d, t, job.SchemaName, job.TableName, []ast.Ident{{Name: tblInfo.Name, Schema: model.NewCIStr(job.SchemaName)}}, fkCheck)
+	if err != nil {
+		return err
+	}
+	if referredFK != nil {
+		job.State = model.JobStateCancelled
+		msg := fmt.Sprintf("`%s`.`%s` CONSTRAINT `%s`", referredFK.ChildSchema, referredFK.ChildTable, referredFK.ChildFKName)
+		return errors.Trace(dbterror.ErrTruncateIllegalForeignKey.GenWithStackByArgs(msg))
+	}
+	return nil
+}
+
+func checkTableHasForeignKeyReferredInOwner(d *ddlCtx, t *meta.Meta, schema, tbl string, ignoreTables []ast.Ident, fkCheck bool) (_ *model.ReferredFKInfo, _ error) {
+	if !variable.EnableForeignKey.Load() {
+		return nil, nil
+	}
+	is, err := getAndCheckLatestInfoSchema(d, t)
+	if err != nil {
+		return nil, err
+	}
+	referredFK := checkTableHasForeignKeyReferred(is, schema, tbl, ignoreTables, fkCheck)
+	return referredFK, nil
+}
+
+func checkIndexNeededInForeignKey(is infoschema.InfoSchema, dbName string, tbInfo *model.TableInfo, idxInfo *model.IndexInfo) error {
+	referredFKs := is.GetTableReferredForeignKeys(dbName, tbInfo.Name.L)
+	if len(tbInfo.ForeignKeys) == 0 && len(referredFKs) == 0 {
+		return nil
+	}
+	remainIdxs := make([]*model.IndexInfo, 0, len(tbInfo.Indices))
+	for _, idx := range tbInfo.Indices {
+		if idx.ID == idxInfo.ID {
+			continue
+		}
+		remainIdxs = append(remainIdxs, idx)
+	}
+	checkFn := func(cols []model.CIStr) error {
+		if !model.IsIndexPrefixCovered(tbInfo, idxInfo, cols...) {
+			return nil
+		}
+		if tbInfo.PKIsHandle && len(cols) == 1 {
+			refColInfo := model.FindColumnInfo(tbInfo.Columns, cols[0].L)
+			if refColInfo != nil && mysql.HasPriKeyFlag(refColInfo.GetFlag()) {
+				return nil
+			}
+		}
+		for _, index := range remainIdxs {
+			if model.IsIndexPrefixCovered(tbInfo, index, cols...) {
+				return nil
+			}
+		}
+		return dbterror.ErrDropIndexNeededInForeignKey.GenWithStackByArgs(idxInfo.Name)
+	}
+	for _, fk := range tbInfo.ForeignKeys {
+		if fk.Version < model.FKVersion1 {
+			continue
+		}
+		err := checkFn(fk.Cols)
+		if err != nil {
+			return err
+		}
+	}
+	for _, referredFK := range referredFKs {
+		err := checkFn(referredFK.Cols)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func checkIndexNeededInForeignKeyInOwner(d *ddlCtx, t *meta.Meta, job *model.Job, dbName string, tbInfo *model.TableInfo, idxInfo *model.IndexInfo) error {
+	if !variable.EnableForeignKey.Load() {
+		return nil
+	}
+	is, err := getAndCheckLatestInfoSchema(d, t)
+	if err != nil {
+		return err
+	}
+	err = checkIndexNeededInForeignKey(is, dbName, tbInfo, idxInfo)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return err
 	}
 	return nil
 }

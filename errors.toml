@@ -896,6 +896,11 @@ error = '''
 Duplicate partition name %-.192s
 '''
 
+["ddl:1553"]
+error = '''
+Cannot drop index '%-.192s': needed in a foreign key constraint
+'''
+
 ["ddl:1562"]
 error = '''
 Cannot create temporary table with partitions
@@ -954,6 +959,11 @@ Comment for index '%-.64s' is too long (max = %d)
 ["ddl:1697"]
 error = '''
 VALUES value for partition '%-.64s' must have type INT
+'''
+
+["ddl:1701"]
+error = '''
+Cannot truncate a table referenced in a foreign key constraint (%.192s)
 '''
 
 ["ddl:1731"]
@@ -1054,6 +1064,11 @@ A primary key index cannot be invisible
 ["ddl:3593"]
 error = '''
 You cannot use the window function '%s' in this context.'
+'''
+
+["ddl:3730"]
+error = '''
+Cannot drop table '%s' referenced by a foreign key constraint '%s' on table '%s'.
 '''
 
 ["ddl:3753"]
