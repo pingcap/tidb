@@ -717,7 +717,7 @@ func isPiTREnable(w *worker) bool {
 // tryFallbackToTxnMerge changes the reorg type to txn-merge if the lightning backfill meets something wrong.
 func tryFallbackToTxnMerge(job *model.Job, err error) {
 	if job.State != model.JobStateRollingback {
-		logutil.BgLogger().Info("fallback to txn-merge backfill process", zap.Error(err))
+		logutil.BgLogger().Info("[ddl] fallback to txn-merge backfill process", zap.Error(err))
 		job.ReorgMeta.ReorgTp = model.ReorgTypeTxnMerge
 		job.SnapshotVer = 0
 	}
