@@ -53,7 +53,7 @@ type featureUsage struct {
 	LogBackup             bool                             `json:"logBackup"`
 	EnablePaging          bool                             `json:"enablePaging"`
 	EnableCostModelVer2   bool                             `json:"enableCostModelVer2"`
-	AddIndexLightning     *m.AddIndexLightningUsageCounter `json:"AddIndexLightning"`
+	AddIndexIngest        *m.AddIndexIngestUsageCounter    `json:"AddIndexIngest"`
 }
 
 type placementPolicyUsage struct {
@@ -98,7 +98,7 @@ func getFeatureUsage(ctx context.Context, sctx sessionctx.Context) (*featureUsag
 
 	usage.EnableCostModelVer2 = getCostModelVer2UsageInfo(sctx)
 
-	usage.AddIndexLightning = getAddIndexLightningUsageInfo()
+	usage.AddIndexIngest = getAddIndexIngestUsageInfo()
 
 	return &usage, nil
 }
@@ -231,7 +231,7 @@ var initialMultiSchemaChangeCounter m.MultiSchemaChangeUsageCounter
 var initialTablePartitionCounter m.TablePartitionUsageCounter
 var initialSavepointStmtCounter int64
 var initialLazyPessimisticUniqueCheckSetCount int64
-var initialAddIndexLightningCounter m.AddIndexLightningUsageCounter
+var initialAddIndexIngestCounter m.AddIndexIngestUsageCounter
 
 // getTxnUsageInfo gets the usage info of transaction related features. It's exported for tests.
 func getTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
@@ -321,7 +321,7 @@ func postReportTablePartitionUsage() {
 }
 
 func postReportAddIndexLightingUsage() {
-	initialAddIndexLightningCounter = m.GetAddIndexLightningCounter()
+	initialAddIndexIngestCounter = m.GetAddIndexIngestCounter()
 }
 
 func getTablePartitionUsageInfo() *m.TablePartitionUsageCounter {
@@ -366,8 +366,8 @@ func getCostModelVer2UsageInfo(ctx sessionctx.Context) bool {
 func getPagingUsageInfo(ctx sessionctx.Context) bool {
 	return ctx.GetSessionVars().EnablePaging
 }
-func getAddIndexLightningUsageInfo() *m.AddIndexLightningUsageCounter {
-	curr := m.GetAddIndexLightningCounter()
-	diff := curr.Sub(initialAddIndexLightningCounter)
+func getAddIndexIngestUsageInfo() *m.AddIndexIngestUsageCounter {
+	curr := m.GetAddIndexIngestCounter()
+	diff := curr.Sub(initialAddIndexIngestCounter)
 	return &diff
 }

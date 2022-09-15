@@ -1,0 +1,224 @@
+Index: ddl/backfilling.go
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/ddl/backfilling.go b/ddl/backfilling.go
+--- a/ddl/backfilling.go	(revision e213d9afa7783d7b04fcf5a659efc698ba805357)
++++ b/ddl/backfilling.go	(revision e4af0b498994f3518f9f49437090f3895fc9ea90)
+@@ -1190,7 +1190,7 @@
+ 	}
+ 
+ 	if err != nil {
+-		err := reorgInfo.UpdateReorgMeta(nextKey)
++		err := reorgInfo.UpdateReorgMeta(nextKey, w.sessPool)
+ 		metrics.BatchAddIdxHistogram.WithLabelValues(metrics.LblError).Observe(elapsedTime.Seconds())
+ 		logutil.BgLogger().Warn("[ddl] merge worker handle batch tasks failed",
+ 			zap.ByteString("elementType", reorgInfo.currElement.TypeKey),
+Index: ddl/index_lightning.go
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/ddl/index_lightning.go b/ddl/index_lightning.go
+--- a/ddl/index_lightning.go	(revision e213d9afa7783d7b04fcf5a659efc698ba805357)
++++ b/ddl/index_lightning.go	(revision e4af0b498994f3518f9f49437090f3895fc9ea90)
+@@ -120,7 +120,7 @@
+ 			return err
+ 		}
+ 		// After import local data into TiKV, then the progress set to 85.
+-		metrics.GetBackfillProgressByLabel(metrics.LblAddIndex).Set(85)
++		metrics.GetBackfillProgressByLabel(metrics.LblAddIndex, reorg.SchemaName, reorg.TableName).Set(85)
+ 	}
+ 	return nil
+ }
+@@ -531,7 +531,7 @@
+ 
+ 	reorg.StartKey, reorg.EndKey, reorg.PhysicalTableID = start, end, pid
+ 	// Write the reorg info to store so the whole reorganize process can recover from panic.
+-	err = reorg.UpdateReorgMeta(reorg.StartKey)
++	err = reorg.UpdateReorgMeta(reorg.StartKey, w.sessPool)
+ 	logutil.BgLogger().Info("[ddl] job update MergeInfo", zap.Int64("jobID", reorg.Job.ID),
+ 		zap.ByteString("elementType", reorg.currElement.TypeKey), zap.Int64("elementID", reorg.currElement.ID),
+ 		zap.Int64("partitionTableID", pid), zap.String("startHandle", tryDecodeToHandleString(start)),
+Index: metrics/telemetry.go
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/metrics/telemetry.go b/metrics/telemetry.go
+--- a/metrics/telemetry.go	(revision e213d9afa7783d7b04fcf5a659efc698ba805357)
++++ b/metrics/telemetry.go	(revision e4af0b498994f3518f9f49437090f3895fc9ea90)
+@@ -85,6 +85,13 @@
+ 			Name:      "table_partition_max_partition_usage",
+ 			Help:      "Counter of partitions created by CREATE TABLE statements",
+ 		})
++	TelemetryAddIndexLightningCnt = prometheus.NewCounter(
++		prometheus.CounterOpts{
++			Namespace: "tidb",
++			Subsystem: "telemetry",
++			Name:      "add_index_lightning_usage",
++			Help:      "Counter of usage of add index lightning",
++		})
+ )
+ 
+ // readCounter reads the value of a prometheus.Counter.
+@@ -217,3 +224,22 @@
+ func GetSavepointStmtCounter() int64 {
+ 	return readCounter(StmtNodeCounter.With(prometheus.Labels{LblType: "Savepoint"}))
+ }
++
++// AddIndexLightning records the usages of Add Index with Lightning solution.
++type AddIndexLightningUsageCounter struct {
++	AddIndexLightningUsed int64 `json:"add_index_lightning_used"`
++}
++
++// Sub returns the difference of two counters.
++func (a AddIndexLightningUsageCounter) Sub(rhs AddIndexLightningUsageCounter) AddIndexLightningUsageCounter {
++	return AddIndexLightningUsageCounter{
++		AddIndexLightningUsed: a.AddIndexLightningUsed - rhs.AddIndexLightningUsed,
++	}
++}
++
++// GetAddIndexLightningCounter gets the add index lightning counts.
++func GetAddIndexLightningCounter() AddIndexLightningUsageCounter {
++	return AddIndexLightningUsageCounter{
++		AddIndexLightningUsed: readCounter(TelemetryAddIndexLightningCnt),
++	}
++}
+Index: telemetry/data_feature_usage.go
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/telemetry/data_feature_usage.go b/telemetry/data_feature_usage.go
+--- a/telemetry/data_feature_usage.go	(revision e213d9afa7783d7b04fcf5a659efc698ba805357)
++++ b/telemetry/data_feature_usage.go	(revision e4af0b498994f3518f9f49437090f3895fc9ea90)
+@@ -53,6 +53,7 @@
+ 	LogBackup             bool                             `json:"logBackup"`
+ 	EnablePaging          bool                             `json:"enablePaging"`
+ 	EnableCostModelVer2   bool                             `json:"enableCostModelVer2"`
++	AddIndexLightning     *m.AddIndexLightningUsageCounter `json:"AddIndexLightning"`
+ }
+ 
+ type placementPolicyUsage struct {
+@@ -97,6 +98,8 @@
+ 
+ 	usage.EnableCostModelVer2 = getCostModelVer2UsageInfo(sctx)
+ 
++	usage.AddIndexLightning = getAddIndexLightningUsageInfo()
++
+ 	return &usage, nil
+ }
+ 
+@@ -224,6 +227,7 @@
+ var initialMultiSchemaChangeCounter m.MultiSchemaChangeUsageCounter
+ var initialTablePartitionCounter m.TablePartitionUsageCounter
+ var initialSavepointStmtCounter int64
++var initialAddIndexLightningCounter m.AddIndexLightningUsageCounter
+ 
+ // getTxnUsageInfo gets the usage info of transaction related features. It's exported for tests.
+ func getTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
+@@ -278,6 +282,10 @@
+ 	initialMultiSchemaChangeCounter = m.GetMultiSchemaCounter()
+ }
+ 
++func postReportAddIndexLightingUsage() {
++	initialAddIndexLightningCounter = m.GetAddIndexLightningCounter()
++}
++
+ func getMultiSchemaChangeUsageInfo() *m.MultiSchemaChangeUsageCounter {
+ 	curr := m.GetMultiSchemaCounter()
+ 	diff := curr.Sub(initialMultiSchemaChangeCounter)
+@@ -358,3 +366,9 @@
+ func getPagingUsageInfo(ctx sessionctx.Context) bool {
+ 	return ctx.GetSessionVars().EnablePaging
+ }
++
++func getAddIndexLightningUsageInfo() *m.AddIndexLightningUsageCounter {
++	curr := m.GetAddIndexLightningCounter()
++	diff := curr.Sub(initialAddIndexLightningCounter)
++	return &diff
++}
+Index: telemetry/data_feature_usage_test.go
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/telemetry/data_feature_usage_test.go b/telemetry/data_feature_usage_test.go
+--- a/telemetry/data_feature_usage_test.go	(revision e213d9afa7783d7b04fcf5a659efc698ba805357)
++++ b/telemetry/data_feature_usage_test.go	(revision e4af0b498994f3518f9f49437090f3895fc9ea90)
+@@ -22,6 +22,7 @@
+ 	"github.com/pingcap/kvproto/pkg/metapb"
+ 	"github.com/pingcap/tidb/config"
+ 	"github.com/pingcap/tidb/ddl"
++	lit "github.com/pingcap/tidb/ddl/lightning"
+ 	"github.com/pingcap/tidb/domain"
+ 	"github.com/pingcap/tidb/domain/infosync"
+ 	"github.com/pingcap/tidb/kv"
+@@ -391,10 +392,12 @@
+ 	defer teardown()
+ 
+ 	tk := testkit.NewTestKit(t, s.store)
++
+ 	tk.MustExec("use test")
+ 
+ 	usage, err := telemetry.GetFeatureUsage(tk.Session())
+ 	require.NoError(t, err)
++
+ 	require.Equal(t, int64(0), usage.TiFlashModeStatistics.FastModeTableCount)
+ 	require.Equal(t, int64(0), usage.TiFlashModeStatistics.NormalModeTableCount)
+ 
+@@ -474,3 +477,35 @@
+ 	txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
+ 	require.Equal(t, int64(1), txnUsage.SavepointCounter)
+ }
++
++func TestAddIndexLightning(t *testing.T) {
++	store, clean := testkit.CreateMockStore(t)
++	defer clean()
++	lit.GlobalEnv.SetMinQuota()
++	tk := testkit.NewTestKit(t, store)
++	usage, err := telemetry.GetFeatureUsage(tk.Session())
++	require.Equal(t, int64(0), usage.AddIndexLightning.AddIndexLightningUsed)
++
++	allow := ddl.IsEnableFastReorg()
++	require.Equal(t, false, allow)
++	tk.MustExec("use test")
++	tk.MustExec("drop table if exists tele_t")
++	tk.MustExec("create table tele_t(id int, b int)")
++	tk.MustExec("insert into tele_t values(1,1),(2,2);")
++	tk.MustExec("alter table tele_t add index idx_org(b)")
++	usage, err = telemetry.GetFeatureUsage(tk.Session())
++	require.NoError(t, err)
++	require.Equal(t, int64(0), usage.AddIndexLightning.AddIndexLightningUsed)
++
++	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = on")
++	allow = ddl.IsEnableFastReorg()
++	require.Equal(t, true, allow)
++	usage, err = telemetry.GetFeatureUsage(tk.Session())
++	require.NoError(t, err)
++	// Because we have check once ddl.IsEnableFastReorg() so we get two as result.
++	require.Equal(t, int64(1), usage.AddIndexLightning.AddIndexLightningUsed)
++	tk.MustExec("alter table tele_t add index idx_new(b)")
++	usage, err = telemetry.GetFeatureUsage(tk.Session())
++	require.NoError(t, err)
++	require.Equal(t, int64(2), usage.AddIndexLightning.AddIndexLightningUsed)
++}
+Index: telemetry/main_test.go
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/telemetry/main_test.go b/telemetry/main_test.go
+--- a/telemetry/main_test.go	(revision e213d9afa7783d7b04fcf5a659efc698ba805357)
++++ b/telemetry/main_test.go	(revision e4af0b498994f3518f9f49437090f3895fc9ea90)
+@@ -40,6 +40,8 @@
+ 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
+ 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
+ 		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
++		goleak.IgnoreTopFunction("net/http.(*persistConn).writeLoop"),
++		goleak.IgnoreTopFunction("internal/poll.runtime_pollWait"),
+ 	}
+ 
+ 	goleak.VerifyTestMain(m, opts...)

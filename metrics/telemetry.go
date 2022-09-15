@@ -113,12 +113,12 @@ var (
 			Name:      "table_partition_drop_interval_partition_usage",
 			Help:      "Counter of partitions added by ALTER TABLE FIRST PARTITION statements",
 		})
-	TelemetryAddIndexLightningCnt = prometheus.NewCounter(
+	TelemetryAddIndexIngestCnt = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "telemetry",
-			Name:      "add_index_lightning_usage",
-			Help:      "Counter of usage of add index lightning",
+			Name:      "add_index_ingest_usage",
+			Help:      "Counter of usage of add index acceleration solution",
 		})
 )
 
@@ -292,21 +292,21 @@ func GetLazyPessimisticUniqueCheckSetCounter() int64 {
 	return readCounter(LazyPessimisticUniqueCheckSetCount)
 }
 
-// AddIndexLightning records the usages of Add Index with Lightning solution.
-type AddIndexLightningUsageCounter struct {
-	AddIndexLightningUsed int64 `json:"add_index_lightning_used"`
+// AddIndexIngestUsageCounter records the usages of Add Index with acceleration solution.
+type AddIndexIngestUsageCounter struct {
+	AddIndexIngestUsed int64 `json:"add_index_Ingest_used"`
 }
 
 // Sub returns the difference of two counters.
-func (a AddIndexLightningUsageCounter) Sub(rhs AddIndexLightningUsageCounter) AddIndexLightningUsageCounter {
-	return AddIndexLightningUsageCounter{
-		AddIndexLightningUsed: a.AddIndexLightningUsed - rhs.AddIndexLightningUsed,
+func (a AddIndexIngestUsageCounter) Sub(rhs AddIndexIngestUsageCounter) AddIndexIngestUsageCounter {
+	return AddIndexIngestUsageCounter{
+		AddIndexIngestUsed: a.AddIndexIngestUsed - rhs.AddIndexIngestUsed,
 	}
 }
 
-// GetAddIndexLightningCounter gets the add index lightning counts.
-func GetAddIndexLightningCounter() AddIndexLightningUsageCounter {
-	return AddIndexLightningUsageCounter{
-		AddIndexLightningUsed: readCounter(TelemetryAddIndexLightningCnt),
+// GetAddIndexIngestCounter gets the add index acceleration solution counts.
+func GetAddIndexIngestCounter() AddIndexIngestUsageCounter {
+	return AddIndexIngestUsageCounter{
+		AddIndexIngestUsed: readCounter(TelemetryAddIndexIngestCnt),
 	}
 }

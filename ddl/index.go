@@ -57,7 +57,7 @@ const (
 )
 
 var (
-	telemetryAddIndexLightningUsage = metrics.TelemetryAddIndexLightningCnt
+	telemetryAddIndexIngestUsage = metrics.TelemetryAddIndexIngestCnt
 )
 
 func buildIndexColumns(ctx sessionctx.Context, columns []*model.ColumnInfo, indexPartSpecifications []*ast.IndexPartSpecification) ([]*model.IndexColumn, error) {
@@ -604,8 +604,8 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		// none -> delete only
 		reorgTp := pickBackfillType(job)
 		if reorgTp.NeedMergeProcess() {
-			// Increase telemetryAddIndexLightningUsage
-			telemetryAddIndexLightningUsage.Inc()
+			// Increase TelemetryAddIndexIngestUsage
+			telemetryAddIndexIngestUsage.Inc()
 			indexInfo.BackfillState = model.BackfillStateRunning
 		}
 		indexInfo.State = model.StateDeleteOnly
