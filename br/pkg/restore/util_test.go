@@ -293,7 +293,7 @@ func TestPaginateScanRegion(t *testing.T) {
 	_, err = split.PaginateScanRegion(ctx, NewTestClient(stores, regionMap, 0), regions[1].Region.EndKey, regions[5].Region.EndKey, 3)
 	require.Error(t, err)
 	require.True(t, berrors.ErrPDBatchScanRegion.Equal(err))
-	require.Regexp(t, ".*region endKey not equal to next region StartKey.*", err.Error())
+	require.Regexp(t, ".*region endKey not equal to next region startKey.*", err.Error())
 
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/split/scanRegionBackoffer"))
 }
