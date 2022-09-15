@@ -9398,7 +9398,7 @@
       {
         "SQL": "select /*+ leading(t4) */ * from t1 left join t2 on t1.a=t2.a right join t4 on t1.b = t4.b where t1.a not in (select t3.a from t3)",
         "Plan": [
-          "HashJoin 12487.50 root  CARTESIAN anti semi join, other cond:eq(test.t1.a, test.t3.a)",
+          "HashJoin 12487.50 root  Null-aware anti semi join, equal:[eq(test.t1.a, test.t3.a)]",
           "├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
           "│ └─IndexFullScan 10000.00 cop[tikv] table:t3, index:a(a) keep order:false, stats:pseudo",
           "└─HashJoin(Probe) 15609.38 root  right outer join, equal:[eq(test.t1.b, test.t4.b)]",
@@ -9417,7 +9417,7 @@
       {
         "SQL": "select /*+ leading(t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3)",
         "Plan": [
-          "HashJoin 9990.00 root  CARTESIAN anti semi join, other cond:eq(test.t1.a, test.t3.a)",
+          "HashJoin 9990.00 root  Null-aware anti semi join, equal:[eq(test.t1.a, test.t3.a)]",
           "├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
           "│ └─IndexFullScan 10000.00 cop[tikv] table:t3, index:a(a) keep order:false, stats:pseudo",
           "└─HashJoin(Probe) 12487.50 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
@@ -9434,7 +9434,7 @@
       {
         "SQL": "select /*+ leading(t2, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3)",
         "Plan": [
-          "HashJoin 9990.00 root  CARTESIAN anti semi join, other cond:eq(test.t1.a, test.t3.a)",
+          "HashJoin 9990.00 root  Null-aware anti semi join, equal:[eq(test.t1.a, test.t3.a)]",
           "├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
           "│ └─IndexFullScan 10000.00 cop[tikv] table:t3, index:a(a) keep order:false, stats:pseudo",
           "└─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
