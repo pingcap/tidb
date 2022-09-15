@@ -978,6 +978,32 @@ func TestDropTableWithForeignKeyReferred(t *testing.T) {
 	tk.MustQuery("show tables").Check(testkit.Rows("t1", "t2", "t3"))
 }
 
+func TestDropColumnWithForeignKey(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1;")
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t1 (id int key, a int, b int, index(b), CONSTRAINT fk foreign key (a) references t1(b))")
+	err := tk.ExecToErr("alter table t1 drop column a;")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:1828]Cannot drop column 'a': needed in a foreign key constraint 'fk'", err.Error())
+	err = tk.ExecToErr("alter table t1 drop column b;")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:1829]Cannot drop column 'b': needed in a foreign key constraint 'fk' of table 't1'", err.Error())
+
+	tk.MustExec("drop table t1")
+	tk.MustExec("create table t1 (id int key, b int, index(b));")
+	tk.MustExec("create table t2 (a int, b int, constraint fk foreign key (a) references t1(b));")
+	err = tk.ExecToErr("alter table t1 drop column b;")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:1829]Cannot drop column 'b': needed in a foreign key constraint 'fk' of table 't2'", err.Error())
+	err = tk.ExecToErr("alter table t2 drop column a;")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:1828]Cannot drop column 'a': needed in a foreign key constraint 'fk'", err.Error())
+}
+
 func getTableInfo(t *testing.T, dom *domain.Domain, db, tb string) *model.TableInfo {
 	err := dom.Reload()
 	require.NoError(t, err)
