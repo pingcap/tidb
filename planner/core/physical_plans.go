@@ -1109,6 +1109,7 @@ func (p *PhysicalHashJoin) MemoryUsage() (sum int64) {
 	if p == nil {
 		return
 	}
+
 	sum = p.basePhysicalJoin.MemoryUsage() + size.SizeOfUint + size.SizeOfBool*2 + size.SizeOfUint8 + size.SizeOfSlice
 
 	for _, expr := range p.EqualConditions {
