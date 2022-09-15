@@ -333,6 +333,11 @@ var defaultSysVars = []*SysVar{
 		}
 		return string(info), nil
 	}},
+	{Scope: ScopeSession, Name: TiDBLastPlanReplayerToken, Value: "", ReadOnly: true,
+		GetSession: func(s *SessionVars) (string, error) {
+			return s.LastPlanReplayerToken, nil
+		},
+	},
 	/* The system variables below have INSTANCE scope  */
 	{Scope: ScopeInstance, Name: TiDBLogFileMaxDays, Value: strconv.Itoa(config.GetGlobalConfig().Log.File.MaxDays), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt32, SetGlobal: func(s *SessionVars, val string) error {
 		maxAge, err := strconv.ParseInt(val, 10, 32)
