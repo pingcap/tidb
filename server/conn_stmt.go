@@ -255,7 +255,9 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 		return false, cc.writeOK(ctx)
 	}
 	if result, ok := rs.(*tidbResultSet); ok {
-		result.preparedStmt = prepStmt.(*plannercore.PlanCacheStmt)
+		if planCacheStmt, ok := prepStmt.(*plannercore.PlanCacheStmt); ok {
+			result.preparedStmt = planCacheStmt
+		}
 	}
 
 	// if the client wants to use cursor
