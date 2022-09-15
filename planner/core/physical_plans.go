@@ -1848,6 +1848,7 @@ func (t *TableSampleInfo) MemoryUsage() (sum int64) {
 	if t.FullSchema != nil {
 		sum += t.FullSchema.MemoryUsage()
 	}
+	return
 }
 
 // NewTableSampleInfo creates a new TableSampleInfo.
