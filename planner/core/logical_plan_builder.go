@@ -575,6 +575,23 @@ func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *tableHintInfo) {
 		return
 	}
 
+	// set the join method hint
+	p.SetPreferredJoinType(hintInfo)
+	// set the join order hint
+	if hintInfo.leadingJoinOrder != nil {
+		lhsAlias := extractTableAlias(p.children[0], p.blockOffset)
+		rhsAlias := extractTableAlias(p.children[1], p.blockOffset)
+		p.preferJoinOrder = hintInfo.matchTableName([]*hintTableInfo{lhsAlias, rhsAlias}, hintInfo.leadingJoinOrder)
+		p.leadingHintInfo = hintInfo
+	}
+}
+
+// SetPreferredJoinType is used to set the join type hint for the join node.
+func (p *LogicalJoin) SetPreferredJoinType(hintInfo *tableHintInfo) {
+	if hintInfo == nil {
+		return
+	}
+
 	lhsAlias := extractTableAlias(p.children[0], p.blockOffset)
 	rhsAlias := extractTableAlias(p.children[1], p.blockOffset)
 	if hintInfo.ifPreferMergeJoin(lhsAlias, rhsAlias) {
@@ -622,12 +639,8 @@ func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *tableHintInfo) {
 		p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 		p.preferJoinType = 0
 	}
-	// set the join order
-	if hintInfo.leadingJoinOrder != nil {
-		p.preferJoinOrder = hintInfo.matchTableName([]*hintTableInfo{lhsAlias, rhsAlias}, hintInfo.leadingJoinOrder)
-	}
 	// set hintInfo for further usage if this hint info can be used.
-	if p.preferJoinType != 0 || p.preferJoinOrder {
+	if p.preferJoinType != 0 {
 		p.hintInfo = hintInfo
 	}
 }
