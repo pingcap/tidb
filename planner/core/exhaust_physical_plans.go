@@ -1008,12 +1008,9 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 		StatsVersion: ds.stats.StatsVersion,
 		// NDV would not be used in cost computation of IndexJoin, set leave it as default nil.
 	}
-	rowSize := ts.getScanRowSize()
-	sessVars := ds.ctx.GetSessionVars()
 	copTask := &copTask{
 		tablePlan:         ts,
 		indexPlanFinished: true,
-		cst:               sessVars.GetScanFactor(ts.Table) * rowSize * ts.stats.RowCount,
 		tblColHists:       ds.TblColHists,
 		keepOrder:         ts.KeepOrder,
 	}
@@ -1180,9 +1177,6 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		tmpPath.CountAfterAccess = cnt
 	}
 	is.stats = ds.tableStats.ScaleByExpectCnt(tmpPath.CountAfterAccess)
-	rowSize := is.getScanRowSize()
-	sessVars := ds.ctx.GetSessionVars()
-	cop.cst = tmpPath.CountAfterAccess * rowSize * sessVars.GetScanFactor(ds.tableInfo)
 	finalStats := ds.tableStats.ScaleByExpectCnt(rowCount)
 	is.addPushedDownSelection(cop, ds, tmpPath, finalStats)
 	t := cop.convertToRootTask(ds.ctx)
