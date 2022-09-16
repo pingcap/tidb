@@ -238,7 +238,7 @@ var MySQLState = map[uint16]string{
 	ErrSpatialMustHaveGeomCol:              "42000",
 	ErrDataOutOfRange:                      "22003",
 	ErrAccessDeniedNoPassword:              "28000",
-	ErrTruncateIllegalFk:                   "42000",
+	ErrTruncateIllegalForeignKey:           "42000",
 	ErrDaInvalidConditionNumber:            "35000",
 	ErrForeignDuplicateKeyWithChildInfo:    "23000",
 	ErrForeignDuplicateKeyWithoutChildInfo: "23000",

@@ -57,4 +57,10 @@ const (
 
 	// SizeOfInt32 is the memory each int32 occupied
 	SizeOfInt32 = int64(unsafe.Sizeof(*new(int32)))
+
+	// SizeOfInt is the memory each int occupied
+	SizeOfInt = int64(unsafe.Sizeof(*new(int)))
+
+	// SizeOfUint8 is the memory each uint8 occupied
+	SizeOfUint8 = int64(unsafe.Sizeof(*new(uint8)))
 )

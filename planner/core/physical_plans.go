@@ -131,6 +131,30 @@ type PartitionInfo struct {
 	ColumnNames    types.NameSlice
 }
 
+const emptyPartitionInfoSize = int64(unsafe.Sizeof(PartitionInfo{}))
+
+// MemoryUsage return the memory usage of PartitionInfo
+func (pi *PartitionInfo) MemoryUsage() (sum int64) {
+	if pi == nil {
+		return
+	}
+
+	sum = emptyPartitionInfoSize
+	for _, cond := range pi.PruningConds {
+		sum += cond.MemoryUsage()
+	}
+	for _, cis := range pi.PartitionNames {
+		sum += cis.MemoryUsage()
+	}
+	for _, col := range pi.Columns {
+		sum += col.MemoryUsage()
+	}
+	for _, colName := range pi.ColumnNames {
+		sum += colName.MemoryUsage()
+	}
+	return
+}
+
 // GetTablePlan exports the tablePlan.
 func (p *PhysicalTableReader) GetTablePlan() PhysicalPlan {
 	return p.tablePlan
@@ -160,6 +184,26 @@ func (p *PhysicalTableReader) GetTableScan() (*PhysicalTableScan, error) {
 // GetAvgRowSize return the average row size of this plan.
 func (p *PhysicalTableReader) GetAvgRowSize() float64 {
 	return getTblStats(p.tablePlan).GetAvgRowSize(p.ctx, p.tablePlan.Schema().Columns, false, false)
+}
+
+// MemoryUsage return the memory usage of PhysicalTableReader
+func (p *PhysicalTableReader) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.physicalSchemaProducer.MemoryUsage() + size.SizeOfUint8*2 + size.SizeOfBool + p.PartitionInfo.MemoryUsage()
+	if p.tablePlan != nil {
+		sum += p.tablePlan.MemoryUsage()
+	}
+
+	for _, plan := range p.TablePlans {
+		sum += plan.MemoryUsage()
+	}
+	for _, pInfos := range p.PartitionInfos {
+		sum += pInfos.tableScan.MemoryUsage() + pInfos.partitionInfo.MemoryUsage()
+	}
+	return
 }
 
 // setMppOrBatchCopForTableScan set IsMPPOrBatchCop for all TableScan.
@@ -321,6 +365,26 @@ func (p *PhysicalIndexReader) appendChildCandidate(op *physicalOptimizeOp) {
 	}
 }
 
+// MemoryUsage return the memory usage of PhysicalIndexReader
+func (p *PhysicalIndexReader) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.physicalSchemaProducer.MemoryUsage() + p.PartitionInfo.MemoryUsage()
+	if p.indexPlan != nil {
+		p.indexPlan.MemoryUsage()
+	}
+
+	for _, plan := range p.IndexPlans {
+		sum += plan.MemoryUsage()
+	}
+	for _, col := range p.OutputColumns {
+		sum += col.MemoryUsage()
+	}
+	return
+}
+
 // PushedDownLimit is the limit operator pushed down into PhysicalIndexLookUpReader.
 type PushedDownLimit struct {
 	Offset uint64
@@ -332,6 +396,17 @@ func (p *PushedDownLimit) Clone() *PushedDownLimit {
 	cloned := new(PushedDownLimit)
 	*cloned = *p
 	return cloned
+}
+
+const pushedDownLimitSize = size.SizeOfUint64 * 2
+
+// MemoryUsage return the memory usage of PushedDownLimit
+func (p *PushedDownLimit) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	return pushedDownLimitSize
 }
 
 // PhysicalIndexLookUpReader is the index look up reader in tidb. It's used in case of double reading.
@@ -431,6 +506,39 @@ func (p *PhysicalIndexLookUpReader) appendChildCandidate(op *physicalOptimizeOp)
 	}
 }
 
+// MemoryUsage return the memory usage of PhysicalIndexLookUpReader
+func (p *PhysicalIndexLookUpReader) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.physicalSchemaProducer.MemoryUsage() + size.SizeOfBool*2 + p.PartitionInfo.MemoryUsage() + size.SizeOfUint64
+
+	if p.indexPlan != nil {
+		sum += p.indexPlan.MemoryUsage()
+	}
+	if p.tablePlan != nil {
+		sum += p.tablePlan.MemoryUsage()
+	}
+	if p.ExtraHandleCol != nil {
+		sum += p.ExtraHandleCol.MemoryUsage()
+	}
+	if p.PushedLimit != nil {
+		sum += p.PushedLimit.MemoryUsage()
+	}
+
+	for _, plan := range p.IndexPlans {
+		sum += plan.MemoryUsage()
+	}
+	for _, plan := range p.TablePlans {
+		sum += plan.MemoryUsage()
+	}
+	for _, col := range p.CommonHandleCols {
+		sum += col.MemoryUsage()
+	}
+	return
+}
+
 // PhysicalIndexMergeReader is the reader using multiple indexes in tidb.
 type PhysicalIndexMergeReader struct {
 	physicalSchemaProducer
@@ -488,6 +596,31 @@ func (p *PhysicalIndexMergeReader) appendChildCandidate(op *physicalOptimizeOp) 
 	for _, partialPlan := range p.partialPlans {
 		appendChildCandidate(p, partialPlan, op)
 	}
+}
+
+// MemoryUsage return the memory usage of PhysicalIndexMergeReader
+func (p *PhysicalIndexMergeReader) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.physicalSchemaProducer.MemoryUsage() + p.PartitionInfo.MemoryUsage()
+	if p.tablePlan != nil {
+		sum += p.tablePlan.MemoryUsage()
+	}
+
+	for _, plans := range p.PartialPlans {
+		for _, plan := range plans {
+			sum += plan.MemoryUsage()
+		}
+	}
+	for _, plan := range p.TablePlans {
+		sum += plan.MemoryUsage()
+	}
+	for _, plan := range p.partialPlans {
+		sum += plan.MemoryUsage()
+	}
+	return
 }
 
 // PhysicalIndexScan represents an index scan plan.
@@ -575,6 +708,41 @@ func (p *PhysicalIndexScan) ExtractCorrelatedCols() []*expression.CorrelatedColu
 		corCols = append(corCols, expression.ExtractCorColumns(expr)...)
 	}
 	return corCols
+}
+
+const emptyPhysicalIndexScanSize = int64(unsafe.Sizeof(PhysicalIndexScan{}))
+
+// MemoryUsage return the memory usage of PhysicalIndexScan
+func (p *PhysicalIndexScan) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = emptyPhysicalIndexScanSize + p.physicalSchemaProducer.MemoryUsage() + int64(cap(p.IdxColLens))*size.SizeOfInt +
+		p.DBName.MemoryUsage() + int64(len(p.rangeInfo))
+	if p.TableAsName != nil {
+		sum += p.TableAsName.MemoryUsage()
+	}
+	if p.pkIsHandleCol != nil {
+		sum += p.pkIsHandleCol.MemoryUsage()
+	}
+	if p.prop != nil {
+		sum += p.prop.MemoryUsage()
+	}
+	// slice memory usage
+	for _, cond := range p.AccessCondition {
+		sum += cond.MemoryUsage()
+	}
+	for _, col := range p.IdxCols {
+		sum += col.MemoryUsage()
+	}
+	for _, rang := range p.Ranges {
+		sum += rang.MemoryUsage()
+	}
+	for iid, expr := range p.GenExprs {
+		sum += int64(unsafe.Sizeof(iid)) + expr.MemoryUsage()
+	}
+	return
 }
 
 // PhysicalMemTable reads memory table.
@@ -681,7 +849,9 @@ func (ts *PhysicalTableScan) IsPartition() (bool, int64) {
 	return ts.isPartition, ts.physicalTableID
 }
 
-// ResolveCorrelatedColumns resolves the correlated columns in range access
+// ResolveCorrelatedColumns resolves the correlated columns in range access.
+// We already limit range mem usage when building ranges in optimizer phase, so we don't need and shouldn't limit range
+// mem usage when rebuilding ranges during the execution phase.
 func (ts *PhysicalTableScan) ResolveCorrelatedColumns() ([]*ranger.Range, error) {
 	access := ts.AccessCondition
 	if ts.Table.IsCommonHandle {
@@ -702,7 +872,7 @@ func (ts *PhysicalTableScan) ResolveCorrelatedColumns() ([]*ranger.Range, error)
 	} else {
 		var err error
 		pkTP := ts.Table.GetPkColInfo().FieldType
-		ts.Ranges, err = ranger.BuildTableRange(access, ts.SCtx(), &pkTP)
+		ts.Ranges, _, _, err = ranger.BuildTableRange(access, ts.SCtx(), &pkTP, 0)
 		if err != nil {
 			return nil, err
 		}
@@ -749,6 +919,44 @@ func (ts *PhysicalTableScan) SetIsChildOfIndexLookUp(isIsChildOfIndexLookUp bool
 	ts.isChildOfIndexLookUp = isIsChildOfIndexLookUp
 }
 
+const emptyPhysicalTableScanSize = int64(unsafe.Sizeof(PhysicalTableScan{}))
+
+// MemoryUsage return the memory usage of PhysicalTableScan
+func (ts *PhysicalTableScan) MemoryUsage() (sum int64) {
+	if ts == nil {
+		return
+	}
+
+	sum = emptyPhysicalTableScanSize + ts.physicalSchemaProducer.MemoryUsage() + ts.DBName.MemoryUsage() +
+		int64(cap(ts.HandleIdx))*size.SizeOfInt + ts.PartitionInfo.MemoryUsage()
+	if ts.TableAsName != nil {
+		sum += ts.TableAsName.MemoryUsage()
+	}
+	if ts.HandleCols != nil {
+		sum += ts.HandleCols.MemoryUsage()
+	}
+	if ts.prop != nil {
+		sum += ts.prop.MemoryUsage()
+	}
+	// slice memory usage
+	for _, cond := range ts.AccessCondition {
+		sum += cond.MemoryUsage()
+	}
+	for _, cond := range ts.filterCondition {
+		sum += cond.MemoryUsage()
+	}
+	for _, rang := range ts.Ranges {
+		sum += rang.MemoryUsage()
+	}
+	for _, col := range ts.rangeDecidedBy {
+		sum += col.MemoryUsage()
+	}
+	for _, col := range ts.tblCols {
+		sum += col.MemoryUsage()
+	}
+	return
+}
+
 // PhysicalProjection is the physical operator of projection.
 type PhysicalProjection struct {
 	physicalSchemaProducer
@@ -778,6 +986,19 @@ func (p *PhysicalProjection) ExtractCorrelatedCols() []*expression.CorrelatedCol
 		corCols = append(corCols, expression.ExtractCorColumns(expr)...)
 	}
 	return corCols
+}
+
+// MemoryUsage return the memory usage of PhysicalProjection
+func (p *PhysicalProjection) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.basePhysicalPlan.MemoryUsage() + size.SizeOfBool*2
+	for _, expr := range p.Exprs {
+		sum += expr.MemoryUsage()
+	}
+	return
 }
 
 // PhysicalTopN is the physical operator of topN.
@@ -1129,6 +1350,16 @@ func (p *PhysicalLimit) Clone() (PhysicalPlan, error) {
 	return cloned, nil
 }
 
+// MemoryUsage return the memory usage of PhysicalLimit
+func (p *PhysicalLimit) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.physicalSchemaProducer.MemoryUsage() + size.SizeOfUint64*2
+	return
+}
+
 // PhysicalUnionAll is the physical operator of UnionAll.
 type PhysicalUnionAll struct {
 	physicalSchemaProducer
@@ -1241,6 +1472,26 @@ func (p *basePhysicalAgg) ExtractCorrelatedCols() []*expression.CorrelatedColumn
 	return corCols
 }
 
+// MemoryUsage return the memory usage of basePhysicalAgg
+func (p *basePhysicalAgg) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.physicalSchemaProducer.MemoryUsage() + size.SizeOfInt
+
+	for _, agg := range p.AggFuncs {
+		sum += agg.MemoryUsage()
+	}
+	for _, expr := range p.GroupByItems {
+		sum += expr.MemoryUsage()
+	}
+	for _, mppCol := range p.MppPartitionCols {
+		sum += mppCol.MemoryUsage()
+	}
+	return
+}
+
 // PhysicalHashAgg is hash operator of aggregate.
 type PhysicalHashAgg struct {
 	basePhysicalAgg
@@ -1255,6 +1506,15 @@ func (p *PhysicalHashAgg) Clone() (PhysicalPlan, error) {
 	}
 	cloned.basePhysicalAgg = *base
 	return cloned, nil
+}
+
+// MemoryUsage return the memory usage of PhysicalHashAgg
+func (p *PhysicalHashAgg) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	return p.basePhysicalAgg.MemoryUsage()
 }
 
 // NewPhysicalHashAgg creates a new PhysicalHashAgg from a LogicalAggregation.
@@ -1280,6 +1540,15 @@ func (p *PhysicalStreamAgg) Clone() (PhysicalPlan, error) {
 	}
 	cloned.basePhysicalAgg = *base
 	return cloned, nil
+}
+
+// MemoryUsage return the memory usage of PhysicalStreamAgg
+func (p *PhysicalStreamAgg) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	return p.basePhysicalAgg.MemoryUsage()
 }
 
 // PhysicalSort is the physical operator of sort, which implements a memory sort.
@@ -1374,6 +1643,19 @@ func (p *PhysicalUnionScan) ExtractCorrelatedCols() []*expression.CorrelatedColu
 	return corCols
 }
 
+// MemoryUsage return the memory usage of PhysicalUnionScan
+func (p *PhysicalUnionScan) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.basePhysicalPlan.MemoryUsage() + size.SizeOfSlice + p.HandleCols.MemoryUsage()
+	for _, cond := range p.Conditions {
+		sum += cond.MemoryUsage()
+	}
+	return
+}
+
 // IsPartition returns true and partition ID if it works on a partition.
 func (p *PhysicalIndexScan) IsPartition() (bool, int64) {
 	return p.isPartition, p.physicalTableID
@@ -1418,6 +1700,19 @@ func (p *PhysicalSelection) ExtractCorrelatedCols() []*expression.CorrelatedColu
 		corCols = append(corCols, expression.ExtractCorColumns(cond)...)
 	}
 	return corCols
+}
+
+// MemoryUsage return the memory usage of PhysicalSelection
+func (p *PhysicalSelection) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.basePhysicalPlan.MemoryUsage() + size.SizeOfBool
+	for _, expr := range p.Conditions {
+		sum += expr.MemoryUsage()
+	}
+	return
 }
 
 // PhysicalMaxOneRow is the physical operator of maxOneRow.
@@ -1732,8 +2027,8 @@ func appendChildCandidate(origin PhysicalPlan, pp PhysicalPlan, op *physicalOpti
 		PlanTrace: &tracing.PlanTrace{
 			ID:          pp.ID(),
 			TP:          pp.TP(),
-			Cost:        pp.Cost(),
 			ExplainInfo: pp.ExplainInfo(),
+			// TODO: trace the cost
 		},
 	}
 	op.tracer.AppendCandidate(candidate)
