@@ -251,6 +251,7 @@ func TestTablePartition(t *testing.T) {
 	tk.MustExec("create table nt (a int,b int)")
 	tk.MustExec(`alter table pt2 exchange partition p1 with table nt`)
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
 	require.Equal(t, int64(1), usage.ExchangePartition.ExchangePartitionCnt)
 
 }
