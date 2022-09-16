@@ -152,8 +152,6 @@ func TestPlanReplayer(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, index idx_a(a))")
 	tk.MustExec("alter table t set tiflash replica 1")
-	tk.MustExec("plan replayer dump explain './testdata/plan_replayer_test.txt'")
-	require.True(t, len(tk.Session().GetSessionVars().LastPlanReplayerToken) > 0)
 	tk.MustQuery("plan replayer dump explain select * from t where a=10")
 	tk.MustQuery("plan replayer dump explain select /*+ read_from_storage(tiflash[t]) */ * from t")
 
