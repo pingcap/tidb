@@ -224,7 +224,6 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 			ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"))
 		}
 
-		useLeadingHintSucc := false
 		if leadingHintInfo != nil && leadingHintInfo.leadingJoinOrder != nil {
 			if useGreedy {
 				ok, leftJoinGroup := baseGroupSolver.generateLeadingJoinGroup(curJoinGroup, leadingHintInfo, hasOuterJoin)
@@ -232,7 +231,6 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 					ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("leading hint is inapplicable, check if the leading hint table is valid"))
 				} else {
 					curJoinGroup = leftJoinGroup
-					useLeadingHintSucc = true
 				}
 			} else {
 				ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("leading hint is inapplicable for the DP join reorder algorithm"))
@@ -254,6 +252,9 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 		if err != nil {
 			return nil, err
 		}
+		if len(joinTypeHintInfo) > 0 {
+			resetJoinTypeHintAfterJoinReorder(p, joinTypeHintInfo)
+		}
 		schemaChanged := false
 		if len(p.Schema().Columns) != len(originalSchema.Columns) {
 			schemaChanged = true
@@ -272,9 +273,6 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 			proj.SetSchema(originalSchema)
 			proj.SetChildren(p)
 			p = proj
-		}
-		if useLeadingHintSucc && len(joinTypeHintInfo) > 0 {
-			resetJoinTypeHintAfterJoinReorder(p, joinTypeHintInfo)
 		}
 		return p, nil
 	}
