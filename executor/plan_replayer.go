@@ -699,17 +699,23 @@ type PlanReplayerLoadInfo struct {
 	Ctx  sessionctx.Context
 }
 
-type planReplayerKeyType int
+type planReplayerDumpVarKey int
 
-func (k planReplayerKeyType) String() string {
+func (k planReplayerDumpVarKey) String() string {
+	return "plan_replayer_dump_var"
+}
+
+type planReplayerLoadKeyType int
+
+func (k planReplayerLoadKeyType) String() string {
 	return "plan_replayer_load_var"
 }
 
 // PlanReplayerLoadVarKey is a variable key for plan replayer load.
-const PlanReplayerLoadVarKey planReplayerKeyType = 0
+const PlanReplayerLoadVarKey planReplayerLoadKeyType = 0
 
 // PlanReplayerDumpVarKey is a variable key for plan replayer dump.
-const PlanReplayerDumpVarKey planReplayerKeyType = 1
+const PlanReplayerDumpVarKey planReplayerDumpVarKey = 1
 
 // Next implements the Executor Next interface.
 func (e *PlanReplayerLoadExec) Next(ctx context.Context, req *chunk.Chunk) error {
