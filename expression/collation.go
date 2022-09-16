@@ -204,7 +204,9 @@ func deriveCollation(ctx sessionctx.Context, funcName string, args []Expression,
 		if argTps[0] == types.ETString {
 			return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args...)
 		}
-	case ast.Locate, ast.Instr, ast.Position:
+	case ast.RegexpReplace:
+		return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args[0], args[1], args[2])
+	case ast.Locate, ast.Instr, ast.Position, ast.RegexpLike, ast.RegexpSubstr, ast.RegexpInStr:
 		return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args[0], args[1])
 	case ast.GE, ast.LE, ast.GT, ast.LT, ast.EQ, ast.NE, ast.NullEQ, ast.Strcmp:
 		// if compare type is string, we should determine which collation should be used.
@@ -276,6 +278,10 @@ func deriveCollation(ctx sessionctx.Context, funcName string, args []Expression,
 		// should return ASCII repertoire, MySQL's doc says it depends on character_set_connection, but it not true from its source code.
 		ec = &ExprCollation{Coer: CoercibilityCoercible, Repe: ASCII}
 		ec.Charset, ec.Collation = ctx.GetSessionVars().GetCharsetInfo()
+		return ec, nil
+	case ast.JSONPretty, ast.JSONQuote:
+		// JSON function always return utf8mb4 and utf8mb4_bin.
+		ec = &ExprCollation{Coer: CoercibilityCoercible, Repe: UNICODE, Charset: charset.CharsetUTF8MB4, Collation: charset.CollationUTF8MB4}
 		return ec, nil
 	}
 
