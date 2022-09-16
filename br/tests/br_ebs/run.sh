@@ -18,8 +18,6 @@ set -eu
 
 res_file="$TEST_DIR/sql_res.$TEST_NAME.txt"
 
-unset BR_LOG_TO_TERM
-
 run_br backup full -h > $res_file 2>&1
 check_not_contains "--type"
 check_not_contains "--volume-file"
