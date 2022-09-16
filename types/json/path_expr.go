@@ -24,6 +24,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/kvcache"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 /*
@@ -168,10 +170,12 @@ func (pe PathExpression) ContainsAnyAsterisk() bool {
 // ParseJSONPathExpr parses a JSON path expression. Returns a PathExpression
 // object which can be used in JSON_EXTRACT, JSON_SET and so on.
 func ParseJSONPathExpr(pathExpr string) (pe PathExpression, err error) {
+	logutil.BgLogger().Info("parse json path expression", zap.String("pathExpr", pathExpr))
 	peCache.mu.Lock()
 	val, ok := peCache.cache.Get(pathExpressionKey(pathExpr))
 	if ok {
 		peCache.mu.Unlock()
+		logutil.BgLogger().Info("hit cache", zap.String("pathExpr", pathExpr), zap.Any("pe", val))
 		return val.(PathExpression), nil
 	}
 	peCache.mu.Unlock()
@@ -179,6 +183,7 @@ func ParseJSONPathExpr(pathExpr string) (pe PathExpression, err error) {
 	defer func() {
 		if err == nil {
 			peCache.mu.Lock()
+			logutil.BgLogger().Info("put into cache", zap.String("pathExpr", pathExpr), zap.Any("pe", pe))
 			peCache.cache.Put(pathExpressionKey(pathExpr), kvcache.Value(pe))
 			peCache.mu.Unlock()
 		}
