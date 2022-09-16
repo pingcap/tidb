@@ -946,15 +946,46 @@
       "select /*+ hash_join_build(t2) hash_join(t2, t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
       "select /*+ hash_join_probe(t2) hash_join(t2, t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
 
-      "select /*+ hash_join_build(t2) index_join(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
-      "select /*+ hash_join_probe(t2) index_join(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
-      "select /*+ hash_join_build(t1) index_join(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
-      "select /*+ hash_join_probe(t1) index_join(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_build(t2) INL_JOIN(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_probe(t2) INL_JOIN(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_build(t1) INL_JOIN(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_probe(t1) INL_JOIN(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+
+      "select /*+ hash_join_build(t2) INL_HASH_JOIN(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_probe(t2) INL_HASH_JOIN(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_build(t1) INL_HASH_JOIN(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_probe(t1) INL_HASH_JOIN(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
 
       "select /*+ hash_join_build(t2) merge_join(t1, t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
       "select /*+ hash_join_probe(t2) merge_join(t1, t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
       "select /*+ hash_join_build(t1) merge_join(t1, t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
-      "select /*+ hash_join_probe(t1) merge_join(t1, t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b"
+      "select /*+ hash_join_probe(t1) merge_join(t1, t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+
+      "SELECT * FROM t1 WHERE EXISTS (SELECT 1 FROM t2 WHERE t2.a = t1.a);",
+      "SELECT /*+ hash_join_probe(t1) */ * FROM t1 WHERE EXISTS (SELECT 1 FROM t2 WHERE t2.a = t1.a);",
+      "SELECT /*+ hash_join_probe(t2@sel_2) */ * FROM t1 WHERE EXISTS (SELECT 1 FROM t2 WHERE t2.a = t1.a);",
+      "SELECT /*+ hash_join_probe(t1) */ * FROM t1 WHERE EXISTS (SELECT /*+ SEMI_JOIN_REWRITE() */ 1 FROM t2 WHERE t2.a = t1.a);",
+      "SELECT /*+ hash_join_probe(t2@sel_2) */ * FROM t1 WHERE EXISTS (SELECT /*+ SEMI_JOIN_REWRITE() */ 1 FROM t2 WHERE t2.a = t1.a);",
+      "SELECT /*+ hash_join_build(t1) */ * FROM t1 WHERE EXISTS (SELECT 1 FROM t2 WHERE t2.a = t1.a);",
+      "SELECT /*+ hash_join_build(t2@sel_2) */ * FROM t1 WHERE EXISTS (SELECT 1 FROM t2 WHERE t2.a = t1.a);",
+      "SELECT /*+ hash_join_build(t1) */ * FROM t1 WHERE EXISTS (SELECT /*+ SEMI_JOIN_REWRITE() */ 1 FROM t2 WHERE t2.a = t1.a);",
+      "SELECT /*+ hash_join_build(t2@sel_2) */ * FROM t1 WHERE EXISTS (SELECT /*+ SEMI_JOIN_REWRITE() */ 1 FROM t2 WHERE t2.a = t1.a);",
+
+      "SELECT t1.a, t1.b FROM t1 WHERE t1.a in (SELECT t2.a FROM t2);",
+      "SELECT /*+ hash_join_build(t1) */ t1.a, t1.b FROM t1 WHERE t1.a in (SELECT t2.a FROM t2);",
+      "SELECT /*+ hash_join_probe(t1) */ t1.a, t1.b FROM t1 WHERE t1.a in (SELECT t2.a FROM t2);",
+      "SELECT /*+ hash_join_build(t2@sel_2) */ t1.a, t1.b FROM t1 WHERE t1.a in (SELECT t2.a FROM t2);",
+      "SELECT /*+ hash_join_probe(t2@sel_2) */ t1.a, t1.b FROM t1 WHERE t1.a in (SELECT t2.a FROM t2);",
+      "SELECT /*+ USE_TOJA(TRUE) */ t1.a, t1.b FROM t1 WHERE t1.a in (SELECT t2.a FROM t2);",
+      "SELECT /*+ USE_TOJA(TRUE) hash_join_build(t1) */ t1.a, t1.b FROM t1 WHERE t1.a in (SELECT t2.a FROM t2);",
+      "SELECT /*+ USE_TOJA(TRUE) hash_join_probe(t1) */ t1.a, t1.b FROM t1 WHERE t1.a in (SELECT t2.a FROM t2);",
+      "SELECT /*+ USE_TOJA(TRUE) hash_join_build(t2@sel_2) */ t1.a, t1.b FROM t1 WHERE t1.a in (SELECT t2.a FROM t2);",
+      "SELECT /*+ USE_TOJA(TRUE) hash_join_probe(t2@sel_2) */ t1.a, t1.b FROM t1 WHERE t1.a in (SELECT t2.a FROM t2);",
+      "SELECT /*+ USE_TOJA(false) */ t1.a, t1.b FROM t1 WHERE t1.a in (SELECT t2.a FROM t2);",
+      "SELECT /*+ USE_TOJA(false) hash_join_build(t1) */ t1.a, t1.b FROM t1 WHERE t1.a in (SELECT t2.a FROM t2);",
+      "SELECT /*+ USE_TOJA(false) hash_join_probe(t1) */ t1.a, t1.b FROM t1 WHERE t1.a in (SELECT t2.a FROM t2);",
+      "SELECT /*+ USE_TOJA(false) hash_join_build(t2@sel_2) */ t1.a, t1.b FROM t1 WHERE t1.a in (SELECT t2.a FROM t2);",
+      "SELECT /*+ USE_TOJA(false) hash_join_probe(t2@sel_2) */ t1.a, t1.b FROM t1 WHERE t1.a in (SELECT t2.a FROM t2);"
     ]
   },
   {
