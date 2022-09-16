@@ -180,7 +180,7 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 	if !FullBackupType(fullBackupType).Valid() {
-		return errors.New("invalid full backup/restore type")
+		return errors.New("invalid full backup type")
 	}
 	cfg.FullBackupType = FullBackupType(fullBackupType)
 	cfg.SkipAWS, err = flags.GetBool(flagSkipAWS)
