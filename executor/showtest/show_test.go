@@ -862,10 +862,8 @@ func TestIssue17794(t *testing.T) {
 func TestIssue3641(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	_, err := tk.Exec("show tables;")
-	require.Equal(t, plannercore.ErrNoDB.Error(), err.Error())
-	_, err = tk.Exec("show table status;")
-	require.Equal(t, plannercore.ErrNoDB.Error(), err.Error())
+	tk.MustGetErrCode("show tables;", mysql.ErrNoDB)
+	tk.MustGetErrCode("show tables;", mysql.ErrNoDB)
 }
 
 func TestIssue10549(t *testing.T) {

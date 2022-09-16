@@ -409,6 +409,9 @@ func (bj BinaryJSON) Modify(pathExprList []JSONPathExpression, values []BinaryJS
 			return BinaryJSON{}, modifier.err
 		}
 	}
+	if bj.GetElemDepth()-1 > maxJSONDepth {
+		return bj, ErrJSONDocumentTooDeep
+	}
 	return bj, nil
 }
 

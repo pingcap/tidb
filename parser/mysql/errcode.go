@@ -570,7 +570,7 @@ const (
 	ErrEventCompile                                          = 1550
 	ErrEventSameName                                         = 1551
 	ErrEventDataTooLong                                      = 1552
-	ErrDropIndexFk                                           = 1553
+	ErrDropIndexNeededInForeignKey                           = 1553
 	ErrWarnDeprecatedSyntaxWithVer                           = 1554
 	ErrCantWriteLockLogTable                                 = 1555
 	ErrCantLockLogTable                                      = 1556
@@ -718,7 +718,7 @@ const (
 	ErrAccessDeniedNoPassword                                = 1698
 	ErrSetPasswordAuthPlugin                                 = 1699
 	ErrGrantPluginUserExists                                 = 1700
-	ErrTruncateIllegalFk                                     = 1701
+	ErrTruncateIllegalForeignKey                             = 1701
 	ErrPluginIsPermanent                                     = 1702
 	ErrSlaveHeartbeatValueOutOfRangeMin                      = 1703
 	ErrSlaveHeartbeatValueOutOfRangeMax                      = 1704
@@ -849,8 +849,8 @@ const (
 	ErrFkColumnCannotDropChild                               = 1829
 	ErrForeignKeyColumnNotNull                               = 1830
 	ErrDupIndex                                              = 1831
-	ErrFkColumnCannotChange                                  = 1832
-	ErrFkColumnCannotChangeChild                             = 1833
+	ErrForeignKeyColumnCannotChange                          = 1832
+	ErrForeignKeyColumnCannotChangeChild                     = 1833
 	ErrFkCannotDeleteParent                                  = 1834
 	ErrMalformedPacket                                       = 1835
 	ErrReadOnlyMode                                          = 1836
