@@ -26,6 +26,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/ddl/ingest"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -51,9 +52,10 @@ import (
 type backfillWorkerType byte
 
 const (
-	typeAddIndexWorker     backfillWorkerType = 0
-	typeUpdateColumnWorker backfillWorkerType = 1
-	typeCleanUpIndexWorker backfillWorkerType = 2
+	typeAddIndexWorker         backfillWorkerType = 0
+	typeUpdateColumnWorker     backfillWorkerType = 1
+	typeCleanUpIndexWorker     backfillWorkerType = 2
+	typeAddIndexMergeTmpWorker backfillWorkerType = 3
 )
 
 // By now the DDL jobs that need backfilling include:
@@ -116,6 +118,8 @@ func (bWT backfillWorkerType) String() string {
 		return "update column"
 	case typeCleanUpIndexWorker:
 		return "clean up index"
+	case typeAddIndexMergeTmpWorker:
+		return "merge temporary index"
 	default:
 		return "unknown"
 	}
@@ -466,15 +470,21 @@ func (dc *ddlCtx) handleRangeTasks(sessPool *sessionPool, t table.Table, workers
 	batchTasks := make([]*reorgBackfillTask, 0, len(workers))
 	physicalTableID := reorgInfo.PhysicalTableID
 
+	var prefix kv.Key
+	if reorgInfo.mergingTmpIdx {
+		prefix = t.IndexPrefix()
+	} else {
+		prefix = t.RecordPrefix()
+	}
 	// Build reorg tasks.
 	for i, keyRange := range kvRanges {
 		endKey := keyRange.EndKey
-		endK, err := getRangeEndKey(reorgInfo.d.jobContext(reorgInfo.Job), workers[0].sessCtx.GetStore(), workers[0].priority, t.RecordPrefix(), keyRange.StartKey, endKey)
+		endK, err := getRangeEndKey(reorgInfo.d.jobContext(reorgInfo.Job), workers[0].sessCtx.GetStore(), workers[0].priority, prefix, keyRange.StartKey, endKey)
 		if err != nil {
 			logutil.BgLogger().Info("[ddl] send range task to workers, get reverse key failed", zap.Error(err))
 		} else {
 			logutil.BgLogger().Info("[ddl] send range task to workers, change end key",
-				zap.String("end key", tryDecodeToHandleString(endKey)), zap.String("current end key", tryDecodeToHandleString(endK)))
+				zap.String("end key", hex.EncodeToString(endKey)), zap.String("current end key", hex.EncodeToString(endK)))
 			endKey = endK
 		}
 
@@ -646,9 +656,16 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 
 			switch bfWorkerType {
 			case typeAddIndexWorker:
-				idxWorker := newAddIndexWorker(sessCtx, i, t, decodeColMap, reorgInfo, jc)
+				idxWorker, err := newAddIndexWorker(sessCtx, i, t, decodeColMap, reorgInfo, jc, job)
+				if err != nil {
+					return errors.Trace(err)
+				}
 				backfillWorkers = append(backfillWorkers, idxWorker.backfillWorker)
 				go idxWorker.backfillWorker.run(reorgInfo.d, idxWorker, job)
+			case typeAddIndexMergeTmpWorker:
+				tmpIdxWorker := newMergeTempIndexWorker(sessCtx, i, t, reorgInfo, jc)
+				backfillWorkers = append(backfillWorkers, tmpIdxWorker.backfillWorker)
+				go tmpIdxWorker.backfillWorker.run(reorgInfo.d, tmpIdxWorker, job)
 			case typeUpdateColumnWorker:
 				// Setting InCreateOrAlterStmt tells the difference between SELECT casting and ALTER COLUMN casting.
 				sessCtx.GetSessionVars().StmtCtx.InCreateOrAlterStmt = true
@@ -696,6 +713,16 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 			zap.Int("regionCnt", len(kvRanges)),
 			zap.String("startKey", hex.EncodeToString(startKey)),
 			zap.String("endKey", hex.EncodeToString(endKey)))
+		if bfWorkerType == typeAddIndexWorker && job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
+			if bc, ok := ingest.LitBackCtxMgr.Load(job.ID); ok {
+				err := bc.Flush(reorgInfo.currElement.ID)
+				if err != nil {
+					return errors.Trace(err)
+				}
+			} else {
+				return errors.New(ingest.LitErrGetBackendFail)
+			}
+		}
 		remains, err := dc.handleRangeTasks(sessPool, t, backfillWorkers, reorgInfo, &totalAddedCount, kvRanges)
 		if err != nil {
 			return errors.Trace(err)
