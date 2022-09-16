@@ -3,8 +3,10 @@
 package utils
 
 import (
+	"context"
 	"fmt"
 	"net" //nolint:goimports
+
 	// #nosec
 	// register HTTP handler for /debug/pprof
 	"net/http"
@@ -13,6 +15,7 @@ import (
 	"os"
 	"sync"
 
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
@@ -66,4 +69,21 @@ func StartPProfListener(statusAddr string, wrapper *tidbutils.TLS) error {
 		}
 	}()
 	return nil
+}
+
+// Spanning updates the context and begins spanning, it:
+// - returns a function that finished the span.
+// - update the context so we can pass it to next level.
+// General usage:
+// defer Spanning(&ctx, "DoStuff", ...)
+//
+// NOTE: this may introduce the overhead of defering when the tracing not enabled.
+//       please take care when using it at critical path.
+func Spanning(ctx *context.Context, operationName string, opts ...opentracing.StartSpanOption) func() {
+	if span := opentracing.SpanFromContext(*ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan(operationName, append(opts, opentracing.ChildOf(span.Context()))...)
+		*ctx = opentracing.ContextWithSpan(*ctx, span1)
+		return span1.Finish
+	}
+	return func() {}
 }
