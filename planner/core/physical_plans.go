@@ -1219,7 +1219,7 @@ func (p *PhysicalHashJoin) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.basePhysicalJoin.MemoryUsage() + size.SizeOfUint + size.SizeOfBool*2 + size.SizeOfUint8 + size.SizeOfSlice
+	sum = p.basePhysicalJoin.MemoryUsage() + size.SizeOfUint + size.SizeOfSlice + size.SizeOfBool*2 + size.SizeOfUint8
 
 	for _, expr := range p.EqualConditions {
 		sum += expr.MemoryUsage()
@@ -1282,8 +1282,8 @@ func (p *PhysicalIndexJoin) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.basePhysicalJoin.MemoryUsage() + size.SizeOfInterface*2 +
-		int64(cap(p.KeyOff2IdxOff)+cap(p.IdxColLens))*size.SizeOfInt
+	sum = p.basePhysicalJoin.MemoryUsage() + size.SizeOfInterface*2 + size.SizeOfSlice*4 +
+		int64(cap(p.KeyOff2IdxOff)+cap(p.IdxColLens))*size.SizeOfInt + size.SizeOfPointer
 	if p.CompareFilters != nil {
 		sum += p.CompareFilters.MemoryUsage()
 	}
@@ -1320,7 +1320,7 @@ func (p *PhysicalIndexMergeJoin) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.PhysicalIndexJoin.MemoryUsage() + int64(cap(p.KeyOff2KeyOffOrderByIdx))*size.SizeOfInt +
+	sum = p.PhysicalIndexJoin.MemoryUsage() + size.SizeOfSlice*3 + int64(cap(p.KeyOff2KeyOffOrderByIdx))*size.SizeOfInt +
 		int64(cap(p.CompareFuncs)+cap(p.OuterCompareFuncs))*size.SizeOfFunc + size.SizeOfBool*2
 	return
 }
@@ -1357,7 +1357,8 @@ func (p *PhysicalMergeJoin) MemoryUsage() (sum int64) {
 		return
 	}
 
-	return p.basePhysicalJoin.MemoryUsage() + int64(cap(p.CompareFuncs))*size.SizeOfFunc + size.SizeOfBool
+	sum = p.basePhysicalJoin.MemoryUsage() + size.SizeOfSlice + int64(cap(p.CompareFuncs))*size.SizeOfFunc + size.SizeOfBool
+	return
 }
 
 // PhysicalExchangeReceiver accepts connection and receives data passively.

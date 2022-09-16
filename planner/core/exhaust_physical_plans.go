@@ -1286,6 +1286,9 @@ func (cwc *ColWithCmpFuncManager) MemoryUsage() (sum int64) {
 	if cwc.TargetCol != nil {
 		sum += cwc.TargetCol.MemoryUsage()
 	}
+	if cwc.affectedColSchema != nil {
+		sum += cwc.affectedColSchema.MemoryUsage()
+	}
 
 	for _, str := range cwc.OpType {
 		sum += int64(len(str))
