@@ -126,7 +126,7 @@ func (w *workload) start(ctx *suiteContext, colIDs ...int) {
 	}
 }
 
-func (w *workload) stop(ctx *suiteContext) (err error) {
+func (w *workload) stop(ctx *suiteContext, tableID int) (err error) {
 	ctx.cancel()
 	count := 3
 	for i := 0; i < 3; i++ {
