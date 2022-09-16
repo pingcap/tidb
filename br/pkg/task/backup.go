@@ -174,6 +174,9 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 	cfg.UseBackupMetaV2, err = flags.GetBool(flagUseBackupMetaV2)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	fullBackupType, err := flags.GetString(flagFullBackupType)
 	if err != nil {
@@ -200,7 +203,7 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 
-	return errors.Trace(err)
+	return nil
 }
 
 // parseCompressionFlags parses the backup-related flags from the flag set.
