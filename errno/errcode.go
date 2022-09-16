@@ -551,7 +551,7 @@ const (
 	ErrEventCompile                                          = 1550
 	ErrEventSameName                                         = 1551
 	ErrEventDataTooLong                                      = 1552
-	ErrDropIndexFk                                           = 1553
+	ErrDropIndexNeededInForeignKey                           = 1553
 	ErrWarnDeprecatedSyntaxWithVer                           = 1554
 	ErrCantWriteLockLogTable                                 = 1555
 	ErrCantLockLogTable                                      = 1556
@@ -791,8 +791,8 @@ const (
 	ErrFkColumnCannotDropChild                               = 1829
 	ErrForeignKeyColumnNotNull                               = 1830
 	ErrDupIndex                                              = 1831
-	ErrFkColumnCannotChange                                  = 1832
-	ErrFkColumnCannotChangeChild                             = 1833
+	ErrForeignKeyColumnCannotChange                          = 1832
+	ErrForeignKeyColumnCannotChangeChild                     = 1833
 	ErrFkCannotDeleteParent                                  = 1834
 	ErrMalformedPacket                                       = 1835
 	ErrReadOnlyMode                                          = 1836

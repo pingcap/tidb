@@ -977,8 +977,16 @@ func (b *executorBuilder) buildPlanReplayer(v *plannercore.PlanReplayer) Executo
 	}
 	e := &PlanReplayerExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
-		ExecStmts:    []ast.StmtNode{v.ExecStmt},
-		Analyze:      v.Analyze,
+		DumpInfo: &PlanReplayerDumpInfo{
+			Analyze: v.Analyze,
+			Path:    v.File,
+			ctx:     b.ctx,
+		},
+	}
+	if v.ExecStmt != nil {
+		e.DumpInfo.ExecStmts = []ast.StmtNode{v.ExecStmt}
+	} else {
+		e.baseExecutor = newBaseExecutor(b.ctx, nil, v.ID())
 	}
 	return e
 }
@@ -1017,51 +1025,72 @@ func (b *executorBuilder) buildRevoke(revoke *ast.RevokeStmt) Executor {
 	return e
 }
 
-func (b *executorBuilder) buildDDL(v *plannercore.DDL) Executor {
-	switch v.Statement.(type) {
+func (b *executorBuilder) setTelemetryInfo(v *plannercore.DDL) {
+	if v == nil || b.Ti == nil {
+		return
+	}
+	switch s := v.Statement.(type) {
 	case *ast.AlterTableStmt:
-		if len(v.Statement.(*ast.AlterTableStmt).Specs) > 1 && b.Ti != nil {
+		if len(s.Specs) > 1 {
 			b.Ti.UseMultiSchemaChange = true
 		}
+		for _, spec := range s.Specs {
+			switch spec.Tp {
+			case ast.AlterTableDropFirstPartition:
+				if b.Ti.PartitionTelemetry == nil {
+					b.Ti.PartitionTelemetry = &PartitionTelemetryInfo{}
+				}
+				b.Ti.PartitionTelemetry.UseDropIntervalPartition = true
+			case ast.AlterTableAddLastPartition:
+				if b.Ti.PartitionTelemetry == nil {
+					b.Ti.PartitionTelemetry = &PartitionTelemetryInfo{}
+				}
+				b.Ti.PartitionTelemetry.UseAddIntervalPartition = true
+			}
+		}
 	case *ast.CreateTableStmt:
-		stmt := v.Statement.(*ast.CreateTableStmt)
-		if stmt != nil && stmt.Partition != nil {
-			if strings.EqualFold(b.ctx.GetSessionVars().EnableTablePartition, "OFF") {
-				break
-			}
+		if s.Partition == nil || strings.EqualFold(b.ctx.GetSessionVars().EnableTablePartition, "OFF") {
+			break
+		}
 
-			s := stmt.Partition
-			if b.Ti.PartitionTelemetry == nil {
-				b.Ti.PartitionTelemetry = &PartitionTelemetryInfo{}
-			}
-			b.Ti.PartitionTelemetry.TablePartitionMaxPartitionsNum = mathutil.Max(s.Num, uint64(len(s.Definitions)))
-			b.Ti.PartitionTelemetry.UseTablePartition = true
+		p := s.Partition
+		if b.Ti.PartitionTelemetry == nil {
+			b.Ti.PartitionTelemetry = &PartitionTelemetryInfo{}
+		}
+		b.Ti.PartitionTelemetry.TablePartitionMaxPartitionsNum = mathutil.Max(p.Num, uint64(len(p.Definitions)))
+		b.Ti.PartitionTelemetry.UseTablePartition = true
 
-			switch s.Tp {
-			case model.PartitionTypeRange:
-				if s.Sub == nil {
-					if len(s.ColumnNames) > 0 {
-						b.Ti.PartitionTelemetry.UseTablePartitionRangeColumns = true
-					} else {
-						b.Ti.PartitionTelemetry.UseTablePartitionRange = true
-					}
+		switch p.Tp {
+		case model.PartitionTypeRange:
+			if p.Sub == nil {
+				if len(p.ColumnNames) > 0 {
+					b.Ti.PartitionTelemetry.UseTablePartitionRangeColumns = true
+				} else {
+					b.Ti.PartitionTelemetry.UseTablePartitionRange = true
 				}
-			case model.PartitionTypeHash:
-				if !s.Linear && s.Sub == nil {
-					b.Ti.PartitionTelemetry.UseTablePartitionHash = true
+				if p.Interval != nil {
+					b.Ti.PartitionTelemetry.UseCreateIntervalPartition = true
 				}
-			case model.PartitionTypeList:
-				enable := b.ctx.GetSessionVars().EnableListTablePartition
-				if s.Sub == nil && enable {
-					if len(s.ColumnNames) > 0 {
-						b.Ti.PartitionTelemetry.UseTablePartitionListColumns = true
-					} else {
-						b.Ti.PartitionTelemetry.UseTablePartitionList = true
-					}
+			}
+		case model.PartitionTypeHash:
+			if !p.Linear && p.Sub == nil {
+				b.Ti.PartitionTelemetry.UseTablePartitionHash = true
+			}
+		case model.PartitionTypeList:
+			enable := b.ctx.GetSessionVars().EnableListTablePartition
+			if p.Sub == nil && enable {
+				if len(p.ColumnNames) > 0 {
+					b.Ti.PartitionTelemetry.UseTablePartitionListColumns = true
+				} else {
+					b.Ti.PartitionTelemetry.UseTablePartitionList = true
 				}
 			}
 		}
 	}
+}
+
+func (b *executorBuilder) buildDDL(v *plannercore.DDL) Executor {
+	b.setTelemetryInfo(v)
 
 	e := &DDLExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
@@ -3899,6 +3928,11 @@ type mockPhysicalIndexReader struct {
 	plannercore.PhysicalPlan
 
 	e Executor
+}
+
+// MemoryUsage return the memory usage of mockPhysicalIndexReader
+func (p *mockPhysicalIndexReader) MemoryUsage() (sum int64) {
+	return // mock operator for testing only
 }
 
 func (builder *dataReaderBuilder) buildExecutorForIndexJoin(ctx context.Context, lookUpContents []*indexJoinLookUpContent,

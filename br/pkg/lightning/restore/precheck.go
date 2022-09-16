@@ -5,7 +5,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	ropts "github.com/pingcap/tidb/br/pkg/lightning/restore/opts"
@@ -73,11 +72,11 @@ func NewPrecheckItemBuilderFromConfig(ctx context.Context, cfg *config.Config, o
 	}
 	mdl, err := mydump.NewMyDumpLoader(ctx, cfg, builderCfg.MDLoaderSetupOptions...)
 	if err != nil {
-		if errors.ErrorEqual(err, common.ErrTooManySourceFiles) {
-			gerr = err
-		} else {
+		if mdl == nil {
 			return nil, errors.Trace(err)
 		}
+		// here means the partial result is returned, so we can continue on processing
+		gerr = err
 	}
 	dbMetas := mdl.GetDatabases()
 	srcStorage := mdl.GetStore()
