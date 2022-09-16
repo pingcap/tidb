@@ -65,7 +65,8 @@ func NewEngineInfo(ctx context.Context, jobID, indexID int64, cfg *backend.Engin
 func (ei *engineInfo) Flush() error {
 	err := ei.openedEngine.Flush(ei.ctx)
 	if err != nil {
-		logutil.BgLogger().Error(LitErrFlushEngineErr, zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
+		logutil.BgLogger().Error(LitErrFlushEngineErr, zap.Error(err),
+			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
 		return err
 	}
 	return nil
@@ -78,13 +79,15 @@ func (ei *engineInfo) Clean() {
 	indexEngine := ei.openedEngine
 	closedEngine, err := indexEngine.Close(ei.ctx, ei.cfg)
 	if err != nil {
-		logutil.BgLogger().Error(LitErrCloseEngineErr, zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
+		logutil.BgLogger().Error(LitErrCloseEngineErr, zap.Error(err),
+			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
 	}
 	ei.openedEngine = nil
 	// Here the local intermediate files will be removed.
 	err = closedEngine.Cleanup(ei.ctx)
 	if err != nil {
-		logutil.BgLogger().Error(LitErrCleanEngineErr, zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
+		logutil.BgLogger().Error(LitErrCleanEngineErr, zap.Error(err),,
+			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
 	}
 }
 
@@ -94,14 +97,16 @@ func (ei *engineInfo) ImportAndClean() error {
 	indexEngine := ei.openedEngine
 	closeEngine, err1 := indexEngine.Close(ei.ctx, ei.cfg)
 	if err1 != nil {
-		logutil.BgLogger().Error(LitErrCloseEngineErr, zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
+		logutil.BgLogger().Error(LitErrCloseEngineErr, zap.Error(err1),
+			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
 		return errors.New(LitErrCloseEngineErr)
 	}
 	ei.openedEngine = nil
 
 	err := ei.diskRoot.UpdateUsageAndQuota()
 	if err != nil {
-		logutil.BgLogger().Error(LitErrUpdateDiskStats, zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
+		logutil.BgLogger().Error(LitErrUpdateDiskStats, zap.Error(err),
+			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
 		return err
 	}
 
@@ -111,14 +116,16 @@ func (ei *engineInfo) ImportAndClean() error {
 		zap.String("split region size", strconv.FormatInt(int64(config.SplitRegionSize), 10)))
 	err = closeEngine.Import(ei.ctx, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	if err != nil {
-		logutil.BgLogger().Error(LitErrIngestDataErr, zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
+		logutil.BgLogger().Error(LitErrIngestDataErr, zap.Error(err),
+			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
 		return errors.New(LitErrIngestDataErr)
 	}
 
 	// Clean up the engine local workspace.
 	err = closeEngine.Cleanup(ei.ctx)
 	if err != nil {
-		logutil.BgLogger().Error(LitErrCloseEngineErr, zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
+		logutil.BgLogger().Error(LitErrCloseEngineErr, zap.Error(err),
+			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
 		return errors.New(LitErrCloseEngineErr)
 	}
 	return nil
@@ -139,7 +146,8 @@ func (ei *engineInfo) NewWriterCtx(id int) (*WriterContext, error) {
 
 	wCtx, err := ei.newWriterContext(id)
 	if err != nil {
-		logutil.BgLogger().Error(LitErrCreateContextFail, zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID),
+		logutil.BgLogger().Error(LitErrCreateContextFail, zap.Error(err),
+			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID),
 			zap.Int("worker ID", id))
 		return nil, err
 	}
