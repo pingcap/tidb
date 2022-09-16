@@ -405,7 +405,10 @@ func TestNewBundleFromOptions(t *testing.T) {
 			Regions:       "us",
 		},
 		output: []*Rule{
-			NewRule(Voter, 3, NewConstraintsDirect(
+			NewRule(Leader, 1, NewConstraintsDirect(
+				NewConstraintDirect("region", In, "us"),
+			)),
+			NewRule(Voter, 2, NewConstraintsDirect(
 				NewConstraintDirect("region", In, "us"),
 			)),
 		},
@@ -419,10 +422,13 @@ func TestNewBundleFromOptions(t *testing.T) {
 			Schedule:      "majority_in_primary",
 		},
 		output: []*Rule{
-			NewRule(Voter, 2, NewConstraintsDirect(
+			NewRule(Leader, 1, NewConstraintsDirect(
 				NewConstraintDirect("region", In, "us"),
 			)),
-			NewRule(Follower, 1, NewConstraintsDirect()),
+			NewRule(Voter, 1, NewConstraintsDirect(
+				NewConstraintDirect("region", In, "us"),
+			)),
+			NewRule(Voter, 1, NewConstraintsDirect()),
 		},
 	})
 
@@ -434,10 +440,10 @@ func TestNewBundleFromOptions(t *testing.T) {
 			Followers:     1,
 		},
 		output: []*Rule{
-			NewRule(Voter, 1, NewConstraintsDirect(
+			NewRule(Leader, 1, NewConstraintsDirect(
 				NewConstraintDirect("region", In, "us"),
 			)),
-			NewRule(Follower, 1, NewConstraintsDirect(
+			NewRule(Voter, 1, NewConstraintsDirect(
 				NewConstraintDirect("region", In, "bj", "sh"),
 			)),
 		},
@@ -510,10 +516,13 @@ func TestNewBundleFromOptions(t *testing.T) {
 			Followers:     5,
 		},
 		output: []*Rule{
-			NewRule(Voter, 3, NewConstraintsDirect(
+			NewRule(Leader, 1, NewConstraintsDirect(
 				NewConstraintDirect("region", In, "us"),
 			)),
-			NewRule(Follower, 3, NewConstraintsDirect(
+			NewRule(Voter, 2, NewConstraintsDirect(
+				NewConstraintDirect("region", In, "us"),
+			)),
+			NewRule(Voter, 3, NewConstraintsDirect(
 				NewConstraintDirect("region", In, "sh"),
 			)),
 		},
@@ -531,10 +540,13 @@ func TestNewBundleFromOptions(t *testing.T) {
 			Schedule:      "majority_in_primary",
 		},
 		output: []*Rule{
-			NewRule(Voter, 3, NewConstraintsDirect(
+			NewRule(Leader, 1, NewConstraintsDirect(
 				NewConstraintDirect("region", In, "sh"),
 			)),
-			NewRule(Follower, 2, NewConstraintsDirect(
+			NewRule(Voter, 2, NewConstraintsDirect(
+				NewConstraintDirect("region", In, "sh"),
+			)),
+			NewRule(Voter, 2, NewConstraintsDirect(
 				NewConstraintDirect("region", In, "bj"),
 			)),
 		},

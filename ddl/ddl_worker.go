@@ -319,6 +319,13 @@ func (d *ddl) addBatchDDLJobs2Queue(tasks []*limitJobTask) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	return kv.RunInNewTxn(ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
+		jobID, err := t.GetFlashbackClusterJobID()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if jobID != 0 {
+			return errors.Errorf("Can't add to ddl table, cluster is flashing back now")
+		}
 		ids, err := t.GenGlobalIDs(len(tasks))
 		if err != nil {
 			return errors.Trace(err)
@@ -383,6 +390,13 @@ func (d *ddl) addBatchDDLJobs2Table(tasks []*limitJobTask) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err = kv.RunInNewTxn(ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
+		jobID, err := t.GetFlashbackClusterJobID()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if jobID != 0 {
+			return errors.Errorf("Can't add to ddl table, cluster is flashing back now")
+		}
 		ids, err = t.GenGlobalIDs(len(tasks))
 		if err != nil {
 			return errors.Trace(err)
@@ -500,14 +514,9 @@ func jobNeedGC(job *model.Job) bool {
 			return false
 		}
 		switch job.Type {
-		case model.ActionAddIndex, model.ActionAddPrimaryKey:
-			if job.State != model.JobStateRollbackDone {
-				break
-			}
-			// After rolling back an AddIndex operation, we need to use delete-range to delete the half-done index data.
-			return true
 		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropPrimaryKey,
-			model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionDropColumn, model.ActionModifyColumn:
+			model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionDropColumn, model.ActionModifyColumn,
+			model.ActionAddIndex, model.ActionAddPrimaryKey:
 			return true
 		case model.ActionMultiSchemaChange:
 			for _, sub := range job.MultiSchemaInfo.SubJobs {
@@ -541,6 +550,8 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	switch job.Type {
 	case model.ActionRecoverTable:
 		err = finishRecoverTable(w, job)
+	case model.ActionFlashbackCluster:
+		err = finishFlashbackCluster(w, job)
 	case model.ActionCreateTables:
 		if job.IsCancelled() {
 			// it may be too large that it can not be added to the history queue, too
@@ -681,12 +692,11 @@ func (w *worker) HandleJobDone(d *ddlCtx, job *model.Job, t *meta.Meta) error {
 	return nil
 }
 
-func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) error {
+func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 	var (
 		err       error
 		schemaVer int64
 		runJobErr error
-		waitTime  = 2 * d.lease
 	)
 	defer func() {
 		w.unlockSeqNum(err)
@@ -694,11 +704,11 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) error {
 
 	err = w.sess.begin()
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if !variable.EnableConcurrentDDL.Load() || d.waiting.Load() {
 		w.sess.rollback()
-		return nil
+		return 0, nil
 	}
 	failpoint.Inject("mockRunJobTime", func(val failpoint.Value) {
 		if val.(bool) {
@@ -708,7 +718,7 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) error {
 	txn, err := w.sess.txn()
 	if err != nil {
 		w.sess.rollback()
-		return err
+		return 0, err
 	}
 	// Only general DDLs are allowed to be executed when TiKV is disk full.
 	if w.tp == addIdxWorker && job.IsRunning() {
@@ -726,7 +736,7 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) error {
 			job.State = model.JobStateSynced
 		}
 		err = w.HandleJobDone(d, job, t)
-		return err
+		return 0, err
 	}
 
 	d.mu.RLock()
@@ -744,7 +754,7 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) error {
 		defer d.unlockSchemaVersion(job.ID)
 		w.sess.reset()
 		err = w.HandleJobDone(d, job, t)
-		return err
+		return 0, err
 	}
 
 	if runJobErr != nil && !job.IsRollingback() && !job.IsRollbackDone() {
@@ -764,7 +774,7 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) error {
 	if err = w.handleUpdateJobError(t, job, err); err != nil {
 		w.sess.rollback()
 		d.unlockSchemaVersion(job.ID)
-		return err
+		return 0, err
 	}
 	writeBinlog(d.binlogCli, txn, job)
 	// reset the SQL digest to make topsql work right.
@@ -772,7 +782,7 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) error {
 	err = w.sess.commit()
 	d.unlockSchemaVersion(job.ID)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	w.registerSync(job)
 
@@ -784,35 +794,7 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) error {
 		time.Sleep(GetWaitTimeWhenErrorOccurred())
 	}
 
-	failpoint.Inject("mockDownBeforeUpdateGlobalVersion", func(val failpoint.Value) {
-		if val.(bool) {
-			if mockDDLErrOnce == 0 {
-				mockDDLErrOnce = schemaVer
-				failpoint.Return(errors.New("mock for ddl down"))
-			}
-		}
-	})
-
-	// Here means the job enters another state (delete only, write only, public, etc...) or is cancelled.
-	// If the job is done or still running or rolling back, we will wait 2 * lease time to guarantee other servers to update
-	// the newest schema.
-	ctx, cancel := context.WithTimeout(w.ctx, waitTime)
-	w.waitSchemaChanged(ctx, d, waitTime, schemaVer, job)
-	cancel()
-	d.synced(job)
-
-	if RunInGoTest {
-		// d.mu.hook is initialed from domain / test callback, which will force the owner host update schema diff synchronously.
-		d.mu.RLock()
-		d.mu.hook.OnSchemaStateChanged()
-		d.mu.RUnlock()
-	}
-
-	d.mu.RLock()
-	d.mu.hook.OnJobUpdated(job)
-	d.mu.RUnlock()
-
-	return nil
+	return schemaVer, nil
 }
 
 func (w *JobContext) getResourceGroupTaggerForTopSQL() tikvrpc.ResourceGroupTagger {
@@ -959,9 +941,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 		// Here means the job enters another state (delete only, write only, public, etc...) or is cancelled.
 		// If the job is done or still running or rolling back, we will wait 2 * lease time to guarantee other servers to update
 		// the newest schema.
-		ctx, cancel := context.WithTimeout(w.ctx, waitTime)
-		w.waitSchemaChanged(ctx, d, waitTime, schemaVer, job)
-		cancel()
+		waitSchemaChanged(context.Background(), d, waitTime, schemaVer, job)
 
 		if RunInGoTest {
 			// d.mu.hook is initialed from domain / test callback, which will force the owner host update schema diff synchronously.
@@ -1094,6 +1074,19 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	if job.Type != model.ActionMultiSchemaChange {
 		logutil.Logger(w.logCtx).Info("[ddl] run DDL job", zap.String("job", job.String()))
 	}
+
+	// Should check flashbackClusterJobID.
+	// Some ddl jobs maybe added between check and insert into ddl job table.
+	flashbackJobID, err := t.GetFlashbackClusterJobID()
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, err
+	}
+	if flashbackJobID != 0 && flashbackJobID != job.ID {
+		job.State = model.JobStateCancelled
+		return ver, errors.Errorf("Can't do ddl job, cluster is flashing back now")
+	}
+
 	timeStart := time.Now()
 	if job.RealStartTS == 0 {
 		job.RealStartTS = t.StartTS
@@ -1219,6 +1212,8 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = onAlterCacheTable(d, t, job)
 	case model.ActionAlterNoCacheTable:
 		ver, err = onAlterNoCacheTable(d, t, job)
+	case model.ActionFlashbackCluster:
+		ver, err = w.onFlashbackCluster(d, t, job)
 	case model.ActionMultiSchemaChange:
 		ver, err = onMultiSchemaChange(w, d, t, job)
 	default:
@@ -1257,8 +1252,8 @@ func toTError(err error) *terror.Error {
 }
 
 // waitSchemaChanged waits for the completion of updating all servers' schema. In order to make sure that happens,
-// we wait 2 * lease time.
-func (w *worker) waitSchemaChanged(ctx context.Context, d *ddlCtx, waitTime time.Duration, latestSchemaVersion int64, job *model.Job) {
+// we wait at most 2 * lease time(sessionTTL, 90 seconds).
+func waitSchemaChanged(ctx context.Context, d *ddlCtx, waitTime time.Duration, latestSchemaVersion int64, job *model.Job) {
 	if !job.IsRunning() && !job.IsRollingback() && !job.IsDone() && !job.IsRollbackDone() {
 		return
 	}
@@ -1273,13 +1268,13 @@ func (w *worker) waitSchemaChanged(ctx context.Context, d *ddlCtx, waitTime time
 	}()
 
 	if latestSchemaVersion == 0 {
-		logutil.Logger(w.logCtx).Info("[ddl] schema version doesn't change")
+		logutil.Logger(d.ctx).Info("[ddl] schema version doesn't change")
 		return
 	}
 
 	err = d.schemaSyncer.OwnerUpdateGlobalVersion(ctx, latestSchemaVersion)
 	if err != nil {
-		logutil.Logger(w.logCtx).Info("[ddl] update latest schema version failed", zap.Int64("ver", latestSchemaVersion), zap.Error(err))
+		logutil.Logger(d.ctx).Info("[ddl] update latest schema version failed", zap.Int64("ver", latestSchemaVersion), zap.Error(err))
 		if terror.ErrorEqual(err, context.DeadlineExceeded) {
 			// If err is context.DeadlineExceeded, it means waitTime(2 * lease) is elapsed. So all the schemas are synced by ticker.
 			// There is no need to use etcd to sync. The function returns directly.
@@ -1287,18 +1282,13 @@ func (w *worker) waitSchemaChanged(ctx context.Context, d *ddlCtx, waitTime time
 		}
 	}
 
-	// OwnerCheckAllVersions returns only when context is timeout(2 * lease) or all TiDB schemas are synced.
+	// OwnerCheckAllVersions returns only when  all TiDB schemas are synced(exclude the isolated TiDB).
 	err = d.schemaSyncer.OwnerCheckAllVersions(ctx, latestSchemaVersion)
 	if err != nil {
-		logutil.Logger(w.logCtx).Info("[ddl] wait latest schema version to deadline", zap.Int64("ver", latestSchemaVersion), zap.Error(err))
-		if terror.ErrorEqual(err, context.DeadlineExceeded) {
-			return
-		}
-		// Wait until timeout.
-		<-ctx.Done()
+		logutil.Logger(d.ctx).Info("[ddl] wait latest schema version encounter error", zap.Int64("ver", latestSchemaVersion), zap.Error(err))
 		return
 	}
-	logutil.Logger(w.logCtx).Info("[ddl] wait latest schema version changed",
+	logutil.Logger(d.ctx).Info("[ddl] wait latest schema version changed",
 		zap.Int64("ver", latestSchemaVersion),
 		zap.Duration("take time", time.Since(timeStart)),
 		zap.String("job", job.String()))
@@ -1314,8 +1304,6 @@ func (w *worker) waitSchemaSynced(d *ddlCtx, job *model.Job, waitTime time.Durat
 	if !job.IsRunning() && !job.IsRollingback() && !job.IsDone() && !job.IsRollbackDone() {
 		return nil
 	}
-	ctx, cancelFunc := context.WithTimeout(w.ctx, waitTime)
-	defer cancelFunc()
 
 	ver, _ := w.store.CurrentVersion(kv.GlobalTxnScope)
 	snapshot := w.store.GetSnapshot(ver)
@@ -1336,7 +1324,7 @@ func (w *worker) waitSchemaSynced(d *ddlCtx, job *model.Job, waitTime time.Durat
 		}
 	})
 
-	w.waitSchemaChanged(ctx, d, waitTime, latestSchemaVersion, job)
+	waitSchemaChanged(context.Background(), d, waitTime, latestSchemaVersion, job)
 	return nil
 }
 
@@ -1469,6 +1457,19 @@ func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, error)
 		if len(job.CtxVars) > 0 {
 			if oldIDs, ok := job.CtxVars[0].([]int64); ok {
 				diff.AffectedOpts = buildPlacementAffects(oldIDs, oldIDs)
+			}
+		}
+	case model.ActionCreateTable:
+		diff.TableID = job.TableID
+		if len(job.Args) > 0 {
+			tbInfo, _ := job.Args[0].(*model.TableInfo)
+			// When create table with foreign key, we actually has two schema status change:
+			// 1. none -> write-only
+			// 2. write-only -> public
+			// In the second status change write-only -> public, infoschema loader should apply drop old table first, then
+			// apply create new table. So need to set diff.OldTableID here to make sure it.
+			if tbInfo != nil && tbInfo.State == model.StatePublic && len(tbInfo.ForeignKeys) > 0 {
+				diff.OldTableID = job.TableID
 			}
 		}
 	default:

@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
@@ -53,7 +54,6 @@ func setupTxnContextTest(t *testing.T) (kv.Storage, *domain.Domain) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertTxnManagerAfterPessimisticLockErrorRetry", "return"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertTxnManagerInShortPointGetPlan", "return"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/assertTxnManagerInRunStmt", "return"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/assertTxnManagerInPreparedStmtExec", "return"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/assertTxnManagerInCachedPlanExec", "return"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/assertTxnManagerForUpdateTSEqual", "return"))
 
@@ -81,7 +81,6 @@ func setupTxnContextTest(t *testing.T) (kv.Storage, *domain.Domain) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertTxnManagerAfterPessimisticLockErrorRetry"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertTxnManagerInShortPointGetPlan"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/session/assertTxnManagerInRunStmt"))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/session/assertTxnManagerInPreparedStmtExec"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/session/assertTxnManagerInCachedPlanExec"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/session/assertTxnManagerForUpdateTSEqual"))
 
@@ -194,7 +193,7 @@ func TestTxnContextInExplicitTxn(t *testing.T) {
 	})
 
 	doWithCheckPath(t, se, normalPathRecords, func() {
-		tk.MustExec("commit")
+		tk.MustGetErrCode("commit", errno.ErrInfoSchemaChanged)
 	})
 
 	// the info schema in new txn should use the newest one
@@ -536,8 +535,7 @@ func TestTxnContextForPrepareExecute(t *testing.T) {
 	})
 
 	// Test ExecutePreparedStmt
-	path := append([]string{"assertTxnManagerInPreparedStmtExec"}, normalPathRecords...)
-	doWithCheckPath(t, se, path, func() {
+	doWithCheckPath(t, se, normalPathRecords, func() {
 		rs, err := se.ExecutePreparedStmt(context.TODO(), stmtID, nil)
 		require.NoError(t, err)
 		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 10"))
@@ -567,8 +565,7 @@ func TestTxnContextForPrepareExecute(t *testing.T) {
 	doWithCheckPath(t, se, normalPathRecords, func() {
 		tk.MustQuery("execute s").Check(testkit.Rows("1 10"))
 	})
-	path = append([]string{"assertTxnManagerInPreparedStmtExec"}, normalPathRecords...)
-	doWithCheckPath(t, se, path, func() {
+	doWithCheckPath(t, se, normalPathRecords, func() {
 		rs, err := se.ExecutePreparedStmt(context.TODO(), stmtID, nil)
 		require.NoError(t, err)
 		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 10"))
@@ -612,8 +609,7 @@ func TestTxnContextForStaleReadInPrepare(t *testing.T) {
 	// tx_read_ts
 	tk.MustExec("set @@tx_read_ts=@a")
 	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, is1)
-	path := append([]string{"assertTxnManagerInPreparedStmtExec"}, normalPathRecords...)
-	doWithCheckPath(t, se, path, func() {
+	doWithCheckPath(t, se, normalPathRecords, func() {
 		rs, err := se.ExecutePreparedStmt(context.TODO(), stmtID1, nil)
 		require.NoError(t, err)
 		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 10"))
@@ -631,7 +627,7 @@ func TestTxnContextForStaleReadInPrepare(t *testing.T) {
 
 	// select ... as of ...
 	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, is1)
-	doWithCheckPath(t, se, path, func() {
+	doWithCheckPath(t, se, normalPathRecords, func() {
 		rs, err := se.ExecutePreparedStmt(context.TODO(), stmtID2, nil)
 		require.NoError(t, err)
 		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 10"))
@@ -642,7 +638,7 @@ func TestTxnContextForStaleReadInPrepare(t *testing.T) {
 
 	// tx_read_ts in prepare
 	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, is1)
-	doWithCheckPath(t, se, path, func() {
+	doWithCheckPath(t, se, normalPathRecords, func() {
 		rs, err := se.ExecutePreparedStmt(context.TODO(), stmtID3, nil)
 		require.NoError(t, err)
 		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 10"))
@@ -661,7 +657,7 @@ func TestTxnContextForStaleReadInPrepare(t *testing.T) {
 	tk.MustExec("do sleep(0.1)")
 	tk.MustExec("update t1 set v=v+1 where id=1")
 	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, is2)
-	doWithCheckPath(t, se, path, func() {
+	doWithCheckPath(t, se, normalPathRecords, func() {
 		rs, err := se.ExecutePreparedStmt(context.TODO(), stmtID1, nil)
 		require.NoError(t, err)
 		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 12"))
@@ -669,7 +665,7 @@ func TestTxnContextForStaleReadInPrepare(t *testing.T) {
 	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, nil)
 	tk.MustExec("set @@tx_read_ts=@b")
 	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, is2)
-	doWithCheckPath(t, se, path, func() {
+	doWithCheckPath(t, se, normalPathRecords, func() {
 		rs, err := se.ExecutePreparedStmt(context.TODO(), stmtID1, nil)
 		require.NoError(t, err)
 		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 11"))
@@ -702,8 +698,7 @@ func TestTxnContextPreparedStmtWithForUpdate(t *testing.T) {
 		tk.MustQuery("select * from t1 where id=1 for update").Check(testkit.Rows("1 11"))
 	})
 
-	path := append([]string{"assertTxnManagerInPreparedStmtExec"}, normalPathRecords...)
-	doWithCheckPath(t, se, path, func() {
+	doWithCheckPath(t, se, normalPathRecords, func() {
 		rs, err := se.ExecutePreparedStmt(context.TODO(), stmtID1, nil)
 		require.NoError(t, err)
 		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 11"))

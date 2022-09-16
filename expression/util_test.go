@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mock"
@@ -91,7 +90,7 @@ func TestClone(t *testing.T) {
 		&builtinJSONArraySig{}, &builtinJSONArrayAppendSig{}, &builtinJSONObjectSig{}, &builtinJSONExtractSig{}, &builtinJSONSetSig{},
 		&builtinJSONInsertSig{}, &builtinJSONReplaceSig{}, &builtinJSONRemoveSig{}, &builtinJSONMergeSig{}, &builtinJSONContainsSig{},
 		&builtinJSONStorageSizeSig{}, &builtinJSONDepthSig{}, &builtinJSONSearchSig{}, &builtinJSONKeysSig{}, &builtinJSONKeys2ArgsSig{}, &builtinJSONLengthSig{},
-		&builtinLikeSig{}, &builtinRegexpSig{}, &builtinRegexpUTF8Sig{}, &builtinAbsRealSig{}, &builtinAbsIntSig{},
+		&builtinLikeSig{}, &builtinRegexpLikeFuncSig{}, &builtinRegexpSubstrFuncSig{}, &builtinRegexpInStrFuncSig{}, &builtinRegexpReplaceFuncSig{}, &builtinAbsRealSig{}, &builtinAbsIntSig{},
 		&builtinAbsUIntSig{}, &builtinAbsDecSig{}, &builtinRoundRealSig{}, &builtinRoundIntSig{}, &builtinRoundDecSig{},
 		&builtinRoundWithFracRealSig{}, &builtinRoundWithFracIntSig{}, &builtinRoundWithFracDecSig{}, &builtinCeilRealSig{}, &builtinCeilIntToDecSig{},
 		&builtinCeilIntToIntSig{}, &builtinCeilDecToIntSig{}, &builtinCeilDecToDecSig{}, &builtinFloorRealSig{}, &builtinFloorIntToDecSig{},
@@ -561,11 +560,11 @@ func (m *MockExpr) EvalDuration(ctx sessionctx.Context, row chunk.Row) (val type
 	}
 	return types.Duration{}, m.i == nil, m.err
 }
-func (m *MockExpr) EvalJSON(ctx sessionctx.Context, row chunk.Row) (val json.BinaryJSON, isNull bool, err error) {
-	if x, ok := m.i.(json.BinaryJSON); ok {
+func (m *MockExpr) EvalJSON(ctx sessionctx.Context, row chunk.Row) (val types.BinaryJSON, isNull bool, err error) {
+	if x, ok := m.i.(types.BinaryJSON); ok {
 		return x, false, m.err
 	}
-	return json.BinaryJSON{}, m.i == nil, m.err
+	return types.BinaryJSON{}, m.i == nil, m.err
 }
 func (m *MockExpr) ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error) {
 	return types.Datum{}, m.err
@@ -595,3 +594,7 @@ func (m *MockExpr) CharsetAndCollation() (string, string) {
 	return "", ""
 }
 func (m *MockExpr) SetCharsetAndCollation(chs, coll string) {}
+
+func (m *MockExpr) MemoryUsage() (sum int64) {
+	return
+}

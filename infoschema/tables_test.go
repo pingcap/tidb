@@ -34,13 +34,12 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/stretchr/testify/require"
 )
 
@@ -53,7 +52,8 @@ func newTestKitWithRoot(t *testing.T, store kv.Storage) *testkit.TestKit {
 
 func newTestKitWithPlanCache(t *testing.T, store kv.Storage) *testkit.TestKit {
 	tk := testkit.NewTestKit(t, store)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64)})
+	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{PreparedPlanCache: plannercore.NewLRUPlanCache(100,
+		0.1, math.MaxUint64, plannercore.PickPlanFromBucket)})
 	require.NoError(t, err)
 	tk.SetSession(se)
 	tk.RefreshConnectionID()
@@ -128,7 +128,7 @@ func TestInfoSchemaFieldValue(t *testing.T) {
 	tk1.MustQuery("select distinct(table_schema) from information_schema.tables").Check(testkit.Rows("INFORMATION_SCHEMA"))
 
 	// Fix issue 9836
-	sm := &testutil.MockSessionManager{PS: make([]*util.ProcessInfo, 0)}
+	sm := &testkit.MockSessionManager{PS: make([]*util.ProcessInfo, 0)}
 	sm.PS = append(sm.PS, &util.ProcessInfo{
 		ID:      1,
 		User:    "root",
@@ -294,7 +294,7 @@ func TestSomeTables(t *testing.T) {
 	require.NoError(t, err)
 	tk := testkit.NewTestKit(t, store)
 	tk.SetSession(se)
-	sm := &testutil.MockSessionManager{PS: make([]*util.ProcessInfo, 0)}
+	sm := &testkit.MockSessionManager{PS: make([]*util.ProcessInfo, 0)}
 	sm.PS = append(sm.PS, &util.ProcessInfo{
 		ID:      1,
 		User:    "user-1",
@@ -351,7 +351,7 @@ func TestSomeTables(t *testing.T) {
 			fmt.Sprintf("3 user-3 127.0.0.1:12345 test Init DB 9223372036 %s %s", "in transaction", "check port"),
 		))
 
-	sm = &testutil.MockSessionManager{PS: make([]*util.ProcessInfo, 0)}
+	sm = &testkit.MockSessionManager{PS: make([]*util.ProcessInfo, 0)}
 	sm.PS = append(sm.PS, &util.ProcessInfo{
 		ID:      1,
 		User:    "user-1",
@@ -1382,7 +1382,7 @@ func TestTiDBTrx(t *testing.T) {
 	// by digest.
 	tk.MustExec("update test_tidb_trx set i = i + 1")
 	_, digest := parser.NormalizeDigest("update test_tidb_trx set i = i + 1")
-	sm := &testutil.MockSessionManager{TxnInfo: make([]*txninfo.TxnInfo, 2)}
+	sm := &testkit.MockSessionManager{TxnInfo: make([]*txninfo.TxnInfo, 2)}
 	sm.TxnInfo[0] = &txninfo.TxnInfo{
 		StartTS:          424768545227014155,
 		CurrentSQLDigest: digest.String(),
@@ -1543,7 +1543,6 @@ func TestVariablesInfo(t *testing.T) {
 		"tidb_enable_collect_execution_info ON OFF", // for test stability
 		"tidb_enable_mutation_checker OFF ON",       // for new installs
 		"tidb_mem_oom_action CANCEL LOG",            // always changed for tests
-		"tidb_partition_prune_mode static dynamic",  // for new installs
 		"tidb_row_format_version 1 2",               // for new installs
 		"tidb_txn_assertion_level OFF FAST",         // for new installs
 		"timestamp 0 123456789",                     // always dynamic

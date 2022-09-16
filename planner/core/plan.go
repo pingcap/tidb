@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/util/size"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
@@ -338,7 +340,7 @@ type PhysicalPlan interface {
 	// ToPB converts physical plan to tipb executor.
 	ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error)
 
-	// getChildReqProps gets the required property by child index.
+	// GetChildReqProps gets the required property by child index.
 	GetChildReqProps(idx int) *property.PhysicalProperty
 
 	// StatsCount returns the count of property.StatsInfo for this plan.
@@ -347,7 +349,7 @@ type PhysicalPlan interface {
 	// ExtractCorrelatedCols extracts correlated columns inside the PhysicalPlan.
 	ExtractCorrelatedCols() []*expression.CorrelatedColumn
 
-	// Get all the children.
+	// Children get all the children.
 	Children() []PhysicalPlan
 
 	// SetChildren sets the children for the plan.
@@ -362,14 +364,6 @@ type PhysicalPlan interface {
 	// Stats returns the StatsInfo of the plan.
 	Stats() *property.StatsInfo
 
-	// Cost returns the estimated cost of the subplan.
-	// Deprecated: use the new method GetPlanCost
-	Cost() float64
-
-	// SetCost set the cost of the subplan.
-	// Deprecated: use the new method GetPlanCost
-	SetCost(cost float64)
-
 	// ExplainNormalizedInfo returns operator normalized information for generating digest.
 	ExplainNormalizedInfo() string
 
@@ -379,6 +373,9 @@ type PhysicalPlan interface {
 	// appendChildCandidate append child physicalPlan into tracer in order to track each child physicalPlan which can't
 	// be tracked during findBestTask or enumeratePhysicalPlans4Task
 	appendChildCandidate(op *physicalOptimizeOp)
+
+	// MemoryUsage return the memory usage of PhysicalPlan
+	MemoryUsage() int64
 }
 
 // NewDefaultPlanCostOption returns PlanCostOption
@@ -455,7 +452,6 @@ type basePhysicalPlan struct {
 	childrenReqProps []*property.PhysicalProperty
 	self             PhysicalPlan
 	children         []PhysicalPlan
-	cost             float64
 
 	// used by the new cost interface
 	planCostInit bool
@@ -465,16 +461,6 @@ type basePhysicalPlan struct {
 	// 1. For ExchangeSender, means its output will be partitioned by hash key.
 	// 2. For ExchangeReceiver/Window/Sort, means its input is already partitioned.
 	TiFlashFineGrainedShuffleStreamCount uint64
-}
-
-// Cost implements PhysicalPlan interface.
-func (p *basePhysicalPlan) Cost() float64 {
-	return p.cost
-}
-
-// SetCost implements PhysicalPlan interface.
-func (p *basePhysicalPlan) SetCost(cost float64) {
-	p.cost = cost
 }
 
 func (p *basePhysicalPlan) cloneWithSelf(newSelf PhysicalPlan) (*basePhysicalPlan, error) {
@@ -521,6 +507,22 @@ func (p *basePhysicalPlan) GetChildReqProps(idx int) *property.PhysicalProperty 
 // ExtractCorrelatedCols implements PhysicalPlan interface.
 func (*basePhysicalPlan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	return nil
+}
+
+// MemoryUsage return the memory usage of basePhysicalPlan
+func (p *basePhysicalPlan) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.basePlan.MemoryUsage() + size.SizeOfSlice + int64(cap(p.childrenReqProps))*size.SizeOfPointer +
+		size.SizeOfSlice + int64(cap(p.children)+1)*size.SizeOfInterface + size.SizeOfFloat64*2 +
+		size.SizeOfUint64 + size.SizeOfBool
+	for _, prop := range p.childrenReqProps {
+		sum += prop.MemoryUsage()
+	}
+	//todo: memtrace: add children's memory
+	return
 }
 
 // GetLogicalTS4TaskMap get the logical TimeStamp now to help rollback the TaskMap changes after that.
@@ -726,6 +728,19 @@ func (p *basePlan) Stats() *property.StatsInfo {
 	return p.stats
 }
 
+// basePlanSize is the size of basePlan.
+const basePlanSize = int64(unsafe.Sizeof(basePlan{}))
+
+// MemoryUsage return the memory usage of basePlan
+func (p *basePlan) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = basePlanSize + int64(len(p.tp))
+	return sum
+}
+
 // Schema implements Plan Schema interface.
 func (p *baseLogicalPlan) Schema() *expression.Schema {
 	return p.children[0].Schema()
@@ -781,7 +796,7 @@ func (p *basePlan) SCtx() sessionctx.Context {
 
 // buildPlanTrace implements Plan
 func (p *basePhysicalPlan) buildPlanTrace() *tracing.PlanTrace {
-	planTrace := &tracing.PlanTrace{ID: p.ID(), TP: p.self.TP(), ExplainInfo: p.self.ExplainInfo(), Cost: p.self.Cost()}
+	planTrace := &tracing.PlanTrace{ID: p.ID(), TP: p.self.TP(), ExplainInfo: p.self.ExplainInfo()}
 	for _, child := range p.Children() {
 		planTrace.Children = append(planTrace.Children, child.buildPlanTrace())
 	}
@@ -811,11 +826,11 @@ func (p *basePhysicalPlan) appendChildCandidate(op *physicalOptimizeOp) {
 	for _, child := range p.Children() {
 		childCandidate := &tracing.CandidatePlanTrace{
 			PlanTrace: &tracing.PlanTrace{TP: child.TP(), ID: child.ID(),
-				ExplainInfo: child.ExplainInfo(), Cost: child.Cost()},
+				ExplainInfo: child.ExplainInfo()},
 		}
 		op.tracer.AppendCandidate(childCandidate)
 		child.appendChildCandidate(op)
 		childrenID = append(childrenID, child.ID())
 	}
-	op.tracer.Candidates[p.ID()].PlanTrace.ChildrenID = childrenID
+	op.tracer.Candidates[p.ID()].PlanTrace.AppendChildrenID(childrenID...)
 }
