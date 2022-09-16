@@ -919,6 +919,9 @@ func updateNewIdxColsNameOffset(changingIdxs []*model.IndexInfo,
 }
 
 func updateFKInfoWhenModifyColumn(tblInfo *model.TableInfo, oldCol, newCol model.CIStr) {
+	if oldCol.L == newCol.L {
+		return
+	}
 	for _, fk := range tblInfo.ForeignKeys {
 		for i := range fk.Cols {
 			if fk.Cols[i].L == oldCol.L {
@@ -1450,7 +1453,7 @@ func adjustTableInfoAfterModifyColumn(
 }
 
 func adjustForeignKeyChildTableInfoAfterModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, newCol, oldCol *model.ColumnInfo) ([]schemaIDAndTableInfo, error) {
-	if !variable.EnableForeignKey.Load() {
+	if !variable.EnableForeignKey.Load() || newCol.Name.L == oldCol.Name.L {
 		return nil, nil
 	}
 	is, err := getAndCheckLatestInfoSchema(d, t)
@@ -1458,7 +1461,7 @@ func adjustForeignKeyChildTableInfoAfterModifyColumn(d *ddlCtx, t *meta.Meta, jo
 		return nil, err
 	}
 	referredFKs := is.GetTableReferredForeignKeys(job.SchemaName, tblInfo.Name.L)
-	if newCol.Name.L == oldCol.Name.L || len(referredFKs) == 0 {
+	if len(referredFKs) == 0 {
 		return nil, nil
 	}
 	fkh := newForeignKeyHelper(job.SchemaName, job.SchemaID, tblInfo)

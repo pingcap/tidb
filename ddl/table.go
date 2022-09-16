@@ -1386,20 +1386,20 @@ func updateVersionAndTableInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo 
 		}
 	}
 
-	updateTableFn := func(schemaID int64, tbInfo *model.TableInfo) error {
-		if tbInfo.State == model.StatePublic {
-			tbInfo.UpdateTS = t.StartTS
-		}
-		return t.UpdateTable(schemaID, tbInfo)
+	if tblInfo.State == model.StatePublic {
+		tblInfo.UpdateTS = t.StartTS
 	}
-	err = updateTableFn(job.SchemaID, tblInfo)
+	err = t.UpdateTable(job.SchemaID, tblInfo)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
 	for _, info := range multiInfos {
-		err = updateTableFn(info.schemaID, info.tblInfo)
+		if info.tblInfo.State == model.StatePublic {
+			info.tblInfo.UpdateTS = t.StartTS
+		}
+		err = t.UpdateTable(info.schemaID, info.tblInfo)
 		if err != nil {
-			return ver, err
+			return 0, errors.Trace(err)
 		}
 	}
 	return ver, nil
