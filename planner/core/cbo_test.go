@@ -23,6 +23,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/parser/model"
@@ -726,6 +727,11 @@ func TestUpdateProjEliminate(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int)")
 	tk.MustExec("explain update t t1, (select distinct b from t) t2 set t1.b = t2.b")
+
+	tk.MustExec("drop table if exists tb1, tb2")
+	tk.MustExec("create table tb1(a int, b int, primary key(a))")
+	tk.MustExec("create table tb2 (a int, b int, c int, d datetime, primary key(c),key idx_u(a));")
+	tk.MustExec("update tb1 set tb1.b=(select tb2.b from tb2 where tb2.a=tb1.a order by c desc limit 1);")
 }
 
 func TestTiFlashCostModel(t *testing.T) {
@@ -814,6 +820,8 @@ func TestLimitIndexEstimation(t *testing.T) {
 }
 
 func TestBatchPointGetTablePartition(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")

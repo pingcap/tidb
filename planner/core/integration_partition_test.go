@@ -21,6 +21,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
@@ -61,6 +62,9 @@ func TestListPartitionPushDown(t *testing.T) {
 }
 
 func TestListColVariousTypes(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
+
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -102,6 +106,9 @@ func TestListColVariousTypes(t *testing.T) {
 }
 
 func TestListPartitionPruning(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
+
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -560,7 +567,7 @@ func TestListPartitionPrivilege(t *testing.T) {
 
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
-	require.True(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk.SetSession(se)
 	tk.MustExec("create database list_partition_pri")
 	tk.MustExec("use list_partition_pri")
@@ -574,7 +581,7 @@ func TestListPartitionPrivilege(t *testing.T) {
 	tk1 := testkit.NewTestKit(t, store)
 	se, err = session.CreateSession4Test(store)
 	require.NoError(t, err)
-	require.True(t, se.Auth(&auth.UserIdentity{Username: "priv_test", Hostname: "%"}, nil, nil))
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "priv_test", Hostname: "%"}, nil, nil))
 	tk1.SetSession(se)
 	tk1.MustExec(`use list_partition_pri`)
 	err = tk1.ExecToErr(`alter table tlist truncate partition p0`)

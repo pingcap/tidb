@@ -71,7 +71,7 @@ func TestTableForeignKey(t *testing.T) {
 	failSQL = "alter table t4 modify column d bigint;"
 	tk.MustGetErrCode(failSQL, errno.ErrFKIncompatibleColumns)
 	tk.MustQuery("select count(*) from information_schema.KEY_COLUMN_USAGE;")
-	tk.MustExec("alter table t4 drop foreign key d")
+	tk.MustExec("alter table t4 drop foreign key fk_1")
 	tk.MustExec("alter table t4 modify column d bigint;")
 	tk.MustExec("drop table if exists t1,t2,t3,t4;")
 }
