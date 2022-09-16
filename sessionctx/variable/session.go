@@ -1263,6 +1263,9 @@ type SessionVars struct {
 	// EnableTiFlashReadForWriteStmt indicates whether to enable TiFlash to read for write statements.
 	EnableTiFlashReadForWriteStmt bool
 
+	// EnableUnsafeSubstitute indicates whether to enable generate column takes unsafe substitute.
+	EnableUnsafeSubstitute bool
+
 	// ForeignKeyChecks indicates whether to enable foreign key constraint check.
 	ForeignKeyChecks bool
 
