@@ -366,33 +366,27 @@ func TestDAGPlanBuilderUnionScan(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, c int)")
 
 	var input []string
 	var output []struct {
 		SQL  string
-		Best string
+		Best []string
 	}
-	p := parser.New()
-	is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
-	for i, tt := range input {
-		comment := fmt.Sprintf("input: %s", tt)
-		stmt, err := p.ParseOneStmt(tt, "", "")
-		require.NoError(t, err, comment)
-		require.NoError(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
+	planSuiteData := core.GetPlanSuiteData()
+	planSuiteData.LoadTestCases(t, &input, &output)
 
-		// Make txn not read only.
-		txn, err := tk.Session().Txn(true)
-		require.NoError(t, err)
-		err = txn.Set(kv.Key("AAA"), []byte("BBB"))
-		require.NoError(t, err)
-		tk.Session().StmtCommit()
-		p, _, err := planner.Optimize(context.TODO(), tk.Session(), stmt, is)
-		require.NoError(t, err)
+	for i, tt := range input {
+		tk.MustExec("begin")
+		tk.MustExec("insert into t values(1,1,1)")
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Best = core.ToString(p)
+			output[i].Best = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
 		})
-		require.Equal(t, output[i].Best, core.ToString(p), fmt.Sprintf("input: %s", tt))
+		require.Equal(t, tt, output[i].SQL)
+		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Best...))
+		tk.MustExec("rollback")
 	}
 }
 
