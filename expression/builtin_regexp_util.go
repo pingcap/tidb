@@ -85,11 +85,9 @@ func buildStringParam(bf *baseBuiltinFunc, idx int, input *chunk.Chunk, notProvi
 	}
 
 	// Get values from input
-	if err := bf.args[idx].VecEvalString(bf.ctx, input, pa.getCol()); err != nil {
-		return nil, false, err
-	}
+	err = bf.args[idx].VecEvalString(bf.ctx, input, pa.getCol())
 
-	return &pa, false, nil
+	return &pa, false, err
 }
 
 // bool return value: return true when we get a const null parameter
@@ -119,11 +117,9 @@ func buildIntParam(bf *baseBuiltinFunc, idx int, input *chunk.Chunk, notProvided
 	}
 
 	// Get values from input
-	if err := bf.args[idx].VecEvalInt(bf.ctx, input, pa.getCol()); err != nil {
-		return nil, false, err
-	}
+	err = bf.args[idx].VecEvalInt(bf.ctx, input, pa.getCol())
 
-	return &pa, false, nil
+	return &pa, false, err
 }
 
 // memorized regexp means the constant pattern.
@@ -176,4 +172,12 @@ func fillNullStringIntoResult(result *chunk.Column, num int) {
 	for i := 0; i < num; i++ {
 		result.AppendNull()
 	}
+}
+
+// check if this is a valid position arguement when position is out of range
+func checkOutRangePos(strLen int, pos int64) bool {
+	// false condition:
+	//  1. non-empty string
+	//  2. empty string and pos != 1
+	return strLen != 0 || pos != 1
 }

@@ -443,7 +443,7 @@ func (re *builtinRegexpSubstrFuncSig) evalString(row chunk.Row) (string, bool, e
 		// Check position and trim expr
 		if re.isBinaryCollation() {
 			if pos < 1 || pos > int64(len(bexpr)) {
-				if len(expr) != 0 || (len(expr) == 0 && pos != 1) {
+				if checkOutRangePos(len(bexpr), pos) {
 					return "", true, ErrRegexp.GenWithStackByArgs(invalidIndex)
 				}
 			}
@@ -451,7 +451,7 @@ func (re *builtinRegexpSubstrFuncSig) evalString(row chunk.Row) (string, bool, e
 			bexpr = bexpr[pos-1:] // Trim
 		} else {
 			if pos < 1 || pos > int64(utf8.RuneCountInString(expr)) {
-				if len(expr) != 0 || (len(expr) == 0 && pos != 1) {
+				if checkOutRangePos(len(expr), pos) {
 					return "", true, ErrRegexp.GenWithStackByArgs(invalidIndex)
 				}
 			}
@@ -604,7 +604,7 @@ func (re *builtinRegexpSubstrFuncSig) vecEvalString(input *chunk.Chunk, result *
 		pos := params[2].getIntVal(i)
 		if re.isBinaryCollation() {
 			if pos < 1 || pos > int64(len(bexpr)) {
-				if len(bexpr) != 0 || (len(bexpr) == 0 && pos != 1) {
+				if checkOutRangePos(len(bexpr), pos) {
 					return ErrRegexp.GenWithStackByArgs(invalidIndex)
 				}
 			}
@@ -612,7 +612,7 @@ func (re *builtinRegexpSubstrFuncSig) vecEvalString(input *chunk.Chunk, result *
 			bexpr = bexpr[pos-1:] // Trim
 		} else {
 			if pos < 1 || pos > int64(utf8.RuneCountInString(expr)) {
-				if len(expr) != 0 || (len(expr) == 0 && pos != 1) {
+				if checkOutRangePos(len(expr), pos) {
 					return ErrRegexp.GenWithStackByArgs(invalidIndex)
 				}
 			}
@@ -764,7 +764,7 @@ func (re *builtinRegexpInStrFuncSig) evalInt(row chunk.Row) (int64, bool, error)
 		// Check position and trim expr
 		if re.isBinaryCollation() {
 			if pos < 1 || pos > int64(len(bexpr)) {
-				if len(bexpr) != 0 || (len(bexpr) == 0 && pos != 1) {
+				if checkOutRangePos(len(bexpr), pos) {
 					return 0, true, ErrRegexp.GenWithStackByArgs(invalidIndex)
 				}
 			}
@@ -772,7 +772,7 @@ func (re *builtinRegexpInStrFuncSig) evalInt(row chunk.Row) (int64, bool, error)
 			bexpr = bexpr[pos-1:] // Trim
 		} else {
 			if pos < 1 || pos > int64(utf8.RuneCountInString(expr)) {
-				if len(expr) != 0 || (len(expr) == 0 && pos != 1) {
+				if checkOutRangePos(len(expr), pos) {
 					return 0, true, ErrRegexp.GenWithStackByArgs(invalidIndex)
 				}
 			}
@@ -947,7 +947,7 @@ func (re *builtinRegexpInStrFuncSig) vecEvalInt(input *chunk.Chunk, result *chun
 		pos := params[2].getIntVal(i)
 		if re.isBinaryCollation() {
 			if pos < 1 || pos > int64(len(bexpr)) {
-				if len(bexpr) != 0 || (len(bexpr) == 0 && pos != 1) {
+				if checkOutRangePos(len(bexpr), pos) {
 					return ErrRegexp.GenWithStackByArgs(invalidIndex)
 				}
 			}
@@ -955,7 +955,7 @@ func (re *builtinRegexpInStrFuncSig) vecEvalInt(input *chunk.Chunk, result *chun
 			bexpr = bexpr[pos-1:] // Trim
 		} else {
 			if pos < 1 || pos > int64(utf8.RuneCountInString(expr)) {
-				if len(expr) != 0 || (len(expr) == 0 && pos != 1) {
+				if checkOutRangePos(len(expr), pos) {
 					return ErrRegexp.GenWithStackByArgs(invalidIndex)
 				}
 			}
@@ -1142,7 +1142,7 @@ func (re *builtinRegexpReplaceFuncSig) evalString(row chunk.Row) (string, bool, 
 		// Check position and trim expr
 		if re.isBinaryCollation() {
 			if pos < 1 || pos > int64(len(trimmedBexpr)) {
-				if len(trimmedBexpr) != 0 || (len(trimmedBexpr) == 0 && pos != 1) {
+				if checkOutRangePos(len(trimmedBexpr), pos) {
 					return "", true, ErrRegexp.GenWithStackByArgs(invalidIndex)
 				}
 			}
@@ -1150,7 +1150,7 @@ func (re *builtinRegexpReplaceFuncSig) evalString(row chunk.Row) (string, bool, 
 			trimmedBexpr = bexpr[pos-1:] // Trim
 		} else {
 			if pos < 1 || pos > int64(utf8.RuneCountInString(trimmedExpr)) {
-				if len(trimmedExpr) != 0 || (len(trimmedExpr) == 0 && pos != 1) {
+				if checkOutRangePos(len(trimmedExpr), pos) {
 					return "", true, ErrRegexp.GenWithStackByArgs(invalidIndex)
 				}
 			}
@@ -1327,7 +1327,7 @@ func (re *builtinRegexpReplaceFuncSig) vecEvalString(input *chunk.Chunk, result 
 		trimmedLen := int64(0)
 		if re.isBinaryCollation() {
 			if pos < 1 || pos > int64(len(trimmedBexpr)) {
-				if len(trimmedBexpr) != 0 || (len(trimmedBexpr) == 0 && pos != 1) {
+				if checkOutRangePos(len(trimmedBexpr), pos) {
 					return ErrRegexp.GenWithStackByArgs(invalidIndex)
 				}
 			}
@@ -1335,7 +1335,7 @@ func (re *builtinRegexpReplaceFuncSig) vecEvalString(input *chunk.Chunk, result 
 			trimmedBexpr = bexpr[pos-1:] // Trim
 		} else {
 			if pos < 1 || pos > int64(utf8.RuneCountInString(trimmedExpr)) {
-				if len(trimmedExpr) != 0 || (len(trimmedExpr) == 0 && pos != 1) {
+				if checkOutRangePos(len(trimmedExpr), pos) {
 					return ErrRegexp.GenWithStackByArgs(invalidIndex)
 				}
 			}
