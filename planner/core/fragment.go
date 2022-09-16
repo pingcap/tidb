@@ -17,6 +17,7 @@ package core
 import (
 	"context"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/distsql"
@@ -47,6 +48,28 @@ type Fragment struct {
 	IsRoot bool
 
 	singleton bool // indicates if this is a task running on a single node.
+}
+
+const emptyFragmentSize = int64(unsafe.Sizeof(Fragment{}))
+
+// MemoryUsage return the memory usage of Fragment
+func (f *Fragment) MemoryUsage() (sum int64) {
+	if f == nil {
+		return
+	}
+
+	sum = emptyFragmentSize
+	if f.TableScan != nil {
+		sum += f.TableScan.MemoryUsage()
+	}
+	if f.ExchangeSender != nil {
+		sum += f.ExchangeSender.MemoryUsage()
+	}
+
+	for _, receiver := range f.ExchangeReceivers {
+		sum += receiver.MemoryUsage()
+	}
+	return
 }
 
 type tasksAndFrags struct {
