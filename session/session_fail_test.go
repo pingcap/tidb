@@ -144,7 +144,7 @@ func (s *testSessionSerialSuite) TestClusterTableSendError(c *C) {
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[0].Err, ErrorMatches, ".*TiDB server timeout, address is.*")
 }
 
-func (*testSessionSerialSuite) TestSchemaValidator2(c *C) {
+func (s *testSessionSerialSuite) TestSchemaValidator2(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
 	// create table
