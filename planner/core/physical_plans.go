@@ -1184,6 +1184,14 @@ func (p *PhysicalExchangeReceiver) GetExchangeSender() *PhysicalExchangeSender {
 	return p.children[0].(*PhysicalExchangeSender)
 }
 
+// MemoryUsage return the memory usage of PhysicalExchangeReceiver
+func (p *PhysicalExchangeReceiver) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+}
+
 // PhysicalExchangeSender dispatches data to upstream tasks. That means push mode processing,
 type PhysicalExchangeSender struct {
 	basePhysicalPlan
