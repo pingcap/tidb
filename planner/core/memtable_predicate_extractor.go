@@ -325,7 +325,7 @@ func (helper extractHelper) extractLikePattern(
 	var colName string
 	var datums []types.Datum
 	switch fn.FuncName.L {
-	case ast.EQ, ast.Like, ast.Regexp:
+	case ast.EQ, ast.Like, ast.Regexp, ast.RegexpLike:
 		colName, datums = helper.extractColBinaryOpConsExpr(extractCols, fn)
 	}
 	if colName == extractColName {
@@ -337,7 +337,7 @@ func (helper extractHelper) extractLikePattern(
 				return true, stringutil.CompileLike2Regexp(datums[0].GetString())
 			}
 			return true, datums[0].GetString()
-		case ast.Regexp:
+		case ast.Regexp, ast.RegexpLike:
 			return true, datums[0].GetString()
 		default:
 			return false, ""
