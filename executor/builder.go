@@ -3922,6 +3922,11 @@ type mockPhysicalIndexReader struct {
 	e Executor
 }
 
+// MemoryUsage return the memory usage of mockPhysicalIndexReader
+func (p *mockPhysicalIndexReader) MemoryUsage() (sum int64) {
+	return // mock operator for testing only
+}
+
 func (builder *dataReaderBuilder) buildExecutorForIndexJoin(ctx context.Context, lookUpContents []*indexJoinLookUpContent,
 	IndexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager, canReorderHandles bool, memTracker *memory.Tracker, interruptSignal *atomic.Value) (Executor, error) {
 	return builder.buildExecutorForIndexJoinInternal(ctx, builder.Plan, lookUpContents, IndexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
