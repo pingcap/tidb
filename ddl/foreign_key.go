@@ -477,6 +477,41 @@ func checkIndexNeededInForeignKeyInOwner(d *ddlCtx, t *meta.Meta, job *model.Job
 	return nil
 }
 
+func checkDropColumnWithForeignKeyConstraint(is infoschema.InfoSchema, dbName string, tbInfo *model.TableInfo, colName string) error {
+	for _, fkInfo := range tbInfo.ForeignKeys {
+		for _, col := range fkInfo.Cols {
+			if col.L == colName {
+				return dbterror.ErrFkColumnCannotDrop.GenWithStackByArgs(colName, fkInfo.Name)
+			}
+		}
+	}
+	referredFKs := is.GetTableReferredForeignKeys(dbName, tbInfo.Name.L)
+	for _, referredFK := range referredFKs {
+		for _, col := range referredFK.Cols {
+			if col.L == colName {
+				return dbterror.ErrFkColumnCannotDropChild.GenWithStackByArgs(colName, referredFK.ChildFKName, referredFK.ChildTable)
+			}
+		}
+	}
+	return nil
+}
+
+func checkDropColumnWithForeignKeyConstraintInOwner(d *ddlCtx, t *meta.Meta, job *model.Job, tbInfo *model.TableInfo, colName string) error {
+	if !variable.EnableForeignKey.Load() {
+		return nil
+	}
+	is, err := getAndCheckLatestInfoSchema(d, t)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = checkDropColumnWithForeignKeyConstraint(is, job.SchemaName, tbInfo, colName)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return errors.Trace(err)
+	}
+	return nil
+}
+
 type foreignKeyHelper struct {
 	loaded map[schemaAndTable]schemaIDAndTableInfo
 }
