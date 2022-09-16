@@ -766,6 +766,40 @@ func TestCreateTableWithForeignKeyError(t *testing.T) {
 	}
 }
 
+func TestModifyColumnWithForeignKey(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1;")
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t1 (id int key, b varchar(10), index(b));")
+	tk.MustExec("create table t2 (a varchar(10), constraint fk foreign key (a) references t1(b));")
+	tk.MustExec("insert into t1 values (1, '123456789');")
+	tk.MustExec("insert into t2 values ('123456789');")
+	tk.MustGetErrMsg("alter table t1 modify column b varchar(5);", "[ddl:1833]Cannot change column 'b': used in a foreign key constraint 'fk' of table 'test.t2'")
+	tk.MustGetErrMsg("alter table t1 modify column b bigint;", "[ddl:3780]Referencing column 'a' and referenced column 'b' in foreign key constraint 'fk' are incompatible.")
+	tk.MustExec("alter table t1 modify column b varchar(20);")
+	tk.MustGetErrMsg("alter table t1 modify column b varchar(10);", "[ddl:1833]Cannot change column 'b': used in a foreign key constraint 'fk' of table 'test.t2'")
+	tk.MustExec("alter table t2 modify column a varchar(20);")
+	tk.MustExec("alter table t2 modify column a varchar(21);")
+	tk.MustGetErrMsg("alter table t2 modify column a varchar(5);", "[ddl:1832]Cannot change column 'a': used in a foreign key constraint 'fk'")
+	tk.MustGetErrMsg("alter table t2 modify column a bigint;", "[ddl:3780]Referencing column 'a' and referenced column 'b' in foreign key constraint 'fk' are incompatible.")
+
+	tk.MustExec("drop table t2")
+	tk.MustExec("drop table t1")
+	tk.MustExec("create table t1 (id int key, b decimal(10, 5), index(b));")
+	tk.MustExec("create table t2 (a decimal(10, 5), constraint fk foreign key (a) references t1(b));")
+	tk.MustExec("insert into t1 values (1, 12345.67891);")
+	tk.MustExec("insert into t2 values (12345.67891);")
+	tk.MustGetErrMsg("alter table t1 modify column b decimal(10, 6);", "[ddl:1833]Cannot change column 'b': used in a foreign key constraint 'fk' of table 'test.t2'")
+	tk.MustGetErrMsg("alter table t1 modify column b decimal(10, 3);", "[ddl:1833]Cannot change column 'b': used in a foreign key constraint 'fk' of table 'test.t2'")
+	tk.MustGetErrMsg("alter table t1 modify column b decimal(5, 2);", "[ddl:1833]Cannot change column 'b': used in a foreign key constraint 'fk' of table 'test.t2'")
+	tk.MustGetErrMsg("alter table t1 modify column b decimal(20, 10);", "[ddl:1833]Cannot change column 'b': used in a foreign key constraint 'fk' of table 'test.t2'")
+	tk.MustGetErrMsg("alter table t2 modify column a decimal(30, 15);", "[ddl:1832]Cannot change column 'a': used in a foreign key constraint 'fk'")
+	tk.MustGetErrMsg("alter table t2 modify column a decimal(5, 2);", "[ddl:1832]Cannot change column 'a': used in a foreign key constraint 'fk'")
+}
+
 func TestDropChildTableForeignKeyMetaInfo(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
