@@ -138,7 +138,7 @@ vet:
 	$(GO) vet -all $(PACKAGES) 2>&1 | $(FAIL_ON_STDOUT)
 
 staticcheck:
-	$(GO) get honnef.co/go/tools/cmd/staticcheck
+	$(GO) get honnef.co/go/tools/cmd/staticcheck@v0.0.1-2020.1.6
 	$(STATICCHECK) ./...
 
 tidy:
