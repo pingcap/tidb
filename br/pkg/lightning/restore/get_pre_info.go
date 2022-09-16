@@ -684,6 +684,17 @@ outloop:
 					_, extendCols, extendVals = filterColumns(columnNames, sampleFile.ExtendData, ignoreColsMap, tableInfo)
 				}
 				initializedColumns = true
+				lastRow := parser.LastRow()
+				lastRowLen := len(lastRow.Row)
+				extendColsMap := make(map[string]int)
+				for i, c := range extendCols {
+					extendColsMap[c] = lastRowLen + i
+				}
+				for i, col := range tableInfo.Columns {
+					if p, ok := extendColsMap[col.Name.O]; ok {
+						columnPermutation[i] = p
+					}
+				}
 			}
 		case io.EOF:
 			break outloop
@@ -692,18 +703,6 @@ outloop:
 			return 0.0, false, errors.Trace(err)
 		}
 		lastRow := parser.LastRow()
-		if rowCount == 0 {
-			lastRowLen := len(lastRow.Row)
-			extendColsMap := make(map[string]int)
-			for i, c := range extendCols {
-				extendColsMap[c] = lastRowLen + i
-			}
-			for i, col := range tableInfo.Columns {
-				if p, ok := extendColsMap[col.Name.O]; ok {
-					columnPermutation[i] = p
-				}
-			}
-		}
 		rowCount++
 		lastRow.Row = append(lastRow.Row, extendVals...)
 

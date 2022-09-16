@@ -1,6 +1,10 @@
-
 [mydumper]
 source-id = "mysql-01"
+
+[[mydumper.ignore-columns]]
+db = "routes_b"
+table = "u"
+columns = ["b", "c", "c_source"]
 
 # the complicated routing rules should be tested in tidb-tools repo already
 # here we're just verifying the basic things do work.

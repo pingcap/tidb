@@ -2487,10 +2487,7 @@ func filterColumns(columnNames []string, extendData mydump.ExtendColumnData, ign
 	filteredColumns := make([]string, 0, len(columnNames))
 	if len(columnNames) > 0 {
 		for _, c := range columnNames {
-			ok := false
-			if ignoreColsMap != nil {
-				_, ok = ignoreColsMap[c]
-			}
+			_, ok := ignoreColsMap[c]
 			if !ok {
 				delete(extendColsSet, c)
 				filteredColumns = append(filteredColumns, c)
@@ -2500,10 +2497,7 @@ func filterColumns(columnNames []string, extendData mydump.ExtendColumnData, ign
 		// init column names by table schema
 		// after filtered out some columns, we must explicitly set the columns for TiDB backend
 		for _, col := range tableInfo.Columns {
-			ok := false
-			if ignoreColsMap != nil {
-				_, ok = ignoreColsMap[col.Name.L]
-			}
+			_, ok := ignoreColsMap[col.Name.L]
 			// ignore all extend row values specified by users
 			if !col.Hidden && !ok && !extendColsSet.Exist(col.Name.O) {
 				filteredColumns = append(filteredColumns, col.Name.O)
@@ -2553,7 +2547,7 @@ func (cr *chunkRestore) encodeLoop(
 	}
 
 	pauser, maxKvPairsCnt := rc.pauser, rc.cfg.TikvImporter.MaxKVPairs
-	initializedColumns, initilizedEntendPerm, reachEOF := false, false, false
+	initializedColumns, reachEOF := false, false
 	// filteredColumns is column names that excluded ignored columns
 	// WARN: this might be not correct when different SQL statements contains different fields,
 	// but since ColumnPermutation also depends on the hypothesis that the columns in one source file is the same
@@ -2602,6 +2596,17 @@ func (cr *chunkRestore) encodeLoop(
 					if len(ignoreColsMap) > 0 || len(cr.chunk.FileMeta.ExtendData.Columns) > 0 {
 						filteredColumns, extendCols, extendVals = filterColumns(columnNames, cr.chunk.FileMeta.ExtendData, ignoreColsMap, t.tableInfo.Core)
 					}
+					lastRow := cr.parser.LastRow()
+					lastRowLen := len(lastRow.Row)
+					extendColsMap := make(map[string]int)
+					for i, c := range extendCols {
+						extendColsMap[c] = lastRowLen + i
+					}
+					for i, col := range t.tableInfo.Core.Columns {
+						if p, ok := extendColsMap[col.Name.O]; ok {
+							cr.chunk.ColumnPermutation[i] = p
+						}
+					}
 					initializedColumns = true
 				}
 			case io.EOF:
@@ -2614,19 +2619,6 @@ func (cr *chunkRestore) encodeLoop(
 			readDur += time.Since(readDurStart)
 			encodeDurStart := time.Now()
 			lastRow := cr.parser.LastRow()
-			if !initilizedEntendPerm {
-				initilizedEntendPerm = true
-				lastRowLen := len(lastRow.Row)
-				extendColsMap := make(map[string]int)
-				for i, c := range extendCols {
-					extendColsMap[c] = lastRowLen + i
-				}
-				for i, col := range t.tableInfo.Core.Columns {
-					if p, ok := extendColsMap[col.Name.O]; ok {
-						cr.chunk.ColumnPermutation[i] = p
-					}
-				}
-			}
 			lastRow.Row = append(lastRow.Row, extendVals...)
 			// sql -> kv
 			kvs, encodeErr := kvEncoder.Encode(logger, lastRow.Row, lastRow.RowID, cr.chunk.ColumnPermutation, cr.chunk.Key.Path, curOffset)
