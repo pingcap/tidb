@@ -16,12 +16,15 @@ package domain
 import (
 	"math/rand"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -106,6 +109,26 @@ func (*testSuite) TestSchemaValidator(c *C) {
 
 	close(exit)
 	wg.Wait()
+}
+
+func (*testSuite) TestSchemaValidator2(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	// create table
+	tk.MustExec("create table t1(a int, b int);")
+	tk.MustExec("create table t2(a int, b int);")
+	tk.MustExec("insert into t1 value(1,1);")
+	tk.MustExec("insert into t2 value(1,1);")
+
+	// The schema version is out of date in the first transaction, and the SQL can't be retried.
+	atomic.StoreUint32(&session.SchemaChangedWithoutRetry, 1)
+	defer func() {
+		atomic.StoreUint32(&session.SchemaChangedWithoutRetry, 0)
+	}()
+	tk.MustExec(`begin;`)
+	tk.MustExec("update t1, t2 set t1.a = t2.b;")
+	tk1.MustExec("create table t3(a int, b int);")
+	tk.MustExec(`commit;`)
 }
 
 func getGreaterVersionItem(c *C, lease time.Duration, leaseGrantCh chan leaseGrantItem, currVer int64) leaseGrantItem {
