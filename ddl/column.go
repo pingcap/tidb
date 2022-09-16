@@ -19,7 +19,6 @@ import (
 	"context"
 	"fmt"
 	"math/bits"
-	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -1413,16 +1412,11 @@ func (w *worker) doModifyColumn(
 		return ver, errors.Trace(err)
 	}
 
-	tblInfos, err := adjustForeignKeyChildTableInfoAfterModifyColumn(d, t, job, tblInfo, newCol, oldCol)
+	childTableInfos, err := adjustForeignKeyChildTableInfoAfterModifyColumn(d, t, job, tblInfo, newCol, oldCol)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	if len(tblInfos) > 0 {
-		ver, err = updateVersionAndMultiTableInfosWithCheck(d, t, job, tblInfos, true)
-	} else {
-		ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, true)
-	}
-
+	ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, true, childTableInfos...)
 	if err != nil {
 		// Modified the type definition of 'null' to 'not null' before this, so rollBack the job when an error occurs.
 		job.State = model.JobStateRollingback
@@ -1488,11 +1482,11 @@ func adjustForeignKeyChildTableInfoAfterModifyColumn(d *ddlCtx, t *meta.Meta, jo
 	}
 	infoList := make([]schemaIDAndTableInfo, 0, len(fkh.loaded))
 	for _, info := range fkh.loaded {
+		if info.tblInfo.ID == tblInfo.ID {
+			continue
+		}
 		infoList = append(infoList, info)
 	}
-	sort.Slice(infoList, func(i, j int) bool {
-		return infoList[i].tblInfo.ID < infoList[j].tblInfo.ID
-	})
 	return infoList, nil
 }
 

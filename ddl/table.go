@@ -1347,18 +1347,25 @@ func checkTableNotExistsFromStore(t *meta.Meta, schemaID int64, tableName string
 }
 
 // updateVersionAndTableInfoWithCheck checks table info validate and updates the schema version and the table information
-func updateVersionAndTableInfoWithCheck(d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, shouldUpdateVer bool) (
+func updateVersionAndTableInfoWithCheck(d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, shouldUpdateVer bool, multiInfos ...schemaIDAndTableInfo) (
 	ver int64, err error) {
 	err = checkTableInfoValid(tblInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	return updateVersionAndTableInfo(d, t, job, tblInfo, shouldUpdateVer)
+	for _, info := range multiInfos {
+		err = checkTableInfoValid(info.tblInfo)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+	}
+	return updateVersionAndTableInfo(d, t, job, tblInfo, shouldUpdateVer, multiInfos...)
 }
 
 // updateVersionAndTableInfo updates the schema version and the table information.
-func updateVersionAndTableInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, shouldUpdateVer bool) (
+func updateVersionAndTableInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, shouldUpdateVer bool, multiInfos ...schemaIDAndTableInfo) (
 	ver int64, err error) {
 	failpoint.Inject("mockUpdateVersionAndTableInfoErr", func(val failpoint.Value) {
 		switch val.(int) {
@@ -1373,54 +1380,34 @@ func updateVersionAndTableInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo 
 		}
 	})
 	if shouldUpdateVer && (job.MultiSchemaInfo == nil || !job.MultiSchemaInfo.SkipVersion) {
-		ver, err = updateSchemaVersion(d, t, job)
+		ver, err = updateSchemaVersion(d, t, job, multiInfos...)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
 	}
 
-	if tblInfo.State == model.StatePublic {
-		tblInfo.UpdateTS = t.StartTS
-	}
-	return ver, t.UpdateTable(job.SchemaID, tblInfo)
-}
-
-type schemaIDAndTableInfo struct {
-	schemaID int64
-	tblInfo  *model.TableInfo
-}
-
-func updateVersionAndMultiTableInfosWithCheck(d *ddlCtx, t *meta.Meta, job *model.Job, infos []schemaIDAndTableInfo, shouldUpdateVer bool) (
-	ver int64, err error) {
-	for _, info := range infos {
-		err = checkTableInfoValid(info.tblInfo)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
+	updateTableFn := func(schemaID int64, tbInfo *model.TableInfo) error {
+		if tbInfo.State == model.StatePublic {
+			tbInfo.UpdateTS = t.StartTS
 		}
+		return t.UpdateTable(schemaID, tbInfo)
 	}
-	return updateVersionAndMultiTableInfos(d, t, job, infos, shouldUpdateVer)
-}
-
-func updateVersionAndMultiTableInfos(d *ddlCtx, t *meta.Meta, job *model.Job, infos []schemaIDAndTableInfo, shouldUpdateVer bool) (
-	ver int64, err error) {
-	if shouldUpdateVer {
-		ver, err = updateMultiSchemaVersion(d, t, job, infos)
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
+	err = updateTableFn(job.SchemaID, tblInfo)
+	if err != nil {
+		return 0, errors.Trace(err)
 	}
-
-	for _, info := range infos {
-		if info.tblInfo.State == model.StatePublic {
-			info.tblInfo.UpdateTS = t.StartTS
-		}
-		err = t.UpdateTable(info.schemaID, info.tblInfo)
+	for _, info := range multiInfos {
+		err = updateTableFn(info.schemaID, info.tblInfo)
 		if err != nil {
 			return ver, err
 		}
 	}
 	return ver, nil
+}
+
+type schemaIDAndTableInfo struct {
+	schemaID int64
+	tblInfo  *model.TableInfo
 }
 
 func onRepairTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
