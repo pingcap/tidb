@@ -1739,7 +1739,6 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.
 		// In this case, this TiDB wrongly gets the mdl lock.
 		if !skipLock {
 			sctx.GetSessionVars().GetRelatedTableForMDL().Store(tableInfo.ID, int64(0))
-
 		}
 		domainSchema := domain.GetDomain(sctx).InfoSchema()
 		domainSchemaVer := domainSchema.SchemaMetaVersion()
