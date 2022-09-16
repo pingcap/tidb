@@ -23,6 +23,7 @@ set -o pipefail
 make bazel_coverage_test
 EXIT_STATUS=$?
 # collect the junit and coverage report
+cat /home/jenkins/.tidb/tmp/63a9840cd0739f2c243bb46478607469/server/jvm.out
 bazel_collect
 mkdir -p test_coverage
 mv bazel.xml test_coverage/bazel.xml
