@@ -504,19 +504,24 @@ func TestShow(t *testing.T) {
 
 	// Test range columns partition
 	tk.MustExec(`drop table if exists t`)
-	tk.MustExec(`CREATE TABLE t (a int, b int, c char, d int) PARTITION BY RANGE COLUMNS(a,d,c) (
+	tk.MustExec(`CREATE TABLE t (a int, b int, c varchar(25), d int) PARTITION BY RANGE COLUMNS(a,d,c) (
  	PARTITION p0 VALUES LESS THAN (5,10,'ggg'),
  	PARTITION p1 VALUES LESS THAN (10,20,'mmm'),
  	PARTITION p2 VALUES LESS THAN (15,30,'sss'),
         PARTITION p3 VALUES LESS THAN (50,MAXVALUE,MAXVALUE))`)
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 	tk.MustQuery("show create table t").Check(testkit.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
 			"  `a` int(11) DEFAULT NULL,\n"+
 			"  `b` int(11) DEFAULT NULL,\n"+
-			"  `c` char(1) DEFAULT NULL,\n"+
+			"  `c` varchar(25) DEFAULT NULL,\n"+
 			"  `d` int(11) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
-	))
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
+			"PARTITION BY RANGE COLUMNS(`a`,`d`,`c`)\n"+
+			"(PARTITION `p0` VALUES LESS THAN (5,10,'ggg'),\n"+
+			" PARTITION `p1` VALUES LESS THAN (10,20,'mmm'),\n"+
+			" PARTITION `p2` VALUES LESS THAN (15,30,'sss'),\n"+
+			" PARTITION `p3` VALUES LESS THAN (50,MAXVALUE,MAXVALUE))"))
 
 	// Test hash partition
 	tk.MustExec(`drop table if exists t`)
