@@ -164,6 +164,7 @@ func (e *PlanReplayerExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		if err != nil {
 			return err
 		}
+		// As we can only read file from handleSpecialQuery, thus we store the file token in the session var and return nil here.
 		e.endFlag = true
 		e.ctx.GetSessionVars().LastPlanReplayerToken = e.DumpInfo.FileName
 		return nil
@@ -204,7 +205,6 @@ func (e *PlanReplayerExec) createFile(path string) error {
 	}
 	e.DumpInfo.File = zf
 	e.DumpInfo.FileName = fileName
-	e.ctx.GetSessionVars().LastPlanReplayerToken = e.DumpInfo.FileName
 	return nil
 }
 
@@ -310,11 +310,7 @@ func (e *PlanReplayerDumpInfo) dump(ctx context.Context) (err error) {
 	}
 
 	// Dump explain
-	if err = dumpExplain(e.ctx, zw, e.ExecStmts, e.Analyze); err != nil {
-		return err
-	}
-
-	return nil
+	return dumpExplain(e.ctx, zw, e.ExecStmts, e.Analyze)
 }
 
 func dumpConfig(zw *zip.Writer) error {
@@ -560,9 +556,6 @@ func (e *PlanReplayerDumpInfo) extractTableNames(ctx context.Context,
 }
 
 func (e *PlanReplayerExec) prepare() error {
-	if len(e.DumpInfo.Path) == 0 {
-		return errors.New("plan replayer: file path is empty")
-	}
 	val := e.ctx.Value(PlanReplayerDumpVarKey)
 	if val != nil {
 		e.ctx.SetValue(PlanReplayerDumpVarKey, nil)
