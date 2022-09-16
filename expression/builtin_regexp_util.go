@@ -73,8 +73,8 @@ func buildStringParam(bf *baseBuiltinFunc, idx int, input *chunk.Chunk, notProvi
 		// Initialize the const
 		var isConstNull bool
 		pa.defaultStrVal, isConstNull, err = bf.args[idx].EvalString(bf.ctx, chunk.Row{})
-		if isConstNull {
-			return nil, isConstNull, nil
+		if isConstNull || err != nil {
+			return nil, isConstNull, err
 		}
 		return &pa, false, nil
 	}
@@ -105,8 +105,8 @@ func buildIntParam(bf *baseBuiltinFunc, idx int, input *chunk.Chunk, notProvided
 		// Initialize the const
 		var isConstNull bool
 		pa.defaultIntVal, isConstNull, err = bf.args[idx].EvalInt(bf.ctx, chunk.Row{})
-		if isConstNull {
-			return nil, isConstNull, nil
+		if isConstNull || err != nil {
+			return nil, isConstNull, err
 		}
 		return &pa, false, nil
 	}
@@ -174,7 +174,7 @@ func fillNullStringIntoResult(result *chunk.Column, num int) {
 	}
 }
 
-// check if this is a valid position arguement when position is out of range
+// check if this is a valid position argument when position is out of range
 func checkOutRangePos(strLen int, pos int64) bool {
 	// false condition:
 	//  1. non-empty string
