@@ -436,10 +436,10 @@ func (s *tidbSuite) TestAlterAutoInc(c *C) {
 		ExpectClose()
 
 	err := AlterAutoIncrement(ctx, s.tiGlue.GetSQLExecutor(), "`db`.`table`", 12345)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 
 	err = AlterAutoIncrement(ctx, s.tiGlue.GetSQLExecutor(), "`db`.`table`", uint64(math.MaxInt64)+1)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 }
 
 func (s *tidbSuite) TestAlterAutoRandom(c *C) {
@@ -455,14 +455,14 @@ func (s *tidbSuite) TestAlterAutoRandom(c *C) {
 		ExpectClose()
 
 	err := AlterAutoRandom(ctx, s.tiGlue.GetSQLExecutor(), "`db`.`table`", 12345, 288230376151711743)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 
 	// insert 288230376151711743 and try rebase to 288230376151711744
 	err = AlterAutoRandom(ctx, s.tiGlue.GetSQLExecutor(), "`db`.`table`", 288230376151711744, 288230376151711743)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 
 	err = AlterAutoRandom(ctx, s.tiGlue.GetSQLExecutor(), "`db`.`table`", uint64(math.MaxInt64)+1, 288230376151711743)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 }
 
 func (s *tidbSuite) TestObtainRowFormatVersionSucceed(c *C) {
