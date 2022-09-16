@@ -53,6 +53,7 @@ const (
 	invalidMatchType    = "Invalid match type"
 	invalidIndex        = "Index out of bounds in regular expression search"
 	invalidReturnOption = "Incorrect arguments to regexp_instr: return_option must be 1 or 0"
+	binaryCollateErr    = "Not support binary collation so far"
 )
 
 var validMatchType = set.NewStringSet(
@@ -378,6 +379,10 @@ func (c *regexpSubstrFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	}
 	sig.setPbCode(tipb.ScalarFuncSig_RegexpSubstrSig)
 
+	if sig.isBinaryCollation() {
+		return nil, ErrRegexp.GenWithStackByArgs(binaryCollateErr)
+	}
+
 	return &sig, nil
 }
 
@@ -690,6 +695,10 @@ func (c *regexpInStrFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	}
 	sig.setPbCode(tipb.ScalarFuncSig_RegexpInStrSig)
 
+	if sig.isBinaryCollation() {
+		return nil, ErrRegexp.GenWithStackByArgs(binaryCollateErr)
+	}
+
 	return &sig, nil
 }
 
@@ -763,21 +772,23 @@ func (re *builtinRegexpInStrFuncSig) evalInt(row chunk.Row) (int64, bool, error)
 
 		// Check position and trim expr
 		if re.isBinaryCollation() {
-			if pos < 1 || pos > int64(len(bexpr)) {
-				if checkOutRangePos(len(bexpr), pos) {
-					return 0, true, ErrRegexp.GenWithStackByArgs(invalidIndex)
-				}
+			bexprLen := int64(len(bexpr))
+			if (pos < 1 || pos > bexprLen) && bexprLen != 0 {
+				return 0, true, ErrRegexp.GenWithStackByArgs(invalidIndex)
 			}
 
-			bexpr = bexpr[pos-1:] // Trim
+			if bexprLen != 0 {
+				bexpr = bexpr[pos-1:] // Trim
+			}
 		} else {
-			if pos < 1 || pos > int64(utf8.RuneCountInString(expr)) {
-				if checkOutRangePos(len(expr), pos) {
-					return 0, true, ErrRegexp.GenWithStackByArgs(invalidIndex)
-				}
+			exprLen := int64(len(expr))
+			if pos < 1 || pos > int64(utf8.RuneCountInString(expr)) && exprLen != 0 {
+				return 0, true, ErrRegexp.GenWithStackByArgs(invalidIndex)
 			}
 
-			stringutil.TrimUtf8String(&expr, pos-1) // Trim
+			if exprLen != 0 {
+				stringutil.TrimUtf8String(&expr, pos-1) // Trim
+			}
 		}
 	}
 
@@ -946,21 +957,22 @@ func (re *builtinRegexpInStrFuncSig) vecEvalInt(input *chunk.Chunk, result *chun
 		// Check position and trim expr
 		pos := params[2].getIntVal(i)
 		if re.isBinaryCollation() {
-			if pos < 1 || pos > int64(len(bexpr)) {
-				if checkOutRangePos(len(bexpr), pos) {
-					return ErrRegexp.GenWithStackByArgs(invalidIndex)
-				}
+			bexprLen := int64(len(bexpr))
+			if pos < 1 || pos > bexprLen {
+				return ErrRegexp.GenWithStackByArgs(invalidIndex)
 			}
 
-			bexpr = bexpr[pos-1:] // Trim
+			if bexprLen != 0 {
+				bexpr = bexpr[pos-1:] // Trim
+			}
 		} else {
 			if pos < 1 || pos > int64(utf8.RuneCountInString(expr)) {
-				if checkOutRangePos(len(expr), pos) {
-					return ErrRegexp.GenWithStackByArgs(invalidIndex)
-				}
+				return ErrRegexp.GenWithStackByArgs(invalidIndex)
 			}
 
-			stringutil.TrimUtf8String(&expr, pos-1) // Trim
+			if len(expr) != 0 {
+				stringutil.TrimUtf8String(&expr, pos-1) // Trim
+			}
 		}
 
 		// Get occurrence
@@ -1046,6 +1058,10 @@ func (c *regexpReplaceFunctionClass) getFunction(ctx sessionctx.Context, args []
 		regexpBaseFuncSig: regexpBaseFuncSig{baseBuiltinFunc: bf},
 	}
 	sig.setPbCode(tipb.ScalarFuncSig_RegexpReplaceSig)
+
+	if sig.isBinaryCollation() {
+		return nil, ErrRegexp.GenWithStackByArgs(binaryCollateErr)
+	}
 
 	return &sig, nil
 }
