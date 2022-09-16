@@ -246,7 +246,6 @@ func TestTablePartition(t *testing.T) {
 	tk.MustExec("create table pt2 (a int,b int) partition by range(a) (" +
 		"partition p0 values less than (10)," +
 		"partition p1 values less than (20))")
-
 	tk.MustExec("drop table if exists nt")
 	tk.MustExec("create table nt (a int,b int)")
 	tk.MustExec(`alter table pt2 exchange partition p1 with table nt`)
