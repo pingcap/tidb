@@ -292,21 +292,21 @@ func GetLazyPessimisticUniqueCheckSetCounter() int64 {
 	return readCounter(LazyPessimisticUniqueCheckSetCount)
 }
 
-// AddIndexIngestUsageCounter records the usages of Add Index with acceleration solution.
-type AddIndexIngestUsageCounter struct {
+// DDLUsageCounter records the usages of Add Index with acceleration solution.
+type DDLUsageCounter struct {
 	AddIndexIngestUsed int64 `json:"add_index_Ingest_used"`
 }
 
 // Sub returns the difference of two counters.
-func (a AddIndexIngestUsageCounter) Sub(rhs AddIndexIngestUsageCounter) AddIndexIngestUsageCounter {
-	return AddIndexIngestUsageCounter{
+func (a DDLUsageCounter) Sub(rhs DDLUsageCounter) DDLUsageCounter {
+	return DDLUsageCounter{
 		AddIndexIngestUsed: a.AddIndexIngestUsed - rhs.AddIndexIngestUsed,
 	}
 }
 
-// GetAddIndexIngestCounter gets the add index acceleration solution counts.
-func GetAddIndexIngestCounter() AddIndexIngestUsageCounter {
-	return AddIndexIngestUsageCounter{
+// GetDDLUsageCounter gets the add index acceleration solution counts.
+func GetDDLUsageCounter() DDLUsageCounter {
+	return DDLUsageCounter{
 		AddIndexIngestUsed: readCounter(TelemetryAddIndexIngestCnt),
 	}
 }

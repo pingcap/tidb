@@ -425,7 +425,7 @@ func TestAddIndexAcceleration(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	usage, err := telemetry.GetFeatureUsage(tk.Session())
-	require.Equal(t, int64(0), usage.AddIndexIngest.AddIndexIngestUsed)
+	require.Equal(t, int64(0), usage.DDLUsageCounter.AddIndexIngestUsed)
 	require.NoError(t, err)
 
 	allow := ddl.IsEnableFastReorg()
@@ -437,16 +437,16 @@ func TestAddIndexAcceleration(t *testing.T) {
 	tk.MustExec("alter table tele_t add index idx_org(b)")
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
-	require.Equal(t, int64(0), usage.AddIndexIngest.AddIndexIngestUsed)
+	require.Equal(t, int64(0), usage.DDLUsageCounter.AddIndexIngestUsed)
 
 	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = on")
 	allow = ddl.IsEnableFastReorg()
 	require.Equal(t, true, allow)
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
-	require.Equal(t, int64(0), usage.AddIndexIngest.AddIndexIngestUsed)
+	require.Equal(t, int64(0), usage.DDLUsageCounter.AddIndexIngestUsed)
 	tk.MustExec("alter table tele_t add index idx_new(b)")
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
-	require.Equal(t, int64(1), usage.AddIndexIngest.AddIndexIngestUsed)
+	require.Equal(t, int64(1), usage.DDLUsageCounter.AddIndexIngestUsed)
 }

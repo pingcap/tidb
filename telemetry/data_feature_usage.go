@@ -53,7 +53,7 @@ type featureUsage struct {
 	LogBackup             bool                             `json:"logBackup"`
 	EnablePaging          bool                             `json:"enablePaging"`
 	EnableCostModelVer2   bool                             `json:"enableCostModelVer2"`
-	AddIndexIngest        *m.AddIndexIngestUsageCounter    `json:"addIndexIngest"`
+	DDLUsageCounter       *m.DDLUsageCounter               `json:"DDLUsageCounter"`
 }
 
 type placementPolicyUsage struct {
@@ -98,7 +98,7 @@ func getFeatureUsage(ctx context.Context, sctx sessionctx.Context) (*featureUsag
 
 	usage.EnableCostModelVer2 = getCostModelVer2UsageInfo(sctx)
 
-	usage.AddIndexIngest = getAddIndexIngestUsageInfo()
+	usage.DDLUsageCounter = getAddIndexIngestUsageInfo()
 
 	return &usage, nil
 }
@@ -231,7 +231,7 @@ var initialMultiSchemaChangeCounter m.MultiSchemaChangeUsageCounter
 var initialTablePartitionCounter m.TablePartitionUsageCounter
 var initialSavepointStmtCounter int64
 var initialLazyPessimisticUniqueCheckSetCount int64
-var initialAddIndexIngestCounter m.AddIndexIngestUsageCounter
+var initialDDLUsageCounter m.DDLUsageCounter
 
 // getTxnUsageInfo gets the usage info of transaction related features. It's exported for tests.
 func getTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
@@ -320,8 +320,8 @@ func postReportTablePartitionUsage() {
 	initialTablePartitionCounter = m.ResetTablePartitionCounter(initialTablePartitionCounter)
 }
 
-func postReportAddIndexLightingUsage() {
-	initialAddIndexIngestCounter = m.GetAddIndexIngestCounter()
+func postReportAddIndexIngestUsage() {
+	initialDDLUsageCounter = m.GetDDLUsageCounter()
 }
 
 func getTablePartitionUsageInfo() *m.TablePartitionUsageCounter {
@@ -366,8 +366,8 @@ func getCostModelVer2UsageInfo(ctx sessionctx.Context) bool {
 func getPagingUsageInfo(ctx sessionctx.Context) bool {
 	return ctx.GetSessionVars().EnablePaging
 }
-func getAddIndexIngestUsageInfo() *m.AddIndexIngestUsageCounter {
-	curr := m.GetAddIndexIngestCounter()
-	diff := curr.Sub(initialAddIndexIngestCounter)
+func getAddIndexIngestUsageInfo() *m.DDLUsageCounter {
+	curr := m.GetDDLUsageCounter()
+	diff := curr.Sub(initialDDLUsageCounter)
 	return &diff
 }
