@@ -737,7 +737,7 @@ func (p *PhysicalIndexScan) MemoryUsage() (sum int64) {
 		sum += col.MemoryUsage()
 	}
 	for _, rang := range p.Ranges {
-		sum += rang.MemoryUsage()
+		sum += rang.MemUsage()
 	}
 	for iid, expr := range p.GenExprs {
 		sum += int64(unsafe.Sizeof(iid)) + expr.MemoryUsage()
@@ -946,7 +946,7 @@ func (ts *PhysicalTableScan) MemoryUsage() (sum int64) {
 		sum += cond.MemoryUsage()
 	}
 	for _, rang := range ts.Ranges {
-		sum += rang.MemoryUsage()
+		sum += rang.MemUsage()
 	}
 	for _, col := range ts.rangeDecidedBy {
 		sum += col.MemoryUsage()

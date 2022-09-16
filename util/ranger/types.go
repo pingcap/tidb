@@ -273,21 +273,3 @@ func formatDatum(d types.Datum, isLeftSide bool) string {
 	}
 	return fmt.Sprintf("%v", d.GetValue())
 }
-
-const emptyRangeSize = int64(unsafe.Sizeof(Range{}))
-
-// MemoryUsage return the memory usage of Range
-func (ran *Range) MemoryUsage() (sum int64) {
-	if ran == nil {
-		return
-	}
-
-	sum = emptyRangeSize
-	for _, low := range ran.LowVal {
-		sum += low.MemUsage()
-	}
-	for _, high := range ran.HighVal {
-		sum += high.MemUsage()
-	}
-	return
-}
