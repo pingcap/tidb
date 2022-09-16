@@ -73,7 +73,7 @@ service ImportSST {
 Duplicate key will be reported when two unique index records with the same key but different value are encountered. In this case, we could report the error and cancel this DDL job.
 
 ### Checkpoints
-In current implementation, the progress of creating an index is persisted in reorgCtx, it is updated when each batch of the index is backfilled. For new backfiller in this proposal, we could mark the progress in a similar way when a SST file generated from a batch of index is ingested successfully.
+In the current implementation, the progress of creating an index is persisted in reorgCtx, it is updated when each batch of the index is backfilled. For the new backfiller in this proposal, we could mark the progress in a similar way when an SST file generated from a batch of indexes is ingested successfully.
       
 ## Temporary files
 The temporarily generated SST files are stored in local storage, the path of storage and maximum disk usage size should be configurable, but it’s not a good idea to modify them at runtime. If size of temporary files closes to allowed maximum size, the largest existing files are ingested to TiKV and cleaned.
