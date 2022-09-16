@@ -95,6 +95,8 @@ var (
 	ErrReorgPanic = ClassDDL.NewStd(mysql.ErrReorgPanic)
 	// ErrFkColumnCannotDrop is used when foreign key column can't be dropped.
 	ErrFkColumnCannotDrop = ClassDDL.NewStd(mysql.ErrFkColumnCannotDrop)
+	// ErrFkColumnCannotDropChild is used when foreign key column can't be dropped.
+	ErrFkColumnCannotDropChild = ClassDDL.NewStd(mysql.ErrFkColumnCannotDropChild)
 	// ErrFKIncompatibleColumns is used when foreign key column type is incompatible.
 	ErrFKIncompatibleColumns = ClassDDL.NewStd(mysql.ErrFKIncompatibleColumns)
 	// ErrOnlyOnRangeListPartition is used when the partition type is range list.
@@ -408,4 +410,8 @@ var (
 	ErrForeignKeyCannotDropParent = ClassDDL.NewStd(mysql.ErrForeignKeyCannotDropParent)
 	// ErrTruncateIllegalForeignKey returns when truncate table which has foreign key referred.
 	ErrTruncateIllegalForeignKey = ClassDDL.NewStd(mysql.ErrTruncateIllegalForeignKey)
+	// ErrForeignKeyColumnCannotChange returns when change column which used by foreign key.
+	ErrForeignKeyColumnCannotChange = ClassDDL.NewStd(mysql.ErrForeignKeyColumnCannotChange)
+	// ErrForeignKeyColumnCannotChangeChild returns when change child table's column which used by foreign key.
+	ErrForeignKeyColumnCannotChangeChild = ClassDDL.NewStd(mysql.ErrForeignKeyColumnCannotChangeChild)
 )
