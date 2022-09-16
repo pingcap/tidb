@@ -30,11 +30,12 @@ import (
 //   - is based on range (it only promises there won't be new committed txns in the range).
 //   - the checkpoint of union of ranges is the minimal checkpoint of all ranges.
 // As an example:
-// +----------------------------------+
-// ^-----------^ (Checkpoint = 42)
-//         ^---------------^ (Checkpoint = 76)
-// ^-----------------------^ (Checkpoint = min(42, 76) = 42)
-//
+/*
+ +----------------------------------+
+ ^-----------^ (Checkpoint = 42)
+         ^---------------^ (Checkpoint = 76)
+ ^-----------------------^ (Checkpoint = min(42, 76) = 42)
+*/
 // For calculating the global checkpoint, we can make a heap-like structure:
 // Checkpoint    Ranges
 // 42         -> {[0, 8], [16, 100]}

@@ -96,7 +96,7 @@ const (
 	ActionAlterNoCacheTable             ActionType = 59
 	ActionCreateTables                  ActionType = 60
 	ActionMultiSchemaChange             ActionType = 61
-	ActionSetTiFlashMode                ActionType = 62
+	ActionFlashbackCluster              ActionType = 62
 )
 
 var actionMap = map[ActionType]string{
@@ -157,7 +157,7 @@ var actionMap = map[ActionType]string{
 	ActionAlterNoCacheTable:             "alter table nocache",
 	ActionAlterTableStatsOptions:        "alter table statistics options",
 	ActionMultiSchemaChange:             "alter table multi-schema change",
-	ActionSetTiFlashMode:                "set tiflash mode",
+	ActionFlashbackCluster:              "flashback cluster",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
@@ -222,6 +222,34 @@ type DDLReorgMeta struct {
 	Warnings      map[errors.ErrorID]*terror.Error `json:"warnings"`
 	WarningsCount map[errors.ErrorID]int64         `json:"warnings_count"`
 	Location      *TimeZoneLocation                `json:"location"`
+	ReorgTp       ReorgType                        `json:"reorg_tp"`
+}
+
+// ReorgType indicates which process is used for the data reorganization.
+type ReorgType int8
+
+const (
+	// ReorgTypeNone means the backfill task is not started yet.
+	ReorgTypeNone ReorgType = iota
+	// ReorgTypeTxn means the index records are backfill with transactions.
+	// All the index KVs are written through the transaction interface.
+	// This is the original backfill implementation.
+	ReorgTypeTxn
+	// ReorgTypeLitMerge means the index records are backfill with lightning.
+	// The index KVs are encoded to SST files and imported to the storage directly.
+	// The incremental index KVs written by DML are redirected to a temporary index.
+	// After the backfill is finished, the temporary index records are merged back to the original index.
+	ReorgTypeLitMerge
+	// ReorgTypeTxnMerge means backfill with transactions and merge incremental changes.
+	// The backfill index KVs are written through the transaction interface.
+	// The incremental index KVs written by DML are redirected to a temporary index.
+	// After the backfill is finished, the temporary index records are merged back to the original index.
+	ReorgTypeTxnMerge
+)
+
+// NeedMergeProcess means the incremental changes need to be merged.
+func (tp ReorgType) NeedMergeProcess() bool {
+	return tp == ReorgTypeLitMerge || tp == ReorgTypeTxnMerge
 }
 
 // TimeZoneLocation represents a single time zone.
@@ -459,9 +487,11 @@ func (job *Job) Clone() *Job {
 		clone.Args = make([]interface{}, len(job.Args))
 		copy(clone.Args, job.Args)
 	}
-	for i, sub := range job.MultiSchemaInfo.SubJobs {
-		clone.MultiSchemaInfo.SubJobs[i].Args = make([]interface{}, len(sub.Args))
-		copy(clone.MultiSchemaInfo.SubJobs[i].Args, sub.Args)
+	if job.MultiSchemaInfo != nil {
+		for i, sub := range job.MultiSchemaInfo.SubJobs {
+			clone.MultiSchemaInfo.SubJobs[i].Args = make([]interface{}, len(sub.Args))
+			copy(clone.MultiSchemaInfo.SubJobs[i].Args, sub.Args)
+		}
 	}
 	return &clone
 }
@@ -469,7 +499,7 @@ func (job *Job) Clone() *Job {
 // TSConvert2Time converts timestamp to time.
 func TSConvert2Time(ts uint64) time.Time {
 	t := int64(ts >> 18) // 18 is for the logical time.
-	return time.Unix(t/1e3, (t%1e3)*1e6)
+	return time.UnixMilli(t)
 }
 
 // SetRowCount sets the number of rows. Make sure it can pass `make race`.
@@ -583,6 +613,63 @@ func (job *Job) hasDependentSchema(other *Job) (bool, error) {
 				return true, nil
 			}
 		}
+		if job.Type == ActionExchangeTablePartition {
+			var (
+				defID          int64
+				ptSchemaID     int64
+				ptID           int64
+				partName       string
+				withValidation bool
+			)
+			if err := job.DecodeArgs(&defID, &ptSchemaID, &ptID, &partName, &withValidation); err != nil {
+				return false, errors.Trace(err)
+			}
+			if other.SchemaID == ptSchemaID {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+func (job *Job) hasDependentTableForExchangePartition(other *Job) (bool, error) {
+	if job.Type == ActionExchangeTablePartition {
+		var (
+			defID          int64
+			ptSchemaID     int64
+			ptID           int64
+			partName       string
+			withValidation bool
+		)
+
+		if err := job.DecodeArgs(&defID, &ptSchemaID, &ptID, &partName, &withValidation); err != nil {
+			return false, errors.Trace(err)
+		}
+		if ptID == other.TableID || defID == other.TableID {
+			return true, nil
+		}
+
+		if other.Type == ActionExchangeTablePartition {
+			var (
+				otherDefID          int64
+				otherPtSchemaID     int64
+				otherPtID           int64
+				otherPartName       string
+				otherWithValidation bool
+			)
+			if err := other.DecodeArgs(&otherDefID, &otherPtSchemaID, &otherPtID, &otherPartName, &otherWithValidation); err != nil {
+				return false, errors.Trace(err)
+			}
+			if job.TableID == other.TableID || job.TableID == otherPtID || job.TableID == otherDefID {
+				return true, nil
+			}
+			if ptID == other.TableID || ptID == otherPtID || ptID == otherDefID {
+				return true, nil
+			}
+			if defID == other.TableID || defID == otherPtID || defID == otherDefID {
+				return true, nil
+			}
+		}
 	}
 	return false, nil
 }
@@ -604,6 +691,14 @@ func (job *Job) IsDependentOn(other *Job) (bool, error) {
 	// TODO: If a job is ActionRenameTable, we need to check table name.
 	if other.TableID == job.TableID {
 		return true, nil
+	}
+	isDependent, err = job.hasDependentTableForExchangePartition(other)
+	if err != nil || isDependent {
+		return isDependent, errors.Trace(err)
+	}
+	isDependent, err = other.hasDependentTableForExchangePartition(job)
+	if err != nil || isDependent {
+		return isDependent, errors.Trace(err)
 	}
 	return false, nil
 }
@@ -710,6 +805,10 @@ func (job *Job) IsRollbackable() bool {
 		return job.SchemaState == StateNone
 	case ActionMultiSchemaChange:
 		return job.MultiSchemaInfo.Revertible
+	case ActionFlashbackCluster:
+		if job.SchemaState == StateWriteReorganization {
+			return false
+		}
 	}
 	return true
 }

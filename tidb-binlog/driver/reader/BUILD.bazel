@@ -22,6 +22,7 @@ go_test(
     timeout = "short",
     srcs = ["offset_test.go"],
     embed = [":reader"],
+    flaky = True,
     deps = [
         "//tidb-binlog/proto/go-binlog",
         "@com_github_shopify_sarama//:sarama",

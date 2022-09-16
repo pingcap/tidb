@@ -360,7 +360,7 @@ func (e *indexScanExec) open() error {
 
 func (e *indexScanExec) next() (*chunk.Chunk, error) {
 	if e.chkIdx < len(e.chunks) {
-		e.chkIdx += 1
+		e.chkIdx++
 		e.execSummary.updateOnlyRows(e.chunks[e.chkIdx-1].NumRows())
 		if e.paging != nil {
 			if e.desc {

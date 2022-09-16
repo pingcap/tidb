@@ -4,10 +4,8 @@ package export
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"net"
 	"strconv"
 	"strings"
@@ -17,6 +15,7 @@ import (
 	"github.com/coreos/go-semver/semver"
 	"github.com/docker/go-units"
 	"github.com/go-sql-driver/mysql"
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version"
@@ -103,12 +102,13 @@ type Config struct {
 	User     string
 	Password string `json:"-"`
 	Security struct {
+		DriveTLSName string `json:"-"`
 		CAPath       string
 		CertPath     string
 		KeyPath      string
 		SSLCABytes   []byte `json:"-"`
 		SSLCertBytes []byte `json:"-"`
-		SSLKEYBytes  []byte `json:"-"`
+		SSLKeyBytes  []byte `json:"-"`
 	}
 
 	LogLevel      string
@@ -209,8 +209,8 @@ func (conf *Config) GetDSN(db string) string {
 	hostPort := net.JoinHostPort(conf.Host, strconv.Itoa(conf.Port))
 	dsn := fmt.Sprintf("%s:%s@tcp(%s)/%s?collation=utf8mb4_general_ci&readTimeout=%s&writeTimeout=30s&interpolateParams=true&maxAllowedPacket=0",
 		conf.User, conf.Password, hostPort, db, conf.ReadTimeout)
-	if len(conf.Security.CAPath) > 0 {
-		dsn += "&tls=dumpling-tls-target"
+	if conf.Security.DriveTLSName != "" {
+		dsn += "&tls=" + conf.Security.DriveTLSName
 	}
 	if conf.AllowCleartextPasswords {
 		dsn += "&allowCleartextPasswords=1"
@@ -223,7 +223,7 @@ func timestampDirName() string {
 }
 
 // DefineFlags defines flags of dumpling's configuration
-func (conf *Config) DefineFlags(flags *pflag.FlagSet) {
+func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	storage.DefineFlags(flags)
 	flags.StringSliceP(flagDatabase, "B", nil, "Databases to dump")
 	flags.StringSliceP(flagTablesList, "T", nil, "Comma delimited table list to dump; must be qualified table names")
@@ -490,7 +490,7 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	}
 	tmpl, err := ParseOutputFileTemplate(outputFilenameFormat)
 	if err != nil {
-		return errors.Errorf("failed to parse output filename template (--output-filename-template '%s')\n", outputFilenameFormat)
+		return errors.Errorf("failed to parse output filename template (--output-filename-template '%s')", outputFilenameFormat)
 	}
 	conf.OutputFileTemplate = tmpl
 
@@ -551,6 +551,7 @@ func ParseTableFilter(tablesList, filters []string) (filter.Filter, error) {
 	return filter.NewTablesFilter(tableNames...), nil
 }
 
+// GetConfTables parses tables from tables-list and filter arguments
 func GetConfTables(tablesList []string) (DatabaseTables, error) {
 	dbTables := DatabaseTables{}
 	var (
@@ -609,7 +610,9 @@ const (
 	defaultDumpGCSafePointTTL = 5 * 60
 	defaultEtcdDialTimeOut    = 3 * time.Second
 
-	LooseCollationCompatible  = "loose"
+	// LooseCollationCompatible is used in DM, represents a collation setting for best compatibility.
+	LooseCollationCompatible = "loose"
+	// StrictCollationCompatible is used in DM, represents a collation setting for correctness.
 	StrictCollationCompatible = "strict"
 
 	dumplingServiceSafePointPrefix = "dumpling"
@@ -632,43 +635,23 @@ func adjustConfig(conf *Config, fns ...func(*Config) error) error {
 }
 
 func registerTLSConfig(conf *Config) error {
-	if len(conf.Security.CAPath) > 0 {
-		var err error
-		var tlsConfig *tls.Config
-		if len(conf.Security.SSLCABytes) == 0 {
-			conf.Security.SSLCABytes, err = ioutil.ReadFile(conf.Security.CAPath)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if len(conf.Security.CertPath) > 0 {
-				conf.Security.SSLCertBytes, err = ioutil.ReadFile(conf.Security.CertPath)
-				if err != nil {
-					return errors.Trace(err)
-				}
-			}
-			if len(conf.Security.KeyPath) > 0 {
-				conf.Security.SSLKEYBytes, err = ioutil.ReadFile(conf.Security.KeyPath)
-				if err != nil {
-					return errors.Trace(err)
-				}
-			}
-		}
-		tlsConfig, err = util.ToTLSConfigWithVerifyByRawbytes(conf.Security.SSLCABytes,
-			conf.Security.SSLCertBytes, conf.Security.SSLKEYBytes, []string{})
-		if err != nil {
-			return errors.Trace(err)
-		}
-		// NOTE for local test(use a self-signed or invalid certificate), we don't need to check CA file.
-		// see more here https://github.com/go-sql-driver/mysql#tls
-		if conf.Host == "127.0.0.1" || len(conf.Security.SSLCertBytes) == 0 || len(conf.Security.SSLKEYBytes) == 0 {
-			tlsConfig.InsecureSkipVerify = true
-		}
-		err = mysql.RegisterTLSConfig("dumpling-tls-target", tlsConfig)
-		if err != nil {
-			return errors.Trace(err)
-		}
+	tlsConfig, err := util.NewTLSConfig(
+		util.WithCAPath(conf.Security.CAPath),
+		util.WithCertAndKeyPath(conf.Security.CertPath, conf.Security.KeyPath),
+		util.WithCAContent(conf.Security.SSLCABytes),
+		util.WithCertAndKeyContent(conf.Security.SSLCertBytes, conf.Security.SSLKeyBytes),
+	)
+	if err != nil {
+		return errors.Trace(err)
 	}
-	return nil
+
+	if tlsConfig == nil {
+		return nil
+	}
+
+	conf.Security.DriveTLSName = "dumpling" + uuid.NewString()
+	err = mysql.RegisterTLSConfig(conf.Security.DriveTLSName, tlsConfig)
+	return errors.Trace(err)
 }
 
 func validateSpecifiedSQL(conf *Config) error {

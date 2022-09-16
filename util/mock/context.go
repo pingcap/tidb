@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/disk"
-	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sli"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -48,16 +47,16 @@ var (
 
 // Context represents mocked sessionctx.Context.
 type Context struct {
-	values      map[fmt.Stringer]interface{}
 	txn         wrapTxn    // mock global variable
 	Store       kv.Storage // mock global variable
-	sessionVars *variable.SessionVars
 	ctx         context.Context
-	cancel      context.CancelFunc
 	sm          util.SessionManager
-	pcache      *kvcache.SimpleLRUCache
-	level       kvrpcpb.DiskFullOpt
 	is          sessionctx.InfoschemaMetaVersion
+	values      map[fmt.Stringer]interface{}
+	sessionVars *variable.SessionVars
+	cancel      context.CancelFunc
+	pcache      sessionctx.PlanCache
+	level       kvrpcpb.DiskFullOpt
 }
 
 type wrapTxn struct {
@@ -247,8 +246,8 @@ func (*Context) SetGlobalSysVar(_ sessionctx.Context, name string, value string)
 	return nil
 }
 
-// PreparedPlanCache implements the sessionctx.Context interface.
-func (c *Context) PreparedPlanCache() *kvcache.SimpleLRUCache {
+// GetPlanCache implements the sessionctx.Context interface.
+func (c *Context) GetPlanCache(_ bool) sessionctx.PlanCache {
 	return c.pcache
 }
 
@@ -451,6 +450,10 @@ func NewContext() *Context {
 	sctx.sessionVars.StmtCtx.MemTracker = memory.NewTracker(-1, -1)
 	sctx.sessionVars.StmtCtx.DiskTracker = disk.NewTracker(-1, -1)
 	sctx.sessionVars.GlobalVarsAccessor = variable.NewMockGlobalAccessor()
+	sctx.sessionVars.EnablePaging = variable.DefTiDBEnablePaging
+	sctx.sessionVars.MinPagingSize = variable.DefMinPagingSize
+	sctx.sessionVars.CostModelVersion = variable.DefTiDBCostModelVer
+	sctx.sessionVars.EnableChunkRPC = true
 	if err := sctx.GetSessionVars().SetSystemVar(variable.MaxAllowedPacket, "67108864"); err != nil {
 		panic(err)
 	}

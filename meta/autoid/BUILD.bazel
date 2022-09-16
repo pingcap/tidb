@@ -32,6 +32,7 @@ go_library(
 
 go_test(
     name = "autoid_test",
+    timeout = "short",
     srcs = [
         "autoid_test.go",
         "bench_test.go",
@@ -39,6 +40,7 @@ go_test(
         "memid_test.go",
         "seq_autoid_test.go",
     ],
+    flaky = True,
     deps = [
         ":autoid",
         "//kv",

@@ -12,6 +12,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/tikv/client-go/v2/kv"
 	"go.uber.org/multierr"
@@ -19,12 +20,12 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-type RegionFunc func(ctx context.Context, r *RegionInfo) RPCResult
+type RegionFunc func(ctx context.Context, r *split.RegionInfo) RPCResult
 
 type OverRegionsInRangeController struct {
 	start      []byte
 	end        []byte
-	metaClient SplitClient
+	metaClient split.SplitClient
 
 	errors error
 	rs     *utils.RetryState
@@ -33,7 +34,7 @@ type OverRegionsInRangeController struct {
 // OverRegionsInRange creates a controller that cloud be used to scan regions in a range and
 // apply a function over these regions.
 // You can then call the `Run` method for applying some functions.
-func OverRegionsInRange(start, end []byte, metaClient SplitClient, retryStatus *utils.RetryState) OverRegionsInRangeController {
+func OverRegionsInRange(start, end []byte, metaClient split.SplitClient, retryStatus *utils.RetryState) OverRegionsInRangeController {
 	// IMPORTANT: we record the start/end key with TimeStamp.
 	// but scanRegion will drop the TimeStamp and the end key is exclusive.
 	// if we do not use PrefixNextKey. we might scan fewer regions than we expected.
@@ -49,12 +50,12 @@ func OverRegionsInRange(start, end []byte, metaClient SplitClient, retryStatus *
 	}
 }
 
-func (o *OverRegionsInRangeController) onError(ctx context.Context, result RPCResult, region *RegionInfo) {
+func (o *OverRegionsInRangeController) onError(ctx context.Context, result RPCResult, region *split.RegionInfo) {
 	o.errors = multierr.Append(o.errors, errors.Annotatef(&result, "execute over region %v failed", region.Region))
 	// TODO: Maybe handle some of region errors like `epoch not match`?
 }
 
-func (o *OverRegionsInRangeController) tryFindLeader(ctx context.Context, region *RegionInfo) (*metapb.Peer, error) {
+func (o *OverRegionsInRangeController) tryFindLeader(ctx context.Context, region *split.RegionInfo) (*metapb.Peer, error) {
 	var leader *metapb.Peer
 	failed := false
 	leaderRs := utils.InitialRetryState(4, 5*time.Second, 10*time.Second)
@@ -63,7 +64,7 @@ func (o *OverRegionsInRangeController) tryFindLeader(ctx context.Context, region
 		if err != nil {
 			return err
 		}
-		if !checkRegionEpoch(r, region) {
+		if !split.CheckRegionEpoch(r, region) {
 			failed = true
 			return nil
 		}
@@ -83,7 +84,7 @@ func (o *OverRegionsInRangeController) tryFindLeader(ctx context.Context, region
 }
 
 // handleInRegionError handles the error happens internal in the region. Update the region info, and perform a suitable backoff.
-func (o *OverRegionsInRangeController) handleInRegionError(ctx context.Context, result RPCResult, region *RegionInfo) (cont bool) {
+func (o *OverRegionsInRangeController) handleInRegionError(ctx context.Context, result RPCResult, region *split.RegionInfo) (cont bool) {
 	if nl := result.StoreError.GetNotLeader(); nl != nil {
 		if nl.Leader != nil {
 			region.Leader = nl.Leader
@@ -128,8 +129,8 @@ func (o *OverRegionsInRangeController) runOverRegions(ctx context.Context, f Reg
 	}
 
 	// Scan regions covered by the file range
-	regionInfos, errScanRegion := PaginateScanRegion(
-		ctx, o.metaClient, o.start, o.end, ScanRegionPaginationLimit)
+	regionInfos, errScanRegion := split.PaginateScanRegion(
+		ctx, o.metaClient, o.start, o.end, split.ScanRegionPaginationLimit)
 	if errScanRegion != nil {
 		return errors.Trace(errScanRegion)
 	}
@@ -147,7 +148,7 @@ func (o *OverRegionsInRangeController) runOverRegions(ctx context.Context, f Reg
 }
 
 // runInRegion executes the function in the region, and returns `cont = false` if no need for trying for next region.
-func (o *OverRegionsInRangeController) runInRegion(ctx context.Context, f RegionFunc, region *RegionInfo) (cont bool, err error) {
+func (o *OverRegionsInRangeController) runInRegion(ctx context.Context, f RegionFunc, region *split.RegionInfo) (cont bool, err error) {
 	if !o.rs.ShouldRetry() {
 		return false, o.errors
 	}

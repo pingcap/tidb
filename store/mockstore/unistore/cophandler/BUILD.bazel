@@ -55,11 +55,13 @@ go_library(
 
 go_test(
     name = "cophandler_test",
+    timeout = "short",
     srcs = [
         "cop_handler_test.go",
         "main_test.go",
     ],
     embed = [":cophandler"],
+    flaky = True,
     deps = [
         "//expression",
         "//kv",

@@ -39,8 +39,7 @@ import (
 )
 
 func TestColumnAdd(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
 	tk := testkit.NewTestKit(t, store)
 	internal := testkit.NewTestKit(t, store)
@@ -140,8 +139,7 @@ func TestColumnAdd(t *testing.T) {
 }
 
 func TestModifyAutoRandColumnWithMetaKeyChanged(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

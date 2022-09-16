@@ -44,11 +44,13 @@ go_library(
 
 go_test(
     name = "gcworker_test",
+    timeout = "short",
     srcs = [
         "gc_worker_test.go",
         "main_test.go",
     ],
     embed = [":gcworker"],
+    flaky = True,
     deps = [
         "//ddl/placement",
         "//ddl/util",

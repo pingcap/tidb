@@ -30,11 +30,13 @@ go_library(
 
 go_test(
     name = "pdutil_test",
+    timeout = "short",
     srcs = [
         "main_test.go",
         "pd_serial_test.go",
     ],
     embed = [":pdutil"],
+    flaky = True,
     deps = [
         "//store/pdtypes",
         "//testkit/testsetup",

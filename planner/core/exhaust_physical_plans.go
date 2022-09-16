@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 )
@@ -366,43 +367,71 @@ func (p *PhysicalMergeJoin) initCompareFuncs() {
 
 // ForceUseOuterBuild4Test is a test option to control forcing use outer input as build.
 // TODO: use hint and remove this variable
-var ForceUseOuterBuild4Test = false
+var ForceUseOuterBuild4Test = atomic.NewBool(false)
 
 // ForcedHashLeftJoin4Test is a test option to force using HashLeftJoin
 // TODO: use hint and remove this variable
-var ForcedHashLeftJoin4Test = false
+var ForcedHashLeftJoin4Test = atomic.NewBool(false)
 
-func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) []PhysicalPlan {
+func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) (joins []PhysicalPlan, forced bool) {
 	if !prop.IsSortItemEmpty() { // hash join doesn't promise any orders
-		return nil
+		return
 	}
-	joins := make([]PhysicalPlan, 0, 2)
+	forceLeftToBuild := ((p.preferJoinType & preferLeftAsHJBuild) > 0) || ((p.preferJoinType & preferRightAsHJProbe) > 0)
+	forceRightToBuild := ((p.preferJoinType & preferRightAsHJBuild) > 0) || ((p.preferJoinType & preferLeftAsHJProbe) > 0)
+	if forceLeftToBuild && forceRightToBuild {
+		p.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are conflicts, please check the hints"))
+		forceLeftToBuild = false
+		forceRightToBuild = false
+	}
+	joins = make([]PhysicalPlan, 0, 2)
 	switch p.JoinType {
 	case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
 		joins = append(joins, p.getHashJoin(prop, 1, false))
+		if forceLeftToBuild || forceRightToBuild {
+			// Do not support specifying the build side.
+			p.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(fmt.Sprintf("We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for %s, please check the hint", p.JoinType)))
+			forceLeftToBuild = false
+			forceRightToBuild = false
+		}
 	case LeftOuterJoin:
-		if ForceUseOuterBuild4Test {
+		if ForceUseOuterBuild4Test.Load() {
 			joins = append(joins, p.getHashJoin(prop, 1, true))
 		} else {
-			joins = append(joins, p.getHashJoin(prop, 1, false))
-			joins = append(joins, p.getHashJoin(prop, 1, true))
+			if !forceLeftToBuild {
+				joins = append(joins, p.getHashJoin(prop, 1, false))
+			}
+			if !forceRightToBuild {
+				joins = append(joins, p.getHashJoin(prop, 1, true))
+			}
 		}
 	case RightOuterJoin:
-		if ForceUseOuterBuild4Test {
+		if ForceUseOuterBuild4Test.Load() {
 			joins = append(joins, p.getHashJoin(prop, 0, true))
 		} else {
-			joins = append(joins, p.getHashJoin(prop, 0, false))
-			joins = append(joins, p.getHashJoin(prop, 0, true))
+			if !forceLeftToBuild {
+				joins = append(joins, p.getHashJoin(prop, 0, true))
+			}
+			if !forceRightToBuild {
+				joins = append(joins, p.getHashJoin(prop, 0, false))
+			}
 		}
 	case InnerJoin:
-		if ForcedHashLeftJoin4Test {
+		if ForcedHashLeftJoin4Test.Load() {
 			joins = append(joins, p.getHashJoin(prop, 1, false))
 		} else {
-			joins = append(joins, p.getHashJoin(prop, 1, false))
-			joins = append(joins, p.getHashJoin(prop, 0, false))
+			if forceLeftToBuild {
+				joins = append(joins, p.getHashJoin(prop, 0, false))
+			} else if forceRightToBuild {
+				joins = append(joins, p.getHashJoin(prop, 1, false))
+			} else {
+				joins = append(joins, p.getHashJoin(prop, 1, false))
+				joins = append(joins, p.getHashJoin(prop, 0, false))
+			}
 		}
 	}
-	return joins
+	forced = (p.preferJoinType&preferHashJoin > 0) || forceLeftToBuild || forceRightToBuild
+	return
 }
 
 func (p *LogicalJoin) getHashJoin(prop *property.PhysicalProperty, innerIdx int, useOuterToBuild bool) *PhysicalHashJoin {
@@ -822,7 +851,7 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 	}
 	joins = make([]PhysicalPlan, 0, 3)
 	failpoint.Inject("MockOnlyEnableIndexHashJoin", func(val failpoint.Value) {
-		if val.(bool) {
+		if val.(bool) && !p.ctx.GetSessionVars().InRestrictedSQL {
 			failpoint.Return(p.constructIndexHashJoin(prop, outerIdx, innerTask, nil, keyOff2IdxOff, path, lastColMng))
 		}
 	})
@@ -857,7 +886,7 @@ func (p *LogicalJoin) buildIndexJoinInner2IndexScan(
 	}
 	innerTask := p.constructInnerIndexScanTask(ds, helper.chosenPath, helper.chosenRanges.Range(), helper.chosenRemained, outerJoinKeys, us, rangeInfo, false, false, avgInnerRowCnt, maxOneRow)
 	failpoint.Inject("MockOnlyEnableIndexHashJoin", func(val failpoint.Value) {
-		if val.(bool) {
+		if val.(bool) && !p.ctx.GetSessionVars().InRestrictedSQL {
 			failpoint.Return(p.constructIndexHashJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager))
 		}
 	})
@@ -977,12 +1006,9 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 		StatsVersion: ds.stats.StatsVersion,
 		// NDV would not be used in cost computation of IndexJoin, set leave it as default nil.
 	}
-	rowSize := ts.getScanRowSize()
-	sessVars := ds.ctx.GetSessionVars()
 	copTask := &copTask{
 		tablePlan:         ts,
 		indexPlanFinished: true,
-		cst:               sessVars.GetScanFactor(ts.Table) * rowSize * ts.stats.RowCount,
 		tblColHists:       ds.TblColHists,
 		keepOrder:         ts.KeepOrder,
 	}
@@ -1021,7 +1047,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 	path *util.AccessPath,
 	ranges ranger.Ranges,
 	filterConds []expression.Expression,
-	outerJoinKeys []*expression.Column,
+	_ []*expression.Column,
 	us *LogicalUnionScan,
 	rangeInfo string,
 	keepOrder bool,
@@ -1149,9 +1175,6 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		tmpPath.CountAfterAccess = cnt
 	}
 	is.stats = ds.tableStats.ScaleByExpectCnt(tmpPath.CountAfterAccess)
-	rowSize := is.getScanRowSize()
-	sessVars := ds.ctx.GetSessionVars()
-	cop.cst = tmpPath.CountAfterAccess * rowSize * sessVars.GetScanFactor(ds.tableInfo)
 	finalStats := ds.tableStats.ScaleByExpectCnt(rowCount)
 	is.addPushedDownSelection(cop, ds, tmpPath, finalStats)
 	t := cop.convertToRootTask(ds.ctx)
@@ -1218,7 +1241,9 @@ func (cwc *ColWithCmpFuncManager) BuildRangesByRow(ctx sessionctx.Context, row c
 		}
 		exprs = append(exprs, newExpr) // nozero
 	}
-	ranges, err := ranger.BuildColumnRange(exprs, ctx, cwc.TargetCol.RetType, cwc.colLength)
+	// TODO: We already limit range mem usage when buildTemplateRange for inner table of IndexJoin in optimizer phase,
+	// so we don't need and shouldn't limit range mem usage when we refill inner ranges during the execution phase.
+	ranges, _, _, err := ranger.BuildColumnRange(exprs, ctx, cwc.TargetCol.RetType, cwc.colLength, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -1327,12 +1352,13 @@ loopOtherConds:
 }
 
 // removeUselessEqAndInFunc removes the useless eq/in conditions. It's designed for the following case:
-//   t1 join t2 on t1.a=t2.a and t1.c=t2.c where t1.b > t2.b-10 and t1.b < t2.b+10 there's index(a, b, c) on t1.
-//   In this case the curIdxOff2KeyOff is [0 -1 1] and the notKeyEqAndIn is [].
-//   It's clearly that the column c cannot be used to access data. So we need to remove it and reset the IdxOff2KeyOff to
-//   [0 -1 -1].
-//   So that we can use t1.a=t2.a and t1.b > t2.b-10 and t1.b < t2.b+10 to build ranges then access data.
-func (ijHelper *indexJoinBuildHelper) removeUselessEqAndInFunc(idxCols []*expression.Column, notKeyEqAndIn []expression.Expression, outerJoinKeys []*expression.Column) (usefulEqAndIn, uselessOnes []expression.Expression) {
+//
+//	t1 join t2 on t1.a=t2.a and t1.c=t2.c where t1.b > t2.b-10 and t1.b < t2.b+10 there's index(a, b, c) on t1.
+//	In this case the curIdxOff2KeyOff is [0 -1 1] and the notKeyEqAndIn is [].
+//	It's clearly that the column c cannot be used to access data. So we need to remove it and reset the IdxOff2KeyOff to
+//	[0 -1 -1].
+//	So that we can use t1.a=t2.a and t1.b > t2.b-10 and t1.b < t2.b+10 to build ranges then access data.
+func (ijHelper *indexJoinBuildHelper) removeUselessEqAndInFunc(idxCols []*expression.Column, notKeyEqAndIn []expression.Expression, _ []*expression.Column) (usefulEqAndIn, uselessOnes []expression.Expression) {
 	ijHelper.curPossibleUsedKeys = make([]*expression.Column, 0, len(idxCols))
 	for idxColPos, notKeyColPos := 0, 0; idxColPos < len(idxCols); idxColPos++ {
 		if ijHelper.curIdxOff2KeyOff[idxColPos] != -1 {
@@ -1465,7 +1491,8 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *util.AccessPath
 		var ranges, nextColRange []*ranger.Range
 		var err error
 		if len(colAccesses) > 0 {
-			nextColRange, err = ranger.BuildColumnRange(colAccesses, ijHelper.join.ctx, lastPossibleCol.RetType, path.IdxColLens[lastColPos])
+			// TODO: restrict the mem usage of column ranges
+			nextColRange, _, _, err = ranger.BuildColumnRange(colAccesses, ijHelper.join.ctx, lastPossibleCol.RetType, path.IdxColLens[lastColPos], 0)
 			if err != nil {
 				return false, err
 			}
@@ -1577,7 +1604,8 @@ func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAn
 			continue
 		}
 		exprs := []expression.Expression{eqAndInFuncs[j]}
-		oneColumnRan, err := ranger.BuildColumnRange(exprs, ijHelper.join.ctx, ijHelper.curNotUsedIndexCols[j].RetType, ijHelper.curNotUsedColLens[j])
+		// TODO: restrict the mem usage of column ranges
+		oneColumnRan, _, _, err := ranger.BuildColumnRange(exprs, ijHelper.join.ctx, ijHelper.curNotUsedIndexCols[j].RetType, ijHelper.curNotUsedColLens[j], 0)
 		if err != nil {
 			return nil, false, err
 		}
@@ -1785,7 +1813,7 @@ func (p *LogicalJoin) shouldUseMPPBCJ() bool {
 // If the hint is not figured, we will pick all candidates.
 func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
 	failpoint.Inject("MockOnlyEnableIndexHashJoin", func(val failpoint.Value) {
-		if val.(bool) {
+		if val.(bool) && !p.ctx.GetSessionVars().InRestrictedSQL {
 			indexJoins, _ := p.tryToGetIndexJoin(prop)
 			failpoint.Return(indexJoins, true, nil)
 		}
@@ -1830,8 +1858,8 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]P
 	}
 	joins = append(joins, indexJoins...)
 
-	hashJoins := p.getHashJoins(prop)
-	if (p.preferJoinType&preferHashJoin) > 0 && len(hashJoins) > 0 {
+	hashJoins, forced := p.getHashJoins(prop)
+	if forced && len(hashJoins) > 0 {
 		return hashJoins, true, nil
 	}
 	joins = append(joins, hashJoins...)
@@ -1895,7 +1923,6 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 			p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because `Cartesian Product` is only supported by broadcast join, check value and documents of variable `tidb_opt_broadcast_cartesian_join`.")
 			return nil
 		}
-
 	}
 	if len(p.LeftConditions) != 0 && p.JoinType != LeftOuterJoin {
 		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because there is a join that is not `left join` but has left conditions, which is not supported by mpp now, see github.com/pingcap/tidb/issues/26090 for more information.")
@@ -2044,8 +2071,8 @@ func (p *LogicalProjection) exhaustPhysicalPlans(prop *property.PhysicalProperty
 		return nil, true, nil
 	}
 	newProps := []*property.PhysicalProperty{newProp}
-	// generate a mpp task candidate if enforced mpp
-	if newProp.TaskTp != property.MppTaskType && p.SCtx().GetSessionVars().IsMPPEnforced() && p.canPushToCop(kv.TiFlash) &&
+	// generate a mpp task candidate if mpp mode is allowed
+	if newProp.TaskTp != property.MppTaskType && p.SCtx().GetSessionVars().IsMPPAllowed() && p.canPushToCop(kv.TiFlash) &&
 		expression.CanExprsPushDown(p.SCtx().GetSessionVars().StmtCtx, p.Exprs, p.SCtx().GetClient(), kv.TiFlash) {
 		mppProp := newProp.CloneEssentialFields()
 		mppProp.TaskTp = property.MppTaskType
@@ -2100,7 +2127,7 @@ func pushLimitOrTopNForcibly(p LogicalPlan) bool {
 	return false
 }
 
-func (lt *LogicalTopN) getPhysTopN(prop *property.PhysicalProperty) []PhysicalPlan {
+func (lt *LogicalTopN) getPhysTopN(_ *property.PhysicalProperty) []PhysicalPlan {
 	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopDoubleReadTaskType}
 	if !pushLimitOrTopNForcibly(lt) {
 		allTaskTypes = append(allTaskTypes, property.RootTaskType)
@@ -2121,7 +2148,7 @@ func (lt *LogicalTopN) getPhysTopN(prop *property.PhysicalProperty) []PhysicalPl
 	return ret
 }
 
-func (lt *LogicalTopN) getPhysLimits(prop *property.PhysicalProperty) []PhysicalPlan {
+func (lt *LogicalTopN) getPhysLimits(_ *property.PhysicalProperty) []PhysicalPlan {
 	p, canPass := GetPropByOrderByItems(lt.ByItems)
 	if !canPass {
 		return nil
@@ -2250,9 +2277,9 @@ func (lw *LogicalWindow) tryToGetMppWindows(prop *property.PhysicalProperty) []P
 	{
 		allSupported := true
 		for _, windowFunc := range lw.WindowFuncDescs {
-			if !windowFunc.CanPushDownToTiFlash() {
+			if !windowFunc.CanPushDownToTiFlash(lw.SCtx()) {
 				lw.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
-					"MPP mode may be blocked because window function `" + windowFunc.Name + "` is not supported now.")
+					"MPP mode may be blocked because window function `" + windowFunc.Name + "` or its arguments are not supported now.")
 				allSupported = false
 			} else if !expression.IsPushDownEnabled(windowFunc.Name, kv.TiFlash) {
 				lw.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because window function `" + windowFunc.Name + "` is blocked by blacklist, check `table mysql.expr_pushdown_blacklist;` for more information.")

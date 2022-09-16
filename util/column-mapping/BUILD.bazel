@@ -16,5 +16,6 @@ go_test(
     timeout = "short",
     srcs = ["column_test.go"],
     embed = [":column-mapping"],
+    flaky = True,
     deps = ["@com_github_stretchr_testify//require"],
 )

@@ -150,6 +150,8 @@ type MemBuffer interface {
 	GetFlags(Key) (KeyFlags, error)
 	// SetWithFlags put key-value into the last active staging buffer with the given KeyFlags.
 	SetWithFlags(Key, []byte, ...FlagsOp) error
+	// UpdateFlags updates the flags associated with key.
+	UpdateFlags(Key, ...FlagsOp)
 	// DeleteWithFlags delete key with the given KeyFlags
 	DeleteWithFlags(Key, ...FlagsOp) error
 
@@ -178,6 +180,17 @@ type MemBuffer interface {
 
 	// RemoveFromBuffer removes the entry from the buffer. It's used for testing.
 	RemoveFromBuffer(Key)
+}
+
+// FindKeysInStage returns all keys in the given stage that satisfies the given condition.
+func FindKeysInStage(m MemBuffer, h StagingHandle, predicate func(Key, KeyFlags, []byte) bool) []Key {
+	result := make([]Key, 0)
+	m.InspectStage(h, func(k Key, f KeyFlags, v []byte) {
+		if predicate(k, f, v) {
+			result = append(result, k)
+		}
+	})
+	return result
 }
 
 // LockCtx contains information for LockKeys method.
@@ -245,6 +258,9 @@ type Transaction interface {
 
 	// RollbackMemDBToCheckpoint rollbacks the transaction's memDB to the specified checkpoint.
 	RollbackMemDBToCheckpoint(*tikv.MemDBCheckpoint)
+
+	// UpdateMemBufferFlags updates the flags of a node in the mem buffer.
+	UpdateMemBufferFlags(key []byte, flags ...FlagsOp)
 }
 
 // AssertionProto is an interface defined for the assertion protocol.
@@ -362,17 +378,27 @@ type Request struct {
 	ReadReplicaScope string
 	// IsStaleness indicates whether the request read staleness data
 	IsStaleness bool
+	// ClosestReplicaReadAdjuster used to adjust a copr request.
+	ClosestReplicaReadAdjuster CoprRequestAdjuster
 	// MatchStoreLabels indicates the labels the store should be matched
 	MatchStoreLabels []*metapb.StoreLabel
 	// ResourceGroupTagger indicates the kv request task group tagger.
 	ResourceGroupTagger tikvrpc.ResourceGroupTagger
 	// Paging indicates whether the request is a paging request.
-	Paging bool
-	// MinPagingSize is used when Paging is true.
-	MinPagingSize uint64
+	Paging struct {
+		Enable bool
+		// MinPagingSize is used when Paging is true.
+		MinPagingSize uint64
+		// MaxPagingSize is used when Paging is true.
+		MaxPagingSize uint64
+	}
 	// RequestSource indicates whether the request is an internal request.
 	RequestSource util.RequestSource
 }
+
+// CoprRequestAdjuster is used to check and adjust a copr request according to specific rules.
+// return true if the request is changed.
+type CoprRequestAdjuster func(*Request, int) bool
 
 // PartitionIDAndRanges used by PartitionTableScan in tiflash.
 type PartitionIDAndRanges struct {

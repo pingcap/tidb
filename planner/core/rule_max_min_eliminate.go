@@ -36,7 +36,7 @@ import (
 type maxMinEliminator struct {
 }
 
-func (a *maxMinEliminator) optimize(ctx context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
+func (a *maxMinEliminator) optimize(_ context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	return a.eliminateMaxMin(p, opt), nil
 }
 

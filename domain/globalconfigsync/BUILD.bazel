@@ -14,7 +14,9 @@ go_library(
 
 go_test(
     name = "globalconfigsync_test",
+    timeout = "short",
     srcs = ["globalconfig_test.go"],
+    flaky = True,
     deps = [
         ":globalconfigsync",
         "//kv",

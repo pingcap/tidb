@@ -21,6 +21,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
@@ -30,8 +31,7 @@ import (
 )
 
 func TestListPartitionPushDown(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database list_push_down")
 	tk.MustExec("use list_push_down")
@@ -51,7 +51,7 @@ func TestListPartitionPushDown(t *testing.T) {
 		Plan []string
 	}
 	integrationPartitionSuiteData := core.GetIntegrationPartitionSuiteData()
-	integrationPartitionSuiteData.GetTestCases(t, &input, &output)
+	integrationPartitionSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -62,8 +62,10 @@ func TestListPartitionPushDown(t *testing.T) {
 }
 
 func TestListColVariousTypes(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
+
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database list_col_partition_types")
@@ -93,7 +95,7 @@ func TestListColVariousTypes(t *testing.T) {
 		Results []string
 	}
 	integrationPartitionSuiteData := core.GetIntegrationPartitionSuiteData()
-	integrationPartitionSuiteData.GetTestCases(t, &input, &output)
+	integrationPartitionSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -104,8 +106,10 @@ func TestListColVariousTypes(t *testing.T) {
 }
 
 func TestListPartitionPruning(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
+
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database list_partition_pruning")
@@ -130,7 +134,7 @@ func TestListPartitionPruning(t *testing.T) {
 		StaticPlan  []string
 	}
 	integrationPartitionSuiteData := core.GetIntegrationPartitionSuiteData()
-	integrationPartitionSuiteData.GetTestCases(t, &input, &output)
+	integrationPartitionSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -147,8 +151,7 @@ func TestListPartitionPruning(t *testing.T) {
 }
 
 func TestListPartitionFunctions(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database list_partition_pruning")
@@ -162,7 +165,7 @@ func TestListPartitionFunctions(t *testing.T) {
 		Results []string
 	}
 	integrationPartitionSuiteData := core.GetIntegrationPartitionSuiteData()
-	integrationPartitionSuiteData.GetTestCases(t, &input, &output)
+	integrationPartitionSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -181,8 +184,7 @@ func TestListPartitionFunctions(t *testing.T) {
 }
 
 func TestListPartitionOrderLimit(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database list_partition_order_limit")
@@ -240,8 +242,7 @@ func TestListPartitionOrderLimit(t *testing.T) {
 }
 
 func TestListPartitionAgg(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database list_partition_agg")
@@ -299,8 +300,7 @@ func TestListPartitionAgg(t *testing.T) {
 }
 
 func TestListPartitionDML(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database list_partition_dml")
@@ -360,8 +360,7 @@ func TestListPartitionDML(t *testing.T) {
 }
 
 func TestListPartitionCreation(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database list_partition_cre")
@@ -423,8 +422,7 @@ func TestListPartitionCreation(t *testing.T) {
 }
 
 func TestListPartitionDDL(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database list_partition_ddl")
@@ -477,8 +475,7 @@ func TestListPartitionDDL(t *testing.T) {
 }
 
 func TestListPartitionOperations(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database list_partition_op")
@@ -564,14 +561,13 @@ func TestListPartitionOperations(t *testing.T) {
 }
 
 func TestListPartitionPrivilege(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
-	require.True(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk.SetSession(se)
 	tk.MustExec("create database list_partition_pri")
 	tk.MustExec("use list_partition_pri")
@@ -585,7 +581,7 @@ func TestListPartitionPrivilege(t *testing.T) {
 	tk1 := testkit.NewTestKit(t, store)
 	se, err = session.CreateSession4Test(store)
 	require.NoError(t, err)
-	require.True(t, se.Auth(&auth.UserIdentity{Username: "priv_test", Hostname: "%"}, nil, nil))
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "priv_test", Hostname: "%"}, nil, nil))
 	tk1.SetSession(se)
 	tk1.MustExec(`use list_partition_pri`)
 	err = tk1.ExecToErr(`alter table tlist truncate partition p0`)
@@ -603,8 +599,7 @@ func TestListPartitionPrivilege(t *testing.T) {
 }
 
 func TestListPartitionShardBits(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database list_partition_shard_bits")
@@ -634,8 +629,7 @@ func TestListPartitionShardBits(t *testing.T) {
 }
 
 func TestListPartitionSplitRegion(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database list_partition_split_region")
@@ -667,8 +661,7 @@ func TestListPartitionSplitRegion(t *testing.T) {
 }
 
 func TestListPartitionView(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database list_partition_view")
@@ -711,8 +704,7 @@ func TestListPartitionView(t *testing.T) {
 }
 
 func TestListPartitionAutoIncre(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database list_partition_auto_incre")
@@ -756,8 +748,7 @@ func TestListPartitionAutoIncre(t *testing.T) {
 }
 
 func TestListPartitionAutoRandom(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database list_partition_auto_rand")
@@ -791,8 +782,7 @@ func TestListPartitionAutoRandom(t *testing.T) {
 }
 
 func TestListPartitionInvisibleIdx(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database list_partition_invisible_idx")
@@ -810,8 +800,7 @@ func TestListPartitionInvisibleIdx(t *testing.T) {
 }
 
 func TestListPartitionCTE(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database list_partition_cte")
@@ -837,8 +826,7 @@ func TestListPartitionCTE(t *testing.T) {
 }
 
 func TestListPartitionTempTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database list_partition_temp_table")
@@ -854,8 +842,7 @@ func TestListPartitionTempTable(t *testing.T) {
 }
 
 func TestListPartitionAlterPK(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database list_partition_alter_pk")
@@ -884,8 +871,7 @@ func TestListPartitionAlterPK(t *testing.T) {
 }
 
 func TestListPartitionRandomTransaction(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database list_partition_random_tran")
@@ -937,8 +923,7 @@ func TestListPartitionRandomTransaction(t *testing.T) {
 }
 
 func TestIssue27018(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database issue_27018")
@@ -964,8 +949,7 @@ PARTITION BY LIST COLUMNS(col1) (
 }
 
 func TestIssue27017(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database issue_27017")
@@ -993,8 +977,7 @@ PARTITION BY LIST COLUMNS(col1) (
 }
 
 func TestIssue27544(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database issue_27544")
@@ -1010,8 +993,7 @@ func TestIssue27544(t *testing.T) {
 }
 
 func TestIssue27012(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database issue_27012")
@@ -1040,8 +1022,7 @@ PARTITION BY LIST COLUMNS(col1) (
 }
 
 func TestIssue27030(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database issue_27030")
@@ -1062,8 +1043,7 @@ PARTITION BY LIST COLUMNS(col1) (
 }
 
 func TestIssue27070(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database issue_27070")
@@ -1074,8 +1054,7 @@ func TestIssue27070(t *testing.T) {
 }
 
 func TestIssue27031(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database issue_27031")
@@ -1092,8 +1071,7 @@ PARTITION BY LIST COLUMNS(col1) (
 }
 
 func TestIssue27493(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database issue_27493")
@@ -1121,8 +1099,7 @@ func genListPartition(begin, end int) string {
 }
 
 func TestIssue27532(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database issue_27532")

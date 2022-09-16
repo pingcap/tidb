@@ -36,8 +36,7 @@ import (
 )
 
 func TestInspectionResult(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -122,8 +121,7 @@ func TestInspectionResult(t *testing.T) {
 		},
 	}
 
-	ctx, cleanup := createInspectionContext(t, mockMetric, mockData)
-	defer cleanup()
+	ctx := createInspectionContext(t, mockMetric, mockData)
 
 	cases := []struct {
 		sql  string
@@ -186,7 +184,7 @@ func parseTime(t *testing.T, se session.Session, str string) types.Time {
 	return time
 }
 
-func createInspectionContext(t *testing.T, mockData map[string][][]types.Datum, configurations map[string]variable.TableSnapshot) (context.Context, func()) {
+func createInspectionContext(t *testing.T, mockData map[string][][]types.Datum, configurations map[string]variable.TableSnapshot) context.Context {
 	// mock tikv configuration.
 	if configurations == nil {
 		configurations = map[string]variable.TableSnapshot{}
@@ -237,15 +235,15 @@ func createInspectionContext(t *testing.T, mockData map[string][][]types.Datum, 
 	ctx = failpoint.WithHook(ctx, func(_ context.Context, currName string) bool {
 		return currName == fpName1 || currName == fpName0
 	})
-	return ctx, func() {
+	t.Cleanup(func() {
 		require.NoError(t, failpoint.Disable(fpName0))
 		require.NoError(t, failpoint.Disable(fpName1))
-	}
+	})
+	return ctx
 }
 
 func TestThresholdCheckInspection(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	datetime := func(str string) types.Time {
@@ -289,8 +287,7 @@ func TestThresholdCheckInspection(t *testing.T) {
 		"pd_region_health":                    {},
 	}
 
-	ctx, cleanup := createInspectionContext(t, mockData, nil)
-	defer cleanup()
+	ctx := createInspectionContext(t, mockData, nil)
 
 	rs, err := tk.Session().Execute(ctx, "select /*+ time_range('2020-02-12 10:35:00','2020-02-12 10:37:00') */ item, type, instance,status_address, value, reference, details from information_schema.inspection_result where rule='threshold-check' order by item")
 	require.NoError(t, err)
@@ -337,8 +334,7 @@ func TestThresholdCheckInspection(t *testing.T) {
 }
 
 func TestThresholdCheckInspection2(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	datetime := func(s string) types.Time {
@@ -396,8 +392,7 @@ func TestThresholdCheckInspection2(t *testing.T) {
 		"pd_region_health":          {},
 	}
 
-	ctx, cleanup := createInspectionContext(t, mockData, nil)
-	defer cleanup()
+	ctx := createInspectionContext(t, mockData, nil)
 
 	rs, err := tk.Session().Execute(ctx, "select /*+ time_range('2020-02-12 10:35:00','2020-02-12 10:37:00') */ item, type, instance, status_address, value, reference, details from information_schema.inspection_result where rule='threshold-check' order by item")
 	require.NoError(t, err)
@@ -422,8 +417,7 @@ func TestThresholdCheckInspection2(t *testing.T) {
 }
 
 func TestThresholdCheckInspection3(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	datetime := func(s string) types.Time {
@@ -459,8 +453,7 @@ func TestThresholdCheckInspection3(t *testing.T) {
 		},
 	}
 
-	ctx, cleanup := createInspectionContext(t, mockData, nil)
-	defer cleanup()
+	ctx := createInspectionContext(t, mockData, nil)
 
 	rs, err := tk.Session().Execute(ctx, `select /*+ time_range('2020-02-14 04:20:00','2020-02-14 05:23:00') */
 		item, type, instance,status_address, value, reference, details from information_schema.inspection_result
@@ -510,8 +503,7 @@ func createClusterGRPCServer(t testing.TB) map[string]*testServer {
 }
 
 func TestCriticalErrorInspection(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -598,8 +590,7 @@ func TestCriticalErrorInspection(t *testing.T) {
 		},
 	}
 
-	ctx, cleanup := createInspectionContext(t, mockData, nil)
-	defer cleanup()
+	ctx := createInspectionContext(t, mockData, nil)
 
 	rs, err := tk.Session().Execute(ctx, "select /*+ time_range('2020-02-12 10:35:00','2020-02-12 10:37:00') */ item, instance,status_address, value, details from information_schema.inspection_result where rule='critical-error'")
 	require.NoError(t, err)
@@ -633,8 +624,7 @@ func TestCriticalErrorInspection(t *testing.T) {
 }
 
 func TestNodeLoadInspection(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	datetime := func(s string) types.Time {
@@ -689,8 +679,7 @@ func TestNodeLoadInspection(t *testing.T) {
 		},
 	}
 
-	ctx, cleanup := createInspectionContext(t, mockData, nil)
-	defer cleanup()
+	ctx := createInspectionContext(t, mockData, nil)
 
 	rs, err := tk.Session().Execute(ctx, `select /*+ time_range('2020-02-14 04:20:00','2020-02-14 05:23:00') */
 		item, type, instance, value, reference, details from information_schema.inspection_result
@@ -711,8 +700,7 @@ func TestNodeLoadInspection(t *testing.T) {
 }
 
 func TestConfigCheckOfStorageBlockCacheSize(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	datetime := func(s string) types.Time {
@@ -740,8 +728,7 @@ func TestConfigCheckOfStorageBlockCacheSize(t *testing.T) {
 		},
 	}
 
-	ctx, cleanup := createInspectionContext(t, mockData, configurations)
-	defer cleanup()
+	ctx := createInspectionContext(t, mockData, configurations)
 
 	rs, err := tk.Session().Execute(ctx, "select  /*+ time_range('2020-02-14 04:20:00','2020-02-14 05:23:00') */ * from information_schema.inspection_result where rule='config' and item='storage.block-cache.capacity' order by value")
 	require.NoError(t, err)

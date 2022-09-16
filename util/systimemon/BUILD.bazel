@@ -19,6 +19,7 @@ go_test(
         "systime_mon_test.go",
     ],
     embed = [":systimemon"],
+    flaky = True,
     deps = [
         "//testkit/testsetup",
         "@com_github_stretchr_testify//require",

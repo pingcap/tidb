@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
@@ -50,14 +51,21 @@ func (Ranges) Rebuild() error {
 	return nil
 }
 
+// MemUsage gets the memory usage of ranges.
+func (rs Ranges) MemUsage() (sum int64) {
+	if len(rs) == 0 {
+		return
+	}
+	return rs[0].MemUsage() * int64(len(rs))
+}
+
 // Range represents a range generated in physical plan building phase.
 type Range struct {
-	LowVal  []types.Datum
-	HighVal []types.Datum
-
-	LowExclude  bool // Low value is exclusive.
-	HighExclude bool // High value is exclusive.
+	LowVal      []types.Datum // Low value is exclusive.
+	HighVal     []types.Datum // High value is exclusive.
 	Collators   []collate.Collator
+	LowExclude  bool
+	HighExclude bool
 }
 
 // Width returns the width of this range.
@@ -217,6 +225,23 @@ func (ran *Range) PrefixEqualLen(sc *stmtctx.StatementContext) (int, error) {
 	return len(ran.LowVal), nil
 }
 
+// EmptyRangeSize is the size of empty range.
+const EmptyRangeSize = int64(unsafe.Sizeof(Range{}))
+
+// MemUsage gets the memory usage of range.
+func (ran *Range) MemUsage() (sum int64) {
+	// 16 is the size of Collator interface.
+	sum = EmptyRangeSize + int64(cap(ran.LowVal))*types.EmptyDatumSize + int64(cap(ran.HighVal))*types.EmptyDatumSize + int64(cap(ran.Collators))*16
+	for _, val := range ran.LowVal {
+		sum += val.MemUsage() - types.EmptyDatumSize
+	}
+	for _, val := range ran.HighVal {
+		sum += val.MemUsage() - types.EmptyDatumSize
+	}
+	// We ignore size of collator currently.
+	return sum
+}
+
 func formatDatum(d types.Datum, isLeftSide bool) string {
 	switch d.Kind() {
 	case types.KindNull:
@@ -247,4 +272,22 @@ func formatDatum(d types.Datum, isLeftSide bool) string {
 		return fmt.Sprintf("\"%v\"", d.GetValue())
 	}
 	return fmt.Sprintf("%v", d.GetValue())
+}
+
+const emptyRangeSize = int64(unsafe.Sizeof(Range{}))
+
+// MemoryUsage return the memory usage of Range
+func (ran *Range) MemoryUsage() (sum int64) {
+	if ran == nil {
+		return
+	}
+
+	sum = emptyRangeSize
+	for _, low := range ran.LowVal {
+		sum += low.MemUsage()
+	}
+	for _, high := range ran.HighVal {
+		sum += high.MemUsage()
+	}
+	return
 }

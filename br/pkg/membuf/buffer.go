@@ -123,6 +123,11 @@ func (p *Pool) Destroy() {
 	}
 }
 
+// TotalSize is the total memory size of this Pool.
+func (p *Pool) TotalSize() int64 {
+	return int64(len(p.blockCache) * p.blockSize)
+}
+
 // Buffer represents the reuse buffer.
 type Buffer struct {
 	pool      *Pool

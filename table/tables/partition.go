@@ -287,16 +287,17 @@ type ListPartitionGroup struct {
 // In partition p0, both value group0 (1,5) and group1 (1,6) are contain the column a which value is 1.
 // In partition p1, value group0 (1,7) contains the column a which value is 1.
 // So, the ListPartitionLocation of column a which value is 1 is:
-// []ListPartitionGroup{
-// 	{
-// 		PartIdx: 0,               // `0` is the partition p0 index in all partitions.
-// 		GroupIdxs: []int{0, 1}    // `0,1` is the index of the value group0, group1.
-// 	},
-// 	{
-// 		PartIdx: 1,               // `1` is the partition p1 index in all partitions.
-// 		GroupIdxs: []int{0}       // `0` is the index of the value group0.
-// 	},
-// }
+//
+//	[]ListPartitionGroup{
+//		{
+//			PartIdx: 0,               // `0` is the partition p0 index in all partitions.
+//			GroupIdxs: []int{0, 1}    // `0,1` is the index of the value group0, group1.
+//		},
+//		{
+//			PartIdx: 1,               // `1` is the partition p1 index in all partitions.
+//			GroupIdxs: []int{0}       // `0` is the index of the value group0.
+//		},
+//	}
 type ListPartitionLocation []ListPartitionGroup
 
 // IsEmpty returns true if the ListPartitionLocation is empty.
@@ -968,6 +969,17 @@ func PartitionRecordKey(pid int64, handle int64) kv.Key {
 	return tablecodec.EncodeRecordKey(recordPrefix, kv.IntHandle(handle))
 }
 
+func (t *partitionedTable) CheckForExchangePartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum, pid int64) error {
+	defID, err := t.locatePartition(ctx, pi, r)
+	if err != nil {
+		return err
+	}
+	if defID != pid {
+		return errors.WithStack(table.ErrRowDoesNotMatchGivenPartitionSet)
+	}
+	return nil
+}
+
 // locatePartition returns the partition ID of the input record.
 func (t *partitionedTable) locatePartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum) (int64, error) {
 	var err error
@@ -996,9 +1008,10 @@ func (t *partitionedTable) locateRangeColumnPartition(ctx sessionctx.Context, pi
 	partitionExprs := t.partitionExpr.UpperBounds
 	evalBuffer := t.evalBufferPool.Get().(*chunk.MutRow)
 	defer t.evalBufferPool.Put(evalBuffer)
+	var ret int64
 	idx := sort.Search(len(partitionExprs), func(i int) bool {
 		evalBuffer.SetDatums(r...)
-		ret, isNull, err := partitionExprs[i].EvalInt(ctx, evalBuffer.ToRow())
+		ret, isNull, err = partitionExprs[i].EvalInt(ctx, evalBuffer.ToRow())
 		if err != nil {
 			return true // Break the search.
 		}

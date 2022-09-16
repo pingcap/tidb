@@ -799,8 +799,8 @@ func UpdateHistogramWithBucketCount(h *Histogram, feedback *QueryFeedback, stats
 	// Update the NDV of primary key column.
 	if feedback.Tp == PkType {
 		hist.NDV = int64(hist.TotalRowCount())
-		// If we maintained the NDV of bucket. We can also update the total ndv.
 	} else if feedback.Tp == IndexType && statsVer == 2 {
+		// If we maintained the NDV of bucket. We can also update the total ndv.
 		totNdv := int64(0)
 		for _, bkt := range buckets {
 			totNdv += bkt.Ndv

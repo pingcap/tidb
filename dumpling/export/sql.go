@@ -204,9 +204,9 @@ func ShowCreateSequence(tctx *tcontext.Context, db *BaseConn, database, sequence
 			return "", err
 		}
 		for _, oneRow := range results {
-			nextGlobalRowId, idType := oneRow[0], oneRow[1]
+			nextGlobalRowID, idType := oneRow[0], oneRow[1]
 			if idType == "SEQUENCE" {
-				nextNotCachedValue, _ = strconv.ParseInt(nextGlobalRowId, 10, 64)
+				nextNotCachedValue, _ = strconv.ParseInt(nextGlobalRowID, 10, 64)
 			}
 		}
 		fmt.Fprintf(&createSequenceSQL, "SELECT SETVAL(`%s`,%d);\n", escapeString(sequence), nextNotCachedValue)
@@ -361,6 +361,7 @@ func ListAllDatabasesTables(tctx *tcontext.Context, db *sql.Conn, databaseNames 
 	return dbTables, nil
 }
 
+// ListAllPlacementPolicyNames returns all placement policy names.
 func ListAllPlacementPolicyNames(tctx *tcontext.Context, db *BaseConn) ([]string, error) {
 	var policyList []string
 	var policy string

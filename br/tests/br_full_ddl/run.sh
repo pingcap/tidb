@@ -82,6 +82,16 @@ if [ "${checksum_count}" -lt "1" ];then
     exit 1
 fi
 
+# when we have backup stats during backup, we cannot close domain during one shot session.
+# so we can check the log count of `one shot domain closed`.
+# we will call UseOneShotSession once to get the value global variable.
+one_shot_session_count=$(cat $LOG | grep "one shot session closed" | wc -l | xargs)
+one_shot_domain_count=$(cat $LOG | grep "one shot domain closed" | wc -l | xargs)
+if [ "${one_shot_session_count}" -ne "1" ] || [ "$one_shot_domain_count" -ne "0" ];then
+    echo "TEST: [$TEST_NAME] fail on one shot session check, $one_shot_session_count, $one_shot_domain_count"
+    exit 1
+fi
+
 echo "backup start without stats..."
 run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/${DB}_disable_stats" --concurrency 4
 
@@ -97,7 +107,7 @@ if [[ "${cluster_index_before_backup}" != "${cluster_index_before_restore}" ]]; 
 fi
 
 echo "restore full without stats..."
-run_br restore full --filter '*.*' --filter '!mysql.*' -s "local://$TEST_DIR/${DB}_disable_stats" --pd $PD_ADDR
+run_br restore full -s "local://$TEST_DIR/${DB}_disable_stats" --pd $PD_ADDR
 curl $TIDB_IP:10080/stats/dump/$DB/$TABLE | jq '.columns.field0 | del(.last_update_version, .fm_sketch, .correlation)' > $RESOTRE_STAT
 
 # stats should not be equal because we disable stats by default.
@@ -114,7 +124,7 @@ run_sql "DROP DATABASE $DB;"
 # restore full
 echo "restore start..."
 export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/restore/restore-createtables-error=return(true)"
-run_br restore full --filter '*.*' --filter '!mysql.*' -s "local://$TEST_DIR/$DB" --pd $PD_ADDR --log-file $RESTORE_LOG --ddl-batch-size=128 || { cat $RESTORE_LOG; }
+run_br restore full -s "local://$TEST_DIR/$DB" --pd $PD_ADDR --log-file $RESTORE_LOG --ddl-batch-size=128 || { cat $RESTORE_LOG; }
 export GO_FAILPOINTS=""
 
 panic_count=$(cat $RESTORE_LOG | grep "panic"| wc -l)
@@ -128,7 +138,7 @@ run_sql "DROP DATABASE $DB;"
 # restore full
 echo "restore start..."
 export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/pdutil/PDEnabledPauseConfig=return(true)"
-run_br restore full --filter '*.*' --filter '!mysql.*' -s "local://$TEST_DIR/$DB" --pd $PD_ADDR --log-file $LOG || { cat $LOG; exit 1; }
+run_br restore full -s "local://$TEST_DIR/$DB" --pd $PD_ADDR --log-file $LOG || { cat $LOG; exit 1; }
 export GO_FAILPOINTS=""
 
 pause_count=$(cat $LOG | grep "pause configs successful"| wc -l | xargs)

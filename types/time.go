@@ -613,18 +613,17 @@ func TruncateFrac(t gotime.Time, fsp int) (gotime.Time, error) {
 
 // ToPackedUint encodes Time to a packed uint64 value.
 //
-//    1 bit  0
-//   17 bits year*13+month   (year 0-9999, month 0-12)
-//    5 bits day             (0-31)
-//    5 bits hour            (0-23)
-//    6 bits minute          (0-59)
-//    6 bits second          (0-59)
-//   24 bits microseconds    (0-999999)
+//	 1 bit  0
+//	17 bits year*13+month   (year 0-9999, month 0-12)
+//	 5 bits day             (0-31)
+//	 5 bits hour            (0-23)
+//	 6 bits minute          (0-59)
+//	 6 bits second          (0-59)
+//	24 bits microseconds    (0-999999)
 //
-//   Total: 64 bits = 8 bytes
+//	Total: 64 bits = 8 bytes
 //
-//   0YYYYYYY.YYYYYYYY.YYdddddh.hhhhmmmm.mmssssss.ffffffff.ffffffff.ffffffff
-//
+//	0YYYYYYY.YYYYYYYY.YYdddddh.hhhhmmmm.mmssssss.ffffffff.ffffffff.ffffffff
 func (t Time) ToPackedUint() (uint64, error) {
 	tm := t
 	if t.IsZero() {
@@ -834,12 +833,13 @@ var validIdxCombinations = map[int]struct {
 // empty string will be returned.
 //
 // Supported syntax:
-//   MySQL compatible: ((?P<tz_sign>[-+])(?P<tz_hour>[0-9]{2}):(?P<tz_minute>[0-9]{2})){0,1}$, see
-//     https://dev.mysql.com/doc/refman/8.0/en/time-zone-support.html and https://dev.mysql.com/doc/refman/8.0/en/datetime.html
-//     the first link specified that timezone information should be in "[H]H:MM, prefixed with a + or -" while the
-//     second link specified that for string literal, "hour values less than than 10, a leading zero is required.".
-//   ISO-8601: Z|((((?P<tz_sign>[-+])(?P<tz_hour>[0-9]{2})(:(?P<tz_minute>[0-9]{2}){0,1}){0,1})|((?P<tz_minute>[0-9]{2}){0,1}){0,1}))$
-//     see https://www.cl.cam.ac.uk/~mgk25/iso-time.html
+//
+//	MySQL compatible: ((?P<tz_sign>[-+])(?P<tz_hour>[0-9]{2}):(?P<tz_minute>[0-9]{2})){0,1}$, see
+//	  https://dev.mysql.com/doc/refman/8.0/en/time-zone-support.html and https://dev.mysql.com/doc/refman/8.0/en/datetime.html
+//	  the first link specified that timezone information should be in "[H]H:MM, prefixed with a + or -" while the
+//	  second link specified that for string literal, "hour values less than than 10, a leading zero is required.".
+//	ISO-8601: Z|((((?P<tz_sign>[-+])(?P<tz_hour>[0-9]{2})(:(?P<tz_minute>[0-9]{2}){0,1}){0,1})|((?P<tz_minute>[0-9]{2}){0,1}){0,1}))$
+//	  see https://www.cl.cam.ac.uk/~mgk25/iso-time.html
 func GetTimezone(lit string) (idx int, tzSign, tzHour, tzSep, tzMinute string) {
 	idx, zidx, sidx, spidx := -1, -1, -1, -1
 	// idx is for the position of the starting of the timezone information
@@ -1487,6 +1487,17 @@ func (d Duration) ConvertToTime(sc *stmtctx.StatementContext, tp uint8) (Time, e
 	return t.Convert(sc, tp)
 }
 
+// ConvertToTimeWithTimestamp converts duration to Time by system timestamp.
+// Tp is TypeDatetime, TypeTimestamp and TypeDate.
+func (d Duration) ConvertToTimeWithTimestamp(sc *stmtctx.StatementContext, tp uint8, ts gotime.Time) (Time, error) {
+	year, month, day := ts.In(sc.TimeZone).Date()
+	datePart := FromDate(year, int(month), day, 0, 0, 0, 0)
+	mixDateAndDuration(&datePart, d)
+
+	t := NewTime(datePart, mysql.TypeDatetime, d.Fsp)
+	return t.Convert(sc, tp)
+}
+
 // RoundFrac rounds fractional seconds precision with new fsp and returns a new one.
 // We will use the “round half up” rule, e.g, >= 0.5 -> 1, < 0.5 -> 0,
 // so 10:10:10.999999 round 0 -> 10:10:11
@@ -1742,9 +1753,9 @@ func matchDuration(str string, fsp int) (Duration, bool, error) {
 }
 
 // canFallbackToDateTime return true
-// 1. the string is failed to be parsed by `matchDuration`
-// 2. the string is start with a series of digits whose length match the full format of DateTime literal (12, 14)
-//	  or the string start with a date literal.
+//  1. the string is failed to be parsed by `matchDuration`
+//  2. the string is start with a series of digits whose length match the full format of DateTime literal (12, 14)
+//     or the string start with a date literal.
 func canFallbackToDateTime(str string) bool {
 	digits, rest, err := parser.Digit(str, 1)
 	if err != nil {

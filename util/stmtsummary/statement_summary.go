@@ -112,16 +112,17 @@ type stmtSummaryByDigestElement struct {
 	beginTime int64
 	endTime   int64
 	// basic
-	sampleSQL   string
-	charset     string
-	collation   string
-	prevSQL     string
-	samplePlan  string
-	planHint    string
-	indexNames  []string
-	execCount   int64
-	sumErrors   int
-	sumWarnings int
+	sampleSQL        string
+	charset          string
+	collation        string
+	prevSQL          string
+	samplePlan       string
+	sampleBinaryPlan string
+	planHint         string
+	indexNames       []string
+	execCount        int64
+	sumErrors        int
+	sumWarnings      int
 	// latency
 	sumLatency        time.Duration
 	maxLatency        time.Duration
@@ -211,33 +212,34 @@ type stmtSummaryByDigestElement struct {
 
 // StmtExecInfo records execution information of each statement.
 type StmtExecInfo struct {
-	SchemaName     string
-	OriginalSQL    string
-	Charset        string
-	Collation      string
-	NormalizedSQL  string
-	Digest         string
-	PrevSQL        string
-	PrevSQLDigest  string
-	PlanGenerator  func() (string, string)
-	PlanDigest     string
-	PlanDigestGen  func() string
-	User           string
-	TotalLatency   time.Duration
-	ParseLatency   time.Duration
-	CompileLatency time.Duration
-	StmtCtx        *stmtctx.StatementContext
-	CopTasks       *stmtctx.CopTasksDetails
-	ExecDetail     *execdetails.ExecDetails
-	MemMax         int64
-	DiskMax        int64
-	StartTime      time.Time
-	IsInternal     bool
-	Succeed        bool
-	PlanInCache    bool
-	PlanInBinding  bool
-	ExecRetryCount uint
-	ExecRetryTime  time.Duration
+	SchemaName          string
+	OriginalSQL         string
+	Charset             string
+	Collation           string
+	NormalizedSQL       string
+	Digest              string
+	PrevSQL             string
+	PrevSQLDigest       string
+	PlanGenerator       func() (string, string)
+	BinaryPlanGenerator func() string
+	PlanDigest          string
+	PlanDigestGen       func() string
+	User                string
+	TotalLatency        time.Duration
+	ParseLatency        time.Duration
+	CompileLatency      time.Duration
+	StmtCtx             *stmtctx.StatementContext
+	CopTasks            *stmtctx.CopTasksDetails
+	ExecDetail          *execdetails.ExecDetails
+	MemMax              int64
+	DiskMax             int64
+	StartTime           time.Time
+	IsInternal          bool
+	Succeed             bool
+	PlanInCache         bool
+	PlanInBinding       bool
+	ExecRetryCount      uint
+	ExecRetryTime       time.Duration
 	execdetails.StmtExecDetails
 	ResultRows      int64
 	TiKVExecDetails util.ExecDetails
@@ -592,14 +594,22 @@ func (ssbd *stmtSummaryByDigest) collectHistorySummaries(checker *stmtSummaryChe
 	return ssElements
 }
 
-var maxEncodedPlanSizeInBytes = 1024 * 1024
+// MaxEncodedPlanSizeInBytes is the upper limit of the size of the plan and the binary plan in the stmt summary.
+var MaxEncodedPlanSizeInBytes = 1024 * 1024
 
 func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalSeconds int64) *stmtSummaryByDigestElement {
 	// sampleSQL / authUsers(sampleUser) / samplePlan / prevSQL / indexNames store the values shown at the first time,
 	// because it compacts performance to update every time.
 	samplePlan, planHint := sei.PlanGenerator()
-	if len(samplePlan) > maxEncodedPlanSizeInBytes {
+	if len(samplePlan) > MaxEncodedPlanSizeInBytes {
 		samplePlan = plancodec.PlanDiscardedEncoded
+	}
+	binPlan := ""
+	if sei.BinaryPlanGenerator != nil {
+		binPlan = sei.BinaryPlanGenerator()
+		if len(binPlan) > MaxEncodedPlanSizeInBytes {
+			binPlan = plancodec.BinaryPlanDiscardedEncoded
+		}
 	}
 	ssElement := &stmtSummaryByDigestElement{
 		beginTime: beginTime,
@@ -609,19 +619,20 @@ func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalS
 		// PrevSQL is already truncated to cfg.Log.QueryLogMaxLen.
 		prevSQL: sei.PrevSQL,
 		// samplePlan needs to be decoded so it can't be truncated.
-		samplePlan:    samplePlan,
-		planHint:      planHint,
-		indexNames:    sei.StmtCtx.IndexNames,
-		minLatency:    sei.TotalLatency,
-		firstSeen:     sei.StartTime,
-		lastSeen:      sei.StartTime,
-		backoffTypes:  make(map[string]int),
-		authUsers:     make(map[string]struct{}),
-		planInCache:   false,
-		planCacheHits: 0,
-		planInBinding: false,
-		prepared:      sei.Prepared,
-		minResultRows: math.MaxInt64,
+		samplePlan:       samplePlan,
+		sampleBinaryPlan: binPlan,
+		planHint:         planHint,
+		indexNames:       sei.StmtCtx.IndexNames,
+		minLatency:       sei.TotalLatency,
+		firstSeen:        sei.StartTime,
+		lastSeen:         sei.StartTime,
+		backoffTypes:     make(map[string]int),
+		authUsers:        make(map[string]struct{}),
+		planInCache:      false,
+		planCacheHits:    0,
+		planInBinding:    false,
+		prepared:         sei.Prepared,
+		minResultRows:    math.MaxInt64,
 	}
 	ssElement.add(sei, intervalSeconds)
 	return ssElement
@@ -784,8 +795,12 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 		if commitBackoffTime > ssElement.maxCommitBackoffTime {
 			ssElement.maxCommitBackoffTime = commitBackoffTime
 		}
-		ssElement.sumBackoffTimes += int64(len(commitDetails.Mu.BackoffTypes))
-		for _, backoffType := range commitDetails.Mu.BackoffTypes {
+		ssElement.sumBackoffTimes += int64(len(commitDetails.Mu.PrewriteBackoffTypes))
+		for _, backoffType := range commitDetails.Mu.PrewriteBackoffTypes {
+			ssElement.backoffTypes[backoffType]++
+		}
+		ssElement.sumBackoffTimes += int64(len(commitDetails.Mu.CommitBackoffTypes))
+		for _, backoffType := range commitDetails.Mu.CommitBackoffTypes {
 			ssElement.backoffTypes[backoffType]++
 		}
 		commitDetails.Mu.Unlock()

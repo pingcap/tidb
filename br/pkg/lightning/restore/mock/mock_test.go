@@ -148,7 +148,9 @@ func TestMockTargetInfoBasic(t *testing.T) {
 	require.Equal(t, s02TotalSize, uint64(store.Status.Capacity))
 	require.Equal(t, s02UsedSize, uint64(store.Status.UsedSize))
 
-	ti.EmptyRegionCount = emptyRegionCount
+	ti.EmptyRegionCountMap = map[uint64]int{
+		1: emptyRegionCount,
+	}
 	ri, err := ti.GetEmptyRegionsInfo(ctx)
 	require.NoError(t, err)
 	require.Equal(t, emptyRegionCount, ri.Count)

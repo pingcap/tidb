@@ -39,8 +39,7 @@ import (
 )
 
 func TestPointGet(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table point (id int primary key, c int, d varchar(10), unique c_d (c, d))")
@@ -82,8 +81,7 @@ func TestPointGet(t *testing.T) {
 }
 
 func TestPointGetOverflow(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t0")
@@ -103,8 +101,7 @@ func TestPointGetOverflow(t *testing.T) {
 
 // Close issue #22839
 func TestPointGetDataTooLong(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists PK_1389;")
@@ -124,8 +121,7 @@ func TestPointGetDataTooLong(t *testing.T) {
 
 // issue #25489
 func TestIssue25489(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
@@ -175,8 +171,7 @@ func TestIssue25489(t *testing.T) {
 
 // issue #25320
 func TestDistinctPlan(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists test_distinct;")
@@ -190,8 +185,7 @@ func TestDistinctPlan(t *testing.T) {
 }
 
 func TestPointGetBinaryPK(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test;`)
 	tk.MustExec(`drop table if exists t;`)
@@ -215,8 +209,7 @@ func TestPointGetBinaryPK(t *testing.T) {
 }
 
 func TestPointGetAliasTableBinaryPK(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test;`)
 	tk.MustExec(`drop table if exists t;`)
@@ -240,8 +233,7 @@ func TestPointGetAliasTableBinaryPK(t *testing.T) {
 }
 
 func TestIndexLookupBinary(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test;`)
 	tk.MustExec(`drop table if exists t;`)
@@ -269,12 +261,10 @@ func TestIndexLookupBinary(t *testing.T) {
 	tk.MustIndexLookup(`select * from t where a = "a";`).Check(testkit.Rows())
 	tk.MustIndexLookup(`select * from t where a = "a ";`).Check(testkit.Rows(`a  b `))
 	tk.MustIndexLookup(`select * from t where a = "a  ";`).Check(testkit.Rows())
-
 }
 
 func TestOverflowOrTruncated(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t6 (id bigint, a bigint, primary key(id), unique key(a));")
@@ -290,8 +280,7 @@ func TestOverflowOrTruncated(t *testing.T) {
 }
 
 func TestIssue10448(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -333,8 +322,7 @@ func TestIssue10448(t *testing.T) {
 }
 
 func TestIssue10677(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -353,8 +341,9 @@ func TestIssue10677(t *testing.T) {
 }
 
 func TestForUpdateRetry(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	_, err := tk.Exec("drop table if exists t")
@@ -373,8 +362,7 @@ func TestForUpdateRetry(t *testing.T) {
 }
 
 func TestPointGetByRowID(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -386,8 +374,7 @@ func TestPointGetByRowID(t *testing.T) {
 }
 
 func TestPointGetBinaryLiteralString(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -397,8 +384,7 @@ func TestPointGetBinaryLiteralString(t *testing.T) {
 }
 
 func TestSelectCheckVisibility(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -432,8 +418,7 @@ func TestSelectCheckVisibility(t *testing.T) {
 }
 
 func TestReturnValues(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -458,8 +443,7 @@ func TestReturnValues(t *testing.T) {
 }
 
 func TestClusterIndexPointGet(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
@@ -483,8 +467,7 @@ func TestClusterIndexPointGet(t *testing.T) {
 }
 
 func TestClusterIndexCBOPointGet(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
@@ -501,7 +484,7 @@ func TestClusterIndexCBOPointGet(t *testing.T) {
 		Plan []string
 		Res  []string
 	}
-	pointGetSuiteData.GetTestCases(t, &input, &output)
+	pointGetSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		plan := tk.MustQuery("explain format = 'brief' " + tt)
 		res := tk.MustQuery(tt).Sort()
@@ -525,8 +508,7 @@ func TestMemCacheReadLock(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.EnableTableLock = true
 	})
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -611,8 +593,7 @@ func TestPartitionMemCacheReadLock(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.EnableTableLock = true
 	})
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -654,8 +635,7 @@ func TestPointGetWriteLock(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.EnableTableLock = true
 	})
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table point (id int primary key, c int, d varchar(10), unique c_d (c, d))")
@@ -685,8 +665,7 @@ func TestPointGetWriteLock(t *testing.T) {
 
 func TestPointGetLockExistKey(t *testing.T) {
 	testLock := func(rc bool, key string, tableName string) {
-		store, clean := testkit.CreateMockStore(t)
-		defer clean()
+		store := testkit.CreateMockStore(t)
 		tk1, tk2 := testkit.NewTestKit(t, store), testkit.NewTestKit(t, store)
 
 		tk1.MustExec("use test")
@@ -791,7 +770,6 @@ func TestPointGetLockExistKey(t *testing.T) {
 		{rc: true, key: "primary key"},
 		{rc: true, key: "unique key"},
 	} {
-
 		tableName := fmt.Sprintf("t_%d", i)
 		func(rc bool, key string, tableName string) {
 			testLock(rc, key, tableName)
@@ -802,8 +780,7 @@ func TestPointGetLockExistKey(t *testing.T) {
 func TestWithTiDBSnapshot(t *testing.T) {
 	// Fix issue https://github.com/pingcap/tidb/issues/22436
 	// Point get should not use math.MaxUint64 when variable @@tidb_snapshot is set.
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists xx")
@@ -835,8 +812,7 @@ func TestWithTiDBSnapshot(t *testing.T) {
 }
 
 func TestPointGetIssue25167(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")

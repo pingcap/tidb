@@ -86,7 +86,6 @@ func makeSubrangeRegions(keys ...string) constantRegions {
 		regions = append(regions, region)
 	}
 	return constantRegions(regions)
-
 }
 
 func useRegions(keys ...string) constantRegions {

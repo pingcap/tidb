@@ -19,6 +19,7 @@
 package ddl
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"math"
@@ -46,6 +47,7 @@ import (
 	field_types "github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -62,6 +64,8 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
 
@@ -90,11 +94,11 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt)
 	// If no charset and/or collation is specified use collation_server and character_set_server
 	charsetOpt := ast.CharsetOpt{}
 	if sessionVars.GlobalVarsAccessor != nil {
-		charsetOpt.Col, err = variable.GetSessionOrGlobalSystemVar(sessionVars, variable.CollationServer)
+		charsetOpt.Col, err = sessionVars.GetSessionOrGlobalSystemVar(variable.CollationServer)
 		if err != nil {
 			return err
 		}
-		charsetOpt.Chs, err = variable.GetSessionOrGlobalSystemVar(sessionVars, variable.CharacterSetServer)
+		charsetOpt.Chs, err = sessionVars.GetSessionOrGlobalSystemVar(variable.CharacterSetServer)
 		if err != nil {
 			return err
 		}
@@ -135,7 +139,6 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt)
 				charsetOpt.Col = ""
 			}
 		}
-
 	}
 	dbInfo := &model.DBInfo{Name: stmt.Name}
 	chs, coll, err := ResolveCharsetCollation(charsetOpt)
@@ -285,7 +288,7 @@ func (d *ddl) getPendingTiFlashTableCount(sctx sessionctx.Context, originVersion
 		}
 		for _, tbl := range dbInfo.Tables {
 			if tbl.TiFlashReplica != nil && !tbl.TiFlashReplica.Available {
-				cnt += 1
+				cnt++
 			}
 		}
 	}
@@ -494,7 +497,7 @@ func checkAndNormalizePlacementPolicy(ctx sessionctx.Context, placementPolicyRef
 		return nil, nil
 	}
 
-	policy, ok := ctx.GetInfoSchema().(infoschema.InfoSchema).PolicyByName(placementPolicyRef.Name)
+	policy, ok := sessiontxn.GetTxnManager(ctx).GetTxnInfoSchema().PolicyByName(placementPolicyRef.Name)
 	if !ok {
 		return nil, errors.Trace(infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(placementPolicyRef.Name))
 	}
@@ -706,7 +709,6 @@ func buildColumnsAndConstraints(
 	tblCharset string,
 	tblCollate string,
 ) ([]*table.Column, []*ast.Constraint, error) {
-	colMap := map[string]*table.Column{}
 	// outPriKeyConstraint is the primary key constraint out of column definition. such as: create table t1 (id int , age int, primary key(id));
 	var outPriKeyConstraint *ast.Constraint
 	for _, v := range constraints {
@@ -716,6 +718,8 @@ func buildColumnsAndConstraints(
 		}
 	}
 	cols := make([]*table.Column, 0, len(colDefs))
+	colMap := make(map[string]*table.Column, len(colDefs))
+
 	for i, colDef := range colDefs {
 		col, cts, err := buildColumnAndConstraint(ctx, i, colDef, outPriKeyConstraint, tblCharset, tblCollate)
 		if err != nil {
@@ -761,7 +765,9 @@ func ResolveCharsetCollation(charsetOpts ...ast.CharsetOpt) (string, string, err
 }
 
 // OverwriteCollationWithBinaryFlag is used to handle the case like
-//   CREATE TABLE t (a VARCHAR(255) BINARY) CHARSET utf8 COLLATE utf8_general_ci;
+//
+//	CREATE TABLE t (a VARCHAR(255) BINARY) CHARSET utf8 COLLATE utf8_general_ci;
+//
 // The 'BINARY' sets the column collation to *_bin according to the table charset.
 func OverwriteCollationWithBinaryFlag(colDef *ast.ColumnDef, chs, coll string) (newChs string, newColl string) {
 	ignoreBinFlag := colDef.Tp.GetCharset() != "" && (colDef.Tp.GetCollate() != "" || containsColumnOption(colDef, ast.ColumnOptionCollate))
@@ -1074,7 +1080,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 					col.AddFlag(mysql.UniqueKeyFlag)
 				}
 			case ast.ColumnOptionDefaultValue:
-				hasDefaultValue, err = setDefaultValue(ctx, col, v)
+				hasDefaultValue, err = SetDefaultValue(ctx, col, v)
 				if err != nil {
 					return nil, nil, errors.Trace(err)
 				}
@@ -1595,25 +1601,11 @@ func checkColumnsAttributes(colDefs []*model.ColumnInfo) error {
 
 func checkColumnFieldLength(col *table.Column) error {
 	if col.GetType() == mysql.TypeVarchar {
-		if err := IsTooBigFieldLength(col.GetFlen(), col.Name.O, col.GetCharset()); err != nil {
+		if err := types.IsVarcharTooBigFieldLength(col.GetFlen(), col.Name.O, col.GetCharset()); err != nil {
 			return errors.Trace(err)
 		}
 	}
 
-	return nil
-}
-
-// IsTooBigFieldLength check if the varchar type column exceeds the maximum length limit.
-func IsTooBigFieldLength(colDefTpFlen int, colDefName, setCharset string) error {
-	desc, err := charset.GetCharsetInfo(setCharset)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	maxFlen := mysql.MaxFieldVarCharLength
-	maxFlen /= desc.Maxlen
-	if colDefTpFlen != types.UnspecifiedLength && colDefTpFlen > maxFlen {
-		return types.ErrTooBigFieldLength.GenWithStack("Column length too big for column '%s' (max = %d); use BLOB or TEXT instead", colDefName, maxFlen)
-	}
 	return nil
 }
 
@@ -1647,7 +1639,7 @@ func checkDuplicateConstraint(namesMap map[string]bool, name string, foreign boo
 	return nil
 }
 
-func setEmptyConstraintName(namesMap map[string]bool, constr *ast.Constraint, foreign bool) {
+func setEmptyConstraintName(namesMap map[string]bool, constr *ast.Constraint) {
 	if constr.Name == "" && len(constr.Keys) > 0 {
 		var colName string
 		for _, keyPart := range constr.Keys {
@@ -1666,11 +1658,7 @@ func setEmptyConstraintName(namesMap map[string]bool, constr *ast.Constraint, fo
 		}
 		for namesMap[constrName] {
 			// We loop forever until we find constrName that haven't been used.
-			if foreign {
-				constrName = fmt.Sprintf("fk_%s_%d", colName, i)
-			} else {
-				constrName = fmt.Sprintf("%s_%d", colName, i)
-			}
+			constrName = fmt.Sprintf("%s_%d", colName, i)
 			i++
 		}
 		constr.Name = constrName
@@ -1699,10 +1687,8 @@ func checkConstraintNames(constraints []*ast.Constraint) error {
 
 	// Set empty constraint names.
 	for _, constr := range constraints {
-		if constr.Tp == ast.ConstraintForeignKey {
-			setEmptyConstraintName(fkNames, constr, true)
-		} else {
-			setEmptyConstraintName(constrNames, constr, false)
+		if constr.Tp != ast.ConstraintForeignKey {
+			setEmptyConstraintName(constrNames, constr)
 		}
 	}
 
@@ -1743,44 +1729,39 @@ func setTableAutoRandomBits(ctx sessionctx.Context, tbInfo *model.TableInfo, col
 				return dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomIncompatibleWithDefaultValueErrMsg)
 			}
 
-			autoRandBits, err := extractAutoRandomBitsFromColDef(col)
+			shardBits, rangeBits, err := extractAutoRandomBitsFromColDef(col)
 			if err != nil {
 				return errors.Trace(err)
 			}
+			tbInfo.AutoRandomBits = shardBits
+			tbInfo.AutoRandomRangeBits = rangeBits
 
-			layout := autoid.NewShardIDLayout(col.Tp, autoRandBits)
-			if autoRandBits == 0 {
-				return dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomNonPositive)
-			} else if autoRandBits > autoid.MaxAutoRandomBits {
-				errMsg := fmt.Sprintf(autoid.AutoRandomOverflowErrMsg,
-					autoid.MaxAutoRandomBits, autoRandBits, col.Name.Name.O)
-				return dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
+			shardFmt := autoid.NewShardIDFormat(col.Tp, shardBits, rangeBits)
+			if shardFmt.IncrementalBits < autoid.AutoRandomIncBitsMin {
+				return dbterror.ErrInvalidAutoRandom.FastGenByArgs(autoid.AutoRandomIncrementalBitsTooSmall)
 			}
-			tbInfo.AutoRandomBits = autoRandBits
-
-			msg := fmt.Sprintf(autoid.AutoRandomAvailableAllocTimesNote, layout.IncrementalBitsCapacity())
+			msg := fmt.Sprintf(autoid.AutoRandomAvailableAllocTimesNote, shardFmt.IncrementalBitsCapacity())
 			ctx.GetSessionVars().StmtCtx.AppendNote(errors.Errorf(msg))
 		}
 	}
 	return nil
 }
 
-func extractAutoRandomBitsFromColDef(colDef *ast.ColumnDef) (uint64, error) {
+func extractAutoRandomBitsFromColDef(colDef *ast.ColumnDef) (shardBits, rangeBits uint64, err error) {
 	for _, op := range colDef.Options {
 		if op.Tp == ast.ColumnOptionAutoRandom {
-			return convertAutoRandomBitsToUnsigned(op.AutoRandomBitLength)
+			shardBits, err = autoid.AutoRandomShardBitsNormalize(op.AutoRandOpt.ShardBits, colDef.Name.Name.O)
+			if err != nil {
+				return 0, 0, err
+			}
+			rangeBits, err = autoid.AutoRandomRangeBitsNormalize(op.AutoRandOpt.RangeBits)
+			if err != nil {
+				return 0, 0, err
+			}
+			return shardBits, rangeBits, nil
 		}
 	}
-	return 0, nil
-}
-
-func convertAutoRandomBitsToUnsigned(autoRandomBits int) (uint64, error) {
-	if autoRandomBits == types.UnspecifiedLength {
-		return autoid.DefaultAutoRandomBits, nil
-	} else if autoRandomBits < 0 {
-		return 0, dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomNonPositive)
-	}
-	return uint64(autoRandomBits), nil
+	return 0, 0, nil
 }
 
 // BuildTableInfo creates a TableInfo.
@@ -1800,19 +1781,20 @@ func BuildTableInfo(
 	}
 	tblColumns := make([]*table.Column, 0, len(cols))
 	for _, v := range cols {
-		v.ID = allocateColumnID(tbInfo)
+		v.ID = AllocateColumnID(tbInfo)
 		tbInfo.Columns = append(tbInfo.Columns, v.ToInfo())
 		tblColumns = append(tblColumns, table.ToColumn(v.ToInfo()))
 	}
+	foreignKeyID := tbInfo.MaxForeignKeyID
 	for _, constr := range constraints {
 		// Build hidden columns if necessary.
-		hiddenCols, err := buildHiddenColumnInfo(ctx, constr.Keys, model.NewCIStr(constr.Name), tbInfo, tblColumns)
+		hiddenCols, err := buildHiddenColumnInfoWithCheck(ctx, constr.Keys, model.NewCIStr(constr.Name), tbInfo, tblColumns)
 		if err != nil {
 			return nil, err
 		}
 		for _, hiddenCol := range hiddenCols {
 			hiddenCol.State = model.StatePublic
-			hiddenCol.ID = allocateColumnID(tbInfo)
+			hiddenCol.ID = AllocateColumnID(tbInfo)
 			hiddenCol.Offset = len(tbInfo.Columns)
 			tbInfo.Columns = append(tbInfo.Columns, hiddenCol)
 			tblColumns = append(tblColumns, table.ToColumn(hiddenCol))
@@ -1823,12 +1805,17 @@ func BuildTableInfo(
 			return nil, dbterror.ErrUnsupportedClusteredSecondaryKey
 		}
 		if constr.Tp == ast.ConstraintForeignKey {
-			for _, fk := range tbInfo.ForeignKeys {
-				if fk.Name.L == strings.ToLower(constr.Name) {
-					return nil, infoschema.ErrCannotAddForeign
-				}
+			var fkName model.CIStr
+			foreignKeyID++
+			if constr.Name != "" {
+				fkName = model.NewCIStr(constr.Name)
+			} else {
+				fkName = model.NewCIStr(fmt.Sprintf("fk_%d", foreignKeyID))
 			}
-			fk, err := buildFKInfo(model.NewCIStr(constr.Name), constr.Keys, constr.Refer, cols, tbInfo)
+			if model.FindFKInfoByName(tbInfo.ForeignKeys, fkName.L) != nil {
+				return nil, infoschema.ErrCannotAddForeign
+			}
+			fk, err := buildFKInfo(ctx, fkName, constr.Keys, constr.Refer, cols)
 			if err != nil {
 				return nil, err
 			}
@@ -1838,7 +1825,7 @@ func BuildTableInfo(
 			continue
 		}
 		if constr.Tp == ast.ConstraintPrimaryKey {
-			lastCol, err := checkPKOnGeneratedColumn(tbInfo, constr.Keys)
+			lastCol, err := CheckPKOnGeneratedColumn(tbInfo, constr.Keys)
 			if err != nil {
 				return nil, err
 			}
@@ -1870,47 +1857,92 @@ func BuildTableInfo(
 			ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedConstraintCheck.GenWithStackByArgs("CONSTRAINT CHECK"))
 			continue
 		}
+
+		var (
+			indexName       = constr.Name
+			primary, unique bool
+		)
+
+		// Check if the index is primary or unique.
+		switch constr.Tp {
+		case ast.ConstraintPrimaryKey:
+			primary = true
+			unique = true
+			indexName = mysql.PrimaryKeyName
+		case ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
+			unique = true
+		}
+
 		// build index info.
-		idxInfo, err := buildIndexInfo(ctx, tbInfo, model.NewCIStr(constr.Name), constr.Keys, model.StatePublic)
+		idxInfo, err := BuildIndexInfo(
+			ctx,
+			tbInfo.Columns,
+			model.NewCIStr(indexName),
+			primary,
+			unique,
+			false,
+			constr.Keys,
+			constr.Option,
+			model.StatePublic,
+		)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+
 		if len(hiddenCols) > 0 {
-			addIndexColumnFlag(tbInfo, idxInfo)
+			AddIndexColumnFlag(tbInfo, idxInfo)
 		}
-		// check if the index is primary or unique.
-		switch constr.Tp {
-		case ast.ConstraintPrimaryKey:
-			idxInfo.Primary = true
-			idxInfo.Unique = true
-			idxInfo.Name = model.NewCIStr(mysql.PrimaryKeyName)
-		case ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
-			idxInfo.Unique = true
+		_, err = validateCommentLength(ctx.GetSessionVars(), idxInfo.Name.String(), &idxInfo.Comment, dbterror.ErrTooLongIndexComment)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
-		// set index type.
-		if constr.Option != nil {
-			idxInfo.Comment, err = validateCommentLength(ctx.GetSessionVars(), idxInfo.Name.String(), &constr.Option.Comment, dbterror.ErrTooLongIndexComment)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if constr.Option.Visibility == ast.IndexVisibilityInvisible {
-				idxInfo.Invisible = true
-			}
-			if constr.Option.Tp == model.IndexTypeInvalid {
-				// Use btree as default index type.
-				idxInfo.Tp = model.IndexTypeBtree
-			} else {
-				idxInfo.Tp = constr.Option.Tp
-			}
-		} else {
-			// Use btree as default index type.
-			idxInfo.Tp = model.IndexTypeBtree
-		}
-		idxInfo.ID = allocateIndexID(tbInfo)
+		idxInfo.ID = AllocateIndexID(tbInfo)
 		tbInfo.Indices = append(tbInfo.Indices, idxInfo)
 	}
 
-	return
+	err = addIndexForForeignKey(ctx, tbInfo)
+	return tbInfo, err
+}
+
+// addIndexForForeignKey uses to auto create an index for the foreign key if the table doesn't have any index cover the
+// foreign key columns.
+func addIndexForForeignKey(ctx sessionctx.Context, tbInfo *model.TableInfo) error {
+	if len(tbInfo.ForeignKeys) == 0 {
+		return nil
+	}
+	var handleCol *model.ColumnInfo
+	if tbInfo.PKIsHandle {
+		handleCol = tbInfo.GetPkColInfo()
+	}
+	for _, fk := range tbInfo.ForeignKeys {
+		if fk.Version < model.FKVersion1 {
+			continue
+		}
+		if handleCol != nil && len(fk.Cols) == 1 && handleCol.Name.L == fk.Cols[0].L {
+			continue
+		}
+		if model.FindIndexByColumns(tbInfo, fk.Cols...) != nil {
+			continue
+		}
+		idxName := fk.Name
+		if tbInfo.FindIndexByName(idxName.L) != nil {
+			return dbterror.ErrDupKeyName.GenWithStack("duplicate key name %s", fk.Name.O)
+		}
+		keys := make([]*ast.IndexPartSpecification, 0, len(fk.Cols))
+		for _, col := range fk.Cols {
+			keys = append(keys, &ast.IndexPartSpecification{
+				Column: &ast.ColumnName{Name: col},
+				Length: types.UnspecifiedLength,
+			})
+		}
+		idxInfo, err := BuildIndexInfo(ctx, tbInfo.Columns, idxName, false, false, false, keys, nil, model.StatePublic)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		idxInfo.ID = AllocateIndexID(tbInfo)
+		tbInfo.Indices = append(tbInfo.Indices, idxInfo)
+	}
+	return nil
 }
 
 func indexColumnsLen(cols []*model.ColumnInfo, idxCols []*model.IndexColumn) (colLen int, err error) {
@@ -2005,6 +2037,11 @@ func checkTableInfoValidWithStmt(ctx sessionctx.Context, tbInfo *model.TableInfo
 	// lost in the model (got serialized into strings).
 	if err := checkGeneratedColumn(ctx, s.Cols); err != nil {
 		return errors.Trace(err)
+	}
+
+	// Check if table has a primary key if required.
+	if !ctx.GetSessionVars().InRestrictedSQL && ctx.GetSessionVars().PrimaryKeyRequired && len(tbInfo.GetPkName().String()) == 0 {
+		return infoschema.ErrTableWithoutPrimaryKey
 	}
 	if tbInfo.Partition != nil {
 		if err := checkPartitionDefinitionConstraints(ctx, tbInfo); err != nil {
@@ -2152,7 +2189,7 @@ func BuildSessionTemporaryTableInfo(ctx sessionctx.Context, is infoschema.InfoSc
 // BuildTableInfoWithStmt builds model.TableInfo from a SQL statement without validity check
 func BuildTableInfoWithStmt(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCharset, dbCollate string, placementPolicyRef *model.PolicyRefInfo) (*model.TableInfo, error) {
 	colDefs := s.Cols
-	tableCharset, tableCollate, err := getCharsetAndCollateInTableOption(0, s.Options)
+	tableCharset, tableCollate, err := GetCharsetAndCollateInTableOption(0, s.Options)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -2264,6 +2301,9 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	if err = checkTableInfoValidWithStmt(ctx, tbInfo, s); err != nil {
 		return err
 	}
+	if err = checkTableForeignKeysValid(ctx, is, schema.Name.L, tbInfo); err != nil {
+		return err
+	}
 
 	onExist := OnExistError
 	if s.IfNotExists {
@@ -2359,6 +2399,7 @@ func (d *ddl) createTableWithInfoJob(
 		actionType = model.ActionCreateSequence
 	default:
 		actionType = model.ActionCreateTable
+		args = append(args, ctx.GetSessionVars().ForeignKeyChecks)
 	}
 
 	job = &model.Job{
@@ -2503,6 +2544,7 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 		return nil
 	}
 	jobs.Args = append(jobs.Args, args)
+	jobs.Args = append(jobs.Args, ctx.GetSessionVars().ForeignKeyChecks)
 
 	err = d.DoDDLJob(ctx, jobs)
 	if err != nil {
@@ -2581,7 +2623,7 @@ func (d *ddl) preSplitAndScatter(ctx sessionctx.Context, tbInfo *model.TableInfo
 		preSplit      func()
 		scatterRegion bool
 	)
-	val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBScatterRegion)
+	val, err := ctx.GetSessionVars().GetGlobalSystemVar(variable.TiDBScatterRegion)
 	if err != nil {
 		logutil.BgLogger().Warn("[ddl] won't scatter region", zap.Error(err))
 	} else {
@@ -2597,6 +2639,23 @@ func (d *ddl) preSplitAndScatter(ctx sessionctx.Context, tbInfo *model.TableInfo
 	} else {
 		go preSplit()
 	}
+}
+
+func (d *ddl) FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) error {
+	logutil.BgLogger().Info("[ddl] get flashback cluster job", zap.String("flashbackTS", oracle.GetTimeFromTS(flashbackTS).String()))
+	job := &model.Job{
+		Type:       model.ActionFlashbackCluster,
+		BinlogInfo: &model.HistoryInfo{},
+		// The value for global variables is meaningless, it will cover during flashback cluster.
+		Args: []interface{}{
+			flashbackTS,
+			map[string]interface{}{},
+			variable.On, /* tidb_super_read_only */
+			true /* tidb_gc_enable */},
+	}
+	err := d.DoDDLJob(ctx, job)
+	err = d.callHookOnChanged(job, err)
+	return errors.Trace(err)
 }
 
 func (d *ddl) RecoverTable(ctx sessionctx.Context, recoverInfo *RecoverInfo) (err error) {
@@ -2709,7 +2768,7 @@ func checkPartitionByList(ctx sessionctx.Context, tbInfo *model.TableInfo) error
 
 func checkColumnsPartitionType(tbInfo *model.TableInfo) error {
 	for _, col := range tbInfo.Partition.Columns {
-		colInfo := getColumnInfoByName(tbInfo, col.L)
+		colInfo := tbInfo.FindPublicColumnByName(col.L)
 		if colInfo == nil {
 			return errors.Trace(dbterror.ErrFieldNotFoundPart)
 		}
@@ -2761,7 +2820,7 @@ func checkTwoRangeColumns(ctx sessionctx.Context, curr, prev *model.PartitionDef
 	}
 	for i := 0; i < len(pi.Columns); i++ {
 		// Special handling for MAXVALUE.
-		if strings.EqualFold(curr.LessThan[i], partitionMaxValue) {
+		if strings.EqualFold(curr.LessThan[i], partitionMaxValue) && !strings.EqualFold(prev.LessThan[i], partitionMaxValue) {
 			// If current is maxvalue, it certainly >= previous.
 			return true, nil
 		}
@@ -2897,7 +2956,7 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 			}
 			tbInfo.PreSplitRegions = op.UintValue
 		case ast.TableOptionCharset, ast.TableOptionCollate:
-			// We don't handle charset and collate here since they're handled in `getCharsetAndCollateInTableOption`.
+			// We don't handle charset and collate here since they're handled in `GetCharsetAndCollateInTableOption`.
 		case ast.TableOptionPlacementPolicy:
 			tbInfo.PlacementPolicyRef = &model.PolicyRefInfo{
 				Name: model.NewCIStr(op.StrValue),
@@ -2952,10 +3011,10 @@ func getCharsetAndCollateInColumnDef(def *ast.ColumnDef) (chs, coll string, err 
 	return
 }
 
-// getCharsetAndCollateInTableOption will iterate the charset and collate in the options,
+// GetCharsetAndCollateInTableOption will iterate the charset and collate in the options,
 // and returns the last charset and collate in options. If there is no charset in the options,
 // the returns charset will be "", the same as collate.
-func getCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption) (chs, coll string, err error) {
+func GetCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption) (chs, coll string, err error) {
 	for i := startIdx; i < len(options); i++ {
 		opt := options[i]
 		// we set the charset to the last option. example: alter table t charset latin1 charset utf8 collate utf8_bin;
@@ -2990,7 +3049,8 @@ func getCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption)
 	return
 }
 
-func needToOverwriteColCharset(options []*ast.TableOption) bool {
+// NeedToOverwriteColCharset return true for altering charset and specified CONVERT TO.
+func NeedToOverwriteColCharset(options []*ast.TableOption) bool {
 	for i := len(options) - 1; i >= 0; i-- {
 		opt := options[i]
 		if opt.Tp == ast.TableOptionCharset {
@@ -3024,9 +3084,9 @@ func resolveAlterTableAddColumns(spec *ast.AlterTableSpec) []*ast.AlterTableSpec
 	return specs
 }
 
-// resolveAlterTableSpec resolves alter table algorithm and removes ignore table spec in specs.
+// ResolveAlterTableSpec resolves alter table algorithm and removes ignore table spec in specs.
 // returns valid specs, and the occurred error.
-func resolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) ([]*ast.AlterTableSpec, error) {
+func ResolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) ([]*ast.AlterTableSpec, error) {
 	validSpecs := make([]*ast.AlterTableSpec, 0, len(specs))
 	algorithm := ast.AlgorithmTypeDefault
 	for _, spec := range specs {
@@ -3065,7 +3125,7 @@ func resolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) 
 
 func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast.AlterTableStmt) (err error) {
 	ident := ast.Ident{Schema: stmt.Table.Schema, Name: stmt.Table.Name}
-	validSpecs, err := resolveAlterTableSpec(sctx, stmt.Specs)
+	validSpecs, err := ResolveAlterTableSpec(sctx, stmt.Specs)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -3095,12 +3155,16 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 		switch spec.Tp {
 		case ast.AlterTableAddColumns:
 			err = d.AddColumn(sctx, ident, spec)
-		case ast.AlterTableAddPartitions:
+		case ast.AlterTableAddPartitions, ast.AlterTableAddLastPartition:
 			err = d.AddTablePartitions(sctx, ident, spec)
 		case ast.AlterTableCoalescePartitions:
 			err = d.CoalescePartitions(sctx, ident, spec)
 		case ast.AlterTableReorganizePartition:
 			err = errors.Trace(dbterror.ErrUnsupportedReorganizePartition)
+		case ast.AlterTableReorganizeFirstPartition:
+			err = dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("MERGE FIRST PARTITION")
+		case ast.AlterTableReorganizeLastPartition:
+			err = dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("SPLIT LAST PARTITION")
 		case ast.AlterTableCheckPartitions:
 			err = errors.Trace(dbterror.ErrUnsupportedCheckPartition)
 		case ast.AlterTableRebuildPartition:
@@ -3119,7 +3183,7 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 			err = d.dropIndex(sctx, ident, model.NewCIStr(mysql.PrimaryKeyName), spec.IfExists)
 		case ast.AlterTableRenameIndex:
 			err = d.RenameIndex(sctx, ident, spec)
-		case ast.AlterTableDropPartition:
+		case ast.AlterTableDropPartition, ast.AlterTableDropFirstPartition:
 			err = d.DropTablePartition(sctx, ident, spec)
 		case ast.AlterTableTruncatePartition:
 			err = d.TruncateTablePartition(sctx, ident, spec)
@@ -3206,17 +3270,17 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 					spec.Comment = opt.StrValue
 					err = d.AlterTableComment(sctx, ident, spec)
 				case ast.TableOptionCharset, ast.TableOptionCollate:
-					// getCharsetAndCollateInTableOption will get the last charset and collate in the options,
+					// GetCharsetAndCollateInTableOption will get the last charset and collate in the options,
 					// so it should be handled only once.
 					if handledCharsetOrCollate {
 						continue
 					}
 					var toCharset, toCollate string
-					toCharset, toCollate, err = getCharsetAndCollateInTableOption(i, spec.Options)
+					toCharset, toCollate, err = GetCharsetAndCollateInTableOption(i, spec.Options)
 					if err != nil {
 						return err
 					}
-					needsOverwriteCols := needToOverwriteColCharset(spec.Options)
+					needsOverwriteCols := NeedToOverwriteColCharset(spec.Options)
 					err = d.AlterTableCharsetAndCollate(sctx, ident, toCharset, toCollate, needsOverwriteCols)
 					handledCharsetOrCollate = true
 				case ast.TableOptionPlacementPolicy:
@@ -3238,8 +3302,6 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 			}
 		case ast.AlterTableSetTiFlashReplica:
 			err = d.AlterTableSetTiFlashReplica(sctx, ident, spec.TiFlashReplica)
-		case ast.AlterTableSetTiFlashMode:
-			err = d.AlterTableSetTiFlashMode(sctx, ident, spec.TiFlashMode)
 		case ast.AlterTableOrderByColumns:
 			err = d.OrderByColumns(sctx, ident)
 		case ast.AlterTableIndexInvisible:
@@ -3266,8 +3328,11 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 			err = d.AlterTableCache(sctx, ident)
 		case ast.AlterTableNoCache:
 			err = d.AlterTableNoCache(sctx, ident)
+		case ast.AlterTableDisableKeys, ast.AlterTableEnableKeys:
+			// Nothing to do now, see https://github.com/pingcap/tidb/issues/1051
+			// MyISAM specific
 		default:
-			// Nothing to do now.
+			err = errors.Trace(dbterror.ErrUnsupportedAlterTableSpec)
 		}
 
 		if err != nil {
@@ -3294,19 +3359,13 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 	switch tp {
 	case autoid.AutoRandomType:
 		tbInfo := t.Meta()
-		if tbInfo.AutoRandomBits == 0 {
+		pkCol := tbInfo.GetPkColInfo()
+		if tbInfo.AutoRandomBits == 0 || pkCol == nil {
 			return errors.Trace(dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomRebaseNotApplicable))
 		}
-		var autoRandColTp types.FieldType
-		for _, c := range tbInfo.Columns {
-			if mysql.HasPriKeyFlag(c.GetFlag()) {
-				autoRandColTp = c.FieldType
-				break
-			}
-		}
-		layout := autoid.NewShardIDLayout(&autoRandColTp, tbInfo.AutoRandomBits)
-		if layout.IncrementalMask()&newBase != newBase {
-			errMsg := fmt.Sprintf(autoid.AutoRandomRebaseOverflow, newBase, layout.IncrementalBitsCapacity())
+		shardFmt := autoid.NewShardIDFormat(&pkCol.FieldType, tbInfo.AutoRandomBits, tbInfo.AutoRandomRangeBits)
+		if shardFmt.IncrementalMask()&newBase != newBase {
+			errMsg := fmt.Sprintf(autoid.AutoRandomRebaseOverflow, newBase, shardFmt.IncrementalBitsCapacity())
 			return errors.Trace(dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(errMsg))
 		}
 		actionType = model.ActionRebaseAutoRandomBase
@@ -3447,6 +3506,11 @@ func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model
 		return nil, dbterror.ErrTooLongIdent.GenWithStackByArgs(colName)
 	}
 
+	return CreateNewColumn(ctx, ti, schema, spec, t, specNewColumn)
+}
+
+// CreateNewColumn creates a new column according to the column information.
+func CreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model.DBInfo, spec *ast.AlterTableSpec, t table.Table, specNewColumn *ast.ColumnDef) (*table.Column, error) {
 	// If new column is a generated column, do validation.
 	// NOTE: we do check whether the column refers other generated
 	// columns occurring later in a table, but we don't handle the col offset.
@@ -3462,7 +3526,7 @@ func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model
 
 			_, dependColNames := findDependedColumnNames(specNewColumn)
 			if !ctx.GetSessionVars().EnableAutoIncrementInGenerated {
-				if err = checkAutoIncrementRef(specNewColumn.Name.Name.L, dependColNames, t.Meta()); err != nil {
+				if err := checkAutoIncrementRef(specNewColumn.Name.Name.L, dependColNames, t.Meta()); err != nil {
 					return nil, errors.Trace(err)
 				}
 			}
@@ -3472,11 +3536,11 @@ func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model
 			}
 			cols := t.Cols()
 
-			if err = checkDependedColExist(dependColNames, cols); err != nil {
+			if err := checkDependedColExist(dependColNames, cols); err != nil {
 				return nil, errors.Trace(err)
 			}
 
-			if err = verifyColumnGenerationSingle(duplicateColNames, cols, spec.Position); err != nil {
+			if err := verifyColumnGenerationSingle(duplicateColNames, cols, spec.Position); err != nil {
 				return nil, errors.Trace(err)
 			}
 		}
@@ -3508,7 +3572,7 @@ func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model
 	}
 	// Ignore table constraints now, they will be checked later.
 	// We use length(t.Cols()) as the default offset firstly, we will change the column's offset later.
-	col, _, err = buildColumnAndConstraint(
+	col, _, err := buildColumnAndConstraint(
 		ctx,
 		len(t.Cols()),
 		specNewColumn,
@@ -3547,7 +3611,7 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	if col == nil {
 		return nil
 	}
-	err = checkAfterPositionExists(t.Meta(), spec.Position)
+	err = CheckAfterPositionExists(t.Meta(), spec.Position)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -3585,7 +3649,7 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 		return errors.Trace(dbterror.ErrPartitionMgmtOnNonpartitioned)
 	}
 
-	partInfo, err := buildAddedPartitionInfo(ctx, meta, spec)
+	partInfo, err := BuildAddedPartitionInfo(ctx, meta, spec)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -3621,6 +3685,20 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 		Args:       []interface{}{partInfo},
 	}
 
+	if spec.Tp == ast.AlterTableAddLastPartition && spec.Partition != nil {
+		query, ok := ctx.Value(sessionctx.QueryString).(string)
+		if ok {
+			sqlMode := ctx.GetSessionVars().SQLMode
+			var buf bytes.Buffer
+			AppendPartitionDefs(partInfo, &buf, sqlMode)
+
+			syntacticSugar := spec.Partition.PartitionMethod.OriginalText()
+			syntacticStart := spec.Partition.PartitionMethod.OriginTextPosition()
+			newQuery := query[:syntacticStart] + "ADD PARTITION (" + buf.String() + ")" + query[syntacticStart+len(syntacticSugar):]
+			defer ctx.SetValue(sessionctx.QueryString, query)
+			ctx.SetValue(sessionctx.QueryString, newQuery)
+		}
+	}
 	err = d.DoDDLJob(ctx, job)
 	if dbterror.ErrSameNamePartition.Equal(err) && spec.IfNotExists {
 		ctx.GetSessionVars().StmtCtx.AppendNote(err)
@@ -3740,11 +3818,59 @@ func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *
 		return errors.Trace(dbterror.ErrPartitionMgmtOnNonpartitioned)
 	}
 
+	if spec.Tp == ast.AlterTableDropFirstPartition {
+		intervalOptions := getPartitionIntervalFromTable(ctx, meta)
+		if intervalOptions == nil {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+				"FIRST PARTITION, does not seem like an INTERVAL partitioned table")
+		}
+		if len(spec.Partition.Definitions) != 0 {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+				"FIRST PARTITION, table info already contains partition definitions")
+		}
+		spec.Partition.Interval = intervalOptions
+		err = GeneratePartDefsFromInterval(ctx, spec.Tp, meta, spec.Partition)
+		if err != nil {
+			return err
+		}
+		pNullOffset := 0
+		if intervalOptions.NullPart {
+			pNullOffset = 1
+		}
+		if len(spec.Partition.Definitions) == 0 ||
+			len(spec.Partition.Definitions) >= len(meta.Partition.Definitions)-pNullOffset {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+				"FIRST PARTITION, number of partitions does not match")
+		}
+		if len(spec.PartitionNames) != 0 || len(spec.Partition.Definitions) <= 1 {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+				"FIRST PARTITION, given value does not generate a list of partition names to be dropped")
+		}
+		for i := range spec.Partition.Definitions {
+			spec.PartitionNames = append(spec.PartitionNames, meta.Partition.Definitions[i+pNullOffset].Name)
+		}
+		// Use the last generated partition as First, i.e. do not drop the last name in the slice
+		spec.PartitionNames = spec.PartitionNames[:len(spec.PartitionNames)-1]
+
+		query, ok := ctx.Value(sessionctx.QueryString).(string)
+		if ok {
+			partNames := make([]string, 0, len(spec.PartitionNames))
+			sqlMode := ctx.GetSessionVars().SQLMode
+			for i := range spec.PartitionNames {
+				partNames = append(partNames, stringutil.Escape(spec.PartitionNames[i].O, sqlMode))
+			}
+			syntacticSugar := spec.Partition.PartitionMethod.OriginalText()
+			syntacticStart := spec.Partition.PartitionMethod.OriginTextPosition()
+			newQuery := query[:syntacticStart] + "DROP PARTITION " + strings.Join(partNames, ", ") + query[syntacticStart+len(syntacticSugar):]
+			defer ctx.SetValue(sessionctx.QueryString, query)
+			ctx.SetValue(sessionctx.QueryString, newQuery)
+		}
+	}
 	partNames := make([]string, len(spec.PartitionNames))
 	for i, partCIName := range spec.PartitionNames {
 		partNames[i] = partCIName.L
 	}
-	err = checkDropTablePartition(meta, partNames)
+	err = CheckDropTablePartition(meta, partNames)
 	if err != nil {
 		if dbterror.ErrDropPartitionNonExistent.Equal(err) && spec.IfExists {
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
@@ -3820,8 +3946,14 @@ func checkTiFlashReplicaCompatible(source *model.TiFlashReplicaInfo, target *mod
 }
 
 func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) error {
+	// check temp table
+	if target.TempTableType != model.TempTableNone {
+		return errors.Trace(dbterror.ErrPartitionExchangeTempTable.FastGenByArgs(target.Name))
+	}
+
 	// check auto_random
 	if source.AutoRandomBits != target.AutoRandomBits ||
+		source.AutoRandomRangeBits != target.AutoRandomRangeBits ||
 		source.Charset != target.Charset ||
 		source.Collate != target.Collate ||
 		source.ShardRowIDBits != target.ShardRowIDBits ||
@@ -3924,6 +4056,13 @@ func (d *ddl) ExchangeTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 	ptMeta := pt.Meta()
 
 	ntIdent := ast.Ident{Schema: spec.NewTable.Schema, Name: spec.NewTable.Name}
+
+	// We should check local temporary here using session's info schema because the local temporary tables are only stored in session.
+	ntLocalTempTable, err := sessiontxn.GetTxnManager(ctx).GetTxnInfoSchema().TableByName(ntIdent.Schema, ntIdent.Name)
+	if err == nil && ntLocalTempTable.Meta().TempTableType == model.TempTableLocal {
+		return errors.Trace(dbterror.ErrPartitionExchangeTempTable.FastGenByArgs(ntLocalTempTable.Meta().Name))
+	}
+
 	ntSchema, nt, err := d.getSchemaAndTableByIdent(ctx, ntIdent)
 	if err != nil {
 		return errors.Trace(err)
@@ -3958,12 +4097,14 @@ func (d *ddl) ExchangeTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 		Type:       model.ActionExchangeTablePartition,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{defID, ptSchema.ID, ptMeta.ID, partName, spec.WithValidation},
+		CtxVars:    []interface{}{[]int64{ntSchema.ID, ptSchema.ID}, []int64{ntMeta.ID, ptMeta.ID}},
 	}
 
 	err = d.DoDDLJob(ctx, job)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("after the exchange, please analyze related table of the exchange to update statistics"))
 	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
@@ -4109,7 +4250,8 @@ func checkModifyTypes(ctx sessionctx.Context, origin *types.FieldType, to *types
 	return errors.Trace(err)
 }
 
-func setDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.ColumnOption) (bool, error) {
+// SetDefaultValue sets the default value of the column.
+func SetDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.ColumnOption) (bool, error) {
 	hasDefaultValue := false
 	value, isSeqExpr, err := getDefaultValue(ctx, col, option)
 	if err != nil {
@@ -4177,7 +4319,7 @@ func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*
 	for _, opt := range options {
 		switch opt.Tp {
 		case ast.ColumnOptionDefaultValue:
-			hasDefaultValue, err = setDefaultValue(ctx, col, opt)
+			hasDefaultValue, err = SetDefaultValue(ctx, col, opt)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -4193,8 +4335,10 @@ func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*
 			col.DelFlag(mysql.NotNullFlag)
 		case ast.ColumnOptionAutoIncrement:
 			col.AddFlag(mysql.AutoIncrementFlag)
-		case ast.ColumnOptionPrimaryKey, ast.ColumnOptionUniqKey:
-			return dbterror.ErrUnsupportedModifyColumn.GenWithStack("can't change column constraint - %v", opt.Tp)
+		case ast.ColumnOptionPrimaryKey:
+			return errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStack("can't change column constraint (PRIMARY KEY)"))
+		case ast.ColumnOptionUniqKey:
+			return errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStack("can't change column constraint (UNIQUE KEY)"))
 		case ast.ColumnOptionOnUpdate:
 			// TODO: Support other time functions.
 			if col.GetType() == mysql.TypeTimestamp || col.GetType() == mysql.TypeDatetime {
@@ -4216,7 +4360,7 @@ func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*
 			col.GeneratedStored = opt.Stored
 			col.Dependences = make(map[string]struct{})
 			col.GeneratedExpr = opt.Expr
-			for _, colName := range findColumnNamesInExpr(opt.Expr) {
+			for _, colName := range FindColumnNamesInExpr(opt.Expr) {
 				col.Dependences[colName.Name.L] = struct{}{}
 			}
 		case ast.ColumnOptionCollate:
@@ -4263,7 +4407,6 @@ func processAndCheckDefaultValueAndColumn(ctx sessionctx.Context, col *table.Col
 
 func (d *ddl) getModifiableColumnJob(ctx context.Context, sctx sessionctx.Context, ident ast.Ident, originalColName model.CIStr,
 	spec *ast.AlterTableSpec) (*model.Job, error) {
-	specNewColumn := spec.NewColumns[0]
 	is := d.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
@@ -4273,6 +4416,22 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, sctx sessionctx.Contex
 	if err != nil {
 		return nil, errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
 	}
+
+	return GetModifiableColumnJob(ctx, sctx, ident, originalColName, schema, t, spec)
+}
+
+// GetModifiableColumnJob returns a DDL job of model.ActionModifyColumn.
+func GetModifiableColumnJob(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	ident ast.Ident,
+	originalColName model.CIStr,
+	schema *model.DBInfo,
+	t table.Table,
+	spec *ast.AlterTableSpec,
+) (*model.Job, error) {
+	var err error
+	specNewColumn := spec.NewColumns[0]
 
 	col := table.FindCol(t.Cols(), originalColName.L)
 	if col == nil {
@@ -4348,7 +4507,7 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, sctx sessionctx.Contex
 	decodeEnumSetBinaryLiteralToUTF8(&newCol.FieldType, chs)
 
 	// Check the column with foreign key, waiting for the default flen and decimal.
-	if fkInfo := getColumnForeignKeyInfo(originalColName.L, t.Meta().ForeignKeys); fkInfo != nil {
+	if fkInfo := GetColumnForeignKeyInfo(originalColName.L, t.Meta().ForeignKeys); fkInfo != nil {
 		// For now we strongly ban the all column type change for column with foreign key.
 		// Actually MySQL support change column with foreign key from varchar(m) -> varchar(m+t) and t > 0.
 		if newCol.GetType() != col.GetType() || newCol.GetFlen() != col.GetFlen() || newCol.GetDecimal() != col.GetDecimal() {
@@ -4521,38 +4680,39 @@ func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxColumns []*mo
 }
 
 func checkAutoRandom(tableInfo *model.TableInfo, originCol *table.Column, specNewColumn *ast.ColumnDef) (uint64, error) {
-	var oldRandBits uint64
+	var oldShardBits, oldRangeBits uint64
 	if originCol.IsPKHandleColumn(tableInfo) {
-		oldRandBits = tableInfo.AutoRandomBits
+		oldShardBits = tableInfo.AutoRandomBits
+		oldRangeBits = tableInfo.AutoRandomRangeBits
 	}
-	newRandBits, err := extractAutoRandomBitsFromColDef(specNewColumn)
+	newShardBits, newRangeBits, err := extractAutoRandomBitsFromColDef(specNewColumn)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
 	switch {
-	case oldRandBits == newRandBits:
-	case oldRandBits < newRandBits:
-		addingAutoRandom := oldRandBits == 0
+	case oldShardBits == newShardBits:
+	case oldShardBits < newShardBits:
+		addingAutoRandom := oldShardBits == 0
 		if addingAutoRandom {
 			convFromAutoInc := mysql.HasAutoIncrementFlag(originCol.GetFlag()) && originCol.IsPKHandleColumn(tableInfo)
 			if !convFromAutoInc {
 				return 0, dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomAlterChangeFromAutoInc)
 			}
 		}
-		if autoid.MaxAutoRandomBits < newRandBits {
+		if autoid.AutoRandomShardBitsMax < newShardBits {
 			errMsg := fmt.Sprintf(autoid.AutoRandomOverflowErrMsg,
-				autoid.MaxAutoRandomBits, newRandBits, specNewColumn.Name.Name.O)
+				autoid.AutoRandomShardBitsMax, newShardBits, specNewColumn.Name.Name.O)
 			return 0, dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
 		}
 		// increasing auto_random shard bits is allowed.
-	case oldRandBits > newRandBits:
-		if newRandBits == 0 {
+	case oldShardBits > newShardBits:
+		if newShardBits == 0 {
 			return 0, dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomAlterErrMsg)
 		}
 		return 0, dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomDecreaseBitErrMsg)
 	}
 
-	modifyingAutoRandCol := oldRandBits > 0 || newRandBits > 0
+	modifyingAutoRandCol := oldShardBits > 0 || newShardBits > 0
 	if modifyingAutoRandCol {
 		// Disallow changing the column field type.
 		if originCol.GetType() != specNewColumn.Tp.GetType() {
@@ -4570,7 +4730,20 @@ func checkAutoRandom(tableInfo *model.TableInfo, originCol *table.Column, specNe
 			return 0, dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomIncompatibleWithDefaultValueErrMsg)
 		}
 	}
-	return newRandBits, nil
+	if rangeBitsIsChanged(oldRangeBits, newRangeBits) {
+		return 0, dbterror.ErrInvalidAutoRandom.FastGenByArgs(autoid.AutoRandomUnsupportedAlterRangeBits)
+	}
+	return newShardBits, nil
+}
+
+func rangeBitsIsChanged(oldBits, newBits uint64) bool {
+	if oldBits == 0 {
+		oldBits = autoid.AutoRandomRangeBitsDefault
+	}
+	if newBits == 0 {
+		newBits = autoid.AutoRandomRangeBitsDefault
+	}
+	return oldBits != newBits
 }
 
 // ChangeColumn renames an existing column and modifies the column's definition,
@@ -4638,7 +4811,7 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 		return infoschema.ErrColumnExists.GenWithStackByArgs(newColName)
 	}
 
-	if fkInfo := getColumnForeignKeyInfo(oldColName.L, tbl.Meta().ForeignKeys); fkInfo != nil {
+	if fkInfo := GetColumnForeignKeyInfo(oldColName.L, tbl.Meta().ForeignKeys); fkInfo != nil {
 		return dbterror.ErrFKIncompatibleColumns.GenWithStackByArgs(oldColName, fkInfo.Name)
 	}
 
@@ -4647,7 +4820,7 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 		if col.GeneratedExpr == nil {
 			continue
 		}
-		dependedColNames := findColumnNamesInExpr(col.GeneratedExpr)
+		dependedColNames := FindColumnNamesInExpr(col.GeneratedExpr)
 		for _, name := range dependedColNames {
 			if name.Name.L == oldColName.L {
 				if col.Hidden {
@@ -4746,7 +4919,7 @@ func (d *ddl) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 		if IsAutoRandomColumnID(t.Meta(), col.ID) {
 			return dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomIncompatibleWithDefaultValueErrMsg)
 		}
-		hasDefaultValue, err := setDefaultValue(ctx, col, specNewColumn.Options[0])
+		hasDefaultValue, err := SetDefaultValue(ctx, col, specNewColumn.Options[0])
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -4925,7 +5098,6 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 }
 
 func isTableTiFlashSupported(schema *model.DBInfo, tb table.Table) error {
-
 	// Memory tables and system tables are not supported by TiFlash
 	if util.IsMemOrSysDB(schema.Name.L) {
 		return errors.Trace(dbterror.ErrUnsupportedTiFlashOperationForSysOrMemTable)
@@ -4942,42 +5114,6 @@ func isTableTiFlashSupported(schema *model.DBInfo, tb table.Table) error {
 	}
 
 	return nil
-}
-
-func (d *ddl) AlterTableSetTiFlashMode(ctx sessionctx.Context, ident ast.Ident, mode model.TiFlashMode) error {
-	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	if mode != model.TiFlashModeNormal && mode != model.TiFlashModeFast {
-		return fmt.Errorf("unsupported TiFlash mode %s", mode)
-	}
-
-	err = isTableTiFlashSupported(schema, tb)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	// Prompt warning when there is no TiFlash replica, as TiFlash mode will
-	// only take effect when executing in TiFlash.
-	tbReplicaInfo := tb.Meta().TiFlashReplica
-	if tbReplicaInfo == nil || tbReplicaInfo.Count == 0 {
-		ctx.GetSessionVars().StmtCtx.AppendNote(dbterror.ErrAlterTiFlashModeForTableWithoutTiFlashReplica)
-	}
-
-	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    tb.Meta().ID,
-		SchemaName: schema.Name.L,
-		TableName:  tb.Meta().Name.L,
-		Type:       model.ActionSetTiFlashMode,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{mode},
-	}
-	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
-	return errors.Trace(err)
 }
 
 func checkTiFlashReplicaCount(ctx sessionctx.Context, replicaCount uint64) error {
@@ -5136,7 +5272,7 @@ func checkAlterTableCharset(tblInfo *model.TableInfo, dbInfo *model.DBInfo, toCh
 
 	for _, col := range tblInfo.Columns {
 		if col.GetType() == mysql.TypeVarchar {
-			if err = IsTooBigFieldLength(col.GetFlen(), col.Name.O, toCharset); err != nil {
+			if err = types.IsVarcharTooBigFieldLength(col.GetFlen(), col.Name.O, toCharset); err != nil {
 				return doNothing, err
 			}
 		}
@@ -5174,7 +5310,7 @@ func (d *ddl) RenameIndex(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 	if tb.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 		return errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Rename Index"))
 	}
-	duplicate, err := validateRenameIndex(spec.FromKey, spec.ToKey, tb.Meta())
+	duplicate, err := ValidateRenameIndex(spec.FromKey, spec.ToKey, tb.Meta())
 	if duplicate {
 		return nil
 	}
@@ -5238,10 +5374,22 @@ func (d *ddl) dropTableObject(
 		jobType        model.ActionType
 	)
 
+	var jobArgs []interface{}
 	switch tableObjectType {
 	case tableObject:
 		dropExistErr = infoschema.ErrTableDropExists
 		jobType = model.ActionDropTable
+		objectIdents := make([]ast.Ident, len(objects))
+		fkCheck := ctx.GetSessionVars().ForeignKeyChecks
+		jobArgs = []interface{}{objectIdents, fkCheck}
+		for i, tn := range objects {
+			objectIdents[i] = ast.Ident{Schema: tn.Schema, Name: tn.Name}
+		}
+		for _, tn := range objects {
+			if referredFK := checkTableHasForeignKeyReferred(is, tn.Schema.L, tn.Name.L, objectIdents, fkCheck); referredFK != nil {
+				return errors.Trace(dbterror.ErrForeignKeyCannotDropParent.GenWithStackByArgs(tn.Name, referredFK.ChildFKName, referredFK.ChildTable))
+			}
+		}
 	case viewObject:
 		dropExistErr = infoschema.ErrTableDropExists
 		jobType = model.ActionDropView
@@ -5249,7 +5397,6 @@ func (d *ddl) dropTableObject(
 		dropExistErr = infoschema.ErrSequenceDropExists
 		jobType = model.ActionDropSequence
 	}
-
 	for _, tn := range objects {
 		fullti := ast.Ident{Schema: tn.Schema, Name: tn.Name}
 		schema, ok := is.SchemaByName(tn.Schema)
@@ -5321,6 +5468,7 @@ func (d *ddl) dropTableObject(
 			TableName:   tableInfo.Meta().Name.L,
 			Type:        jobType,
 			BinlogInfo:  &model.HistoryInfo{},
+			Args:        jobArgs,
 		}
 
 		err = d.DoDDLJob(ctx, job)
@@ -5342,15 +5490,14 @@ func (d *ddl) dropTableObject(
 		if ok, _ := ctx.CheckTableLocked(tableInfo.Meta().ID); ok {
 			ctx.ReleaseTableLockByTableIDs([]int64{tableInfo.Meta().ID})
 		}
-
 	}
 	if len(notExistTables) > 0 && !ifExists {
-		return dropExistErr.GenWithStackByArgs(strings.Join(notExistTables, ","))
+		return dropExistErr.FastGenByArgs(strings.Join(notExistTables, ","))
 	}
 	// We need add warning when use if exists.
 	if len(notExistTables) > 0 && ifExists {
 		for _, table := range notExistTables {
-			sessVars.StmtCtx.AppendNote(dropExistErr.GenWithStackByArgs(table))
+			sessVars.StmtCtx.AppendNote(dropExistErr.FastGenByArgs(table))
 		}
 	}
 	return nil
@@ -5377,6 +5524,12 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	if tb.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 		return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Truncate Table")
 	}
+	fkCheck := ctx.GetSessionVars().ForeignKeyChecks
+	referredFK := checkTableHasForeignKeyReferred(d.GetInfoSchemaWithInterceptor(ctx), ti.Schema.L, ti.Name.L, []ast.Ident{{Name: ti.Name, Schema: ti.Schema}}, fkCheck)
+	if referredFK != nil {
+		msg := fmt.Sprintf("`%s`.`%s` CONSTRAINT `%s`", referredFK.ChildSchema, referredFK.ChildTable, referredFK.ChildFKName)
+		return errors.Trace(dbterror.ErrTruncateIllegalForeignKey.GenWithStackByArgs(msg))
+	}
 
 	genIDs, err := d.genGlobalIDs(1)
 	if err != nil {
@@ -5390,7 +5543,7 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 		TableName:  tb.Meta().Name.L,
 		Type:       model.ActionTruncateTable,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{newTableID},
+		Args:       []interface{}{newTableID, fkCheck},
 	}
 	if ok, _ := ctx.CheckTableLocked(tb.Meta().ID); ok && config.TableLockEnabled() {
 		// AddTableLock here to avoid this ddl job was executed successfully but the session was been kill before return.
@@ -5467,6 +5620,7 @@ func (d *ddl) renameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Ident, 
 		Type:       model.ActionRenameTable,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{schemas[0].ID, newIdent.Name, schemas[0].Name},
+		CtxVars:    []interface{}{[]int64{schemas[0].ID, schemas[1].ID}, []int64{tableID}},
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -5515,6 +5669,7 @@ func (d *ddl) renameTables(ctx sessionctx.Context, oldIdents, newIdents []ast.Id
 		Type:       model.ActionRenameTables,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{oldSchemaIDs, newSchemaIDs, tableNames, tableIDs, oldSchemaNames, oldTableNames},
+		CtxVars:    []interface{}{append(oldSchemaIDs, newSchemaIDs...), tableIDs},
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -5602,7 +5757,8 @@ func getIdentKey(ident ast.Ident) string {
 	return fmt.Sprintf("%s.%s", ident.Schema.L, ident.Name.L)
 }
 
-func getAnonymousIndex(t table.Table, colName model.CIStr, idxName model.CIStr) model.CIStr {
+// GetName4AnonymousIndex returns a valid name for anonymous index.
+func GetName4AnonymousIndex(t table.Table, colName model.CIStr, idxName model.CIStr) model.CIStr {
 	// `id` is used to indicated the index name's suffix.
 	id := 2
 	l := len(t.Indices())
@@ -5620,7 +5776,7 @@ func getAnonymousIndex(t table.Table, colName model.CIStr, idxName model.CIStr) 
 		if t.Indices()[i].Meta().Name.L == indexName.L {
 			indexName = model.NewCIStr(fmt.Sprintf("%s_%d", colName.O, id))
 			if err := checkTooLongIndex(indexName); err != nil {
-				indexName = getAnonymousIndex(t, model.NewCIStr(colName.O[:30]), model.NewCIStr(fmt.Sprintf("%s_%d", colName.O[:30], 2)))
+				indexName = GetName4AnonymousIndex(t, model.NewCIStr(colName.O[:30]), model.NewCIStr(fmt.Sprintf("%s_%d", colName.O[:30], 2)))
 			}
 			i = -1
 			id++
@@ -5670,7 +5826,7 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if _, err = checkPKOnGeneratedColumn(tblInfo, indexPartSpecifications); err != nil {
+	if _, err = CheckPKOnGeneratedColumn(tblInfo, indexPartSpecifications); err != nil {
 		return err
 	}
 
@@ -5722,7 +5878,36 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 	return errors.Trace(err)
 }
 
-func buildHiddenColumnInfo(ctx sessionctx.Context, indexPartSpecifications []*ast.IndexPartSpecification, indexName model.CIStr, tblInfo *model.TableInfo, existCols []*table.Column) ([]*model.ColumnInfo, error) {
+func precheckBuildHiddenColumnInfo(
+	indexPartSpecifications []*ast.IndexPartSpecification,
+	indexName model.CIStr,
+) error {
+	for i, idxPart := range indexPartSpecifications {
+		if idxPart.Expr == nil {
+			continue
+		}
+		name := fmt.Sprintf("%s_%s_%d", expressionIndexPrefix, indexName, i)
+		if utf8.RuneCountInString(name) > mysql.MaxColumnNameLength {
+			// TODO: Refine the error message.
+			return dbterror.ErrTooLongIdent.GenWithStackByArgs("hidden column")
+		}
+		// TODO: Refine the error message.
+		if err := checkIllegalFn4Generated(indexName.L, typeIndex, idxPart.Expr); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+func buildHiddenColumnInfoWithCheck(ctx sessionctx.Context, indexPartSpecifications []*ast.IndexPartSpecification, indexName model.CIStr, tblInfo *model.TableInfo, existCols []*table.Column) ([]*model.ColumnInfo, error) {
+	if err := precheckBuildHiddenColumnInfo(indexPartSpecifications, indexName); err != nil {
+		return nil, err
+	}
+	return BuildHiddenColumnInfo(ctx, indexPartSpecifications, indexName, tblInfo, existCols)
+}
+
+// BuildHiddenColumnInfo builds hidden column info.
+func BuildHiddenColumnInfo(ctx sessionctx.Context, indexPartSpecifications []*ast.IndexPartSpecification, indexName model.CIStr, tblInfo *model.TableInfo, existCols []*table.Column) ([]*model.ColumnInfo, error) {
 	hiddenCols := make([]*model.ColumnInfo, 0, len(indexPartSpecifications))
 	for i, idxPart := range indexPartSpecifications {
 		if idxPart.Expr == nil {
@@ -5737,14 +5922,6 @@ func buildHiddenColumnInfo(ctx sessionctx.Context, indexPartSpecifications []*as
 		}
 		idxPart.Length = types.UnspecifiedLength
 		// The index part is an expression, prepare a hidden column for it.
-		if utf8.RuneCountInString(idxPart.Column.Name.L) > mysql.MaxColumnNameLength {
-			// TODO: Refine the error message.
-			return nil, dbterror.ErrTooLongIdent.GenWithStackByArgs("hidden column")
-		}
-		// TODO: refine the error message.
-		if err := checkIllegalFn4Generated(indexName.L, typeIndex, idxPart.Expr); err != nil {
-			return nil, errors.Trace(err)
-		}
 
 		var sb strings.Builder
 		restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
@@ -5782,7 +5959,7 @@ func buildHiddenColumnInfo(ctx sessionctx.Context, indexPartSpecifications []*as
 			}
 		}
 		checkDependencies := make(map[string]struct{})
-		for _, colName := range findColumnNamesInExpr(idxPart.Expr) {
+		for _, colName := range FindColumnNamesInExpr(idxPart.Expr) {
 			colInfo.Dependences[colName.Name.L] = struct{}{}
 			checkDependencies[colName.Name.L] = struct{}{}
 		}
@@ -5827,7 +6004,7 @@ func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		if indexPartSpecifications[0].Column != nil {
 			colName = indexPartSpecifications[0].Column.Name
 		}
-		indexName = getAnonymousIndex(t, colName, model.NewCIStr(""))
+		indexName = GetName4AnonymousIndex(t, colName, model.NewCIStr(""))
 	}
 
 	if indexInfo := t.Meta().FindIndexByName(indexName.L); indexInfo != nil {
@@ -5853,7 +6030,7 @@ func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 	tblInfo := t.Meta()
 
 	// Build hidden columns if necessary.
-	hiddenCols, err := buildHiddenColumnInfo(ctx, indexPartSpecifications, indexName, t.Meta(), t.Cols())
+	hiddenCols, err := buildHiddenColumnInfoWithCheck(ctx, indexPartSpecifications, indexName, t.Meta(), t.Cols())
 	if err != nil {
 		return err
 	}
@@ -5924,9 +6101,9 @@ func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 	return errors.Trace(err)
 }
 
-func buildFKInfo(fkName model.CIStr, keys []*ast.IndexPartSpecification, refer *ast.ReferenceDef, cols []*table.Column, tbInfo *model.TableInfo) (*model.FKInfo, error) {
+func buildFKInfo(ctx sessionctx.Context, fkName model.CIStr, keys []*ast.IndexPartSpecification, refer *ast.ReferenceDef, cols []*table.Column) (*model.FKInfo, error) {
 	if len(keys) != len(refer.IndexPartSpecifications) {
-		return nil, infoschema.ErrForeignKeyNotMatch.GenWithStackByArgs("foreign key without name")
+		return nil, infoschema.ErrForeignKeyNotMatch.GenWithStackByArgs(fkName, "Key reference and table reference don't match")
 	}
 
 	// all base columns of stored generated columns
@@ -5940,9 +6117,13 @@ func buildFKInfo(fkName model.CIStr, keys []*ast.IndexPartSpecification, refer *
 	}
 
 	fkInfo := &model.FKInfo{
-		Name:     fkName,
-		RefTable: refer.Table.Name,
-		Cols:     make([]model.CIStr, len(keys)),
+		Name:      fkName,
+		RefSchema: refer.Table.Schema,
+		RefTable:  refer.Table.Name,
+		Cols:      make([]model.CIStr, len(keys)),
+	}
+	if variable.EnableForeignKey.Load() {
+		fkInfo.Version = model.FKVersion1
 	}
 
 	for i, key := range keys {
@@ -5955,17 +6136,17 @@ func buildFKInfo(fkName model.CIStr, keys []*ast.IndexPartSpecification, refer *
 			if col.IsGenerated() {
 				// Check foreign key on virtual generated columns
 				if !col.GeneratedStored {
-					return nil, infoschema.ErrCannotAddForeign
+					return nil, infoschema.ErrForeignKeyCannotUseVirtualColumn.GenWithStackByArgs(fkInfo.Name.O, col.Name.O)
 				}
 
 				// Check wrong reference options of foreign key on stored generated columns
 				switch refer.OnUpdate.ReferOpt {
-				case ast.ReferOptionCascade, ast.ReferOptionSetNull, ast.ReferOptionSetDefault:
+				case model.ReferOptionCascade, model.ReferOptionSetNull, model.ReferOptionSetDefault:
 					//nolint: gosec
 					return nil, dbterror.ErrWrongFKOptionForGeneratedColumn.GenWithStackByArgs("ON UPDATE " + refer.OnUpdate.ReferOpt.String())
 				}
 				switch refer.OnDelete.ReferOpt {
-				case ast.ReferOptionSetNull, ast.ReferOptionSetDefault:
+				case model.ReferOptionSetNull, model.ReferOptionSetDefault:
 					//nolint: gosec
 					return nil, dbterror.ErrWrongFKOptionForGeneratedColumn.GenWithStackByArgs("ON DELETE " + refer.OnDelete.ReferOpt.String())
 				}
@@ -5974,17 +6155,21 @@ func buildFKInfo(fkName model.CIStr, keys []*ast.IndexPartSpecification, refer *
 			// Check wrong reference options of foreign key on base columns of stored generated columns
 			if _, ok := baseCols[col.Name.L]; ok {
 				switch refer.OnUpdate.ReferOpt {
-				case ast.ReferOptionCascade, ast.ReferOptionSetNull, ast.ReferOptionSetDefault:
+				case model.ReferOptionCascade, model.ReferOptionSetNull, model.ReferOptionSetDefault:
 					return nil, infoschema.ErrCannotAddForeign
 				}
 				switch refer.OnDelete.ReferOpt {
-				case ast.ReferOptionCascade, ast.ReferOptionSetNull, ast.ReferOptionSetDefault:
+				case model.ReferOptionCascade, model.ReferOptionSetNull, model.ReferOptionSetDefault:
 					return nil, infoschema.ErrCannotAddForeign
 				}
 			}
 		}
-		if table.FindCol(cols, key.Column.Name.O) == nil {
+		col := table.FindCol(cols, key.Column.Name.O)
+		if col == nil {
 			return nil, dbterror.ErrKeyColumnDoesNotExits.GenWithStackByArgs(key.Column.Name)
+		}
+		if mysql.HasNotNullFlag(col.GetFlag()) && (refer.OnDelete.ReferOpt == model.ReferOptionSetNull || refer.OnUpdate.ReferOpt == model.ReferOptionSetNull) {
+			return nil, infoschema.ErrForeignKeyColumnNotNull.GenWithStackByArgs(col.Name.O, fkName)
 		}
 		fkInfo.Cols[i] = key.Column.Name
 	}
@@ -6022,7 +6207,7 @@ func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName mode
 		}
 	}
 
-	fkInfo, err := buildFKInfo(fkName, keys, refer, t.Cols(), t.Meta())
+	fkInfo, err := buildFKInfo(ctx, fkName, keys, refer, t.Cols())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -6095,9 +6280,13 @@ func (d *ddl) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 
 	indexInfo := t.Meta().FindIndexByName(indexName.L)
 
-	isPK, err := checkIsDropPrimaryKey(indexName, indexInfo, t)
+	isPK, err := CheckIsDropPrimaryKey(indexName, indexInfo, t)
 	if err != nil {
 		return err
+	}
+
+	if !ctx.GetSessionVars().InRestrictedSQL && ctx.GetSessionVars().PrimaryKeyRequired && isPK {
+		return infoschema.ErrTableWithoutPrimaryKey
 	}
 
 	if indexInfo == nil {
@@ -6110,9 +6299,13 @@ func (d *ddl) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 	}
 
 	// Check for drop index on auto_increment column.
-	err = checkDropIndexOnAutoIncrementColumn(t.Meta(), indexInfo)
+	err = CheckDropIndexOnAutoIncrementColumn(t.Meta(), indexInfo)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	err = checkIndexNeededInForeignKey(is, schema.Name.L, t.Meta(), indexInfo)
+	if err != nil {
+		return err
 	}
 
 	jobTp := model.ActionDropIndex
@@ -6136,7 +6329,8 @@ func (d *ddl) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 	return errors.Trace(err)
 }
 
-func checkIsDropPrimaryKey(indexName model.CIStr, indexInfo *model.IndexInfo, t table.Table) (bool, error) {
+// CheckIsDropPrimaryKey checks if we will drop PK, there are many PK implementations so we provide a helper function.
+func CheckIsDropPrimaryKey(indexName model.CIStr, indexInfo *model.IndexInfo, t table.Table) (bool, error) {
 	var isPK bool
 	if indexName.L == strings.ToLower(mysql.PrimaryKeyName) &&
 		// Before we fixed #14243, there might be a general index named `primary` but not a primary key.
@@ -6177,7 +6371,7 @@ func isDroppableColumn(tblInfo *model.TableInfo, colName model.CIStr) error {
 		return err
 	}
 	// Check the column with foreign key.
-	if fkInfo := getColumnForeignKeyInfo(colName.L, tblInfo.ForeignKeys); fkInfo != nil {
+	if fkInfo := GetColumnForeignKeyInfo(colName.L, tblInfo.ForeignKeys); fkInfo != nil {
 		return dbterror.ErrFkColumnCannotDrop.GenWithStackByArgs(colName, fkInfo.Name)
 	}
 	return nil
@@ -6212,12 +6406,24 @@ func validateCommentLength(vars *variable.SessionVars, name string, comment *str
 	return *comment, nil
 }
 
-// buildAddedPartitionInfo build alter table add partition info
-func buildAddedPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, spec *ast.AlterTableSpec) (*model.PartitionInfo, error) {
+// BuildAddedPartitionInfo build alter table add partition info
+func BuildAddedPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, spec *ast.AlterTableSpec) (*model.PartitionInfo, error) {
 	switch meta.Partition.Type {
-	case model.PartitionTypeRange, model.PartitionTypeList:
+	case model.PartitionTypeList:
 		if len(spec.PartDefinitions) == 0 {
 			return nil, ast.ErrPartitionsMustBeDefined.GenWithStackByArgs(meta.Partition.Type)
+		}
+	case model.PartitionTypeRange:
+		if spec.Tp == ast.AlterTableAddLastPartition {
+			err := buildAddedPartitionDefs(ctx, meta, spec)
+			if err != nil {
+				return nil, err
+			}
+			spec.PartDefinitions = spec.Partition.Definitions
+		} else {
+			if len(spec.PartDefinitions) == 0 {
+				return nil, ast.ErrPartitionsMustBeDefined.GenWithStackByArgs(meta.Partition.Type)
+			}
 		}
 	default:
 		// we don't support ADD PARTITION for all other partition types yet.
@@ -6238,6 +6444,24 @@ func buildAddedPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, spec
 
 	part.Definitions = defs
 	return part, nil
+}
+
+func buildAddedPartitionDefs(ctx sessionctx.Context, meta *model.TableInfo, spec *ast.AlterTableSpec) error {
+	partInterval := getPartitionIntervalFromTable(ctx, meta)
+	if partInterval == nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+			"LAST PARTITION, does not seem like an INTERVAL partitioned table")
+	}
+	if partInterval.MaxValPart {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("LAST PARTITION when MAXVALUE partition exists")
+	}
+
+	spec.Partition.Interval = partInterval
+
+	if len(spec.PartDefinitions) > 0 {
+		return errors.Trace(dbterror.ErrUnsupportedAddPartition)
+	}
+	return GeneratePartDefsFromInterval(ctx, spec.Tp, meta, spec.Partition)
 }
 
 func checkColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.TableInfo, exprs []ast.ExprNode) error {
@@ -6507,7 +6731,7 @@ func (d *ddl) RepairTable(ctx sessionctx.Context, table *ast.TableName, createSt
 	newTableInfo.AutoIncID = oldTableInfo.AutoIncID
 	// If any old columnInfo has lost, that means the old column ID lost too, repair failed.
 	for i, newOne := range newTableInfo.Columns {
-		old := getColumnInfoByName(oldTableInfo, newOne.Name.L)
+		old := oldTableInfo.FindPublicColumnByName(newOne.Name.L)
 		if old == nil {
 			return dbterror.ErrRepairTableFail.GenWithStackByArgs("Column " + newOne.Name.L + " has lost")
 		}
@@ -6861,9 +7085,9 @@ func handleDatabasePlacement(ctx sessionctx.Context, dbInfo *model.DBInfo) error
 	sessVars := ctx.GetSessionVars()
 	if sessVars.PlacementMode == variable.PlacementModeIgnore {
 		dbInfo.PlacementPolicyRef = nil
-		sessVars.StmtCtx.AppendNote(errors.New(
-			fmt.Sprintf("Placement is ignored when TIDB_PLACEMENT_MODE is '%s'", variable.PlacementModeIgnore),
-		))
+		sessVars.StmtCtx.AppendNote(
+			fmt.Errorf("Placement is ignored when TIDB_PLACEMENT_MODE is '%s'", variable.PlacementModeIgnore),
+		)
 		return nil
 	}
 
@@ -6875,9 +7099,9 @@ func handleDatabasePlacement(ctx sessionctx.Context, dbInfo *model.DBInfo) error
 func handleTablePlacement(ctx sessionctx.Context, tbInfo *model.TableInfo) error {
 	sessVars := ctx.GetSessionVars()
 	if sessVars.PlacementMode == variable.PlacementModeIgnore && removeTablePlacement(tbInfo) {
-		sessVars.StmtCtx.AppendNote(errors.New(
-			fmt.Sprintf("Placement is ignored when TIDB_PLACEMENT_MODE is '%s'", variable.PlacementModeIgnore),
-		))
+		sessVars.StmtCtx.AppendNote(
+			fmt.Errorf("Placement is ignored when TIDB_PLACEMENT_MODE is '%s'", variable.PlacementModeIgnore),
+		)
 		return nil
 	}
 
@@ -6902,9 +7126,9 @@ func handleTablePlacement(ctx sessionctx.Context, tbInfo *model.TableInfo) error
 func handlePartitionPlacement(ctx sessionctx.Context, partInfo *model.PartitionInfo) error {
 	sessVars := ctx.GetSessionVars()
 	if sessVars.PlacementMode == variable.PlacementModeIgnore && removePartitionPlacement(partInfo) {
-		sessVars.StmtCtx.AppendNote(errors.New(
-			fmt.Sprintf("Placement is ignored when TIDB_PLACEMENT_MODE is '%s'", variable.PlacementModeIgnore),
-		))
+		sessVars.StmtCtx.AppendNote(
+			fmt.Errorf("Placement is ignored when TIDB_PLACEMENT_MODE is '%s'", variable.PlacementModeIgnore),
+		)
 		return nil
 	}
 
@@ -6922,9 +7146,9 @@ func handlePartitionPlacement(ctx sessionctx.Context, partInfo *model.PartitionI
 func checkIgnorePlacementDDL(ctx sessionctx.Context) bool {
 	sessVars := ctx.GetSessionVars()
 	if sessVars.PlacementMode == variable.PlacementModeIgnore {
-		sessVars.StmtCtx.AppendNote(errors.New(
-			fmt.Sprintf("Placement is ignored when TIDB_PLACEMENT_MODE is '%s'", variable.PlacementModeIgnore),
-		))
+		sessVars.StmtCtx.AppendNote(
+			fmt.Errorf("Placement is ignored when TIDB_PLACEMENT_MODE is '%s'", variable.PlacementModeIgnore),
+		)
 		return true
 	}
 	return false
@@ -7143,7 +7367,7 @@ func (d *ddl) AlterTableNoCache(ctx sessionctx.Context, ti ast.Ident) (err error
 // in non-strict mode and varchar column. If it is, will try to adjust to blob or text, see issue #30328
 func checkTooBigFieldLengthAndTryAutoConvert(tp *types.FieldType, colName string, sessVars *variable.SessionVars) error {
 	if sessVars != nil && !sessVars.SQLMode.HasStrictMode() && tp.GetType() == mysql.TypeVarchar {
-		err := IsTooBigFieldLength(tp.GetFlen(), colName, tp.GetCharset())
+		err := types.IsVarcharTooBigFieldLength(tp.GetFlen(), colName, tp.GetCharset())
 		if err != nil && terror.ErrorEqual(types.ErrTooBigFieldLength, err) {
 			tp.SetType(mysql.TypeBlob)
 			if err = adjustBlobTypesFlen(tp, tp.GetCharset()); err != nil {

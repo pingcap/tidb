@@ -16,6 +16,7 @@ go_test(
     timeout = "short",
     srcs = ["router_test.go"],
     embed = [":table-router"],
+    flaky = True,
     deps = [
         "//util/table-rule-selector",
         "@com_github_stretchr_testify//require",

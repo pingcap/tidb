@@ -38,6 +38,7 @@ go_test(
         "statement_summary_test.go",
     ],
     embed = [":stmtsummary"],
+    flaky = True,
     deps = [
         "//parser/auth",
         "//parser/model",

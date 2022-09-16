@@ -29,6 +29,7 @@ go_test(
         "table_test.go",
         "type_test.go",
     ],
+    flaky = True,
     deps = [
         ":schemacmp",
         "//ddl",

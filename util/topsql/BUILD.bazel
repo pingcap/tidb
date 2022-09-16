@@ -27,6 +27,7 @@ go_test(
         "topsql_test.go",
     ],
     embed = [":topsql"],
+    flaky = True,
     deps = [
         "//config",
         "//parser",

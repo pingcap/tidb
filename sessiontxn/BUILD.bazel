@@ -20,21 +20,26 @@ go_library(
 
 go_test(
     name = "sessiontxn_test",
+    timeout = "short",
     srcs = [
         "txn_context_test.go",
         "txn_manager_test.go",
+        "txn_rc_tso_optimize_test.go",
     ],
+    flaky = True,
     deps = [
         ":sessiontxn",
         "//domain",
+        "//errno",
+        "//expression",
         "//infoschema",
         "//kv",
         "//parser/ast",
         "//parser/model",
-        "//planner/core",
         "//sessionctx",
         "//sessiontxn/internal",
         "//sessiontxn/staleread",
+        "//table/temptable",
         "//tablecodec",
         "//testkit",
         "//testkit/testfork",

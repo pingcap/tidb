@@ -263,24 +263,28 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		statsHandle = mgr.GetDomain().StatsHandle()
 	}
 
-	se, err := g.CreateSession(mgr.GetStorage())
+	var newCollationEnable string
+	err = g.UseOneShotSession(mgr.GetStorage(), !needDomain, func(se glue.Session) error {
+		newCollationEnable, err = se.GetGlobalVariable(tidbNewCollationEnabled)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		log.Info("get new_collations_enabled_on_first_bootstrap config from system table",
+			zap.String(tidbNewCollationEnabled, newCollationEnable))
+		return nil
+	})
 	if err != nil {
 		return errors.Trace(err)
 	}
-	newCollationEnable, err := se.GetGlobalVariable(tidbNewCollationEnabled)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	log.Info("get new_collations_enabled_on_first_bootstrap config from system table",
-		zap.String(tidbNewCollationEnabled, newCollationEnable))
 
 	client, err := backup.NewBackupClient(ctx, mgr)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	opts := storage.ExternalStorageOptions{
-		NoCredentials:   cfg.NoCreds,
-		SendCredentials: cfg.SendCreds,
+		NoCredentials:            cfg.NoCreds,
+		SendCredentials:          cfg.SendCreds,
+		CheckS3ObjectLockOptions: true,
 	}
 	if err = client.SetStorage(ctx, u, &opts); err != nil {
 		return errors.Trace(err)
@@ -399,7 +403,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		}
 
 		metawriter.StartWriteMetasAsync(ctx, metautil.AppendDDL)
-		err = backup.WriteBackupDDLJobs(metawriter, mgr.GetStorage(), cfg.LastBackupTS, backupTS)
+		err = backup.WriteBackupDDLJobs(metawriter, g, mgr.GetStorage(), cfg.LastBackupTS, backupTS, needDomain)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -544,7 +548,7 @@ func ParseTSString(ts string, tzCheck bool) (uint64, error) {
 	if tzCheck {
 		tzIdx, _, _, _, _ := types.GetTimezone(ts)
 		if tzIdx < 0 {
-			return 0, errors.Errorf("must set timezone when using datetime format ts")
+			return 0, errors.Errorf("must set timezone when using datetime format ts, e.g. '2018-05-11 01:42:23+0800'")
 		}
 	}
 	t, err := types.ParseTime(sc, ts, mysql.TypeTimestamp, types.MaxFsp)

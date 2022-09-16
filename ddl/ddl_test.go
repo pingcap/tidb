@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -57,7 +58,7 @@ var JobNeedGCForTest = jobNeedGC
 
 // GetMaxRowID is used for test.
 func GetMaxRowID(store kv.Storage, priority int, t table.Table, startHandle, endHandle kv.Key) (kv.Key, error) {
-	return getRangeEndKey(NewJobContext(), store, priority, t, startHandle, endHandle)
+	return getRangeEndKey(NewJobContext(), store, priority, t.RecordPrefix(), startHandle, endHandle)
 }
 
 func testNewDDLAndStart(ctx context.Context, options ...Option) (*ddl, error) {
@@ -273,6 +274,9 @@ func TestNotifyDDLJob(t *testing.T) {
 		require.NoError(t, store.Close())
 	}()
 
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/NoDDLDispatchLoop", `return(true)`))
+	defer require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/NoDDLDispatchLoop"))
+
 	getFirstNotificationAfterStartDDL := func(d *ddl) {
 		select {
 		case <-d.workers[addIdxWorker].ddlJobCh:
@@ -283,6 +287,11 @@ func TestNotifyDDLJob(t *testing.T) {
 		case <-d.workers[generalWorker].ddlJobCh:
 		default:
 			// The notification may be received by the worker.
+		}
+
+		select {
+		case <-d.ddlJobCh:
+		default:
 		}
 	}
 
@@ -314,6 +323,7 @@ func TestNotifyDDLJob(t *testing.T) {
 	d.asyncNotifyWorker(job)
 	select {
 	case <-d.workers[generalWorker].ddlJobCh:
+	case <-d.ddlJobCh:
 	default:
 		require.FailNow(t, "do not get the general job notification")
 	}
@@ -323,6 +333,7 @@ func TestNotifyDDLJob(t *testing.T) {
 	d.asyncNotifyWorker(job)
 	select {
 	case <-d.workers[addIdxWorker].ddlJobCh:
+	case <-d.ddlJobCh:
 	default:
 		require.FailNow(t, "do not get the add index job notification")
 	}
@@ -354,6 +365,8 @@ func TestNotifyDDLJob(t *testing.T) {
 		require.FailNow(t, "should not get the add index job notification")
 	case <-d1.workers[generalWorker].ddlJobCh:
 		require.FailNow(t, "should not get the general job notification")
+	case <-d1.ddlJobCh:
+		require.FailNow(t, "should not get the job notification")
 	default:
 	}
 }

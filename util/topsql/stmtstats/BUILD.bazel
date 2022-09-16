@@ -27,6 +27,7 @@ go_test(
         "stmtstats_test.go",
     ],
     embed = [":stmtstats"],
+    flaky = True,
     deps = [
         "//testkit/testsetup",
         "//util/topsql/state",

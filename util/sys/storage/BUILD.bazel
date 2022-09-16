@@ -25,6 +25,7 @@ go_test(
         "sys_test.go",
     ],
     embed = [":storage"],
+    flaky = True,
     deps = [
         "//testkit/testsetup",
         "@com_github_stretchr_testify//require",

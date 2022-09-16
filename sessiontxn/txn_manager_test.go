@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/sessiontxn/internal"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
+	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
@@ -36,8 +37,7 @@ import (
 )
 
 func TestEnterNewTxn(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -182,7 +182,7 @@ func TestEnterNewTxn(t *testing.T) {
 				require.Equal(t, stalenessTS, txn.StartTS())
 				is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
 				require.Equal(t, is1.SchemaMetaVersion(), is.SchemaMetaVersion())
-				_, ok := is.(*infoschema.TemporaryTableAttachedInfoSchema)
+				_, ok := is.(*infoschema.SessionExtendedInfoSchema)
 				require.True(t, ok)
 
 				sessVars := sctx.GetSessionVars()
@@ -256,8 +256,7 @@ func TestEnterNewTxn(t *testing.T) {
 }
 
 func TestGetSnapshot(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -310,7 +309,7 @@ func TestGetSnapshot(t *testing.T) {
 			check: func(t *testing.T, sctx sessionctx.Context) {
 				ts, err := mgr.GetStmtReadTS()
 				require.NoError(t, err)
-				compareSnap := internal.GetSnapshotWithTS(sctx, ts)
+				compareSnap := internal.GetSnapshotWithTS(sctx, ts, nil)
 				snap, err := mgr.GetSnapshotWithStmtReadTS()
 				require.NoError(t, err)
 				require.True(t, isSnapshotEqual(t, compareSnap, snap))
@@ -320,7 +319,7 @@ func TestGetSnapshot(t *testing.T) {
 				tk.MustQuery("select * from t for update").Check(testkit.Rows("1", "3", "10"))
 				ts, err = mgr.GetStmtForUpdateTS()
 				require.NoError(t, err)
-				compareSnap2 := internal.GetSnapshotWithTS(sctx, ts)
+				compareSnap2 := internal.GetSnapshotWithTS(sctx, ts, nil)
 				snap, err = mgr.GetSnapshotWithStmtReadTS()
 				require.NoError(t, err)
 				require.False(t, isSnapshotEqual(t, compareSnap2, snap))
@@ -340,7 +339,7 @@ func TestGetSnapshot(t *testing.T) {
 			check: func(t *testing.T, sctx sessionctx.Context) {
 				ts, err := mgr.GetStmtReadTS()
 				require.NoError(t, err)
-				compareSnap := internal.GetSnapshotWithTS(sctx, ts)
+				compareSnap := internal.GetSnapshotWithTS(sctx, ts, nil)
 				snap, err := mgr.GetSnapshotWithStmtReadTS()
 				require.NoError(t, err)
 				require.True(t, isSnapshotEqual(t, compareSnap, snap))
@@ -350,7 +349,7 @@ func TestGetSnapshot(t *testing.T) {
 				tk.MustQuery("select * from t").Check(testkit.Rows("1", "3", "10"))
 				ts, err = mgr.GetStmtForUpdateTS()
 				require.NoError(t, err)
-				compareSnap2 := internal.GetSnapshotWithTS(sctx, ts)
+				compareSnap2 := internal.GetSnapshotWithTS(sctx, ts, nil)
 				snap, err = mgr.GetSnapshotWithStmtReadTS()
 				require.NoError(t, err)
 				require.True(t, isSnapshotEqual(t, compareSnap2, snap))
@@ -369,7 +368,7 @@ func TestGetSnapshot(t *testing.T) {
 			check: func(t *testing.T, sctx sessionctx.Context) {
 				ts, err := mgr.GetStmtReadTS()
 				require.NoError(t, err)
-				compareSnap := internal.GetSnapshotWithTS(sctx, ts)
+				compareSnap := internal.GetSnapshotWithTS(sctx, ts, nil)
 				snap, err := mgr.GetSnapshotWithStmtReadTS()
 				require.NoError(t, err)
 				require.True(t, isSnapshotEqual(t, compareSnap, snap))
@@ -379,7 +378,7 @@ func TestGetSnapshot(t *testing.T) {
 				tk.MustQuery("select * from t for update").Check(testkit.Rows("1", "3"))
 				ts, err = mgr.GetStmtForUpdateTS()
 				require.NoError(t, err)
-				compareSnap2 := internal.GetSnapshotWithTS(sctx, ts)
+				compareSnap2 := internal.GetSnapshotWithTS(sctx, ts, nil)
 				snap, err = mgr.GetSnapshotWithStmtReadTS()
 				require.NoError(t, err)
 				require.True(t, isSnapshotEqual(t, compareSnap2, snap))
@@ -400,7 +399,7 @@ func TestGetSnapshot(t *testing.T) {
 			check: func(t *testing.T, sctx sessionctx.Context) {
 				ts, err := mgr.GetStmtReadTS()
 				require.NoError(t, err)
-				compareSnap := internal.GetSnapshotWithTS(sctx, ts)
+				compareSnap := internal.GetSnapshotWithTS(sctx, ts, nil)
 				snap, err := mgr.GetSnapshotWithStmtReadTS()
 				require.NoError(t, err)
 				require.True(t, isSnapshotEqual(t, compareSnap, snap))
@@ -410,7 +409,7 @@ func TestGetSnapshot(t *testing.T) {
 				tk.MustQuery("select * from t for update").Check(testkit.Rows("1", "3"))
 				ts, err = mgr.GetStmtForUpdateTS()
 				require.NoError(t, err)
-				compareSnap2 := internal.GetSnapshotWithTS(sctx, ts)
+				compareSnap2 := internal.GetSnapshotWithTS(sctx, ts, nil)
 				snap, err = mgr.GetSnapshotWithStmtReadTS()
 				require.NoError(t, err)
 				require.True(t, isSnapshotEqual(t, compareSnap2, snap))
@@ -445,8 +444,7 @@ func TestGetSnapshot(t *testing.T) {
 }
 
 func TestSnapshotInterceptor(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create temporary table test.tmp1 (id int primary key)")
@@ -497,7 +495,7 @@ func TestSnapshotInterceptor(t *testing.T) {
 	}
 
 	// Also check GetSnapshotWithTS
-	snap := internal.GetSnapshotWithTS(tk.Session(), 0)
+	snap := internal.GetSnapshotWithTS(tk.Session(), 0, temptable.SessionSnapshotInterceptor(tk.Session(), sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()))
 	val, err := snap.Get(context.Background(), k)
 	require.NoError(t, err)
 	require.Equal(t, []byte("v1"), val)
@@ -569,10 +567,10 @@ func checkNonActiveStalenessTxn(t *testing.T, sctx sessionctx.Context, ts uint64
 }
 
 func checkInfoSchemaVersion(t *testing.T, sctx sessionctx.Context, ver int64) {
-	is1, ok := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema().(*infoschema.TemporaryTableAttachedInfoSchema)
+	is1, ok := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema().(*infoschema.SessionExtendedInfoSchema)
 	require.True(t, ok)
 
-	is2 := sctx.GetSessionVars().TxnCtx.InfoSchema.(*infoschema.TemporaryTableAttachedInfoSchema)
+	is2 := sctx.GetSessionVars().TxnCtx.InfoSchema.(*infoschema.SessionExtendedInfoSchema)
 	require.True(t, ok)
 
 	require.Equal(t, ver, is1.SchemaMetaVersion())

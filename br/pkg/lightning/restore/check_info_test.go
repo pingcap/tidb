@@ -406,7 +406,15 @@ func TestCheckCSVHeader(t *testing.T) {
 			})
 		}
 
-		err := rc.checkCSVHeader(WithPreInfoGetterTableStructuresCache(ctx, rc.dbInfos), dbMetas)
+		rc.dbMetas = dbMetas
+		rc.precheckItemBuilder = NewPrecheckItemBuilder(
+			cfg,
+			dbMetas,
+			preInfoGetter,
+			nil,
+		)
+		preInfoGetter.dbInfosCache = rc.dbInfos
+		err = rc.checkCSVHeader(ctx)
 		require.NoError(t, err)
 		if ca.level != passed {
 			require.Equal(t, 1, rc.checkTemplate.FailedCount(ca.level))
@@ -452,12 +460,19 @@ func TestCheckTableEmpty(t *testing.T) {
 		dbMetas:          dbMetas,
 		targetInfoGetter: targetInfoGetter,
 	}
+	theCheckBuilder := NewPrecheckItemBuilder(
+		cfg,
+		dbMetas,
+		preInfoGetter,
+		nil,
+	)
 
 	rc := &Controller{
-		cfg:           cfg,
-		dbMetas:       dbMetas,
-		checkpointsDB: checkpoints.NewNullCheckpointsDB(),
-		preInfoGetter: preInfoGetter,
+		cfg:                 cfg,
+		dbMetas:             dbMetas,
+		checkpointsDB:       checkpoints.NewNullCheckpointsDB(),
+		preInfoGetter:       preInfoGetter,
+		precheckItemBuilder: theCheckBuilder,
 	}
 
 	ctx := context.Background()
@@ -484,7 +499,7 @@ func TestCheckTableEmpty(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))
 	mock.ExpectQuery("SELECT 1 FROM `test2`.`tbl1` LIMIT 1").
 		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))
-	// not error, need not to init check template
+	rc.checkTemplate = NewSimpleTemplate()
 	err = rc.checkTableEmpty(ctx)
 	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
@@ -556,6 +571,7 @@ func TestCheckTableEmpty(t *testing.T) {
 	require.NoError(t, err)
 	err = rc.checkpointsDB.Initialize(ctx, cfg, dbInfos)
 	require.NoError(t, err)
+	rc.precheckItemBuilder.checkpointsDB = rc.checkpointsDB
 	db, mock, err = sqlmock.New()
 	require.NoError(t, err)
 	targetInfoGetter.targetDBGlue = glue.NewExternalTiDBGlue(db, mysql.ModeNone)
@@ -595,17 +611,33 @@ func TestLocalResource(t *testing.T) {
 	cfg.Mydumper.SourceDir = dir
 	cfg.TikvImporter.SortedKVDir = dir
 	cfg.TikvImporter.Backend = "local"
+	ioWorkers := worker.NewPool(context.Background(), 1, "io")
+	preInfoGetter := &PreRestoreInfoGetterImpl{
+		cfg:        cfg,
+		srcStorage: mockStore,
+		ioWorkers:  ioWorkers,
+	}
+	theCheckBuilder := NewPrecheckItemBuilder(
+		cfg,
+		nil,
+		preInfoGetter,
+		nil,
+	)
 	rc := &Controller{
-		cfg:       cfg,
-		store:     mockStore,
-		ioWorkers: worker.NewPool(context.Background(), 1, "io"),
+		cfg:                 cfg,
+		store:               mockStore,
+		ioWorkers:           ioWorkers,
+		preInfoGetter:       preInfoGetter,
+		precheckItemBuilder: theCheckBuilder,
 	}
 
+	estimatedSizeResult := new(EstimateSourceDataSizeResult)
+	preInfoGetter.estimatedSizeCache = estimatedSizeResult
 	ctx := context.Background()
-
 	// 1. source-size is smaller than disk-size, won't trigger error information
 	rc.checkTemplate = NewSimpleTemplate()
-	err = rc.localResource(ctx, 1000)
+	estimatedSizeResult.SizeWithIndex = 1000
+	err = rc.localResource(ctx)
 	require.NoError(t, err)
 	tmpl := rc.checkTemplate.(*SimpleTemplate)
 	require.Equal(t, 1, tmpl.warnFailedCount)
@@ -614,7 +646,8 @@ func TestLocalResource(t *testing.T) {
 
 	// 2. source-size is bigger than disk-size, with default disk-quota will trigger a critical error
 	rc.checkTemplate = NewSimpleTemplate()
-	err = rc.localResource(ctx, 4096)
+	estimatedSizeResult.SizeWithIndex = 4096
+	err = rc.localResource(ctx)
 	require.NoError(t, err)
 	tmpl = rc.checkTemplate.(*SimpleTemplate)
 	require.Equal(t, 1, tmpl.warnFailedCount)
@@ -624,7 +657,8 @@ func TestLocalResource(t *testing.T) {
 	// 3. source-size is bigger than disk-size, with a vaild disk-quota will trigger a warning
 	rc.checkTemplate = NewSimpleTemplate()
 	rc.cfg.TikvImporter.DiskQuota = config.ByteSize(1024)
-	err = rc.localResource(ctx, 4096)
+	estimatedSizeResult.SizeWithIndex = 4096
+	err = rc.localResource(ctx)
 	require.NoError(t, err)
 	tmpl = rc.checkTemplate.(*SimpleTemplate)
 	require.Equal(t, 1, tmpl.warnFailedCount)

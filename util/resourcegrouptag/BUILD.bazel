@@ -24,6 +24,7 @@ go_test(
         "resource_group_tag_test.go",
     ],
     embed = [":resourcegrouptag"],
+    flaky = True,
     deps = [
         "//parser",
         "//testkit/testsetup",

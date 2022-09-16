@@ -21,7 +21,6 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -680,13 +679,14 @@ func (p *preprocessor) checkAutoIncrement(stmt *ast.CreateTableStmt) {
 			p.err = errors.Errorf("Incorrect column specifier for column '%s'", col.Name.Name.O)
 		}
 	}
-
 }
 
 // checkSetOprSelectList checks union's selectList.
 // refer: https://dev.mysql.com/doc/refman/5.7/en/union.html
-//        https://mariadb.com/kb/en/intersect/
-//        https://mariadb.com/kb/en/except/
+//
+//	https://mariadb.com/kb/en/intersect/
+//	https://mariadb.com/kb/en/except/
+//
 // "To apply ORDER BY or LIMIT to an individual SELECT, place the clause inside the parentheses that enclose the SELECT."
 func (p *preprocessor) checkSetOprSelectList(stmt *ast.SetOprSelectList) {
 	for _, sel := range stmt.Selects[:len(stmt.Selects)-1] {
@@ -776,7 +776,6 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 				p.err = err
 				return
 			}
-
 		}
 	}
 	if stmt.TemporaryKeyword != ast.TemporaryNone {
@@ -818,7 +817,7 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 	}
 	for _, constraint := range stmt.Constraints {
 		switch tp := constraint.Tp; tp {
-		case ast.ConstraintKey, ast.ConstraintIndex, ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
+		case ast.ConstraintKey, ast.ConstraintIndex, ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex, ast.ConstraintForeignKey:
 			err := checkIndexInfo(constraint.Name, constraint.Keys)
 			if err != nil {
 				p.err = err
@@ -1281,7 +1280,7 @@ func checkColumn(colDef *ast.ColumnDef) error {
 			// return nil, to make the check in the ddl.CreateTable.
 			return nil
 		}
-		err := ddl.IsTooBigFieldLength(colDef.Tp.GetFlen(), colDef.Name.Name.O, tp.GetCharset())
+		err := types.IsVarcharTooBigFieldLength(colDef.Tp.GetFlen(), colDef.Name.Name.O, tp.GetCharset())
 		if err != nil {
 			return err
 		}
@@ -1407,7 +1406,6 @@ func (p *preprocessor) checkContainDotColumn(stmt *ast.CreateTableStmt) {
 }
 
 func (p *preprocessor) stmtType() string {
-
 	switch p.stmtTp {
 	case TypeDelete:
 		return "DELETE"
@@ -1434,7 +1432,6 @@ func (p *preprocessor) stmtType() string {
 
 func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	if tn.Schema.L == "" {
-
 		for _, cte := range p.preprocessWith.cteCanUsed {
 			if cte == tn.Name.L {
 				return
@@ -1663,9 +1660,9 @@ func (p *preprocessor) updateStateFromStaleReadProcessor() error {
 
 // ensureInfoSchema get the infoschema from the preprocessor.
 // there some situations:
-//    - the stmt specifies the schema version.
-//    - session variable
-//    - transaction context
+//   - the stmt specifies the schema version.
+//   - session variable
+//   - transaction context
 func (p *preprocessor) ensureInfoSchema() infoschema.InfoSchema {
 	if p.InfoSchema != nil {
 		return p.InfoSchema

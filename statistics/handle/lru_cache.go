@@ -430,7 +430,7 @@ func (c *innerItemLruCache) put(tblID, id int64, isIndex bool, item statistics.T
 
 func (c *innerItemLruCache) evictIfNeeded() {
 	curr := c.cache.Back()
-	for c.trackingCost > c.capacity {
+	for c.trackingCost > c.capacity && curr != nil {
 		evictCounter.Inc()
 		prev := curr.Prev()
 		item := curr.Value.(*lruCacheItem)
@@ -443,7 +443,7 @@ func (c *innerItemLruCache) evictIfNeeded() {
 			c.cache.Remove(curr)
 			delete(c.elements[item.tblID][item.isIndex], item.id)
 		} else {
-			c.cache.PushFront(curr)
+			c.cache.MoveToFront(curr)
 			item.innerMemUsage = newMem
 		}
 		if c.onEvict != nil {
