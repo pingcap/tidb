@@ -186,7 +186,7 @@ func RunBackupEBS(c context.Context, g glue.Glue, cfg *BackupConfig) error {
 	// Step.2 starts call ebs snapshot api to back up volume data.
 	// NOTE: we should start snapshot in specify order.
 
-	progress := g.StartProgress(ctx, "ebs backup", int64(storeCount), !cfg.LogProgress)
+	progress := g.StartProgress(ctx, "backup", int64(storeCount), !cfg.LogProgress)
 	go progressFileWriterRoutine(ctx, progress, int64(storeCount)*100, cfg.ProgressFile)
 
 	ec2Session, err := aws.NewEC2Session(cfg.CloudAPIConcurrency)
