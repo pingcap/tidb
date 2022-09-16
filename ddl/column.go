@@ -1486,14 +1486,14 @@ func adjustForeignKeyChildTableInfoAfterModifyColumn(d *ddlCtx, t *meta.Meta, jo
 			}
 		}
 	}
-	InfoList := make([]schemaIDAndTableInfo, 0, len(fkh.loaded))
+	infoList := make([]schemaIDAndTableInfo, 0, len(fkh.loaded))
 	for _, info := range fkh.loaded {
-		InfoList = append(InfoList, info)
+		infoList = append(infoList, info)
 	}
-	sort.Slice(InfoList, func(i, j int) bool {
-		return InfoList[i].tblInfo.ID < InfoList[j].tblInfo.ID
+	sort.Slice(infoList, func(i, j int) bool {
+		return infoList[i].tblInfo.ID < infoList[j].tblInfo.ID
 	})
-	return InfoList, nil
+	return infoList, nil
 }
 
 func checkAndApplyAutoRandomBits(d *ddlCtx, m *meta.Meta, dbInfo *model.DBInfo, tblInfo *model.TableInfo,
