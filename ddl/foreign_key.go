@@ -281,6 +281,68 @@ func checkTableForeignKey(referTblInfo, tblInfo *model.TableInfo, fkInfo *model.
 	return nil
 }
 
+func checkModifyColumnWithForeignKeyConstraint(is infoschema.InfoSchema, dbName string, tbInfo *model.TableInfo, originalCol, newCol *model.ColumnInfo) error {
+	if newCol.GetType() == originalCol.GetType() && newCol.GetFlen() == originalCol.GetFlen() && newCol.GetDecimal() == originalCol.GetDecimal() {
+		return nil
+	}
+	// WARN: is maybe nil.
+	if is == nil {
+		return nil
+	}
+	for _, fkInfo := range tbInfo.ForeignKeys {
+		for i, col := range fkInfo.Cols {
+			if col.L == originalCol.Name.L {
+				if !is.TableExists(fkInfo.RefSchema, fkInfo.RefTable) {
+					continue
+				}
+				referTable, err := is.TableByName(fkInfo.RefSchema, fkInfo.RefTable)
+				if err != nil {
+					return err
+				}
+				referCol := model.FindColumnInfo(referTable.Meta().Columns, fkInfo.RefCols[i].L)
+				if referCol == nil {
+					continue
+				}
+				if newCol.GetType() != referCol.GetType() {
+					return dbterror.ErrFKIncompatibleColumns.GenWithStackByArgs(originalCol.Name, fkInfo.RefCols[i], fkInfo.Name)
+				}
+				if newCol.GetFlen() < referCol.GetFlen() || newCol.GetFlen() < originalCol.GetFlen() ||
+					(newCol.GetType() == mysql.TypeNewDecimal && (newCol.GetFlen() != originalCol.GetFlen() || newCol.GetDecimal() != originalCol.GetDecimal())) {
+					return dbterror.ErrForeignKeyColumnCannotChange.GenWithStackByArgs(originalCol.Name, fkInfo.Name)
+				}
+			}
+		}
+	}
+	referredFKs := is.GetTableReferredForeignKeys(dbName, tbInfo.Name.L)
+	for _, referredFK := range referredFKs {
+		for i, col := range referredFK.Cols {
+			if col.L == originalCol.Name.L {
+				if !is.TableExists(referredFK.ChildSchema, referredFK.ChildTable) {
+					continue
+				}
+				childTblInfo, err := is.TableByName(referredFK.ChildSchema, referredFK.ChildTable)
+				if err != nil {
+					return err
+				}
+				fk := model.FindFKInfoByName(childTblInfo.Meta().ForeignKeys, referredFK.ChildFKName.L)
+				childCol := model.FindColumnInfo(childTblInfo.Meta().Columns, fk.Cols[i].L)
+				if childCol == nil {
+					continue
+				}
+				if newCol.GetType() != childCol.GetType() {
+					return dbterror.ErrFKIncompatibleColumns.GenWithStackByArgs(childCol.Name, originalCol.Name, referredFK.ChildFKName)
+				}
+				if newCol.GetFlen() < childCol.GetFlen() || newCol.GetFlen() < originalCol.GetFlen() ||
+					(newCol.GetType() == mysql.TypeNewDecimal && (newCol.GetFlen() != childCol.GetFlen() || newCol.GetDecimal() != childCol.GetDecimal())) {
+					return dbterror.ErrForeignKeyColumnCannotChangeChild.GenWithStackByArgs(originalCol.Name, referredFK.ChildFKName, referredFK.ChildSchema.L+"."+referredFK.ChildTable.L)
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
 func checkTableHasForeignKeyReferred(is infoschema.InfoSchema, schema, tbl string, ignoreTables []ast.Ident, fkCheck bool) *model.ReferredFKInfo {
 	if !fkCheck {
 		return nil
