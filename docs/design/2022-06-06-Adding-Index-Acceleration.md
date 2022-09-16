@@ -99,4 +99,4 @@ As an optimization, this proposal does not lead to any semantic change so theore
 
 3. Use one config parameter `fast-reorg-local-path` to specify the sort path for lightning when it used in add index reorg stage. The default value is /tmp/tidb, please change it to your own disk path for the new backfiller could work properly.
 
-    Example:```fast-reorg-local-path = “/tmp/tidb”```
+    Example:```fast-reorg-local-path = "/tmp/tidb"```
