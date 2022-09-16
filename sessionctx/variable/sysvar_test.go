@@ -660,6 +660,17 @@ func TestDefaultMemoryDebugModeValue(t *testing.T) {
 	require.Equal(t, val, "0")
 }
 
+func TestDefaultPartitionPruneMode(t *testing.T) {
+	vars := NewSessionVars()
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+	val, err := vars.GetSessionOrGlobalSystemVar(TiDBPartitionPruneMode)
+	require.NoError(t, err)
+	require.Equal(t, "dynamic", val)
+	require.Equal(t, "dynamic", DefTiDBPartitionPruneMode)
+}
+
 func TestSetTIDBFastDDL(t *testing.T) {
 	vars := NewSessionVars()
 	mock := NewMockGlobalAccessor4Tests()
