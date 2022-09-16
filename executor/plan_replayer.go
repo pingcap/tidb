@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
@@ -164,9 +163,9 @@ func (e *PlanReplayerExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		if err != nil {
 			return err
 		}
-		// As we can only read file from handleSpecialQuery, thus we store the file token in the session var and return nil here.
+		// As we can only read file from handleSpecialQuery, thus we store the file token in the session var during `dump`
+		// and return nil here.
 		e.endFlag = true
-		e.ctx.GetSessionVars().LastPlanReplayerToken = e.DumpInfo.FileName
 		return nil
 	}
 	if e.DumpInfo.ExecStmts == nil {
@@ -178,7 +177,6 @@ func (e *PlanReplayerExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	req.AppendString(0, e.DumpInfo.FileName)
 	e.endFlag = true
-	e.ctx.GetSessionVars().LastPlanReplayerToken = e.DumpInfo.FileName
 	return nil
 }
 
@@ -310,7 +308,12 @@ func (e *PlanReplayerDumpInfo) dump(ctx context.Context) (err error) {
 	}
 
 	// Dump explain
-	return dumpExplain(e.ctx, zw, e.ExecStmts, e.Analyze)
+	if err = dumpExplain(e.ctx, zw, e.ExecStmts, e.Analyze); err != nil {
+		return err
+	}
+
+	e.ctx.GetSessionVars().LastPlanReplayerToken = e.FileName
+	return nil
 }
 
 func dumpConfig(zw *zip.Writer) error {
@@ -568,14 +571,13 @@ func (e *PlanReplayerExec) prepare() error {
 // DumpSQLsFromFile dumps plan replayer results for sqls from file
 func (e *PlanReplayerDumpInfo) DumpSQLsFromFile(ctx context.Context, b []byte) error {
 	sqls := strings.Split(string(b), ";")
-	p := parser.New()
 	e.ExecStmts = make([]ast.StmtNode, 0)
 	for _, sql := range sqls {
 		s := strings.Trim(sql, "\n")
 		if len(s) < 1 {
 			continue
 		}
-		node, err := p.ParseOneStmt(s, "", "")
+		node, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ParseWithParams(ctx, s)
 		if err != nil {
 			return fmt.Errorf("parse sql error, sql:%v, err:%v", s, err)
 		}
@@ -699,9 +701,9 @@ type PlanReplayerLoadInfo struct {
 	Ctx  sessionctx.Context
 }
 
-type planReplayerDumpVarKey int
+type planReplayerDumpKeyType int
 
-func (k planReplayerDumpVarKey) String() string {
+func (k planReplayerDumpKeyType) String() string {
 	return "plan_replayer_dump_var"
 }
 
@@ -715,7 +717,7 @@ func (k planReplayerLoadKeyType) String() string {
 const PlanReplayerLoadVarKey planReplayerLoadKeyType = 0
 
 // PlanReplayerDumpVarKey is a variable key for plan replayer dump.
-const PlanReplayerDumpVarKey planReplayerDumpVarKey = 1
+const PlanReplayerDumpVarKey planReplayerDumpKeyType = 1
 
 // Next implements the Executor Next interface.
 func (e *PlanReplayerLoadExec) Next(ctx context.Context, req *chunk.Chunk) error {
