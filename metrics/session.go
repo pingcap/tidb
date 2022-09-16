@@ -151,6 +151,14 @@ var (
 			Help:      "Bucketed histogram of different states of a transaction.",
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 29), // 0.5ms ~ 1.5days
 		}, []string{LblType, LblHasLock})
+	LazyPessimisticUniqueCheckSetCount = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "session",
+			Name:      "lazy_pessimistic_unique_check_set_count",
+			Help:      "Counter of setting tidb_constraint_check_in_place to false",
+		},
+	)
 )
 
 // Label constants.
@@ -181,6 +189,7 @@ const (
 	LblVersion     = "version"
 	LblHash        = "hash"
 	LblCTEType     = "cte_type"
+	LblAccountLock = "account_lock"
 	LblIdle        = "idle"
 	LblRunning     = "executing_sql"
 	LblLockWaiting = "waiting_for_lock"

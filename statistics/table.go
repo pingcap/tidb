@@ -463,6 +463,21 @@ func (n *neededStatsMap) Length() int {
 // and use pseudo estimation.
 var RatioOfPseudoEstimate = atomic.NewFloat64(0.7)
 
+// IsInitialized returns true if any column/index stats of the table is initialized.
+func (t *Table) IsInitialized() bool {
+	for _, col := range t.Columns {
+		if col != nil && col.IsStatsInitialized() {
+			return true
+		}
+	}
+	for _, idx := range t.Indices {
+		if idx != nil && idx.IsStatsInitialized() {
+			return true
+		}
+	}
+	return false
+}
+
 // IsOutdated returns true if the table stats is outdated.
 func (t *Table) IsOutdated() bool {
 	rowcount := t.GetColRowCount()
@@ -1166,7 +1181,6 @@ func getPseudoRowCountByIndexRanges(sc *stmtctx.StatementContext, indexRanges []
 // GetPseudoRowCountByColumnRanges calculate the row count by the ranges if there's no statistics information for this column.
 func GetPseudoRowCountByColumnRanges(sc *stmtctx.StatementContext, tableRowCount float64, columnRanges []*ranger.Range, colIdx int) (float64, error) {
 	var rowCount float64
-	var err error
 	for _, ran := range columnRanges {
 		if ran.LowVal[colIdx].Kind() == types.KindNull && ran.HighVal[colIdx].Kind() == types.KindMaxValue {
 			rowCount += tableRowCount
@@ -1174,25 +1188,22 @@ func GetPseudoRowCountByColumnRanges(sc *stmtctx.StatementContext, tableRowCount
 			nullCount := tableRowCount / pseudoEqualRate
 			if ran.HighVal[colIdx].Kind() == types.KindMaxValue {
 				rowCount += tableRowCount - nullCount
-			} else if err == nil {
+			} else {
 				lessCount := tableRowCount / pseudoLessRate
 				rowCount += lessCount - nullCount
 			}
 		} else if ran.HighVal[colIdx].Kind() == types.KindMaxValue {
 			rowCount += tableRowCount / pseudoLessRate
 		} else {
-			compare, err1 := ran.LowVal[colIdx].Compare(sc, &ran.HighVal[colIdx], ran.Collators[colIdx])
-			if err1 != nil {
-				return 0, errors.Trace(err1)
+			compare, err := ran.LowVal[colIdx].Compare(sc, &ran.HighVal[colIdx], ran.Collators[colIdx])
+			if err != nil {
+				return 0, errors.Trace(err)
 			}
 			if compare == 0 {
 				rowCount += tableRowCount / pseudoEqualRate
 			} else {
 				rowCount += tableRowCount / pseudoBetweenRate
 			}
-		}
-		if err != nil {
-			return 0, errors.Trace(err)
 		}
 	}
 	if rowCount > tableRowCount {
