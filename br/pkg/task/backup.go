@@ -80,7 +80,7 @@ type BackupConfig struct {
 	CompressionConfig
 
 	// for ebs-based backup
-	FullBackupType      FullBackupType `json:"full-br-type" toml:"full-br-type"`
+	FullBackupType      FullBackupType `json:"full-backup-type" toml:"full-backup-type"`
 	VolumeFile          string         `json:"volume-file"`
 	SkipAWS             bool           `json:"skip-aws"`
 	CloudAPIConcurrency uint           `json:"cloud-api-concurrency"`
