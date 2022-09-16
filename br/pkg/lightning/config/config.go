@@ -482,9 +482,6 @@ type IgnoreColumns struct {
 }
 
 func (ic *IgnoreColumns) ColumnsMap() map[string]struct{} {
-	if ic == nil {
-		return nil
-	}
 	columnMap := make(map[string]struct{}, len(ic.Columns))
 	for _, c := range ic.Columns {
 		columnMap[c] = struct{}{}

@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/types"
 	tmock "github.com/pingcap/tidb/util/mock"
 	router "github.com/pingcap/tidb/util/table-router"
 	"github.com/stretchr/testify/require"
@@ -323,5 +324,124 @@ func TestAddExtendDataForCheckpoint(t *testing.T) {
 	for i, chunk := range chunks {
 		require.Equal(t, expectExtendCols, chunk.FileMeta.ExtendData.Columns)
 		require.Equal(t, expectedExtendVals[i], chunk.FileMeta.ExtendData.Values)
+	}
+}
+
+func TestFilterColumns(t *testing.T) {
+	p := parser.New()
+	se := tmock.NewContext()
+
+	testCases := []struct {
+		columnNames    []string
+		extendData     mydump.ExtendColumnData
+		ignoreColsMap  map[string]struct{}
+		createTableSql string
+
+		expectedFilteredColumns    []string
+		expectedFilteredExtendCols []string
+		expectedExtendValues       []string
+	}{
+		{
+			[]string{"a", "b"},
+			mydump.ExtendColumnData{},
+			nil,
+			"CREATE TABLE t (a int primary key, b int)",
+			[]string{"a", "b"},
+			[]string{},
+			[]string{},
+		},
+		{
+			[]string{},
+			mydump.ExtendColumnData{},
+			nil,
+			"CREATE TABLE t (a int primary key, b int)",
+			[]string{},
+			[]string{},
+			[]string{},
+		},
+		{
+			[]string{"a", "b"},
+			mydump.ExtendColumnData{
+				[]string{"c_source", "c_schema", "c_table"},
+				[]string{"01", "1", "1"},
+			},
+			nil,
+			"CREATE TABLE t (a int primary key, b int, c_source varchar(11), c_schema varchar(11), c_table varchar(11))",
+			[]string{"a", "b", "c_source", "c_schema", "c_table"},
+			[]string{"c_source", "c_schema", "c_table"},
+			[]string{"01", "1", "1"},
+		},
+		{
+			[]string{},
+			mydump.ExtendColumnData{
+				[]string{"c_source", "c_schema", "c_table"},
+				[]string{"01", "1", "1"},
+			},
+			nil,
+			"CREATE TABLE t (a int primary key, b int, c_source varchar(11), c_schema varchar(11), c_table varchar(11))",
+			[]string{"a", "b", "c_source", "c_schema", "c_table"},
+			[]string{"c_source", "c_schema", "c_table"},
+			[]string{"01", "1", "1"},
+		},
+		{
+			[]string{"a", "b"},
+			mydump.ExtendColumnData{},
+			map[string]struct{}{"a": {}},
+			"CREATE TABLE t (a int primary key, b int)",
+			[]string{"b"},
+			[]string{},
+			[]string{},
+		},
+		{
+			[]string{},
+			mydump.ExtendColumnData{},
+			map[string]struct{}{"a": {}},
+			"CREATE TABLE t (a int primary key, b int)",
+			[]string{"b"},
+			[]string{},
+			[]string{},
+		},
+		{
+			[]string{"a", "b"},
+			mydump.ExtendColumnData{
+				[]string{"c_source", "c_schema", "c_table"},
+				[]string{"01", "1", "1"},
+			},
+			map[string]struct{}{"a": {}},
+			"CREATE TABLE t (a int primary key, b int, c_source varchar(11), c_schema varchar(11), c_table varchar(11))",
+			[]string{"b", "c_source", "c_schema", "c_table"},
+			[]string{"c_source", "c_schema", "c_table"},
+			[]string{"01", "1", "1"},
+		},
+		{
+			[]string{"a", "b"},
+			mydump.ExtendColumnData{
+				[]string{"c_source", "c_schema", "c_table"},
+				[]string{"01", "1", "1"},
+			},
+			map[string]struct{}{"a": {}, "c_source": {}},
+			"CREATE TABLE t (a int primary key, b int, c_source varchar(11), c_schema varchar(11), c_table varchar(11))",
+			[]string{"b", "c_schema", "c_table"},
+			[]string{"c_schema", "c_table"},
+			[]string{"1", "1"},
+		},
+	}
+	for i, tc := range testCases {
+		t.Logf("test case #%d", i)
+		node, err := p.ParseOneStmt(tc.createTableSql, "utf8mb4", "utf8mb4_bin")
+		require.NoError(t, err)
+		tableInfo, err := ddl.MockTableInfo(se, node.(*ast.CreateTableStmt), int64(i+1))
+		require.NoError(t, err)
+		tableInfo.State = model.StatePublic
+
+		expectedDatums := make([]types.Datum, 0, len(tc.expectedExtendValues))
+		for _, expectedValue := range tc.expectedExtendValues {
+			expectedDatums = append(expectedDatums, types.NewStringDatum(expectedValue))
+		}
+
+		filteredColumns, filteredExtendCols, extendDatums := filterColumns(tc.columnNames, tc.extendData, tc.ignoreColsMap, tableInfo)
+		require.Equal(t, tc.expectedFilteredColumns, filteredColumns)
+		require.Equal(t, tc.expectedFilteredExtendCols, filteredExtendCols)
+		require.Equal(t, expectedDatums, extendDatums)
 	}
 }

@@ -62,6 +62,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mathutil"
 	regexprrouter "github.com/pingcap/tidb/util/regexpr-router"
+	"github.com/pingcap/tidb/util/set"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/atomic"
 	"go.uber.org/multierr"
@@ -2461,14 +2462,27 @@ func saveCheckpoint(rc *Controller, t *TableRestore, engineID int32, chunk *chec
 	}
 }
 
+// filterColumns filter columns and extend columns.
+// It accepts:
+// - columnsNames, header in the data files;
+// - extendData, extendData fetched through data file name, that is to say, table info;
+// - ignoreColsMap, columns to be ignored when we import;
+// - tableInfo, tableInfo of the target table;
+// It returns:
+// - filteredColumns, columns of the original data to import.
+// - filteredExtendCols, columns of the extended data to import.
+// - extendValueDatums, extended Data to import.
+// The data we import will use filteredColumns as columns, use (parser.LastRow+extendValueDatums) as data
+// ColumnPermutation will be modified to make sure the correspondence relationship is correct.
+// if len(columnsNames) > 0, it means users has specified each field definition, we can just use users
 func filterColumns(columnNames []string, extendData mydump.ExtendColumnData, ignoreColsMap map[string]struct{}, tableInfo *model.TableInfo) ([]string, []string, []types.Datum) {
 	extendCols, extendVals := extendData.Columns, extendData.Values
-	extendColsMap := make(map[string]struct{})
+	extendColsSet := make(set.StringSet)
 	for _, extendCol := range extendCols {
-		extendColsMap[extendCol] = struct{}{}
+		extendColsSet.Insert(extendCol)
 	}
 	for c := range ignoreColsMap {
-		delete(extendColsMap, c)
+		delete(extendColsSet, c)
 	}
 	filteredColumns := make([]string, 0, len(columnNames))
 	if len(columnNames) > 0 {
@@ -2478,11 +2492,11 @@ func filterColumns(columnNames []string, extendData mydump.ExtendColumnData, ign
 				_, ok = ignoreColsMap[c]
 			}
 			if !ok {
-				delete(extendColsMap, c)
+				delete(extendColsSet, c)
 				filteredColumns = append(filteredColumns, c)
 			}
 		}
-	} else {
+	} else if len(ignoreColsMap) > 0 || len(extendCols) > 0 {
 		// init column names by table schema
 		// after filtered out some columns, we must explicitly set the columns for TiDB backend
 		for _, col := range tableInfo.Columns {
@@ -2491,18 +2505,15 @@ func filterColumns(columnNames []string, extendData mydump.ExtendColumnData, ign
 				_, ok = ignoreColsMap[col.Name.L]
 			}
 			// ignore all extend row values specified by users
-			_, isExtendCol := extendColsMap[col.Name.O]
-			if !col.Hidden && !ok && !isExtendCol {
+			if !col.Hidden && !ok && !extendColsSet.Exist(col.Name.O) {
 				filteredColumns = append(filteredColumns, col.Name.O)
 			}
 		}
 	}
-	var (
-		filteredExtendCols []string
-		extendValueDatums  []types.Datum
-	)
+	filteredExtendCols := make([]string, 0)
+	extendValueDatums := make([]types.Datum, 0)
 	for i, c := range extendCols {
-		if _, ok := extendColsMap[c]; ok {
+		if extendColsSet.Exist(c) {
 			filteredColumns = append(filteredColumns, c)
 			filteredExtendCols = append(filteredExtendCols, c)
 			extendValueDatums = append(extendValueDatums, types.NewStringDatum(extendVals[i]))
