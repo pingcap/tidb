@@ -177,7 +177,7 @@ func (local *local) SplitAndScatterRegionByRanges(
 			if err != nil {
 				log.FromContext(ctx).Warn("fetch table region size statistics failed",
 					zap.String("table", tableInfo.Name), zap.Error(err))
-				tableRegionStats = make(map[uint64]int64)
+				tableRegionStats, err = make(map[uint64]int64), nil
 			}
 		}
 
@@ -349,7 +349,7 @@ func (local *local) SplitAndScatterRegionByRanges(
 
 func fetchTableRegionSizeStats(ctx context.Context, db *sql.DB, tableID int64) (map[uint64]int64, error) {
 	if db == nil {
-		return make(map[uint64]int64), errors.Errorf("db is nil")
+		return nil, errors.Errorf("db is nil")
 	}
 	exec := &common.SQLWithRetry{
 		DB:     db,
