@@ -1734,6 +1734,19 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.
 		}
 		var err error
 		domainSchema := domain.GetDomain(sctx).InfoSchema()
+		domainSchemaVer := domainSchema.SchemaMetaVersion()
+		if !skipLock {
+			sctx.GetSessionVars().GetRelatedTableForMDL().Store(tableInfo.ID, int64(0))
+			change := true
+			for change {
+				domainSchema = domain.GetDomain(sctx).InfoSchema()
+				if domainSchema.SchemaMetaVersion() != domainSchemaVer {
+					domainSchemaVer = domainSchema.SchemaMetaVersion()
+					sctx.GetSessionVars().GetRelatedTableForMDL().Store(tableInfo.ID, domainSchemaVer)
+				}
+				change = false
+			}
+		}
 		tbl, err = domainSchema.TableByName(dbName, tableInfo.Name)
 		if err != nil {
 			return nil, err
@@ -1784,15 +1797,14 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.
 			}
 		}
 
-		if se, ok := is.(*infoschema.SessionExtendedInfoSchema); ok {
-			db, _ := domainSchema.SchemaByTable(tbl.Meta())
-			err = se.UpdateTableInfo(db, tbl)
-			if err != nil {
-				return nil, err
-			}
+		se, ok := is.(*infoschema.SessionExtendedInfoSchema)
+		if !ok {
+			se = infoschema.AttachMDLTableInfoSchema(is).(*infoschema.SessionExtendedInfoSchema)
 		}
-		if !skipLock {
-			sctx.GetSessionVars().GetRelatedTableForMDL().Store(tableInfo.ID, domainSchema.SchemaMetaVersion())
+		db, _ := domainSchema.SchemaByTable(tbl.Meta())
+		err = se.UpdateTableInfo(db, tbl)
+		if err != nil {
+			return nil, err
 		}
 		return tbl, nil
 	}
