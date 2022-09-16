@@ -29,7 +29,6 @@ type FKCheck struct {
 	Tbl        table.Table
 	Idx        table.Index
 	Cols       []model.CIStr
-	HandleCols []*table.Column
 
 	IdxIsPrimaryKey bool
 	IdxIsExclusive  bool
@@ -144,12 +143,10 @@ func buildFKCheck(tbl table.Table, cols []model.CIStr, failedErr error) (*FKChec
 	if tblInfo.PKIsHandle && len(cols) == 1 {
 		refColInfo := model.FindColumnInfo(tblInfo.Columns, cols[0].L)
 		if refColInfo != nil && mysql.HasPriKeyFlag(refColInfo.GetFlag()) {
-			refCol := table.FindCol(tbl.Cols(), refColInfo.Name.O)
 			return &FKCheck{
 				Tbl:             tbl,
 				IdxIsPrimaryKey: true,
 				IdxIsExclusive:  true,
-				HandleCols:      []*table.Column{refCol},
 				FailedErr:       failedErr,
 			}, nil
 		}
@@ -167,14 +164,6 @@ func buildFKCheck(tbl table.Table, cols []model.CIStr, failedErr error) (*FKChec
 	}
 	if tblIdx == nil {
 		return nil, failedErr
-	}
-
-	var handleCols []*table.Column
-	if referTbIdxInfo.Primary && tblInfo.IsCommonHandle {
-		cols := tbl.Cols()
-		for _, idxCol := range referTbIdxInfo.Columns {
-			handleCols = append(handleCols, cols[idxCol.Offset])
-		}
 	}
 
 	return &FKCheck{

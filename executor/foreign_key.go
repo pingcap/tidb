@@ -173,14 +173,7 @@ func (fkc *FKCheckExec) buildHandleFromFKValues(sc *stmtctx.StatementContext, va
 	if len(vals) == 1 && fkc.Idx == nil {
 		return kv.IntHandle(vals[0].GetInt64()), nil
 	}
-	pkDts := make([]types.Datum, 0, len(vals))
-	for i, val := range vals {
-		if fkc.Idx != nil && len(fkc.HandleCols) > 0 {
-			tablecodec.TruncateIndexValue(&val, fkc.Idx.Meta().Columns[i], fkc.HandleCols[i].ColumnInfo)
-		}
-		pkDts = append(pkDts, val)
-	}
-	handleBytes, err := codec.EncodeKey(sc, nil, pkDts...)
+	handleBytes, err := codec.EncodeKey(sc, nil, vals...)
 	if err != nil {
 		return nil, err
 	}
