@@ -56,7 +56,7 @@ Since Lightning writes index data firstly into local storage instead of committi
 In addition to performance enhancement, the new solution could further lower the impact that DDL caused on DML. This point will be outstanding in the future implementation plan.
 
 ## Uniqueness check
-For unique index / primary key, we should be able to detect if duplicate key is generated and reports error if so. In order to archive that, we could reuse the `DuplicateDetect` interface provided by the Lightning engine:
+For a unique index / primary key, we should be able to detect if a duplicate key is generated and reports an error if so. In order to archive that, we could reuse the `DuplicateDetect` interface provided by the Lightning engine:
 
 ```golang
 service ImportSST {
