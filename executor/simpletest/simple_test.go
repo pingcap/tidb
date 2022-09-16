@@ -469,14 +469,23 @@ func inTxn(ctx sessionctx.Context) bool {
 func TestIssue33144(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+
 	//Create role
 	tk.MustExec("create role 'r1' ;")
-	//Grant role to current_user();
+
 	sessionVars := tk.Session().GetSessionVars()
 	sessionVars.User = &auth.UserIdentity{Username: "root", Hostname: "localhost", AuthUsername: "root", AuthHostname: "%"}
+
+	//Grant role to current_user()
 	tk.MustExec("grant 'r1' to current_user();")
-	//Revoke role from current_user();
+	//Revoke role from current_user()
 	tk.MustExec("revoke 'r1' from current_user();")
+
+	//Grant role to current_user(),current_user()
+	tk.MustExec("grant 'r1' to current_user(),current_user();")
+	//Revoke role from current_user(),current_user()
+	tk.MustExec("revoke 'r1' from current_user(),current_user();")
+
 	//Drop role
 	tk.MustExec("drop role 'r1' ;")
 }
