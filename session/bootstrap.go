@@ -2059,10 +2059,6 @@ func doDMLWorks(s Session) {
 			if config.GetGlobalConfig().Store == "tikv" {
 				vVal = variable.On
 			}
-		case variable.TiDBPartitionPruneMode:
-			if inTestSuite() || config.CheckTableBeforeDrop {
-				vVal = string(variable.Dynamic)
-			}
 		case variable.TiDBMemOOMAction:
 			if inTestSuite() {
 				vVal = variable.OOMActionLog

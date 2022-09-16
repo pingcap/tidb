@@ -896,6 +896,11 @@ error = '''
 Duplicate partition name %-.192s
 '''
 
+["ddl:1553"]
+error = '''
+Cannot drop index '%-.192s': needed in a foreign key constraint
+'''
+
 ["ddl:1562"]
 error = '''
 Cannot create temporary table with partitions
@@ -956,6 +961,11 @@ error = '''
 VALUES value for partition '%-.64s' must have type INT
 '''
 
+["ddl:1701"]
+error = '''
+Cannot truncate a table referenced in a foreign key constraint (%.192s)
+'''
+
 ["ddl:1731"]
 error = '''
 Non matching attribute '%-.64s' between partition and table
@@ -999,6 +1009,16 @@ Duplicate foreign key constraint name '%s'
 ["ddl:1828"]
 error = '''
 Cannot drop column '%-.192s': needed in a foreign key constraint '%-.192s'
+'''
+
+["ddl:1832"]
+error = '''
+Cannot change column '%-.192s': used in a foreign key constraint '%-.192s'
+'''
+
+["ddl:1833"]
+error = '''
+Cannot change column '%-.192s': used in a foreign key constraint '%-.192s' of table '%-.192s'
 '''
 
 ["ddl:1846"]
@@ -1054,6 +1074,11 @@ A primary key index cannot be invisible
 ["ddl:3593"]
 error = '''
 You cannot use the window function '%s' in this context.'
+'''
+
+["ddl:3730"]
+error = '''
+Cannot drop table '%s' referenced by a foreign key constraint '%s' on table '%s'.
 '''
 
 ["ddl:3753"]
@@ -1688,7 +1713,7 @@ not implemented
 
 ["kv:9007"]
 error = '''
-Write conflict, txnStartTS=%d, conflictStartTS=%d, conflictCommitTS=%d, key=%s [try again later]
+Write conflict, txnStartTS=%d, conflictStartTS=%d, conflictCommitTS=%d, key=%s, reason=%s [try again later]
 '''
 
 ["meta:1007"]
