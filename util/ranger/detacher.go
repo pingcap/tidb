@@ -659,6 +659,7 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 	dnfItems := expression.FlattenDNFConditions(condition)
 	newAccessItems := make([]expression.Expression, 0, len(dnfItems))
 	var totalRanges Ranges
+	var totalRangesMemUsage int64
 	columnValues := make([]*valueInfo, len(d.cols))
 	hasResidual := false
 	for i, item := range dnfItems {
@@ -679,7 +680,8 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 				hasResidual = true
 			}
 			totalRanges = append(totalRanges, ranges...)
-			if d.rangeMaxSize > 0 && totalRanges.MemUsage() > d.rangeMaxSize {
+			totalRangesMemUsage += ranges.MemUsage()
+			if d.rangeMaxSize > 0 && totalRangesMemUsage > d.rangeMaxSize {
 				d.sctx.GetSessionVars().StmtCtx.RecordRangeFallback(d.rangeMaxSize)
 				return FullRange(), nil, nil, true, nil
 			}
@@ -721,7 +723,8 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 				return FullRange(), nil, nil, true, nil
 			}
 			totalRanges = append(totalRanges, ranges...)
-			if d.rangeMaxSize > 0 && totalRanges.MemUsage() > d.rangeMaxSize {
+			totalRangesMemUsage += ranges.MemUsage()
+			if d.rangeMaxSize > 0 && totalRangesMemUsage > d.rangeMaxSize {
 				d.sctx.GetSessionVars().StmtCtx.RecordRangeFallback(d.rangeMaxSize)
 				return FullRange(), nil, nil, true, nil
 			}

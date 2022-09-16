@@ -112,6 +112,16 @@ func convertPoints(sctx sessionctx.Context, rangePoints []*point, tp *types.Fiel
 	return rangePoints[:i], nil
 }
 
+// estimateMemUsageForPoints2Ranges estimates the memory usage of ranges converted from points.
+func estimateMemUsageForPoints2Ranges(rangePoints []*point) (sum int64) {
+	// 16 is the size of Range.Collators
+	sum = (EmptyRangeSize + 16) * int64(len(rangePoints)) / 2
+	for _, pt := range rangePoints {
+		sum += pt.value.MemUsage()
+	}
+	return
+}
+
 // points2Ranges build index ranges from range points.
 // Only one column is built there. If there're multiple columns, use appendPoints2Ranges.
 // rangeMaxSize is the max memory limit for ranges. O indicates no memory limit.
@@ -120,6 +130,16 @@ func points2Ranges(sctx sessionctx.Context, rangePoints []*point, tp *types.Fiel
 	convertedPoints, err := convertPoints(sctx, rangePoints, tp, mysql.HasNotNullFlag(tp.GetFlag()), false)
 	if err != nil {
 		return nil, false, errors.Trace(err)
+	}
+	// Estimate whether rangeMaxSize will be exceeded first before converting points to ranges.
+	if rangeMaxSize > 0 && estimateMemUsageForPoints2Ranges(convertedPoints) > rangeMaxSize {
+		var fullRange Ranges
+		if mysql.HasNotNullFlag(tp.GetFlag()) {
+			fullRange = FullNotNullRange()
+		} else {
+			fullRange = FullRange()
+		}
+		return fullRange, true, nil
 	}
 	ranges := make(Ranges, 0, len(convertedPoints)/2)
 	for i := 0; i < len(convertedPoints); i += 2 {
@@ -130,15 +150,6 @@ func points2Ranges(sctx sessionctx.Context, rangePoints []*point, tp *types.Fiel
 			HighVal:     []types.Datum{endPoint.value},
 			HighExclude: endPoint.excl,
 			Collators:   []collate.Collator{collate.GetCollator(tp.GetCollate())},
-		}
-		if len(ranges) == 0 && rangeMaxSize > 0 && ran.MemUsage()*int64(len(convertedPoints))/2 > rangeMaxSize {
-			var fullRange Ranges
-			if mysql.HasNotNullFlag(tp.GetFlag()) {
-				fullRange = FullNotNullRange()
-			} else {
-				fullRange = FullRange()
-			}
-			return fullRange, true, nil
 		}
 		ranges = append(ranges, ran)
 	}
@@ -225,31 +236,26 @@ func convertPoint(sctx sessionctx.Context, point *point, tp *types.FieldType) (*
 	return npoint, nil
 }
 
+// estimateMemUsageForAppendPoints2Ranges estimates the memory usage of results of appending points to ranges.
 func estimateMemUsageForAppendPoints2Ranges(origin Ranges, rangePoints []*point) int64 {
 	if len(origin) == 0 || len(rangePoints) == 0 {
 		return 0
 	}
-	len1, len2 := float64(len(origin)), float64(len(rangePoints)/2)
-	var avgLowValSize, avgHighValSize, avgStartValSize, avgEndValSize float64
+	var originDatumSize, pointDatumSize int64
 	for _, ran := range origin {
 		for _, val := range ran.LowVal {
-			avgLowValSize += float64(val.MemUsage())
+			originDatumSize += val.MemUsage()
 		}
 		for _, val := range ran.HighVal {
-			avgHighValSize += float64(val.MemUsage())
+			originDatumSize += val.MemUsage()
 		}
 	}
-	avgLowValSize /= len1
-	avgHighValSize /= len1
-	for i := 0; i < len(rangePoints); i += 2 {
-		avgStartValSize += float64(rangePoints[i].value.MemUsage())
-		avgEndValSize += float64(rangePoints[i+1].value.MemUsage())
+	for _, pt := range rangePoints {
+		pointDatumSize += pt.value.MemUsage()
 	}
-	avgStartValSize /= len2
-	avgEndValSize /= len2
-	// float64((len(origin[0].LowVal)+1)*16) is the size of Range.Collators.
-	avgRangeSize := float64(EmptyRangeSize) + avgLowValSize + avgStartValSize + avgHighValSize + avgEndValSize + float64((len(origin[0].LowVal)+1)*16)
-	return int64(avgRangeSize * len1 * len2)
+	len1, len2 := int64(len(origin)), int64(len(rangePoints))/2
+	// (int64(len(origin[0].LowVal))+1)*16 is the size of Range.Collators.
+	return (EmptyRangeSize+(int64(len(origin[0].LowVal))+1)*16)*len1*len2 + originDatumSize*len2 + pointDatumSize*len1
 }
 
 // appendPoints2Ranges appends additional column ranges for multi-column index. The additional column ranges can only be
@@ -313,6 +319,28 @@ func appendPoints2IndexRange(origin *Range, rangePoints []*point, ft *types.Fiel
 	return newRanges, nil
 }
 
+// estimateMemUsageForAppendRanges2PointRanges estimates the memory usage of results of appending ranges to point ranges.
+func estimateMemUsageForAppendRanges2PointRanges(pointRanges Ranges, ranges Ranges) int64 {
+	len1, len2 := int64(len(pointRanges)), int64(len(ranges))
+	if len1 == 0 || len2 == 0 {
+		return 0
+	}
+	getDatumSize := func(rs Ranges) int64 {
+		var sum int64
+		for _, ran := range rs {
+			for _, val := range ran.LowVal {
+				sum += val.MemUsage()
+			}
+			for _, val := range ran.HighVal {
+				sum += val.MemUsage()
+			}
+		}
+		return sum
+	}
+	collatorSize := (int64(len(pointRanges[0].LowVal)) + int64(len(ranges[0].LowVal))) * 16
+	return (EmptyRangeSize+collatorSize)*len1*len2 + getDatumSize(pointRanges)*len2 + getDatumSize(ranges)*len1
+}
+
 // appendRanges2PointRanges appends additional ranges to point ranges.
 // rangeMaxSize is the max memory limit for ranges. O indicates no memory limit.
 // If the second return value is true, it means that the estimated memory after appending additional ranges to point ranges
@@ -320,6 +348,10 @@ func appendPoints2IndexRange(origin *Range, rangePoints []*point, ft *types.Fiel
 func appendRanges2PointRanges(pointRanges Ranges, ranges Ranges, rangeMaxSize int64) (Ranges, bool) {
 	if len(ranges) == 0 {
 		return pointRanges, false
+	}
+	// Estimate whether rangeMaxSize will be exceeded first before appending ranges to point ranges.
+	if rangeMaxSize > 0 && estimateMemUsageForAppendRanges2PointRanges(pointRanges, ranges) > rangeMaxSize {
+		return ranges, true
 	}
 	newRanges := make(Ranges, 0, len(pointRanges)*len(ranges))
 	for _, pointRange := range pointRanges {
@@ -343,9 +375,6 @@ func appendRanges2PointRanges(pointRanges Ranges, ranges Ranges, rangeMaxSize in
 				HighExclude: r.HighExclude,
 				Collators:   collators,
 			}
-			if len(newRanges) == 0 && rangeMaxSize > 0 && newRange.MemUsage()*int64(len(pointRanges))*int64(len(ranges)) > rangeMaxSize {
-				return ranges, true
-			}
 			newRanges = append(newRanges, newRange)
 		}
 	}
@@ -361,6 +390,9 @@ func points2TableRanges(sctx sessionctx.Context, rangePoints []*point, tp *types
 	if err != nil {
 		return nil, false, errors.Trace(err)
 	}
+	if rangeMaxSize > 0 && estimateMemUsageForPoints2Ranges(convertedPoints) > rangeMaxSize {
+		return FullIntRange(mysql.HasUnsignedFlag(tp.GetFlag())), true, nil
+	}
 	ranges := make(Ranges, 0, len(convertedPoints)/2)
 	for i := 0; i < len(convertedPoints); i += 2 {
 		startPoint, endPoint := convertedPoints[i], convertedPoints[i+1]
@@ -370,9 +402,6 @@ func points2TableRanges(sctx sessionctx.Context, rangePoints []*point, tp *types
 			HighVal:     []types.Datum{endPoint.value},
 			HighExclude: endPoint.excl,
 			Collators:   []collate.Collator{collate.GetCollator(tp.GetCollate())},
-		}
-		if len(ranges) == 0 && rangeMaxSize > 0 && ran.MemUsage()*int64(len(rangePoints))/2 > rangeMaxSize {
-			return FullIntRange(mysql.HasUnsignedFlag(tp.GetFlag())), true, nil
 		}
 		ranges = append(ranges, ran)
 	}
