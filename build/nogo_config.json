@@ -313,7 +313,6 @@
   "nilness": {
     "exclude_files": {
       "/external/": "no need to vet third party code",
-      "planner/core/physical_plan_test.go": "please fix it",
       ".*_generated\\.go$": "ignore generated code",
       "/cgo/": "ignore cgo"
     }
