@@ -56,6 +56,10 @@ const (
 	MaxCommentLength = 1024
 )
 
+var (
+	telemetryAddIndexIngestUsage = metrics.TelemetryAddIndexIngestCnt
+)
+
 func buildIndexColumns(ctx sessionctx.Context, columns []*model.ColumnInfo, indexPartSpecifications []*ast.IndexPartSpecification) ([]*model.IndexColumn, error) {
 	// Build offsets.
 	idxParts := make([]*model.IndexColumn, 0, len(indexPartSpecifications))
@@ -600,6 +604,8 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		// none -> delete only
 		reorgTp := pickBackfillType(job)
 		if reorgTp.NeedMergeProcess() {
+			// Increase telemetryAddIndexIngestUsage
+			telemetryAddIndexIngestUsage.Inc()
 			indexInfo.BackfillState = model.BackfillStateRunning
 		}
 		indexInfo.State = model.StateDeleteOnly
