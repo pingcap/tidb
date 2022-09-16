@@ -147,8 +147,7 @@ func (s *testSessionSerialSuite) TestClusterTableSendError(c *C) {
 func (s *testSessionSerialSuite) TestSchemaValidator2(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
-	// create table
-	tk.MustExec("create database test")
+
 	tk.MustExec("use test")
 	tk.MustExec("create table t1(a int, b int);")
 	tk.MustExec("create table t2(a int, b int);")
