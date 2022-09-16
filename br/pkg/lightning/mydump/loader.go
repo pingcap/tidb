@@ -121,12 +121,16 @@ type MDLoaderSetupConfig struct {
 	// MaxScanFiles specifies the maximum number of files to scan.
 	// If the value is <= 0, it means the number of data source files will be scanned as many as possible.
 	MaxScanFiles int
+	// ReturnPartialResultOnError specifies whether the currently scanned files are analyzed,
+	// and return the partial result.
+	ReturnPartialResultOnError bool
 }
 
 // DefaultMDLoaderSetupConfig generates a default MDLoaderSetupConfig.
 func DefaultMDLoaderSetupConfig() *MDLoaderSetupConfig {
 	return &MDLoaderSetupConfig{
-		MaxScanFiles: 0, // By default, the loader will scan all the files.
+		MaxScanFiles:               0, // By default, the loader will scan all the files.
+		ReturnPartialResultOnError: false,
 	}
 }
 
@@ -136,7 +140,18 @@ type MDLoaderSetupOption func(cfg *MDLoaderSetupConfig)
 // WithMaxScanFiles generates an option that limits the max scan files when setting up a MDLoader.
 func WithMaxScanFiles(maxScanFiles int) MDLoaderSetupOption {
 	return func(cfg *MDLoaderSetupConfig) {
-		cfg.MaxScanFiles = maxScanFiles
+		if maxScanFiles > 0 {
+			cfg.MaxScanFiles = maxScanFiles
+			cfg.ReturnPartialResultOnError = true
+		}
+	}
+}
+
+// ReturnPartialResultOnError generates an option that controls
+// whether return the partial scanned result on error when setting up a MDLoader.
+func ReturnPartialResultOnError(supportPartialResult bool) MDLoaderSetupOption {
+	return func(cfg *MDLoaderSetupConfig) {
+		cfg.ReturnPartialResultOnError = supportPartialResult
 	}
 }
 
@@ -237,8 +252,8 @@ func NewMyDumpLoaderWithStore(ctx context.Context, cfg *config.Config, store sto
 	}
 
 	if err := setup.setup(ctx, mdl.store); err != nil {
-		if errors.ErrorEqual(err, common.ErrTooManySourceFiles) {
-			return mdl, err
+		if mdLoaderSetupCfg.ReturnPartialResultOnError {
+			return mdl, errors.Trace(err)
 		}
 		return nil, errors.Trace(err)
 	}
@@ -297,7 +312,7 @@ func (s *mdLoaderSetup) setup(ctx context.Context, store storage.ExternalStorage
 	*/
 	var gerr error
 	if err := s.listFiles(ctx, store); err != nil {
-		if errors.ErrorEqual(err, common.ErrTooManySourceFiles) {
+		if s.setupCfg.ReturnPartialResultOnError {
 			gerr = err
 		} else {
 			return common.ErrStorageUnknown.Wrap(err).GenWithStack("list file failed")
