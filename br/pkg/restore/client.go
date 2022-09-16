@@ -1777,8 +1777,8 @@ func (rc *Client) ReadStreamDataFiles(
 	mFiles := make([]*backuppb.DataFileInfo, 0)
 
 	for _, m := range metas {
-		_, exsits := backuppb.MetaVersion_name[int32(m.MetaVersion)]
-		if !exsits {
+		_, exists := backuppb.MetaVersion_name[int32(m.MetaVersion)]
+		if !exists {
 			log.Warn("metaversion too new", zap.Reflect("version id", m.MetaVersion))
 		}
 		for _, ds := range m.FileGroups {
