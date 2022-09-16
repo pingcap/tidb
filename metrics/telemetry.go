@@ -120,6 +120,13 @@ var (
 			Name:      "exchange_partition_usage",
 			Help:      "Counter of usage of exchange partition statements",
 		})
+	TelemetryAddIndexIngestCnt = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "telemetry",
+			Name:      "add_index_ingest_usage",
+			Help:      "Counter of usage of add index acceleration solution",
+		})
 )
 
 // readCounter reads the value of a prometheus.Counter.
@@ -309,4 +316,23 @@ func GetSavepointStmtCounter() int64 {
 // GetLazyPessimisticUniqueCheckSetCounter returns the counter of setting tidb_constraint_check_in_place_pessimistic to false.
 func GetLazyPessimisticUniqueCheckSetCounter() int64 {
 	return readCounter(LazyPessimisticUniqueCheckSetCount)
+}
+
+// DDLUsageCounter records the usages of Add Index with acceleration solution.
+type DDLUsageCounter struct {
+	AddIndexIngestUsed int64 `json:"add_index_Ingest_used"`
+}
+
+// Sub returns the difference of two counters.
+func (a DDLUsageCounter) Sub(rhs DDLUsageCounter) DDLUsageCounter {
+	return DDLUsageCounter{
+		AddIndexIngestUsed: a.AddIndexIngestUsed - rhs.AddIndexIngestUsed,
+	}
+}
+
+// GetDDLUsageCounter gets the add index acceleration solution counts.
+func GetDDLUsageCounter() DDLUsageCounter {
+	return DDLUsageCounter{
+		AddIndexIngestUsed: readCounter(TelemetryAddIndexIngestCnt),
+	}
 }
