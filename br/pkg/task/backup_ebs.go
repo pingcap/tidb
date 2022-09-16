@@ -48,61 +48,28 @@ const (
 // todo: need a better name
 var errHasPendingAdmin = errors.New("has pending admin")
 
-// BackupEBSConfig is the configuration specific for backup tasks.
-type BackupEBSConfig struct {
-	Config
-
-	VolumeFile          string `json:"volume-file"`
-	SkipAWS             bool   `json:"skip-aws"`
-	CloudAPIConcurrency uint   `json:"cloud-api-concurrency"`
-	ProgressFile        string `json:"progress-file"`
-}
-
-// ParseFromFlags parses the backup-related flags from the flag set.
-func (cfg *BackupEBSConfig) ParseFromFlags(flags *pflag.FlagSet) error {
-	var err error
-	cfg.SkipAWS, err = flags.GetBool(flagSkipAWS)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	cfg.CloudAPIConcurrency, err = flags.GetUint(flagCloudAPIConcurrency)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	cfg.VolumeFile, err = flags.GetString(flagBackupVolumeFile)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	cfg.ProgressFile, err = flags.GetString(flagProgressFile)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	return cfg.Config.ParseFromFlags(flags)
-}
-
-func (cfg *BackupEBSConfig) adjust() {
-	if cfg.CloudAPIConcurrency == 0 {
-		cfg.CloudAPIConcurrency = defaultCloudAPIConcurrency
-	}
-	cfg.Config.adjust()
-}
-
 // DefineBackupEBSFlags defines common flags for the backup command.
 func DefineBackupEBSFlags(flags *pflag.FlagSet) {
+	flags.String(flagFullBackupType, string(FullBackupTypeKV), "type when doing full backup or restore")
 	flags.String(flagBackupVolumeFile, "./backup.json", "the file path of volume infos of TiKV node")
 	flags.Bool(flagSkipAWS, false, "don't access to aws environment if set to true")
 	flags.Uint(flagCloudAPIConcurrency, defaultCloudAPIConcurrency, "concurrency of calling cloud api")
 	flags.String(flagProgressFile, "progress.txt", "the file name of progress file")
+
+	_ = flags.MarkHidden(flagFullBackupType)
+	_ = flags.MarkHidden(flagBackupVolumeFile)
+	_ = flags.MarkHidden(flagSkipAWS)
+	_ = flags.MarkHidden(flagCloudAPIConcurrency)
+	_ = flags.MarkHidden(flagProgressFile)
 }
 
 // RunBackupEBS starts a backup task to backup volume vai EBS snapshot.
-func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBSConfig) error {
+func RunBackupEBS(c context.Context, g glue.Glue, cfg *BackupConfig) error {
+	cfg.Adjust()
+
 	var finished bool
 	var totalSize int64
-	var resolvedTs uint64
-	var backupStartTs uint64
+	var resolvedTs, backupStartTs uint64
 	defer func() {
 		if finished {
 			summary.Log("EBS backup success", zap.Int64("size", totalSize), zap.Uint64("resolved_ts", resolvedTs), zap.Uint64("backup_start_ts", backupStartTs))
@@ -219,7 +186,7 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 	// Step.2 starts call ebs snapshot api to back up volume data.
 	// NOTE: we should start snapshot in specify order.
 
-	progress := g.StartProgress(ctx, cmdName, int64(storeCount), !cfg.LogProgress)
+	progress := g.StartProgress(ctx, "backup", int64(storeCount), !cfg.LogProgress)
 	go progressFileWriterRoutine(ctx, progress, int64(storeCount)*100, cfg.ProgressFile)
 
 	ec2Session, err := aws.NewEC2Session(cfg.CloudAPIConcurrency)
@@ -269,6 +236,7 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 	// NOTE: maybe define the meta file in kvproto in the future.
 	// but for now json is enough.
 	backupInfo.SetClusterVersion(normalizedVer.String())
+	backupInfo.SetFullBackupType(string(cfg.FullBackupType))
 	backupInfo.SetResolvedTS(resolvedTs)
 	backupInfo.SetSnapshotIDs(snapIDMap)
 	backupInfo.SetVolumeAZs(volAZs)

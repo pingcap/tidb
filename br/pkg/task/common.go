@@ -97,7 +97,22 @@ const (
 	crypterAES256KeyLen = 32
 
 	tidbNewCollationEnabled = "new_collation_enabled"
+
+	flagFullBackupType = "type"
 )
+
+// FullBackupType type when doing full backup or restore
+type FullBackupType string
+
+const (
+	FullBackupTypeKV  FullBackupType = "kv" // default type
+	FullBackupTypeEBS FullBackupType = "aws-ebs"
+)
+
+// Valid whether the type is valid
+func (t FullBackupType) Valid() bool {
+	return t == FullBackupTypeKV || t == FullBackupTypeEBS
+}
 
 // TLSConfig is the common configuration for TLS connection.
 type TLSConfig struct {

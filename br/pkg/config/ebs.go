@@ -56,10 +56,10 @@ type EBSStore struct {
 // ClusterInfo represents the tidb cluster level meta infos. such as
 // pd cluster id/alloc id, cluster resolved ts and tikv configuration.
 type ClusterInfo struct {
-	Version    string            `json:"cluster_version" toml:"cluster_version"`
-	MaxAllocID uint64            `json:"max_alloc_id" toml:"max_alloc_id"`
-	ResolvedTS uint64            `json:"resolved_ts" toml:"resolved_ts"`
-	Replicas   map[string]uint64 `json:"replicas" toml:"replicas"`
+	Version        string            `json:"cluster_version" toml:"cluster_version"`
+	FullBackupType string            `json:"full_backup_type" toml:"full_backup_type"`
+	ResolvedTS     uint64            `json:"resolved_ts" toml:"resolved_ts"`
+	Replicas       map[string]uint64 `json:"replicas" toml:"replicas"`
 }
 
 type Kubernetes struct {
@@ -159,11 +159,6 @@ func (c *EBSBasedBRMeta) checkEBSBRMeta() error {
 	return nil
 }
 
-func (c *EBSBasedBRMeta) SetAllocID(id uint64) {
-	c.CheckClusterInfo()
-	c.ClusterInfo.MaxAllocID = id
-}
-
 func (c *EBSBasedBRMeta) SetResolvedTS(id uint64) {
 	c.CheckClusterInfo()
 	c.ClusterInfo.ResolvedTS = id
@@ -171,6 +166,15 @@ func (c *EBSBasedBRMeta) SetResolvedTS(id uint64) {
 
 func (c *EBSBasedBRMeta) GetResolvedTS() uint64 {
 	return c.ClusterInfo.ResolvedTS
+}
+
+func (c *EBSBasedBRMeta) SetFullBackupType(t string) {
+	c.CheckClusterInfo()
+	c.ClusterInfo.FullBackupType = t
+}
+
+func (c *EBSBasedBRMeta) GetFullBackupType() string {
+	return c.ClusterInfo.FullBackupType
 }
 
 func (c *EBSBasedBRMeta) SetClusterVersion(version string) {

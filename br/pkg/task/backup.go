@@ -78,6 +78,13 @@ type BackupConfig struct {
 	IgnoreStats      bool          `json:"ignore-stats" toml:"ignore-stats"`
 	UseBackupMetaV2  bool          `json:"use-backupmeta-v2"`
 	CompressionConfig
+
+	// for ebs-based backup
+	FullBackupType      FullBackupType `json:"full-br-type" toml:"full-br-type"`
+	VolumeFile          string         `json:"volume-file"`
+	SkipAWS             bool           `json:"skip-aws"`
+	CloudAPIConcurrency uint           `json:"cloud-api-concurrency"`
+	ProgressFile        string         `json:"progress-file"`
 }
 
 // DefineBackupFlags defines common flags for the backup command.
@@ -167,6 +174,32 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 	cfg.UseBackupMetaV2, err = flags.GetBool(flagUseBackupMetaV2)
+
+	fullBackupType, err := flags.GetString(flagFullBackupType)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if !FullBackupType(fullBackupType).Valid() {
+		return errors.New("invalid full backup type")
+	}
+	cfg.FullBackupType = FullBackupType(fullBackupType)
+	cfg.SkipAWS, err = flags.GetBool(flagSkipAWS)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.CloudAPIConcurrency, err = flags.GetUint(flagCloudAPIConcurrency)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.VolumeFile, err = flags.GetString(flagBackupVolumeFile)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.ProgressFile, err = flags.GetString(flagProgressFile)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	return errors.Trace(err)
 }
 
@@ -190,11 +223,11 @@ func parseCompressionFlags(flags *pflag.FlagSet) (*CompressionConfig, error) {
 	}, nil
 }
 
-// adjustBackupConfig is use for BR(binary) and BR in TiDB.
+// Adjust is use for BR(binary) and BR in TiDB.
 // When new config was add and not included in parser.
 // we should set proper value in this function.
 // so that both binary and TiDB will use same default value.
-func (cfg *BackupConfig) adjustBackupConfig() {
+func (cfg *BackupConfig) Adjust() {
 	cfg.adjust()
 	usingDefaultConcurrency := false
 	if cfg.Config.Concurrency == 0 {
@@ -225,6 +258,9 @@ func (cfg *BackupConfig) adjustBackupConfig() {
 	if cfg.CompressionType == backuppb.CompressionType_UNKNOWN {
 		cfg.CompressionType = backuppb.CompressionType_ZSTD
 	}
+	if cfg.CloudAPIConcurrency == 0 {
+		cfg.CloudAPIConcurrency = defaultCloudAPIConcurrency
+	}
 }
 
 func isFullBackup(cmdName string) bool {
@@ -233,7 +269,7 @@ func isFullBackup(cmdName string) bool {
 
 // RunBackup starts a backup task inside the current goroutine.
 func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig) error {
-	cfg.adjustBackupConfig()
+	cfg.Adjust()
 
 	defer summary.Summary(cmdName)
 	ctx, cancel := context.WithCancel(c)

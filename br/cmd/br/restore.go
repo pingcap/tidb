@@ -39,29 +39,24 @@ func runRestoreCommand(command *cobra.Command, cmdName string) error {
 		ctx, store = trace.TracerStartSpan(ctx)
 		defer trace.TracerFinishSpan(ctx, store)
 	}
+
+	if cfg.MetaPhase {
+		if err := task.RunRestoreEBSMeta(GetDefaultContext(), gluetikv.Glue{}, cmdName, &cfg); err != nil {
+			log.Error("failed to restore EBS meta", zap.Error(err))
+			return errors.Trace(err)
+		}
+		return nil
+	} else if cfg.DataPhase {
+		if err := task.RunResolveKvData(GetDefaultContext(), tidbGlue, cmdName, &cfg); err != nil {
+			log.Error("failed to restore data", zap.Error(err))
+			return errors.Trace(err)
+		}
+		return nil
+	}
+
 	if err := task.RunRestore(GetDefaultContext(), tidbGlue, cmdName, &cfg); err != nil {
 		log.Error("failed to restore", zap.Error(err))
 		printWorkaroundOnFullRestoreError(command, err)
-		return errors.Trace(err)
-	}
-	return nil
-}
-
-func runResolveKvDataCommand(command *cobra.Command, cmdName string) error {
-	cfg := task.RestoreDataConfig{Config: task.Config{LogProgress: HasLogFile()}}
-	if err := cfg.ParseFromFlags(command.Flags()); err != nil {
-		command.SilenceUsage = false
-		return errors.Trace(err)
-	}
-
-	ctx := GetDefaultContext()
-	if cfg.EnableOpenTracing {
-		var store *appdash.MemoryStore
-		ctx, store = trace.TracerStartSpan(ctx)
-		defer trace.TracerFinishSpan(ctx, store)
-	}
-	if err := task.RunResolveKvData(GetDefaultContext(), tidbGlue, cmdName, &cfg); err != nil {
-		log.Error("failed to restore data", zap.Error(err))
 		return errors.Trace(err)
 	}
 	return nil
@@ -107,26 +102,6 @@ func runRestoreRawCommand(command *cobra.Command, cmdName string) error {
 	return nil
 }
 
-func runEBSMetaRestoreCommand(command *cobra.Command, cmdName string) error {
-	cfg := task.RestoreEBSConfig{}
-	if err := cfg.ParseFromFlags(command.Flags()); err != nil {
-		command.SilenceUsage = false
-		return errors.Trace(err)
-	}
-
-	ctx := GetDefaultContext()
-	if cfg.EnableOpenTracing {
-		var store *appdash.MemoryStore
-		ctx, store = trace.TracerStartSpan(ctx)
-		defer trace.TracerFinishSpan(ctx, store)
-	}
-	if err := task.RunRestoreEBSMeta(GetDefaultContext(), gluetikv.Glue{}, cmdName, &cfg); err != nil {
-		log.Error("failed to restore EBS meta", zap.Error(err))
-		return errors.Trace(err)
-	}
-	return nil
-}
-
 // NewRestoreCommand returns a restore subcommand.
 func NewRestoreCommand() *cobra.Command {
 	command := &cobra.Command{
@@ -152,8 +127,6 @@ func NewRestoreCommand() *cobra.Command {
 		newTableRestoreCommand(),
 		newRawRestoreCommand(),
 		newStreamRestoreCommand(),
-		newEBSMetaRestoreCommand(),
-		newResolveKvDataCommand(),
 	)
 	task.DefineRestoreFlags(command.PersistentFlags())
 
@@ -170,6 +143,7 @@ func newFullRestoreCommand() *cobra.Command {
 		},
 	}
 	task.DefineFilterFlags(command, filterOutSysAndMemTables, false)
+	task.DefineRestoreSnapshotFlags(command)
 	return command
 }
 
@@ -224,39 +198,6 @@ func newStreamRestoreCommand() *cobra.Command {
 	}
 	task.DefineFilterFlags(command, filterOutSysAndMemTables, true)
 	task.DefineStreamRestoreFlags(command)
-	command.Hidden = true
-	return command
-}
-
-func newEBSMetaRestoreCommand() *cobra.Command {
-	command := &cobra.Command{
-		Use:   "ebs",
-		Short: "restore volumes and other info during snapshot-based restore",
-		Args:  cobra.NoArgs,
-		RunE: func(command *cobra.Command, _ []string) error {
-			return runEBSMetaRestoreCommand(command, task.EBSMetaRestoreCmd)
-		},
-	}
-	task.DefineRestoreEBSMetaFlags(command)
-	command.Hidden = true
-	return command
-}
-
-func newResolveKvDataCommand() *cobra.Command {
-	command := &cobra.Command{
-		Use:   "data",
-		Short: "restore data from snapshot volume where tikv running on, it requires command 'restore ebs' run before.",
-		Args:  cobra.NoArgs,
-		RunE: func(command *cobra.Command, _ []string) error {
-			err := runResolveKvDataCommand(command, task.ResolvedKvDataCmd)
-			if err != nil {
-				summary.SetSuccessStatus(false)
-				return errors.Trace(err)
-			}
-			return nil
-		},
-	}
-	task.DefineRestoreDataFlags(command)
 	command.Hidden = true
 	return command
 }
