@@ -8,24 +8,25 @@ import (
 	"github.com/spf13/pflag"
 )
 
+//revive:disable:exported
 const (
 	flagBackoffTime      = "backoff-time"
 	flagTickInterval     = "tick-interval"
 	flagFullScanDiffTick = "full-scan-tick"
 	flagAdvancingByCache = "advancing-by-cache"
 
-	DefaultConsistencyCheckTick = 5
-	DefaultTryAdvanceThreshold  = 3 * time.Minute
-	DefaultBackOffTime          = 5 * time.Second
-	DefaultTickInterval         = 12 * time.Second
-	DefaultFullScanTick         = 4
-	DefaultAdvanceByCache       = true
-)
-
-var (
+	DefaultConsistencyCheckTick  = 5
+	DefaultTryAdvanceThreshold   = 3 * time.Minute
+	DefaultBackOffTime           = 5 * time.Second
+	DefaultTickInterval          = 12 * time.Second
+	DefaultFullScanTick          = 4
+	DefaultAdvanceByCache        = true
 	DefaultMaxConcurrencyAdvance = 8
 )
 
+//revive:enable:exported
+
+// Config is a configuration
 type Config struct {
 	// The gap between two retries.
 	BackoffTime time.Duration `toml:"backoff-time" json:"backoff-time"`
@@ -39,6 +40,7 @@ type Config struct {
 	AdvancingByCache bool `toml:"advancing-by-cache" json:"advancing-by-cache"`
 }
 
+// DefineFlagsForCheckpointAdvancerConfig set flags for checkpoint advancer config.
 func DefineFlagsForCheckpointAdvancerConfig(f *pflag.FlagSet) {
 	f.Duration(flagBackoffTime, DefaultBackOffTime, "The gap between two retries.")
 	f.Duration(flagTickInterval, DefaultTickInterval, "From how long we trigger the tick (advancing the checkpoint).")
@@ -46,6 +48,7 @@ func DefineFlagsForCheckpointAdvancerConfig(f *pflag.FlagSet) {
 	f.Int(flagFullScanDiffTick, DefaultFullScanTick, "The backoff of full scan.")
 }
 
+// Default get default config
 func Default() Config {
 	return Config{
 		BackoffTime:      DefaultBackOffTime,
@@ -55,6 +58,7 @@ func Default() Config {
 	}
 }
 
+// GetFromFlags get flag to set config.
 func (conf *Config) GetFromFlags(f *pflag.FlagSet) error {
 	var err error
 	conf.BackoffTime, err = f.GetDuration(flagBackoffTime)
