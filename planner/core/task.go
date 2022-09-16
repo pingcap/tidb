@@ -1759,9 +1759,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 
 			prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.HashType, MPPPartitionCols: partitionCols}
 			newMpp := mpp.enforceExchanger(prop)
-			newMpp.addCost(middleAgg.GetCost(newMpp.count(), false, true, 0))
 			attachPlan2Task(middleAgg, newMpp)
-			middleAgg.SetCost(newMpp.cost())
 			mpp = newMpp
 		}
 
