@@ -89,3 +89,13 @@ func IsLogBackupEnabled(ctx sqlexec.RestrictedSQLExecutor) (bool, error) {
 	}
 	return true, nil
 }
+
+var logBackupTaskExist bool
+
+func SetLogBackupTaskExist(taskExist bool) {
+	logBackupTaskExist = taskExist
+}
+
+func CheckLogBackupTaskExist() bool {
+	return logBackupTaskExist
+}
