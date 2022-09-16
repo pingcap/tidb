@@ -16,8 +16,9 @@ import (
 
 var (
 	// check sql.DB and sql.Conn implement QueryExecutor and DBExecutor
-	_ DBExecutor = &sql.DB{}
-	_ DBExecutor = &sql.Conn{}
+	_                  DBExecutor = &sql.DB{}
+	_                  DBExecutor = &sql.Conn{}
+	logBackupTaskExist bool
 )
 
 // QueryExecutor is a interface for exec query
@@ -90,12 +91,12 @@ func IsLogBackupEnabled(ctx sqlexec.RestrictedSQLExecutor) (bool, error) {
 	return true, nil
 }
 
-var logBackupTaskExist bool
-
+// SetLogBackupTaskExist sets that the log-backup task is existed.
 func SetLogBackupTaskExist(taskExist bool) {
 	logBackupTaskExist = taskExist
 }
 
+// CheckLogBackupTaskExist checks that whether log-backup is existed.
 func CheckLogBackupTaskExist() bool {
 	return logBackupTaskExist
 }
