@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -391,12 +392,14 @@ type reorgInfo struct {
 }
 
 func (r *reorgInfo) String() string {
+	_, isEnabled := ingest.LitBackCtxMgr.Load(r.Job.ID)
 	return "CurrElementType:" + string(r.currElement.TypeKey) + "," +
 		"CurrElementID:" + strconv.FormatInt(r.currElement.ID, 10) + "," +
 		"StartKey:" + hex.EncodeToString(r.StartKey) + "," +
 		"EndKey:" + hex.EncodeToString(r.EndKey) + "," +
 		"First:" + strconv.FormatBool(r.first) + "," +
-		"PhysicalTableID:" + strconv.FormatInt(r.PhysicalTableID, 10)
+		"PhysicalTableID:" + strconv.FormatInt(r.PhysicalTableID, 10) + "," +
+		"Ingest mode:" + strconv.FormatBool(isEnabled)
 }
 
 func constructDescTableScanPB(physicalTableID int64, tblInfo *model.TableInfo, handleCols []*model.ColumnInfo) *tipb.Executor {

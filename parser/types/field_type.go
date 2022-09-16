@@ -273,6 +273,26 @@ func (ft *FieldType) Equal(other *FieldType) bool {
 	return true
 }
 
+// PartialEqual checks whether two FieldType objects are equal.
+// If unsafe is true and the objects is string type, PartialEqual will ignore flen.
+// See https://github.com/pingcap/tidb/issues/35490#issuecomment-1211658886 for more detail.
+func (ft *FieldType) PartialEqual(other *FieldType, unsafe bool) bool {
+	if !unsafe || ft.EvalType() != ETString || other.EvalType() != ETString {
+		return ft.Equal(other)
+	}
+
+	partialEqual := ft.charset == other.charset && ft.collate == other.collate && mysql.HasUnsignedFlag(ft.flag) == mysql.HasUnsignedFlag(other.flag)
+	if !partialEqual || len(ft.elems) != len(other.elems) {
+		return false
+	}
+	for i := range ft.elems {
+		if ft.elems[i] != other.elems[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // EvalType gets the type in evaluation.
 func (ft *FieldType) EvalType() EvalType {
 	switch ft.tp {

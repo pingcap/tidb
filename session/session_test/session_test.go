@@ -1720,6 +1720,7 @@ func TestCoprocessorOOMAction(t *testing.T) {
 	// Assert Coprocessor OOMAction
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_enable_rate_limit_action=true")
 	tk.MustExec("create database testoom")
 	tk.MustExec("use testoom")
 	tk.MustExec(`set @@tidb_wait_split_region_finish=1`)
@@ -1763,6 +1764,7 @@ func TestCoprocessorOOMAction(t *testing.T) {
 		defer tk.MustExec("SET GLOBAL tidb_mem_oom_action = DEFAULT")
 		tk.MustExec("SET GLOBAL tidb_mem_oom_action='CANCEL'")
 		tk.MustExec("use testoom")
+		tk.MustExec("set @@tidb_enable_rate_limit_action=1")
 		tk.MustExec("set @@tidb_distsql_scan_concurrency = 10")
 		tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%v;", quota))
 		var expect []string
@@ -1778,6 +1780,7 @@ func TestCoprocessorOOMAction(t *testing.T) {
 		t.Logf("disable OOM, testcase: %v", name)
 		quota := 5*copr.MockResponseSizeForTest - 100
 		tk.MustExec("use testoom")
+		tk.MustExec("set @@tidb_enable_rate_limit_action=0")
 		tk.MustExec("set @@tidb_distsql_scan_concurrency = 10")
 		tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%v;", quota))
 		err := tk.QueryToErr(sql)
@@ -2093,6 +2096,7 @@ func TestSetEnableRateLimitAction(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
+	tk.MustExec("set @@tidb_enable_rate_limit_action=true")
 	// assert default value
 	result := tk.MustQuery("select @@tidb_enable_rate_limit_action;")
 	result.Check(testkit.Rows("1"))
