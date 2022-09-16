@@ -1273,6 +1273,9 @@ type SessionVars struct {
 
 	// EnableAdvancedJoinHInt indicates whether the join method hint is compatible with join order hint.
 	EnableAdvancedJoinHInt bool
+
+	// LastPlanReplayerToken indicates the last plan replayer token
+	LastPlanReplayerToken string
 }
 
 // GetPreparedStmtByName returns the prepared statement specified by stmtName.

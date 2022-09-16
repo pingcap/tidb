@@ -90,6 +90,9 @@ const (
 	// TiDBLastDDLInfo is used to get the last ddl info within the current session.
 	TiDBLastDDLInfo = "tidb_last_ddl_info"
 
+	// TiDBLastPlanReplayerToken is used to get the last plan replayer token within the current session
+	TiDBLastPlanReplayerToken = "tidb_last_plan_replayer_token"
+
 	// TiDBConfig is a read-only variable that shows the config of the current server.
 	TiDBConfig = "tidb_config"
 
@@ -970,7 +973,7 @@ const (
 	DefTiDBEnableParallelApply                     = false
 	DefTiDBEnableAmendPessimisticTxn               = false
 	DefTiDBPartitionPruneMode                      = "dynamic"
-	DefTiDBEnableRateLimitAction                   = true
+	DefTiDBEnableRateLimitAction                   = false
 	DefTiDBEnableAsyncCommit                       = false
 	DefTiDBEnable1PC                               = false
 	DefTiDBGuaranteeLinearizability                = true
