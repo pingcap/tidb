@@ -3930,9 +3930,9 @@ type mockPhysicalIndexReader struct {
 	e Executor
 }
 
-// MemoryUsage return the memory usage of mockPhysicalIndexReader
+// MemoryUsage of mockPhysicalIndexReader is only for testing
 func (p *mockPhysicalIndexReader) MemoryUsage() (sum int64) {
-	return // mock operator for testing only
+	return
 }
 
 func (builder *dataReaderBuilder) buildExecutorForIndexJoin(ctx context.Context, lookUpContents []*indexJoinLookUpContent,

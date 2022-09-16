@@ -102,6 +102,11 @@ func (mp *mockDataPhysicalPlan) SelectBlockOffset() int {
 	return 0
 }
 
+// MemoryUsage of mockDataPhysicalPlan is only for testing
+func (mp *mockDataPhysicalPlan) MemoryUsage() (sum int64) {
+	return
+}
+
 func buildMockDataPhysicalPlan(ctx sessionctx.Context, srcExec Executor) *mockDataPhysicalPlan {
 	return &mockDataPhysicalPlan{
 		schema: srcExec.Schema(),
