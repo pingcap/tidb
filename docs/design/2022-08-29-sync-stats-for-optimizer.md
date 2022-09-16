@@ -31,7 +31,7 @@ Thus, in logical optimizing, we added 2 new rule `collectPredicateColumnsPoint` 
 
 In `collectPredicateColumnsPoint` rule phase, we collect the required stats by transferring the plan tree, and extract the columns and indices from the conditions in each logical operator in the plan tree.
 
-For example, for the query `select a from t where b = 1 and c = 1` and execution its plan is like following:
+For example, for the query `select a from t where b = 1 and c = 1` and its execution plan is like following:
 
 ```sql 
 +---------------------------+----------+-----------+---------------+----------------------------------+
@@ -52,9 +52,9 @@ If the `StatsLoadedStatus` of column or index is full loaded, it will not to loa
 #### Retrieve the stats
 
 After collecting the necessary columns and indices, tidb-server will collect the stats during `syncWaitStatsLoadPoint` phase.
-For each tidb-server, it will start several sub sync stats loader to load stats for columns and indices given by the above phase.
-As each query may send loading stats request to sync stats loader, the required columns and indices might be duplicated between each query.
-Thus in order to improve the performance for sync stats loader and reduce loading duplicated stats for columns and indices, each sync stats loader will check other loaders in order to avoid loading duplicated stats.
+For each tidb-server, it will start several sub sync stats loaders to load stats for columns and indices given by the above phase.
+As each query may send loading stats request to sync stats loaders, the required columns and indices might be duplicated between each query.
+Thus in order to improve the performance for sync stats loaders and reduce loading duplicated stats for columns and indices, each sync stats loader will check other loaders in order to avoid loading duplicated stats.
 If the required stats are loaded by one loader, other loaders will not load this stats again.
 
 ## Diagnosability
@@ -65,7 +65,7 @@ If any error happened during `Sync Stats`, tidb-server should provide the abilit
 
 If any error happened during sync stats, it will set up a flag in slow log as `IsSyncStatsFailed` to indicate the there existed error during sync stats for this query.
 
-And the stats info will also be recorded in the slow log including its loading memory status, this will also be helpful for sync stats loader whether it load stats successfully.
+And the stats info will also be recorded in the slow log including its loading memory status, this will also be helpful to check whether stats is loaded successfully.
 
 ### Plan's Explain Info
 
