@@ -16,12 +16,12 @@ package addindextest
 
 import (
 	"context"
-	"github.com/pingcap/failpoint"
 	"strconv"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/logutil"
