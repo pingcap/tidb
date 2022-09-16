@@ -175,14 +175,11 @@ func (tc *logCollector) Summary(name string) {
 
 	logFields := make([]zap.Field, 0, len(tc.durations)+len(tc.ints)+3)
 
-	// TODO: a refactoring for summary may necessary
-	if strings.Compare(name, "Restore Data") != 0 {
-		logFields = append(logFields,
-			zap.Int("total-ranges", tc.failureUnitCount+tc.successUnitCount),
-			zap.Int("ranges-succeed", tc.successUnitCount),
-			zap.Int("ranges-failed", tc.failureUnitCount),
-		)
-	}
+	logFields = append(logFields,
+		zap.Int("total-ranges", tc.failureUnitCount+tc.successUnitCount),
+		zap.Int("ranges-succeed", tc.successUnitCount),
+		zap.Int("ranges-failed", tc.failureUnitCount),
+	)
 
 	for key, val := range tc.durations {
 		logFields = append(logFields, zap.Duration(logKeyFor(key), val))
