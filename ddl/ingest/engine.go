@@ -86,7 +86,7 @@ func (ei *engineInfo) Clean() {
 	// Here the local intermediate files will be removed.
 	err = closedEngine.Cleanup(ei.ctx)
 	if err != nil {
-		logutil.BgLogger().Error(LitErrCleanEngineErr, zap.Error(err),,
+		logutil.BgLogger().Error(LitErrCleanEngineErr, zap.Error(err),
 			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
 	}
 }
