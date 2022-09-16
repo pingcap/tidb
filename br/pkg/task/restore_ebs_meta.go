@@ -102,7 +102,7 @@ func (h *restoreEBSMetaHelper) preRestore(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if FullBRType(metaInfo.GetFullBRType()) != FullBRTypeEBS {
+	if FullBackupType(metaInfo.GetFullBackupType()) != FullBackupTypeEBS {
 		log.Error("invalid meta file", zap.Reflect("meta", metaInfo))
 		return errors.New("invalid meta file, only support aws-ebs now")
 	}

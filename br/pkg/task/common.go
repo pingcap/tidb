@@ -98,20 +98,20 @@ const (
 
 	tidbNewCollationEnabled = "new_collation_enabled"
 
-	flagFullBRType = "type"
+	flagFullBackupType = "type"
 )
 
-// FullBRType type when doing full backup or restore
-type FullBRType string
+// FullBackupType type when doing full backup or restore
+type FullBackupType string
 
 const (
-	FullBRTypeKV  FullBRType = "kv" // default type
-	FullBRTypeEBS            = "aws-ebs"
+	FullBackupTypeKV  FullBackupType = "kv" // default type
+	FullBackupTypeEBS FullBackupType = "aws-ebs"
 )
 
 // Valid whether the type is valid
-func (t FullBRType) Valid() bool {
-	return t == FullBRTypeKV || t == FullBRTypeEBS
+func (t FullBackupType) Valid() bool {
+	return t == FullBackupTypeKV || t == FullBackupTypeEBS
 }
 
 // TLSConfig is the common configuration for TLS connection.

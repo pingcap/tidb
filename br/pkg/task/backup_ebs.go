@@ -50,13 +50,13 @@ var errHasPendingAdmin = errors.New("has pending admin")
 
 // DefineBackupEBSFlags defines common flags for the backup command.
 func DefineBackupEBSFlags(flags *pflag.FlagSet) {
-	flags.String(flagFullBRType, string(FullBRTypeKV), "type when doing full backup or restore")
+	flags.String(flagFullBackupType, string(FullBackupTypeKV), "type when doing full backup or restore")
 	flags.String(flagBackupVolumeFile, "./backup.json", "the file path of volume infos of TiKV node")
 	flags.Bool(flagSkipAWS, false, "don't access to aws environment if set to true")
 	flags.Uint(flagCloudAPIConcurrency, defaultCloudAPIConcurrency, "concurrency of calling cloud api")
 	flags.String(flagProgressFile, "progress.txt", "the file name of progress file")
 
-	_ = flags.MarkHidden(flagFullBRType)
+	_ = flags.MarkHidden(flagFullBackupType)
 	_ = flags.MarkHidden(flagBackupVolumeFile)
 	_ = flags.MarkHidden(flagSkipAWS)
 	_ = flags.MarkHidden(flagCloudAPIConcurrency)
@@ -236,7 +236,7 @@ func RunBackupEBS(c context.Context, g glue.Glue, cfg *BackupConfig) error {
 	// NOTE: maybe define the meta file in kvproto in the future.
 	// but for now json is enough.
 	backupInfo.SetClusterVersion(normalizedVer.String())
-	backupInfo.SetFullBRType(string(cfg.FullBRType))
+	backupInfo.SetFullBackupType(string(cfg.FullBackupType))
 	backupInfo.SetResolvedTS(resolvedTs)
 	backupInfo.SetSnapshotIDs(snapIDMap)
 	backupInfo.SetVolumeAZs(volAZs)

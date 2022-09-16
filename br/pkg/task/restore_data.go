@@ -27,7 +27,7 @@ func ReadBackupMetaData(ctx context.Context, s storage.ExternalStorage) (uint64,
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
-	if FullBRType(metaInfo.GetFullBRType()) != FullBRTypeEBS {
+	if FullBackupType(metaInfo.GetFullBackupType()) != FullBackupTypeEBS {
 		log.Error("invalid meta file", zap.Reflect("meta", metaInfo))
 		return 0, 0, errors.New("invalid meta file, only support aws-ebs now")
 	}
