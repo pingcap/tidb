@@ -64,7 +64,7 @@ const (
 	// SizeOfUint8 is the memory each uint8 occupied
 	SizeOfUint8 = int64(unsafe.Sizeof(*new(uint8)))
 
-  // SizeOfUint is the memory each uint occupied
+	// SizeOfUint is the memory each uint occupied
 	SizeOfUint = int64(unsafe.Sizeof(*new(uint)))
 
 	// SizeOfFunc is the memory each function occupied
