@@ -1732,21 +1732,22 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.
 				return tbl, nil
 			}
 		}
-		var err error
+
+		// We need to write 0 to the map to block the txn.
+		// If we don't write 0, consider the following case:
+		// the background mdl check loop gets the mdl lock from this txn. But the domain infoSchema may be changed before writing the ver to the map.
+		// In this case, this TiDB wrongly gets the mdl lock.
+		if !skipLock {
+			sctx.GetSessionVars().GetRelatedTableForMDL().Store(tableInfo.ID, int64(0))
+
+		}
 		domainSchema := domain.GetDomain(sctx).InfoSchema()
 		domainSchemaVer := domainSchema.SchemaMetaVersion()
 		if !skipLock {
-			sctx.GetSessionVars().GetRelatedTableForMDL().Store(tableInfo.ID, int64(0))
-			change := true
-			for change {
-				domainSchema = domain.GetDomain(sctx).InfoSchema()
-				if domainSchema.SchemaMetaVersion() != domainSchemaVer {
-					domainSchemaVer = domainSchema.SchemaMetaVersion()
-					sctx.GetSessionVars().GetRelatedTableForMDL().Store(tableInfo.ID, domainSchemaVer)
-				}
-				change = false
-			}
+			sctx.GetSessionVars().GetRelatedTableForMDL().Store(tableInfo.ID, domainSchemaVer)
 		}
+
+		var err error
 		tbl, err = domainSchema.TableByName(dbName, tableInfo.Name)
 		if err != nil {
 			return nil, err
