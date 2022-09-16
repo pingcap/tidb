@@ -19,7 +19,7 @@ There are some measures that have been done to enhance the performance of creati
 
 ![figure 1](./imgs/addIndexLit-1.png)
 
-From figure 1, the backfill task is firstly split into serials sub tasks, each sub tasks include one batch size record. Then, multi-workers are started up to execute backfill sub tasks parallely.
+From figure 1, the backfill task is firstly split into serial sub tasks, each sub tasks include one batch size record. Then, multi-workers are started up to execute backfill sub tasks parallelly.
 Each worker is assigned one sub task and scans the specific record from the table.
 Then generate index data for this batch record and write them back into TiKV with an optimistic write transaction.
 
