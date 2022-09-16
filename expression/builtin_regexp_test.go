@@ -52,7 +52,8 @@ func getStringConstant(value string, isBin bool) *Constant {
 	}
 
 	if isBin {
-		c.RetType = types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP()
+		// c.RetType = types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP()
+		c.RetType = types.NewFieldType(mysql.TypeVarchar) // turn off the binary collation for the moment
 	} else {
 		c.RetType = types.NewFieldType(mysql.TypeVarchar)
 	}
@@ -89,7 +90,6 @@ func setConstants(isNull bool, isBin bool, constVals map[int]interface{}, consta
 }
 
 func getVecExprBenchCaseForRegexpIncludeConst(retType types.EvalType, isBin bool, isNull bool, constVals map[int]interface{}, paramNum int, constants []*Constant, inputs ...interface{}) vecExprBenchCase {
-	isBin = false // turn off the binary collation tests for the moment
 	setConstants(isNull, isBin, constVals, constants)
 
 	defer func() {
@@ -106,7 +106,6 @@ func getVecExprBenchCaseForRegexpIncludeConst(retType types.EvalType, isBin bool
 }
 
 func getVecExprBenchCaseForRegexp(retType types.EvalType, isBin bool, inputs ...interface{}) vecExprBenchCase {
-	isBin = false // turn off the binary collation for the moment
 	gens := make([]dataGenerator, 0, 6)
 	paramTypes := make([]types.EvalType, 0, 6)
 
