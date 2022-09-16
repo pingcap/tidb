@@ -218,7 +218,7 @@ func TestConcurrentDDLSwitch(t *testing.T) {
 	}
 
 	ddls := make([]string, 0, tblCount)
-	ddlCount := 100
+	ddlCount := 500
 	for i := 0; i < ddlCount; i++ {
 		tblIdx := rand.Intn(tblCount)
 		if rand.Intn(2) == 0 {
