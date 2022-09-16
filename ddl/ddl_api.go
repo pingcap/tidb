@@ -4116,7 +4116,7 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTa
 		return errors.Trace(err)
 	}
 
-	isDropable, err := checkIsDroppableColumn(ctx, d.GetInfoSchemaWithInterceptor(ctx), schema, t, spec)
+	isDropable, err := checkIsDroppableColumn(ctx, d.infoCache.GetLatest(), schema, t, spec)
 	if err != nil {
 		return err
 	}
