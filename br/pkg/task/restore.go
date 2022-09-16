@@ -268,55 +268,58 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Annotatef(err, "failed to get flag %s", FlagWithPlacementPolicy)
 	}
 
-	cfg.MetaPhase, err = flags.GetBool(flagMetaPhase)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	cfg.DataPhase, err = flags.GetBool(flagDataPhase)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if cfg.MetaPhase && cfg.DataPhase {
-		return errors.New("can only set either meta-phase or data-phase")
-	}
-	cfg.SkipAWS, err = flags.GetBool(flagSkipAWS)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	cfg.CloudAPIConcurrency, err = flags.GetUint(flagCloudAPIConcurrency)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	cfg.OutputFile, err = flags.GetString(flagOutputMetaFile)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	volumeType, err := flags.GetString(flagVolumeType)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	cfg.VolumeType = pconfig.EBSVolumeType(volumeType)
-	if !cfg.VolumeType.Valid() {
-		return errors.New("invalid volume type: " + volumeType)
-	}
-	if cfg.VolumeIOPS, err = flags.GetInt64(flagVolumeIOPS); err != nil {
-		return errors.Trace(err)
-	}
-	if cfg.VolumeThroughput, err = flags.GetInt64(flagVolumeThroughput); err != nil {
-		return errors.Trace(err)
-	}
+	if flags.Lookup(flagMetaPhase) != nil {
+		// for restore full only
+		cfg.MetaPhase, err = flags.GetBool(flagMetaPhase)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		cfg.DataPhase, err = flags.GetBool(flagDataPhase)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if cfg.MetaPhase && cfg.DataPhase {
+			return errors.New("can only set either meta-phase or data-phase")
+		}
+		cfg.SkipAWS, err = flags.GetBool(flagSkipAWS)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		cfg.CloudAPIConcurrency, err = flags.GetUint(flagCloudAPIConcurrency)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		cfg.OutputFile, err = flags.GetString(flagOutputMetaFile)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		volumeType, err := flags.GetString(flagVolumeType)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		cfg.VolumeType = pconfig.EBSVolumeType(volumeType)
+		if !cfg.VolumeType.Valid() {
+			return errors.New("invalid volume type: " + volumeType)
+		}
+		if cfg.VolumeIOPS, err = flags.GetInt64(flagVolumeIOPS); err != nil {
+			return errors.Trace(err)
+		}
+		if cfg.VolumeThroughput, err = flags.GetInt64(flagVolumeThroughput); err != nil {
+			return errors.Trace(err)
+		}
 
-	cfg.ProgressFile, err = flags.GetString(flagProgressFile)
-	if err != nil {
-		return errors.Trace(err)
-	}
+		cfg.ProgressFile, err = flags.GetString(flagProgressFile)
+		if err != nil {
+			return errors.Trace(err)
+		}
 
-	// iops: gp3 [3,000-16,000]; io1/io2 [100-32,000]
-	// throughput: gp3 [125, 1000]; io1/io2 cannot set throughput
-	// io1 and io2 volumes support up to 64,000 IOPS only on Instances built on the Nitro System.
-	// Other instance families support performance up to 32,000 IOPS.
-	// https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_CreateVolume.html
-	// todo: check lower/upper bound
+		// iops: gp3 [3,000-16,000]; io1/io2 [100-32,000]
+		// throughput: gp3 [125, 1000]; io1/io2 cannot set throughput
+		// io1 and io2 volumes support up to 64,000 IOPS only on Instances built on the Nitro System.
+		// Other instance families support performance up to 32,000 IOPS.
+		// https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_CreateVolume.html
+		// todo: check lower/upper bound
+	}
 
 	return nil
 }

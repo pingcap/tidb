@@ -178,29 +178,32 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 
-	fullBackupType, err := flags.GetString(flagFullBackupType)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if !FullBackupType(fullBackupType).Valid() {
-		return errors.New("invalid full backup type")
-	}
-	cfg.FullBackupType = FullBackupType(fullBackupType)
-	cfg.SkipAWS, err = flags.GetBool(flagSkipAWS)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	cfg.CloudAPIConcurrency, err = flags.GetUint(flagCloudAPIConcurrency)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	cfg.VolumeFile, err = flags.GetString(flagBackupVolumeFile)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	cfg.ProgressFile, err = flags.GetString(flagProgressFile)
-	if err != nil {
-		return errors.Trace(err)
+	if flags.Lookup(flagFullBackupType) != nil {
+		// for backup full
+		fullBackupType, err := flags.GetString(flagFullBackupType)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if !FullBackupType(fullBackupType).Valid() {
+			return errors.New("invalid full backup type")
+		}
+		cfg.FullBackupType = FullBackupType(fullBackupType)
+		cfg.SkipAWS, err = flags.GetBool(flagSkipAWS)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		cfg.CloudAPIConcurrency, err = flags.GetUint(flagCloudAPIConcurrency)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		cfg.VolumeFile, err = flags.GetString(flagBackupVolumeFile)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		cfg.ProgressFile, err = flags.GetString(flagProgressFile)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	return nil
