@@ -20,6 +20,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -141,4 +142,25 @@ func (s *testSessionSerialSuite) TestClusterTableSendError(c *C) {
 	tk.MustQuery("select * from information_schema.cluster_slow_query")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[0].Err, ErrorMatches, ".*TiDB server timeout, address is.*")
+}
+
+func (*testSessionSerialSuite) TestSchemaValidator2(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	// create table
+	tk.MustExec("create database ")
+	tk.MustExec("create table t1(a int, b int);")
+	tk.MustExec("create table t2(a int, b int);")
+	tk.MustExec("insert into t1 value(1,1);")
+	tk.MustExec("insert into t2 value(1,1);")
+
+	// The schema version is out of date in the first transaction, and the SQL can't be retried.
+	atomic.StoreUint32(&session.SchemaChangedWithoutRetry, 1)
+	defer func() {
+		atomic.StoreUint32(&session.SchemaChangedWithoutRetry, 0)
+	}()
+	tk.MustExec(`begin;`)
+	tk.MustExec("update t1, t2 set t1.a = t2.b;")
+	tk1.MustExec("create table t3(a int, b int);")
+	tk.MustExec(`commit;`)
 }
