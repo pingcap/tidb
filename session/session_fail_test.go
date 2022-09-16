@@ -148,7 +148,8 @@ func (s *testSessionSerialSuite) TestSchemaValidator2(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
 	// create table
-	tk.MustExec("create database ")
+	tk.MustExec("create database test")
+	tk.MustExec("use test")
 	tk.MustExec("create table t1(a int, b int);")
 	tk.MustExec("create table t2(a int, b int);")
 	tk.MustExec("insert into t1 value(1,1);")
@@ -161,6 +162,7 @@ func (s *testSessionSerialSuite) TestSchemaValidator2(c *C) {
 	}()
 	tk.MustExec(`begin;`)
 	tk.MustExec("update t1, t2 set t1.a = t2.b;")
+	tk1.MustExec("use test")
 	tk1.MustExec("create table t3(a int, b int);")
 	tk.MustExec(`commit;`)
 }
