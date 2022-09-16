@@ -6,12 +6,13 @@ go_library(
         "auth.go",
         "caching_sha2.go",
         "mysql_native_password.go",
-        "sm3.go",
+        "tidb_sm3.go",
     ],
     importpath = "github.com/pingcap/tidb/parser/auth",
     visibility = ["//visibility:public"],
     deps = [
         "//parser/format",
+        "//parser/mysql",
         "//parser/terror",
         "@com_github_pingcap_errors//:errors",
     ],
@@ -23,9 +24,12 @@ go_test(
     srcs = [
         "caching_sha2_test.go",
         "mysql_native_password_test.go",
-        "sm3_test.go",
+        "tidb_sm3_test.go",
     ],
     embed = [":auth"],
     flaky = True,
-    deps = ["@com_github_stretchr_testify//require"],
+    deps = [
+        "//parser/mysql",
+        "@com_github_stretchr_testify//require",
+    ],
 )

@@ -322,27 +322,34 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 		}
 	// ActionAddIndex, ActionAddPrimaryKey needs do it, because it needs to be rolled back when it's canceled.
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
-		tableID := job.TableID
 		var indexID int64
 		var ifExists bool
 		var partitionIDs []int64
 		if err := job.DecodeArgs(&indexID, &ifExists, &partitionIDs); err != nil {
 			return errors.Trace(err)
 		}
+		// Determine the physicalIDs to be added.
+		physicalIDs := []int64{job.TableID}
 		if len(partitionIDs) > 0 {
-			for _, pid := range partitionIDs {
-				startKey := tablecodec.EncodeTableIndexPrefix(pid, indexID)
-				endKey := tablecodec.EncodeTableIndexPrefix(pid, indexID+1)
-				elemID := ea.allocForIndexID(pid, indexID)
-				if err := doInsert(ctx, s, job.ID, elemID, startKey, endKey, now, fmt.Sprintf("partition table ID is %d", pid)); err != nil {
+			physicalIDs = partitionIDs
+		}
+		// Determine the index IDs to be added.
+		tempIdxID := tablecodec.TempIndexPrefix | indexID
+		var indexIDs []int64
+		if job.State == model.JobStateRollbackDone {
+			indexIDs = []int64{indexID, tempIdxID}
+		} else {
+			indexIDs = []int64{tempIdxID}
+		}
+		for _, pid := range physicalIDs {
+			for _, iid := range indexIDs {
+				startKey := tablecodec.EncodeTableIndexPrefix(pid, iid)
+				endKey := tablecodec.EncodeTableIndexPrefix(pid, iid+1)
+				elemID := ea.allocForIndexID(pid, iid)
+				if err := doInsert(ctx, s, job.ID, elemID, startKey, endKey, now, fmt.Sprintf("physical ID is %d", pid)); err != nil {
 					return errors.Trace(err)
 				}
 			}
-		} else {
-			startKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
-			endKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
-			elemID := ea.allocForIndexID(tableID, indexID)
-			return doInsert(ctx, s, job.ID, elemID, startKey, endKey, now, fmt.Sprintf("table ID is %d", tableID))
 		}
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		tableID := job.TableID

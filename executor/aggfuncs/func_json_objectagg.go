@@ -61,7 +61,11 @@ func (e *jsonObjectAgg) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Part
 		return nil
 	}
 
-	chk.AppendJSON(e.ordinal, types.CreateBinaryJSON(p.entries))
+	bj, err := types.CreateBinaryJSONWithCheck(p.entries)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	chk.AppendJSON(e.ordinal, bj)
 	return nil
 }
 
