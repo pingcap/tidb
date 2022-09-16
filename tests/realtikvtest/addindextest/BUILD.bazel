@@ -24,6 +24,7 @@ go_test(
     srcs = [
         "add_index_test.go",
         "concurrent_ddl_test.go",
+        "failpoints_test.go",
         "main_test.go",
         "multi_schema_change_test.go",
         "pitr_test.go",
