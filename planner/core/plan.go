@@ -364,14 +364,6 @@ type PhysicalPlan interface {
 	// Stats returns the StatsInfo of the plan.
 	Stats() *property.StatsInfo
 
-	// Cost returns the estimated cost of the subplan.
-	// Deprecated: use the new method GetPlanCost
-	Cost() float64
-
-	// SetCost set the cost of the subplan.
-	// Deprecated: use the new method GetPlanCost
-	SetCost(cost float64)
-
 	// ExplainNormalizedInfo returns operator normalized information for generating digest.
 	ExplainNormalizedInfo() string
 
@@ -460,7 +452,6 @@ type basePhysicalPlan struct {
 	childrenReqProps []*property.PhysicalProperty
 	self             PhysicalPlan
 	children         []PhysicalPlan
-	cost             float64
 
 	// used by the new cost interface
 	planCostInit bool
@@ -470,16 +461,6 @@ type basePhysicalPlan struct {
 	// 1. For ExchangeSender, means its output will be partitioned by hash key.
 	// 2. For ExchangeReceiver/Window/Sort, means its input is already partitioned.
 	TiFlashFineGrainedShuffleStreamCount uint64
-}
-
-// Cost implements PhysicalPlan interface.
-func (p *basePhysicalPlan) Cost() float64 {
-	return p.cost
-}
-
-// SetCost implements PhysicalPlan interface.
-func (p *basePhysicalPlan) SetCost(cost float64) {
-	p.cost = cost
 }
 
 func (p *basePhysicalPlan) cloneWithSelf(newSelf PhysicalPlan) (*basePhysicalPlan, error) {
@@ -815,7 +796,7 @@ func (p *basePlan) SCtx() sessionctx.Context {
 
 // buildPlanTrace implements Plan
 func (p *basePhysicalPlan) buildPlanTrace() *tracing.PlanTrace {
-	planTrace := &tracing.PlanTrace{ID: p.ID(), TP: p.self.TP(), ExplainInfo: p.self.ExplainInfo(), Cost: p.self.Cost()}
+	planTrace := &tracing.PlanTrace{ID: p.ID(), TP: p.self.TP(), ExplainInfo: p.self.ExplainInfo()}
 	for _, child := range p.Children() {
 		planTrace.Children = append(planTrace.Children, child.buildPlanTrace())
 	}
@@ -845,7 +826,7 @@ func (p *basePhysicalPlan) appendChildCandidate(op *physicalOptimizeOp) {
 	for _, child := range p.Children() {
 		childCandidate := &tracing.CandidatePlanTrace{
 			PlanTrace: &tracing.PlanTrace{TP: child.TP(), ID: child.ID(),
-				ExplainInfo: child.ExplainInfo(), Cost: child.Cost()},
+				ExplainInfo: child.ExplainInfo()},
 		}
 		op.tracer.AppendCandidate(childCandidate)
 		child.appendChildCandidate(op)
