@@ -1916,6 +1916,8 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		// TiFlash fast mode(https://github.com/pingcap/tidb/pull/35851) does not keep order in TableScan
 		return invalidTask, nil
 	}
+	// can we generate valid mpp task?
+	mppApplicable := true
 	if ts.StoreType == kv.TiFlash {
 		for _, col := range ts.schema.Columns {
 			// In theory, TiFlash does not support virtual expr, but in non-mpp mode, if the cop request only contain table scan, then
@@ -1928,20 +1930,32 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 				return invalidTask, nil
 			}
 		}
+		if ts.KeepOrder || prop.MPPPartitionTp != property.AnyType || ts.isPartition {
+			mppApplicable = false
+		} else {
+			for _, col := range ts.schema.Columns {
+				if col.VirtualExpr != nil {
+					mppApplicable = false
+					break
+				}
+			}
+		}
 	}
 	if prop.TaskTp == property.MppTaskType {
-		if ts.KeepOrder {
-			return invalidTask, nil
-		}
-		if prop.MPPPartitionTp != property.AnyType || ts.isPartition {
-			// If ts is a single partition, then this partition table is in static-only prune, then we should not choose mpp execution.
-			ds.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because table `" + ds.tableInfo.Name.O + "`is a partition table which is not supported when `@@tidb_partition_prune_mode=static`.")
-			return invalidTask, nil
-		}
-		for _, col := range ts.schema.Columns {
-			if col.VirtualExpr != nil {
-				ds.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because column `" + col.OrigName + "` is a virtual column which is not supported now.")
+		if !mppApplicable {
+			if ts.KeepOrder {
 				return invalidTask, nil
+			}
+			if prop.MPPPartitionTp != property.AnyType || ts.isPartition {
+				// If ts is a single partition, then this partition table is in static-only prune, then we should not choose mpp execution.
+				ds.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because table `" + ds.tableInfo.Name.O + "`is a partition table which is not supported when `@@tidb_partition_prune_mode=static`.")
+				return invalidTask, nil
+			}
+			for _, col := range ts.schema.Columns {
+				if col.VirtualExpr != nil {
+					ds.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because column `" + col.OrigName + "` is a virtual column which is not supported now.")
+					return invalidTask, nil
+				}
 			}
 		}
 		mppTask := &mppTask{
@@ -1956,6 +1970,10 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		}
 		mppTask = ts.addPushedDownSelectionToMppTask(mppTask, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt))
 		return mppTask, nil
+	}
+	if ts.StoreType == kv.TiFlash && mppApplicable && ds.SCtx().GetSessionVars().IsMPPAllowed() {
+		// don't generate cop task for TiFlash if mpp task is applicable
+		return invalidTask, nil
 	}
 	copTask := &copTask{
 		tablePlan:         ts,
