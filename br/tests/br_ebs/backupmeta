@@ -1,7 +1,7 @@
 {
     "cluster_info": {
         "cluster_version": "6.2.0-alpha",
-        "full_br_type": "aws-ebs",
+        "full_backup_type": "aws-ebs",
         "resolved_ts": 436026916244553730,
         "replicas": null
     },

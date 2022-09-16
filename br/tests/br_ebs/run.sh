@@ -30,6 +30,7 @@ check_contains "invalid full backup type"
 
 # should success
 run_br backup full --type kv --pd $PD_ADDR -s "local://$TEST_DIR/kv"
+
 # cannot test backup ebs since we need specified tikv version to pause schedule completely.
 # todo: add it later
 # run_br backup full --type aws-ebs --skip-aws --pd $PD_ADDR -s "local://$TEST_DIR/ebs" --volume-file tests/$TEST_NAME/volume.json
@@ -46,8 +47,9 @@ check_not_contains "--volume-throughput"
 check_not_contains "--type"
 check_not_contains "--progress-file"
 
-run_br restore full --meta-phase --data-phase > $res_file 2>&1
+run_br restore full --meta-phase --data-phase > $res_file 2>&1 || true
 check_contains "can only set either meta-phase or data-phase"
 
-run_br restore full --meta-phase --skip-aws --pd $PD_ADDR -s "local://tests/$TEST_NAME/"
+# todo: cannot run this test now, we need specified pd version.
+# run_br restore full --meta-phase --skip-aws --pd $PD_ADDR -s "local://$(cd .; pwd)/tests/$TEST_NAME/"
 
