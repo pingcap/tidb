@@ -252,7 +252,6 @@ func TestTablePartition(t *testing.T) {
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
 	require.Equal(t, int64(1), usage.ExchangePartition.ExchangePartitionCnt)
-
 }
 
 func TestPlacementPolicies(t *testing.T) {
