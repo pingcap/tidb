@@ -340,7 +340,7 @@ type PhysicalPlan interface {
 	// ToPB converts physical plan to tipb executor.
 	ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error)
 
-	// getChildReqProps gets the required property by child index.
+	// GetChildReqProps gets the required property by child index.
 	GetChildReqProps(idx int) *property.PhysicalProperty
 
 	// StatsCount returns the count of property.StatsInfo for this plan.
@@ -349,7 +349,7 @@ type PhysicalPlan interface {
 	// ExtractCorrelatedCols extracts correlated columns inside the PhysicalPlan.
 	ExtractCorrelatedCols() []*expression.CorrelatedColumn
 
-	// Get all the children.
+	// Children get all the children.
 	Children() []PhysicalPlan
 
 	// SetChildren sets the children for the plan.
@@ -381,6 +381,9 @@ type PhysicalPlan interface {
 	// appendChildCandidate append child physicalPlan into tracer in order to track each child physicalPlan which can't
 	// be tracked during findBestTask or enumeratePhysicalPlans4Task
 	appendChildCandidate(op *physicalOptimizeOp)
+
+	// MemoryUsage return the memory usage of PhysicalPlan
+	MemoryUsage() int64
 }
 
 // NewDefaultPlanCostOption returns PlanCostOption

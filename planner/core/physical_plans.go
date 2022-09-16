@@ -193,7 +193,13 @@ func (p *PhysicalTableReader) MemoryUsage() (sum int64) {
 	}
 
 	sum = p.physicalSchemaProducer.MemoryUsage() + size.SizeOfUint8*2 + size.SizeOfBool + p.PartitionInfo.MemoryUsage()
-	// todo: memtrace: 	p.TablePlans p.PhysicalPlan
+	if p.tablePlan != nil {
+		sum += p.tablePlan.MemoryUsage()
+	}
+
+	for _, plan := range p.TablePlans {
+		sum += plan.MemoryUsage()
+	}
 	for _, pInfos := range p.PartitionInfos {
 		sum += pInfos.tableScan.MemoryUsage() + pInfos.partitionInfo.MemoryUsage()
 	}
@@ -366,10 +372,16 @@ func (p *PhysicalIndexReader) MemoryUsage() (sum int64) {
 	}
 
 	sum = p.physicalSchemaProducer.MemoryUsage() + p.PartitionInfo.MemoryUsage()
+	if p.indexPlan != nil {
+		p.indexPlan.MemoryUsage()
+	}
+
+	for _, plan := range p.IndexPlans {
+		sum += plan.MemoryUsage()
+	}
 	for _, col := range p.OutputColumns {
 		sum += col.MemoryUsage()
 	}
-	// todo: memtrace: 	p.IndexPlans p.PhysicalPlan
 	return
 }
 
@@ -501,6 +513,13 @@ func (p *PhysicalIndexLookUpReader) MemoryUsage() (sum int64) {
 	}
 
 	sum = p.physicalSchemaProducer.MemoryUsage() + size.SizeOfBool*2 + p.PartitionInfo.MemoryUsage() + size.SizeOfUint64
+
+	if p.indexPlan != nil {
+		sum += p.indexPlan.MemoryUsage()
+	}
+	if p.tablePlan != nil {
+		sum += p.tablePlan.MemoryUsage()
+	}
 	if p.ExtraHandleCol != nil {
 		sum += p.ExtraHandleCol.MemoryUsage()
 	}
@@ -508,10 +527,15 @@ func (p *PhysicalIndexLookUpReader) MemoryUsage() (sum int64) {
 		sum += p.PushedLimit.MemoryUsage()
 	}
 
+	for _, plan := range p.IndexPlans {
+		sum += plan.MemoryUsage()
+	}
+	for _, plan := range p.TablePlans {
+		sum += plan.MemoryUsage()
+	}
 	for _, col := range p.CommonHandleCols {
 		sum += col.MemoryUsage()
 	}
-	//todo: memtrace: p.IndexPlans p.TablePlans p.indexPlan p.tablePlan
 	return
 }
 
@@ -581,7 +605,21 @@ func (p *PhysicalIndexMergeReader) MemoryUsage() (sum int64) {
 	}
 
 	sum = p.physicalSchemaProducer.MemoryUsage() + p.PartitionInfo.MemoryUsage()
-	// todo: memtrace: p.PartialPlans  p.TablePlans  p.partialPlans  p.tablePlan
+	if p.tablePlan != nil {
+		sum += p.tablePlan.MemoryUsage()
+	}
+
+	for _, plans := range p.PartialPlans {
+		for _, plan := range plans {
+			sum += plan.MemoryUsage()
+		}
+	}
+	for _, plan := range p.TablePlans {
+		sum += plan.MemoryUsage()
+	}
+	for _, plan := range p.partialPlans {
+		sum += plan.MemoryUsage()
+	}
 	return
 }
 

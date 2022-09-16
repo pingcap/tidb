@@ -3924,11 +3924,7 @@ type mockPhysicalIndexReader struct {
 
 // MemoryUsage return the memory usage of mockPhysicalIndexReader
 func (p *mockPhysicalIndexReader) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-	// todo: memtrace:  plannercore.PhysicalPlan p.e
-	return
+	return // mock operator for testing only
 }
 
 func (builder *dataReaderBuilder) buildExecutorForIndexJoin(ctx context.Context, lookUpContents []*indexJoinLookUpContent,
