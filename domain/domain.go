@@ -725,7 +725,6 @@ func (do *Domain) loadSchemaInLoop(ctx context.Context, lease time.Duration) {
 			if err != nil {
 				logutil.BgLogger().Error("reload schema in loop failed", zap.Error(err))
 			}
-			do.refreshMDLCheckTableInfo()
 		case _, ok := <-syncer.GlobalVersionCh():
 			err := do.Reload()
 			if err != nil {
@@ -736,7 +735,6 @@ func (do *Domain) loadSchemaInLoop(ctx context.Context, lease time.Duration) {
 				// Make sure the rewatch doesn't affect load schema, so we watch the global schema version asynchronously.
 				syncer.WatchGlobalSchemaVer(context.Background())
 			}
-			do.refreshMDLCheckTableInfo()
 		case <-syncer.Done():
 			// The schema syncer stops, we need stop the schema validator to synchronize the schema version.
 			logutil.BgLogger().Info("reload schema in loop, schema syncer need restart")
@@ -759,12 +757,12 @@ func (do *Domain) loadSchemaInLoop(ctx context.Context, lease time.Duration) {
 				logutil.BgLogger().Error("domain is closed, exit loadSchemaInLoop")
 				return
 			}
-			do.refreshMDLCheckTableInfo()
 			do.SchemaValidator.Restart()
 			logutil.BgLogger().Info("schema syncer restarted")
 		case <-do.exit:
 			return
 		}
+		do.refreshMDLCheckTableInfo()
 	}
 }
 
