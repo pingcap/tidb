@@ -662,22 +662,33 @@ func (do *Domain) mdlCheckLoop() {
 
 			do.mdlCheckTableInfo.mu.Lock()
 
-			jobNeedToCheckCnt := len(do.mdlCheckTableInfo.jobsIdsMap)
+			jobNeedToCheckCnt := len(do.mdlCheckTableInfo.jobsVerMap)
 			if jobNeedToCheckCnt == 0 {
 				jobNeedToSync = false
 				do.mdlCheckTableInfo.mu.Unlock()
 				continue
 			}
+
+			jobsVerMap := make(map[int64]int64, len(do.mdlCheckTableInfo.jobsVerMap))
+			jobsIdsMap := make(map[int64]string, len(do.mdlCheckTableInfo.jobsIdsMap))
+			for k, v := range do.mdlCheckTableInfo.jobsVerMap {
+				jobsVerMap[k] = v
+			}
+			for k, v := range do.mdlCheckTableInfo.jobsIdsMap {
+				jobsIdsMap[k] = v
+			}
+			do.mdlCheckTableInfo.mu.Unlock()
+
 			jobNeedToSync = true
 
 			sm := do.InfoSyncer().GetSessionManager()
 			if sm == nil {
 				logutil.BgLogger().Info("session manager is nil")
 			} else {
-				sm.CheckOldRunningTxn(do.mdlCheckTableInfo.jobsVerMap, do.mdlCheckTableInfo.jobsIdsMap)
+				sm.CheckOldRunningTxn(jobsVerMap, jobsIdsMap)
 			}
 
-			if len(do.mdlCheckTableInfo.jobsVerMap) == jobNeedToCheckCnt {
+			if len(jobsVerMap) == jobNeedToCheckCnt {
 				jobNeedToSync = false
 			}
 
@@ -686,7 +697,7 @@ func (do *Domain) mdlCheckLoop() {
 				jobCache = make(map[int64]int64, 1000)
 			}
 
-			for jobID, ver := range do.mdlCheckTableInfo.jobsVerMap {
+			for jobID, ver := range jobsVerMap {
 				if cver, ok := jobCache[jobID]; ok && cver >= ver {
 					// Already update, skip it.
 					continue
@@ -699,7 +710,6 @@ func (do *Domain) mdlCheckLoop() {
 					jobCache[jobID] = ver
 				}
 			}
-			do.mdlCheckTableInfo.mu.Unlock()
 		case <-do.exit:
 			return
 		}
