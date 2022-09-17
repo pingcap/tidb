@@ -124,6 +124,7 @@ type Domain struct {
 
 type mdlCheckTableInfo struct {
 	mu         sync.Mutex
+	newestVer  int64
 	jobsVerMap map[int64]int64
 	jobsIdsMap map[int64]string
 }
@@ -624,7 +625,8 @@ func (do *Domain) refreshMDLCheckTableInfo() {
 	}
 	defer do.sysSessionPool.Put(se)
 	exec := se.(sqlexec.RestrictedSQLExecutor)
-	rows, _, err := exec.ExecRestrictedSQL(kv.WithInternalSourceType(context.Background(), kv.InternalTxnTelemetry), nil, fmt.Sprintf("select job_id, version, table_ids from mysql.tidb_mdl_info where version <= %d", do.InfoSchema().SchemaMetaVersion()))
+	domainSchemaVer := do.InfoSchema().SchemaMetaVersion()
+	rows, _, err := exec.ExecRestrictedSQL(kv.WithInternalSourceType(context.Background(), kv.InternalTxnTelemetry), nil, fmt.Sprintf("select job_id, version, table_ids from mysql.tidb_mdl_info where version <= %d", domainSchemaVer))
 	if err != nil {
 		logutil.BgLogger().Warn("get mdl info from tidb_mdl_info failed", zap.Error(err))
 		return
@@ -632,9 +634,10 @@ func (do *Domain) refreshMDLCheckTableInfo() {
 	do.mdlCheckTableInfo.mu.Lock()
 	defer do.mdlCheckTableInfo.mu.Unlock()
 
+	do.mdlCheckTableInfo.newestVer = domainSchemaVer
+	do.mdlCheckTableInfo.jobsVerMap = make(map[int64]int64, len(rows))
+	do.mdlCheckTableInfo.jobsIdsMap = make(map[int64]string, len(rows))
 	for i := 0; i < len(rows); i++ {
-		do.mdlCheckTableInfo.jobsVerMap = make(map[int64]int64, len(rows))
-		do.mdlCheckTableInfo.jobsIdsMap = make(map[int64]string, len(rows))
 		do.mdlCheckTableInfo.jobsVerMap[rows[i].GetInt64(0)] = rows[i].GetInt64(1)
 		do.mdlCheckTableInfo.jobsIdsMap[rows[i].GetInt64(0)] = rows[i].GetString(2)
 	}
@@ -652,15 +655,16 @@ func (do *Domain) mdlCheckLoop() {
 			if !variable.EnableMDL.Load() {
 				continue
 			}
-			maxVer := do.InfoSchema().SchemaMetaVersion()
+
+			do.mdlCheckTableInfo.mu.Lock()
+			maxVer := do.mdlCheckTableInfo.newestVer
 			if maxVer > saveMaxSchemaVersion {
 				saveMaxSchemaVersion = maxVer
 			} else if !jobNeedToSync {
 				// Schema doesn't change, and no job to check in the last run.
+				do.mdlCheckTableInfo.mu.Unlock()
 				continue
 			}
-
-			do.mdlCheckTableInfo.mu.Lock()
 
 			jobNeedToCheckCnt := len(do.mdlCheckTableInfo.jobsVerMap)
 			if jobNeedToCheckCnt == 0 {
