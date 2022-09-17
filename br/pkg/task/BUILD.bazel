@@ -84,6 +84,7 @@ go_test(
     name = "task_test",
     timeout = "short",
     srcs = [
+        "backup_ebs_test.go",
         "backup_test.go",
         "common_test.go",
         "restore_test.go",
