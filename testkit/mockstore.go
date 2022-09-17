@@ -48,11 +48,14 @@ func CreateMockStore(t testing.TB, opts ...mockstore.MockTiKVStoreOption) kv.Sto
 			dom.Close()
 			err := store.Close()
 			require.NoError(t, err)
+			view.Stop()
 		})
 		require.NoError(t, err)
 		return store
 	}
-
+	t.Cleanup(func() {
+		view.Stop()
+	})
 	store, _ := CreateMockStoreAndDomain(t, opts...)
 	return store
 }
