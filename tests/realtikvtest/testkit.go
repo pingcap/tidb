@@ -36,6 +36,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
+	"go.opencensus.io/stats/view"
 	"go.uber.org/goleak"
 )
 
@@ -125,6 +126,7 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...mockstore.MockTiKVSt
 		dom.Close()
 		require.NoError(t, store.Close())
 		transaction.PrewriteMaxBackoff.Store(20000)
+		view.Stop()
 	})
 	return store, dom
 }
