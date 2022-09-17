@@ -1325,7 +1325,6 @@ func TiflashFixUnixtimePrecision(expr *Expression) {
 	if !err {
 		return
 	}
-
 	if x.FuncName.L == ast.FromUnixTime {
 		for _, arg := range x.GetArgs() {
 			x, err := (arg).(*ScalarFunction)
@@ -1336,13 +1335,10 @@ func TiflashFixUnixtimePrecision(expr *Expression) {
 						fieldLen := mathutil.Min(x.RetType.GetFlen()+6, mysql.MaxDecimalWidth)
 						x.RetType.SetFlen(fieldLen)
 					}
-
 				}
-
 			}
 		}
 	}
-
 }
 
 // PushDownExprsWithExtraInfo split the input exprs into pushed and remained, pushed include all the exprs that can be pushed down
