@@ -57,9 +57,6 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	isReadOnly := plannercore.IsReadOnly(stmtNode, c.Ctx.GetSessionVars())
-	c.Ctx.GetSessionVars().StmtCtx.IsReadOnly = isReadOnly
-
 	ret := &plannercore.PreprocessorReturn{}
 	err := plannercore.Preprocess(c.Ctx,
 		stmtNode,

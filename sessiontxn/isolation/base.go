@@ -121,6 +121,13 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 		p.onInitializeTxnCtx(txnCtx)
 	}
 	sessVars.TxnCtx = txnCtx
+	if variable.EnableMDL.Load() {
+		sessVars.TxnCtx.EnableMDL = true
+		if !(core.IsAutoCommitTxn(p.sctx) && p.sctx.GetSessionVars().StmtCtx.IsReadOnly) {
+			p.infoSchema = infoschema.AttachMDLTableInfoSchema(p.infoSchema)
+			sessVars.TxnCtx.InfoSchema = p.infoSchema
+		}
+	}
 
 	txn, err := p.sctx.Txn(false)
 	if err != nil {
@@ -260,12 +267,9 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 	if p.enterNewTxnType == sessiontxn.EnterNewTxnWithBeginStmt {
 		sessVars.SetInTxn(true)
 	}
-	if !core.IsAutoCommitTxn(p.sctx) && variable.EnableMDL.Load() {
+	if !core.IsAutoCommitTxn(p.sctx) && !p.sctx.GetSessionVars().TxnCtx.EnableMDL {
 		p.infoSchema = infoschema.AttachMDLTableInfoSchema(p.infoSchema)
 		sessVars.TxnCtx.InfoSchema = p.infoSchema
-	}
-	if variable.EnableMDL.Load() {
-		sessVars.TxnCtx.EnableMDL = true
 	}
 
 	txn.SetVars(sessVars.KVVars)

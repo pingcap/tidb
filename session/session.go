@@ -1977,6 +1977,9 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
+	isReadOnly := plannercore.IsReadOnly(stmtNode, s.GetSessionVars())
+	s.GetSessionVars().StmtCtx.IsReadOnly = isReadOnly
+
 	if err := s.PrepareTxnCtx(ctx); err != nil {
 		return nil, err
 	}
@@ -1991,6 +1994,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	if err := executor.ResetContextOfStmt(s, stmtNode); err != nil {
 		return nil, err
 	}
+	s.GetSessionVars().StmtCtx.IsReadOnly = isReadOnly
 	normalizedSQL, digest := s.sessionVars.StmtCtx.SQLDigest()
 	if topsqlstate.TopSQLEnabled() {
 		s.sessionVars.StmtCtx.IsSQLRegistered.Store(true)

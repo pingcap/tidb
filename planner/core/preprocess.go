@@ -1699,7 +1699,7 @@ func (p *preprocessor) hasAutoConvertWarning(colDef *ast.ColumnDef) bool {
 }
 
 func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.CIStr, tbl table.Table, is infoschema.InfoSchema) (table.Table, error) {
-	if !variable.EnableMDL.Load() {
+	if !sctx.GetSessionVars().TxnCtx.EnableMDL {
 		return tbl, nil
 	}
 	if is.SchemaMetaVersion() == 0 {
@@ -1799,7 +1799,8 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.
 
 		se, ok := is.(*infoschema.SessionExtendedInfoSchema)
 		if !ok {
-			se = infoschema.AttachMDLTableInfoSchema(is).(*infoschema.SessionExtendedInfoSchema)
+			logutil.BgLogger().Error("should not happen")
+			return nil, errors.New("should not happen")
 		}
 		db, _ := domainSchema.SchemaByTable(tbl.Meta())
 		err = se.UpdateTableInfo(db, tbl)
