@@ -372,8 +372,7 @@ func (p *LogicalJoin) GetJoinKeys() (leftKeys, rightKeys []*expression.Column, i
 	return
 }
 
-// GetNAJoinKeys extracts join keys(columns) from NAEqualCondition, where shouldn't care about null value
-// since null values is always considered.
+// GetNAJoinKeys extracts join keys(columns) from NAEqualCondition.
 func (p *LogicalJoin) GetNAJoinKeys() (leftKeys, rightKeys []*expression.Column) {
 	for _, expr := range p.NAEQConditions {
 		leftKeys = append(leftKeys, expr.GetArgs()[0].(*expression.Column))

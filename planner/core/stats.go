@@ -1127,7 +1127,7 @@ func (h *fullJoinRowCountHelper) estimate() float64 {
 	}
 	var leftKeyNDV, rightKeyNDV float64
 	var leftColCnt, rightColCnt int
-	if len(h.leftJoinKeys) > 0 {
+	if len(h.leftJoinKeys) > 0 || len(h.rightJoinKeys) > 0 {
 		leftKeyNDV, leftColCnt = getColsNDVWithMatchedLen(h.leftJoinKeys, h.leftSchema, h.leftProfile)
 		rightKeyNDV, rightColCnt = getColsNDVWithMatchedLen(h.rightJoinKeys, h.rightSchema, h.rightProfile)
 	} else {

@@ -321,7 +321,7 @@ func (p *LogicalJoin) updateEQCond() {
 	// eg: select * from stu where stu.name not in (select name from exam where exam.stu_id = stu.id);
 	// combination of <stu.name NAEQ exam.name> and <exam.stu_id EQ stu.id> for join key is little complicated for now.
 	canBeNAAJ := (p.JoinType == AntiSemiJoin || p.JoinType == AntiLeftOuterSemiJoin) && len(p.EqualConditions) == 0
-	if canBeNAAJ {
+	if canBeNAAJ && p.SCtx().GetSessionVars().OptimizerEnableNAAJ {
 		for i := len(p.OtherConditions) - 1; i >= 0; i-- {
 			need2Remove := false
 			if eqCond, ok := p.OtherConditions[i].(*expression.ScalarFunction); ok && eqCond.FuncName.L == ast.EQ {

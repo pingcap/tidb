@@ -1,4 +1,5 @@
 use test;
+set @@session.tidb_enable_null_aware_anti_join=1;
 select "***************************************************** PART 1 *****************************************************************" as name;
 name
 ***************************************************** PART 1 *****************************************************************
@@ -408,3 +409,4 @@ HashJoin_9	8000.00	root		anti semi join, equal:[eq(test.naaj_a.a, test.naaj_b.a)
 │ └─TableFullScan_12	10000.00	cop[tikv]	table:naaj_B	keep order:false, stats:pseudo
 └─TableReader_11(Probe)	10000.00	root		data:TableFullScan_10
   └─TableFullScan_10	10000.00	cop[tikv]	table:naaj_A	keep order:false, stats:pseudo
+set @@session.tidb_enable_null_aware_anti_join=0;

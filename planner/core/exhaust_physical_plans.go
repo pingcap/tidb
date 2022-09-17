@@ -1949,6 +1949,9 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 	}
 	lkeys, rkeys, _, _ := p.GetJoinKeys()
 	lNAkeys, rNAKeys := p.GetNAJoinKeys()
+	if len(lNAkeys) > 0 || len(rNAKeys) > 0 {
+		return nil
+	}
 	// todo: mpp na-keys.
 	// check match property
 	baseJoin := basePhysicalJoin{

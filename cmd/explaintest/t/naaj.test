@@ -1,5 +1,6 @@
 # naaj.test file is for null-aware anti join
 use test;
+set @@session.tidb_enable_null_aware_anti_join=1;
 # assert the cases for the left side without null.
 select "***************************************************** PART 1 *****************************************************************" as name;
 drop table if exists naaj_A, naaj_B;
@@ -209,3 +210,4 @@ select * from naaj_A where (a+1,b*2) not in (select a, b from naaj_B);
 # assert 3: NA-EQ and EQ can't co-exist at the same time.
 explain select (a+1,b*2) not in (select a, b=1 from naaj_B where naaj_A.a = naaj_B.a) from naaj_A;
 explain select * from naaj_A where (a+1,b*2) not in (select a, b=1 from naaj_B where naaj_A.a = naaj_B.a);
+set @@session.tidb_enable_null_aware_anti_join=0;
