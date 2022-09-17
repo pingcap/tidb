@@ -1470,14 +1470,14 @@ func (d *Datum) convertToMysqlDecimal(sc *stmtctx.StatementContext, target *Fiel
 func ProduceDecWithSpecifiedTp(dec *MyDecimal, tp *FieldType, sc *stmtctx.StatementContext) (_ *MyDecimal, err error) {
 	flen, decimal := tp.GetFlen(), tp.GetDecimal()
 
-	//If string to decimal, determine the precision for each string
-	if (tp.GetFlag() & mysql.StringToDecimalFlag) == mysql.StringToDecimalFlag {
-		decimal = flen - int(dec.GetDigitsInt())
-		//remaining length of the string, the maximum length of decmail decimal places, the actual decimal length
-		decimal = mathutil.Min(decimal, mysql.MaxDecimalScale, int(dec.GetDigitsFrac()))
-	}
-
 	if flen != UnspecifiedLength && decimal != UnspecifiedLength {
+		//If string to decimal, determine the precision for each string
+		if (tp.GetFlag() & mysql.StringToDecimalFlag) == mysql.StringToDecimalFlag {
+			decimal = flen - int(dec.GetDigitsInt())
+			//remaining length of the string, the maximum length of decmail decimal places, the actual decimal length
+			decimal = mathutil.Min(decimal, mysql.MaxDecimalScale, int(dec.GetDigitsFrac()))
+		}
+
 		if flen < decimal {
 			return nil, ErrMBiggerThanD.GenWithStackByArgs("")
 		}
