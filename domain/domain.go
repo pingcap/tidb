@@ -624,7 +624,7 @@ func (do *Domain) refreshMDLCheckTableInfo() {
 	}
 	defer do.sysSessionPool.Put(se)
 	exec := se.(sqlexec.RestrictedSQLExecutor)
-	rows, _, err := exec.ExecRestrictedSQL(kv.WithInternalSourceType(context.Background(), kv.InternalTxnTelemetry), nil, "select job_id, version, table_ids from mysql.tidb_mdl_info")
+	rows, _, err := exec.ExecRestrictedSQL(kv.WithInternalSourceType(context.Background(), kv.InternalTxnTelemetry), nil, fmt.Sprintf("select job_id, version, table_ids from mysql.tidb_mdl_info where version <= %d", do.InfoSchema().SchemaMetaVersion()))
 	if err != nil {
 		logutil.BgLogger().Warn("get mdl info from tidb_mdl_info failed", zap.Error(err))
 		return
