@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
@@ -123,10 +122,6 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 	sessVars.TxnCtx = txnCtx
 	if variable.EnableMDL.Load() {
 		sessVars.TxnCtx.EnableMDL = true
-		if !(core.IsAutoCommitTxn(p.sctx) && p.sctx.GetSessionVars().StmtCtx.IsReadOnly) {
-			p.infoSchema = infoschema.AttachMDLTableInfoSchema(p.infoSchema)
-			sessVars.TxnCtx.InfoSchema = p.infoSchema
-		}
 	}
 
 	txn, err := p.sctx.Txn(false)
