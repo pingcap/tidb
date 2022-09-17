@@ -1436,6 +1436,35 @@ func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType, isMPPTas
 	return partialAgg, finalAgg
 }
 
+// canUse3StageDistinctAgg returns true if this agg can use 3 stage for distinct aggregation
+func (p *basePhysicalAgg) canUse3StageDistinctAgg() bool {
+	num := 0
+	if !p.ctx.GetSessionVars().Enable3StageDistinctAgg || len(p.GroupByItems) > 0 {
+		return false
+	}
+	for _, fun := range p.AggFuncs {
+		if fun.HasDistinct {
+			num++
+			if num > 1 || fun.Name != ast.AggFuncCount {
+				return false
+			}
+			for _, arg := range fun.Args {
+				// bail out when args are not simple column, see GitHub issue #35417
+				if _, ok := arg.(*expression.Column); !ok {
+					return false
+				}
+			}
+		} else if len(fun.Args) > 1 {
+			return false
+		}
+
+		if len(fun.OrderByItems) > 0 {
+			return false
+		}
+	}
+	return num == 1
+}
+
 func genFirstRowAggForGroupBy(ctx sessionctx.Context, groupByItems []expression.Expression) ([]*aggregation.AggFuncDesc, error) {
 	aggFuncs := make([]*aggregation.AggFuncDesc, 0, len(groupByItems))
 	for _, groupBy := range groupByItems {
@@ -1642,15 +1671,98 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 		if !mpp.needEnforceExchanger(prop) {
 			return p.attach2TaskForMpp1Phase(mpp)
 		}
+		// we have to check it before the content of p has been modified
+		canUse3StageAgg := p.canUse3StageDistinctAgg()
 		proj := p.convertAvgForMPP()
 		partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash, true)
 		if finalAgg == nil {
 			return invalidTask
 		}
+
+		// generate 3 stage aggregation for single count distinct if applicable.
+		//  select count(distinct a), count(b) from foo
+		// will generate plan:
+		//  HashAgg sum(#1), sum(#2)                              -> final agg
+		//   +- Exchange Passthrough
+		//       +- HashAgg count(distinct a) #1, sum(#3) #2      -> middle agg
+		//           +- Exchange HashPartition by a
+		//               +- HashAgg count(b) #3, group by a       -> partial agg
+		//                   +- TableScan foo
+		var middleAgg *PhysicalHashAgg = nil
+		if partialAgg != nil && canUse3StageAgg {
+			clonedAgg, err := finalAgg.Clone()
+			if err != nil {
+				return invalidTask
+			}
+			middleAgg = clonedAgg.(*PhysicalHashAgg)
+			distinctPos := 0
+			middleSchema := expression.NewSchema()
+			schemaMap := make(map[int64]*expression.Column, len(middleAgg.AggFuncs))
+			for i, fun := range middleAgg.AggFuncs {
+				col := &expression.Column{
+					UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
+					RetType:  fun.RetTp,
+				}
+				if fun.HasDistinct {
+					distinctPos = i
+				} else {
+					fun.Mode = aggregation.Partial2Mode
+					originalCol := fun.Args[0].(*expression.Column)
+					schemaMap[originalCol.UniqueID] = col
+				}
+				middleSchema.Append(col)
+			}
+			middleAgg.schema = middleSchema
+
+			finalHashAgg := finalAgg.(*PhysicalHashAgg)
+			finalAggDescs := make([]*aggregation.AggFuncDesc, 0, len(finalHashAgg.AggFuncs))
+			for i, fun := range finalHashAgg.AggFuncs {
+				newArgs := make([]expression.Expression, 0, 1)
+				if distinctPos == i {
+					// change count(distinct) to sum()
+					fun.Name = ast.AggFuncSum
+					fun.HasDistinct = false
+					newArgs = append(newArgs, middleSchema.Columns[i])
+				} else {
+					for _, arg := range fun.Args {
+						newCol, err := arg.RemapColumn(schemaMap)
+						if err != nil {
+							return invalidTask
+						}
+						newArgs = append(newArgs, newCol)
+					}
+				}
+				fun.Args = newArgs
+				finalAggDescs = append(finalAggDescs, fun)
+			}
+			finalHashAgg.AggFuncs = finalAggDescs
+		}
+
 		// partial agg would be null if one scalar agg cannot run in two-phase mode
 		if partialAgg != nil {
 			attachPlan2Task(partialAgg, mpp)
 		}
+
+		if middleAgg != nil && canUse3StageAgg {
+			items := partialAgg.(*PhysicalHashAgg).GroupByItems
+			partitionCols := make([]*property.MPPPartitionColumn, 0, len(items))
+			for _, expr := range items {
+				col, ok := expr.(*expression.Column)
+				if !ok {
+					continue
+				}
+				partitionCols = append(partitionCols, &property.MPPPartitionColumn{
+					Col:       col,
+					CollateID: property.GetCollateIDByNameForPartition(col.GetType().GetCollate()),
+				})
+			}
+
+			prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.HashType, MPPPartitionCols: partitionCols}
+			newMpp := mpp.enforceExchanger(prop)
+			attachPlan2Task(middleAgg, newMpp)
+			mpp = newMpp
+		}
+
 		newMpp := mpp.enforceExchanger(prop)
 		attachPlan2Task(finalAgg, newMpp)
 		if proj == nil {
