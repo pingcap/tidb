@@ -468,16 +468,16 @@
       {
         "SQL": "explain format = 'brief' select * from t where b regexp '.*111.*'",
         "Result": [
-          "TableReader 4.00 root  data:Selection",
-          "└─Selection 4.00 cop[tikv]  regexp(test.t.b, \".*111.*\")",
+          "TableReader 30.70 root  data:Selection",
+          "└─Selection 30.70 cop[tikv]  regexp(test.t.b, \".*111.*\")",
           "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where b not regexp '.*111.*'",
         "Result": [
-          "TableReader 36.00 root  data:Selection",
-          "└─Selection 36.00 cop[tikv]  not(istrue_with_null(regexp(test.t.b, \".*111.*\")))",
+          "TableReader 6.30 root  data:Selection",
+          "└─Selection 6.30 cop[tikv]  not(istrue_with_null(regexp(test.t.b, \".*111.*\")))",
           "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
         ]
       },
@@ -609,8 +609,8 @@
       {
         "SQL": "explain format = 'brief' select * from t where a not regexp '.*111.*'",
         "Result": [
-          "Selection 6.30 root  not(istrue_with_null(regexp(test.t.a, \".*111.*\")))",
-          "└─TableReader 40.00 root  data:TableFullScan",
+          "TableReader 6.30 root  data:Selection",
+          "└─Selection 6.30 cop[tikv]  not(istrue_with_null(regexp(test.t.a, \".*111.*\")))",
           "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
         ]
       },
@@ -698,16 +698,16 @@
       {
         "SQL": "explain format = 'brief' select * from t where b regexp '.*111.*'",
         "Result": [
-          "Selection 30.70 root  regexp(test.t.b, \".*111.*\")",
-          "└─TableReader 40.00 root  data:TableFullScan",
+          "TableReader 30.70 root  data:Selection",
+          "└─Selection 30.70 cop[tikv]  regexp(test.t.b, \".*111.*\")",
           "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where b not regexp '.*111.*'",
         "Result": [
-          "Selection 6.30 root  not(istrue_with_null(regexp(test.t.b, \".*111.*\")))",
-          "└─TableReader 40.00 root  data:TableFullScan",
+          "TableReader 6.30 root  data:Selection",
+          "└─Selection 6.30 cop[tikv]  not(istrue_with_null(regexp(test.t.b, \".*111.*\")))",
           "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
         ]
       },
