@@ -90,6 +90,9 @@ const (
 	// TiDBLastDDLInfo is used to get the last ddl info within the current session.
 	TiDBLastDDLInfo = "tidb_last_ddl_info"
 
+	// TiDBLastPlanReplayerToken is used to get the last plan replayer token within the current session
+	TiDBLastPlanReplayerToken = "tidb_last_plan_replayer_token"
+
 	// TiDBConfig is a read-only variable that shows the config of the current server.
 	TiDBConfig = "tidb_config"
 
@@ -234,6 +237,9 @@ const (
 
 	// TiFlashFastScan indicates whether use fast scan in tiflash.
 	TiFlashFastScan = "tiflash_fastscan"
+
+	// TiDBEnableUnsafeSubstitute indicates whether to enable generate column takes unsafe substitute.
+	TiDBEnableUnsafeSubstitute = "tidb_enable_unsafe_substitute"
 
 	// TiDBEnableTiFlashReadForWriteStmt indicates whether to enable TiFlash to read for write statements.
 	TiDBEnableTiFlashReadForWriteStmt = "tidb_enable_tiflash_read_for_write_stmt"
@@ -970,7 +976,7 @@ const (
 	DefTiDBEnableParallelApply                     = false
 	DefTiDBEnableAmendPessimisticTxn               = false
 	DefTiDBPartitionPruneMode                      = "dynamic"
-	DefTiDBEnableRateLimitAction                   = true
+	DefTiDBEnableRateLimitAction                   = false
 	DefTiDBEnableAsyncCommit                       = false
 	DefTiDBEnable1PC                               = false
 	DefTiDBGuaranteeLinearizability                = true
@@ -1107,7 +1113,8 @@ var (
 	// DDLDiskQuota is the temporary variable for set disk quota for lightning
 	DDLDiskQuota = atomic.NewUint64(DefTiDBDDLDiskQuota)
 	// EnableForeignKey indicates whether to enable foreign key feature.
-	EnableForeignKey = atomic.NewBool(false)
+	EnableForeignKey    = atomic.NewBool(false)
+	EnableRCReadCheckTS = atomic.NewBool(false)
 )
 
 var (

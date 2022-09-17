@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/telemetry"
 	"github.com/pingcap/tidb/testkit"
@@ -211,6 +212,9 @@ func TestTablePartition(t *testing.T) {
 	require.Equal(t, int64(0), usage.TablePartition.TablePartitionListCnt)
 	require.Equal(t, int64(0), usage.TablePartition.TablePartitionRangeCnt)
 	require.Equal(t, int64(0), usage.TablePartition.TablePartitionRangeColumnsCnt)
+	require.Equal(t, int64(0), usage.TablePartition.TablePartitionRangeColumnsGt1Cnt)
+	require.Equal(t, int64(0), usage.TablePartition.TablePartitionRangeColumnsGt2Cnt)
+	require.Equal(t, int64(0), usage.TablePartition.TablePartitionRangeColumnsGt3Cnt)
 	require.Equal(t, int64(0), usage.TablePartition.TablePartitionListColumnsCnt)
 	require.Equal(t, int64(0), usage.TablePartition.TablePartitionCreateIntervalPartitionsCnt)
 	require.Equal(t, int64(0), usage.TablePartition.TablePartitionAddIntervalPartitionsCnt)
@@ -229,14 +233,23 @@ func TestTablePartition(t *testing.T) {
 	tk.MustExec("drop table if exists pt1")
 	tk.MustExec("create table pt1 (d datetime primary key, v varchar(255)) partition by range columns(d)" +
 		" interval (1 day) first partition less than ('2022-01-01') last partition less than ('2022-02-22')")
+	tk.MustExec("create table pt2 (d datetime, v varchar(255)) partition by range columns(d,v)" +
+		" (partition p0 values less than ('2022-01-01', ''), partition p1 values less than ('2023-01-01','ZZZ'))")
+	tk.MustExec("create table pt3 (d datetime, v varchar(255), i int) partition by range columns(d,v,i)" +
+		" (partition p0 values less than ('2022-01-01', '', 0), partition p1 values less than ('2023-01-01','ZZZ', 1))")
+	tk.MustExec("create table pt4 (d datetime, v varchar(255), s bigint unsigned, u tinyint) partition by range columns(d,v,s,u)" +
+		" (partition p0 values less than ('2022-01-01', '', 1, -3), partition p1 values less than ('2023-01-01','ZZZ', 1, 3))")
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
-	require.Equal(t, int64(2), usage.TablePartition.TablePartitionCnt)
+	require.Equal(t, int64(5), usage.TablePartition.TablePartitionCnt)
 	require.Equal(t, int64(0), usage.TablePartition.TablePartitionHashCnt)
-	require.Equal(t, int64(5), usage.TablePartition.TablePartitionMaxPartitionsCnt)
+	require.Equal(t, int64(11), usage.TablePartition.TablePartitionMaxPartitionsCnt)
 	require.Equal(t, int64(0), usage.TablePartition.TablePartitionListCnt)
 	require.Equal(t, int64(1), usage.TablePartition.TablePartitionRangeCnt)
-	require.Equal(t, int64(1), usage.TablePartition.TablePartitionRangeColumnsCnt)
+	require.Equal(t, int64(4), usage.TablePartition.TablePartitionRangeColumnsCnt)
+	require.Equal(t, int64(3), usage.TablePartition.TablePartitionRangeColumnsGt1Cnt)
+	require.Equal(t, int64(2), usage.TablePartition.TablePartitionRangeColumnsGt2Cnt)
+	require.Equal(t, int64(1), usage.TablePartition.TablePartitionRangeColumnsGt3Cnt)
 	require.Equal(t, int64(0), usage.TablePartition.TablePartitionListColumnsCnt)
 	require.Equal(t, int64(1), usage.TablePartition.TablePartitionCreateIntervalPartitionsCnt)
 	require.Equal(t, int64(1), usage.TablePartition.TablePartitionAddIntervalPartitionsCnt)
@@ -418,4 +431,34 @@ func TestLazyPessimisticUniqueCheck(t *testing.T) {
 	tk2.MustExec("set @@tidb_constraint_check_in_place_pessimistic = 0")
 	usage = telemetry.GetTxnUsageInfo(tk.Session())
 	require.Equal(t, int64(2), usage.LazyUniqueCheckSetCounter)
+}
+
+func TestAddIndexAcceleration(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	usage, err := telemetry.GetFeatureUsage(tk.Session())
+	require.Equal(t, int64(0), usage.DDLUsageCounter.AddIndexIngestUsed)
+	require.NoError(t, err)
+
+	allow := ddl.IsEnableFastReorg()
+	require.Equal(t, false, allow)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tele_t")
+	tk.MustExec("create table tele_t(id int, b int)")
+	tk.MustExec("insert into tele_t values(1,1),(2,2);")
+	tk.MustExec("alter table tele_t add index idx_org(b)")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(0), usage.DDLUsageCounter.AddIndexIngestUsed)
+
+	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = on")
+	allow = ddl.IsEnableFastReorg()
+	require.Equal(t, true, allow)
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(0), usage.DDLUsageCounter.AddIndexIngestUsed)
+	tk.MustExec("alter table tele_t add index idx_new(b)")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(1), usage.DDLUsageCounter.AddIndexIngestUsed)
 }

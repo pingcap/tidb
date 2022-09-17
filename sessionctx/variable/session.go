@@ -1208,8 +1208,6 @@ type SessionVars struct {
 	CostModelVersion int
 	// BatchPendingTiFlashCount shows the threshold of pending TiFlash tables when batch adding.
 	BatchPendingTiFlashCount int
-	// RcReadCheckTS indicates if ts check optimization is enabled for current session.
-	RcReadCheckTS bool
 	// RcWriteCheckTS indicates whether some special write statements don't get latest tso from PD at RC
 	RcWriteCheckTS bool
 	// RemoveOrderbyInSubquery indicates whether to remove ORDER BY in subquery.
@@ -1269,6 +1267,9 @@ type SessionVars struct {
 	// EnableTiFlashReadForWriteStmt indicates whether to enable TiFlash to read for write statements.
 	EnableTiFlashReadForWriteStmt bool
 
+	// EnableUnsafeSubstitute indicates whether to enable generate column takes unsafe substitute.
+	EnableUnsafeSubstitute bool
+
 	// ForeignKeyChecks indicates whether to enable foreign key constraint check.
 	ForeignKeyChecks bool
 
@@ -1276,6 +1277,9 @@ type SessionVars struct {
 	// ranges would exceed the limit, it chooses less accurate ranges such as full range. 0 indicates that there is no
 	// memory limit for ranges.
 	RangeMaxSize int64
+
+	// LastPlanReplayerToken indicates the last plan replayer token
+	LastPlanReplayerToken string
 }
 
 // GetPreparedStmtByName returns the prepared statement specified by stmtName.
