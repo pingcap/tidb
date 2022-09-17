@@ -1309,7 +1309,7 @@ func TestGeneratedColumnRelatedDDL(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	// Test create an exist database
-	_, err := tk.Exec("CREATE database test")
+	err := tk.ExecToErr("CREATE database test")
 	require.Error(t, err)
 
 	tk.MustGetErrMsg("create table t1 (a bigint not null primary key auto_increment, b bigint as (a + 1));",

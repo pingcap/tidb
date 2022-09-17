@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable/featuretag/concurrencyddl"
 	"github.com/pingcap/tidb/util/paging"
-	"github.com/pingcap/tidb/util/size"
 	"go.uber.org/atomic"
 )
 
@@ -54,6 +53,9 @@ const (
 
 	// TiDBOptSkewDistinctAgg is used to indicate the distinct agg has data skew
 	TiDBOptSkewDistinctAgg = "tidb_opt_skew_distinct_agg"
+
+	// TiDBOpt3StageDistinctAgg is used to indicate whether to plan and execute the distinct agg in 3 stages
+	TiDBOpt3StageDistinctAgg = "tidb_opt_three_stage_distinct_agg"
 
 	// TiDBBCJThresholdSize is used to limit the size of small table for mpp broadcast join.
 	// Its unit is bytes, if the size of small table is larger than it, we will not use bcj.
@@ -90,6 +92,9 @@ const (
 
 	// TiDBLastDDLInfo is used to get the last ddl info within the current session.
 	TiDBLastDDLInfo = "tidb_last_ddl_info"
+
+	// TiDBLastPlanReplayerToken is used to get the last plan replayer token within the current session
+	TiDBLastPlanReplayerToken = "tidb_last_plan_replayer_token"
 
 	// TiDBConfig is a read-only variable that shows the config of the current server.
 	TiDBConfig = "tidb_config"
@@ -235,6 +240,9 @@ const (
 
 	// TiFlashFastScan indicates whether use fast scan in tiflash.
 	TiFlashFastScan = "tiflash_fastscan"
+
+	// TiDBEnableUnsafeSubstitute indicates whether to enable generate column takes unsafe substitute.
+	TiDBEnableUnsafeSubstitute = "tidb_enable_unsafe_substitute"
 
 	// TiDBEnableTiFlashReadForWriteStmt indicates whether to enable TiFlash to read for write statements.
 	TiDBEnableTiFlashReadForWriteStmt = "tidb_enable_tiflash_read_for_write_stmt"
@@ -746,6 +754,11 @@ const (
 	// TiDBEnableForeignKey indicates whether to enable foreign key feature.
 	// TODO(crazycs520): remove this after foreign key GA.
 	TiDBEnableForeignKey = "tidb_enable_foreign_key"
+
+	// TiDBOptRangeMaxSize is the max memory limit for ranges. When the optimizer estimates that the memory usage of complete
+	// ranges would exceed the limit, it chooses less accurate ranges such as full range. 0 indicates that there is no memory
+	// limit for ranges.
+	TiDBOptRangeMaxSize = "tidb_opt_range_max_size"
 )
 
 // TiDB vars that have only global scope
@@ -781,6 +794,8 @@ const (
 	TiDBMemQuotaBindingCache = "tidb_mem_quota_binding_cache"
 	// TiDBRCReadCheckTS indicates the tso optimization for read-consistency read is enabled.
 	TiDBRCReadCheckTS = "tidb_rc_read_check_ts"
+	// TiDBRCWriteCheckTs indicates whether some special write statements don't get latest tso from PD at RC
+	TiDBRCWriteCheckTs = "tidb_rc_write_check_ts"
 	// TiDBCommitterConcurrency controls the number of running concurrent requests in the commit phase.
 	TiDBCommitterConcurrency = "tidb_committer_concurrency"
 	// TiDBEnableBatchDML enables batch dml.
@@ -816,10 +831,6 @@ const (
 	TiDBDDLEnableFastReorg = "tidb_ddl_enable_fast_reorg"
 	// TiDBDDLDiskQuota used to set disk quota for lightning add index.
 	TiDBDDLDiskQuota = "tidb_ddl_disk_quota"
-	// TiDBOptRangeMaxSize is the max memory limit for ranges. When the optimizer estimates that the memory usage of complete
-	// ranges would exceed the limit, it chooses less accurate ranges such as full range. 0 indicates that there is no memory
-	// limit for ranges.
-	TiDBOptRangeMaxSize = "tidb_opt_range_max_size"
 )
 
 // TiDB intentional limits
@@ -964,8 +975,8 @@ const (
 	DefTiDBEnableTelemetry                         = true
 	DefTiDBEnableParallelApply                     = false
 	DefTiDBEnableAmendPessimisticTxn               = false
-	DefTiDBPartitionPruneMode                      = "static"
-	DefTiDBEnableRateLimitAction                   = true
+	DefTiDBPartitionPruneMode                      = "dynamic"
+	DefTiDBEnableRateLimitAction                   = false
 	DefTiDBEnableAsyncCommit                       = false
 	DefTiDBEnable1PC                               = false
 	DefTiDBGuaranteeLinearizability                = true
@@ -1006,6 +1017,7 @@ const (
 	DefRCReadCheckTS                               = false
 	DefTiDBRemoveOrderbyInSubquery                 = false
 	DefTiDBSkewDistinctAgg                         = false
+	DefTiDB3StageDistinctAgg                       = true
 	DefTiDBReadStaleness                           = 0
 	DefTiDBGCMaxWaitTime                           = 24 * 60 * 60
 	DefMaxAllowedPacket                     uint64 = 67108864
@@ -1047,9 +1059,11 @@ const (
 	MaxDDLReorgBatchSize                     int32  = 10240
 	MinDDLReorgBatchSize                     int32  = 32
 	MinExpensiveQueryTimeThreshold           uint64 = 10 // 10s
+	DefTiDBRcWriteCheckTs                           = false
 	DefTiDBConstraintCheckInPlacePessimistic        = true
 	DefTiDBForeignKeyChecks                         = false
-	DefTiDBOptRangeMaxSize                          = 64 * int64(size.MB) // 64 MB
+	DefTiDBOptRangeMaxSize                          = 0
+	DefTiDBCostModelVer                             = 1
 )
 
 // Process global variables.
@@ -1098,7 +1112,8 @@ var (
 	// DDLDiskQuota is the temporary variable for set disk quota for lightning
 	DDLDiskQuota = atomic.NewUint64(DefTiDBDDLDiskQuota)
 	// EnableForeignKey indicates whether to enable foreign key feature.
-	EnableForeignKey = atomic.NewBool(false)
+	EnableForeignKey    = atomic.NewBool(false)
+	EnableRCReadCheckTS = atomic.NewBool(false)
 )
 
 var (

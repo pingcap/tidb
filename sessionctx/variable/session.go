@@ -738,6 +738,9 @@ type SessionVars struct {
 	// EnableSkewDistinctAgg can be set true to allow skew distinct aggregate rewrite
 	EnableSkewDistinctAgg bool
 
+	// Enable3StageDistinctAgg indicates whether to allow 3 stage distinct aggregate
+	Enable3StageDistinctAgg bool
+
 	// MultiStatementMode permits incorrect client library usage. Not recommended to be turned on.
 	MultiStatementMode int
 
@@ -1202,8 +1205,8 @@ type SessionVars struct {
 	CostModelVersion int
 	// BatchPendingTiFlashCount shows the threshold of pending TiFlash tables when batch adding.
 	BatchPendingTiFlashCount int
-	// RcReadCheckTS indicates if ts check optimization is enabled for current session.
-	RcReadCheckTS bool
+	// RcWriteCheckTS indicates whether some special write statements don't get latest tso from PD at RC
+	RcWriteCheckTS bool
 	// RemoveOrderbyInSubquery indicates whether to remove ORDER BY in subquery.
 	RemoveOrderbyInSubquery bool
 	// NonTransactionalIgnoreError indicates whether to ignore error in non-transactional statements.
@@ -1261,6 +1264,9 @@ type SessionVars struct {
 	// EnableTiFlashReadForWriteStmt indicates whether to enable TiFlash to read for write statements.
 	EnableTiFlashReadForWriteStmt bool
 
+	// EnableUnsafeSubstitute indicates whether to enable generate column takes unsafe substitute.
+	EnableUnsafeSubstitute bool
+
 	// ForeignKeyChecks indicates whether to enable foreign key constraint check.
 	ForeignKeyChecks bool
 
@@ -1268,6 +1274,9 @@ type SessionVars struct {
 	// ranges would exceed the limit, it chooses less accurate ranges such as full range. 0 indicates that there is no
 	// memory limit for ranges.
 	RangeMaxSize int64
+
+	// LastPlanReplayerToken indicates the last plan replayer token
+	LastPlanReplayerToken string
 }
 
 // GetPreparedStmtByName returns the prepared statement specified by stmtName.
@@ -1555,6 +1564,7 @@ func NewSessionVars() *SessionVars {
 		EnableLegacyInstanceScope:     DefEnableLegacyInstanceScope,
 		RemoveOrderbyInSubquery:       DefTiDBRemoveOrderbyInSubquery,
 		EnableSkewDistinctAgg:         DefTiDBSkewDistinctAgg,
+		Enable3StageDistinctAgg:       DefTiDB3StageDistinctAgg,
 		MaxAllowedPacket:              DefMaxAllowedPacket,
 		TiFlashFastScan:               DefTiFlashFastScan,
 		EnableTiFlashReadForWriteStmt: DefTiDBEnableTiFlashReadForWriteStmt,

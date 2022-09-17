@@ -164,6 +164,9 @@ type Expression interface {
 	// resolveIndicesByVirtualExpr is called inside the `ResolveIndicesByVirtualExpr` It will perform on the expression itself.
 	resolveIndicesByVirtualExpr(schema *Schema) bool
 
+	// RemapColumn remaps columns with provided mapping and returns new expression
+	RemapColumn(map[int64]*Column) (Expression, error)
+
 	// ExplainInfo returns operator information to be explained.
 	ExplainInfo() string
 
@@ -1151,7 +1154,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		default:
 			return false
 		}
-	case ast.Upper, ast.Ucase, ast.Lower, ast.Lcase:
+	case ast.Upper, ast.Ucase, ast.Lower, ast.Lcase, ast.Space:
 		return true
 	case ast.Sysdate:
 		return true
