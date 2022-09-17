@@ -139,6 +139,29 @@ var (
 	telemetryTablePartitionCreateIntervalUsage = metrics.TelemetryTablePartitionCreateIntervalPartitionsCnt
 	telemetryTablePartitionAddIntervalUsage    = metrics.TelemetryTablePartitionAddIntervalPartitionsCnt
 	telemetryTablePartitionDropIntervalUsage   = metrics.TelemetryTablePartitionDropIntervalPartitionsCnt
+
+	telemetryCTEUsageRecurCTE       = metrics.TelemetrySQLCTECnt.WithLabelValues("recurCTE")
+	telemetryCTEUsageNonRecurCTE    = metrics.TelemetrySQLCTECnt.WithLabelValues("nonRecurCTE")
+	telemetryCTEUsageNotCTE         = metrics.TelemetrySQLCTECnt.WithLabelValues("notCTE")
+	telemetryMultiSchemaChangeUsage = metrics.TelemetryMultiSchemaChangeCnt
+
+	telemetryTablePartitionUsage                = metrics.TelemetryTablePartitionCnt
+	telemetryTablePartitionListUsage            = metrics.TelemetryTablePartitionListCnt
+	telemetryTablePartitionRangeUsage           = metrics.TelemetryTablePartitionRangeCnt
+	telemetryTablePartitionHashUsage            = metrics.TelemetryTablePartitionHashCnt
+	telemetryTablePartitionRangeColumnsUsage    = metrics.TelemetryTablePartitionRangeColumnsCnt
+	telemetryTablePartitionRangeColumnsGt1Usage = metrics.TelemetryTablePartitionRangeColumnsGt1Cnt
+	telemetryTablePartitionRangeColumnsGt2Usage = metrics.TelemetryTablePartitionRangeColumnsGt2Cnt
+	telemetryTablePartitionRangeColumnsGt3Usage = metrics.TelemetryTablePartitionRangeColumnsGt3Cnt
+	telemetryTablePartitionListColumnsUsage     = metrics.TelemetryTablePartitionListColumnsCnt
+	telemetryTablePartitionMaxPartitionsUsage   = metrics.TelemetryTablePartitionMaxPartitionsCnt
+	telemetryTablePartitionCreateIntervalUsage  = metrics.TelemetryTablePartitionCreateIntervalPartitionsCnt
+	telemetryTablePartitionAddIntervalUsage     = metrics.TelemetryTablePartitionAddIntervalPartitionsCnt
+	telemetryTablePartitionDropIntervalUsage    = metrics.TelemetryTablePartitionDropIntervalPartitionsCnt
+
+	telemetryLockUserUsage          = metrics.TelemetryAccountLockCnt.WithLabelValues("lockUser")
+	telemetryUnlockUserUsage        = metrics.TelemetryAccountLockCnt.WithLabelValues("unlockUser")
+	telemetryCreateOrAlterUserUsage = metrics.TelemetryAccountLockCnt.WithLabelValues("createOrAlterUser")
 )
 
 // Session context, it is consistent with the lifecycle of a client connection.
@@ -3314,6 +3337,15 @@ func (s *session) updateTelemetryMetric(es *executor.ExecStmt) {
 		}
 		if ti.PartitionTelemetry.UseTablePartitionRangeColumns {
 			telemetryTablePartitionRangeColumnsUsage.Inc()
+		}
+		if ti.PartitionTelemetry.UseTablePartitionRangeColumnsGt1 {
+			telemetryTablePartitionRangeColumnsGt1Usage.Inc()
+		}
+		if ti.PartitionTelemetry.UseTablePartitionRangeColumnsGt2 {
+			telemetryTablePartitionRangeColumnsGt2Usage.Inc()
+		}
+		if ti.PartitionTelemetry.UseTablePartitionRangeColumnsGt3 {
+			telemetryTablePartitionRangeColumnsGt3Usage.Inc()
 		}
 		if ti.PartitionTelemetry.UseTablePartitionListColumns {
 			telemetryTablePartitionListColumnsUsage.Inc()

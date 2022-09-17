@@ -175,6 +175,10 @@ var defaultSysVars = []*SysVar{
 		s.EnableSkewDistinctAgg = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOpt3StageDistinctAgg, Value: BoolToOnOff(DefTiDB3StageDistinctAgg), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.Enable3StageDistinctAgg = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: ScopeSession, Name: TiDBOptWriteRowID, Value: BoolToOnOff(DefOptWriteRowID), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.AllowWriteRowID = TiDBOptOn(val)
 		return nil
@@ -461,6 +465,12 @@ var defaultSysVars = []*SysVar{
 			return BoolToOnOff(config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()), nil
 		},
 	},
+	{Scope: ScopeInstance, Name: TiDBRCReadCheckTS, Value: BoolToOnOff(DefRCReadCheckTS), Type: TypeBool, SetGlobal: func(s *SessionVars, val string) error {
+		EnableRCReadCheckTS.Store(TiDBOptOn(val))
+		return nil
+	}, GetGlobal: func(s *SessionVars) (string, error) {
+		return BoolToOnOff(EnableRCReadCheckTS.Load()), nil
+	}},
 
 	/* The system variables below have GLOBAL scope  */
 	{Scope: ScopeGlobal, Name: MaxPreparedStmtCount, Value: strconv.FormatInt(DefMaxPreparedStmtCount, 10), Type: TypeInt, MinValue: -1, MaxValue: 1048576},
@@ -1721,10 +1731,6 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBRCReadCheckTS, Type: TypeBool, Value: BoolToOnOff(DefRCReadCheckTS), SetSession: func(s *SessionVars, val string) error {
-		s.RcReadCheckTS = TiDBOptOn(val)
-		return nil
-	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBRCWriteCheckTs, Type: TypeBool, Value: BoolToOnOff(DefTiDBRcWriteCheckTs), SetSession: func(s *SessionVars, val string) error {
 		s.RcWriteCheckTS = TiDBOptOn(val)
 		return nil
