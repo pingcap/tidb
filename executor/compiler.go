@@ -57,6 +57,8 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
+	c.Ctx.GetSessionVars().StmtCtx.IsReadOnly = plannercore.IsReadOnly(stmtNode, c.Ctx.GetSessionVars())
+
 	ret := &plannercore.PreprocessorReturn{}
 	err := plannercore.Preprocess(c.Ctx,
 		stmtNode,
@@ -75,8 +77,6 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 			sessiontxn.AssertTxnManagerReadTS(c.Ctx, ret.LastSnapshotTS)
 		}
 	})
-
-	c.Ctx.GetSessionVars().StmtCtx.IsReadOnly = plannercore.IsReadOnly(stmtNode, c.Ctx.GetSessionVars())
 
 	is := sessiontxn.GetTxnManager(c.Ctx).GetTxnInfoSchema()
 	sessVars := c.Ctx.GetSessionVars()
