@@ -50,7 +50,9 @@ go_library(
         ":ddl_friend",
     ],
     deps = [
+        "//br/pkg/utils",
         "//config",
+        "//ddl/ingest",
         "//ddl/label",
         "//ddl/placement",
         "//ddl/syncer",
@@ -248,7 +250,6 @@ go_test(
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/metapb",
-        "@com_github_pingcap_log//:log",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//oracle",
