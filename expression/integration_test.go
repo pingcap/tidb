@@ -7633,4 +7633,10 @@ func TestRegexpPushdown(t *testing.T) {
 
 	tk.MustExec("drop table if exists regbin")
 	tk.MustExec("create table regbin(a varchar(20) null,b varchar(20) null,rep varchar(20) null) charset=binary collate=binary;")
+
+	tk.MustQuery("explain select a from regbin where regexp_like(a, b);").Check(testkit.Rows(
+		"Projection_4 8000.00 root  test.regbin.a",
+		"└─Selection_5 8000.00 root  regexp_like(test.regbin.a, test.regbin.b)",
+		"  └─TableReader_7 10000.00 root  data:TableFullScan_6",
+		"    └─TableFullScan_6 10000.00 cop[tikv] table:regbin keep order:false, stats:pseudo"))
 }

@@ -82,16 +82,16 @@
       {
         "SQL": "explain format = 'brief' select * from t where b regexp '.*test.*'",
         "Result": [
-          "Selection 8000.00 root  regexp(test.t.b, \".*test.*\")",
-          "└─TableReader 10000.00 root  data:TableFullScan",
+          "TableReader 8000.00 root  data:Selection",
+          "└─Selection 8000.00 cop[tikv]  regexp(test.t.b, \".*test.*\")",
           "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where b not regexp '.*test.*'",
         "Result": [
-          "Selection 8000.00 root  not(istrue_with_null(regexp(test.t.b, \".*test.*\")))",
-          "└─TableReader 10000.00 root  data:TableFullScan",
+          "TableReader 8000.00 root  data:Selection",
+          "└─Selection 8000.00 cop[tikv]  not(istrue_with_null(regexp(test.t.b, \".*test.*\")))",
           "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
@@ -150,16 +150,16 @@
       {
         "SQL": "explain format = 'brief' select * from t where b regexp '.*test.*'",
         "Result": [
-          "Selection 9000.00 root  regexp(test.t.b, \".*test.*\")",
-          "└─TableReader 10000.00 root  data:TableFullScan",
+          "TableReader 9000.00 root  data:Selection",
+          "└─Selection 9000.00 cop[tikv]  regexp(test.t.b, \".*test.*\")",
           "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where b not regexp '.*test.*'",
         "Result": [
-          "Selection 1000.00 root  not(istrue_with_null(regexp(test.t.b, \".*test.*\")))",
-          "└─TableReader 10000.00 root  data:TableFullScan",
+          "TableReader 1000.00 root  data:Selection",
+          "└─Selection 1000.00 cop[tikv]  not(istrue_with_null(regexp(test.t.b, \".*test.*\")))",
           "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
@@ -226,32 +226,32 @@
       {
         "SQL": "explain format = 'brief' select * from t where b regexp '.*test.*'",
         "Result": [
-          "Selection 1000.00 root  regexp(test.t.b, \".*test.*\")",
-          "└─TableReader 10000.00 root  data:TableFullScan",
+          "TableReader 1000.00 root  data:Selection",
+          "└─Selection 1000.00 cop[tikv]  regexp(test.t.b, \".*test.*\")",
           "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where b rlike '.*test.*'",
         "Result": [
-          "Selection 1000.00 root  regexp(test.t.b, \".*test.*\")",
-          "└─TableReader 10000.00 root  data:TableFullScan",
+          "TableReader 1000.00 root  data:Selection",
+          "└─Selection 1000.00 cop[tikv]  regexp(test.t.b, \".*test.*\")",
           "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where b not rlike '.*test.*'",
         "Result": [
-          "Selection 9000.00 root  not(istrue_with_null(regexp(test.t.b, \".*test.*\")))",
-          "└─TableReader 10000.00 root  data:TableFullScan",
+          "TableReader 9000.00 root  data:Selection",
+          "└─Selection 9000.00 cop[tikv]  not(istrue_with_null(regexp(test.t.b, \".*test.*\")))",
           "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where b not regexp '.*test.*'",
         "Result": [
-          "Selection 9000.00 root  not(istrue_with_null(regexp(test.t.b, \".*test.*\")))",
-          "└─TableReader 10000.00 root  data:TableFullScan",
+          "TableReader 9000.00 root  data:Selection",
+          "└─Selection 9000.00 cop[tikv]  not(istrue_with_null(regexp(test.t.b, \".*test.*\")))",
           "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
@@ -310,16 +310,16 @@
       {
         "SQL": "explain format = 'brief' select * from t where b regexp '.*test.*'",
         "Result": [
-          "Selection 1000.00 root  regexp(test.t.b, \".*test.*\")",
-          "└─TableReader 10000.00 root  data:TableFullScan",
+          "TableReader 1000.00 root  data:Selection",
+          "└─Selection 1000.00 cop[tikv]  regexp(test.t.b, \".*test.*\")",
           "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where b not regexp '.*test.*'",
         "Result": [
-          "Selection 9000.00 root  not(istrue_with_null(regexp(test.t.b, \".*test.*\")))",
-          "└─TableReader 10000.00 root  data:TableFullScan",
+          "TableReader 9000.00 root  data:Selection",
+          "└─Selection 9000.00 cop[tikv]  not(istrue_with_null(regexp(test.t.b, \".*test.*\")))",
           "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
