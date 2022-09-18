@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"strings"
+	"sync"
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/kv"
@@ -16,9 +17,11 @@ import (
 
 var (
 	// check sql.DB and sql.Conn implement QueryExecutor and DBExecutor
-	_                  DBExecutor = &sql.DB{}
-	_                  DBExecutor = &sql.Conn{}
-	logBackupTaskExist bool
+	_ DBExecutor = &sql.DB{}
+	_ DBExecutor = &sql.Conn{}
+
+	LogBackupTaskMutex sync.Mutex
+	logBackupTaskCount int
 )
 
 // QueryExecutor is a interface for exec query
@@ -91,12 +94,21 @@ func IsLogBackupEnabled(ctx sqlexec.RestrictedSQLExecutor) (bool, error) {
 	return true, nil
 }
 
-// SetLogBackupTaskExist sets that the log-backup task is existed.
-func SetLogBackupTaskExist(taskExist bool) {
-	logBackupTaskExist = taskExist
+// CheckLogBackupTaskExist increases the count of log backup task.
+func LogBackupTaskCountInc() {
+	LogBackupTaskMutex.Lock()
+	logBackupTaskCount++
+	LogBackupTaskMutex.Unlock()
+}
+
+// CheckLogBackupTaskExist decreases the count of log backup task.
+func LogBackupTaskCountDec() {
+	LogBackupTaskMutex.Lock()
+	logBackupTaskCount--
+	LogBackupTaskMutex.Unlock()
 }
 
 // CheckLogBackupTaskExist checks that whether log-backup is existed.
 func CheckLogBackupTaskExist() bool {
-	return logBackupTaskExist
+	return logBackupTaskCount > 0
 }

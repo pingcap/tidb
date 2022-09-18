@@ -410,10 +410,10 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 	defer c.taskMu.Unlock()
 	switch e.Type {
 	case EventAdd:
-		utils.SetLogBackupTaskExist(true)
+		utils.LogBackupTaskCountInc()
 		c.task = e.Info
 	case EventDel:
-		utils.SetLogBackupTaskExist(false)
+		utils.LogBackupTaskCountDec()
 		c.task = nil
 		c.state = &fullScan{}
 		if err := c.env.ClearV3GlobalCheckpointForTask(ctx, e.Name); err != nil {
