@@ -175,8 +175,8 @@ func (c *hashRowContainer) GetAllMatchedRows(probeHCtx *hashContext, probeSideRo
 		if probeKeyNullBits != nil && len(probeHCtx.naKeyColIdx) > 1 {
 			// if len(probeHCtx.naKeyColIdx)=1
 			//     that means the NA-Join probe key is directly a (null) <-> (fetch all buckets), nothing to do.
-			// else like
-			//	   (null, 1, 2), we should use the not-null probe bit to filter rows. Only fetch rows like
+			// else
+			//	   like (null, 1, 2), we should use the not-null probe bit to filter rows. Only fetch rows like
 			//     (  ? , 1, 2), that exactly with value as 1 and 2 in the second and third join key column.
 			needCheckProbeRowPos = needCheckProbeRowPos[:0]
 			needCheckBuildRowPos = needCheckBuildRowPos[:0]
