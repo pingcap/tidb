@@ -1028,8 +1028,8 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 			return true
 		}
 	case ast.Regexp, ast.RegexpLike:
-		_, collation := sf.Function.CharsetAndCollation()
-		if collation == charset.CollationBin {
+		funcCharset, funcCollation := sf.Function.CharsetAndCollation()
+		if funcCharset == charset.CharsetBin && funcCollation == charset.CollationBin {
 			return false
 		}
 		return true
