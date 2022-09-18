@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
@@ -982,7 +983,7 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		ast.Length, ast.BitLength, ast.Concat, ast.ConcatWS, ast.Replace, ast.ASCII, ast.Hex,
 		ast.Reverse, ast.LTrim, ast.RTrim, ast.Strcmp, ast.Space, ast.Elt, ast.Field,
 		InternalFuncFromBinary, InternalFuncToBinary, ast.Mid, ast.Substring, ast.Substr, ast.CharLength,
-		ast.Right, /* ast.Left */
+		ast.Right /* ast.Left */, ast.RegexpSubstr, ast.RegexpInStr, ast.RegexpReplace,
 
 		// json functions.
 		ast.JSONType, ast.JSONExtract, ast.JSONObject, ast.JSONArray, ast.JSONMerge, ast.JSONSet,
@@ -1026,6 +1027,12 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		case tipb.ScalarFuncSig_RandWithSeedFirstGen:
 			return true
 		}
+	case ast.Regexp, ast.RegexpLike:
+		funcCharset, funcCollation := sf.Function.CharsetAndCollation()
+		if funcCharset == charset.CharsetBin && funcCollation == charset.CollationBin {
+			return false
+		}
+		return true
 	}
 	return false
 }
