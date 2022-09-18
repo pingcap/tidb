@@ -54,6 +54,9 @@ const (
 	// TiDBOptSkewDistinctAgg is used to indicate the distinct agg has data skew
 	TiDBOptSkewDistinctAgg = "tidb_opt_skew_distinct_agg"
 
+	// TiDBOpt3StageDistinctAgg is used to indicate whether to plan and execute the distinct agg in 3 stages
+	TiDBOpt3StageDistinctAgg = "tidb_opt_three_stage_distinct_agg"
+
 	// TiDBBCJThresholdSize is used to limit the size of small table for mpp broadcast join.
 	// Its unit is bytes, if the size of small table is larger than it, we will not use bcj.
 	TiDBBCJThresholdSize = "tidb_broadcast_join_threshold_size"
@@ -237,6 +240,9 @@ const (
 
 	// TiFlashFastScan indicates whether use fast scan in tiflash.
 	TiFlashFastScan = "tiflash_fastscan"
+
+	// TiDBEnableUnsafeSubstitute indicates whether to enable generate column takes unsafe substitute.
+	TiDBEnableUnsafeSubstitute = "tidb_enable_unsafe_substitute"
 
 	// TiDBEnableTiFlashReadForWriteStmt indicates whether to enable TiFlash to read for write statements.
 	TiDBEnableTiFlashReadForWriteStmt = "tidb_enable_tiflash_read_for_write_stmt"
@@ -1011,6 +1017,7 @@ const (
 	DefRCReadCheckTS                               = false
 	DefTiDBRemoveOrderbyInSubquery                 = false
 	DefTiDBSkewDistinctAgg                         = false
+	DefTiDB3StageDistinctAgg                       = true
 	DefTiDBReadStaleness                           = 0
 	DefTiDBGCMaxWaitTime                           = 24 * 60 * 60
 	DefMaxAllowedPacket                     uint64 = 67108864
@@ -1105,7 +1112,8 @@ var (
 	// DDLDiskQuota is the temporary variable for set disk quota for lightning
 	DDLDiskQuota = atomic.NewUint64(DefTiDBDDLDiskQuota)
 	// EnableForeignKey indicates whether to enable foreign key feature.
-	EnableForeignKey = atomic.NewBool(false)
+	EnableForeignKey    = atomic.NewBool(false)
+	EnableRCReadCheckTS = atomic.NewBool(false)
 )
 
 var (
