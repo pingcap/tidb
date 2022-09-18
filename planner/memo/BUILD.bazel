@@ -38,6 +38,7 @@ go_test(
         "//parser/model",
         "//planner/core",
         "//planner/property",
+        "//sessionctx/variable",
         "//testkit/testsetup",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
