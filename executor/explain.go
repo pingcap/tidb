@@ -258,8 +258,8 @@ func (h *memoryDebugModeHandler) run() {
 }
 
 func getHeapProfile() (fileName string, err error) {
-	disk.TempDirMutex.RLock()
-	defer disk.TempDirMutex.RUnlock()
+	disk.TmpDirMutex.RLock()
+	defer disk.TmpDirMutex.RUnlock()
 	tempDir := filepath.Join(config.GetGlobalConfig().Instance.TmpDir, "record")
 	timeString := time.Now().Format(time.RFC3339)
 	fileName = filepath.Join(tempDir, "heapGC"+timeString)

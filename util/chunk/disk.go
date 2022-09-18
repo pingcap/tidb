@@ -110,8 +110,8 @@ func NewListInDisk(fieldTypes []*types.FieldType) *ListInDisk {
 }
 
 func (l *ListInDisk) initDiskFile() (err error) {
-	disk.TempDirMutex.RLock()
-	defer disk.TempDirMutex.RUnlock()
+	disk.TmpDirMutex.RLock()
+	defer disk.TmpDirMutex.RUnlock()
 	err = disk.CheckAndInitTempDir()
 	if err != nil {
 		return

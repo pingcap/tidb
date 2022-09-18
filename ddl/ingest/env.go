@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/size"
 	"go.uber.org/zap"
@@ -87,6 +88,8 @@ func genRLimit() uint64 {
 // Generate lightning local store dir in TiDB data dir.
 // it will append -port to be tmp_ddl suffix.
 func genLightningDataDir() (string, error) {
+	disk.TmpDirMutex.RLock()
+	defer disk.TmpDirMutex.RUnlock()
 	tidbCfg := config.GetGlobalConfig()
 	sortPathSuffix := "/tmp_ddl-" + strconv.Itoa(int(tidbCfg.Port))
 	sortPath := filepath.Join(tidbCfg.Instance.TmpDir, sortPathSuffix)

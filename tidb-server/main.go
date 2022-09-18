@@ -181,7 +181,7 @@ func main() {
 	registerStores()
 	registerMetrics()
 	if variable.EnableTmpStorageOnOOM.Load() {
-		config.GetGlobalConfig().UpdateTempStoragePath()
+		config.GetGlobalConfig().UpdateTmpDir()
 		err := disk.InitializeTempDir()
 		terror.MustNil(err)
 		config.CheckTempStorageQuota()

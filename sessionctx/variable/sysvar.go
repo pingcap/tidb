@@ -460,14 +460,14 @@ var defaultSysVars = []*SysVar{
 		},
 	},
 	{Scope: ScopeInstance, Name: TmpDir, Value: config.GetGlobalConfig().Instance.TmpDir, Type: TypeStr, SetGlobal: func(s *SessionVars, val string) error {
-		// FIXME: check if temp dir is being used; if used, reject
-		disk.TempDirMutex.Lock()
-		defer disk.TempDirMutex.Unlock()
+		disk.TmpDirMutex.Lock()
+		defer disk.TmpDirMutex.Unlock()
 		oldVal := config.GetGlobalConfig().Instance.TmpDir
 		config.GetGlobalConfig().Instance.TmpDir = val
-		config.GetGlobalConfig().UpdateTempStoragePath()
+		config.GetGlobalConfig().UpdateTmpDir()
 		if err := disk.InitializeTempDir(); err != nil {
 			config.GetGlobalConfig().Instance.TmpDir = oldVal
+			config.GetGlobalConfig().UpdateTmpDir()
 			return err
 		}
 		config.CheckTempStorageQuota()
@@ -484,7 +484,7 @@ var defaultSysVars = []*SysVar{
 			if !os.IsNotExist(err) {
 				return normalizedValue, err
 			}
-			if err = os.Mkdir(normalizedValue, 0o750); err != nil {
+			if err = os.Mkdir(normalizedValue, 0750); err != nil {
 				return normalizedValue, err
 			}
 			defer func() {

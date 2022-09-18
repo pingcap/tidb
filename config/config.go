@@ -278,9 +278,9 @@ type Config struct {
 	TempStorageQuota           int64      `toml:"tmp-storage-quota" json:"tmp-storage-quota"` // Bytes
 }
 
-// UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
+// UpdateTmpDir is to update the `TempStoragePath` if port/statusPort was changed
 // and the `tmpdir` was not specified in the conf.toml or was specified the same as the default value.
-func (c *Config) UpdateTempStoragePath() {
+func (c *Config) UpdateTmpDir() {
 	if c.Instance.TmpDir == TempStorageDirName {
 		c.Instance.TmpDir = encodeDefTempStorageDir(os.TempDir(), c.Host, c.Status.StatusHost, c.Port, c.Status.StatusPort)
 	} else {

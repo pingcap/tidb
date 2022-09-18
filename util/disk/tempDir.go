@@ -31,8 +31,8 @@ import (
 var (
 	tempDirLock fslock.Handle
 	sf          singleflight.Group
-	// TempDirMutex is used for changing sysvar TmpDir
-	TempDirMutex sync.RWMutex
+	// TmpDirMutex is used for changing sysvar TmpDir
+	TmpDirMutex sync.RWMutex
 )
 
 const (
