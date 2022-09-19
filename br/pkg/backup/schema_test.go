@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	filter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/stretchr/testify/require"
+	"go.opencensus.io/stats/view"
 )
 
 func createMockCluster(t *testing.T) *mock.Cluster {
@@ -30,6 +31,7 @@ func createMockCluster(t *testing.T) *mock.Cluster {
 	require.NoError(t, err)
 	require.NoError(t, m.Start())
 	t.Cleanup(func() {
+		view.Stop()
 		m.Stop()
 	})
 	return m
@@ -76,6 +78,15 @@ type simpleProgress struct {
 
 func (sp *simpleProgress) Inc() {
 	atomic.AddInt64(&sp.counter, 1)
+}
+
+// IncBy implements glue.Progress
+func (sp *simpleProgress) IncBy(cnt int64) {
+	atomic.AddInt64(&sp.counter, cnt)
+}
+
+func (sp *simpleProgress) GetCurrent() int64 {
+	return 0
 }
 
 func (sp *simpleProgress) Close() {}
