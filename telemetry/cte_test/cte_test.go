@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/testkit/testsetup"
 	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/tests/v3/integration"
+	"go.opencensus.io/stats/view"
 	"go.uber.org/goleak"
 )
 
@@ -119,6 +120,7 @@ func newSuite(t *testing.T) *testSuite {
 		suite.dom.Close()
 		err = suite.store.Close()
 		require.NoError(t, err)
+		view.Stop()
 	}
 
 	return suite
