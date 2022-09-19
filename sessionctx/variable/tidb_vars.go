@@ -986,7 +986,7 @@ const (
 	DefTiDBAnalyzeVersion                          = 2
 	DefTiDBEnableIndexMergeJoin                    = false
 	DefTiDBTrackAggregateMemoryUsage               = true
-	DefTiDBEnableExchangePartition                 = false
+	DefTiDBEnableExchangePartition                 = true
 	DefCTEMaxRecursionDepth                        = 1000
 	DefTiDBTmpTableMaxSize                         = 64 << 20 // 64MB.
 	DefTiDBEnableLocalTxn                          = false
@@ -1041,7 +1041,7 @@ const (
 	DefTiDBPrepPlanCacheMemoryGuardRatio           = 0.1
 	DefTiDBEnableConcurrentDDL                     = concurrencyddl.TiDBEnableConcurrentDDL
 	DefTiDBSimplifiedMetrics                       = false
-	DefTiDBEnablePaging                            = true
+	DefTiDBEnablePaging                            = false
 	DefTiFlashFineGrainedShuffleStreamCount        = 0
 	DefStreamCountWhenMaxThreadsNotSet             = 8
 	DefTiFlashFineGrainedShuffleBatchSize          = 8192

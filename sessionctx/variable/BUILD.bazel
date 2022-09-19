@@ -97,6 +97,7 @@ go_test(
         "//util/mock",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//util",
+        "@io_opencensus_go//stats/view",
         "@org_uber_go_goleak//:goleak",
     ],
 )
