@@ -319,3 +319,18 @@ func TestLRUPCSetCapacity(t *testing.T) {
 	err = lru.SetCapacity(0)
 	require.Error(t, err, "capacity of LRU cache should be at least 1")
 }
+
+func TestIssue37914(t *testing.T) {
+	lru := NewLRUPlanCache(3, 0.1, 1, pickFromBucket)
+
+	pTypes := []*types.FieldType{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeDouble)}
+	key := newMockHashKey(int64(1))
+	val := &fakePlan{
+		plan: int64(1),
+		tps:  pTypes,
+	}
+
+	require.NotPanics(t, func() {
+		lru.Put(key, val, pTypes)
+	})
+}

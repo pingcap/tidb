@@ -475,7 +475,7 @@ func (s *session) GetSessionManager() util.SessionManager {
 }
 
 func (s *session) StoreQueryFeedback(feedback interface{}) {
-	if fb, ok := feedback.(*statistics.QueryFeedback); !ok || fb == nil || !fb.Valid {
+	if fb, ok := feedback.(*statistics.QueryFeedback); !ok || fb == nil || !fb.Valid.Load() {
 		return
 	}
 	if s.statsCollector != nil {
