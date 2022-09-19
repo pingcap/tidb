@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
+	"go.opencensus.io/stats/view"
 )
 
 func TestFlushTables(t *testing.T) {
@@ -921,6 +922,7 @@ func TestFlushPrivileges(t *testing.T) {
 }
 
 func TestFlushPrivilegesPanic(t *testing.T) {
+	defer view.Stop()
 	// Run in a separate suite because this test need to set SkipGrantTable config.
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
