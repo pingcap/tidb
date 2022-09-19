@@ -1473,7 +1473,6 @@ func (d *Datum) convertToMysqlDecimal(sc *stmtctx.StatementContext, target *Fiel
 // ProduceDecWithSpecifiedTp produces a new decimal according to `flen` and `decimal`.
 func ProduceDecWithSpecifiedTp(dec *MyDecimal, tp *FieldType, sc *stmtctx.StatementContext) (_ *MyDecimal, err error) {
 	flen, decimal := tp.GetFlen(), tp.GetDecimal()
-
 	if flen != UnspecifiedLength && decimal != UnspecifiedLength {
 		if flen < decimal {
 			return nil, ErrMBiggerThanD.GenWithStackByArgs("")
