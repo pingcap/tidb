@@ -298,7 +298,17 @@ func partitionPruning(ctx sessionctx.Context, tbl table.PartitionedTable, conds 
 		}
 	}
 	if len(ret) == 0 {
-		ret = []table.PhysicalTable{tbl.GetPartition(pi.Definitions[0].ID)}
+		// TiFlash cannot process an empty task correctly, so choose to leave it with some data to read.
+		if len(partitionNames) == 0 {
+			ret = []table.PhysicalTable{tbl.GetPartition(pi.Definitions[0].ID)}
+		} else {
+			for _, def := range pi.Definitions {
+				if def.Name.L == partitionNames[0].L {
+					ret = []table.PhysicalTable{tbl.GetPartition(def.ID)}
+					break
+				}
+			}
+		}
 	}
 	return ret, nil
 }
