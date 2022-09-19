@@ -63,7 +63,7 @@ func (wp *workerPool) get() (*worker, error) {
 
 // put returns workerPool to context resource pool.
 func (wp *workerPool) put(wk *worker) {
-	if wp.resPool == nil {
+	if wp.resPool == nil || wp.exit.Load() {
 		return
 	}
 
@@ -83,7 +83,72 @@ func (wp *workerPool) close() {
 	wp.resPool.Close()
 }
 
-// tp return the type of worker pool.
+// tp return the type of backfill worker pool.
 func (wp *workerPool) tp() jobType {
 	return wp.t
+}
+
+// backfilWorkerPool is used to new backfill worker.
+type backfilWorkerPool struct {
+	exit    atomic.Bool
+	resPool *pools.ResourcePool
+}
+
+func newBackfillWorkerPool(resPool *pools.ResourcePool) *backfilWorkerPool {
+	return &backfilWorkerPool{
+		exit:    *atomic.NewBool(false),
+		resPool: resPool,
+	}
+}
+
+// setCapacity changes the capacity of the pool.
+// A setCapacity of 0 is equivalent to closing the backfilWorkerPool.
+func (bwp *backfilWorkerPool) setCapacity(capacity int) error {
+	return bwp.resPool.SetCapacity(capacity)
+}
+
+// get gets backfilWorkerPool from context resource pool.
+// Please remember to call put after you finished using backfilWorkerPool.
+func (bwp *backfilWorkerPool) get() (*backfillWorker, error) {
+	if bwp.resPool == nil {
+		return nil, nil
+	}
+
+	if bwp.exit.Load() {
+		return nil, errors.Errorf("backfill worker pool is closed")
+	}
+
+	// no need to protect bwp.resPool
+	resource, err := bwp.resPool.TryGet()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if resource == nil {
+		return nil, nil
+	}
+
+	worker := resource.(*backfillWorker)
+	return worker, nil
+}
+
+// put returns workerPool to context resource pool.
+func (bwp *backfilWorkerPool) put(wk *backfillWorker) {
+	if bwp.resPool == nil || bwp.exit.Load() {
+		return
+	}
+
+	// No need to protect bwp.resPool, even the bwp.resPool is closed, the ctx still need to
+	// put into resPool, because when resPool is closing, it will wait all the ctx returns, then resPool finish closing.
+	bwp.resPool.Put(wk)
+}
+
+// close clean up the backfilWorkerPool.
+func (bwp *backfilWorkerPool) close() {
+	// Prevent closing resPool twice.
+	if bwp.resPool == nil || bwp.exit.Load() {
+		return
+	}
+	bwp.exit.Store(true)
+	logutil.BgLogger().Info("[ddl] closing workerPool")
+	bwp.resPool.Close()
 }

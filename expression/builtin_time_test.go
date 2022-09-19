@@ -846,7 +846,7 @@ func TestNowAndUTCTimestamp(t *testing.T) {
 		// we canot use a constant value to check timestamp funcs, so here
 		// just to check the fractional seconds part and the time delta.
 		require.False(t, strings.Contains(mt.String(), "."))
-		require.LessOrEqual(t, ts.Sub(gotime(mt, ts.Location())), 3*time.Second)
+		require.LessOrEqual(t, ts.Sub(gotime(mt, ts.Location())), 5*time.Second)
 
 		f, err = x.fc.getFunction(ctx, datumsToConstants(types.MakeDatums(6)))
 		require.NoError(t, err)
@@ -856,7 +856,7 @@ func TestNowAndUTCTimestamp(t *testing.T) {
 		require.NoError(t, err)
 		mt = v.GetMysqlTime()
 		require.True(t, strings.Contains(mt.String(), "."))
-		require.LessOrEqual(t, ts.Sub(gotime(mt, ts.Location())), 3*time.Second)
+		require.LessOrEqual(t, ts.Sub(gotime(mt, ts.Location())), 5*time.Second)
 
 		resetStmtContext(ctx)
 		_, err = x.fc.getFunction(ctx, datumsToConstants(types.MakeDatums(8)))
@@ -2745,7 +2745,7 @@ func TestConvertTz(t *testing.T) {
 		{"2021-10-31 02:59:59", "Europe/Amsterdam", "+02:00", true, "2021-10-31 03:59:59"},
 		{"2021-10-31 02:00:00", "Europe/Amsterdam", "+01:00", true, "2021-10-31 02:00:00"},
 		{"2021-10-31 03:00:00", "Europe/Amsterdam", "+01:00", true, "2021-10-31 03:00:00"},
-		{"2021-03-28 02:30:00", "Europe/Amsterdam", "UTC", true, ""},
+		{"2021-03-28 02:30:00", "Europe/Amsterdam", "UTC", true, "2021-03-28 01:00:00"},
 		{"2021-10-22 10:00:00", "Europe/Tallinn", "SYSTEM", true, t1.In(loc2).Format("2006-01-02 15:04:00")},
 		{"2021-10-22 10:00:00", "SYSTEM", "Europe/Tallinn", true, t2.In(loc1).Format("2006-01-02 15:04:00")},
 	}

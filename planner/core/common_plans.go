@@ -754,12 +754,8 @@ func (e *Explain) getOperatorInfo(p Plan, id string) (string, string, string, st
 	}
 	estCost := "N/A"
 	if pp, ok := p.(PhysicalPlan); ok {
-		if p.SCtx().GetSessionVars().EnableNewCostInterface {
-			planCost, _ := pp.GetPlanCost(property.RootTaskType, NewDefaultPlanCostOption())
-			estCost = strconv.FormatFloat(planCost, 'f', 2, 64)
-		} else {
-			estCost = strconv.FormatFloat(pp.Cost(), 'f', 2, 64)
-		}
+		planCost, _ := pp.GetPlanCost(property.RootTaskType, NewDefaultPlanCostOption())
+		estCost = strconv.FormatFloat(planCost, 'f', 2, 64)
 	}
 	var accessObject, operatorInfo string
 	if plan, ok := p.(dataAccesser); ok {
@@ -864,11 +860,7 @@ func binaryOpFromFlatOp(explainCtx sessionctx.Context, op *FlatOperator, out *ti
 	}
 	if op.IsPhysicalPlan {
 		p := op.Origin.(PhysicalPlan)
-		if p.SCtx().GetSessionVars().EnableNewCostInterface {
-			out.Cost, _ = p.GetPlanCost(property.RootTaskType, NewDefaultPlanCostOption())
-		} else {
-			out.Cost = p.Cost()
-		}
+		out.Cost, _ = p.GetPlanCost(property.RootTaskType, NewDefaultPlanCostOption())
 	}
 	if rootStats != nil {
 		basic, groups := rootStats.MergeStats()

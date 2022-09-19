@@ -2116,6 +2116,7 @@ func TestBuiltin(t *testing.T) {
 		{`SELECT SHA1('abc');`, true, "SELECT SHA1(_UTF8MB4'abc')"},
 		{`SELECT SHA('abc');`, true, "SELECT SHA(_UTF8MB4'abc')"},
 		{`SELECT SHA2('abc', 224);`, true, "SELECT SHA2(_UTF8MB4'abc', 224)"},
+		{`SELECT SM3('abc');`, true, "SELECT SM3(_UTF8MB4'abc')"},
 		{`SELECT UNCOMPRESS('any string');`, true, "SELECT UNCOMPRESS(_UTF8MB4'any string')"},
 		{`SELECT UNCOMPRESSED_LENGTH(@compressed_string);`, true, "SELECT UNCOMPRESSED_LENGTH(@`compressed_string`)"},
 		{`SELECT VALIDATE_PASSWORD_STRENGTH(@str);`, true, "SELECT VALIDATE_PASSWORD_STRENGTH(@`str`)"},
@@ -2144,6 +2145,12 @@ func TestBuiltin(t *testing.T) {
 		{"select next value for seq", true, "SELECT NEXTVAL(`seq`)"},
 		{"select next value for sequence", true, "SELECT NEXTVAL(`sequence`)"},
 		{"select NeXt vAluE for seQuEncE2", true, "SELECT NEXTVAL(`seQuEncE2`)"},
+
+		// Test regexp functions
+		{"select regexp_like('aBc', 'abc', 'im');", true, "SELECT REGEXP_LIKE(_UTF8MB4'aBc', _UTF8MB4'abc', _UTF8MB4'im')"},
+		{"select regexp_substr('aBc', 'abc', 1, 1, 'im');", true, "SELECT REGEXP_SUBSTR(_UTF8MB4'aBc', _UTF8MB4'abc', 1, 1, _UTF8MB4'im')"},
+		{"select regexp_instr('aBc', 'abc', 1, 1, 0, 'im');", true, "SELECT REGEXP_INSTR(_UTF8MB4'aBc', _UTF8MB4'abc', 1, 1, 0, _UTF8MB4'im')"},
+		{"select regexp_replace('aBc', 'abc', 'def', 1, 1, 'i');", true, "SELECT REGEXP_REPLACE(_UTF8MB4'aBc', _UTF8MB4'abc', _UTF8MB4'def', 1, 1, _UTF8MB4'i')"},
 	}
 	RunTest(t, table, false)
 
@@ -3234,6 +3241,11 @@ func TestDDL(t *testing.T) {
 		{"flashback table t", true, "FLASHBACK TABLE `t`"},
 		{"flashback table t TO t1", true, "FLASHBACK TABLE `t` TO `t1`"},
 
+		// for flashback cluster
+		{"flashback cluster to timestamp '2021-05-26 16:45:26'", true, "FLASHBACK CLUSTER TO TIMESTAMP '2021-05-26 16:45:26'"},
+		{"flashback cluster to timestamp TIDB_BOUNDED_STALENESS(DATE_SUB(NOW(), INTERVAL 3 SECOND), NOW())", false, ""},
+		{"flashback cluster to timestamp DATE_SUB(NOW(), INTERVAL 3 SECOND)", false, ""},
+
 		// for remove partitioning
 		{"alter table t remove partitioning", true, "ALTER TABLE `t` REMOVE PARTITIONING"},
 		{"alter table db.ident remove partitioning", true, "ALTER TABLE `db`.`ident` REMOVE PARTITIONING"},
@@ -3965,18 +3977,18 @@ func TestOptimizerHints(t *testing.T) {
 	require.Equal(t, "t3", hints[1].Tables[0].TableName.L)
 	require.Equal(t, "t4", hints[1].Tables[1].TableName.L)
 
-	// Test HASH_BUILD and HASH_PROBE
-	stmt, _, err = p.Parse("select /*+ hash_build(t1), hash_probe(t4) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
+	// Test HASH_JOIN_BUILD and HASH_JOIN_PROBE
+	stmt, _, err = p.Parse("select /*+ hash_join_build(t1), hash_join_probe(t4) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
 	require.NoError(t, err)
 	selectStmt = stmt[0].(*ast.SelectStmt)
 
 	hints = selectStmt.TableHints
 	require.Len(t, hints, 2)
-	require.Equal(t, "hash_build", hints[0].HintName.L)
+	require.Equal(t, "hash_join_build", hints[0].HintName.L)
 	require.Len(t, hints[0].Tables, 1)
 	require.Equal(t, "t1", hints[0].Tables[0].TableName.L)
 
-	require.Equal(t, "hash_probe", hints[1].HintName.L)
+	require.Equal(t, "hash_join_probe", hints[1].HintName.L)
 	require.Len(t, hints[1].Tables, 1)
 	require.Equal(t, "t4", hints[1].Tables[0].TableName.L)
 
@@ -6726,6 +6738,8 @@ func TestPlanReplayer(t *testing.T) {
 		{"PLAN REPLAYER DUMP EXPLAIN SLOW QUERY", true, "PLAN REPLAYER DUMP EXPLAIN SLOW QUERY"},
 		{"PLAN REPLAYER DUMP EXPLAIN ANALYZE SLOW QUERY", true, "PLAN REPLAYER DUMP EXPLAIN ANALYZE SLOW QUERY"},
 		{"PLAN REPLAYER LOAD '/tmp/sdfaalskdjf.zip'", true, "PLAN REPLAYER LOAD '/tmp/sdfaalskdjf.zip'"},
+		{"PLAN REPLAYER DUMP EXPLAIN 'sql.txt'", true, "PLAN REPLAYER DUMP EXPLAIN 'sql.txt'"},
+		{"PLAN REPLAYER DUMP EXPLAIN ANALYZE 'sql.txt'", true, "PLAN REPLAYER DUMP EXPLAIN ANALYZE 'sql.txt'"},
 	}
 	RunTest(t, table, false)
 

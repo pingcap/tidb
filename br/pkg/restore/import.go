@@ -824,16 +824,18 @@ func (importer *FileImporter) downloadAndApplyKVFile(
 	}
 
 	meta := &import_sstpb.KVMeta{
-		Name: file.Path,
-		Cf:   file.Cf,
-		// TODO fill the length
-		Length:          0,
+		Name:            file.Path,
+		Cf:              file.Cf,
+		RangeOffset:     file.RangeOffset,
+		Length:          file.Length,
+		RangeLength:     file.RangeLength,
 		IsDelete:        file.Type == backuppb.FileType_Delete,
 		StartSnapshotTs: startTS,
 		RestoreTs:       restoreTS,
 		StartKey:        regionInfo.Region.GetStartKey(),
 		EndKey:          regionInfo.Region.GetEndKey(),
 		Sha256:          file.GetSha256(),
+		CompressionType: file.CompressionType,
 	}
 
 	reqCtx := &kvrpcpb.Context{

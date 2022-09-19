@@ -500,13 +500,19 @@ func TestDefaultValForAnalyze(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_analyze_version=1")
 	defer tk.MustExec("set @@tidb_analyze_version=2")
+	originalSampleSize := executor.MaxRegionSampleSize
+	// Increase MaxRegionSampleSize to ensure all samples are collected for building histogram, otherwise the test will be unstable.
+	executor.MaxRegionSampleSize = 10000
+	defer func() {
+		executor.MaxRegionSampleSize = originalSampleSize
+	}()
 	tk.MustExec("drop database if exists test_default_val_for_analyze;")
 	tk.MustExec("create database test_default_val_for_analyze;")
 	tk.MustExec("use test_default_val_for_analyze")
 
 	tk.MustExec("create table t (a int, key(a));")
-	for i := 0; i < 2048; i++ {
-		tk.MustExec("insert into t values (0)")
+	for i := 0; i < 256; i++ {
+		tk.MustExec("insert into t values (0),(0),(0),(0),(0),(0),(0),(0)")
 	}
 	for i := 1; i < 4; i++ {
 		tk.MustExec("insert into t values (?)", i)
@@ -517,7 +523,7 @@ func TestDefaultValForAnalyze(t *testing.T) {
 
 	tk.MustQuery("select @@tidb_enable_fast_analyze").Check(testkit.Rows("0"))
 	tk.MustQuery("select @@session.tidb_enable_fast_analyze").Check(testkit.Rows("0"))
-	tk.MustExec("analyze table t with 0 topn;")
+	tk.MustExec("analyze table t with 0 topn, 2 buckets, 10000 samples")
 	tk.MustQuery("explain format = 'brief' select * from t where a = 1").Check(testkit.Rows("IndexReader 512.00 root  index:IndexRangeScan",
 		"└─IndexRangeScan 512.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false"))
 	tk.MustQuery("explain format = 'brief' select * from t where a = 999").Check(testkit.Rows("IndexReader 0.00 root  index:IndexRangeScan",
@@ -525,11 +531,15 @@ func TestDefaultValForAnalyze(t *testing.T) {
 
 	tk.MustExec("drop table t;")
 	tk.MustExec("create table t (a int, key(a));")
-	for i := 0; i < 2048; i++ {
-		tk.MustExec("insert into t values (0)")
+	for i := 0; i < 256; i++ {
+		tk.MustExec("insert into t values (0),(0),(0),(0),(0),(0),(0),(0)")
 	}
-	for i := 1; i < 2049; i++ {
-		tk.MustExec("insert into t values (?)", i)
+	for i := 1; i < 2049; i += 8 {
+		vals := make([]string, 0, 8)
+		for j := i; j < i+8; j += 1 {
+			vals = append(vals, fmt.Sprintf("(%v)", j))
+		}
+		tk.MustExec("insert into t values " + strings.Join(vals, ","))
 	}
 	tk.MustExec("analyze table t with 0 topn;")
 	tk.MustQuery("explain format = 'brief' select * from t where a = 1").Check(testkit.Rows("IndexReader 1.00 root  index:IndexRangeScan",
@@ -900,6 +910,8 @@ func TestAnalyzeSamplingWorkPanic(t *testing.T) {
 }
 
 func TestSmallTableAnalyzeV2(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -925,6 +937,20 @@ create table small_table_inject_pd_with_partition(
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.small_table_inject_pd_with_partition's partition p1",
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.small_table_inject_pd_with_partition's partition p2",
 	))
+	rows := [][]interface{}{
+		{"global", "a"},
+		{"p0", "a"},
+		{"p1", "a"},
+		{"p2", "a"},
+	}
+	tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 'small_table_inject_pd_with_partition' and last_analyzed_at is not null").Sort().CheckAt([]int{2, 3}, rows)
+	rows = [][]interface{}{
+		{"global", "0", "3"},
+		{"p0", "0", "1"},
+		{"p1", "0", "1"},
+		{"p2", "0", "1"},
+	}
+	tk.MustQuery("show stats_meta where db_name = 'test' and table_name = 'small_table_inject_pd_with_partition'").Sort().CheckAt([]int{2, 4, 5}, rows)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/calcSampleRateByStorageCount"))
 }
 
@@ -2823,6 +2849,8 @@ PARTITION BY RANGE ( a ) (
 }
 
 func TestAnalyzePartitionStaticToDynamic(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	originalVal := tk.MustQuery("select @@tidb_persist_analyze_options").Rows()[0][0].(string)
@@ -2891,7 +2919,7 @@ PARTITION BY RANGE ( a ) (
 	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1 and d > 1")
 	require.NoError(t, h.LoadNeededHistograms())
 	tbl := h.GetTableStats(tableInfo)
-	require.Equal(t, 0, len(tbl.Columns))
+	require.Equal(t, 4, len(tbl.Columns))
 
 	// ignore both p0's 3 buckets, persisted-partition-options' 1 bucket, just use table-level 2 buckets
 	tk.MustExec("analyze table t partition p0")

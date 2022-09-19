@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
@@ -32,7 +33,39 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestSetPartitionPruneMode(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tkInit := testkit.NewTestKit(t, store)
+	tkInit.MustExec(`set @@session.tidb_partition_prune_mode = DEFAULT`)
+	tkInit.MustQuery("show warnings").Check(testkit.Rows())
+	tkInit.MustExec(`set @@global.tidb_partition_prune_mode = DEFAULT`)
+	tkInit.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Please analyze all partition tables again for consistency between partition and global stats"))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustQuery("select @@global.tidb_partition_prune_mode").Check(testkit.Rows("dynamic"))
+	tk.MustQuery("select @@session.tidb_partition_prune_mode").Check(testkit.Rows("dynamic"))
+	tk.MustExec(`set @@session.tidb_partition_prune_mode = "static"`)
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustExec(`set @@global.tidb_partition_prune_mode = "static"`)
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustQuery("select @@session.tidb_partition_prune_mode").Check(testkit.Rows("static"))
+	tk2.MustQuery("show warnings").Check(testkit.Rows())
+	tk2.MustQuery("select @@global.tidb_partition_prune_mode").Check(testkit.Rows("static"))
+	tk2.MustExec(`set @@session.tidb_partition_prune_mode = "dynamic"`)
+	tk2.MustQuery("show warnings").Sort().Check(testkit.Rows(
+		`Warning 1105 Please analyze all partition tables again for consistency between partition and global stats`,
+		`Warning 1105 Please avoid setting partition prune mode to dynamic at session level and set partition prune mode to dynamic at global level`))
+	tk2.MustExec(`set @@global.tidb_partition_prune_mode = "dynamic"`)
+	tk2.MustQuery("show warnings").Check(testkit.Rows(`Warning 1105 Please analyze all partition tables again for consistency between partition and global stats`))
+	tk3 := testkit.NewTestKit(t, store)
+	tk3.MustQuery("select @@global.tidb_partition_prune_mode").Check(testkit.Rows("dynamic"))
+	tk3.MustQuery("select @@session.tidb_partition_prune_mode").Check(testkit.Rows("dynamic"))
+}
+
 func TestFourReader(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -103,7 +136,7 @@ func TestPartitionIndexJoin(t *testing.T) {
 		// Build indexLookUp in index join
 		tk.MustQuery("select /*+ INL_JOIN(p) */ * from p, t where p.id = t.id").Sort().Check(testkit.Rows("4 4 4", "9 9 9"))
 		// Build index reader in index join
-		tk.MustQuery("select /*+ INL_JOIN(p) */ p.id from p, t where p.id = t.id").Check(testkit.Rows("4", "9"))
+		tk.MustQuery("select /*+ INL_JOIN(p) */ p.id from p, t where p.id = t.id").Sort().Check(testkit.Rows("4", "9"))
 	}
 }
 
@@ -529,6 +562,8 @@ func TestView(t *testing.T) {
 }
 
 func TestDirectReadingwithIndexJoin(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -641,6 +676,8 @@ func TestDirectReadingwithIndexJoin(t *testing.T) {
 }
 
 func TestDynamicPruningUnderIndexJoin(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -943,6 +980,8 @@ func TestGlobalStatsAndSQLBinding(t *testing.T) {
 }
 
 func TestPartitionTableWithDifferentJoin(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -1731,6 +1770,8 @@ func TestDynamicPruneModeWithExpression(t *testing.T) {
 }
 
 func TestAddDropPartitions(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -1764,6 +1805,8 @@ func TestAddDropPartitions(t *testing.T) {
 }
 
 func TestMPPQueryExplainInfo(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -1793,6 +1836,8 @@ func TestMPPQueryExplainInfo(t *testing.T) {
 }
 
 func TestPartitionPruningInTransaction(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -2026,6 +2071,8 @@ func TestSubqueries(t *testing.T) {
 }
 
 func TestSplitRegion(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -2062,6 +2109,9 @@ func TestSplitRegion(t *testing.T) {
 }
 
 func TestParallelApply(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
+
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -2569,6 +2619,8 @@ func TestDirectReadingWithAgg(t *testing.T) {
 }
 
 func TestDynamicModeByDefault(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -2764,6 +2816,8 @@ func TestIssue25309(t *testing.T) {
 }
 
 func TestGlobalIndexScan(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -2784,6 +2838,8 @@ partition p2 values less than (10))`)
 }
 
 func TestGlobalIndexDoubleRead(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)

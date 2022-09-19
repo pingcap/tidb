@@ -46,27 +46,33 @@ import (
 	"go.uber.org/zap"
 )
 
-var _ Executor = &PlanReplayerSingleExec{}
+var _ Executor = &PlanReplayerExec{}
 var _ Executor = &PlanReplayerLoadExec{}
 
 const (
 	configFile          = "config.toml"
 	metaFile            = "meta.txt"
 	variablesFile       = "variables.toml"
-	sqlFile             = "sqls.sql"
 	tiFlashReplicasFile = "table_tiflash_replica.txt"
 	sessionBindingFile  = "session_bindings.sql"
 	globalBindingFile   = "global_bindings.sql"
-	explainFile         = "explain.txt"
 )
 
-// PlanReplayerSingleExec represents a plan replayer executor.
-type PlanReplayerSingleExec struct {
+// PlanReplayerExec represents a plan replayer executor.
+type PlanReplayerExec struct {
 	baseExecutor
-	ExecStmt ast.StmtNode
-	Analyze  bool
+	DumpInfo *PlanReplayerDumpInfo
+	endFlag  bool
+}
 
-	endFlag bool
+// PlanReplayerDumpInfo indicates dump info
+type PlanReplayerDumpInfo struct {
+	ExecStmts []ast.StmtNode
+	Analyze   bool
+	Path      string
+	File      *os.File
+	FileName  string
+	ctx       sessionctx.Context
 }
 
 type tableNamePair struct {
@@ -143,24 +149,64 @@ func (tne *tableNameExtractor) handleIsView(t *ast.TableName) (bool, error) {
 }
 
 // Next implements the Executor Next interface.
-func (e *PlanReplayerSingleExec) Next(ctx context.Context, req *chunk.Chunk) error {
+func (e *PlanReplayerExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(e.maxChunkSize)
 	if e.endFlag {
 		return nil
 	}
-	if e.ExecStmt == nil {
-		return errors.New("plan replayer: sql is empty")
-	}
-	res, err := e.dumpSingle(ctx, domain.GetPlanReplayerDirName())
+	err := e.createFile(domain.GetPlanReplayerDirName())
 	if err != nil {
 		return err
 	}
-	req.AppendString(0, res)
+	if len(e.DumpInfo.Path) > 0 {
+		err = e.prepare()
+		if err != nil {
+			return err
+		}
+		// As we can only read file from handleSpecialQuery, thus we store the file token in the session var during `dump`
+		// and return nil here.
+		e.endFlag = true
+		return nil
+	}
+	if e.DumpInfo.ExecStmts == nil {
+		return errors.New("plan replayer: sql is empty")
+	}
+	err = e.DumpInfo.dump(ctx)
+	if err != nil {
+		return err
+	}
+	req.AppendString(0, e.DumpInfo.FileName)
 	e.endFlag = true
 	return nil
 }
 
-// dumpSingle will dump the information about a single sql.
+func (e *PlanReplayerExec) createFile(path string) error {
+	// Create path
+	err := os.MkdirAll(path, os.ModePerm)
+	if err != nil {
+		return errors.AddStack(err)
+	}
+
+	// Generate key and create zip file
+	time := time.Now().UnixNano()
+	b := make([]byte, 16)
+	//nolint: gosec
+	_, err = rand.Read(b)
+	if err != nil {
+		return err
+	}
+	key := base64.URLEncoding.EncodeToString(b)
+	fileName := fmt.Sprintf("replayer_%v_%v.zip", key, time)
+	zf, err := os.Create(filepath.Join(path, fileName))
+	if err != nil {
+		return errors.AddStack(err)
+	}
+	e.DumpInfo.File = zf
+	e.DumpInfo.FileName = fileName
+	return nil
+}
+
+// dumpSingle will dump the information about sqls.
 // The files will be organized into the following format:
 /*
  |-meta.txt
@@ -180,32 +226,18 @@ func (e *PlanReplayerSingleExec) Next(ctx context.Context, req *chunk.Chunk) err
  |-table_tiflash_replica.txt
  |-variables.toml
  |-bindings.sql
- |-sqls.sql
+ |-sql
+ |   |-sql1.sql
+ |   |-sql2.sql
+ |	 |-....
  |_explain
-     |-explain.txt
+     |-explain1.txt
+     |-explain2.txt
+     |-....
 */
-func (e *PlanReplayerSingleExec) dumpSingle(ctx context.Context, path string) (fileName string, err error) {
-	// Create path
-	err = os.MkdirAll(path, os.ModePerm)
-	if err != nil {
-		return "", errors.AddStack(err)
-	}
-
-	// Generate key and create zip file
-	time := time.Now().UnixNano()
-	b := make([]byte, 16)
-	//nolint: gosec
-	_, err = rand.Read(b)
-	if err != nil {
-		return "", err
-	}
-	key := base64.URLEncoding.EncodeToString(b)
-	fileName = fmt.Sprintf("replayer_single_%v_%v.zip", key, time)
-	zf, err := os.Create(filepath.Join(path, fileName))
-	if err != nil {
-		return "", errors.AddStack(err)
-	}
-
+func (e *PlanReplayerDumpInfo) dump(ctx context.Context) (err error) {
+	fileName := e.FileName
+	zf := e.File
 	// Create zip writer
 	zw := zip.NewWriter(zf)
 	defer func() {
@@ -221,12 +253,12 @@ func (e *PlanReplayerSingleExec) dumpSingle(ctx context.Context, path string) (f
 
 	// Dump config
 	if err = dumpConfig(zw); err != nil {
-		return "", err
+		return err
 	}
 
 	// Dump meta
 	if err = dumpMeta(zw); err != nil {
-		return "", err
+		return err
 	}
 
 	// Retrieve current DB
@@ -235,57 +267,53 @@ func (e *PlanReplayerSingleExec) dumpSingle(ctx context.Context, path string) (f
 	do := domain.GetDomain(e.ctx)
 
 	// Retrieve all tables
-	pairs, err := e.extractTableNames(ctx, e.ExecStmt, dbName)
+	pairs, err := e.extractTableNames(ctx, e.ExecStmts, dbName)
 	if err != nil {
-		return "", errors.AddStack(fmt.Errorf("plan replayer: invalid SQL text, err: %v", err))
+		return errors.AddStack(fmt.Errorf("plan replayer: invalid SQL text, err: %v", err))
 	}
 
 	// Dump Schema and View
 	if err = dumpSchemas(e.ctx, zw, pairs); err != nil {
-		return "", err
+		return err
 	}
 
 	// Dump tables tiflash replicas
 	if err = dumpTiFlashReplica(e.ctx, zw, pairs); err != nil {
-		return "", err
+		return err
 	}
 
 	// Dump stats
 	if err = dumpStats(zw, pairs, do); err != nil {
-		return "", err
+		return err
 	}
 
 	// Dump variables
 	if err = dumpVariables(e.ctx, zw); err != nil {
-		return "", err
+		return err
 	}
 
 	// Dump sql
-	sql, err := zw.Create(sqlFile)
-	if err != nil {
-		return "", nil
-	}
-	_, err = sql.Write([]byte(e.ExecStmt.Text()))
-	if err != nil {
-		return "", err
+	if err = dumpSQLs(e.ExecStmts, zw); err != nil {
+		return err
 	}
 
 	// Dump session bindings
 	if err = dumpSessionBindings(e.ctx, zw); err != nil {
-		return "", err
+		return err
 	}
 
 	// Dump global bindings
 	if err = dumpGlobalBindings(e.ctx, zw); err != nil {
-		return "", err
+		return err
 	}
 
 	// Dump explain
-	if err = dumpExplain(e.ctx, zw, e.ExecStmt.Text(), e.Analyze); err != nil {
-		return "", err
+	if err = dumpExplain(e.ctx, zw, e.ExecStmts, e.Analyze); err != nil {
+		return err
 	}
 
-	return fileName, nil
+	e.ctx.GetSessionVars().LastPlanReplayerToken = e.FileName
+	return nil
 }
 
 func dumpConfig(zw *zip.Writer) error {
@@ -371,13 +399,27 @@ func dumpStats(zw *zip.Writer, pairs map[tableNamePair]struct{}, do *domain.Doma
 	return nil
 }
 
+func dumpSQLs(execStmts []ast.StmtNode, zw *zip.Writer) error {
+	for i, stmtExec := range execStmts {
+		zf, err := zw.Create(fmt.Sprintf("sql/sql%v.sql", i))
+		if err != nil {
+			return err
+		}
+		_, err = zf.Write([]byte(stmtExec.Text()))
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func dumpVariables(ctx sessionctx.Context, zw *zip.Writer) error {
 	varMap := make(map[string]string)
 	recordSets, err := ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "show variables")
 	if err != nil {
 		return err
 	}
-	sRows, err := resultSetToStringSlice(context.Background(), recordSets[0])
+	sRows, err := resultSetToStringSlice(context.Background(), recordSets[0], false)
 	if err != nil {
 		return err
 	}
@@ -404,7 +446,7 @@ func dumpSessionBindings(ctx sessionctx.Context, zw *zip.Writer) error {
 	if err != nil {
 		return err
 	}
-	sRows, err := resultSetToStringSlice(context.Background(), recordSets[0])
+	sRows, err := resultSetToStringSlice(context.Background(), recordSets[0], true)
 	if err != nil {
 		return err
 	}
@@ -428,7 +470,7 @@ func dumpGlobalBindings(ctx sessionctx.Context, zw *zip.Writer) error {
 	if err != nil {
 		return err
 	}
-	sRows, err := resultSetToStringSlice(context.Background(), recordSets[0])
+	sRows, err := resultSetToStringSlice(context.Background(), recordSets[0], false)
 	if err != nil {
 		return err
 	}
@@ -447,43 +489,46 @@ func dumpGlobalBindings(ctx sessionctx.Context, zw *zip.Writer) error {
 	return nil
 }
 
-func dumpExplain(ctx sessionctx.Context, zw *zip.Writer, sql string, isAnalyze bool) error {
-	var recordSets []sqlexec.RecordSet
-	var err error
-	if isAnalyze {
-		// Explain analyze
-		recordSets, err = ctx.(sqlexec.SQLExecutor).Execute(context.Background(), fmt.Sprintf("explain analyze %s", sql))
+func dumpExplain(ctx sessionctx.Context, zw *zip.Writer, execStmts []ast.StmtNode, isAnalyze bool) error {
+	for i, stmtExec := range execStmts {
+		sql := stmtExec.Text()
+		var recordSets []sqlexec.RecordSet
+		var err error
+		if isAnalyze {
+			// Explain analyze
+			recordSets, err = ctx.(sqlexec.SQLExecutor).Execute(context.Background(), fmt.Sprintf("explain analyze %s", sql))
+			if err != nil {
+				return err
+			}
+		} else {
+			// Explain
+			recordSets, err = ctx.(sqlexec.SQLExecutor).Execute(context.Background(), fmt.Sprintf("explain %s", sql))
+			if err != nil {
+				return err
+			}
+		}
+		sRows, err := resultSetToStringSlice(context.Background(), recordSets[0], false)
 		if err != nil {
 			return err
 		}
-	} else {
-		// Explain
-		recordSets, err = ctx.(sqlexec.SQLExecutor).Execute(context.Background(), fmt.Sprintf("explain %s", sql))
+		fw, err := zw.Create(fmt.Sprintf("explain/sql%v.txt", i))
 		if err != nil {
-			return err
+			return errors.AddStack(err)
 		}
-	}
-	sRows, err := resultSetToStringSlice(context.Background(), recordSets[0])
-	if err != nil {
-		return err
-	}
-	fw, err := zw.Create(explainFile)
-	if err != nil {
-		return errors.AddStack(err)
-	}
-	for _, row := range sRows {
-		fmt.Fprintf(fw, "%s\n", strings.Join(row, "\t"))
-	}
-	if len(recordSets) > 0 {
-		if err := recordSets[0].Close(); err != nil {
-			return err
+		for _, row := range sRows {
+			fmt.Fprintf(fw, "%s\n", strings.Join(row, "\t"))
+		}
+		if len(recordSets) > 0 {
+			if err := recordSets[0].Close(); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
 }
 
-func (e *PlanReplayerSingleExec) extractTableNames(ctx context.Context,
-	ExecStmt ast.StmtNode, curDB model.CIStr) (map[tableNamePair]struct{}, error) {
+func (e *PlanReplayerDumpInfo) extractTableNames(ctx context.Context,
+	ExecStmts []ast.StmtNode, curDB model.CIStr) (map[tableNamePair]struct{}, error) {
 	tableExtractor := &tableNameExtractor{
 		ctx:      ctx,
 		executor: e.ctx.(sqlexec.RestrictedSQLExecutor),
@@ -492,7 +537,9 @@ func (e *PlanReplayerSingleExec) extractTableNames(ctx context.Context,
 		names:    make(map[tableNamePair]struct{}),
 		cteNames: make(map[string]struct{}),
 	}
-	ExecStmt.Accept(tableExtractor)
+	for _, execStmt := range ExecStmts {
+		execStmt.Accept(tableExtractor)
+	}
 	if tableExtractor.err != nil {
 		return nil, tableExtractor.err
 	}
@@ -511,6 +558,34 @@ func (e *PlanReplayerSingleExec) extractTableNames(ctx context.Context,
 	return r, nil
 }
 
+func (e *PlanReplayerExec) prepare() error {
+	val := e.ctx.Value(PlanReplayerDumpVarKey)
+	if val != nil {
+		e.ctx.SetValue(PlanReplayerDumpVarKey, nil)
+		return errors.New("plan replayer: previous plan replayer dump option isn't closed normally, please try again")
+	}
+	e.ctx.SetValue(PlanReplayerDumpVarKey, e.DumpInfo)
+	return nil
+}
+
+// DumpSQLsFromFile dumps plan replayer results for sqls from file
+func (e *PlanReplayerDumpInfo) DumpSQLsFromFile(ctx context.Context, b []byte) error {
+	sqls := strings.Split(string(b), ";")
+	e.ExecStmts = make([]ast.StmtNode, 0)
+	for _, sql := range sqls {
+		s := strings.Trim(sql, "\n")
+		if len(s) < 1 {
+			continue
+		}
+		node, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ParseWithParams(ctx, s)
+		if err != nil {
+			return fmt.Errorf("parse sql error, sql:%v, err:%v", s, err)
+		}
+		e.ExecStmts = append(e.ExecStmts, node)
+	}
+	return e.dump(ctx)
+}
+
 func getStatsForTable(do *domain.Domain, pair tableNamePair) (*handle.JSONTable, error) {
 	is := do.InfoSchema()
 	h := do.StatsHandle()
@@ -527,7 +602,7 @@ func getShowCreateTable(pair tableNamePair, zw *zip.Writer, ctx sessionctx.Conte
 	if err != nil {
 		return err
 	}
-	sRows, err := resultSetToStringSlice(context.Background(), recordSets[0])
+	sRows, err := resultSetToStringSlice(context.Background(), recordSets[0], false)
 	if err != nil {
 		return err
 	}
@@ -559,7 +634,7 @@ func getShowCreateTable(pair tableNamePair, zw *zip.Writer, ctx sessionctx.Conte
 	return nil
 }
 
-func resultSetToStringSlice(ctx context.Context, rs sqlexec.RecordSet) ([][]string, error) {
+func resultSetToStringSlice(ctx context.Context, rs sqlexec.RecordSet, emptyAsNil bool) ([][]string, error) {
 	rows, err := getRows(ctx, rs)
 	if err != nil {
 		return nil, err
@@ -579,6 +654,9 @@ func resultSetToStringSlice(ctx context.Context, rs sqlexec.RecordSet) ([][]stri
 				iRow[j], err = d.ToString()
 				if err != nil {
 					return nil, err
+				}
+				if len(iRow[j]) < 1 && emptyAsNil {
+					iRow[j] = "<nil>"
 				}
 			}
 		}
@@ -623,6 +701,12 @@ type PlanReplayerLoadInfo struct {
 	Ctx  sessionctx.Context
 }
 
+type planReplayerDumpKeyType int
+
+func (k planReplayerDumpKeyType) String() string {
+	return "plan_replayer_dump_var"
+}
+
 type planReplayerLoadKeyType int
 
 func (k planReplayerLoadKeyType) String() string {
@@ -631,6 +715,9 @@ func (k planReplayerLoadKeyType) String() string {
 
 // PlanReplayerLoadVarKey is a variable key for plan replayer load.
 const PlanReplayerLoadVarKey planReplayerLoadKeyType = 0
+
+// PlanReplayerDumpVarKey is a variable key for plan replayer dump.
+const PlanReplayerDumpVarKey planReplayerDumpKeyType = 1
 
 // Next implements the Executor Next interface.
 func (e *PlanReplayerLoadExec) Next(ctx context.Context, req *chunk.Chunk) error {
@@ -679,6 +766,64 @@ func loadSetTiFlashReplica(ctx sessionctx.Context, z *zip.Reader) error {
 				sql := fmt.Sprintf("alter table %s.%s set tiflash replica 1", dbName, tableName)
 				_, err = ctx.(sqlexec.SQLExecutor).Execute(c, sql)
 				logutil.BgLogger().Debug("plan replayer: skip error", zap.Error(err))
+			}
+		}
+	}
+	return nil
+}
+
+func loadAllBindings(ctx sessionctx.Context, z *zip.Reader) error {
+	for _, f := range z.File {
+		if strings.Compare(f.Name, sessionBindingFile) == 0 {
+			err := loadBindings(ctx, f, true)
+			if err != nil {
+				return err
+			}
+		} else if strings.Compare(f.Name, globalBindingFile) == 0 {
+			err := loadBindings(ctx, f, false)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func loadBindings(ctx sessionctx.Context, f *zip.File, isSession bool) error {
+	r, err := f.Open()
+	if err != nil {
+		return errors.AddStack(err)
+	}
+	//nolint: errcheck
+	defer r.Close()
+	buf := new(bytes.Buffer)
+	_, err = buf.ReadFrom(r)
+	if err != nil {
+		return errors.AddStack(err)
+	}
+	if len(buf.String()) < 1 {
+		return nil
+	}
+	bindings := strings.Split(buf.String(), "\n")
+	for _, binding := range bindings {
+		cols := strings.Split(binding, "\t")
+		if len(cols) < 3 {
+			continue
+		}
+		originSQL := cols[0]
+		bindingSQL := cols[1]
+		enabled := cols[3]
+		if strings.Compare(enabled, "enabled") == 0 {
+			sql := fmt.Sprintf("CREATE %s BINDING FOR %s USING %s", func() string {
+				if isSession {
+					return "SESSION"
+				}
+				return "GLOBAL"
+			}(), originSQL, bindingSQL)
+			c := context.Background()
+			_, err = ctx.(sqlexec.SQLExecutor).Execute(c, sql)
+			if err != nil {
+				return err
 			}
 		}
 	}
@@ -838,6 +983,12 @@ func (e *PlanReplayerLoadInfo) Update(data []byte) error {
 				return err
 			}
 		}
+	}
+
+	err = loadAllBindings(e.Ctx, z)
+	if err != nil {
+		logutil.BgLogger().Warn("load bindings failed", zap.Error(err))
+		e.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("load bindings failed, err:%v", err))
 	}
 	return nil
 }
