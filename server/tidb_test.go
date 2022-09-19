@@ -60,6 +60,7 @@ import (
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	"go.opencensus.io/stats/view"
 )
 
 type tidbTestSuite struct {
@@ -111,6 +112,7 @@ func createTidbTestSuite(t *testing.T) *tidbTestSuite {
 		if ts.store != nil {
 			require.NoError(t, ts.store.Close())
 		}
+		view.Stop()
 	})
 
 	return ts
@@ -143,6 +145,7 @@ func createTidbTestTopSQLSuite(t *testing.T) *tidbTestTopSQLSuite {
 		cpuprofile.StopCPUProfiler()
 		topsqlstate.GlobalState.PrecisionSeconds.Store(topsqlstate.DefTiDBTopSQLPrecisionSeconds)
 		topsqlstate.GlobalState.ReportIntervalSeconds.Store(topsqlstate.DefTiDBTopSQLReportIntervalSeconds)
+		view.Stop()
 	})
 	return ts
 }
@@ -2082,6 +2085,7 @@ func setupForTestTopSQLStatementStats(t *testing.T) (*tidbTestSuite, stmtstats.S
 		err = failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/unistoreRPCClientSendHook")
 		require.NoError(t, err)
 		stmtstats.CloseAggregator()
+		view.Stop()
 	})
 
 	return ts, total, tagChecker, collectedNotifyCh
