@@ -121,23 +121,28 @@ var (
 	sessionExecuteParseDurationInternal   = metrics.SessionExecuteParseDuration.WithLabelValues(metrics.LblInternal)
 	sessionExecuteParseDurationGeneral    = metrics.SessionExecuteParseDuration.WithLabelValues(metrics.LblGeneral)
 
-	telemetryCTEUsageRecurCTE                  = metrics.TelemetrySQLCTECnt.WithLabelValues("recurCTE")
-	telemetryCTEUsageNonRecurCTE               = metrics.TelemetrySQLCTECnt.WithLabelValues("nonRecurCTE")
-	telemetryCTEUsageNotCTE                    = metrics.TelemetrySQLCTECnt.WithLabelValues("notCTE")
-	telemetryMultiSchemaChangeUsage            = metrics.TelemetryMultiSchemaChangeCnt
-	telemetryTablePartitionUsage               = metrics.TelemetryTablePartitionCnt
-	telemetryTablePartitionListUsage           = metrics.TelemetryTablePartitionListCnt
-	telemetryTablePartitionRangeUsage          = metrics.TelemetryTablePartitionRangeCnt
-	telemetryTablePartitionHashUsage           = metrics.TelemetryTablePartitionHashCnt
-	telemetryTablePartitionRangeColumnsUsage   = metrics.TelemetryTablePartitionRangeColumnsCnt
-	telemetryTablePartitionListColumnsUsage    = metrics.TelemetryTablePartitionListColumnsCnt
-	telemetryTablePartitionMaxPartitionsUsage  = metrics.TelemetryTablePartitionMaxPartitionsCnt
-	telemetryLockUserUsage                     = metrics.TelemetryAccountLockCnt.WithLabelValues("lockUser")
-	telemetryUnlockUserUsage                   = metrics.TelemetryAccountLockCnt.WithLabelValues("unlockUser")
-	telemetryCreateOrAlterUserUsage            = metrics.TelemetryAccountLockCnt.WithLabelValues("createOrAlterUser")
-	telemetryTablePartitionCreateIntervalUsage = metrics.TelemetryTablePartitionCreateIntervalPartitionsCnt
-	telemetryTablePartitionAddIntervalUsage    = metrics.TelemetryTablePartitionAddIntervalPartitionsCnt
-	telemetryTablePartitionDropIntervalUsage   = metrics.TelemetryTablePartitionDropIntervalPartitionsCnt
+	telemetryCTEUsageRecurCTE       = metrics.TelemetrySQLCTECnt.WithLabelValues("recurCTE")
+	telemetryCTEUsageNonRecurCTE    = metrics.TelemetrySQLCTECnt.WithLabelValues("nonRecurCTE")
+	telemetryCTEUsageNotCTE         = metrics.TelemetrySQLCTECnt.WithLabelValues("notCTE")
+	telemetryMultiSchemaChangeUsage = metrics.TelemetryMultiSchemaChangeCnt
+
+	telemetryTablePartitionUsage                = metrics.TelemetryTablePartitionCnt
+	telemetryTablePartitionListUsage            = metrics.TelemetryTablePartitionListCnt
+	telemetryTablePartitionRangeUsage           = metrics.TelemetryTablePartitionRangeCnt
+	telemetryTablePartitionHashUsage            = metrics.TelemetryTablePartitionHashCnt
+	telemetryTablePartitionRangeColumnsUsage    = metrics.TelemetryTablePartitionRangeColumnsCnt
+	telemetryTablePartitionRangeColumnsGt1Usage = metrics.TelemetryTablePartitionRangeColumnsGt1Cnt
+	telemetryTablePartitionRangeColumnsGt2Usage = metrics.TelemetryTablePartitionRangeColumnsGt2Cnt
+	telemetryTablePartitionRangeColumnsGt3Usage = metrics.TelemetryTablePartitionRangeColumnsGt3Cnt
+	telemetryTablePartitionListColumnsUsage     = metrics.TelemetryTablePartitionListColumnsCnt
+	telemetryTablePartitionMaxPartitionsUsage   = metrics.TelemetryTablePartitionMaxPartitionsCnt
+	telemetryTablePartitionCreateIntervalUsage  = metrics.TelemetryTablePartitionCreateIntervalPartitionsCnt
+	telemetryTablePartitionAddIntervalUsage     = metrics.TelemetryTablePartitionAddIntervalPartitionsCnt
+	telemetryTablePartitionDropIntervalUsage    = metrics.TelemetryTablePartitionDropIntervalPartitionsCnt
+
+	telemetryLockUserUsage          = metrics.TelemetryAccountLockCnt.WithLabelValues("lockUser")
+	telemetryUnlockUserUsage        = metrics.TelemetryAccountLockCnt.WithLabelValues("unlockUser")
+	telemetryCreateOrAlterUserUsage = metrics.TelemetryAccountLockCnt.WithLabelValues("createOrAlterUser")
 )
 
 // Session context, it is consistent with the lifecycle of a client connection.
@@ -470,7 +475,7 @@ func (s *session) GetSessionManager() util.SessionManager {
 }
 
 func (s *session) StoreQueryFeedback(feedback interface{}) {
-	if fb, ok := feedback.(*statistics.QueryFeedback); !ok || fb == nil || !fb.Valid {
+	if fb, ok := feedback.(*statistics.QueryFeedback); !ok || fb == nil || !fb.Valid.Load() {
 		return
 	}
 	if s.statsCollector != nil {
@@ -565,6 +570,11 @@ func (s *session) TxnInfo() *txninfo.TxnInfo {
 	txnInfo.ConnectionID = processInfo.ID
 	txnInfo.Username = processInfo.User
 	txnInfo.CurrentDB = processInfo.DB
+	txnInfo.RelatedTableIDs = make(map[int64]struct{})
+	s.GetSessionVars().GetRelatedTableForMDL().Range(func(key, value interface{}) bool {
+		txnInfo.RelatedTableIDs[key.(int64)] = struct{}{}
+		return true
+	})
 
 	return &txnInfo
 }
@@ -644,8 +654,12 @@ func (s *session) doCommit(ctx context.Context) error {
 		}
 		physicalTableIDs = append(physicalTableIDs, id)
 	}
+	needCheckSchema := true
 	// Set this option for 2 phase commit to validate schema lease.
-	s.txn.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.GetInfoSchema().SchemaMetaVersion(), physicalTableIDs))
+	if s.GetSessionVars().TxnCtx != nil {
+		needCheckSchema = !s.GetSessionVars().TxnCtx.EnableMDL
+	}
+	s.txn.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.GetInfoSchema().SchemaMetaVersion(), physicalTableIDs, needCheckSchema))
 	s.txn.SetOption(kv.InfoSchema, s.sessionVars.TxnCtx.InfoSchema)
 	s.txn.SetOption(kv.CommitHook, func(info string, _ error) { s.sessionVars.LastTxnInfo = info })
 	if sessVars.EnableAmendPessimisticTxn {
@@ -2613,6 +2627,7 @@ var (
 		{ddl.ReorgTableSQL, ddl.ReorgTableID},
 		{ddl.HistoryTableSQL, ddl.HistoryTableID},
 	}
+	mdlTable = "create table mysql.tidb_mdl_info(job_id BIGINT NOT NULL PRIMARY KEY, version BIGINT NOT NULL, table_ids text(65535));"
 )
 
 // InitDDLJobTables is to create tidb_ddl_job, tidb_ddl_reorg and tidb_ddl_history.
@@ -2634,7 +2649,7 @@ func InitDDLJobTables(store kv.Storage) error {
 				return errors.Trace(err)
 			}
 			if id >= meta.MaxGlobalID {
-				return errors.Errorf("It is unreasonable that the global ID grows such a big value: %d, please concat TiDB team", id)
+				return errors.Errorf("It is unreasonable that the global ID grows such a big value: %d, please contact TiDB team", id)
 			}
 			stmt, err := p.ParseOneStmt(tbl.SQL, "", "")
 			if err != nil {
@@ -2656,6 +2671,46 @@ func InitDDLJobTables(store kv.Storage) error {
 	})
 }
 
+// InitMDLTable is to create tidb_mdl_info, which is used for metadata lock.
+func InitMDLTable(store kv.Storage) error {
+	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		exists, err := t.CheckMDLTableExists()
+		if err != nil || exists {
+			return errors.Trace(err)
+		}
+		dbID, err := t.CreateMySQLDatabaseIfNotExists()
+		if err != nil {
+			return err
+		}
+		p := parser.New()
+		id, err := t.GetGlobalID()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if id >= meta.MaxGlobalID {
+			return errors.Errorf("It is unreasonable that the global ID grows such a big value: %d, please contact TiDB team", id)
+		}
+		stmt, err := p.ParseOneStmt(mdlTable, "", "")
+		if err != nil {
+			return errors.Trace(err)
+		}
+		tblInfo, err := ddl.BuildTableInfoFromAST(stmt.(*ast.CreateTableStmt))
+		if err != nil {
+			return errors.Trace(err)
+		}
+		tblInfo.State = model.StatePublic
+		tblInfo.ID = ddl.MDLTableID
+		tblInfo.UpdateTS = t.StartTS
+		err = t.CreateTableOrView(dbID, tblInfo)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		return t.SetMDLTables()
+	})
+}
+
 // BootstrapSession runs the first time when the TiDB server start.
 func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
@@ -2670,6 +2725,10 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		}
 	}
 	err := InitDDLJobTables(store)
+	if err != nil {
+		return nil, err
+	}
+	err = InitMDLTable(store)
 	if err != nil {
 		return nil, err
 	}
@@ -3310,6 +3369,15 @@ func (s *session) updateTelemetryMetric(es *executor.ExecStmt) {
 		if ti.PartitionTelemetry.UseTablePartitionRangeColumns {
 			telemetryTablePartitionRangeColumnsUsage.Inc()
 		}
+		if ti.PartitionTelemetry.UseTablePartitionRangeColumnsGt1 {
+			telemetryTablePartitionRangeColumnsGt1Usage.Inc()
+		}
+		if ti.PartitionTelemetry.UseTablePartitionRangeColumnsGt2 {
+			telemetryTablePartitionRangeColumnsGt2Usage.Inc()
+		}
+		if ti.PartitionTelemetry.UseTablePartitionRangeColumnsGt3 {
+			telemetryTablePartitionRangeColumnsGt3Usage.Inc()
+		}
 		if ti.PartitionTelemetry.UseTablePartitionListColumns {
 			telemetryTablePartitionListColumnsUsage.Inc()
 		}
@@ -3461,4 +3529,21 @@ func (s *session) setRequestSource(ctx context.Context, stmtLabel string, stmtNo
 			}
 		}
 	}
+}
+
+// RemoveLockDDLJobs removes the DDL jobs which doesn't get the metadata lock from job2ver.
+func RemoveLockDDLJobs(s Session, job2ver map[int64]int64, job2ids map[int64]string) {
+	if s.GetSessionVars().InRestrictedSQL {
+		return
+	}
+	s.GetSessionVars().GetRelatedTableForMDL().Range(func(tblID, value any) bool {
+		for jobID, ver := range job2ver {
+			ids := util.Str2Int64Map(job2ids[jobID])
+			if _, ok := ids[tblID.(int64)]; ok && value.(int64) < ver {
+				delete(job2ver, jobID)
+				logutil.BgLogger().Debug("old running transaction block DDL", zap.Int64("table ID", tblID.(int64)), zap.Uint64("conn ID", s.GetSessionVars().ConnectionID))
+			}
+		}
+		return true
+	})
 }
