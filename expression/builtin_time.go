@@ -5667,9 +5667,6 @@ func (b *builtinSubDatetimeAndStringSig) evalTime(row chunk.Row) (types.Time, bo
 	if isNull || err != nil {
 		return types.ZeroDatetime, isNull, err
 	}
-	if err != nil {
-		return types.ZeroDatetime, true, err
-	}
 	if !isDuration(s) {
 		return types.ZeroDatetime, true, nil
 	}

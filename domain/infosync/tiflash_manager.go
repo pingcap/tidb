@@ -43,6 +43,8 @@ import (
 
 // TiFlashPlacementManager manages placement settings for TiFlash.
 type TiFlashPlacementManager interface {
+	// SetTiFlashGroupConfig sets the group index of the tiflash placement rule
+	SetTiFlashGroupConfig(ctx context.Context) error
 	// SetPlacementRule is a helper function to set placement rule.
 	SetPlacementRule(ctx context.Context, rule placement.TiFlashRule) error
 	// DeletePlacementRule is to delete placement rule for certain group.
@@ -69,8 +71,63 @@ func (m *TiFlashPDPlacementManager) Close(ctx context.Context) {
 
 }
 
+// SetTiFlashGroupConfig sets the tiflash's rule group config
+func (m *TiFlashPDPlacementManager) SetTiFlashGroupConfig(ctx context.Context) error {
+	res, err := doRequest(ctx,
+		"GetRuleGroupConfig",
+		m.etcdCli.Endpoints(),
+		path.Join(pdapi.Config, "rule_group", placement.TiFlashRuleGroupID),
+		"GET",
+		nil,
+	)
+
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	var groupConfig placement.RuleGroupConfig
+	shouldUpdate := res == nil
+	if res != nil {
+		if err = json.Unmarshal(res, &groupConfig); err != nil {
+			return errors.Trace(err)
+		}
+
+		if groupConfig.Index != placement.RuleIndexTiFlash || groupConfig.Override {
+			shouldUpdate = true
+		}
+	}
+
+	if shouldUpdate {
+		groupConfig.ID = placement.TiFlashRuleGroupID
+		groupConfig.Index = placement.RuleIndexTiFlash
+		groupConfig.Override = false
+
+		body, err := json.Marshal(&groupConfig)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		_, err = doRequest(ctx,
+			"SetRuleGroupConfig",
+			m.etcdCli.Endpoints(),
+			path.Join(pdapi.Config, "rule_group"),
+			"POST",
+			bytes.NewBuffer(body),
+		)
+
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
 // SetPlacementRule is a helper function to set placement rule.
 func (m *TiFlashPDPlacementManager) SetPlacementRule(ctx context.Context, rule placement.TiFlashRule) error {
+	if err := m.SetTiFlashGroupConfig(ctx); err != nil {
+		return err
+	}
+
 	if rule.Count == 0 {
 		return m.DeletePlacementRule(ctx, rule.GroupID, rule.ID)
 	}
@@ -195,7 +252,7 @@ type mockTiFlashPlacementManager struct {
 
 func makeBaseRule() placement.TiFlashRule {
 	return placement.TiFlashRule{
-		GroupID:  "tiflash",
+		GroupID:  placement.TiFlashRuleGroupID,
 		ID:       "",
 		Index:    placement.RuleIndexTiFlash,
 		Override: false,
@@ -248,6 +305,7 @@ func (m *mockTiFlashTableInfo) String() string {
 // MockTiFlash mocks a TiFlash, with necessary Pd support.
 type MockTiFlash struct {
 	sync.Mutex
+	groupIndex                  int
 	StatusAddr                  string
 	StatusServer                *httptest.Server
 	SyncStatus                  map[int]mockTiFlashTableInfo
@@ -255,6 +313,7 @@ type MockTiFlash struct {
 	PdEnabled                   bool
 	TiflashDelay                time.Duration
 	StartTime                   time.Time
+	NotAvailable                bool
 }
 
 func (tiflash *MockTiFlash) setUpMockTiFlashHTTPServer() {
@@ -277,6 +336,10 @@ func (tiflash *MockTiFlash) setUpMockTiFlashHTTPServer() {
 			return
 		}
 		table, ok := tiflash.SyncStatus[tableID]
+		if tiflash.NotAvailable {
+			// No region is available, so the table is not available.
+			table.Regions = []int{}
+		}
 		if !ok {
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("0\n\n"))
@@ -306,6 +369,7 @@ func NewMockTiFlash() *MockTiFlash {
 		PdEnabled:                   true,
 		TiflashDelay:                0,
 		StartTime:                   time.Now(),
+		NotAvailable:                false,
 	}
 	tiflash.setUpMockTiFlashHTTPServer()
 	return tiflash
@@ -315,6 +379,7 @@ func NewMockTiFlash() *MockTiFlash {
 func (tiflash *MockTiFlash) HandleSetPlacementRule(rule placement.TiFlashRule) error {
 	tiflash.Lock()
 	defer tiflash.Unlock()
+	tiflash.groupIndex = placement.RuleIndexTiFlash
 	if !tiflash.PdEnabled {
 		logutil.BgLogger().Info("pd server is manually disabled, just quit")
 		return nil
@@ -433,6 +498,20 @@ func (tiflash *MockTiFlash) HandleGetStoresStat() *helper.StoresStat {
 	}
 }
 
+// SetRuleGroupIndex sets the group index of tiflash
+func (tiflash *MockTiFlash) SetRuleGroupIndex(groupIndex int) {
+	tiflash.Lock()
+	defer tiflash.Unlock()
+	tiflash.groupIndex = groupIndex
+}
+
+// GetRuleGroupIndex gets the group index of tiflash
+func (tiflash *MockTiFlash) GetRuleGroupIndex() int {
+	tiflash.Lock()
+	defer tiflash.Unlock()
+	return tiflash.groupIndex
+}
+
 // Compare supposed rule, and we actually get from TableInfo
 func isRuleMatch(rule placement.TiFlashRule, startKey string, endKey string, count int, labels []string) bool {
 	// Compute startKey
@@ -530,6 +609,17 @@ func (m *mockTiFlashPlacementManager) SetMockTiFlash(tiflash *MockTiFlash) {
 	m.Lock()
 	defer m.Unlock()
 	m.tiflash = tiflash
+}
+
+// SetTiFlashGroupConfig sets the tiflash's rule group config
+func (m *mockTiFlashPlacementManager) SetTiFlashGroupConfig(_ context.Context) error {
+	m.Lock()
+	defer m.Unlock()
+	if m.tiflash == nil {
+		return nil
+	}
+	m.tiflash.SetRuleGroupIndex(placement.RuleIndexTiFlash)
+	return nil
 }
 
 // SetPlacementRule is a helper function to set placement rule.

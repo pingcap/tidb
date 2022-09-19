@@ -1125,6 +1125,24 @@ func GenIndexKey(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo
 	return
 }
 
+// TempIndexPrefix used to generate temporary index ID from index ID.
+const TempIndexPrefix = 0x7fff000000000000
+
+// IndexIDMask used to get index id from index ID/temp index ID.
+const IndexIDMask = 0xffffffffffff
+
+// IndexKey2TempIndexKey generates a temporary index key.
+func IndexKey2TempIndexKey(indexID int64, key []byte) {
+	eid := codec.EncodeIntToCmpUint(TempIndexPrefix | indexID)
+	binary.BigEndian.PutUint64(key[prefixLen:], eid)
+}
+
+// TempIndexKey2IndexKey generates an index key from temporary index key.
+func TempIndexKey2IndexKey(originIdxID int64, tempIdxKey []byte) {
+	eid := codec.EncodeIntToCmpUint(originIdxID)
+	binary.BigEndian.PutUint64(tempIdxKey[prefixLen:], eid)
+}
+
 // GenIndexValuePortal is the portal for generating index value.
 // Value layout:
 //

@@ -46,6 +46,17 @@ func GetDDLReorgWorkerCounter() int32 {
 	return atomic.LoadInt32(&ddlReorgWorkerCounter)
 }
 
+// SetDDLFlashbackConcurrency sets ddlFlashbackConcurrency count.
+// Sysvar validation enforces the range to already be correct.
+func SetDDLFlashbackConcurrency(cnt int32) {
+	atomic.StoreInt32(&ddlFlashbackConcurrency, cnt)
+}
+
+// GetDDLFlashbackConcurrency gets ddlFlashbackConcurrency count.
+func GetDDLFlashbackConcurrency() int32 {
+	return atomic.LoadInt32(&ddlFlashbackConcurrency)
+}
+
 // SetDDLReorgBatchSize sets ddlReorgBatchSize size.
 // Sysvar validation enforces the range to already be correct.
 func SetDDLReorgBatchSize(cnt int32) {
@@ -318,6 +329,15 @@ func TidbOptInt64(opt string, defaultVal int64) int64 {
 	return val
 }
 
+// TidbOptUint64 converts a string to an uint64.
+func TidbOptUint64(opt string, defaultVal uint64) uint64 {
+	val, err := strconv.ParseUint(opt, 10, 64)
+	if err != nil {
+		return defaultVal
+	}
+	return val
+}
+
 func tidbOptFloat64(opt string, defaultVal float64) float64 {
 	val, err := strconv.ParseFloat(opt, 64)
 	if err != nil {
@@ -426,6 +446,16 @@ func setReadStaleness(s *SessionVars, sVal string) error {
 	return nil
 }
 
+// switchDDL turns on/off DDL in an instance.
+func switchDDL(on bool) error {
+	if on && EnableDDL != nil {
+		return EnableDDL()
+	} else if !on && DisableDDL != nil {
+		return DisableDDL()
+	}
+	return nil
+}
+
 func collectAllowFuncName4ExpressionIndex() string {
 	str := make([]string, 0, len(GAFunction4ExpressionIndex))
 	for funcName := range GAFunction4ExpressionIndex {
@@ -443,4 +473,28 @@ var GAFunction4ExpressionIndex = map[string]struct{}{
 	ast.Reverse:    {},
 	ast.VitessHash: {},
 	ast.TiDBShard:  {},
+	// JSON functions.
+	ast.JSONType:          {},
+	ast.JSONExtract:       {},
+	ast.JSONUnquote:       {},
+	ast.JSONArray:         {},
+	ast.JSONObject:        {},
+	ast.JSONSet:           {},
+	ast.JSONInsert:        {},
+	ast.JSONReplace:       {},
+	ast.JSONRemove:        {},
+	ast.JSONContains:      {},
+	ast.JSONContainsPath:  {},
+	ast.JSONValid:         {},
+	ast.JSONArrayAppend:   {},
+	ast.JSONArrayInsert:   {},
+	ast.JSONMergePatch:    {},
+	ast.JSONMergePreserve: {},
+	ast.JSONPretty:        {},
+	ast.JSONQuote:         {},
+	ast.JSONSearch:        {},
+	ast.JSONStorageSize:   {},
+	ast.JSONDepth:         {},
+	ast.JSONKeys:          {},
+	ast.JSONLength:        {},
 }

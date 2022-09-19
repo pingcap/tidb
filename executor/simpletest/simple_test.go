@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
+	"go.opencensus.io/stats/view"
 )
 
 func TestFlushTables(t *testing.T) {
@@ -94,7 +95,7 @@ func TestIssue9111(t *testing.T) {
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	defer se.Close()
-	require.True(t, se.Auth(&auth.UserIdentity{Username: "user_admin", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "user_admin", Hostname: "localhost"}, nil, nil))
 
 	ctx := context.Background()
 	_, err = se.Execute(ctx, `create user test_create_user`)
@@ -146,7 +147,7 @@ func TestExtendedStatsPrivileges(t *testing.T) {
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	defer se.Close()
-	require.True(t, se.Auth(&auth.UserIdentity{Username: "u1", Hostname: "%"}, nil, nil))
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "u1", Hostname: "%"}, nil, nil))
 	ctx := context.Background()
 	_, err = se.Execute(ctx, "set session tidb_enable_extended_stats = on")
 	require.NoError(t, err)
@@ -184,7 +185,7 @@ func TestIssue17247(t *testing.T) {
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
-	require.True(t, tk1.Session().Auth(&auth.UserIdentity{Username: "issue17247", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "issue17247", Hostname: "%"}, nil, nil))
 	tk1.MustExec("ALTER USER USER() IDENTIFIED BY 'xxx'")
 	tk1.MustExec("ALTER USER CURRENT_USER() IDENTIFIED BY 'yyy'")
 	tk1.MustExec("ALTER USER CURRENT_USER IDENTIFIED BY 'zzz'")
@@ -216,10 +217,10 @@ func TestSetCurrentUserPwd(t *testing.T) {
 		tk.MustExec("DROP USER IF EXISTS issue28534;")
 	}()
 
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "issue28534", Hostname: "localhost", CurrentUser: true, AuthUsername: "issue28534", AuthHostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "issue28534", Hostname: "localhost", CurrentUser: true, AuthUsername: "issue28534", AuthHostname: "%"}, nil, nil))
 	tk.MustExec(`SET PASSWORD FOR CURRENT_USER() = "43582eussi"`)
 
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	result := tk.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="issue28534"`)
 	result.Check(testkit.Rows(auth.EncodePassword("43582eussi")))
 }
@@ -374,7 +375,7 @@ func TestSetRoleAllCorner(t *testing.T) {
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	defer se.Close()
-	require.True(t, se.Auth(&auth.UserIdentity{Username: "set_role_all", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "set_role_all", Hostname: "localhost"}, nil, nil))
 	ctx := context.Background()
 	_, err = se.Execute(ctx, `set role all`)
 	require.NoError(t, err)
@@ -390,7 +391,7 @@ func TestCreateRole(t *testing.T) {
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	defer se.Close()
-	require.True(t, se.Auth(&auth.UserIdentity{Username: "testCreateRole", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "testCreateRole", Hostname: "localhost"}, nil, nil))
 
 	ctx := context.Background()
 	_, err = se.Execute(ctx, `create role test_create_role;`)
@@ -415,7 +416,7 @@ func TestDropRole(t *testing.T) {
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	defer se.Close()
-	require.True(t, se.Auth(&auth.UserIdentity{Username: "testCreateRole", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "testCreateRole", Hostname: "localhost"}, nil, nil))
 
 	ctx := context.Background()
 	_, err = se.Execute(ctx, `drop role test_create_role;`)
@@ -573,7 +574,7 @@ func TestRoleAdmin(t *testing.T) {
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	defer se.Close()
-	require.True(t, se.Auth(&auth.UserIdentity{Username: "testRoleAdmin", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "testRoleAdmin", Hostname: "localhost"}, nil, nil))
 
 	ctx := context.Background()
 	_, err = se.Execute(ctx, "GRANT `targetRole` TO `testRoleAdmin`;")
@@ -647,7 +648,7 @@ func TestSetDefaultRoleAll(t *testing.T) {
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	defer se.Close()
-	require.True(t, se.Auth(&auth.UserIdentity{Username: "test_all", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "test_all", Hostname: "localhost"}, nil, nil))
 
 	ctx := context.Background()
 	_, err = se.Execute(ctx, "set default role all to test_all;")
@@ -882,7 +883,7 @@ func TestFlushPrivileges(t *testing.T) {
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	defer se.Close()
-	require.True(t, se.Auth(&auth.UserIdentity{Username: "testflush", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "testflush", Hostname: "localhost"}, nil, nil))
 
 	ctx := context.Background()
 	// Before flush.
@@ -897,6 +898,7 @@ func TestFlushPrivileges(t *testing.T) {
 }
 
 func TestFlushPrivilegesPanic(t *testing.T) {
+	defer view.Stop()
 	// Run in a separate suite because this test need to set SkipGrantTable config.
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)

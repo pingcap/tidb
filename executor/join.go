@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/bitmap"
+	"github.com/pingcap/tidb/util/channel"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/disk"
@@ -126,26 +127,21 @@ func (e *HashJoinExec) Close() error {
 	e.finished.Store(true)
 	if e.prepared {
 		if e.buildFinished != nil {
-			for range e.buildFinished {
-			}
+			channel.Clear(e.buildFinished)
 		}
 		if e.joinResultCh != nil {
-			for range e.joinResultCh {
-			}
+			channel.Clear(e.joinResultCh)
 		}
 		if e.probeChkResourceCh != nil {
 			close(e.probeChkResourceCh)
-			for range e.probeChkResourceCh {
-			}
+			channel.Clear(e.probeChkResourceCh)
 		}
 		for i := range e.probeResultChs {
-			for range e.probeResultChs[i] {
-			}
+			channel.Clear(e.probeResultChs[i])
 		}
 		for i := range e.joinChkResourceCh {
 			close(e.joinChkResourceCh[i])
-			for range e.joinChkResourceCh[i] {
-			}
+			channel.Clear(e.joinChkResourceCh[i])
 		}
 		e.probeChkResourceCh = nil
 		e.joinChkResourceCh = nil
@@ -217,6 +213,7 @@ func (e *HashJoinExec) fetchProbeSideChunks(ctx context.Context) {
 			probeSideResult.SetRequiredRows(required, e.maxChunkSize)
 		}
 		err := Next(ctx, e.probeSideExec, probeSideResult)
+		failpoint.Inject("ConsumeRandomPanic", nil)
 		if err != nil {
 			e.joinResultCh <- &hashjoinWorkerResult{
 				err: err,
@@ -290,6 +287,7 @@ func (e *HashJoinExec) fetchBuildSideRows(ctx context.Context, chkCh chan<- *chu
 			return
 		}
 		failpoint.Inject("errorFetchBuildSideRowsMockOOMPanic", nil)
+		failpoint.Inject("ConsumeRandomPanic", nil)
 		if chk.NumRows() == 0 {
 			return
 		}
@@ -467,6 +465,7 @@ func (e *HashJoinExec) runJoinWorker(workerID uint, probeKeyColIdx []int) {
 			return
 		case probeSideResult, ok = <-e.probeResultChs[workerID]:
 		}
+		failpoint.Inject("ConsumeRandomPanic", nil)
 		if !ok {
 			break
 		}
@@ -762,8 +761,7 @@ func (e *HashJoinExec) fetchAndBuildHashTable(ctx context.Context) {
 	// Wait fetchBuildSideRows be finished.
 	// 1. if buildHashTableForList fails
 	// 2. if probeSideResult.NumRows() == 0, fetchProbeSideChunks will not wait for the build side.
-	for range buildSideResultCh {
-	}
+	channel.Clear(buildSideResultCh)
 	// Check whether err is nil to avoid sending redundant error into buildFinished.
 	if err == nil {
 		if err = <-fetchBuildSideRowsOk; err != nil {
@@ -810,6 +808,7 @@ func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chu
 				err = e.rowContainer.PutChunkSelected(chk, selected, e.isNullEQ)
 			}
 		}
+		failpoint.Inject("ConsumeRandomPanic", nil)
 		if err != nil {
 			return err
 		}

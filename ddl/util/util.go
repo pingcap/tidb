@@ -51,14 +51,20 @@ const (
 	KeyOpRetryInterval = 30 * time.Millisecond
 	// DDLAllSchemaVersions is the path on etcd that is used to store all servers current schema versions.
 	DDLAllSchemaVersions = "/tidb/ddl/all_schema_versions"
+	// DDLAllSchemaVersionsByJob is the path on etcd that is used to store all servers current schema versions.
+	DDLAllSchemaVersionsByJob = "/tidb/ddl/all_schema_by_job_versions"
 	// DDLGlobalSchemaVersion is the path on etcd that is used to store the latest schema versions.
 	DDLGlobalSchemaVersion = "/tidb/ddl/global_schema_version"
+	// SessionTTL is the etcd session's TTL in seconds.
+	SessionTTL = 90
 )
 
 // DelRangeTask is for run delete-range command in gc_worker.
 type DelRangeTask struct {
-	JobID, ElementID int64
-	StartKey, EndKey kv.Key
+	StartKey  kv.Key
+	EndKey    kv.Key
+	JobID     int64
+	ElementID int64
 }
 
 // Range returns the range [start, end) to delete.

@@ -59,11 +59,14 @@ var (
 	// RandSeed is the seed for randing package.
 	// It's public for test.
 	RandSeed = int64(1)
+
+	// MaxRegionSampleSize is the max sample size for one region when analyze v1 collects samples from table.
+	// It's public for test.
+	MaxRegionSampleSize = int64(1000)
 )
 
 const (
-	maxRegionSampleSize = 1000
-	maxSketchSize       = 10000
+	maxSketchSize = 10000
 )
 
 type taskType int
