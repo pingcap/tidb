@@ -687,7 +687,6 @@ func (s *tiflashTestSuite) TestMppUnionAll(c *C) {
 
 	tk.MustExec("insert into x4 values (2, 2), (2, 3)")
 	tk.MustQuery("(select * from x1 union all select * from x4) order by a, b").Check(testkit.Rows("1 1", "2 2", "2 2", "2 3", "3 3", "4 4"))
-
 }
 
 func (s *tiflashTestSuite) TestUnionWithEmptyDualTable(c *C) {
@@ -755,28 +754,6 @@ func (s *tiflashTestSuite) TestAvgOverflow(c *C) {
 
 	tk.MustQuery(" SELECT AVG(col_bigint) OVER (PARTITION BY col_smallint) as field2 FROM td where col_smallint = -23828;").Sort().Check(testkit.Rows("4.0000"))
 	tk.MustExec("drop table if exists td;")
-}
-
-func (s *tiflashTestSuite) TestUnionWithEmptyDualTable(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t (a int not null, b int, c varchar(20))")
-	tk.MustExec("create table t1 (a int, b int not null, c double)")
-	tk.MustExec("alter table t set tiflash replica 1")
-	tk.MustExec("alter table t1 set tiflash replica 1")
-	tb := testGetTableByName(c, tk.Se, "test", "t")
-	err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
-	c.Assert(err, IsNil)
-	tb = testGetTableByName(c, tk.Se, "test", "t1")
-	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
-	c.Assert(err, IsNil)
-	tk.MustExec("insert into t values(1,2,3)")
-	tk.MustExec("insert into t1 values(1,2,3)")
-	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
-	tk.MustExec("set @@session.tidb_enforce_mpp=ON")
-	tk.MustQuery("select count(*) from (select a , b from t union all select a , c from t1 where false) tt").Check(testkit.Rows("1"))
 }
 
 func (s *tiflashTestSuite) TestMppApply(c *C) {
