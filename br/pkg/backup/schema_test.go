@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	filter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/stretchr/testify/require"
+	"go.opencensus.io/stats/view"
 )
 
 func createMockCluster(t *testing.T) *mock.Cluster {
@@ -30,6 +31,7 @@ func createMockCluster(t *testing.T) *mock.Cluster {
 	require.NoError(t, err)
 	require.NoError(t, m.Start())
 	t.Cleanup(func() {
+		view.Stop()
 		m.Stop()
 	})
 	return m
