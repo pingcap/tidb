@@ -179,8 +179,8 @@ def go_deps():
         name = "com_github_aws_aws_sdk_go",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/aws/aws-sdk-go",
-        sum = "h1:hAwyfe7eZa7sM+S5mIJZFiNFwJMia9Whz6CYblioLoU=",
-        version = "v1.36.30",
+        sum = "h1:jLDC9RsNoYMLFlKpB8LdqUnoDdC2yvkS4QbuyPQJ8+M=",
+        version = "v1.44.48",
     )
     go_repository(
         name = "com_github_aymerick_raymond",
@@ -825,6 +825,13 @@ def go_deps():
         importpath = "github.com/elazarl/go-bindata-assetfs",
         sum = "h1:G/bYguwHIzWq9ZoyUQqrjTmJbbYn3j3CKKpKinvZLFk=",
         version = "v1.0.0",
+    )
+    go_repository(
+        name = "com_github_emirpasic_gods",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/emirpasic/gods",
+        sum = "h1:FXtiHYKDGKCW2KzwZKx0iC0PQmdlorYgdFG9jPXJ1Bc=",
+        version = "v1.18.1",
     )
 
     go_repository(
