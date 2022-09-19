@@ -17,8 +17,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+<<<<<<< HEAD
 	"go.uber.org/zap"
 	"sort"
+=======
+	"net"
+>>>>>>> a6db4b7ed... privilege/privileges: sort in-memory db privilege table records (#37688)
 	"strings"
 	"sync/atomic"
 	"time"
@@ -350,6 +354,7 @@ func (p *MySQLPrivilege) LoadUserTable(ctx sessionctx.Context) error {
 	return nil
 }
 
+<<<<<<< HEAD
 type sortedUserRecord []UserRecord
 
 func (s sortedUserRecord) Len() int {
@@ -360,6 +365,17 @@ func (s sortedUserRecord) Less(i, j int) bool {
 	x := s[i]
 	y := s[j]
 
+=======
+func (p *MySQLPrivilege) buildUserMap() {
+	userMap := make(map[string][]UserRecord, len(p.User))
+	for _, record := range p.User {
+		userMap[record.User] = append(userMap[record.User], record)
+	}
+	p.UserMap = userMap
+}
+
+func compareBaseRecord(x, y *baseRecord) bool {
+>>>>>>> a6db4b7ed... privilege/privileges: sort in-memory db privilege table records (#37688)
 	// Compare two item by user's host first.
 	c1 := compareHost(x.Host, y.Host)
 	if c1 < 0 {
@@ -371,6 +387,10 @@ func (s sortedUserRecord) Less(i, j int) bool {
 
 	// Then, compare item by user's name value.
 	return x.User < y.User
+}
+
+func compareUserRecord(x, y UserRecord) bool {
+	return compareBaseRecord(&x.baseRecord, &y.baseRecord)
 }
 
 // compareHost compares two host string using some special rules, return value 1, 0, -1 means > = <.
@@ -422,13 +442,9 @@ func compareHost(x, y string) int {
 	return 0
 }
 
-func (s sortedUserRecord) Swap(i, j int) {
-	s[i], s[j] = s[j], s[i]
-}
-
 // SortUserTable sorts p.User in the MySQLPrivilege struct.
 func (p MySQLPrivilege) SortUserTable() {
-	sort.Sort(sortedUserRecord(p.User))
+	slices.SortFunc(p.User, compareUserRecord)
 }
 
 // LoadGlobalPrivTable loads the mysql.global_priv table from database.
@@ -438,7 +454,33 @@ func (p *MySQLPrivilege) LoadGlobalPrivTable(ctx sessionctx.Context) error {
 
 // LoadDBTable loads the mysql.db table from database.
 func (p *MySQLPrivilege) LoadDBTable(ctx sessionctx.Context) error {
+<<<<<<< HEAD
 	return p.loadTable(ctx, "select HIGH_PRIORITY Host,DB,User,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Grant_priv,Index_priv,Alter_priv,Execute_priv,Create_view_priv,Show_view_priv from mysql.db order by host, db, user;", p.decodeDBTableRow)
+=======
+	err := p.loadTable(ctx, sqlLoadDBTable, p.decodeDBTableRow)
+	if err != nil {
+		return err
+	}
+	p.buildDBMap()
+	return nil
+}
+
+func compareDBRecord(x, y dbRecord) bool {
+	return compareBaseRecord(&x.baseRecord, &y.baseRecord)
+}
+
+func (p *MySQLPrivilege) buildDBMap() {
+	dbMap := make(map[string][]dbRecord, len(p.DB))
+	for _, record := range p.DB {
+		dbMap[record.User] = append(dbMap[record.User], record)
+	}
+
+	// Sort the records to make the matching rule work.
+	for _, records := range dbMap {
+		slices.SortFunc(records, compareDBRecord)
+	}
+	p.DBMap = dbMap
+>>>>>>> a6db4b7ed... privilege/privileges: sort in-memory db privilege table records (#37688)
 }
 
 // LoadTablesPrivTable loads the mysql.tables_priv table from database.
