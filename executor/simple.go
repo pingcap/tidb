@@ -1478,8 +1478,7 @@ func killRemoteConn(ctx context.Context, sctx sessionctx.Context, connID *util.G
 	if err != nil {
 		return err
 	}
-
-	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars, sctx.GetSessionVars().StmtCtx.MemTracker, false, nil)
+	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars, &kv.ClientSendOption{})
 	if resp == nil {
 		err := errors.New("client returns nil response")
 		return err

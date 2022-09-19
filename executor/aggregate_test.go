@@ -1461,11 +1461,9 @@ func (s *testSuiteAgg) TestIssue23277(c *C) {
 	tk.MustExec("drop table t;")
 }
 
-func TestAvgDecimal(t *testing.T) {
-	t.Parallel()
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
+
+func (s *testSuiteAgg) TestAvgDecimal(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists td;")
 	tk.MustExec("create table td (col_bigint bigint(20), col_smallint smallint(6));")
@@ -1480,6 +1478,7 @@ func TestAvgDecimal(t *testing.T) {
 	tk.MustExec("insert into td values (0,29815);")
 	tk.MustExec("insert into td values (10017,-32661);")
 	tk.MustQuery(" SELECT AVG( col_bigint / col_smallint) AS field1 FROM td;").Sort().Check(testkit.Rows("25769363061037.62077260"))
+	tk.MustQuery(" SELECT AVG(col_bigint) OVER (PARTITION BY col_smallint) as field2 FROM td where col_smallint = -23828;").Sort().Check(testkit.Rows("4.0000"))
 	tk.MustExec("drop table td;")
 }
 
