@@ -299,7 +299,7 @@ func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
 	if selected == nil && len(uniqueIdxsWithDoubleScan) > 0 {
 		uniqueIdxColumnSets := make([]*intsets.Sparse, 0, len(uniqueIdxsWithDoubleScan))
 		for _, uniqueIdx := range uniqueIdxsWithDoubleScan {
-			uniqueIdxColumnSets = append(uniqueIdxColumnSets, expression.ExtractColumnSet(uniqueIdx.AccessConds))
+			uniqueIdxColumnSets = append(uniqueIdxColumnSets, expression.ExtractColumnSet(uniqueIdx.AccessConds...))
 			// Find the unique index with the minimal number of ranges as `uniqueBest`.
 			if uniqueBest == nil || len(uniqueIdx.Ranges) < len(uniqueBest.Ranges) {
 				uniqueBest = uniqueIdx
@@ -314,7 +314,7 @@ func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
 		// Hence, for each index in `singleScanIdxs`, we check whether it is better than some index in `uniqueIdxsWithDoubleScan`.
 		// If yes, the index is a refined one. We find the refined index with the minimal number of ranges as `refineBest`.
 		for _, singleScanIdx := range singleScanIdxs {
-			columnSet := expression.ExtractColumnSet(singleScanIdx.AccessConds)
+			columnSet := expression.ExtractColumnSet(singleScanIdx.AccessConds...)
 			for _, uniqueIdxColumnSet := range uniqueIdxColumnSets {
 				setsResult, comparable := compareColumnSet(columnSet, uniqueIdxColumnSet)
 				if comparable && setsResult == 1 {

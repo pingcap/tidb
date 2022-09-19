@@ -1027,9 +1027,87 @@ func (m noopTableMetaMgr) UpdateTableBaseChecksum(ctx context.Context, checksum 
 }
 
 func (m noopTableMetaMgr) CheckAndUpdateLocalChecksum(ctx context.Context, checksum *verify.KVChecksum, hasLocalDupes bool) (bool, bool, *verify.KVChecksum, error) {
-	return false, false, nil, nil
+	return true, true, &verify.KVChecksum{}, nil
 }
 
 func (m noopTableMetaMgr) FinishTable(ctx context.Context) error {
 	return nil
+}
+
+type singleMgrBuilder struct {
+	taskID int64
+}
+
+func (b singleMgrBuilder) Init(context.Context) error {
+	return nil
+}
+
+func (b singleMgrBuilder) TaskMetaMgr(pd *pdutil.PdController) taskMetaMgr {
+	return &singleTaskMetaMgr{
+		pd:     pd,
+		taskID: b.taskID,
+	}
+}
+
+func (b singleMgrBuilder) TableMetaMgr(tr *TableRestore) tableMetaMgr {
+	return noopTableMetaMgr{}
+}
+
+type singleTaskMetaMgr struct {
+	pd           *pdutil.PdController
+	taskID       int64
+	initialized  bool
+	sourceBytes  uint64
+	clusterAvail uint64
+}
+
+func (m *singleTaskMetaMgr) InitTask(ctx context.Context, source int64) error {
+	m.sourceBytes = uint64(source)
+	m.initialized = true
+	return nil
+}
+
+func (m *singleTaskMetaMgr) CheckTasksExclusively(ctx context.Context, action func(tasks []taskMeta) ([]taskMeta, error)) error {
+	newTasks, err := action([]taskMeta{
+		{
+			taskID:       m.taskID,
+			status:       taskMetaStatusInitial,
+			sourceBytes:  m.sourceBytes,
+			clusterAvail: m.clusterAvail,
+		},
+	})
+	for _, t := range newTasks {
+		if m.taskID == t.taskID {
+			m.sourceBytes = t.sourceBytes
+			m.clusterAvail = t.clusterAvail
+		}
+	}
+	return err
+}
+
+func (m *singleTaskMetaMgr) CheckAndPausePdSchedulers(ctx context.Context) (pdutil.UndoFunc, error) {
+	return m.pd.RemoveSchedulers(ctx)
+}
+
+func (m *singleTaskMetaMgr) CheckTaskExist(ctx context.Context) (bool, error) {
+	return m.initialized, nil
+}
+
+func (m *singleTaskMetaMgr) CheckAndFinishRestore(context.Context, bool) (shouldSwitchBack bool, shouldCleanupMeta bool, err error) {
+	return true, true, nil
+}
+
+func (m *singleTaskMetaMgr) Cleanup(ctx context.Context) error {
+	return nil
+}
+
+func (m *singleTaskMetaMgr) CleanupTask(ctx context.Context) error {
+	return nil
+}
+
+func (m *singleTaskMetaMgr) CleanupAllMetas(ctx context.Context) error {
+	return nil
+}
+
+func (m *singleTaskMetaMgr) Close() {
 }

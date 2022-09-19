@@ -20,9 +20,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -53,12 +55,13 @@ type MySQLConnectParam struct {
 }
 
 func (param *MySQLConnectParam) ToDSN() string {
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/?charset=utf8mb4&sql_mode='%s'&maxAllowedPacket=%d&tls=%s",
-		param.User, param.Password, param.Host, param.Port,
+	hostPort := net.JoinHostPort(param.Host, strconv.Itoa(param.Port))
+	dsn := fmt.Sprintf("%s:%s@tcp(%s)/?charset=utf8mb4&sql_mode='%s'&maxAllowedPacket=%d&tls=%s",
+		param.User, param.Password, hostPort,
 		param.SQLMode, param.MaxAllowedPacket, param.TLS)
 
 	for k, v := range param.Vars {
-		dsn += fmt.Sprintf("&%s=%s", k, url.QueryEscape(v))
+		dsn += fmt.Sprintf("&%s='%s'", k, url.QueryEscape(v))
 	}
 
 	return dsn

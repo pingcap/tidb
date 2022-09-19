@@ -16,11 +16,14 @@ package infoschema_test
 
 import (
 	"fmt"
+	"math/rand"
 	"net"
 	"net/http/httptest"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -30,6 +33,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/auth"
@@ -79,6 +83,8 @@ func TestClusterTables(t *testing.T) {
 	t.Run("StmtSummaryHistoryTable", SubTestStmtSummaryHistoryTable(s))
 	t.Run("Issue26379", SubTestIssue26379(s))
 	t.Run("SubTestStmtSummaryResultRows", SubTestStmtSummaryResultRows(s))
+	t.Run("SubTestStmtSummaryIssue35340", SubTestStmtSummaryIssue35340(s))
+	t.Run("SubTestSlowQueryOOM", SubTestSlowQueryOOM(s))
 }
 
 func SubTestForClusterServerInfo(s *clusterTablesSuite) func(*testing.T) {
@@ -486,6 +492,138 @@ func SubTestStmtSummaryResultRows(s *clusterTablesSuite) func(t *testing.T) {
 			Check(testkit.Rows("10 30 20"))
 		tk.MustQuery("select MIN_RESULT_ROWS,MAX_RESULT_ROWS,AVG_RESULT_ROWS from information_schema.cluster_statements_summary where query_sample_text like 'select%test.t limit%' and MAX_RESULT_ROWS > 10").
 			Check(testkit.Rows("10 30 20"))
+	}
+}
+
+func SubTestStmtSummaryIssue35340(s *clusterTablesSuite) func(t *testing.T) {
+	return func(t *testing.T) {
+		tk := s.newTestKitWithRoot(t)
+		tk.MustExec("set global tidb_stmt_summary_refresh_interval=1800")
+		tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 3000")
+		for i := 0; i < 100; i++ {
+			user := "user" + strconv.Itoa(i)
+			tk.MustExec(fmt.Sprintf("create user '%v'@'localhost'", user))
+		}
+		tk.MustExec("flush privileges")
+		var wg sync.WaitGroup
+		for i := 0; i < 10; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				tk := s.newTestKitWithRoot(t)
+				for j := 0; j < 100; j++ {
+					user := "user" + strconv.Itoa(j)
+					require.True(t, tk.Session().Auth(&auth.UserIdentity{
+						Username: user,
+						Hostname: "localhost",
+					}, nil, nil))
+					tk.MustQuery("select count(*) from information_schema.statements_summary;")
+				}
+			}()
+		}
+		wg.Wait()
+	}
+}
+
+func SubTestSlowQueryOOM(s *clusterTablesSuite) func(t *testing.T) {
+	return func(t *testing.T) {
+		var clean func()
+		s.store, s.dom, clean = testkit.CreateMockStoreAndDomain(t)
+		defer clean()
+		s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0")
+		s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+		s.startTime = time.Now()
+		defer s.httpServer.Close()
+		defer s.rpcserver.Stop()
+		tk := s.newTestKitWithRoot(t)
+
+		f, err := os.CreateTemp("", "tidb-slow-*.log")
+		require.NoError(t, err)
+		_, err = f.WriteString(`
+# Time: 2022-04-14T10:50:28.185954+08:00
+# Txn_start_ts: 432512598850928660
+# User@Host: root[root] @ 127.0.0.1 [127.0.0.1]
+# Conn_ID: 465
+# Query_time: 0.000955269
+# Parse_time: 0
+# Compile_time: 0.000486719
+# Rewrite_time: 0.000142467
+# Optimize_time: 0.000312527
+# Wait_TS: 0.000004489
+# Cop_time: 0.000169235 Request_count: 2
+# DB: test
+# Index_names: [t_normal_oltp:idx0]
+# Is_internal: false
+# Digest: dcb13f841a568ec94baec50c88d0679c533bbd65539ba8fee6deb2e39881acdd
+# Stats: t_normal_oltp:432512598027796484
+# Num_cop_tasks: 2
+# Cop_proc_avg: 0 Cop_proc_p90: 0 Cop_proc_max: 0 Cop_proc_addr: store1
+# Cop_wait_avg: 0 Cop_wait_p90: 0 Cop_wait_max: 0 Cop_wait_addr: store1
+# Mem_max: 11372
+# Prepared: true
+# Plan_from_cache: false
+# Plan_from_binding: false
+# Has_more_results: false
+# KV_total: 0
+# PD_total: 0.000000671
+# Backoff_total: 0
+# Write_sql_response_total: 0.000000606
+# Result_rows: 1
+# Succ: true
+# IsExplicitTxn: false
+# Plan: tidb_decode_plan('lQeAMAk1XzEwCTAJMQlmdW5jczpzdW0oQ29sdW1uIzEyKS0+DQzwUjYJMQl0aW1lOjQyMS45wrVzLCBsb29wczoyCTEuNDUgS0IJTi9BCjEJM18yNwkwCTAJY2FzdChwbHVzKHRlc3QudF9ub3JtYWxfb2x0cC5hLCB0RhYAXGIpLCBkZWNpbWFsKDIwLDApIEJJTkFSWRmHDDEyCTERiQQxOC6HAGwsIENvbmN1cnJlbmN5Ok9GRgk3NjAgQnl0ZXMJAZoYMgkzMF8yNAWbGUQMMDkuNzZGAEhpbmRleF90YXNrOiB7dG90YWxfBfgUIDEwMS4yBSwsZmV0Y2hfaGFuZGxlARgIMC4xBRiAYnVpbGQ6IDQ2OW5zLCB3YWl0OiA1OTVuc30sIHRhYmxlTlcADDI1Ny4pUCBudW06IDEsIGMdyBwgNX0JOC45MTFgODMJNDdfMjIJMV8wCTAJdAFVADoyWgEALAnBwDppZHgwKGEpLCByYW5nZTpbNjY4Mzk4LDY2ODQwOF0sIGtlZXAgb3JkZXI6ZmFsc2U1Ewg5Ni4uWAEAMwGQAHARuRGjGG1heDogNzQF9kRwcm9jX2tleXM6IDAsIHJwY18RJgEMKTwENjMN5GRjb3ByX2NhY2hlX2hpdF9yYXRpbzogMC4wMCEkCGlrdglqAHsFNwA1LokAFDB9CU4vQQEEIQUMNV8yM24FAWbfAAA1LcVNvmrfAAAwot8ADDU5LjYFLbbfAAQzLlrhAA==')
+# Plan_digest: e7b1a5789200cb6d91aaac8af3f5560af51870369bac2e247b84fe9b5e754cbe
+select sum(a+b) from test.t_normal_oltp where a >= ? and a <= ? [arguments: (668398, 668408)];
+# Time: 2022-04-14T10:50:28.185987+08:00
+select * from t;
+# Time: 2022-04-14T10:50:28.186028+08:00
+select * from t1;
+`)
+		require.NoError(t, err)
+		require.NoError(t, f.Close())
+		executor.ParseSlowLogBatchSize = 1
+		originCfg := config.GetGlobalConfig()
+		newCfg := *originCfg
+		newCfg.Log.SlowQueryFile = f.Name()
+		newCfg.OOMAction = config.OOMActionCancel
+		config.StoreGlobalConfig(&newCfg)
+		defer func() {
+			executor.ParseSlowLogBatchSize = 64
+			config.StoreGlobalConfig(originCfg)
+			require.NoError(t, os.Remove(newCfg.Log.SlowQueryFile))
+		}()
+
+		tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", f.Name()))
+		checkFn := func(quota int) {
+			originCfg := config.GetGlobalConfig()
+			newCfg := *originCfg
+			newCfg.MemQuotaQuery = int64(quota)
+			config.StoreGlobalConfig(&newCfg)
+			tk.MustExec("set @@tidb_mem_quota_query=" + strconv.Itoa(quota))
+
+			err = tk.QueryToErr("select * from `information_schema`.`slow_query` where time > '2022-04-14 00:00:00' and time < '2022-04-15 00:00:00'")
+			require.Error(t, err, quota)
+			require.Contains(t, err.Error(), "Out Of Memory Quota!", quota)
+			err = tk.QueryToErr("select * from `information_schema`.`cluster_slow_query` where time > '2022-04-14 00:00:00' and time < '2022-04-15 00:00:00'")
+			require.Error(t, err, quota)
+			require.Contains(t, err.Error(), "Out Of Memory Quota!", quota)
+		}
+		memQuotas := []int{128, 512, 1024, 2048, 4096}
+		for _, quota := range memQuotas {
+			checkFn(quota)
+		}
+		for i := 0; i < 100; i++ {
+			quota := rand.Int()%8192 + 1
+			checkFn(quota)
+		}
+
+		newCfg.MemQuotaQuery = 1024 * 1024 * 1024
+		config.StoreGlobalConfig(&newCfg)
+		tk.MustExec("set @@tidb_mem_quota_query=" + strconv.Itoa(int(newCfg.MemQuotaQuery)))
+		tk.MustQuery("select * from `information_schema`.`slow_query` where time > '2022-04-14 00:00:00' and time < '2022-04-15 00:00:00'")
+		mem := tk.Session().GetSessionVars().StmtCtx.MemTracker.BytesConsumed()
+		require.Equal(t, mem, int64(0))
+		tk.MustQuery("select * from `information_schema`.`cluster_slow_query` where time > '2022-04-14 00:00:00' and time < '2022-04-15 00:00:00'")
 	}
 }
 

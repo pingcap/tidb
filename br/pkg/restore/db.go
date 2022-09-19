@@ -28,6 +28,15 @@ type UniqueTableName struct {
 	Table string
 }
 
+type DDLJobFilterRule func(ddlJob *model.Job) bool
+
+var incrementalRestoreActionBlockList = map[model.ActionType]struct{}{
+	model.ActionSetTiFlashReplica:          {},
+	model.ActionUpdateTiFlashReplicaStatus: {},
+	model.ActionLockTable:                  {},
+	model.ActionUnlockTable:                {},
+}
+
 // NewDB returns a new DB.
 func NewDB(g glue.Glue, store kv.Storage) (*DB, error) {
 	se, err := g.CreateSession(store)
@@ -69,6 +78,13 @@ func (db *DB) ExecDDL(ctx context.Context, ddlJob *model.Job) error {
 				zap.Error(err))
 		}
 		return errors.Trace(err)
+	}
+
+	if ddlJob.Query == "" {
+		log.Warn("query of ddl job is empty, ignore it",
+			zap.Stringer("type", ddlJob.Type),
+			zap.String("db", ddlJob.SchemaName))
+		return nil
 	}
 
 	if tableInfo != nil {
@@ -125,7 +141,7 @@ func (db *DB) CreateDatabase(ctx context.Context, schema *model.DBInfo) error {
 }
 
 // CreateTable executes a CREATE TABLE SQL.
-func (db *DB) CreateTable(ctx context.Context, table *metautil.Table, ddlTables map[UniqueTableName]bool) error {
+func (db *DB) CreateTable(ctx context.Context, table *metautil.Table, toBeCorrectedTables map[UniqueTableName]bool) error {
 	err := db.se.CreateTable(ctx, table.DB.Name, table.Info)
 	if err != nil {
 		log.Error("create table failed",
@@ -190,8 +206,8 @@ func (db *DB) CreateTable(ctx context.Context, table *metautil.Table, ddlTables 
 				zap.Error(err))
 			return errors.Trace(err)
 		}
-	// only table exists in ddlJobs during incremental restoration should do alter after creation.
-	case ddlTables[UniqueTableName{table.DB.Name.String(), table.Info.Name.String()}]:
+	// only table exists in restored cluster during incremental restoration should do alter after creation.
+	case toBeCorrectedTables[UniqueTableName{table.DB.Name.String(), table.Info.Name.String()}]:
 		if utils.NeedAutoID(table.Info) {
 			restoreMetaSQL = fmt.Sprintf(
 				"alter table %s.%s auto_increment = %d;",
@@ -280,6 +296,31 @@ func FilterDDLJobs(allDDLJobs []*model.Job, tables []*metautil.Table) (ddlJobs [
 	return ddlJobs
 }
 
+// FilterDDLJobByRules if one of rules returns true, the job in srcDDLJobs will be filtered.
+func FilterDDLJobByRules(srcDDLJobs []*model.Job, rules ...DDLJobFilterRule) (dstDDLJobs []*model.Job) {
+	dstDDLJobs = make([]*model.Job, 0, len(srcDDLJobs))
+	for _, ddlJob := range srcDDLJobs {
+		passed := true
+		for _, rule := range rules {
+			if rule(ddlJob) {
+				passed = false
+				break
+			}
+		}
+
+		if passed {
+			dstDDLJobs = append(dstDDLJobs, ddlJob)
+		}
+	}
+
+	return
+}
+
+// DDLJobBlockListRule rule for filter ddl job with type in block list.
+func DDLJobBlockListRule(ddlJob *model.Job) bool {
+	return checkIsInActions(ddlJob.Type, incrementalRestoreActionBlockList)
+}
+
 func getDatabases(tables []*metautil.Table) (dbs []*model.DBInfo) {
 	dbIDs := make(map[int64]bool)
 	for _, table := range tables {
@@ -289,4 +330,9 @@ func getDatabases(tables []*metautil.Table) (dbs []*model.DBInfo) {
 		}
 	}
 	return
+}
+
+func checkIsInActions(action model.ActionType, actions map[model.ActionType]struct{}) bool {
+	_, ok := actions[action]
+	return ok
 }

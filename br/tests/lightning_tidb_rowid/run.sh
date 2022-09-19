@@ -58,8 +58,13 @@ for BACKEND in local importer tidb; do
 
   run_sql 'SELECT count(*), min(_tidb_rowid), max(_tidb_rowid) FROM rowid.pre_rebase'
   check_contains 'count(*): 1'
-  check_contains 'min(_tidb_rowid): 70000'
-  check_contains 'max(_tidb_rowid): 70000'
+  if [ "$BACKEND" == 'tidb' ]; then
+    check_contains 'min(_tidb_rowid): 70000'
+    check_contains 'max(_tidb_rowid): 70000'
+  else
+    check_contains 'min(_tidb_rowid): 1'
+    check_contains 'max(_tidb_rowid): 1'
+  fi
   run_sql 'INSERT INTO rowid.pre_rebase VALUES ("?")'
   run_sql 'SELECT _tidb_rowid > 70000 FROM rowid.pre_rebase WHERE pk = "?"'
   check_contains '_tidb_rowid > 70000: 1'
