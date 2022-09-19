@@ -539,6 +539,7 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, v *ast.
 	if noDecorrelate && len(extractCorColumnsBySchema4LogicalPlan(np, er.p.Schema())) == 0 {
 		er.sctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(
 			"NO_DECORRELATE() is inapplicable because there are no correlated columns."))
+		noDecorrelate = false
 	}
 
 	// Only (a,b,c) = any (...) and (a,b,c) != all (...) can use row expression.
@@ -988,6 +989,7 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 	if len(corCols) == 0 && noDecorrelate {
 		er.sctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(
 			"NO_DECORRELATE() is inapplicable because there are no correlated columns."))
+		noDecorrelate = false
 	}
 
 	// If it's not the form of `not in (SUBQUERY)`,
@@ -1047,6 +1049,7 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 	if noDecorrelate && len(extractCorColumnsBySchema4LogicalPlan(np, er.p.Schema())) == 0 {
 		er.sctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(
 			"NO_DECORRELATE() is inapplicable because there are no correlated columns."))
+		noDecorrelate = false
 	}
 
 	if er.b.disableSubQueryPreprocessing || len(ExtractCorrelatedCols4LogicalPlan(np)) > 0 {

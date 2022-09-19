@@ -3692,6 +3692,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 		case HintNoDecorrelate:
 			if b.subQueryCtx == notHandlingSubquery {
 				b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("NO_DECORRELATE() is inapplicable because it's not in an IN subquery, an EXISTS subquery, an ANY/ALL/SOME subquery or a scalar subquery."))
+				continue
 			}
 			b.subQueryHintFlags |= HintFlagNoDecorrelate
 		default:
