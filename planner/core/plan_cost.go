@@ -820,7 +820,7 @@ func (p *PhysicalApply) GetCost(lCount, rCount, lCost, rCost float64) float64 {
 		cpuCost += lCount * rCount * sessVars.GetCPUFactor()
 		rCount *= SelectionFactor
 	}
-	if len(p.EqualConditions)+len(p.OtherConditions) > 0 {
+	if len(p.EqualConditions)+len(p.OtherConditions)+len(p.NAEqualConditions) > 0 {
 		if p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin ||
 			p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
 			cpuCost += lCount * rCount * sessVars.GetCPUFactor() * 0.5
@@ -956,14 +956,16 @@ func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64, isMPP bool, costFlag uint
 	diskCost := buildCnt * diskFactor * rowSize
 	// Number of matched row pairs regarding the equal join conditions.
 	helper := &fullJoinRowCountHelper{
-		sctx:          p.SCtx(),
-		cartesian:     false,
-		leftProfile:   p.children[0].statsInfo(),
-		rightProfile:  p.children[1].statsInfo(),
-		leftJoinKeys:  p.LeftJoinKeys,
-		rightJoinKeys: p.RightJoinKeys,
-		leftSchema:    p.children[0].Schema(),
-		rightSchema:   p.children[1].Schema(),
+		sctx:            p.SCtx(),
+		cartesian:       false,
+		leftProfile:     p.children[0].statsInfo(),
+		rightProfile:    p.children[1].statsInfo(),
+		leftJoinKeys:    p.LeftJoinKeys,
+		rightJoinKeys:   p.RightJoinKeys,
+		leftSchema:      p.children[0].Schema(),
+		rightSchema:     p.children[1].Schema(),
+		leftNAJoinKeys:  p.LeftNAJoinKeys,
+		rightNAJoinKeys: p.RightNAJoinKeys,
 	}
 	numPairs := helper.estimate()
 	// For semi-join class, if `OtherConditions` is empty, we already know
