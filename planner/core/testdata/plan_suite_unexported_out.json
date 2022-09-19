@@ -117,7 +117,8 @@
       "Join{DataScan(t1)->DataScan(t2)->Aggr(max(test.t.a),firstrow(test.t.b))}(test.t.b,test.t.b)->Projection->Sel([eq(test.t.b, Column#25)])->Projection",
       "Join{DataScan(t1)->DataScan(t2)}(test.t.a,test.t.a)(test.t.b,test.t.b)->Projection",
       "Join{DataScan(t1)->DataScan(t2)}(test.t.a,test.t.a)->Projection",
-      "Apply{DataScan(t1)->DataScan(t2)->Sel([eq(test.t.a, test.t.a)])->Projection->Sort->Limit}->Projection->Sel([eq(test.t.b, test.t.b)])->Projection"
+      "Apply{DataScan(t1)->DataScan(t2)->Sel([eq(test.t.a, test.t.a)])->Projection->Sort->Limit}->Projection->Sel([eq(test.t.b, test.t.b)])->Projection",
+      "Apply{DataScan(t2)->DataScan(t1)->Sel([eq(test.t.a, test.t.a)])->Projection}->Projection"
     ]
   },
   {

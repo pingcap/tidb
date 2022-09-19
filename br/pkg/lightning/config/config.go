@@ -101,7 +101,7 @@ const (
 )
 
 var (
-	supportedStorageTypes = []string{"file", "local", "s3", "noop", "gcs"}
+	supportedStorageTypes = []string{"file", "local", "s3", "noop", "gcs", "gs"}
 
 	DefaultFilter = []string{
 		"*.*",
@@ -473,6 +473,14 @@ type IgnoreColumns struct {
 	Columns     []string `toml:"columns" json:"columns"`
 }
 
+func (ic *IgnoreColumns) ColumnsMap() map[string]struct{} {
+	columnMap := make(map[string]struct{}, len(ic.Columns))
+	for _, c := range ic.Columns {
+		columnMap[c] = struct{}{}
+	}
+	return columnMap
+}
+
 // GetIgnoreColumns gets Ignore config by schema name/regex and table name/regex.
 func (igCols AllIgnoreColumns) GetIgnoreColumns(db string, table string, caseSensitive bool) (*IgnoreColumns, error) {
 	if !caseSensitive {
@@ -519,6 +527,7 @@ type TikvImporter struct {
 	DiskQuota           ByteSize                     `toml:"disk-quota" json:"disk-quota"`
 	RangeConcurrency    int                          `toml:"range-concurrency" json:"range-concurrency"`
 	DuplicateResolution DuplicateResolutionAlgorithm `toml:"duplicate-resolution" json:"duplicate-resolution"`
+	IncrementalImport   bool                         `toml:"incremental-import" json:"incremental-import"`
 
 	EngineMemCacheSize      ByteSize `toml:"engine-mem-cache-size" json:"engine-mem-cache-size"`
 	LocalWriterMemCacheSize ByteSize `toml:"local-writer-mem-cache-size" json:"local-writer-mem-cache-size"`

@@ -28,7 +28,7 @@ SELECTED_TEST_NAME="${TEST_NAME-$(find tests -mindepth 2 -maxdepth 2 -name run.s
 source tests/_utils/run_services
 
 trap stop_services EXIT
-start_services
+start_services $@
 
 # Intermediate file needed because read can be used as a pipe target.
 # https://stackoverflow.com/q/2746553/

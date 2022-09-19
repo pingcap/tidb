@@ -50,6 +50,8 @@ func TestScalarFunction(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "values", newSf.FuncName.O)
 	require.Equal(t, mysql.TypeLonglong, newSf.RetType.Tp)
+	require.Equal(t, sf.Coercibility(), newSf.Coercibility())
+	require.Equal(t, sf.Repertoire(), newSf.Repertoire())
 	_, ok = newSf.Function.(*builtinValuesIntSig)
 	require.True(t, ok)
 }

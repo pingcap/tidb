@@ -3,7 +3,6 @@ on:
   push:
     branches:
       - master
-      - 'release-[0-9].[0-9]*'
     paths:
       - 'br/**'
       - '!**.html'
@@ -16,7 +15,6 @@ on:
   pull_request:
     branches:
       - master
-      - 'release-[0-9].[0-9]*'
     paths:
       - 'br/**'
       - '!**.html'

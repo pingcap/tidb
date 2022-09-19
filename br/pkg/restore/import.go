@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -168,6 +169,8 @@ func (ic *importClient) GetImportClient(
 		ctx,
 		addr,
 		opt,
+		grpc.WithBlock(),
+		grpc.FailOnNonTempDialError(true),
 		grpc.WithConnectParams(grpc.ConnectParams{Backoff: bfConf}),
 		grpc.WithKeepaliveParams(ic.keepaliveConf),
 	)
@@ -328,6 +331,14 @@ func (importer *FileImporter) Import(
 						log.Warn("the connection to TiKV has been cut by a neko, meow :3")
 						e = status.Error(codes.Unavailable, "the connection to TiKV has been cut by a neko, meow :3")
 					})
+					if isDecryptSstErr(e) {
+						log.Info("fail to decrypt when download sst, try again with no-crypt", logutil.File(f))
+						if importer.isRawKvMode {
+							downloadMeta, e = importer.downloadRawKVSST(ctx, info, f, nil)
+						} else {
+							downloadMeta, e = importer.downloadSST(ctx, info, f, rewriteRules, nil)
+						}
+					}
 					if e != nil {
 						remainFiles = remainFiles[i:]
 						return errors.Trace(e)
@@ -623,4 +634,10 @@ func (importer *FileImporter) ingestSSTs(
 	log.Debug("ingest SSTs", logutil.SSTMetas(sstMetas), logutil.Leader(leader))
 	resp, err := importer.importClient.MultiIngest(ctx, leader.GetStoreId(), req)
 	return resp, errors.Trace(err)
+}
+
+func isDecryptSstErr(err error) bool {
+	return err != nil &&
+		strings.Contains(err.Error(), "Engine Engine") &&
+		strings.Contains(err.Error(), "Corruption: Bad table magic number")
 }

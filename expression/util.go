@@ -167,7 +167,7 @@ func extractColumns(result []*Column, expr Expression, filter func(*Column) bool
 }
 
 // ExtractColumnSet extracts the different values of `UniqueId` for columns in expressions.
-func ExtractColumnSet(exprs []Expression) *intsets.Sparse {
+func ExtractColumnSet(exprs ...Expression) *intsets.Sparse {
 	set := &intsets.Sparse{}
 	for _, expr := range exprs {
 		extractColumnSet(expr, set)
@@ -369,8 +369,8 @@ func SubstituteCorCol2Constant(expr Expression) (Expression, error) {
 
 func locateStringWithCollation(str, substr, coll string) int64 {
 	collator := collate.GetCollator(coll)
-	strKey := collator.Key(str)
-	subStrKey := collator.Key(substr)
+	strKey := collator.KeyWithoutTrimRightSpace(str)
+	subStrKey := collator.KeyWithoutTrimRightSpace(substr)
 
 	index := bytes.Index(strKey, subStrKey)
 	if index == -1 || index == 0 {
@@ -382,8 +382,8 @@ func locateStringWithCollation(str, substr, coll string) int64 {
 	for {
 		r, size := utf8.DecodeRuneInString(str)
 		count += 1
-		index -= len(collator.Key(string(r)))
-		if index == 0 {
+		index -= len(collator.KeyWithoutTrimRightSpace(string(r)))
+		if index <= 0 {
 			return count + 1
 		}
 		str = str[size:]
