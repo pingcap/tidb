@@ -5105,7 +5105,7 @@ func (b *builtinConvertTzSig) convertTz(dt types.Time, fromTzStr, toTzStr string
 		}
 	}
 
-	t, err := dt.GoTime(fromTz)
+	t, err := dt.AdjustedGoTime(fromTz)
 	if err != nil {
 		return types.ZeroTime, true, nil
 	}
@@ -5666,9 +5666,6 @@ func (b *builtinSubDatetimeAndStringSig) evalTime(row chunk.Row) (types.Time, bo
 	s, isNull, err := b.args[1].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return types.ZeroDatetime, isNull, err
-	}
-	if err != nil {
-		return types.ZeroDatetime, true, err
 	}
 	if !isDuration(s) {
 		return types.ZeroDatetime, true, nil
