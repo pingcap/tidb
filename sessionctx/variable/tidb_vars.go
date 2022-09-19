@@ -585,18 +585,6 @@ const (
 	// TiDBMemoryUsageAlarmRatio indicates the alarm threshold when memory usage of the tidb-server exceeds.
 	TiDBMemoryUsageAlarmRatio = "tidb_memory_usage_alarm_ratio"
 
-	// TiDBMemoryUsageAlarmIntervalSeconds indicates the alarm interval when memory usage of the tidb-server exceeds.
-	TiDBMemoryUsageAlarmIntervalSeconds = "tidb_memory_usage_alarm_interval_seconds"
-
-	// TiDBMemoryUsageAlarmDesensitizationEnable indicates whether to desensitize the alarm information.
-	TiDBMemoryUsageAlarmDesensitizationEnable = "tidb_memory_usage_alarm_desensitization_enable"
-
-	// TiDBAutoGcMemoryRatio indicates the auto gc threshold when memory usage of the tidb-server exceeds.
-	TiDBAutoGcMemoryRatio = "tidb_auto_gc_memory_ratio"
-
-	// TiDBMemoryUsageAlarmTruncationEnable indicates whether to truncate the alarm information.
-	TiDBMemoryUsageAlarmTruncationEnable = "tidb_memory_usage_alarm_truncation_enable"
-
 	// TiDBEnableRateLimitAction indicates whether enabled ratelimit action
 	TiDBEnableRateLimitAction = "tidb_enable_rate_limit_action"
 
@@ -1049,30 +1037,26 @@ var (
 	ddlReorgRowFormat     int64 = DefTiDBRowFormatV2
 	maxDeltaSchemaCount   int64 = DefTiDBMaxDeltaSchemaCount
 	// DDLSlowOprThreshold is the threshold for ddl slow operations, uint is millisecond.
-	DDLSlowOprThreshold                          = config.GetGlobalConfig().Instance.DDLSlowOprThreshold
-	ForcePriority                                = int32(DefTiDBForcePriority)
-	MaxOfMaxAllowedPacket                 uint64 = 1073741824
-	ExpensiveQueryTimeThreshold           uint64 = DefTiDBExpensiveQueryTimeThreshold
-	MemoryUsageAlarmRatio                        = atomic.NewFloat64(config.GetGlobalConfig().Instance.MemoryUsageAlarmRatio)
-	MemoryUsageAlarmIntervalSeconds              = atomic.NewUint64(config.GetGlobalConfig().Instance.MemoryUsageAlarmIntervalSeconds)
-	MemoryUsageAlarmDesensitizationEnable        = atomic.NewBool(config.GetGlobalConfig().Instance.MemoryUsageAlarmDesensitizationEnable)
-	AutoGcMemoryRatio                            = atomic.NewFloat64(config.GetGlobalConfig().Instance.AutoGcMemoryRatio)
-	MemoryUsageAlarmTruncationEnable             = atomic.NewBool(config.GetGlobalConfig().Instance.MemoryUsageAlarmTruncationEnable)
-	EnableLocalTxn                               = atomic.NewBool(DefTiDBEnableLocalTxn)
-	MaxTSOBatchWaitInterval                      = atomic.NewFloat64(DefTiDBTSOClientBatchMaxWaitTime)
-	EnableTSOFollowerProxy                       = atomic.NewBool(DefTiDBEnableTSOFollowerProxy)
-	RestrictedReadOnly                           = atomic.NewBool(DefTiDBRestrictedReadOnly)
-	VarTiDBSuperReadOnly                         = atomic.NewBool(DefTiDBSuperReadOnly)
-	PersistAnalyzeOptions                        = atomic.NewBool(DefTiDBPersistAnalyzeOptions)
-	TableCacheLease                              = atomic.NewInt64(DefTiDBTableCacheLease)
-	EnableColumnTracking                         = atomic.NewBool(DefTiDBEnableColumnTracking)
-	StatsLoadSyncWait                            = atomic.NewInt64(DefTiDBStatsLoadSyncWait)
-	StatsLoadPseudoTimeout                       = atomic.NewBool(DefTiDBStatsLoadPseudoTimeout)
-	MemQuotaBindingCache                         = atomic.NewInt64(DefTiDBMemQuotaBindingCache)
-	GCMaxWaitTime                                = atomic.NewInt64(DefTiDBGCMaxWaitTime)
-	StatsCacheMemQuota                           = atomic.NewInt64(DefTiDBStatsCacheMemQuota)
-	OOMAction                                    = atomic.NewString(DefTiDBMemOOMAction)
-	MaxAutoAnalyzeTime                           = atomic.NewInt64(DefTiDBMaxAutoAnalyzeTime)
+	DDLSlowOprThreshold                = config.GetGlobalConfig().Instance.DDLSlowOprThreshold
+	ForcePriority                      = int32(DefTiDBForcePriority)
+	MaxOfMaxAllowedPacket       uint64 = 1073741824
+	ExpensiveQueryTimeThreshold uint64 = DefTiDBExpensiveQueryTimeThreshold
+	MemoryUsageAlarmRatio              = atomic.NewFloat64(config.GetGlobalConfig().Instance.MemoryUsageAlarmRatio)
+	EnableLocalTxn                     = atomic.NewBool(DefTiDBEnableLocalTxn)
+	MaxTSOBatchWaitInterval            = atomic.NewFloat64(DefTiDBTSOClientBatchMaxWaitTime)
+	EnableTSOFollowerProxy             = atomic.NewBool(DefTiDBEnableTSOFollowerProxy)
+	RestrictedReadOnly                 = atomic.NewBool(DefTiDBRestrictedReadOnly)
+	VarTiDBSuperReadOnly               = atomic.NewBool(DefTiDBSuperReadOnly)
+	PersistAnalyzeOptions              = atomic.NewBool(DefTiDBPersistAnalyzeOptions)
+	TableCacheLease                    = atomic.NewInt64(DefTiDBTableCacheLease)
+	EnableColumnTracking               = atomic.NewBool(DefTiDBEnableColumnTracking)
+	StatsLoadSyncWait                  = atomic.NewInt64(DefTiDBStatsLoadSyncWait)
+	StatsLoadPseudoTimeout             = atomic.NewBool(DefTiDBStatsLoadPseudoTimeout)
+	MemQuotaBindingCache               = atomic.NewInt64(DefTiDBMemQuotaBindingCache)
+	GCMaxWaitTime                      = atomic.NewInt64(DefTiDBGCMaxWaitTime)
+	StatsCacheMemQuota                 = atomic.NewInt64(DefTiDBStatsCacheMemQuota)
+	OOMAction                          = atomic.NewString(DefTiDBMemOOMAction)
+	MaxAutoAnalyzeTime                 = atomic.NewInt64(DefTiDBMaxAutoAnalyzeTime)
 	// variables for plan cache
 	PreparedPlanCacheMemoryGuardRatio = atomic.NewFloat64(DefTiDBPrepPlanCacheMemoryGuardRatio)
 	EnableConcurrentDDL               = atomic.NewBool(DefTiDBEnableConcurrentDDL)

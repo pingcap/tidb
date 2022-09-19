@@ -669,10 +669,6 @@ func setGlobalVars() {
 	variable.SetSysVar(variable.TiDBIsolationReadEngines, strings.Join(cfg.IsolationRead.Engines, ","))
 	variable.SetSysVar(variable.TiDBEnforceMPPExecution, variable.BoolToOnOff(config.GetGlobalConfig().Performance.EnforceMPP))
 	variable.MemoryUsageAlarmRatio.Store(cfg.Instance.MemoryUsageAlarmRatio)
-	variable.MemoryUsageAlarmIntervalSeconds.Store(cfg.Instance.MemoryUsageAlarmIntervalSeconds)
-	variable.MemoryUsageAlarmDesensitizationEnable.Store(cfg.Instance.MemoryUsageAlarmDesensitizationEnable)
-	variable.AutoGcMemoryRatio.Store(cfg.Instance.AutoGcMemoryRatio)
-	variable.MemoryUsageAlarmTruncationEnable.Store(cfg.Instance.MemoryUsageAlarmTruncationEnable)
 	if hostname, err := os.Hostname(); err == nil {
 		variable.SetSysVar(variable.Hostname, hostname)
 	}

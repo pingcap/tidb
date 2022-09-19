@@ -83,18 +83,11 @@ const (
 	DefDDLSlowOprThreshold = 300
 	// DefExpensiveQueryTimeThreshold indicates the time threshold of expensive query.
 	DefExpensiveQueryTimeThreshold = 60
+	// DefMemoryUsageAlarmRatio is the threshold triggering an alarm which the memory usage of tidb-server instance exceeds.
+	DefMemoryUsageAlarmRatio = 0.7
 	// DefTempDir is the default temporary directory path for TiDB.
 	DefTempDir = "/tmp/tidb"
 	// DefMemoryUsageAlarmRatio is the threshold triggering an alarm which the memory usage of tidb-server instance exceeds.
-	DefMemoryUsageAlarmRatio = 0.7
-	// DefTiDBAutoGcMemoryRatio is the threshold triggering gc which the memory usage of tidb-server instance exceeds.
-	DefTiDBAutoGcMemoryRatio = 0.8
-	// DefTiDBMemoryUsageAlarmDesensitizationEnable indicates whether to desensitize the alarm information.
-	DefTiDBMemoryUsageAlarmDesensitizationEnable = true
-	// DefTiDBMemoryUsageAlarmTruncationEnable indicates whether to truncate the alarm information.
-	DefTiDBMemoryUsageAlarmTruncationEnable = true
-	// DefTiDBMemoryUsageAlarmIntervalSeconds indicates the alarm interval when memory usage of the tidb-server exceeds.
-	DefTiDBMemoryUsageAlarmIntervalSeconds = 10
 )
 
 // Valid config maps
@@ -193,7 +186,6 @@ type Config struct {
 	Instance                   Instance                `toml:"instance" json:"instance"`
 	Security                   Security                `toml:"security" json:"security"`
 	Status                     Status                  `toml:"status" json:"status"`
-	S3                         S3                      `toml:"S3" json:"S3"`
 	Performance                Performance             `toml:"performance" json:"performance"`
 	PreparedPlanCache          PreparedPlanCache       `toml:"prepared-plan-cache" json:"prepared-plan-cache"`
 	OpenTracing                OpenTracing             `toml:"opentracing" json:"opentracing"`
@@ -487,16 +479,12 @@ type Instance struct {
 	// These variables exist in both 'instance' section and another place.
 	// The configuration in 'instance' section takes precedence.
 
-	EnableSlowLog                         AtomicBool `toml:"tidb_enable_slow_log" json:"tidb_enable_slow_log"`
-	SlowThreshold                         uint64     `toml:"tidb_slow_log_threshold" json:"tidb_slow_log_threshold"`
-	RecordPlanInSlowLog                   uint32     `toml:"tidb_record_plan_in_slow_log" json:"tidb_record_plan_in_slow_log"`
-	CheckMb4ValueInUTF8                   AtomicBool `toml:"tidb_check_mb4_value_in_utf8" json:"tidb_check_mb4_value_in_utf8"`
-	ForcePriority                         string     `toml:"tidb_force_priority" json:"tidb_force_priority"`
-	MemoryUsageAlarmRatio                 float64    `toml:"tidb_memory_usage_alarm_ratio" json:"tidb_memory_usage_alarm_ratio"`
-	MemoryUsageAlarmIntervalSeconds       uint64     `toml:"tidb_memory_usage_alarm_interval_seconds" json:"tidb_memory_usage_alarm_interval_seconds"`
-	MemoryUsageAlarmDesensitizationEnable bool       `toml:"tidb_memory_usage_alarm_desensitization_enable" json:"tidb_memory_usage_alarm_desensitization_enable"`
-	AutoGcMemoryRatio                     float64    `toml:"tidb_auto_gc_memory_ratio" json:"tidb_auto_gc_memory_ratio"`
-	MemoryUsageAlarmTruncationEnable      bool       `toml:"tidb_memory_usage_alarm_truncation_enable" json:"tidb_memory_usage_alarm_truncation_enable"`
+	EnableSlowLog         AtomicBool `toml:"tidb_enable_slow_log" json:"tidb_enable_slow_log"`
+	SlowThreshold         uint64     `toml:"tidb_slow_log_threshold" json:"tidb_slow_log_threshold"`
+	RecordPlanInSlowLog   uint32     `toml:"tidb_record_plan_in_slow_log" json:"tidb_record_plan_in_slow_log"`
+	CheckMb4ValueInUTF8   AtomicBool `toml:"tidb_check_mb4_value_in_utf8" json:"tidb_check_mb4_value_in_utf8"`
+	ForcePriority         string     `toml:"tidb_force_priority" json:"tidb_force_priority"`
+	MemoryUsageAlarmRatio float64    `toml:"tidb_memory_usage_alarm_ratio" json:"tidb_memory_usage_alarm_ratio"`
 	// EnableCollectExecutionInfo enables the TiDB to collect execution info.
 	EnableCollectExecutionInfo bool   `toml:"tidb_enable_collect_execution_info" json:"tidb_enable_collect_execution_info"`
 	PluginDir                  string `toml:"plugin_dir" json:"plugin_dir"`
@@ -630,19 +618,6 @@ type Status struct {
 	GRPCInitialWindowSize int `toml:"grpc-initial-window-size" json:"grpc-initial-window-size"`
 	// Set maximum message length in bytes that gRPC can send. `-1` means unlimited. The default value is 10MB.
 	GRPCMaxSendMsgSize int `toml:"grpc-max-send-msg-size" json:"grpc-max-send-msg-size"`
-}
-
-// S3 is the config of oom alarm upload to S3.
-type S3 struct {
-	AccessKey             string `toml:"access-key" json:"access-key"`
-	SecretKey             string `toml:"secret-key" json:"secret-key"`
-	EndPoint              string `toml:"end-point" json:"end-point"`
-	RegionName            string `toml:"region-name" json:"region-name"`
-	BucketName            string `toml:"bucket-name" json:"bucket-name"`
-	DisableSSL            bool   `toml:"disable-ssl" json:"disable-ssl"`
-	S3ForcePathStyle      bool   `toml:"s3-force-path-style" json:"s3-force-path-style"`
-	EnableUploadOOMRecord bool   `toml:"enable-upload-oom-record" json:"enable-upload-oom-record"`
-	TimeoutSeconds        int    `toml:"timeout-seconds" json:"timeout-seconds"`
 }
 
 // Performance is the performance section of the config.
@@ -879,25 +854,21 @@ var defaultConf = Config{
 		EnableSlowLog:       *NewAtomicBool(logutil.DefaultTiDBEnableSlowLog),
 	},
 	Instance: Instance{
-		TiDBGeneralLog:                        false,
-		EnablePProfSQLCPU:                     false,
-		DDLSlowOprThreshold:                   DefDDLSlowOprThreshold,
-		ExpensiveQueryTimeThreshold:           DefExpensiveQueryTimeThreshold,
-		EnableSlowLog:                         *NewAtomicBool(logutil.DefaultTiDBEnableSlowLog),
-		SlowThreshold:                         logutil.DefaultSlowThreshold,
-		RecordPlanInSlowLog:                   logutil.DefaultRecordPlanInSlowLog,
-		CheckMb4ValueInUTF8:                   *NewAtomicBool(true),
-		ForcePriority:                         "NO_PRIORITY",
-		MemoryUsageAlarmRatio:                 DefMemoryUsageAlarmRatio,
-		AutoGcMemoryRatio:                     DefTiDBAutoGcMemoryRatio,
-		MemoryUsageAlarmIntervalSeconds:       DefTiDBMemoryUsageAlarmIntervalSeconds,
-		MemoryUsageAlarmDesensitizationEnable: DefTiDBMemoryUsageAlarmDesensitizationEnable,
-		MemoryUsageAlarmTruncationEnable:      DefTiDBMemoryUsageAlarmTruncationEnable,
-		EnableCollectExecutionInfo:            true,
-		PluginDir:                             "/data/deploy/plugin",
-		PluginLoad:                            "",
-		MaxConnections:                        0,
-		TiDBEnableDDL:                         *NewAtomicBool(true),
+		TiDBGeneralLog:              false,
+		EnablePProfSQLCPU:           false,
+		DDLSlowOprThreshold:         DefDDLSlowOprThreshold,
+		ExpensiveQueryTimeThreshold: DefExpensiveQueryTimeThreshold,
+		EnableSlowLog:               *NewAtomicBool(logutil.DefaultTiDBEnableSlowLog),
+		SlowThreshold:               logutil.DefaultSlowThreshold,
+		RecordPlanInSlowLog:         logutil.DefaultRecordPlanInSlowLog,
+		CheckMb4ValueInUTF8:         *NewAtomicBool(true),
+		ForcePriority:               "NO_PRIORITY",
+		MemoryUsageAlarmRatio:       DefMemoryUsageAlarmRatio,
+		EnableCollectExecutionInfo:  true,
+		PluginDir:                   "/data/deploy/plugin",
+		PluginLoad:                  "",
+		MaxConnections:              0,
+		TiDBEnableDDL:               *NewAtomicBool(true),
 	},
 	Status: Status{
 		ReportStatus:          true,
@@ -910,17 +881,6 @@ var defaultConf = Config{
 		GRPCConcurrentStreams: 1024,
 		GRPCInitialWindowSize: 2 * 1024 * 1024,
 		GRPCMaxSendMsgSize:    math.MaxInt32,
-	},
-	S3: S3{
-		AccessKey:             "",
-		SecretKey:             "",
-		EndPoint:              "",
-		RegionName:            "",
-		BucketName:            "",
-		DisableSSL:            true,
-		S3ForcePathStyle:      true,
-		EnableUploadOOMRecord: false,
-		TimeoutSeconds:        300,
 	},
 	Performance: Performance{
 		MaxMemory:             0,
@@ -1282,10 +1242,6 @@ func (c *Config) Valid() error {
 
 	if c.Instance.MemoryUsageAlarmRatio > 1 || c.Instance.MemoryUsageAlarmRatio < 0 {
 		return fmt.Errorf("tidb_memory_usage_alarm_ratio in [Instance] must be greater than or equal to 0 and less than or equal to 1")
-	}
-
-	if c.Instance.MemoryUsageAlarmRatio > 1 || c.Instance.MemoryUsageAlarmRatio < 0 {
-		return fmt.Errorf("tidb_auto_gc_memory_ratio in [Instance] must be greater than or equal to 0 and less than or equal to 1")
 	}
 
 	if len(c.IsolationRead.Engines) < 1 {

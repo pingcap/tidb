@@ -15,9 +15,6 @@
 package memory
 
 import (
-	"bufio"
-	"fmt"
-	"github.com/pingcap/errors"
 	"os"
 	"runtime"
 	"strconv"
@@ -64,10 +61,9 @@ func MemUsedNormal() (uint64, error) {
 }
 
 const (
-	cGroupMemLimitPath = "/sys/fs/cgroup/memory/%v/memory.limit_in_bytes"
-	cGroupMemUsagePath = "/sys/fs/cgroup/memory/%v/memory.usage_in_bytes"
+	cGroupMemLimitPath = "/sys/fs/cgroup/memory/memory.limit_in_bytes"
+	cGroupMemUsagePath = "/sys/fs/cgroup/memory/memory.usage_in_bytes"
 	selfCGroupPath     = "/proc/self/cgroup"
-	cGroupMemoryName   = "memory"
 )
 
 type memInfoCache struct {
@@ -105,11 +101,7 @@ func MemTotalCGroup() (uint64, error) {
 	if time.Since(t) < 60*time.Second {
 		return memo, nil
 	}
-	path, err := getContainerPath()
-	if err != nil {
-		return 0, err
-	}
-	memo, err = readUint(fmt.Sprint(cGroupMemLimitPath, path))
+	memo, err := readUint(cGroupMemLimitPath)
 	if err != nil {
 		return memo, err
 	}
@@ -123,11 +115,7 @@ func MemUsedCGroup() (uint64, error) {
 	if time.Since(t) < 500*time.Millisecond {
 		return memo, nil
 	}
-	path, err := getContainerPath()
-	if err != nil {
-		return 0, err
-	}
-	memo, err = readUint(fmt.Sprintf(cGroupMemUsagePath, path))
+	memo, err := readUint(cGroupMemUsagePath)
 	if err != nil {
 		return memo, err
 	}
@@ -169,27 +157,6 @@ func inContainer() bool {
 		return true
 	}
 	return false
-}
-
-func getContainerPath() (string, error) {
-	file, err := os.Open(selfCGroupPath)
-	if err != nil {
-		return "", err
-	}
-	defer func() {
-		err := file.Close()
-		terror.MustNil(err)
-	}()
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := scanner.Text()
-		info := strings.Split(line, ":")
-		names := strings.Split(info[1], ",")
-		if names[0] == cGroupMemoryName {
-			return info[2], nil
-		}
-	}
-	return "", errors.New("can not find memory path in cgroup.")
 }
 
 // refer to https://github.com/containerd/cgroups/blob/318312a373405e5e91134d8063d04d59768a1bff/utils.go#L251

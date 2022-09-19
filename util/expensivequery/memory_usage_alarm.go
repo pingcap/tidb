@@ -15,7 +15,6 @@
 package expensivequery
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -24,42 +23,23 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/credentials"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/shirou/gopsutil/v3/process"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"golang.org/x/exp/slices"
 )
-
-type s3Config struct {
-	accessKey             string
-	secretKey             string
-	endPoint              string
-	regionName            string
-	bucketName            string
-	disableSSL            bool
-	s3ForcePathStyle      bool
-	enableUploadOOMRecord bool
-	timeoutSeconds        int
-}
 
 type memoryUsageAlarm struct {
 	lastCheckTime                         time.Time
 	err                                   error
 	tmpDir                                string
 	lastProfileFileName                   [][]string
-	lastSystemInfoFileName                []string
 	lastLogFileName                       []string
-	s3Conf                                s3Config
 	memoryUsageAlarmIntervalSeconds       uint64
 	autoGcRatio                           float64
 	memoryUsageAlarmRatio                 float64
@@ -70,71 +50,8 @@ type memoryUsageAlarm struct {
 	memoryUsageAlarmTruncationEnable      bool
 }
 
-func (record *memoryUsageAlarm) initS3Config() {
-	record.s3Conf.accessKey = config.GetGlobalConfig().S3.AccessKey
-	record.s3Conf.secretKey = config.GetGlobalConfig().S3.SecretKey
-	record.s3Conf.endPoint = config.GetGlobalConfig().S3.EndPoint
-	record.s3Conf.regionName = config.GetGlobalConfig().S3.RegionName
-	record.s3Conf.bucketName = config.GetGlobalConfig().S3.BucketName
-	record.s3Conf.disableSSL = config.GetGlobalConfig().S3.DisableSSL
-	record.s3Conf.s3ForcePathStyle = config.GetGlobalConfig().S3.S3ForcePathStyle
-	record.s3Conf.enableUploadOOMRecord = config.GetGlobalConfig().S3.EnableUploadOOMRecord
-	record.s3Conf.timeoutSeconds = config.GetGlobalConfig().S3.TimeoutSeconds
-}
-
-func (record *memoryUsageAlarm) uploadFileToS3(filename string, uploader *s3manager.Uploader, timeout time.Duration) {
-	file, err := os.OpenFile(filename, os.O_RDONLY, 0600)
-	if err != nil {
-		logutil.BgLogger().Error("open record file fail", zap.Error(err))
-		return
-	}
-	ctx, cancel := context.WithTimeout(aws.BackgroundContext(), timeout)
-	if _, err = uploader.UploadWithContext(ctx, &s3manager.UploadInput{
-		Bucket: aws.String(record.s3Conf.bucketName),
-		Key:    aws.String(filename),
-		Body:   file,
-	}); err != nil {
-		cancel()
-		logutil.BgLogger().Error("upload to s3 fail", zap.Error(err))
-		return
-	}
-	defer func() {
-		cancel()
-		if err := file.Close(); err != nil {
-			logutil.BgLogger().Error("close record file fail", zap.Error(err))
-		}
-	}()
-}
-
-func (record *memoryUsageAlarm) createSessionAndUploadFilesToS3(filenames []string) {
-	if record.initialized {
-		sess, err := session.NewSession(&aws.Config{
-			Credentials:      credentials.NewStaticCredentials(record.s3Conf.accessKey, record.s3Conf.secretKey, ""),
-			Endpoint:         aws.String(record.s3Conf.endPoint),
-			Region:           aws.String(record.s3Conf.regionName),
-			DisableSSL:       aws.Bool(record.s3Conf.disableSSL),
-			S3ForcePathStyle: aws.Bool(record.s3Conf.s3ForcePathStyle),
-		})
-		if err != nil {
-			logutil.BgLogger().Error("create s3 new session fail", zap.Error(err))
-			return
-		}
-		uploader := s3manager.NewUploader(sess)
-		for _, filename := range filenames {
-			go record.uploadFileToS3(filename, uploader, time.Second*time.Duration(record.s3Conf.timeoutSeconds))
-		}
-	}
-}
-
 func (record *memoryUsageAlarm) initMemoryUsageAlarmRecord() {
-	if recordToS3 := config.GetGlobalConfig().S3.EnableUploadOOMRecord; recordToS3 {
-		record.initS3Config()
-	}
 	record.memoryUsageAlarmRatio = variable.MemoryUsageAlarmRatio.Load()
-	record.memoryUsageAlarmDesensitizationEnable = variable.MemoryUsageAlarmDesensitizationEnable.Load()
-	record.memoryUsageAlarmTruncationEnable = variable.MemoryUsageAlarmTruncationEnable.Load()
-	record.autoGcRatio = variable.AutoGcMemoryRatio.Load()
-	record.memoryUsageAlarmIntervalSeconds = variable.MemoryUsageAlarmIntervalSeconds.Load()
 	if quota := config.GetGlobalConfig().Performance.ServerMemoryQuota; quota != 0 {
 		record.serverMemoryQuota = quota
 		record.isServerMemoryQuotaSet = true
@@ -168,9 +85,6 @@ func (record *memoryUsageAlarm) initMemoryUsageAlarmRecord() {
 		}
 		if strings.Contains(f.Name(), "goroutine") {
 			record.lastProfileFileName[1] = append(record.lastProfileFileName[1], name)
-		}
-		if strings.Contains(f.Name(), "system_info") {
-			record.lastSystemInfoFileName = append(record.lastSystemInfoFileName, name)
 		}
 	}
 	record.initialized = true
@@ -240,7 +154,6 @@ func (record *memoryUsageAlarm) doRecord(memUsage uint64, instanceMemoryUsage ui
 	}
 
 	var recordSQLFile string
-	var recordSystemInfoFile string
 	var recordProfileFiles []string
 	if recordSQLFile, record.err = record.recordSQL(sm); record.err != nil {
 		return
@@ -248,16 +161,9 @@ func (record *memoryUsageAlarm) doRecord(memUsage uint64, instanceMemoryUsage ui
 	if recordProfileFiles, record.err = record.recordProfile(); record.err != nil {
 		return
 	}
-	if recordSystemInfoFile, record.err = record.recordSystemInfoFile(); record.err != nil {
-		return
-	}
 	recordFiles := make([]string, 0, len(recordProfileFiles)+2)
 	recordFiles = append(recordFiles, recordSQLFile)
 	recordFiles = append(recordFiles, recordProfileFiles...)
-	recordFiles = append(recordFiles, recordSystemInfoFile)
-	if record.s3Conf.enableUploadOOMRecord {
-		record.createSessionAndUploadFilesToS3(recordFiles)
-	}
 
 	tryRemove := func(filename *[]string) {
 		// Keep the last 5 files
@@ -270,7 +176,6 @@ func (record *memoryUsageAlarm) doRecord(memUsage uint64, instanceMemoryUsage ui
 		}
 	}
 	tryRemove(&record.lastLogFileName)
-	tryRemove(&record.lastSystemInfoFileName)
 	for i := range record.lastProfileFileName {
 		tryRemove(&record.lastProfileFileName[i])
 	}
@@ -333,7 +238,7 @@ func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager) (string, error
 		var buf strings.Builder
 		for i, info := range list {
 			buf.WriteString(fmt.Sprintf("SQL %v: \n", i))
-			fields := genLogFields(record.lastCheckTime.Sub(info.Time), info, record.memoryUsageAlarmTruncationEnable, record.memoryUsageAlarmDesensitizationEnable)
+			fields := genLogFields(record.lastCheckTime.Sub(info.Time), info, false, true)
 			fields = append(fields, info.OomAlarmVariablesInfo...)
 			fields = append(fields, zap.String("current_analyze_plan", getCurrentAnalyzePlan(info)))
 			for _, field := range fields {
@@ -412,69 +317,5 @@ func (record *memoryUsageAlarm) write(i int, item item) (string, error) {
 			logutil.BgLogger().Error(fmt.Sprintf("close %v profile file fail", item.Name), zap.Error(err))
 		}
 	}()
-	return fileName, nil
-}
-
-func (record *memoryUsageAlarm) recordSystemInfoFile() (string, error) {
-	procs, _ := process.Processes()
-	pInfos := make([]*process.Process, 0, len(procs))
-	for _, proc := range procs {
-		if _, err := proc.MemoryInfo(); err == nil {
-			pInfos = append(pInfos, proc)
-		}
-	}
-	fileName := filepath.Join(record.tmpDir, "system_info"+record.lastCheckTime.Format(time.RFC3339))
-	record.lastSystemInfoFileName = append(record.lastSystemInfoFileName, fileName)
-	f, err := os.Create(fileName)
-	if err != nil {
-		logutil.BgLogger().Error("create oom record file fail", zap.Error(err))
-		return "", err
-	}
-	defer func() {
-		err := f.Close()
-		if err != nil {
-			logutil.BgLogger().Error("close oom record file fail", zap.Error(err))
-		}
-	}()
-	slices.SortFunc(pInfos, func(i, j *process.Process) bool {
-		memoryLeft, errLeft := i.MemoryInfo()
-		memoryRight, errRight := j.MemoryInfo()
-		if errLeft != nil {
-			logutil.BgLogger().Error("get system thread memory info failed.", zap.Error(errLeft))
-			return false
-		}
-		if errRight != nil {
-			logutil.BgLogger().Error("get system thread memory info failed.", zap.Error(errRight))
-			return false
-		}
-		return memoryLeft.RSS > memoryRight.RSS
-	})
-	if len(pInfos) > 10 {
-		pInfos = pInfos[:10]
-	}
-	var buf strings.Builder
-	var name string
-	var memInfo *process.MemoryInfoStat
-	for _, pInfo := range pInfos {
-		if name, err = pInfo.Name(); err != nil {
-			return fileName, err
-		}
-		if memInfo, err = pInfo.MemoryInfo(); err != nil {
-			return fileName, err
-		}
-		buf.WriteString(fmt.Sprintf("%v: %v", "pid", pInfo.Pid) + "\n")
-		buf.WriteString(fmt.Sprintf("%v: %v", "name", name) + "\n")
-		buf.WriteString(fmt.Sprintf("%v: %v", "memroy", memInfo.String()) + "\n")
-		buf.WriteString("\n")
-	}
-	if _, err = f.WriteString("The 10 system threads with the most memory usage for OOM analysis\n"); err != nil {
-		logutil.BgLogger().Error("write oom record file fail", zap.Error(err))
-		return fileName, err
-	}
-
-	if _, err = f.WriteString(buf.String()); err != nil {
-		logutil.BgLogger().Error("write oom record file fail", zap.Error(err))
-		return fileName, err
-	}
 	return fileName, nil
 }
