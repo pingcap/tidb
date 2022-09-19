@@ -80,7 +80,7 @@ func TestColumnAdd(t *testing.T) {
 			require.NoError(t, checkAddPublic(ct, writeOnlyTable, publicTable))
 		}
 	}
-	d.SetHook(tc)
+	d.SetHook(tc.Clone())
 	tk.MustExec("alter table t add column c3 int default 3")
 	tb := publicTable
 	v := getSchemaVer(t, tk.Session())
@@ -105,7 +105,7 @@ func TestColumnAdd(t *testing.T) {
 			}
 		}
 	}
-	d.SetHook(tc)
+	d.SetHook(tc.Clone())
 	tk.MustExec("alter table t drop column c3")
 	v = getSchemaVer(t, tk.Session())
 	// Don't check column, so it's ok to use tb.
