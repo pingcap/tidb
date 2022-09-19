@@ -16,6 +16,7 @@ package core
 
 import (
 	"math"
+	"unsafe"
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -33,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/size"
 	"go.uber.org/zap"
 )
 
@@ -1869,6 +1871,19 @@ type ShowContents struct {
 	IfNotExists bool // Used for `show create database if not exists`.
 	GlobalScope bool // Used by show variables.
 	Extended    bool // Used for `show extended columns from ...`
+}
+
+const emptyShowContentsSize = int64(unsafe.Sizeof(ShowContents{}))
+
+// MemoryUsage return the memory usage of ShowContents
+func (s *ShowContents) MemoryUsage() (sum int64) {
+	if s == nil {
+		return
+	}
+
+	sum = emptyShowContentsSize + int64(len(s.DBName)) + s.Partition.MemoryUsage() + s.IndexName.MemoryUsage() +
+		int64(cap(s.Roles))*size.SizeOfPointer
+	return
 }
 
 // LogicalShow represents a show plan.
