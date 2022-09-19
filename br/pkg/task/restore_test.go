@@ -27,7 +27,7 @@ import (
 
 func TestRestoreConfigAdjust(t *testing.T) {
 	cfg := &RestoreConfig{}
-	cfg.adjustRestoreConfig()
+	cfg.Adjust()
 
 	require.Equal(t, uint32(defaultRestoreConcurrency), cfg.Config.Concurrency)
 	require.Equal(t, defaultSwitchInterval, cfg.Config.SwitchModeInterval)
