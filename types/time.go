@@ -579,7 +579,7 @@ func GetFracIndex(s string) (index int) {
 	tzIndex, _, _, _, _ := GetTimezone(s)
 	var end int
 	if tzIndex != -1 {
-		end = tzIndex
+		end = tzIndex - 1
 	} else {
 		end = len(s) - 1
 	}
