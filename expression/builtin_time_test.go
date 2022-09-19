@@ -2637,6 +2637,28 @@ func (s *testEvaluatorSuite) TestConvertTz(c *C) {
 		{nil, "GMT", "+00:00", true, ""},
 		{"2004-01-01 12:00:00", nil, "+00:00", true, ""},
 		{"2004-01-01 12:00:00", "GMT", nil, true, ""},
+<<<<<<< HEAD
+=======
+		{"2004-01-01 12:00:00", "GMT", "+10:00", true, "2004-01-01 22:00:00"},
+		{"2004-01-01 12:00:00", "+00:00", "MET", true, "2004-01-01 13:00:00"},
+		{"2004-01-01 12:00:00", "+00:00", "+14:00", true, "2004-01-02 02:00:00"},
+		{"2021-10-31 02:59:59", "+02:00", "Europe/Amsterdam", true, "2021-10-31 02:59:59"},
+		{"2021-10-31 03:00:00", "+01:00", "Europe/Amsterdam", true, "2021-10-31 03:00:00"},
+		{"2021-10-31 02:00:00", "+02:00", "Europe/Amsterdam", true, "2021-10-31 02:00:00"},
+		{"2021-10-31 02:59:59", "+02:00", "Europe/Amsterdam", true, "2021-10-31 02:59:59"},
+		{"2021-10-31 03:00:00", "+02:00", "Europe/Amsterdam", true, "2021-10-31 02:00:00"},
+		{"2021-10-31 02:30:00", "+01:00", "Europe/Amsterdam", true, "2021-10-31 02:30:00"},
+		{"2021-10-31 03:00:00", "+01:00", "Europe/Amsterdam", true, "2021-10-31 03:00:00"},
+		// Europe/Amsterdam during DST transition +02:00 -> +01:00, Summer to normal time,
+		// will be interpreted as +01:00, normal time.
+		{"2021-10-31 02:00:00", "Europe/Amsterdam", "+02:00", true, "2021-10-31 03:00:00"},
+		{"2021-10-31 02:59:59", "Europe/Amsterdam", "+02:00", true, "2021-10-31 03:59:59"},
+		{"2021-10-31 02:00:00", "Europe/Amsterdam", "+01:00", true, "2021-10-31 02:00:00"},
+		{"2021-10-31 03:00:00", "Europe/Amsterdam", "+01:00", true, "2021-10-31 03:00:00"},
+		{"2021-03-28 02:30:00", "Europe/Amsterdam", "UTC", true, "2021-03-28 01:00:00"},
+		{"2021-10-22 10:00:00", "Europe/Tallinn", "SYSTEM", true, t1.In(loc2).Format("2006-01-02 15:04:00")},
+		{"2021-10-22 10:00:00", "SYSTEM", "Europe/Tallinn", true, t2.In(loc1).Format("2006-01-02 15:04:00")},
+>>>>>>> 8d5328ec4... expression: adjust DST for convert_tz() (#37206)
 	}
 	fc := funcs[ast.ConvertTz]
 	for _, test := range tests {
