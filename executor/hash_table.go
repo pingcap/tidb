@@ -89,6 +89,10 @@ type hashRowContainer struct {
 
 	// chkBuf buffer the data reads from the disk if rowContainer is spilled.
 	chkBuf *chunk.Chunk
+
+	// We pre-alloc and reuse the Rows and RowPtrs for each probe goroutine, to avoid allocation frequently
+	buildSideRows    [][]chunk.Row
+	buildSideRowPtrs [][]chunk.RowPtr
 }
 
 func newHashRowContainer(sCtx sessionctx.Context, estCount int, hCtx *hashContext, allTypes []*types.FieldType) *hashRowContainer {
@@ -236,7 +240,18 @@ func (c *hashRowContainer) Len() uint64 {
 
 func (c *hashRowContainer) Close() error {
 	defer c.memTracker.Detach()
-	c.chkBuf = nil
+	if c.buildSideRows != nil {
+		c.buildSideRows = nil
+	}
+	if c.buildSideRowPtrs != nil {
+		c.buildSideRowPtrs = nil
+	}
+	if c.chkBuf != nil {
+		c.chkBuf = nil
+	}
+	if c.hashTable != nil {
+		c.hashTable = nil
+	}
 	return c.rowContainer.Close()
 }
 
