@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/stretchr/testify/require"
+	"go.opencensus.io/stats/view"
 )
 
 func TestDMLCapturePlanBaseline(t *testing.T) {
@@ -658,6 +659,7 @@ func TestCaptureUserFilter(t *testing.T) {
 }
 
 func TestCaptureTableFilterValid(t *testing.T) {
+	defer view.Stop()
 	type matchCase struct {
 		table   string
 		matched bool

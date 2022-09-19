@@ -47,7 +47,6 @@ go_library(
         "//util/memory",
         "//util/paging",
         "//util/rowcodec",
-        "//util/size",
         "//util/stmtsummary",
         "//util/stringutil",
         "//util/tableutil",
@@ -98,6 +97,7 @@ go_test(
         "//util/mock",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//util",
+        "@io_opencensus_go//stats/view",
         "@org_uber_go_goleak//:goleak",
     ],
 )

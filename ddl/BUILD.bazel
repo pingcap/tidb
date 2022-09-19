@@ -27,6 +27,7 @@ go_library(
         "foreign_key.go",
         "generated_column.go",
         "index.go",
+        "index_merge_tmp.go",
         "job_table.go",
         "mock.go",
         "multi_schema_change.go",
@@ -49,7 +50,9 @@ go_library(
         ":ddl_friend",
     ],
     deps = [
+        "//br/pkg/utils",
         "//config",
+        "//ddl/ingest",
         "//ddl/label",
         "//ddl/placement",
         "//ddl/syncer",
@@ -134,7 +137,7 @@ go_library(
 
 go_test(
     name = "ddl_test",
-    timeout = "moderate",
+    timeout = "long",
     srcs = [
         "attributes_sql_test.go",
         "callback_test.go",
@@ -164,6 +167,7 @@ go_test(
         "fail_test.go",
         "foreign_key_test.go",
         "index_change_test.go",
+        "index_merge_tmp_test.go",
         "index_modify_test.go",
         "integration_test.go",
         "job_table_test.go",
@@ -193,6 +197,7 @@ go_test(
     shard_count = 50,
     deps = [
         "//config",
+        "//ddl/ingest",
         "//ddl/placement",
         "//ddl/schematracker",
         "//ddl/testutil",
@@ -245,7 +250,6 @@ go_test(
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/metapb",
-        "@com_github_pingcap_log//:log",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//oracle",
