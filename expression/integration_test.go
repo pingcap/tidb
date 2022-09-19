@@ -10294,8 +10294,25 @@ func (s *testIntegrationSuite) TestIssue27831(c *C) {
 	tk.MustQuery("select /*+ inl_hash_join(t1) */  * from t t1 right join t t2 on t1.a=t2.b and t1.a= t2.c and t1.d=t2.d;").Check(testkit.Rows("a a 1 1 a a 1 1"))
 }
 
+<<<<<<< HEAD
 func (s *testIntegrationSuite) TestIssue30326(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+=======
+func TestIssue30081(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`USE test`)
+	tk.MustQuery(`SELECT CONVERT_TZ('2007-03-11 2:00:00','US/Eastern','US/Central');`).
+		Check(testkit.Rows(`2007-03-11 01:00:00`))
+	tk.MustQuery(`SELECT CONVERT_TZ('2007-03-11 3:00:00','US/Eastern','US/Central');`).
+		Check(testkit.Rows(`2007-03-11 01:00:00`))
+}
+
+func TestIssue30326(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+>>>>>>> 8d5328ec4... expression: adjust DST for convert_tz() (#37206)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a int);")

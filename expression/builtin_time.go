@@ -5773,7 +5773,13 @@ func (b *builtinConvertTzSig) convertTz(dt types.Time, fromTzStr, toTzStr string
 			return types.ZeroTime, true, nil
 		}
 
+<<<<<<< HEAD
 		return types.NewTime(types.FromGoTime(t.In(toTz)), mysql.TypeDatetime, int8(b.tp.Decimal)), false, nil
+=======
+	t, err := dt.AdjustedGoTime(fromTz)
+	if err != nil {
+		return types.ZeroTime, true, nil
+>>>>>>> 8d5328ec4... expression: adjust DST for convert_tz() (#37206)
 	}
 	if fromTzMatched && toTzMatched {
 		t, err := dt.GoTime(time.Local)
