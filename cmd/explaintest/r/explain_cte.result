@@ -484,6 +484,25 @@ create table t3 (e int, f int);
 insert into t1 values(1,1);
 insert into t2 values(1,1);
 insert into t3 values(1,1234);
+explain update t1 inner join (select t2.c from t2 inner join (with temp as (select e from t3 where t3.f = 1234) select e from temp) tt on t2.d = tt.e) t on t1.a = t.c set t1.b = 4321;
+id	estRows	task	access object	operator info
+Update_17	N/A	root		N/A
+└─HashJoin_22	15.61	root		inner join, equal:[eq(test.t1.a, test.t2.c)]
+  ├─HashJoin_30(Build)	12.49	root		inner join, equal:[eq(test.t3.e, test.t2.d)]
+  │ ├─Projection_32(Build)	9.99	root		test.t3.e
+  │ │ └─TableReader_35	9.99	root		data:Selection_34
+  │ │   └─Selection_34	9.99	cop[tikv]		eq(test.t3.f, 1234), not(isnull(test.t3.e))
+  │ │     └─TableFullScan_33	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
+  │ └─TableReader_38(Probe)	9980.01	root		data:Selection_37
+  │   └─Selection_37	9980.01	cop[tikv]		not(isnull(test.t2.c)), not(isnull(test.t2.d))
+  │     └─TableFullScan_36	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  └─TableReader_26(Probe)	9990.00	root		data:Selection_25
+    └─Selection_25	9990.00	cop[tikv]		not(isnull(test.t1.a))
+      └─TableFullScan_24	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+update t1 inner join (select t2.c from t2 inner join (with temp as (select e from t3 where t3.f = 1234) select e from temp) tt on t2.d = tt.e) t on t1.a = t.c set t1.b = 4321;
+select * from t1;
+a	b
+1	4321
 explain insert into t1  select t1.a, t1.b  from  t1 inner join (select t2.c from t2 inner join (with temp as (select e from t3 where t3.f = 1234) select e from temp) tt on t2.d = tt.e) t on t1.a = t.c;
 id	estRows	task	access object	operator info
 Insert_1	N/A	root		N/A
@@ -501,5 +520,23 @@ Insert_1	N/A	root		N/A
 insert into t1  select t1.a, t1.b  from  t1 inner join (select t2.c from t2 inner join (with temp as (select e from t3 where t3.f = 1234) select e from temp) tt on t2.d = tt.e) t on t1.a = t.c;
 select * from t1;
 a	b
-1	1
-1	1
+1	4321
+1	4321
+explain delete from  t1 using t1 inner join (select t2.c from t2 inner join (with temp as (select e from t3 where t3.f = 1234) select e from temp) tt on t2.d = tt.e) t on t1.a = t.c;
+id	estRows	task	access object	operator info
+Delete_17	N/A	root		N/A
+└─Projection_22	15.61	root		test.t1.a, test.t1.b, test.t1._tidb_rowid, test.t2.c
+  └─HashJoin_24	15.61	root		inner join, equal:[eq(test.t2.c, test.t1.a)]
+    ├─HashJoin_26(Build)	12.49	root		inner join, equal:[eq(test.t3.e, test.t2.d)]
+    │ ├─TableReader_29(Build)	9.99	root		data:Selection_28
+    │ │ └─Selection_28	9.99	cop[tikv]		eq(test.t3.f, 1234), not(isnull(test.t3.e))
+    │ │   └─TableFullScan_27	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
+    │ └─TableReader_32(Probe)	9980.01	root		data:Selection_31
+    │   └─Selection_31	9980.01	cop[tikv]		not(isnull(test.t2.c)), not(isnull(test.t2.d))
+    │     └─TableFullScan_30	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+    └─TableReader_35(Probe)	9990.00	root		data:Selection_34
+      └─Selection_34	9990.00	cop[tikv]		not(isnull(test.t1.a))
+        └─TableFullScan_33	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+delete from  t1 using t1 inner join (select t2.c from t2 inner join (with temp as (select e from t3 where t3.f = 1234) select e from temp) tt on t2.d = tt.e) t on t1.a = t.c;
+select * from t1;
+a	b
