@@ -9681,6 +9681,19 @@ func (s *testIntegrationSuite) TestRedundantColumnResolve(c *C) {
 	tk.MustQuery("select t1.a, t2.a from t1 natural join t2").Check(testkit.Rows("1 1"))
 }
 
+func (s *testIntegrationSuite) TestIssue37414(c *C) {
+	defer s.cleanEnv(c)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists foo")
+	tk.MustExec("drop table if exists bar")
+	tk.MustExec("create table foo(a decimal(65,0));")
+	tk.MustExec("create table bar(a decimal(65,0), b decimal(65,0));")
+	tk.MustExec("insert into bar values(0,0),(1,1),(2,2);")
+	tk.MustExec("insert into foo select if(b>0, if(a/b>1, 1, 2), null) from bar;")
+}
+
 func (s *testIntegrationSuite) TestControlFunctionWithEnumOrSet(c *C) {
 	defer s.cleanEnv(c)
 
@@ -9945,6 +9958,18 @@ func (s *testIntegrationSuite) TestConstPropNullFunctions(c *C) {
 	tk.MustExec("create table t2 (i2 integer, c2 char, f2 float)")
 	tk.MustExec("insert into t2 values (0, 'c', null), (1, null, 0.1), (3, 'b', 0.01), (2, 'q', 0.12), (null, 'a', -0.1), (null, null, null)")
 	tk.MustQuery("select * from t2 where t2.i2=((select count(1) from t1 where t1.i1=t2.i2))").Check(testkit.Rows("1 <nil> 0.1"))
+}
+
+func (s *testIntegrationSuite) TestIssue30326(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t values(1),(1),(2),(2);")
+	tk.MustExec("set tidb_window_concurrency = 1;")
+	err := tk.QueryToErr("select (FIRST_VALUE(1) over (partition by v.a)) as c3 from (select a from t where t.a = (select a from t t2 where t.a = t2.a)) as v;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[executor:1242]Subquery returns more than 1 row")
 }
 
 func (s *testIntegrationSuite) TestIssue28643(c *C) {
