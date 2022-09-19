@@ -2970,3 +2970,104 @@ func TestSkipGrantTable(t *testing.T) {
 	tk.MustExec(`GRANT RESTRICTED_TABLES_ADMIN ON *.* TO 'test2'@'%';`)
 	tk.MustExec(`GRANT RESTRICTED_USER_ADMIN ON *.* TO 'test2'@'%';`)
 }
+<<<<<<< HEAD
+=======
+
+// https://github.com/pingcap/tidb/issues/32891
+func TestIncorrectUsageDBGrant(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`CREATE USER ucorrect1, ucorrect2;`)
+	tk.MustExec(`CREATE TABLE test.trigger_table (a int)`)
+	tk.MustExec(`GRANT CREATE TEMPORARY TABLES,DELETE,EXECUTE,INSERT,SELECT,SHOW VIEW,TRIGGER,UPDATE ON test.* TO ucorrect1;`)
+	tk.MustExec(`GRANT TRIGGER ON test.trigger_table TO ucorrect2;`)
+	tk.MustExec(`DROP TABLE test.trigger_table`)
+
+	err := tk.ExecToErr(`GRANT CREATE TEMPORARY TABLES,DELETE,EXECUTE,INSERT,SELECT,SHOW VIEW,TRIGGER,UPDATE ON test.* TO uincorrect;`)
+	require.EqualError(t, err, "[executor:1410]You are not allowed to create a user with GRANT")
+}
+
+func TestIssue29823(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create user u1")
+	tk.MustExec("create role r1")
+	tk.MustExec("create table t1 (c1 int)")
+	tk.MustExec("grant select on t1 to r1")
+	tk.MustExec("grant r1 to u1")
+
+	tk2 := testkit.NewTestKit(t, store)
+	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "%"}, nil, nil))
+	tk2.MustExec("set role all")
+	tk2.MustQuery("select current_role()").Check(testkit.Rows("`r1`@`%`"))
+	tk2.MustQuery("select * from test.t1").Check(testkit.Rows())
+	tk2.MustQuery("show databases like 'test'").Check(testkit.Rows("test"))
+	tk2.MustQuery("show tables from test").Check(testkit.Rows("t1"))
+
+	tk.MustExec("revoke r1 from u1")
+	tk2.MustQuery("select current_role()").Check(testkit.Rows("`r1`@`%`"))
+	err := tk2.ExecToErr("select * from test.t1")
+	require.EqualError(t, err, "[planner:1142]SELECT command denied to user 'u1'@'%' for table 't1'")
+	tk2.MustQuery("show databases like 'test'").Check(testkit.Rows())
+	err = tk2.QueryToErr("show tables from test")
+	require.EqualError(t, err, "[executor:1044]Access denied for user 'u1'@'%' to database 'test'")
+}
+
+func TestCheckPreparePrivileges(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create user u1")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("insert into t values(1)")
+
+	tk2 := testkit.NewTestKit(t, store)
+	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "%"}, nil, nil))
+
+	// sql
+	err := tk2.ExecToErr("prepare s from 'select * from test.t'")
+	require.EqualError(t, err, "[planner:1142]SELECT command denied to user 'u1'@'%' for table 't'")
+	err = tk2.ExecToErr("execute s")
+	require.EqualError(t, err, "[planner:8111]Prepared statement not found")
+
+	// binary proto
+	stmtID, _, _, err := tk2.Session().PrepareStmt("select * from test.t")
+	require.EqualError(t, err, "[planner:1142]SELECT command denied to user 'u1'@'%' for table 't'")
+	require.Zero(t, stmtID)
+
+	// grant
+	tk.MustExec("grant SELECT ON test.t TO  'u1'@'%';")
+
+	// should success after grant
+	tk2.MustExec("prepare s from 'select * from test.t'")
+	tk2.MustQuery("execute s").Check(testkit.Rows("1"))
+	stmtID, _, _, err = tk2.Session().PrepareStmt("select * from test.t")
+	require.NoError(t, err)
+	require.NotZero(t, stmtID)
+	rs, err := tk2.Session().ExecutePreparedStmt(context.TODO(), stmtID, nil)
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, rs.Close())
+	}()
+	tk2.ResultSetToResult(rs, "").Check(testkit.Rows("1"))
+}
+
+func TestIssue37488(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE USER dba_test@'%';")
+	tk.MustExec("GRANT SELECT,INSERT,UPDATE,DELETE ON test.* TO 'dba_test'@'%';")
+	tk.MustExec("CREATE USER dba_test@'192.168.%';")
+	tk.MustExec("GRANT SELECT,INSERT,UPDATE,DELETE,CREATE,DROP,ALTER ON test.* TO 'dba_test'@'192.168.%';")
+
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "dba_test", Hostname: "192.168.13.15"}, nil, nil))
+	tk.MustQuery("select current_user()").Check(testkit.Rows("dba_test@192.168.%"))
+	tk.MustExec("DROP TABLE IF EXISTS a;") // succ
+}
+>>>>>>> a6db4b7ed... privilege/privileges: sort in-memory db privilege table records (#37688)
