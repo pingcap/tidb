@@ -48,6 +48,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
+	"go.opencensus.io/stats/view"
 )
 
 func TestAnalyzePartition(t *testing.T) {
@@ -291,6 +292,7 @@ func TestIssue15752(t *testing.T) {
 }
 
 func TestFastAnalyzeRetryRowCount(t *testing.T) {
+	defer view.Stop()
 	cli := &testkit.RegionProperityClient{}
 	hijackClient := func(c tikv.Client) tikv.Client {
 		cli.Client = c
