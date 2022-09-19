@@ -7600,7 +7600,6 @@ func TestCastJSONTimeDuration(t *testing.T) {
 	))
 }
 
-
 func TestRegexpPushdown(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -7642,8 +7641,12 @@ func TestRegexpPushdown(t *testing.T) {
 		"└─Selection_5 8000.00 root  regexp_like(test.regbin.a, test.regbin.b)",
 		"  └─TableReader_7 10000.00 root  data:TableFullScan_6",
 		"    └─TableFullScan_6 10000.00 cop[tikv] table:regbin keep order:false, stats:pseudo"))
+}
 
 func TestIssue35184(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 
 	tk.MustExec("drop table if exists ft")
 	tk.MustExec("create table ft (tint int, tdou double, tdec decimal(22,9),tchar char(44))")
