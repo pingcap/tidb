@@ -9960,8 +9960,25 @@ func (s *testIntegrationSuite) TestConstPropNullFunctions(c *C) {
 	tk.MustQuery("select * from t2 where t2.i2=((select count(1) from t1 where t1.i1=t2.i2))").Check(testkit.Rows("1 <nil> 0.1"))
 }
 
+<<<<<<< HEAD
 func (s *testIntegrationSuite) TestIssue30326(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+=======
+func TestIssue30081(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`USE test`)
+	tk.MustQuery(`SELECT CONVERT_TZ('2007-03-11 2:00:00','US/Eastern','US/Central');`).
+		Check(testkit.Rows(`2007-03-11 01:00:00`))
+	tk.MustQuery(`SELECT CONVERT_TZ('2007-03-11 3:00:00','US/Eastern','US/Central');`).
+		Check(testkit.Rows(`2007-03-11 01:00:00`))
+}
+
+func TestIssue30326(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+>>>>>>> 8d5328ec4... expression: adjust DST for convert_tz() (#37206)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a int);")
