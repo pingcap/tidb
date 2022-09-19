@@ -731,17 +731,12 @@ func (s *tiflashTestSuite) TestAvgOverflow(c *C) {
 	tk.MustQuery("select avg(a) from t group by a").Check(testkit.Rows("9.0000"))
 	tk.MustExec("drop table if exists t")
 
-func (s *tiflashTestSuite) TestAvgOverflow(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-
 	// avg decimal
 	tk.MustExec("drop table if exists td;")
 	tk.MustExec("create table td (col_bigint bigint(20), col_smallint smallint(6));")
 	tk.MustExec("alter table td set tiflash replica 1")
-
-	tb := testGetTableByName(c, tk.Se, "test", "td")
-	err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	tb = testGetTableByName(c, tk.Se, "test", "td")
+	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
 
 	c.Assert(err, IsNil)
 	tk.MustExec("insert into td values (null, 22876);")
