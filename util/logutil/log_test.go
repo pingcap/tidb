@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 func TestZapLoggerWithKeys(t *testing.T) {
@@ -114,11 +115,14 @@ func TestGrpcLoggerCreation(t *testing.T) {
 }
 
 func TestSlowQueryLoggerCreation(t *testing.T) {
-	level := "warn"
+	level := "Error"
 	conf := NewLogConfig(level, DefaultLogFormat, "", EmptyFileLogConfig, false)
 	_, prop, err := newSlowQueryLogger(conf)
 	// assert after init slow query logger, the original conf is not changed
 	require.Equal(t, conf.Level, level)
 	require.Nil(t, err)
-	require.Equal(t, prop.Level.String(), conf.Level)
+	// slow query logger doesn't use the level of the global log config, and the
+	// level should be less than WarnLevel which is used by it to log slow query.
+	require.NotEqual(t, conf.Level, prop.Level.String())
+	require.True(t, prop.Level.Level() <= zapcore.WarnLevel)
 }
