@@ -330,5 +330,7 @@ func TestIssue37914(t *testing.T) {
 		tps:  pTypes,
 	}
 
-	lru.Put(key, val, pTypes)
+	require.NotPanics(t, func() {
+		lru.Put(key, val, pTypes)
+	})
 }
