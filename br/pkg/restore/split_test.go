@@ -5,6 +5,7 @@ package restore_test
 import (
 	"bytes"
 	"context"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -31,13 +32,14 @@ import (
 )
 
 type TestClient struct {
-	mu                  sync.RWMutex
-	stores              map[uint64]*metapb.Store
-	regions             map[uint64]*split.RegionInfo
-	regionsInfo         *pdtypes.RegionTree // For now it's only used in ScanRegions
-	nextRegionID        uint64
-	injectInScatter     func(*split.RegionInfo) error
-	supportBatchScatter bool
+	mu                        sync.RWMutex
+	stores                    map[uint64]*metapb.Store
+	regions                   map[uint64]*split.RegionInfo
+	regionsInfo               *pdtypes.RegionTree // For now it's only used in ScanRegions
+	nextRegionID              uint64
+	injectInScatter           func(*split.RegionInfo) error
+	supportBatchScatter       bool
+	supportAtomicSplitScatter bool
 
 	scattered   map[uint64]bool
 	InjectErr   bool
@@ -65,6 +67,10 @@ func NewTestClient(
 
 func (c *TestClient) InstallBatchScatterSupport() {
 	c.supportBatchScatter = true
+}
+
+func (c *TestClient) InstallAtomicSplitAndScatterSupport() {
+	c.supportAtomicSplitScatter = true
 }
 
 // ScatterRegions scatters regions in a batch.
@@ -120,6 +126,45 @@ func (c *TestClient) GetRegion(ctx context.Context, key []byte) (*split.RegionIn
 	return nil, errors.Errorf("region not found: key=%s", string(key))
 }
 
+func (c *TestClient) SplitAndScatterOverKeys(ctx context.Context, keys [][]byte) ([]uint64, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if !c.supportAtomicSplitScatter {
+		return nil, status.Error(codes.Unimplemented, "meow?")
+	}
+
+	keys = utils.CloneSlice(keys)
+	sort.Slice(keys, func(i, j int) bool {
+		return bytes.Compare(keys[i], keys[j]) < 0
+	})
+	rs := map[uint64][][]byte{}
+	regions := c.regionsInfo.ScanRange(keys[0], keys[len(keys)-1], 0)
+	newRegions := make([]uint64, 0, len(keys))
+
+	for _, r := range regions {
+		for len(keys) > 0 &&
+			utils.CompareBytesExt(r.Meta.StartKey, false, keys[0], false) <= 0 &&
+			utils.CompareBytesExt(keys[0], false, r.Meta.EndKey, true) < 0 {
+			rs[r.Meta.Id] = append(rs[r.Leader.Id], keys[0])
+			keys = keys[1:]
+		}
+	}
+	for regionID, targets := range rs {
+		for _, target := range targets {
+			newRegion, err := c.splitRegionWithLock(ctx, c.regions[regionID], target)
+			if err != nil {
+				return nil, err
+			}
+			newRegions = append(newRegions, newRegion.Region.Id)
+		}
+	}
+	for _, newRegion := range newRegions {
+		c.ScatterRegion(ctx, c.regions[newRegion])
+	}
+	return newRegions, nil
+}
+
 func (c *TestClient) GetRegionByID(ctx context.Context, regionID uint64) (*split.RegionInfo, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -137,6 +182,14 @@ func (c *TestClient) SplitRegion(
 ) (*split.RegionInfo, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	return c.splitRegionWithLock(ctx, regionInfo, key)
+}
+
+func (c *TestClient) splitRegionWithLock(
+	ctx context.Context,
+	regionInfo *split.RegionInfo,
+	key []byte,
+) (*split.RegionInfo, error) {
 	var target *split.RegionInfo
 	splitKey := codec.EncodeBytes([]byte{}, key)
 	for _, region := range c.regions {
@@ -324,6 +377,11 @@ func TestScatterFinishInTime(t *testing.T) {
 //	[, aay), [aay, bba), [bba, bbf), [bbf, bbh), [bbh, bbj),
 //	[bbj, cca), [cca, xxe), [xxe, xxz), [xxz, )
 func TestSplitAndScatter(t *testing.T) {
+	t.Run("SplitAndScatter", func(t *testing.T) {
+		client := initTestClient(false)
+		client.InstallAtomicSplitAndScatterSupport()
+		runTestSplitAndScatterWith(t, client)
+	})
 	t.Run("BatchScatter", func(t *testing.T) {
 		client := initTestClient(false)
 		client.InstallBatchScatterSupport()

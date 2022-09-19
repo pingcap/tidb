@@ -181,8 +181,8 @@ func (rs *RegionSplitter) legacySendSplitAndCreateScatterOperator(ctx context.Co
 	return
 }
 
-// legacyWaitForScatterRegions waits the scatter operators get finished.
-func (rs *RegionSplitter) legacyWaitForScatterRegions(ctx context.Context, scatterRegions []*split.RegionInfo) {
+// WaitForScatterRegionsByID waits the scatter operators get finished.
+func (rs *RegionSplitter) WaitForScatterRegionsByID(ctx context.Context, scatterRegions []uint64) {
 	defer utils.Spanning(&ctx, "RegionSplitter.legacySplitAndScatter/Waiting")()
 
 	startTime := time.Now()
@@ -211,15 +211,18 @@ func (rs *RegionSplitter) legacyWaitForScatterRegions(ctx context.Context, scatt
 // with two phases:
 // 1. split by the keys.
 // 2. create scatter operator for each newly spilt regions.
-func (rs *RegionSplitter) legacySplitAndScatter(ctx context.Context, a *splitArgs) error {
+func (rs *RegionSplitter) legacySplitAndScatter(ctx context.Context, a *splitArgs) ([]uint64, error) {
 	start := time.Now()
 	newRegions, err := rs.legacySendSplitAndCreateScatterOperator(ctx, a)
 	if err != nil {
-		return errors.Annotatef(err, "failed to split & creating the scatter operator")
+		return nil, errors.Annotatef(err, "failed to split & creating the scatter operator")
 	}
 	log.Info("split & creating scatter operator finished", zap.Stringer("take", time.Since(start)), zap.Int("new-regions", len(newRegions)))
-	rs.legacyWaitForScatterRegions(ctx, newRegions)
-	return nil
+	result := make([]uint64, 0, len(newRegions))
+	for _, r := range newRegions {
+		result = append(result, r.Region.Id)
+	}
+	return result, nil
 }
 
 // Split executes a region split. It will split regions by the rewrite rules,
@@ -250,7 +253,27 @@ func (rs *RegionSplitter) Split(
 	if err := args.Init(); err != nil {
 		return err
 	}
-	return rs.legacySplitAndScatter(ctx, args)
+
+	newRegions, err := rs.dispatchSplitAndScatter(ctx, args)
+	if err != nil {
+		return err
+	}
+	rs.WaitForScatterRegionsByID(ctx, newRegions)
+	return nil
+}
+
+func (rs *RegionSplitter) dispatchSplitAndScatter(ctx context.Context, args *splitArgs) (newRegions []uint64, err error) {
+	keys := args.GetSplitKeys()
+	newRegions, err = rs.client.SplitAndScatterOverKeys(ctx, keys)
+	if err == nil {
+		args.onSplit(keys)
+		return newRegions, nil
+	}
+	// The endpoint doesn't implements atomic split & scatter, let's retry the legacy way.
+	if status.Code(errors.Cause(err)) == codes.Unimplemented {
+		newRegions, err = rs.legacySplitAndScatter(ctx, args)
+	}
+	return
 }
 
 func (rs *RegionSplitter) hasHealthyRegion(ctx context.Context, regionID uint64) (bool, error) {
@@ -321,15 +344,14 @@ type retryTimeKey struct{}
 
 var retryTimes = new(retryTimeKey)
 
-func (rs *RegionSplitter) waitForScatterRegion(ctx context.Context, regionInfo *split.RegionInfo) {
+func (rs *RegionSplitter) waitForScatterRegion(ctx context.Context, regionID uint64) {
 	interval := split.ScatterWaitInterval
-	regionID := regionInfo.Region.GetId()
 	for i := 0; i < split.ScatterWaitMaxRetryTimes; i++ {
 		ctx1 := context.WithValue(ctx, retryTimes, i)
 		ok, err := rs.isScatterRegionFinished(ctx1, regionID)
 		if err != nil {
 			log.Warn("scatter region failed: do not have the region",
-				logutil.Region(regionInfo.Region))
+				zap.Uint64("region-id", regionID))
 			return
 		}
 		if ok {
@@ -466,30 +488,6 @@ func (rs *RegionSplitter) ScatterRegions(ctx context.Context, newRegions []*spli
 	if err != nil {
 		log.Warn("failed to batch scatter region", logutil.ShortError(err))
 	}
-}
-
-// getSplitKeys checks if the regions should be split by the end key of
-// the ranges, groups the split keys by region id.
-func getSplitKeys(rewriteRules *RewriteRules, ranges []rtree.Range, regions []*split.RegionInfo, isRawKv bool) map[uint64][][]byte {
-	splitKeyMap := make(map[uint64][][]byte)
-	checkKeys := make([][]byte, 0)
-	for _, rg := range ranges {
-		checkKeys = append(checkKeys, rg.EndKey)
-	}
-	for _, key := range checkKeys {
-		if region := NeedSplit(key, regions, isRawKv); region != nil {
-			splitKeys, ok := splitKeyMap[region.Region.GetId()]
-			if !ok {
-				splitKeys = make([][]byte, 0, 1)
-			}
-			splitKeyMap[region.Region.GetId()] = append(splitKeys, key)
-			log.Debug("get key for split region",
-				logutil.Key("key", key),
-				logutil.Key("startKey", region.Region.StartKey),
-				logutil.Key("endKey", region.Region.EndKey))
-		}
-	}
-	return splitKeyMap
 }
 
 // NeedSplit checks whether a key is necessary to split, if true returns the split region.

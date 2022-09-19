@@ -62,6 +62,9 @@ type SplitClient interface {
 	ScatterRegion(ctx context.Context, regionInfo *RegionInfo) error
 	// ScatterRegions scatters regions in a batch.
 	ScatterRegions(ctx context.Context, regionInfo []*RegionInfo) error
+	// SplitAndScatterOverKeys split at the keys and scatter over them.
+	// returning the newly created region IDs.
+	SplitAndScatterOverKeys(ctx context.Context, keys [][]byte) ([]uint64, error)
 	// GetOperator gets the status of operator of the specified region.
 	GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error)
 	// ScanRegions gets a list of regions, starts from the region that contains key.
@@ -102,6 +105,21 @@ func NewSplitClient(client pd.Client, tlsConf *tls.Config, isRawKv bool) SplitCl
 		isRawKv:    isRawKv,
 	}
 	return cli
+}
+
+// SplitAndScatterOverKeys split & scatter over the keys.
+func (c *pdClient) SplitAndScatterOverKeys(ctx context.Context, keys [][]byte) ([]uint64, error) {
+	resp, err := c.client.SplitAndScatterRegions(ctx, keys)
+	if err != nil {
+		return nil, err
+	}
+	if resp.ScatterFinishedPercentage < 100 || resp.SplitFinishedPercentage < 100 {
+		log.Warn("Split and scattter partially finished.",
+			zap.Uint64("scatter%", resp.ScatterFinishedPercentage),
+			zap.Uint64("split%", resp.SplitFinishedPercentage),
+		)
+	}
+	return resp.RegionsId, nil
 }
 
 func (c *pdClient) needScatter(ctx context.Context) bool {
