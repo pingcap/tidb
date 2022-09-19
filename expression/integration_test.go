@@ -9352,8 +9352,46 @@ func (s *testIntegrationSuite) TestIssue30101(c *C) {
 	tk.MustQuery("select greatest(c1, c2) from t1;").Sort().Check(testkit.Rows("9223372036854775809"))
 }
 
+<<<<<<< HEAD
 func (s *testIntegrationSuite) TestIssue28643(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+=======
+func TestIssue28739(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`USE test`)
+	tk.MustExec("SET time_zone = 'Europe/Vilnius'")
+	tk.MustQuery("SELECT UNIX_TIMESTAMP('2020-03-29 03:45:00')").Check(testkit.Rows("1585443600"))
+	tk.MustQuery("SELECT FROM_UNIXTIME(UNIX_TIMESTAMP('2020-03-29 03:45:00'))").Check(testkit.Rows("2020-03-29 04:00:00"))
+	tk.MustExec(`DROP TABLE IF EXISTS t`)
+	tk.MustExec(`CREATE TABLE t (dt DATETIME NULL)`)
+	defer tk.MustExec(`DROP TABLE t`)
+	// Test the vector implememtation
+	tk.MustExec(`INSERT INTO t VALUES ('2021-10-31 02:30:00'), ('2021-03-28 02:30:00'), ('2020-10-04 02:15:00'), ('2020-03-29 03:45:00'), (NULL)`)
+	tk.MustQuery(`SELECT dt, UNIX_TIMESTAMP(dt) FROM t`).Sort().Check(testkit.Rows(
+		"2020-03-29 03:45:00 1585443600",
+		"2020-10-04 02:15:00 1601766900",
+		"2021-03-28 02:30:00 1616891400",
+		"2021-10-31 02:30:00 1635636600",
+		"<nil> <nil>"))
+}
+
+func TestIssue30081(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`USE test`)
+	tk.MustQuery(`SELECT CONVERT_TZ('2007-03-11 2:00:00','US/Eastern','US/Central');`).
+		Check(testkit.Rows(`2007-03-11 01:00:00`))
+	tk.MustQuery(`SELECT CONVERT_TZ('2007-03-11 3:00:00','US/Eastern','US/Central');`).
+		Check(testkit.Rows(`2007-03-11 01:00:00`))
+}
+
+func TestIssue30326(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+>>>>>>> 8d5328ec4... expression: adjust DST for convert_tz() (#37206)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a time(4));")
