@@ -865,6 +865,17 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(s *SessionVars) (string, error) {
 		return BoolToOnOff(EnableConcurrentDDL.Load()), nil
 	}},
+	{Scope: ScopeGlobal, Name: TiDBEnableMDL, Value: BoolToOnOff(DefTiDBEnableMDL), Type: TypeBool, SetGlobal: func(vars *SessionVars, val string) error {
+		if EnableMDL.Load() != TiDBOptOn(val) {
+			err := SwitchMDL(TiDBOptOn(val))
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	}, GetGlobal: func(vars *SessionVars) (string, error) {
+		return BoolToOnOff(EnableMDL.Load()), nil
+	}},
 	{Scope: ScopeGlobal, Name: TiDBEnableNoopVariables, Value: BoolToOnOff(DefTiDBEnableNoopVariables), Type: TypeEnum, PossibleValues: []string{Off, On}, SetGlobal: func(s *SessionVars, val string) error {
 		EnableNoopVariables.Store(TiDBOptOn(val))
 		return nil
