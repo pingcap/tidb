@@ -1461,7 +1461,6 @@ func (s *testSuiteAgg) TestIssue23277(c *C) {
 	tk.MustExec("drop table t;")
 }
 
-
 func (s *testSuiteAgg) TestAvgDecimal(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
