@@ -191,7 +191,7 @@ func (l *LRUPlanCache) memoryControl() {
 	}
 
 	memUsed, _ := memory.InstanceMemUsed()
-	for memUsed > uint64(float64(l.quota)*(1.0-l.guard)) {
+	for memUsed > uint64(float64(l.quota)*(1.0-l.guard)) && l.size > 0 {
 		l.removeOldest()
 		memUsed, _ = memory.InstanceMemUsed()
 	}
