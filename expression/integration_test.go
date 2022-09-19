@@ -4913,8 +4913,9 @@ func TestSchemaDMLNotChange(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
-	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=0")
+	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 	tk2.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int primary key, c_json json);")
@@ -7599,11 +7600,51 @@ func TestCastJSONTimeDuration(t *testing.T) {
 	))
 }
 
-func TestIssue35184(t *testing.T) {
+
+func TestRegexpPushdown(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists reg")
+	tk.MustExec("create table reg(a varchar(20) null,b varchar(20) null,rep varchar(20) null) charset=utf8mb4 collate=utf8mb4_general_ci;")
+
+	tk.MustQuery("explain select a from reg where regexp_like(a, b);").Check(testkit.Rows(
+		"Projection_4 8000.00 root  test.reg.a",
+		"└─TableReader_7 8000.00 root  data:Selection_6",
+		"  └─Selection_6 8000.00 cop[tikv]  regexp_like(test.reg.a, test.reg.b)",
+		"    └─TableFullScan_5 10000.00 cop[tikv] table:reg keep order:false, stats:pseudo"))
+
+	tk.MustQuery("explain select a from reg where regexp_instr(a, b);").Check(testkit.Rows(
+		"Projection_4 8000.00 root  test.reg.a",
+		"└─TableReader_7 8000.00 root  data:Selection_6",
+		"  └─Selection_6 8000.00 cop[tikv]  regexp_instr(test.reg.a, test.reg.b)",
+		"    └─TableFullScan_5 10000.00 cop[tikv] table:reg keep order:false, stats:pseudo"))
+
+	tk.MustQuery("explain select a from reg where regexp_substr(a, b);").Check(testkit.Rows(
+		"Projection_4 8000.00 root  test.reg.a",
+		"└─TableReader_7 8000.00 root  data:Selection_6",
+		"  └─Selection_6 8000.00 cop[tikv]  regexp_substr(test.reg.a, test.reg.b)",
+		"    └─TableFullScan_5 10000.00 cop[tikv] table:reg keep order:false, stats:pseudo"))
+
+	tk.MustQuery("explain select a from reg where regexp_replace(a, b, rep);").Check(testkit.Rows(
+		"Projection_4 8000.00 root  test.reg.a",
+		"└─TableReader_7 8000.00 root  data:Selection_6",
+		"  └─Selection_6 8000.00 cop[tikv]  regexp_replace(test.reg.a, test.reg.b, test.reg.rep)",
+		"    └─TableFullScan_5 10000.00 cop[tikv] table:reg keep order:false, stats:pseudo"))
+
+	tk.MustExec("drop table if exists regbin")
+	tk.MustExec("create table regbin(a varchar(20) null,b varchar(20) null,rep varchar(20) null) charset=binary collate=binary;")
+
+	tk.MustQuery("explain select a from regbin where regexp_like(a, b);").Check(testkit.Rows(
+		"Projection_4 8000.00 root  test.regbin.a",
+		"└─Selection_5 8000.00 root  regexp_like(test.regbin.a, test.regbin.b)",
+		"  └─TableReader_7 10000.00 root  data:TableFullScan_6",
+		"    └─TableFullScan_6 10000.00 cop[tikv] table:regbin keep order:false, stats:pseudo"))
+
+func TestIssue35184(t *testing.T) {
+
 	tk.MustExec("drop table if exists ft")
 	tk.MustExec("create table ft (tint int, tdou double, tdec decimal(22,9),tchar char(44))")
 	tk.MustExec("insert into ft values(1234567890,123467890.1234,123467890.1234,'123467890.1234')")

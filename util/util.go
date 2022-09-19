@@ -18,6 +18,8 @@ import (
 	"encoding/json"
 	"io/ioutil"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/pingcap/errors"
 )
@@ -85,4 +87,15 @@ func ChanMap[T, R any](c <-chan T, f func(T) R) <-chan R {
 		}
 	}()
 	return outCh
+}
+
+// Str2Int64Map converts a string to a map[int64]struct{}.
+func Str2Int64Map(str string) map[int64]struct{} {
+	strs := strings.Split(str, ",")
+	res := make(map[int64]struct{}, len(strs))
+	for _, s := range strs {
+		id, _ := strconv.ParseInt(s, 10, 64)
+		res[id] = struct{}{}
+	}
+	return res
 }

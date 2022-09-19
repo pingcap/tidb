@@ -117,6 +117,7 @@ func TestLockTableReadOnly(t *testing.T) {
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
+	tk1.MustExec("set global tidb_enable_metadata_lock=0")
 	tk2.MustExec("use test")
 	tk1.MustExec("drop table if exists t1,t2")
 	defer func() {
