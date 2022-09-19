@@ -1458,7 +1458,7 @@ func (p *basePhysicalAgg) canUse3StageDistinctAgg() bool {
 			return false
 		}
 
-		if len(fun.OrderByItems) > 0 {
+		if len(fun.OrderByItems) > 0 || fun.Mode != aggregation.CompleteMode {
 			return false
 		}
 	}
@@ -1705,6 +1705,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 				}
 				if fun.HasDistinct {
 					distinctPos = i
+					fun.Mode = aggregation.Partial1Mode
 				} else {
 					fun.Mode = aggregation.Partial2Mode
 					originalCol := fun.Args[0].(*expression.Column)
@@ -1732,6 +1733,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 						newArgs = append(newArgs, newCol)
 					}
 				}
+				fun.Mode = aggregation.FinalMode
 				fun.Args = newArgs
 				finalAggDescs = append(finalAggDescs, fun)
 			}
