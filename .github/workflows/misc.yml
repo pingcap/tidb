@@ -37,6 +37,5 @@ jobs:
         uses: trufflesecurity/trufflehog@v3.4.3
         with:
           path: ./
-          log: info
           base: ${{ github.event.repository.default_branch }}
           head: HEAD
