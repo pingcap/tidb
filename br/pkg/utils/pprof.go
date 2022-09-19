@@ -78,7 +78,8 @@ func StartPProfListener(statusAddr string, wrapper *tidbutils.TLS) error {
 // defer Spanning(&ctx, "DoStuff", ...)
 //
 // NOTE: this may introduce the overhead of defering when the tracing not enabled.
-//       please take care when using it at critical path.
+//
+//	please take care when using it at critical path.
 func Spanning(ctx *context.Context, operationName string, opts ...opentracing.StartSpanOption) func() {
 	if span := opentracing.SpanFromContext(*ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan(operationName, append(opts, opentracing.ChildOf(span.Context()))...)
