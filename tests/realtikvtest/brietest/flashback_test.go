@@ -80,7 +80,7 @@ func TestFlashback(t *testing.T) {
 			fmt.Sprintf("return(%v)", injectSafeTS)))
 
 		tk.MustExec("insert t values (4), (5), (6)")
-		tk.MustExec(fmt.Sprintf("flashback cluster as of timestamp '%s'", oracle.GetTimeFromTS(ts)))
+		tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts)))
 
 		tk.MustExec("admin check table t")
 		require.Equal(t, tk.MustQuery("select max(a) from t").Rows()[0][0], "3")

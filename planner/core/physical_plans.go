@@ -186,6 +186,26 @@ func (p *PhysicalTableReader) GetAvgRowSize() float64 {
 	return getTblStats(p.tablePlan).GetAvgRowSize(p.ctx, p.tablePlan.Schema().Columns, false, false)
 }
 
+// MemoryUsage return the memory usage of PhysicalTableReader
+func (p *PhysicalTableReader) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.physicalSchemaProducer.MemoryUsage() + size.SizeOfUint8*2 + size.SizeOfBool + p.PartitionInfo.MemoryUsage()
+	if p.tablePlan != nil {
+		sum += p.tablePlan.MemoryUsage()
+	}
+
+	for _, plan := range p.TablePlans {
+		sum += plan.MemoryUsage()
+	}
+	for _, pInfos := range p.PartitionInfos {
+		sum += pInfos.tableScan.MemoryUsage() + pInfos.partitionInfo.MemoryUsage()
+	}
+	return
+}
+
 // setMppOrBatchCopForTableScan set IsMPPOrBatchCop for all TableScan.
 func setMppOrBatchCopForTableScan(curPlan PhysicalPlan) {
 	if ts, ok := curPlan.(*PhysicalTableScan); ok {
@@ -345,6 +365,26 @@ func (p *PhysicalIndexReader) appendChildCandidate(op *physicalOptimizeOp) {
 	}
 }
 
+// MemoryUsage return the memory usage of PhysicalIndexReader
+func (p *PhysicalIndexReader) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.physicalSchemaProducer.MemoryUsage() + p.PartitionInfo.MemoryUsage()
+	if p.indexPlan != nil {
+		p.indexPlan.MemoryUsage()
+	}
+
+	for _, plan := range p.IndexPlans {
+		sum += plan.MemoryUsage()
+	}
+	for _, col := range p.OutputColumns {
+		sum += col.MemoryUsage()
+	}
+	return
+}
+
 // PushedDownLimit is the limit operator pushed down into PhysicalIndexLookUpReader.
 type PushedDownLimit struct {
 	Offset uint64
@@ -356,6 +396,17 @@ func (p *PushedDownLimit) Clone() *PushedDownLimit {
 	cloned := new(PushedDownLimit)
 	*cloned = *p
 	return cloned
+}
+
+const pushedDownLimitSize = size.SizeOfUint64 * 2
+
+// MemoryUsage return the memory usage of PushedDownLimit
+func (p *PushedDownLimit) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	return pushedDownLimitSize
 }
 
 // PhysicalIndexLookUpReader is the index look up reader in tidb. It's used in case of double reading.
@@ -455,6 +506,39 @@ func (p *PhysicalIndexLookUpReader) appendChildCandidate(op *physicalOptimizeOp)
 	}
 }
 
+// MemoryUsage return the memory usage of PhysicalIndexLookUpReader
+func (p *PhysicalIndexLookUpReader) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.physicalSchemaProducer.MemoryUsage() + size.SizeOfBool*2 + p.PartitionInfo.MemoryUsage() + size.SizeOfUint64
+
+	if p.indexPlan != nil {
+		sum += p.indexPlan.MemoryUsage()
+	}
+	if p.tablePlan != nil {
+		sum += p.tablePlan.MemoryUsage()
+	}
+	if p.ExtraHandleCol != nil {
+		sum += p.ExtraHandleCol.MemoryUsage()
+	}
+	if p.PushedLimit != nil {
+		sum += p.PushedLimit.MemoryUsage()
+	}
+
+	for _, plan := range p.IndexPlans {
+		sum += plan.MemoryUsage()
+	}
+	for _, plan := range p.TablePlans {
+		sum += plan.MemoryUsage()
+	}
+	for _, col := range p.CommonHandleCols {
+		sum += col.MemoryUsage()
+	}
+	return
+}
+
 // PhysicalIndexMergeReader is the reader using multiple indexes in tidb.
 type PhysicalIndexMergeReader struct {
 	physicalSchemaProducer
@@ -512,6 +596,31 @@ func (p *PhysicalIndexMergeReader) appendChildCandidate(op *physicalOptimizeOp) 
 	for _, partialPlan := range p.partialPlans {
 		appendChildCandidate(p, partialPlan, op)
 	}
+}
+
+// MemoryUsage return the memory usage of PhysicalIndexMergeReader
+func (p *PhysicalIndexMergeReader) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.physicalSchemaProducer.MemoryUsage() + p.PartitionInfo.MemoryUsage()
+	if p.tablePlan != nil {
+		sum += p.tablePlan.MemoryUsage()
+	}
+
+	for _, plans := range p.PartialPlans {
+		for _, plan := range plans {
+			sum += plan.MemoryUsage()
+		}
+	}
+	for _, plan := range p.TablePlans {
+		sum += plan.MemoryUsage()
+	}
+	for _, plan := range p.partialPlans {
+		sum += plan.MemoryUsage()
+	}
+	return
 }
 
 // PhysicalIndexScan represents an index scan plan.
@@ -1918,8 +2027,8 @@ func appendChildCandidate(origin PhysicalPlan, pp PhysicalPlan, op *physicalOpti
 		PlanTrace: &tracing.PlanTrace{
 			ID:          pp.ID(),
 			TP:          pp.TP(),
-			Cost:        pp.Cost(),
 			ExplainInfo: pp.ExplainInfo(),
+			// TODO: trace the cost
 		},
 	}
 	op.tracer.AppendCandidate(candidate)

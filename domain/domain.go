@@ -118,6 +118,15 @@ type Domain struct {
 	sysExecutorFactory   func(*Domain) (pools.Resource, error)
 
 	sysProcesses SysProcesses
+
+	mdlCheckTableInfo *mdlCheckTableInfo
+}
+
+type mdlCheckTableInfo struct {
+	mu         sync.Mutex
+	newestVer  int64
+	jobsVerMap map[int64]int64
+	jobsIdsMap map[int64]string
 }
 
 // InfoCache export for test.
@@ -448,7 +457,7 @@ func (do *Domain) Reload() error {
 		// loaded newer schema
 		if oldSchemaVersion < is.SchemaMetaVersion() {
 			// Update self schema version to etcd.
-			err = do.ddl.SchemaSyncer().UpdateSelfVersion(context.Background(), is.SchemaMetaVersion())
+			err = do.ddl.SchemaSyncer().UpdateSelfVersion(context.Background(), 0, is.SchemaMetaVersion())
 			if err != nil {
 				logutil.BgLogger().Info("update self version failed",
 					zap.Int64("oldSchemaVersion", oldSchemaVersion),
@@ -607,6 +616,110 @@ func (do *Domain) topologySyncerKeeper() {
 	}
 }
 
+func (do *Domain) refreshMDLCheckTableInfo() {
+	se, err := do.sysSessionPool.Get()
+
+	if err != nil {
+		logutil.BgLogger().Warn("get system session failed", zap.Error(err))
+		return
+	}
+	defer do.sysSessionPool.Put(se)
+	exec := se.(sqlexec.RestrictedSQLExecutor)
+	domainSchemaVer := do.InfoSchema().SchemaMetaVersion()
+	rows, _, err := exec.ExecRestrictedSQL(kv.WithInternalSourceType(context.Background(), kv.InternalTxnTelemetry), nil, fmt.Sprintf("select job_id, version, table_ids from mysql.tidb_mdl_info where version <= %d", domainSchemaVer))
+	if err != nil {
+		logutil.BgLogger().Warn("get mdl info from tidb_mdl_info failed", zap.Error(err))
+		return
+	}
+	do.mdlCheckTableInfo.mu.Lock()
+	defer do.mdlCheckTableInfo.mu.Unlock()
+
+	do.mdlCheckTableInfo.newestVer = domainSchemaVer
+	do.mdlCheckTableInfo.jobsVerMap = make(map[int64]int64, len(rows))
+	do.mdlCheckTableInfo.jobsIdsMap = make(map[int64]string, len(rows))
+	for i := 0; i < len(rows); i++ {
+		do.mdlCheckTableInfo.jobsVerMap[rows[i].GetInt64(0)] = rows[i].GetInt64(1)
+		do.mdlCheckTableInfo.jobsIdsMap[rows[i].GetInt64(0)] = rows[i].GetString(2)
+	}
+}
+
+func (do *Domain) mdlCheckLoop() {
+	ticker := time.Tick(time.Millisecond * 50)
+	var saveMaxSchemaVersion int64
+	jobNeedToSync := false
+	jobCache := make(map[int64]int64, 1000)
+
+	for {
+		select {
+		case <-ticker:
+			if !variable.EnableMDL.Load() {
+				continue
+			}
+
+			do.mdlCheckTableInfo.mu.Lock()
+			maxVer := do.mdlCheckTableInfo.newestVer
+			if maxVer > saveMaxSchemaVersion {
+				saveMaxSchemaVersion = maxVer
+			} else if !jobNeedToSync {
+				// Schema doesn't change, and no job to check in the last run.
+				do.mdlCheckTableInfo.mu.Unlock()
+				continue
+			}
+
+			jobNeedToCheckCnt := len(do.mdlCheckTableInfo.jobsVerMap)
+			if jobNeedToCheckCnt == 0 {
+				jobNeedToSync = false
+				do.mdlCheckTableInfo.mu.Unlock()
+				continue
+			}
+
+			jobsVerMap := make(map[int64]int64, len(do.mdlCheckTableInfo.jobsVerMap))
+			jobsIdsMap := make(map[int64]string, len(do.mdlCheckTableInfo.jobsIdsMap))
+			for k, v := range do.mdlCheckTableInfo.jobsVerMap {
+				jobsVerMap[k] = v
+			}
+			for k, v := range do.mdlCheckTableInfo.jobsIdsMap {
+				jobsIdsMap[k] = v
+			}
+			do.mdlCheckTableInfo.mu.Unlock()
+
+			jobNeedToSync = true
+
+			sm := do.InfoSyncer().GetSessionManager()
+			if sm == nil {
+				logutil.BgLogger().Info("session manager is nil")
+			} else {
+				sm.CheckOldRunningTxn(jobsVerMap, jobsIdsMap)
+			}
+
+			if len(jobsVerMap) == jobNeedToCheckCnt {
+				jobNeedToSync = false
+			}
+
+			// Try to gc jobCache.
+			if len(jobCache) > 1000 {
+				jobCache = make(map[int64]int64, 1000)
+			}
+
+			for jobID, ver := range jobsVerMap {
+				if cver, ok := jobCache[jobID]; ok && cver >= ver {
+					// Already update, skip it.
+					continue
+				}
+				logutil.BgLogger().Info("mdl gets lock, update to owner", zap.Int64("jobID", jobID), zap.Int64("version", ver))
+				err := do.ddl.SchemaSyncer().UpdateSelfVersion(context.Background(), jobID, ver)
+				if err != nil {
+					logutil.BgLogger().Warn("update self version failed", zap.Error(err))
+				} else {
+					jobCache[jobID] = ver
+				}
+			}
+		case <-do.exit:
+			return
+		}
+	}
+}
+
 func (do *Domain) loadSchemaInLoop(ctx context.Context, lease time.Duration) {
 	defer util.Recover(metrics.LabelDomain, "loadSchemaInLoop", nil, true)
 	// Lease renewal can run at any frequency.
@@ -663,6 +776,7 @@ func (do *Domain) loadSchemaInLoop(ctx context.Context, lease time.Duration) {
 		case <-do.exit:
 			return
 		}
+		do.refreshMDLCheckTableInfo()
 	}
 }
 
@@ -761,6 +875,11 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		dumpFileGcChecker:   &dumpFileGcChecker{gcLease: dumpFileGcLease, paths: []string{GetPlanReplayerDirName(), GetOptimizerTraceDirName()}},
 		onClose:             onClose,
 		expiredTimeStamp4PC: types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, types.DefaultFsp),
+		mdlCheckTableInfo: &mdlCheckTableInfo{
+			mu:         sync.Mutex{},
+			jobsVerMap: make(map[int64]int64),
+			jobsIdsMap: make(map[int64]string),
+		},
 	}
 
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)
@@ -904,6 +1023,7 @@ func (do *Domain) Init(
 		// Local store needs to get the change information for every DDL state in each session.
 		go do.loadSchemaInLoop(ctx, ddlLease)
 	}
+	do.wg.Run(do.mdlCheckLoop)
 	do.wg.Add(3)
 	go do.topNSlowQueryLoop()
 	go do.infoSyncerKeeper()
