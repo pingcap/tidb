@@ -21,7 +21,9 @@ import (
 	"net/http/httptest"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -1495,4 +1497,32 @@ func (s *testTableSuite) TestInfoschemaClientErrors(c *C) {
 
 	err = tk.ExecToErr("FLUSH CLIENT_ERRORS_SUMMARY")
 	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the RELOAD privilege(s) for this operation")
+}
+
+func (s *testTableSuite) TestStmtSummaryIssue35340(c *C) {
+	tk := s.newTestKitWithRoot(c)
+	tk.MustExec("set global tidb_stmt_summary_refresh_interval=1800")
+	tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 3000")
+	for i := 0; i < 100; i++ {
+		user := "user" + strconv.Itoa(i)
+		tk.MustExec(fmt.Sprintf("create user '%v'@'localhost'", user))
+	}
+	tk.MustExec("flush privileges")
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			tk := s.newTestKitWithRoot(c)
+			for j := 0; j < 100; j++ {
+				user := "user" + strconv.Itoa(j)
+				c.Assert(tk.Se.Auth(&auth.UserIdentity{
+					Username: user,
+					Hostname: "localhost",
+				}, nil, nil), IsTrue)
+				tk.MustQuery("select count(*) from information_schema.statements_summary;")
+			}
+		}()
+	}
+	wg.Wait()
 }
