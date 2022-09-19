@@ -55,7 +55,7 @@ func subTestSchemaValidatorGeneral(t *testing.T) {
 		item.oldVer,
 		item.schemaVer,
 		&transaction.RelatedSchemaChange{PhyTblIDS: []int64{10}, ActionTypes: []uint64{10}})
-	_, valid := validator.Check(item.leaseGrantTS, item.schemaVer, []int64{10})
+	_, valid := validator.Check(item.leaseGrantTS, item.schemaVer, []int64{10}, true)
 	require.Equal(t, ResultSucc, valid)
 
 	// Stop the validator, validator's items value is nil.
@@ -63,23 +63,23 @@ func subTestSchemaValidatorGeneral(t *testing.T) {
 	require.False(t, validator.IsStarted())
 	_, isTablesChanged := validator.isRelatedTablesChanged(item.schemaVer, []int64{10})
 	require.True(t, isTablesChanged)
-	_, valid = validator.Check(item.leaseGrantTS, item.schemaVer, []int64{10})
+	_, valid = validator.Check(item.leaseGrantTS, item.schemaVer, []int64{10}, true)
 	require.Equal(t, ResultUnknown, valid)
 	validator.Restart()
 
 	// Increase the current time by 2 leases, check schema is invalid.
 	after2LeaseTime := time.Now().Add(2 * lease)
 	ts := uint64(after2LeaseTime.UnixNano()) // Make sure that ts has timed out a lease.
-	_, valid = validator.Check(ts, item.schemaVer, []int64{10})
+	_, valid = validator.Check(ts, item.schemaVer, []int64{10}, true)
 	require.Equalf(t, ResultUnknown, valid, "validator latest schema ver %v, time %v, item schema ver %v, ts %v", validator.latestSchemaVer, validator.latestSchemaExpire, 0, oracle.GetTimeFromTS(ts))
 
 	// Make sure newItem's version is greater than item.schema.
 	newItem := getGreaterVersionItem(t, leaseGrantCh, item.schemaVer)
 	currVer := newItem.schemaVer
 	validator.Update(newItem.leaseGrantTS, newItem.oldVer, currVer, nil)
-	_, valid = validator.Check(ts, item.schemaVer, nil)
+	_, valid = validator.Check(ts, item.schemaVer, nil, true)
 	require.Equalf(t, ResultFail, valid, "currVer %d, newItem %v", currVer, item)
-	_, valid = validator.Check(ts, item.schemaVer, []int64{0})
+	_, valid = validator.Check(ts, item.schemaVer, []int64{0}, true)
 	require.Equalf(t, ResultFail, valid, "currVer %d, newItem %v", currVer, item)
 
 	// Check the latest schema version must changed.
@@ -101,7 +101,7 @@ func subTestSchemaValidatorGeneral(t *testing.T) {
 
 	// All schema versions is expired.
 	ts = uint64(after2LeaseTime.Add(2 * lease).UnixNano())
-	_, valid = validator.Check(ts, newItem.schemaVer, nil)
+	_, valid = validator.Check(ts, newItem.schemaVer, nil, true)
 	require.Equal(t, ResultUnknown, valid, "schemaVer %v, validator %#v", newItem.schemaVer, validator)
 
 	close(exit)
