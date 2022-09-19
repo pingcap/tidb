@@ -96,6 +96,10 @@ type StoreManager struct {
 	tlsConf   *tls.Config
 }
 
+func (mgr *StoreManager) GetKeepalive() keepalive.ClientParameters {
+	return mgr.keepalive
+}
+
 // NewStoreManager create a new manager for gRPC connections to stores.
 func NewStoreManager(pdCli pd.Client, kl keepalive.ClientParameters, tlsConf *tls.Config) *StoreManager {
 	return &StoreManager{
