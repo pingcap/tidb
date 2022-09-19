@@ -2023,6 +2023,7 @@ type InsertStmt struct {
 	// TableHints represents the table level Optimizer Hint for join type.
 	TableHints     []*TableOptimizerHint
 	PartitionNames []model.CIStr
+	ColLen         int
 }
 
 // Restore implements Node interface.
