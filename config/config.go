@@ -861,7 +861,6 @@ var defaultConf = Config{
 		RecordPlanInSlowLog:         logutil.DefaultRecordPlanInSlowLog,
 		CheckMb4ValueInUTF8:         *NewAtomicBool(true),
 		ForcePriority:               "NO_PRIORITY",
-		MemoryUsageAlarmRatio:       DefMemoryUsageAlarmRatio,
 		EnableCollectExecutionInfo:  true,
 		PluginDir:                   "/data/deploy/plugin",
 		PluginLoad:                  "",
@@ -881,23 +880,22 @@ var defaultConf = Config{
 		GRPCMaxSendMsgSize:    math.MaxInt32,
 	},
 	Performance: Performance{
-		MaxMemory:             0,
-		ServerMemoryQuota:     0,
-		MemoryUsageAlarmRatio: DefMemoryUsageAlarmRatio,
-		TCPKeepAlive:          true,
-		TCPNoDelay:            true,
-		CrossJoin:             true,
-		StatsLease:            "3s",
-		StmtCountLimit:        5000,
-		PseudoEstimateRatio:   0.8,
-		ForcePriority:         "NO_PRIORITY",
-		BindInfoLease:         "3s",
-		TxnEntrySizeLimit:     DefTxnEntrySizeLimit,
-		TxnTotalSizeLimit:     DefTxnTotalSizeLimit,
-		DistinctAggPushDown:   false,
-		ProjectionPushDown:    false,
-		CommitterConcurrency:  defTiKVCfg.CommitterConcurrency,
-		MaxTxnTTL:             defTiKVCfg.MaxTxnTTL, // 1hour
+		MaxMemory:            0,
+		ServerMemoryQuota:    0,
+		TCPKeepAlive:         true,
+		TCPNoDelay:           true,
+		CrossJoin:            true,
+		StatsLease:           "3s",
+		StmtCountLimit:       5000,
+		PseudoEstimateRatio:  0.8,
+		ForcePriority:        "NO_PRIORITY",
+		BindInfoLease:        "3s",
+		TxnEntrySizeLimit:    DefTxnEntrySizeLimit,
+		TxnTotalSizeLimit:    DefTxnTotalSizeLimit,
+		DistinctAggPushDown:  false,
+		ProjectionPushDown:   false,
+		CommitterConcurrency: defTiKVCfg.CommitterConcurrency,
+		MaxTxnTTL:            defTiKVCfg.MaxTxnTTL, // 1hour
 		// TODO: set indexUsageSyncLease to 60s.
 		IndexUsageSyncLease:      "0s",
 		GOGC:                     100,
@@ -1236,10 +1234,6 @@ func (c *Config) Valid() error {
 
 	if c.Performance.TxnTotalSizeLimit > 1<<40 {
 		return fmt.Errorf("txn-total-size-limit should be less than %d", 1<<40)
-	}
-
-	if c.Instance.MemoryUsageAlarmRatio > 1 || c.Instance.MemoryUsageAlarmRatio < 0 {
-		return fmt.Errorf("tidb_memory_usage_alarm_ratio in [Instance] must be greater than or equal to 0 and less than or equal to 1")
 	}
 
 	if len(c.IsolationRead.Engines) < 1 {
