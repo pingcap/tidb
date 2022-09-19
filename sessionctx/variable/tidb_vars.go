@@ -1051,7 +1051,7 @@ const (
 	DefEnableTiDBGCAwareMemoryTrack                = true
 	DefTiDBDefaultStrMatchSelectivity              = 0.8
 	DefTiDBEnableTmpStorageOnOOM                   = true
-	DefTiDBEnableMDL                               = false
+	DefTiDBEnableMDL                               = true
 	DefTiFlashFastScan                             = false
 	DefTiDBEnableFastReorg                         = false
 	DefTiDBDDLDiskQuota                            = 100 * 1024 * 1024 * 1024 // 100GB
