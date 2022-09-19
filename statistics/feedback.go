@@ -74,9 +74,13 @@ func NewQueryFeedback(physicalID int64, hist *Histogram, expected int64, desc bo
 	if hist != nil && hist.IsIndexHist() {
 		tp = IndexType
 	}
+	var valid bool
+	if FeedbackProbability.Load() > 0 {
+		valid = true
+	}
 	return &QueryFeedback{
 		PhysicalID: physicalID,
-		Valid:      true,
+		Valid:      valid,
 		Tp:         tp,
 		Hist:       hist,
 		Expected:   expected,

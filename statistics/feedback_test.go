@@ -187,6 +187,24 @@ func TestSplitBuckets(t *testing.T) {
 	require.Equal(t, int64(5001), totalCount)
 }
 
+func TestFeedbackVaild(t *testing.T) {
+	oriProbability := FeedbackProbability.Load()
+	defer func() {
+		FeedbackProbability.Store(oriProbability)
+	}()
+	FeedbackProbability.Store(1)
+	q := NewQueryFeedback(0, genHistogram(), 0, false)
+	require.Equal(t, q.Valid, true)
+
+	FeedbackProbability.Store(0)
+	q = NewQueryFeedback(0, genHistogram(), 0, false)
+	require.Equal(t, q.Valid, false)
+
+	FeedbackProbability.Store(0.5)
+	q = NewQueryFeedback(0, genHistogram(), 0, false)
+	require.Equal(t, q.Valid, true)
+}
+
 func TestMergeBuckets(t *testing.T) {
 	tests := []struct {
 		points       []int64
