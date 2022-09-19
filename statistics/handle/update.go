@@ -194,7 +194,7 @@ var (
 // StoreQueryFeedback merges the feedback into stats collector. Deprecated.
 func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Handle, enablePseudoForOutdatedStats bool) error {
 	q := feedback.(*statistics.QueryFeedback)
-	if !q.Valid || q.Hist == nil {
+	if !q.Valid.Load() || q.Hist == nil {
 		return nil
 	}
 	err := h.RecalculateExpectCount(q, enablePseudoForOutdatedStats)

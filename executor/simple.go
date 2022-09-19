@@ -624,6 +624,9 @@ func (e *SimpleExec) executeSavepoint(s *ast.SavepointStmt) error {
 	if sessVars.BinlogClient != nil {
 		return ErrSavepointNotSupportedWithBinlog
 	}
+	if !sessVars.ConstraintCheckInPlacePessimistic && sessVars.TxnCtx.IsPessimistic {
+		return errors.New("savepoint is not supported in pessimistic transactions when in-place constraint check is disabled")
+	}
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return err
@@ -1397,7 +1400,7 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 					break
 				}
 			}
-		} //TODO: need delete columns_priv once we implement columns_priv functionality.
+		} // TODO: need delete columns_priv once we implement columns_priv functionality.
 	}
 
 	if len(failedUsers) == 0 {

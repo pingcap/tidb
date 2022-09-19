@@ -24,6 +24,7 @@ go_test(
         "//testkit",
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
+        "@io_opencensus_go//stats/view",
         "@org_uber_go_goleak//:goleak",
     ],
 )
