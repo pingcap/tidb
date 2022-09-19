@@ -164,31 +164,33 @@ func (c *hashRowContainer) GetAllMatchedRows(probeHCtx *hashContext, probeSideRo
 	if len(innerPtrs) == 0 {
 		return matched, nil
 	}
+	// all built bucket rows come from hash table, their bitmap are all nil (doesn't contain any null). so
+	// we could only use the probe null bits to filter valid rows.
+	if probeKeyNullBits != nil && len(probeHCtx.naKeyColIdx) > 1 {
+		// if len(probeHCtx.naKeyColIdx)=1
+		//     that means the NA-Join probe key is directly a (null) <-> (fetch all buckets), nothing to do.
+		// else like
+		//	   (null, 1, 2), we should use the not-null probe bit to filter rows. Only fetch rows like
+		//     (  ? , 1, 2), that exactly with value as 1 and 2 in the second and third join key column.
+		needCheckProbeRowPos = needCheckProbeRowPos[:0]
+		needCheckBuildRowPos = needCheckBuildRowPos[:0]
+		keyColLen := len(c.hCtx.naKeyColIdx)
+		for i := 0; i < keyColLen; i++ {
+			// since all bucket is from hash table (Not Null), so the buildSideNullBits check is eliminated.
+			if probeKeyNullBits.UnsafeIsSet(i) {
+				continue
+			}
+			needCheckBuildRowPos = append(needCheckBuildRowPos, c.hCtx.naKeyColIdx[i])
+			needCheckProbeRowPos = append(needCheckProbeRowPos, probeHCtx.naKeyColIdx[i])
+		}
+	}
 	var mayMatchedRow chunk.Row
 	for _, ptr := range innerPtrs {
 		mayMatchedRow, c.chkBuf, err = c.rowContainer.GetRowAndAppendToChunk(ptr, c.chkBuf)
 		if err != nil {
 			return nil, err
 		}
-		// all built bucket rows come from hash table, their bitmap are all nil (doesn't contain any null). so
-		// we could only use the probe null bits to filter valid rows.
 		if probeKeyNullBits != nil && len(probeHCtx.naKeyColIdx) > 1 {
-			// if len(probeHCtx.naKeyColIdx)=1
-			//     that means the NA-Join probe key is directly a (null) <-> (fetch all buckets), nothing to do.
-			// else
-			//	   like (null, 1, 2), we should use the not-null probe bit to filter rows. Only fetch rows like
-			//     (  ? , 1, 2), that exactly with value as 1 and 2 in the second and third join key column.
-			needCheckProbeRowPos = needCheckProbeRowPos[:0]
-			needCheckBuildRowPos = needCheckBuildRowPos[:0]
-			keyColLen := len(c.hCtx.naKeyColIdx)
-			for i := 0; i < keyColLen; i++ {
-				// since all bucket is from hash table (Not Null), so the buildSideNullBits check is eliminated.
-				if probeKeyNullBits.UnsafeIsSet(i) {
-					continue
-				}
-				needCheckBuildRowPos = append(needCheckBuildRowPos, c.hCtx.naKeyColIdx[i])
-				needCheckProbeRowPos = append(needCheckProbeRowPos, probeHCtx.naKeyColIdx[i])
-			}
 			// check the idxs-th value of the join columns.
 			ok, err = codec.EqualChunkRow(c.sc, mayMatchedRow, c.hCtx.allTypes, needCheckBuildRowPos, probeSideRow, probeHCtx.allTypes, needCheckProbeRowPos)
 			if err != nil {
