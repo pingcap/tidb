@@ -808,6 +808,21 @@ func (e AnalyzeColumnsExec) decodeSampleDataWithVirtualColumn(
 	return nil
 }
 
+func readDataAndSendTask(handler *tableResultHandler, mergeTaskCh chan []byte) error {
+	defer close(mergeTaskCh)
+	for {
+		data, err := handler.nextRaw(context.TODO())
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if data == nil {
+			break
+		}
+		mergeTaskCh <- data
+	}
+	return nil
+}
+
 func (e *AnalyzeColumnsExec) buildSamplingStats(
 	ranges []*ranger.Range,
 	needExtStats bool,
@@ -853,17 +868,10 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	for i := 0; i < statsConcurrency; i++ {
 		go e.subMergeWorker(mergeResultCh, mergeTaskCh, l, i == 0)
 	}
-	for {
-		data, err1 := e.resultHandler.nextRaw(context.TODO())
-		if err1 != nil {
-			return 0, nil, nil, nil, nil, err1
-		}
-		if data == nil {
-			break
-		}
-		mergeTaskCh <- data
+	if err = readDataAndSendTask(e.resultHandler, mergeTaskCh); err != nil {
+		return 0, nil, nil, nil, nil, err
 	}
-	close(mergeTaskCh)
+
 	mergeWorkerPanicCnt := 0
 	for mergeWorkerPanicCnt < statsConcurrency {
 		mergeResult, ok := <-mergeResultCh
