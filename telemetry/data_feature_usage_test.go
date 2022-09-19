@@ -450,8 +450,10 @@ func TestAddIndexAcceleration(t *testing.T) {
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
 	require.Equal(t, int64(0), usage.DDLUsageCounter.AddIndexIngestUsed)
+	require.Equal(t, false, usage.DDLUsageCounter.MetadataLockUsed)
 
 	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = on")
+	tk.MustExec("set global tidb_enable_metadata_lock = 1")
 	allow = ddl.IsEnableFastReorg()
 	require.Equal(t, true, allow)
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
@@ -461,4 +463,5 @@ func TestAddIndexAcceleration(t *testing.T) {
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
 	require.Equal(t, int64(1), usage.DDLUsageCounter.AddIndexIngestUsed)
+	require.Equal(t, true, usage.DDLUsageCounter.MetadataLockUsed)
 }
