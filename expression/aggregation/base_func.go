@@ -42,7 +42,7 @@ type baseFuncDesc struct {
 
 func newBaseFuncDesc(ctx sessionctx.Context, name string, args []expression.Expression) (baseFuncDesc, error) {
 	b := baseFuncDesc{Name: strings.ToLower(name), Args: args}
-	err := b.typeInfer(ctx)
+	err := b.TypeInfer(ctx)
 	return b, err
 }
 
@@ -83,8 +83,8 @@ func (a *baseFuncDesc) String() string {
 	return buffer.String()
 }
 
-// typeInfer infers the arguments and return types of an function.
-func (a *baseFuncDesc) typeInfer(ctx sessionctx.Context) error {
+// TypeInfer infers the arguments and return types of an function.
+func (a *baseFuncDesc) TypeInfer(ctx sessionctx.Context) error {
 	switch a.Name {
 	case ast.AggFuncCount:
 		a.typeInfer4Count(ctx)
@@ -206,6 +206,14 @@ func (a *baseFuncDesc) typeInfer4Sum(ctx sessionctx.Context) {
 	types.SetBinChsClnFlag(a.RetTp)
 }
 
+// TypeInfer4AvgSum infers the type of sum from avg, which should extend the precision of decimal
+// compatible with mysql.
+func (a *baseFuncDesc) TypeInfer4AvgSum(avgRetType *types.FieldType) {
+	if avgRetType.Tp == mysql.TypeNewDecimal {
+		a.RetTp.Flen = mathutil.Min(mysql.MaxDecimalWidth, a.RetTp.Flen+22)
+	}
+}
+
 // typeInfer4Avg should returns a "decimal", otherwise it returns a "double".
 // Because child returns integer or decimal type.
 func (a *baseFuncDesc) typeInfer4Avg(ctx sessionctx.Context) {
@@ -245,6 +253,12 @@ func (a *baseFuncDesc) typeInfer4GroupConcat(ctx sessionctx.Context) {
 
 	a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxBlobWidth, 0
 	// TODO: a.Args[i] = expression.WrapWithCastAsString(ctx, a.Args[i])
+	for i := 0; i < len(a.Args)-1; i++ {
+		if tp := a.Args[i].GetType(); tp.Tp == mysql.TypeNewDecimal {
+			a.Args[i] = expression.BuildCastFunction(ctx, a.Args[i], tp)
+		}
+	}
+
 }
 
 func (a *baseFuncDesc) typeInfer4MaxMin(ctx sessionctx.Context) {
@@ -259,7 +273,7 @@ func (a *baseFuncDesc) typeInfer4MaxMin(ctx sessionctx.Context) {
 		a.Args[0] = expression.BuildCastFunction(ctx, a.Args[0], tp)
 	}
 	a.RetTp = a.Args[0].GetType()
-	if (a.Name == ast.AggFuncMax || a.Name == ast.AggFuncMin) && a.RetTp.Tp != mysql.TypeBit {
+	if a.Name == ast.AggFuncMax || a.Name == ast.AggFuncMin {
 		a.RetTp = a.Args[0].GetType().Clone()
 		a.RetTp.Flag &^= mysql.NotNullFlag
 	}
@@ -366,18 +380,6 @@ var noNeedCastAggFuncs = map[string]struct{}{
 	ast.WindowFuncNtile:            {},
 	ast.AggFuncJsonArrayagg:        {},
 	ast.AggFuncJsonObjectAgg:       {},
-}
-
-// WrapCastAsDecimalForAggArgs wraps the args of some specific aggregate functions
-// with a cast as decimal function. See issue #19426
-func (a *baseFuncDesc) WrapCastAsDecimalForAggArgs(ctx sessionctx.Context) {
-	if a.Name == ast.AggFuncGroupConcat {
-		for i := 0; i < len(a.Args)-1; i++ {
-			if tp := a.Args[i].GetType(); tp.Tp == mysql.TypeNewDecimal {
-				a.Args[i] = expression.BuildCastFunction(ctx, a.Args[i], tp)
-			}
-		}
-	}
 }
 
 // WrapCastForAggArgs wraps the args of an aggregate function with a cast function.
