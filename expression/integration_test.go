@@ -6988,8 +6988,6 @@ func TestIssue30081(t *testing.T) {
 		Check(testkit.Rows(`2007-03-11 01:00:00`))
 	tk.MustQuery(`SELECT CONVERT_TZ('2007-03-11 3:00:00','US/Eastern','US/Central');`).
 		Check(testkit.Rows(`2007-03-11 01:00:00`))
-	tk.MustQuery(`SELECT UNIX_TIMESTAMP(20200329034500.0);`).
-		Check(testkit.Rows(`1585443600.0`))
 }
 
 func TestIssue30326(t *testing.T) {

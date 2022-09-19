@@ -4243,7 +4243,7 @@ func (b *builtinUnixTimestampDecSig) evalDecimal(row chunk.Row) (*types.MyDecima
 		// Return 0 for invalid date time.
 		return new(types.MyDecimal), isNull, nil
 	}
-	t, err := val.AdjustedGoTime(getTimeZone(b.ctx))
+	t, err := val.GoTime(getTimeZone(b.ctx))
 	if err != nil {
 		return new(types.MyDecimal), false, nil
 	}

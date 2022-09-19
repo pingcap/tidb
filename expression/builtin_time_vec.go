@@ -1628,7 +1628,7 @@ func (b *builtinUnixTimestampDecSig) vecEvalDecimal(input *chunk.Chunk, result *
 			if result.IsNull(i) {
 				continue
 			}
-			t, err := timeBuf.GetTime(i).AdjustedGoTime(getTimeZone(b.ctx))
+			t, err := timeBuf.GetTime(i).GoTime(getTimeZone(b.ctx))
 			if err != nil {
 				ts[i] = *new(types.MyDecimal)
 				continue
