@@ -104,6 +104,10 @@ func (rs *batchCopResponse) RespTime() time.Duration {
 //    if there is only 1 available store, then put the region to the related store
 //    otherwise, use a greedy algorithm to put it into the store with highest weight
 func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []*batchCopTask, mppStoreLastFailTime map[string]time.Time, ttl time.Duration) []*batchCopTask {
+	if len(originalTasks) == 0 {
+		log.Info("Batch cop task balancer got an empty task set.")
+		return originalTasks
+	}
 	isMPP := mppStoreLastFailTime != nil
 	// for mpp, we still need to detect the store availability
 	if len(originalTasks) <= 1 && !isMPP {
@@ -317,7 +321,6 @@ func buildBatchCopTasks(bo *backoff.Backoffer, store *kvStore, ranges *KeyRanges
 	const cmdType = tikvrpc.CmdBatchCop
 	rangesLen := ranges.Len()
 	for {
-
 		locations, err := cache.SplitKeyRangesByLocations(bo, ranges)
 		if err != nil {
 			return nil, errors.Trace(err)
