@@ -983,7 +983,7 @@ func (e *HashJoinExec) join2Chunk(workerID uint, probeSideChk *chunk.Chunk, hCtx
 		// eg: if a NA Join cols is (a, b, c), for every build row here we maintained a 3-bit map to mark which column is null for them.
 		for rowIdx := 0; rowIdx < numRows; rowIdx++ {
 			if hCtx.hasNull[rowIdx] {
-				hCtx.naColNullBitMap[rowIdx].Set(keyIdx)
+				hCtx.naColNullBitMap[rowIdx].UnsafeSet(keyIdx)
 				// clean and try fetch next NA join col.
 				hCtx.hasNull[rowIdx] = false
 				hCtx.naHasNull[rowIdx] = true

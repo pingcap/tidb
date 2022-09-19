@@ -377,7 +377,7 @@ func (c *hashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected, ignoreNu
 		// eg: if a NA Join cols is (a, b, c), for every build row here we maintained a 3-bit map to mark which column are null for them.
 		for rowIdx := 0; rowIdx < numRows; rowIdx++ {
 			if hCtx.hasNull[rowIdx] {
-				hCtx.naColNullBitMap[rowIdx].Set(keyIdx)
+				hCtx.naColNullBitMap[rowIdx].UnsafeSet(keyIdx)
 				// clean and try fetch next NA join col.
 				hCtx.hasNull[rowIdx] = false
 				// just a mark variable for whether there is a null in at least one NA join column.

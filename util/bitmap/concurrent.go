@@ -105,6 +105,19 @@ func (cb *ConcurrentBitmap) Set(bitIndex int) (isSetter bool) {
 	}
 }
 
+// UnsafeSet sets the bit on bitIndex to be 1 (bitIndex starts from 0).
+// isSetter indicates whether the function call this time triggers the bit from 0 to 1.
+// bitIndex bigger than bitLen initialized will be ignored.
+// (this version is concurrent unsafe if the caller can make sure write is in single thread)
+func (cb *ConcurrentBitmap) UnsafeSet(bitIndex int) {
+	if bitIndex < 0 || bitIndex >= cb.bitLen {
+		return
+	}
+
+	mask := bitMask >> uint32(bitIndex%segmentWidth)
+	cb.segments[bitIndex>>segmentWidthPower] = cb.segments[bitIndex>>segmentWidthPower] | mask
+}
+
 // UnsafeIsSet returns if a bit on bitIndex is set (bitIndex starts from 0).
 // bitIndex bigger than bitLen initialized will return false.
 // This method is not thread-safe as it does not use atomic load.
