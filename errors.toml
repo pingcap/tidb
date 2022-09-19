@@ -61,6 +61,16 @@ error = '''
 version mismatch
 '''
 
+["BR:EBS:ErrRestoreInvalidPeer"]
+error = '''
+restore met a invalid peer
+'''
+
+["BR:EBS:ErrRestoreTotalKVMismatch"]
+error = '''
+restore total tikvs mismatch
+'''
+
 ["BR:ExternalStorage:ErrStorageInvalidConfig"]
 error = '''
 invalid external storage config
@@ -1009,6 +1019,21 @@ Duplicate foreign key constraint name '%s'
 ["ddl:1828"]
 error = '''
 Cannot drop column '%-.192s': needed in a foreign key constraint '%-.192s'
+'''
+
+["ddl:1829"]
+error = '''
+Cannot drop column '%-.192s': needed in a foreign key constraint '%-.192s' of table '%-.192s'
+'''
+
+["ddl:1832"]
+error = '''
+Cannot change column '%-.192s': used in a foreign key constraint '%-.192s'
+'''
+
+["ddl:1833"]
+error = '''
+Cannot change column '%-.192s': used in a foreign key constraint '%-.192s' of table '%-.192s'
 '''
 
 ["ddl:1846"]
