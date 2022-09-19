@@ -1599,6 +1599,10 @@ func (b *executorBuilder) buildSelection(v *plannercore.PhysicalSelection) Execu
 }
 
 func (b *executorBuilder) buildProjection(v *plannercore.PhysicalProjection) Executor {
+	//update FromUnixTime precision
+	for _, expr := range v.Exprs {
+		expression.FixUnixtimePrecision(&expr)
+	}
 	childExec := b.build(v.Children()[0])
 	if b.err != nil {
 		return nil

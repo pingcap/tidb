@@ -37,6 +37,8 @@ import (
 func ExpressionsToPBList(sc *stmtctx.StatementContext, exprs []Expression, client kv.Client) (pbExpr []*tipb.Expr, err error) {
 	pc := PbConverter{client: client, sc: sc}
 	for _, expr := range exprs {
+		//update FromUnixTime precision
+		FixUnixtimePrecision(&expr)
 		v := pc.ExprToPB(expr)
 		if v == nil {
 			return nil, ErrInternal.GenWithStack("expression %v cannot be pushed down", expr)

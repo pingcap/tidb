@@ -123,12 +123,6 @@ func (p *PhysicalSelection) ToPB(ctx sessionctx.Context, storeType kv.StoreType)
 func (p *PhysicalProjection) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	client := ctx.GetClient()
-	//update tiflash FromUnixTime precision
-	if storeType == kv.TiFlash {
-		for _, expr := range p.Exprs {
-			expression.TiflashFixUnixtimePrecision(&expr)
-		}
-	}
 	exprs, err := expression.ExpressionsToPBList(sc, p.Exprs, client)
 	if err != nil {
 		return nil, err

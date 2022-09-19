@@ -1326,8 +1326,8 @@ func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType, ca
 	return false
 }
 
-// TiflashFixUnixtimePrecision is used to adjust FromUnixTime precision #Fixbug35184
-func TiflashFixUnixtimePrecision(expr *Expression) {
+// FixUnixtimePrecision is used to adjust FromUnixTime precision #Fixbug35184
+func FixUnixtimePrecision(expr *Expression) {
 	x, err := (*expr).(*ScalarFunction)
 	if !err {
 		return
