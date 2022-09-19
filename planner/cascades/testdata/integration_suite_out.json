@@ -1097,7 +1097,7 @@
         "Plan": [
           "MemTableScan_3 10000.00 root table:PROCESSLIST "
         ],
-        "Result": null
+        "Result": ["1   test Sleep 0 autocommit select * from information_schema.processlist 4b5e7cdd5d3ed84d6c1a6d56403a3d512554b534313caf296268abdec1c9ea99 0 0 "]
       }
     ]
   },
