@@ -479,7 +479,11 @@ func (p *PhysicalHashJoin) explainInfo(normalized bool) string {
 	buffer := new(strings.Builder)
 
 	if len(p.EqualConditions) == 0 {
-		buffer.WriteString("CARTESIAN ")
+		if len(p.NAEqualConditions) == 0 {
+			buffer.WriteString("CARTESIAN ")
+		} else {
+			buffer.WriteString("Null-aware ")
+		}
 	}
 
 	buffer.WriteString(p.JoinType.String())
@@ -495,6 +499,21 @@ func (p *PhysicalHashJoin) explainInfo(normalized bool) string {
 					buffer.WriteString(" ")
 				}
 				buffer.WriteString(EqualConditions.String())
+			}
+			buffer.WriteString("]")
+		}
+	}
+	if len(p.NAEqualConditions) > 0 {
+		if normalized {
+			buffer.WriteString(", equal:")
+			buffer.Write(expression.SortedExplainNormalizedScalarFuncList(p.NAEqualConditions))
+		} else {
+			buffer.WriteString(", equal:[")
+			for i, NAEqualCondition := range p.NAEqualConditions {
+				if i != 0 {
+					buffer.WriteString(" ")
+				}
+				buffer.WriteString(NAEqualCondition.String())
 			}
 			buffer.WriteString("]")
 		}

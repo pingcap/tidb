@@ -1111,14 +1111,29 @@ type fullJoinRowCountHelper struct {
 	rightJoinKeys []*expression.Column
 	leftSchema    *expression.Schema
 	rightSchema   *expression.Schema
+
+	leftNAJoinKeys  []*expression.Column
+	rightNAJoinKeys []*expression.Column
 }
 
 func (h *fullJoinRowCountHelper) estimate() float64 {
 	if h.cartesian {
 		return h.leftProfile.RowCount * h.rightProfile.RowCount
 	}
+<<<<<<< HEAD
 	leftKeyNDV := getColsNDV(h.leftJoinKeys, h.leftSchema, h.leftProfile)
 	rightKeyNDV := getColsNDV(h.rightJoinKeys, h.rightSchema, h.rightProfile)
+=======
+	var leftKeyNDV, rightKeyNDV float64
+	var leftColCnt, rightColCnt int
+	if len(h.leftJoinKeys) > 0 || len(h.rightJoinKeys) > 0 {
+		leftKeyNDV, leftColCnt = getColsNDVWithMatchedLen(h.leftJoinKeys, h.leftSchema, h.leftProfile)
+		rightKeyNDV, rightColCnt = getColsNDVWithMatchedLen(h.rightJoinKeys, h.rightSchema, h.rightProfile)
+	} else {
+		leftKeyNDV, leftColCnt = getColsNDVWithMatchedLen(h.leftNAJoinKeys, h.leftSchema, h.leftProfile)
+		rightKeyNDV, rightColCnt = getColsNDVWithMatchedLen(h.rightNAJoinKeys, h.rightSchema, h.rightProfile)
+	}
+>>>>>>> 0823fdb6b... planner, executor: implement the null-aware antiSemiJoin and null-aware antiLeftOuterSemiJoin (hash join with inner build) (#37512)
 	count := h.leftProfile.RowCount * h.rightProfile.RowCount / math.Max(leftKeyNDV, rightKeyNDV)
 	return count
 }

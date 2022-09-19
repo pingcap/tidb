@@ -144,6 +144,9 @@ const (
 
 	TiDBOptimizerEnableOuterJoinReorder = "tidb_enable_outer_join_reorder"
 
+	// TiDBOptimizerEnableNAAJ is used to open the newly null-aware anti join
+	TiDBOptimizerEnableNAAJ = "tidb_enable_null_aware_anti_join"
+
 	// TiDBTxnMode is used to control the transaction behavior.
 	TiDBTxnMode = "tidb_txn_mode"
 
@@ -868,6 +871,7 @@ const (
 	DefTiDBOptimizerSelectivityLevel               = 0
 	DefTiDBOptimizerEnableNewOFGB                  = false
 	DefTiDBEnableOuterJoinReorder                  = false
+	DefTiDBEnableNAAJ                              = false
 	DefTiDBAllowBatchCop                           = 1
 	DefTiDBAllowMPPExecution                       = true
 	DefTiDBHashExchangeWithNewCollation            = true
