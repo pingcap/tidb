@@ -53,6 +53,7 @@ type MergeJoinExec struct {
 }
 
 type mergeJoinTable struct {
+	inited     bool
 	isInner    bool
 	childIndex int
 	joinKeys   []*expression.Column
@@ -108,10 +109,14 @@ func (t *mergeJoinTable) init(exec *MergeJoinExec) {
 	}
 
 	t.memTracker.AttachTo(exec.memTracker)
+	t.inited = true
 	t.memTracker.Consume(t.childChunk.MemoryUsage())
 }
 
 func (t *mergeJoinTable) finish() error {
+	if !t.inited {
+		return nil
+	}
 	t.memTracker.Consume(-t.childChunk.MemoryUsage())
 
 	if t.isInner {
