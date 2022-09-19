@@ -155,6 +155,8 @@ func InferType4ControlFuncs(ctx sessionctx.Context, funcName string, lexp, rexp 
 		if resultFieldType.Tp == mysql.TypeEnum || resultFieldType.Tp == mysql.TypeSet {
 			resultFieldType.Tp = mysql.TypeVarchar
 		}
+	} else if resultFieldType.Tp == mysql.TypeDatetime {
+		types.TryToFixFlenOfDatetime(resultFieldType)
 	}
 	return resultFieldType, nil
 }
@@ -204,6 +206,7 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		decimal = 0
 	}
 	fieldTp.Decimal, fieldTp.Flen = decimal, flen
+	types.TryToFixFlenOfDatetime(fieldTp)
 	if fieldTp.EvalType().IsStringKind() && !isBinaryStr {
 		fieldTp.Charset, fieldTp.Collate = DeriveCollationFromExprs(ctx, args...)
 		if fieldTp.Charset == charset.CharsetBin && fieldTp.Collate == charset.CollationBin {
