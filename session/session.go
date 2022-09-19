@@ -69,6 +69,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/store/tikv"
 	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	tikvutil "github.com/pingcap/tidb/store/tikv/util"
@@ -544,14 +545,15 @@ func (s *session) doCommit(ctx context.Context) error {
 
 type temporaryTableKVFilter map[int64]tableutil.TempTable
 
-func (m temporaryTableKVFilter) IsUnnecessaryKeyValue(key, value []byte, flags tikvstore.KeyFlags) bool {
+func (m temporaryTableKVFilter) IsUnnecessaryKeyValue(key, value []byte, flags tikvstore.KeyFlags) (bool, error) {
 	tid := tablecodec.DecodeTableID(key)
 	if _, ok := m[tid]; ok {
-		return true
+		return true, nil
 	}
 
 	// This is the default filter for all tables.
-	return tablecodec.IsUntouchedIndexKValue(key, value)
+	defaultFilter := txn.TiDBKVFilter{}
+	return defaultFilter.IsUnnecessaryKeyValue(key, value, flags)
 }
 
 // errIsNoisy is used to filter DUPLCATE KEY errors.
