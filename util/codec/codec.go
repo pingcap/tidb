@@ -664,8 +664,8 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 // If two rows are logically equal, it will generate the same bytes.
 func HashChunkRow(sc *stmtctx.StatementContext, w io.Writer, row chunk.Row, allTypes []*types.FieldType, colIdx []int, buf []byte) (err error) {
 	var b []byte
-	for _, idx := range colIdx {
-		buf[0], b, err = encodeHashChunkRowIdx(sc, row, allTypes[idx], idx)
+	for i, idx := range colIdx {
+		buf[0], b, err = encodeHashChunkRowIdx(sc, row, allTypes[i], idx)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -687,13 +687,16 @@ func EqualChunkRow(sc *stmtctx.StatementContext,
 	row1 chunk.Row, allTypes1 []*types.FieldType, colIdx1 []int,
 	row2 chunk.Row, allTypes2 []*types.FieldType, colIdx2 []int,
 ) (bool, error) {
+	if len(colIdx1) != len(colIdx2) {
+		return false, errors.Errorf("Internal error: Hash columns count mismatch, col1: %d, col2: %d", len(colIdx1), len(colIdx2))
+	}
 	for i := range colIdx1 {
 		idx1, idx2 := colIdx1[i], colIdx2[i]
-		flag1, b1, err := encodeHashChunkRowIdx(sc, row1, allTypes1[idx1], idx1)
+		flag1, b1, err := encodeHashChunkRowIdx(sc, row1, allTypes1[i], idx1)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
-		flag2, b2, err := encodeHashChunkRowIdx(sc, row2, allTypes2[idx2], idx2)
+		flag2, b2, err := encodeHashChunkRowIdx(sc, row2, allTypes2[i], idx2)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
@@ -958,7 +961,9 @@ func peek(b []byte) (length int, err error) {
 		return 0, errors.Trace(err)
 	}
 	length += l
-	if length > originLength {
+	if length <= 0 {
+		return 0, errors.New("invalid encoded key")
+	} else if length > originLength {
 		return 0, errors.Errorf("invalid encoded key, "+
 			"expected length: %d, actual length: %d", length, originLength)
 	}
