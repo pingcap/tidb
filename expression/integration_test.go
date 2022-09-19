@@ -9743,6 +9743,19 @@ func (s *testIntegrationSuite) TestRedundantColumnResolve(c *C) {
 	tk.MustQuery("select t1.a, t2.a from t1 natural join t2").Check(testkit.Rows("1 1"))
 }
 
+func (s *testIntegrationSuite) TestIssue37414(c *C) {
+	defer s.cleanEnv(c)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists foo")
+	tk.MustExec("drop table if exists bar")
+	tk.MustExec("create table foo(a decimal(65,0));")
+	tk.MustExec("create table bar(a decimal(65,0), b decimal(65,0));")
+	tk.MustExec("insert into bar values(0,0),(1,1),(2,2);")
+	tk.MustExec("insert into foo select if(b>0, if(a/b>1, 1, 2), null) from bar;")
+}
+
 func (s *testIntegrationSuite) TestControlFunctionWithEnumOrSet(c *C) {
 	defer s.cleanEnv(c)
 
