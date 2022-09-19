@@ -4347,7 +4347,12 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		return nil, err
 	}
 
+	tbl, err = tryLockMDLAndUpdateSchemaIfNecessary(b.ctx, dbName, tbl, b.is)
+	if err != nil {
+		return nil, err
+	}
 	tableInfo := tbl.Meta()
+
 	if b.isCreateView && tableInfo.TempTableType == model.TempTableLocal {
 		return nil, ErrViewSelectTemporaryTable.GenWithStackByArgs(tn.Name)
 	}
@@ -4408,6 +4413,10 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		if usePartitionProcessor {
 			b.optFlag = b.optFlag | flagPartitionProcessor
 			b.ctx.GetSessionVars().StmtCtx.UseDynamicPruneMode = false
+			if isDynamicEnabled {
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(
+					fmt.Errorf("disable dynamic pruning due to %s has no global stats", tableInfo.Name.String()))
+			}
 		}
 
 		pt := tbl.(table.PartitionedTable)
