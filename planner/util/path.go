@@ -91,7 +91,10 @@ func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx sessionctx.Context,
 			colEqConstant := isColEqConstant(filter, path.IdxCols[i])
 			if i == eqOrInCount && colEqConstant {
 				// If there is a col-eq-constant condition for path.IdxCols[eqOrInCount], it means that range fallback happens
-				// in DetachCondAndBuildRangeForIndex. In this case we don't consider adding access conditions.
+				// in DetachCondAndBuildRangeForIndex. In this case we don't consider adding access conditions. Besides, the IF
+				// branch also ensures that there must be some col-eq-corcol condition in access if len(access) > 0, which is
+				// important. If there is no col-eq-corcol condition in access, we would not rebuild ranges, which brings the
+				// correctness issue.
 				return nil, path.TableFilters
 			}
 			colEqCorCol := isColEqCorCol(filter, path.IdxCols[i])
