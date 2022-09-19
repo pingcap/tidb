@@ -35,23 +35,22 @@ import (
 )
 
 type memoryUsageAlarm struct {
-	lastCheckTime                         time.Time
-	err                                   error
-	tmpDir                                string
-	lastProfileFileName                   [][]string
-	lastLogFileName                       []string
-	memoryUsageAlarmIntervalSeconds       uint64
-	autoGcRatio                           float64
-	memoryUsageAlarmRatio                 float64
-	serverMemoryQuota                     uint64
-	memoryUsageAlarmDesensitizationEnable bool
-	isServerMemoryQuotaSet                bool
-	initialized                           bool
-	memoryUsageAlarmTruncationEnable      bool
+	lastCheckTime                time.Time
+	lastRecordMemUsed            uint64
+	err                          error
+	baseRecordDir                string
+	lastRecordDirName            []string
+	memoryUsageAlarmRatio        float64
+	memoryUsageAlarmKeepFilesNum int64
+	serverMemoryQuota            uint64
+	isServerMemoryQuotaSet       bool
+	initialized                  bool
 }
 
 func (record *memoryUsageAlarm) initMemoryUsageAlarmRecord() {
-	record.memoryUsageAlarmRatio = variable.MemoryUsageAlarmRatio.Load()
+	record.memoryUsageAlarmRatio = 0.1
+	//record.memoryUsageAlarmRatio = variable.MemoryUsageAlarmRatio.Load()
+	record.memoryUsageAlarmKeepFilesNum = variable.MemoryUsageAlarmKeepFilesNum.Load()
 	if quota := config.GetGlobalConfig().Performance.ServerMemoryQuota; quota != 0 {
 		record.serverMemoryQuota = quota
 		record.isServerMemoryQuotaSet = true
@@ -64,27 +63,22 @@ func (record *memoryUsageAlarm) initMemoryUsageAlarmRecord() {
 		record.isServerMemoryQuotaSet = false
 	}
 	record.lastCheckTime = time.Time{}
-	record.tmpDir = filepath.Join(config.GetGlobalConfig().TempStoragePath, "record")
-	if record.err = disk.CheckAndCreateDir(record.tmpDir); record.err != nil {
+	record.lastRecordMemUsed = uint64(float64(record.serverMemoryQuota) * record.memoryUsageAlarmRatio)
+	tidbLogDir, _ := filepath.Split(config.GetGlobalConfig().Log.File.Filename)
+	record.baseRecordDir = filepath.Join(tidbLogDir, "oom_record")
+	if record.err = disk.CheckAndCreateDir(record.baseRecordDir); record.err != nil {
 		return
 	}
-	record.lastProfileFileName = make([][]string, 2)
 	// Read last records
-	files, err := os.ReadDir(record.tmpDir)
+	recordDirs, err := os.ReadDir(record.baseRecordDir)
 	if err != nil {
 		record.err = err
 		return
 	}
-	for _, f := range files {
-		name := filepath.Join(record.tmpDir, f.Name())
-		if strings.Contains(f.Name(), "running_sql") {
-			record.lastLogFileName = append(record.lastLogFileName, name)
-		}
-		if strings.Contains(f.Name(), "heap") {
-			record.lastProfileFileName[0] = append(record.lastProfileFileName[0], name)
-		}
-		if strings.Contains(f.Name(), "goroutine") {
-			record.lastProfileFileName[1] = append(record.lastProfileFileName[1], name)
+	for _, dir := range recordDirs {
+		name := filepath.Join(record.baseRecordDir, dir.Name())
+		if strings.Contains(dir.Name(), "record") {
+			record.lastRecordDirName = append(record.lastRecordDirName, name)
 		}
 	}
 	record.initialized = true
@@ -117,17 +111,15 @@ func (record *memoryUsageAlarm) alarm4ExcessiveMemUsage(sm util.SessionManager) 
 
 	// TODO: Consider NextGC to record SQLs.
 	if float64(memoryUsage) > float64(record.serverMemoryQuota)*record.memoryUsageAlarmRatio {
-		// At least ten seconds between two recordings that memory usage is less than threshold (default 70% system memory).
+		// At least 60 seconds between two recordings that memory usage is less than threshold (default 70% system memory).
 		// If the memory is still exceeded, only records once.
+		// If the memory used ratio recorded this time is 0.1 higher than last time, we will force record this time.
 
-		if float64(memoryUsage) > float64(record.serverMemoryQuota)*record.autoGcRatio {
-			// if memory usage is more than threshold (default 80% system memory), doing GC actively to avoid OOM risk.
-			// revive:disable:call-to-gc
-			runtime.GC()
-		}
 		interval := time.Since(record.lastCheckTime)
-		if interval > time.Duration(record.memoryUsageAlarmIntervalSeconds)*time.Second {
+		memDiff := int64(memoryUsage) - int64(record.lastRecordMemUsed)
+		if interval > 5*time.Second || float64(memDiff) > 0.1*float64(record.serverMemoryQuota) {
 			record.lastCheckTime = time.Now()
+			record.lastRecordMemUsed = memoryUsage
 			record.doRecord(memoryUsage, instanceStats.HeapAlloc, sm)
 		}
 	}
@@ -145,40 +137,29 @@ func (record *memoryUsageAlarm) doRecord(memUsage uint64, instanceMemoryUsage ui
 		fields = append(fields, zap.Any("tidb-server memory usage", instanceMemoryUsage))
 	}
 	fields = append(fields, zap.Any("memory-usage-alarm-ratio", record.memoryUsageAlarmRatio))
-	fields = append(fields, zap.Any("record path", record.tmpDir))
-
+	fields = append(fields, zap.Any("record path", record.baseRecordDir))
 	logutil.BgLogger().Warn("tidb-server has the risk of OOM. Running SQLs and heap profile will be recorded in record path", fields...)
-
-	if record.err = disk.CheckAndCreateDir(record.tmpDir); record.err != nil {
+	recordDir := filepath.Join(record.baseRecordDir, "record"+record.lastCheckTime.Format(time.RFC3339))
+	if record.err = disk.CheckAndCreateDir(recordDir); record.err != nil {
 		return
 	}
-
-	var recordSQLFile string
-	var recordProfileFiles []string
-	if recordSQLFile, record.err = record.recordSQL(sm); record.err != nil {
+	if record.err = record.recordSQL(sm, recordDir); record.err != nil {
 		return
 	}
-	if recordProfileFiles, record.err = record.recordProfile(); record.err != nil {
+	if record.err = record.recordProfile(recordDir); record.err != nil {
 		return
 	}
-	recordFiles := make([]string, 0, len(recordProfileFiles)+2)
-	recordFiles = append(recordFiles, recordSQLFile)
-	recordFiles = append(recordFiles, recordProfileFiles...)
-
+	record.lastRecordDirName = append(record.lastRecordDirName, recordDir)
 	tryRemove := func(filename *[]string) {
-		// Keep the last 5 files
-		for len(*filename) > 5 {
-			err := os.Remove((*filename)[0])
+		for len(*filename) > int(record.memoryUsageAlarmKeepFilesNum) {
+			err := os.RemoveAll((*filename)[0])
 			if err != nil {
 				logutil.BgLogger().Error("remove temp files failed", zap.Error(err))
 			}
 			*filename = (*filename)[1:]
 		}
 	}
-	tryRemove(&record.lastLogFileName)
-	for i := range record.lastProfileFileName {
-		tryRemove(&record.lastProfileFileName[i])
-	}
+	tryRemove(&record.lastRecordDirName)
 }
 
 func getRelevantSystemVariableBuf() string {
@@ -201,7 +182,7 @@ func getCurrentAnalyzePlan(info *util.ProcessInfo) string {
 	return buf.String()
 }
 
-func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager) (string, error) {
+func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager, recordDir string) error {
 	processInfo := sm.ShowProcessList()
 	pinfo := make([]*util.ProcessInfo, 0, len(processInfo))
 	for _, info := range processInfo {
@@ -209,14 +190,11 @@ func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager) (string, error
 			pinfo = append(pinfo, info)
 		}
 	}
-
-	fileName := filepath.Join(record.tmpDir, "running_sql"+record.lastCheckTime.Format(time.RFC3339))
-	println(fileName)
-	record.lastLogFileName = append(record.lastLogFileName, fileName)
+	fileName := filepath.Join(recordDir, "running_sql")
 	f, err := os.Create(fileName)
 	if err != nil {
 		logutil.BgLogger().Error("create oom record file fail", zap.Error(err))
-		return "", err
+		return err
 	}
 	defer func() {
 		err := f.Close()
@@ -224,11 +202,9 @@ func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager) (string, error
 			logutil.BgLogger().Error("close oom record file fail", zap.Error(err))
 		}
 	}()
-
 	if _, err = f.WriteString(getRelevantSystemVariableBuf()); err != nil {
 		logutil.BgLogger().Error("write oom record file fail", zap.Error(err))
 	}
-
 	printTop10 := func(cmp func(i, j *util.ProcessInfo) bool) {
 		slices.SortFunc(pinfo, cmp)
 		list := pinfo
@@ -270,7 +246,7 @@ func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager) (string, error
 	printTop10(func(i, j *util.ProcessInfo) bool {
 		return i.Time.Before(j.Time)
 	})
-	return fileName, nil
+	return nil
 }
 
 type item struct {
@@ -278,36 +254,31 @@ type item struct {
 	Debug int
 }
 
-func (record *memoryUsageAlarm) recordProfile() ([]string, error) {
+func (record *memoryUsageAlarm) recordProfile(recordDir string) error {
 	items := []item{
 		{Name: "heap"},
 		{Name: "goroutine", Debug: 2},
 	}
-	profileFilenames := make([]string, 0, len(items))
-	for i, item := range items {
-		fileName, err := record.write(i, item)
-		if err != nil {
-			return profileFilenames, err
+	for _, item := range items {
+		if err := record.write(item, recordDir); err != nil {
+			return err
 		}
-		profileFilenames = append(profileFilenames, fileName)
 	}
-	return profileFilenames, nil
+	return nil
 }
 
-func (record *memoryUsageAlarm) write(i int, item item) (string, error) {
-	fileName := filepath.Join(record.tmpDir, item.Name+record.lastCheckTime.Format(time.RFC3339))
-	record.lastProfileFileName[i] = append(record.lastProfileFileName[i], fileName)
+func (record *memoryUsageAlarm) write(item item, recordDir string) error {
+	fileName := filepath.Join(recordDir, item.Name)
 	f, err := os.Create(fileName)
 	if err != nil {
 		logutil.BgLogger().Error(fmt.Sprintf("create %v profile file fail", item.Name), zap.Error(err))
-		return fileName, err
+		return err
 	}
-
 	p := rpprof.Lookup(item.Name)
 	err = p.WriteTo(f, item.Debug)
 	if err != nil {
 		logutil.BgLogger().Error(fmt.Sprintf("write %v profile file fail", item.Name), zap.Error(err))
-		return fileName, err
+		return err
 	}
 
 	//nolint: revive
@@ -317,5 +288,5 @@ func (record *memoryUsageAlarm) write(i int, item item) (string, error) {
 			logutil.BgLogger().Error(fmt.Sprintf("close %v profile file fail", item.Name), zap.Error(err))
 		}
 	}()
-	return fileName, nil
+	return nil
 }
