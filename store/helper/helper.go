@@ -1209,8 +1209,13 @@ func ComputeTiFlashStatus(reader *bufio.Reader, regionReplica *map[int64]int) er
 		if s == "" {
 			continue
 		}
+<<<<<<< HEAD
 		realN += 1
 		r, err := strconv.ParseInt(s, 10, 32)
+=======
+		realN++
+		r, err := strconv.ParseInt(s, 10, 64)
+>>>>>>> b5ed6740d... ddl: fix collect TiFlash sync status bug (#37923)
 		if err != nil {
 			return errors.Trace(err)
 		}
