@@ -188,9 +188,8 @@ type baseAggFunc struct {
 	// used to append the final result of this function.
 	ordinal int
 
-	// frac stores digits of the fractional part of decimals,
-	// which makes the decimal be the result of type inferring.
-	frac int
+	// retTp means the target type of the final agg should return.
+	retTp *types.FieldType
 }
 
 func (*baseAggFunc) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
