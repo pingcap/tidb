@@ -585,6 +585,10 @@ func TestInstanceScopedVars(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, fmt.Sprintf("%g", MemoryUsageAlarmRatio.Load()), val)
 
+	val, err = vars.GetSessionOrGlobalSystemVar(TiDBMemoryUsageAlarmKeepFilesNum)
+	require.NoError(t, err)
+	require.Equal(t, fmt.Sprintf("%d", MemoryUsageAlarmKeepFilesNum.Load()), val)
+
 	val, err = vars.GetSessionOrGlobalSystemVar(TiDBForcePriority)
 	require.NoError(t, err)
 	require.Equal(t, mysql.Priority2Str[mysql.PriorityEnum(atomic.LoadInt32(&ForcePriority))], val)
