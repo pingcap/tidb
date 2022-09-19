@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/util/size"
 )
 
 // baseFuncDesc describes an function signature, only used in planner.
@@ -430,4 +431,20 @@ func (a *baseFuncDesc) WrapCastForAggArgs(ctx sessionctx.Context) {
 		}
 		a.Args[i] = castFunc(ctx, a.Args[i])
 	}
+}
+
+// MemoryUsage return the memory usage of baseFuncDesc
+func (a *baseFuncDesc) MemoryUsage() (sum int64) {
+	if a == nil {
+		return
+	}
+
+	sum = size.SizeOfString + int64(len(a.Name))
+	if a.RetTp != nil {
+		sum += a.RetTp.MemoryUsage()
+	}
+	for _, expr := range a.Args {
+		sum += expr.MemoryUsage()
+	}
+	return
 }
