@@ -24,27 +24,11 @@ cur=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
 # restart cluster with new collation enabled
 start_services --tidb-cfg $cur/tidb-new-collation.toml
 
-# Populate the mydumper source
-DBPATH="$TEST_DIR/nc.mydump"
-mkdir -p $DBPATH
-echo 'CREATE DATABASE nc;' > "$DBPATH/nc-schema-create.sql"
-# create table with collate `utf8_general_ci`, the index key will be different between old/new collation
-echo "CREATE TABLE t(i INT PRIMARY KEY, s varchar(32), j TINYINT, KEY s_j (s, i)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;" > "$DBPATH/nc.t-schema.sql"
-cat > "$DBPATH/nc.t.0.sql" << _EOF_
-INSERT INTO t (s, i, j) VALUES
-  ("this_is_test1", 1, 1),
-  ("this_is_test2", 2, 2),
-  ("this_is_test3", 3, 3),
-  ("this_is_test4", 4, 4),
-  ("this_is_test5", 5, 5);
-_EOF_
-echo 'INSERT INTO t(s, i, j) VALUES ("another test case", 6, 6);' > "$DBPATH/nc.t.1.sql"
-
 for BACKEND in local importer tidb; do
   # Start importing the tables.
   run_sql 'DROP DATABASE IF EXISTS nc'
 
-  run_lightning -d "$DBPATH" --backend $BACKEND 2> /dev/null
+  run_lightning --backend $BACKEND 2> /dev/null
 
   run_sql 'SELECT count(*), sum(i) FROM `nc`.t'
   check_contains "count(*): 6"
@@ -53,6 +37,10 @@ for BACKEND in local importer tidb; do
   # run sql with index `s_j`, if lightning don't support new collation, no result will be returned.
   run_sql "SELECT j FROM nc.t WHERE s = 'This_Is_Test4'";
   check_contains "j: 4"
+
+  run_sql "SELeCT i, v from nc.ci where v = 'aa';"
+  check_contains "i: 1"
+  check_contains "v: aA"
 
 done
 

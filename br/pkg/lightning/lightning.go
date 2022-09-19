@@ -214,7 +214,7 @@ func (l *Lightning) RunServer() error {
 			return err
 		}
 		err = l.run(context.Background(), task, nil)
-		if err != nil {
+		if err != nil && !common.IsContextCanceledError(err) {
 			restore.DeliverPauser.Pause() // force pause the progress on error
 			log.L().Error("tidb lightning encountered error", zap.Error(err))
 		}
@@ -295,6 +295,19 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, g glue.
 	s, err := storage.New(ctx, u, &storage.ExternalStorageOptions{})
 	if err != nil {
 		return errors.Annotate(err, "create storage failed")
+	}
+
+	// return expectedErr means at least meet one file
+	expectedErr := errors.New("Stop Iter")
+	walkErr := s.WalkDir(ctx, &storage.WalkOption{ListCount: 1}, func(string, int64) error {
+		// return an error when meet the first regular file to break the walk loop
+		return expectedErr
+	})
+	if !errors.ErrorEqual(walkErr, expectedErr) {
+		if walkErr == nil {
+			return errors.Errorf("data-source-dir '%s' doesn't exist or contains no files", taskCfg.Mydumper.SourceDir)
+		}
+		return errors.Annotatef(walkErr, "visit data-source-dir '%s' failed", taskCfg.Mydumper.SourceDir)
 	}
 
 	loadTask := log.L().Begin(zap.InfoLevel, "load data source")

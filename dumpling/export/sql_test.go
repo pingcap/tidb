@@ -1736,6 +1736,35 @@ func TestPickupPossibleField(t *testing.T) {
 	}
 }
 
+func TestCheckIfSeqExists(t *testing.T) {
+	t.Parallel()
+
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
+	conn, err := db.Conn(context.Background())
+	require.NoError(t, err)
+
+	mock.ExpectQuery("SELECT COUNT").
+		WillReturnRows(sqlmock.NewRows([]string{"c"}).
+			AddRow("1"))
+
+	exists, err := CheckIfSeqExists(conn)
+	require.NoError(t, err)
+	require.Equal(t, true, exists)
+
+	mock.ExpectQuery("SELECT COUNT").
+		WillReturnRows(sqlmock.NewRows([]string{"c"}).
+			AddRow("0"))
+
+	exists, err = CheckIfSeqExists(conn)
+	require.NoError(t, err)
+	require.Equal(t, false, exists)
+}
+
 func makeVersion(major, minor, patch int64, preRelease string) *semver.Version {
 	return &semver.Version{
 		Major:      major,

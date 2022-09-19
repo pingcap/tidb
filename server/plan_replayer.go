@@ -102,12 +102,13 @@ func (prh PlanReplayerHandler) ServeHTTP(w http.ResponseWriter, req *http.Reques
 			continue
 		}
 		url := fmt.Sprintf("http://%s:%v/plan_replayer/dump/%s?forward=true", topo.IP, topo.StatusPort, name)
-		resp, err := http.Get(url) // #nosec G107
+		resp, err := http.Get(url) // nolint #nosec G107
 		if err != nil {
 			terror.Log(errors.Trace(err))
 			logutil.BgLogger().Error("forward request failed", zap.String("addr", topo.IP), zap.Uint("port", topo.StatusPort), zap.Error(err))
 			continue
 		}
+		defer terror.Call(resp.Body.Close)
 		if resp.StatusCode != http.StatusOK {
 			continue
 		}
@@ -115,11 +116,6 @@ func (prh PlanReplayerHandler) ServeHTTP(w http.ResponseWriter, req *http.Reques
 		w.Header().Set("Content-Type", "application/zip")
 		w.Header().Set("Content-Disposition", "attachment; filename=\"plan_replayer.zip\"")
 		_, err = io.Copy(w, resp.Body)
-		if err != nil {
-			writeError(w, err)
-			return
-		}
-		err = resp.Body.Close()
 		if err != nil {
 			writeError(w, err)
 			return

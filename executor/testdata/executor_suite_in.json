@@ -41,6 +41,25 @@
     ]
   },
   {
+    "name": "TestUsingAndNaturalJoinSchema",
+    "cases": [
+      "select t1.*, t2.*, t3.*, t4.* from (t1 natural join t2) natural join (t3 natural join t4);",
+      "select t1.*, t2.*, t3.*, t4.* from (t1 natural join t2) join (t3 natural join t4) using (b);",
+      "select t1.*, t2.*, t3.*, t4.* from (t1 natural join t2) join (t3 natural join t4) using (c);",
+      "select t1.*, t2.*, t3.*, t4.* from (t1 natural join t2) join (t3 natural join t4) using (c,b);",
+      "select t1.*, t2.*, t3.*, t4.* from (t1 natural join t2) left outer join (t3 natural join t4) using (b);",
+      "select t1.*, t2.*, t3.*, t4.* from (t1 natural join t2) left outer join (t3 natural join t4) using (c);",
+      "select t1.*, t2.*, t3.*, t4.* from (t1 natural join t2) left outer join (t3 natural join t4) using (c,b);",
+      "select t1.*, t2.*, t3.*, t4.* from (t1 natural join t2) right outer join (t3 natural join t4) using (b);",
+      "select t1.*, t2.*, t3.*, t4.* from (t1 natural join t2) right outer join (t3 natural join t4) using (c);",
+      "select t1.*, t2.*, t3.*, t4.* from (t1 natural join t2) right outer join (t3 natural join t4) using (c,b);",
+      "select * from (t1  natural join t2) natural join (t3 natural  join t4);",
+      "select * from (t1 natural join t2) join (t3 natural join t4) using (b);",
+      "select * from (t1 natural join t2) left outer join (t3 natural join t4) using (b);",
+      "select * from (t1 natural join t2) right outer join (t3 natural join t4) using (c,b);"
+    ]
+  },
+  {
     "name": "TestIndexScanWithYearCol",
     "cases": [
       "select t1.c1, t2.c1 from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL",
