@@ -123,7 +123,7 @@ const (
 	HintIgnorePlanCache = "ignore_plan_cache"
 	// HintLimitToCop is a hint enforce pushing limit or topn to coprocessor.
 	HintLimitToCop = "limit_to_cop"
-	//HintMerge is a hint which can switch turning inline for the CTE.
+	// HintMerge is a hint which can switch turning inline for the CTE.
 	HintMerge = "merge"
 	// HintSemiJoinRewrite is a hint to force we rewrite the semi join operator as much as possible.
 	HintSemiJoinRewrite = "semi_join_rewrite"
@@ -352,7 +352,7 @@ func (b *PlanBuilder) buildTableRefs(ctx context.Context, from *ast.TableRefsCla
 }
 
 func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSetNode, IsCTE bool) (p LogicalPlan, err error) {
-	//If it is building the CTE queries, we will mark them.
+	// If it is building the CTE queries, we will mark them.
 	b.isCTE = IsCTE
 	switch x := node.(type) {
 	case *ast.Join:
@@ -3862,7 +3862,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 			if b.isCTE {
 				b.outerCTEs[len(b.outerCTEs)-1].isInline = true
 			} else if !b.buildingRecursivePartForCTE {
-				//If there has subquery which is not CTE and using `MERGE()` hint, we will show this warning;
+				// If there has subquery which is not CTE and using `MERGE()` hint, we will show this warning;
 				b.ctx.GetSessionVars().StmtCtx.AppendWarning(
 					ErrInternal.GenWithStack("Hint merge() is inapplicable. " +
 						"Please check whether the hint is used in the right place, " +
@@ -4934,8 +4934,8 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 	originalVisitInfo := b.visitInfo
 	b.visitInfo = make([]visitInfo, 0)
 
-	//For the case that views appear in CTE queries,
-	//we need to save the CTEs after the views are established.
+	// For the case that views appear in CTE queries,
+	// we need to save the CTEs after the views are established.
 	var saveCte []*cteInfo
 	if len(b.outerCTEs) > 0 {
 		saveCte = make([]*cteInfo, len(b.outerCTEs))
@@ -7091,7 +7091,7 @@ func (b *PlanBuilder) buildWith(ctx context.Context, w *ast.WithClause) error {
 		// Case1: If the current CTE has only one consumer, the default is set to inline CTE
 		// Case2: If the session variable "tidb_opt_force_inline_cte" is true, all of CTEs will be inlined.
 		// Otherwise, whether CTEs are inlined depends on whether the merge() hint is declared.
-		if cte.ConsumerCount == 1 || b.ctx.GetSessionVars().EnableForceInlineCTE() {
+		if !cte.IsRecursive && (cte.ConsumerCount == 1 || b.ctx.GetSessionVars().EnableForceInlineCTE()) {
 			b.outerCTEs[len(b.outerCTEs)-1].isInline = true
 		}
 		_, err := b.buildCte(ctx, cte, w.IsRecursive)
