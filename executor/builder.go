@@ -199,6 +199,8 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildInsert(v)
 	case *plannercore.LoadData:
 		return b.buildLoadData(v)
+	case *plannercore.LoadSSTFile:
+		return b.buildLoadSSTFile(v)
 	case *plannercore.LoadStats:
 		return b.buildLoadStats(v)
 	case *plannercore.IndexAdvise:
@@ -942,6 +944,14 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 	loadDataExec.loadDataInfo.SetMaxRowsInBatch(defaultLoadDataBatchCnt)
 
 	return loadDataExec
+}
+
+func (b *executorBuilder) buildLoadSSTFile(v *plannercore.LoadSSTFile) Executor {
+	e := &LoadSSTFileExec{
+		baseExecutor: newBaseExecutor(b.ctx, nil, v.ID()),
+		path:         v.Path,
+	}
+	return e
 }
 
 func (b *executorBuilder) buildLoadStats(v *plannercore.LoadStats) Executor {

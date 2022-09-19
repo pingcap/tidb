@@ -243,6 +243,7 @@ import (
 	sqlCalcFoundRows  "SQL_CALC_FOUND_ROWS"
 	sqlSmallResult    "SQL_SMALL_RESULT"
 	ssl               "SSL"
+	sst               "SST"
 	starting          "STARTING"
 	statsExtended     "STATS_EXTENDED"
 	straightJoin      "STRAIGHT_JOIN"
@@ -908,6 +909,7 @@ import (
 	IndexAdviseStmt            "INDEX ADVISE statement"
 	KillStmt                   "Kill statement"
 	LoadDataStmt               "Load data statement"
+	LoadSSTFileStmt            "Load sst file statement"
 	LoadStatsStmt              "Load statistic statement"
 	LockTablesStmt             "Lock tables statement"
 	NonTransactionalDeleteStmt "Non-transactional delete statement"
@@ -11324,6 +11326,7 @@ Statement:
 |	IndexAdviseStmt
 |	KillStmt
 |	LoadDataStmt
+|	LoadSSTFileStmt
 |	LoadStatsStmt
 |	PlanReplayerStmt
 |	PreparedStmt
@@ -13494,6 +13497,14 @@ LoadDataStmt:
 		x.Columns = columns
 
 		$$ = x
+	}
+
+LoadSSTFileStmt:
+	"LOAD" "SST" "FILE" stringLit
+	{
+		$$ = &ast.LoadSSTFileStmt{
+			Path: $4,
+		}
 	}
 
 IgnoreLines:

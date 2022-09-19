@@ -424,6 +424,13 @@ type LoadData struct {
 	GenCols InsertGeneratedColumns
 }
 
+// LoadSSTFile represents a load sst file plan.
+type LoadSSTFile struct {
+	baseSchemaProducer
+
+	Path string
+}
+
 // LoadStats represents a load stats plan.
 type LoadStats struct {
 	baseSchemaProducer

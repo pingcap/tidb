@@ -734,6 +734,8 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 		return b.buildInsert(ctx, x)
 	case *ast.LoadDataStmt:
 		return b.buildLoadData(ctx, x)
+	case *ast.LoadSSTFileStmt:
+		return b.buildLoadSSTFile(x)
 	case *ast.LoadStatsStmt:
 		return b.buildLoadStats(x), nil
 	case *ast.IndexAdviseStmt:
@@ -3975,6 +3977,13 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 	p.GenCols, err = b.resolveGeneratedColumns(ctx, tableInPlan.Cols(), nil, mockTablePlan)
 	if err != nil {
 		return nil, err
+	}
+	return p, nil
+}
+
+func (b *PlanBuilder) buildLoadSSTFile(ld *ast.LoadSSTFileStmt) (Plan, error) {
+	p := &LoadSSTFile{
+		Path: ld.Path,
 	}
 	return p, nil
 }

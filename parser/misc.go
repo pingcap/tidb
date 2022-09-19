@@ -669,6 +669,7 @@ var tokenMap = map[string]int{
 	"SQL_TSI_YEAR":             sqlTsiYear,
 	"SQL":                      sql,
 	"SSL":                      ssl,
+	"SST":                      sst,
 	"STALENESS":                staleness,
 	"START":                    start,
 	"STARTING":                 starting,

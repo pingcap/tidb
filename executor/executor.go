@@ -2199,3 +2199,35 @@ func isWeakConsistencyRead(ctx sessionctx.Context, node ast.Node) bool {
 	return sessionVars.ConnectionID > 0 && sessionVars.ReadConsistency.IsWeak() &&
 		plannercore.IsAutoCommitTxn(ctx) && plannercore.IsReadOnly(node, sessionVars)
 }
+
+// LoadSSTFileExec represents a load sst file executor.
+type LoadSSTFileExec struct {
+	baseExecutor
+
+	path string
+	done bool
+}
+
+// Open implements the Executor Open interface.
+func (e *LoadSSTFileExec) Open(ctx context.Context) error {
+	logutil.BgLogger().Warn("----- load sst file open, you can initialize some resource here")
+	return nil
+}
+
+// Next implements the Executor Next interface.
+func (e *LoadSSTFileExec) Next(ctx context.Context, req *chunk.Chunk) error {
+	req.Reset()
+	if e.done {
+		return nil
+	}
+	e.done = true
+
+	logutil.BgLogger().Warn("----- load sst file exec", zap.String("file", e.path))
+	return nil
+}
+
+// Close implements the Executor Close interface.
+func (e *LoadSSTFileExec) Close() error {
+	logutil.BgLogger().Warn("----- load sst file close, you can release some resource here")
+	return nil
+}

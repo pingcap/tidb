@@ -1897,6 +1897,26 @@ func (n *LoadDataStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// LoadSSTFileStmt is a statement to load sst file.
+type LoadSSTFileStmt struct {
+	dmlNode
+
+	Path string
+}
+
+// Restore implements Node interface.
+func (n *LoadSSTFileStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("LOAD SST FILE ")
+	ctx.WriteString(n.Path)
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *LoadSSTFileStmt) Accept(v Visitor) (Node, bool) {
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
+}
+
 const (
 	Terminated = iota
 	Enclosed
