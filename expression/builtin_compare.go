@@ -470,6 +470,14 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	}
 	switch tp {
 	case types.ETInt:
+		// adjust unsigned flag
+		greastInitUnsignedFlag := false
+		if isEqualsInitUnsignedFlag(greastInitUnsignedFlag, args) {
+			bf.tp.Flag &= ^mysql.UnsignedFlag
+		} else {
+			bf.tp.Flag |= mysql.UnsignedFlag
+		}
+
 		sig = &builtinGreatestIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_GreatestInt)
 	case types.ETReal:
@@ -689,6 +697,14 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	}
 	switch tp {
 	case types.ETInt:
+		// adjust unsigned flag
+		leastInitUnsignedFlag := true
+		if isEqualsInitUnsignedFlag(leastInitUnsignedFlag, args) {
+			bf.tp.Flag |= mysql.UnsignedFlag
+		} else {
+			bf.tp.Flag &= ^mysql.UnsignedFlag
+		}
+
 		sig = &builtinLeastIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_LeastInt)
 	case types.ETReal:
@@ -2755,4 +2771,16 @@ func CompareJSON(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, rhs
 		return compareNull(isNull0, isNull1), true, nil
 	}
 	return int64(json.CompareBinary(arg0, arg1)), false, nil
+}
+
+// isEqualsInitUnsignedFlag can adjust unsigned flag for greatest/least function.
+// For greatest, returns unsigned result if there is at least one argument is unsigned.
+// For least, returns signed result if there is at least one argument is signed.
+func isEqualsInitUnsignedFlag(initUnsigned bool, args []Expression) bool {
+	for _, arg := range args {
+		if initUnsigned != mysql.HasUnsignedFlag(arg.GetType().Flag) {
+			return false
+		}
+	}
+	return true
 }
