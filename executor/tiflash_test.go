@@ -817,7 +817,7 @@ func (s *tiflashTestSuite) TestAvgOverflow(c *C) {
 	tk.MustExec("create table td (col_bigint bigint(20), col_smallint smallint(6));")
 	tk.MustExec("alter table td set tiflash replica 1")
 	tb := testGetTableByName(c, tk.Se, "test", "td")
-	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
 
 	c.Assert(err, IsNil)
 	tk.MustExec("insert into td values (null, 22876);")
