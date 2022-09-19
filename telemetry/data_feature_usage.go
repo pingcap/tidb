@@ -42,6 +42,7 @@ type featureUsage struct {
 	NewClusterIndex       *NewClusterIndexUsage            `json:"newClusterIndex"`
 	TemporaryTable        bool                             `json:"temporaryTable"`
 	CTE                   *m.CTEUsageCounter               `json:"cte"`
+	AccountLock           *m.AccountLockCounter            `json:"accountLock"`
 	CachedTable           bool                             `json:"cachedTable"`
 	AutoCapture           bool                             `json:"autoCapture"`
 	PlacementPolicyUsage  *placementPolicyUsage            `json:"placementPolicy"`
@@ -52,6 +53,7 @@ type featureUsage struct {
 	LogBackup             bool                             `json:"logBackup"`
 	EnablePaging          bool                             `json:"enablePaging"`
 	EnableCostModelVer2   bool                             `json:"enableCostModelVer2"`
+	DDLUsageCounter       *m.DDLUsageCounter               `json:"DDLUsageCounter"`
 }
 
 type placementPolicyUsage struct {
@@ -76,6 +78,8 @@ func getFeatureUsage(ctx context.Context, sctx sessionctx.Context) (*featureUsag
 
 	usage.CTE = getCTEUsageInfo()
 
+	usage.AccountLock = getAccountLockUsageInfo()
+
 	usage.MultiSchemaChange = getMultiSchemaChangeUsageInfo()
 
 	usage.TablePartition = getTablePartitionUsageInfo()
@@ -93,6 +97,8 @@ func getFeatureUsage(ctx context.Context, sctx sessionctx.Context) (*featureUsag
 	usage.EnablePaging = getPagingUsageInfo(sctx)
 
 	usage.EnableCostModelVer2 = getCostModelVer2UsageInfo(sctx)
+
+	usage.DDLUsageCounter = getAddIndexIngestUsageInfo()
 
 	return &usage, nil
 }
@@ -206,21 +212,26 @@ func getClusterIndexUsageInfo(ctx context.Context, sctx sessionctx.Context) (ncu
 // TxnUsage records the usage info of transaction related features, including
 // async-commit, 1PC and counters of transactions committed with different protocols.
 type TxnUsage struct {
-	AsyncCommitUsed     bool                     `json:"asyncCommitUsed"`
-	OnePCUsed           bool                     `json:"onePCUsed"`
-	TxnCommitCounter    metrics.TxnCommitCounter `json:"txnCommitCounter"`
-	MutationCheckerUsed bool                     `json:"mutationCheckerUsed"`
-	AssertionLevel      string                   `json:"assertionLevel"`
-	RcCheckTS           bool                     `json:"rcCheckTS"`
-	SavepointCounter    int64                    `json:"SavepointCounter"`
+	AsyncCommitUsed           bool                     `json:"asyncCommitUsed"`
+	OnePCUsed                 bool                     `json:"onePCUsed"`
+	TxnCommitCounter          metrics.TxnCommitCounter `json:"txnCommitCounter"`
+	MutationCheckerUsed       bool                     `json:"mutationCheckerUsed"`
+	AssertionLevel            string                   `json:"assertionLevel"`
+	RcCheckTS                 bool                     `json:"rcCheckTS"`
+	RCWriteCheckTS            bool                     `json:"rcWriteCheckTS"`
+	SavepointCounter          int64                    `json:"SavepointCounter"`
+	LazyUniqueCheckSetCounter int64                    `json:"lazyUniqueCheckSetCounter"`
 }
 
 var initialTxnCommitCounter metrics.TxnCommitCounter
 var initialCTECounter m.CTEUsageCounter
+var initialAccountLockCounter m.AccountLockCounter
 var initialNonTransactionalCounter m.NonTransactionalStmtCounter
 var initialMultiSchemaChangeCounter m.MultiSchemaChangeUsageCounter
 var initialTablePartitionCounter m.TablePartitionUsageCounter
 var initialSavepointStmtCounter int64
+var initialLazyPessimisticUniqueCheckSetCount int64
+var initialDDLUsageCounter m.DDLUsageCounter
 
 // getTxnUsageInfo gets the usage info of transaction related features. It's exported for tests.
 func getTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
@@ -246,9 +257,18 @@ func getTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
 	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(variable.TiDBRCReadCheckTS); err == nil {
 		rcCheckTSUsed = val == variable.On
 	}
+	rcWriteCheckTSUsed := false
+	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(variable.TiDBRCWriteCheckTs); err == nil {
+		rcWriteCheckTSUsed = val == variable.On
+	}
 	currSavepointCount := m.GetSavepointStmtCounter()
 	diffSavepointCount := currSavepointCount - initialSavepointStmtCounter
-	return &TxnUsage{asyncCommitUsed, onePCUsed, diff, mutationCheckerUsed, assertionUsed, rcCheckTSUsed, diffSavepointCount}
+	currLazyUniqueCheckSetCount := m.GetLazyPessimisticUniqueCheckSetCounter()
+	diffLazyUniqueCheckSetCount := currLazyUniqueCheckSetCount - initialLazyPessimisticUniqueCheckSetCount
+	return &TxnUsage{asyncCommitUsed, onePCUsed, diff,
+		mutationCheckerUsed, assertionUsed, rcCheckTSUsed, rcWriteCheckTSUsed,
+		diffSavepointCount, diffLazyUniqueCheckSetCount,
+	}
 }
 
 func postReportTxnUsage() {
@@ -259,15 +279,30 @@ func postReportCTEUsage() {
 	initialCTECounter = m.GetCTECounter()
 }
 
+func postReportAccountLockUsage() {
+	initialAccountLockCounter = m.GetAccountLockCounter()
+}
+
 // PostSavepointCount exports for testing.
 func PostSavepointCount() {
 	initialSavepointStmtCounter = m.GetSavepointStmtCounter()
+}
+
+func postReportLazyPessimisticUniqueCheckSetCount() {
+	initialLazyPessimisticUniqueCheckSetCount = m.GetLazyPessimisticUniqueCheckSetCounter()
 }
 
 // getCTEUsageInfo gets the CTE usages.
 func getCTEUsageInfo() *m.CTEUsageCounter {
 	curr := m.GetCTECounter()
 	diff := curr.Sub(initialCTECounter)
+	return &diff
+}
+
+// getAccountLockUsageInfo gets the AccountLock usages.
+func getAccountLockUsageInfo() *m.AccountLockCounter {
+	curr := m.GetAccountLockCounter()
+	diff := curr.Sub(initialAccountLockCounter)
 	return &diff
 }
 
@@ -283,6 +318,10 @@ func getMultiSchemaChangeUsageInfo() *m.MultiSchemaChangeUsageCounter {
 
 func postReportTablePartitionUsage() {
 	initialTablePartitionCounter = m.ResetTablePartitionCounter(initialTablePartitionCounter)
+}
+
+func postReportAddIndexIngestUsage() {
+	initialDDLUsageCounter = m.GetDDLUsageCounter()
 }
 
 func getTablePartitionUsageInfo() *m.TablePartitionUsageCounter {
@@ -326,4 +365,9 @@ func getCostModelVer2UsageInfo(ctx sessionctx.Context) bool {
 // users set it to false manually.
 func getPagingUsageInfo(ctx sessionctx.Context) bool {
 	return ctx.GetSessionVars().EnablePaging
+}
+func getAddIndexIngestUsageInfo() *m.DDLUsageCounter {
+	curr := m.GetDDLUsageCounter()
+	diff := curr.Sub(initialDDLUsageCounter)
+	return &diff
 }

@@ -624,6 +624,9 @@ func (e *SimpleExec) executeSavepoint(s *ast.SavepointStmt) error {
 	if sessVars.BinlogClient != nil {
 		return ErrSavepointNotSupportedWithBinlog
 	}
+	if !sessVars.ConstraintCheckInPlacePessimistic && sessVars.TxnCtx.IsPessimistic {
+		return errors.New("savepoint is not supported in pessimistic transactions when in-place constraint check is disabled")
+	}
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return err
@@ -852,7 +855,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		}
 
 		switch authPlugin {
-		case mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthSocket:
+		case mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password, mysql.AuthSocket:
 		default:
 			return ErrPluginIsNotLoaded.GenWithStackByArgs(spec.AuthOpt.AuthPlugin)
 		}
@@ -1010,7 +1013,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 				spec.AuthOpt.AuthPlugin = authplugin
 			}
 			switch spec.AuthOpt.AuthPlugin {
-			case mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthSocket, "":
+			case mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password, mysql.AuthSocket, "":
 			default:
 				return ErrPluginIsNotLoaded.GenWithStackByArgs(spec.AuthOpt.AuthPlugin)
 			}
@@ -1397,7 +1400,7 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 					break
 				}
 			}
-		} //TODO: need delete columns_priv once we implement columns_priv functionality.
+		} // TODO: need delete columns_priv once we implement columns_priv functionality.
 	}
 
 	if len(failedUsers) == 0 {
@@ -1495,8 +1498,8 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 	}
 	var pwd string
 	switch authplugin {
-	case mysql.AuthCachingSha2Password:
-		pwd = auth.NewSha2Password(s.Password)
+	case mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:
+		pwd = auth.NewHashPassword(s.Password, authplugin)
 	case mysql.AuthSocket:
 		e.ctx.GetSessionVars().StmtCtx.AppendNote(ErrSetPasswordAuthPlugin.GenWithStackByArgs(u, h))
 		pwd = ""

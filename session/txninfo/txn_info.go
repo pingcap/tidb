@@ -16,6 +16,8 @@ package txninfo
 
 import (
 	"encoding/json"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/pingcap/tidb/metrics"
@@ -124,6 +126,8 @@ const (
 	DBStr = "DB"
 	// AllSQLDigestsStr is the column name of the TIDB_TRX table's AllSQLDigests column.
 	AllSQLDigestsStr = "ALL_SQL_DIGESTS"
+	// RelatedTableIDsStr is the table id of the TIDB_TRX table's RelatedTableIDs column.
+	RelatedTableIDsStr = "RELATED_TABLE_IDS"
 )
 
 // TxnRunningStateStrs is the names of the TxnRunningStates
@@ -168,6 +172,8 @@ type TxnInfo struct {
 	Username string
 	// The schema this transaction works on
 	CurrentDB string
+	// The related table IDs.
+	RelatedTableIDs map[int64]struct{}
 }
 
 var columnValueGetterMap = map[string]func(*TxnInfo) types.Datum{
@@ -226,6 +232,20 @@ var columnValueGetterMap = map[string]func(*TxnInfo) types.Datum{
 			return types.NewDatum(nil)
 		}
 		return types.NewDatum(string(res))
+	},
+	RelatedTableIDsStr: func(info *TxnInfo) types.Datum {
+		relatedTableIDs := info.RelatedTableIDs
+		str := strings.Builder{}
+		first := true
+		for tblID := range relatedTableIDs {
+			if !first {
+				str.Write([]byte(","))
+			} else {
+				first = false
+			}
+			str.WriteString(fmt.Sprintf("%d", tblID))
+		}
+		return types.NewDatum(str.String())
 	},
 }
 

@@ -15,7 +15,7 @@
 package channel
 
 // Clear is to clear the channel
-func Clear[T any](ch chan T) {
+func Clear[T any, V chan T | <-chan T](ch V) {
 	//nolint:revive,all_revive
 	for range ch {
 	}

@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -357,8 +358,7 @@ func TestForUpdateRetry(t *testing.T) {
 	tk2.MustExec("use test")
 	tk2.MustExec("update t set c = c + 1 where pk = 1")
 	tk.MustExec("update t set c = c + 1 where pk = 2")
-	_, err = tk.Exec("commit")
-	require.True(t, session.ErrForUpdateCantRetry.Equal(err))
+	tk.MustGetErrCode("commit", errno.ErrForUpdateCantRetry)
 }
 
 func TestPointGetByRowID(t *testing.T) {
