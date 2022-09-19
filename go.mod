@@ -48,6 +48,7 @@ require (
 	github.com/pingcap/parser v0.0.0-20210618053735-57843e8185c4
 	github.com/pingcap/sysutil v0.0.0-20210315073920-cc0985d983a3
 	github.com/pingcap/tidb-tools v4.0.9-0.20201127090955-2707c97b3853+incompatible
+	github.com/pingcap/tidb/parser v0.0.0-20220919075501-a6db4b7ed402
 	github.com/pingcap/tipb v0.0.0-20220704075215-f654f5a3fece
 	github.com/prometheus/client_golang v1.5.1
 	github.com/prometheus/client_model v0.2.0
@@ -70,14 +71,13 @@ require (
 	go.uber.org/automaxprocs v1.2.0
 	go.uber.org/goleak v1.1.10
 	go.uber.org/zap v1.18.1
-	golang.org/x/net v0.0.0-20210316092652-d523dce5a7f4
-	golang.org/x/sync v0.0.0-20201020160332-67f06af15bc9
-	golang.org/x/sys v0.0.0-20210324051608-47abb6519492
-	golang.org/x/text v0.3.6
-	golang.org/x/tools v0.1.0
+	golang.org/x/net v0.0.0-20211015210444-4f30a5c0130f
+	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c
+	golang.org/x/sys v0.0.0-20211019181941-9d821ace8654
+	golang.org/x/text v0.3.7
+	golang.org/x/tools v0.1.8-0.20211029000441-d6a9af8af023
 	google.golang.org/grpc v1.27.1
 	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
-	modernc.org/mathutil v1.4.1 // indirect
 	sourcegraph.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
