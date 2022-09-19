@@ -352,8 +352,8 @@ func TestBindCTEMerge(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(id int)")
-	require.True(t, tk.HasPlan("with cte as (select * from t1) select * from cte", "CTEFullScan"))
-	require.False(t, tk.HasPlan("with cte as (select /*+ MERGE() */ * from t1) select * from cte", "CTEFullScan"))
+	require.True(t, tk.HasPlan("with cte as (select * from t1) select * from cte a, cte b", "CTEFullScan"))
+	require.False(t, tk.HasPlan("with cte as (select /*+ MERGE() */ * from t1) select * from cte a, cte b", "CTEFullScan"))
 	tk.MustExec(`
 create global binding for
 	with cte as (select * from t1) select * from cte
