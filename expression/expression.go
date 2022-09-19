@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
@@ -163,6 +164,9 @@ type Expression interface {
 
 	// resolveIndicesByVirtualExpr is called inside the `ResolveIndicesByVirtualExpr` It will perform on the expression itself.
 	resolveIndicesByVirtualExpr(schema *Schema) bool
+
+	// RemapColumn remaps columns with provided mapping and returns new expression
+	RemapColumn(map[int64]*Column) (Expression, error)
 
 	// ExplainInfo returns operator information to be explained.
 	ExplainInfo() string
@@ -979,7 +983,7 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		ast.Length, ast.BitLength, ast.Concat, ast.ConcatWS, ast.Replace, ast.ASCII, ast.Hex,
 		ast.Reverse, ast.LTrim, ast.RTrim, ast.Strcmp, ast.Space, ast.Elt, ast.Field,
 		InternalFuncFromBinary, InternalFuncToBinary, ast.Mid, ast.Substring, ast.Substr, ast.CharLength,
-		ast.Right, /* ast.Left */
+		ast.Right /* ast.Left */, ast.RegexpSubstr, ast.RegexpInStr, ast.RegexpReplace,
 
 		// json functions.
 		ast.JSONType, ast.JSONExtract, ast.JSONObject, ast.JSONArray, ast.JSONMerge, ast.JSONSet,
@@ -1023,6 +1027,12 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		case tipb.ScalarFuncSig_RandWithSeedFirstGen:
 			return true
 		}
+	case ast.Regexp, ast.RegexpLike:
+		funcCharset, funcCollation := sf.Function.CharsetAndCollation()
+		if funcCharset == charset.CharsetBin && funcCollation == charset.CollationBin {
+			return false
+		}
+		return true
 	}
 	return false
 }

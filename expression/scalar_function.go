@@ -488,6 +488,24 @@ func (sf *ScalarFunction) resolveIndicesByVirtualExpr(schema *Schema) bool {
 	return true
 }
 
+// RemapColumn remaps columns with provided mapping and returns new expression
+func (sf *ScalarFunction) RemapColumn(m map[int64]*Column) (Expression, error) {
+	newSf, ok := sf.Clone().(*ScalarFunction)
+	if !ok {
+		return nil, errors.New("failed to cast to scalar function")
+	}
+	for i, arg := range sf.GetArgs() {
+		newArg, err := arg.RemapColumn(m)
+		if err != nil {
+			return nil, err
+		}
+		newSf.GetArgs()[i] = newArg
+	}
+	// clear hash code
+	newSf.hashcode = nil
+	return newSf, nil
+}
+
 // GetSingleColumn returns (Col, Desc) when the ScalarFunction is equivalent to (Col, Desc)
 // when used as a sort key, otherwise returns (nil, false).
 //
