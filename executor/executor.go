@@ -764,6 +764,7 @@ func (e *ShowDDLJobsExec) Open(ctx context.Context) error {
 		return err
 	}
 	e.sess = sess
+	sess.GetSessionVars().SetInTxn(true)
 	err = sessiontxn.NewTxn(context.Background(), sess)
 	if err != nil {
 		return err
@@ -772,7 +773,6 @@ func (e *ShowDDLJobsExec) Open(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	sess.GetSessionVars().SetInTxn(true)
 	err = e.DDLJobRetriever.initial(txn, sess)
 	return err
 }
