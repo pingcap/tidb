@@ -16,6 +16,7 @@ package core
 import (
 	"container/list"
 	"sync"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/types"
@@ -23,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/size"
 )
 
 // planCacheEntry wraps Key and Value. It's the value of list.Element.
@@ -198,6 +200,29 @@ func (l *LRUPlanCache) memoryControl() {
 		l.removeOldest()
 		memUsed, _ = memory.InstanceMemUsed()
 	}
+}
+
+const emptyLRUPlanCacheSize = int64(unsafe.Sizeof(LRUPlanCache{}))
+
+// MemoryUsage return the memory usage of LRUPlanCache
+func (l *LRUPlanCache) MemoryUsage() (sum int64) {
+	if l == nil {
+		return
+	}
+
+	sum = emptyLRUPlanCacheSize + int64(l.lruList.Len())*(size.SizeOfPointer*3+size.SizeOfInterface)
+	for k, v := range l.buckets {
+		sum += size.SizeOfString + int64(len(k))
+		for ele, _ := range v {
+			if key, ok := ele.Value.(*planCacheEntry).PlanKey.(*planCacheKey); ok {
+				sum += key.MemoryUsage()
+			}
+			if plan, ok := ele.Value.(*planCacheEntry).PlanValue.(*PlanCacheValue); ok {
+				sum += plan.MemoryUsage()
+			}
+		}
+	}
+	return
 }
 
 // PickPlanFromBucket pick one plan from bucket

@@ -19,6 +19,7 @@ import (
 	"math"
 	"strconv"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
@@ -34,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/kvcache"
+	"github.com/pingcap/tidb/util/size"
 	atomic2 "go.uber.org/atomic"
 	"golang.org/x/exp/slices"
 )
@@ -232,6 +234,19 @@ func (key *planCacheKey) Hash() []byte {
 	return key.hash
 }
 
+const emptyPlanCacheKeySize = int64(unsafe.Sizeof(planCacheKey{}))
+
+// MemoryUsage return the memory usage of planCacheKey
+func (key *planCacheKey) MemoryUsage() (sum int64) {
+	if key == nil {
+		return
+	}
+
+	sum = emptyPlanCacheKeySize + int64(len(key.database)+len(key.stmtText)+len(key.bindSQL)) +
+		int64(len(key.isolationReadEngines)) + int64(cap(key.hash))
+	return
+}
+
 // SetPstmtIDSchemaVersion implements PstmtCacheKeyMutator interface to change pstmtID and schemaVersion of cacheKey.
 // so we can reuse Key instead of new every time.
 func SetPstmtIDSchemaVersion(key kvcache.Key, stmtText string, schemaVersion int64, isolationReadEngines map[kv.StoreType]struct{}) {
@@ -329,6 +344,28 @@ type PlanCacheValue struct {
 
 func (v *PlanCacheValue) varTypesUnchanged(txtVarTps []*types.FieldType) bool {
 	return v.ParamTypes.CheckTypesCompatibility4PC(txtVarTps)
+}
+
+// MemoryUsage return the memory usage of PlanCacheValue
+func (v *PlanCacheValue) MemoryUsage() (sum int64) {
+	if v == nil {
+		return
+	}
+	plan, ok := v.Plan.(PhysicalPlan)
+	if !ok {
+		return
+	}
+
+	sum = plan.MemoryUsage() + size.SizeOfSlice*2 + int64(cap(v.OutPutNames)+cap(v.ParamTypes))*size.SizeOfPointer +
+		size.SizeOfMap + int64(len(v.TblInfo2UnionScan))*(size.SizeOfPointer+size.SizeOfBool)
+
+	for _, name := range v.OutPutNames {
+		sum += name.MemoryUsage()
+	}
+	for _, ft := range v.ParamTypes {
+		sum += ft.MemoryUsage()
+	}
+	return
 }
 
 // NewPlanCacheValue creates a SQLCacheValue.
