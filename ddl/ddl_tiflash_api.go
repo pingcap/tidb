@@ -368,7 +368,6 @@ func updateTiFlashStores(pollTiFlashContext *TiFlashManagementContext) error {
 
 func getTiFlashPeerCount(pollTiFlashContext *TiFlashManagementContext, tableID int64) (int, error) {
 	// storeIDs -> regionID, PD will not create two peer on the same store
-	storeRegionReplica := make(map[int64]map[int64]int)
 	var flashPeerCount int
 	for _, store := range pollTiFlashContext.TiFlashStores {
 		regionReplica := make(map[int64]int)
@@ -379,7 +378,6 @@ func getTiFlashPeerCount(pollTiFlashContext *TiFlashManagementContext, tableID i
 			return 0, err
 		}
 		flashPeerCount += len(regionReplica)
-		storeRegionReplica[store.Store.ID] = regionReplica
 	}
 	return flashPeerCount, nil
 }

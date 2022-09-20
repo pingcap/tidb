@@ -1216,3 +1216,30 @@ func TestTiFlashProgressAvailableList(t *testing.T) {
 	}
 	require.Equal(t, tableCount, UpdatedTableCount)
 }
+
+func TestTiFlashAvailableAfterResetReplica(t *testing.T) {
+	s, teardown := createTiFlashContext(t)
+	defer teardown()
+	tk := testkit.NewTestKit(t, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists ddltiflash")
+	tk.MustExec("create table ddltiflash(z int)")
+	tk.MustExec("alter table ddltiflash set tiflash replica 1")
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
+	CheckTableAvailable(s.dom, t, 1, []string{})
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount"))
+	}()
+
+	tk.MustExec("alter table ddltiflash set tiflash replica 2")
+	CheckTableAvailable(s.dom, t, 2, []string{})
+
+	tk.MustExec("alter table ddltiflash set tiflash replica 0")
+	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
+	require.NoError(t, err)
+	require.NotNil(t, tb)
+	require.Nil(t, tb.Meta().TiFlashReplica)
+}

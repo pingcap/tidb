@@ -1203,10 +1203,15 @@ func (w *worker) onSetTableFlashReplica(d *ddlCtx, t *meta.Meta, job *model.Job)
 		}
 	}
 
+	available := false
+	if tblInfo.TiFlashReplica != nil {
+		available = tblInfo.TiFlashReplica.Available
+	}
 	if replicaInfo.Count > 0 {
 		tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
 			Count:          replicaInfo.Count,
 			LocationLabels: replicaInfo.Labels,
+			Available:      available,
 		}
 	} else {
 		tblInfo.TiFlashReplica = nil
