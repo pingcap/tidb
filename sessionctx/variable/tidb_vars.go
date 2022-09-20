@@ -1134,7 +1134,6 @@ var (
 	// DefTiDBServerMemoryQuota indicates the default value of TiDBServerMemoryQuota(TotalMem * 80%).
 	// It should be a const and shouldn't be modified after tidb is started.
 	DefTiDBServerMemoryQuota = mathutil.Max(memory.GetMemTotalIgnoreErr()/10*8, 512<<20)
-
 )
 
 var (
