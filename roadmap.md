@@ -175,6 +175,12 @@ It brings you what's coming in the 1-year future, so you can see the new feature
     <td>TiCDC supports replicating data changes to common object storage services.</td>
     <td>November 2022</td>
   </tr>
+  <tr>
+    <td>Data migration</td>
+    <td>TiDB Lightning supports table-level and partition-level incremental data import.</td>
+    <td>TiDB Lightning provides comprehensive table-level and partition-level data import capabilities</td>
+    <td>December 2022</td>
+  </tr>
 </tbody>
 </table>
 
