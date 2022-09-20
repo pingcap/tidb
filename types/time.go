@@ -3444,7 +3444,7 @@ func DateTimeIsOverflow(sc *stmtctx.StatementContext, date Time) (bool, error) {
 		return false, nil
 	}
 
-	if t, err = date.GoTime(tz); err != nil {
+	if t, err = date.AdjustedGoTime(tz); err != nil {
 		return false, err
 	}
 
