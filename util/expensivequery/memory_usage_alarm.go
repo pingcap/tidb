@@ -36,10 +36,10 @@ import (
 
 type memoryUsageAlarm struct {
 	lastCheckTime                time.Time
-	lastRecordMemUsed            uint64
 	err                          error
 	baseRecordDir                string
 	lastRecordDirName            []string
+	lastRecordMemUsed            uint64
 	memoryUsageAlarmRatio        float64
 	memoryUsageAlarmKeepFilesNum int64
 	serverMemoryQuota            uint64
@@ -260,14 +260,14 @@ func (record *memoryUsageAlarm) recordProfile(recordDir string) error {
 		{Name: "goroutine", Debug: 2},
 	}
 	for _, item := range items {
-		if err := record.write(item, recordDir); err != nil {
+		if err := write(item, recordDir); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (record *memoryUsageAlarm) write(item item, recordDir string) error {
+func write(item item, recordDir string) error {
 	fileName := filepath.Join(recordDir, item.Name)
 	f, err := os.Create(fileName)
 	if err != nil {
