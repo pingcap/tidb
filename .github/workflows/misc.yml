@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - run: git pull origin ${{ github.event.pull_request.base.sha }}
+      - run: git pull --merge origin ${{ github.event.pull_request.base.sha }}
       - name: Check File Permission
         run: make check-file-perm
       - name: Check License Header
