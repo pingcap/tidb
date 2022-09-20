@@ -1002,7 +1002,7 @@ func (h *Helper) GetPDRegionStats(tableID int64, stats *PDRegionStats, noIndexSt
 		}
 	}()
 	if resp.StatusCode != http.StatusOK {
-		return errors.New("GetPDRegionStats returns error")
+		return errors.Errorf("GetPDRegionStats failed with status: %d", resp.StatusCode)
 	}
 	dec := json.NewDecoder(resp.Body)
 
