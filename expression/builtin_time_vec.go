@@ -1703,7 +1703,7 @@ func (b *builtinTimestampAddSig) vecEvalString(input *chunk.Chunk, result *chunk
 		return err
 	}
 	defer b.bufAllocator.put(buf1)
-	if err := b.args[1].VecEvalInt(b.ctx, input, buf1); err != nil {
+	if err := b.args[1].VecEvalReal(b.ctx, input, buf1); err != nil {
 		return err
 	}
 
@@ -1717,7 +1717,7 @@ func (b *builtinTimestampAddSig) vecEvalString(input *chunk.Chunk, result *chunk
 	}
 
 	result.ReserveString(n)
-	nums := buf1.Int64s()
+	nums := buf1.Float64s()
 	ds := buf2.Times()
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) || buf1.IsNull(i) || buf2.IsNull(i) {
@@ -1728,6 +1728,9 @@ func (b *builtinTimestampAddSig) vecEvalString(input *chunk.Chunk, result *chunk
 		unit := buf.GetString(i)
 		v := nums[i]
 		arg := ds[i]
+		s := int64(v * 1000000)
+		// round to the nearest int
+		v = math.Round(v)
 
 		tm1, err := arg.GoTime(time.Local)
 		if err != nil {
@@ -1742,7 +1745,10 @@ func (b *builtinTimestampAddSig) vecEvalString(input *chunk.Chunk, result *chunk
 			tb = tm1.Add(time.Duration(v) * time.Microsecond)
 			fsp = types.MaxFsp
 		case "SECOND":
-			tb = tm1.Add(time.Duration(v) * time.Second)
+			tb = tm1.Add(time.Duration(s) * time.Microsecond)
+			if s%1000000 != 0 {
+				fsp = types.MaxFsp
+			}
 		case "MINUTE":
 			tb = tm1.Add(time.Duration(v) * time.Minute)
 		case "HOUR":
@@ -1759,6 +1765,10 @@ func (b *builtinTimestampAddSig) vecEvalString(input *chunk.Chunk, result *chunk
 			tb = tm1.AddDate(int(v), 0, 0)
 		default:
 			return types.ErrWrongValue.GenWithStackByArgs(types.TimeStr, unit)
+		}
+		// use MaxFsp when microsecond is not zero
+		if tb.Nanosecond()/1000 != 0 {
+			fsp = types.MaxFsp
 		}
 		r := types.NewTime(types.FromGoTime(tb), b.resolveType(arg.Type(), unit), fsp)
 		if err = r.Check(b.ctx.GetSessionVars().StmtCtx); err != nil {

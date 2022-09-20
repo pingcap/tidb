@@ -6060,7 +6060,7 @@ func (c *timestampAddFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString, types.ETInt, types.ETDatetime)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString, types.ETReal, types.ETDatetime)
 	if err != nil {
 		return nil, err
 	}
@@ -6100,10 +6100,13 @@ func (b *builtinTimestampAddSig) evalString(row chunk.Row) (string, bool, error)
 	if isNull || err != nil {
 		return "", isNull, err
 	}
-	v, isNull, err := b.args[1].EvalInt(b.ctx, row)
+	v, isNull, err := b.args[1].EvalReal(b.ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
 	}
+	s := int64(v * 1000000)
+	// round to the nearest int
+	v = math.Round(v)
 	arg, isNull, err := b.args[2].EvalTime(b.ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
@@ -6118,9 +6121,8 @@ func (b *builtinTimestampAddSig) evalString(row chunk.Row) (string, bool, error)
 	switch unit {
 	case "MICROSECOND":
 		tb = tm1.Add(time.Duration(v) * time.Microsecond)
-		fsp = types.MaxFsp
 	case "SECOND":
-		tb = tm1.Add(time.Duration(v) * time.Second)
+		tb = tm1.Add(time.Duration(s) * time.Microsecond)
 	case "MINUTE":
 		tb = tm1.Add(time.Duration(v) * time.Minute)
 	case "HOUR":
@@ -6137,6 +6139,10 @@ func (b *builtinTimestampAddSig) evalString(row chunk.Row) (string, bool, error)
 		tb = tm1.AddDate(int(v), 0, 0)
 	default:
 		return "", true, types.ErrWrongValue.GenWithStackByArgs(types.TimeStr, unit)
+	}
+	// use MaxFsp when microsecond is not zero
+	if tb.Nanosecond()/1000 != 0 {
+		fsp = types.MaxFsp
 	}
 	r := types.NewTime(types.FromGoTime(tb), b.resolveType(arg.Type(), unit), fsp)
 	if err = r.Check(b.ctx.GetSessionVars().StmtCtx); err != nil {
