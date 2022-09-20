@@ -1001,7 +1001,9 @@ func (h *Helper) GetPDRegionStats(tableID int64, stats *PDRegionStats, noIndexSt
 			logutil.BgLogger().Error("err", zap.Error(err))
 		}
 	}()
-
+	if resp.StatusCode != http.StatusOK {
+		return errors.New("GetPDRegionStats returns error")
+	}
 	dec := json.NewDecoder(resp.Body)
 
 	return dec.Decode(stats)
