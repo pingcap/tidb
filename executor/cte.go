@@ -203,8 +203,10 @@ func (e *CTEExec) Close() (err error) {
 		}
 		// `iterInTbl` and `resTbl` are shared by multiple operators,
 		// so will be closed when the SQL finishes.
-		if err = e.iterOutTbl.DerefAndClose(); err != nil {
-			return err
+		if e.iterOutTbl != nil {
+			if err = e.iterOutTbl.DerefAndClose(); err != nil {
+				return err
+			}
 		}
 	}
 
