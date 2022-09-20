@@ -204,7 +204,9 @@ func deriveCollation(ctx sessionctx.Context, funcName string, args []Expression,
 		if argTps[0] == types.ETString {
 			return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args...)
 		}
-	case ast.Locate, ast.Instr, ast.Position:
+	case ast.RegexpReplace:
+		return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args[0], args[1], args[2])
+	case ast.Locate, ast.Instr, ast.Position, ast.RegexpLike, ast.RegexpSubstr, ast.RegexpInStr:
 		return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args[0], args[1])
 	case ast.GE, ast.LE, ast.GT, ast.LT, ast.EQ, ast.NE, ast.NullEQ, ast.Strcmp:
 		// if compare type is string, we should determine which collation should be used.

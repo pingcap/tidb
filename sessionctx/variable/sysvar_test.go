@@ -350,6 +350,10 @@ func TestInstanceScopedVars(t *testing.T) {
 	val, err = vars.GetSessionOrGlobalSystemVar(TiDBLogFileMaxDays)
 	require.NoError(t, err)
 	require.Equal(t, fmt.Sprint(GlobalLogMaxDays.Load()), val)
+
+	val, err = vars.GetSessionOrGlobalSystemVar(TiDBRCReadCheckTS)
+	require.NoError(t, err)
+	require.Equal(t, BoolToOnOff(EnableRCReadCheckTS.Load()), val)
 }
 
 func TestSecureAuth(t *testing.T) {
