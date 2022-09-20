@@ -4,7 +4,6 @@ package task
 
 import (
 	"context"
-	"math"
 	"strings"
 	"time"
 
@@ -28,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/spf13/cobra"
@@ -470,41 +468,6 @@ func IsStreamRestore(cmdName string) bool {
 	return cmdName == PointRestoreCmd
 }
 
-func getTableIDRange(tables []*metautil.Table) (min, max int64) {
-	min = int64(math.MaxInt64)
-
-	for _, t := range tables {
-		if t.Info.ID > max {
-			max = t.Info.ID
-		}
-		if t.Info.ID < min {
-			min = t.Info.ID
-		}
-	}
-	return
-}
-
-// preallocTableIDs peralloc the id for [start, end)
-func preallocTableIDs(m *meta.Meta, start, end int64) (map[int64]struct{}, error) {
-	currentId, err := m.GetGlobalID()
-	if err != nil {
-		return nil, err
-	}
-	if currentId > end {
-		return map[int64]struct{}{}, nil
-	}
-
-	result := make(map[int64]struct{}, end-currentId)
-	ids, err := m.GenGlobalIDs(int(end - currentId))
-	if err != nil {
-		return nil, err
-	}
-	for _, id := range ids {
-		result[id] = struct{}{}
-	}
-	return result, nil
-}
-
 // RunRestore starts a restore task inside the current goroutine.
 func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) error {
 	if IsStreamRestore(cmdName) {
@@ -688,36 +651,8 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 
 	// We make bigger errCh so we won't block on multi-part failed.
 	errCh := make(chan error, 32)
-	// Maybe allow user modify the DDL concurrency isn't necessary,
-	// because executing DDL is really I/O bound (or, algorithm bound?),
-	// and we cost most of time at waiting DDL jobs be enqueued.
-	// So these jobs won't be faster or slower when machine become faster or slower,
-	// hence make it a fixed value would be fine.
-	var dbPool []*restore.DB
-	if g.OwnsStorage() {
-		// Only in binary we can use multi-thread sessions to create tables.
-		// so use OwnStorage() to tell whether we are use binary or SQL.
-		dbPool, err = restore.MakeDBPool(defaultDDLConcurrency, func() (*restore.DB, error) {
-			return restore.NewDB(g, mgr.GetStorage())
-		})
-	}
-	if err != nil {
-		log.Warn("create session pool failed, we will send DDLs only by created sessions",
-			zap.Error(err),
-			zap.Int("sessionCount", len(dbPool)),
-		)
-	}
-	min, max := getTableIDRange(tables)
-	var ids map[int64]struct{}
-	kv.RunInNewTxn(ctx, mgr.GetStorage(), true, func(ctx context.Context, txn kv.Transaction) error {
-		ids2, err := preallocTableIDs(meta.NewMeta(txn), min, max)
-		if err != nil {
-			return err
-		}
-		ids = ids2
-		return nil
-	})
-	tableStream := client.GoCreateTables(context.WithValue(ctx, utils.TableIDs{}, ids), mgr.GetDomain(), tables, newTS, dbPool, errCh)
+
+	tableStream := client.GoCreateTables(ctx, mgr.GetDomain(), tables, newTS, errCh)
 	if len(files) == 0 {
 		log.Info("no files, empty databases and tables are restored")
 		summary.SetSuccessStatus(true)
