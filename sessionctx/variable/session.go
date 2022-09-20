@@ -320,12 +320,12 @@ func (tc *TransactionContext) Cleanup() {
 	tc.History = nil
 	tc.tdmLock.Lock()
 	tc.TableDeltaMap = nil
+	tc.relatedTableForMDL = nil
 	tc.tdmLock.Unlock()
 	tc.pessimisticLockCache = nil
 	tc.IsStaleness = false
 	tc.Savepoints = nil
 	tc.EnableMDL = false
-	tc.relatedTableForMDL = nil
 }
 
 // ClearDelta clears the delta map.
