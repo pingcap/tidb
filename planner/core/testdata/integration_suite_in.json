@@ -288,7 +288,9 @@
       "explain format = 'brief' select * from t where exists (select 1 from t t1 join t t2 where t1.a = t2.a and t1.a = t.a)",
       "explain format = 'brief' select * from t where exists (select 1 from t t1 join t t2 on t1.a = t2.a and t1.a = t.a)",
       "explain format = 'brief' select * from t where exists (select /*+ SEMI_JOIN_REWRITE() */ 1 from t t1 join t t2 where t1.a = t2.a and t1.a = t.a)",
-      "explain format = 'brief' select * from t where exists (select /*+ SEMI_JOIN_REWRITE() */ 1 from t t1 join t t2 on t1.a = t2.a and t1.a = t.a)"
+      "explain format = 'brief' select * from t where exists (select /*+ SEMI_JOIN_REWRITE() */ 1 from t t1 join t t2 on t1.a = t2.a and t1.a = t.a)",
+      "explain format = 'brief' select /*+ hash_join_build(t) */ * from t where exists (select /*+ SEMI_JOIN_REWRITE() */ 1 from t t1 join t t2 where t1.a = t2.a and t1.a = t.a)",
+      "explain format = 'brief' select /*+ hash_join_probe(t) */ * from t where exists (select /*+ SEMI_JOIN_REWRITE() */ 1 from t t1 join t t2 where t1.a = t2.a and t1.a = t.a)"
     ]
   },
   {

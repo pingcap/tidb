@@ -176,6 +176,8 @@ type Table interface {
 
 	// RecordPrefix returns the record key prefix.
 	RecordPrefix() kv.Key
+	// IndexPrefix returns the index key prefix.
+	IndexPrefix() kv.Key
 
 	// AddRecord inserts a row which should contain only public columns
 	AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...AddRecordOption) (recordID kv.Handle, err error)

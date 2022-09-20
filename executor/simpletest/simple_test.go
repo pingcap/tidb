@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
+	"go.opencensus.io/stats/view"
 )
 
 func TestFlushTables(t *testing.T) {
@@ -466,6 +467,30 @@ func inTxn(ctx sessionctx.Context) bool {
 	return (ctx.GetSessionVars().Status & mysql.ServerStatusInTrans) > 0
 }
 
+func TestIssue33144(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	//Create role
+	tk.MustExec("create role 'r1' ;")
+
+	sessionVars := tk.Session().GetSessionVars()
+	sessionVars.User = &auth.UserIdentity{Username: "root", Hostname: "localhost", AuthUsername: "root", AuthHostname: "%"}
+
+	//Grant role to current_user()
+	tk.MustExec("grant 'r1' to current_user();")
+	//Revoke role from current_user()
+	tk.MustExec("revoke 'r1' from current_user();")
+
+	//Grant role to current_user(),current_user()
+	tk.MustExec("grant 'r1' to current_user(),current_user();")
+	//Revoke role from current_user(),current_user()
+	tk.MustExec("revoke 'r1' from current_user(),current_user();")
+
+	//Drop role
+	tk.MustExec("drop role 'r1' ;")
+}
+
 func TestRole(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -897,6 +922,7 @@ func TestFlushPrivileges(t *testing.T) {
 }
 
 func TestFlushPrivilegesPanic(t *testing.T) {
+	defer view.Stop()
 	// Run in a separate suite because this test need to set SkipGrantTable config.
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)

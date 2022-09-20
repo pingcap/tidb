@@ -330,6 +330,12 @@ func onDropTableOrView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ er
 	switch tblInfo.State {
 	case model.StatePublic:
 		// public -> write only
+		if job.Type == model.ActionDropTable {
+			err = checkDropTableHasForeignKeyReferredInOwner(d, t, job)
+			if err != nil {
+				return ver, err
+			}
+		}
 		tblInfo.State = model.StateWriteOnly
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != tblInfo.State)
 		if err != nil {
@@ -362,6 +368,12 @@ func onDropTableOrView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ er
 			}
 			if err = t.GetAutoIDAccessors(job.SchemaID, job.TableID).Del(); err != nil {
 				return ver, errors.Trace(err)
+			}
+		}
+		if tblInfo.TiFlashReplica != nil {
+			e := infosync.DeleteTiFlashTableSyncProgress(tblInfo.ID)
+			if e != nil {
+				logutil.BgLogger().Error("DeleteTiFlashTableSyncProgress fails", zap.Error(e))
 			}
 		}
 		// Placement rules cannot be removed immediately after drop table / truncate table, because the
@@ -660,7 +672,8 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 	schemaID := job.SchemaID
 	tableID := job.TableID
 	var newTableID int64
-	err := job.DecodeArgs(&newTableID)
+	var fkCheck bool
+	err := job.DecodeArgs(&newTableID, &fkCheck)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -673,7 +686,10 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		job.State = model.JobStateCancelled
 		return ver, infoschema.ErrTableNotExists.GenWithStackByArgs(job.SchemaName, tblInfo.Name.O)
 	}
-
+	err = checkTruncateTableHasForeignKeyReferredInOwner(d, t, job, tblInfo, fkCheck)
+	if err != nil {
+		return ver, err
+	}
 	err = t.DropTableOrView(schemaID, tblInfo.ID)
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -730,6 +746,10 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 
 	// Clear the TiFlash replica available status.
 	if tblInfo.TiFlashReplica != nil {
+		e := infosync.DeleteTiFlashTableSyncProgress(tblInfo.ID)
+		if e != nil {
+			logutil.BgLogger().Error("DeleteTiFlashTableSyncProgress fails", zap.Error(e))
+		}
 		// Set PD rules for TiFlash
 		if pi := tblInfo.GetPartitionInfo(); pi != nil {
 			if e := infosync.ConfigureTiFlashPDForPartitions(true, &pi.Definitions, tblInfo.TiFlashReplica.Count, &tblInfo.TiFlashReplica.LocationLabels, tblInfo.ID); e != nil {

@@ -764,6 +764,7 @@ func (e *ShowDDLJobsExec) Open(ctx context.Context) error {
 		return err
 	}
 	e.sess = sess
+	sess.GetSessionVars().SetInTxn(true)
 	err = sessiontxn.NewTxn(context.Background(), sess)
 	if err != nil {
 		return err
@@ -772,7 +773,6 @@ func (e *ShowDDLJobsExec) Open(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	sess.GetSessionVars().SetInTxn(true)
 	err = e.DDLJobRetriever.initial(txn, sess)
 	return err
 }
@@ -1926,6 +1926,13 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc.OptimizerCETrace = nil
 	sc.StatsLoadStatus = make(map[model.TableItemID]string)
 	sc.IsSyncStatsFailed = false
+	// Firstly we assume that UseDynamicPruneMode can be enabled according session variable, then we will check other conditions
+	// in PlanBuilder.buildDataSource
+	if ctx.GetSessionVars().IsDynamicPartitionPruneEnabled() {
+		sc.UseDynamicPruneMode = true
+	} else {
+		sc.UseDynamicPruneMode = false
+	}
 
 	sc.SysdateIsNow = ctx.GetSessionVars().SysdateIsNow
 

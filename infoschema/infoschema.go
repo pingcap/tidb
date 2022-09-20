@@ -498,7 +498,7 @@ func (is *infoSchema) GetTableReferredForeignKeys(schema, table string) []*model
 
 // SessionTables store local temporary tables
 type SessionTables struct {
-	// Local temporary tables can be accessed after the db is dropped, so there needs a way to retain the DBInfo.
+	// Session tables can be accessed after the db is dropped, so there needs a way to retain the DBInfo.
 	// schemaTables.dbInfo will only be used when the db is dropped and it may be stale after the db is created again.
 	// But it's fine because we only need its name.
 	schemaMap map[string]*schemaTables
@@ -624,12 +624,21 @@ func (is *SessionTables) schemaTables(schema model.CIStr) *schemaTables {
 type SessionExtendedInfoSchema struct {
 	InfoSchema
 	LocalTemporaryTables *SessionTables
+	MdlTables            *SessionTables
 }
 
 // TableByName implements InfoSchema.TableByName
 func (ts *SessionExtendedInfoSchema) TableByName(schema, table model.CIStr) (table.Table, error) {
-	if tbl, ok := ts.LocalTemporaryTables.TableByName(schema, table); ok {
-		return tbl, nil
+	if ts.LocalTemporaryTables != nil {
+		if tbl, ok := ts.LocalTemporaryTables.TableByName(schema, table); ok {
+			return tbl, nil
+		}
+	}
+
+	if ts.MdlTables != nil {
+		if tbl, ok := ts.MdlTables.TableByName(schema, table); ok {
+			return tbl, nil
+		}
 	}
 
 	return ts.InfoSchema.TableByName(schema, table)
@@ -637,8 +646,16 @@ func (ts *SessionExtendedInfoSchema) TableByName(schema, table model.CIStr) (tab
 
 // TableByID implements InfoSchema.TableByID
 func (ts *SessionExtendedInfoSchema) TableByID(id int64) (table.Table, bool) {
-	if tbl, ok := ts.LocalTemporaryTables.TableByID(id); ok {
-		return tbl, true
+	if ts.LocalTemporaryTables != nil {
+		if tbl, ok := ts.LocalTemporaryTables.TableByID(id); ok {
+			return tbl, true
+		}
+	}
+
+	if ts.MdlTables != nil {
+		if tbl, ok := ts.MdlTables.TableByID(id); ok {
+			return tbl, true
+		}
 	}
 
 	return ts.InfoSchema.TableByID(id)
@@ -650,14 +667,41 @@ func (ts *SessionExtendedInfoSchema) SchemaByTable(tableInfo *model.TableInfo) (
 		return nil, false
 	}
 
-	if db, ok := ts.LocalTemporaryTables.SchemaByTable(tableInfo); ok {
-		return db, true
+	if ts.LocalTemporaryTables != nil {
+		if db, ok := ts.LocalTemporaryTables.SchemaByTable(tableInfo); ok {
+			return db, true
+		}
 	}
 
 	return ts.InfoSchema.SchemaByTable(tableInfo)
 }
 
+// UpdateTableInfo implements InfoSchema.SchemaByTable.
+func (ts *SessionExtendedInfoSchema) UpdateTableInfo(db *model.DBInfo, tableInfo table.Table) error {
+	if ts.MdlTables == nil {
+		ts.MdlTables = NewSessionTables()
+	}
+	err := ts.MdlTables.AddTable(db, tableInfo)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 // HasTemporaryTable returns whether information schema has temporary table
 func (ts *SessionExtendedInfoSchema) HasTemporaryTable() bool {
-	return ts.LocalTemporaryTables.Count() > 0 || ts.InfoSchema.HasTemporaryTable()
+	return ts.LocalTemporaryTables != nil && ts.LocalTemporaryTables.Count() > 0 || ts.InfoSchema.HasTemporaryTable()
+}
+
+// AttachMDLTableInfoSchema attach MDL related table information schema to is
+func AttachMDLTableInfoSchema(is InfoSchema) InfoSchema {
+	mdlTables := NewSessionTables()
+	if iss, ok := is.(*SessionExtendedInfoSchema); ok {
+		iss.MdlTables = mdlTables
+		return iss
+	}
+	return &SessionExtendedInfoSchema{
+		InfoSchema: is,
+		MdlTables:  mdlTables,
+	}
 }

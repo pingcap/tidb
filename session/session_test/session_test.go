@@ -60,6 +60,7 @@ func TestSchemaCheckerSQL(t *testing.T) {
 	store := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second)
 
 	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_enable_metadata_lock=0")
 	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk1 := testkit.NewTestKit(t, store)
@@ -138,6 +139,7 @@ func TestSchemaCheckerTempTable(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 
 	tk1.MustExec("use test")
+	tk1.MustExec("set global tidb_enable_metadata_lock=0")
 	tk2.MustExec("use test")
 
 	// create table
@@ -1720,6 +1722,7 @@ func TestCoprocessorOOMAction(t *testing.T) {
 	// Assert Coprocessor OOMAction
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_enable_rate_limit_action=true")
 	tk.MustExec("create database testoom")
 	tk.MustExec("use testoom")
 	tk.MustExec(`set @@tidb_wait_split_region_finish=1`)
@@ -1763,6 +1766,7 @@ func TestCoprocessorOOMAction(t *testing.T) {
 		defer tk.MustExec("SET GLOBAL tidb_mem_oom_action = DEFAULT")
 		tk.MustExec("SET GLOBAL tidb_mem_oom_action='CANCEL'")
 		tk.MustExec("use testoom")
+		tk.MustExec("set @@tidb_enable_rate_limit_action=1")
 		tk.MustExec("set @@tidb_distsql_scan_concurrency = 10")
 		tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%v;", quota))
 		var expect []string
@@ -1778,6 +1782,7 @@ func TestCoprocessorOOMAction(t *testing.T) {
 		t.Logf("disable OOM, testcase: %v", name)
 		quota := 5*copr.MockResponseSizeForTest - 100
 		tk.MustExec("use testoom")
+		tk.MustExec("set @@tidb_enable_rate_limit_action=0")
 		tk.MustExec("set @@tidb_distsql_scan_concurrency = 10")
 		tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%v;", quota))
 		err := tk.QueryToErr(sql)
@@ -2093,6 +2098,7 @@ func TestSetEnableRateLimitAction(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
+	tk.MustExec("set @@tidb_enable_rate_limit_action=true")
 	// assert default value
 	result := tk.MustQuery("select @@tidb_enable_rate_limit_action;")
 	result.Check(testkit.Rows("1"))

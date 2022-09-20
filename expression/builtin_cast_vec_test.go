@@ -127,7 +127,7 @@ func (g *randJSONDuration) gen() interface{} {
 	d := types.Duration{
 		Duration: time.Duration(rand.Intn(12))*time.Hour + time.Duration(rand.Intn(60))*time.Minute + time.Duration(rand.Intn(60))*time.Second + time.Duration(rand.Intn(1000))*time.Millisecond,
 		Fsp:      3}
-	return types.CreateBinaryJSON(d.String())
+	return types.CreateBinaryJSON(d)
 }
 
 type datetimeJSONGener struct{}
@@ -145,7 +145,7 @@ func (g *datetimeJSONGener) gen() interface{} {
 		0,
 		3,
 	)
-	return types.CreateBinaryJSON(d.String())
+	return types.CreateBinaryJSON(d)
 }
 
 func TestVectorizedBuiltinCastEvalOneVec(t *testing.T) {
