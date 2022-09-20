@@ -50,14 +50,7 @@ func TestConcurrentDDLSwitch(t *testing.T) {
 	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size=32")
 
 	for i := range tables {
-		tk.MustExec(fmt.Sprintf("create table t%d (col0 int) partition by range columns (col0) ("+
-			"partition p1 values less than (100), "+
-			"partition p2 values less than (300), "+
-			"partition p3 values less than (500), "+
-			"partition p4 values less than (700), "+
-			"partition p5 values less than (1000), "+
-			"partition p6 values less than maxvalue);",
-			i))
+		tk.MustExec(fmt.Sprintf("create table t%d (col0 int)", i))
 		for j := 0; j < 1000; j++ {
 			tk.MustExec(fmt.Sprintf("insert into t%d values (%d)", i, j))
 		}
