@@ -130,11 +130,11 @@ func (record *memoryUsageAlarm) needRecord(memoryUsage uint64) bool {
 	interval := time.Since(record.lastCheckTime)
 	memDiff := int64(memoryUsage) - int64(record.lastRecordMemUsed)
 	if interval > 60*time.Second {
-		logutil.BgLogger().Warn("Record Memory Infomation.", zap.String("record time", time.Now().String()), zap.String("last record time", record.lastCheckTime.String()))
+		logutil.BgLogger().Warn("Record Memory Information.", zap.String("record time", time.Now().String()), zap.String("last record time", record.lastCheckTime.String()))
 		return true
 	}
 	if float64(memDiff) > 0.1*float64(record.serverMemoryQuota) {
-		logutil.BgLogger().Warn("Record Memory Infomation.", zap.String("record memory", strconv.FormatUint(memoryUsage, 10)), zap.String("last record memory", strconv.FormatUint(record.lastRecordMemUsed, 10)))
+		logutil.BgLogger().Warn("Record Memory Information.", zap.String("record memory", strconv.FormatUint(memoryUsage, 10)), zap.String("last record memory", strconv.FormatUint(record.lastRecordMemUsed, 10)))
 		return true
 	}
 	return false
