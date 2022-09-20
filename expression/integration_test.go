@@ -9985,6 +9985,19 @@ func (s *testIntegrationSuite) TestIssue28643(c *C) {
 	tk.MustQuery("select hour(a) from t;").Check(testkit.Rows("838", "838"))
 }
 
+func (s *testIntegrationSuite) TestIssue29513(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustQuery("select '123' union select cast(45678 as char);").Sort().Check(testkit.Rows("123", "45678"))
+	tk.MustQuery("select '123' union select cast(45678 as char(2));").Sort().Check(testkit.Rows("123", "45"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t values(45678);")
+	tk.MustQuery("select '123' union select cast(a as char) from t;").Sort().Check(testkit.Rows("123", "45678"))
+	tk.MustQuery("select '123' union select cast(a as char(2)) from t;").Sort().Check(testkit.Rows("123", "45"))
+}
+
 func (s *testIntegrationSuite) TestIssue27831(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -10010,4 +10023,13 @@ func (s *testIntegrationSuite) TestIssue29244(c *C) {
 	tk.MustQuery("select microsecond(a) from t;").Check(testkit.Rows("123500", "123500"))
 	tk.MustExec("set tidb_enable_vectorized_expression = off;")
 	tk.MustQuery("select microsecond(a) from t;").Check(testkit.Rows("123500", "123500"))
+}
+
+func (s *testIntegrationSuite) TestIssue30101(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 bigint unsigned, c2 bigint unsigned);")
+	tk.MustExec("insert into t1 values(9223372036854775808, 9223372036854775809);")
+	tk.MustQuery("select greatest(c1, c2) from t1;").Sort().Check(testkit.Rows("9223372036854775809"))
 }
