@@ -214,12 +214,13 @@ It brings you what's coming in the 1-year future, so you can see the new feature
     <td>October 2022</td>
   </tr>
   <tr>
-    <td rowspan="2">Password complexity check</td>
+    <td>Password complexity check</td>
     <td>A strong password is required.</td>
     <td>To improve security, empty passwords and weak passwords are not allowed.<br>The required password length is not less than 8. The password must contain an uppercase letter, a lowercase letter, a number, and a character.</td>
     <td>November 2022</td>
   </tr>
   <tr>
+    <td>Password expiration</td>
     <td>TiDB provides password expiration management and requires users to change passwords regularly.</td>
     <td>Reduce the security risk of password cracking or leakage caused by using the same password for a long time.</td>
     <td>December 2022</td>
