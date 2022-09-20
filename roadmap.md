@@ -2,6 +2,8 @@
 
 This document shows the roadmap for TiDB development from September 2022 to September 2023.
 
+It brings you what's coming in the 1-year future, so you can see the new features or improvements in advance, follow the progress, learn about the key milestones on the way, and give feedback as the development work goes on.
+
 ## TiDB kernel
 
 <table>
