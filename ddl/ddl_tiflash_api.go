@@ -239,10 +239,10 @@ var (
 	PollTiFlashBackoffCapacity int = 1000
 	// PollTiFlashBackoffRate is growth rate of exponential backoff threshold.
 	PollTiFlashBackoffRate TiFlashTick = 1.5
-	// PollAvailableTableProgressCount is the count of available table to update progress each poll.
-	PollAvailableTableProgressCount uint64 = 1000
-	// PollCleanProgressCacheInteal is the inteval of cleaning progress cache to avoid data race when ddl owner switchover
-	PollCleanProgressCacheInteal uint64 = 1500
+	// RefreshProgressMaxTableCount is the max count of table to refresh progress after available each poll.
+	RefreshProgressMaxTableCount uint64 = 1000
+	// PollCleanProgressCacheInterval is the inteval (PollTiFlashInterval * PollCleanProgressCacheInterval) of cleaning progress cache to avoid data race when ddl owner switchover
+	PollCleanProgressCacheInterval uint64 = 300
 )
 
 func getTiflashHTTPAddr(host string, statusAddr string) (string, error) {
@@ -366,14 +366,14 @@ func updateTiFlashStores(pollTiFlashContext *TiFlashManagementContext) error {
 	return nil
 }
 
-func getTiFlashPeerCount(pollTiFlashContext *TiFlashManagementContext, tableID int64) (int, error) {
+func getTiFlashPeerWithoutLagCount(pollTiFlashContext *TiFlashManagementContext, tableID int64) (int, error) {
 	// storeIDs -> regionID, PD will not create two peer on the same store
 	var flashPeerCount int
 	for _, store := range pollTiFlashContext.TiFlashStores {
 		regionReplica := make(map[int64]int)
 		err := helper.CollectTiFlashStatus(store.Store.StatusAddress, tableID, &regionReplica)
 		if err != nil {
-			logutil.BgLogger().Error("Fail to get region record from TiFlash.",
+			logutil.BgLogger().Error("Fail to get peer status from TiFlash.",
 				zap.Int64("tableID", tableID))
 			return 0, err
 		}
@@ -391,7 +391,7 @@ func getTiFlashTableSyncProgress(pollTiFlashContext *TiFlashManagementContext, t
 	}
 	regionCount := stats.Count
 
-	tiflashPeerCount, err := getTiFlashPeerCount(pollTiFlashContext, tableID)
+	tiflashPeerCount, err := getTiFlashPeerWithoutLagCount(pollTiFlashContext, tableID)
 	if err != nil {
 		logutil.BgLogger().Error("Fail to get peer count from TiFlash.",
 			zap.Int64("tableID", tableID))
@@ -407,7 +407,7 @@ func getTiFlashTableSyncProgress(pollTiFlashContext *TiFlashManagementContext, t
 }
 
 func pollAvailableTableProgress(schemas infoschema.InfoSchema, ctx sessionctx.Context, pollTiFlashContext *TiFlashManagementContext) {
-	pollMaxCount := PollAvailableTableProgressCount
+	pollMaxCount := RefreshProgressMaxTableCount
 	failpoint.Inject("PollAvailableTableProgressMaxCount", func(val failpoint.Value) {
 		pollMaxCount = uint64(val.(int))
 	})
@@ -477,11 +477,11 @@ func pollAvailableTableProgress(schemas infoschema.InfoSchema, ctx sessionctx.Co
 func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContext *TiFlashManagementContext) error {
 	defer func() {
 		failpoint.Inject("PollTiFlashReplicaStatusCleanProgressCache", func() {
-			pollTiFlashContext.PollCounter = PollCleanProgressCacheInteal
+			pollTiFlashContext.PollCounter = PollCleanProgressCacheInterval
 		})
 		pollTiFlashContext.PollCounter++
-		// 5min clean progress cache to avoid data race
-		if pollTiFlashContext.PollCounter > PollCleanProgressCacheInteal {
+		// 10min clean progress cache to avoid data race
+		if pollTiFlashContext.PollCounter > PollCleanProgressCacheInterval {
 			for k := range pollTiFlashContext.ProgressCache {
 				delete(pollTiFlashContext.ProgressCache, k)
 			}

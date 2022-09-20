@@ -2234,7 +2234,6 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(ctx sessionctx.Context, s
 			}
 			var progress float64
 			if pi := tbl.GetPartitionInfo(); pi != nil && len(pi.Definitions) > 0 {
-				progress = 0
 				for _, p := range pi.Definitions {
 					progress += progressMap[p.ID]
 				}
