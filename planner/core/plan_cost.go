@@ -904,16 +904,6 @@ func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64, isMPP bool, costFlag uint
 	diskCost := buildCnt * sessVars.GetDiskFactor() * rowSize
 	// Number of matched row pairs regarding the equal join conditions.
 	helper := &fullJoinRowCountHelper{
-<<<<<<< HEAD
-		cartesian:     false,
-		leftProfile:   p.children[0].statsInfo(),
-		rightProfile:  p.children[1].statsInfo(),
-		leftJoinKeys:  p.LeftJoinKeys,
-		rightJoinKeys: p.RightJoinKeys,
-		leftSchema:    p.children[0].Schema(),
-		rightSchema:   p.children[1].Schema(),
-=======
-		sctx:            p.SCtx(),
 		cartesian:       false,
 		leftProfile:     p.children[0].statsInfo(),
 		rightProfile:    p.children[1].statsInfo(),
@@ -923,7 +913,6 @@ func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64, isMPP bool, costFlag uint
 		rightSchema:     p.children[1].Schema(),
 		leftNAJoinKeys:  p.LeftNAJoinKeys,
 		rightNAJoinKeys: p.RightNAJoinKeys,
->>>>>>> 0823fdb6b... planner, executor: implement the null-aware antiSemiJoin and null-aware antiLeftOuterSemiJoin (hash join with inner build) (#37512)
 	}
 	numPairs := helper.estimate()
 	// For semi-join class, if `OtherConditions` is empty, we already know
