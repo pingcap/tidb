@@ -57,6 +57,11 @@ import (
 
 var coprCacheCounterEvict = tidbmetrics.DistSQLCoprCacheCounter.WithLabelValues("evict")
 
+var (
+	coprCacheCounterHit  = tidbmetrics.DistSQLCoprCacheCounter.WithLabelValues("hit")
+	coprCacheCounterMiss = tidbmetrics.DistSQLCoprCacheCounter.WithLabelValues("miss")
+)
+
 // Maximum total sleep time(in ms) for kv/cop commands.
 const (
 	copBuildTaskMaxBackoff = 5000
@@ -577,6 +582,7 @@ func (worker *copIteratorWorker) sendToRespCh(resp *copResponse, respCh chan<- *
 				}
 			}
 		})
+		failpoint.Inject("ConsumeRandomPanic", nil)
 		worker.memTracker.Consume(consumed)
 	}
 	select {
@@ -983,6 +989,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 	worker.handleCollectExecutionInfo(bo, rpcCtx, resp, resolveLockDetail)
 	resp.respTime = costTime
 	if resp.pbResp.IsCacheHit {
+		coprCacheCounterHit.Add(1)
 		if cacheValue == nil {
 			return nil, errors.New("Internal error: received illegal TiKV response")
 		}
@@ -1012,6 +1019,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 		}
 		resp.detail.CoprCacheHit = true
 	} else {
+		coprCacheCounterMiss.Add(1)
 		// Cache not hit or cache hit but not valid: update the cache if the response can be cached.
 		if cacheKey != nil && resp.pbResp.CanBeCached && resp.pbResp.CacheLastVersion > 0 {
 			if resp.detail != nil {

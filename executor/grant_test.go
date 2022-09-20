@@ -295,11 +295,11 @@ func TestGrantPrivilegeAtomic(t *testing.T) {
 		"Y Y Y Y",
 	))
 
-	_, err = tk.Exec(`grant update, select, insert, delete on test.* to r1, r2, r4;`)
+	err = tk.ExecToErr(`grant update, select, insert, delete on test.* to r1, r2, r4;`)
 	require.True(t, terror.ErrorEqual(err, executor.ErrCantCreateUserWithGrant))
 	tk.MustQuery(`select Update_priv, Select_priv, Insert_priv, Delete_priv from mysql.db where user in ('r1', 'r2', 'r3', 'r4') and host = "%";`).Check(testkit.Rows())
 	tk.MustExec(`grant update, select, insert, delete on test.* to r1, r2, r3;`)
-	_, err = tk.Exec(`revoke all on *.* from r1, r2, r4, r3;`)
+	err = tk.ExecToErr(`revoke all on *.* from r1, r2, r4, r3;`)
 	require.Error(t, err)
 	tk.MustQuery(`select Update_priv, Select_priv, Insert_priv, Delete_priv from mysql.db where user in ('r1', 'r2', 'r3', 'r4') and host = "%";`).Check(testkit.Rows(
 		"Y Y Y Y",
@@ -307,11 +307,11 @@ func TestGrantPrivilegeAtomic(t *testing.T) {
 		"Y Y Y Y",
 	))
 
-	_, err = tk.Exec(`grant update, select, insert, delete on test.testatomic to r1, r2, r4;`)
+	err = tk.ExecToErr(`grant update, select, insert, delete on test.testatomic to r1, r2, r4;`)
 	require.True(t, terror.ErrorEqual(err, executor.ErrCantCreateUserWithGrant))
 	tk.MustQuery(`select Table_priv from mysql.tables_priv where user in ('r1', 'r2', 'r3', 'r4') and host = "%";`).Check(testkit.Rows())
 	tk.MustExec(`grant update, select, insert, delete on test.testatomic to r1, r2, r3;`)
-	_, err = tk.Exec(`revoke all on *.* from r1, r2, r4, r3;`)
+	err = tk.ExecToErr(`revoke all on *.* from r1, r2, r4, r3;`)
 	require.Error(t, err)
 	tk.MustQuery(`select Table_priv from mysql.tables_priv where user in ('r1', 'r2', 'r3', 'r4') and host = "%";`).Check(testkit.Rows(
 		"Select,Insert,Update,Delete",
@@ -397,25 +397,22 @@ func TestMaintainRequire(t *testing.T) {
 	tk.MustQuery("show create user 'u3'").Check(testkit.Rows("CREATE USER 'u3'@'%' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE CIPHER 'AES128-GCM-SHA256' ISSUER '/CN=TiDB admin/OU=TiDB/O=PingCAP/L=San Francisco/ST=California/C=US' SUBJECT '/CN=tester1/OU=TiDB/O=PingCAP.Inc/L=Haidian/ST=Beijing/C=ZH' PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK"))
 
 	// check issuer/subject/cipher value
-	_, err := tk.Exec(`CREATE USER 'u4'@'%' require issuer 'CN=TiDB,OU=PingCAP'`)
+	err := tk.ExecToErr(`CREATE USER 'u4'@'%' require issuer 'CN=TiDB,OU=PingCAP'`)
 	require.Error(t, err)
-	_, err = tk.Exec(`CREATE USER 'u5'@'%' require subject '/CN=TiDB\OU=PingCAP'`)
+	err = tk.ExecToErr(`CREATE USER 'u5'@'%' require subject '/CN=TiDB\OU=PingCAP'`)
 	require.Error(t, err)
-	_, err = tk.Exec(`CREATE USER 'u6'@'%' require subject '/CN=TiDB\NC=PingCAP'`)
+	err = tk.ExecToErr(`CREATE USER 'u6'@'%' require subject '/CN=TiDB\NC=PingCAP'`)
 	require.Error(t, err)
-	_, err = tk.Exec(`CREATE USER 'u7'@'%' require cipher 'AES128-GCM-SHA1'`)
+	err = tk.ExecToErr(`CREATE USER 'u7'@'%' require cipher 'AES128-GCM-SHA1'`)
 	require.Error(t, err)
-	_, err = tk.Exec(`CREATE USER 'u8'@'%' require subject '/CN'`)
+	err = tk.ExecToErr(`CREATE USER 'u8'@'%' require subject '/CN'`)
 	require.Error(t, err)
-	_, err = tk.Exec(`CREATE USER 'u9'@'%' require cipher 'TLS_AES_256_GCM_SHA384' cipher 'RC4-SHA'`)
-	require.EqualError(t, err, "Duplicate require CIPHER clause")
-	_, err = tk.Exec(`CREATE USER 'u9'@'%' require issuer 'CN=TiDB,OU=PingCAP' issuer 'CN=TiDB,OU=PingCAP2'`)
-	require.EqualError(t, err, "Duplicate require ISSUER clause")
-	_, err = tk.Exec(`CREATE USER 'u9'@'%' require subject '/CN=TiDB\OU=PingCAP' subject '/CN=TiDB\OU=PingCAP2'`)
-	require.EqualError(t, err, "Duplicate require SUBJECT clause")
-	_, err = tk.Exec(`CREATE USER 'u9'@'%' require ssl ssl`)
+	tk.MustGetErrMsg(`CREATE USER 'u9'@'%' require cipher 'TLS_AES_256_GCM_SHA384' cipher 'RC4-SHA'`, "Duplicate require CIPHER clause")
+	tk.MustGetErrMsg(`CREATE USER 'u9'@'%' require issuer 'CN=TiDB,OU=PingCAP' issuer 'CN=TiDB,OU=PingCAP2'`, "Duplicate require ISSUER clause")
+	tk.MustGetErrMsg(`CREATE USER 'u9'@'%' require subject '/CN=TiDB\OU=PingCAP' subject '/CN=TiDB\OU=PingCAP2'`, "Duplicate require SUBJECT clause")
+	err = tk.ExecToErr(`CREATE USER 'u9'@'%' require ssl ssl`)
 	require.Error(t, err)
-	_, err = tk.Exec(`CREATE USER 'u9'@'%' require x509 x509`)
+	err = tk.ExecToErr(`CREATE USER 'u9'@'%' require x509 x509`)
 	require.Error(t, err)
 }
 
@@ -435,20 +432,17 @@ func TestGrantOnNonExistTable(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create user genius")
 	tk.MustExec("use test")
-	_, err := tk.Exec("select * from nonexist")
+	err := tk.ExecToErr("select * from nonexist")
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableNotExists))
-	_, err = tk.Exec("grant Select,Insert on nonexist to 'genius'")
+	err = tk.ExecToErr("grant Select,Insert on nonexist to 'genius'")
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableNotExists))
 
 	tk.MustExec("create table if not exists xx (id int)")
 	// Case insensitive, differ from MySQL default behaviour.
 	// In TiDB, system variable lower_case_table_names = 2, which means compare table name using lower case.
 	tk.MustExec("grant Select,Insert on XX to 'genius'")
-
-	_, err = tk.Exec("grant Select,Insert on xx to 'genius'")
-	require.NoError(t, err)
-	_, err = tk.Exec("grant Select,Update on test.xx to 'genius'")
-	require.NoError(t, err)
+	tk.MustExec("grant Select,Insert on xx to 'genius'")
+	tk.MustExec("grant Select,Update on test.xx to 'genius'")
 
 	// issue #29268
 	tk.MustExec("CREATE DATABASE d29268")
@@ -511,7 +505,7 @@ func TestPerformanceSchemaPrivGrant(t *testing.T) {
 	defer func() {
 		tk.MustExec("drop user issue27867;")
 	}()
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil))
 	tk.MustGetErrCode("grant all on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
 	// Check case insensitivity
 	tk.MustGetErrCode("grant all on PERFormanCE_scHemA.* to issue27867;", errno.ErrDBaccessDenied)
@@ -537,9 +531,9 @@ func TestGrantDynamicPrivs(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create user dyn")
 
-	_, err := tk.Exec("GRANT BACKUP_ADMIN ON test.* TO dyn")
+	err := tk.ExecToErr("GRANT BACKUP_ADMIN ON test.* TO dyn")
 	require.True(t, terror.ErrorEqual(err, executor.ErrIllegalPrivilegeLevel))
-	_, err = tk.Exec("GRANT BOGUS_GRANT ON *.* TO dyn")
+	err = tk.ExecToErr("GRANT BOGUS_GRANT ON *.* TO dyn")
 	require.True(t, terror.ErrorEqual(err, executor.ErrDynamicPrivilegeNotRegistered))
 
 	tk.MustExec("GRANT BACKUP_Admin ON *.* TO dyn") // grant one priv

@@ -19,7 +19,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/mathutil"
 )
 
@@ -322,7 +321,11 @@ func reCalcCapacity(c *Chunk, maxChunkSize int) int {
 	if c.NumRows() < c.capacity {
 		return c.capacity
 	}
-	return mathutil.Min(c.capacity*2, maxChunkSize)
+	newCapacity := c.capacity * 2
+	if newCapacity == 0 {
+		newCapacity = InitialCapacity
+	}
+	return mathutil.Min(newCapacity, maxChunkSize)
 }
 
 // Capacity returns the capacity of the Chunk.
@@ -548,7 +551,7 @@ func (c *Chunk) AppendSet(colIdx int, set types.Set) {
 }
 
 // AppendJSON appends a JSON value to the chunk.
-func (c *Chunk) AppendJSON(colIdx int, j json.BinaryJSON) {
+func (c *Chunk) AppendJSON(colIdx int, j types.BinaryJSON) {
 	c.appendSel(colIdx)
 	c.columns[colIdx].AppendJSON(j)
 }

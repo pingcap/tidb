@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
+	"go.etcd.io/etcd/tests/v3/integration"
 	"go.uber.org/zap"
 )
 
@@ -381,56 +382,6 @@ func TestTiFlashReplicaAvailable(t *testing.T) {
 	r, ok = s.tiflash.GetPlacementRule(fmt.Sprintf("table-%v-r", tb.Meta().ID))
 	require.Nil(t, r)
 	require.False(t, ok)
-}
-
-// set TiFlash mode shall be eventually available.
-func TestSetTiFlashModeAvailable(t *testing.T) {
-	s, teardown := createTiFlashContext(t)
-	defer teardown()
-	tk := testkit.NewTestKit(t, s.store)
-
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists ddltiflash")
-	tk.MustExec("create table ddltiflash(z int)")
-	tk.MustExec("alter table ddltiflash set tiflash replica 1")
-	tk.MustExec("alter table ddltiflash set tiflash mode fast")
-	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
-	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
-	require.NoError(t, err)
-	tiflashmode := tb.Meta().TiFlashMode
-	require.NotNil(t, tiflashmode)
-	require.Equal(t, tiflashmode, model.TiFlashModeFast)
-
-	tk.MustExec("alter table ddltiflash set tiflash mode normal")
-	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
-	tb, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
-	require.NoError(t, err)
-	tiflashmode = tb.Meta().TiFlashMode
-	require.NotNil(t, tiflashmode)
-	require.Equal(t, tiflashmode, model.TiFlashModeNormal)
-
-	// check the warning when set tiflash mode on the table whose tiflash replica is nil
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists ddltiflash")
-	tk.MustExec("create table ddltiflash(z int)")
-	tk.MustExec("alter table ddltiflash set tiflash mode fast")
-	tk.MustQuery("show warnings").Check(
-		testkit.Rows("Note 0 TiFlash mode will take effect after at least one TiFlash replica is set for the table"))
-}
-
-// check for the condition that unsupport set tiflash mode
-func TestSetTiFlashModeUnsupported(t *testing.T) {
-	s, teardown := createTiFlashContext(t)
-	defer teardown()
-	tk := testkit.NewTestKit(t, s.store)
-
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists ddltiflash")
-	tk.MustExec("create temporary table ddltiflash(z int)")
-	// unsupport for temporary table
-	tk.MustGetErrMsg("alter table ddltiflash set tiflash mode fast", "[ddl:8200]TiDB doesn't support ALTER TABLE for local temporary table")
-	// unsupport for system table
-	tk.MustGetErrMsg("alter table information_schema.tiflash_replica set tiflash mode fast", "[ddl:8200]Unsupported ALTER TiFlash settings for system table and memory table")
 }
 
 // Truncate partition shall not block.
@@ -996,20 +947,69 @@ func TestTiFlashBatchUnsupported(t *testing.T) {
 	tk.MustGetErrCode("alter database information_schema set tiflash replica 1", 8200)
 }
 
+func TestTiFlashProgress(t *testing.T) {
+	s, teardown := createTiFlashContext(t)
+	s.tiflash.NotAvailable = true
+	defer teardown()
+	tk := testkit.NewTestKit(t, s.store)
+
+	integration.BeforeTest(t, integration.WithoutGoLeakDetection())
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	defer cluster.Terminate(t)
+
+	save := infosync.GetEtcdClient()
+	defer infosync.SetEtcdClient(save)
+	infosync.SetEtcdClient(cluster.Client(0))
+	tk.MustExec("create database tiflash_d")
+	tk.MustExec("create table tiflash_d.t(z int)")
+	tk.MustExec("alter table tiflash_d.t set tiflash replica 1")
+	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("tiflash_d"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	require.NotNil(t, tb)
+	mustExist := func(tid int64) {
+		pm, err := infosync.GetTiFlashTableSyncProgress(context.TODO())
+		require.NoError(t, err)
+		_, ok := pm[tb.Meta().ID]
+		require.True(t, ok)
+	}
+	mustAbsent := func(tid int64) {
+		pm, err := infosync.GetTiFlashTableSyncProgress(context.TODO())
+		require.NoError(t, err)
+		_, ok := pm[tb.Meta().ID]
+		require.False(t, ok)
+	}
+	_ = infosync.UpdateTiFlashTableSyncProgress(context.TODO(), tb.Meta().ID, 5.0)
+	mustExist(tb.Meta().ID)
+	_ = infosync.DeleteTiFlashTableSyncProgress(tb.Meta().ID)
+	mustAbsent(tb.Meta().ID)
+
+	_ = infosync.UpdateTiFlashTableSyncProgress(context.TODO(), tb.Meta().ID, 5.0)
+	tk.MustExec("truncate table tiflash_d.t")
+	mustAbsent(tb.Meta().ID)
+
+	tb, _ = s.dom.InfoSchema().TableByName(model.NewCIStr("tiflash_d"), model.NewCIStr("t"))
+	_ = infosync.UpdateTiFlashTableSyncProgress(context.TODO(), tb.Meta().ID, 5.0)
+	tk.MustExec("drop table tiflash_d.t")
+	mustAbsent(tb.Meta().ID)
+
+	time.Sleep(100 * time.Millisecond)
+}
+
 func TestTiFlashGroupIndexWhenStartup(t *testing.T) {
 	s, teardown := createTiFlashContext(t)
+	tiflash := s.tiflash
 	defer teardown()
 	_ = testkit.NewTestKit(t, s.store)
 	timeout := time.Now().Add(10 * time.Second)
 	errMsg := "time out"
 	for time.Now().Before(timeout) {
 		time.Sleep(100 * time.Millisecond)
-		if s.tiflash.GroupIndex != 0 {
+		if tiflash.GetRuleGroupIndex() != 0 {
 			errMsg = "invalid group index"
 			break
 		}
 	}
-	require.Equal(t, placement.RuleIndexTiFlash, s.tiflash.GroupIndex, errMsg)
-	require.Greater(t, s.tiflash.GroupIndex, placement.RuleIndexTable)
-	require.Greater(t, s.tiflash.GroupIndex, placement.RuleIndexPartition)
+	require.Equal(t, placement.RuleIndexTiFlash, tiflash.GetRuleGroupIndex(), errMsg)
+	require.Greater(t, tiflash.GetRuleGroupIndex(), placement.RuleIndexTable)
+	require.Greater(t, tiflash.GetRuleGroupIndex(), placement.RuleIndexPartition)
 }

@@ -53,6 +53,11 @@ func (p *StalenessTxnContextProvider) GetTxnInfoSchema() infoschema.InfoSchema {
 	return p.is
 }
 
+// SetTxnInfoSchema sets the information schema used by txn.
+func (p *StalenessTxnContextProvider) SetTxnInfoSchema(is infoschema.InfoSchema) {
+	p.is = is
+}
+
 // GetTxnScope returns the current txn scope
 func (p *StalenessTxnContextProvider) GetTxnScope() string {
 	return p.sctx.GetSessionVars().TxnCtx.TxnScope
@@ -124,7 +129,10 @@ func (p *StalenessTxnContextProvider) activateStaleTxn() error {
 			TxnScope:    txnScope,
 		},
 	}
-	txn.SetOption(kv.SnapInterceptor, temptable.SessionSnapshotInterceptor(p.sctx, is))
+
+	if interceptor := temptable.SessionSnapshotInterceptor(p.sctx, is); interceptor != nil {
+		txn.SetOption(kv.SnapInterceptor, interceptor)
+	}
 
 	p.is = is
 	err = p.sctx.GetSessionVars().SetSystemVar(variable.TiDBSnapshot, "")

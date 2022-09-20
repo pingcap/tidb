@@ -305,7 +305,7 @@ func (m *mockTiFlashTableInfo) String() string {
 // MockTiFlash mocks a TiFlash, with necessary Pd support.
 type MockTiFlash struct {
 	sync.Mutex
-	GroupIndex                  int
+	groupIndex                  int
 	StatusAddr                  string
 	StatusServer                *httptest.Server
 	SyncStatus                  map[int]mockTiFlashTableInfo
@@ -313,6 +313,7 @@ type MockTiFlash struct {
 	PdEnabled                   bool
 	TiflashDelay                time.Duration
 	StartTime                   time.Time
+	NotAvailable                bool
 }
 
 func (tiflash *MockTiFlash) setUpMockTiFlashHTTPServer() {
@@ -335,6 +336,10 @@ func (tiflash *MockTiFlash) setUpMockTiFlashHTTPServer() {
 			return
 		}
 		table, ok := tiflash.SyncStatus[tableID]
+		if tiflash.NotAvailable {
+			// No region is available, so the table is not available.
+			table.Regions = []int{}
+		}
 		if !ok {
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("0\n\n"))
@@ -364,6 +369,7 @@ func NewMockTiFlash() *MockTiFlash {
 		PdEnabled:                   true,
 		TiflashDelay:                0,
 		StartTime:                   time.Now(),
+		NotAvailable:                false,
 	}
 	tiflash.setUpMockTiFlashHTTPServer()
 	return tiflash
@@ -373,7 +379,7 @@ func NewMockTiFlash() *MockTiFlash {
 func (tiflash *MockTiFlash) HandleSetPlacementRule(rule placement.TiFlashRule) error {
 	tiflash.Lock()
 	defer tiflash.Unlock()
-	tiflash.GroupIndex = placement.RuleIndexTiFlash
+	tiflash.groupIndex = placement.RuleIndexTiFlash
 	if !tiflash.PdEnabled {
 		logutil.BgLogger().Info("pd server is manually disabled, just quit")
 		return nil
@@ -492,6 +498,20 @@ func (tiflash *MockTiFlash) HandleGetStoresStat() *helper.StoresStat {
 	}
 }
 
+// SetRuleGroupIndex sets the group index of tiflash
+func (tiflash *MockTiFlash) SetRuleGroupIndex(groupIndex int) {
+	tiflash.Lock()
+	defer tiflash.Unlock()
+	tiflash.groupIndex = groupIndex
+}
+
+// GetRuleGroupIndex gets the group index of tiflash
+func (tiflash *MockTiFlash) GetRuleGroupIndex() int {
+	tiflash.Lock()
+	defer tiflash.Unlock()
+	return tiflash.groupIndex
+}
+
 // Compare supposed rule, and we actually get from TableInfo
 func isRuleMatch(rule placement.TiFlashRule, startKey string, endKey string, count int, labels []string) bool {
 	// Compute startKey
@@ -598,7 +618,7 @@ func (m *mockTiFlashPlacementManager) SetTiFlashGroupConfig(_ context.Context) e
 	if m.tiflash == nil {
 		return nil
 	}
-	m.tiflash.GroupIndex = placement.RuleIndexTiFlash
+	m.tiflash.SetRuleGroupIndex(placement.RuleIndexTiFlash)
 	return nil
 }
 

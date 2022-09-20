@@ -17,7 +17,6 @@ package executor
 import (
 	"bytes"
 	"context"
-	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -76,6 +75,16 @@ type brieTaskProgress struct {
 // Inc implements glue.Progress
 func (p *brieTaskProgress) Inc() {
 	atomic.AddInt64(&p.current, 1)
+}
+
+// IncBy implements glue.Progress
+func (p *brieTaskProgress) IncBy(cnt int64) {
+	atomic.AddInt64(&p.current, cnt)
+}
+
+// GetCurrent implements glue.Progress
+func (p *brieTaskProgress) GetCurrent() int64 {
+	return atomic.LoadInt64(&p.current)
 }
 
 // Close implements glue.Progress
@@ -225,7 +234,7 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 		},
 	}
 
-	storageURL, err := url.Parse(s.Storage)
+	storageURL, err := storage.ParseRawURL(s.Storage)
 	if err != nil {
 		b.err = errors.Annotate(err, "invalid destination URL")
 		return nil

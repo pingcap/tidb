@@ -96,7 +96,7 @@ const (
 	ActionAlterNoCacheTable             ActionType = 59
 	ActionCreateTables                  ActionType = 60
 	ActionMultiSchemaChange             ActionType = 61
-	ActionSetTiFlashMode                ActionType = 62
+	ActionFlashbackCluster              ActionType = 62
 )
 
 var actionMap = map[ActionType]string{
@@ -157,7 +157,7 @@ var actionMap = map[ActionType]string{
 	ActionAlterNoCacheTable:             "alter table nocache",
 	ActionAlterTableStatsOptions:        "alter table statistics options",
 	ActionMultiSchemaChange:             "alter table multi-schema change",
-	ActionSetTiFlashMode:                "set tiflash mode",
+	ActionFlashbackCluster:              "flashback cluster",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
@@ -222,6 +222,34 @@ type DDLReorgMeta struct {
 	Warnings      map[errors.ErrorID]*terror.Error `json:"warnings"`
 	WarningsCount map[errors.ErrorID]int64         `json:"warnings_count"`
 	Location      *TimeZoneLocation                `json:"location"`
+	ReorgTp       ReorgType                        `json:"reorg_tp"`
+}
+
+// ReorgType indicates which process is used for the data reorganization.
+type ReorgType int8
+
+const (
+	// ReorgTypeNone means the backfill task is not started yet.
+	ReorgTypeNone ReorgType = iota
+	// ReorgTypeTxn means the index records are backfill with transactions.
+	// All the index KVs are written through the transaction interface.
+	// This is the original backfill implementation.
+	ReorgTypeTxn
+	// ReorgTypeLitMerge means the index records are backfill with lightning.
+	// The index KVs are encoded to SST files and imported to the storage directly.
+	// The incremental index KVs written by DML are redirected to a temporary index.
+	// After the backfill is finished, the temporary index records are merged back to the original index.
+	ReorgTypeLitMerge
+	// ReorgTypeTxnMerge means backfill with transactions and merge incremental changes.
+	// The backfill index KVs are written through the transaction interface.
+	// The incremental index KVs written by DML are redirected to a temporary index.
+	// After the backfill is finished, the temporary index records are merged back to the original index.
+	ReorgTypeTxnMerge
+)
+
+// NeedMergeProcess means the incremental changes need to be merged.
+func (tp ReorgType) NeedMergeProcess() bool {
+	return tp == ReorgTypeLitMerge || tp == ReorgTypeTxnMerge
 }
 
 // TimeZoneLocation represents a single time zone.
@@ -777,6 +805,10 @@ func (job *Job) IsRollbackable() bool {
 		return job.SchemaState == StateNone
 	case ActionMultiSchemaChange:
 		return job.MultiSchemaInfo.Revertible
+	case ActionFlashbackCluster:
+		if job.SchemaState == StateWriteReorganization {
+			return false
+		}
 	}
 	return true
 }

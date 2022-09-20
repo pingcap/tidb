@@ -17,6 +17,7 @@ package ddl
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"fmt"
 	"math"
 	"strconv"
@@ -243,10 +244,6 @@ func alterTablePartitionBundles(t *meta.Meta, tblInfo *model.TableInfo, addingDe
 	p.Definitions = append(tblInfo.Partition.Definitions, addingDefinitions...)
 	tblInfo.Partition = &p
 
-	if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Count > 0 && tableHasPlacementSettings(tblInfo) {
-		return nil, errors.Trace(dbterror.ErrIncompatibleTiFlashAndPlacement)
-	}
-
 	// bundle for table should be recomputed because it includes some default configs for partitions
 	tblBundle, err := placement.NewTableBundle(t, tblInfo)
 	if err != nil {
@@ -424,14 +421,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 	switch s.Tp {
 	case model.PartitionTypeRange:
 		if s.Sub == nil {
-			// Partition by range expression is enabled by default.
-			if s.ColumnNames == nil {
-				enable = true
-			}
-			// Partition by range columns and just one column.
-			if len(s.ColumnNames) == 1 {
-				enable = true
-			}
+			enable = true
 		}
 	case model.PartitionTypeHash:
 		// Partition by hash is enabled by default.
@@ -788,10 +778,11 @@ func generatePartitionDefinitionsFromInterval(ctx sessionctx.Context, partOption
 		Exprs: []ast.ExprNode{*partOptions.Interval.LastRangeEnd},
 	}
 	if len(tbInfo.Partition.Columns) > 0 {
-		if err := checkColumnsTypeAndValuesMatch(ctx, tbInfo, first.Exprs); err != nil {
+		colTypes := collectColumnsType(tbInfo)
+		if _, err := checkAndGetColumnsTypeAndValuesMatch(ctx, colTypes, first.Exprs); err != nil {
 			return err
 		}
-		if err := checkColumnsTypeAndValuesMatch(ctx, tbInfo, last.Exprs); err != nil {
+		if _, err := checkAndGetColumnsTypeAndValuesMatch(ctx, colTypes, last.Exprs); err != nil {
 			return err
 		}
 	} else {
@@ -1086,6 +1077,7 @@ func buildHashPartitionDefinitions(_ sessionctx.Context, defs []*ast.PartitionDe
 func buildListPartitionDefinitions(ctx sessionctx.Context, defs []*ast.PartitionDefinition, tbInfo *model.TableInfo) ([]model.PartitionDefinition, error) {
 	definitions := make([]model.PartitionDefinition, 0, len(defs))
 	exprChecker := newPartitionExprChecker(ctx, nil, checkPartitionExprAllowed)
+	colTypes := collectColumnsType(tbInfo)
 	for _, def := range defs {
 		if err := def.Clause.Validate(model.PartitionTypeList, len(tbInfo.Partition.Columns)); err != nil {
 			return nil, err
@@ -1093,7 +1085,9 @@ func buildListPartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partition
 		clause := def.Clause.(*ast.PartitionDefinitionClauseIn)
 		if len(tbInfo.Partition.Columns) > 0 {
 			for _, vs := range clause.Values {
-				if err := checkColumnsTypeAndValuesMatch(ctx, tbInfo, vs); err != nil {
+				// TODO: use the generated strings / normalized partition values
+				_, err := checkAndGetColumnsTypeAndValuesMatch(ctx, colTypes, vs)
+				if err != nil {
 					return nil, err
 				}
 			}
@@ -1154,13 +1148,16 @@ func collectColumnsType(tbInfo *model.TableInfo) []types.FieldType {
 func buildRangePartitionDefinitions(ctx sessionctx.Context, defs []*ast.PartitionDefinition, tbInfo *model.TableInfo) ([]model.PartitionDefinition, error) {
 	definitions := make([]model.PartitionDefinition, 0, len(defs))
 	exprChecker := newPartitionExprChecker(ctx, nil, checkPartitionExprAllowed)
+	colTypes := collectColumnsType(tbInfo)
 	for _, def := range defs {
 		if err := def.Clause.Validate(model.PartitionTypeRange, len(tbInfo.Partition.Columns)); err != nil {
 			return nil, err
 		}
 		clause := def.Clause.(*ast.PartitionDefinitionClauseLessThan)
+		var partValStrings []string
 		if len(tbInfo.Partition.Columns) > 0 {
-			if err := checkColumnsTypeAndValuesMatch(ctx, tbInfo, clause.Exprs); err != nil {
+			var err error
+			if partValStrings, err = checkAndGetColumnsTypeAndValuesMatch(ctx, colTypes, clause.Exprs); err != nil {
 				return nil, err
 			}
 		} else {
@@ -1188,14 +1185,31 @@ func buildRangePartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partitio
 
 		buf := new(bytes.Buffer)
 		// Range columns partitions support multi-column partitions.
-		for _, expr := range clause.Exprs {
+		for i, expr := range clause.Exprs {
 			expr.Accept(exprChecker)
 			if exprChecker.err != nil {
 				return nil, exprChecker.err
 			}
-			expr.Format(buf)
-			piDef.LessThan = append(piDef.LessThan, buf.String())
-			buf.Reset()
+			// If multi-column use new evaluated+normalized output, instead of just formatted expression
+			if len(partValStrings) > i && len(colTypes) > 1 {
+				partVal := partValStrings[i]
+				switch colTypes[i].EvalType() {
+				case types.ETInt:
+					// no wrapping
+				case types.ETDatetime, types.ETString, types.ETDuration:
+					if _, ok := clause.Exprs[i].(*ast.MaxValueExpr); !ok {
+						// Don't wrap MAXVALUE
+						partVal = driver.WrapInSingleQuotes(partVal)
+					}
+				default:
+					return nil, dbterror.ErrWrongTypeColumnValue.GenWithStackByArgs()
+				}
+				piDef.LessThan = append(piDef.LessThan, partVal)
+			} else {
+				expr.Format(buf)
+				piDef.LessThan = append(piDef.LessThan, buf.String())
+				buf.Reset()
+			}
 		}
 		definitions = append(definitions, piDef)
 	}
@@ -2174,7 +2188,7 @@ func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, inde
 		// For range expression and range columns
 		if len(pi.Columns) == 0 {
 			sql, paramList = buildCheckSQLForRangeExprPartition(pi, index, schemaName, tableName)
-		} else if len(pi.Columns) == 1 {
+		} else {
 			sql, paramList = buildCheckSQLForRangeColumnsPartition(pi, index, schemaName, tableName)
 		}
 	case model.PartitionTypeList:
@@ -2740,6 +2754,56 @@ func checkNoTimestampArgs(tbInfo *model.TableInfo, exprs ...ast.ExprNode) error 
 	return nil
 }
 
+// hexIfNonPrint checks if printable UTF-8 characters from a single quoted string,
+// if so, just returns the string
+// else returns a hex string of the binary string (i.e. actual encoding, not unicode code points!)
+func hexIfNonPrint(s string) string {
+	isPrint := true
+	// https://go.dev/blog/strings `for range` of string converts to runes!
+	for _, runeVal := range s {
+		if !strconv.IsPrint(runeVal) {
+			isPrint = false
+			break
+		}
+	}
+	if isPrint {
+		return s
+	}
+	// To avoid 'simple' MySQL accepted escape characters, to be showed as hex, just escape them
+	// \0 \b \n \r \t \Z, see https://dev.mysql.com/doc/refman/8.0/en/string-literals.html
+	isPrint = true
+	res := ""
+	for _, runeVal := range s {
+		switch runeVal {
+		case 0: // Null
+			res += `\0`
+		case 7: // Bell
+			res += `\b`
+		case '\t': // 9
+			res += `\t`
+		case '\n': // 10
+			res += `\n`
+		case '\r': // 13
+			res += `\r`
+		case 26: // ctrl-z / Substitute
+			res += `\Z`
+		default:
+			if strconv.IsPrint(runeVal) {
+				res += string(runeVal)
+			} else {
+				isPrint = false
+				break
+			}
+		}
+	}
+	if isPrint {
+		return res
+	}
+	// Not possible to create an easy interpreted MySQL string, return as hex string
+	// Can be converted to string in MySQL like: CAST(UNHEX('<hex string>') AS CHAR(255))
+	return "0x" + hex.EncodeToString([]byte(driver.UnwrapFromSingleQuotes(s)))
+}
+
 // AppendPartitionDefs generates a list of partition definitions needed for SHOW CREATE TABLE (in executor/show.go)
 // as well as needed for generating the ADD PARTITION query for INTERVAL partitioning of ALTER TABLE t LAST PARTITION
 // and generating the CREATE TABLE query from CREATE TABLE ... INTERVAL
@@ -2751,8 +2815,11 @@ func AppendPartitionDefs(partitionInfo *model.PartitionInfo, buf *bytes.Buffer, 
 		fmt.Fprintf(buf, "PARTITION %s", stringutil.Escape(def.Name.O, sqlMode))
 		// PartitionTypeHash does not have any VALUES definition
 		if partitionInfo.Type == model.PartitionTypeRange {
-			lessThans := strings.Join(def.LessThan, ",")
-			fmt.Fprintf(buf, " VALUES LESS THAN (%s)", lessThans)
+			lessThans := make([]string, len(def.LessThan))
+			for idx, v := range def.LessThan {
+				lessThans[idx] = hexIfNonPrint(v)
+			}
+			fmt.Fprintf(buf, " VALUES LESS THAN (%s)", strings.Join(lessThans, ","))
 		} else if partitionInfo.Type == model.PartitionTypeList {
 			values := bytes.NewBuffer(nil)
 			for j, inValues := range def.InValues {
@@ -2761,10 +2828,14 @@ func AppendPartitionDefs(partitionInfo *model.PartitionInfo, buf *bytes.Buffer, 
 				}
 				if len(inValues) > 1 {
 					values.WriteString("(")
-					values.WriteString(strings.Join(inValues, ","))
+					tmpVals := make([]string, len(inValues))
+					for idx, v := range inValues {
+						tmpVals[idx] = hexIfNonPrint(v)
+					}
+					values.WriteString(strings.Join(tmpVals, ","))
 					values.WriteString(")")
-				} else {
-					values.WriteString(strings.Join(inValues, ","))
+				} else if len(inValues) == 1 {
+					values.WriteString(hexIfNonPrint(inValues[0]))
 				}
 			}
 			fmt.Fprintf(buf, " VALUES IN (%s)", values.String())
