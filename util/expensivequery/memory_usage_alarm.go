@@ -16,10 +16,12 @@ package expensivequery
 
 import (
 	"fmt"
+	"github.com/pingcap/errors"
 	"os"
 	"path/filepath"
 	"runtime"
 	rpprof "runtime/pprof"
+	"strconv"
 	"strings"
 	"time"
 
@@ -48,7 +50,7 @@ type memoryUsageAlarm struct {
 }
 
 func (record *memoryUsageAlarm) initMemoryUsageAlarmRecord() {
-	record.memoryUsageAlarmRatio = 0.1
+	record.memoryUsageAlarmRatio = 0.01
 	//record.memoryUsageAlarmRatio = variable.MemoryUsageAlarmRatio.Load()
 	record.memoryUsageAlarmKeepFilesNum = variable.MemoryUsageAlarmKeepFilesNum.Load()
 	if quota := config.GetGlobalConfig().Performance.ServerMemoryQuota; quota != 0 {
@@ -110,19 +112,33 @@ func (record *memoryUsageAlarm) alarm4ExcessiveMemUsage(sm util.SessionManager) 
 	}
 
 	// TODO: Consider NextGC to record SQLs.
-	if float64(memoryUsage) > float64(record.serverMemoryQuota)*record.memoryUsageAlarmRatio {
-		// At least 60 seconds between two recordings that memory usage is less than threshold (default 70% system memory).
-		// If the memory is still exceeded, only records once.
-		// If the memory used ratio recorded this time is 0.1 higher than last time, we will force record this time.
-
-		interval := time.Since(record.lastCheckTime)
-		memDiff := int64(memoryUsage) - int64(record.lastRecordMemUsed)
-		if interval > 5*time.Second || float64(memDiff) > 0.1*float64(record.serverMemoryQuota) {
-			record.lastCheckTime = time.Now()
-			record.lastRecordMemUsed = memoryUsage
-			record.doRecord(memoryUsage, instanceStats.HeapAlloc, sm)
-		}
+	if record.needRecord(memoryUsage) {
+		record.lastCheckTime = time.Now()
+		record.lastRecordMemUsed = memoryUsage
+		record.doRecord(memoryUsage, instanceStats.HeapAlloc, sm)
+		record.tryRemoveNoNeedRecords()
 	}
+}
+
+func (record *memoryUsageAlarm) needRecord(memoryUsage uint64) bool {
+	// At least 60 seconds between two recordings that memory usage is less than threshold (default 70% system memory).
+	// If the memory is still exceeded, only records once.
+	// If the memory used ratio recorded this time is 0.1 higher than last time, we will force record this time.
+	if float64(memoryUsage) <= float64(record.serverMemoryQuota)*record.memoryUsageAlarmRatio {
+		return false
+	}
+
+	interval := time.Since(record.lastCheckTime)
+	memDiff := int64(memoryUsage) - int64(record.lastRecordMemUsed)
+	if interval > 60*time.Second {
+		logutil.BgLogger().Warn("Record Memory Infomation.", zap.String("record time", time.Now().String()), zap.String("last record time", record.lastCheckTime.String()))
+		return true
+	}
+	if float64(memDiff) > 0.1*float64(record.serverMemoryQuota) {
+		logutil.BgLogger().Warn("Record Memory Infomation.", zap.String("record memory", strconv.FormatUint(memoryUsage, 10)), zap.String("last record memory", strconv.FormatUint(record.lastRecordMemUsed, 10)))
+		return true
+	}
+	return false
 }
 
 func (record *memoryUsageAlarm) doRecord(memUsage uint64, instanceMemoryUsage uint64, sm util.SessionManager) {
@@ -143,23 +159,24 @@ func (record *memoryUsageAlarm) doRecord(memUsage uint64, instanceMemoryUsage ui
 	if record.err = disk.CheckAndCreateDir(recordDir); record.err != nil {
 		return
 	}
+	record.lastRecordDirName = append(record.lastRecordDirName, recordDir)
 	if record.err = record.recordSQL(sm, recordDir); record.err != nil {
 		return
 	}
 	if record.err = record.recordProfile(recordDir); record.err != nil {
 		return
 	}
-	record.lastRecordDirName = append(record.lastRecordDirName, recordDir)
-	tryRemove := func(filename *[]string) {
-		for len(*filename) > int(record.memoryUsageAlarmKeepFilesNum) {
-			err := os.RemoveAll((*filename)[0])
-			if err != nil {
-				logutil.BgLogger().Error("remove temp files failed", zap.Error(err))
-			}
-			*filename = (*filename)[1:]
+}
+
+func (record *memoryUsageAlarm) tryRemoveNoNeedRecords() {
+	filename := &record.lastRecordDirName
+	for len(*filename) > int(record.memoryUsageAlarmKeepFilesNum) {
+		err := os.RemoveAll((*filename)[0])
+		if err != nil {
+			logutil.BgLogger().Error("remove temp files failed", zap.Error(err))
 		}
+		*filename = (*filename)[1:]
 	}
-	tryRemove(&record.lastRecordDirName)
 }
 
 func getRelevantSystemVariableBuf() string {
@@ -183,6 +200,10 @@ func getCurrentAnalyzePlan(info *util.ProcessInfo) string {
 }
 
 func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager, recordDir string) error {
+	if sm == nil {
+		logutil.BgLogger().Error("session manager is nil!")
+		return errors.New("session manager is nil!")
+	}
 	processInfo := sm.ShowProcessList()
 	pinfo := make([]*util.ProcessInfo, 0, len(processInfo))
 	for _, info := range processInfo {
@@ -254,7 +275,7 @@ type item struct {
 	Debug int
 }
 
-func (record *memoryUsageAlarm) recordProfile(recordDir string) error {
+func (_ *memoryUsageAlarm) recordProfile(recordDir string) error {
 	items := []item{
 		{Name: "heap"},
 		{Name: "goroutine", Debug: 2},
