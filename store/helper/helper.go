@@ -1004,9 +1004,9 @@ func (h *Helper) GetPDRegionStats(tableID int64, stats *PDRegionStats, noIndexSt
 	if resp.StatusCode != http.StatusOK {
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
-			return errors.Errorf("GetPDRegionStats %d, %s", resp.StatusCode, err)
+			return errors.Errorf("GetPDRegionStats %d: %s", resp.StatusCode, err)
 		}
-		return errors.Errorf("GetPDRegionStats %d, %s", resp.StatusCode, string(body))
+		return errors.Errorf("GetPDRegionStats %d: %s", resp.StatusCode, string(body))
 	}
 	dec := json.NewDecoder(resp.Body)
 
