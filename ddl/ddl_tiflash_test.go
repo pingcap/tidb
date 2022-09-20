@@ -327,9 +327,9 @@ func TestTiFlashReplicaPartitionTableBlock(t *testing.T) {
 
 	lessThan := "40"
 	// Stop loop
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/BeforePollTiFlashReplicaStatusLoop", `return`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/BeforeRefreshTiFlashTickeLoop", `return`))
 	defer func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/ddl/BeforePollTiFlashReplicaStatusLoop")
+		_ = failpoint.Disable("github.com/pingcap/tidb/ddl/BeforeRefreshTiFlashTickeLoop")
 	}()
 
 	tk.MustExec(fmt.Sprintf("ALTER TABLE ddltiflash ADD PARTITION (PARTITION pn VALUES LESS THAN (%v))", lessThan))

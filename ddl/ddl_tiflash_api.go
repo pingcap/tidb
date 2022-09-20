@@ -80,11 +80,6 @@ func NewPollTiFlashBackoffElement() *PollTiFlashBackoffElement {
 	}
 }
 
-type schemaTableID struct {
-	tableID      int64
-	replicaCount uint64
-}
-
 // PollTiFlashBackoffContext is a collection of all backoff states.
 type PollTiFlashBackoffContext struct {
 	MinThreshold TiFlashTick
@@ -120,15 +115,15 @@ func NewPollTiFlashBackoffContext(MinThreshold, MaxThreshold TiFlashTick, Capaci
 
 // TiFlashManagementContext is the context for TiFlash Replica Management
 type TiFlashManagementContext struct {
-	TiFlashStores             map[int64]helper.StoreStat
-	UpdateTiFlashStoreCounter uint64
-	PollCounter               uint64
-	ProgressCache             map[int64]string
-	Backoff                   *PollTiFlashBackoffContext
-	AvailableTables           *list.List
+	TiFlashStores map[int64]helper.StoreStat
+	PollCounter   uint64
+	ProgressCache map[int64]string
+	Backoff       *PollTiFlashBackoffContext
+	// tables waiting for updating progress after become available.
+	UpdatingProgressTables *list.List
 }
 
-// AvailableTableID is the table id info of available table for wating to update TiFlash replica progress.
+// AvailableTableID is the table id info of available table for waiting to update TiFlash replica progress.
 type AvailableTableID struct {
 	ID          int64
 	IsPartition bool
@@ -215,12 +210,11 @@ func NewTiFlashManagementContext() (*TiFlashManagementContext, error) {
 		return nil, err
 	}
 	return &TiFlashManagementContext{
-		UpdateTiFlashStoreCounter: 0,
-		PollCounter:               0,
-		TiFlashStores:             make(map[int64]helper.StoreStat),
-		ProgressCache:             make(map[int64]string),
-		Backoff:                   c,
-		AvailableTables:           list.New(),
+		PollCounter:            0,
+		TiFlashStores:          make(map[int64]helper.StoreStat),
+		ProgressCache:          make(map[int64]string),
+		Backoff:                c,
+		UpdatingProgressTables: list.New(),
 	}, nil
 }
 
@@ -382,6 +376,7 @@ func getTiFlashPeerWithoutLagCount(pollTiFlashContext *TiFlashManagementContext,
 	return flashPeerCount, nil
 }
 
+// getTiFlashTableSyncProgress return truncated string to avoid float64 comparison.
 func getTiFlashTableSyncProgress(pollTiFlashContext *TiFlashManagementContext, tableID int64, replicaCount uint64) (string, error) {
 	var stats helper.PDRegionStats
 	if err := infosync.GetTiFlashPDRegionRecordStats(context.Background(), tableID, &stats); err != nil {
@@ -398,7 +393,7 @@ func getTiFlashTableSyncProgress(pollTiFlashContext *TiFlashManagementContext, t
 		return "0", errors.Trace(err)
 	}
 	progress := float64(tiflashPeerCount) / float64(regionCount*int(replicaCount))
-	if tiflashPeerCount > regionCount*int(replicaCount) { // when pd do balance
+	if progress > 1 { // when pd do balance
 		logutil.BgLogger().Debug("TiFlash peer count > pd peer count, maybe doing balance.",
 			zap.Int64("tableID", tableID), zap.Int("tiflashPeerCount", tiflashPeerCount), zap.Int("regionCount", regionCount), zap.Uint64("replicaCount", replicaCount))
 		progress = 1
@@ -411,7 +406,7 @@ func pollAvailableTableProgress(schemas infoschema.InfoSchema, ctx sessionctx.Co
 	failpoint.Inject("PollAvailableTableProgressMaxCount", func(val failpoint.Value) {
 		pollMaxCount = uint64(val.(int))
 	})
-	for element := pollTiFlashContext.AvailableTables.Front(); element != nil && pollMaxCount > 0; pollMaxCount-- {
+	for element := pollTiFlashContext.UpdatingProgressTables.Front(); element != nil && pollMaxCount > 0; pollMaxCount-- {
 		availableTableID := element.Value.(AvailableTableID)
 		var table table.Table
 		if availableTableID.IsPartition {
@@ -420,7 +415,7 @@ func pollAvailableTableProgress(schemas infoschema.InfoSchema, ctx sessionctx.Co
 				logutil.BgLogger().Info("get table by partition failed, may be dropped or truncated",
 					zap.Int64("partitionID", availableTableID.ID),
 				)
-				pollTiFlashContext.AvailableTables.Remove(element)
+				pollTiFlashContext.UpdatingProgressTables.Remove(element)
 				element = element.Next()
 				continue
 			}
@@ -431,7 +426,7 @@ func pollAvailableTableProgress(schemas infoschema.InfoSchema, ctx sessionctx.Co
 				logutil.BgLogger().Info("get table id failed, may be dropped or truncated",
 					zap.Int64("tableID", availableTableID.ID),
 				)
-				pollTiFlashContext.AvailableTables.Remove(element)
+				pollTiFlashContext.UpdatingProgressTables.Remove(element)
 				element = element.Next()
 				continue
 			}
@@ -443,7 +438,7 @@ func pollAvailableTableProgress(schemas infoschema.InfoSchema, ctx sessionctx.Co
 				zap.Int64("tableID or partitionID", availableTableID.ID),
 				zap.Bool("IsPartition", availableTableID.IsPartition),
 			)
-			pollTiFlashContext.AvailableTables.Remove(element)
+			pollTiFlashContext.UpdatingProgressTables.Remove(element)
 			element = element.Next()
 			continue
 		}
@@ -469,36 +464,28 @@ func pollAvailableTableProgress(schemas infoschema.InfoSchema, ctx sessionctx.Co
 			}
 			pollTiFlashContext.ProgressCache[availableTableID.ID] = progress
 		}
-		pollTiFlashContext.AvailableTables.Remove(element)
+		pollTiFlashContext.UpdatingProgressTables.Remove(element)
 		element = element.Next()
 	}
 }
 
-func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContext *TiFlashManagementContext) error {
-	defer func() {
-		failpoint.Inject("PollTiFlashReplicaStatusCleanProgressCache", func() {
-			pollTiFlashContext.PollCounter = PollCleanProgressCacheInterval
-		})
-		pollTiFlashContext.PollCounter++
-		// 10min clean progress cache to avoid data race
-		if pollTiFlashContext.PollCounter > PollCleanProgressCacheInterval {
-			for k := range pollTiFlashContext.ProgressCache {
-				delete(pollTiFlashContext.ProgressCache, k)
-			}
-			pollTiFlashContext.PollCounter = 0
-		}
-	}()
-
-	updateTiFlash := pollTiFlashContext.UpdateTiFlashStoreCounter%UpdateTiFlashStoreTick.Load() == 0
-	if updateTiFlash {
+func (d *ddl) refreshTiFlashTicker(ctx sessionctx.Context, pollTiFlashContext *TiFlashManagementContext) error {
+	if pollTiFlashContext.PollCounter%UpdateTiFlashStoreTick.Load() == 0 {
 		if err := updateTiFlashStores(pollTiFlashContext); err != nil {
 			// If we failed to get from pd, retry everytime.
-			pollTiFlashContext.UpdateTiFlashStoreCounter = 0
+			pollTiFlashContext.PollCounter = 0
 			return err
 		}
 	}
-	pollTiFlashContext.UpdateTiFlashStoreCounter += 1
-	pollTiFlashContext.UpdateTiFlashStoreCounter %= UpdateTiFlashStoreTick.Load()
+
+	failpoint.Inject("PollTiFlashReplicaStatusCleanProgressCache", func() {
+		pollTiFlashContext.PollCounter = PollCleanProgressCacheInterval
+	})
+	// 10min clean progress cache to avoid data race
+	if pollTiFlashContext.PollCounter > 0 && pollTiFlashContext.PollCounter%PollCleanProgressCacheInterval == 0 {
+		pollTiFlashContext.ProgressCache = make(map[int64]string)
+	}
+	pollTiFlashContext.PollCounter++
 
 	// Start to process every table.
 	schema := d.GetInfoSchemaWithInterceptor(ctx)
@@ -520,7 +507,7 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 	}
 
 	needPushPending := false
-	if pollTiFlashContext.AvailableTables.Len() == 0 {
+	if pollTiFlashContext.UpdatingProgressTables.Len() == 0 {
 		needPushPending = true
 	}
 
@@ -586,7 +573,7 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 			}
 		} else {
 			if needPushPending {
-				pollTiFlashContext.AvailableTables.PushFront(AvailableTableID{tb.ID, tb.IsPartition})
+				pollTiFlashContext.UpdatingProgressTables.PushFront(AvailableTableID{tb.ID, tb.IsPartition})
 			}
 		}
 	}
@@ -714,10 +701,10 @@ func (d *ddl) PollTiFlashRoutine() {
 		}
 		if d.IsTiFlashPollEnabled() {
 			if d.sessPool == nil {
-				logutil.BgLogger().Error("failed to get sessionPool for pollTiFlashReplicaStatus")
+				logutil.BgLogger().Error("failed to get sessionPool for refreshTiFlashTicker")
 				return
 			}
-			failpoint.Inject("BeforePollTiFlashReplicaStatusLoop", func() {
+			failpoint.Inject("BeforeRefreshTiFlashTickeLoop", func() {
 				failpoint.Continue()
 			})
 
@@ -735,19 +722,17 @@ func (d *ddl) PollTiFlashRoutine() {
 			sctx, err := d.sessPool.get()
 			if err == nil {
 				if d.ownerManager.IsOwner() {
-					err := d.pollTiFlashReplicaStatus(sctx, pollTiflashContext)
+					err := d.refreshTiFlashTicker(sctx, pollTiflashContext)
 					if err != nil {
 						switch err.(type) {
 						case *infosync.MockTiFlashError:
 							// If we have not set up MockTiFlash instance, for those tests without TiFlash, just suppress.
 						default:
-							logutil.BgLogger().Warn("pollTiFlashReplicaStatus returns error", zap.Error(err))
+							logutil.BgLogger().Warn("refreshTiFlashTicker returns error", zap.Error(err))
 						}
 					}
 				} else {
-					for k := range pollTiflashContext.ProgressCache {
-						delete(pollTiflashContext.ProgressCache, k)
-					}
+					pollTiflashContext.ProgressCache = make(map[int64]string)
 				}
 				d.sessPool.put(sctx)
 			} else {
