@@ -24,6 +24,7 @@ import (
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
+	"go.opencensus.io/stats/view"
 	"go.uber.org/zap"
 )
 
@@ -121,6 +122,7 @@ func (mock *Cluster) Stop() {
 	if mock.HttpServer != nil {
 		_ = mock.HttpServer.Close()
 	}
+	view.Stop()
 }
 
 type configOverrider func(*mysql.Config)

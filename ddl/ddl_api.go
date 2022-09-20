@@ -4045,10 +4045,6 @@ func checkExchangePartition(pt *model.TableInfo, nt *model.TableInfo) error {
 }
 
 func (d *ddl) ExchangeTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
-	if !ctx.GetSessionVars().TiDBEnableExchangePartition {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrExchangePartitionDisabled)
-		return nil
-	}
 	ptSchema, pt, err := d.getSchemaAndTableByIdent(ctx, ident)
 	if err != nil {
 		return errors.Trace(err)
