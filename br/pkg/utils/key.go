@@ -150,6 +150,16 @@ func CloneSlice[T any](s []T) []T {
 	return r
 }
 
+// MapSlice returns a slice contains the elements
+// applying the function to all elements in the input slice.
+func MapSlice[T, R any](s []T, f func(t T) R) []R {
+	r := make([]R, 0, len(s))
+	for _, i := range s {
+		r = append(r, f(i))
+	}
+	return r
+}
+
 // IntersectAll returns the intersect of two set of segments.
 // OWNERSHIP INFORMATION:
 // For running faster, this function would MUTATE the input slice. (i.e. takes its ownership.)

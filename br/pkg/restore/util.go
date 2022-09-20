@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 
@@ -483,6 +484,9 @@ func SplitRanges(
 	isRawKv bool,
 ) error {
 	splitter := NewRegionSplitter(split.NewSplitClient(client.GetPDClient(), client.GetTLSConfig(), isRawKv))
+	if _, ok := os.LookupEnv("br-use-split-and-scatter-regions-api"); ok {
+		splitter.TryWithAtomicSplitScatterAPI()
+	}
 
 	return splitter.Split(ctx, ranges, rewriteRules, isRawKv, func(keys [][]byte) {
 		for range keys {

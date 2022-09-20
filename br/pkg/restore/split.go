@@ -21,13 +21,15 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
 // RegionSplitter is a executor of region split by rules.
 type RegionSplitter struct {
-	client split.SplitClient
+	client                       split.SplitClient
+	tryWithAtomicSplitScatterAPI bool
 }
 
 // NewRegionSplitter returns a new RegionSplitter.
@@ -67,6 +69,12 @@ func (a *splitArgs) GetSplitKeys() [][]byte {
 	for _, r := range a.ranges {
 		result = append(result, r.EndKey)
 	}
+	// If we are using new PD API, we cannot detailly control whether to scatter a region.
+	// For preventing scattering regions with data, we'd better make regions from different table
+	// isolated.
+	for _, r := range a.rewriteRules.Data {
+		result = append(result, r.NewKeyPrefix)
+	}
 	return result
 }
 
@@ -96,6 +104,10 @@ func (a *splitArgs) GetRange() (min, max []byte) {
 	min = codec.EncodeBytesExt(nil, a.ranges[0].StartKey, a.isRawKv)
 	max = codec.EncodeBytesExt(nil, a.ranges[len(a.ranges)-1].EndKey, a.isRawKv)
 	return
+}
+
+func (rs *RegionSplitter) TryWithAtomicSplitScatterAPI() {
+	rs.tryWithAtomicSplitScatterAPI = true
 }
 
 // legacySendSplitAndCreateScatterOperator sends the split requests defined by the splitArgs to TiKV cluster and
@@ -264,13 +276,21 @@ func (rs *RegionSplitter) Split(
 
 func (rs *RegionSplitter) dispatchSplitAndScatter(ctx context.Context, args *splitArgs) (newRegions []uint64, err error) {
 	keys := args.GetSplitKeys()
-	newRegions, err = rs.client.SplitAndScatterOverKeys(ctx, keys)
-	if err == nil {
-		args.onSplit(keys)
-		return newRegions, nil
+	if log.GetLevel() <= zapcore.DebugLevel {
+		for _, key := range keys {
+			log.Debug("spliting over key", logutil.Key("key", key))
+		}
+	}
+	if rs.tryWithAtomicSplitScatterAPI {
+		newRegions, err = rs.client.SplitAndScatterOverKeys(ctx, keys)
+		if err == nil {
+			args.onSplit(keys)
+			return newRegions, nil
+		}
 	}
 	// The endpoint doesn't implements atomic split & scatter, let's retry the legacy way.
-	if status.Code(errors.Cause(err)) == codes.Unimplemented {
+	if !rs.tryWithAtomicSplitScatterAPI || status.Code(errors.Cause(err)) == codes.Unimplemented {
+		log.Info("failed to call split and scatter, rolling back to legacy way", logutil.ShortError(err))
 		newRegions, err = rs.legacySplitAndScatter(ctx, args)
 	}
 	return

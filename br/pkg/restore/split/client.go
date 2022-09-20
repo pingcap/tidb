@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/httputil"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/store/pdtypes"
+	"github.com/pingcap/tidb/util/codec"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -64,6 +65,7 @@ type SplitClient interface {
 	ScatterRegions(ctx context.Context, regionInfo []*RegionInfo) error
 	// SplitAndScatterOverKeys split at the keys and scatter over them.
 	// returning the newly created region IDs.
+	// The input key should be original keys (not encoded.)
 	SplitAndScatterOverKeys(ctx context.Context, keys [][]byte) ([]uint64, error)
 	// GetOperator gets the status of operator of the specified region.
 	GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error)
@@ -109,17 +111,22 @@ func NewSplitClient(client pd.Client, tlsConf *tls.Config, isRawKv bool) SplitCl
 
 // SplitAndScatterOverKeys split & scatter over the keys.
 func (c *pdClient) SplitAndScatterOverKeys(ctx context.Context, keys [][]byte) ([]uint64, error) {
-	resp, err := c.client.SplitAndScatterRegions(ctx, keys)
+	encodedKeys := make([][]byte, 0, len(keys))
+	for _, key := range keys {
+		encodedKeys = append(encodedKeys, codec.EncodeBytes(nil, key))
+	}
+	log.Info("split & scattering over keys", logutil.Keys(encodedKeys))
+	resp, err := c.client.SplitAndScatterRegions(ctx, encodedKeys, pd.WithRetry(16))
 	if err != nil {
 		return nil, err
 	}
-	if resp.ScatterFinishedPercentage < 100 || resp.SplitFinishedPercentage < 100 {
+	if resp.GetScatterFinishedPercentage() < 100 || resp.GetSplitFinishedPercentage() < 100 {
 		log.Warn("Split and scattter partially finished.",
-			zap.Uint64("scatter%", resp.ScatterFinishedPercentage),
-			zap.Uint64("split%", resp.SplitFinishedPercentage),
+			zap.Uint64("scatter%", resp.GetScatterFinishedPercentage()),
+			zap.Uint64("split%", resp.GetSplitFinishedPercentage()),
 		)
 	}
-	return resp.RegionsId, nil
+	return resp.GetRegionsId(), nil
 }
 
 func (c *pdClient) needScatter(ctx context.Context) bool {
