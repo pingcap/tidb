@@ -3017,7 +3017,7 @@ func (b *builtinAddSubDateDurationAnySig) vectorized() bool {
 
 func updateFromUnixTimePrecision(expr *Expression) {
 	x, err := (*expr).(*ScalarFunction)
-	if(err){
-	  FixUnixtimePrecision(x)
+	if err {
+		FixUnixtimePrecision(x)
 	}
 }
