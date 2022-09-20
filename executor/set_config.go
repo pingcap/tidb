@@ -65,7 +65,7 @@ func (s *SetConfigExec) Open(ctx context.Context) error {
 
 	if s.p.Type == "tiflash" {
 		if !strings.HasPrefix(s.p.Name, "raftstore-proxy.") {
-			return errors.Errorf("This command can only change config items begin with 'raftstore-proxy'. Other TiFlash config items will take effect immediately when values in the config file is changed.")
+			return errors.Errorf("This command can only change config items begin with 'raftstore-proxy'. For other TiFlash config items, please update the config file directly. Your change to the config file will take effect immediately without a restart.")
 		}
 		s.p.Name = strings.TrimPrefix(s.p.Name, "raftstore-proxy.")
 	}
