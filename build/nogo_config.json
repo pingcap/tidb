@@ -206,7 +206,6 @@
       "ddl/column.go": "ddl/column.go",
       "ddl/index.go": "ddl/index.go",
       "ddl/ingest/": "ddl/ingest/",
-      "ddl/lightning/": "ddl/lightning/",
       "util/cgroup": "util/cgroup code",
       "server/conn.go": "server/conn.go",
       "server/conn_stmt.go": "server/conn_stmt.go",
