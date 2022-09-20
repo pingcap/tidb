@@ -63,6 +63,7 @@ go_library(
         "//util/mathutil",
         "//util/mock",
         "//util/regexpr-router",
+        "//util/set",
         "@com_github_coreos_go_semver//semver",
         "@com_github_docker_go_units//:go-units",
         "@com_github_go_sql_driver_mysql//:mysql",

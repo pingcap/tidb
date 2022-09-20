@@ -360,28 +360,26 @@ func TestFilterColumns(t *testing.T) {
 			[]string{},
 		},
 		{
-			[]string{"a", "b"},
-			mydump.ExtendColumnData{
-				[]string{"c_source", "c_schema", "c_table"},
-				[]string{"01", "1", "1"},
+			columnNames: []string{"a", "b"},
+			extendData: mydump.ExtendColumnData{
+				Columns: []string{"c_source", "c_schema", "c_table"},
+				Values:  []string{"01", "1", "1"},
 			},
-			nil,
-			"CREATE TABLE t (a int primary key, b int, c_source varchar(11), c_schema varchar(11), c_table varchar(11))",
-			[]string{"a", "b", "c_source", "c_schema", "c_table"},
-			[]string{"c_source", "c_schema", "c_table"},
-			[]string{"01", "1", "1"},
+			createTableSql:             "CREATE TABLE t (a int primary key, b int, c_source varchar(11), c_schema varchar(11), c_table varchar(11))",
+			expectedFilteredColumns:    []string{"a", "b", "c_source", "c_schema", "c_table"},
+			expectedFilteredExtendCols: []string{"c_source", "c_schema", "c_table"},
+			expectedExtendValues:       []string{"01", "1", "1"},
 		},
 		{
-			[]string{},
-			mydump.ExtendColumnData{
-				[]string{"c_source", "c_schema", "c_table"},
-				[]string{"01", "1", "1"},
+			columnNames: []string{},
+			extendData: mydump.ExtendColumnData{
+				Columns: []string{"c_source", "c_schema", "c_table"},
+				Values:  []string{"01", "1", "1"},
 			},
-			nil,
-			"CREATE TABLE t (a int primary key, b int, c_source varchar(11), c_schema varchar(11), c_table varchar(11))",
-			[]string{"a", "b", "c_source", "c_schema", "c_table"},
-			[]string{"c_source", "c_schema", "c_table"},
-			[]string{"01", "1", "1"},
+			createTableSql:             "CREATE TABLE t (a int primary key, b int, c_source varchar(11), c_schema varchar(11), c_table varchar(11))",
+			expectedFilteredColumns:    []string{"a", "b", "c_source", "c_schema", "c_table"},
+			expectedFilteredExtendCols: []string{"c_source", "c_schema", "c_table"},
+			expectedExtendValues:       []string{"01", "1", "1"},
 		},
 		{
 			[]string{"a", "b"},
@@ -402,28 +400,16 @@ func TestFilterColumns(t *testing.T) {
 			[]string{},
 		},
 		{
-			[]string{"a", "b"},
-			mydump.ExtendColumnData{
-				[]string{"c_source", "c_schema", "c_table"},
-				[]string{"01", "1", "1"},
+			columnNames: []string{"a", "b"},
+			extendData: mydump.ExtendColumnData{
+				Columns: []string{"c_source", "c_schema", "c_table"},
+				Values:  []string{"01", "1", "1"},
 			},
-			map[string]struct{}{"a": {}},
-			"CREATE TABLE t (a int primary key, b int, c_source varchar(11), c_schema varchar(11), c_table varchar(11))",
-			[]string{"b", "c_source", "c_schema", "c_table"},
-			[]string{"c_source", "c_schema", "c_table"},
-			[]string{"01", "1", "1"},
-		},
-		{
-			[]string{"a", "b"},
-			mydump.ExtendColumnData{
-				[]string{"c_source", "c_schema", "c_table"},
-				[]string{"01", "1", "1"},
-			},
-			map[string]struct{}{"a": {}, "c_source": {}},
-			"CREATE TABLE t (a int primary key, b int, c_source varchar(11), c_schema varchar(11), c_table varchar(11))",
-			[]string{"b", "c_schema", "c_table"},
-			[]string{"c_schema", "c_table"},
-			[]string{"1", "1"},
+			ignoreColsMap:              map[string]struct{}{"a": {}},
+			createTableSql:             "CREATE TABLE t (a int primary key, b int, c_source varchar(11), c_schema varchar(11), c_table varchar(11))",
+			expectedFilteredColumns:    []string{"b", "c_source", "c_schema", "c_table"},
+			expectedFilteredExtendCols: []string{"c_source", "c_schema", "c_table"},
+			expectedExtendValues:       []string{"01", "1", "1"},
 		},
 	}
 	for i, tc := range testCases {

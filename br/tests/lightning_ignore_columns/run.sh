@@ -10,7 +10,7 @@ for BACKEND in tidb local; do
   run_sql 'DROP DATABASE IF EXISTS routes_b;'
 
   run_sql 'CREATE DATABASE routes_b;'
-  run_sql 'CREATE TABLE routes_b.u (a int primary key, c int, c_schema varchar(11) not null, c_table varchar(11) not null);'
+  run_sql 'CREATE TABLE routes_b.u (a int primary key, b int, c int, c_source varchar(11), c_schema varchar(11) not null, c_table varchar(11) not null);'
 
   run_lightning --config "tests/$TEST_NAME/config.toml" --backend $BACKEND
   echo Import using $BACKEND finished
@@ -18,7 +18,8 @@ for BACKEND in tidb local; do
   run_sql 'SELECT count(1), sum(a), sum(c) FROM routes_b.u;'
   check_contains 'count(1): 4'
   check_contains 'sum(a): 11'
-  check_contains 'sum(c): 0'
+  check_contains 'sum(b): NULL'
+  check_contains 'sum(c): NULL'
 
   run_sql 'SELECT count(1), sum(a), sum(b), sum(c) FROM routes_a1.s1;'
   check_contains 'count(1): 1'
@@ -36,11 +37,8 @@ for BACKEND in tidb local; do
   check_contains 'count(1): 3'
   run_sql 'SELECT count(1) FROM routes_b.u where c_schema = "1";'
   check_contains 'count(1): 1'
-  run_sql 'SELECT count(1) FROM routes_b.u'
+  run_sql 'SELECT count(1) FROM routes_b.u where c_source = "01";'
   check_contains 'count(1): 4'
-
-  run_sql 'SHOW FIELDS FROM routes_b.u'
-  check_not_contains "c_source"
 
   run_sql 'SHOW TABLES IN routes_a1;'
   check_not_contains 'Tables_in_routes_a1: t2'

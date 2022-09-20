@@ -2477,21 +2477,18 @@ func saveCheckpoint(rc *Controller, t *TableRestore, engineID int32, chunk *chec
 // if len(columnsNames) > 0, it means users has specified each field definition, we can just use users
 func filterColumns(columnNames []string, extendData mydump.ExtendColumnData, ignoreColsMap map[string]struct{}, tableInfo *model.TableInfo) ([]string, []string, []types.Datum) {
 	extendCols, extendVals := extendData.Columns, extendData.Values
-	extendColsSet := make(set.StringSet)
-	for _, extendCol := range extendCols {
-		extendColsSet.Insert(extendCol)
-	}
-	for c := range ignoreColsMap {
-		delete(extendColsSet, c)
-	}
+	extendColsSet := set.NewStringSet(extendCols...)
 	filteredColumns := make([]string, 0, len(columnNames))
 	if len(columnNames) > 0 {
-		for _, c := range columnNames {
-			_, ok := ignoreColsMap[c]
-			if !ok {
-				delete(extendColsSet, c)
-				filteredColumns = append(filteredColumns, c)
+		if len(ignoreColsMap) > 0 {
+			for _, c := range columnNames {
+				_, ok := ignoreColsMap[c]
+				if !ok {
+					filteredColumns = append(filteredColumns, c)
+				}
 			}
+		} else {
+			filteredColumns = columnNames
 		}
 	} else if len(ignoreColsMap) > 0 || len(extendCols) > 0 {
 		// init column names by table schema

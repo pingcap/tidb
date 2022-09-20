@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/engine"
 	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/util/set"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 	"golang.org/x/sync/errgroup"
@@ -749,23 +750,73 @@ func (ci *schemaCheckItem) SchemaIsValid(ctx context.Context, tableInfo *mydump.
 	}
 	igCols := igCol.ColumnsMap()
 
-	extendColsMap := make(map[string]struct{})
+	fullExtendColsSet := make(set.StringSet)
 	for _, fileInfo := range tableInfo.DataFiles {
 		for _, col := range fileInfo.FileMeta.ExtendData.Columns {
-			extendColsMap[col] = struct{}{}
+			if _, ok = igCols[col]; ok {
+				msgs = append(msgs, fmt.Sprintf("extend column %s is also assigned in ignore-column for table `%s`.`%s`, "+
+					"please keep only either one of them", col, tableInfo.DB, tableInfo.Name))
+			}
+			fullExtendColsSet.Insert(col)
 		}
+	}
+	if len(msgs) > 0 {
+		return msgs, nil
 	}
 
 	colCountFromTiDB := len(info.Core.Columns)
+	if len(fullExtendColsSet) > 0 {
+		log.FromContext(ctx).Info("check extend column count through data files", zap.String("db", tableInfo.DB),
+			zap.String("table", tableInfo.Name))
+		igColCnt := 0
+		for _, col := range info.Core.Columns {
+			if _, ok = igCols[col.Name.L]; ok {
+				igColCnt++
+			}
+		}
+		for _, f := range tableInfo.DataFiles {
+			cols, previewRows, err := ci.preInfoGetter.ReadFirstNRowsByFileMeta(ctx, f.FileMeta, 1)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if len(cols) > 0 {
+				colsSet := set.NewStringSet(cols...)
+				for _, extendCol := range f.FileMeta.ExtendData.Columns {
+					if colsSet.Exist(strings.ToLower(extendCol)) {
+						msgs = append(msgs, fmt.Sprintf("extend column %s is contained in table `%s`.`%s`'s header, "+
+							"please remove this column in data or remove this extend rule", extendCol, tableInfo.DB, tableInfo.Name))
+					}
+				}
+			} else if len(previewRows) > 0 && len(previewRows[0])+len(f.FileMeta.ExtendData.Columns) > colCountFromTiDB+igColCnt {
+				msgs = append(msgs, fmt.Sprintf("row count %d adding with extend column length %d is larger than columnCount %d plus ignore column count %d for table `%s`.`%s`, "+
+					"please make sure your source data don't have extend columns and target schema has all of them", len(previewRows[0]), len(f.FileMeta.ExtendData.Columns), colCountFromTiDB, igColCnt, tableInfo.DB, tableInfo.Name))
+			}
+		}
+	}
+	if len(msgs) > 0 {
+		return msgs, nil
+	}
+
 	core := info.Core
 	defaultCols := make(map[string]struct{})
 	for _, col := range core.Columns {
 		// we can extend column the same with columns with default values
-		if _, isExtendCol := extendColsMap[col.Name.O]; isExtendCol || hasDefault(col) || (info.Core.ContainsAutoRandomBits() && mysql.HasPriKeyFlag(col.GetFlag())) {
+		if _, isExtendCol := fullExtendColsSet[col.Name.O]; isExtendCol || hasDefault(col) || (info.Core.ContainsAutoRandomBits() && mysql.HasPriKeyFlag(col.GetFlag())) {
 			// this column has default value or it's auto random id, so we can ignore it
 			defaultCols[col.Name.L] = struct{}{}
 		}
+		delete(fullExtendColsSet, col.Name.O)
 	}
+	if len(fullExtendColsSet) > 0 {
+		extendCols := make([]string, 0, len(fullExtendColsSet))
+		for col := range fullExtendColsSet {
+			extendCols = append(extendCols, col)
+		}
+		msgs = append(msgs, fmt.Sprintf("extend column [%s] don't exist in target table `%s`.`%s` schema, "+
+			"please add these extend columns manually in downstream database/schema file", strings.Join(extendCols, ","), tableInfo.DB, tableInfo.Name))
+		return msgs, nil
+	}
+
 	// tidb_rowid have a default value.
 	defaultCols[model.ExtraHandleName.String()] = struct{}{}
 
