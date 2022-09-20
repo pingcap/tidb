@@ -349,6 +349,10 @@ func TestInstanceScopedVars(t *testing.T) {
 	val, err = vars.GetSessionOrGlobalSystemVar(TiDBLogFileMaxDays)
 	require.NoError(t, err)
 	require.Equal(t, fmt.Sprint(GlobalLogMaxDays.Load()), val)
+
+	val, err = vars.GetSessionOrGlobalSystemVar(TiDBRCReadCheckTS)
+	require.NoError(t, err)
+	require.Equal(t, BoolToOnOff(EnableRCReadCheckTS.Load()), val)
 }
 
 func TestSecureAuth(t *testing.T) {
@@ -654,6 +658,17 @@ func TestDefaultMemoryDebugModeValue(t *testing.T) {
 	val, err = vars.GetSessionOrGlobalSystemVar(TiDBMemoryDebugModeAlarmRatio)
 	require.NoError(t, err)
 	require.Equal(t, val, "0")
+}
+
+func TestDefaultPartitionPruneMode(t *testing.T) {
+	vars := NewSessionVars()
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+	val, err := vars.GetSessionOrGlobalSystemVar(TiDBPartitionPruneMode)
+	require.NoError(t, err)
+	require.Equal(t, "dynamic", val)
+	require.Equal(t, "dynamic", DefTiDBPartitionPruneMode)
 }
 
 func TestSetTIDBFastDDL(t *testing.T) {

@@ -53,6 +53,7 @@ go_test(
     embed = [":stream"],
     flaky = True,
     deps = [
+        "//br/pkg/storage",
         "//br/pkg/streamhelper",
         "//meta",
         "//parser/model",

@@ -2777,6 +2777,7 @@ func checkColumnsPartitionType(tbInfo *model.TableInfo) error {
 		// DATE and DATETIME
 		// CHAR, VARCHAR, BINARY, and VARBINARY
 		// See https://dev.mysql.com/doc/mysql-partitioning-excerpt/5.7/en/partitioning-columns.html
+		// Note that also TIME is allowed in MySQL. Also see https://bugs.mysql.com/bug.php?id=84362
 		switch colInfo.FieldType.GetType() {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeDuration:
@@ -4044,10 +4045,6 @@ func checkExchangePartition(pt *model.TableInfo, nt *model.TableInfo) error {
 }
 
 func (d *ddl) ExchangeTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
-	if !ctx.GetSessionVars().TiDBEnableExchangePartition {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrExchangePartitionDisabled)
-		return nil
-	}
 	ptSchema, pt, err := d.getSchemaAndTableByIdent(ctx, ident)
 	if err != nil {
 		return errors.Trace(err)
@@ -4116,7 +4113,7 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTa
 		return errors.Trace(err)
 	}
 
-	isDropable, err := checkIsDroppableColumn(ctx, t, spec)
+	isDropable, err := checkIsDroppableColumn(ctx, d.infoCache.GetLatest(), schema, t, spec)
 	if err != nil {
 		return err
 	}
@@ -4145,7 +4142,7 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTa
 	return errors.Trace(err)
 }
 
-func checkIsDroppableColumn(ctx sessionctx.Context, t table.Table, spec *ast.AlterTableSpec) (isDrapable bool, err error) {
+func checkIsDroppableColumn(ctx sessionctx.Context, is infoschema.InfoSchema, schema *model.DBInfo, t table.Table, spec *ast.AlterTableSpec) (isDrapable bool, err error) {
 	tblInfo := t.Meta()
 	// Check whether dropped column has existed.
 	colName := spec.OldColumnName.Name
@@ -4160,6 +4157,11 @@ func checkIsDroppableColumn(ctx sessionctx.Context, t table.Table, spec *ast.Alt
 	}
 
 	if err = isDroppableColumn(tblInfo, colName); err != nil {
+		return false, errors.Trace(err)
+	}
+	// Check the column with foreign key.
+	err = checkDropColumnWithForeignKeyConstraint(is, schema.Name.L, tblInfo, colName.L)
+	if err != nil {
 		return false, errors.Trace(err)
 	}
 	// We don't support dropping column with PK handle covered now.
@@ -4335,8 +4337,10 @@ func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*
 			col.DelFlag(mysql.NotNullFlag)
 		case ast.ColumnOptionAutoIncrement:
 			col.AddFlag(mysql.AutoIncrementFlag)
-		case ast.ColumnOptionPrimaryKey, ast.ColumnOptionUniqKey:
-			return dbterror.ErrUnsupportedModifyColumn.GenWithStack("can't change column constraint - %v", opt.Tp)
+		case ast.ColumnOptionPrimaryKey:
+			return errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStack("can't change column constraint (PRIMARY KEY)"))
+		case ast.ColumnOptionUniqKey:
+			return errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStack("can't change column constraint (UNIQUE KEY)"))
 		case ast.ColumnOptionOnUpdate:
 			// TODO: Support other time functions.
 			if col.GetType() == mysql.TypeTimestamp || col.GetType() == mysql.TypeDatetime {
@@ -4415,13 +4419,14 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, sctx sessionctx.Contex
 		return nil, errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
 	}
 
-	return GetModifiableColumnJob(ctx, sctx, ident, originalColName, schema, t, spec)
+	return GetModifiableColumnJob(ctx, sctx, is, ident, originalColName, schema, t, spec)
 }
 
 // GetModifiableColumnJob returns a DDL job of model.ActionModifyColumn.
 func GetModifiableColumnJob(
 	ctx context.Context,
 	sctx sessionctx.Context,
+	is infoschema.InfoSchema, // WARN: is maybe nil here.
 	ident ast.Ident,
 	originalColName model.CIStr,
 	schema *model.DBInfo,
@@ -4504,13 +4509,8 @@ func GetModifiableColumnJob(
 	}
 	decodeEnumSetBinaryLiteralToUTF8(&newCol.FieldType, chs)
 
-	// Check the column with foreign key, waiting for the default flen and decimal.
-	if fkInfo := GetColumnForeignKeyInfo(originalColName.L, t.Meta().ForeignKeys); fkInfo != nil {
-		// For now we strongly ban the all column type change for column with foreign key.
-		// Actually MySQL support change column with foreign key from varchar(m) -> varchar(m+t) and t > 0.
-		if newCol.GetType() != col.GetType() || newCol.GetFlen() != col.GetFlen() || newCol.GetDecimal() != col.GetDecimal() {
-			return nil, dbterror.ErrFKIncompatibleColumns.GenWithStackByArgs(originalColName, fkInfo.Name)
-		}
+	if err = checkModifyColumnWithForeignKeyConstraint(is, schema.Name.L, t.Meta(), col.ColumnInfo, newCol.ColumnInfo); err != nil {
+		return nil, err
 	}
 
 	// Copy index related options to the new spec.
@@ -4807,10 +4807,6 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 	colWithNewNameAlreadyExist := table.FindCol(allCols, newColName.L) != nil
 	if colWithNewNameAlreadyExist {
 		return infoschema.ErrColumnExists.GenWithStackByArgs(newColName)
-	}
-
-	if fkInfo := GetColumnForeignKeyInfo(oldColName.L, tbl.Meta().ForeignKeys); fkInfo != nil {
-		return dbterror.ErrFKIncompatibleColumns.GenWithStackByArgs(oldColName, fkInfo.Name)
 	}
 
 	// Check generated expression.
@@ -5372,10 +5368,22 @@ func (d *ddl) dropTableObject(
 		jobType        model.ActionType
 	)
 
+	var jobArgs []interface{}
 	switch tableObjectType {
 	case tableObject:
 		dropExistErr = infoschema.ErrTableDropExists
 		jobType = model.ActionDropTable
+		objectIdents := make([]ast.Ident, len(objects))
+		fkCheck := ctx.GetSessionVars().ForeignKeyChecks
+		jobArgs = []interface{}{objectIdents, fkCheck}
+		for i, tn := range objects {
+			objectIdents[i] = ast.Ident{Schema: tn.Schema, Name: tn.Name}
+		}
+		for _, tn := range objects {
+			if referredFK := checkTableHasForeignKeyReferred(is, tn.Schema.L, tn.Name.L, objectIdents, fkCheck); referredFK != nil {
+				return errors.Trace(dbterror.ErrForeignKeyCannotDropParent.GenWithStackByArgs(tn.Name, referredFK.ChildFKName, referredFK.ChildTable))
+			}
+		}
 	case viewObject:
 		dropExistErr = infoschema.ErrTableDropExists
 		jobType = model.ActionDropView
@@ -5383,7 +5391,6 @@ func (d *ddl) dropTableObject(
 		dropExistErr = infoschema.ErrSequenceDropExists
 		jobType = model.ActionDropSequence
 	}
-
 	for _, tn := range objects {
 		fullti := ast.Ident{Schema: tn.Schema, Name: tn.Name}
 		schema, ok := is.SchemaByName(tn.Schema)
@@ -5455,6 +5462,7 @@ func (d *ddl) dropTableObject(
 			TableName:   tableInfo.Meta().Name.L,
 			Type:        jobType,
 			BinlogInfo:  &model.HistoryInfo{},
+			Args:        jobArgs,
 		}
 
 		err = d.DoDDLJob(ctx, job)
@@ -5510,6 +5518,12 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	if tb.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 		return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Truncate Table")
 	}
+	fkCheck := ctx.GetSessionVars().ForeignKeyChecks
+	referredFK := checkTableHasForeignKeyReferred(d.GetInfoSchemaWithInterceptor(ctx), ti.Schema.L, ti.Name.L, []ast.Ident{{Name: ti.Name, Schema: ti.Schema}}, fkCheck)
+	if referredFK != nil {
+		msg := fmt.Sprintf("`%s`.`%s` CONSTRAINT `%s`", referredFK.ChildSchema, referredFK.ChildTable, referredFK.ChildFKName)
+		return errors.Trace(dbterror.ErrTruncateIllegalForeignKey.GenWithStackByArgs(msg))
+	}
 
 	genIDs, err := d.genGlobalIDs(1)
 	if err != nil {
@@ -5523,7 +5537,7 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 		TableName:  tb.Meta().Name.L,
 		Type:       model.ActionTruncateTable,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{newTableID},
+		Args:       []interface{}{newTableID, fkCheck},
 	}
 	if ok, _ := ctx.CheckTableLocked(tb.Meta().ID); ok && config.TableLockEnabled() {
 		// AddTableLock here to avoid this ddl job was executed successfully but the session was been kill before return.
@@ -6283,6 +6297,10 @@ func (d *ddl) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 	if err != nil {
 		return errors.Trace(err)
 	}
+	err = checkIndexNeededInForeignKey(is, schema.Name.L, t.Meta(), indexInfo)
+	if err != nil {
+		return err
+	}
 
 	jobTp := model.ActionDropIndex
 	if isPK {
@@ -6345,10 +6363,6 @@ func isDroppableColumn(tblInfo *model.TableInfo, colName model.CIStr) error {
 	err := isColumnCanDropWithIndex(colName.L, tblInfo.Indices)
 	if err != nil {
 		return err
-	}
-	// Check the column with foreign key.
-	if fkInfo := GetColumnForeignKeyInfo(colName.L, tblInfo.ForeignKeys); fkInfo != nil {
-		return dbterror.ErrFkColumnCannotDrop.GenWithStackByArgs(colName, fkInfo.Name)
 	}
 	return nil
 }
@@ -6440,20 +6454,21 @@ func buildAddedPartitionDefs(ctx sessionctx.Context, meta *model.TableInfo, spec
 	return GeneratePartDefsFromInterval(ctx, spec.Tp, meta, spec.Partition)
 }
 
-func checkColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.TableInfo, exprs []ast.ExprNode) error {
+func checkAndGetColumnsTypeAndValuesMatch(ctx sessionctx.Context, colTypes []types.FieldType, exprs []ast.ExprNode) ([]string, error) {
 	// Validate() has already checked len(colNames) = len(exprs)
 	// create table ... partition by range columns (cols)
 	// partition p0 values less than (expr)
 	// check the type of cols[i] and expr is consistent.
-	colTypes := collectColumnsType(meta)
+	valStrings := make([]string, 0, len(colTypes))
 	for i, colExpr := range exprs {
 		if _, ok := colExpr.(*ast.MaxValueExpr); ok {
+			valStrings = append(valStrings, partitionMaxValue)
 			continue
 		}
 		colType := colTypes[i]
 		val, err := expression.EvalAstExpr(ctx, colExpr)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		// Check val.ConvertTo(colType) doesn't work, so we need this case by case check.
 		vkind := val.Kind()
@@ -6462,33 +6477,38 @@ func checkColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.TableInf
 			switch vkind {
 			case types.KindString, types.KindBytes:
 			default:
-				return dbterror.ErrWrongTypeColumnValue.GenWithStackByArgs()
+				return nil, dbterror.ErrWrongTypeColumnValue.GenWithStackByArgs()
 			}
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 			switch vkind {
 			case types.KindInt64, types.KindUint64, types.KindNull:
 			default:
-				return dbterror.ErrWrongTypeColumnValue.GenWithStackByArgs()
+				return nil, dbterror.ErrWrongTypeColumnValue.GenWithStackByArgs()
 			}
 		case mysql.TypeFloat, mysql.TypeDouble:
 			switch vkind {
 			case types.KindFloat32, types.KindFloat64, types.KindNull:
 			default:
-				return dbterror.ErrWrongTypeColumnValue.GenWithStackByArgs()
+				return nil, dbterror.ErrWrongTypeColumnValue.GenWithStackByArgs()
 			}
 		case mysql.TypeString, mysql.TypeVarString:
 			switch vkind {
 			case types.KindString, types.KindBytes, types.KindNull, types.KindBinaryLiteral:
 			default:
-				return dbterror.ErrWrongTypeColumnValue.GenWithStackByArgs()
+				return nil, dbterror.ErrWrongTypeColumnValue.GenWithStackByArgs()
 			}
 		}
-		_, err = val.ConvertTo(ctx.GetSessionVars().StmtCtx, &colType)
+		newVal, err := val.ConvertTo(ctx.GetSessionVars().StmtCtx, &colType)
 		if err != nil {
-			return dbterror.ErrWrongTypeColumnValue.GenWithStackByArgs()
+			return nil, dbterror.ErrWrongTypeColumnValue.GenWithStackByArgs()
 		}
+		s, err := newVal.ToString()
+		if err != nil {
+			return nil, err
+		}
+		valStrings = append(valStrings, s)
 	}
-	return nil
+	return valStrings, nil
 }
 
 // LockTables uses to execute lock tables statement.

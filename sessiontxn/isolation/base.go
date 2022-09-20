@@ -120,6 +120,9 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 		p.onInitializeTxnCtx(txnCtx)
 	}
 	sessVars.TxnCtx = txnCtx
+	if variable.EnableMDL.Load() {
+		sessVars.TxnCtx.EnableMDL = true
+	}
 
 	txn, err := p.sctx.Txn(false)
 	if err != nil {
@@ -139,6 +142,10 @@ func (p *baseTxnContextProvider) GetTxnInfoSchema() infoschema.InfoSchema {
 		return is.(infoschema.InfoSchema)
 	}
 	return p.infoSchema
+}
+
+func (p *baseTxnContextProvider) SetTxnInfoSchema(is infoschema.InfoSchema) {
+	p.infoSchema = is
 }
 
 // GetTxnScope returns the current txn scope
@@ -415,7 +422,9 @@ func (p *baseTxnContextProvider) getSnapshotByTS(snapshotTS uint64) (kv.Snapshot
 	)
 
 	replicaReadType := sessVars.GetReplicaRead()
-	if replicaReadType.IsFollowerRead() && !sessVars.StmtCtx.RCCheckTS {
+	if replicaReadType.IsFollowerRead() &&
+		!sessVars.StmtCtx.RCCheckTS &&
+		!sessVars.RcWriteCheckTS {
 		snapshot.SetOption(kv.ReplicaRead, replicaReadType)
 	}
 

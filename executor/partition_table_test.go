@@ -33,6 +33,36 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestSetPartitionPruneMode(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tkInit := testkit.NewTestKit(t, store)
+	tkInit.MustExec(`set @@session.tidb_partition_prune_mode = DEFAULT`)
+	tkInit.MustQuery("show warnings").Check(testkit.Rows())
+	tkInit.MustExec(`set @@global.tidb_partition_prune_mode = DEFAULT`)
+	tkInit.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Please analyze all partition tables again for consistency between partition and global stats"))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustQuery("select @@global.tidb_partition_prune_mode").Check(testkit.Rows("dynamic"))
+	tk.MustQuery("select @@session.tidb_partition_prune_mode").Check(testkit.Rows("dynamic"))
+	tk.MustExec(`set @@session.tidb_partition_prune_mode = "static"`)
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustExec(`set @@global.tidb_partition_prune_mode = "static"`)
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustQuery("select @@session.tidb_partition_prune_mode").Check(testkit.Rows("static"))
+	tk2.MustQuery("show warnings").Check(testkit.Rows())
+	tk2.MustQuery("select @@global.tidb_partition_prune_mode").Check(testkit.Rows("static"))
+	tk2.MustExec(`set @@session.tidb_partition_prune_mode = "dynamic"`)
+	tk2.MustQuery("show warnings").Sort().Check(testkit.Rows(
+		`Warning 1105 Please analyze all partition tables again for consistency between partition and global stats`,
+		`Warning 1105 Please avoid setting partition prune mode to dynamic at session level and set partition prune mode to dynamic at global level`))
+	tk2.MustExec(`set @@global.tidb_partition_prune_mode = "dynamic"`)
+	tk2.MustQuery("show warnings").Check(testkit.Rows(`Warning 1105 Please analyze all partition tables again for consistency between partition and global stats`))
+	tk3 := testkit.NewTestKit(t, store)
+	tk3.MustQuery("select @@global.tidb_partition_prune_mode").Check(testkit.Rows("dynamic"))
+	tk3.MustQuery("select @@session.tidb_partition_prune_mode").Check(testkit.Rows("dynamic"))
+}
+
 func TestFourReader(t *testing.T) {
 	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
 	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")

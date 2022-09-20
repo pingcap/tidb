@@ -2404,6 +2404,10 @@ func TestJSONBuiltin(t *testing.T) {
 	tk.MustGetErrCode(`select json_merge(1, 2);`, mysql.ErrInvalidTypeForJSON)
 	tk.MustGetErrCode(`select json_merge_preserve(1, 2);`, mysql.ErrInvalidTypeForJSON)
 	tk.MustGetErrCode(`select json_merge_patch(1, 2);`, mysql.ErrInvalidTypeForJSON)
+	tk.MustGetErrCode(`select JSON_CONTAINS_PATH(1, 'one', '$.a');`, mysql.ErrInvalidTypeForJSON)
+	tk.MustGetErrCode(`select json_search(1, 'one', '$.a');`, mysql.ErrInvalidTypeForJSON)
+	tk.MustGetErrCode(`select json_keys(1, '$.a');`, mysql.ErrInvalidTypeForJSON)
+	tk.MustGetErrCode(`select JSON_extract(1, '$.a');`, mysql.ErrInvalidTypeForJSON)
 }
 
 func TestTimeLiteral(t *testing.T) {
@@ -4909,8 +4913,9 @@ func TestSchemaDMLNotChange(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
-	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=0")
+	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 	tk2.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int primary key, c_json json);")
@@ -6975,6 +6980,16 @@ func TestIssue28739(t *testing.T) {
 		"<nil> <nil>"))
 }
 
+func TestIssue30081(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`USE test`)
+	tk.MustQuery(`SELECT CONVERT_TZ('2007-03-11 2:00:00','US/Eastern','US/Central');`).
+		Check(testkit.Rows(`2007-03-11 01:00:00`))
+	tk.MustQuery(`SELECT CONVERT_TZ('2007-03-11 3:00:00','US/Eastern','US/Central');`).
+		Check(testkit.Rows(`2007-03-11 01:00:00`))
+}
+
 func TestIssue30326(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -7532,6 +7547,42 @@ func TestCastRealAsTime(t *testing.T) {
 		"<nil> <nil> <nil>"))
 }
 
+func TestJSONDepth(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a JSON)")
+	tk.MustGetErrCode(`insert into t
+with recursive c1 as (select cast(1 as signed) c, json_array(1) as a
+                      union
+                      select c + 1, json_array_insert(a, concat('$', repeat('[0]', c)), json_array(1))
+                      from c1
+                      where c < 101)
+select a from c1 where c > 100;`, errno.ErrJSONDocumentTooDeep)
+	tk.MustExec(`insert into t
+with recursive c1 as (select cast(1 as signed) c, json_array(1) as a
+                      union
+                      select c + 1, json_array_insert(a, concat('$', repeat('[0]', c)), json_array(1))
+                      from c1
+                      where c < 100)
+select a from c1 where c > 99;`)
+
+	err := tk.QueryToErr(`select json_array(a, 1) from t`)
+	require.Error(t, err)
+	// FIXME: mysql client shows the error.
+	//err = tk.QueryToErr(`select json_objectagg(1, a) from t;`)
+	//require.Error(t, err)
+	err = tk.QueryToErr(`select json_object(1, a) from t;`)
+	require.Error(t, err)
+	err = tk.QueryToErr(`select json_set(a, concat('$', repeat('[0]', 100)), json_array(json_array(3))) from t;`)
+	require.Error(t, err)
+	err = tk.QueryToErr(`select json_array_append(a, concat('$', repeat('[0]', 100)), 1) from t;`)
+	require.Error(t, err)
+	// FIXME: mysql client shows the error.
+	//err = tk.QueryToErr(`select json_arrayagg(a) from t;`)
+	//require.Error(t, err)
+}
+
 func TestCastJSONTimeDuration(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -7557,4 +7608,46 @@ func TestCastJSONTimeDuration(t *testing.T) {
 		"5 2012-12-12 2012-12-12 00:00:00 12:12:12 STRING",
 		fmt.Sprintf("6 %s %s 12:12:12 12:12:12 TIME", nowDate, nowDate),
 	))
+}
+
+func TestRegexpPushdown(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists reg")
+	tk.MustExec("create table reg(a varchar(20) null,b varchar(20) null,rep varchar(20) null) charset=utf8mb4 collate=utf8mb4_general_ci;")
+
+	tk.MustQuery("explain select a from reg where regexp_like(a, b);").Check(testkit.Rows(
+		"Projection_4 8000.00 root  test.reg.a",
+		"└─TableReader_7 8000.00 root  data:Selection_6",
+		"  └─Selection_6 8000.00 cop[tikv]  regexp_like(test.reg.a, test.reg.b)",
+		"    └─TableFullScan_5 10000.00 cop[tikv] table:reg keep order:false, stats:pseudo"))
+
+	tk.MustQuery("explain select a from reg where regexp_instr(a, b);").Check(testkit.Rows(
+		"Projection_4 8000.00 root  test.reg.a",
+		"└─TableReader_7 8000.00 root  data:Selection_6",
+		"  └─Selection_6 8000.00 cop[tikv]  regexp_instr(test.reg.a, test.reg.b)",
+		"    └─TableFullScan_5 10000.00 cop[tikv] table:reg keep order:false, stats:pseudo"))
+
+	tk.MustQuery("explain select a from reg where regexp_substr(a, b);").Check(testkit.Rows(
+		"Projection_4 8000.00 root  test.reg.a",
+		"└─TableReader_7 8000.00 root  data:Selection_6",
+		"  └─Selection_6 8000.00 cop[tikv]  regexp_substr(test.reg.a, test.reg.b)",
+		"    └─TableFullScan_5 10000.00 cop[tikv] table:reg keep order:false, stats:pseudo"))
+
+	tk.MustQuery("explain select a from reg where regexp_replace(a, b, rep);").Check(testkit.Rows(
+		"Projection_4 8000.00 root  test.reg.a",
+		"└─TableReader_7 8000.00 root  data:Selection_6",
+		"  └─Selection_6 8000.00 cop[tikv]  regexp_replace(test.reg.a, test.reg.b, test.reg.rep)",
+		"    └─TableFullScan_5 10000.00 cop[tikv] table:reg keep order:false, stats:pseudo"))
+
+	tk.MustExec("drop table if exists regbin")
+	tk.MustExec("create table regbin(a varchar(20) null,b varchar(20) null,rep varchar(20) null) charset=binary collate=binary;")
+
+	tk.MustQuery("explain select a from regbin where regexp_like(a, b);").Check(testkit.Rows(
+		"Projection_4 8000.00 root  test.regbin.a",
+		"└─Selection_5 8000.00 root  regexp_like(test.regbin.a, test.regbin.b)",
+		"  └─TableReader_7 10000.00 root  data:TableFullScan_6",
+		"    └─TableFullScan_6 10000.00 cop[tikv] table:regbin keep order:false, stats:pseudo"))
 }
