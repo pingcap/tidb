@@ -1086,8 +1086,15 @@ type basePhysicalJoin struct {
 	InnerJoinKeys []*expression.Column
 	LeftJoinKeys  []*expression.Column
 	RightJoinKeys []*expression.Column
+	// IsNullEQ is used for cases like Except statement where null key should be matched with null key.
+	// <1,null> is exactly matched with <1,null>, where the null value should not be filtered and
+	// the null is exactly matched with null only. (while in NAAJ null value should also be matched
+	// with other non-null item as well)
 	IsNullEQ      []bool
 	DefaultValues []types.Datum
+
+	LeftNAJoinKeys  []*expression.Column
+	RightNAJoinKeys []*expression.Column
 }
 
 func (p *basePhysicalJoin) cloneWithSelf(newSelf PhysicalPlan) (*basePhysicalJoin, error) {
@@ -1106,6 +1113,8 @@ func (p *basePhysicalJoin) cloneWithSelf(newSelf PhysicalPlan) (*basePhysicalJoi
 	cloned.InnerJoinKeys = cloneCols(p.InnerJoinKeys)
 	cloned.LeftJoinKeys = cloneCols(p.LeftJoinKeys)
 	cloned.RightJoinKeys = cloneCols(p.RightJoinKeys)
+	cloned.LeftNAJoinKeys = cloneCols(p.LeftNAJoinKeys)
+	cloned.RightNAJoinKeys = cloneCols(p.RightNAJoinKeys)
 	for _, d := range p.DefaultValues {
 		cloned.DefaultValues = append(cloned.DefaultValues, *d.Clone())
 	}
@@ -1171,6 +1180,8 @@ type PhysicalHashJoin struct {
 	Concurrency     uint
 	EqualConditions []*expression.ScalarFunction
 
+	NAEqualConditions []*expression.ScalarFunction
+
 	// use the outer table to build a hash table when the outer table is smaller.
 	UseOuterToBuild bool
 
@@ -1192,13 +1203,19 @@ func (p *PhysicalHashJoin) Clone() (PhysicalPlan, error) {
 	for _, c := range p.EqualConditions {
 		cloned.EqualConditions = append(cloned.EqualConditions, c.Clone().(*expression.ScalarFunction))
 	}
+	for _, c := range p.NAEqualConditions {
+		cloned.NAEqualConditions = append(cloned.NAEqualConditions, c.Clone().(*expression.ScalarFunction))
+	}
 	return cloned, nil
 }
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.
 func (p *PhysicalHashJoin) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := make([]*expression.CorrelatedColumn, 0, len(p.EqualConditions)+len(p.LeftConditions)+len(p.RightConditions)+len(p.OtherConditions))
+	corCols := make([]*expression.CorrelatedColumn, 0, len(p.EqualConditions)+len(p.NAEqualConditions)+len(p.LeftConditions)+len(p.RightConditions)+len(p.OtherConditions))
 	for _, fun := range p.EqualConditions {
+		corCols = append(corCols, expression.ExtractCorColumns(fun)...)
+	}
+	for _, fun := range p.NAEqualConditions {
 		corCols = append(corCols, expression.ExtractCorColumns(fun)...)
 	}
 	for _, fun := range p.LeftConditions {
@@ -1230,22 +1247,27 @@ func (p *PhysicalHashJoin) MemoryUsage() (sum int64) {
 // NewPhysicalHashJoin creates a new PhysicalHashJoin from LogicalJoin.
 func NewPhysicalHashJoin(p *LogicalJoin, innerIdx int, useOuterToBuild bool, newStats *property.StatsInfo, prop ...*property.PhysicalProperty) *PhysicalHashJoin {
 	leftJoinKeys, rightJoinKeys, isNullEQ, _ := p.GetJoinKeys()
+	leftNAJoinKeys, rightNAJoinKeys := p.GetNAJoinKeys()
 	baseJoin := basePhysicalJoin{
 		LeftConditions:  p.LeftConditions,
 		RightConditions: p.RightConditions,
 		OtherConditions: p.OtherConditions,
 		LeftJoinKeys:    leftJoinKeys,
 		RightJoinKeys:   rightJoinKeys,
+		// NA join keys
+		LeftNAJoinKeys:  leftNAJoinKeys,
+		RightNAJoinKeys: rightNAJoinKeys,
 		IsNullEQ:        isNullEQ,
 		JoinType:        p.JoinType,
 		DefaultValues:   p.DefaultValues,
 		InnerChildIdx:   innerIdx,
 	}
 	hashJoin := PhysicalHashJoin{
-		basePhysicalJoin: baseJoin,
-		EqualConditions:  p.EqualConditions,
-		Concurrency:      uint(p.ctx.GetSessionVars().HashJoinConcurrency()),
-		UseOuterToBuild:  useOuterToBuild,
+		basePhysicalJoin:  baseJoin,
+		EqualConditions:   p.EqualConditions,
+		NAEqualConditions: p.NAEQConditions,
+		Concurrency:       uint(p.ctx.GetSessionVars().HashJoinConcurrency()),
+		UseOuterToBuild:   useOuterToBuild,
 	}.Init(p.ctx, newStats, p.blockOffset, prop...)
 	return hashJoin
 }
