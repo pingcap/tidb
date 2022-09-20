@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net/http"
 	"strconv"
 	"testing"
@@ -1730,6 +1731,7 @@ func TestSetClusterConfig(t *testing.T) {
 		{ServerType: "pd", Address: "127.0.0.1:4444", StatusAddr: "127.0.0.1:4444"},
 		{ServerType: "tikv", Address: "127.0.0.1:5555", StatusAddr: "127.0.0.1:5555"},
 		{ServerType: "tikv", Address: "127.0.0.1:6666", StatusAddr: "127.0.0.1:6666"},
+		{ServerType: "tiflash", Address: "127.0.0.1:3933", StatusAddr: "127.0.0.1:7777"},
 	}
 	var serverInfoErr error
 	serverInfoFunc := func(sessionctx.Context) ([]infoschema.ServerInfo, error) {
@@ -1745,6 +1747,7 @@ func TestSetClusterConfig(t *testing.T) {
 	require.EqualError(t, tk.ExecToErr("set config tikv log.level=null"), "can't set config to null")
 	require.EqualError(t, tk.ExecToErr("set config '1.1.1.1:1111' log.level='info'"), "instance 1.1.1.1:1111 is not found in this cluster")
 	require.EqualError(t, tk.ExecToErr("set config tikv `raftstore.max-peer-down-duration`=DEFAULT"), "Unknown DEFAULT for SET CONFIG")
+	require.ErrorContains(t, tk.ExecToErr("set config tiflash `server.snap-max-write-bytes-per-sec`='500MB'"), "This command can only change config items begin with 'raftstore-proxy'")
 
 	httpCnt := 0
 	tk.Session().SetValue(executor.TestSetConfigHTTPHandlerKey, func(*http.Request) (*http.Response, error) {
@@ -1756,6 +1759,18 @@ func TestSetClusterConfig(t *testing.T) {
 
 	httpCnt = 0
 	tk.MustExec("set config '127.0.0.1:5555' log.level='info'")
+	require.Equal(t, 1, httpCnt)
+
+	httpCnt = 0
+	tk.Session().SetValue(executor.TestSetConfigHTTPHandlerKey, func(req *http.Request) (*http.Response, error) {
+		httpCnt++
+		body, err := ioutil.ReadAll(req.Body)
+		require.NoError(t, err)
+		// The `raftstore.` prefix is stripped.
+		require.JSONEq(t, `{"server.snap-max-write-bytes-per-sec":"500MB"}`, string(body));
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(nil)}, nil
+	})
+	tk.MustExec("set config tiflash `raftstore-proxy.server.snap-max-write-bytes-per-sec`='500MB'")
 	require.Equal(t, 1, httpCnt)
 
 	httpCnt = 0
