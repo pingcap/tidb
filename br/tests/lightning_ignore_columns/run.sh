@@ -15,7 +15,7 @@ for BACKEND in tidb local; do
   run_lightning --config "tests/$TEST_NAME/config.toml" --backend $BACKEND
   echo Import using $BACKEND finished
 
-  run_sql 'SELECT count(1), sum(a), sum(c) FROM routes_b.u;'
+  run_sql 'SELECT count(1), sum(a), sum(b), sum(c) FROM routes_b.u;'
   check_contains 'count(1): 4'
   check_contains 'sum(a): 11'
   check_contains 'sum(b): NULL'
