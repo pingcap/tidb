@@ -46,33 +46,49 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, needGlobalStats boo
 	if !needGlobalStats {
 		return nil
 	}
+	globalStatsTableIDs := make(map[int64]struct{})
+	for globalStatsID := range globalStatsMap {
+		globalStatsTableIDs[globalStatsID.tableID] = struct{}{}
+	}
 	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
-	for globalStatsID, info := range globalStatsMap {
-		globalOpts := e.opts
-		if e.OptionsMap != nil {
-			if v2Options, ok := e.OptionsMap[globalStatsID.tableID]; ok {
-				globalOpts = v2Options.FilledOpts
-			}
-		}
-		globalStats, err := statsHandle.MergePartitionStats2GlobalStatsByTableID(e.ctx, globalOpts, e.ctx.GetInfoSchema().(infoschema.InfoSchema), globalStatsID.tableID, info.isIndex, info.histIDs)
+	for tableID := range globalStatsTableIDs {
+		// pre-load partition stats for the specific table and provide to all globalStatsID which belongs to this table.
+		tableAllPartitionStats, err := statsHandle.GetTableAllPartitionStats(e.ctx.GetDomainInfoSchema().(infoschema.InfoSchema), tableID)
 		if err != nil {
-			if types.ErrPartitionStatsMissing.Equal(err) || types.ErrPartitionColumnStatsMissing.Equal(err) {
-				// When we find some partition-level stats are missing, we need to report warning.
-				e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
-				continue
-			}
 			return err
 		}
-		for i := 0; i < globalStats.Num; i++ {
-			hg, cms, topN := globalStats.Hg[i], globalStats.Cms[i], globalStats.TopN[i]
-			// fms for global stats doesn't need to dump to kv.
-			err = statsHandle.SaveStatsToStorage(globalStatsID.tableID, globalStats.Count, info.isIndex, hg, cms, topN, info.statsVersion, 1, true)
-			if err != nil {
-				logutil.Logger(ctx).Error("save global-level stats to storage failed", zap.Error(err))
+		for globalStatsID, info := range globalStatsMap {
+			if globalStatsID.tableID != tableID {
+				continue
 			}
-			// Dump stats to historical storage.
-			if err := e.recordHistoricalStats(globalStatsID.tableID); err != nil {
-				logutil.BgLogger().Error("record historical stats failed", zap.Error(err))
+			globalOpts := e.opts
+			if e.OptionsMap != nil {
+				if v2Options, ok := e.OptionsMap[globalStatsID.tableID]; ok {
+					globalOpts = v2Options.FilledOpts
+				}
+			}
+			globalStats, err := statsHandle.MergePartitionStats2GlobalStatsByTableID(e.ctx, globalOpts, e.ctx.GetInfoSchema().(infoschema.InfoSchema),
+				globalStatsID.tableID, info.isIndex, info.histIDs,
+				tableAllPartitionStats)
+			if err != nil {
+				if types.ErrPartitionStatsMissing.Equal(err) || types.ErrPartitionColumnStatsMissing.Equal(err) {
+					// When we find some partition-level stats are missing, we need to report warning.
+					e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+					continue
+				}
+				return err
+			}
+			for i := 0; i < globalStats.Num; i++ {
+				hg, cms, topN := globalStats.Hg[i], globalStats.Cms[i], globalStats.TopN[i]
+				// fms for global stats doesn't need to dump to kv.
+				err = statsHandle.SaveStatsToStorage(globalStatsID.tableID, globalStats.Count, info.isIndex, hg, cms, topN, info.statsVersion, 1, true)
+				if err != nil {
+					logutil.Logger(ctx).Error("save global-level stats to storage failed", zap.Error(err))
+				}
+				// Dump stats to historical storage.
+				if err := e.recordHistoricalStats(globalStatsID.tableID); err != nil {
+					logutil.BgLogger().Error("record historical stats failed", zap.Error(err))
+				}
 			}
 		}
 	}
