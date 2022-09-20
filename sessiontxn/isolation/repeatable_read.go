@@ -53,7 +53,7 @@ func NewPessimisticRRTxnContextProvider(sctx sessionctx.Context, causalConsisten
 				txnCtx.IsPessimistic = true
 				txnCtx.Isolation = ast.RepeatableRead
 			},
-			onTxnActive: func(txn kv.Transaction, _ sessiontxn.EnterNewTxnType) {
+			onTxnActiveFunc: func(txn kv.Transaction, _ sessiontxn.EnterNewTxnType) {
 				txn.SetOption(kv.Pessimistic, true)
 			},
 		},

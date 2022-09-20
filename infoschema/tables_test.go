@@ -1456,7 +1456,7 @@ func TestTiDBTrx(t *testing.T) {
 		StartTS:          425070846483628033,
 		CurrentSQLDigest: "",
 		AllSQLDigests:    []string{"sql1", "sql2", digest.String()},
-		State:            txninfo.TxnLockAcquiring,
+		State:            txninfo.TxnLockWaiting,
 		ConnectionID:     10,
 		Username:         "user1",
 		CurrentDB:        "db1",

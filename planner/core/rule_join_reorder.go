@@ -98,9 +98,9 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 		// If the filters of the outer join is related with multiple leaves of the outer join side. We don't reorder it for now.
 		if join.JoinType == RightOuterJoin {
 			extractedCols := make([]*expression.Column, 0, 8)
-			expression.ExtractColumnsFromExpressions(extractedCols, join.OtherConditions, nil)
-			expression.ExtractColumnsFromExpressions(extractedCols, join.RightConditions, nil)
-			expression.ExtractColumnsFromExpressions(extractedCols, expression.ScalarFuncs2Exprs(join.EqualConditions), nil)
+			extractedCols = expression.ExtractColumnsFromExpressions(extractedCols, join.OtherConditions, nil)
+			extractedCols = expression.ExtractColumnsFromExpressions(extractedCols, join.RightConditions, nil)
+			extractedCols = expression.ExtractColumnsFromExpressions(extractedCols, expression.ScalarFuncs2Exprs(join.EqualConditions), nil)
 			affectedGroups := 0
 			for i := range rhsGroup {
 				for _, col := range extractedCols {

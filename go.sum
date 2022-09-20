@@ -879,8 +879,8 @@ github.com/tdakkota/asciicheck v0.1.1 h1:PKzG7JUTUmVspQTDqtkX9eSiLGossXTybutHwTX
 github.com/tdakkota/asciicheck v0.1.1/go.mod h1:yHp0ai0Z9gUljN3o0xMhYJnH/IcvkdTBOX2fmJ93JEM=
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2 h1:mbAskLJ0oJfDRtkanvQPiooDH8HvJ2FBh+iKT/OmiQQ=
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2/go.mod h1:2PfKggNGDuadAa0LElHrByyrz4JPZ9fFx6Gs7nx7ZZU=
-github.com/tikv/client-go/v2 v2.0.1-0.20220725090834-0cdc7c1d0fb9 h1:RW/8xnBK618j7B33mP4TTCVhzj1dgwZv/TT7vHaMpbg=
-github.com/tikv/client-go/v2 v2.0.1-0.20220725090834-0cdc7c1d0fb9/go.mod h1:v3DEt8LS9olI6D6El17pYBWq7B28hw3NnDFTxQHDLpY=
+github.com/tikv/client-go/v2 v2.0.1-0.20220809034808-2ed2113d1090 h1:tugwRUqH0gYZ0noHr17AVSKxNVd+Jl2BmNqgANeDIok=
+github.com/tikv/client-go/v2 v2.0.1-0.20220809034808-2ed2113d1090/go.mod h1:v3DEt8LS9olI6D6El17pYBWq7B28hw3NnDFTxQHDLpY=
 github.com/tikv/pd/client v0.0.0-20220725055910-7187a7ab72db h1:r1eMh9Rny3hfWuBuxOnbsCRrR4FhthiNxLQ5rAUtaww=
 github.com/tikv/pd/client v0.0.0-20220725055910-7187a7ab72db/go.mod h1:ew8kS0yIcEaSetuuywkTLIUBR+sz3J5XvAYRae11qwc=
 github.com/tklauser/go-sysconf v0.3.9/go.mod h1:11DU/5sG7UexIrp/O6g35hrWzu0JxlwQ3LSFUzyeuhs=
