@@ -17,12 +17,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
+      - run: git pull origin:${{ github.event.pull_request.base.sha }}
       - name: Check File Permission
         run: make check-file-perm
       - name: Check License Header
         uses: apache/skywalking-eyes/header@v0.4.0
         with:
-          log: info
           token: ${{ secrets.GITHUB_TOKEN }}
           config: .github/licenserc.yml
       - name: Check Leaked Secrets
