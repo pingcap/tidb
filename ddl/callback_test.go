@@ -138,6 +138,11 @@ func (tc *TestDDLCallback) OnGetJobAfter(jobType string, job *model.Job) {
 	tc.BaseCallback.OnGetJobAfter(jobType, job)
 }
 
+// Clone copies the callback and take its reference
+func (tc *TestDDLCallback) Clone() *TestDDLCallback {
+	return &*tc
+}
+
 func TestCallback(t *testing.T) {
 	cb := &BaseCallback{}
 	require.Nil(t, cb.OnChanged(nil))
