@@ -2195,6 +2195,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 		"[or(or(eq(test.t1.a, 10), eq(test.t1.a, 20)), eq(test.t1.a, 30))]",
 		"[[NULL,+inf]]")
 	checkRangeFallbackAndReset(t, sctx, true)
+
 	sql = "select * from t1 where (a = 10 and b = 40) or (a = 20 and b = 50) or (a = 30 and b = 60)"
 	selection = getSelectionFromQuery(t, sctx, sql)
 	conds = selection.Conditions
@@ -2213,6 +2214,45 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 	checkDetachRangeResult(t, res,
 		"[]",
 		"[or(or(and(eq(test.t1.a, 10), eq(test.t1.b, 40)), and(eq(test.t1.a, 20), eq(test.t1.b, 50))), and(eq(test.t1.a, 30), eq(test.t1.b, 60)))]",
+		"[[NULL,+inf]]")
+	checkRangeFallbackAndReset(t, sctx, true)
+
+	// test considerDNF code path
+	sql = "select * from t1 where (a, b) in ((10, 20), (30, 40)) and c = 50"
+	selection = getSelectionFromQuery(t, sctx, sql)
+	conds = selection.Conditions
+	require.Equal(t, 2, len(conds))
+	cols, lengths = expression.IndexInfo2PrefixCols(tblInfo.Columns, selection.Schema().Columns, tblInfo.Indices[0])
+	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, 0)
+	require.NoError(t, err)
+	checkDetachRangeResult(t, res,
+		"[or(and(eq(test.t1.a, 10), eq(test.t1.b, 20)), and(eq(test.t1.a, 30), eq(test.t1.b, 40))) eq(test.t1.c, 50)]",
+		"[]",
+		"[[10 20 50,10 20 50] [30 40 50,30 40 50]]")
+	checkRangeFallbackAndReset(t, sctx, false)
+	quota = res.Ranges.MemUsage() - 1
+	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, quota)
+	require.NoError(t, err)
+	checkDetachRangeResult(t, res,
+		"[or(and(eq(test.t1.a, 10), eq(test.t1.b, 20)), and(eq(test.t1.a, 30), eq(test.t1.b, 40)))]",
+		"[eq(test.t1.c, 50)]",
+		"[[10 20,10 20] [30 40,30 40]]")
+	checkRangeFallbackAndReset(t, sctx, true)
+	quota = res.Ranges.MemUsage() - 1
+	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, quota)
+	require.NoError(t, err)
+	checkDetachRangeResult(t, res,
+		"[or(eq(test.t1.a, 10), eq(test.t1.a, 30))]",
+		"[eq(test.t1.c, 50) or(and(eq(test.t1.a, 10), eq(test.t1.b, 20)), and(eq(test.t1.a, 30), eq(test.t1.b, 40)))]",
+		"[[10,10] [30,30]]")
+	checkRangeFallbackAndReset(t, sctx, true)
+	quota = res.Ranges.MemUsage() - 1
+	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, quota)
+	require.NoError(t, err)
+	checkDetachRangeResult(t, res,
+		"[]",
+		// Ideal RemainedConds should be [eq(test.t1.c, 50) or(and(eq(test.t1.a, 10), eq(test.t1.b, 20)), and(eq(test.t1.a, 30), eq(test.t1.b, 40)))], but we don't remove redundant or(eq(test.t1.a, 10), eq(test.t1.a, 30)) for now.
+		"[eq(test.t1.c, 50) or(and(eq(test.t1.a, 10), eq(test.t1.b, 20)), and(eq(test.t1.a, 30), eq(test.t1.b, 40))) or(eq(test.t1.a, 10), eq(test.t1.a, 30))]",
 		"[[NULL,+inf]]")
 	checkRangeFallbackAndReset(t, sctx, true)
 
@@ -2282,6 +2322,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 		"[or(or(eq(test.t2.a, aaa), eq(test.t2.a, bbb)), eq(test.t2.a, ccc))]",
 		"[[NULL,+inf]]")
 	checkRangeFallbackAndReset(t, sctx, true)
+
 	sql = "select * from t2 where (a = 'aaa' and b = 'ddd') or (a = 'bbb' and b = 'eee') or (a = 'ccc' and b = 'fff')"
 	selection = getSelectionFromQuery(t, sctx, sql)
 	conds = selection.Conditions
@@ -2302,6 +2343,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 		"[or(or(and(eq(test.t2.a, aaa), eq(test.t2.b, ddd)), and(eq(test.t2.a, bbb), eq(test.t2.b, eee))), and(eq(test.t2.a, ccc), eq(test.t2.b, fff)))]",
 		"[[NULL,+inf]]")
 	checkRangeFallbackAndReset(t, sctx, true)
+
 }
 
 func TestRangeFallbackForBuildTableRange(t *testing.T) {

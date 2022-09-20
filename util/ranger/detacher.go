@@ -401,6 +401,10 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 		if err != nil {
 			return nil, err
 		}
+		// detachColumnCNFConditions extracts `a = 10 or a = 30` from `(a = 10 and b = 20) or (a = 30 and b = 40)`. If
+		// [10, 10] [30, 30] exceeds range mem limit, we add `a = 10 or a = 30` back to RemainedConds, which is actually
+		// unnecessary because `(a = 10 and b = 20) or (a = 30 and b = 40)` is already in RemainedConds.
+		// TODO: we will optimize it later.
 		res.RemainedConds = appendConditionsIfNotExist(res.RemainedConds, remainedConds)
 		res.Ranges = ranges
 		return res, nil
