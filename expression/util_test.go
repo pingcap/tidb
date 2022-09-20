@@ -90,7 +90,7 @@ func TestClone(t *testing.T) {
 		&builtinJSONArraySig{}, &builtinJSONArrayAppendSig{}, &builtinJSONObjectSig{}, &builtinJSONExtractSig{}, &builtinJSONSetSig{},
 		&builtinJSONInsertSig{}, &builtinJSONReplaceSig{}, &builtinJSONRemoveSig{}, &builtinJSONMergeSig{}, &builtinJSONContainsSig{},
 		&builtinJSONStorageSizeSig{}, &builtinJSONDepthSig{}, &builtinJSONSearchSig{}, &builtinJSONKeysSig{}, &builtinJSONKeys2ArgsSig{}, &builtinJSONLengthSig{},
-		&builtinLikeSig{}, &builtinRegexpSig{}, &builtinRegexpUTF8Sig{}, &builtinAbsRealSig{}, &builtinAbsIntSig{},
+		&builtinLikeSig{}, &builtinRegexpLikeFuncSig{}, &builtinRegexpSubstrFuncSig{}, &builtinRegexpInStrFuncSig{}, &builtinRegexpReplaceFuncSig{}, &builtinAbsRealSig{}, &builtinAbsIntSig{},
 		&builtinAbsUIntSig{}, &builtinAbsDecSig{}, &builtinRoundRealSig{}, &builtinRoundIntSig{}, &builtinRoundDecSig{},
 		&builtinRoundWithFracRealSig{}, &builtinRoundWithFracIntSig{}, &builtinRoundWithFracDecSig{}, &builtinCeilRealSig{}, &builtinCeilIntToDecSig{},
 		&builtinCeilIntToIntSig{}, &builtinCeilDecToIntSig{}, &builtinCeilDecToDecSig{}, &builtinFloorRealSig{}, &builtinFloorIntToDecSig{},
@@ -579,6 +579,7 @@ func (m *MockExpr) ResolveIndices(schema *Schema) (Expression, error)           
 func (m *MockExpr) resolveIndices(schema *Schema) error                           { return nil }
 func (m *MockExpr) ResolveIndicesByVirtualExpr(schema *Schema) (Expression, bool) { return m, true }
 func (m *MockExpr) resolveIndicesByVirtualExpr(schema *Schema) bool               { return true }
+func (m *MockExpr) RemapColumn(_ map[int64]*Column) (Expression, error)           { return m, nil }
 func (m *MockExpr) ExplainInfo() string                                           { return "" }
 func (m *MockExpr) ExplainNormalizedInfo() string                                 { return "" }
 func (m *MockExpr) HashCode(sc *stmtctx.StatementContext) []byte                  { return nil }
