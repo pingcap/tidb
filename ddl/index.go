@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/ingest"
+	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -1147,6 +1148,7 @@ type addIndexWorker struct {
 	baseIndexWorker
 	index     table.Index
 	writerCtx *ingest.WriterContext
+	coprCtx   *copContext
 
 	// The following attributes are used to reduce memory allocation.
 	idxKeyBufs         [][]byte
@@ -1194,6 +1196,7 @@ func newAddIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable
 		},
 		index:     index,
 		writerCtx: lwCtx,
+		coprCtx:   newCopContext(t.Meta(), indexInfo),
 	}, nil
 }
 
@@ -1447,7 +1450,7 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 
 	oprStartTime := time.Now()
 	ctx := kv.WithInternalSourceType(context.Background(), w.jobContext.ddlJobSourceType())
-	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
+	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) (err error) {
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
 		txn.SetOption(kv.Priority, w.priority)
@@ -1455,7 +1458,21 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 			txn.SetOption(kv.ResourceGroupTagger, tagger)
 		}
 
-		idxRecords, nextKey, taskDone, err := w.fetchRowColVals(txn, handleRange)
+		var (
+			idxRecords []*indexRecord
+			nextKey    kv.Key
+			taskDone   bool
+		)
+		if w.coprCtx != nil {
+			var res distsql.SelectResult
+			res, err = w.buildTableScan(w.jobContext.ddlJobCtx, txn, handleRange.startKey, handleRange.excludedEndKey())
+			if err != nil {
+				return errors.Trace(err)
+			}
+			idxRecords, nextKey, taskDone, err = w.fetchRowColValsFromSelect(ctx, res, handleRange)
+		} else {
+			idxRecords, nextKey, taskDone, err = w.fetchRowColVals(txn, handleRange)
+		}
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1477,7 +1494,7 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 
 			// When the backfill-merge process is used, the writes from DML are redirected to a temp index.
 			// The write-conflict will be handled by the merge worker. Thus, the locks are unnecessary.
-			if !needMergeTmpIdx {
+			if !needMergeTmpIdx && idxRecord.key != nil {
 				// We need to add this lock to make sure pessimistic transaction can realize this operation.
 				// For the normal pessimistic transaction, it's ok. But if async commit is used, it may lead to inconsistent data and index.
 				err := txn.LockKeys(context.Background(), new(kv.LockCtx), idxRecord.key)

@@ -27,6 +27,7 @@ go_library(
         "foreign_key.go",
         "generated_column.go",
         "index.go",
+        "index_distsql.go",
         "index_merge_tmp.go",
         "job_table.go",
         "mock.go",
