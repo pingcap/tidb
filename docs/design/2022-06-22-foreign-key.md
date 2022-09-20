@@ -200,6 +200,15 @@ If `foreign_key_checks` is `ON`, then drop the table which has foreign key refer
 (3730, "Cannot drop table 't1' referenced by a foreign key constraint 't2_ibfk_1' on table 't2'.")
 ```
 
+### Drop Database
+
+If `foreign_key_checks` is `ON`, then drop the database which has foreign key references by other database will be rejected.
+
+```sql
+> drop database test;
+(3730, "Cannot drop table 't1' referenced by a foreign key constraint 't2_ibfk_1' on table 't2'.")
+```
+
 ### Drop Index
 
 Drop index which used by foreign key will be rejected.
