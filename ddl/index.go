@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -1183,6 +1184,14 @@ func newAddIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable
 		}
 	}
 
+	var coprCtx *copContext
+	if variable.EnableCoprRead.Load() {
+		coprCtx = newCopContext(t.Meta(), indexInfo)
+		logutil.BgLogger().Info("[ddl] fetch index values with coprocessor",
+			zap.String("table", t.Meta().Name.O),
+			zap.String("index", indexInfo.Name.O))
+	}
+
 	return &addIndexWorker{
 		baseIndexWorker: baseIndexWorker{
 			backfillWorker: newBackfillWorker(sessCtx, id, t, reorgInfo, typeAddIndexWorker),
@@ -1196,7 +1205,7 @@ func newAddIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable
 		},
 		index:     index,
 		writerCtx: lwCtx,
-		coprCtx:   newCopContext(t.Meta(), indexInfo),
+		coprCtx:   coprCtx,
 	}, nil
 }
 

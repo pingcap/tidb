@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
@@ -151,7 +152,13 @@ func (w *addIndexWorker) fetchRowColValsFromSelect(ctx context.Context,
 }
 
 func buildHandleColInfoAndFieldTypes(tbInfo *model.TableInfo) ([]*model.ColumnInfo, []*types.FieldType) {
-	if tbInfo.IsCommonHandle {
+	if tbInfo.PKIsHandle {
+		for i := range tbInfo.Columns {
+			if mysql.HasPriKeyFlag(tbInfo.Columns[i].GetFlag()) {
+				return []*model.ColumnInfo{tbInfo.Columns[i]}, []*types.FieldType{&tbInfo.Columns[i].FieldType}
+			}
+		}
+	} else if tbInfo.IsCommonHandle {
 		primaryIdx := tables.FindPrimaryIndex(tbInfo)
 		pkCols := make([]*model.ColumnInfo, 0, len(primaryIdx.Columns))
 		pkFts := make([]*types.FieldType, 0, len(primaryIdx.Columns))

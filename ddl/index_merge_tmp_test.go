@@ -41,6 +41,7 @@ func TestAddIndexMergeProcess(t *testing.T) {
 	// Force onCreateIndex use the txn-merge process.
 	ingest.LitInitialized = false
 	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1;")
+	tk.MustExec("set global tidb_ddl_enable_copr_read = 1;")
 
 	var checkErr error
 	var runDML, backfillDone bool
