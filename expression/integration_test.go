@@ -7725,5 +7725,4 @@ func TestIssue35184(t *testing.T) {
 
 	result = tk.MustQuery("SELECT FROM_UNIXTIME(tchar,'%Y%m%d') from ft where FROM_UNIXTIME(tchar)= '1973-11-30 08:38:10.123400' ")
 	result.Check(testkit.Rows("19731130"))
-
 }
