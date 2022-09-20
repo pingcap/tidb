@@ -7713,4 +7713,17 @@ func TestIssue35184(t *testing.T) {
 	tk.MustExec("insert into ft values(1234567890,123467890.1234,123467890.1234,'11111123467890.1234')")
 	result = tk.MustQuery("SELECT FROM_UNIXTIME(tchar) from ft")
 	result.Check(testkit.Rows("<nil>"))
+
+	tk.MustExec("drop table if exists ft")
+	tk.MustExec("create table ft (tint int, tdou double, tdec decimal(22,9),tchar char(44))")
+	tk.MustExec("insert into ft values(1234567890,123467890.1234,123467890.1234,'123467890.1234')")
+	result = tk.MustQuery("SELECT FROM_UNIXTIME(tchar) from ft where FROM_UNIXTIME(tchar)= '1973-11-30 08:38:10.123400' ")
+	result.Check(testkit.Rows(unixTime1))
+
+	result = tk.MustQuery("SELECT FROM_UNIXTIME(cast(tchar as decimal(44,1))) from ft where FROM_UNIXTIME(tchar)= '1973-11-30 08:38:10.123400' ")
+	result.Check(testkit.Rows("1973-11-30 08:38:10.1"))
+
+	result = tk.MustQuery("SELECT FROM_UNIXTIME(tchar,'%Y%m%d') from ft where FROM_UNIXTIME(tchar)= '1973-11-30 08:38:10.123400' ")
+	result.Check(testkit.Rows("19731130"))
+
 }
