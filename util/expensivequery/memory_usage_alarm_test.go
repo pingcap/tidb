@@ -26,7 +26,7 @@ func TestIfNeedDoRecord(t *testing.T) {
 	record.initMemoryUsageAlarmRecord()
 
 	// mem usage ratio < 70% will not be recorded
-	memUsed := 0.70 * float64(record.serverMemoryQuota)
+	memUsed := 0.69 * float64(record.serverMemoryQuota)
 	assert.False(t, record.needRecord(uint64(memUsed)))
 
 	// mem usage ratio > 70% will not be recorded

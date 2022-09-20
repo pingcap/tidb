@@ -49,8 +49,7 @@ type memoryUsageAlarm struct {
 }
 
 func (record *memoryUsageAlarm) initMemoryUsageAlarmRecord() {
-	record.memoryUsageAlarmRatio = 0.01
-	//record.memoryUsageAlarmRatio = variable.MemoryUsageAlarmRatio.Load()
+	record.memoryUsageAlarmRatio = variable.MemoryUsageAlarmRatio.Load()
 	record.memoryUsageAlarmKeepRecordNum = variable.MemoryUsageAlarmKeepRecordNum.Load()
 	if quota := config.GetGlobalConfig().Performance.ServerMemoryQuota; quota != 0 {
 		record.serverMemoryQuota = quota
