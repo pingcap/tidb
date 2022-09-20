@@ -22,12 +22,12 @@ jobs:
       - name: Check File Permission
         run: make check-file-perm
       - name: Check License Header
-        uses: apache/skywalking-eyes/header@v0.4.0
+        uses: xhebox/actioncol/skywalking-eyes-header@main
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           config: .github/licenserc.yml
       - name: Check Leaked Secrets
-        uses: trufflesecurity/trufflehog@v3.4.3
+        uses: trufflesecurity/trufflehog@v3.11.1
         with:
           path: ./
           base: ${{ github.event.pull_request.base.sha }}
