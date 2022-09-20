@@ -6022,8 +6022,8 @@ func TestGlobalMemoryControl(t *testing.T) {
 	sm := &testkit.MockSessionManager{
 		PS: []*util.ProcessInfo{tk1.Session().ShowProcess(), tk2.Session().ShowProcess(), tk3.Session().ShowProcess()},
 	}
-	dom.ExpensiveQueryHandle().SetSessionManager(sm)
-	go dom.ExpensiveQueryHandle().Run()
+	dom.ServerMemoryQuotaHandle().SetSessionManager(sm)
+	go dom.ServerMemoryQuotaHandle().Run()
 
 	tracker1.Consume(100 << 20) // 100 MB
 	tracker2.Consume(200 << 20) // 200 MB

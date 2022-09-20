@@ -12,15 +12,50 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package expensivequery
+package memory
 
 import (
 	"runtime"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/memory"
 )
+
+// ServerMemoryQuotaHandle is the handler for server memory quota.
+type ServerMemoryQuotaHandle struct {
+	exitCh chan struct{}
+	sm     atomic.Value
+}
+
+// NewServerMemoryQuotaHandle builds a new server memory quota handler.
+func NewServerMemoryQuotaHandle(exitCh chan struct{}) *ServerMemoryQuotaHandle {
+	return &ServerMemoryQuotaHandle{exitCh: exitCh}
+}
+
+// SetSessionManager sets the SessionManager which is used to fetching the info
+// of all active sessions.
+func (smqh *ServerMemoryQuotaHandle) SetSessionManager(sm util.SessionManager) *ServerMemoryQuotaHandle {
+	smqh.sm.Store(sm)
+	return smqh
+}
+
+// Run starts a server memory quota checker goroutine at the start time of the server.
+func (smqh *ServerMemoryQuotaHandle) Run() {
+	tickInterval := time.Millisecond * time.Duration(100)
+	ticker := time.NewTicker(tickInterval)
+	defer ticker.Stop()
+	sm := smqh.sm.Load().(util.SessionManager)
+	serverMemoryQuota := &serverMemoryQuota{}
+	for {
+		select {
+		case <-ticker.C:
+			serverMemoryQuota.CheckQuotaAndKill(ServerMemoryQuota.Load(), sm)
+		case <-smqh.exitCh:
+			return
+		}
+	}
+}
 
 type serverMemoryQuota struct {
 	sqlStartTime time.Time
@@ -46,8 +81,8 @@ func (s *serverMemoryQuota) CheckQuotaAndKill(bt uint64, sm util.SessionManager)
 	instanceStats := &runtime.MemStats{}
 	runtime.ReadMemStats(instanceStats)
 	if instanceStats.HeapInuse > bt {
-		t := memory.MemUsageTop1Tracker.Load()
-		if t != nil && uint64(t.BytesConsumed()) > memory.ServerMemoryLimitSessMinSize.Load() {
+		t := MemUsageTop1Tracker.Load()
+		if t != nil && uint64(t.BytesConsumed()) > ServerMemoryLimitSessMinSize.Load() {
 			if info, ok := sm.GetProcessInfo(t.SessionID); ok {
 				s.sessionID = t.SessionID
 				s.sqlStartTime = info.Time

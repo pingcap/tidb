@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -58,7 +57,6 @@ func (eqh *Handle) Run() {
 	defer ticker.Stop()
 	sm := eqh.sm.Load().(util.SessionManager)
 	record := &memoryUsageAlarm{}
-	serverMemoryQuota := &serverMemoryQuota{}
 	for {
 		select {
 		case <-ticker.C:
@@ -93,7 +91,6 @@ func (eqh *Handle) Run() {
 			if record.err == nil {
 				record.alarm4ExcessiveMemUsage(sm)
 			}
-			serverMemoryQuota.CheckQuotaAndKill(memory.ServerMemoryQuota.Load(), sm)
 		case <-eqh.exitCh:
 			return
 		}

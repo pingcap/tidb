@@ -63,6 +63,7 @@ import (
 	"github.com/pingcap/tidb/util/engine"
 	"github.com/pingcap/tidb/util/expensivequery"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	pd "github.com/tikv/pd/client"
@@ -86,30 +87,31 @@ func NewMockDomain() *Domain {
 // Domain represents a storage space. Different domains can use the same database name.
 // Multiple domains can be used in parallel without synchronization.
 type Domain struct {
-	store                kv.Storage
-	infoCache            *infoschema.InfoCache
-	privHandle           *privileges.Handle
-	bindHandle           *bindinfo.BindHandle
-	statsHandle          unsafe.Pointer
-	statsLease           time.Duration
-	ddl                  ddl.DDL
-	info                 *infosync.InfoSyncer
-	globalCfgSyncer      *globalconfigsync.GlobalConfigSyncer
-	m                    sync.Mutex
-	SchemaValidator      SchemaValidator
-	sysSessionPool       *sessionPool
-	exit                 chan struct{}
-	etcdClient           *clientv3.Client
-	sysVarCache          sysVarCache // replaces GlobalVariableCache
-	slowQuery            *topNSlowQueries
-	expensiveQueryHandle *expensivequery.Handle
-	wg                   util.WaitGroupWrapper
-	statsUpdating        atomicutil.Int32
-	cancel               context.CancelFunc
-	indexUsageSyncLease  time.Duration
-	dumpFileGcChecker    *dumpFileGcChecker
-	expiredTimeStamp4PC  types.Time
-	logBackupAdvancer    *streamhelper.AdvancerDaemon
+	store                   kv.Storage
+	infoCache               *infoschema.InfoCache
+	privHandle              *privileges.Handle
+	bindHandle              *bindinfo.BindHandle
+	statsHandle             unsafe.Pointer
+	statsLease              time.Duration
+	ddl                     ddl.DDL
+	info                    *infosync.InfoSyncer
+	globalCfgSyncer         *globalconfigsync.GlobalConfigSyncer
+	m                       sync.Mutex
+	SchemaValidator         SchemaValidator
+	sysSessionPool          *sessionPool
+	exit                    chan struct{}
+	etcdClient              *clientv3.Client
+	sysVarCache             sysVarCache // replaces GlobalVariableCache
+	slowQuery               *topNSlowQueries
+	expensiveQueryHandle    *expensivequery.Handle
+	serverMemoryQuotaHandle *memory.ServerMemoryQuotaHandle
+	wg                      util.WaitGroupWrapper
+	statsUpdating           atomicutil.Int32
+	cancel                  context.CancelFunc
+	indexUsageSyncLease     time.Duration
+	dumpFileGcChecker       *dumpFileGcChecker
+	expiredTimeStamp4PC     types.Time
+	logBackupAdvancer       *streamhelper.AdvancerDaemon
 
 	serverID             uint64
 	serverIDSession      *concurrency.Session
@@ -765,6 +767,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)
 	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do.exit)
+	do.serverMemoryQuotaHandle = memory.NewServerMemoryQuotaHandle(do.exit)
 	do.sysProcesses = SysProcesses{mu: &sync.RWMutex{}, procMap: make(map[uint64]sessionctx.Context)}
 	variable.SetStatsCacheCapacity.Store(do.SetStatsCacheCapacity)
 	return do
@@ -1695,6 +1698,11 @@ func (do *Domain) gcAnalyzeHistory(owner owner.Manager) {
 // ExpensiveQueryHandle returns the expensive query handle.
 func (do *Domain) ExpensiveQueryHandle() *expensivequery.Handle {
 	return do.expensiveQueryHandle
+}
+
+// ServerMemoryQuotaHandle returns the expensive query handle.
+func (do *Domain) ServerMemoryQuotaHandle() *memory.ServerMemoryQuotaHandle {
+	return do.serverMemoryQuotaHandle
 }
 
 const (
