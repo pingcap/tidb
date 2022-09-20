@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package memory
+package servermemoryquota
 
 import (
 	"runtime"
@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/memory"
 )
 
 // ServerMemoryQuotaHandle is the handler for server memory quota.
@@ -50,7 +51,7 @@ func (smqh *ServerMemoryQuotaHandle) Run() {
 	for {
 		select {
 		case <-ticker.C:
-			serverMemoryQuota.CheckQuotaAndKill(ServerMemoryQuota.Load(), sm)
+			serverMemoryQuota.CheckQuotaAndKill(memory.ServerMemoryQuota.Load(), sm)
 		case <-smqh.exitCh:
 			return
 		}
@@ -81,8 +82,8 @@ func (s *serverMemoryQuota) CheckQuotaAndKill(bt uint64, sm util.SessionManager)
 	instanceStats := &runtime.MemStats{}
 	runtime.ReadMemStats(instanceStats)
 	if instanceStats.HeapInuse > bt {
-		t := MemUsageTop1Tracker.Load()
-		if t != nil && uint64(t.BytesConsumed()) > ServerMemoryLimitSessMinSize.Load() {
+		t := memory.MemUsageTop1Tracker.Load()
+		if t != nil && uint64(t.BytesConsumed()) > memory.ServerMemoryLimitSessMinSize.Load() {
 			if info, ok := sm.GetProcessInfo(t.SessionID); ok {
 				s.sessionID = t.SessionID
 				s.sqlStartTime = info.Time

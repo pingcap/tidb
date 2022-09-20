@@ -63,7 +63,7 @@ import (
 	"github.com/pingcap/tidb/util/engine"
 	"github.com/pingcap/tidb/util/expensivequery"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/servermemoryquota"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	pd "github.com/tikv/pd/client"
@@ -104,7 +104,7 @@ type Domain struct {
 	sysVarCache             sysVarCache // replaces GlobalVariableCache
 	slowQuery               *topNSlowQueries
 	expensiveQueryHandle    *expensivequery.Handle
-	serverMemoryQuotaHandle *memory.ServerMemoryQuotaHandle
+	serverMemoryQuotaHandle *servermemoryquota.ServerMemoryQuotaHandle
 	wg                      util.WaitGroupWrapper
 	statsUpdating           atomicutil.Int32
 	cancel                  context.CancelFunc
@@ -886,7 +886,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)
 	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do.exit)
-	do.serverMemoryQuotaHandle = memory.NewServerMemoryQuotaHandle(do.exit)
+	do.serverMemoryQuotaHandle = servermemoryquota.NewServerMemoryQuotaHandle(do.exit)
 	do.sysProcesses = SysProcesses{mu: &sync.RWMutex{}, procMap: make(map[uint64]sessionctx.Context)}
 	variable.SetStatsCacheCapacity.Store(do.SetStatsCacheCapacity)
 	return do
@@ -1821,7 +1821,7 @@ func (do *Domain) ExpensiveQueryHandle() *expensivequery.Handle {
 }
 
 // ServerMemoryQuotaHandle returns the expensive query handle.
-func (do *Domain) ServerMemoryQuotaHandle() *memory.ServerMemoryQuotaHandle {
+func (do *Domain) ServerMemoryQuotaHandle() *servermemoryquota.ServerMemoryQuotaHandle {
 	return do.serverMemoryQuotaHandle
 }
 
