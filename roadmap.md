@@ -2,6 +2,8 @@
 
 This document shows the roadmap for TiDB development from September 2022 to September 2023.
 
+Note that the roadmap is subject to change based on user needs and feedback. 
+
 It brings you what's coming in the 1-year future, so you can see the new features or improvements in advance, follow the progress, learn about the key milestones on the way, and give feedback as the development work goes on.
 
 ## TiDB kernel
@@ -30,11 +32,11 @@ It brings you what's coming in the 1-year future, so you can see the new feature
   <tr>
     <td>Flashback</td>
     <td>Support cluster-level flashback</td>
-    <td>In game rollback scenarios, the flashback can be used to achieve fast rollback of the current cluster. This solves the common problems in the gaming industry such as version errors and bugs.</td>
+    <td>In game rollback scenarios, the flashback can be used to achieve a fast rollback of the current cluster. This solves the common problems in the gaming industry such as version errors and bugs.</td>
     <td>November 2022</td>
   </tr>
   <tr>
-    <td>TiFlash result write back (supports <code>INSERT INTO SELECT</code>)</td>
+    <td>TiFlash result write-back (supports <code>INSERT INTO SELECT</code>)</td>
     <td><ul><li>Easily write the analysis results in TiFlash back to TiDB.</li><li>Provide complete ACID transactions, more convenient and reliable than general ETL solutions.</li><li>Set a hard limit on the threshold of intermediate result size, and report an error if the threshold is exceeded.</li><li>Support fully distributed transactions, and remove or relax the limit on the intermediate result size.</li></ul></td>
     <td>These features combined enable a way to materialize intermediate results. The analysis results can be easily reused, which reduces unnecessary ad-hoc queries, improves the performance of BI and other applications (by pulling results directly) and reduces system load (by avoiding duplicated computation), thereby improving the overall data pipeline efficiency and reducing costs. It will make TiFlash an online service.</td>
     <td>November 2022</td>
@@ -85,7 +87,7 @@ It brings you what's coming in the 1-year future, so you can see the new feature
     <td>SQL blocklist</td>
     <td>Support a rule-based SQL blocklist mechanism.</td>
     <td>In multi-service aggregation scenarios, provide SQL management and control capabilities, and improve cluster stability by prohibiting high-resource-consuming SQL statements.</td>
-    <td>2022.02</td>
+    <td>February 2023</td>
   </tr>
   <tr>
     <td>Resource management</td>
@@ -151,7 +153,7 @@ It brings you what's coming in the 1-year future, so you can see the new feature
     <td rowspan="2">Backup and restore</td>
     <td>EBS snapshot-based backup</td>
     <td>BR provides an MVP version of EBS snapshot-based backup and restore.</td>
-    <td>2022.9</td>
+    <td>September 2022</td>
   </tr>
   <tr>
     <td>EBS snapshot-based backup and restore</td>
@@ -226,7 +228,7 @@ It brings you what's coming in the 1-year future, so you can see the new feature
   </tr>
   <tr>
     <td>Password policy management</td>
-    <td>TiDB provides password reuse mechanism and brute-force cracking prevention capabilities</td>
+    <td>TiDB provides a password reuse mechanism and brute-force cracking prevention capabilities</td>
     <td>TiDB supports password policy management to protect password security.</td>
     <td>March 2023</td>
   </tr>
