@@ -1364,7 +1364,8 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 
 // WatchTiFlashMPPStoreChange create a routine to watch.
 // TODO: we can start watch only when user add tiflash_mpp into tidb_isolatoin_read_engines.
-// 		 tiflashMPPStoreKey is not put to etcd yet, store cache will only be invalidated every 30 seconds.
+//
+//	tiflashMPPStoreKey is not put to etcd yet, store cache will only be invalidated every 30 seconds.
 func (do *Domain) WatchTiFlashMPPStoreChange() error {
 	var watchCh clientv3.WatchChan
 	if do.etcdClient != nil {

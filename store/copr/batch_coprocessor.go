@@ -21,7 +21,7 @@ import (
 	"io"
 	"math"
 	"strconv"
-	_"strings"
+	_ "strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -36,12 +36,12 @@ import (
 	"github.com/pingcap/tidb/store/driver/backoff"
 	derr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/stathat/consistent"
 	"github.com/tikv/client-go/v2/metrics"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
-	"github.com/stathat/consistent"
 )
 
 // batchCopTask comprises of multiple copTask that will send to same store.
@@ -284,11 +284,12 @@ func balanceBatchCopTaskWithContinuity(storeTaskMap map[uint64]*batchCopTask, ca
 }
 
 // balanceBatchCopTask balance the regions between available stores, the basic rule is
-// 1. the first region of each original batch cop task belongs to its original store because some
-//    meta data(like the rpc context) in batchCopTask is related to it
-// 2. for the remaining regions:
-//    if there is only 1 available store, then put the region to the related store
-//    otherwise, these region will be balance between TiFlash stores.
+//  1. the first region of each original batch cop task belongs to its original store because some
+//     meta data(like the rpc context) in batchCopTask is related to it
+//  2. for the remaining regions:
+//     if there is only 1 available store, then put the region to the related store
+//     otherwise, these region will be balance between TiFlash stores.
+//
 // Currently, there are two balance strategies.
 // The first balance strategy: use a greedy algorithm to put it into the store with highest weight. This strategy only consider the region count between TiFlash stores.
 //
@@ -622,17 +623,17 @@ func buildBatchCopTasksConsistentHash(bo *backoff.Backoffer, store *kvStore, ran
 // 	const cmdType = tikvrpc.CmdBatchCop
 // 	var retryNum int
 // 	cache := store.GetRegionCache()
-// 
+//
 // 	for {
 // 		retryNum++
 // 		if retryNum >= 10 {
 // 			return nil, errors.New("too many times of retry to GetTiFlashMPPRPCContextByConsistentHash()")
 // 		}
-// 
+//
 // 		var rangesLen int
 // 		tasks := make([]*copTask, 0)
 // 		regionIDs := make([]tikv.RegionVerID, 0)
-// 
+//
 // 		for i, ranges := range rangesForEachPhysicalTable {
 // 			rangesLen += ranges.Len()
 // 			locations, err := cache.SplitKeyRangesByLocations(bo, ranges)
@@ -650,7 +651,7 @@ func buildBatchCopTasksConsistentHash(bo *backoff.Backoffer, store *kvStore, ran
 // 				regionIDs = append(regionIDs, lo.Location.Region)
 // 			}
 // 		}
-// 
+//
 // 		rpcCtxs, err := cache.GetTiFlashMPPRPCContextByConsistentHash(bo.TiKVBackoffer(), regionIDs)
 // 		if err != nil {
 // 			return nil, err
@@ -699,7 +700,7 @@ func buildBatchCopTasksConsistentHash(bo *backoff.Backoffer, store *kvStore, ran
 // 		}
 // 		break
 // 	}
-// 
+//
 // 	failpoint.Inject("check_only_dispatched_to_tiflash_mpp_nodes", func(val failpoint.Value) {
 // 		// This failpoint will be tested in test-infra case, because we needs setup a cluster.
 // 		// All ReadNode addrs are stored in val, each addr is separated by semicolon.
