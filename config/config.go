@@ -82,10 +82,8 @@ const (
 	DefDDLSlowOprThreshold = 300
 	// DefExpensiveQueryTimeThreshold indicates the time threshold of expensive query.
 	DefExpensiveQueryTimeThreshold = 60
-
 	// DefTempDir is the default temporary directory path for TiDB.
 	DefTempDir = "/tmp/tidb"
-	// DefMemoryUsageAlarmRatio is the threshold triggering an alarm which the memory usage of tidb-server instance exceeds.
 )
 
 // Valid config maps

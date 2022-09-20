@@ -36,22 +36,22 @@ import (
 )
 
 type memoryUsageAlarm struct {
-	lastCheckTime                time.Time
-	err                          error
-	baseRecordDir                string
-	lastRecordDirName            []string
-	lastRecordMemUsed            uint64
-	memoryUsageAlarmRatio        float64
-	memoryUsageAlarmKeepFilesNum int64
-	serverMemoryQuota            uint64
-	isServerMemoryQuotaSet       bool
-	initialized                  bool
+	lastCheckTime                 time.Time
+	err                           error
+	baseRecordDir                 string
+	lastRecordDirName             []string
+	lastRecordMemUsed             uint64
+	memoryUsageAlarmRatio         float64
+	memoryUsageAlarmKeepRecordNum int64
+	serverMemoryQuota             uint64
+	isServerMemoryQuotaSet        bool
+	initialized                   bool
 }
 
 func (record *memoryUsageAlarm) initMemoryUsageAlarmRecord() {
 	record.memoryUsageAlarmRatio = 0.01
 	//record.memoryUsageAlarmRatio = variable.MemoryUsageAlarmRatio.Load()
-	record.memoryUsageAlarmKeepFilesNum = variable.MemoryUsageAlarmKeepFilesNum.Load()
+	record.memoryUsageAlarmKeepRecordNum = variable.MemoryUsageAlarmKeepRecordNum.Load()
 	if quota := config.GetGlobalConfig().Performance.ServerMemoryQuota; quota != 0 {
 		record.serverMemoryQuota = quota
 		record.isServerMemoryQuotaSet = true
@@ -169,7 +169,7 @@ func (record *memoryUsageAlarm) doRecord(memUsage uint64, instanceMemoryUsage ui
 
 func (record *memoryUsageAlarm) tryRemoveNoNeedRecords() {
 	filename := &record.lastRecordDirName
-	for len(*filename) > int(record.memoryUsageAlarmKeepFilesNum) {
+	for len(*filename) > int(record.memoryUsageAlarmKeepRecordNum) {
 		err := os.RemoveAll((*filename)[0])
 		if err != nil {
 			logutil.BgLogger().Error("remove temp files failed", zap.Error(err))

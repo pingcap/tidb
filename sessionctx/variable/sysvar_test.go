@@ -303,9 +303,9 @@ func TestInstanceScopedVars(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, fmt.Sprintf("%g", MemoryUsageAlarmRatio.Load()), val)
 
-	val, err = vars.GetSessionOrGlobalSystemVar(TiDBMemoryUsageAlarmKeepFilesNum)
+	val, err = vars.GetSessionOrGlobalSystemVar(TiDBMemoryUsageAlarmKeepRecordNum)
 	require.NoError(t, err)
-	require.Equal(t, fmt.Sprintf("%d", MemoryUsageAlarmKeepFilesNum.Load()), val)
+	require.Equal(t, fmt.Sprintf("%d", MemoryUsageAlarmKeepRecordNum.Load()), val)
 
 	val, err = vars.GetSessionOrGlobalSystemVar(TiDBForcePriority)
 	require.NoError(t, err)

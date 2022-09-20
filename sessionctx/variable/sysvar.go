@@ -902,11 +902,11 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(s *SessionVars) (string, error) {
 		return fmt.Sprintf("%g", MemoryUsageAlarmRatio.Load()), nil
 	}},
-	{Scope: ScopeGlobal, Name: TiDBMemoryUsageAlarmKeepFilesNum, Value: strconv.Itoa(DefMemoryUsageAlarmKeepFilesNum), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt32, SetGlobal: func(s *SessionVars, val string) error {
-		MemoryUsageAlarmKeepFilesNum.Store(TidbOptInt64(val, DefMemoryUsageAlarmKeepFilesNum))
+	{Scope: ScopeGlobal, Name: TiDBMemoryUsageAlarmKeepRecordNum, Value: strconv.Itoa(DefMemoryUsageAlarmKeepRecordNum), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt32, SetGlobal: func(s *SessionVars, val string) error {
+		MemoryUsageAlarmKeepRecordNum.Store(TidbOptInt64(val, DefMemoryUsageAlarmKeepRecordNum))
 		return nil
 	}, GetGlobal: func(s *SessionVars) (string, error) {
-		return fmt.Sprintf("%d", MemoryUsageAlarmKeepFilesNum.Load()), nil
+		return fmt.Sprintf("%d", MemoryUsageAlarmKeepRecordNum.Load()), nil
 	}},
 
 	/* The system variables below have GLOBAL and SESSION scope  */
