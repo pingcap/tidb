@@ -71,6 +71,27 @@ var (
 			Name:      "table_partition_range_columns_usage",
 			Help:      "Counter of CREATE TABLE which includes RANGE COLUMNS partitioning",
 		})
+	TelemetryTablePartitionRangeColumnsGt1Cnt = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "telemetry",
+			Name:      "table_partition_range_multi_columns_usage",
+			Help:      "Counter of CREATE TABLE which includes RANGE COLUMNS partitioning with more than one partitioning column",
+		})
+	TelemetryTablePartitionRangeColumnsGt2Cnt = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "telemetry",
+			Name:      "table_partition_range_multi_columns_usage",
+			Help:      "Counter of CREATE TABLE which includes RANGE COLUMNS partitioning with more than two partitioning columns",
+		})
+	TelemetryTablePartitionRangeColumnsGt3Cnt = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "telemetry",
+			Name:      "table_partition_range_multi_columns_usage",
+			Help:      "Counter of CREATE TABLE which includes RANGE COLUMNS partitioning with more than three partitioning columns",
+		})
 	TelemetryTablePartitionListColumnsCnt = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
@@ -112,6 +133,13 @@ var (
 			Subsystem: "telemetry",
 			Name:      "table_partition_drop_interval_partition_usage",
 			Help:      "Counter of partitions added by ALTER TABLE FIRST PARTITION statements",
+		})
+	TelemetryAddIndexIngestCnt = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "telemetry",
+			Name:      "add_index_ingest_usage",
+			Help:      "Counter of usage of add index acceleration solution",
 		})
 )
 
@@ -204,6 +232,9 @@ type TablePartitionUsageCounter struct {
 	TablePartitionRangeCnt                    int64 `json:"table_partition_range_cnt"`
 	TablePartitionHashCnt                     int64 `json:"table_partition_hash_cnt"`
 	TablePartitionRangeColumnsCnt             int64 `json:"table_partition_range_columns_cnt"`
+	TablePartitionRangeColumnsGt1Cnt          int64 `json:"table_partition_range_columns_gt_1_cnt"`
+	TablePartitionRangeColumnsGt2Cnt          int64 `json:"table_partition_range_columns_gt_2_cnt"`
+	TablePartitionRangeColumnsGt3Cnt          int64 `json:"table_partition_range_columns_gt_3_cnt"`
 	TablePartitionListColumnsCnt              int64 `json:"table_partition_list_columns_cnt"`
 	TablePartitionMaxPartitionsCnt            int64 `json:"table_partition_max_partitions_cnt"`
 	TablePartitionCreateIntervalPartitionsCnt int64 `json:"table_partition_create_interval_partitions_cnt"`
@@ -219,6 +250,9 @@ func (c TablePartitionUsageCounter) Cal(rhs TablePartitionUsageCounter) TablePar
 		TablePartitionRangeCnt:                    c.TablePartitionRangeCnt - rhs.TablePartitionRangeCnt,
 		TablePartitionHashCnt:                     c.TablePartitionHashCnt - rhs.TablePartitionHashCnt,
 		TablePartitionRangeColumnsCnt:             c.TablePartitionRangeColumnsCnt - rhs.TablePartitionRangeColumnsCnt,
+		TablePartitionRangeColumnsGt1Cnt:          c.TablePartitionRangeColumnsGt1Cnt - rhs.TablePartitionRangeColumnsGt1Cnt,
+		TablePartitionRangeColumnsGt2Cnt:          c.TablePartitionRangeColumnsGt2Cnt - rhs.TablePartitionRangeColumnsGt2Cnt,
+		TablePartitionRangeColumnsGt3Cnt:          c.TablePartitionRangeColumnsGt3Cnt - rhs.TablePartitionRangeColumnsGt3Cnt,
 		TablePartitionListColumnsCnt:              c.TablePartitionListColumnsCnt - rhs.TablePartitionListColumnsCnt,
 		TablePartitionMaxPartitionsCnt:            mathutil.Max(c.TablePartitionMaxPartitionsCnt-rhs.TablePartitionMaxPartitionsCnt, rhs.TablePartitionMaxPartitionsCnt),
 		TablePartitionCreateIntervalPartitionsCnt: c.TablePartitionCreateIntervalPartitionsCnt - rhs.TablePartitionCreateIntervalPartitionsCnt,
@@ -230,13 +264,16 @@ func (c TablePartitionUsageCounter) Cal(rhs TablePartitionUsageCounter) TablePar
 // ResetTablePartitionCounter gets the TxnCommitCounter.
 func ResetTablePartitionCounter(pre TablePartitionUsageCounter) TablePartitionUsageCounter {
 	return TablePartitionUsageCounter{
-		TablePartitionCnt:              readCounter(TelemetryTablePartitionCnt),
-		TablePartitionListCnt:          readCounter(TelemetryTablePartitionListCnt),
-		TablePartitionRangeCnt:         readCounter(TelemetryTablePartitionRangeCnt),
-		TablePartitionHashCnt:          readCounter(TelemetryTablePartitionHashCnt),
-		TablePartitionRangeColumnsCnt:  readCounter(TelemetryTablePartitionRangeColumnsCnt),
-		TablePartitionListColumnsCnt:   readCounter(TelemetryTablePartitionListColumnsCnt),
-		TablePartitionMaxPartitionsCnt: mathutil.Max(readCounter(TelemetryTablePartitionMaxPartitionsCnt)-pre.TablePartitionMaxPartitionsCnt, pre.TablePartitionMaxPartitionsCnt),
+		TablePartitionCnt:                readCounter(TelemetryTablePartitionCnt),
+		TablePartitionListCnt:            readCounter(TelemetryTablePartitionListCnt),
+		TablePartitionRangeCnt:           readCounter(TelemetryTablePartitionRangeCnt),
+		TablePartitionHashCnt:            readCounter(TelemetryTablePartitionHashCnt),
+		TablePartitionRangeColumnsCnt:    readCounter(TelemetryTablePartitionRangeColumnsCnt),
+		TablePartitionRangeColumnsGt1Cnt: readCounter(TelemetryTablePartitionRangeColumnsGt1Cnt),
+		TablePartitionRangeColumnsGt2Cnt: readCounter(TelemetryTablePartitionRangeColumnsGt2Cnt),
+		TablePartitionRangeColumnsGt3Cnt: readCounter(TelemetryTablePartitionRangeColumnsGt3Cnt),
+		TablePartitionListColumnsCnt:     readCounter(TelemetryTablePartitionListColumnsCnt),
+		TablePartitionMaxPartitionsCnt:   mathutil.Max(readCounter(TelemetryTablePartitionMaxPartitionsCnt)-pre.TablePartitionMaxPartitionsCnt, pre.TablePartitionMaxPartitionsCnt),
 	}
 }
 
@@ -248,6 +285,9 @@ func GetTablePartitionCounter() TablePartitionUsageCounter {
 		TablePartitionRangeCnt:                    readCounter(TelemetryTablePartitionRangeCnt),
 		TablePartitionHashCnt:                     readCounter(TelemetryTablePartitionHashCnt),
 		TablePartitionRangeColumnsCnt:             readCounter(TelemetryTablePartitionRangeColumnsCnt),
+		TablePartitionRangeColumnsGt1Cnt:          readCounter(TelemetryTablePartitionRangeColumnsGt1Cnt),
+		TablePartitionRangeColumnsGt2Cnt:          readCounter(TelemetryTablePartitionRangeColumnsGt2Cnt),
+		TablePartitionRangeColumnsGt3Cnt:          readCounter(TelemetryTablePartitionRangeColumnsGt3Cnt),
 		TablePartitionListColumnsCnt:              readCounter(TelemetryTablePartitionListColumnsCnt),
 		TablePartitionMaxPartitionsCnt:            readCounter(TelemetryTablePartitionMaxPartitionsCnt),
 		TablePartitionCreateIntervalPartitionsCnt: readCounter(TelemetryTablePartitionCreateIntervalPartitionsCnt),
@@ -283,4 +323,24 @@ func GetSavepointStmtCounter() int64 {
 // GetLazyPessimisticUniqueCheckSetCounter returns the counter of setting tidb_constraint_check_in_place_pessimistic to false.
 func GetLazyPessimisticUniqueCheckSetCounter() int64 {
 	return readCounter(LazyPessimisticUniqueCheckSetCount)
+}
+
+// DDLUsageCounter records the usages of Add Index with acceleration solution.
+type DDLUsageCounter struct {
+	AddIndexIngestUsed int64 `json:"add_index_ingest_used"`
+	MetadataLockUsed   bool  `json:"metadata_lock_used"`
+}
+
+// Sub returns the difference of two counters.
+func (a DDLUsageCounter) Sub(rhs DDLUsageCounter) DDLUsageCounter {
+	return DDLUsageCounter{
+		AddIndexIngestUsed: a.AddIndexIngestUsed - rhs.AddIndexIngestUsed,
+	}
+}
+
+// GetDDLUsageCounter gets the add index acceleration solution counts.
+func GetDDLUsageCounter() DDLUsageCounter {
+	return DDLUsageCounter{
+		AddIndexIngestUsed: readCounter(TelemetryAddIndexIngestCnt),
+	}
 }
