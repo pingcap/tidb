@@ -1953,7 +1953,7 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 		// we expect the check failed because csv data columns plus extend columns is greater than target schema's columns.
 		{
 			nil,
-			"row count 2 adding with extend column length 1 is larger than columnCount 2 for(.*)",
+			"row count 2 adding with extend column length 1 is larger than columnCount 2 plus ignore column count 0 for(.*)",
 			1,
 			false,
 			map[string]*checkpoints.TidbDBInfo{
