@@ -993,3 +993,115 @@ func TestMDLSavePoint(t *testing.T) {
 	tk.MustExec("commit")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 <nil>"))
 }
+
+func TestMDLTableCreate(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tkDDL := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=1")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t values(1);")
+
+	tk.MustExec("begin")
+	tk.MustQuery("select * from t;")
+	tk.MustGetErrCode("select * from t1;", mysql.ErrNoSuchTable)
+
+	tkDDL.MustExec("create table test.t1(a int);")
+
+	tk.MustGetErrCode("select * from t1;", mysql.ErrNoSuchTable)
+
+	tk.MustExec("commit")
+}
+
+func TestMDLTableDrop(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tkDDL := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=1")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t values(1);")
+
+	tk.MustExec("begin")
+
+	tkDDL.MustExec("drop table test.t;")
+
+	tk.MustGetErrCode("select * from t;", mysql.ErrNoSuchTable)
+
+	tk.MustExec("commit")
+}
+
+func TestMDLDatabaseCreate(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tkDDL := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=1")
+
+	tk.MustExec("begin")
+
+	tkDDL.MustExec("create database test2;")
+	tkDDL.MustExec("create table test2.t(a int);")
+
+	tk.MustGetErrCode("use test2", mysql.ErrBadDB)
+	tk.MustGetErrCode("select * from test2.t;", mysql.ErrNoSuchTable)
+
+	tk.MustExec("commit")
+}
+
+func TestMDLDatabaseDrop(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tkDDL := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=1")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t values(1);")
+
+	tk.MustExec("begin")
+
+	tkDDL.MustExec("drop database test;")
+
+	tk.MustExec("use test;")
+	tk.MustGetErrCode("select * from t;", mysql.ErrNoSuchTable)
+
+	tk.MustExec("commit")
+}
+
+func TestMDLRenameTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tkDDL := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=1")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t values(1);")
+
+	tk.MustExec("begin")
+
+	tkDDL.MustExec("rename table test.t to test.t1;")
+
+	tk.MustGetErrCode("select * from t;", mysql.ErrNoSuchTable)
+	tk.MustGetErrCode("select * from t1;", mysql.ErrNoSuchTable)
+
+	tk.MustExec("commit")
+	tk.MustExec("create database test2")
+	tk.MustExec("begin")
+
+	tkDDL.MustExec("rename table test.t1 to test2.t1;")
+
+	tk.MustGetErrCode("select * from t1;", mysql.ErrNoSuchTable)
+	tk.MustGetErrCode("select * from test2.t1;", mysql.ErrNoSuchTable)
+	tk.MustExec("commit")
+}
