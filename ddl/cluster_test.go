@@ -303,12 +303,12 @@ func TestFlashbackTimeRange(t *testing.T) {
 	defer resetGC()
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 	sql := fmt.Sprintf("set tidb_snapshot='%v'", flashbackTime.Add(5*time.Minute).Format("2006-01-02 15:04:05"))
-	tk.MustGetErrMsg(sql, fmt.Sprintf("Can't get snapshot value from flashback time range [%s, %s]",
+	tk.MustGetErrMsg(sql, fmt.Sprintf("can't set timestamp to history flashback time range [%s, %s]",
 		flashbackTime, oracle.GetTimeFromTS(m.StartTS)))
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int)")
 	sql = fmt.Sprintf("select * from t as of timestamp '%v'", flashbackTime.Add(5*time.Minute).Format("2006-01-02 15:04:05"))
-	tk.MustGetErrMsg(sql, fmt.Sprintf("Can't get snapshot value from flashback time range [%s, %s]",
+	tk.MustGetErrMsg(sql, fmt.Sprintf("can't set timestamp to history flashback time range [%s, %s]",
 		flashbackTime, oracle.GetTimeFromTS(m.StartTS)))
 
 	se, err = session.CreateSession4Test(store)

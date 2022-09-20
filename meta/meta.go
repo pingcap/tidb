@@ -664,7 +664,7 @@ func CheckFlashbackHistoryTSRange(m *Meta, targetTS uint64) error {
 	}
 	for _, tsRange := range tsRanges {
 		if tsRange.StartTS <= targetTS && targetTS <= tsRange.EndTS {
-			return errors.Errorf("Can't get snapshot value from flashback time range [%s, %s]",
+			return errors.Errorf("can't set timestamp to history flashback time range [%s, %s]",
 				oracle.GetTimeFromTS(tsRange.StartTS), oracle.GetTimeFromTS(tsRange.EndTS))
 		}
 	}
