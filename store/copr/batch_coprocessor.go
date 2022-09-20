@@ -21,7 +21,7 @@ import (
 	"io"
 	"math"
 	"strconv"
-	"strings"
+	_"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -41,6 +41,7 @@ import (
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
+	"github.com/stathat/consistent"
 )
 
 // batchCopTask comprises of multiple copTask that will send to same store.
@@ -283,12 +284,11 @@ func balanceBatchCopTaskWithContinuity(storeTaskMap map[uint64]*batchCopTask, ca
 }
 
 // balanceBatchCopTask balance the regions between available stores, the basic rule is
-//  1. the first region of each original batch cop task belongs to its original store because some
-//     meta data(like the rpc context) in batchCopTask is related to it
-//  2. for the remaining regions:
-//     if there is only 1 available store, then put the region to the related store
-//     otherwise, these region will be balance between TiFlash stores.
-//
+// 1. the first region of each original batch cop task belongs to its original store because some
+//    meta data(like the rpc context) in batchCopTask is related to it
+// 2. for the remaining regions:
+//    if there is only 1 available store, then put the region to the related store
+//    otherwise, these region will be balance between TiFlash stores.
 // Currently, there are two balance strategies.
 // The first balance strategy: use a greedy algorithm to put it into the store with highest weight. This strategy only consider the region count between TiFlash stores.
 //
@@ -539,7 +539,7 @@ func buildBatchCopTasksForNonPartitionedTable(bo *backoff.Backoffer,
 	if engine == kv.TiFlash {
 		return buildBatchCopTasksCore(bo, store, []*KeyRanges{ranges}, storeType, mppStoreLastFailTime, ttl, balanceWithContinuity, balanceContinuousRegionCount)
 	} else if engine == kv.TiFlashMPP {
-		return buildBatchCopTasksConsistentHash(bo, store, []*KeyRanges{ranges}, storeType)
+		return buildBatchCopTasksConsistentHash(bo, store, []*KeyRanges{ranges}, storeType, mppStoreLastFailTime, ttl, balanceWithContinuity, balanceContinuousRegionCount)
 	} else {
 		return nil, errors.New(fmt.Sprintf("unexpected engine type: %v", engine))
 	}
@@ -558,7 +558,7 @@ func buildBatchCopTasksForPartitionedTable(bo *backoff.Backoffer,
 	if engine == kv.TiFlash {
 		batchTasks, err = buildBatchCopTasksCore(bo, store, rangesForEachPhysicalTable, storeType, mppStoreLastFailTime, ttl, balanceWithContinuity, balanceContinuousRegionCount)
 	} else if engine == kv.TiFlashMPP {
-		batchTasks, err = buildBatchCopTasksConsistentHash(bo, store, rangesForEachPhysicalTable, storeType)
+		batchTasks, err = buildBatchCopTasksConsistentHash(bo, store, rangesForEachPhysicalTable, storeType, mppStoreLastFailTime, ttl, balanceWithContinuity, balanceContinuousRegionCount)
 	} else {
 		err = errors.New(fmt.Sprintf("unexpected engine type: %v", engine))
 	}
@@ -570,104 +570,161 @@ func buildBatchCopTasksForPartitionedTable(bo *backoff.Backoffer,
 	return batchTasks, nil
 }
 
-// 1. Split range by region location to build copTasks.
-// 2. For each copTask build its rpcCtx , the target ReadNode will be computed using consistent hash.
-// 3. All copTasks that will be sent to one ReadNode are put in one batchCopTask.
-func buildBatchCopTasksConsistentHash(bo *backoff.Backoffer, store *kvStore, rangesForEachPhysicalTable []*KeyRanges, storeType kv.StoreType) (res []*batchCopTask, err error) {
-	const cmdType = tikvrpc.CmdBatchCop
-	var retryNum int
+func buildBatchCopTasksConsistentHash(bo *backoff.Backoffer, store *kvStore, rangesForEachPhysicalTable []*KeyRanges, storeType kv.StoreType, mppStoreLastFailTime map[string]time.Time, ttl time.Duration, balanceWithContinuity bool, balanceContinuousRegionCount int64) ([]*batchCopTask, error) {
+	batchTasks, err := buildBatchCopTasksCore(bo, store, rangesForEachPhysicalTable, storeType, mppStoreLastFailTime, ttl, balanceWithContinuity, balanceContinuousRegionCount)
+	if err != nil {
+		return nil, err
+	}
 	cache := store.GetRegionCache()
+	mppStores, err := cache.GetTiFlashMPPStores(bo.TiKVBackoffer())
+	if err != nil {
+		return nil, err
+	}
+	if len(mppStores) == 0 {
+		return nil, errors.New("Number of tiflash_mpp node is zero")
+	}
 
-	for {
-		retryNum++
-		if retryNum >= 10 {
-			return nil, errors.New("too many times of retry to GetTiFlashMPPRPCContextByConsistentHash()")
-		}
-
-		var rangesLen int
-		tasks := make([]*copTask, 0)
-		regionIDs := make([]tikv.RegionVerID, 0)
-
-		for i, ranges := range rangesForEachPhysicalTable {
-			rangesLen += ranges.Len()
-			locations, err := cache.SplitKeyRangesByLocations(bo, ranges)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			for _, lo := range locations {
-				tasks = append(tasks, &copTask{
-					region:         lo.Location.Region,
-					ranges:         lo.Ranges,
-					cmdType:        cmdType,
-					storeType:      storeType,
-					partitionIndex: int64(i),
-				})
-				regionIDs = append(regionIDs, lo.Location.Region)
-			}
-		}
-
-		rpcCtxs, err := cache.GetTiFlashMPPRPCContextByConsistentHash(bo.TiKVBackoffer(), regionIDs)
+	hasher := consistent.New()
+	for _, store := range mppStores {
+		hasher.Add(store.GetAddr())
+	}
+	for _, task := range batchTasks {
+		addr, err := hasher.Get(task.storeAddr)
 		if err != nil {
 			return nil, err
 		}
-		if rpcCtxs == nil {
-			logutil.BgLogger().Info("buildBatchCopTasksConsistentHash retry because rcpCtx is nil", zap.Int("retryNum", retryNum))
-			continue
-		}
-		if len(rpcCtxs) != len(tasks) {
-			return nil, errors.New(fmt.Sprintf("unexpected length of rpcCtxs, expect: %v, got: %v", len(tasks), len(rpcCtxs)))
-		}
-		taskMap := make(map[string]*batchCopTask)
-		for i, rpcCtx := range rpcCtxs {
-			regionInfo := RegionInfo{
-				// tasks and rpcCtxs are correspond to each other.
-				Region:         tasks[i].region,
-				Meta:           rpcCtx.Meta,
-				Ranges:         tasks[i].ranges,
-				AllStores:      []uint64{rpcCtx.Store.StoreID()},
-				PartitionIndex: tasks[i].partitionIndex,
-			}
-			if batchTask, ok := taskMap[rpcCtx.Addr]; ok {
-				batchTask.regionInfos = append(batchTask.regionInfos, regionInfo)
-			} else {
-				batchTask := &batchCopTask{
-					storeAddr:   rpcCtx.Addr,
-					cmdType:     cmdType,
-					ctx:         rpcCtx,
-					regionInfos: []RegionInfo{regionInfo},
-				}
-				taskMap[rpcCtx.Addr] = batchTask
-				res = append(res, batchTask)
+		var store *tikv.Store
+		for _, s := range mppStores {
+			if s.GetAddr() == addr {
+				store = s
+				break
 			}
 		}
-		break
-	}
+		if store == nil {
+			return nil, errors.New(fmt.Sprintf("cannot find mpp store: %v", addr))
+		}
 
-	failpoint.Inject("check_only_dispatched_to_tiflash_mpp_nodes", func(val failpoint.Value) {
-		// This failpoint will be tested in test-infra case, because we needs setup a cluster.
-		// All ReadNode addrs are stored in val, each addr is separated by semicolon.
-		str := val.(string)
-		addrs := strings.Split(str, ";")
-		if len(addrs) < 1 {
-			panic(fmt.Sprintf("unexpected length of tiflash_mpp node addrs: %v", len(addrs)))
-		}
-		for _, batchTask := range res {
-			var matched bool
-			for _, addr := range addrs {
-				if batchTask.storeAddr == addr {
-					matched = true
-					break
-				}
-			}
-			if !matched {
-				panic(fmt.Sprintf("batchCopTask send to node which is not tiflash_mpp: %v(tiflash_mpp nodes: %s)",
-					batchTask.storeAddr, str))
-			}
-		}
-		logutil.BgLogger().Info(fmt.Sprintf("check_only_dispatched_to_tiflash_mpp_nodes checked succeed(tiflash_mpp nodes: %s)", str))
-	})
-	return res, nil
+		task.storeAddr = addr
+		task.ctx.Store = store
+		task.ctx.Addr = addr
+	}
+	logutil.BgLogger().Info(fmt.Sprintf("gjt debug batchTasks: len: %d\n", len(batchTasks)))
+	for i, task := range batchTasks {
+		logutil.BgLogger().Info(fmt.Sprintf("gjt debug each batchTasks[%d], addr: %s, len(RegionInfo): %d\n", i, task.storeAddr, len(task.regionInfos)))
+	}
+	return batchTasks, nil
 }
+
+// // 1. Split range by region location to build copTasks.
+// // 2. For each copTask build its rpcCtx , the target ReadNode will be computed using consistent hash.
+// // 3. All copTasks that will be sent to one ReadNode are put in one batchCopTask.
+// func buildBatchCopTasksConsistentHash(bo *backoff.Backoffer, store *kvStore, rangesForEachPhysicalTable []*KeyRanges, storeType kv.StoreType) (res []*batchCopTask, err error) {
+// 	const cmdType = tikvrpc.CmdBatchCop
+// 	var retryNum int
+// 	cache := store.GetRegionCache()
+// 
+// 	for {
+// 		retryNum++
+// 		if retryNum >= 10 {
+// 			return nil, errors.New("too many times of retry to GetTiFlashMPPRPCContextByConsistentHash()")
+// 		}
+// 
+// 		var rangesLen int
+// 		tasks := make([]*copTask, 0)
+// 		regionIDs := make([]tikv.RegionVerID, 0)
+// 
+// 		for i, ranges := range rangesForEachPhysicalTable {
+// 			rangesLen += ranges.Len()
+// 			locations, err := cache.SplitKeyRangesByLocations(bo, ranges)
+// 			if err != nil {
+// 				return nil, errors.Trace(err)
+// 			}
+// 			for _, lo := range locations {
+// 				tasks = append(tasks, &copTask{
+// 					region:         lo.Location.Region,
+// 					ranges:         lo.Ranges,
+// 					cmdType:        cmdType,
+// 					storeType:      storeType,
+// 					partitionIndex: int64(i),
+// 				})
+// 				regionIDs = append(regionIDs, lo.Location.Region)
+// 			}
+// 		}
+// 
+// 		rpcCtxs, err := cache.GetTiFlashMPPRPCContextByConsistentHash(bo.TiKVBackoffer(), regionIDs)
+// 		if err != nil {
+// 			return nil, err
+// 		}
+// 		if rpcCtxs == nil {
+// 			logutil.BgLogger().Info("buildBatchCopTasksConsistentHash retry because rcpCtx is nil", zap.Int("retryNum", retryNum))
+// 			continue
+// 		}
+// 		if len(rpcCtxs) != len(tasks) {
+// 			return nil, errors.New(fmt.Sprintf("unexpected length of rpcCtxs, expect: %v, got: %v", len(tasks), len(rpcCtxs)))
+// 		}
+// 		logutil.BgLogger().Info(fmt.Sprintf("gjt debug cop tsaks len(tasks): %v\n", len(tasks)))
+// 		for i, t := range tasks {
+// 			logutil.BgLogger().Info(fmt.Sprintf("gjt debug regoin: %v, cmdType: %v, storeType: %v\n", t.region, t.cmdType, t.storeType))
+// 			logutil.BgLogger().Info(fmt.Sprintf("gjt debug rpcCtxs. id: %v, region: %v, addr: %v\n", i, rpcCtxs[i].Region, rpcCtxs[i].Addr))
+// 		}
+// 		taskMap := make(map[string]*batchCopTask)
+// 		for i, rpcCtx := range rpcCtxs {
+// 			regionInfo := RegionInfo{
+// 				// tasks and rpcCtxs are correspond to each other.
+// 				Region:         tasks[i].region,
+// 				Meta:           rpcCtx.Meta,
+// 				Ranges:         tasks[i].ranges,
+// 				AllStores:      []uint64{rpcCtx.Store.StoreID()},
+// 				PartitionIndex: tasks[i].partitionIndex,
+// 			}
+// 			if batchTask, ok := taskMap[rpcCtx.Addr]; ok {
+// 				batchTask.regionInfos = append(batchTask.regionInfos, regionInfo)
+// 			} else {
+// 				batchTask := &batchCopTask{
+// 					storeAddr:   rpcCtx.Addr,
+// 					cmdType:     cmdType,
+// 					ctx:         rpcCtx,
+// 					regionInfos: []RegionInfo{regionInfo},
+// 				}
+// 				taskMap[rpcCtx.Addr] = batchTask
+// 				res = append(res, batchTask)
+// 			}
+// 		}
+// 		logutil.BgLogger().Info(fmt.Sprintf("gjt debug all batchTasks: len(tasksMap): %v", len(taskMap)))
+// 		for addr, t := range taskMap {
+// 			logutil.BgLogger().Info(fmt.Sprintf("gjt debug addr: %v, len(RegionInfo): %v", addr, len(t.regionInfos)))
+// 			for i, reg := range t.regionInfos {
+// 				logutil.BgLogger().Info(fmt.Sprintf("gjt debug region id: %v, reg: %v", i, reg))
+// 			}
+// 		}
+// 		break
+// 	}
+// 
+// 	failpoint.Inject("check_only_dispatched_to_tiflash_mpp_nodes", func(val failpoint.Value) {
+// 		// This failpoint will be tested in test-infra case, because we needs setup a cluster.
+// 		// All ReadNode addrs are stored in val, each addr is separated by semicolon.
+// 		str := val.(string)
+// 		addrs := strings.Split(str, ";")
+// 		if len(addrs) < 1 {
+// 			panic(fmt.Sprintf("unexpected length of tiflash_mpp node addrs: %v", len(addrs)))
+// 		}
+// 		for _, batchTask := range res {
+// 			var matched bool
+// 			for _, addr := range addrs {
+// 				if batchTask.storeAddr == addr {
+// 					matched = true
+// 					break
+// 				}
+// 			}
+// 			if !matched {
+// 				panic(fmt.Sprintf("batchCopTask send to node which is not tiflash_mpp: %v(tiflash_mpp nodes: %s)",
+// 					batchTask.storeAddr, str))
+// 			}
+// 		}
+// 		logutil.BgLogger().Info(fmt.Sprintf("check_only_dispatched_to_tiflash_mpp_nodes checked succeed(tiflash_mpp nodes: %s)", str))
+// 	})
+// 	return res, nil
+// }
 
 // When `partitionIDs != nil`, it means that buildBatchCopTasksCore is constructing a batch cop tasks for PartitionTableScan.
 // At this time, `len(rangesForEachPhysicalTable) == len(partitionIDs)` and `rangesForEachPhysicalTable[i]` is for partition `partitionIDs[i]`.
