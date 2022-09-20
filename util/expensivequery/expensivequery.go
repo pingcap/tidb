@@ -87,7 +87,6 @@ func (eqh *Handle) Run() {
 			}
 			threshold = atomic.LoadUint64(&variable.ExpensiveQueryTimeThreshold)
 
-			record.memoryUsageAlarmRatio = variable.MemoryUsageAlarmRatio.Load()
 			if record.err == nil {
 				record.alarm4ExcessiveMemUsage(sm)
 			}
@@ -119,7 +118,7 @@ func (eqh *Handle) LogOnQueryExceedMemQuota(connID uint64) {
 	logExpensiveQuery(time.Since(info.Time), info)
 }
 
-func genLogFields(costTime time.Duration, info *util.ProcessInfo) []zap.Field {
+func genLogFields(costTime time.Duration, info *util.ProcessInfo, sqlTruncate, sqlForceDesensitization bool) []zap.Field {
 	logFields := make([]zap.Field, 0, 20)
 	logFields = append(logFields, zap.String("cost_time", strconv.FormatFloat(costTime.Seconds(), 'f', -1, 64)+"s"))
 	execDetail := info.StmtCtx.GetExecDetails()
@@ -173,11 +172,11 @@ func genLogFields(costTime time.Duration, info *util.ProcessInfo) []zap.Field {
 	var sql string
 	if len(info.Info) > 0 {
 		sql = info.Info
-		if info.RedactSQL {
+		if info.RedactSQL || sqlForceDesensitization {
 			sql = parser.Normalize(sql)
 		}
 	}
-	if len(sql) > logSQLLen {
+	if len(sql) > logSQLLen && sqlTruncate {
 		sql = fmt.Sprintf("%s len(%d)", sql[:logSQLLen], len(sql))
 	}
 	logFields = append(logFields, zap.String("sql", sql))
@@ -186,5 +185,5 @@ func genLogFields(costTime time.Duration, info *util.ProcessInfo) []zap.Field {
 
 // logExpensiveQuery logs the queries which exceed the time threshold or memory threshold.
 func logExpensiveQuery(costTime time.Duration, info *util.ProcessInfo) {
-	logutil.BgLogger().Warn("expensive_query", genLogFields(costTime, info)...)
+	logutil.BgLogger().Warn("expensive_query", genLogFields(costTime, info, true, false)...)
 }

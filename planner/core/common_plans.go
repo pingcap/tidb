@@ -522,6 +522,17 @@ func GetExplainRowsForPlan(plan Plan) (rows [][]string) {
 	return explain.Rows
 }
 
+// GetExplainAnalyzeRowsForPlan get explain rows for plan.
+func GetExplainAnalyzeRowsForPlan(plan *Explain) (rows [][]string) {
+	if err := plan.prepareSchema(); err != nil {
+		return rows
+	}
+	if err := plan.RenderResult(); err != nil {
+		return rows
+	}
+	return plan.Rows
+}
+
 // prepareSchema prepares explain's result schema.
 func (e *Explain) prepareSchema() error {
 	var fieldNames []string

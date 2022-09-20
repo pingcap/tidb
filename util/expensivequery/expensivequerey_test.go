@@ -38,6 +38,8 @@ func TestMain(m *testing.M) {
 func TestLogFormat(t *testing.T) {
 	mem := memory.NewTracker(-1, -1)
 	mem.Consume(1<<30 + 1<<29 + 1<<28 + 1<<27)
+	mockTooLongQuery := make([]byte, 1024*9)
+
 	info := &util.ProcessInfo{
 		ID:            233,
 		User:          "PingCAP",
@@ -54,7 +56,8 @@ func TestLogFormat(t *testing.T) {
 		RedactSQL: false,
 	}
 	costTime := time.Second * 233
-	logFields := genLogFields(costTime, info)
+	logSQLTruncateLen := 1024 * 8
+	logFields := genLogFields(costTime, info, true, false)
 
 	assert.Len(t, logFields, 7)
 	assert.Equal(t, "cost_time", logFields[0].Key)
@@ -72,7 +75,17 @@ func TestLogFormat(t *testing.T) {
 	assert.Equal(t, "sql", logFields[6].Key)
 	assert.Equal(t, "select * from table where a > 1", logFields[6].String)
 
-	info.RedactSQL = true
-	logFields = genLogFields(costTime, info)
+	logFields = genLogFields(costTime, info, true, false)
+	assert.Equal(t, "select * from table where a > 1", logFields[6].String)
+	logFields = genLogFields(costTime, info, true, true)
 	assert.Equal(t, "select * from table where `a` > ?", logFields[6].String)
+	info.RedactSQL = true
+	logFields = genLogFields(costTime, info, true, false)
+	assert.Equal(t, "select * from table where `a` > ?", logFields[6].String)
+	info.RedactSQL = false
+	info.Info = string(mockTooLongQuery)
+	logFields = genLogFields(costTime, info, true, false)
+	assert.Equal(t, len(logFields[6].String), logSQLTruncateLen+10)
+	logFields = genLogFields(costTime, info, false, false)
+	assert.Equal(t, len(logFields[6].String), len(mockTooLongQuery))
 }
