@@ -1222,7 +1222,7 @@
           "StreamAgg 1.00 root  funcs:avg(Column#7, Column#8)->Column#4",
           "└─TableReader 1.00 root  data:StreamAgg",
           "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:count(Column#9)->Column#7, funcs:sum(Column#10)->Column#8",
-          "    └─Projection 10000.00 batchCop[tiflash]  test.t.a, cast(test.t.a, decimal(15,4) BINARY)->Column#10",
+          "    └─Projection 10000.00 batchCop[tiflash]  test.t.a, cast(test.t.a, decimal(37,4) BINARY)->Column#10",
           "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -1233,7 +1233,7 @@
           "StreamAgg 1.00 root  funcs:avg(Column#7, Column#8)->Column#4",
           "└─TableReader 1.00 root  data:StreamAgg",
           "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:count(Column#9)->Column#7, funcs:sum(Column#10)->Column#8",
-          "    └─Projection 10000.00 batchCop[tiflash]  test.t.a, cast(test.t.a, decimal(15,4) BINARY)->Column#10",
+          "    └─Projection 10000.00 batchCop[tiflash]  test.t.a, cast(test.t.a, decimal(37,4) BINARY)->Column#10",
           "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
