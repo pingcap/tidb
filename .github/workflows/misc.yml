@@ -25,17 +25,9 @@ jobs:
           log: info
           token: ${{ secrets.GITHUB_TOKEN }}
           config: .github/licenserc.yml
-
-  Leaked-key-check:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-        with:
-          fetch-depth: 1
       - name: Check Leaked Secrets
         uses: trufflesecurity/trufflehog@v3.4.3
         with:
           path: ./
-          base: ${{ github.event.repository.default_branch }}
-          head: HEAD
+          base: ${{ github.event.pull_request.base.sha }}
+          head: ${{ github.event.pull_request.head.sha }}
