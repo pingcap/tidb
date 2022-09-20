@@ -16,7 +16,6 @@ package expensivequery
 
 import (
 	"github.com/stretchr/testify/assert"
-	"os"
 	"testing"
 	"time"
 )
@@ -53,20 +52,4 @@ func TestIfNeedDoRecord(t *testing.T) {
 	// mem usage ratio - last mem usage ratio > 10% will not be recorded even though check time - last record time
 	memUsed = 0.82 * float64(record.serverMemoryQuota)
 	assert.True(t, record.needRecord(uint64(memUsed)))
-}
-
-func TestRecordKeepNum(t *testing.T) {
-	record := memoryUsageAlarm{}
-	record.initMemoryUsageAlarmRecord()
-	record.memoryUsageAlarmKeepFilesNum = 2
-
-	for i := 0; i < 3; i++ {
-		record.lastCheckTime = time.Now()
-		record.doRecord(0, 0, nil)
-		time.Sleep(1 * time.Second)
-		record.tryRemoveNoNeedRecords()
-	}
-	recordDirs, _ := os.ReadDir(record.baseRecordDir)
-	assert.Equal(t, 2, len(recordDirs))
-
 }

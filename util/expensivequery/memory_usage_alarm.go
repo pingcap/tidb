@@ -16,7 +16,6 @@ package expensivequery
 
 import (
 	"fmt"
-	"github.com/pingcap/errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -200,10 +199,6 @@ func getCurrentAnalyzePlan(info *util.ProcessInfo) string {
 }
 
 func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager, recordDir string) error {
-	if sm == nil {
-		logutil.BgLogger().Error("session manager is nil!")
-		return errors.New("session manager is nil!")
-	}
 	processInfo := sm.ShowProcessList()
 	pinfo := make([]*util.ProcessInfo, 0, len(processInfo))
 	for _, info := range processInfo {
@@ -275,7 +270,7 @@ type item struct {
 	Debug int
 }
 
-func (_ *memoryUsageAlarm) recordProfile(recordDir string) error {
+func (*memoryUsageAlarm) recordProfile(recordDir string) error {
 	items := []item{
 		{Name: "heap"},
 		{Name: "goroutine", Debug: 2},
