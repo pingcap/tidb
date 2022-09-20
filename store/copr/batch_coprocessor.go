@@ -342,6 +342,8 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 					// The interval time is so short that may happen in a same query, so we needn't to check again.
 					mu.Unlock()
 					return
+				} else if !ok {
+					lastAny = time.Time{}
 				}
 				mu.Unlock()
 
