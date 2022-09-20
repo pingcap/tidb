@@ -68,7 +68,7 @@ func TestBaseFunc_InferAggRetType(t *testing.T) {
 		for _, name := range funcNames {
 			desc, err := newBaseFuncDesc(ctx, name, []expression.Expression{col})
 			require.NoError(t, err)
-			err = desc.typeInfer(ctx)
+			err = desc.TypeInfer(ctx)
 			require.NoError(t, err)
 			require.Equal(t, dataType, desc.RetTp)
 		}
