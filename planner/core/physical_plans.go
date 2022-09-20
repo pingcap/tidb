@@ -1041,7 +1041,7 @@ func (lt *PhysicalTopN) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = lt.basePhysicalPlan.MemoryUsage() + size.SizeOfSlice + size.SizeOfUint64*2
+	sum = lt.basePhysicalPlan.MemoryUsage() + size.SizeOfSlice + int64(cap(lt.ByItems))*size.SizeOfPointer + size.SizeOfUint64*2
 	for _, byItem := range lt.ByItems {
 		sum += byItem.MemoryUsage()
 	}
@@ -1091,7 +1091,8 @@ func (la *PhysicalApply) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = la.PhysicalHashJoin.MemoryUsage() + size.SizeOfBool + size.SizeOfBool + size.SizeOfSlice
+	sum = la.PhysicalHashJoin.MemoryUsage() + size.SizeOfBool + size.SizeOfBool + size.SizeOfSlice +
+		int64(cap(la.OuterSchema))*size.SizeOfPointer
 	for _, corrCol := range la.OuterSchema {
 		sum += corrCol.MemoryUsage()
 	}
