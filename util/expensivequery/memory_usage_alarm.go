@@ -48,6 +48,11 @@ type memoryUsageAlarm struct {
 	initialized                   bool
 }
 
+func (record *memoryUsageAlarm) updateVariable() {
+	record.memoryUsageAlarmRatio = variable.MemoryUsageAlarmRatio.Load()
+	record.memoryUsageAlarmKeepRecordNum = variable.MemoryUsageAlarmKeepRecordNum.Load()
+}
+
 func (record *memoryUsageAlarm) initMemoryUsageAlarmRecord() {
 	record.memoryUsageAlarmRatio = variable.MemoryUsageAlarmRatio.Load()
 	record.memoryUsageAlarmKeepRecordNum = variable.MemoryUsageAlarmKeepRecordNum.Load()
@@ -92,6 +97,8 @@ func (record *memoryUsageAlarm) alarm4ExcessiveMemUsage(sm util.SessionManager) 
 		if record.err != nil {
 			return
 		}
+	} else {
+		record.updateVariable()
 	}
 	if record.memoryUsageAlarmRatio <= 0.0 || record.memoryUsageAlarmRatio >= 1.0 {
 		return
