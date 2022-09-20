@@ -104,7 +104,7 @@ type Domain struct {
 	sysVarCache             sysVarCache // replaces GlobalVariableCache
 	slowQuery               *topNSlowQueries
 	expensiveQueryHandle    *expensivequery.Handle
-	serverMemoryQuotaHandle *servermemoryquota.ServerMemoryQuotaHandle
+	serverMemoryQuotaHandle *servermemoryquota.Handle
 	wg                      util.WaitGroupWrapper
 	statsUpdating           atomicutil.Int32
 	cancel                  context.CancelFunc
@@ -1821,7 +1821,7 @@ func (do *Domain) ExpensiveQueryHandle() *expensivequery.Handle {
 }
 
 // ServerMemoryQuotaHandle returns the expensive query handle.
-func (do *Domain) ServerMemoryQuotaHandle() *servermemoryquota.ServerMemoryQuotaHandle {
+func (do *Domain) ServerMemoryQuotaHandle() *servermemoryquota.Handle {
 	return do.serverMemoryQuotaHandle
 }
 

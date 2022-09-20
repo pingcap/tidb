@@ -23,26 +23,26 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 )
 
-// ServerMemoryQuotaHandle is the handler for server memory quota.
-type ServerMemoryQuotaHandle struct {
+// Handle is the handler for server memory quota.
+type Handle struct {
 	exitCh chan struct{}
 	sm     atomic.Value
 }
 
 // NewServerMemoryQuotaHandle builds a new server memory quota handler.
-func NewServerMemoryQuotaHandle(exitCh chan struct{}) *ServerMemoryQuotaHandle {
-	return &ServerMemoryQuotaHandle{exitCh: exitCh}
+func NewServerMemoryQuotaHandle(exitCh chan struct{}) *Handle {
+	return &Handle{exitCh: exitCh}
 }
 
 // SetSessionManager sets the SessionManager which is used to fetching the info
 // of all active sessions.
-func (smqh *ServerMemoryQuotaHandle) SetSessionManager(sm util.SessionManager) *ServerMemoryQuotaHandle {
+func (smqh *Handle) SetSessionManager(sm util.SessionManager) *Handle {
 	smqh.sm.Store(sm)
 	return smqh
 }
 
 // Run starts a server memory quota checker goroutine at the start time of the server.
-func (smqh *ServerMemoryQuotaHandle) Run() {
+func (smqh *Handle) Run() {
 	tickInterval := time.Millisecond * time.Duration(100)
 	ticker := time.NewTicker(tickInterval)
 	defer ticker.Stop()
