@@ -26,7 +26,7 @@ It brings you what's coming in the 1-year future, so you can see the new feature
   </tr>
   <tr>
     <td><ul><li>Support expression indexes</li><li>Support generated columns</li></ul></td>
-    <td>Provides query acceleration for specific field indexes in JSON scenarios.</td>
+    <td>Provide query acceleration for specific field indexes in JSON scenarios.</td>
     <td>October 2022 </td>
   </tr>
   <tr>
@@ -109,7 +109,7 @@ It brings you what's coming in the 1-year future, so you can see the new feature
   </tr>
   <tr>
     <td>Instance plan cache</td>
-    <td>Support cross-session plan cache, save cache resources, improve the hit rate of general execution plans, and improve SQL performance</td>
+    <td>Support cross-session plan cache, save cache resources, improve the hit rate of general execution plans, and improve SQL performance.</td>
     <td>In general scenarios, reuse execution plans to improve memory utilization and to achieve higher throughputs.</td>
     <td>July 2023</td>
   </tr>
@@ -180,7 +180,7 @@ It brings you what's coming in the 1-year future, so you can see the new feature
   <tr>
     <td>Data migration</td>
     <td>TiDB Lightning supports table-level and partition-level incremental data import.</td>
-    <td>TiDB Lightning provides comprehensive table-level and partition-level data import capabilities</td>
+    <td>TiDB Lightning provides comprehensive table-level and partition-level data import capabilities.</td>
     <td>December 2022</td>
   </tr>
 </tbody>
@@ -229,19 +229,19 @@ It brings you what's coming in the 1-year future, so you can see the new feature
   </tr>
   <tr>
     <td>Password policy management</td>
-    <td>TiDB provides a password reuse mechanism and brute-force cracking prevention capabilities</td>
+    <td>TiDB provides a password reuse mechanism and brute-force cracking prevention capabilities.</td>
     <td>TiDB supports password policy management to protect password security.</td>
     <td>March 2023</td>
   </tr>
   <tr>
     <td>Column-level access control</td>
-    <td>TiDB supports column-level privilege management</td>
+    <td>TiDB supports column-level privilege management.</td>
     <td>TiDB already supports cluster-level, database-level, and table-level privilege management. On top of that, TiDB will support column-level privilege management to meet the principle of least privilege and provide fine-grained data access control.</td>
     <td>June 2023</td>
   </tr>
   <tr>
     <td>Audit logging capability refactor</td>
-    <td>Support configurable audit log policies, configurable audit filters (filter by objects, users, and operation types), and visual access to audit logs</td>
+    <td>Support configurable audit log policies, configurable audit filters (filter by objects, users, and operation types), and visual access to audit logs.</td>
     <td>Improve the completeness and usability of the audit log feature.</td>
     <td>July 2023</td>
   </tr>
