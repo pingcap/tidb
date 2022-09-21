@@ -719,7 +719,7 @@ func canUseIngest(w *worker) bool {
 		failpoint.Return(true)
 	})
 	// Ingest way is not compatible with PiTR.
-	return !utils.IsLogBackupUsage(ctx)
+	return !utils.IsLogBackupInUse(ctx)
 }
 
 // IngestJobsNotExisted checks the ddl about `add index` with ingest method not existed.
