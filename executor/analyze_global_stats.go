@@ -55,7 +55,8 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, needGlobalStats boo
 		// pre-load partition stats for the specific table and provide to all globalStatsID which belongs to this table.
 		tableAllPartitionStats, err := statsHandle.GetTableAllPartitionStats(e.ctx.GetDomainInfoSchema().(infoschema.InfoSchema), tableID)
 		if err != nil {
-			return err
+			logutil.BgLogger().Warn("load table all partition stats failed", zap.Error(err), zap.Int64("tableID", tableID))
+			tableAllPartitionStats = nil
 		}
 		for globalStatsID, info := range globalStatsMap {
 			if globalStatsID.tableID != tableID {

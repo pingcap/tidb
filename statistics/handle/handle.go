@@ -532,6 +532,10 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 			if err != nil {
 				return
 			}
+			if allPartitionStats == nil {
+				allPartitionStats = make(map[int64]*statistics.Table)
+			}
+			allPartitionStats[partitionID] = partitionStats
 		}
 		for i := 0; i < globalStats.Num; i++ {
 			count, hg, cms, topN, fms := partitionStats.GetStatsInfo(histIDs[i], isIndex == 1)
