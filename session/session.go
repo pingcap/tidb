@@ -941,6 +941,12 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 	}
 	err = s.doCommit(ctx)
 	if err != nil {
+		// polish the Write Conflict error message
+		newErr := s.tryReplaceWriteConflictError(err)
+		if newErr != nil {
+			err = newErr
+		}
+
 		commitRetryLimit := s.sessionVars.RetryLimit
 		if !s.sessionVars.TxnCtx.CouldRetry {
 			commitRetryLimit = 0
@@ -983,6 +989,61 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 	}
 	s.updateStatsDeltaToCollector()
 	return nil
+}
+
+// adds more information about the table in the error message
+// precondition: oldErr is a 9007:WriteConflict Error
+func (s *session) tryReplaceWriteConflictError(oldErr error) (newErr error) {
+	if !kv.ErrWriteConflict.Equal(oldErr) {
+		return nil
+	}
+	if errors.RedactLogEnabled.Load() {
+		return nil
+	}
+	originErr := errors.Cause(oldErr)
+	inErr, _ := originErr.(*errors.Error)
+	args := inErr.Args()
+	is := sessiontxn.GetTxnManager(s).GetTxnInfoSchema()
+
+	newKeyTableField, ok := addTableNameInTableIDField(args[3], is)
+	if ok {
+		args[3] = newKeyTableField
+	}
+	newPrimaryKeyTableField, ok := addTableNameInTableIDField(args[5], is)
+	if ok {
+		args[5] = newPrimaryKeyTableField
+	}
+	return kv.ErrWriteConflict.FastGenByArgs(args...)
+}
+
+func addTableNameInTableIDField(tableIDField interface{}, is infoschema.InfoSchema) (enhancedMsg string, done bool) {
+	keyTableID, ok := tableIDField.(string)
+	if !ok {
+		return "", false
+	}
+	stringsInTableIDField := strings.Split(keyTableID, "=")
+	if len(stringsInTableIDField) == 0 {
+		return "", false
+	}
+	tableIDStr := stringsInTableIDField[len(stringsInTableIDField)-1]
+	tableID, err := strconv.ParseInt(tableIDStr, 10, 64)
+	if err != nil {
+		return "", false
+	}
+	var tableName string
+	tbl, ok := is.TableByID(tableID)
+	if !ok {
+		tableName = "unknown"
+	} else {
+		dbInfo, ok := is.SchemaByTable(tbl.Meta())
+		if !ok {
+			tableName = "unknown." + tbl.Meta().Name.String()
+		} else {
+			tableName = dbInfo.Name.String() + "." + tbl.Meta().Name.String()
+		}
+	}
+	enhancedMsg = keyTableID + ", tableName=" + tableName
+	return enhancedMsg, true
 }
 
 func (s *session) updateStatsDeltaToCollector() {
