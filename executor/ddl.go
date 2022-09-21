@@ -58,7 +58,7 @@ type DDLExec struct {
 func (e *DDLExec) toErr(err error) error {
 	// The err may be cause by schema changed, here we distinguish the ErrInfoSchemaChanged error from other errors.
 	dom := domain.GetDomain(e.ctx)
-	checker := domain.NewSchemaChecker(dom, e.is.SchemaMetaVersion(), nil)
+	checker := domain.NewSchemaChecker(dom, e.is.SchemaMetaVersion(), nil, true)
 	txn, err1 := e.ctx.Txn(true)
 	if err1 != nil {
 		logutil.BgLogger().Error("active txn failed", zap.Error(err1))
@@ -537,7 +537,7 @@ func (e *DDLExec) executeFlashBackCluster(ctx context.Context, s *ast.FlashBackC
 		return errors.Errorf("not support flash back cluster with TiFlash stores")
 	}
 
-	flashbackTS, err := staleread.CalculateAsOfTsExpr(e.ctx, &s.AsOf)
+	flashbackTS, err := staleread.CalculateAsOfTsExpr(e.ctx, s.FlashbackTS)
 	if err != nil {
 		return err
 	}

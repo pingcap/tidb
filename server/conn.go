@@ -923,11 +923,6 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshakeRespon
 	// method to match the one configured for that specific user.
 	if (cc.authPlugin != userplugin) || (cc.authPlugin != resp.AuthPlugin) {
 		if resp.Capability&mysql.ClientPluginAuth > 0 {
-			// For compatibility, since most mysql client doesn't support 'tidb_sm3_password',
-			// they can connect to TiDB using a `tidb_sm3_password` user with a 'caching_sha2_password' plugin.
-			if userplugin == mysql.AuthTiDBSM3Password {
-				userplugin = mysql.AuthCachingSha2Password
-			}
 			authData, err := cc.authSwitchRequest(ctx, userplugin)
 			if err != nil {
 				return nil, err
@@ -1815,6 +1810,24 @@ func (cc *clientConn) handlePlanReplayerLoad(ctx context.Context, planReplayerLo
 	return planReplayerLoadInfo.Update(data)
 }
 
+func (cc *clientConn) handlePlanReplayerDump(ctx context.Context, e *executor.PlanReplayerDumpInfo) error {
+	if cc.capability&mysql.ClientLocalFiles == 0 {
+		return errNotAllowedCommand
+	}
+	if e == nil {
+		return errors.New("plan replayer dump: executor is empty")
+	}
+	data, err := cc.getDataFromPath(ctx, e.Path)
+	if err != nil {
+		logutil.BgLogger().Error(err.Error())
+		return err
+	}
+	if len(data) == 0 {
+		return nil
+	}
+	return e.DumpSQLsFromFile(ctx, data)
+}
+
 func (cc *clientConn) audit(eventType plugin.GeneralEvent) {
 	err := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		audit := plugin.DeclareAuditManifest(p.Manifest)
@@ -2117,6 +2130,15 @@ func (cc *clientConn) handleQuerySpecial(ctx context.Context, status uint16) (bo
 		}
 	}
 
+	planReplayerDump := cc.ctx.Value(executor.PlanReplayerDumpVarKey)
+	if planReplayerDump != nil {
+		handled = true
+		defer cc.ctx.SetValue(executor.PlanReplayerDumpVarKey, nil)
+		//nolint:forcetypeassert
+		if err := cc.handlePlanReplayerDump(ctx, planReplayerDump.(*executor.PlanReplayerDumpInfo)); err != nil {
+			return handled, err
+		}
+	}
 	return handled, cc.writeOkWith(ctx, mysql.OKHeader, true, status)
 }
 
