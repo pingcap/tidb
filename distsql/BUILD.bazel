@@ -91,7 +91,6 @@ go_test(
         "@com_github_tikv_client_go_v2//kv",
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_client_go_v2//tikvrpc",
-        "@io_opencensus_go//stats/view",
         "@org_uber_go_goleak//:goleak",
     ],
 )
