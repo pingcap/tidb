@@ -588,5 +588,5 @@ func checkDatabaseHasForeignKeyReferredInOwner(d *ddlCtx, t *meta.Meta, job *mod
 	if err != nil {
 		job.State = model.JobStateCancelled
 	}
-	return err
+	return errors.Trace(err)
 }
