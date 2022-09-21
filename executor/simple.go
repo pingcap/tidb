@@ -644,8 +644,22 @@ func (e *SimpleExec) executeReleaseSavepoint(s *ast.ReleaseSavepointStmt) error 
 	return nil
 }
 
+func (e *SimpleExec) setCurrentUser(users []*auth.UserIdentity) {
+	sessionVars := e.ctx.GetSessionVars()
+	for i, user := range users {
+		if user.CurrentUser {
+			users[i].Username = sessionVars.User.AuthUsername
+			users[i].Hostname = sessionVars.User.AuthHostname
+		}
+	}
+}
+
 func (e *SimpleExec) executeRevokeRole(ctx context.Context, s *ast.RevokeRoleStmt) error {
 	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
+
+	//Fix revoke role from current_user results error.
+	e.setCurrentUser(s.Users)
+
 	for _, role := range s.Roles {
 		exists, err := userExists(ctx, e.ctx, role.Username, role.Hostname)
 		if err != nil {
@@ -1069,13 +1083,8 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 
 func (e *SimpleExec) executeGrantRole(ctx context.Context, s *ast.GrantRoleStmt) error {
 	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
-	sessionVars := e.ctx.GetSessionVars()
-	for i, user := range s.Users {
-		if user.CurrentUser {
-			s.Users[i].Username = sessionVars.User.AuthUsername
-			s.Users[i].Hostname = sessionVars.User.AuthHostname
-		}
-	}
+
+	e.setCurrentUser(s.Users)
 
 	for _, role := range s.Roles {
 		exists, err := userExists(ctx, e.ctx, role.Username, role.Hostname)
