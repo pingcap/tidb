@@ -53,10 +53,10 @@ func (Ranges) Rebuild() error {
 
 // MemUsage gets the memory usage of ranges.
 func (rs Ranges) MemUsage() (sum int64) {
-	if len(rs) == 0 {
-		return
+	for _, ran := range rs {
+		sum += ran.MemUsage()
 	}
-	return rs[0].MemUsage() * int64(len(rs))
+	return
 }
 
 // Range represents a range generated in physical plan building phase.
