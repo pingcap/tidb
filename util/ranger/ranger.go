@@ -351,7 +351,7 @@ func appendRanges2PointRanges(pointRanges Ranges, ranges Ranges, rangeMaxSize in
 	}
 	// Estimate whether rangeMaxSize will be exceeded first before appending ranges to point ranges.
 	if rangeMaxSize > 0 && estimateMemUsageForAppendRanges2PointRanges(pointRanges, ranges) > rangeMaxSize {
-		return ranges, true
+		return pointRanges, true
 	}
 	newRanges := make(Ranges, 0, len(pointRanges)*len(ranges))
 	for _, pointRange := range pointRanges {
