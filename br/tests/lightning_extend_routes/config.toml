@@ -1,3 +1,5 @@
+[tikv-importer]
+sorted-kv-dir = "/tmp/tidb-lightning/sorted-kv-dir"
 
 [mydumper]
 source-id = "mysql-01"

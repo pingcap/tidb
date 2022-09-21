@@ -40,6 +40,8 @@ if [ "${1-}" = '--debug' ]; then
     read line
 fi
 
+SELECTED_TEST_NAME="lightning_extend_routes"
+
 echo "selected test cases: $SELECTED_TEST_NAME"
 
 # wait for global variable cache invalid
