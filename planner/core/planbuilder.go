@@ -4518,8 +4518,8 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 		for _, lock := range v.TableLocks {
 			var lockAuthErr, selectAuthErr error
 			if user != nil {
-				lockAuthErr = ErrDBaccessDenied.GenWithStackByArgs(user.AuthUsername, user.AuthHostname, lock.Table.Schema.L)
-				selectAuthErr = ErrTableaccessDenied.GenWithStackByArgs("SELECT", user.AuthUsername, user.AuthHostname, lock.Table.Name.L)
+				lockAuthErr = ErrDBaccessDenied.FastGenByArgs(user.AuthUsername, user.AuthHostname, lock.Table.Schema.L)
+				selectAuthErr = ErrTableaccessDenied.FastGenByArgs("SELECT", user.AuthUsername, user.AuthHostname, lock.Table.Name.L)
 			}
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.LockTablesPriv, lock.Table.Schema.L, lock.Table.Name.L, "", lockAuthErr)
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, lock.Table.Schema.L, lock.Table.Name.L, "", selectAuthErr)
