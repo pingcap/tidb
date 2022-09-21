@@ -678,7 +678,7 @@ engines = ["tikv", "tiflash", "tidb"]
 
 func TestConfig(t *testing.T) {
 	conf := new(Config)
-	conf.TempStoragePath = TempStorageDirName
+	conf.TempStoragePath = DefTempStorageDirName
 	conf.Binlog.Enable = true
 	conf.Binlog.IgnoreError = true
 	conf.Binlog.Strategy = "hash"

@@ -100,8 +100,8 @@ var (
 	CheckTableBeforeDrop = false
 	// checkBeforeDropLDFlag is a go build flag.
 	checkBeforeDropLDFlag = "None"
-	// TempStorageDirName is the default temporary storage dir name by base64 encoding a string `port/statusPort`
-	TempStorageDirName = encodeDefTempStorageDir(os.TempDir(), DefHost, DefStatusHost, DefPort, DefStatusPort)
+	// DefTempStorageDirName is the default temporary storage dir name by base64 encoding a string `port/statusPort`
+	DefTempStorageDirName = encodeDefTempStorageDir(os.TempDir(), DefHost, DefStatusHost, DefPort, DefStatusPort)
 )
 
 // InstanceConfigSection indicates a config session that has options moved to [instance] session.
@@ -281,7 +281,7 @@ type Config struct {
 // UpdateTmpDir is to update the `TempStoragePath` if port/statusPort was changed
 // and the `tmpdir` was not specified in the conf.toml or was specified the same as the default value.
 func (c *Config) UpdateTmpDir() {
-	if c.Instance.TmpDir == TempStorageDirName {
+	if c.Instance.TmpDir == DefTempStorageDirName {
 		c.Instance.TmpDir = encodeDefTempStorageDir(os.TempDir(), c.Host, c.Status.StatusHost, c.Port, c.Status.StatusPort)
 	} else {
 		c.Instance.TmpDir = encodeDefTempStorageDir(c.Instance.TmpDir, c.Host, c.Status.StatusHost, c.Port, c.Status.StatusPort)
@@ -820,7 +820,7 @@ var defaultConf = Config{
 	TokenLimit:                   1000,
 	OOMUseTmpStorage:             true,
 	TempStorageQuota:             -1,
-	TempStoragePath:              TempStorageDirName,
+	TempStoragePath:              DefTempStorageDirName,
 	MemQuotaQuery:                1 << 30,
 	OOMAction:                    "cancel",
 	EnableBatchDML:               false,
@@ -875,7 +875,7 @@ var defaultConf = Config{
 		TiDBEnableDDL:               *NewAtomicBool(true),
 		TiDBRCReadCheckTS:           false,
 		TmpStorageQuota:             -1,
-		TmpDir:                      TempStorageDirName,
+		TmpDir:                      DefTempStorageDirName,
 	},
 	Status: Status{
 		ReportStatus:          true,
