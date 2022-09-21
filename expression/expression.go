@@ -38,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/generatedexpr"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -1324,19 +1323,6 @@ func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType, ca
 		return canScalarFuncPushDown(x, pc, storeType)
 	}
 	return false
-}
-
-// FixUnixtimePrecision is used to adjust FromUnixTime precision #Fixbug35184
-func FixUnixtimePrecision(expr *ScalarFunction) {
-	if expr.FuncName.L == ast.Cast {
-		if (expr.RetType.GetFlag() & mysql.StringToDecimalFlag) == mysql.StringToDecimalFlag {
-			if expr.RetType.GetDecimal() == 0 {
-				expr.RetType.SetDecimal(6)
-				fieldLen := mathutil.Min(expr.RetType.GetFlen()+6, mysql.MaxDecimalWidth)
-				expr.RetType.SetFlen(fieldLen)
-			}
-		}
-	}
 }
 
 // PushDownExprsWithExtraInfo split the input exprs into pushed and remained, pushed include all the exprs that can be pushed down

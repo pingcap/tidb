@@ -218,8 +218,6 @@ func (pc PbConverter) columnToPBExpr(column *Column) *tipb.Expr {
 }
 
 func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
-	//FixUnixtimePrecision fix cast precision
-	FixUnixtimePrecision(expr)
 	// Check whether this function has ProtoBuf signature.
 	pbCode := expr.Function.PbCode()
 	if pbCode <= tipb.ScalarFuncSig_Unspecified {

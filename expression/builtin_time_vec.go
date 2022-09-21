@@ -3014,10 +3014,3 @@ func (b *builtinAddSubDateDurationAnySig) vecEvalDuration(input *chunk.Chunk, re
 func (b *builtinAddSubDateDurationAnySig) vectorized() bool {
 	return true
 }
-
-func updateFromUnixTimePrecision(expr Expression) {
-	x, ok := (expr).(*ScalarFunction)
-	if ok {
-		FixUnixtimePrecision(x)
-	}
-}
