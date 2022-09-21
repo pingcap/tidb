@@ -108,7 +108,7 @@ type CreateTableWithInfoConfigurier interface {
 	Apply(*CreateTableWithInfoConfig)
 }
 
-// GetCreateTableWithConfig applies the series of configurier from default config
+// GetCreateTableWithInfoConfig applies the series of configurier from default config
 // and returns the final config.
 func GetCreateTableWithInfoConfig(cs []CreateTableWithInfoConfigurier) CreateTableWithInfoConfig {
 	config := CreateTableWithInfoConfig{}
