@@ -3158,10 +3158,9 @@ func (s *testIntegrationSuite2) TestIssue11648(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("1", "0", "2"))
 }
 
-func TestExprDateTimeOnDST(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
+func (s *testIntegrationSuite2) TestExprDateTimeOnDST(c *C) {
+	defer s.cleanEnv(c)
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
 	// insert DST datetime
@@ -3178,11 +3177,6 @@ func TestExprDateTimeOnDST(t *testing.T) {
 func (s *testIntegrationSuite) TestInfoBuiltin(c *C) {
 	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
-
-func TestInfoBuiltin(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
 	// for last_insert_id
