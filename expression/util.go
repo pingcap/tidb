@@ -382,13 +382,13 @@ func SetExprColumnInOperand(expr Expression) Expression {
 	return expr
 }
 
-// ColumnSubstitute4PPD2P substitutes the columns in filter to expressions in select fields.
+// ColumnSubstitute4PPD substitutes the columns in filter to expressions in select fields.
 // Only used for predicate push down to projection. Some columns can not be substituted for some reasons.
 // So we should return the bool value to indicate some expressions can not be pushed down.
 // e.g. CREATE TABLE t3(c0 INT, primary key(c0));
 // SELECT v2.c0 FROM (select 1 as c0 from t3) v2 WHERE (v2.c0)like(True);
 // The cond `(v2.c0)like(True)` can not be substituted when the new collation enable. So we shouldn't push the cond down to the projection.
-func ColumnSubstitute4PPD2P(expr Expression, schema *Schema, newExprs []Expression) (bool, Expression) {
+func ColumnSubstitute4PPD(expr Expression, schema *Schema, newExprs []Expression) (bool, Expression) {
 	substituted, _, resExpr := ColumnSubstituteImpl(expr, schema, newExprs, false)
 	return substituted, resExpr
 }

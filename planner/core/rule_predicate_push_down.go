@@ -470,7 +470,7 @@ func (p *LogicalProjection) PredicatePushDown(predicates []expression.Expression
 		}
 	}
 	for _, cond := range predicates {
-		substituted, newFilter := expression.ColumnSubstitute4PPD2P(cond, p.Schema(), p.Exprs)
+		substituted, newFilter := expression.ColumnSubstitute4PPD(cond, p.Schema(), p.Exprs)
 		if substituted && !expression.HasGetSetVarFunc(newFilter) {
 			canBePushed = append(canBePushed, newFilter)
 		} else {
