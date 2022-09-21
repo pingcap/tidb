@@ -330,6 +330,12 @@ func onDropTableOrView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ er
 	switch tblInfo.State {
 	case model.StatePublic:
 		// public -> write only
+		if job.Type == model.ActionDropTable {
+			err = checkDropTableHasForeignKeyReferredInOwner(d, t, job)
+			if err != nil {
+				return ver, err
+			}
+		}
 		tblInfo.State = model.StateWriteOnly
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != tblInfo.State)
 		if err != nil {
@@ -362,6 +368,12 @@ func onDropTableOrView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ er
 			}
 			if err = t.GetAutoIDAccessors(job.SchemaID, job.TableID).Del(); err != nil {
 				return ver, errors.Trace(err)
+			}
+		}
+		if tblInfo.TiFlashReplica != nil {
+			e := infosync.DeleteTiFlashTableSyncProgress(tblInfo.ID)
+			if e != nil {
+				logutil.BgLogger().Error("DeleteTiFlashTableSyncProgress fails", zap.Error(e))
 			}
 		}
 		// Placement rules cannot be removed immediately after drop table / truncate table, because the
@@ -660,7 +672,8 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 	schemaID := job.SchemaID
 	tableID := job.TableID
 	var newTableID int64
-	err := job.DecodeArgs(&newTableID)
+	var fkCheck bool
+	err := job.DecodeArgs(&newTableID, &fkCheck)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -673,7 +686,10 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		job.State = model.JobStateCancelled
 		return ver, infoschema.ErrTableNotExists.GenWithStackByArgs(job.SchemaName, tblInfo.Name.O)
 	}
-
+	err = checkTruncateTableHasForeignKeyReferredInOwner(d, t, job, tblInfo, fkCheck)
+	if err != nil {
+		return ver, err
+	}
 	err = t.DropTableOrView(schemaID, tblInfo.ID)
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -730,6 +746,10 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 
 	// Clear the TiFlash replica available status.
 	if tblInfo.TiFlashReplica != nil {
+		e := infosync.DeleteTiFlashTableSyncProgress(tblInfo.ID)
+		if e != nil {
+			logutil.BgLogger().Error("DeleteTiFlashTableSyncProgress fails", zap.Error(e))
+		}
 		// Set PD rules for TiFlash
 		if pi := tblInfo.GetPartitionInfo(); pi != nil {
 			if e := infosync.ConfigureTiFlashPDForPartitions(true, &pi.Definitions, tblInfo.TiFlashReplica.Count, &tblInfo.TiFlashReplica.LocationLabels, tblInfo.ID); e != nil {
@@ -1327,18 +1347,25 @@ func checkTableNotExistsFromStore(t *meta.Meta, schemaID int64, tableName string
 }
 
 // updateVersionAndTableInfoWithCheck checks table info validate and updates the schema version and the table information
-func updateVersionAndTableInfoWithCheck(d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, shouldUpdateVer bool) (
+func updateVersionAndTableInfoWithCheck(d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, shouldUpdateVer bool, multiInfos ...schemaIDAndTableInfo) (
 	ver int64, err error) {
 	err = checkTableInfoValid(tblInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	return updateVersionAndTableInfo(d, t, job, tblInfo, shouldUpdateVer)
+	for _, info := range multiInfos {
+		err = checkTableInfoValid(info.tblInfo)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+	}
+	return updateVersionAndTableInfo(d, t, job, tblInfo, shouldUpdateVer, multiInfos...)
 }
 
 // updateVersionAndTableInfo updates the schema version and the table information.
-func updateVersionAndTableInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, shouldUpdateVer bool) (
+func updateVersionAndTableInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, shouldUpdateVer bool, multiInfos ...schemaIDAndTableInfo) (
 	ver int64, err error) {
 	failpoint.Inject("mockUpdateVersionAndTableInfoErr", func(val failpoint.Value) {
 		switch val.(int) {
@@ -1353,7 +1380,7 @@ func updateVersionAndTableInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo 
 		}
 	})
 	if shouldUpdateVer && (job.MultiSchemaInfo == nil || !job.MultiSchemaInfo.SkipVersion) {
-		ver, err = updateSchemaVersion(d, t, job)
+		ver, err = updateSchemaVersion(d, t, job, multiInfos...)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -1362,7 +1389,25 @@ func updateVersionAndTableInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo 
 	if tblInfo.State == model.StatePublic {
 		tblInfo.UpdateTS = t.StartTS
 	}
-	return ver, t.UpdateTable(job.SchemaID, tblInfo)
+	err = t.UpdateTable(job.SchemaID, tblInfo)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	for _, info := range multiInfos {
+		if info.tblInfo.State == model.StatePublic {
+			info.tblInfo.UpdateTS = t.StartTS
+		}
+		err = t.UpdateTable(info.schemaID, info.tblInfo)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+	}
+	return ver, nil
+}
+
+type schemaIDAndTableInfo struct {
+	schemaID int64
+	tblInfo  *model.TableInfo
 }
 
 func onRepairTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {

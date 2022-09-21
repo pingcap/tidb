@@ -37,49 +37,52 @@ func (m *engineManager) init(memRoot MemRoot, diskRoot DiskRoot) {
 }
 
 // Register create a new engineInfo and register it to the engineManager.
-func (m *engineManager) Register(bc *BackendContext, job *model.Job, indexID int64) error {
+func (m *engineManager) Register(bc *BackendContext, job *model.Job, indexID int64) (*engineInfo, error) {
 	// Calculate lightning concurrency degree and set memory usage
 	// and pre-allocate memory usage for worker.
 	m.MemRoot.RefreshConsumption()
 	ok := m.MemRoot.CheckConsume(int64(bc.cfg.TikvImporter.LocalWriterMemCacheSize))
 	if !ok {
-		return genEngineAllocMemFailedErr(m.MemRoot, bc.jobID, indexID)
+		return nil, genEngineAllocMemFailedErr(m.MemRoot, bc.jobID, indexID)
 	}
 
+	var info string
 	en, exist := m.Load(indexID)
 	if !exist {
 		engineCacheSize := int64(bc.cfg.TikvImporter.EngineMemCacheSize)
 		ok := m.MemRoot.CheckConsume(StructSizeEngineInfo + engineCacheSize)
 		if !ok {
-			return genEngineAllocMemFailedErr(m.MemRoot, bc.jobID, indexID)
+			return nil, genEngineAllocMemFailedErr(m.MemRoot, bc.jobID, indexID)
 		}
 
 		cfg := generateLocalEngineConfig(job.ID, job.SchemaName, job.TableName)
 		openedEn, err := bc.backend.OpenEngine(bc.ctx, cfg, job.TableName, int32(indexID))
 		if err != nil {
-			return errors.New(LitErrCreateEngineFail)
+			return nil, errors.New(LitErrCreateEngineFail)
 		}
 		id := openedEn.GetEngineUUID()
 		en = NewEngineInfo(bc.ctx, job.ID, indexID, cfg, openedEn, id, 1, m.MemRoot, m.DiskRoot)
 		m.Store(indexID, en)
 		m.MemRoot.Consume(StructSizeEngineInfo)
 		m.MemRoot.ConsumeWithTag(encodeEngineTag(job.ID, indexID), engineCacheSize)
+		info = LitInfoOpenEngine
 	} else {
 		if en.writerCount+1 > bc.cfg.TikvImporter.RangeConcurrency {
 			logutil.BgLogger().Warn(LitErrExceedConcurrency, zap.Int64("job ID", job.ID),
 				zap.Int64("index ID", indexID),
 				zap.Int("concurrency", bc.cfg.TikvImporter.RangeConcurrency))
-			return errors.New(LitErrExceedConcurrency)
+			return nil, errors.New(LitErrExceedConcurrency)
 		}
 		en.writerCount++
+		info = LitInfoAddWriter
 	}
 	m.MemRoot.ConsumeWithTag(encodeEngineTag(job.ID, indexID), int64(bc.cfg.TikvImporter.LocalWriterMemCacheSize))
-	logutil.BgLogger().Info(LitInfoOpenEngine, zap.Int64("job ID", job.ID),
+	logutil.BgLogger().Info(info, zap.Int64("job ID", job.ID),
 		zap.Int64("index ID", indexID),
 		zap.Int64("current memory usage", m.MemRoot.CurrentUsage()),
 		zap.Int64("memory limitation", m.MemRoot.MaxMemoryQuota()),
 		zap.Int("current writer count", en.writerCount))
-	return nil
+	return en, nil
 }
 
 // Unregister delete the engineInfo from the engineManager.

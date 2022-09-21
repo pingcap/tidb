@@ -1408,8 +1408,8 @@ func TestTiDBTrx(t *testing.T) {
 	tk.Session().SetSessionManager(sm)
 
 	tk.MustQuery("select * from information_schema.TIDB_TRX;").Check(testkit.Rows(
-		"424768545227014155 2021-05-07 12:56:48.001000 "+digest.String()+" update `test_tidb_trx` set `i` = `i` + ? Idle <nil> 1 19 2 root test []",
-		"425070846483628033 2021-05-20 21:16:35.778000 <nil> <nil> LockWaiting 2021-05-20 13:18:30.123456 0 0 10 user1 db1 [\"sql1\",\"sql2\",\""+digest.String()+"\"]"))
+		"424768545227014155 2021-05-07 12:56:48.001000 "+digest.String()+" update `test_tidb_trx` set `i` = `i` + ? Idle <nil> 1 19 2 root test [] ",
+		"425070846483628033 2021-05-20 21:16:35.778000 <nil> <nil> LockWaiting 2021-05-20 13:18:30.123456 0 0 10 user1 db1 [\"sql1\",\"sql2\",\""+digest.String()+"\"] "))
 
 	// Test the all_sql_digests column can be directly passed to the tidb_decode_sql_digests function.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/expression/sqlDigestRetrieverSkipRetrieveGlobal", "return"))
@@ -1543,7 +1543,6 @@ func TestVariablesInfo(t *testing.T) {
 		"tidb_enable_collect_execution_info ON OFF", // for test stability
 		"tidb_enable_mutation_checker OFF ON",       // for new installs
 		"tidb_mem_oom_action CANCEL LOG",            // always changed for tests
-		"tidb_partition_prune_mode static dynamic",  // for new installs
 		"tidb_row_format_version 1 2",               // for new installs
 		"tidb_txn_assertion_level OFF FAST",         // for new installs
 		"timestamp 0 123456789",                     // always dynamic

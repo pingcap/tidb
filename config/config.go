@@ -489,8 +489,9 @@ type Instance struct {
 	PluginDir                  string `toml:"plugin_dir" json:"plugin_dir"`
 	PluginLoad                 string `toml:"plugin_load" json:"plugin_load"`
 	// MaxConnections is the maximum permitted number of simultaneous client connections.
-	MaxConnections uint32     `toml:"max_connections" json:"max_connections"`
-	TiDBEnableDDL  AtomicBool `toml:"tidb_enable_ddl" json:"tidb_enable_ddl"`
+	MaxConnections    uint32     `toml:"max_connections" json:"max_connections"`
+	TiDBEnableDDL     AtomicBool `toml:"tidb_enable_ddl" json:"tidb_enable_ddl"`
+	TiDBRCReadCheckTS bool       `toml:"tidb_rc_read_check_ts" json:"tidb_rc_read_check_ts"`
 }
 
 func (l *Log) getDisableTimestamp() bool {
@@ -868,6 +869,7 @@ var defaultConf = Config{
 		PluginLoad:                  "",
 		MaxConnections:              0,
 		TiDBEnableDDL:               *NewAtomicBool(true),
+		TiDBRCReadCheckTS:           false,
 	},
 	Status: Status{
 		ReportStatus:          true,

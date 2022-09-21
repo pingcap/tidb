@@ -26,6 +26,7 @@ import (
 	"unicode"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -126,6 +127,8 @@ const (
 	HintMerge = "merge"
 	// HintSemiJoinRewrite is a hint to force we rewrite the semi join operator as much as possible.
 	HintSemiJoinRewrite = "semi_join_rewrite"
+	// HintNoDecorrelate indicates a LogicalApply not to be decorrelated.
+	HintNoDecorrelate = "no_decorrelate"
 )
 
 const (
@@ -3681,11 +3684,17 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 			}
 			leadingHintCnt++
 		case HintSemiJoinRewrite:
-			if !b.checkSemiJoinHint {
+			if b.subQueryCtx != handlingExistsSubquery {
 				b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("The SEMI_JOIN_REWRITE hint is not used correctly, maybe it's not in a subquery or the subquery is not EXISTS clause."))
 				continue
 			}
-			b.hasValidSemiJoinHint = true
+			b.subQueryHintFlags |= HintFlagSemiJoinRewrite
+		case HintNoDecorrelate:
+			if b.subQueryCtx == notHandlingSubquery {
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("NO_DECORRELATE() is inapplicable because it's not in an IN subquery, an EXISTS subquery, an ANY/ALL/SOME subquery or a scalar subquery."))
+				continue
+			}
+			b.subQueryHintFlags |= HintFlagNoDecorrelate
 		default:
 			// ignore hints that not implemented
 		}
@@ -3841,20 +3850,35 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		b.isForUpdateRead = true
 	}
 
-	// Verify Merge hints in the current query, we will update parameters for those that meet the rules, and warn those that do not.
-	//If the current query uses Merge Hint and the query is a CTE, we update the HINT information for the current query.
-	//If the current query is not a CTE query (it may be a subquery within a CTE query or an external non-CTE query), we will give a warning.
-	//In particular, recursive CTE have separate warnings, so they are no longer called.
-	if hints := b.TableHints(); hints != nil && hints.MergeHints.preferMerge {
+	// If the session variable "tidb_opt_force_inline_cte" is true, all of CTEs will be inlined.
+	// Otherwise, whether CTEs are inlined depends on whether the merge() hint is declared.
+	if b.ctx.GetSessionVars().EnableForceInlineCTE() {
+		if b.buildingCTE && b.isCTE {
+			b.outerCTEs[len(b.outerCTEs)-1].isInline = true
+		}
+	} else if hints := b.TableHints(); hints != nil && hints.MergeHints.preferMerge {
+		// Verify Merge hints in the current query,
+		// we will update parameters for those that meet the rules, and warn those that do not.
+		// If the current query uses Merge Hint and the query is a CTE,
+		// we update the HINT information for the current query.
+		// If the current query is not a CTE query (it may be a subquery within a CTE query
+		// or an external non-CTE query), we will give a warning.
+		// In particular, recursive CTE have separate warnings, so they are no longer called.
 		if b.buildingCTE {
 			if b.isCTE {
 				b.outerCTEs[len(b.outerCTEs)-1].isInline = hints.MergeHints.preferMerge
 			} else if !b.buildingRecursivePartForCTE {
 				//If there has subquery which is not CTE and using `MERGE()` hint, we will show this warning;
-				b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("Hint merge() is inapplicable. Please check whether the hint is using in the right place, you should use this hint in CTE inner query."))
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(
+					ErrInternal.GenWithStack("Hint merge() is inapplicable. " +
+						"Please check whether the hint is used in the right place, " +
+						"you should use this hint inside the CTE."))
 			}
 		} else if !b.buildingCTE && !b.isCTE {
-			b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("Hint merge() is inapplicable. Please check whether the hint is using in the right place, you should use this hint in CTE inner query."))
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(
+				ErrInternal.GenWithStack("Hint merge() is inapplicable. " +
+					"Please check whether the hint is used in the right place, " +
+					"you should use this hint inside the CTE."))
 		}
 	}
 
@@ -4157,7 +4181,7 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 	}
 
 	var statsTbl *statistics.Table
-	if pid == tblInfo.ID || ctx.GetSessionVars().UseDynamicPartitionPrune() {
+	if pid == tblInfo.ID || ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		statsTbl = statsHandle.GetTableStats(tblInfo, handle.WithTableStatsByQuery())
 	} else {
 		statsTbl = statsHandle.GetPartitionStats(tblInfo, pid, handle.WithTableStatsByQuery())
@@ -4243,10 +4267,10 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 			lp.SetSchema(getResultCTESchema(cte.seedLP.Schema(), b.ctx.GetSessionVars()))
 
 			if cte.recurLP != nil && cte.isInline {
-				b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("Hint merge() is inapplicable. Please check whether the CTE use recursive."))
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(
+					ErrInternal.GenWithStack("Recursive CTE can not be inlined."))
 			}
 			if cte.recurLP == nil && cte.isInline {
-				lp.MergeHints.preferMerge = cte.isInline
 				saveCte := make([]*cteInfo, len(b.outerCTEs[i:]))
 				copy(saveCte, b.outerCTEs[i:])
 				b.outerCTEs = b.outerCTEs[:i]
@@ -4331,7 +4355,12 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		return nil, err
 	}
 
+	tbl, err = tryLockMDLAndUpdateSchemaIfNecessary(b.ctx, dbName, tbl, b.is)
+	if err != nil {
+		return nil, err
+	}
 	tableInfo := tbl.Meta()
+
 	if b.isCreateView && tableInfo.TempTableType == model.TempTableLocal {
 		return nil, ErrViewSelectTemporaryTable.GenWithStackByArgs(tn.Name)
 	}
@@ -4374,9 +4403,28 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	}
 
 	if tableInfo.GetPartitionInfo() != nil {
-		// Use the new partition implementation, clean up the code here when it's full implemented.
-		if !b.ctx.GetSessionVars().UseDynamicPartitionPrune() {
+		h := domain.GetDomain(b.ctx).StatsHandle()
+		tblStats := h.GetTableStats(tableInfo)
+		isDynamicEnabled := b.ctx.GetSessionVars().IsDynamicPartitionPruneEnabled()
+		globalStatsReady := tblStats.IsInitialized()
+		// If dynamic partition prune isn't enabled or global stats is not ready, we won't enable dynamic prune mode in query
+		usePartitionProcessor := !isDynamicEnabled || !globalStatsReady
+
+		failpoint.Inject("forceDynamicPrune", func(val failpoint.Value) {
+			if val.(bool) {
+				if isDynamicEnabled {
+					usePartitionProcessor = false
+				}
+			}
+		})
+
+		if usePartitionProcessor {
 			b.optFlag = b.optFlag | flagPartitionProcessor
+			b.ctx.GetSessionVars().StmtCtx.UseDynamicPruneMode = false
+			if isDynamicEnabled {
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(
+					fmt.Errorf("disable dynamic pruning due to %s has no global stats", tableInfo.Name.String()))
+			}
 		}
 
 		pt := tbl.(table.PartitionedTable)
@@ -5001,10 +5049,10 @@ func (b *PlanBuilder) buildProjUponView(_ context.Context, dbName model.CIStr, t
 
 // buildApplyWithJoinType builds apply plan with outerPlan and innerPlan, which apply join with particular join type for
 // every row from outerPlan and the whole innerPlan.
-func (b *PlanBuilder) buildApplyWithJoinType(outerPlan, innerPlan LogicalPlan, tp JoinType) LogicalPlan {
+func (b *PlanBuilder) buildApplyWithJoinType(outerPlan, innerPlan LogicalPlan, tp JoinType, markNoDecorrelate bool) LogicalPlan {
 	b.optFlag = b.optFlag | flagPredicatePushDown | flagBuildKeyInfo | flagDecorrelate
 	setIsInApplyForCTE(innerPlan)
-	ap := LogicalApply{LogicalJoin: LogicalJoin{JoinType: tp}}.Init(b.ctx, b.getSelectOffset())
+	ap := LogicalApply{LogicalJoin: LogicalJoin{JoinType: tp}, NoDecorrelate: markNoDecorrelate}.Init(b.ctx, b.getSelectOffset())
 	ap.SetChildren(outerPlan, innerPlan)
 	ap.names = make([]*types.FieldName, outerPlan.Schema().Len()+innerPlan.Schema().Len())
 	copy(ap.names, outerPlan.OutputNames())
@@ -5021,7 +5069,8 @@ func (b *PlanBuilder) buildApplyWithJoinType(outerPlan, innerPlan LogicalPlan, t
 }
 
 // buildSemiApply builds apply plan with outerPlan and innerPlan, which apply semi-join for every row from outerPlan and the whole innerPlan.
-func (b *PlanBuilder) buildSemiApply(outerPlan, innerPlan LogicalPlan, condition []expression.Expression, asScalar, not, considerRewrite bool) (LogicalPlan, error) {
+func (b *PlanBuilder) buildSemiApply(outerPlan, innerPlan LogicalPlan, condition []expression.Expression,
+	asScalar, not, considerRewrite, markNoDecorrelate bool) (LogicalPlan, error) {
 	b.optFlag = b.optFlag | flagPredicatePushDown | flagBuildKeyInfo | flagDecorrelate
 
 	join, err := b.buildSemiJoin(outerPlan, innerPlan, condition, asScalar, not, considerRewrite)
@@ -5030,7 +5079,7 @@ func (b *PlanBuilder) buildSemiApply(outerPlan, innerPlan LogicalPlan, condition
 	}
 
 	setIsInApplyForCTE(innerPlan)
-	ap := &LogicalApply{LogicalJoin: *join}
+	ap := &LogicalApply{LogicalJoin: *join, NoDecorrelate: markNoDecorrelate}
 	ap.tp = plancodec.TypeApply
 	ap.self = ap
 	return ap, nil

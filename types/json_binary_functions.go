@@ -62,6 +62,14 @@ func (bj BinaryJSON) Type() string {
 		default:
 			return "OPAQUE"
 		}
+	case JSONTypeCodeDate:
+		return "DATE"
+	case JSONTypeCodeDatetime:
+		return "DATETIME"
+	case JSONTypeCodeTimestamp:
+		return "DATETIME"
+	case JSONTypeCodeDuration:
+		return "TIME"
 	default:
 		msg := fmt.Sprintf(unknownTypeCodeErrorMsg, bj.TypeCode)
 		panic(msg)
@@ -401,6 +409,9 @@ func (bj BinaryJSON) Modify(pathExprList []JSONPathExpression, values []BinaryJS
 			return BinaryJSON{}, modifier.err
 		}
 	}
+	if bj.GetElemDepth()-1 > maxJSONDepth {
+		return bj, ErrJSONDocumentTooDeep
+	}
 	return bj, nil
 }
 
@@ -626,8 +637,7 @@ func (bm *binaryModifier) rebuildTo(buf []byte) ([]byte, JSONTypeCode) {
 		return append(buf, bm.bj.Value...), bm.bj.TypeCode
 	}
 	bj := bm.bj
-	switch bj.TypeCode {
-	case JSONTypeCodeLiteral, JSONTypeCodeInt64, JSONTypeCodeUint64, JSONTypeCodeFloat64, JSONTypeCodeString, JSONTypeCodeOpaque:
+	if bj.TypeCode != JSONTypeCodeArray && bj.TypeCode != JSONTypeCodeObject {
 		return append(buf, bj.Value...), bj.TypeCode
 	}
 	docOff := len(buf)
@@ -804,6 +814,17 @@ func CompareBinaryJSON(left, right BinaryJSON) int {
 			}
 		case JSONTypeCodeOpaque:
 			cmp = bytes.Compare(left.GetOpaque().Buf, right.GetOpaque().Buf)
+		case JSONTypeCodeDate, JSONTypeCodeDatetime, JSONTypeCodeTimestamp:
+			// the jsonTypePrecedences guarantees that the DATE is only
+			// comparable with the DATE, and the DATETIME and TIMESTAMP will compare with each other
+			// as the `Type()` of `JSONTypeCodeTimestamp` is also `DATETIME`.
+			leftTime := left.GetTime()
+			rightTime := right.GetTime()
+			cmp = leftTime.Compare(rightTime)
+		case JSONTypeCodeDuration:
+			leftDuration := left.GetDuration()
+			rightDuration := right.GetDuration()
+			cmp = leftDuration.Compare(rightDuration)
 		}
 	} else {
 		cmp = precedence1 - precedence2
@@ -1002,7 +1023,7 @@ func PeekBytesAsJSON(b []byte) (n int, err error) {
 	case JSONTypeCodeString:
 		strLen, lenLen := binary.Uvarint(b[valTypeSize:])
 		return valTypeSize + int(strLen) + lenLen, nil
-	case JSONTypeCodeInt64, JSONTypeCodeUint64, JSONTypeCodeFloat64:
+	case JSONTypeCodeInt64, JSONTypeCodeUint64, JSONTypeCodeFloat64, JSONTypeCodeDate, JSONTypeCodeDatetime, JSONTypeCodeTimestamp:
 		n = valTypeSize + 8
 		return
 	case JSONTypeCodeLiteral:
@@ -1011,6 +1032,9 @@ func PeekBytesAsJSON(b []byte) (n int, err error) {
 	case JSONTypeCodeOpaque:
 		bufLen, lenLen := binary.Uvarint(b[valTypeSize+1:])
 		return valTypeSize + 1 + int(bufLen) + lenLen, nil
+	case JSONTypeCodeDuration:
+		n = valTypeSize + 12
+		return
 	}
 	err = errors.New("Invalid JSON bytes")
 	return

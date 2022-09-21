@@ -312,13 +312,19 @@ type StatementContext struct {
 	IsSQLRegistered atomic2.Bool
 	// IsSQLAndPlanRegistered uses to indicate whether the SQL and plan has been registered for TopSQL.
 	IsSQLAndPlanRegistered atomic2.Bool
-
+	// IsReadOnly uses to indicate whether the SQL is read-only.
+	IsReadOnly bool
 	// StatsLoadStatus records StatsLoadedStatus for the index/column which is used in query
 	StatsLoadStatus map[model.TableItemID]string
 	// IsSyncStatsFailed indicates whether any failure happened during sync stats
 	IsSyncStatsFailed bool
+	// UseDynamicPruneMode indicates whether use UseDynamicPruneMode in query stmt
+	UseDynamicPruneMode bool
 	// ColRefFromPlan mark the column ref used by assignment in update statement.
 	ColRefFromUpdatePlan []int64
+
+	// RangeFallback indicates that building complete ranges exceeds the memory limit so it falls back to less accurate ranges such as full range.
+	RangeFallback bool
 }
 
 // StmtHints are SessionVars related sql hints.
@@ -982,6 +988,22 @@ func (sc *StatementContext) GetLockWaitStartTime() time.Time {
 		atomic.StoreInt64(&sc.lockWaitStartTime, startTime)
 	}
 	return time.Unix(0, startTime)
+}
+
+// RecordRangeFallback records range fallback.
+func (sc *StatementContext) RecordRangeFallback(rangeMaxSize int64) {
+	// If range fallback happens, it means ether the query is unreasonable(for example, several long IN lists) or tidb_opt_range_max_size is too small
+	// and the generated plan is probably suboptimal. In that case we don't put it into plan cache.
+	sc.SkipPlanCache = true
+	if !sc.RangeFallback {
+		sc.AppendWarning(errors.Errorf("Memory capacity of %v bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen", rangeMaxSize))
+		sc.RangeFallback = true
+	}
+}
+
+// UseDynamicPartitionPrune indicates whether dynamic partition is used during the query
+func (sc *StatementContext) UseDynamicPartitionPrune() bool {
+	return sc.UseDynamicPruneMode
 }
 
 // CopTasksDetails collects some useful information of cop-tasks during execution.

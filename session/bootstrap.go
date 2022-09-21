@@ -424,6 +424,10 @@ const (
 	CreateAdvisoryLocks = `CREATE TABLE IF NOT EXISTS mysql.advisory_locks (
 		lock_name VARCHAR(64) NOT NULL PRIMARY KEY
 	);`
+	// CreateMDLView is a view about metadata locks.
+	CreateMDLView = `CREATE OR REPLACE VIEW mysql.tidb_mdl_view as (
+	select JOB_ID, DB_NAME, TABLE_NAME, QUERY, SESSION_ID, TxnStart, TIDB_DECODE_SQL_DIGESTS(ALL_SQL_DIGESTS, 4096) AS SQL_DIGESTS from information_schema.ddl_jobs, information_schema.CLUSTER_TIDB_TRX, information_schema.CLUSTER_PROCESSLIST where ddl_jobs.STATE = 'running' and find_in_set(ddl_jobs.table_id, CLUSTER_TIDB_TRX.RELATED_TABLE_IDS) and CLUSTER_TIDB_TRX.SESSION_ID=CLUSTER_PROCESSLIST.ID
+	);`
 )
 
 // bootstrap initiates system DB for a store.
@@ -627,11 +631,12 @@ const (
 	version92 = 92
 	// version93 converts oom-use-tmp-storage to a sysvar
 	version93 = 93
+	version94 = 94
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version93
+var currentBootstrapVersion int64 = version94
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -730,6 +735,7 @@ var (
 		upgradeToVer90,
 		upgradeToVer91,
 		upgradeToVer93,
+		upgradeToVer94,
 	}
 )
 
@@ -1918,6 +1924,13 @@ func upgradeToVer93(s Session, ver int64) {
 	importConfigOption(s, "oom-use-tmp-storage", variable.TiDBEnableTmpStorageOnOOM, valStr)
 }
 
+func upgradeToVer94(s Session, ver int64) {
+	if ver >= version94 {
+		return
+	}
+	mustExecute(s, CreateMDLView)
+}
+
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -2012,6 +2025,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateAnalyzeJobs)
 	// Create advisory_locks table.
 	mustExecute(s, CreateAdvisoryLocks)
+	// Create mdl view.
+	mustExecute(s, CreateMDLView)
 }
 
 // inTestSuite checks if we are bootstrapping in the context of tests.
@@ -2058,10 +2073,6 @@ func doDMLWorks(s Session) {
 		case variable.TiDBEnableAsyncCommit, variable.TiDBEnable1PC:
 			if config.GetGlobalConfig().Store == "tikv" {
 				vVal = variable.On
-			}
-		case variable.TiDBPartitionPruneMode:
-			if inTestSuite() || config.CheckTableBeforeDrop {
-				vVal = string(variable.Dynamic)
 			}
 		case variable.TiDBMemOOMAction:
 			if inTestSuite() {

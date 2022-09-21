@@ -146,6 +146,7 @@ type LogicalJoin struct {
 	preferJoinOrder bool
 
 	EqualConditions []*expression.ScalarFunction
+	NAEQConditions  []*expression.ScalarFunction
 	LeftConditions  expression.CNFExprs
 	RightConditions expression.CNFExprs
 	OtherConditions expression.CNFExprs
@@ -178,6 +179,10 @@ type LogicalJoin struct {
 
 	// equalCondOutCnt indicates the estimated count of joined rows after evaluating `EqualConditions`.
 	equalCondOutCnt float64
+}
+
+func (p *LogicalJoin) isNAAJ() bool {
+	return len(p.NAEQConditions) > 0
 }
 
 // Shallow shallow copies a LogicalJoin struct.
@@ -363,6 +368,15 @@ func (p *LogicalJoin) GetJoinKeys() (leftKeys, rightKeys []*expression.Column, i
 		rightKeys = append(rightKeys, expr.GetArgs()[1].(*expression.Column))
 		isNullEQ = append(isNullEQ, expr.FuncName.L == ast.NullEQ)
 		hasNullEQ = hasNullEQ || expr.FuncName.L == ast.NullEQ
+	}
+	return
+}
+
+// GetNAJoinKeys extracts join keys(columns) from NAEqualCondition.
+func (p *LogicalJoin) GetNAJoinKeys() (leftKeys, rightKeys []*expression.Column) {
+	for _, expr := range p.NAEQConditions {
+		leftKeys = append(leftKeys, expr.GetArgs()[0].(*expression.Column))
+		rightKeys = append(rightKeys, expr.GetArgs()[1].(*expression.Column))
 	}
 	return
 }
@@ -1047,6 +1061,8 @@ type LogicalApply struct {
 	LogicalJoin
 
 	CorCols []*expression.CorrelatedColumn
+	// NoDecorrelate is from /*+ no_decorrelate() */ hint.
+	NoDecorrelate bool
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
@@ -1459,7 +1475,9 @@ func (ds *DataSource) deriveTablePathStats(path *util.AccessPath, conds []expres
 		path.CountAfterAccess = 1
 		return nil
 	}
-	path.Ranges, err = ranger.BuildTableRange(path.AccessConds, ds.ctx, pkCol.RetType)
+	var remainedConds []expression.Expression
+	path.Ranges, path.AccessConds, remainedConds, err = ranger.BuildTableRange(path.AccessConds, ds.ctx, pkCol.RetType, ds.ctx.GetSessionVars().RangeMaxSize)
+	path.TableFilters = append(path.TableFilters, remainedConds...)
 	if err != nil {
 		return err
 	}
@@ -1916,7 +1934,6 @@ type LogicalCTE struct {
 	cteAsName      model.CIStr
 	seedStat       *property.StatsInfo
 	isOuterMostCTE bool
-	MergeHints     MergeHintInfo
 }
 
 // LogicalCTETable is for CTE table

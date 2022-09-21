@@ -855,6 +855,11 @@ func (d *Datum) compareMysqlSet(sc *stmtctx.StatementContext, set Set, comparer 
 }
 
 func (d *Datum) compareMysqlJSON(_ *stmtctx.StatementContext, target BinaryJSON) (int, error) {
+	// json is not equal with NULL
+	if d.k == KindNull {
+		return 1, nil
+	}
+
 	origin, err := d.ToMysqlJSON()
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -1696,6 +1701,12 @@ func (d *Datum) convertToMysqlJSON(_ *stmtctx.StatementContext, _ *FieldType) (r
 		}
 	case KindMysqlJSON:
 		ret = *d
+	case KindMysqlTime:
+		tm := d.GetMysqlTime()
+		ret.SetMysqlJSON(CreateBinaryJSON(tm))
+	case KindMysqlDuration:
+		dur := d.GetMysqlDuration()
+		ret.SetMysqlJSON(CreateBinaryJSON(dur))
 	case KindBinaryLiteral:
 		err = ErrInvalidJSONCharset.GenWithStackByArgs(charset.CharsetBin)
 	default:
