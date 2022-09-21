@@ -1193,13 +1193,6 @@ func (re *builtinRegexpReplaceFuncSig) evalString(row chunk.Row) (string, bool, 
 		}
 	}
 
-	if len(expr) == 0 {
-		if re.isBinaryCollation() {
-			return "0x", false, nil
-		}
-		return "", false, nil
-	}
-
 	memorize := func() {
 		compile, err := re.genCompile(matchType)
 		if err != nil {
@@ -1370,15 +1363,6 @@ func (re *builtinRegexpReplaceFuncSig) vecEvalString(input *chunk.Chunk, result 
 		reg, err := re.genRegexp(params[1].getStringVal(i), matchType)
 		if err != nil {
 			return ErrRegexp.GenWithStackByArgs(err)
-		}
-
-		if len(expr) == 0 {
-			if re.isBinaryCollation() {
-				result.AppendString("0x")
-			} else {
-				result.AppendString("")
-			}
-			continue
 		}
 
 		// Start to replace
