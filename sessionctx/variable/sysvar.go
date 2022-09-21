@@ -718,7 +718,7 @@ var defaultSysVars = []*SysVar{
 	},
 	{Scope: ScopeGlobal, Name: TiDBServerMemoryLimit, Value: strconv.FormatUint(DefTiDBServerMemoryLimit, 10), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint64,
 		GetGlobal: func(s *SessionVars) (string, error) {
-			return memory.ServerMemoryQuota.String(), nil
+			return memory.ServerMemoryLimit.String(), nil
 		},
 		Validation: func(s *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 			intVal, err := strconv.ParseUint(normalizedValue, 10, 64)
@@ -736,7 +736,7 @@ var defaultSysVars = []*SysVar{
 			if err != nil {
 				return err
 			}
-			memory.ServerMemoryQuota.Store(intVal)
+			memory.ServerMemoryLimit.Store(intVal)
 			return nil
 		},
 	},

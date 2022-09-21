@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package servermemoryquota
+package servermemorylimit
 
 import (
 	"runtime"
@@ -29,8 +29,8 @@ type Handle struct {
 	sm     atomic.Value
 }
 
-// NewServerMemoryQuotaHandle builds a new server memory quota handler.
-func NewServerMemoryQuotaHandle(exitCh chan struct{}) *Handle {
+// NewServerMemoryLimitHandle builds a new server memory limit handler.
+func NewServerMemoryLimitHandle(exitCh chan struct{}) *Handle {
 	return &Handle{exitCh: exitCh}
 }
 
@@ -41,7 +41,7 @@ func (smqh *Handle) SetSessionManager(sm util.SessionManager) *Handle {
 	return smqh
 }
 
-// Run starts a server memory quota checker goroutine at the start time of the server.
+// Run starts a server memory limit checker goroutine at the start time of the server.
 func (smqh *Handle) Run() {
 	tickInterval := time.Millisecond * time.Duration(100)
 	ticker := time.NewTicker(tickInterval)
@@ -51,7 +51,7 @@ func (smqh *Handle) Run() {
 	for {
 		select {
 		case <-ticker.C:
-			killSessIfNeeded(sessionToBeKilled, memory.ServerMemoryQuota.Load(), sm)
+			killSessIfNeeded(sessionToBeKilled, memory.ServerMemoryLimit.Load(), sm)
 		case <-smqh.exitCh:
 			return
 		}

@@ -32,7 +32,7 @@ const TrackMemWhenExceeds = 104857600 // 100MB
 
 // Process global variables for memory limit.
 var (
-	ServerMemoryQuota            = atomicutil.NewUint64(0)
+	ServerMemoryLimit            = atomicutil.NewUint64(0)
 	ServerMemoryLimitSessMinSize = atomicutil.NewUint64(128 << 20)
 )
 
