@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package expensivequery
+package memoryusagealarm
 
 import (
 	"fmt"
@@ -22,6 +22,7 @@ import (
 	rpprof "runtime/pprof"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/tidb/config"
@@ -34,6 +35,42 @@ import (
 	"go.uber.org/zap/zapcore"
 	"golang.org/x/exp/slices"
 )
+
+// Handle is the handler for expensive query.
+type Handle struct {
+	exitCh chan struct{}
+	sm     atomic.Value
+}
+
+// NewMemoryUsageAlarmHandle builds a memory usage alarm handler.
+func NewMemoryUsageAlarmHandle(exitCh chan struct{}) *Handle {
+	return &Handle{exitCh: exitCh}
+}
+
+// SetSessionManager sets the SessionManager which is used to fetching the info
+// of all active sessions.
+func (eqh *Handle) SetSessionManager(sm util.SessionManager) *Handle {
+	eqh.sm.Store(sm)
+	return eqh
+}
+
+// Run starts a memory usage alarm goroutine at the start time of the server.
+func (eqh *Handle) Run() {
+	// use 100ms as tickInterval temply, may use given interval or use defined variable later
+	tickInterval := time.Millisecond * time.Duration(100)
+	ticker := time.NewTicker(tickInterval)
+	defer ticker.Stop()
+	sm := eqh.sm.Load().(util.SessionManager)
+	record := &memoryUsageAlarm{}
+	for {
+		select {
+		case <-ticker.C:
+			record.alarm4ExcessiveMemUsage(sm)
+		case <-eqh.exitCh:
+			return
+		}
+	}
+}
 
 type memoryUsageAlarm struct {
 	lastCheckTime                 time.Time
@@ -135,7 +172,7 @@ func (record *memoryUsageAlarm) needRecord(memoryUsage uint64) bool {
 
 	interval := time.Since(record.lastCheckTime)
 	memDiff := int64(memoryUsage) - int64(record.lastRecordMemUsed)
-	if interval > 60*time.Second {
+	if interval > 5*time.Second {
 		logutil.BgLogger().Warn("Record Memory Information.", zap.String("record time", time.Now().String()), zap.String("last record time", record.lastCheckTime.String()))
 		return true
 	}
@@ -204,6 +241,50 @@ func getCurrentAnalyzePlan(info *util.ProcessInfo) string {
 	return buf.String()
 }
 
+func (record *memoryUsageAlarm) printTop10SqlInfo(cmp func(i, j *util.ProcessInfo) bool, pinfo []*util.ProcessInfo, f *os.File) {
+	slices.SortFunc(pinfo, cmp)
+	list := pinfo
+	if len(list) > 10 {
+		list = list[:10]
+	}
+	var buf strings.Builder
+	for i, info := range list {
+		buf.WriteString(fmt.Sprintf("SQL %v: \n", i))
+		fields := util.GenLogFields(record.lastCheckTime.Sub(info.Time), info, false, true)
+		fields = append(fields, info.OomAlarmVariablesInfo...)
+		fields = append(fields, zap.String("current_analyze_plan", getCurrentAnalyzePlan(info)))
+		for _, field := range fields {
+			switch field.Type {
+			case zapcore.StringType:
+				buf.WriteString(fmt.Sprintf("%v: %v", field.Key, field.String))
+			case zapcore.Uint8Type, zapcore.Uint16Type, zapcore.Uint32Type, zapcore.Uint64Type:
+				buf.WriteString(fmt.Sprintf("%v: %v", field.Key, uint64(field.Integer)))
+			case zapcore.Int8Type, zapcore.Int16Type, zapcore.Int32Type, zapcore.Int64Type:
+				buf.WriteString(fmt.Sprintf("%v: %v", field.Key, field.Integer))
+			case zapcore.BoolType:
+				buf.WriteString(fmt.Sprintf("%v: %v", field.Key, field.Integer == 1))
+			}
+			buf.WriteString("\n")
+		}
+	}
+	buf.WriteString("\n")
+	if _, err := f.WriteString(buf.String()); err != nil {
+		logutil.BgLogger().Error("write oom record file fail", zap.Error(err))
+	}
+}
+
+func (record *memoryUsageAlarm) printTop10SqlInfoByMemoryUsage(pinfo []*util.ProcessInfo, f *os.File) {
+	record.printTop10SqlInfo(func(i, j *util.ProcessInfo) bool {
+		return i.StmtCtx.MemTracker.MaxConsumed() > j.StmtCtx.MemTracker.MaxConsumed()
+	}, pinfo, f)
+}
+
+func (record *memoryUsageAlarm) printTop10SqlInfoByCostTime(pinfo []*util.ProcessInfo, f *os.File) {
+	record.printTop10SqlInfo(func(i, j *util.ProcessInfo) bool {
+		return i.Time.Before(j.Time)
+	}, pinfo, f)
+}
+
 func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager, recordDir string) error {
 	processInfo := sm.ShowProcessList()
 	pinfo := make([]*util.ProcessInfo, 0, len(processInfo))
@@ -227,47 +308,12 @@ func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager, recordDir stri
 	if _, err = f.WriteString(getRelevantSystemVariableBuf()); err != nil {
 		logutil.BgLogger().Error("write oom record file fail", zap.Error(err))
 	}
-	printTop10 := func(cmp func(i, j *util.ProcessInfo) bool) {
-		slices.SortFunc(pinfo, cmp)
-		list := pinfo
-		if len(list) > 10 {
-			list = list[:10]
-		}
-		var buf strings.Builder
-		for i, info := range list {
-			buf.WriteString(fmt.Sprintf("SQL %v: \n", i))
-			fields := genLogFields(record.lastCheckTime.Sub(info.Time), info, false, true)
-			fields = append(fields, info.OomAlarmVariablesInfo...)
-			fields = append(fields, zap.String("current_analyze_plan", getCurrentAnalyzePlan(info)))
-			for _, field := range fields {
-				switch field.Type {
-				case zapcore.StringType:
-					buf.WriteString(fmt.Sprintf("%v: %v", field.Key, field.String))
-				case zapcore.Uint8Type, zapcore.Uint16Type, zapcore.Uint32Type, zapcore.Uint64Type:
-					buf.WriteString(fmt.Sprintf("%v: %v", field.Key, uint64(field.Integer)))
-				case zapcore.Int8Type, zapcore.Int16Type, zapcore.Int32Type, zapcore.Int64Type:
-					buf.WriteString(fmt.Sprintf("%v: %v", field.Key, field.Integer))
-				case zapcore.BoolType:
-					buf.WriteString(fmt.Sprintf("%v: %v", field.Key, field.Integer == 1))
-				}
-				buf.WriteString("\n")
-			}
-		}
-		buf.WriteString("\n")
-		if _, err = f.WriteString(buf.String()); err != nil {
-			logutil.BgLogger().Error("write oom record file fail", zap.Error(err))
-		}
-	}
 
 	_, err = f.WriteString("The 10 SQLs with the most memory usage for OOM analysis\n")
-	printTop10(func(i, j *util.ProcessInfo) bool {
-		return i.StmtCtx.MemTracker.MaxConsumed() > j.StmtCtx.MemTracker.MaxConsumed()
-	})
+	record.printTop10SqlInfoByMemoryUsage(pinfo, f)
 
 	_, err = f.WriteString("The 10 SQLs with the most time usage for OOM analysis\n")
-	printTop10(func(i, j *util.ProcessInfo) bool {
-		return i.Time.Before(j.Time)
-	})
+	record.printTop10SqlInfoByCostTime(pinfo, f)
 	return nil
 }
 
