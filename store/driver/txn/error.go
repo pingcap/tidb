@@ -158,45 +158,47 @@ func newWriteConflictError(conflict *kvrpcpb.WriteConflict) error {
 	if conflict == nil {
 		return kv.ErrWriteConflict
 	}
-	var buf1 bytes.Buffer // table id part of conflict key, which is used to be parsed by upper level to provide more information about the table
-	var buf2 bytes.Buffer // the rest part of conflict key
-	var buf3 bytes.Buffer // table id part of primary key
-	var buf4 bytes.Buffer // the rest part of primary key
-	prettyWriteKey(&buf1, &buf2, conflict.Key)
-	buf2.WriteString(", primary=")
-	prettyWriteKey(&buf3, &buf4, conflict.Primary)
+	var bufConflictKeyTableID bytes.Buffer // table id part of conflict key, which is used to be parsed by upper level to provide more information about the table
+	var bufConflictKeyRest bytes.Buffer    // the rest part of conflict key
+	var bufPrimaryKeyTableID bytes.Buffer  // table id part of primary key
+	var bufPrimaryKeyRest bytes.Buffer     // the rest part of primary key
+	prettyWriteKey(&bufConflictKeyTableID, &bufConflictKeyRest, conflict.Key)
+	bufConflictKeyRest.WriteString(", primary=")
+	prettyWriteKey(&bufPrimaryKeyTableID, &bufPrimaryKeyRest, conflict.Primary)
 	return kv.ErrWriteConflict.FastGenByArgs(conflict.StartTs, conflict.ConflictTs, conflict.ConflictCommitTs,
-		buf1.String(), buf2.String(), buf3.String(), buf4.String(), conflict.Reason.String())
+		bufConflictKeyTableID.String(), bufConflictKeyRest.String(), bufPrimaryKeyTableID.String(),
+		bufPrimaryKeyRest.String(), conflict.Reason.String(),
+	)
 }
 
-func prettyWriteKey(buf1, buf2 *bytes.Buffer, key []byte) {
+func prettyWriteKey(bufTableID, bufRest *bytes.Buffer, key []byte) {
 	tableID, indexID, indexValues, err := tablecodec.DecodeIndexKey(key)
 	if err == nil {
-		_, err1 := fmt.Fprintf(buf1, "{tableID=%d", tableID)
+		_, err1 := fmt.Fprintf(bufTableID, "{tableID=%d", tableID)
 		if err1 != nil {
 			logutil.BgLogger().Error("error", zap.Error(err1))
 		}
-		_, err1 = fmt.Fprintf(buf2, ", indexID=%d, indexValues={", indexID)
+		_, err1 = fmt.Fprintf(bufRest, ", indexID=%d, indexValues={", indexID)
 		if err1 != nil {
 			logutil.BgLogger().Error("error", zap.Error(err1))
 		}
 		for _, v := range indexValues {
-			_, err2 := fmt.Fprintf(buf2, "%s, ", v)
+			_, err2 := fmt.Fprintf(bufRest, "%s, ", v)
 			if err2 != nil {
 				logutil.BgLogger().Error("error", zap.Error(err2))
 			}
 		}
-		buf2.WriteString("}}")
+		bufRest.WriteString("}}")
 		return
 	}
 
 	tableID, handle, err := tablecodec.DecodeRecordKey(key)
 	if err == nil {
-		_, err3 := fmt.Fprintf(buf1, "{tableID=%d", tableID)
+		_, err3 := fmt.Fprintf(bufTableID, "{tableID=%d", tableID)
 		if err3 != nil {
 			logutil.BgLogger().Error("error", zap.Error(err3))
 		}
-		_, err3 = fmt.Fprintf(buf2, ", handle=%d}", handle)
+		_, err3 = fmt.Fprintf(bufRest, ", handle=%d}", handle)
 		if err3 != nil {
 			logutil.BgLogger().Error("error", zap.Error(err3))
 		}
@@ -205,14 +207,14 @@ func prettyWriteKey(buf1, buf2 *bytes.Buffer, key []byte) {
 
 	mKey, mField, err := tablecodec.DecodeMetaKey(key)
 	if err == nil {
-		_, err3 := fmt.Fprintf(buf2, "{metaKey=true, key=%s, field=%s}", string(mKey), string(mField))
+		_, err3 := fmt.Fprintf(bufRest, "{metaKey=true, key=%s, field=%s}", string(mKey), string(mField))
 		if err3 != nil {
 			logutil.Logger(context.Background()).Error("error", zap.Error(err3))
 		}
 		return
 	}
 
-	_, err4 := fmt.Fprintf(buf2, "%#v", key)
+	_, err4 := fmt.Fprintf(bufRest, "%#v", key)
 	if err4 != nil {
 		logutil.BgLogger().Error("error", zap.Error(err4))
 	}
