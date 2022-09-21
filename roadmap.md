@@ -1,10 +1,8 @@
 # TiDB Roadmap
 
-This document shows the roadmap for TiDB development from September 2022 to September 2023.
-
-Note that the roadmap is subject to change based on user needs and feedback.
-
 This roadmap brings you what's coming in the 1-year future, so you can see the new features or improvements in advance, follow the progress, learn about the key milestones on the way, and give feedback as the development work goes on.
+
+In the course of development, this roadmap is subject to change based on user needs and feedback. If you have a feature request or want to prioritize a feature, please file an issue on [GitHub](https://github.com/pingcap/tidb/issues).
 
 ## TiDB kernel
 
