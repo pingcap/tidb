@@ -55,8 +55,8 @@ type diskFileReaderWriter struct {
 	ctrCipher *encrypt.CtrCipher
 }
 
-func (l *diskFileReaderWriter) initWithFileName(fileName string) (err error) {
-	l.disk, err = os.CreateTemp(config.GetGlobalConfig().Instance.TmpDir.Load(), fileName)
+func (l *diskFileReaderWriter) initWithFileName(dirName, fileName string) (err error) {
+	l.disk, err = os.CreateTemp(dirName, fileName)
 	if err != nil {
 		return errors2.Trace(err)
 	}
@@ -110,15 +110,18 @@ func NewListInDisk(fieldTypes []*types.FieldType) *ListInDisk {
 }
 
 func (l *ListInDisk) initDiskFile() (err error) {
+	disk.TmpDirMutex.RLock()
+	defer disk.TmpDirMutex.RUnlock()
 	err = disk.CheckAndInitTempDir()
 	if err != nil {
 		return
 	}
-	err = l.dataFile.initWithFileName(defaultChunkListInDiskPath + strconv.Itoa(l.diskTracker.Label()))
+	tmpdir := config.GetGlobalConfig().Instance.TmpDir.Load()
+	err = l.dataFile.initWithFileName(tmpdir, defaultChunkListInDiskPath+strconv.Itoa(l.diskTracker.Label()))
 	if err != nil {
 		return
 	}
-	err = l.offsetFile.initWithFileName(defaultChunkListInDiskOffsetPath + strconv.Itoa(l.diskTracker.Label()))
+	err = l.offsetFile.initWithFileName(tmpdir, defaultChunkListInDiskOffsetPath+strconv.Itoa(l.diskTracker.Label()))
 	return
 }
 

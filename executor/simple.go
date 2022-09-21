@@ -1647,13 +1647,12 @@ func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {
 
 func (e *SimpleExec) executeAlterInstance(s *ast.AlterInstanceStmt) error {
 	if s.ReloadTLS {
-		logutil.BgLogger().Info("execute reload tls", zap.Bool("NoRollbackOnError", s.NoRollbackOnError))
 		sm := e.ctx.GetSessionManager()
-		tlsCfg, err := util.LoadTLSCertificates(
-			variable.GetSysVar("ssl_ca").Value,
+		ca, key, cert := variable.GetSysVar("ssl_ca").Value,
 			variable.GetSysVar("ssl_key").Value,
-			variable.GetSysVar("ssl_cert").Value,
-		)
+			variable.GetSysVar("ssl_cert").Value
+		logutil.BgLogger().Info("execute reload tls", zap.Bool("NoRollbackOnError", s.NoRollbackOnError), zap.String("ca", ca), zap.String("key", key), zap.String("cert", cert))
+		tlsCfg, err := util.LoadTLSCertificates(ca, key, cert)
 		if err != nil {
 			if !s.NoRollbackOnError || tls.RequireSecureTransport.Load() {
 				return err

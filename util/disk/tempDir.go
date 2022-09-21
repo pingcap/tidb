@@ -15,6 +15,10 @@
 package disk
 
 import (
+	"os"
+	"path/filepath"
+	"sync"
+
 	"github.com/danjacques/gofslock/fslock"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -22,13 +26,13 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
-	"os"
-	"path/filepath"
 )
 
 var (
 	tempDirLock fslock.Handle
 	sf          singleflight.Group
+	// TmpDirMutex is used for changing sysvar TmpDir
+	TmpDirMutex sync.RWMutex
 )
 
 const (
