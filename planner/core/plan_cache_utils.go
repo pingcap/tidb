@@ -243,7 +243,7 @@ func (key *planCacheKey) MemoryUsage() (sum int64) {
 	}
 
 	sum = emptyPlanCacheKeySize + int64(len(key.database)+len(key.stmtText)+len(key.bindSQL)) +
-		int64(len(key.isolationReadEngines)) + int64(cap(key.hash))
+		int64(len(key.isolationReadEngines))*size.SizeOfUint8 + int64(cap(key.hash))
 	return
 }
 
@@ -357,7 +357,8 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 	}
 
 	sum = plan.MemoryUsage() + size.SizeOfSlice*2 + int64(cap(v.OutPutNames)+cap(v.ParamTypes))*size.SizeOfPointer +
-		size.SizeOfMap + int64(len(v.TblInfo2UnionScan))*(size.SizeOfPointer+size.SizeOfBool)
+		int64(len(v.TblInfo2UnionScan))*(size.SizeOfPointer+size.SizeOfBool)
+	// todo: memtrace: size.SizeOfMap   wait for the preorder PR
 
 	for _, name := range v.OutPutNames {
 		sum += name.MemoryUsage()
