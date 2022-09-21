@@ -386,7 +386,8 @@ func encodeHashChunkRowIdx(sc *stmtctx.StatementContext, row chunk.Row, tp *type
 		b = (*[unsafe.Sizeof(v)]byte)(unsafe.Pointer(&v))[:]
 	case mysql.TypeJSON:
 		flag = jsonFlag
-		b = row.GetBytes(idx)
+		json := row.GetJSON(idx)
+		b = json.HashValue(b)
 	default:
 		return 0, nil, errors.Errorf("unsupport column type for encode %d", tp.GetType())
 	}
@@ -645,7 +646,8 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 				isNull[i] = !ignoreNull
 			} else {
 				buf[0] = jsonFlag
-				b = column.GetBytes(i)
+				json := column.GetJSON(i)
+				b = json.HashValue(b)
 			}
 
 			// As the golang doc described, `Hash.Write` never returns an error..
