@@ -418,6 +418,8 @@ func (t *Tracker) Consume(bs int64) {
 			for oldTracker.LessThan(sessionRootTracker) {
 				if MemUsageTop1Tracker.CompareAndSwap(oldTracker, sessionRootTracker) {
 					break
+				} else {
+					oldTracker = MemUsageTop1Tracker.Load()
 				}
 			}
 		}
