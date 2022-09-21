@@ -1754,9 +1754,7 @@ func updateFromUnixTimePrecision(expr Expression) {
 				fieldLen := mathutil.Min(x.RetType.GetFlen()+6, mysql.MaxDecimalWidth)
 				x.RetType.SetFlen(fieldLen)
 			}
-
 		}
-
 	}
 }
 
