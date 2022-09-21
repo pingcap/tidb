@@ -419,38 +419,6 @@ func (h *Handle) MergePartitionStats2GlobalStatsByTableID(sc sessionctx.Context,
 	return h.mergePartitionStats2GlobalStats(sc, opts, is, globalTableInfo, isIndex, histIDs, tablePartitionStats)
 }
 
-// GetTableAllPartitionStats return all partition stats of a table
-func (h *Handle) GetTableAllPartitionStats(is infoschema.InfoSchema, physicalID int64) (map[int64]*statistics.Table, error) {
-	h.mu.Lock()
-	globalTable, ok := h.getTableByPhysicalID(is, physicalID)
-	h.mu.Unlock()
-	if !ok {
-		return nil, errors.Errorf("unknown physical ID %d in stats meta table, maybe it has been dropped", physicalID)
-	}
-	globalTableInfo := globalTable.Meta()
-	partitionNum := len(globalTableInfo.Partition.Definitions)
-	partitionIDs := make([]int64, 0, partitionNum)
-	for i := 0; i < partitionNum; i++ {
-		partitionIDs = append(partitionIDs, globalTableInfo.Partition.Definitions[i].ID)
-	}
-	allPartitionStats := make(map[int64]*statistics.Table)
-	for _, partitionID := range partitionIDs {
-		h.mu.Lock()
-		partitionTable, ok := h.getTableByPhysicalID(is, partitionID)
-		h.mu.Unlock()
-		if !ok {
-			return nil, errors.Errorf("unknown physical ID %d in stats meta table, maybe it has been dropped", partitionID)
-		}
-		tableInfo := partitionTable.Meta()
-		partitionStats, err := h.loadTablePartitionStats(tableInfo, partitionID)
-		if err != nil {
-			return nil, err
-		}
-		allPartitionStats[partitionID] = partitionStats
-	}
-	return allPartitionStats, nil
-}
-
 func (h *Handle) loadTablePartitionStats(tableInfo *model.TableInfo, partitionID int64) (*statistics.Table, error) {
 	var partitionStats *statistics.Table
 	partitionStats, err := h.TableStatsFromStorage(tableInfo, partitionID, true, 0)
