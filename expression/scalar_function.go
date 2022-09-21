@@ -17,6 +17,7 @@ package expression
 import (
 	"bytes"
 	"fmt"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/ast"
@@ -487,6 +488,24 @@ func (sf *ScalarFunction) resolveIndicesByVirtualExpr(schema *Schema) bool {
 	return true
 }
 
+// RemapColumn remaps columns with provided mapping and returns new expression
+func (sf *ScalarFunction) RemapColumn(m map[int64]*Column) (Expression, error) {
+	newSf, ok := sf.Clone().(*ScalarFunction)
+	if !ok {
+		return nil, errors.New("failed to cast to scalar function")
+	}
+	for i, arg := range sf.GetArgs() {
+		newArg, err := arg.RemapColumn(m)
+		if err != nil {
+			return nil, err
+		}
+		newSf.GetArgs()[i] = newArg
+	}
+	// clear hash code
+	newSf.hashcode = nil
+	return newSf, nil
+}
+
 // GetSingleColumn returns (Col, Desc) when the ScalarFunction is equivalent to (Col, Desc)
 // when used as a sort key, otherwise returns (nil, false).
 //
@@ -589,4 +608,17 @@ func (sf *ScalarFunction) Repertoire() Repertoire {
 // SetRepertoire sets a specified repertoire for this expression.
 func (sf *ScalarFunction) SetRepertoire(r Repertoire) {
 	sf.Function.SetRepertoire(r)
+}
+
+const emptyScalarFunctionSize = int64(unsafe.Sizeof(ScalarFunction{}))
+
+// MemoryUsage return the memory usage of ScalarFunction
+func (sf *ScalarFunction) MemoryUsage() (sum int64) {
+	if sf == nil {
+		return
+	}
+
+	sum = emptyScalarFunctionSize + int64(len(sf.FuncName.L)+len(sf.FuncName.O)) + sf.RetType.MemoryUsage() +
+		int64(cap(sf.hashcode)) + sf.Function.MemoryUsage()
+	return sum
 }

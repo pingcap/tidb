@@ -21,6 +21,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
@@ -31,6 +32,8 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner"
 	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -1153,6 +1156,61 @@ func TestCTEMergeHint(t *testing.T) {
 	}
 }
 
+func TestForceInlineCTE(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE `t` (`a` int(11));")
+	tk.MustExec("insert into t values (1), (5), (10), (15), (20), (30), (50);")
+
+	var (
+		input  []string
+		output []struct {
+			SQL     string
+			Plan    []string
+			Warning []string
+		}
+	)
+	planSuiteData := core.GetPlanSuiteData()
+	planSuiteData.LoadTestCases(t, &input, &output)
+
+	for i, ts := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = ts
+		})
+		if strings.HasPrefix(ts, "set") {
+			tk.MustExec(ts)
+			continue
+		}
+		testdata.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format='brief' " + ts).Rows())
+		})
+		tk.MustQuery("explain format='brief' " + ts).Check(testkit.Rows(output[i].Plan...))
+
+		comment := fmt.Sprintf("case:%v sql:%s", i, ts)
+		warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
+		testdata.OnRecord(func() {
+			if len(warnings) > 0 {
+				output[i].Warning = make([]string, len(warnings))
+				for j, warning := range warnings {
+					output[i].Warning[j] = warning.Err.Error()
+				}
+			}
+		})
+		if len(output[i].Warning) == 0 {
+			require.Len(t, warnings, 0)
+		} else {
+			require.Len(t, warnings, len(output[i].Warning), comment)
+			for j, warning := range warnings {
+				require.Equal(t, stmtctx.WarnLevelWarning, warning.Level, comment)
+				require.Equal(t, output[i].Warning[j], warning.Err.Error(), comment)
+			}
+		}
+	}
+}
+
 func TestPushdownDistinctEnable(t *testing.T) {
 	var (
 		input  []string
@@ -1259,6 +1317,8 @@ func doTestPushdownDistinct(t *testing.T, vars, input []string, output []struct 
 }
 
 func TestGroupConcatOrderby(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	var (
 		input  []string
 		output []struct {
@@ -2009,11 +2069,50 @@ func TestHJBuildAndProbeHint(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("drop table if exists t1, t2, t3")
 	tk.MustExec("create table t1(a int primary key, b int not null)")
 	tk.MustExec("create table t2(a int primary key, b int not null)")
+	tk.MustExec("create table t3(a int primary key, b int not null)")
 	tk.MustExec("insert into t1 values(1,1),(2,2)")
 	tk.MustExec("insert into t2 values(1,1),(2,1)")
+	tk.MustExec("insert into t3 values(1,1),(2,1)")
+
+	for i, ts := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(ts).Sort().Rows())
+			output[i].Warning = testdata.ConvertRowsToStrings(tk.MustQuery("show warnings").Rows())
+		})
+		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery(ts).Sort().Check(testkit.Rows(output[i].Result...))
+		tk.MustQuery("show warnings").Check(testkit.Rows(output[i].Warning...))
+	}
+}
+
+func TestHJBuildAndProbeHint4StaticPartitionTable(t *testing.T) {
+	var (
+		input  []string
+		output []struct {
+			SQL     string
+			Plan    []string
+			Result  []string
+			Warning []string
+		}
+	)
+	planSuiteData := core.GetPlanSuiteData()
+	planSuiteData.LoadTestCases(t, &input, &output)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2, t3")
+	tk.MustExec(`create table t1(a int, b int) partition by hash(a) partitions 4`)
+	tk.MustExec(`create table t2(a int, b int) partition by hash(a) partitions 5`)
+	tk.MustExec(`create table t3(a int, b int) partition by hash(b) partitions 3`)
+	tk.MustExec("insert into t1 values(1,1),(2,2)")
+	tk.MustExec("insert into t2 values(1,1),(2,1)")
+	tk.MustExec("insert into t3 values(1,1),(2,1)")
+	tk.MustExec(`set @@tidb_partition_prune_mode="static"`)
 
 	for i, ts := range input {
 		testdata.OnRecord(func() {
@@ -2025,6 +2124,124 @@ func TestHJBuildAndProbeHint(t *testing.T) {
 		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery(ts).Sort().Check(testkit.Rows(output[i].Result...))
 	}
+}
+
+func TestHJBuildAndProbeHint4DynamicPartitionTable(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
+
+	var (
+		input  []string
+		output []struct {
+			SQL     string
+			Plan    []string
+			Result  []string
+			Warning []string
+		}
+	)
+	planSuiteData := core.GetPlanSuiteData()
+	planSuiteData.LoadTestCases(t, &input, &output)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2, t3")
+	tk.MustExec(`create table t1(a int, b int) partition by hash(a) partitions 4`)
+	tk.MustExec(`create table t2(a int, b int) partition by hash(a) partitions 5`)
+	tk.MustExec(`create table t3(a int, b int) partition by hash(b) partitions 3`)
+	tk.MustExec("insert into t1 values(1,1),(2,2)")
+	tk.MustExec("insert into t2 values(1,1),(2,1)")
+	tk.MustExec("insert into t3 values(1,1),(2,1)")
+	tk.MustExec(`set @@tidb_partition_prune_mode="dynamic"`)
+
+	for i, ts := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(ts).Sort().Rows())
+			output[i].Warning = testdata.ConvertRowsToStrings(tk.MustQuery("show warnings").Rows())
+		})
+		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery(ts).Sort().Check(testkit.Rows(output[i].Result...))
+	}
+}
+
+func TestHJBuildAndProbeHint4TiFlash(t *testing.T) {
+	var (
+		input  []string
+		output []struct {
+			SQL     string
+			Plan    []string
+			Warning []string
+		}
+	)
+	planSuiteData := core.GetPlanSuiteData()
+	planSuiteData.LoadTestCases(t, &input, &output)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2, t3")
+	tk.MustExec("create table t1(a int primary key, b int not null)")
+	tk.MustExec("create table t2(a int primary key, b int not null)")
+	tk.MustExec("create table t3(a int primary key, b int not null)")
+	tk.MustExec("insert into t1 values(1,1),(2,2)")
+	tk.MustExec("insert into t2 values(1,1),(2,1)")
+	tk.MustExec("insert into t3 values(1,1),(2,1)")
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Session())
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	require.True(t, exists)
+	for _, tblInfo := range db.Tables {
+		tableName := tblInfo.Name.L
+		if tableName == "t1" || tableName == "t2" || tableName == "t3" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
+	for i, ts := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
+			output[i].Warning = testdata.ConvertRowsToStrings(tk.MustQuery("show warnings").Rows())
+		})
+		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+func TestHJBuildAndProbeHintWithBinding(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1, t2, t3;")
+	tk.MustExec("create table t(a int, b int, key(a));")
+	tk.MustExec("create table t1(a int, b int, key(a));")
+	tk.MustExec("create table t2(a int, b int, key(a));")
+	tk.MustExec("create table t3(a int, b int, key(a));")
+
+	tk.MustExec("select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b")
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("0"))
+	tk.MustExec("create global binding for select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b using select /*+ hash_join_build(t1) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b")
+	tk.MustExec("select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b")
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+	res := tk.MustQuery("show global bindings").Rows()
+	require.Equal(t, res[0][0], "select * from ( `test` . `t1` join `test` . `t2` on `t1` . `a` = `t2` . `a` ) join `test` . `t3` on `t2` . `b` = `t3` . `b`", "SELECT /*+ hash_join_build(t1)*/ * FROM (`test`.`t1` JOIN `test`.`t2` ON `t1`.`a` = `t2`.`a`) JOIN `test`.`t3` ON `t2`.`b` = `t3`.`b`")
+
+	tk.MustExec("create global binding for select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b using select /*+ hash_join_probe(t1) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b")
+	tk.MustExec("select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b")
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+	res = tk.MustQuery("show global bindings").Rows()
+	require.Equal(t, res[0][0], "select * from ( `test` . `t1` join `test` . `t2` on `t1` . `a` = `t2` . `a` ) join `test` . `t3` on `t2` . `b` = `t3` . `b`", "SELECT /*+ hash_join_probe(t1)*/ * FROM (`test`.`t1` JOIN `test`.`t2` ON `t1`.`a` = `t2`.`a`) JOIN `test`.`t3` ON `t2`.`b` = `t3`.`b`")
+
+	tk.MustExec("drop global binding for select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b")
+	tk.MustExec("select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b")
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("0"))
+	res = tk.MustQuery("show global bindings").Rows()
+	require.Equal(t, len(res), 0)
 }
 
 func TestMPPSinglePartitionType(t *testing.T) {
@@ -2069,5 +2286,60 @@ func TestMPPSinglePartitionType(t *testing.T) {
 			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format='brief'" + ts).Rows())
 		})
 		tk.MustQuery("explain format='brief' " + ts).Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+func TestPhysicalPlanMemoryTrace(t *testing.T) {
+	// PhysicalSort
+	ls := core.PhysicalSort{}
+	size := ls.MemoryUsage()
+	ls.ByItems = append(ls.ByItems, &util.ByItems{})
+	require.Greater(t, ls.MemoryUsage(), size)
+
+	//PhysicalProperty
+	pp := property.PhysicalProperty{}
+	size = pp.MemoryUsage()
+	pp.MPPPartitionCols = append(pp.MPPPartitionCols, &property.MPPPartitionColumn{})
+	require.Greater(t, pp.MemoryUsage(), size)
+}
+
+func TestNoDecorrelateHint(t *testing.T) {
+	var (
+		input  []string
+		output []struct {
+			SQL     string
+			Plan    []string
+			Result  []string
+			Warning []string
+		}
+	)
+	planSuiteData := core.GetPlanSuiteData()
+	planSuiteData.LoadTestCases(t, &input, &output)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, b int)")
+	tk.MustExec("create table t2(a int primary key, b int)")
+	tk.MustExec("create table t3(a int, b int)")
+	tk.MustExec("insert into t1 values(1,1),(2,2)")
+	tk.MustExec("insert into t2 values(1,1),(2,1)")
+	tk.MustExec("insert into t3 values(1,1),(2,1)")
+
+	tk.MustExec("create table ta(id int, code int, name varchar(20), index idx_ta_id(id),index idx_ta_name(name), index idx_ta_code(code))")
+	tk.MustExec("create table tb(id int, code int, name varchar(20), index idx_tb_id(id),index idx_tb_name(name))")
+	tk.MustExec("create table tc(id int, code int, name varchar(20), index idx_tc_id(id),index idx_tc_name(name))")
+	tk.MustExec("create table td(id int, code int, name varchar(20), index idx_tc_id(id),index idx_tc_name(name))")
+
+	for i, ts := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(ts).Sort().Rows())
+			output[i].Warning = testdata.ConvertRowsToStrings(tk.MustQuery("show warnings").Rows())
+		})
+		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery(ts).Sort().Check(testkit.Rows(output[i].Result...))
+		tk.MustQuery("show warnings").Check(testkit.Rows(output[i].Warning...))
 	}
 }

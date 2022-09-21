@@ -1110,11 +1110,11 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 			refColNames = append(refColNames, stringutil.Escape(refCol.O, sqlMode))
 		}
 		buf.WriteString(fmt.Sprintf("(%s)", strings.Join(refColNames, ",")))
-		if ast.ReferOptionType(fk.OnDelete) != 0 {
-			buf.WriteString(fmt.Sprintf(" ON DELETE %s", ast.ReferOptionType(fk.OnDelete).String()))
+		if model.ReferOptionType(fk.OnDelete) != 0 {
+			buf.WriteString(fmt.Sprintf(" ON DELETE %s", model.ReferOptionType(fk.OnDelete).String()))
 		}
-		if ast.ReferOptionType(fk.OnUpdate) != 0 {
-			buf.WriteString(fmt.Sprintf(" ON UPDATE %s", ast.ReferOptionType(fk.OnUpdate).String()))
+		if model.ReferOptionType(fk.OnUpdate) != 0 {
+			buf.WriteString(fmt.Sprintf(" ON UPDATE %s", model.ReferOptionType(fk.OnUpdate).String()))
 		}
 	}
 
@@ -1505,7 +1505,7 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 
-	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT plugin FROM %n.%n WHERE User=%? AND Host=%?`, mysql.SystemDB, mysql.UserTable, userName, strings.ToLower(hostName))
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT plugin, Account_locked FROM %n.%n WHERE User=%? AND Host=%?`, mysql.SystemDB, mysql.UserTable, userName, strings.ToLower(hostName))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1519,6 +1519,12 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 	authplugin := mysql.AuthNativePassword
 	if len(rows) == 1 && rows[0].GetString(0) != "" {
 		authplugin = rows[0].GetString(0)
+	}
+
+	accountLockedRaw := rows[0].GetString(1)
+	accountLocked := "LOCK"
+	if accountLockedRaw[len(accountLockedRaw)-1:] == "N" {
+		accountLocked = "UNLOCK"
 	}
 
 	rows, _, err = exec.ExecRestrictedSQL(ctx, nil, `SELECT Priv FROM %n.%n WHERE User=%? AND Host=%?`, mysql.SystemDB, mysql.GlobalPrivTable, userName, hostName)
@@ -1544,8 +1550,8 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 	}
 
 	// FIXME: the returned string is not escaped safely
-	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH '%s'%s REQUIRE %s PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK",
-		e.User.Username, e.User.Hostname, authplugin, authStr, require)
+	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH '%s'%s REQUIRE %s PASSWORD EXPIRE DEFAULT ACCOUNT %s",
+		e.User.Username, e.User.Hostname, authplugin, authStr, require, accountLocked)
 	e.appendRow([]interface{}{showStr})
 	return nil
 }

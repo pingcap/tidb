@@ -141,18 +141,6 @@ func TestTimeZone(t *testing.T) {
 	require.Equal(t, tz, vars.TimeZone)
 }
 
-func TestForeignKeyChecks(t *testing.T) {
-	sv := GetSysVar(ForeignKeyChecks)
-	vars := NewSessionVars()
-
-	val, err := sv.Validate(vars, "on", ScopeSession)
-	require.NoError(t, err)
-	require.Equal(t, "OFF", val) // warns and refuses to set ON.
-
-	warn := vars.StmtCtx.GetWarnings()[0].Err
-	require.Equal(t, "[variable:8047]variable 'foreign_key_checks' does not yet support value: on", warn.Error())
-}
-
 func TestTxnIsolation(t *testing.T) {
 	sv := GetSysVar(TxnIsolation)
 	vars := NewSessionVars()
@@ -361,6 +349,10 @@ func TestInstanceScopedVars(t *testing.T) {
 	val, err = vars.GetSessionOrGlobalSystemVar(TiDBLogFileMaxDays)
 	require.NoError(t, err)
 	require.Equal(t, fmt.Sprint(GlobalLogMaxDays.Load()), val)
+
+	val, err = vars.GetSessionOrGlobalSystemVar(TiDBRCReadCheckTS)
+	require.NoError(t, err)
+	require.Equal(t, BoolToOnOff(EnableRCReadCheckTS.Load()), val)
 }
 
 func TestSecureAuth(t *testing.T) {
@@ -632,6 +624,32 @@ func TestTiDBCommitterConcurrency(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestTiDBDDLFlashbackConcurrency(t *testing.T) {
+	sv := GetSysVar(TiDBDDLFlashbackConcurrency)
+	vars := NewSessionVars()
+
+	newVal := 128
+	val, err := sv.Validate(vars, fmt.Sprintf("%d", newVal), ScopeGlobal)
+	require.Equal(t, val, "128")
+	require.NoError(t, err)
+
+	// out of range
+	newVal = MaxConfigurableConcurrency + 1
+	expected := MaxConfigurableConcurrency
+	val, err = sv.Validate(vars, fmt.Sprintf("%d", newVal), ScopeGlobal)
+	// expected to truncate
+	require.Equal(t, val, fmt.Sprintf("%d", expected))
+	require.NoError(t, err)
+
+	// min value out of range
+	newVal = 0
+	expected = 1
+	val, err = sv.Validate(vars, fmt.Sprintf("%d", newVal), ScopeGlobal)
+	// expected to set to min value
+	require.Equal(t, val, fmt.Sprintf("%d", expected))
+	require.NoError(t, err)
+}
+
 func TestDefaultMemoryDebugModeValue(t *testing.T) {
 	vars := NewSessionVars()
 	val, err := vars.GetSessionOrGlobalSystemVar(TiDBMemoryDebugModeMinHeapInUse)
@@ -640,6 +658,17 @@ func TestDefaultMemoryDebugModeValue(t *testing.T) {
 	val, err = vars.GetSessionOrGlobalSystemVar(TiDBMemoryDebugModeAlarmRatio)
 	require.NoError(t, err)
 	require.Equal(t, val, "0")
+}
+
+func TestDefaultPartitionPruneMode(t *testing.T) {
+	vars := NewSessionVars()
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+	val, err := vars.GetSessionOrGlobalSystemVar(TiDBPartitionPruneMode)
+	require.NoError(t, err)
+	require.Equal(t, "dynamic", val)
+	require.Equal(t, "dynamic", DefTiDBPartitionPruneMode)
 }
 
 func TestSetTIDBFastDDL(t *testing.T) {

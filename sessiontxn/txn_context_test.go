@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
@@ -150,6 +151,7 @@ func TestTxnContextInExplicitTxn(t *testing.T) {
 	store, do := setupTxnContextTest(t)
 
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_enable_metadata_lock=0")
 	tk.MustExec("use test")
 	se := tk.Session()
 
@@ -192,7 +194,7 @@ func TestTxnContextInExplicitTxn(t *testing.T) {
 	})
 
 	doWithCheckPath(t, se, normalPathRecords, func() {
-		tk.MustExec("commit")
+		tk.MustGetErrCode("commit", errno.ErrInfoSchemaChanged)
 	})
 
 	// the info schema in new txn should use the newest one
@@ -251,6 +253,7 @@ func TestTxnContextWithAutocommitFalse(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=0")
 	se := tk.Session()
 
 	tk2 := testkit.NewTestKit(t, store)
@@ -676,6 +679,7 @@ func TestTxnContextForStaleReadInPrepare(t *testing.T) {
 func TestTxnContextPreparedStmtWithForUpdate(t *testing.T) {
 	store, do := setupTxnContextTest(t)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_enable_metadata_lock=0")
 	tk.MustExec("use test")
 	se := tk.Session()
 
