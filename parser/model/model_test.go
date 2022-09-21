@@ -744,3 +744,31 @@ func TestLocation(t *testing.T) {
 	location := time.FixedZone("UTC", loc1.Offset)
 	require.Equal(t, nLoc, location)
 }
+
+func TestIsIndexPrefixCovered(t *testing.T) {
+	c0 := newColumnForTest(0, 0)
+	c1 := newColumnForTest(1, 1)
+	c2 := newColumnForTest(2, 2)
+	c3 := newColumnForTest(3, 3)
+	c4 := newColumnForTest(4, 4)
+
+	i0 := newIndexForTest(0, c0, c1, c2)
+	i1 := newIndexForTest(1, c4, c2)
+
+	tbl := &TableInfo{
+		ID:      1,
+		Name:    NewCIStr("t"),
+		Columns: []*ColumnInfo{c0, c1, c2, c3, c4},
+		Indices: []*IndexInfo{i0, i1},
+	}
+	require.Equal(t, true, IsIndexPrefixCovered(tbl, i0, NewCIStr("c_0")))
+	require.Equal(t, true, IsIndexPrefixCovered(tbl, i0, NewCIStr("c_0"), NewCIStr("c_1"), NewCIStr("c_2")))
+	require.Equal(t, false, IsIndexPrefixCovered(tbl, i0, NewCIStr("c_1")))
+	require.Equal(t, false, IsIndexPrefixCovered(tbl, i0, NewCIStr("c_2")))
+	require.Equal(t, false, IsIndexPrefixCovered(tbl, i0, NewCIStr("c_1"), NewCIStr("c_2")))
+	require.Equal(t, false, IsIndexPrefixCovered(tbl, i0, NewCIStr("c_0"), NewCIStr("c_2")))
+
+	require.Equal(t, true, IsIndexPrefixCovered(tbl, i1, NewCIStr("c_4")))
+	require.Equal(t, true, IsIndexPrefixCovered(tbl, i1, NewCIStr("c_4"), NewCIStr("c_2")))
+	require.Equal(t, false, IsIndexPrefixCovered(tbl, i0, NewCIStr("c_2")))
+}

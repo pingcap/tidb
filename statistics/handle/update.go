@@ -192,12 +192,12 @@ var (
 )
 
 // StoreQueryFeedback merges the feedback into stats collector. Deprecated.
-func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Handle) error {
+func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Handle, enablePseudoForOutdatedStats bool) error {
 	q := feedback.(*statistics.QueryFeedback)
-	if !q.Valid || q.Hist == nil {
+	if !q.Valid.Load() || q.Hist == nil {
 		return nil
 	}
-	err := h.RecalculateExpectCount(q)
+	err := h.RecalculateExpectCount(q, enablePseudoForOutdatedStats)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1382,13 +1382,13 @@ func logForPK(prefix string, c *statistics.Column, ranges []*ranger.Range, actua
 }
 
 // RecalculateExpectCount recalculates the expect row count if the origin row count is estimated by pseudo. Deprecated.
-func (h *Handle) RecalculateExpectCount(q *statistics.QueryFeedback) error {
+func (h *Handle) RecalculateExpectCount(q *statistics.QueryFeedback, enablePseudoForOutdatedStats bool) error {
 	t, ok := h.statsCache.Load().(statsCache).Get(q.PhysicalID)
 	if !ok {
 		return nil
 	}
 	tablePseudo := t.Pseudo
-	if h.mu.ctx.GetSessionVars().GetEnablePseudoForOutdatedStats() {
+	if enablePseudoForOutdatedStats {
 		tablePseudo = t.Pseudo || t.IsOutdated()
 	}
 	if !tablePseudo {

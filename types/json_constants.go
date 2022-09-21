@@ -42,6 +42,14 @@ const (
 	JSONTypeCodeString JSONTypeCode = 0x0c
 	// JSONTypeCodeOpaque indicates the JSON is a opaque
 	JSONTypeCodeOpaque JSONTypeCode = 0x0d
+	// JSONTypeCodeDate indicates the JSON is a opaque
+	JSONTypeCodeDate JSONTypeCode = 0x0e
+	// JSONTypeCodeDatetime indicates the JSON is a opaque
+	JSONTypeCodeDatetime JSONTypeCode = 0x0f
+	// JSONTypeCodeTimestamp indicates the JSON is a opaque
+	JSONTypeCodeTimestamp JSONTypeCode = 0x10
+	// JSONTypeCodeDuration indicates the JSON is a opaque
+	JSONTypeCodeDuration JSONTypeCode = 0x11
 )
 
 const (
@@ -222,6 +230,8 @@ var (
 	ErrInvalidJSONContainsPathType = dbterror.ClassJSON.NewStd(mysql.ErrInvalidJSONContainsPathType)
 	// ErrJSONDocumentNULLKey means that json's key is null
 	ErrJSONDocumentNULLKey = dbterror.ClassJSON.NewStd(mysql.ErrJSONDocumentNULLKey)
+	// ErrJSONDocumentTooDeep means that json's depth is too deep.
+	ErrJSONDocumentTooDeep = dbterror.ClassJSON.NewStd(mysql.ErrJSONDocumentTooDeep)
 	// ErrJSONObjectKeyTooLong means JSON object with key length >= 65536 which is not yet supported.
 	ErrJSONObjectKeyTooLong = dbterror.ClassTypes.NewStdErr(mysql.ErrJSONObjectKeyTooLong, mysql.MySQLErrName[mysql.ErrJSONObjectKeyTooLong])
 	// ErrInvalidJSONPathArrayCell means invalid JSON path for an array cell.

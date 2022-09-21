@@ -16,6 +16,7 @@ package expression
 
 import (
 	"fmt"
+	"unsafe"
 
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -421,6 +422,11 @@ func (c *Constant) resolveIndicesByVirtualExpr(_ *Schema) bool {
 	return true
 }
 
+// RemapColumn remaps columns with provided mapping and returns new expression
+func (c *Constant) RemapColumn(_ map[int64]*Column) (Expression, error) {
+	return c, nil
+}
+
 // Vectorized returns if this expression supports vectorized evaluation.
 func (c *Constant) Vectorized() bool {
 	if c.DeferredExpr != nil {
@@ -448,4 +454,16 @@ func (c *Constant) Coercibility() Coercibility {
 		c.SetCoercibility(deriveCoercibilityForConstant(c))
 	}
 	return c.collationInfo.Coercibility()
+}
+
+const emptyConstantSize = int64(unsafe.Sizeof(Constant{}))
+
+// MemoryUsage return the memory usage of Constant
+func (c *Constant) MemoryUsage() (sum int64) {
+	if c == nil {
+		return
+	}
+
+	sum = emptyConstantSize + c.RetType.MemoryUsage() + c.Value.MemUsage() + int64(cap(c.hashcode))
+	return
 }
