@@ -502,7 +502,231 @@ func (s *session) doCommit(ctx context.Context) error {
 		// An auto-commit transaction fetches its startTS from the TSO so its commitTS > its startTS > the commitTS
 		// of any previously committed transactions.
 		s.txn.SetOption(kv.GuaranteeLinearizability,
+<<<<<<< HEAD
 			s.GetSessionVars().TxnCtx.IsExplicit && s.GetSessionVars().GuaranteeLinearizability)
+=======
+			sessVars.TxnCtx.IsExplicit && sessVars.GuaranteeLinearizability)
+	}
+	if tables := sessVars.TxnCtx.TemporaryTables; len(tables) > 0 {
+		s.txn.SetOption(kv.KVFilter, temporaryTableKVFilter(tables))
+	}
+	if tables := sessVars.TxnCtx.CachedTables; len(tables) > 0 {
+		c := cachedTableRenewLease{tables: tables}
+		now := time.Now()
+		err := c.start(ctx)
+		defer c.stop(ctx)
+		sessVars.StmtCtx.WaitLockLeaseTime += time.Since(now)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		s.txn.SetOption(kv.CommitTSUpperBoundCheck, c.commitTSCheck)
+	}
+
+	err = s.commitTxnWithTemporaryData(tikvutil.SetSessionID(ctx, sessVars.ConnectionID), &s.txn)
+	if err != nil {
+		err = s.handleAssertionFailure(ctx, err)
+	}
+	return err
+}
+
+type cachedTableRenewLease struct {
+	tables map[int64]interface{}
+	lease  []uint64 // Lease for each visited cached tables.
+	exit   chan struct{}
+}
+
+func (c *cachedTableRenewLease) start(ctx context.Context) error {
+	c.exit = make(chan struct{})
+	c.lease = make([]uint64, len(c.tables))
+	wg := make(chan error, len(c.tables))
+	ith := 0
+	for _, raw := range c.tables {
+		tbl := raw.(table.CachedTable)
+		go tbl.WriteLockAndKeepAlive(ctx, c.exit, &c.lease[ith], wg)
+		ith++
+	}
+
+	// Wait for all LockForWrite() return, this function can return.
+	var err error
+	for ; ith > 0; ith-- {
+		tmp := <-wg
+		if tmp != nil {
+			err = tmp
+		}
+	}
+	return err
+}
+
+func (c *cachedTableRenewLease) stop(ctx context.Context) {
+	close(c.exit)
+}
+
+func (c *cachedTableRenewLease) commitTSCheck(commitTS uint64) bool {
+	for i := 0; i < len(c.lease); i++ {
+		lease := atomic.LoadUint64(&c.lease[i])
+		if commitTS >= lease {
+			// Txn fails to commit because the write lease is expired.
+			return false
+		}
+	}
+	return true
+}
+
+// handleAssertionFailure extracts the possible underlying assertionFailed error,
+// gets the corresponding MVCC history and logs it.
+// If it's not an assertion failure, returns the original error.
+func (s *session) handleAssertionFailure(ctx context.Context, err error) error {
+	var assertionFailure *tikverr.ErrAssertionFailed
+	if !stderrs.As(err, &assertionFailure) {
+		return err
+	}
+	key := assertionFailure.Key
+	newErr := kv.ErrAssertionFailed.GenWithStackByArgs(
+		hex.EncodeToString(key), assertionFailure.Assertion.String(), assertionFailure.StartTs,
+		assertionFailure.ExistingStartTs, assertionFailure.ExistingCommitTs,
+	)
+
+	if s.GetSessionVars().EnableRedactLog {
+		return newErr
+	}
+
+	var decodeFunc func(kv.Key, *kvrpcpb.MvccGetByKeyResponse, map[string]interface{})
+	// if it's a record key or an index key, decode it
+	if infoSchema, ok := s.sessionVars.TxnCtx.InfoSchema.(infoschema.InfoSchema); ok &&
+		infoSchema != nil && (tablecodec.IsRecordKey(key) || tablecodec.IsIndexKey(key)) {
+		tableID := tablecodec.DecodeTableID(key)
+		if table, ok := infoSchema.TableByID(tableID); ok {
+			if tablecodec.IsRecordKey(key) {
+				decodeFunc = consistency.DecodeRowMvccData(table.Meta())
+			} else {
+				tableInfo := table.Meta()
+				_, indexID, _, e := tablecodec.DecodeIndexKey(key)
+				if e != nil {
+					logutil.Logger(ctx).Error("assertion failed but cannot decode index key", zap.Error(e))
+					return err
+				}
+				var indexInfo *model.IndexInfo
+				for _, idx := range tableInfo.Indices {
+					if idx.ID == indexID {
+						indexInfo = idx
+						break
+					}
+				}
+				if indexInfo == nil {
+					return err
+				}
+				decodeFunc = consistency.DecodeIndexMvccData(indexInfo)
+			}
+		} else {
+			logutil.Logger(ctx).Warn("assertion failed but table not found in infoschema", zap.Int64("tableID", tableID))
+		}
+	}
+	if store, ok := s.store.(helper.Storage); ok {
+		content := consistency.GetMvccByKey(store, key, decodeFunc)
+		logutil.Logger(ctx).Error("assertion failed", zap.String("message", newErr.Error()), zap.String("mvcc history", content))
+	}
+	return newErr
+}
+
+func (s *session) commitTxnWithTemporaryData(ctx context.Context, txn kv.Transaction) error {
+	sessVars := s.sessionVars
+	txnTempTables := sessVars.TxnCtx.TemporaryTables
+	if len(txnTempTables) == 0 {
+		failpoint.Inject("mockSleepBeforeTxnCommit", func(v failpoint.Value) {
+			ms := v.(int)
+			time.Sleep(time.Millisecond * time.Duration(ms))
+		})
+		return txn.Commit(ctx)
+	}
+
+	sessionData := sessVars.TemporaryTableData
+	var (
+		stage           kv.StagingHandle
+		localTempTables *infoschema.SessionTables
+	)
+
+	if sessVars.LocalTemporaryTables != nil {
+		localTempTables = sessVars.LocalTemporaryTables.(*infoschema.SessionTables)
+	} else {
+		localTempTables = new(infoschema.SessionTables)
+	}
+
+	defer func() {
+		// stage != kv.InvalidStagingHandle means error occurs, we need to cleanup sessionData
+		if stage != kv.InvalidStagingHandle {
+			sessionData.Cleanup(stage)
+		}
+	}()
+
+	for tblID, tbl := range txnTempTables {
+		if !tbl.GetModified() {
+			continue
+		}
+
+		if tbl.GetMeta().TempTableType != model.TempTableLocal {
+			continue
+		}
+		if _, ok := localTempTables.TableByID(tblID); !ok {
+			continue
+		}
+
+		if stage == kv.InvalidStagingHandle {
+			stage = sessionData.Staging()
+		}
+
+		tblPrefix := tablecodec.EncodeTablePrefix(tblID)
+		endKey := tablecodec.EncodeTablePrefix(tblID + 1)
+
+		txnMemBuffer := s.txn.GetMemBuffer()
+		iter, err := txnMemBuffer.Iter(tblPrefix, endKey)
+		if err != nil {
+			return err
+		}
+
+		for iter.Valid() {
+			key := iter.Key()
+			if !bytes.HasPrefix(key, tblPrefix) {
+				break
+			}
+
+			value := iter.Value()
+			if len(value) == 0 {
+				err = sessionData.DeleteTableKey(tblID, key)
+			} else {
+				err = sessionData.SetTableKey(tblID, key, iter.Value())
+			}
+
+			if err != nil {
+				return err
+			}
+
+			err = iter.Next()
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	err := txn.Commit(ctx)
+	if err != nil {
+		return err
+	}
+
+	if stage != kv.InvalidStagingHandle {
+		sessionData.Release(stage)
+		stage = kv.InvalidStagingHandle
+	}
+
+	return nil
+}
+
+type temporaryTableKVFilter map[int64]tableutil.TempTable
+
+func (m temporaryTableKVFilter) IsUnnecessaryKeyValue(key, value []byte, flags tikvstore.KeyFlags) (bool, error) {
+	tid := tablecodec.DecodeTableID(key)
+	if _, ok := m[tid]; ok {
+		return true, nil
+>>>>>>> b0e073478... execution: commit the transaction before responding explain analyze results to the client (#38044)
 	}
 
 	return s.txn.Commit(tikvutil.SetSessionID(ctx, s.GetSessionVars().ConnectionID))
@@ -1560,6 +1784,14 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	rs, err = s.Exec(ctx)
 	sessVars.TxnCtx.StatementCount++
 	if rs != nil {
+		if se.GetSessionVars().StmtCtx.IsExplainAnalyzeDML {
+			if !sessVars.InTxn() {
+				se.StmtCommit()
+				if err := se.CommitTxn(ctx); err != nil {
+					return nil, err
+				}
+			}
+		}
 		return &execStmtResult{
 			RecordSet: rs,
 			sql:       s,
