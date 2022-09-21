@@ -142,7 +142,11 @@ func (dr *mockDelRange) addDelRangeJob(ctx context.Context, job *model.Job) erro
 }
 
 // removeFromGCDeleteRange implements delRangeManager interface.
+<<<<<<< HEAD
 func (dr *mockDelRange) removeFromGCDeleteRange(ctx context.Context, jobID int64, tableIDs []int64) error {
+=======
+func (*mockDelRange) removeFromGCDeleteRange(_ context.Context, _ int64) error {
+>>>>>>> 5aab87679... ddl: fix a bug that 'flashback table' does not handle mysql.gc_delete_range correctly (#38038)
 	return nil
 }
 
