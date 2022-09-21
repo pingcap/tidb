@@ -1106,7 +1106,8 @@ func TestIssue11648(t *testing.T) {
 }
 
 func TestExprDateTimeOnDST(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
