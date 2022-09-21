@@ -1662,7 +1662,18 @@ func (c *fromUnixTimeFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	}
 
 	if fieldString(arg0Tp.GetType()) {
-		updateFromUnixTimePrecision(bf.getArgs()[0])
+		//Improve string cast Unix Time precision
+		x, ok := (bf.getArgs()[0]).(*ScalarFunction)
+		if ok {
+			//used to adjust FromUnixTime precision #Fixbug35184
+			if x.FuncName.L == ast.Cast {
+				if x.RetType.GetDecimal() == 0 {
+					x.RetType.SetDecimal(6)
+					fieldLen := mathutil.Min(x.RetType.GetFlen()+6, mysql.MaxDecimalWidth)
+					x.RetType.SetFlen(fieldLen)
+				}
+			}
+		}
 	}
 
 	if len(args) > 1 {
@@ -1740,21 +1751,6 @@ func fieldString(fieldType byte) bool {
 		return true
 	default:
 		return false
-	}
-}
-
-// Improve Unix Time 6-bit precision
-func updateFromUnixTimePrecision(expr Expression) {
-	x, ok := (expr).(*ScalarFunction)
-	if ok {
-		// FixUnixtimePrecision is used to adjust FromUnixTime precision #Fixbug35184
-		if x.FuncName.L == ast.Cast {
-			if x.RetType.GetDecimal() == 0 {
-				x.RetType.SetDecimal(6)
-				fieldLen := mathutil.Min(x.RetType.GetFlen()+6, mysql.MaxDecimalWidth)
-				x.RetType.SetFlen(fieldLen)
-			}
-		}
 	}
 }
 
