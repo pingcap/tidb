@@ -1434,9 +1434,8 @@ func ContainHiddenConfig(s string) bool {
 func CheckTempStorageQuota() {
 	// check capacity and the quota when OOMUseTmpStorage is enabled
 	c := GetGlobalConfig()
-	if c.Instance.TmpStorageQuota < 0 {
-		// means unlimited, do nothing
-	} else {
+	// "TmpStorageQuota < 0" means unlimited, and we need do nothing.
+	if c.Instance.TmpStorageQuota >= 0 {
 		capacityByte, err := storageSys.GetTargetDirectoryCapacity(c.Instance.TmpDir)
 		if err != nil {
 			zaplog.Fatal(err.Error())
