@@ -497,8 +497,8 @@ func RunStreamStart(
 		return errors.New("Unable to create task about log-backup. " +
 			"please set TiKV config `log-backup.enable` to true and restart TiKVs.")
 	}
-	if !ddl.IngestJobsClear(se.GetSessionCtx()) {
-		return errors.Annotate(berrors.ErrUnknown, "Unable to create log backup task. Please wait until the DDL tasks are finished.")
+	if !ddl.IngestJobsNotExisted(se.GetSessionCtx()) {
+		return errors.Annotate(berrors.ErrUnknown, "Unable to create log backup task. Please wait until the DDL jobs(add index with ingest method) are finished.")
 	}
 
 	if err = streamMgr.adjustAndCheckStartTS(ctx); err != nil {

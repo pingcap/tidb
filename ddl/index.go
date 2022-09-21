@@ -722,7 +722,8 @@ func canUseIngest(w *worker) bool {
 	return !utils.IsLogBackupUsage(ctx)
 }
 
-func IngestJobsClear(ctx sessionctx.Context) bool {
+// IngestJobsNotExisted checks the ddl about `add index` with ingest method not existed.
+func IngestJobsNotExisted(ctx sessionctx.Context) bool {
 	sess := session{ctx}
 	template := "select job_meta from mysql.tidb_ddl_job where reorg and (type = %d or type = %d) and processing;"
 	sql := fmt.Sprintf(template, model.ActionAddIndex, model.ActionAddPrimaryKey)
