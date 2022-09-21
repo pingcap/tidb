@@ -412,13 +412,12 @@ func (t *Tracker) Consume(bs int64) {
 		}
 		// Update the Top1 session
 		memUsage := sessionRootTracker.BytesConsumed()
-		if limitSessMinSize := ServerMemoryLimitSessMinSize.Load(); limitSessMinSize > 0 {
-			if uint64(memUsage) >= limitSessMinSize {
-				oldTracker := MemUsageTop1Tracker.Load()
-				for oldTracker.LessThan(sessionRootTracker) {
-					if MemUsageTop1Tracker.CompareAndSwap(oldTracker, sessionRootTracker) {
-						break
-					}
+		limitSessMinSize := ServerMemoryLimitSessMinSize.Load()
+		if uint64(memUsage) >= limitSessMinSize {
+			oldTracker := MemUsageTop1Tracker.Load()
+			for oldTracker.LessThan(sessionRootTracker) {
+				if MemUsageTop1Tracker.CompareAndSwap(oldTracker, sessionRootTracker) {
+					break
 				}
 			}
 		}
