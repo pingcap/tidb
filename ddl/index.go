@@ -718,7 +718,7 @@ func canUseIngest(w *worker) bool {
 		failpoint.Return(true)
 	})
 	// Ingest way is not compatible with PiTR.
-	return !utils.CheckLogBackupEnabled(ctx)
+	return !utils.IsLogBackupUsage(ctx)
 }
 
 // tryFallbackToTxnMerge changes the reorg type to txn-merge if the lightning backfill meets something wrong.

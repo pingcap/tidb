@@ -112,3 +112,7 @@ func LogBackupTaskCountDec() {
 func CheckLogBackupTaskExist() bool {
 	return logBackupTaskCount > 0
 }
+
+func IsLogBackupUsage(ctx sessionctx.Context) bool {
+	return CheckLogBackupEnabled(ctx) && CheckLogBackupTaskExist()
+}
