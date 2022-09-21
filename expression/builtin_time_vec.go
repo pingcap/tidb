@@ -123,7 +123,6 @@ func (b *builtinFromUnixTime2ArgSig) vecEvalString(input *chunk.Chunk, result *c
 		return err
 	}
 	defer b.bufAllocator.put(buf1)
-	updateFromUnixTimePrecision(b.args[0])
 	if err = b.args[0].VecEvalDecimal(b.ctx, input, buf1); err != nil {
 		return err
 	}
@@ -2174,7 +2173,6 @@ func (b *builtinFromUnixTime1ArgSig) vecEvalTime(input *chunk.Chunk, result *chu
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	updateFromUnixTimePrecision(b.args[0])
 	if err = b.args[0].VecEvalDecimal(b.ctx, input, buf); err != nil {
 		return err
 	}
