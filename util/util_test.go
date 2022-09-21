@@ -1,11 +1,12 @@
 package util
 
 import (
+	"testing"
+	"time"
+
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/stretchr/testify/assert"
-	"testing"
-	"time"
 )
 
 func TestLogFormat(t *testing.T) {
