@@ -1743,12 +1743,8 @@ func (b *builtinTimestampAddSig) vecEvalString(input *chunk.Chunk, result *chunk
 		switch unit {
 		case "MICROSECOND":
 			tb = tm1.Add(time.Duration(v) * time.Microsecond)
-			fsp = types.MaxFsp
 		case "SECOND":
 			tb = tm1.Add(time.Duration(s) * time.Microsecond)
-			if s%1000000 != 0 {
-				fsp = types.MaxFsp
-			}
 		case "MINUTE":
 			tb = tm1.Add(time.Duration(v) * time.Minute)
 		case "HOUR":
