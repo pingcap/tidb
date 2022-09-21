@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
@@ -53,13 +52,6 @@ type MPPGather struct {
 }
 
 func (e *MPPGather) appendMPPDispatchReq(pf *plannercore.Fragment) error {
-	// If storeType is TiFlash and tidb_isolation_read_engine is "tiflash_mpp",
-	// then batchCopTask will only be sent to tiflash_mpp nodes.
-	// Will be checked when send batchCopTask.
-	storeType, err := variable.GetTiFlashEngine(e.ctx.GetSessionVars().GetIsolationReadEngines())
-	if err != nil {
-		return err
-	}
 	dagReq, err := constructDAGReq(e.ctx, []plannercore.PhysicalPlan{pf.ExchangeSender}, kv.TiFlash)
 	if err != nil {
 		return errors.Trace(err)
@@ -97,7 +89,6 @@ func (e *MPPGather) appendMPPDispatchReq(pf *plannercore.Fragment) error {
 			SchemaVar: e.is.SchemaMetaVersion(),
 			StartTs:   e.startTS,
 			State:     kv.MppTaskReady,
-			StoreTp:   storeType,
 		}
 		e.mppReqs = append(e.mppReqs, req)
 	}

@@ -16,12 +16,12 @@ package copr
 
 import (
 	"context"
-	"fmt"
 	"math/rand"
 	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
+	tidb_config "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/driver/backoff"
 	derr "github.com/pingcap/tidb/store/driver/error"
@@ -123,21 +123,15 @@ func getEndPointType(t kv.StoreType) tikvrpc.EndpointType {
 	case kv.TiKV:
 		return tikvrpc.TiKV
 	case kv.TiFlash:
+		if tidb_config.GetGlobalConfig().DisaggregatedTiFlash {
+			return tikvrpc.TiFlashMPP
+		}
 		return tikvrpc.TiFlash
 	case kv.TiDB:
 		return tikvrpc.TiDB
-	case kv.TiFlashMPP:
-		return tikvrpc.TiFlashMPP
 	default:
 		return tikvrpc.TiKV
 	}
-}
-func getTiFlashEndPointType(t kv.StoreType) (tikvrpc.EndpointType, error) {
-	tp := getEndPointType(t)
-	if tp != tikvrpc.TiFlash && tp != tikvrpc.TiFlashMPP {
-		return tp, errors.New(fmt.Sprintf("unexpected endpoint tp, expect tiflash or tiflash_mpp, got: %v", tp))
-	}
-	return tp, nil
 }
 
 // Backoffer wraps tikv.Backoffer and converts the error which returns by the functions of tikv.Backoffer to tidb error.

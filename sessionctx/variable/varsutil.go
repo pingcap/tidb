@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -498,23 +497,4 @@ var GAFunction4ExpressionIndex = map[string]struct{}{
 	ast.JSONDepth:         {},
 	ast.JSONKeys:          {},
 	ast.JSONLength:        {},
-}
-
-// GetTiFlashEngine return kv.TiFlash or kv.TiFlashMPP.
-func GetTiFlashEngine(readEngines map[kv.StoreType]struct{}) (res kv.StoreType, _ error) {
-	_, hasTiFlash := readEngines[kv.TiFlash]
-	_, hasTiFlashMPP := readEngines[kv.TiFlashMPP]
-
-	if !hasTiFlash && !hasTiFlashMPP {
-		return kv.UnSpecified, errors.New("cannot get tiflash engine, nor tiflash or tiflash_mpp exists in readEngines")
-	}
-	if hasTiFlashMPP && !hasTiFlash {
-		return kv.UnSpecified, errors.New("tiflash must be set when tiflash_mpp exists in readEngines")
-	}
-	if hasTiFlashMPP {
-		res = kv.TiFlashMPP
-	} else {
-		res = kv.TiFlash
-	}
-	return res, nil
 }

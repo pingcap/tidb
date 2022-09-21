@@ -16,14 +16,12 @@ package copr
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/config"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -68,24 +66,6 @@ func NewRegionBatchRequestSender(cache *RegionCache, client tikv.Client, enableC
 
 // SendReqToAddr send batch cop request
 func (ss *RegionBatchRequestSender) SendReqToAddr(bo *Backoffer, rpcCtx *tikv.RPCContext, regionInfos []RegionInfo, req *tikvrpc.Request, timout time.Duration) (resp *tikvrpc.Response, retry bool, cancel func(), err error) {
-	failpoint.Inject("check_store_type_of_batch_cop_task", func(val failpoint.Value) {
-		// Will be tested in test-infra.
-		storeTpStr := val.(string)
-		expectStoreTp := tikvrpc.TiFlash
-		switch storeTpStr {
-		case "tiflash":
-			expectStoreTp = tikvrpc.TiFlash
-		case "tiflash_mpp":
-			expectStoreTp = tikvrpc.TiFlashMPP
-		default:
-			panic("unexpected failpoint val, must be tiflash or tiflash_mpp")
-		}
-		if expectStoreTp != req.StoreTp {
-			panic(fmt.Sprintf("unexpected store type, expect: %v, got: %v", expectStoreTp, req.StoreTp))
-		}
-		logutil.BgLogger().Info("failpoint check_store_type_of_batch_cop_task succeed")
-	})
-
 	cancel = func() {}
 	if e := tikvrpc.SetContext(req, rpcCtx.Meta, rpcCtx.Peer); e != nil {
 		return nil, false, cancel, errors.Trace(e)
@@ -102,7 +82,7 @@ func (ss *RegionBatchRequestSender) SendReqToAddr(bo *Backoffer, rpcCtx *tikv.RP
 	if err != nil {
 		cancel()
 		ss.SetRPCError(err)
-		e := ss.onSendFailForBatchRegions(bo, rpcCtx, regionInfos, err, req.StoreTp)
+		e := ss.onSendFailForBatchRegions(bo, rpcCtx, regionInfos, err)
 		if e != nil {
 			return nil, false, func() {}, errors.Trace(e)
 		}
@@ -112,7 +92,7 @@ func (ss *RegionBatchRequestSender) SendReqToAddr(bo *Backoffer, rpcCtx *tikv.RP
 	return
 }
 
-func (ss *RegionBatchRequestSender) onSendFailForBatchRegions(bo *Backoffer, ctx *tikv.RPCContext, regionInfos []RegionInfo, err error, storeTp tikvrpc.EndpointType) error {
+func (ss *RegionBatchRequestSender) onSendFailForBatchRegions(bo *Backoffer, ctx *tikv.RPCContext, regionInfos []RegionInfo, err error) error {
 	// If it failed because the context is cancelled by ourself, don't retry.
 	if errors.Cause(err) == context.Canceled || status.Code(errors.Cause(err)) == codes.Canceled {
 		return errors.Trace(err)
@@ -120,7 +100,7 @@ func (ss *RegionBatchRequestSender) onSendFailForBatchRegions(bo *Backoffer, ctx
 		return tikverr.ErrTiDBShuttingDown
 	}
 
-	if storeTp == tikvrpc.TiFlashMPP {
+	if config.GetGlobalConfig().DisaggregatedTiFlash {
 		ss.GetRegionCache().InvalidateTiFlashMPPStoresIfGRPCError(err)
 	} else {
 		// The reload region param is always true. Because that every time we try, we must

@@ -85,9 +85,9 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 		return copErrorResponse{errors.Errorf("unsupported variables:%+v", variables)}
 	}
 	// req.StoreType is setup in TableReader.
-	if (req.StoreType == kv.TiFlash || req.StoreType == kv.TiFlashMPP) && req.BatchCop {
+	if req.StoreType == kv.TiFlash && req.BatchCop {
 		logutil.BgLogger().Debug("send batch requests")
-		return c.sendBatch(ctx, req, vars, option, req.StoreType)
+		return c.sendBatch(ctx, req, vars, option)
 	}
 	failpoint.Inject("DisablePaging", func(_ failpoint.Value) {
 		req.Paging.Enable = false

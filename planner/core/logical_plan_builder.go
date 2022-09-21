@@ -677,15 +677,11 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 			ds.preferStoreType = 0
 			return
 		}
-		if config.GetGlobalConfig().DisaggregatedTiFlash {
-			bo := backoff.NewBackofferWithVars(context.Background(), 5000, nil)
-			mppStores, err := ds.ctx.GetStore().(tikv.Storage).GetRegionCache().GetTiFlashMPPStores(bo.TiKVBackoffer())
-			if err != nil || len(mppStores) == 0 {
-				errMsg := fmt.Sprintf("TiFlash ReadNodes number is zero")
-				warning := ErrInternal.GenWithStack(errMsg)
-				ds.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
-				return
-			}
+		if config.GetGlobalConfig().DisaggregatedTiFlash && !isTiFlashReadNodeAvailable(ds.ctx) {
+			errMsg := fmt.Sprintf("TiFlash ReadNodes number is zero")
+			warning := ErrInternal.GenWithStack(errMsg)
+			ds.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+			return
 		}
 		for _, path := range ds.possibleAccessPaths {
 			if path.StoreType == kv.TiFlash {
@@ -702,6 +698,15 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 			ds.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 		}
 	}
+}
+
+func isTiFlashReadNodeAvailable(ctx sessionctx.Context) bool {
+	bo := backoff.NewBackofferWithVars(context.Background(), 5000, nil)
+	mppStores, err := ctx.GetStore().(tikv.Storage).GetRegionCache().GetTiFlashMPPStores(bo.TiKVBackoffer())
+	if err != nil || len(mppStores) == 0 {
+		return false
+	}
+	return true
 }
 
 func resetNotNullFlag(schema *expression.Schema, start, end int) {

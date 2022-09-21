@@ -80,15 +80,13 @@ type MPPDispatchRequest struct {
 	// Identify a single task.
 	ID    int64
 	State MppTaskStates
-	// Check is tiflash or tiflash_mpp.
-	StoreTp StoreType
 }
 
 // MPPClient accepts and processes mpp requests.
 type MPPClient interface {
 	// ConstructMPPTasks schedules task for a plan fragment.
 	// TODO:: This interface will be refined after we support more executors.
-	ConstructMPPTasks(context.Context, *MPPBuildTasksRequest, *sync.Map, time.Duration, StoreType) ([]MPPTaskMeta, error)
+	ConstructMPPTasks(context.Context, *MPPBuildTasksRequest, *sync.Map, time.Duration) ([]MPPTaskMeta, error)
 
 	// DispatchMPPTasks dispatches ALL mpp requests at once, and returns an iterator that transfers the data.
 	DispatchMPPTasks(ctx context.Context, vars interface{}, reqs []*MPPDispatchRequest, needTriggerFallback bool, startTs uint64) Response

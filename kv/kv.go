@@ -316,14 +316,6 @@ const (
 	// TiDB means the type of a store is TiDB.
 	TiDB
 
-	// TiFlashMPP means tiflash ReadNodes.
-	// WATCHOUT: This label should only be used in:
-	// 	1. sysvar.go: when user set tidb_isolation_read_engines.
-	// 	2. coprocessor.go/mpp.go: when send copTask/batchCopTask/mppTask to tiflash.
-	// Other modules in TiDB should only use kv.TiFlash, they don't distinguish ReadNodes and WriteNodes.
-	// So we can avoid to change kv.TiFlashMPP in all code paths where kv.TiFlash occurs.
-	TiFlashMPP
-
 	// UnSpecified means the store type is unknown
 	UnSpecified = 255
 )
@@ -336,8 +328,6 @@ func (t StoreType) Name() string {
 		return "tidb"
 	} else if t == TiKV {
 		return "tikv"
-	} else if t == TiFlashMPP {
-		return "tiflash_mpp"
 	}
 	return "unspecified"
 }

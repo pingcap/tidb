@@ -1363,9 +1363,9 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 }
 
 // WatchTiFlashMPPStoreChange create a routine to watch.
-// TODO: we can start watch only when user add tiflash_mpp into tidb_isolatoin_read_engines.
+// TODO: tiflashMPPStoreKey is not put to etcd yet(finish this when AutoScaler is done)
 //
-//	tiflashMPPStoreKey is not put to etcd yet, store cache will only be invalidated every 30 seconds.
+//	store cache will only be invalidated every 30 seconds.
 func (do *Domain) WatchTiFlashMPPStoreChange() error {
 	var watchCh clientv3.WatchChan
 	if do.etcdClient != nil {
@@ -1403,9 +1403,9 @@ func (do *Domain) WatchTiFlashMPPStoreChange() error {
 			switch s := do.store.(type) {
 			case tikv.Storage:
 				s.GetRegionCache().InvalidateTiFlashMPPStores()
-				logutil.BgLogger().Info("tiflash_mpp store cache invalied, will update next query", zap.Bool("watched", watched))
+				logutil.BgLogger().Debug("tiflash_mpp store cache invalied, will update next query", zap.Bool("watched", watched))
 			default:
-				logutil.BgLogger().Info("ignore non tikv store to watch tiflashMPPStoreKey")
+				logutil.BgLogger().Debug("No need to watch TiFlashMPP for non-tikv store")
 				return
 			}
 		}
