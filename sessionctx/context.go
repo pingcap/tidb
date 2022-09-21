@@ -226,7 +226,7 @@ func ValidateSnapshotReadTS(ctx context.Context, sctx Context, readTS uint64) er
 			return errors.Errorf("cannot set read timestamp to a future time")
 		}
 	}
-	txn, err := sctx.Txn(true)
+	txn, err := sctx.GetStore().Begin()
 	if err != nil {
 		return err
 	}
@@ -251,7 +251,7 @@ func ValidateStaleReadTS(ctx context.Context, sctx Context, readTS uint64) error
 	if oracle.GetTimeFromTS(readTS).After(oracle.GetTimeFromTS(currentTS).Add(allowedTimeFromNow)) {
 		return errors.Errorf("cannot set read timestamp to a future time")
 	}
-	txn, err := sctx.Txn(true)
+	txn, err := sctx.GetStore().Begin()
 	if err != nil {
 		return err
 	}
