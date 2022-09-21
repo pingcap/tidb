@@ -476,3 +476,76 @@ func checkIndexNeededInForeignKeyInOwner(d *ddlCtx, t *meta.Meta, job *model.Job
 	}
 	return nil
 }
+
+func checkDropColumnWithForeignKeyConstraint(is infoschema.InfoSchema, dbName string, tbInfo *model.TableInfo, colName string) error {
+	for _, fkInfo := range tbInfo.ForeignKeys {
+		for _, col := range fkInfo.Cols {
+			if col.L == colName {
+				return dbterror.ErrFkColumnCannotDrop.GenWithStackByArgs(colName, fkInfo.Name)
+			}
+		}
+	}
+	referredFKs := is.GetTableReferredForeignKeys(dbName, tbInfo.Name.L)
+	for _, referredFK := range referredFKs {
+		for _, col := range referredFK.Cols {
+			if col.L == colName {
+				return dbterror.ErrFkColumnCannotDropChild.GenWithStackByArgs(colName, referredFK.ChildFKName, referredFK.ChildTable)
+			}
+		}
+	}
+	return nil
+}
+
+func checkDropColumnWithForeignKeyConstraintInOwner(d *ddlCtx, t *meta.Meta, job *model.Job, tbInfo *model.TableInfo, colName string) error {
+	if !variable.EnableForeignKey.Load() {
+		return nil
+	}
+	is, err := getAndCheckLatestInfoSchema(d, t)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = checkDropColumnWithForeignKeyConstraint(is, job.SchemaName, tbInfo, colName)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+type foreignKeyHelper struct {
+	loaded map[schemaAndTable]schemaIDAndTableInfo
+}
+
+type schemaAndTable struct {
+	schema string
+	table  string
+}
+
+func newForeignKeyHelper(schema string, schemaID int64, tblInfo *model.TableInfo) foreignKeyHelper {
+	h := foreignKeyHelper{loaded: make(map[schemaAndTable]schemaIDAndTableInfo)}
+	k := schemaAndTable{schema: schema, table: tblInfo.Name.L}
+	h.loaded[k] = schemaIDAndTableInfo{schemaID: schemaID, tblInfo: tblInfo}
+	return h
+}
+
+func (h *foreignKeyHelper) getTableFromStorage(is infoschema.InfoSchema, t *meta.Meta, schema, table model.CIStr) (result schemaIDAndTableInfo, _ error) {
+	k := schemaAndTable{schema: schema.L, table: table.L}
+	if info, ok := h.loaded[k]; ok {
+		return info, nil
+	}
+	db, ok := is.SchemaByName(schema)
+	if !ok {
+		return result, errors.Trace(infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schema))
+	}
+	tb, err := is.TableByName(schema, table)
+	if err != nil {
+		return result, errors.Trace(err)
+	}
+	tbInfo, err := getTableInfo(t, tb.Meta().ID, db.ID)
+	if err != nil {
+		return result, errors.Trace(err)
+	}
+	result.schemaID, result.tblInfo = db.ID, tbInfo
+	h.loaded[k] = result
+	return result, nil
+}
