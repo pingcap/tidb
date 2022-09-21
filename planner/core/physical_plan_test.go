@@ -363,7 +363,6 @@ func TestDAGPlanBuilderUnion(t *testing.T) {
 
 func TestDAGPlanBuilderUnionScan(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -372,21 +371,29 @@ func TestDAGPlanBuilderUnionScan(t *testing.T) {
 	var input []string
 	var output []struct {
 		SQL  string
-		Best []string
+		Best string
 	}
 	planSuiteData := core.GetPlanSuiteData()
 	planSuiteData.LoadTestCases(t, &input, &output)
 
+	p := parser.New()
 	for i, tt := range input {
-		tk.MustExec("begin")
-		tk.MustExec("insert into t values(1,1,1)")
+		tk.MustExec("begin;")
+		tk.MustExec("insert into t values(2, 2, 2);")
+
+		comment := fmt.Sprintf("input: %s", tt)
+		stmt, err := p.ParseOneStmt(tt, "", "")
+		require.NoError(t, err, comment)
+		dom := domain.GetDomain(tk.Session())
+		require.NoError(t, dom.Reload())
+		plan, _, err := planner.Optimize(context.TODO(), tk.Session(), stmt, dom.InfoSchema())
+		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Best = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+			output[i].Best = core.ToString(plan)
 		})
-		require.Equal(t, tt, output[i].SQL)
-		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Best...))
-		tk.MustExec("rollback")
+		require.Equal(t, output[i].Best, core.ToString(plan), fmt.Sprintf("input: %s", tt))
+		tk.MustExec("rollback;")
 	}
 }
 
