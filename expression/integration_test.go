@@ -1243,6 +1243,23 @@ func TestIssue11648(t *testing.T) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("1", "0", "2"))
 }
 
+func TestExprDateTimeOnDST(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// insert DST datetime
+	tk.MustExec("set @@session.time_zone = 'Europe/Amsterdam'")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int, dt datetime, primary key (id, dt))")
+	tk.MustExec("insert into t values (1, date_add('2023-03-26 00:00:00', interval 2 hour))")
+	tk.MustExec("insert into t values (4,'2023-03-26 02:00:00')")
+
+	// check DST datetime
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2023-03-26 02:00:00", "4 2023-03-26 02:00:00"))
+}
+
 func TestInfoBuiltin(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -4913,8 +4930,9 @@ func TestSchemaDMLNotChange(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
-	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=0")
+	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 	tk2.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int primary key, c_json json);")
@@ -6979,6 +6997,16 @@ func TestIssue28739(t *testing.T) {
 		"<nil> <nil>"))
 }
 
+func TestIssue30081(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`USE test`)
+	tk.MustQuery(`SELECT CONVERT_TZ('2007-03-11 2:00:00','US/Eastern','US/Central');`).
+		Check(testkit.Rows(`2007-03-11 01:00:00`))
+	tk.MustQuery(`SELECT CONVERT_TZ('2007-03-11 3:00:00','US/Eastern','US/Central');`).
+		Check(testkit.Rows(`2007-03-11 01:00:00`))
+}
+
 func TestIssue30326(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -7597,4 +7625,46 @@ func TestCastJSONTimeDuration(t *testing.T) {
 		"5 2012-12-12 2012-12-12 00:00:00 12:12:12 STRING",
 		fmt.Sprintf("6 %s %s 12:12:12 12:12:12 TIME", nowDate, nowDate),
 	))
+}
+
+func TestRegexpPushdown(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists reg")
+	tk.MustExec("create table reg(a varchar(20) null,b varchar(20) null,rep varchar(20) null) charset=utf8mb4 collate=utf8mb4_general_ci;")
+
+	tk.MustQuery("explain select a from reg where regexp_like(a, b);").Check(testkit.Rows(
+		"Projection_4 8000.00 root  test.reg.a",
+		"└─TableReader_7 8000.00 root  data:Selection_6",
+		"  └─Selection_6 8000.00 cop[tikv]  regexp_like(test.reg.a, test.reg.b)",
+		"    └─TableFullScan_5 10000.00 cop[tikv] table:reg keep order:false, stats:pseudo"))
+
+	tk.MustQuery("explain select a from reg where regexp_instr(a, b);").Check(testkit.Rows(
+		"Projection_4 8000.00 root  test.reg.a",
+		"└─TableReader_7 8000.00 root  data:Selection_6",
+		"  └─Selection_6 8000.00 cop[tikv]  regexp_instr(test.reg.a, test.reg.b)",
+		"    └─TableFullScan_5 10000.00 cop[tikv] table:reg keep order:false, stats:pseudo"))
+
+	tk.MustQuery("explain select a from reg where regexp_substr(a, b);").Check(testkit.Rows(
+		"Projection_4 8000.00 root  test.reg.a",
+		"└─TableReader_7 8000.00 root  data:Selection_6",
+		"  └─Selection_6 8000.00 cop[tikv]  regexp_substr(test.reg.a, test.reg.b)",
+		"    └─TableFullScan_5 10000.00 cop[tikv] table:reg keep order:false, stats:pseudo"))
+
+	tk.MustQuery("explain select a from reg where regexp_replace(a, b, rep);").Check(testkit.Rows(
+		"Projection_4 8000.00 root  test.reg.a",
+		"└─TableReader_7 8000.00 root  data:Selection_6",
+		"  └─Selection_6 8000.00 cop[tikv]  regexp_replace(test.reg.a, test.reg.b, test.reg.rep)",
+		"    └─TableFullScan_5 10000.00 cop[tikv] table:reg keep order:false, stats:pseudo"))
+
+	tk.MustExec("drop table if exists regbin")
+	tk.MustExec("create table regbin(a varchar(20) null,b varchar(20) null,rep varchar(20) null) charset=binary collate=binary;")
+
+	tk.MustQuery("explain select a from regbin where regexp_like(a, b);").Check(testkit.Rows(
+		"Projection_4 8000.00 root  test.regbin.a",
+		"└─Selection_5 8000.00 root  regexp_like(test.regbin.a, test.regbin.b)",
+		"  └─TableReader_7 10000.00 root  data:TableFullScan_6",
+		"    └─TableFullScan_6 10000.00 cop[tikv] table:regbin keep order:false, stats:pseudo"))
 }
