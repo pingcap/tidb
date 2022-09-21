@@ -276,7 +276,7 @@ type Config struct {
 	Plugin                     Plugin     `toml:"plugin" json:"plugin"`
 	MaxServerConnections       uint32     `toml:"max-server-connections" json:"max-server-connections"`
 	RunDDL                     bool       `toml:"run-ddl" json:"run-ddl"`
-	DisaggregatedTiFlash       bool       `toml:"disaggregated-tiflash" json: "disaggregated-tiflash"`
+	DisaggregatedTiFlash       bool       `toml:"disaggregated-tiflash" json:"disaggregated-tiflash"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
