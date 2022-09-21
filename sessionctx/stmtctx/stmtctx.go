@@ -310,6 +310,26 @@ type StatementContext struct {
 	IsSQLRegistered atomic2.Bool
 	// IsSQLAndPlanRegistered uses to indicate whether the SQL and plan has been registered for TopSQL.
 	IsSQLAndPlanRegistered atomic2.Bool
+<<<<<<< HEAD
+=======
+	// IsReadOnly uses to indicate whether the SQL is read-only.
+	IsReadOnly bool
+	// StatsLoadStatus records StatsLoadedStatus for the index/column which is used in query
+	StatsLoadStatus map[model.TableItemID]string
+	// IsSyncStatsFailed indicates whether any failure happened during sync stats
+	IsSyncStatsFailed bool
+	// UseDynamicPruneMode indicates whether use UseDynamicPruneMode in query stmt
+	UseDynamicPruneMode bool
+	// ColRefFromPlan mark the column ref used by assignment in update statement.
+	ColRefFromUpdatePlan []int64
+
+	// RangeFallback indicates that building complete ranges exceeds the memory limit so it falls back to less accurate ranges such as full range.
+	RangeFallback bool
+
+	// IsExplainAnalyzeDML is true if the statement is "explain analyze DML executors", before responding the explain
+	// results to the client, the transaction should be committed first. See issue #37373 for more details.
+	IsExplainAnalyzeDML bool
+>>>>>>> b0e073478f (execution: commit the transaction before responding explain analyze results to the client (#38044))
 }
 
 // StmtHints are SessionVars related sql hints.
