@@ -21,13 +21,13 @@ import (
 
 // GeneralPlanCacheableOp stores function which can be cached to general plan cache.
 var GeneralPlanCacheableOp = map[string]struct{}{
-	ast.And: {},
-	ast.Or:  {},
-	ast.GE:  {},
-	ast.LE:  {},
-	ast.EQ:  {},
-	ast.LT:  {},
-	ast.GT:  {},
+	ast.LogicAnd: {},
+	ast.LogicOr:  {},
+	ast.GE:       {},
+	ast.LE:       {},
+	ast.EQ:       {},
+	ast.LT:       {},
+	ast.GT:       {},
 }
 
 // UnCacheableFunctions stores functions which can not be cached to plan cache.
