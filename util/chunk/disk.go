@@ -56,7 +56,7 @@ type diskFileReaderWriter struct {
 }
 
 func (l *diskFileReaderWriter) initWithFileName(fileName string) (err error) {
-	l.disk, err = os.CreateTemp(config.GetGlobalConfig().Instance.TmpDir, fileName)
+	l.disk, err = os.CreateTemp(config.GetGlobalConfig().Instance.TmpDir.Load(), fileName)
 	if err != nil {
 		return errors2.Trace(err)
 	}
@@ -110,8 +110,6 @@ func NewListInDisk(fieldTypes []*types.FieldType) *ListInDisk {
 }
 
 func (l *ListInDisk) initDiskFile() (err error) {
-	disk.TmpDirMutex.RLock()
-	defer disk.TmpDirMutex.RUnlock()
 	err = disk.CheckAndInitTempDir()
 	if err != nil {
 		return

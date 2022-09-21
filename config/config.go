@@ -281,10 +281,10 @@ type Config struct {
 // UpdateTmpDir is to update the `TempStoragePath` if port/statusPort was changed
 // and the `tmpdir` was not specified in the conf.toml or was specified the same as the default value.
 func (c *Config) UpdateTmpDir() {
-	if c.Instance.TmpDir == DefTempStorageDirName {
-		c.Instance.TmpDir = encodeDefTempStorageDir(os.TempDir(), c.Host, c.Status.StatusHost, c.Port, c.Status.StatusPort)
+	if c.Instance.TmpDir.Load() == DefTempStorageDirName {
+		c.Instance.TmpDir.Store(encodeDefTempStorageDir(os.TempDir(), c.Host, c.Status.StatusHost, c.Port, c.Status.StatusPort))
 	} else {
-		c.Instance.TmpDir = encodeDefTempStorageDir(c.Instance.TmpDir, c.Host, c.Status.StatusHost, c.Port, c.Status.StatusPort)
+		c.Instance.TmpDir.Store(encodeDefTempStorageDir(c.Instance.TmpDir.Load(), c.Host, c.Status.StatusHost, c.Port, c.Status.StatusPort))
 	}
 }
 
@@ -493,7 +493,7 @@ type Instance struct {
 	TiDBRCReadCheckTS bool       `toml:"tidb_rc_read_check_ts" json:"tidb_rc_read_check_ts"`
 
 	// TmpDir describes the path of temporary storage.
-	TmpDir string `toml:"tmpdir" json:"tmpdir"`
+	TmpDir atomicutil.String `toml:"tmpdir" json:"tmpdir"`
 	// TmpStorageQuota describe the temporary storage Quota during query executor when TiDBEnableTmpStorageOnOOM is enabled.
 	// If the quota exceed the capacity of the TempStoragePath, the tidb-server would exit with fatal error.
 	TmpStorageQuota int64 `toml:"tidb_tmp_storage_quota" json:"tidb_tmp_storage_quota"` // Bytes
@@ -875,7 +875,7 @@ var defaultConf = Config{
 		TiDBEnableDDL:               *NewAtomicBool(true),
 		TiDBRCReadCheckTS:           false,
 		TmpStorageQuota:             -1,
-		TmpDir:                      DefTempStorageDirName,
+		TmpDir:                      *atomicutil.NewString(DefTempStorageDirName),
 	},
 	Status: Status{
 		ReportStatus:          true,
@@ -1436,11 +1436,11 @@ func CheckTempStorageQuota() {
 	c := GetGlobalConfig()
 	// "TmpStorageQuota < 0" means unlimited, and we need do nothing.
 	if c.Instance.TmpStorageQuota >= 0 {
-		capacityByte, err := storageSys.GetTargetDirectoryCapacity(c.Instance.TmpDir)
+		capacityByte, err := storageSys.GetTargetDirectoryCapacity(c.Instance.TmpDir.Load())
 		if err != nil {
 			zaplog.Fatal(err.Error())
 		} else if capacityByte < uint64(c.Instance.TmpStorageQuota) {
-			zaplog.Fatal(fmt.Sprintf("value of [tidb_tmp_storage_quota](%d byte) exceeds the capacity(%d byte) of the [%s] directory", c.Instance.TmpStorageQuota, capacityByte, c.Instance.TmpDir))
+			zaplog.Fatal(fmt.Sprintf("value of [tidb_tmp_storage_quota](%d byte) exceeds the capacity(%d byte) of the [%s] directory", c.Instance.TmpStorageQuota, capacityByte, c.Instance.TmpDir.Load()))
 		}
 	}
 }

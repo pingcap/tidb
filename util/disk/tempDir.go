@@ -15,10 +15,6 @@
 package disk
 
 import (
-	"os"
-	"path/filepath"
-	"sync"
-
 	"github.com/danjacques/gofslock/fslock"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -26,13 +22,13 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
+	"os"
+	"path/filepath"
 )
 
 var (
 	tempDirLock fslock.Handle
 	sf          singleflight.Group
-	// TmpDirMutex is used for changing sysvar TmpDir
-	TmpDirMutex sync.RWMutex
 )
 
 const (
@@ -54,7 +50,7 @@ func CheckAndInitTempDir() (err error) {
 }
 
 func checkTempDirExist() bool {
-	tempDir := config.GetGlobalConfig().Instance.TmpDir
+	tempDir := config.GetGlobalConfig().Instance.TmpDir.Load()
 	_, err := os.Stat(tempDir)
 	if err != nil && !os.IsExist(err) {
 		return false
@@ -64,7 +60,7 @@ func checkTempDirExist() bool {
 
 // InitializeTempDir initializes the temp directory.
 func InitializeTempDir() error {
-	tempDir := config.GetGlobalConfig().Instance.TmpDir
+	tempDir := config.GetGlobalConfig().Instance.TmpDir.Load()
 	_, err := os.Stat(tempDir)
 	if err != nil && !os.IsExist(err) {
 		err = os.MkdirAll(tempDir, 0750)

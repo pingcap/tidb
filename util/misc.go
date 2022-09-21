@@ -458,7 +458,7 @@ func CheckCertificates(rawKey, rawCert string, autoTLS bool, rsaKeySize int) (ke
 		}
 		// Automatically generate the TLS certificates on startup.
 		autoReload = true
-		tempStoragePath := config.GetGlobalConfig().Instance.TmpDir
+		tempStoragePath := config.GetGlobalConfig().Instance.TmpDir.Load()
 		cert = filepath.Join(tempStoragePath, "/cert.pem")
 		key = filepath.Join(tempStoragePath, "/key.pem")
 		err = CreateCertificates(cert, key, rsaKeySize, x509.RSA, x509.UnknownSignatureAlgorithm)

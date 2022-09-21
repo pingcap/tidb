@@ -117,7 +117,7 @@ func TestTLSAuto(t *testing.T) {
 	cfg.Status.ReportStatus = false
 	cfg.Security.AutoTLS = true
 	cfg.Security.RSAKeySize = 528 // Reduces unittest runtime
-	err := os.MkdirAll(cfg.Instance.TmpDir, 0700)
+	err := os.MkdirAll(cfg.Instance.TmpDir.Load(), 0700)
 	require.NoError(t, err)
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)

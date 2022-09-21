@@ -478,14 +478,12 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(s *SessionVars) (string, error) {
 		return BoolToOnOff(EnableRCReadCheckTS.Load()), nil
 	}},
-	{Scope: ScopeInstance, Name: TmpDir, Value: config.GetGlobalConfig().Instance.TmpDir, Type: TypeStr, SetGlobal: func(s *SessionVars, val string) error {
-		disk.TmpDirMutex.Lock()
-		defer disk.TmpDirMutex.Unlock()
-		oldVal := config.GetGlobalConfig().Instance.TmpDir
-		config.GetGlobalConfig().Instance.TmpDir = val
+	{Scope: ScopeInstance, Name: TmpDir, Value: config.GetGlobalConfig().Instance.TmpDir.Load(), Type: TypeStr, SetGlobal: func(s *SessionVars, val string) error {
+		oldVal := config.GetGlobalConfig().Instance.TmpDir.Load()
+		config.GetGlobalConfig().Instance.TmpDir.Store(val)
 		config.GetGlobalConfig().UpdateTmpDir()
 		if err := disk.InitializeTempDir(); err != nil {
-			config.GetGlobalConfig().Instance.TmpDir = oldVal
+			config.GetGlobalConfig().Instance.TmpDir.Store(oldVal)
 			config.GetGlobalConfig().UpdateTmpDir()
 			return err
 		}
@@ -493,7 +491,7 @@ var defaultSysVars = []*SysVar{
 		UpdateMemoryUsageAlarmRecord()
 		return nil
 	}, GetGlobal: func(s *SessionVars) (string, error) {
-		return config.GetGlobalConfig().Instance.TmpDir, nil
+		return config.GetGlobalConfig().Instance.TmpDir.Load(), nil
 	}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		var (
 			fileInfo os.FileInfo

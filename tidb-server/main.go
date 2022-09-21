@@ -461,7 +461,7 @@ func overrideConfig(cfg *config.Config) {
 		}
 	}
 	if actualFlags[nmTmpDir] {
-		cfg.Instance.TmpDir = *tmpDir
+		cfg.Instance.TmpDir.Store(*tmpDir)
 	}
 
 	// Log
@@ -557,7 +557,7 @@ func setGlobalVars() {
 				case "run-ddl":
 					cfg.Instance.TiDBEnableDDL.Store(cfg.RunDDL)
 				case "tmp-storage-path":
-					cfg.Instance.TmpDir = cfg.TempStoragePath
+					cfg.Instance.TmpDir.Store(cfg.TempStoragePath)
 				case "tmp-storage-quota":
 					cfg.Instance.TmpStorageQuota = cfg.TempStorageQuota
 				}
