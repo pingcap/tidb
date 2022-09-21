@@ -34,7 +34,6 @@ import (
 	zaplog "github.com/pingcap/log"
 	logbackupconf "github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/parser/terror"
-	typejson "github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/tikvutil"
 	"github.com/pingcap/tidb/util/versioninfo"
@@ -448,8 +447,9 @@ type Log struct {
 	// File log config.
 	File logutil.FileLogConfig `toml:"file" json:"file"`
 
-	SlowQueryFile      string `toml:"slow-query-file" json:"slow-query-file"`
-	ExpensiveThreshold uint   `toml:"expensive-threshold" json:"expensive-threshold"`
+	SlowQueryFile string `toml:"slow-query-file" json:"slow-query-file"`
+	// ExpensiveThreshold is deprecated.
+	ExpensiveThreshold uint `toml:"expensive-threshold" json:"expensive-threshold"`
 
 	// The following items are deprecated. We need to keep them here temporarily
 	// to support the upgrade process. They can be removed in future.
@@ -489,8 +489,9 @@ type Instance struct {
 	PluginDir                  string `toml:"plugin_dir" json:"plugin_dir"`
 	PluginLoad                 string `toml:"plugin_load" json:"plugin_load"`
 	// MaxConnections is the maximum permitted number of simultaneous client connections.
-	MaxConnections uint32     `toml:"max_connections" json:"max_connections"`
-	TiDBEnableDDL  AtomicBool `toml:"tidb_enable_ddl" json:"tidb_enable_ddl"`
+	MaxConnections    uint32     `toml:"max_connections" json:"max_connections"`
+	TiDBEnableDDL     AtomicBool `toml:"tidb_enable_ddl" json:"tidb_enable_ddl"`
+	TiDBRCReadCheckTS bool       `toml:"tidb_rc_read_check_ts" json:"tidb_rc_read_check_ts"`
 }
 
 func (l *Log) getDisableTimestamp() bool {
@@ -843,7 +844,7 @@ var defaultConf = Config{
 		File:                logutil.NewFileLogConfig(logutil.DefaultLogMaxSize),
 		SlowQueryFile:       "tidb-slow.log",
 		SlowThreshold:       logutil.DefaultSlowThreshold,
-		ExpensiveThreshold:  10000,
+		ExpensiveThreshold:  10000, // ExpensiveThreshold is deprecated.
 		DisableErrorStack:   nbUnset,
 		EnableErrorStack:    nbUnset, // If both options are nbUnset, getDisableErrorStack() returns true
 		EnableTimestamp:     nbUnset,
@@ -868,6 +869,7 @@ var defaultConf = Config{
 		PluginLoad:                  "",
 		MaxConnections:              0,
 		TiDBEnableDDL:               *NewAtomicBool(true),
+		TiDBRCReadCheckTS:           false,
 	},
 	Status: Status{
 		ReportStatus:          true,
@@ -1029,6 +1031,7 @@ var removedConfig = map[string]struct{}{
 	"log.enable-slow-log":                    {}, // use tidb_enable_slow_log
 	"log.slow-threshold":                     {}, // use tidb_slow_log_threshold
 	"log.record-plan-in-slow-log":            {}, // use tidb_record_plan_in_slow_log
+	"log.expensive-threshold":                {},
 	"performance.force-priority":             {}, // use tidb_force_priority
 	"performance.memory-usage-alarm-ratio":   {}, // use tidb_memory_usage_alarm_ratio
 	"plugin.load":                            {}, // use plugin_load
@@ -1350,12 +1353,6 @@ var hideConfig = []string{
 	"performance.index-usage-sync-lease",
 }
 
-// jsonifyPath converts the item to json path, so it can be extracted.
-func jsonifyPath(str string) string {
-	s := strings.Split(str, ".")
-	return fmt.Sprintf("$.\"%s\"", strings.Join(s, "\".\""))
-}
-
 // GetJSONConfig returns the config as JSON with hidden items removed
 // It replaces the earlier HideConfig() which used strings.Split() in
 // an way that didn't work for similarly named items (like enable).
@@ -1364,46 +1361,45 @@ func GetJSONConfig() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	jsonValue, err := typejson.ParseBinaryFromString(string(j))
-	if err != nil {
-		return "", err
-	}
-	// Approximately length of removed items + hidden items.
-	pathExprs := make([]typejson.PathExpression, 0, len(removedConfig)+len(hideConfig))
-	var pathExpr typejson.PathExpression
 
-	// Patch out removed items.
+	jsonValue := make(map[string]interface{})
+	err = json.Unmarshal(j, &jsonValue)
+	if err != nil {
+		return "", err
+	}
+
+	removedPaths := make([]string, 0, len(removedConfig)+len(hideConfig))
 	for removedItem := range removedConfig {
-		s := jsonifyPath(removedItem)
-		pathExpr, err = typejson.ParseJSONPathExpr(s)
-		if err != nil {
-			// Should not be reachable, but not worth bailing for.
-			// It just means we can't patch out this line.
-			continue
-		}
-		pathExprs = append(pathExprs, pathExpr)
+		removedPaths = append(removedPaths, removedItem)
 	}
-	// Patch out hidden items
-	for _, hiddenItem := range hideConfig {
-		s := jsonifyPath(hiddenItem)
-		pathExpr, err = typejson.ParseJSONPathExpr(s)
-		if err != nil {
-			// Should not be reachable, but not worth bailing for.
-			// It just means we can't patch out this line.
-			continue
+	removedPaths = append(removedPaths, hideConfig...)
+
+	for _, path := range removedPaths {
+		s := strings.Split(path, ".")
+		curValue := jsonValue
+		for i, key := range s {
+			if i == len(s)-1 {
+				delete(curValue, key)
+			}
+
+			if curValue[key] != nil {
+				mapValue, ok := curValue[key].(map[string]interface{})
+				if !ok {
+					break
+				}
+
+				curValue = mapValue
+			} else {
+				break
+			}
 		}
-		pathExprs = append(pathExprs, pathExpr)
 	}
-	newJSONValue, err := jsonValue.Remove(pathExprs)
+
+	buf, err := json.Marshal(jsonValue)
 	if err != nil {
 		return "", err
 	}
-	// Convert back to GoJSON so it can be pretty formatted.
-	// This is expected for compatibility with previous versions.
-	buf, err := newJSONValue.MarshalJSON()
-	if err != nil {
-		return "", err
-	}
+
 	var resBuf bytes.Buffer
 	if err = json.Indent(&resBuf, buf, "", "\t"); err != nil {
 		return "", err

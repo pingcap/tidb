@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
@@ -34,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/generatedexpr"
 	"github.com/pingcap/tidb/util/logutil"
@@ -126,7 +126,7 @@ type Expression interface {
 	EvalDuration(ctx sessionctx.Context, row chunk.Row) (val types.Duration, isNull bool, err error)
 
 	// EvalJSON returns the JSON representation of expression.
-	EvalJSON(ctx sessionctx.Context, row chunk.Row) (val json.BinaryJSON, isNull bool, err error)
+	EvalJSON(ctx sessionctx.Context, row chunk.Row) (val types.BinaryJSON, isNull bool, err error)
 
 	// GetType gets the type that the expression returns.
 	GetType() *types.FieldType
@@ -165,6 +165,9 @@ type Expression interface {
 	// resolveIndicesByVirtualExpr is called inside the `ResolveIndicesByVirtualExpr` It will perform on the expression itself.
 	resolveIndicesByVirtualExpr(schema *Schema) bool
 
+	// RemapColumn remaps columns with provided mapping and returns new expression
+	RemapColumn(map[int64]*Column) (Expression, error)
+
 	// ExplainInfo returns operator information to be explained.
 	ExplainInfo() string
 
@@ -177,6 +180,9 @@ type Expression interface {
 	// Column: ColumnFlag+encoded value
 	// ScalarFunction: SFFlag+encoded function name + encoded arg_1 + encoded arg_2 + ...
 	HashCode(sc *stmtctx.StatementContext) []byte
+
+	// MemoryUsage return the memory usage of Expression
+	MemoryUsage() int64
 }
 
 // CNFExprs stands for a CNF expression.
@@ -1021,6 +1027,12 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		case tipb.ScalarFuncSig_RandWithSeedFirstGen:
 			return true
 		}
+	case ast.Regexp, ast.RegexpLike, ast.RegexpSubstr, ast.RegexpInStr, ast.RegexpReplace:
+		funcCharset, funcCollation := sf.Function.CharsetAndCollation()
+		if funcCharset == charset.CharsetBin && funcCollation == charset.CollationBin {
+			return false
+		}
+		return true
 	}
 	return false
 }
@@ -1149,7 +1161,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		default:
 			return false
 		}
-	case ast.Upper, ast.Ucase, ast.Lower, ast.Lcase:
+	case ast.Upper, ast.Ucase, ast.Lower, ast.Lcase, ast.Space:
 		return true
 	case ast.Sysdate:
 		return true

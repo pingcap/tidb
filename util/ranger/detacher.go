@@ -688,7 +688,8 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 				firstColumnChecker.shouldReserve = d.lengths[0] != types.UnspecifiedLength
 			}
 			points := rb.build(item, collate.GetCollator(newTpSlice[0].GetCollate()))
-			ranges, err := points2Ranges(d.sctx, points, newTpSlice[0])
+			// TODO: restrict the mem usage of ranges
+			ranges, _, err := points2Ranges(d.sctx, points, newTpSlice[0], 0)
 			if err != nil {
 				return nil, nil, nil, false, errors.Trace(err)
 			}

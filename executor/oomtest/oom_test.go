@@ -37,7 +37,6 @@ func TestMain(m *testing.M) {
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
-		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	}
 	goleak.VerifyTestMain(m, opts...)
 }
@@ -166,6 +165,7 @@ func TestMemTracker4DeleteExec(t *testing.T) {
 
 	oom.SetTracker("")
 
+	tk.Session().GetSessionVars().EnabledRateLimitAction = true
 	tk.Session().GetSessionVars().MemQuotaQuery = 10000
 	tk.MustExec("delete MemTracker4DeleteExec1, MemTracker4DeleteExec2 from MemTracker4DeleteExec1 join MemTracker4DeleteExec2 on MemTracker4DeleteExec1.a=MemTracker4DeleteExec2.a")
 	require.Equal(t, "memory exceeds quota, rateLimitAction delegate to fallback action", oom.GetTracker())

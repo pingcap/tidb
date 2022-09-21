@@ -218,6 +218,7 @@ var tokenMap = map[string]int{
 	"CLEANUP":                  cleanup,
 	"CLIENT":                   client,
 	"CLIENT_ERRORS_SUMMARY":    clientErrorsSummary,
+	"CLUSTER":                  cluster,
 	"CLUSTERED":                clustered,
 	"CMSKETCH":                 cmSketch,
 	"COALESCE":                 coalesce,
@@ -943,6 +944,7 @@ var hintTokenMap = map[string]int{
 	"STRAIGHT_JOIN":           hintStraightJoin,
 	"LEADING":                 hintLeading,
 	"SEMI_JOIN_REWRITE":       hintSemiJoinRewrite,
+	"NO_DECORRELATE":          hintNoDecorrelate,
 
 	// TiDB hint aliases
 	"TIDB_HJ":   hintHashJoin,
