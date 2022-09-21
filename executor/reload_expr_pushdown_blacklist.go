@@ -304,6 +304,7 @@ var funcName2Alias = map[string]string{
 	"sha1":                       ast.SHA1,
 	"sha":                        ast.SHA,
 	"sha2":                       ast.SHA2,
+	"sm3":                        ast.SM3,
 	"uncompress":                 ast.Uncompress,
 	"uncompressed_length":        ast.UncompressedLength,
 	"validate_password_strength": ast.ValidatePasswordStrength,
