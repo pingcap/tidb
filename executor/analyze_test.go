@@ -355,5 +355,4 @@ func TestAnalyzePartitionTableLoading(t *testing.T) {
 	failpoint.Enable("github.com/pingcap/tidb/statistics/handle/assertAnalyzeLoadStats", `return(true)`)
 	tk.MustExec("analyze table t1")
 	failpoint.Disable("github.com/pingcap/tidb/statistics/handle/assertAnalyzeLoadStats")
-
 }
