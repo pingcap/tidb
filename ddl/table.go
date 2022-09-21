@@ -17,6 +17,7 @@ package ddl
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -980,12 +981,20 @@ func onRenameTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		return ver, errors.Trace(err)
 	}
 
-	ver, tblInfo, err := checkAndRenameTables(t, job, oldSchemaID, job.SchemaID, &oldSchemaName, &tableName)
+	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, oldSchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-
-	ver, err = updateSchemaVersion(d, t, job)
+	oldTableName := tblInfo.Name
+	ver, err = checkAndRenameTables(t, job, tblInfo, oldSchemaID, job.SchemaID, &oldSchemaName, &tableName)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	childTableInfos, err := adjustForeignKeyChildTableInfoAfterRenameTable(d, t, job, tblInfo, oldSchemaName, oldTableName, tableName, newSchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, true, childTableInfos...)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -1008,9 +1017,13 @@ func onRenameTables(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 	var tblInfos = make([]*model.TableInfo, 0, len(tableNames))
 	var err error
 	for i, oldSchemaID := range oldSchemaIDs {
+		tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, oldSchemaID)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
 		job.TableID = tableIDs[i]
 		job.TableName = oldTableNames[i].L
-		ver, tblInfo, err := checkAndRenameTables(t, job, oldSchemaID, newSchemaIDs[i], oldSchemaNames[i], tableNames[i])
+		ver, err := checkAndRenameTables(t, job, tblInfo, oldSchemaID, newSchemaIDs[i], oldSchemaNames[i], tableNames[i])
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -1025,16 +1038,11 @@ func onRenameTables(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 	return ver, nil
 }
 
-func checkAndRenameTables(t *meta.Meta, job *model.Job, oldSchemaID, newSchemaID int64, oldSchemaName, tableName *model.CIStr) (ver int64, tblInfo *model.TableInfo, _ error) {
-	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, oldSchemaID)
-	if err != nil {
-		return ver, tblInfo, errors.Trace(err)
-	}
-
-	err = t.DropTableOrView(oldSchemaID, tblInfo.ID)
+func checkAndRenameTables(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, oldSchemaID, newSchemaID int64, oldSchemaName, tableName *model.CIStr) (ver int64, _ error) {
+	err := t.DropTableOrView(oldSchemaID, tblInfo.ID)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return ver, tblInfo, errors.Trace(err)
+		return ver, errors.Trace(err)
 	}
 
 	failpoint.Inject("renameTableErr", func(val failpoint.Value) {
@@ -1050,14 +1058,14 @@ func checkAndRenameTables(t *meta.Meta, job *model.Job, oldSchemaID, newSchemaID
 	tableRuleID, partRuleIDs, oldRuleIDs, oldRules, err := getOldLabelRules(tblInfo, oldSchemaName.L, oldTableName.L)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return ver, tblInfo, errors.Wrapf(err, "failed to get old label rules from PD")
+		return ver, errors.Wrapf(err, "failed to get old label rules from PD")
 	}
 
 	tblInfo.Name = *tableName
 	err = t.CreateTableOrView(newSchemaID, tblInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return ver, tblInfo, errors.Trace(err)
+		return ver, errors.Trace(err)
 	}
 
 	if newSchemaID != oldSchemaID {
@@ -1065,7 +1073,7 @@ func checkAndRenameTables(t *meta.Meta, job *model.Job, oldSchemaID, newSchemaID
 		err := meta.BackupAndRestoreAutoIDs(t, oldDBID, tblInfo.ID, newSchemaID, tblInfo.ID)
 		if err != nil {
 			job.State = model.JobStateCancelled
-			return ver, tblInfo, errors.Trace(err)
+			return ver, errors.Trace(err)
 		}
 		// It's compatible with old version.
 		// TODO: Remove it.
@@ -1075,10 +1083,58 @@ func checkAndRenameTables(t *meta.Meta, job *model.Job, oldSchemaID, newSchemaID
 	err = updateLabelRules(job, tblInfo, oldRules, tableRuleID, partRuleIDs, oldRuleIDs, tblInfo.ID)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return ver, tblInfo, errors.Wrapf(err, "failed to update the label rule to PD")
+		return ver, errors.Wrapf(err, "failed to update the label rule to PD")
 	}
 
-	return ver, tblInfo, nil
+	return ver, nil
+}
+
+func adjustForeignKeyChildTableInfoAfterRenameTable(d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, oldSchemaName, oldTableName, newTableName model.CIStr, newSchemaID int64) ([]schemaIDAndTableInfo, error) {
+	infos := make(map[int64]schemaIDAndTableInfo)
+	if !variable.EnableForeignKey.Load() || newTableName.L == oldTableName.L {
+		return nil, nil
+	}
+	is, err := getAndCheckLatestInfoSchema(d, t)
+	if err != nil {
+		return nil, err
+	}
+	newDB, ok := is.SchemaByID(newSchemaID)
+	if !ok {
+		job.State = model.JobStateCancelled
+		return nil, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(fmt.Sprintf("schema-ID: %v", newSchemaID))
+	}
+	fkh := newForeignKeyHelper(newDB.Name.L, newDB.ID, tblInfo)
+	referredFKs := is.GetTableReferredForeignKeys(oldSchemaName.L, oldTableName.L)
+	for _, referredFK := range referredFKs {
+		var childTableInfo schemaIDAndTableInfo
+		if referredFK.ChildSchema.L == oldSchemaName.L && referredFK.ChildTable.L == oldTableName.L {
+			childTableInfo = schemaIDAndTableInfo{newDB.ID, tblInfo}
+		} else {
+			var err error
+			childTableInfo, err = fkh.getTableFromStorage(is, t, referredFK.ChildSchema, referredFK.ChildTable)
+			if err != nil {
+				if infoschema.ErrTableNotExists.Equal(err) || infoschema.ErrDatabaseNotExists.Equal(err) {
+					continue
+				}
+				return nil, err
+			}
+		}
+		childfkInfo := model.FindFKInfoByName(childTableInfo.tblInfo.ForeignKeys, referredFK.ChildFKName.L)
+		if childfkInfo == nil {
+			continue
+		}
+		childfkInfo.RefSchema = newDB.Name
+		childfkInfo.RefTable = newTableName
+		infos[childTableInfo.tblInfo.ID] = childTableInfo
+	}
+	infoList := make([]schemaIDAndTableInfo, 0, len(fkh.loaded))
+	for _, info := range fkh.loaded {
+		if info.tblInfo.ID == tblInfo.ID {
+			continue
+		}
+		infoList = append(infoList, info)
+	}
+	return infoList, nil
 }
 
 func onModifyTableComment(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
