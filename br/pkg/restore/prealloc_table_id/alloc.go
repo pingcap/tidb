@@ -7,15 +7,23 @@ import (
 	"math"
 
 	"github.com/pingcap/tidb/br/pkg/metautil"
-	"github.com/pingcap/tidb/meta"
 )
 
+// Allocator is the interface needed to allocate table IDs.
+type Allocator interface {
+	GetGlobalID() (int64, error)
+	AdvanceGlobalIDs(n int) (int64, error)
+}
+
+// PreallocIDs mantains the state of preallocated table IDs.
 type PreallocIDs struct {
 	end int64
 
 	allocedFrom int64
 }
 
+// New collectes the requirement of prealloc IDs and return a
+// not-yet-allocated PreallocIDs.
 func New(tables []*metautil.Table) *PreallocIDs {
 	if len(tables) == 0 {
 		return &PreallocIDs{
@@ -46,7 +54,7 @@ func (p *PreallocIDs) String() string {
 }
 
 // preallocTableIDs peralloc the id for [start, end)
-func (p *PreallocIDs) Alloc(m *meta.Meta) error {
+func (p *PreallocIDs) Alloc(m Allocator) error {
 	currentId, err := m.GetGlobalID()
 	if err != nil {
 		return err
@@ -63,6 +71,7 @@ func (p *PreallocIDs) Alloc(m *meta.Meta) error {
 	return nil
 }
 
+// Prealloced checks whether a table ID has been successfully allocated.
 func (p *PreallocIDs) Prealloced(tid int64) bool {
 	return p.allocedFrom <= tid && tid < p.end
 }
