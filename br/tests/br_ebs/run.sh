@@ -46,7 +46,7 @@ check_not_contains "--volume-iops"
 check_not_contains "--volume-throughput"
 check_not_contains "--progress-file"
 
-run_br backup restore --type xxx > $res_file 2>&1 || true
+run_br restore full --type xxx > $res_file 2>&1 || true
 check_contains "invalid full backup type"
 
 # todo: cannot run this test now, we need specified pd version.
