@@ -22,7 +22,7 @@ type PreallocIDs struct {
 	allocedFrom int64
 }
 
-// New collectes the requirement of prealloc IDs and return a
+// New collects the requirement of prealloc IDs and return a
 // not-yet-allocated PreallocIDs.
 func New(tables []*metautil.Table) *PreallocIDs {
 	if len(tables) == 0 {
