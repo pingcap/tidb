@@ -27,6 +27,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -49,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/store/driver/backoff"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/table/temptable"
@@ -63,6 +65,7 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/set"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 const (
@@ -673,6 +676,16 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 			ds.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 			ds.preferStoreType = 0
 			return
+		}
+		if config.GetGlobalConfig().DisaggregatedTiFlash {
+			bo := backoff.NewBackofferWithVars(context.Background(), 5000, nil)
+			mppStores, err := ds.ctx.GetStore().(tikv.Storage).GetRegionCache().GetTiFlashMPPStores(bo.TiKVBackoffer())
+			if err != nil || len(mppStores) == 0 {
+				errMsg := fmt.Sprintf("TiFlash ReadNodes number is zero")
+				warning := ErrInternal.GenWithStack(errMsg)
+				ds.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+				return
+			}
 		}
 		for _, path := range ds.possibleAccessPaths {
 			if path.StoreType == kv.TiFlash {
