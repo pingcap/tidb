@@ -758,36 +758,36 @@ func TestTiDBServerMemoryQuota(t *testing.T) {
 		err error
 		val string
 	)
-	// Test tidb_server_memory_quota
-	serverMemoryQuota := GetSysVar(TiDBServerMemoryQuota)
+	// Test tidb_server_memory_limit
+	serverMemoryQuota := GetSysVar(TiDBServerMemoryLimit)
 	// Check default value
-	require.Equal(t, serverMemoryQuota.Value, strconv.FormatUint(DefTiDBServerMemoryQuota, 10))
+	require.Equal(t, serverMemoryQuota.Value, strconv.FormatUint(DefTiDBServerMemoryLimit, 10))
 
 	// MinValue is 512 MB
-	err = mock.SetGlobalSysVar(TiDBServerMemoryQuota, strconv.FormatUint(100*mb, 10))
+	err = mock.SetGlobalSysVar(TiDBServerMemoryLimit, strconv.FormatUint(100*mb, 10))
 	require.NoError(t, err)
-	val, err = mock.GetGlobalSysVar(TiDBServerMemoryQuota)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimit)
 	require.NoError(t, err)
 	require.Equal(t, strconv.FormatUint(512*mb, 10), val)
 
 	// Test Close
-	err = mock.SetGlobalSysVar(TiDBServerMemoryQuota, strconv.FormatUint(0, 10))
+	err = mock.SetGlobalSysVar(TiDBServerMemoryLimit, strconv.FormatUint(0, 10))
 	require.NoError(t, err)
-	val, err = mock.GetGlobalSysVar(TiDBServerMemoryQuota)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimit)
 	require.NoError(t, err)
 	require.Equal(t, strconv.FormatUint(0, 10), val)
 
 	// Test MaxValue
-	err = mock.SetGlobalSysVar(TiDBServerMemoryQuota, strconv.FormatUint(math.MaxUint64, 10))
+	err = mock.SetGlobalSysVar(TiDBServerMemoryLimit, strconv.FormatUint(math.MaxUint64, 10))
 	require.NoError(t, err)
-	val, err = mock.GetGlobalSysVar(TiDBServerMemoryQuota)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimit)
 	require.NoError(t, err)
 	require.Equal(t, strconv.FormatUint(math.MaxUint64, 10), val)
 
 	// Test Normal Value
-	err = mock.SetGlobalSysVar(TiDBServerMemoryQuota, strconv.FormatUint(1024*mb, 10))
+	err = mock.SetGlobalSysVar(TiDBServerMemoryLimit, strconv.FormatUint(1024*mb, 10))
 	require.NoError(t, err)
-	val, err = mock.GetGlobalSysVar(TiDBServerMemoryQuota)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimit)
 	require.NoError(t, err)
 	require.Equal(t, strconv.FormatUint(1024*mb, 10), val)
 

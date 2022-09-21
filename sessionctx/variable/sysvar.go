@@ -716,7 +716,7 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
-	{Scope: ScopeGlobal, Name: TiDBServerMemoryQuota, Value: strconv.FormatUint(DefTiDBServerMemoryQuota, 10), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint64,
+	{Scope: ScopeGlobal, Name: TiDBServerMemoryLimit, Value: strconv.FormatUint(DefTiDBServerMemoryLimit, 10), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint64,
 		GetGlobal: func(s *SessionVars) (string, error) {
 			return memory.ServerMemoryQuota.String(), nil
 		},
@@ -726,7 +726,7 @@ var defaultSysVars = []*SysVar{
 				return "", err
 			}
 			if intVal > 0 && intVal < (512<<20) { // 512 MB
-				s.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(TiDBServerMemoryQuota, originalValue))
+				s.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(TiDBServerMemoryLimit, originalValue))
 				intVal = 512 << 20
 			}
 			return strconv.FormatUint(intVal, 10), nil

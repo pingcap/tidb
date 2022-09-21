@@ -839,9 +839,9 @@ const (
 	TiDBDDLEnableFastReorg = "tidb_ddl_enable_fast_reorg"
 	// TiDBDDLDiskQuota used to set disk quota for lightning add index.
 	TiDBDDLDiskQuota = "tidb_ddl_disk_quota"
-	// TiDBServerMemoryQuota indicates the memory limit of the tidb-server instance.
-	TiDBServerMemoryQuota = "tidb_server_memory_quota"
-	// TiDBServerMemoryLimitSessMinSize indicates the minimum memory usage of the session that can be controlled.
+	// TiDBServerMemoryLimit indicates the memory limit of the tidb-server instance.
+	TiDBServerMemoryLimit = "tidb_server_memory_limit"
+	// TiDBServerMemoryLimitSessMinSize indicates the minimal memory used of a session, that becomes a candidate for session kill.
 	TiDBServerMemoryLimitSessMinSize = "tidb_server_memory_limit_sess_min_size"
 )
 
@@ -1131,9 +1131,9 @@ var (
 	EnableForeignKey    = atomic.NewBool(false)
 	EnableRCReadCheckTS = atomic.NewBool(false)
 
-	// DefTiDBServerMemoryQuota indicates the default value of TiDBServerMemoryQuota(TotalMem * 80%).
+	// DefTiDBServerMemoryLimit indicates the default value of TiDBServerMemoryLimit(TotalMem * 80%).
 	// It should be a const and shouldn't be modified after tidb is started.
-	DefTiDBServerMemoryQuota = mathutil.Max(memory.GetMemTotalIgnoreErr()/10*8, 512<<20)
+	DefTiDBServerMemoryLimit = mathutil.Max(memory.GetMemTotalIgnoreErr()/10*8, 512<<20)
 )
 
 var (

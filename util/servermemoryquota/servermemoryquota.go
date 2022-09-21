@@ -47,31 +47,31 @@ func (smqh *Handle) Run() {
 	ticker := time.NewTicker(tickInterval)
 	defer ticker.Stop()
 	sm := smqh.sm.Load().(util.SessionManager)
-	serverMemoryQuota := &serverMemoryQuota{}
+	sessionToBeKilled := &sessionToBeKilled{}
 	for {
 		select {
 		case <-ticker.C:
-			serverMemoryQuota.CheckQuotaAndKill(memory.ServerMemoryQuota.Load(), sm)
+			killSessIfNeeded(sessionToBeKilled, memory.ServerMemoryQuota.Load(), sm)
 		case <-smqh.exitCh:
 			return
 		}
 	}
 }
 
-type serverMemoryQuota struct {
+type sessionToBeKilled struct {
+	isKilling    bool
 	sqlStartTime time.Time
 	sessionID    uint64
 }
 
-func (s *serverMemoryQuota) CheckQuotaAndKill(bt uint64, sm util.SessionManager) {
-	if s.sessionID != 0 {
+func killSessIfNeeded(s *sessionToBeKilled, bt uint64, sm util.SessionManager) {
+	if s.isKilling {
 		if info, ok := sm.GetProcessInfo(s.sessionID); ok {
 			if info.Time == s.sqlStartTime {
-				return // Wait killing finished.
+				return
 			}
 		}
-		s.sessionID = 0
-		s.sqlStartTime = time.Time{}
+		s.isKilling = false
 		//nolint: all_revive,revive
 		runtime.GC()
 	}
@@ -87,6 +87,7 @@ func (s *serverMemoryQuota) CheckQuotaAndKill(bt uint64, sm util.SessionManager)
 			if info, ok := sm.GetProcessInfo(t.SessionID); ok {
 				s.sessionID = t.SessionID
 				s.sqlStartTime = info.Time
+				s.isKilling = true
 				t.IsKilled.Store(true)
 			}
 		}

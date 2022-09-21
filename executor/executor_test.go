@@ -6008,7 +6008,7 @@ func TestGlobalMemoryControl(t *testing.T) {
 
 	tk0 := testkit.NewTestKit(t, store)
 	tk0.MustExec("set global tidb_mem_oom_action = 'cancel'")
-	tk0.MustExec("set global tidb_server_memory_quota = 512 << 20")
+	tk0.MustExec("set global tidb_server_memory_limit = 512 << 20")
 	tk0.MustExec("set global tidb_server_memory_limit_sess_min_size = 128")
 
 	tk1 := testkit.NewTestKit(t, store)

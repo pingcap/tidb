@@ -77,14 +77,14 @@ type Tracker struct {
 		parent *Tracker // The parent memory tracker.
 		sync.Mutex
 	}
-	label         int              // Label of this "Tracker".
-	bytesConsumed int64            // Consumed bytes.
-	bytesReleased int64            // Released bytes.
-	maxConsumed   atomicutil.Int64 // max number of bytes consumed during execution.
-	SessionID     uint64           // SessionID indicates the sessionID the tracker is bound.
-	IsKilled      atomic.Bool      // IsKilled indicates whether this session is killed because OOM
-	IsSession     bool             // IsSession indicates whether this tracker is bound for session
-	isGlobal      bool             // isGlobal indicates whether this tracker is global tracker
+	label               int              // Label of this "Tracker".
+	bytesConsumed       int64            // Consumed bytes.
+	bytesReleased       int64            // Released bytes.
+	maxConsumed         atomicutil.Int64 // max number of bytes consumed during execution.
+	SessionID           uint64           // SessionID indicates the sessionID the tracker is bound.
+	IsKilled            atomic.Bool      // IsKilled indicates whether this session is killed because OOM
+	IsRootTrackerOfSess bool             // IsRootTrackerOfSess indicates whether this tracker is bound for session
+	isGlobal            bool             // isGlobal indicates whether this tracker is global tracker
 }
 
 type actionMu struct {
@@ -110,7 +110,7 @@ type bytesLimits struct {
 	bytesSoftLimit int64 // bytesSoftLimit <= 0 means no limit, used for actionMuForSoftLimit.
 }
 
-// MemUsageTop1Tracker record the tracker that use memory Usage
+// MemUsageTop1Tracker record the use memory top1 session's tracker for kill.
 var MemUsageTop1Tracker atomic.Pointer[Tracker]
 
 // InitTracker initializes a memory tracker.
@@ -366,10 +366,10 @@ func (t *Tracker) Consume(bs int64) {
 	if bs == 0 {
 		return
 	}
-	var rootExceed, rootExceedForSoftLimit, sessionTracker *Tracker
+	var rootExceed, rootExceedForSoftLimit, sessionRootTracker *Tracker
 	for tracker := t; tracker != nil; tracker = tracker.getParent() {
-		if tracker.IsSession {
-			sessionTracker = tracker
+		if tracker.IsRootTrackerOfSess {
+			sessionRootTracker = tracker
 		}
 		bytesConsumed := atomic.AddInt64(&tracker.bytesConsumed, bs)
 		bytesReleased := atomic.LoadInt64(&tracker.bytesReleased)
@@ -405,18 +405,18 @@ func (t *Tracker) Consume(bs int64) {
 		}
 	}
 
-	if bs > 0 && sessionTracker != nil {
+	if bs > 0 && sessionRootTracker != nil {
 		// Kill the Top1 session
-		if sessionTracker.IsKilled.Load() {
-			tryAction(&sessionTracker.actionMuForHardLimit, sessionTracker)
+		if sessionRootTracker.IsKilled.Load() {
+			tryAction(&sessionRootTracker.actionMuForHardLimit, sessionRootTracker)
 		}
 		// Update the Top1 session
-		memUsage := sessionTracker.BytesConsumed()
+		memUsage := sessionRootTracker.BytesConsumed()
 		if limitSessMinSize := ServerMemoryLimitSessMinSize.Load(); limitSessMinSize > 0 {
 			if uint64(memUsage) >= limitSessMinSize {
 				oldTracker := MemUsageTop1Tracker.Load()
-				for oldTracker.Compare(sessionTracker) {
-					if MemUsageTop1Tracker.CompareAndSwap(oldTracker, sessionTracker) {
+				for oldTracker.LessThan(sessionRootTracker) {
+					if MemUsageTop1Tracker.CompareAndSwap(oldTracker, sessionRootTracker) {
 						break
 					}
 				}
@@ -578,8 +578,8 @@ func (*Tracker) FormatBytes(numBytes int64) string {
 	return FormatBytes(numBytes)
 }
 
-// Compare indicates whether t2 byteConsumed is bigger than t byteConsumed.
-func (t *Tracker) Compare(t2 *Tracker) bool {
+// LessThan indicates whether t byteConsumed is less than t2 byteConsumed.
+func (t *Tracker) LessThan(t2 *Tracker) bool {
 	if t == nil {
 		return true
 	}
