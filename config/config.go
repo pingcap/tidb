@@ -386,6 +386,11 @@ func (b *nullableBool) UnmarshalJSON(data []byte) error {
 	return err
 }
 
+// AtomicString is a helper type for atomic operations on a string value.
+type AtomicString struct {
+	atomicutil.String
+}
+
 // AtomicBool is a helper type for atomic operations on a boolean value.
 type AtomicBool struct {
 	atomicutil.Bool
@@ -493,7 +498,7 @@ type Instance struct {
 	TiDBRCReadCheckTS bool       `toml:"tidb_rc_read_check_ts" json:"tidb_rc_read_check_ts"`
 
 	// TmpDir describes the path of temporary storage.
-	TmpDir atomicutil.String `toml:"tmpdir" json:"tmpdir"`
+	TmpDir AtomicString `toml:"tmpdir" json:"tmpdir"`
 	// TmpStorageQuota describe the temporary storage Quota during query executor when TiDBEnableTmpStorageOnOOM is enabled.
 	// If the quota exceed the capacity of the TempStoragePath, the tidb-server would exit with fatal error.
 	TmpStorageQuota int64 `toml:"tidb_tmp_storage_quota" json:"tidb_tmp_storage_quota"` // Bytes
@@ -875,7 +880,7 @@ var defaultConf = Config{
 		TiDBEnableDDL:               *NewAtomicBool(true),
 		TiDBRCReadCheckTS:           false,
 		TmpStorageQuota:             -1,
-		TmpDir:                      *atomicutil.NewString(DefTempStorageDirName),
+		TmpDir:                      AtomicString{*atomicutil.NewString(DefTempStorageDirName)},
 	},
 	Status: Status{
 		ReportStatus:          true,
