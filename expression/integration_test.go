@@ -3158,11 +3158,6 @@ func (s *testIntegrationSuite2) TestIssue11648(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("1", "0", "2"))
 }
 
-<<<<<<< HEAD
-func (s *testIntegrationSuite) TestInfoBuiltin(c *C) {
-	defer s.cleanEnv(c)
-	tk := testkit.NewTestKit(c, s.store)
-=======
 func TestExprDateTimeOnDST(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -3180,11 +3175,14 @@ func TestExprDateTimeOnDST(t *testing.T) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 2023-03-26 02:00:00", "4 2023-03-26 02:00:00"))
 }
 
+func (s *testIntegrationSuite) TestInfoBuiltin(c *C) {
+	defer s.cleanEnv(c)
+	tk := testkit.NewTestKit(c, s.store)
+
 func TestInfoBuiltin(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
->>>>>>> 6feaa5271... types: Fix DATE_ADD on DST Transition (#37979)
 	tk.MustExec("use test")
 
 	// for last_insert_id
