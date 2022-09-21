@@ -1170,6 +1170,12 @@ func (p *basePhysicalJoin) MemoryUsage() (sum int64) {
 	for _, datum := range p.DefaultValues {
 		sum += datum.MemUsage()
 	}
+	for _, col := range p.LeftNAJoinKeys {
+		sum += col.MemoryUsage()
+	}
+	for _, col := range p.RightNAJoinKeys {
+		sum += col.MemoryUsage()
+	}
 	return
 }
 
@@ -1239,6 +1245,9 @@ func (p *PhysicalHashJoin) MemoryUsage() (sum int64) {
 	sum = p.basePhysicalJoin.MemoryUsage() + size.SizeOfUint + size.SizeOfSlice + size.SizeOfBool*2 + size.SizeOfUint8
 
 	for _, expr := range p.EqualConditions {
+		sum += expr.MemoryUsage()
+	}
+	for _, expr := range p.NAEqualConditions {
 		sum += expr.MemoryUsage()
 	}
 	return
