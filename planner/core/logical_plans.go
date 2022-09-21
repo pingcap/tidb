@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/size"
 	"go.uber.org/zap"
 )
 
@@ -1935,13 +1936,12 @@ func (cc *CTEClass) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = emptyCTEClassSize
-	// todo: memtrace: p.seedPartPhysicalPlan p.recursivePartPhysicalPlan
+	sum = emptyCTEClassSize + cc.seedPartPhysicalPlan.MemoryUsage() + cc.recursivePartPhysicalPlan.MemoryUsage()
 	for _, expr := range cc.pushDownPredicates {
 		sum += expr.MemoryUsage()
 	}
 	for key, val := range cc.ColumnMap {
-		sum += int64(len(key)) + val.MemoryUsage()
+		sum += size.SizeOfString + int64(len(key)) + size.SizeOfPointer + val.MemoryUsage()
 	}
 	return
 }

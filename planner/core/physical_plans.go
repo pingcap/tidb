@@ -2046,12 +2046,11 @@ func (p *PhysicalCTE) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.physicalSchemaProducer.MemoryUsage() + p.cteAsName.MemoryUsage()
+	sum = p.physicalSchemaProducer.MemoryUsage() + p.SeedPlan.MemoryUsage() + p.RecurPlan.MemoryUsage() + p.cteAsName.MemoryUsage()
 	if p.CTE != nil {
 		sum += p.CTE.MemoryUsage()
 	}
 	return
-	//todo: memtrace: p.SeedPlan p.RecurPlan
 }
 
 // ExplainInfo overrides the ExplainInfo
@@ -2098,12 +2097,11 @@ func (p *CTEDefinition) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.physicalSchemaProducer.MemoryUsage() + p.cteAsName.MemoryUsage()
+	sum = p.physicalSchemaProducer.MemoryUsage() + p.SeedPlan.MemoryUsage() + p.RecurPlan.MemoryUsage() + p.cteAsName.MemoryUsage()
 	if p.CTE != nil {
 		sum += p.CTE.MemoryUsage()
 	}
 	return
-	//todo: memtrace: p.SeedPlan p.RecurPlan
 }
 
 func appendChildCandidate(origin PhysicalPlan, pp PhysicalPlan, op *physicalOptimizeOp) {

@@ -15,8 +15,9 @@
 package expression
 
 import (
-	"github.com/pingcap/tidb/util/size"
 	"strings"
+
+	"github.com/pingcap/tidb/util/size"
 )
 
 // KeyInfo stores the columns of one unique key or primary key.
