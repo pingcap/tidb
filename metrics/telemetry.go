@@ -353,7 +353,8 @@ func GetLazyPessimisticUniqueCheckSetCounter() int64 {
 
 // DDLUsageCounter records the usages of Add Index with acceleration solution.
 type DDLUsageCounter struct {
-	AddIndexIngestUsed int64 `json:"add_index_Ingest_used"`
+	AddIndexIngestUsed int64 `json:"add_index_ingest_used"`
+	MetadataLockUsed   bool  `json:"metadata_lock_used"`
 }
 
 // Sub returns the difference of two counters.

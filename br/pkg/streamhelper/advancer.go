@@ -413,10 +413,12 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 	defer c.taskMu.Unlock()
 	switch e.Type {
 	case EventAdd:
+		utils.LogBackupTaskCountInc()
 		c.task = e.Info
 		c.taskRange = CollapseRanges(len(e.Ranges), func(i int) kv.KeyRange { return e.Ranges[i] })
 		log.Info("added event", zap.Stringer("task", e.Info), zap.Stringer("ranges", logutil.StringifyKeys(c.taskRange)))
 	case EventDel:
+		utils.LogBackupTaskCountDec()
 		c.task = nil
 		c.taskRange = nil
 		c.state = &fullScan{}

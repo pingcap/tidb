@@ -426,6 +426,7 @@ func TestDupRandJoinCondsPushDown(t *testing.T) {
 }
 
 func TestTablePartition(t *testing.T) {
+	variable.EnableMDL.Store(false)
 	definitions := []model.PartitionDefinition{
 		{
 			ID:       41,
@@ -1015,6 +1016,7 @@ func TestAggPrune(t *testing.T) {
 }
 
 func TestVisitInfo(t *testing.T) {
+	variable.EnableMDL.Store(false)
 	tests := []struct {
 		sql string
 		ans []visitInfo

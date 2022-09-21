@@ -68,6 +68,7 @@ func postReportTelemetryData() {
 	postReportNonTransactionalCounter()
 	PostSavepointCount()
 	postReportLazyPessimisticUniqueCheckSetCount()
+	postReportDDLUsage()
 }
 
 // PostReportTelemetryDataForTest is for test.

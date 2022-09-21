@@ -101,7 +101,7 @@ func getFeatureUsage(ctx context.Context, sctx sessionctx.Context) (*featureUsag
 
 	usage.EnableCostModelVer2 = getCostModelVer2UsageInfo(sctx)
 
-	usage.DDLUsageCounter = getAddIndexIngestUsageInfo()
+	usage.DDLUsageCounter = getDDLUsageInfo(sctx)
 
 	return &usage, nil
 }
@@ -334,7 +334,7 @@ func postReportTablePartitionUsage() {
 	initialTablePartitionCounter = m.ResetTablePartitionCounter(initialTablePartitionCounter)
 }
 
-func postReportAddIndexIngestUsage() {
+func postReportDDLUsage() {
 	initialDDLUsageCounter = m.GetDDLUsageCounter()
 }
 
@@ -367,7 +367,7 @@ func getGlobalKillUsageInfo() bool {
 }
 
 func getLogBackupUsageInfo(ctx sessionctx.Context) bool {
-	return utils.CheckLogBackupEnabled(ctx)
+	return utils.CheckLogBackupEnabled(ctx) && utils.CheckLogBackupTaskExist()
 }
 
 func getCostModelVer2UsageInfo(ctx sessionctx.Context) bool {
@@ -380,8 +380,12 @@ func getCostModelVer2UsageInfo(ctx sessionctx.Context) bool {
 func getPagingUsageInfo(ctx sessionctx.Context) bool {
 	return ctx.GetSessionVars().EnablePaging
 }
-func getAddIndexIngestUsageInfo() *m.DDLUsageCounter {
+func getDDLUsageInfo(ctx sessionctx.Context) *m.DDLUsageCounter {
 	curr := m.GetDDLUsageCounter()
 	diff := curr.Sub(initialDDLUsageCounter)
+	isEnable, err := ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar("tidb_enable_metadata_lock")
+	if err == nil {
+		diff.MetadataLockUsed = isEnable == "ON"
+	}
 	return &diff
 }
