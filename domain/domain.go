@@ -1820,8 +1820,8 @@ func (do *Domain) ExpensiveQueryHandle() *expensivequery.Handle {
 	return do.expensiveQueryHandle
 }
 
-// ServerMemoryQuotaHandle returns the expensive query handle.
-func (do *Domain) ServerMemoryQuotaHandle() *servermemorylimit.Handle {
+// ServerMemoryLimitHandle returns the expensive query handle.
+func (do *Domain) ServerMemoryLimitHandle() *servermemorylimit.Handle {
 	return do.serverMemoryLimitHandle
 }
 

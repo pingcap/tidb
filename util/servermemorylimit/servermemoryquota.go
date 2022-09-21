@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 )
 
-// Handle is the handler for server memory quota.
+// Handle is the handler for server memory limit.
 type Handle struct {
 	exitCh chan struct{}
 	sm     atomic.Value

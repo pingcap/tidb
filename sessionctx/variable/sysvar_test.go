@@ -748,7 +748,7 @@ func TestSetTIDBDiskQuota(t *testing.T) {
 	require.Equal(t, strconv.FormatInt(pb, 10), val)
 }
 
-func TestTiDBServerMemoryQuota(t *testing.T) {
+func TestTiDBServerMemoryLimit(t *testing.T) {
 	vars := NewSessionVars()
 	mock := NewMockGlobalAccessor4Tests()
 	mock.SessionVars = vars
@@ -759,9 +759,9 @@ func TestTiDBServerMemoryQuota(t *testing.T) {
 		val string
 	)
 	// Test tidb_server_memory_limit
-	serverMemoryQuota := GetSysVar(TiDBServerMemoryLimit)
+	serverMemoryLimit := GetSysVar(TiDBServerMemoryLimit)
 	// Check default value
-	require.Equal(t, serverMemoryQuota.Value, strconv.FormatUint(DefTiDBServerMemoryLimit, 10))
+	require.Equal(t, serverMemoryLimit.Value, strconv.FormatUint(DefTiDBServerMemoryLimit, 10))
 
 	// MinValue is 512 MB
 	err = mock.SetGlobalSysVar(TiDBServerMemoryLimit, strconv.FormatUint(100*mb, 10))
