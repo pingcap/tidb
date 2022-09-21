@@ -2344,6 +2344,27 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 		"[[NULL,+inf]]")
 	checkRangeFallbackAndReset(t, sctx, true)
 
+	// test considerDNF code path
+	sql = "select * from t2 where (a, b) in (('aaa', 'bbb'), ('ccc', 'ddd')) and c = 'eee'"
+	selection = getSelectionFromQuery(t, sctx, sql)
+	conds = selection.Conditions
+	require.Equal(t, 2, len(conds))
+	cols, lengths = expression.IndexInfo2PrefixCols(tblInfo.Columns, selection.Schema().Columns, tblInfo.Indices[0])
+	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, 0)
+	require.NoError(t, err)
+	checkDetachRangeResult(t, res,
+		"[or(eq(test.t2.a, aaa), eq(test.t2.a, ccc))]",
+		"[eq(test.t2.c, eee) or(and(eq(test.t2.a, aaa), eq(test.t2.b, bbb)), and(eq(test.t2.a, ccc), eq(test.t2.b, ddd)))]",
+		"[[\"aa\",\"aa\"] [\"cc\",\"cc\"]]")
+	checkRangeFallbackAndReset(t, sctx, false)
+	quota = res.Ranges.MemUsage() - 1
+	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, quota)
+	require.NoError(t, err)
+	checkDetachRangeResult(t, res,
+		"[]",
+		"[eq(test.t2.c, eee) or(and(eq(test.t2.a, aaa), eq(test.t2.b, bbb)), and(eq(test.t2.a, ccc), eq(test.t2.b, ddd))) or(eq(test.t2.a, aaa), eq(test.t2.a, ccc))]",
+		"[[NULL,+inf]]")
+	checkRangeFallbackAndReset(t, sctx, true)
 }
 
 func TestRangeFallbackForBuildTableRange(t *testing.T) {
