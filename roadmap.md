@@ -149,12 +149,12 @@ In the course of development, this roadmap is subject to change based on user ne
 <tbody>
   <tr>
     <td rowspan="2">Backup and restore</td>
-    <td>EBS snapshot-based backup</td>
-    <td>BR provides an MVP version of EBS snapshot-based backup and restore.</td>
+    <td>AWS EBS snapshot-based backup</td>
+    <td>BR provides an MVP version of AWS EBS snapshot-based backup and restore.</td>
     <td>September 2022</td>
   </tr>
   <tr>
-    <td>EBS snapshot-based backup and restore</td>
+    <td>Backup and restore based on AWS EBS or GCP Persistent Disk snapshot</td>
     <td>BR provides a complete version of EBS snapshot-based backup and restore.</td>
     <td>December 2022</td>
   </tr>
@@ -162,7 +162,7 @@ In the course of development, this roadmap is subject to change based on user ne
     <td>Point-in-time recovery (PITR)</td>
     <td>Table-level and database-level PITR</td>
     <td>BR supports table-level or database-level PITR.</td>
-    <td>October 2022</td>
+    <td>November 2022</td>
   </tr>
   <tr>
     <td rowspan="2">Data replication to downstream systems via TiCDC</td>
