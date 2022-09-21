@@ -242,7 +242,6 @@ func getCurrentAnalyzePlan(info *util.ProcessInfo) string {
 }
 
 func (record *memoryUsageAlarm) printTop10SqlInfo(pinfo []*util.ProcessInfo, f *os.File) {
-
 	if _, err := f.WriteString("The 10 SQLs with the most memory usage for OOM analysis\n"); err != nil {
 		logutil.BgLogger().Error("write top 10 memory sql info fail", zap.Error(err))
 	}
