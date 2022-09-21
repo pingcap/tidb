@@ -202,6 +202,18 @@ func (col *CorrelatedColumn) MemoryUsage() (sum int64) {
 	return sum
 }
 
+// RemapColumn remaps columns with provided mapping and returns new expression
+func (col *CorrelatedColumn) RemapColumn(m map[int64]*Column) (Expression, error) {
+	mapped := m[(&col.Column).UniqueID]
+	if mapped == nil {
+		return nil, errors.Errorf("Can't remap column for %s", col)
+	}
+	return &CorrelatedColumn{
+		Column: *mapped,
+		Data:   col.Data,
+	}, nil
+}
+
 // Column represents a column.
 type Column struct {
 	RetType *types.FieldType
@@ -535,6 +547,15 @@ func (col *Column) resolveIndicesByVirtualExpr(schema *Schema) bool {
 		}
 	}
 	return false
+}
+
+// RemapColumn remaps columns with provided mapping and returns new expression
+func (col *Column) RemapColumn(m map[int64]*Column) (Expression, error) {
+	mapped := m[col.UniqueID]
+	if mapped == nil {
+		return nil, errors.Errorf("Can't remap column for %s", col)
+	}
+	return mapped, nil
 }
 
 // Vectorized returns if this expression supports vectorized evaluation.

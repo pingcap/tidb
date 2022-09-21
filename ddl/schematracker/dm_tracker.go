@@ -567,10 +567,6 @@ func (d SchemaTracker) renameColumn(ctx sessionctx.Context, ident ast.Ident, spe
 		return infoschema.ErrColumnExists.GenWithStackByArgs(newColName)
 	}
 
-	if fkInfo := ddl.GetColumnForeignKeyInfo(oldColName.L, tbl.Meta().ForeignKeys); fkInfo != nil {
-		return dbterror.ErrFKIncompatibleColumns.GenWithStackByArgs(oldColName, fkInfo.Name)
-	}
-
 	// Check generated expression.
 	for _, col := range allCols {
 		if col.GeneratedExpr == nil {
@@ -668,7 +664,7 @@ func (d SchemaTracker) handleModifyColumn(
 	}
 	schema := d.SchemaByName(ident.Schema)
 	t := tables.MockTableFromMeta(tblInfo)
-	job, err := ddl.GetModifiableColumnJob(ctx, sctx, ident, originalColName, schema, t, spec)
+	job, err := ddl.GetModifiableColumnJob(ctx, sctx, nil, ident, originalColName, schema, t, spec)
 	if err != nil {
 		if infoschema.ErrColumnNotExists.Equal(err) && spec.IfExists {
 			sctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrColumnNotExists.GenWithStackByArgs(originalColName, ident.Name))

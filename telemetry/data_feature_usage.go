@@ -53,6 +53,7 @@ type featureUsage struct {
 	LogBackup             bool                             `json:"logBackup"`
 	EnablePaging          bool                             `json:"enablePaging"`
 	EnableCostModelVer2   bool                             `json:"enableCostModelVer2"`
+	DDLUsageCounter       *m.DDLUsageCounter               `json:"DDLUsageCounter"`
 }
 
 type placementPolicyUsage struct {
@@ -96,6 +97,8 @@ func getFeatureUsage(ctx context.Context, sctx sessionctx.Context) (*featureUsag
 	usage.EnablePaging = getPagingUsageInfo(sctx)
 
 	usage.EnableCostModelVer2 = getCostModelVer2UsageInfo(sctx)
+
+	usage.DDLUsageCounter = getDDLUsageInfo(sctx)
 
 	return &usage, nil
 }
@@ -228,6 +231,7 @@ var initialMultiSchemaChangeCounter m.MultiSchemaChangeUsageCounter
 var initialTablePartitionCounter m.TablePartitionUsageCounter
 var initialSavepointStmtCounter int64
 var initialLazyPessimisticUniqueCheckSetCount int64
+var initialDDLUsageCounter m.DDLUsageCounter
 
 // getTxnUsageInfo gets the usage info of transaction related features. It's exported for tests.
 func getTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
@@ -316,6 +320,10 @@ func postReportTablePartitionUsage() {
 	initialTablePartitionCounter = m.ResetTablePartitionCounter(initialTablePartitionCounter)
 }
 
+func postReportDDLUsage() {
+	initialDDLUsageCounter = m.GetDDLUsageCounter()
+}
+
 func getTablePartitionUsageInfo() *m.TablePartitionUsageCounter {
 	curr := m.GetTablePartitionCounter()
 	diff := curr.Cal(initialTablePartitionCounter)
@@ -345,7 +353,7 @@ func getGlobalKillUsageInfo() bool {
 }
 
 func getLogBackupUsageInfo(ctx sessionctx.Context) bool {
-	return utils.CheckLogBackupEnabled(ctx)
+	return utils.CheckLogBackupEnabled(ctx) && utils.CheckLogBackupTaskExist()
 }
 
 func getCostModelVer2UsageInfo(ctx sessionctx.Context) bool {
@@ -357,4 +365,13 @@ func getCostModelVer2UsageInfo(ctx sessionctx.Context) bool {
 // users set it to false manually.
 func getPagingUsageInfo(ctx sessionctx.Context) bool {
 	return ctx.GetSessionVars().EnablePaging
+}
+func getDDLUsageInfo(ctx sessionctx.Context) *m.DDLUsageCounter {
+	curr := m.GetDDLUsageCounter()
+	diff := curr.Sub(initialDDLUsageCounter)
+	isEnable, err := ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar("tidb_enable_metadata_lock")
+	if err == nil {
+		diff.MetadataLockUsed = isEnable == "ON"
+	}
+	return &diff
 }

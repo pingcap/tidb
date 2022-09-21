@@ -54,6 +54,9 @@ const (
 	// TiDBOptSkewDistinctAgg is used to indicate the distinct agg has data skew
 	TiDBOptSkewDistinctAgg = "tidb_opt_skew_distinct_agg"
 
+	// TiDBOpt3StageDistinctAgg is used to indicate whether to plan and execute the distinct agg in 3 stages
+	TiDBOpt3StageDistinctAgg = "tidb_opt_three_stage_distinct_agg"
+
 	// TiDBBCJThresholdSize is used to limit the size of small table for mpp broadcast join.
 	// Its unit is bytes, if the size of small table is larger than it, we will not use bcj.
 	TiDBBCJThresholdSize = "tidb_broadcast_join_threshold_size"
@@ -89,6 +92,9 @@ const (
 
 	// TiDBLastDDLInfo is used to get the last ddl info within the current session.
 	TiDBLastDDLInfo = "tidb_last_ddl_info"
+
+	// TiDBLastPlanReplayerToken is used to get the last plan replayer token within the current session
+	TiDBLastPlanReplayerToken = "tidb_last_plan_replayer_token"
 
 	// TiDBConfig is a read-only variable that shows the config of the current server.
 	TiDBConfig = "tidb_config"
@@ -143,6 +149,9 @@ const (
 	TiDBOptimizerEnableNewOnlyFullGroupByCheck = "tidb_enable_new_only_full_group_by_check"
 
 	TiDBOptimizerEnableOuterJoinReorder = "tidb_enable_outer_join_reorder"
+
+	// TiDBOptimizerEnableNAAJ is used to open the newly null-aware anti join
+	TiDBOptimizerEnableNAAJ = "tidb_enable_null_aware_anti_join"
 
 	// TiDBTxnMode is used to control the transaction behavior.
 	TiDBTxnMode = "tidb_txn_mode"
@@ -234,6 +243,9 @@ const (
 
 	// TiFlashFastScan indicates whether use fast scan in tiflash.
 	TiFlashFastScan = "tiflash_fastscan"
+
+	// TiDBEnableUnsafeSubstitute indicates whether to enable generate column takes unsafe substitute.
+	TiDBEnableUnsafeSubstitute = "tidb_enable_unsafe_substitute"
 
 	// TiDBEnableTiFlashReadForWriteStmt indicates whether to enable TiFlash to read for write statements.
 	TiDBEnableTiFlashReadForWriteStmt = "tidb_enable_tiflash_read_for_write_stmt"
@@ -636,6 +648,9 @@ const (
 	// TiDBEnableLocalTxn indicates whether to enable Local Txn.
 	TiDBEnableLocalTxn = "tidb_enable_local_txn"
 
+	// TiDBEnableMDL indicates whether to enable MDL.
+	TiDBEnableMDL = "tidb_enable_metadata_lock"
+
 	// TiDBTSOClientBatchMaxWaitTime indicates the max value of the TSO Batch Wait interval time of PD client.
 	TiDBTSOClientBatchMaxWaitTime = "tidb_tso_client_batch_max_wait_time"
 
@@ -908,6 +923,7 @@ const (
 	DefTiDBOptimizerSelectivityLevel               = 0
 	DefTiDBOptimizerEnableNewOFGB                  = false
 	DefTiDBEnableOuterJoinReorder                  = false
+	DefTiDBEnableNAAJ                              = false
 	DefTiDBAllowBatchCop                           = 1
 	DefTiDBAllowMPPExecution                       = true
 	DefTiDBHashExchangeWithNewCollation            = true
@@ -967,14 +983,14 @@ const (
 	DefTiDBEnableParallelApply                     = false
 	DefTiDBEnableAmendPessimisticTxn               = false
 	DefTiDBPartitionPruneMode                      = "dynamic"
-	DefTiDBEnableRateLimitAction                   = true
+	DefTiDBEnableRateLimitAction                   = false
 	DefTiDBEnableAsyncCommit                       = false
 	DefTiDBEnable1PC                               = false
 	DefTiDBGuaranteeLinearizability                = true
 	DefTiDBAnalyzeVersion                          = 2
 	DefTiDBEnableIndexMergeJoin                    = false
 	DefTiDBTrackAggregateMemoryUsage               = true
-	DefTiDBEnableExchangePartition                 = false
+	DefTiDBEnableExchangePartition                 = true
 	DefCTEMaxRecursionDepth                        = 1000
 	DefTiDBTmpTableMaxSize                         = 64 << 20 // 64MB.
 	DefTiDBEnableLocalTxn                          = false
@@ -1008,6 +1024,7 @@ const (
 	DefRCReadCheckTS                               = false
 	DefTiDBRemoveOrderbyInSubquery                 = false
 	DefTiDBSkewDistinctAgg                         = false
+	DefTiDB3StageDistinctAgg                       = true
 	DefTiDBReadStaleness                           = 0
 	DefTiDBGCMaxWaitTime                           = 24 * 60 * 60
 	DefMaxAllowedPacket                     uint64 = 67108864
@@ -1028,7 +1045,7 @@ const (
 	DefTiDBPrepPlanCacheMemoryGuardRatio           = 0.1
 	DefTiDBEnableConcurrentDDL                     = concurrencyddl.TiDBEnableConcurrentDDL
 	DefTiDBSimplifiedMetrics                       = false
-	DefTiDBEnablePaging                            = true
+	DefTiDBEnablePaging                            = false
 	DefTiFlashFineGrainedShuffleStreamCount        = 0
 	DefStreamCountWhenMaxThreadsNotSet             = 8
 	DefTiFlashFineGrainedShuffleBatchSize          = 8192
@@ -1038,6 +1055,7 @@ const (
 	DefEnableTiDBGCAwareMemoryTrack                = true
 	DefTiDBDefaultStrMatchSelectivity              = 0.8
 	DefTiDBEnableTmpStorageOnOOM                   = true
+	DefTiDBEnableMDL                               = false
 	DefTiFlashFastScan                             = false
 	DefTiDBEnableFastReorg                         = false
 	DefTiDBDDLDiskQuota                            = 100 * 1024 * 1024 * 1024 // 100GB
@@ -1053,6 +1071,7 @@ const (
 	DefTiDBConstraintCheckInPlacePessimistic        = true
 	DefTiDBForeignKeyChecks                         = false
 	DefTiDBOptRangeMaxSize                          = 0
+	DefTiDBCostModelVer                             = 1
 )
 
 // Process global variables.
@@ -1096,12 +1115,14 @@ var (
 	EnableConcurrentDDL               = atomic.NewBool(DefTiDBEnableConcurrentDDL)
 	DDLForce2Queue                    = atomic.NewBool(false)
 	EnableNoopVariables               = atomic.NewBool(DefTiDBEnableNoopVariables)
+	EnableMDL                         = atomic.NewBool(DefTiDBEnableMDL)
 	// EnableFastReorg indicates whether to use lightning to enhance DDL reorg performance.
 	EnableFastReorg = atomic.NewBool(DefTiDBEnableFastReorg)
 	// DDLDiskQuota is the temporary variable for set disk quota for lightning
 	DDLDiskQuota = atomic.NewUint64(DefTiDBDDLDiskQuota)
 	// EnableForeignKey indicates whether to enable foreign key feature.
-	EnableForeignKey = atomic.NewBool(false)
+	EnableForeignKey    = atomic.NewBool(false)
+	EnableRCReadCheckTS = atomic.NewBool(false)
 )
 
 var (
@@ -1113,6 +1134,8 @@ var (
 	SetStatsCacheCapacity atomic.Value
 	// SwitchConcurrentDDL is the func registered by DDL to switch concurrent DDL.
 	SwitchConcurrentDDL func(bool) error = nil
+	// SwitchMDL is the func registered by DDL to switch MDL.
+	SwitchMDL func(bool2 bool) error = nil
 	// EnableDDL is the func registered by ddl to enable running ddl in this instance.
 	EnableDDL func() error = nil
 	// DisableDDL is the func registered by ddl to disable running ddl in this instance.
