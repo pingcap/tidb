@@ -104,6 +104,7 @@ func Str2Int64Map(str string) map[int64]struct{} {
 	return res
 }
 
+// GenLogFields generate log fields.
 func GenLogFields(costTime time.Duration, info *ProcessInfo, sqlTruncate, sqlForceDesensitization bool) []zap.Field {
 	logFields := make([]zap.Field, 0, 20)
 	logFields = append(logFields, zap.String("cost_time", strconv.FormatFloat(costTime.Seconds(), 'f', -1, 64)+"s"))

@@ -234,14 +234,32 @@ func getRelevantSystemVariableBuf() string {
 func getCurrentAnalyzePlan(info *util.ProcessInfo) string {
 	var buf strings.Builder
 	rows := info.CurrentAnalyzeRows(info.Plan, info.RuntimeStatsColl)
-	buf.WriteString(fmt.Sprintf("|%v|%v|%v|%v|%v|%v|%v|%v|%v|\n", "id", "estRows", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"))
+	buf.WriteString(fmt.Sprintf("|%v|%v|%v|%v|%v|%v|%v|%v|%v|", "id", "estRows", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"))
 	for _, row := range rows {
-		buf.WriteString(fmt.Sprintf("|%v|%v|%v|%v|%v|%v|%v|%v|%v|\n", row[0], row[1], row[2], row[3], row[4], row[5], row[6], row[7], row[8]))
+		buf.WriteString(fmt.Sprintf("\n|%v|%v|%v|%v|%v|%v|%v|%v|%v|", row[0], row[1], row[2], row[3], row[4], row[5], row[6], row[7], row[8]))
 	}
 	return buf.String()
 }
 
-func (record *memoryUsageAlarm) printTop10SqlInfo(cmp func(i, j *util.ProcessInfo) bool, pinfo []*util.ProcessInfo, f *os.File) {
+func (record *memoryUsageAlarm) printTop10SqlInfo(pinfo []*util.ProcessInfo, f *os.File) {
+
+	if _, err := f.WriteString("The 10 SQLs with the most memory usage for OOM analysis\n"); err != nil {
+		logutil.BgLogger().Error("write top 10 memory sql info fail", zap.Error(err))
+	}
+	memBuf := record.getTop10SqlInfoByMemoryUsage(pinfo)
+	if _, err := f.WriteString(memBuf.String()); err != nil {
+		logutil.BgLogger().Error("write top 10 memory sql info fail", zap.Error(err))
+	}
+	if _, err := f.WriteString("The 10 SQLs with the most time usage for OOM analysis\n"); err != nil {
+		logutil.BgLogger().Error("write top 10 time cost sql info fail", zap.Error(err))
+	}
+	costBuf := record.getTop10SqlInfoByCostTime(pinfo)
+	if _, err := f.WriteString(costBuf.String()); err != nil {
+		logutil.BgLogger().Error("write top 10 time cost sql info fail", zap.Error(err))
+	}
+}
+
+func (record *memoryUsageAlarm) getTop10SqlInfo(cmp func(i, j *util.ProcessInfo) bool, pinfo []*util.ProcessInfo) strings.Builder {
 	slices.SortFunc(pinfo, cmp)
 	list := pinfo
 	if len(list) > 10 {
@@ -268,21 +286,19 @@ func (record *memoryUsageAlarm) printTop10SqlInfo(cmp func(i, j *util.ProcessInf
 		}
 	}
 	buf.WriteString("\n")
-	if _, err := f.WriteString(buf.String()); err != nil {
-		logutil.BgLogger().Error("write oom record file fail", zap.Error(err))
-	}
+	return buf
 }
 
-func (record *memoryUsageAlarm) printTop10SqlInfoByMemoryUsage(pinfo []*util.ProcessInfo, f *os.File) {
-	record.printTop10SqlInfo(func(i, j *util.ProcessInfo) bool {
+func (record *memoryUsageAlarm) getTop10SqlInfoByMemoryUsage(pinfo []*util.ProcessInfo) strings.Builder {
+	return record.getTop10SqlInfo(func(i, j *util.ProcessInfo) bool {
 		return i.StmtCtx.MemTracker.MaxConsumed() > j.StmtCtx.MemTracker.MaxConsumed()
-	}, pinfo, f)
+	}, pinfo)
 }
 
-func (record *memoryUsageAlarm) printTop10SqlInfoByCostTime(pinfo []*util.ProcessInfo, f *os.File) {
-	record.printTop10SqlInfo(func(i, j *util.ProcessInfo) bool {
+func (record *memoryUsageAlarm) getTop10SqlInfoByCostTime(pinfo []*util.ProcessInfo) strings.Builder {
+	return record.getTop10SqlInfo(func(i, j *util.ProcessInfo) bool {
 		return i.Time.Before(j.Time)
-	}, pinfo, f)
+	}, pinfo)
 }
 
 func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager, recordDir string) error {
@@ -308,12 +324,7 @@ func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager, recordDir stri
 	if _, err = f.WriteString(getRelevantSystemVariableBuf()); err != nil {
 		logutil.BgLogger().Error("write oom record file fail", zap.Error(err))
 	}
-
-	_, err = f.WriteString("The 10 SQLs with the most memory usage for OOM analysis\n")
-	record.printTop10SqlInfoByMemoryUsage(pinfo, f)
-
-	_, err = f.WriteString("The 10 SQLs with the most time usage for OOM analysis\n")
-	record.printTop10SqlInfoByCostTime(pinfo, f)
+	record.printTop10SqlInfo(pinfo, f)
 	return nil
 }
 
