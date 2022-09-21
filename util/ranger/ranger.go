@@ -113,13 +113,9 @@ func convertPoints(sctx sessionctx.Context, rangePoints []*point, tp *types.Fiel
 }
 
 // estimateMemUsageForPoints2Ranges estimates the memory usage of ranges converted from points.
-func estimateMemUsageForPoints2Ranges(rangePoints []*point) (sum int64) {
+func estimateMemUsageForPoints2Ranges(rangePoints []*point) int64 {
 	// 16 is the size of Range.Collators
-	sum = (EmptyRangeSize + 16) * int64(len(rangePoints)) / 2
-	for _, pt := range rangePoints {
-		sum += pt.value.MemUsage()
-	}
-	return
+	return (EmptyRangeSize+16)*int64(len(rangePoints))/2 + getPointsTotalDatumSize(rangePoints)
 }
 
 // points2Ranges build index ranges from range points.
@@ -236,23 +232,32 @@ func convertPoint(sctx sessionctx.Context, point *point, tp *types.FieldType) (*
 	return npoint, nil
 }
 
+func getRangesTotalDatumSize(ranges Ranges) (sum int64) {
+	for _, ran := range ranges {
+		for _, val := range ran.LowVal {
+			sum += val.MemUsage()
+		}
+		for _, val := range ran.HighVal {
+			sum += val.MemUsage()
+		}
+	}
+	return
+}
+
+func getPointsTotalDatumSize(points []*point) (sum int64) {
+	for _, pt := range points {
+		sum += pt.value.MemUsage()
+	}
+	return
+}
+
 // estimateMemUsageForAppendPoints2Ranges estimates the memory usage of results of appending points to ranges.
 func estimateMemUsageForAppendPoints2Ranges(origin Ranges, rangePoints []*point) int64 {
 	if len(origin) == 0 || len(rangePoints) == 0 {
 		return 0
 	}
-	var originDatumSize, pointDatumSize int64
-	for _, ran := range origin {
-		for _, val := range ran.LowVal {
-			originDatumSize += val.MemUsage()
-		}
-		for _, val := range ran.HighVal {
-			originDatumSize += val.MemUsage()
-		}
-	}
-	for _, pt := range rangePoints {
-		pointDatumSize += pt.value.MemUsage()
-	}
+	originDatumSize := getRangesTotalDatumSize(origin)
+	pointDatumSize := getPointsTotalDatumSize(rangePoints)
 	len1, len2 := int64(len(origin)), int64(len(rangePoints))/2
 	// (int64(len(origin[0].LowVal))+1)*16 is the size of Range.Collators.
 	return (EmptyRangeSize+(int64(len(origin[0].LowVal))+1)*16)*len1*len2 + originDatumSize*len2 + pointDatumSize*len1
@@ -325,20 +330,8 @@ func estimateMemUsageForAppendRanges2PointRanges(pointRanges Ranges, ranges Rang
 	if len1 == 0 || len2 == 0 {
 		return 0
 	}
-	getDatumSize := func(rs Ranges) int64 {
-		var sum int64
-		for _, ran := range rs {
-			for _, val := range ran.LowVal {
-				sum += val.MemUsage()
-			}
-			for _, val := range ran.HighVal {
-				sum += val.MemUsage()
-			}
-		}
-		return sum
-	}
 	collatorSize := (int64(len(pointRanges[0].LowVal)) + int64(len(ranges[0].LowVal))) * 16
-	return (EmptyRangeSize+collatorSize)*len1*len2 + getDatumSize(pointRanges)*len2 + getDatumSize(ranges)*len1
+	return (EmptyRangeSize+collatorSize)*len1*len2 + getRangesTotalDatumSize(pointRanges)*len2 + getRangesTotalDatumSize(ranges)*len1
 }
 
 // appendRanges2PointRanges appends additional ranges to point ranges.
