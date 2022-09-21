@@ -5348,12 +5348,9 @@ func (s *testIntegrationSuite) TestDNFCondSelectivityWithConst(c *C) {
 	testKit.MustExec("drop table if exists t1")
 }
 
-func TestIssue33175(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
+func (s *testIntegrationSuite) TestIssue33175(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-
 	tk.MustExec("create table t (id bigint(45) unsigned not null, c varchar(20), primary key(id));")
 	tk.MustExec("insert into t values (9734095886065816707, 'a'), (10353107668348738101, 'b'), (0, 'c');")
 	tk.MustExec("begin")
@@ -5361,21 +5358,8 @@ func TestIssue33175(t *testing.T) {
 	tk.MustQuery("select max(id) from t;").Check(testkit.Rows("10353107668348738101"))
 	tk.MustExec("rollback")
 
-	tk.MustExec("alter table t cache")
-	for {
-		tk.MustQuery("select max(id) from t;").Check(testkit.Rows("10353107668348738101"))
-		if tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache {
-			break
-		}
-	}
-
-	// // With subquery, like the original issue case.
-	for {
-		tk.MustQuery("select * from t where id > (select  max(id) from t where t.id > 0);").Check(testkit.Rows())
-		if tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache {
-			break
-		}
-	}
+	// With subquery, like the original issue case.
+	tk.MustQuery("select * from t where id > (select  max(id) from t where t.id > 0);").Check(testkit.Rows())
 
 	// Test order by desc / asc.
 	tk.MustQuery("select id from t order by id desc;").Check(testkit.Rows(
@@ -5388,7 +5372,6 @@ func TestIssue33175(t *testing.T) {
 		"9734095886065816707",
 		"10353107668348738101"))
 
-	tk.MustExec("alter table t nocache")
 	tk.MustExec("drop table t")
 
 	// Cover more code that use union scan
@@ -5419,20 +5402,4 @@ func TestIssue33175(t *testing.T) {
 		}
 		tk.MustExec("drop table t")
 	}
-
-	// More and more test
-	tk.MustExec("create global temporary table `tmp1` (id bigint unsigned primary key) on commit delete rows;")
-	tk.MustExec("begin")
-	tk.MustExec("insert into tmp1 values (0),(1),(2),(65536),(9734095886065816707),(9734095886065816708);")
-	tk.MustQuery("select * from tmp1 where id <= 65534 or (id > 65535 and id < 9734095886065816700) or id >= 9734095886065816707 order by id desc;").Check(testkit.Rows(
-		"9734095886065816708", "9734095886065816707", "65536", "2", "1", "0"))
-
-	tk.MustQuery("select * from tmp1 where id <= 65534 or (id > 65535 and id < 9734095886065816700) or id >= 9734095886065816707 order by id asc;").Check(testkit.Rows(
-		"0", "1", "2", "65536", "9734095886065816707", "9734095886065816708"))
-
-	tk.MustExec("create global temporary table `tmp2` (id bigint primary key) on commit delete rows;")
-	tk.MustExec("begin")
-	tk.MustExec("insert into tmp2 values(-2),(-1),(0),(1),(2);")
-	tk.MustQuery("select * from tmp2 where id <= -1 or id > 0 order by id desc;").Check(testkit.Rows("2", "1", "-1", "-2"))
-	tk.MustQuery("select * from tmp2 where id <= -1 or id > 0 order by id asc;").Check(testkit.Rows("-2", "-1", "1", "2"))
 }
