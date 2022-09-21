@@ -42,6 +42,10 @@ func (smqh *Handle) SetSessionManager(sm util.SessionManager) *Handle {
 }
 
 // Run starts a server memory limit checker goroutine at the start time of the server.
+// This goroutine will obtain the `heapInuse` of Golang runtime periodically and compare it with `tidb_server_memory_limit`.
+// When `heapInuse` is greater than `tidb_server_memory_limit`, it will set the `needKill` flag of `MemUsageTop1Tracker`.
+// When the corresponding SQL try to acquire more memory(next Tracker.Consume() call), it will trigger panic and exit.
+// When this goroutine detects the `needKill` SQL has exited successfully, it will immediately trigger runtime.GC() to release memory resources.
 func (smqh *Handle) Run() {
 	tickInterval := time.Millisecond * time.Duration(100)
 	ticker := time.NewTicker(tickInterval)
@@ -88,7 +92,7 @@ func killSessIfNeeded(s *sessionToBeKilled, bt uint64, sm util.SessionManager) {
 				s.sessionID = t.SessionID
 				s.sqlStartTime = info.Time
 				s.isKilling = true
-				t.IsKilled.Store(true)
+				t.NeedKill.Store(true)
 			}
 		}
 	}

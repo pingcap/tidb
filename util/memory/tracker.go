@@ -82,7 +82,7 @@ type Tracker struct {
 	bytesReleased       int64            // Released bytes.
 	maxConsumed         atomicutil.Int64 // max number of bytes consumed during execution.
 	SessionID           uint64           // SessionID indicates the sessionID the tracker is bound.
-	IsKilled            atomic.Bool      // IsKilled indicates whether this session is killed because OOM
+	NeedKill            atomic.Bool      // NeedKill indicates whether this session need kill because OOM
 	IsRootTrackerOfSess bool             // IsRootTrackerOfSess indicates whether this tracker is bound for session
 	isGlobal            bool             // isGlobal indicates whether this tracker is global tracker
 }
@@ -407,7 +407,7 @@ func (t *Tracker) Consume(bs int64) {
 
 	if bs > 0 && sessionRootTracker != nil {
 		// Kill the Top1 session
-		if sessionRootTracker.IsKilled.Load() {
+		if sessionRootTracker.NeedKill.Load() {
 			tryAction(&sessionRootTracker.actionMuForHardLimit, sessionRootTracker)
 		}
 		// Update the Top1 session

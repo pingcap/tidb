@@ -6034,9 +6034,9 @@ func TestGlobalMemoryControl(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 
 	// Kill Top1
-	require.False(t, tracker1.IsKilled.Load())
-	require.False(t, tracker2.IsKilled.Load())
-	require.True(t, tracker3.IsKilled.Load())
+	require.False(t, tracker1.NeedKill.Load())
+	require.False(t, tracker2.NeedKill.Load())
+	require.True(t, tracker3.NeedKill.Load())
 	require.Equal(t, memory.MemUsageTop1Tracker.Load(), tracker3)
 	util.WithRecovery( // Next Consume() will panic and cancel the SQL
 		func() {
@@ -6046,7 +6046,7 @@ func TestGlobalMemoryControl(t *testing.T) {
 		})
 	tracker2.Consume(300 << 20) // Sum 500MB, Not Panic, Waiting t3 cancel finish.
 	time.Sleep(500 * time.Millisecond)
-	require.False(t, tracker2.IsKilled.Load())
+	require.False(t, tracker2.NeedKill.Load())
 	// Kill Finished
 	tracker3.Consume(-(300 << 20))
 	// Simulated SQL is Canceled and the time is updated
