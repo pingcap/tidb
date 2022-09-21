@@ -154,7 +154,7 @@ In the course of development, this roadmap is subject to change based on user ne
     <td>September 2022</td>
   </tr>
   <tr>
-    <td>Backup and restore based on AWS EBS or GCP Persistent Disk snapshot</td>
+    <td>Backup and restore based on AWS EBS or GCP persistent disk snapshots</td>
     <td>BR provides a complete version of EBS snapshot-based backup and restore.</td>
     <td>December 2022</td>
   </tr>
