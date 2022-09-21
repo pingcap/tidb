@@ -235,8 +235,10 @@ func (p *PointGetPlan) MemoryUsage() (sum int64) {
 	}
 
 	sum = emptyPointGetPlanSize + p.basePlan.MemoryUsage() + int64(len(p.dbName)) + int64(cap(p.IdxColLens))*size.SizeOfInt +
-		int64(cap(p.IndexValues)+cap(p.IndexConstants)+cap(p.ColsFieldType)+cap(p.IdxCols)+cap(p.outputNames)+
-			cap(p.Columns)+cap(p.accessCols))*size.SizeOfPointer
+		int64(cap(p.IndexConstants)+cap(p.ColsFieldType)+cap(p.IdxCols)+cap(p.outputNames)+cap(p.Columns)+cap(p.accessCols))*size.SizeOfPointer
+	if p.schema != nil {
+		sum += p.schema.MemoryUsage()
+	}
 	if p.PartitionInfo != nil {
 		sum += p.PartitionInfo.MemoryUsage()
 	}
@@ -434,9 +436,8 @@ func (p *BatchPointGetPlan) MemoryUsage() (sum int64) {
 	}
 
 	sum = emptyBatchPointGetPlanSize + p.baseSchemaProducer.MemoryUsage() + int64(len(p.dbName)) +
-		int64(cap(p.IdxColLens))*size.SizeOfInt + int64(cap(p.PartitionInfos)+cap(p.HandleParams)+cap(p.IndexColTypes)+
-		cap(p.IdxCols)+cap(p.Columns)+cap(p.accessCols))*size.SizeOfPointer
-
+		int64(cap(p.IdxColLens))*size.SizeOfInt + int64(cap(p.Handles))*size.SizeOfInterface +
+		int64(cap(p.PartitionInfos)+cap(p.HandleParams)+cap(p.IndexColTypes)+cap(p.IdxCols)+cap(p.Columns)+cap(p.accessCols))*size.SizeOfPointer
 	if p.HandleType != nil {
 		sum += p.HandleType.MemoryUsage()
 	}
