@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"net" //nolint:goimports
-
 	// #nosec
 	// register HTTP handler for /debug/pprof
 	"net/http"
