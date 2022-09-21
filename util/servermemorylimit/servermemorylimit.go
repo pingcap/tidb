@@ -87,7 +87,7 @@ func killSessIfNeeded(s *sessionToBeKilled, bt uint64, sm util.SessionManager) {
 	runtime.ReadMemStats(instanceStats)
 	if instanceStats.HeapInuse > bt {
 		t := memory.MemUsageTop1Tracker.Load()
-		if t != nil && uint64(t.BytesConsumed()) > memory.ServerMemoryLimitSessMinSize.Load() {
+		if t != nil {
 			if info, ok := sm.GetProcessInfo(t.SessionID); ok {
 				s.sessionID = t.SessionID
 				s.sqlStartTime = info.Time
