@@ -142,7 +142,7 @@ func closeAll(objs ...Closeable) error {
 }
 
 // rebuildIndexRanges will be called if there's correlated column in access conditions. We will rebuild the range
-// by substitute correlated column with the constant.
+// by substituting correlated column with the constant.
 func rebuildIndexRanges(ctx sessionctx.Context, is *plannercore.PhysicalIndexScan, idxCols []*expression.Column, colLens []int) (ranges []*ranger.Range, err error) {
 	access := make([]expression.Expression, 0, len(is.AccessCondition))
 	for _, cond := range is.AccessCondition {
@@ -152,7 +152,8 @@ func rebuildIndexRanges(ctx sessionctx.Context, is *plannercore.PhysicalIndexSca
 		}
 		access = append(access, newCond)
 	}
-	ranges, _, err = ranger.DetachSimpleCondAndBuildRangeForIndex(ctx, access, idxCols, colLens)
+	// All of access conditions must be used to build ranges, so we don't limit range memory usage.
+	ranges, _, err = ranger.DetachSimpleCondAndBuildRangeForIndex(ctx, access, idxCols, colLens, 0)
 	return ranges, err
 }
 
