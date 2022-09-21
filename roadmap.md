@@ -2,9 +2,9 @@
 
 This document shows the roadmap for TiDB development from September 2022 to September 2023.
 
-Note that the roadmap is subject to change based on user needs and feedback. 
+Note that the roadmap is subject to change based on user needs and feedback.
 
-It brings you what's coming in the 1-year future, so you can see the new features or improvements in advance, follow the progress, learn about the key milestones on the way, and give feedback as the development work goes on.
+This roadmap brings you what's coming in the 1-year future, so you can see the new features or improvements in advance, follow the progress, learn about the key milestones on the way, and give feedback as the development work goes on.
 
 ## TiDB kernel
 
@@ -20,18 +20,18 @@ It brings you what's coming in the 1-year future, so you can see the new feature
 <tbody>
   <tr>
     <td rowspan="2">Support JSON</td>
-    <td>Support JSON function</td>
+    <td>Support JSON function.</td>
     <td>In business scenarios that require flexible schema definitions (such as SaaS, Web3, and gaming), the application can use JSON to store information for ODS, transaction indicators, commodities, game characters, and props.</td>
     <td>September 2022</td>
   </tr>
   <tr>
-    <td><ul><li>Support expression indexes</li><li>Support generated columns</li></ul></td>
+    <td><ul><li>Support expression indexes.</li><li>Support generated columns.</li></ul></td>
     <td>Provide query acceleration for specific field indexes in JSON scenarios.</td>
     <td>October 2022 </td>
   </tr>
   <tr>
     <td>Flashback</td>
-    <td>Support cluster-level flashback</td>
+    <td>Support cluster-level flashback.</td>
     <td>In game rollback scenarios, the flashback can be used to achieve a fast rollback of the current cluster. This solves the common problems in the gaming industry such as version errors and bugs.</td>
     <td>November 2022</td>
   </tr>
@@ -130,7 +130,7 @@ It brings you what's coming in the 1-year future, so you can see the new feature
 <tbody>
   <tr>
     <td>SQL tuning for HTAP workloads</td>
-    <td><ul><li>Provide SQL execution information from the perspective of applications</li><li>Provide suggestions on optimizing SQL for TiFlash and TiKV in HTAP workloads</li></ul></td>
+    <td><ul><li>Provide SQL execution information from the perspective of applications.</li><li>Provide suggestions on optimizing SQL for TiFlash and TiKV in HTAP workloads.</li></ul></td>
     <td><ul><li>Provide a dashboard that displays a SQL execution overview from the perspective of applications in HTAP workloads.</li><li>For one or several HTAP scenarios, provide suggestions on SQL optimization.</li></ul></td>
     <td>October 2022</td>
   </tr>
@@ -168,7 +168,7 @@ It brings you what's coming in the 1-year future, so you can see the new feature
   </tr>
   <tr>
     <td rowspan="2">Data replication to downstream systems via TiCDC</td>
-    <td>Reduce TiCDC replication latency in planned offline scenarios</td>
+    <td>Reduce TiCDC replication latency in planned offline scenarios.</td>
     <td>When TiKV, TiDB, PD, or TiCDC nodes are offline in a planned maintenance window, the replication latency of TiCDC can be reduced to less than 10 seconds.</td>
     <td>October 2022</td>
   </tr>
