@@ -40,6 +40,8 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func init() {
@@ -95,6 +97,10 @@ func (c *testClient) GetStore(ctx context.Context, storeID uint64) (*metapb.Stor
 		return nil, errors.Errorf("store not found")
 	}
 	return store, nil
+}
+
+func (c *testClient) SplitAndScatterOverKeys(ctx context.Context, keys [][]byte) ([]uint64, error) {
+	return nil, status.Error(codes.Unimplemented, "meow?")
 }
 
 func (c *testClient) GetRegion(ctx context.Context, key []byte) (*split.RegionInfo, error) {
