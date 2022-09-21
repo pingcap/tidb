@@ -724,7 +724,7 @@ func canUseIngest(w *worker) bool {
 
 func IngestJobsClear(ctx sessionctx.Context) bool {
 	sess := session{ctx}
-	template := "select job_meta from mysql.tidb_ddl_job where reorg and (type = %d or type = %d);"
+	template := "select job_meta from mysql.tidb_ddl_job where reorg and (type = %d or type = %d) and processing;"
 	sql := fmt.Sprintf(template, model.ActionAddIndex, model.ActionAddPrimaryKey)
 	rows, err := sess.execute(context.Background(), sql, "")
 	if err != nil {
