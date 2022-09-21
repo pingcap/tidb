@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/util/versioninfo"
 	tikvcfg "github.com/tikv/client-go/v2/config"
 	tracing "github.com/uber/jaeger-client-go/config"
-	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -316,110 +315,11 @@ func encodeDefTempStorageDir(tempDir string, host, statusHost string, port, stat
 	return filepath.Join(tempDir, osUID+"_tidb", dirName, "tmp-storage")
 }
 
-// nullableBool defaults unset bool options to unset instead of false, which enables us to know if the user has set 2
-// conflict options at the same time.
-type nullableBool struct {
-	IsValid bool
-	IsTrue  bool
-}
-
 var (
 	nbUnset = nullableBool{false, false}
 	nbFalse = nullableBool{true, false}
 	nbTrue  = nullableBool{true, true}
 )
-
-func (b *nullableBool) toBool() bool {
-	return b.IsValid && b.IsTrue
-}
-
-func (b nullableBool) MarshalJSON() ([]byte, error) {
-	switch b {
-	case nbTrue:
-		return json.Marshal(true)
-	case nbFalse:
-		return json.Marshal(false)
-	default:
-		return json.Marshal(nil)
-	}
-}
-
-func (b *nullableBool) UnmarshalText(text []byte) error {
-	str := string(text)
-	switch str {
-	case "", "null":
-		*b = nbUnset
-		return nil
-	case "true":
-		*b = nbTrue
-	case "false":
-		*b = nbFalse
-	default:
-		*b = nbUnset
-		return errors.New("Invalid value for bool type: " + str)
-	}
-	return nil
-}
-
-func (b nullableBool) MarshalText() ([]byte, error) {
-	if !b.IsValid {
-		return []byte(""), nil
-	}
-	if b.IsTrue {
-		return []byte("true"), nil
-	}
-	return []byte("false"), nil
-}
-
-func (b *nullableBool) UnmarshalJSON(data []byte) error {
-	var err error
-	var v interface{}
-	if err = json.Unmarshal(data, &v); err != nil {
-		return err
-	}
-	switch raw := v.(type) {
-	case bool:
-		*b = nullableBool{true, raw}
-	default:
-		*b = nbUnset
-	}
-	return err
-}
-
-// AtomicBool is a helper type for atomic operations on a boolean value.
-type AtomicBool struct {
-	atomicutil.Bool
-}
-
-// NewAtomicBool creates an AtomicBool.
-func NewAtomicBool(v bool) *AtomicBool {
-	return &AtomicBool{*atomicutil.NewBool(v)}
-}
-
-// MarshalText implements the encoding.TextMarshaler interface.
-func (b AtomicBool) MarshalText() ([]byte, error) {
-	if b.Load() {
-		return []byte("true"), nil
-	}
-	return []byte("false"), nil
-}
-
-// UnmarshalText implements the encoding.TextUnmarshaler interface.
-func (b *AtomicBool) UnmarshalText(text []byte) error {
-	str := string(text)
-	switch str {
-	case "", "null":
-		*b = AtomicBool{*atomicutil.NewBool(false)}
-	case "true":
-		*b = AtomicBool{*atomicutil.NewBool(true)}
-	case "false":
-		*b = AtomicBool{*atomicutil.NewBool(false)}
-	default:
-		*b = AtomicBool{*atomicutil.NewBool(false)}
-		return errors.New("Invalid value for bool type: " + str)
-	}
-	return nil
-}
 
 // LogBackup is the config for log backup service.
 // For now, it includes the embed advancer.

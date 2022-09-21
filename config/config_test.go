@@ -59,6 +59,31 @@ func TestAtomicBoolUnmarshal(t *testing.T) {
 	require.EqualError(t, err, "Invalid value for bool type: 1")
 }
 
+func TestAtomicStringUnmarshal(t *testing.T) {
+	type data struct {
+		As AtomicString `toml:"as"`
+	}
+	var d data
+	var firstBuffer bytes.Buffer
+	_, err := toml.Decode("as=\"a_string_value\"", &d)
+	require.NoError(t, err)
+	require.Equal(t, "a_string_value", d.As.Load())
+	err = toml.NewEncoder(&firstBuffer).Encode(d)
+	require.NoError(t, err)
+	require.Equal(t, "as = \"a_string_value\"\n", firstBuffer.String())
+	firstBuffer.Reset()
+
+	_, err = toml.Decode("as=\"\"", &d)
+	require.NoError(t, err)
+	require.Equal(t, "", d.As.Load())
+	err = toml.NewEncoder(&firstBuffer).Encode(d)
+	require.NoError(t, err)
+	require.Equal(t, "as = \"\"\n", firstBuffer.String())
+
+	_, err = toml.Decode("as = ", &d)
+	require.Error(t, err)
+}
+
 func TestNullableBoolUnmarshal(t *testing.T) {
 	var nb = nullableBool{false, false}
 	data, err := json.Marshal(nb)
