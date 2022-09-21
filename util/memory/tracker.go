@@ -370,21 +370,21 @@ func (t *Tracker) Consume(bs int64) {
 }
 
 func tryAction(mu *actionMu, tracker *Tracker) {
-	actionOne := func(nowAction ActionOnExceed, tracker *Tracker) ActionOnExceed {
-		for nowAction != nil && nowAction.IsFinished() {
-			nowAction = nowAction.GetFallback()
+	actionOne := func(currentAction ActionOnExceed, tracker *Tracker) ActionOnExceed {
+		for currentAction != nil && currentAction.IsFinished() {
+			currentAction = currentAction.GetFallback()
 		}
-		if nowAction != nil {
-			nowAction.Action(tracker)
+		if currentAction != nil {
+			currentAction.Action(tracker)
 		}
-		return nowAction
+		return currentAction
 	}
 
-	actionAll := func(nowAction ActionOnExceed, tracker *Tracker) ActionOnExceed {
-		nowAction = actionOne(nowAction, tracker)
-		firstAction := nowAction
-		for ; nowAction != nil; nowAction = nowAction.GetFallback() {
-			nowAction.SetFallback(actionOne(nowAction.GetFallback(), tracker))
+	actionAll := func(currentAction ActionOnExceed, tracker *Tracker) ActionOnExceed {
+		currentAction = actionOne(currentAction, tracker)
+		firstAction := currentAction
+		for ; currentAction != nil; currentAction = currentAction.GetFallback() {
+			currentAction.SetFallback(actionOne(currentAction.GetFallback(), tracker))
 		}
 		return firstAction
 	}
