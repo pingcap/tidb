@@ -406,7 +406,7 @@ type GlobalStats struct {
 func (h *Handle) MergePartitionStats2GlobalStatsByTableID(sc sessionctx.Context,
 	opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema,
 	physicalID int64, isIndex int, histIDs []int64,
-	globalPartitionStats map[int64]*statistics.Table) (globalStats *GlobalStats, err error) {
+	tablePartitionStats map[int64]*statistics.Table) (globalStats *GlobalStats, err error) {
 	// get the partition table IDs
 	h.mu.Lock()
 	globalTable, ok := h.getTableByPhysicalID(is, physicalID)
@@ -416,7 +416,7 @@ func (h *Handle) MergePartitionStats2GlobalStatsByTableID(sc sessionctx.Context,
 		return
 	}
 	globalTableInfo := globalTable.Meta()
-	return h.mergePartitionStats2GlobalStats(sc, opts, is, globalTableInfo, isIndex, histIDs, globalPartitionStats)
+	return h.mergePartitionStats2GlobalStats(sc, opts, is, globalTableInfo, isIndex, histIDs, tablePartitionStats)
 }
 
 // GetTableAllPartitionStats return all partition stats of a table
@@ -521,13 +521,8 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 		if allPartitionStats != nil {
 			partitionStats, ok = allPartitionStats[partitionID]
 		}
-		// If pre-load partition stats isn't provided, then we load partition stats directly.
+		// If pre-load partition stats isn't provided, then we load partition stats directly and set it into allPartitionStats
 		if allPartitionStats == nil || partitionStats == nil || !ok {
-			failpoint.Inject("assertAnalyzeLoadStats", func(val failpoint.Value) {
-				if val.(bool) {
-					panic("manual analyze shouldn't load stats in mergePartitionStats2GlobalStats")
-				}
-			})
 			partitionStats, err = h.loadTablePartitionStats(tableInfo, partitionID)
 			if err != nil {
 				return

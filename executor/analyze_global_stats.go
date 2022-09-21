@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -52,12 +53,7 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, needGlobalStats boo
 	}
 	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
 	for tableID := range globalStatsTableIDs {
-		// pre-load partition stats for the specific table and provide to all globalStatsID which belongs to this table.
-		tableAllPartitionStats, err := statsHandle.GetTableAllPartitionStats(e.ctx.GetDomainInfoSchema().(infoschema.InfoSchema), tableID)
-		if err != nil {
-			logutil.BgLogger().Warn("load table all partition stats failed", zap.Error(err), zap.Int64("tableID", tableID))
-			tableAllPartitionStats = nil
-		}
+		tableAllPartitionStats := make(map[int64]*statistics.Table)
 		for globalStatsID, info := range globalStatsMap {
 			if globalStatsID.tableID != tableID {
 				continue

@@ -21,7 +21,6 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
@@ -338,21 +337,4 @@ func TestAnalyzePartitionTableForFloat(t *testing.T) {
 		tk.MustExec(sql)
 	}
 	tk.MustExec("analyze table t1")
-}
-
-func TestAnalyzePartitionTableLoading(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
-	tk.MustExec("use test")
-	tk.MustExec(`create table t1 (a int) partition by range (a) (
- partition p0 values less than (10),
- partition p1 values less than (20),
- partition p2 values less than (30),
- partition p3 values less than (40),
- partition p4 values less than MAXVALUE
- )`)
-	failpoint.Enable("github.com/pingcap/tidb/statistics/handle/assertAnalyzeLoadStats", `return(true)`)
-	tk.MustExec("analyze table t1")
-	failpoint.Disable("github.com/pingcap/tidb/statistics/handle/assertAnalyzeLoadStats")
 }
