@@ -1767,7 +1767,7 @@ func TestSetClusterConfig(t *testing.T) {
 		body, err := ioutil.ReadAll(req.Body)
 		require.NoError(t, err)
 		// The `raftstore.` prefix is stripped.
-		require.JSONEq(t, `{"server.snap-max-write-bytes-per-sec":"500MB"}`, string(body));
+		require.JSONEq(t, `{"server.snap-max-write-bytes-per-sec":"500MB"}`, string(body))
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(nil)}, nil
 	})
 	tk.MustExec("set config tiflash `raftstore-proxy.server.snap-max-write-bytes-per-sec`='500MB'")
