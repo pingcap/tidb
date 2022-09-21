@@ -101,6 +101,8 @@ func TestForeignKeyOnInsertChildTable(t *testing.T) {
 	tk.MustExec("set @@foreign_key_checks=1")
 	tk.MustExec("use test")
 
+	tk.MustExec("create table t_data (id int, a int, b int)")
+	tk.MustExec("insert into t_data (id, a, b) values (1, 1, 1), (2, 2, 2);")
 	for _, ca := range foreignKeyTestCase1 {
 		tk.MustExec("drop table if exists t2;")
 		tk.MustExec("drop table if exists t1;")
@@ -117,6 +119,10 @@ func TestForeignKeyOnInsertChildTable(t *testing.T) {
 		tk.MustGetDBError("insert into t2 (id, a, b) values (5, 1, 0);", plannercore.ErrNoReferencedRow2)
 		tk.MustGetDBError("insert into t2 (id, a, b) values (6, 0, 1);", plannercore.ErrNoReferencedRow2)
 		tk.MustGetDBError("insert into t2 (id, a, b) values (7, 2, 2);", plannercore.ErrNoReferencedRow2)
+		// Test insert from select.
+		tk.MustExec("delete from t2")
+		tk.MustExec("insert into t2 (id, a, b) select id, a, b from t_data where t_data.id=1")
+		tk.MustGetDBError("insert into t2 (id, a, b) select id, a, b from t_data where t_data.id=2", plannercore.ErrNoReferencedRow2)
 
 		// Test in txn
 		tk.MustExec("delete from t2")
