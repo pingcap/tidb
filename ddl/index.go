@@ -740,6 +740,7 @@ func IngestJobsNotExisted(ctx sessionctx.Context) bool {
 			logutil.BgLogger().Warn("cannot check ingest job", zap.Error(err))
 			return false
 		}
+		// Check whether this add index job is using lightning to do the backfill work.
 		if runJob.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
 			return false
 		}
