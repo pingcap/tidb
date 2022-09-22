@@ -1936,7 +1936,14 @@ func (cc *CTEClass) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = emptyCTEClassSize + cc.seedPartPhysicalPlan.MemoryUsage() + cc.recursivePartPhysicalPlan.MemoryUsage()
+	sum = emptyCTEClassSize
+	if cc.seedPartPhysicalPlan != nil {
+		sum += cc.seedPartPhysicalPlan.MemoryUsage()
+	}
+	if cc.recursivePartPhysicalPlan != nil {
+		sum += cc.recursivePartPhysicalPlan.MemoryUsage()
+	}
+
 	for _, expr := range cc.pushDownPredicates {
 		sum += expr.MemoryUsage()
 	}
