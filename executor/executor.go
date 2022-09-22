@@ -1682,32 +1682,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc.CTEStorageMap = map[int]*CTEStorages{}
 	sc.IsStaleness = false
 	sc.LockTableIDs = make(map[int64]struct{})
-<<<<<<< HEAD
-=======
-	sc.EnableOptimizeTrace = false
-	sc.OptimizeTracer = nil
-	sc.OptimizerCETrace = nil
-	sc.StatsLoadStatus = make(map[model.TableItemID]string)
-	sc.IsSyncStatsFailed = false
 	sc.IsExplainAnalyzeDML = false
-	// Firstly we assume that UseDynamicPruneMode can be enabled according session variable, then we will check other conditions
-	// in PlanBuilder.buildDataSource
-	if ctx.GetSessionVars().IsDynamicPartitionPruneEnabled() {
-		sc.UseDynamicPruneMode = true
-	} else {
-		sc.UseDynamicPruneMode = false
-	}
-
-	sc.SysdateIsNow = ctx.GetSessionVars().SysdateIsNow
-
-	if _, ok := s.(*ast.AnalyzeTableStmt); ok {
-		sc.InitMemTracker(memory.LabelForAnalyzeMemory, -1)
-		sc.MemTracker.AttachTo(GlobalAnalyzeMemoryTracker)
-	} else {
-		sc.InitMemTracker(memory.LabelForSQLText, vars.MemQuotaQuery)
-		sc.MemTracker.AttachToGlobalTracker(GlobalMemoryUsageTracker)
-	}
->>>>>>> b0e073478... execution: commit the transaction before responding explain analyze results to the client (#38044)
 
 	sc.InitMemTracker(memory.LabelForSQLText, vars.MemQuotaQuery)
 	sc.InitDiskTracker(memory.LabelForSQLText, -1)
