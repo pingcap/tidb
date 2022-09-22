@@ -647,6 +647,7 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 			} else {
 				buf[0] = jsonFlag
 				json := column.GetJSON(i)
+				b = b[:0]
 				b = json.HashValue(b)
 			}
 
