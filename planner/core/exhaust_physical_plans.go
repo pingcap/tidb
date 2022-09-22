@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"fmt"
 	"math"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -38,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
+	"github.com/pingcap/tidb/util/size"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
@@ -1272,6 +1274,34 @@ func (cwc *ColWithCmpFuncManager) String() string {
 	return buffer.String()
 }
 
+const emptyColWithCmpFuncManagerSize = int64(unsafe.Sizeof(ColWithCmpFuncManager{}))
+
+// MemoryUsage return the memory usage of ColWithCmpFuncManager
+func (cwc *ColWithCmpFuncManager) MemoryUsage() (sum int64) {
+	if cwc == nil {
+		return
+	}
+
+	sum = emptyColWithCmpFuncManagerSize + int64(cap(cwc.compareFuncs))*size.SizeOfFunc
+	if cwc.TargetCol != nil {
+		sum += cwc.TargetCol.MemoryUsage()
+	}
+	if cwc.affectedColSchema != nil {
+		sum += cwc.affectedColSchema.MemoryUsage()
+	}
+
+	for _, str := range cwc.OpType {
+		sum += int64(len(str))
+	}
+	for _, expr := range cwc.opArg {
+		sum += expr.MemoryUsage()
+	}
+	for _, cst := range cwc.TmpConstant {
+		sum += cst.MemoryUsage()
+	}
+	return
+}
+
 func (ijHelper *indexJoinBuildHelper) resetContextForIndex(innerKeys []*expression.Column, idxCols []*expression.Column, colLens []int, outerKeys []*expression.Column) {
 	tmpSchema := expression.NewSchema(innerKeys...)
 	ijHelper.curIdxOff2KeyOff = make([]int, len(idxCols))
@@ -1545,7 +1575,7 @@ func (ijHelper *indexJoinBuildHelper) updateBestChoice(ranges ranger.MutableRang
 	}
 	var innerNDV float64
 	if stats := ijHelper.innerPlan.statsInfo(); stats != nil && stats.StatsVersion != statistics.PseudoVersion {
-		innerNDV = getColsNDV(path.IdxCols[:usedColsLen], ijHelper.innerPlan.Schema(), stats)
+		innerNDV, _ = getColsNDVWithMatchedLen(path.IdxCols[:usedColsLen], ijHelper.innerPlan.Schema(), stats)
 	}
 	// We choose the index by the NDV of the used columns, the larger the better.
 	// If NDVs are same, we choose index which uses more columns.
@@ -1807,6 +1837,11 @@ func (p *LogicalJoin) shouldUseMPPBCJ() bool {
 	return checkChildFitBC(p.children[0]) || checkChildFitBC(p.children[1])
 }
 
+// canPushToCop checks if it can be pushed to some stores.
+func (p *LogicalJoin) canPushToCop(storeTp kv.StoreType) bool {
+	return len(p.NAEQConditions) == 0 && p.baseLogicalPlan.canPushToCop(storeTp)
+}
+
 // LogicalJoin can generates hash join, index join and sort merge join.
 // Firstly we check the hint, if hint is figured by user, we force to choose the corresponding physical plan.
 // If the hint is not matched, it will get other candidates.
@@ -1846,17 +1881,20 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]P
 		return joins, true, nil
 	}
 
-	mergeJoins := p.GetMergeJoin(prop, p.schema, p.Stats(), p.children[0].statsInfo(), p.children[1].statsInfo())
-	if (p.preferJoinType&preferMergeJoin) > 0 && len(mergeJoins) > 0 {
-		return mergeJoins, true, nil
-	}
-	joins = append(joins, mergeJoins...)
+	if !p.isNAAJ() {
+		// naaj refuse merge join and index join.
+		mergeJoins := p.GetMergeJoin(prop, p.schema, p.Stats(), p.children[0].statsInfo(), p.children[1].statsInfo())
+		if (p.preferJoinType&preferMergeJoin) > 0 && len(mergeJoins) > 0 {
+			return mergeJoins, true, nil
+		}
+		joins = append(joins, mergeJoins...)
 
-	indexJoins, forced := p.tryToGetIndexJoin(prop)
-	if forced {
-		return indexJoins, true, nil
+		indexJoins, forced := p.tryToGetIndexJoin(prop)
+		if forced {
+			return indexJoins, true, nil
+		}
+		joins = append(joins, indexJoins...)
 	}
-	joins = append(joins, indexJoins...)
 
 	hashJoins, forced := p.getHashJoins(prop)
 	if forced && len(hashJoins) > 0 {
@@ -1940,6 +1978,11 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 		return nil
 	}
 	lkeys, rkeys, _, _ := p.GetJoinKeys()
+	lNAkeys, rNAKeys := p.GetNAJoinKeys()
+	if len(lNAkeys) > 0 || len(rNAKeys) > 0 {
+		return nil
+	}
+	// todo: mpp na-keys.
 	// check match property
 	baseJoin := basePhysicalJoin{
 		JoinType:        p.JoinType,
@@ -1949,6 +1992,8 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 		DefaultValues:   p.DefaultValues,
 		LeftJoinKeys:    lkeys,
 		RightJoinKeys:   rkeys,
+		LeftNAJoinKeys:  lNAkeys,
+		RightNAJoinKeys: rNAKeys,
 	}
 	// It indicates which side is the build side.
 	preferredBuildIndex := 0
@@ -2027,12 +2072,13 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 		childrenProps[1] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.HashType, MPPPartitionCols: rPartitionKeys, CanAddEnforcer: true, RejectSort: true}
 	}
 	join := PhysicalHashJoin{
-		basePhysicalJoin: baseJoin,
-		Concurrency:      uint(p.ctx.GetSessionVars().CopTiFlashConcurrencyFactor),
-		EqualConditions:  p.EqualConditions,
-		storeTp:          kv.TiFlash,
-		mppShuffleJoin:   !useBCJ,
-		// Mpp Join has quite heavy cost. Even limit might not suspend it in time, so we dont scale the count.
+		basePhysicalJoin:  baseJoin,
+		Concurrency:       uint(p.ctx.GetSessionVars().CopTiFlashConcurrencyFactor),
+		EqualConditions:   p.EqualConditions,
+		NAEqualConditions: p.NAEQConditions,
+		storeTp:           kv.TiFlash,
+		mppShuffleJoin:    !useBCJ,
+		// Mpp Join has quite heavy cost. Even limit might not suspend it in time, so we don't scale the count.
 	}.Init(p.ctx, p.stats, p.blockOffset, childrenProps...)
 	join.SetSchema(p.schema)
 	return []PhysicalPlan{join}
@@ -2215,7 +2261,7 @@ func (la *LogicalApply) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([
 	}
 	cacheHitRatio := 0.0
 	if la.stats.RowCount != 0 {
-		ndv := getColsNDV(columns, la.schema, la.stats)
+		ndv, _ := getColsNDVWithMatchedLen(columns, la.schema, la.stats)
 		// for example, if there are 100 rows and the number of distinct values of these correlated columns
 		// are 70, then we can assume 30 rows can hit the cache so the cache hit ratio is 1 - (70/100) = 0.3
 		cacheHitRatio = 1 - (ndv / la.stats.RowCount)
