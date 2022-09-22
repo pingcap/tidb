@@ -1667,7 +1667,7 @@ func (c *fromUnixTimeFunctionClass) getFunction(ctx sessionctx.Context, args []E
 		if ok {
 			//used to adjust FromUnixTime precision #Fixbug35184
 			if x.FuncName.L == ast.Cast {
-				if x.RetType.GetDecimal() == 0 {
+				if x.RetType.GetDecimal() == 0 && (x.RetType.GetType() == mysql.TypeNewDecimal) {
 					x.RetType.SetDecimal(6)
 					fieldLen := mathutil.Min(x.RetType.GetFlen()+6, mysql.MaxDecimalWidth)
 					x.RetType.SetFlen(fieldLen)
