@@ -29,6 +29,7 @@ We need to implement the following three functions to control the memory usage o
 ### Kill the SQL with the most memory usage
 
 New variables:
+
 1. Global variable `MemUsageTop1Tracker atomic.Pointer[Tracker]`: Indicates the Tracker with the largest memory usage.
 2. The flag `NeedKill atomic.Bool` in the structure `Tracker`: Indicates whether the SQL for the current Tracker needs to be Killed.
 3. `SessionID int64` in Structure Tracker: Indicates the Session ID corresponding to the current Tracker.
@@ -36,14 +37,14 @@ New variables:
 Implements:
 
 #### How to get the current TiDB memory usage Top 1
-When Tracker Consume, judge the following logic. If all are satisfied, update `MemUsageTop1Tracker`.
+When Tracker Consume, check the following logic. If all are satisfied, update `MemUsageTop1Tracker`.
 1. Is it a Session-level Tracker?
-2. Whether the flag `NeedKill` is false, that is, the current SQL has not been Canceled
-3. Whether the memory usage exceeds the threshold `tidb_server_memory_limit_sess_min_size`(default 128MB, can be dynamically adjusted) of the lowest entry Top 1 
-4. Is the memory usage of the current Tracker greater than the current Top 1
+2. Whether the flag `NeedKill` is false, to avoid cancel the current SQL twice
+3. Whether the memory usage exceeds the threshold `tidb_server_memory_limit_sess_min_size`(default 128MB, can be dynamically adjusted), can be candidate of the `MemUsageTop1Tracker` 
+4. Is the memory usage of the current Tracker greater than the current `MemUsageTop1Tracker`
 
 #### How to Cancel the current top 1 memory usage and recycle memory usage in time
-1. Create a coroutine that calls Golang's `ReadMemStat` interface in a 200 ms cycle. (Get the memory usage of the current TiDB instance)
+1. Create a coroutine that calls Golang's `ReadMemStat` interface in a 100 ms cycle. (Get the memory usage of the current TiDB instance)
 2. If the heapInUse of the current instance is greater than `tidb_server_memory_limit`, set `MemUsageTop1Tracker`'s `NeedKill` flag to true. (Sends a Kill signal)
 3. When the SQL call to Tracker Consume, check its own `NeedKill` flag. If it is true, trigger Panic and exit. (terminates the execution of SQL)
 4. Get the SessionID from Tracker and continuously query its status, waiting for it to complete Cancel. When SQL successfully Cancels, explicitly trigger Golang GC to release memory. (Wait for SQL Cancel completely and release memory)
@@ -52,7 +53,7 @@ When Tracker Consume, judge the following logic. If all are satisfied, update `M
 
 Design your own control logic according to the idea of uber-go-gc-tuner:
 1. Use the Go1.19 `SetMemoryLimit` feature to set the soft limit to `tidb_server_memory_limit` * `tidb_server_memory_limit_gc_trigger` to ensure that GC can be triggered after reaching a certain threshold
-2. After each GC, determine whether the GC is caused by memory_limit. If it is caused by this, temporarily set SetMemoryLimit to infinite, and then set it back to the specified threshold after 1 minute. In this way, the problem of frequent GC caused by heapInUse being larger than the soft limit can be avoided.
+2. After each GC, determine whether the GC is caused by memory limit. If it is caused by this, temporarily set SetMemoryLimit to infinite, and then set it back to the specified threshold after 1 minute. In this way, the problem of frequent GC caused by heapInUse being larger than the soft limit can be avoided.
 
 ### Introduce some memory tables
 
