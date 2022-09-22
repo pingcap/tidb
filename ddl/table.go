@@ -1049,7 +1049,7 @@ func checkAndRenameTables(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo
 		if valStr, ok := val.(string); ok {
 			if tableName.L == valStr {
 				job.State = model.JobStateCancelled
-				failpoint.Return(ver, tblInfo, errors.New("occur an error after renaming table"))
+				failpoint.Return(ver, errors.New("occur an error after renaming table"))
 			}
 		}
 	})
