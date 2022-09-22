@@ -60,9 +60,9 @@ In the course of development, this roadmap is subject to change based on user ne
     <td>Scenarios with fast business growth and a large amount of data</td>
   </tr>
   <tr>
-    <td>DDL parallel framework</td>
-    <td>Implement a single DDL parallel execution framework for DDL acceleration.</td>
-    <td>Accelerate DDL in scenarios such as creating indexes for large tables, modifying a column's default value, and modifying a column type.</td>
+    <td>Distributed DDL parallel framework</td>
+    <td>Implement a distributed parallel DDL execution framework, so that DDL tasks executed by only one TiDB Owner node can be coordinated and executed by all TiDB nodes in the cluster. Improve the execution speed of DDL tasks and cluster resource utilization.</td>
+    <td>By converting the execution of DDL tasks to distributed mode, this feature accelerates the execution speed of DDL tasks and improves the utilization of computing resources in the entire cluster. At present, DDL tasks that need to improve the speed include large table indexing and lossy column type modification tasks.</td>
   </tr>
   <tr>
     <td>Non-prepared Plan Cache</td>
