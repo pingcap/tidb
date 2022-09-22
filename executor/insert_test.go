@@ -356,13 +356,8 @@ func (s *testSuite3) TestUpdateDuplicateKey(c *C) {
 	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1-2-4' for key 'PRIMARY'")
 }
 
-<<<<<<< HEAD
-func (s *testSuite3) TestInsertWrongValueForField(c *C) {
+func (s *testSuite3) TestIssue37187(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-=======
-func TestIssue37187(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
 	tk.MustExec("drop table if exists a, b")
@@ -370,13 +365,11 @@ func TestIssue37187(t *testing.T) {
 	tk.MustExec("create table t2 (c int(11) ,d varchar(100) ,primary key (c));")
 	tk.MustExec("prepare in1 from 'insert into t1 (a,b) select c,null from t2 t on duplicate key update b=t.d';")
 	err := tk.ExecToErr("execute in1;")
-	require.NoError(t, err)
+	c.Assert(err, NotNil)
 }
 
-func TestInsertWrongValueForField(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
->>>>>>> d5b2c9b17... planner: fix panic when prepare and execute the insert on duplicate (#37924)
+func (s *testSuite3) TestInsertWrongValueForField(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists t1;`)
 	tk.MustExec(`create table t1(a bigint);`)
