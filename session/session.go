@@ -139,6 +139,7 @@ var (
 	telemetryTablePartitionCreateIntervalUsage  = metrics.TelemetryTablePartitionCreateIntervalPartitionsCnt
 	telemetryTablePartitionAddIntervalUsage     = metrics.TelemetryTablePartitionAddIntervalPartitionsCnt
 	telemetryTablePartitionDropIntervalUsage    = metrics.TelemetryTablePartitionDropIntervalPartitionsCnt
+	telemetryExchangePartitionUsage             = metrics.TelemetryExchangePartitionCnt
 
 	telemetryLockUserUsage          = metrics.TelemetryAccountLockCnt.WithLabelValues("lockUser")
 	telemetryUnlockUserUsage        = metrics.TelemetryAccountLockCnt.WithLabelValues("unlockUser")
@@ -807,6 +808,10 @@ func (s *session) commitTxnWithTemporaryData(ctx context.Context, txn kv.Transac
 	sessVars := s.sessionVars
 	txnTempTables := sessVars.TxnCtx.TemporaryTables
 	if len(txnTempTables) == 0 {
+		failpoint.Inject("mockSleepBeforeTxnCommit", func(v failpoint.Value) {
+			ms := v.(int)
+			time.Sleep(time.Millisecond * time.Duration(ms))
+		})
 		return txn.Commit(ctx)
 	}
 
@@ -2205,6 +2210,14 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	se.updateTelemetryMetric(s.(*executor.ExecStmt))
 	sessVars.TxnCtx.StatementCount++
 	if rs != nil {
+		if se.GetSessionVars().StmtCtx.IsExplainAnalyzeDML {
+			if !sessVars.InTxn() {
+				se.StmtCommit()
+				if err := se.CommitTxn(ctx); err != nil {
+					return nil, err
+				}
+			}
+		}
 		return &execStmtResult{
 			RecordSet: rs,
 			sql:       s,
@@ -3352,6 +3365,10 @@ func (s *session) updateTelemetryMetric(es *executor.ExecStmt) {
 		telemetryMultiSchemaChangeUsage.Inc()
 	}
 
+	if ti.UesExchangePartition {
+		telemetryExchangePartitionUsage.Inc()
+	}
+
 	if ti.PartitionTelemetry != nil {
 		if ti.PartitionTelemetry.UseTablePartition {
 			telemetryTablePartitionUsage.Inc()
@@ -3533,15 +3550,21 @@ func (s *session) setRequestSource(ctx context.Context, stmtLabel string, stmtNo
 
 // RemoveLockDDLJobs removes the DDL jobs which doesn't get the metadata lock from job2ver.
 func RemoveLockDDLJobs(s Session, job2ver map[int64]int64, job2ids map[int64]string) {
-	if s.GetSessionVars().InRestrictedSQL {
+	sv := s.GetSessionVars()
+	if sv.InRestrictedSQL {
 		return
 	}
-	s.GetSessionVars().GetRelatedTableForMDL().Range(func(tblID, value any) bool {
+	sv.TxnCtxMu.Lock()
+	defer sv.TxnCtxMu.Unlock()
+	if sv.TxnCtx == nil {
+		return
+	}
+	sv.GetRelatedTableForMDL().Range(func(tblID, value any) bool {
 		for jobID, ver := range job2ver {
 			ids := util.Str2Int64Map(job2ids[jobID])
 			if _, ok := ids[tblID.(int64)]; ok && value.(int64) < ver {
 				delete(job2ver, jobID)
-				logutil.BgLogger().Debug("old running transaction block DDL", zap.Int64("table ID", tblID.(int64)), zap.Uint64("conn ID", s.GetSessionVars().ConnectionID))
+				logutil.BgLogger().Debug("old running transaction block DDL", zap.Int64("table ID", tblID.(int64)), zap.Uint64("conn ID", sv.ConnectionID))
 			}
 		}
 		return true
