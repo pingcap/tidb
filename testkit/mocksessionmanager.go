@@ -56,9 +56,11 @@ func (msm *MockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo {
 		}
 		return ret
 	}
+	msm.mu.Lock()
 	for connID, pi := range msm.conn {
 		ret[connID] = pi.ShowProcess()
 	}
+	msm.mu.Unlock()
 	return ret
 }
 
