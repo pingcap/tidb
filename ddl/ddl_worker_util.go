@@ -115,13 +115,13 @@ func analyzeTrace(trace minitrace.Trace) string {
 			groupByEvent[span.Event] = append(spans, &trace.Spans[i])
 		}
 	}
-	var sb strings.Builder
-	sb.WriteString("{")
 	orderedEvents := make([]string, 0, len(groupByEvent))
 	for event := range groupByEvent {
 		orderedEvents = append(orderedEvents, event)
 	}
 	slices.Sort(orderedEvents)
+	var sb strings.Builder
+	sb.WriteString("{")
 	for i := 0; i < len(orderedEvents); i++ {
 		spans := groupByEvent[orderedEvents[i]]
 		sum := uint64(0)
