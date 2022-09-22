@@ -1227,6 +1227,10 @@ func partitionRangeForInExpr(sctx sessionctx.Context, args []expression.Expressi
 		if !ok {
 			return pruner.fullRange()
 		}
+		if constExpr.Value.Kind() == types.KindNull {
+			result = append(result, partitionRange{0, 1})
+			continue
+		}
 
 		var val int64
 		var err error
