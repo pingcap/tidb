@@ -445,8 +445,9 @@ type Log struct {
 	// File log config.
 	File logutil.FileLogConfig `toml:"file" json:"file"`
 
-	SlowQueryFile      string `toml:"slow-query-file" json:"slow-query-file"`
-	ExpensiveThreshold uint   `toml:"expensive-threshold" json:"expensive-threshold"`
+	SlowQueryFile string `toml:"slow-query-file" json:"slow-query-file"`
+	// ExpensiveThreshold is deprecated.
+	ExpensiveThreshold uint `toml:"expensive-threshold" json:"expensive-threshold"`
 
 	// The following items are deprecated. We need to keep them here temporarily
 	// to support the upgrade process. They can be removed in future.
@@ -840,7 +841,7 @@ var defaultConf = Config{
 		File:                logutil.NewFileLogConfig(logutil.DefaultLogMaxSize),
 		SlowQueryFile:       "tidb-slow.log",
 		SlowThreshold:       logutil.DefaultSlowThreshold,
-		ExpensiveThreshold:  10000,
+		ExpensiveThreshold:  10000, // ExpensiveThreshold is deprecated.
 		DisableErrorStack:   nbUnset,
 		EnableErrorStack:    nbUnset, // If both options are nbUnset, getDisableErrorStack() returns true
 		EnableTimestamp:     nbUnset,
@@ -1025,6 +1026,7 @@ var removedConfig = map[string]struct{}{
 	"log.enable-slow-log":                    {}, // use tidb_enable_slow_log
 	"log.slow-threshold":                     {}, // use tidb_slow_log_threshold
 	"log.record-plan-in-slow-log":            {}, // use tidb_record_plan_in_slow_log
+	"log.expensive-threshold":                {},
 	"performance.force-priority":             {}, // use tidb_force_priority
 	"performance.memory-usage-alarm-ratio":   {}, // use tidb_memory_usage_alarm_ratio
 	"plugin.load":                            {}, // use plugin_load

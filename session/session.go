@@ -140,6 +140,7 @@ var (
 	telemetryTablePartitionCreateIntervalUsage  = metrics.TelemetryTablePartitionCreateIntervalPartitionsCnt
 	telemetryTablePartitionAddIntervalUsage     = metrics.TelemetryTablePartitionAddIntervalPartitionsCnt
 	telemetryTablePartitionDropIntervalUsage    = metrics.TelemetryTablePartitionDropIntervalPartitionsCnt
+	telemetryExchangePartitionUsage             = metrics.TelemetryExchangePartitionCnt
 
 	telemetryLockUserUsage          = metrics.TelemetryAccountLockCnt.WithLabelValues("lockUser")
 	telemetryUnlockUserUsage        = metrics.TelemetryAccountLockCnt.WithLabelValues("unlockUser")
@@ -808,6 +809,10 @@ func (s *session) commitTxnWithTemporaryData(ctx context.Context, txn kv.Transac
 	sessVars := s.sessionVars
 	txnTempTables := sessVars.TxnCtx.TemporaryTables
 	if len(txnTempTables) == 0 {
+		failpoint.Inject("mockSleepBeforeTxnCommit", func(v failpoint.Value) {
+			ms := v.(int)
+			time.Sleep(time.Millisecond * time.Duration(ms))
+		})
 		return txn.Commit(ctx)
 	}
 
@@ -2226,6 +2231,14 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	se.updateTelemetryMetric(s.(*executor.ExecStmt))
 	sessVars.TxnCtx.StatementCount++
 	if rs != nil {
+		if se.GetSessionVars().StmtCtx.IsExplainAnalyzeDML {
+			if !sessVars.InTxn() {
+				se.StmtCommit()
+				if err := se.CommitTxn(ctx); err != nil {
+					return nil, err
+				}
+			}
+		}
 		return &execStmtResult{
 			RecordSet: rs,
 			sql:       s,
@@ -3371,6 +3384,10 @@ func (s *session) updateTelemetryMetric(es *executor.ExecStmt) {
 
 	if ti.UseMultiSchemaChange {
 		telemetryMultiSchemaChangeUsage.Inc()
+	}
+
+	if ti.UesExchangePartition {
+		telemetryExchangePartitionUsage.Inc()
 	}
 
 	if ti.PartitionTelemetry != nil {

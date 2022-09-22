@@ -185,16 +185,19 @@ func (c *coprCache) CheckRequestAdmission(ranges int) bool {
 }
 
 // CheckResponseAdmission checks whether a response item is worth caching.
-func (c *coprCache) CheckResponseAdmission(dataSize int, processTime time.Duration, paging bool) bool {
+func (c *coprCache) CheckResponseAdmission(dataSize int, processTime time.Duration, pagingTaskIdx uint32) bool {
 	if c == nil {
 		return false
 	}
 	if dataSize == 0 || dataSize > c.admissionMaxSize {
 		return false
 	}
+	if pagingTaskIdx > 50 {
+		return false
+	}
 
 	admissionMinProcessTime := c.admissionMinProcessTime
-	if paging {
+	if pagingTaskIdx > 0 {
 		admissionMinProcessTime = admissionMinProcessTime / 3
 	}
 	if processTime < admissionMinProcessTime {
