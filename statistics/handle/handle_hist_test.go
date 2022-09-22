@@ -30,8 +30,7 @@ import (
 )
 
 func TestConcurrentLoadHist(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
@@ -60,9 +59,9 @@ func TestConcurrentLoadHist(t *testing.T) {
 	topn = stat.Columns[tableInfo.Columns[2].ID].TopN
 	require.Equal(t, 0, hg.Len()+topn.Num())
 	stmtCtx := &stmtctx.StatementContext{}
-	neededColumns := make([]model.TableColumnID, 0, len(tableInfo.Columns))
+	neededColumns := make([]model.TableItemID, 0, len(tableInfo.Columns))
 	for _, col := range tableInfo.Columns {
-		neededColumns = append(neededColumns, model.TableColumnID{TableID: tableInfo.ID, ColumnID: col.ID})
+		neededColumns = append(neededColumns, model.TableItemID{TableID: tableInfo.ID, ID: col.ID, IsIndex: false})
 	}
 	timeout := time.Nanosecond * mathutil.MaxInt
 	h.SendLoadRequests(stmtCtx, neededColumns, timeout)
@@ -75,8 +74,7 @@ func TestConcurrentLoadHist(t *testing.T) {
 }
 
 func TestConcurrentLoadHistTimeout(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
@@ -106,9 +104,9 @@ func TestConcurrentLoadHistTimeout(t *testing.T) {
 	topn = stat.Columns[tableInfo.Columns[2].ID].TopN
 	require.Equal(t, 0, hg.Len()+topn.Num())
 	stmtCtx := &stmtctx.StatementContext{}
-	neededColumns := make([]model.TableColumnID, 0, len(tableInfo.Columns))
+	neededColumns := make([]model.TableItemID, 0, len(tableInfo.Columns))
 	for _, col := range tableInfo.Columns {
-		neededColumns = append(neededColumns, model.TableColumnID{TableID: tableInfo.ID, ColumnID: col.ID})
+		neededColumns = append(neededColumns, model.TableItemID{TableID: tableInfo.ID, ID: col.ID, IsIndex: false})
 	}
 	h.SendLoadRequests(stmtCtx, neededColumns, 0) // set timeout to 0 so task will go to timeout channel
 	rs := h.SyncWaitStatsLoad(stmtCtx)
@@ -137,8 +135,7 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 	newConfig.Performance.StatsLoadConcurrency = 0 // no worker to consume channel
 	config.StoreGlobalConfig(newConfig)
 	defer config.StoreGlobalConfig(originConfig)
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
@@ -160,18 +157,14 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 	tableInfo := tbl.Meta()
 	h := dom.StatsHandle()
 
-	neededColumns := make([]model.TableColumnID, 1)
-	neededColumns[0] = model.TableColumnID{TableID: tableInfo.ID, ColumnID: tableInfo.Columns[2].ID}
+	neededColumns := make([]model.TableItemID, 1)
+	neededColumns[0] = model.TableItemID{TableID: tableInfo.ID, ID: tableInfo.Columns[2].ID, IsIndex: false}
 	timeout := time.Nanosecond * mathutil.MaxInt
 
 	failpoints := []struct {
 		failPath string
 		inTerms  string
 	}{
-		{
-			failPath: "github.com/pingcap/tidb/statistics/handle/mockFinishWorkingPanic",
-			inTerms:  "panic",
-		},
 		{
 			failPath: "github.com/pingcap/tidb/statistics/handle/mockReadStatsForOnePanic",
 			inTerms:  "panic",
@@ -228,10 +221,10 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 
 		rs1, ok1 := <-stmtCtx1.StatsLoad.ResultCh
 		require.True(t, ok1)
-		require.Equal(t, neededColumns[0], rs1)
+		require.Equal(t, neededColumns[0], rs1.Item)
 		rs2, ok2 := <-stmtCtx2.StatsLoad.ResultCh
 		require.True(t, ok2)
-		require.Equal(t, neededColumns[0], rs2)
+		require.Equal(t, neededColumns[0], rs2.Item)
 
 		stat = h.GetTableStats(tableInfo)
 		hg = stat.Columns[tableInfo.Columns[2].ID].Histogram

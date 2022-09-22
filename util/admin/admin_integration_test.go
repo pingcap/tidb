@@ -25,8 +25,7 @@ import (
 )
 
 func TestAdminCheckTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	// test NULL value.
 	tk := testkit.NewTestKit(t, store)
@@ -77,8 +76,7 @@ func TestAdminCheckTable(t *testing.T) {
 }
 
 func TestAdminCheckTableClusterIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists admin_check_table_clustered_index;")
@@ -113,8 +111,7 @@ func TestAdminCheckTableClusterIndex(t *testing.T) {
 }
 
 func TestAdminCheckTableCorrupted(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")

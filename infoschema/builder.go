@@ -15,8 +15,8 @@
 package infoschema
 
 import (
+	"context"
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/ngaut/pools"
@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
@@ -288,6 +289,40 @@ func (b *Builder) applyRecoverTable(m *meta.Meta, diff *model.SchemaDiff) ([]int
 	return tblIDs, nil
 }
 
+func updateAutoIDForExchangePartition(store kv.Storage, ptSchemaID, ptID, ntSchemaID, ntID int64) error {
+	err := kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		ptAutoIDs, err := t.GetAutoIDAccessors(ptSchemaID, ptID).Get()
+		if err != nil {
+			return err
+		}
+
+		// non-partition table auto IDs.
+		ntAutoIDs, err := t.GetAutoIDAccessors(ntSchemaID, ntID).Get()
+		if err != nil {
+			return err
+		}
+
+		// Set both tables to the maximum auto IDs between normal table and partitioned table.
+		newAutoIDs := meta.AutoIDGroup{
+			RowID:       mathutil.Max(ptAutoIDs.RowID, ntAutoIDs.RowID),
+			IncrementID: mathutil.Max(ptAutoIDs.IncrementID, ntAutoIDs.IncrementID),
+			RandomID:    mathutil.Max(ptAutoIDs.RandomID, ntAutoIDs.RandomID),
+		}
+		err = t.GetAutoIDAccessors(ptSchemaID, ptID).Put(newAutoIDs)
+		if err != nil {
+			return err
+		}
+		err = t.GetAutoIDAccessors(ntSchemaID, ntID).Put(newAutoIDs)
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+
+	return err
+}
+
 func (b *Builder) applyDefaultAction(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	tblIDs, err := b.applyTableUpdate(m, diff)
 	if err != nil {
@@ -309,6 +344,14 @@ func (b *Builder) applyDefaultAction(m *meta.Meta, diff *model.SchemaDiff) ([]in
 			return nil, errors.Trace(err)
 		}
 		tblIDs = append(tblIDs, affectedIDs...)
+
+		if diff.Type == model.ActionExchangeTablePartition {
+			// handle partition table and table AutoID
+			err = updateAutoIDForExchangePartition(b.store, affectedDiff.SchemaID, affectedDiff.TableID, diff.SchemaID, diff.TableID)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
 	}
 
 	return tblIDs, nil
@@ -324,7 +367,19 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 	dbInfo := b.getSchemaAndCopyIfNecessary(roDBInfo.Name.L)
 	var oldTableID, newTableID int64
 	switch diff.Type {
-	case model.ActionCreateTable, model.ActionCreateSequence, model.ActionRecoverTable:
+	case model.ActionCreateSequence, model.ActionRecoverTable:
+		newTableID = diff.TableID
+	case model.ActionCreateTable:
+		// WARN: when support create table with foreign key in https://github.com/pingcap/tidb/pull/37148,
+		// create table with foreign key requires a multi-step state change(none -> write-only -> public),
+		// when the table's state changes from write-only to public, infoSchema need to drop the old table
+		// which state is write-only, otherwise, infoSchema.sortedTablesBuckets will contain 2 table both
+		// have the same ID, but one state is write-only, another table's state is public, it's unexpected.
+		//
+		// WARN: this change will break the compatibility if execute create table with foreign key DDL when upgrading TiDB,
+		// since old-version TiDB doesn't know to delete the old table.
+		// Since the cluster-index feature also has similar problem, we chose to prevent DDL execution during the upgrade process to avoid this issue.
+		oldTableID = diff.OldTableID
 		newTableID = diff.TableID
 	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
 		oldTableID = diff.TableID
@@ -644,6 +699,9 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	b.is.addReferredForeignKeys(dbInfo.Name, tblInfo)
+
 	tableNames := b.is.schemaMap[dbInfo.Name.L]
 	tableNames.tables[tblInfo.Name.L] = tbl
 	bucketIdx := tableBucketIdx(tableID)
@@ -653,6 +711,10 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 		return i.Meta().ID < j.Meta().ID
 	})
 	b.is.sortedTablesBuckets[bucketIdx] = sortedTbls
+
+	if tblInfo.TempTableType != model.TempTableNone {
+		b.addTemporaryTable(tableID)
+	}
 
 	newTbl, ok := b.is.TableByID(tableID)
 	if ok {
@@ -707,6 +769,11 @@ func (b *Builder) applyDropTable(dbInfo *model.DBInfo, tableID int64, affected [
 	// Remove the table in sorted table slice.
 	b.is.sortedTablesBuckets[bucketIdx] = append(sortedTbls[0:idx], sortedTbls[idx+1:]...)
 
+	// Remove the table in temporaryTables
+	if b.is.temporaryTableIDs != nil {
+		delete(b.is.temporaryTableIDs, tableID)
+	}
+
 	// The old DBInfo still holds a reference to old table info, we need to remove it.
 	for i, tblInfo := range dbInfo.Tables {
 		if tblInfo.ID == tableID {
@@ -715,6 +782,7 @@ func (b *Builder) applyDropTable(dbInfo *model.DBInfo, tableID int64, affected [
 			} else {
 				dbInfo.Tables = append(dbInfo.Tables[:i], dbInfo.Tables[i+1:]...)
 			}
+			b.is.deleteReferredForeignKeys(dbInfo.Name, tblInfo)
 			break
 		}
 	}
@@ -734,6 +802,8 @@ func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) *Builder {
 	b.copySchemasMap(oldIS)
 	b.copyBundlesMap(oldIS)
 	b.copyPoliciesMap(oldIS)
+	b.copyTemporaryTableIDsMap(oldIS)
+	b.copyReferredForeignKeyMap(oldIS)
 
 	copy(b.is.sortedTablesBuckets, oldIS.sortedTablesBuckets)
 	return b
@@ -756,6 +826,25 @@ func (b *Builder) copyPoliciesMap(oldIS *infoSchema) {
 	is := b.is
 	for _, v := range oldIS.AllPlacementPolicies() {
 		is.policyMap[v.Name.L] = v
+	}
+}
+
+func (b *Builder) copyTemporaryTableIDsMap(oldIS *infoSchema) {
+	is := b.is
+	if len(oldIS.temporaryTableIDs) == 0 {
+		is.temporaryTableIDs = nil
+		return
+	}
+
+	is.temporaryTableIDs = make(map[int64]struct{})
+	for tblID := range oldIS.temporaryTableIDs {
+		is.temporaryTableIDs[tblID] = struct{}{}
+	}
+}
+
+func (b *Builder) copyReferredForeignKeyMap(oldIS *infoSchema) {
+	for k, v := range oldIS.referredForeignKeyMap {
+		b.is.referredForeignKeyMap[k] = v
 	}
 }
 
@@ -789,6 +878,13 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.Pol
 		info.setPolicy(policy)
 	}
 
+	// Maintain foreign key reference information.
+	for _, di := range dbInfos {
+		for _, t := range di.Tables {
+			b.is.addReferredForeignKeys(di.Name, t)
+		}
+	}
+
 	for _, di := range dbInfos {
 		err := b.createSchemaTablesForDB(di, b.tableFromMeta)
 		if err != nil {
@@ -806,7 +902,9 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.Pol
 
 	// Sort all tables by `ID`
 	for _, v := range info.sortedTablesBuckets {
-		sort.Sort(v)
+		slices.SortFunc(v, func(a, b table.Table) bool {
+			return a.Meta().ID < b.Meta().ID
+		})
 	}
 	return b, nil
 }
@@ -850,8 +948,18 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 		schTbls.tables[t.Name.L] = tbl
 		sortedTbls := b.is.sortedTablesBuckets[tableBucketIdx(t.ID)]
 		b.is.sortedTablesBuckets[tableBucketIdx(t.ID)] = append(sortedTbls, tbl)
+		if tblInfo := tbl.Meta(); tblInfo.TempTableType != model.TempTableNone {
+			b.addTemporaryTable(tblInfo.ID)
+		}
 	}
 	return nil
+}
+
+func (b *Builder) addTemporaryTable(tblID int64) {
+	if b.is.temporaryTableIDs == nil {
+		b.is.temporaryTableIDs = make(map[int64]struct{})
+	}
+	b.is.temporaryTableIDs[tblID] = struct{}{}
 }
 
 type virtualTableDriver struct {
@@ -871,10 +979,11 @@ func NewBuilder(store kv.Storage, factory func() (pools.Resource, error)) *Build
 	return &Builder{
 		store: store,
 		is: &infoSchema{
-			schemaMap:           map[string]*schemaTables{},
-			policyMap:           map[string]*model.PolicyInfo{},
-			ruleBundleMap:       map[int64]*placement.Bundle{},
-			sortedTablesBuckets: make([]sortedTables, bucketCount),
+			schemaMap:             map[string]*schemaTables{},
+			policyMap:             map[string]*model.PolicyInfo{},
+			ruleBundleMap:         map[int64]*placement.Bundle{},
+			sortedTablesBuckets:   make([]sortedTables, bucketCount),
+			referredForeignKeyMap: make(map[SchemaAndTableName][]*model.ReferredFKInfo),
 		},
 		dirtyDB: make(map[string]bool),
 		factory: factory,

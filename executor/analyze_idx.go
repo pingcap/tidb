@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	"math"
 	"sync/atomic"
 	"time"
 
@@ -23,6 +24,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -142,9 +144,15 @@ func (e *AnalyzeIndexExec) fetchAnalyzeResult(ranges []*ranger.Range, isNullRang
 		kvReqBuilder = builder.SetIndexRangesForTables(e.ctx.GetSessionVars().StmtCtx, []int64{e.tableID.GetStatisticsID()}, e.idxInfo.ID, ranges)
 	}
 	kvReqBuilder.SetResourceGroupTagger(e.ctx.GetSessionVars().StmtCtx.GetResourceGroupTagger())
+	startTS := uint64(math.MaxUint64)
+	isoLevel := kv.RC
+	if e.ctx.GetSessionVars().EnableAnalyzeSnapshot {
+		startTS = e.snapshot
+		isoLevel = kv.SI
+	}
 	kvReq, err := kvReqBuilder.
-		SetAnalyzeRequest(e.analyzePB).
-		SetStartTS(e.snapshot).
+		SetAnalyzeRequest(e.analyzePB, isoLevel).
+		SetStartTS(startTS).
 		SetKeepOrder(true).
 		SetConcurrency(e.concurrency).
 		Build()

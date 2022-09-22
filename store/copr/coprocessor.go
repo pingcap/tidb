@@ -15,6 +15,7 @@
 package copr
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"strconv"
@@ -51,9 +52,15 @@ import (
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 var coprCacheCounterEvict = tidbmetrics.DistSQLCoprCacheCounter.WithLabelValues("evict")
+
+var (
+	coprCacheCounterHit  = tidbmetrics.DistSQLCoprCacheCounter.WithLabelValues("hit")
+	coprCacheCounterMiss = tidbmetrics.DistSQLCoprCacheCounter.WithLabelValues("miss")
+)
 
 // Maximum total sleep time(in ms) for kv/cop commands.
 const (
@@ -82,21 +89,41 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 		return c.sendBatch(ctx, req, vars, option)
 	}
 	failpoint.Inject("DisablePaging", func(_ failpoint.Value) {
-		req.Paging = false
+		req.Paging.Enable = false
 	})
 	if req.StoreType == kv.TiDB {
 		// coprocessor on TiDB doesn't support paging
-		req.Paging = false
+		req.Paging.Enable = false
 	}
 	if req.Tp != kv.ReqTypeDAG {
 		// coprocessor request but type is not DAG
-		req.Paging = false
+		req.Paging.Enable = false
 	}
+
+	failpoint.Inject("checkKeyRangeSortedForPaging", func(_ failpoint.Value) {
+		if req.Paging.Enable {
+			isSorted := slices.IsSortedFunc(req.KeyRanges, func(i, j kv.KeyRange) bool {
+				return bytes.Compare(i.StartKey, j.StartKey) < 0
+			})
+			if !isSorted {
+				logutil.BgLogger().Fatal("distsql request key range not sorted!")
+			}
+		}
+	})
+
 	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTs)
 	ctx = context.WithValue(ctx, util.RequestSourceKey, req.RequestSource)
 	bo := backoff.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
 	ranges := NewKeyRanges(req.KeyRanges)
 	tasks, err := buildCopTasks(bo, c.store.GetRegionCache(), ranges, req, eventCb)
+	reqType := "null"
+	if req.ClosestReplicaReadAdjuster != nil {
+		reqType = "miss"
+		if req.ClosestReplicaReadAdjuster(req, len(tasks)) {
+			reqType = "hit"
+		}
+	}
+	tidbmetrics.DistSQLCoprClosestReadCounter.WithLabelValues(reqType).Inc()
 	if err != nil {
 		return copErrorResponse{err}
 	}
@@ -120,24 +147,27 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 	}
 
 	if it.req.KeepOrder {
+		// Don't set high concurrency for the keep order case. It wastes a lot of memory and gains nothing.
+		// TL;DR
+		// Because for a keep order coprocessor request, the cop tasks are handled one by one, if we set a
+		// higher concurrency, the data is just cached and not consumed for a while, this increase the memory usage.
+		// Set concurrency to 2 can reduce the memory usage and I've tested that it does not necessarily
+		// decrease the performance.
+		if it.concurrency > 2 {
+			oldConcurrency := it.concurrency
+			it.concurrency = 2
+
+			failpoint.Inject("testRateLimitActionMockConsumeAndAssert", func(val failpoint.Value) {
+				if val.(bool) {
+					// When the concurrency is too small, test case tests/realtikvtest/sessiontest.TestCoprocessorOOMAction can't trigger OOM condition
+					it.concurrency = oldConcurrency
+				}
+			})
+		}
 		it.sendRate = util.NewRateLimit(2 * it.concurrency)
 		it.respChan = nil
 	} else {
-		capacity := it.concurrency
-		if enabledRateLimitAction {
-			// The count of cached response in memory is controlled by the capacity of the it.sendRate, not capacity of the respChan.
-			// As the worker will send finCopResponse after each task being handled, we make the capacity of the respCh equals to
-			// 2*it.concurrency to avoid deadlock in the unit test caused by the `MustExec` or `Exec`
-			capacity = it.concurrency * 2
-		}
-		// in paging request, a request will be returned in multi batches,
-		// enlarge the channel size to avoid the request blocked by buffer full.
-		if req.Paging {
-			if capacity < 2048 {
-				capacity = 2048
-			}
-		}
-		it.respChan = make(chan *copResponse, capacity)
+		it.respChan = make(chan *copResponse)
 		it.sendRate = util.NewRateLimit(it.concurrency)
 	}
 	it.actionOnExceed = newRateLimitAction(uint(it.sendRate.GetCapacity()))
@@ -196,8 +226,8 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 	chanSize := 2
 	// in paging request, a request will be returned in multi batches,
 	// enlarge the channel size to avoid the request blocked by buffer full.
-	if req.Paging {
-		chanSize = 128
+	if req.Paging.Enable {
+		chanSize = 18
 	}
 
 	var tasks []*copTask
@@ -210,8 +240,8 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 			// If this is a paging request, we set the paging size to minPagingSize,
 			// the size will grow every round.
 			pagingSize := uint64(0)
-			if req.Paging {
-				pagingSize = paging.MinPagingSize
+			if req.Paging.Enable {
+				pagingSize = req.Paging.MinPagingSize
 			}
 			tasks = append(tasks, &copTask{
 				region:        loc.Location.Region,
@@ -221,7 +251,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 				cmdType:       cmdType,
 				storeType:     req.StoreType,
 				eventCb:       eventCb,
-				paging:        req.Paging,
+				paging:        req.Paging.Enable,
 				pagingSize:    pagingSize,
 				requestSource: req.RequestSource,
 			})
@@ -551,6 +581,7 @@ func (worker *copIteratorWorker) sendToRespCh(resp *copResponse, respCh chan<- *
 				}
 			}
 		})
+		failpoint.Inject("ConsumeRandomPanic", nil)
 		worker.memTracker.Consume(consumed)
 	}
 	select {
@@ -776,18 +807,23 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	// Set task.storeAddr field so its task.String() method have the store address information.
 	task.storeAddr = storeAddr
 	costTime := time.Since(startTime)
+	copResp := resp.Resp.(*coprocessor.Response)
+
 	if costTime > minLogCopTaskTime {
-		worker.logTimeCopTask(costTime, task, bo, resp)
+		worker.logTimeCopTask(costTime, task, bo, copResp)
 	}
 	storeID := strconv.FormatUint(req.Context.GetPeer().GetStoreId(), 10)
 	metrics.TiKVCoprocessorHistogram.WithLabelValues(storeID, strconv.FormatBool(staleRead)).Observe(costTime.Seconds())
+	if copResp != nil {
+		tidbmetrics.DistSQLCoprRespBodySize.WithLabelValues(storeAddr).Observe(float64(len(copResp.Data)))
+	}
 
-	if worker.req.Paging {
-		return worker.handleCopPagingResult(bo, rpcCtx, &copResponse{pbResp: resp.Resp.(*coprocessor.Response)}, cacheKey, cacheValue, task, ch, costTime)
+	if worker.req.Paging.Enable {
+		return worker.handleCopPagingResult(bo, rpcCtx, &copResponse{pbResp: copResp}, cacheKey, cacheValue, task, ch, costTime)
 	}
 
 	// Handles the response for non-paging copTask.
-	return worker.handleCopResponse(bo, rpcCtx, &copResponse{pbResp: resp.Resp.(*coprocessor.Response)}, cacheKey, cacheValue, task, ch, nil, costTime)
+	return worker.handleCopResponse(bo, rpcCtx, &copResponse{pbResp: copResp}, cacheKey, cacheValue, task, ch, nil, costTime)
 }
 
 const (
@@ -795,24 +831,15 @@ const (
 	minLogKVProcessTime = 100
 )
 
-func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *copTask, bo *Backoffer, resp *tikvrpc.Response) {
+func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *copTask, bo *Backoffer, resp *coprocessor.Response) {
 	logStr := fmt.Sprintf("[TIME_COP_PROCESS] resp_time:%s txnStartTS:%d region_id:%d store_addr:%s", costTime, worker.req.StartTs, task.region.GetID(), task.storeAddr)
 	if bo.GetTotalSleep() > minLogBackoffTime {
 		backoffTypes := strings.Replace(fmt.Sprintf("%v", bo.TiKVBackoffer().GetTypes()), " ", ",", -1)
 		logStr += fmt.Sprintf(" backoff_ms:%d backoff_types:%s", bo.GetTotalSleep(), backoffTypes)
 	}
-	var detailV2 *kvrpcpb.ExecDetailsV2
-	var detail *kvrpcpb.ExecDetails
-	if resp.Resp != nil {
-		switch r := resp.Resp.(type) {
-		case *coprocessor.Response:
-			detailV2 = r.ExecDetailsV2
-			detail = r.ExecDetails
-		default:
-			panic("unreachable")
-		}
-	}
-
+	// resp might be nil, but it is safe to call resp.GetXXX here.
+	detailV2 := resp.GetExecDetailsV2()
+	detail := resp.GetExecDetails()
 	var timeDetail *kvrpcpb.TimeDetail
 	if detailV2 != nil && detailV2.TimeDetail != nil {
 		timeDetail = detailV2.TimeDetail
@@ -868,12 +895,14 @@ func (worker *copIteratorWorker) handleCopPagingResult(bo *Backoffer, rpcCtx *ti
 		// So we finish here.
 		return nil, nil
 	}
+
 	// calculate next ranges and grow the paging size
 	task.ranges = worker.calculateRemain(task.ranges, pagingRange, worker.req.Desc)
 	if task.ranges.Len() == 0 {
 		return nil, nil
 	}
-	task.pagingSize = paging.GrowPagingSize(task.pagingSize)
+
+	task.pagingSize = paging.GrowPagingSize(task.pagingSize, worker.req.Paging.MaxPagingSize)
 	return []*copTask{task}, nil
 }
 
@@ -959,6 +988,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 	worker.handleCollectExecutionInfo(bo, rpcCtx, resp, resolveLockDetail)
 	resp.respTime = costTime
 	if resp.pbResp.IsCacheHit {
+		coprCacheCounterHit.Add(1)
 		if cacheValue == nil {
 			return nil, errors.New("Internal error: received illegal TiKV response")
 		}
@@ -966,7 +996,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 		data := make([]byte, len(cacheValue.Data))
 		copy(data, cacheValue.Data)
 		resp.pbResp.Data = data
-		if worker.req.Paging {
+		if worker.req.Paging.Enable {
 			var start, end []byte
 			if cacheValue.PageStart != nil {
 				start = make([]byte, len(cacheValue.PageStart))
@@ -988,10 +1018,11 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 		}
 		resp.detail.CoprCacheHit = true
 	} else {
+		coprCacheCounterMiss.Add(1)
 		// Cache not hit or cache hit but not valid: update the cache if the response can be cached.
 		if cacheKey != nil && resp.pbResp.CanBeCached && resp.pbResp.CacheLastVersion > 0 {
 			if resp.detail != nil {
-				if worker.store.coprCache.CheckResponseAdmission(resp.pbResp.Data.Size(), resp.detail.TimeDetail.ProcessTime) {
+				if worker.store.coprCache.CheckResponseAdmission(resp.pbResp.Data.Size(), resp.detail.TimeDetail.ProcessTime, worker.req.Paging.Enable) {
 					data := make([]byte, len(resp.pbResp.Data))
 					copy(data, resp.pbResp.Data)
 

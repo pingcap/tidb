@@ -144,8 +144,41 @@ func (t *TableMemoryUsage) TotalTrackingMemUsage() int64 {
 // TableCacheItem indicates the unit item stored in statsCache, eg: Column/Index
 type TableCacheItem interface {
 	ItemID() int64
-	DropEvicted()
 	MemoryUsage() CacheItemMemoryUsage
+	IsAllEvicted() bool
+
+	dropCMS()
+	dropTopN()
+	dropHist()
+	isStatsInitialized() bool
+	getEvictedStatus() int
+	statsVer() int64
+	isCMSExist() bool
+}
+
+// DropEvicted drop stats for table column/index
+func DropEvicted(item TableCacheItem) {
+	if !item.isStatsInitialized() {
+		return
+	}
+	switch item.getEvictedStatus() {
+	case allLoaded:
+		if item.isCMSExist() && item.statsVer() < Version2 {
+			item.dropCMS()
+			return
+		}
+		// For stats version2, there is no cms thus we directly drop topn
+		item.dropTopN()
+		return
+	case onlyCmsEvicted:
+		item.dropTopN()
+		return
+	case onlyHistRemained:
+		item.dropHist()
+		return
+	default:
+		return
+	}
 }
 
 // CacheItemMemoryUsage indicates the memory usage of TableCacheItem
@@ -153,6 +186,9 @@ type CacheItemMemoryUsage interface {
 	ItemID() int64
 	TotalMemoryUsage() int64
 	TrackingMemUsage() int64
+	HistMemUsage() int64
+	TopnMemUsage() int64
+	CMSMemUsage() int64
 }
 
 // ColumnMemUsage records column memory usage
@@ -161,6 +197,7 @@ type ColumnMemUsage struct {
 	HistogramMemUsage int64
 	CMSketchMemUsage  int64
 	FMSketchMemUsage  int64
+	TopNMemUsage      int64
 	TotalMemUsage     int64
 }
 
@@ -176,6 +213,21 @@ func (c *ColumnMemUsage) ItemID() int64 {
 
 // TrackingMemUsage implements CacheItemMemoryUsage
 func (c *ColumnMemUsage) TrackingMemUsage() int64 {
+	return c.CMSketchMemUsage + c.TopNMemUsage + c.HistogramMemUsage
+}
+
+// HistMemUsage implements CacheItemMemoryUsage
+func (c *ColumnMemUsage) HistMemUsage() int64 {
+	return c.HistogramMemUsage
+}
+
+// TopnMemUsage implements CacheItemMemoryUsage
+func (c *ColumnMemUsage) TopnMemUsage() int64 {
+	return c.TopNMemUsage
+}
+
+// CMSMemUsage implements CacheItemMemoryUsage
+func (c *ColumnMemUsage) CMSMemUsage() int64 {
 	return c.CMSketchMemUsage
 }
 
@@ -184,6 +236,7 @@ type IndexMemUsage struct {
 	IndexID           int64
 	HistogramMemUsage int64
 	CMSketchMemUsage  int64
+	TopNMemUsage      int64
 	TotalMemUsage     int64
 }
 
@@ -199,6 +252,21 @@ func (c *IndexMemUsage) ItemID() int64 {
 
 // TrackingMemUsage implements CacheItemMemoryUsage
 func (c *IndexMemUsage) TrackingMemUsage() int64 {
+	return c.CMSketchMemUsage + c.TopNMemUsage + c.HistogramMemUsage
+}
+
+// HistMemUsage implements CacheItemMemoryUsage
+func (c *IndexMemUsage) HistMemUsage() int64 {
+	return c.HistogramMemUsage
+}
+
+// TopnMemUsage implements CacheItemMemoryUsage
+func (c *IndexMemUsage) TopnMemUsage() int64 {
+	return c.TopNMemUsage
+}
+
+// CMSMemUsage implements CacheItemMemoryUsage
+func (c *IndexMemUsage) CMSMemUsage() int64 {
 	return c.CMSketchMemUsage
 }
 
@@ -327,8 +395,15 @@ func (t *Table) GetStatsInfo(ID int64, isIndex bool) (int64, *Histogram, *CMSket
 // GetColRowCount tries to get the row count of the a column if possible.
 // This method is useful because this row count doesn't consider the modify count.
 func (t *Table) GetColRowCount() float64 {
-	for _, col := range t.Columns {
+	IDs := make([]int64, 0, len(t.Columns))
+	for id := range t.Columns {
+		IDs = append(IDs, id)
+	}
+	slices.Sort(IDs)
+	for _, id := range IDs {
+		col := t.Columns[id]
 		// need to make sure stats on this column is loaded.
+		// TODO: use the new method to check if it's loaded
 		if col != nil && !(col.Histogram.NDV > 0 && col.notNullCount() == 0) && col.TotalRowCount() != 0 {
 			return col.TotalRowCount()
 		}
@@ -337,7 +412,7 @@ func (t *Table) GetColRowCount() float64 {
 }
 
 // GetStatsHealthy calculates stats healthy if the table stats is not pseudo.
-// If the table stats is pseudo, it returns 0, false, otherwise it returns stats healthy, ture.
+// If the table stats is pseudo, it returns 0, false, otherwise it returns stats healthy, true.
 func (t *Table) GetStatsHealthy() (int64, bool) {
 	if t == nil || t.Pseudo {
 		return 0, false
@@ -387,6 +462,21 @@ func (n *neededStatsMap) Length() int {
 // RatioOfPseudoEstimate means if modifyCount / statsTblCount is greater than this ratio, we think the stats is invalid
 // and use pseudo estimation.
 var RatioOfPseudoEstimate = atomic.NewFloat64(0.7)
+
+// IsInitialized returns true if any column/index stats of the table is initialized.
+func (t *Table) IsInitialized() bool {
+	for _, col := range t.Columns {
+		if col != nil && col.IsStatsInitialized() {
+			return true
+		}
+	}
+	for _, idx := range t.Indices {
+		if idx != nil && idx.IsStatsInitialized() {
+			return true
+		}
+	}
+	return false
+}
 
 // IsOutdated returns true if the table stats is outdated.
 func (t *Table) IsOutdated() bool {
@@ -456,10 +546,12 @@ func (t *Table) ColumnEqualRowCount(sctx sessionctx.Context, value types.Datum, 
 }
 
 // GetRowCountByIntColumnRanges estimates the row count by a slice of IntColumnRange.
-func (coll *HistColl) GetRowCountByIntColumnRanges(sctx sessionctx.Context, colID int64, intRanges []*ranger.Range) (float64, error) {
+func (coll *HistColl) GetRowCountByIntColumnRanges(sctx sessionctx.Context, colID int64, intRanges []*ranger.Range) (result float64, err error) {
 	sc := sctx.GetSessionVars().StmtCtx
-	var result float64
 	c, ok := coll.Columns[colID]
+	if c != nil {
+		recordUsedItemStatsStatus(sctx, c.StatsLoadedStatus, coll.PhysicalID, colID, false)
+	}
 	if !ok || c.IsInvalid(sctx, coll.Pseudo) {
 		if len(intRanges) == 0 {
 			return 0, nil
@@ -474,7 +566,7 @@ func (coll *HistColl) GetRowCountByIntColumnRanges(sctx sessionctx.Context, colI
 		}
 		return result, nil
 	}
-	result, err := c.GetColumnRowCount(sctx, intRanges, coll.Count, true)
+	result, err = c.GetColumnRowCount(sctx, intRanges, coll.Count, true)
 	if sc.EnableOptimizerCETrace {
 		CETraceRange(sctx, coll.PhysicalID, []string{c.Info.Name.O}, intRanges, "Column Stats", uint64(result))
 	}
@@ -485,6 +577,9 @@ func (coll *HistColl) GetRowCountByIntColumnRanges(sctx sessionctx.Context, colI
 func (coll *HistColl) GetRowCountByColumnRanges(sctx sessionctx.Context, colID int64, colRanges []*ranger.Range) (float64, error) {
 	sc := sctx.GetSessionVars().StmtCtx
 	c, ok := coll.Columns[colID]
+	if c != nil {
+		recordUsedItemStatsStatus(sctx, c.StatsLoadedStatus, coll.PhysicalID, colID, false)
+	}
 	if !ok || c.IsInvalid(sctx, coll.Pseudo) {
 		result, err := GetPseudoRowCountByColumnRanges(sc, float64(coll.Count), colRanges, 0)
 		if err == nil && sc.EnableOptimizerCETrace && ok {
@@ -508,6 +603,9 @@ func (coll *HistColl) GetRowCountByIndexRanges(sctx sessionctx.Context, idxID in
 		for _, col := range idx.Info.Columns {
 			colNames = append(colNames, col.Name.O)
 		}
+	}
+	if idx != nil {
+		recordUsedItemStatsStatus(sctx, idx.StatsLoadedStatus, coll.PhysicalID, idxID, true)
 	}
 	if !ok || idx.IsInvalid(coll.Pseudo) {
 		colsLen := -1
@@ -563,6 +661,148 @@ func CETraceRange(sctx sessionctx.Context, tableID int64, colNames []string, ran
 		RowCount: rowCount,
 	}
 	sc.OptimizerCETrace = append(sc.OptimizerCETrace, &CERecord)
+}
+
+func (coll *HistColl) findAvailableStatsForCol(sctx sessionctx.Context, uniqueID int64) (isIndex bool, idx int64) {
+	// try to find available stats in column stats
+	if colStats, ok := coll.Columns[uniqueID]; ok && colStats != nil && !colStats.IsInvalid(sctx, coll.Pseudo) {
+		return false, uniqueID
+	}
+	// try to find available stats in single column index stats (except for prefix index)
+	for idxStatsIdx, cols := range coll.Idx2ColumnIDs {
+		if len(cols) == 1 && cols[0] == uniqueID {
+			idxStats, ok := coll.Indices[idxStatsIdx]
+			if ok &&
+				idxStats.Info.Columns[0].Length == types.UnspecifiedLength &&
+				!idxStats.IsInvalid(coll.Pseudo) {
+				return true, idxStatsIdx
+			}
+		}
+	}
+	return false, -1
+}
+
+// GetSelectivityByFilter try to estimate selectivity of expressions by evaluate the expressions using TopN and NULL.
+// The data represented by the Histogram would use the defaultSelectivity parameter as the selectivity.
+// Currently, this method can only handle expressions involving a single column.
+func (coll *HistColl) GetSelectivityByFilter(sctx sessionctx.Context,
+	defaultSelectivity float64,
+	filters []expression.Expression) (ok bool, selectivity float64, err error) {
+	// 1. Make sure the expressions
+	//   (1) are safe to be evaluated here,
+	//   (2) involve only one column,
+	//   (3) and this column is not a "new collation" string column so that we're able to restore values from the stats.
+	for _, filter := range filters {
+		if expression.IsMutableEffectsExpr(filter) {
+			return false, 0, nil
+		}
+	}
+	if expression.ContainCorrelatedColumn(filters) {
+		return false, 0, nil
+	}
+	cols := expression.ExtractColumnsFromExpressions(nil, filters, nil)
+	if len(cols) != 1 {
+		return false, 0, nil
+	}
+	col := cols[0]
+	tp := col.RetType
+	if types.IsString(tp.GetType()) && collate.NewCollationEnabled() && !collate.IsBinCollation(tp.GetCollate()) {
+		return false, 0, nil
+	}
+
+	// 2. Get the available stats, make sure it's a ver2 stats and get the needed data structure from it.
+	isIndex, i := coll.findAvailableStatsForCol(sctx, col.UniqueID)
+	if i < 0 {
+		return false, 0, nil
+	}
+	var statsVer, nullCnt int64
+	var histTotalCnt, totalCnt float64
+	var topnTotalCnt uint64
+	var hist *Histogram
+	var topn *TopN
+	if isIndex {
+		stats := coll.Indices[i]
+		statsVer = stats.StatsVer
+		hist = &stats.Histogram
+		nullCnt = hist.NullCount
+		topn = stats.TopN
+	} else {
+		stats := coll.Columns[i]
+		statsVer = stats.StatsVer
+		hist = &stats.Histogram
+		nullCnt = hist.NullCount
+		topn = stats.TopN
+	}
+	// Only in stats ver2, we can assume that: TopN + Histogram + NULL == All data
+	if statsVer != Version2 {
+		return false, 0, nil
+	}
+	topnTotalCnt = topn.TotalCount()
+	histTotalCnt = hist.notNullCount()
+	totalCnt = float64(topnTotalCnt) + histTotalCnt + float64(nullCnt)
+
+	var topNSel, histSel, nullSel float64
+
+	// Prepare for evaluation.
+
+	// For execution, we use Column.Index instead of Column.UniqueID to locate a column.
+	// We have only one column here, so we set it to 0.
+	originalIndex := col.Index
+	col.Index = 0
+	defer func() {
+		// Restore the original Index to avoid unexpected situation.
+		col.Index = originalIndex
+	}()
+	size := 1
+	if topn != nil {
+		size = len(topn.TopN)
+	}
+	c := chunk.NewChunkWithCapacity([]*types.FieldType{tp}, size)
+	selected := make([]bool, 0, size)
+
+	// 3. Calculate the TopN part selectivity.
+	// This stage is considered as the core functionality of this method, errors in this stage would make this entire method fail.
+	var topNSelectedCnt uint64
+	if topn != nil {
+		for _, item := range topn.TopN {
+			_, val, err := codec.DecodeOne(item.Encoded)
+			if err != nil {
+				return false, 0, err
+			}
+			c.AppendDatum(0, &val)
+		}
+		selected, err = expression.VectorizedFilter(sctx, filters, chunk.NewIterator4Chunk(c), selected)
+		if err != nil {
+			return false, 0, err
+		}
+		for i, isTrue := range selected {
+			if isTrue {
+				topNSelectedCnt += topn.TopN[i].Count
+			}
+		}
+	}
+	topNSel = float64(topNSelectedCnt) / totalCnt
+
+	// 4. Calculate the Histogram part selectivity.
+	histSel = defaultSelectivity * histTotalCnt / totalCnt
+
+	// 5. Calculate the NULL part selectivity.
+	// Errors in this staged would be returned, but would not make this entire method fail.
+	c.Reset()
+	c.AppendNull(0)
+	selected = selected[:0]
+	selected, err = expression.VectorizedFilter(sctx, filters, chunk.NewIterator4Chunk(c), selected)
+	if err != nil || len(selected) != 1 {
+		nullSel = defaultSelectivity * float64(nullCnt) / totalCnt
+	} else if selected[0] {
+		nullSel = float64(nullCnt) / totalCnt
+	} else {
+		nullSel = 0
+	}
+
+	// 6. Get the final result.
+	res := topNSel + histSel + nullSel
+	return true, res, err
 }
 
 // PseudoAvgCountPerValue gets a pseudo average count if histogram not exists.
@@ -941,7 +1181,6 @@ func getPseudoRowCountByIndexRanges(sc *stmtctx.StatementContext, indexRanges []
 // GetPseudoRowCountByColumnRanges calculate the row count by the ranges if there's no statistics information for this column.
 func GetPseudoRowCountByColumnRanges(sc *stmtctx.StatementContext, tableRowCount float64, columnRanges []*ranger.Range, colIdx int) (float64, error) {
 	var rowCount float64
-	var err error
 	for _, ran := range columnRanges {
 		if ran.LowVal[colIdx].Kind() == types.KindNull && ran.HighVal[colIdx].Kind() == types.KindMaxValue {
 			rowCount += tableRowCount
@@ -949,25 +1188,22 @@ func GetPseudoRowCountByColumnRanges(sc *stmtctx.StatementContext, tableRowCount
 			nullCount := tableRowCount / pseudoEqualRate
 			if ran.HighVal[colIdx].Kind() == types.KindMaxValue {
 				rowCount += tableRowCount - nullCount
-			} else if err == nil {
+			} else {
 				lessCount := tableRowCount / pseudoLessRate
 				rowCount += lessCount - nullCount
 			}
 		} else if ran.HighVal[colIdx].Kind() == types.KindMaxValue {
 			rowCount += tableRowCount / pseudoLessRate
 		} else {
-			compare, err1 := ran.LowVal[colIdx].Compare(sc, &ran.HighVal[colIdx], ran.Collators[colIdx])
-			if err1 != nil {
-				return 0, errors.Trace(err1)
+			compare, err := ran.LowVal[colIdx].Compare(sc, &ran.HighVal[colIdx], ran.Collators[colIdx])
+			if err != nil {
+				return 0, errors.Trace(err)
 			}
 			if compare == 0 {
 				rowCount += tableRowCount / pseudoEqualRate
 			} else {
 				rowCount += tableRowCount / pseudoBetweenRate
 			}
-		}
-		if err != nil {
-			return 0, errors.Trace(err)
 		}
 	}
 	if rowCount > tableRowCount {
@@ -1160,4 +1396,19 @@ func CheckAnalyzeVerOnTable(tbl *Table, version *int) bool {
 	}
 	// This table has no statistics yet. We can directly return true.
 	return true
+}
+
+// recordUsedItemStatsStatus only records un-FullLoad item load status during user query
+func recordUsedItemStatsStatus(sctx sessionctx.Context, loadStatus StatsLoadedStatus,
+	tableID, id int64, isIndex bool) {
+	if loadStatus.IsFullLoad() {
+		return
+	}
+	stmtCtx := sctx.GetSessionVars().StmtCtx
+	item := model.TableItemID{TableID: tableID, ID: id, IsIndex: isIndex}
+	// For some testcases, it skips ResetContextOfStmt to init StatsLoadStatus
+	if stmtCtx.StatsLoadStatus == nil {
+		stmtCtx.StatsLoadStatus = make(map[model.TableItemID]string)
+	}
+	stmtCtx.StatsLoadStatus[item] = loadStatus.StatusToString()
 }

@@ -21,11 +21,13 @@ go_library(
 
 go_test(
     name = "topsql_test",
+    timeout = "short",
     srcs = [
         "main_test.go",
         "topsql_test.go",
     ],
     embed = [":topsql"],
+    flaky = True,
     deps = [
         "//config",
         "//parser",

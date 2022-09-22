@@ -23,6 +23,7 @@ go_library(
         "//sessionctx",
         "//sessionctx/variable",
         "//sessiontxn",
+        "//sessiontxn/internal",
         "//table/temptable",
         "//types",
         "//util/dbterror",
@@ -33,11 +34,13 @@ go_library(
 
 go_test(
     name = "staleread_test",
+    timeout = "short",
     srcs = [
         "main_test.go",
         "processor_test.go",
         "provider_test.go",
     ],
+    flaky = True,
     deps = [
         ":staleread",
         "//domain",

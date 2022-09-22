@@ -27,12 +27,14 @@ go_library(
 
 go_test(
     name = "mockstore_test",
+    timeout = "short",
     srcs = [
         "cluster_test.go",
         "main_test.go",
         "tikv_test.go",
     ],
     embed = [":mockstore"],
+    flaky = True,
     deps = [
         "//config",
         "//kv",

@@ -27,7 +27,6 @@ import (
 	"honnef.co/go/tools/analysis/report"
 )
 
-//
 type skipType int
 
 const (
@@ -201,7 +200,6 @@ func FindOffset(fileText string, line, column int) int {
 		} else {
 			currentCol++
 		}
-
 	}
 	return -1 //not found
 }

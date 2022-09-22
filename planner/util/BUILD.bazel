@@ -17,6 +17,7 @@ go_library(
         "//types",
         "//util/collate",
         "//util/ranger",
+        "//util/size",
     ],
 )
 
@@ -28,6 +29,7 @@ go_test(
         "path_test.go",
     ],
     embed = [":util"],
+    flaky = True,
     deps = [
         "//parser/model",
         "//planner/core",

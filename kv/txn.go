@@ -51,7 +51,6 @@ func (ib *innerTxnStartTsBox) storeInnerTxnTS(startTS uint64) {
 	ib.innerTSLock.Lock()
 	ib.innerTxnStartTsMap[startTS] = struct{}{}
 	ib.innerTSLock.Unlock()
-
 }
 
 func (ib *innerTxnStartTsBox) deleteInnerTxnTS(startTS uint64) {
@@ -82,7 +81,8 @@ func (ib *innerTxnStartTsBox) getMinStartTS(now time.Time, startTSLowerLimit uin
 
 // PrintLongTimeInternalTxn print the internal transaction information.
 // runByFunction	true means the transaction is run by `RunInNewTxn`,
-//					false means the transaction is run by internal session.
+//
+//	false means the transaction is run by internal session.
 func PrintLongTimeInternalTxn(now time.Time, startTS uint64, runByFunction bool) {
 	if startTS > 0 {
 		innerTxnStartTime := oracle.GetTimeFromTS(startTS)
@@ -144,6 +144,7 @@ func RunInNewTxn(ctx context.Context, store Storage, retryable bool, f func(ctx 
 			if v := val.(string); len(v) > 0 {
 				switch v {
 				case "retry_once":
+					//nolint:noloopclosure
 					if i == 0 {
 						err = ErrTxnRetryable
 					}

@@ -27,9 +27,10 @@ var (
 )
 
 // Match matches the `pat` at least `times`, and returns the match, the rest and the error
-func Match(buf string, pat func(byte) bool, times int) (string, string, error) {
+func Match(buf string, pat func(byte) bool, times int) (match string, rest string, err error) {
 	var i int
-	for i = 0; i < len(buf) && pat(buf[i]); i++ {
+	for i < len(buf) && pat(buf[i]) {
+		i++
 	}
 	if i < times {
 		return "", buf, ErrPatternNotMatch
@@ -84,7 +85,7 @@ func Space0(buf string) string {
 }
 
 // Digit matches at least `times` digits
-func Digit(buf string, times int) (string, string, error) {
+func Digit(buf string, times int) (match string, rest string, err error) {
 	return Match(buf, func(c byte) bool {
 		return unicode.IsDigit(rune(c))
 	}, times)

@@ -20,6 +20,7 @@ go_library(
 
 go_test(
     name = "profile_test",
+    timeout = "short",
     srcs = [
         "flamegraph_test.go",
         "main_test.go",
@@ -27,6 +28,7 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     embed = [":profile"],
+    flaky = True,
     deps = [
         "//domain",
         "//kv",
@@ -38,6 +40,7 @@ go_test(
         "//util/collate",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
+        "@io_opencensus_go//stats/view",
         "@org_uber_go_goleak//:goleak",
     ],
 )

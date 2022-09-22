@@ -109,7 +109,7 @@ func (d DynamicPartitionAccessObjects) SetIntoPB(pb *tipb.ExplainOperator) {
 		if len(obj.err) > 0 {
 			continue
 		}
-		pbObj := pbObjSlice[i]
+		pbObj := &pbObjSlice[i]
 		pbObj.Database = obj.Database
 		pbObj.Table = obj.Table
 		pbObj.AllPartitions = obj.AllPartitions
@@ -119,7 +119,11 @@ func (d DynamicPartitionAccessObjects) SetIntoPB(pb *tipb.ExplainOperator) {
 	for i := range pbObjSlice {
 		pbObjs.Objects = append(pbObjs.Objects, &pbObjSlice[i])
 	}
-	pb.AccessObject = &tipb.ExplainOperator_DynamicPartitionObjects{DynamicPartitionObjects: &pbObjs}
+	pb.AccessObjects = []*tipb.AccessObject{
+		{
+			AccessObject: &tipb.AccessObject_DynamicPartitionObjects{DynamicPartitionObjects: &pbObjs},
+		},
+	}
 }
 
 // IndexAccess represents the index accessed by an operator.
@@ -202,7 +206,11 @@ func (s *ScanAccessObject) SetIntoPB(pb *tipb.ExplainOperator) {
 	for i := range s.Indexes {
 		pbObj.Indexes = append(pbObj.Indexes, s.Indexes[i].ToPB())
 	}
-	pb.AccessObject = &tipb.ExplainOperator_ScanObject{ScanObject: &pbObj}
+	pb.AccessObjects = []*tipb.AccessObject{
+		{
+			AccessObject: &tipb.AccessObject_ScanObject{ScanObject: &pbObj},
+		},
+	}
 }
 
 // OtherAccessObject represents other kinds of access.
@@ -222,7 +230,11 @@ func (o OtherAccessObject) SetIntoPB(pb *tipb.ExplainOperator) {
 	if pb == nil {
 		return
 	}
-	pb.AccessObject = &tipb.ExplainOperator_OtherObject{OtherObject: string(o)}
+	pb.AccessObjects = []*tipb.AccessObject{
+		{
+			AccessObject: &tipb.AccessObject_OtherObject{OtherObject: string(o)},
+		},
+	}
 }
 
 // AccessObject implements dataAccesser interface.
@@ -340,7 +352,7 @@ func (p *BatchPointGetPlan) AccessObject() AccessObject {
 
 func getDynamicAccessPartition(sctx sessionctx.Context, tblInfo *model.TableInfo, partitionInfo *PartitionInfo, asName string) (res *DynamicPartitionAccessObject) {
 	pi := tblInfo.GetPartitionInfo()
-	if pi == nil || !sctx.GetSessionVars().UseDynamicPartitionPrune() {
+	if pi == nil || !sctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		return nil
 	}
 
@@ -380,7 +392,7 @@ func getDynamicAccessPartition(sctx sessionctx.Context, tblInfo *model.TableInfo
 }
 
 func (p *PhysicalTableReader) accessObject(sctx sessionctx.Context) AccessObject {
-	if !sctx.GetSessionVars().UseDynamicPartitionPrune() {
+	if !sctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		return DynamicPartitionAccessObjects(nil)
 	}
 	if len(p.PartitionInfos) == 0 {
@@ -432,7 +444,7 @@ func (p *PhysicalTableReader) accessObject(sctx sessionctx.Context) AccessObject
 }
 
 func (p *PhysicalIndexReader) accessObject(sctx sessionctx.Context) AccessObject {
-	if !sctx.GetSessionVars().UseDynamicPartitionPrune() {
+	if !sctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		return DynamicPartitionAccessObjects(nil)
 	}
 	is := p.IndexPlans[0].(*PhysicalIndexScan)
@@ -448,7 +460,7 @@ func (p *PhysicalIndexReader) accessObject(sctx sessionctx.Context) AccessObject
 }
 
 func (p *PhysicalIndexLookUpReader) accessObject(sctx sessionctx.Context) AccessObject {
-	if !sctx.GetSessionVars().UseDynamicPartitionPrune() {
+	if !sctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		return DynamicPartitionAccessObjects(nil)
 	}
 	ts := p.TablePlans[0].(*PhysicalTableScan)
@@ -464,7 +476,7 @@ func (p *PhysicalIndexLookUpReader) accessObject(sctx sessionctx.Context) Access
 }
 
 func (p *PhysicalIndexMergeReader) accessObject(sctx sessionctx.Context) AccessObject {
-	if !sctx.GetSessionVars().UseDynamicPartitionPrune() {
+	if !sctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		return DynamicPartitionAccessObjects(nil)
 	}
 	ts := p.TablePlans[0].(*PhysicalTableScan)

@@ -258,12 +258,11 @@ func newGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorage
 				return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "%v Or you should provide '--gcs.credentials_file'", err)
 			}
 			if opts.SendCredentials {
-				if len(creds.JSON) > 0 {
-					gcs.CredentialsBlob = string(creds.JSON)
-				} else {
+				if len(creds.JSON) <= 0 {
 					return nil, errors.Annotate(berrors.ErrStorageInvalidConfig,
 						"You should provide '--gcs.credentials_file' when '--send-credentials-to-tikv' is true")
 				}
+				gcs.CredentialsBlob = string(creds.JSON)
 			}
 			if creds != nil {
 				clientOps = append(clientOps, option.WithCredentials(creds))

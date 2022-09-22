@@ -39,8 +39,7 @@ import (
 )
 
 func TestColumnAdd(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
 	tk := testkit.NewTestKit(t, store)
 	internal := testkit.NewTestKit(t, store)
@@ -81,7 +80,7 @@ func TestColumnAdd(t *testing.T) {
 			require.NoError(t, checkAddPublic(ct, writeOnlyTable, publicTable))
 		}
 	}
-	d.SetHook(tc)
+	d.SetHook(tc.Clone())
 	tk.MustExec("alter table t add column c3 int default 3")
 	tb := publicTable
 	v := getSchemaVer(t, tk.Session())
@@ -106,7 +105,7 @@ func TestColumnAdd(t *testing.T) {
 			}
 		}
 	}
-	d.SetHook(tc)
+	d.SetHook(tc.Clone())
 	tk.MustExec("alter table t drop column c3")
 	v = getSchemaVer(t, tk.Session())
 	// Don't check column, so it's ok to use tb.
@@ -140,8 +139,7 @@ func TestColumnAdd(t *testing.T) {
 }
 
 func TestModifyAutoRandColumnWithMetaKeyChanged(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

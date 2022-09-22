@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
@@ -568,7 +567,7 @@ func SubTestBuild() func(*testing.T) {
 		count = col.lessRowCount(types.NewIntDatum(1))
 		require.Equal(t, 5, int(count))
 
-		colv2, topnv2, err := BuildHistAndTopN(ctx, int(bucketCount), topNCount, 2, collector, types.NewFieldType(mysql.TypeLonglong), true)
+		colv2, topnv2, err := BuildHistAndTopN(ctx, int(bucketCount), topNCount, 2, collector, types.NewFieldType(mysql.TypeLonglong), true, nil)
 		require.NoError(t, err)
 		require.NotNil(t, topnv2.TopN)
 		// The most common one's occurrence is 9990, the second most common one's occurrence is 30.
@@ -646,7 +645,7 @@ func SubTestBuild() func(*testing.T) {
 		require.Equal(t, 99999, int(count))
 
 		datum := types.Datum{}
-		datum.SetMysqlJSON(json.BinaryJSON{TypeCode: json.TypeCodeLiteral})
+		datum.SetMysqlJSON(types.BinaryJSON{TypeCode: types.JSONTypeCodeLiteral})
 		item := &SampleItem{Value: datum}
 		collector = &SampleCollector{
 			Count:     1,

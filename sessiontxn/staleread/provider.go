@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/sessiontxn/internal"
 	"github.com/pingcap/tidb/table/temptable"
 )
 
@@ -50,6 +51,11 @@ func NewStalenessTxnContextProvider(sctx sessionctx.Context, ts uint64, is infos
 // GetTxnInfoSchema returns the information schema used by txn
 func (p *StalenessTxnContextProvider) GetTxnInfoSchema() infoschema.InfoSchema {
 	return p.is
+}
+
+// SetTxnInfoSchema sets the information schema used by txn.
+func (p *StalenessTxnContextProvider) SetTxnInfoSchema(is infoschema.InfoSchema) {
+	p.is = is
 }
 
 // GetTxnScope returns the current txn scope
@@ -89,7 +95,7 @@ func (p *StalenessTxnContextProvider) OnInitialize(ctx context.Context, tp sessi
 // with the staleness snapshot ts. After that, it sets the relevant context variables.
 func (p *StalenessTxnContextProvider) activateStaleTxn() error {
 	var err error
-	if err = sessiontxn.CommitBeforeEnterNewTxn(p.ctx, p.sctx); err != nil {
+	if err = internal.CommitBeforeEnterNewTxn(p.ctx, p.sctx); err != nil {
 		return err
 	}
 
@@ -108,7 +114,7 @@ func (p *StalenessTxnContextProvider) activateStaleTxn() error {
 	txn.SetVars(sessVars.KVVars)
 	txn.SetOption(kv.IsStalenessReadOnly, true)
 	txn.SetOption(kv.TxnScope, txnScope)
-	sessiontxn.SetTxnAssertionLevel(txn, sessVars.AssertionLevel)
+	internal.SetTxnAssertionLevel(txn, sessVars.AssertionLevel)
 	is, err := GetSessionSnapshotInfoSchema(p.sctx, p.ts)
 	if err != nil {
 		return errors.Trace(err)
@@ -123,7 +129,10 @@ func (p *StalenessTxnContextProvider) activateStaleTxn() error {
 			TxnScope:    txnScope,
 		},
 	}
-	txn.SetOption(kv.SnapInterceptor, temptable.SessionSnapshotInterceptor(p.sctx))
+
+	if interceptor := temptable.SessionSnapshotInterceptor(p.sctx, is); interceptor != nil {
+		txn.SetOption(kv.SnapInterceptor, interceptor)
+	}
 
 	p.is = is
 	err = p.sctx.GetSessionVars().SetSystemVar(variable.TiDBSnapshot, "")
@@ -208,7 +217,11 @@ func (p *StalenessTxnContextProvider) GetSnapshotWithStmtReadTS() (kv.Snapshot, 
 	}
 
 	sessVars := p.sctx.GetSessionVars()
-	snapshot := sessiontxn.GetSnapshotWithTS(p.sctx, p.ts)
+	snapshot := internal.GetSnapshotWithTS(
+		p.sctx,
+		p.ts,
+		temptable.SessionSnapshotInterceptor(p.sctx, p.is),
+	)
 
 	replicaReadType := sessVars.GetReplicaRead()
 	if replicaReadType.IsFollowerRead() {
@@ -223,3 +236,6 @@ func (p *StalenessTxnContextProvider) GetSnapshotWithStmtReadTS() (kv.Snapshot, 
 func (p *StalenessTxnContextProvider) GetSnapshotWithStmtForUpdateTS() (kv.Snapshot, error) {
 	return nil, errors.New("GetSnapshotWithStmtForUpdateTS not supported for stalenessTxnProvider")
 }
+
+// OnLocalTemporaryTableCreated will not be called for StalenessTxnContextProvider
+func (p *StalenessTxnContextProvider) OnLocalTemporaryTableCreated() {}

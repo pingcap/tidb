@@ -16,37 +16,41 @@ package ddl
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/ddl/syncer"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
-var _ util.SchemaSyncer = &MockSchemaSyncer{}
+var _ syncer.SchemaSyncer = &MockSchemaSyncer{}
 
 const mockCheckVersInterval = 2 * time.Millisecond
 
 // MockSchemaSyncer is a mock schema syncer, it is exported for tesing.
 type MockSchemaSyncer struct {
 	selfSchemaVersion int64
+	mdlSchemaVersions sync.Map
 	globalVerCh       chan clientv3.WatchResponse
 	mockSession       chan struct{}
 }
 
 // NewMockSchemaSyncer creates a new mock SchemaSyncer.
-func NewMockSchemaSyncer() util.SchemaSyncer {
+func NewMockSchemaSyncer() syncer.SchemaSyncer {
 	return &MockSchemaSyncer{}
 }
 
 // Init implements SchemaSyncer.Init interface.
 func (s *MockSchemaSyncer) Init(ctx context.Context) error {
+	s.mdlSchemaVersions = sync.Map{}
 	s.globalVerCh = make(chan clientv3.WatchResponse, 1)
 	s.mockSession = make(chan struct{}, 1)
 	return nil
@@ -61,8 +65,12 @@ func (s *MockSchemaSyncer) GlobalVersionCh() clientv3.WatchChan {
 func (s *MockSchemaSyncer) WatchGlobalSchemaVer(context.Context) {}
 
 // UpdateSelfVersion implements SchemaSyncer.UpdateSelfVersion interface.
-func (s *MockSchemaSyncer) UpdateSelfVersion(ctx context.Context, version int64) error {
-	atomic.StoreInt64(&s.selfSchemaVersion, version)
+func (s *MockSchemaSyncer) UpdateSelfVersion(ctx context.Context, jobID int64, version int64) error {
+	if variable.EnableMDL.Load() {
+		s.mdlSchemaVersions.Store(jobID, version)
+	} else {
+		atomic.StoreInt64(&s.selfSchemaVersion, version)
+	}
 	return nil
 }
 
@@ -91,13 +99,8 @@ func (s *MockSchemaSyncer) OwnerUpdateGlobalVersion(ctx context.Context, version
 	return nil
 }
 
-// MustGetGlobalVersion implements SchemaSyncer.MustGetGlobalVersion interface.
-func (s *MockSchemaSyncer) MustGetGlobalVersion(ctx context.Context) (int64, error) {
-	return 0, nil
-}
-
 // OwnerCheckAllVersions implements SchemaSyncer.OwnerCheckAllVersions interface.
-func (s *MockSchemaSyncer) OwnerCheckAllVersions(ctx context.Context, latestVer int64) error {
+func (s *MockSchemaSyncer) OwnerCheckAllVersions(ctx context.Context, jobID int64, latestVer int64) error {
 	ticker := time.NewTicker(mockCheckVersInterval)
 	defer ticker.Stop()
 
@@ -111,22 +114,23 @@ func (s *MockSchemaSyncer) OwnerCheckAllVersions(ctx context.Context, latestVer 
 			})
 			return errors.Trace(ctx.Err())
 		case <-ticker.C:
-			ver := atomic.LoadInt64(&s.selfSchemaVersion)
-			if ver >= latestVer {
-				return nil
+			if variable.EnableMDL.Load() {
+				ver, ok := s.mdlSchemaVersions.Load(jobID)
+				if ok && ver.(int64) >= latestVer {
+					return nil
+				}
+			} else {
+				ver := atomic.LoadInt64(&s.selfSchemaVersion)
+				if ver >= latestVer {
+					return nil
+				}
 			}
 		}
 	}
 }
 
-// NotifyCleanExpiredPaths implements SchemaSyncer.NotifyCleanExpiredPaths interface.
-func (s *MockSchemaSyncer) NotifyCleanExpiredPaths() bool { return true }
-
-// StartCleanWork implements SchemaSyncer.StartCleanWork interface.
-func (s *MockSchemaSyncer) StartCleanWork() {}
-
 // Close implements SchemaSyncer.Close interface.
-func (s *MockSchemaSyncer) Close() {}
+func (*MockSchemaSyncer) Close() {}
 
 type mockDelRange struct {
 }
@@ -137,12 +141,12 @@ func newMockDelRangeManager() delRangeManager {
 }
 
 // addDelRangeJob implements delRangeManager interface.
-func (dr *mockDelRange) addDelRangeJob(ctx context.Context, job *model.Job) error {
+func (*mockDelRange) addDelRangeJob(_ context.Context, _ *model.Job) error {
 	return nil
 }
 
 // removeFromGCDeleteRange implements delRangeManager interface.
-func (dr *mockDelRange) removeFromGCDeleteRange(ctx context.Context, jobID int64, tableIDs []int64) error {
+func (*mockDelRange) removeFromGCDeleteRange(_ context.Context, _ int64) error {
 	return nil
 }
 
@@ -159,11 +163,15 @@ func MockTableInfo(ctx sessionctx.Context, stmt *ast.CreateTableStmt, tableID in
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	tbl, err := buildTableInfo(ctx, stmt.Table.Name, cols, newConstraints, "", "")
+	tbl, err := BuildTableInfo(ctx, stmt.Table.Name, cols, newConstraints, "", "")
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	tbl.ID = tableID
+
+	if err = setTableAutoRandomBits(ctx, tbl, stmt.Cols); err != nil {
+		return nil, errors.Trace(err)
+	}
 
 	// The specified charset will be handled in handleTableOptions
 	if err = handleTableOptions(stmt.Options, tbl); err != nil {

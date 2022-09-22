@@ -37,8 +37,8 @@ const (
 type Table = tfilter.Table
 
 type cache struct {
+	items map[string]ActionType
 	sync.RWMutex
-	items map[string]ActionType // `schema`.`table` => do/ignore
 }
 
 func (c *cache) query(key string) (ActionType, bool) {
@@ -100,8 +100,8 @@ const (
 )
 
 type nodeEndRule struct {
-	kind        int
 	r           *regexp.Regexp
+	kind        int
 	isAllowList bool
 }
 

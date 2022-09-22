@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
+	"github.com/pingcap/tidb/util/size"
 	"golang.org/x/exp/slices"
 )
 
@@ -176,6 +177,16 @@ func (s *physicalSchemaProducer) SetSchema(schema *expression.Schema) {
 	s.schema = schema
 }
 
+// MemoryUsage return the memory usage of physicalSchemaProducer
+func (s *physicalSchemaProducer) MemoryUsage() (sum int64) {
+	if s == nil {
+		return
+	}
+
+	sum = s.basePhysicalPlan.MemoryUsage() + size.SizeOfPointer
+	return
+}
+
 // baseSchemaProducer stores the schema for the base plans who can produce schema directly.
 type baseSchemaProducer struct {
 	schema *expression.Schema
@@ -256,7 +267,26 @@ func BuildPhysicalJoinSchema(joinType JoinType, join PhysicalPlan) *expression.S
 	return newSchema
 }
 
+// GetStatsInfoFromFlatPlan gets the statistics info from a FlatPhysicalPlan.
+func GetStatsInfoFromFlatPlan(flat *FlatPhysicalPlan) map[string]uint64 {
+	res := make(map[string]uint64)
+	for _, op := range flat.Main {
+		switch p := op.Origin.(type) {
+		case *PhysicalIndexScan:
+			if _, ok := res[p.Table.Name.O]; p.stats != nil && !ok {
+				res[p.Table.Name.O] = p.stats.StatsVersion
+			}
+		case *PhysicalTableScan:
+			if _, ok := res[p.Table.Name.O]; p.stats != nil && !ok {
+				res[p.Table.Name.O] = p.stats.StatsVersion
+			}
+		}
+	}
+	return res
+}
+
 // GetStatsInfo gets the statistics info from a physical plan tree.
+// Deprecated: FlattenPhysicalPlan() + GetStatsInfoFromFlatPlan() is preferred.
 func GetStatsInfo(i interface{}) map[string]uint64 {
 	if i == nil {
 		// it's a workaround for https://github.com/pingcap/tidb/issues/17419

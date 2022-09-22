@@ -117,6 +117,8 @@ type TxnContextProvider interface {
 	TxnAdvisable
 	// GetTxnInfoSchema returns the information schema used by txn
 	GetTxnInfoSchema() infoschema.InfoSchema
+	// SetTxnInfoSchema sets the information schema used by txn.
+	SetTxnInfoSchema(is infoschema.InfoSchema)
 	// GetTxnScope returns the current txn scope
 	GetTxnScope() string
 	// GetReadReplicaScope returns the read replica scope
@@ -138,6 +140,8 @@ type TxnContextProvider interface {
 	OnStmtErrorForNextAction(point StmtErrorHandlePoint, err error) (StmtErrorAction, error)
 	// OnStmtRetry is the hook that should be called when a statement is retried internally.
 	OnStmtRetry(ctx context.Context) error
+	// OnLocalTemporaryTableCreated is the hook that should be called when a local temporary table created.
+	OnLocalTemporaryTableCreated()
 	// ActivateTxn activates the transaction.
 	ActivateTxn() (kv.Transaction, error)
 }
@@ -149,6 +153,8 @@ type TxnManager interface {
 	// If the session is not in any transaction, for example: between two autocommit statements,
 	// this method will return the latest information schema in session that is same with `sessionctx.GetDomainInfoSchema()`
 	GetTxnInfoSchema() infoschema.InfoSchema
+	// SetTxnInfoSchema sets the information schema used by txn.
+	SetTxnInfoSchema(infoschema.InfoSchema)
 	// GetTxnScope returns the current txn scope
 	GetTxnScope() string
 	// GetReadReplicaScope returns the read replica scope
@@ -177,6 +183,8 @@ type TxnManager interface {
 	OnStmtErrorForNextAction(point StmtErrorHandlePoint, err error) (StmtErrorAction, error)
 	// OnStmtRetry is the hook that should be called when a statement retry
 	OnStmtRetry(ctx context.Context) error
+	// OnLocalTemporaryTableCreated is the hook that should be called when a local temporary table created.
+	OnLocalTemporaryTableCreated()
 	// ActivateTxn activates the transaction.
 	ActivateTxn() (kv.Transaction, error)
 	// GetCurrentStmt returns the current statement node

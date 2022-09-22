@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/sli"
@@ -48,6 +49,16 @@ type SessionStatesHandler interface {
 	EncodeSessionStates(context.Context, Context, *sessionstates.SessionStates) error
 	// DecodeSessionStates decodes a map into session states.
 	DecodeSessionStates(context.Context, Context, *sessionstates.SessionStates) error
+}
+
+// PlanCache is an interface for prepare and general plan cache
+type PlanCache interface {
+	Get(key kvcache.Key, paramTypes []*types.FieldType) (value kvcache.Value, ok bool)
+	Put(key kvcache.Key, value kvcache.Value, paramTypes []*types.FieldType)
+	Delete(key kvcache.Key)
+	DeleteAll()
+	Size() int
+	SetCapacity(capacity uint) error
 }
 
 // Context is an interface for transaction and executive args environment.
@@ -106,15 +117,16 @@ type Context interface {
 	// GetStore returns the store of session.
 	GetStore() kv.Storage
 
-	// PreparedPlanCache returns the cache of the physical plan
-	PreparedPlanCache() *kvcache.SimpleLRUCache
+	// GetPlanCache returns the cache of the physical plan.
+	// generalPlanCache indicates to return the general plan cache or the prepared plan cache.
+	GetPlanCache(isGeneralPlanCache bool) PlanCache
 
 	// StoreQueryFeedback stores the query feedback.
 	StoreQueryFeedback(feedback interface{})
 
 	// UpdateColStatsUsage updates the column stats usage.
 	// TODO: maybe we can use a method called GetSessionStatsCollector to replace both StoreQueryFeedback and UpdateColStatsUsage but we need to deal with import circle if we do so.
-	UpdateColStatsUsage(predicateColumns []model.TableColumnID)
+	UpdateColStatsUsage(predicateColumns []model.TableItemID)
 
 	// HasDirtyContent checks whether there's dirty update on the given table.
 	HasDirtyContent(tid int64) bool

@@ -72,7 +72,7 @@ func extractKeyExistsErrFromHandle(key kv.Key, value []byte, tblInfo *model.Tabl
 
 	cols := make(map[int64]*types.FieldType, len(tblInfo.Columns))
 	for _, col := range tblInfo.Columns {
-		cols[col.ID] = &col.FieldType
+		cols[col.ID] = &(col.FieldType)
 	}
 	handleColIDs := make([]int64, 0, len(idxInfo.Columns))
 	for _, col := range idxInfo.Columns {
@@ -162,7 +162,7 @@ func newWriteConflictError(conflict *kvrpcpb.WriteConflict) error {
 	prettyWriteKey(&buf, conflict.Key)
 	buf.WriteString(" primary=")
 	prettyWriteKey(&buf, conflict.Primary)
-	return kv.ErrWriteConflict.FastGenByArgs(conflict.StartTs, conflict.ConflictTs, conflict.ConflictCommitTs, buf.String())
+	return kv.ErrWriteConflict.FastGenByArgs(conflict.StartTs, conflict.ConflictTs, conflict.ConflictCommitTs, buf.String(), conflict.Reason.String())
 }
 
 func prettyWriteKey(buf *bytes.Buffer, key []byte) {

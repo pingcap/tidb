@@ -129,7 +129,6 @@ func TestBalanceBatchCopTaskWithEmptyTaskSet(t *testing.T) {
 		require.True(t, emptyResult != nil)
 		require.True(t, len(emptyResult) == 0)
 	}
-
 }
 
 func TestDeepCopyStoreTaskMap(t *testing.T) {

@@ -74,7 +74,7 @@ type noopBackoffer struct {
 	attempt int
 }
 
-func (b *noopBackoffer) NextBackoff(err error) time.Duration {
+func (b *noopBackoffer) NextBackoff(_ error) time.Duration {
 	b.attempt--
 	return time.Duration(0)
 }

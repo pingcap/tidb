@@ -18,23 +18,39 @@ import "fmt"
 
 // PlanTrace indicates for the Plan trace information
 type PlanTrace struct {
-	ID         int          `json:"id"`
-	TP         string       `json:"type"`
-	Children   []*PlanTrace `json:"-"`
-	ChildrenID []int        `json:"children"`
-	Cost       float64      `json:"cost"`
-	Selected   bool         `json:"selected"`
-	ProperType string       `json:"property"`
+	mapChildren map[int]struct{}
+	TP          string `json:"type"`
+	ProperType  string `json:"property"`
 	// ExplainInfo should be implemented by each implemented Plan
-	ExplainInfo string `json:"info"`
+	ExplainInfo string       `json:"info"`
+	Children    []*PlanTrace `json:"-"`
+	ChildrenID  []int        `json:"children"`
+	ID          int          `json:"id"`
+	Cost        float64      `json:"cost"`
+	Selected    bool         `json:"selected"`
+}
+
+// AppendChildrenID appends children ids
+func (p *PlanTrace) AppendChildrenID(ids ...int) {
+	if p.mapChildren == nil {
+		p.mapChildren = make(map[int]struct{})
+	}
+	for _, id := range ids {
+		_, existed := p.mapChildren[id]
+		if existed {
+			continue
+		}
+		p.mapChildren[id] = struct{}{}
+		p.ChildrenID = append(p.ChildrenID, id)
+	}
 }
 
 // LogicalOptimizeTracer indicates the trace for the whole logicalOptimize processing
 type LogicalOptimizeTracer struct {
+	// curRuleTracer indicates the current rule Tracer during optimize by rule
+	curRuleTracer    *LogicalRuleOptimizeTracer
 	FinalLogicalPlan []*PlanTrace                 `json:"final"`
 	Steps            []*LogicalRuleOptimizeTracer `json:"steps"`
-	// curRuleTracer indicates the current rule Tracer during optimize by rule
-	curRuleTracer *LogicalRuleOptimizeTracer
 }
 
 // AppendRuleTracerBeforeRuleOptimize add plan tracer before optimize
@@ -62,7 +78,6 @@ func (tracer *LogicalOptimizeTracer) RecordFinalLogicalPlan(final *PlanTrace) {
 	tracer.removeUselessStep()
 }
 
-// TODO: use a switch to control it
 func (tracer *LogicalOptimizeTracer) removeUselessStep() {
 	newSteps := make([]*LogicalRuleOptimizeTracer, 0)
 	for _, step := range tracer.Steps {
@@ -76,10 +91,10 @@ func (tracer *LogicalOptimizeTracer) removeUselessStep() {
 // LogicalRuleOptimizeTracer indicates the trace for the LogicalPlan tree before and after
 // logical rule optimize
 type LogicalRuleOptimizeTracer struct {
-	Index    int                            `json:"index"`
-	Before   []*PlanTrace                   `json:"before"`
 	RuleName string                         `json:"name"`
+	Before   []*PlanTrace                   `json:"before"`
 	Steps    []LogicalRuleOptimizeTraceStep `json:"steps"`
+	Index    int                            `json:"index"`
 }
 
 // buildLogicalRuleOptimizeTracerBeforeOptimize build rule tracer before rule optimize
@@ -97,8 +112,8 @@ func buildLogicalRuleOptimizeTracerBeforeOptimize(index int, name string, before
 type LogicalRuleOptimizeTraceStep struct {
 	Action string `json:"action"`
 	Reason string `json:"reason"`
-	ID     int    `json:"id"`
 	TP     string `json:"type"`
+	ID     int    `json:"id"`
 	Index  int    `json:"index"`
 }
 
@@ -126,7 +141,7 @@ func flattenLogicalPlanTrace(node *PlanTrace, wrapper *flattenWrapper) {
 		return
 	}
 	for _, child := range node.Children {
-		newNode.ChildrenID = append(newNode.ChildrenID, child.ID)
+		newNode.AppendChildrenID(child.ID)
 	}
 	for _, child := range node.Children {
 		flattenLogicalPlanTrace(child, wrapper)
@@ -136,10 +151,10 @@ func flattenLogicalPlanTrace(node *PlanTrace, wrapper *flattenWrapper) {
 
 // CETraceRecord records an expression and related cardinality estimation result.
 type CETraceRecord struct {
-	TableID   int64  `json:"-"`
 	TableName string `json:"table_name"`
 	Type      string `json:"type"`
 	Expr      string `json:"expr"`
+	TableID   int64  `json:"-"`
 	RowCount  uint64 `json:"row_count"`
 }
 
@@ -158,12 +173,20 @@ func DedupCETrace(records []*CETraceRecord) []*CETraceRecord {
 
 // PhysicalOptimizeTracer indicates the trace for the whole physicalOptimize processing
 type PhysicalOptimizeTracer struct {
+	PhysicalPlanCostDetails map[int]*PhysicalPlanCostDetail `json:"costs"`
+	Candidates              map[int]*CandidatePlanTrace     `json:"candidates"`
 	// final indicates the final physical plan trace
-	Final               []*PlanTrace          `json:"final"`
-	SelectedCandidates  []*CandidatePlanTrace `json:"selected_candidates"`
-	DiscardedCandidates []*CandidatePlanTrace `json:"discarded_candidates"`
-	// (logical plan) -> physical plan codename -> physical plan
-	State map[string]map[string]*PlanTrace `json:"-"`
+	Final []*PlanTrace `json:"final"`
+}
+
+// AppendCandidate appends physical CandidatePlanTrace in tracer.
+// If the candidate already exists, the previous candidate would be covered depends on whether it has mapping logical plan
+func (tracer *PhysicalOptimizeTracer) AppendCandidate(c *CandidatePlanTrace) {
+	old, exists := tracer.Candidates[c.ID]
+	if exists && len(old.MappingLogicalPlan) > 0 && len(c.MappingLogicalPlan) < 1 {
+		return
+	}
+	tracer.Candidates[c.ID] = c
 }
 
 // RecordFinalPlanTrace records final physical plan trace
@@ -178,48 +201,21 @@ type CandidatePlanTrace struct {
 	MappingLogicalPlan string `json:"mapping"`
 }
 
-func newCandidatePlanTrace(trace *PlanTrace, logicalPlanKey string, bestKey map[string]struct{}) *CandidatePlanTrace {
-	selected := false
-	if _, ok := bestKey[CodecPlanName(trace.TP, trace.ID)]; ok {
-		selected = true
-	}
-	c := &CandidatePlanTrace{
-		MappingLogicalPlan: logicalPlanKey,
-	}
-	c.PlanTrace = trace
-	c.Selected = selected
-	for i, child := range c.Children {
-		if _, ok := bestKey[CodecPlanName(child.TP, child.ID)]; ok {
-			child.Selected = true
-		}
-		c.Children[i] = child
-	}
-	return c
-}
-
 // buildCandidatesInfo builds candidates info
 func (tracer *PhysicalOptimizeTracer) buildCandidatesInfo() {
-	if tracer == nil || len(tracer.State) < 1 {
+	if tracer == nil || len(tracer.Candidates) < 1 {
 		return
 	}
-	sCandidates := make([]*CandidatePlanTrace, 0)
-	dCandidates := make([]*CandidatePlanTrace, 0)
-	bestKeys := map[string]struct{}{}
-	for _, node := range tracer.Final {
-		bestKeys[CodecPlanName(node.TP, node.ID)] = struct{}{}
+	fID := make(map[int]struct{}, len(tracer.Final))
+	for _, plan := range tracer.Final {
+		fID[plan.ID] = struct{}{}
 	}
-	for logicalKey, pps := range tracer.State {
-		for _, pp := range pps {
-			c := newCandidatePlanTrace(pp, logicalKey, bestKeys)
-			if c.Selected {
-				sCandidates = append(sCandidates, c)
-			} else {
-				dCandidates = append(dCandidates, c)
-			}
+
+	for _, candidate := range tracer.Candidates {
+		if _, ok := fID[candidate.ID]; ok {
+			candidate.Selected = true
 		}
 	}
-	tracer.SelectedCandidates = sCandidates
-	tracer.DiscardedCandidates = dCandidates
 }
 
 // CodecPlanName returns tp_id of plan.
@@ -248,4 +244,52 @@ func (tracer *OptimizeTracer) SetFastPlan(final *PlanTrace) {
 // RecordFinalPlan records plan after post optimize
 func (tracer *OptimizeTracer) RecordFinalPlan(final *PlanTrace) {
 	tracer.FinalPlan = toFlattenPlanTrace(final)
+}
+
+// PhysicalPlanCostDetail indicates cost detail
+type PhysicalPlanCostDetail struct {
+	Params map[string]interface{} `json:"params"`
+	TP     string                 `json:"type"`
+	Desc   string                 `json:"desc"`
+	ID     int                    `json:"id"`
+}
+
+// NewPhysicalPlanCostDetail creates a cost detail
+func NewPhysicalPlanCostDetail(id int, tp string) *PhysicalPlanCostDetail {
+	return &PhysicalPlanCostDetail{
+		ID:     id,
+		TP:     tp,
+		Params: make(map[string]interface{}),
+	}
+}
+
+// AddParam adds param
+func (d *PhysicalPlanCostDetail) AddParam(k string, v interface{}) *PhysicalPlanCostDetail {
+	// discard empty param value
+	if s, ok := v.(string); ok && len(s) < 1 {
+		return d
+	}
+	d.Params[k] = v
+	return d
+}
+
+// SetDesc sets desc
+func (d *PhysicalPlanCostDetail) SetDesc(desc string) {
+	d.Desc = desc
+}
+
+// GetPlanID gets plan id
+func (d *PhysicalPlanCostDetail) GetPlanID() int {
+	return d.ID
+}
+
+// GetPlanType gets plan type
+func (d *PhysicalPlanCostDetail) GetPlanType() string {
+	return d.TP
+}
+
+// Exists checks whether key exists in params
+func (d *PhysicalPlanCostDetail) Exists(k string) bool {
+	_, ok := d.Params[k]
+	return ok
 }

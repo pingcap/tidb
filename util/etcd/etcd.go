@@ -28,8 +28,8 @@ import (
 
 // Node organizes the ectd query result as a Trie tree
 type Node struct {
-	Value  []byte
 	Childs map[string]*Node
+	Value  []byte
 }
 
 // OpType is operation's type in etcd
@@ -51,10 +51,9 @@ type Operation struct {
 	Tp         OpType
 	Key        string
 	Value      string
+	Opts       []clientv3.OpOption
 	TTL        int64
 	WithPrefix bool
-
-	Opts []clientv3.OpOption
 }
 
 // String implements Stringer interface.
@@ -304,8 +303,8 @@ func (e *Client) DoTxn(ctx context.Context, operations []*Operation) (int64, err
 	return txnResp.Header.Revision, nil
 }
 
-func parseToDirTree(root *Node, path string) *Node {
-	pathDirs := strings.Split(path, "/")
+func parseToDirTree(root *Node, p string) *Node {
+	pathDirs := strings.Split(p, "/")
 	current := root
 	var next *Node
 	var ok bool

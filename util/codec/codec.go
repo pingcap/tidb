@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
@@ -68,7 +67,7 @@ func preRealloc(b []byte, vals []types.Datum, comparable1 bool) []byte {
 		case types.KindMysqlTime, types.KindMysqlDuration, types.KindFloat32, types.KindFloat64:
 			size += 9
 		case types.KindNull, types.KindMinNotNull, types.KindMaxValue:
-			size += 1
+			size++
 		case types.KindMysqlJSON:
 			size += 2 + len(vals[i].GetBytes())
 		case types.KindMysqlDecimal:
@@ -157,7 +156,12 @@ func EstimateValueSize(sc *stmtctx.StatementContext, val types.Datum) (int, erro
 	case types.KindString, types.KindBytes:
 		l = valueSizeOfBytes(val.GetBytes())
 	case types.KindMysqlDecimal:
-		l = valueSizeOfDecimal(val.GetMysqlDecimal(), val.Length(), val.Frac()) + 1
+		var err error
+		l, err = valueSizeOfDecimal(val.GetMysqlDecimal(), val.Length(), val.Frac())
+		if err != nil {
+			return 0, err
+		}
+		l = l + 1
 	case types.KindMysqlEnum:
 		l = valueSizeOfUnsignedInt(val.GetMysqlEnum().Value)
 	case types.KindMysqlSet:
@@ -762,6 +766,8 @@ func DecodeRange(b []byte, size int, idxColumnTypes []byte, loc *time.Location) 
 			if types.IsTypeTime(idxColumnTypes[i]) {
 				// handle datetime values specially since they are encoded to int and we'll get int values if using DecodeOne.
 				b, d, err = DecodeAsDateTime(b, idxColumnTypes[i], loc)
+			} else if types.IsTypeFloat(idxColumnTypes[i]) {
+				b, d, err = DecodeAsFloat32(b, idxColumnTypes[i])
 			} else {
 				b, d, err = DecodeOne(b)
 			}
@@ -846,11 +852,11 @@ func DecodeOne(b []byte) (remain []byte, d types.Datum, err error) {
 		}
 	case jsonFlag:
 		var size int
-		size, err = json.PeekBytesAsJSON(b)
+		size, err = types.PeekBytesAsJSON(b)
 		if err != nil {
 			return b, d, err
 		}
-		j := json.BinaryJSON{TypeCode: b[0], Value: b[1:size]}
+		j := types.BinaryJSON{TypeCode: b[0], Value: b[1:size]}
 		d.SetMysqlJSON(j)
 		b = b[size:]
 	case NilFlag:
@@ -896,6 +902,22 @@ func DecodeAsDateTime(b []byte, tp byte, loc *time.Location) (remain []byte, d t
 		}
 	}
 	d.SetMysqlTime(t)
+	return b, d, nil
+}
+
+// DecodeAsFloat32 decodes value for mysql.TypeFloat
+func DecodeAsFloat32(b []byte, tp byte) (remain []byte, d types.Datum, err error) {
+	if len(b) < 1 || tp != mysql.TypeFloat {
+		return nil, d, errors.New("invalid encoded key")
+	}
+	flag := b[0]
+	b = b[1:]
+	if flag != floatFlag {
+		return b, d, errors.Errorf("invalid encoded key flag %v for DecodeAsFloat32", flag)
+	}
+	var v float64
+	b, v, err = DecodeFloat(b)
+	d.SetFloat32FromF64(v)
 	return b, d, nil
 }
 
@@ -959,7 +981,7 @@ func peek(b []byte) (length int, err error) {
 	case uvarintFlag:
 		l, err = peekUvarint(b)
 	case jsonFlag:
-		l, err = json.PeekBytesAsJSON(b)
+		l, err = types.PeekBytesAsJSON(b)
 	default:
 		return 0, errors.Errorf("invalid encoded key flag %v", flag)
 	}
@@ -1126,11 +1148,11 @@ func (decoder *Decoder) DecodeOne(b []byte, colIdx int, ft *types.FieldType) (re
 		chk.AppendDuration(colIdx, v)
 	case jsonFlag:
 		var size int
-		size, err = json.PeekBytesAsJSON(b)
+		size, err = types.PeekBytesAsJSON(b)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		chk.AppendJSON(colIdx, json.BinaryJSON{TypeCode: b[0], Value: b[1:size]})
+		chk.AppendJSON(colIdx, types.BinaryJSON{TypeCode: b[0], Value: b[1:size]})
 		b = b[size:]
 	case NilFlag:
 		chk.AppendNull(colIdx)
@@ -1282,7 +1304,7 @@ func HashGroupKey(sc *stmtctx.StatementContext, n int, col *chunk.Column, buf []
 			}
 		}
 	default:
-		return nil, errors.New(fmt.Sprintf("invalid eval type %v", ft.EvalType()))
+		return nil, fmt.Errorf("invalid eval type %v", ft.EvalType())
 	}
 	return buf, nil
 }
@@ -1300,8 +1322,7 @@ func ConvertByCollationStr(str string, tp *types.FieldType) string {
 }
 
 // HashCode encodes a Datum into a unique byte slice.
-// It is mostly the same as EncodeValue, but it doesn't contain truncation or verification logic in order
-// 	to make the encoding lossless.
+// It is mostly the same as EncodeValue, but it doesn't contain truncation or verification logic in order to make the encoding lossless.
 func HashCode(b []byte, d types.Datum) []byte {
 	switch d.Kind() {
 	case types.KindInt64:

@@ -5,5 +5,8 @@ go_library(
     srcs = ["analyzer.go"],
     importpath = "github.com/pingcap/tidb/build/linter/ineffassign",
     visibility = ["//visibility:public"],
-    deps = ["@com_github_gordonklaus_ineffassign//pkg/ineffassign"],
+    deps = [
+        "//build/linter/util",
+        "@com_github_gordonklaus_ineffassign//pkg/ineffassign",
+    ],
 )

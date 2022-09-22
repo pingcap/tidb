@@ -22,10 +22,13 @@ go_library(
         "//sessionctx",
         "//sessionctx/variable",
         "//sessiontxn",
+        "//sessiontxn/internal",
         "//sessiontxn/staleread",
         "//table/temptable",
         "//util/logutil",
+        "@com_github_opentracing_opentracing_go//:opentracing-go",
         "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_tikv_client_go_v2//error",
         "@com_github_tikv_client_go_v2//oracle",
         "@org_uber_go_zap//:zap",
@@ -34,6 +37,7 @@ go_library(
 
 go_test(
     name = "isolation_test",
+    timeout = "short",
     srcs = [
         "main_test.go",
         "optimistic_test.go",
@@ -41,10 +45,12 @@ go_test(
         "repeatable_read_test.go",
         "serializable_test.go",
     ],
+    flaky = True,
     deps = [
         ":isolation",
         "//config",
         "//executor",
+        "//expression",
         "//infoschema",
         "//kv",
         "//parser",
@@ -56,7 +62,6 @@ go_test(
         "//testkit",
         "//testkit/testfork",
         "//testkit/testsetup",
-        "//types",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",

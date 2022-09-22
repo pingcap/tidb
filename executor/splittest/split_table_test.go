@@ -15,6 +15,7 @@
 package splittest
 
 import (
+	"context"
 	"fmt"
 	"sync/atomic"
 	"testing"
@@ -22,20 +23,24 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/copr"
+	"github.com/pingcap/tidb/store/driver/backoff"
+	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
+	"github.com/pingcap/tidb/util/benchdaily"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/stretchr/testify/require"
 )
 
 func TestSplitTableRegion(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a varchar(100),b int, index idx1(b,a))")
@@ -107,8 +112,7 @@ func TestSplitTableRegion(t *testing.T) {
 }
 
 func TestSplitRegionEdgeCase(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -122,8 +126,7 @@ func TestSplitRegionEdgeCase(t *testing.T) {
 }
 
 func TestClusterIndexSplitTableIntegration(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists test_cluster_index_index_split_table_integration;")
 	tk.MustExec("create database test_cluster_index_index_split_table_integration;")
@@ -177,8 +180,7 @@ func TestClusterIndexSplitTableIntegration(t *testing.T) {
 }
 
 func TestClusterIndexShowTableRegion(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	tk.MustExec("set global tidb_scatter_region = 1")
@@ -206,8 +208,7 @@ func TestClusterIndexShowTableRegion(t *testing.T) {
 }
 
 func TestShowTableRegion(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t_regions")
@@ -713,5 +714,39 @@ func TestShowTableRegion(t *testing.T) {
 		}
 		require.Equal(t, infosync.PlacementScheduleStatePending.String(), rows[i][12])
 	}
+}
 
+func BenchmarkLocateRegion(t *testing.B) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec(`create table t (a varchar(100), b int, index idx1(b,a))`)
+	tk.MustExec("set @@tidb_wait_split_region_finish = 1")
+	tk.MustQuery("split table t between (0) and (1000000000) regions 1000").Check(testkit.Rows("1000 1"))
+	tk.MustQuery("split table t between (1000000000) and (2000000000) regions 1000").Check(testkit.Rows("999 1"))
+	tk.MustQuery("split table t between (2000000000) and (3000000000) regions 1000").Check(testkit.Rows("999 1"))
+
+	bo := backoff.NewBackoffer(context.Background(), 10)
+	tmp := store.(helper.Storage).GetRegionCache()
+	cache := copr.RegionCache{RegionCache: tmp}
+	ranges := copr.NewKeyRanges([]kv.KeyRange{
+		{
+			StartKey: []byte("t"),
+			EndKey:   []byte("u"),
+		},
+	})
+
+	t.ResetTimer()
+	for i := 0; i < t.N; i++ {
+		_, err := cache.SplitKeyRangesByBuckets(bo, ranges)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.StopTimer()
+}
+
+func TestBenchDaily(t *testing.T) {
+	benchdaily.Run(BenchmarkLocateRegion)
 }

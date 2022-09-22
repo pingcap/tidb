@@ -371,6 +371,11 @@ func TableHasAutoRowID(info *model.TableInfo) bool {
 	return !info.PKIsHandle && !info.IsCommonHandle
 }
 
+// TableHasAutoID return whether table has auto generated id.
+func TableHasAutoID(info *model.TableInfo) bool {
+	return TableHasAutoRowID(info) || info.GetAutoIncrementColInfo() != nil || info.ContainsAutoRandomBits()
+}
+
 // StringSliceEqual checks if two string slices are equal.
 func StringSliceEqual(a, b []string) bool {
 	if len(a) != len(b) {

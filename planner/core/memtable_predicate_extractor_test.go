@@ -16,8 +16,10 @@ package core_test
 
 import (
 	"context"
+	"fmt"
 	"regexp"
 	"sort"
+	"strconv"
 	"testing"
 	"time"
 
@@ -56,8 +58,7 @@ func getLogicalMemTable(t *testing.T, dom *domain.Domain, se session.Session, pa
 }
 
 func TestClusterConfigTableExtractor(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
@@ -227,12 +228,11 @@ func TestClusterConfigTableExtractor(t *testing.T) {
 func timestamp(t *testing.T, s string) int64 {
 	tt, err := time.ParseInLocation("2006-01-02 15:04:05.999", s, time.Local)
 	require.NoError(t, err)
-	return tt.UnixNano() / int64(time.Millisecond)
+	return tt.UnixMilli()
 }
 
 func TestClusterLogTableExtractor(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
@@ -533,8 +533,7 @@ func TestClusterLogTableExtractor(t *testing.T) {
 }
 
 func TestMetricTableExtractor(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
@@ -659,8 +658,7 @@ func TestMetricTableExtractor(t *testing.T) {
 }
 
 func TestMetricsSummaryTableExtractor(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
@@ -760,8 +758,7 @@ func TestMetricsSummaryTableExtractor(t *testing.T) {
 }
 
 func TestInspectionResultTableExtractor(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
@@ -902,8 +899,7 @@ func TestInspectionResultTableExtractor(t *testing.T) {
 }
 
 func TestInspectionSummaryTableExtractor(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
@@ -1004,8 +1000,7 @@ func TestInspectionSummaryTableExtractor(t *testing.T) {
 }
 
 func TestInspectionRuleTableExtractor(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
@@ -1045,8 +1040,7 @@ func TestInspectionRuleTableExtractor(t *testing.T) {
 }
 
 func TestTiDBHotRegionsHistoryTableExtractor(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
@@ -1421,8 +1415,7 @@ func TestTiDBHotRegionsHistoryTableExtractor(t *testing.T) {
 }
 
 func TestTikvRegionPeersExtractor(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
@@ -1556,8 +1549,7 @@ func TestTikvRegionPeersExtractor(t *testing.T) {
 }
 
 func TestColumns(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
@@ -1655,8 +1647,7 @@ func TestColumns(t *testing.T) {
 }
 
 func TestPredicateQuery(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1708,11 +1699,24 @@ func TestPredicateQuery(t *testing.T) {
 }
 
 func TestTikvRegionStatusExtractor(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE p (id int(11), unique index(id))
+PARTITION BY RANGE COLUMNS ( id ) (
+		PARTITION p0 VALUES LESS THAN (6),
+		PARTITION p1 VALUES LESS THAN (11),
+		PARTITION p3 VALUES LESS THAN (21)
+)`)
+	res := tk.MustQuery("select * from information_schema.tables where table_name = 'p'")
+	idStr := res.Rows()[0][21]
+	id, err := strconv.Atoi(idStr.(string))
+	require.NoError(t, err)
+	sSQL := fmt.Sprintf("select * from information_schema.TIKV_REGION_STATUS where table_id = %v", id)
 
 	var cases = []struct {
 		sql      string
@@ -1729,6 +1733,10 @@ func TestTikvRegionStatusExtractor(t *testing.T) {
 		{
 			sql:      "select * from information_schema.TIKV_REGION_STATUS where table_id in (1,2,3)",
 			tableIDs: []int64{1, 2, 3},
+		},
+		{
+			sql:      sSQL,
+			tableIDs: []int64{int64(id)},
 		},
 	}
 	parser := parser.New()

@@ -367,6 +367,6 @@ func (td *multiQueriesChunk) Close() error {
 	return td.SQLRowIter.Close()
 }
 
-func (td *multiQueriesChunk) RawRows() *sql.Rows {
+func (*multiQueriesChunk) RawRows() *sql.Rows {
 	return nil
 }
