@@ -20,7 +20,9 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/table"
 )
 
 // EnterNewTxnType is the type to enter a new txn
@@ -117,8 +119,6 @@ type TxnContextProvider interface {
 	TxnAdvisable
 	// GetTxnInfoSchema returns the information schema used by txn
 	GetTxnInfoSchema() infoschema.InfoSchema
-	// SetTxnInfoSchema sets the information schema used by txn.
-	SetTxnInfoSchema(is infoschema.InfoSchema)
 	// GetTxnScope returns the current txn scope
 	GetTxnScope() string
 	// GetReadReplicaScope returns the read replica scope
@@ -146,6 +146,18 @@ type TxnContextProvider interface {
 	ActivateTxn() (kv.Transaction, error)
 }
 
+type SessionMDLManager interface {
+	UseTableForMDL(schema, table model.CIStr) (*model.DBInfo, table.Table, error)
+	RangeMDLTableIDs(fn func(tblID, ver int64) bool)
+	RemoveTableForMDL(tblID int64)
+	ClearMDL()
+}
+
+type SessionMDLSupported interface {
+	SetSessionMDLManager(manager SessionMDLManager)
+	UseTableForMDL(schema, table model.CIStr, detachLocalTemporaryTable bool) (tbl table.Table, err error)
+}
+
 // TxnManager is an interface providing txn context management in session
 type TxnManager interface {
 	TxnAdvisable
@@ -153,8 +165,8 @@ type TxnManager interface {
 	// If the session is not in any transaction, for example: between two autocommit statements,
 	// this method will return the latest information schema in session that is same with `sessionctx.GetDomainInfoSchema()`
 	GetTxnInfoSchema() infoschema.InfoSchema
-	// SetTxnInfoSchema sets the information schema used by txn.
-	SetTxnInfoSchema(infoschema.InfoSchema)
+	UseTableForMDLIfNeeded(schema, table model.CIStr, detachLocalTemporaryTable bool) (table.Table, error)
+	RangeMDLTableIDs(func(tblID, ver int64) bool)
 	// GetTxnScope returns the current txn scope
 	GetTxnScope() string
 	// GetReadReplicaScope returns the read replica scope

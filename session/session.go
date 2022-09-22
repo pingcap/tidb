@@ -572,8 +572,8 @@ func (s *session) TxnInfo() *txninfo.TxnInfo {
 	txnInfo.Username = processInfo.User
 	txnInfo.CurrentDB = processInfo.DB
 	txnInfo.RelatedTableIDs = make(map[int64]struct{})
-	s.GetSessionVars().GetRelatedTableForMDL().Range(func(key, value interface{}) bool {
-		txnInfo.RelatedTableIDs[key.(int64)] = struct{}{}
+	sessiontxn.GetTxnManager(s).RangeMDLTableIDs(func(tblID, ver int64) bool {
+		txnInfo.RelatedTableIDs[tblID] = struct{}{}
 		return true
 	})
 
@@ -2453,6 +2453,7 @@ func (s *session) Close() {
 		s.stmtStats.SetFinished()
 	}
 	s.ClearDiskFullOpt()
+	domain.GetDomain(s).GetMDLManager().RemoveSession(s.sessionVars.ConnectionID)
 }
 
 // GetSessionVars implements the context.Context interface.
@@ -3546,21 +3547,4 @@ func (s *session) setRequestSource(ctx context.Context, stmtLabel string, stmtNo
 			}
 		}
 	}
-}
-
-// RemoveLockDDLJobs removes the DDL jobs which doesn't get the metadata lock from job2ver.
-func RemoveLockDDLJobs(s Session, job2ver map[int64]int64, job2ids map[int64]string) {
-	if s.GetSessionVars().InRestrictedSQL {
-		return
-	}
-	s.GetSessionVars().GetRelatedTableForMDL().Range(func(tblID, value any) bool {
-		for jobID, ver := range job2ver {
-			ids := util.Str2Int64Map(job2ids[jobID])
-			if _, ok := ids[tblID.(int64)]; ok && value.(int64) < ver {
-				delete(job2ver, jobID)
-				logutil.BgLogger().Debug("old running transaction block DDL", zap.Int64("table ID", tblID.(int64)), zap.Uint64("conn ID", s.GetSessionVars().ConnectionID))
-			}
-		}
-		return true
-	})
 }

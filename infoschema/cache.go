@@ -47,16 +47,27 @@ func NewCache(capcity int) *InfoCache {
 	return &InfoCache{cache: make([]InfoSchema, 0, capcity)}
 }
 
-// GetLatest gets the newest information schema.
-func (h *InfoCache) GetLatest() InfoSchema {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
+func (h *InfoCache) getLatest() InfoSchema {
 	getLatestCounter.Inc()
 	if len(h.cache) > 0 {
 		hitLatestCounter.Inc()
 		return h.cache[0]
 	}
 	return nil
+}
+
+// GetLatest gets the newest information schema.
+func (h *InfoCache) GetLatest() InfoSchema {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.getLatest()
+}
+
+func (h *InfoCache) DoWithLatest(do func(InfoSchema)) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	latest := h.getLatest()
+	do(latest)
 }
 
 // GetByVersion gets the information schema based on schemaVersion. Returns nil if it is not loaded.

@@ -99,10 +99,3 @@ func (*MockSessionManager) DeleteInternalSession(interface{}) {}
 func (*MockSessionManager) GetInternalSessionStartTSList() []uint64 {
 	return nil
 }
-
-// CheckOldRunningTxn is to get all startTS of every transactions running in the current internal sessions
-func (msm *MockSessionManager) CheckOldRunningTxn(job2ver map[int64]int64, job2ids map[int64]string) {
-	for _, se := range msm.conn {
-		session.RemoveLockDDLJobs(se, job2ver, job2ids)
-	}
-}

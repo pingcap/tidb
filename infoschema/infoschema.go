@@ -676,12 +676,12 @@ func (ts *SessionExtendedInfoSchema) SchemaByTable(tableInfo *model.TableInfo) (
 	return ts.InfoSchema.SchemaByTable(tableInfo)
 }
 
-// UpdateTableInfo implements InfoSchema.SchemaByTable.
-func (ts *SessionExtendedInfoSchema) UpdateTableInfo(db *model.DBInfo, tableInfo table.Table) error {
+// AddMDLTable adds MDL table
+func (ts *SessionExtendedInfoSchema) AddMDLTable(db *model.DBInfo, tbl table.Table) error {
 	if ts.MdlTables == nil {
 		ts.MdlTables = NewSessionTables()
 	}
-	err := ts.MdlTables.AddTable(db, tableInfo)
+	err := ts.MdlTables.AddTable(db, tbl)
 	if err != nil {
 		return err
 	}

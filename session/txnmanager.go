@@ -20,13 +20,17 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/sessiontxn/isolation"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
+	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/temptable"
 )
 
 func init() {
@@ -52,10 +56,15 @@ type txnManager struct {
 
 	// We always reuse the same OptimisticTxnContextProvider in one session to reduce memory allocation cost for every new txn.
 	reservedOptimisticProvider isolation.OptimisticTxnContextProvider
+
+	mdlManager sessiontxn.SessionMDLManager
 }
 
 func newTxnManager(sctx sessionctx.Context) *txnManager {
-	return &txnManager{sctx: sctx}
+	return &txnManager{
+		sctx:       sctx,
+		mdlManager: domain.GetDomain(sctx).GetMDLManager().GetSessionMDLManager(sctx.GetSessionVars().ConnectionID),
+	}
 }
 
 func (m *txnManager) GetTxnInfoSchema() infoschema.InfoSchema {
@@ -70,11 +79,25 @@ func (m *txnManager) GetTxnInfoSchema() infoschema.InfoSchema {
 	return nil
 }
 
-func (m *txnManager) SetTxnInfoSchema(is infoschema.InfoSchema) {
-	if m.ctxProvider == nil {
+func (m *txnManager) UseTableForMDLIfNeeded(schema, table model.CIStr, detachLocalTemporaryTable bool) (table.Table, error) {
+	if mdlProvider, ok := m.ctxProvider.(sessiontxn.SessionMDLSupported); ok {
+		return mdlProvider.UseTableForMDL(schema, table, detachLocalTemporaryTable)
+	}
+
+	is := m.GetTxnInfoSchema()
+	if detachLocalTemporaryTable {
+		is = temptable.DetachLocalTemporaryTableInfoSchema(is)
+	}
+
+	return is.TableByName(schema, table)
+}
+
+func (m *txnManager) RangeMDLTableIDs(fn func(tblID, ver int64) bool) {
+	if m.mdlManager == nil {
 		return
 	}
-	m.ctxProvider.SetTxnInfoSchema(is)
+
+	m.mdlManager.RangeMDLTableIDs(fn)
 }
 
 func (m *txnManager) GetStmtReadTS() (uint64, error) {
@@ -144,6 +167,10 @@ func (m *txnManager) EnterNewTxn(ctx context.Context, r *sessiontxn.EnterNewTxnR
 		return err
 	}
 
+	if p, ok := ctxProvider.(sessiontxn.SessionMDLSupported); ok {
+		p.SetSessionMDLManager(m.mdlManager)
+	}
+
 	if err = ctxProvider.OnInitialize(ctx, r.Type); err != nil {
 		m.sctx.RollbackTxn(ctx)
 		return err
@@ -159,6 +186,7 @@ func (m *txnManager) EnterNewTxn(ctx context.Context, r *sessiontxn.EnterNewTxnR
 func (m *txnManager) OnTxnEnd() {
 	m.ctxProvider = nil
 	m.stmtNode = nil
+	m.mdlManager.ClearMDL()
 }
 
 func (m *txnManager) GetCurrentStmt() ast.StmtNode {

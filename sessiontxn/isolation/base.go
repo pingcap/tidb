@@ -24,14 +24,20 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/sessiontxn/internal"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/temptable"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/tikv/client-go/v2/oracle"
+	"go.uber.org/zap"
 )
 
 // baseTxnContextProvider is a base class for the transaction context providers that implement `TxnContextProvider` in different isolation.
@@ -48,6 +54,8 @@ type baseTxnContextProvider struct {
 	// States that should be initialized when baseTxnContextProvider is created and should not be changed after that
 	sctx                   sessionctx.Context
 	causalConsistencyOnly  bool
+	mdlManager             sessiontxn.SessionMDLManager
+	skipCheckMDLTableMeta  bool
 	onInitializeTxnCtx     func(*variable.TransactionContext)
 	onTxnActiveFunc        func(kv.Transaction, sessiontxn.EnterNewTxnType)
 	getStmtReadTSFunc      func() (uint64, error)
@@ -63,6 +71,10 @@ type baseTxnContextProvider struct {
 	// When constStartTS != 0, we use constStartTS directly without fetching it from tso.
 	// To save the cpu cycles `PrepareTSFuture` will also not be called when warmup (postpone to activate txn).
 	constStartTS uint64
+}
+
+func (p *baseTxnContextProvider) SetSessionMDLManager(manager sessiontxn.SessionMDLManager) {
+	p.mdlManager = manager
 }
 
 // OnInitialize is the hook that should be called when enter a new txn with this provider
@@ -144,8 +156,111 @@ func (p *baseTxnContextProvider) GetTxnInfoSchema() infoschema.InfoSchema {
 	return p.infoSchema
 }
 
-func (p *baseTxnContextProvider) SetTxnInfoSchema(is infoschema.InfoSchema) {
-	p.infoSchema = is
+func (p *baseTxnContextProvider) UseTableForMDL(schema, table model.CIStr, detachLocalTemporaryTable bool) (_ table.Table, err error) {
+	sessVars := p.sctx.GetSessionVars()
+	if p.mdlManager == nil ||
+		!sessVars.TxnCtx.EnableMDL ||
+		sessVars.SnapshotInfoschema != nil ||
+		sessVars.IsAutocommit() && !sessVars.InTxn() && sessVars.StmtCtx.IsReadOnly {
+		is := p.GetTxnInfoSchema()
+		if detachLocalTemporaryTable {
+			is = temptable.DetachLocalTemporaryTableInfoSchema(is)
+		}
+		return is.TableByName(schema, table)
+	}
+
+	se, ok := p.infoSchema.(*infoschema.SessionExtendedInfoSchema)
+	if !ok {
+		se = infoschema.AttachMDLTableInfoSchema(p.infoSchema).(*infoschema.SessionExtendedInfoSchema)
+		sessVars.TxnCtx.InfoSchema = se
+	}
+
+	if !detachLocalTemporaryTable && se.LocalTemporaryTables != nil {
+		if tbl, ok := se.LocalTemporaryTables.TableByName(schema, table); ok {
+			return tbl, nil
+		}
+	}
+
+	if se.MdlTables != nil {
+		if tbl, ok := se.MdlTables.TableByName(schema, table); ok {
+			return tbl, nil
+		}
+	}
+
+	db, tbl, err := p.mdlManager.UseTableForMDL(schema, table)
+	if err != nil {
+		return tbl, err
+	}
+
+	defer func() {
+		if err != nil {
+			p.mdlManager.RemoveTableForMDL(tbl.Meta().ID)
+		}
+	}()
+
+	if !p.skipCheckMDLTableMeta {
+		tbl, err = p.checkMDLTableMeta(db, tbl)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if err = se.AddMDLTable(db, tbl); err != nil {
+		return nil, err
+	}
+
+	return tbl, nil
+}
+
+func (p *baseTxnContextProvider) checkMDLTableMeta(db *model.DBInfo, tbl table.Table) (table.Table, error) {
+	nonMDLTbl, ok := p.infoSchema.TableByID(tbl.Meta().ID)
+	if !ok {
+		return nil, plannercore.ErrSchemaChanged.GenWithStack("Table definition has changed, please retry transaction")
+	}
+
+	nonMDLTableInfo := nonMDLTbl.Meta()
+	// Check the index change.
+	var copyTableInfo *model.TableInfo
+	for i, idx := range tbl.Meta().Indices {
+		if idx.State != model.StatePublic {
+			continue
+		}
+		found := false
+		for _, idxx := range nonMDLTableInfo.Indices {
+			if idx.Name.L == idxx.Name.L && idx.ID == idxx.ID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			if copyTableInfo == nil {
+				copyTableInfo = tbl.Meta().Clone()
+			}
+			copyTableInfo.Indices[i].State = model.StateWriteReorganization
+			allocs := autoid.NewAllocatorsFromTblInfo(p.sctx.GetStore(), db.ID, copyTableInfo)
+			return table.TableFromMeta(allocs, copyTableInfo)
+		}
+	}
+
+	// Check the column change.
+	for _, col := range tbl.Meta().Columns {
+		if col.State != model.StatePublic {
+			continue
+		}
+		found := false
+		for _, coll := range nonMDLTableInfo.Columns {
+			if col.Name.L == coll.Name.L && col.ID != coll.ID {
+				logutil.BgLogger().Info("public column changed", zap.String("column", col.Name.L), zap.String("old_col", coll.Name.L), zap.Int64("new id", col.ID), zap.Int64("old id", coll.ID))
+				found = true
+				break
+			}
+		}
+		if found {
+			return nil, plannercore.ErrSchemaChanged.GenWithStack("public column %s has changed", col.Name)
+		}
+	}
+
+	return tbl, nil
 }
 
 // GetTxnScope returns the current txn scope

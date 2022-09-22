@@ -54,7 +54,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/telemetry"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
@@ -120,6 +122,7 @@ type Domain struct {
 	sysProcesses SysProcesses
 
 	mdlCheckTableInfo *mdlCheckTableInfo
+	mdlManager        *MDLManager
 }
 
 type mdlCheckTableInfo struct {
@@ -355,6 +358,10 @@ func canSkipSchemaCheckerDDL(tp model.ActionType) bool {
 // InfoSchema gets the latest information schema from domain.
 func (do *Domain) InfoSchema() infoschema.InfoSchema {
 	return do.infoCache.GetLatest()
+}
+
+func (do *Domain) GetMDLManager() *MDLManager {
+	return do.mdlManager
 }
 
 // GetSnapshotInfoSchema gets a snapshot information schema.
@@ -643,6 +650,19 @@ func (do *Domain) refreshMDLCheckTableInfo() {
 	}
 }
 
+func (do *Domain) removeLockDDLJobs(job2ver map[int64]int64, job2ids map[int64]string) {
+	do.GetMDLManager().RangeMDLTableIDs(func(sessID uint64, tblID, value int64) bool {
+		for jobID, ver := range job2ver {
+			ids := util.Str2Int64Map(job2ids[jobID])
+			if _, ok := ids[tblID]; ok && value < ver {
+				delete(job2ver, jobID)
+				logutil.BgLogger().Debug("old running transaction block DDL", zap.Int64("table ID", tblID), zap.Uint64("conn ID", sessID))
+			}
+		}
+		return true
+	})
+}
+
 func (do *Domain) mdlCheckLoop() {
 	ticker := time.Tick(time.Millisecond * 50)
 	var saveMaxSchemaVersion int64
@@ -685,13 +705,8 @@ func (do *Domain) mdlCheckLoop() {
 
 			jobNeedToSync = true
 
-			sm := do.InfoSyncer().GetSessionManager()
-			if sm == nil {
-				logutil.BgLogger().Info("session manager is nil")
-			} else {
-				sm.CheckOldRunningTxn(jobsVerMap, jobsIdsMap)
-			}
-
+			do.InfoSyncer().GetSessionManager()
+			do.removeLockDDLJobs(jobsVerMap, jobsIdsMap)
 			if len(jobsVerMap) == jobNeedToCheckCnt {
 				jobNeedToSync = false
 			}
@@ -882,6 +897,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		},
 	}
 
+	do.mdlManager = newMDLManager(do)
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)
 	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do.exit)
 	do.sysProcesses = SysProcesses{mu: &sync.RWMutex{}, procMap: make(map[uint64]sessionctx.Context)}
@@ -2188,5 +2204,99 @@ func (s *SysProcesses) KillSysProcess(id uint64) {
 	defer s.mu.Unlock()
 	if proc, ok := s.procMap[id]; ok {
 		atomic.StoreUint32(&proc.GetSessionVars().Killed, 1)
+	}
+}
+
+type sessionMDLManager struct {
+	sessionID uint64
+	infoCache *infoschema.InfoCache
+	sync.Map
+}
+
+func (m *sessionMDLManager) UseTableForMDL(schema, table model.CIStr) (db *model.DBInfo, tbl table.Table, err error) {
+	m.infoCache.DoWithLatest(func(is infoschema.InfoSchema) {
+		tbl, err = is.TableByName(schema, table)
+		if err != nil {
+			return
+		}
+
+		db, _ = is.SchemaByName(schema)
+		tblInfo := tbl.Meta()
+
+		if tblInfo.TempTableType != model.TempTableNone {
+			return
+		}
+
+		if _, ok := m.LoadOrStore(tblInfo.ID, is.SchemaMetaVersion()); !ok {
+			err = errors.Errorf("cannot use table twice for mdl in session '%d', tableID '%d'", m.sessionID, tblInfo.ID)
+		}
+	})
+	return
+}
+
+func (m *sessionMDLManager) RangeMDLTableIDs(fn func(tblID, ver int64) bool) {
+	m.Range(func(key, value any) bool {
+		return fn(key.(int64), value.(int64))
+	})
+}
+
+func (m *sessionMDLManager) RemoveTableForMDL(tblID int64) {
+	m.Delete(tblID)
+}
+
+func (m *sessionMDLManager) ClearMDL() {
+	m.Range(func(key, _ any) bool {
+		m.Delete(key)
+		return true
+	})
+}
+
+type MDLManager struct {
+	sync.Mutex
+	do       *Domain
+	sessions map[uint64]*sessionMDLManager
+}
+
+func newMDLManager(do *Domain) *MDLManager {
+	return &MDLManager{
+		do:       do,
+		sessions: make(map[uint64]*sessionMDLManager, 128),
+	}
+}
+
+func (m *MDLManager) GetSessionMDLManager(sessID uint64) sessiontxn.SessionMDLManager {
+	m.Lock()
+	defer m.Unlock()
+	if manager, ok := m.sessions[sessID]; ok {
+		return manager
+	}
+
+	records := &sessionMDLManager{
+		sessionID: sessID,
+		infoCache: m.do.infoCache,
+	}
+
+	m.sessions[sessID] = records
+	return records
+}
+
+func (m *MDLManager) RemoveSession(sessID uint64) {
+	m.Lock()
+	defer m.Unlock()
+	delete(m.sessions, sessID)
+}
+
+func (m *MDLManager) RangeMDLTableIDs(fn func(sessID uint64, tblID, ver int64) bool) {
+	m.Lock()
+	defer m.Unlock()
+	for sessID, s := range m.sessions {
+		shouldContinue := false
+		s.RangeMDLTableIDs(func(tblID, ver int64) bool {
+			shouldContinue = fn(sessID, tblID, ver)
+			return shouldContinue
+		})
+		if !shouldContinue {
+			break
+		}
 	}
 }

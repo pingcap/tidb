@@ -37,6 +37,7 @@ import (
 	"math/rand"
 	"net"
 	"net/http" //nolint:goimports
+
 	// For pprof
 	_ "net/http/pprof" // #nosec G108
 	"os"
@@ -870,15 +871,4 @@ func setSystemTimeZoneVariable() {
 		}
 		variable.SetSysVar("system_time_zone", tz)
 	})
-}
-
-// CheckOldRunningTxn implements SessionManager interface.
-func (s *Server) CheckOldRunningTxn(job2ver map[int64]int64, job2ids map[int64]string) {
-	s.rwlock.RLock()
-	defer s.rwlock.RUnlock()
-	for _, client := range s.clients {
-		if client.ctx.Session != nil {
-			session.RemoveLockDDLJobs(client.ctx.Session, job2ver, job2ids)
-		}
-	}
 }

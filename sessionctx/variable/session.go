@@ -223,8 +223,6 @@ type TxnCtxNoNeedToRestore struct {
 	TemporaryTables map[int64]tableutil.TempTable
 	// EnableMDL indicates whether to enable the MDL lock for the transaction.
 	EnableMDL bool
-	// relatedTableForMDL records the `lock` table for metadata lock. It maps from int64 to int64(version).
-	relatedTableForMDL *sync.Map
 }
 
 // SavepointRecord indicates a transaction's savepoint record.
@@ -320,7 +318,6 @@ func (tc *TransactionContext) Cleanup() {
 	tc.History = nil
 	tc.tdmLock.Lock()
 	tc.TableDeltaMap = nil
-	tc.relatedTableForMDL = nil
 	tc.tdmLock.Unlock()
 	tc.pessimisticLockCache = nil
 	tc.IsStaleness = false
@@ -3054,16 +3051,6 @@ func (s *SessionVars) GetNegateStrMatchDefaultSelectivity() float64 {
 		return DefTiDBDefaultStrMatchSelectivity
 	}
 	return 1 - s.GetStrMatchDefaultSelectivity()
-}
-
-// GetRelatedTableForMDL gets the related table for metadata lock.
-func (s *SessionVars) GetRelatedTableForMDL() *sync.Map {
-	s.TxnCtx.tdmLock.Lock()
-	defer s.TxnCtx.tdmLock.Unlock()
-	if s.TxnCtx.relatedTableForMDL == nil {
-		s.TxnCtx.relatedTableForMDL = new(sync.Map)
-	}
-	return s.TxnCtx.relatedTableForMDL
 }
 
 // EnableForceInlineCTE returns the session variable enableForceInlineCTE

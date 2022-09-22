@@ -21,7 +21,6 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -45,9 +44,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/domainutil"
-	"github.com/pingcap/tidb/util/logutil"
 	utilparser "github.com/pingcap/tidb/util/parser"
-	"go.uber.org/zap"
 )
 
 // PreprocessOpt presents optional parameters to `Preprocess` method.
@@ -396,7 +393,7 @@ func bindableStmtType(node ast.StmtNode) byte {
 	return TypeInvalid
 }
 
-func (p *preprocessor) tableByName(tn *ast.TableName) (table.Table, error) {
+func (p *preprocessor) tableByName(tn *ast.TableName) (tbl table.Table, err error) {
 	currentDB := p.ctx.GetSessionVars().CurrentDB
 	if tn.Schema.String() != "" {
 		currentDB = tn.Schema.L
@@ -404,15 +401,25 @@ func (p *preprocessor) tableByName(tn *ast.TableName) (table.Table, error) {
 	if currentDB == "" {
 		return nil, errors.Trace(ErrNoDB)
 	}
-	sName := model.NewCIStr(currentDB)
-	is := p.ensureInfoSchema()
 
-	// for 'SHOW CREATE VIEW/SEQUENCE ...' statement, ignore local temporary tables.
-	if p.stmtTp == TypeShow && (p.showTp == ast.ShowCreateView || p.showTp == ast.ShowCreateSequence) {
-		is = temptable.DetachLocalTemporaryTableInfoSchema(is)
+	sName := model.NewCIStr(currentDB)
+
+	is := p.ensureInfoSchema()
+	switch p.stmtTp {
+	case TypeSelect, TypeInsert, TypeUpdate, TypeDelete:
+		if p.flag&inPrepare == 0 {
+			tbl, err = sessiontxn.GetTxnManager(p.ctx).UseTableForMDLIfNeeded(sName, tn.Name, false)
+		} else {
+			tbl, err = is.TableByName(sName, tn.Name)
+		}
+	default:
+		// for 'SHOW CREATE VIEW/SEQUENCE ...' statement, ignore local temporary tables.
+		if p.stmtTp == TypeShow && (p.showTp == ast.ShowCreateView || p.showTp == ast.ShowCreateSequence) {
+			is = temptable.DetachLocalTemporaryTableInfoSchema(is)
+			tbl, err = is.TableByName(sName, tn.Name)
+		}
 	}
 
-	tbl, err := is.TableByName(sName, tn.Name)
 	if err != nil {
 		// We should never leak that the table doesn't exist (i.e. attach ErrTableNotExists)
 		// unless we know that the user has permissions to it, should it exist.
@@ -1483,15 +1490,6 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 		p.err = err
 		return
 	}
-	currentDB := p.ctx.GetSessionVars().CurrentDB
-	if tn.Schema.String() != "" {
-		currentDB = tn.Schema.L
-	}
-	table, err = tryLockMDLAndUpdateSchemaIfNecessary(p.ctx, model.NewCIStr(currentDB), table, p.ensureInfoSchema())
-	if err != nil {
-		p.err = err
-		return
-	}
 
 	tableInfo := table.Meta()
 	dbInfo, _ := p.ensureInfoSchema().SchemaByTable(tableInfo)
@@ -1696,119 +1694,4 @@ func (p *preprocessor) hasAutoConvertWarning(colDef *ast.ColumnDef) bool {
 		return true
 	}
 	return false
-}
-
-func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.CIStr, tbl table.Table, is infoschema.InfoSchema) (table.Table, error) {
-	if !sctx.GetSessionVars().TxnCtx.EnableMDL {
-		return tbl, nil
-	}
-	if is.SchemaMetaVersion() == 0 {
-		return tbl, nil
-	}
-	skipLock := false
-	if sctx.GetSessionVars().SnapshotInfoschema != nil {
-		return tbl, nil
-	}
-	if sctx.GetSessionVars().TxnCtx.IsStaleness {
-		return tbl, nil
-	}
-	if tbl.Meta().TempTableType == model.TempTableLocal {
-		// Don't attach, don't lock.
-		return tbl, nil
-	} else if tbl.Meta().TempTableType == model.TempTableGlobal {
-		skipLock = true
-	}
-	if IsAutoCommitTxn(sctx) && sctx.GetSessionVars().StmtCtx.IsReadOnly {
-		return tbl, nil
-	}
-	tableInfo := tbl.Meta()
-	if _, ok := sctx.GetSessionVars().GetRelatedTableForMDL().Load(tableInfo.ID); !ok {
-		if se, ok := is.(*infoschema.SessionExtendedInfoSchema); ok && skipLock {
-			if se.MdlTables == nil {
-				return tbl, nil
-			}
-			if _, ok := se.MdlTables.TableByID(tableInfo.ID); ok {
-				// Already attach.
-				return tbl, nil
-			}
-		}
-
-		// We need to write 0 to the map to block the txn.
-		// If we don't write 0, consider the following case:
-		// the background mdl check loop gets the mdl lock from this txn. But the domain infoSchema may be changed before writing the ver to the map.
-		// In this case, this TiDB wrongly gets the mdl lock.
-		if !skipLock {
-			sctx.GetSessionVars().GetRelatedTableForMDL().Store(tableInfo.ID, int64(0))
-		}
-		domainSchema := domain.GetDomain(sctx).InfoSchema()
-		domainSchemaVer := domainSchema.SchemaMetaVersion()
-		if !skipLock {
-			sctx.GetSessionVars().GetRelatedTableForMDL().Store(tableInfo.ID, domainSchemaVer)
-		}
-
-		var err error
-		tbl, err = domainSchema.TableByName(dbName, tableInfo.Name)
-		if err != nil {
-			return nil, err
-		}
-		// Check the table change, if adding new public index or modify a column, we need to handle them.
-		if !sctx.GetSessionVars().IsPessimisticReadConsistency() {
-			var copyTableInfo *model.TableInfo
-			for i, idx := range tbl.Meta().Indices {
-				if idx.State != model.StatePublic {
-					continue
-				}
-				found := false
-				for _, idxx := range tableInfo.Indices {
-					if idx.Name.L == idxx.Name.L && idx.ID == idxx.ID {
-						found = true
-						break
-					}
-				}
-				if !found {
-					if copyTableInfo == nil {
-						copyTableInfo = tbl.Meta().Clone()
-					}
-					copyTableInfo.Indices[i].State = model.StateWriteReorganization
-					dbInfo, _ := domainSchema.SchemaByName(dbName)
-					allocs := autoid.NewAllocatorsFromTblInfo(sctx.GetStore(), dbInfo.ID, copyTableInfo)
-					tbl, err = table.TableFromMeta(allocs, copyTableInfo)
-					if err != nil {
-						return nil, err
-					}
-				}
-			}
-			// Check the column change.
-			for _, col := range tbl.Meta().Columns {
-				if col.State != model.StatePublic {
-					continue
-				}
-				found := false
-				for _, coll := range tableInfo.Columns {
-					if col.Name.L == coll.Name.L && col.ID != coll.ID {
-						logutil.BgLogger().Info("public column changed", zap.String("column", col.Name.L), zap.String("old_col", coll.Name.L), zap.Int64("new id", col.ID), zap.Int64("old id", coll.ID))
-						found = true
-						break
-					}
-				}
-				if found {
-					return nil, ErrSchemaChanged.GenWithStack("public column %s has changed", col.Name)
-				}
-			}
-		}
-
-		se, ok := is.(*infoschema.SessionExtendedInfoSchema)
-		if !ok {
-			se = infoschema.AttachMDLTableInfoSchema(is).(*infoschema.SessionExtendedInfoSchema)
-			sessiontxn.GetTxnManager(sctx).SetTxnInfoSchema(se)
-			sctx.GetSessionVars().TxnCtx.InfoSchema = se
-		}
-		db, _ := domainSchema.SchemaByTable(tbl.Meta())
-		err = se.UpdateTableInfo(db, tbl)
-		if err != nil {
-			return nil, err
-		}
-		return tbl, nil
-	}
-	return tbl, nil
 }

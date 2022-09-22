@@ -62,6 +62,7 @@ func NewPessimisticRCTxnContextProvider(sctx sessionctx.Context, causalConsisten
 		baseTxnContextProvider: baseTxnContextProvider{
 			sctx:                  sctx,
 			causalConsistencyOnly: causalConsistencyOnly,
+			skipCheckMDLTableMeta: true,
 			onInitializeTxnCtx: func(txnCtx *variable.TransactionContext) {
 				txnCtx.IsPessimistic = true
 				txnCtx.Isolation = ast.ReadCommitted

@@ -47,11 +47,11 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	util2 "github.com/pingcap/tidb/util"
@@ -4329,7 +4329,7 @@ func (b *PlanBuilder) buildDataSourceFromCTEMerge(ctx context.Context, cte *ast.
 	return p, nil
 }
 
-func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, asName *model.CIStr) (LogicalPlan, error) {
+func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, asName *model.CIStr) (_ LogicalPlan, err error) {
 	dbName := tn.Schema
 	sessionVars := b.ctx.GetSessionVars()
 
@@ -4342,28 +4342,28 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		dbName = model.NewCIStr(sessionVars.CurrentDB)
 	}
 
-	is := b.is
-	if len(b.buildingViewStack) > 0 {
+	var tbl table.Table
+	if b.isCreateView {
+		tbl, err = b.is.TableByName(dbName, tn.Name)
+		if err != nil {
+			return nil, err
+		}
+
+		if tbl.Meta().TempTableType == model.TempTableLocal {
+			return nil, ErrViewSelectTemporaryTable.GenWithStackByArgs(tn.Name)
+		}
+	} else {
 		// For tables in view, always ignore local temporary table, considering the below case:
 		// If a user created a normal table `t1` and a view `v1` referring `t1`, and then a local temporary table with a same name `t1` is created.
 		// At this time, executing 'select * from v1' should still return all records from normal table `t1` instead of temporary table `t1`.
-		is = temptable.DetachLocalTemporaryTableInfoSchema(is)
-	}
+		detachLocalTemporaryTable := len(b.buildingViewStack) > 0
 
-	tbl, err := is.TableByName(dbName, tn.Name)
-	if err != nil {
-		return nil, err
-	}
-
-	tbl, err = tryLockMDLAndUpdateSchemaIfNecessary(b.ctx, dbName, tbl, b.is)
-	if err != nil {
-		return nil, err
+		tbl, err = sessiontxn.GetTxnManager(b.ctx).UseTableForMDLIfNeeded(dbName, tn.Name, detachLocalTemporaryTable)
+		if err != nil {
+			return nil, err
+		}
 	}
 	tableInfo := tbl.Meta()
-
-	if b.isCreateView && tableInfo.TempTableType == model.TempTableLocal {
-		return nil, ErrViewSelectTemporaryTable.GenWithStackByArgs(tn.Name)
-	}
 
 	var authErr error
 	if sessionVars.User != nil {
