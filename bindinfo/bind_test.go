@@ -384,17 +384,17 @@ func TestBindNoDecorrelate(t *testing.T) {
 	tk.MustExec("drop table if exists t2")
 	tk.MustExec("create table t1(a int, b int)")
 	tk.MustExec("create table t2(a int, b int)")
-	require.False(t, tk.HasPlan("select exists (select t2.b from t2 where t2.a = t1.b limit 2) from t1", "Apply"))
-	require.True(t, tk.HasPlan("select exists (select /*+ no_decorrelate() */ t2.b from t2 where t2.a = t1.b limit 2) from t1", "Apply"))
+	require.False(t, tk.HasPlan("select exists (select t2.b from t2 where t2.a = t1.b) from t1", "Apply"))
+	require.True(t, tk.HasPlan("select exists (select /*+ no_decorrelate() */ t2.b from t2 where t2.a = t1.b) from t1", "Apply"))
 
 	tk.MustExec(`
 create global binding for
-	select exists (select t2.b from t2 where t2.a = t1.b limit 2) from t1
+	select exists (select t2.b from t2 where t2.a = t1.b) from t1
 using
-	select exists (select /*+ no_decorrelate() */ t2.b from t2 where t2.a = t1.b limit 2) from t1
+	select exists (select /*+ no_decorrelate() */ t2.b from t2 where t2.a = t1.b) from t1
 `)
 
-	require.True(t, tk.HasPlan("select exists (select t2.b from t2 where t2.a = t1.b limit 2) from t1", "Apply"))
+	require.True(t, tk.HasPlan("select exists (select t2.b from t2 where t2.a = t1.b) from t1", "Apply"))
 }
 
 // TestBindingSymbolList tests sql with "?, ?, ?, ?", fixes #13871
