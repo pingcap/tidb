@@ -86,7 +86,6 @@ func reportTrace(rootTrace minitrace.Trace) {
 			return
 		}
 	}
-
 }
 
 func splitTraces(trace minitrace.Trace) []minitrace.Trace {
