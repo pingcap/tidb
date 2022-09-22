@@ -220,7 +220,7 @@ type generalPlanCacheableChecker struct {
 // Enter implements Visitor interface.
 func (checker *generalPlanCacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch node := in.(type) {
-	case *ast.UnaryOperationExpr:
+	case *ast.BinaryOperationExpr:
 		if _, found := expression.GeneralPlanCacheableOp[node.Op.String()]; !found {
 			checker.cacheable = false
 			return in, true
