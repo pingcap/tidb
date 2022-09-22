@@ -110,7 +110,7 @@ func createDDLSuite(t *testing.T) (s *ddlSuite) {
 	goCtx := goctx.Background()
 	_, err = s.s.Execute(goCtx, "create database if not exists test_ddl")
 	require.NoError(t, err)
-	_, err = s.s.Execute(goCtx, "set @@tidb_enable_ddl_fast_reorg = 0;")
+	_, err = s.s.Execute(goCtx, "set @@global.tidb_ddl_enable_fast_reorg = 0;")
 	require.NoError(t, err)
 
 	s.Bootstrap(t)
