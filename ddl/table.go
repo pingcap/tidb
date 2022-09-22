@@ -17,7 +17,6 @@ package ddl
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -36,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	field_types "github.com/pingcap/tidb/parser/types"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
