@@ -21,7 +21,6 @@ import (
 	"io"
 	"math"
 	"strconv"
-	_ "strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -539,9 +538,8 @@ func buildBatchCopTasksForNonPartitionedTable(bo *backoff.Backoffer,
 	balanceContinuousRegionCount int64) ([]*batchCopTask, error) {
 	if config.GetGlobalConfig().DisaggregatedTiFlash {
 		return buildBatchCopTasksConsistentHash(bo, store, []*KeyRanges{ranges}, storeType, mppStoreLastFailTime, ttl, balanceWithContinuity, balanceContinuousRegionCount)
-	} else {
-		return buildBatchCopTasksCore(bo, store, []*KeyRanges{ranges}, storeType, mppStoreLastFailTime, ttl, balanceWithContinuity, balanceContinuousRegionCount)
 	}
+	return buildBatchCopTasksCore(bo, store, []*KeyRanges{ranges}, storeType, mppStoreLastFailTime, ttl, balanceWithContinuity, balanceContinuousRegionCount)
 }
 
 func buildBatchCopTasksForPartitionedTable(bo *backoff.Backoffer,
@@ -597,7 +595,7 @@ func buildBatchCopTasksConsistentHash(bo *backoff.Backoffer, store *kvStore, ran
 			}
 		}
 		if store == nil {
-			return nil, errors.New(fmt.Sprintf("cannot find mpp store: %v", addr))
+			return nil, errors.New("cannot find mpp store: " + addr)
 		}
 
 		task.storeAddr = addr
