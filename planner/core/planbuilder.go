@@ -3428,6 +3428,11 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 					}
 					sel.Fields.Fields = append(sel.Fields.Fields, &ast.SelectField{Expr: colName, Offset: len(sel.Fields.Fields)})
 				}
+				defer func(originSelFieldLen int) {
+					// Revert the change for ast. Because when we use the 'prepare' and 'execute' statement it will both build plan which will cause problem.
+					// You can see the issue #37187 for more details.
+					sel.Fields.Fields = sel.Fields.Fields[:originSelFieldLen]
+				}(actualColLen)
 			}
 		}
 	}
