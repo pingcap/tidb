@@ -45,15 +45,17 @@ const FullRange = -1
 // partitionProcessor rewrites the ast for table partition.
 //
 // create table t (id int) partition by range (id)
-//   (partition p1 values less than (10),
-//    partition p2 values less than (20),
-//    partition p3 values less than (30))
+//
+//	(partition p1 values less than (10),
+//	 partition p2 values less than (20),
+//	 partition p3 values less than (30))
 //
 // select * from t is equal to
 // select * from (union all
-//      select * from p1 where id < 10
-//      select * from p2 where id < 20
-//      select * from p3 where id < 30)
+//
+//	select * from p1 where id < 10
+//	select * from p2 where id < 20
+//	select * from p3 where id < 30)
 //
 // partitionProcessor is here because it's easier to prune partition after predicate push down.
 type partitionProcessor struct{}
@@ -846,36 +848,7 @@ func (s *partitionProcessor) pruneRangePartition(ctx sessionctx.Context, pi *mod
 		monotonous: mono,
 	}
 	result = partitionRangeForCNFExpr(ctx, conds, &pruner, result)
-
-<<<<<<< HEAD
-	if condsToBePruned == nil {
-		return result, nil, nil
-	}
-	// remove useless predicates after pruning
-	newConds := make([]expression.Expression, 0, len(*condsToBePruned))
-	for _, cond := range *condsToBePruned {
-		if dataForPrune, ok := pruner.extractDataForPrune(ctx, cond); ok {
-			switch dataForPrune.op {
-			case ast.EQ:
-				unsigned := mysql.HasUnsignedFlag(pruner.col.RetType.Flag)
-				start, _ := pruneUseBinarySearch(pruner.lessThan, dataForPrune, unsigned)
-				// if the type of partition key is Int
-				if pk, ok := partExpr.Expr.(*expression.Column); ok && pk.RetType.EvalType() == types.ETInt {
-					// see if can be removed
-					// see issue #22079: https://github.com/pingcap/tidb/issues/22079 for details
-					if start > 0 && pruner.lessThan.data[start-1] == dataForPrune.c && (pruner.lessThan.data[start]-1) == dataForPrune.c {
-						continue
-					}
-				}
-			}
-		}
-		newConds = append(newConds, cond)
-	}
-
-	return result, newConds, nil
-=======
 	return result, nil
->>>>>>> 2ba2a9ef5... planner: Manual revert of #24282 (#35298)
 }
 
 func (s *partitionProcessor) processRangePartition(ds *DataSource, pi *model.PartitionInfo, opt *logicalOptimizeOp) (LogicalPlan, error) {
@@ -1229,13 +1202,11 @@ func relaxOP(op string) string {
 	return op
 }
 
-// pruneUseBinarySearch returns the start and end of which partitions will match.
-// If no match (i.e. value > last partition) the start partition will be the number of partition, not the first partition!
 func pruneUseBinarySearch(lessThan lessThanDataInt, data dataForPrune, unsigned bool) (start int, end int) {
 	length := lessThan.length()
 	switch data.op {
 	case ast.EQ:
-		// col = 66, lessThan = [4 7 11 14 17] => [5, 5)
+		// col = 66, lessThan = [4 7 11 14 17] => [5, 6)
 		// col = 14, lessThan = [4 7 11 14 17] => [4, 5)
 		// col = 10, lessThan = [4 7 11 14 17] => [2, 3)
 		// col = 3, lessThan = [4 7 11 14 17] => [0, 1)
@@ -1532,13 +1503,7 @@ func (p *rangeColumnsPruner) partitionRangeForExpr(sctx sessionctx.Context, expr
 	return start, end, true
 }
 
-<<<<<<< HEAD
 func (p *rangeColumnsPruner) pruneUseBinarySearch(sctx sessionctx.Context, op string, data *expression.Constant, f *expression.ScalarFunction) (start int, end int) {
-=======
-// pruneUseBinarySearch returns the start and end of which partitions will match.
-// If no match (i.e. value > last partition) the start partition will be the number of partition, not the first partition!
-func (p *rangeColumnsPruner) pruneUseBinarySearch(sctx sessionctx.Context, op string, data *expression.Constant) (start int, end int) {
->>>>>>> 2ba2a9ef5... planner: Manual revert of #24282 (#35298)
 	var err error
 	var isNull bool
 	compare := func(ith int, op string, v *expression.Constant) bool {
