@@ -882,11 +882,7 @@ func (s *testStatsSuite) TestBuildGlobalLevelStats(c *C) {
 	c.Assert(len(result.Rows()), Equals, 20)
 }
 
-// nolint:unused
-<<<<<<< HEAD
-func (s *testSerialStatsSuite) prepareForGlobalStatsWithOpts(c *C, tk *testkit.TestKit, tblName, dbName string) {
-=======
-func prepareForGlobalStatsWithOptsV2(t *testing.T, dom *domain.Domain, tk *testkit.TestKit, tblName, dbName string) {
+func (s *testSerialStatsSuite) prepareForGlobalStatsWithOptsV2(c *C, tk *testkit.TestKit, tblName, dbName string) {
 	tk.MustExec("create database if not exists " + dbName)
 	tk.MustExec("use " + dbName)
 	tk.MustExec("drop table if exists " + tblName)
@@ -910,12 +906,11 @@ func prepareForGlobalStatsWithOptsV2(t *testing.T, dom *domain.Domain, tk *testk
 	tk.MustExec(buf2.String())
 	tk.MustExec("set @@tidb_analyze_version=2")
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
+	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 }
 
 // nolint:unused
-func prepareForGlobalStatsWithOpts(t *testing.T, dom *domain.Domain, tk *testkit.TestKit, tblName, dbName string) {
->>>>>>> 0fb8ae887... statistics: fix unstable TestAnalyzeGlobalStatsWithOpts2 (#37705)
+func (s *testSerialStatsSuite) prepareForGlobalStatsWithOpts(c *C, tk *testkit.TestKit, tblName, dbName string) {
 	tk.MustExec("create database if not exists " + dbName)
 	tk.MustExec("use " + dbName)
 	tk.MustExec("drop table if exists " + tblName)
@@ -1027,53 +1022,28 @@ func (s *testSerialStatsSuite) TestAnalyzeGlobalStatsWithOpts2(c *C) {
 		tk.MustExec(fmt.Sprintf("set global tidb_persist_analyze_options = %v", originalVal1))
 	}()
 	tk.MustExec("set global tidb_persist_analyze_options=false")
-<<<<<<< HEAD
-	s.prepareForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "test_gstats_opt2")
-
-	tk.MustExec("analyze table test_gstats_opt2 with 20 topn, 50 buckets, 1000 samples")
-	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "test_gstats_opt2", "global", 2, 50)
-	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "test_gstats_opt2", "p0", 1, 50)
-	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "test_gstats_opt2", "p1", 1, 50)
-
-	// analyze a partition to let its options be different with others'
-	tk.MustExec("analyze table test_gstats_opt2 partition p0 with 10 topn, 20 buckets")
-	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "test_gstats_opt2", "global", 10, 20) // use new options
-	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "test_gstats_opt2", "p0", 10, 20)
-	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "test_gstats_opt2", "p1", 1, 50)
-
-	tk.MustExec("analyze table test_gstats_opt2 partition p1 with 100 topn, 200 buckets")
-	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "test_gstats_opt2", "global", 100, 200)
-	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "test_gstats_opt2", "p0", 10, 20)
-	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "test_gstats_opt2", "p1", 100, 200)
-
-	tk.MustExec("analyze table test_gstats_opt2 partition p0 with 20 topn") // change back to 20 topn
-	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "test_gstats_opt2", "global", 20, 256)
-	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "test_gstats_opt2", "p0", 20, 256)
-	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "test_gstats_opt2", "p1", 100, 200)
-=======
-	prepareForGlobalStatsWithOptsV2(t, dom, tk, "test_gstats_opt2", "test_gstats_opt2")
+	s.prepareForGlobalStatsWithOptsV2(c, tk, "test_gstats_opt2", "test_gstats_opt2")
 
 	tk.MustExec("analyze table test_gstats_opt2 with 2 topn, 10 buckets, 1000 samples")
-	checkForGlobalStatsWithOpts(t, dom, "test_gstats_opt2", "test_gstats_opt2", "global", 2, 10)
-	checkForGlobalStatsWithOpts(t, dom, "test_gstats_opt2", "test_gstats_opt2", "p0", 2, 10)
-	checkForGlobalStatsWithOpts(t, dom, "test_gstats_opt2", "test_gstats_opt2", "p1", 2, 10)
+	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "test_gstats_opt2", "global", 2, 10)
+	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "test_gstats_opt2", "p0", 2, 10)
+	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "test_gstats_opt2", "p1", 2, 10)
 
 	// analyze a partition to let its options be different with others'
 	tk.MustExec("analyze table test_gstats_opt2 partition p0 with 3 topn, 20 buckets")
-	checkForGlobalStatsWithOpts(t, dom, "test_gstats_opt2", "test_gstats_opt2", "global", 3, 20) // use new options
-	checkForGlobalStatsWithOpts(t, dom, "test_gstats_opt2", "test_gstats_opt2", "p0", 3, 20)
-	checkForGlobalStatsWithOpts(t, dom, "test_gstats_opt2", "test_gstats_opt2", "p1", 2, 10)
+	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "test_gstats_opt2", "global", 3, 20) // use new options
+	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "test_gstats_opt2", "p0", 3, 20)
+	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "test_gstats_opt2", "p1", 2, 10)
 
 	tk.MustExec("analyze table test_gstats_opt2 partition p1 with 1 topn, 15 buckets")
-	checkForGlobalStatsWithOpts(t, dom, "test_gstats_opt2", "test_gstats_opt2", "global", 1, 15)
-	checkForGlobalStatsWithOpts(t, dom, "test_gstats_opt2", "test_gstats_opt2", "p0", 3, 20)
-	checkForGlobalStatsWithOpts(t, dom, "test_gstats_opt2", "test_gstats_opt2", "p1", 1, 15)
+	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "test_gstats_opt2", "global", 1, 15)
+	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "test_gstats_opt2", "p0", 3, 20)
+	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "test_gstats_opt2", "p1", 1, 15)
 
 	tk.MustExec("analyze table test_gstats_opt2 partition p0 with 2 topn, 10 buckets") // change back to 2 topn
-	checkForGlobalStatsWithOpts(t, dom, "test_gstats_opt2", "test_gstats_opt2", "global", 2, 10)
-	checkForGlobalStatsWithOpts(t, dom, "test_gstats_opt2", "test_gstats_opt2", "p0", 2, 10)
-	checkForGlobalStatsWithOpts(t, dom, "test_gstats_opt2", "test_gstats_opt2", "p1", 1, 15)
->>>>>>> 0fb8ae887... statistics: fix unstable TestAnalyzeGlobalStatsWithOpts2 (#37705)
+	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "test_gstats_opt2", "global", 2, 10)
+	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "test_gstats_opt2", "p0", 2, 10)
+	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "test_gstats_opt2", "p1", 1, 15)
 }
 
 func (s *testStatsSuite) TestGlobalStatsHealthy(c *C) {
