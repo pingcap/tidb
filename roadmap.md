@@ -128,17 +128,13 @@ In the course of development, this roadmap is subject to change based on user ne
 </thead>
 <tbody>
   <tr>
-    <td rowspan="2">Backup and restore</td>
-    <td>Support AWS EBS snapshot-based backup.</td>
-    <td>BR provides an MVP version of AWS EBS snapshot-based backup and restore.</td>
-  </tr>
-  <tr>
+    <td>Backup and restore</td>
+    <td>EBS snapshot-based backup and restore</td>
     <td>Support backup and restore based on AWS EBS or GCP persistent disk snapshots.</td>
-    <td>BR provides a complete version of EBS snapshot-based backup and restore.</td>
   </tr>
   <tr>
     <td>Point-in-time recovery (PITR)</td>
-    <td>Support Table-level and database-level PITR.</td>
+    <td>Table-level and database-level PITR.</td>
     <td>BR supports table-level or database-level PITR.</td>
   </tr>
   <tr>
