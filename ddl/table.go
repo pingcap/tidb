@@ -440,11 +440,7 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 			return ver, errors.Wrapf(err, "failed to get old label rules from PD")
 		}
 
-<<<<<<< HEAD
-		err = w.delRangeManager.removeFromGCDeleteRange(w.ddlJobCtx, dropJobID, tids)
-=======
-		err = w.delRangeManager.removeFromGCDeleteRange(w.ctx, dropJobID)
->>>>>>> 5aab87679... ddl: fix a bug that 'flashback table' does not handle mysql.gc_delete_range correctly (#38038)
+		err = w.delRangeManager.removeFromGCDeleteRange(w.ddlJobCtx, dropJobID)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
