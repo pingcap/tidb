@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/set"
+	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 )
 
 // WithForeignKeyTrigger indicates the executor has foreign key check or cascade.
@@ -244,7 +245,7 @@ func (fkc *FKCheckExec) checkIndexKeys(ctx context.Context, txn kv.Transaction) 
 	snap := txn.GetSnapshot()
 	snap.SetOption(kv.ScanBatchSize, 2)
 	defer func() {
-		snap.SetOption(kv.ScanBatchSize, 256)
+		snap.SetOption(kv.ScanBatchSize, txnsnapshot.DefaultScanBatchSize)
 	}()
 	for _, key := range fkc.toBeCheckedPrefixKeys {
 		err := fkc.checkPrefixKey(ctx, memBuffer, snap, key)
