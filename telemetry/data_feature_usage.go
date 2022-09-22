@@ -49,6 +49,7 @@ type featureUsage struct {
 	NonTransactionalUsage *m.NonTransactionalStmtCounter   `json:"nonTransactional"`
 	GlobalKill            bool                             `json:"globalKill"`
 	MultiSchemaChange     *m.MultiSchemaChangeUsageCounter `json:"multiSchemaChange"`
+	ExchangePartition     *m.ExchangePartitionUsageCounter `json:"exchangePartition"`
 	TablePartition        *m.TablePartitionUsageCounter    `json:"tablePartition"`
 	LogBackup             bool                             `json:"logBackup"`
 	EnablePaging          bool                             `json:"enablePaging"`
@@ -81,6 +82,8 @@ func getFeatureUsage(ctx context.Context, sctx sessionctx.Context) (*featureUsag
 	usage.AccountLock = getAccountLockUsageInfo()
 
 	usage.MultiSchemaChange = getMultiSchemaChangeUsageInfo()
+
+	usage.ExchangePartition = getExchangePartitionUsageInfo()
 
 	usage.TablePartition = getTablePartitionUsageInfo()
 
@@ -228,6 +231,7 @@ var initialCTECounter m.CTEUsageCounter
 var initialAccountLockCounter m.AccountLockCounter
 var initialNonTransactionalCounter m.NonTransactionalStmtCounter
 var initialMultiSchemaChangeCounter m.MultiSchemaChangeUsageCounter
+var initialExchangePartitionCounter m.ExchangePartitionUsageCounter
 var initialTablePartitionCounter m.TablePartitionUsageCounter
 var initialSavepointStmtCounter int64
 var initialLazyPessimisticUniqueCheckSetCount int64
@@ -313,6 +317,16 @@ func postReportMultiSchemaChangeUsage() {
 func getMultiSchemaChangeUsageInfo() *m.MultiSchemaChangeUsageCounter {
 	curr := m.GetMultiSchemaCounter()
 	diff := curr.Sub(initialMultiSchemaChangeCounter)
+	return &diff
+}
+
+func postReportExchangePartitionUsage() {
+	initialExchangePartitionCounter = m.GetExchangePartitionCounter()
+}
+
+func getExchangePartitionUsageInfo() *m.ExchangePartitionUsageCounter {
+	curr := m.GetExchangePartitionCounter()
+	diff := curr.Sub(initialExchangePartitionCounter)
 	return &diff
 }
 

@@ -186,13 +186,13 @@ func checkTableForeignKeyValid(is infoschema.InfoSchema, schema string, tbInfo *
 }
 
 func getAndCheckLatestInfoSchema(d *ddlCtx, t *meta.Meta) (infoschema.InfoSchema, error) {
-	currVer, err := t.GetSchemaVersion()
+	globalVer, err := t.GetSchemaVersion()
 	if err != nil {
 		return nil, err
 	}
 	is := d.infoCache.GetLatest()
-	if is.SchemaMetaVersion() != currVer {
-		return nil, errors.New("need wait owner to load latest schema")
+	if is.SchemaMetaVersion() != globalVer {
+		return nil, errors.Errorf("need wait owner to load latest schema, global: %d, info_cache: %d", globalVer, is.SchemaMetaVersion())
 	}
 	return is, nil
 }
@@ -548,4 +548,45 @@ func (h *foreignKeyHelper) getTableFromStorage(is infoschema.InfoSchema, t *meta
 	result.schemaID, result.tblInfo = db.ID, tbInfo
 	h.loaded[k] = result
 	return result, nil
+}
+
+func checkDatabaseHasForeignKeyReferred(is infoschema.InfoSchema, schema model.CIStr, fkCheck bool) error {
+	if !fkCheck {
+		return nil
+	}
+	tables := is.SchemaTables(schema)
+	tableNames := make([]ast.Ident, len(tables))
+	for i := range tables {
+		tableNames[i] = ast.Ident{Schema: schema, Name: tables[i].Meta().Name}
+	}
+	for _, tbl := range tables {
+		if referredFK := checkTableHasForeignKeyReferred(is, schema.L, tbl.Meta().Name.L, tableNames, fkCheck); referredFK != nil {
+			return errors.Trace(dbterror.ErrForeignKeyCannotDropParent.GenWithStackByArgs(tbl.Meta().Name, referredFK.ChildFKName, referredFK.ChildTable))
+		}
+	}
+	return nil
+}
+
+func checkDatabaseHasForeignKeyReferredInOwner(d *ddlCtx, t *meta.Meta, job *model.Job) error {
+	if !variable.EnableForeignKey.Load() {
+		return nil
+	}
+	var fkCheck bool
+	err := job.DecodeArgs(&fkCheck)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return errors.Trace(err)
+	}
+	if !fkCheck {
+		return nil
+	}
+	is, err := getAndCheckLatestInfoSchema(d, t)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = checkDatabaseHasForeignKeyReferred(is, model.NewCIStr(job.SchemaName), fkCheck)
+	if err != nil {
+		job.State = model.JobStateCancelled
+	}
+	return errors.Trace(err)
 }
