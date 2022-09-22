@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/structure"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
 
@@ -60,27 +59,26 @@ var (
 //
 
 var (
-	mMetaPrefix              = []byte("m")
-	mNextGlobalIDKey         = []byte("NextGlobalID")
-	mSchemaVersionKey        = []byte("SchemaVersionKey")
-	mDBs                     = []byte("DBs")
-	mDBPrefix                = "DB"
-	mTablePrefix             = "Table"
-	mSequencePrefix          = "SID"
-	mSeqCyclePrefix          = "SequenceCycle"
-	mTableIDPrefix           = "TID"
-	mIncIDPrefix             = "IID"
-	mRandomIDPrefix          = "TARID"
-	mBootstrapKey            = []byte("BootstrapKey")
-	mSchemaDiffPrefix        = "Diff"
-	mPolicies                = []byte("Policies")
-	mPolicyPrefix            = "Policy"
-	mPolicyGlobalID          = []byte("PolicyGlobalID")
-	mPolicyMagicByte         = CurrentMagicByteVer
-	mDDLTableVersion         = []byte("DDLTableVersion")
-	mConcurrentDDL           = []byte("concurrentDDL")
-	mInFlashbackCluster      = []byte("InFlashbackCluster")
-	mFlashbackHistoryTSRange = []byte("FlashbackHistoryTSRange")
+	mMetaPrefix         = []byte("m")
+	mNextGlobalIDKey    = []byte("NextGlobalID")
+	mSchemaVersionKey   = []byte("SchemaVersionKey")
+	mDBs                = []byte("DBs")
+	mDBPrefix           = "DB"
+	mTablePrefix        = "Table"
+	mSequencePrefix     = "SID"
+	mSeqCyclePrefix     = "SequenceCycle"
+	mTableIDPrefix      = "TID"
+	mIncIDPrefix        = "IID"
+	mRandomIDPrefix     = "TARID"
+	mBootstrapKey       = []byte("BootstrapKey")
+	mSchemaDiffPrefix   = "Diff"
+	mPolicies           = []byte("Policies")
+	mPolicyPrefix       = "Policy"
+	mPolicyGlobalID     = []byte("PolicyGlobalID")
+	mPolicyMagicByte    = CurrentMagicByteVer
+	mDDLTableVersion    = []byte("DDLTableVersion")
+	mConcurrentDDL      = []byte("concurrentDDL")
+	mInFlashbackCluster = []byte("InFlashbackCluster")
 )
 
 const (
@@ -623,90 +621,6 @@ func (m *Meta) GetFlashbackClusterJobID() (int64, error) {
 	}
 
 	return int64(binary.BigEndian.Uint64(val)), nil
-}
-
-// TSRange store a range time
-type TSRange struct {
-	StartTS uint64
-	EndTS   uint64
-}
-
-// SetFlashbackHistoryTSRange store flashback time range to TiKV
-func (m *Meta) SetFlashbackHistoryTSRange(timeRange []TSRange) error {
-	timeRangeByte, err := json.Marshal(timeRange)
-	if err != nil {
-		return err
-	}
-	return errors.Trace(m.txn.Set(mFlashbackHistoryTSRange, timeRangeByte))
-}
-
-// GetFlashbackHistoryTSRange get flashback time range from TiKV
-func (m *Meta) GetFlashbackHistoryTSRange() (timeRange []TSRange, err error) {
-	timeRangeByte, err := m.txn.Get(mFlashbackHistoryTSRange)
-	if err != nil {
-		return nil, err
-	}
-	if len(timeRangeByte) == 0 {
-		return []TSRange{}, nil
-	}
-	err = json.Unmarshal(timeRangeByte, &timeRange)
-	if err != nil {
-		return nil, err
-	}
-	return timeRange, nil
-}
-
-// CheckFlashbackHistoryTSRange checks flashbackTS overlapped with history time ranges or not.
-func CheckFlashbackHistoryTSRange(m *Meta, targetTS uint64) error {
-	tsRanges, err := m.GetFlashbackHistoryTSRange()
-	if err != nil {
-		return err
-	}
-	for _, tsRange := range tsRanges {
-		if tsRange.StartTS <= targetTS && targetTS <= tsRange.EndTS {
-			return errors.Errorf("can't set timestamp to history flashback time range [%s, %s]",
-				oracle.GetTimeFromTS(tsRange.StartTS), oracle.GetTimeFromTS(tsRange.EndTS))
-		}
-	}
-	return nil
-}
-
-// UpdateFlashbackHistoryTSRanges insert [startTS, endTS] into FlashbackHistoryTSRange.
-func UpdateFlashbackHistoryTSRanges(m *Meta, startTS uint64, endTS uint64, gcSafePoint uint64) error {
-	tsRanges, err := m.GetFlashbackHistoryTSRange()
-	if err != nil {
-		return err
-	}
-	if len(tsRanges) != 0 && tsRanges[len(tsRanges)-1].EndTS >= endTS {
-		// It's impossible, endTS should always greater than all TS in history TS ranges.
-		return errors.Errorf("Maybe TSO fallback, last flashback endTS: %d, now: %d", tsRanges[len(tsRanges)-1].EndTS, endTS)
-	}
-
-	newTsRange := make([]TSRange, 0, len(tsRanges))
-
-	for _, tsRange := range tsRanges {
-		if tsRange.EndTS < gcSafePoint {
-			continue
-		}
-		if startTS > tsRange.EndTS {
-			// tsRange.StartTS < tsRange.EndTS < startTS.
-			// We should keep tsRange in slices.
-			newTsRange = append(newTsRange, tsRange)
-		} else if startTS < tsRange.StartTS {
-			// startTS < tsRange.StartTS < tsRange.EndTS.
-			// The remained ts ranges are useless, [startTS, endTS] will cover them, so break.
-			break
-		} else {
-			// tsRange.StartTS < startTS < tsRange.EndTS.
-			// It's impossible reach here, we checked it before start flashback cluster.
-			return errors.Errorf("It's an unreachable branch, flashbackTS (%d) in old ts range: [%d, %d]",
-				startTS, tsRange.StartTS, tsRange.EndTS)
-		}
-	}
-
-	// Store the new tsRange.
-	newTsRange = append(newTsRange, TSRange{StartTS: startTS, EndTS: endTS})
-	return m.SetFlashbackHistoryTSRange(newTsRange)
 }
 
 // SetConcurrentDDL set the concurrent DDL flag.

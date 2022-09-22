@@ -2656,11 +2656,9 @@ func (d *ddl) FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) error
 		Args: []interface{}{
 			flashbackTS,
 			map[string]interface{}{},
-			variable.On, /* tidb_super_read_only */
 			true,        /* tidb_gc_enable */
 			variable.On, /* tidb_enable_auto_analyze */
-			"1",         /* tidb_max_auto_analyze_time */
-			flashbackTS /* min safe time */},
+			"1" /* tidb_max_auto_analyze_time */},
 	}
 	err := d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
