@@ -847,7 +847,7 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, v *ast.Ex
 		er.sctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(
 			"NO_DECORRELATE() and SEMI_JOIN_REWRITE() are in conflict. Both will be ineffective."))
 		noDecorrelate = false
-		semiJoinRewrite = false
+		// semiJoinRewrite = false
 	}
 
 	if er.b.disableSubQueryPreprocessing || len(ExtractCorrelatedCols4LogicalPlan(np)) > 0 {
