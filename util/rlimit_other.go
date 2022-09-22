@@ -22,6 +22,7 @@ import (
 	"go.uber.org/zap"
 )
 
+// GenRLimit get RLIMIT_NOFILE limit
 func GenRLimit() uint64 {
 	rLimit := uint64(1024)
 	var rl syscall.Rlimit

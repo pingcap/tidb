@@ -15,6 +15,7 @@
 
 package util
 
+// GenRLimit always return 1024.
 func GenRLimit() uint64 {
 	return 1024
 }
