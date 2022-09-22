@@ -192,7 +192,7 @@ func getAndCheckLatestInfoSchema(d *ddlCtx, t *meta.Meta) (infoschema.InfoSchema
 	}
 	is := d.infoCache.GetLatest()
 	if is.SchemaMetaVersion() != currVer {
-		return nil, errors.New("need wait owner to load latest schema")
+		return nil, errors.Errorf("need wait owner to load latest schema, global: %d, info_cache: %d", currVer, is.SchemaMetaVersion())
 	}
 	return is, nil
 }
