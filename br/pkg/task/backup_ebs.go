@@ -50,7 +50,7 @@ var errHasPendingAdmin = errors.New("has pending admin")
 
 // DefineBackupEBSFlags defines common flags for the backup command.
 func DefineBackupEBSFlags(flags *pflag.FlagSet) {
-	flags.String(flagFullBackupType, string(FullBackupTypeKV), "type when doing full backup or restore")
+	flags.String(flagFullBackupType, string(FullBackupTypeKV), "full backup type")
 	flags.String(flagBackupVolumeFile, "./backup.json", "the file path of volume infos of TiKV node")
 	flags.Bool(flagSkipAWS, false, "don't access to aws environment if set to true")
 	flags.Uint(flagCloudAPIConcurrency, defaultCloudAPIConcurrency, "concurrency of calling cloud api")
