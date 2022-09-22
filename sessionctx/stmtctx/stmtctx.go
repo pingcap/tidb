@@ -75,6 +75,7 @@ type StatementContext struct {
 	InLoadDataStmt         bool
 	InExplainStmt          bool
 	InCreateOrAlterStmt    bool
+	InPreparedPlanBuilding bool
 	IgnoreTruncate         bool
 	IgnoreZeroInDate       bool
 	NoZeroDate             bool
@@ -239,6 +240,8 @@ type StatementContext struct {
 		// LoadStartTime is to record the load start time to calculate latency
 		LoadStartTime time.Time
 	}
+	// ColRefFromPlan mark the column ref used by assignment in update statement.
+	ColRefFromUpdatePlan []int64
 }
 
 // StmtHints are SessionVars related sql hints.
