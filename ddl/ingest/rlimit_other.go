@@ -29,6 +29,7 @@ func genRLimit() uint64 {
 	if err != nil {
 		logutil.BgLogger().Warn(LitErrGetSysLimitErr, zap.Error(err), zap.String("default", "1024"))
 	} else {
+		//nolint: unconvert
 		rLimit = uint64(rl.Cur)
 	}
 	return rLimit
