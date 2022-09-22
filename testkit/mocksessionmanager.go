@@ -34,15 +34,44 @@ type MockSessionManager struct {
 
 // ShowTxnList is to show txn list.
 func (msm *MockSessionManager) ShowTxnList() []*txninfo.TxnInfo {
+<<<<<<< HEAD
 	return msm.TxnInfo
+=======
+	msm.mu.Lock()
+	defer msm.mu.Unlock()
+	if len(msm.TxnInfo) > 0 {
+		return msm.TxnInfo
+	}
+	rs := make([]*txninfo.TxnInfo, 0, len(msm.conn))
+	for _, se := range msm.conn {
+		info := se.TxnInfo()
+		if info != nil {
+			rs = append(rs, info)
+		}
+	}
+	return rs
+>>>>>>> c9dd53734... *: fix race and enable race for concurrent ddl test (#38093)
 }
 
 // ShowProcessList implements the SessionManager.ShowProcessList interface.
 func (msm *MockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo {
 	ret := make(map[uint64]*util.ProcessInfo)
+<<<<<<< HEAD
 	for _, item := range msm.PS {
 		ret[item.ID] = item
+=======
+	if len(msm.PS) > 0 {
+		for _, item := range msm.PS {
+			ret[item.ID] = item
+		}
+		return ret
 	}
+	msm.mu.Lock()
+	for connID, pi := range msm.conn {
+		ret[connID] = pi.ShowProcess()
+>>>>>>> c9dd53734... *: fix race and enable race for concurrent ddl test (#38093)
+	}
+	msm.mu.Unlock()
 	return ret
 }
 
@@ -86,7 +115,9 @@ func (*MockSessionManager) GetInternalSessionStartTSList() []uint64 {
 
 // CheckOldRunningTxn is to get all startTS of every transactions running in the current internal sessions
 func (msm *MockSessionManager) CheckOldRunningTxn(job2ver map[int64]int64, job2ids map[int64]string) {
+	msm.mu.Lock()
 	for _, se := range msm.conn {
 		session.RemoveLockDDLJobs(se, job2ver, job2ids)
 	}
+	msm.mu.Unlock()
 }
