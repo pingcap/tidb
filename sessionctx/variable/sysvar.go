@@ -490,7 +490,9 @@ var defaultSysVars = []*SysVar{
 			return err
 		}
 		config.CheckTempStorageQuota()
-		UpdateMemoryUsageAlarmRecord()
+		if UpdateMemoryUsageAlarmRecord != nil {
+			UpdateMemoryUsageAlarmRecord()
+		}
 		return nil
 	}, GetGlobal: func(s *SessionVars) (string, error) {
 		return config.GetGlobalConfig().Instance.TmpDir.Load(), nil
@@ -503,12 +505,9 @@ var defaultSysVars = []*SysVar{
 			if !os.IsNotExist(err) {
 				return normalizedValue, err
 			}
-			if err = os.Mkdir(normalizedValue, 0750); err != nil {
+			if err = os.MkdirAll(normalizedValue, 0750); err != nil {
 				return normalizedValue, err
 			}
-			defer func() {
-				_ = os.Remove(normalizedValue)
-			}()
 			fileInfo, err = os.Stat(normalizedValue)
 			return normalizedValue, err
 		}

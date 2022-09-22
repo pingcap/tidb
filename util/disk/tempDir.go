@@ -72,6 +72,7 @@ func InitializeTempDir() error {
 			return err
 		}
 	}
+	CleanUp()
 	tempDirLock, err = fslock.Lock(filepath.Join(tempDir, lockFile))
 	if err != nil {
 		switch err {
@@ -109,7 +110,7 @@ func InitializeTempDir() error {
 	return nil
 }
 
-// CleanUp releases the directory lock when exiting TiDB.
+// CleanUp releases the directory lock when exiting TiDB or changing tmpdir.
 func CleanUp() {
 	if tempDirLock != nil {
 		err := tempDirLock.Unlock()
