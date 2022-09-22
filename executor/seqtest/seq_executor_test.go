@@ -299,8 +299,13 @@ func TestShow(t *testing.T) {
 
 	tk.MustQuery("SHOW PROCEDURE STATUS WHERE Db='test'").Check(testkit.Rows())
 	tk.MustQuery("SHOW TRIGGERS WHERE `Trigger` ='test'").Check(testkit.Rows())
+<<<<<<< HEAD
 	tk.MustQuery("SHOW PROCESSLIST;").Check(testkit.Rows())
 	tk.MustQuery("SHOW FULL PROCESSLIST;").Check(testkit.Rows())
+=======
+	tk.MustQuery("SHOW PROCESSLIST;").Check(testkit.Rows(fmt.Sprintf("%d   test Sleep 0 autocommit SHOW PROCESSLIST;", tk.Session().ShowProcess().ID)))
+	tk.MustQuery("SHOW FULL PROCESSLIST;").Check(testkit.Rows(fmt.Sprintf("%d   test Sleep 0 autocommit SHOW FULL PROCESSLIST;", tk.Session().ShowProcess().ID)))
+>>>>>>> 05f808f68... *: fix data race for txnCtx (#38041)
 	tk.MustQuery("SHOW EVENTS WHERE Db = 'test'").Check(testkit.Rows())
 	tk.MustQuery("SHOW PLUGINS").Check(testkit.Rows())
 	tk.MustQuery("SHOW PROFILES").Check(testkit.Rows())
