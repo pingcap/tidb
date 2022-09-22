@@ -180,7 +180,7 @@ In the course of development, this roadmap is subject to change based on user ne
   </tr>
   <tr>
     <td>Log redaction</td>
-    <td><ul><li>Data redaction in execution plans in TiDB Dashboard</li><li>Data redaction in TiDB-related logs</li></ul></td>
+    <td><ul><li>Data redaction in execution plans in TiDB Dashboard.</li><li>Data redaction in TiDB-related logs.</li></ul></td>
     <td>Redact sensitive information in execution plans and various logs to enhance the security of user data.</td>
   </tr>
   <tr>
