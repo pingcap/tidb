@@ -850,12 +850,13 @@ func (p *PdController) ResetTS(ctx context.Context, ts uint64) error {
 	var err error
 	for _, addr := range p.addrs {
 		code, _, e := pdRequestWithCode(ctx, addr, resetTSPrefix, p.cli, http.MethodPost, bytes.NewBuffer(reqData))
-		// for pd version <= 6.2, if the given ts < current ts of pd, pd returns StatusForbidden.
-		// it's not an error for br
-		if code == http.StatusForbidden {
-			return nil
-		}
 		if e != nil {
+			// for pd version <= 6.2, if the given ts < current ts of pd, pd returns StatusForbidden.
+			// it's not an error for br
+			if code == http.StatusForbidden {
+				log.Info("reset-ts returns with status forbidden, ignore")
+				return nil
+			}
 			log.Warn("failed to reset ts", zap.Uint64("ts", ts), zap.String("addr", addr), zap.Error(e))
 			err = e
 			continue
