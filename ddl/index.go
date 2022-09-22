@@ -600,11 +600,13 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 			return ver, err
 		}
 		logutil.BgLogger().Info("[ddl] run add index job", zap.String("job", job.String()), zap.Reflect("indexInfo", indexInfo))
+		initializeTrace(job.ID)
 	}
 	originalState := indexInfo.State
 	switch indexInfo.State {
 	case model.StateNone:
 		// none -> delete only
+		defer injectSpan(job.ID, "none")()
 		reorgTp := pickBackfillType(w, job)
 		if reorgTp.NeedMergeProcess() {
 			// Increase telemetryAddIndexIngestUsage
@@ -620,6 +622,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		job.SchemaState = model.StateDeleteOnly
 	case model.StateDeleteOnly:
 		// delete only -> write only
+		defer injectSpan(job.ID, "delete-only")()
 		indexInfo.State = model.StateWriteOnly
 		_, err = checkPrimaryKeyNotNull(d, w, t, job, tblInfo, indexInfo)
 		if err != nil {
@@ -632,6 +635,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		job.SchemaState = model.StateWriteOnly
 	case model.StateWriteOnly:
 		// write only -> reorganization
+		defer injectSpan(job.ID, "write-only")()
 		indexInfo.State = model.StateWriteReorganization
 		_, err = checkPrimaryKeyNotNull(d, w, t, job, tblInfo, indexInfo)
 		if err != nil {
@@ -646,6 +650,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		job.SchemaState = model.StateWriteReorganization
 	case model.StateWriteReorganization:
 		// reorganization -> public
+		defer injectSpan(job.ID, "write-reorg")()
 		tbl, err := getTable(d.store, schemaID, tblInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -676,10 +681,12 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		job.Args = []interface{}{indexInfo.ID, false /*if exists*/, getPartitionIDs(tbl.Meta())}
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+		details := collectTrace(job.ID)
+		logutil.BgLogger().Info("[ddl] finish add index job", zap.String("job", job.String()),
+			zap.String("time details", details))
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", tblInfo.State)
 	}
-
 	return ver, errors.Trace(err)
 }
 
@@ -778,6 +785,7 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 	}
 	switch indexInfo.BackfillState {
 	case model.BackfillStateRunning:
+		defer injectSpan(job.ID, "write-reorg-backfill")()
 		logutil.BgLogger().Info("[ddl] index backfill state running", zap.Int64("job ID", job.ID),
 			zap.String("table", tbl.Meta().Name.O), zap.String("index", indexInfo.Name.O))
 		switch bfProcess {
@@ -828,6 +836,7 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 		ver, err = updateVersionAndTableInfo(d, t, job, tbl.Meta(), true)
 		return false, ver, errors.Trace(err)
 	case model.BackfillStateReadyToMerge:
+		defer injectSpan(job.ID, "write-reorg-ready-to-merge")()
 		logutil.BgLogger().Info("[ddl] index backfill state ready to merge", zap.Int64("job ID", job.ID),
 			zap.String("table", tbl.Meta().Name.O), zap.String("index", indexInfo.Name.O))
 		indexInfo.BackfillState = model.BackfillStateMerging
@@ -838,6 +847,7 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 		ver, err = updateVersionAndTableInfo(d, t, job, tbl.Meta(), true)
 		return false, ver, errors.Trace(err)
 	case model.BackfillStateMerging:
+		defer injectSpan(job.ID, "write-reorg-merging")()
 		done, ver, err = runReorgJobAndHandleErr(w, d, t, job, tbl, indexInfo, true)
 		if !done {
 			return false, ver, err
@@ -1474,6 +1484,7 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 
 	oprStartTime := time.Now()
 	ctx := kv.WithInternalSourceType(context.Background(), w.jobContext.ddlJobSourceType())
+	defer injectSpan(w.reorgInfo.Job.ID, "fetch-create-txn")()
 	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
@@ -1482,7 +1493,9 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 			txn.SetOption(kv.ResourceGroupTagger, tagger)
 		}
 
+		finishSpan := injectSpan(w.reorgInfo.Job.ID, "fetch-rows")
 		idxRecords, nextKey, taskDone, err := w.fetchRowColVals(txn, handleRange)
+		finishSpan()
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1494,6 +1507,7 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 			return errors.Trace(err)
 		}
 
+		defer injectSpan(w.reorgInfo.Job.ID, "create-records")()
 		for _, idxRecord := range idxRecords {
 			taskCtx.scanCount++
 			// The index is already exists, we skip it, no needs to backfill it.

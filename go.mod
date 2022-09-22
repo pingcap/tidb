@@ -58,7 +58,7 @@ require (
 	github.com/mgechev/revive v1.2.4-0.20220827111817-553604eaced5
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
 	github.com/nishanths/predeclared v0.2.2
-	github.com/opentracing/basictracer-go v1.0.0
+	github.com/opentracing/basictracer-go v1.1.0
 	github.com/opentracing/opentracing-go v1.2.0
 	github.com/phayes/freeport v0.0.0-20180830031419-95f893ade6f2
 	github.com/pingcap/badger v1.5.1-0.20220314162537-ab58fbf40580
@@ -84,6 +84,7 @@ require (
 	github.com/tdakkota/asciicheck v0.1.1
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/tikv/client-go/v2 v2.0.1-0.20220913051514-ffaaf7131a8d
+	github.com/tikv/minitrace-go v0.0.0-20210623164044-529c511f20f8
 	github.com/tikv/pd/client v0.0.0-20220725055910-7187a7ab72db
 	github.com/timakin/bodyclose v0.0.0-20210704033933-f49887972144
 	github.com/twmb/murmur3 v1.1.3
