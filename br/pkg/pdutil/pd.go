@@ -237,7 +237,9 @@ func NewPdController(
 	pdClient, err := pd.NewClientWithContext(
 		ctx, addrs, securityOption,
 		pd.WithGRPCDialOptions(maxCallMsgSize...),
-		pd.WithCustomTimeoutOption(10*time.Second),
+		// If the time too short, we may scatter a region many times, because
+		// the interface `ScatterRegions` may time out.
+		pd.WithCustomTimeoutOption(60*time.Second),
 		pd.WithMaxErrorRetry(3),
 	)
 	if err != nil {
@@ -378,7 +380,7 @@ func (p *PdController) getStoreInfoWith(
 
 func (p *PdController) doPauseSchedulers(ctx context.Context, schedulers []string, post pdHTTPRequest) ([]string, error) {
 	// pause this scheduler with 300 seconds
-	body, err := json.Marshal(pauseSchedulerBody{Delay: int64(pauseTimeout)})
+	body, err := json.Marshal(pauseSchedulerBody{Delay: int64(pauseTimeout.Seconds())})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

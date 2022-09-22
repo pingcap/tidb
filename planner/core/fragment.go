@@ -126,7 +126,8 @@ func (f *Fragment) init(p PhysicalPlan) error {
 		}
 		f.TableScan = x
 	case *PhysicalExchangeReceiver:
-		f.singleton = x.children[0].(*PhysicalExchangeSender).ExchangeType == tipb.ExchangeType_PassThrough
+		// TODO: after we support partial merge, we should check whether all the target exchangeReceiver is same.
+		f.singleton = f.singleton || x.children[0].(*PhysicalExchangeSender).ExchangeType == tipb.ExchangeType_PassThrough
 		f.ExchangeReceivers = append(f.ExchangeReceivers, x)
 	case *PhysicalUnionAll:
 		return errors.New("unexpected union all detected")
@@ -247,6 +248,11 @@ func (e *mppTaskGenerator) generateMPPTasksForFragment(f *Fragment) (tasks []*kv
 	}
 	if f.TableScan != nil {
 		tasks, err = e.constructMPPTasksImpl(context.Background(), f.TableScan)
+		if err == nil && len(tasks) == 0 {
+			err = errors.New(
+				"In mpp mode, the number of tasks for table scan should not be zero. " +
+					"Please set tidb_allow_mpp = 0, and then rerun sql.")
+		}
 	} else {
 		childrenTasks := make([]*kv.MPPTask, 0)
 		for _, r := range f.ExchangeReceivers {
@@ -293,7 +299,17 @@ func partitionPruning(ctx sessionctx.Context, tbl table.PartitionedTable, conds 
 		}
 	}
 	if len(ret) == 0 {
-		ret = []table.PhysicalTable{tbl.GetPartition(pi.Definitions[0].ID)}
+		// TiFlash cannot process an empty task correctly, so choose to leave it with some data to read.
+		if len(partitionNames) == 0 {
+			ret = []table.PhysicalTable{tbl.GetPartition(pi.Definitions[0].ID)}
+		} else {
+			for _, def := range pi.Definitions {
+				if def.Name.L == partitionNames[0].L {
+					ret = []table.PhysicalTable{tbl.GetPartition(def.ID)}
+					break
+				}
+			}
+		}
 	}
 	return ret, nil
 }

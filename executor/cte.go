@@ -230,8 +230,6 @@ func (e *CTEExec) Close() (err error) {
 func (e *CTEExec) computeSeedPart(ctx context.Context) (err error) {
 	e.curIter = 0
 	e.iterInTbl.SetIter(e.curIter)
-	// This means iterInTbl's can be read.
-	defer close(e.iterInTbl.GetBegCh())
 	chks := make([]*chunk.Chunk, 0, 10)
 	for {
 		if e.limitDone(e.iterInTbl) {
@@ -384,7 +382,6 @@ func (e *CTEExec) setupTblsForNewIteration() (err error) {
 	if err = e.iterInTbl.Reopen(); err != nil {
 		return err
 	}
-	defer close(e.iterInTbl.GetBegCh())
 	if e.isDistinct {
 		// Already deduplicated by resTbl, adding directly is ok.
 		for _, chk := range chks {

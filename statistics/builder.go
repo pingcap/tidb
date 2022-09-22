@@ -375,8 +375,8 @@ func BuildHistAndTopN(
 // pruneTopNItem tries to prune the least common values in the top-n list if it is not significantly more common than the values not in the list.
 //   We assume that the ones not in the top-n list's selectivity is 1/remained_ndv which is the internal implementation of EqualRowCount
 func pruneTopNItem(topns []TopNMeta, ndv, nullCount, sampleRows, totalRows int64) []TopNMeta {
-	// If the sampleRows holds all rows. We just return the top-n directly.
-	if sampleRows == totalRows || totalRows <= 1 {
+	// If the sampleRows holds all rows, or NDV of samples equals to actual NDV, we just return the TopN directly.
+	if sampleRows == totalRows || totalRows <= 1 || int64(len(topns)) >= ndv {
 		return topns
 	}
 	// Sum the occurrence except the least common one from the top-n list. To check whether the lest common one is worth
@@ -396,7 +396,7 @@ func pruneTopNItem(topns []TopNMeta, ndv, nullCount, sampleRows, totalRows int64
 		if selectivity > 1 {
 			selectivity = 1
 		}
-		otherNDV := float64(ndv) - float64(topNNum)
+		otherNDV := float64(ndv) - (float64(topNNum) - 1)
 		if otherNDV > 1 {
 			selectivity /= otherNDV
 		}
@@ -407,11 +407,13 @@ func pruneTopNItem(topns []TopNMeta, ndv, nullCount, sampleRows, totalRows int64
 		// Thus the variance is the following formula.
 		variance := n * K * (N - K) * (N - n) / (N * N * (N - 1))
 		stddev := math.Sqrt(variance)
-		// We choose the bound that plus two stddev of the sample frequency， plus an additional 0.5 for the continuity correction.
+		// We choose the bound that plus two stddev of the sample frequency, plus an additional 0.5 for the continuity correction.
 		//   Note:
 		//  	The mean + 2 * stddev is known as Wald confidence interval, plus 0.5 would be continuity-corrected Wald interval
 		if float64(topns[topNNum-1].Count) > selectivity*n+2*stddev+0.5 {
-			// If the current one is worth storing, the latter ones too. So we just break here.
+			// Estimated selectivity of this item in the TopN is significantly higher than values not in TopN.
+			// So this value, and all other values in the TopN (selectivity of which is higher than this value) are
+			// worth being remained in the TopN list, and we stop pruning now.
 			break
 		}
 		// Current one is not worth storing, remove it and subtract it from sumCount, go to next one.

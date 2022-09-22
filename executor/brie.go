@@ -16,7 +16,6 @@ package executor
 
 import (
 	"context"
-	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -224,7 +223,7 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 		},
 	}
 
-	storageURL, err := url.Parse(s.Storage)
+	storageURL, err := storage.ParseRawURL(s.Storage)
 	if err != nil {
 		b.err = errors.Annotate(err, "invalid destination URL")
 		return nil
@@ -503,6 +502,11 @@ func (gs *tidbGlueSession) CreateTable(ctx context.Context, dbName model.CIStr, 
 
 // Close implements glue.Session
 func (gs *tidbGlueSession) Close() {
+}
+
+// GetGlobalVariables implements glue.Session.
+func (gs *tidbGlueSession) GetGlobalVariable(name string) (string, error) {
+	return gs.se.GetSessionVars().GlobalVarsAccessor.GetTiDBTableValue(name)
 }
 
 // Open implements glue.Glue
