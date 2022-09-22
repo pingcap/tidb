@@ -1322,4 +1322,6 @@ func TestDropDatabaseWithForeignKeyReferred2(t *testing.T) {
 	wg.Wait()
 	require.Error(t, dropErr)
 	require.Equal(t, "[ddl:3730]Cannot drop table 't2' referenced by a foreign key constraint 'fk_b' on table 't3'.", dropErr.Error())
+	tk.MustExec("drop table test2.t3")
+	tk.MustExec("drop database test")
 }
