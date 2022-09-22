@@ -18,7 +18,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"syscall"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/config"
@@ -70,18 +69,6 @@ func InitGlobalLightningEnv() {
 		zap.Uint64("sort path disk quota", LitDiskRoot.MaxQuota()),
 		zap.Uint64("max open file number", LitRLimit),
 		zap.Bool("lightning is initialized", LitInitialized))
-}
-
-func genRLimit() uint64 {
-	rLimit := uint64(1024)
-	var rl syscall.Rlimit
-	err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &rl)
-	if err != nil {
-		logutil.BgLogger().Warn(LitErrGetSysLimitErr, zap.Error(err), zap.String("default", "1024"))
-	} else {
-		rLimit = rl.Cur
-	}
-	return rLimit
 }
 
 // Generate lightning local store dir in TiDB data dir.
