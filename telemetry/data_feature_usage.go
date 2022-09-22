@@ -49,6 +49,7 @@ type featureUsage struct {
 	NonTransactionalUsage *m.NonTransactionalStmtCounter   `json:"nonTransactional"`
 	GlobalKill            bool                             `json:"globalKill"`
 	MultiSchemaChange     *m.MultiSchemaChangeUsageCounter `json:"multiSchemaChange"`
+	ExchangePartition     *m.ExchangePartitionUsageCounter `json:"exchangePartition"`
 	TablePartition        *m.TablePartitionUsageCounter    `json:"tablePartition"`
 	LogBackup             bool                             `json:"logBackup"`
 	EnablePaging          bool                             `json:"enablePaging"`
@@ -82,6 +83,8 @@ func getFeatureUsage(ctx context.Context, sctx sessionctx.Context) (*featureUsag
 
 	usage.MultiSchemaChange = getMultiSchemaChangeUsageInfo()
 
+	usage.ExchangePartition = getExchangePartitionUsageInfo()
+
 	usage.TablePartition = getTablePartitionUsageInfo()
 
 	usage.AutoCapture = getAutoCaptureUsageInfo(sctx)
@@ -98,7 +101,7 @@ func getFeatureUsage(ctx context.Context, sctx sessionctx.Context) (*featureUsag
 
 	usage.EnableCostModelVer2 = getCostModelVer2UsageInfo(sctx)
 
-	usage.DDLUsageCounter = getAddIndexIngestUsageInfo()
+	usage.DDLUsageCounter = getDDLUsageInfo(sctx)
 
 	return &usage, nil
 }
@@ -228,6 +231,7 @@ var initialCTECounter m.CTEUsageCounter
 var initialAccountLockCounter m.AccountLockCounter
 var initialNonTransactionalCounter m.NonTransactionalStmtCounter
 var initialMultiSchemaChangeCounter m.MultiSchemaChangeUsageCounter
+var initialExchangePartitionCounter m.ExchangePartitionUsageCounter
 var initialTablePartitionCounter m.TablePartitionUsageCounter
 var initialSavepointStmtCounter int64
 var initialLazyPessimisticUniqueCheckSetCount int64
@@ -316,11 +320,21 @@ func getMultiSchemaChangeUsageInfo() *m.MultiSchemaChangeUsageCounter {
 	return &diff
 }
 
+func postReportExchangePartitionUsage() {
+	initialExchangePartitionCounter = m.GetExchangePartitionCounter()
+}
+
+func getExchangePartitionUsageInfo() *m.ExchangePartitionUsageCounter {
+	curr := m.GetExchangePartitionCounter()
+	diff := curr.Sub(initialExchangePartitionCounter)
+	return &diff
+}
+
 func postReportTablePartitionUsage() {
 	initialTablePartitionCounter = m.ResetTablePartitionCounter(initialTablePartitionCounter)
 }
 
-func postReportAddIndexIngestUsage() {
+func postReportDDLUsage() {
 	initialDDLUsageCounter = m.GetDDLUsageCounter()
 }
 
@@ -353,7 +367,7 @@ func getGlobalKillUsageInfo() bool {
 }
 
 func getLogBackupUsageInfo(ctx sessionctx.Context) bool {
-	return utils.CheckLogBackupEnabled(ctx)
+	return utils.IsLogBackupInUse(ctx)
 }
 
 func getCostModelVer2UsageInfo(ctx sessionctx.Context) bool {
@@ -366,8 +380,12 @@ func getCostModelVer2UsageInfo(ctx sessionctx.Context) bool {
 func getPagingUsageInfo(ctx sessionctx.Context) bool {
 	return ctx.GetSessionVars().EnablePaging
 }
-func getAddIndexIngestUsageInfo() *m.DDLUsageCounter {
+func getDDLUsageInfo(ctx sessionctx.Context) *m.DDLUsageCounter {
 	curr := m.GetDDLUsageCounter()
 	diff := curr.Sub(initialDDLUsageCounter)
+	isEnable, err := ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar("tidb_enable_metadata_lock")
+	if err == nil {
+		diff.MetadataLockUsed = isEnable == "ON"
+	}
 	return &diff
 }
