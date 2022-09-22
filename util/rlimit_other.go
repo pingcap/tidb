@@ -11,10 +11,26 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-//go:build windows
+//go:build !windows
 
-package ingest
+package util
 
-func genRLimit() uint64 {
-	return 1024
+import (
+	"syscall"
+
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
+)
+
+func GenRLimit() uint64 {
+	rLimit := uint64(1024)
+	var rl syscall.Rlimit
+	err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &rl)
+	if err != nil {
+		logutil.BgLogger().Warn(LitErrGetSysLimitErr, zap.Error(err), zap.String("default", "1024"))
+	} else {
+		//nolint: unconvert
+		rLimit = uint64(rl.Cur)
+	}
+	return rLimit
 }
