@@ -946,10 +946,6 @@ func TestTruncateOrDropTableWithForeignKeyReferred2(t *testing.T) {
 	tk2.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk2.MustExec("set @@foreign_key_checks=1;")
 	tk2.MustExec("use test")
-	tk3 := testkit.NewTestKit(t, store)
-	tk3.MustExec("set @@global.tidb_enable_foreign_key=1")
-	tk3.MustExec("set @@foreign_key_checks=1;")
-	tk3.MustExec("use test")
 
 	tk.MustExec("create table t1 (id int key, a int);")
 
@@ -1255,4 +1251,77 @@ func TestRenameColumnWithForeignKeyMetaInfo(t *testing.T) {
 			"  CONSTRAINT `fk_1` FOREIGN KEY (`aa`) REFERENCES `t1` (`bb`),\n" +
 			"  CONSTRAINT `fk_2` FOREIGN KEY (`bb`) REFERENCES `t1` (`bb`)\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+}
+
+func TestDropDatabaseWithForeignKeyReferred(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1;")
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t1 (id int key, b int, index(b));")
+	tk.MustExec("create table t2 (id int key, b int, foreign key fk_b(b) references t1(id));")
+	tk.MustExec("create database test2")
+	tk.MustExec("create table test2.t3 (id int key, b int, foreign key fk_b(b) references test.t2(id));")
+	err := tk.ExecToErr("drop database test;")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:3730]Cannot drop table 't2' referenced by a foreign key constraint 'fk_b' on table 't3'.", err.Error())
+	tk.MustExec("set @@foreign_key_checks=0;")
+	tk.MustExec("drop database test")
+
+	tk.MustExec("set @@foreign_key_checks=1;")
+	tk.MustExec("create database test")
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int key, b int, index(b));")
+	tk.MustExec("create table t2 (id int key, b int, foreign key fk_b(b) references t1(id));")
+	err = tk.ExecToErr("drop database test;")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:3730]Cannot drop table 't2' referenced by a foreign key constraint 'fk_b' on table 't3'.", err.Error())
+	tk.MustExec("drop table test2.t3")
+	tk.MustExec("drop database test")
+}
+
+func TestDropDatabaseWithForeignKeyReferred2(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
+	d := dom.DDL()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1;")
+	tk.MustExec("use test")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk2.MustExec("set @@foreign_key_checks=1;")
+	tk2.MustExec("use test")
+	tk.MustExec("create table t1 (id int key, b int, index(b));")
+	tk.MustExec("create table t2 (id int key, b int, foreign key fk_b(b) references t1(id));")
+	tk.MustExec("create database test2")
+	var wg sync.WaitGroup
+	var dropErr error
+	tc := &ddl.TestDDLCallback{}
+	tc.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.SchemaState != model.StateNone {
+			return
+		}
+		if job.Type != model.ActionCreateTable {
+			return
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			dropErr = tk2.ExecToErr("drop database test")
+		}()
+		// make sure tk2's ddl job already put into ddl job queue.
+		time.Sleep(time.Millisecond * 100)
+	}
+	originalHook := d.GetHook()
+	defer d.SetHook(originalHook)
+	d.SetHook(tc)
+
+	tk.MustExec("create table test2.t3 (id int key, b int, foreign key fk_b(b) references test.t2(id));")
+	wg.Wait()
+	require.Error(t, dropErr)
+	require.Equal(t, "[ddl:3730]Cannot drop table 't2' referenced by a foreign key constraint 'fk_b' on table 't3'.", dropErr.Error())
+	tk.MustExec("drop table test2.t3")
+	tk.MustExec("drop database test")
 }
