@@ -41,7 +41,7 @@ func TestWriteConflictPrettyFormat(t *testing.T) {
 
 	expectedStr := "[kv:9007]Write conflict, " +
 		"txnStartTS=399402937522847774, conflictStartTS=399402937719455772, conflictCommitTS=399402937719455773, " +
-		"key={tableID=411, indexID=1, indexValues={RW01, 768221109, , }} " +
+		"key={tableID=411, indexID=1, indexValues={RW01, 768221109, , }}, " +
 		"primary={tableID=411, indexID=1, indexValues={RW01, 768221109, , }}, reason=Unknown " +
 		kv.TxnRetryableMark
 	require.EqualError(t, newWriteConflictError(conflict), expectedStr)
@@ -56,7 +56,7 @@ func TestWriteConflictPrettyFormat(t *testing.T) {
 	}
 	expectedStr = "[kv:9007]Write conflict, " +
 		"txnStartTS=399402937522847774, conflictStartTS=399402937719455772, conflictCommitTS=399402937719455773, " +
-		"key={metaKey=true, key=DB:56, field=TID:108} " +
+		"key={metaKey=true, key=DB:56, field=TID:108}, " +
 		"primary={metaKey=true, key=DB:56, field=TID:108}, reason=Optimistic " +
 		kv.TxnRetryableMark
 	require.EqualError(t, newWriteConflictError(conflict), expectedStr)
