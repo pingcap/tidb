@@ -5,6 +5,7 @@ package restore_test
 import (
 	"context"
 	"encoding/binary"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"testing"
 
 	"github.com/pingcap/failpoint"
@@ -52,7 +53,8 @@ func TestGetSSTMetaFromFile(t *testing.T) {
 		StartKey: []byte("t2abc"),
 		EndKey:   []byte("t3a"),
 	}
-	sstMeta := restore.GetSSTMetaFromFile([]byte{}, file, region, rule)
+	sstMeta, err := restore.GetSSTMetaFromFile([]byte{}, file, region, rule)
+	require.Nil(t, err)
 	require.Equal(t, "t2abc", string(sstMeta.GetRange().GetStart()))
 	require.Equal(t, "t2\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff", string(sstMeta.GetRange().GetEnd()))
 }
@@ -88,7 +90,7 @@ func TestMapTableToFiles(t *testing.T) {
 		},
 	}
 
-	result := restore.MapTableToFiles(append(filesOfTable2, filesOfTable1...))
+	result := restore.MapTableToFiles(append(filesOfTable2, filesOfTable1...), kvrpcpb.APIVersion_V1)
 
 	require.Equal(t, filesOfTable1, result[1])
 	require.Equal(t, filesOfTable2, result[2])
@@ -315,7 +317,7 @@ func TestRewriteFileKeys(t *testing.T) {
 		StartKey: tablecodec.GenTableRecordPrefix(1),
 		EndKey:   tablecodec.GenTableRecordPrefix(1).PrefixNext(),
 	}
-	start, end, err := restore.GetRewriteRawKeys(&rawKeyFile, &rewriteRules)
+	start, end, err := restore.GetRewriteRawKeys(&rawKeyFile, &rewriteRules, kvrpcpb.APIVersion_V1)
 	require.NoError(t, err)
 	_, end, err = codec.DecodeBytes(end, nil)
 	require.NoError(t, err)
@@ -341,7 +343,7 @@ func TestRewriteFileKeys(t *testing.T) {
 		EndKey:   codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(767).PrefixNext()),
 	}
 	// use raw rewrite should no error but not equal
-	start, end, err = restore.GetRewriteRawKeys(&encodeKeyFile767, &rewriteRules)
+	start, end, err = restore.GetRewriteRawKeys(&encodeKeyFile767, &rewriteRules, kvrpcpb.APIVersion_V1)
 	require.NoError(t, err)
 	require.NotEqual(t, codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(511)), start)
 	require.NotEqual(t, codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(511).PrefixNext()), end)

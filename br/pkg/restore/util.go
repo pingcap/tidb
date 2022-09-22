@@ -15,6 +15,7 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -196,7 +198,21 @@ func GetSSTMetaFromFile(
 	file *backuppb.File,
 	region *metapb.Region,
 	regionRule *import_sstpb.RewriteRule,
-) import_sstpb.SSTMeta {
+) (meta *import_sstpb.SSTMeta, err error) {
+	r := *region
+	if len(region.GetStartKey()) > 0 {
+		_, r.StartKey, err = codec.DecodeBytes(region.GetStartKey(), nil)
+		if err != nil {
+			return
+		}
+	}
+	if len(region.GetEndKey()) > 0 {
+		_, r.EndKey, err = codec.DecodeBytes(region.GetEndKey(), nil)
+		if err != nil {
+			return
+		}
+	}
+
 	// Get the column family of the file by the file name.
 	var cfName string
 	if strings.Contains(file.GetName(), defaultCFName) {
@@ -208,8 +224,8 @@ func GetSSTMetaFromFile(
 	// Here we rewrites the keys to compare with the keys of the region.
 	rangeStart := regionRule.GetNewKeyPrefix()
 	//  rangeStart = max(rangeStart, region.StartKey)
-	if bytes.Compare(rangeStart, region.GetStartKey()) < 0 {
-		rangeStart = region.GetStartKey()
+	if bytes.Compare(rangeStart, r.GetStartKey()) < 0 {
+		rangeStart = r.GetStartKey()
 	}
 
 	// Append 10 * 0xff to make sure rangeEnd cover all file key
@@ -219,8 +235,8 @@ func GetSSTMetaFromFile(
 	suffix := []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
 	rangeEnd := append(append([]byte{}, regionRule.GetNewKeyPrefix()...), suffix...)
 	// rangeEnd = min(rangeEnd, region.EndKey)
-	if len(region.GetEndKey()) > 0 && bytes.Compare(rangeEnd, region.GetEndKey()) > 0 {
-		rangeEnd = region.GetEndKey()
+	if len(r.GetEndKey()) > 0 && bytes.Compare(rangeEnd, r.GetEndKey()) > 0 {
+		rangeEnd = r.GetEndKey()
 	}
 
 	if bytes.Compare(rangeStart, rangeEnd) > 0 {
@@ -235,7 +251,7 @@ func GetSSTMetaFromFile(
 		logutil.Key("startKey", rangeStart),
 		logutil.Key("endKey", rangeEnd))
 
-	return import_sstpb.SSTMeta{
+	return &import_sstpb.SSTMeta{
 		Uuid:   id,
 		CfName: cfName,
 		Range: &import_sstpb.Range{
@@ -246,7 +262,7 @@ func GetSSTMetaFromFile(
 		RegionId:    region.GetId(),
 		RegionEpoch: region.GetRegionEpoch(),
 		CipherIv:    file.GetCipherIv(),
-	}
+	}, nil
 }
 
 // makeDBPool makes a session pool with specficated size by sessionFactory.
@@ -275,11 +291,21 @@ func EstimateRangeSize(files []*backuppb.File) int {
 
 // MapTableToFiles makes a map that mapping table ID to its backup files.
 // aware that one file can and only can hold one table.
-func MapTableToFiles(files []*backuppb.File) map[int64][]*backuppb.File {
+func MapTableToFiles(files []*backuppb.File, version kvrpcpb.APIVersion) map[int64][]*backuppb.File {
 	result := map[int64][]*backuppb.File{}
 	for _, file := range files {
-		tableID := tablecodec.DecodeTableID(file.GetStartKey())
-		tableEndID := tablecodec.DecodeTableID(file.GetEndKey())
+		_, start, err := tikv.DecodeKey(file.GetStartKey(), version)
+		if err != nil {
+			log.Panic("decode key error", logutil.File(file), logutil.Key("startKey", file.GetStartKey()), zap.Error(err))
+		}
+
+		_, end, err := tikv.DecodeKey(file.GetEndKey(), version)
+		if err != nil {
+			log.Panic("decode key error", logutil.File(file), logutil.Key("startKey", file.GetStartKey()), zap.Error(err))
+		}
+
+		tableID := tablecodec.DecodeTableID(start)
+		tableEndID := tablecodec.DecodeTableID(end)
 		if tableID != tableEndID {
 			log.Panic("key range spread between many files.",
 				zap.String("file name", file.Name),
@@ -508,7 +534,16 @@ func findMatchedRewriteRule(file AppliedFile, rules *RewriteRules) *import_sstpb
 }
 
 // GetRewriteRawKeys rewrites rules to the raw key.
-func GetRewriteRawKeys(file AppliedFile, rewriteRules *RewriteRules) (startKey, endKey []byte, err error) {
+func GetRewriteRawKeys(file AppliedFile, rewriteRules *RewriteRules, apiVersion kvrpcpb.APIVersion) (startKey, endKey []byte, err error) {
+	_, startKey, err = tikv.DecodeKey(file.GetStartKey(), apiVersion)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	_, endKey, err = tikv.DecodeKey(file.GetEndKey(), apiVersion)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+
 	startID := tablecodec.DecodeTableID(file.GetStartKey())
 	endID := tablecodec.DecodeTableID(file.GetEndKey())
 	var rule *import_sstpb.RewriteRule

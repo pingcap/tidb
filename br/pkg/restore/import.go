@@ -250,7 +250,8 @@ type FileImporter struct {
 	rawEndKey          []byte
 	supportMultiIngest bool
 
-	cacheKey string
+	cacheKey   string
+	apiVersion kvrpcpb.APIVersion
 }
 
 // NewFileImporter returns a new file importClient.
@@ -259,6 +260,7 @@ func NewFileImporter(
 	importClient ImporterClient,
 	backend *backuppb.StorageBackend,
 	isRawKvMode bool,
+	version kvrpcpb.APIVersion,
 ) FileImporter {
 	return FileImporter{
 		metaClient:   metaClient,
@@ -266,6 +268,7 @@ func NewFileImporter(
 		importClient: importClient,
 		isRawKvMode:  isRawKvMode,
 		cacheKey:     fmt.Sprintf("BR-%s-%d", time.Now().Format("20060102150405"), rand.Int63()),
+		apiVersion:   version,
 	}
 }
 
@@ -317,7 +320,7 @@ func (importer *FileImporter) getKeyRangeForFiles(
 		if importer.isRawKvMode {
 			start, end = f.GetStartKey(), f.GetEndKey()
 		} else {
-			start, end, err = GetRewriteRawKeys(f, rewriteRules)
+			start, end, err = GetRewriteRawKeys(f, rewriteRules, importer.apiVersion)
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
@@ -580,7 +583,7 @@ func (importer *FileImporter) download(
 			if importer.isRawKvMode {
 				downloadMeta, e = importer.downloadRawKVSST(ctx, regionInfo, f, cipher, apiVersion)
 			} else {
-				downloadMeta, e = importer.downloadSST(ctx, regionInfo, f, rewriteRules, cipher)
+				downloadMeta, e = importer.downloadSST(ctx, regionInfo, f, rewriteRules, cipher, apiVersion)
 			}
 
 			failpoint.Inject("restore-storage-error", func(val failpoint.Value) {
@@ -597,7 +600,7 @@ func (importer *FileImporter) download(
 				if importer.isRawKvMode {
 					downloadMeta, e = importer.downloadRawKVSST(ctx, regionInfo, f, nil, apiVersion)
 				} else {
-					downloadMeta, e = importer.downloadSST(ctx, regionInfo, f, rewriteRules, nil)
+					downloadMeta, e = importer.downloadSST(ctx, regionInfo, f, rewriteRules, nil, apiVersion)
 				}
 			}
 
@@ -621,6 +624,7 @@ func (importer *FileImporter) downloadSST(
 	file *backuppb.File,
 	rewriteRules *RewriteRules,
 	cipher *backuppb.CipherInfo,
+	apiVersion kvrpcpb.APIVersion,
 ) (*import_sstpb.SSTMeta, error) {
 	uid := uuid.New()
 	id := uid[:]
@@ -629,22 +633,22 @@ func (importer *FileImporter) downloadSST(
 	if fileRule == nil {
 		return nil, errors.Trace(berrors.ErrKVRewriteRuleNotFound)
 	}
-	rule := import_sstpb.RewriteRule{
-		OldKeyPrefix: encodeKeyPrefix(fileRule.GetOldKeyPrefix()),
-		NewKeyPrefix: encodeKeyPrefix(fileRule.GetNewKeyPrefix()),
+
+	sstMeta, err := GetSSTMetaFromFile(id, file, regionInfo.Region, fileRule)
+	if err != nil {
+		return nil, err
 	}
-	sstMeta := GetSSTMetaFromFile(id, file, regionInfo.Region, &rule)
 
 	req := &import_sstpb.DownloadRequest{
-		Sst:            sstMeta,
+		Sst:            *sstMeta,
 		StorageBackend: importer.backend,
 		Name:           file.GetName(),
-		RewriteRule:    rule,
+		RewriteRule:    *fileRule,
 		CipherInfo:     cipher,
 		StorageCacheId: importer.cacheKey,
 	}
 	log.Debug("download SST",
-		logutil.SSTMeta(&sstMeta),
+		logutil.SSTMeta(sstMeta),
 		logutil.File(file),
 		logutil.Region(regionInfo.Region),
 		logutil.Leader(regionInfo.Leader),
@@ -670,7 +674,7 @@ func (importer *FileImporter) downloadSST(
 				logutil.Region(regionInfo.Region),
 				logutil.Peer(peer),
 				logutil.Key("resp-range-start", resp.Range.Start),
-				logutil.Key("resp-range-end", resp.Range.Start),
+				logutil.Key("resp-range-end", resp.Range.End),
 				zap.Bool("resp-isempty", resp.IsEmpty),
 				zap.Uint32("resp-crc32", resp.Crc32),
 			)
@@ -685,7 +689,8 @@ func (importer *FileImporter) downloadSST(
 	downloadResp := atomicResp.Load().(*import_sstpb.DownloadResponse)
 	sstMeta.Range.Start = TruncateTS(downloadResp.Range.GetStart())
 	sstMeta.Range.End = TruncateTS(downloadResp.Range.GetEnd())
-	return &sstMeta, nil
+	sstMeta.ApiVersion = apiVersion
+	return sstMeta, nil
 }
 
 func (importer *FileImporter) downloadRawKVSST(
@@ -699,7 +704,10 @@ func (importer *FileImporter) downloadRawKVSST(
 	id := uid[:]
 	// Empty rule
 	var rule import_sstpb.RewriteRule
-	sstMeta := GetSSTMetaFromFile(id, file, regionInfo.Region, &rule)
+	sstMeta, err := GetSSTMetaFromFile(id, file, regionInfo.Region, &rule)
+	if err != nil {
+		return nil, err
+	}
 
 	// Cut the SST file's range to fit in the restoring range.
 	if bytes.Compare(importer.rawStartKey, sstMeta.Range.GetStart()) > 0 {
@@ -715,7 +723,7 @@ func (importer *FileImporter) downloadRawKVSST(
 	}
 
 	req := &import_sstpb.DownloadRequest{
-		Sst:            sstMeta,
+		Sst:            *sstMeta,
 		StorageBackend: importer.backend,
 		Name:           file.GetName(),
 		RewriteRule:    rule,
@@ -723,7 +731,7 @@ func (importer *FileImporter) downloadRawKVSST(
 		CipherInfo:     cipher,
 		StorageCacheId: importer.cacheKey,
 	}
-	log.Debug("download SST", logutil.SSTMeta(&sstMeta), logutil.Region(regionInfo.Region))
+	log.Debug("download SST", logutil.SSTMeta(sstMeta), logutil.Region(regionInfo.Region))
 
 	var atomicResp atomic.Value
 	eg, ectx := errgroup.WithContext(ctx)
@@ -754,7 +762,7 @@ func (importer *FileImporter) downloadRawKVSST(
 	sstMeta.Range.Start = downloadResp.Range.GetStart()
 	sstMeta.Range.End = downloadResp.Range.GetEnd()
 	sstMeta.ApiVersion = apiVersion
-	return &sstMeta, nil
+	return sstMeta, nil
 }
 
 func (importer *FileImporter) ingest(

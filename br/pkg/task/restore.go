@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tikv/client-go/v2/tikv"
+
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -51,6 +53,8 @@ const (
 	// FlagWithPlacementPolicy corresponds to tidb config with-tidb-placement-mode
 	// current only support STRICT or IGNORE, the default is STRICT according to tidb.
 	FlagWithPlacementPolicy = "with-tidb-placement-mode"
+	// FlagKeyspaceName corresponds to tidb config keyspace-name
+	FlagKeyspaceName = "keyspace-name"
 
 	// FlagStreamStartTS and FlagStreamRestoreTS is used for log restore timestamp range.
 	FlagStreamStartTS   = "start-ts"
@@ -206,6 +210,7 @@ func DefineRestoreFlags(flags *pflag.FlagSet) {
 	// Do not expose this flag
 	_ = flags.MarkHidden(flagNoSchema)
 	flags.String(FlagWithPlacementPolicy, "STRICT", "correspond to tidb global/session variable with-tidb-placement-mode")
+	flags.String(FlagKeyspaceName, "", "correspond to tidb config keyspace-name")
 
 	DefineRestoreCommonFlags(flags)
 }
@@ -296,6 +301,10 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	cfg.WithPlacementPolicy, err = flags.GetString(FlagWithPlacementPolicy)
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", FlagWithPlacementPolicy)
+	}
+	cfg.KeyspaceName, err = flags.GetString(FlagKeyspaceName)
+	if err != nil {
+		return errors.Annotatef(err, "failed to get flag %s", FlagKeyspaceName)
 	}
 
 	if flags.Lookup(flagFullBackupType) != nil {
@@ -473,6 +482,9 @@ func IsStreamRestore(cmdName string) bool {
 
 // RunRestore starts a restore task inside the current goroutine.
 func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) error {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceName = cfg.KeyspaceName
+	})
 	if IsStreamRestore(cmdName) {
 		return RunStreamRestore(c, g, cmdName, cfg)
 	}
@@ -496,6 +508,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		return errors.Trace(err)
 	}
 	defer mgr.Close()
+	codec := mgr.GetStorage().GetCodec()
 
 	mergeRegionSize := cfg.MergeSmallRegionSizeBytes
 	mergeRegionCount := cfg.MergeSmallRegionKeyCount
@@ -654,6 +667,25 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	errCh := make(chan error, 32)
 
 	tableStream := client.GoCreateTables(ctx, mgr.GetDomain(), tables, newTS, errCh)
+
+	var oldKeyspace []byte
+	oldKeyspace, _, err = tikv.DecodeKey(files[0].GetStartKey(), backupMeta.ApiVersion)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// Hijack the tableStream and rewrite the rewrite rules.
+	tableStream = util.ChanMap(tableStream, func(t restore.CreatedTable) restore.CreatedTable {
+		t.RewriteRule.OldKeyspace = oldKeyspace
+		t.RewriteRule.NewKeyspace = codec.GetKeyspace()
+
+		for _, rule := range t.RewriteRule.Data {
+			rule.OldKeyPrefix = append(append([]byte{}, oldKeyspace...), rule.OldKeyPrefix...)
+			rule.NewKeyPrefix = codec.EncodeKey(rule.NewKeyPrefix)
+		}
+		return t
+	})
+
 	if len(files) == 0 {
 		log.Info("no files, empty databases and tables are restored")
 		summary.SetSuccessStatus(true)
@@ -669,7 +701,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		})
 	}
 
-	tableFileMap := restore.MapTableToFiles(files)
+	tableFileMap := restore.MapTableToFiles(files, backupMeta.ApiVersion)
 	log.Debug("mapped table to files", zap.Any("result map", tableFileMap))
 
 	rangeStream := restore.GoValidateFileRanges(

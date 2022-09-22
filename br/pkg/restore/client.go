@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"math"
 	"strconv"
 	"strings"
@@ -344,7 +345,7 @@ func (rc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBacke
 func (rc *Client) InitClients(backend *backuppb.StorageBackend, isRawKvMode bool) {
 	metaClient := split.NewSplitClient(rc.pdClient, rc.tlsConf, isRawKvMode)
 	importCli := NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
-	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode)
+	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode, rc.backupMeta.ApiVersion)
 }
 
 func (rc *Client) SetRawKVClient(c *RawKVBatchClient) {
@@ -868,7 +869,7 @@ func (rc *Client) createTablesInWorkerPool(ctx context.Context, dom *domain.Doma
 				}
 			})
 			if err != nil {
-				log.Error("create tables fail")
+				log.Error("create tables fail", zap.Error(err))
 				return err
 			}
 			for _, ct := range cts {
@@ -1040,7 +1041,7 @@ func MockCallSetSpeedLimit(ctx context.Context, fakeImportClient ImporterClient,
 	rc.SetRateLimit(42)
 	rc.SetConcurrency(concurrency)
 	rc.hasSpeedLimited = false
-	rc.fileImporter = NewFileImporter(nil, fakeImportClient, nil, false)
+	rc.fileImporter = NewFileImporter(nil, fakeImportClient, nil, false, kvrpcpb.APIVersion_V1)
 	return rc.setSpeedLimit(ctx, rc.rateLimit)
 }
 
@@ -1168,7 +1169,7 @@ func (rc *Client) RestoreSSTFiles(
 						zap.Duration("take", time.Since(fileStart)))
 					updateCh.Inc()
 				}()
-				return rc.fileImporter.ImportSSTFiles(ectx, filesReplica, rewriteRules, rc.cipher, rc.backupMeta.ApiVersion)
+				return rc.fileImporter.ImportSSTFiles(ectx, filesReplica, rewriteRules, rc.cipher, rc.dom.Store().GetCodec().GetAPIVersion())
 			})
 	}
 
@@ -1420,6 +1421,8 @@ func (rc *Client) execChecksum(
 	exe, err := checksum.NewExecutorBuilder(tbl.Table, startTS).
 		SetOldTable(tbl.OldTable).
 		SetConcurrency(concurrency).
+		SetOldKeyspace(tbl.RewriteRule.OldKeyspace).
+		SetNewKeyspace(tbl.RewriteRule.NewKeyspace).
 		Build()
 	if err != nil {
 		return errors.Trace(err)
