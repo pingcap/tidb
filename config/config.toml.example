@@ -117,9 +117,6 @@ format = "text"
 # Stores slow query log into separated files.
 slow-query-file = "tidb-slow.log"
 
-# Queries with internal result greater than this value will be logged.
-expensive-threshold = 10000
-
 # File logging.
 [log.file]
 # Log file name.
