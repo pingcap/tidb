@@ -39,8 +39,7 @@ import (
 )
 
 func TestPreferRangeScan(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists test;")
@@ -68,7 +67,7 @@ func TestPreferRangeScan(t *testing.T) {
 		Plan []string
 	}
 	planNormalizedSuiteData := core.GetPlanNormalizedSuiteData()
-	planNormalizedSuiteData.GetTestCases(t, &input, &output)
+	planNormalizedSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		if i == 0 {
 			tk.MustExec("set session tidb_opt_prefer_range_scan=0")
@@ -81,7 +80,14 @@ func TestPreferRangeScan(t *testing.T) {
 		require.NotNil(t, info)
 		p, ok := info.Plan.(core.Plan)
 		require.True(t, ok)
-		normalized, _ := core.NormalizePlan(p)
+		normalized, digest := core.NormalizePlan(p)
+
+		// test the new normalization code
+		flat := core.FlattenPhysicalPlan(p, false)
+		newNormalized, newDigest := core.NormalizeFlatPlan(flat)
+		require.Equal(t, normalized, newNormalized)
+		require.Equal(t, digest, newDigest)
+
 		normalizedPlan, err := plancodec.DecodeNormalizedPlan(normalized)
 		normalizedPlanRows := getPlanRows(normalizedPlan)
 		require.NoError(t, err)
@@ -94,8 +100,7 @@ func TestPreferRangeScan(t *testing.T) {
 }
 
 func TestNormalizedPlan(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_partition_prune_mode='static';")
@@ -110,7 +115,7 @@ func TestNormalizedPlan(t *testing.T) {
 		Plan []string
 	}
 	planNormalizedSuiteData := core.GetPlanNormalizedSuiteData()
-	planNormalizedSuiteData.GetTestCases(t, &input, &output)
+	planNormalizedSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		tk.Session().GetSessionVars().PlanID = 0
 		tk.MustExec(tt)
@@ -118,7 +123,14 @@ func TestNormalizedPlan(t *testing.T) {
 		require.NotNil(t, info)
 		p, ok := info.Plan.(core.Plan)
 		require.True(t, ok)
-		normalized, _ := core.NormalizePlan(p)
+		normalized, digest := core.NormalizePlan(p)
+
+		// test the new normalization code
+		flat := core.FlattenPhysicalPlan(p, false)
+		newNormalized, newDigest := core.NormalizeFlatPlan(flat)
+		require.Equal(t, normalized, newNormalized)
+		require.Equal(t, digest, newDigest)
+
 		normalizedPlan, err := plancodec.DecodeNormalizedPlan(normalized)
 		normalizedPlanRows := getPlanRows(normalizedPlan)
 		require.NoError(t, err)
@@ -131,8 +143,7 @@ func TestNormalizedPlan(t *testing.T) {
 }
 
 func TestNormalizedPlanForDiffStore(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -149,7 +160,7 @@ func TestNormalizedPlanForDiffStore(t *testing.T) {
 		Plan   []string
 	}
 	planNormalizedSuiteData := core.GetPlanNormalizedSuiteData()
-	planNormalizedSuiteData.GetTestCases(t, &input, &output)
+	planNormalizedSuiteData.LoadTestCases(t, &input, &output)
 	lastDigest := ""
 	for i, tt := range input {
 		tk.Session().GetSessionVars().PlanID = 0
@@ -159,6 +170,13 @@ func TestNormalizedPlanForDiffStore(t *testing.T) {
 		ep, ok := info.Plan.(*core.Explain)
 		require.True(t, ok)
 		normalized, digest := core.NormalizePlan(ep.TargetPlan)
+
+		// test the new normalization code
+		flat := core.FlattenPhysicalPlan(ep.TargetPlan, false)
+		newNormalized, newPlanDigest := core.NormalizeFlatPlan(flat)
+		require.Equal(t, digest, newPlanDigest)
+		require.Equal(t, normalized, newNormalized)
+
 		normalizedPlan, err := plancodec.DecodeNormalizedPlan(normalized)
 		normalizedPlanRows := getPlanRows(normalizedPlan)
 		require.NoError(t, err)
@@ -173,8 +191,7 @@ func TestNormalizedPlanForDiffStore(t *testing.T) {
 }
 
 func TestEncodeDecodePlan(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1,t2")
@@ -184,7 +201,7 @@ func TestEncodeDecodePlan(t *testing.T) {
 	tk.MustExec("set tidb_partition_prune_mode='static';")
 
 	tk.Session().GetSessionVars().PlanID = 0
-	getPlanTree := func() string {
+	getPlanTree := func() (str1, str2 string) {
 		info := tk.Session().ShowProcess()
 		require.NotNil(t, info)
 		p, ok := info.Plan.(core.Plan)
@@ -192,46 +209,93 @@ func TestEncodeDecodePlan(t *testing.T) {
 		encodeStr := core.EncodePlan(p)
 		planTree, err := plancodec.DecodePlan(encodeStr)
 		require.NoError(t, err)
-		return planTree
+
+		// test the new encoding method
+		flat := core.FlattenPhysicalPlan(p, true)
+		newEncodeStr := core.EncodeFlatPlan(flat)
+		newPlanTree, err := plancodec.DecodePlan(newEncodeStr)
+		require.NoError(t, err)
+
+		return planTree, newPlanTree
 	}
 	tk.MustExec("select max(a) from t1 where a>0;")
-	planTree := getPlanTree()
+	planTree, newplanTree := getPlanTree()
 	require.Contains(t, planTree, "time")
 	require.Contains(t, planTree, "loops")
+	require.Contains(t, newplanTree, "time")
+	require.Contains(t, newplanTree, "loops")
 
-	tk.MustExec("insert into t1 values (1,1,1);")
-	planTree = getPlanTree()
+	tk.MustExec("prepare stmt from \"select max(a) from t1 where a > ?\";")
+	tk.MustExec("set @a = 1;")
+	tk.MustExec("execute stmt using @a;")
+	planTree, newplanTree = getPlanTree()
+	require.Empty(t, planTree)
+	require.Empty(t, newplanTree)
+
+	tk.MustExec("insert into t1 values (1,1,1), (2,2,2);")
+	planTree, newplanTree = getPlanTree()
 	require.Contains(t, planTree, "Insert")
 	require.Contains(t, planTree, "time")
 	require.Contains(t, planTree, "loops")
+	require.Contains(t, newplanTree, "Insert")
+	require.Contains(t, newplanTree, "time")
+	require.Contains(t, newplanTree, "loops")
+
+	tk.MustExec("update t1 set b = 3 where c = 1;")
+	planTree, newplanTree = getPlanTree()
+	require.Contains(t, planTree, "Update")
+	require.Contains(t, planTree, "time")
+	require.Contains(t, planTree, "loops")
+	require.Contains(t, newplanTree, "Update")
+	require.Contains(t, newplanTree, "time")
+	require.Contains(t, newplanTree, "loops")
+
+	tk.MustExec("delete from t1 where b = 3;")
+	planTree, newplanTree = getPlanTree()
+	require.Contains(t, planTree, "Delete")
+	require.Contains(t, planTree, "time")
+	require.Contains(t, planTree, "loops")
+	require.Contains(t, newplanTree, "Delete")
+	require.Contains(t, newplanTree, "time")
+	require.Contains(t, newplanTree, "loops")
 
 	tk.MustExec("with cte(a) as (select 1) select * from cte")
-	planTree = getPlanTree()
+	planTree, newplanTree = getPlanTree()
 	require.Contains(t, planTree, "CTE")
 	require.Contains(t, planTree, "1->Column#1")
 	require.Contains(t, planTree, "time")
 	require.Contains(t, planTree, "loops")
+	require.Contains(t, newplanTree, "CTE")
+	require.Contains(t, newplanTree, "1->Column#1")
+	require.Contains(t, newplanTree, "time")
+	require.Contains(t, newplanTree, "loops")
 
 	tk.MustExec("with cte(a) as (select 2) select * from cte")
-	planTree = getPlanTree()
+	planTree, newplanTree = getPlanTree()
 	require.Contains(t, planTree, "CTE")
 	require.Contains(t, planTree, "2->Column#1")
 	require.Contains(t, planTree, "time")
 	require.Contains(t, planTree, "loops")
+	require.Contains(t, newplanTree, "CTE")
+	require.Contains(t, newplanTree, "2->Column#1")
+	require.Contains(t, newplanTree, "time")
+	require.Contains(t, newplanTree, "loops")
 
 	tk.MustExec("select * from tp")
-	planTree = getPlanTree()
+	planTree, newplanTree = getPlanTree()
 	require.Contains(t, planTree, "PartitionUnion")
+	require.Contains(t, newplanTree, "PartitionUnion")
 
 	tk.MustExec("select row_number() over (partition by c) from t1;")
-	planTree = getPlanTree()
+	planTree, newplanTree = getPlanTree()
 	require.Contains(t, planTree, "Shuffle")
 	require.Contains(t, planTree, "ShuffleReceiver")
+	require.Contains(t, newplanTree, "Shuffle")
+	require.Contains(t, newplanTree, "ShuffleReceiver")
 }
 
 func TestNormalizedDigest(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1,t2,t3,t4, bmsql_order_line, bmsql_district,bmsql_stock")
@@ -419,12 +483,25 @@ func testNormalizeDigest(tk *testkit.TestKit, t *testing.T, sql1, sql2 string, i
 	require.True(t, ok)
 	normalized1, digest1 := core.NormalizePlan(physicalPlan)
 
+	// test the new normalization code
+	flat := core.FlattenPhysicalPlan(physicalPlan, false)
+	newNormalized, newPlanDigest := core.NormalizeFlatPlan(flat)
+	require.Equal(t, digest1, newPlanDigest)
+	require.Equal(t, normalized1, newNormalized)
+
 	tk.MustQuery(sql2)
 	info = tk.Session().ShowProcess()
 	require.NotNil(t, info)
 	physicalPlan, ok = info.Plan.(core.PhysicalPlan)
 	require.True(t, ok)
 	normalized2, digest2 := core.NormalizePlan(physicalPlan)
+
+	// test the new normalization code
+	flat = core.FlattenPhysicalPlan(physicalPlan, false)
+	newNormalized, newPlanDigest = core.NormalizeFlatPlan(flat)
+	require.Equal(t, digest2, newPlanDigest)
+	require.Equal(t, normalized2, newNormalized)
+
 	comment := fmt.Sprintf("sql1: %v, sql2: %v\n%v !=\n%v\n", sql1, sql2, normalized1, normalized2)
 	if isSame {
 		require.Equal(t, normalized1, normalized2, comment)
@@ -448,20 +525,22 @@ func compareStringSlice(t *testing.T, ss1, ss2 []string) {
 }
 
 func TestExplainFormatHint(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c1 int not null, c2 int not null, key idx_c2(c2)) partition by range (c2) (partition p0 values less than (10), partition p1 values less than (20))")
 
-	tk.MustQuery("explain format='hint' select /*+ use_index(@`sel_2` `test`.`t2` `idx_c2`), hash_agg(@`sel_2`), use_index(@`sel_1` `test`.`t1` `idx_c2`), hash_agg(@`sel_1`) */ count(1) from t t1 where c2 in (select c2 from t t2 where t2.c2 < 15 and t2.c2 > 12)").Check(testkit.Rows(
-		"use_index(@`sel_2` `test`.`t2` `idx_c2`), hash_agg(@`sel_2`), use_index(@`sel_1` `test`.`t1` `idx_c2`), hash_agg(@`sel_1`)"))
+	tk.MustQuery("explain format='hint'" +
+		"select " +
+		"/*+ use_index(@`sel_2` `test`.`t2` `idx_c2`), hash_agg(@`sel_2`), use_index(@`sel_1` `test`.`t1` `idx_c2`), hash_agg(@`sel_1`) */ " +
+		"count(1) from t t1 " +
+		"where c2 in (select c2 from t t2 where t2.c2 < 15 and t2.c2 > 12)").Check(testkit.Rows(
+		"hash_agg(@`sel_1`), hash_agg(@`sel_2`), use_index(@`sel_2` `test`.`t2` `idx_c2`), use_index(@`sel_1` `test`.`t1` `idx_c2`)"))
 }
 
 func TestExplainFormatHintRecoverableForTiFlashReplica(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -480,19 +559,18 @@ func TestExplainFormatHintRecoverableForTiFlashReplica(t *testing.T) {
 	}
 
 	rows := tk.MustQuery("explain select * from t").Rows()
-	require.Equal(t, rows[len(rows)-1][2], "cop[tiflash]")
+	require.Equal(t, rows[len(rows)-1][2], "mpp[tiflash]")
 
 	rows = tk.MustQuery("explain format='hint' select * from t").Rows()
 	require.Equal(t, rows[0][0], "read_from_storage(@`sel_1` tiflash[`test`.`t`])")
 
 	hints := tk.MustQuery("explain format='hint' select * from t;").Rows()[0][0]
 	rows = tk.MustQuery(fmt.Sprintf("explain select /*+ %s */ * from t", hints)).Rows()
-	require.Equal(t, rows[len(rows)-1][2], "cop[tiflash]")
+	require.Equal(t, rows[len(rows)-1][2], "mpp[tiflash]")
 }
 
 func TestNthPlanHint(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tt")
@@ -551,8 +629,7 @@ func TestNthPlanHint(t *testing.T) {
 }
 
 func BenchmarkDecodePlan(b *testing.B) {
-	store, clean := testkit.CreateMockStore(b)
-	defer clean()
+	store := testkit.CreateMockStore(b)
 	tk := testkit.NewTestKit(b, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -585,8 +662,7 @@ func BenchmarkDecodePlan(b *testing.B) {
 }
 
 func BenchmarkEncodePlan(b *testing.B) {
-	store, clean := testkit.CreateMockStore(b)
-	defer clean()
+	store := testkit.CreateMockStore(b)
 	tk := testkit.NewTestKit(b, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists th")
@@ -609,13 +685,60 @@ func BenchmarkEncodePlan(b *testing.B) {
 	}
 }
 
+func BenchmarkEncodeFlatPlan(b *testing.B) {
+	store := testkit.CreateMockStore(b)
+	tk := testkit.NewTestKit(b, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists th")
+	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
+	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
+	tk.MustExec("create table th (i int, a int,b int, c int, index (a)) partition by hash (a) partitions 8192;")
+	tk.MustExec("set @@tidb_slow_log_threshold=200000")
+
+	query := "select count(*) from th t1 join th t2 join th t3 join th t4 join th t5 join th t6 where t1.i=t2.a and t1.i=t3.i and t3.i=t4.i and t4.i=t5.i and t5.i=t6.i"
+	tk.Session().GetSessionVars().PlanID = 0
+	tk.MustExec(query)
+	info := tk.Session().ShowProcess()
+	require.NotNil(b, info)
+	p, ok := info.Plan.(core.PhysicalPlan)
+	require.True(b, ok)
+	tk.Session().GetSessionVars().StmtCtx.RuntimeStatsColl = nil
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		flat := core.FlattenPhysicalPlan(p, false)
+		core.EncodeFlatPlan(flat)
+	}
+}
+
+func TestIssue35090(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists p, t;")
+	tk.MustExec("create table p (id int, c int, key i_id(id), key i_c(c));")
+	tk.MustExec("create table t (id int);")
+	tk.MustExec("insert into p values (3,3), (4,4), (6,6), (9,9);")
+	tk.MustExec("insert into t values (4), (9);")
+	tk.MustExec("select /*+ INL_JOIN(p) */ * from p, t where p.id = t.id;")
+	rows := [][]interface{}{
+		{"IndexJoin"},
+		{"├─TableReader(Build)"},
+		{"│ └─Selection"},
+		{"│   └─TableFullScan"},
+		{"└─IndexLookUp(Probe)"},
+		{"  ├─Selection(Build)"},
+		{"  │ └─IndexRangeScan"},
+		{"  └─TableRowIDScan(Probe)"},
+	}
+	tk.MustQuery("explain analyze format='brief' select /*+ INL_JOIN(p) */ * from p, t where p.id = t.id;").CheckAt([]int{0}, rows)
+}
+
 // Close issue 25729
 func TestIssue25729(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Experimental.AllowsExpressionIndex = true
 	})
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tt")
@@ -660,8 +783,7 @@ func TestIssue25729(t *testing.T) {
 }
 
 func TestCopPaging(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -866,8 +988,7 @@ func TestBuildFinalModeAggregation(t *testing.T) {
 }
 
 func TestIssue34863(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -893,10 +1014,39 @@ func TestIssue34863(t *testing.T) {
 	tk.MustQuery("select count(o.c_id) from c right join o on c.c_id=o.c_id;").Check(testkit.Rows("5"))
 }
 
+func TestCloneFineGrainedShuffleStreamCount(t *testing.T) {
+	window := &core.PhysicalWindow{}
+	newPlan, err := window.Clone()
+	require.NoError(t, err)
+	newWindow, ok := newPlan.(*core.PhysicalWindow)
+	require.Equal(t, ok, true)
+	require.Equal(t, window.TiFlashFineGrainedShuffleStreamCount, newWindow.TiFlashFineGrainedShuffleStreamCount)
+
+	window.TiFlashFineGrainedShuffleStreamCount = 8
+	newPlan, err = window.Clone()
+	require.NoError(t, err)
+	newWindow, ok = newPlan.(*core.PhysicalWindow)
+	require.Equal(t, ok, true)
+	require.Equal(t, window.TiFlashFineGrainedShuffleStreamCount, newWindow.TiFlashFineGrainedShuffleStreamCount)
+
+	sort := &core.PhysicalSort{}
+	newPlan, err = sort.Clone()
+	require.NoError(t, err)
+	newSort, ok := newPlan.(*core.PhysicalSort)
+	require.Equal(t, ok, true)
+	require.Equal(t, sort.TiFlashFineGrainedShuffleStreamCount, newSort.TiFlashFineGrainedShuffleStreamCount)
+
+	sort.TiFlashFineGrainedShuffleStreamCount = 8
+	newPlan, err = sort.Clone()
+	require.NoError(t, err)
+	newSort, ok = newPlan.(*core.PhysicalSort)
+	require.Equal(t, ok, true)
+	require.Equal(t, sort.TiFlashFineGrainedShuffleStreamCount, newSort.TiFlashFineGrainedShuffleStreamCount)
+}
+
 // https://github.com/pingcap/tidb/issues/35527.
 func TestTableDualAsSubQuery(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("CREATE VIEW v0(c0) AS SELECT NULL;")

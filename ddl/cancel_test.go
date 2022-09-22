@@ -206,14 +206,13 @@ var allTestCase = []testCancelJob{
 	{"alter table t_partition drop partition p6", false, model.StateDeleteReorganization, true, true, []string{"alter table t_partition add partition (partition p6 values less than (8192))"}},
 	{"alter table t_partition drop partition p6", false, model.StateNone, true, true, []string{"alter table t_partition add partition (partition p6 values less than (8192))"}},
 	// Drop indexes.
-	// TODO: fix schema state.
-	{"alter table t drop index mul_idx1, drop index mul_idx2", true, model.StateNone, true, false, []string{"alter table t add index mul_idx1(c1)", "alter table t add index mul_idx2(c1)"}},
-	{"alter table t drop index mul_idx1, drop index mul_idx2", false, model.StateWriteOnly, true, false, nil},
-	{"alter table t drop index mul_idx1, drop index mul_idx2", false, model.StateWriteOnly, true, false, []string{"alter table t add index mul_idx1(c1)", "alter table t add index mul_idx2(c1)"}},
-	{"alter table t drop index mul_idx1, drop index mul_idx2", false, model.StateDeleteOnly, true, false, []string{"alter table t add index mul_idx1(c1)", "alter table t add index mul_idx2(c1)"}},
-	{"alter table t drop index mul_idx1, drop index mul_idx2", false, model.StateDeleteOnly, false, true, []string{"alter table t add index mul_idx1(c1)", "alter table t add index mul_idx2(c1)"}},
-	{"alter table t drop index mul_idx1, drop index mul_idx2", false, model.StateDeleteReorganization, true, false, []string{"alter table t add index mul_idx1(c1)", "alter table t add index mul_idx2(c1)"}},
-	{"alter table t drop index mul_idx1, drop index mul_idx2", false, model.StateDeleteReorganization, false, true, []string{"alter table t add index mul_idx1(c1)", "alter table t add index mul_idx2(c1)"}},
+	{"alter table t drop index mul_idx1, drop index mul_idx2", true, subStates{model.StatePublic, model.StatePublic}, true, false, []string{"alter table t add index mul_idx1(c1)", "alter table t add index mul_idx2(c1)"}},
+	{"alter table t drop index mul_idx1, drop index mul_idx2", false, subStates{model.StateWriteOnly, model.StateWriteOnly}, true, false, nil},
+	{"alter table t drop index mul_idx1, drop index mul_idx2", false, subStates{model.StateWriteOnly, model.StateWriteOnly}, true, false, []string{"alter table t add index mul_idx1(c1)", "alter table t add index mul_idx2(c1)"}},
+	{"alter table t drop index mul_idx1, drop index mul_idx2", false, subStates{model.StateDeleteOnly, model.StateWriteOnly}, true, false, []string{"alter table t add index mul_idx1(c1)", "alter table t add index mul_idx2(c1)"}},
+	{"alter table t drop index mul_idx1, drop index mul_idx2", false, subStates{model.StateDeleteOnly, model.StateWriteOnly}, false, true, []string{"alter table t add index mul_idx1(c1)", "alter table t add index mul_idx2(c1)"}},
+	{"alter table t drop index mul_idx1, drop index mul_idx2", false, subStates{model.StateDeleteReorganization, model.StateWriteOnly}, true, false, []string{"alter table t add index mul_idx1(c1)", "alter table t add index mul_idx2(c1)"}},
+	{"alter table t drop index mul_idx1, drop index mul_idx2", false, subStates{model.StateDeleteReorganization, model.StateWriteOnly}, false, true, []string{"alter table t add index mul_idx1(c1)", "alter table t add index mul_idx2(c1)"}},
 	// Alter db placement.
 	{"alter database db_placement placement policy = 'alter_x'", true, model.StateNone, true, false, []string{"create placement policy alter_x PRIMARY_REGION=\"cn-east-1\", REGIONS=\"cn-east-1\";", "create database db_placement"}},
 	{"alter database db_placement placement policy = 'alter_x'", false, model.StatePublic, false, true, nil},
@@ -227,8 +226,7 @@ func cancelSuccess(rs *testkit.Result) bool {
 }
 
 func TestCancel(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 100*time.Millisecond)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 100*time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tkCancel := testkit.NewTestKit(t, store)
 
@@ -268,25 +266,26 @@ func TestCancel(t *testing.T) {
 
 	hook := &ddl.TestDDLCallback{Do: dom}
 	i := atomicutil.NewInt64(0)
-	cancel := false
-	cancelResult := false
-	cancelWhenReorgNotStart := false
+	cancel := atomicutil.NewBool(false)
+	cancelResult := atomicutil.NewBool(false)
+	cancelWhenReorgNotStart := atomicutil.NewBool(false)
 
 	hookFunc := func(job *model.Job) {
-		if testMatchCancelState(t, job, allTestCase[i.Load()].cancelState, allTestCase[i.Load()].sql) && !cancel {
-			if !cancelWhenReorgNotStart && job.SchemaState == model.StateWriteReorganization && job.MayNeedReorg() && job.RowCount == 0 {
+		if testMatchCancelState(t, job, allTestCase[i.Load()].cancelState, allTestCase[i.Load()].sql) && !cancel.Load() {
+			if !cancelWhenReorgNotStart.Load() && job.SchemaState == model.StateWriteReorganization && job.MayNeedReorg() && job.RowCount == 0 {
 				return
 			}
 			rs := tkCancel.MustQuery(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
-			cancelResult = cancelSuccess(rs)
-			cancel = true
+			cancelResult.Store(cancelSuccess(rs))
+			cancel.Store(true)
 		}
 	}
-	dom.DDL().SetHook(hook)
+	dom.DDL().SetHook(hook.Clone())
 
 	restHook := func(h *ddl.TestDDLCallback) {
 		h.OnJobRunBeforeExported = nil
 		h.OnJobUpdatedExported = nil
+		dom.DDL().SetHook(h.Clone())
 	}
 	registHook := func(h *ddl.TestDDLCallback, onJobRunBefore bool) {
 		if onJobRunBefore {
@@ -294,6 +293,7 @@ func TestCancel(t *testing.T) {
 		} else {
 			h.OnJobUpdatedExported = hookFunc
 		}
+		dom.DDL().SetHook(h.Clone())
 	}
 
 	for j, tc := range allTestCase {
@@ -304,17 +304,16 @@ func TestCancel(t *testing.T) {
 			for _, prepareSQL := range tc.prepareSQL {
 				tk.MustExec(prepareSQL)
 			}
-
-			cancel = false
-			cancelWhenReorgNotStart = true
+			cancel.Store(false)
+			cancelWhenReorgNotStart.Store(true)
 			registHook(hook, true)
 			if tc.ok {
 				tk.MustGetErrCode(tc.sql, errno.ErrCancelledDDLJob)
 			} else {
 				tk.MustExec(tc.sql)
 			}
-			if cancel {
-				require.Equal(t, tc.ok, cancelResult, msg)
+			if cancel.Load() {
+				require.Equal(t, tc.ok, cancelResult.Load(), msg)
 			}
 		}
 		if tc.onJobUpdate {
@@ -322,16 +321,16 @@ func TestCancel(t *testing.T) {
 			for _, prepareSQL := range tc.prepareSQL {
 				tk.MustExec(prepareSQL)
 			}
-			cancel = false
-			cancelWhenReorgNotStart = false
+			cancel.Store(false)
+			cancelWhenReorgNotStart.Store(false)
 			registHook(hook, false)
 			if tc.ok {
 				tk.MustGetErrCode(tc.sql, errno.ErrCancelledDDLJob)
 			} else {
 				tk.MustExec(tc.sql)
 			}
-			if cancel {
-				require.Equal(t, tc.ok, cancelResult, msg)
+			if cancel.Load() {
+				require.Equal(t, tc.ok, cancelResult.Load(), msg)
 			}
 		}
 	}

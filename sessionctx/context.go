@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/sli"
@@ -50,15 +51,19 @@ type SessionStatesHandler interface {
 	DecodeSessionStates(context.Context, Context, *sessionstates.SessionStates) error
 }
 
+// PlanCache is an interface for prepare and general plan cache
+type PlanCache interface {
+	Get(key kvcache.Key, paramTypes []*types.FieldType) (value kvcache.Value, ok bool)
+	Put(key kvcache.Key, value kvcache.Value, paramTypes []*types.FieldType)
+	Delete(key kvcache.Key)
+	DeleteAll()
+	Size() int
+	SetCapacity(capacity uint) error
+}
+
 // Context is an interface for transaction and executive args environment.
 type Context interface {
 	SessionStatesHandler
-	// NewTxn creates a new transaction for further execution.
-	// If old transaction is valid, it is committed first.
-	// It's used in BEGIN statement and DDL statements to commit old transaction.
-	NewTxn(context.Context) error
-	// NewStaleTxnWithStartTS initializes a staleness transaction with the given StartTS.
-	NewStaleTxnWithStartTS(ctx context.Context, startTS uint64) error
 	// SetDiskFullOpt set the disk full opt when tikv disk full happened.
 	SetDiskFullOpt(level kvrpcpb.DiskFullOpt)
 	// RollbackTxn rolls back the current transaction.
@@ -112,15 +117,16 @@ type Context interface {
 	// GetStore returns the store of session.
 	GetStore() kv.Storage
 
-	// PreparedPlanCache returns the cache of the physical plan
-	PreparedPlanCache() *kvcache.SimpleLRUCache
+	// GetPlanCache returns the cache of the physical plan.
+	// generalPlanCache indicates to return the general plan cache or the prepared plan cache.
+	GetPlanCache(isGeneralPlanCache bool) PlanCache
 
 	// StoreQueryFeedback stores the query feedback.
 	StoreQueryFeedback(feedback interface{})
 
 	// UpdateColStatsUsage updates the column stats usage.
 	// TODO: maybe we can use a method called GetSessionStatsCollector to replace both StoreQueryFeedback and UpdateColStatsUsage but we need to deal with import circle if we do so.
-	UpdateColStatsUsage(predicateColumns []model.TableColumnID)
+	UpdateColStatsUsage(predicateColumns []model.TableItemID)
 
 	// HasDirtyContent checks whether there's dirty update on the given table.
 	HasDirtyContent(tid int64) bool
@@ -149,7 +155,8 @@ type Context interface {
 	HasLockedTables() bool
 	// PrepareTSFuture uses to prepare timestamp by future.
 	PrepareTSFuture(ctx context.Context, future oracle.Future, scope string) error
-	// GetPreparedTxnFuture returns the prepared ts future
+	// GetPreparedTxnFuture returns the TxnFuture if it is valid or pending.
+	// It returns nil otherwise.
 	GetPreparedTxnFuture() TxnFuture
 	// StoreIndexUsage stores the index usage information.
 	StoreIndexUsage(tblID int64, idxID int64, rowsSelected int64)

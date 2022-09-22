@@ -150,7 +150,7 @@ func NewReader(cfg *Config) (r *Reader, err error) {
 func (r *Reader) Close() {
 	close(r.stop)
 
-	r.client.Close()
+	_ = r.client.Close()
 }
 
 // Messages returns a chan that contains unread buffered message
@@ -191,20 +191,23 @@ func (r *Reader) run() {
 	if err != nil {
 		log.Fatal("create kafka consumer failed", zap.Error(err))
 	}
-	defer consumer.Close()
+	defer func() {
+		_ = consumer.Close()
+	}()
 	topic, partition := r.getTopic()
 	partitionConsumer, err := consumer.ConsumePartition(topic, partition, offset)
 	if err != nil {
 		log.Fatal("create kafka partition consumer failed", zap.Error(err))
 	}
-	defer partitionConsumer.Close()
-
+	defer func() {
+		_ = partitionConsumer.Close()
+	}()
 	// add select to avoid message blocking while reading
 	for {
 		select {
 		case <-r.stop:
 			// clean environment
-			partitionConsumer.Close()
+			_ = partitionConsumer.Close()
 			close(r.msgs)
 			log.Info("reader stop to run")
 			return

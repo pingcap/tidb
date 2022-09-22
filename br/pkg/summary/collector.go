@@ -92,7 +92,7 @@ type logCollector struct {
 }
 
 // NewLogCollector returns a new LogCollector.
-func NewLogCollector(log logFunc) LogCollector {
+func NewLogCollector(logf logFunc) LogCollector {
 	return &logCollector{
 		successUnitCount: 0,
 		failureUnitCount: 0,
@@ -102,7 +102,7 @@ func NewLogCollector(log logFunc) LogCollector {
 		durations:        make(map[string]time.Duration),
 		ints:             make(map[string]int),
 		uints:            make(map[string]uint64),
-		log:              log,
+		log:              logf,
 		startTime:        time.Now(),
 	}
 }

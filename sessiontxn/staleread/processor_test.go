@@ -28,20 +28,9 @@ import (
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/testkit/testsetup"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
-	"go.uber.org/goleak"
 )
-
-func TestMain(m *testing.M) {
-	opts := []goleak.Option{
-		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
-		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
-	}
-	testsetup.SetupForCommonTest()
-	goleak.VerifyTestMain(m, opts...)
-}
 
 type staleReadPoint struct {
 	tk *testkit.TestKit
@@ -104,8 +93,7 @@ func astTableWithAsOf(t *testing.T, dt string) *ast.TableName {
 }
 
 func TestStaleReadProcessorWithSelectTable(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tn := astTableWithAsOf(t, "")
 	p1 := genStaleReadPoint(t, tk)
@@ -191,8 +179,7 @@ func TestStaleReadProcessorWithSelectTable(t *testing.T) {
 }
 
 func TestStaleReadProcessorWithExecutePreparedStmt(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	p1 := genStaleReadPoint(t, tk)
 	//p2 := genStaleReadPoint(t, tk)
@@ -271,8 +258,7 @@ func TestStaleReadProcessorWithExecutePreparedStmt(t *testing.T) {
 }
 
 func TestStaleReadProcessorInTxn(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tn := astTableWithAsOf(t, "")
 	p1 := genStaleReadPoint(t, tk)

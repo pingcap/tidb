@@ -16,6 +16,7 @@ go_library(
 
 go_test(
     name = "watcher_test",
+    timeout = "short",
     srcs = ["watcher_test.go"],
     embed = [":watcher"],
     flaky = True,

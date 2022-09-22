@@ -29,6 +29,7 @@ go_test(
         "pattern_test.go",
     ],
     embed = [":memo"],
+    flaky = True,
     deps = [
         "//domain",
         "//expression",
@@ -37,8 +38,10 @@ go_test(
         "//parser/model",
         "//planner/core",
         "//planner/property",
+        "//sessionctx/variable",
         "//testkit/testsetup",
         "@com_github_stretchr_testify//require",
+        "@io_opencensus_go//stats/view",
         "@org_uber_go_goleak//:goleak",
     ],
 )

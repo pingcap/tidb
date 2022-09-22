@@ -7,9 +7,8 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"go.uber.org/zap"
-
 	tcontext "github.com/pingcap/tidb/dumpling/context"
+	"go.uber.org/zap"
 )
 
 // rowIter implements the SQLRowIter interface.
@@ -368,6 +367,6 @@ func (td *multiQueriesChunk) Close() error {
 	return td.SQLRowIter.Close()
 }
 
-func (td *multiQueriesChunk) RawRows() *sql.Rows {
+func (*multiQueriesChunk) RawRows() *sql.Rows {
 	return nil
 }

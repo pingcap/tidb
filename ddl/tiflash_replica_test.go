@@ -41,8 +41,7 @@ const tiflashReplicaLease = 600 * time.Millisecond
 
 func TestSetTableFlashReplica(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`))
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, tiflashReplicaLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, tiflashReplicaLease)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -146,8 +145,7 @@ func TestSetTiFlashReplicaForTemporaryTable(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount"))
 	}()
 
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, tiflashReplicaLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, tiflashReplicaLease)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -169,8 +167,7 @@ func TestSetTiFlashReplicaForTemporaryTable(t *testing.T) {
 }
 
 func TestSetTableFlashReplicaForSystemTable(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, tiflashReplicaLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, tiflashReplicaLease)
 
 	tk := testkit.NewTestKit(t, store)
 	sysTables := make([]string, 0, 24)
@@ -185,11 +182,14 @@ func TestSetTableFlashReplicaForSystemTable(t *testing.T) {
 		for _, one := range sysTables {
 			_, err := tk.Exec(fmt.Sprintf("alter table `%s` set tiflash replica 1", one))
 			if db == "MySQL" {
-				require.Equal(t, "[ddl:8200]ALTER table replica for tables in system database is currently unsupported", err.Error())
+				if one == "tidb_mdl_view" {
+					require.EqualError(t, err, "[ddl:1347]'MySQL.tidb_mdl_view' is not BASE TABLE")
+				} else {
+					require.Equal(t, "[ddl:8200]Unsupported ALTER TiFlash settings for system table and memory table", err.Error())
+				}
 			} else {
 				require.Equal(t, fmt.Sprintf("[planner:1142]ALTER command denied to user 'root'@'%%' for table '%s'", strings.ToLower(one)), err.Error())
 			}
-
 		}
 		sysTables = sysTables[:0]
 	}
@@ -202,10 +202,10 @@ func TestSkipSchemaChecker(t *testing.T) {
 		require.NoError(t, err)
 	}()
 
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, tiflashReplicaLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, tiflashReplicaLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=0")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a int)")
 	tk2 := testkit.NewTestKit(t, store)
@@ -235,8 +235,7 @@ func TestSkipSchemaChecker(t *testing.T) {
 
 // TestCreateTableWithLike2 tests create table with like when refer table have non-public column/index.
 func TestCreateTableWithLike2(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, tiflashReplicaLease)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, tiflashReplicaLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (a int, b int, c int, index idx1(c));")
@@ -342,8 +341,7 @@ func TestCreateTableWithLike2(t *testing.T) {
 }
 
 func TestTruncateTable2(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, tiflashReplicaLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, tiflashReplicaLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table truncate_table (c1 int, c2 int)")
@@ -443,5 +441,4 @@ func TestTruncateTable2(t *testing.T) {
 	require.Equal(t, t1.Meta().TiFlashReplica.LocationLabels, t2.Meta().TiFlashReplica.LocationLabels)
 	require.False(t, t2.Meta().TiFlashReplica.Available)
 	require.Equal(t, []int64{partition.Definitions[1].ID}, t2.Meta().TiFlashReplica.AvailablePartitionIDs)
-
 }

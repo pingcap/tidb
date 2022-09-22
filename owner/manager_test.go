@@ -16,7 +16,6 @@ package owner_test
 
 import (
 	"context"
-	goctx "context"
 	"fmt"
 	"runtime"
 	"testing"
@@ -41,7 +40,7 @@ func TestSingle(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
-	integration.BeforeTest(t)
+	integration.BeforeTestExternal(t)
 
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
@@ -54,7 +53,7 @@ func TestSingle(t *testing.T) {
 	defer cluster.Terminate(t)
 
 	client := cluster.RandClient()
-	ctx := goctx.Background()
+	ctx := context.Background()
 	ic := infoschema.NewCache(2)
 	ic.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0)
 	d := NewDDL(
@@ -69,13 +68,13 @@ func TestSingle(t *testing.T) {
 	require.True(t, isOwner)
 
 	// test for newSession failed
-	ctx, cancel := goctx.WithCancel(ctx)
+	ctx, cancel := context.WithCancel(ctx)
 	manager := owner.NewOwnerManager(ctx, client, "ddl", "ddl_id", DDLOwnerKey)
 	cancel()
 
 	err = manager.CampaignOwner()
 	comment := fmt.Sprintf("campaigned result don't match, err %v", err)
-	require.True(t, terror.ErrorEqual(err, goctx.Canceled) || terror.ErrorEqual(err, goctx.DeadlineExceeded), comment)
+	require.True(t, terror.ErrorEqual(err, context.Canceled) || terror.ErrorEqual(err, context.DeadlineExceeded), comment)
 
 	isOwner = checkOwner(d, true)
 	require.True(t, isOwner)
@@ -88,7 +87,7 @@ func TestSingle(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 
 	// err is ok to be not nil since we canceled the manager.
-	ownerID, _ := manager.GetOwnerID(goctx.Background())
+	ownerID, _ := manager.GetOwnerID(context.Background())
 	require.Equal(t, "", ownerID)
 }
 
@@ -96,7 +95,7 @@ func TestCluster(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
-	integration.BeforeTest(t)
+	integration.BeforeTestExternal(t)
 
 	originalTTL := owner.ManagerSessionTTL
 	owner.ManagerSessionTTL = 3
@@ -118,16 +117,14 @@ func TestCluster(t *testing.T) {
 	ic := infoschema.NewCache(2)
 	ic.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0)
 	d := NewDDL(
-		goctx.Background(),
+		context.Background(),
 		WithEtcdClient(cli),
 		WithStore(store),
 		WithLease(testLease),
 		WithInfoCache(ic),
 	)
 
-	go func() {
-		require.NoError(t, d.OwnerManager().CampaignOwner())
-	}()
+	require.NoError(t, d.OwnerManager().CampaignOwner())
 
 	isOwner := checkOwner(d, true)
 	require.True(t, isOwner)
@@ -136,15 +133,13 @@ func TestCluster(t *testing.T) {
 	ic2 := infoschema.NewCache(2)
 	ic2.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0)
 	d1 := NewDDL(
-		goctx.Background(),
+		context.Background(),
 		WithEtcdClient(cli1),
 		WithStore(store),
 		WithLease(testLease),
 		WithInfoCache(ic2),
 	)
-	go func() {
-		require.NoError(t, d1.OwnerManager().CampaignOwner())
-	}()
+	require.NoError(t, d1.OwnerManager().CampaignOwner())
 
 	isOwner = checkOwner(d1, false)
 	require.False(t, isOwner)
@@ -163,15 +158,13 @@ func TestCluster(t *testing.T) {
 	ic3 := infoschema.NewCache(2)
 	ic3.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0)
 	d3 := NewDDL(
-		goctx.Background(),
+		context.Background(),
 		WithEtcdClient(cli3),
 		WithStore(store),
 		WithLease(testLease),
 		WithInfoCache(ic3),
 	)
-	go func() {
-		require.NoError(t, d3.OwnerManager().CampaignOwner())
-	}()
+	require.NoError(t, d3.OwnerManager().CampaignOwner())
 
 	isOwner = checkOwner(d3, false)
 	require.False(t, isOwner)
@@ -186,7 +179,7 @@ func TestCluster(t *testing.T) {
 	election := concurrency.NewElection(session, DDLOwnerKey)
 	logPrefix := fmt.Sprintf("[ddl] %s ownerManager %s", DDLOwnerKey, "useless id")
 	logCtx := logutil.WithKeyValue(context.Background(), "owner info", logPrefix)
-	_, err = owner.GetOwnerInfo(goctx.Background(), logCtx, election, "useless id")
+	_, err = owner.GetOwnerInfo(context.Background(), logCtx, election, "useless id")
 	require.Truef(t, terror.ErrorEqual(err, concurrency.ErrElectionNoLeader), "get owner info result don't match, err %v", err)
 }
 
@@ -213,10 +206,10 @@ func deleteLeader(cli *clientv3.Client, prefixKey string) error {
 		_ = session.Close()
 	}()
 	election := concurrency.NewElection(session, prefixKey)
-	resp, err := election.Leader(goctx.Background())
+	resp, err := election.Leader(context.Background())
 	if err != nil {
 		return errors.Trace(err)
 	}
-	_, err = cli.Delete(goctx.Background(), string(resp.Kvs[0].Key))
+	_, err = cli.Delete(context.Background(), string(resp.Kvs[0].Key))
 	return errors.Trace(err)
 }

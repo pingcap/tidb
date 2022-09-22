@@ -26,6 +26,8 @@ go_library(
         "//br/pkg/storage",
         "//br/pkg/utils",
         "//br/pkg/version/build",
+        "//expression",
+        "//planner/core",
         "//util/promutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
@@ -34,6 +36,7 @@ go_library(
         "@com_github_prometheus_client_golang//prometheus/collectors",
         "@com_github_prometheus_client_golang//prometheus/promhttp",
         "@com_github_shurcool_httpgzip//:httpgzip",
+        "@org_golang_x_exp//slices",
         "@org_uber_go_zap//:zap",
         "@org_uber_go_zap//zapcore",
     ],
@@ -41,12 +44,14 @@ go_library(
 
 go_test(
     name = "lightning_test",
+    timeout = "short",
     srcs = [
         "lightning_serial_test.go",
         "lightning_server_serial_test.go",
         "main_test.go",
     ],
     embed = [":lightning"],
+    flaky = True,
     deps = [
         "//br/pkg/lightning/checkpoints",
         "//br/pkg/lightning/config",

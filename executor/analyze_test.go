@@ -16,6 +16,8 @@ package executor_test
 
 import (
 	"fmt"
+	"io/ioutil"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -222,6 +224,7 @@ func TestFastAnalyze(t *testing.T) {
 		"IndexReader 2.00 root  index:IndexRangeScan",
 		"└─IndexRangeScan 2.00 cop[tikv] table:t3, partition:p1, index:k(v) range:[3,3], keep order:false",
 	))
+	//nolint:revive,all_revive
 	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Dynamic) + `'`)
 
 	// global-stats depends on stats-ver2, but stats-ver2 is not compatible with fast-analyze, so forbid using global-stats with fast-analyze now.
@@ -315,4 +318,23 @@ func TestAnalyzeIndexExtractTopN(t *testing.T) {
 		require.True(t, ok)
 		require.True(t, idx.TopN.Equal(topn))
 	}
+}
+
+func TestAnalyzePartitionTableForFloat(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t1 ( id bigint(20) unsigned NOT NULL AUTO_INCREMENT, num float(9,8) DEFAULT NULL, PRIMARY KEY (id)  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin PARTITION BY HASH (id) PARTITIONS 128;")
+	// To reproduce the error we meet in https://github.com/pingcap/tidb/issues/35910, we should use the data provided in this issue
+	b, err := ioutil.ReadFile("testdata/analyze_test_data.sql")
+	require.NoError(t, err)
+	sqls := strings.Split(string(b), ";")
+	for _, sql := range sqls {
+		if len(sql) < 1 {
+			continue
+		}
+		tk.MustExec(sql)
+	}
+	tk.MustExec("analyze table t1")
 }

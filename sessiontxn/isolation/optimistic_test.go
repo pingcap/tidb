@@ -22,9 +22,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/config"
-
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
@@ -34,15 +33,19 @@ import (
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/sessiontxn/isolation"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/testfork"
 	"github.com/stretchr/testify/require"
 	tikverr "github.com/tikv/client-go/v2/error"
 )
 
 func TestOptimisticTxnContextProviderTS(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("rollback")
+
 	tk.MustExec("use test")
 	tk.MustExec("create table t(id int primary key, v int)")
 
@@ -128,10 +131,11 @@ func TestOptimisticTxnContextProviderTS(t *testing.T) {
 }
 
 func TestOptimisticHandleError(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("rollback")
+
 	provider := initializeOptimisticProvider(t, tk, true)
 	startTS := tk.Session().GetSessionVars().TxnCtx.StartTS
 	checkTS := func() {
@@ -207,94 +211,91 @@ func TestOptimisticHandleError(t *testing.T) {
 }
 
 func TestOptimisticProviderInitialize(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
+	testfork.RunTest(t, func(t *testfork.T) {
+		clearScopeSettings := forkScopeSettings(t, store)
+		defer clearScopeSettings()
 
-	tk := testkit.NewTestKit(t, store)
-	se := tk.Session()
+		tk := testkit.NewTestKit(t, store)
+		defer tk.MustExec("rollback")
 
-	// begin outside a txn
-	assert := activeOptimisticTxnAssert(t, se, true)
-	tk.MustExec("begin")
-	assert.Check(t)
+		se := tk.Session()
 
-	// begin in a txn
-	assert = activeOptimisticTxnAssert(t, se, true)
-	tk.MustExec("begin")
-	assert.Check(t)
+		// begin outside a txn
+		assert := activeOptimisticTxnAssert(t, se, true)
+		tk.MustExec("begin")
+		assert.Check(t)
 
-	// begin outside a txn when tidb_disable_txn_auto_retry=0
-	tk.MustExec("set @@tidb_disable_txn_auto_retry=0")
-	tk.MustExec("rollback")
-	assert = activeOptimisticTxnAssert(t, se, true)
-	assert.couldRetry = true
-	tk.MustExec("begin")
-	assert.Check(t)
+		// begin in a txn
+		assert = activeOptimisticTxnAssert(t, se, true)
+		tk.MustExec("begin")
+		assert.Check(t)
 
-	// START TRANSACTION WITH CAUSAL CONSISTENCY ONLY
-	assert = activeOptimisticTxnAssert(t, se, true)
-	assert.causalConsistencyOnly = true
-	assert.couldRetry = true
-	tk.MustExec("START TRANSACTION WITH CAUSAL CONSISTENCY ONLY")
-	assert.Check(t)
+		// begin outside a txn when tidb_disable_txn_auto_retry=0
+		tk.MustExec("set @@tidb_disable_txn_auto_retry=0")
+		tk.MustExec("rollback")
+		assert = activeOptimisticTxnAssert(t, se, true)
+		assert.couldRetry = true
+		tk.MustExec("begin")
+		assert.Check(t)
 
-	// EnterNewTxnDefault will create an active txn, but not explicit
-	assert = activeOptimisticTxnAssert(t, se, false)
-	require.NoError(t, sessiontxn.GetTxnManager(se).EnterNewTxn(context.TODO(), &sessiontxn.EnterNewTxnRequest{
-		Type:    sessiontxn.EnterNewTxnDefault,
-		TxnMode: ast.Optimistic,
-	}))
-	assert.Check(t)
+		// START TRANSACTION WITH CAUSAL CONSISTENCY ONLY
+		assert = activeOptimisticTxnAssert(t, se, true)
+		assert.causalConsistencyOnly = true
+		assert.couldRetry = true
+		tk.MustExec("START TRANSACTION WITH CAUSAL CONSISTENCY ONLY")
+		assert.Check(t)
 
-	tk.MustExec("rollback")
-	require.NoError(t, sessiontxn.GetTxnManager(se).EnterNewTxn(context.TODO(), &sessiontxn.EnterNewTxnRequest{
-		Type: sessiontxn.EnterNewTxnDefault,
-	}))
-	assert.Check(t)
+		// EnterNewTxnDefault will create an active txn, but not explicit
+		assert = activeOptimisticTxnAssert(t, se, false)
+		require.NoError(t, sessiontxn.GetTxnManager(se).EnterNewTxn(context.TODO(), &sessiontxn.EnterNewTxnRequest{
+			Type:    sessiontxn.EnterNewTxnDefault,
+			TxnMode: ast.Optimistic,
+		}))
+		assert.Check(t)
 
-	// non-active txn and then active it
-	cases := []struct {
-		disableTxnAutoRetry bool
-		autocommit          bool
-	}{
-		{
-			true, true,
-		},
-		{
-			true, false,
-		},
-		{
-			false, true,
-		},
-		{
-			false, false,
-		},
-	}
-	for _, c := range cases {
-		t.Run(fmt.Sprintf("disableAutRetry: %v, autoCommit: %v", c.disableTxnAutoRetry, c.autocommit), func(t *testing.T) {
-			tk.MustExec("rollback")
-			defer tk.MustExec("rollback")
-			tk.MustExec(fmt.Sprintf("set @@autocommit=%v", c.autocommit))
-			tk.MustExec(fmt.Sprintf("set @@tidb_disable_txn_auto_retry=%v", c.disableTxnAutoRetry))
-			assert = inactiveOptimisticTxnAssert(se)
-			assertAfterActive := activeOptimisticTxnAssert(t, se, !c.autocommit)
-			assertAfterActive.couldRetry = c.autocommit || !c.disableTxnAutoRetry
-			require.NoError(t, se.PrepareTxnCtx(context.TODO()))
-			provider := assert.CheckAndGetProvider(t)
-			require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
-			ts, err := provider.GetStmtReadTS()
-			require.NoError(t, err)
-			assertAfterActive.Check(t)
-			require.Equal(t, ts, se.GetSessionVars().TxnCtx.StartTS)
-		})
-	}
+		tk.MustExec("rollback")
+		require.NoError(t, sessiontxn.GetTxnManager(se).EnterNewTxn(context.TODO(), &sessiontxn.EnterNewTxnRequest{
+			Type: sessiontxn.EnterNewTxnDefault,
+		}))
+		assert.Check(t)
+
+		// non-active txn and then active it
+		disableTxnAutoRetry := true
+		if testfork.PickEnum(t, "enableTxnAutoRetry", "") != "" {
+			disableTxnAutoRetry = false
+		}
+		autocommit := true
+		if testfork.PickEnum(t, "noAutocommit", "") != "" {
+			autocommit = false
+		}
+		tk.MustExec("rollback")
+		defer tk.MustExec("rollback")
+		tk.MustExec(fmt.Sprintf("set @@autocommit=%v", autocommit))
+		tk.MustExec(fmt.Sprintf("set @@tidb_disable_txn_auto_retry=%v", disableTxnAutoRetry))
+		assert = inactiveOptimisticTxnAssert(se)
+		assertAfterActive := activeOptimisticTxnAssert(t, se, !autocommit)
+		assertAfterActive.couldRetry = autocommit || !disableTxnAutoRetry
+		require.NoError(t, se.PrepareTxnCtx(context.TODO()))
+		provider := assert.CheckAndGetProvider(t)
+		require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
+		ts, err := provider.GetStmtReadTS()
+		require.NoError(t, err)
+		assertAfterActive.Check(t)
+		require.Equal(t, ts, se.GetSessionVars().TxnCtx.StartTS)
+	})
 }
 
 func TestTidbSnapshotVarInOptimisticTxn(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("rollback")
+
 	se := tk.Session()
 	tk.MustExec("set @@tx_isolation = 'READ-COMMITTED'")
 	safePoint := "20160102-15:04:05 -0700"
@@ -321,7 +322,7 @@ func TestTidbSnapshotVarInOptimisticTxn(t *testing.T) {
 	checkUseSnapshot := func() {
 		is := provider.GetTxnInfoSchema()
 		require.Equal(t, snapshotISVersion, is.SchemaMetaVersion())
-		require.IsType(t, &infoschema.TemporaryTableAttachedInfoSchema{}, is)
+		require.IsType(t, &infoschema.SessionExtendedInfoSchema{}, is)
 		readTS, err := provider.GetStmtReadTS()
 		require.NoError(t, err)
 		require.Equal(t, snapshotTS, readTS)
@@ -333,7 +334,7 @@ func TestTidbSnapshotVarInOptimisticTxn(t *testing.T) {
 	checkUseTxn := func() {
 		is := provider.GetTxnInfoSchema()
 		require.Equal(t, isVersion, is.SchemaMetaVersion())
-		require.IsType(t, &infoschema.TemporaryTableAttachedInfoSchema{}, is)
+		require.IsType(t, &infoschema.SessionExtendedInfoSchema{}, is)
 		readTS, err := provider.GetStmtReadTS()
 		require.NoError(t, err)
 		require.NotEqual(t, snapshotTS, readTS)
@@ -376,7 +377,7 @@ func TestTidbSnapshotVarInOptimisticTxn(t *testing.T) {
 	}
 }
 
-func activeOptimisticTxnAssert(t *testing.T, sctx sessionctx.Context, inTxn bool) *txnAssert[*isolation.OptimisticTxnContextProvider] {
+func activeOptimisticTxnAssert(t testing.TB, sctx sessionctx.Context, inTxn bool) *txnAssert[*isolation.OptimisticTxnContextProvider] {
 	return &txnAssert[*isolation.OptimisticTxnContextProvider]{
 		sctx:         sctx,
 		minStartTime: time.Now(),
@@ -394,7 +395,7 @@ func inactiveOptimisticTxnAssert(sctx sessionctx.Context) *txnAssert[*isolation.
 	}
 }
 
-func initializeOptimisticProvider(t *testing.T, tk *testkit.TestKit, withExplicitBegin bool) *isolation.OptimisticTxnContextProvider {
+func initializeOptimisticProvider(t testing.TB, tk *testkit.TestKit, withExplicitBegin bool) *isolation.OptimisticTxnContextProvider {
 	tk.MustExec("commit")
 	if withExplicitBegin {
 		assert := activeOptimisticTxnAssert(t, tk.Session(), true)

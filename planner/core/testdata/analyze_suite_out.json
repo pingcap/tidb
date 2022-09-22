@@ -17,7 +17,7 @@
       {
         "SQL": "explain format = 'hint' select * from t1, t2 where t1.a = t2.a",
         "Plan": [
-          "use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` ), hash_join(@`sel_1` `test`.`t1`)"
+          "hash_join(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` )"
         ]
       }
     ]
@@ -286,19 +286,21 @@
     "Name": "TestTiFlashCostModel",
     "Cases": [
       [
-        "TableReader_7 10000.00 root  data:TableFullScan_6",
-        "└─TableFullScan_6 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        "TableReader_11 10000.00 root  data:ExchangeSender_10",
+        "└─ExchangeSender_10 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+        "  └─TableFullScan_9 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
       ],
       [
-        "TableReader_5 10000.00 root  data:TableFullScan_4",
-        "└─TableFullScan_4 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        "TableReader_6 10000.00 root  data:TableFullScan_5",
+        "└─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
       ],
       [
         "Batch_Point_Get_5 2.00 root table:t handle:[1 2], keep order:false, desc:false"
       ],
       [
-        "TableReader_6 2.00 root  data:TableRangeScan_5",
-        "└─TableRangeScan_5 2.00 cop[tiflash] table:t range:[1,1], [2,2], keep order:false, stats:pseudo"
+        "TableReader_10 2.00 root  data:ExchangeSender_9",
+        "└─ExchangeSender_9 2.00 mpp[tiflash]  ExchangeType: PassThrough",
+        "  └─TableRangeScan_8 2.00 mpp[tiflash] table:t range:[1,1], [2,2], keep order:false, stats:pseudo"
       ]
     ]
   },

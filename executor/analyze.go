@@ -59,11 +59,14 @@ var (
 	// RandSeed is the seed for randing package.
 	// It's public for test.
 	RandSeed = int64(1)
+
+	// MaxRegionSampleSize is the max sample size for one region when analyze v1 collects samples from table.
+	// It's public for test.
+	MaxRegionSampleSize = int64(1000)
 )
 
 const (
-	maxRegionSampleSize = 1000
-	maxSketchSize       = 10000
+	maxSketchSize = 10000
 )
 
 type taskType int
@@ -254,7 +257,7 @@ func (e *AnalyzeExec) handleResultsError(ctx context.Context, concurrency int, n
 				}
 			}
 		}
-		if err1 := statsHandle.SaveTableStatsToStorage(results, results.TableID.IsPartitionTable()); err1 != nil {
+		if err1 := statsHandle.SaveTableStatsToStorage(results, results.TableID.IsPartitionTable(), e.ctx.GetSessionVars().EnableAnalyzeSnapshot); err1 != nil {
 			err = err1
 			logutil.Logger(ctx).Error("save table stats to storage failed", zap.Error(err))
 			finishJobWithLog(e.ctx, results.Job, err)
@@ -265,6 +268,7 @@ func (e *AnalyzeExec) handleResultsError(ctx context.Context, concurrency int, n
 				logutil.BgLogger().Error("record historical stats failed", zap.Error(err))
 			}
 		}
+		invalidInfoSchemaStatCache(results.TableID.GetStatisticsID())
 	}
 	return err
 }

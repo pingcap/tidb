@@ -40,12 +40,14 @@ go_library(
 
 go_test(
     name = "unistore_test",
+    timeout = "short",
     srcs = [
         "main_test.go",
         "pd_test.go",
         "raw_handler_test.go",
     ],
     embed = [":unistore"],
+    flaky = True,
     deps = [
         "//testkit/testsetup",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",

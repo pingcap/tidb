@@ -17,13 +17,13 @@ package telemetry
 import (
 	"context"
 	"regexp"
-	"sort"
 	"strings"
 
 	"github.com/iancoleman/strcase"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"golang.org/x/exp/slices"
 )
 
 var (
@@ -36,10 +36,10 @@ var (
 )
 
 func init() {
-	sort.Strings(sortedCPUAllowedFieldNames)
-	sort.Strings(sortedDiskAllowedFieldNames)
-	sort.Strings(sortedDiskAllowedPaths)
-	sort.Strings(sortedMemoryAllowedFieldNames)
+	slices.Sort(sortedCPUAllowedFieldNames)
+	slices.Sort(sortedDiskAllowedFieldNames)
+	slices.Sort(sortedDiskAllowedPaths)
+	slices.Sort(sortedMemoryAllowedFieldNames)
 }
 
 type clusterHardwareItem struct {

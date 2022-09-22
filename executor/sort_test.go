@@ -38,15 +38,13 @@ func testSortInDisk(t *testing.T, removeDir bool) {
 	restore := config.RestoreFunc()
 	defer restore()
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.OOMUseTmpStorage = true
 		conf.TempStoragePath = t.TempDir()
 	})
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill", "return(true)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill"))
 	}()
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	defer tk.MustExec("SET GLOBAL tidb_mem_oom_action = DEFAULT")
 	tk.MustExec("SET GLOBAL tidb_mem_oom_action='LOG'")
@@ -98,7 +96,6 @@ func testSortInDisk(t *testing.T, removeDir bool) {
 func TestIssue16696(t *testing.T) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.OOMUseTmpStorage = true
 		conf.TempStoragePath = t.TempDir()
 	})
 	alarmRatio := variable.MemoryUsageAlarmRatio.Load()
@@ -109,8 +106,7 @@ func TestIssue16696(t *testing.T) {
 	defer require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testRowContainerSpill", "return(true)"))
 	defer require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testRowContainerSpill"))
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	defer tk.MustExec("SET GLOBAL tidb_mem_oom_action = DEFAULT")
 	tk.MustExec("SET GLOBAL tidb_mem_oom_action='LOG'")

@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 type CheckpointStatus uint8
@@ -1217,8 +1218,8 @@ func (cpdb *FileCheckpointsDB) Get(_ context.Context, tableName string) (*TableC
 			})
 		}
 
-		sort.Slice(engine.Chunks, func(i, j int) bool {
-			return engine.Chunks[i].Key.less(&engine.Chunks[j].Key)
+		slices.SortFunc(engine.Chunks, func(i, j *ChunkCheckpoint) bool {
+			return i.Key.less(&j.Key)
 		})
 
 		cp.Engines[engineID] = engine
@@ -1567,6 +1568,7 @@ func (cpdb *MySQLCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tabl
 
 //nolint:rowserrcheck // sqltocsv.Write will check this.
 func (cpdb *MySQLCheckpointsDB) DumpTables(ctx context.Context, writer io.Writer) error {
+	//nolint: rowserrcheck
 	rows, err := cpdb.db.QueryContext(ctx, fmt.Sprintf(`
 		SELECT
 			task_id,
@@ -1589,6 +1591,7 @@ func (cpdb *MySQLCheckpointsDB) DumpTables(ctx context.Context, writer io.Writer
 
 //nolint:rowserrcheck // sqltocsv.Write will check this.
 func (cpdb *MySQLCheckpointsDB) DumpEngines(ctx context.Context, writer io.Writer) error {
+	//nolint: rowserrcheck
 	rows, err := cpdb.db.QueryContext(ctx, fmt.Sprintf(`
 		SELECT
 			table_name,
@@ -1609,6 +1612,7 @@ func (cpdb *MySQLCheckpointsDB) DumpEngines(ctx context.Context, writer io.Write
 
 //nolint:rowserrcheck // sqltocsv.Write will check this.
 func (cpdb *MySQLCheckpointsDB) DumpChunks(ctx context.Context, writer io.Writer) error {
+	//nolint: rowserrcheck
 	rows, err := cpdb.db.QueryContext(ctx, fmt.Sprintf(`
 		SELECT
 			table_name,

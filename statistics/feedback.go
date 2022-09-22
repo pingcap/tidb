@@ -20,6 +20,7 @@ import (
 	"math"
 	"math/rand"
 	"sort"
+	goatomic "sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -40,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 // Feedback represents the total scan count in range [lower, upper).
@@ -54,14 +56,14 @@ type Feedback struct {
 // QueryFeedback is used to represent the query feedback info. It contains the query's scan ranges and number of rows
 // in each range.
 type QueryFeedback struct {
-	PhysicalID int64
 	Hist       *Histogram
-	Tp         int
 	Feedback   []Feedback
-	Expected   int64 // Expected is the Expected scan count of corresponding query.
-	actual     int64 // actual is the actual scan count of corresponding query.
-	Valid      bool  // Valid represents the whether this query feedback is still Valid.
-	desc       bool  // desc represents the corresponding query is desc scan.
+	PhysicalID int64
+	Tp         int
+	Expected   int64         // Expected is the Expected scan count of corresponding query.
+	actual     int64         // actual is the actual scan count of corresponding query.
+	Valid      goatomic.Bool // Valid represents the whether this query feedback is still Valid.
+	desc       bool          // desc represents the corresponding query is desc scan.
 }
 
 // NewQueryFeedback returns a new query feedback.
@@ -73,14 +75,15 @@ func NewQueryFeedback(physicalID int64, hist *Histogram, expected int64, desc bo
 	if hist != nil && hist.IsIndexHist() {
 		tp = IndexType
 	}
-	return &QueryFeedback{
+	rs := &QueryFeedback{
 		PhysicalID: physicalID,
-		Valid:      true,
 		Tp:         tp,
 		Hist:       hist,
 		Expected:   expected,
 		desc:       desc,
 	}
+	rs.Valid.Store(true)
+	return rs
 }
 
 // QueryFeedbackKey is the key for a group of feedbacks on the same index/column.
@@ -275,13 +278,13 @@ func (q *QueryFeedback) StoreRanges(ranges []*ranger.Range) {
 func (q *QueryFeedback) Invalidate() {
 	q.Feedback = nil
 	q.Hist = nil
-	q.Valid = false
+	q.Valid.Store(false)
 	q.actual = -1
 }
 
 // Actual gets the actual row count.
 func (q *QueryFeedback) Actual() int64 {
-	if !q.Valid {
+	if !q.Valid.Load() {
 		return -1
 	}
 	return q.actual
@@ -304,7 +307,7 @@ func (q *QueryFeedback) Update(startKey kv.Key, counts, ndvs []int64) {
 	}
 	metrics.DistSQLScanKeysPartialHistogram.Observe(float64(sum))
 	q.actual += sum
-	if !q.Valid || q.Hist == nil {
+	if !q.Valid.Load() || q.Hist == nil {
 		return
 	}
 
@@ -350,15 +353,15 @@ func NonOverlappedFeedbacks(sc *stmtctx.StatementContext, fbs []Feedback) ([]Fee
 	// Sort feedbacks by end point and start point incrementally, then pick every feedback that is not overlapped
 	// with the previous chosen feedbacks.
 	var existsErr bool
-	sort.Slice(fbs, func(i, j int) bool {
-		res, err := fbs[i].Upper.Compare(sc, fbs[j].Upper, collate.GetBinaryCollator())
+	slices.SortFunc(fbs, func(i, j Feedback) bool {
+		res, err := i.Upper.Compare(sc, j.Upper, collate.GetBinaryCollator())
 		if err != nil {
 			existsErr = true
 		}
 		if existsErr || res != 0 {
 			return res < 0
 		}
-		res, err = fbs[i].Lower.Compare(sc, fbs[j].Lower, collate.GetBinaryCollator())
+		res, err = i.Lower.Compare(sc, j.Lower, collate.GetBinaryCollator())
 		if err != nil {
 			existsErr = true
 		}
@@ -726,7 +729,7 @@ func mergeBuckets(bkts []bucket, isNewBuckets []bool, bucketCount int, totalCoun
 	for i := 0; i < mergeCount; i++ {
 		ids = append(ids, bs[i].id)
 	}
-	sort.Ints(ids)
+	slices.Sort(ids)
 	idCursor, bktCursor := 0, 0
 	for i := range bkts {
 		// Merge this bucket with last one.
@@ -798,8 +801,8 @@ func UpdateHistogramWithBucketCount(h *Histogram, feedback *QueryFeedback, stats
 	// Update the NDV of primary key column.
 	if feedback.Tp == PkType {
 		hist.NDV = int64(hist.TotalRowCount())
-		// If we maintained the NDV of bucket. We can also update the total ndv.
 	} else if feedback.Tp == IndexType && statsVer == 2 {
+		// If we maintained the NDV of bucket. We can also update the total ndv.
 		totNdv := int64(0)
 		for _, bkt := range buckets {
 			totNdv += bkt.Ndv

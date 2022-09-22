@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
@@ -35,8 +36,7 @@ import (
 )
 
 func TestTableRange(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
@@ -280,7 +280,7 @@ func TestTableRange(t *testing.T) {
 			conds, filter = ranger.DetachCondsForColumn(sctx, conds, col)
 			require.Equal(t, tt.accessConds, fmt.Sprintf("%s", conds))
 			require.Equal(t, tt.filterConds, fmt.Sprintf("%s", filter))
-			result, err := ranger.BuildTableRange(conds, sctx, col.RetType)
+			result, _, _, err := ranger.BuildTableRange(conds, sctx, col.RetType, 0)
 			require.NoError(t, err)
 			got := fmt.Sprintf("%v", result)
 			require.Equal(t, tt.resultStr, got)
@@ -290,8 +290,7 @@ func TestTableRange(t *testing.T) {
 
 // for issue #6661
 func TestIndexRangeForUnsignedAndOverflow(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
@@ -478,8 +477,7 @@ create table t(
 }
 
 func TestColumnRange(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
@@ -831,7 +829,7 @@ func TestColumnRange(t *testing.T) {
 			require.NotNil(t, col)
 			conds = ranger.ExtractAccessConditionsForColumn(conds, col)
 			require.Equal(t, tt.accessConds, fmt.Sprintf("%s", conds))
-			result, err := ranger.BuildColumnRange(conds, sctx, col.RetType, tt.length)
+			result, _, _, err := ranger.BuildColumnRange(conds, sctx, col.RetType, tt.length, 0)
 			require.NoError(t, err)
 			got := fmt.Sprintf("%v", result)
 			require.Equal(t, tt.resultStr, got)
@@ -840,8 +838,7 @@ func TestColumnRange(t *testing.T) {
 }
 
 func TestIndexRangeEliminatedProjection(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
@@ -864,8 +861,7 @@ func TestIndexRangeEliminatedProjection(t *testing.T) {
 }
 
 func TestCompIndexInExprCorrCol(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
@@ -879,7 +875,7 @@ func TestCompIndexInExprCorrCol(t *testing.T) {
 		SQL    string
 		Result []string
 	}
-	rangerSuiteData.GetTestCases(t, &input, &output)
+	rangerSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -890,8 +886,7 @@ func TestCompIndexInExprCorrCol(t *testing.T) {
 }
 
 func TestIndexStringIsTrueRange(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
@@ -906,7 +901,7 @@ func TestIndexStringIsTrueRange(t *testing.T) {
 		SQL    string
 		Result []string
 	}
-	rangerSuiteData.GetTestCases(t, &input, &output)
+	rangerSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -917,8 +912,7 @@ func TestIndexStringIsTrueRange(t *testing.T) {
 }
 
 func TestCompIndexDNFMatch(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
@@ -933,7 +927,7 @@ func TestCompIndexDNFMatch(t *testing.T) {
 		Plan   []string
 		Result []string
 	}
-	rangerSuiteData.GetTestCases(t, &input, &output)
+	rangerSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -946,8 +940,7 @@ func TestCompIndexDNFMatch(t *testing.T) {
 }
 
 func TestCompIndexMultiColDNF1(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
@@ -963,7 +956,7 @@ func TestCompIndexMultiColDNF1(t *testing.T) {
 		Plan   []string
 		Result []string
 	}
-	rangerSuiteData.GetTestCases(t, &input, &output)
+	rangerSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -976,8 +969,7 @@ func TestCompIndexMultiColDNF1(t *testing.T) {
 }
 
 func TestCompIndexMultiColDNF2(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
@@ -993,7 +985,7 @@ func TestCompIndexMultiColDNF2(t *testing.T) {
 		Plan   []string
 		Result []string
 	}
-	rangerSuiteData.GetTestCases(t, &input, &output)
+	rangerSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -1006,8 +998,7 @@ func TestCompIndexMultiColDNF2(t *testing.T) {
 }
 
 func TestPrefixIndexMultiColDNF(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test;")
@@ -1021,7 +1012,7 @@ func TestPrefixIndexMultiColDNF(t *testing.T) {
 		Plan   []string
 		Result []string
 	}
-	rangerSuiteData.GetTestCases(t, &input, &output)
+	rangerSuiteData.LoadTestCases(t, &input, &output)
 	inputLen := len(input)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
@@ -1038,8 +1029,7 @@ func TestPrefixIndexMultiColDNF(t *testing.T) {
 }
 
 func TestIndexRangeForBit(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test;")
@@ -1060,7 +1050,7 @@ func TestIndexRangeForBit(t *testing.T) {
 		Plan   []string
 		Result []string
 	}
-	rangerSuiteData.GetTestCases(t, &input, &output)
+	rangerSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -1073,8 +1063,7 @@ func TestIndexRangeForBit(t *testing.T) {
 }
 
 func TestIndexRangeForYear(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	testKit := testkit.NewTestKit(t, store)
 
@@ -1232,8 +1221,7 @@ func TestIndexRangeForYear(t *testing.T) {
 
 // For https://github.com/pingcap/tidb/issues/22032
 func TestPrefixIndexRangeScan(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	testKit := testkit.NewTestKit(t, store)
 
@@ -1300,8 +1288,7 @@ func TestPrefixIndexRangeScan(t *testing.T) {
 }
 
 func TestIndexRangeForDecimal(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test;")
@@ -1317,7 +1304,7 @@ func TestIndexRangeForDecimal(t *testing.T) {
 		Plan   []string
 		Result []string
 	}
-	rangerSuiteData.GetTestCases(t, &input, &output)
+	rangerSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -1330,8 +1317,7 @@ func TestIndexRangeForDecimal(t *testing.T) {
 }
 
 func TestPrefixIndexAppendPointRanges(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("USE test")
@@ -1351,7 +1337,7 @@ func TestPrefixIndexAppendPointRanges(t *testing.T) {
 		Plan   []string
 		Result []string
 	}
-	rangerSuiteData.GetTestCases(t, &input, &output)
+	rangerSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -1364,8 +1350,7 @@ func TestPrefixIndexAppendPointRanges(t *testing.T) {
 }
 
 func TestIndexRange(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
@@ -1712,8 +1697,7 @@ create table t(
 }
 
 func TestTableShardIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	testKit := testkit.NewTestKit(t, store)
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Experimental.AllowsExpressionIndex = true
@@ -1988,9 +1972,7 @@ func TestTableShardIndex(t *testing.T) {
 }
 
 func TestShardIndexFuncSuites(t *testing.T) {
-
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	testKit := testkit.NewTestKit(t, store)
 	sctx := testKit.Session().(sessionctx.Context)
 
@@ -2115,4 +2097,105 @@ func TestShardIndexFuncSuites(t *testing.T) {
 		newConds, _ := ranger.AddExpr4EqAndInCondition(sctx, tt.inputConds, shardIndexCols)
 		require.Equal(t, fmt.Sprintf("%s", newConds), tt.outputConds)
 	}
+}
+
+func getSelectionFromQuery(t *testing.T, sctx sessionctx.Context, sql string) *plannercore.LogicalSelection {
+	ctx := context.Background()
+	stmts, err := session.Parse(sctx, sql)
+	require.NoError(t, err)
+	require.Len(t, stmts, 1)
+	ret := &plannercore.PreprocessorReturn{}
+	err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
+	require.NoError(t, err)
+	p, _, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
+	require.NoError(t, err)
+	selection, isSelection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
+	require.True(t, isSelection)
+	return selection
+}
+
+func checkRangeFallbackAndReset(t *testing.T, sctx sessionctx.Context, expectedRangeFallback bool) {
+	require.Equal(t, expectedRangeFallback, sctx.GetSessionVars().StmtCtx.RangeFallback)
+	sctx.GetSessionVars().StmtCtx.RangeFallback = false
+}
+
+func TestBuildTableRangeFallback(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int primary key, b int)")
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	sctx := tk.Session().(sessionctx.Context)
+	sql := "select * from t where a in (10,20,30,40,50)"
+	selection := getSelectionFromQuery(t, sctx, sql)
+	conds := selection.Conditions
+	require.Equal(t, 1, len(conds))
+	col := expression.ColInfo2Col(selection.Schema().Columns, tblInfo.Columns[0])
+	var filters []expression.Expression
+	conds, filters = ranger.DetachCondsForColumn(sctx, conds, col)
+	require.Equal(t, 1, len(conds))
+	require.Equal(t, 0, len(filters))
+	ranges, access, remained, err := ranger.BuildTableRange(conds, sctx, col.RetType, 0)
+	require.NoError(t, err)
+	require.Equal(t, "[[10,10] [20,20] [30,30] [40,40] [50,50]]", fmt.Sprintf("%v", ranges))
+	require.Equal(t, "[in(test.t.a, 10, 20, 30, 40, 50)]", fmt.Sprintf("%v", access))
+	require.Equal(t, "[]", fmt.Sprintf("%v", remained))
+	checkRangeFallbackAndReset(t, sctx, false)
+	quota := ranges.MemUsage() - 1
+	ranges, access, remained, err = ranger.BuildTableRange(conds, sctx, col.RetType, quota)
+	require.NoError(t, err)
+	require.Equal(t, "[[-inf,+inf]]", fmt.Sprintf("%v", ranges))
+	require.Equal(t, "[]", fmt.Sprintf("%v", access))
+	require.Equal(t, "[in(test.t.a, 10, 20, 30, 40, 50)]", fmt.Sprintf("%v", remained))
+	checkRangeFallbackAndReset(t, sctx, true)
+}
+
+func TestBuildColumnRangeFallback(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a varchar(20), b int not null)")
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	sctx := tk.Session().(sessionctx.Context)
+	sql := "select * from t where a in ('aaa','bbb','ccc','ddd','eee')"
+	selection := getSelectionFromQuery(t, sctx, sql)
+	conds := selection.Conditions
+	require.Equal(t, 1, len(conds))
+	cola := expression.ColInfo2Col(selection.Schema().Columns, tblInfo.Columns[0])
+	var filters []expression.Expression
+	conds, filters = ranger.DetachCondsForColumn(sctx, conds, cola)
+	require.Equal(t, 1, len(conds))
+	require.Equal(t, 0, len(filters))
+	ranges, access, remained, err := ranger.BuildColumnRange(conds, sctx, cola.RetType, types.UnspecifiedLength, 0)
+	require.NoError(t, err)
+	require.Equal(t, "[[\"aaa\",\"aaa\"] [\"bbb\",\"bbb\"] [\"ccc\",\"ccc\"] [\"ddd\",\"ddd\"] [\"eee\",\"eee\"]]", fmt.Sprintf("%v", ranges))
+	require.Equal(t, "[in(test.t.a, aaa, bbb, ccc, ddd, eee)]", fmt.Sprintf("%v", access))
+	require.Equal(t, "[]", fmt.Sprintf("%v", remained))
+	checkRangeFallbackAndReset(t, sctx, false)
+	quota := ranges.MemUsage() - 1
+	ranges, access, remained, err = ranger.BuildColumnRange(conds, sctx, cola.RetType, types.UnspecifiedLength, quota)
+	require.NoError(t, err)
+	require.Equal(t, "[[NULL,+inf]]", fmt.Sprintf("%v", ranges))
+	require.Equal(t, "[]", fmt.Sprintf("%v", access))
+	require.Equal(t, "[in(test.t.a, aaa, bbb, ccc, ddd, eee)]", fmt.Sprintf("%v", remained))
+	checkRangeFallbackAndReset(t, sctx, true)
+	sql = "select * from t where b in (10,20,30)"
+	selection = getSelectionFromQuery(t, sctx, sql)
+	conds = selection.Conditions
+	require.Equal(t, 1, len(conds))
+	colb := expression.ColInfo2Col(selection.Schema().Columns, tblInfo.Columns[1])
+	conds, filters = ranger.DetachCondsForColumn(sctx, conds, colb)
+	require.Equal(t, 1, len(conds))
+	require.Equal(t, 0, len(filters))
+	ranges, access, remained, err = ranger.BuildColumnRange(conds, sctx, colb.RetType, types.UnspecifiedLength, 1)
+	require.NoError(t, err)
+	require.Equal(t, "[[-inf,+inf]]", fmt.Sprintf("%v", ranges))
+	require.Equal(t, "[]", fmt.Sprintf("%v", access))
+	require.Equal(t, "[in(test.t.b, 10, 20, 30)]", fmt.Sprintf("%v", remained))
 }

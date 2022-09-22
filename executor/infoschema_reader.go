@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -39,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -55,7 +53,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
-	binaryJson "github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
@@ -74,6 +71,7 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 type memtableRetriever struct {
@@ -100,7 +98,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 	if !e.initialized {
 		is := sctx.GetInfoSchema().(infoschema.InfoSchema)
 		dbs := is.AllSchemas()
-		sort.Sort(infoschema.SchemasSorter(dbs))
+		slices.SortFunc(dbs, model.LessDBInfo)
 		var err error
 		switch e.table.Name.O {
 		case infoschema.TableSchemata:
@@ -150,7 +148,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.TableConstraints:
 			e.setDataFromTableConstraints(sctx, dbs)
 		case infoschema.TableSessionVar:
-			err = e.setDataFromSessionVar(sctx)
+			e.rows, err = infoschema.GetDataFromSessionVariables(sctx)
 		case infoschema.TableTiDBServersInfo:
 			err = e.setDataForServersInfo(sctx)
 		case infoschema.TableTiFlashReplica:
@@ -172,6 +170,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataForTrxSummary(sctx)
 		case infoschema.ClusterTableTrxSummary:
 			err = e.setDataForClusterTrxSummary(sctx)
+		case infoschema.TableVariablesInfo:
+			err = e.setDataForVariablesInfo(sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -194,9 +194,17 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 	return adjustColumns(ret, e.columns, e.table), nil
 }
 
-func getRowCountAllTable(ctx context.Context, sctx sessionctx.Context) (map[int64]uint64, error) {
+func getRowCountTables(ctx context.Context, sctx sessionctx.Context, tableIDs ...int64) (map[int64]uint64, error) {
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
-	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "select table_id, count from mysql.stats_meta")
+	var rows []chunk.Row
+	var err error
+	if len(tableIDs) == 0 {
+		rows, _, err = exec.ExecRestrictedSQL(ctx, nil, "select table_id, count from mysql.stats_meta")
+	} else {
+		inTblIDs := buildInTableIDsString(tableIDs)
+		sql := "select table_id, count from mysql.stats_meta where " + inTblIDs
+		rows, _, err = exec.ExecRestrictedSQL(ctx, nil, sql)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -210,14 +218,36 @@ func getRowCountAllTable(ctx context.Context, sctx sessionctx.Context) (map[int6
 	return rowCountMap, nil
 }
 
+func buildInTableIDsString(tableIDs []int64) string {
+	var whereBuilder strings.Builder
+	whereBuilder.WriteString("table_id in (")
+	for i, id := range tableIDs {
+		whereBuilder.WriteString(strconv.FormatInt(id, 10))
+		if i != len(tableIDs)-1 {
+			whereBuilder.WriteString(",")
+		}
+	}
+	whereBuilder.WriteString(")")
+	return whereBuilder.String()
+}
+
 type tableHistID struct {
 	tableID int64
 	histID  int64
 }
 
-func getColLengthAllTables(ctx context.Context, sctx sessionctx.Context) (map[tableHistID]uint64, error) {
+func getColLengthTables(ctx context.Context, sctx sessionctx.Context, tableIDs ...int64) (map[tableHistID]uint64, error) {
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
-	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "select table_id, hist_id, tot_col_size from mysql.stats_histograms where is_index = 0")
+	var rows []chunk.Row
+	var err error
+	if len(tableIDs) == 0 {
+		sql := "select table_id, hist_id, tot_col_size from mysql.stats_histograms where is_index = 0"
+		rows, _, err = exec.ExecRestrictedSQL(ctx, nil, sql)
+	} else {
+		inTblIDs := buildInTableIDsString(tableIDs)
+		sql := "select table_id, hist_id, tot_col_size from mysql.stats_histograms where is_index = 0 and " + inTblIDs
+		rows, _, err = exec.ExecRestrictedSQL(ctx, nil, sql)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -235,7 +265,7 @@ func getColLengthAllTables(ctx context.Context, sctx sessionctx.Context) (map[ta
 	return colLengthMap, nil
 }
 
-func getDataAndIndexLength(info *model.TableInfo, physicalID int64, rowCount uint64, columnLengthMap map[tableHistID]uint64) (uint64, uint64) {
+func getDataAndIndexLength(info *model.TableInfo, physicalID int64, rowCount uint64) (uint64, uint64) {
 	columnLength := make(map[string]uint64, len(info.Columns))
 	for _, col := range info.Columns {
 		if col.State != model.StatePublic {
@@ -245,7 +275,7 @@ func getDataAndIndexLength(info *model.TableInfo, physicalID int64, rowCount uin
 		if length != types.VarStorageLen {
 			columnLength[col.Name.L] = rowCount * uint64(length)
 		} else {
-			length := columnLengthMap[tableHistID{tableID: physicalID, histID: col.ID}]
+			length := tableStatsCache.GetColLength(tableHistID{tableID: physicalID, histID: col.ID})
 			columnLength[col.Name.L] = length
 		}
 	}
@@ -273,6 +303,7 @@ type statsCache struct {
 	modifyTime time.Time
 	tableRows  map[int64]uint64
 	colLength  map[tableHistID]uint64
+	dirtyIDs   []int64
 }
 
 var tableStatsCache = &statsCache{}
@@ -280,34 +311,61 @@ var tableStatsCache = &statsCache{}
 // TableStatsCacheExpiry is the expiry time for table stats cache.
 var TableStatsCacheExpiry = 3 * time.Second
 
-func (c *statsCache) get(ctx context.Context, sctx sessionctx.Context) (map[int64]uint64, map[tableHistID]uint64, error) {
-	c.mu.RLock()
-	if time.Since(c.modifyTime) < TableStatsCacheExpiry {
-		tableRows, colLength := c.tableRows, c.colLength
-		c.mu.RUnlock()
-		return tableRows, colLength, nil
-	}
-	c.mu.RUnlock()
+func invalidInfoSchemaStatCache(tblID int64) {
+	tableStatsCache.mu.Lock()
+	defer tableStatsCache.mu.Unlock()
+	tableStatsCache.dirtyIDs = append(tableStatsCache.dirtyIDs, tblID)
+}
 
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
+func (c *statsCache) GetTableRows(id int64) uint64 {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.tableRows[id]
+}
+
+func (c *statsCache) GetColLength(id tableHistID) uint64 {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.colLength[id]
+}
+
+func (c *statsCache) update(ctx context.Context, sctx sessionctx.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
 	if time.Since(c.modifyTime) < TableStatsCacheExpiry {
-		return c.tableRows, c.colLength, nil
+		if len(c.dirtyIDs) > 0 {
+			tableRows, err := getRowCountTables(ctx, sctx, c.dirtyIDs...)
+			if err != nil {
+				return err
+			}
+			for id, tr := range tableRows {
+				c.tableRows[id] = tr
+			}
+			colLength, err := getColLengthTables(ctx, sctx, c.dirtyIDs...)
+			if err != nil {
+				return err
+			}
+			for id, cl := range colLength {
+				c.colLength[id] = cl
+			}
+			c.dirtyIDs = nil
+		}
+		return nil
 	}
-	tableRows, err := getRowCountAllTable(ctx, sctx)
+	tableRows, err := getRowCountTables(ctx, sctx)
 	if err != nil {
-		return nil, nil, err
+		return err
 	}
-	colLength, err := getColLengthAllTables(ctx, sctx)
+	colLength, err := getColLengthTables(ctx, sctx)
 	if err != nil {
-		return nil, nil, err
+		return err
 	}
-
 	c.tableRows = tableRows
 	c.colLength = colLength
 	c.modifyTime = time.Now()
-	return tableRows, colLength, nil
+	c.dirtyIDs = nil
+	return nil
 }
 
 func getAutoIncrementID(ctx sessionctx.Context, schema *model.DBInfo, tblInfo *model.TableInfo) (int64, error) {
@@ -337,12 +395,68 @@ func hasPriv(ctx sessionctx.Context, priv mysql.PrivilegeType) bool {
 	return pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, "", "", "", priv)
 }
 
+func scopeStr(sv *variable.SysVar) string {
+	var scopes []string
+	if sv.HasNoneScope() {
+		return "NONE"
+	}
+	if sv.HasSessionScope() {
+		scopes = append(scopes, "SESSION")
+	}
+	if sv.HasGlobalScope() {
+		scopes = append(scopes, "GLOBAL")
+	}
+	if sv.HasInstanceScope() {
+		scopes = append(scopes, "INSTANCE")
+	}
+	return strings.Join(scopes, ",")
+}
+
+func (e *memtableRetriever) setDataForVariablesInfo(ctx sessionctx.Context) error {
+	sysVars := variable.GetSysVars()
+	rows := make([][]types.Datum, 0, len(sysVars))
+	for _, sv := range sysVars {
+		if infoschema.SysVarHiddenForSem(ctx, sv.Name) {
+			continue
+		}
+		currentVal, err := ctx.GetSessionVars().GetSessionOrGlobalSystemVar(sv.Name)
+		if err != nil {
+			currentVal = ""
+		}
+		isNoop := "NO"
+		if sv.IsNoop {
+			isNoop = "YES"
+		}
+		row := types.MakeDatums(
+			sv.Name,      // VARIABLE_NAME
+			scopeStr(sv), // VARIABLE_SCOPE
+			sv.Value,     // DEFAULT_VALUE
+			currentVal,   // CURRENT_VALUE
+			sv.MinValue,  // MIN_VALUE
+			sv.MaxValue,  // MAX_VALUE
+			nil,          // POSSIBLE_VALUES
+			isNoop,       // IS_NOOP
+		)
+		// min and max value is only supported for numeric types
+		if !(sv.Type == variable.TypeUnsigned || sv.Type == variable.TypeInt || sv.Type == variable.TypeFloat) {
+			row[4].SetNull()
+			row[5].SetNull()
+		}
+		if sv.Type == variable.TypeEnum {
+			possibleValues := strings.Join(sv.PossibleValues, ",")
+			row[6].SetString(possibleValues, mysql.DefaultCollationName)
+		}
+		rows = append(rows, row)
+	}
+	e.rows = rows
+	return nil
+}
+
 func (e *memtableRetriever) setDataFromSchemata(ctx sessionctx.Context, schemas []*model.DBInfo) {
 	checker := privilege.GetPrivilegeManager(ctx)
 	rows := make([][]types.Datum, 0, len(schemas))
 
 	for _, schema := range schemas {
-
 		charset := mysql.DefaultCharset
 		collation := mysql.DefaultCollationName
 
@@ -484,11 +598,11 @@ func (e *memtableRetriever) setDataFromReferConst(ctx context.Context, sctx sess
 			}
 			for _, fk := range table.ForeignKeys {
 				updateRule, deleteRule := "NO ACTION", "NO ACTION"
-				if ast.ReferOptionType(fk.OnUpdate) != 0 {
-					updateRule = ast.ReferOptionType(fk.OnUpdate).String()
+				if model.ReferOptionType(fk.OnUpdate) != 0 {
+					updateRule = model.ReferOptionType(fk.OnUpdate).String()
 				}
-				if ast.ReferOptionType(fk.OnDelete) != 0 {
-					deleteRule = ast.ReferOptionType(fk.OnDelete).String()
+				if model.ReferOptionType(fk.OnDelete) != 0 {
+					deleteRule = model.ReferOptionType(fk.OnDelete).String()
 				}
 				record := types.MakeDatums(
 					infoschema.CatalogVal, // CONSTRAINT_CATALOG
@@ -512,7 +626,7 @@ func (e *memtableRetriever) setDataFromReferConst(ctx context.Context, sctx sess
 }
 
 func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionctx.Context, schemas []*model.DBInfo) error {
-	tableRowsMap, colLengthMap, err := tableStatsCache.get(ctx, sctx)
+	err := tableStatsCache.update(ctx, sctx)
 	if err != nil {
 		return err
 	}
@@ -556,12 +670,13 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 
 				var rowCount, dataLength, indexLength uint64
 				if table.GetPartitionInfo() == nil {
-					rowCount = tableRowsMap[table.ID]
-					dataLength, indexLength = getDataAndIndexLength(table, table.ID, rowCount, colLengthMap)
+					rowCount = tableStatsCache.GetTableRows(table.ID)
+					dataLength, indexLength = getDataAndIndexLength(table, table.ID, rowCount)
 				} else {
 					for _, pi := range table.GetPartitionInfo().Definitions {
-						rowCount += tableRowsMap[pi.ID]
-						parDataLen, parIndexLen := getDataAndIndexLength(table, pi.ID, tableRowsMap[pi.ID], colLengthMap)
+						piRowCnt := tableStatsCache.GetTableRows(pi.ID)
+						rowCount += piRowCnt
+						parDataLen, parIndexLen := getDataAndIndexLength(table, pi.ID, piRowCnt)
 						dataLength += parDataLen
 						indexLength += parIndexLen
 					}
@@ -738,13 +853,14 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx 
 			}
 		}
 	}
+	i := 1
 ForColumnsTag:
-	for i, col := range tbl.Columns {
+	for _, col := range tbl.Columns {
 		if col.Hidden {
 			continue
 		}
 
-		ft := &col.FieldType
+		ft := &(col.FieldType)
 		if tbl.IsView() {
 			e.viewMu.RLock()
 			if e.viewSchemaMap[tbl.ID] != nil {
@@ -836,10 +952,19 @@ ForColumnsTag:
 		var columnDefault interface{}
 		if columnDesc.DefaultValue != nil {
 			columnDefault = fmt.Sprintf("%v", columnDesc.DefaultValue)
-			if ft.GetType() == mysql.TypeBit {
-				defaultStr := fmt.Sprintf("%v", columnDesc.DefaultValue)
-				defaultValBinaryLiteral := types.BinaryLiteral(defaultStr)
-				columnDefault = defaultValBinaryLiteral.ToBitLiteralString(true)
+			switch col.GetDefaultValue() {
+			case "CURRENT_TIMESTAMP":
+			default:
+				if ft.GetType() == mysql.TypeTimestamp && columnDefault != types.ZeroDatetimeStr {
+					timeValue, err := table.GetColDefaultValue(sctx, col)
+					if err == nil {
+						columnDefault = timeValue.GetMysqlTime().String()
+					}
+				}
+				if ft.GetType() == mysql.TypeBit && !col.DefaultIsExpr {
+					defaultValBinaryLiteral := types.BinaryLiteral(columnDefault.(string))
+					columnDefault = defaultValBinaryLiteral.ToBitLiteralString(true)
+				}
 			}
 		}
 		record := types.MakeDatums(
@@ -847,7 +972,7 @@ ForColumnsTag:
 			schema.Name.O,         // TABLE_SCHEMA
 			tbl.Name.O,            // TABLE_NAME
 			col.Name.O,            // COLUMN_NAME
-			i+1,                   // ORIGINAL_POSITION
+			i,                     // ORDINAL_POSITION
 			columnDefault,         // COLUMN_DEFAULT
 			columnDesc.Null,       // IS_NULLABLE
 			types.TypeToStr(ft.GetType(), ft.GetCharset()), // DATA_TYPE
@@ -866,6 +991,7 @@ ForColumnsTag:
 			col.GeneratedExprString, // GENERATION_EXPRESSION
 		)
 		e.rows = append(e.rows, record)
+		i++
 	}
 }
 
@@ -878,7 +1004,7 @@ func calcCharOctLength(lenInChar int, cs string) int {
 }
 
 func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sessionctx.Context, schemas []*model.DBInfo) error {
-	tableRowsMap, colLengthMap, err := tableStatsCache.get(ctx, sctx)
+	err := tableStatsCache.update(ctx, sctx)
 	if err != nil {
 		return err
 	}
@@ -894,8 +1020,8 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 
 			var rowCount, dataLength, indexLength uint64
 			if table.GetPartitionInfo() == nil {
-				rowCount = tableRowsMap[table.ID]
-				dataLength, indexLength = getDataAndIndexLength(table, table.ID, rowCount, colLengthMap)
+				rowCount = tableStatsCache.GetTableRows(table.ID)
+				dataLength, indexLength = getDataAndIndexLength(table, table.ID, rowCount)
 				avgRowLength := uint64(0)
 				if rowCount != 0 {
 					avgRowLength = dataLength / rowCount
@@ -932,8 +1058,8 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 				rows = append(rows, record)
 			} else {
 				for i, pi := range table.GetPartitionInfo().Definitions {
-					rowCount = tableRowsMap[pi.ID]
-					dataLength, indexLength = getDataAndIndexLength(table, pi.ID, tableRowsMap[pi.ID], colLengthMap)
+					rowCount = tableStatsCache.GetTableRows(pi.ID)
+					dataLength, indexLength = getDataAndIndexLength(table, pi.ID, rowCount)
 
 					avgRowLength := uint64(0)
 					if rowCount != 0 {
@@ -1170,7 +1296,7 @@ func (e *memtableRetriever) dataForTiKVStoreStatus(ctx sessionctx.Context) (err 
 		if err != nil {
 			return err
 		}
-		bj := binaryJson.BinaryJSON{}
+		bj := types.BinaryJSON{}
 		if err = bj.UnmarshalJSON(data); err != nil {
 			return err
 		}
@@ -1215,6 +1341,7 @@ type DDLJobsReaderExec struct {
 
 	cacheJobs []*model.Job
 	is        infoschema.InfoSchema
+	sess      sessionctx.Context
 }
 
 // Open implements the Executor Next interface.
@@ -1222,13 +1349,23 @@ func (e *DDLJobsReaderExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
-	txn, err := e.ctx.Txn(true)
+	e.DDLJobRetriever.is = e.is
+	e.activeRoles = e.ctx.GetSessionVars().ActiveRoles
+	sess, err := e.getSysSession()
 	if err != nil {
 		return err
 	}
-	e.DDLJobRetriever.is = e.is
-	e.activeRoles = e.ctx.GetSessionVars().ActiveRoles
-	err = e.DDLJobRetriever.initial(txn)
+	e.sess = sess
+	err = sessiontxn.NewTxn(context.Background(), sess)
+	if err != nil {
+		return err
+	}
+	txn, err := sess.Txn(true)
+	if err != nil {
+		return err
+	}
+	sess.GetSessionVars().SetInTxn(true)
+	err = e.DDLJobRetriever.initial(txn, sess)
 	if err != nil {
 		return err
 	}
@@ -1247,6 +1384,11 @@ func (e *DDLJobsReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		for i := e.cursor; i < e.cursor+num; i++ {
 			e.appendJobToChunk(req, e.runningJobs[i], checker)
 			req.AppendString(12, e.runningJobs[i].Query)
+			if e.runningJobs[i].MultiSchemaInfo != nil {
+				for range e.runningJobs[i].MultiSchemaInfo.SubJobs {
+					req.AppendString(12, e.runningJobs[i].Query)
+				}
+			}
 		}
 		e.cursor += num
 		count += num
@@ -1262,10 +1404,21 @@ func (e *DDLJobsReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		for _, job := range e.cacheJobs {
 			e.appendJobToChunk(req, job, checker)
 			req.AppendString(12, job.Query)
+			if job.MultiSchemaInfo != nil {
+				for range job.MultiSchemaInfo.SubJobs {
+					req.AppendString(12, job.Query)
+				}
+			}
 		}
 		e.cursor += len(e.cacheJobs)
 	}
 	return nil
+}
+
+// Close implements the Executor Close interface.
+func (e *DDLJobsReaderExec) Close() error {
+	e.releaseSysSession(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), e.sess)
+	return e.baseExecutor.Close()
 }
 
 func (e *memtableRetriever) setDataFromEngines() {
@@ -1421,7 +1574,7 @@ func (e *memtableRetriever) setDataForMetricTables(ctx sessionctx.Context) {
 	for name := range infoschema.MetricTableMap {
 		tables = append(tables, name)
 	}
-	sort.Strings(tables)
+	slices.Sort(tables)
 	rows := make([][]types.Datum, 0, len(tables))
 	for _, name := range tables {
 		schema := infoschema.MetricTableMap[name]
@@ -1535,11 +1688,12 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx sessionctx.Context) (
 	}
 	requestByTableRange := false
 	allRegionsInfo := helper.NewRegionsInfo()
+	is := ctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 	if e.extractor != nil {
 		extractor, ok := e.extractor.(*plannercore.TiKVRegionStatusExtractor)
 		if ok && len(extractor.GetTablesID()) > 0 {
 			for _, tableID := range extractor.GetTablesID() {
-				regionsInfo, err := e.getRegionsInfoForSingleTable(tikvHelper, tableID)
+				regionsInfo, err := e.getRegionsInfoForTable(tikvHelper, is, tableID)
 				if err != nil {
 					return err
 				}
@@ -1554,8 +1708,7 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx sessionctx.Context) (
 			return err
 		}
 	}
-	allSchemas := ctx.GetInfoSchema().(infoschema.InfoSchema).AllSchemas()
-	tableInfos := tikvHelper.GetRegionsTableInfo(allRegionsInfo, allSchemas)
+	tableInfos := tikvHelper.GetRegionsTableInfo(allRegionsInfo, is.AllSchemas())
 	for i := range allRegionsInfo.Regions {
 		tableList := tableInfos[allRegionsInfo.Regions[i].ID]
 		if len(tableList) == 0 {
@@ -1566,6 +1719,32 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx sessionctx.Context) (
 		}
 	}
 	return nil
+}
+
+func (e *memtableRetriever) getRegionsInfoForTable(h *helper.Helper, is infoschema.InfoSchema, tableID int64) (*helper.RegionsInfo, error) {
+	tbl, _ := is.TableByID(tableID)
+	if tbl == nil {
+		return nil, infoschema.ErrTableExists.GenWithStackByArgs(tableID)
+	}
+
+	pt := tbl.Meta().GetPartitionInfo()
+	if pt == nil {
+		regionsInfo, err := e.getRegionsInfoForSingleTable(h, tableID)
+		if err != nil {
+			return nil, err
+		}
+		return regionsInfo, nil
+	}
+
+	allRegionsInfo := helper.NewRegionsInfo()
+	for _, def := range pt.Definitions {
+		regionsInfo, err := e.getRegionsInfoForSingleTable(h, def.ID)
+		if err != nil {
+			return nil, err
+		}
+		allRegionsInfo = allRegionsInfo.Merge(regionsInfo)
+	}
+	return allRegionsInfo, nil
 }
 
 func (e *memtableRetriever) getRegionsInfoForSingleTable(helper *helper.Helper, tableID int64) (*helper.RegionsInfo, error) {
@@ -1800,7 +1979,8 @@ func (e *tableStorageStatsRetriever) initialize(sctx sessionctx.Context) error {
 
 	// If not specify the table_schema, return an error to avoid traverse all schemas and their tables.
 	if len(schemas) == 0 {
-		return errors.Errorf("Please specify the 'table_schema'")
+		return errors.Errorf("Please add where clause to filter the column TABLE_SCHEMA. " +
+			"For example, where TABLE_SCHEMA = 'xxx' or where TABLE_SCHEMA in ('xxx', 'yyy')")
 	}
 
 	// Filter the sys or memory schema.
@@ -1883,24 +2063,6 @@ func (e *tableStorageStatsRetriever) setDataForTableStorageStats(ctx sessionctx.
 		e.curTable++
 	}
 	return rows, nil
-}
-
-func (e *memtableRetriever) setDataFromSessionVar(ctx sessionctx.Context) error {
-	var err error
-	sessionVars := ctx.GetSessionVars()
-	sysVars := variable.GetSysVars()
-	rows := make([][]types.Datum, 0, len(sysVars))
-	for _, v := range sysVars {
-		var value string
-		value, err = variable.GetSessionOrGlobalSystemVar(sessionVars, v.Name)
-		if err != nil {
-			return err
-		}
-		row := types.MakeDatums(v.Name, value)
-		rows = append(rows, row)
-	}
-	e.rows = rows
-	return nil
 }
 
 // dataForAnalyzeStatusHelper is a helper function which can be used in show_stats.go
@@ -2721,7 +2883,9 @@ func (e *hugeMemTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 	if !e.initialized {
 		is := sctx.GetInfoSchema().(infoschema.InfoSchema)
 		dbs := is.AllSchemas()
-		sort.Sort(infoschema.SchemasSorter(dbs))
+		slices.SortFunc(dbs, func(i, j *model.DBInfo) bool {
+			return i.Name.L < j.Name.L
+		})
 		e.dbs = dbs
 		e.initialized = true
 		e.rows = make([][]types.Datum, 0, 1024)
@@ -3123,18 +3287,18 @@ func checkRule(rule *label.Rule) (dbName, tableName string, partitionName string
 
 func decodeTableIDFromRule(rule *label.Rule) (tableID int64, err error) {
 	if len(rule.Data) == 0 {
-		err = errors.New(fmt.Sprintf("there is no data in rule %s", rule.ID))
+		err = fmt.Errorf("there is no data in rule %s", rule.ID)
 		return
 	}
 	data := rule.Data[0]
 	dataMap, ok := data.(map[string]interface{})
 	if !ok {
-		err = errors.New(fmt.Sprintf("get the label rules %s failed", rule.ID))
+		err = fmt.Errorf("get the label rules %s failed", rule.ID)
 		return
 	}
 	key, err := hex.DecodeString(fmt.Sprintf("%s", dataMap["start_key"]))
 	if err != nil {
-		err = errors.New(fmt.Sprintf("decode key from start_key %s in rule %s failed", dataMap["start_key"], rule.ID))
+		err = fmt.Errorf("decode key from start_key %s in rule %s failed", dataMap["start_key"], rule.ID)
 		return
 	}
 	_, bs, err := codec.DecodeBytes(key, nil)
@@ -3143,7 +3307,7 @@ func decodeTableIDFromRule(rule *label.Rule) (tableID int64, err error) {
 	}
 	tableID = tablecodec.DecodeTableID(key)
 	if tableID == 0 {
-		err = errors.New(fmt.Sprintf("decode tableID from key %s in rule %s failed", key, rule.ID))
+		err = fmt.Errorf("decode tableID from key %s in rule %s failed", key, rule.ID)
 		return
 	}
 	return

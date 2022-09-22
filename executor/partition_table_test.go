@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
@@ -32,9 +33,40 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestSetPartitionPruneMode(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tkInit := testkit.NewTestKit(t, store)
+	tkInit.MustExec(`set @@session.tidb_partition_prune_mode = DEFAULT`)
+	tkInit.MustQuery("show warnings").Check(testkit.Rows())
+	tkInit.MustExec(`set @@global.tidb_partition_prune_mode = DEFAULT`)
+	tkInit.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Please analyze all partition tables again for consistency between partition and global stats"))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustQuery("select @@global.tidb_partition_prune_mode").Check(testkit.Rows("dynamic"))
+	tk.MustQuery("select @@session.tidb_partition_prune_mode").Check(testkit.Rows("dynamic"))
+	tk.MustExec(`set @@session.tidb_partition_prune_mode = "static"`)
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustExec(`set @@global.tidb_partition_prune_mode = "static"`)
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustQuery("select @@session.tidb_partition_prune_mode").Check(testkit.Rows("static"))
+	tk2.MustQuery("show warnings").Check(testkit.Rows())
+	tk2.MustQuery("select @@global.tidb_partition_prune_mode").Check(testkit.Rows("static"))
+	tk2.MustExec(`set @@session.tidb_partition_prune_mode = "dynamic"`)
+	tk2.MustQuery("show warnings").Sort().Check(testkit.Rows(
+		`Warning 1105 Please analyze all partition tables again for consistency between partition and global stats`,
+		`Warning 1105 Please avoid setting partition prune mode to dynamic at session level and set partition prune mode to dynamic at global level`))
+	tk2.MustExec(`set @@global.tidb_partition_prune_mode = "dynamic"`)
+	tk2.MustQuery("show warnings").Check(testkit.Rows(`Warning 1105 Please analyze all partition tables again for consistency between partition and global stats`))
+	tk3 := testkit.NewTestKit(t, store)
+	tk3.MustQuery("select @@global.tidb_partition_prune_mode").Check(testkit.Rows("dynamic"))
+	tk3.MustQuery("select @@session.tidb_partition_prune_mode").Check(testkit.Rows("dynamic"))
+}
+
 func TestFourReader(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -72,8 +104,7 @@ partition p2 values less than (10))`)
 }
 
 func TestPartitionIndexJoin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -105,14 +136,13 @@ func TestPartitionIndexJoin(t *testing.T) {
 		// Build indexLookUp in index join
 		tk.MustQuery("select /*+ INL_JOIN(p) */ * from p, t where p.id = t.id").Sort().Check(testkit.Rows("4 4 4", "9 9 9"))
 		// Build index reader in index join
-		tk.MustQuery("select /*+ INL_JOIN(p) */ p.id from p, t where p.id = t.id").Check(testkit.Rows("4", "9"))
+		tk.MustQuery("select /*+ INL_JOIN(p) */ p.id from p, t where p.id = t.id").Sort().Check(testkit.Rows("4", "9"))
 	}
 }
 
 func TestPartitionUnionScanIndexJoin(t *testing.T) {
 	// For issue https://github.com/pingcap/tidb/issues/19152
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -130,8 +160,7 @@ func TestPartitionUnionScanIndexJoin(t *testing.T) {
 }
 
 func TestPointGetwithRangeAndListPartitionTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -205,8 +234,7 @@ func TestPointGetwithRangeAndListPartitionTable(t *testing.T) {
 }
 
 func TestPartitionReaderUnderApply(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -265,8 +293,7 @@ func TestPartitionReaderUnderApply(t *testing.T) {
 }
 
 func TestImproveCoverage(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -284,8 +311,7 @@ PRIMARY KEY (pk1,pk2)) partition by hash(pk2) partitions 4;`)
 }
 
 func TestPartitionInfoDisable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -331,8 +357,7 @@ func TestPartitionInfoDisable(t *testing.T) {
 }
 
 func TestOrderByandLimit(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -410,9 +435,7 @@ func TestOrderByandLimit(t *testing.T) {
 }
 
 func TestBatchGetandPointGetwithHashPartition(t *testing.T) {
-
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -468,8 +491,7 @@ func TestBatchGetandPointGetwithHashPartition(t *testing.T) {
 }
 
 func TestView(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -540,8 +562,9 @@ func TestView(t *testing.T) {
 }
 
 func TestDirectReadingwithIndexJoin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -653,8 +676,9 @@ func TestDirectReadingwithIndexJoin(t *testing.T) {
 }
 
 func TestDynamicPruningUnderIndexJoin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -713,8 +737,7 @@ func TestDynamicPruningUnderIndexJoin(t *testing.T) {
 }
 
 func TestIssue25527(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -752,8 +775,7 @@ func TestIssue25527(t *testing.T) {
 }
 
 func TestIssue25598(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -779,8 +801,7 @@ func TestIssue25598(t *testing.T) {
 }
 
 func TestBatchGetforRangeandListPartitionTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -882,8 +903,7 @@ func TestBatchGetforRangeandListPartitionTable(t *testing.T) {
 }
 
 func TestGlobalStatsAndSQLBinding(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -960,8 +980,9 @@ func TestGlobalStatsAndSQLBinding(t *testing.T) {
 }
 
 func TestPartitionTableWithDifferentJoin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1212,8 +1233,7 @@ type testData4Expression struct {
 }
 
 func TestDateColWithUnequalExpression(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1247,8 +1267,7 @@ func TestDateColWithUnequalExpression(t *testing.T) {
 }
 
 func TestToDaysColWithExpression(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1282,8 +1301,7 @@ func TestToDaysColWithExpression(t *testing.T) {
 }
 
 func TestWeekdayWithExpression(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1321,8 +1339,7 @@ func TestWeekdayWithExpression(t *testing.T) {
 }
 
 func TestFloorUnixTimestampAndIntColWithExpression(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1356,8 +1373,7 @@ func TestFloorUnixTimestampAndIntColWithExpression(t *testing.T) {
 }
 
 func TestUnixTimestampAndIntColWithExpression(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1391,8 +1407,7 @@ func TestUnixTimestampAndIntColWithExpression(t *testing.T) {
 }
 
 func TestDatetimeColAndIntColWithExpression(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1426,8 +1441,7 @@ func TestDatetimeColAndIntColWithExpression(t *testing.T) {
 }
 
 func TestVarcharColAndIntColWithExpression(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1465,8 +1479,7 @@ func TestVarcharColAndIntColWithExpression(t *testing.T) {
 }
 
 func TestDynamicPruneModeWithExpression(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1757,8 +1770,9 @@ func TestDynamicPruneModeWithExpression(t *testing.T) {
 }
 
 func TestAddDropPartitions(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1791,8 +1805,9 @@ func TestAddDropPartitions(t *testing.T) {
 }
 
 func TestMPPQueryExplainInfo(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1821,8 +1836,9 @@ func TestMPPQueryExplainInfo(t *testing.T) {
 }
 
 func TestPartitionPruningInTransaction(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1846,8 +1862,7 @@ func TestPartitionPruningInTransaction(t *testing.T) {
 }
 
 func TestIssue25253(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1881,8 +1896,7 @@ func TestIssue25253(t *testing.T) {
 }
 
 func TestDML(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1942,8 +1956,7 @@ func TestDML(t *testing.T) {
 }
 
 func TestUnion(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1993,8 +2006,7 @@ func TestUnion(t *testing.T) {
 }
 
 func TestSubqueries(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2059,8 +2071,9 @@ func TestSubqueries(t *testing.T) {
 }
 
 func TestSplitRegion(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2096,8 +2109,10 @@ func TestSplitRegion(t *testing.T) {
 }
 
 func TestParallelApply(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
+
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2132,7 +2147,7 @@ func TestParallelApply(t *testing.T) {
 	// parallel apply + hash partition + IndexReader as its inner child
 	tk.MustQuery(`explain format='brief' select * from touter where touter.a > (select sum(thash.a) from thash use index(a) where thash.a>touter.b)`).Check(testkit.Rows(
 		`Projection 10000.00 root  test_parallel_apply.touter.a, test_parallel_apply.touter.b`,
-		`└─Apply 10000.00 root  CARTESIAN inner join, other cond:gt(cast(test_parallel_apply.touter.a, decimal(20,0) BINARY), Column#7)`,
+		`└─Apply 10000.00 root  CARTESIAN inner join, other cond:gt(cast(test_parallel_apply.touter.a, decimal(10,0) BINARY), Column#7)`,
 		`  ├─TableReader(Build) 10000.00 root  data:TableFullScan`,
 		`  │ └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo`,
 		`  └─StreamAgg(Probe) 1.00 root  funcs:sum(Column#9)->Column#7`,
@@ -2146,7 +2161,7 @@ func TestParallelApply(t *testing.T) {
 	// parallel apply + hash partition + TableReader as its inner child
 	tk.MustQuery(`explain format='brief' select * from touter where touter.a > (select sum(thash.b) from thash ignore index(a) where thash.a>touter.b)`).Check(testkit.Rows(
 		`Projection 10000.00 root  test_parallel_apply.touter.a, test_parallel_apply.touter.b`,
-		`└─Apply 10000.00 root  CARTESIAN inner join, other cond:gt(cast(test_parallel_apply.touter.a, decimal(20,0) BINARY), Column#7)`,
+		`└─Apply 10000.00 root  CARTESIAN inner join, other cond:gt(cast(test_parallel_apply.touter.a, decimal(10,0) BINARY), Column#7)`,
 		`  ├─TableReader(Build) 10000.00 root  data:TableFullScan`,
 		`  │ └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo`,
 		`  └─StreamAgg(Probe) 1.00 root  funcs:sum(Column#9)->Column#7`,
@@ -2160,7 +2175,7 @@ func TestParallelApply(t *testing.T) {
 	// parallel apply + hash partition + IndexLookUp as its inner child
 	tk.MustQuery(`explain format='brief' select * from touter where touter.a > (select sum(tinner.b) from tinner use index(a) where tinner.a>touter.b)`).Check(testkit.Rows(
 		`Projection 10000.00 root  test_parallel_apply.touter.a, test_parallel_apply.touter.b`,
-		`└─Apply 10000.00 root  CARTESIAN inner join, other cond:gt(cast(test_parallel_apply.touter.a, decimal(20,0) BINARY), Column#7)`,
+		`└─Apply 10000.00 root  CARTESIAN inner join, other cond:gt(cast(test_parallel_apply.touter.a, decimal(10,0) BINARY), Column#7)`,
 		`  ├─TableReader(Build) 10000.00 root  data:TableFullScan`,
 		`  │ └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo`,
 		`  └─HashAgg(Probe) 1.00 root  funcs:sum(Column#9)->Column#7`,
@@ -2175,7 +2190,7 @@ func TestParallelApply(t *testing.T) {
 	// parallel apply + range partition + IndexReader as its inner child
 	tk.MustQuery(`explain format='brief' select * from touter where touter.a > (select sum(trange.a) from trange use index(a) where trange.a>touter.b)`).Check(testkit.Rows(
 		`Projection 10000.00 root  test_parallel_apply.touter.a, test_parallel_apply.touter.b`,
-		`└─Apply 10000.00 root  CARTESIAN inner join, other cond:gt(cast(test_parallel_apply.touter.a, decimal(20,0) BINARY), Column#7)`,
+		`└─Apply 10000.00 root  CARTESIAN inner join, other cond:gt(cast(test_parallel_apply.touter.a, decimal(10,0) BINARY), Column#7)`,
 		`  ├─TableReader(Build) 10000.00 root  data:TableFullScan`,
 		`  │ └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo`,
 		`  └─StreamAgg(Probe) 1.00 root  funcs:sum(Column#9)->Column#7`,
@@ -2189,7 +2204,7 @@ func TestParallelApply(t *testing.T) {
 	// parallel apply + range partition + TableReader as its inner child
 	tk.MustQuery(`explain format='brief' select * from touter where touter.a > (select sum(trange.b) from trange ignore index(a) where trange.a>touter.b)`).Check(testkit.Rows(
 		`Projection 10000.00 root  test_parallel_apply.touter.a, test_parallel_apply.touter.b`,
-		`└─Apply 10000.00 root  CARTESIAN inner join, other cond:gt(cast(test_parallel_apply.touter.a, decimal(20,0) BINARY), Column#7)`,
+		`└─Apply 10000.00 root  CARTESIAN inner join, other cond:gt(cast(test_parallel_apply.touter.a, decimal(10,0) BINARY), Column#7)`,
 		`  ├─TableReader(Build) 10000.00 root  data:TableFullScan`,
 		`  │ └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo`,
 		`  └─StreamAgg(Probe) 1.00 root  funcs:sum(Column#9)->Column#7`,
@@ -2203,7 +2218,7 @@ func TestParallelApply(t *testing.T) {
 	// parallel apply + range partition + IndexLookUp as its inner child
 	tk.MustQuery(`explain format='brief' select * from touter where touter.a > (select sum(tinner.b) from tinner use index(a) where tinner.a>touter.b)`).Check(testkit.Rows(
 		`Projection 10000.00 root  test_parallel_apply.touter.a, test_parallel_apply.touter.b`,
-		`└─Apply 10000.00 root  CARTESIAN inner join, other cond:gt(cast(test_parallel_apply.touter.a, decimal(20,0) BINARY), Column#7)`,
+		`└─Apply 10000.00 root  CARTESIAN inner join, other cond:gt(cast(test_parallel_apply.touter.a, decimal(10,0) BINARY), Column#7)`,
 		`  ├─TableReader(Build) 10000.00 root  data:TableFullScan`,
 		`  │ └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo`,
 		`  └─HashAgg(Probe) 1.00 root  funcs:sum(Column#9)->Column#7`,
@@ -2236,8 +2251,7 @@ func TestParallelApply(t *testing.T) {
 }
 
 func TestDirectReadingWithUnionScan(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2311,8 +2325,7 @@ func TestDirectReadingWithUnionScan(t *testing.T) {
 }
 
 func TestIssue25030(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2340,8 +2353,7 @@ func TestIssue25030(t *testing.T) {
 }
 
 func TestUnsignedPartitionColumn(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2464,8 +2476,7 @@ func TestUnsignedPartitionColumn(t *testing.T) {
 }
 
 func TestDirectReadingWithAgg(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2608,8 +2619,9 @@ func TestDirectReadingWithAgg(t *testing.T) {
 }
 
 func TestDynamicModeByDefault(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2632,8 +2644,7 @@ func TestDynamicModeByDefault(t *testing.T) {
 }
 
 func TestIssue24636(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2672,8 +2683,7 @@ func TestIssue24636(t *testing.T) {
 }
 
 func TestIdexMerge(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2767,8 +2777,7 @@ func TestIdexMerge(t *testing.T) {
 }
 
 func TestIssue25309(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2807,8 +2816,9 @@ func TestIssue25309(t *testing.T) {
 }
 
 func TestGlobalIndexScan(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	restoreConfig := config.RestoreFunc()
@@ -2828,8 +2838,9 @@ partition p2 values less than (10))`)
 }
 
 func TestGlobalIndexDoubleRead(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	restoreConfig := config.RestoreFunc()
@@ -2849,8 +2860,7 @@ partition p2 values less than (10))`)
 }
 
 func TestIssue20028(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2879,8 +2889,7 @@ partition p3 values less than maxvalue)`)
 }
 
 func TestSelectLockOnPartitionTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3013,8 +3022,7 @@ partition p2 values less than (11))`)
 }
 
 func TestIssue21731(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3057,8 +3065,7 @@ func verifyPartitionResult(tk *testkit.TestKit, input []string, output []testOut
 }
 
 func TestRangePartitionBoundariesEq(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -3077,13 +3084,12 @@ PARTITION BY RANGE (a) (
 
 	var input []string
 	var output []testOutput
-	executorSuiteData.GetTestCases(t, &input, &output)
+	executorSuiteData.LoadTestCases(t, &input, &output)
 	verifyPartitionResult(tk, input, output)
 }
 
 func TestRangePartitionBoundariesNe(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -3105,13 +3111,12 @@ PARTITION BY RANGE (a) (
 
 	var input []string
 	var output []testOutput
-	executorSuiteData.GetTestCases(t, &input, &output)
+	executorSuiteData.LoadTestCases(t, &input, &output)
 	verifyPartitionResult(tk, input, output)
 }
 
 func TestRangePartitionBoundariesBetweenM(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -3128,13 +3133,12 @@ PARTITION BY RANGE (a) (
 
 	var input []string
 	var output []testOutput
-	executorSuiteData.GetTestCases(t, &input, &output)
+	executorSuiteData.LoadTestCases(t, &input, &output)
 	verifyPartitionResult(tk, input, output)
 }
 
 func TestRangePartitionBoundariesBetweenS(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -3155,13 +3159,12 @@ PARTITION BY RANGE (a) (
 
 	var input []string
 	var output []testOutput
-	executorSuiteData.GetTestCases(t, &input, &output)
+	executorSuiteData.LoadTestCases(t, &input, &output)
 	verifyPartitionResult(tk, input, output)
 }
 
 func TestRangePartitionBoundariesLtM(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -3179,13 +3182,12 @@ PARTITION BY RANGE (a) (
 
 	var input []string
 	var output []testOutput
-	executorSuiteData.GetTestCases(t, &input, &output)
+	executorSuiteData.LoadTestCases(t, &input, &output)
 	verifyPartitionResult(tk, input, output)
 }
 
 func TestRangePartitionBoundariesLtS(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -3207,13 +3209,12 @@ PARTITION BY RANGE (a) (
 
 	var input []string
 	var output []testOutput
-	executorSuiteData.GetTestCases(t, &input, &output)
+	executorSuiteData.LoadTestCases(t, &input, &output)
 	verifyPartitionResult(tk, input, output)
 }
 
 func TestIssue25528(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
@@ -3230,8 +3231,7 @@ func TestIssue25528(t *testing.T) {
 }
 
 func TestIssue26251(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk1 := testkit.NewTestKit(t, store)
 	restoreConfig := config.RestoreFunc()
@@ -3274,8 +3274,7 @@ func TestIssue26251(t *testing.T) {
 }
 
 func TestLeftJoinForUpdate(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("create database TestLeftJoinForUpdate")
@@ -3359,8 +3358,7 @@ func TestLeftJoinForUpdate(t *testing.T) {
 }
 
 func TestIssue31024(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("create database TestIssue31024")
@@ -3405,8 +3403,7 @@ func TestIssue31024(t *testing.T) {
 }
 
 func TestIssue27346(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("create database TestIssue27346")
@@ -3434,8 +3431,7 @@ func TestIssue27346(t *testing.T) {
 }
 
 func TestPartitionTableExplain(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database TestPartitionTableExplain")
@@ -3602,8 +3598,7 @@ func TestPartitionTableExplain(t *testing.T) {
 }
 
 func TestIssue35181(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database TestIssue35181")

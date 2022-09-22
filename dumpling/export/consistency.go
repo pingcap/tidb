@@ -7,7 +7,6 @@ import (
 	"database/sql"
 
 	"github.com/pingcap/errors"
-
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
@@ -27,7 +26,7 @@ const (
 	ConsistencyTypeNone = "none"
 )
 
-var tiDBDisableTableLockErr = errors.New("try to apply lock consistency on TiDB but it doesn't enable table lock. please set enable-table-lock=true in tidb server config")
+var errTiDBDisableTableLock = errors.New("try to apply lock consistency on TiDB but it doesn't enable table lock. please set enable-table-lock=true in tidb server config")
 
 // NewConsistencyController returns a new consistency controller
 func NewConsistencyController(ctx context.Context, conf *Config, session *sql.DB) (ConsistencyController, error) {
@@ -69,17 +68,17 @@ type ConsistencyController interface {
 type ConsistencyNone struct{}
 
 // Setup implements ConsistencyController.Setup
-func (c *ConsistencyNone) Setup(_ *tcontext.Context) error {
+func (*ConsistencyNone) Setup(_ *tcontext.Context) error {
 	return nil
 }
 
 // TearDown implements ConsistencyController.TearDown
-func (c *ConsistencyNone) TearDown(_ context.Context) error {
+func (*ConsistencyNone) TearDown(_ context.Context) error {
 	return nil
 }
 
 // PingContext implements ConsistencyController.PingContext
-func (c *ConsistencyNone) PingContext(_ context.Context) error {
+func (*ConsistencyNone) PingContext(_ context.Context) error {
 	return nil
 }
 
@@ -103,7 +102,7 @@ func (c *ConsistencyFlushTableWithReadLock) TearDown(ctx context.Context) error 
 		return nil
 	}
 	defer func() {
-		c.conn.Close()
+		_ = c.conn.Close()
 		c.conn = nil
 	}()
 	return UnlockTables(ctx, c.conn)
@@ -129,9 +128,8 @@ func (c *ConsistencyLockDumpingTables) Setup(tctx *tcontext.Context) error {
 		if enableTableLock, err := CheckTiDBEnableTableLock(c.conn); err != nil || !enableTableLock {
 			if err != nil {
 				return err
-			} else {
-				return tiDBDisableTableLockErr
 			}
+			return errTiDBDisableTableLock
 		}
 	}
 	blockList := make(map[string]map[string]interface{})
@@ -150,7 +148,7 @@ func (c *ConsistencyLockDumpingTables) Setup(tctx *tcontext.Context) error {
 				})
 			}
 		}
-		return errors.Trace(err)
+		return errors.Annotatef(err, "sql: %s", lockTablesSQL)
 	}, newLockTablesBackoffer(tctx, blockList, c.conf))
 }
 
@@ -160,7 +158,7 @@ func (c *ConsistencyLockDumpingTables) TearDown(ctx context.Context) error {
 		return nil
 	}
 	defer func() {
-		c.conn.Close()
+		_ = c.conn.Close()
 		c.conn = nil
 	}()
 	return UnlockTables(ctx, c.conn)

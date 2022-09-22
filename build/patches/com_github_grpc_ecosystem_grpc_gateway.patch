@@ -48,7 +48,10 @@ diff --git a/runtime/BUILD.bazel b/runtime/BUILD.bazel
 index c4d18f624..41d5319fb 100644
 --- a/runtime/BUILD.bazel
 +++ b/runtime/BUILD.bazel
-@@ -30,13 +30,14 @@ go_library(
+@@ -27,16 +27,17 @@
+     deps = [
+         "//internal:go_default_library",
+         "//utilities:go_default_library",
 -        "@com_github_golang_protobuf//descriptor:go_default_library_gen",
 +        "@com_github_golang_protobuf//descriptor:descriptor",
          "@com_github_golang_protobuf//jsonpb:go_default_library_gen",

@@ -400,16 +400,22 @@ func Test_normalizedSQLMap_toProto(t *testing.T) {
 func Test_normalizedPlanMap_register(t *testing.T) {
 	topsqlstate.GlobalState.MaxCollect.Store(2)
 	m := newNormalizedPlanMap()
-	m.register([]byte("PLAN-1"), "PLAN-1")
-	m.register([]byte("PLAN-2"), "PLAN-2")
-	m.register([]byte("PLAN-3"), "PLAN-3")
+	m.register([]byte("PLAN-1"), "PLAN-1", false)
+	m.register([]byte("PLAN-2"), "PLAN-2", true)
+	m.register([]byte("PLAN-3"), "PLAN-3", false)
 	require.Equal(t, int64(2), m.length.Load())
 	v, ok := m.data.Load().(*sync.Map).Load("PLAN-1")
 	require.True(t, ok)
-	require.Equal(t, "PLAN-1", v.(string))
+	require.Equal(t, planMeta{
+		binaryNormalizedPlan: "PLAN-1",
+		isLarge:              false,
+	}, v.(planMeta))
 	v, ok = m.data.Load().(*sync.Map).Load("PLAN-2")
 	require.True(t, ok)
-	require.Equal(t, "PLAN-2", v.(string))
+	require.Equal(t, planMeta{
+		binaryNormalizedPlan: "PLAN-2",
+		isLarge:              true,
+	}, v.(planMeta))
 	_, ok = m.data.Load().(*sync.Map).Load("PLAN-3")
 	require.False(t, ok)
 }
@@ -417,9 +423,9 @@ func Test_normalizedPlanMap_register(t *testing.T) {
 func Test_normalizedPlanMap_take(t *testing.T) {
 	topsqlstate.GlobalState.MaxCollect.Store(999)
 	m1 := newNormalizedPlanMap()
-	m1.register([]byte("PLAN-1"), "PLAN-1")
-	m1.register([]byte("PLAN-2"), "PLAN-2")
-	m1.register([]byte("PLAN-3"), "PLAN-3")
+	m1.register([]byte("PLAN-1"), "PLAN-1", false)
+	m1.register([]byte("PLAN-2"), "PLAN-2", false)
+	m1.register([]byte("PLAN-3"), "PLAN-3", false)
 	m2 := m1.take()
 	require.Equal(t, int64(0), m1.length.Load())
 	require.Equal(t, int64(3), m2.length.Load())
@@ -442,26 +448,28 @@ func Test_normalizedPlanMap_take(t *testing.T) {
 func Test_normalizedPlanMap_toProto(t *testing.T) {
 	topsqlstate.GlobalState.MaxCollect.Store(999)
 	m := newNormalizedPlanMap()
-	m.register([]byte("PLAN-1"), "PLAN-1")
-	m.register([]byte("PLAN-2"), "PLAN-2")
-	m.register([]byte("PLAN-3"), "PLAN-3")
-	pb := m.toProto(func(s string) (string, error) { return s, nil })
+	m.register([]byte("PLAN-1"), "PLAN-1", false)
+	m.register([]byte("PLAN-2"), "PLAN-2", true)
+	m.register([]byte("PLAN-3"), "PLAN-3", false)
+	pb := m.toProto(
+		func(s string) (string, error) { return "[decoded] " + s, nil },
+		func(s []byte) string { return "[encoded] " + string(s) })
 	require.Len(t, pb, 3)
 	hash := map[string]tipb.PlanMeta{}
 	for _, meta := range pb {
-		hash[meta.NormalizedPlan] = meta
+		hash[string(meta.PlanDigest)] = meta
 	}
 	require.Equal(t, tipb.PlanMeta{
 		PlanDigest:     []byte("PLAN-1"),
-		NormalizedPlan: "PLAN-1",
+		NormalizedPlan: "[decoded] PLAN-1",
 	}, hash["PLAN-1"])
 	require.Equal(t, tipb.PlanMeta{
-		PlanDigest:     []byte("PLAN-2"),
-		NormalizedPlan: "PLAN-2",
+		PlanDigest:            []byte("PLAN-2"),
+		EncodedNormalizedPlan: "[encoded] PLAN-2",
 	}, hash["PLAN-2"])
 	require.Equal(t, tipb.PlanMeta{
 		PlanDigest:     []byte("PLAN-3"),
-		NormalizedPlan: "PLAN-3",
+		NormalizedPlan: "[decoded] PLAN-3",
 	}, hash["PLAN-3"])
 }
 

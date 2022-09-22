@@ -18,6 +18,7 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/terror"
@@ -51,6 +52,8 @@ type PessimisticRCTxnContextProvider struct {
 	latestOracleTS uint64
 	// latestOracleTSValid shows whether we have already fetched a ts from pd and whether the ts we fetched is still valid.
 	latestOracleTSValid bool
+	// checkTSInWriteStmt is used to set RCCheckTS isolation for getting value when doing point-write
+	checkTSInWriteStmt bool
 }
 
 // NewPessimisticRCTxnContextProvider returns a new PessimisticRCTxnContextProvider
@@ -63,13 +66,13 @@ func NewPessimisticRCTxnContextProvider(sctx sessionctx.Context, causalConsisten
 				txnCtx.IsPessimistic = true
 				txnCtx.Isolation = ast.ReadCommitted
 			},
-			onTxnActive: func(txn kv.Transaction, _ sessiontxn.EnterNewTxnType) {
+			onTxnActiveFunc: func(txn kv.Transaction, _ sessiontxn.EnterNewTxnType) {
 				txn.SetOption(kv.Pessimistic, true)
 			},
 		},
 	}
 
-	provider.onTxnActive = func(txn kv.Transaction, _ sessiontxn.EnterNewTxnType) {
+	provider.onTxnActiveFunc = func(txn kv.Transaction, _ sessiontxn.EnterNewTxnType) {
 		txn.SetOption(kv.Pessimistic, true)
 		provider.latestOracleTS = txn.StartTS()
 		provider.latestOracleTSValid = true
@@ -90,6 +93,7 @@ func (p *PessimisticRCTxnContextProvider) OnStmtStart(ctx context.Context, node 
 	if node != nil && NeedSetRCCheckTSFlag(p.sctx, node) {
 		p.sctx.GetSessionVars().StmtCtx.RCCheckTS = true
 	}
+	p.checkTSInWriteStmt = false
 
 	return p.prepareStmt(!p.isTxnPrepared)
 }
@@ -97,7 +101,7 @@ func (p *PessimisticRCTxnContextProvider) OnStmtStart(ctx context.Context, node 
 // NeedSetRCCheckTSFlag checks whether it's needed to set `RCCheckTS` flag in current stmtctx.
 func NeedSetRCCheckTSFlag(ctx sessionctx.Context, node ast.Node) bool {
 	sessionVars := ctx.GetSessionVars()
-	if sessionVars.ConnectionID > 0 && sessionVars.RcReadCheckTS && sessionVars.InTxn() &&
+	if sessionVars.ConnectionID > 0 && variable.EnableRCReadCheckTS.Load() && sessionVars.InTxn() &&
 		!sessionVars.RetryInfo.Retrying && plannercore.IsReadOnly(node, sessionVars) {
 		return true
 	}
@@ -121,6 +125,7 @@ func (p *PessimisticRCTxnContextProvider) OnStmtRetry(ctx context.Context) error
 	if err := p.baseTxnContextProvider.OnStmtRetry(ctx); err != nil {
 		return err
 	}
+	p.checkTSInWriteStmt = false
 	return p.prepareStmt(false)
 }
 
@@ -128,12 +133,11 @@ func (p *PessimisticRCTxnContextProvider) prepareStmtTS() {
 	if p.stmtTSFuture != nil {
 		return
 	}
-
 	sessVars := p.sctx.GetSessionVars()
 	var stmtTSFuture oracle.Future
 	switch {
 	case p.stmtUseStartTS:
-		stmtTSFuture = sessiontxn.FuncFuture(p.getTxnStartTS)
+		stmtTSFuture = funcFuture(p.getTxnStartTS)
 	case p.latestOracleTSValid && sessVars.StmtCtx.RCCheckTS:
 		stmtTSFuture = sessiontxn.ConstantFuture(p.latestOracleTS)
 	default:
@@ -143,13 +147,16 @@ func (p *PessimisticRCTxnContextProvider) prepareStmtTS() {
 	p.stmtTSFuture = stmtTSFuture
 }
 
-func (p *PessimisticRCTxnContextProvider) getOracleFuture() sessiontxn.FuncFuture {
+func (p *PessimisticRCTxnContextProvider) getOracleFuture() funcFuture {
 	txnCtx := p.sctx.GetSessionVars().TxnCtx
-	future := sessiontxn.NewOracleFuture(p.ctx, p.sctx, txnCtx.TxnScope)
+	future := newOracleFuture(p.ctx, p.sctx, txnCtx.TxnScope)
 	return func() (ts uint64, err error) {
 		if ts, err = future.Wait(); err != nil {
 			return
 		}
+		failpoint.Inject("waitTsoOfOracleFuture", func() {
+			sessiontxn.TsoWaitCountInc(p.sctx)
+		})
 		txnCtx.SetForUpdateTS(ts)
 		ts = txnCtx.GetForUpdateTS()
 		p.latestOracleTS = ts
@@ -187,6 +194,7 @@ func (p *PessimisticRCTxnContextProvider) handleAfterQueryError(queryErr error) 
 	}
 
 	p.latestOracleTSValid = false
+
 	logutil.Logger(p.ctx).Info("RC read with ts checking has failed, retry RC read",
 		zap.String("sql", sessVars.StmtCtx.OriginalSQL), zap.Error(queryErr))
 	return sessiontxn.RetryReady()
@@ -219,25 +227,53 @@ func (p *PessimisticRCTxnContextProvider) handleAfterPessimisticLockError(lockEr
 
 // AdviseWarmup provides warmup for inner state
 func (p *PessimisticRCTxnContextProvider) AdviseWarmup() error {
-	if p.isTidbSnapshotEnabled() {
-		return nil
-	}
-
 	if err := p.prepareTxn(); err != nil {
 		return err
 	}
-	p.prepareStmtTS()
+
+	if !p.isTidbSnapshotEnabled() {
+		p.prepareStmtTS()
+	}
+
 	return nil
 }
 
-// AdviseOptimizeWithPlan in RC covers much fewer cases compared with pessimistic repeatable read.
-// We only optimize with insert operator with no selection in that we do not fetch latest ts immediately.
-// We only update ts if write conflict is incurred.
+// planSkipGetTsoFromPD identifies the plans which don't need get newest ts from PD.
+func planSkipGetTsoFromPD(sctx sessionctx.Context, plan plannercore.Plan, inLockOrWriteStmt bool) bool {
+	switch v := plan.(type) {
+	case *plannercore.PointGetPlan:
+		return sctx.GetSessionVars().RcWriteCheckTS && (v.Lock || inLockOrWriteStmt)
+	case plannercore.PhysicalPlan:
+		if len(v.Children()) == 0 {
+			return false
+		}
+		_, isPhysicalLock := v.(*plannercore.PhysicalLock)
+		for _, p := range v.Children() {
+			if !planSkipGetTsoFromPD(sctx, p, isPhysicalLock || inLockOrWriteStmt) {
+				return false
+			}
+		}
+		return true
+	case *plannercore.Update:
+		return planSkipGetTsoFromPD(sctx, v.SelectPlan, true)
+	case *plannercore.Delete:
+		return planSkipGetTsoFromPD(sctx, v.SelectPlan, true)
+	case *plannercore.Insert:
+		return v.SelectPlan == nil && len(v.OnDuplicate) == 0 && !v.IsReplace
+	}
+	return false
+}
+
+// AdviseOptimizeWithPlan in read-committed covers as many cases as repeatable-read.
+// We do not fetch latest ts immediately for such scenes.
+// 1. A query like the form of "SELECT ... FOR UPDATE" whose execution plan is "PointGet".
+// 2. An INSERT statement without "SELECT" subquery.
+// 3. A UPDATE statement whose sub execution plan is "PointGet".
+// 4. A DELETE statement whose sub execution plan is "PointGet".
 func (p *PessimisticRCTxnContextProvider) AdviseOptimizeWithPlan(val interface{}) (err error) {
 	if p.isTidbSnapshotEnabled() || p.isBeginStmtWithStaleRead() {
 		return nil
 	}
-
 	if p.stmtUseStartTS || !p.latestOracleTSValid {
 		return nil
 	}
@@ -251,14 +287,35 @@ func (p *PessimisticRCTxnContextProvider) AdviseOptimizeWithPlan(val interface{}
 		plan = execute.Plan
 	}
 
-	if v, ok := plan.(*plannercore.Insert); ok && v.SelectPlan == nil {
+	useLastOracleTS := false
+	if !p.sctx.GetSessionVars().RetryInfo.Retrying {
+		useLastOracleTS = planSkipGetTsoFromPD(p.sctx, plan, false)
+	}
+
+	if useLastOracleTS {
+		failpoint.Inject("tsoUseConstantFuture", func() {
+			sessiontxn.TsoUseConstantCountInc(p.sctx)
+		})
+		p.checkTSInWriteStmt = true
 		p.stmtTSFuture = sessiontxn.ConstantFuture(p.latestOracleTS)
 	}
 
 	return nil
 }
 
-// GetSnapshotWithStmtReadTS get snapshot with read ts
+// GetSnapshotWithStmtForUpdateTS gets snapshot with for update ts
+func (p *PessimisticRCTxnContextProvider) GetSnapshotWithStmtForUpdateTS() (kv.Snapshot, error) {
+	snapshot, err := p.baseTxnContextProvider.GetSnapshotWithStmtForUpdateTS()
+	if err != nil {
+		return nil, err
+	}
+	if p.checkTSInWriteStmt {
+		snapshot.SetOption(kv.IsolationLevel, kv.RCCheckTS)
+	}
+	return snapshot, err
+}
+
+// GetSnapshotWithStmtReadTS gets snapshot with read ts
 func (p *PessimisticRCTxnContextProvider) GetSnapshotWithStmtReadTS() (kv.Snapshot, error) {
 	snapshot, err := p.baseTxnContextProvider.GetSnapshotWithStmtForUpdateTS()
 	if err != nil {
@@ -270,4 +327,9 @@ func (p *PessimisticRCTxnContextProvider) GetSnapshotWithStmtReadTS() (kv.Snapsh
 	}
 
 	return snapshot, nil
+}
+
+// IsCheckTSInWriteStmtMode is only used for test
+func (p *PessimisticRCTxnContextProvider) IsCheckTSInWriteStmtMode() bool {
+	return p.checkTSInWriteStmt
 }

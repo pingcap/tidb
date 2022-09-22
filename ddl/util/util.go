@@ -27,9 +27,12 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	"go.etcd.io/etcd/client/v3"
 	atomicutil "go.uber.org/atomic"
+	"go.uber.org/zap"
 )
 
 const (
@@ -42,12 +45,26 @@ const (
 	updateDeleteRangeSQL         = `UPDATE mysql.gc_delete_range SET start_key = %? WHERE job_id = %? AND element_id = %? AND start_key = %?`
 	deleteDoneRecordSQL          = `DELETE FROM mysql.gc_delete_range_done WHERE job_id = %? AND element_id = %?`
 	loadGlobalVars               = `SELECT HIGH_PRIORITY variable_name, variable_value from mysql.global_variables where variable_name in (` // + nameList + ")"
+	// KeyOpDefaultTimeout is the default timeout for each key operation.
+	KeyOpDefaultTimeout = 2 * time.Second
+	// KeyOpRetryInterval is the interval between two key operations.
+	KeyOpRetryInterval = 30 * time.Millisecond
+	// DDLAllSchemaVersions is the path on etcd that is used to store all servers current schema versions.
+	DDLAllSchemaVersions = "/tidb/ddl/all_schema_versions"
+	// DDLAllSchemaVersionsByJob is the path on etcd that is used to store all servers current schema versions.
+	DDLAllSchemaVersionsByJob = "/tidb/ddl/all_schema_by_job_versions"
+	// DDLGlobalSchemaVersion is the path on etcd that is used to store the latest schema versions.
+	DDLGlobalSchemaVersion = "/tidb/ddl/global_schema_version"
+	// SessionTTL is the etcd session's TTL in seconds.
+	SessionTTL = 90
 )
 
 // DelRangeTask is for run delete-range command in gc_worker.
 type DelRangeTask struct {
-	JobID, ElementID int64
-	StartKey, EndKey kv.Key
+	StartKey  kv.Key
+	EndKey    kv.Key
+	JobID     int64
+	ElementID int64
 }
 
 // Range returns the range [start, end) to delete.
@@ -201,7 +218,7 @@ func LoadGlobalVars(ctx context.Context, sctx sessionctx.Context, varNames []str
 		for _, row := range rows {
 			varName := row.GetString(0)
 			varValue := row.GetString(1)
-			if err = sctx.GetSessionVars().SetSystemVar(varName, varValue); err != nil {
+			if err = sctx.GetSessionVars().SetSystemVarWithoutValidation(varName, varValue); err != nil {
 				return err
 			}
 		}
@@ -255,4 +272,54 @@ func GetInternalResourceGroupTaggerForTopSQL() tikvrpc.ResourceGroupTagger {
 // IsInternalResourceGroupTaggerForTopSQL use for testing.
 func IsInternalResourceGroupTaggerForTopSQL(tag []byte) bool {
 	return bytes.Equal(tag, internalResourceGroupTag)
+}
+
+// DeleteKeyFromEtcd deletes key value from etcd.
+func DeleteKeyFromEtcd(key string, etcdCli *clientv3.Client, retryCnt int, timeout time.Duration) error {
+	var err error
+	ctx := context.Background()
+	for i := 0; i < retryCnt; i++ {
+		childCtx, cancel := context.WithTimeout(ctx, timeout)
+		_, err = etcdCli.Delete(childCtx, key)
+		cancel()
+		if err == nil {
+			return nil
+		}
+		logutil.BgLogger().Warn("[ddl] etcd-cli delete key failed", zap.String("key", key), zap.Error(err), zap.Int("retryCnt", i))
+	}
+	return errors.Trace(err)
+}
+
+// PutKVToEtcd puts key value to etcd.
+// etcdCli is client of etcd.
+// retryCnt is retry time when an error occurs.
+// opts are configures of etcd Operations.
+func PutKVToEtcd(ctx context.Context, etcdCli *clientv3.Client, retryCnt int, key, val string,
+	opts ...clientv3.OpOption) error {
+	var err error
+	for i := 0; i < retryCnt; i++ {
+		if IsContextDone(ctx) {
+			return errors.Trace(ctx.Err())
+		}
+
+		childCtx, cancel := context.WithTimeout(ctx, KeyOpDefaultTimeout)
+		_, err = etcdCli.Put(childCtx, key, val, opts...)
+		cancel()
+		if err == nil {
+			return nil
+		}
+		logutil.BgLogger().Warn("[ddl] etcd-cli put kv failed", zap.String("key", key), zap.String("value", val), zap.Error(err), zap.Int("retryCnt", i))
+		time.Sleep(KeyOpRetryInterval)
+	}
+	return errors.Trace(err)
+}
+
+// IsContextDone checks if context is done.
+func IsContextDone(ctx context.Context) bool {
+	select {
+	case <-ctx.Done():
+		return true
+	default:
+	}
+	return false
 }

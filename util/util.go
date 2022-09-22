@@ -18,6 +18,8 @@ import (
 	"encoding/json"
 	"io/ioutil"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/pingcap/errors"
 )
@@ -70,4 +72,30 @@ func GetJSON(client *http.Client, url string, v interface{}) error {
 	}
 
 	return errors.Trace(json.NewDecoder(resp.Body).Decode(v))
+}
+
+// ChanMap creates a channel which applies the function over the input Channel.
+// Hint of Resource Leakage:
+// In golang, channel isn't an interface so we must create a goroutine for handling the inputs.
+// Hence the input channel must be closed properly or this function may leak a goroutine.
+func ChanMap[T, R any](c <-chan T, f func(T) R) <-chan R {
+	outCh := make(chan R)
+	go func() {
+		defer close(outCh)
+		for item := range c {
+			outCh <- f(item)
+		}
+	}()
+	return outCh
+}
+
+// Str2Int64Map converts a string to a map[int64]struct{}.
+func Str2Int64Map(str string) map[int64]struct{} {
+	strs := strings.Split(str, ",")
+	res := make(map[int64]struct{}, len(strs))
+	for _, s := range strs {
+		id, _ := strconv.ParseInt(s, 10, 64)
+		res[id] = struct{}{}
+	}
+	return res
 }

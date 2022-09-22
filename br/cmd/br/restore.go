@@ -3,8 +3,11 @@
 package main
 
 import (
+	"fmt"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/gluetikv"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/task"
@@ -36,11 +39,46 @@ func runRestoreCommand(command *cobra.Command, cmdName string) error {
 		ctx, store = trace.TracerStartSpan(ctx)
 		defer trace.TracerFinishSpan(ctx, store)
 	}
+
+	if cfg.FullBackupType == task.FullBackupTypeEBS {
+		if cfg.Prepare {
+			if err := task.RunRestoreEBSMeta(GetDefaultContext(), gluetikv.Glue{}, cmdName, &cfg); err != nil {
+				log.Error("failed to restore EBS meta", zap.Error(err))
+				return errors.Trace(err)
+			}
+		} else {
+			if err := task.RunResolveKvData(GetDefaultContext(), tidbGlue, cmdName, &cfg); err != nil {
+				log.Error("failed to restore data", zap.Error(err))
+				return errors.Trace(err)
+			}
+		}
+		return nil
+	}
+
 	if err := task.RunRestore(GetDefaultContext(), tidbGlue, cmdName, &cfg); err != nil {
 		log.Error("failed to restore", zap.Error(err))
+		printWorkaroundOnFullRestoreError(command, err)
 		return errors.Trace(err)
 	}
 	return nil
+}
+
+// print workaround when we met not fresh or incompatible cluster error on full cluster restore
+func printWorkaroundOnFullRestoreError(command *cobra.Command, err error) {
+	if !errors.ErrorEqual(err, berrors.ErrRestoreNotFreshCluster) &&
+		!errors.ErrorEqual(err, berrors.ErrRestoreIncompatibleSys) {
+		return
+	}
+	fmt.Println("#######################################################################")
+	switch {
+	case errors.ErrorEqual(err, berrors.ErrRestoreNotFreshCluster):
+		fmt.Println("# the target cluster is not fresh, br cannot restore system tables.")
+	case errors.ErrorEqual(err, berrors.ErrRestoreIncompatibleSys):
+		fmt.Println("# the target cluster is not compatible with the backup data,")
+		fmt.Println("# br cannot restore system tables.")
+	}
+	fmt.Println("# you can remove 'with-sys-table' flag to skip restoring system tables")
+	fmt.Println("#######################################################################")
 }
 
 func runRestoreRawCommand(command *cobra.Command, cmdName string) error {
@@ -106,6 +144,7 @@ func newFullRestoreCommand() *cobra.Command {
 		},
 	}
 	task.DefineFilterFlags(command, filterOutSysAndMemTables, false)
+	task.DefineRestoreSnapshotFlags(command)
 	return command
 }
 

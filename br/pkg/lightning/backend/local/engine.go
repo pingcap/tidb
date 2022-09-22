@@ -24,7 +24,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
 	"sync"
 	"time"
 
@@ -45,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -233,6 +233,20 @@ func (e *Engine) unlock() {
 	}
 	e.isImportingAtomic.Store(0)
 	e.mutex.Unlock()
+}
+
+func (e *Engine) TotalMemorySize() int64 {
+	var memSize int64 = 0
+	e.localWriters.Range(func(k, v interface{}) bool {
+		w := k.(*Writer)
+		if w.kvBuffer != nil {
+			w.Lock()
+			memSize += w.kvBuffer.TotalSize()
+			w.Unlock()
+		}
+		return true
+	})
+	return memSize
 }
 
 type rangeOffsets struct {
@@ -732,8 +746,8 @@ func (e *Engine) batchIngestSSTs(metas []*sstMeta) error {
 	if len(metas) == 0 {
 		return nil
 	}
-	sort.Slice(metas, func(i, j int) bool {
-		return bytes.Compare(metas[i].minKey, metas[j].minKey) < 0
+	slices.SortFunc(metas, func(i, j *sstMeta) bool {
+		return bytes.Compare(i.minKey, j.minKey) < 0
 	})
 
 	metaLevels := make([][]*sstMeta, 0)
@@ -894,8 +908,8 @@ func sortAndMergeRanges(ranges []Range) []Range {
 		return ranges
 	}
 
-	sort.Slice(ranges, func(i, j int) bool {
-		return bytes.Compare(ranges[i].start, ranges[j].start) < 0
+	slices.SortFunc(ranges, func(i, j Range) bool {
+		return bytes.Compare(i.start, j.start) < 0
 	})
 
 	curEnd := ranges[0].end
@@ -1161,8 +1175,8 @@ func (w *Writer) flushKVs(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	if !w.isWriteBatchSorted {
-		sort.Slice(w.writeBatch[:w.batchCount], func(i, j int) bool {
-			return bytes.Compare(w.writeBatch[i].Key, w.writeBatch[j].Key) < 0
+		slices.SortFunc(w.writeBatch[:w.batchCount], func(i, j common.KvPair) bool {
+			return bytes.Compare(i.Key, j.Key) < 0
 		})
 		w.isWriteBatchSorted = true
 	}
@@ -1416,7 +1430,7 @@ func (i dbSSTIngester) mergeSSTs(metas []*sstMeta, dir string) (*sstMeta, error)
 		return nil, err
 	}
 	if key == nil {
-		return nil, errors.New("all ssts are empty!")
+		return nil, errors.New("all ssts are empty")
 	}
 	newMeta.minKey = append(newMeta.minKey[:0], key...)
 	lastKey := make([]byte, 0)

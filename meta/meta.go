@@ -15,11 +15,11 @@
 package meta
 
 import (
+	"bytes"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"math"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -59,23 +59,27 @@ var (
 //
 
 var (
-	mMetaPrefix       = []byte("m")
-	mNextGlobalIDKey  = []byte("NextGlobalID")
-	mSchemaVersionKey = []byte("SchemaVersionKey")
-	mDBs              = []byte("DBs")
-	mDBPrefix         = "DB"
-	mTablePrefix      = "Table"
-	mSequencePrefix   = "SID"
-	mSeqCyclePrefix   = "SequenceCycle"
-	mTableIDPrefix    = "TID"
-	mIncIDPrefix      = "IID"
-	mRandomIDPrefix   = "TARID"
-	mBootstrapKey     = []byte("BootstrapKey")
-	mSchemaDiffPrefix = "Diff"
-	mPolicies         = []byte("Policies")
-	mPolicyPrefix     = "Policy"
-	mPolicyGlobalID   = []byte("PolicyGlobalID")
-	mPolicyMagicByte  = CurrentMagicByteVer
+	mMetaPrefix              = []byte("m")
+	mNextGlobalIDKey         = []byte("NextGlobalID")
+	mSchemaVersionKey        = []byte("SchemaVersionKey")
+	mDBs                     = []byte("DBs")
+	mDBPrefix                = "DB"
+	mTablePrefix             = "Table"
+	mSequencePrefix          = "SID"
+	mSeqCyclePrefix          = "SequenceCycle"
+	mTableIDPrefix           = "TID"
+	mIncIDPrefix             = "IID"
+	mRandomIDPrefix          = "TARID"
+	mBootstrapKey            = []byte("BootstrapKey")
+	mSchemaDiffPrefix        = "Diff"
+	mPolicies                = []byte("Policies")
+	mPolicyPrefix            = "Policy"
+	mPolicyGlobalID          = []byte("PolicyGlobalID")
+	mPolicyMagicByte         = CurrentMagicByteVer
+	mDDLTableVersion         = []byte("DDLTableVersion")
+	mConcurrentDDL           = []byte("concurrentDDL")
+	mInFlashbackCluster      = []byte("InFlashbackCluster")
+	mFlashbackHistoryTSRange = []byte("FlashbackHistoryTSRange")
 )
 
 const (
@@ -91,6 +95,11 @@ const (
 	typeUnknown int = 0
 	typeJSON    int = 1
 	// todo: customized handler.
+
+	// MaxInt48 is the max value of int48.
+	MaxInt48 = 0x0000FFFFFFFFFFFF
+	// MaxGlobalID reserves 1000 IDs. Use MaxInt48 to reserves the high 2 bytes to compatible with Multi-tenancy.
+	MaxGlobalID = MaxInt48 - 1000
 )
 
 var (
@@ -148,7 +157,14 @@ func (m *Meta) GenGlobalID() (int64, error) {
 	globalIDMutex.Lock()
 	defer globalIDMutex.Unlock()
 
-	return m.txn.Inc(mNextGlobalIDKey, 1)
+	newID, err := m.txn.Inc(mNextGlobalIDKey, 1)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if newID > MaxGlobalID {
+		return 0, errors.Errorf("global id:%d exceeds the limit:%d", newID, MaxGlobalID)
+	}
+	return newID, err
 }
 
 // GenGlobalIDs generates the next n global IDs.
@@ -159,6 +175,9 @@ func (m *Meta) GenGlobalIDs(n int) ([]int64, error) {
 	newID, err := m.txn.Inc(mNextGlobalIDKey, int64(n))
 	if err != nil {
 		return nil, err
+	}
+	if newID > MaxGlobalID {
+		return nil, errors.Errorf("global id:%d exceeds the limit:%d", newID, MaxGlobalID)
 	}
 	origID := newID - int64(n)
 	ids := make([]int64, 0, n)
@@ -186,11 +205,11 @@ func (m *Meta) GetPolicyID() (int64, error) {
 	return m.txn.GetInt64(mPolicyGlobalID)
 }
 
-func (m *Meta) policyKey(policyID int64) []byte {
+func (*Meta) policyKey(policyID int64) []byte {
 	return []byte(fmt.Sprintf("%s:%d", mPolicyPrefix, policyID))
 }
 
-func (m *Meta) dbKey(dbID int64) []byte {
+func (*Meta) dbKey(dbID int64) []byte {
 	return DBkey(dbID)
 }
 
@@ -215,7 +234,7 @@ func IsDBkey(dbKey []byte) bool {
 	return strings.HasPrefix(string(dbKey), mDBPrefix+":")
 }
 
-func (m *Meta) autoTableIDKey(tableID int64) []byte {
+func (*Meta) autoTableIDKey(tableID int64) []byte {
 	return AutoTableIDKey(tableID)
 }
 
@@ -240,11 +259,11 @@ func ParseAutoTableIDKey(key []byte) (int64, error) {
 	return int64(id), err
 }
 
-func (m *Meta) autoIncrementIDKey(tableID int64) []byte {
+func (*Meta) autoIncrementIDKey(tableID int64) []byte {
 	return []byte(fmt.Sprintf("%s:%d", mIncIDPrefix, tableID))
 }
 
-func (m *Meta) autoRandomTableIDKey(tableID int64) []byte {
+func (*Meta) autoRandomTableIDKey(tableID int64) []byte {
 	return AutoRandomTableIDKey(tableID)
 }
 
@@ -269,7 +288,7 @@ func ParseAutoRandomTableIDKey(key []byte) (int64, error) {
 	return int64(id), err
 }
 
-func (m *Meta) tableKey(tableID int64) []byte {
+func (*Meta) tableKey(tableID int64) []byte {
 	return TableKey(tableID)
 }
 
@@ -294,7 +313,7 @@ func ParseTableKey(tableKey []byte) (int64, error) {
 	return int64(id), errors.Trace(err)
 }
 
-func (m *Meta) sequenceKey(sequenceID int64) []byte {
+func (*Meta) sequenceKey(sequenceID int64) []byte {
 	return SequenceKey(sequenceID)
 }
 
@@ -319,7 +338,7 @@ func ParseSequenceKey(key []byte) (int64, error) {
 	return int64(id), errors.Trace(err)
 }
 
-func (m *Meta) sequenceCycleKey(sequenceID int64) []byte {
+func (*Meta) sequenceCycleKey(sequenceID int64) []byte {
 	return []byte(fmt.Sprintf("%s:%d", mSeqCyclePrefix, sequenceID))
 }
 
@@ -338,6 +357,37 @@ func (m *Meta) GenAutoTableIDKeyValue(dbID, tableID, autoID int64) (key, value [
 // GetAutoIDAccessors gets the controller for auto IDs.
 func (m *Meta) GetAutoIDAccessors(dbID, tableID int64) AutoIDAccessors {
 	return NewAutoIDAccessors(m, dbID, tableID)
+}
+
+// GetSchemaVersionWithNonEmptyDiff gets current global schema version, if diff is nil, we should return version - 1.
+// Consider the following scenario:
+/*
+//             t1            		t2			      t3             t4
+//             |					|				   |
+//    update schema version         |              set diff
+//                             stale read ts
+*/
+// At the first time, t2 reads the schema version v10, but the v10's diff is not set yet, so it loads v9 infoSchema.
+// But at t4 moment, v10's diff has been set and been cached in the memory, so stale read on t2 will get v10 schema from cache,
+// and inconsistency happen.
+// To solve this problem, we always check the schema diff at first, if the diff is empty, we know at t2 moment we can only see the v9 schema,
+// so make neededSchemaVersion = neededSchemaVersion - 1.
+// For `Reload`, we can also do this: if the newest version's diff is not set yet, it is ok to load the previous version's infoSchema, and wait for the next reload.
+func (m *Meta) GetSchemaVersionWithNonEmptyDiff() (int64, error) {
+	v, err := m.txn.GetInt64(mSchemaVersionKey)
+	if err != nil {
+		return 0, err
+	}
+	diff, err := m.GetSchemaDiff(v)
+	if err != nil {
+		return 0, err
+	}
+
+	if diff == nil && v > 0 {
+		// Although the diff of v is undetermined, the last version's diff is deterministic(this is guaranteed by schemaVersionManager).
+		v--
+	}
+	return v, err
 }
 
 // GetSchemaVersion gets current global schema version.
@@ -488,6 +538,142 @@ func (m *Meta) CreateTableOrView(dbID int64, tableInfo *model.TableInfo) error {
 	}
 
 	return m.txn.HSet(dbKey, tableKey, data)
+}
+
+// SetDDLTables write a key into storage.
+func (m *Meta) SetDDLTables() error {
+	err := m.txn.Set(mDDLTableVersion, []byte("1"))
+	return errors.Trace(err)
+}
+
+// SetMDLTables write a key into storage.
+func (m *Meta) SetMDLTables() error {
+	err := m.txn.Set(mDDLTableVersion, []byte("2"))
+	return errors.Trace(err)
+}
+
+// CreateMySQLDatabaseIfNotExists creates mysql schema and return its DB ID.
+func (m *Meta) CreateMySQLDatabaseIfNotExists() (int64, error) {
+	id, err := m.GetSystemDBID()
+	if id != 0 || err != nil {
+		return id, err
+	}
+
+	id, err = m.GenGlobalID()
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	db := model.DBInfo{
+		ID:      id,
+		Name:    model.NewCIStr(mysql.SystemDB),
+		Charset: mysql.UTF8MB4Charset,
+		Collate: mysql.UTF8MB4DefaultCollation,
+		State:   model.StatePublic,
+	}
+	err = m.CreateDatabase(&db)
+	return db.ID, err
+}
+
+// GetSystemDBID gets the system DB ID. return (0, nil) indicates that the system DB does not exist.
+func (m *Meta) GetSystemDBID() (int64, error) {
+	dbs, err := m.ListDatabases()
+	if err != nil {
+		return 0, err
+	}
+	for _, db := range dbs {
+		if db.Name.L == mysql.SystemDB {
+			return db.ID, nil
+		}
+	}
+	return 0, nil
+}
+
+// CheckDDLTableExists check if the tables related to concurrent DDL exists.
+func (m *Meta) CheckDDLTableExists() (bool, error) {
+	v, err := m.txn.Get(mDDLTableVersion)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return len(v) != 0, nil
+}
+
+// CheckMDLTableExists check if the tables related to concurrent DDL exists.
+func (m *Meta) CheckMDLTableExists() (bool, error) {
+	v, err := m.txn.Get(mDDLTableVersion)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return bytes.Equal(v, []byte("2")), nil
+}
+
+// SetFlashbackClusterJobID set flashback cluster jobID
+func (m *Meta) SetFlashbackClusterJobID(jobID int64) error {
+	return errors.Trace(m.txn.Set(mInFlashbackCluster, m.jobIDKey(jobID)))
+}
+
+// GetFlashbackClusterJobID returns flashback cluster jobID.
+func (m *Meta) GetFlashbackClusterJobID() (int64, error) {
+	val, err := m.txn.Get(mInFlashbackCluster)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if len(val) == 0 {
+		return 0, nil
+	}
+
+	return int64(binary.BigEndian.Uint64(val)), nil
+}
+
+// TSRange store a range time
+type TSRange struct {
+	StartTS uint64
+	EndTS   uint64
+}
+
+// SetFlashbackHistoryTSRange store flashback time range to TiKV
+func (m *Meta) SetFlashbackHistoryTSRange(timeRange []TSRange) error {
+	timeRangeByte, err := json.Marshal(timeRange)
+	if err != nil {
+		return err
+	}
+	return errors.Trace(m.txn.Set(mFlashbackHistoryTSRange, timeRangeByte))
+}
+
+// GetFlashbackHistoryTSRange get flashback time range from TiKV
+func (m *Meta) GetFlashbackHistoryTSRange() (timeRange []TSRange, err error) {
+	timeRangeByte, err := m.txn.Get(mFlashbackHistoryTSRange)
+	if err != nil {
+		return nil, err
+	}
+	if len(timeRangeByte) == 0 {
+		return []TSRange{}, nil
+	}
+	err = json.Unmarshal(timeRangeByte, &timeRange)
+	if err != nil {
+		return nil, err
+	}
+	return timeRange, nil
+}
+
+// SetConcurrentDDL set the concurrent DDL flag.
+func (m *Meta) SetConcurrentDDL(b bool) error {
+	var data []byte
+	if b {
+		data = []byte("1")
+	} else {
+		data = []byte("0")
+	}
+	return errors.Trace(m.txn.Set(mConcurrentDDL, data))
+}
+
+// IsConcurrentDDL returns true if the concurrent DDL flag is set.
+func (m *Meta) IsConcurrentDDL() (bool, error) {
+	val, err := m.txn.Get(mConcurrentDDL)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+
+	return len(val) == 0 || bytes.Equal(val, []byte("1")), nil
 }
 
 // CreateTableAndSetAutoID creates a table with tableInfo in database,
@@ -803,8 +989,8 @@ var (
 	AddIndexJobListKey JobListKeyType = mDDLJobAddIdxList
 )
 
-func (m *Meta) enQueueDDLJob(key []byte, job *model.Job) error {
-	b, err := job.Encode(true)
+func (m *Meta) enQueueDDLJob(key []byte, job *model.Job, updateRawArgs bool) error {
+	b, err := job.Encode(updateRawArgs)
 	if err == nil {
 		err = m.txn.RPush(key, b)
 	}
@@ -818,7 +1004,17 @@ func (m *Meta) EnQueueDDLJob(job *model.Job, jobListKeys ...JobListKeyType) erro
 		listKey = jobListKeys[0]
 	}
 
-	return m.enQueueDDLJob(listKey, job)
+	return m.enQueueDDLJob(listKey, job, true)
+}
+
+// EnQueueDDLJobNoUpdate adds a DDL job to the list without update raw args.
+func (m *Meta) EnQueueDDLJobNoUpdate(job *model.Job, jobListKeys ...JobListKeyType) error {
+	listKey := m.jobListKey
+	if len(jobListKeys) != 0 {
+		listKey = jobListKeys[0]
+	}
+
+	return m.enQueueDDLJob(listKey, job, false)
 }
 
 func (m *Meta) deQueueDDLJob(key []byte) (*model.Job, error) {
@@ -939,7 +1135,7 @@ func (m *Meta) GetAllDDLJobsInQueue(jobListKeys ...JobListKeyType) ([]*model.Job
 	return jobs, nil
 }
 
-func (m *Meta) jobIDKey(id int64) []byte {
+func (*Meta) jobIDKey(id int64) []byte {
 	b := make([]byte, 8)
 	binary.BigEndian.PutUint64(b, uint64(id))
 	return b
@@ -962,7 +1158,7 @@ func (m *Meta) reorgJobStartHandle(id int64, element *Element) []byte {
 	return b
 }
 
-func (m *Meta) reorgJobEndHandle(id int64, element *Element) []byte {
+func (*Meta) reorgJobEndHandle(id int64, element *Element) []byte {
 	b := make([]byte, 8, 25)
 	binary.BigEndian.PutUint64(b, uint64(id))
 	b = append(b, element.TypeKey...)
@@ -973,7 +1169,7 @@ func (m *Meta) reorgJobEndHandle(id int64, element *Element) []byte {
 	return b
 }
 
-func (m *Meta) reorgJobPhysicalTableID(id int64, element *Element) []byte {
+func (*Meta) reorgJobPhysicalTableID(id int64, element *Element) []byte {
 	b := make([]byte, 8, 25)
 	binary.BigEndian.PutUint64(b, uint64(id))
 	b = append(b, element.TypeKey...)
@@ -1016,34 +1212,9 @@ func (m *Meta) GetHistoryDDLJob(id int64) (*model.Job, error) {
 	return job, errors.Trace(err)
 }
 
-// GetAllHistoryDDLJobs gets all history DDL jobs.
-func (m *Meta) GetAllHistoryDDLJobs() ([]*model.Job, error) {
-	pairs, err := m.txn.HGetAll(mDDLJobHistoryKey)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	jobs, err := decodeJob(pairs)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	// sort job.
-	sorter := &jobsSorter{jobs: jobs}
-	sort.Sort(sorter)
-	return jobs, nil
-}
-
 // GetHistoryDDLCount the count of all history DDL jobs.
 func (m *Meta) GetHistoryDDLCount() (uint64, error) {
 	return m.txn.HGetLen(mDDLJobHistoryKey)
-}
-
-// GetLastNHistoryDDLJobs gets latest N history ddl jobs.
-func (m *Meta) GetLastNHistoryDDLJobs(num int) ([]*model.Job, error) {
-	pairs, err := m.txn.HGetLastN(mDDLJobHistoryKey, num)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return decodeJob(pairs)
 }
 
 // LastJobIterator is the iterator for gets latest history.
@@ -1054,6 +1225,18 @@ type LastJobIterator interface {
 // GetLastHistoryDDLJobsIterator gets latest N history ddl jobs iterator.
 func (m *Meta) GetLastHistoryDDLJobsIterator() (LastJobIterator, error) {
 	iter, err := structure.NewHashReverseIter(m.txn, mDDLJobHistoryKey)
+	if err != nil {
+		return nil, err
+	}
+	return &HLastJobIterator{
+		iter: iter,
+	}, nil
+}
+
+// GetHistoryDDLJobsIterator gets the jobs iterator begin with startJobID.
+func (m *Meta) GetHistoryDDLJobsIterator(startJobID int64) (LastJobIterator, error) {
+	field := m.jobIDKey(startJobID)
+	iter, err := structure.NewHashReverseIterBeginWithField(m.txn, mDDLJobHistoryKey, field)
 	if err != nil {
 		return nil, err
 	}
@@ -1087,36 +1270,6 @@ func (i *HLastJobIterator) GetLastJobs(num int, jobs []*model.Job) ([]*model.Job
 		}
 	}
 	return jobs, nil
-}
-
-func decodeJob(jobPairs []structure.HashPair) ([]*model.Job, error) {
-	jobs := make([]*model.Job, 0, len(jobPairs))
-	for _, pair := range jobPairs {
-		job := &model.Job{}
-		err := job.Decode(pair.Value)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		jobs = append(jobs, job)
-	}
-	return jobs, nil
-}
-
-// jobsSorter implements the sort.Interface interface.
-type jobsSorter struct {
-	jobs []*model.Job
-}
-
-func (s *jobsSorter) Swap(i, j int) {
-	s.jobs[i], s.jobs[j] = s.jobs[j], s.jobs[i]
-}
-
-func (s *jobsSorter) Len() int {
-	return len(s.jobs)
-}
-
-func (s *jobsSorter) Less(i, j int) bool {
-	return s.jobs[i].ID < s.jobs[j].ID
 }
 
 // GetBootstrapVersion returns the version of the server which bootstrap the store.
@@ -1204,25 +1357,49 @@ func (m *Meta) UpdateDDLReorgStartHandle(job *model.Job, element *Element, start
 }
 
 // UpdateDDLReorgHandle saves the job reorganization latest processed information for later resuming.
-func (m *Meta) UpdateDDLReorgHandle(job *model.Job, startKey, endKey kv.Key, physicalTableID int64, element *Element) error {
-	err := m.txn.HSet(mDDLJobReorgKey, m.reorgJobCurrentElement(job.ID), element.EncodeElement())
+func (m *Meta) UpdateDDLReorgHandle(jobID int64, startKey, endKey kv.Key, physicalTableID int64, element *Element) error {
+	err := m.txn.HSet(mDDLJobReorgKey, m.reorgJobCurrentElement(jobID), element.EncodeElement())
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if startKey != nil {
-		err = m.txn.HSet(mDDLJobReorgKey, m.reorgJobStartHandle(job.ID, element), startKey)
+		err = m.txn.HSet(mDDLJobReorgKey, m.reorgJobStartHandle(jobID, element), startKey)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
 	if endKey != nil {
-		err = m.txn.HSet(mDDLJobReorgKey, m.reorgJobEndHandle(job.ID, element), endKey)
+		err = m.txn.HSet(mDDLJobReorgKey, m.reorgJobEndHandle(jobID, element), endKey)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
-	err = m.txn.HSet(mDDLJobReorgKey, m.reorgJobPhysicalTableID(job.ID, element), []byte(strconv.FormatInt(physicalTableID, 10)))
+	err = m.txn.HSet(mDDLJobReorgKey, m.reorgJobPhysicalTableID(jobID, element), []byte(strconv.FormatInt(physicalTableID, 10)))
 	return errors.Trace(err)
+}
+
+// ClearAllDDLReorgHandle clears all reorganization related handles.
+func (m *Meta) ClearAllDDLReorgHandle() error {
+	return m.txn.HClear(mDDLJobReorgKey)
+}
+
+// ClearALLDDLJob clears all DDL jobs.
+func (m *Meta) ClearALLDDLJob() error {
+	if err := m.txn.LClear(mDDLJobAddIdxList); err != nil {
+		return errors.Trace(err)
+	}
+	if err := m.txn.LClear(mDDLJobListKey); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+// ClearAllHistoryJob clears all history jobs. **IT IS VERY DANGEROUS**
+func (m *Meta) ClearAllHistoryJob() error {
+	if err := m.txn.HClear(mDDLJobHistoryKey); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
 }
 
 // RemoveReorgElement removes the element of the reorganization information.
@@ -1318,7 +1495,7 @@ func getReorgJobFieldHandle(t *structure.TxStructure, reorgJobField []byte) (kv.
 	return bs, nil
 }
 
-func (m *Meta) schemaDiffKey(schemaVersion int64) []byte {
+func (*Meta) schemaDiffKey(schemaVersion int64) []byte {
 	return []byte(fmt.Sprintf("%s:%d", mSchemaDiffPrefix, schemaVersion))
 }
 

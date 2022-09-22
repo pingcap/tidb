@@ -89,11 +89,11 @@ func TestByteSizeTOMLDecode(t *testing.T) {
 		},
 		{
 			input: "x = ['100000']",
-			err:   "toml: cannot load TOML value.*",
+			err:   "toml: .* incompatible types:.*",
 		},
 		{
 			input: "x = { size = '100000' }",
-			err:   "toml: cannot load TOML value.*",
+			err:   "toml: .* incompatible types:.*",
 		},
 	}
 

@@ -26,12 +26,14 @@ go_library(
         "//util/sqlexec",
         "@com_github_joho_sqltocsv//:sqltocsv",
         "@com_github_pingcap_errors//:errors",
+        "@org_golang_x_exp//slices",
         "@org_uber_go_zap//:zap",
     ],
 )
 
 go_test(
     name = "checkpoints_test",
+    timeout = "short",
     srcs = [
         "checkpoints_file_test.go",
         "checkpoints_sql_test.go",
@@ -39,6 +41,7 @@ go_test(
         "main_test.go",
     ],
     embed = [":checkpoints"],
+    flaky = True,
     deps = [
         "//br/pkg/lightning/checkpoints/checkpointspb",
         "//br/pkg/lightning/config",

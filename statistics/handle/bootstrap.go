@@ -112,12 +112,16 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache *stat
 			}
 			hist := statistics.NewHistogram(id, ndv, nullCount, version, types.NewFieldType(mysql.TypeBlob), chunk.InitialCapacity, 0)
 			index := &statistics.Index{
-				Histogram: *hist,
-				CMSketch:  cms,
-				TopN:      topN,
-				Info:      idxInfo,
-				StatsVer:  statsVer,
-				Flag:      row.GetInt64(10),
+				Histogram:  *hist,
+				CMSketch:   cms,
+				TopN:       topN,
+				Info:       idxInfo,
+				StatsVer:   statsVer,
+				Flag:       row.GetInt64(10),
+				PhysicalID: tblID,
+			}
+			if statsVer != statistics.Version0 {
+				index.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
 			}
 			lastAnalyzePos.Copy(&index.LastAnalyzePos)
 			table.Indices[hist.ID] = index
@@ -427,6 +431,18 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 	err = h.initStatsBuckets(&cache)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	// Set columns' stats status.
+	for _, table := range cache.Values() {
+		for _, col := range table.Columns {
+			if col.StatsVer != statistics.Version0 || col.Count > 0 {
+				if mysql.HasPriKeyFlag(col.Info.GetFlag()) {
+					col.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
+				} else {
+					col.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
+				}
+			}
+		}
 	}
 	cache.FreshMemUsage()
 	h.updateStatsCache(cache)

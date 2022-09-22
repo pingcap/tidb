@@ -20,12 +20,8 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit/testmain"
 	"github.com/pingcap/tidb/testkit/testsetup"
-	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/goleak"
 )
@@ -61,19 +57,4 @@ func TestMain(m *testing.M) {
 		return i
 	}
 	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
-}
-func createMockStoreForSchemaTest(t *testing.T, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, func()) {
-	store, err := mockstore.NewMockStore(opts...)
-	require.NoError(t, err)
-	session.DisableStats4Test()
-	dom, err := session.BootstrapSession(store)
-	require.NoError(t, err)
-
-	dom.SetStatsUpdating(true)
-
-	clean := func() {
-		dom.Close()
-		require.NoError(t, store.Close())
-	}
-	return store, clean
 }

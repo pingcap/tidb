@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
@@ -255,14 +254,15 @@ func TestCastFunctions(t *testing.T) {
 }
 
 var (
-	year, month, day     = time.Now().In(time.UTC).Date()
-	curDateInt           = int64(year*10000 + int(month)*100 + day)
-	curTimeInt           = curDateInt*1000000 + 125959
-	curTimeWithFspReal   = float64(curTimeInt) + 0.555
-	curTimeString        = fmt.Sprintf("%4d-%02d-%02d 12:59:59", year, int(month), day)
-	curTimeWithFspString = fmt.Sprintf("%4d-%02d-%02d 12:59:59.555000", year, int(month), day)
-	tm                   = types.NewTime(types.FromDate(year, int(month), day, 12, 59, 59, 0), mysql.TypeDatetime, types.DefaultFsp)
-	tmWithFsp            = types.NewTime(types.FromDate(year, int(month), day, 12, 59, 59, 555000), mysql.TypeDatetime, types.MaxFsp)
+	year, month, day            = time.Now().In(time.UTC).Date()
+	curDateInt                  = int64(year*10000 + int(month)*100 + day)
+	curTimeInt                  = curDateInt*1000000 + 125959
+	curTimeWithFspReal          = float64(curTimeInt) + 0.555
+	curTimeString               = fmt.Sprintf("%4d-%02d-%02d 12:59:59", year, int(month), day)
+	curTimeWithFspString        = fmt.Sprintf("%4d-%02d-%02d 12:59:59.555000", year, int(month), day)
+	tm                          = types.NewTime(types.FromDate(year, int(month), day, 12, 59, 59, 0), mysql.TypeDatetime, types.DefaultFsp)
+	tmWithFsp                   = types.NewTime(types.FromDate(year, int(month), day, 12, 59, 59, 555000), mysql.TypeDatetime, types.MaxFsp)
+	tmWithFspAndZeroMicrosecond = types.NewTime(types.FromDate(year, int(month), day, 12, 59, 59, 000000), mysql.TypeDatetime, types.MaxFsp)
 	// timeDatum indicates datetime "curYear-curMonth-curDay 12:59:59".
 	timeDatum = types.NewDatum(tm)
 	// timeWithFspDatum indicates datetime "curYear-curMonth-curDay 12:59:59.555000".
@@ -275,18 +275,21 @@ var (
 	durationWithFsp = types.Duration{
 		Duration: 12*time.Hour + 59*time.Minute + 59*time.Second + 555*time.Millisecond,
 		Fsp:      3}
+	durationWithFspAndZeroMicrosecond = types.Duration{
+		Duration: 12*time.Hour + 59*time.Minute + 59*time.Second,
+		Fsp:      3}
 	// durationWithFspDatum indicates duration "12:59:59.555"
 	durationWithFspDatum = types.NewDatum(durationWithFsp)
 	dt                   = types.NewTime(types.FromDate(year, int(month), day, 0, 0, 0, 0), mysql.TypeDate, types.DefaultFsp)
 
 	// jsonInt indicates json(3)
-	jsonInt = types.NewDatum(json.CreateBinary(int64(3)))
+	jsonInt = types.NewDatum(types.CreateBinaryJSON(int64(3)))
 
 	// jsonTime indicates "CURRENT_DAY 12:59:59"
-	jsonTime = types.NewDatum(json.CreateBinary(tm.String()))
+	jsonTime = types.NewDatum(types.CreateBinaryJSON(tm))
 
 	// jsonDuration indicates
-	jsonDuration = types.NewDatum(json.CreateBinary(duration.String()))
+	jsonDuration = types.NewDatum(types.CreateBinaryJSON(duration))
 )
 
 func TestCastFuncSig(t *testing.T) {
@@ -344,10 +347,9 @@ func TestCastFuncSig(t *testing.T) {
 	}
 	for i, c := range castToDecCases {
 		args := []Expression{c.before}
-		b, err := newBaseBuiltinFunc(ctx, "", args, 0)
+		b, err := newBaseBuiltinFunc(ctx, "", args, types.NewFieldType(mysql.TypeNewDecimal))
 		require.NoError(t, err)
 		decFunc := newBaseBuiltinCastFunc(b, false)
-		decFunc.tp = types.NewFieldType(mysql.TypeNewDecimal)
 		switch i {
 		case 0:
 			sig = &builtinCastIntAsDecimalSig{decFunc}
@@ -431,10 +433,9 @@ func TestCastFuncSig(t *testing.T) {
 		tp := types.NewFieldType(mysql.TypeNewDecimal)
 		tp.SetFlen(c.flen)
 		tp.SetDecimal(c.decimal)
-		b, err := newBaseBuiltinFunc(ctx, "", args, 0)
+		b, err := newBaseBuiltinFunc(ctx, "", args, tp)
 		require.NoError(t, err)
 		decFunc := newBaseBuiltinCastFunc(b, false)
-		decFunc.tp = tp
 		switch i {
 		case 0:
 			sig = &builtinCastIntAsDecimalSig{decFunc}
@@ -501,7 +502,7 @@ func TestCastFuncSig(t *testing.T) {
 	}
 	for i, c := range castToIntCases {
 		args := []Expression{c.before}
-		b, err := newBaseBuiltinFunc(ctx, "", args, 0)
+		b, err := newBaseBuiltinFunc(ctx, "", args, types.NewFieldType(mysql.TypeLonglong))
 		require.NoError(t, err)
 		intFunc := newBaseBuiltinCastFunc(b, false)
 		switch i {
@@ -569,7 +570,7 @@ func TestCastFuncSig(t *testing.T) {
 	}
 	for i, c := range castToRealCases {
 		args := []Expression{c.before}
-		b, err := newBaseBuiltinFunc(ctx, "", args, 0)
+		b, err := newBaseBuiltinFunc(ctx, "", args, types.NewFieldType(mysql.TypeDouble))
 		require.NoError(t, err)
 		realFunc := newBaseBuiltinCastFunc(b, false)
 		switch i {
@@ -645,9 +646,8 @@ func TestCastFuncSig(t *testing.T) {
 		tp := types.NewFieldType(mysql.TypeVarString)
 		tp.SetCharset(charset.CharsetBin)
 		args := []Expression{c.before}
-		stringFunc, err := newBaseBuiltinFunc(ctx, "", args, 0)
+		stringFunc, err := newBaseBuiltinFunc(ctx, "", args, tp)
 		require.NoError(t, err)
-		stringFunc.tp = tp
 		switch i {
 		case 0:
 			sig = &builtinCastRealAsStringSig{stringFunc}
@@ -725,9 +725,8 @@ func TestCastFuncSig(t *testing.T) {
 		tp := types.NewFieldType(mysql.TypeVarString)
 		tp.SetFlen(c.flen)
 		tp.SetCharset(charset.CharsetBin)
-		stringFunc, err := newBaseBuiltinFunc(ctx, "", args, 0)
+		stringFunc, err := newBaseBuiltinFunc(ctx, "", args, tp)
 		require.NoError(t, err)
-		stringFunc.tp = tp
 		switch i {
 		case 0:
 			sig = &builtinCastRealAsStringSig{stringFunc}
@@ -801,9 +800,8 @@ func TestCastFuncSig(t *testing.T) {
 		args := []Expression{c.before}
 		tp := types.NewFieldType(mysql.TypeDatetime)
 		tp.SetDecimal(types.DefaultFsp)
-		timeFunc, err := newBaseBuiltinFunc(ctx, "", args, 0)
+		timeFunc, err := newBaseBuiltinFunc(ctx, "", args, tp)
 		require.NoError(t, err)
-		timeFunc.tp = tp
 		switch i {
 		case 0:
 			sig = &builtinCastRealAsTimeSig{timeFunc}
@@ -886,9 +884,8 @@ func TestCastFuncSig(t *testing.T) {
 		args := []Expression{c.before}
 		tp := types.NewFieldType(c.tp)
 		tp.SetDecimal(c.fsp)
-		timeFunc, err := newBaseBuiltinFunc(ctx, "", args, 0)
+		timeFunc, err := newBaseBuiltinFunc(ctx, "", args, tp)
 		require.NoError(t, err)
-		timeFunc.tp = tp
 		switch i {
 		case 0:
 			sig = &builtinCastRealAsTimeSig{timeFunc}
@@ -968,9 +965,8 @@ func TestCastFuncSig(t *testing.T) {
 		args := []Expression{c.before}
 		tp := types.NewFieldType(mysql.TypeDuration)
 		tp.SetDecimal(types.DefaultFsp)
-		durationFunc, err := newBaseBuiltinFunc(ctx, "", args, 0)
+		durationFunc, err := newBaseBuiltinFunc(ctx, "", args, tp)
 		require.NoError(t, err)
-		durationFunc.tp = tp
 		switch i {
 		case 0:
 			sig = &builtinCastRealAsDurationSig{durationFunc}
@@ -1046,9 +1042,8 @@ func TestCastFuncSig(t *testing.T) {
 		args := []Expression{c.before}
 		tp := types.NewFieldType(mysql.TypeDuration)
 		tp.SetDecimal(c.fsp)
-		durationFunc, err := newBaseBuiltinFunc(ctx, "", args, 0)
+		durationFunc, err := newBaseBuiltinFunc(ctx, "", args, tp)
 		require.NoError(t, err)
-		durationFunc.tp = tp
 		switch i {
 		case 0:
 			sig = &builtinCastRealAsDurationSig{durationFunc}
@@ -1079,9 +1074,8 @@ func TestCastFuncSig(t *testing.T) {
 	// null case
 	args := []Expression{&Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0}}
 	row := chunk.MutRowFromDatums([]types.Datum{types.NewDatum(nil)})
-	bf, err := newBaseBuiltinFunc(ctx, "", args, 0)
+	bf, err := newBaseBuiltinFunc(ctx, "", args, types.NewFieldType(mysql.TypeVarString))
 	require.NoError(t, err)
-	bf.tp = types.NewFieldType(mysql.TypeVarString)
 	sig = &builtinCastRealAsStringSig{bf}
 	sRes, isNull, err := sig.evalString(row.ToRow())
 	require.Equal(t, "", sRes)
@@ -1090,7 +1084,7 @@ func TestCastFuncSig(t *testing.T) {
 
 	// test hybridType case.
 	args = []Expression{&Constant{Value: types.NewDatum(types.Enum{Name: "a", Value: 0}), RetType: types.NewFieldType(mysql.TypeEnum)}}
-	b, err := newBaseBuiltinFunc(ctx, "", args, 0)
+	b, err := newBaseBuiltinFunc(ctx, "", args, types.NewFieldType(mysql.TypeLonglong))
 	require.NoError(t, err)
 	sig = &builtinCastStringAsIntSig{newBaseBuiltinCastFunc(b, false)}
 	iRes, isNull, err := sig.evalInt(chunk.Row{})
@@ -1109,10 +1103,9 @@ func TestCastJSONAsDecimalSig(t *testing.T) {
 	}()
 
 	col := &Column{RetType: types.NewFieldType(mysql.TypeJSON), Index: 0}
-	b, err := newBaseBuiltinFunc(ctx, "", []Expression{col}, 0)
+	b, err := newBaseBuiltinFunc(ctx, "", []Expression{col}, types.NewFieldType(mysql.TypeNewDecimal))
 	require.NoError(t, err)
 	decFunc := newBaseBuiltinCastFunc(b, false)
-	decFunc.tp = types.NewFieldType(mysql.TypeNewDecimal)
 	decFunc.tp.SetFlen(60)
 	decFunc.tp.SetDecimal(2)
 	sig := &builtinCastJSONAsDecimalSig{decFunc}
@@ -1134,7 +1127,7 @@ func TestCastJSONAsDecimalSig(t *testing.T) {
 		{`"1234567890123456789012345678901234567890123456789012345"`, types.NewDecFromStringForTest("1234567890123456789012345678901234567890123456789012345")},
 	}
 	for _, tt := range tests {
-		j, err := json.ParseBinaryFromString(tt.In)
+		j, err := types.ParseBinaryJSONFromString(tt.In)
 		require.NoError(t, err)
 		row := chunk.MutRowFromDatums([]types.Datum{types.NewDatum(j)})
 		res, isNull, err := sig.evalDecimal(row.ToRow())
@@ -1449,11 +1442,10 @@ func TestCastIntAsIntVec(t *testing.T) {
 // for issue https://github.com/pingcap/tidb/issues/16825
 func TestCastStringAsDecimalSigWithUnsignedFlagInUnion(t *testing.T) {
 	col := &Column{RetType: types.NewFieldType(mysql.TypeString), Index: 0}
-	b, err := newBaseBuiltinFunc(mock.NewContext(), "", []Expression{col}, 0)
+	b, err := newBaseBuiltinFunc(mock.NewContext(), "", []Expression{col}, types.NewFieldType(mysql.TypeNewDecimal))
 	require.NoError(t, err)
 	// set `inUnion` to `true`
 	decFunc := newBaseBuiltinCastFunc(b, true)
-	decFunc.tp = types.NewFieldType(mysql.TypeNewDecimal)
 	// set the `UnsignedFlag` bit
 	decFunc.tp.AddFlag(mysql.UnsignedFlag)
 	cast := &builtinCastStringAsDecimalSig{decFunc}
@@ -1555,5 +1547,66 @@ func TestCastConstAsDecimalFieldType(t *testing.T) {
 		expr := WrapWithCastAsDecimal(ctx, tc.input)
 		require.Equal(t, tc.resultFlen, expr.GetType().GetFlen())
 		require.Equal(t, tc.resultDecimal, expr.GetType().GetDecimal())
+	}
+}
+
+func TestCastBinaryStringAsJSONSig(t *testing.T) {
+	ctx := createContext(t)
+	sc := ctx.GetSessionVars().StmtCtx
+	originIgnoreTruncate := sc.IgnoreTruncate
+	sc.IgnoreTruncate = true
+	defer func() {
+		sc.IgnoreTruncate = originIgnoreTruncate
+	}()
+
+	// BINARY STRING will be converted to a JSON opaque
+	// and yield "base64:typeXX:<base64 encoded value>" finally
+	var tests = []struct {
+		str       string
+		tp        *types.FieldType
+		result    types.BinaryJSON
+		resultStr string
+	}{
+		{
+			"a",
+			types.NewFieldTypeWithCollation(mysql.TypeVarString, charset.CollationBin, 4),
+			types.BinaryJSON{TypeCode: types.JSONTypeCodeOpaque, Value: []byte{0xfd, 1, 'a'}},
+			`"base64:type253:YQ=="`,
+		},
+		{
+			"test",
+			types.NewFieldTypeWithCollation(mysql.TypeVarString, charset.CollationBin, 4),
+			types.BinaryJSON{TypeCode: types.JSONTypeCodeOpaque, Value: []byte{0xfd, 4, 't', 'e', 's', 't'}},
+			`"base64:type253:dGVzdA=="`,
+		},
+		{
+			"a",
+			types.NewFieldTypeWithCollation(mysql.TypeString, charset.CollationBin, 4),
+			types.BinaryJSON{TypeCode: types.JSONTypeCodeOpaque, Value: []byte{0xfe, 4, 'a', 0, 0, 0}},
+			`"base64:type254:YQAAAA=="`,
+		},
+		{
+			"a",
+			types.NewFieldTypeWithCollation(mysql.TypeBlob, charset.CollationBin, 4),
+			types.BinaryJSON{TypeCode: types.JSONTypeCodeOpaque, Value: []byte{0xfc, 1, 'a'}},
+			`"base64:type252:YQ=="`,
+		},
+	}
+	for _, tt := range tests {
+		args := []Expression{&Column{RetType: tt.tp, Index: 0}}
+		tp := types.NewFieldType(mysql.TypeJSON)
+		tp.SetDecimal(types.DefaultFsp)
+		jsonFunc, err := newBaseBuiltinFunc(ctx, "", args, tp)
+		require.NoError(t, err)
+		sig := &builtinCastStringAsJSONSig{jsonFunc}
+
+		row := chunk.MutRowFromDatums(
+			[]types.Datum{types.NewCollationStringDatum(tt.str, charset.CollationBin)},
+		)
+		res, isNull, err := sig.evalJSON(row.ToRow())
+		require.NoError(t, err)
+		require.False(t, isNull)
+		require.Equal(t, tt.result, res)
+		require.Equal(t, tt.resultStr, res.String())
 	}
 }

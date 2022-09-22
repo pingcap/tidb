@@ -30,8 +30,10 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/util/chunk"
@@ -56,11 +58,11 @@ type DDLExec struct {
 func (e *DDLExec) toErr(err error) error {
 	// The err may be cause by schema changed, here we distinguish the ErrInfoSchemaChanged error from other errors.
 	dom := domain.GetDomain(e.ctx)
-	checker := domain.NewSchemaChecker(dom, e.is.SchemaMetaVersion(), nil)
+	checker := domain.NewSchemaChecker(dom, e.is.SchemaMetaVersion(), nil, true)
 	txn, err1 := e.ctx.Txn(true)
 	if err1 != nil {
-		logutil.BgLogger().Error("active txn failed", zap.Error(err))
-		return err1
+		logutil.BgLogger().Error("active txn failed", zap.Error(err1))
+		return err
 	}
 	_, schemaInfoErr := checker.Check(txn.StartTS())
 	if schemaInfoErr != nil {
@@ -169,6 +171,8 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		err = e.executeRecoverTable(x)
 	case *ast.FlashBackTableStmt:
 		err = e.executeFlashbackTable(x)
+	case *ast.FlashBackClusterStmt:
+		err = e.executeFlashBackCluster(ctx, x)
 	case *ast.RenameTableStmt:
 		err = e.executeRenameTable(x)
 	case *ast.TruncateTableStmt:
@@ -269,7 +273,12 @@ func (e *DDLExec) createSessionTemporaryTable(s *ast.CreateTableStmt) error {
 		return err
 	}
 
-	return e.tempTableDDL.CreateLocalTemporaryTable(dbInfo, tbInfo)
+	if err = e.tempTableDDL.CreateLocalTemporaryTable(dbInfo, tbInfo); err != nil {
+		return err
+	}
+
+	sessiontxn.GetTxnManager(e.ctx).OnLocalTemporaryTableCreated()
+	return nil
 }
 
 func (e *DDLExec) executeCreateView(s *ast.CreateViewStmt) error {
@@ -306,11 +315,11 @@ func (e *DDLExec) executeDropDatabase(s *ast.DropDatabaseStmt) error {
 	sessionVars := e.ctx.GetSessionVars()
 	if err == nil && strings.ToLower(sessionVars.CurrentDB) == dbName.L {
 		sessionVars.CurrentDB = ""
-		err = variable.SetSessionSystemVar(sessionVars, variable.CharsetDatabase, mysql.DefaultCharset)
+		err = sessionVars.SetSystemVar(variable.CharsetDatabase, mysql.DefaultCharset)
 		if err != nil {
 			return err
 		}
-		err = variable.SetSessionSystemVar(sessionVars, variable.CollationDatabase, mysql.DefaultCollationName)
+		err = sessionVars.SetSystemVar(variable.CollationDatabase, mysql.DefaultCollationName)
 		if err != nil {
 			return err
 		}
@@ -512,6 +521,28 @@ func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName) (*model.J
 		return nil, nil, errUnsupportedFlashbackTmpTable
 	}
 	return jobInfo, tableInfo, nil
+}
+
+func (e *DDLExec) executeFlashBackCluster(ctx context.Context, s *ast.FlashBackClusterStmt) error {
+	checker := privilege.GetPrivilegeManager(e.ctx)
+	if !checker.RequestVerification(e.ctx.GetSessionVars().ActiveRoles, "", "", "", mysql.SuperPriv) {
+		return core.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER")
+	}
+
+	tiFlashInfo, err := getTiFlashStores(e.ctx)
+	if err != nil {
+		return err
+	}
+	if len(tiFlashInfo) != 0 {
+		return errors.Errorf("not support flash back cluster with TiFlash stores")
+	}
+
+	flashbackTS, err := staleread.CalculateAsOfTsExpr(e.ctx, s.FlashbackTS)
+	if err != nil {
+		return err
+	}
+
+	return domain.GetDomain(e.ctx).DDL().FlashbackCluster(e.ctx, flashbackTS)
 }
 
 func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {

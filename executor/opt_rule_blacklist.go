@@ -18,7 +18,6 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/kv"
-
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"

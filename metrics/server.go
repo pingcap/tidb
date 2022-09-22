@@ -52,6 +52,14 @@ var (
 			Help:      "Counter of queries.",
 		}, []string{LblType, LblResult})
 
+	AffectedRowsCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "affected_rows",
+			Help:      "Counters of server affected rows.",
+		}, []string{LblSQLType})
+
 	ConnGauge = prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",

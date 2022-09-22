@@ -48,17 +48,20 @@ go_library(
         "@com_github_pingcap_tipb//go-tipb",
         "@com_github_tikv_client_go_v2//tikvrpc",
         "@com_github_twmb_murmur3//:murmur3",
+        "@org_golang_x_exp//slices",
         "@org_uber_go_atomic//:atomic",
     ],
 )
 
 go_test(
     name = "cophandler_test",
+    timeout = "short",
     srcs = [
         "cop_handler_test.go",
         "main_test.go",
     ],
     embed = [":cophandler"],
+    flaky = True,
     deps = [
         "//expression",
         "//kv",

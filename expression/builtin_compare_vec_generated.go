@@ -18,7 +18,6 @@ package expression
 
 import (
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -236,7 +235,7 @@ func (b *builtinLTJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		if result.IsNull(i) {
 			continue
 		}
-		val := json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i))
+		val := types.CompareBinaryJSON(buf0.GetJSON(i), buf1.GetJSON(i))
 		i64s[i] = boolToInt64(val < 0)
 	}
 	return nil
@@ -460,7 +459,7 @@ func (b *builtinLEJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		if result.IsNull(i) {
 			continue
 		}
-		val := json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i))
+		val := types.CompareBinaryJSON(buf0.GetJSON(i), buf1.GetJSON(i))
 		i64s[i] = boolToInt64(val <= 0)
 	}
 	return nil
@@ -684,7 +683,7 @@ func (b *builtinGTJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		if result.IsNull(i) {
 			continue
 		}
-		val := json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i))
+		val := types.CompareBinaryJSON(buf0.GetJSON(i), buf1.GetJSON(i))
 		i64s[i] = boolToInt64(val > 0)
 	}
 	return nil
@@ -908,7 +907,7 @@ func (b *builtinGEJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		if result.IsNull(i) {
 			continue
 		}
-		val := json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i))
+		val := types.CompareBinaryJSON(buf0.GetJSON(i), buf1.GetJSON(i))
 		i64s[i] = boolToInt64(val >= 0)
 	}
 	return nil
@@ -1132,7 +1131,7 @@ func (b *builtinEQJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		if result.IsNull(i) {
 			continue
 		}
-		val := json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i))
+		val := types.CompareBinaryJSON(buf0.GetJSON(i), buf1.GetJSON(i))
 		i64s[i] = boolToInt64(val == 0)
 	}
 	return nil
@@ -1356,7 +1355,7 @@ func (b *builtinNEJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		if result.IsNull(i) {
 			continue
 		}
-		val := json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i))
+		val := types.CompareBinaryJSON(buf0.GetJSON(i), buf1.GetJSON(i))
 		i64s[i] = boolToInt64(val != 0)
 	}
 	return nil
@@ -1603,7 +1602,7 @@ func (b *builtinNullEQJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 			i64s[i] = 1
 		case isNull0 != isNull1:
 			i64s[i] = 0
-		case json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i)) == 0:
+		case types.CompareBinaryJSON(buf0.GetJSON(i), buf1.GetJSON(i)) == 0:
 			i64s[i] = 1
 		}
 	}
@@ -1883,6 +1882,7 @@ func (b *builtinCoalesceTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.C
 	beforeWarns := sc.WarningCount()
 	for j := 0; j < len(b.args); j++ {
 		err := b.args[j].VecEvalTime(b.ctx, input, buf1)
+		fsp := b.tp.GetDecimal()
 		afterWarns := sc.WarningCount()
 		if err != nil || afterWarns > beforeWarns {
 			if afterWarns > beforeWarns {
@@ -1894,6 +1894,7 @@ func (b *builtinCoalesceTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.C
 		for i := 0; i < n; i++ {
 			if !buf1.IsNull(i) && result.IsNull(i) {
 				i64s[i] = args[i]
+				i64s[i].SetFsp(fsp)
 				result.SetNull(i, false)
 			}
 		}

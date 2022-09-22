@@ -18,9 +18,11 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"go.opencensus.io/stats/view"
 )
 
 func TestMockAPI(t *testing.T) {
+	defer view.Stop()
 	vars := NewSessionVars()
 	mock := NewMockGlobalAccessor4Tests()
 	mock.SessionVars = vars
@@ -46,4 +48,8 @@ func TestMockAPI(t *testing.T) {
 	err = mock.SetGlobalSysVarOnly(DefaultAuthPlugin, "mysql_native_password")
 	require.NoError(t, err)
 
+	// Test GetTiDBTableValue
+	str, err = mock.GetTiDBTableValue("tikv_gc_life_time")
+	require.NoError(t, err)
+	require.Equal(t, "10m0s", str)
 }

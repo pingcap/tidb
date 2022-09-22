@@ -18,13 +18,12 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/pingcap/tidb/dumpling/cli"
+	"github.com/pingcap/tidb/dumpling/export"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
-
-	"github.com/pingcap/tidb/dumpling/cli"
-	"github.com/pingcap/tidb/dumpling/export"
 )
 
 func main() {
@@ -73,7 +72,7 @@ func main() {
 		os.Exit(1)
 	}
 	err = dumper.Dump()
-	dumper.Close()
+	_ = dumper.Close()
 	if err != nil {
 		dumper.L().Error("dump failed error stack info", zap.Error(err))
 		fmt.Printf("\ndump failed: %s\n", err.Error())

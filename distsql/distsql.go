@@ -58,7 +58,6 @@ func DispatchMPPTasks(ctx context.Context, sctx sessionctx.Context, tasks []*kv.
 		rootPlanID: rootID,
 		storeType:  kv.TiFlash,
 	}, nil
-
 }
 
 // Select sends a DAG request, returns SelectResult.
@@ -113,16 +112,17 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 	// for selectResult, we just use the kvReq.MemTracker prepared for co-processor
 	// instead of creating a new one for simplification.
 	return &selectResult{
-		label:      "dag",
-		resp:       resp,
-		rowLen:     len(fieldTypes),
-		fieldTypes: fieldTypes,
-		ctx:        sctx,
-		feedback:   fb,
-		sqlType:    label,
-		memTracker: kvReq.MemTracker,
-		storeType:  kvReq.StoreType,
-		paging:     kvReq.Paging,
+		label:              "dag",
+		resp:               resp,
+		rowLen:             len(fieldTypes),
+		fieldTypes:         fieldTypes,
+		ctx:                sctx,
+		feedback:           fb,
+		sqlType:            label,
+		memTracker:         kvReq.MemTracker,
+		storeType:          kvReq.StoreType,
+		paging:             kvReq.Paging.Enable,
+		distSQLConcurrency: kvReq.Concurrency,
 	}, nil
 }
 
