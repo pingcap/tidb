@@ -1110,7 +1110,6 @@ func adjustForeignKeyChildTableInfoAfterRenameTable(d *ddlCtx, t *meta.Meta, job
 		if referredFK.ChildSchema.L == oldSchemaName.L && referredFK.ChildTable.L == oldTableName.L {
 			childTableInfo = schemaIDAndTableInfo{newDB.ID, tblInfo}
 		} else {
-			var err error
 			childTableInfo, err = fkh.getTableFromStorage(is, t, referredFK.ChildSchema, referredFK.ChildTable)
 			if err != nil {
 				if infoschema.ErrTableNotExists.Equal(err) || infoschema.ErrDatabaseNotExists.Equal(err) {
@@ -1119,12 +1118,12 @@ func adjustForeignKeyChildTableInfoAfterRenameTable(d *ddlCtx, t *meta.Meta, job
 				return nil, err
 			}
 		}
-		childfkInfo := model.FindFKInfoByName(childTableInfo.tblInfo.ForeignKeys, referredFK.ChildFKName.L)
-		if childfkInfo == nil {
+		childFKInfo := model.FindFKInfoByName(childTableInfo.tblInfo.ForeignKeys, referredFK.ChildFKName.L)
+		if childFKInfo == nil {
 			continue
 		}
-		childfkInfo.RefSchema = newDB.Name
-		childfkInfo.RefTable = newTableName
+		childFKInfo.RefSchema = newDB.Name
+		childFKInfo.RefTable = newTableName
 		infos[childTableInfo.tblInfo.ID] = childTableInfo
 	}
 	infoList := make([]schemaIDAndTableInfo, 0, len(fkh.loaded))
