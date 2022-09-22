@@ -6036,3 +6036,30 @@ func TestBinaryStrNumericOperator(t *testing.T) {
 	// there should be no warning.
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 }
+
+func TestTableLockPrivilege(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("create user 'testuser'@'localhost'")
+	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "testuser", Hostname: "localhost"}, nil, nil))
+	tk2.MustGetErrMsg("LOCK TABLE test.t WRITE", "[planner:1044]Access denied for user 'testuser'@'localhost' to database 'test'")
+	tk.MustExec("GRANT LOCK TABLES ON test.* to 'testuser'@'localhost'")
+	tk2.MustGetErrMsg("LOCK TABLE test.t WRITE", "[planner:1142]SELECT command denied to user 'testuser'@'localhost' for table 't'")
+	tk.MustExec("REVOKE ALL ON test.* FROM 'testuser'@'localhost'")
+	tk.MustExec("GRANT SELECT ON test.* to 'testuser'@'localhost'")
+	tk2.MustGetErrMsg("LOCK TABLE test.t WRITE", "[planner:1044]Access denied for user 'testuser'@'localhost' to database 'test'")
+	tk.MustExec("GRANT LOCK TABLES ON test.* to 'testuser'@'localhost'")
+	tk2.MustExec("LOCK TABLE test.t WRITE")
+
+	tk.MustExec("create database test2")
+	tk.MustExec("create table test2.t2(a int)")
+	tk2.MustGetErrMsg("LOCK TABLE test.t WRITE, test2.t2 WRITE", "[planner:1044]Access denied for user 'testuser'@'localhost' to database 'test2'")
+	tk.MustExec("GRANT LOCK TABLES ON test2.* to 'testuser'@'localhost'")
+	tk2.MustGetErrMsg("LOCK TABLE test.t WRITE, test2.t2 WRITE", "[planner:1142]SELECT command denied to user 'testuser'@'localhost' for table 't2'")
+	tk.MustExec("GRANT SELECT ON test2.* to 'testuser'@'localhost'")
+	tk2.MustExec("LOCK TABLE test.t WRITE, test2.t2 WRITE")
+	tk.MustExec("LOCK TABLE test.t WRITE, test2.t2 WRITE")
+}

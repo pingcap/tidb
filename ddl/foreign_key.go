@@ -186,15 +186,8 @@ func checkTableForeignKeyValid(is infoschema.InfoSchema, schema string, tbInfo *
 }
 
 func getAndCheckLatestInfoSchema(d *ddlCtx, t *meta.Meta) (infoschema.InfoSchema, error) {
-	globalVer, err := t.GetSchemaVersion()
-	if err != nil {
-		return nil, err
-	}
-	is := d.infoCache.GetLatest()
-	if is.SchemaMetaVersion() != globalVer {
-		return nil, errors.Errorf("need wait owner to load latest schema, global: %d, info_cache: %d", globalVer, is.SchemaMetaVersion())
-	}
-	return is, nil
+	// TODO(crazycs520): fix me, need to make sure the `d.infoCache` is the latest infoschema.
+	return d.infoCache.GetLatest(), nil
 }
 
 func checkTableForeignKeyValidInOwner(d *ddlCtx, t *meta.Meta, job *model.Job, tbInfo *model.TableInfo, fkCheck bool) (retryable bool, _ error) {
