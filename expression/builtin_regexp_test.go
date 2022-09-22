@@ -226,8 +226,9 @@ func TestRegexpLike(t *testing.T) {
 		{"..", "b", 0, nil},
 		{".ab", "aab", 1, nil},
 		{".*", "abcd", 1, nil},
-		{"(", "", 0, ErrRegexp},
-		{"(*", "", 0, ErrRegexp}, // index 10
+		{"", "a", 0, ErrRegexp}, // issue 37988
+		{"(", "", 0, ErrRegexp}, // index 10
+		{"(*", "", 0, ErrRegexp},
 		{"[a", "", 0, ErrRegexp},
 		{"\\", "", 0, ErrRegexp},
 	}
@@ -368,6 +369,7 @@ func TestRegexpSubstr(t *testing.T) {
 		{"abc", nil, nil, nil, nil},
 		{nil, "bc", nil, nil, nil},
 		{nil, nil, nil, nil, nil},
+		{"a", "", nil, nil, ErrRegexp}, // issue 37988
 	}
 
 	for charsetAndCollateTp := 0; charsetAndCollateTp < testCharsetAndCollateTpNum; charsetAndCollateTp++ {
@@ -623,6 +625,7 @@ func TestRegexpInStr(t *testing.T) {
 		{"abc", nil, nil, nil, nil},
 		{nil, "bc", nil, nil, nil},
 		{nil, nil, nil, nil, nil},
+		{"a", "", nil, nil, ErrRegexp}, // issue 37988
 	}
 
 	for charsetAndCollateTp := 0; charsetAndCollateTp < testCharsetAndCollateTpNum; charsetAndCollateTp++ {
@@ -931,10 +934,11 @@ func TestRegexpReplace(t *testing.T) {
 	}{
 		{"abc abd abe", "ab.", "cz", "cz cz cz", "0x637A20637A20637A", nil},
 		{"你好 好的", "好", "逸", "你逸 逸的", "0xE4BDA0E980B820E980B8E79A84", nil},
-		{"", "^$", "123", "", "0x", nil},
+		{"", "^$", "123", "123", "0x313233", nil},
 		{"abc", nil, nil, nil, nil, nil},
 		{nil, "bc", nil, nil, nil, nil},
 		{nil, nil, nil, nil, nil, nil},
+		{"a", "", "a", nil, nil, ErrRegexp}, // issue 37988
 	}
 
 	for charsetAndCollateTp := 0; charsetAndCollateTp < testCharsetAndCollateTpNum; charsetAndCollateTp++ {
@@ -973,7 +977,7 @@ func TestRegexpReplace(t *testing.T) {
 		{"abc", "bc", "cc", int64(3), "abc", "0x616263", nil},
 		{"你好", "好", "的", int64(2), "你的", "0xE4BDA0E79A84", nil},
 		{"你好啊", "好", "的", int64(3), "你好啊", "0xE4BDA0E79A84E5958A", nil},
-		{"", "^$", "cc", int64(1), "", "0x", nil},
+		{"", "^$", "cc", int64(1), "cc", "0x6363", nil},
 		// Invalid position index tests
 		{"", "^$", "a", int64(2), "", "", ErrRegexp},
 		{"", "^&", "a", int64(0), "", "", ErrRegexp},
@@ -1027,9 +1031,9 @@ func TestRegexpReplace(t *testing.T) {
 		{"abc abd abe", "ab.", "cc", int64(3), int64(10), "abc abd abe", "0x6162632061626420616265", nil},
 		{"你好 好啊", "好", "的", int64(1), int64(1), "你的 好啊", "0xE4BDA0E79A8420E5A5BDE5958A", nil}, // index 5
 		{"你好 好啊", "好", "的", int64(3), int64(1), "你好 的啊", "0xE4BDA0E79A8420E5A5BDE5958A", nil},
-		{"", "^$", "cc", int64(1), int64(1), "", "0x", nil},
+		{"", "^$", "cc", int64(1), int64(1), "cc", "0x6363", nil},
 		{"", "^$", "cc", int64(1), int64(2), "", "0x", nil},
-		{"", "^$", "cc", int64(1), int64(-1), "", "0x", nil},
+		{"", "^$", "cc", int64(1), int64(-1), "cc", "0x6363", nil},
 		// Some nullable input tests
 		{"", "^$", "a", nil, int64(1), nil, nil, nil}, // index 10
 		{nil, "^$", "a", nil, nil, nil, nil, nil},

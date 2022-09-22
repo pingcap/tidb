@@ -45,6 +45,7 @@ import (
 	advancercfg "github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/mathutil"
@@ -59,7 +60,6 @@ import (
 
 const (
 	flagYes              = "yes"
-	flagDryRun           = "dry-run"
 	flagUntil            = "until"
 	flagStreamJSONOutput = "json"
 	flagStreamTaskName   = "task-name"
@@ -497,6 +497,9 @@ func RunStreamStart(
 		return errors.New("Unable to create task about log-backup. " +
 			"please set TiKV config `log-backup.enable` to true and restart TiKVs.")
 	}
+	if !ddl.IngestJobsNotExisted(se.GetSessionCtx()) {
+		return errors.Annotate(berrors.ErrUnknown, "Unable to create log backup task. Please wait until the DDL jobs(add index with ingest method) are finished.")
+	}
 
 	if err = streamMgr.adjustAndCheckStartTS(ctx); err != nil {
 		return errors.Trace(err)
@@ -542,11 +545,12 @@ func RunStreamStart(
 
 	ti := streamhelper.TaskInfo{
 		PBInfo: backuppb.StreamBackupTaskInfo{
-			Storage:     streamMgr.bc.GetStorageBackend(),
-			StartTs:     cfg.StartTS,
-			EndTs:       cfg.EndTS,
-			Name:        cfg.TaskName,
-			TableFilter: cfg.FilterStr,
+			Storage:         streamMgr.bc.GetStorageBackend(),
+			StartTs:         cfg.StartTS,
+			EndTs:           cfg.EndTS,
+			Name:            cfg.TaskName,
+			TableFilter:     cfg.FilterStr,
+			CompressionType: backuppb.CompressionType_ZSTD,
 		},
 		Ranges:  ranges,
 		Pausing: false,
@@ -1133,6 +1137,10 @@ func restoreStream(
 	dmlFiles, ddlFiles, err := client.ReadStreamDataFiles(ctx, metas)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	if len(dmlFiles) == 0 && len(ddlFiles) == 0 {
+		log.Info("nothing to restore.")
+		return nil
 	}
 
 	// get full backup meta to generate rewrite rules.
