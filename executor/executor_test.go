@@ -5981,28 +5981,6 @@ func TestIsFastPlan(t *testing.T) {
 	}
 }
 
-func TestBinaryStrNumericOperator(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-
-	// Test normal warnings.
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a varbinary(10))")
-	tk.MustExec("insert into t values ('123.12')")
-	tk.MustQuery("select 1+a from t").Check(testkit.Rows(
-		"124.12"))
-	tk.MustQuery("select a-1 from t").Check(testkit.Rows(
-		"122.12"))
-	tk.MustQuery("select -10*a from t").Check(testkit.Rows(
-		"-1231.2"))
-	tk.MustQuery("select a/-2 from t").Check(testkit.Rows(
-		"-61.56"))
-	// there should be no warning.
-	tk.MustQuery("show warnings").Check(testkit.Rows())
-}
-
 func TestCountDistinctJSON(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -6035,4 +6013,26 @@ func TestHashJoinJSON(t *testing.T) {
 	tk.MustExec("insert into t values(3, cast(? as JSON), ?)", uint64(math.MaxUint64), float64(math.MaxUint64))
 
 	tk.MustQuery("select /*+inl_hash_join(t2)*/ t1.id, t2.id from t t1 join t t2 on t1.j = t2.d;").Check(testkit.Rows("0 0", "1 1", "2 2"))
+}
+
+func TestBinaryStrNumericOperator(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// Test normal warnings.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a varbinary(10))")
+	tk.MustExec("insert into t values ('123.12')")
+	tk.MustQuery("select 1+a from t").Check(testkit.Rows(
+		"124.12"))
+	tk.MustQuery("select a-1 from t").Check(testkit.Rows(
+		"122.12"))
+	tk.MustQuery("select -10*a from t").Check(testkit.Rows(
+		"-1231.2"))
+	tk.MustQuery("select a/-2 from t").Check(testkit.Rows(
+		"-61.56"))
+	// there should be no warning.
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 }
