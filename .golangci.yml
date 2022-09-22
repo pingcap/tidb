@@ -10,7 +10,6 @@ linters:
     - structcheck
     - deadcode
     - gosimple
-    - goimports
     - errcheck
     - staticcheck
     - stylecheck
