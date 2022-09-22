@@ -3821,13 +3821,13 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 	if err != nil {
 		return err
 	}
-	actualColLen := insert.ColLen
+	actualColLen := -1
 	// For MYSQL, it handles the case that the columns in ON DUPLICATE UPDATE is not the project column of the SELECT clause
 	// but just in the table occurs in the SELECT CLAUSE.
 	//   e.g. insert into a select x from b ON DUPLICATE KEY UPDATE  a.x=b.y; the `y` is not a column of select's output.
 	//        MySQL won't throw error and will execute this SQL successfully.
 	// To make compatible with this strange feature, we add the variable `actualColLen` and the following IF branch.
-	if len(insert.OnDuplicate) > 0 && actualColLen == 0 {
+	if len(insert.OnDuplicate) > 0 {
 		// If the select has aggregation, it cannot see the columns not in the select field.
 		//   e.g. insert into a select x from b ON DUPLICATE KEY UPDATE  a.x=b.y; can be executed successfully.
 		//        insert into a select x from b group by x ON DUPLICATE KEY UPDATE  a.x=b.y; will report b.y not found.
@@ -3865,6 +3865,11 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 					}
 					sel.Fields.Fields = append(sel.Fields.Fields, &ast.SelectField{Expr: colName, Offset: len(sel.Fields.Fields)})
 				}
+				defer func() {
+					// Revert the change for ast. Because when we use the 'prepare' and 'execute' statement it will both build plan which will cause problem.
+					// You can see the issue #37187 for more details.
+					sel.Fields.Fields = sel.Fields.Fields[:actualColLen]
+				}()
 			}
 		}
 	}
@@ -3874,7 +3879,7 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 	}
 
 	// Check to guarantee that the length of the row returned by select is equal to that of affectedValuesCols.
-	if (actualColLen == 0 && selectPlan.Schema().Len() != len(affectedValuesCols)) || (actualColLen != 0 && actualColLen != len(affectedValuesCols)) {
+	if (actualColLen == -1 && selectPlan.Schema().Len() != len(affectedValuesCols)) || (actualColLen != -1 && actualColLen != len(affectedValuesCols)) {
 		return ErrWrongValueCountOnRow.GenWithStackByArgs(1)
 	}
 
@@ -3897,11 +3902,8 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 		return err
 	}
 
-	if actualColLen == 0 {
+	if actualColLen == -1 {
 		actualColLen = selectPlan.Schema().Len()
-	}
-	if insert.ColLen == 0 {
-		insert.ColLen = actualColLen
 	}
 	insertPlan.RowLen = actualColLen
 	// schema4NewRow is the schema for the newly created data record based on
