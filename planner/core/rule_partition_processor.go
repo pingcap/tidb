@@ -136,7 +136,7 @@ func (s *partitionProcessor) findUsedPartitions(ctx sessionctx.Context, tbl tabl
 		partIdx[i].Index = i
 		colLen = append(colLen, types.UnspecifiedLength)
 	}
-	detachedResult, err := ranger.DetachCondAndBuildRangeForPartition(ctx, conds, partIdx, colLen)
+	detachedResult, err := ranger.DetachCondAndBuildRangeForPartition(ctx, conds, partIdx, colLen, ctx.GetSessionVars().RangeMaxSize)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -531,7 +531,7 @@ func (l *listPartitionPruner) detachCondAndBuildRange(conds []expression.Express
 		colLen = append(colLen, types.UnspecifiedLength)
 	}
 
-	detachedResult, err := ranger.DetachCondAndBuildRangeForPartition(l.ctx, conds, cols, colLen)
+	detachedResult, err := ranger.DetachCondAndBuildRangeForPartition(l.ctx, conds, cols, colLen, l.ctx.GetSessionVars().RangeMaxSize)
 	if err != nil {
 		return nil, err
 	}
@@ -1043,7 +1043,7 @@ func multiColumnRangeColumnsPruner(sctx sessionctx.Context, exprs []expression.E
 		lens = append(lens, columnsPruner.partCols[i].RetType.GetFlen())
 	}
 
-	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, exprs, columnsPruner.partCols, lens)
+	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, exprs, columnsPruner.partCols, lens, sctx.GetSessionVars().RangeMaxSize)
 	if err != nil {
 		return fullRange(len(columnsPruner.lessThan))
 	}
