@@ -1090,7 +1090,6 @@ func checkAndRenameTables(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo
 }
 
 func adjustForeignKeyChildTableInfoAfterRenameTable(d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, oldSchemaName, oldTableName, newTableName model.CIStr, newSchemaID int64) ([]schemaIDAndTableInfo, error) {
-	infos := make(map[int64]schemaIDAndTableInfo)
 	if !variable.EnableForeignKey.Load() || newTableName.L == oldTableName.L {
 		return nil, nil
 	}
@@ -1103,6 +1102,7 @@ func adjustForeignKeyChildTableInfoAfterRenameTable(d *ddlCtx, t *meta.Meta, job
 		job.State = model.JobStateCancelled
 		return nil, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(fmt.Sprintf("schema-ID: %v", newSchemaID))
 	}
+	infos := make(map[int64]schemaIDAndTableInfo)
 	fkh := newForeignKeyHelper(newDB.Name.L, newDB.ID, tblInfo)
 	referredFKs := is.GetTableReferredForeignKeys(oldSchemaName.L, oldTableName.L)
 	for _, referredFK := range referredFKs {

@@ -493,6 +493,14 @@ func TestRenameTableWithForeignKeyMetaInfo(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (id int key, a int, b int, foreign key fk(a) references t1(id))")
 	tk.MustExec("rename table test.t1 to test2.t2")
+	tk.MustQuery("show create table test2.t2").Check(testkit.Rows("t2 CREATE TABLE `t2` (\n" +
+		"  `id` int(11) NOT NULL,\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  `b` int(11) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n" +
+		"  KEY `fk` (`a`),\n" +
+		"  CONSTRAINT `fk` FOREIGN KEY (`a`) REFERENCES `t2` (`id`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tblInfo := getTableInfo(t, dom, "test2", "t2")
 	tbReferredFKs := getTableInfoReferredForeignKeys(t, dom, "test2", "t2")
 	require.Equal(t, 1, len(tblInfo.ForeignKeys))
@@ -519,19 +527,19 @@ func TestRenameTableWithForeignKeyMetaInfo(t *testing.T) {
 	tk.MustExec("create table t1 (id int key, a int, b int as (a) virtual);")
 	tk.MustExec("create table t2 (id int key, b int, foreign key fk_b(b) references test.t1(id))")
 	tk.MustExec("use test2")
-	tk.MustExec("rename table test.t2 to test2.t2")
+	tk.MustExec("rename table test.t2 to test2.tt2")
 	tb1Info := getTableInfo(t, dom, "test", "t1")
-	tb2Info := getTableInfo(t, dom, "test2", "t2")
+	tb2Info := getTableInfo(t, dom, "test2", "tt2")
 	require.Equal(t, 0, len(tb1Info.ForeignKeys))
 	tb1ReferredFKs := getTableInfoReferredForeignKeys(t, dom, "test", "t1")
 	require.Equal(t, 1, len(tb1ReferredFKs))
 	require.Equal(t, model.ReferredFKInfo{
 		Cols:        []model.CIStr{model.NewCIStr("id")},
 		ChildSchema: model.NewCIStr("test2"),
-		ChildTable:  model.NewCIStr("t2"),
+		ChildTable:  model.NewCIStr("tt2"),
 		ChildFKName: model.NewCIStr("fk_b"),
 	}, *tb1ReferredFKs[0])
-	tb2ReferredFKs := getTableInfoReferredForeignKeys(t, dom, "test2", "t2")
+	tb2ReferredFKs := getTableInfoReferredForeignKeys(t, dom, "test2", "tt2")
 	require.Equal(t, 0, len(tb2ReferredFKs))
 	require.Equal(t, 1, len(tb2Info.ForeignKeys))
 	require.Equal(t, model.FKInfo{
@@ -547,8 +555,39 @@ func TestRenameTableWithForeignKeyMetaInfo(t *testing.T) {
 	// Auto create index for foreign key usage.
 	require.Equal(t, 1, len(tb2Info.Indices))
 	require.Equal(t, "fk_b", tb2Info.Indices[0].Name.L)
-	require.Equal(t, "`test2`.`t2`, CONSTRAINT `fk_b` FOREIGN KEY (`b`) REFERENCES `test`.`t1` (`id`)", tb2Info.ForeignKeys[0].String("test2", "t2"))
-	// TODO(crazycs520): add test for "rename table t1"
+	require.Equal(t, "`test2`.`tt2`, CONSTRAINT `fk_b` FOREIGN KEY (`b`) REFERENCES `test`.`t1` (`id`)", tb2Info.ForeignKeys[0].String("test2", "tt2"))
+
+	tk.MustExec("rename table test.t1 to test3.tt1")
+	tb1ReferredFKs = getTableInfoReferredForeignKeys(t, dom, "test3", "tt1")
+	require.Equal(t, 1, len(tb1ReferredFKs))
+	require.Equal(t, 1, len(tb1ReferredFKs[0].Cols))
+	require.Equal(t, model.ReferredFKInfo{
+		Cols:        []model.CIStr{model.NewCIStr("id")},
+		ChildSchema: model.NewCIStr("test2"),
+		ChildTable:  model.NewCIStr("tt2"),
+		ChildFKName: model.NewCIStr("fk_b"),
+	}, *tb1ReferredFKs[0])
+	tbl2Info := getTableInfo(t, dom, "test2", "tt2")
+	tb2ReferredFKs = getTableInfoReferredForeignKeys(t, dom, "test2", "tt2")
+	require.Equal(t, 0, len(tb2ReferredFKs))
+	require.Equal(t, 1, len(tbl2Info.ForeignKeys))
+	require.Equal(t, model.FKInfo{
+		ID:        1,
+		Name:      model.NewCIStr("fk_b"),
+		RefSchema: model.NewCIStr("test3"),
+		RefTable:  model.NewCIStr("tt1"),
+		RefCols:   []model.CIStr{model.NewCIStr("id")},
+		Cols:      []model.CIStr{model.NewCIStr("b")},
+		State:     model.StatePublic,
+		Version:   1,
+	}, *tbl2Info.ForeignKeys[0])
+	tk.MustQuery("show create table test2.tt2").Check(testkit.Rows("tt2 CREATE TABLE `tt2` (\n" +
+		"  `id` int(11) NOT NULL,\n" +
+		"  `b` int(11) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n" +
+		"  KEY `fk_b` (`b`),\n" +
+		"  CONSTRAINT `fk_b` FOREIGN KEY (`b`) REFERENCES `tt1` (`id`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
 
 func TestCreateTableWithForeignKeyDML(t *testing.T) {
@@ -1350,89 +1389,4 @@ func TestDropDatabaseWithForeignKeyReferred2(t *testing.T) {
 	require.Equal(t, "[ddl:3730]Cannot drop table 't2' referenced by a foreign key constraint 'fk_b' on table 't3'.", dropErr.Error())
 	tk.MustExec("drop table test2.t3")
 	tk.MustExec("drop database test")
-}
-
-func TestRenameTableWithForeignKeyMetaInfo0(t *testing.T) {
-	return
-	//store, dom := testkit.CreateMockStoreAndDomain(t)
-	//tk := testkit.NewTestKit(t, store)
-	//tk.MustExec("create database test2")
-	//tk.MustExec("create database test3")
-	//tk.MustExec("use test")
-	//tk.MustExec("create table t1 (id int key, a int, b int, foreign key fk(a) references t1(id))")
-	//tk.MustExec("rename table test.t1 to test2.t2")
-	//tblInfo := getTableInfo(t, dom, "test2", "t2")
-	//tbReferredFKs := getTableInfoReferredForeignKeys(t, dom, "test2", "t2")
-	//require.Equal(t, 1, len(tblInfo.ForeignKeys))
-	//require.Equal(t, 1, len(tbReferredFKs))
-	//require.Equal(t, model.ReferredFKInfo{
-	//	Cols:        []model.CIStr{model.NewCIStr("id")},
-	//	ChildSchema: model.NewCIStr("test2"),
-	//	ChildTable:  model.NewCIStr("t2"),
-	//	ChildFKName: model.NewCIStr("fk"),
-	//}, *tbReferredFKs[0])
-	//require.Equal(t, model.FKInfo{
-	//	ID:        1,
-	//	Name:      model.NewCIStr("fk"),
-	//	RefSchema: model.NewCIStr("test2"),
-	//	RefTable:  model.NewCIStr("t2"),
-	//	RefCols:   []model.CIStr{model.NewCIStr("id")},
-	//	Cols:      []model.CIStr{model.NewCIStr("a")},
-	//	State:     model.StatePublic,
-	//	Version:   1,
-	//}, *tblInfo.ForeignKeys[0])
-	//
-	//tk.MustExec("drop table test2.t2")
-	//tk.MustExec("use test")
-	//tk.MustExec("create table t1 (id int key, b int, index(b))")
-	//tk.MustExec("create table t2 (a int, b int, foreign key fk(a) references t1(b));")
-	//tk.MustExec("rename table test.t2 to test2.tt2")
-	//tb1ReferredFKs := getTableInfoReferredForeignKeys(t, dom, "test", "t1")
-	//require.Equal(t, 1, len(tb1ReferredFKs))
-	//require.Equal(t, 1, len(tb1ReferredFKs[0].Cols))
-	//require.Equal(t, model.ReferredFKInfo{
-	//	Cols:        []model.CIStr{model.NewCIStr("b")},
-	//	ChildSchema: model.NewCIStr("test2"),
-	//	ChildTable:  model.NewCIStr("tt2"),
-	//	ChildFKName: model.NewCIStr("fk"),
-	//}, *tb1ReferredFKs[0])
-	//tbl2Info := getTableInfo(t, dom, "test2", "tt2")
-	//tb2ReferredFKs = getTableInfoReferredForeignKeys(t, dom, "test2", "tt2")
-	//require.Equal(t, 0, len(tb2ReferredFKs))
-	//require.Equal(t, 1, len(tbl2Info.ForeignKeys))
-	//require.Equal(t, model.FKInfo{
-	//	ID:        1,
-	//	Name:      model.NewCIStr("fk"),
-	//	RefSchema: model.NewCIStr("test"),
-	//	RefTable:  model.NewCIStr("t1"),
-	//	RefCols:   []model.CIStr{model.NewCIStr("b")},
-	//	Cols:      []model.CIStr{model.NewCIStr("a")},
-	//	State:     model.StatePublic,
-	//	Version:   1,
-	//}, *tbl2Info.ForeignKeys[0])
-	//
-	//tk.MustExec("rename table test.t1 to test3.tt1")
-	//tb1ReferredFKs = getTableInfoReferredForeignKeys(t, dom, "test3", "tt1")
-	//require.Equal(t, 1, len(tb1ReferredFKs))
-	//require.Equal(t, 1, len(tb1ReferredFKs[0].Cols))
-	//require.Equal(t, model.ReferredFKInfo{
-	//	Cols:        []model.CIStr{model.NewCIStr("b")},
-	//	ChildSchema: model.NewCIStr("test2"),
-	//	ChildTable:  model.NewCIStr("tt2"),
-	//	ChildFKName: model.NewCIStr("fk"),
-	//}, *tb1ReferredFKs[0])
-	//tbl2Info = getTableInfo(t, dom, "test2", "tt2")
-	//tb2ReferredFKs = getTableInfoReferredForeignKeys(t, dom, "test2", "tt2")
-	//require.Equal(t, 0, len(tb2ReferredFKs))
-	//require.Equal(t, 1, len(tbl2Info.ForeignKeys))
-	//require.Equal(t, model.FKInfo{
-	//	ID:        1,
-	//	Name:      model.NewCIStr("fk"),
-	//	RefSchema: model.NewCIStr("test3"),
-	//	RefTable:  model.NewCIStr("tt1"),
-	//	RefCols:   []model.CIStr{model.NewCIStr("b")},
-	//	Cols:      []model.CIStr{model.NewCIStr("a")},
-	//	State:     model.StatePublic,
-	//	Version:   1,
-	//}, *tbl2Info.ForeignKeys[0])
 }
