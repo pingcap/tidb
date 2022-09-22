@@ -538,6 +538,12 @@ func (bj BinaryJSON) HashValue(buf []byte) []byte {
 		} else {
 			buf = append(buf, bj.Value...)
 		}
+	case JSONTypeCodeUint64:
+		if bj.GetUint64() == uint64(float64(bj.GetUint64())) {
+			buf = appendBinaryFloat64(buf, float64(bj.GetUint64()))
+		} else {
+			buf = append(buf, bj.Value...)
+		}
 	case JSONTypeCodeArray:
 		elemCount := int(jsonEndian.Uint32(bj.Value))
 		for i := 0; i < elemCount; i++ {
