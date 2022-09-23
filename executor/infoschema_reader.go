@@ -1356,7 +1356,6 @@ func (e *DDLJobsReaderExec) Open(ctx context.Context) error {
 		return err
 	}
 	e.sess = sess
-	sess.GetSessionVars().SetInTxn(true)
 	err = sessiontxn.NewTxn(context.Background(), sess)
 	if err != nil {
 		return err
@@ -1365,6 +1364,7 @@ func (e *DDLJobsReaderExec) Open(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	sess.GetSessionVars().SetInTxn(true)
 	err = e.DDLJobRetriever.initial(txn, sess)
 	if err != nil {
 		return err
@@ -2232,21 +2232,14 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(ctx sessionctx.Context, s
 			if tbl.TiFlashReplica == nil {
 				continue
 			}
-			progress := 1.0
-			if !tbl.TiFlashReplica.Available {
-				if pi := tbl.GetPartitionInfo(); pi != nil && len(pi.Definitions) > 0 {
-					progress = 0
-					for _, p := range pi.Definitions {
-						if tbl.TiFlashReplica.IsPartitionAvailable(p.ID) {
-							progress += 1
-						} else {
-							progress += progressMap[p.ID]
-						}
-					}
-					progress = progress / float64(len(pi.Definitions))
-				} else {
-					progress = progressMap[tbl.ID]
+			var progress float64
+			if pi := tbl.GetPartitionInfo(); pi != nil && len(pi.Definitions) > 0 {
+				for _, p := range pi.Definitions {
+					progress += progressMap[p.ID]
 				}
+				progress = progress / float64(len(pi.Definitions))
+			} else {
+				progress = progressMap[tbl.ID]
 			}
 			record := types.MakeDatums(
 				schema.Name.O,                   // TABLE_SCHEMA

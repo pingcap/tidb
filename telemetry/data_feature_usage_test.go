@@ -254,6 +254,18 @@ func TestTablePartition(t *testing.T) {
 	require.Equal(t, int64(1), usage.TablePartition.TablePartitionCreateIntervalPartitionsCnt)
 	require.Equal(t, int64(1), usage.TablePartition.TablePartitionAddIntervalPartitionsCnt)
 	require.Equal(t, int64(1), usage.TablePartition.TablePartitionDropIntervalPartitionsCnt)
+
+	tk.MustExec("drop table if exists pt2")
+	tk.MustExec("create table pt2 (a int,b int) partition by range(a) (" +
+		"partition p0 values less than (10)," +
+		"partition p1 values less than (20))")
+	tk.MustExec("drop table if exists nt")
+	tk.MustExec("create table nt (a int,b int)")
+	require.Equal(t, int64(0), usage.ExchangePartition.ExchangePartitionCnt)
+	tk.MustExec(`alter table pt2 exchange partition p1 with table nt`)
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(1), usage.ExchangePartition.ExchangePartitionCnt)
 }
 
 func TestPlacementPolicies(t *testing.T) {
@@ -433,7 +445,11 @@ func TestLazyPessimisticUniqueCheck(t *testing.T) {
 	require.Equal(t, int64(2), usage.LazyUniqueCheckSetCounter)
 }
 
-func TestAddIndexAcceleration(t *testing.T) {
+func TestAddIndexAccelerationAndMDL(t *testing.T) {
+	if !variable.EnableConcurrentDDL.Load() {
+		t.Skipf("test requires concurrent ddl")
+	}
+
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	usage, err := telemetry.GetFeatureUsage(tk.Session())
@@ -450,8 +466,10 @@ func TestAddIndexAcceleration(t *testing.T) {
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
 	require.Equal(t, int64(0), usage.DDLUsageCounter.AddIndexIngestUsed)
+	require.Equal(t, false, usage.DDLUsageCounter.MetadataLockUsed)
 
 	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = on")
+	tk.MustExec("set global tidb_enable_metadata_lock = 1")
 	allow = ddl.IsEnableFastReorg()
 	require.Equal(t, true, allow)
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
@@ -461,4 +479,5 @@ func TestAddIndexAcceleration(t *testing.T) {
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
 	require.Equal(t, int64(1), usage.DDLUsageCounter.AddIndexIngestUsed)
+	require.Equal(t, true, usage.DDLUsageCounter.MetadataLockUsed)
 }
