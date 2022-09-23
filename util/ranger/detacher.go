@@ -370,12 +370,12 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 				return &DetachRangeResult{}, nil
 			}
 			if len(tailRes.AccessConds) > 0 {
-				newRanges, rangeFallback := appendRanges2PointRanges(pointRanges, tailRes.Ranges, d.rangeMaxSize)
+				newRanges, rangeFallback := AppendRanges2PointRanges(pointRanges, tailRes.Ranges, d.rangeMaxSize)
 				if rangeFallback {
 					d.sctx.GetSessionVars().StmtCtx.RecordRangeFallback(d.rangeMaxSize)
 					res.RemainedConds = append(res.RemainedConds, tailRes.AccessConds...)
-					// Some conditions may be in both tailRes.AccessConds and tailRes.RemainedConds so we call appendConditionsIfNotExist here.
-					res.RemainedConds = appendConditionsIfNotExist(res.RemainedConds, tailRes.RemainedConds)
+					// Some conditions may be in both tailRes.AccessConds and tailRes.RemainedConds so we call AppendConditionsIfNotExist here.
+					res.RemainedConds = AppendConditionsIfNotExist(res.RemainedConds, tailRes.RemainedConds)
 					return res, nil
 				}
 				res.Ranges = newRanges
@@ -405,7 +405,7 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 		// [10, 10] [30, 30] exceeds range mem limit, we add `a = 10 or a = 30` back to RemainedConds, which is actually
 		// unnecessary because `(a = 10 and b = 20) or (a = 30 and b = 40)` is already in RemainedConds.
 		// TODO: we will optimize it later.
-		res.RemainedConds = appendConditionsIfNotExist(res.RemainedConds, remainedConds)
+		res.RemainedConds = AppendConditionsIfNotExist(res.RemainedConds, remainedConds)
 		res.Ranges = ranges
 		return res, nil
 	}
@@ -904,7 +904,8 @@ func removeConditions(conditions, condsToRemove []expression.Expression) []expre
 	return filterConds
 }
 
-func appendConditionsIfNotExist(conditions, condsToAppend []expression.Expression) []expression.Expression {
+// AppendConditionsIfNotExist appends conditions if they are absent.
+func AppendConditionsIfNotExist(conditions, condsToAppend []expression.Expression) []expression.Expression {
 	shouldAppend := make([]expression.Expression, 0, len(condsToAppend))
 	for _, cond := range condsToAppend {
 		if !expression.Contains(conditions, cond) {
