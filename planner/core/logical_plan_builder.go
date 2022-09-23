@@ -678,7 +678,7 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 			return
 		}
 		if config.GetGlobalConfig().DisaggregatedTiFlash && !isTiFlashReadNodeAvailable(ds.ctx) {
-			errMsg := fmt.Sprintf("TiFlash ReadNodes number is zero")
+			errMsg := "The number of TiFlash ReadNode is zero, cannot use TiFlash"
 			warning := ErrInternal.GenWithStack(errMsg)
 			ds.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 			return
