@@ -92,12 +92,11 @@ func (m *txnManager) UseTableForMDLIfNeeded(schema, table model.CIStr, detachLoc
 	return is.TableByName(schema, table)
 }
 
-func (m *txnManager) RangeMDLTableIDs(fn func(tblID, ver int64) bool) {
+func (m *txnManager) GetMDLRecords() []sessiontxn.TableMDLRecord {
 	if m.mdlManager == nil {
-		return
+		return nil
 	}
-
-	m.mdlManager.RangeMDLTableIDs(fn)
+	return m.mdlManager.GetMDLRecords(nil)
 }
 
 func (m *txnManager) GetStmtReadTS() (uint64, error) {

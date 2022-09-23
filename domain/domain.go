@@ -121,15 +121,8 @@ type Domain struct {
 
 	sysProcesses SysProcesses
 
-	mdlCheckTableInfo *mdlCheckTableInfo
-	mdlManager        *MDLManager
-}
-
-type mdlCheckTableInfo struct {
-	mu         sync.Mutex
-	newestVer  int64
-	jobsVerMap map[int64]int64
-	jobsIdsMap map[int64]string
+	mdlManager  *MDLManager
+	mdlResolver *mdlResolver
 }
 
 // InfoCache export for test.
@@ -623,112 +616,12 @@ func (do *Domain) topologySyncerKeeper() {
 	}
 }
 
-func (do *Domain) refreshMDLCheckTableInfo() {
-	se, err := do.sysSessionPool.Get()
-
-	if err != nil {
-		logutil.BgLogger().Warn("get system session failed", zap.Error(err))
-		return
-	}
-	defer do.sysSessionPool.Put(se)
-	exec := se.(sqlexec.RestrictedSQLExecutor)
-	domainSchemaVer := do.InfoSchema().SchemaMetaVersion()
-	rows, _, err := exec.ExecRestrictedSQL(kv.WithInternalSourceType(context.Background(), kv.InternalTxnTelemetry), nil, fmt.Sprintf("select job_id, version, table_ids from mysql.tidb_mdl_info where version <= %d", domainSchemaVer))
-	if err != nil {
-		logutil.BgLogger().Warn("get mdl info from tidb_mdl_info failed", zap.Error(err))
-		return
-	}
-	do.mdlCheckTableInfo.mu.Lock()
-	defer do.mdlCheckTableInfo.mu.Unlock()
-
-	do.mdlCheckTableInfo.newestVer = domainSchemaVer
-	do.mdlCheckTableInfo.jobsVerMap = make(map[int64]int64, len(rows))
-	do.mdlCheckTableInfo.jobsIdsMap = make(map[int64]string, len(rows))
-	for i := 0; i < len(rows); i++ {
-		do.mdlCheckTableInfo.jobsVerMap[rows[i].GetInt64(0)] = rows[i].GetInt64(1)
-		do.mdlCheckTableInfo.jobsIdsMap[rows[i].GetInt64(0)] = rows[i].GetString(2)
-	}
-}
-
-func (do *Domain) removeLockDDLJobs(job2ver map[int64]int64, job2ids map[int64]string) {
-	do.GetMDLManager().RangeMDLTableIDs(func(sessID uint64, tblID, value int64) bool {
-		for jobID, ver := range job2ver {
-			ids := util.Str2Int64Map(job2ids[jobID])
-			if _, ok := ids[tblID]; ok && value < ver {
-				delete(job2ver, jobID)
-				logutil.BgLogger().Debug("old running transaction block DDL", zap.Int64("table ID", tblID), zap.Uint64("conn ID", sessID))
-			}
-		}
-		return true
-	})
-}
-
-func (do *Domain) mdlCheckLoop() {
+func (do *Domain) mdlResolveLoop() {
 	ticker := time.Tick(time.Millisecond * 50)
-	var saveMaxSchemaVersion int64
-	jobNeedToSync := false
-	jobCache := make(map[int64]int64, 1000)
-
 	for {
 		select {
 		case <-ticker:
-			if !variable.EnableMDL.Load() {
-				continue
-			}
-
-			do.mdlCheckTableInfo.mu.Lock()
-			maxVer := do.mdlCheckTableInfo.newestVer
-			if maxVer > saveMaxSchemaVersion {
-				saveMaxSchemaVersion = maxVer
-			} else if !jobNeedToSync {
-				// Schema doesn't change, and no job to check in the last run.
-				do.mdlCheckTableInfo.mu.Unlock()
-				continue
-			}
-
-			jobNeedToCheckCnt := len(do.mdlCheckTableInfo.jobsVerMap)
-			if jobNeedToCheckCnt == 0 {
-				jobNeedToSync = false
-				do.mdlCheckTableInfo.mu.Unlock()
-				continue
-			}
-
-			jobsVerMap := make(map[int64]int64, len(do.mdlCheckTableInfo.jobsVerMap))
-			jobsIdsMap := make(map[int64]string, len(do.mdlCheckTableInfo.jobsIdsMap))
-			for k, v := range do.mdlCheckTableInfo.jobsVerMap {
-				jobsVerMap[k] = v
-			}
-			for k, v := range do.mdlCheckTableInfo.jobsIdsMap {
-				jobsIdsMap[k] = v
-			}
-			do.mdlCheckTableInfo.mu.Unlock()
-
-			jobNeedToSync = true
-
-			do.InfoSyncer().GetSessionManager()
-			do.removeLockDDLJobs(jobsVerMap, jobsIdsMap)
-			if len(jobsVerMap) == jobNeedToCheckCnt {
-				jobNeedToSync = false
-			}
-
-			// Try to gc jobCache.
-			if len(jobCache) > 1000 {
-				jobCache = make(map[int64]int64, 1000)
-			}
-
-			for jobID, ver := range jobsVerMap {
-				if cver, ok := jobCache[jobID]; ok && cver >= ver {
-					// Already update, skip it.
-					continue
-				}
-				logutil.BgLogger().Info("mdl gets lock, update to owner", zap.Int64("jobID", jobID), zap.Int64("version", ver))
-				err := do.ddl.SchemaSyncer().UpdateSelfVersion(context.Background(), jobID, ver)
-				if err != nil {
-					logutil.BgLogger().Warn("update self version failed", zap.Error(err))
-				} else {
-					jobCache[jobID] = ver
-				}
-			}
+			do.mdlResolver.DoResolveOnce()
 		case <-do.exit:
 			return
 		}
@@ -791,7 +684,7 @@ func (do *Domain) loadSchemaInLoop(ctx context.Context, lease time.Duration) {
 		case <-do.exit:
 			return
 		}
-		do.refreshMDLCheckTableInfo()
+		do.mdlResolver.UpdateInfoSchemaVer(do.InfoSchema().SchemaMetaVersion())
 	}
 }
 
@@ -890,14 +783,10 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		dumpFileGcChecker:   &dumpFileGcChecker{gcLease: dumpFileGcLease, paths: []string{GetPlanReplayerDirName(), GetOptimizerTraceDirName()}},
 		onClose:             onClose,
 		expiredTimeStamp4PC: types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, types.DefaultFsp),
-		mdlCheckTableInfo: &mdlCheckTableInfo{
-			mu:         sync.Mutex{},
-			jobsVerMap: make(map[int64]int64),
-			jobsIdsMap: make(map[int64]string),
-		},
 	}
 
 	do.mdlManager = newMDLManager(do)
+	do.mdlResolver = newMDLResolver(do)
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)
 	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do.exit)
 	do.sysProcesses = SysProcesses{mu: &sync.RWMutex{}, procMap: make(map[uint64]sessionctx.Context)}
@@ -1039,7 +928,7 @@ func (do *Domain) Init(
 		// Local store needs to get the change information for every DDL state in each session.
 		go do.loadSchemaInLoop(ctx, ddlLease)
 	}
-	do.wg.Run(do.mdlCheckLoop)
+	do.wg.Run(do.mdlResolveLoop)
 	do.wg.Add(3)
 	go do.topNSlowQueryLoop()
 	go do.infoSyncerKeeper()
@@ -2210,7 +2099,9 @@ func (s *SysProcesses) KillSysProcess(id uint64) {
 type sessionMDLManager struct {
 	sessionID uint64
 	infoCache *infoschema.InfoCache
-	sync.Map
+
+	sync.Mutex
+	records []sessiontxn.TableMDLRecord
 }
 
 func (m *sessionMDLManager) UseTableForMDL(schema, table model.CIStr) (db *model.DBInfo, tbl table.Table, err error) {
@@ -2227,34 +2118,68 @@ func (m *sessionMDLManager) UseTableForMDL(schema, table model.CIStr) (db *model
 			return
 		}
 
-		if _, ok := m.LoadOrStore(tblInfo.ID, is.SchemaMetaVersion()); !ok {
-			err = errors.Errorf("cannot use table twice for mdl in session '%d', tableID '%d'", m.sessionID, tblInfo.ID)
+		tblID := tblInfo.ID
+		ver := is.SchemaMetaVersion()
+
+		m.Lock()
+		defer m.Unlock()
+		records := m.records
+		n := len(records)
+		if n == cap(records) {
+			records = make([]sessiontxn.TableMDLRecord, n, n+8)
+			copy(records, m.records)
+			m.records = records
 		}
+		records = records[:n+1]
+		records[n] = sessiontxn.TableMDLRecord{TableID: tblID, Ver: ver, ConnID: m.sessionID}
 	})
 	return
 }
 
-func (m *sessionMDLManager) RangeMDLTableIDs(fn func(tblID, ver int64) bool) {
-	m.Range(func(key, value any) bool {
-		return fn(key.(int64), value.(int64))
-	})
+func (m *sessionMDLManager) GetMDLRecords(records []sessiontxn.TableMDLRecord) []sessiontxn.TableMDLRecord {
+	m.Lock()
+	defer m.Unlock()
+
+	n := len(m.records)
+	if cap(records) >= len(m.records) {
+		records = records[:n]
+	} else {
+		records = make([]sessiontxn.TableMDLRecord, n)
+	}
+	copy(records, m.records)
+	return records
 }
 
 func (m *sessionMDLManager) RemoveTableForMDL(tblID int64) {
-	m.Delete(tblID)
+	m.Lock()
+	defer m.Unlock()
+
+	records := m.records
+	n := len(records) - 1
+	if records[n].TableID == tblID {
+		m.records = records[0:n]
+		return
+	}
+
+	for i := n - 1; i >= 0; i-- {
+		if records[i].TableID == tblID {
+			m.records = append(records[:i], records[i+1:]...)
+			return
+		}
+	}
 }
 
 func (m *sessionMDLManager) ClearMDL() {
-	m.Range(func(key, _ any) bool {
-		m.Delete(key)
-		return true
-	})
+	m.Lock()
+	defer m.Unlock()
+	m.records = m.records[:0]
 }
 
 type MDLManager struct {
-	sync.Mutex
-	do       *Domain
-	sessions map[uint64]*sessionMDLManager
+	do *Domain
+
+	sessionsMutex sync.Mutex
+	sessions      map[uint64]*sessionMDLManager
 }
 
 func newMDLManager(do *Domain) *MDLManager {
@@ -2265,8 +2190,8 @@ func newMDLManager(do *Domain) *MDLManager {
 }
 
 func (m *MDLManager) GetSessionMDLManager(sessID uint64) sessiontxn.SessionMDLManager {
-	m.Lock()
-	defer m.Unlock()
+	m.sessionsMutex.Lock()
+	defer m.sessionsMutex.Unlock()
 	if manager, ok := m.sessions[sessID]; ok {
 		return manager
 	}
@@ -2274,6 +2199,7 @@ func (m *MDLManager) GetSessionMDLManager(sessID uint64) sessiontxn.SessionMDLMa
 	records := &sessionMDLManager{
 		sessionID: sessID,
 		infoCache: m.do.infoCache,
+		records:   make([]sessiontxn.TableMDLRecord, 0, 8),
 	}
 
 	m.sessions[sessID] = records
@@ -2281,22 +2207,135 @@ func (m *MDLManager) GetSessionMDLManager(sessID uint64) sessiontxn.SessionMDLMa
 }
 
 func (m *MDLManager) RemoveSession(sessID uint64) {
-	m.Lock()
-	defer m.Unlock()
+	m.sessionsMutex.Lock()
+	defer m.sessionsMutex.Unlock()
 	delete(m.sessions, sessID)
 }
 
-func (m *MDLManager) RangeMDLTableIDs(fn func(sessID uint64, tblID, ver int64) bool) {
-	m.Lock()
-	defer m.Unlock()
-	for sessID, s := range m.sessions {
-		shouldContinue := false
-		s.RangeMDLTableIDs(func(tblID, ver int64) bool {
-			shouldContinue = fn(sessID, tblID, ver)
-			return shouldContinue
-		})
-		if !shouldContinue {
+func (m *MDLManager) RangeSessions(fn func(uint64, sessiontxn.SessionMDLManager) bool) {
+	m.sessionsMutex.Lock()
+	defer m.sessionsMutex.Unlock()
+	for id, se := range m.sessions {
+		if !fn(id, se) {
 			break
 		}
 	}
+}
+
+type mdlJobRecord struct {
+	id     int64
+	ver    int64
+	tblIDs map[int64]struct{}
+}
+
+type mdlResolver struct {
+	do *Domain
+
+	sync.Mutex
+	resolvedJobs   map[int64]*mdlJobRecord
+	unResolvedJobs map[int64]*mdlJobRecord
+}
+
+func newMDLResolver(do *Domain) *mdlResolver {
+	return &mdlResolver{do: do}
+}
+
+func (r *mdlResolver) DoResolveOnce() {
+	jobs := r.jobsCanBeResolved()
+	for _, job := range jobs {
+		logutil.BgLogger().Info("mdl gets lock, update to owner", zap.Int64("jobID", job.id), zap.Int64("version", job.ver))
+		err := r.do.ddl.SchemaSyncer().UpdateSelfVersion(context.Background(), job.id, job.ver)
+		if err != nil {
+			logutil.BgLogger().Warn("update self version failed", zap.Error(err))
+		}
+		r.markJobResolved(job.id, job.ver)
+	}
+}
+
+func (r *mdlResolver) markJobResolved(jobID, ver int64) {
+	r.Lock()
+	defer r.Unlock()
+	if job, ok := r.unResolvedJobs[jobID]; ok && job.ver == ver {
+		delete(r.unResolvedJobs, jobID)
+		r.resolvedJobs[jobID] = job
+	}
+}
+
+func (r *mdlResolver) jobsCanBeResolved() []*mdlJobRecord {
+	r.Lock()
+	defer r.Unlock()
+	if len(r.unResolvedJobs) == 0 {
+		return nil
+	}
+
+	tblID2MinVerMDLRecord := make(map[int64]*sessiontxn.TableMDLRecord)
+	var mdlRecords []sessiontxn.TableMDLRecord
+	r.do.GetMDLManager().RangeSessions(func(connID uint64, manager sessiontxn.SessionMDLManager) bool {
+		mdlRecords = manager.GetMDLRecords(mdlRecords)
+		for i := range mdlRecords {
+			record := &mdlRecords[i]
+			if exist, ok := tblID2MinVerMDLRecord[record.TableID]; !ok || record.Ver < exist.Ver {
+				tblID2MinVerMDLRecord[record.TableID] = record
+			}
+		}
+		return true
+	})
+
+	jobs := make([]*mdlJobRecord, 0, len(r.unResolvedJobs))
+	for _, job := range r.unResolvedJobs {
+		block := false
+		for tblID := range job.tblIDs {
+			if record, ok := tblID2MinVerMDLRecord[tblID]; ok && record.Ver < job.ver {
+				block = true
+				logutil.BgLogger().Debug("old running transaction block DDL", zap.Int64("table ID", tblID), zap.Uint64("conn ID", record.ConnID))
+				break
+			}
+		}
+
+		if !block {
+			jobs = append(jobs, &mdlJobRecord{
+				id:  job.id,
+				ver: job.ver,
+			})
+		}
+	}
+	return jobs
+}
+
+func (r *mdlResolver) UpdateInfoSchemaVer(ver int64) {
+	se, err := r.do.sysSessionPool.Get()
+	if err != nil {
+		logutil.BgLogger().Warn("get system session failed", zap.Error(err))
+		return
+	}
+	defer r.do.sysSessionPool.Put(se)
+
+	exec := se.(sqlexec.RestrictedSQLExecutor)
+	rows, _, err := exec.ExecRestrictedSQL(kv.WithInternalSourceType(context.Background(), kv.InternalTxnTelemetry), nil, fmt.Sprintf("select job_id, version, table_ids from mysql.tidb_mdl_info where version <= %d", ver))
+	if err != nil {
+		logutil.BgLogger().Warn("get mdl info from tidb_mdl_info failed", zap.Error(err))
+		return
+	}
+
+	r.Lock()
+	defer r.Unlock()
+
+	nextResolvedJobs := make(map[int64]*mdlJobRecord, len(rows))
+	nextUnResolvedJobs := make(map[int64]*mdlJobRecord, len(rows))
+	for _, row := range rows {
+		jobID := row.GetInt64(0)
+		jobVer := row.GetInt64(1)
+		if job, ok := r.resolvedJobs[jobID]; ok && job.ver == jobVer {
+			nextResolvedJobs[jobID] = job
+			continue
+		}
+
+		nextUnResolvedJobs[jobID] = &mdlJobRecord{
+			id:     jobID,
+			ver:    jobVer,
+			tblIDs: util.Str2Int64Map(row.GetString(2)),
+		}
+	}
+	r.resolvedJobs = nextResolvedJobs
+	r.unResolvedJobs = nextUnResolvedJobs
 }

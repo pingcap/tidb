@@ -146,9 +146,15 @@ type TxnContextProvider interface {
 	ActivateTxn() (kv.Transaction, error)
 }
 
+type TableMDLRecord struct {
+	ConnID  uint64
+	TableID int64
+	Ver     int64
+}
+
 type SessionMDLManager interface {
 	UseTableForMDL(schema, table model.CIStr) (*model.DBInfo, table.Table, error)
-	RangeMDLTableIDs(fn func(tblID, ver int64) bool)
+	GetMDLRecords(records []TableMDLRecord) []TableMDLRecord
 	RemoveTableForMDL(tblID int64)
 	ClearMDL()
 }
@@ -166,7 +172,7 @@ type TxnManager interface {
 	// this method will return the latest information schema in session that is same with `sessionctx.GetDomainInfoSchema()`
 	GetTxnInfoSchema() infoschema.InfoSchema
 	UseTableForMDLIfNeeded(schema, table model.CIStr, detachLocalTemporaryTable bool) (table.Table, error)
-	RangeMDLTableIDs(func(tblID, ver int64) bool)
+	GetMDLRecords() []TableMDLRecord
 	// GetTxnScope returns the current txn scope
 	GetTxnScope() string
 	// GetReadReplicaScope returns the read replica scope

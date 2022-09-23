@@ -625,6 +625,7 @@ type SessionExtendedInfoSchema struct {
 	InfoSchema
 	LocalTemporaryTables *SessionTables
 	MdlTables            *SessionTables
+	MdlConflictTableIDs  map[int64]error
 }
 
 // TableByName implements InfoSchema.TableByName
@@ -677,7 +678,7 @@ func (ts *SessionExtendedInfoSchema) SchemaByTable(tableInfo *model.TableInfo) (
 }
 
 // AddMDLTable adds MDL table
-func (ts *SessionExtendedInfoSchema) AddMDLTable(db *model.DBInfo, tbl table.Table) error {
+func (ts *SessionExtendedInfoSchema) AddMDLTable(db *model.DBInfo, tbl table.Table, conflictErr error) error {
 	if ts.MdlTables == nil {
 		ts.MdlTables = NewSessionTables()
 	}
@@ -685,6 +686,11 @@ func (ts *SessionExtendedInfoSchema) AddMDLTable(db *model.DBInfo, tbl table.Tab
 	if err != nil {
 		return err
 	}
+
+	if conflictErr != nil {
+		ts.MdlConflictTableIDs[tbl.Meta().ID] = conflictErr
+	}
+	
 	return nil
 }
 

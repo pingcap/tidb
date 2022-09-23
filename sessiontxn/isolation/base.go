@@ -183,6 +183,9 @@ func (p *baseTxnContextProvider) UseTableForMDL(schema, table model.CIStr, detac
 
 	if se.MdlTables != nil {
 		if tbl, ok := se.MdlTables.TableByName(schema, table); ok {
+			if err, _ = se.MdlConflictTableIDs[tbl.Meta().ID]; err != nil {
+				return nil, err
+			}
 			return tbl, nil
 		}
 	}
@@ -192,21 +195,22 @@ func (p *baseTxnContextProvider) UseTableForMDL(schema, table model.CIStr, detac
 		return tbl, err
 	}
 
-	defer func() {
-		if err != nil {
-			p.mdlManager.RemoveTableForMDL(tbl.Meta().ID)
-		}
-	}()
-
+	var conflictErr error
 	if !p.skipCheckMDLTableMeta {
-		tbl, err = p.checkMDLTableMeta(db, tbl)
-		if err != nil {
-			return nil, err
+		if checkedTbl, err := p.checkMDLTableMeta(db, tbl); err != nil {
+			conflictErr = err
+		} else {
+			tbl = checkedTbl
 		}
 	}
 
-	if err = se.AddMDLTable(db, tbl); err != nil {
+	if err = se.AddMDLTable(db, tbl, conflictErr); err != nil {
+		p.mdlManager.RemoveTableForMDL(tbl.Meta().ID)
 		return nil, err
+	}
+
+	if conflictErr != nil {
+		return nil, conflictErr
 	}
 
 	return tbl, nil

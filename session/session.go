@@ -572,11 +572,10 @@ func (s *session) TxnInfo() *txninfo.TxnInfo {
 	txnInfo.Username = processInfo.User
 	txnInfo.CurrentDB = processInfo.DB
 	txnInfo.RelatedTableIDs = make(map[int64]struct{})
-	sessiontxn.GetTxnManager(s).RangeMDLTableIDs(func(tblID, ver int64) bool {
-		txnInfo.RelatedTableIDs[tblID] = struct{}{}
-		return true
-	})
-
+	mdlRecords := sessiontxn.GetTxnManager(s).GetMDLRecords()
+	for i := range mdlRecords {
+		txnInfo.RelatedTableIDs[mdlRecords[i].TableID] = struct{}{}
+	}
 	return &txnInfo
 }
 
