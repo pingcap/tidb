@@ -1017,12 +1017,12 @@ func onRenameTables(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 	var tblInfos = make([]*model.TableInfo, 0, len(tableNames))
 	var err error
 	for i, oldSchemaID := range oldSchemaIDs {
+		job.TableID = tableIDs[i]
+		job.TableName = oldTableNames[i].L
 		tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, oldSchemaID)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		job.TableID = tableIDs[i]
-		job.TableName = oldTableNames[i].L
 		ver, err := checkAndRenameTables(t, job, tblInfo, oldSchemaID, newSchemaIDs[i], oldSchemaNames[i], tableNames[i])
 		if err != nil {
 			return ver, errors.Trace(err)
