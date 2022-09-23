@@ -259,7 +259,9 @@ type IndexPartSpecification struct {
 
 	Column *ColumnName
 	Length int
-	Expr   ExprNode
+	// Desc should be ignored because TiDB not support index sort direction.
+	Desc bool
+	Expr ExprNode
 }
 
 // Restore implements Node interface.
@@ -277,6 +279,11 @@ func (n *IndexPartSpecification) Restore(ctx *format.RestoreCtx) error {
 	}
 	if n.Length > 0 {
 		ctx.WritePlainf("(%d)", n.Length)
+	}
+	if n.Desc {
+		ctx.WritePlain(" DESC")
+	} else {
+		ctx.WritePlain(" ASC")
 	}
 	return nil
 }
