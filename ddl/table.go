@@ -497,7 +497,7 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 			return ver, errors.Wrapf(err, "failed to get old label rules from PD")
 		}
 
-		err = w.delRangeManager.removeFromGCDeleteRange(w.ctx, dropJobID, tids)
+		err = w.delRangeManager.removeFromGCDeleteRange(w.ctx, dropJobID)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -1203,10 +1203,15 @@ func (w *worker) onSetTableFlashReplica(d *ddlCtx, t *meta.Meta, job *model.Job)
 		}
 	}
 
+	available := false
+	if tblInfo.TiFlashReplica != nil {
+		available = tblInfo.TiFlashReplica.Available
+	}
 	if replicaInfo.Count > 0 {
 		tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
 			Count:          replicaInfo.Count,
 			LocationLabels: replicaInfo.Labels,
+			Available:      available,
 		}
 	} else {
 		tblInfo.TiFlashReplica = nil

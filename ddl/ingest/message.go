@@ -33,7 +33,6 @@ const (
 	LitErrCreateContextFail string = "[ddl-ingest] build lightning worker context failed, will use kernel index reorg method to backfill the index"
 	LitErrGetEngineFail     string = "[ddl-ingest] can not get cached engine info"
 	LitErrGetStorageQuota   string = "[ddl-ingest] get storage quota error"
-	LitErrGetSysLimitErr    string = "[ddl-ingest] get system open file limit error"
 	LitErrCloseEngineErr    string = "[ddl-ingest] close engine error"
 	LitErrCleanEngineErr    string = "[ddl-ingest] clean engine error"
 	LitErrFlushEngineErr    string = "[ddl-ingest] flush engine data err"
