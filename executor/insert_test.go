@@ -365,7 +365,7 @@ func (s *testSuite3) TestIssue37187(c *C) {
 	tk.MustExec("create table t2 (c int(11) ,d varchar(100) ,primary key (c));")
 	tk.MustExec("prepare in1 from 'insert into t1 (a,b) select c,null from t2 t on duplicate key update b=t.d';")
 	err := tk.ExecToErr("execute in1;")
-	c.Assert(err, nil)
+	c.Assert(err, IsNil)
 }
 
 func (s *testSuite3) TestInsertWrongValueForField(c *C) {
