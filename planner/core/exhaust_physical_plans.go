@@ -1326,11 +1326,9 @@ func (ijHelper *indexJoinBuildHelper) resetContextForIndex(innerKeys []*expressi
 
 // findUsefulEqAndInFilters analyzes the pushedDownConds held by inner child and split them to three parts.
 // usefulEqOrInFilters is the continuous eq/in conditions on current unused index columns.
-// uselessFilters is the conditions which cannot be used for building ranges.
+// remainedEqOrIn is part of usefulEqOrInFilters, which needs to be evaluated again in selection.
 // remainingRangeCandidates is the other conditions for future use.
-func (ijHelper *indexJoinBuildHelper) findUsefulEqAndInFilters(innerPlan *DataSource) (usefulEqOrInFilters, uselessFilters, remainingRangeCandidates []expression.Expression, emptyRange bool) {
-	uselessFilters = make([]expression.Expression, 0, len(innerPlan.pushedDownConds))
-	var remainedEqOrIn []expression.Expression
+func (ijHelper *indexJoinBuildHelper) findUsefulEqAndInFilters(innerPlan *DataSource) (usefulEqOrInFilters, remainedEqOrIn, remainingRangeCandidates []expression.Expression, emptyRange bool) {
 	// Extract the eq/in functions of possible join key.
 	// you can see the comment of ExtractEqAndInCondition to get the meaning of the second return value.
 	usefulEqOrInFilters, remainedEqOrIn, remainingRangeCandidates, _, emptyRange = ranger.ExtractEqAndInCondition(
@@ -1338,8 +1336,7 @@ func (ijHelper *indexJoinBuildHelper) findUsefulEqAndInFilters(innerPlan *DataSo
 		ijHelper.curNotUsedIndexCols,
 		ijHelper.curNotUsedColLens,
 	)
-	uselessFilters = append(uselessFilters, remainedEqOrIn...)
-	return usefulEqOrInFilters, uselessFilters, remainingRangeCandidates, emptyRange
+	return usefulEqOrInFilters, remainedEqOrIn, remainingRangeCandidates, emptyRange
 }
 
 // buildLastColManager analyze the `OtherConditions` of join to see whether there're some filters can be used in manager.

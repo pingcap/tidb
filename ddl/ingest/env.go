@@ -18,10 +18,10 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"syscall"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/size"
 	"go.uber.org/zap"
@@ -63,25 +63,13 @@ func InitGlobalLightningEnv() {
 		return
 	}
 	LitBackCtxMgr.init(LitMemRoot, LitDiskRoot)
-	LitRLimit = genRLimit()
+	LitRLimit = util.GenRLimit()
 	LitInitialized = true
 	logutil.BgLogger().Info(LitInfoEnvInitSucc,
 		zap.Uint64("memory limitation", maxMemoryQuota),
 		zap.Uint64("sort path disk quota", LitDiskRoot.MaxQuota()),
 		zap.Uint64("max open file number", LitRLimit),
 		zap.Bool("lightning is initialized", LitInitialized))
-}
-
-func genRLimit() uint64 {
-	rLimit := uint64(1024)
-	var rl syscall.Rlimit
-	err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &rl)
-	if err != nil {
-		logutil.BgLogger().Warn(LitErrGetSysLimitErr, zap.Error(err), zap.String("default", "1024"))
-	} else {
-		rLimit = rl.Cur
-	}
-	return rLimit
 }
 
 // Generate lightning local store dir in TiDB data dir.
@@ -115,7 +103,7 @@ func genLightningDataDir() (string, error) {
 }
 
 // GenRLimitForTest is only used for test.
-var GenRLimitForTest = genRLimit
+var GenRLimitForTest = util.GenRLimit()
 
 // GenLightningDataDirForTest is only used for test.
 var GenLightningDataDirForTest = genLightningDataDir

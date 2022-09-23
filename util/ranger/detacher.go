@@ -542,7 +542,7 @@ func extractValueInfo(expr expression.Expression) *valueInfo {
 
 // ExtractEqAndInCondition will split the given condition into three parts by the information of index columns and their lengths.
 // accesses: The condition will be used to build range.
-// filters: filters is the part that some access conditions need to be evaluate again since it's only the prefix part of char column.
+// filters: filters is the part that some access conditions need to be evaluated again since it's only the prefix part of char column.
 // newConditions: We'll simplify the given conditions if there're multiple in conditions or eq conditions on the same column.
 //
 //	e.g. if there're a in (1, 2, 3) and a in (2, 3, 4). This two will be combined to a in (2, 3) and pushed to newConditions.
