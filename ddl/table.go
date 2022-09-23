@@ -1112,7 +1112,6 @@ func adjustForeignKeyChildTableInfoAfterRenameTable(d *ddlCtx, t *meta.Meta, job
 	if len(referredFKs) == 0 {
 		return nil
 	}
-	infos := make(map[int64]schemaIDAndTableInfo)
 	fkh.addLoadedTable(oldSchemaName.L, oldTableName.L, newDB.ID, tblInfo)
 	for _, referredFK := range referredFKs {
 		childTableInfo, err := fkh.getTableFromStorage(is, t, referredFK.ChildSchema, referredFK.ChildTable)
@@ -1128,7 +1127,6 @@ func adjustForeignKeyChildTableInfoAfterRenameTable(d *ddlCtx, t *meta.Meta, job
 		}
 		childFKInfo.RefSchema = newDB.Name
 		childFKInfo.RefTable = newTableName
-		infos[childTableInfo.tblInfo.ID] = childTableInfo
 	}
 	for _, info := range fkh.loaded {
 		err = updateTable(t, info.schemaID, info.tblInfo)
