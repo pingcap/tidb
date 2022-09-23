@@ -1725,7 +1725,7 @@ func (b *PlanBuilder) buildIntersect(ctx context.Context, selects []ast.Node) (L
 		leftPlan, err = b.buildSelect(ctx, x)
 	case *ast.SetOprSelectList:
 		afterSetOperator = x.AfterSetOperator
-		leftPlan, err = b.buildSetOpr(ctx, &ast.SetOprStmt{SelectList: x})
+		leftPlan, err = b.buildSetOpr(ctx, &ast.SetOprStmt{SelectList: x, With: x.With})
 	}
 	if err != nil {
 		return nil, nil, err
@@ -1749,7 +1749,7 @@ func (b *PlanBuilder) buildIntersect(ctx context.Context, selects []ast.Node) (L
 				// TODO: support intersect all
 				return nil, nil, errors.Errorf("TiDB do not support intersect all")
 			}
-			rightPlan, err = b.buildSetOpr(ctx, &ast.SetOprStmt{SelectList: x})
+			rightPlan, err = b.buildSetOpr(ctx, &ast.SetOprStmt{SelectList: x, With: x.With})
 		}
 		if err != nil {
 			return nil, nil, err
