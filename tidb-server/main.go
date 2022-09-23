@@ -110,6 +110,7 @@ const (
 	nmPluginLoad       = "plugin-load"
 	nmRepairMode       = "repair-mode"
 	nmRepairList       = "repair-list"
+	nmTempDir          = "temp-dir"
 
 	nmProxyProtocolNetworks      = "proxy-protocol-networks"
 	nmProxyProtocolHeaderTimeout = "proxy-protocol-header-timeout"
@@ -142,6 +143,7 @@ var (
 	affinityCPU      = flag.String(nmAffinityCPU, "", "affinity cpu (cpu-no. separated by comma, e.g. 1,2,3)")
 	repairMode       = flagBoolean(nmRepairMode, false, "enable admin repair mode")
 	repairList       = flag.String(nmRepairList, "", "admin repair table list")
+	tempDir          = flag.String(nmTempDir, config.DefTempDir, "tidb temporary directory")
 
 	// Log
 	logLevel     = flag.String(nmLogLevel, "info", "log level: info, debug, warn, error, fatal")
@@ -157,7 +159,7 @@ var (
 
 	// PROXY Protocol
 	proxyProtocolNetworks      = flag.String(nmProxyProtocolNetworks, "", "proxy protocol networks allowed IP or *, empty mean disable proxy protocol support")
-	proxyProtocolHeaderTimeout = flag.Uint(nmProxyProtocolHeaderTimeout, 5, "proxy protocol header read timeout, unit is second.")
+	proxyProtocolHeaderTimeout = flag.Uint(nmProxyProtocolHeaderTimeout, 5, "proxy protocol header read timeout, unit is second. (Deprecated: as proxy protocol using lazy mode, header read timeout no longer used)")
 
 	// Security
 	initializeSecure   = flagBoolean(nmInitializeSecure, false, "bootstrap tidb-server in secure mode")
@@ -474,6 +476,9 @@ func overrideConfig(cfg *config.Config) {
 			cfg.RepairTableList = stringToList(*repairList)
 		}
 	}
+	if actualFlags[nmTempDir] {
+		cfg.TempDir = *tempDir
+	}
 
 	// Log
 	if actualFlags[nmLogLevel] {
@@ -633,6 +638,7 @@ func setGlobalVars() {
 
 	variable.ProcessGeneralLog.Store(cfg.Instance.TiDBGeneralLog)
 	variable.EnablePProfSQLCPU.Store(cfg.Instance.EnablePProfSQLCPU)
+	variable.EnableRCReadCheckTS.Store(cfg.Instance.TiDBRCReadCheckTS)
 	atomic.StoreUint32(&variable.DDLSlowOprThreshold, cfg.Instance.DDLSlowOprThreshold)
 	atomic.StoreUint64(&variable.ExpensiveQueryTimeThreshold, cfg.Instance.ExpensiveQueryTimeThreshold)
 
@@ -675,7 +681,7 @@ func setGlobalVars() {
 
 	// For CI environment we default enable prepare-plan-cache.
 	if config.CheckTableBeforeDrop { // only for test
-		plannercore.SetPreparedPlanCache(true)
+		variable.SetSysVar(variable.TiDBEnablePrepPlanCache, variable.BoolToOnOff(true))
 	}
 	// use server-memory-quota as max-plan-cache-memory
 	plannercore.PreparedPlanCacheMaxMemory.Store(cfg.Performance.ServerMemoryQuota)

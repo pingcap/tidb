@@ -23,6 +23,8 @@ type StreamMetadataSet struct {
 	// The metadata after changed that needs to be write back.
 	writeback map[string]*backuppb.Metadata
 
+	Helper *stream.MetadataHelper
+
 	BeforeDoWriteBack func(path string, last, current *backuppb.Metadata) (skip bool)
 }
 
@@ -36,7 +38,11 @@ func (ms *StreamMetadataSet) LoadUntil(ctx context.Context, s storage.ExternalSt
 	}{}
 	ms.writeback = make(map[string]*backuppb.Metadata)
 	metadataMap.metas = make(map[string]*backuppb.Metadata)
-	err := stream.FastUnmarshalMetaData(ctx, s, func(path string, m *backuppb.Metadata) error {
+	err := stream.FastUnmarshalMetaData(ctx, s, func(path string, raw []byte) error {
+		m, err := ms.Helper.ParseToMetadataHard(raw)
+		if err != nil {
+			return err
+		}
 		metadataMap.Lock()
 		// If the meta file contains only files with ts grater than `until`, when the file is from
 		// `Default`: it should be kept, because its corresponding `write` must has commit ts grater than it, which should not be considered.
@@ -59,9 +65,9 @@ func (ms *StreamMetadataSet) LoadFrom(ctx context.Context, s storage.ExternalSto
 	return ms.LoadUntil(ctx, s, math.MaxUint64)
 }
 
-func (ms *StreamMetadataSet) iterateDataFiles(f func(d *backuppb.DataFileInfo) (shouldBreak bool)) {
+func (ms *StreamMetadataSet) iterateDataFiles(f func(d *backuppb.DataFileGroup) (shouldBreak bool)) {
 	for _, m := range ms.metadata {
-		for _, d := range m.Files {
+		for _, d := range m.FileGroups {
 			if f(d) {
 				return
 			}
@@ -85,13 +91,15 @@ func (ms *StreamMetadataSet) CalculateShiftTS(startTS uint64) uint64 {
 }
 
 // IterateFilesFullyBefore runs the function over all files contain data before the timestamp only.
-//   0                                          before
-//   |------------------------------------------|
-//    |-file1---------------| <- File contains records in this TS range would be found.
-//                                  |-file2--------------| <- File contains any record out of this won't be found.
+//
+//	0                                          before
+//	|------------------------------------------|
+//	 |-file1---------------| <- File contains records in this TS range would be found.
+//	                               |-file2--------------| <- File contains any record out of this won't be found.
+//
 // This function would call the `f` over file1 only.
-func (ms *StreamMetadataSet) IterateFilesFullyBefore(before uint64, f func(d *backuppb.DataFileInfo) (shouldBreak bool)) {
-	ms.iterateDataFiles(func(d *backuppb.DataFileInfo) (shouldBreak bool) {
+func (ms *StreamMetadataSet) IterateFilesFullyBefore(before uint64, f func(d *backuppb.DataFileGroup) (shouldBreak bool)) {
+	ms.iterateDataFiles(func(d *backuppb.DataFileGroup) (shouldBreak bool) {
 		if d.MaxTs >= before {
 			return false
 		}
@@ -101,21 +109,21 @@ func (ms *StreamMetadataSet) IterateFilesFullyBefore(before uint64, f func(d *ba
 
 // RemoveDataBefore would find files contains only records before the timestamp, mark them as removed from meta,
 // and returning their information.
-func (ms *StreamMetadataSet) RemoveDataBefore(from uint64) []*backuppb.DataFileInfo {
-	removed := []*backuppb.DataFileInfo{}
+func (ms *StreamMetadataSet) RemoveDataBefore(from uint64) []*backuppb.DataFileGroup {
+	removed := []*backuppb.DataFileGroup{}
 	for metaPath, m := range ms.metadata {
-		remainedDataFiles := make([]*backuppb.DataFileInfo, 0)
+		remainedDataFiles := make([]*backuppb.DataFileGroup, 0)
 		// can we assume those files are sorted to avoid traversing here? (by what?)
-		for _, d := range m.Files {
-			if d.MaxTs < from {
-				removed = append(removed, d)
+		for _, ds := range m.FileGroups {
+			if ds.MaxTs < from {
+				removed = append(removed, ds)
 			} else {
-				remainedDataFiles = append(remainedDataFiles, d)
+				remainedDataFiles = append(remainedDataFiles, ds)
 			}
 		}
-		if len(remainedDataFiles) != len(m.Files) {
+		if len(remainedDataFiles) != len(m.FileGroups) {
 			mCopy := *m
-			mCopy.Files = remainedDataFiles
+			mCopy.FileGroups = remainedDataFiles
 			ms.WriteBack(metaPath, &mCopy)
 		}
 	}
@@ -132,14 +140,14 @@ func (ms *StreamMetadataSet) doWriteBackForFile(ctx context.Context, s storage.E
 		return errors.Annotatef(berrors.ErrInvalidArgument, "There is no write back for path %s", path)
 	}
 	// If the metadata file contains no data file, remove it due to it is meanless.
-	if len(data.Files) == 0 {
+	if len(data.FileGroups) == 0 {
 		if err := s.DeleteFile(ctx, path); err != nil {
 			return errors.Annotatef(err, "failed to remove the empty meta %s", path)
 		}
 		return nil
 	}
 
-	bs, err := data.Marshal()
+	bs, err := ms.Helper.Marshal(data)
 	if err != nil {
 		return errors.Annotatef(err, "failed to marshal the file %s", path)
 	}
@@ -248,20 +256,22 @@ func UpdateShiftTS(m *backuppb.Metadata, startTS uint64, restoreTS uint64) (uint
 		minBeginTS uint64
 		isExist    bool
 	)
-	if len(m.Files) == 0 || m.MinTs > restoreTS || m.MaxTs < startTS {
+	if len(m.FileGroups) == 0 || m.MinTs > restoreTS || m.MaxTs < startTS {
 		return 0, false
 	}
 
-	for _, d := range m.Files {
-		if d.Cf == stream.DefaultCF || d.MinBeginTsInDefaultCf == 0 {
-			continue
-		}
-		if d.MinTs > restoreTS || d.MaxTs < startTS {
-			continue
-		}
-		if d.MinBeginTsInDefaultCf < minBeginTS || !isExist {
-			isExist = true
-			minBeginTS = d.MinBeginTsInDefaultCf
+	for _, ds := range m.FileGroups {
+		for _, d := range ds.DataFilesInfo {
+			if d.Cf == stream.DefaultCF || d.MinBeginTsInDefaultCf == 0 {
+				continue
+			}
+			if d.MinTs > restoreTS || d.MaxTs < startTS {
+				continue
+			}
+			if d.MinBeginTsInDefaultCf < minBeginTS || !isExist {
+				isExist = true
+				minBeginTS = d.MinBeginTsInDefaultCf
+			}
 		}
 	}
 	return minBeginTS, isExist
@@ -278,10 +288,10 @@ func CalculateShiftTS(
 		isExist    bool
 	)
 	for _, m := range metas {
-		if len(m.Files) == 0 || m.MinTs > restoreTS || m.MaxTs < startTS {
+		if len(m.FileGroups) == 0 || m.MinTs > restoreTS || m.MaxTs < startTS {
 			continue
 		}
-		ts, ok := UpdateShiftTS(m, startTS, mathutil.MaxUint)
+		ts, ok := UpdateShiftTS(m, startTS, restoreTS)
 		if ok && (!isExist || ts < minBeginTS) {
 			minBeginTS = ts
 			isExist = true

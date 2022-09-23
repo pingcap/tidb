@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/hint"
-	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
@@ -45,14 +44,8 @@ import (
 
 func TestPointGetPreparedPlan4PlanCache(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk1 := testkit.NewTestKitWithSession(t, store, se)
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 	tk1.MustExec("drop database if exists ps_text")
 	defer tk1.MustExec("drop database if exists ps_text")
 	tk1.MustExec("create database ps_text")
@@ -67,7 +60,7 @@ func TestPointGetPreparedPlan4PlanCache(t *testing.T) {
 
 	pspk1Id, _, _, err := tk1.Session().PrepareStmt("select * from t where a = ?")
 	require.NoError(t, err)
-	tk1.Session().GetSessionVars().PreparedStmts[pspk1Id].(*core.CachedPrepareStmt).PreparedAst.UseCache = false
+	tk1.Session().GetSessionVars().PreparedStmts[pspk1Id].(*core.PlanCacheStmt).PreparedAst.UseCache = false
 
 	ctx := context.Background()
 	// first time plan generated
@@ -81,14 +74,8 @@ func TestPointGetPreparedPlan4PlanCache(t *testing.T) {
 
 func TestPreparePointGetWithDML(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk := testkit.NewTestKitWithSession(t, store, se)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t`)
@@ -113,14 +100,8 @@ func TestPreparePointGetWithDML(t *testing.T) {
 
 func TestPrepareIgnoreCloseStmtCmd(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk := testkit.NewTestKitWithSession(t, store, se)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t`)
@@ -153,15 +134,10 @@ func TestPrepareIgnoreCloseStmtCmd(t *testing.T) {
 
 func TestRandomFlushPlanCache(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk := testkit.NewTestKitWithSession(t, store, se)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 	tk2 := testkit.NewTestKit(t, store)
+	var err error
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -242,14 +218,8 @@ func TestRandomFlushPlanCache(t *testing.T) {
 
 func TestFlushPlanCache(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk := testkit.NewTestKitWithSession(t, store, se)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 	tk2 := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -329,21 +299,16 @@ func TestFlushPlanCache(t *testing.T) {
 	tk.MustExec("execute stmt3;")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 
-	err = tk.ExecToErr("admin flush global plan_cache;")
+	err := tk.ExecToErr("admin flush global plan_cache;")
 	require.EqualError(t, err, "Do not support the 'admin flush global scope.'")
 }
 
 func TestFlushPlanCacheWithoutPCEnable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(false)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk := testkit.NewTestKitWithSession(t, store, se)
+	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=0`)
+	tk2.MustExec(`set tidb_enable_prepared_plan_cache=0`)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -424,20 +389,14 @@ func TestFlushPlanCacheWithoutPCEnable(t *testing.T) {
 	tk.MustExec("execute stmt3;")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 
-	err = tk.ExecToErr("admin flush global plan_cache;")
+	err := tk.ExecToErr("admin flush global plan_cache;")
 	require.EqualError(t, err, "Do not support the 'admin flush global scope.'")
 }
 
 func TestPrepareCache(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk := testkit.NewTestKitWithSession(t, store, se)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -476,7 +435,7 @@ func TestPrepareCache(t *testing.T) {
 
 	// user u_tp
 	userSess := newSession(t, store, "test")
-	require.True(t, userSess.Auth(&auth.UserIdentity{Username: "u_tp", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, userSess.Auth(&auth.UserIdentity{Username: "u_tp", Hostname: "localhost"}, nil, nil))
 	mustExec(t, userSess, `prepare ps_stp_r from 'select * from tp where c1 > ?'`)
 	mustExec(t, userSess, `set @p2 = 2`)
 	tk.SetSession(userSess)
@@ -490,7 +449,7 @@ func TestPrepareCache(t *testing.T) {
 
 	// user u_tp
 	tk.SetSession(userSess)
-	_, err = tk.Exec(`execute ps_stp_r using @p2`)
+	_, err := tk.Exec(`execute ps_stp_r using @p2`)
 	require.Error(t, err)
 
 	// grant again
@@ -510,14 +469,8 @@ func TestPrepareCache(t *testing.T) {
 
 func TestPrepareCacheIndexScan(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk := testkit.NewTestKitWithSession(t, store, se)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -614,14 +567,8 @@ func randValue(tk *testkit.TestKit, tbl, col, dtype, rtype string) string {
 
 func TestPrepareCacheChangingParamType(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk := testkit.NewTestKitWithSession(t, store, se)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t_tinyint, t_unsigned, t_float, t_decimal, t_year`)
@@ -678,14 +625,8 @@ func TestPrepareCacheChangingParamType(t *testing.T) {
 
 func TestPrepareCacheChangeCharsetCollation(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk := testkit.NewTestKitWithSession(t, store, se)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t`)
@@ -718,14 +659,8 @@ func TestPrepareCacheChangeCharsetCollation(t *testing.T) {
 
 func TestPrepareCacheDeferredFunction(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk := testkit.NewTestKitWithSession(t, store, se)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -754,9 +689,9 @@ func TestPrepareCacheDeferredFunction(t *testing.T) {
 		require.True(t, ok)
 		err = executor.ResetContextOfStmt(tk.Session(), stmt)
 		require.NoError(t, err)
-		err = execPlan.OptimizePreparedPlan(ctx, tk.Session(), is)
+		plan, _, err := core.GetPlanFromSessionPlanCache(ctx, tk.Session(), false, is, execPlan.PrepStmt, execPlan.Params)
 		require.NoError(t, err)
-		planStr[i] = core.ToString(execPlan.Plan)
+		planStr[i] = core.ToString(plan)
 		require.Regexpf(t, expectedPattern, planStr[i], "for %dth %s", i, sql1)
 		pb := &dto.Metric{}
 		err = counter.Write(pb)
@@ -770,14 +705,8 @@ func TestPrepareCacheDeferredFunction(t *testing.T) {
 
 func TestPrepareCacheNow(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk := testkit.NewTestKitWithSession(t, store, se)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec("use test")
 	tk.MustExec(`prepare stmt1 from "select now(), current_timestamp(), utc_timestamp(), unix_timestamp(), sleep(0.1), now(), current_timestamp(), utc_timestamp(), unix_timestamp()"`)
@@ -836,14 +765,8 @@ func TestPrepareOverMaxPreparedStmtCount(t *testing.T) {
 func TestPrepareTableAsNameOnGroupByWithCache(t *testing.T) {
 	t.Skip("unstable, skip it and fix it before 20210702")
 	store := testkit.CreateMockStore(t)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk := testkit.NewTestKitWithSession(t, store, se)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -869,14 +792,8 @@ func TestPrepareTableAsNameOnGroupByWithCache(t *testing.T) {
 
 func TestPrepareCachePointGetInsert(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk := testkit.NewTestKitWithSession(t, store, se)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -904,14 +821,8 @@ func TestPrepareCachePointGetInsert(t *testing.T) {
 
 func TestIssue31280(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk := testkit.NewTestKitWithSession(t, store, se)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists UK_MU15569;")
@@ -945,14 +856,8 @@ func TestIssue31280(t *testing.T) {
 
 func TestIssue31375(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk := testkit.NewTestKitWithSession(t, store, se)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists IDT_MULTI15844STROBJSTROBJ;")
@@ -1012,10 +917,8 @@ func TestPrepareWithWindowFunction(t *testing.T) {
 
 func TestPrepareWindowFunctionWithoutParamsCheck(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(false)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=0`)
 	tk.MustExec("set @@tidb_enable_window_function = 1")
 	defer tk.MustExec("set @@tidb_enable_window_function = 0")
 	tk.MustExec("use test")
@@ -1101,14 +1004,8 @@ func TestPrepareCacheForClusteredIndex(t *testing.T) {
 
 func TestPrepareCacheForPartition(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk := testkit.NewTestKitWithSession(t, store, se)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec("use test")
 	for _, pruneMode := range []string{string(variable.Static), string(variable.Dynamic)} {
@@ -1245,14 +1142,8 @@ func mustExec(t *testing.T, se session.Session, sql string) {
 
 func TestConstPropAndPPDWithCache(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk := testkit.NewTestKitWithSession(t, store, se)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1344,14 +1235,8 @@ func TestConstPropAndPPDWithCache(t *testing.T) {
 
 func TestPlanCacheUnionScan(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk := testkit.NewTestKitWithSession(t, store, se)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 	pb := &dto.Metric{}
 	metrics.ResettablePlanCacheCounterFortTest = true
 	metrics.PlanCacheCounter.Reset()
@@ -1367,7 +1252,7 @@ func TestPlanCacheUnionScan(t *testing.T) {
 	tk.MustQuery("execute stmt1 using @p0").Check(testkit.Rows())
 	tk.MustExec("begin")
 	tk.MustQuery("execute stmt1 using @p0").Check(testkit.Rows())
-	err = counter.Write(pb)
+	err := counter.Write(pb)
 	require.NoError(t, err)
 	cnt := pb.GetCounter().GetValue()
 	require.Equal(t, float64(1), cnt)
@@ -1442,14 +1327,8 @@ func TestPlanCacheUnionScan(t *testing.T) {
 
 func TestPlanCacheSwitchDB(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk := testkit.NewTestKitWithSession(t, store, se)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	// create a table in test
 	tk.MustExec(`use test`)
@@ -1460,7 +1339,7 @@ func TestPlanCacheSwitchDB(t *testing.T) {
 
 	// DB is not specified
 	se2, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+		PreparedPlanCache: core.NewLRUPlanCache(100, 0.1, math.MaxUint64, core.PickPlanFromBucket),
 	})
 	require.NoError(t, err)
 	tk2 := testkit.NewTestKitWithSession(t, store, se2)
@@ -1496,14 +1375,8 @@ func TestPlanCacheSwitchDB(t *testing.T) {
 func TestPlanCacheHitInfo(t *testing.T) {
 	t.Skip("unstable, skip it and fix it before 20210705")
 	store := testkit.CreateMockStore(t)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk := testkit.NewTestKitWithSession(t, store, se)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1531,14 +1404,8 @@ func TestPlanCacheHitInfo(t *testing.T) {
 
 func TestIssue29303(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk := testkit.NewTestKitWithSession(t, store, se)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec(`set tidb_enable_clustered_index=on`)
 	tk.MustExec(`use test`)
@@ -1558,14 +1425,8 @@ func TestIssue29303(t *testing.T) {
 
 func TestIssue34725(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk := testkit.NewTestKitWithSession(t, store, se)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t`)
@@ -1583,14 +1444,8 @@ func TestIssue34725(t *testing.T) {
 
 func TestIssue33628(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(false)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk := testkit.NewTestKitWithSession(t, store, se)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=0`)
 
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t`)
@@ -1603,14 +1458,8 @@ func TestIssue33628(t *testing.T) {
 
 func TestIssue28942(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk := testkit.NewTestKitWithSession(t, store, se)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists IDT_MULTI15853STROBJSTROBJ`)
@@ -1630,14 +1479,8 @@ func TestIssue28942(t *testing.T) {
 
 func TestPlanCacheUnsignedHandleOverflow(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk := testkit.NewTestKitWithSession(t, store, se)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1656,14 +1499,8 @@ func TestPlanCacheUnsignedHandleOverflow(t *testing.T) {
 
 func TestIssue28254(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk := testkit.NewTestKitWithSession(t, store, se)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists PK_GCOL_STORED9816")
@@ -1682,14 +1519,8 @@ func TestIssue28254(t *testing.T) {
 
 func TestIssue33067(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk := testkit.NewTestKitWithSession(t, store, se)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec("use test")
 	tk.MustExec("DROP TABLE IF EXISTS `t`")
@@ -1705,14 +1536,8 @@ func TestIssue33067(t *testing.T) {
 
 func TestIssue29486(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk := testkit.NewTestKitWithSession(t, store, se)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists UK_MULTI_COL_11691`)
@@ -1735,14 +1560,8 @@ func TestIssue29486(t *testing.T) {
 
 func TestIssue28867(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk := testkit.NewTestKitWithSession(t, store, se)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
@@ -1777,14 +1596,8 @@ func TestIssue28867(t *testing.T) {
 
 func TestParamMarker4FastPlan(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk := testkit.NewTestKitWithSession(t, store, se)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	// test handle for point get
 	tk.MustExec(`use test`)
@@ -1888,10 +1701,8 @@ func TestParamMarker4FastPlan(t *testing.T) {
 
 func TestIssue29565(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists PK_SIGNED_10094`)
@@ -1910,10 +1721,8 @@ func TestIssue29565(t *testing.T) {
 
 func TestIssue31730(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists PK_S_MULTI_37;`)
@@ -1926,10 +1735,8 @@ func TestIssue31730(t *testing.T) {
 
 func TestIssue28828(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
 	tk.MustExec("CREATE TABLE t (" +
@@ -1965,14 +1772,8 @@ func TestIssue28828(t *testing.T) {
 
 func TestIssue28920(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk := testkit.NewTestKitWithSession(t, store, se)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists UK_GCOL_VIRTUAL_18928`)
@@ -1994,16 +1795,10 @@ func TestIssue28920(t *testing.T) {
 
 func TestIssue18066(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk := testkit.NewTestKitWithSession(t, store, se)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 	tk.RefreshConnectionID()
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -2076,14 +1871,8 @@ func TestInvisibleIndexPrepare(t *testing.T) {
 // Test for issue https://github.com/pingcap/tidb/issues/22167
 func TestPrepareCacheWithJoinTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk := testkit.NewTestKitWithSession(t, store, se)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists ta, tb")
@@ -2098,14 +1887,8 @@ func TestPrepareCacheWithJoinTable(t *testing.T) {
 
 func TestPlanCacheSnapshot(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk := testkit.NewTestKitWithSession(t, store, se)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -2143,14 +1926,8 @@ func TestPlanCacheSnapshot(t *testing.T) {
 
 func TestPlanCachePointGetAndTableDual(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk := testkit.NewTestKitWithSession(t, store, se)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t0, t1, t2, t3, t4")
@@ -2222,14 +1999,8 @@ func TestPlanCachePointGetAndTableDual(t *testing.T) {
 
 func TestIssue26873(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk := testkit.NewTestKitWithSession(t, store, se)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -2245,14 +2016,8 @@ func TestIssue26873(t *testing.T) {
 
 func TestIssue29511(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk := testkit.NewTestKitWithSession(t, store, se)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -2266,14 +2031,8 @@ func TestIssue29511(t *testing.T) {
 
 func TestIssue23671(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk := testkit.NewTestKitWithSession(t, store, se)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -2290,14 +2049,8 @@ func TestIssue23671(t *testing.T) {
 
 func TestIssue29296(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk := testkit.NewTestKitWithSession(t, store, se)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists UK_MU14722`)
@@ -2322,14 +2075,8 @@ func TestIssue29296(t *testing.T) {
 
 func TestIssue28246(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk := testkit.NewTestKitWithSession(t, store, se)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists PK_AUTO_RANDOM9111;")
@@ -2349,14 +2096,8 @@ func TestIssue28246(t *testing.T) {
 
 func TestIssue29805(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk := testkit.NewTestKitWithSession(t, store, se)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_enable_clustered_index=on;")
@@ -2377,14 +2118,8 @@ func TestIssue29805(t *testing.T) {
 
 func TestIssue29993(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk := testkit.NewTestKitWithSession(t, store, se)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec("use test")
 
@@ -2447,14 +2182,8 @@ func TestIssue29993(t *testing.T) {
 
 func TestIssue30100(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk := testkit.NewTestKitWithSession(t, store, se)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
@@ -2474,14 +2203,8 @@ func TestIssue30100(t *testing.T) {
 
 func TestPartitionTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk := testkit.NewTestKitWithSession(t, store, se)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	// enable partition table dynamic mode
 	tk.MustExec("create database test_plan_cache")
@@ -2620,14 +2343,8 @@ func helperCheckPlanCache(t *testing.T, tk *testkit.TestKit, sql, expected strin
 
 func TestPartitionWithVariedDataSources(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk := testkit.NewTestKitWithSession(t, store, se)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	// enable partition table dynamic mode
 	tk.MustExec("create database test_plan_cache2")
@@ -2784,14 +2501,8 @@ func TestPartitionWithVariedDataSources(t *testing.T) {
 
 func TestCachedTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk := testkit.NewTestKitWithSession(t, store, se)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -2848,18 +2559,13 @@ func TestCachedTable(t *testing.T) {
 }
 
 func TestPlanCacheWithRCWhenInfoSchemaChange(t *testing.T) {
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer func() {
-		core.SetPreparedPlanCache(orgEnable)
-	}()
-	core.SetPreparedPlanCache(true)
-
 	ctx := context.Background()
 	store := testkit.CreateMockStore(t)
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
+	tk1.MustExec("set global tidb_enable_metadata_lock=0")
 	tk2.MustExec("use test")
 	tk1.MustExec("drop table if exists t1")
 	tk1.MustExec("create table t1(id int primary key, c int, index ic (c))")
@@ -2899,6 +2605,9 @@ func TestConsistencyBetweenPrepareExecuteAndNormalSql(t *testing.T) {
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
+	tk1.MustExec("set global tidb_enable_metadata_lock=0")
+	tk1.MustExec(`set tidb_enable_prepared_plan_cache=1`)
+	tk2.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 	tk1.MustExec("use test")
 	tk2.MustExec("use test")
 	tk1.MustExec("drop table if exists t1")
@@ -2966,17 +2675,14 @@ func verifyCache(ctx context.Context, t *testing.T, tk1 *testkit.TestKit, tk2 *t
 }
 
 func TestCacheHitInRc(t *testing.T) {
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer func() {
-		core.SetPreparedPlanCache(orgEnable)
-	}()
-	core.SetPreparedPlanCache(true)
-
 	ctx := context.Background()
 	store := testkit.CreateMockStore(t)
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
+	tk1.MustExec("set global tidb_enable_metadata_lock=0")
+	tk1.MustExec(`set tidb_enable_prepared_plan_cache=1`)
+	tk2.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 	tk1.MustExec("use test")
 	tk2.MustExec("use test")
 	tk1.MustExec("drop table if exists t1")
@@ -2998,17 +2704,13 @@ func TestCacheHitInRc(t *testing.T) {
 }
 
 func TestCacheHitInForUpdateRead(t *testing.T) {
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer func() {
-		core.SetPreparedPlanCache(orgEnable)
-	}()
-	core.SetPreparedPlanCache(true)
-
 	ctx := context.Background()
 	store := testkit.CreateMockStore(t)
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
+	tk1.MustExec(`set tidb_enable_prepared_plan_cache=1`)
+	tk2.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 	tk1.MustExec("use test")
 	tk2.MustExec("use test")
 	tk1.MustExec("drop table if exists t1")
@@ -3026,17 +2728,13 @@ func TestCacheHitInForUpdateRead(t *testing.T) {
 }
 
 func TestPointGetForUpdateAutoCommitCache(t *testing.T) {
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer func() {
-		core.SetPreparedPlanCache(orgEnable)
-	}()
-	core.SetPreparedPlanCache(true)
-
 	ctx := context.Background()
 	store := testkit.CreateMockStore(t)
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
+	tk1.MustExec(`set tidb_enable_prepared_plan_cache=1`)
+	tk2.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 	tk1.MustExec("use test")
 	tk2.MustExec("use test")
 	tk1.MustExec("drop table if exists t1")

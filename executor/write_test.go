@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
@@ -212,7 +213,8 @@ func TestInsert(t *testing.T) {
 	tk.MustExec("CREATE TABLE t(a DECIMAL(4,2));")
 	tk.MustExec("INSERT INTO t VALUES (1.000001);")
 	r = tk.MustQuery("SHOW WARNINGS;")
-	r.Check(testkit.Rows("Warning 1292 Truncated incorrect DECIMAL value: '1.000001'"))
+	// TODO: MySQL8.0 reports Note 1265 Data truncated for column 'a' at row 1
+	r.Check(testkit.Rows("Warning 1366 Incorrect decimal value: '1.000001' for column 'a' at row 1"))
 	tk.MustExec("INSERT INTO t VALUES (1.000000);")
 	r = tk.MustQuery("SHOW WARNINGS;")
 	r.Check(testkit.Rows())
@@ -249,15 +251,14 @@ func TestInsert(t *testing.T) {
 	require.True(t, types.ErrWarnDataOutOfRange.Equal(err))
 	tk.MustExec("set @@sql_mode = '';")
 	tk.MustExec("insert into t value (-1);")
-	// TODO: the following warning messages are not consistent with MySQL, fix them in the future PRs
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 constant -1 overflows bigint"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1264 Out of range value for column 'a' at row 1"))
 	tk.MustExec("insert into t select -1;")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 constant -1 overflows bigint"))
 	tk.MustExec("insert into t select cast(-1 as unsigned);")
 	tk.MustExec("insert into t value (-1.111);")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 constant -1.111 overflows bigint"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1264 Out of range value for column 'a' at row 1"))
 	tk.MustExec("insert into t value ('-1.111');")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 BIGINT UNSIGNED value is out of range in '-1'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1264 Out of range value for column 'a' at row 1"))
 	tk.MustExec("update t set a = -1 limit 1;")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 constant -1 overflows bigint"))
 	r = tk.MustQuery("select * from t;")
@@ -280,8 +281,8 @@ func TestInsert(t *testing.T) {
 	tk.MustExec("create table t(a float unsigned, b double unsigned)")
 	tk.MustExec("insert into t value(-1.1, -1.1), (-2.1, -2.1), (0, 0), (1.1, 1.1)")
 	tk.MustQuery("show warnings").
-		Check(testkit.Rows("Warning 1690 constant -1.1 overflows float", "Warning 1690 constant -1.1 overflows double",
-			"Warning 1690 constant -2.1 overflows float", "Warning 1690 constant -2.1 overflows double"))
+		Check(testkit.Rows("Warning 1264 Out of range value for column 'a' at row 1", "Warning 1264 Out of range value for column 'b' at row 1",
+			"Warning 1264 Out of range value for column 'a' at row 2", "Warning 1264 Out of range value for column 'b' at row 2"))
 	tk.MustQuery("select * from t").Check(testkit.Rows("0 0", "0 0", "0 0", "1.1 1.1"))
 
 	// issue 7061
@@ -527,7 +528,8 @@ func TestInsertIgnore(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, tk.Session().LastMessage())
 	r = tk.MustQuery("SHOW WARNINGS")
-	r.Check(testkit.Rows("Warning 1292 Truncated incorrect DOUBLE value: '1a'"))
+	// TODO: MySQL8.0 reports Warning 1265 Data truncated for column 'a' at row 1
+	r.Check(testkit.Rows("Warning 1366 Incorrect bigint value: '1a' for column 'a' at row 1"))
 
 	// for duplicates with warning
 	testSQL = `drop table if exists t;
@@ -1190,6 +1192,8 @@ func TestGeneratedColumnForInsert(t *testing.T) {
 }
 
 func TestPartitionedTableReplace(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1448,6 +1452,8 @@ func TestHashPartitionedTableReplace(t *testing.T) {
 }
 
 func TestPartitionedTableUpdate(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1718,6 +1724,8 @@ func TestDelete(t *testing.T) {
 }
 
 func TestPartitionedTableDelete(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	createTable := `CREATE TABLE test.t (id int not null default 1, name varchar(255), index(id))
 			  PARTITION BY RANGE ( id ) (
 			  PARTITION p0 VALUES LESS THAN (6),
@@ -3236,6 +3244,8 @@ func TestWriteListPartitionTable1(t *testing.T) {
 
 // TestWriteListPartitionTable2 test for write list partition when the partition expression is complicated and contain generated column.
 func TestWriteListPartitionTable2(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3358,6 +3368,8 @@ func TestWriteListPartitionTable2(t *testing.T) {
 }
 
 func TestWriteListColumnsPartitionTable1(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3929,6 +3941,8 @@ func testEqualDatumsAsBinary(t *testing.T, a []interface{}, b []interface{}, sam
 }
 
 func TestUpdate(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -4199,6 +4213,8 @@ func TestUpdate(t *testing.T) {
 }
 
 func TestListColumnsPartitionWithGlobalIndex(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

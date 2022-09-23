@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -45,10 +46,10 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
+	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 const (
@@ -1126,7 +1127,6 @@ var tableTableTiFlashReplicaCols = []columnInfo{
 	{name: "LOCATION_LABELS", tp: mysql.TypeVarchar, size: 64},
 	{name: "AVAILABLE", tp: mysql.TypeTiny, size: 1},
 	{name: "PROGRESS", tp: mysql.TypeDouble, size: 22},
-	{name: "TABLE_MODE", tp: mysql.TypeVarchar, size: 64},
 }
 
 var tableInspectionResultCols = []columnInfo{
@@ -1452,6 +1452,7 @@ var tableTiDBTrxCols = []columnInfo{
 	{name: txninfo.UserStr, tp: mysql.TypeVarchar, size: 16, comment: "The user who open this session"},
 	{name: txninfo.DBStr, tp: mysql.TypeVarchar, size: 64, comment: "The schema this transaction works on"},
 	{name: txninfo.AllSQLDigestsStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "A list of the digests of SQL statements that the transaction has executed"},
+	{name: txninfo.RelatedTableIDsStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "A list of the table IDs that the transaction has accessed"},
 }
 
 var tableDeadlocksCols = []columnInfo{
@@ -1521,10 +1522,11 @@ var tableVariablesInfoCols = []columnInfo{
 
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
 // The returned description string may be:
-//  - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
-//  - "NOT_SHARDED(PK_IS_HANDLE)": for tables of which primary key is row id.
-//  - "PK_AUTO_RANDOM_BITS={bit_number}": for tables of which primary key is sharded row id.
-//  - "SHARD_BITS={bit_number}": for tables that with SHARD_ROW_ID_BITS.
+//   - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
+//   - "NOT_SHARDED(PK_IS_HANDLE)": for tables of which primary key is row id.
+//   - "PK_AUTO_RANDOM_BITS={bit_number}, RANGE BITS={bit_number}": for tables of which primary key is sharded row id.
+//   - "SHARD_BITS={bit_number}": for tables that with SHARD_ROW_ID_BITS.
+//
 // The returned nil indicates that sharding information is not suitable for the table(for example, when the table is a View).
 // This function is exported for unit test.
 func GetShardingInfo(dbInfo *model.DBInfo, tableInfo *model.TableInfo) interface{} {
@@ -1535,6 +1537,10 @@ func GetShardingInfo(dbInfo *model.DBInfo, tableInfo *model.TableInfo) interface
 	if tableInfo.PKIsHandle {
 		if tableInfo.ContainsAutoRandomBits() {
 			shardingInfo = "PK_AUTO_RANDOM_BITS=" + strconv.Itoa(int(tableInfo.AutoRandomBits))
+			rangeBits := tableInfo.AutoRandomRangeBits
+			if rangeBits != 0 && rangeBits != autoid.AutoRandomRangeBitsDefault {
+				shardingInfo = fmt.Sprintf("%s, RANGE BITS=%d", shardingInfo, rangeBits)
+			}
 		} else {
 			shardingInfo = "NOT_SHARDED(PK_IS_HANDLE)"
 		}
@@ -1850,12 +1856,27 @@ func GetTiFlashStoreCount(ctx sessionctx.Context) (cnt uint64, err error) {
 	return cnt, nil
 }
 
+// SysVarHiddenForSem checks if a given sysvar is hidden according to SEM and privileges.
+func SysVarHiddenForSem(ctx sessionctx.Context, sysVarNameInLower string) bool {
+	if !sem.IsEnabled() || !sem.IsInvisibleSysVar(sysVarNameInLower) {
+		return false
+	}
+	checker := privilege.GetPrivilegeManager(ctx)
+	if checker == nil || checker.RequestDynamicVerification(ctx.GetSessionVars().ActiveRoles, "RESTRICTED_VARIABLES_ADMIN", false) {
+		return false
+	}
+	return true
+}
+
 // GetDataFromSessionVariables return the [name, value] of all session variables
 func GetDataFromSessionVariables(ctx sessionctx.Context) ([][]types.Datum, error) {
 	sessionVars := ctx.GetSessionVars()
 	sysVars := variable.GetSysVars()
 	rows := make([][]types.Datum, 0, len(sysVars))
 	for _, v := range sysVars {
+		if SysVarHiddenForSem(ctx, v.Name) {
+			continue
+		}
 		var value string
 		value, err := sessionVars.GetSessionOrGlobalSystemVar(v.Name)
 		if err != nil {
@@ -1960,61 +1981,9 @@ type infoschemaTable struct {
 	tp   table.Type
 }
 
-func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column) (fullRows [][]types.Datum, err error) {
-	is := ctx.GetInfoSchema().(InfoSchema)
-	dbs := is.AllSchemas()
-	slices.SortFunc(dbs, func(i, j *model.DBInfo) bool {
-		return i.Name.L < j.Name.L
-	})
-	switch it.meta.Name.O {
-	case tableFiles:
-	case tablePlugins, tableTriggers:
-	case tableRoutines:
-	// TODO: Fill the following tables.
-	case tableSchemaPrivileges:
-	case tableTablePrivileges:
-	case tableColumnPrivileges:
-	case tableParameters:
-	case tableEvents:
-	case tableGlobalStatus:
-	case tableGlobalVariables:
-	case tableSessionStatus:
-	case tableOptimizerTrace:
-	case tableTableSpaces:
-	}
-	if err != nil {
-		return nil, err
-	}
-	if len(cols) == len(it.cols) {
-		return
-	}
-	rows := make([][]types.Datum, len(fullRows))
-	for i, fullRow := range fullRows {
-		row := make([]types.Datum, len(cols))
-		for j, col := range cols {
-			row[j] = fullRow[col.Offset]
-		}
-		rows[i] = row
-	}
-	return rows, nil
-}
-
 // IterRecords implements table.Table IterRecords interface.
-func (it *infoschemaTable) IterRecords(ctx sessionctx.Context, cols []*table.Column,
-	fn table.RecordIterFunc) error {
-	rows, err := it.getRows(ctx, cols)
-	if err != nil {
-		return err
-	}
-	for i, row := range rows {
-		more, err := fn(kv.IntHandle(i), row, cols)
-		if err != nil {
-			return err
-		}
-		if !more {
-			break
-		}
-	}
+func (*infoschemaTable) IterRecords(_ sessionctx.Context, _ []*table.Column,
+	_ table.RecordIterFunc) error {
 	return nil
 }
 
@@ -2055,6 +2024,11 @@ func (it *infoschemaTable) Indices() []table.Index {
 
 // RecordPrefix implements table.Table RecordPrefix interface.
 func (it *infoschemaTable) RecordPrefix() kv.Key {
+	return nil
+}
+
+// IndexPrefix implements table.Table IndexPrefix interface.
+func (it *infoschemaTable) IndexPrefix() kv.Key {
 	return nil
 }
 
@@ -2133,6 +2107,11 @@ func (vt *VirtualTable) Indices() []table.Index {
 
 // RecordPrefix implements table.Table RecordPrefix interface.
 func (vt *VirtualTable) RecordPrefix() kv.Key {
+	return nil
+}
+
+// IndexPrefix implements table.Table IndexPrefix interface.
+func (vt *VirtualTable) IndexPrefix() kv.Key {
 	return nil
 }
 

@@ -973,7 +973,8 @@ func (h flashReplicaHandler) handleStatusReport(w http.ResponseWriter, req *http
 	if available {
 		err = infosync.DeleteTiFlashTableSyncProgress(status.ID)
 	} else {
-		err = infosync.UpdateTiFlashTableSyncProgress(context.Background(), status.ID, float64(status.FlashRegionCount)/float64(status.RegionCount))
+		progress := types.TruncateFloatToString(float64(status.FlashRegionCount)/float64(status.RegionCount), 2)
+		err = infosync.UpdateTiFlashTableSyncProgress(context.Background(), status.ID, progress)
 	}
 	if err != nil {
 		writeError(w, err)
@@ -2088,9 +2089,9 @@ func (h *testHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 }
 
 // Supported operations:
-//   * resolvelock?safepoint={uint64}&physical={bool}:
-//	   * safepoint: resolve all locks whose timestamp is less than the safepoint.
-//	   * physical: whether it uses physical(green GC) mode to scan locks. Default is true.
+//   - resolvelock?safepoint={uint64}&physical={bool}:
+//   - safepoint: resolve all locks whose timestamp is less than the safepoint.
+//   - physical: whether it uses physical(green GC) mode to scan locks. Default is true.
 func (h *testHandler) handleGC(op string, w http.ResponseWriter, req *http.Request) {
 	if !atomic.CompareAndSwapUint32(&h.gcIsRunning, 0, 1) {
 		writeError(w, errors.New("GC is running"))

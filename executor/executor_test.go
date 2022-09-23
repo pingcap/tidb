@@ -29,6 +29,7 @@ import (
 
 	"github.com/golang/protobuf/proto"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
@@ -79,11 +80,12 @@ func checkFileName(s string) bool {
 		"meta.txt",
 		"stats/test.t_dump_single.json",
 		"schema/test.t_dump_single.schema.txt",
+		"table_tiflash_replica.txt",
 		"variables.toml",
-		"sqls.sql",
 		"session_bindings.sql",
 		"global_bindings.sql",
-		"explain.txt",
+		"sql/sql0.sql",
+		"explain/sql0.txt",
 	}
 	for _, f := range files {
 		if strings.Compare(f, s) == 0 {
@@ -140,17 +142,28 @@ func TestLoadStats(t *testing.T) {
 }
 
 func TestPlanReplayer(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount"))
+	}()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, index idx_a(a))")
-	tk.MustExec("plan replayer dump explain select * from t where a=10")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tk.MustQuery("plan replayer dump explain select * from t where a=10")
+	tk.MustQuery("plan replayer dump explain select /*+ read_from_storage(tiflash[t]) */ * from t")
 
 	tk.MustExec("create table t1 (a int)")
 	tk.MustExec("create table t2 (a int)")
-	tk.MustExec("plan replayer dump explain with tmp as (select a from t1 group by t1.a) select * from tmp, t2 where t2.a=tmp.a;")
-	tk.MustExec("plan replayer dump explain select * from t1 where t1.a > (with cte1 as (select 1) select count(1) from cte1);")
+	tk.MustExec("create definer=`root`@`127.0.0.1` view v1 as select * from t1")
+	tk.MustExec("create definer=`root`@`127.0.0.1` view v2 as select * from v1")
+	tk.MustQuery("plan replayer dump explain with tmp as (select a from t1 group by t1.a) select * from tmp, t2 where t2.a=tmp.a;")
+	tk.MustQuery("plan replayer dump explain select * from t1 where t1.a > (with cte1 as (select 1) select count(1) from cte1);")
+	tk.MustQuery("plan replayer dump explain select * from v1")
+	tk.MustQuery("plan replayer dump explain select * from v2")
+	require.True(t, len(tk.Session().GetSessionVars().LastPlanReplayerToken) > 0)
 }
 
 func TestShow(t *testing.T) {
@@ -3554,10 +3567,10 @@ func TestPointGetPreparedPlan(t *testing.T) {
 
 	pspk1Id, _, _, err := tk.Session().PrepareStmt("select * from t where a = ?")
 	require.NoError(t, err)
-	tk.Session().GetSessionVars().PreparedStmts[pspk1Id].(*plannercore.CachedPrepareStmt).PreparedAst.UseCache = false
+	tk.Session().GetSessionVars().PreparedStmts[pspk1Id].(*plannercore.PlanCacheStmt).PreparedAst.UseCache = false
 	pspk2Id, _, _, err := tk.Session().PrepareStmt("select * from t where ? = a ")
 	require.NoError(t, err)
-	tk.Session().GetSessionVars().PreparedStmts[pspk2Id].(*plannercore.CachedPrepareStmt).PreparedAst.UseCache = false
+	tk.Session().GetSessionVars().PreparedStmts[pspk2Id].(*plannercore.PlanCacheStmt).PreparedAst.UseCache = false
 
 	ctx := context.Background()
 	// first time plan generated
@@ -3597,7 +3610,7 @@ func TestPointGetPreparedPlan(t *testing.T) {
 	// unique index
 	psuk1Id, _, _, err := tk.Session().PrepareStmt("select * from t where b = ? ")
 	require.NoError(t, err)
-	tk.Session().GetSessionVars().PreparedStmts[psuk1Id].(*plannercore.CachedPrepareStmt).PreparedAst.UseCache = false
+	tk.Session().GetSessionVars().PreparedStmts[psuk1Id].(*plannercore.PlanCacheStmt).PreparedAst.UseCache = false
 
 	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, expression.Args2Expressions4Test(1))
 	require.NoError(t, err)
@@ -3715,7 +3728,7 @@ func TestPointGetPreparedPlanWithCommitMode(t *testing.T) {
 
 	pspk1Id, _, _, err := tk1.Session().PrepareStmt("select * from t where a = ?")
 	require.NoError(t, err)
-	tk1.Session().GetSessionVars().PreparedStmts[pspk1Id].(*plannercore.CachedPrepareStmt).PreparedAst.UseCache = false
+	tk1.Session().GetSessionVars().PreparedStmts[pspk1Id].(*plannercore.PlanCacheStmt).PreparedAst.UseCache = false
 
 	ctx := context.Background()
 	// first time plan generated
@@ -3781,11 +3794,11 @@ func TestPointUpdatePreparedPlan(t *testing.T) {
 
 	updateID1, pc, _, err := tk.Session().PrepareStmt(`update t set c = c + 1 where a = ?`)
 	require.NoError(t, err)
-	tk.Session().GetSessionVars().PreparedStmts[updateID1].(*plannercore.CachedPrepareStmt).PreparedAst.UseCache = false
+	tk.Session().GetSessionVars().PreparedStmts[updateID1].(*plannercore.PlanCacheStmt).PreparedAst.UseCache = false
 	require.Equal(t, 1, pc)
 	updateID2, pc, _, err := tk.Session().PrepareStmt(`update t set c = c + 2 where ? = a`)
 	require.NoError(t, err)
-	tk.Session().GetSessionVars().PreparedStmts[updateID2].(*plannercore.CachedPrepareStmt).PreparedAst.UseCache = false
+	tk.Session().GetSessionVars().PreparedStmts[updateID2].(*plannercore.PlanCacheStmt).PreparedAst.UseCache = false
 	require.Equal(t, 1, pc)
 
 	ctx := context.Background()
@@ -3820,7 +3833,7 @@ func TestPointUpdatePreparedPlan(t *testing.T) {
 	// unique index
 	updUkID1, _, _, err := tk.Session().PrepareStmt(`update t set c = c + 10 where b = ?`)
 	require.NoError(t, err)
-	tk.Session().GetSessionVars().PreparedStmts[updUkID1].(*plannercore.CachedPrepareStmt).PreparedAst.UseCache = false
+	tk.Session().GetSessionVars().PreparedStmts[updUkID1].(*plannercore.PlanCacheStmt).PreparedAst.UseCache = false
 	rs, err = tk.Session().ExecutePreparedStmt(ctx, updUkID1, expression.Args2Expressions4Test(3))
 	require.Nil(t, rs)
 	require.NoError(t, err)
@@ -3889,7 +3902,7 @@ func TestPointUpdatePreparedPlanWithCommitMode(t *testing.T) {
 
 	ctx := context.Background()
 	updateID1, _, _, err := tk1.Session().PrepareStmt(`update t set c = c + 1 where a = ?`)
-	tk1.Session().GetSessionVars().PreparedStmts[updateID1].(*plannercore.CachedPrepareStmt).PreparedAst.UseCache = false
+	tk1.Session().GetSessionVars().PreparedStmts[updateID1].(*plannercore.PlanCacheStmt).PreparedAst.UseCache = false
 	require.NoError(t, err)
 
 	// first time plan generated
@@ -4295,6 +4308,7 @@ func TestAdminShowDDLJobs(t *testing.T) {
 	require.NoError(t, err)
 	err = meta.NewMeta(txn).AddHistoryDDLJob(job, true)
 	require.NoError(t, err)
+	tk.Session().StmtCommit()
 
 	re = tk.MustQuery("admin show ddl jobs 1")
 	row = re.Rows()[0]
@@ -5925,7 +5939,7 @@ func TestSummaryFailedUpdate(t *testing.T) {
 	dom.ExpensiveQueryHandle().SetSessionManager(sm)
 	defer tk.MustExec("SET GLOBAL tidb_mem_oom_action = DEFAULT")
 	tk.MustExec("SET GLOBAL tidb_mem_oom_action='CANCEL'")
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk.MustExec("set @@tidb_mem_quota_query=1")
 	tk.MustMatchErrMsg("update t set t.a = t.a - 1 where t.a in (select a from t where a < 4)", "Out Of Memory Quota!.*")
 	tk.MustExec("set @@tidb_mem_quota_query=1000000000")
@@ -5967,6 +5981,40 @@ func TestIsFastPlan(t *testing.T) {
 	}
 }
 
+func TestCountDistinctJSON(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(j JSON)")
+	tk.MustExec("insert into t values('2010')")
+	tk.MustExec("insert into t values('2011')")
+	tk.MustExec("insert into t values('2012')")
+	tk.MustExec("insert into t values('2010.000')")
+	tk.MustExec("insert into t values(cast(? as JSON))", uint64(math.MaxUint64))
+	tk.MustExec("insert into t values(cast(? as JSON))", float64(math.MaxUint64))
+
+	tk.MustQuery("select count(distinct j) from t").Check(testkit.Rows("5"))
+}
+
+func TestHashJoinJSON(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int(11), j JSON, d DOUBLE)")
+	tk.MustExec("insert into t values(0, '2010', 2010)")
+	tk.MustExec("insert into t values(1, '2011', 2011)")
+	tk.MustExec("insert into t values(2, '2012', 2012)")
+	tk.MustExec("insert into t values(3, cast(? as JSON), ?)", uint64(math.MaxUint64), float64(math.MaxUint64))
+
+	tk.MustQuery("select /*+inl_hash_join(t2)*/ t1.id, t2.id from t t1 join t t2 on t1.j = t2.d;").Check(testkit.Rows("0 0", "1 1", "2 2"))
+}
+
 func TestBinaryStrNumericOperator(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -5987,4 +6035,31 @@ func TestBinaryStrNumericOperator(t *testing.T) {
 		"-61.56"))
 	// there should be no warning.
 	tk.MustQuery("show warnings").Check(testkit.Rows())
+}
+
+func TestTableLockPrivilege(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("create user 'testuser'@'localhost'")
+	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "testuser", Hostname: "localhost"}, nil, nil))
+	tk2.MustGetErrMsg("LOCK TABLE test.t WRITE", "[planner:1044]Access denied for user 'testuser'@'localhost' to database 'test'")
+	tk.MustExec("GRANT LOCK TABLES ON test.* to 'testuser'@'localhost'")
+	tk2.MustGetErrMsg("LOCK TABLE test.t WRITE", "[planner:1142]SELECT command denied to user 'testuser'@'localhost' for table 't'")
+	tk.MustExec("REVOKE ALL ON test.* FROM 'testuser'@'localhost'")
+	tk.MustExec("GRANT SELECT ON test.* to 'testuser'@'localhost'")
+	tk2.MustGetErrMsg("LOCK TABLE test.t WRITE", "[planner:1044]Access denied for user 'testuser'@'localhost' to database 'test'")
+	tk.MustExec("GRANT LOCK TABLES ON test.* to 'testuser'@'localhost'")
+	tk2.MustExec("LOCK TABLE test.t WRITE")
+
+	tk.MustExec("create database test2")
+	tk.MustExec("create table test2.t2(a int)")
+	tk2.MustGetErrMsg("LOCK TABLE test.t WRITE, test2.t2 WRITE", "[planner:1044]Access denied for user 'testuser'@'localhost' to database 'test2'")
+	tk.MustExec("GRANT LOCK TABLES ON test2.* to 'testuser'@'localhost'")
+	tk2.MustGetErrMsg("LOCK TABLE test.t WRITE, test2.t2 WRITE", "[planner:1142]SELECT command denied to user 'testuser'@'localhost' for table 't2'")
+	tk.MustExec("GRANT SELECT ON test2.* to 'testuser'@'localhost'")
+	tk2.MustExec("LOCK TABLE test.t WRITE, test2.t2 WRITE")
+	tk.MustExec("LOCK TABLE test.t WRITE, test2.t2 WRITE")
 }

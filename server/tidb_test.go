@@ -60,6 +60,7 @@ import (
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	"go.opencensus.io/stats/view"
 )
 
 type tidbTestSuite struct {
@@ -111,6 +112,7 @@ func createTidbTestSuite(t *testing.T) *tidbTestSuite {
 		if ts.store != nil {
 			require.NoError(t, ts.store.Close())
 		}
+		view.Stop()
 	})
 
 	return ts
@@ -143,6 +145,7 @@ func createTidbTestTopSQLSuite(t *testing.T) *tidbTestTopSQLSuite {
 		cpuprofile.StopCPUProfiler()
 		topsqlstate.GlobalState.PrecisionSeconds.Store(topsqlstate.DefTiDBTopSQLPrecisionSeconds)
 		topsqlstate.GlobalState.ReportIntervalSeconds.Store(topsqlstate.DefTiDBTopSQLReportIntervalSeconds)
+		view.Stop()
 	})
 	return ts
 }
@@ -193,6 +196,7 @@ func TestAuth(t *testing.T) {
 
 	ts.runTestAuth(t)
 	ts.runTestIssue3682(t)
+	ts.runTestAccountLock(t)
 }
 
 func TestIssues(t *testing.T) {
@@ -271,7 +275,8 @@ func TestStatusAPIWithTLS(t *testing.T) {
 
 	// but plain http connection should fail.
 	cli.statusScheme = "http"
-	_, err = cli.fetchStatus("/status") // nolint: bodyclose
+	//nolint:bodyclose
+	_, err = cli.fetchStatus("/status")
 	require.Error(t, err)
 
 	server.Close()
@@ -328,7 +333,8 @@ func TestStatusAPIWithTLSCNCheck(t *testing.T) {
 		client1CertPath,
 		client1KeyPath,
 	)
-	_, err = hc.Get(cli.statusURL("/status")) // nolint: bodyclose
+	//nolint:bodyclose
+	_, err = hc.Get(cli.statusURL("/status"))
 	require.Error(t, err)
 
 	hc = newTLSHttpClient(t, caPath,
@@ -871,6 +877,9 @@ func TestInternalSessionTxnStartTS(t *testing.T) {
 	se, err := session.CreateSession4Test(ts.store)
 	require.NoError(t, err)
 
+	_, err = se.Execute(context.Background(), "set global tidb_enable_metadata_lock=0")
+	require.NoError(t, err)
+
 	count := 10
 	stmts := make([]ast.StmtNode, count)
 	for i := 0; i < count; i++ {
@@ -1235,7 +1244,7 @@ func TestGracefulShutdown(t *testing.T) {
 
 	time.Sleep(time.Second * 2)
 
-	// nolint: bodyclose
+	//nolint:bodyclose
 	_, err = cli.fetchStatus("/status") // status is gone
 	require.Error(t, err)
 	require.Regexp(t, "connect: connection refused$", err.Error())
@@ -2076,6 +2085,7 @@ func setupForTestTopSQLStatementStats(t *testing.T) (*tidbTestSuite, stmtstats.S
 		err = failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/unistoreRPCClientSendHook")
 		require.NoError(t, err)
 		stmtstats.CloseAggregator()
+		view.Stop()
 	})
 
 	return ts, total, tagChecker, collectedNotifyCh

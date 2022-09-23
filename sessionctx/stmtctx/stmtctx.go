@@ -15,6 +15,7 @@
 package stmtctx
 
 import (
+	"bytes"
 	"encoding/json"
 	"math"
 	"strconv"
@@ -144,6 +145,7 @@ type StatementContext struct {
 	// in stmtCtx
 	IsStaleness     bool
 	InRestrictedSQL bool
+	ViewDepth       int32
 	// mu struct holds variables that change during execution.
 	mu struct {
 		sync.Mutex
@@ -293,7 +295,7 @@ type StatementContext struct {
 		// NeededItems stores the columns/indices whose stats are needed for planner.
 		NeededItems []model.TableItemID
 		// ResultCh to receive stats loading results
-		ResultCh chan model.TableItemID
+		ResultCh chan StatsLoadResult
 		// Fallback indicates if the planner uses full-loaded stats or fallback all to pseudo/simple.
 		Fallback bool
 		// LoadStartTime is to record the load start time to calculate latency
@@ -310,6 +312,23 @@ type StatementContext struct {
 	IsSQLRegistered atomic2.Bool
 	// IsSQLAndPlanRegistered uses to indicate whether the SQL and plan has been registered for TopSQL.
 	IsSQLAndPlanRegistered atomic2.Bool
+	// IsReadOnly uses to indicate whether the SQL is read-only.
+	IsReadOnly bool
+	// StatsLoadStatus records StatsLoadedStatus for the index/column which is used in query
+	StatsLoadStatus map[model.TableItemID]string
+	// IsSyncStatsFailed indicates whether any failure happened during sync stats
+	IsSyncStatsFailed bool
+	// UseDynamicPruneMode indicates whether use UseDynamicPruneMode in query stmt
+	UseDynamicPruneMode bool
+	// ColRefFromPlan mark the column ref used by assignment in update statement.
+	ColRefFromUpdatePlan []int64
+
+	// RangeFallback indicates that building complete ranges exceeds the memory limit so it falls back to less accurate ranges such as full range.
+	RangeFallback bool
+
+	// IsExplainAnalyzeDML is true if the statement is "explain analyze DML executors", before responding the explain
+	// results to the client, the transaction should be committed first. See issue #37373 for more details.
+	IsExplainAnalyzeDML bool
 }
 
 // StmtHints are SessionVars related sql hints.
@@ -975,6 +994,22 @@ func (sc *StatementContext) GetLockWaitStartTime() time.Time {
 	return time.Unix(0, startTime)
 }
 
+// RecordRangeFallback records range fallback.
+func (sc *StatementContext) RecordRangeFallback(rangeMaxSize int64) {
+	// If range fallback happens, it means ether the query is unreasonable(for example, several long IN lists) or tidb_opt_range_max_size is too small
+	// and the generated plan is probably suboptimal. In that case we don't put it into plan cache.
+	sc.SkipPlanCache = true
+	if !sc.RangeFallback {
+		sc.AppendWarning(errors.Errorf("Memory capacity of %v bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen", rangeMaxSize))
+		sc.RangeFallback = true
+	}
+}
+
+// UseDynamicPartitionPrune indicates whether dynamic partition is used during the query
+func (sc *StatementContext) UseDynamicPartitionPrune() bool {
+	return sc.UseDynamicPruneMode
+}
+
 // CopTasksDetails collects some useful information of cop-tasks during execution.
 type CopTasksDetails struct {
 	NumCopTasks int
@@ -1013,4 +1048,31 @@ func (d *CopTasksDetails) ToZapFields() (fields []zap.Field) {
 	fields = append(fields, zap.String("wait_max_time", strconv.FormatFloat(d.MaxWaitTime.Seconds(), 'f', -1, 64)+"s"))
 	fields = append(fields, zap.String("wait_max_addr", d.MaxWaitAddress))
 	return fields
+}
+
+// StatsLoadResult indicates result for StatsLoad
+type StatsLoadResult struct {
+	Item  model.TableItemID
+	Error error
+}
+
+// HasError returns whether result has error
+func (r StatsLoadResult) HasError() bool {
+	return r.Error != nil
+}
+
+// ErrorMsg returns StatsLoadResult err msg
+func (r StatsLoadResult) ErrorMsg() string {
+	if r.Error == nil {
+		return ""
+	}
+	b := bytes.NewBufferString("tableID:")
+	b.WriteString(strconv.FormatInt(r.Item.TableID, 10))
+	b.WriteString(", id:")
+	b.WriteString(strconv.FormatInt(r.Item.ID, 10))
+	b.WriteString(", isIndex:")
+	b.WriteString(strconv.FormatBool(r.Item.IsIndex))
+	b.WriteString(", err:")
+	b.WriteString(r.Error.Error())
+	return b.String()
 }

@@ -28,12 +28,10 @@ import (
 	testddlutil "github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
@@ -406,15 +404,6 @@ func TestRenameColumn(t *testing.T) {
 	// Test renaming to an exist column.
 	tk.MustGetErrCode("alter table test_rename_column rename column col2 to id", errno.ErrDupFieldName)
 
-	// Test renaming the column with foreign key.
-	tk.MustExec("drop table test_rename_column")
-	tk.MustExec("create table test_rename_column_base (base int)")
-	tk.MustExec("create table test_rename_column (col int, foreign key (col) references test_rename_column_base(base))")
-
-	tk.MustGetErrCode("alter table test_rename_column rename column col to col1", errno.ErrFKIncompatibleColumns)
-
-	tk.MustExec("drop table test_rename_column_base")
-
 	// Test renaming generated columns.
 	tk.MustExec("drop table test_rename_column")
 	tk.MustExec("create table test_rename_column (id int, col1 int generated always as (id + 1))")
@@ -447,7 +436,7 @@ func TestVirtualColumnDDL(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`create global temporary table test_gv_ddl(a int, b int as (a+8) virtual, c int as (b + 2) stored) on commit delete rows;`)
-	is := tk.Session().(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
+	is := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("test_gv_ddl"))
 	require.NoError(t, err)
 	testCases := []struct {
@@ -471,7 +460,7 @@ func TestVirtualColumnDDL(t *testing.T) {
 
 	// for local temporary table
 	tk.MustExec(`create temporary table test_local_gv_ddl(a int, b int as (a+8) virtual, c int as (b + 2) stored);`)
-	is = tk.Session().(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
+	is = sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("test_local_gv_ddl"))
 	require.NoError(t, err)
 	for i, column := range tbl.Meta().Columns {
@@ -1043,6 +1032,7 @@ func TestWriteReorgForColumnTypeChangeOnAmendTxn(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, columnModifyLease)
 
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_enable_metadata_lock=0")
 	tk.MustExec("set global tidb_enable_amend_pessimistic_txn = ON")
 	defer tk.MustExec("set global tidb_enable_amend_pessimistic_txn = OFF")
 

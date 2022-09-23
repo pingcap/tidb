@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -60,8 +61,29 @@ import (
 	"golang.org/x/exp/slices"
 )
 
-// PreparedStmtCount is exported for test.
-var PreparedStmtCount int64
+var (
+	// PreparedStmtCount is exported for test.
+	PreparedStmtCount int64
+	// enableAdaptiveReplicaRead indicates whether closest adaptive replica read
+	// can be enabled. We forces disable replica read when tidb server in missing
+	// in regions that contains tikv server to avoid read traffic skew.
+	enableAdaptiveReplicaRead uint32 = 1
+)
+
+// SetEnableAdaptiveReplicaRead set `enableAdaptiveReplicaRead` with given value.
+// return true if the value is changed.
+func SetEnableAdaptiveReplicaRead(enabled bool) bool {
+	value := uint32(0)
+	if enabled {
+		value = 1
+	}
+	return atomic.SwapUint32(&enableAdaptiveReplicaRead, value) != value
+}
+
+// IsAdaptiveReplicaReadEnabled returns whether adaptive closest replica read can be enabled.
+func IsAdaptiveReplicaReadEnabled() bool {
+	return atomic.LoadUint32(&enableAdaptiveReplicaRead) > 0
+}
 
 // RetryInfo saves retry information.
 type RetryInfo struct {
@@ -168,9 +190,8 @@ type TxnCtxNoNeedToRestore struct {
 	currentShard int64
 	shardRand    *rand.Rand
 
-	// unchangedLockKeys is used to store the unchanged keys that needs to lock for pessimistic transaction, including
-	// row keys and unique keys.
-	unchangedLockKeys map[string]struct{}
+	// unchangedRowKeys is used to store the unchanged rows that needs to lock for pessimistic transaction.
+	unchangedRowKeys map[string]struct{}
 
 	PessimisticCacheHit int
 
@@ -200,6 +221,10 @@ type TxnCtxNoNeedToRestore struct {
 	// TemporaryTables is used to store transaction-specific information for global temporary tables.
 	// It can also be stored in sessionCtx with local temporary tables, but it's easier to clean this data after transaction ends.
 	TemporaryTables map[int64]tableutil.TempTable
+	// EnableMDL indicates whether to enable the MDL lock for the transaction.
+	EnableMDL bool
+	// relatedTableForMDL records the `lock` table for metadata lock. It maps from int64 to int64(version).
+	relatedTableForMDL *sync.Map
 }
 
 // SavepointRecord indicates a transaction's savepoint record.
@@ -212,11 +237,8 @@ type SavepointRecord struct {
 	TxnCtxSavepoint TxnCtxNeedToRestore
 }
 
-// GetShard returns the shard prefix for the next `count` rowids.
-func (tc *TransactionContext) GetShard(shardRowIDBits uint64, typeBitsLength uint64, reserveSignBit bool, count int) int64 {
-	if shardRowIDBits == 0 {
-		return 0
-	}
+// GetCurrentShard returns the shard for the next `count` IDs.
+func (tc *TransactionContext) GetCurrentShard(count int) int64 {
 	if tc.shardRand == nil {
 		tc.shardRand = rand.New(rand.NewSource(int64(tc.StartTS))) // #nosec G404
 	}
@@ -225,12 +247,7 @@ func (tc *TransactionContext) GetShard(shardRowIDBits uint64, typeBitsLength uin
 		tc.shardRemain = tc.ShardStep
 	}
 	tc.shardRemain -= count
-
-	var signBitLength uint64
-	if reserveSignBit {
-		signBitLength = 1
-	}
-	return (tc.currentShard & (1<<shardRowIDBits - 1)) << (typeBitsLength - shardRowIDBits - signBitLength)
+	return tc.currentShard
 }
 
 func (tc *TransactionContext) updateShard() {
@@ -239,20 +256,20 @@ func (tc *TransactionContext) updateShard() {
 	tc.currentShard = int64(murmur3.Sum32(buf[:]))
 }
 
-// AddUnchangedLockKey adds an unchanged key in update statement for pessimistic lock.
-func (tc *TransactionContext) AddUnchangedLockKey(key []byte) {
-	if tc.unchangedLockKeys == nil {
-		tc.unchangedLockKeys = map[string]struct{}{}
+// AddUnchangedRowKey adds an unchanged row key in update statement for pessimistic lock.
+func (tc *TransactionContext) AddUnchangedRowKey(key []byte) {
+	if tc.unchangedRowKeys == nil {
+		tc.unchangedRowKeys = map[string]struct{}{}
 	}
-	tc.unchangedLockKeys[string(key)] = struct{}{}
+	tc.unchangedRowKeys[string(key)] = struct{}{}
 }
 
-// CollectUnchangedLockKeys collects unchanged keys for pessimistic lock.
-func (tc *TransactionContext) CollectUnchangedLockKeys(buf []kv.Key) []kv.Key {
-	for key := range tc.unchangedLockKeys {
+// CollectUnchangedRowKeys collects unchanged row keys for pessimistic lock.
+func (tc *TransactionContext) CollectUnchangedRowKeys(buf []kv.Key) []kv.Key {
+	for key := range tc.unchangedRowKeys {
 		buf = append(buf, kv.Key(key))
 	}
-	tc.unchangedLockKeys = nil
+	tc.unchangedRowKeys = nil
 	return buf
 }
 
@@ -303,10 +320,12 @@ func (tc *TransactionContext) Cleanup() {
 	tc.History = nil
 	tc.tdmLock.Lock()
 	tc.TableDeltaMap = nil
+	tc.relatedTableForMDL = nil
 	tc.tdmLock.Unlock()
 	tc.pessimisticLockCache = nil
 	tc.IsStaleness = false
 	tc.Savepoints = nil
+	tc.EnableMDL = false
 }
 
 // ClearDelta clears the delta map.
@@ -549,6 +568,36 @@ func validateReadConsistencyLevel(val string) error {
 	}
 }
 
+// SetUserVarVal set user defined variables' value
+func (s *SessionVars) SetUserVarVal(name string, dt types.Datum) {
+	s.userVars.lock.Lock()
+	defer s.userVars.lock.Unlock()
+	s.userVars.values[name] = dt
+}
+
+// GetUserVarVal get user defined variables' value
+func (s *SessionVars) GetUserVarVal(name string) (types.Datum, bool) {
+	s.userVars.lock.RLock()
+	defer s.userVars.lock.RUnlock()
+	dt, ok := s.userVars.values[name]
+	return dt, ok
+}
+
+// SetUserVarType set user defined variables' type
+func (s *SessionVars) SetUserVarType(name string, ft *types.FieldType) {
+	s.userVars.lock.Lock()
+	defer s.userVars.lock.Unlock()
+	s.userVars.types[name] = ft
+}
+
+// GetUserVarType get user defined variables' type
+func (s *SessionVars) GetUserVarType(name string) (*types.FieldType, bool) {
+	s.userVars.lock.RLock()
+	defer s.userVars.lock.RUnlock()
+	ft, ok := s.userVars.types[name]
+	return ft, ok
+}
+
 // SessionVars is to handle user-defined or global variables in the current session.
 type SessionVars struct {
 	Concurrency
@@ -559,13 +608,14 @@ type SessionVars struct {
 	DMLBatchSize        int
 	RetryLimit          int64
 	DisableTxnAutoRetry bool
-	// UsersLock is a lock for user defined variables.
-	UsersLock sync.RWMutex
-	// Users are user defined variables.
-	Users map[string]types.Datum
-	// UserVarTypes stores the FieldType for user variables, it cannot be inferred from Users when Users have not been set yet.
-	// It is read/write protected by UsersLock.
-	UserVarTypes map[string]*types.FieldType
+	userVars            struct {
+		// lock is for user defined variables. values and types is read/write protected.
+		lock sync.RWMutex
+		// values stores the Datum for user variables
+		values map[string]types.Datum
+		// types stores the FieldType for user variables, it cannot be inferred from values when values have not been set yet.
+		types map[string]*types.FieldType
+	}
 	// systems variables, don't modify it directly, use GetSystemVar/SetSystemVar method.
 	systems map[string]string
 	// stmtVars variables are temporarily set by SET_VAR hint
@@ -575,6 +625,8 @@ type SessionVars struct {
 	SysWarningCount int
 	// SysErrorCount is the system variable "error_count", because it is on the hot path, so we extract it from the systems
 	SysErrorCount uint16
+	// generalPlanCacheStmts stores PlanCacheStmts for general plan cache.
+	generalPlanCacheStmts *kvcache.SimpleLRUCache
 	// PreparedStmts stores prepared statement.
 	PreparedStmts        map[uint32]interface{}
 	PreparedStmtNameToID map[string]uint32
@@ -590,6 +642,8 @@ type SessionVars struct {
 	RetryInfo *RetryInfo
 	//  TxnCtx Should be reset on transaction finished.
 	TxnCtx *TransactionContext
+	// TxnCtxMu is used to protect TxnCtx.
+	TxnCtxMu sync.Mutex
 
 	// TxnManager is used to manage txn context in session
 	TxnManager interface{}
@@ -692,6 +746,9 @@ type SessionVars struct {
 	// EnableSkewDistinctAgg can be set true to allow skew distinct aggregate rewrite
 	EnableSkewDistinctAgg bool
 
+	// Enable3StageDistinctAgg indicates whether to allow 3 stage distinct aggregate
+	Enable3StageDistinctAgg bool
+
 	// MultiStatementMode permits incorrect client library usage. Not recommended to be turned on.
 	MultiStatementMode int
 
@@ -788,6 +845,8 @@ type SessionVars struct {
 	diskFactorV2 float64
 	// concurrencyFactorV2 is the concurrency factor for the Cost Model Ver2.
 	concurrencyFactorV2 float64
+	// enableForceInlineCTE is used to enable/disable force inline CTE.
+	enableForceInlineCTE bool
 
 	// CopTiFlashConcurrencyFactor is the concurrency number of computation in tiflash coprocessor.
 	CopTiFlashConcurrencyFactor float64
@@ -840,6 +899,9 @@ type SessionVars struct {
 
 	// EnableOuterJoinWithJoinReorder enables TiDB to involve the outer join into the join reorder.
 	EnableOuterJoinReorder bool
+
+	// OptimizerEnableNAAJ enables TiDB to use null-aware anti join.
+	OptimizerEnableNAAJ bool
 
 	// EnableTablePartition enables table partition feature.
 	EnableTablePartition string
@@ -1109,8 +1171,8 @@ type SessionVars struct {
 	// TemporaryTableData stores committed kv values for temporary table for current session.
 	TemporaryTableData TemporaryTableData
 
-	// MPPStoreLastFailTime records the lastest fail time that a TiFlash store failed.
-	MPPStoreLastFailTime map[string]time.Time
+	// MPPStoreLastFailTime records the lastest fail time that a TiFlash store failed. It maps store address(string) to fail time(time.Time).
+	MPPStoreLastFailTime *sync.Map
 
 	// MPPStoreFailTTL indicates the duration that protect TiDB from sending task to a new recovered TiFlash.
 	MPPStoreFailTTL string
@@ -1154,8 +1216,8 @@ type SessionVars struct {
 	CostModelVersion int
 	// BatchPendingTiFlashCount shows the threshold of pending TiFlash tables when batch adding.
 	BatchPendingTiFlashCount int
-	// RcReadCheckTS indicates if ts check optimization is enabled for current session.
-	RcReadCheckTS bool
+	// RcWriteCheckTS indicates whether some special write statements don't get latest tso from PD at RC
+	RcWriteCheckTS bool
 	// RemoveOrderbyInSubquery indicates whether to remove ORDER BY in subquery.
 	RemoveOrderbyInSubquery bool
 	// NonTransactionalIgnoreError indicates whether to ignore error in non-transactional statements.
@@ -1188,8 +1250,62 @@ type SessionVars struct {
 	// when = 0: try to use TopN to evaluate the like expression to estimate the selectivity.
 	DefaultStrMatchSelectivity float64
 
+	// TiFlashFastScan indicates whether use fast scan in TiFlash
+	TiFlashFastScan bool
+
 	// PrimaryKeyRequired indicates if sql_require_primary_key sysvar is set
 	PrimaryKeyRequired bool
+
+	// EnablePreparedPlanCache indicates whether to enable prepared plan cache.
+	EnablePreparedPlanCache bool
+
+	// GeneralPlanCacheSize controls the size of general plan cache.
+	PreparedPlanCacheSize uint64
+
+	// EnableGeneralPlanCache indicates whether to enable general plan cache.
+	EnableGeneralPlanCache bool
+
+	// GeneralPlanCacheSize controls the size of general plan cache.
+	GeneralPlanCacheSize uint64
+
+	// ConstraintCheckInPlacePessimistic controls whether to skip the locking of some keys in pessimistic transactions.
+	// Postpone the conflict check and constraint check to prewrite or later pessimistic locking requests.
+	ConstraintCheckInPlacePessimistic bool
+
+	// EnableTiFlashReadForWriteStmt indicates whether to enable TiFlash to read for write statements.
+	EnableTiFlashReadForWriteStmt bool
+
+	// EnableUnsafeSubstitute indicates whether to enable generate column takes unsafe substitute.
+	EnableUnsafeSubstitute bool
+
+	// ForeignKeyChecks indicates whether to enable foreign key constraint check.
+	ForeignKeyChecks bool
+
+	// RangeMaxSize is the max memory limit for ranges. When the optimizer estimates that the memory usage of complete
+	// ranges would exceed the limit, it chooses less accurate ranges such as full range. 0 indicates that there is no
+	// memory limit for ranges.
+	RangeMaxSize int64
+
+	// LastPlanReplayerToken indicates the last plan replayer token
+	LastPlanReplayerToken string
+}
+
+// GetPreparedStmtByName returns the prepared statement specified by stmtName.
+func (s *SessionVars) GetPreparedStmtByName(stmtName string) (interface{}, error) {
+	stmtID, ok := s.PreparedStmtNameToID[stmtName]
+	if !ok {
+		return nil, ErrStmtNotFound
+	}
+	return s.GetPreparedStmtByID(stmtID)
+}
+
+// GetPreparedStmtByID returns the prepared statement specified by stmtID.
+func (s *SessionVars) GetPreparedStmtByID(stmtID uint32) (interface{}, error) {
+	stmt, ok := s.PreparedStmts[stmtID]
+	if !ok {
+		return nil, ErrStmtNotFound
+	}
+	return stmt, nil
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
@@ -1243,8 +1359,10 @@ func (s *SessionVars) CheckAndGetTxnScope() string {
 	return kv.GlobalTxnScope
 }
 
-// UseDynamicPartitionPrune indicates whether use new dynamic partition prune.
-func (s *SessionVars) UseDynamicPartitionPrune() bool {
+// IsDynamicPartitionPruneEnabled indicates whether dynamic partition prune enabled
+// Note that: IsDynamicPartitionPruneEnabled only indicates whether dynamic partition prune mode is enabled according to
+// session variable, it isn't guaranteed to be used during query due to other conditions checking.
+func (s *SessionVars) IsDynamicPartitionPruneEnabled() bool {
 	return PartitionPruneMode(s.PartitionPruneMode.Load()) == Dynamic
 }
 
@@ -1362,95 +1480,106 @@ func (connInfo *ConnectionInfo) IsSecureTransport() bool {
 // NewSessionVars creates a session vars object.
 func NewSessionVars() *SessionVars {
 	vars := &SessionVars{
-		Users:                       make(map[string]types.Datum),
-		UserVarTypes:                make(map[string]*types.FieldType),
-		systems:                     make(map[string]string),
-		stmtVars:                    make(map[string]string),
-		PreparedStmts:               make(map[uint32]interface{}),
-		PreparedStmtNameToID:        make(map[string]uint32),
-		PreparedParams:              make([]types.Datum, 0, 10),
-		TxnCtx:                      &TransactionContext{},
-		RetryInfo:                   &RetryInfo{},
-		ActiveRoles:                 make([]*auth.RoleIdentity, 0, 10),
-		StrictSQLMode:               true,
-		AutoIncrementIncrement:      DefAutoIncrementIncrement,
-		AutoIncrementOffset:         DefAutoIncrementOffset,
-		Status:                      mysql.ServerStatusAutocommit,
-		StmtCtx:                     new(stmtctx.StatementContext),
-		AllowAggPushDown:            false,
-		AllowCartesianBCJ:           DefOptCartesianBCJ,
-		MPPOuterJoinFixedBuildSide:  DefOptMPPOuterJoinFixedBuildSide,
-		BroadcastJoinThresholdSize:  DefBroadcastJoinThresholdSize,
-		BroadcastJoinThresholdCount: DefBroadcastJoinThresholdSize,
-		OptimizerSelectivityLevel:   DefTiDBOptimizerSelectivityLevel,
-		EnableOuterJoinReorder:      DefTiDBEnableOuterJoinReorder,
-		RetryLimit:                  DefTiDBRetryLimit,
-		DisableTxnAutoRetry:         DefTiDBDisableTxnAutoRetry,
-		DDLReorgPriority:            kv.PriorityLow,
-		allowInSubqToJoinAndAgg:     DefOptInSubqToJoinAndAgg,
-		preferRangeScan:             DefOptPreferRangeScan,
-		EnableCorrelationAdjustment: DefOptEnableCorrelationAdjustment,
-		LimitPushDownThreshold:      DefOptLimitPushDownThreshold,
-		CorrelationThreshold:        DefOptCorrelationThreshold,
-		CorrelationExpFactor:        DefOptCorrelationExpFactor,
-		cpuFactor:                   DefOptCPUFactor,
-		copCPUFactor:                DefOptCopCPUFactor,
-		CopTiFlashConcurrencyFactor: DefOptTiFlashConcurrencyFactor,
-		networkFactor:               DefOptNetworkFactor,
-		scanFactor:                  DefOptScanFactor,
-		descScanFactor:              DefOptDescScanFactor,
-		seekFactor:                  DefOptSeekFactor,
-		memoryFactor:                DefOptMemoryFactor,
-		diskFactor:                  DefOptDiskFactor,
-		concurrencyFactor:           DefOptConcurrencyFactor,
-		EnableVectorizedExpression:  DefEnableVectorizedExpression,
-		CommandValue:                uint32(mysql.ComSleep),
-		TiDBOptJoinReorderThreshold: DefTiDBOptJoinReorderThreshold,
-		SlowQueryFile:               config.GetGlobalConfig().Log.SlowQueryFile,
-		WaitSplitRegionFinish:       DefTiDBWaitSplitRegionFinish,
-		WaitSplitRegionTimeout:      DefWaitSplitRegionTimeout,
-		enableIndexMerge:            DefTiDBEnableIndexMerge,
-		NoopFuncsMode:               TiDBOptOnOffWarn(DefTiDBEnableNoopFuncs),
-		replicaRead:                 kv.ReplicaReadLeader,
-		AllowRemoveAutoInc:          DefTiDBAllowRemoveAutoInc,
-		UsePlanBaselines:            DefTiDBUsePlanBaselines,
-		EvolvePlanBaselines:         DefTiDBEvolvePlanBaselines,
-		EnableExtendedStats:         false,
-		IsolationReadEngines:        make(map[kv.StoreType]struct{}),
-		LockWaitTimeout:             DefInnodbLockWaitTimeout * 1000,
-		MetricSchemaStep:            DefTiDBMetricSchemaStep,
-		MetricSchemaRangeDuration:   DefTiDBMetricSchemaRangeDuration,
-		SequenceState:               NewSequenceState(),
-		WindowingUseHighPrecision:   true,
-		PrevFoundInPlanCache:        DefTiDBFoundInPlanCache,
-		FoundInPlanCache:            DefTiDBFoundInPlanCache,
-		PrevFoundInBinding:          DefTiDBFoundInBinding,
-		FoundInBinding:              DefTiDBFoundInBinding,
-		SelectLimit:                 math.MaxUint64,
-		AllowAutoRandExplicitInsert: DefTiDBAllowAutoRandExplicitInsert,
-		EnableClusteredIndex:        DefTiDBEnableClusteredIndex,
-		EnableParallelApply:         DefTiDBEnableParallelApply,
-		ShardAllocateStep:           DefTiDBShardAllocateStep,
-		EnableAmendPessimisticTxn:   DefTiDBEnableAmendPessimisticTxn,
-		PartitionPruneMode:          *atomic2.NewString(DefTiDBPartitionPruneMode),
-		TxnScope:                    kv.NewDefaultTxnScopeVar(),
-		EnabledRateLimitAction:      DefTiDBEnableRateLimitAction,
-		EnableAsyncCommit:           DefTiDBEnableAsyncCommit,
-		Enable1PC:                   DefTiDBEnable1PC,
-		GuaranteeLinearizability:    DefTiDBGuaranteeLinearizability,
-		AnalyzeVersion:              DefTiDBAnalyzeVersion,
-		EnableIndexMergeJoin:        DefTiDBEnableIndexMergeJoin,
-		AllowFallbackToTiKV:         make(map[kv.StoreType]struct{}),
-		CTEMaxRecursionDepth:        DefCTEMaxRecursionDepth,
-		TMPTableSize:                DefTiDBTmpTableMaxSize,
-		MPPStoreLastFailTime:        make(map[string]time.Time),
-		MPPStoreFailTTL:             DefTiDBMPPStoreFailTTL,
-		Rng:                         mathutil.NewWithTime(),
-		StatsLoadSyncWait:           StatsLoadSyncWait.Load(),
-		EnableLegacyInstanceScope:   DefEnableLegacyInstanceScope,
-		RemoveOrderbyInSubquery:     DefTiDBRemoveOrderbyInSubquery,
-		EnableSkewDistinctAgg:       DefTiDBSkewDistinctAgg,
-		MaxAllowedPacket:            DefMaxAllowedPacket,
+		userVars: struct {
+			lock   sync.RWMutex
+			values map[string]types.Datum
+			types  map[string]*types.FieldType
+		}{
+			values: make(map[string]types.Datum),
+			types:  make(map[string]*types.FieldType),
+		},
+		systems:                       make(map[string]string),
+		stmtVars:                      make(map[string]string),
+		PreparedStmts:                 make(map[uint32]interface{}),
+		PreparedStmtNameToID:          make(map[string]uint32),
+		PreparedParams:                make([]types.Datum, 0, 10),
+		TxnCtx:                        &TransactionContext{},
+		RetryInfo:                     &RetryInfo{},
+		ActiveRoles:                   make([]*auth.RoleIdentity, 0, 10),
+		StrictSQLMode:                 true,
+		AutoIncrementIncrement:        DefAutoIncrementIncrement,
+		AutoIncrementOffset:           DefAutoIncrementOffset,
+		Status:                        mysql.ServerStatusAutocommit,
+		StmtCtx:                       new(stmtctx.StatementContext),
+		AllowAggPushDown:              false,
+		AllowCartesianBCJ:             DefOptCartesianBCJ,
+		MPPOuterJoinFixedBuildSide:    DefOptMPPOuterJoinFixedBuildSide,
+		BroadcastJoinThresholdSize:    DefBroadcastJoinThresholdSize,
+		BroadcastJoinThresholdCount:   DefBroadcastJoinThresholdSize,
+		OptimizerSelectivityLevel:     DefTiDBOptimizerSelectivityLevel,
+		EnableOuterJoinReorder:        DefTiDBEnableOuterJoinReorder,
+		RetryLimit:                    DefTiDBRetryLimit,
+		DisableTxnAutoRetry:           DefTiDBDisableTxnAutoRetry,
+		DDLReorgPriority:              kv.PriorityLow,
+		allowInSubqToJoinAndAgg:       DefOptInSubqToJoinAndAgg,
+		preferRangeScan:               DefOptPreferRangeScan,
+		EnableCorrelationAdjustment:   DefOptEnableCorrelationAdjustment,
+		LimitPushDownThreshold:        DefOptLimitPushDownThreshold,
+		CorrelationThreshold:          DefOptCorrelationThreshold,
+		CorrelationExpFactor:          DefOptCorrelationExpFactor,
+		cpuFactor:                     DefOptCPUFactor,
+		copCPUFactor:                  DefOptCopCPUFactor,
+		CopTiFlashConcurrencyFactor:   DefOptTiFlashConcurrencyFactor,
+		networkFactor:                 DefOptNetworkFactor,
+		scanFactor:                    DefOptScanFactor,
+		descScanFactor:                DefOptDescScanFactor,
+		seekFactor:                    DefOptSeekFactor,
+		memoryFactor:                  DefOptMemoryFactor,
+		diskFactor:                    DefOptDiskFactor,
+		concurrencyFactor:             DefOptConcurrencyFactor,
+		enableForceInlineCTE:          DefOptForceInlineCTE,
+		EnableVectorizedExpression:    DefEnableVectorizedExpression,
+		CommandValue:                  uint32(mysql.ComSleep),
+		TiDBOptJoinReorderThreshold:   DefTiDBOptJoinReorderThreshold,
+		SlowQueryFile:                 config.GetGlobalConfig().Log.SlowQueryFile,
+		WaitSplitRegionFinish:         DefTiDBWaitSplitRegionFinish,
+		WaitSplitRegionTimeout:        DefWaitSplitRegionTimeout,
+		enableIndexMerge:              DefTiDBEnableIndexMerge,
+		NoopFuncsMode:                 TiDBOptOnOffWarn(DefTiDBEnableNoopFuncs),
+		replicaRead:                   kv.ReplicaReadLeader,
+		AllowRemoveAutoInc:            DefTiDBAllowRemoveAutoInc,
+		UsePlanBaselines:              DefTiDBUsePlanBaselines,
+		EvolvePlanBaselines:           DefTiDBEvolvePlanBaselines,
+		EnableExtendedStats:           false,
+		IsolationReadEngines:          make(map[kv.StoreType]struct{}),
+		LockWaitTimeout:               DefInnodbLockWaitTimeout * 1000,
+		MetricSchemaStep:              DefTiDBMetricSchemaStep,
+		MetricSchemaRangeDuration:     DefTiDBMetricSchemaRangeDuration,
+		SequenceState:                 NewSequenceState(),
+		WindowingUseHighPrecision:     true,
+		PrevFoundInPlanCache:          DefTiDBFoundInPlanCache,
+		FoundInPlanCache:              DefTiDBFoundInPlanCache,
+		PrevFoundInBinding:            DefTiDBFoundInBinding,
+		FoundInBinding:                DefTiDBFoundInBinding,
+		SelectLimit:                   math.MaxUint64,
+		AllowAutoRandExplicitInsert:   DefTiDBAllowAutoRandExplicitInsert,
+		EnableClusteredIndex:          DefTiDBEnableClusteredIndex,
+		EnableParallelApply:           DefTiDBEnableParallelApply,
+		ShardAllocateStep:             DefTiDBShardAllocateStep,
+		EnableAmendPessimisticTxn:     DefTiDBEnableAmendPessimisticTxn,
+		PartitionPruneMode:            *atomic2.NewString(DefTiDBPartitionPruneMode),
+		TxnScope:                      kv.NewDefaultTxnScopeVar(),
+		EnabledRateLimitAction:        DefTiDBEnableRateLimitAction,
+		EnableAsyncCommit:             DefTiDBEnableAsyncCommit,
+		Enable1PC:                     DefTiDBEnable1PC,
+		GuaranteeLinearizability:      DefTiDBGuaranteeLinearizability,
+		AnalyzeVersion:                DefTiDBAnalyzeVersion,
+		EnableIndexMergeJoin:          DefTiDBEnableIndexMergeJoin,
+		AllowFallbackToTiKV:           make(map[kv.StoreType]struct{}),
+		CTEMaxRecursionDepth:          DefCTEMaxRecursionDepth,
+		TMPTableSize:                  DefTiDBTmpTableMaxSize,
+		MPPStoreLastFailTime:          new(sync.Map),
+		MPPStoreFailTTL:               DefTiDBMPPStoreFailTTL,
+		Rng:                           mathutil.NewWithTime(),
+		StatsLoadSyncWait:             StatsLoadSyncWait.Load(),
+		EnableLegacyInstanceScope:     DefEnableLegacyInstanceScope,
+		RemoveOrderbyInSubquery:       DefTiDBRemoveOrderbyInSubquery,
+		EnableSkewDistinctAgg:         DefTiDBSkewDistinctAgg,
+		Enable3StageDistinctAgg:       DefTiDB3StageDistinctAgg,
+		MaxAllowedPacket:              DefMaxAllowedPacket,
+		TiFlashFastScan:               DefTiFlashFastScan,
+		EnableTiFlashReadForWriteStmt: DefTiDBEnableTiFlashReadForWriteStmt,
+		ForeignKeyChecks:              DefTiDBForeignKeyChecks,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -1565,12 +1694,21 @@ func (s *SessionVars) GetReplicaRead() kv.ReplicaReadType {
 	if s.StmtCtx.HasReplicaReadHint {
 		return kv.ReplicaReadType(s.StmtCtx.ReplicaRead)
 	}
+	// if closest-adaptive is unavailable, fallback to leader read
+	if s.replicaRead == kv.ReplicaReadClosestAdaptive && !IsAdaptiveReplicaReadEnabled() {
+		return kv.ReplicaReadLeader
+	}
 	return s.replicaRead
 }
 
 // SetReplicaRead set SessionVars.replicaRead.
 func (s *SessionVars) SetReplicaRead(val kv.ReplicaReadType) {
 	s.replicaRead = val
+}
+
+// IsReplicaReadClosestAdaptive returns whether adaptive closest replica can be enabled.
+func (s *SessionVars) IsReplicaReadClosestAdaptive() bool {
+	return s.replicaRead == kv.ReplicaReadClosestAdaptive && IsAdaptiveReplicaReadEnabled()
 }
 
 // GetWriteStmtBufs get pointer of SessionVars.writeStmtBufs.
@@ -1628,22 +1766,24 @@ func (s *SessionVars) GetParseParams() []parser.ParseParam {
 	}
 }
 
-// SetUserVar set the value and collation for user defined variable.
-func (s *SessionVars) SetUserVar(varName string, svalue string, collation string) {
-	varName = strings.ToLower(varName)
+// SetStringUserVar set the value and collation for user defined variable.
+func (s *SessionVars) SetStringUserVar(name string, strVal string, collation string) {
+	name = strings.ToLower(name)
 	if len(collation) > 0 {
-		s.Users[varName] = types.NewCollationStringDatum(stringutil.Copy(svalue), collation)
+		s.SetUserVarVal(name, types.NewCollationStringDatum(stringutil.Copy(strVal), collation))
 	} else {
 		_, collation = s.GetCharsetInfo()
-		s.Users[varName] = types.NewCollationStringDatum(stringutil.Copy(svalue), collation)
+		s.SetUserVarVal(name, types.NewCollationStringDatum(stringutil.Copy(strVal), collation))
 	}
 }
 
 // UnsetUserVar unset an user defined variable by name.
 func (s *SessionVars) UnsetUserVar(varName string) {
 	varName = strings.ToLower(varName)
-	delete(s.Users, varName)
-	delete(s.UserVarTypes, varName)
+	s.userVars.lock.Lock()
+	defer s.userVars.lock.Unlock()
+	delete(s.userVars.values, varName)
+	delete(s.userVars.types, varName)
 }
 
 // SetLastInsertID saves the last insert id to the session context.
@@ -1784,6 +1924,29 @@ func (s *SessionVars) setDDLReorgPriority(val string) {
 	default:
 		s.DDLReorgPriority = kv.PriorityLow
 	}
+}
+
+type planCacheStmtKey string
+
+func (k planCacheStmtKey) Hash() []byte {
+	return []byte(k)
+}
+
+// AddGeneralPlanCacheStmt adds this PlanCacheStmt into general-plan-cache-stmt cache
+func (s *SessionVars) AddGeneralPlanCacheStmt(sql string, stmt interface{}) {
+	if s.generalPlanCacheStmts == nil {
+		s.generalPlanCacheStmts = kvcache.NewSimpleLRUCache(uint(s.GeneralPlanCacheSize), 0, 0)
+	}
+	s.generalPlanCacheStmts.Put(planCacheStmtKey(sql), stmt)
+}
+
+// GetGeneralPlanCacheStmt gets the PlanCacheStmt.
+func (s *SessionVars) GetGeneralPlanCacheStmt(sql string) interface{} {
+	if s.generalPlanCacheStmts == nil {
+		return nil
+	}
+	stmt, _ := s.generalPlanCacheStmts.Get(planCacheStmtKey(sql))
+	return stmt
 }
 
 // AddPreparedStmt adds prepareStmt to current session and count in global.
@@ -2000,16 +2163,16 @@ func (s *SessionVars) GetTemporaryTable(tblInfo *model.TableInfo) tableutil.Temp
 // EncodeSessionStates saves session states into SessionStates.
 func (s *SessionVars) EncodeSessionStates(ctx context.Context, sessionStates *sessionstates.SessionStates) (err error) {
 	// Encode user-defined variables.
-	s.UsersLock.RLock()
-	sessionStates.UserVars = make(map[string]*types.Datum, len(s.Users))
-	for name, userVar := range s.Users {
+	sessionStates.UserVars = make(map[string]*types.Datum, len(s.userVars.values))
+	sessionStates.UserVarTypes = make(map[string]*ptypes.FieldType, len(s.userVars.types))
+	s.userVars.lock.RLock()
+	defer s.userVars.lock.RUnlock()
+	for name, userVar := range s.userVars.values {
 		sessionStates.UserVars[name] = userVar.Clone()
 	}
-	sessionStates.UserVarTypes = make(map[string]*ptypes.FieldType, len(s.UserVarTypes))
-	for name, userVarType := range s.UserVarTypes {
+	for name, userVarType := range s.userVars.types {
 		sessionStates.UserVarTypes[name] = userVarType.Clone()
 	}
-	s.UsersLock.RUnlock()
 
 	// Encode other session contexts.
 	sessionStates.PreparedStmtID = s.preparedStmtID
@@ -2024,7 +2187,12 @@ func (s *SessionVars) EncodeSessionStates(ctx context.Context, sessionStates *se
 	}
 	sessionStates.LastFoundRows = s.LastFoundRows
 	sessionStates.SequenceLatestValues = s.SequenceState.GetAllStates()
-	sessionStates.MPPStoreLastFailTime = s.MPPStoreLastFailTime
+	sessionStates.MPPStoreLastFailTime = make(map[string]time.Time, 0)
+	s.MPPStoreLastFailTime.Range(
+		func(key, value interface{}) bool {
+			sessionStates.MPPStoreLastFailTime[key.(string)] = value.(time.Time)
+			return true
+		})
 	sessionStates.FoundInPlanCache = s.PrevFoundInPlanCache
 	sessionStates.FoundInBinding = s.PrevFoundInBinding
 
@@ -2038,16 +2206,14 @@ func (s *SessionVars) EncodeSessionStates(ctx context.Context, sessionStates *se
 // DecodeSessionStates restores session states from SessionStates.
 func (s *SessionVars) DecodeSessionStates(ctx context.Context, sessionStates *sessionstates.SessionStates) (err error) {
 	// Decode user-defined variables.
-	s.UsersLock.Lock()
-	s.Users = make(map[string]types.Datum, len(sessionStates.UserVars))
+	s.userVars.values = make(map[string]types.Datum, len(sessionStates.UserVars))
 	for name, userVar := range sessionStates.UserVars {
-		s.Users[name] = *userVar.Clone()
+		s.SetUserVarVal(name, *userVar.Clone())
 	}
-	s.UserVarTypes = make(map[string]*ptypes.FieldType, len(sessionStates.UserVarTypes))
+	s.userVars.types = make(map[string]*ptypes.FieldType, len(sessionStates.UserVarTypes))
 	for name, userVarType := range sessionStates.UserVarTypes {
-		s.UserVarTypes[name] = userVarType.Clone()
+		s.SetUserVarType(name, userVarType.Clone())
 	}
-	s.UsersLock.Unlock()
 
 	// Decode other session contexts.
 	s.preparedStmtID = sessionStates.PreparedStmtID
@@ -2062,8 +2228,8 @@ func (s *SessionVars) DecodeSessionStates(ctx context.Context, sessionStates *se
 	}
 	s.LastFoundRows = sessionStates.LastFoundRows
 	s.SequenceState.SetAllStates(sessionStates.SequenceLatestValues)
-	if sessionStates.MPPStoreLastFailTime != nil {
-		s.MPPStoreLastFailTime = sessionStates.MPPStoreLastFailTime
+	for k, v := range sessionStates.MPPStoreLastFailTime {
+		s.MPPStoreLastFailTime.Store(k, v)
 	}
 	s.FoundInPlanCache = sessionStates.FoundInPlanCache
 	s.FoundInBinding = sessionStates.FoundInBinding
@@ -2442,6 +2608,8 @@ const (
 	SlowLogIsExplicitTxn = "IsExplicitTxn"
 	// SlowLogIsWriteCacheTable is used to indicate whether writing to the cache table need to wait for the read lock to expire.
 	SlowLogIsWriteCacheTable = "IsWriteCacheTable"
+	// SlowLogIsSyncStatsFailed is used to indicate whether any failure happen during sync stats
+	SlowLogIsSyncStatsFailed = "IsSyncStatsFailed"
 )
 
 // GenerateBinaryPlan decides whether we should record binary plan in slow log and stmt summary.
@@ -2484,6 +2652,9 @@ type SlowQueryLogItems struct {
 	ResultRows        int64
 	IsExplicitTxn     bool
 	IsWriteCacheTable bool
+	// table -> name -> status
+	StatsLoadStatus   map[string]map[string]string
+	IsSyncStatsFailed bool
 }
 
 // SlowLogFormat uses for formatting slow log.
@@ -2578,6 +2749,9 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 				buf.WriteString(k + ":" + vStr)
 				firstComma = true
 			}
+			if v != 0 && len(logItems.StatsLoadStatus[k]) > 0 {
+				writeStatsLoadStatusItems(&buf, logItems.StatsLoadStatus[k])
+			}
 		}
 		buf.WriteString("\n")
 	}
@@ -2648,6 +2822,7 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	writeSlowLogItem(&buf, SlowLogResultRows, strconv.FormatInt(logItems.ResultRows, 10))
 	writeSlowLogItem(&buf, SlowLogSucc, strconv.FormatBool(logItems.Succ))
 	writeSlowLogItem(&buf, SlowLogIsExplicitTxn, strconv.FormatBool(logItems.IsExplicitTxn))
+	writeSlowLogItem(&buf, SlowLogIsSyncStatsFailed, strconv.FormatBool(logItems.IsSyncStatsFailed))
 	if s.StmtCtx.WaitLockLeaseTime > 0 {
 		writeSlowLogItem(&buf, SlowLogIsWriteCacheTable, strconv.FormatBool(logItems.IsWriteCacheTable))
 	}
@@ -2660,7 +2835,6 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	if len(logItems.BinaryPlan) != 0 {
 		writeSlowLogItem(&buf, SlowLogBinaryPlan, logItems.BinaryPlan)
 	}
-
 	if logItems.PrevStmt != "" {
 		writeSlowLogItem(&buf, SlowLogPrevStmt, logItems.PrevStmt)
 	}
@@ -2674,7 +2848,24 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	if len(logItems.SQL) == 0 || logItems.SQL[len(logItems.SQL)-1] != ';' {
 		buf.WriteString(";")
 	}
+
 	return buf.String()
+}
+
+func writeStatsLoadStatusItems(buf *bytes.Buffer, loadStatus map[string]string) {
+	if len(loadStatus) > 0 {
+		buf.WriteString("[")
+		firstComma := false
+		for name, status := range loadStatus {
+			if firstComma {
+				buf.WriteString("," + name + ":" + status)
+			} else {
+				buf.WriteString(name + ":" + status)
+				firstComma = true
+			}
+		}
+		buf.WriteString("]")
+	}
 }
 
 // writeSlowLogItem writes a slow log item in the form of: "# ${key}:${value}"
@@ -2856,12 +3047,28 @@ func (s *SessionVars) GetStrMatchDefaultSelectivity() float64 {
 
 // GetNegateStrMatchDefaultSelectivity means the default selectivity for not like and not regexp.
 // Note:
-//     0 is a special value, which means the default selectivity is 0.9 and TopN assisted estimation is enabled.
-//     0.8 (the default value) is also a special value. For backward compatibility, when the variable is set to 0.8, we
-//   keep the default selectivity of like/regexp and not like/regexp all 0.8.
+//
+//	  0 is a special value, which means the default selectivity is 0.9 and TopN assisted estimation is enabled.
+//	  0.8 (the default value) is also a special value. For backward compatibility, when the variable is set to 0.8, we
+//	keep the default selectivity of like/regexp and not like/regexp all 0.8.
 func (s *SessionVars) GetNegateStrMatchDefaultSelectivity() float64 {
 	if s.DefaultStrMatchSelectivity == DefTiDBDefaultStrMatchSelectivity {
 		return DefTiDBDefaultStrMatchSelectivity
 	}
 	return 1 - s.GetStrMatchDefaultSelectivity()
+}
+
+// GetRelatedTableForMDL gets the related table for metadata lock.
+func (s *SessionVars) GetRelatedTableForMDL() *sync.Map {
+	s.TxnCtx.tdmLock.Lock()
+	defer s.TxnCtx.tdmLock.Unlock()
+	if s.TxnCtx.relatedTableForMDL == nil {
+		s.TxnCtx.relatedTableForMDL = new(sync.Map)
+	}
+	return s.TxnCtx.relatedTableForMDL
+}
+
+// EnableForceInlineCTE returns the session variable enableForceInlineCTE
+func (s *SessionVars) EnableForceInlineCTE() bool {
+	return s.enableForceInlineCTE
 }

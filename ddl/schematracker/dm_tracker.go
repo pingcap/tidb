@@ -26,7 +26,7 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/ddl/syncer"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/owner"
@@ -86,7 +86,8 @@ func (d SchemaTracker) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateData
 	return d.CreateSchemaWithInfo(ctx, dbInfo, onExist)
 }
 
-func (d SchemaTracker) createTestDB() {
+// CreateTestDB creates the `test` database, which is the default behavior of TiDB.
+func (d SchemaTracker) CreateTestDB() {
 	_ = d.CreateSchema(nil, &ast.CreateDatabaseStmt{
 		Name: model.NewCIStr("test"),
 	})
@@ -302,6 +303,11 @@ func (d SchemaTracker) DropTable(ctx sessionctx.Context, stmt *ast.DropTableStmt
 
 // RecoverTable implements the DDL interface, which is no-op in DM's case.
 func (d SchemaTracker) RecoverTable(ctx sessionctx.Context, recoverInfo *ddl.RecoverInfo) (err error) {
+	return nil
+}
+
+// FlashbackCluster implements the DDL interface, which is no-op in DM's case.
+func (d SchemaTracker) FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) (err error) {
 	return nil
 }
 
@@ -561,10 +567,6 @@ func (d SchemaTracker) renameColumn(ctx sessionctx.Context, ident ast.Ident, spe
 		return infoschema.ErrColumnExists.GenWithStackByArgs(newColName)
 	}
 
-	if fkInfo := ddl.GetColumnForeignKeyInfo(oldColName.L, tbl.Meta().ForeignKeys); fkInfo != nil {
-		return dbterror.ErrFKIncompatibleColumns.GenWithStackByArgs(oldColName, fkInfo.Name)
-	}
-
 	// Check generated expression.
 	for _, col := range allCols {
 		if col.GeneratedExpr == nil {
@@ -662,7 +664,7 @@ func (d SchemaTracker) handleModifyColumn(
 	}
 	schema := d.SchemaByName(ident.Schema)
 	t := tables.MockTableFromMeta(tblInfo)
-	job, err := ddl.GetModifiableColumnJob(ctx, sctx, ident, originalColName, schema, t, spec)
+	job, err := ddl.GetModifiableColumnJob(ctx, sctx, nil, ident, originalColName, schema, t, spec)
 	if err != nil {
 		if infoschema.ErrColumnNotExists.Equal(err) && spec.IfExists {
 			sctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrColumnNotExists.GenWithStackByArgs(originalColName, ident.Name))
@@ -1152,7 +1154,7 @@ func (d SchemaTracker) Stop() error {
 func (SchemaTracker) RegisterStatsHandle(handle *handle.Handle) {}
 
 // SchemaSyncer implements the DDL interface, it's no-op in DM's case.
-func (SchemaTracker) SchemaSyncer() util.SchemaSyncer {
+func (SchemaTracker) SchemaSyncer() syncer.SchemaSyncer {
 	return nil
 }
 

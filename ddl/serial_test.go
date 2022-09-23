@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
@@ -271,7 +272,7 @@ func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
 	tk.MustExec(`create table test_gv_ddl(a int, b int as (a+8) virtual, c int as (b + 2) stored)`)
 	tk.MustExec(`create global temporary table test_gv_ddl_temp like test_gv_ddl on commit delete rows;`)
 	defer tk.MustExec("drop table if exists test_gv_ddl_temp, test_gv_ddl")
-	is := tk.Session().GetInfoSchema().(infoschema.InfoSchema)
+	is := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("test_gv_ddl"))
 	require.NoError(t, err)
 	testCases := []struct {
@@ -300,7 +301,7 @@ func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
 	tk.MustExec("create table test_foreign_key (c int,d int,foreign key (d) references t1 (b))")
 	defer tk.MustExec("drop table if exists test_foreign_key, t1")
 	tk.MustExec("create global temporary table test_foreign_key_temp like test_foreign_key on commit delete rows")
-	is = tk.Session().GetInfoSchema().(infoschema.InfoSchema)
+	is = sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
 	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("test_foreign_key_temp"))
 	require.NoError(t, err)
 	tableInfo := table.Meta()
@@ -384,7 +385,7 @@ func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
 	tk.MustExec("create table foreign_key_table1 (a int, b int)")
 	tk.MustExec("create table foreign_key_table2 (c int,d int,foreign key (d) references foreign_key_table1 (b))")
 	tk.MustExec("create temporary table foreign_key_tmp like foreign_key_table2")
-	is = tk.Session().GetInfoSchema().(infoschema.InfoSchema)
+	is = sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
 	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("foreign_key_tmp"))
 	require.NoError(t, err)
 	tableInfo = table.Meta()
@@ -752,7 +753,7 @@ func TestCanceledJobTakeTime(t *testing.T) {
 
 	hook := &ddl.TestDDLCallback{}
 	once := sync.Once{}
-	hook.OnJobUpdatedExported = func(job *model.Job) {
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		once.Do(func() {
 			ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 			err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
@@ -842,7 +843,7 @@ func TestAutoRandom(t *testing.T) {
 		assertInvalidAutoRandomErr(sql, autoid.AutoRandomOverflowErrMsg, maxAutoRandBits, actualAutoRandBits, colName)
 	}
 	assertMaxOverflow := func(sql, colName string, autoRandBits uint64) {
-		assertInvalidAutoRandomErr(sql, autoid.AutoRandomOverflowErrMsg, autoid.MaxAutoRandomBits, autoRandBits, colName)
+		assertInvalidAutoRandomErr(sql, autoid.AutoRandomOverflowErrMsg, autoid.AutoRandomShardBitsMax, autoRandBits, colName)
 	}
 	assertModifyColType := func(sql string) {
 		tk.MustGetErrCode(sql, errno.ErrUnsupportedDDLOperation)
@@ -936,7 +937,6 @@ func TestAutoRandom(t *testing.T) {
 	// Add/drop the auto_random attribute is not allowed.
 	mustExecAndDrop("create table t (a bigint auto_random(3) primary key)", func() {
 		assertAlterValue("alter table t modify column a bigint")
-		assertAlterValue("alter table t modify column a bigint auto_random(0)")
 		assertAlterValue("alter table t change column a b bigint")
 	})
 	mustExecAndDrop("create table t (a bigint, b char, c bigint auto_random(3), primary key(c))", func() {
@@ -1029,6 +1029,32 @@ func TestAutoRandom(t *testing.T) {
 	})
 }
 
+func TestAutoRandomWithRangeBits(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	// Test normal usages.
+	tk.MustExec("create table t (a bigint auto_random(5, 64) primary key, b int);")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a bigint unsigned auto_random(5, 32) primary key, b int);")
+
+	// Test create auto_random table with invalid range bits.
+	expectErr := dbterror.ErrInvalidAutoRandom
+	tk.MustExec("drop table if exists t;")
+	err := tk.ExecToErr("create table t (a bigint auto_random(5, 31) primary key, b int);")
+	require.EqualError(t, err, expectErr.FastGenByArgs(fmt.Sprintf(autoid.AutoRandomInvalidRangeBits, 32, 64, 31)).Error())
+	err = tk.ExecToErr("create table t (a bigint auto_random(5, 65) primary key, b int);")
+	require.EqualError(t, err, expectErr.FastGenByArgs(fmt.Sprintf(autoid.AutoRandomInvalidRangeBits, 32, 64, 65)).Error())
+	err = tk.ExecToErr("create table t (a bigint auto_random(15, 32) primary key, b int);")
+	require.EqualError(t, err, expectErr.FastGenByArgs(autoid.AutoRandomIncrementalBitsTooSmall).Error())
+
+	// Alter table range bits is not supported.
+	tk.MustExec("create table t (a bigint auto_random(5, 64) primary key, b int);")
+	err = tk.ExecToErr("alter table t modify column a bigint auto_random(5, 32);")
+	require.EqualError(t, err, expectErr.FastGenByArgs(autoid.AutoRandomUnsupportedAlterRangeBits).Error())
+	tk.MustExec("alter table t modify column a bigint auto_random(15, 64);")
+}
+
 func TestAutoRandomWithPreSplitRegion(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1049,6 +1075,21 @@ func TestAutoRandomWithPreSplitRegion(t *testing.T) {
 	require.Equal(t, fmt.Sprintf("t_%d_r_2305843009213693952", tbl.Meta().ID), rows[1][1])
 	require.Equal(t, fmt.Sprintf("t_%d_r_4611686018427387904", tbl.Meta().ID), rows[2][1])
 	require.Equal(t, fmt.Sprintf("t_%d_r_6917529027641081856", tbl.Meta().ID), rows[3][1])
+
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (a bigint auto_random(2, 32) primary key clustered, b int) pre_split_regions=2;")
+	rows = tk.MustQuery("show table t regions;").Rows()
+	tbl = external.GetTableByName(t, tk, "auto_random_db", "t") //nolint:typecheck
+	require.Equal(t, fmt.Sprintf("t_%d_r_536870912", tbl.Meta().ID), rows[1][1])
+	require.Equal(t, fmt.Sprintf("t_%d_r_1073741824", tbl.Meta().ID), rows[2][1])
+	require.Equal(t, fmt.Sprintf("t_%d_r_1610612736", tbl.Meta().ID), rows[3][1])
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (a bigint unsigned auto_random(2, 32) primary key clustered, b int) pre_split_regions=2;")
+	rows = tk.MustQuery("show table t regions;").Rows()
+	tbl = external.GetTableByName(t, tk, "auto_random_db", "t") //nolint:typecheck
+	require.Equal(t, fmt.Sprintf("t_%d_r_1073741824", tbl.Meta().ID), rows[1][1])
+	require.Equal(t, fmt.Sprintf("t_%d_r_2147483648", tbl.Meta().ID), rows[2][1])
+	require.Equal(t, fmt.Sprintf("t_%d_r_3221225472", tbl.Meta().ID), rows[3][1])
 }
 
 func TestModifyingColumn4NewCollations(t *testing.T) {

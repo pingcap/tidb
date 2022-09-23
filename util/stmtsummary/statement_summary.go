@@ -795,8 +795,12 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 		if commitBackoffTime > ssElement.maxCommitBackoffTime {
 			ssElement.maxCommitBackoffTime = commitBackoffTime
 		}
-		ssElement.sumBackoffTimes += int64(len(commitDetails.Mu.BackoffTypes))
-		for _, backoffType := range commitDetails.Mu.BackoffTypes {
+		ssElement.sumBackoffTimes += int64(len(commitDetails.Mu.PrewriteBackoffTypes))
+		for _, backoffType := range commitDetails.Mu.PrewriteBackoffTypes {
+			ssElement.backoffTypes[backoffType]++
+		}
+		ssElement.sumBackoffTimes += int64(len(commitDetails.Mu.CommitBackoffTypes))
+		for _, backoffType := range commitDetails.Mu.CommitBackoffTypes {
 			ssElement.backoffTypes[backoffType]++
 		}
 		commitDetails.Mu.Unlock()
