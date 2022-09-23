@@ -186,15 +186,8 @@ func checkTableForeignKeyValid(is infoschema.InfoSchema, schema string, tbInfo *
 }
 
 func getAndCheckLatestInfoSchema(d *ddlCtx, t *meta.Meta) (infoschema.InfoSchema, error) {
-	currVer, err := t.GetSchemaVersion()
-	if err != nil {
-		return nil, err
-	}
-	is := d.infoCache.GetLatest()
-	if is.SchemaMetaVersion() != currVer {
-		return nil, errors.New("need wait owner to load latest schema")
-	}
-	return is, nil
+	// TODO(crazycs520): fix me, need to make sure the `d.infoCache` is the latest infoschema.
+	return d.infoCache.GetLatest(), nil
 }
 
 func checkTableForeignKeyValidInOwner(d *ddlCtx, t *meta.Meta, job *model.Job, tbInfo *model.TableInfo, fkCheck bool) (retryable bool, _ error) {
@@ -510,4 +503,83 @@ func checkDropColumnWithForeignKeyConstraintInOwner(d *ddlCtx, t *meta.Meta, job
 		return errors.Trace(err)
 	}
 	return nil
+}
+
+type foreignKeyHelper struct {
+	loaded map[schemaAndTable]schemaIDAndTableInfo
+}
+
+type schemaAndTable struct {
+	schema string
+	table  string
+}
+
+func newForeignKeyHelper(schema string, schemaID int64, tblInfo *model.TableInfo) foreignKeyHelper {
+	h := foreignKeyHelper{loaded: make(map[schemaAndTable]schemaIDAndTableInfo)}
+	k := schemaAndTable{schema: schema, table: tblInfo.Name.L}
+	h.loaded[k] = schemaIDAndTableInfo{schemaID: schemaID, tblInfo: tblInfo}
+	return h
+}
+
+func (h *foreignKeyHelper) getTableFromStorage(is infoschema.InfoSchema, t *meta.Meta, schema, table model.CIStr) (result schemaIDAndTableInfo, _ error) {
+	k := schemaAndTable{schema: schema.L, table: table.L}
+	if info, ok := h.loaded[k]; ok {
+		return info, nil
+	}
+	db, ok := is.SchemaByName(schema)
+	if !ok {
+		return result, errors.Trace(infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schema))
+	}
+	tb, err := is.TableByName(schema, table)
+	if err != nil {
+		return result, errors.Trace(err)
+	}
+	tbInfo, err := getTableInfo(t, tb.Meta().ID, db.ID)
+	if err != nil {
+		return result, errors.Trace(err)
+	}
+	result.schemaID, result.tblInfo = db.ID, tbInfo
+	h.loaded[k] = result
+	return result, nil
+}
+
+func checkDatabaseHasForeignKeyReferred(is infoschema.InfoSchema, schema model.CIStr, fkCheck bool) error {
+	if !fkCheck {
+		return nil
+	}
+	tables := is.SchemaTables(schema)
+	tableNames := make([]ast.Ident, len(tables))
+	for i := range tables {
+		tableNames[i] = ast.Ident{Schema: schema, Name: tables[i].Meta().Name}
+	}
+	for _, tbl := range tables {
+		if referredFK := checkTableHasForeignKeyReferred(is, schema.L, tbl.Meta().Name.L, tableNames, fkCheck); referredFK != nil {
+			return errors.Trace(dbterror.ErrForeignKeyCannotDropParent.GenWithStackByArgs(tbl.Meta().Name, referredFK.ChildFKName, referredFK.ChildTable))
+		}
+	}
+	return nil
+}
+
+func checkDatabaseHasForeignKeyReferredInOwner(d *ddlCtx, t *meta.Meta, job *model.Job) error {
+	if !variable.EnableForeignKey.Load() {
+		return nil
+	}
+	var fkCheck bool
+	err := job.DecodeArgs(&fkCheck)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return errors.Trace(err)
+	}
+	if !fkCheck {
+		return nil
+	}
+	is, err := getAndCheckLatestInfoSchema(d, t)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = checkDatabaseHasForeignKeyReferred(is, model.NewCIStr(job.SchemaName), fkCheck)
+	if err != nil {
+		job.State = model.JobStateCancelled
+	}
+	return errors.Trace(err)
 }
