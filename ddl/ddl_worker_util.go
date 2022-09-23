@@ -63,6 +63,7 @@ func collectTrace(jobID int64) string {
 		if len(rootTrace.Spans) < 1000 {
 			reportTrace(rootTrace)
 		}
+		timeDetails.Delete(jobID)
 		return analyzed
 	}
 	return ""
