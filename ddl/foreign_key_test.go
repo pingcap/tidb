@@ -494,6 +494,10 @@ func TestRenameTableWithForeignKeyMetaInfo(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (id int key, a int, b int, foreign key fk(a) references t1(id))")
 	tk.MustExec("rename table test.t1 to test2.t2")
+	// check the schema diff
+	diff := getLatestSchemaDiff(t, tk)
+	require.Equal(t, model.ActionRenameTable, diff.Type)
+	require.Equal(t, 0, len(diff.AffectedOpts))
 	tk.MustQuery("show create table test2.t2").Check(testkit.Rows("t2 CREATE TABLE `t2` (\n" +
 		"  `id` int(11) NOT NULL,\n" +
 		"  `a` int(11) DEFAULT NULL,\n" +
@@ -529,6 +533,10 @@ func TestRenameTableWithForeignKeyMetaInfo(t *testing.T) {
 	tk.MustExec("create table t2 (id int key, b int, foreign key fk_b(b) references test.t1(id))")
 	tk.MustExec("use test2")
 	tk.MustExec("rename table test.t2 to test2.tt2")
+	// check the schema diff
+	diff = getLatestSchemaDiff(t, tk)
+	require.Equal(t, model.ActionRenameTable, diff.Type)
+	require.Equal(t, 0, len(diff.AffectedOpts))
 	tb1Info := getTableInfo(t, dom, "test", "t1")
 	tb2Info := getTableInfo(t, dom, "test2", "tt2")
 	require.Equal(t, 0, len(tb1Info.ForeignKeys))
@@ -562,6 +570,10 @@ func TestRenameTableWithForeignKeyMetaInfo(t *testing.T) {
 	tb1ReferredFKs = getTableInfoReferredForeignKeys(t, dom, "test3", "tt1")
 	require.Equal(t, 1, len(tb1ReferredFKs))
 	require.Equal(t, 1, len(tb1ReferredFKs[0].Cols))
+	// check the schema diff
+	diff = getLatestSchemaDiff(t, tk)
+	require.Equal(t, model.ActionRenameTable, diff.Type)
+	require.Equal(t, 1, len(diff.AffectedOpts))
 	require.Equal(t, model.ReferredFKInfo{
 		Cols:        []model.CIStr{model.NewCIStr("id")},
 		ChildSchema: model.NewCIStr("test2"),

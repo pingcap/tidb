@@ -1532,30 +1532,23 @@ func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job, multiInfos ...
 		diff.TableID = job.TableID
 	}
 	if len(multiInfos) > 0 {
-		existsMap := make(map[model.AffectedOption]struct{})
-		affect := model.AffectedOption{
-			SchemaID:    diff.SchemaID,
-			TableID:     diff.TableID,
-			OldTableID:  diff.OldTableID,
-			OldSchemaID: diff.OldSchemaID,
-		}
-		existsMap[affect] = struct{}{}
+		existsMap := make(map[int64]struct{})
+		existsMap[diff.TableID] = struct{}{}
 		for _, affect := range diff.AffectedOpts {
-			existsMap[*affect] = struct{}{}
+			existsMap[affect.TableID] = struct{}{}
 		}
 		for _, info := range multiInfos {
-			affect := model.AffectedOption{
+			_, exist := existsMap[info.tblInfo.ID]
+			if exist {
+				continue
+			}
+			existsMap[info.tblInfo.ID] = struct{}{}
+			diff.AffectedOpts = append(diff.AffectedOpts, &model.AffectedOption{
 				SchemaID:    info.schemaID,
 				OldSchemaID: info.schemaID,
 				TableID:     info.tblInfo.ID,
 				OldTableID:  info.tblInfo.ID,
-			}
-			_, exist := existsMap[affect]
-			if exist {
-				continue
-			}
-			existsMap[affect] = struct{}{}
-			diff.AffectedOpts = append(diff.AffectedOpts, &affect)
+			})
 		}
 	}
 	err = t.SetSchemaDiff(diff)
