@@ -994,7 +994,7 @@ func onRenameTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, true, childTableInfos...)
+	ver, err = updateSchemaVersion(d, t, job, childTableInfos...)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -1015,6 +1015,7 @@ func onRenameTables(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 	}
 
 	var tblInfos = make([]*model.TableInfo, 0, len(tableNames))
+	var allChildTableInfos []schemaIDAndTableInfo
 	var err error
 	for i, oldSchemaID := range oldSchemaIDs {
 		job.TableID = tableIDs[i]
@@ -1027,10 +1028,15 @@ func onRenameTables(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+		childTableInfos, err := adjustForeignKeyChildTableInfoAfterRenameTable(d, t, job, tblInfo, *oldSchemaNames[i], *oldTableNames[i], *tableNames[i], newSchemaIDs[i])
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		allChildTableInfos = append(allChildTableInfos, childTableInfos...)
 		tblInfos = append(tblInfos, tblInfo)
 	}
 
-	ver, err = updateSchemaVersion(d, t, job)
+	ver, err = updateSchemaVersion(d, t, job, allChildTableInfos...)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -1126,14 +1132,15 @@ func adjustForeignKeyChildTableInfoAfterRenameTable(d *ddlCtx, t *meta.Meta, job
 		childFKInfo.RefTable = newTableName
 		infos[childTableInfo.tblInfo.ID] = childTableInfo
 	}
-	infoList := make([]schemaIDAndTableInfo, 0, len(fkh.loaded))
+	tableList := make([]schemaIDAndTableInfo, 0, len(fkh.loaded))
 	for _, info := range fkh.loaded {
-		if info.tblInfo.ID == tblInfo.ID {
-			continue
+		err = updateTable(t, info.schemaID, info.tblInfo)
+		if err != nil {
+			return nil, err
 		}
-		infoList = append(infoList, info)
+		tableList = append(tableList, info)
 	}
-	return infoList, nil
+	return tableList, nil
 }
 
 func onModifyTableComment(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -1446,23 +1453,24 @@ func updateVersionAndTableInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo 
 		}
 	}
 
-	if tblInfo.State == model.StatePublic {
-		tblInfo.UpdateTS = t.StartTS
-	}
-	err = t.UpdateTable(job.SchemaID, tblInfo)
+	err = updateTable(t, job.SchemaID, tblInfo)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
 	for _, info := range multiInfos {
-		if info.tblInfo.State == model.StatePublic {
-			info.tblInfo.UpdateTS = t.StartTS
-		}
-		err = t.UpdateTable(info.schemaID, info.tblInfo)
+		err = updateTable(t, info.schemaID, info.tblInfo)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
 	}
 	return ver, nil
+}
+
+func updateTable(t *meta.Meta, schemaID int64, tblInfo *model.TableInfo) error {
+	if tblInfo.State == model.StatePublic {
+		tblInfo.UpdateTS = t.StartTS
+	}
+	return t.UpdateTable(schemaID, tblInfo)
 }
 
 type schemaIDAndTableInfo struct {

@@ -1390,3 +1390,22 @@ func TestDropDatabaseWithForeignKeyReferred2(t *testing.T) {
 	tk.MustExec("drop table test2.t3")
 	tk.MustExec("drop database test")
 }
+
+func TestRenameTablesWithForeignKey(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=0;")
+	tk.MustExec("create database test1")
+	tk.MustExec("create database test2")
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int key, b int, index(b), foreign key fk(b) references t2(id));")
+	tk.MustExec("create table t2 (id int key, b int, index(b), foreign key fk(b) references t1(id));")
+	tk.MustExec("rename table test.t1 to test1.tt1, test.t2 to test2.tt2;")
+	tk.MustQuery("show create table test1.tt1").Check(testkit.Rows("tt1 CREATE TABLE `tt1` (\n" +
+		"  `id` int(11) NOT NULL,\n" +
+		"  `b` int(11) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n" +
+		"  KEY `b` (`b`),\n" +
+		"  CONSTRAINT `fk` FOREIGN KEY (`b`) REFERENCES `t2` (`id`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin]\n"))
+}
