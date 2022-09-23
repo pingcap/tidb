@@ -1326,8 +1326,8 @@ func TestRenameColumnWithForeignKeyMetaInfo(t *testing.T) {
 			"  `aa` int(11) DEFAULT NULL,\n" +
 			"  `bb` int(11) DEFAULT NULL,\n" +
 			"  KEY `fk_1` (`aa`),\n  KEY `fk_2` (`bb`),\n" +
-			"  CONSTRAINT `fk_1` FOREIGN KEY (`aa`) REFERENCES `t1` (`bb`),\n" +
-			"  CONSTRAINT `fk_2` FOREIGN KEY (`bb`) REFERENCES `t1` (`bb`)\n" +
+			"  CONSTRAINT `fk_1` FOREIGN KEY (`aa`) REFERENCES `test`.`t1` (`bb`),\n" +
+			"  CONSTRAINT `fk_2` FOREIGN KEY (`bb`) REFERENCES `test`.`t1` (`bb`)\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
 
