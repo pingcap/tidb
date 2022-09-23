@@ -733,6 +733,7 @@ func TestMppUnionAll(t *testing.T) {
 	tk.MustExec("set tidb_opt_mpp_outer_join_fixed_build_side=1")
 
 	// test join + union (join + select)
+	failpoint.Disable("github.com/pingcap/tidb/executor/checkTotalMPPTasks")
 	tk.MustQuery("select x1.a, x.a from x1 left join (select x2.b a, x1.b from x1 join x2 on x1.a = x2.b union all select * from x1 ) x on x1.a = x.a order by x1.a").Check(testkit.Rows("1 1", "1 1", "2 2", "2 2", "3 3", "3 3", "4 4", "4 4"))
 	tk.MustQuery("select x1.a, x.a from x1 left join (select count(*) a, sum(b) b from x1 group by a union all select * from x2 ) x on x1.a = x.a order by x1.a").Check(testkit.Rows("1 1", "1 1", "1 1", "1 1", "2 2", "3 3", "4 4"))
 
