@@ -202,7 +202,8 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 		// Since reorg job will be interrupted for polling the cancel action outside. we don't need to wait for 2.5s
 		// for the later entrances.
 		// lease = 0 means it's in an integration test. In this case we don't delay so the test won't run too slowly.
-		if lease > 0 {
+		// We don't need to wait in merging temp index because all the async commit txns should be committed in previous reorg phase.
+		if lease > 0 && !reorgInfo.mergingTmpIdx {
 			delayForAsyncCommit()
 		}
 		// This job is cancelling, we should return ErrCancelledDDLJob directly.
