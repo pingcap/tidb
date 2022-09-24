@@ -54,6 +54,7 @@ type GlobalMydumper struct {
 	SourceDir string `toml:"data-source-dir" json:"data-source-dir"`
 	// Deprecated
 	NoSchema      bool             `toml:"no-schema" json:"no-schema"`
+	Truncate      bool             `toml:"truncate" json:"truncate"`
 	Filter        []string         `toml:"filter" json:"filter"`
 	IgnoreColumns []*IgnoreColumns `toml:"ignore-columns" json:"ignore-columns"`
 }
@@ -100,7 +101,8 @@ func NewGlobalConfig() *GlobalConfig {
 			LogLevel:   "error",
 		},
 		Mydumper: GlobalMydumper{
-			Filter: DefaultFilter,
+			Filter:   DefaultFilter,
+			Truncate: false,
 		},
 		TikvImporter: GlobalImporter{
 			Backend: "",
@@ -156,6 +158,7 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 	sortedKVDir := fs.String("sorted-kv-dir", "", "path for KV pairs when local backend enabled")
 	enableCheckpoint := fs.Bool("enable-checkpoint", true, "whether to enable checkpoints")
 	noSchema := fs.Bool("no-schema", false, "ignore schema files, get schema directly from TiDB instead")
+	truncate := fs.Bool("truncate", false, "truncate Table before load data")
 	checksum := flagext.ChoiceVar(fs, "checksum", "", "compare checksum after importing.", "", "required", "optional", "off", "true", "false")
 	analyze := flagext.ChoiceVar(fs, "analyze", "", "analyze table after importing", "", "required", "optional", "off", "true", "false")
 	checkRequirements := fs.Bool("check-requirements", true, "check cluster version before starting")
@@ -240,6 +243,9 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 	}
 	if *noSchema {
 		cfg.Mydumper.NoSchema = true
+	}
+	if *truncate {
+		cfg.Mydumper.Truncate = true
 	}
 	if *checksum != "" {
 		_ = cfg.PostRestore.Checksum.FromStringValue(*checksum)

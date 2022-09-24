@@ -455,6 +455,7 @@ type MydumperRuntime struct {
 	FileRouters      []*FileRouteRule `toml:"files" json:"files"`
 	// Deprecated: only used to keep the compatibility.
 	NoSchema         bool             `toml:"no-schema" json:"no-schema"`
+	Truncate         bool             `toml:"truncate" json:"truncate"`
 	CaseSensitive    bool             `toml:"case-sensitive" json:"case-sensitive"`
 	StrictFormat     bool             `toml:"strict-format" json:"strict-format"`
 	DefaultFileRules bool             `toml:"default-file-rules" json:"default-file-rules"`
@@ -749,6 +750,7 @@ func (cfg *Config) LoadFromGlobal(global *GlobalConfig) error {
 	cfg.TiDB.StatusPort = global.TiDB.StatusPort
 	cfg.TiDB.PdAddr = global.TiDB.PdAddr
 	cfg.Mydumper.NoSchema = global.Mydumper.NoSchema
+	cfg.Mydumper.Truncate = global.Mydumper.Truncate
 	cfg.Mydumper.SourceDir = global.Mydumper.SourceDir
 	cfg.Mydumper.Filter = global.Mydumper.Filter
 	cfg.TikvImporter.Backend = global.TikvImporter.Backend

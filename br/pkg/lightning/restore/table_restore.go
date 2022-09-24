@@ -1010,6 +1010,13 @@ func (tr *TableRestore) analyzeTable(ctx context.Context, g glue.SQLExecutor) er
 	return err
 }
 
+func (tr *TableRestore) truncateTable(ctx context.Context, g glue.SQLExecutor) error {
+	task := tr.logger.Begin(zap.InfoLevel, "truncate")
+	err := g.ExecuteWithLog(ctx, "TRUNCATE TABLE "+tr.tableName, "truncate table", tr.logger)
+	task.End(zap.ErrorLevel, err)
+	return err
+}
+
 // estimate SST files compression threshold by total row file size
 // with a higher compression threshold, the compression time increases, but the iteration time decreases.
 // Try to limit the total SST files number under 500. But size compress 32GB SST files cost about 20min,

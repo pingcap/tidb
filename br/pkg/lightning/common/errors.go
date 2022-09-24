@@ -91,6 +91,7 @@ var (
 	ErrUnknownColumns       = errors.Normalize("unknown columns in header (%s) for table %s", errors.RFCCodeText("Lightning:Restore:ErrUnknownColumns"))
 	ErrChecksumMismatch     = errors.Normalize("checksum mismatched remote vs local => (checksum: %d vs %d) (total_kvs: %d vs %d) (total_bytes:%d vs %d)", errors.RFCCodeText("Lighting:Restore:ErrChecksumMismatch"))
 	ErrRestoreTable         = errors.Normalize("restore table %s failed", errors.RFCCodeText("Lightning:Restore:ErrRestoreTable"))
+	ErrTruncateTable        = errors.Normalize("truncate table %s failed", errors.RFCCodeText("Lightning:Restore:ErrTruncateTable"))
 	ErrEncodeKV             = errors.Normalize("encode kv error in file %s at offset %d", errors.RFCCodeText("Lightning:Restore:ErrEncodeKV"))
 	ErrAllocTableRowIDs     = errors.Normalize("allocate table row id error", errors.RFCCodeText("Lightning:Restore:ErrAllocTableRowIDs"))
 	ErrInvalidMetaStatus    = errors.Normalize("invalid meta status: '%s'", errors.RFCCodeText("Lightning:Restore:ErrInvalidMetaStatus"))

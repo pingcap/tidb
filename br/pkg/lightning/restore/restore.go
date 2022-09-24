@@ -1529,6 +1529,16 @@ func (rc *Controller) restoreTables(ctx context.Context) (finalErr error) {
 				tableLogTask := task.tr.logger.Begin(zap.InfoLevel, "restore table")
 				web.BroadcastTableCheckpoint(task.tr.tableName, task.cp)
 
+				if rc.cfg.Mydumper.Truncate {
+					err := task.tr.truncateTable(ctx, rc.tidbGlue.GetSQLExecutor())
+					if err != nil {
+						tableLogTask.End(zap.ErrorLevel, err)
+						web.BroadcastError(task.tr.tableName, err)
+						restoreErr.Set(err)
+						wg.Done()
+					}
+				}
+
 				needPostProcess, err := task.tr.restoreTable(ctx, rc, task.cp)
 
 				err = common.NormalizeOrWrapErr(common.ErrRestoreTable, err, task.tr.tableName)
