@@ -600,7 +600,7 @@ import (
 	temptable             "TEMPTABLE"
 	textType              "TEXT"
 	than                  "THAN"
-	tidbCurrentTSO		  "TiDB_CURRENT_TSO"
+	tidbCurrentTSO        "TiDB_CURRENT_TSO"
 	tikvImporter          "TIKV_IMPORTER"
 	timestampType         "TIMESTAMP"
 	timeType              "TIME"
