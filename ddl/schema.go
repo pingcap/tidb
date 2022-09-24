@@ -182,6 +182,12 @@ func onDropSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
+	if dbInfo.State == model.StatePublic {
+		err = checkDatabaseHasForeignKeyReferredInOwner(d, t, job)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+	}
 
 	ver, err = updateSchemaVersion(d, t, job)
 	if err != nil {
@@ -190,10 +196,6 @@ func onDropSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 	switch dbInfo.State {
 	case model.StatePublic:
 		// public -> write only
-		err = checkDatabaseHasForeignKeyReferredInOwner(d, t, job)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
 		dbInfo.State = model.StateWriteOnly
 		err = t.UpdateDatabase(dbInfo)
 		if err != nil {

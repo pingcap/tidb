@@ -737,7 +737,7 @@ func (p *PhysicalIndexScan) MemoryUsage() (sum int64) {
 		sum += col.MemoryUsage()
 	}
 	for _, rang := range p.Ranges {
-		sum += rang.MemoryUsage()
+		sum += rang.MemUsage()
 	}
 	for iid, expr := range p.GenExprs {
 		sum += int64(unsafe.Sizeof(iid)) + expr.MemoryUsage()
@@ -864,7 +864,8 @@ func (ts *PhysicalTableScan) ResolveCorrelatedColumns() ([]*ranger.Range, error)
 			}
 			access = append(access, newCond)
 		}
-		res, err := ranger.DetachCondAndBuildRangeForIndex(ts.SCtx(), access, idxCols, idxColLens)
+		// All of access conditions must be used to build ranges, so we don't limit range memory usage.
+		res, err := ranger.DetachCondAndBuildRangeForIndex(ts.SCtx(), access, idxCols, idxColLens, 0)
 		if err != nil {
 			return nil, err
 		}
@@ -872,6 +873,7 @@ func (ts *PhysicalTableScan) ResolveCorrelatedColumns() ([]*ranger.Range, error)
 	} else {
 		var err error
 		pkTP := ts.Table.GetPkColInfo().FieldType
+		// All of access conditions must be used to build ranges, so we don't limit range memory usage.
 		ts.Ranges, _, _, err = ranger.BuildTableRange(access, ts.SCtx(), &pkTP, 0)
 		if err != nil {
 			return nil, err
@@ -946,7 +948,7 @@ func (ts *PhysicalTableScan) MemoryUsage() (sum int64) {
 		sum += cond.MemoryUsage()
 	}
 	for _, rang := range ts.Ranges {
-		sum += rang.MemoryUsage()
+		sum += rang.MemUsage()
 	}
 	for _, col := range ts.rangeDecidedBy {
 		sum += col.MemoryUsage()
@@ -1136,6 +1138,49 @@ func (p *basePhysicalJoin) ExtractCorrelatedCols() []*expression.CorrelatedColum
 	return corCols
 }
 
+const emptyBasePhysicalJoinSize = int64(unsafe.Sizeof(basePhysicalJoin{}))
+
+// MemoryUsage return the memory usage of basePhysicalJoin
+func (p *basePhysicalJoin) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = emptyBasePhysicalJoinSize + p.physicalSchemaProducer.MemoryUsage() + int64(cap(p.IsNullEQ))*size.SizeOfBool
+
+	for _, cond := range p.LeftConditions {
+		sum += cond.MemoryUsage()
+	}
+	for _, cond := range p.RightConditions {
+		sum += cond.MemoryUsage()
+	}
+	for _, cond := range p.OtherConditions {
+		sum += cond.MemoryUsage()
+	}
+	for _, col := range p.LeftJoinKeys {
+		sum += col.MemoryUsage()
+	}
+	for _, col := range p.RightJoinKeys {
+		sum += col.MemoryUsage()
+	}
+	for _, col := range p.InnerJoinKeys {
+		sum += col.MemoryUsage()
+	}
+	for _, col := range p.OuterJoinKeys {
+		sum += col.MemoryUsage()
+	}
+	for _, datum := range p.DefaultValues {
+		sum += datum.MemUsage()
+	}
+	for _, col := range p.LeftNAJoinKeys {
+		sum += col.MemoryUsage()
+	}
+	for _, col := range p.RightNAJoinKeys {
+		sum += col.MemoryUsage()
+	}
+	return
+}
+
 // PhysicalHashJoin represents hash join implementation of LogicalJoin.
 type PhysicalHashJoin struct {
 	basePhysicalJoin
@@ -1193,6 +1238,23 @@ func (p *PhysicalHashJoin) ExtractCorrelatedCols() []*expression.CorrelatedColum
 	return corCols
 }
 
+// MemoryUsage return the memory usage of PhysicalHashJoin
+func (p *PhysicalHashJoin) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.basePhysicalJoin.MemoryUsage() + size.SizeOfUint + size.SizeOfSlice + size.SizeOfBool*2 + size.SizeOfUint8
+
+	for _, expr := range p.EqualConditions {
+		sum += expr.MemoryUsage()
+	}
+	for _, expr := range p.NAEqualConditions {
+		sum += expr.MemoryUsage()
+	}
+	return
+}
+
 // NewPhysicalHashJoin creates a new PhysicalHashJoin from LogicalJoin.
 func NewPhysicalHashJoin(p *LogicalJoin, innerIdx int, useOuterToBuild bool, newStats *property.StatsInfo, prop ...*property.PhysicalProperty) *PhysicalHashJoin {
 	leftJoinKeys, rightJoinKeys, isNullEQ, _ := p.GetJoinKeys()
@@ -1247,6 +1309,27 @@ type PhysicalIndexJoin struct {
 	InnerHashKeys []*expression.Column
 }
 
+// MemoryUsage return the memory usage of PhysicalIndexJoin
+func (p *PhysicalIndexJoin) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.basePhysicalJoin.MemoryUsage() + size.SizeOfInterface*2 + size.SizeOfSlice*4 +
+		int64(cap(p.KeyOff2IdxOff)+cap(p.IdxColLens))*size.SizeOfInt + size.SizeOfPointer
+	if p.CompareFilters != nil {
+		sum += p.CompareFilters.MemoryUsage()
+	}
+
+	for _, col := range p.OuterHashKeys {
+		sum += col.MemoryUsage()
+	}
+	for _, col := range p.InnerHashKeys {
+		sum += col.MemoryUsage()
+	}
+	return
+}
+
 // PhysicalIndexMergeJoin represents the plan of index look up merge join.
 type PhysicalIndexMergeJoin struct {
 	PhysicalIndexJoin
@@ -1264,12 +1347,32 @@ type PhysicalIndexMergeJoin struct {
 	Desc bool
 }
 
+// MemoryUsage return the memory usage of PhysicalIndexMergeJoin
+func (p *PhysicalIndexMergeJoin) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.PhysicalIndexJoin.MemoryUsage() + size.SizeOfSlice*3 + int64(cap(p.KeyOff2KeyOffOrderByIdx))*size.SizeOfInt +
+		int64(cap(p.CompareFuncs)+cap(p.OuterCompareFuncs))*size.SizeOfFunc + size.SizeOfBool*2
+	return
+}
+
 // PhysicalIndexHashJoin represents the plan of index look up hash join.
 type PhysicalIndexHashJoin struct {
 	PhysicalIndexJoin
 	// KeepOuterOrder indicates whether keeping the output result order as the
 	// outer side.
 	KeepOuterOrder bool
+}
+
+// MemoryUsage return the memory usage of PhysicalIndexHashJoin
+func (p *PhysicalIndexHashJoin) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	return p.PhysicalIndexJoin.MemoryUsage() + size.SizeOfBool
 }
 
 // PhysicalMergeJoin represents merge join implementation of LogicalJoin.
@@ -1279,6 +1382,16 @@ type PhysicalMergeJoin struct {
 	CompareFuncs []expression.CompareFunc
 	// Desc means whether inner child keep desc order.
 	Desc bool
+}
+
+// MemoryUsage return the memory usage of PhysicalMergeJoin
+func (p *PhysicalMergeJoin) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.basePhysicalJoin.MemoryUsage() + size.SizeOfSlice + int64(cap(p.CompareFuncs))*size.SizeOfFunc + size.SizeOfBool
+	return
 }
 
 // PhysicalExchangeReceiver accepts connection and receives data passively.
@@ -1398,6 +1511,15 @@ func (p *PhysicalUnionAll) Clone() (PhysicalPlan, error) {
 	}
 	cloned.physicalSchemaProducer = *base
 	return cloned, nil
+}
+
+// MemoryUsage return the memory usage of PhysicalUnionAll
+func (p *PhysicalUnionAll) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	return p.physicalSchemaProducer.MemoryUsage() + size.SizeOfBool
 }
 
 // AggMppRunMode defines the running mode of aggregation in MPP
@@ -1957,6 +2079,22 @@ type TableSampleInfo struct {
 	Partitions []table.PartitionedTable
 }
 
+// MemoryUsage return the memory usage of TableSampleInfo
+func (t *TableSampleInfo) MemoryUsage() (sum int64) {
+	if t == nil {
+		return
+	}
+
+	sum = size.SizeOfPointer*2 + size.SizeOfSlice + int64(cap(t.Partitions))*size.SizeOfInterface
+	if t.AstNode != nil {
+		sum += int64(unsafe.Sizeof(ast.TableSample{}))
+	}
+	if t.FullSchema != nil {
+		sum += t.FullSchema.MemoryUsage()
+	}
+	return
+}
+
 // NewTableSampleInfo creates a new TableSampleInfo.
 func NewTableSampleInfo(node *ast.TableSample, fullSchema *expression.Schema, pt []table.PartitionedTable) *TableSampleInfo {
 	if node == nil {
@@ -2015,9 +2153,37 @@ func (p *PhysicalCTE) ExplainID() fmt.Stringer {
 	})
 }
 
+// MemoryUsage return the memory usage of PhysicalCTE
+func (p *PhysicalCTE) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.physicalSchemaProducer.MemoryUsage() + p.cteAsName.MemoryUsage()
+	if p.SeedPlan != nil {
+		sum += p.SeedPlan.MemoryUsage()
+	}
+	if p.RecurPlan != nil {
+		sum += p.RecurPlan.MemoryUsage()
+	}
+	if p.CTE != nil {
+		sum += p.CTE.MemoryUsage()
+	}
+	return
+}
+
 // ExplainInfo overrides the ExplainInfo
 func (p *PhysicalCTETable) ExplainInfo() string {
 	return "Scan on CTE_" + strconv.Itoa(p.IDForStorage)
+}
+
+// MemoryUsage return the memory usage of PhysicalCTETable
+func (p *PhysicalCTETable) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	return p.physicalSchemaProducer.MemoryUsage() + size.SizeOfInt
 }
 
 // CTEDefinition is CTE definition for explain.
@@ -2042,6 +2208,25 @@ func (p *CTEDefinition) ExplainID() fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
 		return "CTE_" + strconv.Itoa(p.CTE.IDForStorage)
 	})
+}
+
+// MemoryUsage return the memory usage of CTEDefinition
+func (p *CTEDefinition) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.physicalSchemaProducer.MemoryUsage() + p.cteAsName.MemoryUsage()
+	if p.SeedPlan != nil {
+		sum += p.SeedPlan.MemoryUsage()
+	}
+	if p.RecurPlan != nil {
+		sum += p.RecurPlan.MemoryUsage()
+	}
+	if p.CTE != nil {
+		sum += p.CTE.MemoryUsage()
+	}
+	return
 }
 
 func appendChildCandidate(origin PhysicalPlan, pp PhysicalPlan, op *physicalOptimizeOp) {
