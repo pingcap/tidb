@@ -7173,6 +7173,7 @@ func TestNullEQPushDownToTiFlash(t *testing.T) {
 		{"    └─TableFullScan_7", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 	}
 	tk.MustQuery("explain select nulleq(a, NULL) from t;").CheckAt([]int{0, 2, 4}, rows)
+	tk.MustQuery("explain select a <=> NULL from t;").CheckAt([]int{0, 2, 4}, rows)
 
 	rows = [][]interface{}{
 		{"TableReader_12", "root", "data:ExchangeSender_11"},
@@ -7180,6 +7181,7 @@ func TestNullEQPushDownToTiFlash(t *testing.T) {
 		{"  └─Selection_10", "mpp[tiflash]", "nulleq(test.t.a, NULL)"},
 		{"    └─TableFullScan_9", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 	}
+	tk.MustQuery("explain select * from t where nulleq(a, NULL);").CheckAt([]int{0, 2, 4}, rows)
 	tk.MustQuery("explain select * from t where a <=> NULL;").CheckAt([]int{0, 2, 4}, rows)
 }
 
