@@ -309,10 +309,12 @@ type MockTiFlash struct {
 	StatusAddr                  string
 	StatusServer                *httptest.Server
 	SyncStatus                  map[int]mockTiFlashTableInfo
+	StoreInfo                   map[uint64]helper.StoreBaseStat
 	GlobalTiFlashPlacementRules map[string]placement.TiFlashRule
 	PdEnabled                   bool
 	TiflashDelay                time.Duration
 	StartTime                   time.Time
+	NotAvailable                bool
 }
 
 func (tiflash *MockTiFlash) setUpMockTiFlashHTTPServer() {
@@ -335,6 +337,10 @@ func (tiflash *MockTiFlash) setUpMockTiFlashHTTPServer() {
 			return
 		}
 		table, ok := tiflash.SyncStatus[tableID]
+		if tiflash.NotAvailable {
+			// No region is available, so the table is not available.
+			table.Regions = []int{}
+		}
 		if !ok {
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("0\n\n"))
@@ -360,10 +366,12 @@ func NewMockTiFlash() *MockTiFlash {
 		StatusAddr:                  "",
 		StatusServer:                nil,
 		SyncStatus:                  make(map[int]mockTiFlashTableInfo),
+		StoreInfo:                   make(map[uint64]helper.StoreBaseStat),
 		GlobalTiFlashPlacementRules: make(map[string]placement.TiFlashRule),
 		PdEnabled:                   true,
 		TiflashDelay:                0,
 		StartTime:                   time.Now(),
+		NotAvailable:                false,
 	}
 	tiflash.setUpMockTiFlashHTTPServer()
 	return tiflash
@@ -412,6 +420,25 @@ func (tiflash *MockTiFlash) HandleSetPlacementRule(rule placement.TiFlashRule) e
 		f()
 	}
 	return nil
+}
+
+// ResetSyncStatus is mock function for reset sync status.
+func (tiflash *MockTiFlash) ResetSyncStatus(tableID int, canAvailable bool) {
+	tiflash.Lock()
+	defer tiflash.Unlock()
+	if canAvailable {
+		if z, ok := tiflash.SyncStatus[tableID]; ok {
+			z.Regions = []int{1}
+			tiflash.SyncStatus[tableID] = z
+		} else {
+			tiflash.SyncStatus[tableID] = mockTiFlashTableInfo{
+				Regions: []int{1},
+				Accel:   false,
+			}
+		}
+	} else {
+		delete(tiflash.SyncStatus, tableID)
+	}
 }
 
 // HandleDeletePlacementRule is mock function for DeleteTiFlashPlacementRule.
@@ -464,31 +491,60 @@ func (tiflash *MockTiFlash) HandleGetPDRegionRecordStats(_ int64) helper.PDRegio
 	}
 }
 
+// AddStore is mock function for adding store info into MockTiFlash.
+func (tiflash *MockTiFlash) AddStore(storeID uint64, address string) {
+	tiflash.StoreInfo[storeID] = helper.StoreBaseStat{
+		ID:             int64(storeID),
+		Address:        address,
+		State:          0,
+		StateName:      "Up",
+		Version:        "4.0.0-alpha",
+		StatusAddress:  tiflash.StatusAddr,
+		GitHash:        "mock-tikv-githash",
+		StartTimestamp: tiflash.StartTime.Unix(),
+		Labels: []helper.StoreLabel{{
+			Key:   "engine",
+			Value: "tiflash",
+		}},
+	}
+}
+
 // HandleGetStoresStat is mock function for GetStoresStat.
 // It returns address of our mocked TiFlash server.
 func (tiflash *MockTiFlash) HandleGetStoresStat() *helper.StoresStat {
 	tiflash.Lock()
 	defer tiflash.Unlock()
-	return &helper.StoresStat{
-		Count: 1,
-		Stores: []helper.StoreStat{
-			{
-				Store: helper.StoreBaseStat{
-					ID:             1,
-					Address:        "127.0.0.1:3930",
-					State:          0,
-					StateName:      "Up",
-					Version:        "4.0.0-alpha",
-					StatusAddress:  tiflash.StatusAddr,
-					GitHash:        "mock-tikv-githash",
-					StartTimestamp: tiflash.StartTime.Unix(),
-					Labels: []helper.StoreLabel{{
-						Key:   "engine",
-						Value: "tiflash",
-					}},
+	if len(tiflash.StoreInfo) == 0 {
+		// default Store
+		return &helper.StoresStat{
+			Count: 1,
+			Stores: []helper.StoreStat{
+				{
+					Store: helper.StoreBaseStat{
+						ID:             1,
+						Address:        "127.0.0.1:3930",
+						State:          0,
+						StateName:      "Up",
+						Version:        "4.0.0-alpha",
+						StatusAddress:  tiflash.StatusAddr,
+						GitHash:        "mock-tikv-githash",
+						StartTimestamp: tiflash.StartTime.Unix(),
+						Labels: []helper.StoreLabel{{
+							Key:   "engine",
+							Value: "tiflash",
+						}},
+					},
 				},
 			},
-		},
+		}
+	}
+	stores := make([]helper.StoreStat, 0, len(tiflash.StoreInfo))
+	for _, storeInfo := range tiflash.StoreInfo {
+		stores = append(stores, helper.StoreStat{Store: storeInfo, Status: helper.StoreDetailStat{}})
+	}
+	return &helper.StoresStat{
+		Count:  len(tiflash.StoreInfo),
+		Stores: stores,
 	}
 }
 

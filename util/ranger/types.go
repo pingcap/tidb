@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
@@ -48,6 +49,14 @@ func (rs Ranges) Range() []*Range {
 // Rebuild rebuilds this range.
 func (Ranges) Rebuild() error {
 	return nil
+}
+
+// MemUsage gets the memory usage of ranges.
+func (rs Ranges) MemUsage() (sum int64) {
+	for _, ran := range rs {
+		sum += ran.MemUsage()
+	}
+	return
 }
 
 // Range represents a range generated in physical plan building phase.
@@ -214,6 +223,23 @@ func (ran *Range) PrefixEqualLen(sc *stmtctx.StatementContext) (int, error) {
 		}
 	}
 	return len(ran.LowVal), nil
+}
+
+// EmptyRangeSize is the size of empty range.
+const EmptyRangeSize = int64(unsafe.Sizeof(Range{}))
+
+// MemUsage gets the memory usage of range.
+func (ran *Range) MemUsage() (sum int64) {
+	// 16 is the size of Collator interface.
+	sum = EmptyRangeSize + int64(cap(ran.LowVal))*types.EmptyDatumSize + int64(cap(ran.HighVal))*types.EmptyDatumSize + int64(cap(ran.Collators))*16
+	for _, val := range ran.LowVal {
+		sum += val.MemUsage() - types.EmptyDatumSize
+	}
+	for _, val := range ran.HighVal {
+		sum += val.MemUsage() - types.EmptyDatumSize
+	}
+	// We ignore size of collator currently.
+	return sum
 }
 
 func formatDatum(d types.Datum, isLeftSide bool) string {

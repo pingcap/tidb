@@ -5,9 +5,9 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
+	ropts "github.com/pingcap/tidb/br/pkg/lightning/restore/opts"
 )
 
 type CheckItemID string
@@ -49,43 +49,6 @@ func WithPrecheckKey(ctx context.Context, key precheckContextKey, val any) conte
 	return context.WithValue(ctx, key, val)
 }
 
-type PrecheckItemBuilderConfig struct {
-	PreInfoGetterOptions []GetPreInfoOption
-	MDLoaderSetupOptions []mydump.MDLoaderSetupOption
-}
-
-type PrecheckItemBuilderOption interface {
-	Apply(c *PrecheckItemBuilderConfig)
-}
-
-type preInfoGetterOptsForBuilder struct {
-	opts []GetPreInfoOption
-}
-
-func (o *preInfoGetterOptsForBuilder) Apply(c *PrecheckItemBuilderConfig) {
-	c.PreInfoGetterOptions = append([]GetPreInfoOption{}, o.opts...)
-}
-
-func WithPreInfoGetterOptions(opts ...GetPreInfoOption) PrecheckItemBuilderOption {
-	return &preInfoGetterOptsForBuilder{
-		opts: opts,
-	}
-}
-
-type mdLoaderSetupOptsForBuilder struct {
-	opts []mydump.MDLoaderSetupOption
-}
-
-func (o *mdLoaderSetupOptsForBuilder) Apply(c *PrecheckItemBuilderConfig) {
-	c.MDLoaderSetupOptions = append([]mydump.MDLoaderSetupOption{}, o.opts...)
-}
-
-func WithMDLoaderSetupOptions(opts ...mydump.MDLoaderSetupOption) PrecheckItemBuilderOption {
-	return &mdLoaderSetupOptsForBuilder{
-		opts: opts,
-	}
-}
-
 type PrecheckItemBuilder struct {
 	cfg           *config.Config
 	dbMetas       []*mydump.MDDatabaseMeta
@@ -93,11 +56,11 @@ type PrecheckItemBuilder struct {
 	checkpointsDB checkpoints.DB
 }
 
-func NewPrecheckItemBuilderFromConfig(ctx context.Context, cfg *config.Config, opts ...PrecheckItemBuilderOption) (*PrecheckItemBuilder, error) {
+func NewPrecheckItemBuilderFromConfig(ctx context.Context, cfg *config.Config, opts ...ropts.PrecheckItemBuilderOption) (*PrecheckItemBuilder, error) {
 	var gerr error
-	builderCfg := new(PrecheckItemBuilderConfig)
+	builderCfg := new(ropts.PrecheckItemBuilderConfig)
 	for _, o := range opts {
-		o.Apply(builderCfg)
+		o(builderCfg)
 	}
 	targetDB, err := DBFromConfig(ctx, cfg.TiDB)
 	if err != nil {
@@ -109,11 +72,11 @@ func NewPrecheckItemBuilderFromConfig(ctx context.Context, cfg *config.Config, o
 	}
 	mdl, err := mydump.NewMyDumpLoader(ctx, cfg, builderCfg.MDLoaderSetupOptions...)
 	if err != nil {
-		if errors.ErrorEqual(err, common.ErrTooManySourceFiles) {
-			gerr = err
-		} else {
+		if mdl == nil {
 			return nil, errors.Trace(err)
 		}
+		// here means the partial result is returned, so we can continue on processing
+		gerr = err
 	}
 	dbMetas := mdl.GetDatabases()
 	srcStorage := mdl.GetStore()
@@ -179,4 +142,9 @@ func (b *PrecheckItemBuilder) BuildPrecheckItem(checkID CheckItemID) (PrecheckIt
 	default:
 		return nil, errors.Errorf("unsupported check item: %v", checkID)
 	}
+}
+
+// GetPreInfoGetter gets the pre restore info getter from the builder.
+func (b *PrecheckItemBuilder) GetPreInfoGetter() PreRestoreInfoGetter {
+	return b.preInfoGetter
 }

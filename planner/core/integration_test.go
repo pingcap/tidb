@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
+	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
 )
 
@@ -1452,6 +1453,8 @@ func TestPartitionTableStats(t *testing.T) {
 }
 
 func TestPartitionPruningForInExpr(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -1477,6 +1480,8 @@ func TestPartitionPruningForInExpr(t *testing.T) {
 }
 
 func TestPartitionPruningWithDateType(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -3227,6 +3232,40 @@ func TestReversePushDownToTiFlash(t *testing.T) {
 	tk.MustQuery("explain select reverse(a) from t;").CheckAt([]int{0, 2, 4}, rows)
 }
 
+func TestSpacePushDownToTiFlash(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("insert into t values(5)")
+	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
+	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Session())
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	require.True(t, exists)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	rows := [][]interface{}{
+		{"TableReader_9", "root", "data:ExchangeSender_8"},
+		{"└─ExchangeSender_8", "mpp[tiflash]", "ExchangeType: PassThrough"},
+		{"  └─Projection_4", "mpp[tiflash]", "space(test.t.a)->Column#3"},
+		{"    └─TableFullScan_7", "mpp[tiflash]", "keep order:false, stats:pseudo"},
+	}
+
+	tk.MustQuery("explain select space(a) from t;").CheckAt([]int{0, 2, 4}, rows)
+}
+
 func TestExplainAnalyzePointGet(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -3375,6 +3414,8 @@ func TestExplainAnalyzeDML2(t *testing.T) {
 }
 
 func TestPartitionExplain(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3549,6 +3590,8 @@ func TestPartitionUnionWithPPruningColumn(t *testing.T) {
 }
 
 func TestIssue20139(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -5026,6 +5069,8 @@ func TestIncrementalAnalyzeStatsVer2(t *testing.T) {
 }
 
 func TestConflictReadFromStorage(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -6519,6 +6564,9 @@ func TestIssue32632(t *testing.T) {
 }
 
 func TestTiFlashPartitionTableScan(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
+
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -7156,6 +7204,58 @@ func TestCastTimeAsDurationToTiFlash(t *testing.T) {
 	tk.MustQuery("explain select cast(a as time), cast(b as time) from t;").CheckAt([]int{0, 2, 4}, rows)
 }
 
+func TestPartitionTableFallBackStatic(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_partition_prune_mode='static'")
+	tk.MustExec("CREATE TABLE t (a int) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6),PARTITION p1 VALUES LESS THAN (11));")
+	tk.MustExec("insert into t values (1),(2),(3),(4),(7),(8),(9),(10)")
+	tk.MustExec("analyze table t")
+
+	// use static plan in static mode
+	rows := [][]interface{}{
+		{"PartitionUnion", "", ""},
+		{"├─TableReader", "", "data:TableFullScan"},
+		{"│ └─TableFullScan", "table:t, partition:p0", "keep order:false"},
+		{"└─TableReader", "", "data:TableFullScan"},
+		{"  └─TableFullScan", "table:t, partition:p1", "keep order:false"},
+	}
+	tk.MustQuery("explain format='brief' select * from t").CheckAt([]int{0, 3, 4}, rows)
+
+	tk.MustExec("CREATE TABLE t2 (a int) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6),PARTITION p1 VALUES LESS THAN (11));")
+	tk.MustExec("insert into t2 values (1),(2),(3),(4),(7),(8),(9),(10)")
+	tk.MustExec("analyze table t2")
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+
+	// use static plan in dynamic mode due to having not global stats
+	tk.MustQuery("explain format='brief' select * from t").CheckAt([]int{0, 3, 4}, rows)
+	tk.MustExec("analyze table t")
+
+	// use dynamic plan in dynamic mode with global stats
+	rows = [][]interface{}{
+		{"TableReader", "partition:all", "data:TableFullScan"},
+		{"└─TableFullScan", "table:t", "keep order:false"},
+	}
+	tk.MustQuery("explain format='brief' select * from t").CheckAt([]int{0, 3, 4}, rows)
+
+	rows = [][]interface{}{
+		{"Union", "", ""},
+		{"├─PartitionUnion", "", ""},
+		{"│ ├─TableReader", "", "data:TableFullScan"},
+		{"│ │ └─TableFullScan", "table:t, partition:p0", "keep order:false"},
+		{"│ └─TableReader", "", "data:TableFullScan"},
+		{"│   └─TableFullScan", "table:t, partition:p1", "keep order:false"},
+		{"└─PartitionUnion", "", ""},
+		{"  ├─TableReader", "", "data:TableFullScan"},
+		{"  │ └─TableFullScan", "table:t2, partition:p0", "keep order:false"},
+		{"  └─TableReader", "", "data:TableFullScan"},
+		{"    └─TableFullScan", "table:t2, partition:p1", "keep order:false"},
+	}
+	// use static plan in dynamic mode due to t2 has no global stats
+	tk.MustQuery("explain format='brief' select  * from t union all select * from t2;").CheckAt([]int{0, 3, 4}, rows)
+}
+
 func TestEnableTiFlashReadForWriteStmt(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -7205,4 +7305,256 @@ func TestEnableTiFlashReadForWriteStmt(t *testing.T) {
 	// CTE
 	rs = tk.MustQuery("explain update t set a=a+1 where b in (select a from t2 where t.a > t2.a)").Rows()
 	checkMpp(rs)
+}
+
+func TestTableRangeFallback(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (a int primary key, b int)")
+	tk.MustExec("create table t2 (c int)")
+	tk.MustQuery("explain format='brief' select * from t1 where a in (10, 20, 30, 40, 50) and b > 1").Check(testkit.Rows(
+		"Selection 1.67 root  gt(test.t1.b, 1)",
+		"└─Batch_Point_Get 5.00 root table:t1 handle:[10 20 30 40 50], keep order:false, desc:false"))
+	tk.MustQuery("explain format='brief' select * from t1 join t2 on t1.b = t2.c where t1.a in (10, 20, 30, 40, 50)").Check(testkit.Rows(
+		"HashJoin 6.24 root  inner join, equal:[eq(test.t1.b, test.t2.c)]",
+		"├─Selection(Build) 5.00 root  not(isnull(test.t1.b))",
+		"│ └─Batch_Point_Get 5.00 root table:t1 handle:[10 20 30 40 50], keep order:false, desc:false",
+		"└─TableReader(Probe) 9990.00 root  data:Selection",
+		"  └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.c))",
+		"    └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"))
+	tk.MustExec("set @@tidb_opt_range_max_size=10")
+	tk.MustQuery("explain format='brief' select * from t1 where a in (10, 20, 30, 40, 50) and b > 1").Check(testkit.Rows(
+		"TableReader 8000.00 root  data:Selection",
+		"└─Selection 8000.00 cop[tikv]  gt(test.t1.b, 1), in(test.t1.a, 10, 20, 30, 40, 50)",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Memory capacity of 10 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen"))
+	tk.MustQuery("explain format='brief' select * from t1 join t2 on t1.b = t2.c where t1.a in (10, 20, 30, 40, 50)").Check(testkit.Rows(
+		"HashJoin 10000.00 root  inner join, equal:[eq(test.t1.b, test.t2.c)]",
+		"├─TableReader(Build) 8000.00 root  data:Selection",
+		"│ └─Selection 8000.00 cop[tikv]  not(isnull(test.t2.c))",
+		"│   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+		"└─TableReader(Probe) 8000.00 root  data:Selection",
+		"  └─Selection 8000.00 cop[tikv]  in(test.t1.a, 10, 20, 30, 40, 50), not(isnull(test.t1.b))",
+		"    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Memory capacity of 10 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen"))
+}
+
+func TestIndexRangeFallback(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (a varchar(10), b varchar(10), c varchar(10), index idx_a_b(a(2), b(2)))")
+	tk.MustExec("create table t2 (d varchar(10))")
+	tk.MustExec("create table t3 (pk int primary key, a int, key(a))")
+	tk.MustExec("create table t4 (a int, b int, c int, index idx_a_b(a, b))")
+
+	// Simple index range fallback case.
+	tk.MustExec("set @@tidb_opt_range_max_size=0")
+	tk.MustQuery("explain format='brief' select * from t1 where a in ('aaa', 'bbb', 'ccc') and b in ('ddd', 'eee', 'fff')").Check(testkit.Rows(
+		"IndexLookUp 0.90 root  ",
+		"├─IndexRangeScan(Build) 0.90 cop[tikv] table:t1, index:idx_a_b(a, b) range:[\"aa\" \"dd\",\"aa\" \"dd\"], [\"aa\" \"ee\",\"aa\" \"ee\"], [\"aa\" \"ff\",\"aa\" \"ff\"], [\"bb\" \"dd\",\"bb\" \"dd\"], [\"bb\" \"ee\",\"bb\" \"ee\"], [\"bb\" \"ff\",\"bb\" \"ff\"], [\"cc\" \"dd\",\"cc\" \"dd\"], [\"cc\" \"ee\",\"cc\" \"ee\"], [\"cc\" \"ff\",\"cc\" \"ff\"], keep order:false, stats:pseudo",
+		"└─Selection(Probe) 0.90 cop[tikv]  in(test.t1.a, \"aaa\", \"bbb\", \"ccc\"), in(test.t1.b, \"ddd\", \"eee\", \"fff\")",
+		"  └─TableRowIDScan 0.90 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+	tk.MustExec("set @@tidb_opt_range_max_size=1000")
+	tk.MustQuery("explain format='brief' select * from t1 where a in ('aaa', 'bbb', 'ccc') and b in ('ddd', 'eee', 'fff')").Check(testkit.Rows(
+		"IndexLookUp 0.09 root  ",
+		"├─IndexRangeScan(Build) 30.00 cop[tikv] table:t1, index:idx_a_b(a, b) range:[\"aa\",\"aa\"], [\"bb\",\"bb\"], [\"cc\",\"cc\"], keep order:false, stats:pseudo",
+		"└─Selection(Probe) 0.09 cop[tikv]  in(test.t1.a, \"aaa\", \"bbb\", \"ccc\"), in(test.t1.b, \"ddd\", \"eee\", \"fff\")",
+		"  └─TableRowIDScan 30.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Memory capacity of 1000 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen"))
+
+	// Index range fallback under join.
+	tk.MustExec("set @@tidb_opt_range_max_size=0")
+	tk.MustQuery("explain format='brief' select * from t1 join t2 on t1.c = t2.d where a in ('aaa', 'bbb', 'ccc') and b in ('ddd', 'eee', 'fff')").Check(testkit.Rows(
+		"HashJoin 1.12 root  inner join, equal:[eq(test.t1.c, test.t2.d)]",
+		"├─IndexLookUp(Build) 0.90 root  ",
+		"│ ├─IndexRangeScan(Build) 0.90 cop[tikv] table:t1, index:idx_a_b(a, b) range:[\"aa\" \"dd\",\"aa\" \"dd\"], [\"aa\" \"ee\",\"aa\" \"ee\"], [\"aa\" \"ff\",\"aa\" \"ff\"], [\"bb\" \"dd\",\"bb\" \"dd\"], [\"bb\" \"ee\",\"bb\" \"ee\"], [\"bb\" \"ff\",\"bb\" \"ff\"], [\"cc\" \"dd\",\"cc\" \"dd\"], [\"cc\" \"ee\",\"cc\" \"ee\"], [\"cc\" \"ff\",\"cc\" \"ff\"], keep order:false, stats:pseudo",
+		"│ └─Selection(Probe) 0.90 cop[tikv]  in(test.t1.a, \"aaa\", \"bbb\", \"ccc\"), in(test.t1.b, \"ddd\", \"eee\", \"fff\"), not(isnull(test.t1.c))",
+		"│   └─TableRowIDScan 0.90 cop[tikv] table:t1 keep order:false, stats:pseudo",
+		"└─TableReader(Probe) 9990.00 root  data:Selection",
+		"  └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.d))",
+		"    └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"))
+	tk.MustExec("set @@tidb_opt_range_max_size=1000")
+	tk.MustQuery("explain format='brief' select * from t1 join t2 on t1.c = t2.d where a in ('aaa', 'bbb', 'ccc') and b in ('ddd', 'eee', 'fff')").Check(testkit.Rows(
+		"HashJoin 0.11 root  inner join, equal:[eq(test.t1.c, test.t2.d)]",
+		"├─IndexLookUp(Build) 0.09 root  ",
+		"│ ├─IndexRangeScan(Build) 30.00 cop[tikv] table:t1, index:idx_a_b(a, b) range:[\"aa\",\"aa\"], [\"bb\",\"bb\"], [\"cc\",\"cc\"], keep order:false, stats:pseudo",
+		"│ └─Selection(Probe) 0.09 cop[tikv]  in(test.t1.a, \"aaa\", \"bbb\", \"ccc\"), in(test.t1.b, \"ddd\", \"eee\", \"fff\"), not(isnull(test.t1.c))",
+		"│   └─TableRowIDScan 30.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+		"└─TableReader(Probe) 9990.00 root  data:Selection",
+		"  └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.d))",
+		"    └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Memory capacity of 1000 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen"))
+
+	// Index range fallback in index column + pk column schema.
+	tk.MustExec("set @@tidb_opt_range_max_size=0")
+	tk.MustQuery("explain format='brief' select /*+ use_index(t3, a) */ * from t3 where a in (1, 3, 5) and pk in (2, 4, 6)").Check(testkit.Rows(
+		"IndexReader 0.90 root  index:IndexRangeScan",
+		"└─IndexRangeScan 0.90 cop[tikv] table:t3, index:a(a) range:[1 2,1 2], [1 4,1 4], [1 6,1 6], [3 2,3 2], [3 4,3 4], [3 6,3 6], [5 2,5 2], [5 4,5 4], [5 6,5 6], keep order:false, stats:pseudo"))
+	tk.MustExec("set @@tidb_opt_range_max_size=1000")
+	tk.MustQuery("explain format='brief' select /*+ use_index(t3, a) */ * from t3 where a in (1, 3, 5) and pk in (2, 4, 6)").Check(testkit.Rows(
+		"IndexReader 0.01 root  index:Selection",
+		"└─Selection 0.01 cop[tikv]  in(test.t3.pk, 2, 4, 6)",
+		"  └─IndexRangeScan 30.00 cop[tikv] table:t3, index:a(a) range:[1,1], [3,3], [5,5], keep order:false, stats:pseudo"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Memory capacity of 1000 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen"))
+
+	// Index range fallback for idx_col1 in (?, ?, ?) and idx_col2 = ? conditions. Prevent SplitCorColAccessCondFromFilters
+	// adding idx_col2 = ? back to access conditions.
+	tk.MustExec("set @@tidb_opt_range_max_size=0")
+	tk.MustQuery("explain format='brief' select /*+ use_index(t4, idx_a_b) */ * from t4 where a in (1, 3, 5) and b = 2").Check(testkit.Rows(
+		"IndexLookUp 0.30 root  ",
+		"├─IndexRangeScan(Build) 0.30 cop[tikv] table:t4, index:idx_a_b(a, b) range:[1 2,1 2], [3 2,3 2], [5 2,5 2], keep order:false, stats:pseudo",
+		"└─TableRowIDScan(Probe) 0.30 cop[tikv] table:t4 keep order:false, stats:pseudo"))
+	tk.MustExec("set @@tidb_opt_range_max_size=1000")
+	tk.MustQuery("explain format='brief' select /*+ use_index(t4, idx_a_b) */ * from t4 where a in (1, 3, 5) and b = 2").Check(testkit.Rows(
+		"IndexLookUp 0.03 root  ",
+		"├─Selection(Build) 0.03 cop[tikv]  eq(test.t4.b, 2)",
+		"│ └─IndexRangeScan 30.00 cop[tikv] table:t4, index:idx_a_b(a, b) range:[1,1], [3,3], [5,5], keep order:false, stats:pseudo",
+		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t4 keep order:false, stats:pseudo"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Memory capacity of 1000 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen"))
+}
+
+func TestPlanCacheForTableRangeFallback(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("set @@tidb_enable_prepared_plan_cache=1")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int primary key, b int)")
+	tk.MustExec("set @@tidb_opt_range_max_size=10")
+	tk.MustExec("prepare stmt from 'select * from t where a in (?, ?, ?, ?, ?) and b > 1'")
+	tk.MustExec("set @a=10, @b=20, @c=30, @d=40, @e=50")
+	tk.MustExec("execute stmt using @a, @b, @c, @d, @e")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Memory capacity of 10 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen"))
+	tk.MustExec("execute stmt using @a, @b, @c, @d, @e")
+	// The plan with range fallback is not cached.
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
+
+func TestPlanCacheForIndexRangeFallback(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`set @@tidb_enable_prepared_plan_cache=1`)
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0") // In this way `explain for connection id` doesn't display execution info.
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a varchar(10), b varchar(10), c varchar(10), index idx_a_b(a, b))")
+	tk.MustExec("set @@tidb_opt_range_max_size=1330") // 1330 is the memory usage of ["aa","aa"], ["bb","bb"], ["cc","cc"], ["dd","dd"], ["ee","ee"].
+	rows := tk.MustQuery("explain format='brief' select * from t where a in ('aa', 'bb', 'cc', 'dd', 'ee')").Rows()
+	require.True(t, strings.Contains(rows[1][0].(string), "IndexRangeScan"))
+	require.True(t, strings.Contains(rows[1][4].(string), "range:[\"aa\",\"aa\"], [\"bb\",\"bb\"], [\"cc\",\"cc\"], [\"dd\",\"dd\"], [\"ee\",\"ee\"]"))
+	rows = tk.MustQuery("explain format='brief' select * from t where a in ('aaaaaaaaaa', 'bbbbbbbbbb', 'cccccccccc', 'dddddddddd', 'eeeeeeeeee')").Rows()
+	// 1330 is not enough for ["aaaaaaaaaa","aaaaaaaaaa"], ["bbbbbbbbbb","bbbbbbbbbb"], ["cccccccccc","cccccccccc"], ["dddddddddd","dddddddddd"], ["eeeeeeeeee","eeeeeeeeee"].
+	// So it falls back to table full scan.
+	require.True(t, strings.Contains(rows[2][0].(string), "TableFullScan"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Memory capacity of 1330 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen"))
+
+	// Test rebuilding ranges for the cached plan doesn't have memory limit.
+	tk.MustExec("prepare stmt1 from 'select * from t where a in (?, ?, ?, ?, ?)'")
+	tk.MustExec("set @a='aa', @b='bb', @c='cc', @d='dd', @e='ee'")
+	tk.MustExec("execute stmt1 using @a, @b, @c, @d, @e")
+	tk.MustQuery("show warnings").Check(testkit.Rows()) // Range fallback doesn't happen and the plan can be put into cache.
+	tk.MustExec("set @a='aaaaaaaaaa', @b='bbbbbbbbbb', @c='cccccccccc', @d='dddddddddd', @e='eeeeeeeeee'")
+	tk.MustExec("execute stmt1 using @a, @b, @c, @d, @e")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustExec("execute stmt1 using @a, @b, @c, @d, @e")
+	tkProcess := tk.Session().ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	rows = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
+	// We don't limit range mem usage when rebuilding ranges for the cached plan.
+	// So ["aaaaaaaaaa","aaaaaaaaaa"], ["bbbbbbbbbb","bbbbbbbbbb"], ["cccccccccc","cccccccccc"], ["dddddddddd","dddddddddd"], ["eeeeeeeeee","eeeeeeeeee"] can still be built even if its mem usage exceeds 1330.
+	require.True(t, strings.Contains(rows[2][0].(string), "IndexRangeScan"))
+	require.True(t, strings.Contains(rows[2][4].(string), "range:[\"aaaaaaaaaa\",\"aaaaaaaaaa\"], [\"bbbbbbbbbb\",\"bbbbbbbbbb\"], [\"cccccccccc\",\"cccccccccc\"], [\"dddddddddd\",\"dddddddddd\"], [\"eeeeeeeeee\",\"eeeeeeeeee\"]"))
+
+	// Test the plan with range fallback would not be put into cache.
+	tk.MustExec("prepare stmt2 from 'select * from t where a in (?, ?, ?, ?, ?) and b in (?, ?, ?, ?, ?)'")
+	tk.MustExec("set @a='aa', @b='bb', @c='cc', @d='dd', @e='ee', @f='ff', @g='gg', @h='hh', @i='ii', @j='jj'")
+	tk.MustExec("execute stmt2 using @a, @b, @c, @d, @e, @f, @g, @h, @i, @j")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Memory capacity of 1330 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen"))
+	tk.MustExec("execute stmt2 using @a, @b, @c, @d, @e, @f, @g, @h, @i, @j")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
+
+func TestCorColRangeWithRangeMaxSize(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2, t3")
+	tk.MustExec("create table t1(a int)")
+	tk.MustExec("create table t2 (a int, b int, c int, index idx_a_b(a, b))")
+	tk.MustExec("create table t3(a int primary key)")
+	tk.MustExec("insert into t1 values (2), (4), (6)")
+	tk.MustExec("insert into t2 (a, b) values (1, 2), (3, 2), (5, 2)")
+	tk.MustExec("insert into t3 values (2), (4)")
+	tk.MustExec("insert into mysql.opt_rule_blacklist value(\"decorrelate\")")
+	tk.MustExec("admin reload opt_rule_blacklist")
+
+	// Correlated column in index range.
+	tk.MustExec("set @@tidb_opt_range_max_size=1000")
+	rows := tk.MustQuery("explain format='brief' select * from t1 where exists (select * from t2 where t2.a in (1, 3, 5) and b >= 2 and t2.b = t1.a)").Rows()
+	// 1000 is not enough for [1 2,1 +inf], [3 2,3 +inf], [5 2,5 +inf]. So b >= 2 is not used to build ranges.
+	require.True(t, strings.Contains(rows[4][0].(string), "Selection"))
+	require.True(t, strings.Contains(rows[4][4].(string), "ge(test.t2.b, 2)"))
+	// 1000 is not enough for [1 ?,1 ?], [3 ?,3 ?], [5 ?,5 ?] but we don't restrict range mem usage when appending col = cor_col
+	// conditions to access conditions in SplitCorColAccessCondFromFilters.
+	require.True(t, strings.Contains(rows[5][0].(string), "IndexRangeScan"))
+	require.True(t, strings.Contains(rows[5][4].(string), "range: decided by [in(test.t2.a, 1, 3, 5) eq(test.t2.b, test.t1.a)]"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Memory capacity of 1000 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen"))
+	// We need to rebuild index ranges each time the value of correlated column test.t1.a changes. We don't restrict range
+	// mem usage when rebuilding index ranges, otherwise range fallback would happen when rebuilding index ranges, causing
+	// to wrong query results.
+	tk.MustQuery("select * from t1 where exists (select * from t2 where t2.a in (1, 3, 5) and b >= 2 and t2.b = t1.a)").Check(testkit.Rows("2"))
+
+	// Correlated column in table range.
+	tk.MustExec("set @@tidb_opt_range_max_size=1")
+	rows = tk.MustQuery("explain format='brief' select * from t1 where exists (select * from t3 where t3.a = t1.a)").Rows()
+	// 1 is not enough for [?,?] but we don't restrict range mem usage when adding col = cor_col to access conditions.
+	require.True(t, strings.Contains(rows[4][0].(string), "TableRangeScan"))
+	require.True(t, strings.Contains(rows[4][4].(string), "range: decided by [eq(test.t3.a, test.t1.a)]"))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	// We need to rebuild table ranges each time the value of correlated column test.t1.a changes. We don't restrict range
+	// mem usage when rebuilding table ranges, otherwise range fallback would happen when rebuilding table ranges, causing
+	// to wrong query results.
+	tk.MustQuery("select * from t1 where exists (select * from t3 where t3.a = t1.a)").Check(testkit.Rows("2", "4"))
+}
+
+func TestIssue37760(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key)")
+	tk.MustExec("insert into t values (2), (4), (6)")
+	tk.MustExec("set @@tidb_opt_range_max_size=1")
+	tk.MustQuery("select * from t where a").Check(testkit.Rows("2", "4", "6"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Memory capacity of 1 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen"))
+}
+
+// TestExplainAnalyzeDMLCommit covers the issue #37373.
+func TestExplainAnalyzeDMLCommit(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c1 int key, c2 int);")
+	tk.MustExec("insert into t values (1, 1)")
+
+	err := failpoint.Enable("github.com/pingcap/tidb/session/mockSleepBeforeTxnCommit", "return(500)")
+	require.NoError(t, err)
+	defer func() {
+		_ = failpoint.Disable("github.com/pingcap/tidb/session/mockSleepBeforeTxnCommit")
+	}()
+	// The commit is paused by the failpoint, after the fix the explain statement
+	// execution should proceed after the commit finishes.
+	_, err = tk.Exec("explain analyze delete from t;")
+	require.NoError(t, err)
+	tk.MustQuery("select * from t").Check(testkit.Rows())
 }

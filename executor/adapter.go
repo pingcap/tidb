@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"runtime/trace"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -193,18 +194,36 @@ type TelemetryInfo struct {
 	UseNonRecursive      bool
 	UseRecursive         bool
 	UseMultiSchemaChange bool
+	UesExchangePartition bool
 	PartitionTelemetry   *PartitionTelemetryInfo
+	AccountLockTelemetry *AccountLockTelemetryInfo
 }
 
 // PartitionTelemetryInfo records table partition telemetry information during execution.
 type PartitionTelemetryInfo struct {
-	UseTablePartition              bool
-	UseTablePartitionList          bool
-	UseTablePartitionRange         bool
-	UseTablePartitionHash          bool
-	UseTablePartitionRangeColumns  bool
-	UseTablePartitionListColumns   bool
-	TablePartitionMaxPartitionsNum uint64
+	UseTablePartition                bool
+	UseTablePartitionList            bool
+	UseTablePartitionRange           bool
+	UseTablePartitionHash            bool
+	UseTablePartitionRangeColumns    bool
+	UseTablePartitionRangeColumnsGt1 bool
+	UseTablePartitionRangeColumnsGt2 bool
+	UseTablePartitionRangeColumnsGt3 bool
+	UseTablePartitionListColumns     bool
+	TablePartitionMaxPartitionsNum   uint64
+	UseCreateIntervalPartition       bool
+	UseAddIntervalPartition          bool
+	UseDropIntervalPartition         bool
+}
+
+// AccountLockTelemetryInfo records account lock/unlock information during execution
+type AccountLockTelemetryInfo struct {
+	// The number of CREATE/ALTER USER statements that lock the user
+	LockUser int64
+	// The number of CREATE/ALTER USER statements that unlock the user
+	UnlockUser int64
+	// The number of CREATE/ALTER USER statements
+	CreateOrAlterUser int64
 }
 
 // ExecStmt implements the sqlexec.Statement interface, it builds a planner.Plan to an sqlexec.Statement.
@@ -437,10 +456,16 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	sctx := a.Ctx
 	ctx = util.SetSessionID(ctx, sctx.GetSessionVars().ConnectionID)
 	if _, ok := a.Plan.(*plannercore.Analyze); ok && sctx.GetSessionVars().InRestrictedSQL {
-		oriStats, _ := sctx.GetSessionVars().GetSystemVar(variable.TiDBBuildStatsConcurrency)
+		oriStats, ok := sctx.GetSessionVars().GetSystemVar(variable.TiDBBuildStatsConcurrency)
+		if !ok {
+			oriStats = strconv.Itoa(variable.DefBuildStatsConcurrency)
+		}
 		oriScan := sctx.GetSessionVars().DistSQLScanConcurrency()
 		oriIndex := sctx.GetSessionVars().IndexSerialScanConcurrency()
-		oriIso, _ := sctx.GetSessionVars().GetSystemVar(variable.TxnIsolation)
+		oriIso, ok := sctx.GetSessionVars().GetSystemVar(variable.TxnIsolation)
+		if !ok {
+			oriIso = "REPEATABLE-READ"
+		}
 		terror.Log(sctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, "1"))
 		sctx.GetSessionVars().SetDistSQLScanConcurrency(1)
 		sctx.GetSessionVars().SetIndexSerialScanConcurrency(1)
@@ -511,6 +536,10 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	}
 
 	if handled, result, err := a.handleNoDelay(ctx, e, isPessimistic); handled || err != nil {
+		if err != nil {
+			return result, err
+		}
+		err = a.handleForeignKeyTrigger(ctx, e)
 		return result, err
 	}
 
@@ -528,6 +557,21 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		stmt:       a,
 		txnStartTS: txnStartTS,
 	}, nil
+}
+
+func (a *ExecStmt) handleForeignKeyTrigger(ctx context.Context, e Executor) error {
+	exec, ok := e.(WithForeignKeyTrigger)
+	if !ok {
+		return nil
+	}
+	fkChecks := exec.GetFKChecks()
+	for _, fkCheck := range fkChecks {
+		err := fkCheck.doCheck(ctx)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic bool) (handled bool, rs sqlexec.RecordSet, err error) {
@@ -552,6 +596,7 @@ func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic 
 		if analyze := explain.getAnalyzeExecToExecutedNoDelay(); analyze != nil {
 			toCheck = analyze
 			isExplainAnalyze = true
+			a.Ctx.GetSessionVars().StmtCtx.IsExplainAnalyzeDML = isExplainAnalyze
 		}
 	}
 
@@ -731,7 +776,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) (err er
 	}
 	txnCtx := sctx.GetSessionVars().TxnCtx
 	defer func() {
-		if err != nil && !sctx.GetSessionVars().ConstraintCheckInPlacePessimistic {
+		if err != nil && !sctx.GetSessionVars().ConstraintCheckInPlacePessimistic && sctx.GetSessionVars().InTxn() {
 			// If it's not a retryable error, rollback current transaction instead of rolling back current statement like
 			// in normal transactions, because we cannot locate and rollback the statement that leads to the lock error.
 			// This is too strict, but since the feature is not for everyone, it's the easiest way to guarantee safety.
@@ -925,9 +970,14 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 	return e, nil
 }
 
-func (a *ExecStmt) openExecutor(ctx context.Context, e Executor) error {
+func (a *ExecStmt) openExecutor(ctx context.Context, e Executor) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = errors.New(fmt.Sprint(r))
+		}
+	}()
 	start := time.Now()
-	err := e.Open(ctx)
+	err = e.Open(ctx)
 	a.phaseOpenDurations[0] += time.Since(start)
 	return err
 }

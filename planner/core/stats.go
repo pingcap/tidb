@@ -28,9 +28,11 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
@@ -509,7 +511,8 @@ func (ts *LogicalTableScan) DeriveStats(_ []*property.StatsInfo, _ *expression.S
 	// ts.Handle could be nil if PK is Handle, and PK column has been pruned.
 	// TODO: support clustered index.
 	if ts.HandleCols != nil {
-		ts.Ranges, err = ranger.BuildTableRange(ts.AccessConds, ts.ctx, ts.HandleCols.GetCol(0).RetType)
+		// TODO: restrict mem usage of table ranges.
+		ts.Ranges, _, _, err = ranger.BuildTableRange(ts.AccessConds, ts.ctx, ts.HandleCols.GetCol(0).RetType, 0)
 	} else {
 		isUnsigned := false
 		if ts.Source.tableInfo.PKIsHandle {
@@ -830,25 +833,25 @@ func getGroupNDV4Cols(cols []*expression.Column, stats *property.StatsInfo) *pro
 	return nil
 }
 
-// getColsNDV returns the NDV of a couple of columns.
+// getColsNDVWithMatchedLen returns the NDV of a couple of columns.
 // If the columns match any GroupNDV maintained by child operator, we can get an accurate NDV.
 // Otherwise, we simply return the max NDV among the columns, which is a lower bound.
-func getColsNDV(cols []*expression.Column, schema *expression.Schema, profile *property.StatsInfo) float64 {
+func getColsNDVWithMatchedLen(cols []*expression.Column, schema *expression.Schema, profile *property.StatsInfo) (float64, int) {
 	NDV := 1.0
 	if groupNDV := getGroupNDV4Cols(cols, profile); groupNDV != nil {
-		return math.Max(groupNDV.NDV, NDV)
+		return math.Max(groupNDV.NDV, NDV), len(groupNDV.Cols)
 	}
 	indices := schema.ColumnsIndices(cols)
 	if indices == nil {
 		logutil.BgLogger().Error("column not found in schema", zap.Any("columns", cols), zap.String("schema", schema.String()))
-		return NDV
+		return NDV, 1
 	}
 	for _, idx := range indices {
 		// It is a very naive estimation.
 		col := schema.Columns[idx]
 		NDV = math.Max(NDV, profile.ColNDVs[col.UniqueID])
 	}
-	return NDV
+	return NDV, 1
 }
 
 func (p *LogicalProjection) getGroupNDVs(colGroups [][]*expression.Column, childProfile *property.StatsInfo, selfSchema *expression.Schema) []property.GroupNDV {
@@ -901,7 +904,7 @@ func (p *LogicalProjection) DeriveStats(childStats []*property.StatsInfo, selfSc
 	}
 	for i, expr := range p.Exprs {
 		cols := expression.ExtractColumns(expr)
-		p.stats.ColNDVs[selfSchema.Columns[i].UniqueID] = getColsNDV(cols, childSchema[0], childProfile)
+		p.stats.ColNDVs[selfSchema.Columns[i].UniqueID], _ = getColsNDVWithMatchedLen(cols, childSchema[0], childProfile)
 	}
 	p.stats.GroupNDVs = p.getGroupNDVs(colGroups, childProfile, selfSchema)
 	return p.stats, nil
@@ -964,7 +967,7 @@ func (la *LogicalAggregation) DeriveStats(childStats []*property.StatsInfo, self
 		la.stats.GroupNDVs = la.getGroupNDVs(colGroups, childProfile, gbyCols)
 		return la.stats, nil
 	}
-	NDV := getColsNDV(gbyCols, childSchema[0], childProfile)
+	NDV, _ := getColsNDVWithMatchedLen(gbyCols, childSchema[0], childProfile)
 	la.stats = &property.StatsInfo{
 		RowCount: NDV,
 		ColNDVs:  make(map[int64]float64, selfSchema.Len()),
@@ -1025,6 +1028,7 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 	leftProfile, rightProfile := childStats[0], childStats[1]
 	leftJoinKeys, rightJoinKeys, _, _ := p.GetJoinKeys()
 	helper := &fullJoinRowCountHelper{
+		sctx:          p.SCtx(),
 		cartesian:     0 == len(p.EqualConditions),
 		leftProfile:   leftProfile,
 		rightProfile:  rightProfile,
@@ -1104,6 +1108,7 @@ func (p *LogicalJoin) ExtractColGroups(colGroups [][]*expression.Column) [][]*ex
 }
 
 type fullJoinRowCountHelper struct {
+	sctx          sessionctx.Context
 	cartesian     bool
 	leftProfile   *property.StatsInfo
 	rightProfile  *property.StatsInfo
@@ -1111,16 +1116,31 @@ type fullJoinRowCountHelper struct {
 	rightJoinKeys []*expression.Column
 	leftSchema    *expression.Schema
 	rightSchema   *expression.Schema
+
+	leftNAJoinKeys  []*expression.Column
+	rightNAJoinKeys []*expression.Column
 }
 
 func (h *fullJoinRowCountHelper) estimate() float64 {
 	if h.cartesian {
 		return h.leftProfile.RowCount * h.rightProfile.RowCount
 	}
-	leftKeyNDV := getColsNDV(h.leftJoinKeys, h.leftSchema, h.leftProfile)
-	rightKeyNDV := getColsNDV(h.rightJoinKeys, h.rightSchema, h.rightProfile)
+	var leftKeyNDV, rightKeyNDV float64
+	var leftColCnt, rightColCnt int
+	if len(h.leftJoinKeys) > 0 || len(h.rightJoinKeys) > 0 {
+		leftKeyNDV, leftColCnt = getColsNDVWithMatchedLen(h.leftJoinKeys, h.leftSchema, h.leftProfile)
+		rightKeyNDV, rightColCnt = getColsNDVWithMatchedLen(h.rightJoinKeys, h.rightSchema, h.rightProfile)
+	} else {
+		leftKeyNDV, leftColCnt = getColsNDVWithMatchedLen(h.leftNAJoinKeys, h.leftSchema, h.leftProfile)
+		rightKeyNDV, rightColCnt = getColsNDVWithMatchedLen(h.rightNAJoinKeys, h.rightSchema, h.rightProfile)
+	}
 	count := h.leftProfile.RowCount * h.rightProfile.RowCount / math.Max(leftKeyNDV, rightKeyNDV)
-	return count
+	if h.sctx.GetSessionVars().TiDBOptJoinReorderThreshold <= 0 {
+		return count
+	}
+	// If we enable the DP choice, we multiple the 0.9 for each remained join key supposing that 0.9 is the correlation factor between them.
+	// This estimation logic is referred to Presto.
+	return count * math.Pow(0.9, float64(len(h.leftJoinKeys)-mathutil.Max(leftColCnt, rightColCnt)))
 }
 
 func (la *LogicalApply) getGroupNDVs(colGroups [][]*expression.Column, childStats []*property.StatsInfo) []property.GroupNDV {
@@ -1288,7 +1308,7 @@ func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression
 			p.stats.ColNDVs[col.UniqueID] += recurStat.ColNDVs[p.cte.recursivePartLogicalPlan.Schema().Columns[i].UniqueID]
 		}
 		if p.cte.IsDistinct {
-			p.stats.RowCount = getColsNDV(p.schema.Columns, p.schema, p.stats)
+			p.stats.RowCount, _ = getColsNDVWithMatchedLen(p.schema.Columns, p.schema, p.stats)
 		} else {
 			p.stats.RowCount += recurStat.RowCount
 		}

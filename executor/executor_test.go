@@ -60,7 +60,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
-	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
@@ -83,10 +82,10 @@ func checkFileName(s string) bool {
 		"schema/test.t_dump_single.schema.txt",
 		"table_tiflash_replica.txt",
 		"variables.toml",
-		"sqls.sql",
 		"session_bindings.sql",
 		"global_bindings.sql",
-		"explain.txt",
+		"sql/sql0.sql",
+		"explain/sql0.txt",
 	}
 	for _, f := range files {
 		if strings.Compare(f, s) == 0 {
@@ -153,17 +152,18 @@ func TestPlanReplayer(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, index idx_a(a))")
 	tk.MustExec("alter table t set tiflash replica 1")
-	tk.MustExec("plan replayer dump explain select * from t where a=10")
-	tk.MustExec("plan replayer dump explain select /*+ read_from_storage(tiflash[t]) */ * from t")
+	tk.MustQuery("plan replayer dump explain select * from t where a=10")
+	tk.MustQuery("plan replayer dump explain select /*+ read_from_storage(tiflash[t]) */ * from t")
 
 	tk.MustExec("create table t1 (a int)")
 	tk.MustExec("create table t2 (a int)")
 	tk.MustExec("create definer=`root`@`127.0.0.1` view v1 as select * from t1")
 	tk.MustExec("create definer=`root`@`127.0.0.1` view v2 as select * from v1")
-	tk.MustExec("plan replayer dump explain with tmp as (select a from t1 group by t1.a) select * from tmp, t2 where t2.a=tmp.a;")
-	tk.MustExec("plan replayer dump explain select * from t1 where t1.a > (with cte1 as (select 1) select count(1) from cte1);")
-	tk.MustExec("plan replayer dump explain select * from v1")
-	tk.MustExec("plan replayer dump explain select * from v2")
+	tk.MustQuery("plan replayer dump explain with tmp as (select a from t1 group by t1.a) select * from tmp, t2 where t2.a=tmp.a;")
+	tk.MustQuery("plan replayer dump explain select * from t1 where t1.a > (with cte1 as (select 1) select count(1) from cte1);")
+	tk.MustQuery("plan replayer dump explain select * from v1")
+	tk.MustQuery("plan replayer dump explain select * from v2")
+	require.True(t, len(tk.Session().GetSessionVars().LastPlanReplayerToken) > 0)
 }
 
 func TestShow(t *testing.T) {
@@ -3501,7 +3501,7 @@ func TestOOMPanicAction(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int primary key, b double);")
 	tk.MustExec("insert into t values (1,1)")
-	sm := &testutil.MockSessionManager{
+	sm := &testkit.MockSessionManager{
 		PS: make([]*util.ProcessInfo, 0),
 	}
 	tk.Session().SetSessionManager(sm)
@@ -4308,6 +4308,7 @@ func TestAdminShowDDLJobs(t *testing.T) {
 	require.NoError(t, err)
 	err = meta.NewMeta(txn).AddHistoryDDLJob(job, true)
 	require.NoError(t, err)
+	tk.Session().StmtCommit()
 
 	re = tk.MustQuery("admin show ddl jobs 1")
 	row = re.Rows()[0]
@@ -5931,7 +5932,7 @@ func TestSummaryFailedUpdate(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int as(-a))")
 	tk.MustExec("insert into t(a) values(1), (3), (7)")
-	sm := &testutil.MockSessionManager{
+	sm := &testkit.MockSessionManager{
 		PS: make([]*util.ProcessInfo, 0),
 	}
 	tk.Session().SetSessionManager(sm)
@@ -5980,6 +5981,40 @@ func TestIsFastPlan(t *testing.T) {
 	}
 }
 
+func TestCountDistinctJSON(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(j JSON)")
+	tk.MustExec("insert into t values('2010')")
+	tk.MustExec("insert into t values('2011')")
+	tk.MustExec("insert into t values('2012')")
+	tk.MustExec("insert into t values('2010.000')")
+	tk.MustExec("insert into t values(cast(? as JSON))", uint64(math.MaxUint64))
+	tk.MustExec("insert into t values(cast(? as JSON))", float64(math.MaxUint64))
+
+	tk.MustQuery("select count(distinct j) from t").Check(testkit.Rows("5"))
+}
+
+func TestHashJoinJSON(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int(11), j JSON, d DOUBLE)")
+	tk.MustExec("insert into t values(0, '2010', 2010)")
+	tk.MustExec("insert into t values(1, '2011', 2011)")
+	tk.MustExec("insert into t values(2, '2012', 2012)")
+	tk.MustExec("insert into t values(3, cast(? as JSON), ?)", uint64(math.MaxUint64), float64(math.MaxUint64))
+
+	tk.MustQuery("select /*+inl_hash_join(t2)*/ t1.id, t2.id from t t1 join t t2 on t1.j = t2.d;").Check(testkit.Rows("0 0", "1 1", "2 2"))
+}
+
 func TestBinaryStrNumericOperator(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -6000,4 +6035,31 @@ func TestBinaryStrNumericOperator(t *testing.T) {
 		"-61.56"))
 	// there should be no warning.
 	tk.MustQuery("show warnings").Check(testkit.Rows())
+}
+
+func TestTableLockPrivilege(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("create user 'testuser'@'localhost'")
+	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "testuser", Hostname: "localhost"}, nil, nil))
+	tk2.MustGetErrMsg("LOCK TABLE test.t WRITE", "[planner:1044]Access denied for user 'testuser'@'localhost' to database 'test'")
+	tk.MustExec("GRANT LOCK TABLES ON test.* to 'testuser'@'localhost'")
+	tk2.MustGetErrMsg("LOCK TABLE test.t WRITE", "[planner:1142]SELECT command denied to user 'testuser'@'localhost' for table 't'")
+	tk.MustExec("REVOKE ALL ON test.* FROM 'testuser'@'localhost'")
+	tk.MustExec("GRANT SELECT ON test.* to 'testuser'@'localhost'")
+	tk2.MustGetErrMsg("LOCK TABLE test.t WRITE", "[planner:1044]Access denied for user 'testuser'@'localhost' to database 'test'")
+	tk.MustExec("GRANT LOCK TABLES ON test.* to 'testuser'@'localhost'")
+	tk2.MustExec("LOCK TABLE test.t WRITE")
+
+	tk.MustExec("create database test2")
+	tk.MustExec("create table test2.t2(a int)")
+	tk2.MustGetErrMsg("LOCK TABLE test.t WRITE, test2.t2 WRITE", "[planner:1044]Access denied for user 'testuser'@'localhost' to database 'test2'")
+	tk.MustExec("GRANT LOCK TABLES ON test2.* to 'testuser'@'localhost'")
+	tk2.MustGetErrMsg("LOCK TABLE test.t WRITE, test2.t2 WRITE", "[planner:1142]SELECT command denied to user 'testuser'@'localhost' for table 't2'")
+	tk.MustExec("GRANT SELECT ON test2.* to 'testuser'@'localhost'")
+	tk2.MustExec("LOCK TABLE test.t WRITE, test2.t2 WRITE")
+	tk.MustExec("LOCK TABLE test.t WRITE, test2.t2 WRITE")
 }

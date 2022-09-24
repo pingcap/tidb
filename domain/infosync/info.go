@@ -46,7 +46,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/helper"
-	"github.com/pingcap/tidb/types"
 	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/engine"
@@ -72,8 +71,6 @@ const (
 	keyOpDefaultRetryCnt = 5
 	// keyOpDefaultTimeout is the default time out for etcd store.
 	keyOpDefaultTimeout = 1 * time.Second
-	// InfoSessionTTL is the ETCD session's TTL in seconds.
-	InfoSessionTTL = 10 * 60
 	// ReportInterval is interval of infoSyncerKeeper reporting min startTS.
 	ReportInterval = 30 * time.Second
 	// TopologyInformationPath means etcd path for storing topology info.
@@ -319,6 +316,21 @@ func (is *InfoSyncer) getServerInfoByID(ctx context.Context, id string) (*Server
 
 // GetAllServerInfo gets all servers static information from etcd.
 func GetAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
+	failpoint.Inject("mockGetAllServerInfo", func() {
+		res := map[string]*ServerInfo{
+			"fa598405-a08e-4e74-83ff-75c30b1daedc": {
+				Labels: map[string]string{
+					"zone": "zone1",
+				},
+			},
+			"ad84dbbd-5a50-4742-a73c-4f674d41d4bd": {
+				Labels: map[string]string{
+					"zone": "zone2",
+				},
+			},
+		}
+		failpoint.Return(res, nil)
+	})
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return nil, err
@@ -327,7 +339,7 @@ func GetAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
 }
 
 // UpdateTiFlashTableSyncProgress is used to update the tiflash table replica sync progress.
-func UpdateTiFlashTableSyncProgress(ctx context.Context, tid int64, progress float64) error {
+func UpdateTiFlashTableSyncProgress(ctx context.Context, tid int64, progressString string) error {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return err
@@ -336,8 +348,6 @@ func UpdateTiFlashTableSyncProgress(ctx context.Context, tid int64, progress flo
 		return nil
 	}
 	key := fmt.Sprintf("%s/%v", TiFlashTableSyncProgressPath, tid)
-	// truncate progress with 2 decimal digits so that it will not be rounded to 1 when the progress is 0.995
-	progressString := types.TruncateFloatToString(progress, 2)
 	return util.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, key, progressString)
 }
 
@@ -782,7 +792,7 @@ func (is *InfoSyncer) newSessionAndStoreServerInfo(ctx context.Context, retryCnt
 		return nil
 	}
 	logPrefix := fmt.Sprintf("[Info-syncer] %s", is.serverInfoPath)
-	session, err := util2.NewSession(ctx, logPrefix, is.etcdCli, retryCnt, InfoSessionTTL)
+	session, err := util2.NewSession(ctx, logPrefix, is.etcdCli, retryCnt, util.SessionTTL)
 	if err != nil {
 		return err
 	}
@@ -1175,6 +1185,26 @@ func DeleteInternalSession(se interface{}) {
 		return
 	}
 	sm.DeleteInternalSession(se)
+}
+
+// SetEtcdClient is only used for test.
+func SetEtcdClient(etcdCli *clientv3.Client) {
+	is, err := getGlobalInfoSyncer()
+
+	if err != nil {
+		return
+	}
+	is.etcdCli = etcdCli
+}
+
+// GetEtcdClient is only used for test.
+func GetEtcdClient() *clientv3.Client {
+	is, err := getGlobalInfoSyncer()
+
+	if err != nil {
+		return nil
+	}
+	return is.etcdCli
 }
 
 // GetPDScheduleConfig gets the schedule information from pd

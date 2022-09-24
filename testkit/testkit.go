@@ -48,8 +48,6 @@ type TestKit struct {
 	t       testing.TB
 	store   kv.Storage
 	session session.Session
-
-	useGeneralPlanCache bool
 }
 
 // NewTestKit returns a new *TestKit.
@@ -61,6 +59,22 @@ func NewTestKit(t testing.TB, store kv.Storage) *TestKit {
 		store:   store,
 	}
 	tk.RefreshSession()
+
+	dom, _ := session.GetDomain(store)
+	sm := dom.InfoSyncer().GetSessionManager()
+	if sm != nil {
+		mockSm, ok := sm.(*MockSessionManager)
+		if ok {
+			mockSm.mu.Lock()
+			if mockSm.conn == nil {
+				mockSm.conn = make(map[uint64]session.Session)
+			}
+			mockSm.conn[tk.session.GetSessionVars().ConnectionID] = tk.session
+			mockSm.mu.Unlock()
+		}
+		tk.session.SetSessionManager(sm)
+	}
+
 	return tk
 }
 
@@ -73,13 +87,6 @@ func NewTestKitWithSession(t testing.TB, store kv.Storage, se session.Session) *
 		store:   store,
 		session: se,
 	}
-}
-
-// NewTestKitWithGeneralPlanCache returns a new *TestKit.
-func NewTestKitWithGeneralPlanCache(t testing.TB, store kv.Storage) *TestKit {
-	tk := NewTestKit(t, store)
-	tk.useGeneralPlanCache = true
-	return tk
 }
 
 // RefreshSession set a new session for the testkit
@@ -146,7 +153,8 @@ func (tk *TestKit) MustPartition(sql string, partitions string, args ...interfac
 		if len(partitions) == 0 && strings.Contains(rs.rows[i][3], "partition:") {
 			ok = false
 		}
-		if len(partitions) != 0 && strings.Compare(rs.rows[i][3], "partition:"+partitions) == 0 {
+		// The data format is "table: t1, partition: p0,p1,p2"
+		if len(partitions) != 0 && strings.HasSuffix(rs.rows[i][3], "partition:"+partitions) {
 			ok = true
 		}
 	}
@@ -252,11 +260,6 @@ func (tk *TestKit) ExecWithContext(ctx context.Context, sql string, args ...inte
 		sc := tk.session.GetSessionVars().StmtCtx
 		prevWarns := sc.GetWarnings()
 		var stmts []ast.StmtNode
-		if tk.useGeneralPlanCache {
-			if execStmt, ok := tk.session.Parameterize(ctx, sql); ok {
-				stmts = append(stmts, execStmt)
-			}
-		}
 		if len(stmts) == 0 {
 			var err error
 			stmts, err = tk.session.Parse(ctx, sql)
