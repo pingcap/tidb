@@ -600,6 +600,7 @@ import (
 	temptable             "TEMPTABLE"
 	textType              "TEXT"
 	than                  "THAN"
+	tidbCurrentTSO		  "TiDB_CURRENT_TSO"
 	tikvImporter          "TIKV_IMPORTER"
 	timestampType         "TIMESTAMP"
 	timeType              "TIME"
@@ -7257,6 +7258,7 @@ FunctionNameOptionalBraces:
 |	"CURRENT_DATE"
 |	"CURRENT_ROLE"
 |	"UTC_DATE"
+|   "TiDB_CURRENT_TSO"
 
 FunctionNameDatetimePrecision:
 	"CURRENT_TIME"
