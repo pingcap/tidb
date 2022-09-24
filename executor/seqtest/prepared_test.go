@@ -172,13 +172,13 @@ func TestPrepared(t *testing.T) {
 		require.NoError(t, err)
 		tk.MustExec("alter table prepare_test drop column c2")
 
-		rs, err = tk.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test(1))
+		_, err = tk.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test(1))
 		require.True(t, plannercore.ErrUnknownColumn.Equal(err))
-		rs.Close()
+
 		tk.MustExec("drop table prepare_test")
-		rs, err = tk.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test(1))
+		_, err = tk.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test(1))
 		require.True(t, plannercore.ErrSchemaChanged.Equal(err))
-		rs.Close()
+
 		// issue 3381
 		tk.MustExec("drop table if exists prepare3")
 		tk.MustExec("create table prepare3 (a decimal(1))")
