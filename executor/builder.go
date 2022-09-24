@@ -888,6 +888,11 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
 		b.err = err
 		return nil
 	}
+	ivs.fkChecks, err = buildFKCheckExecs(b.ctx, ivs.Table, v.FKChecks)
+	if err != nil {
+		b.err = err
+		return nil
+	}
 
 	if v.IsReplace {
 		return b.buildReplace(ivs)
