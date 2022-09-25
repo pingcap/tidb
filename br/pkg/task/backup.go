@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -242,6 +243,20 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		span1 := span.Tracer().StartSpan("task.RunBackup", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
+
+	if cfg.Host != "" && cfg.Port != 0 && cfg.User != "" && cfg.Password != "" {
+		param := common.MySQLConnectParam{
+			Host:     cfg.Host,
+			Port:     cfg.Port,
+			User:     cfg.User,
+			Password: cfg.Password,
+		}
+		db, err := param.Connect()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		db.Close()
 	}
 
 	u, err := storage.ParseBackend(cfg.Storage, &cfg.BackendOptions)
