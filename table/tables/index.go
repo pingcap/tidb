@@ -89,6 +89,14 @@ func (c *index) GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.
 	return tablecodec.GenIndexKey(sc, c.tblInfo, c.idxInfo, idxTblID, indexedValues, h, buf)
 }
 
+// GenIndexValue generates the index value.
+func (c *index) GenIndexValue(sc *stmtctx.StatementContext, distinct bool, indexedValues []types.Datum, h kv.Handle, restoredData []types.Datum) ([]byte, error) {
+	c.initNeedRestoreData.Do(func() {
+		c.needRestoredData = NeedRestoredData(c.idxInfo.Columns, c.tblInfo.Columns)
+	})
+	return tablecodec.GenIndexValuePortal(sc, c.tblInfo, c.idxInfo, c.needRestoredData, distinct, false, indexedValues, h, c.phyTblID, restoredData)
+}
+
 // Create creates a new entry in the kvIndex data.
 // If the index is unique and there is an existing entry with the same key,
 // Create will return the existing entry's handle as the first return value, ErrKeyExists as the second return value.
@@ -106,6 +114,19 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 	key, distinct, err := c.GenIndexKey(vars.StmtCtx, indexedValues, h, writeBufs.IndexKeyBuf)
 	if err != nil {
 		return nil, err
+	}
+
+	var (
+		tempKey        []byte
+		keyVer         byte
+		keyIsRewritten bool
+	)
+	if !opt.FromBackFill {
+		key, tempKey, keyVer = genTempIdxKeyByState(c.idxInfo, key)
+		if keyVer == TempIndexKeyTypeBackfill {
+			key, tempKey = tempKey, nil
+			keyIsRewritten = true
+		}
 	}
 
 	ctx := opt.Ctx
@@ -150,9 +171,19 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 	opt.IgnoreAssertion = opt.IgnoreAssertion || c.idxInfo.State != model.StatePublic
 
 	if !distinct || skipCheck || opt.Untouched {
+		if keyIsRewritten {
+			idxVal = append(idxVal, keyVer)
+		}
 		err = txn.GetMemBuffer().Set(key, idxVal)
 		if err != nil {
 			return nil, err
+		}
+		if len(tempKey) > 0 {
+			idxVal = append(idxVal, keyVer)
+			err = txn.GetMemBuffer().Set(tempKey, idxVal)
+			if err != nil {
+				return nil, err
+			}
 		}
 		if !opt.IgnoreAssertion && (!opt.Untouched) {
 			if sctx.GetSessionVars().LazyCheckKeyNotExists() && !txn.IsPessimistic() {
@@ -188,6 +219,9 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 	}
 	if err != nil || len(value) == 0 {
 		lazyCheck := sctx.GetSessionVars().LazyCheckKeyNotExists() && err != nil
+		if keyIsRewritten {
+			idxVal = append(idxVal, keyVer)
+		}
 		if lazyCheck {
 			flags := []kv.FlagsOp{kv.SetPresumeKeyNotExists}
 			if !vars.ConstraintCheckInPlacePessimistic && vars.TxnCtx.IsPessimistic && vars.InTxn() {
@@ -199,6 +233,17 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 		}
 		if err != nil {
 			return nil, err
+		}
+		if len(tempKey) > 0 {
+			idxVal = append(idxVal, keyVer)
+			if lazyCheck {
+				err = txn.GetMemBuffer().SetWithFlags(tempKey, idxVal, kv.SetPresumeKeyNotExists)
+			} else {
+				err = txn.GetMemBuffer().Set(tempKey, idxVal)
+			}
+			if err != nil {
+				return nil, err
+			}
 		}
 		if opt.IgnoreAssertion {
 			return nil, nil
@@ -218,25 +263,91 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 	return handle, kv.ErrKeyExists
 }
 
+var (
+	// DeleteMarker is a marker that the key is deleted.
+	DeleteMarker = []byte("delete")
+	// DeleteMarkerUnique is a marker that the unique index key is deleted.
+	DeleteMarkerUnique = []byte("deleteu")
+)
+
 // Delete removes the entry for handle h and indexedValues from KV index.
 func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle) error {
 	key, distinct, err := c.GenIndexKey(sc, indexedValues, h, nil)
 	if err != nil {
 		return err
 	}
+
+	key, tempKey, tempKeyVer := genTempIdxKeyByState(c.idxInfo, key)
+
 	if distinct {
-		err = txn.GetMemBuffer().DeleteWithFlags(key, kv.SetNeedLocked)
+		if len(key) > 0 {
+			err = txn.GetMemBuffer().DeleteWithFlags(key, kv.SetNeedLocked)
+			if err != nil {
+				return err
+			}
+		}
+		if len(tempKey) > 0 {
+			val := make([]byte, 0, len(DeleteMarkerUnique)+1)
+			val = append(val, DeleteMarkerUnique...)
+			val = append(val, tempKeyVer)
+			err = txn.GetMemBuffer().Set(tempKey, val)
+			if err != nil {
+				return err
+			}
+		}
 	} else {
-		err = txn.GetMemBuffer().Delete(key)
-	}
-	if err != nil {
-		return err
+		if len(key) > 0 {
+			err = txn.GetMemBuffer().Delete(key)
+			if err != nil {
+				return err
+			}
+		}
+		if len(tempKey) > 0 {
+			val := make([]byte, 0, len(DeleteMarker)+1)
+			val = append(val, DeleteMarker...)
+			val = append(val, tempKeyVer)
+			err = txn.GetMemBuffer().Set(tempKey, val)
+			if err != nil {
+				return err
+			}
+		}
 	}
 	if c.idxInfo.State == model.StatePublic {
 		// If the index is in public state, delete this index means it must exists.
 		err = txn.SetAssertion(key, kv.SetAssertExist)
 	}
 	return err
+}
+
+const (
+	// TempIndexKeyTypeNone means the key is not a temporary index key.
+	TempIndexKeyTypeNone byte = 0
+	// TempIndexKeyTypeBackfill indicates this value is written in the backfill stage.
+	TempIndexKeyTypeBackfill byte = 'b'
+	// TempIndexKeyTypeMerge indicates this value is written in the merge stage.
+	TempIndexKeyTypeMerge byte = 'm'
+)
+
+// genTempIdxKeyByState is used to get the key version and the temporary key.
+// The tempKeyVer means the temp index key/value version.
+func genTempIdxKeyByState(indexInfo *model.IndexInfo, indexKey kv.Key) (key, tempKey kv.Key, tempKeyVer byte) {
+	if indexInfo.State != model.StatePublic {
+		switch indexInfo.BackfillState {
+		case model.BackfillStateInapplicable:
+			return indexKey, nil, TempIndexKeyTypeNone
+		case model.BackfillStateRunning:
+			// Write to the temporary index.
+			tablecodec.IndexKey2TempIndexKey(indexInfo.ID, indexKey)
+			return nil, indexKey, TempIndexKeyTypeBackfill
+		case model.BackfillStateReadyToMerge, model.BackfillStateMerging:
+			// Double write
+			tmp := make([]byte, len(indexKey))
+			copy(tmp, indexKey)
+			tablecodec.IndexKey2TempIndexKey(indexInfo.ID, tmp)
+			return indexKey, tmp, TempIndexKeyTypeMerge
+		}
+	}
+	return indexKey, nil, TempIndexKeyTypeNone
 }
 
 func (c *index) Exist(sc *stmtctx.StatementContext, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle) (bool, kv.Handle, error) {

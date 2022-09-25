@@ -888,6 +888,11 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
 		b.err = err
 		return nil
 	}
+	ivs.fkChecks, err = buildFKCheckExecs(b.ctx, ivs.Table, v.FKChecks)
+	if err != nil {
+		b.err = err
+		return nil
+	}
 
 	if v.IsReplace {
 		return b.buildReplace(ivs)
@@ -975,10 +980,18 @@ func (b *executorBuilder) buildPlanReplayer(v *plannercore.PlanReplayer) Executo
 		}
 		return e
 	}
-	e := &PlanReplayerSingleExec{
+	e := &PlanReplayerExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
-		ExecStmt:     v.ExecStmt,
-		Analyze:      v.Analyze,
+		DumpInfo: &PlanReplayerDumpInfo{
+			Analyze: v.Analyze,
+			Path:    v.File,
+			ctx:     b.ctx,
+		},
+	}
+	if v.ExecStmt != nil {
+		e.DumpInfo.ExecStmts = []ast.StmtNode{v.ExecStmt}
+	} else {
+		e.baseExecutor = newBaseExecutor(b.ctx, nil, v.ID())
 	}
 	return e
 }
@@ -1017,51 +1030,83 @@ func (b *executorBuilder) buildRevoke(revoke *ast.RevokeStmt) Executor {
 	return e
 }
 
-func (b *executorBuilder) buildDDL(v *plannercore.DDL) Executor {
-	switch v.Statement.(type) {
+func (b *executorBuilder) setTelemetryInfo(v *plannercore.DDL) {
+	if v == nil || b.Ti == nil {
+		return
+	}
+	switch s := v.Statement.(type) {
 	case *ast.AlterTableStmt:
-		if len(v.Statement.(*ast.AlterTableStmt).Specs) > 1 && b.Ti != nil {
+		if len(s.Specs) > 1 {
 			b.Ti.UseMultiSchemaChange = true
 		}
+		for _, spec := range s.Specs {
+			switch spec.Tp {
+			case ast.AlterTableDropFirstPartition:
+				if b.Ti.PartitionTelemetry == nil {
+					b.Ti.PartitionTelemetry = &PartitionTelemetryInfo{}
+				}
+				b.Ti.PartitionTelemetry.UseDropIntervalPartition = true
+			case ast.AlterTableAddLastPartition:
+				if b.Ti.PartitionTelemetry == nil {
+					b.Ti.PartitionTelemetry = &PartitionTelemetryInfo{}
+				}
+				b.Ti.PartitionTelemetry.UseAddIntervalPartition = true
+			case ast.AlterTableExchangePartition:
+				b.Ti.UesExchangePartition = true
+			}
+		}
 	case *ast.CreateTableStmt:
-		stmt := v.Statement.(*ast.CreateTableStmt)
-		if stmt != nil && stmt.Partition != nil {
-			if strings.EqualFold(b.ctx.GetSessionVars().EnableTablePartition, "OFF") {
-				break
-			}
+		if s.Partition == nil || strings.EqualFold(b.ctx.GetSessionVars().EnableTablePartition, "OFF") {
+			break
+		}
 
-			s := stmt.Partition
-			if b.Ti.PartitionTelemetry == nil {
-				b.Ti.PartitionTelemetry = &PartitionTelemetryInfo{}
-			}
-			b.Ti.PartitionTelemetry.TablePartitionMaxPartitionsNum = mathutil.Max(s.Num, uint64(len(s.Definitions)))
-			b.Ti.PartitionTelemetry.UseTablePartition = true
+		p := s.Partition
+		if b.Ti.PartitionTelemetry == nil {
+			b.Ti.PartitionTelemetry = &PartitionTelemetryInfo{}
+		}
+		b.Ti.PartitionTelemetry.TablePartitionMaxPartitionsNum = mathutil.Max(p.Num, uint64(len(p.Definitions)))
+		b.Ti.PartitionTelemetry.UseTablePartition = true
 
-			switch s.Tp {
-			case model.PartitionTypeRange:
-				if s.Sub == nil {
-					if len(s.ColumnNames) > 0 {
-						b.Ti.PartitionTelemetry.UseTablePartitionRangeColumns = true
-					} else {
-						b.Ti.PartitionTelemetry.UseTablePartitionRange = true
+		switch p.Tp {
+		case model.PartitionTypeRange:
+			if p.Sub == nil {
+				if len(p.ColumnNames) > 0 {
+					b.Ti.PartitionTelemetry.UseTablePartitionRangeColumns = true
+					if len(p.ColumnNames) > 1 {
+						b.Ti.PartitionTelemetry.UseTablePartitionRangeColumnsGt1 = true
 					}
-				}
-			case model.PartitionTypeHash:
-				if !s.Linear && s.Sub == nil {
-					b.Ti.PartitionTelemetry.UseTablePartitionHash = true
-				}
-			case model.PartitionTypeList:
-				enable := b.ctx.GetSessionVars().EnableListTablePartition
-				if s.Sub == nil && enable {
-					if len(s.ColumnNames) > 0 {
-						b.Ti.PartitionTelemetry.UseTablePartitionListColumns = true
-					} else {
-						b.Ti.PartitionTelemetry.UseTablePartitionList = true
+					if len(p.ColumnNames) > 2 {
+						b.Ti.PartitionTelemetry.UseTablePartitionRangeColumnsGt2 = true
 					}
+					if len(p.ColumnNames) > 3 {
+						b.Ti.PartitionTelemetry.UseTablePartitionRangeColumnsGt3 = true
+					}
+				} else {
+					b.Ti.PartitionTelemetry.UseTablePartitionRange = true
+				}
+				if p.Interval != nil {
+					b.Ti.PartitionTelemetry.UseCreateIntervalPartition = true
+				}
+			}
+		case model.PartitionTypeHash:
+			if !p.Linear && p.Sub == nil {
+				b.Ti.PartitionTelemetry.UseTablePartitionHash = true
+			}
+		case model.PartitionTypeList:
+			enable := b.ctx.GetSessionVars().EnableListTablePartition
+			if p.Sub == nil && enable {
+				if len(p.ColumnNames) > 0 {
+					b.Ti.PartitionTelemetry.UseTablePartitionListColumns = true
+				} else {
+					b.Ti.PartitionTelemetry.UseTablePartitionList = true
 				}
 			}
 		}
 	}
+}
+
+func (b *executorBuilder) buildDDL(v *plannercore.DDL) Executor {
+	b.setTelemetryInfo(v)
 
 	e := &DDLExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
@@ -1282,6 +1327,7 @@ func (b *executorBuilder) buildMergeJoin(v *plannercore.PhysicalMergeJoin) Execu
 			retTypes(leftExec),
 			retTypes(rightExec),
 			markChildrenUsedCols(v.Schema(), v.Children()[0].Schema(), v.Children()[1].Schema()),
+			false,
 		),
 		isOuterJoin: v.JoinType.IsOuterJoin(),
 		desc:        v.Desc,
@@ -1367,12 +1413,12 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 	if v.UseOuterToBuild {
 		// update the buildSideEstCount due to changing the build side
 		if v.InnerChildIdx == 1 {
-			e.buildSideExec, e.buildKeys = leftExec, v.LeftJoinKeys
-			e.probeSideExec, e.probeKeys = rightExec, v.RightJoinKeys
+			e.buildSideExec, e.buildKeys, e.buildNAKeys = leftExec, v.LeftJoinKeys, v.LeftNAJoinKeys
+			e.probeSideExec, e.probeKeys, e.probeNAKeys = rightExec, v.RightJoinKeys, v.RightNAJoinKeys
 			e.outerFilter = v.LeftConditions
 		} else {
-			e.buildSideExec, e.buildKeys = rightExec, v.RightJoinKeys
-			e.probeSideExec, e.probeKeys = leftExec, v.LeftJoinKeys
+			e.buildSideExec, e.buildKeys, e.buildNAKeys = rightExec, v.RightJoinKeys, v.RightNAJoinKeys
+			e.probeSideExec, e.probeKeys, e.probeNAKeys = leftExec, v.LeftJoinKeys, v.LeftNAJoinKeys
 			e.outerFilter = v.RightConditions
 			leftIsBuildSide = false
 		}
@@ -1381,12 +1427,12 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 		}
 	} else {
 		if v.InnerChildIdx == 0 {
-			e.buildSideExec, e.buildKeys = leftExec, v.LeftJoinKeys
-			e.probeSideExec, e.probeKeys = rightExec, v.RightJoinKeys
+			e.buildSideExec, e.buildKeys, e.buildNAKeys = leftExec, v.LeftJoinKeys, v.LeftNAJoinKeys
+			e.probeSideExec, e.probeKeys, e.probeNAKeys = rightExec, v.RightJoinKeys, v.RightNAJoinKeys
 			e.outerFilter = v.RightConditions
 		} else {
-			e.buildSideExec, e.buildKeys = rightExec, v.RightJoinKeys
-			e.probeSideExec, e.probeKeys = leftExec, v.LeftJoinKeys
+			e.buildSideExec, e.buildKeys, e.buildNAKeys = rightExec, v.RightJoinKeys, v.RightNAJoinKeys
+			e.probeSideExec, e.probeKeys, e.probeNAKeys = leftExec, v.LeftJoinKeys, v.LeftNAJoinKeys
 			e.outerFilter = v.LeftConditions
 			leftIsBuildSide = false
 		}
@@ -1394,12 +1440,13 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 			defaultValues = make([]types.Datum, e.buildSideExec.Schema().Len())
 		}
 	}
+	isNAJoin := len(v.LeftNAJoinKeys) > 0
 	e.buildSideEstCount = b.buildSideEstCount(v)
 	childrenUsedSchema := markChildrenUsedCols(v.Schema(), v.Children()[0].Schema(), v.Children()[1].Schema())
 	e.joiners = make([]joiner, e.concurrency)
 	for i := uint(0); i < e.concurrency; i++ {
 		e.joiners[i] = newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues,
-			v.OtherConditions, lhsTypes, rhsTypes, childrenUsedSchema)
+			v.OtherConditions, lhsTypes, rhsTypes, childrenUsedSchema, isNAJoin)
 	}
 	executorCountHashJoinExec.Inc()
 
@@ -1408,14 +1455,25 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 	// For example, the condition `enum = int and enum = string`, we should use ETInt to hash the first column,
 	// and use ETString to hash the second column, although they may be the same column.
 	leftExecTypes, rightExecTypes := retTypes(leftExec), retTypes(rightExec)
-	leftTypes, rightTypes := make([]*types.FieldType, 0, len(v.LeftJoinKeys)), make([]*types.FieldType, 0, len(v.RightJoinKeys))
+	leftTypes, rightTypes := make([]*types.FieldType, 0, len(v.LeftJoinKeys)+len(v.LeftNAJoinKeys)), make([]*types.FieldType, 0, len(v.RightJoinKeys)+len(v.RightNAJoinKeys))
+	// set left types and right types for joiner.
 	for i, col := range v.LeftJoinKeys {
 		leftTypes = append(leftTypes, leftExecTypes[col.Index].Clone())
 		leftTypes[i].SetFlag(col.RetType.GetFlag())
 	}
+	offset := len(v.LeftJoinKeys)
+	for i, col := range v.LeftNAJoinKeys {
+		leftTypes = append(leftTypes, leftExecTypes[col.Index].Clone())
+		leftTypes[i+offset].SetFlag(col.RetType.GetFlag())
+	}
 	for i, col := range v.RightJoinKeys {
 		rightTypes = append(rightTypes, rightExecTypes[col.Index].Clone())
 		rightTypes[i].SetFlag(col.RetType.GetFlag())
+	}
+	offset = len(v.RightJoinKeys)
+	for i, col := range v.RightNAJoinKeys {
+		rightTypes = append(rightTypes, rightExecTypes[col.Index].Clone())
+		rightTypes[i+offset].SetFlag(col.RetType.GetFlag())
 	}
 
 	// consider collations
@@ -1425,6 +1483,14 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 		leftTypes[i].SetCollate(coll)
 		rightTypes[i].SetCharset(chs)
 		rightTypes[i].SetCollate(coll)
+	}
+	offset = len(v.EqualConditions)
+	for i := range v.NAEqualConditions {
+		chs, coll := v.NAEqualConditions[i].CharsetAndCollation()
+		leftTypes[i+offset].SetCharset(chs)
+		leftTypes[i+offset].SetCollate(coll)
+		rightTypes[i+offset].SetCharset(chs)
+		rightTypes[i+offset].SetCollate(coll)
 	}
 	if leftIsBuildSide {
 		e.buildTypes, e.probeTypes = leftTypes, rightTypes
@@ -1972,7 +2038,10 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) Executor {
 	if b.err != nil {
 		return nil
 	}
-	otherConditions := append(expression.ScalarFuncs2Exprs(v.EqualConditions), v.OtherConditions...)
+	// test is in the explain/naaj.test#part5.
+	// although we prepared the NAEqualConditions, but for Apply mode, we still need move it to other conditions like eq condition did here.
+	otherConditions := append(expression.ScalarFuncs2Exprs(v.EqualConditions), expression.ScalarFuncs2Exprs(v.NAEqualConditions)...)
+	otherConditions = append(otherConditions, v.OtherConditions...)
 	defaultValues := v.DefaultValues
 	if defaultValues == nil {
 		defaultValues = make([]types.Datum, v.Children()[v.InnerChildIdx].Schema().Len())
@@ -1984,7 +2053,7 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) Executor {
 		outerFilter, innerFilter = v.RightConditions, v.LeftConditions
 	}
 	tupleJoiner := newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0,
-		defaultValues, otherConditions, retTypes(leftChild), retTypes(rightChild), nil)
+		defaultValues, otherConditions, retTypes(leftChild), retTypes(rightChild), nil, false)
 	serialExec := &NestedLoopApplyExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID(), outerExec, innerExec),
 		innerExec:    innerExec,
@@ -2021,7 +2090,7 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) Executor {
 			corCols = append(corCols, corCol)
 			innerFilters = append(innerFilters, innerFilter.Clone())
 			joiners = append(joiners, newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0,
-				defaultValues, otherConditions, retTypes(leftChild), retTypes(rightChild), nil))
+				defaultValues, otherConditions, retTypes(leftChild), retTypes(rightChild), nil, false))
 		}
 
 		allExecs := append([]Executor{outerExec}, innerExecs...)
@@ -3009,7 +3078,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 		finished:      &atomic.Value{},
 	}
 	childrenUsedSchema := markChildrenUsedCols(v.Schema(), v.Children()[0].Schema(), v.Children()[1].Schema())
-	e.joiner = newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues, v.OtherConditions, leftTypes, rightTypes, childrenUsedSchema)
+	e.joiner = newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues, v.OtherConditions, leftTypes, rightTypes, childrenUsedSchema, false)
 	outerKeyCols := make([]int, len(v.OuterJoinKeys))
 	for i := 0; i < len(v.OuterJoinKeys); i++ {
 		outerKeyCols[i] = v.OuterJoinKeys[i].Index
@@ -3133,7 +3202,7 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndex
 	childrenUsedSchema := markChildrenUsedCols(v.Schema(), v.Children()[0].Schema(), v.Children()[1].Schema())
 	joiners := make([]joiner, e.ctx.GetSessionVars().IndexLookupJoinConcurrency())
 	for i := 0; i < len(joiners); i++ {
-		joiners[i] = newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues, v.OtherConditions, leftTypes, rightTypes, childrenUsedSchema)
+		joiners[i] = newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues, v.OtherConditions, leftTypes, rightTypes, childrenUsedSchema, false)
 	}
 	e.joiners = joiners
 	return e
@@ -3899,6 +3968,11 @@ type mockPhysicalIndexReader struct {
 	plannercore.PhysicalPlan
 
 	e Executor
+}
+
+// MemoryUsage of mockPhysicalIndexReader is only for testing
+func (p *mockPhysicalIndexReader) MemoryUsage() (sum int64) {
+	return
 }
 
 func (builder *dataReaderBuilder) buildExecutorForIndexJoin(ctx context.Context, lookUpContents []*indexJoinLookUpContent,

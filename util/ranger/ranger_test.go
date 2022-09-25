@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
@@ -279,7 +280,7 @@ func TestTableRange(t *testing.T) {
 			conds, filter = ranger.DetachCondsForColumn(sctx, conds, col)
 			require.Equal(t, tt.accessConds, fmt.Sprintf("%s", conds))
 			require.Equal(t, tt.filterConds, fmt.Sprintf("%s", filter))
-			result, err := ranger.BuildTableRange(conds, sctx, col.RetType)
+			result, _, _, err := ranger.BuildTableRange(conds, sctx, col.RetType, 0)
 			require.NoError(t, err)
 			got := fmt.Sprintf("%v", result)
 			require.Equal(t, tt.resultStr, got)
@@ -465,7 +466,7 @@ create table t(
 			}
 			cols, lengths := expression.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
 			require.NotNil(t, cols)
-			res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths)
+			res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, 0)
 			require.NoError(t, err)
 			require.Equal(t, tt.accessConds, fmt.Sprintf("%s", res.AccessConds))
 			require.Equal(t, tt.filterConds, fmt.Sprintf("%s", res.RemainedConds))
@@ -828,7 +829,7 @@ func TestColumnRange(t *testing.T) {
 			require.NotNil(t, col)
 			conds = ranger.ExtractAccessConditionsForColumn(conds, col)
 			require.Equal(t, tt.accessConds, fmt.Sprintf("%s", conds))
-			result, err := ranger.BuildColumnRange(conds, sctx, col.RetType, tt.length)
+			result, _, _, err := ranger.BuildColumnRange(conds, sctx, col.RetType, tt.length, 0)
 			require.NoError(t, err)
 			got := fmt.Sprintf("%v", result)
 			require.Equal(t, tt.resultStr, got)
@@ -1208,7 +1209,7 @@ func TestIndexRangeForYear(t *testing.T) {
 			}
 			cols, lengths := expression.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
 			require.NotNil(t, cols)
-			res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths)
+			res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, 0)
 			require.NoError(t, err)
 			require.Equal(t, tt.accessConds, fmt.Sprintf("%s", res.AccessConds))
 			require.Equal(t, tt.filterConds, fmt.Sprintf("%s", res.RemainedConds))
@@ -1276,7 +1277,7 @@ func TestPrefixIndexRangeScan(t *testing.T) {
 			}
 			cols, lengths := expression.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
 			require.NotNil(t, cols)
-			res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths)
+			res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, 0)
 			require.NoError(t, err)
 			require.Equal(t, tt.accessConds, fmt.Sprintf("%s", res.AccessConds))
 			require.Equal(t, tt.filterConds, fmt.Sprintf("%s", res.RemainedConds))
@@ -1685,7 +1686,7 @@ create table t(
 			}
 			cols, lengths := expression.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
 			require.NotNil(t, cols)
-			res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths)
+			res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, 0)
 			require.NoError(t, err)
 			require.Equal(t, tt.accessConds, fmt.Sprintf("%s", res.AccessConds))
 			require.Equal(t, tt.filterConds, fmt.Sprintf("%s", res.RemainedConds))
@@ -2096,4 +2097,353 @@ func TestShardIndexFuncSuites(t *testing.T) {
 		newConds, _ := ranger.AddExpr4EqAndInCondition(sctx, tt.inputConds, shardIndexCols)
 		require.Equal(t, fmt.Sprintf("%s", newConds), tt.outputConds)
 	}
+}
+
+func getSelectionFromQuery(t *testing.T, sctx sessionctx.Context, sql string) *plannercore.LogicalSelection {
+	ctx := context.Background()
+	stmts, err := session.Parse(sctx, sql)
+	require.NoError(t, err)
+	require.Len(t, stmts, 1)
+	ret := &plannercore.PreprocessorReturn{}
+	err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
+	require.NoError(t, err)
+	p, _, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
+	require.NoError(t, err)
+	selection, isSelection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
+	require.True(t, isSelection)
+	return selection
+}
+
+func checkDetachRangeResult(t *testing.T, res *ranger.DetachRangeResult, expectedAccessConds, expectedRemainedConds, expectedRanges string) {
+	require.Equal(t, expectedAccessConds, fmt.Sprintf("%v", res.AccessConds))
+	require.Equal(t, expectedRemainedConds, fmt.Sprintf("%v", res.RemainedConds))
+	require.Equal(t, expectedRanges, fmt.Sprintf("%v", res.Ranges))
+}
+
+func checkRangeFallbackAndReset(t *testing.T, sctx sessionctx.Context, expectedRangeFallback bool) {
+	require.Equal(t, expectedRangeFallback, sctx.GetSessionVars().StmtCtx.RangeFallback)
+	sctx.GetSessionVars().StmtCtx.RangeFallback = false
+}
+
+func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int, b int, c int, d int, index idx(a, b, c))")
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	sctx := tk.Session().(sessionctx.Context)
+
+	// test CNF condition
+	sql := "select * from t1 where a in (10,20,30) and b in (40,50,60) and c >= 70 and c <= 80"
+	selection := getSelectionFromQuery(t, sctx, sql)
+	conds := selection.Conditions
+	require.Equal(t, 4, len(conds))
+	cols, lengths := expression.IndexInfo2PrefixCols(tblInfo.Columns, selection.Schema().Columns, tblInfo.Indices[0])
+	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, 0)
+	require.NoError(t, err)
+	checkDetachRangeResult(t, res,
+		"[in(test.t1.a, 10, 20, 30) in(test.t1.b, 40, 50, 60) ge(test.t1.c, 70) le(test.t1.c, 80)]",
+		"[]",
+		"[[10 40 70,10 40 80] [10 50 70,10 50 80] [10 60 70,10 60 80] [20 40 70,20 40 80] [20 50 70,20 50 80] [20 60 70,20 60 80] [30 40 70,30 40 80] [30 50 70,30 50 80] [30 60 70,30 60 80]]")
+	checkRangeFallbackAndReset(t, sctx, false)
+	quota := res.Ranges.MemUsage() - 1
+	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, quota)
+	require.NoError(t, err)
+	checkDetachRangeResult(t, res,
+		"[in(test.t1.a, 10, 20, 30) in(test.t1.b, 40, 50, 60)]",
+		"[ge(test.t1.c, 70) le(test.t1.c, 80)]",
+		"[[10 40,10 40] [10 50,10 50] [10 60,10 60] [20 40,20 40] [20 50,20 50] [20 60,20 60] [30 40,30 40] [30 50,30 50] [30 60,30 60]]")
+	checkRangeFallbackAndReset(t, sctx, true)
+	quota = res.Ranges.MemUsage() - 1
+	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, quota)
+	require.NoError(t, err)
+	checkDetachRangeResult(t, res,
+		"[in(test.t1.a, 10, 20, 30)]",
+		"[in(test.t1.b, 40, 50, 60) ge(test.t1.c, 70) le(test.t1.c, 80)]",
+		"[[10,10] [20,20] [30,30]]")
+	checkRangeFallbackAndReset(t, sctx, true)
+	quota = res.Ranges.MemUsage() - 1
+	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, quota)
+	require.NoError(t, err)
+	checkDetachRangeResult(t, res,
+		"[]",
+		"[ge(test.t1.c, 70) le(test.t1.c, 80) in(test.t1.b, 40, 50, 60) in(test.t1.a, 10, 20, 30)]",
+		"[[NULL,+inf]]")
+	checkRangeFallbackAndReset(t, sctx, true)
+
+	// test DNF condition
+	sql = "select * from t1 where a = 10 or a = 20 or a = 30"
+	selection = getSelectionFromQuery(t, sctx, sql)
+	conds = selection.Conditions
+	require.Equal(t, 1, len(conds))
+	cols, lengths = expression.IndexInfo2PrefixCols(tblInfo.Columns, selection.Schema().Columns, tblInfo.Indices[0])
+	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, 0)
+	require.NoError(t, err)
+	checkDetachRangeResult(t, res,
+		"[or(eq(test.t1.a, 10), or(eq(test.t1.a, 20), eq(test.t1.a, 30)))]",
+		"[]",
+		"[[10,10] [20,20] [30,30]]")
+	checkRangeFallbackAndReset(t, sctx, false)
+	quota = res.Ranges.MemUsage() - 1
+	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, quota)
+	require.NoError(t, err)
+	checkDetachRangeResult(t, res,
+		"[]",
+		"[or(or(eq(test.t1.a, 10), eq(test.t1.a, 20)), eq(test.t1.a, 30))]",
+		"[[NULL,+inf]]")
+	checkRangeFallbackAndReset(t, sctx, true)
+
+	sql = "select * from t1 where (a = 10 and b = 40) or (a = 20 and b = 50) or (a = 30 and b = 60)"
+	selection = getSelectionFromQuery(t, sctx, sql)
+	conds = selection.Conditions
+	require.Equal(t, 1, len(conds))
+	cols, lengths = expression.IndexInfo2PrefixCols(tblInfo.Columns, selection.Schema().Columns, tblInfo.Indices[0])
+	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, 0)
+	require.NoError(t, err)
+	checkDetachRangeResult(t, res,
+		"[or(and(eq(test.t1.a, 10), eq(test.t1.b, 40)), or(and(eq(test.t1.a, 20), eq(test.t1.b, 50)), and(eq(test.t1.a, 30), eq(test.t1.b, 60))))]",
+		"[]",
+		"[[10 40,10 40] [20 50,20 50] [30 60,30 60]]")
+	checkRangeFallbackAndReset(t, sctx, false)
+	quota = res.Ranges.MemUsage() - 1
+	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, quota)
+	require.NoError(t, err)
+	checkDetachRangeResult(t, res,
+		"[]",
+		"[or(or(and(eq(test.t1.a, 10), eq(test.t1.b, 40)), and(eq(test.t1.a, 20), eq(test.t1.b, 50))), and(eq(test.t1.a, 30), eq(test.t1.b, 60)))]",
+		"[[NULL,+inf]]")
+	checkRangeFallbackAndReset(t, sctx, true)
+
+	// test considerDNF code path
+	sql = "select * from t1 where (a, b) in ((10, 20), (30, 40)) and c = 50"
+	selection = getSelectionFromQuery(t, sctx, sql)
+	conds = selection.Conditions
+	require.Equal(t, 2, len(conds))
+	cols, lengths = expression.IndexInfo2PrefixCols(tblInfo.Columns, selection.Schema().Columns, tblInfo.Indices[0])
+	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, 0)
+	require.NoError(t, err)
+	checkDetachRangeResult(t, res,
+		"[or(and(eq(test.t1.a, 10), eq(test.t1.b, 20)), and(eq(test.t1.a, 30), eq(test.t1.b, 40))) eq(test.t1.c, 50)]",
+		"[]",
+		"[[10 20 50,10 20 50] [30 40 50,30 40 50]]")
+	checkRangeFallbackAndReset(t, sctx, false)
+	quota = res.Ranges.MemUsage() - 1
+	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, quota)
+	require.NoError(t, err)
+	checkDetachRangeResult(t, res,
+		"[or(and(eq(test.t1.a, 10), eq(test.t1.b, 20)), and(eq(test.t1.a, 30), eq(test.t1.b, 40)))]",
+		"[eq(test.t1.c, 50)]",
+		"[[10 20,10 20] [30 40,30 40]]")
+	checkRangeFallbackAndReset(t, sctx, true)
+	quota = res.Ranges.MemUsage() - 1
+	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, quota)
+	require.NoError(t, err)
+	checkDetachRangeResult(t, res,
+		"[or(eq(test.t1.a, 10), eq(test.t1.a, 30))]",
+		"[eq(test.t1.c, 50) or(and(eq(test.t1.a, 10), eq(test.t1.b, 20)), and(eq(test.t1.a, 30), eq(test.t1.b, 40)))]",
+		"[[10,10] [30,30]]")
+	checkRangeFallbackAndReset(t, sctx, true)
+	quota = res.Ranges.MemUsage() - 1
+	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, quota)
+	require.NoError(t, err)
+	checkDetachRangeResult(t, res,
+		"[]",
+		// Ideal RemainedConds should be [eq(test.t1.c, 50) or(and(eq(test.t1.a, 10), eq(test.t1.b, 20)), and(eq(test.t1.a, 30), eq(test.t1.b, 40)))], but we don't remove redundant or(eq(test.t1.a, 10), eq(test.t1.a, 30)) for now.
+		"[eq(test.t1.c, 50) or(and(eq(test.t1.a, 10), eq(test.t1.b, 20)), and(eq(test.t1.a, 30), eq(test.t1.b, 40))) or(eq(test.t1.a, 10), eq(test.t1.a, 30))]",
+		"[[NULL,+inf]]")
+	checkRangeFallbackAndReset(t, sctx, true)
+
+	// test prefix index
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2 (a varchar(10), b varchar(10), c varchar(10), d varchar(10), index idx(a(2), b(2), c(2)))")
+	tbl, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	require.NoError(t, err)
+	tblInfo = tbl.Meta()
+
+	// test CNF condition
+	sql = "select * from t2 where a in ('aaa','bbb','ccc') and b in ('ddd','eee','fff') and c >= 'ggg' and c <= 'iii'"
+	selection = getSelectionFromQuery(t, sctx, sql)
+	conds = selection.Conditions
+	require.Equal(t, 4, len(conds))
+	cols, lengths = expression.IndexInfo2PrefixCols(tblInfo.Columns, selection.Schema().Columns, tblInfo.Indices[0])
+	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, 0)
+	require.NoError(t, err)
+	checkDetachRangeResult(t, res,
+		"[in(test.t2.a, aaa, bbb, ccc) in(test.t2.b, ddd, eee, fff) ge(test.t2.c, ggg) le(test.t2.c, iii)]",
+		"[in(test.t2.a, aaa, bbb, ccc) in(test.t2.b, ddd, eee, fff) ge(test.t2.c, ggg) le(test.t2.c, iii)]",
+		"[[\"aa\" \"dd\" \"gg\",\"aa\" \"dd\" \"ii\"] [\"aa\" \"ee\" \"gg\",\"aa\" \"ee\" \"ii\"] [\"aa\" \"ff\" \"gg\",\"aa\" \"ff\" \"ii\"] [\"bb\" \"dd\" \"gg\",\"bb\" \"dd\" \"ii\"] [\"bb\" \"ee\" \"gg\",\"bb\" \"ee\" \"ii\"] [\"bb\" \"ff\" \"gg\",\"bb\" \"ff\" \"ii\"] [\"cc\" \"dd\" \"gg\",\"cc\" \"dd\" \"ii\"] [\"cc\" \"ee\" \"gg\",\"cc\" \"ee\" \"ii\"] [\"cc\" \"ff\" \"gg\",\"cc\" \"ff\" \"ii\"]]")
+	checkRangeFallbackAndReset(t, sctx, false)
+	quota = res.Ranges.MemUsage() - 1
+	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, quota)
+	require.NoError(t, err)
+	checkDetachRangeResult(t, res,
+		"[in(test.t2.a, aaa, bbb, ccc) in(test.t2.b, ddd, eee, fff)]",
+		"[in(test.t2.a, aaa, bbb, ccc) in(test.t2.b, ddd, eee, fff) ge(test.t2.c, ggg) le(test.t2.c, iii)]",
+		"[[\"aa\" \"dd\",\"aa\" \"dd\"] [\"aa\" \"ee\",\"aa\" \"ee\"] [\"aa\" \"ff\",\"aa\" \"ff\"] [\"bb\" \"dd\",\"bb\" \"dd\"] [\"bb\" \"ee\",\"bb\" \"ee\"] [\"bb\" \"ff\",\"bb\" \"ff\"] [\"cc\" \"dd\",\"cc\" \"dd\"] [\"cc\" \"ee\",\"cc\" \"ee\"] [\"cc\" \"ff\",\"cc\" \"ff\"]]")
+	checkRangeFallbackAndReset(t, sctx, true)
+	quota = res.Ranges.MemUsage() - 1
+	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, quota)
+	require.NoError(t, err)
+	checkDetachRangeResult(t, res,
+		"[in(test.t2.a, aaa, bbb, ccc)]",
+		"[in(test.t2.a, aaa, bbb, ccc) in(test.t2.b, ddd, eee, fff) ge(test.t2.c, ggg) le(test.t2.c, iii)]",
+		"[[\"aa\",\"aa\"] [\"bb\",\"bb\"] [\"cc\",\"cc\"]]")
+	checkRangeFallbackAndReset(t, sctx, true)
+	quota = res.Ranges.MemUsage() - 1
+	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, quota)
+	require.NoError(t, err)
+	checkDetachRangeResult(t, res,
+		"[]",
+		"[ge(test.t2.c, ggg) le(test.t2.c, iii) in(test.t2.a, aaa, bbb, ccc) in(test.t2.b, ddd, eee, fff)]",
+		"[[NULL,+inf]]")
+	checkRangeFallbackAndReset(t, sctx, true)
+
+	// test DNF condition
+	sql = "select * from t2 where a = 'aaa' or a = 'bbb' or a = 'ccc'"
+	selection = getSelectionFromQuery(t, sctx, sql)
+	conds = selection.Conditions
+	require.Equal(t, 1, len(conds))
+	cols, lengths = expression.IndexInfo2PrefixCols(tblInfo.Columns, selection.Schema().Columns, tblInfo.Indices[0])
+	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, 0)
+	require.NoError(t, err)
+	checkDetachRangeResult(t, res,
+		"[or(eq(test.t2.a, aaa), or(eq(test.t2.a, bbb), eq(test.t2.a, ccc)))]",
+		"[or(or(eq(test.t2.a, aaa), eq(test.t2.a, bbb)), eq(test.t2.a, ccc))]",
+		"[[\"aa\",\"aa\"] [\"bb\",\"bb\"] [\"cc\",\"cc\"]]")
+	checkRangeFallbackAndReset(t, sctx, false)
+	quota = res.Ranges.MemUsage() - 1
+	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, quota)
+	require.NoError(t, err)
+	checkDetachRangeResult(t, res,
+		"[]",
+		"[or(or(eq(test.t2.a, aaa), eq(test.t2.a, bbb)), eq(test.t2.a, ccc))]",
+		"[[NULL,+inf]]")
+	checkRangeFallbackAndReset(t, sctx, true)
+
+	sql = "select * from t2 where (a = 'aaa' and b = 'ddd') or (a = 'bbb' and b = 'eee') or (a = 'ccc' and b = 'fff')"
+	selection = getSelectionFromQuery(t, sctx, sql)
+	conds = selection.Conditions
+	require.Equal(t, 1, len(conds))
+	cols, lengths = expression.IndexInfo2PrefixCols(tblInfo.Columns, selection.Schema().Columns, tblInfo.Indices[0])
+	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, 0)
+	require.NoError(t, err)
+	checkDetachRangeResult(t, res,
+		"[or(and(eq(test.t2.a, aaa), eq(test.t2.b, ddd)), or(and(eq(test.t2.a, bbb), eq(test.t2.b, eee)), and(eq(test.t2.a, ccc), eq(test.t2.b, fff))))]",
+		"[or(or(and(eq(test.t2.a, aaa), eq(test.t2.b, ddd)), and(eq(test.t2.a, bbb), eq(test.t2.b, eee))), and(eq(test.t2.a, ccc), eq(test.t2.b, fff)))]",
+		"[[\"aa\" \"dd\",\"aa\" \"dd\"] [\"bb\" \"ee\",\"bb\" \"ee\"] [\"cc\" \"ff\",\"cc\" \"ff\"]]")
+	checkRangeFallbackAndReset(t, sctx, false)
+	quota = res.Ranges.MemUsage() - 1
+	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, quota)
+	require.NoError(t, err)
+	checkDetachRangeResult(t, res,
+		"[]",
+		"[or(or(and(eq(test.t2.a, aaa), eq(test.t2.b, ddd)), and(eq(test.t2.a, bbb), eq(test.t2.b, eee))), and(eq(test.t2.a, ccc), eq(test.t2.b, fff)))]",
+		"[[NULL,+inf]]")
+	checkRangeFallbackAndReset(t, sctx, true)
+
+	// test considerDNF code path
+	sql = "select * from t2 where (a, b) in (('aaa', 'bbb'), ('ccc', 'ddd')) and c = 'eee'"
+	selection = getSelectionFromQuery(t, sctx, sql)
+	conds = selection.Conditions
+	require.Equal(t, 2, len(conds))
+	cols, lengths = expression.IndexInfo2PrefixCols(tblInfo.Columns, selection.Schema().Columns, tblInfo.Indices[0])
+	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, 0)
+	require.NoError(t, err)
+	checkDetachRangeResult(t, res,
+		"[or(eq(test.t2.a, aaa), eq(test.t2.a, ccc))]",
+		"[eq(test.t2.c, eee) or(and(eq(test.t2.a, aaa), eq(test.t2.b, bbb)), and(eq(test.t2.a, ccc), eq(test.t2.b, ddd)))]",
+		"[[\"aa\",\"aa\"] [\"cc\",\"cc\"]]")
+	checkRangeFallbackAndReset(t, sctx, false)
+	quota = res.Ranges.MemUsage() - 1
+	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, quota)
+	require.NoError(t, err)
+	checkDetachRangeResult(t, res,
+		"[]",
+		"[eq(test.t2.c, eee) or(and(eq(test.t2.a, aaa), eq(test.t2.b, bbb)), and(eq(test.t2.a, ccc), eq(test.t2.b, ddd))) or(eq(test.t2.a, aaa), eq(test.t2.a, ccc))]",
+		"[[NULL,+inf]]")
+	checkRangeFallbackAndReset(t, sctx, true)
+}
+
+func TestRangeFallbackForBuildTableRange(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int primary key, b int)")
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	sctx := tk.Session().(sessionctx.Context)
+	sql := "select * from t where a in (10,20,30,40,50)"
+	selection := getSelectionFromQuery(t, sctx, sql)
+	conds := selection.Conditions
+	require.Equal(t, 1, len(conds))
+	col := expression.ColInfo2Col(selection.Schema().Columns, tblInfo.Columns[0])
+	var filters []expression.Expression
+	conds, filters = ranger.DetachCondsForColumn(sctx, conds, col)
+	require.Equal(t, 1, len(conds))
+	require.Equal(t, 0, len(filters))
+	ranges, access, remained, err := ranger.BuildTableRange(conds, sctx, col.RetType, 0)
+	require.NoError(t, err)
+	require.Equal(t, "[[10,10] [20,20] [30,30] [40,40] [50,50]]", fmt.Sprintf("%v", ranges))
+	require.Equal(t, "[in(test.t.a, 10, 20, 30, 40, 50)]", fmt.Sprintf("%v", access))
+	require.Equal(t, "[]", fmt.Sprintf("%v", remained))
+	checkRangeFallbackAndReset(t, sctx, false)
+	quota := ranges.MemUsage() - 1
+	ranges, access, remained, err = ranger.BuildTableRange(conds, sctx, col.RetType, quota)
+	require.NoError(t, err)
+	require.Equal(t, "[[-inf,+inf]]", fmt.Sprintf("%v", ranges))
+	require.Equal(t, "[]", fmt.Sprintf("%v", access))
+	require.Equal(t, "[in(test.t.a, 10, 20, 30, 40, 50)]", fmt.Sprintf("%v", remained))
+	checkRangeFallbackAndReset(t, sctx, true)
+}
+
+func TestRangeFallbackForBuildColumnRange(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a varchar(20), b int not null)")
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	sctx := tk.Session().(sessionctx.Context)
+	sql := "select * from t where a in ('aaa','bbb','ccc','ddd','eee')"
+	selection := getSelectionFromQuery(t, sctx, sql)
+	conds := selection.Conditions
+	require.Equal(t, 1, len(conds))
+	cola := expression.ColInfo2Col(selection.Schema().Columns, tblInfo.Columns[0])
+	var filters []expression.Expression
+	conds, filters = ranger.DetachCondsForColumn(sctx, conds, cola)
+	require.Equal(t, 1, len(conds))
+	require.Equal(t, 0, len(filters))
+	ranges, access, remained, err := ranger.BuildColumnRange(conds, sctx, cola.RetType, types.UnspecifiedLength, 0)
+	require.NoError(t, err)
+	require.Equal(t, "[[\"aaa\",\"aaa\"] [\"bbb\",\"bbb\"] [\"ccc\",\"ccc\"] [\"ddd\",\"ddd\"] [\"eee\",\"eee\"]]", fmt.Sprintf("%v", ranges))
+	require.Equal(t, "[in(test.t.a, aaa, bbb, ccc, ddd, eee)]", fmt.Sprintf("%v", access))
+	require.Equal(t, "[]", fmt.Sprintf("%v", remained))
+	checkRangeFallbackAndReset(t, sctx, false)
+	quota := ranges.MemUsage() - 1
+	ranges, access, remained, err = ranger.BuildColumnRange(conds, sctx, cola.RetType, types.UnspecifiedLength, quota)
+	require.NoError(t, err)
+	require.Equal(t, "[[NULL,+inf]]", fmt.Sprintf("%v", ranges))
+	require.Equal(t, "[]", fmt.Sprintf("%v", access))
+	require.Equal(t, "[in(test.t.a, aaa, bbb, ccc, ddd, eee)]", fmt.Sprintf("%v", remained))
+	checkRangeFallbackAndReset(t, sctx, true)
+	sql = "select * from t where b in (10,20,30)"
+	selection = getSelectionFromQuery(t, sctx, sql)
+	conds = selection.Conditions
+	require.Equal(t, 1, len(conds))
+	colb := expression.ColInfo2Col(selection.Schema().Columns, tblInfo.Columns[1])
+	conds, filters = ranger.DetachCondsForColumn(sctx, conds, colb)
+	require.Equal(t, 1, len(conds))
+	require.Equal(t, 0, len(filters))
+	ranges, access, remained, err = ranger.BuildColumnRange(conds, sctx, colb.RetType, types.UnspecifiedLength, 1)
+	require.NoError(t, err)
+	require.Equal(t, "[[-inf,+inf]]", fmt.Sprintf("%v", ranges))
+	require.Equal(t, "[]", fmt.Sprintf("%v", access))
+	require.Equal(t, "[in(test.t.b, 10, 20, 30)]", fmt.Sprintf("%v", remained))
 }

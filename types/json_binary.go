@@ -120,6 +120,8 @@ import (
 
 var jsonZero = CreateBinaryJSON(uint64(0))
 
+const maxJSONDepth = 100
+
 // BinaryJSON represents a binary encoded JSON object.
 // It can be randomly accessed without deserialization.
 type BinaryJSON struct {
@@ -514,19 +516,19 @@ func (bj *BinaryJSON) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	buf := make([]byte, 0, len(data))
-	var typeCode JSONTypeCode
-	typeCode, buf, err = appendBinaryJSON(buf, in)
+	newBj, err := CreateBinaryJSONWithCheck(in)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	bj.TypeCode = typeCode
-	bj.Value = buf
+	bj.TypeCode = newBj.TypeCode
+	bj.Value = newBj.Value
 	return nil
 }
 
 // HashValue converts certain JSON values for aggregate comparisons.
 // For example int64(3) == float64(3.0)
+// Other than the numeric condition, this function has to construct a bidirectional map between hash value
+// and the original representation
 func (bj BinaryJSON) HashValue(buf []byte) []byte {
 	switch bj.TypeCode {
 	case JSONTypeCodeInt64:
@@ -534,22 +536,42 @@ func (bj BinaryJSON) HashValue(buf []byte) []byte {
 		// In the future, it will be better to convert to a DECIMAL value instead
 		// See: https://github.com/pingcap/tidb/issues/9988
 		if bj.GetInt64() == int64(float64(bj.GetInt64())) {
+			buf = append(buf, JSONTypeCodeFloat64)
 			buf = appendBinaryFloat64(buf, float64(bj.GetInt64()))
 		} else {
+			buf = append(buf, bj.TypeCode)
+			buf = append(buf, bj.Value...)
+		}
+	case JSONTypeCodeUint64:
+		if bj.GetUint64() == uint64(float64(bj.GetUint64())) {
+			buf = append(buf, JSONTypeCodeFloat64)
+			buf = appendBinaryFloat64(buf, float64(bj.GetUint64()))
+		} else {
+			buf = append(buf, bj.TypeCode)
 			buf = append(buf, bj.Value...)
 		}
 	case JSONTypeCodeArray:
+		// this hash value is bidirectional, because you can get the element one-by-one
+		// and you know the end of it, as the elemCount is also appended here
+		buf = append(buf, bj.TypeCode)
 		elemCount := int(jsonEndian.Uint32(bj.Value))
+		buf = append(buf, bj.Value[0:dataSizeOff]...)
 		for i := 0; i < elemCount; i++ {
 			buf = bj.arrayGetElem(i).HashValue(buf)
 		}
 	case JSONTypeCodeObject:
+		// this hash value is bidirectional, because you can get the key using the json
+		// string format, and get the value accordingly.
+		buf = append(buf, bj.TypeCode)
 		elemCount := int(jsonEndian.Uint32(bj.Value))
+		buf = append(buf, bj.Value[0:dataSizeOff]...)
 		for i := 0; i < elemCount; i++ {
-			buf = append(buf, bj.objectGetKey(i)...)
+			keyJSON := CreateBinaryJSON(string(bj.objectGetKey(i)))
+			buf = append(buf, keyJSON.Value...)
 			buf = bj.objectGetVal(i).HashValue(buf)
 		}
 	default:
+		buf = append(buf, bj.TypeCode)
 		buf = append(buf, bj.Value...)
 	}
 	return buf
@@ -557,11 +579,25 @@ func (bj BinaryJSON) HashValue(buf []byte) []byte {
 
 // CreateBinaryJSON creates a BinaryJSON from interface.
 func CreateBinaryJSON(in interface{}) BinaryJSON {
-	typeCode, buf, err := appendBinaryJSON(nil, in)
+	bj, err := CreateBinaryJSONWithCheck(in)
 	if err != nil {
 		panic(err)
 	}
-	return BinaryJSON{TypeCode: typeCode, Value: buf}
+	return bj
+}
+
+// CreateBinaryJSONWithCheck creates a BinaryJSON from interface with error check.
+func CreateBinaryJSONWithCheck(in interface{}) (BinaryJSON, error) {
+	typeCode, buf, err := appendBinaryJSON(nil, in)
+	if err != nil {
+		return BinaryJSON{}, err
+	}
+	bj := BinaryJSON{TypeCode: typeCode, Value: buf}
+	// GetElemDepth always returns +1.
+	if bj.GetElemDepth()-1 > maxJSONDepth {
+		return BinaryJSON{}, ErrJSONDocumentTooDeep
+	}
+	return bj, nil
 }
 
 func appendBinaryJSON(buf []byte, in interface{}) (JSONTypeCode, []byte, error) {

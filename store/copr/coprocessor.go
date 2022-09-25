@@ -191,9 +191,10 @@ type copTask struct {
 	cmdType   tikvrpc.CmdType
 	storeType kv.StoreType
 
-	eventCb    trxevents.EventCallback
-	paging     bool
-	pagingSize uint64
+	eventCb       trxevents.EventCallback
+	paging        bool
+	pagingSize    uint64
+	pagingTaskIdx uint32
 
 	partitionIndex int64 // used by balanceBatchCopTask in PartitionTableScan
 	requestSource  util.RequestSource
@@ -235,14 +236,14 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 		// TiKV will return gRPC error if the message is too large. So we need to limit the length of the ranges slice
 		// to make sure the message can be sent successfully.
 		rLen := loc.Ranges.Len()
+		// If this is a paging request, we set the paging size to minPagingSize,
+		// the size will grow every round.
+		pagingSize := uint64(0)
+		if req.Paging.Enable {
+			pagingSize = req.Paging.MinPagingSize
+		}
 		for i := 0; i < rLen; {
 			nextI := mathutil.Min(i+rangesPerTask, rLen)
-			// If this is a paging request, we set the paging size to minPagingSize,
-			// the size will grow every round.
-			pagingSize := uint64(0)
-			if req.Paging.Enable {
-				pagingSize = req.Paging.MinPagingSize
-			}
 			tasks = append(tasks, &copTask{
 				region:        loc.Location.Region,
 				bucketsVer:    loc.getBucketVersion(),
@@ -256,6 +257,9 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 				requestSource: req.RequestSource,
 			})
 			i = nextI
+			if req.Paging.Enable {
+				pagingSize = paging.GrowPagingSize(pagingSize, req.Paging.MaxPagingSize)
+			}
 		}
 	}
 
@@ -338,6 +342,7 @@ type copIterator struct {
 	committedLocks util.TSSet
 
 	actionOnExceed *rateLimitAction
+	pagingTaskIdx  uint32
 }
 
 // copIteratorWorker receives tasks from copIteratorTaskSender, handles tasks and sends the copResponse to respChan.
@@ -356,6 +361,7 @@ type copIteratorWorker struct {
 	replicaReadSeed uint32
 
 	enableCollectExecutionInfo bool
+	pagingTaskIdx              *uint32
 }
 
 // copIteratorTaskSender sends tasks to taskCh then wait for the workers to exit.
@@ -477,6 +483,7 @@ func (it *copIterator) open(ctx context.Context, enabledRateLimitAction, enableC
 			memTracker:                 it.memTracker,
 			replicaReadSeed:            it.replicaReadSeed,
 			enableCollectExecutionInfo: enableCollectExecutionInfo,
+			pagingTaskIdx:              &it.pagingTaskIdx,
 		}
 		go worker.run(ctx)
 	}
@@ -581,6 +588,7 @@ func (worker *copIteratorWorker) sendToRespCh(resp *copResponse, respCh chan<- *
 				}
 			}
 		})
+		failpoint.Inject("ConsumeRandomPanic", nil)
 		worker.memTracker.Consume(consumed)
 	}
 	select {
@@ -732,6 +740,10 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 			failpoint.Return(nil, errors.New("mock handleTaskOnce error"))
 		}
 	})
+
+	if task.paging {
+		task.pagingTaskIdx = atomic.AddUint32(worker.pagingTaskIdx, 1)
+	}
 
 	copReq := coprocessor.Request{
 		Tp:         worker.req.Tp,
@@ -1021,7 +1033,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 		// Cache not hit or cache hit but not valid: update the cache if the response can be cached.
 		if cacheKey != nil && resp.pbResp.CanBeCached && resp.pbResp.CacheLastVersion > 0 {
 			if resp.detail != nil {
-				if worker.store.coprCache.CheckResponseAdmission(resp.pbResp.Data.Size(), resp.detail.TimeDetail.ProcessTime, worker.req.Paging.Enable) {
+				if worker.store.coprCache.CheckResponseAdmission(resp.pbResp.Data.Size(), resp.detail.TimeDetail.ProcessTime, task.pagingTaskIdx) {
 					data := make([]byte, len(resp.pbResp.Data))
 					copy(data, resp.pbResp.Data)
 
