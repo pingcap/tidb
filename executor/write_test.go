@@ -1995,6 +1995,24 @@ func TestIssue34358(t *testing.T) {
 	}, ld, t, tk, ctx, "select * from load_data_test", "delete from load_data_test")
 }
 
+func TestIssue33298(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	ctx := tk.Session().(sessionctx.Context)
+	defer ctx.SetValue(executor.LoadDataVarKey, nil)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists load_data_test")
+	tk.MustExec("create table load_data_test (a varchar(10), b varchar(10))")
+
+	// According to https://dev.mysql.com/doc/refman/8.0/en/load-data.html , fixed-row format should be used when fields
+	// terminated by '' and enclosed by ''. However, tidb doesn't support it yet and empty terminator leads to infinite
+	// loop in `indexOfTerminator` (see https://github.com/pingcap/tidb/issues/33298).
+	require.Error(t, tk.ExecToErr("load data local infile '/tmp/nonexistence.csv' into table load_data_test fields terminated by ''"))
+	require.Error(t, tk.ExecToErr("load data local infile '/tmp/nonexistence.csv' into table load_data_test fields terminated by '' enclosed by ''"))
+}
+
 func TestLoadData(t *testing.T) {
 	trivialMsg := "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"
 	store, clean := testkit.CreateMockStore(t)
