@@ -119,6 +119,7 @@ func (p *StalenessTxnContextProvider) activateStaleTxn() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	sessVars.TxnCtxMu.Lock()
 	sessVars.TxnCtx = &variable.TransactionContext{
 		TxnCtxNoNeedToRestore: variable.TxnCtxNoNeedToRestore{
 			InfoSchema:  is,
@@ -129,6 +130,7 @@ func (p *StalenessTxnContextProvider) activateStaleTxn() error {
 			TxnScope:    txnScope,
 		},
 	}
+	sessVars.TxnCtxMu.Unlock()
 
 	if interceptor := temptable.SessionSnapshotInterceptor(p.sctx, is); interceptor != nil {
 		txn.SetOption(kv.SnapInterceptor, interceptor)

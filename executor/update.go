@@ -191,7 +191,7 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema, row, n
 		flags := bAssignFlag[content.Start:content.End]
 
 		// Update row
-		changed, err1 := updateRecord(ctx, e.ctx, handle, oldData, newTableData, flags, tbl, false, e.memTracker)
+		changed, err1 := updateRecord(ctx, e.ctx, handle, oldData, newTableData, flags, tbl, false, e.memTracker, nil)
 		if err1 == nil {
 			_, exist := e.updatedRowKeys[content.Start].Get(handle)
 			memDelta := e.updatedRowKeys[content.Start].Set(handle, changed)
