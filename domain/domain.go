@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
+	"github.com/pingcap/tidb/br/pkg/streamhelper/daemon"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/placement"
@@ -111,7 +112,7 @@ type Domain struct {
 	indexUsageSyncLease     time.Duration
 	dumpFileGcChecker       *dumpFileGcChecker
 	expiredTimeStamp4PC     types.Time
-	logBackupAdvancer       *streamhelper.AdvancerDaemon
+	logBackupAdvancer       *daemon.OwnerDaemon
 
 	serverID             uint64
 	serverIDSession      *concurrency.Session
@@ -1058,7 +1059,7 @@ func (do *Domain) initLogBackup(ctx context.Context, pdClient pd.Client) error {
 		return err
 	}
 	adv := streamhelper.NewCheckpointAdvancer(env)
-	do.logBackupAdvancer = streamhelper.NewAdvancerDaemon(adv, streamhelper.OwnerManagerForLogBackup(ctx, do.etcdClient))
+	do.logBackupAdvancer = daemon.New(adv, streamhelper.OwnerManagerForLogBackup(ctx, do.etcdClient), adv.Config().TickDuration)
 	loop, err := do.logBackupAdvancer.Begin(ctx)
 	if err != nil {
 		return err
