@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/tikv/client-go/v2/tikv"
+	"go.opencensus.io/stats/view"
 	"go.uber.org/goleak"
 )
 
@@ -39,5 +40,8 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("gopkg.in/natefinch/lumberjack%2ev2.(*Logger).millRun"),
 		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/txnkv/transaction.keepAlive"),
 	}
+	goleak.Cleanup(func(_ int) {
+		view.Stop()
+	})
 	goleak.VerifyTestMain(m, opts...)
 }
