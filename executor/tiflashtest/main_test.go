@@ -35,13 +35,14 @@ func TestMain(m *testing.M) {
 	tikv.EnableFailpoints()
 
 	opts := []goleak.Option{
+		goleak.Cleanup(func(_ int) {
+			view.Stop()
+		}),
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("gopkg.in/natefinch/lumberjack%2ev2.(*Logger).millRun"),
 		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/txnkv/transaction.keepAlive"),
 	}
-	goleak.Cleanup(func(_ int) {
-		view.Stop()
-	})
+
 	goleak.VerifyTestMain(m, opts...)
 }

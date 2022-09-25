@@ -901,8 +901,6 @@ func TestTiFlashVirtualColumn(t *testing.T) {
 }
 
 func TestTiFlashPartitionTableShuffledHashAggregation(t *testing.T) {
-	t.Skip("too slow")
-
 	store := testkit.CreateMockStore(t, withMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database tiflash_partition_AGG")
@@ -972,8 +970,6 @@ func TestTiFlashPartitionTableShuffledHashAggregation(t *testing.T) {
 }
 
 func TestTiFlashPartitionTableBroadcastJoin(t *testing.T) {
-	t.Skip("too slow")
-
 	store := testkit.CreateMockStore(t, withMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database tiflash_partition_BCJ")
