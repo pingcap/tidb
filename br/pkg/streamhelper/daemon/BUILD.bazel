@@ -19,6 +19,7 @@ go_library(
 go_test(
     name = "daemon_test",
     srcs = ["owner_daemon_test.go"],
+    flaky = True,
     deps = [
         ":daemon",
         "//owner",
