@@ -51,6 +51,7 @@ go_library(
         "//util/execdetails",
         "//util/expensivequery",
         "//util/logutil",
+        "//util/servermemorylimit",
         "//util/sqlexec",
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
