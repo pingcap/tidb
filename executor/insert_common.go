@@ -97,6 +97,8 @@ type InsertValues struct {
 	// We use mutex to protect routine from using invalid txn.
 	isLoadData bool
 	txnInUse   sync.Mutex
+	// fkChecks contains the foreign key checkers.
+	fkChecks []*FKCheckExec
 }
 
 type defaultVal struct {
@@ -1126,6 +1128,13 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 			defer snapshot.SetOption(kv.CollectRuntimeStats, nil)
 		}
 	}
+	sc := e.ctx.GetSessionVars().StmtCtx
+	for _, fkc := range e.fkChecks {
+		err = fkc.checkRows(ctx, sc, txn, toBeCheckedRows)
+		if err != nil {
+			return err
+		}
+	}
 	prefetchStart := time.Now()
 	// Fill cache using BatchGet, the following Get requests don't need to visit TiKV.
 	// Temporary table need not to do prefetch because its all data are stored in the memory.
@@ -1264,6 +1273,14 @@ func (e *InsertValues) addRecordWithAutoIDHint(ctx context.Context, row []types.
 	vars.StmtCtx.AddAffectedRows(1)
 	if e.lastInsertID != 0 {
 		vars.SetLastInsertID(e.lastInsertID)
+	}
+	if !vars.StmtCtx.BatchCheck {
+		for _, fkc := range e.fkChecks {
+			err = fkc.insertRowNeedToCheck(vars.StmtCtx, row)
+			if err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }

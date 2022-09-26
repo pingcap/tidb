@@ -2060,8 +2060,7 @@ func TestPDFail(t *testing.T) {
 	checkAllBundlesNotChange(t, existBundles)
 
 	// exchange partition
-	tk.MustExec("alter table tp exchange partition p1 with table t1")
-	require.True(t, infosync.ErrHTTPServiceError.Equal(err))
+	tk.MustGetErrCode("alter table tp exchange partition p1 with table t1", mysql.ErrTablesDifferentMetadata)
 	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))

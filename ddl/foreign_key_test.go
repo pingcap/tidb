@@ -489,23 +489,57 @@ func TestRenameTableWithForeignKeyMetaInfo(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk.MustExec("create database test2")
+	tk.MustExec("create database test3")
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int key, a int, b int, foreign key fk(a) references t1(id))")
+	tk.MustExec("rename table test.t1 to test2.t2")
+	tk.MustQuery("show create table test2.t2").Check(testkit.Rows("t2 CREATE TABLE `t2` (\n" +
+		"  `id` int(11) NOT NULL,\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  `b` int(11) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n" +
+		"  KEY `fk` (`a`),\n" +
+		"  CONSTRAINT `fk` FOREIGN KEY (`a`) REFERENCES `test2`.`t2` (`id`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tblInfo := getTableInfo(t, dom, "test2", "t2")
+	tbReferredFKs := getTableInfoReferredForeignKeys(t, dom, "test2", "t2")
+	require.Equal(t, 1, len(tblInfo.ForeignKeys))
+	require.Equal(t, 1, len(tbReferredFKs))
+	require.Equal(t, model.ReferredFKInfo{
+		Cols:        []model.CIStr{model.NewCIStr("id")},
+		ChildSchema: model.NewCIStr("test2"),
+		ChildTable:  model.NewCIStr("t2"),
+		ChildFKName: model.NewCIStr("fk"),
+	}, *tbReferredFKs[0])
+	require.Equal(t, model.FKInfo{
+		ID:        1,
+		Name:      model.NewCIStr("fk"),
+		RefSchema: model.NewCIStr("test2"),
+		RefTable:  model.NewCIStr("t2"),
+		RefCols:   []model.CIStr{model.NewCIStr("id")},
+		Cols:      []model.CIStr{model.NewCIStr("a")},
+		State:     model.StatePublic,
+		Version:   1,
+	}, *tblInfo.ForeignKeys[0])
+
+	tk.MustExec("drop table test2.t2")
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (id int key, a int, b int as (a) virtual);")
 	tk.MustExec("create table t2 (id int key, b int, foreign key fk_b(b) references test.t1(id))")
 	tk.MustExec("use test2")
-	tk.MustExec("rename table test.t2 to test2.t2")
+	tk.MustExec("rename table test.t2 to test2.tt2")
 	tb1Info := getTableInfo(t, dom, "test", "t1")
-	tb2Info := getTableInfo(t, dom, "test2", "t2")
+	tb2Info := getTableInfo(t, dom, "test2", "tt2")
 	require.Equal(t, 0, len(tb1Info.ForeignKeys))
 	tb1ReferredFKs := getTableInfoReferredForeignKeys(t, dom, "test", "t1")
 	require.Equal(t, 1, len(tb1ReferredFKs))
 	require.Equal(t, model.ReferredFKInfo{
 		Cols:        []model.CIStr{model.NewCIStr("id")},
 		ChildSchema: model.NewCIStr("test2"),
-		ChildTable:  model.NewCIStr("t2"),
+		ChildTable:  model.NewCIStr("tt2"),
 		ChildFKName: model.NewCIStr("fk_b"),
 	}, *tb1ReferredFKs[0])
-	tb2ReferredFKs := getTableInfoReferredForeignKeys(t, dom, "test2", "t2")
+	tb2ReferredFKs := getTableInfoReferredForeignKeys(t, dom, "test2", "tt2")
 	require.Equal(t, 0, len(tb2ReferredFKs))
 	require.Equal(t, 1, len(tb2Info.ForeignKeys))
 	require.Equal(t, model.FKInfo{
@@ -521,8 +555,39 @@ func TestRenameTableWithForeignKeyMetaInfo(t *testing.T) {
 	// Auto create index for foreign key usage.
 	require.Equal(t, 1, len(tb2Info.Indices))
 	require.Equal(t, "fk_b", tb2Info.Indices[0].Name.L)
-	require.Equal(t, "`test2`.`t2`, CONSTRAINT `fk_b` FOREIGN KEY (`b`) REFERENCES `test`.`t1` (`id`)", tb2Info.ForeignKeys[0].String("test2", "t2"))
-	// TODO(crazycs520): add test for "rename table t1"
+	require.Equal(t, "`test2`.`tt2`, CONSTRAINT `fk_b` FOREIGN KEY (`b`) REFERENCES `test`.`t1` (`id`)", tb2Info.ForeignKeys[0].String("test2", "tt2"))
+
+	tk.MustExec("rename table test.t1 to test3.tt1")
+	tb1ReferredFKs = getTableInfoReferredForeignKeys(t, dom, "test3", "tt1")
+	require.Equal(t, 1, len(tb1ReferredFKs))
+	require.Equal(t, 1, len(tb1ReferredFKs[0].Cols))
+	require.Equal(t, model.ReferredFKInfo{
+		Cols:        []model.CIStr{model.NewCIStr("id")},
+		ChildSchema: model.NewCIStr("test2"),
+		ChildTable:  model.NewCIStr("tt2"),
+		ChildFKName: model.NewCIStr("fk_b"),
+	}, *tb1ReferredFKs[0])
+	tbl2Info := getTableInfo(t, dom, "test2", "tt2")
+	tb2ReferredFKs = getTableInfoReferredForeignKeys(t, dom, "test2", "tt2")
+	require.Equal(t, 0, len(tb2ReferredFKs))
+	require.Equal(t, 1, len(tbl2Info.ForeignKeys))
+	require.Equal(t, model.FKInfo{
+		ID:        1,
+		Name:      model.NewCIStr("fk_b"),
+		RefSchema: model.NewCIStr("test3"),
+		RefTable:  model.NewCIStr("tt1"),
+		RefCols:   []model.CIStr{model.NewCIStr("id")},
+		Cols:      []model.CIStr{model.NewCIStr("b")},
+		State:     model.StatePublic,
+		Version:   1,
+	}, *tbl2Info.ForeignKeys[0])
+	tk.MustQuery("show create table test2.tt2").Check(testkit.Rows("tt2 CREATE TABLE `tt2` (\n" +
+		"  `id` int(11) NOT NULL,\n" +
+		"  `b` int(11) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n" +
+		"  KEY `fk_b` (`b`),\n" +
+		"  CONSTRAINT `fk_b` FOREIGN KEY (`b`) REFERENCES `test3`.`tt1` (`id`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
 
 func TestCreateTableWithForeignKeyDML(t *testing.T) {
@@ -766,6 +831,40 @@ func TestCreateTableWithForeignKeyError(t *testing.T) {
 	}
 }
 
+func TestModifyColumnWithForeignKey(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1;")
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t1 (id int key, b varchar(10), index(b));")
+	tk.MustExec("create table t2 (a varchar(10), constraint fk foreign key (a) references t1(b));")
+	tk.MustExec("insert into t1 values (1, '123456789');")
+	tk.MustExec("insert into t2 values ('123456789');")
+	tk.MustGetErrMsg("alter table t1 modify column b varchar(5);", "[ddl:1833]Cannot change column 'b': used in a foreign key constraint 'fk' of table 'test.t2'")
+	tk.MustGetErrMsg("alter table t1 modify column b bigint;", "[ddl:3780]Referencing column 'a' and referenced column 'b' in foreign key constraint 'fk' are incompatible.")
+	tk.MustExec("alter table t1 modify column b varchar(20);")
+	tk.MustGetErrMsg("alter table t1 modify column b varchar(10);", "[ddl:1833]Cannot change column 'b': used in a foreign key constraint 'fk' of table 'test.t2'")
+	tk.MustExec("alter table t2 modify column a varchar(20);")
+	tk.MustExec("alter table t2 modify column a varchar(21);")
+	tk.MustGetErrMsg("alter table t2 modify column a varchar(5);", "[ddl:1832]Cannot change column 'a': used in a foreign key constraint 'fk'")
+	tk.MustGetErrMsg("alter table t2 modify column a bigint;", "[ddl:3780]Referencing column 'a' and referenced column 'b' in foreign key constraint 'fk' are incompatible.")
+
+	tk.MustExec("drop table t2")
+	tk.MustExec("drop table t1")
+	tk.MustExec("create table t1 (id int key, b decimal(10, 5), index(b));")
+	tk.MustExec("create table t2 (a decimal(10, 5), constraint fk foreign key (a) references t1(b));")
+	tk.MustExec("insert into t1 values (1, 12345.67891);")
+	tk.MustExec("insert into t2 values (12345.67891);")
+	tk.MustGetErrMsg("alter table t1 modify column b decimal(10, 6);", "[ddl:1833]Cannot change column 'b': used in a foreign key constraint 'fk' of table 'test.t2'")
+	tk.MustGetErrMsg("alter table t1 modify column b decimal(10, 3);", "[ddl:1833]Cannot change column 'b': used in a foreign key constraint 'fk' of table 'test.t2'")
+	tk.MustGetErrMsg("alter table t1 modify column b decimal(5, 2);", "[ddl:1833]Cannot change column 'b': used in a foreign key constraint 'fk' of table 'test.t2'")
+	tk.MustGetErrMsg("alter table t1 modify column b decimal(20, 10);", "[ddl:1833]Cannot change column 'b': used in a foreign key constraint 'fk' of table 'test.t2'")
+	tk.MustGetErrMsg("alter table t2 modify column a decimal(30, 15);", "[ddl:1832]Cannot change column 'a': used in a foreign key constraint 'fk'")
+	tk.MustGetErrMsg("alter table t2 modify column a decimal(5, 2);", "[ddl:1832]Cannot change column 'a': used in a foreign key constraint 'fk'")
+}
+
 func TestDropChildTableForeignKeyMetaInfo(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -912,10 +1011,6 @@ func TestTruncateOrDropTableWithForeignKeyReferred2(t *testing.T) {
 	tk2.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk2.MustExec("set @@foreign_key_checks=1;")
 	tk2.MustExec("use test")
-	tk3 := testkit.NewTestKit(t, store)
-	tk3.MustExec("set @@global.tidb_enable_foreign_key=1")
-	tk3.MustExec("set @@foreign_key_checks=1;")
-	tk3.MustExec("use test")
 
 	tk.MustExec("create table t1 (id int key, a int);")
 
@@ -978,6 +1073,129 @@ func TestDropTableWithForeignKeyReferred(t *testing.T) {
 	tk.MustQuery("show tables").Check(testkit.Rows("t1", "t2", "t3"))
 }
 
+func TestDropIndexNeededInForeignKey(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+
+	cases := []struct {
+		prepares []string
+		drops    []string
+		err      string
+	}{
+		{
+			prepares: []string{
+				"create table t1 (id int key, b int, index idx (b))",
+				"create table t2 (a int, b int, index idx (b), foreign key fk_b(b) references t1(b));",
+			},
+			drops: []string{
+				"alter table t1 drop index idx",
+				"alter table t2 drop index idx",
+			},
+			err: "[ddl:1553]Cannot drop index 'idx': needed in a foreign key constraint",
+		},
+		{
+			prepares: []string{
+				"create table t1 (id int, b int, index idx (id, b))",
+				"create table t2 (a int, b int, index idx (b, a), foreign key fk_b(b) references t1(id));",
+			},
+			drops: []string{
+				"alter table t1 drop index idx",
+				"alter table t2 drop index idx",
+			},
+			err: "[ddl:1553]Cannot drop index 'idx': needed in a foreign key constraint",
+		},
+	}
+
+	for _, ca := range cases {
+		tk.MustExec("drop table if exists t2")
+		tk.MustExec("drop table if exists t1")
+		for _, sql := range ca.prepares {
+			tk.MustExec(sql)
+		}
+		for _, drop := range ca.drops {
+			// even disable foreign key check, still can't drop the index used by foreign key.
+			tk.MustExec("set @@foreign_key_checks=0;")
+			err := tk.ExecToErr(drop)
+			require.Error(t, err)
+			require.Equal(t, ca.err, err.Error())
+			tk.MustExec("set @@foreign_key_checks=1;")
+			err = tk.ExecToErr(drop)
+			require.Error(t, err)
+			require.Equal(t, ca.err, err.Error())
+		}
+	}
+	passCases := [][]string{
+		{
+			"create table t1 (id int key, b int, index idxb (b))",
+			"create table t2 (a int, b int key, index idxa (a),index idxb (b), foreign key fk_b(b) references t1(id));",
+			"alter table t1 drop index idxb",
+			"alter table t2 drop index idxa",
+			"alter table t2 drop index idxb",
+		},
+		{
+			"create table t1 (id int key, b int, index idxb (b), unique index idx(b, id))",
+			"create table t2 (a int, b int key, index idx (b, a),index idxb (b), index idxab(a, b), foreign key fk_b(b) references t1(b));",
+			"alter table t1 drop index idxb",
+			"alter table t1 add index idxb (b)",
+			"alter table t1 drop index idx",
+			"alter table t2 drop index idx",
+			"alter table t2 add index idx (b, a)",
+			"alter table t2 drop index idxb",
+			"alter table t2 drop index idxab",
+		},
+	}
+	tk.MustExec("set @@foreign_key_checks=1;")
+	for _, ca := range passCases {
+		tk.MustExec("drop table if exists t2")
+		tk.MustExec("drop table if exists t1")
+		for _, sql := range ca {
+			tk.MustExec(sql)
+		}
+	}
+}
+
+func TestDropIndexNeededInForeignKey2(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
+	d := dom.DDL()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1;")
+	tk.MustExec("use test")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk2.MustExec("set @@foreign_key_checks=1;")
+	tk2.MustExec("use test")
+	tk.MustExec("create table t1 (id int key, b int)")
+	tk.MustExec("create table t2 (a int, b int, index idx1 (b),index idx2 (b), foreign key (b) references t1(id));")
+
+	var wg sync.WaitGroup
+	var dropErr error
+	tc := &ddl.TestDDLCallback{}
+	tc.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.SchemaState != model.StatePublic || job.Type != model.ActionDropIndex {
+			return
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			dropErr = tk2.ExecToErr("alter table t2 drop index idx2")
+		}()
+		// make sure tk2's ddl job already put into ddl job queue.
+		time.Sleep(time.Millisecond * 100)
+	}
+	originalHook := d.GetHook()
+	defer d.SetHook(originalHook)
+	d.SetHook(tc)
+
+	tk.MustExec("alter table t2 drop index idx1")
+	wg.Wait()
+	require.Error(t, dropErr)
+	require.Equal(t, "[ddl:1553]Cannot drop index 'idx2': needed in a foreign key constraint", dropErr.Error())
+}
+
 func getTableInfo(t *testing.T, dom *domain.Domain, db, tb string) *model.TableInfo {
 	err := dom.Reload()
 	require.NoError(t, err)
@@ -993,4 +1211,182 @@ func getTableInfoReferredForeignKeys(t *testing.T, dom *domain.Domain, db, tb st
 	err := dom.Reload()
 	require.NoError(t, err)
 	return dom.InfoSchema().GetTableReferredForeignKeys(db, tb)
+}
+
+func TestDropColumnWithForeignKey(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1;")
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t1 (id int key, a int, b int, index(b), CONSTRAINT fk foreign key (a) references t1(b))")
+	tk.MustGetErrMsg("alter table t1 drop column a;", "[ddl:1828]Cannot drop column 'a': needed in a foreign key constraint 'fk'")
+	tk.MustGetErrMsg("alter table t1 drop column b;", "[ddl:1829]Cannot drop column 'b': needed in a foreign key constraint 'fk' of table 't1'")
+
+	tk.MustExec("drop table t1")
+	tk.MustExec("create table t1 (id int key, b int, index(b));")
+	tk.MustExec("create table t2 (a int, b int, constraint fk foreign key (a) references t1(b));")
+	tk.MustGetErrMsg("alter table t1 drop column b;", "[ddl:1829]Cannot drop column 'b': needed in a foreign key constraint 'fk' of table 't2'")
+	tk.MustGetErrMsg("alter table t2 drop column a;", "[ddl:1828]Cannot drop column 'a': needed in a foreign key constraint 'fk'")
+}
+
+func TestRenameColumnWithForeignKeyMetaInfo(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1;")
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t1 (id int key, a int, b int, foreign key fk(a) references t1(id))")
+	tk.MustExec("alter table t1 change id kid int")
+	tk.MustExec("alter table t1 rename column a to aa")
+	tbl1Info := getTableInfo(t, dom, "test", "t1")
+	tb1ReferredFKs := getTableInfoReferredForeignKeys(t, dom, "test", "t1")
+	require.Equal(t, 1, len(tbl1Info.ForeignKeys))
+	require.Equal(t, 1, len(tb1ReferredFKs))
+	require.Equal(t, "kid", tb1ReferredFKs[0].Cols[0].L)
+	require.Equal(t, "kid", tbl1Info.ForeignKeys[0].RefCols[0].L)
+	require.Equal(t, "aa", tbl1Info.ForeignKeys[0].Cols[0].L)
+
+	tk.MustExec("drop table t1")
+	tk.MustExec("create table t1 (id int key, b int, index(b))")
+	tk.MustExec("create table t2 (a int, b int, foreign key fk(a) references t1(b));")
+	tk.MustExec("alter table t2 change a aa int")
+	tbl1Info = getTableInfo(t, dom, "test", "t1")
+	tb1ReferredFKs = getTableInfoReferredForeignKeys(t, dom, "test", "t1")
+	require.Equal(t, 1, len(tb1ReferredFKs))
+	require.Equal(t, 1, len(tb1ReferredFKs[0].Cols))
+	require.Equal(t, "b", tb1ReferredFKs[0].Cols[0].L)
+	tbl2Info := getTableInfo(t, dom, "test", "t2")
+	tb2ReferredFKs := getTableInfoReferredForeignKeys(t, dom, "test", "t2")
+	require.Equal(t, 0, len(tb2ReferredFKs))
+	require.Equal(t, 1, len(tbl2Info.ForeignKeys))
+	require.Equal(t, 1, len(tbl2Info.ForeignKeys[0].Cols))
+	require.Equal(t, 1, len(tbl2Info.ForeignKeys[0].RefCols))
+	require.Equal(t, "aa", tbl2Info.ForeignKeys[0].Cols[0].L)
+	require.Equal(t, "b", tbl2Info.ForeignKeys[0].RefCols[0].L)
+
+	tk.MustExec("alter table t1 change id kid int")
+	tk.MustExec("alter table t1 change b bb int")
+	tbl1Info = getTableInfo(t, dom, "test", "t1")
+	tb1ReferredFKs = getTableInfoReferredForeignKeys(t, dom, "test", "t1")
+	require.Equal(t, 1, len(tb1ReferredFKs))
+	require.Equal(t, 1, len(tb1ReferredFKs[0].Cols))
+	require.Equal(t, "bb", tb1ReferredFKs[0].Cols[0].L)
+	tbl2Info = getTableInfo(t, dom, "test", "t2")
+	tb2ReferredFKs = getTableInfoReferredForeignKeys(t, dom, "test", "t2")
+	require.Equal(t, 0, len(tb2ReferredFKs))
+	require.Equal(t, 1, len(tbl2Info.ForeignKeys))
+	require.Equal(t, 1, len(tbl2Info.ForeignKeys[0].Cols))
+	require.Equal(t, 1, len(tbl2Info.ForeignKeys[0].RefCols))
+	require.Equal(t, "aa", tbl2Info.ForeignKeys[0].Cols[0].L)
+	require.Equal(t, "bb", tbl2Info.ForeignKeys[0].RefCols[0].L)
+
+	tk.MustExec("drop table t1, t2")
+	tk.MustExec("create table t1 (id int key, b int, index(b))")
+	tk.MustExec("create table t2 (a int, b int, foreign key (a) references t1(b), foreign key (b) references t1(b));")
+	tk.MustExec("alter table t1 change b bb int")
+	tbl1Info = getTableInfo(t, dom, "test", "t1")
+	tb1ReferredFKs = getTableInfoReferredForeignKeys(t, dom, "test", "t1")
+	require.Equal(t, 2, len(tb1ReferredFKs))
+	require.Equal(t, 1, len(tb1ReferredFKs[0].Cols))
+	require.Equal(t, 1, len(tb1ReferredFKs[1].Cols))
+	require.Equal(t, "bb", tb1ReferredFKs[0].Cols[0].L)
+	require.Equal(t, "bb", tb1ReferredFKs[1].Cols[0].L)
+	tbl2Info = getTableInfo(t, dom, "test", "t2")
+	tb2ReferredFKs = getTableInfoReferredForeignKeys(t, dom, "test", "t2")
+	require.Equal(t, 0, len(tb2ReferredFKs))
+	require.Equal(t, 2, len(tbl2Info.ForeignKeys))
+	require.Equal(t, 1, len(tbl2Info.ForeignKeys[0].Cols))
+	require.Equal(t, 1, len(tbl2Info.ForeignKeys[0].RefCols))
+	require.Equal(t, "a", tbl2Info.ForeignKeys[0].Cols[0].L)
+	require.Equal(t, "bb", tbl2Info.ForeignKeys[0].RefCols[0].L)
+	require.Equal(t, 1, len(tbl2Info.ForeignKeys[1].Cols))
+	require.Equal(t, 1, len(tbl2Info.ForeignKeys[1].RefCols))
+	require.Equal(t, "b", tbl2Info.ForeignKeys[1].Cols[0].L)
+	require.Equal(t, "bb", tbl2Info.ForeignKeys[1].RefCols[0].L)
+	tk.MustExec("alter table t2 rename column a to aa")
+	tk.MustExec("alter table t2 change b bb int")
+	tk.MustQuery("show create table t2").
+		Check(testkit.Rows("t2 CREATE TABLE `t2` (\n" +
+			"  `aa` int(11) DEFAULT NULL,\n" +
+			"  `bb` int(11) DEFAULT NULL,\n" +
+			"  KEY `fk_1` (`aa`),\n  KEY `fk_2` (`bb`),\n" +
+			"  CONSTRAINT `fk_1` FOREIGN KEY (`aa`) REFERENCES `test`.`t1` (`bb`),\n" +
+			"  CONSTRAINT `fk_2` FOREIGN KEY (`bb`) REFERENCES `test`.`t1` (`bb`)\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+}
+
+func TestDropDatabaseWithForeignKeyReferred(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1;")
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t1 (id int key, b int, index(b));")
+	tk.MustExec("create table t2 (id int key, b int, foreign key fk_b(b) references t1(id));")
+	tk.MustExec("create database test2")
+	tk.MustExec("create table test2.t3 (id int key, b int, foreign key fk_b(b) references test.t2(id));")
+	err := tk.ExecToErr("drop database test;")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:3730]Cannot drop table 't2' referenced by a foreign key constraint 'fk_b' on table 't3'.", err.Error())
+	tk.MustExec("set @@foreign_key_checks=0;")
+	tk.MustExec("drop database test")
+
+	tk.MustExec("set @@foreign_key_checks=1;")
+	tk.MustExec("create database test")
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int key, b int, index(b));")
+	tk.MustExec("create table t2 (id int key, b int, foreign key fk_b(b) references t1(id));")
+	err = tk.ExecToErr("drop database test;")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:3730]Cannot drop table 't2' referenced by a foreign key constraint 'fk_b' on table 't3'.", err.Error())
+	tk.MustExec("drop table test2.t3")
+	tk.MustExec("drop database test")
+}
+
+func TestDropDatabaseWithForeignKeyReferred2(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
+	d := dom.DDL()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1;")
+	tk.MustExec("use test")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk2.MustExec("set @@foreign_key_checks=1;")
+	tk2.MustExec("use test")
+	tk.MustExec("create table t1 (id int key, b int, index(b));")
+	tk.MustExec("create table t2 (id int key, b int, foreign key fk_b(b) references t1(id));")
+	tk.MustExec("create database test2")
+	var wg sync.WaitGroup
+	var dropErr error
+	tc := &ddl.TestDDLCallback{}
+	tc.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.SchemaState != model.StateNone {
+			return
+		}
+		if job.Type != model.ActionCreateTable {
+			return
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			dropErr = tk2.ExecToErr("drop database test")
+		}()
+		// make sure tk2's ddl job already put into ddl job queue.
+		time.Sleep(time.Millisecond * 100)
+	}
+	originalHook := d.GetHook()
+	defer d.SetHook(originalHook)
+	d.SetHook(tc)
+
+	tk.MustExec("create table test2.t3 (id int key, b int, foreign key fk_b(b) references test.t2(id));")
+	wg.Wait()
+	require.Error(t, dropErr)
+	require.Equal(t, "[ddl:3730]Cannot drop table 't2' referenced by a foreign key constraint 'fk_b' on table 't3'.", dropErr.Error())
+	tk.MustExec("drop table test2.t3")
+	tk.MustExec("drop database test")
 }

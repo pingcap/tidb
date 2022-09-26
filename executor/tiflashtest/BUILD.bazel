@@ -8,6 +8,8 @@ go_test(
         "tiflash_test.go",
     ],
     flaky = True,
+    shard_count = 28,
+    race = "on",
     deps = [
         "//config",
         "//domain",
