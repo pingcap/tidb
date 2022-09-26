@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
@@ -387,7 +386,8 @@ func encodeHashChunkRowIdx(sc *stmtctx.StatementContext, row chunk.Row, tp *type
 		b = (*[unsafe.Sizeof(v)]byte)(unsafe.Pointer(&v))[:]
 	case mysql.TypeJSON:
 		flag = jsonFlag
-		b = row.GetBytes(idx)
+		json := row.GetJSON(idx)
+		b = json.HashValue(b)
 	default:
 		return 0, nil, errors.Errorf("unsupport column type for encode %d", tp.GetType())
 	}
@@ -646,7 +646,9 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 				isNull[i] = !ignoreNull
 			} else {
 				buf[0] = jsonFlag
-				b = column.GetBytes(i)
+				json := column.GetJSON(i)
+				b = b[:0]
+				b = json.HashValue(b)
 			}
 
 			// As the golang doc described, `Hash.Write` never returns an error..
@@ -853,11 +855,11 @@ func DecodeOne(b []byte) (remain []byte, d types.Datum, err error) {
 		}
 	case jsonFlag:
 		var size int
-		size, err = json.PeekBytesAsJSON(b)
+		size, err = types.PeekBytesAsJSON(b)
 		if err != nil {
 			return b, d, err
 		}
-		j := json.BinaryJSON{TypeCode: b[0], Value: b[1:size]}
+		j := types.BinaryJSON{TypeCode: b[0], Value: b[1:size]}
 		d.SetMysqlJSON(j)
 		b = b[size:]
 	case NilFlag:
@@ -982,7 +984,7 @@ func peek(b []byte) (length int, err error) {
 	case uvarintFlag:
 		l, err = peekUvarint(b)
 	case jsonFlag:
-		l, err = json.PeekBytesAsJSON(b)
+		l, err = types.PeekBytesAsJSON(b)
 	default:
 		return 0, errors.Errorf("invalid encoded key flag %v", flag)
 	}
@@ -1149,11 +1151,11 @@ func (decoder *Decoder) DecodeOne(b []byte, colIdx int, ft *types.FieldType) (re
 		chk.AppendDuration(colIdx, v)
 	case jsonFlag:
 		var size int
-		size, err = json.PeekBytesAsJSON(b)
+		size, err = types.PeekBytesAsJSON(b)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		chk.AppendJSON(colIdx, json.BinaryJSON{TypeCode: b[0], Value: b[1:size]})
+		chk.AppendJSON(colIdx, types.BinaryJSON{TypeCode: b[0], Value: b[1:size]})
 		b = b[size:]
 	case NilFlag:
 		chk.AppendNull(colIdx)

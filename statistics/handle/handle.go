@@ -215,7 +215,7 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration, pool sessionPool, tr
 	handle.StatsLoad.SubCtxs = make([]sessionctx.Context, cfg.Performance.StatsLoadConcurrency)
 	handle.StatsLoad.NeededItemsCh = make(chan *NeededItemTask, cfg.Performance.StatsLoadQueueSize)
 	handle.StatsLoad.TimeoutItemsCh = make(chan *NeededItemTask, cfg.Performance.StatsLoadQueueSize)
-	handle.StatsLoad.WorkingColMap = map[model.TableItemID][]chan model.TableItemID{}
+	handle.StatsLoad.WorkingColMap = map[model.TableItemID][]chan stmtctx.StatsLoadResult{}
 	err := handle.RefreshVars()
 	if err != nil {
 		return nil, err
@@ -403,7 +403,10 @@ type GlobalStats struct {
 }
 
 // MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableID.
-func (h *Handle) MergePartitionStats2GlobalStatsByTableID(sc sessionctx.Context, opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema, physicalID int64, isIndex int, histIDs []int64) (globalStats *GlobalStats, err error) {
+func (h *Handle) MergePartitionStats2GlobalStatsByTableID(sc sessionctx.Context,
+	opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema,
+	physicalID int64, isIndex int, histIDs []int64,
+	tablePartitionStats map[int64]*statistics.Table) (globalStats *GlobalStats, err error) {
 	// get the partition table IDs
 	h.mu.Lock()
 	globalTable, ok := h.getTableByPhysicalID(is, physicalID)
@@ -413,11 +416,34 @@ func (h *Handle) MergePartitionStats2GlobalStatsByTableID(sc sessionctx.Context,
 		return
 	}
 	globalTableInfo := globalTable.Meta()
-	return h.mergePartitionStats2GlobalStats(sc, opts, is, globalTableInfo, isIndex, histIDs)
+	return h.mergePartitionStats2GlobalStats(sc, opts, is, globalTableInfo, isIndex, histIDs, tablePartitionStats)
+}
+
+func (h *Handle) loadTablePartitionStats(tableInfo *model.TableInfo, partitionID int64, isIndex int, histIDs []int64) (*statistics.Table, error) {
+	var partitionStats *statistics.Table
+	partitionStats, err := h.TableStatsFromStorage(tableInfo, partitionID, true, 0)
+	if err != nil {
+		return nil, err
+	}
+	// if the err == nil && partitionStats == nil, it means we lack the partition-level stats which the physicalID is equal to partitionID.
+	if partitionStats == nil {
+		var errMsg string
+		if isIndex == 0 {
+			errMsg = fmt.Sprintf("`%s`", tableInfo.Name.L)
+		} else {
+			errMsg = fmt.Sprintf("`%s` index: `%s`", tableInfo.Name.L, tableInfo.FindIndexNameByID(histIDs[0]))
+		}
+		err = types.ErrPartitionStatsMissing.GenWithStackByArgs(errMsg)
+		return nil, err
+	}
+	return partitionStats, nil
 }
 
 // MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableInfo.
-func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context, opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema, globalTableInfo *model.TableInfo, isIndex int, histIDs []int64) (globalStats *GlobalStats, err error) {
+func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
+	opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema, globalTableInfo *model.TableInfo,
+	isIndex int, histIDs []int64,
+	allPartitionStats map[int64]*statistics.Table) (globalStats *GlobalStats, err error) {
 	partitionNum := len(globalTableInfo.Partition.Definitions)
 	partitionIDs := make([]int64, 0, partitionNum)
 	for i := 0; i < partitionNum; i++ {
@@ -467,20 +493,19 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context, opts map
 		}
 		tableInfo := partitionTable.Meta()
 		var partitionStats *statistics.Table
-		partitionStats, err = h.TableStatsFromStorage(tableInfo, partitionID, true, 0)
-		if err != nil {
-			return
+		if allPartitionStats != nil {
+			partitionStats, ok = allPartitionStats[partitionID]
 		}
-		// if the err == nil && partitionStats == nil, it means we lack the partition-level stats which the physicalID is equal to partitionID.
-		if partitionStats == nil {
-			var errMsg string
-			if isIndex == 0 {
-				errMsg = fmt.Sprintf("`%s`", tableInfo.Name.L)
-			} else {
-				errMsg = fmt.Sprintf("`%s` index: `%s`", tableInfo.Name.L, tableInfo.FindIndexNameByID(histIDs[0]))
+		// If pre-load partition stats isn't provided, then we load partition stats directly and set it into allPartitionStats
+		if allPartitionStats == nil || partitionStats == nil || !ok {
+			partitionStats, err = h.loadTablePartitionStats(tableInfo, partitionID, isIndex, histIDs)
+			if err != nil {
+				return
 			}
-			err = types.ErrPartitionStatsMissing.GenWithStackByArgs(errMsg)
-			return
+			if allPartitionStats == nil {
+				allPartitionStats = make(map[int64]*statistics.Table)
+			}
+			allPartitionStats[partitionID] = partitionStats
 		}
 		for i := 0; i < globalStats.Num; i++ {
 			count, hg, cms, topN, fms := partitionStats.GetStatsInfo(histIDs[i], isIndex == 1)
@@ -699,19 +724,24 @@ func (h *Handle) loadNeededColumnHistograms(reader *statsReader, col model.Table
 		logutil.BgLogger().Error("fail to get stats version for this histogram", zap.Int64("table_id", col.TableID), zap.Int64("hist_id", col.ID))
 		return errors.Trace(fmt.Errorf("fail to get stats version for this histogram, table_id:%v, hist_id:%v", col.TableID, col.ID))
 	}
+	statsVer := rows[0].GetInt64(0)
 	colHist := &statistics.Column{
-		PhysicalID:        col.TableID,
-		Histogram:         *hg,
-		Info:              c.Info,
-		CMSketch:          cms,
-		TopN:              topN,
-		FMSketch:          fms,
-		IsHandle:          c.IsHandle,
-		StatsVer:          rows[0].GetInt64(0),
-		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+		PhysicalID: col.TableID,
+		Histogram:  *hg,
+		Info:       c.Info,
+		CMSketch:   cms,
+		TopN:       topN,
+		FMSketch:   fms,
+		IsHandle:   c.IsHandle,
+		StatsVer:   statsVer,
 	}
 	// Column.Count is calculated by Column.TotalRowCount(). Hence we don't set Column.Count when initializing colHist.
 	colHist.Count = int64(colHist.TotalRowCount())
+	// When adding/modifying a column, we create its stats(all values are default values) without setting stats_ver.
+	// So we need add colHist.Count > 0 here.
+	if statsVer != statistics.Version0 || colHist.Count > 0 {
+		colHist.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
+	}
 	// Reload the latest stats cache, otherwise the `updateStatsCache` may fail with high probability, because functions
 	// like `GetPartitionStats` called in `fmSketchFromStorage` would have modified the stats cache already.
 	oldCache = h.statsCache.Load().(statsCache)
@@ -835,6 +865,7 @@ func (h *Handle) indexStatsFromStorage(reader *statsReader, row chunk.Row, table
 	distinct := row.GetInt64(3)
 	histVer := row.GetUint64(4)
 	nullCount := row.GetInt64(5)
+	statsVer := row.GetInt64(7)
 	idx := table.Indices[histID]
 	errorRate := statistics.ErrorRate{}
 	flag := row.GetInt64(8)
@@ -861,10 +892,20 @@ func (h *Handle) indexStatsFromStorage(reader *statsReader, row chunk.Row, table
 			if err != nil {
 				return errors.Trace(err)
 			}
-			idx = &statistics.Index{Histogram: *hg, CMSketch: cms, TopN: topN, FMSketch: fmSketch,
-				Info: idxInfo, ErrorRate: errorRate, StatsVer: row.GetInt64(7), Flag: flag,
-				PhysicalID:        table.PhysicalID,
-				StatsLoadedStatus: statistics.NewStatsFullLoadStatus()}
+			idx = &statistics.Index{
+				Histogram:  *hg,
+				CMSketch:   cms,
+				TopN:       topN,
+				FMSketch:   fmSketch,
+				Info:       idxInfo,
+				ErrorRate:  errorRate,
+				StatsVer:   statsVer,
+				Flag:       flag,
+				PhysicalID: table.PhysicalID,
+			}
+			if statsVer != statistics.Version0 {
+				idx.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
+			}
 			lastAnalyzePos.Copy(&idx.LastAnalyzePos)
 		}
 		break
@@ -923,6 +964,11 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 				Flag:       flag,
 				StatsVer:   statsVer,
 			}
+			// When adding/modifying a column, we create its stats(all values are default values) without setting stats_ver.
+			// So we need add col.Count > 0 here.
+			if statsVer != statistics.Version0 || col.Count > 0 {
+				col.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
+			}
 			lastAnalyzePos.Copy(&col.LastAnalyzePos)
 			col.Histogram.Correlation = correlation
 			break
@@ -936,27 +982,34 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 			if err != nil {
 				return errors.Trace(err)
 			}
-			// FMSketch is only used when merging partition stats into global stats. When merging partition stats into global stats,
-			// we load all the statistics, i.e., loadAll is true. We don't need to read FMSketch from storage in notNeedLoad IF.
-			fmSketch, err := h.fmSketchFromStorage(reader, table.PhysicalID, 0, histID)
-			if err != nil {
-				return errors.Trace(err)
+			var fmSketch *statistics.FMSketch
+			if loadAll {
+				// FMSketch is only used when merging partition stats into global stats. When merging partition stats into global stats,
+				// we load all the statistics, i.e., loadAll is true.
+				fmSketch, err = h.fmSketchFromStorage(reader, table.PhysicalID, 0, histID)
+				if err != nil {
+					return errors.Trace(err)
+				}
 			}
 			col = &statistics.Column{
-				PhysicalID:        table.PhysicalID,
-				Histogram:         *hg,
-				Info:              colInfo,
-				CMSketch:          cms,
-				TopN:              topN,
-				FMSketch:          fmSketch,
-				ErrorRate:         errorRate,
-				IsHandle:          tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
-				Flag:              flag,
-				StatsVer:          statsVer,
-				StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+				PhysicalID: table.PhysicalID,
+				Histogram:  *hg,
+				Info:       colInfo,
+				CMSketch:   cms,
+				TopN:       topN,
+				FMSketch:   fmSketch,
+				ErrorRate:  errorRate,
+				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
+				Flag:       flag,
+				StatsVer:   statsVer,
 			}
 			// Column.Count is calculated by Column.TotalRowCount(). Hence we don't set Column.Count when initializing col.
 			col.Count = int64(col.TotalRowCount())
+			// When adding/modifying a column, we create its stats(all values are default values) without setting stats_ver.
+			// So we need add colHist.Count > 0 here.
+			if statsVer != statistics.Version0 || col.Count > 0 {
+				col.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
+			}
 			lastAnalyzePos.Copy(&col.LastAnalyzePos)
 			break
 		}

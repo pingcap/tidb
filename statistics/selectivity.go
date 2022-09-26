@@ -209,12 +209,11 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 			continue
 		}
 
-		if colHist := coll.Columns[c.UniqueID]; colHist == nil || colHist.IsInvalid(ctx, coll.Pseudo) {
+		colHist := coll.Columns[c.UniqueID]
+		if colHist == nil || colHist.IsInvalid(ctx, coll.Pseudo) {
 			ret *= 1.0 / pseudoEqualRate
 			continue
 		}
-
-		colHist := coll.Columns[c.UniqueID]
 		if colHist.Histogram.NDV > 0 {
 			ret *= 1 / float64(colHist.Histogram.NDV)
 		} else {
@@ -336,7 +335,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 				case ast.LogicOr:
 					notCoveredDNF[i] = x
 					continue
-				case ast.Like, ast.Regexp:
+				case ast.Like, ast.Regexp, ast.RegexpLike:
 					notCoveredStrMatch[i] = x
 					continue
 				case ast.UnaryNot:
@@ -344,7 +343,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 					innerSF, ok := inner.(*expression.ScalarFunction)
 					if ok {
 						switch innerSF.FuncName.L {
-						case ast.Like, ast.Regexp:
+						case ast.Like, ast.Regexp, ast.RegexpLike:
 							notCoveredNegateStrMatch[i] = x
 							continue
 						}
@@ -500,14 +499,14 @@ func getMaskAndRanges(ctx sessionctx.Context, exprs []expression.Expression, ran
 	switch rangeType {
 	case ranger.ColumnRangeType:
 		accessConds = ranger.ExtractAccessConditionsForColumn(exprs, cols[0])
-		ranges, err = ranger.BuildColumnRange(accessConds, ctx, cols[0].RetType, types.UnspecifiedLength)
+		ranges, accessConds, _, err = ranger.BuildColumnRange(accessConds, ctx, cols[0].RetType, types.UnspecifiedLength, ctx.GetSessionVars().RangeMaxSize)
 	case ranger.IndexRangeType:
 		if cachedPath != nil {
 			ranges, accessConds, remainedConds, isDNF = cachedPath.Ranges, cachedPath.AccessConds, cachedPath.TableFilters, cachedPath.IsDNFCond
 			break
 		}
 		var res *ranger.DetachRangeResult
-		res, err = ranger.DetachCondAndBuildRangeForIndex(ctx, exprs, cols, lengths)
+		res, err = ranger.DetachCondAndBuildRangeForIndex(ctx, exprs, cols, lengths, ctx.GetSessionVars().RangeMaxSize)
 		if err != nil {
 			return 0, nil, false, err
 		}

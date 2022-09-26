@@ -99,6 +99,8 @@ type tableHintInfo struct {
 	limitHints          limitHintInfo
 	MergeHints          MergeHintInfo
 	leadingJoinOrder    []hintTableInfo
+	hjBuildTables       []hintTableInfo
+	hjProbeTables       []hintTableInfo
 }
 
 type limitHintInfo struct {
@@ -215,6 +217,14 @@ func (info *tableHintInfo) ifPreferBroadcastJoin(tableNames ...*hintTableInfo) b
 
 func (info *tableHintInfo) ifPreferHashJoin(tableNames ...*hintTableInfo) bool {
 	return info.matchTableName(tableNames, info.hashJoinTables)
+}
+
+func (info *tableHintInfo) ifPreferHJBuild(tableNames ...*hintTableInfo) bool {
+	return info.matchTableName(tableNames, info.hjBuildTables)
+}
+
+func (info *tableHintInfo) ifPreferHJProbe(tableNames ...*hintTableInfo) bool {
+	return info.matchTableName(tableNames, info.hjProbeTables)
 }
 
 func (info *tableHintInfo) ifPreferINLJ(tableNames ...*hintTableInfo) bool {
@@ -437,6 +447,24 @@ type cteInfo struct {
 	isInline bool
 }
 
+type subQueryCtx = uint64
+
+const (
+	notHandlingSubquery subQueryCtx = iota
+	handlingExistsSubquery
+	handlingCompareSubquery
+	handlingInSubquery
+	handlingScalarSubquery
+)
+
+// Hint flags listed here are used by PlanBuilder.subQueryHintFlags.
+const (
+	// HintFlagSemiJoinRewrite corresponds to HintSemiJoinRewrite.
+	HintFlagSemiJoinRewrite uint64 = 1 << iota
+	// HintFlagNoDecorrelate corresponds to HintNoDecorrelate.
+	HintFlagNoDecorrelate
+)
+
 // PlanBuilder builds Plan from an ast.Node.
 // It just builds the ast node straightforwardly.
 type PlanBuilder struct {
@@ -512,14 +540,23 @@ type PlanBuilder struct {
 	//Check whether the current building query is a CTE
 	isCTE bool
 
-	// checkSemiJoinHint checks whether the SEMI_JOIN_REWRITE hint is possible to be applied on the current SELECT stmt.
-	// We need this variable for the hint since the hint is set in subquery, but we check its availability in its outer scope.
-	//   e.g. select * from t where exists(select /*+ SEMI_JOIN_REWRITE() */ 1 from t1 where t.a=t1.a)
-	// Whether the hint can be applied or not is checked after the subquery is fully built.
-	checkSemiJoinHint bool
-	// hasValidSemijoinHint would tell the outer APPLY/JOIN operator that there's valid hint to be checked later
-	// if there's SEMI_JOIN_REWRITE hint and we find checkSemiJoinHint is true.
-	hasValidSemiJoinHint bool
+	// subQueryCtx and subQueryHintFlags are for handling subquery related hints.
+	// Note: "subquery" here only contains subqueries that are handled by the expression rewriter, i.e., [NOT] IN,
+	// [NOT] EXISTS, compare + ANY/ALL and scalar subquery. Derived table doesn't belong to this.
+	// We need these fields to passing information because:
+	//   1. We know what kind of subquery is this only when we're in the outer query block.
+	//   2. We know if there are such hints only when we're in the subquery block.
+	//   3. These hints are only applicable when they are in a subquery block. And for some hints, they are only
+	//     applicable for some kinds of subquery.
+	//   4. If a hint is set and is applicable, the corresponding logic is handled in the outer query block.
+	// Example SQL: select * from t where exists(select /*+ SEMI_JOIN_REWRITE() */ 1 from t1 where t.a=t1.a)
+
+	// subQueryCtx indicates if we are handling a subquery, and what kind of subquery is it.
+	subQueryCtx subQueryCtx
+	// subQueryHintFlags stores subquery related hints that are set and applicable in the query block.
+	// It's for returning information to buildSubquery().
+	subQueryHintFlags uint64
+
 	// disableSubQueryPreprocessing indicates whether to pre-process uncorrelated sub-queries in rewriting stage.
 	disableSubQueryPreprocessing bool
 }
@@ -2888,7 +2925,7 @@ func buildCancelDDLJobsFields() (*expression.Schema, types.NameSlice) {
 	return schema.col2Schema(), schema.names
 }
 
-func buildBRIESchema() (*expression.Schema, types.NameSlice) {
+func buildBRIESchema(kind ast.BRIEKind) (*expression.Schema, types.NameSlice) {
 	longlongSize, _ := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
 	datetimeSize, _ := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeDatetime)
 
@@ -2896,6 +2933,9 @@ func buildBRIESchema() (*expression.Schema, types.NameSlice) {
 	schema.Append(buildColumnWithName("", "Destination", mysql.TypeVarchar, 255))
 	schema.Append(buildColumnWithName("", "Size", mysql.TypeLonglong, longlongSize))
 	schema.Append(buildColumnWithName("", "BackupTS", mysql.TypeLonglong, longlongSize))
+	if kind == ast.BRIEKindRestore {
+		schema.Append(buildColumnWithName("", "Cluster TS", mysql.TypeLonglong, longlongSize))
+	}
 	schema.Append(buildColumnWithName("", "Queue Time", mysql.TypeDatetime, datetimeSize))
 	schema.Append(buildColumnWithName("", "Execution Time", mysql.TypeDatetime, datetimeSize))
 	return schema.col2Schema(), schema.names
@@ -3141,7 +3181,7 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 			return nil, err
 		}
 	case *ast.BRIEStmt:
-		p.setSchemaAndNames(buildBRIESchema())
+		p.setSchemaAndNames(buildBRIESchema(raw.Kind))
 		if raw.Kind == ast.BRIEKindRestore {
 			err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or RESTORE_ADMIN")
 			b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "RESTORE_ADMIN", false, err)
@@ -3203,7 +3243,7 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 	case *ast.BeginStmt:
 		readTS := b.ctx.GetSessionVars().TxnReadTS.PeakTxnReadTS()
 		if raw.AsOf != nil {
-			startTS, err := staleread.CalculateAsOfTsExpr(b.ctx, raw.AsOf)
+			startTS, err := staleread.CalculateAsOfTsExpr(b.ctx, raw.AsOf.TsExpr)
 			if err != nil {
 				return nil, err
 			}
@@ -3550,6 +3590,10 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 	}
 
 	err = insertPlan.ResolveIndices()
+	if err != nil {
+		return nil, err
+	}
+	insertPlan.FKChecks, err = insertPlan.buildOnInsertFKChecks(b.ctx, b.is, tn.DBInfo.Name.L)
 	return insertPlan, err
 }
 
@@ -3855,6 +3899,11 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 					}
 					sel.Fields.Fields = append(sel.Fields.Fields, &ast.SelectField{Expr: colName, Offset: len(sel.Fields.Fields)})
 				}
+				defer func(originSelFieldLen int) {
+					// Revert the change for ast. Because when we use the 'prepare' and 'execute' statement it will both build plan which will cause problem.
+					// You can see the issue #37187 for more details.
+					sel.Fields.Fields = sel.Fields.Fields[:originSelFieldLen]
+				}(actualColLen)
 			}
 		}
 	}
@@ -4228,8 +4277,8 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 			return nil, ErrNoDB
 		}
 		if b.ctx.GetSessionVars().User != nil {
-			authErr = ErrDBaccessDenied.GenWithStackByArgs("ALTER", b.ctx.GetSessionVars().User.AuthUsername,
-				b.ctx.GetSessionVars().User.AuthHostname, v.Name)
+			authErr = ErrDBaccessDenied.GenWithStackByArgs(b.ctx.GetSessionVars().User.AuthUsername,
+				b.ctx.GetSessionVars().User.AuthHostname, v.Name.O)
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AlterPriv, v.Name.L, "", "", authErr)
 	case *ast.AlterTableStmt:
@@ -4335,6 +4384,14 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 			} else {
 				authErr = ErrTableaccessDenied.GenWithStackByArgs("CREATE", b.ctx.GetSessionVars().User.AuthUsername,
 					b.ctx.GetSessionVars().User.AuthHostname, v.Table.Name.L)
+			}
+			for _, cons := range v.Constraints {
+				if cons.Tp == ast.ConstraintForeignKey && cons.Refer != nil {
+					authErr = ErrTableaccessDenied.GenWithStackByArgs("REFERENCES", b.ctx.GetSessionVars().User.AuthUsername,
+						b.ctx.GetSessionVars().User.AuthHostname, cons.Refer.Table.Name.L)
+					b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ReferencesPriv, cons.Refer.Table.Schema.L,
+						cons.Refer.Table.Name.L, "", authErr)
+				}
 			}
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreatePriv, v.Table.Schema.L,
@@ -4468,8 +4525,17 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 	case *ast.RecoverTableStmt, *ast.FlashBackTableStmt:
 		// Recover table command can only be executed by administrator.
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
-	case *ast.LockTablesStmt, *ast.UnlockTablesStmt:
-		// TODO: add Lock Table privilege check.
+	case *ast.LockTablesStmt:
+		user := b.ctx.GetSessionVars().User
+		for _, lock := range v.TableLocks {
+			var lockAuthErr, selectAuthErr error
+			if user != nil {
+				lockAuthErr = ErrDBaccessDenied.FastGenByArgs(user.AuthUsername, user.AuthHostname, lock.Table.Schema.L)
+				selectAuthErr = ErrTableaccessDenied.FastGenByArgs("SELECT", user.AuthUsername, user.AuthHostname, lock.Table.Name.L)
+			}
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.LockTablesPriv, lock.Table.Schema.L, lock.Table.Name.L, "", lockAuthErr)
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, lock.Table.Schema.L, lock.Table.Name.L, "", selectAuthErr)
+		}
 	case *ast.CleanupTableLockStmt:
 		// This command can only be executed by administrator.
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)

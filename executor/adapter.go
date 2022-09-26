@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"runtime/trace"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -193,18 +194,36 @@ type TelemetryInfo struct {
 	UseNonRecursive      bool
 	UseRecursive         bool
 	UseMultiSchemaChange bool
+	UesExchangePartition bool
 	PartitionTelemetry   *PartitionTelemetryInfo
+	AccountLockTelemetry *AccountLockTelemetryInfo
 }
 
 // PartitionTelemetryInfo records table partition telemetry information during execution.
 type PartitionTelemetryInfo struct {
-	UseTablePartition              bool
-	UseTablePartitionList          bool
-	UseTablePartitionRange         bool
-	UseTablePartitionHash          bool
-	UseTablePartitionRangeColumns  bool
-	UseTablePartitionListColumns   bool
-	TablePartitionMaxPartitionsNum uint64
+	UseTablePartition                bool
+	UseTablePartitionList            bool
+	UseTablePartitionRange           bool
+	UseTablePartitionHash            bool
+	UseTablePartitionRangeColumns    bool
+	UseTablePartitionRangeColumnsGt1 bool
+	UseTablePartitionRangeColumnsGt2 bool
+	UseTablePartitionRangeColumnsGt3 bool
+	UseTablePartitionListColumns     bool
+	TablePartitionMaxPartitionsNum   uint64
+	UseCreateIntervalPartition       bool
+	UseAddIntervalPartition          bool
+	UseDropIntervalPartition         bool
+}
+
+// AccountLockTelemetryInfo records account lock/unlock information during execution
+type AccountLockTelemetryInfo struct {
+	// The number of CREATE/ALTER USER statements that lock the user
+	LockUser int64
+	// The number of CREATE/ALTER USER statements that unlock the user
+	UnlockUser int64
+	// The number of CREATE/ALTER USER statements
+	CreateOrAlterUser int64
 }
 
 // ExecStmt implements the sqlexec.Statement interface, it builds a planner.Plan to an sqlexec.Statement.
@@ -247,7 +266,7 @@ type ExecStmt struct {
 }
 
 // GetStmtNode returns the stmtNode inside Statement
-func (a ExecStmt) GetStmtNode() ast.StmtNode {
+func (a *ExecStmt) GetStmtNode() ast.StmtNode {
 	return a.StmtNode
 }
 
@@ -312,7 +331,7 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 		// Update processinfo, ShowProcess() will use it.
 		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
 		if sctx.GetSessionVars().StmtCtx.StmtType == "" {
-			sctx.GetSessionVars().StmtCtx.StmtType = GetStmtLabel(a.StmtNode)
+			sctx.GetSessionVars().StmtCtx.StmtType = ast.GetStmtLabel(a.StmtNode)
 		}
 	}
 
@@ -437,10 +456,16 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	sctx := a.Ctx
 	ctx = util.SetSessionID(ctx, sctx.GetSessionVars().ConnectionID)
 	if _, ok := a.Plan.(*plannercore.Analyze); ok && sctx.GetSessionVars().InRestrictedSQL {
-		oriStats, _ := sctx.GetSessionVars().GetSystemVar(variable.TiDBBuildStatsConcurrency)
+		oriStats, ok := sctx.GetSessionVars().GetSystemVar(variable.TiDBBuildStatsConcurrency)
+		if !ok {
+			oriStats = strconv.Itoa(variable.DefBuildStatsConcurrency)
+		}
 		oriScan := sctx.GetSessionVars().DistSQLScanConcurrency()
 		oriIndex := sctx.GetSessionVars().IndexSerialScanConcurrency()
-		oriIso, _ := sctx.GetSessionVars().GetSystemVar(variable.TxnIsolation)
+		oriIso, ok := sctx.GetSessionVars().GetSystemVar(variable.TxnIsolation)
+		if !ok {
+			oriIso = "REPEATABLE-READ"
+		}
 		terror.Log(sctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, "1"))
 		sctx.GetSessionVars().SetDistSQLScanConcurrency(1)
 		sctx.GetSessionVars().SetIndexSerialScanConcurrency(1)
@@ -486,7 +511,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		// Update processinfo, ShowProcess() will use it.
 		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
 		if a.Ctx.GetSessionVars().StmtCtx.StmtType == "" {
-			a.Ctx.GetSessionVars().StmtCtx.StmtType = GetStmtLabel(a.StmtNode)
+			a.Ctx.GetSessionVars().StmtCtx.StmtType = ast.GetStmtLabel(a.StmtNode)
 		}
 	}
 
@@ -511,6 +536,10 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	}
 
 	if handled, result, err := a.handleNoDelay(ctx, e, isPessimistic); handled || err != nil {
+		if err != nil {
+			return result, err
+		}
+		err = a.handleForeignKeyTrigger(ctx, e)
 		return result, err
 	}
 
@@ -528,6 +557,21 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		stmt:       a,
 		txnStartTS: txnStartTS,
 	}, nil
+}
+
+func (a *ExecStmt) handleForeignKeyTrigger(ctx context.Context, e Executor) error {
+	exec, ok := e.(WithForeignKeyTrigger)
+	if !ok {
+		return nil
+	}
+	fkChecks := exec.GetFKChecks()
+	for _, fkCheck := range fkChecks {
+		err := fkCheck.doCheck(ctx)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic bool) (handled bool, rs sqlexec.RecordSet, err error) {
@@ -552,6 +596,7 @@ func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic 
 		if analyze := explain.getAnalyzeExecToExecutedNoDelay(); analyze != nil {
 			toCheck = analyze
 			isExplainAnalyze = true
+			a.Ctx.GetSessionVars().StmtCtx.IsExplainAnalyzeDML = isExplainAnalyze
 		}
 	}
 
@@ -720,9 +765,9 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e Executor) (sqlex
 	return nil, err
 }
 
-func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
+func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) (err error) {
 	sctx := a.Ctx
-	// Do not active the transaction here.
+	// Do not activate the transaction here.
 	// When autocommit = 0 and transaction in pessimistic mode,
 	// statements like set xxx = xxx; should not active the transaction.
 	txn, err := sctx.Txn(false)
@@ -730,6 +775,27 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 		return err
 	}
 	txnCtx := sctx.GetSessionVars().TxnCtx
+	defer func() {
+		if err != nil && !sctx.GetSessionVars().ConstraintCheckInPlacePessimistic && sctx.GetSessionVars().InTxn() {
+			// If it's not a retryable error, rollback current transaction instead of rolling back current statement like
+			// in normal transactions, because we cannot locate and rollback the statement that leads to the lock error.
+			// This is too strict, but since the feature is not for everyone, it's the easiest way to guarantee safety.
+			stmtText := a.OriginText()
+			if sctx.GetSessionVars().EnableRedactLog {
+				stmtText = parser.Normalize(stmtText)
+			}
+			logutil.Logger(ctx).Info("Transaction abort for the safety of lazy uniqueness check. "+
+				"Note this may not be a uniqueness violation.",
+				zap.Error(err),
+				zap.String("statement", stmtText),
+				zap.Uint64("conn", sctx.GetSessionVars().ConnectionID),
+				zap.Uint64("txnStartTS", txnCtx.StartTS),
+				zap.Uint64("forUpdateTS", txnCtx.GetForUpdateTS()),
+			)
+			sctx.GetSessionVars().SetInTxn(false)
+			err = ErrLazyUniquenessCheckFailure.GenWithStackByArgs(err.Error())
+		}
+	}()
 	for {
 		startPointGetLocking := time.Now()
 		_, err = a.handleNoDelayExecutor(ctx, e)
@@ -904,9 +970,14 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 	return e, nil
 }
 
-func (a *ExecStmt) openExecutor(ctx context.Context, e Executor) error {
+func (a *ExecStmt) openExecutor(ctx context.Context, e Executor) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = errors.New(fmt.Sprint(r))
+		}
+	}()
 	start := time.Now()
-	err := e.Open(ctx)
+	err = e.Open(ctx)
 	a.phaseOpenDurations[0] += time.Since(start)
 	return err
 }
@@ -1296,7 +1367,16 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		ExecRetryCount:    a.retryCount,
 		IsExplicitTxn:     sessVars.TxnCtx.IsExplicit,
 		IsWriteCacheTable: stmtCtx.WaitLockLeaseTime > 0,
+		StatsLoadStatus:   convertStatusIntoString(a.Ctx, stmtCtx.StatsLoadStatus),
+		IsSyncStatsFailed: stmtCtx.IsSyncStatsFailed,
 	}
+	failpoint.Inject("assertSyncStatsFailed", func(val failpoint.Value) {
+		if val.(bool) {
+			if !slowItems.IsSyncStatsFailed {
+				panic("isSyncStatsFailed should be true")
+			}
+		}
+	})
 	if a.retryCount > 0 {
 		slowItems.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)
 	}
@@ -1467,7 +1547,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	stmtCtx := sessVars.StmtCtx
 	// Make sure StmtType is filled even if succ is false.
 	if stmtCtx.StmtType == "" {
-		stmtCtx.StmtType = GetStmtLabel(a.StmtNode)
+		stmtCtx.StmtType = ast.GetStmtLabel(a.StmtNode)
 	}
 	normalizedSQL, digest := stmtCtx.SQLDigest()
 	costTime := time.Since(sessVars.StartTime) + sessVars.DurationParse
@@ -1658,4 +1738,42 @@ func (a *ExecStmt) getSQLPlanDigest() ([]byte, []byte) {
 		planDigest = d.Bytes()
 	}
 	return sqlDigest, planDigest
+}
+
+func convertStatusIntoString(sctx sessionctx.Context, statsLoadStatus map[model.TableItemID]string) map[string]map[string]string {
+	if len(statsLoadStatus) < 1 {
+		return nil
+	}
+	is := domain.GetDomain(sctx).InfoSchema()
+	// tableName -> name -> status
+	r := make(map[string]map[string]string)
+	for item, status := range statsLoadStatus {
+		t, ok := is.TableByID(item.TableID)
+		if !ok {
+			t, _, _ = is.FindTableByPartitionID(item.TableID)
+		}
+		if t == nil {
+			logutil.BgLogger().Warn("record table item load status failed due to not finding table",
+				zap.Int64("tableID", item.TableID))
+			continue
+		}
+		tableName := t.Meta().Name.O
+		itemName := ""
+		if item.IsIndex {
+			itemName = t.Meta().FindIndexNameByID(item.ID)
+		} else {
+			itemName = t.Meta().FindColumnNameByID(item.ID)
+		}
+		if itemName == "" {
+			logutil.BgLogger().Warn("record table item load status failed due to not finding item",
+				zap.Int64("tableID", item.TableID),
+				zap.Int64("id", item.ID), zap.Bool("isIndex", item.IsIndex))
+			continue
+		}
+		if r[tableName] == nil {
+			r[tableName] = make(map[string]string)
+		}
+		r[tableName][itemName] = status
+	}
+	return r
 }

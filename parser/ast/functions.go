@@ -64,6 +64,10 @@ const (
 	Like               = "like"
 	Case               = "case"
 	Regexp             = "regexp"
+	RegexpLike         = "regexp_like"
+	RegexpSubstr       = "regexp_substr"
+	RegexpInStr        = "regexp_instr"
+	RegexpReplace      = "regexp_replace"
 	IsNull             = "isnull"
 	IsTruthWithoutNull = "istrue" // Avoid name conflict with IsTrue in github/pingcap/check.
 	IsTruthWithNull    = "istrue_with_null"
@@ -182,6 +186,7 @@ const (
 	// For more info, please see AsOfClause.
 	TiDBBoundedStaleness = "tidb_bounded_staleness"
 	TiDBParseTso         = "tidb_parse_tso"
+	TiDBCurrentTso       = "tidb_current_tso"
 
 	// string functions
 	ASCII           = "ascii"
@@ -310,6 +315,7 @@ const (
 	SHA1                     = "sha1"
 	SHA                      = "sha"
 	SHA2                     = "sha2"
+	SM3                      = "sm3"
 	Uncompress               = "uncompress"
 	UncompressedLength       = "uncompressed_length"
 	ValidatePasswordStrength = "validate_password_strength"

@@ -401,6 +401,7 @@ type DuplicateManager struct {
 	logger      log.Logger
 	concurrency int
 	hasDupe     *atomic.Bool
+	indexID     int64
 }
 
 // NewDuplicateManager creates a new DuplicateManager.
@@ -430,6 +431,7 @@ func NewDuplicateManager(
 		logger:      logger,
 		concurrency: concurrency,
 		hasDupe:     hasDupe,
+		indexID:     sessOpts.IndexID,
 	}, nil
 }
 
@@ -540,6 +542,11 @@ func (m *DuplicateManager) RecordIndexConflictError(ctx context.Context, stream 
 	return nil
 }
 
+// BuildDuplicateTaskForTest is only used for test.
+var BuildDuplicateTaskForTest = func(m *DuplicateManager) ([]dupTask, error) {
+	return m.buildDupTasks()
+}
+
 type dupTask struct {
 	tidbkv.KeyRange
 	tableID   int64
@@ -547,6 +554,9 @@ type dupTask struct {
 }
 
 func (m *DuplicateManager) buildDupTasks() ([]dupTask, error) {
+	if m.indexID != 0 {
+		return m.buildIndexDupTasks()
+	}
 	keyRanges, err := tableHandleKeyRanges(m.tbl.Meta())
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -577,6 +587,29 @@ func (m *DuplicateManager) buildDupTasks() ([]dupTask, error) {
 		}
 	}
 	return tasks, nil
+}
+
+func (m *DuplicateManager) buildIndexDupTasks() ([]dupTask, error) {
+	for _, indexInfo := range m.tbl.Meta().Indices {
+		if m.indexID != indexInfo.ID {
+			continue
+		}
+		keyRanges, err := tableIndexKeyRanges(m.tbl.Meta(), indexInfo)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		tasks := make([]dupTask, 0, len(keyRanges))
+		for _, kr := range keyRanges {
+			tableID := tablecodec.DecodeTableID(kr.StartKey)
+			tasks = append(tasks, dupTask{
+				KeyRange:  kr,
+				tableID:   tableID,
+				indexInfo: indexInfo,
+			})
+		}
+		return tasks, nil
+	}
+	return nil, nil
 }
 
 func (m *DuplicateManager) splitLocalDupTaskByKeys(

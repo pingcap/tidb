@@ -1569,6 +1569,10 @@ partition p1022 values less than (738537),
 partition p1023 values less than (738538)
 )`)
 
+	_, err := se.Execute(ctx, "analyze table t")
+	if err != nil {
+		b.Fatal(err)
+	}
 	alloc := chunk.NewAllocator()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -1604,6 +1608,10 @@ func BenchmarkRangeColumnPartitionPruning(b *testing.B) {
 	build.WriteString("partition p1023 values less than maxvalue)")
 	mustExecute(se, build.String())
 	alloc := chunk.NewAllocator()
+	_, err := se.Execute(ctx, "analyze table t")
+	if err != nil {
+		b.Fatal(err)
+	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		rs, err := se.Execute(ctx, "select * from t where dt > '2020-05-01' and dt < '2020-06-07'")

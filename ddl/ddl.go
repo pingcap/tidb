@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/ddl/syncer"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain/infosync"
@@ -135,6 +136,7 @@ type DDL interface {
 	CreatePlacementPolicy(ctx sessionctx.Context, stmt *ast.CreatePlacementPolicyStmt) error
 	DropPlacementPolicy(ctx sessionctx.Context, stmt *ast.DropPlacementPolicyStmt) error
 	AlterPlacementPolicy(ctx sessionctx.Context, stmt *ast.AlterPlacementPolicyStmt) error
+	FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) error
 
 	// CreateSchemaWithInfo creates a database (schema) given its database info.
 	//
@@ -571,6 +573,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	variable.EnableDDL = d.EnableDDL
 	variable.DisableDDL = d.DisableDDL
 	variable.SwitchConcurrentDDL = d.SwitchConcurrentDDL
+	variable.SwitchMDL = d.SwitchMDL
 
 	return d
 }
@@ -679,6 +682,8 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 
 	// Start some background routine to manage TiFlash replica.
 	d.wg.Run(d.PollTiFlashRoutine)
+
+	ingest.InitGlobalLightningEnv()
 
 	return nil
 }
@@ -1155,6 +1160,37 @@ func (d *ddl) SwitchConcurrentDDL(toConcurrentDDL bool) error {
 	}
 	logutil.BgLogger().Info("[ddl] SwitchConcurrentDDL", zap.Bool("toConcurrentDDL", toConcurrentDDL), zap.Error(err))
 	return err
+}
+
+// SwitchMDL enables MDL or disable DDL.
+func (d *ddl) SwitchMDL(enable bool) error {
+	isEnableBefore := variable.EnableMDL.Load()
+	if isEnableBefore == enable {
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*30)
+	defer cancel()
+
+	// Check if there is any DDL running.
+	// This check can not cover every corner cases, so users need to guarantee that there is no DDL running by themselves.
+	sess, err := d.sessPool.get()
+	if err != nil {
+		return err
+	}
+	defer d.sessPool.put(sess)
+	se := newSession(sess)
+	rows, err := se.execute(ctx, "select 1 from mysql.tidb_ddl_job", "check job")
+	if err != nil {
+		return err
+	}
+	if len(rows) != 0 {
+		return errors.New("please wait for all jobs done")
+	}
+
+	variable.EnableMDL.Store(enable)
+	logutil.BgLogger().Info("[ddl] switch metadata lock feature", zap.Bool("enable", enable), zap.Error(err))
+	return nil
 }
 
 func (d *ddl) wait4Switch(ctx context.Context) error {
