@@ -21,6 +21,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/memory"
 	atomicutil "go.uber.org/atomic"
 )
@@ -32,58 +33,79 @@ var GlobalMemoryLimitTuner = &memoryLimitTuner{}
 // So we can change memory limit dynamically to avoid frequent GC when memory usage is greater than the soft limit.
 type memoryLimitTuner struct {
 	finalizer  *finalizer
+	isTuning   atomic.Bool
 	percentage atomicutil.Float64
-	running    atomic.Bool
+	coolDown   atomic.Bool
+	times      int
 }
 
 // tuning check the memory nextGC and judge whether this GC is trigger by memory limit.
 // Go runtime ensure that it will be called serially.
 func (t *memoryLimitTuner) tuning() {
+	if !t.isTuning.Load() {
+		return
+	}
 	r := &runtime.MemStats{}
 	runtime.ReadMemStats(r)
-	if r.NextGC > uint64(t.GetSoftMemoryLimit()/10*9) {
-		if t.running.CompareAndSwap(false, true) {
+	gogc := util.GetGOGC()
+	ratio := float64(100+gogc) / 100
+	// If theoretical NextGC(Equivalent to HeapInUse * (100 + GOGC) / 100) is bigger than MemoryLimit twice in a row,
+	// it means that the second GC is caused by the memory limit
+	if r.HeapInuse > uint64(float64(debug.SetMemoryLimit(-1))/ratio) {
+		t.times++
+		if t.times >= 2 && t.coolDown.CompareAndSwap(false, true) {
+			t.times = 0
 			go func() {
 				debug.SetMemoryLimit(math.MaxInt)
-				time.Sleep(60 * time.Second)
-				debug.SetMemoryLimit(t.GetSoftMemoryLimit())
-				for !t.running.CompareAndSwap(true, false) {
+				time.Sleep(1 * time.Minute) // 1 minute to cool down, to avoid frequent GC
+				debug.SetMemoryLimit(t.calcSoftMemoryLimit())
+				for !t.coolDown.CompareAndSwap(true, false) {
 				}
 			}()
 		}
+	} else {
+		t.times = 0
 	}
 }
 
-func (t *memoryLimitTuner) Stop() {
-	if t.finalizer != nil {
-		t.finalizer.stop()
-		t.finalizer = nil
-	}
+func (t *memoryLimitTuner) init() {
+	t.finalizer = newFinalizer(t.tuning) // start tuning
 }
 
+func (t *memoryLimitTuner) stop() {
+	t.finalizer.stop()
+}
+
+// SetPercentage set the percentage for memory limit tuner.
 func (t *memoryLimitTuner) SetPercentage(percentage float64) {
 	t.percentage.Store(percentage)
 }
 
+// GetPercentage get the percentage from memory limit tuner.
 func (t *memoryLimitTuner) GetPercentage() float64 {
 	return t.percentage.Load()
 }
 
-func (t *memoryLimitTuner) GetSoftMemoryLimit() int64 {
-	softLimit := int64(float64(memory.ServerMemoryLimit.Load()) * t.percentage.Load())
+// UpdateMemoryLimit updates the memory limit.
+// This function should be called when `tidb_server_memory_limit` or `tidb_server_memory_gc_trigger` is modified.
+func (t *memoryLimitTuner) UpdateMemoryLimit() {
+	softLimit := t.calcSoftMemoryLimit()
+	if softLimit == math.MaxInt64 {
+		t.isTuning.Store(false)
+	} else {
+		t.isTuning.Store(true)
+	}
+	debug.SetMemoryLimit(softLimit)
+}
+
+func (t *memoryLimitTuner) calcSoftMemoryLimit() int64 {
+	softLimit := int64(float64(memory.ServerMemoryLimit.Load()) * t.percentage.Load()) // `tidb_server_memory_limit` * `tidb_server_memory_gc_trigger`
 	if softLimit == 0 {
 		softLimit = math.MaxInt64
 	}
 	return softLimit
 }
 
-func (t *memoryLimitTuner) Start() {
-	if t.finalizer == nil {
-		t.finalizer = newFinalizer(t.tuning) // start tuning
-	}
-	t.UpdateMemoryLimit()
-}
-
-func (t *memoryLimitTuner) UpdateMemoryLimit() {
-	debug.SetMemoryLimit(t.GetSoftMemoryLimit())
+func init() {
+	GlobalMemoryLimitTuner.init()
 }
