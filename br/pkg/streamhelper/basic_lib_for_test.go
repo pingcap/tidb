@@ -18,8 +18,11 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	logbackup "github.com/pingcap/kvproto/pkg/logbackuppb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/kv"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
 
@@ -155,6 +158,7 @@ func (f *fakeStore) GetLastFlushTSOfRegion(ctx context.Context, in *logbackup.Ge
 			},
 		})
 	}
+	log.Debug("Get last flush ts of region", zap.Stringer("in", in), zap.Stringer("out", resp))
 	return resp, nil
 }
 
@@ -293,7 +297,8 @@ func (f *fakeCluster) splitAndScatter(keys ...string) {
 		f.splitAt(key)
 	}
 	for _, r := range f.regions {
-		f.transferRegionTo(r.id, f.chooseStores(3))
+		chosen := f.chooseStores(3)
+		f.transferRegionTo(r.id, chosen)
 		f.shuffleLeader(r.id)
 	}
 }
@@ -308,13 +313,16 @@ func (f *fakeCluster) advanceCheckpoints() uint64 {
 	minCheckpoint := uint64(math.MaxUint64)
 	for _, r := range f.regions {
 		f.updateRegion(r.id, func(r *region) {
-			r.checkpoint += rand.Uint64() % 256
+			// The current implementation assumes that the server never returns checkpoint with value 0.
+			// This assumption is true for the TiKV implementation, simulating it here.
+			r.checkpoint += rand.Uint64()%256 + 1
 			if r.checkpoint < minCheckpoint {
 				minCheckpoint = r.checkpoint
 			}
 			r.fsim.flushedEpoch = 0
 		})
 	}
+	log.Info("checkpoint updated", zap.Uint64("to", minCheckpoint))
 	return minCheckpoint
 }
 
@@ -354,7 +362,14 @@ func createFakeCluster(t *testing.T, n int, simEnabled bool) *fakeCluster {
 }
 
 func (r *region) String() string {
-	return fmt.Sprintf("%d(%d):[%s,%s);%dL%d", r.id, r.epoch, hex.EncodeToString(r.rng.StartKey), hex.EncodeToString(r.rng.EndKey), r.checkpoint, r.leader)
+	return fmt.Sprintf("%d(%d):[%s,%s);%dL%dF%d",
+		r.id,
+		r.epoch,
+		hex.EncodeToString(r.rng.StartKey),
+		hex.EncodeToString(r.rng.EndKey),
+		r.checkpoint,
+		r.leader,
+		r.fsim.flushedEpoch)
 }
 
 func (f *fakeStore) String() string {
@@ -368,6 +383,20 @@ func (f *fakeStore) String() string {
 
 func (f *fakeCluster) flushAll() {
 	for _, r := range f.regions {
+		r.flush()
+	}
+}
+
+func (f *fakeCluster) flushAllExcept(keys ...string) {
+outer:
+	for _, r := range f.regions {
+		// Note: can we make it faster?
+		for _, key := range keys {
+			if utils.CompareBytesExt(r.rng.StartKey, false, []byte(key), false) <= 0 &&
+				utils.CompareBytesExt([]byte(key), false, r.rng.EndKey, true) < 0 {
+				continue outer
+			}
+		}
 		r.flush()
 	}
 }
@@ -397,17 +426,23 @@ type testEnv struct {
 	*fakeCluster
 	checkpoint uint64
 	testCtx    *testing.T
+	ranges     []kv.KeyRange
 
 	mu sync.Mutex
 }
 
 func (t *testEnv) Begin(ctx context.Context, ch chan<- streamhelper.TaskEvent) error {
+	rngs := t.ranges
+	if len(rngs) == 0 {
+		rngs = []kv.KeyRange{{}}
+	}
 	tsk := streamhelper.TaskEvent{
 		Type: streamhelper.EventAdd,
 		Name: "whole",
 		Info: &backup.StreamBackupTaskInfo{
 			Name: "whole",
 		},
+		Ranges: rngs,
 	}
 	ch <- tsk
 	return nil

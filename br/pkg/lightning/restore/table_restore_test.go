@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	restoremock "github.com/pingcap/tidb/br/pkg/lightning/restore/mock"
+	ropts "github.com/pingcap/tidb/br/pkg/lightning/restore/opts"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/lightning/web"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
@@ -1078,8 +1079,8 @@ func (s *tableRestoreSuite) TestCheckClusterResource() {
 				"max-replicas": 1
 			}`),
 			"(.*)Cluster doesn't have enough space(.*)",
-			false,
-			1,
+			true,
+			0,
 		},
 	}
 
@@ -1138,10 +1139,11 @@ func (s *tableRestoreSuite) TestCheckClusterResource() {
 			return nil
 		})
 		require.NoError(s.T(), err)
-		err = rc.clusterResource(WithPreInfoGetterEstimatedSrcSizeCache(ctx, &EstimateSourceDataSizeResult{
+		preInfoGetter.estimatedSizeCache = &EstimateSourceDataSizeResult{
 			SizeWithIndex:    sourceSize,
 			SizeWithoutIndex: sourceSize,
-		}))
+		}
+		err = rc.clusterResource(ctx)
 		require.NoError(s.T(), err)
 
 		require.Equal(s.T(), ca.expectErrorCount, template.FailedCount(Critical))
@@ -1212,8 +1214,8 @@ func (s *tableRestoreSuite) TestCheckClusterRegion() {
 				".*TiKV stores \\(1\\) contains more than 500 empty regions respectively.*",
 				".*Region distribution is unbalanced.*but we expect it should not be less than 0.75.*",
 			},
-			expectResult:   false,
-			expectErrorCnt: 1,
+			expectResult:   true,
+			expectErrorCnt: 0,
 		},
 		{
 			stores: pdtypes.StoresInfo{Stores: []*pdtypes.StoreInfo{
@@ -1283,7 +1285,8 @@ func (s *tableRestoreSuite) TestCheckClusterRegion() {
 			precheckItemBuilder: theCheckBuilder,
 		}
 
-		ctx := WithPreInfoGetterTableStructuresCache(context.Background(), rc.dbInfos)
+		preInfoGetter.dbInfosCache = rc.dbInfos
+		ctx := context.Background()
 		err := rc.checkClusterRegion(ctx)
 		require.NoError(s.T(), err)
 		require.Equal(s.T(), ca.expectErrorCnt, template.FailedCount(Critical))
@@ -1433,19 +1436,22 @@ func (s *tableRestoreSuite) TestEstimate() {
 		preInfoGetter:       preInfoGetter,
 		precheckItemBuilder: theCheckBuilder,
 	}
-	ctx = WithPreInfoGetterTableStructuresCache(ctx, dbInfos)
-	source, _, _, err := rc.estimateSourceData(ctx)
+	preInfoGetter.dbInfosCache = dbInfos
+	estimateResult, err := preInfoGetter.EstimateSourceDataSize(ctx)
+	s.Require().NoError(err)
+	source := estimateResult.SizeWithIndex
 	// Because this file is small than region split size so we does not sample it.
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), s.tableMeta.TotalSize, source)
+	s.Require().Equal(s.tableMeta.TotalSize, source)
 	s.tableMeta.TotalSize = int64(config.SplitRegionSize)
-	source, _, _, err = rc.estimateSourceData(ctx)
-	require.NoError(s.T(), err)
-	require.Greater(s.T(), source, s.tableMeta.TotalSize)
+	estimateResult, err = preInfoGetter.EstimateSourceDataSize(ctx, ropts.ForceReloadCache(true))
+	s.Require().NoError(err)
+	source = estimateResult.SizeWithIndex
+	s.Require().Greater(source, s.tableMeta.TotalSize)
 	rc.cfg.TikvImporter.Backend = config.BackendTiDB
-	source, _, _, err = rc.estimateSourceData(ctx)
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), s.tableMeta.TotalSize, source)
+	estimateResult, err = preInfoGetter.EstimateSourceDataSize(ctx, ropts.ForceReloadCache(true))
+	s.Require().NoError(err)
+	source = estimateResult.SizeWithIndex
+	s.Require().Equal(s.tableMeta.TotalSize, source)
 }
 
 func (s *tableRestoreSuite) TestSchemaIsValid() {
@@ -1849,7 +1855,8 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 			ioWorkers:  ioWorkers,
 		}
 		ci := NewSchemaCheckItem(cfg, preInfoGetter, nil, nil).(*schemaCheckItem)
-		msgs, err := ci.SchemaIsValid(WithPreInfoGetterTableStructuresCache(ctx, ca.dbInfos), ca.tableMeta)
+		preInfoGetter.dbInfosCache = ca.dbInfos
+		msgs, err := ci.SchemaIsValid(ctx, ca.tableMeta)
 		require.NoError(s.T(), err)
 		require.Len(s.T(), msgs, ca.MsgNum)
 		if len(msgs) > 0 {
@@ -1919,7 +1926,8 @@ func (s *tableRestoreSuite) TestGBKEncodedSchemaIsValid() {
 		ioWorkers:  ioWorkers,
 	}
 	ci := NewSchemaCheckItem(cfg, preInfoGetter, nil, nil).(*schemaCheckItem)
-	msgs, err := ci.SchemaIsValid(WithPreInfoGetterTableStructuresCache(ctx, dbInfos), &mydump.MDTableMeta{
+	preInfoGetter.dbInfosCache = dbInfos
+	msgs, err := ci.SchemaIsValid(ctx, &mydump.MDTableMeta{
 		DB:   "db1",
 		Name: "gbk_table",
 		DataFiles: []mydump.FileInfo{

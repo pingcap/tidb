@@ -512,6 +512,8 @@ func (ts *basicHTTPHandlerTestSuite) prepareData(t *testing.T) {
 	err = txn1.Commit()
 	require.NoError(t, err)
 	dbt.MustExec("alter table tidb.test add index idx1 (a, b);")
+	dbt.MustExec("alter table tidb.test drop index idx1;")
+	dbt.MustExec("alter table tidb.test add index idx1 (a, b);")
 	dbt.MustExec("alter table tidb.test add unique index idx2 (a, b);")
 
 	dbt.MustExec(`create table tidb.pt (a int primary key, b varchar(20), key idx(a, b))
@@ -976,7 +978,49 @@ func TestAllHistory(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
-	require.Equal(t, data, jobs)
+	require.Equal(t, len(data), len(jobs))
+	for i := range data {
+		// For the jobs that have arguments(job.Args) for GC delete range,
+		// the RawArgs should be the same after filtering the spaces.
+		data[i].RawArgs = filterSpaces(data[i].RawArgs)
+		jobs[i].RawArgs = filterSpaces(jobs[i].RawArgs)
+		require.Equal(t, data[i], jobs[i], i)
+	}
+
+	// Cover the start_job_id parameter.
+	resp, err = ts.fetchStatus("/ddl/history?start_job_id=41")
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+
+	resp, err = ts.fetchStatus("/ddl/history?start_job_id=41&limit=3")
+	require.NoError(t, err)
+	decoder = json.NewDecoder(resp.Body)
+	err = decoder.Decode(&jobs)
+	require.NoError(t, err)
+
+	// The result is in descending order
+	lastID := int64(42)
+	for _, job := range jobs {
+		require.Less(t, job.ID, lastID)
+		lastID = job.ID
+	}
+	require.NoError(t, resp.Body.Close())
+}
+
+func filterSpaces(bs []byte) []byte {
+	if len(bs) == 0 {
+		return nil
+	}
+	tmp := bs[:0]
+	for _, b := range bs {
+		// 0xa is the line feed character.
+		// 0xd is the carriage return character.
+		// 0x20 is the space character.
+		if b != 0xa && b != 0xd && b != 0x20 {
+			tmp = append(tmp, b)
+		}
+	}
+	return tmp
 }
 
 func dummyRecord() *deadlockhistory.DeadlockRecord {
@@ -1107,4 +1151,40 @@ func TestWriteDBTablesData(t *testing.T) {
 	require.Equal(t, ti[1].ID, tbs[1].Meta().ID)
 	require.Equal(t, ti[0].Name.String(), tbs[0].Meta().Name.String())
 	require.Equal(t, ti[1].Name.String(), tbs[1].Meta().Name.String())
+}
+
+func TestSetLabels(t *testing.T) {
+	ts := createBasicHTTPHandlerTestSuite()
+
+	ts.startServer(t)
+	defer ts.stopServer(t)
+
+	testUpdateLabels := func(labels, expected map[string]string) {
+		buffer := bytes.NewBuffer([]byte{})
+		require.Nil(t, json.NewEncoder(buffer).Encode(labels))
+		resp, err := ts.postStatus("/labels", "application/json", buffer)
+		require.NoError(t, err)
+		require.NotNil(t, resp)
+		defer func() {
+			require.NoError(t, resp.Body.Close())
+		}()
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		newLabels := config.GetGlobalConfig().Labels
+		require.Equal(t, newLabels, expected)
+	}
+
+	labels := map[string]string{
+		"zone": "us-west-1",
+		"test": "123",
+	}
+	testUpdateLabels(labels, labels)
+
+	updated := map[string]string{
+		"zone": "bj-1",
+	}
+	labels["zone"] = "bj-1"
+	testUpdateLabels(updated, labels)
+
+	// reset the global variable
+	config.GetGlobalConfig().Labels = map[string]string{}
 }

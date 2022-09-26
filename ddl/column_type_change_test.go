@@ -245,10 +245,10 @@ var mockTerrorMap = make(map[string]*terror.Error)
 
 func init() {
 	// Since terror new action will cause data race with other test suite (getTerrorCode) in parallel, we init it all here.
-	mockTerrorMap[model.StateNone.String()] = dbterror.ClassDDL.New(1, "MockRollingBackInCallBack-"+model.StateNone.String())
-	mockTerrorMap[model.StateDeleteOnly.String()] = dbterror.ClassDDL.New(1, "MockRollingBackInCallBack-"+model.StateDeleteOnly.String())
-	mockTerrorMap[model.StateWriteOnly.String()] = dbterror.ClassDDL.New(1, "MockRollingBackInCallBack-"+model.StateWriteOnly.String())
-	mockTerrorMap[model.StateWriteReorganization.String()] = dbterror.ClassDDL.New(1, "MockRollingBackInCallBack-"+model.StateWriteReorganization.String())
+	mockTerrorMap[model.StateNone.String()] = dbterror.ClassDDL.NewStdErr(1, mysql.Message("MockRollingBackInCallBack-"+model.StateNone.String(), nil))
+	mockTerrorMap[model.StateDeleteOnly.String()] = dbterror.ClassDDL.NewStdErr(1, mysql.Message("MockRollingBackInCallBack-"+model.StateDeleteOnly.String(), nil))
+	mockTerrorMap[model.StateWriteOnly.String()] = dbterror.ClassDDL.NewStdErr(1, mysql.Message("MockRollingBackInCallBack-"+model.StateWriteOnly.String(), nil))
+	mockTerrorMap[model.StateWriteReorganization.String()] = dbterror.ClassDDL.NewStdErr(1, mysql.Message("MockRollingBackInCallBack-"+model.StateWriteReorganization.String(), nil))
 }
 
 func TestColumnTypeChangeFromIntegerToOthers(t *testing.T) {
@@ -619,7 +619,7 @@ func TestColumnTypeChangeFromStringToOthers(t *testing.T) {
 	tk.MustExec("alter table t modify txt json")
 	tk.MustExec("alter table t modify e json")
 	tk.MustExec("alter table t modify s json")
-	tk.MustQuery("select * from t").Check(testkit.Rows("{\"k1\": \"value\"} {\"k1\": \"value\"} {\"k1\": \"value\"} {\"k1\": \"value\"} {\"k1\": \"value\"} {\"k1\": \"value\"} \"{\\\"k1\\\": \\\"value\\\"}\" \"{\\\"k1\\\": \\\"value\\\"}\""))
+	tk.MustQuery("select * from t").Check(testkit.Rows("{\"k1\": \"value\"} {\"k1\": \"value\"} {\"k1\": \"value\"} {\"k1\": \"value\"} {\"k1\": \"value\"} {\"k1\": \"value\"} {\"k1\": \"value\"} {\"k1\": \"value\"}"))
 
 	reset(tk)
 	tk.MustExec("insert into t values ('123x', 'x123', 'abc', 'datetime', 'timestamp', 'date', '123', '123')")
@@ -651,7 +651,10 @@ func TestColumnTypeChangeFromStringToOthers(t *testing.T) {
 	reset(tk)
 	tk.MustExec("alter table t modify c char(15)")
 	tk.MustExec("insert into t(c) values ('{\"k1\": \"value\"')")
+	tk.MustExec("insert into t(e, s) values ('str', 'str')")
 	tk.MustGetErrCode("alter table t modify c json", errno.ErrInvalidJSONText)
+	tk.MustGetErrCode("alter table t modify e json", errno.ErrInvalidJSONText)
+	tk.MustGetErrCode("alter table t modify s json", errno.ErrInvalidJSONText)
 
 	// MySQL will get "ERROR 1366 (HY000): Incorrect DECIMAL value: '0' for column '' at row -1" error.
 	tk.MustExec("insert into t(vc) values ('abc')")
@@ -1138,7 +1141,7 @@ func TestColumnTypeChangeFromDateTimeTypeToOthers(t *testing.T) {
 	tk.MustExec("alter table t modify dt json")
 	tk.MustExec("alter table t modify tmp json")
 	tk.MustExec("alter table t modify y json")
-	tk.MustQuery("select * from t").Check(testkit.Rows("\"2020-10-30\" \"19:38:25.001\" \"2020-10-30 08:21:33.455555\" \"2020-10-30 08:21:33.455555\" 2020"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("\"2020-10-30\" \"19:38:25.001000\" \"2020-10-30 08:21:33.455555\" \"2020-10-30 08:21:33.455555\" 2020"))
 }
 
 func TestColumnTypeChangeFromJsonToOthers(t *testing.T) {

@@ -16,6 +16,7 @@ go_library(
     deps = [
         "//ddl/schematracker",
         "//domain",
+        "//expression",
         "//kv",
         "//parser/ast",
         "//parser/terror",
@@ -24,7 +25,6 @@ go_library(
         "//sessionctx/variable",
         "//store/driver",
         "//store/mockstore",
-        "//types",
         "//util",
         "//util/breakpoint",
         "//util/sqlexec",
@@ -34,6 +34,7 @@ go_library(
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_client_go_v2//tikvrpc",
+        "@io_opencensus_go//stats/view",
         "@org_golang_x_exp//slices",
         "@org_uber_go_atomic//:atomic",
     ],

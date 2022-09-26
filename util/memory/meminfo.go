@@ -15,14 +15,12 @@
 package memory
 
 import (
-	"os"
 	"runtime"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/util/cgroup"
 	"github.com/shirou/gopsutil/v3/mem"
 )
 
@@ -60,28 +58,22 @@ func MemUsedNormal() (uint64, error) {
 	return v.Used, nil
 }
 
-const (
-	cGroupMemLimitPath = "/sys/fs/cgroup/memory/memory.limit_in_bytes"
-	cGroupMemUsagePath = "/sys/fs/cgroup/memory/memory.usage_in_bytes"
-	selfCGroupPath     = "/proc/self/cgroup"
-)
-
 type memInfoCache struct {
-	*sync.RWMutex
-	mem        uint64
 	updateTime time.Time
+	mu         *sync.RWMutex
+	mem        uint64
 }
 
 func (c *memInfoCache) get() (memo uint64, t time.Time) {
-	c.RLock()
-	defer c.RUnlock()
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	memo, t = c.mem, c.updateTime
 	return
 }
 
 func (c *memInfoCache) set(memo uint64, t time.Time) {
-	c.Lock()
-	defer c.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.mem, c.updateTime = memo, t
 }
 
@@ -101,7 +93,7 @@ func MemTotalCGroup() (uint64, error) {
 	if time.Since(t) < 60*time.Second {
 		return memo, nil
 	}
-	memo, err := readUint(cGroupMemLimitPath)
+	memo, err := cgroup.GetMemoryLimit()
 	if err != nil {
 		return memo, err
 	}
@@ -115,7 +107,7 @@ func MemUsedCGroup() (uint64, error) {
 	if time.Since(t) < 500*time.Millisecond {
 		return memo, nil
 	}
-	memo, err := readUint(cGroupMemUsagePath)
+	memo, err := cgroup.GetMemoryUsage()
 	if err != nil {
 		return memo, err
 	}
@@ -124,7 +116,7 @@ func MemUsedCGroup() (uint64, error) {
 }
 
 func init() {
-	if inContainer() {
+	if cgroup.InContainer() {
 		MemTotal = MemTotalCGroup
 		MemUsed = MemUsedCGroup
 	} else {
@@ -132,59 +124,18 @@ func init() {
 		MemUsed = MemUsedNormal
 	}
 	memLimit = &memInfoCache{
-		RWMutex: &sync.RWMutex{},
+		mu: &sync.RWMutex{},
 	}
 	memUsage = &memInfoCache{
-		RWMutex: &sync.RWMutex{},
+		mu: &sync.RWMutex{},
 	}
 	serverMemUsage = &memInfoCache{
-		RWMutex: &sync.RWMutex{},
+		mu: &sync.RWMutex{},
 	}
 	_, err := MemTotal()
 	terror.MustNil(err)
 	_, err = MemUsed()
 	terror.MustNil(err)
-}
-
-func inContainer() bool {
-	v, err := os.ReadFile(selfCGroupPath)
-	if err != nil {
-		return false
-	}
-	if strings.Contains(string(v), "docker") ||
-		strings.Contains(string(v), "kubepods") ||
-		strings.Contains(string(v), "containerd") {
-		return true
-	}
-	return false
-}
-
-// refer to https://github.com/containerd/cgroups/blob/318312a373405e5e91134d8063d04d59768a1bff/utils.go#L251
-func parseUint(s string, base, bitSize int) (uint64, error) {
-	v, err := strconv.ParseUint(s, base, bitSize)
-	if err != nil {
-		intValue, intErr := strconv.ParseInt(s, base, bitSize)
-		// 1. Handle negative values greater than MinInt64 (and)
-		// 2. Handle negative values lesser than MinInt64
-		if intErr == nil && intValue < 0 {
-			return 0, nil
-		} else if intErr != nil &&
-			intErr.(*strconv.NumError).Err == strconv.ErrRange &&
-			intValue < 0 {
-			return 0, nil
-		}
-		return 0, err
-	}
-	return v, nil
-}
-
-// refer to https://github.com/containerd/cgroups/blob/318312a373405e5e91134d8063d04d59768a1bff/utils.go#L243
-func readUint(path string) (uint64, error) {
-	v, err := os.ReadFile(path)
-	if err != nil {
-		return 0, err
-	}
-	return parseUint(strings.TrimSpace(string(v)), 10, 64)
 }
 
 // InstanceMemUsed returns the memory usage of this TiDB server

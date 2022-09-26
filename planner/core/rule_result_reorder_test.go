@@ -16,15 +16,12 @@ package core_test
 
 import (
 	"fmt"
-	"math"
 	"testing"
 
 	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
-	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/stretchr/testify/require"
 )
 
@@ -32,16 +29,7 @@ func TestPlanCache(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
-	orgEnable := plannercore.PreparedPlanCacheEnabled()
-	defer func() {
-		plannercore.SetPreparedPlanCache(orgEnable)
-	}()
-	plannercore.SetPreparedPlanCache(true)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk.SetSession(se)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_enable_ordered_result_mode=1")
@@ -159,6 +147,7 @@ func TestOrderedResultModeOnJoin(t *testing.T) {
 	tk.MustExec("drop table if exists t2")
 	tk.MustExec("create table t1 (a int primary key, b int, c int, d int, key(b))")
 	tk.MustExec("create table t2 (a int primary key, b int, c int, d int, key(b))")
+	tk.MustExec("set @@tidb_enable_outer_join_reorder=true")
 	runTestData(t, tk, "TestOrderedResultModeOnJoin")
 }
 
@@ -190,7 +179,9 @@ func TestOrderedResultModeOnPartitionTable(t *testing.T) {
 					partition p1 values less than (200),
 					partition p2 values less than (300),
 					partition p3 values less than (400))`)
-	tk.MustQuery("select @@tidb_partition_prune_mode").Check(testkit.Rows("static"))
+	tk.MustExec(`analyze table thash`)
+	tk.MustExec(`analyze table trange`)
+	tk.MustQuery("select @@tidb_partition_prune_mode").Check(testkit.Rows("dynamic"))
 	runTestData(t, tk, "TestOrderedResultModeOnPartitionTable")
 }
 

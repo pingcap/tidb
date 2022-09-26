@@ -87,14 +87,12 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 			if err != nil {
 				return err
 			}
-			sessionVars.UsersLock.Lock()
 			if value.IsNull() {
 				sessionVars.UnsetUserVar(name)
 			} else {
-				sessionVars.Users[name] = value
-				sessionVars.UserVarTypes[name] = v.Expr.GetType()
+				sessionVars.SetUserVarVal(name, value)
+				sessionVars.SetUserVarType(name, v.Expr.GetType())
 			}
-			sessionVars.UsersLock.Unlock()
 			continue
 		}
 

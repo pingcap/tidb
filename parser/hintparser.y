@@ -61,7 +61,8 @@ import (
 	hintBNL                 "BNL"
 	hintNoBNL               "NO_BNL"
 	hintHashJoin            "HASH_JOIN"
-	hintOrderedHashJoin     "ORDERED_HASH_JOIN"
+	hintHashJoinBuild       "HASH_JOIN_BUILD"
+	hintHashJoinProbe       "HASH_JOIN_PROBE"
 	hintNoHashJoin          "NO_HASH_JOIN"
 	hintMerge               "MERGE"
 	hintNoMerge             "NO_MERGE"
@@ -109,6 +110,7 @@ import (
 	hintStraightJoin          "STRAIGHT_JOIN"
 	hintLeading               "LEADING"
 	hintSemiJoinRewrite       "SEMI_JOIN_REWRITE"
+	hintNoDecorrelate         "NO_DECORRELATE"
 
 	/* Other keywords */
 	hintOLAP            "OLAP"
@@ -543,7 +545,8 @@ SupportedTableLevelOptimizerHintName:
 |	"NO_SWAP_JOIN_INPUTS"
 |	"INL_MERGE_JOIN"
 |	"HASH_JOIN"
-|	"ORDERED_HASH_JOIN"
+|	"HASH_JOIN_BUILD"
+|	"HASH_JOIN_PROBE"
 |	"LEADING"
 
 UnsupportedIndexLevelOptimizerHintName:
@@ -587,6 +590,7 @@ NullaryHintName:
 |	"IGNORE_PLAN_CACHE"
 |	"STRAIGHT_JOIN"
 |	"SEMI_JOIN_REWRITE"
+|	"NO_DECORRELATE"
 
 HintQueryType:
 	"OLAP"
@@ -608,7 +612,8 @@ Identifier:
 |	"BNL"
 |	"NO_BNL"
 |	"HASH_JOIN"
-|	"ORDERED_HASH_JOIN"
+|	"HASH_JOIN_BUILD"
+|	"HASH_JOIN_PROBE"
 |	"NO_HASH_JOIN"
 |	"MERGE"
 |	"NO_MERGE"
@@ -655,6 +660,7 @@ Identifier:
 |	"STRAIGHT_JOIN"
 |	"LEADING"
 |	"SEMI_JOIN_REWRITE"
+|	"NO_DECORRELATE"
 /* other keywords */
 |	"OLAP"
 |	"OLTP"

@@ -20,7 +20,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/collate"
@@ -427,8 +426,7 @@ func TestApplyWithOtherFeatures(t *testing.T) {
 	defer collate.SetNewCollationEnabledForTest(true)
 
 	// plan cache
-	orgEnable := core.PreparedPlanCacheEnabled()
-	core.SetPreparedPlanCache(true)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(a int, b int)")
 	tk.MustExec("create table t2(a int, b int)")
@@ -440,7 +438,6 @@ func TestApplyWithOtherFeatures(t *testing.T) {
 	tk.MustExec("set @a=2")
 	tk.MustQuery("execute stmt using @a").Sort().Check(testkit.Rows("1 5", "2 3", "2 4"))
 	tk.MustQuery(" select @@last_plan_from_cache").Check(testkit.Rows("0")) // sub-queries are not cacheable
-	core.SetPreparedPlanCache(orgEnable)
 
 	// cluster index
 	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn

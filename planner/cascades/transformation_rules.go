@@ -240,9 +240,10 @@ func NewRulePushSelDownIndexScan() Transformation {
 
 // OnTransform implements Transformation interface.
 // It will transform `Selection -> IndexScan` to:
-//   `IndexScan(with a new access range)` or
-//   `Selection -> IndexScan(with a new access range)`
-//	 or just keep the two GroupExprs unchanged.
+//
+//	  `IndexScan(with a new access range)` or
+//	  `Selection -> IndexScan(with a new access range)`
+//		 or just keep the two GroupExprs unchanged.
 func (*PushSelDownIndexScan) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	sel := old.GetExpr().ExprNode.(*plannercore.LogicalSelection)
 	is := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalIndexScan)
@@ -258,7 +259,7 @@ func (*PushSelDownIndexScan) OnTransform(old *memo.ExprIter) (newExprs []*memo.G
 		copy(conditions, sel.Conditions)
 		copy(conditions[len(sel.Conditions):], is.AccessConds)
 	}
-	res, err := ranger.DetachCondAndBuildRangeForIndex(is.SCtx(), conditions, is.IdxCols, is.IdxColLens)
+	res, err := ranger.DetachCondAndBuildRangeForIndex(is.SCtx(), conditions, is.IdxCols, is.IdxColLens, is.SCtx().GetSessionVars().RangeMaxSize)
 	if err != nil {
 		return nil, false, false, err
 	}

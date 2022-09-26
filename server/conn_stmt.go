@@ -45,7 +45,9 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -97,8 +99,11 @@ func (cc *clientConn) handleStmtPrepare(ctx context.Context, sql string) error {
 			}
 		}
 
-		if err := cc.writeEOF(0); err != nil {
-			return err
+		if cc.capability&mysql.ClientDeprecateEOF == 0 {
+			// metadata only needs EOF marker for old clients without ClientDeprecateEOF
+			if err := cc.writeEOF(ctx, cc.ctx.Status()); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -112,8 +117,11 @@ func (cc *clientConn) handleStmtPrepare(ctx context.Context, sql string) error {
 			}
 		}
 
-		if err := cc.writeEOF(0); err != nil {
-			return err
+		if cc.capability&mysql.ClientDeprecateEOF == 0 {
+			// metadata only needs EOF marker for old clients without ClientDeprecateEOF
+			if err := cc.writeEOF(ctx, cc.ctx.Status()); err != nil {
+				return err
+			}
 		}
 	}
 	return cc.flush(ctx)
@@ -136,21 +144,18 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 
 	flag := data[pos]
 	pos++
-	// Please refer to https://dev.mysql.com/doc/internals/en/com-stmt-execute.html
+	// Please refer to https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_com_stmt_execute.html
 	// The client indicates that it wants to use cursor by setting this flag.
-	// 0x00 CURSOR_TYPE_NO_CURSOR
-	// 0x01 CURSOR_TYPE_READ_ONLY
-	// 0x02 CURSOR_TYPE_FOR_UPDATE
-	// 0x04 CURSOR_TYPE_SCROLLABLE
 	// Now we only support forward-only, read-only cursor.
-	var useCursor bool
-	switch flag {
-	case 0:
-		useCursor = false
-	case 1:
+	useCursor := false
+	if flag&mysql.CursorTypeReadOnly > 0 {
 		useCursor = true
-	default:
-		return mysql.NewErrf(mysql.ErrUnknown, "unsupported flag %d", nil, flag)
+	}
+	if flag&mysql.CursorTypeForUpdate > 0 {
+		return mysql.NewErrf(mysql.ErrUnknown, "unsupported flag: CursorTypeForUpdate", nil)
+	}
+	if flag&mysql.CursorTypeScrollable > 0 {
+		return mysql.NewErrf(mysql.ErrUnknown, "unsupported flag: CursorTypeScrollable", nil)
 	}
 
 	// skip iteration-count, always 1
@@ -163,7 +168,7 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 	)
 	cc.initInputEncoder(ctx)
 	numParams := stmt.NumParams()
-	args := make([]types.Datum, numParams)
+	args := make([]expression.Expression, numParams)
 	if numParams > 0 {
 		nullBitmapLen := (numParams + 7) >> 3
 		if len(data) < (pos + nullBitmapLen + 1) {
@@ -195,9 +200,13 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 			return errors.Annotate(err, cc.preparedStmt2String(stmtID))
 		}
 	}
+	return cc.executePlanCacheStmt(ctx, stmt, args, useCursor)
+}
+
+func (cc *clientConn) executePlanCacheStmt(ctx context.Context, stmt interface{}, args []expression.Expression, useCursor bool) (err error) {
 	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
 	ctx = context.WithValue(ctx, util.ExecDetailsKey, &util.ExecDetails{})
-	retryable, err := cc.executePreparedStmtAndWriteResult(ctx, stmt, args, useCursor)
+	retryable, err := cc.executePreparedStmtAndWriteResult(ctx, stmt.(PreparedStatement), args, useCursor)
 	if err != nil {
 		action, txnErr := sessiontxn.GetTxnManager(&cc.ctx).OnStmtErrorForNextAction(sessiontxn.StmtErrAfterQuery, err)
 		if txnErr != nil {
@@ -206,7 +215,7 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 
 		if retryable && action == sessiontxn.StmtActionRetryReady {
 			cc.ctx.GetSessionVars().RetryInfo.Retrying = true
-			_, err = cc.executePreparedStmtAndWriteResult(ctx, stmt, args, useCursor)
+			_, err = cc.executePreparedStmtAndWriteResult(ctx, stmt.(PreparedStatement), args, useCursor)
 			cc.ctx.GetSessionVars().RetryInfo.Retrying = false
 			return err
 		}
@@ -220,7 +229,7 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 		defer func() {
 			cc.ctx.GetSessionVars().IsolationReadEngines[kv.TiFlash] = struct{}{}
 		}()
-		_, err = cc.executePreparedStmtAndWriteResult(ctx, stmt, args, useCursor)
+		_, err = cc.executePreparedStmtAndWriteResult(ctx, stmt.(PreparedStatement), args, useCursor)
 		// We append warning after the retry because `ResetContextOfStmt` may be called during the retry, which clears warnings.
 		cc.ctx.GetSessionVars().StmtCtx.AppendError(prevErr)
 	}
@@ -229,13 +238,26 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 
 // The first return value indicates whether the call of executePreparedStmtAndWriteResult has no side effect and can be retried.
 // Currently the first return value is used to fallback to TiKV when TiFlash is down.
-func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stmt PreparedStatement, args []types.Datum, useCursor bool) (bool, error) {
-	rs, err := stmt.Execute(ctx, args)
+func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stmt PreparedStatement, args []expression.Expression, useCursor bool) (bool, error) {
+	prepStmt, err := (&cc.ctx).GetSessionVars().GetPreparedStmtByID(uint32(stmt.ID()))
+	if err != nil {
+		return true, errors.Annotate(err, cc.preparedStmt2String(uint32(stmt.ID())))
+	}
+	execStmt := &ast.ExecuteStmt{
+		BinaryArgs: args,
+		PrepStmt:   prepStmt,
+	}
+	rs, err := (&cc.ctx).ExecuteStmt(ctx, execStmt)
 	if err != nil {
 		return true, errors.Annotate(err, cc.preparedStmt2String(uint32(stmt.ID())))
 	}
 	if rs == nil {
 		return false, cc.writeOK(ctx)
+	}
+	if result, ok := rs.(*tidbResultSet); ok {
+		if planCacheStmt, ok := prepStmt.(*plannercore.PlanCacheStmt); ok {
+			result.preparedStmt = planCacheStmt
+		}
 	}
 
 	// if the client wants to use cursor
@@ -245,18 +267,21 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 		cc.initResultEncoder(ctx)
 		defer cc.rsEncoder.clean()
 		stmt.StoreResultSet(rs)
-		err = cc.writeColumnInfo(rs.Columns(), mysql.ServerStatusCursorExists)
-		if err != nil {
+		if err = cc.writeColumnInfo(rs.Columns()); err != nil {
 			return false, err
 		}
 		if cl, ok := rs.(fetchNotifier); ok {
 			cl.OnFetchReturned()
 		}
 		// explicitly flush columnInfo to client.
+		err = cc.writeEOF(ctx, cc.ctx.Status()|mysql.ServerStatusCursorExists)
+		if err != nil {
+			return false, err
+		}
 		return false, cc.flush(ctx)
 	}
 	defer terror.Call(rs.Close)
-	retryable, err := cc.writeResultset(ctx, rs, true, 0, 0)
+	retryable, err := cc.writeResultset(ctx, rs, true, cc.ctx.Status(), 0)
 	if err != nil {
 		return retryable, errors.Annotate(err, cc.preparedStmt2String(uint32(stmt.ID())))
 	}
@@ -298,27 +323,27 @@ func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err err
 			strconv.FormatUint(uint64(stmtID), 10), "stmt_fetch_rs"), cc.preparedStmt2String(stmtID))
 	}
 
-	_, err = cc.writeResultset(ctx, rs, true, mysql.ServerStatusCursorExists, int(fetchSize))
+	_, err = cc.writeResultset(ctx, rs, true, cc.ctx.Status()|mysql.ServerStatusCursorExists, int(fetchSize))
 	if err != nil {
 		return errors.Annotate(err, cc.preparedStmt2String(stmtID))
 	}
 	return nil
 }
 
-func parseStmtFetchCmd(data []byte) (uint32, uint32, error) {
+func parseStmtFetchCmd(data []byte) (stmtID uint32, fetchSize uint32, err error) {
 	if len(data) != 8 {
 		return 0, 0, mysql.ErrMalformPacket
 	}
 	// Please refer to https://dev.mysql.com/doc/internals/en/com-stmt-fetch.html
-	stmtID := binary.LittleEndian.Uint32(data[0:4])
-	fetchSize := binary.LittleEndian.Uint32(data[4:8])
+	stmtID = binary.LittleEndian.Uint32(data[0:4])
+	fetchSize = binary.LittleEndian.Uint32(data[4:8])
 	if fetchSize > maxFetchSize {
 		fetchSize = maxFetchSize
 	}
-	return stmtID, fetchSize, nil
+	return
 }
 
-func parseExecArgs(sc *stmtctx.StatementContext, args []types.Datum, boundParams [][]byte,
+func parseExecArgs(sc *stmtctx.StatementContext, params []expression.Expression, boundParams [][]byte,
 	nullBitmap, paramTypes, paramValues []byte, enc *inputDecoder) (err error) {
 	pos := 0
 	var (
@@ -331,6 +356,7 @@ func parseExecArgs(sc *stmtctx.StatementContext, args []types.Datum, boundParams
 		enc = newInputDecoder(charset.CharsetUTF8)
 	}
 
+	args := make([]types.Datum, len(params))
 	for i := 0; i < len(args); i++ {
 		// if params had received via ComStmtSendLongData, use them directly.
 		// ref https://dev.mysql.com/doc/internals/en/com-stmt-send-long-data.html
@@ -567,6 +593,12 @@ func parseExecArgs(sc *stmtctx.StatementContext, args []types.Datum, boundParams
 			return
 		}
 	}
+
+	for i := range params {
+		ft := new(types.FieldType)
+		types.DefaultParamTypeForValue(args[i].GetValue(), ft)
+		params[i] = &expression.Constant{Value: args[i], RetType: ft}
+	}
 	return
 }
 
@@ -684,7 +716,8 @@ func (cc *clientConn) handleSetOption(ctx context.Context, data []byte) (err err
 	default:
 		return mysql.ErrMalformPacket
 	}
-	if err = cc.writeEOF(0); err != nil {
+
+	if err = cc.writeEOF(ctx, cc.ctx.Status()); err != nil {
 		return err
 	}
 
@@ -709,7 +742,7 @@ func (cc *clientConn) preparedStmt2StringNoArgs(stmtID uint32) string {
 	}
 	preparedObj, invalid := cc.preparedStmtID2CachePreparedStmt(stmtID)
 	if invalid {
-		return "invalidate CachedPrepareStmt type, ID: " + strconv.FormatUint(uint64(stmtID), 10)
+		return "invalidate PlanCacheStmt type, ID: " + strconv.FormatUint(uint64(stmtID), 10)
 	}
 	if preparedObj == nil {
 		return "prepared statement not found, ID: " + strconv.FormatUint(uint64(stmtID), 10)
@@ -717,7 +750,7 @@ func (cc *clientConn) preparedStmt2StringNoArgs(stmtID uint32) string {
 	return preparedObj.PreparedAst.Stmt.Text()
 }
 
-func (cc *clientConn) preparedStmtID2CachePreparedStmt(stmtID uint32) (_ *plannercore.CachedPrepareStmt, invalid bool) {
+func (cc *clientConn) preparedStmtID2CachePreparedStmt(stmtID uint32) (_ *plannercore.PlanCacheStmt, invalid bool) {
 	sv := cc.ctx.GetSessionVars()
 	if sv == nil {
 		return nil, false
@@ -727,7 +760,7 @@ func (cc *clientConn) preparedStmtID2CachePreparedStmt(stmtID uint32) (_ *planne
 		// not found
 		return nil, false
 	}
-	preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
+	preparedObj, ok := preparedPointer.(*plannercore.PlanCacheStmt)
 	if !ok {
 		// invalid cache. should never happen.
 		return nil, true

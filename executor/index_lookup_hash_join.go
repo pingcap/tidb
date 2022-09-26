@@ -30,6 +30,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/channel"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/memory"
@@ -39,11 +40,11 @@ import (
 // numResChkHold indicates the number of resource chunks that an inner worker
 // holds at the same time.
 // It's used in 2 cases individually:
-// 1. IndexMergeJoin
-// 2. IndexNestedLoopHashJoin:
-//    It's used when IndexNestedLoopHashJoin.keepOuterOrder is true.
-//    Otherwise, there will be at most `concurrency` resource chunks throughout
-//    the execution of IndexNestedLoopHashJoin.
+//  1. IndexMergeJoin
+//  2. IndexNestedLoopHashJoin:
+//     It's used when IndexNestedLoopHashJoin.keepOuterOrder is true.
+//     Otherwise, there will be at most `concurrency` resource chunks throughout
+//     the execution of IndexNestedLoopHashJoin.
 const numResChkHold = 4
 
 // IndexNestedLoopHashJoin employs one outer worker and N inner workers to
@@ -53,10 +54,11 @@ const numResChkHold = 4
 // 1. The outer worker reads N outer rows, builds a task and sends it to the
 // inner worker channel.
 // 2. The inner worker receives the tasks and does 3 things for every task:
-//    1. builds hash table from the outer rows
-//    2. builds key ranges from outer rows and fetches inner rows
-//    3. probes the hash table and sends the join result to the main thread channel.
-//    Note: step 1 and step 2 runs concurrently.
+//  1. builds hash table from the outer rows
+//  2. builds key ranges from outer rows and fetches inner rows
+//  3. probes the hash table and sends the join result to the main thread channel.
+//     Note: step 1 and step 2 runs concurrently.
+//
 // 3. The main thread receives the join results.
 type IndexNestedLoopHashJoin struct {
 	IndexLookUpJoin
@@ -289,13 +291,11 @@ func (e *IndexNestedLoopHashJoin) Close() error {
 		e.cancelFunc()
 	}
 	if e.resultCh != nil {
-		for range e.resultCh {
-		}
+		channel.Clear(e.resultCh)
 		e.resultCh = nil
 	}
 	if e.taskCh != nil {
-		for range e.taskCh {
-		}
+		channel.Clear(e.taskCh)
 		e.taskCh = nil
 	}
 	for i := range e.joinChkResourceCh {
@@ -543,6 +543,7 @@ func (iw *indexHashJoinInnerWorker) getNewJoinResult(ctx context.Context) (*inde
 
 func (iw *indexHashJoinInnerWorker) buildHashTableForOuterResult(ctx context.Context, task *indexHashJoinTask, h hash.Hash64) {
 	failpoint.Inject("IndexHashJoinBuildHashTablePanic", nil)
+	failpoint.Inject("ConsumeRandomPanic", nil)
 	if iw.stats != nil {
 		start := time.Now()
 		defer func() {
@@ -628,10 +629,10 @@ func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexH
 
 	iw.wg = &sync.WaitGroup{}
 	iw.wg.Add(1)
+	iw.lookup.workerWg.Add(1)
 	// TODO(XuHuaiyu): we may always use the smaller side to build the hashtable.
 	go util.WithRecovery(
 		func() {
-			iw.lookup.workerWg.Add(1)
 			iw.buildHashTableForOuterResult(ctx, task, h)
 		},
 		func(r interface{}) {
@@ -649,6 +650,7 @@ func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexH
 	failpoint.Inject("IndexHashJoinFetchInnerResultsErr", func() {
 		err = errors.New("IndexHashJoinFetchInnerResultsErr")
 	})
+	failpoint.Inject("ConsumeRandomPanic", nil)
 	if err != nil {
 		return err
 	}
@@ -777,11 +779,11 @@ func (iw *indexHashJoinInnerWorker) collectMatchedInnerPtrs4OuterRows(ctx contex
 }
 
 // doJoinInOrder follows the following steps:
-// 1. collect all the matched inner row ptrs for every outer row
-// 2. do the join work
-//   2.1 collect all the matched inner rows using the collected ptrs for every outer row
-//   2.2 call tryToMatchInners for every outer row
-//   2.3 call onMissMatch when no inner rows are matched
+//  1. collect all the matched inner row ptrs for every outer row
+//  2. do the join work
+//     2.1 collect all the matched inner rows using the collected ptrs for every outer row
+//     2.2 call tryToMatchInners for every outer row
+//     2.3 call onMissMatch when no inner rows are matched
 func (iw *indexHashJoinInnerWorker) doJoinInOrder(ctx context.Context, task *indexHashJoinTask, joinResult *indexHashJoinResult, h hash.Hash64, resultCh chan *indexHashJoinResult) (err error) {
 	defer func() {
 		if err == nil && joinResult.chk != nil {

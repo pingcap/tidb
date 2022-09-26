@@ -1661,6 +1661,21 @@ func (c *fromUnixTimeFunctionClass) getFunction(ctx sessionctx.Context, args []E
 		return nil, err
 	}
 
+	if fieldString(arg0Tp.GetType()) {
+		//Improve string cast Unix Time precision
+		x, ok := (bf.getArgs()[0]).(*ScalarFunction)
+		if ok {
+			//used to adjust FromUnixTime precision #Fixbug35184
+			if x.FuncName.L == ast.Cast {
+				if x.RetType.GetDecimal() == 0 && (x.RetType.GetType() == mysql.TypeNewDecimal) {
+					x.RetType.SetDecimal(6)
+					fieldLen := mathutil.Min(x.RetType.GetFlen()+6, mysql.MaxDecimalWidth)
+					x.RetType.SetFlen(fieldLen)
+				}
+			}
+		}
+	}
+
 	if len(args) > 1 {
 		sig = &builtinFromUnixTime2ArgSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_FromUnixTime2Arg)
@@ -1726,6 +1741,17 @@ func evalFromUnixTime(ctx sessionctx.Context, fsp int, unixTimeStamp *types.MyDe
 		return res, true, err
 	}
 	return t, false, nil
+}
+
+// fieldString returns true if precision cannot be determined
+func fieldString(fieldType byte) bool {
+	switch fieldType {
+	case mysql.TypeString, mysql.TypeVarchar, mysql.TypeTinyBlob,
+		mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
+		return true
+	default:
+		return false
+	}
 }
 
 type builtinFromUnixTime1ArgSig struct {
@@ -5105,7 +5131,7 @@ func (b *builtinConvertTzSig) convertTz(dt types.Time, fromTzStr, toTzStr string
 		}
 	}
 
-	t, err := dt.GoTime(fromTz)
+	t, err := dt.AdjustedGoTime(fromTz)
 	if err != nil {
 		return types.ZeroTime, true, nil
 	}
@@ -5666,9 +5692,6 @@ func (b *builtinSubDatetimeAndStringSig) evalTime(row chunk.Row) (types.Time, bo
 	s, isNull, err := b.args[1].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return types.ZeroDatetime, isNull, err
-	}
-	if err != nil {
-		return types.ZeroDatetime, true, err
 	}
 	if !isDuration(s) {
 		return types.ZeroDatetime, true, nil
@@ -6541,12 +6564,12 @@ func CalAppropriateTime(minTime, maxTime, minSafeTime time.Time) time.Time {
 }
 
 // For a SafeTS t and a time range [t1, t2]:
-//   1. If t < t1, we will use t1 as the result,
-//      and with it, a read request may fail because it's an unreached SafeTS.
-//   2. If t1 <= t <= t2, we will use t as the result, and with it,
-//      a read request won't fail.
-//   2. If t2 < t, we will use t2 as the result,
-//      and with it, a read request won't fail because it's bigger than the latest SafeTS.
+//  1. If t < t1, we will use t1 as the result,
+//     and with it, a read request may fail because it's an unreached SafeTS.
+//  2. If t1 <= t <= t2, we will use t as the result, and with it,
+//     a read request won't fail.
+//  2. If t2 < t, we will use t2 as the result,
+//     and with it, a read request won't fail because it's bigger than the latest SafeTS.
 func calAppropriateTime(minTime, maxTime, minSafeTime time.Time) time.Time {
 	if minSafeTime.Before(minTime) || minSafeTime.After(maxTime) {
 		logutil.BgLogger().Warn("calAppropriateTime",

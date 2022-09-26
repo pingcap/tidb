@@ -81,7 +81,7 @@ func (ci *clusterResourceCheckItem) getReplicaCount(ctx context.Context) (uint64
 func (ci *clusterResourceCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 	theResult := &CheckResult{
 		Item:     ci.GetCheckItemID(),
-		Severity: Critical,
+		Severity: Warn,
 		Passed:   true,
 		Message:  "Cluster resources are rich for this import task",
 	}
@@ -208,7 +208,7 @@ func (ci *emptyRegionCheckItem) GetCheckItemID() CheckItemID {
 func (ci *emptyRegionCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 	theResult := &CheckResult{
 		Item:     ci.GetCheckItemID(),
-		Severity: Critical,
+		Severity: Warn,
 		Passed:   true,
 		Message:  "Cluster doesn't have too many empty regions",
 	}
@@ -866,10 +866,10 @@ func (ci *csvHeaderCheckItem) GetCheckItemID() CheckItemID {
 }
 
 // Check tries to check whether the csv header config is consistent with the source csv files by:
-// 1. pick one table with two CSV files and a unique/primary key
-// 2. read the first row of those two CSV files
-// 3. checks if the content of those first rows are compatible with the table schema, and whether the
-//    two rows are identical, to determine if the first rows are a header rows.
+//  1. pick one table with two CSV files and a unique/primary key
+//  2. read the first row of those two CSV files
+//  3. checks if the content of those first rows are compatible with the table schema, and whether the
+//     two rows are identical, to determine if the first rows are a header rows.
 func (ci *csvHeaderCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 	// if cfg set header = true but source files actually contain not header, former SchemaCheck should
 	// return error in this situation, so we need do it again.

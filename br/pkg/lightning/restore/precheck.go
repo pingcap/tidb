@@ -7,6 +7,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
+	ropts "github.com/pingcap/tidb/br/pkg/lightning/restore/opts"
 )
 
 type CheckItemID string
@@ -55,7 +56,12 @@ type PrecheckItemBuilder struct {
 	checkpointsDB checkpoints.DB
 }
 
-func NewPrecheckItemBuilderFromConfig(ctx context.Context, cfg *config.Config) (*PrecheckItemBuilder, error) {
+func NewPrecheckItemBuilderFromConfig(ctx context.Context, cfg *config.Config, opts ...ropts.PrecheckItemBuilderOption) (*PrecheckItemBuilder, error) {
+	var gerr error
+	builderCfg := new(ropts.PrecheckItemBuilderConfig)
+	for _, o := range opts {
+		o(builderCfg)
+	}
 	targetDB, err := DBFromConfig(ctx, cfg.TiDB)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -64,9 +70,13 @@ func NewPrecheckItemBuilderFromConfig(ctx context.Context, cfg *config.Config) (
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	mdl, err := mydump.NewMyDumpLoader(ctx, cfg)
+	mdl, err := mydump.NewMyDumpLoader(ctx, cfg, builderCfg.MDLoaderSetupOptions...)
 	if err != nil {
-		return nil, errors.Trace(err)
+		if mdl == nil {
+			return nil, errors.Trace(err)
+		}
+		// here means the partial result is returned, so we can continue on processing
+		gerr = err
 	}
 	dbMetas := mdl.GetDatabases()
 	srcStorage := mdl.GetStore()
@@ -77,6 +87,7 @@ func NewPrecheckItemBuilderFromConfig(ctx context.Context, cfg *config.Config) (
 		targetInfoGetter,
 		nil, // ioWorkers
 		nil, // encBuilder
+		builderCfg.PreInfoGetterOptions...,
 	)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -85,7 +96,7 @@ func NewPrecheckItemBuilderFromConfig(ctx context.Context, cfg *config.Config) (
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return NewPrecheckItemBuilder(cfg, dbMetas, preInfoGetter, cpdb), nil
+	return NewPrecheckItemBuilder(cfg, dbMetas, preInfoGetter, cpdb), gerr
 }
 
 func NewPrecheckItemBuilder(
@@ -131,4 +142,9 @@ func (b *PrecheckItemBuilder) BuildPrecheckItem(checkID CheckItemID) (PrecheckIt
 	default:
 		return nil, errors.Errorf("unsupported check item: %v", checkID)
 	}
+}
+
+// GetPreInfoGetter gets the pre restore info getter from the builder.
+func (b *PrecheckItemBuilder) GetPreInfoGetter() PreRestoreInfoGetter {
+	return b.preInfoGetter
 }

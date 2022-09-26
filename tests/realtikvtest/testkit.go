@@ -17,8 +17,8 @@
 package realtikvtest
 
 import (
-	"context"
 	"flag"
+	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -27,16 +27,17 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testmain"
 	"github.com/pingcap/tidb/testkit/testsetup"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
-	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.opencensus.io/stats/view"
 	"go.uber.org/goleak"
-	"google.golang.org/grpc"
 )
 
 // WithRealTiKV is a flag identify whether tests run with real TiKV
@@ -57,7 +58,6 @@ func RunTestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/internal/retry.newBackoffFn.func1"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/v3.waitRetryBackoff"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
-		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 		goleak.IgnoreTopFunction("google.golang.org/grpc.(*addrConn).resetTransport"),
 		goleak.IgnoreTopFunction("google.golang.org/grpc.(*ccBalancerWrapper).watcher"),
 		goleak.IgnoreTopFunction("google.golang.org/grpc/internal/transport.(*controlBuffer).get"),
@@ -72,44 +72,6 @@ func RunTestMain(m *testing.M) {
 		return i
 	}
 	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
-}
-
-func clearTiKVStorage(t *testing.T, store kv.Storage) {
-	txn, err := store.Begin()
-	require.NoError(t, err)
-	iter, err := txn.Iter(nil, nil)
-	require.NoError(t, err)
-	for iter.Valid() {
-		require.NoError(t, txn.Delete(iter.Key()))
-		require.NoError(t, iter.Next())
-	}
-	require.NoError(t, txn.Commit(context.Background()))
-}
-
-func clearEtcdStorage(t *testing.T, backend kv.EtcdBackend) {
-	endpoints, err := backend.EtcdAddrs()
-	require.NoError(t, err)
-	cli, err := clientv3.New(clientv3.Config{
-		Endpoints:        endpoints,
-		AutoSyncInterval: 30 * time.Second,
-		DialTimeout:      5 * time.Second,
-		DialOptions: []grpc.DialOption{
-			grpc.WithBackoffMaxDelay(time.Second * 3),
-		},
-		TLS: backend.TLSConfig(),
-	})
-	require.NoError(t, err)
-	defer func() { require.NoError(t, cli.Close()) }()
-	resp, err := cli.Get(context.Background(), "/tidb", clientv3.WithPrefix())
-	require.NoError(t, err)
-	for _, entry := range resp.Kvs {
-		if entry.Lease != 0 {
-			_, err := cli.Revoke(context.Background(), clientv3.LeaseID(entry.Lease))
-			require.NoError(t, err)
-		}
-	}
-	_, err = cli.Delete(context.Background(), "/tidb", clientv3.WithPrefix())
-	require.NoError(t, err)
 }
 
 // CreateMockStoreAndSetup return a new kv.Storage.
@@ -128,6 +90,8 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...mockstore.MockTiKVSt
 	var dom *domain.Domain
 	var err error
 
+	session.SetSchemaLease(500 * time.Millisecond)
+
 	if *WithRealTiKV {
 		var d driver.TiKVDriver
 		config.UpdateGlobal(func(conf *config.Config) {
@@ -136,17 +100,25 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...mockstore.MockTiKVSt
 		store, err = d.Open("tikv://127.0.0.1:2379?disableGC=true")
 		require.NoError(t, err)
 
-		clearTiKVStorage(t, store)
-		clearEtcdStorage(t, store.(kv.EtcdBackend))
-
-		session.ResetStoreForWithTiKVTest(store)
 		dom, err = session.BootstrapSession(store)
 		require.NoError(t, err)
+		sm := testkit.MockSessionManager{}
+		dom.InfoSyncer().SetSessionManager(&sm)
+		tk := testkit.NewTestKit(t, store)
+		// set it to default value.
+		tk.MustExec(fmt.Sprintf("set global innodb_lock_wait_timeout = %d", variable.DefInnodbLockWaitTimeout))
+		tk.MustExec("use test")
+		rs := tk.MustQuery("show tables")
+		for _, row := range rs.Rows() {
+			tk.MustExec(fmt.Sprintf("drop table %s", row[0]))
+		}
 	} else {
 		store, err = mockstore.NewMockStore(opts...)
 		require.NoError(t, err)
 		session.DisableStats4Test()
 		dom, err = session.BootstrapSession(store)
+		sm := testkit.MockSessionManager{}
+		dom.InfoSyncer().SetSessionManager(&sm)
 		require.NoError(t, err)
 	}
 
@@ -154,6 +126,7 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...mockstore.MockTiKVSt
 		dom.Close()
 		require.NoError(t, store.Close())
 		transaction.PrewriteMaxBackoff.Store(20000)
+		view.Stop()
 	})
 	return store, dom
 }

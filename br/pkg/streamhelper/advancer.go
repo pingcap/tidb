@@ -15,7 +15,6 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -29,30 +28,33 @@ import (
 // CheckpointAdvancer is the central node for advancing the checkpoint of log backup.
 // It's a part of "checkpoint v3".
 // Generally, it scan the regions in the task range, collect checkpoints from tikvs.
-//                                         ┌──────┐
-//                                   ┌────►│ TiKV │
-//                                   │     └──────┘
-//                                   │
-//                                   │
-// ┌──────────┐GetLastFlushTSOfRegion│     ┌──────┐
-// │ Advancer ├──────────────────────┼────►│ TiKV │
-// └────┬─────┘                      │     └──────┘
-//      │                            │
-//      │                            │
-//      │                            │     ┌──────┐
-//      │                            └────►│ TiKV │
-//      │                                  └──────┘
-//      │
-//      │ UploadCheckpointV3   ┌──────────────────┐
-//      └─────────────────────►│  PD              │
-//                             └──────────────────┘
+/*
+                                         ┌──────┐
+                                   ┌────►│ TiKV │
+                                   │     └──────┘
+                                   │
+                                   │
+ ┌──────────┐GetLastFlushTSOfRegion│     ┌──────┐
+ │ Advancer ├──────────────────────┼────►│ TiKV │
+ └────┬─────┘                      │     └──────┘
+      │                            │
+      │                            │
+      │                            │     ┌──────┐
+      │                            └────►│ TiKV │
+      │                                  └──────┘
+      │
+      │ UploadCheckpointV3   ┌──────────────────┐
+      └─────────────────────►│  PD              │
+                             └──────────────────┘
+*/
 type CheckpointAdvancer struct {
 	env Env
 
 	// The concurrency accessed task:
 	// both by the task listener and ticking.
-	task   *backuppb.StreamBackupTaskInfo
-	taskMu sync.Mutex
+	task      *backuppb.StreamBackupTaskInfo
+	taskRange []kv.KeyRange
+	taskMu    sync.Mutex
 
 	// the read-only config.
 	// once tick begin, this should not be changed for now.
@@ -137,7 +139,7 @@ func (c *CheckpointAdvancer) enableCache() {
 func (c *CheckpointAdvancer) resetToFullScan() {
 	log.Info("advancer: entering into full scan.")
 	fs := &fullScan{
-		todo:              []kv.KeyRange{{}},
+		todo:              c.taskRange,
 		ticker:            utils.ExecuteEvery(c.Config().FullScanTick, c.onFullScanTicking),
 		checkpointTillNow: uint64(math.MaxUint64),
 	}
@@ -146,7 +148,7 @@ func (c *CheckpointAdvancer) resetToFullScan() {
 
 func (c *CheckpointAdvancer) resetToUploadSmallTree() error {
 	log.Info("advancer: entering into upload small tree.")
-	if err := c.cache.ConsistencyCheck(); err != nil {
+	if err := c.cache.ConsistencyCheck(c.taskRange); err != nil {
 		return err
 	}
 	ust := &updateSmallTree{
@@ -233,12 +235,15 @@ func (c *CheckpointAdvancer) tryAdvance(ctx context.Context, rst RangesSharesTS)
 	}()
 	defer utils.PanicToErr(&err)
 
-	ranges := CollapseRanges(len(rst.Ranges), func(i int) kv.KeyRange { return rst.Ranges[i] })
+	ranges := CollapseRanges(len(rst.Ranges), func(i int) kv.KeyRange {
+		return rst.Ranges[i]
+	})
 	workers := utils.NewWorkerPool(4, "sub ranges")
 	eg, cx := errgroup.WithContext(ctx)
 	collector := NewClusterCollector(ctx, c.env)
 	collector.setOnSuccessHook(c.cache.InsertRange)
-	for _, r := range ranges {
+	clampedRanges := utils.IntersectAll(ranges, utils.CloneSlice(c.taskRange))
+	for _, r := range clampedRanges {
 		r := r
 		workers.ApplyOnErrorGroup(eg, func() (e error) {
 			defer c.recordTimeCost("get regions in range", zap.Uint64("checkpoint", rst.TS))()
@@ -457,8 +462,12 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 	defer c.taskMu.Unlock()
 	switch e.Type {
 	case EventAdd:
+		utils.LogBackupTaskCountInc()
 		c.task = e.Info
+		c.taskRange = CollapseRanges(len(e.Ranges), func(i int) kv.KeyRange { return e.Ranges[i] })
+		log.Info("added event", zap.Stringer("task", e.Info), zap.Stringer("ranges", logutil.StringifyKeys(c.taskRange)))
 	case EventDel:
+		utils.LogBackupTaskCountDec()
 		c.task = nil
 		c.resetToFullScan()
 		if err := c.env.ClearV3GlobalCheckpointForTask(ctx, e.Name); err != nil {
@@ -506,25 +515,9 @@ func (c *CheckpointAdvancer) advanceCheckpointBy(ctx context.Context, getCheckpo
 	return c.uploadCheckpoint(cx, cp)
 }
 
-// OnTick advances the inner logic clock for the advancer.
-// It's synchronous: this would only return after the events triggered by the clock has all been done.
-// It's generally panic-free, you may not need to trying recover a panic here.
-func (c *CheckpointAdvancer) OnTick(ctx context.Context) (err error) {
-	defer c.recordTimeCost("tick")()
-	defer func() {
-		e := recover()
-		if e != nil {
-			log.Error("panic during handing tick", zap.Stack("stack"), logutil.ShortError(err))
-			err = errors.Annotatef(berrors.ErrUnknown, "panic during handling tick: %s", e)
-		}
-	}()
-	err = c.tick(ctx)
-	return
-}
-
 func (c *CheckpointAdvancer) onConsistencyCheckTick(context.Context) error {
 	defer c.recordTimeCost("consistency check")()
-	err := c.cache.ConsistencyCheck()
+	err := c.cache.ConsistencyCheck(c.taskRange)
 	if err != nil {
 		log.Error("consistency check failed! log backup may lose data! rolling back to full scan for saving.", logutil.ShortError(err))
 		c.resetToFullScan()

@@ -291,6 +291,8 @@ func TestPushLimitDownIndexLookUpReader(t *testing.T) {
 }
 
 func TestPartitionTableIndexLookUpReader(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -613,4 +615,19 @@ func TestCoprocessorPagingReqKeyRangeSorted(t *testing.T) {
 	tk.MustExec("execute stmt using @a,@b,@c,@d;")
 	tk.MustExec("set @a=0xFCABFE6198B6323EE8A46247EDD33830453B1BDE, @b=0xFCABFE6198B6323EE8A46247EDD33830453B1BDE, @c=0xFCABFE6198B6323EE8A46247EDD33830453B1BDE, @d=0xFCABFE6198B6323EE8A46247EDD33830453B1BDE;")
 	tk.MustExec("execute stmt using @a,@b,@c,@d;")
+
+	tk.MustExec("CREATE TABLE `PK_SNPRE10114` (" +
+		"`COL1` varbinary(10) NOT NULL DEFAULT 'S'," +
+		"`COL2` varchar(20) DEFAULT NULL," +
+		"`COL4` datetime DEFAULT NULL," +
+		"`COL3` bigint(20) DEFAULT NULL," +
+		"`COL5` float DEFAULT NULL," +
+		"PRIMARY KEY (`COL1`) CLUSTERED)")
+	tk.MustExec(`prepare stmt from 'SELECT * FROM PK_SNPRE10114 WHERE col1 IN (?, ?, ?) AND (col2 IS NULL OR col2 IN (?, ?)) AND (col3 IS NULL OR col4 IS NULL);';`)
+	tk.MustExec(`set @a=0x0D5BDAEB79074756F203, @b=NULL, @c=0x6A911AAAC728F1ED3B4F, @d="鏖秿垙麜濇凗辯Ũ卮伄幖轒ƀ漭蝏雓轊恿磔徵", @e="訇廵纹髺釖寒近槩靏詗膦潳陒錃粓悧闒摔)乀";`)
+	tk.MustExec(`execute stmt using @a,@b,@c,@d,@e;`)
+	tk.MustExec(`set @a=7775448739068993371, @b=5641728652098016210, @c=6774432238941172824, @d="HqpP5rN", @e="8Fy";`)
+	tk.MustExec(`execute stmt using @a,@b,@c,@d,@e;`)
+	tk.MustExec(`set @a=0x61219F79C90D3541F70E, @b=5501707547099269248, @c=0xEC43EFD30131DEA2CB8B, @d="呣丼蒢咿卻鹻铴础湜僂頃ǆ縍套衞陀碵碼幓9", @e="鹹楞睕堚尛鉌翡佾搁紟精廬姆燵藝潐楻翇慸嵊";`)
+	tk.MustExec(`execute stmt using @a,@b,@c,@d,@e;`)
 }

@@ -20,10 +20,12 @@ const (
 	DefaultConsistencyCheckTick            = 5
 	DefaultTickInterval                    = 3 * time.Second
 	DefaultBackOffTime                     = 5 * time.Second
-	DefaultTryAdvanceThreshold             = 3 * time.Minute
 	DefaultTickBeforeUpdateCheckpointLight = 5
 	DefaultTickBeforeFullScanRetry         = 2
 	DefaultAdvancingByCache                = true
+	DefaultTryAdvanceThreshold             = 108 * time.Second
+	DefaultFullScanTick                    = 4
+	DefaultAdvanceByCache                  = true
 )
 
 var (

@@ -625,13 +625,11 @@ func (e *LoadDataInfo) colsToRow(ctx context.Context, cols []field) []types.Datu
 	row := make([]types.Datum, 0, len(e.insertColumns))
 	sessionVars := e.Ctx.GetSessionVars()
 	setVar := func(name string, col *field) {
-		sessionVars.UsersLock.Lock()
 		if col == nil || col.isNull() {
 			sessionVars.UnsetUserVar(name)
 		} else {
-			sessionVars.SetUserVar(name, string(col.str), mysql.DefaultCollationName)
+			sessionVars.SetStringUserVar(name, string(col.str), mysql.DefaultCollationName)
 		}
-		sessionVars.UsersLock.Unlock()
 	}
 
 	for i := 0; i < len(e.FieldMappings); i++ {
