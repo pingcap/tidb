@@ -1051,7 +1051,7 @@ const (
 	DefTiDBPrepPlanCacheMemoryGuardRatio           = 0.1
 	DefTiDBEnableConcurrentDDL                     = concurrencyddl.TiDBEnableConcurrentDDL
 	DefTiDBSimplifiedMetrics                       = false
-	DefTiDBEnablePaging                            = false
+	DefTiDBEnablePaging                            = true
 	DefTiFlashFineGrainedShuffleStreamCount        = 0
 	DefStreamCountWhenMaxThreadsNotSet             = 8
 	DefTiFlashFineGrainedShuffleBatchSize          = 8192
