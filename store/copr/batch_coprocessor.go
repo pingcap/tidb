@@ -575,9 +575,9 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 
 		storeTaskMap := make(map[string]*batchCopTask)
 		needRetry := false
-		//isMPP := mppStoreLastFailTime != nil
+		isMPP := mppStoreLastFailTime != nil
 		for _, task := range tasks {
-			rpcCtx, err := cache.GetTiFlashRPCContext(bo.TiKVBackoffer(), task.region, true)
+			rpcCtx, err := cache.GetTiFlashRPCContext(bo.TiKVBackoffer(), task.region, isMPP)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
