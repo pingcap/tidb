@@ -429,35 +429,3 @@ func TestIssue36903(t *testing.T) {
 	tk.MustExec("insert into t_vwvgdc (wkey, pkey, c_rdsfbc) values (155, 228000, 99.50);")
 	tk.MustQuery("select pkey from t_vwvgdc where 0 <> 0 union select pkey from t_vwvgdc;")
 }
-
-func BenchmarkUnionScanRead(b *testing.B) {
-	store := testkit.CreateMockStore(b)
-
-	tk := testkit.NewTestKit(b, store)
-	tk.MustExec("use test")
-	tk.MustExec(`create table t_us (
-c1 varchar(10),
-c2 varchar(30),
-c3 varchar(1),
-c4 varchar(12),
-c5 varchar(10),
-c6 datetime);`)
-	tk.MustExec(`begin;`)
-	for i := 0; i < 8000; i++ {
-		tk.MustExec("insert into t_us values ('54321', '1234', '1', '000000', '7518', '2014-05-08')")
-	}
-
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		tk.MustQuery("select * from t_us where c1 = '12345'").Check(testkit.Rows())
-	}
-	b.StopTimer()
-}
-
-func TestBenchDaily(t *testing.T) {
-	benchdaily.Run(
-		executor.BenchmarkReadLastLinesOfHugeLine,
-		BenchmarkUnionScanRead,
-	)
-}
