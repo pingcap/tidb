@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
@@ -1389,4 +1390,61 @@ func TestDropDatabaseWithForeignKeyReferred2(t *testing.T) {
 	require.Equal(t, "[ddl:3730]Cannot drop table 't2' referenced by a foreign key constraint 'fk_b' on table 't3'.", dropErr.Error())
 	tk.MustExec("drop table test2.t3")
 	tk.MustExec("drop database test")
+}
+
+func TestAddForeignKey(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1;")
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int key, b int);")
+	tk.MustExec("create table t2 (id int key, b int);")
+	err := tk.ExecToErr("alter table t2 add foreign key (b) references t1(id);")
+	require.Error(t, err)
+	require.Equal(t, "Failed to add the foreign key constraint. Missing index for 'fk_1' foreign key columns in the table 't2'", err.Error())
+	tk.MustExec("alter table t2 add index(b)")
+	tk.MustExec("alter table t2 add foreign key (b) references t1(id);")
+	tbl2Info := getTableInfo(t, dom, "test", "t2")
+	require.Equal(t, int64(1), tbl2Info.MaxForeignKeyID)
+	tk.MustGetDBError("alter table t2 add foreign key (b) references t1(b);", infoschema.ErrForeignKeyNoIndexInParent)
+	tk.MustExec("alter table t1 add index(b)")
+	tk.MustExec("alter table t2 add foreign key (b) references t1(b);")
+	tk.MustGetDBError("alter table t2 add foreign key (b) references t2(b);", infoschema.ErrCannotAddForeign)
+}
+
+func TestAddForeignKey2(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
+	d := dom.DDL()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1;")
+	tk.MustExec("use test")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk.MustExec("create table t1 (id int key, b int, index(b));")
+	tk.MustExec("create table t2 (id int key, b int, index(b));")
+	var wg sync.WaitGroup
+	var addErr error
+	tc := &ddl.TestDDLCallback{}
+	tc.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.SchemaState != model.StatePublic || job.Type != model.ActionDropIndex {
+			return
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			addErr = tk2.ExecToErr("alter table t2 add foreign key (b) references t1(id);")
+		}()
+		// make sure tk2's ddl job already put into ddl job queue.
+		time.Sleep(time.Millisecond * 100)
+	}
+	originalHook := d.GetHook()
+	defer d.SetHook(originalHook)
+	d.SetHook(tc)
+
+	tk.MustExec("alter table t2 drop index b")
+	wg.Wait()
+	require.Error(t, addErr)
+	require.Equal(t, "[ddl:-1]Failed to add the foreign key constraint. Missing index for 'fk_1' foreign key columns in the table 't2'", addErr.Error())
 }
