@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/size"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
@@ -58,7 +59,7 @@ func (f *Fragment) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = emptyFragmentSize
+	sum = emptyFragmentSize + int64(cap(f.ExchangeReceivers))*size.SizeOfPointer
 	if f.TableScan != nil {
 		sum += f.TableScan.MemoryUsage()
 	}

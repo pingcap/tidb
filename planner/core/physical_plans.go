@@ -756,13 +756,14 @@ type PhysicalMemTable struct {
 	QueryTimeRange QueryTimeRange
 }
 
+// MemoryUsage return the memory usage of PhysicalMemTable
 func (p *PhysicalMemTable) MemoryUsage() (sum int64) {
 	if p == nil {
 		return
 	}
 
-	sum = p.physicalSchemaProducer.MemoryUsage() + p.DBName.MemoryUsage() + size.SizeOfSlice + size.SizeOfInterface +
-		p.QueryTimeRange.MemoryUsage()
+	sum = p.physicalSchemaProducer.MemoryUsage() + p.DBName.MemoryUsage() + size.SizeOfPointer + size.SizeOfSlice +
+		int64(cap(p.Columns))*size.SizeOfPointer + size.SizeOfInterface + p.QueryTimeRange.MemoryUsage()
 	return
 }
 
@@ -1436,8 +1437,7 @@ func (p *PhysicalExchangeReceiver) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.basePhysicalPlan.MemoryUsage() + size.SizeOfSlice*2 + int64(cap(p.Tasks))*emptyMPPTaskSize
-
+	sum = p.basePhysicalPlan.MemoryUsage() + size.SizeOfSlice*2 + int64(cap(p.Tasks)+cap(p.frags))*size.SizeOfPointer
 	for _, frag := range p.frags {
 		sum += frag.MemoryUsage()
 	}
@@ -1474,8 +1474,8 @@ func (p *PhysicalExchangeSender) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.basePhysicalPlan.MemoryUsage() + size.SizeOfSlice*3 + size.SizeOfInt32 + int64(cap(p.TargetTasks)+cap(p.Tasks))*emptyMPPTaskSize
-
+	sum = p.basePhysicalPlan.MemoryUsage() + size.SizeOfSlice*3 + size.SizeOfInt32 +
+		int64(cap(p.TargetTasks)+cap(p.HashCols)+cap(p.Tasks))*size.SizeOfPointer
 	for _, hCol := range p.HashCols {
 		sum += hCol.MemoryUsage()
 	}
@@ -1517,13 +1517,13 @@ func (pl *PhysicalLock) MemoryUsage() (sum int64) {
 	}
 
 	for _, vals := range pl.TblID2Handle {
-		sum += size.SizeOfInt64
+		sum += size.SizeOfInt64 + size.SizeOfInterface + int64(cap(vals))*size.SizeOfInterface
 		for _, val := range vals {
 			sum += val.MemoryUsage()
 		}
 	}
 	for _, val := range pl.TblID2PhysTblIDCol {
-		sum += size.SizeOfInt64 + val.MemoryUsage()
+		sum += size.SizeOfInt64 + size.SizeOfPointer + val.MemoryUsage()
 	}
 	return
 }

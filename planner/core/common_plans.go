@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
@@ -39,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/plancodec"
+	"github.com/pingcap/tidb/util/size"
 	"github.com/pingcap/tidb/util/texttree"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -281,6 +281,16 @@ type Simple struct {
 	StaleTxnStartTS uint64
 }
 
+// MemoryUsage return the memory usage of Simple
+func (s *Simple) MemoryUsage() (sum int64) {
+	if s == nil {
+		return
+	}
+
+	sum = s.baseSchemaProducer.MemoryUsage() + size.SizeOfInterface + size.SizeOfBool + size.SizeOfUint64
+	return
+}
+
 // PhysicalSimpleWrapper is a wrapper of `Simple` to implement physical plan interface.
 //
 //	Used for simple statements executing in coprocessor.
@@ -295,7 +305,7 @@ func (p *PhysicalSimpleWrapper) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.basePhysicalPlan.MemoryUsage() + int64(unsafe.Sizeof(Simple{})) + p.Inner.baseSchemaProducer.MemoryUsage()
+	sum = p.basePhysicalPlan.MemoryUsage() + p.Inner.MemoryUsage()
 	return
 }
 
