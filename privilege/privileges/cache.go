@@ -23,6 +23,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"sort"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/ast"
@@ -40,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 var (
