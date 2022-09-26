@@ -558,9 +558,7 @@ func TestForeignKeyOnUpdateChildTable(t *testing.T) {
 			"update t2 set a=12, b = 23 where id = 1",
 		}
 		for _, sqlStr := range sqls {
-			err := tk.ExecToErr(sqlStr)
-			require.NotNil(t, err)
-			require.True(t, plannercore.ErrNoReferencedRow2.Equal(err))
+			tk.MustGetDBError(sqlStr, plannercore.ErrNoReferencedRow2)
 		}
 		tk.MustExec("update t2 set a=12, b = 22 where id = 1")
 		tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 12 22 a"))
@@ -583,16 +581,12 @@ func TestForeignKeyOnUpdateChildTable(t *testing.T) {
 
 		tk.MustExec("begin")
 		tk.MustExec("delete from t1 where id=2")
-		err := tk.ExecToErr("update t2 set a=12, b=22 where id=1")
-		require.NotNil(t, err)
-		require.True(t, plannercore.ErrNoReferencedRow2.Equal(err))
+		tk.MustGetDBError("update t2 set a=12, b=22 where id=1", plannercore.ErrNoReferencedRow2)
 		tk.MustExec("update t2 set a=13, b=23 where id=1")
 		tk.MustExec("insert into t1 (id, a, b) values (5, 15, 25)")
 		tk.MustExec("update t2 set a=15, b=25 where id=1")
 		tk.MustExec("delete from t1 where id=1")
-		err = tk.ExecToErr("update t2 set a=11, b=21 where id=1")
-		require.NotNil(t, err)
-		require.True(t, plannercore.ErrNoReferencedRow2.Equal(err))
+		tk.MustGetDBError("update t2 set a=11, b=21 where id=1", plannercore.ErrNoReferencedRow2)
 		tk.MustExec("commit")
 		tk.MustQuery("select id, a, b, name from t2").Check(testkit.Rows("1 15 25 a"))
 	}
@@ -613,9 +607,7 @@ func TestForeignKeyOnUpdateChildTable(t *testing.T) {
 	tk.MustQuery("select id, a, b , name from t2 order by id").Check(testkit.Rows("11 3 22 a"))
 	tk.MustExec("update t2 set id = 1 where id = 11")
 	tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 3 22 a"))
-	err := tk.ExecToErr("update t2 set a = 10 where id = 1")
-	require.NotNil(t, err)
-	require.True(t, plannercore.ErrNoReferencedRow2.Equal(err))
+	tk.MustGetDBError("update t2 set a = 10 where id = 1", plannercore.ErrNoReferencedRow2)
 	tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 3 22 a"))
 
 	// Test In txn.
@@ -629,16 +621,12 @@ func TestForeignKeyOnUpdateChildTable(t *testing.T) {
 
 	tk.MustExec("begin")
 	tk.MustExec("delete from t1 where id=2")
-	err = tk.ExecToErr("update t2 set a=2, b=22 where id=1")
-	require.NotNil(t, err)
-	require.True(t, plannercore.ErrNoReferencedRow2.Equal(err))
+	tk.MustGetDBError("update t2 set a=2, b=22 where id=1", plannercore.ErrNoReferencedRow2)
 	tk.MustExec("update t2 set a=3, b=23 where id=1")
 	tk.MustExec("insert into t1 (id, a, b) values (5, 15, 25)")
 	tk.MustExec("update t2 set a=5, b=25 where id=1")
 	tk.MustExec("delete from t1 where id=1")
-	err = tk.ExecToErr("update t2 set a=1, b=21 where id=1")
-	require.NotNil(t, err)
-	require.True(t, plannercore.ErrNoReferencedRow2.Equal(err))
+	tk.MustGetDBError("update t2 set a=1, b=21 where id=1", plannercore.ErrNoReferencedRow2)
 	tk.MustExec("commit")
 	tk.MustQuery("select id, a, b, name from t2").Check(testkit.Rows("1 5 25 a"))
 }
@@ -649,7 +637,6 @@ func TestForeignKeyOnUpdateParentTableCheck(t *testing.T) {
 	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk.MustExec("set @@foreign_key_checks=1")
 	tk.MustExec("use test")
-
 	for _, ca := range foreignKeyTestCase1 {
 		tk.MustExec("drop table if exists t2;")
 		tk.MustExec("drop table if exists t1;")
@@ -665,30 +652,21 @@ func TestForeignKeyOnUpdateParentTableCheck(t *testing.T) {
 			tk.MustExec("update t1 set a=a+10000, b = b+20000 where id = 5 or a is null or b is null")
 			tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 11 21", "2 1112 2222", "3 1013 2023", "4 14 24", "5 10015 <nil>", "6 <nil> 20026", "7 <nil> <nil>"))
 			tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 11 21 a", "5 15 <nil> e", "6 <nil> 26 f", "7 <nil> <nil> g"))
-
-			err := tk.ExecToErr("update t1 set a=a+10, b = b+20 where id = 1 or a = 1112 or b = 24")
-			require.NotNil(t, err)
-			require.True(t, plannercore.ErrRowIsReferenced2.Equal(err))
+			tk.MustGetDBError("update t1 set a=a+10, b = b+20 where id = 1 or a = 1112 or b = 24", plannercore.ErrRowIsReferenced2)
 			tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 11 21", "2 1112 2222", "3 1013 2023", "4 14 24", "5 10015 <nil>", "6 <nil> 20026", "7 <nil> <nil>"))
 			tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 11 21 a", "5 15 <nil> e", "6 <nil> 26 f", "7 <nil> <nil> g"))
 		} else {
 			tk.MustExec("insert into t1 (id, a, b) values (1, 11, 21),(2, 12, 22), (3, 13, 23), (4, 14, 24)")
 			tk.MustExec("insert into t2 (id, a, b, name) values (1, 11, 21, 'a');")
-
 			tk.MustExec("update t1 set a=a+100, b = b+200 where id = 2")
 			tk.MustExec("update t1 set a=a+1000, b = b+2000 where a = 13 or b=222")
 			tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 11 21", "2 1112 2222", "3 1013 2023", "4 14 24"))
 			tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 11 21 a"))
-
-			err := tk.ExecToErr("update t1 set a=a+10, b = b+20 where id = 1 or a = 1112 or b = 24")
-			require.NotNil(t, err)
-			require.True(t, plannercore.ErrRowIsReferenced2.Equal(err))
+			tk.MustGetDBError("update t1 set a=a+10, b = b+20 where id = 1 or a = 1112 or b = 24", plannercore.ErrRowIsReferenced2)
 			tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 11 21", "2 1112 2222", "3 1013 2023", "4 14 24"))
 			tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 11 21 a"))
 		}
-
 	}
-
 	// Case-9: test primary key is handle and contain foreign key column.
 	tk.MustExec("drop table if exists t2;")
 	tk.MustExec("drop table if exists t1;")
@@ -699,10 +677,7 @@ func TestForeignKeyOnUpdateParentTableCheck(t *testing.T) {
 	tk.MustExec("insert into t2 (id, a, b, name) values (11, 1, 21, 'a')")
 	tk.MustExec("update t1 set id = id + 100 where id =2 or a = 13")
 	tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 11 21", "4 14 24", "102 12 22", "103 13 23"))
-
-	err := tk.ExecToErr("update t1 set id = id+10 where id = 1 or b = 24")
-	require.NotNil(t, err)
-	require.True(t, plannercore.ErrRowIsReferenced2.Equal(err))
+	tk.MustGetDBError("update t1 set id = id+10 where id = 1 or b = 24", plannercore.ErrRowIsReferenced2)
 	tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 11 21", "4 14 24", "102 12 22", "103 13 23"))
 	tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("11 1 21 a"))
 }
