@@ -6091,8 +6091,8 @@ func TestGlobalMemoryControl(t *testing.T) {
 	tracker2.Consume(200 << 20) // 200 MB
 	tracker3.Consume(300 << 20) // 300 MB
 
-	test := make([]int, 128<<20) // Keep 1GB HeapInUse
-	time.Sleep(500 * time.Millisecond)
+	test := make([]int, 128<<20)       // Keep 1GB HeapInUse
+	time.Sleep(500 * time.Millisecond) // The check goroutine checks the memory usage every 100ms. The Sleep() make sure that Top1Tracker can be Canceled.
 
 	// Kill Top1
 	require.False(t, tracker1.NeedKill.Load())
