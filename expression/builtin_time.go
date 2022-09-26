@@ -1702,7 +1702,7 @@ func evalFromUnixTime(ctx sessionctx.Context, fsp int, unixTimeStamp *types.MyDe
 		return res, true, nil
 	}
 	integralPart, err := unixTimeStamp.ToInt()
-	if err != nil && !terror.ErrorEqual(err, types.ErrTruncated) {
+	if err != nil && !terror.ErrorEqual(err, types.ErrTruncated) && !terror.ErrorEqual(err, types.ErrOverflow) {
 		return res, true, err
 	}
 	// The max integralPart should not be larger than 32536771199.
