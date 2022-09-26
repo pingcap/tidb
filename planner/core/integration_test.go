@@ -331,6 +331,19 @@ func TestJoinNotNullFlag(t *testing.T) {
 	tk.MustQuery("select ifnull(t1.x, 'xxx') from t2 natural left join t1").Check(testkit.Rows("xxx"))
 }
 
+func TestIssue35004(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(id int, key(id));")
+	tk.MustExec("create table t2(id int, key(id));")
+
+	str := tk.MustQuery("explain format = 'brief' select  /*+ merge_join(b) */ * from (select * from t1) a join (select id, count(1) from t2 group by t2.id) b on a.id=b.id;").Rows()[1][0].(string)
+	require.True(t, strings.Contains(str, "MergeJoin"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows())
+}
+
 func TestAntiJoinConstProp(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
