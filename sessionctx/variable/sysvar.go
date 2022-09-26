@@ -766,7 +766,7 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
-	{Scope: ScopeGlobal, Name: TiDBServerMemoryGCTrigger, Value: strconv.FormatFloat(DefTiDBServerMemoryGCTrigger, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: math.MaxUint64,
+	{Scope: ScopeGlobal, Name: TiDBServerMemoryLimitGCTrigger, Value: strconv.FormatFloat(DefTiDBServerMemoryLimitGCTrigger, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: math.MaxUint64,
 		GetGlobal: func(s *SessionVars) (string, error) {
 			return strconv.FormatFloat(gctuner.GlobalMemoryLimitTuner.GetPercentage(), 'f', -1, 64), nil
 		},
@@ -776,8 +776,8 @@ var defaultSysVars = []*SysVar{
 				return "", err
 			}
 			if floatValue < 0.51 && floatValue > 1 { // 51% ~ 100%
-				s.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(TiDBServerMemoryGCTrigger, originalValue))
-				floatValue = DefTiDBServerMemoryGCTrigger
+				s.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(TiDBServerMemoryLimitGCTrigger, originalValue))
+				floatValue = DefTiDBServerMemoryLimitGCTrigger
 			}
 			return strconv.FormatFloat(floatValue, 'f', -1, 64), nil
 		},

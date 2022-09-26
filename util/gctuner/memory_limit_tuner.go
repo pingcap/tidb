@@ -87,7 +87,7 @@ func (t *memoryLimitTuner) GetPercentage() float64 {
 }
 
 // UpdateMemoryLimit updates the memory limit.
-// This function should be called when `tidb_server_memory_limit` or `tidb_server_memory_gc_trigger` is modified.
+// This function should be called when `tidb_server_memory_limit` or `tidb_server_memory_limit_gc_trigger` is modified.
 func (t *memoryLimitTuner) UpdateMemoryLimit() {
 	softLimit := t.calcSoftMemoryLimit()
 	if softLimit == math.MaxInt64 {
@@ -99,7 +99,7 @@ func (t *memoryLimitTuner) UpdateMemoryLimit() {
 }
 
 func (t *memoryLimitTuner) calcSoftMemoryLimit() int64 {
-	softLimit := int64(float64(memory.ServerMemoryLimit.Load()) * t.percentage.Load()) // `tidb_server_memory_limit` * `tidb_server_memory_gc_trigger`
+	softLimit := int64(float64(memory.ServerMemoryLimit.Load()) * t.percentage.Load()) // `tidb_server_memory_limit` * `tidb_server_memory_limit_gc_trigger`
 	if softLimit == 0 {
 		softLimit = math.MaxInt64
 	}
