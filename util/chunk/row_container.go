@@ -394,13 +394,6 @@ func (a *SpillDiskAction) Action(t *memory.Tracker) {
 		a.cond.Wait()
 	}
 	a.cond.L.Unlock()
-
-	if !t.CheckExceed() {
-		return
-	}
-	if fallback := a.GetFallback(); fallback != nil {
-		fallback.Action(t)
-	}
 }
 
 // Reset resets the status for SpillDiskAction.
