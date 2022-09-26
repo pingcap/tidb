@@ -30,6 +30,12 @@ import (
 // TrackMemWhenExceeds is the threshold when memory usage needs to be tracked.
 const TrackMemWhenExceeds = 104857600 // 100MB
 
+// Process global variables for memory limit.
+var (
+	ServerMemoryLimit            = atomicutil.NewUint64(0)
+	ServerMemoryLimitSessMinSize = atomicutil.NewUint64(128 << 20)
+)
+
 // Tracker is used to track the memory usage during query execution.
 // It contains an optional limit and can be arranged into a tree structure
 // such that the consumption tracked by a Tracker is also tracked by
@@ -71,11 +77,14 @@ type Tracker struct {
 		parent *Tracker // The parent memory tracker.
 		sync.Mutex
 	}
-	label         int              // Label of this "Tracker".
-	bytesConsumed int64            // Consumed bytes.
-	bytesReleased int64            // Released bytes.
-	maxConsumed   atomicutil.Int64 // max number of bytes consumed during execution.
-	isGlobal      bool             // isGlobal indicates whether this tracker is global tracker
+	label               int              // Label of this "Tracker".
+	bytesConsumed       int64            // Consumed bytes.
+	bytesReleased       int64            // Released bytes.
+	maxConsumed         atomicutil.Int64 // max number of bytes consumed during execution.
+	SessionID           uint64           // SessionID indicates the sessionID the tracker is bound.
+	NeedKill            atomic.Bool      // NeedKill indicates whether this session need kill because OOM
+	IsRootTrackerOfSess bool             // IsRootTrackerOfSess indicates whether this tracker is bound for session
+	isGlobal            bool             // isGlobal indicates whether this tracker is global tracker
 }
 
 type actionMu struct {
@@ -100,6 +109,9 @@ type bytesLimits struct {
 	bytesHardLimit int64 // bytesHardLimit <= 0 means no limit, used for actionMuForHardLimit.
 	bytesSoftLimit int64 // bytesSoftLimit <= 0 means no limit, used for actionMuForSoftLimit.
 }
+
+// MemUsageTop1Tracker record the use memory top1 session's tracker for kill.
+var MemUsageTop1Tracker atomic.Pointer[Tracker]
 
 // InitTracker initializes a memory tracker.
 //  1. "label" is the label used in the usage string.
@@ -354,8 +366,11 @@ func (t *Tracker) Consume(bs int64) {
 	if bs == 0 {
 		return
 	}
-	var rootExceed, rootExceedForSoftLimit *Tracker
+	var rootExceed, rootExceedForSoftLimit, sessionRootTracker *Tracker
 	for tracker := t; tracker != nil; tracker = tracker.getParent() {
+		if tracker.IsRootTrackerOfSess {
+			sessionRootTracker = tracker
+		}
 		bytesConsumed := atomic.AddInt64(&tracker.bytesConsumed, bs)
 		bytesReleased := atomic.LoadInt64(&tracker.bytesReleased)
 		limits := tracker.bytesLimit.Load().(*bytesLimits)
@@ -390,11 +405,31 @@ func (t *Tracker) Consume(bs int64) {
 		}
 	}
 
-	if bs > 0 && rootExceedForSoftLimit != nil {
-		tryAction(&rootExceedForSoftLimit.actionMuForSoftLimit, rootExceedForSoftLimit)
+	if bs > 0 && sessionRootTracker != nil {
+		// Kill the Top1 session
+		if sessionRootTracker.NeedKill.Load() {
+			tryAction(&sessionRootTracker.actionMuForHardLimit, sessionRootTracker)
+		}
+		// Update the Top1 session
+		memUsage := sessionRootTracker.BytesConsumed()
+		limitSessMinSize := ServerMemoryLimitSessMinSize.Load()
+		if uint64(memUsage) >= limitSessMinSize {
+			oldTracker := MemUsageTop1Tracker.Load()
+			for oldTracker.LessThan(sessionRootTracker) {
+				if MemUsageTop1Tracker.CompareAndSwap(oldTracker, sessionRootTracker) {
+					break
+				}
+				oldTracker = MemUsageTop1Tracker.Load()
+			}
+		}
 	}
+
 	if bs > 0 && rootExceed != nil {
 		tryAction(&rootExceed.actionMuForHardLimit, rootExceed)
+	}
+
+	if bs > 0 && rootExceedForSoftLimit != nil {
+		tryAction(&rootExceedForSoftLimit.actionMuForSoftLimit, rootExceedForSoftLimit)
 	}
 }
 
@@ -541,6 +576,17 @@ func (t *Tracker) toString(indent string, buffer *bytes.Buffer) {
 // FormatBytes uses to format bytes, this function will prune precision before format bytes.
 func (*Tracker) FormatBytes(numBytes int64) string {
 	return FormatBytes(numBytes)
+}
+
+// LessThan indicates whether t byteConsumed is less than t2 byteConsumed.
+func (t *Tracker) LessThan(t2 *Tracker) bool {
+	if t == nil {
+		return true
+	}
+	if t2 == nil {
+		return false
+	}
+	return t.BytesConsumed() < t2.BytesConsumed()
 }
 
 // BytesToString converts the memory consumption to a readable string.
