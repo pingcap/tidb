@@ -936,7 +936,7 @@ func buildSelectField(tctx *tcontext.Context, db *BaseConn, dbName, tableName st
 		newField := wrapBackTicks(escapeString(fieldName))
 		if binaryEncodeFunc != "" && (strings.Contains(fieldType, "blob") || strings.Contains(fieldType, "binary")) {
 			hasBinaryEncodeColumn = true
-			newField = fmt.Sprintf(binaryEncodeFunc, newField)
+			newField = fmt.Sprintf(binaryEncodeFunc+" as %s", newField, newField)
 		}
 		availableFields = append(availableFields, newField)
 	}
