@@ -182,6 +182,7 @@ type SessionManager interface {
 	GetInternalSessionStartTSList() []uint64
 	// CheckOldRunningTxn checks if there is an old transaction running in the current sessions
 	CheckOldRunningTxn(job2ver map[int64]int64, job2ids map[int64]string)
+	RollbackNonFlashbackClusterTxn()
 }
 
 // GlobalConnID is the global connection ID, providing UNIQUE connection IDs across the whole TiDB cluster.

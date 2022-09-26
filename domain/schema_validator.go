@@ -153,6 +153,9 @@ func (s *schemaValidator) Update(leaseGrantTS uint64, oldVer, currVer int64, cha
 			if ac == 1<<model.ActionUnlockTable {
 				s.do.Store().GetMemCache().Delete(tblIDs[idx])
 			}
+			if ac == 1<<model.ActionFlashbackCluster {
+				s.do.InfoSyncer().GetSessionManager().RollbackNonFlashbackClusterTxn()
+			}
 		}
 		logutil.BgLogger().Debug("update schema validator", zap.Int64("oldVer", oldVer),
 			zap.Int64("currVer", currVer), zap.Int64s("changedTableIDs", tblIDs), zap.Uint64s("changedActionTypes", actionTypes))

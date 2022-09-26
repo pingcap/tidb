@@ -217,6 +217,8 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		return b.applyRecoverTable(m, diff)
 	case model.ActionCreateTables:
 		return b.applyCreateTables(m, diff)
+	case model.ActionFlashbackCluster:
+		return []int64{-1}, nil
 	default:
 		return b.applyDefaultAction(m, diff)
 	}

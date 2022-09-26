@@ -58,6 +58,7 @@ const (
 	flashbackMaxBackoff = 1800000         // 1800s
 	flashbackTimeout    = 3 * time.Minute // 3min
 
+	pdScheduleArgsOffset     = 1
 	gcEnabledArgsOffset      = 2
 	autoAnalyzeOffset        = 3
 	maxAutoAnalyzeTimeOffset = 4
@@ -80,7 +81,7 @@ func savePDSchedule(job *model.Job) error {
 	for _, key := range pdScheduleKey {
 		saveValue[key] = retValue[key]
 	}
-	job.Args[1] = &saveValue
+	job.Args[pdScheduleArgsOffset] = &saveValue
 	return nil
 }
 
@@ -168,9 +169,16 @@ func checkAndSetFlashbackClusterInfo(sess sessionctx.Context, d *ddlCtx, t *meta
 	if err != nil {
 		return errors.Trace(err)
 	}
+
 	// If flashbackSchemaVersion not same as nowSchemaVersion, we've done ddl during [flashbackTs, now).
-	if flashbackSchemaVersion != nowSchemaVersion {
-		return errors.Errorf("Had ddl history during [%s, now), can't do flashback", oracle.GetTimeFromTS(flashbackTS))
+	for i := flashbackSchemaVersion + 1; i <= nowSchemaVersion; i++ {
+		diff, err := t.GetSchemaDiff(i)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if diff != nil && diff.Type != model.ActionFlashbackCluster {
+			return errors.Errorf("Had ddl history during [%s, now), can't do flashback", oracle.GetTimeFromTS(flashbackTS))
+		}
 	}
 
 	jobs, err := GetAllDDLJobs(sess, t)
@@ -370,10 +378,11 @@ func flashbackToVersion(
 	).RunOnRange(ctx, startKey, endKey)
 }
 
-// A Flashback has 3 different stages.
+// A Flashback has 4 different stages.
 // 1. before lock flashbackClusterJobID, check clusterJobID and lock it.
 // 2. before flashback start, check timestamp, disable GC and close PD schedule.
-// 3. before flashback done, get key ranges, send flashback RPC.
+// 3. phase 1, get key ranges, lock all regions.
+// 4. phase 2, send flashback RPC, do flashback jobs.
 func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	inFlashbackTest := false
 	failpoint.Inject("mockFlashbackTest", func(val failpoint.Value) {
@@ -387,11 +396,11 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		return ver, errors.Errorf("Not support flashback cluster in non-TiKV env")
 	}
 
-	var flashbackTS, minSafeTime uint64
+	var flashbackTS uint64
 	var pdScheduleValue map[string]interface{}
-	var readOnlyValue, autoAnalyzeValue, maxAutoAnalyzeTimeValue string
+	var autoAnalyzeValue, maxAutoAnalyzeTimeValue string
 	var gcEnabledValue bool
-	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue, &readOnlyValue, &gcEnabledValue, &autoAnalyzeValue, &maxAutoAnalyzeTimeValue, &minSafeTime); err != nil {
+	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue, &gcEnabledValue, &autoAnalyzeValue, &maxAutoAnalyzeTimeValue); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
@@ -445,24 +454,26 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			job.State = model.JobStateCancelled
 			return ver, errors.Errorf("Other flashback job(ID: %d) is running", job.ID)
 		}
-		job.SchemaState = model.StateWriteOnly
+		job.SchemaState = model.StateDeleteOnly
 		return ver, nil
 	// Stage 2, check flashbackTS, close GC and PD schedule.
-	case model.StateWriteOnly:
+	case model.StateDeleteOnly:
 		if err = checkAndSetFlashbackClusterInfo(sess, d, t, job, flashbackTS); err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-
+		job.SchemaState = model.StateWriteOnly
+		return ver, nil
+	// Stage 3, get key ranges and get locks.
+	case model.StateWriteOnly:
 		_, err := GetFlashbackKeyRanges(sess, tablecodec.EncodeTablePrefix(0))
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-
-		// TODO, lock all regions, update schema diff, close all txns.
+		// TODO, lock all regions.
 		job.SchemaState = model.StateWriteReorganization
 		return updateSchemaVersion(d, t, job)
-	// Stage 3, get key ranges.
+	// Stage 4, get key ranges and send flashback RPC.
 	case model.StateWriteReorganization:
 		// TODO: Support flashback in unistore.
 		if inFlashbackTest {
@@ -471,7 +482,6 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			job.SchemaState = model.StatePublic
 			return ver, nil
 		}
-
 		keyRanges, err := GetFlashbackKeyRanges(sess, tablecodec.EncodeTablePrefix(0))
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -499,11 +509,11 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 func finishFlashbackCluster(w *worker, job *model.Job) error {
 	var flashbackTS uint64
 	var pdScheduleValue map[string]interface{}
-	var readOnlyValue, autoAnalyzeValue, maxAutoAnalyzeTime string
+	var autoAnalyzeValue, maxAutoAnalyzeTime string
 	var gcEnabled bool
 	var jobID int64
 
-	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue, &readOnlyValue, &gcEnabled, &autoAnalyzeValue, &maxAutoAnalyzeTime); err != nil {
+	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue, &gcEnabled, &autoAnalyzeValue, &maxAutoAnalyzeTime); err != nil {
 		return errors.Trace(err)
 	}
 	sess, err := w.sessPool.get()

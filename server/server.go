@@ -53,8 +53,10 @@ import (
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/session/txninfo"
@@ -879,6 +881,26 @@ func (s *Server) CheckOldRunningTxn(job2ver map[int64]int64, job2ids map[int64]s
 	for _, client := range s.clients {
 		if client.ctx.Session != nil {
 			session.RemoveLockDDLJobs(client.ctx.Session, job2ver, job2ids)
+		}
+	}
+}
+
+func (s *Server) RollbackNonFlashbackClusterTxn() {
+	s.rwlock.RLock()
+	defer s.rwlock.RUnlock()
+	for _, client := range s.clients {
+		if client.ctx.Session != nil {
+			processInfo := client.ctx.Session.ShowProcess()
+			ddl, ok := processInfo.StmtCtx.GetPlan().(*core.DDL)
+			if !ok {
+				s.Kill(client.connectionID, false)
+				continue
+			}
+			_, ok = ddl.Statement.(*ast.FlashBackClusterStmt)
+			if !ok {
+				s.Kill(client.connectionID, false)
+				continue
+			}
 		}
 	}
 }
