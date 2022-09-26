@@ -2126,6 +2126,17 @@
         "Warning": null
       },
       {
+        "SQL": "with x as (select * from (select a from t for update) s) select * from x where a = 1;",
+        "Plan": [
+          "Projection 10.00 root  test.t.a",
+          "└─SelectLock 10.00 root  for update 0",
+          "  └─TableReader 10.00 root  data:Selection",
+          "    └─Selection 10.00 cop[tikv]  eq(test.t.a, 1)",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
         "SQL": "set tidb_opt_force_inline_cte=1; -- enable force inline CTE",
         "Plan": null,
         "Warning": null

@@ -1214,6 +1214,10 @@ func TestForceInlineCTE(t *testing.T) {
 func TestSingleConsumerCTE(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE `t` (`a` int(11));")
+	tk.MustExec("insert into t values (1), (5), (10), (15), (20), (30), (50);")
 
 	var (
 		input  []string
