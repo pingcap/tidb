@@ -224,19 +224,19 @@ type runningStoreCollector struct {
 // clusterCollector is the controller for collecting region checkpoints for the cluster.
 // It creates multi store collectors.
 /*
-                              ┌──────────────────────┐ Requesting   ┌────────────┐
-                           ┌─►│ StoreCollector[id=1] ├─────────────►│ TiKV[id=1] │
-                           │  └──────────────────────┘              └────────────┘
-                           │
-                           │Owns
-  ┌──────────────────┐     │  ┌──────────────────────┐ Requesting   ┌────────────┐
-  │ ClusterCollector ├─────┼─►│ StoreCollector[id=4] ├─────────────►│ TiKV[id=4] │
-  └──────────────────┘     │  └──────────────────────┘              └────────────┘
-                           │
-                           │
-                           │  ┌──────────────────────┐ Requesting   ┌────────────┐
-                           └─►│ StoreCollector[id=5] ├─────────────►│ TiKV[id=5] │
-                              └──────────────────────┘              └────────────┘
+                             ┌──────────────────────┐ Requesting   ┌────────────┐
+                          ┌─►│ StoreCollector[id=1] ├─────────────►│ TiKV[id=1] │
+                          │  └──────────────────────┘              └────────────┘
+                          │
+                          │Owns
+ ┌──────────────────┐     │  ┌──────────────────────┐ Requesting   ┌────────────┐
+ │ ClusterCollector ├─────┼─►│ StoreCollector[id=4] ├─────────────►│ TiKV[id=4] │
+ └──────────────────┘     │  └──────────────────────┘              └────────────┘
+                          │
+                          │
+                          │  ┌──────────────────────┐ Requesting   ┌────────────┐
+                          └─►│ StoreCollector[id=5] ├─────────────►│ TiKV[id=5] │
+                             └──────────────────────┘              └────────────┘
 */
 type clusterCollector struct {
 	mu         sync.Mutex
