@@ -885,7 +885,8 @@ func (s *Server) CheckOldRunningTxn(job2ver map[int64]int64, job2ids map[int64]s
 	}
 }
 
-func (s *Server) RollbackNonFlashbackClusterTxn() {
+// KillNonFlashbackClusterConn implements SessionManager interface.
+func (s *Server) KillNonFlashbackClusterConn() {
 	s.rwlock.RLock()
 	defer s.rwlock.RUnlock()
 	for _, client := range s.clients {
