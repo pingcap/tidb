@@ -12,6 +12,8 @@ go_library(
         "prefix_helper.go",
         "printer.go",
         "processinfo.go",
+        "rlimit_other.go",
+        "rlimit_windows.go",
         "security.go",
         "tso.go",
         "urls.go",
