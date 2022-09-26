@@ -8,8 +8,8 @@ go_test(
         "tiflash_test.go",
     ],
     flaky = True,
-    shard_count = 28,
     race = "on",
+    shard_count = 28,
     deps = [
         "//config",
         "//domain",
@@ -27,6 +27,7 @@ go_test(
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//testutils",
         "@com_github_tikv_client_go_v2//tikv",
+        "@io_opencensus_go//stats/view",
         "@org_uber_go_goleak//:goleak",
     ],
 )
