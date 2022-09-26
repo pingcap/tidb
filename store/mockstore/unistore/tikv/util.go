@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,11 +16,11 @@ package tikv
 
 import (
 	"bytes"
-	"sort"
 
 	"github.com/dgryski/go-farm"
 	"github.com/pingcap/badger/y"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"golang.org/x/exp/slices"
 )
 
 func exceedEndKey(current, endKey []byte) bool {
@@ -32,9 +33,7 @@ func exceedEndKey(current, endKey []byte) bool {
 // SortAndDedupHashVals will change hashVals into sort ascending order and remove duplicates
 func sortAndDedupHashVals(hashVals []uint64) []uint64 {
 	if len(hashVals) > 1 {
-		sort.Slice(hashVals, func(i, j int) bool {
-			return hashVals[i] < hashVals[j]
-		})
+		slices.Sort(hashVals)
 		idx := 0
 		for i, v := range hashVals {
 			if i > 0 && hashVals[i] == hashVals[i-1] {

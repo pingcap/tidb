@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,22 +18,13 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/format"
+	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/types"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testValueExprRestoreSuite{})
-
-func TestT(t *testing.T) {
-	TestingT(t)
-}
-
-type testValueExprRestoreSuite struct {
-}
-
-func (s *testValueExprRestoreSuite) TestValueExprRestore(c *C) {
-	testCases := []struct {
+func TestValueExprRestore(t *testing.T) {
+	tests := []struct {
 		datum  types.Datum
 		expect string
 	}{
@@ -50,13 +42,47 @@ func (s *testValueExprRestoreSuite) TestValueExprRestore(c *C) {
 		{types.NewTimeDatum(types.ZeroDatetime), "'0000-00-00 00:00:00'"},
 		{types.NewStringDatum("\\"), "'\\\\'"},
 	}
-	// Run Test
-	var sb strings.Builder
-	for _, testCase := range testCases {
-		sb.Reset()
-		expr := &ValueExpr{Datum: testCase.datum}
-		err := expr.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb))
-		c.Assert(err, IsNil)
-		c.Assert(sb.String(), Equals, testCase.expect, Commentf("Datum: %#v", testCase.datum))
+
+	for _, test := range tests {
+		// copy iterator variable into a new variable, see issue #27779
+		test := test
+		t.Run(test.expect, func(t *testing.T) {
+			var sb strings.Builder
+			expr := &ValueExpr{Datum: test.datum}
+			err := expr.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb))
+			require.NoError(t, err)
+			require.Equalf(t, test.expect, sb.String(), "datum: %#v", test.datum)
+		})
+	}
+}
+
+func TestValueExprFormat(t *testing.T) {
+	tests := []struct {
+		datum  types.Datum
+		expect string
+	}{
+		{types.NewDatum(nil), "NULL"},
+		{types.NewIntDatum(1), "1"},
+		{types.NewIntDatum(-1), "-1"},
+		{types.NewUintDatum(1), "1"},
+		{types.NewFloat32Datum(1.1), "1.1e+00"},
+		{types.NewFloat64Datum(1.1), "1.1e+00"},
+		{types.NewStringDatum("test `s't\"r."), "'test `s''t\"r.'"},
+		{types.NewBytesDatum([]byte("test `s't\"r.")), "'test `s''t\"r.'"},
+		{types.NewBinaryLiteralDatum([]byte("test `s't\"r.")), "b'11101000110010101110011011101000010000001100000011100110010011101110100001000100111001000101110'"},
+		{types.NewDecimalDatum(types.NewDecFromInt(321)), "321"},
+		{types.NewStringDatum("\\"), "'\\\\'"},
+		{types.NewStringDatum("''"), "''''''"},
+		{types.NewStringDatum("\\''\t\n"), "'\\\\''''\t\n'"},
+	}
+
+	for _, test := range tests {
+		test := test
+		t.Run(test.expect, func(t *testing.T) {
+			var sb strings.Builder
+			expr := &ValueExpr{Datum: test.datum}
+			expr.Format(&sb)
+			require.Equalf(t, test.expect, sb.String(), "datum: %#v", test.datum)
+		})
 	}
 }

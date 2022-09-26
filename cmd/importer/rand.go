@@ -8,8 +8,11 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
+// #nosec G404
 
 package main
 
@@ -84,7 +87,7 @@ func randDate(col *column) string {
 		log.Warn("parse min date failed", zap.Error(err))
 	}
 	if max == "" {
-		t := minTime.Add(time.Duration(randInt(0, 365)) * 24 * time.Hour)
+		t := minTime.Add(time.Duration(randInt(0, 365)) * 24 * time.Hour) // nolint: durationcheck
 		return fmt.Sprintf("%04d-%02d-%02d", t.Year(), t.Month(), t.Day())
 	}
 
@@ -93,7 +96,7 @@ func randDate(col *column) string {
 		log.Warn("parse max date failed", zap.Error(err))
 	}
 	days := int(maxTime.Sub(minTime).Hours() / 24)
-	t := minTime.Add(time.Duration(randInt(0, days)) * 24 * time.Hour)
+	t := minTime.Add(time.Duration(randInt(0, days)) * 24 * time.Hour) // nolint: durationcheck
 	return fmt.Sprintf("%04d-%02d-%02d", t.Year(), t.Month(), t.Day())
 }
 
@@ -142,7 +145,7 @@ func randTimestamp(col *column) string {
 		log.Warn("parse min timestamp failed", zap.Error(err))
 	}
 	if max == "" {
-		t := minTime.Add(time.Duration(randInt(0, 365)) * 24 * time.Hour)
+		t := minTime.Add(time.Duration(randInt(0, 365)) * 24 * time.Hour) // nolint: durationcheck
 		return fmt.Sprintf("%04d-%02d-%02d %02d:%02d:%02d", t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second())
 	}
 

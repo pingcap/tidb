@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -50,10 +51,21 @@ func (c *clientRedirector) Close() error {
 	return err
 }
 
+func (c *clientRedirector) CloseAddr(addr string) error {
+	err := c.mockClient.CloseAddr(addr)
+	if err != nil {
+		return err
+	}
+	if c.rpcClient != nil {
+		err = c.rpcClient.CloseAddr(addr)
+	}
+	return err
+}
+
 func (c *clientRedirector) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
 	if req.StoreTp == tikvrpc.TiDB {
 		c.Once.Do(func() {
-			c.rpcClient = tikv.NewRPCClient(config.GetGlobalConfig().Security.ClusterSecurity())
+			c.rpcClient = tikv.NewRPCClient(tikv.WithSecurity(config.GetGlobalConfig().Security.ClusterSecurity()))
 		})
 		return c.rpcClient.SendRequest(ctx, addr, req, timeout)
 	}

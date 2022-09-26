@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,26 +17,27 @@ package executor
 import (
 	"context"
 	"fmt"
-	"runtime"
 	"runtime/trace"
-	"sort"
 	"sync"
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/channel"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 // IndexLookUpMergeJoin realizes IndexLookUpJoin by merge join
@@ -64,13 +66,14 @@ type IndexLookUpMergeJoin struct {
 
 	task *lookUpMergeJoinTask
 
-	indexRanges   []*ranger.Range
+	indexRanges   ranger.MutableRanges
 	keyOff2IdxOff []int
 
 	// lastColHelper store the information for last col if there's complicated filter like col > x_col and col < x_col + 100.
 	lastColHelper *plannercore.ColWithCmpFuncManager
 
 	memTracker *memory.Tracker // track memory usage
+	prepared   bool
 }
 
 type outerMergeCtx struct {
@@ -87,6 +90,7 @@ type innerMergeCtx struct {
 	rowTypes                []*types.FieldType
 	joinKeys                []*expression.Column
 	keyCols                 []int
+	keyCollators            []collate.Collator
 	compareFuncs            []expression.CompareFunc
 	colLens                 []int
 	desc                    bool
@@ -153,35 +157,12 @@ type indexMergeJoinResult struct {
 
 // Open implements the Executor interface
 func (e *IndexLookUpMergeJoin) Open(ctx context.Context) error {
-	// Be careful, very dirty hack in this line!!!
-	// IndexLookMergeUpJoin need to rebuild executor (the dataReaderBuilder) during
-	// executing. However `executor.Next()` is lazy evaluation when the RecordSet
-	// result is drained.
-	// Lazy evaluation means the saved session context may change during executor's
-	// building and its running.
-	// A specific sequence for example:
-	//
-	// e := buildExecutor()   // txn at build time
-	// recordSet := runStmt(e)
-	// session.CommitTxn()    // txn closed
-	// recordSet.Next()
-	// e.dataReaderBuilder.Build() // txn is used again, which is already closed
-	//
-	// The trick here is `getSnapshotTS` will cache snapshot ts in the dataReaderBuilder,
-	// so even txn is destroyed later, the dataReaderBuilder could still use the
-	// cached snapshot ts to construct DAG.
-	_, err := e.innerMergeCtx.readerBuilder.getSnapshotTS()
-	if err != nil {
-		return err
-	}
-
-	err = e.children[0].Open(ctx)
+	err := e.children[0].Open(ctx)
 	if err != nil {
 		return err
 	}
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
-	e.startWorkers(ctx)
 	return nil
 }
 
@@ -236,8 +217,8 @@ func (e *IndexLookUpMergeJoin) newOuterWorker(resultCh, innerCh chan *lookUpMerg
 
 func (e *IndexLookUpMergeJoin) newInnerMergeWorker(taskCh chan *lookUpMergeJoinTask, workID int) *innerMergeWorker {
 	// Since multiple inner workers run concurrently, we should copy join's indexRanges for every worker to avoid data race.
-	copiedRanges := make([]*ranger.Range, 0, len(e.indexRanges))
-	for _, ran := range e.indexRanges {
+	copiedRanges := make([]*ranger.Range, 0, len(e.indexRanges.Range()))
+	for _, ran := range e.indexRanges.Range() {
 		copiedRanges = append(copiedRanges, ran.Clone())
 	}
 	imw := &innerMergeWorker{
@@ -268,12 +249,16 @@ func (e *IndexLookUpMergeJoin) newInnerMergeWorker(taskCh chan *lookUpMergeJoinT
 
 // Next implements the Executor interface
 func (e *IndexLookUpMergeJoin) Next(ctx context.Context, req *chunk.Chunk) error {
+	if !e.prepared {
+		e.startWorkers(ctx)
+		e.prepared = true
+	}
 	if e.isOuterJoin {
 		atomic.StoreInt64(&e.requiredRows, int64(req.RequiredRows()))
 	}
 	req.Reset()
 	if e.task == nil {
-		e.getFinishedTask(ctx)
+		e.loadFinishedTask(ctx)
 	}
 	for e.task != nil {
 		select {
@@ -282,7 +267,7 @@ func (e *IndexLookUpMergeJoin) Next(ctx context.Context, req *chunk.Chunk) error
 				if e.task.doneErr != nil {
 					return e.task.doneErr
 				}
-				e.getFinishedTask(ctx)
+				e.loadFinishedTask(ctx)
 				continue
 			}
 			req.SwapColumns(result.chk)
@@ -296,14 +281,13 @@ func (e *IndexLookUpMergeJoin) Next(ctx context.Context, req *chunk.Chunk) error
 	return nil
 }
 
-func (e *IndexLookUpMergeJoin) getFinishedTask(ctx context.Context) {
+// TODO: reuse the finished task memory to build tasks.
+func (e *IndexLookUpMergeJoin) loadFinishedTask(ctx context.Context) {
 	select {
 	case e.task = <-e.resultCh:
 	case <-ctx.Done():
 		e.task = nil
 	}
-
-	// TODO: reuse the finished task memory to build tasks.
 }
 
 func (omw *outerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup, cancelFunc context.CancelFunc) {
@@ -311,7 +295,7 @@ func (omw *outerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup, cancel
 	defer func() {
 		if r := recover(); r != nil {
 			task := &lookUpMergeJoinTask{
-				doneErr: errors.New(fmt.Sprintf("%v", r)),
+				doneErr: fmt.Errorf("%v", r),
 				results: make(chan *indexMergeJoinResult, numResChkHold),
 			}
 			close(task.results)
@@ -413,10 +397,7 @@ func (imw *innerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup, cancel
 				task.doneErr = errors.Errorf("%v", r)
 				close(task.results)
 			}
-			buf := make([]byte, 4096)
-			stackSize := runtime.Stack(buf, false)
-			buf = buf[:stackSize]
-			logutil.Logger(ctx).Error("innerMergeWorker panicked", zap.String("stack", string(buf)))
+			logutil.Logger(ctx).Error("innerMergeWorker panicked", zap.Any("recover", r), zap.Stack("stack"))
 			cancelFunc()
 		}
 	}()
@@ -468,8 +449,7 @@ func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJo
 	// Because the necessary condition of merge join is both outer and inner keep order of join keys.
 	// In this case, we need sort the outer side.
 	if imw.outerMergeCtx.needOuterSort {
-		sort.Slice(task.outerOrderIdx, func(i, j int) bool {
-			idxI, idxJ := task.outerOrderIdx[i], task.outerOrderIdx[j]
+		slices.SortFunc(task.outerOrderIdx, func(idxI, idxJ chunk.RowPtr) bool {
 			rowI, rowJ := task.outerResult.GetRow(idxI), task.outerResult.GetRow(idxJ)
 			var cmp int64
 			var err error
@@ -501,7 +481,7 @@ func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJo
 			dLookUpKeys[i], dLookUpKeys[lenKeys-i-1] = dLookUpKeys[lenKeys-i-1], dLookUpKeys[i]
 		}
 	}
-	imw.innerExec, err = imw.readerBuilder.buildExecutorForIndexJoin(ctx, dLookUpKeys, imw.indexRanges, imw.keyOff2IdxOff, imw.nextColCompareFilters, false)
+	imw.innerExec, err = imw.readerBuilder.buildExecutorForIndexJoin(ctx, dLookUpKeys, imw.indexRanges, imw.keyOff2IdxOff, imw.nextColCompareFilters, false, nil, nil)
 	if imw.innerExec != nil {
 		defer terror.Call(imw.innerExec.Close)
 	}
@@ -688,15 +668,15 @@ func (imw *innerMergeWorker) constructDatumLookupKey(task *lookUpMergeJoinTask, 
 		innerValue, err := outerValue.ConvertTo(sc, innerColType)
 		if err != nil {
 			// If the converted outerValue overflows, we don't need to lookup it.
-			if terror.ErrorEqual(err, types.ErrOverflow) {
+			if terror.ErrorEqual(err, types.ErrOverflow) || terror.ErrorEqual(err, types.ErrWarnDataOutOfRange) {
 				return nil, nil
 			}
-			if terror.ErrorEqual(err, types.ErrTruncated) && (innerColType.Tp == mysql.TypeSet || innerColType.Tp == mysql.TypeEnum) {
+			if terror.ErrorEqual(err, types.ErrTruncated) && (innerColType.GetType() == mysql.TypeSet || innerColType.GetType() == mysql.TypeEnum) {
 				return nil, nil
 			}
 			return nil, err
 		}
-		cmp, err := outerValue.CompareDatum(sc, &innerValue)
+		cmp, err := outerValue.Compare(sc, &innerValue, imw.keyCollators[i])
 		if err != nil {
 			return nil, err
 		}
@@ -716,7 +696,7 @@ func (imw *innerMergeWorker) dedupDatumLookUpKeys(lookUpContents []*indexJoinLoo
 	sc := imw.ctx.GetSessionVars().StmtCtx
 	deDupedLookUpContents := lookUpContents[:1]
 	for i := 1; i < len(lookUpContents); i++ {
-		cmp := compareRow(sc, lookUpContents[i].keys, lookUpContents[i-1].keys)
+		cmp := compareRow(sc, lookUpContents[i].keys, lookUpContents[i-1].keys, imw.keyCollators)
 		if cmp != 0 || (imw.nextColCompareFilters != nil && imw.nextColCompareFilters.CompareRow(lookUpContents[i].row, lookUpContents[i-1].row) != 0) {
 			deDupedLookUpContents = append(deDupedLookUpContents, lookUpContents[i])
 		}
@@ -740,8 +720,7 @@ func (e *IndexLookUpMergeJoin) Close() error {
 		e.cancelFunc = nil
 	}
 	if e.resultCh != nil {
-		for range e.resultCh {
-		}
+		channel.Clear(e.resultCh)
 		e.resultCh = nil
 	}
 	e.joinChkResourceCh = nil
@@ -750,5 +729,6 @@ func (e *IndexLookUpMergeJoin) Close() error {
 	// cancelFunc control the outer worker and outer worker close the task channel.
 	e.workerWg.Wait()
 	e.memTracker = nil
+	e.prepared = false
 	return e.baseExecutor.Close()
 }

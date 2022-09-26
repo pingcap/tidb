@@ -1,0 +1,9 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "pberror",
+    srcs = ["pberror.go"],
+    importpath = "github.com/pingcap/tidb/store/mockstore/unistore/tikv/pberror",
+    visibility = ["//visibility:public"],
+    deps = ["@com_github_pingcap_kvproto//pkg/errorpb"],
+)

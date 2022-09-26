@@ -8,18 +8,19 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package aggregation
 
 import (
-	"github.com/cznic/mathutil"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/mathutil"
 )
 
 type avgFunction struct {
@@ -81,11 +82,11 @@ func (af *avgFunction) GetResult(evalCtx *AggEvaluateContext) (d types.Datum) {
 		to := new(types.MyDecimal)
 		err := types.DecimalDiv(x, y, to, types.DivFracIncr)
 		terror.Log(err)
-		frac := af.RetTp.Decimal
+		frac := af.RetTp.GetDecimal()
 		if frac == -1 {
 			frac = mysql.MaxDecimalScale
 		}
-		err = to.Round(to, mathutil.Min(frac, mysql.MaxDecimalScale), types.ModeHalfEven)
+		err = to.Round(to, mathutil.Min(frac, mysql.MaxDecimalScale), types.ModeHalfUp)
 		terror.Log(err)
 		d.SetMysqlDecimal(to)
 	}

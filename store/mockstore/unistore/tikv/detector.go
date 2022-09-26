@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 // Copyright 2019-present PingCAP, Inc.
@@ -20,6 +21,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -32,6 +34,7 @@ import (
 
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/kverrors"
 	"go.uber.org/zap"
 )
 
@@ -79,7 +82,7 @@ func NewDetector(ttl time.Duration, urgentSize uint64, expireInterval time.Durat
 }
 
 // Detect detects deadlock for the sourceTxn on a locked key.
-func (d *Detector) Detect(sourceTxn, waitForTxn, keyHash uint64, diagCtx diagnosticContext) *ErrDeadlock {
+func (d *Detector) Detect(sourceTxn, waitForTxn, keyHash uint64, diagCtx diagnosticContext) *kverrors.ErrDeadlock {
 	d.lock.Lock()
 	nowTime := time.Now()
 	d.activeExpire(nowTime)
@@ -105,7 +108,7 @@ func (d *Detector) Detect(sourceTxn, waitForTxn, keyHash uint64, diagCtx diagnos
 	return err
 }
 
-func (d *Detector) doDetect(nowTime time.Time, sourceTxn, waitForTxn uint64) *ErrDeadlock {
+func (d *Detector) doDetect(nowTime time.Time, sourceTxn, waitForTxn uint64) *kverrors.ErrDeadlock {
 	val := d.waitForMap[waitForTxn]
 	if val == nil {
 		return nil
@@ -121,7 +124,7 @@ func (d *Detector) doDetect(nowTime time.Time, sourceTxn, waitForTxn uint64) *Er
 			continue
 		}
 		if keyHashPair.txn == sourceTxn {
-			return &ErrDeadlock{DeadlockKeyHash: keyHashPair.keyHash,
+			return &kverrors.ErrDeadlock{DeadlockKeyHash: keyHashPair.keyHash,
 				WaitChain: []*deadlockpb.WaitForEntry{
 					{
 						Txn:              waitForTxn,
@@ -200,7 +203,6 @@ func (d *Detector) CleanUpWaitFor(txn, waitForTxn, keyHash uint64) {
 		}
 	}
 	d.lock.Unlock()
-
 }
 
 // activeExpire removes expired entries, should be called under d.lock protection

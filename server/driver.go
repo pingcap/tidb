@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,7 +18,7 @@ import (
 	"context"
 	"crypto/tls"
 
-	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -33,7 +34,7 @@ type PreparedStatement interface {
 	ID() int
 
 	// Execute executes the statement.
-	Execute(context.Context, []types.Datum) (ResultSet, error)
+	Execute(context.Context, []expression.Expression) (ResultSet, error)
 
 	// AppendParam appends parameter to the statement.
 	AppendParam(paramID int, data []byte) error
@@ -66,11 +67,13 @@ type PreparedStatement interface {
 // ResultSet is the result set of an query.
 type ResultSet interface {
 	Columns() []*ColumnInfo
-	NewChunk() *chunk.Chunk
+	NewChunk(chunk.Allocator) *chunk.Chunk
 	Next(context.Context, *chunk.Chunk) error
 	StoreFetchedRows(rows []chunk.Row)
 	GetFetchedRows() []chunk.Row
 	Close() error
+	// IsClosed checks whether the result set is closed.
+	IsClosed() bool
 }
 
 // fetchNotifier represents notifier will be called in COM_FETCH.

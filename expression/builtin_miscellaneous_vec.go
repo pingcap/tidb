@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -25,14 +26,13 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/vitess"
 )
 
 func (b *builtinInetNtoaSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETInt, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -68,7 +68,7 @@ func (b *builtinInetNtoaSig) vectorized() bool {
 
 func (b *builtinIsIPv4Sig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -125,7 +125,7 @@ func (b *builtinIsIPv6Sig) vectorized() bool {
 
 func (b *builtinIsIPv6Sig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -149,6 +149,36 @@ func (b *builtinIsIPv6Sig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 			} else {
 				i64s[i] = 0
 			}
+		}
+	}
+	return nil
+}
+
+func (b *builtinIsUUIDSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinIsUUIDSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+	result.ResizeInt64(n, false)
+	i64s := result.Int64s()
+	result.MergeNulls(buf)
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		if _, err = uuid.Parse(buf.GetString(i)); err != nil {
+			i64s[i] = 0
+		} else {
+			i64s[i] = 1
 		}
 	}
 	return nil
@@ -197,23 +227,6 @@ func (b *builtinNameConstDurationSig) vecEvalDuration(input *chunk.Chunk, result
 	return b.args[1].VecEvalDuration(b.ctx, input, result)
 }
 
-func (b *builtinLockSig) vectorized() bool {
-	return true
-}
-
-// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_get-lock
-// The lock function will do nothing.
-// Warning: get_lock() function is parsed but ignored.
-func (b *builtinLockSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	n := input.NumRows()
-	result.ResizeInt64(n, false)
-	i64s := result.Int64s()
-	for i := range i64s {
-		i64s[i] = 1
-	}
-	return nil
-}
-
 func (b *builtinDurationAnyValueSig) vectorized() bool {
 	return true
 }
@@ -236,7 +249,7 @@ func (b *builtinIsIPv4CompatSig) vectorized() bool {
 
 func (b *builtinIsIPv4CompatSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -291,7 +304,7 @@ func (b *builtinSleepSig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_sleep
 func (b *builtinSleepSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETReal, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -311,7 +324,8 @@ func (b *builtinSleepSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 
 		sessVars := b.ctx.GetSessionVars()
 		if isNull || val < 0 {
-			if sessVars.StrictSQLMode {
+			// for insert ignore stmt, the StrictSQLMode and ignoreErr should both be considered.
+			if !sessVars.StmtCtx.BadNullAsWarning {
 				return errIncorrectArgs.GenWithStackByArgs("sleep")
 			}
 			err := errIncorrectArgs.GenWithStackByArgs("sleep")
@@ -361,7 +375,7 @@ func (b *builtinIsIPv4MappedSig) vectorized() bool {
 
 func (b *builtinIsIPv4MappedSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -416,7 +430,7 @@ func (b *builtinInet6AtonSig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_inet6-aton
 func (b *builtinInet6AtonSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -493,7 +507,7 @@ func (b *builtinInetAtonSig) vectorized() bool {
 
 func (b *builtinInetAtonSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -566,7 +580,7 @@ func (b *builtinInet6NtoaSig) vectorized() bool {
 
 func (b *builtinInet6NtoaSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	val, err := b.bufAllocator.get(types.ETString, n)
+	val, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -602,30 +616,13 @@ func (b *builtinNameConstRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.
 	return b.args[1].VecEvalReal(b.ctx, input, result)
 }
 
-func (b *builtinReleaseLockSig) vectorized() bool {
-	return true
-}
-
-// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_release-lock
-// The release lock function will do nothing.
-// Warning: release_lock() function is parsed but ignored.
-func (b *builtinReleaseLockSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	n := input.NumRows()
-	result.ResizeInt64(n, false)
-	i64s := result.Int64s()
-	for i := range i64s {
-		i64s[i] = 1
-	}
-	return nil
-}
-
 func (b *builtinVitessHashSig) vectorized() bool {
 	return true
 }
 
 func (b *builtinVitessHashSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	column, err := b.bufAllocator.get(types.ETInt, n)
+	column, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -662,7 +659,7 @@ func (b *builtinUUIDToBinSig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/8.0/en/miscellaneous-functions.html#function_uuid-to-bin
 func (b *builtinUUIDToBinSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	valBuf, err := b.bufAllocator.get(types.ETString, n)
+	valBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -674,7 +671,7 @@ func (b *builtinUUIDToBinSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 	var flagBuf *chunk.Column
 	i64s := make([]int64, n)
 	if len(b.args) == 2 {
-		flagBuf, err = b.bufAllocator.get(types.ETInt, n)
+		flagBuf, err = b.bufAllocator.get()
 		if err != nil {
 			return err
 		}
@@ -720,7 +717,7 @@ func (b *builtinBinToUUIDSig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/8.0/en/miscellaneous-functions.html#function_bin-to-uuid
 func (b *builtinBinToUUIDSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	valBuf, err := b.bufAllocator.get(types.ETString, n)
+	valBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -732,7 +729,7 @@ func (b *builtinBinToUUIDSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 	var flagBuf *chunk.Column
 	i64s := make([]int64, n)
 	if len(b.args) == 2 {
-		flagBuf, err = b.bufAllocator.get(types.ETInt, n)
+		flagBuf, err = b.bufAllocator.get()
 		if err != nil {
 			return err
 		}

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -27,8 +28,6 @@ const (
 )
 
 func TestSimpleArenaAllocator(t *testing.T) {
-	t.Parallel()
-
 	arena := NewAllocator(arenaCap)
 	slice := arena.Alloc(allocCapSmall)
 	assert.Equal(t, allocCapSmall, arena.off)
@@ -56,7 +55,6 @@ func TestSimpleArenaAllocator(t *testing.T) {
 }
 
 func TestStdAllocator(t *testing.T) {
-	t.Parallel()
 	slice := StdAllocator.Alloc(allocCapMedium)
 	assert.Len(t, slice, 0)
 	assert.Equal(t, allocCapMedium, cap(slice))

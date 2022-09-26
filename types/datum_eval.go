@@ -8,15 +8,16 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package types
 
 import (
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/opcode"
+	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/util/mathutil"
 )
 
 // ComputePlus computes the result of a+b.
@@ -45,15 +46,13 @@ func ComputePlus(a, b Datum) (d Datum, err error) {
 			return d, errors.Trace(err1)
 		}
 	case KindFloat64:
-		switch b.Kind() {
-		case KindFloat64:
+		if b.Kind() == KindFloat64 {
 			r := a.GetFloat64() + b.GetFloat64()
 			d.SetFloat64(r)
 			return d, nil
 		}
 	case KindMysqlDecimal:
-		switch b.Kind() {
-		case KindMysqlDecimal:
+		if b.Kind() == KindMysqlDecimal {
 			r := new(MyDecimal)
 			err = DecimalAdd(a.GetMysqlDecimal(), b.GetMysqlDecimal(), r)
 			d.SetMysqlDecimal(r)

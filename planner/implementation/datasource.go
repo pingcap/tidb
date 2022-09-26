@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,9 +17,9 @@ package implementation
 import (
 	"math"
 
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/memo"
 	"github.com/pingcap/tidb/statistics"
@@ -35,7 +36,7 @@ func NewTableDualImpl(dual *plannercore.PhysicalTableDual) *TableDualImpl {
 }
 
 // CalcCost calculates the cost of the table dual Implementation.
-func (impl *TableDualImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
+func (*TableDualImpl) CalcCost(_ float64, _ ...memo.Implementation) float64 {
 	return 0
 }
 
@@ -50,7 +51,7 @@ func NewMemTableScanImpl(dual *plannercore.PhysicalMemTable) *MemTableScanImpl {
 }
 
 // CalcCost calculates the cost of the table dual Implementation.
-func (impl *MemTableScanImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
+func (*MemTableScanImpl) CalcCost(_ float64, _ ...memo.Implementation) float64 {
 	return 0
 }
 
@@ -90,7 +91,7 @@ func (impl *TableReaderImpl) CalcCost(outCount float64, children ...memo.Impleme
 }
 
 // GetCostLimit implements Implementation interface.
-func (impl *TableReaderImpl) GetCostLimit(costLimit float64, children ...memo.Implementation) float64 {
+func (impl *TableReaderImpl) GetCostLimit(costLimit float64, _ ...memo.Implementation) float64 {
 	reader := impl.plan.(*plannercore.PhysicalTableReader)
 	sessVars := reader.SCtx().GetSessionVars()
 	copIterWorkers := float64(sessVars.DistSQLScanConcurrency())
@@ -119,7 +120,7 @@ func NewTableScanImpl(ts *plannercore.PhysicalTableScan, cols []*expression.Colu
 }
 
 // CalcCost calculates the cost of the table scan Implementation.
-func (impl *TableScanImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
+func (impl *TableScanImpl) CalcCost(outCount float64, _ ...memo.Implementation) float64 {
 	ts := impl.plan.(*plannercore.PhysicalTableScan)
 	width := impl.tblColHists.GetTableAvgRowSize(impl.plan.SCtx(), impl.tblCols, kv.TiKV, true)
 	sessVars := ts.SCtx().GetSessionVars()
@@ -138,7 +139,7 @@ type IndexReaderImpl struct {
 }
 
 // GetCostLimit implements Implementation interface.
-func (impl *IndexReaderImpl) GetCostLimit(costLimit float64, children ...memo.Implementation) float64 {
+func (impl *IndexReaderImpl) GetCostLimit(costLimit float64, _ ...memo.Implementation) float64 {
 	reader := impl.plan.(*plannercore.PhysicalIndexReader)
 	sessVars := reader.SCtx().GetSessionVars()
 	copIterWorkers := float64(sessVars.DistSQLScanConcurrency())
@@ -174,7 +175,7 @@ type IndexScanImpl struct {
 }
 
 // CalcCost implements Implementation interface.
-func (impl *IndexScanImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
+func (impl *IndexScanImpl) CalcCost(outCount float64, _ ...memo.Implementation) float64 {
 	is := impl.plan.(*plannercore.PhysicalIndexScan)
 	sessVars := is.SCtx().GetSessionVars()
 	rowSize := impl.tblColHists.GetIndexAvgRowSize(is.SCtx(), is.Schema().Columns, is.Index.Unique)

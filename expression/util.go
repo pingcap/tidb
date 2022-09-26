@@ -8,29 +8,35 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package expression
 
 import (
+	"bytes"
+	"context"
 	"math"
 	"strconv"
 	"strings"
-	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/opcode"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 	"golang.org/x/tools/container/intsets"
 )
@@ -134,9 +140,10 @@ func ExtractCorColumns(expr Expression) (cols []*CorrelatedColumn) {
 // It's often observed that the pattern of the caller like this:
 //
 // cols := ExtractColumns(...)
-// for _, col := range cols {
-//     if xxx(col) {...}
-// }
+//
+//	for _, col := range cols {
+//	    if xxx(col) {...}
+//	}
 //
 // Provide an additional filter argument, this can be done in one step.
 // To avoid allocation for cols that not need.
@@ -161,8 +168,186 @@ func extractColumns(result []*Column, expr Expression, filter func(*Column) bool
 	return result
 }
 
+// ExtractEquivalenceColumns detects the equivalence from CNF exprs.
+func ExtractEquivalenceColumns(result [][]Expression, exprs []Expression) [][]Expression {
+	// exprs are CNF expressions, EQ condition only make sense in the top level of every expr.
+	for _, expr := range exprs {
+		result = extractEquivalenceColumns(result, expr)
+	}
+	return result
+}
+
+func extractEquivalenceColumns(result [][]Expression, expr Expression) [][]Expression {
+	switch v := expr.(type) {
+	case *ScalarFunction:
+		// a==b, a<=>b, the latter one is evaluated to true when a,b are both null.
+		if v.FuncName.L == ast.EQ || v.FuncName.L == ast.NullEQ {
+			args := v.GetArgs()
+			if len(args) == 2 {
+				col1, ok1 := args[0].(*Column)
+				col2, ok2 := args[1].(*Column)
+				if ok1 && ok2 {
+					result = append(result, []Expression{col1, col2})
+				}
+				col, ok1 := args[0].(*Column)
+				scl, ok2 := args[1].(*ScalarFunction)
+				if ok1 && ok2 {
+					result = append(result, []Expression{col, scl})
+				}
+				col, ok1 = args[1].(*Column)
+				scl, ok2 = args[0].(*ScalarFunction)
+				if ok1 && ok2 {
+					result = append(result, []Expression{col, scl})
+				}
+			}
+			return result
+		}
+		if v.FuncName.L == ast.In {
+			args := v.GetArgs()
+			// only `col in (only 1 element)`, can we build an equivalence here.
+			if len(args[1:]) == 1 {
+				col1, ok1 := args[0].(*Column)
+				col2, ok2 := args[1].(*Column)
+				if ok1 && ok2 {
+					result = append(result, []Expression{col1, col2})
+				}
+				col, ok1 := args[0].(*Column)
+				scl, ok2 := args[1].(*ScalarFunction)
+				if ok1 && ok2 {
+					result = append(result, []Expression{col, scl})
+				}
+				col, ok1 = args[1].(*Column)
+				scl, ok2 = args[0].(*ScalarFunction)
+				if ok1 && ok2 {
+					result = append(result, []Expression{col, scl})
+				}
+			}
+			return result
+		}
+		// For Non-EQ function, we don't have to traverse down.
+		// eg: (a=b or c=d) doesn't make any definitely equivalence assertion.
+	}
+	return result
+}
+
+// extractColumnsAndCorColumns extracts columns and correlated columns from `expr` and append them to `result`.
+func extractColumnsAndCorColumns(result []*Column, expr Expression) []*Column {
+	switch v := expr.(type) {
+	case *Column:
+		result = append(result, v)
+	case *CorrelatedColumn:
+		result = append(result, &v.Column)
+	case *ScalarFunction:
+		for _, arg := range v.GetArgs() {
+			result = extractColumnsAndCorColumns(result, arg)
+		}
+	}
+	return result
+}
+
+// ExtractConstantEqColumnsOrScalar detects the constant equal relationship from CNF exprs.
+func ExtractConstantEqColumnsOrScalar(ctx sessionctx.Context, result []Expression, exprs []Expression) []Expression {
+	// exprs are CNF expressions, EQ condition only make sense in the top level of every expr.
+	for _, expr := range exprs {
+		result = extractConstantEqColumnsOrScalar(ctx, result, expr)
+	}
+	return result
+}
+
+func extractConstantEqColumnsOrScalar(ctx sessionctx.Context, result []Expression, expr Expression) []Expression {
+	switch v := expr.(type) {
+	case *ScalarFunction:
+		if v.FuncName.L == ast.EQ || v.FuncName.L == ast.NullEQ {
+			args := v.GetArgs()
+			if len(args) == 2 {
+				col, ok1 := args[0].(*Column)
+				_, ok2 := args[1].(*Constant)
+				if ok1 && ok2 {
+					result = append(result, col)
+				}
+				col, ok1 = args[1].(*Column)
+				_, ok2 = args[0].(*Constant)
+				if ok1 && ok2 {
+					result = append(result, col)
+				}
+				// take the correlated column as constant here.
+				col, ok1 = args[0].(*Column)
+				_, ok2 = args[1].(*CorrelatedColumn)
+				if ok1 && ok2 {
+					result = append(result, col)
+				}
+				col, ok1 = args[1].(*Column)
+				_, ok2 = args[0].(*CorrelatedColumn)
+				if ok1 && ok2 {
+					result = append(result, col)
+				}
+				scl, ok1 := args[0].(*ScalarFunction)
+				_, ok2 = args[1].(*Constant)
+				if ok1 && ok2 {
+					result = append(result, scl)
+				}
+				scl, ok1 = args[1].(*ScalarFunction)
+				_, ok2 = args[0].(*Constant)
+				if ok1 && ok2 {
+					result = append(result, scl)
+				}
+				// take the correlated column as constant here.
+				scl, ok1 = args[0].(*ScalarFunction)
+				_, ok2 = args[1].(*CorrelatedColumn)
+				if ok1 && ok2 {
+					result = append(result, scl)
+				}
+				scl, ok1 = args[1].(*ScalarFunction)
+				_, ok2 = args[0].(*CorrelatedColumn)
+				if ok1 && ok2 {
+					result = append(result, scl)
+				}
+			}
+			return result
+		}
+		if v.FuncName.L == ast.In {
+			args := v.GetArgs()
+			allArgsIsConst := true
+			// only `col in (all same const)`, can col be the constant column.
+			// eg: a in (1, "1") does, while a in (1, '2') doesn't.
+			guard := args[1]
+			for i, v := range args[1:] {
+				if _, ok := v.(*Constant); !ok {
+					allArgsIsConst = false
+					break
+				}
+				if i == 0 {
+					continue
+				}
+				if !guard.Equal(ctx, v) {
+					allArgsIsConst = false
+					break
+				}
+			}
+			if allArgsIsConst {
+				if col, ok := args[0].(*Column); ok {
+					result = append(result, col)
+				} else if scl, ok := args[0].(*ScalarFunction); ok {
+					result = append(result, scl)
+				}
+			}
+			return result
+		}
+		// For Non-EQ function, we don't have to traverse down.
+	}
+	return result
+}
+
+// ExtractColumnsAndCorColumnsFromExpressions extracts columns and correlated columns from expressions and append them to `result`.
+func ExtractColumnsAndCorColumnsFromExpressions(result []*Column, list []Expression) []*Column {
+	for _, expr := range list {
+		result = extractColumnsAndCorColumns(result, expr)
+	}
+	return result
+}
+
 // ExtractColumnSet extracts the different values of `UniqueId` for columns in expressions.
-func ExtractColumnSet(exprs []Expression) *intsets.Sparse {
+func ExtractColumnSet(exprs ...Expression) *intsets.Sparse {
 	set := &intsets.Sparse{}
 	for _, expr := range exprs {
 		extractColumnSet(expr, set)
@@ -181,7 +366,8 @@ func extractColumnSet(expr Expression, set *intsets.Sparse) {
 	}
 }
 
-func setExprColumnInOperand(expr Expression) Expression {
+// SetExprColumnInOperand is used to set columns in expr as InOperand.
+func SetExprColumnInOperand(expr Expression) Expression {
 	switch v := expr.(type) {
 	case *Column:
 		col := v.Clone().(*Column)
@@ -190,47 +376,85 @@ func setExprColumnInOperand(expr Expression) Expression {
 	case *ScalarFunction:
 		args := v.GetArgs()
 		for i, arg := range args {
-			args[i] = setExprColumnInOperand(arg)
+			args[i] = SetExprColumnInOperand(arg)
 		}
 	}
 	return expr
 }
 
+// ColumnSubstitute4PPD substitutes the columns in filter to expressions in select fields.
+// Only used for predicate push down to projection. Some columns can not be substituted for some reasons.
+// So we should return the bool value to indicate some expressions can not be pushed down.
+// e.g. CREATE TABLE t3(c0 INT, primary key(c0));
+// SELECT v2.c0 FROM (select 1 as c0 from t3) v2 WHERE (v2.c0)like(True);
+// The cond `(v2.c0)like(True)` can not be substituted when the new collation enable. So we shouldn't push the cond down to the projection.
+func ColumnSubstitute4PPD(expr Expression, schema *Schema, newExprs []Expression) (bool, Expression) {
+	substituted, _, resExpr := ColumnSubstituteImpl(expr, schema, newExprs, false)
+	return substituted, resExpr
+}
+
 // ColumnSubstitute substitutes the columns in filter to expressions in select fields.
 // e.g. select * from (select b as a from t) k where a < 10 => select * from (select b as a from t where b < 10) k.
 func ColumnSubstitute(expr Expression, schema *Schema, newExprs []Expression) Expression {
-	_, resExpr := ColumnSubstituteImpl(expr, schema, newExprs)
+	_, _, resExpr := ColumnSubstituteImpl(expr, schema, newExprs, false)
 	return resExpr
+}
+
+// ColumnSubstituteAll substitutes the columns just like ColumnSubstitute, but we don't accept partial substitution.
+// Only accept:
+//
+//	1: substitute them all once find col in schema.
+//	2: nothing in expr can be substituted.
+func ColumnSubstituteAll(expr Expression, schema *Schema, newExprs []Expression) (bool, Expression) {
+	_, hasFail, resExpr := ColumnSubstituteImpl(expr, schema, newExprs, true)
+	return hasFail, resExpr
 }
 
 // ColumnSubstituteImpl tries to substitute column expr using newExprs,
 // the newFunctionInternal is only called if its child is substituted
-func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression) (bool, Expression) {
+// @return bool means whether the expr has changed.
+// @return bool means whether the expr should change (has the dependency in schema, while the corresponding expr has some compatibility), but finally fallback.
+// @return Expression, the original expr or the changed expr, it depends on the first @return bool.
+func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression, fail1Return bool) (bool, bool, Expression) {
 	switch v := expr.(type) {
 	case *Column:
 		id := schema.ColumnIndex(v)
 		if id == -1 {
-			return false, v
+			return false, false, v
 		}
 		newExpr := newExprs[id]
 		if v.InOperand {
-			newExpr = setExprColumnInOperand(newExpr)
+			newExpr = SetExprColumnInOperand(newExpr)
 		}
 		newExpr.SetCoercibility(v.Coercibility())
-		return true, newExpr
+		return true, false, newExpr
 	case *ScalarFunction:
+		substituted := false
+		hasFail := false
 		if v.FuncName.L == ast.Cast {
 			newFunc := v.Clone().(*ScalarFunction)
-			_, newFunc.GetArgs()[0] = ColumnSubstituteImpl(newFunc.GetArgs()[0], schema, newExprs)
-			return true, newFunc
+			substituted, hasFail, newFunc.GetArgs()[0] = ColumnSubstituteImpl(newFunc.GetArgs()[0], schema, newExprs, fail1Return)
+			if fail1Return && hasFail {
+				return substituted, hasFail, newFunc
+			}
+			if substituted {
+				// Workaround for issue https://github.com/pingcap/tidb/issues/28804
+				e := NewFunctionInternal(v.GetCtx(), v.FuncName.L, v.RetType, newFunc.GetArgs()...)
+				e.SetCoercibility(v.Coercibility())
+				return true, false, e
+			}
+			return false, false, newFunc
 		}
 		// cowExprRef is a copy-on-write util, args array allocation happens only
 		// when expr in args is changed
 		refExprArr := cowExprRef{v.GetArgs(), nil}
-		substituted := false
 		_, coll := DeriveCollationFromExprs(v.GetCtx(), v.GetArgs()...)
 		for idx, arg := range v.GetArgs() {
-			changed, newFuncExpr := ColumnSubstituteImpl(arg, schema, newExprs)
+			changed, hasFail, newFuncExpr := ColumnSubstituteImpl(arg, schema, newExprs, fail1Return)
+			if fail1Return && hasFail {
+				return changed, hasFail, v
+			}
+			oldChanged := changed
 			if collate.NewCollationEnabled() {
 				// Make sure the collation used by the ScalarFunction isn't changed and its result collation is not weaker than the collation used by the ScalarFunction.
 				if changed {
@@ -239,9 +463,17 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 					_ = append(append(append(tmpArgs, refExprArr.Result()[0:idx]...), refExprArr.Result()[idx+1:]...), newFuncExpr)
 					_, newColl := DeriveCollationFromExprs(v.GetCtx(), append(v.GetArgs(), newFuncExpr)...)
 					if coll == newColl {
-						changed = checkCollationStrictness(coll, newFuncExpr.GetType().Collate)
+						changed = checkCollationStrictness(coll, newFuncExpr.GetType().GetCollate())
 					}
 				}
+			}
+			if fail1Return && oldChanged != changed {
+				// Only when the oldChanged is true and changed is false, we will get here.
+				// And this means there some dependency in this arg can be substituted with
+				// given expressions, while it has some collation compatibility, finally we
+				// fall back to use the origin args. (commonly used in projection elimination
+				// in which fallback usage is unacceptable)
+				return changed, true, v
 			}
 			refExprArr.Set(idx, changed, newFuncExpr)
 			if changed {
@@ -249,10 +481,10 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 			}
 		}
 		if substituted {
-			return true, NewFunctionInternal(v.GetCtx(), v.FuncName.L, v.RetType, refExprArr.Result()...)
+			return true, false, NewFunctionInternal(v.GetCtx(), v.FuncName.L, v.RetType, refExprArr.Result()...)
 		}
 	}
-	return false, expr
+	return false, false, expr
 }
 
 // checkCollationStrictness check collation strictness-ship between `coll` and `newFuncColl`
@@ -356,9 +588,32 @@ func SubstituteCorCol2Constant(expr Expression) (Expression, error) {
 	return expr, nil
 }
 
+func locateStringWithCollation(str, substr, coll string) int64 {
+	collator := collate.GetCollator(coll)
+	strKey := collator.KeyWithoutTrimRightSpace(str)
+	subStrKey := collator.KeyWithoutTrimRightSpace(substr)
+
+	index := bytes.Index(strKey, subStrKey)
+	if index == -1 || index == 0 {
+		return int64(index + 1)
+	}
+
+	// todo: we can use binary search to make it faster.
+	count := int64(0)
+	for {
+		r, size := utf8.DecodeRuneInString(str)
+		count++
+		index -= len(collator.KeyWithoutTrimRightSpace(string(r)))
+		if index <= 0 {
+			return count + 1
+		}
+		str = str[size:]
+	}
+}
+
 // timeZone2Duration converts timezone whose format should satisfy the regular condition
-// `(^(+|-)(0?[0-9]|1[0-2]):[0-5]?\d$)|(^+13:00$)` to time.Duration.
-func timeZone2Duration(tz string) time.Duration {
+// `(^(+|-)(0?[0-9]|1[0-2]):[0-5]?\d$)|(^+13:00$)` to int for use by time.FixedZone().
+func timeZone2int(tz string) int {
 	sign := 1
 	if strings.HasPrefix(tz, "-") {
 		sign = -1
@@ -369,7 +624,7 @@ func timeZone2Duration(tz string) time.Duration {
 	terror.Log(err)
 	m, err := strconv.Atoi(tz[i+1:])
 	terror.Log(err)
-	return time.Duration(sign) * (time.Duration(h)*time.Hour + time.Duration(m)*time.Minute)
+	return sign * ((h * 3600) + (m * 60))
 }
 
 var logicalOps = map[string]struct{}{
@@ -475,10 +730,61 @@ func pushNotAcrossExpr(ctx sessionctx.Context, expr Expression, not bool) (_ Exp
 	return expr, not
 }
 
+// GetExprInsideIsTruth get the expression inside the `istrue_with_null` and `istrue`.
+// This is useful when handling expressions from "not" or "!", because we might wrap `istrue_with_null` or `istrue`
+// when handling them. See pushNotAcrossExpr() and wrapWithIsTrue() for details.
+func GetExprInsideIsTruth(expr Expression) Expression {
+	if f, ok := expr.(*ScalarFunction); ok {
+		switch f.FuncName.L {
+		case ast.IsTruthWithNull, ast.IsTruthWithoutNull:
+			return GetExprInsideIsTruth(f.GetArgs()[0])
+		default:
+			return expr
+		}
+	}
+	return expr
+}
+
 // PushDownNot pushes the `not` function down to the expression's arguments.
 func PushDownNot(ctx sessionctx.Context, expr Expression) Expression {
 	newExpr, _ := pushNotAcrossExpr(ctx, expr, false)
 	return newExpr
+}
+
+// ContainOuterNot checks if there is an outer `not`.
+func ContainOuterNot(expr Expression) bool {
+	return containOuterNot(expr, false)
+}
+
+// containOuterNot checks if there is an outer `not`.
+// Input `not` means whether there is `not` outside `expr`
+//
+// eg.
+//
+//	not(0+(t.a == 1 and t.b == 2)) returns true
+//	not(t.a) and not(t.b) returns false
+func containOuterNot(expr Expression, not bool) bool {
+	if f, ok := expr.(*ScalarFunction); ok {
+		switch f.FuncName.L {
+		case ast.UnaryNot:
+			return containOuterNot(f.GetArgs()[0], true)
+		case ast.IsTruthWithNull, ast.IsNull:
+			return containOuterNot(f.GetArgs()[0], not)
+		default:
+			if not {
+				return true
+			}
+			hasNot := false
+			for _, expr := range f.GetArgs() {
+				hasNot = hasNot || containOuterNot(expr, not)
+				if hasNot {
+					return hasNot
+				}
+			}
+			return hasNot
+		}
+	}
+	return false
 }
 
 // Contains tests if `exprs` contains `e`.
@@ -657,24 +963,44 @@ func PopRowFirstArg(ctx sessionctx.Context, e Expression) (ret Expression, err e
 // DatumToConstant generates a Constant expression from a Datum.
 func DatumToConstant(d types.Datum, tp byte, flag uint) *Constant {
 	t := types.NewFieldType(tp)
-	t.Flag |= flag
+	t.AddFlag(flag)
 	return &Constant{Value: d, RetType: t}
 }
 
 // ParamMarkerExpression generate a getparam function expression.
-func ParamMarkerExpression(ctx sessionctx.Context, v *driver.ParamMarkerExpr) (Expression, error) {
+func ParamMarkerExpression(ctx sessionctx.Context, v *driver.ParamMarkerExpr, needParam bool) (*Constant, error) {
 	useCache := ctx.GetSessionVars().StmtCtx.UseCache
 	isPointExec := ctx.GetSessionVars().StmtCtx.PointExec
 	tp := types.NewFieldType(mysql.TypeUnspecified)
 	types.DefaultParamTypeForValue(v.GetValue(), tp)
 	value := &Constant{Value: v.Datum, RetType: tp}
-	if useCache || isPointExec {
+	if useCache || isPointExec || needParam {
 		value.ParamMarker = &ParamMarker{
 			order: v.Order,
 			ctx:   ctx,
 		}
 	}
 	return value, nil
+}
+
+// ParamMarkerInPrepareChecker checks whether the given ast tree has paramMarker and is in prepare statement.
+type ParamMarkerInPrepareChecker struct {
+	InPrepareStmt bool
+}
+
+// Enter implements Visitor Interface.
+func (pc *ParamMarkerInPrepareChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+	switch v := in.(type) {
+	case *driver.ParamMarkerExpr:
+		pc.InPrepareStmt = !v.InExecute
+		return v, true
+	}
+	return in, false
+}
+
+// Leave implements Visitor Interface.
+func (pc *ParamMarkerInPrepareChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
+	return in, true
 }
 
 // DisableParseJSONFlag4Expr disables ParseToJSONFlag for `expr` except Column.
@@ -690,7 +1016,7 @@ func DisableParseJSONFlag4Expr(expr Expression) {
 	if _, isCorCol := expr.(*CorrelatedColumn); isCorCol {
 		return
 	}
-	expr.GetType().Flag &= ^mysql.ParseToJSONFlag
+	expr.GetType().SetFlag(expr.GetType().GetFlag() & ^mysql.ParseToJSONFlag)
 }
 
 // ConstructPositionExpr constructs PositionExpr with the given ParamMarkerExpr.
@@ -703,7 +1029,7 @@ func PosFromPositionExpr(ctx sessionctx.Context, v *ast.PositionExpr) (int, bool
 	if v.P == nil {
 		return v.N, false, nil
 	}
-	value, err := ParamMarkerExpression(ctx, v.P.(*driver.ParamMarkerExpr))
+	value, err := ParamMarkerExpression(ctx, v.P.(*driver.ParamMarkerExpr), false)
 	if err != nil {
 		return 0, true, err
 	}
@@ -769,6 +1095,42 @@ func IsRuntimeConstExpr(expr Expression) bool {
 	return false
 }
 
+// CheckNonDeterministic checks whether the current expression contains a non-deterministic func.
+func CheckNonDeterministic(e Expression) bool {
+	switch x := e.(type) {
+	case *Constant, *Column, *CorrelatedColumn:
+		return false
+	case *ScalarFunction:
+		if _, ok := unFoldableFunctions[x.FuncName.L]; ok {
+			return true
+		}
+		for _, arg := range x.GetArgs() {
+			if CheckNonDeterministic(arg) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// CheckFuncInExpr checks whether there's a given function in the expression.
+func CheckFuncInExpr(e Expression, funcName string) bool {
+	switch x := e.(type) {
+	case *Constant, *Column, *CorrelatedColumn:
+		return false
+	case *ScalarFunction:
+		if x.FuncName.L == funcName {
+			return true
+		}
+		for _, arg := range x.GetArgs() {
+			if CheckFuncInExpr(arg, funcName) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // IsMutableEffectsExpr checks if expr contains function which is mutable or has side effects.
 func IsMutableEffectsExpr(expr Expression) bool {
 	switch x := expr.(type) {
@@ -798,10 +1160,6 @@ func RemoveDupExprs(ctx sessionctx.Context, exprs []Expression) []Expression {
 	exists := make(map[string]struct{}, len(exprs))
 	sc := ctx.GetSessionVars().StmtCtx
 	for _, expr := range exprs {
-		if ContainMutableConst(ctx, []Expression{expr}) {
-			res = append(res, expr)
-			continue
-		}
 		key := string(expr.HashCode(sc))
 		if _, ok := exists[key]; !ok || IsMutableEffectsExpr(expr) {
 			res = append(res, expr)
@@ -876,12 +1234,28 @@ func ContainCorrelatedColumn(exprs []Expression) bool {
 	return false
 }
 
-// ContainMutableConst checks if the expressions contain a lazy constant.
-func ContainMutableConst(ctx sessionctx.Context, exprs []Expression) bool {
-	// Treat all constants immutable if plan cache is not enabled for this query.
-	if !ctx.GetSessionVars().StmtCtx.UseCache {
+// MaybeOverOptimized4PlanCache used to check whether an optimization can work
+// for the statement when we enable the plan cache.
+// In some situations, some optimizations maybe over-optimize and cache an
+// overOptimized plan. The cached plan may not get the correct result when we
+// reuse the plan for other statements.
+// For example, `pk>=$a and pk<=$b` can be optimized to a PointGet when
+// `$a==$b`, but it will cause wrong results when `$a!=$b`.
+// So we need to do the check here. The check includes the following aspects:
+// 1. Whether the plan cache switch is enable.
+// 2. Whether the statement can be cached.
+// 3. Whether the expressions contain a lazy constant.
+// TODO: Do more careful check here.
+func MaybeOverOptimized4PlanCache(ctx sessionctx.Context, exprs []Expression) bool {
+	// If we do not enable plan cache, all the optimization can work correctly.
+	if !ctx.GetSessionVars().StmtCtx.UseCache || ctx.GetSessionVars().StmtCtx.SkipPlanCache {
 		return false
 	}
+	return containMutableConst(ctx, exprs)
+}
+
+// containMutableConst checks if the expressions contain a lazy constant.
+func containMutableConst(ctx sessionctx.Context, exprs []Expression) bool {
 	for _, expr := range exprs {
 		switch v := expr.(type) {
 		case *Constant:
@@ -889,12 +1263,25 @@ func ContainMutableConst(ctx sessionctx.Context, exprs []Expression) bool {
 				return true
 			}
 		case *ScalarFunction:
-			if ContainMutableConst(ctx, v.GetArgs()) {
+			if containMutableConst(ctx, v.GetArgs()) {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+// RemoveMutableConst used to remove the `ParamMarker` and `DeferredExpr` in the `Constant` expr.
+func RemoveMutableConst(ctx sessionctx.Context, exprs []Expression) {
+	for _, expr := range exprs {
+		switch v := expr.(type) {
+		case *Constant:
+			v.ParamMarker = nil
+			v.DeferredExpr = nil
+		case *ScalarFunction:
+			RemoveMutableConst(ctx, v.GetArgs())
+		}
+	}
 }
 
 const (
@@ -949,7 +1336,7 @@ func GetFormatBytes(bytes float64) string {
 	if divisor == 1 {
 		return strconv.FormatFloat(bytes, 'f', 0, 64) + " " + unit
 	}
-	value := float64(bytes) / divisor
+	value := bytes / divisor
 	if math.Abs(value) >= 100000.0 {
 		return strconv.FormatFloat(value, 'e', 2, 64) + " " + unit
 	}
@@ -988,9 +1375,179 @@ func GetFormatNanoTime(time float64) string {
 	if divisor == 1 {
 		return strconv.FormatFloat(time, 'f', 0, 64) + " " + unit
 	}
-	value := float64(time) / divisor
+	value := time / divisor
 	if math.Abs(value) >= 100000.0 {
 		return strconv.FormatFloat(value, 'e', 2, 64) + " " + unit
 	}
 	return strconv.FormatFloat(value, 'f', 2, 64) + " " + unit
+}
+
+// SQLDigestTextRetriever is used to find the normalized SQL statement text by SQL digests in statements_summary table.
+// It's exported for test purposes. It's used by the `tidb_decode_sql_digests` builtin function, but also exposed to
+// be used in other modules.
+type SQLDigestTextRetriever struct {
+	// SQLDigestsMap is the place to put the digests that's requested for getting SQL text and also the place to put
+	// the query result.
+	SQLDigestsMap map[string]string
+
+	// Replace querying for test purposes.
+	mockLocalData  map[string]string
+	mockGlobalData map[string]string
+	// There are two ways for querying information: 1) query specified digests by WHERE IN query, or 2) query all
+	// information to avoid the too long WHERE IN clause. If there are more than `fetchAllLimit` digests needs to be
+	// queried, the second way will be chosen; otherwise, the first way will be chosen.
+	fetchAllLimit int
+}
+
+// NewSQLDigestTextRetriever creates a new SQLDigestTextRetriever.
+func NewSQLDigestTextRetriever() *SQLDigestTextRetriever {
+	return &SQLDigestTextRetriever{
+		SQLDigestsMap: make(map[string]string),
+		fetchAllLimit: 512,
+	}
+}
+
+func (r *SQLDigestTextRetriever) runMockQuery(data map[string]string, inValues []interface{}) (map[string]string, error) {
+	if len(inValues) == 0 {
+		return data, nil
+	}
+	res := make(map[string]string, len(inValues))
+	for _, digest := range inValues {
+		if text, ok := data[digest.(string)]; ok {
+			res[digest.(string)] = text
+		}
+	}
+	return res, nil
+}
+
+// runFetchDigestQuery runs query to the system tables to fetch the kv mapping of SQL digests and normalized SQL texts
+// of the given SQL digests, if `inValues` is given, or all these mappings otherwise. If `queryGlobal` is false, it
+// queries information_schema.statements_summary and information_schema.statements_summary_history; otherwise, it
+// queries the cluster version of these two tables.
+func (r *SQLDigestTextRetriever) runFetchDigestQuery(ctx context.Context, sctx sessionctx.Context, queryGlobal bool, inValues []interface{}) (map[string]string, error) {
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
+	// If mock data is set, query the mock data instead of the real statements_summary tables.
+	if !queryGlobal && r.mockLocalData != nil {
+		return r.runMockQuery(r.mockLocalData, inValues)
+	} else if queryGlobal && r.mockGlobalData != nil {
+		return r.runMockQuery(r.mockGlobalData, inValues)
+	}
+
+	exec, ok := sctx.(sqlexec.RestrictedSQLExecutor)
+	if !ok {
+		return nil, errors.New("restricted sql can't be executed in this context")
+	}
+
+	// Information in statements_summary will be periodically moved to statements_summary_history. Union them together
+	// to avoid missing information when statements_summary is just cleared.
+	stmt := "select digest, digest_text from information_schema.statements_summary union distinct " +
+		"select digest, digest_text from information_schema.statements_summary_history"
+	if queryGlobal {
+		stmt = "select digest, digest_text from information_schema.cluster_statements_summary union distinct " +
+			"select digest, digest_text from information_schema.cluster_statements_summary_history"
+	}
+	// Add the where clause if `inValues` is specified.
+	if len(inValues) > 0 {
+		stmt += " where digest in (" + strings.Repeat("%?,", len(inValues)-1) + "%?)"
+	}
+
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, stmt, inValues...)
+	if err != nil {
+		return nil, err
+	}
+
+	res := make(map[string]string, len(rows))
+	for _, row := range rows {
+		res[row.GetString(0)] = row.GetString(1)
+	}
+	return res, nil
+}
+
+func (r *SQLDigestTextRetriever) updateDigestInfo(queryResult map[string]string) {
+	for digest, text := range r.SQLDigestsMap {
+		if len(text) > 0 {
+			// The text of this digest is already known
+			continue
+		}
+		sqlText, ok := queryResult[digest]
+		if ok {
+			r.SQLDigestsMap[digest] = sqlText
+		}
+	}
+}
+
+// RetrieveLocal tries to retrieve the SQL text of the SQL digests from local information.
+func (r *SQLDigestTextRetriever) RetrieveLocal(ctx context.Context, sctx sessionctx.Context) error {
+	if len(r.SQLDigestsMap) == 0 {
+		return nil
+	}
+
+	var queryResult map[string]string
+	if len(r.SQLDigestsMap) <= r.fetchAllLimit {
+		inValues := make([]interface{}, 0, len(r.SQLDigestsMap))
+		for key := range r.SQLDigestsMap {
+			inValues = append(inValues, key)
+		}
+		var err error
+		queryResult, err = r.runFetchDigestQuery(ctx, sctx, false, inValues)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		if len(queryResult) == len(r.SQLDigestsMap) {
+			r.SQLDigestsMap = queryResult
+			return nil
+		}
+	} else {
+		var err error
+		queryResult, err = r.runFetchDigestQuery(ctx, sctx, false, nil)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	r.updateDigestInfo(queryResult)
+	return nil
+}
+
+// RetrieveGlobal tries to retrieve the SQL text of the SQL digests from the information of the whole cluster.
+func (r *SQLDigestTextRetriever) RetrieveGlobal(ctx context.Context, sctx sessionctx.Context) error {
+	err := r.RetrieveLocal(ctx, sctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// In some unit test environments it's unable to retrieve global info, and this function blocks it for tens of
+	// seconds, which wastes much time during unit test. In this case, enable this failpoint to bypass retrieving
+	// globally.
+	failpoint.Inject("sqlDigestRetrieverSkipRetrieveGlobal", func() {
+		failpoint.Return(nil)
+	})
+
+	var unknownDigests []interface{}
+	for k, v := range r.SQLDigestsMap {
+		if len(v) == 0 {
+			unknownDigests = append(unknownDigests, k)
+		}
+	}
+
+	if len(unknownDigests) == 0 {
+		return nil
+	}
+
+	var queryResult map[string]string
+	if len(r.SQLDigestsMap) <= r.fetchAllLimit {
+		queryResult, err = r.runFetchDigestQuery(ctx, sctx, true, unknownDigests)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	} else {
+		queryResult, err = r.runFetchDigestQuery(ctx, sctx, true, nil)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	r.updateDigestInfo(queryResult)
+	return nil
 }

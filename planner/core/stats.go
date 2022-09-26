@@ -8,26 +8,34 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package core
 
 import (
+	"context"
+	"fmt"
 	"math"
-	"sort"
+	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 func (p *basePhysicalPlan) StatsCount() float64 {
@@ -35,42 +43,42 @@ func (p *basePhysicalPlan) StatsCount() float64 {
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
-func (p *LogicalTableDual) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
+func (p *LogicalTableDual) DeriveStats(_ []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
 	if p.stats != nil {
 		return p.stats, nil
 	}
 	profile := &property.StatsInfo{
-		RowCount:    float64(p.RowCount),
-		Cardinality: make(map[int64]float64, selfSchema.Len()),
+		RowCount: float64(p.RowCount),
+		ColNDVs:  make(map[int64]float64, selfSchema.Len()),
 	}
 	for _, col := range selfSchema.Columns {
-		profile.Cardinality[col.UniqueID] = float64(p.RowCount)
+		profile.ColNDVs[col.UniqueID] = float64(p.RowCount)
 	}
 	p.stats = profile
 	return p.stats, nil
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
-func (p *LogicalMemTable) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
+func (p *LogicalMemTable) DeriveStats(_ []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
 	if p.stats != nil {
 		return p.stats, nil
 	}
 	statsTable := statistics.PseudoTable(p.TableInfo)
 	stats := &property.StatsInfo{
 		RowCount:     float64(statsTable.Count),
-		Cardinality:  make(map[int64]float64, len(p.TableInfo.Columns)),
+		ColNDVs:      make(map[int64]float64, len(p.TableInfo.Columns)),
 		HistColl:     statsTable.GenerateHistCollFromColumnInfo(p.TableInfo.Columns, p.schema.Columns),
 		StatsVersion: statistics.PseudoVersion,
 	}
 	for _, col := range selfSchema.Columns {
-		stats.Cardinality[col.UniqueID] = float64(statsTable.Count)
+		stats.ColNDVs[col.UniqueID] = float64(statsTable.Count)
 	}
 	p.stats = stats
 	return p.stats, nil
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
-func (p *LogicalShow) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
+func (p *LogicalShow) DeriveStats(_ []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
 	if p.stats != nil {
 		return p.stats, nil
 	}
@@ -81,17 +89,17 @@ func (p *LogicalShow) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 
 func getFakeStats(schema *expression.Schema) *property.StatsInfo {
 	profile := &property.StatsInfo{
-		RowCount:    1,
-		Cardinality: make(map[int64]float64, schema.Len()),
+		RowCount: 1,
+		ColNDVs:  make(map[int64]float64, schema.Len()),
 	}
 	for _, col := range schema.Columns {
-		profile.Cardinality[col.UniqueID] = 1
+		profile.ColNDVs[col.UniqueID] = 1
 	}
 	return profile
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
-func (p *LogicalShowDDLJobs) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
+func (p *LogicalShowDDLJobs) DeriveStats(_ []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
 	if p.stats != nil {
 		return p.stats, nil
 	}
@@ -131,7 +139,7 @@ func (p *baseLogicalPlan) ExtractColGroups(_ [][]*expression.Column) [][]*expres
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
-func (p *baseLogicalPlan) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
+func (p *baseLogicalPlan) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
 	if len(childStats) == 1 {
 		p.stats = childStats[0]
 		return p.stats, nil
@@ -144,11 +152,11 @@ func (p *baseLogicalPlan) DeriveStats(childStats []*property.StatsInfo, selfSche
 		return p.stats, nil
 	}
 	profile := &property.StatsInfo{
-		RowCount:    float64(1),
-		Cardinality: make(map[int64]float64, selfSchema.Len()),
+		RowCount: float64(1),
+		ColNDVs:  make(map[int64]float64, selfSchema.Len()),
 	}
 	for _, col := range selfSchema.Columns {
-		profile.Cardinality[col.UniqueID] = 1
+		profile.ColNDVs[col.UniqueID] = 1
 	}
 	p.stats = profile
 	return profile, nil
@@ -185,9 +193,7 @@ func (ds *DataSource) getGroupNDVs(colGroups [][]*expression.Column) []property.
 		}
 		idxCols := make([]int64, colsLen)
 		copy(idxCols, tbl.Idx2ColumnIDs[idxID])
-		sort.Slice(idxCols, func(i, j int) bool {
-			return idxCols[i] < idxCols[j]
-		})
+		slices.Sort(idxCols)
 		for _, g := range colGroups {
 			// We only want those exact matches.
 			if len(g) != colsLen {
@@ -221,11 +227,11 @@ func (ds *DataSource) initStats(colGroups [][]*expression.Column) {
 		return
 	}
 	if ds.statisticTable == nil {
-		ds.statisticTable = getStatsTable(ds.ctx, ds.tableInfo, ds.table.Meta().ID)
+		ds.statisticTable = getStatsTable(ds.ctx, ds.tableInfo, ds.physicalTableID)
 	}
 	tableStats := &property.StatsInfo{
 		RowCount:     float64(ds.statisticTable.Count),
-		Cardinality:  make(map[int64]float64, ds.schema.Len()),
+		ColNDVs:      make(map[int64]float64, ds.schema.Len()),
 		HistColl:     ds.statisticTable.GenerateHistCollFromColumnInfo(ds.Columns, ds.schema.Columns),
 		StatsVersion: ds.statisticTable.Version,
 	}
@@ -233,7 +239,7 @@ func (ds *DataSource) initStats(colGroups [][]*expression.Column) {
 		tableStats.StatsVersion = statistics.PseudoVersion
 	}
 	for _, col := range ds.schema.Columns {
-		tableStats.Cardinality[col.UniqueID] = ds.getColumnNDV(col.ID)
+		tableStats.ColNDVs[col.UniqueID] = ds.getColumnNDV(col.ID)
 	}
 	ds.tableStats = tableStats
 	ds.tableStats.GroupNDVs = ds.getGroupNDVs(colGroups)
@@ -248,13 +254,130 @@ func (ds *DataSource) deriveStatsByFilter(conds expression.CNFExprs, filledPaths
 	}
 	stats := ds.tableStats.Scale(selectivity)
 	if ds.ctx.GetSessionVars().OptimizerSelectivityLevel >= 1 {
-		stats.HistColl = stats.HistColl.NewHistCollBySelectivity(ds.ctx.GetSessionVars().StmtCtx, nodes)
+		stats.HistColl = stats.HistColl.NewHistCollBySelectivity(ds.ctx, nodes)
 	}
 	return stats
 }
 
+// We bind logic of derivePathStats and tryHeuristics together. When some path matches the heuristic rule, we don't need
+// to derive stats of subsequent paths. In this way we can save unnecessary computation of derivePathStats.
+func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
+	uniqueIdxsWithDoubleScan := make([]*util.AccessPath, 0, len(ds.possibleAccessPaths))
+	singleScanIdxs := make([]*util.AccessPath, 0, len(ds.possibleAccessPaths))
+	var (
+		selected, uniqueBest, refinedBest *util.AccessPath
+		isRefinedPath                     bool
+	)
+	for _, path := range ds.possibleAccessPaths {
+		if path.IsTablePath() {
+			err := ds.deriveTablePathStats(path, ds.pushedDownConds, false)
+			if err != nil {
+				return err
+			}
+			path.IsSingleScan = true
+		} else {
+			ds.deriveIndexPathStats(path, ds.pushedDownConds, false)
+			path.IsSingleScan = ds.isCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo)
+		}
+		// Try some heuristic rules to select access path.
+		if len(path.Ranges) == 0 {
+			selected = path
+			break
+		}
+		if path.OnlyPointRange(ds.SCtx()) {
+			if path.IsTablePath() || path.Index.Unique {
+				if path.IsSingleScan {
+					selected = path
+					break
+				}
+				uniqueIdxsWithDoubleScan = append(uniqueIdxsWithDoubleScan, path)
+			}
+		} else if path.IsSingleScan {
+			singleScanIdxs = append(singleScanIdxs, path)
+		}
+	}
+	if selected == nil && len(uniqueIdxsWithDoubleScan) > 0 {
+		uniqueIdxAccessCols := make([]util.Col2Len, 0, len(uniqueIdxsWithDoubleScan))
+		for _, uniqueIdx := range uniqueIdxsWithDoubleScan {
+			uniqueIdxAccessCols = append(uniqueIdxAccessCols, uniqueIdx.GetCol2LenFromAccessConds())
+			// Find the unique index with the minimal number of ranges as `uniqueBest`.
+			if uniqueBest == nil || len(uniqueIdx.Ranges) < len(uniqueBest.Ranges) {
+				uniqueBest = uniqueIdx
+			}
+		}
+		// `uniqueBest` may not always be the best.
+		// ```
+		// create table t(a int, b int, c int, unique index idx_b(b), index idx_b_c(b, c));
+		// select b, c from t where b = 5 and c > 10;
+		// ```
+		// In the case, `uniqueBest` is `idx_b`. However, `idx_b_c` is better than `idx_b`.
+		// Hence, for each index in `singleScanIdxs`, we check whether it is better than some index in `uniqueIdxsWithDoubleScan`.
+		// If yes, the index is a refined one. We find the refined index with the minimal number of ranges as `refineBest`.
+		for _, singleScanIdx := range singleScanIdxs {
+			col2Len := singleScanIdx.GetCol2LenFromAccessConds()
+			for _, uniqueIdxCol2Len := range uniqueIdxAccessCols {
+				accessResult, comparable1 := util.CompareCol2Len(col2Len, uniqueIdxCol2Len)
+				if comparable1 && accessResult == 1 {
+					if refinedBest == nil || len(singleScanIdx.Ranges) < len(refinedBest.Ranges) {
+						refinedBest = singleScanIdx
+					}
+				}
+			}
+		}
+		// `refineBest` may not always be better than `uniqueBest`.
+		// ```
+		// create table t(a int, b int, c int, d int, unique index idx_a(a), unique index idx_b_c(b, c), unique index idx_b_c_a_d(b, c, a, d));
+		// select a, b, c from t where a = 1 and b = 2 and c in (1, 2, 3, 4, 5);
+		// ```
+		// In the case, `refinedBest` is `idx_b_c_a_d` and `uniqueBest` is `a`. `idx_b_c_a_d` needs to access five points while `idx_a`
+		// only needs one point access and one table access.
+		// Hence we should compare `len(refinedBest.Ranges)` and `2*len(uniqueBest.Ranges)` to select the better one.
+		if refinedBest != nil && (uniqueBest == nil || len(refinedBest.Ranges) < 2*len(uniqueBest.Ranges)) {
+			selected = refinedBest
+			isRefinedPath = true
+		} else {
+			selected = uniqueBest
+		}
+	}
+	// If some path matches a heuristic rule, just remove other possible paths
+	if selected != nil {
+		ds.possibleAccessPaths[0] = selected
+		ds.possibleAccessPaths = ds.possibleAccessPaths[:1]
+		if ds.ctx.GetSessionVars().StmtCtx.InVerboseExplain {
+			var tableName string
+			if ds.TableAsName.O == "" {
+				tableName = ds.tableInfo.Name.O
+			} else {
+				tableName = ds.TableAsName.O
+			}
+			if selected.IsTablePath() {
+				// TODO: primary key / handle / real name?
+				ds.ctx.GetSessionVars().StmtCtx.AppendNote(fmt.Errorf("handle of %s is selected since the path only has point ranges", tableName))
+			} else {
+				var sb strings.Builder
+				if selected.Index.Unique {
+					sb.WriteString("unique ")
+				}
+				sb.WriteString(fmt.Sprintf("index %s of %s is selected since the path", selected.Index.Name.O, tableName))
+				if isRefinedPath {
+					sb.WriteString(" only fetches limited number of rows")
+				} else {
+					sb.WriteString(" only has point ranges")
+				}
+				if selected.IsSingleScan {
+					sb.WriteString(" with single scan")
+				} else {
+					sb.WriteString(" with double scan")
+				}
+				ds.ctx.GetSessionVars().StmtCtx.AppendNote(errors.New(sb.String()))
+			}
+		}
+	}
+	return nil
+}
+
 // DeriveStats implement LogicalPlan DeriveStats interface.
-func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, colGroups [][]*expression.Column) (*property.StatsInfo, error) {
+func (ds *DataSource) DeriveStats(_ []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema, colGroups [][]*expression.Column) (*property.StatsInfo, error) {
 	if ds.stats != nil && len(colGroups) == 0 {
 		return ds.stats, nil
 	}
@@ -278,45 +401,29 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 			return nil, err
 		}
 	}
+	// TODO: Can we move ds.deriveStatsByFilter after pruning by heuristics? In this way some computation can be avoided
+	// when ds.possibleAccessPaths are pruned.
 	ds.stats = ds.deriveStatsByFilter(ds.pushedDownConds, ds.possibleAccessPaths)
-	for _, path := range ds.possibleAccessPaths {
-		if path.IsTablePath() {
-			noIntervalRanges, err := ds.deriveTablePathStats(path, ds.pushedDownConds, false)
-			if err != nil {
-				return nil, err
-			}
-			// If we have point or empty range, just remove other possible paths.
-			if noIntervalRanges || len(path.Ranges) == 0 {
-				ds.possibleAccessPaths[0] = path
-				ds.possibleAccessPaths = ds.possibleAccessPaths[:1]
-				ds.ctx.GetSessionVars().StmtCtx.OptimDependOnMutableConst = true
-				break
-			}
-			continue
-		}
-		noIntervalRanges := ds.deriveIndexPathStats(path, ds.pushedDownConds, false)
-		// If we have empty range, or point range on unique index, just remove other possible paths.
-		if (noIntervalRanges && path.Index.Unique) || len(path.Ranges) == 0 {
-			ds.possibleAccessPaths[0] = path
-			ds.possibleAccessPaths = ds.possibleAccessPaths[:1]
-			ds.ctx.GetSessionVars().StmtCtx.OptimDependOnMutableConst = true
-			break
-		}
-	}
-
-	// TODO: implement UnionScan + IndexMerge
-	isReadOnlyTxn := true
-	txn, err := ds.ctx.Txn(false)
+	err := ds.derivePathStatsAndTryHeuristics()
 	if err != nil {
 		return nil, err
 	}
-	if txn.Valid() && !txn.IsReadOnly() {
-		isReadOnlyTxn = false
-	}
+
 	// Consider the IndexMergePath. Now, we just generate `IndexMergePath` in DNF case.
-	isPossibleIdxMerge := len(ds.pushedDownConds) > 0 && len(ds.possibleAccessPaths) > 1
-	sessionAndStmtPermission := (ds.ctx.GetSessionVars().GetEnableIndexMerge() || len(ds.indexMergeHints) > 0) && !ds.ctx.GetSessionVars().StmtCtx.NoIndexMergeHint
-	// If there is an index path, we current do not consider `IndexMergePath`.
+	// Use allConds instread of pushedDownConds,
+	// because we want to use IndexMerge even if some expr cannot be pushed to TiKV.
+	// We will create new Selection for exprs that cannot be pushed in convertToIndexMergeScan.
+	indexMergeConds := make([]expression.Expression, 0, len(ds.allConds))
+	for _, expr := range ds.allConds {
+		indexMergeConds = append(indexMergeConds, expression.PushDownNot(ds.ctx, expr))
+	}
+
+	stmtCtx := ds.ctx.GetSessionVars().StmtCtx
+	isPossibleIdxMerge := len(indexMergeConds) > 0 && len(ds.possibleAccessPaths) > 1
+	sessionAndStmtPermission := (ds.ctx.GetSessionVars().GetEnableIndexMerge() || len(ds.indexMergeHints) > 0) && !stmtCtx.NoIndexMergeHint
+	// We current do not consider `IndexMergePath`:
+	// 1. If there is an index path.
+	// 2. TODO: If there exists exprs that cannot be pushed down. This is to avoid wrongly estRow of Selection added by rule_predicate_push_down.
 	needConsiderIndexMerge := true
 	if len(ds.indexMergeHints) == 0 {
 		for i := 1; i < len(ds.possibleAccessPaths); i++ {
@@ -325,22 +432,42 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 				break
 			}
 		}
+		if needConsiderIndexMerge {
+			// PushDownExprs() will append extra warnings, which is annoying. So we reset warnings here.
+			warnings := stmtCtx.GetWarnings()
+			_, remaining := expression.PushDownExprs(stmtCtx, indexMergeConds, ds.ctx.GetClient(), kv.UnSpecified)
+			stmtCtx.SetWarnings(warnings)
+			if len(remaining) != 0 {
+				needConsiderIndexMerge = false
+			}
+		}
 	}
-	if isPossibleIdxMerge && sessionAndStmtPermission && needConsiderIndexMerge && isReadOnlyTxn {
-		err := ds.generateAndPruneIndexMergePath(ds.indexMergeHints != nil)
+
+	if isPossibleIdxMerge && sessionAndStmtPermission && needConsiderIndexMerge && ds.tableInfo.TempTableType != model.TempTableLocal {
+		err := ds.generateAndPruneIndexMergePath(indexMergeConds, ds.indexMergeHints != nil)
 		if err != nil {
 			return nil, err
 		}
 	} else if len(ds.indexMergeHints) > 0 {
 		ds.indexMergeHints = nil
-		ds.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("IndexMerge is inapplicable or disabled"))
+		var msg string
+		if !isPossibleIdxMerge {
+			msg = "No available filter or available index."
+		} else if !sessionAndStmtPermission {
+			msg = "Got no_index_merge hint or tidb_enable_index_merge is off."
+		} else if ds.tableInfo.TempTableType == model.TempTableLocal {
+			msg = "Cannot use IndexMerge on temporary table."
+		}
+		msg = fmt.Sprintf("IndexMerge is inapplicable or disabled. %s", msg)
+		stmtCtx.AppendWarning(errors.Errorf(msg))
+		logutil.BgLogger().Debug(msg)
 	}
 	return ds.stats, nil
 }
 
-func (ds *DataSource) generateAndPruneIndexMergePath(needPrune bool) error {
+func (ds *DataSource) generateAndPruneIndexMergePath(indexMergeConds []expression.Expression, needPrune bool) error {
 	regularPathCount := len(ds.possibleAccessPaths)
-	err := ds.generateIndexMergeOrPaths()
+	err := ds.generateIndexMergeOrPaths(indexMergeConds)
 	if err != nil {
 		return err
 	}
@@ -351,18 +478,28 @@ func (ds *DataSource) generateAndPruneIndexMergePath(needPrune bool) error {
 	// With hints and without generated IndexMerge paths
 	if regularPathCount == len(ds.possibleAccessPaths) {
 		ds.indexMergeHints = nil
-		ds.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("IndexMerge is inapplicable or disabled"))
+		ds.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("IndexMerge is inapplicable"))
 		return nil
 	}
 	// Do not need to consider the regular paths in find_best_task().
+	// So we can use index merge's row count as DataSource's row count.
 	if needPrune {
 		ds.possibleAccessPaths = ds.possibleAccessPaths[regularPathCount:]
+		minRowCount := ds.possibleAccessPaths[0].CountAfterAccess
+		for _, path := range ds.possibleAccessPaths {
+			if minRowCount < path.CountAfterAccess {
+				minRowCount = path.CountAfterAccess
+			}
+		}
+		if ds.stats.RowCount > minRowCount {
+			ds.stats = ds.tableStats.ScaleByExpectCnt(minRowCount)
+		}
 	}
 	return nil
 }
 
 // DeriveStats implements LogicalPlan DeriveStats interface.
-func (ts *LogicalTableScan) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, _ [][]*expression.Column) (_ *property.StatsInfo, err error) {
+func (ts *LogicalTableScan) DeriveStats(_ []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (_ *property.StatsInfo, err error) {
 	ts.Source.initStats(nil)
 	// PushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
 	for i, expr := range ts.AccessConds {
@@ -371,16 +508,16 @@ func (ts *LogicalTableScan) DeriveStats(childStats []*property.StatsInfo, selfSc
 		ts.AccessConds[i] = expression.PushDownNot(ts.ctx, expr)
 	}
 	ts.stats = ts.Source.deriveStatsByFilter(ts.AccessConds, nil)
-	sc := ts.SCtx().GetSessionVars().StmtCtx
 	// ts.Handle could be nil if PK is Handle, and PK column has been pruned.
 	// TODO: support clustered index.
 	if ts.HandleCols != nil {
-		ts.Ranges, err = ranger.BuildTableRange(ts.AccessConds, sc, ts.HandleCols.GetCol(0).RetType)
+		// TODO: restrict mem usage of table ranges.
+		ts.Ranges, _, _, err = ranger.BuildTableRange(ts.AccessConds, ts.ctx, ts.HandleCols.GetCol(0).RetType, 0)
 	} else {
 		isUnsigned := false
 		if ts.Source.tableInfo.PKIsHandle {
 			if pkColInfo := ts.Source.tableInfo.GetPkColInfo(); pkColInfo != nil {
-				isUnsigned = mysql.HasUnsignedFlag(pkColInfo.Flag)
+				isUnsigned = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
 			}
 		}
 		ts.Ranges = ranger.FullIntRange(isUnsigned)
@@ -392,7 +529,7 @@ func (ts *LogicalTableScan) DeriveStats(childStats []*property.StatsInfo, selfSc
 }
 
 // DeriveStats implements LogicalPlan DeriveStats interface.
-func (is *LogicalIndexScan) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
+func (is *LogicalIndexScan) DeriveStats(_ []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
 	is.Source.initStats(nil)
 	for i, expr := range is.AccessConds {
 		is.AccessConds[i] = expression.PushDownNot(is.ctx, expr)
@@ -405,7 +542,7 @@ func (is *LogicalIndexScan) DeriveStats(childStats []*property.StatsInfo, selfSc
 	is.FullIdxCols, is.FullIdxColLens = expression.IndexInfo2Cols(is.Columns, selfSchema.Columns, is.Index)
 	if !is.Index.Unique && !is.Index.Primary && len(is.Index.Columns) == len(is.IdxCols) {
 		handleCol := is.getPKIsHandleCol(selfSchema)
-		if handleCol != nil && !mysql.HasUnsignedFlag(handleCol.RetType.Flag) {
+		if handleCol != nil && !mysql.HasUnsignedFlag(handleCol.RetType.GetFlag()) {
 			is.IdxCols = append(is.IdxCols, handleCol)
 			is.IdxColLens = append(is.IdxColLens, types.UnspecifiedLength)
 		}
@@ -414,9 +551,9 @@ func (is *LogicalIndexScan) DeriveStats(childStats []*property.StatsInfo, selfSc
 }
 
 // getIndexMergeOrPath generates all possible IndexMergeOrPaths.
-func (ds *DataSource) generateIndexMergeOrPaths() error {
+func (ds *DataSource) generateIndexMergeOrPaths(filters []expression.Expression) error {
 	usedIndexCount := len(ds.possibleAccessPaths)
-	for i, cond := range ds.pushedDownConds {
+	for i, cond := range filters {
 		sf, ok := cond.(*expression.ScalarFunction)
 		if !ok || sf.FuncName.L != ast.LogicOr {
 			continue
@@ -452,7 +589,7 @@ func (ds *DataSource) generateIndexMergeOrPaths() error {
 			continue
 		}
 		if len(partialPaths) > 1 {
-			possiblePath := ds.buildIndexMergeOrPath(partialPaths, i)
+			possiblePath := ds.buildIndexMergeOrPath(filters, partialPaths, i)
 			if possiblePath == nil {
 				return nil
 			}
@@ -488,7 +625,7 @@ func (ds *DataSource) isInIndexMergeHints(name string) bool {
 			return true
 		}
 		for _, hintName := range hint.indexHint.IndexNames {
-			if name == hintName.String() {
+			if strings.EqualFold(strings.ToLower(name), strings.ToLower(hintName.String())) {
 				return true
 			}
 		}
@@ -511,24 +648,29 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 			} else {
 				path.IsIntHandlePath = true
 			}
-			noIntervalRanges, err := ds.deriveTablePathStats(path, conditions, true)
+			err := ds.deriveTablePathStats(path, conditions, true)
 			if err != nil {
 				logutil.BgLogger().Debug("can not derive statistics of a path", zap.Error(err))
 				continue
 			}
+			var unsignedIntHandle bool
+			if path.IsIntHandlePath && ds.tableInfo.PKIsHandle {
+				if pkColInfo := ds.tableInfo.GetPkColInfo(); pkColInfo != nil {
+					unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
+				}
+			}
 			// If the path contains a full range, ignore it.
-			if ranger.HasFullRange(path.Ranges) {
+			if ranger.HasFullRange(path.Ranges, unsignedIntHandle) {
 				continue
 			}
 			// If we have point or empty range, just remove other possible paths.
-			if noIntervalRanges || len(path.Ranges) == 0 {
+			if len(path.Ranges) == 0 || path.OnlyPointRange(ds.SCtx()) {
 				if len(results) == 0 {
 					results = append(results, path)
 				} else {
 					results[0] = path
 					results = results[:1]
 				}
-				ds.ctx.GetSessionVars().StmtCtx.OptimDependOnMutableConst = true
 				break
 			}
 		} else {
@@ -541,20 +683,19 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 				logutil.BgLogger().Debug("can not derive statistics of a path", zap.Error(err))
 				continue
 			}
-			noIntervalRanges := ds.deriveIndexPathStats(path, conditions, true)
+			ds.deriveIndexPathStats(path, conditions, true)
 			// If the path contains a full range, ignore it.
-			if ranger.HasFullRange(path.Ranges) {
+			if ranger.HasFullRange(path.Ranges, false) {
 				continue
 			}
 			// If we have empty range, or point range on unique index, just remove other possible paths.
-			if (noIntervalRanges && path.Index.Unique) || len(path.Ranges) == 0 {
+			if len(path.Ranges) == 0 || (path.OnlyPointRange(ds.SCtx()) && path.Index.Unique) {
 				if len(results) == 0 {
 					results = append(results, path)
 				} else {
 					results[0] = path
 					results = results[:1]
 				}
-				ds.ctx.GetSessionVars().StmtCtx.OptimDependOnMutableConst = true
 				break
 			}
 		}
@@ -586,22 +727,35 @@ func (ds *DataSource) buildIndexMergePartialPath(indexAccessPaths []*util.Access
 }
 
 // buildIndexMergeOrPath generates one possible IndexMergePath.
-func (ds *DataSource) buildIndexMergeOrPath(partialPaths []*util.AccessPath, current int) *util.AccessPath {
+func (ds *DataSource) buildIndexMergeOrPath(filters []expression.Expression, partialPaths []*util.AccessPath, current int) *util.AccessPath {
 	indexMergePath := &util.AccessPath{PartialIndexPaths: partialPaths}
-	indexMergePath.TableFilters = append(indexMergePath.TableFilters, ds.pushedDownConds[:current]...)
-	indexMergePath.TableFilters = append(indexMergePath.TableFilters, ds.pushedDownConds[current+1:]...)
+	indexMergePath.TableFilters = append(indexMergePath.TableFilters, filters[:current]...)
+	indexMergePath.TableFilters = append(indexMergePath.TableFilters, filters[current+1:]...)
+	var addCurrentFilter bool
 	for _, path := range partialPaths {
 		// If any partial path contains table filters, we need to keep the whole DNF filter in the Selection.
 		if len(path.TableFilters) > 0 {
-			indexMergePath.TableFilters = append(indexMergePath.TableFilters, ds.pushedDownConds[current])
-			break
+			addCurrentFilter = true
 		}
+		// If any partial path's index filter cannot be pushed to TiKV, we should keep the whole DNF filter.
+		if len(path.IndexFilters) != 0 && !expression.CanExprsPushDown(ds.ctx.GetSessionVars().StmtCtx, path.IndexFilters, ds.ctx.GetClient(), kv.TiKV) {
+			addCurrentFilter = true
+			// Clear IndexFilter, the whole filter will be put in indexMergePath.TableFilters.
+			path.IndexFilters = nil
+		}
+		if len(path.TableFilters) != 0 && !expression.CanExprsPushDown(ds.ctx.GetSessionVars().StmtCtx, path.TableFilters, ds.ctx.GetClient(), kv.TiKV) {
+			addCurrentFilter = true
+			path.TableFilters = nil
+		}
+	}
+	if addCurrentFilter {
+		indexMergePath.TableFilters = append(indexMergePath.TableFilters, filters[current])
 	}
 	return indexMergePath
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
-func (p *LogicalSelection) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
+func (p *LogicalSelection) DeriveStats(childStats []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
 	if p.stats != nil {
 		return p.stats, nil
 	}
@@ -611,17 +765,17 @@ func (p *LogicalSelection) DeriveStats(childStats []*property.StatsInfo, selfSch
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
-func (p *LogicalUnionAll) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
+func (p *LogicalUnionAll) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
 	if p.stats != nil {
 		return p.stats, nil
 	}
 	p.stats = &property.StatsInfo{
-		Cardinality: make(map[int64]float64, selfSchema.Len()),
+		ColNDVs: make(map[int64]float64, selfSchema.Len()),
 	}
 	for _, childProfile := range childStats {
 		p.stats.RowCount += childProfile.RowCount
 		for _, col := range selfSchema.Columns {
-			p.stats.Cardinality[col.UniqueID] += childProfile.Cardinality[col.UniqueID]
+			p.stats.ColNDVs[col.UniqueID] += childProfile.ColNDVs[col.UniqueID]
 		}
 	}
 	return p.stats, nil
@@ -629,17 +783,17 @@ func (p *LogicalUnionAll) DeriveStats(childStats []*property.StatsInfo, selfSche
 
 func deriveLimitStats(childProfile *property.StatsInfo, limitCount float64) *property.StatsInfo {
 	stats := &property.StatsInfo{
-		RowCount:    math.Min(limitCount, childProfile.RowCount),
-		Cardinality: make(map[int64]float64, len(childProfile.Cardinality)),
+		RowCount: math.Min(limitCount, childProfile.RowCount),
+		ColNDVs:  make(map[int64]float64, len(childProfile.ColNDVs)),
 	}
-	for id, c := range childProfile.Cardinality {
-		stats.Cardinality[id] = math.Min(c, stats.RowCount)
+	for id, c := range childProfile.ColNDVs {
+		stats.ColNDVs[id] = math.Min(c, stats.RowCount)
 	}
 	return stats
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
-func (p *LogicalLimit) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
+func (p *LogicalLimit) DeriveStats(childStats []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
 	if p.stats != nil {
 		return p.stats, nil
 	}
@@ -648,7 +802,7 @@ func (p *LogicalLimit) DeriveStats(childStats []*property.StatsInfo, selfSchema 
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
-func (lt *LogicalTopN) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
+func (lt *LogicalTopN) DeriveStats(childStats []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
 	if lt.stats != nil {
 		return lt.stats, nil
 	}
@@ -679,25 +833,25 @@ func getGroupNDV4Cols(cols []*expression.Column, stats *property.StatsInfo) *pro
 	return nil
 }
 
-// getCardinality returns the Cardinality of a couple of columns.
-// If the columns match any GroupNDV maintained by child operator, we can get an accurate cardinality.
-// Otherwise, we simply return the max cardinality among the columns, which is a lower bound.
-func getCardinality(cols []*expression.Column, schema *expression.Schema, profile *property.StatsInfo) float64 {
-	cardinality := 1.0
+// getColsNDVWithMatchedLen returns the NDV of a couple of columns.
+// If the columns match any GroupNDV maintained by child operator, we can get an accurate NDV.
+// Otherwise, we simply return the max NDV among the columns, which is a lower bound.
+func getColsNDVWithMatchedLen(cols []*expression.Column, schema *expression.Schema, profile *property.StatsInfo) (float64, int) {
+	NDV := 1.0
 	if groupNDV := getGroupNDV4Cols(cols, profile); groupNDV != nil {
-		return math.Max(groupNDV.NDV, cardinality)
+		return math.Max(groupNDV.NDV, NDV), len(groupNDV.Cols)
 	}
 	indices := schema.ColumnsIndices(cols)
 	if indices == nil {
 		logutil.BgLogger().Error("column not found in schema", zap.Any("columns", cols), zap.String("schema", schema.String()))
-		return cardinality
+		return NDV, 1
 	}
 	for _, idx := range indices {
 		// It is a very naive estimation.
 		col := schema.Columns[idx]
-		cardinality = math.Max(cardinality, profile.Cardinality[col.UniqueID])
+		NDV = math.Max(NDV, profile.ColNDVs[col.UniqueID])
 	}
-	return cardinality
+	return NDV, 1
 }
 
 func (p *LogicalProjection) getGroupNDVs(colGroups [][]*expression.Column, childProfile *property.StatsInfo, selfSchema *expression.Schema) []property.GroupNDV {
@@ -726,9 +880,7 @@ func (p *LogicalProjection) getGroupNDVs(colGroups [][]*expression.Column, child
 		if projCols == nil {
 			continue
 		}
-		sort.Slice(projCols, func(i, j int) bool {
-			return projCols[i] < projCols[j]
-		})
+		slices.Sort(projCols)
 		groupNDV := property.GroupNDV{
 			Cols: projCols,
 			NDV:  childGroupNDV.NDV,
@@ -747,12 +899,12 @@ func (p *LogicalProjection) DeriveStats(childStats []*property.StatsInfo, selfSc
 		return p.stats, nil
 	}
 	p.stats = &property.StatsInfo{
-		RowCount:    childProfile.RowCount,
-		Cardinality: make(map[int64]float64, len(p.Exprs)),
+		RowCount: childProfile.RowCount,
+		ColNDVs:  make(map[int64]float64, len(p.Exprs)),
 	}
 	for i, expr := range p.Exprs {
 		cols := expression.ExtractColumns(expr)
-		p.stats.Cardinality[selfSchema.Columns[i].UniqueID] = getCardinality(cols, childSchema[0], childProfile)
+		p.stats.ColNDVs[selfSchema.Columns[i].UniqueID], _ = getColsNDVWithMatchedLen(cols, childSchema[0], childProfile)
 	}
 	p.stats.GroupNDVs = p.getGroupNDVs(colGroups, childProfile, selfSchema)
 	return p.stats, nil
@@ -793,7 +945,7 @@ func (la *LogicalAggregation) getGroupNDVs(colGroups [][]*expression.Column, chi
 	}
 	// Check if the child profile provides GroupNDV for the GROUP BY columns.
 	// Note that gbyCols may not be the exact GROUP BY columns, e.g, GROUP BY a+b,
-	// but we have no other approaches for the cardinality estimation of these cases
+	// but we have no other approaches for the NDV estimation of these cases
 	// except for using the independent assumption, unless we can use stats of expression index.
 	groupNDV := getGroupNDV4Cols(gbyCols, childProfile)
 	if groupNDV == nil {
@@ -815,14 +967,14 @@ func (la *LogicalAggregation) DeriveStats(childStats []*property.StatsInfo, self
 		la.stats.GroupNDVs = la.getGroupNDVs(colGroups, childProfile, gbyCols)
 		return la.stats, nil
 	}
-	cardinality := getCardinality(gbyCols, childSchema[0], childProfile)
+	NDV, _ := getColsNDVWithMatchedLen(gbyCols, childSchema[0], childProfile)
 	la.stats = &property.StatsInfo{
-		RowCount:    cardinality,
-		Cardinality: make(map[int64]float64, selfSchema.Len()),
+		RowCount: NDV,
+		ColNDVs:  make(map[int64]float64, selfSchema.Len()),
 	}
-	// We cannot estimate the Cardinality for every output, so we use a conservative strategy.
+	// We cannot estimate the ColNDVs for every output, so we use a conservative strategy.
 	for _, col := range selfSchema.Columns {
-		la.stats.Cardinality[col.UniqueID] = cardinality
+		la.stats.ColNDVs[col.UniqueID] = NDV
 	}
 	la.inputCount = childProfile.RowCount
 	la.stats.GroupNDVs = la.getGroupNDVs(colGroups, childProfile, gbyCols)
@@ -834,7 +986,7 @@ func (la *LogicalAggregation) ExtractColGroups(_ [][]*expression.Column) [][]*ex
 	// Parent colGroups would be dicarded, because aggregation would make NDV of colGroups
 	// which does not match GroupByItems invalid.
 	// Note that gbyCols may not be the exact GROUP BY columns, e.g, GROUP BY a+b,
-	// but we have no other approaches for the cardinality estimation of these cases
+	// but we have no other approaches for the NDV estimation of these cases
 	// except for using the independent assumption, unless we can use stats of expression index.
 	gbyCols := make([]*expression.Column, 0, len(la.GroupByItems))
 	for _, gbyExpr := range la.GroupByItems {
@@ -862,9 +1014,9 @@ func (p *LogicalJoin) getGroupNDVs(colGroups [][]*expression.Column, childStats 
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
 // If the type of join is SemiJoin, the selectivity of it will be same as selection's.
-// If the type of join is LeftOuterSemiJoin, it will not add or remove any row. The last column is a boolean value, whose Cardinality should be two.
+// If the type of join is LeftOuterSemiJoin, it will not add or remove any row. The last column is a boolean value, whose NDV should be two.
 // If the type of join is inner/outer join, the output of join(s, t) should be N(s) * N(t) / (V(s.key) * V(t.key)) * Min(s.key, t.key).
-// N(s) stands for the number of rows in relation s. V(s.key) means the Cardinality of join key in s.
+// N(s) stands for the number of rows in relation s. V(s.key) means the NDV of join key in s.
 // This is a quite simple strategy: We assume every bucket of relation which will participate join has the same number of rows, and apply cross join for
 // every matched bucket.
 func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, colGroups [][]*expression.Column) (*property.StatsInfo, error) {
@@ -876,6 +1028,7 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 	leftProfile, rightProfile := childStats[0], childStats[1]
 	leftJoinKeys, rightJoinKeys, _, _ := p.GetJoinKeys()
 	helper := &fullJoinRowCountHelper{
+		sctx:          p.SCtx(),
 		cartesian:     0 == len(p.EqualConditions),
 		leftProfile:   leftProfile,
 		rightProfile:  rightProfile,
@@ -887,23 +1040,23 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 	p.equalCondOutCnt = helper.estimate()
 	if p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
 		p.stats = &property.StatsInfo{
-			RowCount:    leftProfile.RowCount * SelectionFactor,
-			Cardinality: make(map[int64]float64, len(leftProfile.Cardinality)),
+			RowCount: leftProfile.RowCount * SelectionFactor,
+			ColNDVs:  make(map[int64]float64, len(leftProfile.ColNDVs)),
 		}
-		for id, c := range leftProfile.Cardinality {
-			p.stats.Cardinality[id] = c * SelectionFactor
+		for id, c := range leftProfile.ColNDVs {
+			p.stats.ColNDVs[id] = c * SelectionFactor
 		}
 		return p.stats, nil
 	}
 	if p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
 		p.stats = &property.StatsInfo{
-			RowCount:    leftProfile.RowCount,
-			Cardinality: make(map[int64]float64, selfSchema.Len()),
+			RowCount: leftProfile.RowCount,
+			ColNDVs:  make(map[int64]float64, selfSchema.Len()),
 		}
-		for id, c := range leftProfile.Cardinality {
-			p.stats.Cardinality[id] = c
+		for id, c := range leftProfile.ColNDVs {
+			p.stats.ColNDVs[id] = c
 		}
-		p.stats.Cardinality[selfSchema.Columns[selfSchema.Len()-1].UniqueID] = 2.0
+		p.stats.ColNDVs[selfSchema.Columns[selfSchema.Len()-1].UniqueID] = 2.0
 		p.stats.GroupNDVs = p.getGroupNDVs(colGroups, childStats)
 		return p.stats, nil
 	}
@@ -913,16 +1066,16 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 	} else if p.JoinType == RightOuterJoin {
 		count = math.Max(count, rightProfile.RowCount)
 	}
-	cardinality := make(map[int64]float64, selfSchema.Len())
-	for id, c := range leftProfile.Cardinality {
-		cardinality[id] = math.Min(c, count)
+	colNDVs := make(map[int64]float64, selfSchema.Len())
+	for id, c := range leftProfile.ColNDVs {
+		colNDVs[id] = math.Min(c, count)
 	}
-	for id, c := range rightProfile.Cardinality {
-		cardinality[id] = math.Min(c, count)
+	for id, c := range rightProfile.ColNDVs {
+		colNDVs[id] = math.Min(c, count)
 	}
 	p.stats = &property.StatsInfo{
-		RowCount:    count,
-		Cardinality: cardinality,
+		RowCount: count,
+		ColNDVs:  colNDVs,
 	}
 	p.stats.GroupNDVs = p.getGroupNDVs(colGroups, childStats)
 	return p.stats, nil
@@ -955,6 +1108,7 @@ func (p *LogicalJoin) ExtractColGroups(colGroups [][]*expression.Column) [][]*ex
 }
 
 type fullJoinRowCountHelper struct {
+	sctx          sessionctx.Context
 	cartesian     bool
 	leftProfile   *property.StatsInfo
 	rightProfile  *property.StatsInfo
@@ -962,16 +1116,31 @@ type fullJoinRowCountHelper struct {
 	rightJoinKeys []*expression.Column
 	leftSchema    *expression.Schema
 	rightSchema   *expression.Schema
+
+	leftNAJoinKeys  []*expression.Column
+	rightNAJoinKeys []*expression.Column
 }
 
 func (h *fullJoinRowCountHelper) estimate() float64 {
 	if h.cartesian {
 		return h.leftProfile.RowCount * h.rightProfile.RowCount
 	}
-	leftKeyCardinality := getCardinality(h.leftJoinKeys, h.leftSchema, h.leftProfile)
-	rightKeyCardinality := getCardinality(h.rightJoinKeys, h.rightSchema, h.rightProfile)
-	count := h.leftProfile.RowCount * h.rightProfile.RowCount / math.Max(leftKeyCardinality, rightKeyCardinality)
-	return count
+	var leftKeyNDV, rightKeyNDV float64
+	var leftColCnt, rightColCnt int
+	if len(h.leftJoinKeys) > 0 || len(h.rightJoinKeys) > 0 {
+		leftKeyNDV, leftColCnt = getColsNDVWithMatchedLen(h.leftJoinKeys, h.leftSchema, h.leftProfile)
+		rightKeyNDV, rightColCnt = getColsNDVWithMatchedLen(h.rightJoinKeys, h.rightSchema, h.rightProfile)
+	} else {
+		leftKeyNDV, leftColCnt = getColsNDVWithMatchedLen(h.leftNAJoinKeys, h.leftSchema, h.leftProfile)
+		rightKeyNDV, rightColCnt = getColsNDVWithMatchedLen(h.rightNAJoinKeys, h.rightSchema, h.rightProfile)
+	}
+	count := h.leftProfile.RowCount * h.rightProfile.RowCount / math.Max(leftKeyNDV, rightKeyNDV)
+	if h.sctx.GetSessionVars().TiDBOptJoinReorderThreshold <= 0 {
+		return count
+	}
+	// If we enable the DP choice, we multiple the 0.9 for each remained join key supposing that 0.9 is the correlation factor between them.
+	// This estimation logic is referred to Presto.
+	return count * math.Pow(0.9, float64(len(h.leftJoinKeys)-mathutil.Max(leftColCnt, rightColCnt)))
 }
 
 func (la *LogicalApply) getGroupNDVs(colGroups [][]*expression.Column, childStats []*property.StatsInfo) []property.GroupNDV {
@@ -990,17 +1159,17 @@ func (la *LogicalApply) DeriveStats(childStats []*property.StatsInfo, selfSchema
 	}
 	leftProfile := childStats[0]
 	la.stats = &property.StatsInfo{
-		RowCount:    leftProfile.RowCount,
-		Cardinality: make(map[int64]float64, selfSchema.Len()),
+		RowCount: leftProfile.RowCount,
+		ColNDVs:  make(map[int64]float64, selfSchema.Len()),
 	}
-	for id, c := range leftProfile.Cardinality {
-		la.stats.Cardinality[id] = c
+	for id, c := range leftProfile.ColNDVs {
+		la.stats.ColNDVs[id] = c
 	}
 	if la.JoinType == LeftOuterSemiJoin || la.JoinType == AntiLeftOuterSemiJoin {
-		la.stats.Cardinality[selfSchema.Columns[selfSchema.Len()-1].UniqueID] = 2.0
+		la.stats.ColNDVs[selfSchema.Columns[selfSchema.Len()-1].UniqueID] = 2.0
 	} else {
 		for i := childSchema[0].Len(); i < selfSchema.Len(); i++ {
-			la.stats.Cardinality[selfSchema.Columns[i].UniqueID] = leftProfile.RowCount
+			la.stats.ColNDVs[selfSchema.Columns[i].UniqueID] = leftProfile.RowCount
 		}
 	}
 	la.stats.GroupNDVs = la.getGroupNDVs(colGroups, childStats)
@@ -1031,17 +1200,17 @@ func (la *LogicalApply) ExtractColGroups(colGroups [][]*expression.Column) [][]*
 // Exists and MaxOneRow produce at most one row, so we set the RowCount of stats one.
 func getSingletonStats(schema *expression.Schema) *property.StatsInfo {
 	ret := &property.StatsInfo{
-		RowCount:    1.0,
-		Cardinality: make(map[int64]float64, schema.Len()),
+		RowCount: 1.0,
+		ColNDVs:  make(map[int64]float64, schema.Len()),
 	}
 	for _, col := range schema.Columns {
-		ret.Cardinality[col.UniqueID] = 1
+		ret.ColNDVs[col.UniqueID] = 1
 	}
 	return ret
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
-func (p *LogicalMaxOneRow) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
+func (p *LogicalMaxOneRow) DeriveStats(_ []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
 	if p.stats != nil {
 		return p.stats, nil
 	}
@@ -1057,7 +1226,7 @@ func (p *LogicalWindow) getGroupNDVs(colGroups [][]*expression.Column, childStat
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
-func (p *LogicalWindow) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, colGroups [][]*expression.Column) (*property.StatsInfo, error) {
+func (p *LogicalWindow) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, colGroups [][]*expression.Column) (*property.StatsInfo, error) {
 	if p.stats != nil {
 		// Reload GroupNDVs since colGroups may have changed.
 		p.stats.GroupNDVs = p.getGroupNDVs(colGroups, childStats)
@@ -1065,16 +1234,16 @@ func (p *LogicalWindow) DeriveStats(childStats []*property.StatsInfo, selfSchema
 	}
 	childProfile := childStats[0]
 	p.stats = &property.StatsInfo{
-		RowCount:    childProfile.RowCount,
-		Cardinality: make(map[int64]float64, selfSchema.Len()),
+		RowCount: childProfile.RowCount,
+		ColNDVs:  make(map[int64]float64, selfSchema.Len()),
 	}
 	childLen := selfSchema.Len() - len(p.WindowFuncDescs)
 	for i := 0; i < childLen; i++ {
 		id := selfSchema.Columns[i].UniqueID
-		p.stats.Cardinality[id] = childProfile.Cardinality[id]
+		p.stats.ColNDVs[id] = childProfile.ColNDVs[id]
 	}
 	for i := childLen; i < selfSchema.Len(); i++ {
-		p.stats.Cardinality[selfSchema.Columns[i].UniqueID] = childProfile.RowCount
+		p.stats.ColNDVs[selfSchema.Columns[i].UniqueID] = childProfile.RowCount
 	}
 	p.stats.GroupNDVs = p.getGroupNDVs(colGroups, childStats)
 	return p.stats, nil
@@ -1095,4 +1264,63 @@ func (p *LogicalWindow) ExtractColGroups(colGroups [][]*expression.Column) [][]*
 		extracted[i] = colGroups[offset]
 	}
 	return extracted
+}
+
+// DeriveStats implement LogicalPlan DeriveStats interface.
+func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
+	if p.stats != nil {
+		return p.stats, nil
+	}
+
+	var err error
+	if p.cte.seedPartPhysicalPlan == nil {
+		// Build push-downed predicates.
+		if len(p.cte.pushDownPredicates) > 0 {
+			newCond := expression.ComposeDNFCondition(p.ctx, p.cte.pushDownPredicates...)
+			newSel := LogicalSelection{Conditions: []expression.Expression{newCond}}.Init(p.SCtx(), p.cte.seedPartLogicalPlan.SelectBlockOffset())
+			newSel.SetChildren(p.cte.seedPartLogicalPlan)
+			p.cte.seedPartLogicalPlan = newSel
+		}
+		p.cte.seedPartPhysicalPlan, _, err = DoOptimize(context.TODO(), p.ctx, p.cte.optFlag, p.cte.seedPartLogicalPlan)
+		if err != nil {
+			return nil, err
+		}
+	}
+	resStat := p.cte.seedPartPhysicalPlan.Stats()
+	// Changing the pointer so that seedStat in LogicalCTETable can get the new stat.
+	*p.seedStat = *resStat
+	p.stats = &property.StatsInfo{
+		RowCount: resStat.RowCount,
+		ColNDVs:  make(map[int64]float64, selfSchema.Len()),
+	}
+	for i, col := range selfSchema.Columns {
+		p.stats.ColNDVs[col.UniqueID] += resStat.ColNDVs[p.cte.seedPartLogicalPlan.Schema().Columns[i].UniqueID]
+	}
+	if p.cte.recursivePartLogicalPlan != nil {
+		if p.cte.recursivePartPhysicalPlan == nil {
+			p.cte.recursivePartPhysicalPlan, _, err = DoOptimize(context.TODO(), p.ctx, p.cte.optFlag, p.cte.recursivePartLogicalPlan)
+			if err != nil {
+				return nil, err
+			}
+		}
+		recurStat := p.cte.recursivePartPhysicalPlan.Stats()
+		for i, col := range selfSchema.Columns {
+			p.stats.ColNDVs[col.UniqueID] += recurStat.ColNDVs[p.cte.recursivePartLogicalPlan.Schema().Columns[i].UniqueID]
+		}
+		if p.cte.IsDistinct {
+			p.stats.RowCount, _ = getColsNDVWithMatchedLen(p.schema.Columns, p.schema, p.stats)
+		} else {
+			p.stats.RowCount += recurStat.RowCount
+		}
+	}
+	return p.stats, nil
+}
+
+// DeriveStats implement LogicalPlan DeriveStats interface.
+func (p *LogicalCTETable) DeriveStats(_ []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
+	if p.stats != nil {
+		return p.stats, nil
+	}
+	p.stats = p.seedStat
+	return p.stats, nil
 }

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -33,14 +34,18 @@ var (
 
 // EncodeBytes guarantees the encoded value is in ascending order for comparison,
 // encoding with the following rule:
-//  [group1][marker1]...[groupN][markerN]
-//  group is 8 bytes slice which is padding with 0.
-//  marker is `0xFF - padding 0 count`
+//
+//	[group1][marker1]...[groupN][markerN]
+//	group is 8 bytes slice which is padding with 0.
+//	marker is `0xFF - padding 0 count`
+//
 // For example:
-//   [] -> [0, 0, 0, 0, 0, 0, 0, 0, 247]
-//   [1, 2, 3] -> [1, 2, 3, 0, 0, 0, 0, 0, 250]
-//   [1, 2, 3, 0] -> [1, 2, 3, 0, 0, 0, 0, 0, 251]
-//   [1, 2, 3, 4, 5, 6, 7, 8] -> [1, 2, 3, 4, 5, 6, 7, 8, 255, 0, 0, 0, 0, 0, 0, 0, 0, 247]
+//
+//	[] -> [0, 0, 0, 0, 0, 0, 0, 0, 247]
+//	[1, 2, 3] -> [1, 2, 3, 0, 0, 0, 0, 0, 250]
+//	[1, 2, 3, 0] -> [1, 2, 3, 0, 0, 0, 0, 0, 251]
+//	[1, 2, 3, 4, 5, 6, 7, 8] -> [1, 2, 3, 4, 5, 6, 7, 8, 255, 0, 0, 0, 0, 0, 0, 0, 0, 247]
+//
 // Refer: https://github.com/facebook/mysql-5.6/wiki/MyRocks-record-format#memcomparable-format
 func EncodeBytes(b []byte, data []byte) []byte {
 	// Allocate more space to avoid unnecessary slice growing.
@@ -65,6 +70,14 @@ func EncodeBytes(b []byte, data []byte) []byte {
 	}
 
 	return result
+}
+
+// EncodeBytesExt is an extension of `EncodeBytes`, which will not encode for `isRawKv = true` but just append `data` to `b`.
+func EncodeBytesExt(b []byte, data []byte, isRawKv bool) []byte {
+	if isRawKv {
+		return append(b, data...)
+	}
+	return EncodeBytes(b, data)
 }
 
 // EncodedBytesLength returns the length of data after encoded
@@ -160,7 +173,7 @@ func DecodeCompactBytes(b []byte) ([]byte, []byte, error) {
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	if int64(len(b)) < n {
+	if n < 0 || int64(len(b)) < n {
 		return nil, nil, errors.Errorf("insufficient bytes to decode value, expected length: %v", n)
 	}
 	return b[n:], b[:n], nil

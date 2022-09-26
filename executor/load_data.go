@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -23,10 +24,10 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -57,10 +58,7 @@ func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if !e.IsLocal {
 		return errors.New("Load Data: don't support load data without local field")
 	}
-	// TODO: support load data with replace field.
-	if e.OnDuplicate == ast.OnDuplicateKeyHandlingReplace {
-		return errors.New("Load Data: don't support load data with replace field")
-	}
+	e.loadDataInfo.OnDuplicate = e.OnDuplicate
 	// TODO: support lines terminated is "".
 	if len(e.loadDataInfo.LinesInfo.Terminated) == 0 {
 		return errors.New("Load Data: don't support load data terminated is nil")
@@ -122,12 +120,43 @@ type LoadDataInfo struct {
 	commitTaskQueue chan CommitTask
 	StopCh          chan struct{}
 	QuitCh          chan struct{}
+	OnDuplicate     ast.OnDuplicateKeyHandlingType
 }
 
 // FieldMapping inticates the relationship between input field and table column or user variable
 type FieldMapping struct {
 	Column  *table.Column
 	UserVar *ast.VariableExpr
+}
+
+// reorderColumns reorder the e.insertColumns according to the order of columnNames
+// Note: We must ensure there must be one-to-one mapping between e.insertColumns and columnNames in terms of column name.
+func (e *LoadDataInfo) reorderColumns(columnNames []string) error {
+	cols := e.insertColumns
+
+	if len(cols) != len(columnNames) {
+		return ErrColumnsNotMatched
+	}
+
+	reorderedColumns := make([]*table.Column, len(cols))
+
+	if columnNames == nil {
+		return nil
+	}
+
+	mapping := make(map[string]int)
+	for idx, colName := range columnNames {
+		mapping[strings.ToLower(colName)] = idx
+	}
+
+	for _, col := range cols {
+		idx := mapping[col.Name.L]
+		reorderedColumns[idx] = col
+	}
+
+	e.insertColumns = reorderedColumns
+
+	return nil
 }
 
 // initLoadColumns sets columns which the input fields loaded to.
@@ -156,12 +185,19 @@ func (e *LoadDataInfo) initLoadColumns(columnNames []string) error {
 		}
 		if col.Name.L == model.ExtraHandleName.L {
 			if !e.ctx.GetSessionVars().AllowWriteRowID {
-				return errors.Errorf("load data statement for _tidb_rowid are not supported.")
+				return errors.Errorf("load data statement for _tidb_rowid are not supported")
 			}
 			e.hasExtraHandle = true
 			break
 		}
 	}
+
+	// e.insertColumns is appended according to the original tables' column sequence.
+	// We have to reorder it to follow the use-specified column order which is shown in the columnNames.
+	if err = e.reorderColumns(columnNames); err != nil {
+		return err
+	}
+
 	e.rowLen = len(e.insertColumns)
 	// Check column whether is specified only once.
 	err = table.CheckOnce(cols)
@@ -362,65 +398,20 @@ func (e *LoadDataInfo) SetMaxRowsInBatch(limit uint64) {
 	e.curBatchCnt = 0
 }
 
-// getValidData returns prevData and curData that starts from starting symbol.
-// If the data doesn't have starting symbol, prevData is nil and curData is curData[len(curData)-startingLen+1:].
-// If curData size less than startingLen, curData is returned directly.
-func (e *LoadDataInfo) getValidData(prevData, curData []byte) ([]byte, []byte) {
-	startingLen := len(e.LinesInfo.Starting)
-	if startingLen == 0 {
-		return prevData, curData
-	}
-
-	prevLen := len(prevData)
-	if prevLen > 0 {
-		// starting symbol in the prevData
-		idx := strings.Index(string(hack.String(prevData)), e.LinesInfo.Starting)
-		if idx != -1 {
-			return prevData[idx:], curData
-		}
-
-		// starting symbol in the middle of prevData and curData
-		restStart := curData
-		if len(curData) >= startingLen {
-			restStart = curData[:startingLen-1]
-		}
-		prevData = append(prevData, restStart...)
-		idx = strings.Index(string(hack.String(prevData)), e.LinesInfo.Starting)
-		if idx != -1 {
-			return prevData[idx:prevLen], curData
-		}
-	}
-
-	// starting symbol in the curData
+// getValidData returns curData that starts from starting symbol.
+// If the data doesn't have starting symbol, return curData[len(curData)-startingLen+1:] and false.
+func (e *LoadDataInfo) getValidData(curData []byte) ([]byte, bool) {
 	idx := strings.Index(string(hack.String(curData)), e.LinesInfo.Starting)
-	if idx != -1 {
-		return nil, curData[idx:]
+	if idx == -1 {
+		return curData[len(curData)-len(e.LinesInfo.Starting)+1:], false
 	}
 
-	// no starting symbol
-	if len(curData) >= startingLen {
-		curData = curData[len(curData)-startingLen+1:]
-	}
-	return nil, curData
-}
-
-func (e *LoadDataInfo) isInQuoter(bs []byte) bool {
-	inQuoter := false
-	for i := 0; i < len(bs); i++ {
-		switch bs[i] {
-		case e.FieldsInfo.Enclosed:
-			inQuoter = !inQuoter
-		case e.FieldsInfo.Escaped:
-			i++
-		default:
-		}
-	}
-	return inQuoter
+	return curData[idx:], true
 }
 
 // indexOfTerminator return index of terminator, if not, return -1.
 // normally, the field terminator and line terminator is short, so we just use brute force algorithm.
-func (e *LoadDataInfo) indexOfTerminator(bs []byte, isInQuoter bool) int {
+func (e *LoadDataInfo) indexOfTerminator(bs []byte) int {
 	fieldTerm := []byte(e.FieldsInfo.Terminated)
 	fieldTermLen := len(fieldTerm)
 	lineTerm := []byte(e.LinesInfo.Terminated)
@@ -461,15 +452,13 @@ func (e *LoadDataInfo) indexOfTerminator(bs []byte, isInQuoter bool) int {
 	inQuoter := false
 loop:
 	for i := 0; i < len(bs); i++ {
-		if atFieldStart && bs[i] == e.FieldsInfo.Enclosed {
-			if !isInQuoter {
-				inQuoter = true
-			}
+		if atFieldStart && e.FieldsInfo.Enclosed != byte(0) && bs[i] == e.FieldsInfo.Enclosed {
+			inQuoter = !inQuoter
 			atFieldStart = false
 			continue
 		}
 		restLen := len(bs) - i - 1
-		if inQuoter && bs[i] == e.FieldsInfo.Enclosed {
+		if inQuoter && e.FieldsInfo.Enclosed != byte(0) && bs[i] == e.FieldsInfo.Enclosed {
 			// look ahead to see if it is end of line or field.
 			switch cmpTerm(restLen, bs[i+1:]) {
 			case lineTermType:
@@ -507,67 +496,32 @@ loop:
 // getLine returns a line, curData, the next data start index and a bool value.
 // If it has starting symbol the bool is true, otherwise is false.
 func (e *LoadDataInfo) getLine(prevData, curData []byte, ignore bool) ([]byte, []byte, bool) {
-	startingLen := len(e.LinesInfo.Starting)
-	prevData, curData = e.getValidData(prevData, curData)
-	if prevData == nil && len(curData) < startingLen {
-		return nil, curData, false
-	}
-	inquotor := e.isInQuoter(prevData)
-	prevLen := len(prevData)
-	terminatedLen := len(e.LinesInfo.Terminated)
-	curStartIdx := 0
-	if prevLen < startingLen {
-		curStartIdx = startingLen - prevLen
-	}
-	endIdx := -1
-	if len(curData) >= curStartIdx {
-		if ignore {
-			endIdx = strings.Index(string(hack.String(curData[curStartIdx:])), e.LinesInfo.Terminated)
-		} else {
-			endIdx = e.indexOfTerminator(curData[curStartIdx:], inquotor)
-		}
-	}
-	if endIdx == -1 {
-		// no terminated symbol
-		if len(prevData) == 0 {
-			return nil, curData, true
-		}
-
-		// terminated symbol in the middle of prevData and curData
+	if prevData != nil {
 		curData = append(prevData, curData...)
-		if ignore {
-			endIdx = strings.Index(string(hack.String(curData[startingLen:])), e.LinesInfo.Terminated)
-		} else {
-			endIdx = e.indexOfTerminator(curData[startingLen:], inquotor)
+	}
+	startLen := len(e.LinesInfo.Starting)
+	if startLen != 0 {
+		if len(curData) < startLen {
+			return nil, curData, false
 		}
-		if endIdx != -1 {
-			nextDataIdx := startingLen + endIdx + terminatedLen
-			return curData[startingLen : startingLen+endIdx], curData[nextDataIdx:], true
+		var ok bool
+		curData, ok = e.getValidData(curData)
+		if !ok {
+			return nil, curData, false
 		}
-		// no terminated symbol
+	}
+	var endIdx int
+	if ignore {
+		endIdx = strings.Index(string(hack.String(curData[startLen:])), e.LinesInfo.Terminated)
+	} else {
+		endIdx = e.indexOfTerminator(curData[startLen:])
+	}
+
+	if endIdx == -1 {
 		return nil, curData, true
 	}
 
-	// terminated symbol in the curData
-	nextDataIdx := curStartIdx + endIdx + terminatedLen
-	if len(prevData) == 0 {
-		return curData[curStartIdx : curStartIdx+endIdx], curData[nextDataIdx:], true
-	}
-
-	// terminated symbol in the curData
-	prevData = append(prevData, curData[:nextDataIdx]...)
-	if ignore {
-		endIdx = strings.Index(string(hack.String(prevData[startingLen:])), e.LinesInfo.Terminated)
-	} else {
-		endIdx = e.indexOfTerminator(prevData[startingLen:], inquotor)
-	}
-	if endIdx >= prevLen {
-		return prevData[startingLen : startingLen+endIdx], curData[nextDataIdx:], true
-	}
-
-	// terminated symbol in the middle of prevData and curData
-	lineLen := startingLen + endIdx + terminatedLen
-	return prevData[startingLen : startingLen+endIdx], curData[lineLen-prevLen:], true
+	return curData[startLen : startLen+endIdx], curData[startLen+endIdx+len(e.LinesInfo.Terminated):], true
 }
 
 // InsertData inserts data into specified table according to the specified format.
@@ -642,7 +596,13 @@ func (e *LoadDataInfo) CheckAndInsertOneBatch(ctx context.Context, rows [][]type
 		return err
 	}
 	e.ctx.GetSessionVars().StmtCtx.AddRecordRows(cnt)
-	err = e.batchCheckAndInsert(ctx, rows[0:cnt], e.addRecordLD)
+
+	replace := false
+	if e.OnDuplicate == ast.OnDuplicateKeyHandlingReplace {
+		replace = true
+	}
+
+	err = e.batchCheckAndInsert(ctx, rows[0:cnt], e.addRecordLD, replace)
 	if err != nil {
 		return err
 	}
@@ -654,7 +614,7 @@ func (e *LoadDataInfo) CheckAndInsertOneBatch(ctx context.Context, rows [][]type
 func (e *LoadDataInfo) SetMessage() {
 	stmtCtx := e.ctx.GetSessionVars().StmtCtx
 	numRecords := stmtCtx.RecordRows()
-	numDeletes := 0
+	numDeletes := stmtCtx.DeletedRows()
 	numSkipped := numRecords - stmtCtx.CopiedRows()
 	numWarnings := stmtCtx.WarningCount()
 	msg := fmt.Sprintf(mysql.MySQLErrName[mysql.ErrLoadInfo].Raw, numRecords, numDeletes, numSkipped, numWarnings)
@@ -663,18 +623,25 @@ func (e *LoadDataInfo) SetMessage() {
 
 func (e *LoadDataInfo) colsToRow(ctx context.Context, cols []field) []types.Datum {
 	row := make([]types.Datum, 0, len(e.insertColumns))
+	sessionVars := e.Ctx.GetSessionVars()
+	setVar := func(name string, col *field) {
+		if col == nil || col.isNull() {
+			sessionVars.UnsetUserVar(name)
+		} else {
+			sessionVars.SetStringUserVar(name, string(col.str), mysql.DefaultCollationName)
+		}
+	}
 
 	for i := 0; i < len(e.FieldMappings); i++ {
 		if i >= len(cols) {
 			if e.FieldMappings[i].Column == nil {
-				sessionVars := e.Ctx.GetSessionVars()
-				sessionVars.SetUserVar(e.FieldMappings[i].UserVar.Name, "", mysql.DefaultCollationName)
+				setVar(e.FieldMappings[i].UserVar.Name, nil)
 				continue
 			}
 
 			// If some columns is missing and their type is time and has not null flag, they should be set as current time.
-			if types.IsTypeTime(e.FieldMappings[i].Column.Tp) && mysql.HasNotNullFlag(e.FieldMappings[i].Column.Flag) {
-				row = append(row, types.NewTimeDatum(types.CurrentTime(e.FieldMappings[i].Column.Tp)))
+			if types.IsTypeTime(e.FieldMappings[i].Column.GetType()) && mysql.HasNotNullFlag(e.FieldMappings[i].Column.GetFlag()) {
+				row = append(row, types.NewTimeDatum(types.CurrentTime(e.FieldMappings[i].Column.GetType())))
 				continue
 			}
 
@@ -683,14 +650,11 @@ func (e *LoadDataInfo) colsToRow(ctx context.Context, cols []field) []types.Datu
 		}
 
 		if e.FieldMappings[i].Column == nil {
-			sessionVars := e.Ctx.GetSessionVars()
-			sessionVars.SetUserVar(e.FieldMappings[i].UserVar.Name, string(cols[i].str), mysql.DefaultCollationName)
+			setVar(e.FieldMappings[i].UserVar.Name, &cols[i])
 			continue
 		}
 
-		// The field with only "\N" in it is handled as NULL in the csv file.
-		// See http://dev.mysql.com/doc/refman/5.7/en/load-data.html
-		if cols[i].maybeNull && string(cols[i].str) == "N" {
+		if cols[i].isNull() {
 			row = append(row, types.NewDatum(nil))
 			continue
 		}
@@ -733,6 +697,12 @@ type field struct {
 	str       []byte
 	maybeNull bool
 	enclosed  bool
+}
+
+func (f *field) isNull() bool {
+	// The field with only "\N" in it is handled as NULL in the csv file.
+	// See http://dev.mysql.com/doc/refman/5.7/en/load-data.html
+	return f.maybeNull && len(f.str) == 1 && f.str[0] == 'N'
 }
 
 type fieldWriter struct {

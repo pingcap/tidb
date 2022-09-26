@@ -47,7 +47,7 @@
         "SQL": "select a+1,b+2 from t1 use index(b) where b=3",
         "Plan": [
           " Projection         root plus(test.t1.a, ?), plus(test.t1.b, ?)",
-          " └─IndexReader      root index:IndexRangeScan_5",
+          " └─IndexReader      root index:IndexRangeScan",
           "   └─IndexRangeScan cop  table:t1, index:b(b), range:[?,?], keep order:false"
         ]
       },
@@ -259,10 +259,11 @@
     "Name": "TestNormalizedPlanForDiffStore",
     "Cases": [
       {
-        "Digest": "f970a867275a8e8878e3b0a7960a3d15e7fecda7cf31957ba2624b0afd91ddee",
+        "Digest": "2cb2b27afb3aec316c4ee9af4cefbc25495ce42fe560933acb713c95829857c9",
         "Plan": [
-          " TableReader     root         ",
-          " └─TableFullScan cop[tiflash] table:t1, range:[?,?], keep order:false"
+          " TableReader       root         ",
+          " └─ExchangeSender  cop[tiflash] ",
+          "   └─TableFullScan cop[tiflash] table:t1, range:[?,?], keep order:false"
         ]
       },
       {
@@ -273,12 +274,13 @@
         ]
       },
       {
-        "Digest": "35da54afee3417b46607d9d836b9e3aea3a450537980d65abedda63498298784",
+        "Digest": "5fc0a796273b90410acda281d59ff137547ace7422739f9b1dbf90ded8cb836c",
         "Plan": [
-          " Projection          root         plus(test.t1.a, test.t1.b)",
-          " └─TableReader       root         ",
-          "   └─Selection       cop[tiflash] lt(plus(test.t1.a, test.t1.b), ?)",
-          "     └─TableFullScan cop[tiflash] table:t1, range:[?,?], keep order:false"
+          " TableReader           root         ",
+          " └─ExchangeSender      cop[tiflash] ",
+          "   └─Projection        cop[tiflash] plus(test.t1.a, test.t1.b)",
+          "     └─Selection       cop[tiflash] lt(plus(test.t1.a, test.t1.b), ?)",
+          "       └─TableFullScan cop[tiflash] table:t1, range:[?,?], keep order:false"
         ]
       },
       {

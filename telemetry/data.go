@@ -8,14 +8,17 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package telemetry
 
 import (
+	"context"
 	"time"
 
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 )
 
@@ -30,21 +33,22 @@ type telemetryData struct {
 	SlowQueryStats     *slowQueryStats         `json:"slowQueryStats"`
 }
 
-func generateTelemetryData(ctx sessionctx.Context, trackingID string) telemetryData {
+func generateTelemetryData(sctx sessionctx.Context, trackingID string) telemetryData {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTelemetry)
 	r := telemetryData{
 		ReportTimestamp: time.Now().Unix(),
 		TrackingID:      trackingID,
 	}
-	if h, err := getClusterHardware(ctx); err == nil {
+	if h, err := getClusterHardware(ctx, sctx); err == nil {
 		r.Hardware = h
 	}
-	if i, err := getClusterInfo(ctx); err == nil {
+	if i, err := getClusterInfo(ctx, sctx); err == nil {
 		r.Instances = i
 	}
-	if f, err := getFeatureUsage(ctx); err == nil {
+	if f, err := getFeatureUsage(ctx, sctx); err == nil {
 		r.FeatureUsage = f
 	}
-	if s, err := getSlowQueryStats(ctx); err == nil {
+	if s, err := getSlowQueryStats(); err == nil {
 		r.SlowQueryStats = s
 	}
 
@@ -56,5 +60,18 @@ func generateTelemetryData(ctx sessionctx.Context, trackingID string) telemetryD
 func postReportTelemetryData() {
 	postReportTxnUsage()
 	postReportCTEUsage()
+	postReportAccountLockUsage()
+	postReportMultiSchemaChangeUsage()
+	postReportExchangePartitionUsage()
+	postReportTablePartitionUsage()
 	postReportSlowQueryStats()
+	postReportNonTransactionalCounter()
+	PostSavepointCount()
+	postReportLazyPessimisticUniqueCheckSetCount()
+	postReportDDLUsage()
+}
+
+// PostReportTelemetryDataForTest is for test.
+func PostReportTelemetryDataForTest() {
+	postReportTablePartitionUsage()
 }

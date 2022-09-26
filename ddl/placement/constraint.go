@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -80,8 +81,17 @@ func NewConstraint(label string) (Constraint, error) {
 
 	r.Key = key
 	r.Op = op
-	r.Values = []string{val}
+	r.Values = strings.Split(val, ",")
 	return r, nil
+}
+
+// NewConstraintDirect will create a Constraint from argument directly.
+func NewConstraintDirect(key string, op ConstraintOp, val ...string) Constraint {
+	return Constraint{
+		Key:    key,
+		Op:     op,
+		Values: val,
+	}
 }
 
 // Restore converts a Constraint to a string.

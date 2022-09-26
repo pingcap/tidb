@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,17 +17,17 @@ package profile
 import (
 	"fmt"
 	"math"
-	"sort"
 
 	"github.com/google/pprof/profile"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/texttree"
+	"golang.org/x/exp/slices"
 )
 
 type flamegraphNode struct {
-	cumValue int64
 	children map[uint64]*flamegraphNode
 	name     string
+	cumValue int64
 }
 
 func newFlamegraphNode() *flamegraphNode {
@@ -77,21 +78,6 @@ func (n *flamegraphNode) add(sample *profile.Sample) {
 	}
 }
 
-// collectFuncUsage collect the value by given function name
-func (n *flamegraphNode) collectFuncUsage(name string) int64 {
-	if n.name == name {
-		return n.cumValue
-	}
-	if len(n.children) == 0 {
-		return 0
-	}
-	var usage int64 = 0
-	for _, child := range n.children {
-		usage = child.collectFuncUsage(name) + usage
-	}
-	return usage
-}
-
 type flamegraphNodeWithLocation struct {
 	*flamegraphNode
 	locID uint64
@@ -107,20 +93,19 @@ func (n *flamegraphNode) sortedChildren() []flamegraphNodeWithLocation {
 			locID:          locID,
 		})
 	}
-	sort.Slice(children, func(i, j int) bool {
-		a, b := children[i], children[j]
-		if a.cumValue != b.cumValue {
-			return a.cumValue > b.cumValue
+	slices.SortFunc(children, func(i, j flamegraphNodeWithLocation) bool {
+		if i.cumValue != j.cumValue {
+			return i.cumValue > j.cumValue
 		}
-		return a.locID < b.locID
+		return i.locID < j.locID
 	})
 
 	return children
 }
 
 type flamegraphCollector struct {
-	rows      [][]types.Datum
 	locations map[uint64]*profile.Location
+	rows      [][]types.Datum
 	total     int64
 	rootChild int
 }

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -24,7 +25,7 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/mysql"
 	"go.uber.org/zap"
 )
 
@@ -85,7 +86,7 @@ func nextInt64Value(column *column, min int64, max int64) int64 {
 }
 
 func intToDecimalString(intValue int64, decimal int) string {
-	data := fmt.Sprintf("%d", intValue)
+	data := strconv.FormatInt(intValue, 10)
 
 	// add leading zero
 	if len(data) < decimal {
@@ -116,7 +117,7 @@ func genRowDatas(table *table, count int) ([]string, error) {
 }
 
 func genRowData(table *table) (string, error) {
-	var values []byte
+	var values []byte //nolint: prealloc
 	for _, column := range table.columns {
 		data, err := genColumnData(table, column)
 		if err != nil {
@@ -131,6 +132,7 @@ func genRowData(table *table) (string, error) {
 	return sql, nil
 }
 
+// #nosec G404
 func genColumnData(table *table, column *column) (string, error) {
 	tp := column.tp
 	incremental := column.incremental
@@ -144,9 +146,9 @@ func genColumnData(table *table, column *column) (string, error) {
 	if _, ok := table.uniqIndices[column.name]; ok {
 		incremental = true
 	}
-	isUnsigned := mysql.HasUnsignedFlag(tp.Flag)
+	isUnsigned := mysql.HasUnsignedFlag(tp.GetFlag())
 
-	switch tp.Tp {
+	switch tp.GetType() {
 	case mysql.TypeTiny:
 		var data int64
 		if incremental {
@@ -214,9 +216,9 @@ func genColumnData(table *table, column *column) (string, error) {
 	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeTinyBlob, mysql.TypeBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		data := []byte{'\''}
 		if incremental {
-			data = append(data, []byte(column.data.nextString(tp.Flen))...)
+			data = append(data, []byte(column.data.nextString(tp.GetFlen()))...)
 		} else {
-			data = append(data, []byte(randStringValue(column, tp.Flen))...)
+			data = append(data, []byte(randStringValue(column, tp.GetFlen()))...)
 		}
 
 		data = append(data, '\'')
@@ -278,7 +280,7 @@ func genColumnData(table *table, column *column) (string, error) {
 		data = append(data, '\'')
 		return string(data), nil
 	case mysql.TypeNewDecimal:
-		var limit = int64(math.Pow10(tp.Flen))
+		var limit = int64(math.Pow10(tp.GetFlen()))
 		var intVal int64
 		if limit < 0 {
 			limit = math.MaxInt64
@@ -296,7 +298,7 @@ func genColumnData(table *table, column *column) (string, error) {
 				intVal = randInt64Value(column, (-limit+1)/2, (limit-1)/2)
 			}
 		}
-		return intToDecimalString(intVal, tp.Decimal), nil
+		return intToDecimalString(intVal, tp.GetDecimal()), nil
 	default:
 		return "", errors.Errorf("unsupported column type - %v", column)
 	}

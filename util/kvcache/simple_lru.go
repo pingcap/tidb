@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -51,16 +52,15 @@ func init() {
 
 // SimpleLRUCache is a simple least recently used cache, not thread-safe, use it carefully.
 type SimpleLRUCache struct {
+	elements map[string]*list.Element
+	// onEvict function will be called if any eviction happened
+	onEvict  func(Key, Value)
+	cache    *list.List
 	capacity uint
 	size     uint
 	// 0 indicates no quota
-	quota    uint64
-	guard    float64
-	elements map[string]*list.Element
-
-	// onEvict function will be called if any eviction happened
-	onEvict func(Key, Value)
-	cache   *list.List
+	quota uint64
+	guard float64
 }
 
 // NewSimpleLRUCache creates a SimpleLRUCache object, whose capacity is "capacity".
@@ -127,7 +127,7 @@ func (l *SimpleLRUCache) Put(key Key, value Value) {
 		return
 	}
 
-	memUsed, err := memory.MemUsed()
+	memUsed, err := memory.InstanceMemUsed()
 	if err != nil {
 		l.DeleteAll()
 		return
@@ -147,7 +147,7 @@ func (l *SimpleLRUCache) Put(key Key, value Value) {
 		delete(l.elements, string(lru.Value.(*cacheEntry).key.Hash()))
 		l.size--
 		if memUsed > uint64(float64(l.quota)*(1.0-l.guard)) {
-			memUsed, err = memory.MemUsed()
+			memUsed, err = memory.InstanceMemUsed()
 			if err != nil {
 				l.DeleteAll()
 				return

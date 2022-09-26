@@ -1,0 +1,11 @@
+[dn]
+CN = 127.0.0.1
+[req]
+distinguished_name = dn
+[EXT]
+subjectAltName = @alt_names
+keyUsage = digitalSignature,keyEncipherment
+extendedKeyUsage = clientAuth,serverAuth
+[alt_names]
+DNS.1 = localhost
+IP.1 = 127.0.0.1

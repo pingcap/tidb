@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,16 +17,16 @@ package util
 import (
 	"fmt"
 
-	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/parser/model"
 )
 
 // Event is an event that a ddl operation happened.
 type Event struct {
-	Tp          model.ActionType
 	TableInfo   *model.TableInfo
 	PartInfo    *model.PartitionInfo
-	ColumnInfos []*model.ColumnInfo
 	IndexInfo   *model.IndexInfo
+	ColumnInfos []*model.ColumnInfo
+	Tp          model.ActionType
 }
 
 // String implements fmt.Stringer interface.

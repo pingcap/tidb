@@ -8,22 +8,26 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package server
 
 import (
-	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"testing"
+
+	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/stretchr/testify/require"
 )
 
-func (ts *ConnTestSuite) TestParseExecArgs(c *C) {
+func TestParseExecArgs(t *testing.T) {
 	type args struct {
-		args        []types.Datum
+		args        []expression.Expression
 		boundParams [][]byte
 		nullBitmap  []byte
 		paramTypes  []byte
@@ -37,7 +41,7 @@ func (ts *ConnTestSuite) TestParseExecArgs(c *C) {
 		// Tests for int overflow
 		{
 			args{
-				make([]types.Datum, 1),
+				expression.Args2Expressions4Test(1),
 				[][]byte{nil},
 				[]byte{0x0},
 				[]byte{1, 0},
@@ -48,7 +52,7 @@ func (ts *ConnTestSuite) TestParseExecArgs(c *C) {
 		},
 		{
 			args{
-				make([]types.Datum, 1),
+				expression.Args2Expressions4Test(1),
 				[][]byte{nil},
 				[]byte{0x0},
 				[]byte{2, 0},
@@ -59,7 +63,7 @@ func (ts *ConnTestSuite) TestParseExecArgs(c *C) {
 		},
 		{
 			args{
-				make([]types.Datum, 1),
+				expression.Args2Expressions4Test(1),
 				[][]byte{nil},
 				[]byte{0x0},
 				[]byte{3, 0},
@@ -71,7 +75,7 @@ func (ts *ConnTestSuite) TestParseExecArgs(c *C) {
 		// Tests for date/datetime/timestamp
 		{
 			args{
-				make([]types.Datum, 1),
+				expression.Args2Expressions4Test(1),
 				[][]byte{nil},
 				[]byte{0x0},
 				[]byte{12, 0},
@@ -82,7 +86,7 @@ func (ts *ConnTestSuite) TestParseExecArgs(c *C) {
 		},
 		{
 			args{
-				make([]types.Datum, 1),
+				expression.Args2Expressions4Test(1),
 				[][]byte{nil},
 				[]byte{0x0},
 				[]byte{10, 0},
@@ -93,7 +97,7 @@ func (ts *ConnTestSuite) TestParseExecArgs(c *C) {
 		},
 		{
 			args{
-				make([]types.Datum, 1),
+				expression.Args2Expressions4Test(1),
 				[][]byte{nil},
 				[]byte{0x0},
 				[]byte{7, 0},
@@ -104,7 +108,7 @@ func (ts *ConnTestSuite) TestParseExecArgs(c *C) {
 		},
 		{
 			args{
-				make([]types.Datum, 1),
+				expression.Args2Expressions4Test(1),
 				[][]byte{nil},
 				[]byte{0x0},
 				[]byte{7, 0},
@@ -115,7 +119,7 @@ func (ts *ConnTestSuite) TestParseExecArgs(c *C) {
 		},
 		{
 			args{
-				make([]types.Datum, 1),
+				expression.Args2Expressions4Test(1),
 				[][]byte{nil},
 				[]byte{0x0},
 				[]byte{7, 0},
@@ -127,7 +131,7 @@ func (ts *ConnTestSuite) TestParseExecArgs(c *C) {
 		// Tests for time
 		{
 			args{
-				make([]types.Datum, 1),
+				expression.Args2Expressions4Test(1),
 				[][]byte{nil},
 				[]byte{0x0},
 				[]byte{11, 0},
@@ -138,7 +142,7 @@ func (ts *ConnTestSuite) TestParseExecArgs(c *C) {
 		},
 		{
 			args{
-				make([]types.Datum, 1),
+				expression.Args2Expressions4Test(1),
 				[][]byte{nil},
 				[]byte{0x0},
 				[]byte{11, 0},
@@ -149,7 +153,7 @@ func (ts *ConnTestSuite) TestParseExecArgs(c *C) {
 		},
 		{
 			args{
-				make([]types.Datum, 1),
+				expression.Args2Expressions4Test(1),
 				[][]byte{nil},
 				[]byte{0x0},
 				[]byte{11, 0},
@@ -161,7 +165,7 @@ func (ts *ConnTestSuite) TestParseExecArgs(c *C) {
 		// For error test
 		{
 			args{
-				make([]types.Datum, 1),
+				expression.Args2Expressions4Test(1),
 				[][]byte{nil},
 				[]byte{0x0},
 				[]byte{7, 0},
@@ -172,7 +176,7 @@ func (ts *ConnTestSuite) TestParseExecArgs(c *C) {
 		},
 		{
 			args{
-				make([]types.Datum, 1),
+				expression.Args2Expressions4Test(1),
 				[][]byte{nil},
 				[]byte{0x0},
 				[]byte{11, 0},
@@ -183,7 +187,7 @@ func (ts *ConnTestSuite) TestParseExecArgs(c *C) {
 		},
 		{
 			args{
-				make([]types.Datum, 1),
+				expression.Args2Expressions4Test(1),
 				[][]byte{nil},
 				[]byte{0x0},
 				[]byte{11, 0},
@@ -194,13 +198,38 @@ func (ts *ConnTestSuite) TestParseExecArgs(c *C) {
 		},
 	}
 	for _, tt := range tests {
-		err := parseExecArgs(&stmtctx.StatementContext{}, tt.args.args, tt.args.boundParams, tt.args.nullBitmap, tt.args.paramTypes, tt.args.paramValues)
-		c.Assert(terror.ErrorEqual(err, tt.err), IsTrue, Commentf("err %v", err))
-		c.Assert(tt.args.args[0].GetValue(), Equals, tt.expect)
+		err := parseExecArgs(&stmtctx.StatementContext{}, tt.args.args, tt.args.boundParams, tt.args.nullBitmap, tt.args.paramTypes, tt.args.paramValues, nil)
+		require.Truef(t, terror.ErrorEqual(err, tt.err), "err %v", err)
+		if err == nil {
+			require.Equal(t, tt.expect, tt.args.args[0].(*expression.Constant).Value.GetValue())
+		}
 	}
 }
 
-func (ts *ConnTestSuite) TestParseStmtFetchCmd(c *C) {
+func TestParseExecArgsAndEncode(t *testing.T) {
+	dt := expression.Args2Expressions4Test(1)
+	err := parseExecArgs(&stmtctx.StatementContext{},
+		dt,
+		[][]byte{nil},
+		[]byte{0x0},
+		[]byte{mysql.TypeVarchar, 0},
+		[]byte{4, 178, 226, 202, 212},
+		newInputDecoder("gbk"))
+	require.NoError(t, err)
+	require.Equal(t, "测试", dt[0].(*expression.Constant).Value.GetValue())
+
+	err = parseExecArgs(&stmtctx.StatementContext{},
+		dt,
+		[][]byte{{178, 226, 202, 212}},
+		[]byte{0x0},
+		[]byte{mysql.TypeString, 0},
+		[]byte{},
+		newInputDecoder("gbk"))
+	require.NoError(t, err)
+	require.Equal(t, "测试", dt[0].(*expression.Constant).Value.GetString())
+}
+
+func TestParseStmtFetchCmd(t *testing.T) {
 	tests := []struct {
 		arg       []byte
 		stmtID    uint32
@@ -215,10 +244,10 @@ func (ts *ConnTestSuite) TestParseStmtFetchCmd(c *C) {
 		{[]byte{}, 0, 0, mysql.ErrMalformPacket},
 	}
 
-	for _, t := range tests {
-		stmtID, fetchSize, err := parseStmtFetchCmd(t.arg)
-		c.Assert(stmtID, Equals, t.stmtID)
-		c.Assert(fetchSize, Equals, t.fetchSize)
-		c.Assert(err, Equals, t.err)
+	for _, tc := range tests {
+		stmtID, fetchSize, err := parseStmtFetchCmd(tc.arg)
+		require.Equal(t, tc.stmtID, stmtID)
+		require.Equal(t, tc.fetchSize, fetchSize)
+		require.Equal(t, tc.err, err)
 	}
 }

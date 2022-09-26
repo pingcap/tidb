@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -23,6 +24,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
@@ -166,12 +168,8 @@ func (n *metricNode) getLabelValue(label string) *metricValue {
 
 func (n *metricNode) queryRowsByLabel(pb *profileBuilder, query string, handleRowFn func(label string, v float64)) error {
 	exec := pb.sctx.(sqlexec.RestrictedSQLExecutor)
-	stmt, err := exec.ParseWithParams(context.TODO(), query)
-	if err != nil {
-		return err
-	}
-
-	rows, _, err := pb.sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedStmt(context.TODO(), stmt)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, query)
 	if err != nil {
 		return err
 	}

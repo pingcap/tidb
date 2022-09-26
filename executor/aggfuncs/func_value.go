@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,11 +17,10 @@ package aggfuncs
 import (
 	"unsafe"
 
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -189,7 +189,7 @@ func (v *value4Duration) appendResult(chk *chunk.Chunk, colIdx int) {
 }
 
 type value4JSON struct {
-	val    json.BinaryJSON
+	val    types.BinaryJSON
 	isNull bool
 }
 
@@ -210,14 +210,14 @@ func (v *value4JSON) appendResult(chk *chunk.Chunk, colIdx int) {
 
 func buildValueEvaluator(tp *types.FieldType) (ve valueEvaluator, memDelta int64) {
 	evalType := tp.EvalType()
-	if tp.Tp == mysql.TypeBit {
+	if tp.GetType() == mysql.TypeBit {
 		evalType = types.ETString
 	}
 	switch evalType {
 	case types.ETInt:
 		return &value4Int{}, DefValue4IntSize
 	case types.ETReal:
-		switch tp.Tp {
+		switch tp.GetType() {
 		case mysql.TypeFloat:
 			return &value4Float32{}, DefValue4Float32Size
 		case mysql.TypeDouble:

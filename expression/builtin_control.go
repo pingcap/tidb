@@ -8,19 +8,18 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package expression
 
 import (
-	"github.com/cznic/mathutil"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -63,53 +62,73 @@ func maxlen(lhsFlen, rhsFlen int) int {
 }
 
 // InferType4ControlFuncs infer result type for builtin IF, IFNULL, NULLIF, LEAD and LAG.
-func InferType4ControlFuncs(lexp, rexp Expression) *types.FieldType {
+func InferType4ControlFuncs(ctx sessionctx.Context, funcName string, lexp, rexp Expression) (*types.FieldType, error) {
 	lhs, rhs := lexp.GetType(), rexp.GetType()
 	resultFieldType := &types.FieldType{}
-	if lhs.Tp == mysql.TypeNull {
+	if lhs.GetType() == mysql.TypeNull {
 		*resultFieldType = *rhs
 		// If any of arg is NULL, result type need unset NotNullFlag.
-		types.SetTypeFlag(&resultFieldType.Flag, mysql.NotNullFlag, false)
+		tempFlag := resultFieldType.GetFlag()
+		types.SetTypeFlag(&tempFlag, mysql.NotNullFlag, false)
+		resultFieldType.SetFlag(tempFlag)
 		// If both arguments are NULL, make resulting type BINARY(0).
-		if rhs.Tp == mysql.TypeNull {
-			resultFieldType.Tp = mysql.TypeString
-			resultFieldType.Flen, resultFieldType.Decimal = 0, 0
+		if rhs.GetType() == mysql.TypeNull {
+			resultFieldType.SetType(mysql.TypeString)
+			resultFieldType.SetFlen(0)
+			resultFieldType.SetDecimal(0)
 			types.SetBinChsClnFlag(resultFieldType)
 		}
-	} else if rhs.Tp == mysql.TypeNull {
+	} else if rhs.GetType() == mysql.TypeNull {
 		*resultFieldType = *lhs
-		types.SetTypeFlag(&resultFieldType.Flag, mysql.NotNullFlag, false)
+		tempFlag := resultFieldType.GetFlag()
+		types.SetTypeFlag(&tempFlag, mysql.NotNullFlag, false)
+		resultFieldType.SetFlag(tempFlag)
 	} else {
 		resultFieldType = types.AggFieldType([]*types.FieldType{lhs, rhs})
-		evalType := types.AggregateEvalType([]*types.FieldType{lhs, rhs}, &resultFieldType.Flag)
+		var tempFlag uint
+		evalType := types.AggregateEvalType([]*types.FieldType{lhs, rhs}, &tempFlag)
+		resultFieldType.SetFlag(tempFlag)
 		if evalType == types.ETInt {
-			resultFieldType.Decimal = 0
+			resultFieldType.SetDecimal(0)
 		} else {
-			if lhs.Decimal == types.UnspecifiedLength || rhs.Decimal == types.UnspecifiedLength {
-				resultFieldType.Decimal = types.UnspecifiedLength
+			if lhs.GetDecimal() == types.UnspecifiedLength || rhs.GetDecimal() == types.UnspecifiedLength {
+				resultFieldType.SetDecimal(types.UnspecifiedLength)
 			} else {
-				resultFieldType.Decimal = mathutil.Max(lhs.Decimal, rhs.Decimal)
+				resultFieldType.SetDecimalUnderLimit(mathutil.Max(lhs.GetDecimal(), rhs.GetDecimal()))
 			}
 		}
+
 		if types.IsNonBinaryStr(lhs) && !types.IsBinaryStr(rhs) {
-			resultFieldType.Collate, resultFieldType.Charset, _, _ = inferCollation(lexp, rexp)
-			resultFieldType.Flag = 0
-			if mysql.HasBinaryFlag(lhs.Flag) || !types.IsNonBinaryStr(rhs) {
-				resultFieldType.Flag |= mysql.BinaryFlag
+			ec, err := CheckAndDeriveCollationFromExprs(ctx, funcName, evalType, lexp, rexp)
+			if err != nil {
+				return nil, err
+			}
+			resultFieldType.SetCollate(ec.Collation)
+			resultFieldType.SetCharset(ec.Charset)
+			resultFieldType.SetFlag(0)
+			if mysql.HasBinaryFlag(lhs.GetFlag()) || !types.IsNonBinaryStr(rhs) {
+				resultFieldType.AddFlag(mysql.BinaryFlag)
 			}
 		} else if types.IsNonBinaryStr(rhs) && !types.IsBinaryStr(lhs) {
-			resultFieldType.Collate, resultFieldType.Charset, _, _ = inferCollation(lexp, rexp)
-			resultFieldType.Flag = 0
-			if mysql.HasBinaryFlag(rhs.Flag) || !types.IsNonBinaryStr(lhs) {
-				resultFieldType.Flag |= mysql.BinaryFlag
+			ec, err := CheckAndDeriveCollationFromExprs(ctx, funcName, evalType, lexp, rexp)
+			if err != nil {
+				return nil, err
+			}
+			resultFieldType.SetCollate(ec.Collation)
+			resultFieldType.SetCharset(ec.Charset)
+			resultFieldType.SetFlag(0)
+			if mysql.HasBinaryFlag(rhs.GetFlag()) || !types.IsNonBinaryStr(lhs) {
+				resultFieldType.AddFlag(mysql.BinaryFlag)
 			}
 		} else if types.IsBinaryStr(lhs) || types.IsBinaryStr(rhs) || !evalType.IsStringKind() {
 			types.SetBinChsClnFlag(resultFieldType)
 		} else {
-			resultFieldType.Charset, resultFieldType.Collate, resultFieldType.Flag = mysql.DefaultCharset, mysql.DefaultCollationName, 0
+			resultFieldType.SetCharset(mysql.DefaultCharset)
+			resultFieldType.SetCollate(mysql.DefaultCollationName)
+			resultFieldType.SetFlag(0)
 		}
 		if evalType == types.ETDecimal || evalType == types.ETInt {
-			lhsUnsignedFlag, rhsUnsignedFlag := mysql.HasUnsignedFlag(lhs.Flag), mysql.HasUnsignedFlag(rhs.Flag)
+			lhsUnsignedFlag, rhsUnsignedFlag := mysql.HasUnsignedFlag(lhs.GetFlag()), mysql.HasUnsignedFlag(rhs.GetFlag())
 			lhsFlagLen, rhsFlagLen := 0, 0
 			if !lhsUnsignedFlag {
 				lhsFlagLen = 1
@@ -117,36 +136,38 @@ func InferType4ControlFuncs(lexp, rexp Expression) *types.FieldType {
 			if !rhsUnsignedFlag {
 				rhsFlagLen = 1
 			}
-			lhsFlen := lhs.Flen - lhsFlagLen
-			rhsFlen := rhs.Flen - rhsFlagLen
-			if lhs.Decimal != types.UnspecifiedLength {
-				lhsFlen -= lhs.Decimal
+			lhsFlen := lhs.GetFlen() - lhsFlagLen
+			rhsFlen := rhs.GetFlen() - rhsFlagLen
+			if lhs.GetDecimal() != types.UnspecifiedLength {
+				lhsFlen -= lhs.GetDecimal()
 			}
-			if lhs.Decimal != types.UnspecifiedLength {
-				rhsFlen -= rhs.Decimal
+			if lhs.GetDecimal() != types.UnspecifiedLength {
+				rhsFlen -= rhs.GetDecimal()
 			}
-			flen := maxlen(lhsFlen, rhsFlen) + resultFieldType.Decimal + 1   // account for -1 len fields
-			resultFieldType.Flen = mathutil.Min(flen, mysql.MaxDecimalWidth) // make sure it doesn't overflow
+			flen := maxlen(lhsFlen, rhsFlen) + resultFieldType.GetDecimal() + 1 // account for -1 len fields
+			resultFieldType.SetFlenUnderLimit(flen)
 		} else {
-			resultFieldType.Flen = maxlen(lhs.Flen, rhs.Flen)
+			resultFieldType.SetFlen(maxlen(lhs.GetFlen(), rhs.GetFlen()))
 		}
 	}
 	// Fix decimal for int and string.
 	resultEvalType := resultFieldType.EvalType()
 	if resultEvalType == types.ETInt {
-		resultFieldType.Decimal = 0
-		if resultFieldType.Tp == mysql.TypeEnum || resultFieldType.Tp == mysql.TypeSet {
-			resultFieldType.Tp = mysql.TypeLonglong
+		resultFieldType.SetDecimal(0)
+		if resultFieldType.GetType() == mysql.TypeEnum || resultFieldType.GetType() == mysql.TypeSet {
+			resultFieldType.SetType(mysql.TypeLonglong)
 		}
 	} else if resultEvalType == types.ETString {
-		if lhs.Tp != mysql.TypeNull || rhs.Tp != mysql.TypeNull {
-			resultFieldType.Decimal = types.UnspecifiedLength
+		if lhs.GetType() != mysql.TypeNull || rhs.GetType() != mysql.TypeNull {
+			resultFieldType.SetDecimal(types.UnspecifiedLength)
 		}
-		if resultFieldType.Tp == mysql.TypeEnum || resultFieldType.Tp == mysql.TypeSet {
-			resultFieldType.Tp = mysql.TypeVarchar
+		if resultFieldType.GetType() == mysql.TypeEnum || resultFieldType.GetType() == mysql.TypeSet {
+			resultFieldType.SetType(mysql.TypeVarchar)
 		}
+	} else if resultFieldType.GetType() == mysql.TypeDatetime {
+		types.TryToFixFlenOfDatetime(resultFieldType)
 	}
-	return resultFieldType
+	return resultFieldType, nil
 }
 
 type caseWhenFunctionClass struct {
@@ -160,49 +181,49 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	l := len(args)
 	// Fill in each 'THEN' clause parameter type.
 	fieldTps := make([]*types.FieldType, 0, (l+1)/2)
-	decimal, flen, isBinaryStr, isBinaryFlag := args[1].GetType().Decimal, 0, false, false
+	decimal, flen, isBinaryFlag := args[1].GetType().GetDecimal(), 0, false
 	for i := 1; i < l; i += 2 {
 		fieldTps = append(fieldTps, args[i].GetType())
-		decimal = mathutil.Max(decimal, args[i].GetType().Decimal)
-		if args[i].GetType().Flen == -1 {
+		decimal = mathutil.Max(decimal, args[i].GetType().GetDecimal())
+		if args[i].GetType().GetFlen() == -1 {
 			flen = -1
 		} else if flen != -1 {
-			flen = mathutil.Max(flen, args[i].GetType().Flen)
+			flen = mathutil.Max(flen, args[i].GetType().GetFlen())
 		}
-		isBinaryStr = isBinaryStr || types.IsBinaryStr(args[i].GetType())
 		isBinaryFlag = isBinaryFlag || !types.IsNonBinaryStr(args[i].GetType())
 	}
 	if l%2 == 1 {
 		fieldTps = append(fieldTps, args[l-1].GetType())
-		decimal = mathutil.Max(decimal, args[l-1].GetType().Decimal)
-		if args[l-1].GetType().Flen == -1 {
+		decimal = mathutil.Max(decimal, args[l-1].GetType().GetDecimal())
+		if args[l-1].GetType().GetFlen() == -1 {
 			flen = -1
 		} else if flen != -1 {
-			flen = mathutil.Max(flen, args[l-1].GetType().Flen)
+			flen = mathutil.Max(flen, args[l-1].GetType().GetFlen())
 		}
-		isBinaryStr = isBinaryStr || types.IsBinaryStr(args[l-1].GetType())
 		isBinaryFlag = isBinaryFlag || !types.IsNonBinaryStr(args[l-1].GetType())
 	}
 
 	fieldTp := types.AggFieldType(fieldTps)
 	// Here we turn off NotNullFlag. Because if all when-clauses are false,
 	// the result of case-when expr is NULL.
-	types.SetTypeFlag(&fieldTp.Flag, mysql.NotNullFlag, false)
+	tempFlag := fieldTp.GetFlag()
+	types.SetTypeFlag(&tempFlag, mysql.NotNullFlag, false)
+	fieldTp.SetFlag(tempFlag)
 	tp := fieldTp.EvalType()
 
 	if tp == types.ETInt {
 		decimal = 0
 	}
-	fieldTp.Decimal, fieldTp.Flen = decimal, flen
-	if fieldTp.EvalType().IsStringKind() && !isBinaryStr {
-		fieldTp.Charset, fieldTp.Collate = charset.CharsetUTF8MB4, charset.CollationUTF8MB4
-	}
+	fieldTp.SetDecimal(decimal)
+	fieldTp.SetFlen(flen)
+	types.TryToFixFlenOfDatetime(fieldTp)
 	if isBinaryFlag {
-		fieldTp.Flag |= mysql.BinaryFlag
+		fieldTp.AddFlag(mysql.BinaryFlag)
 	}
 	// Set retType to BINARY(0) if all arguments are of type NULL.
-	if fieldTp.Tp == mysql.TypeNull {
-		fieldTp.Flen, fieldTp.Decimal = 0, types.UnspecifiedLength
+	if fieldTp.GetType() == mysql.TypeNull {
+		fieldTp.SetFlen(0)
+		fieldTp.SetDecimal(0)
 		types.SetBinChsClnFlag(fieldTp)
 	}
 	argTps := make([]types.EvalType, 0, l)
@@ -219,11 +240,21 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err != nil {
 		return nil, err
 	}
+	fieldTp.SetCharset(bf.tp.GetCharset())
+	fieldTp.SetCollate(bf.tp.GetCollate())
 	bf.tp = fieldTp
+	if fieldTp.GetType() == mysql.TypeEnum || fieldTp.GetType() == mysql.TypeSet {
+		switch tp {
+		case types.ETInt:
+			fieldTp.SetType(mysql.TypeLonglong)
+		case types.ETString:
+			fieldTp.SetType(mysql.TypeVarchar)
+		}
+	}
 
 	switch tp {
 	case types.ETInt:
-		bf.tp.Decimal = 0
+		bf.tp.SetDecimal(0)
 		sig = &builtinCaseWhenIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CaseWhenInt)
 	case types.ETReal:
@@ -233,7 +264,7 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		sig = &builtinCaseWhenDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CaseWhenDecimal)
 	case types.ETString:
-		bf.tp.Decimal = types.UnspecifiedLength
+		bf.tp.SetDecimal(types.UnspecifiedLength)
 		sig = &builtinCaseWhenStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CaseWhenString)
 	case types.ETDatetime, types.ETTimestamp:
@@ -477,7 +508,7 @@ func (b *builtinCaseWhenJSONSig) Clone() builtinFunc {
 
 // evalJSON evals a builtinCaseWhenJSONSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#operator_case
-func (b *builtinCaseWhenJSONSig) evalJSON(row chunk.Row) (ret json.BinaryJSON, isNull bool, err error) {
+func (b *builtinCaseWhenJSONSig) evalJSON(row chunk.Row) (ret types.BinaryJSON, isNull bool, err error) {
 	var condition int64
 	args, l := b.getArgs(), len(b.getArgs())
 	for i := 0; i < l-1; i += 2 {
@@ -508,7 +539,10 @@ func (c *ifFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	retTp := InferType4ControlFuncs(args[1], args[2])
+	retTp, err := InferType4ControlFuncs(ctx, c.funcName, args[1], args[2])
+	if err != nil {
+		return nil, err
+	}
 	evalTps := retTp.EvalType()
 	args[0], err = wrapWithIsTrue(ctx, true, args[0], false)
 	if err != nil {
@@ -518,7 +552,8 @@ func (c *ifFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 	if err != nil {
 		return nil, err
 	}
-	retTp.Flag |= bf.tp.Flag
+
+	retTp.AddFlag(bf.tp.GetFlag())
 	bf.tp = retTp
 	switch evalTps {
 	case types.ETInt:
@@ -682,7 +717,7 @@ func (b *builtinIfJSONSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinIfJSONSig) evalJSON(row chunk.Row) (ret json.BinaryJSON, isNull bool, err error) {
+func (b *builtinIfJSONSig) evalJSON(row chunk.Row) (ret types.BinaryJSON, isNull bool, err error) {
 	arg0, isNull0, err := b.args[0].EvalInt(b.ctx, row)
 	if err != nil {
 		return ret, true, err
@@ -702,11 +737,16 @@ func (c *ifNullFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 		return nil, err
 	}
 	lhs, rhs := args[0].GetType(), args[1].GetType()
-	retTp := InferType4ControlFuncs(args[0], args[1])
-	retTp.Flag |= (lhs.Flag & mysql.NotNullFlag) | (rhs.Flag & mysql.NotNullFlag)
-	if lhs.Tp == mysql.TypeNull && rhs.Tp == mysql.TypeNull {
-		retTp.Tp = mysql.TypeNull
-		retTp.Flen, retTp.Decimal = 0, -1
+	retTp, err := InferType4ControlFuncs(ctx, c.funcName, args[0], args[1])
+	if err != nil {
+		return nil, err
+	}
+
+	retTp.AddFlag((lhs.GetFlag() & mysql.NotNullFlag) | (rhs.GetFlag() & mysql.NotNullFlag))
+	if lhs.GetType() == mysql.TypeNull && rhs.GetType() == mysql.TypeNull {
+		retTp.SetType(mysql.TypeNull)
+		retTp.SetFlen(0)
+		retTp.SetDecimal(0)
 		types.SetBinChsClnFlag(retTp)
 	}
 	evalTps := retTp.EvalType()
@@ -865,7 +905,7 @@ func (b *builtinIfNullJSONSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinIfNullJSONSig) evalJSON(row chunk.Row) (json.BinaryJSON, bool, error) {
+func (b *builtinIfNullJSONSig) evalJSON(row chunk.Row) (types.BinaryJSON, bool, error) {
 	arg0, isNull, err := b.args[0].EvalJSON(b.ctx, row)
 	if !isNull {
 		return arg0, err != nil, err

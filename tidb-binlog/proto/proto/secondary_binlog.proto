@@ -1,0 +1,119 @@
+// Copyright 2022 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto2";
+package slave.binlog;
+import "gogoproto/gogo.proto";
+
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.sizer_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+
+// for date and time type, string_value is set
+
+// for int type int64 or uint64_value is set
+// for float, double, double_value is set
+// for decimal, string_value is set in human-readable now
+// for bit, bytes_value is set
+
+// for text and char type, string_value is set
+// for blob and binary type, bytes_value is set
+// for enum, set, uint64_value is set
+// for json, bytes_value is set
+message Column {
+  optional bool is_null = 1 [ default = false ];
+  optional int64 int64_value = 2;
+  optional uint64 uint64_value = 3;
+  optional double double_value = 4;
+  optional bytes bytes_value = 5;
+  optional string string_value = 6;
+}
+
+message ColumnInfo {
+  optional string name = 1 [ (gogoproto.nullable) = false ];
+  // lower case column field type in mysql
+  // https://dev.mysql.com/doc/refman/8.0/en/data-types.html
+  // for numeric type: int bigint smallint tinyint float double decimal bit
+  // for string type: text longtext mediumtext char tinytext varchar
+  // blob longblob mediumblob binary tinyblob varbinary
+  // enum set
+  // for json type: json
+  optional string mysql_type = 2 [ (gogoproto.nullable) = false ];
+  optional bool is_primary_key = 3 [ (gogoproto.nullable) = false ];
+  optional int32 flen = 4 [ (gogoproto.nullable) = false ];
+  optional int32 decimal = 5 [ (gogoproto.nullable) = false ];
+}
+
+message Row { repeated Column columns = 1; }
+
+enum MutationType {
+  Insert = 0;
+  Update = 1;
+  Delete = 2;
+}
+
+//  Table contains mutations in a table.
+message Table {
+  optional string schema_name = 1;
+  optional string table_name = 2;
+  repeated ColumnInfo column_info = 3;
+  repeated TableMutation mutations = 4;
+  // will only be set with version >= 3.0.9
+  repeated Key unique_keys = 5;
+}
+
+
+// Key contains Key info.
+message Key {
+  // name will be PRIMARY if it's the primary key.
+  optional string name = 1;
+  repeated string column_names = 2;
+}
+
+message TableMutation {
+  required MutationType type = 1;
+  required Row row = 2;
+  // for Update MutationType only
+  optional Row change_row = 3;
+}
+
+message DMLData {
+  // tables contains all the table changes.
+  repeated Table tables = 1;
+}
+
+message DDLData {
+  // the current database use
+  optional string schema_name = 1;
+  // the relate table
+  optional string table_name = 2;
+  // ddl_query is the original ddl statement query.
+  optional bytes ddl_query = 3;
+}
+
+enum BinlogType {
+  DML = 0; //  has dml_data
+  DDL = 1; //  has ddl_query
+}
+
+// Binlog contains all the changes in a transaction.
+message Binlog {
+  optional BinlogType type = 1 [ (gogoproto.nullable) = false ];
+  optional int64 commit_ts = 2 [ (gogoproto.nullable) = false ];
+  // dml_data is marshalled from DML type
+  optional DMLData dml_data = 3;
+  optional DDLData ddl_data = 4;
+  // time_zone is the time zone of timestamp value
+  optional string  time_zone  = 5;
+}

@@ -8,9 +8,11 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build ignore
 // +build ignore
 
 package main
@@ -36,6 +38,7 @@ const header = `// Copyright 2019 PingCAP, Inc.
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -47,9 +50,8 @@ package expression
 const newLine = "\n"
 
 const builtinOtherImports = `import (
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 )
@@ -57,7 +59,7 @@ const builtinOtherImports = `import (
 
 var builtinInTmpl = template.Must(template.New("builtinInTmpl").Parse(`
 {{ define "BufAllocator" }}
-	buf0, err := b.bufAllocator.get(types.ET{{ .Input.ETName }}, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -65,7 +67,7 @@ var builtinInTmpl = template.Must(template.New("builtinInTmpl").Parse(`
 	if err := b.args[0].VecEval{{ .Input.TypeName }}(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ET{{ .Input.ETName }}, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -106,7 +108,7 @@ var builtinInTmpl = template.Must(template.New("builtinInTmpl").Parse(`
 	{{- else if eq .Input.TypeName "Duration" -}}
 		compareResult = types.CompareDuration(arg0, arg1)
 	{{- else if eq .Input.TypeName "JSON" -}}
-		compareResult = json.CompareBinary(arg0, arg1)
+		compareResult = types.CompareBinaryJSON(arg0, arg1)
 	{{- else if eq .Input.TypeName "String" -}}
 		compareResult = types.CompareString(arg0, arg1, b.collation)
 	{{- else -}}
@@ -141,7 +143,7 @@ func (b *{{.SigName}}) vecEvalInt(input *chunk.Chunk, result *chunk.Column) erro
 	}
 	{{- end }}
 	{{- if $InputInt }}
-		isUnsigned0 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
+		isUnsigned0 := mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag())
 	{{- end }}
 	var compareResult int
 	args := b.args[1:]
@@ -213,7 +215,7 @@ func (b *{{.SigName}}) vecEvalInt(input *chunk.Chunk, result *chunk.Column) erro
 			return err
 		}
 		{{- if $InputInt }}
-			isUnsigned := mysql.HasUnsignedFlag(args[j].GetType().Flag)
+			isUnsigned := mysql.HasUnsignedFlag(args[j].GetType().GetFlag())
 		{{- end }}
 		{{- if $InputFixed }}
 			args1 := buf1.{{.Input.TypeNameInColumn}}s()
@@ -265,6 +267,7 @@ var testFile = template.Must(template.New("").Parse(`// Copyright 2019 PingCAP, 
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -275,14 +278,13 @@ package expression
 import (
 	"fmt"
 	"math/rand"
+	"strconv"
 	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 )
 
 type inGener struct {
@@ -319,14 +321,14 @@ func (g inGener) gen() interface{} {
 	case types.ETDuration:
 		return types.Duration{ Duration: time.Duration(randNum) }
 	case types.ETJson:
-		j := new(json.BinaryJSON)
+		j := new(types.BinaryJSON)
 		jsonStr := fmt.Sprintf("{\"key\":%v}", randNum)
 		if err := j.UnmarshalJSON([]byte(jsonStr)); err != nil {
 			panic(err)
 		}
 		return *j
 	case types.ETString:
-		return fmt.Sprint(randNum)
+		return strconv.FormatInt(randNum, 10)
 	}
 	return randNum
 }
@@ -376,8 +378,8 @@ var vecBuiltin{{ .Category }}GeneratedCases = map[string][]vecExprBenchCase {
 					{Value: types.NewTimeDatum(dateTimeFromString("2019-01-01")), RetType: types.NewFieldType(mysql.TypeDatetime)},
 				{{- end }}
 				{{- if eq .Input.ETName "Json" }}
-					{Value: types.NewJSONDatum(json.CreateBinary("aaaa")), RetType: types.NewFieldType(mysql.TypeJSON)},
-					{Value: types.NewJSONDatum(json.CreateBinary("bbbb")), RetType: types.NewFieldType(mysql.TypeJSON)},
+					{Value: types.NewJSONDatum(types.CreateBinaryJSON("aaaa")), RetType: types.NewFieldType(mysql.TypeJSON)},
+					{Value: types.NewJSONDatum(types.CreateBinaryJSON("bbbb")), RetType: types.NewFieldType(mysql.TypeJSON)},
 				{{- end }}
 				{{- if eq .Input.ETName "Duration" }}
 					{Value: types.NewDurationDatum(types.Duration{Duration: time.Duration(1000)}), RetType: types.NewFieldType(mysql.TypeDuration)},
@@ -398,12 +400,12 @@ var vecBuiltin{{ .Category }}GeneratedCases = map[string][]vecExprBenchCase {
 	},
 }
 
-func (s *testEvaluatorSuite) TestVectorizedBuiltin{{.Category}}EvalOneVecGenerated(c *C) {
-	testVectorizedEvalOneVec(c, vecBuiltin{{.Category}}GeneratedCases)
+func TestVectorizedBuiltin{{.Category}}EvalOneVecGenerated(t *testing.T) {
+	testVectorizedEvalOneVec(t, vecBuiltin{{.Category}}GeneratedCases)
 }
 
-func (s *testEvaluatorSuite) TestVectorizedBuiltin{{.Category}}FuncGenerated(c *C) {
-	testVectorizedBuiltinFunc(c, vecBuiltin{{.Category}}GeneratedCases)
+func TestVectorizedBuiltin{{.Category}}FuncGenerated(t *testing.T) {
+	testVectorizedBuiltinFunc(t, vecBuiltin{{.Category}}GeneratedCases)
 }
 
 func BenchmarkVectorizedBuiltin{{.Category}}EvalOneVecGenerated(b *testing.B) {

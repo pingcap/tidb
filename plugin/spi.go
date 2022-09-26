@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,8 +18,6 @@ import (
 	"context"
 	"reflect"
 	"unsafe"
-
-	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
 const (
@@ -36,7 +35,6 @@ type Manifest struct {
 	RequireVersion map[string]uint16
 	License        string
 	BuildTime      string
-	SysVars        map[string]*variable.SysVar
 	// Validate defines the validate logic for plugin.
 	// returns error will stop load plugin process and TiDB startup.
 	Validate func(ctx context.Context, manifest *Manifest) error

@@ -8,16 +8,14 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package metrics
 
 import (
-	"net/http"
-
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 const (
@@ -100,7 +98,8 @@ var (
 		})
 )
 
-func init() {
+// RegisterMetrics register the metrics related to unistore.
+func RegisterMetrics() {
 	prometheus.MustRegister(RaftWriterWait)
 	prometheus.MustRegister(WriteWaiteStepOne)
 	prometheus.MustRegister(WriteWaiteStepTwo)
@@ -111,5 +110,4 @@ func init() {
 	prometheus.MustRegister(LockUpdate)
 	prometheus.MustRegister(RaftBatchSize)
 	prometheus.MustRegister(LatchWait)
-	http.Handle("/metrics", promhttp.Handler())
 }

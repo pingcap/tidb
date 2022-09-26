@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,15 +18,15 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/cznic/mathutil"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -58,6 +59,8 @@ func Build(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal
 		return buildVarPop(aggFuncDesc, ordinal)
 	case ast.AggFuncStddevPop:
 		return buildStdDevPop(aggFuncDesc, ordinal)
+	case ast.AggFuncJsonArrayagg:
+		return buildJSONArrayagg(aggFuncDesc, ordinal)
 	case ast.AggFuncJsonObjectAgg:
 		return buildJSONObjectAgg(aggFuncDesc, ordinal)
 	case ast.AggFuncApproxCountDistinct:
@@ -116,7 +119,7 @@ func buildApproxCountDistinct(aggFuncDesc *aggregation.AggFuncDesc, ordinal int)
 	// In partition table, union need to compute partial result into partial result.
 	// We can detect and handle this case by checking whether return type is string.
 
-	switch aggFuncDesc.RetTp.Tp {
+	switch aggFuncDesc.RetTp.GetType() {
 	case mysql.TypeLonglong:
 		switch aggFuncDesc.Mode {
 		case aggregation.CompleteMode:
@@ -156,7 +159,7 @@ func buildApproxPercentile(sctx sessionctx.Context, aggFuncDesc *aggregation.Agg
 	base := basePercentile{percent: int(percent), baseAggFunc: baseAggFunc{args: aggFuncDesc.Args, ordinal: ordinal}}
 
 	evalType := aggFuncDesc.Args[0].GetType().EvalType()
-	if aggFuncDesc.Args[0].GetType().Tp == mysql.TypeBit {
+	if aggFuncDesc.Args[0].GetType().GetType() == mysql.TypeBit {
 		evalType = types.ETString // same as other aggregate function
 	}
 	switch aggFuncDesc.Mode {
@@ -191,6 +194,7 @@ func buildCount(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	base := baseAggFunc{
 		args:    aggFuncDesc.Args,
 		ordinal: ordinal,
+		retTp:   aggFuncDesc.RetTp,
 	}
 
 	// If HasDistinct and mode is CompleteMode or Partial1Mode, we should
@@ -201,7 +205,7 @@ func buildCount(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 			// optimize with single column
 			// TODO: because Time and JSON does not have `hashcode()` or similar method
 			// so they're in exception for now.
-			// TODO: add hashCode method for all evaluate types (Decimal, Time, Duration, JSON).
+			// TODO: add hashCode method for all evaluate types (decimal, Time, Duration, JSON).
 			// https://github.com/pingcap/tidb/issues/15857
 			switch aggFuncDesc.Args[0].GetType().EvalType() {
 			case types.ETInt:
@@ -250,13 +254,9 @@ func buildSum(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordi
 		baseAggFunc: baseAggFunc{
 			args:    aggFuncDesc.Args,
 			ordinal: ordinal,
+			retTp:   aggFuncDesc.RetTp,
 		},
 	}
-	frac := base.args[0].GetType().Decimal
-	if frac == -1 {
-		frac = mysql.MaxDecimalScale
-	}
-	base.frac = mathutil.Min(frac, mysql.MaxDecimalScale)
 	switch aggFuncDesc.Mode {
 	case aggregation.DedupMode:
 		return nil
@@ -284,16 +284,8 @@ func buildAvg(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordi
 	base := baseAggFunc{
 		args:    aggFuncDesc.Args,
 		ordinal: ordinal,
+		retTp:   aggFuncDesc.RetTp,
 	}
-	frac := base.args[0].GetType().Decimal
-	if len(base.args) == 2 {
-		frac = base.args[1].GetType().Decimal
-	}
-	if frac == -1 {
-		frac = mysql.MaxDecimalScale
-	}
-	base.frac = mathutil.Min(frac, mysql.MaxDecimalScale)
-
 	switch aggFuncDesc.Mode {
 	// Build avg functions which consume the original data and remove the
 	// duplicated input of the same group.
@@ -322,7 +314,7 @@ func buildAvg(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordi
 	// Build avg functions which consume the partial result of other avg
 	// functions and update their partial results.
 	case aggregation.Partial2Mode, aggregation.FinalMode:
-		switch aggFuncDesc.RetTp.Tp {
+		switch aggFuncDesc.RetTp.GetType() {
 		case mysql.TypeNewDecimal:
 			return &avgPartial4Decimal{baseAvgDecimal{base}}
 		case mysql.TypeDouble:
@@ -337,21 +329,16 @@ func buildFirstRow(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	base := baseAggFunc{
 		args:    aggFuncDesc.Args,
 		ordinal: ordinal,
+		retTp:   aggFuncDesc.RetTp,
 	}
-	frac := base.args[0].GetType().Decimal
-	if frac == -1 {
-		frac = mysql.MaxDecimalScale
-	}
-	base.frac = mathutil.Min(frac, mysql.MaxDecimalScale)
-
 	evalType, fieldType := aggFuncDesc.RetTp.EvalType(), aggFuncDesc.RetTp
-	if fieldType.Tp == mysql.TypeBit {
+	if fieldType.GetType() == mysql.TypeBit {
 		evalType = types.ETString
 	}
 	switch aggFuncDesc.Mode {
 	case aggregation.DedupMode:
 	default:
-		switch fieldType.Tp {
+		switch fieldType.GetType() {
 		case mysql.TypeEnum:
 			return &firstRow4Enum{base}
 		case mysql.TypeSet:
@@ -362,7 +349,7 @@ func buildFirstRow(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 		case types.ETInt:
 			return &firstRow4Int{base}
 		case types.ETReal:
-			switch fieldType.Tp {
+			switch fieldType.GetType() {
 			case mysql.TypeFloat:
 				return &firstRow4Float32{base}
 			case mysql.TypeDouble:
@@ -389,23 +376,19 @@ func buildMaxMin(aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) 
 		baseAggFunc: baseAggFunc{
 			args:    aggFuncDesc.Args,
 			ordinal: ordinal,
+			retTp:   aggFuncDesc.RetTp,
 		},
-		isMax: isMax,
+		isMax:    isMax,
+		collator: collate.GetCollator(aggFuncDesc.RetTp.GetCollate()),
 	}
-	frac := base.args[0].GetType().Decimal
-	if frac == -1 {
-		frac = mysql.MaxDecimalScale
-	}
-	base.frac = mathutil.Min(frac, mysql.MaxDecimalScale)
-
 	evalType, fieldType := aggFuncDesc.RetTp.EvalType(), aggFuncDesc.RetTp
-	if fieldType.Tp == mysql.TypeBit {
+	if fieldType.GetType() == mysql.TypeBit {
 		evalType = types.ETString
 	}
 	switch aggFuncDesc.Mode {
 	case aggregation.DedupMode:
 	default:
-		switch fieldType.Tp {
+		switch fieldType.GetType() {
 		case mysql.TypeEnum:
 			return &maxMin4Enum{base}
 		case mysql.TypeSet:
@@ -414,12 +397,12 @@ func buildMaxMin(aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) 
 
 		switch evalType {
 		case types.ETInt:
-			if mysql.HasUnsignedFlag(fieldType.Flag) {
+			if mysql.HasUnsignedFlag(fieldType.GetFlag()) {
 				return &maxMin4Uint{base}
 			}
 			return &maxMin4Int{base}
 		case types.ETReal:
-			switch fieldType.Tp {
+			switch fieldType.GetType() {
 			case mysql.TypeFloat:
 				return &maxMin4Float32{base}
 			case mysql.TypeDouble:
@@ -479,7 +462,7 @@ func buildGroupConcat(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDe
 			panic(fmt.Sprintf("Error happened when buildGroupConcat: %s", err.Error()))
 		}
 		var s string
-		s, err = variable.GetSessionOrGlobalSystemVar(ctx.GetSessionVars(), variable.GroupConcatMaxLen)
+		s, err = ctx.GetSessionVars().GetSessionOrGlobalSystemVar(variable.GroupConcatMaxLen)
 		if err != nil {
 			panic(fmt.Sprintf("Error happened when buildGroupConcat: no system variable named '%s'", variable.GroupConcatMaxLen))
 		}
@@ -612,6 +595,20 @@ func buildStddevSamp(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc 
 			return &stddevSamp4DistinctFloat64{varPop4DistinctFloat64{base}}
 		}
 		return &stddevSamp4Float64{varPop4Float64{base}}
+	}
+}
+
+// buildJSONArrayagg builds the AggFunc implementation for function "json_arrayagg".
+func buildJSONArrayagg(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	base := baseAggFunc{
+		args:    aggFuncDesc.Args,
+		ordinal: ordinal,
+	}
+	switch aggFuncDesc.Mode {
+	case aggregation.DedupMode:
+		return nil
+	default:
+		return &jsonArrayagg{base}
 	}
 }
 

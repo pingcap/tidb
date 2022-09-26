@@ -8,36 +8,37 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package variable_test
 
 import (
+	"sync"
+	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/auth"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )
 
-var _ = SerialSuites(&testSessionSuite{})
-
-type testSessionSuite struct {
-}
-
-func (*testSessionSuite) TestSetSystemVariable(c *C) {
+func TestSetSystemVariable(t *testing.T) {
 	v := variable.NewSessionVars()
-	v.GlobalVarsAccessor = variable.NewMockGlobalAccessor()
+	v.GlobalVarsAccessor = variable.NewMockGlobalAccessor4Tests()
 	v.TimeZone = time.UTC
-	tests := []struct {
+	mtx := new(sync.Mutex)
+
+	testCases := []struct {
 		key   string
 		value string
 		err   bool
@@ -47,106 +48,109 @@ func (*testSessionSuite) TestSetSystemVariable(c *C) {
 		{variable.TiDBOptAggPushDown, "1", false},
 		{variable.TiDBOptDistinctAggPushDown, "1", false},
 		{variable.TiDBMemQuotaQuery, "1024", false},
-		{variable.TiDBMemQuotaHashJoin, "1024", false},
-		{variable.TiDBMemQuotaMergeJoin, "1024", false},
-		{variable.TiDBMemQuotaSort, "1024", false},
-		{variable.TiDBMemQuotaTopn, "1024", false},
-		{variable.TiDBMemQuotaIndexLookupReader, "1024", false},
-		{variable.TiDBMemQuotaIndexLookupJoin, "1024", false},
 		{variable.TiDBMemQuotaApplyCache, "1024", false},
-		{variable.TiDBEnableStmtSummary, "1", false},
+		{variable.TiDBEnableStmtSummary, "1", true}, // now global only
 	}
-	for _, t := range tests {
-		err := variable.SetSessionSystemVar(v, t.key, t.value)
-		if t.err {
-			c.Assert(err, NotNil)
-		} else {
-			c.Assert(err, IsNil)
-		}
+
+	for _, tc := range testCases {
+		// copy iterator variable into a new variable, see issue #27779
+		tc := tc
+		t.Run(tc.key, func(t *testing.T) {
+			mtx.Lock()
+			err := v.SetSystemVar(tc.key, tc.value)
+			mtx.Unlock()
+			if tc.err {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+		})
 	}
 }
 
-func (*testSessionSuite) TestSession(c *C) {
+func TestSession(t *testing.T) {
 	ctx := mock.NewContext()
 
 	ss := ctx.GetSessionVars().StmtCtx
-	c.Assert(ss, NotNil)
+	require.NotNil(t, ss)
 
 	// For AffectedRows
 	ss.AddAffectedRows(1)
-	c.Assert(ss.AffectedRows(), Equals, uint64(1))
+	require.Equal(t, uint64(1), ss.AffectedRows())
 	ss.AddAffectedRows(1)
-	c.Assert(ss.AffectedRows(), Equals, uint64(2))
+	require.Equal(t, uint64(2), ss.AffectedRows())
 
 	// For RecordRows
 	ss.AddRecordRows(1)
-	c.Assert(ss.RecordRows(), Equals, uint64(1))
+	require.Equal(t, uint64(1), ss.RecordRows())
 	ss.AddRecordRows(1)
-	c.Assert(ss.RecordRows(), Equals, uint64(2))
+	require.Equal(t, uint64(2), ss.RecordRows())
 
 	// For FoundRows
 	ss.AddFoundRows(1)
-	c.Assert(ss.FoundRows(), Equals, uint64(1))
+	require.Equal(t, uint64(1), ss.FoundRows())
 	ss.AddFoundRows(1)
-	c.Assert(ss.FoundRows(), Equals, uint64(2))
+	require.Equal(t, uint64(2), ss.FoundRows())
 
 	// For UpdatedRows
 	ss.AddUpdatedRows(1)
-	c.Assert(ss.UpdatedRows(), Equals, uint64(1))
+	require.Equal(t, uint64(1), ss.UpdatedRows())
 	ss.AddUpdatedRows(1)
-	c.Assert(ss.UpdatedRows(), Equals, uint64(2))
+	require.Equal(t, uint64(2), ss.UpdatedRows())
 
 	// For TouchedRows
 	ss.AddTouchedRows(1)
-	c.Assert(ss.TouchedRows(), Equals, uint64(1))
+	require.Equal(t, uint64(1), ss.TouchedRows())
 	ss.AddTouchedRows(1)
-	c.Assert(ss.TouchedRows(), Equals, uint64(2))
+	require.Equal(t, uint64(2), ss.TouchedRows())
 
 	// For CopiedRows
 	ss.AddCopiedRows(1)
-	c.Assert(ss.CopiedRows(), Equals, uint64(1))
+	require.Equal(t, uint64(1), ss.CopiedRows())
 	ss.AddCopiedRows(1)
-	c.Assert(ss.CopiedRows(), Equals, uint64(2))
+	require.Equal(t, uint64(2), ss.CopiedRows())
 
 	// For last insert id
 	ctx.GetSessionVars().SetLastInsertID(1)
-	c.Assert(ctx.GetSessionVars().StmtCtx.LastInsertID, Equals, uint64(1))
+	require.Equal(t, uint64(1), ctx.GetSessionVars().StmtCtx.LastInsertID)
 
 	ss.ResetForRetry()
-	c.Assert(ss.AffectedRows(), Equals, uint64(0))
-	c.Assert(ss.FoundRows(), Equals, uint64(0))
-	c.Assert(ss.UpdatedRows(), Equals, uint64(0))
-	c.Assert(ss.RecordRows(), Equals, uint64(0))
-	c.Assert(ss.TouchedRows(), Equals, uint64(0))
-	c.Assert(ss.CopiedRows(), Equals, uint64(0))
-	c.Assert(ss.WarningCount(), Equals, uint16(0))
+	require.Equal(t, uint64(0), ss.AffectedRows())
+	require.Equal(t, uint64(0), ss.FoundRows())
+	require.Equal(t, uint64(0), ss.UpdatedRows())
+	require.Equal(t, uint64(0), ss.RecordRows())
+	require.Equal(t, uint64(0), ss.TouchedRows())
+	require.Equal(t, uint64(0), ss.CopiedRows())
+	require.Equal(t, uint16(0), ss.WarningCount())
 }
 
-func (*testSessionSuite) TestAllocMPPID(c *C) {
+func TestAllocMPPID(t *testing.T) {
 	ctx := mock.NewContext()
 
 	seVar := ctx.GetSessionVars()
-	c.Assert(seVar, NotNil)
+	require.NotNil(t, seVar)
 
-	c.Assert(seVar.AllocMPPTaskID(1), Equals, int64(1))
-	c.Assert(seVar.AllocMPPTaskID(1), Equals, int64(2))
-	c.Assert(seVar.AllocMPPTaskID(1), Equals, int64(3))
-	c.Assert(seVar.AllocMPPTaskID(2), Equals, int64(1))
-	c.Assert(seVar.AllocMPPTaskID(2), Equals, int64(2))
-	c.Assert(seVar.AllocMPPTaskID(2), Equals, int64(3))
+	require.Equal(t, int64(1), seVar.AllocMPPTaskID(1))
+	require.Equal(t, int64(2), seVar.AllocMPPTaskID(1))
+	require.Equal(t, int64(3), seVar.AllocMPPTaskID(1))
+	require.Equal(t, int64(1), seVar.AllocMPPTaskID(2))
+	require.Equal(t, int64(2), seVar.AllocMPPTaskID(2))
+	require.Equal(t, int64(3), seVar.AllocMPPTaskID(2))
 }
 
-func (*testSessionSuite) TestSlowLogFormat(c *C) {
+func TestSlowLogFormat(t *testing.T) {
 	ctx := mock.NewContext()
 
 	seVar := ctx.GetSessionVars()
-	c.Assert(seVar, NotNil)
+	require.NotNil(t, seVar)
 
 	seVar.User = &auth.UserIdentity{Username: "root", Hostname: "192.168.0.1"}
 	seVar.ConnectionInfo = &variable.ConnectionInfo{ClientIP: "192.168.0.1"}
 	seVar.ConnectionID = 1
-	seVar.CurrentDB = "test"
+	// the out put of the loged CurrentDB should be 'test', should be to lower cased.
+	seVar.CurrentDB = "TeST"
 	seVar.InRestrictedSQL = true
+	seVar.StmtCtx.WaitLockLeaseTime = 1
 	txnTS := uint64(406649736972468225)
 	costTime := time.Second
 	execDetail := execdetails.ExecDetails{
@@ -162,7 +166,12 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 		},
 	}
 	statsInfos := make(map[string]uint64)
-	statsInfos["t1"] = 0
+	statsInfos["t1"] = 123
+	loadStatus := make(map[string]map[string]string)
+	loadStatus["t1"] = map[string]string{
+		"col1": "unInitialized",
+	}
+
 	copTasks := &stmtctx.CopTasksDetails{
 		NumCopTasks:       10,
 		AvgProcessTime:    time.Second,
@@ -208,7 +217,7 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 # Index_names: [t1:a,t2:b]
 # Is_internal: true
 # Digest: 01d00e6e93b28184beae487ac05841145d2a2f6a7b16de32a763bed27967e83d
-# Stats: t1:pseudo
+# Stats: t1:123[col1:unInitialized]
 # Num_cop_tasks: 10
 # Cop_proc_avg: 1 Cop_proc_p90: 2 Cop_proc_max: 3 Cop_proc_addr: 10.6.131.78
 # Cop_wait_avg: 0.01 Cop_wait_p90: 0.02 Cop_wait_max: 0.03 Cop_wait_addr: 10.6.131.79
@@ -225,7 +234,11 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 # PD_total: 11
 # Backoff_total: 12
 # Write_sql_response_total: 1
-# Succ: true`
+# Result_rows: 12345
+# Succ: true
+# IsExplicitTxn: true
+# IsSyncStatsFailed: false
+# IsWriteCacheTable: true`
 	sql := "select * from t;"
 	_, digest := parser.NormalizeDigest(sql)
 	logItems := &variable.SlowQueryLogItems{
@@ -251,34 +264,147 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 		PDTotal:           11 * time.Second,
 		BackoffTotal:      12 * time.Second,
 		WriteSQLRespTotal: 1 * time.Second,
+		ResultRows:        12345,
 		Succ:              true,
 		RewriteInfo: variable.RewritePhaseInfo{
 			DurationRewrite:            3,
 			DurationPreprocessSubQuery: 2,
 			PreprocessSubQueries:       2,
 		},
-		ExecRetryCount: 3,
-		ExecRetryTime:  5*time.Second + time.Millisecond*100,
+		ExecRetryCount:    3,
+		ExecRetryTime:     5*time.Second + time.Millisecond*100,
+		IsExplicitTxn:     true,
+		IsWriteCacheTable: true,
+		StatsLoadStatus:   loadStatus,
 	}
 	logString := seVar.SlowLogFormat(logItems)
-	c.Assert(logString, Equals, resultFields+"\n"+sql)
+	require.Equal(t, resultFields+"\n"+sql, logString)
 
 	seVar.CurrentDBChanged = true
 	logString = seVar.SlowLogFormat(logItems)
-	c.Assert(logString, Equals, resultFields+"\n"+"use test;\n"+sql)
-	c.Assert(seVar.CurrentDBChanged, IsFalse)
+	require.Equal(t, resultFields+"\n"+"use test;\n"+sql, logString)
+	require.False(t, seVar.CurrentDBChanged)
 }
 
-func (*testSessionSuite) TestIsolationRead(c *C) {
+func TestIsolationRead(t *testing.T) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.IsolationRead.Engines = []string{"tiflash", "tidb"}
 	})
 	sessVars := variable.NewSessionVars()
 	_, ok := sessVars.IsolationReadEngines[kv.TiDB]
-	c.Assert(ok, Equals, true)
+	require.True(t, ok)
 	_, ok = sessVars.IsolationReadEngines[kv.TiKV]
-	c.Assert(ok, Equals, false)
+	require.False(t, ok)
 	_, ok = sessVars.IsolationReadEngines[kv.TiFlash]
-	c.Assert(ok, Equals, true)
+	require.True(t, ok)
+}
+
+func TestTableDeltaClone(t *testing.T) {
+	td0 := variable.TableDelta{
+		Delta:    1,
+		Count:    2,
+		ColSize:  map[int64]int64{1: 1, 2: 2},
+		InitTime: time.Now(),
+		TableID:  5,
+	}
+	td1 := td0.Clone()
+	require.Equal(t, td0, td1)
+	td0.ColSize[3] = 3
+	require.NotEqual(t, td0, td1)
+
+	td2 := td0.Clone()
+	require.Equal(t, td0, td2)
+	td0.InitTime = td0.InitTime.Add(time.Second)
+	require.NotEqual(t, td0, td2)
+}
+
+func TestTransactionContextSavepoint(t *testing.T) {
+	tc := &variable.TransactionContext{
+		TxnCtxNeedToRestore: variable.TxnCtxNeedToRestore{
+			TableDeltaMap: map[int64]variable.TableDelta{
+				1: {
+					Delta:    1,
+					Count:    2,
+					ColSize:  map[int64]int64{1: 1},
+					InitTime: time.Now(),
+					TableID:  5,
+				},
+			},
+		},
+	}
+	tc.SetPessimisticLockCache([]byte{'a'}, []byte{'a'})
+
+	tc.AddSavepoint("S1", nil)
+	require.Equal(t, 1, len(tc.Savepoints))
+	require.Equal(t, 1, len(tc.Savepoints[0].TxnCtxSavepoint.TableDeltaMap))
+	require.Equal(t, "s1", tc.Savepoints[0].Name)
+
+	succ := tc.DeleteSavepoint("s2")
+	require.False(t, succ)
+	require.Equal(t, 1, len(tc.Savepoints))
+
+	tc.TableDeltaMap[1].ColSize[2] = 2
+	tc.TableDeltaMap[2] = variable.TableDelta{
+		Delta:    6,
+		Count:    7,
+		ColSize:  map[int64]int64{8: 8},
+		InitTime: time.Now(),
+		TableID:  9,
+	}
+	tc.SetPessimisticLockCache([]byte{'b'}, []byte{'b'})
+
+	tc.AddSavepoint("S2", nil)
+	require.Equal(t, 2, len(tc.Savepoints))
+	require.Equal(t, 1, len(tc.Savepoints[0].TxnCtxSavepoint.TableDeltaMap))
+	require.Equal(t, 1, len(tc.Savepoints[0].TxnCtxSavepoint.TableDeltaMap[1].ColSize))
+	require.Equal(t, "s1", tc.Savepoints[0].Name)
+	require.Equal(t, 2, len(tc.Savepoints[1].TxnCtxSavepoint.TableDeltaMap))
+	require.Equal(t, "s2", tc.Savepoints[1].Name)
+
+	tc.TableDeltaMap[3] = variable.TableDelta{
+		Delta:    10,
+		Count:    11,
+		ColSize:  map[int64]int64{12: 12},
+		InitTime: time.Now(),
+		TableID:  13,
+	}
+	tc.SetPessimisticLockCache([]byte{'c'}, []byte{'c'})
+
+	tc.AddSavepoint("s2", nil)
+	require.Equal(t, 2, len(tc.Savepoints))
+	require.Equal(t, 3, len(tc.Savepoints[1].TxnCtxSavepoint.TableDeltaMap))
+	require.Equal(t, "s2", tc.Savepoints[1].Name)
+
+	tc.RollbackToSavepoint("s1")
+	require.Equal(t, 1, len(tc.Savepoints))
+	require.Equal(t, 1, len(tc.Savepoints[0].TxnCtxSavepoint.TableDeltaMap))
+	require.Equal(t, "s1", tc.Savepoints[0].Name)
+	val, ok := tc.GetKeyInPessimisticLockCache([]byte{'a'})
+	require.True(t, ok)
+	require.Equal(t, []byte{'a'}, val)
+	val, ok = tc.GetKeyInPessimisticLockCache([]byte{'b'})
+	require.False(t, ok)
+	require.Nil(t, val)
+
+	succ = tc.DeleteSavepoint("s1")
+	require.True(t, succ)
+	require.Equal(t, 0, len(tc.Savepoints))
+}
+
+func TestGeneralPlanCacheStmt(t *testing.T) {
+	sessVars := variable.NewSessionVars()
+	sessVars.GeneralPlanCacheSize = 100
+	sql1 := "select * from t where a>?"
+	sql2 := "select * from t where a<?"
+	require.Nil(t, sessVars.GetGeneralPlanCacheStmt(sql1))
+	require.Nil(t, sessVars.GetGeneralPlanCacheStmt(sql2))
+
+	sessVars.AddGeneralPlanCacheStmt(sql1, new(plannercore.PlanCacheStmt))
+	require.NotNil(t, sessVars.GetGeneralPlanCacheStmt(sql1))
+	require.Nil(t, sessVars.GetGeneralPlanCacheStmt(sql2))
+
+	sessVars.AddGeneralPlanCacheStmt(sql2, new(plannercore.PlanCacheStmt))
+	require.NotNil(t, sessVars.GetGeneralPlanCacheStmt(sql1))
+	require.NotNil(t, sessVars.GetGeneralPlanCacheStmt(sql2))
 }

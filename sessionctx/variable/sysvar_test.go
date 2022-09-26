@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,324 +17,100 @@ package variable
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"strconv"
-	"strings"
 	"sync/atomic"
 	"testing"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
+	"github.com/stretchr/testify/require"
 )
 
-func TestT(t *testing.T) {
-	CustomVerboseFlag = true
-	TestingT(t)
-}
-
-var _ = Suite(&testSysVarSuite{})
-
-type testSysVarSuite struct {
-}
-
-func (*testSysVarSuite) TestSysVar(c *C) {
-	f := GetSysVar("autocommit")
-	c.Assert(f, NotNil)
-
-	f = GetSysVar("wrong-var-name")
-	c.Assert(f, IsNil)
-
-	f = GetSysVar("explicit_defaults_for_timestamp")
-	c.Assert(f, NotNil)
-	c.Assert(f.Value, Equals, "ON")
-
-	f = GetSysVar("port")
-	c.Assert(f, NotNil)
-	c.Assert(f.Value, Equals, "4000")
-
-	f = GetSysVar("tidb_low_resolution_tso")
-	c.Assert(f.Value, Equals, "OFF")
-
-	f = GetSysVar("tidb_replica_read")
-	c.Assert(f.Value, Equals, "leader")
-
-	f = GetSysVar("tidb_enable_table_partition")
-	c.Assert(f.Value, Equals, "ON")
-}
-
-func (*testSysVarSuite) TestTxnMode(c *C) {
-	seVar := NewSessionVars()
-	c.Assert(seVar, NotNil)
-	c.Assert(seVar.TxnMode, Equals, "")
-	err := seVar.setTxnMode("pessimistic")
-	c.Assert(err, IsNil)
-	err = seVar.setTxnMode("optimistic")
-	c.Assert(err, IsNil)
-	err = seVar.setTxnMode("")
-	c.Assert(err, IsNil)
-	err = seVar.setTxnMode("something else")
-	c.Assert(err, NotNil)
-}
-
-func (*testSysVarSuite) TestError(c *C) {
-	kvErrs := []*terror.Error{
-		ErrUnsupportedValueForVar,
-		ErrUnknownSystemVar,
-		ErrIncorrectScope,
-		ErrUnknownTimeZone,
-		ErrReadOnly,
-		ErrWrongValueForVar,
-		ErrWrongTypeForVar,
-		ErrTruncatedWrongValue,
-		ErrMaxPreparedStmtCountReached,
-		ErrUnsupportedIsolationLevel,
-	}
-	for _, err := range kvErrs {
-		c.Assert(terror.ToSQLError(err).Code != mysql.ErrUnknown, IsTrue)
-	}
-}
-
-func (*testSysVarSuite) TestRegistrationOfNewSysVar(c *C) {
-	count := len(GetSysVars())
-	sv := SysVar{Scope: ScopeGlobal | ScopeSession, Name: "mynewsysvar", Value: On, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
-		return fmt.Errorf("set should fail")
-	}}
-
-	RegisterSysVar(&sv)
-	c.Assert(count+1, Equals, len(GetSysVars()))
-
-	sysVar := GetSysVar("mynewsysvar")
-	c.Assert(sysVar, NotNil)
-
-	vars := NewSessionVars()
-
-	// It is a boolean, try to set it to a bogus value
-	_, err := sysVar.Validate(vars, "ABCD", ScopeSession)
-	c.Assert(err, NotNil)
-
-	// Boolean oN or 1 converts to canonical ON or OFF
-	normalizedVal, err := sysVar.Validate(vars, "oN", ScopeSession)
-	c.Assert(normalizedVal, Equals, "ON")
-	c.Assert(err, IsNil)
-	normalizedVal, err = sysVar.Validate(vars, "0", ScopeSession)
-	c.Assert(normalizedVal, Equals, "OFF")
-	c.Assert(err, IsNil)
-
-	err = sysVar.SetSessionFromHook(vars, "OFF") // default is on
-	c.Assert(err.Error(), Matches, "set should fail")
-
-	// Test unregistration restores previous count
-	UnregisterSysVar("mynewsysvar")
-	c.Assert(count, Equals, len(GetSysVars()))
-}
-
-func (*testSysVarSuite) TestIntValidation(c *C) {
-	sv := SysVar{Scope: ScopeGlobal | ScopeSession, Name: "mynewsysvar", Value: "123", Type: TypeInt, MinValue: 10, MaxValue: 300, AllowAutoValue: true}
-	vars := NewSessionVars()
-
-	_, err := sv.Validate(vars, "oN", ScopeSession)
-	c.Assert(err.Error(), Equals, "[variable:1232]Incorrect argument type to variable 'mynewsysvar'")
-
-	_, err = sv.Validate(vars, "301", ScopeSession)
-	c.Assert(err.Error(), Equals, "[variable:1231]Variable 'mynewsysvar' can't be set to the value of '301'")
-
-	_, err = sv.Validate(vars, "5", ScopeSession)
-	c.Assert(err.Error(), Equals, "[variable:1231]Variable 'mynewsysvar' can't be set to the value of '5'")
-
-	val, err := sv.Validate(vars, "300", ScopeSession)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, "300")
-
-	// out of range but permitted due to auto value
-	val, err = sv.Validate(vars, "-1", ScopeSession)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, "-1")
-}
-
-func (*testSysVarSuite) TestEnumValidation(c *C) {
-	sv := SysVar{Scope: ScopeGlobal | ScopeSession, Name: "mynewsysvar", Value: On, Type: TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
-	vars := NewSessionVars()
-
-	_, err := sv.Validate(vars, "randomstring", ScopeSession)
-	c.Assert(err.Error(), Equals, "[variable:1231]Variable 'mynewsysvar' can't be set to the value of 'randomstring'")
-
-	val, err := sv.Validate(vars, "oFf", ScopeSession)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, "OFF")
-
-	val, err = sv.Validate(vars, "On", ScopeSession)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, "ON")
-
-	val, err = sv.Validate(vars, "auto", ScopeSession)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, "AUTO")
-
-	// Also settable by numeric offset.
-	val, err = sv.Validate(vars, "2", ScopeSession)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, "AUTO")
-}
-
-func (*testSysVarSuite) TestSynonyms(c *C) {
-	sysVar := GetSysVar(TxnIsolation)
-	c.Assert(sysVar, NotNil)
-
-	vars := NewSessionVars()
-
-	// It does not permit SERIALIZABLE by default.
-	_, err := sysVar.Validate(vars, "SERIALIZABLE", ScopeSession)
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[variable:8048]The isolation level 'SERIALIZABLE' is not supported. Set tidb_skip_isolation_level_check=1 to skip this error")
-
-	// Enable Skip isolation check
-	c.Assert(GetSysVar(TiDBSkipIsolationLevelCheck).SetSessionFromHook(vars, "ON"), IsNil)
-
-	// Serializable is now permitted.
-	_, err = sysVar.Validate(vars, "SERIALIZABLE", ScopeSession)
-	c.Assert(err, IsNil)
-
-	// Currently TiDB returns a warning because of SERIALIZABLE, but in future
-	// it may also return a warning because TxnIsolation is deprecated.
-
-	warn := vars.StmtCtx.GetWarnings()[0].Err
-	c.Assert(warn.Error(), Equals, "[variable:8048]The isolation level 'SERIALIZABLE' is not supported. Set tidb_skip_isolation_level_check=1 to skip this error")
-
-	c.Assert(sysVar.SetSessionFromHook(vars, "SERIALIZABLE"), IsNil)
-
-	// When we set TxnIsolation, it also updates TransactionIsolation.
-	c.Assert(vars.systems[TxnIsolation], Equals, "SERIALIZABLE")
-	c.Assert(vars.systems[TransactionIsolation], Equals, vars.systems[TxnIsolation])
-}
-
-func (*testSysVarSuite) TestDeprecation(c *C) {
-	sysVar := GetSysVar(TiDBIndexLookupConcurrency)
-	c.Assert(sysVar, NotNil)
-
-	vars := NewSessionVars()
-
-	_, err := sysVar.Validate(vars, "1234", ScopeSession)
-	c.Assert(err, IsNil)
-
-	// There was no error but there is a deprecation warning.
-	warn := vars.StmtCtx.GetWarnings()[0].Err
-	c.Assert(warn.Error(), Equals, "[variable:1287]'tidb_index_lookup_concurrency' is deprecated and will be removed in a future release. Please use tidb_executor_concurrency instead")
-}
-
-func (*testSysVarSuite) TestScope(c *C) {
-	sv := SysVar{Scope: ScopeGlobal | ScopeSession, Name: "mynewsysvar", Value: On, Type: TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
-	c.Assert(sv.HasSessionScope(), IsTrue)
-	c.Assert(sv.HasGlobalScope(), IsTrue)
-	c.Assert(sv.HasNoneScope(), IsFalse)
-
-	sv = SysVar{Scope: ScopeGlobal, Name: "mynewsysvar", Value: On, Type: TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
-	c.Assert(sv.HasSessionScope(), IsFalse)
-	c.Assert(sv.HasGlobalScope(), IsTrue)
-	c.Assert(sv.HasNoneScope(), IsFalse)
-
-	sv = SysVar{Scope: ScopeSession, Name: "mynewsysvar", Value: On, Type: TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
-	c.Assert(sv.HasSessionScope(), IsTrue)
-	c.Assert(sv.HasGlobalScope(), IsFalse)
-	c.Assert(sv.HasNoneScope(), IsFalse)
-
-	sv = SysVar{Scope: ScopeNone, Name: "mynewsysvar", Value: On, Type: TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
-	c.Assert(sv.HasSessionScope(), IsFalse)
-	c.Assert(sv.HasGlobalScope(), IsFalse)
-	c.Assert(sv.HasNoneScope(), IsTrue)
-}
-
-func (*testSysVarSuite) TestBuiltInCase(c *C) {
-	// All Sysvars should have lower case names.
-	// This tests builtins.
-	for name := range GetSysVars() {
-		c.Assert(name, Equals, strings.ToLower(name))
-	}
-}
-
-func (*testSysVarSuite) TestSQLSelectLimit(c *C) {
+func TestSQLSelectLimit(t *testing.T) {
 	sv := GetSysVar(SQLSelectLimit)
 	vars := NewSessionVars()
 	val, err := sv.Validate(vars, "-10", ScopeSession)
-	c.Assert(err, IsNil) // it has autoconvert out of range.
-	c.Assert(val, Equals, "0")
+	require.NoError(t, err) // it has autoconvert out of range.
+	require.Equal(t, "0", val)
 
 	val, err = sv.Validate(vars, "9999", ScopeSession)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, "9999")
+	require.NoError(t, err)
+	require.Equal(t, "9999", val)
 
-	c.Assert(sv.SetSessionFromHook(vars, "9999"), IsNil) // sets
-	c.Assert(vars.SelectLimit, Equals, uint64(9999))
+	require.Nil(t, sv.SetSessionFromHook(vars, "9999")) // sets
+	require.Equal(t, uint64(9999), vars.SelectLimit)
 }
 
-func (*testSysVarSuite) TestSQLModeVar(c *C) {
+func TestSQLModeVar(t *testing.T) {
 	sv := GetSysVar(SQLModeVar)
 	vars := NewSessionVars()
 	val, err := sv.Validate(vars, "strict_trans_tabLES  ", ScopeSession)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, "STRICT_TRANS_TABLES")
+	require.NoError(t, err)
+	require.Equal(t, "STRICT_TRANS_TABLES", val)
 
 	_, err = sv.Validate(vars, "strict_trans_tabLES,nonsense_option", ScopeSession)
-	c.Assert(err.Error(), Equals, "ERROR 1231 (42000): Variable 'sql_mode' can't be set to the value of 'NONSENSE_OPTION'")
+	require.Equal(t, "ERROR 1231 (42000): Variable 'sql_mode' can't be set to the value of 'NONSENSE_OPTION'", err.Error())
 
 	val, err = sv.Validate(vars, "ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION", ScopeSession)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, "ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION")
+	require.NoError(t, err)
+	require.Equal(t, "ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION", val)
 
-	c.Assert(sv.SetSessionFromHook(vars, val), IsNil) // sets to strict from above
-	c.Assert(vars.StrictSQLMode, IsTrue)
+	require.Nil(t, sv.SetSessionFromHook(vars, val)) // sets to strict from above
+	require.True(t, vars.StrictSQLMode)
 
 	sqlMode, err := mysql.GetSQLMode(val)
-	c.Assert(err, IsNil)
-	c.Assert(vars.SQLMode, Equals, sqlMode)
+	require.NoError(t, err)
+	require.Equal(t, sqlMode, vars.SQLMode)
 
 	// Set it to non strict.
 	val, err = sv.Validate(vars, "ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION", ScopeSession)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, "ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION")
+	require.NoError(t, err)
+	require.Equal(t, "ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION", val)
 
-	c.Assert(sv.SetSessionFromHook(vars, val), IsNil) // sets to non-strict from above
-	c.Assert(vars.StrictSQLMode, IsFalse)
+	require.Nil(t, sv.SetSessionFromHook(vars, val)) // sets to non-strict from above
+	require.False(t, vars.StrictSQLMode)
 	sqlMode, err = mysql.GetSQLMode(val)
-	c.Assert(err, IsNil)
-	c.Assert(vars.SQLMode, Equals, sqlMode)
+	require.NoError(t, err)
+	require.Equal(t, sqlMode, vars.SQLMode)
 }
 
-func (*testSysVarSuite) TestMaxExecutionTime(c *C) {
+func TestMaxExecutionTime(t *testing.T) {
 	sv := GetSysVar(MaxExecutionTime)
 	vars := NewSessionVars()
 
 	val, err := sv.Validate(vars, "-10", ScopeSession)
-	c.Assert(err, IsNil) // it has autoconvert out of range.
-	c.Assert(val, Equals, "0")
+	require.NoError(t, err) // it has autoconvert out of range.
+	require.Equal(t, "0", val)
 
 	val, err = sv.Validate(vars, "99999", ScopeSession)
-	c.Assert(err, IsNil) // it has autoconvert out of range.
-	c.Assert(val, Equals, "99999")
+	require.NoError(t, err) // it has autoconvert out of range.
+	require.Equal(t, "99999", val)
 
-	c.Assert(sv.SetSessionFromHook(vars, "99999"), IsNil) // sets
-	c.Assert(vars.MaxExecutionTime, Equals, uint64(99999))
+	require.Nil(t, sv.SetSessionFromHook(vars, "99999")) // sets
+	require.Equal(t, uint64(99999), vars.MaxExecutionTime)
 }
 
-func (*testSysVarSuite) TestCollationServer(c *C) {
+func TestCollationServer(t *testing.T) {
 	sv := GetSysVar(CollationServer)
 	vars := NewSessionVars()
 
 	val, err := sv.Validate(vars, "LATIN1_bin", ScopeSession)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, "latin1_bin") // test normalization
+	require.NoError(t, err)
+	require.Equal(t, "latin1_bin", val) // test normalization
 
 	_, err = sv.Validate(vars, "BOGUSCOLLation", ScopeSession)
-	c.Assert(err.Error(), Equals, "[ddl:1273]Unknown collation: 'BOGUSCOLLation'")
+	require.Equal(t, "[ddl:1273]Unknown collation: 'BOGUSCOLLation'", err.Error())
 
-	c.Assert(sv.SetSessionFromHook(vars, "latin1_bin"), IsNil)
-	c.Assert(vars.systems[CharacterSetServer], Equals, "latin1") // check it also changes charset.
+	require.Nil(t, sv.SetSessionFromHook(vars, "latin1_bin"))
+	require.Equal(t, "latin1", vars.systems[CharacterSetServer]) // check it also changes charset.
 
-	c.Assert(sv.SetSessionFromHook(vars, "utf8mb4_bin"), IsNil)
-	c.Assert(vars.systems[CharacterSetServer], Equals, "utf8mb4") // check it also changes charset.
+	require.Nil(t, sv.SetSessionFromHook(vars, "utf8mb4_bin"))
+	require.Equal(t, "utf8mb4", vars.systems[CharacterSetServer]) // check it also changes charset.
 }
 
-func (*testSysVarSuite) TestTimeZone(c *C) {
+func TestTimeZone(t *testing.T) {
 	sv := GetSysVar(TimeZone)
 	vars := NewSessionVars()
 
@@ -344,281 +121,706 @@ func (*testSysVarSuite) TestTimeZone(c *C) {
 	// See: https://github.com/pingcap/tidb/issues/8087
 
 	val, err := sv.Validate(vars, "America/Edmonton", ScopeSession)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, "America/Edmonton")
+	require.NoError(t, err)
+	require.Equal(t, "America/Edmonton", val)
 
 	val, err = sv.Validate(vars, "+10:00", ScopeSession)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, "+10:00")
+	require.NoError(t, err)
+	require.Equal(t, "+10:00", val)
 
 	val, err = sv.Validate(vars, "UTC", ScopeSession)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, "UTC")
+	require.NoError(t, err)
+	require.Equal(t, "UTC", val)
 
 	val, err = sv.Validate(vars, "+00:00", ScopeSession)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, "+00:00")
+	require.NoError(t, err)
+	require.Equal(t, "+00:00", val)
 
-	c.Assert(sv.SetSessionFromHook(vars, "UTC"), IsNil) // sets
+	require.Nil(t, sv.SetSessionFromHook(vars, "UTC")) // sets
 	tz, err := parseTimeZone("UTC")
-	c.Assert(err, IsNil)
-	c.Assert(vars.TimeZone, Equals, tz)
-
+	require.NoError(t, err)
+	require.Equal(t, tz, vars.TimeZone)
 }
 
-func (*testSysVarSuite) TestForeignKeyChecks(c *C) {
-	sv := GetSysVar(ForeignKeyChecks)
-	vars := NewSessionVars()
-
-	val, err := sv.Validate(vars, "on", ScopeSession)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, "OFF") // warns and refuses to set ON.
-
-	warn := vars.StmtCtx.GetWarnings()[0].Err
-	c.Assert(warn.Error(), Equals, "[variable:8047]variable 'foreign_key_checks' does not yet support value: on")
-
-}
-
-func (*testSysVarSuite) TestTxnIsolation(c *C) {
+func TestTxnIsolation(t *testing.T) {
 	sv := GetSysVar(TxnIsolation)
 	vars := NewSessionVars()
 
 	_, err := sv.Validate(vars, "on", ScopeSession)
-	c.Assert(err.Error(), Equals, "[variable:1231]Variable 'tx_isolation' can't be set to the value of 'on'")
+	require.Equal(t, "[variable:1231]Variable 'tx_isolation' can't be set to the value of 'on'", err.Error())
 
 	val, err := sv.Validate(vars, "read-COMMitted", ScopeSession)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, "READ-COMMITTED")
+	require.NoError(t, err)
+	require.Equal(t, "READ-COMMITTED", val)
 
 	_, err = sv.Validate(vars, "Serializable", ScopeSession)
-	c.Assert(err.Error(), Equals, "[variable:8048]The isolation level 'SERIALIZABLE' is not supported. Set tidb_skip_isolation_level_check=1 to skip this error")
+	require.Equal(t, "[variable:8048]The isolation level 'SERIALIZABLE' is not supported. Set tidb_skip_isolation_level_check=1 to skip this error", err.Error())
 
 	_, err = sv.Validate(vars, "read-uncommitted", ScopeSession)
-	c.Assert(err.Error(), Equals, "[variable:8048]The isolation level 'READ-UNCOMMITTED' is not supported. Set tidb_skip_isolation_level_check=1 to skip this error")
+	require.Equal(t, "[variable:8048]The isolation level 'READ-UNCOMMITTED' is not supported. Set tidb_skip_isolation_level_check=1 to skip this error", err.Error())
 
-	vars.systems[TiDBSkipIsolationLevelCheck] = "ON"
+	// Enable global skip isolation check doesn't affect current session
+	require.Nil(t, GetSysVar(TiDBSkipIsolationLevelCheck).SetGlobalFromHook(vars, "ON", true))
+	_, err = sv.Validate(vars, "Serializable", ScopeSession)
+	require.Equal(t, "[variable:8048]The isolation level 'SERIALIZABLE' is not supported. Set tidb_skip_isolation_level_check=1 to skip this error", err.Error())
+
+	// Enable session skip isolation check
+	require.Nil(t, GetSysVar(TiDBSkipIsolationLevelCheck).SetSessionFromHook(vars, "ON"))
 
 	val, err = sv.Validate(vars, "Serializable", ScopeSession)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, "SERIALIZABLE")
+	require.NoError(t, err)
+	require.Equal(t, "SERIALIZABLE", val)
+
+	// Init TiDBSkipIsolationLevelCheck like what loadCommonGlobalVariables does
+	vars = NewSessionVars()
+	require.NoError(t, vars.SetSystemVarWithRelaxedValidation(TiDBSkipIsolationLevelCheck, "1"))
+	val, err = sv.Validate(vars, "Serializable", ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "SERIALIZABLE", val)
 }
 
-func (*testSysVarSuite) TestTiDBMultiStatementMode(c *C) {
+func TestTiDBMultiStatementMode(t *testing.T) {
 	sv := GetSysVar(TiDBMultiStatementMode)
 	vars := NewSessionVars()
 
 	val, err := sv.Validate(vars, "on", ScopeSession)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, "ON")
-	c.Assert(sv.SetSessionFromHook(vars, val), IsNil)
-	c.Assert(vars.MultiStatementMode, Equals, 1)
+	require.NoError(t, err)
+	require.Equal(t, "ON", val)
+	require.Nil(t, sv.SetSessionFromHook(vars, val))
+	require.Equal(t, 1, vars.MultiStatementMode)
 
 	val, err = sv.Validate(vars, "0", ScopeSession)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, "OFF")
-	c.Assert(sv.SetSessionFromHook(vars, val), IsNil)
-	c.Assert(vars.MultiStatementMode, Equals, 0)
+	require.NoError(t, err)
+	require.Equal(t, "OFF", val)
+	require.Nil(t, sv.SetSessionFromHook(vars, val))
+	require.Equal(t, 0, vars.MultiStatementMode)
 
 	val, err = sv.Validate(vars, "Warn", ScopeSession)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, "WARN")
-	c.Assert(sv.SetSessionFromHook(vars, val), IsNil)
-	c.Assert(vars.MultiStatementMode, Equals, 2)
+	require.NoError(t, err)
+	require.Equal(t, "WARN", val)
+	require.Nil(t, sv.SetSessionFromHook(vars, val))
+	require.Equal(t, 2, vars.MultiStatementMode)
 }
 
-func (*testSysVarSuite) TestReadOnlyNoop(c *C) {
+func TestReadOnlyNoop(t *testing.T) {
 	vars := NewSessionVars()
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+	noopFuncs := GetSysVar(TiDBEnableNoopFuncs)
+
+	// For session scope
 	for _, name := range []string{TxReadOnly, TransactionReadOnly} {
 		sv := GetSysVar(name)
 		val, err := sv.Validate(vars, "on", ScopeSession)
-		c.Assert(err.Error(), Equals, "[variable:1235]function READ ONLY has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions")
-		c.Assert(val, Equals, "OFF")
+		require.Equal(t, "[variable:1235]function READ ONLY has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions", err.Error())
+		require.Equal(t, "OFF", val)
+
+		require.NoError(t, noopFuncs.SetSessionFromHook(vars, "ON"))
+		_, err = sv.Validate(vars, "on", ScopeSession)
+		require.NoError(t, err)
+		require.NoError(t, noopFuncs.SetSessionFromHook(vars, "OFF")) // restore default.
+	}
+
+	// For global scope
+	for _, name := range []string{TxReadOnly, TransactionReadOnly, OfflineMode, SuperReadOnly, ReadOnly} {
+		sv := GetSysVar(name)
+		val, err := sv.Validate(vars, "on", ScopeGlobal)
+		if name == OfflineMode {
+			require.Equal(t, "[variable:1235]function OFFLINE MODE has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions", err.Error())
+		} else {
+			require.Equal(t, "[variable:1235]function READ ONLY has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions", err.Error())
+		}
+		require.Equal(t, "OFF", val)
+		require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(TiDBEnableNoopFuncs, "ON"))
+		_, err = sv.Validate(vars, "on", ScopeGlobal)
+		require.NoError(t, err)
+		require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(TiDBEnableNoopFuncs, "OFF"))
 	}
 }
 
-func (*testSysVarSuite) TestSkipInit(c *C) {
+func TestSkipInit(t *testing.T) {
 	sv := SysVar{Scope: ScopeGlobal, Name: "skipinit1", Value: On, Type: TypeBool}
-	c.Assert(sv.SkipInit(), IsTrue)
+	require.True(t, sv.SkipInit())
 
 	sv = SysVar{Scope: ScopeGlobal | ScopeSession, Name: "skipinit1", Value: On, Type: TypeBool}
-	c.Assert(sv.SkipInit(), IsFalse)
+	require.False(t, sv.SkipInit())
 
 	sv = SysVar{Scope: ScopeSession, Name: "skipinit1", Value: On, Type: TypeBool}
-	c.Assert(sv.SkipInit(), IsFalse)
+	require.False(t, sv.SkipInit())
 
 	sv = SysVar{Scope: ScopeSession, Name: "skipinit1", Value: On, Type: TypeBool, skipInit: true}
-	c.Assert(sv.SkipInit(), IsTrue)
+	require.True(t, sv.SkipInit())
 }
 
-// IsNoop is used by the documentation to auto-generate docs for real sysvars.
-func (*testSysVarSuite) TestIsNoop(c *C) {
-	sv := GetSysVar(TiDBMultiStatementMode)
-	c.Assert(sv.IsNoop, IsFalse)
-
-	sv = GetSysVar(InnodbLockWaitTimeout)
-	c.Assert(sv.IsNoop, IsFalse)
-
-	sv = GetSysVar(InnodbFastShutdown)
-	c.Assert(sv.IsNoop, IsTrue)
-
-	sv = GetSysVar(ReadOnly)
-	c.Assert(sv.IsNoop, IsTrue)
-}
-
-func (*testSysVarSuite) TestInstanceScopedVars(c *C) {
-	c.Skip("Skip this unstable test temporarily and bring it back before 2021-07-26")
-	// This tests instance scoped variables through GetSessionOrGlobalSystemVar().
-	// Eventually these should be changed to use getters so that the switch
-	// statement in GetSessionOnlySysVars can be removed.
-
+func TestSessionGetterFuncs(t *testing.T) {
 	vars := NewSessionVars()
+	val, err := vars.GetSessionOrGlobalSystemVar(TiDBCurrentTS)
+	require.NoError(t, err)
+	require.Equal(t, fmt.Sprintf("%d", vars.TxnCtx.StartTS), val)
 
-	val, err := GetSessionOrGlobalSystemVar(vars, TiDBCurrentTS)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, fmt.Sprintf("%d", vars.TxnCtx.StartTS))
+	val, err = vars.GetSessionOrGlobalSystemVar(TiDBLastTxnInfo)
+	require.NoError(t, err)
+	require.Equal(t, vars.LastTxnInfo, val)
 
-	val, err = GetSessionOrGlobalSystemVar(vars, TiDBLastTxnInfo)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, vars.LastTxnInfo)
-
-	val, err = GetSessionOrGlobalSystemVar(vars, TiDBLastQueryInfo)
-	c.Assert(err, IsNil)
+	val, err = vars.GetSessionOrGlobalSystemVar(TiDBLastQueryInfo)
+	require.NoError(t, err)
 	info, err := json.Marshal(vars.LastQueryInfo)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, string(info))
+	require.NoError(t, err)
+	require.Equal(t, string(info), val)
 
-	val, err = GetSessionOrGlobalSystemVar(vars, TiDBGeneralLog)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, BoolToOnOff(ProcessGeneralLog.Load()))
+	val, err = vars.GetSessionOrGlobalSystemVar(TiDBFoundInPlanCache)
+	require.NoError(t, err)
+	require.Equal(t, BoolToOnOff(vars.PrevFoundInPlanCache), val)
 
-	val, err = GetSessionOrGlobalSystemVar(vars, TiDBPProfSQLCPU)
-	c.Assert(err, IsNil)
+	val, err = vars.GetSessionOrGlobalSystemVar(TiDBFoundInBinding)
+	require.NoError(t, err)
+	require.Equal(t, BoolToOnOff(vars.PrevFoundInBinding), val)
+
+	val, err = vars.GetSessionOrGlobalSystemVar(TiDBTxnScope)
+	require.NoError(t, err)
+	require.Equal(t, vars.TxnScope.GetVarValue(), val)
+}
+
+func TestInstanceScopedVars(t *testing.T) {
+	vars := NewSessionVars()
+	val, err := vars.GetSessionOrGlobalSystemVar(TiDBGeneralLog)
+	require.NoError(t, err)
+	require.Equal(t, BoolToOnOff(ProcessGeneralLog.Load()), val)
+
+	val, err = vars.GetSessionOrGlobalSystemVar(TiDBPProfSQLCPU)
+	require.NoError(t, err)
 	expected := "0"
 	if EnablePProfSQLCPU.Load() {
 		expected = "1"
 	}
-	c.Assert(val, Equals, expected)
+	require.Equal(t, expected, val)
 
-	val, err = GetSessionOrGlobalSystemVar(vars, TiDBExpensiveQueryTimeThreshold)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, fmt.Sprintf("%d", atomic.LoadUint64(&ExpensiveQueryTimeThreshold)))
+	val, err = vars.GetSessionOrGlobalSystemVar(TiDBExpensiveQueryTimeThreshold)
+	require.NoError(t, err)
+	require.Equal(t, fmt.Sprintf("%d", atomic.LoadUint64(&ExpensiveQueryTimeThreshold)), val)
 
-	val, err = GetSessionOrGlobalSystemVar(vars, TiDBMemoryUsageAlarmRatio)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, fmt.Sprintf("%g", MemoryUsageAlarmRatio.Load()))
+	val, err = vars.GetSessionOrGlobalSystemVar(TiDBMemoryUsageAlarmRatio)
+	require.NoError(t, err)
+	require.Equal(t, fmt.Sprintf("%g", MemoryUsageAlarmRatio.Load()), val)
 
-	val, err = GetSessionOrGlobalSystemVar(vars, TiDBConfig)
-	c.Assert(err, IsNil)
-	conf := config.GetGlobalConfig()
-	j, err := json.MarshalIndent(conf, "", "\t")
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, config.HideConfig(string(j)))
+	val, err = vars.GetSessionOrGlobalSystemVar(TiDBForcePriority)
+	require.NoError(t, err)
+	require.Equal(t, mysql.Priority2Str[mysql.PriorityEnum(atomic.LoadInt32(&ForcePriority))], val)
 
-	val, err = GetSessionOrGlobalSystemVar(vars, TiDBForcePriority)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, mysql.Priority2Str[mysql.PriorityEnum(atomic.LoadInt32(&ForcePriority))])
+	val, err = vars.GetSessionOrGlobalSystemVar(TiDBDDLSlowOprThreshold)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatUint(uint64(atomic.LoadUint32(&DDLSlowOprThreshold)), 10), val)
 
-	val, err = GetSessionOrGlobalSystemVar(vars, TiDBDDLSlowOprThreshold)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, strconv.FormatUint(uint64(atomic.LoadUint32(&DDLSlowOprThreshold)), 10))
+	val, err = vars.GetSessionOrGlobalSystemVar(PluginDir)
+	require.NoError(t, err)
+	require.Equal(t, config.GetGlobalConfig().Instance.PluginDir, val)
 
-	val, err = GetSessionOrGlobalSystemVar(vars, PluginDir)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, config.GetGlobalConfig().Plugin.Dir)
+	val, err = vars.GetSessionOrGlobalSystemVar(PluginLoad)
+	require.NoError(t, err)
+	require.Equal(t, config.GetGlobalConfig().Instance.PluginLoad, val)
 
-	val, err = GetSessionOrGlobalSystemVar(vars, PluginLoad)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, config.GetGlobalConfig().Plugin.Load)
+	val, err = vars.GetSessionOrGlobalSystemVar(TiDBSlowLogThreshold)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Instance.SlowThreshold), 10), val)
 
-	val, err = GetSessionOrGlobalSystemVar(vars, TiDBSlowLogThreshold)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Log.SlowThreshold), 10))
+	val, err = vars.GetSessionOrGlobalSystemVar(TiDBRecordPlanInSlowLog)
+	require.NoError(t, err)
+	enabled := atomic.LoadUint32(&config.GetGlobalConfig().Instance.RecordPlanInSlowLog) == 1
+	require.Equal(t, BoolToOnOff(enabled), val)
 
-	val, err = GetSessionOrGlobalSystemVar(vars, TiDBRecordPlanInSlowLog)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, strconv.FormatUint(uint64(atomic.LoadUint32(&config.GetGlobalConfig().Log.RecordPlanInSlowLog)), 10))
+	val, err = vars.GetSessionOrGlobalSystemVar(TiDBEnableSlowLog)
+	require.NoError(t, err)
+	require.Equal(t, BoolToOnOff(config.GetGlobalConfig().Instance.EnableSlowLog.Load()), val)
 
-	val, err = GetSessionOrGlobalSystemVar(vars, TiDBEnableSlowLog)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, BoolToOnOff(config.GetGlobalConfig().Log.EnableSlowLog))
+	val, err = vars.GetSessionOrGlobalSystemVar(TiDBCheckMb4ValueInUTF8)
+	require.NoError(t, err)
+	require.Equal(t, BoolToOnOff(config.GetGlobalConfig().Instance.CheckMb4ValueInUTF8.Load()), val)
 
-	val, err = GetSessionOrGlobalSystemVar(vars, TiDBQueryLogMaxLen)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen), 10))
+	val, err = vars.GetSessionOrGlobalSystemVar(TiDBEnableCollectExecutionInfo)
+	require.NoError(t, err)
+	require.Equal(t, BoolToOnOff(config.GetGlobalConfig().Instance.EnableCollectExecutionInfo), val)
 
-	val, err = GetSessionOrGlobalSystemVar(vars, TiDBCheckMb4ValueInUTF8)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, BoolToOnOff(config.GetGlobalConfig().CheckMb4ValueInUTF8))
+	val, err = vars.GetSessionOrGlobalSystemVar(TiDBConfig)
+	require.NoError(t, err)
+	expected, err = config.GetJSONConfig()
+	require.NoError(t, err)
+	require.Equal(t, expected, val)
 
-	val, err = GetSessionOrGlobalSystemVar(vars, TiDBCapturePlanBaseline)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, CapturePlanBaseline.GetVal())
+	val, err = vars.GetSessionOrGlobalSystemVar(TiDBLogFileMaxDays)
+	require.NoError(t, err)
+	require.Equal(t, fmt.Sprint(GlobalLogMaxDays.Load()), val)
 
-	val, err = GetSessionOrGlobalSystemVar(vars, TiDBFoundInPlanCache)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, BoolToOnOff(vars.PrevFoundInPlanCache))
-
-	val, err = GetSessionOrGlobalSystemVar(vars, TiDBFoundInBinding)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, BoolToOnOff(vars.PrevFoundInBinding))
-
-	val, err = GetSessionOrGlobalSystemVar(vars, TiDBEnableCollectExecutionInfo)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, BoolToOnOff(config.GetGlobalConfig().EnableCollectExecutionInfo))
-
-	val, err = GetSessionOrGlobalSystemVar(vars, TiDBTxnScope)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, vars.TxnScope.GetVarValue())
+	val, err = vars.GetSessionOrGlobalSystemVar(TiDBRCReadCheckTS)
+	require.NoError(t, err)
+	require.Equal(t, BoolToOnOff(EnableRCReadCheckTS.Load()), val)
 }
 
-// Calling GetSysVars/GetSysVar needs to return a deep copy, otherwise there will be data races.
-// This is a bit unfortunate, since the only time the race occurs is in the testsuite (Enabling/Disabling SEM) and
-// during startup (setting the .Value of ScopeNone variables). In future it might also be able
-// to fix this by delaying the LoadSysVarCacheLoop start time until after the server is fully initialized.
-func (*testSysVarSuite) TestDeepCopyGetSysVars(c *C) {
-	// Check GetSysVar
-	sv := SysVar{Scope: ScopeGlobal | ScopeSession, Name: "datarace", Value: On, Type: TypeBool}
-	RegisterSysVar(&sv)
-	svcopy := GetSysVar("datarace")
-	svcopy.Name = "datarace2"
-	c.Assert(sv.Name, Equals, "datarace")
-	c.Assert(GetSysVar("datarace").Name, Equals, "datarace")
-	UnregisterSysVar("datarace")
-
-	// Check GetSysVars
-	sv = SysVar{Scope: ScopeGlobal | ScopeSession, Name: "datarace", Value: On, Type: TypeBool}
-	RegisterSysVar(&sv)
-	for name, svcopy := range GetSysVars() {
-		if name == "datarace" {
-			svcopy.Name = "datarace2"
-		}
-	}
-	c.Assert(sv.Name, Equals, "datarace")
-	c.Assert(GetSysVar("datarace").Name, Equals, "datarace")
-	UnregisterSysVar("datarace")
-}
-
-// Test that sysvars defaults are logically valid. i.e.
-// the default itself must validate without error provided the scope and read-only is correct.
-// The default values should also be normalized for consistency.
-func (*testSysVarSuite) TestDefaultValuesAreSettable(c *C) {
+func TestSecureAuth(t *testing.T) {
+	sv := GetSysVar(SecureAuth)
 	vars := NewSessionVars()
-	for _, sv := range GetSysVars() {
-		if sv.HasSessionScope() && !sv.ReadOnly {
-			val, err := sv.Validate(vars, sv.Value, ScopeSession)
-			c.Assert(sv.Value, Equals, val)
-			c.Assert(err, IsNil)
-		}
+	_, err := sv.Validate(vars, "OFF", ScopeGlobal)
+	require.Equal(t, "[variable:1231]Variable 'secure_auth' can't be set to the value of 'OFF'", err.Error())
+	val, err := sv.Validate(vars, "ON", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, "ON", val)
+}
 
-		if sv.HasGlobalScope() && !sv.ReadOnly {
-			if sv.Name == TiDBEnableNoopFuncs {
-				// TODO: this requires access to the global var accessor,
-				// which is not available in this test.
-				continue
-			}
-			val, err := sv.Validate(vars, sv.Value, ScopeGlobal)
-			c.Assert(sv.Value, Equals, val)
-			c.Assert(err, IsNil)
-		}
+func TestTiDBReplicaRead(t *testing.T) {
+	sv := GetSysVar(TiDBReplicaRead)
+	vars := NewSessionVars()
+	val, err := sv.Validate(vars, "follower", ScopeGlobal)
+	require.Equal(t, val, "follower")
+	require.NoError(t, err)
+}
+
+func TestSQLAutoIsNull(t *testing.T) {
+	svSQL, svNoop := GetSysVar(SQLAutoIsNull), GetSysVar(TiDBEnableNoopFuncs)
+	vars := NewSessionVars()
+	vars.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
+	_, err := svSQL.Validate(vars, "ON", ScopeSession)
+	require.True(t, terror.ErrorEqual(err, ErrFunctionsNoopImpl))
+	// change tidb_enable_noop_functions to 1, it will success
+	require.NoError(t, svNoop.SetSessionFromHook(vars, "ON"))
+	_, err = svSQL.Validate(vars, "ON", ScopeSession)
+	require.NoError(t, err)
+	require.NoError(t, svSQL.SetSessionFromHook(vars, "ON"))
+	res, ok := vars.GetSystemVar(SQLAutoIsNull)
+	require.True(t, ok)
+	require.Equal(t, "ON", res)
+	// restore tidb_enable_noop_functions to 0 failed, as sql_auto_is_null is 1
+	_, err = svNoop.Validate(vars, "OFF", ScopeSession)
+	require.True(t, terror.ErrorEqual(err, errValueNotSupportedWhen))
+	// after set sql_auto_is_null to 0, restore success
+	require.NoError(t, svSQL.SetSessionFromHook(vars, "OFF"))
+	require.NoError(t, svNoop.SetSessionFromHook(vars, "OFF"))
+
+	// Only test validate as MockGlobalAccessor do not support SetGlobalSysVar
+	_, err = svSQL.Validate(vars, "ON", ScopeGlobal)
+	require.True(t, terror.ErrorEqual(err, ErrFunctionsNoopImpl))
+}
+
+func TestLastInsertID(t *testing.T) {
+	vars := NewSessionVars()
+	val, err := vars.GetSessionOrGlobalSystemVar(LastInsertID)
+	require.NoError(t, err)
+	require.Equal(t, val, "0")
+
+	vars.StmtCtx.PrevLastInsertID = 21
+	val, err = vars.GetSessionOrGlobalSystemVar(LastInsertID)
+	require.NoError(t, err)
+	require.Equal(t, val, "21")
+}
+
+func TestTimestamp(t *testing.T) {
+	vars := NewSessionVars()
+	val, err := vars.GetSessionOrGlobalSystemVar(Timestamp)
+	require.NoError(t, err)
+	require.NotEqual(t, "", val)
+
+	vars.systems[Timestamp] = "10"
+	val, err = vars.GetSessionOrGlobalSystemVar(Timestamp)
+	require.NoError(t, err)
+	require.Equal(t, "10", val)
+
+	vars.systems[Timestamp] = "0" // set to default
+	val, err = vars.GetSessionOrGlobalSystemVar(Timestamp)
+	require.NoError(t, err)
+	require.NotEqual(t, "", val)
+	require.NotEqual(t, "10", val)
+
+	// Test validating a value that less than the minimum one.
+	sv := GetSysVar(Timestamp)
+	_, err = sv.Validate(vars, "-5", ScopeSession)
+	require.NoError(t, err)
+	warn := vars.StmtCtx.GetWarnings()[0].Err
+	require.Equal(t, "[variable:1292]Truncated incorrect timestamp value: '-5'", warn.Error())
+
+	// Test validating values that larger than the maximum one.
+	_, err = sv.Validate(vars, "3147483698", ScopeSession)
+	require.Equal(t, "[variable:1231]Variable 'timestamp' can't be set to the value of '3147483698'", err.Error())
+
+	_, err = sv.Validate(vars, "2147483648", ScopeSession)
+	require.Equal(t, "[variable:1231]Variable 'timestamp' can't be set to the value of '2147483648'", err.Error())
+
+	// Test validating the maximum value.
+	_, err = sv.Validate(vars, "2147483647", ScopeSession)
+	require.NoError(t, err)
+}
+
+func TestIdentity(t *testing.T) {
+	vars := NewSessionVars()
+	val, err := vars.GetSessionOrGlobalSystemVar(Identity)
+	require.NoError(t, err)
+	require.Equal(t, val, "0")
+
+	vars.StmtCtx.PrevLastInsertID = 21
+	val, err = vars.GetSessionOrGlobalSystemVar(Identity)
+	require.NoError(t, err)
+	require.Equal(t, val, "21")
+}
+
+func TestLcTimeNamesReadOnly(t *testing.T) {
+	sv := GetSysVar("lc_time_names")
+	vars := NewSessionVars()
+	vars.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
+	_, err := sv.Validate(vars, "newvalue", ScopeGlobal)
+	require.Error(t, err)
+}
+
+func TestLcMessagesReadOnly(t *testing.T) {
+	sv := GetSysVar("lc_messages")
+	vars := NewSessionVars()
+	vars.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
+	_, err := sv.Validate(vars, "newvalue", ScopeGlobal)
+	require.Error(t, err)
+}
+
+func TestDDLWorkers(t *testing.T) {
+	svWorkerCount, svBatchSize := GetSysVar(TiDBDDLReorgWorkerCount), GetSysVar(TiDBDDLReorgBatchSize)
+	vars := NewSessionVars()
+	vars.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
+
+	val, err := svWorkerCount.Validate(vars, "-100", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, val, "1") // converts it to min value
+	val, err = svWorkerCount.Validate(vars, "1234", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, val, "256") // converts it to max value
+	val, err = svWorkerCount.Validate(vars, "100", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, val, "100") // unchanged
+
+	val, err = svBatchSize.Validate(vars, "10", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, val, fmt.Sprint(MinDDLReorgBatchSize)) // converts it to min value
+	val, err = svBatchSize.Validate(vars, "999999", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, val, fmt.Sprint(MaxDDLReorgBatchSize)) // converts it to max value
+	val, err = svBatchSize.Validate(vars, "100", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, val, "100") // unchanged
+}
+
+func TestDefaultCharsetAndCollation(t *testing.T) {
+	vars := NewSessionVars()
+	val, err := vars.GetSessionOrGlobalSystemVar(CharacterSetConnection)
+	require.NoError(t, err)
+	require.Equal(t, val, mysql.DefaultCharset)
+	val, err = vars.GetSessionOrGlobalSystemVar(CollationConnection)
+	require.NoError(t, err)
+	require.Equal(t, val, mysql.DefaultCollationName)
+}
+
+func TestIndexMergeSwitcher(t *testing.T) {
+	vars := NewSessionVars()
+	vars.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
+	val, err := vars.GetSessionOrGlobalSystemVar(TiDBEnableIndexMerge)
+	require.NoError(t, err)
+	require.Equal(t, DefTiDBEnableIndexMerge, true)
+	require.Equal(t, BoolToOnOff(DefTiDBEnableIndexMerge), val)
+}
+
+func TestNetBufferLength(t *testing.T) {
+	netBufferLength := GetSysVar(NetBufferLength)
+	vars := NewSessionVars()
+	vars.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
+
+	val, err := netBufferLength.Validate(vars, "1", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, "1024", val) // converts it to min value
+	val, err = netBufferLength.Validate(vars, "10485760", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, "1048576", val) // converts it to max value
+	val, err = netBufferLength.Validate(vars, "524288", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, "524288", val) // unchanged
+}
+
+func TestTiDBBatchPendingTiFlashCount(t *testing.T) {
+	sv := GetSysVar(TiDBBatchPendingTiFlashCount)
+	vars := NewSessionVars()
+	val, err := sv.Validate(vars, "-10", ScopeSession)
+	require.NoError(t, err) // it has autoconvert out of range.
+	require.Equal(t, "0", val)
+
+	val, err = sv.Validate(vars, "9999", ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "9999", val)
+
+	_, err = sv.Validate(vars, "1.5", ScopeSession)
+	require.Error(t, err)
+	require.EqualError(t, err, "[variable:1232]Incorrect argument type to variable 'tidb_batch_pending_tiflash_count'")
+}
+
+func TestTiDBMemQuotaQuery(t *testing.T) {
+	sv := GetSysVar(TiDBMemQuotaQuery)
+	vars := NewSessionVars()
+
+	for _, scope := range []ScopeFlag{ScopeGlobal, ScopeSession} {
+		newVal := 32 * 1024 * 1024
+		val, err := sv.Validate(vars, fmt.Sprintf("%d", newVal), scope)
+		require.Equal(t, val, "33554432")
+		require.NoError(t, err)
+
+		// min value out of range
+		newVal = -2
+		expected := -1
+		val, err = sv.Validate(vars, fmt.Sprintf("%d", newVal), scope)
+		// expected to truncate
+		require.Equal(t, val, fmt.Sprintf("%d", expected))
+		require.NoError(t, err)
 	}
+}
+
+func TestTiDBQueryLogMaxLen(t *testing.T) {
+	sv := GetSysVar(TiDBQueryLogMaxLen)
+	vars := NewSessionVars()
+
+	newVal := 32 * 1024 * 1024
+	val, err := sv.Validate(vars, fmt.Sprintf("%d", newVal), ScopeGlobal)
+	require.Equal(t, val, "33554432")
+	require.NoError(t, err)
+
+	// out of range
+	newVal = 1073741825
+	expected := 1073741824
+	val, err = sv.Validate(vars, fmt.Sprintf("%d", newVal), ScopeGlobal)
+	// expected to truncate
+	require.Equal(t, val, fmt.Sprintf("%d", expected))
+	require.NoError(t, err)
+
+	// min value out of range
+	newVal = -2
+	expected = 0
+	val, err = sv.Validate(vars, fmt.Sprintf("%d", newVal), ScopeGlobal)
+	// expected to set to min value
+	require.Equal(t, val, fmt.Sprintf("%d", expected))
+	require.NoError(t, err)
+}
+
+func TestTiDBCommitterConcurrency(t *testing.T) {
+	sv := GetSysVar(TiDBCommitterConcurrency)
+	vars := NewSessionVars()
+
+	newVal := 1024
+	val, err := sv.Validate(vars, fmt.Sprintf("%d", newVal), ScopeGlobal)
+	require.Equal(t, val, "1024")
+	require.NoError(t, err)
+
+	// out of range
+	newVal = 10001
+	expected := 10000
+	val, err = sv.Validate(vars, fmt.Sprintf("%d", newVal), ScopeGlobal)
+	// expected to truncate
+	require.Equal(t, val, fmt.Sprintf("%d", expected))
+	require.NoError(t, err)
+
+	// min value out of range
+	newVal = 0
+	expected = 1
+	val, err = sv.Validate(vars, fmt.Sprintf("%d", newVal), ScopeGlobal)
+	// expected to set to min value
+	require.Equal(t, val, fmt.Sprintf("%d", expected))
+	require.NoError(t, err)
+}
+
+func TestTiDBDDLFlashbackConcurrency(t *testing.T) {
+	sv := GetSysVar(TiDBDDLFlashbackConcurrency)
+	vars := NewSessionVars()
+
+	newVal := 128
+	val, err := sv.Validate(vars, fmt.Sprintf("%d", newVal), ScopeGlobal)
+	require.Equal(t, val, "128")
+	require.NoError(t, err)
+
+	// out of range
+	newVal = MaxConfigurableConcurrency + 1
+	expected := MaxConfigurableConcurrency
+	val, err = sv.Validate(vars, fmt.Sprintf("%d", newVal), ScopeGlobal)
+	// expected to truncate
+	require.Equal(t, val, fmt.Sprintf("%d", expected))
+	require.NoError(t, err)
+
+	// min value out of range
+	newVal = 0
+	expected = 1
+	val, err = sv.Validate(vars, fmt.Sprintf("%d", newVal), ScopeGlobal)
+	// expected to set to min value
+	require.Equal(t, val, fmt.Sprintf("%d", expected))
+	require.NoError(t, err)
+}
+
+func TestDefaultMemoryDebugModeValue(t *testing.T) {
+	vars := NewSessionVars()
+	val, err := vars.GetSessionOrGlobalSystemVar(TiDBMemoryDebugModeMinHeapInUse)
+	require.NoError(t, err)
+	require.Equal(t, val, "0")
+	val, err = vars.GetSessionOrGlobalSystemVar(TiDBMemoryDebugModeAlarmRatio)
+	require.NoError(t, err)
+	require.Equal(t, val, "0")
+}
+
+func TestDefaultPartitionPruneMode(t *testing.T) {
+	vars := NewSessionVars()
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+	val, err := vars.GetSessionOrGlobalSystemVar(TiDBPartitionPruneMode)
+	require.NoError(t, err)
+	require.Equal(t, "dynamic", val)
+	require.Equal(t, "dynamic", DefTiDBPartitionPruneMode)
+}
+
+func TestSetTIDBFastDDL(t *testing.T) {
+	vars := NewSessionVars()
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+	fastDDL := GetSysVar(TiDBDDLEnableFastReorg)
+
+	// Default off
+	require.Equal(t, fastDDL.Value, Off)
+
+	// Set to On
+	err := mock.SetGlobalSysVar(TiDBDDLEnableFastReorg, On)
+	require.NoError(t, err)
+	val, err1 := mock.GetGlobalSysVar(TiDBDDLEnableFastReorg)
+	require.NoError(t, err1)
+	require.Equal(t, On, val)
+
+	// Set to off
+	err = mock.SetGlobalSysVar(TiDBDDLEnableFastReorg, Off)
+	require.NoError(t, err)
+	val, err1 = mock.GetGlobalSysVar(TiDBDDLEnableFastReorg)
+	require.NoError(t, err1)
+	require.Equal(t, Off, val)
+}
+
+func TestSetTIDBDiskQuota(t *testing.T) {
+	vars := NewSessionVars()
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+	diskQuota := GetSysVar(TiDBDDLDiskQuota)
+	var (
+		gb  int64 = 1024 * 1024 * 1024
+		pb  int64 = 1024 * 1024 * 1024 * 1024 * 1024
+		err error
+		val string
+	)
+	// Default 100 GB
+	require.Equal(t, diskQuota.Value, strconv.FormatInt(100*gb, 10))
+
+	// MinValue is 100 GB, set to 50 Gb is not allowed
+	err = mock.SetGlobalSysVar(TiDBDDLDiskQuota, strconv.FormatInt(50*gb, 10))
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBDDLDiskQuota)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatInt(100*gb, 10), val)
+
+	// Set to 100 GB
+	err = mock.SetGlobalSysVar(TiDBDDLDiskQuota, strconv.FormatInt(100*gb, 10))
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBDDLDiskQuota)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatInt(100*gb, 10), val)
+
+	// Set to 200 GB
+	err = mock.SetGlobalSysVar(TiDBDDLDiskQuota, strconv.FormatInt(200*gb, 10))
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBDDLDiskQuota)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatInt(200*gb, 10), val)
+
+	// Set to 1 Pb
+	err = mock.SetGlobalSysVar(TiDBDDLDiskQuota, strconv.FormatInt(pb, 10))
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBDDLDiskQuota)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatInt(pb, 10), val)
+
+	// MaxValue is 1 PB, set to 2 Pb is not allowed, it will set back to 1 PB max allowed value.
+	err = mock.SetGlobalSysVar(TiDBDDLDiskQuota, strconv.FormatInt(2*pb, 10))
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBDDLDiskQuota)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatInt(pb, 10), val)
+}
+
+func TestTiDBServerMemoryLimit(t *testing.T) {
+	vars := NewSessionVars()
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+	var (
+		mb  uint64 = 1 << 20
+		err error
+		val string
+	)
+	// Test tidb_server_memory_limit
+	serverMemoryLimit := GetSysVar(TiDBServerMemoryLimit)
+	// Check default value
+	require.Equal(t, serverMemoryLimit.Value, strconv.FormatUint(DefTiDBServerMemoryLimit, 10))
+
+	// MinValue is 512 MB
+	err = mock.SetGlobalSysVar(TiDBServerMemoryLimit, strconv.FormatUint(100*mb, 10))
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimit)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatUint(512*mb, 10), val)
+
+	// Test Close
+	err = mock.SetGlobalSysVar(TiDBServerMemoryLimit, strconv.FormatUint(0, 10))
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimit)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatUint(0, 10), val)
+
+	// Test MaxValue
+	err = mock.SetGlobalSysVar(TiDBServerMemoryLimit, strconv.FormatUint(math.MaxUint64, 10))
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimit)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatUint(math.MaxUint64, 10), val)
+
+	// Test Normal Value
+	err = mock.SetGlobalSysVar(TiDBServerMemoryLimit, strconv.FormatUint(1024*mb, 10))
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimit)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatUint(1024*mb, 10), val)
+
+	// Test tidb_server_memory_limit_sess_min_size
+	serverMemoryLimitSessMinSize := GetSysVar(TiDBServerMemoryLimitSessMinSize)
+	// Check default value
+	require.Equal(t, serverMemoryLimitSessMinSize.Value, strconv.FormatUint(DefTiDBServerMemoryLimitSessMinSize, 10))
+
+	// MinValue is 128 Bytes
+	err = mock.SetGlobalSysVar(TiDBServerMemoryLimitSessMinSize, strconv.FormatUint(100, 10))
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimitSessMinSize)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatUint(128, 10), val)
+
+	// Test Close
+	err = mock.SetGlobalSysVar(TiDBServerMemoryLimitSessMinSize, strconv.FormatUint(0, 10))
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimitSessMinSize)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatUint(0, 10), val)
+
+	// Test MaxValue
+	err = mock.SetGlobalSysVar(TiDBServerMemoryLimitSessMinSize, strconv.FormatUint(math.MaxUint64, 10))
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimitSessMinSize)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatUint(math.MaxUint64, 10), val)
+
+	// Test Normal Value
+	err = mock.SetGlobalSysVar(TiDBServerMemoryLimitSessMinSize, strconv.FormatUint(200*mb, 10))
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimitSessMinSize)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatUint(200*mb, 10), val)
 }

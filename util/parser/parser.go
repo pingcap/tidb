@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -26,9 +27,10 @@ var (
 )
 
 // Match matches the `pat` at least `times`, and returns the match, the rest and the error
-func Match(buf string, pat func(byte) bool, times int) (string, string, error) {
+func Match(buf string, pat func(byte) bool, times int) (match string, rest string, err error) {
 	var i int
-	for i = 0; i < len(buf) && pat(buf[i]); i++ {
+	for i < len(buf) && pat(buf[i]) {
+		i++
 	}
 	if i < times {
 		return "", buf, ErrPatternNotMatch
@@ -83,7 +85,7 @@ func Space0(buf string) string {
 }
 
 // Digit matches at least `times` digits
-func Digit(buf string, times int) (string, string, error) {
+func Digit(buf string, times int) (match string, rest string, err error) {
 	return Match(buf, func(c byte) bool {
 		return unicode.IsDigit(rune(c))
 	}, times)

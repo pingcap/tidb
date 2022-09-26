@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,12 +19,15 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
@@ -59,9 +63,10 @@ func (e *RevokeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 	e.done = true
+	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 
 	// Commit the old transaction, like DDL.
-	if err := e.ctx.NewTxn(ctx); err != nil {
+	if err := sessiontxn.NewTxnInStmt(ctx, e.ctx); err != nil {
 		return err
 	}
 	defer func() { e.ctx.GetSessionVars().SetInTxn(false) }()
@@ -74,15 +79,15 @@ func (e *RevokeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	defer func() {
 		if !isCommit {
-			_, err := internalSession.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), "rollback")
+			_, err := internalSession.(sqlexec.SQLExecutor).ExecuteInternal(internalCtx, "rollback")
 			if err != nil {
 				logutil.BgLogger().Error("rollback error occur at grant privilege", zap.Error(err))
 			}
 		}
-		e.releaseSysSession(internalSession)
+		e.releaseSysSession(internalCtx, internalSession)
 	}()
 
-	_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), "begin")
+	_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(internalCtx, "begin")
 	if err != nil {
 		return err
 	}
@@ -96,7 +101,7 @@ func (e *RevokeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 
 		// Check if user exists.
-		exists, err := userExists(e.ctx, user.User.Username, user.User.Hostname)
+		exists, err := userExists(ctx, e.ctx, user.User.Username, user.User.Hostname)
 		if err != nil {
 			return err
 		}
@@ -113,13 +118,12 @@ func (e *RevokeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 	}
 
-	_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), "commit")
+	_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(internalCtx, "commit")
 	if err != nil {
 		return err
 	}
 	isCommit = true
-	domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
-	return nil
+	return domain.GetDomain(e.ctx).NotifyUpdatePrivilege()
 }
 
 // Checks that dynamic privileges are only of global scope.
@@ -195,16 +199,18 @@ func (e *RevokeExec) revokeDynamicPriv(internalSession sessionctx.Context, privN
 	if !privilege.GetPrivilegeManager(e.ctx).IsDynamicPrivilege(privName) { // for MySQL compatibility
 		e.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrDynamicPrivilegeNotRegistered.GenWithStackByArgs(privName))
 	}
-	_, err := internalSession.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), "DELETE FROM mysql.global_grants WHERE user = %? AND host = %? AND priv = %?", user, host, privName)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
+	_, err := internalSession.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "DELETE FROM mysql.global_grants WHERE user = %? AND host = %? AND priv = %?", user, host, privName)
 	return err
 }
 
 func (e *RevokeExec) revokeGlobalPriv(internalSession sessionctx.Context, priv *ast.PrivElem, user, host string) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 	if priv.Priv == mysql.ExtendedPriv {
 		return e.revokeDynamicPriv(internalSession, priv.Name, user, host)
 	}
 	if priv.Priv == mysql.AllPriv { // If ALL, also revoke dynamic privileges
-		_, err := internalSession.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), "DELETE FROM mysql.global_grants WHERE user = %? AND host = %?", user, host)
+		_, err := internalSession.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "DELETE FROM mysql.global_grants WHERE user = %? AND host = %?", user, host)
 		if err != nil {
 			return err
 		}
@@ -215,13 +221,14 @@ func (e *RevokeExec) revokeGlobalPriv(internalSession sessionctx.Context, priv *
 	if err != nil {
 		return err
 	}
-	sqlexec.MustFormatSQL(sql, " WHERE User=%? AND Host=%?", user, host)
+	sqlexec.MustFormatSQL(sql, " WHERE User=%? AND Host=%?", user, strings.ToLower(host))
 
-	_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql.String())
+	_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql.String())
 	return err
 }
 
 func (e *RevokeExec) revokeDBPriv(internalSession sessionctx.Context, priv *ast.PrivElem, userName, host string) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 	dbName := e.Level.DBName
 	if len(dbName) == 0 {
 		dbName = e.ctx.GetSessionVars().CurrentDB
@@ -235,29 +242,36 @@ func (e *RevokeExec) revokeDBPriv(internalSession sessionctx.Context, priv *ast.
 	}
 	sqlexec.MustFormatSQL(sql, " WHERE User=%? AND Host=%? AND DB=%?", userName, host, dbName)
 
-	_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql.String())
+	_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql.String())
 	return err
 }
 
 func (e *RevokeExec) revokeTablePriv(internalSession sessionctx.Context, priv *ast.PrivElem, user, host string) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 	dbName, tbl, err := getTargetSchemaAndTable(e.ctx, e.Level.DBName, e.Level.TableName, e.is)
-	if err != nil {
+	if err != nil && !terror.ErrorEqual(err, infoschema.ErrTableNotExists) {
 		return err
 	}
 
+	// Allow REVOKE on non-existent table, see issue #28533
+	tblName := e.Level.TableName
+	if tbl != nil {
+		tblName = tbl.Meta().Name.O
+	}
 	sql := new(strings.Builder)
 	sqlexec.MustFormatSQL(sql, "UPDATE %n.%n SET ", mysql.SystemDB, mysql.TablePrivTable)
-	err = composeTablePrivUpdateForRevoke(internalSession, sql, priv.Priv, user, host, dbName, tbl.Meta().Name.O)
+	err = composeTablePrivUpdateForRevoke(internalSession, sql, priv.Priv, user, host, dbName, tblName)
 	if err != nil {
 		return err
 	}
-	sqlexec.MustFormatSQL(sql, " WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%?", user, host, dbName, tbl.Meta().Name.O)
+	sqlexec.MustFormatSQL(sql, " WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%?", user, host, dbName, tblName)
 
-	_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql.String())
+	_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql.String())
 	return err
 }
 
 func (e *RevokeExec) revokeColumnPriv(internalSession sessionctx.Context, priv *ast.PrivElem, user, host string) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 	dbName, tbl, err := getTargetSchemaAndTable(e.ctx, e.Level.DBName, e.Level.TableName, e.is)
 	if err != nil {
 		return err
@@ -277,7 +291,7 @@ func (e *RevokeExec) revokeColumnPriv(internalSession sessionctx.Context, priv *
 		}
 		sqlexec.MustFormatSQL(sql, " WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%? AND Column_name=%?", user, host, dbName, tbl.Meta().Name.O, col.Name.O)
 
-		_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql.String())
+		_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql.String())
 		if err != nil {
 			return err
 		}
@@ -297,12 +311,21 @@ func privUpdateForRevoke(cur []string, priv mysql.PrivilegeType) ([]string, erro
 func composeTablePrivUpdateForRevoke(ctx sessionctx.Context, sql *strings.Builder, priv mysql.PrivilegeType, name string, host string, db string, tbl string) error {
 	var newTablePriv, newColumnPriv []string
 
-	if priv != mysql.AllPriv {
-		currTablePriv, currColumnPriv, err := getTablePriv(ctx, name, host, db, tbl)
-		if err != nil {
-			return err
-		}
+	currTablePriv, currColumnPriv, err := getTablePriv(ctx, name, host, db, tbl)
+	if err != nil {
+		return err
+	}
 
+	if priv == mysql.AllPriv {
+		// Revoke ALL does not revoke the Grant option,
+		// so we only need to check if the user previously had this.
+		tmp := SetFromString(currTablePriv)
+		for _, p := range tmp {
+			if p == mysql.Priv2SetStr[mysql.GrantPriv] {
+				newTablePriv = []string{mysql.Priv2SetStr[mysql.GrantPriv]}
+			}
+		}
+	} else {
 		newTablePriv = SetFromString(currTablePriv)
 		newTablePriv, err = privUpdateForRevoke(newTablePriv, priv)
 		if err != nil {

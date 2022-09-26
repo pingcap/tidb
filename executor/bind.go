@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,9 +18,9 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/parser/ast"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -36,6 +37,7 @@ type SQLBindExec struct {
 	db           string
 	isGlobal     bool
 	bindAst      ast.StmtNode
+	newStatus    string
 }
 
 // Next implements the Executor Next interface.
@@ -54,6 +56,8 @@ func (e *SQLBindExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return e.evolveBindings()
 	case plannercore.OpReloadBindings:
 		return e.reloadBindings()
+	case plannercore.OpSetBindingStatus:
+		return e.setBindingStatus()
 	default:
 		return errors.Errorf("unsupported SQL bind operation: %v", e.sqlBindOp)
 	}
@@ -76,12 +80,36 @@ func (e *SQLBindExec) dropSQLBind() error {
 	return domain.GetDomain(e.ctx).BindHandle().DropBindRecord(e.normdOrigSQL, e.db, bindInfo)
 }
 
+func (e *SQLBindExec) setBindingStatus() error {
+	var bindInfo *bindinfo.Binding
+	if e.bindSQL != "" {
+		bindInfo = &bindinfo.Binding{
+			BindSQL:   e.bindSQL,
+			Charset:   e.charset,
+			Collation: e.collation,
+		}
+	}
+	ok, err := domain.GetDomain(e.ctx).BindHandle().SetBindRecordStatus(e.normdOrigSQL, bindInfo, e.newStatus)
+	if err == nil && !ok {
+		warningMess := errors.New("There are no bindings can be set the status. Please check the SQL text")
+		e.ctx.GetSessionVars().StmtCtx.AppendWarning(warningMess)
+	}
+	return err
+}
+
 func (e *SQLBindExec) createSQLBind() error {
+	// For audit log, SQLBindExec execute "explain" statement internally, save and recover stmtctx
+	// is necessary to avoid 'create binding' been recorded as 'explain'.
+	saveStmtCtx := e.ctx.GetSessionVars().StmtCtx
+	defer func() {
+		e.ctx.GetSessionVars().StmtCtx = saveStmtCtx
+	}()
+
 	bindInfo := bindinfo.Binding{
 		BindSQL:   e.bindSQL,
 		Charset:   e.charset,
 		Collation: e.collation,
-		Status:    bindinfo.Using,
+		Status:    bindinfo.Enabled,
 		Source:    bindinfo.Manual,
 	}
 	record := &bindinfo.BindRecord{

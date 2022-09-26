@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,50 +16,19 @@ package admin_test
 
 import (
 	"strconv"
+	"testing"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/util/testkit"
-	"github.com/tikv/client-go/v2/testutils"
+	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/testkit"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testAdminSuite{})
+func TestAdminCheckTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
 
-type testAdminSuite struct {
-	cluster testutils.Cluster
-	store   kv.Storage
-	domain  *domain.Domain
-}
-
-func (s *testAdminSuite) SetUpSuite(c *C) {
-	store, err := mockstore.NewMockStore(
-		mockstore.WithClusterInspector(func(c testutils.Cluster) {
-			mockstore.BootstrapWithSingleStore(c)
-			s.cluster = c
-		}),
-	)
-	c.Assert(err, IsNil)
-	s.store = store
-	session.SetSchemaLease(0)
-	session.DisableStats4Test()
-	d, err := session.BootstrapSession(s.store)
-	c.Assert(err, IsNil)
-	d.SetStatsUpdating(true)
-	s.domain = d
-}
-
-func (s *testAdminSuite) TearDownSuite(c *C) {
-	s.domain.Close()
-	s.store.Close()
-}
-
-func (s *testAdminSuite) TestAdminCheckTable(c *C) {
 	// test NULL value.
-	tk := testkit.NewTestKit(c, s.store)
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	// test index column has pk-handle column
 	tk.MustExec("drop table if exists t")
@@ -74,6 +44,7 @@ func (s *testAdminSuite) TestAdminCheckTable(c *C) {
 	tk.MustExec("ALTER TABLE t1 ADD COLUMN cc2 VARCHAR(36) NULL DEFAULT ''")
 	tk.MustExec("ALTER TABLE t1 ADD INDEX idx1 (cc1);")
 	tk.MustExec("ALTER TABLE t1 ADD INDEX idx2 (cc2);")
+	tk.MustExec("ALTER TABLE t1 engine=innodb;")
 	tk.MustExec("admin check table t1;")
 
 	// For add index on virtual column
@@ -104,13 +75,15 @@ func (s *testAdminSuite) TestAdminCheckTable(c *C) {
 	tk.MustExec("admin check table t1;")
 }
 
-func (s *testAdminSuite) TestAdminCheckTableClusterIndex(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestAdminCheckTableClusterIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists admin_check_table_clustered_index;")
 	tk.MustExec("create database admin_check_table_clustered_index;")
 	tk.MustExec("use admin_check_table_clustered_index;")
 
-	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 
 	tk.MustExec("create table t (a bigint, b varchar(255), c int, primary key (a, b), index idx_0(a, b), index idx_1(b, c));")
 	tk.MustExec("insert into t values (1, '1', 1);")
@@ -135,4 +108,36 @@ func (s *testAdminSuite) TestAdminCheckTableClusterIndex(c *C) {
 
 	tk.MustExec("insert into t values (1000, '1000', 1000, '1000', '1000');")
 	tk.MustExec("admin check table t;")
+}
+
+func TestAdminCheckTableCorrupted(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int, v int, UNIQUE KEY i1(id, v))")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values (1, 1)")
+
+	txn, err := tk.Session().Txn(false)
+	require.NoError(t, err)
+	memBuffer := txn.GetMemBuffer()
+	it, err := memBuffer.Iter(nil, nil)
+	require.NoError(t, err)
+	for it.Valid() {
+		if tablecodec.IsRecordKey(it.Key()) && len(it.Value()) > 0 {
+			value := make([]byte, len(it.Value()))
+			key := make([]byte, len(it.Key()))
+			copy(key, it.Key())
+			copy(value, it.Value())
+			key[len(key)-1] += 1
+			memBuffer.Set(key, value)
+		}
+		err = it.Next()
+		require.NoError(t, err)
+	}
+
+	tk.MustExec("commit")
+	err = tk.ExecToErr("admin check table t")
+	require.Error(t, err)
 }

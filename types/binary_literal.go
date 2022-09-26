@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -108,7 +109,7 @@ func (b BinaryLiteral) ToInt(sc *stmtctx.StatementContext) (uint64, error) {
 		return 0, nil
 	}
 	if length > 8 {
-		var err = ErrTruncatedWrongVal.GenWithStackByArgs("BINARY", b)
+		var err = ErrTruncatedWrongVal.FastGenByArgs("BINARY", b)
 		if sc != nil {
 			err = sc.HandleTruncate(err)
 		}
@@ -146,11 +147,11 @@ func ParseBitStr(s string) (BinaryLiteral, error) {
 	if s[0] == 'b' || s[0] == 'B' {
 		// format is b'val' or B'val'
 		s = strings.Trim(s[1:], "'")
-	} else if strings.HasPrefix(s, "0b") {
-		s = s[2:]
-	} else {
+	} else if !strings.HasPrefix(s, "0b") {
 		// here means format is not b'val', B'val' or 0bval.
 		return nil, errors.Errorf("invalid bit type format %s", s)
+	} else {
+		s = s[2:]
 	}
 
 	if len(s) == 0 {
@@ -201,11 +202,11 @@ func ParseHexStr(s string) (BinaryLiteral, error) {
 		if len(s)%2 != 0 {
 			return nil, errors.Errorf("invalid hexadecimal format, must even numbers, but %d", len(s))
 		}
-	} else if strings.HasPrefix(s, "0x") {
-		s = s[2:]
-	} else {
+	} else if !strings.HasPrefix(s, "0x") {
 		// here means format is not x'val', X'val' or 0xval.
 		return nil, errors.Errorf("invalid hexadecimal format %s", s)
+	} else {
+		s = s[2:]
 	}
 
 	if len(s) == 0 {

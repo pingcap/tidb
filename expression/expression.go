@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,6 +17,7 @@ package expression
 import (
 	goJSON "encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -23,16 +25,16 @@ import (
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/opcode"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/generatedexpr"
 	"github.com/pingcap/tidb/util/logutil"
@@ -45,6 +47,7 @@ const (
 	constantFlag       byte = 0
 	columnFlag         byte = 1
 	scalarFunctionFlag byte = 3
+	parameterFlag      byte = 4
 )
 
 // EvalAstExpr evaluates ast expression directly.
@@ -123,7 +126,7 @@ type Expression interface {
 	EvalDuration(ctx sessionctx.Context, row chunk.Row) (val types.Duration, isNull bool, err error)
 
 	// EvalJSON returns the JSON representation of expression.
-	EvalJSON(ctx sessionctx.Context, row chunk.Row) (val json.BinaryJSON, isNull bool, err error)
+	EvalJSON(ctx sessionctx.Context, row chunk.Row) (val types.BinaryJSON, isNull bool, err error)
 
 	// GetType gets the type that the expression returns.
 	GetType() *types.FieldType
@@ -156,6 +159,15 @@ type Expression interface {
 	// resolveIndices is called inside the `ResolveIndices` It will perform on the expression itself.
 	resolveIndices(schema *Schema) error
 
+	// ResolveIndicesByVirtualExpr resolves indices by the given schema in terms of virual expression. It will copy the original expression and return the copied one.
+	ResolveIndicesByVirtualExpr(schema *Schema) (Expression, bool)
+
+	// resolveIndicesByVirtualExpr is called inside the `ResolveIndicesByVirtualExpr` It will perform on the expression itself.
+	resolveIndicesByVirtualExpr(schema *Schema) bool
+
+	// RemapColumn remaps columns with provided mapping and returns new expression
+	RemapColumn(map[int64]*Column) (Expression, error)
+
 	// ExplainInfo returns operator information to be explained.
 	ExplainInfo() string
 
@@ -168,6 +180,9 @@ type Expression interface {
 	// Column: ColumnFlag+encoded value
 	// ScalarFunction: SFFlag+encoded function name + encoded arg_1 + encoded arg_2 + ...
 	HashCode(sc *stmtctx.StatementContext) []byte
+
+	// MemoryUsage return the memory usage of Expression
+	MemoryUsage() int64
 }
 
 // CNFExprs stands for a CNF expression.
@@ -211,13 +226,14 @@ func ExprNotNull(expr Expression) bool {
 	}
 	// For ScalarFunction, the result would not be correct until we support maintaining
 	// NotNull flag for it.
-	return mysql.HasNotNullFlag(expr.GetType().Flag)
+	return mysql.HasNotNullFlag(expr.GetType().GetFlag())
 }
 
 // HandleOverflowOnSelection handles Overflow errors when evaluating selection filters.
 // We should ignore overflow errors when evaluating selection conditions:
-//		INSERT INTO t VALUES ("999999999999999999");
-//		SELECT * FROM t WHERE v;
+//
+//	INSERT INTO t VALUES ("999999999999999999");
+//	SELECT * FROM t WHERE v;
 func HandleOverflowOnSelection(sc *stmtctx.StatementContext, val int64, err error) (int64, error) {
 	if sc.InSelectStmt && err != nil && types.ErrOverflow.Equal(err) {
 		return -1, nil
@@ -254,7 +270,6 @@ func EvalBool(ctx sessionctx.Context, exprList CNFExprs, row chunk.Row) (bool, b
 			i, err = HandleOverflowOnSelection(ctx.GetSessionVars().StmtCtx, i, err)
 			if err != nil {
 				return false, false, err
-
 			}
 		}
 		if i == 0 {
@@ -340,7 +355,7 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 		if CanImplicitEvalReal(expr) {
 			eType = types.ETReal
 		}
-		buf, err := globalColumnAllocator.get(eType, n)
+		buf, err := globalColumnAllocator.get()
 		if err != nil {
 			return nil, nil, err
 		}
@@ -457,7 +472,7 @@ func toBool(sc *stmtctx.StatementContext, tp *types.FieldType, eType types.EvalT
 				var err error
 				sVal := buf.GetString(i)
 				if tp.Hybrid() {
-					switch tp.Tp {
+					switch tp.GetType() {
 					case mysql.TypeSet, mysql.TypeEnum:
 						fVal = float64(len(sVal))
 						if fVal == 0 {
@@ -465,7 +480,7 @@ func toBool(sc *stmtctx.StatementContext, tp *types.FieldType, eType types.EvalT
 							// with 1. The index value of the empty string error value (distinguish from a "normal"
 							// empty string) is 0. Thus we need to check whether it's an empty string error value when
 							// `fVal==0`.
-							for idx, elem := range tp.Elems {
+							for idx, elem := range tp.GetElems() {
 								if elem == sVal {
 									fVal = float64(idx + 1)
 									break
@@ -569,7 +584,7 @@ func EvalExpr(ctx sessionctx.Context, expr Expression, evalType types.EvalType, 
 		case types.ETDecimal:
 			err = expr.VecEvalDecimal(ctx, input, result)
 		default:
-			err = errors.New(fmt.Sprintf("invalid eval type %v", expr.GetType().EvalType()))
+			err = fmt.Errorf("invalid eval type %v", expr.GetType().EvalType())
 		}
 	} else {
 		ind, n := 0, input.NumRows()
@@ -677,7 +692,7 @@ func EvalExpr(ctx sessionctx.Context, expr Expression, evalType types.EvalType, 
 				ind++
 			}
 		default:
-			err = errors.New(fmt.Sprintf("invalid eval type %v", expr.GetType().EvalType()))
+			err = fmt.Errorf("invalid eval type %v", expr.GetType().EvalType())
 		}
 	}
 	return
@@ -740,6 +755,9 @@ type Assignment struct {
 	// ColName indicates its original column name in table schema. It's used for outputting helping message when executing meets some errors.
 	ColName model.CIStr
 	Expr    Expression
+	// LazyErr is used in statement like `INSERT INTO t1 (a) VALUES (1) ON DUPLICATE KEY UPDATE a= (SELECT b FROM source);`, ErrSubqueryMoreThan1Row
+	// should be evaluated after the duplicate situation is detected in the executing procedure.
+	LazyErr error
 }
 
 // VarAssignment represents a variable assignment in Set, such as set global a = 1.
@@ -754,6 +772,7 @@ type VarAssignment struct {
 
 // splitNormalFormItems split CNF(conjunctive normal form) like "a and b and c", or DNF(disjunctive normal form) like "a or b or c"
 func splitNormalFormItems(onExpr Expression, funcName string) []Expression {
+	//nolint: revive
 	switch v := onExpr.(type) {
 	case *ScalarFunction:
 		if v.FuncName.L == funcName {
@@ -782,8 +801,8 @@ func SplitDNFItems(onExpr Expression) []Expression {
 // EvaluateExprWithNull sets columns in schema as null and calculate the final result of the scalar function.
 // If the Expression is a non-constant value, it means the result is unknown.
 func EvaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expression) Expression {
-	if ContainMutableConst(ctx, []Expression{expr}) {
-		ctx.GetSessionVars().StmtCtx.OptimDependOnMutableConst = true
+	if MaybeOverOptimized4PlanCache(ctx, []Expression{expr}) {
+		return expr
 	}
 	return evaluateExprWithNull(ctx, schema, expr)
 }
@@ -795,7 +814,7 @@ func evaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expressio
 		for i, arg := range x.GetArgs() {
 			args[i] = evaluateExprWithNull(ctx, schema, arg)
 		}
-		return NewFunctionInternal(ctx, x.FuncName.L, x.RetType, args...)
+		return NewFunctionInternal(ctx, x.FuncName.L, x.RetType.Clone(), args...)
 	case *Column:
 		if !schema.Contains(x) {
 			return x
@@ -826,7 +845,7 @@ func TableInfo2SchemaAndNames(ctx sessionctx.Context, dbName model.CIStr, tbl *m
 			find := false
 			for i, col := range tbl.Columns {
 				if idxCol.Name.L == col.Name.L {
-					if !mysql.HasNotNullFlag(col.Flag) {
+					if !mysql.HasNotNullFlag(col.GetFlag()) {
 						break
 					}
 					newKey = append(newKey, cols[i])
@@ -845,7 +864,7 @@ func TableInfo2SchemaAndNames(ctx sessionctx.Context, dbName model.CIStr, tbl *m
 	}
 	if tbl.PKIsHandle {
 		for i, col := range tbl.Columns {
-			if mysql.HasPriKeyFlag(col.Flag) {
+			if mysql.HasPriKeyFlag(col.GetFlag()) {
 				keys = append(keys, KeyInfo{cols[i]})
 				break
 			}
@@ -930,6 +949,7 @@ func IsBinaryLiteral(expr Expression) bool {
 	return ok && con.Value.Kind() == types.KindBinaryLiteral
 }
 
+// supported functions tracked by https://github.com/tikv/tikv/issues/5751
 func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 	switch sf.FuncName.L {
 	case
@@ -938,24 +958,32 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 
 		// compare functions.
 		ast.LT, ast.LE, ast.EQ, ast.NE, ast.GE, ast.GT, ast.NullEQ, ast.In, ast.IsNull, ast.Like, ast.IsTruthWithoutNull, ast.IsTruthWithNull, ast.IsFalsity,
+		// ast.Greatest, ast.Least, ast.Interval
 
 		// arithmetical functions.
-		ast.Plus, ast.Minus, ast.Mul, ast.Div, ast.Abs, /*ast.Mod,*/
+		ast.PI, /* ast.Truncate */
+		ast.Plus, ast.Minus, ast.Mul, ast.Div, ast.Abs, ast.Mod,
 
 		// math functions.
 		ast.Ceil, ast.Ceiling, ast.Floor, ast.Sqrt, ast.Sign, ast.Ln, ast.Log, ast.Log2, ast.Log10, ast.Exp, ast.Pow,
 
 		// Rust use the llvm math functions, which have different precision with Golang/MySQL(cmath)
 		// open the following switchers if we implement them in coprocessor via `cmath`
-		// ast.Sin, ast.Asin, ast.Cos, ast.Acos, ast.Tan, ast.Atan, ast.Atan2, ast.Cot,
+		ast.Sin, ast.Asin, ast.Cos, ast.Acos /* ast.Tan */, ast.Atan, ast.Atan2, ast.Cot,
 		ast.Radians, ast.Degrees, ast.Conv, ast.CRC32,
 
 		// control flow functions.
 		ast.Case, ast.If, ast.Ifnull, ast.Coalesce,
 
 		// string functions.
-		ast.Length, ast.BitLength, ast.Concat, ast.ConcatWS /*ast.Locate,*/, ast.Replace, ast.ASCII, ast.Hex,
-		ast.Reverse, ast.LTrim, ast.RTrim /*ast.Left,*/, ast.Strcmp, ast.Space, ast.Elt, ast.Field,
+		// ast.Bin, ast.Unhex, ast.Locate, ast.Ord, ast.Lpad, ast.Rpad,
+		// ast.Trim, ast.FromBase64, ast.ToBase64, ast.Upper, ast.Lower, ast.InsertFunc,
+		// ast.MakeSet, ast.SubstringIndex, ast.Instr, ast.Quote, ast.Oct,
+		// ast.FindInSet, ast.Repeat,
+		ast.Length, ast.BitLength, ast.Concat, ast.ConcatWS, ast.Replace, ast.ASCII, ast.Hex,
+		ast.Reverse, ast.LTrim, ast.RTrim, ast.Strcmp, ast.Space, ast.Elt, ast.Field,
+		InternalFuncFromBinary, InternalFuncToBinary, ast.Mid, ast.Substring, ast.Substr, ast.CharLength,
+		ast.Right, /* ast.Left */
 
 		// json functions.
 		ast.JSONType, ast.JSONExtract, ast.JSONObject, ast.JSONArray, ast.JSONMerge, ast.JSONSet,
@@ -964,10 +992,17 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		ast.JSONUnquote,
 
 		// date functions.
-		ast.DateFormat, ast.FromDays /*ast.ToDays,*/, ast.DayOfYear, ast.DayOfMonth, ast.Year, ast.Month,
-		// FIXME: the coprocessor cannot keep the same behavior with TiDB in current compute framework
-		// ast.Hour, ast.Minute, ast.Second, ast.MicroSecond, ast.DayName,
+		ast.Date, ast.Week /* ast.YearWeek, ast.ToSeconds */, ast.DateDiff,
+		/* ast.TimeDiff, ast.AddTime,  ast.SubTime, */
+		ast.MonthName, ast.MakeDate, ast.TimeToSec, ast.MakeTime,
+		ast.DateFormat,
+		ast.Hour, ast.Minute, ast.Second, ast.MicroSecond, ast.Month,
+		/* ast.DayName */ ast.DayOfMonth, ast.DayOfWeek, ast.DayOfYear,
+		/* ast.Weekday */ ast.WeekOfYear, ast.Year,
+		ast.FromDays,                  /* ast.ToDays */
 		ast.PeriodAdd, ast.PeriodDiff, /*ast.TimestampDiff, ast.DateAdd, ast.FromUnixTime,*/
+		/* ast.LastDay */
+		ast.Sysdate,
 
 		// encryption functions.
 		ast.MD5, ast.SHA1, ast.UncompressedLength,
@@ -975,14 +1010,16 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		ast.Cast,
 
 		// misc functions.
-		ast.InetNtoa, ast.InetAton, ast.Inet6Ntoa, ast.Inet6Aton, ast.IsIPv4, ast.IsIPv4Compat, ast.IsIPv4Mapped, ast.IsIPv6, ast.UUID:
+		// TODO(#26942): enable functions below after them are fully tested in TiKV.
+		/*ast.InetNtoa, ast.InetAton, ast.Inet6Ntoa, ast.Inet6Aton, ast.IsIPv4, ast.IsIPv4Compat, ast.IsIPv4Mapped, ast.IsIPv6,*/
+		ast.UUID:
 
 		return true
-
-	// A special case: Only push down Round by signature
 	case ast.Round:
 		switch sf.Function.PbCode() {
 		case tipb.ScalarFuncSig_RoundReal, tipb.ScalarFuncSig_RoundInt, tipb.ScalarFuncSig_RoundDec:
+			// We don't push round with frac due to mysql's round with frac has its special behavior:
+			// https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_round
 			return true
 		}
 	case ast.Rand:
@@ -990,8 +1027,23 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		case tipb.ScalarFuncSig_RandWithSeedFirstGen:
 			return true
 		}
+	case ast.Regexp, ast.RegexpLike, ast.RegexpSubstr, ast.RegexpInStr, ast.RegexpReplace:
+		funcCharset, funcCollation := sf.Function.CharsetAndCollation()
+		if funcCharset == charset.CharsetBin && funcCollation == charset.CollationBin {
+			return false
+		}
+		return true
 	}
 	return false
+}
+
+func canEnumPushdownPreliminarily(scalarFunc *ScalarFunction) bool {
+	switch scalarFunc.FuncName.L {
+	case ast.Cast:
+		return scalarFunc.RetType.EvalType() == types.ETInt || scalarFunc.RetType.EvalType() == types.ETReal || scalarFunc.RetType.EvalType() == types.ETDecimal
+	default:
+		return false
+	}
 }
 
 func scalarExprSupportedByFlash(function *ScalarFunction) bool {
@@ -1004,43 +1056,79 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 			return true
 		}
 	case
-		ast.LogicOr, ast.LogicAnd, ast.UnaryNot, ast.BitNeg, ast.Xor, ast.And, ast.Or,
-		ast.GE, ast.LE, ast.EQ, ast.NE, ast.LT, ast.GT, ast.In, ast.IsNull, ast.Like,
-		ast.Plus, ast.Minus, ast.Div, ast.Mul, ast.Abs, /*ast.Mod,*/
+		ast.LogicOr, ast.LogicAnd, ast.UnaryNot, ast.BitNeg, ast.Xor, ast.And, ast.Or, ast.RightShift, ast.LeftShift,
+		ast.GE, ast.LE, ast.EQ, ast.NE, ast.LT, ast.GT, ast.In, ast.IsNull, ast.Like, ast.Strcmp,
+		ast.Plus, ast.Minus, ast.Div, ast.Mul, ast.Abs, ast.Mod,
 		ast.If, ast.Ifnull, ast.Case,
 		ast.Concat, ast.ConcatWS,
-		ast.Year, ast.Month, ast.Day,
+		ast.Date, ast.Year, ast.Month, ast.Day, ast.Quarter, ast.DayName, ast.MonthName,
 		ast.DateDiff, ast.TimestampDiff, ast.DateFormat, ast.FromUnixTime,
-		ast.Sqrt,
-		ast.JSONLength:
+		ast.DayOfWeek, ast.DayOfMonth, ast.DayOfYear, ast.LastDay, ast.WeekOfYear, ast.ToSeconds,
+		ast.FromDays, ast.ToDays,
+
+		ast.Sqrt, ast.Log, ast.Log2, ast.Log10, ast.Ln, ast.Exp, ast.Pow, ast.Sign,
+		ast.Radians, ast.Degrees, ast.Conv, ast.CRC32,
+		ast.JSONLength, ast.Repeat,
+		ast.InetNtoa, ast.InetAton, ast.Inet6Ntoa, ast.Inet6Aton,
+		ast.Coalesce, ast.ASCII, ast.Length, ast.Trim, ast.Position, ast.Format, ast.Elt,
+		ast.LTrim, ast.RTrim, ast.Lpad, ast.Rpad, ast.Regexp,
+		ast.Hour, ast.Minute, ast.Second, ast.MicroSecond,
+		ast.TimeToSec:
+		switch function.Function.PbCode() {
+		case tipb.ScalarFuncSig_InDuration,
+			tipb.ScalarFuncSig_CoalesceDuration,
+			tipb.ScalarFuncSig_IfNullDuration,
+			tipb.ScalarFuncSig_IfDuration,
+			tipb.ScalarFuncSig_CaseWhenDuration:
+			return false
+		}
 		return true
-	case ast.Substr, ast.Substring, ast.Left, ast.Right, ast.CharLength:
+	case ast.Substr, ast.Substring, ast.Left, ast.Right, ast.CharLength, ast.SubstringIndex, ast.Reverse:
 		switch function.Function.PbCode() {
 		case
 			tipb.ScalarFuncSig_LeftUTF8,
 			tipb.ScalarFuncSig_RightUTF8,
 			tipb.ScalarFuncSig_CharLengthUTF8,
 			tipb.ScalarFuncSig_Substring2ArgsUTF8,
-			tipb.ScalarFuncSig_Substring3ArgsUTF8:
+			tipb.ScalarFuncSig_Substring3ArgsUTF8,
+			tipb.ScalarFuncSig_SubstringIndex,
+			tipb.ScalarFuncSig_ReverseUTF8,
+			tipb.ScalarFuncSig_Reverse:
 			return true
 		}
 	case ast.Cast:
+		sourceType := function.GetArgs()[0].GetType()
+		retType := function.RetType
 		switch function.Function.PbCode() {
-		case tipb.ScalarFuncSig_CastIntAsInt, tipb.ScalarFuncSig_CastIntAsReal, tipb.ScalarFuncSig_CastIntAsDecimal, tipb.ScalarFuncSig_CastIntAsString, tipb.ScalarFuncSig_CastIntAsTime,
-			tipb.ScalarFuncSig_CastRealAsInt, tipb.ScalarFuncSig_CastRealAsReal, tipb.ScalarFuncSig_CastRealAsDecimal, tipb.ScalarFuncSig_CastRealAsString, tipb.ScalarFuncSig_CastRealAsTime,
-			tipb.ScalarFuncSig_CastStringAsInt, tipb.ScalarFuncSig_CastStringAsReal, tipb.ScalarFuncSig_CastStringAsDecimal, tipb.ScalarFuncSig_CastStringAsString, tipb.ScalarFuncSig_CastStringAsTime,
-			tipb.ScalarFuncSig_CastDecimalAsInt /*, tipb.ScalarFuncSig_CastDecimalAsReal*/, tipb.ScalarFuncSig_CastDecimalAsDecimal, tipb.ScalarFuncSig_CastDecimalAsString, tipb.ScalarFuncSig_CastDecimalAsTime,
-			tipb.ScalarFuncSig_CastTimeAsInt /*, tipb.ScalarFuncSig_CastTimeAsReal*/, tipb.ScalarFuncSig_CastTimeAsDecimal, tipb.ScalarFuncSig_CastTimeAsTime, tipb.ScalarFuncSig_CastTimeAsString:
+		case tipb.ScalarFuncSig_CastDecimalAsInt, tipb.ScalarFuncSig_CastIntAsInt, tipb.ScalarFuncSig_CastRealAsInt, tipb.ScalarFuncSig_CastTimeAsInt,
+			tipb.ScalarFuncSig_CastStringAsInt /*, tipb.ScalarFuncSig_CastDurationAsInt, tipb.ScalarFuncSig_CastJsonAsInt*/ :
+			// TiFlash cast only support cast to Int64 or the source type is the same as the target type
+			return (sourceType.GetType() == retType.GetType() && mysql.HasUnsignedFlag(sourceType.GetFlag()) == mysql.HasUnsignedFlag(retType.GetFlag())) || retType.GetType() == mysql.TypeLonglong
+		case tipb.ScalarFuncSig_CastIntAsReal, tipb.ScalarFuncSig_CastRealAsReal, tipb.ScalarFuncSig_CastStringAsReal, tipb.ScalarFuncSig_CastTimeAsReal: /*, tipb.ScalarFuncSig_CastDecimalAsReal,
+			  tipb.ScalarFuncSig_CastDurationAsReal, tipb.ScalarFuncSig_CastJsonAsReal*/
+			// TiFlash cast only support cast to Float64 or the source type is the same as the target type
+			return sourceType.GetType() == retType.GetType() || retType.GetType() == mysql.TypeDouble
+		case tipb.ScalarFuncSig_CastDecimalAsDecimal, tipb.ScalarFuncSig_CastIntAsDecimal, tipb.ScalarFuncSig_CastRealAsDecimal, tipb.ScalarFuncSig_CastTimeAsDecimal,
+			tipb.ScalarFuncSig_CastStringAsDecimal /*, tipb.ScalarFuncSig_CastDurationAsDecimal, tipb.ScalarFuncSig_CastJsonAsDecimal*/ :
+			return function.RetType.IsDecimalValid()
+		case tipb.ScalarFuncSig_CastDecimalAsString, tipb.ScalarFuncSig_CastIntAsString, tipb.ScalarFuncSig_CastRealAsString, tipb.ScalarFuncSig_CastTimeAsString,
+			tipb.ScalarFuncSig_CastStringAsString /*, tipb.ScalarFuncSig_CastDurationAsString, tipb.ScalarFuncSig_CastJsonAsString*/ :
 			return true
+		case tipb.ScalarFuncSig_CastDecimalAsTime, tipb.ScalarFuncSig_CastIntAsTime, tipb.ScalarFuncSig_CastRealAsTime, tipb.ScalarFuncSig_CastTimeAsTime,
+			tipb.ScalarFuncSig_CastStringAsTime /*, tipb.ScalarFuncSig_CastDurationAsTime, tipb.ScalarFuncSig_CastJsonAsTime*/ :
+			// ban the function of casting year type as time type pushing down to tiflash because of https://github.com/pingcap/tidb/issues/26215
+			return function.GetArgs()[0].GetType().GetType() != mysql.TypeYear
+		case tipb.ScalarFuncSig_CastTimeAsDuration:
+			return retType.GetType() == mysql.TypeDuration
 		}
 	case ast.DateAdd, ast.AddDate:
 		switch function.Function.PbCode() {
-		case tipb.ScalarFuncSig_AddDateDatetimeInt, tipb.ScalarFuncSig_AddDateStringInt:
+		case tipb.ScalarFuncSig_AddDateDatetimeInt, tipb.ScalarFuncSig_AddDateStringInt, tipb.ScalarFuncSig_AddDateStringReal:
 			return true
 		}
 	case ast.DateSub, ast.SubDate:
 		switch function.Function.PbCode() {
-		case tipb.ScalarFuncSig_SubDateDatetimeInt, tipb.ScalarFuncSig_SubDateStringInt:
+		case tipb.ScalarFuncSig_SubDateDatetimeInt, tipb.ScalarFuncSig_SubDateStringInt, tipb.ScalarFuncSig_SubDateStringReal:
 			return true
 		}
 	case ast.UnixTimestamp:
@@ -1050,7 +1138,8 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		}
 	case ast.Round:
 		switch function.Function.PbCode() {
-		case tipb.ScalarFuncSig_RoundInt, tipb.ScalarFuncSig_RoundReal:
+		case tipb.ScalarFuncSig_RoundInt, tipb.ScalarFuncSig_RoundReal, tipb.ScalarFuncSig_RoundDec,
+			tipb.ScalarFuncSig_RoundWithFracInt, tipb.ScalarFuncSig_RoundWithFracReal, tipb.ScalarFuncSig_RoundWithFracDec:
 			return true
 		}
 	case ast.Extract:
@@ -1072,6 +1161,22 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		default:
 			return false
 		}
+	case ast.Upper, ast.Ucase, ast.Lower, ast.Lcase, ast.Space:
+		return true
+	case ast.Sysdate:
+		return true
+	case ast.Least, ast.Greatest:
+		switch function.Function.PbCode() {
+		case tipb.ScalarFuncSig_GreatestInt, tipb.ScalarFuncSig_GreatestReal,
+			tipb.ScalarFuncSig_LeastInt, tipb.ScalarFuncSig_LeastReal:
+			return true
+		}
+	case ast.IsTruthWithNull, ast.IsTruthWithoutNull, ast.IsFalsity:
+		return true
+	case ast.Hex, ast.Bin:
+		return true
+	case ast.GetFormat:
+		return true
 	}
 	return false
 }
@@ -1097,6 +1202,7 @@ func canFuncBePushed(sf *ScalarFunction, storeType kv.StoreType) bool {
 				failpoint.Return(true)
 			}
 		}
+		failpoint.Return(false)
 	})
 
 	ret := false
@@ -1151,28 +1257,26 @@ func init() {
 
 func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType kv.StoreType) bool {
 	pbCode := scalarFunc.Function.PbCode()
-	if pbCode <= tipb.ScalarFuncSig_Unspecified {
-		failpoint.Inject("PanicIfPbCodeUnspecified", func() {
-			panic(errors.Errorf("unspecified PbCode: %T", scalarFunc.Function))
-		})
-		return false
-	}
-
 	// Check whether this function can be pushed.
-	if !canFuncBePushed(scalarFunc, storeType) {
+	if unspecified := pbCode <= tipb.ScalarFuncSig_Unspecified; unspecified || !canFuncBePushed(scalarFunc, storeType) {
+		if unspecified {
+			failpoint.Inject("PanicIfPbCodeUnspecified", func() {
+				panic(errors.Errorf("unspecified PbCode: %T", scalarFunc.Function))
+			})
+		}
 		if pc.sc.InExplainStmt {
 			storageName := storeType.Name()
 			if storeType == kv.UnSpecified {
 				storageName = "storage layer"
 			}
-			pc.sc.AppendWarning(errors.New("Scalar function '" + scalarFunc.FuncName.L + "'(signature: " + scalarFunc.Function.PbCode().String() + ") can not be pushed to " + storageName))
+			pc.sc.AppendWarning(errors.New("Scalar function '" + scalarFunc.FuncName.L + "'(signature: " + scalarFunc.Function.PbCode().String() + ", return type: " + scalarFunc.RetType.CompactStr() + ") is not supported to push down to " + storageName + " now."))
 		}
 		return false
 	}
-
+	canEnumPush := canEnumPushdownPreliminarily(scalarFunc)
 	// Check whether all of its parameters can be pushed.
 	for _, arg := range scalarFunc.GetArgs() {
-		if !canExprPushDown(arg, pc, storeType) {
+		if !canExprPushDown(arg, pc, storeType, canEnumPush) {
 			return false
 		}
 	}
@@ -1188,20 +1292,24 @@ func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType
 	return true
 }
 
-func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType) bool {
+func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType, canEnumPush bool) bool {
 	if storeType == kv.TiFlash {
-		switch expr.GetType().Tp {
-		case mysql.TypeDuration:
+		switch expr.GetType().GetType() {
+		case mysql.TypeEnum, mysql.TypeBit, mysql.TypeSet, mysql.TypeGeometry, mysql.TypeUnspecified:
+			if expr.GetType().GetType() == mysql.TypeEnum && canEnumPush {
+				break
+			}
 			if pc.sc.InExplainStmt {
-				pc.sc.AppendWarning(errors.New("Expr '" + expr.String() + "' can not be pushed to TiFlash because it contains Duration type"))
+				pc.sc.AppendWarning(errors.New("Expression about '" + expr.String() + "' can not be pushed to TiFlash because it contains unsupported calculation of type '" + types.TypeStr(expr.GetType().GetType()) + "'."))
 			}
 			return false
-		case mysql.TypeEnum:
-			if pc.sc.InExplainStmt {
-				pc.sc.AppendWarning(errors.New("Expr '" + expr.String() + "' can not be pushed to TiFlash because it contains Enum type"))
+		case mysql.TypeNewDecimal:
+			if !expr.GetType().IsDecimalValid() {
+				if pc.sc.InExplainStmt {
+					pc.sc.AppendWarning(errors.New("Expression about '" + expr.String() + "' can not be pushed to TiFlash because it contains invalid decimal('" + strconv.Itoa(expr.GetType().GetFlen()) + "','" + strconv.Itoa(expr.GetType().GetDecimal()) + "')."))
+				}
+				return false
 			}
-			return false
-		default:
 		}
 	}
 	switch x := expr.(type) {
@@ -1217,11 +1325,11 @@ func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType) bo
 	return false
 }
 
-// PushDownExprs split the input exprs into pushed and remained, pushed include all the exprs that can be pushed down
-func PushDownExprs(sc *stmtctx.StatementContext, exprs []Expression, client kv.Client, storeType kv.StoreType) (pushed []Expression, remained []Expression) {
+// PushDownExprsWithExtraInfo split the input exprs into pushed and remained, pushed include all the exprs that can be pushed down
+func PushDownExprsWithExtraInfo(sc *stmtctx.StatementContext, exprs []Expression, client kv.Client, storeType kv.StoreType, canEnumPush bool) (pushed []Expression, remained []Expression) {
 	pc := PbConverter{sc: sc, client: client}
 	for _, expr := range exprs {
-		if canExprPushDown(expr, pc, storeType) {
+		if canExprPushDown(expr, pc, storeType, canEnumPush) {
 			pushed = append(pushed, expr)
 		} else {
 			remained = append(remained, expr)
@@ -1230,10 +1338,20 @@ func PushDownExprs(sc *stmtctx.StatementContext, exprs []Expression, client kv.C
 	return
 }
 
+// PushDownExprs split the input exprs into pushed and remained, pushed include all the exprs that can be pushed down
+func PushDownExprs(sc *stmtctx.StatementContext, exprs []Expression, client kv.Client, storeType kv.StoreType) (pushed []Expression, remained []Expression) {
+	return PushDownExprsWithExtraInfo(sc, exprs, client, storeType, false)
+}
+
+// CanExprsPushDownWithExtraInfo return true if all the expr in exprs can be pushed down
+func CanExprsPushDownWithExtraInfo(sc *stmtctx.StatementContext, exprs []Expression, client kv.Client, storeType kv.StoreType, canEnumPush bool) bool {
+	_, remained := PushDownExprsWithExtraInfo(sc, exprs, client, storeType, canEnumPush)
+	return len(remained) == 0
+}
+
 // CanExprsPushDown return true if all the expr in exprs can be pushed down
 func CanExprsPushDown(sc *stmtctx.StatementContext, exprs []Expression, client kv.Client, storeType kv.StoreType) bool {
-	_, remained := PushDownExprs(sc, exprs, client, storeType)
-	return len(remained) == 0
+	return CanExprsPushDownWithExtraInfo(sc, exprs, client, storeType, false)
 }
 
 // wrapWithIsTrue wraps `arg` with istrue function if the return type of expr is not
@@ -1273,4 +1391,91 @@ func wrapWithIsTrue(ctx sessionctx.Context, keepNull bool, arg Expression, wrapF
 		sf.FuncName = model.NewCIStr(ast.IsTruthWithNull)
 	}
 	return FoldConstant(sf), nil
+}
+
+// PropagateType propagates the type information to the `expr`.
+// Note: For now, we only propagate type for the function CastDecimalAsDouble.
+//
+// e.g.
+// > create table t(a decimal(9, 8));
+// > insert into t values(5.04600000)
+// > select a/36000 from t;
+// Type:       NEWDECIMAL
+// Length:     15
+// Decimals:   12
+// +------------------+
+// | 5.04600000/36000 |
+// +------------------+
+// |   0.000140166667 |
+// +------------------+
+//
+// > select cast(a/36000 as double) as result from t;
+// Type:       DOUBLE
+// Length:     23
+// Decimals:   31
+// +----------------------+
+// | result               |
+// +----------------------+
+// | 0.000140166666666666 |
+// +----------------------+
+// The expected `decimal` and `length` of the outer cast_as_double need to be
+// propagated to the inner div.
+func PropagateType(evalType types.EvalType, args ...Expression) {
+	switch evalType {
+	case types.ETReal:
+		expr := args[0]
+		oldFlen, oldDecimal := expr.GetType().GetFlen(), expr.GetType().GetDecimal()
+		newFlen, newDecimal := setDataTypeDouble(expr.GetType().GetDecimal())
+		// For float(M,D), double(M,D) or decimal(M,D), M must be >= D.
+		if newFlen < newDecimal {
+			newFlen = oldFlen - oldDecimal + newDecimal
+		}
+		if oldFlen != newFlen || oldDecimal != newDecimal {
+			if col, ok := args[0].(*Column); ok {
+				newCol := col.Clone()
+				newCol.(*Column).RetType = col.RetType.Clone()
+				args[0] = newCol
+			}
+			if col, ok := args[0].(*CorrelatedColumn); ok {
+				newCol := col.Clone()
+				newCol.(*CorrelatedColumn).RetType = col.RetType.Clone()
+				args[0] = newCol
+			}
+			if args[0].GetType().GetType() == mysql.TypeNewDecimal {
+				if newDecimal > mysql.MaxDecimalScale {
+					newDecimal = mysql.MaxDecimalScale
+				}
+			}
+			args[0].GetType().SetFlenUnderLimit(newFlen)
+			args[0].GetType().SetDecimalUnderLimit(newDecimal)
+		}
+	}
+}
+
+// Args2Expressions4Test converts these values to an expression list.
+// This conversion is incomplete, so only use for test.
+func Args2Expressions4Test(args ...interface{}) []Expression {
+	exprs := make([]Expression, len(args))
+	for i, v := range args {
+		d := types.NewDatum(v)
+		var ft *types.FieldType
+		switch d.Kind() {
+		case types.KindNull:
+			ft = types.NewFieldType(mysql.TypeNull)
+		case types.KindInt64:
+			ft = types.NewFieldType(mysql.TypeLong)
+		case types.KindUint64:
+			ft = types.NewFieldType(mysql.TypeLong)
+			ft.AddFlag(mysql.UnsignedFlag)
+		case types.KindFloat64:
+			ft = types.NewFieldType(mysql.TypeDouble)
+		case types.KindString:
+			ft = types.NewFieldType(mysql.TypeVarString)
+		default:
+			exprs[i] = nil
+			continue
+		}
+		exprs[i] = &Constant{Value: d, RetType: ft}
+	}
+	return exprs
 }

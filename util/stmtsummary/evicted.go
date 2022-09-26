@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,7 +20,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -91,7 +92,6 @@ func (ssbde *stmtSummaryByDigestEvicted) AddEvicted(evictedKey *stmtSummaryByDig
 			defer evictedElement.Unlock()
 			// no record in ssbde.history, direct insert
 			if ssbde.history.Len() == 0 && historySize != 0 {
-
 				eBeginTime := evictedElement.beginTime
 				eEndTime := evictedElement.endTime
 				record := newStmtSummaryByDigestEvictedElement(eBeginTime, eEndTime)
@@ -101,7 +101,6 @@ func (ssbde *stmtSummaryByDigestEvicted) AddEvicted(evictedKey *stmtSummaryByDig
 				h = ssbde.history.Back()
 				return
 			}
-
 			// look for matching history interval
 		MATCHING:
 			for ; h != nil; h = h.Prev() {

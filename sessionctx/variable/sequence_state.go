@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -48,4 +49,24 @@ func (ss *SequenceState) GetLastValue(sequenceID int64) (int64, bool, error) {
 		}
 	}
 	return 0, true, nil
+}
+
+// GetAllStates returns a copied latestValueMap.
+func (ss *SequenceState) GetAllStates() map[int64]int64 {
+	ss.mu.Lock()
+	defer ss.mu.Unlock()
+	latestValueMap := make(map[int64]int64, len(ss.latestValueMap))
+	for seqID, latestValue := range ss.latestValueMap {
+		latestValueMap[seqID] = latestValue
+	}
+	return latestValueMap
+}
+
+// SetAllStates sets latestValueMap as a whole.
+func (ss *SequenceState) SetAllStates(latestValueMap map[int64]int64) {
+	ss.mu.Lock()
+	defer ss.mu.Unlock()
+	for seqID, latestValue := range latestValueMap {
+		ss.latestValueMap[seqID] = latestValue
+	}
 }

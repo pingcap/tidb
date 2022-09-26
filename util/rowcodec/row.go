@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,7 +18,7 @@ import (
 	"encoding/binary"
 )
 
-// row is the struct type used to access the a row.
+// row is the struct type used to access a row.
 type row struct {
 	// small:  colID []byte, offsets []uint16, optimized for most cases.
 	// large:  colID []uint32, offsets []uint32.
@@ -111,11 +112,11 @@ func (r *row) findColID(colID int64) (idx int, isNil, notFound bool) {
 		}
 		if v < colID {
 			i = h + 1
-		} else if v > colID {
-			j = h
-		} else {
+		} else if v == colID {
 			idx = h
 			return
+		} else {
+			j = h
 		}
 	}
 
@@ -132,11 +133,11 @@ func (r *row) findColID(colID int64) (idx int, isNil, notFound bool) {
 		}
 		if v < colID {
 			i = h + 1
-		} else if v > colID {
-			j = h
-		} else {
+		} else if v == colID {
 			isNil = true
 			return
+		} else {
+			j = h
 		}
 	}
 	notFound = true

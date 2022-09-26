@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,8 +19,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/assert"
@@ -33,48 +34,46 @@ const (
 )
 
 func TestPrefix(t *testing.T) {
-	t.Parallel()
 	s, err := mockstore.NewMockStore()
-	require.Nil(t, err)
+	require.NoError(t, err)
 	defer func() {
 		err := s.Close()
-		require.Nil(t, err)
+		require.NoError(t, err)
 	}()
 
 	ctx := &mockContext{10000000, make(map[fmt.Stringer]interface{}), s, nil}
 	err = ctx.fillTxn()
-	require.Nil(t, err)
+	require.NoError(t, err)
 	txn, err := ctx.GetTxn()
-	require.Nil(t, err)
+	require.NoError(t, err)
 	err = util.DelKeyWithPrefix(txn, encodeInt(ctx.prefix))
-	require.Nil(t, err)
+	require.NoError(t, err)
 	err = ctx.CommitTxn()
-	require.Nil(t, err)
+	require.NoError(t, err)
 
 	txn, err = s.Begin()
-	require.Nil(t, err)
+	require.NoError(t, err)
 	k := []byte("key100jfowi878230")
 	err = txn.Set(k, []byte(`val32dfaskli384757^*&%^`))
-	require.Nil(t, err)
+	require.NoError(t, err)
 	err = util.ScanMetaWithPrefix(txn, k, func(kv.Key, []byte) bool {
 		return true
 	})
-	require.Nil(t, err)
+	require.NoError(t, err)
 	err = util.ScanMetaWithPrefix(txn, k, func(kv.Key, []byte) bool {
 		return false
 	})
-	require.Nil(t, err)
+	require.NoError(t, err)
 	err = util.DelKeyWithPrefix(txn, []byte("key"))
-	require.Nil(t, err)
+	require.NoError(t, err)
 	_, err = txn.Get(context.TODO(), k)
 	assert.True(t, terror.ErrorEqual(kv.ErrNotExist, err))
 
 	err = txn.Commit(context.Background())
-	require.Nil(t, err)
+	require.NoError(t, err)
 }
 
 func TestPrefixFilter(t *testing.T) {
-	t.Parallel()
 	rowKey := []byte(`test@#$%l(le[0]..prefix) 2uio`)
 	rowKey[8] = 0x00
 	rowKey[9] = 0x00

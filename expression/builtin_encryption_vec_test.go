@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,8 +17,7 @@ package expression
 import (
 	"testing"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -66,6 +66,9 @@ var vecBuiltinEncryptionCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETInt}, geners: []dataGenerator{newRandLenStrGener(10, 20), newRangeInt64Gener(SHA384, SHA384+1)}},
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETInt}, geners: []dataGenerator{newRandLenStrGener(10, 20), newRangeInt64Gener(SHA512, SHA512+1)}},
 	},
+	ast.SM3: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}},
+	},
 	ast.Encode: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString}},
 	},
@@ -74,8 +77,8 @@ var vecBuiltinEncryptionCases = map[string][]vecExprBenchCase{
 	},
 }
 
-func (s *testEvaluatorSuite) TestVectorizedBuiltinEncryptionFunc(c *C) {
-	testVectorizedBuiltinFunc(c, vecBuiltinEncryptionCases)
+func TestVectorizedBuiltinEncryptionFunc(t *testing.T) {
+	testVectorizedBuiltinFunc(t, vecBuiltinEncryptionCases)
 }
 
 func BenchmarkVectorizedBuiltinEncryptionFunc(b *testing.B) {

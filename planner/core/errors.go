@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -22,6 +23,7 @@ import (
 var (
 	ErrUnsupportedType                       = dbterror.ClassOptimizer.NewStd(mysql.ErrUnsupportedType)
 	ErrAnalyzeMissIndex                      = dbterror.ClassOptimizer.NewStd(mysql.ErrAnalyzeMissIndex)
+	ErrAnalyzeMissColumn                     = dbterror.ClassOptimizer.NewStd(mysql.ErrAnalyzeMissColumn)
 	ErrWrongParamCount                       = dbterror.ClassOptimizer.NewStd(mysql.ErrWrongParamCount)
 	ErrSchemaChanged                         = dbterror.ClassOptimizer.NewStd(mysql.ErrSchemaChanged)
 	ErrTablenameNotAllowedHere               = dbterror.ClassOptimizer.NewStd(mysql.ErrTablenameNotAllowedHere)
@@ -93,14 +95,26 @@ var (
 	ErrCTERecursiveForbidsAggregation        = dbterror.ClassOptimizer.NewStd(mysql.ErrCTERecursiveForbidsAggregation)
 	ErrCTERecursiveForbiddenJoinOrder        = dbterror.ClassOptimizer.NewStd(mysql.ErrCTERecursiveForbiddenJoinOrder)
 	ErrInvalidRequiresSingleReference        = dbterror.ClassOptimizer.NewStd(mysql.ErrInvalidRequiresSingleReference)
+	ErrSQLInReadOnlyMode                     = dbterror.ClassOptimizer.NewStd(mysql.ErrReadOnlyMode)
 	// Since we cannot know if user logged in with a password, use message of ErrAccessDeniedNoPassword instead
 	ErrAccessDenied              = dbterror.ClassOptimizer.NewStdErr(mysql.ErrAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDeniedNoPassword])
 	ErrBadNull                   = dbterror.ClassOptimizer.NewStd(mysql.ErrBadNull)
 	ErrNotSupportedWithSem       = dbterror.ClassOptimizer.NewStd(mysql.ErrNotSupportedWithSem)
 	ErrAsOf                      = dbterror.ClassOptimizer.NewStd(mysql.ErrAsOf)
 	ErrOptOnTemporaryTable       = dbterror.ClassOptimizer.NewStd(mysql.ErrOptOnTemporaryTable)
+	ErrOptOnCacheTable           = dbterror.ClassOptimizer.NewStd(mysql.ErrOptOnCacheTable)
 	ErrDropTableOnTemporaryTable = dbterror.ClassOptimizer.NewStd(mysql.ErrDropTableOnTemporaryTable)
 	// ErrPartitionNoTemporary returns when partition at temporary mode
 	ErrPartitionNoTemporary     = dbterror.ClassOptimizer.NewStd(mysql.ErrPartitionNoTemporary)
 	ErrViewSelectTemporaryTable = dbterror.ClassOptimizer.NewStd(mysql.ErrViewSelectTmptable)
+	ErrSubqueryMoreThan1Row     = dbterror.ClassOptimizer.NewStd(mysql.ErrSubqueryNo1Row)
+	ErrKeyPart0                 = dbterror.ClassOptimizer.NewStd(mysql.ErrKeyPart0)
+	ErrGettingNoopVariable      = dbterror.ClassOptimizer.NewStd(mysql.ErrGettingNoopVariable)
+
+	ErrPrepareMulti     = dbterror.ClassExecutor.NewStd(mysql.ErrPrepareMulti)
+	ErrUnsupportedPs    = dbterror.ClassExecutor.NewStd(mysql.ErrUnsupportedPs)
+	ErrPsManyParam      = dbterror.ClassExecutor.NewStd(mysql.ErrPsManyParam)
+	ErrPrepareDDL       = dbterror.ClassExecutor.NewStd(mysql.ErrPrepareDDL)
+	ErrRowIsReferenced2 = dbterror.ClassOptimizer.NewStd(mysql.ErrRowIsReferenced2)
+	ErrNoReferencedRow2 = dbterror.ClassOptimizer.NewStd(mysql.ErrNoReferencedRow2)
 )

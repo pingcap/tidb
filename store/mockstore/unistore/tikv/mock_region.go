@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,7 +16,7 @@ package tikv
 
 import (
 	"bytes"
-	"sort"
+	"context"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -36,7 +37,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	pdclient "github.com/tikv/pd/client"
-	"golang.org/x/net/context"
+	"golang.org/x/exp/slices"
 )
 
 // MPPTaskHandlerMap is a map of *cophandler.MPPTaskHandler.
@@ -241,7 +242,7 @@ func (rm *MockRegionManager) GetRegion(id uint64) *metapb.Region {
 }
 
 // GetRegionByKey gets a region by the key.
-func (rm *MockRegionManager) GetRegionByKey(key []byte) (region *metapb.Region, peer *metapb.Peer) {
+func (rm *MockRegionManager) GetRegionByKey(key []byte) (region *metapb.Region, peer *metapb.Peer, buckets *metapb.Buckets) {
 	rm.mu.RLock()
 	defer rm.mu.RUnlock()
 	rm.sortedRegions.AscendGreaterOrEqual(newBtreeSearchItem(key), func(item btree.Item) bool {
@@ -253,9 +254,9 @@ func (rm *MockRegionManager) GetRegionByKey(key []byte) (region *metapb.Region, 
 		return false
 	})
 	if region == nil || !rm.regionContainsKey(region, key) {
-		return nil, nil
+		return nil, nil, nil
 	}
-	return proto.Clone(region).(*metapb.Region), proto.Clone(region.Peers[0]).(*metapb.Peer)
+	return proto.Clone(region).(*metapb.Region), proto.Clone(region.Peers[0]).(*metapb.Peer), nil
 }
 
 // GetRegionByEndKey gets a region by the end key.
@@ -355,11 +356,11 @@ func (rm *MockRegionManager) Split(regionID, newRegionID uint64, key []byte, pee
 
 // SplitRaw splits a Region at the key (not encoded) and creates new Region.
 func (rm *MockRegionManager) SplitRaw(regionID, newRegionID uint64, rawKey []byte, peerIDs []uint64, leaderPeerID uint64) *metapb.Region {
-	new, err := rm.split(regionID, newRegionID, rawKey, peerIDs)
+	r, err := rm.split(regionID, newRegionID, rawKey, peerIDs)
 	if err != nil {
 		panic(err)
 	}
-	return proto.Clone(new).(*metapb.Region)
+	return proto.Clone(r).(*metapb.Region)
 }
 
 // SplitTable evenly splits the data in table into count regions.
@@ -399,8 +400,8 @@ func (rm *MockRegionManager) SplitRegion(req *kvrpcpb.SplitRegionRequest) *kvrpc
 	for _, rawKey := range req.SplitKeys {
 		splitKeys = append(splitKeys, codec.EncodeBytes(nil, rawKey))
 	}
-	sort.Slice(splitKeys, func(i, j int) bool {
-		return bytes.Compare(splitKeys[i], splitKeys[j]) < 0
+	slices.SortFunc(splitKeys, func(i, j []byte) bool {
+		return bytes.Compare(i, j) < 0
 	})
 
 	newRegions, err := rm.splitKeys(splitKeys)
@@ -719,13 +720,13 @@ func (pd *MockPD) GetStore(ctx context.Context, storeID uint64) (*metapb.Store, 
 }
 
 // GetRegion implements gRPC PDServer.
-func (pd *MockPD) GetRegion(ctx context.Context, key []byte) (*pdclient.Region, error) {
-	r, p := pd.rm.GetRegionByKey(key)
-	return &pdclient.Region{Meta: r, Leader: p}, nil
+func (pd *MockPD) GetRegion(ctx context.Context, key []byte, opts ...pdclient.GetRegionOption) (*pdclient.Region, error) {
+	r, p, b := pd.rm.GetRegionByKey(key)
+	return &pdclient.Region{Meta: r, Leader: p, Buckets: b}, nil
 }
 
 // GetRegionByID implements gRPC PDServer.
-func (pd *MockPD) GetRegionByID(ctx context.Context, regionID uint64) (*pdclient.Region, error) {
+func (pd *MockPD) GetRegionByID(ctx context.Context, regionID uint64, opts ...pdclient.GetRegionOption) (*pdclient.Region, error) {
 	pd.rm.mu.RLock()
 	defer pd.rm.mu.RUnlock()
 
@@ -801,7 +802,7 @@ func GetTS() (int64, int64) {
 	tsMu.Lock()
 	defer tsMu.Unlock()
 
-	ts := time.Now().UnixNano() / int64(time.Millisecond)
+	ts := time.Now().UnixMilli()
 	if tsMu.physicalTS >= ts {
 		tsMu.logicalTS++
 	} else {
@@ -812,7 +813,7 @@ func GetTS() (int64, int64) {
 }
 
 // GetPrevRegion gets the previous region and its leader Peer of the region where the key is located.
-func (pd *MockPD) GetPrevRegion(ctx context.Context, key []byte) (*pdclient.Region, error) {
+func (pd *MockPD) GetPrevRegion(ctx context.Context, key []byte, opts ...pdclient.GetRegionOption) (*pdclient.Region, error) {
 	r, p := pd.rm.GetRegionByEndKey(key)
 	return &pdclient.Region{Meta: r, Leader: p}, nil
 }

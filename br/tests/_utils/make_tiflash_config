@@ -1,0 +1,96 @@
+#!/bin/sh
+
+cat > $TEST_DIR/tiflash-learner.toml <<EOF
+[rocksdb]
+wal-dir = ""
+
+[security]
+ca-path = "$TEST_DIR/certs/ca.pem"
+cert-path = "$TEST_DIR/certs/tiflash.pem"
+key-path = "$TEST_DIR/certs/tiflash.key"
+
+[server]
+addr = "0.0.0.0:20170"
+advertise-addr = "127.0.0.1:20170"
+engine-addr = "127.0.0.1:3930"
+status-addr = "$TIFLASH_STATUS"
+
+[storage]
+data-dir = "$TEST_DIR/tiflash/data"
+reserve-space = "1KB"
+EOF
+
+cat > $TEST_DIR/tiflash.toml <<EOF
+default_profile = "default"
+display_name = "TiFlash"
+https_port = 8125
+listen_host = "0.0.0.0"
+mark_cache_size = 5368709120
+path = "$TEST_DIR/tiflash/data"
+tcp_port_secure = 9002
+tmp_path = "$TEST_DIR/tiflash/tmp"
+capacity = "10737418240"
+
+[application]
+runAsDaemon = true
+
+[flash]
+service_addr = "127.0.0.1:3930"
+tidb_status_addr = "127.0.0.1:10080"
+
+[flash.proxy]
+config = "$TEST_DIR/tiflash-learner.toml"
+log-file = "$TEST_DIR/tiflash-proxy.log"
+
+[flash.flash_cluster]
+cluster_manager_path = "$PWD/bin/flash_cluster_manager"
+log = "$TEST_DIR/tiflash-manager.log"
+master_ttl = 60
+refresh_interval = 20
+update_rule_interval = 5
+
+[logger]
+count = 20
+level = "trace"
+log = "$TEST_DIR/tiflash-stdout.log"
+errorlog = "$TEST_DIR/tiflash-stderr.log"
+size = "1000M"
+
+[raft]
+pd_addr = "$PD_ADDR"
+
+[profiles]
+[profiles.default]
+load_balancing = "random"
+max_memory_usage = 10000000000
+use_uncompressed_cache = 0
+
+[users]
+[users.default]
+password = ""
+profile = "default"
+quota = "default"
+[users.default.networks]
+ip = "::/0"
+[users.readonly]
+password = ""
+profile = "readonly"
+quota = "default"
+[users.readonly.networks]
+ip = "::/0"
+
+[quotas]
+[quotas.default]
+[quotas.default.interval]
+duration = 3600
+errors = 0
+execution_time = 0
+queries = 0
+read_rows = 0
+result_rows = 0
+
+[security]
+ca_path = "$TEST_DIR/certs/ca.pem"
+cert_path = "$TEST_DIR/certs/tiflash.pem"
+key_path = "$TEST_DIR/certs/tiflash.key"
+EOF

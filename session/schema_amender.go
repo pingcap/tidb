@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -22,13 +23,12 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/txnkv/transaction"
 	"go.uber.org/zap"
 )
 
@@ -141,15 +142,15 @@ func needCollectModifyColOps(actionType uint64) bool {
 }
 
 func fieldTypeDeepEquals(ft1 *types.FieldType, ft2 *types.FieldType) bool {
-	if ft1.Tp == ft2.Tp &&
-		ft1.Flag == ft2.Flag &&
-		ft1.Flen == ft2.Flen &&
-		ft1.Decimal == ft2.Decimal &&
-		ft1.Charset == ft2.Charset &&
-		ft1.Collate == ft2.Collate &&
-		len(ft1.Elems) == len(ft2.Elems) {
-		for i, elem := range ft1.Elems {
-			if elem != ft2.Elems[i] {
+	if ft1.GetType() == ft2.GetType() &&
+		ft1.GetFlag() == ft2.GetFlag() &&
+		ft1.GetFlen() == ft2.GetFlen() &&
+		ft1.GetDecimal() == ft2.GetDecimal() &&
+		ft1.GetCharset() == ft2.GetCharset() &&
+		ft1.GetCollate() == ft2.GetCollate() &&
+		len(ft1.GetElems()) == len(ft2.GetElems()) {
+		for i, elem := range ft1.GetElems() {
+			if elem != ft2.GetElem(i) {
 				return false
 			}
 		}
@@ -163,14 +164,14 @@ func fieldTypeDeepEquals(ft1 *types.FieldType, ft2 *types.FieldType) bool {
 func colChangeAmendable(colAtStart *model.ColumnInfo, colAtCommit *model.ColumnInfo) error {
 	// Modifying a stored generated column is not allowed by DDL, the generated related fields are not considered.
 	if !fieldTypeDeepEquals(&colAtStart.FieldType, &colAtCommit.FieldType) {
-		if colAtStart.FieldType.Flag != colAtCommit.FieldType.Flag {
+		if colAtStart.FieldType.GetFlag() != colAtCommit.FieldType.GetFlag() {
 			return errors.Trace(errors.Errorf("flag is not matched for column=%v, from=%v to=%v",
-				colAtCommit.Name.String(), colAtStart.FieldType.Flag, colAtCommit.FieldType.Flag))
+				colAtCommit.Name.String(), colAtStart.FieldType.GetFlag(), colAtCommit.FieldType.GetFlag()))
 		}
-		if colAtStart.Charset != colAtCommit.Charset || colAtStart.Collate != colAtCommit.Collate {
+		if colAtStart.GetCharset() != colAtCommit.GetCharset() || colAtStart.GetCollate() != colAtCommit.GetCollate() {
 			return errors.Trace(errors.Errorf("charset or collate is not matched for column=%v", colAtCommit.Name.String()))
 		}
-		_, err := ddl.CheckModifyTypeCompatible(&colAtStart.FieldType, &colAtCommit.FieldType)
+		_, err := types.CheckModifyTypeCompatible(&colAtStart.FieldType, &colAtCommit.FieldType)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -194,8 +195,9 @@ func colChangeAmendable(colAtStart *model.ColumnInfo, colAtCommit *model.ColumnI
 // collectModifyColAmendOps is used to check if there is only column size increasing change.Other column type changes
 // such as column change from nullable to not null or column type change are not supported by now.
 func (a *amendCollector) collectModifyColAmendOps(tblAtStart, tblAtCommit table.Table) ([]amendOp, error) {
-	for _, colAtCommit := range tblAtCommit.Cols() {
+	for _, colAtCommit := range tblAtCommit.WritableCols() {
 		colAtStart := findColByID(tblAtStart, colAtCommit.ID)
+		// It can't find colAtCommit's ID from tblAtStart's public columns when "modify/change column" needs reorg data.
 		if colAtStart != nil {
 			err := colChangeAmendable(colAtStart.ColumnInfo, colAtCommit.ColumnInfo)
 			if err != nil {
@@ -206,6 +208,7 @@ func (a *amendCollector) collectModifyColAmendOps(tblAtStart, tblAtCommit table.
 			// is newly added or modified from an original column.Report error to solve the issue
 			// https://github.com/pingcap/tidb/issues/21470. This change will make amend fail for adding column
 			// and modifying columns at the same time.
+			// In addition, amended operations are not currently supported and it goes to this logic when "modify/change column" needs reorg data.
 			return nil, errors.Errorf("column=%v id=%v is not found for table=%v checking column modify",
 				colAtCommit.Name, colAtCommit.ID, tblAtCommit.Meta().Name.String())
 		}
@@ -245,7 +248,7 @@ func (a *amendCollector) collectIndexAmendOps(sctx sessionctx.Context, tblAtStar
 			opInfo.schemaAndDecoder = newSchemaAndDecoder(sctx, tblAtStart.Meta())
 			fieldTypes := make([]*types.FieldType, 0, len(tblAtStart.Meta().Columns))
 			for _, col := range tblAtStart.Meta().Columns {
-				fieldTypes = append(fieldTypes, &col.FieldType)
+				fieldTypes = append(fieldTypes, &(col.FieldType))
 			}
 			opInfo.chk = chunk.NewChunkWithCapacity(fieldTypes, 4)
 			addNewIndexOp := &amendOperationAddIndex{
@@ -294,8 +297,8 @@ func mayGenPutIndexRowKeyOp(keyOp kvrpcpb.Op) bool {
 
 // amendOp is an amend operation for a specific schema change, new mutations will be generated using input ones.
 type amendOp interface {
-	genMutations(ctx context.Context, sctx sessionctx.Context, commitMutations tikv.CommitterMutations, kvMap *rowKvMap,
-		resultMutations *tikv.PlainMutations) error
+	genMutations(ctx context.Context, sctx sessionctx.Context, commitMutations transaction.CommitterMutations, kvMap *rowKvMap,
+		resultMutations *transaction.PlainMutations) error
 }
 
 // amendOperationAddIndex represents one amend operation related to a specific add index change.
@@ -333,17 +336,17 @@ func (a *amendOperationAddIndexInfo) String() string {
 	return res
 }
 
-func (a *amendOperationAddIndex) genMutations(ctx context.Context, sctx sessionctx.Context, commitMutations tikv.CommitterMutations,
-	kvMap *rowKvMap, resAddMutations *tikv.PlainMutations) error {
+func (a *amendOperationAddIndex) genMutations(ctx context.Context, sctx sessionctx.Context, commitMutations transaction.CommitterMutations,
+	kvMap *rowKvMap, resAddMutations *transaction.PlainMutations) error {
 	// There should be no duplicate keys in deletedOldIndexKeys and insertedNewIndexKeys.
-	deletedMutations := tikv.NewPlainMutations(32)
-	insertedMutations := tikv.NewPlainMutations(32)
+	deletedMutations := transaction.NewPlainMutations(32)
+	insertedMutations := transaction.NewPlainMutations(32)
 	for i, key := range commitMutations.GetKeys() {
 		if tablecodec.IsIndexKey(key) || tablecodec.DecodeTableID(key) != a.info.tblInfoAtCommit.Meta().ID {
 			continue
 		}
-		var newIdxMutation *tikv.PlainMutation
-		var oldIdxMutation *tikv.PlainMutation
+		var newIdxMutation *transaction.PlainMutation
+		var oldIdxMutation *transaction.PlainMutation
 		var err error
 		keyOp := commitMutations.GetOp(i)
 		if addIndexNeedRemoveOp(a.info.AmendOpType) {
@@ -389,7 +392,8 @@ func (a *amendOperationAddIndex) genMutations(ctx context.Context, sctx sessionc
 		for i := 0; i < len(deletedMutations.GetKeys()); i++ {
 			key := deletedMutations.GetKeys()[i]
 			if _, ok := a.insertedNewIndexKeys[string(key)]; !ok {
-				resAddMutations.Push(deletedMutations.GetOps()[i], key, deletedMutations.GetValues()[i], deletedMutations.GetPessimisticFlags()[i])
+				resAddMutations.Push(deletedMutations.GetOps()[i], key, deletedMutations.GetValues()[i], deletedMutations.IsPessimisticLock(i),
+					deletedMutations.IsAssertExists(i), deletedMutations.IsAssertNotExist(i), deletedMutations.NeedConstraintCheckInPrewrite(i))
 			}
 		}
 		for i := 0; i < len(insertedMutations.GetKeys()); i++ {
@@ -398,7 +402,8 @@ func (a *amendOperationAddIndex) genMutations(ctx context.Context, sctx sessionc
 			if _, ok := a.deletedOldIndexKeys[string(key)]; ok {
 				destKeyOp = kvrpcpb.Op_Put
 			}
-			resAddMutations.Push(destKeyOp, key, insertedMutations.GetValues()[i], insertedMutations.GetPessimisticFlags()[i])
+			resAddMutations.Push(destKeyOp, key, insertedMutations.GetValues()[i], insertedMutations.IsPessimisticLock(i),
+				insertedMutations.IsAssertExists(i), insertedMutations.IsAssertNotExist(i), insertedMutations.NeedConstraintCheckInPrewrite(i))
 		}
 	} else {
 		resAddMutations.MergeMutations(deletedMutations)
@@ -413,7 +418,7 @@ func getCommonHandleDatum(tbl table.Table, row chunk.Row) []types.Datum {
 	}
 	datumBuf := make([]types.Datum, 0, 4)
 	for _, col := range tbl.Cols() {
-		if mysql.HasPriKeyFlag(col.Flag) {
+		if mysql.HasPriKeyFlag(col.GetFlag()) {
 			datumBuf = append(datumBuf, row.GetDatum(col.Offset, &col.FieldType))
 		}
 	}
@@ -466,7 +471,7 @@ func (a *amendOperationAddIndexInfo) genIndexKeyValue(ctx context.Context, sctx 
 }
 
 func (a *amendOperationAddIndex) genNewIdxKey(ctx context.Context, sctx sessionctx.Context, key []byte,
-	kvMap map[string][]byte) (*tikv.PlainMutation, error) {
+	kvMap map[string][]byte) (*transaction.PlainMutation, error) {
 	kvHandle, err := tablecodec.DecodeRowKey(key)
 	if err != nil {
 		logutil.Logger(ctx).Error("decode key error", zap.String("key", hex.EncodeToString(key)), zap.Error(err))
@@ -488,12 +493,16 @@ func (a *amendOperationAddIndex) genNewIdxKey(ctx context.Context, sctx sessionc
 		isPessimisticLock = true
 	}
 	a.insertedNewIndexKeys[string(newIdxKey)] = struct{}{}
-	newMutation := &tikv.PlainMutation{KeyOp: newIndexOp, Key: newIdxKey, Value: newIdxValue, IsPessimisticLock: isPessimisticLock}
+	var flags transaction.CommitterMutationFlags
+	if isPessimisticLock {
+		flags |= transaction.MutationFlagIsPessimisticLock
+	}
+	newMutation := &transaction.PlainMutation{KeyOp: newIndexOp, Key: newIdxKey, Value: newIdxValue, Flags: flags}
 	return newMutation, nil
 }
 
 func (a *amendOperationAddIndex) genOldIdxKey(ctx context.Context, sctx sessionctx.Context, key []byte,
-	oldValKvMap map[string][]byte) (*tikv.PlainMutation, error) {
+	oldValKvMap map[string][]byte) (*transaction.PlainMutation, error) {
 	kvHandle, err := tablecodec.DecodeRowKey(key)
 	if err != nil {
 		logutil.Logger(ctx).Error("decode key error", zap.String("key", hex.EncodeToString(key)), zap.Error(err))
@@ -515,7 +524,11 @@ func (a *amendOperationAddIndex) genOldIdxKey(ctx context.Context, sctx sessionc
 			isPessimisticLock = true
 		}
 		a.deletedOldIndexKeys[string(newIdxKey)] = struct{}{}
-		return &tikv.PlainMutation{KeyOp: kvrpcpb.Op_Del, Key: newIdxKey, Value: emptyVal, IsPessimisticLock: isPessimisticLock}, nil
+		var flags transaction.CommitterMutationFlags
+		if isPessimisticLock {
+			flags |= transaction.MutationFlagIsPessimisticLock
+		}
+		return &transaction.PlainMutation{KeyOp: kvrpcpb.Op_Del, Key: newIdxKey, Value: emptyVal, Flags: flags}, nil
 	}
 	return nil, nil
 }
@@ -531,7 +544,7 @@ func NewSchemaAmenderForTikvTxn(sess *session) *SchemaAmender {
 	return amender
 }
 
-func (s *SchemaAmender) getAmendableKeys(commitMutations tikv.CommitterMutations, info *amendCollector) ([]kv.Key, []kv.Key) {
+func (s *SchemaAmender) getAmendableKeys(commitMutations transaction.CommitterMutations, info *amendCollector) ([]kv.Key, []kv.Key) {
 	addKeys := make([]kv.Key, 0, len(commitMutations.GetKeys()))
 	removeKeys := make([]kv.Key, 0, len(commitMutations.GetKeys()))
 	for i, byteKey := range commitMutations.GetKeys() {
@@ -557,7 +570,7 @@ type rowKvMap struct {
 	newRowKvMap map[string][]byte
 }
 
-func (s *SchemaAmender) prepareKvMap(ctx context.Context, commitMutations tikv.CommitterMutations, info *amendCollector) (*rowKvMap, error) {
+func (s *SchemaAmender) prepareKvMap(ctx context.Context, commitMutations transaction.CommitterMutations, info *amendCollector) (*rowKvMap, error) {
 	// Get keys need to be considered for the amend operation, currently only row keys.
 	addKeys, removeKeys := s.getAmendableKeys(commitMutations, info)
 
@@ -592,7 +605,7 @@ func (s *SchemaAmender) prepareKvMap(ctx context.Context, commitMutations tikv.C
 	return res, nil
 }
 
-func (s *SchemaAmender) checkDupKeys(ctx context.Context, mutations tikv.CommitterMutations) error {
+func (s *SchemaAmender) checkDupKeys(ctx context.Context, mutations transaction.CommitterMutations) error {
 	// Check if there are duplicate key entries.
 	checkMap := make(map[string]kvrpcpb.Op)
 	for i := 0; i < mutations.Len(); i++ {
@@ -613,14 +626,14 @@ func (s *SchemaAmender) checkDupKeys(ctx context.Context, mutations tikv.Committ
 }
 
 // genAllAmendMutations generates CommitterMutations for all tables and related amend operations.
-func (s *SchemaAmender) genAllAmendMutations(ctx context.Context, commitMutations tikv.CommitterMutations,
-	info *amendCollector) (*tikv.PlainMutations, error) {
+func (s *SchemaAmender) genAllAmendMutations(ctx context.Context, commitMutations transaction.CommitterMutations,
+	info *amendCollector) (*transaction.PlainMutations, error) {
 	rowKvMap, err := s.prepareKvMap(ctx, commitMutations, info)
 	if err != nil {
 		return nil, err
 	}
 	// Do generate add/remove mutations processing each key.
-	resultNewMutations := tikv.NewPlainMutations(32)
+	resultNewMutations := transaction.NewPlainMutations(32)
 	for _, amendOps := range info.tblAmendOpMap {
 		for _, curOp := range amendOps {
 			err := curOp.genMutations(ctx, s.sess, commitMutations, rowKvMap, &resultNewMutations)
@@ -638,8 +651,8 @@ func (s *SchemaAmender) genAllAmendMutations(ctx context.Context, commitMutation
 
 // AmendTxn does check and generate amend mutations based on input infoSchema and mutations, mutations need to prewrite
 // are returned, the input commitMutations will not be changed.
-func (s *SchemaAmender) AmendTxn(ctx context.Context, startInfoSchema tikv.SchemaVer, change *tikv.RelatedSchemaChange,
-	commitMutations tikv.CommitterMutations) (tikv.CommitterMutations, error) {
+func (s *SchemaAmender) AmendTxn(ctx context.Context, startInfoSchema tikv.SchemaVer, change *transaction.RelatedSchemaChange,
+	commitMutations transaction.CommitterMutations) (transaction.CommitterMutations, error) {
 	// Get info schema meta
 	infoSchemaAtStart := startInfoSchema.(infoschema.InfoSchema)
 	infoSchemaAtCheck := change.LatestInfoSchema.(infoschema.InfoSchema)

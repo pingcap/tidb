@@ -1,0 +1,25 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "realtikvtest",
+    srcs = ["testkit.go"],
+    importpath = "github.com/pingcap/tidb/tests/realtikvtest",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//config",
+        "//domain",
+        "//kv",
+        "//session",
+        "//sessionctx/variable",
+        "//store/driver",
+        "//store/mockstore",
+        "//testkit",
+        "//testkit/testmain",
+        "//testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@com_github_tikv_client_go_v2//txnkv/transaction",
+        "@io_opencensus_go//stats/view",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

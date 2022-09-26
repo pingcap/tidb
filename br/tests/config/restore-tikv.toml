@@ -1,0 +1,25 @@
+# config of tikv
+
+[server]
+labels = { exclusive = "restore" }
+
+[storage]
+reserve-space = "1KB"
+
+[coprocessor]
+region-max-keys = 20
+region-split-keys = 12
+
+[rocksdb]
+max-open-files = 4096
+[raftdb]
+max-open-files = 4096
+[raftstore]
+# true (default value) for high reliability, this can prevent data loss when power failure.
+sync-log = false
+capacity = "10GB"
+
+[security]
+ca-path = "/tmp/backup_restore_test/certs/ca.pem"
+cert-path = "/tmp/backup_restore_test/certs/tikv.pem"
+key-path = "/tmp/backup_restore_test/certs/tikv.key"

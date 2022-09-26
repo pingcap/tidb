@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -58,8 +59,9 @@ func toString(g *memo.Group, idMap map[*memo.Group]int, visited map[*memo.Group]
 // groupToString only stringifies a single Group.
 // Format:
 // Group#1 Column: [Column#1,Column#2,Column#13] Unique key: []
-//     Selection_4 input:[Group#2], eq(Column#13, Column#2), gt(Column#1, 10)
-//     Projection_15 input:Group#3 Column#1, Column#2
+//
+//	Selection_4 input:[Group#2], eq(Column#13, Column#2), gt(Column#1, 10)
+//	Projection_15 input:Group#3 Column#1, Column#2
 func groupToString(g *memo.Group, idMap map[*memo.Group]int) []string {
 	schema := g.Prop.Schema
 	colStrs := make([]string, 0, len(schema.Columns))

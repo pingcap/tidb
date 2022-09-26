@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,92 +17,88 @@ package chunk
 import (
 	"testing"
 
-	"github.com/pingcap/check"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = check.Suite(&poolTestSuite{})
-
-type poolTestSuite struct{}
-
-func (s *poolTestSuite) TestNewPool(c *check.C) {
+func TestNewPool(t *testing.T) {
 	pool := NewPool(1024)
-	c.Assert(pool.initCap, check.Equals, 1024)
-	c.Assert(pool.varLenColPool, check.NotNil)
-	c.Assert(pool.fixLenColPool4, check.NotNil)
-	c.Assert(pool.fixLenColPool8, check.NotNil)
-	c.Assert(pool.fixLenColPool16, check.NotNil)
-	c.Assert(pool.fixLenColPool40, check.NotNil)
+	require.Equal(t, 1024, pool.initCap)
+	require.NotNil(t, pool.varLenColPool)
+	require.NotNil(t, pool.fixLenColPool4)
+	require.NotNil(t, pool.fixLenColPool8)
+	require.NotNil(t, pool.fixLenColPool16)
+	require.NotNil(t, pool.fixLenColPool40)
 }
 
-func (s *poolTestSuite) TestPoolGetChunk(c *check.C) {
+func TestPoolGetChunk(t *testing.T) {
 	initCap := 1024
 	pool := NewPool(initCap)
 
 	fieldTypes := []*types.FieldType{
-		{Tp: mysql.TypeVarchar},
-		{Tp: mysql.TypeJSON},
-		{Tp: mysql.TypeFloat},
-		{Tp: mysql.TypeNewDecimal},
-		{Tp: mysql.TypeDouble},
-		{Tp: mysql.TypeLonglong},
-		// {Tp: mysql.TypeTimestamp},
-		// {Tp: mysql.TypeDatetime},
+		types.NewFieldType(mysql.TypeVarchar),
+		types.NewFieldType(mysql.TypeJSON),
+		types.NewFieldType(mysql.TypeFloat),
+		types.NewFieldType(mysql.TypeNewDecimal),
+		types.NewFieldType(mysql.TypeDouble),
+		types.NewFieldType(mysql.TypeLonglong),
+		// types.NewFieldType(mysql.TypeTimestamp),
+		// types.NewFieldType(mysql.TypeDatetime),
 	}
 
 	chk := pool.GetChunk(fieldTypes)
-	c.Assert(chk, check.NotNil)
-	c.Assert(chk.NumCols(), check.Equals, len(fieldTypes))
-	c.Assert(chk.columns[0].elemBuf, check.IsNil)
-	c.Assert(chk.columns[1].elemBuf, check.IsNil)
-	c.Assert(len(chk.columns[2].elemBuf), check.Equals, getFixedLen(fieldTypes[2]))
-	c.Assert(len(chk.columns[3].elemBuf), check.Equals, getFixedLen(fieldTypes[3]))
-	c.Assert(len(chk.columns[4].elemBuf), check.Equals, getFixedLen(fieldTypes[4]))
-	c.Assert(len(chk.columns[5].elemBuf), check.Equals, getFixedLen(fieldTypes[5]))
-	// c.Assert(len(chk.columns[6].elemBuf), check.Equals, getFixedLen(fieldTypes[6]))
-	// c.Assert(len(chk.columns[7].elemBuf), check.Equals, getFixedLen(fieldTypes[7]))
+	require.NotNil(t, chk)
+	require.Len(t, fieldTypes, chk.NumCols())
+	require.Nil(t, chk.columns[0].elemBuf)
+	require.Nil(t, chk.columns[1].elemBuf)
+	require.Equal(t, getFixedLen(fieldTypes[2]), len(chk.columns[2].elemBuf))
+	require.Equal(t, getFixedLen(fieldTypes[3]), len(chk.columns[3].elemBuf))
+	require.Equal(t, getFixedLen(fieldTypes[4]), len(chk.columns[4].elemBuf))
+	require.Equal(t, getFixedLen(fieldTypes[5]), len(chk.columns[5].elemBuf))
+	// require.Equal(t, getFixedLen(fieldTypes[6]), len(chk.columns[6].elemBuf))
+	// require.Equal(t, getFixedLen(fieldTypes[7]), len(chk.columns[7].elemBuf))
 
-	c.Assert(cap(chk.columns[2].data), check.Equals, initCap*getFixedLen(fieldTypes[2]))
-	c.Assert(cap(chk.columns[3].data), check.Equals, initCap*getFixedLen(fieldTypes[3]))
-	c.Assert(cap(chk.columns[4].data), check.Equals, initCap*getFixedLen(fieldTypes[4]))
-	c.Assert(cap(chk.columns[5].data), check.Equals, initCap*getFixedLen(fieldTypes[5]))
-	// c.Assert(cap(chk.columns[6].data), check.Equals, initCap*getFixedLen(fieldTypes[6]))
-	// c.Assert(cap(chk.columns[7].data), check.Equals, initCap*getFixedLen(fieldTypes[7]))
+	require.Equal(t, initCap*getFixedLen(fieldTypes[2]), cap(chk.columns[2].data))
+	require.Equal(t, initCap*getFixedLen(fieldTypes[3]), cap(chk.columns[3].data))
+	require.Equal(t, initCap*getFixedLen(fieldTypes[4]), cap(chk.columns[4].data))
+	require.Equal(t, initCap*getFixedLen(fieldTypes[5]), cap(chk.columns[5].data))
+	// require.Equal(t, initCap*getFixedLen(fieldTypes[6]), cap(chk.columns[6].data))
+	// require.Equal(t, initCap*getFixedLen(fieldTypes[7]), cap(chk.columns[7].data))
 }
 
-func (s *poolTestSuite) TestPoolPutChunk(c *check.C) {
+func TestPoolPutChunk(t *testing.T) {
 	initCap := 1024
 	pool := NewPool(initCap)
 
 	fieldTypes := []*types.FieldType{
-		{Tp: mysql.TypeVarchar},
-		{Tp: mysql.TypeJSON},
-		{Tp: mysql.TypeFloat},
-		{Tp: mysql.TypeNewDecimal},
-		{Tp: mysql.TypeDouble},
-		{Tp: mysql.TypeLonglong},
-		{Tp: mysql.TypeTimestamp},
-		{Tp: mysql.TypeDatetime},
+		types.NewFieldType(mysql.TypeVarchar),
+		types.NewFieldType(mysql.TypeJSON),
+		types.NewFieldType(mysql.TypeFloat),
+		types.NewFieldType(mysql.TypeNewDecimal),
+		types.NewFieldType(mysql.TypeDouble),
+		types.NewFieldType(mysql.TypeLonglong),
+		types.NewFieldType(mysql.TypeTimestamp),
+		types.NewFieldType(mysql.TypeDatetime),
 	}
 
 	chk := pool.GetChunk(fieldTypes)
 	pool.PutChunk(fieldTypes, chk)
-	c.Assert(len(chk.columns), check.Equals, 0)
+	require.Equal(t, 0, len(chk.columns))
 }
 
 func BenchmarkPoolChunkOperation(b *testing.B) {
 	pool := NewPool(1024)
 
 	fieldTypes := []*types.FieldType{
-		{Tp: mysql.TypeVarchar},
-		{Tp: mysql.TypeJSON},
-		{Tp: mysql.TypeFloat},
-		{Tp: mysql.TypeNewDecimal},
-		{Tp: mysql.TypeDouble},
-		{Tp: mysql.TypeLonglong},
-		{Tp: mysql.TypeTimestamp},
-		{Tp: mysql.TypeDatetime},
+		types.NewFieldType(mysql.TypeVarchar),
+		types.NewFieldType(mysql.TypeJSON),
+		types.NewFieldType(mysql.TypeFloat),
+		types.NewFieldType(mysql.TypeNewDecimal),
+		types.NewFieldType(mysql.TypeDouble),
+		types.NewFieldType(mysql.TypeLonglong),
+		types.NewFieldType(mysql.TypeTimestamp),
+		types.NewFieldType(mysql.TypeDatetime),
 	}
 
 	b.ResetTimer()

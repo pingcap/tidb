@@ -1,0 +1,18 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "server",
+    srcs = ["server.go"],
+    importpath = "github.com/pingcap/tidb/store/mockstore/unistore/server",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//store/mockstore/unistore/config",
+        "//store/mockstore/unistore/lockstore",
+        "//store/mockstore/unistore/pd",
+        "//store/mockstore/unistore/tikv",
+        "//store/mockstore/unistore/tikv/mvcc",
+        "@com_github_pingcap_badger//:badger",
+        "@com_github_pingcap_badger//options",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)

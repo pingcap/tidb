@@ -8,10 +8,13 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package chunk
+
+import "sync"
 
 var (
 	_ Iterator = (*Iterator4Chunk)(nil)
@@ -22,11 +25,27 @@ var (
 	_ Iterator = (*multiIterator)(nil)
 )
 
+var (
+	iterator4SlicePool = &sync.Pool{New: func() any { return new(iterator4Slice) }}
+)
+
+// FreeIterator try to free and reuse the iterator.
+func FreeIterator(it any) {
+	switch it := it.(type) {
+	case *iterator4Slice:
+		it.rows = nil
+		it.cursor = 0
+		iterator4SlicePool.Put(it)
+	default:
+		// Do Nothing.
+	}
+}
+
 // Iterator is used to iterate a number of rows.
 //
-// for row := it.Begin(); row != it.End(); row = it.Next() {
-//     ...
-// }
+//	for row := it.Begin(); row != it.End(); row = it.Next() {
+//	    ...
+//	}
 type Iterator interface {
 	// Begin resets the cursor of the iterator and returns the first Row.
 	Begin() Row
@@ -52,7 +71,10 @@ type Iterator interface {
 
 // NewIterator4Slice returns a Iterator for Row slice.
 func NewIterator4Slice(rows []Row) Iterator {
-	return &iterator4Slice{rows: rows}
+	it := iterator4SlicePool.Get().(*iterator4Slice)
+	it.rows = rows
+	it.cursor = 0
+	return it
 }
 
 type iterator4Slice struct {
@@ -71,8 +93,8 @@ func (it *iterator4Slice) Begin() Row {
 
 // Next implements the Iterator interface.
 func (it *iterator4Slice) Next() Row {
-	if len := it.Len(); it.cursor >= len {
-		it.cursor = len + 1
+	if l := it.Len(); it.cursor >= l {
+		it.cursor = l + 1
 		return it.End()
 	}
 	row := it.rows[it.cursor]
@@ -89,7 +111,7 @@ func (it *iterator4Slice) Current() Row {
 }
 
 // End implements the Iterator interface.
-func (it *iterator4Slice) End() Row {
+func (*iterator4Slice) End() Row {
 	return Row{}
 }
 
@@ -104,7 +126,7 @@ func (it *iterator4Slice) Len() int {
 }
 
 // Error returns none-nil error if anything wrong happens during the iteration.
-func (it *iterator4Slice) Error() error {
+func (*iterator4Slice) Error() error {
 	return nil
 }
 
@@ -150,7 +172,7 @@ func (it *Iterator4Chunk) Current() Row {
 }
 
 // End implements the Iterator interface.
-func (it *Iterator4Chunk) End() Row {
+func (*Iterator4Chunk) End() Row {
 	return Row{}
 }
 
@@ -170,7 +192,7 @@ func (it *Iterator4Chunk) GetChunk() *Chunk {
 }
 
 // Error returns none-nil error if anything wrong happens during the iteration.
-func (it *Iterator4Chunk) Error() error {
+func (*Iterator4Chunk) Error() error {
 	return nil
 }
 
@@ -232,7 +254,7 @@ func (it *iterator4List) Current() Row {
 }
 
 // End implements the Iterator interface.
-func (it *iterator4List) End() Row {
+func (*iterator4List) End() Row {
 	return Row{}
 }
 
@@ -247,7 +269,7 @@ func (it *iterator4List) Len() int {
 }
 
 // Error returns none-nil error if anything wrong happens during the iteration.
-func (it *iterator4List) Error() error {
+func (*iterator4List) Error() error {
 	return nil
 }
 
@@ -273,8 +295,8 @@ func (it *iterator4RowPtr) Begin() Row {
 
 // Next implements the Iterator interface.
 func (it *iterator4RowPtr) Next() Row {
-	if len := it.Len(); it.cursor >= len {
-		it.cursor = len + 1
+	if l := it.Len(); it.cursor >= l {
+		it.cursor = l + 1
 		return it.End()
 	}
 	row := it.li.GetRow(it.ptrs[it.cursor])
@@ -291,7 +313,7 @@ func (it *iterator4RowPtr) Current() Row {
 }
 
 // End implements the Iterator interface.
-func (it *iterator4RowPtr) End() Row {
+func (*iterator4RowPtr) End() Row {
 	return Row{}
 }
 
@@ -306,7 +328,7 @@ func (it *iterator4RowPtr) Len() int {
 }
 
 // Error returns none-nil error if anything wrong happens during the iteration.
-func (it *iterator4RowPtr) Error() error {
+func (*iterator4RowPtr) Error() error {
 	return nil
 }
 
@@ -366,7 +388,7 @@ func (it *iterator4RowContainer) Current() Row {
 }
 
 // End implements the Iterator interface.
-func (it *iterator4RowContainer) End() Row {
+func (*iterator4RowContainer) End() Row {
 	return Row{}
 }
 
@@ -453,7 +475,7 @@ func (it *multiIterator) Current() Row {
 }
 
 // End implements the Iterator interface.
-func (it *multiIterator) End() Row {
+func (*multiIterator) End() Row {
 	return Row{}
 }
 

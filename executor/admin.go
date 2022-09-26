@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,12 +19,13 @@ import (
 	"math"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
@@ -33,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/timeutil"
@@ -293,15 +294,11 @@ func (e *RecoverIndexExec) buildTableScan(ctx context.Context, txn kv.Transactio
 func buildRecoverIndexKeyRanges(sctx *stmtctx.StatementContext, tid int64, startHandle kv.Handle) ([]kv.KeyRange, error) {
 	var startKey []byte
 	if startHandle == nil {
-		startKey = tablecodec.EncodeRowKey(tid, []byte{codec.NilFlag})
+		startKey = tablecodec.GenTableRecordPrefix(tid).Next()
 	} else {
-		startKey = tablecodec.EncodeRowKey(tid, startHandle.Next().Encoded())
+		startKey = tablecodec.EncodeRowKey(tid, startHandle.Encoded()).PrefixNext()
 	}
-	maxVal, err := codec.EncodeKey(sctx, nil, types.MaxValueDatum())
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	endKey := tablecodec.EncodeRowKey(tid, maxVal)
+	endKey := tablecodec.GenTableRecordPrefix(tid).PrefixNext()
 	return []kv.KeyRange{{StartKey: startKey, EndKey: endKey}}, nil
 }
 
@@ -320,7 +317,9 @@ func (e *RecoverIndexExec) backfillIndex(ctx context.Context) (int64, int64, err
 		result        backfillResult
 	)
 	for {
-		errInTxn := kv.RunInNewTxn(context.Background(), e.ctx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
+		ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnAdmin)
+		errInTxn := kv.RunInNewTxn(ctx, e.ctx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
+			setOptionForTopSQL(e.ctx.GetSessionVars().StmtCtx, txn)
 			var err error
 			result, err = e.backfillIndexInTxn(ctx, txn, currentHandle)
 			return err
@@ -342,6 +341,9 @@ func (e *RecoverIndexExec) backfillIndex(ctx context.Context) (int64, int64, err
 			break
 		}
 		currentHandle = result.currentHandle
+		if currentHandle.Next().Compare(result.currentHandle) <= 0 {
+			break // There is no more handles in the table.
+		}
 	}
 	return totalAddedCnt, totalScanCnt, nil
 }
@@ -465,7 +467,7 @@ func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, txn kv.Transa
 			return result, err
 		}
 
-		_, err = e.index.Create(e.ctx, txn, row.idxVals, row.handle, row.rsData)
+		_, err = e.index.Create(e.ctx, txn, row.idxVals, row.handle, row.rsData, table.WithIgnoreAssertion)
 		if err != nil {
 			return result, err
 		}
@@ -693,7 +695,10 @@ func (e *CleanupIndexExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func (e *CleanupIndexExec) cleanTableIndex(ctx context.Context) error {
 	for {
-		errInTxn := kv.RunInNewTxn(context.Background(), e.ctx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
+		ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnAdmin)
+		errInTxn := kv.RunInNewTxn(ctx, e.ctx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
+			txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
+			setOptionForTopSQL(e.ctx.GetSessionVars().StmtCtx, txn)
 			err := e.fetchIndex(ctx, txn)
 			if err != nil {
 				return err

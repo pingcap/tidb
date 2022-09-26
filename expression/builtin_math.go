@@ -1,7 +1,3 @@
-// Copyright 2013 The ql Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSES/QL-LICENSE file.
-
 // Copyright 2015 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,8 +8,13 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
+// Copyright 2013 The ql Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSES/QL-LICENSE file.
 
 package expression
 
@@ -23,14 +24,13 @@ import (
 	"math"
 	"strconv"
 	"strings"
-	"sync"
 
-	"github.com/cznic/mathutil"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -130,19 +130,21 @@ func (c *absFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 	if err != nil {
 		return nil, err
 	}
-	if mysql.HasUnsignedFlag(argFieldTp.Flag) {
-		bf.tp.Flag |= mysql.UnsignedFlag
+	if mysql.HasUnsignedFlag(argFieldTp.GetFlag()) {
+		bf.tp.AddFlag(mysql.UnsignedFlag)
 	}
 	if argTp == types.ETReal {
-		bf.tp.Flen, bf.tp.Decimal = mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeDouble)
+		flen, decimal := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeDouble)
+		bf.tp.SetFlen(flen)
+		bf.tp.SetDecimal(decimal)
 	} else {
-		bf.tp.Flen = argFieldTp.Flen
-		bf.tp.Decimal = argFieldTp.Decimal
+		bf.tp.SetFlenUnderLimit(argFieldTp.GetFlen())
+		bf.tp.SetDecimalUnderLimit(argFieldTp.GetDecimal())
 	}
 	var sig builtinFunc
 	switch argTp {
 	case types.ETInt:
-		if mysql.HasUnsignedFlag(argFieldTp.Flag) {
+		if mysql.HasUnsignedFlag(argFieldTp.GetFlag()) {
 			sig = &builtinAbsUIntSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_AbsUInt)
 		} else {
@@ -268,18 +270,21 @@ func (c *roundFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 		return nil, err
 	}
 	argFieldTp := args[0].GetType()
-	if mysql.HasUnsignedFlag(argFieldTp.Flag) {
-		bf.tp.Flag |= mysql.UnsignedFlag
+	if mysql.HasUnsignedFlag(argFieldTp.GetFlag()) {
+		bf.tp.AddFlag(mysql.UnsignedFlag)
 	}
 
-	bf.tp.Flen = argFieldTp.Flen
-	bf.tp.Decimal = calculateDecimal4RoundAndTruncate(ctx, args, argTp)
-	if bf.tp.Decimal != types.UnspecifiedLength {
-		if argFieldTp.Decimal != types.UnspecifiedLength {
-			decimalDelta := bf.tp.Decimal - argFieldTp.Decimal
-			bf.tp.Flen += mathutil.Max(decimalDelta, 0)
-		} else {
-			bf.tp.Flen = argFieldTp.Flen + bf.tp.Decimal
+	// ETInt or ETReal is set correctly by newBaseBuiltinFuncWithTp, only need to handle ETDecimal.
+	if argTp == types.ETDecimal {
+		bf.tp.SetFlenUnderLimit(argFieldTp.GetFlen())
+		bf.tp.SetDecimalUnderLimit(calculateDecimal4RoundAndTruncate(ctx, args, argTp))
+		if bf.tp.GetDecimal() != types.UnspecifiedLength {
+			if argFieldTp.GetDecimal() != types.UnspecifiedLength {
+				decimalDelta := bf.tp.GetDecimal() - argFieldTp.GetDecimal()
+				bf.tp.SetFlenUnderLimit(bf.tp.GetFlen() + mathutil.Max(decimalDelta, 0))
+			} else {
+				bf.tp.SetFlenUnderLimit(argFieldTp.GetFlen() + bf.tp.GetDecimal())
+			}
 		}
 	}
 
@@ -323,7 +328,7 @@ func calculateDecimal4RoundAndTruncate(ctx sessionctx.Context, args []Expression
 	}
 	secondConst, secondIsConst := args[1].(*Constant)
 	if !secondIsConst {
-		return args[0].GetType().Decimal
+		return args[0].GetType().GetDecimal()
 	}
 	argDec, isNull, err := secondConst.EvalInt(ctx, chunk.Row{})
 	if err != nil || isNull || argDec < 0 {
@@ -389,7 +394,7 @@ func (b *builtinRoundDecSig) evalDecimal(row chunk.Row) (*types.MyDecimal, bool,
 		return nil, isNull, err
 	}
 	to := new(types.MyDecimal)
-	if err = val.Round(to, 0, types.ModeHalfEven); err != nil {
+	if err = val.Round(to, 0, types.ModeHalfUp); err != nil {
 		return nil, true, err
 	}
 	return to, false, nil
@@ -465,7 +470,7 @@ func (b *builtinRoundWithFracDecSig) evalDecimal(row chunk.Row) (*types.MyDecima
 		return nil, isNull, err
 	}
 	to := new(types.MyDecimal)
-	if err = val.Round(to, mathutil.Min(int(frac), b.tp.Decimal), types.ModeHalfEven); err != nil {
+	if err = val.Round(to, mathutil.Min(int(frac), b.tp.GetDecimal()), types.ModeHalfUp); err != nil {
 		return nil, true, err
 	}
 	return to, false, nil
@@ -486,8 +491,11 @@ func (c *ceilFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 		return nil, err
 	}
 	setFlag4FloorAndCeil(bf.tp, args[0])
-	argFieldTp := args[0].GetType()
-	bf.tp.Flen, bf.tp.Decimal = argFieldTp.Flen, 0
+	// ETInt or ETReal is set correctly by newBaseBuiltinFuncWithTp, only need to handle ETDecimal.
+	if retTp == types.ETDecimal {
+		bf.tp.SetFlenUnderLimit(args[0].GetType().GetFlen())
+		bf.tp.SetDecimal(0)
+	}
 
 	switch argTp {
 	case types.ETInt:
@@ -567,7 +575,7 @@ func (b *builtinCeilIntToDecSig) evalDecimal(row chunk.Row) (*types.MyDecimal, b
 		return nil, true, err
 	}
 
-	if mysql.HasUnsignedFlag(b.args[0].GetType().Flag) || val >= 0 {
+	if mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag()) || val >= 0 {
 		return types.NewDecFromUint(uint64(val)), false, nil
 	}
 	return types.NewDecFromInt(val), false, nil
@@ -645,7 +653,7 @@ func getEvalTp4FloorAndCeil(arg Expression) (retTp, argTp types.EvalType) {
 	case types.ETInt:
 		retTp = types.ETInt
 	case types.ETDecimal:
-		if fieldTp.Flen-fieldTp.Decimal > mysql.MaxIntWidth-2 { // len(math.MaxInt64) - 1
+		if fieldTp.GetFlen()-fieldTp.GetDecimal() > mysql.MaxIntWidth-2 { // len(math.MaxInt64) - 1
 			retTp = types.ETDecimal
 		}
 	default:
@@ -657,8 +665,8 @@ func getEvalTp4FloorAndCeil(arg Expression) (retTp, argTp types.EvalType) {
 // setFlag4FloorAndCeil sets return flag of FLOOR and CEIL.
 func setFlag4FloorAndCeil(tp *types.FieldType, arg Expression) {
 	fieldTp := arg.GetType()
-	if (fieldTp.Tp == mysql.TypeLong || fieldTp.Tp == mysql.TypeLonglong || fieldTp.Tp == mysql.TypeNewDecimal) && mysql.HasUnsignedFlag(fieldTp.Flag) {
-		tp.Flag |= mysql.UnsignedFlag
+	if (fieldTp.GetType() == mysql.TypeLong || fieldTp.GetType() == mysql.TypeLonglong || fieldTp.GetType() == mysql.TypeNewDecimal) && mysql.HasUnsignedFlag(fieldTp.GetFlag()) {
+		tp.AddFlag(mysql.UnsignedFlag)
 	}
 	// TODO: when argument type is timestamp, add not null flag.
 }
@@ -674,7 +682,12 @@ func (c *floorFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 		return nil, err
 	}
 	setFlag4FloorAndCeil(bf.tp, args[0])
-	bf.tp.Flen, bf.tp.Decimal = args[0].GetType().Flen, 0
+
+	// ETInt or ETReal is set correctly by newBaseBuiltinFuncWithTp, only need to handle ETDecimal.
+	if retTp == types.ETDecimal {
+		bf.tp.SetFlenUnderLimit(args[0].GetType().GetFlen())
+		bf.tp.SetDecimal(0)
+	}
 	switch argTp {
 	case types.ETInt:
 		if retTp == types.ETInt {
@@ -753,7 +766,7 @@ func (b *builtinFloorIntToDecSig) evalDecimal(row chunk.Row) (*types.MyDecimal, 
 		return nil, true, err
 	}
 
-	if mysql.HasUnsignedFlag(b.args[0].GetType().Flag) || val >= 0 {
+	if mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag()) || val >= 0 {
 		return types.NewDecFromUint(uint64(val)), false, nil
 	}
 	return types.NewDecFromInt(val), false, nil
@@ -1013,7 +1026,7 @@ func (c *randFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	}
 	bt := bf
 	if len(args) == 0 {
-		sig = &builtinRandSig{bt, &sync.Mutex{}, NewWithTime()}
+		sig = &builtinRandSig{bt, ctx.GetSessionVars().Rng}
 		sig.setPbCode(tipb.ScalarFuncSig_Rand)
 	} else if _, isConstant := args[0].(*Constant); isConstant {
 		// According to MySQL manual:
@@ -1029,7 +1042,7 @@ func (c *randFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 			// The behavior same as MySQL.
 			seed = 0
 		}
-		sig = &builtinRandSig{bt, &sync.Mutex{}, NewWithSeed(seed)}
+		sig = &builtinRandSig{bt, mathutil.NewWithSeed(seed)}
 		sig.setPbCode(tipb.ScalarFuncSig_Rand)
 	} else {
 		sig = &builtinRandWithSeedFirstGenSig{bt}
@@ -1040,12 +1053,11 @@ func (c *randFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 
 type builtinRandSig struct {
 	baseBuiltinFunc
-	mu       *sync.Mutex
-	mysqlRng *MysqlRng
+	mysqlRng *mathutil.MysqlRng
 }
 
 func (b *builtinRandSig) Clone() builtinFunc {
-	newSig := &builtinRandSig{mysqlRng: b.mysqlRng, mu: b.mu}
+	newSig := &builtinRandSig{mysqlRng: b.mysqlRng}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }
@@ -1053,9 +1065,7 @@ func (b *builtinRandSig) Clone() builtinFunc {
 // evalReal evals RAND().
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_rand
 func (b *builtinRandSig) evalReal(row chunk.Row) (float64, bool, error) {
-	b.mu.Lock()
 	res := b.mysqlRng.Gen()
-	b.mu.Unlock()
 	return res, false, nil
 }
 
@@ -1079,11 +1089,11 @@ func (b *builtinRandWithSeedFirstGenSig) evalReal(row chunk.Row) (float64, bool,
 	// b.args[0] is promised to be a non-constant(such as a column name) in
 	// builtinRandWithSeedFirstGenSig, the seed is initialized with the value for each
 	// invocation of RAND().
-	var rng *MysqlRng
+	var rng *mathutil.MysqlRng
 	if !isNull {
-		rng = NewWithSeed(seed)
+		rng = mathutil.NewWithSeed(seed)
 	} else {
-		rng = NewWithSeed(0)
+		rng = mathutil.NewWithSeed(0)
 	}
 	return rng.Gen(), false, nil
 }
@@ -1150,8 +1160,10 @@ func (c *convFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
-	bf.tp.Flen = 64
+	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	bf.tp.SetCharset(charset)
+	bf.tp.SetCollate(collate)
+	bf.tp.SetFlen(64)
 	sig := &builtinConvSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Conv)
 	return sig, nil
@@ -1286,8 +1298,8 @@ func (c *crc32FunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flen = 10
-	bf.tp.Flag |= mysql.UnsignedFlag
+	bf.tp.SetFlen(10)
+	bf.tp.AddFlag(mysql.UnsignedFlag)
 	sig := &builtinCRC32Sig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_CRC32)
 	return sig, nil
@@ -1745,8 +1757,8 @@ func (c *piFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Decimal = 6
-	bf.tp.Flen = 8
+	bf.tp.SetDecimal(6)
+	bf.tp.SetFlen(8)
 	sig = &builtinPISig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_PI)
 	return sig, nil
@@ -1897,15 +1909,17 @@ func (c *truncateFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err != nil {
 		return nil, err
 	}
-
-	bf.tp.Decimal = calculateDecimal4RoundAndTruncate(ctx, args, argTp)
-	bf.tp.Flen = args[0].GetType().Flen - args[0].GetType().Decimal + bf.tp.Decimal
-	bf.tp.Flag |= args[0].GetType().Flag
+	// ETInt or ETReal is set correctly by newBaseBuiltinFuncWithTp, only need to handle ETDecimal.
+	if argTp == types.ETDecimal {
+		bf.tp.SetDecimalUnderLimit(calculateDecimal4RoundAndTruncate(ctx, args, argTp))
+		bf.tp.SetFlenUnderLimit(args[0].GetType().GetFlen() - args[0].GetType().GetDecimal() + bf.tp.GetDecimal())
+	}
+	bf.tp.AddFlag(args[0].GetType().GetFlag())
 
 	var sig builtinFunc
 	switch argTp {
 	case types.ETInt:
-		if mysql.HasUnsignedFlag(args[0].GetType().Flag) {
+		if mysql.HasUnsignedFlag(args[0].GetType().GetFlag()) {
 			sig = &builtinTruncateUintSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_TruncateUint)
 		} else {
@@ -1949,7 +1963,7 @@ func (b *builtinTruncateDecimalSig) evalDecimal(row chunk.Row) (*types.MyDecimal
 	}
 
 	result := new(types.MyDecimal)
-	if err := x.Round(result, mathutil.Min(int(d), b.getRetTp().Decimal), types.ModeTruncate); err != nil {
+	if err := x.Round(result, mathutil.Min(int(d), b.getRetTp().GetDecimal()), types.ModeTruncate); err != nil {
 		return nil, true, err
 	}
 	return result, false, nil
@@ -1998,7 +2012,7 @@ func (b *builtinTruncateIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-	if mysql.HasUnsignedFlag(b.args[1].GetType().Flag) {
+	if mysql.HasUnsignedFlag(b.args[1].GetType().GetFlag()) {
 		return x, false, nil
 	}
 
@@ -2035,7 +2049,7 @@ func (b *builtinTruncateUintSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-	if mysql.HasUnsignedFlag(b.args[1].GetType().Flag) {
+	if mysql.HasUnsignedFlag(b.args[1].GetType().GetFlag()) {
 		return x, false, nil
 	}
 	uintx := uint64(x)

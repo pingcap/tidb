@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/unistore/client"
 	"github.com/pingcap/tidb/store/mockstore/unistore/cophandler"
 	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/dbreader"
+	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/kverrors"
 	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/pberror"
 	"github.com/pingcap/tidb/store/mockstore/unistore/util/lockwaiter"
 	"github.com/pingcap/tipb/go-tipb"
@@ -42,6 +44,9 @@ var _ tikvpb.TikvServer = new(Server)
 
 // Server implements the tikvpb.TikvServer interface.
 type Server struct {
+	// After updating the kvproto, some methods of TikvServer are not implemented.
+	// Construct `Server` based on `UnimplementedTikvServer`, in order to compile successfully
+	tikvpb.UnimplementedTikvServer
 	mvccStore     *MVCCStore
 	regionManager RegionManager
 	innerServer   InnerServer
@@ -109,7 +114,7 @@ func newRequestCtx(svr *Server, ctx *kvrpcpb.Context, method string) (*requestCt
 	atomic.AddInt32(&svr.refCount, 1)
 	if atomic.LoadInt32(&svr.stopped) > 0 {
 		atomic.AddInt32(&svr.refCount, -1)
-		return nil, ErrRetryable("server is closed")
+		return nil, kverrors.ErrRetryable("server is closed")
 	}
 	req := &requestCtx{
 		svr:       svr,
@@ -133,8 +138,17 @@ func (req *requestCtx) getDBReader() *dbreader.DBReader {
 		mvccStore := req.svr.mvccStore
 		txn := mvccStore.db.NewTransaction(false)
 		req.reader = dbreader.NewDBReader(req.regCtx.RawStart(), req.regCtx.RawEnd(), txn)
+		req.reader.RcCheckTS = req.isRcCheckTSIsolationLevel()
 	}
 	return req.reader
+}
+
+func (req *requestCtx) isSnapshotIsolation() bool {
+	return req.rpcCtx.IsolationLevel == kvrpcpb.IsolationLevel_SI
+}
+
+func (req *requestCtx) isRcCheckTSIsolationLevel() bool {
+	return req.rpcCtx.IsolationLevel == kvrpcpb.IsolationLevel_RCCheckTS
 }
 
 func (req *requestCtx) finish() {
@@ -154,20 +168,10 @@ func (svr *Server) KvGet(ctx context.Context, req *kvrpcpb.GetRequest) (*kvrpcpb
 	if reqCtx.regErr != nil {
 		return &kvrpcpb.GetResponse{RegionError: reqCtx.regErr}, nil
 	}
-	err = svr.mvccStore.CheckKeysLock(req.GetVersion(), req.Context.ResolvedLocks, req.Key)
-	if err != nil {
-		return &kvrpcpb.GetResponse{Error: convertToKeyError(err)}, nil
-	}
-	reader := reqCtx.getDBReader()
-	val, err := reader.Get(req.Key, req.GetVersion())
-	if err != nil {
-		return &kvrpcpb.GetResponse{
-			Error: convertToKeyError(err),
-		}, nil
-	}
-	val = safeCopy(val)
+	val, err := svr.mvccStore.Get(reqCtx, req.Key, req.Version)
 	return &kvrpcpb.GetResponse{
 		Value: val,
+		Error: convertToKeyError(err),
 	}, nil
 }
 
@@ -211,8 +215,8 @@ func (svr *Server) KvPessimisticLock(ctx context.Context, req *kvrpcpb.Pessimist
 	}
 	if result.DeadlockResp != nil {
 		log.Error("deadlock found", zap.Stringer("entry", &result.DeadlockResp.Entry))
-		errLocked := err.(*ErrLocked)
-		deadlockErr := &ErrDeadlock{
+		errLocked := err.(*kverrors.ErrLocked)
+		deadlockErr := &kverrors.ErrDeadlock{
 			LockKey:         errLocked.Key,
 			LockTS:          errLocked.Lock.StartTS,
 			DeadlockKeyHash: result.DeadlockResp.DeadlockKeyHash,
@@ -229,7 +233,7 @@ func (svr *Server) KvPessimisticLock(ctx context.Context, req *kvrpcpb.Pessimist
 			if err == nil {
 				return resp, nil
 			}
-			if _, ok := err.(*ErrLocked); !ok {
+			if _, ok := err.(*kverrors.ErrLocked); !ok {
 				resp.Errors, resp.RegionError = convertToPBErrors(err)
 				return resp, nil
 			}
@@ -239,7 +243,7 @@ func (svr *Server) KvPessimisticLock(ctx context.Context, req *kvrpcpb.Pessimist
 	// The key is rollbacked, we don't have the exact commitTS, but we can use the server's latest.
 	// Always use the store latest ts since the waiter result commitTs may not be the real conflict ts
 	conflictCommitTS := svr.mvccStore.getLatestTS()
-	err = &ErrConflict{
+	err = &kverrors.ErrConflict{
 		StartTS:          req.GetForUpdateTs(),
 		ConflictTS:       waiter.LockTS,
 		ConflictCommitTS: conflictCommitTS,
@@ -390,7 +394,7 @@ func (svr *Server) KvCleanup(ctx context.Context, req *kvrpcpb.CleanupRequest) (
 	}
 	err = svr.mvccStore.Cleanup(reqCtx, req.Key, req.StartVersion, req.CurrentTs)
 	resp := new(kvrpcpb.CleanupResponse)
-	if committed, ok := err.(ErrAlreadyCommitted); ok {
+	if committed, ok := err.(kverrors.ErrAlreadyCommitted); ok {
 		resp.CommitVersion = uint64(committed)
 	} else if err != nil {
 		log.Error("cleanup failed", zap.Error(err))
@@ -588,6 +592,13 @@ func (svr *Server) BatchCoprocessor(req *coprocessor.BatchRequest, batchCopServe
 			ctx.finish()
 		}
 	}()
+	if req.TableRegions != nil {
+		// Support PartitionTableScan for BatchCop
+		req.Regions = req.Regions[:]
+		for _, tr := range req.TableRegions {
+			req.Regions = append(req.Regions, tr.Regions...)
+		}
+	}
 	for _, ri := range req.Regions {
 		cop := coprocessor.Request{
 			Tp:      kv.ReqTypeDAG,
@@ -638,7 +649,7 @@ func (mrm *MockRegionManager) removeMPPTaskHandler(taskID int64, storeID uint64)
 
 // IsAlive implements the tikvpb.TikvServer interface.
 func (svr *Server) IsAlive(_ context.Context, _ *mpp.IsAliveRequest) (*mpp.IsAliveResponse, error) {
-	panic("todo")
+	return &mpp.IsAliveResponse{Available: true}, nil
 }
 
 // DispatchMPPTask implements the tikvpb.TikvServer interface.
@@ -648,6 +659,13 @@ func (svr *Server) DispatchMPPTask(_ context.Context, _ *mpp.DispatchTaskRequest
 
 func (svr *Server) executeMPPDispatch(ctx context.Context, req *mpp.DispatchTaskRequest, storeAddr string, storeID uint64, handler *cophandler.MPPTaskHandler) error {
 	var reqCtx *requestCtx
+	if len(req.TableRegions) > 0 {
+		// Simple unistore logic for PartitionTableScan.
+		for _, tr := range req.TableRegions {
+			req.Regions = append(req.Regions, tr.Regions...)
+		}
+	}
+
 	if len(req.Regions) > 0 {
 		kvContext := &kvrpcpb.Context{
 			RegionId:    req.Regions[0].RegionId,
@@ -788,7 +806,7 @@ func (svr *Server) EstablishMPPConnectionWithStoreID(req *mpp.EstablishMPPConnec
 		}
 	}
 	if mppHandler == nil {
-		return errors.New("tatsk not found")
+		return errors.New("task not found")
 	}
 	ctx1, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -847,6 +865,11 @@ func (svr *Server) SplitRegion(ctx context.Context, req *kvrpcpb.SplitRegionRequ
 	}
 	defer reqCtx.finish()
 	return svr.regionManager.SplitRegion(req), nil
+}
+
+// Compact implements the tikvpb.TikvServer interface.
+func (svr *Server) Compact(ctx context.Context, req *kvrpcpb.CompactRequest) (*kvrpcpb.CompactResponse, error) {
+	panic("unimplemented")
 }
 
 // ReadIndex implements implements the tikvpb.TikvServer interface.
@@ -981,36 +1004,42 @@ func (svr *Server) GetLockWaitInfo(context.Context, *kvrpcpb.GetLockWaitInfoRequ
 	panic("unimplemented")
 }
 
+// RawChecksum implements implements the tikvpb.TikvServer interface.
+func (svr *Server) RawChecksum(context.Context, *kvrpcpb.RawChecksumRequest) (*kvrpcpb.RawChecksumResponse, error) {
+	panic("unimplemented")
+}
+
 func convertToKeyError(err error) *kvrpcpb.KeyError {
 	if err == nil {
 		return nil
 	}
 	causeErr := errors.Cause(err)
 	switch x := causeErr.(type) {
-	case *ErrLocked:
+	case *kverrors.ErrLocked:
 		return &kvrpcpb.KeyError{
 			Locked: x.Lock.ToLockInfo(x.Key),
 		}
-	case ErrRetryable:
+	case kverrors.ErrRetryable:
 		return &kvrpcpb.KeyError{
 			Retryable: x.Error(),
 		}
-	case *ErrKeyAlreadyExists:
+	case *kverrors.ErrKeyAlreadyExists:
 		return &kvrpcpb.KeyError{
 			AlreadyExist: &kvrpcpb.AlreadyExist{
 				Key: x.Key,
 			},
 		}
-	case *ErrConflict:
+	case *kverrors.ErrConflict:
 		return &kvrpcpb.KeyError{
 			Conflict: &kvrpcpb.WriteConflict{
 				StartTs:          x.StartTS,
 				ConflictTs:       x.ConflictTS,
 				ConflictCommitTs: x.ConflictCommitTS,
 				Key:              x.Key,
+				Reason:           x.Reason,
 			},
 		}
-	case *ErrDeadlock:
+	case *kverrors.ErrDeadlock:
 		return &kvrpcpb.KeyError{
 			Deadlock: &kvrpcpb.Deadlock{
 				LockKey:         x.LockKey,
@@ -1019,7 +1048,7 @@ func convertToKeyError(err error) *kvrpcpb.KeyError {
 				WaitChain:       x.WaitChain,
 			},
 		}
-	case *ErrCommitExpire:
+	case *kverrors.ErrCommitExpire:
 		return &kvrpcpb.KeyError{
 			CommitTsExpired: &kvrpcpb.CommitTsExpired{
 				StartTs:           x.StartTs,
@@ -1028,11 +1057,21 @@ func convertToKeyError(err error) *kvrpcpb.KeyError {
 				MinCommitTs:       x.MinCommitTs,
 			},
 		}
-	case *ErrTxnNotFound:
+	case *kverrors.ErrTxnNotFound:
 		return &kvrpcpb.KeyError{
 			TxnNotFound: &kvrpcpb.TxnNotFound{
 				StartTs:    x.StartTS,
 				PrimaryKey: x.PrimaryKey,
+			},
+		}
+	case *kverrors.ErrAssertionFailed:
+		return &kvrpcpb.KeyError{
+			AssertionFailed: &kvrpcpb.AssertionFailed{
+				StartTs:          x.StartTS,
+				Key:              x.Key,
+				Assertion:        x.Assertion,
+				ExistingStartTs:  x.ExistingStartTS,
+				ExistingCommitTs: x.ExistingCommitTS,
 			},
 		}
 	default:

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -21,8 +22,8 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -31,7 +32,7 @@ import (
 
 func (b *builtinMonthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETDatetime, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -46,18 +47,6 @@ func (b *builtinMonthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 	ds := buf.Times()
 	for i := 0; i < input.NumRows(); i++ {
 		if result.IsNull(i) {
-			continue
-		}
-		if ds[i].IsZero() {
-			if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
-				isNull, err := handleInvalidZeroTime(b.ctx, ds[i])
-				if err != nil {
-					return err
-				}
-				result.SetNull(i, isNull)
-				continue
-			}
-			i64s[i] = 0
 			continue
 		}
 		i64s[i] = int64(ds[i].Month())
@@ -71,7 +60,7 @@ func (b *builtinMonthSig) vectorized() bool {
 
 func (b *builtinYearSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETDatetime, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -86,18 +75,6 @@ func (b *builtinYearSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) er
 	ds := buf.Times()
 	for i := 0; i < input.NumRows(); i++ {
 		if result.IsNull(i) {
-			continue
-		}
-		if ds[i].IsZero() {
-			if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
-				isNull, err := handleInvalidZeroTime(b.ctx, ds[i])
-				if err != nil {
-					return err
-				}
-				result.SetNull(i, isNull)
-				continue
-			}
-			i64s[i] = 0
 			continue
 		}
 		i64s[i] = int64(ds[i].Year())
@@ -118,7 +95,7 @@ func (b *builtinDateSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) e
 		if result.IsNull(i) {
 			continue
 		}
-		if times[i].IsZero() {
+		if times[i].IsZero() && b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
 			if err := handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, times[i].String())); err != nil {
 				return err
 			}
@@ -141,7 +118,7 @@ func (b *builtinFromUnixTime2ArgSig) vectorized() bool {
 
 func (b *builtinFromUnixTime2ArgSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf1, err := b.bufAllocator.get(types.ETDecimal, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -150,7 +127,7 @@ func (b *builtinFromUnixTime2ArgSig) vecEvalString(input *chunk.Chunk, result *c
 		return err
 	}
 
-	buf2, err := b.bufAllocator.get(types.ETString, n)
+	buf2, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -161,7 +138,7 @@ func (b *builtinFromUnixTime2ArgSig) vecEvalString(input *chunk.Chunk, result *c
 
 	result.ReserveString(n)
 	ds := buf1.Decimals()
-	fsp := int8(b.tp.Decimal)
+	fsp := b.tp.GetDecimal()
 	for i := 0; i < n; i++ {
 		if buf1.IsNull(i) || buf2.IsNull(i) {
 			result.AppendNull()
@@ -195,7 +172,7 @@ func (b *builtinSysDateWithoutFspSig) vecEvalTime(input *chunk.Chunk, result *ch
 
 	result.ResizeTime(n, false)
 	times := result.Times()
-	t, err := convertTimeToMysqlTime(now, 0, types.ModeHalfEven)
+	t, err := convertTimeToMysqlTime(now, 0, types.ModeHalfUp)
 	if err != nil {
 		return err
 	}
@@ -212,7 +189,7 @@ func (b *builtinExtractDatetimeFromStringSig) vectorized() bool {
 
 func (b *builtinExtractDatetimeFromStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -221,7 +198,7 @@ func (b *builtinExtractDatetimeFromStringSig) vecEvalInt(input *chunk.Chunk, res
 		return err
 	}
 
-	buf1, err := b.bufAllocator.get(types.ETDatetime, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -236,17 +213,6 @@ func (b *builtinExtractDatetimeFromStringSig) vecEvalInt(input *chunk.Chunk, res
 	result.MergeNulls(buf, buf1)
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
-			continue
-		}
-		if ds[i].IsZero() {
-			i64s[i] = 0
-			if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
-				isNull, err := handleInvalidZeroTime(b.ctx, ds[i])
-				if err != nil {
-					return err
-				}
-				result.SetNull(i, isNull)
-			}
 			continue
 		}
 		res, err := types.ExtractDatetimeNum(&ds[i], buf.GetString(i))
@@ -264,7 +230,7 @@ func (b *builtinDayNameSig) vectorized() bool {
 
 func (b *builtinDayNameSig) vecEvalIndex(input *chunk.Chunk, apply func(i, res int), applyNull func(i int)) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETDatetime, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -347,7 +313,7 @@ func (b *builtinWeekDaySig) vectorized() bool {
 
 func (b *builtinWeekDaySig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETDatetime, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -382,7 +348,7 @@ func (b *builtinTimeFormatSig) vectorized() bool {
 
 func (b *builtinTimeFormatSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETDuration, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -394,7 +360,7 @@ func (b *builtinTimeFormatSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 		return vecEvalStringByRows(b, input, result)
 	}
 
-	buf1, err1 := b.bufAllocator.get(types.ETString, n)
+	buf1, err1 := b.bufAllocator.get()
 	if err1 != nil {
 		return err1
 	}
@@ -426,7 +392,7 @@ func (b *builtinUTCTimeWithArgSig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_utc-time
 func (b *builtinUTCTimeWithArgSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETInt, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -450,12 +416,12 @@ func (b *builtinUTCTimeWithArgSig) vecEvalDuration(input *chunk.Chunk, result *c
 		}
 		fsp := i64s[i]
 		if fsp > int64(types.MaxFsp) {
-			return errors.Errorf("Too-big precision %v specified for 'utc_time'. Maximum is %v.", fsp, types.MaxFsp)
+			return errors.Errorf("Too-big precision %v specified for 'utc_time'. Maximum is %v", fsp, types.MaxFsp)
 		}
 		if fsp < int64(types.MinFsp) {
-			return errors.Errorf("Invalid negative %d specified, must in [0, 6].", fsp)
+			return errors.Errorf("Invalid negative %d specified, must in [0, 6]", fsp)
 		}
-		res, err := types.ParseDuration(stmtCtx, utc, int8(fsp))
+		res, _, err := types.ParseDuration(stmtCtx, utc, int(fsp))
 		if err != nil {
 			return err
 		}
@@ -498,7 +464,7 @@ func (b *builtinYearWeekWithoutModeSig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_yearweek
 func (b *builtinYearWeekWithoutModeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETDatetime, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -544,7 +510,7 @@ func (b *builtinPeriodDiffSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 	}
 
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETInt, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -574,7 +540,7 @@ func (b *builtinNowWithArgSig) vectorized() bool {
 
 func (b *builtinNowWithArgSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	bufFsp, err := b.bufAllocator.get(types.ETInt, n)
+	bufFsp, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -588,15 +554,15 @@ func (b *builtinNowWithArgSig) vecEvalTime(input *chunk.Chunk, result *chunk.Col
 	fsps := bufFsp.Int64s()
 
 	for i := 0; i < n; i++ {
-		fsp := int8(0)
+		fsp := 0
 		if !bufFsp.IsNull(i) {
 			if fsps[i] > int64(types.MaxFsp) {
-				return errors.Errorf("Too-big precision %v specified for 'now'. Maximum is %v.", fsps[i], types.MaxFsp)
+				return errors.Errorf("Too-big precision %v specified for 'now'. Maximum is %v", fsps[i], types.MaxFsp)
 			}
 			if fsps[i] < int64(types.MinFsp) {
-				return errors.Errorf("Invalid negative %d specified, must in [0, 6].", fsps[i])
+				return errors.Errorf("Invalid negative %d specified, must in [0, 6]", fsps[i])
 			}
-			fsp = int8(fsps[i])
+			fsp = int(fsps[i])
 		}
 
 		t, isNull, err := evalNowWithFsp(b.ctx, fsp)
@@ -621,7 +587,7 @@ func (b *builtinGetFormatSig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_get-format
 func (b *builtinGetFormatSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETString, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -629,7 +595,7 @@ func (b *builtinGetFormatSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 	if err = b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ETString, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -733,7 +699,7 @@ func (b *builtinStrToDateDateSig) vectorized() bool {
 
 func (b *builtinStrToDateDateSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	bufStrings, err := b.bufAllocator.get(types.ETString, n)
+	bufStrings, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -742,7 +708,7 @@ func (b *builtinStrToDateDateSig) vecEvalTime(input *chunk.Chunk, result *chunk.
 		return err
 	}
 
-	bufFormats, err := b.bufAllocator.get(types.ETString, n)
+	bufFormats, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -788,7 +754,7 @@ func (b *builtinSysDateWithFspSig) vectorized() bool {
 
 func (b *builtinSysDateWithFspSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETInt, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -809,7 +775,7 @@ func (b *builtinSysDateWithFspSig) vecEvalTime(input *chunk.Chunk, result *chunk
 		if result.IsNull(i) {
 			continue
 		}
-		t, err := convertTimeToMysqlTime(now, int8(ds[i]), types.ModeHalfEven)
+		t, err := convertTimeToMysqlTime(now, int(ds[i]), types.ModeHalfUp)
 		if err != nil {
 			return err
 		}
@@ -824,7 +790,7 @@ func (b *builtinTidbParseTsoSig) vectorized() bool {
 
 func (b *builtinTidbParseTsoSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETInt, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -860,7 +826,7 @@ func (b *builtinTiDBBoundedStalenessSig) vectorized() bool {
 
 func (b *builtinTiDBBoundedStalenessSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETDatetime, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -868,7 +834,7 @@ func (b *builtinTiDBBoundedStalenessSig) vecEvalTime(input *chunk.Chunk, result 
 	if err = b.args[0].VecEvalTime(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ETDatetime, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -924,7 +890,7 @@ func (b *builtinFromDaysSig) vectorized() bool {
 
 func (b *builtinFromDaysSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETInt, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -952,7 +918,7 @@ func (b *builtinMicroSecondSig) vectorized() bool {
 
 func (b *builtinMicroSecondSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETDuration, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -964,12 +930,11 @@ func (b *builtinMicroSecondSig) vecEvalInt(input *chunk.Chunk, result *chunk.Col
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
-	ds := buf.GoDurations()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		i64s[i] = int64((ds[i] % time.Second) / time.Microsecond)
+		i64s[i] = int64(buf.GetDuration(i, int(types.UnspecifiedFsp)).MicroSecond())
 	}
 	return nil
 }
@@ -982,7 +947,7 @@ func (b *builtinQuarterSig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_quarter
 func (b *builtinQuarterSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETDatetime, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1000,14 +965,6 @@ func (b *builtinQuarterSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column)
 			continue
 		}
 		date := ds[i]
-		if date.IsZero() {
-			isNull, err := handleInvalidZeroTime(b.ctx, ds[i])
-			if err != nil {
-				return err
-			}
-			result.SetNull(i, isNull)
-			continue
-		}
 		i64s[i] = int64((date.Month() + 2) / 3)
 	}
 	return nil
@@ -1019,7 +976,7 @@ func (b *builtinWeekWithModeSig) vectorized() bool {
 
 func (b *builtinWeekWithModeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf1, err := b.bufAllocator.get(types.ETDatetime, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1028,7 +985,7 @@ func (b *builtinWeekWithModeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 	}
 	defer b.bufAllocator.put(buf1)
 
-	buf2, err := b.bufAllocator.get(types.ETInt, n)
+	buf2, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1071,7 +1028,7 @@ func (b *builtinExtractDatetimeSig) vectorized() bool {
 
 func (b *builtinExtractDatetimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	unit, err := b.bufAllocator.get(types.ETString, n)
+	unit, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1079,7 +1036,7 @@ func (b *builtinExtractDatetimeSig) vecEvalInt(input *chunk.Chunk, result *chunk
 	if err := b.args[0].VecEvalString(b.ctx, input, unit); err != nil {
 		return err
 	}
-	dt, err := b.bufAllocator.get(types.ETDatetime, n)
+	dt, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1112,7 +1069,7 @@ func (b *builtinExtractDurationSig) vectorized() bool {
 
 func (b *builtinExtractDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	unit, err := b.bufAllocator.get(types.ETString, n)
+	unit, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1120,7 +1077,7 @@ func (b *builtinExtractDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk
 	if err := b.args[0].VecEvalString(b.ctx, input, unit); err != nil {
 		return err
 	}
-	dur, err := b.bufAllocator.get(types.ETDuration, n)
+	dur, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1133,7 +1090,7 @@ func (b *builtinExtractDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk
 	i64s := result.Int64s()
 	durIs := dur.GoDurations()
 	var duration types.Duration
-	duration.Fsp = int8(b.args[1].GetType().Decimal)
+	duration.Fsp = b.args[1].GetType().GetDecimal()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
@@ -1154,7 +1111,7 @@ func (b *builtinStrToDateDurationSig) vectorized() bool {
 
 func (b *builtinStrToDateDurationSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	bufStrings, err := b.bufAllocator.get(types.ETString, n)
+	bufStrings, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1163,7 +1120,7 @@ func (b *builtinStrToDateDurationSig) vecEvalDuration(input *chunk.Chunk, result
 		return err
 	}
 
-	bufFormats, err := b.bufAllocator.get(types.ETString, n)
+	bufFormats, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1197,7 +1154,7 @@ func (b *builtinStrToDateDurationSig) vecEvalDuration(input *chunk.Chunk, result
 			result.SetNull(i, true)
 			continue
 		}
-		t.SetFsp(int8(b.tp.Decimal))
+		t.SetFsp(b.tp.GetDecimal())
 		dur, err := t.ConvertToDuration()
 		if err != nil {
 			return err
@@ -1215,7 +1172,7 @@ func (b *builtinToSecondsSig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_to-seconds
 func (b *builtinToSecondsSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETDatetime, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1252,7 +1209,7 @@ func (b *builtinMinuteSig) vectorized() bool {
 
 func (b *builtinMinuteSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETDuration, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1268,7 +1225,7 @@ func (b *builtinMinuteSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		if result.IsNull(i) {
 			continue
 		}
-		i64s[i] = int64(buf.GetDuration(i, int(types.UnspecifiedFsp)).Minute())
+		i64s[i] = int64(buf.GetDuration(i, types.UnspecifiedFsp).Minute())
 	}
 	return nil
 }
@@ -1279,7 +1236,7 @@ func (b *builtinSecondSig) vectorized() bool {
 
 func (b *builtinSecondSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETDuration, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1295,7 +1252,7 @@ func (b *builtinSecondSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		if result.IsNull(i) {
 			continue
 		}
-		i64s[i] = int64(buf.GetDuration(i, int(types.UnspecifiedFsp)).Second())
+		i64s[i] = int64(buf.GetDuration(i, types.UnspecifiedFsp).Second())
 	}
 	return nil
 }
@@ -1306,7 +1263,7 @@ func (b *builtinNowWithoutArgSig) vectorized() bool {
 
 func (b *builtinNowWithoutArgSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	nowTs, isNull, err := evalNowWithFsp(b.ctx, int8(0))
+	nowTs, isNull, err := evalNowWithFsp(b.ctx, 0)
 	if err != nil {
 		return err
 	}
@@ -1342,7 +1299,7 @@ func (b *builtinMakeDateSig) vectorized() bool {
 
 func (b *builtinMakeDateSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf1, err := b.bufAllocator.get(types.ETInt, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1351,7 +1308,7 @@ func (b *builtinMakeDateSig) vecEvalTime(input *chunk.Chunk, result *chunk.Colum
 		return err
 	}
 
-	buf2, err := b.bufAllocator.get(types.ETInt, n)
+	buf2, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1405,7 +1362,7 @@ func (b *builtinWeekOfYearSig) vectorized() bool {
 
 func (b *builtinWeekOfYearSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETDatetime, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1442,7 +1399,7 @@ func (b *builtinUTCTimestampWithArgSig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_utc-timestamp
 func (b *builtinUTCTimestampWithArgSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETInt, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1460,12 +1417,12 @@ func (b *builtinUTCTimestampWithArgSig) vecEvalTime(input *chunk.Chunk, result *
 		}
 		fsp := i64s[i]
 		if fsp > int64(types.MaxFsp) {
-			return errors.Errorf("Too-big precision %v specified for 'utc_timestamp'. Maximum is %v.", fsp, types.MaxFsp)
+			return errors.Errorf("Too-big precision %v specified for 'utc_timestamp'. Maximum is %v", fsp, types.MaxFsp)
 		}
 		if fsp < int64(types.MinFsp) {
-			return errors.Errorf("Invalid negative %d specified, must in [0, 6].", fsp)
+			return errors.Errorf("Invalid negative %d specified, must in [0, 6]", fsp)
 		}
-		res, isNull, err := evalUTCTimestampWithFsp(b.ctx, int8(fsp))
+		res, isNull, err := evalUTCTimestampWithFsp(b.ctx, int(fsp))
 		if err != nil {
 			return err
 		}
@@ -1486,7 +1443,7 @@ func (b *builtinTimeToSecSig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_time-to-sec
 func (b *builtinTimeToSecSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETDuration, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1498,7 +1455,7 @@ func (b *builtinTimeToSecSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
-	fsp := b.args[0].GetType().Decimal
+	fsp := b.args[0].GetType().GetDecimal()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
@@ -1521,7 +1478,7 @@ func (b *builtinStrToDateDatetimeSig) vectorized() bool {
 
 func (b *builtinStrToDateDatetimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	dateBuf, err := b.bufAllocator.get(types.ETString, n)
+	dateBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1530,7 +1487,7 @@ func (b *builtinStrToDateDatetimeSig) vecEvalTime(input *chunk.Chunk, result *ch
 		return err
 	}
 
-	formatBuf, err := b.bufAllocator.get(types.ETString, n)
+	formatBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1544,7 +1501,7 @@ func (b *builtinStrToDateDatetimeSig) vecEvalTime(input *chunk.Chunk, result *ch
 	times := result.Times()
 	sc := b.ctx.GetSessionVars().StmtCtx
 	hasNoZeroDateMode := b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode()
-	fsp := int8(b.tp.Decimal)
+	fsp := b.tp.GetDecimal()
 
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
@@ -1600,7 +1557,7 @@ func (b *builtinWeekWithoutModeSig) vectorized() bool {
 
 func (b *builtinWeekWithoutModeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETDatetime, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1649,7 +1606,7 @@ func (b *builtinUnixTimestampDecSig) vecEvalDecimal(input *chunk.Chunk, result *
 	n := input.NumRows()
 	result.ResizeDecimal(n, false)
 	ts := result.Decimals()
-	timeBuf, err := b.bufAllocator.get(types.ETTimestamp, n)
+	timeBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1676,7 +1633,7 @@ func (b *builtinUnixTimestampDecSig) vecEvalDecimal(input *chunk.Chunk, result *
 				ts[i] = *new(types.MyDecimal)
 				continue
 			}
-			tmp, err := goTimeToMysqlUnixTimestamp(t, b.tp.Decimal)
+			tmp, err := goTimeToMysqlUnixTimestamp(t, b.tp.GetDecimal())
 			if err != nil {
 				return err
 			}
@@ -1698,7 +1655,7 @@ func (b *builtinPeriodAddSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 	}
 
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETInt, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1732,7 +1689,7 @@ func (b *builtinTimestampAddSig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_timestampadd
 func (b *builtinTimestampAddSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1741,7 +1698,7 @@ func (b *builtinTimestampAddSig) vecEvalString(input *chunk.Chunk, result *chunk
 		return err
 	}
 
-	buf1, err := b.bufAllocator.get(types.ETInt, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1750,7 +1707,7 @@ func (b *builtinTimestampAddSig) vecEvalString(input *chunk.Chunk, result *chunk
 		return err
 	}
 
-	buf2, err := b.bufAllocator.get(types.ETDatetime, n)
+	buf2, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1824,7 +1781,7 @@ func (b *builtinToDaysSig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_to-days
 func (b *builtinToDaysSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETDatetime, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1862,7 +1819,7 @@ func (b *builtinDateFormatSig) vectorized() bool {
 func (b *builtinDateFormatSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 
-	dateBuf, err := b.bufAllocator.get(types.ETDatetime, n)
+	dateBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1872,7 +1829,7 @@ func (b *builtinDateFormatSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 	}
 	times := dateBuf.Times()
 
-	formatBuf, err := b.bufAllocator.get(types.ETString, n)
+	formatBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1930,7 +1887,7 @@ func (b *builtinHourSig) vectorized() bool {
 
 func (b *builtinHourSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETDuration, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1942,12 +1899,11 @@ func (b *builtinHourSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) er
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
-	ds := buf.GoDurations()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		i64s[i] = int64(ds[i].Hours())
+		i64s[i] = int64(buf.GetDuration(i, int(types.UnspecifiedFsp)).Hour())
 	}
 	return nil
 }
@@ -1958,7 +1914,7 @@ func (b *builtinSecToTimeSig) vectorized() bool {
 
 func (b *builtinSecToTimeSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETReal, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1998,7 +1954,7 @@ func (b *builtinSecToTimeSig) vecEvalDuration(input *chunk.Chunk, result *chunk.
 			second = seconds % 60
 		}
 		secondDemical := float64(second) + demical
-		duration, err := types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, fmt.Sprintf("%s%02d:%02d:%s", negative, hour, minute, strconv.FormatFloat(secondDemical, 'f', -1, 64)), int8(b.tp.Decimal))
+		duration, _, err := types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, fmt.Sprintf("%s%02d:%02d:%s", negative, hour, minute, strconv.FormatFloat(secondDemical, 'f', -1, 64)), b.tp.GetDecimal())
 		if err != nil {
 			return err
 		}
@@ -2019,7 +1975,7 @@ func (b *builtinUTCTimeWithoutArgSig) vecEvalDuration(input *chunk.Chunk, result
 	if err != nil {
 		return err
 	}
-	res, err := types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, nowTs.UTC().Format(types.TimeFormat), types.DefaultFsp)
+	res, _, err := types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, nowTs.UTC().Format(types.TimeFormat), types.DefaultFsp)
 	if err != nil {
 		return err
 	}
@@ -2037,7 +1993,7 @@ func (b *builtinDateDiffSig) vectorized() bool {
 
 func (b *builtinDateDiffSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETDatetime, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -2045,7 +2001,7 @@ func (b *builtinDateDiffSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 	if err = b.args[0].VecEvalTime(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ETDatetime, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -2133,7 +2089,7 @@ func (b *builtinMakeTimeSig) vecEvalDuration(input *chunk.Chunk, result *chunk.C
 	if err = b.getVecIntParam(b.args[0], input, hoursBuf); err != nil {
 		return err
 	}
-	minutesBuf, err := b.bufAllocator.get(types.ETInt, n)
+	minutesBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -2141,7 +2097,7 @@ func (b *builtinMakeTimeSig) vecEvalDuration(input *chunk.Chunk, result *chunk.C
 	if err = b.getVecIntParam(b.args[1], input, minutesBuf); err != nil {
 		return err
 	}
-	secondsBuf, err := b.bufAllocator.get(types.ETReal, n)
+	secondsBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -2154,7 +2110,7 @@ func (b *builtinMakeTimeSig) vecEvalDuration(input *chunk.Chunk, result *chunk.C
 	seconds := secondsBuf.Float64s()
 	durs := result.GoDurations()
 	result.MergeNulls(minutesBuf, secondsBuf)
-	hourUnsignedFlag := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
+	hourUnsignedFlag := mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag())
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
@@ -2178,7 +2134,7 @@ func (b *builtinDayOfYearSig) vectorized() bool {
 
 func (b *builtinDayOfYearSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETDatetime, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -2195,11 +2151,10 @@ func (b *builtinDayOfYearSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 			continue
 		}
 		if ds[i].InvalidZero() {
-			isNull, err := handleInvalidZeroTime(b.ctx, ds[i])
-			if err != nil {
+			if err := handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, ds[i].String())); err != nil {
 				return err
 			}
-			result.SetNull(i, isNull)
+			result.SetNull(i, true)
 			continue
 		}
 		i64s[i] = int64(ds[i].YearDay())
@@ -2213,7 +2168,7 @@ func (b *builtinFromUnixTime1ArgSig) vectorized() bool {
 
 func (b *builtinFromUnixTime1ArgSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETDecimal, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -2225,7 +2180,7 @@ func (b *builtinFromUnixTime1ArgSig) vecEvalTime(input *chunk.Chunk, result *chu
 	result.MergeNulls(buf)
 	ts := result.Times()
 	ds := buf.Decimals()
-	fsp := int8(b.tp.Decimal)
+	fsp := b.tp.GetDecimal()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
@@ -2251,14 +2206,14 @@ func (b *builtinYearWeekWithModeSig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_yearweek
 func (b *builtinYearWeekWithModeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf1, err := b.bufAllocator.get(types.ETDatetime, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
 	if err := b.args[0].VecEvalTime(b.ctx, input, buf1); err != nil {
 		return err
 	}
-	buf2, err := b.bufAllocator.get(types.ETInt, n)
+	buf2, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -2304,7 +2259,7 @@ func (b *builtinTimestampDiffSig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_timestampdiff
 func (b *builtinTimestampDiffSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	unitBuf, err := b.bufAllocator.get(types.ETString, n)
+	unitBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -2312,7 +2267,7 @@ func (b *builtinTimestampDiffSig) vecEvalInt(input *chunk.Chunk, result *chunk.C
 	if err := b.args[0].VecEvalString(b.ctx, input, unitBuf); err != nil {
 		return err
 	}
-	lhsBuf, err := b.bufAllocator.get(types.ETDatetime, n)
+	lhsBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -2320,7 +2275,7 @@ func (b *builtinTimestampDiffSig) vecEvalInt(input *chunk.Chunk, result *chunk.C
 	if err := b.args[1].VecEvalTime(b.ctx, input, lhsBuf); err != nil {
 		return err
 	}
-	rhsBuf, err := b.bufAllocator.get(types.ETDatetime, n)
+	rhsBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -2364,7 +2319,7 @@ func (b *builtinUnixTimestampIntSig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_unix-timestamp
 func (b *builtinUnixTimestampIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETDatetime, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -2391,7 +2346,7 @@ func (b *builtinUnixTimestampIntSig) vecEvalInt(input *chunk.Chunk, result *chun
 				continue
 			}
 
-			t, err := buf.GetTime(i).GoTime(getTimeZone(b.ctx))
+			t, err := buf.GetTime(i).AdjustedGoTime(getTimeZone(b.ctx))
 			if err != nil {
 				i64s[i] = 0
 				continue
@@ -2423,7 +2378,7 @@ func (b *builtinCurrentTime0ArgSig) vecEvalDuration(input *chunk.Chunk, result *
 	}
 	tz := b.ctx.GetSessionVars().Location()
 	dur := nowTs.In(tz).Format(types.TimeFormat)
-	res, err := types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, dur, types.MinFsp)
+	res, _, err := types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, dur, types.MinFsp)
 	if err != nil {
 		return err
 	}
@@ -2441,7 +2396,7 @@ func (b *builtinTimeSig) vectorized() bool {
 
 func (b *builtinTimeSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -2465,13 +2420,13 @@ func (b *builtinTimeSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Colum
 			fsp = len(expr) - idx - 1
 		}
 
-		var tmpFsp int8
+		var tmpFsp int
 		if tmpFsp, err = types.CheckFsp(fsp); err != nil {
 			return err
 		}
-		fsp = int(tmpFsp)
+		fsp = tmpFsp
 
-		res, err := types.ParseDuration(sc, expr, int8(fsp))
+		res, _, err := types.ParseDuration(sc, expr, fsp)
 		if types.ErrTruncatedWrongVal.Equal(err) {
 			err = sc.HandleTruncate(err)
 		}
@@ -2521,7 +2476,7 @@ func (b *builtinTimeLiteralSig) vecEvalDuration(input *chunk.Chunk, result *chun
 
 func (b *builtinMonthNameSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETDatetime, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -2563,7 +2518,7 @@ func (b *builtinDayOfWeekSig) vectorized() bool {
 
 func (b *builtinDayOfWeekSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETDatetime, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -2580,11 +2535,10 @@ func (b *builtinDayOfWeekSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 			continue
 		}
 		if ds[i].InvalidZero() {
-			isNull, err := handleInvalidZeroTime(b.ctx, ds[i])
-			if err != nil {
+			if err := handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, ds[i].String())); err != nil {
 				return err
 			}
-			result.SetNull(i, isNull)
+			result.SetNull(i, true)
 			continue
 		}
 		i64s[i] = int64(ds[i].Weekday() + 1)
@@ -2598,7 +2552,7 @@ func (b *builtinCurrentTime1ArgSig) vectorized() bool {
 
 func (b *builtinCurrentTime1ArgSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETInt, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -2618,7 +2572,7 @@ func (b *builtinCurrentTime1ArgSig) vecEvalDuration(input *chunk.Chunk, result *
 	result.ResizeGoDuration(n, false)
 	durations := result.GoDurations()
 	for i := 0; i < n; i++ {
-		res, err := types.ParseDuration(stmtCtx, dur, int8(i64s[i]))
+		res, _, err := types.ParseDuration(stmtCtx, dur, int(i64s[i]))
 		if err != nil {
 			return err
 		}
@@ -2661,7 +2615,7 @@ func (b *builtinConvertTzSig) vecEvalTime(input *chunk.Chunk, result *chunk.Colu
 		return err
 	}
 
-	fromTzBuf, err := b.bufAllocator.get(types.ETString, n)
+	fromTzBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -2670,7 +2624,7 @@ func (b *builtinConvertTzSig) vecEvalTime(input *chunk.Chunk, result *chunk.Colu
 		return err
 	}
 
-	toTzBuf, err := b.bufAllocator.get(types.ETString, n)
+	toTzBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -2700,7 +2654,7 @@ func (b *builtinConvertTzSig) vecEvalTime(input *chunk.Chunk, result *chunk.Colu
 
 func (b *builtinTimestamp1ArgSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -2743,7 +2697,7 @@ func (b *builtinTimestamp1ArgSig) vectorized() bool {
 
 func (b *builtinTimestamp2ArgsSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETString, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -2752,7 +2706,7 @@ func (b *builtinTimestamp2ArgsSig) vecEvalTime(input *chunk.Chunk, result *chunk
 		return err
 	}
 
-	buf1, err := b.bufAllocator.get(types.ETString, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -2797,7 +2751,7 @@ func (b *builtinTimestamp2ArgsSig) vecEvalTime(input *chunk.Chunk, result *chunk
 			continue
 		}
 
-		duration, err := types.ParseDuration(sc, arg1, types.GetFsp(arg1))
+		duration, _, err := types.ParseDuration(sc, arg1, types.GetFsp(arg1))
 		if err != nil {
 			if err = handleInvalidTimeError(b.ctx, err); err != nil {
 				return err
@@ -2820,7 +2774,7 @@ func (b *builtinTimestamp2ArgsSig) vectorized() bool {
 
 func (b *builtinDayOfMonthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETDatetime, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -2836,23 +2790,225 @@ func (b *builtinDayOfMonthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 		if result.IsNull(i) {
 			continue
 		}
-		if ds[i].IsZero() {
-			if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
-				isNull, err := handleInvalidZeroTime(b.ctx, ds[i])
-				if err != nil {
-					return err
-				}
-				result.SetNull(i, isNull)
-				continue
-			}
-			i64s[i] = 0
-			continue
-		}
 		i64s[i] = int64(ds[i].Day())
 	}
 	return nil
 }
 
 func (b *builtinDayOfMonthSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinAddSubDateAsStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	unit, isNull, err := b.args[2].EvalString(b.ctx, chunk.Row{})
+	if err != nil {
+		return err
+	}
+	if isNull {
+		result.ReserveString(n)
+		result.SetNulls(0, n, true)
+		return nil
+	}
+
+	intervalBuf, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(intervalBuf)
+	if err := b.vecGetInterval(&b.baseDateArithmetical, &b.baseBuiltinFunc, input, unit, intervalBuf); err != nil {
+		return err
+	}
+
+	dateBuf, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(dateBuf)
+	if err := b.vecGetDate(&b.baseDateArithmetical, &b.baseBuiltinFunc, input, unit, dateBuf); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+
+	dateBuf.MergeNulls(intervalBuf)
+	for i := 0; i < n; i++ {
+		if dateBuf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		resDate, isNull, err := b.timeOp(&b.baseDateArithmetical, b.ctx, dateBuf.Times()[i], intervalBuf.GetString(i), unit, b.tp.GetDecimal())
+		if err != nil {
+			return err
+		}
+		if isNull {
+			result.AppendNull()
+		} else {
+			if resDate.Microsecond() == 0 {
+				resDate.SetFsp(types.MinFsp)
+			} else {
+				resDate.SetFsp(types.MaxFsp)
+			}
+			result.AppendString(resDate.String())
+		}
+	}
+	return nil
+}
+
+func (b *builtinAddSubDateAsStringSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinAddSubDateDatetimeAnySig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	unit, isNull, err := b.args[2].EvalString(b.ctx, chunk.Row{})
+	if err != nil {
+		return err
+	}
+	if isNull {
+		result.ResizeTime(n, true)
+		return nil
+	}
+
+	intervalBuf, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(intervalBuf)
+	if err := b.vecGetInterval(&b.baseDateArithmetical, &b.baseBuiltinFunc, input, unit, intervalBuf); err != nil {
+		return err
+	}
+
+	if err := b.vecGetDateFromDatetime(&b.baseBuiltinFunc, input, unit, result); err != nil {
+		return err
+	}
+
+	result.MergeNulls(intervalBuf)
+	resDates := result.Times()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		resDate, isNull, err := b.timeOp(&b.baseDateArithmetical, b.ctx, resDates[i], intervalBuf.GetString(i), unit, b.tp.GetDecimal())
+		if err != nil {
+			return err
+		}
+		if isNull {
+			result.SetNull(i, true)
+		} else {
+			resDates[i] = resDate
+		}
+	}
+	return nil
+}
+
+func (b *builtinAddSubDateDatetimeAnySig) vectorized() bool {
+	return true
+}
+
+func (b *builtinAddSubDateDurationAnySig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	unit, isNull, err := b.args[2].EvalString(b.ctx, chunk.Row{})
+	if err != nil {
+		return err
+	}
+	if isNull {
+		result.ResizeTime(n, true)
+		return nil
+	}
+
+	intervalBuf, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(intervalBuf)
+	if err := b.vecGetInterval(&b.baseDateArithmetical, &b.baseBuiltinFunc, input, unit, intervalBuf); err != nil {
+		return err
+	}
+
+	durBuf, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(durBuf)
+	if err := b.args[0].VecEvalDuration(b.ctx, input, durBuf); err != nil {
+		return err
+	}
+
+	goDurations := durBuf.GoDurations()
+	result.ResizeTime(n, false)
+	result.MergeNulls(durBuf, intervalBuf)
+	resDates := result.Times()
+	iterDuration := types.Duration{Fsp: types.MaxFsp}
+	sc := b.ctx.GetSessionVars().StmtCtx
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		iterDuration.Duration = goDurations[i]
+		t, err := iterDuration.ConvertToTime(sc, mysql.TypeDatetime)
+		if err != nil {
+			result.SetNull(i, true)
+		}
+		resDate, isNull, err := b.timeOp(&b.baseDateArithmetical, b.ctx, t, intervalBuf.GetString(i), unit, b.tp.GetDecimal())
+		if err != nil {
+			return err
+		}
+		if isNull {
+			result.SetNull(i, true)
+		} else {
+			resDates[i] = resDate
+		}
+	}
+	return nil
+}
+
+func (b *builtinAddSubDateDurationAnySig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	unit, isNull, err := b.args[2].EvalString(b.ctx, chunk.Row{})
+	if err != nil {
+		return err
+	}
+	if isNull {
+		result.ResizeGoDuration(n, true)
+		return nil
+	}
+
+	intervalBuf, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(intervalBuf)
+	if err := b.vecGetInterval(&b.baseDateArithmetical, &b.baseBuiltinFunc, input, unit, intervalBuf); err != nil {
+		return err
+	}
+
+	result.ResizeGoDuration(n, false)
+	if err := b.args[0].VecEvalDuration(b.ctx, input, result); err != nil {
+		return err
+	}
+
+	result.MergeNulls(intervalBuf)
+	resDurations := result.GoDurations()
+	iterDuration := types.Duration{Fsp: types.MaxFsp}
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		iterDuration.Duration = resDurations[i]
+		resDuration, isNull, err := b.durationOp(&b.baseDateArithmetical, b.ctx, iterDuration, intervalBuf.GetString(i), unit, b.tp.GetDecimal())
+		if err != nil {
+			return err
+		}
+		if isNull {
+			result.SetNull(i, true)
+		} else {
+			resDurations[i] = resDuration.Duration
+		}
+	}
+	return nil
+}
+
+func (b *builtinAddSubDateDurationAnySig) vectorized() bool {
 	return true
 }

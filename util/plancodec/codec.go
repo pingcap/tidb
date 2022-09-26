@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -24,7 +25,11 @@ import (
 	"github.com/golang/snappy"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/texttree"
+	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
 )
 
 const (
@@ -44,6 +49,15 @@ var (
 	// PlanDiscardedEncoded indicates the discard plan because it is too long
 	PlanDiscardedEncoded = "[discard]"
 	planDiscardedDecoded = "(plan discarded because too long)"
+	// BinaryPlanDiscardedEncoded is a special binary plan that represents it's discarded because of too long.
+	BinaryPlanDiscardedEncoded = func() string {
+		binary := &tipb.ExplainData{DiscardedDueToTooLong: true}
+		proto, err := binary.Marshal()
+		if err != nil {
+			return ""
+		}
+		return Compress(proto)
+	}()
 )
 
 var decoderPool = sync.Pool{
@@ -53,7 +67,13 @@ var decoderPool = sync.Pool{
 }
 
 // DecodePlan use to decode the string to plan tree.
-func DecodePlan(planString string) (string, error) {
+func DecodePlan(planString string) (res string, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			logutil.BgLogger().Error("DecodePlan panic", zap.Stack("stack"), zap.Any("recover", r))
+			err = errors.New("DecodePlan panicked")
+		}
+	}()
 	if len(planString) == 0 {
 		return "", nil
 	}
@@ -91,14 +111,14 @@ type planInfo struct {
 }
 
 func (pd *planDecoder) decode(planString string) (string, error) {
-	str, err := decompress(planString)
+	b, err := decompress(planString)
 	if err != nil {
 		if planString == PlanDiscardedEncoded {
 			return planDiscardedDecoded, nil
 		}
 		return "", err
 	}
-	return pd.buildPlanTree(str)
+	return pd.buildPlanTree(string(hack.String(b)))
 }
 
 func (pd *planDecoder) buildPlanTree(planString string) (string, error) {
@@ -322,7 +342,7 @@ func decodePlanInfo(str string) (*planInfo, error) {
 }
 
 // EncodePlanNode is used to encode the plan to a string.
-func EncodePlanNode(depth, pid int, planType string, rowCount float64,
+func EncodePlanNode(depth int, pid, planType string, rowCount float64,
 	taskTypeInfo, explainInfo, actRows, analyzeInfo, memoryInfo, diskInfo string, buf *bytes.Buffer) {
 	explainInfo = escapeString(explainInfo)
 	buf.WriteString(strconv.Itoa(depth))
@@ -370,9 +390,9 @@ func NormalizePlanNode(depth int, planType string, taskTypeInfo string, explainI
 	buf.WriteByte(lineBreaker)
 }
 
-func encodeID(planType string, id int) string {
+func encodeID(planType, id string) string {
 	planID := TypeStringToPhysicalID(planType)
-	return strconv.Itoa(planID) + idSeparator + strconv.Itoa(id)
+	return strconv.Itoa(planID) + idSeparator + id
 }
 
 // EncodeTaskType is used to encode task type to a string.
@@ -408,21 +428,21 @@ func decodeTaskType(str string) (string, error) {
 	return "cop[" + ((kv.StoreType)(storeType)).Name() + "]", nil
 }
 
-// Compress is used to compress the input with zlib.
+// Compress compresses the input with snappy then encodes it with base64.
 func Compress(input []byte) string {
 	compressBytes := snappy.Encode(nil, input)
 	return base64.StdEncoding.EncodeToString(compressBytes)
 }
 
-func decompress(str string) (string, error) {
+func decompress(str string) ([]byte, error) {
 	decodeBytes, err := base64.StdEncoding.DecodeString(str)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	bs, err := snappy.Decode(nil, decodeBytes)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	return string(bs), nil
+	return bs, nil
 }

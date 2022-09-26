@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,12 +16,13 @@ package ddl
 
 import (
 	"context"
+	"testing"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
 
@@ -50,6 +52,8 @@ type TestDDLCallback struct {
 	onJobUpdated           func(*model.Job)
 	OnJobUpdatedExported   func(*model.Job)
 	onWatched              func(ctx context.Context)
+	OnGetJobBeforeExported func(string)
+	OnGetJobAfterExported  func(string, *model.Job)
 }
 
 // OnChanged mock the same behavior with the main DDL hook.
@@ -116,9 +120,32 @@ func (tc *TestDDLCallback) OnWatched(ctx context.Context) {
 	tc.BaseCallback.OnWatched(ctx)
 }
 
-func (s *testDDLSuite) TestCallback(c *C) {
+// OnGetJobBefore implements Callback.OnGetJobBefore interface.
+func (tc *TestDDLCallback) OnGetJobBefore(jobType string) {
+	if tc.OnGetJobBeforeExported != nil {
+		tc.OnGetJobBeforeExported(jobType)
+		return
+	}
+	tc.BaseCallback.OnGetJobBefore(jobType)
+}
+
+// OnGetJobAfter implements Callback.OnGetJobAfter interface.
+func (tc *TestDDLCallback) OnGetJobAfter(jobType string, job *model.Job) {
+	if tc.OnGetJobAfterExported != nil {
+		tc.OnGetJobAfterExported(jobType, job)
+		return
+	}
+	tc.BaseCallback.OnGetJobAfter(jobType, job)
+}
+
+// Clone copies the callback and take its reference
+func (tc *TestDDLCallback) Clone() *TestDDLCallback {
+	return &*tc
+}
+
+func TestCallback(t *testing.T) {
 	cb := &BaseCallback{}
-	c.Assert(cb.OnChanged(nil), IsNil)
+	require.Nil(t, cb.OnChanged(nil))
 	cb.OnJobRunBefore(nil)
 	cb.OnJobUpdated(nil)
 	cb.OnWatched(context.TODO())

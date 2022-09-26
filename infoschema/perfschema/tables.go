@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,24 +17,24 @@ package perfschema
 import (
 	"fmt"
 	"net/http"
-	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/profile"
+	"golang.org/x/exp/slices"
 )
 
 const (
@@ -67,6 +68,7 @@ const (
 	tableNamePDProfileAllocs                 = "pd_profile_allocs"
 	tableNamePDProfileBlock                  = "pd_profile_block"
 	tableNamePDProfileGoroutines             = "pd_profile_goroutines"
+	tableNameSessionVariables                = "session_variables"
 )
 
 var tableIDMap = map[string]int64{
@@ -100,6 +102,7 @@ var tableIDMap = map[string]int64{
 	tableNamePDProfileAllocs:                 autoid.PerformanceSchemaDBID + 28,
 	tableNamePDProfileBlock:                  autoid.PerformanceSchemaDBID + 29,
 	tableNamePDProfileGoroutines:             autoid.PerformanceSchemaDBID + 30,
+	tableNameSessionVariables:                autoid.PerformanceSchemaDBID + 31,
 }
 
 // perfSchemaTable stands for the fake table all its data is in the memory.
@@ -173,6 +176,11 @@ func (vt *perfSchemaTable) WritableCols() []*table.Column {
 	return vt.cols
 }
 
+// DeletableCols implements table.Table Type interface.
+func (vt *perfSchemaTable) DeletableCols() []*table.Column {
+	return vt.cols
+}
+
 // FullHiddenColsAndVisibleCols implements table FullHiddenColsAndVisibleCols interface.
 func (vt *perfSchemaTable) FullHiddenColsAndVisibleCols() []*table.Column {
 	return vt.cols
@@ -241,6 +249,8 @@ func (vt *perfSchemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows, err = dataForRemoteProfile(ctx, "pd", "/pd/api/v1/debug/pprof/block", false)
 	case tableNamePDProfileGoroutines:
 		fullRows, err = dataForRemoteProfile(ctx, "pd", "/pd/api/v1/debug/pprof/goroutine?debug=2", true)
+	case tableNameSessionVariables:
+		fullRows, err = infoschema.GetDataFromSessionVariables(ctx)
 	}
 	if err != nil {
 		return
@@ -376,7 +386,7 @@ func dataForRemoteProfile(ctx sessionctx.Context, nodeType, uri string, isGorout
 	close(ch)
 
 	// Keep the original order to make the result more stable
-	var results []result
+	var results []result //nolint: prealloc
 	for result := range ch {
 		if result.err != nil {
 			ctx.GetSessionVars().StmtCtx.AppendWarning(result.err)
@@ -384,7 +394,7 @@ func dataForRemoteProfile(ctx sessionctx.Context, nodeType, uri string, isGorout
 		}
 		results = append(results, result)
 	}
-	sort.Slice(results, func(i, j int) bool { return results[i].addr < results[j].addr })
+	slices.SortFunc(results, func(i, j result) bool { return i.addr < j.addr })
 	var finalRows [][]types.Datum
 	for _, result := range results {
 		addr := types.NewStringDatum(result.addr)

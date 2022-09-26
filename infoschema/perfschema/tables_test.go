@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,60 +20,29 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
-	"runtime"
 	"runtime/pprof"
 	"strings"
 	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema/perfschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/testkit"
+	"github.com/stretchr/testify/require"
+	"go.opencensus.io/stats/view"
 )
 
-func TestT(t *testing.T) {
-	CustomVerboseFlag = true
-	TestingT(t)
+func TestPredefinedTables(t *testing.T) {
+	require.True(t, perfschema.IsPredefinedTable("EVENTS_statements_summary_by_digest"))
+	require.False(t, perfschema.IsPredefinedTable("statements"))
 }
 
-var _ = Suite(&testTableSuite{})
-
-type testTableSuite struct {
-	store kv.Storage
-	dom   *domain.Domain
-}
-
-func (s *testTableSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
-
-	var err error
-	s.store, err = mockstore.NewMockStore()
-	c.Assert(err, IsNil)
-	session.DisableStats4Test()
-	s.dom, err = session.BootstrapSession(s.store)
-	c.Assert(err, IsNil)
-}
-
-func (s *testTableSuite) TearDownSuite(c *C) {
-	defer testleak.AfterTest(c)()
-	s.dom.Close()
-	s.store.Close()
-}
-
-func (s *testTableSuite) TestPredefinedTables(c *C) {
-	c.Assert(perfschema.IsPredefinedTable("EVENTS_statements_summary_by_digest"), IsTrue)
-	c.Assert(perfschema.IsPredefinedTable("statements"), IsFalse)
-}
-
-func (s *testTableSuite) TestPerfSchemaTables(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestPerfSchemaTables(t *testing.T) {
+	store := newMockStore(t)
+	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use performance_schema")
 	tk.MustQuery("select * from global_status where variable_name = 'Ssl_verify_mode'").Check(testkit.Rows())
@@ -81,20 +51,26 @@ func (s *testTableSuite) TestPerfSchemaTables(c *C) {
 	tk.MustQuery("select * from events_stages_history_long").Check(testkit.Rows())
 }
 
-func currentSourceDir() string {
-	_, file, _, _ := runtime.Caller(0)
-	return filepath.Dir(file)
+func TestSessionVariables(t *testing.T) {
+	store := newMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	res := tk.MustQuery("select variable_value from performance_schema.session_variables order by variable_name limit 10;")
+	tk.MustQuery("select variable_value from information_schema.session_variables order by variable_name limit 10;").Check(res.Rows())
 }
 
-func (s *testTableSuite) TestTiKVProfileCPU(c *C) {
+func TestTiKVProfileCPU(t *testing.T) {
+	store := newMockStore(t)
+
 	router := http.NewServeMux()
 	mockServer := httptest.NewServer(router)
 	mockAddr := strings.TrimPrefix(mockServer.URL, "http://")
 	defer mockServer.Close()
 
+	// mock tikv profile
 	copyHandler := func(filename string) http.HandlerFunc {
 		return func(w http.ResponseWriter, _ *http.Request) {
-			file, err := os.Open(filepath.Join(currentSourceDir(), filename))
+			file, err := os.Open(filename)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
@@ -104,7 +80,6 @@ func (s *testTableSuite) TestTiKVProfileCPU(c *C) {
 			terror.Log(err)
 		}
 	}
-	// mock tikv profile
 	router.HandleFunc("/debug/pprof/profile", copyHandler("testdata/tikv.cpu.profile"))
 
 	// failpoint setting
@@ -114,16 +89,16 @@ func (s *testTableSuite) TestTiKVProfileCPU(c *C) {
 	}
 	fpExpr := strings.Join(servers, ";")
 	fpName := "github.com/pingcap/tidb/infoschema/perfschema/mockRemoteNodeStatusAddress"
-	c.Assert(failpoint.Enable(fpName, fmt.Sprintf(`return("%s")`, fpExpr)), IsNil)
-	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
+	require.NoError(t, failpoint.Enable(fpName, fmt.Sprintf(`return("%s")`, fpExpr)))
+	defer func() { require.NoError(t, failpoint.Disable(fpName)) }()
 
-	tk := testkit.NewTestKit(c, s.store)
+	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use performance_schema")
 	result := tk.MustQuery("select function, percent_abs, percent_rel from tikv_profile_cpu where depth < 3")
 
-	warnings := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
-	c.Assert(len(warnings), Equals, 0, Commentf("expect no warnings, but found: %+v", warnings))
+	warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
+	require.Lenf(t, warnings, 0, "expect no warnings, but found: %+v", warnings)
 
 	result.Check(testkit.Rows(
 		"root 100% 100%",
@@ -176,7 +151,7 @@ func (s *testTableSuite) TestTiKVProfileCPU(c *C) {
 	}
 
 	// mock PD profile
-	router.HandleFunc("/pd/api/v1/debug/pprof/profile", copyHandler("../../util/profile/testdata/test.pprof"))
+	router.HandleFunc("/pd/api/v1/debug/pprof/profile", copyHandler("testdata/test.pprof"))
 	router.HandleFunc("/pd/api/v1/debug/pprof/heap", handlerFactory("heap"))
 	router.HandleFunc("/pd/api/v1/debug/pprof/mutex", handlerFactory("mutex"))
 	router.HandleFunc("/pd/api/v1/debug/pprof/allocs", handlerFactory("allocs"))
@@ -184,28 +159,46 @@ func (s *testTableSuite) TestTiKVProfileCPU(c *C) {
 	router.HandleFunc("/pd/api/v1/debug/pprof/goroutine", handlerFactory("goroutine", 2))
 
 	tk.MustQuery("select * from pd_profile_cpu where depth < 3")
-	warnings = tk.Se.GetSessionVars().StmtCtx.GetWarnings()
-	c.Assert(len(warnings), Equals, 0, Commentf("expect no warnings, but found: %+v", warnings))
+	warnings = tk.Session().GetSessionVars().StmtCtx.GetWarnings()
+	require.Lenf(t, warnings, 0, "expect no warnings, but found: %+v", warnings)
 
 	tk.MustQuery("select * from pd_profile_memory where depth < 3")
-	warnings = tk.Se.GetSessionVars().StmtCtx.GetWarnings()
-	c.Assert(len(warnings), Equals, 0, Commentf("expect no warnings, but found: %+v", warnings))
+	warnings = tk.Session().GetSessionVars().StmtCtx.GetWarnings()
+	require.Lenf(t, warnings, 0, "expect no warnings, but found: %+v", warnings)
 
 	tk.MustQuery("select * from pd_profile_mutex where depth < 3")
-	warnings = tk.Se.GetSessionVars().StmtCtx.GetWarnings()
-	c.Assert(len(warnings), Equals, 0, Commentf("expect no warnings, but found: %+v", warnings))
+	warnings = tk.Session().GetSessionVars().StmtCtx.GetWarnings()
+	require.Lenf(t, warnings, 0, "expect no warnings, but found: %+v", warnings)
 
 	tk.MustQuery("select * from pd_profile_allocs where depth < 3")
-	warnings = tk.Se.GetSessionVars().StmtCtx.GetWarnings()
-	c.Assert(len(warnings), Equals, 0, Commentf("expect no warnings, but found: %+v", warnings))
+	warnings = tk.Session().GetSessionVars().StmtCtx.GetWarnings()
+	require.Lenf(t, warnings, 0, "expect no warnings, but found: %+v", warnings)
 
 	tk.MustQuery("select * from pd_profile_block where depth < 3")
-	warnings = tk.Se.GetSessionVars().StmtCtx.GetWarnings()
-	c.Assert(len(warnings), Equals, 0, Commentf("expect no warnings, but found: %+v", warnings))
+	warnings = tk.Session().GetSessionVars().StmtCtx.GetWarnings()
+	require.Lenf(t, warnings, 0, "expect no warnings, but found: %+v", warnings)
 
 	tk.MustQuery("select * from pd_profile_goroutines")
-	warnings = tk.Se.GetSessionVars().StmtCtx.GetWarnings()
-	c.Assert(len(warnings), Equals, 0, Commentf("expect no warnings, but found: %+v", warnings))
+	warnings = tk.Session().GetSessionVars().StmtCtx.GetWarnings()
+	require.Lenf(t, warnings, 0, "expect no warnings, but found: %+v", warnings)
 
-	c.Assert(len(accessed), Equals, 5, Commentf("expect all HTTP API had been accessed, but found: %v", accessed))
+	require.Lenf(t, accessed, 5, "expect all HTTP API had been accessed, but found: %v", accessed)
+}
+
+func newMockStore(t *testing.T) kv.Storage {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	session.DisableStats4Test()
+
+	dom, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		dom.Close()
+		err := store.Close()
+		require.NoError(t, err)
+		view.Stop()
+	})
+
+	return store
 }

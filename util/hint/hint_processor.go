@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,12 +19,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/pingcap/errors"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/format"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/format"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
@@ -31,6 +31,7 @@ import (
 )
 
 var supportedHintNameForInsertStmt = map[string]struct{}{}
+var errWarnConflictingHint = dbterror.ClassUtil.NewStd(errno.ErrWarnConflictingHint)
 
 func init() {
 	supportedHintNameForInsertStmt["memory_quota"] = struct{}{}
@@ -117,8 +118,7 @@ func checkInsertStmtHintDuplicated(node ast.Node, sctx sessionctx.Context) {
 				}
 				if duplicatedHint != nil {
 					hint := fmt.Sprintf("%s(`%v`)", duplicatedHint.HintName.O, duplicatedHint.HintData)
-					err := dbterror.ClassUtil.NewStd(errno.ErrWarnConflictingHint).FastGenByArgs(hint)
-					sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+					sctx.GetSessionVars().StmtCtx.AppendWarning(errWarnConflictingHint.FastGenByArgs(hint))
 				}
 			}
 		}
@@ -252,12 +252,14 @@ func BindHint(stmt ast.StmtNode, hintsSet *HintsSet) ast.StmtNode {
 
 // ParseHintsSet parses a SQL string, then collects and normalizes the HintsSet.
 func ParseHintsSet(p *parser.Parser, sql, charset, collation, db string) (*HintsSet, ast.StmtNode, []error, error) {
-	stmtNodes, warns, err := p.Parse(sql, charset, collation)
+	stmtNodes, warns, err := p.ParseSQL(sql,
+		parser.CharsetConnection(charset),
+		parser.CollationConnection(collation))
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	if len(stmtNodes) != 1 {
-		return nil, nil, nil, errors.New(fmt.Sprintf("bind_sql must be a single statement: %s", sql))
+		return nil, nil, nil, fmt.Errorf("bind_sql must be a single statement: %s", sql)
 	}
 	hs := CollectHint(stmtNodes[0])
 	processor := &BlockHintProcessor{}
@@ -276,7 +278,7 @@ func ParseHintsSet(p *parser.Parser, sql, charset, collation, db string) (*Hints
 			offset := processor.GetHintOffset(tblHint.QBName, curOffset)
 			if offset < 0 || !processor.checkTableQBName(tblHint.Tables) {
 				hintStr := RestoreTableOptimizerHint(tblHint)
-				return nil, nil, nil, errors.New(fmt.Sprintf("Unknown query block name in hint %s", hintStr))
+				return nil, nil, nil, fmt.Errorf("Unknown query block name in hint %s", hintStr)
 			}
 			tblHint.QBName, err = GenerateQBName(topNodeType, offset)
 			if err != nil {
@@ -296,7 +298,8 @@ func ParseHintsSet(p *parser.Parser, sql, charset, collation, db string) (*Hints
 
 func extractHintWarns(warns []error) []error {
 	for _, w := range warns {
-		if parser.ErrWarnOptimizerHintUnsupportedHint.Equal(w) ||
+		if parser.ErrParse.Equal(w) ||
+			parser.ErrWarnOptimizerHintUnsupportedHint.Equal(w) ||
 			parser.ErrWarnOptimizerHintInvalidToken.Equal(w) ||
 			parser.ErrWarnMemoryQuotaOverflow.Equal(w) ||
 			parser.ErrWarnOptimizerHintParseError.Equal(w) ||
@@ -338,7 +341,7 @@ func (p *BlockHintProcessor) Enter(in ast.Node) (ast.Node, bool) {
 }
 
 // Leave implements Visitor interface.
-func (p *BlockHintProcessor) Leave(in ast.Node) (ast.Node, bool) {
+func (*BlockHintProcessor) Leave(in ast.Node) (ast.Node, bool) {
 	return in, true
 }
 
@@ -353,7 +356,7 @@ func (p *BlockHintProcessor) checkQueryBlockHints(hints []*ast.TableOptimizerHin
 		}
 		if qbName != "" {
 			if p.Ctx != nil {
-				p.Ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New(fmt.Sprintf("There are more than two query names in same query block,, using the first one %s", qbName)))
+				p.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("There are more than two query names in same query block,, using the first one %s", qbName))
 			}
 		} else {
 			qbName = hint.QBName.L
@@ -367,7 +370,7 @@ func (p *BlockHintProcessor) checkQueryBlockHints(hints []*ast.TableOptimizerHin
 	}
 	if _, ok := p.QbNameMap[qbName]; ok {
 		if p.Ctx != nil {
-			p.Ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New(fmt.Sprintf("Duplicate query block name %s, only the first one is effective", qbName)))
+			p.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("Duplicate query block name %s, only the first one is effective", qbName))
 		}
 	} else {
 		p.QbNameMap[qbName] = offset
@@ -461,7 +464,7 @@ func (p *BlockHintProcessor) GetCurrentStmtHints(hints []*ast.TableOptimizerHint
 		offset := p.GetHintOffset(hint.QBName, currentOffset)
 		if offset < 0 || !p.checkTableQBName(hint.Tables) {
 			hintStr := RestoreTableOptimizerHint(hint)
-			p.Ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New(fmt.Sprintf("Hint %s is ignored due to unknown query block name", hintStr)))
+			p.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("Hint %s is ignored due to unknown query block name", hintStr))
 			continue
 		}
 		p.QbHints[offset] = append(p.QbHints[offset], hint)
@@ -478,7 +481,7 @@ func GenerateQBName(nodeType NodeType, blockOffset int) (model.CIStr, error) {
 		if nodeType == TypeUpdate {
 			return model.NewCIStr(defaultUpdateBlockName), nil
 		}
-		return model.NewCIStr(""), errors.New(fmt.Sprintf("Unexpected NodeType %d when block offset is 0", nodeType))
+		return model.NewCIStr(""), fmt.Errorf("Unexpected NodeType %d when block offset is 0", nodeType)
 	}
 	return model.NewCIStr(fmt.Sprintf("%s%d", defaultSelectBlockPrefix, blockOffset)), nil
 }

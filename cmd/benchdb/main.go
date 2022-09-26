@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -23,7 +24,7 @@ import (
 	"time"
 
 	"github.com/pingcap/log"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store"
 	"github.com/pingcap/tidb/store/driver"
@@ -124,7 +125,7 @@ func (ut *benchDB) mustExec(sql string, args ...interface{}) {
 	}
 	if rs != nil {
 		ctx := context.Background()
-		req := rs.NewChunk()
+		req := rs.NewChunk(nil)
 		for {
 			err := rs.Next(ctx, req)
 			if err != nil {
@@ -223,6 +224,7 @@ func (ut *benchDB) runCountTimes(name string, count int, f func()) {
 		name, sum/time.Duration(count), count, sum, first, last, max, min)
 }
 
+// #nosec G404
 func (ut *benchDB) insertRows(spec string) {
 	start, end, _ := ut.mustParseSpec(spec)
 	loopCount := (end - start + *batchSize - 1) / *batchSize
@@ -243,6 +245,7 @@ func (ut *benchDB) insertRows(spec string) {
 	})
 }
 
+// #nosec G404
 func (ut *benchDB) updateRandomRows(spec string) {
 	start, end, totalCount := ut.mustParseSpec(spec)
 	loopCount := (totalCount + *batchSize - 1) / *batchSize

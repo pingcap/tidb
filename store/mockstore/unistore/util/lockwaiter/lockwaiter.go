@@ -8,13 +8,13 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package lockwaiter
 
 import (
-	"sort"
 	"sync"
 	"time"
 
@@ -22,21 +22,19 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/store/mockstore/unistore/config"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
-// Used for pessimistic lock wait time
+// LockNoWait is used for pessimistic lock wait time
 // these two constants are special for lock protocol with tikv
-// 0 means always wait, -1 means nowait, others meaning lock wait in milliseconds
-var (
-	LockAlwaysWait = int64(0)
-	LockNoWait     = int64(-1)
-)
+// -1 means nowait, others meaning lock wait in milliseconds
+var LockNoWait = int64(-1)
 
 // Manager represents a waiters manager.
 type Manager struct {
-	mu                  sync.Mutex
 	waitingQueues       map[uint64]*queue
 	wakeUpDelayDuration int64
+	mu                  sync.Mutex
 }
 
 // NewManager returns a new manager.
@@ -53,8 +51,8 @@ type queue struct {
 
 func (q *queue) getOldestWaiter() (*Waiter, []*Waiter) {
 	// make the waiters in start ts order
-	sort.Slice(q.waiters, func(i, j int) bool {
-		return q.waiters[i].startTS < q.waiters[j].startTS
+	slices.SortFunc(q.waiters, func(i, j *Waiter) bool {
+		return i.startTS < j.startTS
 	})
 	oldestWaiter := q.waiters[0]
 	remainWaiter := q.waiters[1:]
@@ -92,11 +90,11 @@ type WakeupWaitTime int
 
 // WaitResult represents a wait result.
 type WaitResult struct {
+	DeadlockResp *deadlock.DeadlockResponse
 	// WakeupSleepTime, -1 means the wait is already timeout, 0 means the lock will be granted to this waiter
 	// others are the wake-up-delay-duration sleep time, in milliseconds
 	WakeupSleepTime WakeupWaitTime
 	CommitTS        uint64
-	DeadlockResp    *deadlock.DeadlockResponse
 }
 
 // WakeupWaitTime

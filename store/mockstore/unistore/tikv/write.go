@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,13 +20,13 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/badger"
 	"github.com/pingcap/badger/y"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/store/mockstore/unistore/lockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/dbreader"
 	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/mvcc"
+	"github.com/pingcap/tidb/util/mathutil"
 )
 
 const (

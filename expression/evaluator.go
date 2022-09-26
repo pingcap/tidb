@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -24,7 +25,8 @@ type columnEvaluator struct {
 
 // run evaluates "Column" expressions.
 // NOTE: It should be called after all the other expressions are evaluated
-//	     since it will change the content of the input Chunk.
+//
+//	since it will change the content of the input Chunk.
 func (e *columnEvaluator) run(ctx sessionctx.Context, input, output *chunk.Chunk) error {
 	for inputIdx, outputIdxes := range e.inputIdxToOutputIdxes {
 		if err := output.SwapColumn(outputIdxes[0], input, inputIdx); err != nil {

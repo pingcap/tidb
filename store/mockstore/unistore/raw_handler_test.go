@@ -8,33 +8,23 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package unistore
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/stretchr/testify/require"
 )
 
-func TestT(t *testing.T) {
-	TestingT(t)
-}
-
-type testSuite struct{}
-
-func (ts testSuite) SetUpSuite(c *C) {}
-
-func (ts testSuite) TearDownSuite(c *C) {}
-
-var _ = Suite(testSuite{})
-
-func (ts testSuite) TestRawHandler(c *C) {
+func TestRawHandler(t *testing.T) {
 	h := newRawHandler()
 	ctx := context.Background()
 	keys := make([][]byte, 10)
@@ -44,12 +34,12 @@ func (ts testSuite) TestRawHandler(c *C) {
 		vals[i] = []byte(fmt.Sprintf("val%d", i))
 	}
 	putResp, _ := h.RawPut(ctx, &kvrpcpb.RawPutRequest{Key: keys[0], Value: vals[0]})
-	c.Assert(putResp, NotNil)
+	require.NotNil(t, putResp)
 	getResp, _ := h.RawGet(ctx, &kvrpcpb.RawGetRequest{Key: keys[0]})
-	c.Assert(getResp, NotNil)
-	c.Assert(getResp.Value, BytesEquals, vals[0])
+	require.NotNil(t, getResp)
+	require.Equal(t, 0, bytes.Compare(getResp.Value, vals[0]))
 	delResp, _ := h.RawDelete(ctx, &kvrpcpb.RawDeleteRequest{Key: keys[0]})
-	c.Assert(delResp, NotNil)
+	require.NotNil(t, delResp)
 
 	batchPutReq := &kvrpcpb.RawBatchPutRequest{Pairs: []*kvrpcpb.KvPair{
 		{Key: keys[1], Value: vals[1]},
@@ -57,12 +47,12 @@ func (ts testSuite) TestRawHandler(c *C) {
 		{Key: keys[5], Value: vals[5]},
 	}}
 	batchPutResp, _ := h.RawBatchPut(ctx, batchPutReq)
-	c.Assert(batchPutResp, NotNil)
+	require.NotNil(t, batchPutResp)
 	batchGetResp, _ := h.RawBatchGet(ctx, &kvrpcpb.RawBatchGetRequest{Keys: [][]byte{keys[1], keys[3], keys[5]}})
-	c.Assert(batchGetResp, NotNil)
-	c.Assert(batchGetResp.Pairs, DeepEquals, batchPutReq.Pairs)
+	require.NotNil(t, batchGetResp)
+	require.Equal(t, batchPutReq.Pairs, batchGetResp.Pairs)
 	batchDelResp, _ := h.RawBatchDelete(ctx, &kvrpcpb.RawBatchDeleteRequest{Keys: [][]byte{keys[1], keys[3], keys[5]}})
-	c.Assert(batchDelResp, NotNil)
+	require.NotNil(t, batchDelResp)
 
 	batchPutReq.Pairs = []*kvrpcpb.KvPair{
 		{Key: keys[6], Value: vals[6]},
@@ -70,17 +60,17 @@ func (ts testSuite) TestRawHandler(c *C) {
 		{Key: keys[8], Value: vals[8]},
 	}
 	batchPutResp, _ = h.RawBatchPut(ctx, batchPutReq)
-	c.Assert(batchPutResp, NotNil)
+	require.NotNil(t, batchPutResp)
 
 	scanReq := &kvrpcpb.RawScanRequest{StartKey: keys[0], EndKey: keys[9], Limit: 2}
 	scanResp, _ := h.RawScan(ctx, scanReq)
-	c.Assert(batchPutResp, NotNil)
-	c.Assert(scanResp.Kvs, HasLen, 2)
-	c.Assert(batchPutReq.Pairs[:2], DeepEquals, scanResp.Kvs)
+	require.NotNil(t, batchPutResp)
+	require.Len(t, scanResp.Kvs, 2)
+	require.Equal(t, scanResp.Kvs, batchPutReq.Pairs[:2])
 
 	delRangeResp, _ := h.RawDeleteRange(ctx, &kvrpcpb.RawDeleteRangeRequest{StartKey: keys[0], EndKey: keys[9]})
-	c.Assert(delRangeResp, NotNil)
+	require.NotNil(t, delRangeResp)
 
 	scanResp, _ = h.RawScan(ctx, scanReq)
-	c.Assert(scanResp.Kvs, HasLen, 0)
+	require.Equal(t, 0, len(scanResp.Kvs))
 }

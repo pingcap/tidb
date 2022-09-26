@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -28,6 +29,10 @@ var (
 	ExplainFormatVerbose = "verbose"
 	// ExplainFormatTraditional is the same as ExplainFormatROW.
 	ExplainFormatTraditional = "traditional"
+	// ExplainFormatTrueCardCost indicates the optimizer to use true cardinality to calculate the cost.
+	ExplainFormatTrueCardCost = "true_card_cost"
+	// ExplainFormatBinary prints the proto for binary plan.
+	ExplainFormatBinary = "binary"
 
 	// ExplainFormats stores the valid formats for explain statement, used by validator.
 	ExplainFormats = []string{
@@ -38,5 +43,7 @@ var (
 		ExplainFormatROW,
 		ExplainFormatVerbose,
 		ExplainFormatTraditional,
+		ExplainFormatTrueCardCost,
+		ExplainFormatBinary,
 	}
 )

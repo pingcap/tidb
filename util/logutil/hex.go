@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -56,7 +57,7 @@ func prettyPrint(w io.Writer, val reflect.Value) {
 		for i := 0; i < val.NumField(); i++ {
 			fv := val.Field(i)
 			ft := tp.Field(i)
-			if strings.HasPrefix(ft.Name, "XXX_") {
+			if strings.HasPrefix(ft.Name, "XXX") {
 				continue
 			}
 			if i != 0 {

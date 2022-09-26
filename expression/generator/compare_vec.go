@@ -8,9 +8,11 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build ignore
 // +build ignore
 
 package main
@@ -37,6 +39,7 @@ const header = `// Copyright 2019 PingCAP, Inc.
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -49,7 +52,6 @@ const newLine = "\n"
 
 const builtinCompareImports = `import (
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 )
 `
@@ -57,7 +59,7 @@ const builtinCompareImports = `import (
 var builtinCompareVecTpl = template.Must(template.New("").Parse(`
 func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ET{{ .type.ETName }}, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -65,7 +67,7 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEvalInt(in
 	if err := b.args[0].VecEval{{ .type.TypeName }}(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ET{{ .type.ETName }}, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -86,7 +88,7 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEvalInt(in
 			continue
 		}
 {{- if eq .type.ETName "Json" }}
-		val := json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i))
+		val := types.CompareBinaryJSON(buf0.GetJSON(i), buf1.GetJSON(i))
 {{- else if eq .type.ETName "Real" }}
 		val := types.CompareFloat64(arg0[i], arg1[i])
 {{- else if eq .type.ETName "String" }}
@@ -98,11 +100,7 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEvalInt(in
 {{- else if eq .type.ETName "Decimal" }}
 		val := arg0[i].Compare(&arg1[i])
 {{- end }}
-		if val {{ .compare.Operator }} 0 {
-			i64s[i] = 1
-		} else {
-			i64s[i] = 0
-		}
+		i64s[i] = boolToInt64(val {{ .compare.Operator }} 0)
 	}
 	return nil
 }
@@ -115,7 +113,7 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vectorized() 
 var builtinNullEQCompareVecTpl = template.Must(template.New("").Parse(`
 func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ET{{ .type.ETName }}, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -123,7 +121,7 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEvalInt(in
 	if err := b.args[0].VecEval{{ .type.TypeName }}(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ET{{ .type.ETName }}, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -147,7 +145,7 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEvalInt(in
 		case isNull0 != isNull1:
 			i64s[i] = 0
 {{- if eq .type.ETName "Json" }}
-		case json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i)) == 0:
+		case types.CompareBinaryJSON(buf0.GetJSON(i), buf1.GetJSON(i)) == 0:
 {{- else if eq .type.ETName "Real" }}
 		case types.CompareFloat64(arg0[i], arg1[i]) == 0:
 {{- else if eq .type.ETName "String" }}
@@ -171,7 +169,7 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vectorized() 
 `))
 
 var builtinCoalesceCompareVecTpl = template.Must(template.New("").Parse(`
-// NOTE: Coalesce just return the first non-null item, but vectorization do each item, which would incur additional errors. If this case happen, 
+// NOTE: Coalesce just return the first non-null item, but vectorization do each item, which would incur additional errors. If this case happen,
 // the vectorization falls back to the scalar execution.
 func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) fallbackEval{{ .type.TypeName }}(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
@@ -216,7 +214,7 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEval{{ .ty
 	n := input.NumRows()
 	result.Resize{{ .type.TypeNameInColumn }}(n, true)
 	i64s := result.{{ .type.TypeNameInColumn }}s()
-	buf1, err := b.bufAllocator.get(types.ET{{ .type.ETName }}, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -225,6 +223,9 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEval{{ .ty
 	beforeWarns := sc.WarningCount()
 	for j := 0; j < len(b.args); j++{
 		err := b.args[j].VecEval{{ .type.TypeName }}(b.ctx, input, buf1)
+        {{- if eq .type.TypeName "Time" }}
+        fsp := b.tp.GetDecimal()
+        {{- end }}
 		afterWarns := sc.WarningCount()
 		if err != nil || afterWarns > beforeWarns {
 			if afterWarns > beforeWarns {
@@ -236,6 +237,9 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEval{{ .ty
 		for i := 0; i < n; i++ {
 			if !buf1.IsNull(i) && result.IsNull(i) {
 				i64s[i] = args[i]
+                {{- if eq .type.TypeName "Time" }}
+                i64s[i].SetFsp(fsp)
+                {{- end }}
 				result.SetNull(i, false)
 			}
 		}
@@ -251,7 +255,7 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEval{{ .ty
 	sc := b.ctx.GetSessionVars().StmtCtx
 	beforeWarns := sc.WarningCount()
 	for i := 0; i < argLen; i++ {
-		buf, err := b.bufAllocator.get(types.ETInt, n)
+		buf, err := b.bufAllocator.get()
 		if err != nil {
 			return err
 		}
@@ -294,8 +298,7 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vectorized() 
 const builtinCompareVecTestHeader = `import (
 	"testing"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -313,12 +316,12 @@ var builtinCompareVecTestFuncTail = `	},
 
 var builtinCompareVecTestTail = `}
 
-func (s *testEvaluatorSuite) TestVectorizedGeneratedBuiltinCompareEvalOneVec(c *C) {
-	testVectorizedEvalOneVec(c, vecGeneratedBuiltinCompareCases)
+func TestVectorizedGeneratedBuiltinCompareEvalOneVec(t *testing.T) {
+	testVectorizedEvalOneVec(t, vecGeneratedBuiltinCompareCases)
 }
 
-func (s *testEvaluatorSuite) TestVectorizedGeneratedBuiltinCompareFunc(c *C) {
-	testVectorizedBuiltinFunc(c, vecGeneratedBuiltinCompareCases)
+func TestVectorizedGeneratedBuiltinCompareFunc(t *testing.T) {
+	testVectorizedBuiltinFunc(t, vecGeneratedBuiltinCompareCases)
 }
 
 func BenchmarkVectorizedGeneratedBuiltinCompareEvalOneVec(b *testing.B) {

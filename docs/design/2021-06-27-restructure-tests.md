@@ -1,6 +1,6 @@
 # Proposal: Restructure TiDB Tests
 
-- Author(s): [tison](http://github.com/tison)
+- Author(s): [tison](http://github.com/tisonkun)
 - Discussion PR: https://github.com/pingcap/tidb/pull/26024
 - Tracking Issue: https://github.com/pingcap/tidb/issues/26022
 

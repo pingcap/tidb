@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,8 +18,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -43,6 +44,8 @@ const (
 	ClusterTableTiDBTrx = "CLUSTER_TIDB_TRX"
 	// ClusterTableDeadlocks is the string constant of cluster dead lock table.
 	ClusterTableDeadlocks = "CLUSTER_DEADLOCKS"
+	// ClusterTableDeadlocks is the string constant of cluster transaction summary table.
+	ClusterTableTrxSummary = "CLUSTER_TRX_SUMMARY"
 )
 
 // memTableToClusterTables means add memory table to cluster table.
@@ -54,6 +57,7 @@ var memTableToClusterTables = map[string]string{
 	TableStatementsSummaryEvicted: ClusterTableStatementsSummaryEvicted,
 	TableTiDBTrx:                  ClusterTableTiDBTrx,
 	TableDeadlocks:                ClusterTableDeadlocks,
+	TableTrxSummary:               ClusterTableTrxSummary,
 }
 
 func init() {
@@ -75,16 +79,14 @@ func isClusterTableByName(dbName, tableName string) bool {
 	dbName = strings.ToUpper(dbName)
 	switch dbName {
 	case util.InformationSchemaName.O, util.PerformanceSchemaName.O:
-		break
-	default:
-		return false
-	}
-	tableName = strings.ToUpper(tableName)
-	for _, name := range memTableToClusterTables {
-		name = strings.ToUpper(name)
-		if name == tableName {
-			return true
+		tableName = strings.ToUpper(tableName)
+		for _, name := range memTableToClusterTables {
+			name = strings.ToUpper(name)
+			if name == tableName {
+				return true
+			}
 		}
+	default:
 	}
 	return false
 }

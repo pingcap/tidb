@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -23,7 +24,7 @@ type baseImpl struct {
 	plan plannercore.PhysicalPlan
 }
 
-func (impl *baseImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
+func (impl *baseImpl) CalcCost(_ float64, children ...memo.Implementation) float64 {
 	impl.cost = 0
 	for _, child := range children {
 		impl.cost += child.GetCost()
@@ -52,11 +53,11 @@ func (impl *baseImpl) AttachChildren(children ...memo.Implementation) memo.Imple
 	return impl
 }
 
-func (impl *baseImpl) ScaleCostLimit(costLimit float64) float64 {
+func (*baseImpl) ScaleCostLimit(costLimit float64) float64 {
 	return costLimit
 }
 
-func (impl *baseImpl) GetCostLimit(costLimit float64, children ...memo.Implementation) float64 {
+func (*baseImpl) GetCostLimit(costLimit float64, children ...memo.Implementation) float64 {
 	childrenCost := 0.0
 	for _, child := range children {
 		childrenCost += child.GetCost()

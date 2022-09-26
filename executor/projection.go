@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -24,7 +25,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
@@ -148,38 +148,37 @@ func (e *ProjectionExec) open(ctx context.Context) error {
 // or error from "output.done" channel. Once a "nil" or error is received:
 //   a. Returns this output to its parent
 //   b. Returns the "output" resource to "projectionInputFetcher.outputCh"
-//
-//  +-----------+----------------------+--------------------------+
-//  |           |                      |                          |
-//  |  +--------+---------+   +--------+---------+       +--------+---------+
-//  |  | projectionWorker |   + projectionWorker |  ...  + projectionWorker |
-//  |  +------------------+   +------------------+       +------------------+
-//  |       ^       ^              ^       ^                  ^       ^
-//  |       |       |              |       |                  |       |
-//  |    inputCh outputCh       inputCh outputCh           inputCh outputCh
-//  |       ^       ^              ^       ^                  ^       ^
-//  |       |       |              |       |                  |       |
-//  |                              |       |
-//  |                              |       +----------------->outputCh
-//  |                              |       |                      |
-//  |                              |       |                      v
-//  |                      +-------+-------+--------+   +---------------------+
-//  |                      | projectionInputFetcher |   | ProjectionExec.Next |
-//  |                      +------------------------+   +---------+-----------+
-//  |                              ^       ^                      |
-//  |                              |       |                      |
-//  |                           inputCh outputCh                  |
-//  |                              ^       ^                      |
-//  |                              |       |                      |
-//  +------------------------------+       +----------------------+
-//
+/*
+  +-----------+----------------------+--------------------------+
+  |           |                      |                          |
+  |  +--------+---------+   +--------+---------+       +--------+---------+
+  |  | projectionWorker |   + projectionWorker |  ...  + projectionWorker |
+  |  +------------------+   +------------------+       +------------------+
+  |       ^       ^              ^       ^                  ^       ^
+  |       |       |              |       |                  |       |
+  |    inputCh outputCh       inputCh outputCh           inputCh outputCh
+  |       ^       ^              ^       ^                  ^       ^
+  |       |       |              |       |                  |       |
+  |                              |       |
+  |                              |       +----------------->outputCh
+  |                              |       |                      |
+  |                              |       |                      v
+  |                      +-------+-------+--------+   +---------------------+
+  |                      | projectionInputFetcher |   | ProjectionExec.Next |
+  |                      +------------------------+   +---------+-----------+
+  |                              ^       ^                      |
+  |                              |       |                      |
+  |                           inputCh outputCh                  |
+  |                              ^       ^                      |
+  |                              |       |                      |
+  +------------------------------+       +----------------------+
+*/
 func (e *ProjectionExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(e.maxChunkSize)
 	if e.isUnparallelExec() {
 		return e.unParallelExecute(ctx, req)
 	}
 	return e.parallelExecute(ctx, req)
-
 }
 
 func (e *ProjectionExec) isUnparallelExec() bool {
@@ -191,6 +190,7 @@ func (e *ProjectionExec) unParallelExecute(ctx context.Context, chk *chunk.Chunk
 	e.childResult.SetRequiredRows(chk.RequiredRows(), e.maxChunkSize)
 	mSize := e.childResult.MemoryUsage()
 	err := Next(ctx, e.children[0], e.childResult)
+	failpoint.Inject("ConsumeRandomPanic", nil)
 	e.memTracker.Consume(e.childResult.MemoryUsage() - mSize)
 	if err != nil {
 		return err
@@ -220,6 +220,7 @@ func (e *ProjectionExec) parallelExecute(ctx context.Context, chk *chunk.Chunk) 
 	}
 	mSize := output.chk.MemoryUsage()
 	chk.SwapColumns(output.chk)
+	failpoint.Inject("ConsumeRandomPanic", nil)
 	e.memTracker.Consume(output.chk.MemoryUsage() - mSize)
 	e.fetcher.outputCh <- output
 	return nil
@@ -253,6 +254,7 @@ func (e *ProjectionExec) prepare(ctx context.Context) {
 		})
 
 		inputChk := newFirstChunk(e.children[0])
+		failpoint.Inject("ConsumeRandomPanic", nil)
 		e.memTracker.Consume(inputChk.MemoryUsage())
 		e.fetcher.inputCh <- &projectionInput{
 			chk:          inputChk,
@@ -341,13 +343,15 @@ type projectionInputFetcher struct {
 // run gets projectionInputFetcher's input and output resources from its
 // "inputCh" and "outputCh" channel, once the input and output resources are
 // abtained, it fetches child's result into "input.chk" and:
-//   a. Dispatches this input to the worker specified in "input.targetWorker"
-//   b. Dispatches this output to the main thread: "ProjectionExec.Next"
-//   c. Dispatches this output to the worker specified in "input.targetWorker"
+//
+//	a. Dispatches this input to the worker specified in "input.targetWorker"
+//	b. Dispatches this output to the main thread: "ProjectionExec.Next"
+//	c. Dispatches this output to the worker specified in "input.targetWorker"
 //
 // It is finished and exited once:
-//   a. There is no more input from child.
-//   b. "ProjectionExec" close the "globalFinishCh"
+//
+//	a. There is no more input from child.
+//	b. "ProjectionExec" close the "globalFinishCh"
 func (f *projectionInputFetcher) run(ctx context.Context) {
 	defer trace.StartRegion(ctx, "ProjectionFetcher").End()
 	var output *projectionOutput
@@ -378,6 +382,7 @@ func (f *projectionInputFetcher) run(ctx context.Context) {
 		input.chk.SetRequiredRows(int(requiredRows), f.proj.maxChunkSize)
 		mSize := input.chk.MemoryUsage()
 		err := Next(ctx, f.child, input.chk)
+		failpoint.Inject("ConsumeRandomPanic", nil)
 		f.proj.memTracker.Consume(input.chk.MemoryUsage() - mSize)
 		if err != nil || input.chk.NumRows() == 0 {
 			output.done <- err
@@ -409,11 +414,13 @@ type projectionWorker struct {
 // "inputCh" and "outputCh" channel, once the input and output resources are
 // abtained, it calculate the projection result use "input.chk" as the input
 // and "output.chk" as the output, once the calculation is done, it:
-//   a. Sends "nil" or error to "output.done" to mark this input is finished.
-//   b. Returns the "input" resource to "projectionInputFetcher.inputCh".
+//
+//	a. Sends "nil" or error to "output.done" to mark this input is finished.
+//	b. Returns the "input" resource to "projectionInputFetcher.inputCh".
 //
 // It is finished and exited once:
-//   a. "ProjectionExec" closes the "globalFinishCh".
+//
+//	a. "ProjectionExec" closes the "globalFinishCh".
 func (w *projectionWorker) run(ctx context.Context) {
 	defer trace.StartRegion(ctx, "ProjectionWorker").End()
 	var output *projectionOutput
@@ -436,6 +443,7 @@ func (w *projectionWorker) run(ctx context.Context) {
 
 		mSize := output.chk.MemoryUsage() + input.chk.MemoryUsage()
 		err := w.evaluatorSuit.Run(w.sctx, input.chk, output.chk)
+		failpoint.Inject("ConsumeRandomPanic", nil)
 		w.proj.memTracker.Consume(output.chk.MemoryUsage() + input.chk.MemoryUsage() - mSize)
 		output.done <- err
 
@@ -451,8 +459,7 @@ func recoveryProjection(output *projectionOutput, r interface{}) {
 	if output != nil {
 		output.done <- errors.Errorf("%v", r)
 	}
-	buf := util.GetStack()
-	logutil.BgLogger().Error("projection executor panicked", zap.String("error", fmt.Sprintf("%v", r)), zap.String("stack", string(buf)))
+	logutil.BgLogger().Error("projection executor panicked", zap.String("error", fmt.Sprintf("%v", r)), zap.Stack("stack"))
 }
 
 func readProjectionInput(inputCh <-chan *projectionInput, finishCh <-chan struct{}) *projectionInput {

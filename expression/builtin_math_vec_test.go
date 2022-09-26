@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,9 +17,8 @@ package expression
 import (
 	"testing"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -84,7 +84,9 @@ var vecBuiltinMathCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDecimal}},
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}},
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}, childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeInt24, Flag: mysql.UnsignedFlag}}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}, childrenFieldTypes: []*types.FieldType{
+			types.NewFieldTypeBuilder().SetType(mysql.TypeInt24).SetFlag(mysql.UnsignedFlag).BuildP(),
+		}},
 	},
 	ast.Round: {
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal}},
@@ -99,18 +101,28 @@ var vecBuiltinMathCases = map[string][]vecExprBenchCase{
 	},
 	ast.Floor: {
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal}, geners: nil},
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}, childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeInt24}}, geners: nil},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}, childrenFieldTypes: []*types.FieldType{
+			types.NewFieldTypeBuilder().SetType(mysql.TypeInt24).BuildP(),
+		}, geners: nil},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal}, geners: nil},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}, geners: nil},
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}, childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}}, geners: nil},
-		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDecimal}, childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeNewDecimal, Flen: 32, Decimal: 2}}, geners: nil},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}, childrenFieldTypes: []*types.FieldType{
+			types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).SetFlag(mysql.UnsignedFlag).BuildP(),
+		}, geners: nil},
+		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDecimal}, childrenFieldTypes: []*types.FieldType{
+			types.NewFieldTypeBuilder().SetType(mysql.TypeNewDecimal).SetFlen(32).SetDecimal(2).BuildP(),
+		}, geners: nil},
 	},
 	ast.Ceil: {
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal}, geners: nil},
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}, childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeInt24}}, geners: nil},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}, childrenFieldTypes: []*types.FieldType{
+			types.NewFieldTypeBuilder().SetType(mysql.TypeInt24).BuildP(),
+		}, geners: nil},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal}, geners: nil},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}, geners: nil},
-		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDecimal}, childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeNewDecimal, Flen: 32, Decimal: 2}}, geners: nil},
+		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDecimal}, childrenFieldTypes: []*types.FieldType{
+			types.NewFieldTypeBuilder().SetType(mysql.TypeNewDecimal).SetFlen(32).SetDecimal(2).BuildP(),
+		}, geners: nil},
 	},
 	ast.PI: {
 		{retEvalType: types.ETReal},
@@ -118,7 +130,9 @@ var vecBuiltinMathCases = map[string][]vecExprBenchCase{
 	ast.Truncate: {
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal, types.ETInt}, geners: []dataGenerator{nil, newRangeInt64Gener(-10, 10)}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: []dataGenerator{nil, newRangeInt64Gener(-10, 10)}},
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeInt24, Flag: mysql.UnsignedFlag}}, geners: []dataGenerator{nil, newRangeInt64Gener(-10, 10)}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, childrenFieldTypes: []*types.FieldType{
+			types.NewFieldTypeBuilder().SetType(mysql.TypeInt24).SetFlag(mysql.UnsignedFlag).BuildP(),
+		}, geners: []dataGenerator{nil, newRangeInt64Gener(-10, 10)}},
 		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDecimal, types.ETInt}},
 	},
 	ast.Rand: {
@@ -135,16 +149,16 @@ var vecBuiltinMathCases1 = map[string][]vecExprBenchCase{
 	},
 }
 
-func (s *testEvaluatorSuite) TestVectorizedBuiltinMathEvalOneVec(c *C) {
-	testVectorizedEvalOneVec(c, vecBuiltinMathCases)
+func TestVectorizedBuiltinMathEvalOneVec(t *testing.T) {
+	testVectorizedEvalOneVec(t, vecBuiltinMathCases)
 }
 
-func (s *testEvaluatorSuite) TestVectorizedBuiltinMathFunc(c *C) {
-	testVectorizedBuiltinFunc(c, vecBuiltinMathCases)
+func TestVectorizedBuiltinMathFunc(t *testing.T) {
+	testVectorizedBuiltinFunc(t, vecBuiltinMathCases)
 }
 
-func (s *testEvaluatorSuite) TestVectorizedBuiltinMathFuncForRand(c *C) {
-	testVectorizedBuiltinFuncForRand(c, vecBuiltinMathCases1)
+func TestVectorizedBuiltinMathFuncForRand(t *testing.T) {
+	testVectorizedBuiltinFuncForRand(t, vecBuiltinMathCases1)
 }
 
 func BenchmarkVectorizedBuiltinMathEvalOneVec(b *testing.B) {

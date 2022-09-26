@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -28,6 +29,7 @@ var perfSchemaTables = []string{
 	tableTransCurrent,
 	tableTransHistory,
 	tableTransHistoryLong,
+	tableSessionVariables,
 	tableStagesCurrent,
 	tableStagesHistory,
 	tableStagesHistoryLong,
@@ -282,7 +284,6 @@ const tableTransCurrent = "CREATE TABLE if not exists performance_schema." + tab
 	"NESTING_EVENT_TYPE		ENUM('TRANSACTION','STATEMENT','STAGE'));"
 
 // tableTransHistory contains the column name definitions for table events_transactions_history, same as MySQL.
-//
 const tableTransHistory = "CREATE TABLE if not exists performance_schema." + tableNameEventsTransactionsHistory + " (" +
 	"THREAD_ID		BIGINT(20) UNSIGNED NOT NULL," +
 	"EVENT_ID		BIGINT(20) UNSIGNED NOT NULL," +
@@ -543,3 +544,8 @@ const tablePDProfileGoroutines = "CREATE TABLE IF NOT EXISTS " + tableNamePDProf
 	"ID INT(8) NOT NULL," +
 	"STATE VARCHAR(16) NOT NULL," +
 	"LOCATION VARCHAR(512) NOT NULL);"
+
+// tableSessionVariables contains the
+const tableSessionVariables = "CREATE TABLE IF NOT EXISTS " + tableNameSessionVariables + " (" +
+	"VARIABLE_NAME VARCHAR(64) NOT NULL," +
+	"VARIABLE_VALUE VARCHAR(1024) NOT NULL);"

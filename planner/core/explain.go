@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,41 +20,27 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
-	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-// A plan is dataAccesser means it can access underlying data.
-// Include `PhysicalTableScan`, `PhysicalIndexScan`, `PointGetPlan`, `BatchPointScan` and `PhysicalMemTable`.
-// ExplainInfo = AccessObject + OperatorInfo
-type dataAccesser interface {
-
-	// AccessObject return plan's `table`, `partition` and `index`.
-	AccessObject(normalized bool) string
-
-	// OperatorInfo return other operator information to be explained.
-	OperatorInfo(normalized bool) string
-}
-
-type partitionAccesser interface {
-	accessObject(sessionctx.Context) string
-}
-
 // ExplainInfo implements Plan interface.
 func (p *PhysicalLock) ExplainInfo() string {
-	return fmt.Sprintf("%s %v", p.Lock.LockType.String(), p.Lock.WaitSec)
+	var str strings.Builder
+	str.WriteString(p.Lock.LockType.String())
+	str.WriteString(" ")
+	str.WriteString(strconv.FormatUint(p.Lock.WaitSec, 10))
+	return str.String()
 }
 
 // ExplainID overrides the ExplainID in order to match different range.
@@ -76,78 +63,57 @@ func (p *PhysicalIndexScan) TP() string {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalIndexScan) ExplainInfo() string {
-	return p.AccessObject(false) + ", " + p.OperatorInfo(false)
+	return p.AccessObject().String() + ", " + p.OperatorInfo(false)
 }
 
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PhysicalIndexScan) ExplainNormalizedInfo() string {
-	return p.AccessObject(true) + ", " + p.OperatorInfo(true)
-}
-
-// AccessObject implements dataAccesser interface.
-func (p *PhysicalIndexScan) AccessObject(normalized bool) string {
-	buffer := bytes.NewBufferString("")
-	tblName := p.Table.Name.O
-	if p.TableAsName != nil && p.TableAsName.O != "" {
-		tblName = p.TableAsName.O
-	}
-	fmt.Fprintf(buffer, "table:%s", tblName)
-	if p.isPartition {
-		if normalized {
-			fmt.Fprintf(buffer, ", partition:?")
-		} else if pi := p.Table.GetPartitionInfo(); pi != nil {
-			partitionName := pi.GetNameByID(p.physicalTableID)
-			fmt.Fprintf(buffer, ", partition:%s", partitionName)
-		}
-	}
-	if len(p.Index.Columns) > 0 {
-		buffer.WriteString(", index:" + p.Index.Name.O + "(")
-		for i, idxCol := range p.Index.Columns {
-			if tblCol := p.Table.Columns[idxCol.Offset]; tblCol.Hidden {
-				buffer.WriteString(tblCol.GeneratedExprString)
-			} else {
-				buffer.WriteString(idxCol.Name.O)
-			}
-			if i+1 < len(p.Index.Columns) {
-				buffer.WriteString(", ")
-			}
-		}
-		buffer.WriteString(")")
-	}
-	return buffer.String()
+	return p.AccessObject().NormalizedString() + ", " + p.OperatorInfo(true)
 }
 
 // OperatorInfo implements dataAccesser interface.
 func (p *PhysicalIndexScan) OperatorInfo(normalized bool) string {
-	buffer := bytes.NewBufferString("")
+	var buffer strings.Builder
 	if len(p.rangeInfo) > 0 {
 		if !normalized {
-			fmt.Fprintf(buffer, "range: decided by %v, ", p.rangeInfo)
+			buffer.WriteString("range: decided by ")
+			buffer.WriteString(p.rangeInfo)
+			buffer.WriteString(", ")
 		}
 	} else if p.haveCorCol() {
 		if normalized {
-			fmt.Fprintf(buffer, "range: decided by %s, ", expression.SortedExplainNormalizedExpressionList(p.AccessCondition))
+			buffer.WriteString("range: decided by ")
+			buffer.Write(expression.SortedExplainNormalizedExpressionList(p.AccessCondition))
+			buffer.WriteString(", ")
 		} else {
-			fmt.Fprintf(buffer, "range: decided by %v, ", p.AccessCondition)
+			buffer.WriteString("range: decided by [")
+			for i, expr := range p.AccessCondition {
+				if i != 0 {
+					buffer.WriteString(" ")
+				}
+				buffer.WriteString(expr.String())
+			}
+			buffer.WriteString("], ")
 		}
 	} else if len(p.Ranges) > 0 {
 		if normalized {
-			fmt.Fprint(buffer, "range:[?,?], ")
+			buffer.WriteString("range:[?,?], ")
 		} else if !p.isFullScan() {
-			fmt.Fprint(buffer, "range:")
+			buffer.WriteString("range:")
 			for _, idxRange := range p.Ranges {
-				fmt.Fprint(buffer, idxRange.String()+", ")
+				buffer.WriteString(idxRange.String())
+				buffer.WriteString(", ")
 			}
 		}
 	}
-	fmt.Fprintf(buffer, "keep order:%v, ", p.KeepOrder)
+	buffer.WriteString("keep order:")
+	buffer.WriteString(strconv.FormatBool(p.KeepOrder))
 	if p.Desc {
-		buffer.WriteString("desc, ")
+		buffer.WriteString(", desc")
 	}
 	if p.stats.StatsVersion == statistics.PseudoVersion && !normalized {
-		buffer.WriteString("stats:pseudo, ")
+		buffer.WriteString(", stats:pseudo")
 	}
-	buffer.Truncate(buffer.Len() - 2)
 	return buffer.String()
 }
 
@@ -165,7 +131,7 @@ func (p *PhysicalIndexScan) isFullScan() bool {
 		return false
 	}
 	for _, ran := range p.Ranges {
-		if !ran.IsFullRange() {
+		if !ran.IsFullRange(false) {
 			return false
 		}
 	}
@@ -194,77 +160,63 @@ func (p *PhysicalTableScan) TP() string {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalTableScan) ExplainInfo() string {
-	return p.AccessObject(false) + ", " + p.OperatorInfo(false)
+	return p.AccessObject().String() + ", " + p.OperatorInfo(false)
 }
 
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PhysicalTableScan) ExplainNormalizedInfo() string {
-	return p.AccessObject(true) + ", " + p.OperatorInfo(true)
-}
-
-// AccessObject implements dataAccesser interface.
-func (p *PhysicalTableScan) AccessObject(normalized bool) string {
-	buffer := bytes.NewBufferString("")
-	tblName := p.Table.Name.O
-	if p.TableAsName != nil && p.TableAsName.O != "" {
-		tblName = p.TableAsName.O
-	}
-	fmt.Fprintf(buffer, "table:%s", tblName)
-	if p.isPartition {
-		if normalized {
-			fmt.Fprintf(buffer, ", partition:?")
-		} else if pi := p.Table.GetPartitionInfo(); pi != nil {
-			partitionName := pi.GetNameByID(p.physicalTableID)
-			fmt.Fprintf(buffer, ", partition:%s", partitionName)
-		}
-	}
-	return buffer.String()
+	return p.AccessObject().NormalizedString() + ", " + p.OperatorInfo(true)
 }
 
 // OperatorInfo implements dataAccesser interface.
 func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
-	buffer := bytes.NewBufferString("")
-	for i, pkCol := range p.PkCols {
-		var fmtStr string
-		switch i {
-		case 0:
-			fmtStr = "pk cols: (%s, "
-		case len(p.PkCols) - 1:
-			fmtStr = "%s)"
-		default:
-			fmtStr = "%s, "
-		}
-		fmt.Fprintf(buffer, fmtStr, pkCol.ExplainInfo())
-	}
+	var buffer strings.Builder
 	if len(p.rangeDecidedBy) > 0 {
-		fmt.Fprintf(buffer, "range: decided by %v, ", p.rangeDecidedBy)
+		buffer.WriteString("range: decided by [")
+		for i, rangeDecidedBy := range p.rangeDecidedBy {
+			if i != 0 {
+				buffer.WriteString(" ")
+			}
+			buffer.WriteString(rangeDecidedBy.String())
+		}
+		buffer.WriteString("], ")
 	} else if p.haveCorCol() {
 		if normalized {
-			fmt.Fprintf(buffer, "range: decided by %s, ", expression.SortedExplainNormalizedExpressionList(p.AccessCondition))
+			buffer.WriteString("range: decided by ")
+			buffer.Write(expression.SortedExplainNormalizedExpressionList(p.AccessCondition))
+			buffer.WriteString(", ")
 		} else {
-			fmt.Fprintf(buffer, "range: decided by %v, ", p.AccessCondition)
+			buffer.WriteString("range: decided by [")
+			for i, AccessCondition := range p.AccessCondition {
+				if i != 0 {
+					buffer.WriteString(" ")
+				}
+				buffer.WriteString(AccessCondition.String())
+			}
+			buffer.WriteString("], ")
 		}
 	} else if len(p.Ranges) > 0 {
 		if normalized {
-			fmt.Fprint(buffer, "range:[?,?], ")
+			buffer.WriteString("range:[?,?], ")
 		} else if !p.isFullScan() {
-			fmt.Fprint(buffer, "range:")
+			buffer.WriteString("range:")
 			for _, idxRange := range p.Ranges {
-				fmt.Fprint(buffer, idxRange.String()+", ")
+				buffer.WriteString(idxRange.String())
+				buffer.WriteString(", ")
 			}
 		}
 	}
-	fmt.Fprintf(buffer, "keep order:%v, ", p.KeepOrder)
+	buffer.WriteString("keep order:")
+	buffer.WriteString(strconv.FormatBool(p.KeepOrder))
 	if p.Desc {
-		buffer.WriteString("desc, ")
+		buffer.WriteString(", desc")
 	}
 	if p.stats.StatsVersion == statistics.PseudoVersion && !normalized {
-		buffer.WriteString("stats:pseudo, ")
+		buffer.WriteString(", stats:pseudo")
 	}
-	if p.IsGlobalRead {
-		buffer.WriteString("global read, ")
+	if p.StoreType == kv.TiFlash && p.Table.GetPartitionInfo() != nil && p.IsMPPOrBatchCop && p.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+		buffer.WriteString(", PartitionTableScan:true")
 	}
-	buffer.Truncate(buffer.Len() - 2)
 	return buffer.String()
 }
 
@@ -281,8 +233,14 @@ func (p *PhysicalTableScan) isFullScan() bool {
 	if len(p.rangeDecidedBy) > 0 || p.haveCorCol() {
 		return false
 	}
+	var unsignedIntHandle bool
+	if p.Table.PKIsHandle {
+		if pkColInfo := p.Table.GetPkColInfo(); pkColInfo != nil {
+			unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
+		}
+	}
 	for _, ran := range p.Ranges {
-		if !ran.IsFullRange() {
+		if !ran.IsFullRange(unsignedIntHandle) {
 			return false
 		}
 	}
@@ -299,52 +257,8 @@ func (p *PhysicalTableReader) ExplainNormalizedInfo() string {
 	return ""
 }
 
-func (p *PhysicalTableReader) accessObject(sctx sessionctx.Context) string {
-	ts := p.TablePlans[0].(*PhysicalTableScan)
-	pi := ts.Table.GetPartitionInfo()
-	if pi == nil || !sctx.GetSessionVars().UseDynamicPartitionPrune() {
-		return ""
-	}
-
-	is := sctx.GetInfoSchema().(infoschema.InfoSchema)
-	tmp, ok := is.TableByID(ts.Table.ID)
-	if !ok {
-		return "partition table not found" + strconv.FormatInt(ts.Table.ID, 10)
-	}
-	tbl := tmp.(table.PartitionedTable)
-
-	return partitionAccessObject(sctx, tbl, pi, &p.PartitionInfo)
-}
-
-func partitionAccessObject(sctx sessionctx.Context, tbl table.PartitionedTable, pi *model.PartitionInfo, partTable *PartitionInfo) string {
-	var buffer bytes.Buffer
-	idxArr, err := PartitionPruning(sctx, tbl, partTable.PruningConds, partTable.PartitionNames, partTable.Columns, partTable.ColumnNames)
-	if err != nil {
-		return "partition pruning error" + err.Error()
-	}
-
-	if len(idxArr) == 0 {
-		return "partition:dual"
-	}
-
-	if len(idxArr) == 1 && idxArr[0] == FullRange {
-		return "partition:all"
-	}
-
-	for i, idx := range idxArr {
-		if i == 0 {
-			buffer.WriteString("partition:")
-		} else {
-			buffer.WriteString(",")
-		}
-		buffer.WriteString(pi.Definitions[idx].Name.O)
-	}
-
-	return buffer.String()
-}
-
 // OperatorInfo return other operator information to be explained.
-func (p *PhysicalTableReader) OperatorInfo(normalized bool) string {
+func (p *PhysicalTableReader) OperatorInfo(_ bool) string {
 	return "data:" + p.tablePlan.ExplainID().String()
 }
 
@@ -355,76 +269,26 @@ func (p *PhysicalIndexReader) ExplainInfo() string {
 
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PhysicalIndexReader) ExplainNormalizedInfo() string {
-	return p.ExplainInfo()
-}
-
-func (p *PhysicalIndexReader) accessObject(sctx sessionctx.Context) string {
-	ts := p.IndexPlans[0].(*PhysicalIndexScan)
-	pi := ts.Table.GetPartitionInfo()
-	if pi == nil || !sctx.GetSessionVars().UseDynamicPartitionPrune() {
-		return ""
-	}
-
-	var buffer bytes.Buffer
-	is := sctx.GetInfoSchema().(infoschema.InfoSchema)
-	tmp, ok := is.TableByID(ts.Table.ID)
-	if !ok {
-		fmt.Fprintf(&buffer, "partition table not found: %d", ts.Table.ID)
-		return buffer.String()
-	}
-
-	tbl := tmp.(table.PartitionedTable)
-	return partitionAccessObject(sctx, tbl, pi, &p.PartitionInfo)
+	return "index:" + p.indexPlan.TP()
 }
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalIndexLookUpReader) ExplainInfo() string {
+	var str strings.Builder
 	// The children can be inferred by the relation symbol.
 	if p.PushedLimit != nil {
-		return fmt.Sprintf("limit embedded(offset:%v, count:%v)", p.PushedLimit.Offset, p.PushedLimit.Count)
+		str.WriteString("limit embedded(offset:")
+		str.WriteString(strconv.FormatUint(p.PushedLimit.Offset, 10))
+		str.WriteString(", count:")
+		str.WriteString(strconv.FormatUint(p.PushedLimit.Count, 10))
+		str.WriteString(")")
 	}
-	return ""
-}
-
-func (p *PhysicalIndexLookUpReader) accessObject(sctx sessionctx.Context) string {
-	ts := p.TablePlans[0].(*PhysicalTableScan)
-	pi := ts.Table.GetPartitionInfo()
-	if pi == nil || !sctx.GetSessionVars().UseDynamicPartitionPrune() {
-		return ""
-	}
-
-	var buffer bytes.Buffer
-	is := sctx.GetInfoSchema().(infoschema.InfoSchema)
-	tmp, ok := is.TableByID(ts.Table.ID)
-	if !ok {
-		fmt.Fprintf(&buffer, "partition table not found: %d", ts.Table.ID)
-		return buffer.String()
-	}
-
-	tbl := tmp.(table.PartitionedTable)
-	return partitionAccessObject(sctx, tbl, pi, &p.PartitionInfo)
+	return str.String()
 }
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalIndexMergeReader) ExplainInfo() string {
 	return ""
-}
-
-func (p *PhysicalIndexMergeReader) accessObject(sctx sessionctx.Context) string {
-	ts := p.TablePlans[0].(*PhysicalTableScan)
-	pi := ts.Table.GetPartitionInfo()
-	if pi == nil || !sctx.GetSessionVars().UseDynamicPartitionPrune() {
-		return ""
-	}
-
-	is := sctx.GetInfoSchema().(infoschema.InfoSchema)
-	tmp, ok := is.TableByID(ts.Table.ID)
-	if !ok {
-		return "partition table not found" + strconv.FormatInt(ts.Table.ID, 10)
-	}
-	tbl := tmp.(table.PartitionedTable)
-
-	return partitionAccessObject(sctx, tbl, pi, &p.PartitionInfo)
 }
 
 // ExplainInfo implements Plan interface.
@@ -434,7 +298,11 @@ func (p *PhysicalUnionScan) ExplainInfo() string {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalSelection) ExplainInfo() string {
-	return string(expression.SortedExplainExpressionList(p.Conditions))
+	exprStr := string(expression.SortedExplainExpressionList(p.Conditions))
+	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
+		exprStr += fmt.Sprintf(", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount)
+	}
+	return exprStr
 }
 
 // ExplainNormalizedInfo implements Plan interface.
@@ -444,7 +312,11 @@ func (p *PhysicalSelection) ExplainNormalizedInfo() string {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalProjection) ExplainInfo() string {
-	return expression.ExplainExpressionList(p.Exprs, p.schema)
+	exprStr := expression.ExplainExpressionList(p.Exprs, p.schema)
+	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
+		exprStr += fmt.Sprintf(", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount)
+	}
+	return exprStr
 }
 
 // ExplainNormalizedInfo implements Plan interface.
@@ -454,18 +326,30 @@ func (p *PhysicalProjection) ExplainNormalizedInfo() string {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalTableDual) ExplainInfo() string {
-	return fmt.Sprintf("rows:%v", p.RowCount)
+	var str strings.Builder
+	str.WriteString("rows:")
+	str.WriteString(strconv.Itoa(p.RowCount))
+	return str.String()
 }
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalSort) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
-	return explainByItems(buffer, p.ByItems).String()
+	buffer = explainByItems(buffer, p.ByItems)
+	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
+		buffer.WriteString(fmt.Sprintf(", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount))
+	}
+	return buffer.String()
 }
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalLimit) ExplainInfo() string {
-	return fmt.Sprintf("offset:%v, count:%v", p.Offset, p.Count)
+	var str strings.Builder
+	str.WriteString("offset:")
+	str.WriteString(strconv.FormatUint(p.Offset, 10))
+	str.WriteString(", count:")
+	str.WriteString(strconv.FormatUint(p.Count, 10))
+	return str.String()
 }
 
 // ExplainInfo implements Plan interface.
@@ -481,8 +365,9 @@ func (p *basePhysicalAgg) explainInfo(normalized bool) string {
 
 	builder := &strings.Builder{}
 	if len(p.GroupByItems) > 0 {
-		fmt.Fprintf(builder, "group by:%s, ",
-			sortedExplainExpressionList(p.GroupByItems))
+		builder.WriteString("group by:")
+		builder.Write(sortedExplainExpressionList(p.GroupByItems))
+		builder.WriteString(", ")
 	}
 	for i := 0; i < len(p.AggFuncs); i++ {
 		builder.WriteString("funcs:")
@@ -492,7 +377,9 @@ func (p *basePhysicalAgg) explainInfo(normalized bool) string {
 		} else {
 			colName = p.schema.Columns[i].ExplainInfo()
 		}
-		fmt.Fprintf(builder, "%v->%v", aggregation.ExplainAggFunc(p.AggFuncs[i], normalized), colName)
+		builder.WriteString(aggregation.ExplainAggFunc(p.AggFuncs[i], normalized))
+		builder.WriteString("->")
+		builder.WriteString(colName)
 		if i+1 < len(p.AggFuncs) {
 			builder.WriteString(", ")
 		}
@@ -522,18 +409,19 @@ func (p *PhysicalIndexJoin) explainInfo(normalized bool, isIndexMergeJoin bool) 
 	}
 
 	buffer := bytes.NewBufferString(p.JoinType.String())
+	buffer.WriteString(", inner:")
 	if normalized {
-		fmt.Fprintf(buffer, ", inner:%s", p.Children()[p.InnerChildIdx].TP())
+		buffer.WriteString(p.Children()[p.InnerChildIdx].TP())
 	} else {
-		fmt.Fprintf(buffer, ", inner:%s", p.Children()[p.InnerChildIdx].ExplainID())
+		buffer.WriteString(p.Children()[p.InnerChildIdx].ExplainID().String())
 	}
 	if len(p.OuterJoinKeys) > 0 {
-		fmt.Fprintf(buffer, ", outer key:%s",
-			expression.ExplainColumnList(p.OuterJoinKeys))
+		buffer.WriteString(", outer key:")
+		buffer.Write(expression.ExplainColumnList(p.OuterJoinKeys))
 	}
 	if len(p.InnerJoinKeys) > 0 {
-		fmt.Fprintf(buffer, ", inner key:%s",
-			expression.ExplainColumnList(p.InnerJoinKeys))
+		buffer.WriteString(", inner key:")
+		buffer.Write(expression.ExplainColumnList(p.InnerJoinKeys))
 	}
 
 	if len(p.OuterHashKeys) > 0 && !isIndexMergeJoin {
@@ -544,20 +432,20 @@ func (p *PhysicalIndexJoin) explainInfo(normalized bool, isIndexMergeJoin bool) 
 			}
 			exprs = append(exprs, expr)
 		}
-		fmt.Fprintf(buffer, ", equal cond:%s",
-			sortedExplainExpressionList(exprs))
+		buffer.WriteString(", equal cond:")
+		buffer.Write(sortedExplainExpressionList(exprs))
 	}
 	if len(p.LeftConditions) > 0 {
-		fmt.Fprintf(buffer, ", left cond:%s",
-			sortedExplainExpressionList(p.LeftConditions))
+		buffer.WriteString(", left cond:")
+		buffer.Write(sortedExplainExpressionList(p.LeftConditions))
 	}
 	if len(p.RightConditions) > 0 {
-		fmt.Fprintf(buffer, ", right cond:%s",
-			sortedExplainExpressionList(p.RightConditions))
+		buffer.WriteString(", right cond:")
+		buffer.Write(sortedExplainExpressionList(p.RightConditions))
 	}
 	if len(p.OtherConditions) > 0 {
-		fmt.Fprintf(buffer, ", other cond:%s",
-			sortedExplainExpressionList(p.OtherConditions))
+		buffer.WriteString(", other cond:")
+		buffer.Write(sortedExplainExpressionList(p.OtherConditions))
 	}
 	return buffer.String()
 }
@@ -588,35 +476,70 @@ func (p *PhysicalHashJoin) explainInfo(normalized bool) string {
 		sortedExplainExpressionList = expression.SortedExplainNormalizedExpressionList
 	}
 
-	buffer := new(bytes.Buffer)
+	buffer := new(strings.Builder)
 
 	if len(p.EqualConditions) == 0 {
-		buffer.WriteString("CARTESIAN ")
+		if len(p.NAEqualConditions) == 0 {
+			buffer.WriteString("CARTESIAN ")
+		} else {
+			buffer.WriteString("Null-aware ")
+		}
 	}
 
 	buffer.WriteString(p.JoinType.String())
 
 	if len(p.EqualConditions) > 0 {
 		if normalized {
-			fmt.Fprintf(buffer, ", equal:%s", expression.SortedExplainNormalizedScalarFuncList(p.EqualConditions))
+			buffer.WriteString(", equal:")
+			buffer.Write(expression.SortedExplainNormalizedScalarFuncList(p.EqualConditions))
 		} else {
-			fmt.Fprintf(buffer, ", equal:%v", p.EqualConditions)
+			buffer.WriteString(", equal:[")
+			for i, EqualConditions := range p.EqualConditions {
+				if i != 0 {
+					buffer.WriteString(" ")
+				}
+				buffer.WriteString(EqualConditions.String())
+			}
+			buffer.WriteString("]")
+		}
+	}
+	if len(p.NAEqualConditions) > 0 {
+		if normalized {
+			buffer.WriteString(", equal:")
+			buffer.Write(expression.SortedExplainNormalizedScalarFuncList(p.NAEqualConditions))
+		} else {
+			buffer.WriteString(", equal:[")
+			for i, NAEqualCondition := range p.NAEqualConditions {
+				if i != 0 {
+					buffer.WriteString(" ")
+				}
+				buffer.WriteString(NAEqualCondition.String())
+			}
+			buffer.WriteString("]")
 		}
 	}
 	if len(p.LeftConditions) > 0 {
 		if normalized {
-			fmt.Fprintf(buffer, ", left cond:%s", expression.SortedExplainNormalizedExpressionList(p.LeftConditions))
+			buffer.WriteString(", left cond:")
+			buffer.Write(expression.SortedExplainNormalizedExpressionList(p.LeftConditions))
 		} else {
-			fmt.Fprintf(buffer, ", left cond:%s", p.LeftConditions)
+			buffer.WriteString(", left cond:[")
+			for i, LeftConditions := range p.LeftConditions {
+				if i != 0 {
+					buffer.WriteString(" ")
+				}
+				buffer.WriteString(LeftConditions.String())
+			}
+			buffer.WriteString("]")
 		}
 	}
 	if len(p.RightConditions) > 0 {
-		fmt.Fprintf(buffer, ", right cond:%s",
-			sortedExplainExpressionList(p.RightConditions))
+		buffer.WriteString(", right cond:")
+		buffer.Write(sortedExplainExpressionList(p.RightConditions))
 	}
 	if len(p.OtherConditions) > 0 {
-		fmt.Fprintf(buffer, ", other cond:%s",
-			sortedExplainExpressionList(p.OtherConditions))
+		buffer.WriteString(", other cond:")
+		buffer.Write(sortedExplainExpressionList(p.OtherConditions))
 	}
 	return buffer.String()
 }
@@ -755,6 +678,9 @@ func (p *PhysicalWindow) ExplainInfo() string {
 		p.formatFrameBound(buffer, p.Frame.End)
 	}
 	buffer.WriteString(")")
+	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
+		buffer.WriteString(fmt.Sprintf(", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount))
+	}
 	return buffer.String()
 }
 
@@ -838,7 +764,10 @@ func (p *LogicalApply) ExplainInfo() string {
 
 // ExplainInfo implements Plan interface.
 func (p *LogicalTableDual) ExplainInfo() string {
-	return fmt.Sprintf("rowcount:%d", p.RowCount)
+	var str strings.Builder
+	str.WriteString("rowcount:")
+	str.WriteString(strconv.Itoa(p.RowCount))
+	return str.String()
 }
 
 // ExplainInfo implements Plan interface.
@@ -868,7 +797,7 @@ func (p *PhysicalExchangeSender) ExplainInfo() string {
 		fmt.Fprintf(buffer, "Broadcast")
 	case tipb.ExchangeType_Hash:
 		fmt.Fprintf(buffer, "HashPartition")
-		fmt.Fprintf(buffer, ", Hash Cols: %s", expression.ExplainColumnList(p.HashCols))
+		fmt.Fprintf(buffer, ", Hash Cols: %s", property.ExplainColumnList(p.HashCols))
 	}
 	if len(p.Tasks) > 0 {
 		fmt.Fprintf(buffer, ", tasks: [")
@@ -880,7 +809,18 @@ func (p *PhysicalExchangeSender) ExplainInfo() string {
 		}
 		fmt.Fprintf(buffer, "]")
 	}
+	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
+		buffer.WriteString(fmt.Sprintf(", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount))
+	}
 	return buffer.String()
+}
+
+// ExplainInfo implements Plan interface.
+func (p *PhysicalExchangeReceiver) ExplainInfo() (res string) {
+	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
+		res = fmt.Sprintf("stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount)
+	}
+	return res
 }
 
 // ExplainInfo implements Plan interface.
@@ -938,7 +878,12 @@ func (p *LogicalTopN) ExplainInfo() string {
 
 // ExplainInfo implements Plan interface.
 func (p *LogicalLimit) ExplainInfo() string {
-	return fmt.Sprintf("offset:%v, count:%v", p.Offset, p.Count)
+	var str strings.Builder
+	str.WriteString("offset:")
+	str.WriteString(strconv.FormatUint(p.Offset, 10))
+	str.WriteString(", count:")
+	str.WriteString(strconv.FormatUint(p.Count, 10))
+	return str.String()
 }
 
 // ExplainInfo implements Plan interface.
@@ -990,16 +935,11 @@ const MetricTableTimeFormat = "2006-01-02 15:04:05.999"
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalMemTable) ExplainInfo() string {
-	accessObject, operatorInfo := p.AccessObject(false), p.OperatorInfo(false)
+	accessObject, operatorInfo := p.AccessObject().String(), p.OperatorInfo(false)
 	if len(operatorInfo) == 0 {
 		return accessObject
 	}
 	return accessObject + ", " + operatorInfo
-}
-
-// AccessObject implements dataAccesser interface.
-func (p *PhysicalMemTable) AccessObject(_ bool) string {
-	return "table:" + p.Table.Name.O
 }
 
 // OperatorInfo implements dataAccesser interface.

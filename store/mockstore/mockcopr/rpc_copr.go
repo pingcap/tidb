@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -40,6 +41,10 @@ func NewCoprRPCHandler() testutils.CoprRPCHandler {
 		streamTimeout: ch,
 		done:          done,
 	}
+}
+
+func (mc *coprRPCHandler) HandleCopStream(ctx context.Context, reqCtx *kvrpcpb.Context, session *testutils.RPCSession, r *coprocessor.Request, timeout time.Duration) (*tikvrpc.CopStreamResponse, error) {
+	panic("CopStream API is deprecated")
 }
 
 func (mc *coprRPCHandler) HandleCmdCop(reqCtx *kvrpcpb.Context, session *testutils.RPCSession, r *coprocessor.Request) *coprocessor.Response {
@@ -86,37 +91,6 @@ func (mc *coprRPCHandler) HandleBatchCop(ctx context.Context, reqCtx *kvrpcpb.Co
 	}
 	batchResp.BatchResponse = first
 	return batchResp, nil
-}
-
-func (mc *coprRPCHandler) HandleCopStream(ctx context.Context, reqCtx *kvrpcpb.Context, session *testutils.RPCSession, r *coprocessor.Request, timeout time.Duration) (*tikvrpc.CopStreamResponse, error) {
-	if err := session.CheckRequestContext(reqCtx); err != nil {
-		return &tikvrpc.CopStreamResponse{
-			Tikv_CoprocessorStreamClient: &mockCopStreamErrClient{Error: err},
-			Response: &coprocessor.Response{
-				RegionError: err,
-			},
-		}, nil
-	}
-	ctx1, cancel := context.WithCancel(ctx)
-	copStream, err := coprHandler{session}.handleCopStream(ctx1, r)
-	if err != nil {
-		cancel()
-		return nil, errors.Trace(err)
-	}
-
-	streamResp := &tikvrpc.CopStreamResponse{
-		Tikv_CoprocessorStreamClient: copStream,
-	}
-	streamResp.Lease.Cancel = cancel
-	streamResp.Timeout = timeout
-	mc.streamTimeout <- &streamResp.Lease
-
-	first, err := streamResp.Recv()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	streamResp.Response = first
-	return streamResp, nil
 }
 
 func (mc *coprRPCHandler) Close() {

@@ -222,6 +222,14 @@
           "TableReader 10000.00 root partition:p0,p1 data:TableFullScan",
           "└─TableFullScan 10000.00 cop[tikv] table:t9 keep order:false, stats:pseudo"
         ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t10 where a between 0 AND 15218001646226433652",
+        "Result": [
+          "TableReader 250.00 root partition:all data:Selection",
+          "└─Selection 250.00 cop[tikv]  ge(test_partition.t10.a, 0), le(test_partition.t10.a, 15218001646226433652)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t10 keep order:false, stats:pseudo"
+        ]
       }
     ]
   },
@@ -278,7 +286,7 @@
           "6 6 6"
         ],
         "Plan": [
-          "TableReader 0.01 root partition:p1 data:Selection",
+          "TableReader 0.01 root partition:all data:Selection",
           "└─Selection 0.01 cop[tikv]  or(and(eq(test_partition.t2.id, 6), and(eq(test_partition.t2.a, 6), eq(test_partition.t2.b, 6))), and(isnull(test_partition.t2.a), eq(test_partition.t2.b, 6)))",
           "  └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ]
@@ -309,7 +317,7 @@
           "6 6 6"
         ],
         "Plan": [
-          "TableReader 0.01 root partition:p1 data:Selection",
+          "TableReader 0.01 root partition:all data:Selection",
           "└─Selection 0.01 cop[tikv]  or(and(eq(test_partition.t2.id, 6), and(eq(test_partition.t2.a, 6), eq(test_partition.t2.b, 6))), and(isnull(test_partition.t2.a), eq(test_partition.t2.b, 6)))",
           "  └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ]
@@ -342,7 +350,7 @@
           "<nil> <nil> <nil>"
         ],
         "Plan": [
-          "TableReader 0.01 root partition:p0,p1 data:Selection",
+          "TableReader 0.01 root partition:all data:Selection",
           "└─Selection 0.01 cop[tikv]  or(and(eq(test_partition.t2.id, 1), and(eq(test_partition.t2.a, 1), eq(test_partition.t2.b, 1))), and(isnull(test_partition.t2.a), isnull(test_partition.t2.b)))",
           "  └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ]
@@ -409,7 +417,7 @@
           "<nil> <nil> <nil>"
         ],
         "Plan": [
-          "TableReader 0.01 root partition:p1 data:Selection",
+          "TableReader 0.01 root partition:all data:Selection",
           "└─Selection 0.01 cop[tikv]  isnull(test_partition.t2.a), isnull(test_partition.t2.b)",
           "  └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ]
@@ -1477,10 +1485,10 @@
         "SQL": "select * from t1 where a in (1,6) and (a=3 and b =3)",
         "Result": null,
         "Plan": [
-          "TableDual 8000.00 root  rows:0"
+          "TableDual 0.00 root  rows:0"
         ],
         "IndexPlan": [
-          "TableDual 8000.00 root  rows:0"
+          "TableDual 0.00 root  rows:0"
         ]
       },
       {
@@ -1638,7 +1646,7 @@
         ],
         "IndexPlan": [
           "Sort 199.80 root  test_partition_1.t1.a",
-          "└─IndexJoin 199.80 root  inner join, inner:IndexReader, outer key:test_partition_1.t2.b, inner key:test_partition_1.t1.a, equal cond:eq(test_partition_1.t2.b, test_partition_1.t1.a)",
+          "└─IndexHashJoin 199.80 root  inner join, inner:IndexReader, outer key:test_partition_1.t2.b, inner key:test_partition_1.t1.a, equal cond:eq(test_partition_1.t2.b, test_partition_1.t1.a)",
           "  ├─HashAgg(Build) 159.84 root  group by:test_partition_1.t2.b, funcs:firstrow(test_partition_1.t2.b)->test_partition_1.t2.b",
           "  │ └─IndexReader 159.84 root partition:p0 index:HashAgg",
           "  │   └─HashAgg 159.84 cop[tikv]  group by:test_partition_1.t2.b, ",
@@ -1668,7 +1676,7 @@
         ],
         "IndexPlan": [
           "Sort 199.80 root  test_partition_1.t1.a",
-          "└─IndexJoin 199.80 root  inner join, inner:IndexReader, outer key:test_partition_1.t1.b, inner key:test_partition_1.t1.a, equal cond:eq(test_partition_1.t1.b, test_partition_1.t1.a)",
+          "└─IndexHashJoin 199.80 root  inner join, inner:IndexReader, outer key:test_partition_1.t1.b, inner key:test_partition_1.t1.a, equal cond:eq(test_partition_1.t1.b, test_partition_1.t1.a)",
           "  ├─HashAgg(Build) 159.84 root  group by:test_partition_1.t1.b, funcs:firstrow(test_partition_1.t1.b)->test_partition_1.t1.b",
           "  │ └─IndexReader 159.84 root partition:p0 index:HashAgg",
           "  │   └─HashAgg 159.84 cop[tikv]  group by:test_partition_1.t1.b, ",
@@ -2480,10 +2488,10 @@
         "SQL": "select * from t1 where a in (1,6) and (a=3 and b =3)",
         "Result": null,
         "Plan": [
-          "TableDual 8000.00 root  rows:0"
+          "TableDual 0.00 root  rows:0"
         ],
         "IndexPlan": [
-          "TableDual 8000.00 root  rows:0"
+          "TableDual 0.00 root  rows:0"
         ]
       },
       {
@@ -2835,15 +2843,17 @@
       {
         "SQL": "explain format = 'brief' select * from t where a = 1",
         "Result": [
-          "TableReader 10000.00 root  data:TableFullScan",
-          "└─TableFullScan 10000.00 cop[tikv] table:t, partition:p1 keep order:false, stats:pseudo"
+          "TableReader 10.00 root  data:Selection",
+          "└─Selection 10.00 cop[tikv]  eq(test_partition.t.a, 1)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t, partition:p1 keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a = 2",
         "Result": [
-          "TableReader 10000.00 root  data:TableFullScan",
-          "└─TableFullScan 10000.00 cop[tikv] table:t, partition:p2 keep order:false, stats:pseudo"
+          "TableReader 10.00 root  data:Selection",
+          "└─Selection 10.00 cop[tikv]  eq(test_partition.t.a, 2)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t, partition:p2 keep order:false, stats:pseudo"
         ]
       },
       {
@@ -2875,24 +2885,25 @@
         "Result": [
           "PartitionUnion 32000.00 root  ",
           "├─TableReader 8000.00 root  data:Selection",
-          "│ └─Selection 8000.00 cop[tikv]  eq(cast(test_partition.t.a, decimal(20,0) BINARY), 1.5)",
+          "│ └─Selection 8000.00 cop[tikv]  eq(cast(test_partition.t.a, decimal(10,0) BINARY), 1.5)",
           "│   └─TableFullScan 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
           "├─TableReader 8000.00 root  data:Selection",
-          "│ └─Selection 8000.00 cop[tikv]  eq(cast(test_partition.t.a, decimal(20,0) BINARY), 1.5)",
+          "│ └─Selection 8000.00 cop[tikv]  eq(cast(test_partition.t.a, decimal(10,0) BINARY), 1.5)",
           "│   └─TableFullScan 10000.00 cop[tikv] table:t, partition:p1 keep order:false, stats:pseudo",
           "├─TableReader 8000.00 root  data:Selection",
-          "│ └─Selection 8000.00 cop[tikv]  eq(cast(test_partition.t.a, decimal(20,0) BINARY), 1.5)",
+          "│ └─Selection 8000.00 cop[tikv]  eq(cast(test_partition.t.a, decimal(10,0) BINARY), 1.5)",
           "│   └─TableFullScan 10000.00 cop[tikv] table:t, partition:p2 keep order:false, stats:pseudo",
           "└─TableReader 8000.00 root  data:Selection",
-          "  └─Selection 8000.00 cop[tikv]  eq(cast(test_partition.t.a, decimal(20,0) BINARY), 1.5)",
+          "  └─Selection 8000.00 cop[tikv]  eq(cast(test_partition.t.a, decimal(10,0) BINARY), 1.5)",
           "    └─TableFullScan 10000.00 cop[tikv] table:t, partition:p_max keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a in (2)",
         "Result": [
-          "TableReader 10000.00 root  data:TableFullScan",
-          "└─TableFullScan 10000.00 cop[tikv] table:t, partition:p2 keep order:false, stats:pseudo"
+          "TableReader 10.00 root  data:Selection",
+          "└─Selection 10.00 cop[tikv]  eq(test_partition.t.a, 2)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t, partition:p2 keep order:false, stats:pseudo"
         ]
       }
     ]

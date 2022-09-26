@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -51,7 +52,7 @@ type MPPGather struct {
 }
 
 func (e *MPPGather) appendMPPDispatchReq(pf *plannercore.Fragment) error {
-	dagReq, _, err := constructDAGReq(e.ctx, []plannercore.PhysicalPlan{pf.ExchangeSender}, kv.TiFlash)
+	dagReq, err := constructDAGReq(e.ctx, []plannercore.PhysicalPlan{pf.ExchangeSender}, kv.TiFlash)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -64,7 +65,11 @@ func (e *MPPGather) appendMPPDispatchReq(pf *plannercore.Fragment) error {
 		dagReq.EncodeType = tipb.EncodeType_TypeChunk
 	}
 	for _, mppTask := range pf.ExchangeSender.Tasks {
-		err := updateExecutorTableID(context.Background(), dagReq.RootExecutor, mppTask.TableID, true)
+		if mppTask.PartitionTableIDs != nil {
+			err = updateExecutorTableID(context.Background(), dagReq.RootExecutor, true, mppTask.PartitionTableIDs)
+		} else {
+			err = updateExecutorTableID(context.Background(), dagReq.RootExecutor, true, []int64{mppTask.TableID})
+		}
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -72,7 +77,9 @@ func (e *MPPGather) appendMPPDispatchReq(pf *plannercore.Fragment) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		logutil.BgLogger().Info("Dispatch mpp task", zap.Uint64("timestamp", mppTask.StartTs), zap.Int64("ID", mppTask.ID), zap.String("address", mppTask.Meta.GetAddress()), zap.String("plan", plannercore.ToString(pf.ExchangeSender)))
+		logutil.BgLogger().Info("Dispatch mpp task", zap.Uint64("timestamp", mppTask.StartTs),
+			zap.Int64("ID", mppTask.ID), zap.String("address", mppTask.Meta.GetAddress()),
+			zap.String("plan", plannercore.ToString(pf.ExchangeSender)))
 		req := &kv.MPPDispatchRequest{
 			Data:      pbData,
 			Meta:      mppTask.Meta,
@@ -117,7 +124,7 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 			failpoint.Return(errors.Errorf("The number of tasks is not right, expect %d tasks but actually there are %d tasks", val.(int), len(e.mppReqs)))
 		}
 	})
-	e.respIter, err = distsql.DispatchMPPTasks(ctx, e.ctx, e.mppReqs, e.retFieldTypes, planIDs, e.id)
+	e.respIter, err = distsql.DispatchMPPTasks(ctx, e.ctx, e.mppReqs, e.retFieldTypes, planIDs, e.id, e.startTS)
 	if err != nil {
 		return errors.Trace(err)
 	}

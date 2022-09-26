@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -27,7 +28,8 @@ const (
 
 // ntile divides the partition into n ranked groups and returns the group number a row belongs to.
 // e.g. We have 11 rows and n = 3. They will be divided into 3 groups.
-//      First 4 rows belongs to group 1. Following 4 rows belongs to group 2. The last 3 rows belongs to group 3.
+//
+//	First 4 rows belongs to group 1. Following 4 rows belongs to group 2. The last 3 rows belongs to group 3.
 type ntile struct {
 	n uint64
 	baseAggFunc

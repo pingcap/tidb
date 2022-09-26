@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,28 +16,37 @@ package util
 
 import (
 	"context"
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/ed25519"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/pem"
 	"fmt"
+	"math/big"
 	"net"
 	"net/http"
 	"os"
-	"runtime"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
+	tlsutil "github.com/pingcap/tidb/util/tls"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -66,19 +76,11 @@ func RunWithRetry(retryCnt int, backoff uint64, f func() (bool, error)) (err err
 	return errors.Trace(err)
 }
 
-// GetStack gets the stacktrace.
-func GetStack() []byte {
-	const size = 4096
-	buf := make([]byte, size)
-	stackSize := runtime.Stack(buf, false)
-	buf = buf[:stackSize]
-	return buf
-}
-
 // WithRecovery wraps goroutine startup call with force recovery.
 // it will dump current goroutine stack into log if catch any recover result.
-//   exec:      execute logic function.
-//   recoverFn: handler will be called after recover and before dump stack, passing `nil` means noop.
+//
+//	exec:      execute logic function.
+//	recoverFn: handler will be called after recover and before dump stack, passing `nil` means noop.
 func WithRecovery(exec func(), recoverFn func(r interface{})) {
 	defer func() {
 		r := recover()
@@ -96,11 +98,13 @@ func WithRecovery(exec func(), recoverFn func(r interface{})) {
 
 // Recover includes operations such as recovering, clearing，and printing information.
 // It will dump current goroutine stack into log if catch any recover result.
-//   metricsLabel: The label of PanicCounter metrics.
-//   funcInfo:     Some information for the panic function.
-//   recoverFn:    Handler will be called after recover and before dump stack, passing `nil` means noop.
-//   quit:         If this value is true, the current program exits after recovery.
+//
+//	metricsLabel: The label of PanicCounter metrics.
+//	funcInfo:     Some information for the panic function.
+//	recoverFn:    Handler will be called after recover and before dump stack, passing `nil` means noop.
+//	quit:         If this value is true, the current program exits after recovery.
 func Recover(metricsLabel, funcInfo string, recoverFn func(), quit bool) {
+	//nolint: revive
 	r := recover()
 	if r == nil {
 		return
@@ -113,7 +117,7 @@ func Recover(metricsLabel, funcInfo string, recoverFn func(), quit bool) {
 		zap.String("label", metricsLabel),
 		zap.String("funcInfo", funcInfo),
 		zap.Reflect("r", r),
-		zap.String("stack", string(GetStack())))
+		zap.Stack("stack"))
 	metrics.PanicCounter.WithLabelValues(metricsLabel).Inc()
 	if quit {
 		// Wait for metrics to be pushed.
@@ -160,6 +164,16 @@ func SyntaxWarn(err error) error {
 	if err == nil {
 		return nil
 	}
+	logutil.BgLogger().Debug("syntax error", zap.Error(err))
+
+	// If the warn is already a terror with stack, pass it through.
+	if errors.HasStack(err) {
+		cause := errors.Cause(err)
+		if _, ok := cause.(*terror.Error); ok {
+			return err
+		}
+	}
+
 	return parser.ErrParse.GenWithStackByArgs(syntaxErrorPrefix, err.Error())
 }
 
@@ -263,8 +277,9 @@ func MockPkixAttribute(name, value string) pkix.AttributeTypeAndValue {
 	if !exists {
 		panic(fmt.Sprintf("unsupport mock type: %s", name))
 	}
-	var vs []int
-	for _, v := range strings.Split(n, ".") {
+	split := strings.Split(n, ".")
+	vs := make([]int, 0, len(split))
+	for _, v := range split {
 		i, err := strconv.Atoi(v)
 		if err != nil {
 			panic(err)
@@ -385,7 +400,7 @@ func ColumnsToProto(columns []*model.ColumnInfo, pkIsHandle bool) []*tipb.Column
 		col := ColumnToProto(c)
 		// TODO: Here `PkHandle`'s meaning is changed, we will change it to `IsHandle` when tikv's old select logic
 		// is abandoned.
-		if (pkIsHandle && mysql.HasPriKeyFlag(c.Flag)) || c.ID == model.ExtraHandleID {
+		if (pkIsHandle && mysql.HasPriKeyFlag(c.GetFlag())) || c.ID == model.ExtraHandleID {
 			col.PkHandle = true
 		} else {
 			col.PkHandle = false
@@ -399,13 +414,13 @@ func ColumnsToProto(columns []*model.ColumnInfo, pkIsHandle bool) []*tipb.Column
 func ColumnToProto(c *model.ColumnInfo) *tipb.ColumnInfo {
 	pc := &tipb.ColumnInfo{
 		ColumnId:  c.ID,
-		Collation: collate.RewriteNewCollationIDIfNeeded(int32(mysql.CollationNames[c.FieldType.Collate])),
-		ColumnLen: int32(c.FieldType.Flen),
-		Decimal:   int32(c.FieldType.Decimal),
-		Flag:      int32(c.Flag),
-		Elems:     c.Elems,
+		Collation: collate.RewriteNewCollationIDIfNeeded(int32(mysql.CollationNames[c.GetCollate()])),
+		ColumnLen: int32(c.GetFlen()),
+		Decimal:   int32(c.GetDecimal()),
+		Flag:      int32(c.GetFlag()),
+		Elems:     c.GetElems(),
 	}
-	pc.Tp = int32(c.FieldType.Tp)
+	pc.Tp = int32(c.GetType())
 	return pc
 }
 
@@ -418,11 +433,8 @@ func init() {
 	}
 }
 
-// SequenceSchema is implemented by infoSchema and used by sequence function in expression package.
-// Otherwise calling information schema will cause import cycle problem.
-type SequenceSchema interface {
-	SequenceByName(schema, sequence model.CIStr) (SequenceTable, error)
-}
+// GetSequenceByName could be used in expression package without import cycle problem.
+var GetSequenceByName func(is interface{}, schema, sequence model.CIStr) (SequenceTable, error)
 
 // SequenceTable is implemented by tableCommon,
 // and it is specialised in handling sequence operation.
@@ -434,9 +446,22 @@ type SequenceTable interface {
 }
 
 // LoadTLSCertificates loads CA/KEY/CERT for special paths.
-func LoadTLSCertificates(ca, key, cert string) (tlsConfig *tls.Config, err error) {
+func LoadTLSCertificates(ca, key, cert string, autoTLS bool, rsaKeySize int) (tlsConfig *tls.Config, autoReload bool, err error) {
+	autoReload = false
 	if len(cert) == 0 || len(key) == 0 {
-		return
+		if !autoTLS {
+			logutil.BgLogger().Warn("Automatic TLS Certificate creation is disabled", zap.Error(err))
+			return
+		}
+		autoReload = true
+		tempStoragePath := config.GetGlobalConfig().TempStoragePath
+		cert = filepath.Join(tempStoragePath, "/cert.pem")
+		key = filepath.Join(tempStoragePath, "/key.pem")
+		err = createTLSCertificates(cert, key, rsaKeySize)
+		if err != nil {
+			logutil.BgLogger().Warn("TLS Certificate creation failed", zap.Error(err))
+			return
+		}
 	}
 
 	var tlsCert tls.Certificate
@@ -447,7 +472,30 @@ func LoadTLSCertificates(ca, key, cert string) (tlsConfig *tls.Config, err error
 		return
 	}
 
-	requireTLS := config.GetGlobalConfig().Security.RequireSecureTransport
+	requireTLS := tlsutil.RequireSecureTransport.Load()
+
+	var minTLSVersion uint16 = tls.VersionTLS11
+	switch tlsver := config.GetGlobalConfig().Security.MinTLSVersion; tlsver {
+	case "TLSv1.0":
+		minTLSVersion = tls.VersionTLS10
+	case "TLSv1.1":
+		minTLSVersion = tls.VersionTLS11
+	case "TLSv1.2":
+		minTLSVersion = tls.VersionTLS12
+	case "TLSv1.3":
+		minTLSVersion = tls.VersionTLS13
+	case "":
+	default:
+		logutil.BgLogger().Warn(
+			"Invalid TLS version, using default instead",
+			zap.String("tls-version", tlsver),
+		)
+	}
+	if minTLSVersion < tls.VersionTLS12 {
+		logutil.BgLogger().Warn(
+			"Minimum TLS version allows pre-TLSv1.2 protocols, this is not recommended",
+		)
+	}
 
 	// Try loading CA cert.
 	clientAuthPolicy := tls.NoClientCert
@@ -472,10 +520,28 @@ func LoadTLSCertificates(ca, key, cert string) (tlsConfig *tls.Config, err error
 			}
 		}
 	}
+
+	// This excludes ciphers listed in tls.InsecureCipherSuites() and can be used to filter out more
+	var cipherSuites []uint16
+	var cipherNames []string
+	for _, sc := range tls.CipherSuites() {
+		switch sc.ID {
+		case tls.TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA, tls.TLS_RSA_WITH_3DES_EDE_CBC_SHA:
+			logutil.BgLogger().Info("Disabling weak cipherSuite", zap.String("cipherSuite", sc.Name))
+		default:
+			cipherNames = append(cipherNames, sc.Name)
+			cipherSuites = append(cipherSuites, sc.ID)
+		}
+	}
+	logutil.BgLogger().Info("Enabled ciphersuites", zap.Strings("cipherNames", cipherNames))
+
+	/* #nosec G402 */
 	tlsConfig = &tls.Config{
 		Certificates: []tls.Certificate{tlsCert},
 		ClientCAs:    certPool,
 		ClientAuth:   clientAuthPolicy,
+		MinVersion:   minTLSVersion,
+		CipherSuites: cipherSuites,
 	}
 	return
 }
@@ -524,6 +590,14 @@ func initInternalClient() {
 	}
 }
 
+// ComposeURL adds HTTP schema if missing and concats address with path
+func ComposeURL(address, path string) string {
+	if strings.HasPrefix(address, "http://") || strings.HasPrefix(address, "https://") {
+		return fmt.Sprintf("%s%s", address, path)
+	}
+	return fmt.Sprintf("%s://%s%s", InternalHTTPSchema(), address, path)
+}
+
 // GetLocalIP will return a local IP(non-loopback, non 0.0.0.0), if there is one
 func GetLocalIP() string {
 	addrs, err := net.InterfaceAddrs()
@@ -545,4 +619,85 @@ func QueryStrForLog(query string) string {
 		return query[:size] + fmt.Sprintf("(len: %d)", len(query))
 	}
 	return query
+}
+
+// CreateCertificates creates and writes a cert based on the params.
+func CreateCertificates(certpath string, keypath string, rsaKeySize int, pubKeyAlgo x509.PublicKeyAlgorithm,
+	signAlgo x509.SignatureAlgorithm) error {
+	certValidity := 90 * 24 * time.Hour // 90 days
+	notBefore := time.Now()
+	notAfter := notBefore.Add(certValidity)
+	hostname, err := os.Hostname()
+	if err != nil {
+		return err
+	}
+
+	template := x509.Certificate{
+		Subject: pkix.Name{
+			CommonName: "TiDB_Server_Auto_Generated_Server_Certificate",
+		},
+		SerialNumber:       big.NewInt(1),
+		NotBefore:          notBefore,
+		NotAfter:           notAfter,
+		DNSNames:           []string{hostname},
+		SignatureAlgorithm: signAlgo,
+	}
+
+	var privKey crypto.Signer
+	switch pubKeyAlgo {
+	case x509.RSA:
+		privKey, err = rsa.GenerateKey(rand.Reader, rsaKeySize)
+	case x509.ECDSA:
+		privKey, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	case x509.Ed25519:
+		_, privKey, err = ed25519.GenerateKey(rand.Reader)
+	default:
+		return errors.Errorf("unknown public key algorithm: %s", pubKeyAlgo.String())
+	}
+	if err != nil {
+		return err
+	}
+	// DER: Distinguished Encoding Rules, this is the ASN.1 encoding rule of the certificate.
+	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, privKey.Public(), privKey)
+	if err != nil {
+		return err
+	}
+
+	certOut, err := os.Create(certpath)
+	if err != nil {
+		return err
+	}
+	if err := pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: derBytes}); err != nil {
+		return err
+	}
+	if err := certOut.Close(); err != nil {
+		return err
+	}
+
+	keyOut, err := os.OpenFile(keypath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		return err
+	}
+
+	privBytes, err := x509.MarshalPKCS8PrivateKey(privKey)
+	if err != nil {
+		return err
+	}
+
+	if err := pem.Encode(keyOut, &pem.Block{Type: "PRIVATE KEY", Bytes: privBytes}); err != nil {
+		return err
+	}
+
+	if err := keyOut.Close(); err != nil {
+		return err
+	}
+
+	logutil.BgLogger().Info("TLS Certificates created", zap.String("cert", certpath), zap.String("key", keypath),
+		zap.Duration("validity", certValidity), zap.Int("rsaKeySize", rsaKeySize))
+	return nil
+}
+
+func createTLSCertificates(certpath string, keypath string, rsaKeySize int) error {
+	// use RSA and unspecified signature algorithm
+	return CreateCertificates(certpath, keypath, rsaKeySize, x509.RSA, x509.UnknownSignatureAlgorithm)
 }

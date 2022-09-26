@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -21,6 +22,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util/channel"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
@@ -29,50 +31,53 @@ import (
 )
 
 // ShuffleExec is the executor to run other executors in a parallel manner.
+//
 //  1. It fetches chunks from M `DataSources` (value of M depends on the actual executor, e.g. M = 1 for WindowExec, M = 2 for MergeJoinExec).
+//
 //  2. It splits tuples from each `DataSource` into N partitions (Only "split by hash" is implemented so far).
+//
 //  3. It invokes N workers in parallel, each one has M `receiver` to receive partitions from `DataSources`
+//
 //  4. It assigns partitions received as input to each worker and executes child executors.
+//
 //  5. It collects outputs from each worker, then sends outputs to its parent.
 //
-//                                +-------------+
-//                        +-------| Main Thread |
-//                        |       +------+------+
-//                        |              ^
-//                        |              |
-//                        |              +
-//                        v             +++
-//                 outputHolderCh       | | outputCh (1 x Concurrency)
-//                        v             +++
-//                        |              ^
-//                        |              |
-//                        |      +-------+-------+
-//                        v      |               |
-//                 +--------------+             +--------------+
-//          +----- |    worker    |   .......   |    worker    |  worker (N Concurrency): child executor, eg. WindowExec (+SortExec)
-//          |      +------------+-+             +-+------------+
-//          |                 ^                 ^
-//          |                 |                 |
-//          |                +-+  +-+  ......  +-+
-//          |                | |  | |          | |
-//          |                ...  ...          ...  inputCh (Concurrency x 1)
-//          v                | |  | |          | |
-//    inputHolderCh          +++  +++          +++
-//          v                 ^    ^            ^
-//          |                 |    |            |
-//          |          +------o----+            |
-//          |          |      +-----------------+-----+
-//          |          |                              |
-//          |      +---+------------+------------+----+-----------+
-//          |      |              Partition Splitter              |
-//          |      +--------------+-+------------+-+--------------+
-//          |                             ^
-//          |                             |
-//          |             +---------------v-----------------+
-//          +---------->  |    fetch data from DataSource   |
-//                        +---------------------------------+
-//
-//
+//     +-------------+
+//     +-------| Main Thread |
+//     |       +------+------+
+//     |              ^
+//     |              |
+//     |              +
+//     v             +++
+//     outputHolderCh       | | outputCh (1 x Concurrency)
+//     v             +++
+//     |              ^
+//     |              |
+//     |      +-------+-------+
+//     v      |               |
+//     +--------------+             +--------------+
+//     +----- |    worker    |   .......   |    worker    |  worker (N Concurrency): child executor, eg. WindowExec (+SortExec)
+//     |      +------------+-+             +-+------------+
+//     |                 ^                 ^
+//     |                 |                 |
+//     |                +-+  +-+  ......  +-+
+//     |                | |  | |          | |
+//     |                ...  ...          ...  inputCh (Concurrency x 1)
+//     v                | |  | |          | |
+//     inputHolderCh          +++  +++          +++
+//     v                 ^    ^            ^
+//     |                 |    |            |
+//     |          +------o----+            |
+//     |          |      +-----------------+-----+
+//     |          |                              |
+//     |      +---+------------+------------+----+-----------+
+//     |      |              Partition Splitter              |
+//     |      +--------------+-+------------+-+--------------+
+//     |                             ^
+//     |                             |
+//     |             +---------------v-----------------+
+//     +---------->  |    fetch data from DataSource   |
+//     +---------------------------------+
 type ShuffleExec struct {
 	baseExecutor
 	concurrency int
@@ -101,7 +106,6 @@ func (e *ShuffleExec) Open(ctx context.Context) error {
 		if err := s.Open(ctx); err != nil {
 			return err
 		}
-
 	}
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
@@ -141,17 +145,28 @@ func (e *ShuffleExec) Close() error {
 	if !e.prepared {
 		for _, w := range e.workers {
 			for _, r := range w.receivers {
-				close(r.inputHolderCh)
-				close(r.inputCh)
+				if r.inputHolderCh != nil {
+					close(r.inputHolderCh)
+				}
+				if r.inputCh != nil {
+					close(r.inputCh)
+				}
 			}
-			close(w.outputHolderCh)
+			if w.outputHolderCh != nil {
+				close(w.outputHolderCh)
+			}
 		}
-		close(e.outputCh)
+		if e.outputCh != nil {
+			close(e.outputCh)
+		}
 	}
-	close(e.finishCh)
+	if e.finishCh != nil {
+		close(e.finishCh)
+	}
 	for _, w := range e.workers {
 		for _, r := range w.receivers {
-			for range r.inputCh {
+			if r.inputCh != nil {
+				channel.Clear(r.inputCh)
 			}
 		}
 		// close child executor of each worker
@@ -159,7 +174,8 @@ func (e *ShuffleExec) Close() error {
 			firstErr = err
 		}
 	}
-	for range e.outputCh { // workers exit before `e.outputCh` is closed.
+	if e.outputCh != nil {
+		channel.Clear(e.outputCh)
 	}
 	e.executed = false
 

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,10 +20,10 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -180,7 +181,12 @@ func (h coprHandler) handleAnalyzeColumnsReq(req *coprocessor.Request, analyzeRe
 	for i := range e.fields {
 		rf := new(ast.ResultField)
 		rf.Column = new(model.ColumnInfo)
-		rf.Column.FieldType = types.FieldType{Tp: mysql.TypeBlob, Flen: mysql.MaxBlobWidth, Charset: mysql.DefaultCharset, Collate: mysql.DefaultCollationName}
+		ft := types.FieldType{}
+		ft.SetType(mysql.TypeBlob)
+		ft.SetFlen(mysql.MaxBlobWidth)
+		ft.SetCharset(mysql.DefaultCharset)
+		ft.SetCollate(mysql.DefaultCollationName)
+		rf.Column.FieldType = ft
 		e.fields[i] = rf
 	}
 
@@ -197,7 +203,7 @@ func (h coprHandler) handleAnalyzeColumnsReq(req *coprocessor.Request, analyzeRe
 		ft := fieldTypeFromPBColumn(col)
 		fts[i] = ft
 		if ft.EvalType() == types.ETString {
-			collators[i] = collate.GetCollator(ft.Collate)
+			collators[i] = collate.GetCollator(ft.GetCollate())
 		}
 	}
 	colReq := analyzeReq.ColReq
@@ -272,7 +278,7 @@ func (e *analyzeColumnsExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
-func (e *analyzeColumnsExec) NewChunk() *chunk.Chunk {
+func (e *analyzeColumnsExec) NewChunk(_ chunk.Allocator) *chunk.Chunk {
 	fields := make([]*types.FieldType, 0, len(e.fields))
 	for _, field := range e.fields {
 		fields = append(fields, &field.Column.FieldType)

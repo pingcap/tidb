@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -113,17 +114,6 @@ func (s *FMSketch) InsertRowValue(sc *stmtctx.StatementContext, values []types.D
 	}
 	s.insertHashValue(s.hashFunc.Sum64())
 	return nil
-}
-
-func buildFMSketch(sc *stmtctx.StatementContext, values []types.Datum, maxSize int) (*FMSketch, int64, error) {
-	s := NewFMSketch(maxSize)
-	for _, value := range values {
-		err := s.InsertValue(sc, value)
-		if err != nil {
-			return nil, 0, errors.Trace(err)
-		}
-	}
-	return s, s.NDV(), nil
 }
 
 // MergeFMSketch merges two FM Sketch.

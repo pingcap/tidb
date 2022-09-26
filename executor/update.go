@@ -8,27 +8,30 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package executor
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"runtime/trace"
 
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 )
 
 // UpdateExec represents a new update executor.
@@ -39,11 +42,11 @@ type UpdateExec struct {
 
 	// updatedRowKeys is a map for unique (TableAlias, handle) pair.
 	// The value is true if the row is changed, or false otherwise
-	updatedRowKeys map[int]*kv.HandleMap
+	updatedRowKeys map[int]*kv.MemAwareHandleMap[bool]
 	tblID2table    map[int64]table.Table
 	// mergedRowData is a map for unique (Table, handle) pair.
 	// The value is cached table row
-	mergedRowData          map[int64]*kv.HandleMap
+	mergedRowData          map[int64]*kv.MemAwareHandleMap[[]types.Datum]
 	multiUpdateOnSameTable map[int64]bool
 
 	matched uint64 // a counter of matched rows during update
@@ -57,7 +60,7 @@ type UpdateExec struct {
 	drained                   bool
 	memTracker                *memory.Tracker
 
-	stats *runtimeStatsWithSnapshot
+	stats *updateRuntimeStats
 
 	handles        []kv.Handle
 	tableUpdatable []bool
@@ -68,7 +71,7 @@ type UpdateExec struct {
 // prepare `handles`, `tableUpdatable`, `changed` to avoid re-computations.
 func (e *UpdateExec) prepare(row []types.Datum) (err error) {
 	if e.updatedRowKeys == nil {
-		e.updatedRowKeys = make(map[int]*kv.HandleMap)
+		e.updatedRowKeys = make(map[int]*kv.MemAwareHandleMap[bool])
 	}
 	e.handles = e.handles[:0]
 	e.tableUpdatable = e.tableUpdatable[:0]
@@ -76,7 +79,7 @@ func (e *UpdateExec) prepare(row []types.Datum) (err error) {
 	e.matches = e.matches[:0]
 	for _, content := range e.tblColPosInfos {
 		if e.updatedRowKeys[content.Start] == nil {
-			e.updatedRowKeys[content.Start] = kv.NewHandleMap()
+			e.updatedRowKeys[content.Start] = kv.NewMemAwareHandleMap[bool]()
 		}
 		handle, err := content.HandleCols.BuildHandleByDatums(row)
 		if err != nil {
@@ -92,14 +95,14 @@ func (e *UpdateExec) prepare(row []types.Datum) (err error) {
 				break
 			}
 		}
-		if e.unmatchedOuterRow(content, row) {
+		if unmatchedOuterRow(content, row) {
 			updatable = false
 		}
 		e.tableUpdatable = append(e.tableUpdatable, updatable)
 
 		changed, ok := e.updatedRowKeys[content.Start].Get(handle)
 		if ok {
-			e.changed = append(e.changed, changed.(bool))
+			e.changed = append(e.changed, changed)
 			e.matches = append(e.matches, false)
 		} else {
 			e.changed = append(e.changed, false)
@@ -111,7 +114,7 @@ func (e *UpdateExec) prepare(row []types.Datum) (err error) {
 
 func (e *UpdateExec) merge(row, newData []types.Datum, mergeGenerated bool) error {
 	if e.mergedRowData == nil {
-		e.mergedRowData = make(map[int64]*kv.HandleMap)
+		e.mergedRowData = make(map[int64]*kv.MemAwareHandleMap[[]types.Datum])
 	}
 	var mergedData []types.Datum
 	// merge updates from and into mergedRowData
@@ -132,13 +135,13 @@ func (e *UpdateExec) merge(row, newData []types.Datum, mergeGenerated bool) erro
 		flags := e.assignFlag[content.Start:content.End]
 
 		if e.mergedRowData[content.TblID] == nil {
-			e.mergedRowData[content.TblID] = kv.NewHandleMap()
+			e.mergedRowData[content.TblID] = kv.NewMemAwareHandleMap[[]types.Datum]()
 		}
 		tbl := e.tblID2table[content.TblID]
 		oldData := row[content.Start:content.End]
 		newTableData := newData[content.Start:content.End]
 		if v, ok := e.mergedRowData[content.TblID].Get(handle); ok {
-			mergedData = v.([]types.Datum)
+			mergedData = v
 			for i, flag := range flags {
 				if tbl.WritableCols()[i].IsGenerated() != mergeGenerated {
 					continue
@@ -153,7 +156,10 @@ func (e *UpdateExec) merge(row, newData []types.Datum, mergeGenerated bool) erro
 		} else {
 			mergedData = append([]types.Datum{}, newTableData...)
 		}
-		e.mergedRowData[content.TblID].Set(handle, mergedData)
+
+		memDelta := e.mergedRowData[content.TblID].Set(handle, mergedData)
+		memDelta += types.EstimatedMemUsage(mergedData, 1) + int64(handle.ExtraMemSize())
+		e.memTracker.Consume(memDelta)
 	}
 	return nil
 }
@@ -185,9 +191,14 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema, row, n
 		flags := bAssignFlag[content.Start:content.End]
 
 		// Update row
-		changed, err1 := updateRecord(ctx, e.ctx, handle, oldData, newTableData, flags, tbl, false, e.memTracker)
+		changed, err1 := updateRecord(ctx, e.ctx, handle, oldData, newTableData, flags, tbl, false, e.memTracker, nil)
 		if err1 == nil {
-			e.updatedRowKeys[content.Start].Set(handle, changed)
+			_, exist := e.updatedRowKeys[content.Start].Get(handle)
+			memDelta := e.updatedRowKeys[content.Start].Set(handle, changed)
+			if !exist {
+				memDelta += int64(handle.ExtraMemSize())
+			}
+			e.memTracker.Consume(memDelta)
 			continue
 		}
 
@@ -207,7 +218,7 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema, row, n
 // the inner handle field is filled with a NULL value.
 //
 // This fixes: https://github.com/pingcap/tidb/issues/7176.
-func (e *UpdateExec) unmatchedOuterRow(tblPos plannercore.TblColPosInfo, waitUpdateRow []types.Datum) bool {
+func unmatchedOuterRow(tblPos plannercore.TblColPosInfo, waitUpdateRow []types.Datum) bool {
 	firstHandleIdx := tblPos.HandleCols.GetCol(0)
 	return waitUpdateRow[firstHandleIdx.Index].IsNull()
 }
@@ -216,6 +227,9 @@ func (e *UpdateExec) unmatchedOuterRow(tblPos plannercore.TblColPosInfo, waitUpd
 func (e *UpdateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	if !e.drained {
+		if e.collectRuntimeStatsEnabled() {
+			ctx = context.WithValue(ctx, autoid.AllocatorRuntimeStatsCtxKey, e.stats.AllocatorRuntimeStats)
+		}
 		numRows, err := e.updateRows(ctx)
 		if err != nil {
 			return err
@@ -264,10 +278,13 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 				txn.GetSnapshot().SetOption(kv.CollectRuntimeStats, e.stats.SnapshotRuntimeStats)
 			}
 		}
-		if variable.TopSQLEnabled() {
-			txn, err := e.ctx.Txn(true)
-			if err == nil {
-				txn.SetOption(kv.ResourceGroupTag, e.ctx.GetSessionVars().StmtCtx.GetResourceGroupTag())
+		txn, err := e.ctx.Txn(true)
+		if err == nil {
+			sc := e.ctx.GetSessionVars().StmtCtx
+			txn.SetOption(kv.ResourceGroupTagger, sc.GetResourceGroupTagger())
+			if sc.KvExecCounter != nil {
+				// Bind an interceptor for client-go to count the number of SQL executions of each TiKV.
+				txn.SetOption(kv.RPCInterceptor, sc.KvExecCounter.RPCInterceptor())
 			}
 		}
 		for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {
@@ -410,10 +427,11 @@ func (e *UpdateExec) composeGeneratedColumns(rowIdx int, newRowData []types.Datu
 
 // Close implements the Executor Close interface.
 func (e *UpdateExec) Close() error {
+	defer e.memTracker.ReplaceBytesUsed(0)
 	e.setMessage()
 	if e.runtimeStats != nil && e.stats != nil {
 		txn, err := e.ctx.Txn(false)
-		if err == nil && txn.GetSnapshot() != nil {
+		if err == nil && txn.Valid() && txn.GetSnapshot() != nil {
 			txn.GetSnapshot().SetOption(kv.CollectRuntimeStats, nil)
 		}
 	}
@@ -441,13 +459,81 @@ func (e *UpdateExec) setMessage() {
 func (e *UpdateExec) collectRuntimeStatsEnabled() bool {
 	if e.runtimeStats != nil {
 		if e.stats == nil {
-			snapshotStats := &tikv.SnapshotRuntimeStats{}
-			e.stats = &runtimeStatsWithSnapshot{
-				SnapshotRuntimeStats: snapshotStats,
+			e.stats = &updateRuntimeStats{
+				SnapshotRuntimeStats:  &txnsnapshot.SnapshotRuntimeStats{},
+				AllocatorRuntimeStats: autoid.NewAllocatorRuntimeStats(),
 			}
 			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 		}
 		return true
 	}
 	return false
+}
+
+// updateRuntimeStats is the execution stats about update statements.
+type updateRuntimeStats struct {
+	*txnsnapshot.SnapshotRuntimeStats
+	*autoid.AllocatorRuntimeStats
+}
+
+func (e *updateRuntimeStats) String() string {
+	if e.SnapshotRuntimeStats == nil && e.AllocatorRuntimeStats == nil {
+		return ""
+	}
+	buf := bytes.NewBuffer(make([]byte, 0, 16))
+	if e.SnapshotRuntimeStats != nil {
+		stats := e.SnapshotRuntimeStats.String()
+		if stats != "" {
+			buf.WriteString(stats)
+		}
+	}
+	if e.AllocatorRuntimeStats != nil {
+		stats := e.AllocatorRuntimeStats.String()
+		if stats != "" {
+			if buf.Len() > 0 {
+				buf.WriteString(", ")
+			}
+			buf.WriteString(stats)
+		}
+	}
+	return buf.String()
+}
+
+// Clone implements the RuntimeStats interface.
+func (e *updateRuntimeStats) Clone() execdetails.RuntimeStats {
+	newRs := &updateRuntimeStats{}
+	if e.SnapshotRuntimeStats != nil {
+		snapshotStats := e.SnapshotRuntimeStats.Clone()
+		newRs.SnapshotRuntimeStats = snapshotStats
+	}
+	if e.AllocatorRuntimeStats != nil {
+		newRs.AllocatorRuntimeStats = e.AllocatorRuntimeStats.Clone()
+	}
+	return newRs
+}
+
+// Merge implements the RuntimeStats interface.
+func (e *updateRuntimeStats) Merge(other execdetails.RuntimeStats) {
+	tmp, ok := other.(*updateRuntimeStats)
+	if !ok {
+		return
+	}
+	if tmp.SnapshotRuntimeStats != nil {
+		if e.SnapshotRuntimeStats == nil {
+			snapshotStats := tmp.SnapshotRuntimeStats.Clone()
+			e.SnapshotRuntimeStats = snapshotStats
+		} else {
+			e.SnapshotRuntimeStats.Merge(tmp.SnapshotRuntimeStats)
+		}
+	}
+	if tmp.AllocatorRuntimeStats != nil {
+		if e.AllocatorRuntimeStats == nil {
+			e.AllocatorRuntimeStats = tmp.AllocatorRuntimeStats.Clone()
+		}
+	}
+}
+
+// Tp implements the RuntimeStats interface.
+func (e *updateRuntimeStats) Tp() int {
+	return execdetails.TpUpdateRuntimeStats
 }

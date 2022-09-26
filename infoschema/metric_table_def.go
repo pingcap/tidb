@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -2512,10 +2513,9 @@ var MetricTableMap = map[string]MetricTableDef{
 		Comment: "The total time of distsql execution(second)",
 	},
 	"tidb_distsql_copr_cache": {
-		Comment:  "The quantile of TiDB distsql coprocessor cache",
-		PromQL:   "histogram_quantile($QUANTILE, sum(rate(tidb_distsql_copr_cache_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,instance))",
-		Labels:   []string{"instance", "type"},
-		Quantile: 0.95,
+		Comment: "The total count of TiDB distsql coprocessor cache",
+		PromQL:  "sum(rate(tidb_distsql_copr_cache{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,instance)",
+		Labels:  []string{"instance", "type"},
 	},
 	"tidb_execute_total_count": {
 		PromQL:  "sum(increase(tidb_session_execute_duration_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance,sql_type)",

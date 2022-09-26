@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,18 +20,8 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
+	"github.com/stretchr/testify/require"
 )
-
-type testSuite struct{}
-
-var _ = Suite(&testSuite{})
-
-func TestT(t *testing.T) {
-	CustomVerboseFlag = true
-	*CustomParallelSuiteFlag = true
-	TestingT(t)
-}
 
 type testSlice []int
 
@@ -58,37 +49,37 @@ func init() {
 	globalCase50 = randomTestCase(50)
 }
 
-func (s *testSuite) TestSelection(c *C) {
+func TestSelection(t *testing.T) {
 	data := testSlice{1, 2, 3, 4, 5}
 	index := Select(data, 3)
-	c.Assert(data[index], Equals, 3)
+	require.Equal(t, 3, data[index])
 }
 
-func (s *testSuite) TestSelectionWithDuplicate(c *C) {
+func TestSelectionWithDuplicate(t *testing.T) {
 	data := testSlice{1, 2, 3, 3, 5}
 	index := Select(data, 3)
-	c.Assert(data[index], Equals, 3)
+	require.Equal(t, 3, data[index])
 	index = Select(data, 5)
-	c.Assert(data[index], Equals, 5)
+	require.Equal(t, 5, data[index])
 }
 
-func (s *testSuite) TestSelectionWithRandomCase(c *C) {
+func TestSelectionWithRandomCase(t *testing.T) {
 	data := randomTestCase(1000000)
 	index := Select(data, 500000)
 	actual := data[index]
 	sort.Stable(data)
 	expected := data[499999]
-	c.Assert(actual, Equals, expected)
+	require.Equal(t, expected, actual)
 }
 
-func (s *testSuite) TestSelectionWithSerialCase(c *C) {
+func TestSelectionWithSerialCase(t *testing.T) {
 	data := serialTestCase(1000000)
 	sort.Sort(sort.Reverse(data))
 	index := Select(data, 500000)
 	actual := data[index]
 	sort.Stable(data)
 	expected := data[499999]
-	c.Assert(actual, Equals, expected)
+	require.Equal(t, expected, actual)
 }
 
 func randomTestCase(size int) testSlice {

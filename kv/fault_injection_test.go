@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,15 +19,13 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 )
 
 func TestFaultInjectionBasic(t *testing.T) {
-	t.Parallel()
-
 	var cfg InjectionConfig
 	err1 := errors.New("foo")
 	cfg.SetGetError(err1)
@@ -34,10 +33,10 @@ func TestFaultInjectionBasic(t *testing.T) {
 
 	storage := NewInjectedStore(newMockStorage(), &cfg)
 	txn, err := storage.Begin()
-	require.Nil(t, err)
+	require.NoError(t, err)
 
-	_, err = storage.BeginWithOption(tikv.DefaultStartTSOption().SetTxnScope(GlobalTxnScope).SetStartTS(0))
-	require.Nil(t, err)
+	_, err = storage.Begin(tikv.WithTxnScope(GlobalTxnScope), tikv.WithStartTS(0))
+	require.NoError(t, err)
 
 	ver := Version{Ver: 1}
 	snap := storage.GetSnapshot(ver)

@@ -1,0 +1,9 @@
+[lightning]
+table-concurrency = 1
+level = "warning"
+
+[tikv-importer]
+backend = 'local'
+
+[mydumper]
+read-block-size = 131072

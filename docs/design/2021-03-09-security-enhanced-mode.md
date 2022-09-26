@@ -20,7 +20,7 @@
 
 ## Introduction
 
-This document was created to discuss the design of Security Enhanced Mode. It comes from the DBaaS requirement that `SUPER` users must not be able to perform certain actions that could comprimise the system.
+This document was created to discuss the design of Security Enhanced Mode. It comes from the DBaaS requirement that `SUPER` users must not be able to perform certain actions that could compromise the system.
 
 ### Terminology
 

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -45,4 +46,13 @@ var (
 			Name:      "statement_db_total",
 			Help:      "Counter of StmtNode by Database.",
 		}, []string{LblDb, LblType})
+
+	// ExecPhaseDuration records the duration of each execution phase.
+	ExecPhaseDuration = prometheus.NewSummaryVec(
+		prometheus.SummaryOpts{
+			Namespace: "tidb",
+			Subsystem: "executor",
+			Name:      "phase_duration_seconds",
+			Help:      "Summary of each execution phase duration.",
+		}, []string{LblPhase, LblInternal})
 )

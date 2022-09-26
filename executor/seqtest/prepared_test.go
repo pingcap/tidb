@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,70 +16,65 @@ package executor_test
 
 import (
 	"context"
-	"crypto/tls"
+	"fmt"
 	"math"
+	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/session/txninfo"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/kvcache"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/testkit"
 	dto "github.com/prometheus/client_model/go"
+	"github.com/stretchr/testify/require"
 )
 
-func (s *seqTestSuite) TestPrepared(c *C) {
-	orgEnable := plannercore.PreparedPlanCacheEnabled()
-	defer func() {
-		plannercore.SetPreparedPlanCache(orgEnable)
-	}()
-
+func TestPrepared(t *testing.T) {
+	store := testkit.CreateMockStore(t)
 	flags := []bool{false, true}
 	ctx := context.Background()
 	for _, flag := range flags {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec(fmt.Sprintf(`set @@tidb_enable_prepared_plan_cache=%v`, flag))
 		var err error
-		plannercore.SetPreparedPlanCache(flag)
-
-		tk := testkit.NewTestKit(c, s.store)
-		tk.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
-			PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-		})
-		c.Assert(err, IsNil)
 
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists prepare_test")
 		tk.MustExec("create table prepare_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1)")
 		tk.MustExec("insert prepare_test (c1) values (1),(2),(NULL)")
 
-		tk.MustExec(`prepare stmt_test_1 from 'select id from prepare_test where id > ?'; set @a = 1; execute stmt_test_1 using @a;`)
+		tk.MustExec(`prepare stmt_test_1 from 'select id from prepare_test where id > ?';`)
+		tk.MustExec(`set @a = 1;`)
+		tk.MustExec(`execute stmt_test_1 using @a;`)
 		tk.MustExec(`prepare stmt_test_2 from 'select 1'`)
 		// Prepare multiple statement is not allowed.
-		_, err = tk.Exec(`prepare stmt_test_3 from 'select id from prepare_test where id > ?;select id from prepare_test where id > ?;'`)
-		c.Assert(executor.ErrPrepareMulti.Equal(err), IsTrue)
+		tk.MustGetErrCode(`prepare stmt_test_3 from 'select id from prepare_test where id > ?;select id from prepare_test where id > ?;'`, errno.ErrPrepareMulti)
+
 		// The variable count does not match.
-		_, err = tk.Exec(`prepare stmt_test_4 from 'select id from prepare_test where id > ? and id < ?'; set @a = 1; execute stmt_test_4 using @a;`)
-		c.Assert(plannercore.ErrWrongParamCount.Equal(err), IsTrue)
+		tk.MustExec(`prepare stmt_test_4 from 'select id from prepare_test where id > ? and id < ?';`)
+		tk.MustExec(`set @a = 1;`)
+		tk.MustGetErrCode(`execute stmt_test_4 using @a;`, errno.ErrWrongParamCount)
 		// Prepare and deallocate prepared statement immediately.
-		tk.MustExec(`prepare stmt_test_5 from 'select id from prepare_test where id > ?'; deallocate prepare stmt_test_5;`)
+		tk.MustExec(`prepare stmt_test_5 from 'select id from prepare_test where id > ?';`)
+		tk.MustExec(`deallocate prepare stmt_test_5;`)
 
 		// Statement not found.
-		_, err = tk.Exec("deallocate prepare stmt_test_5")
-		c.Assert(plannercore.ErrStmtNotFound.Equal(err), IsTrue)
+		err = tk.ExecToErr("deallocate prepare stmt_test_5")
+		require.True(t, plannercore.ErrStmtNotFound.Equal(err))
 
 		// incorrect SQLs in prepare. issue #3738, SQL in prepare stmt is parsed in DoPrepare.
-		_, err = tk.Exec(`prepare p from "delete from t where a = 7 or 1=1/*' and b = 'p'";`)
-		c.Assert(err.Error(), Equals, `[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use near '/*' and b = 'p'' at line 1`)
+		tk.MustGetErrMsg(`prepare p from "delete from t where a = 7 or 1=1/*' and b = 'p'";`,
+			`[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use near '/*' and b = 'p'' at line 1`)
 
 		// The `stmt_test5` should not be found.
-		_, err = tk.Exec(`set @a = 1; execute stmt_test_5 using @a;`)
-		c.Assert(plannercore.ErrStmtNotFound.Equal(err), IsTrue)
+		err = tk.ExecToErr(`set @a = 1; execute stmt_test_5 using @a;`)
+		require.True(t, plannercore.ErrStmtNotFound.Equal(err))
 
 		// Use parameter marker with argument will run prepared statement.
 		result := tk.MustQuery("select distinct c1, c2 from prepare_test where c1 = ?", 1)
@@ -86,209 +82,194 @@ func (s *seqTestSuite) TestPrepared(c *C) {
 
 		// Call Session PrepareStmt directly to get stmtID.
 		query := "select c1, c2 from prepare_test where c1 = ?"
-		stmtID, _, _, err := tk.Se.PrepareStmt(query)
-		c.Assert(err, IsNil)
-		rs, err := tk.Se.ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(1)})
-		c.Assert(err, IsNil)
-		tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("1 <nil>"))
+		stmtID, _, _, err := tk.Session().PrepareStmt(query)
+		require.NoError(t, err)
+		rs, err := tk.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test(1))
+		require.NoError(t, err)
+		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 <nil>"))
 
 		tk.MustExec("delete from prepare_test")
 		query = "select c1 from prepare_test where c1 = (select c1 from prepare_test where c1 = ?)"
-		stmtID, _, _, err = tk.Se.PrepareStmt(query)
-		c.Assert(err, IsNil)
+		stmtID, _, _, err = tk.Session().PrepareStmt(query)
+		require.NoError(t, err)
 
-		tk1 := testkit.NewTestKit(c, s.store)
-		tk1.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
-			PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-		})
-		c.Assert(err, IsNil)
-
+		tk1 := testkit.NewTestKit(t, store)
+		tk1.MustExec(`set @@tidb_enable_prepared_plan_cache=true`)
 		tk1.MustExec("use test")
 		tk1.MustExec("insert prepare_test (c1) values (3)")
-		rs, err = tk.Se.ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(3)})
-		c.Assert(err, IsNil)
-		tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("3"))
+		rs, err = tk.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test(3))
+		require.NoError(t, err)
+		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("3"))
 
 		tk.MustExec("delete from prepare_test")
 		query = "select c1 from prepare_test where c1 = (select c1 from prepare_test where c1 = ?)"
-		stmtID, _, _, err = tk.Se.PrepareStmt(query)
-		c.Assert(err, IsNil)
-		rs, err = tk.Se.ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(3)})
-		c.Assert(err, IsNil)
-		c.Assert(rs.Close(), IsNil)
+		stmtID, _, _, err = tk.Session().PrepareStmt(query)
+		require.NoError(t, err)
+		rs, err = tk.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test(3))
+		require.NoError(t, err)
+		require.NoError(t, rs.Close())
 		tk1.MustExec("insert prepare_test (c1) values (3)")
-		rs, err = tk.Se.ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(3)})
-		c.Assert(err, IsNil)
-		tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("3"))
+		rs, err = tk.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test(3))
+		require.NoError(t, err)
+		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("3"))
 
 		tk.MustExec("delete from prepare_test")
 		query = "select c1 from prepare_test where c1 in (select c1 from prepare_test where c1 = ?)"
-		stmtID, _, _, err = tk.Se.PrepareStmt(query)
-		c.Assert(err, IsNil)
-		rs, err = tk.Se.ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(3)})
-		c.Assert(err, IsNil)
-		c.Assert(rs.Close(), IsNil)
+		stmtID, _, _, err = tk.Session().PrepareStmt(query)
+		require.NoError(t, err)
+		rs, err = tk.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test(3))
+		require.NoError(t, err)
+		require.NoError(t, rs.Close())
 		tk1.MustExec("insert prepare_test (c1) values (3)")
-		rs, err = tk.Se.ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(3)})
-		c.Assert(err, IsNil)
-		tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("3"))
+		rs, err = tk.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test(3))
+		require.NoError(t, err)
+		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("3"))
 
 		tk.MustExec("begin")
 		tk.MustExec("insert prepare_test (c1) values (4)")
 		query = "select c1, c2 from prepare_test where c1 = ?"
-		stmtID, _, _, err = tk.Se.PrepareStmt(query)
-		c.Assert(err, IsNil)
+		stmtID, _, _, err = tk.Session().PrepareStmt(query)
+		require.NoError(t, err)
 		tk.MustExec("rollback")
-		rs, err = tk.Se.ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(4)})
-		c.Assert(err, IsNil)
-		tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows())
+		rs, err = tk.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test(4))
+		require.NoError(t, err)
+		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows())
 
-		// Check that ast.Statement created by executor.CompileExecutePreparedStmt has query text.
-		stmt, _, _, err := executor.CompileExecutePreparedStmt(context.TODO(), tk.Se, stmtID,
-			tk.Se.GetInfoSchema().(infoschema.InfoSchema), 0, []types.Datum{types.NewDatum(1)})
-		c.Assert(err, IsNil)
-		c.Assert(stmt.OriginText(), Equals, query)
+		prepStmt, err := tk.Session().GetSessionVars().GetPreparedStmtByID(stmtID)
+		require.NoError(t, err)
+		execStmt := &ast.ExecuteStmt{PrepStmt: prepStmt, BinaryArgs: expression.Args2Expressions4Test(1)}
+		// Check that ast.Statement created by compiler.Compile has query text.
+		compiler := executor.Compiler{Ctx: tk.Session()}
+		stmt, err := compiler.Compile(context.TODO(), execStmt)
+		require.NoError(t, err)
 
 		// Check that rebuild plan works.
-		tk.Se.PrepareTxnCtx(ctx)
+		err = tk.Session().PrepareTxnCtx(ctx)
+		require.NoError(t, err)
 		_, err = stmt.RebuildPlan(ctx)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		rs, err = stmt.Exec(ctx)
-		c.Assert(err, IsNil)
-		req := rs.NewChunk()
+		require.NoError(t, err)
+		req := rs.NewChunk(nil)
 		err = rs.Next(ctx, req)
-		c.Assert(err, IsNil)
-		c.Assert(rs.Close(), IsNil)
+		require.NoError(t, err)
+		require.NoError(t, rs.Close())
 
 		// Make schema change.
 		tk.MustExec("drop table if exists prepare2")
-		_, err = tk.Exec("create table prepare2 (a int)")
-		c.Assert(err, IsNil)
+		tk.MustExec("create table prepare2 (a int)")
 
 		// Should success as the changed schema do not affect the prepared statement.
-		_, err = tk.Se.ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(1)})
-		c.Assert(err, IsNil)
+		rs, err = tk.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test(1))
+		require.NoError(t, err)
+		if rs != nil {
+			require.NoError(t, rs.Close())
+		}
 
 		// Drop a column so the prepared statement become invalid.
 		query = "select c1, c2 from prepare_test where c1 = ?"
-		stmtID, _, _, err = tk.Se.PrepareStmt(query)
-		c.Assert(err, IsNil)
+		stmtID, _, _, err = tk.Session().PrepareStmt(query)
+		require.NoError(t, err)
 		tk.MustExec("alter table prepare_test drop column c2")
 
-		_, err = tk.Se.ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(1)})
-		c.Assert(plannercore.ErrUnknownColumn.Equal(err), IsTrue)
+		_, err = tk.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test(1))
+		require.True(t, plannercore.ErrUnknownColumn.Equal(err))
 
 		tk.MustExec("drop table prepare_test")
-		_, err = tk.Se.ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(1)})
-		c.Assert(plannercore.ErrSchemaChanged.Equal(err), IsTrue)
+		_, err = tk.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test(1))
+		require.True(t, plannercore.ErrSchemaChanged.Equal(err))
 
 		// issue 3381
 		tk.MustExec("drop table if exists prepare3")
 		tk.MustExec("create table prepare3 (a decimal(1))")
 		tk.MustExec("prepare stmt from 'insert into prepare3 value(123)'")
-		_, err = tk.Exec("execute stmt")
-		c.Assert(err, NotNil)
+		tk.MustExecToErr("execute stmt")
 
-		_, _, fields, err := tk.Se.PrepareStmt("select a from prepare3")
-		c.Assert(err, IsNil)
-		c.Assert(fields[0].DBName.L, Equals, "test")
-		c.Assert(fields[0].TableAsName.L, Equals, "prepare3")
-		c.Assert(fields[0].ColumnAsName.L, Equals, "a")
+		_, _, fields, err := tk.Session().PrepareStmt("select a from prepare3")
+		require.NoError(t, err)
+		require.Equal(t, "test", fields[0].DBName.L)
+		require.Equal(t, "prepare3", fields[0].TableAsName.L)
+		require.Equal(t, "a", fields[0].ColumnAsName.L)
 
-		_, _, fields, err = tk.Se.PrepareStmt("select a from prepare3 where ?")
-		c.Assert(err, IsNil)
-		c.Assert(fields[0].DBName.L, Equals, "test")
-		c.Assert(fields[0].TableAsName.L, Equals, "prepare3")
-		c.Assert(fields[0].ColumnAsName.L, Equals, "a")
+		_, _, fields, err = tk.Session().PrepareStmt("select a from prepare3 where ?")
+		require.NoError(t, err)
+		require.Equal(t, "test", fields[0].DBName.L)
+		require.Equal(t, "prepare3", fields[0].TableAsName.L)
+		require.Equal(t, "a", fields[0].ColumnAsName.L)
 
-		_, _, fields, err = tk.Se.PrepareStmt("select (1,1) in (select 1,1)")
-		c.Assert(err, IsNil)
-		c.Assert(fields[0].DBName.L, Equals, "")
-		c.Assert(fields[0].TableAsName.L, Equals, "")
-		c.Assert(fields[0].ColumnAsName.L, Equals, "(1,1) in (select 1,1)")
+		_, _, fields, err = tk.Session().PrepareStmt("select (1,1) in (select 1,1)")
+		require.NoError(t, err)
+		require.Equal(t, "", fields[0].DBName.L)
+		require.Equal(t, "", fields[0].TableAsName.L)
+		require.Equal(t, "(1,1) in (select 1,1)", fields[0].ColumnAsName.L)
 
-		_, _, fields, err = tk.Se.PrepareStmt("select a from prepare3 where a = (" +
+		_, _, fields, err = tk.Session().PrepareStmt("select a from prepare3 where a = (" +
 			"select a from prepare2 where a = ?)")
-		c.Assert(err, IsNil)
-		c.Assert(fields[0].DBName.L, Equals, "test")
-		c.Assert(fields[0].TableAsName.L, Equals, "prepare3")
-		c.Assert(fields[0].ColumnAsName.L, Equals, "a")
+		require.NoError(t, err)
+		require.Equal(t, "test", fields[0].DBName.L)
+		require.Equal(t, "prepare3", fields[0].TableAsName.L)
+		require.Equal(t, "a", fields[0].ColumnAsName.L)
 
-		_, _, fields, err = tk.Se.PrepareStmt("select * from prepare3 as t1 join prepare3 as t2")
-		c.Assert(err, IsNil)
-		c.Assert(fields[0].DBName.L, Equals, "test")
-		c.Assert(fields[0].TableAsName.L, Equals, "t1")
-		c.Assert(fields[0].ColumnAsName.L, Equals, "a")
-		c.Assert(fields[1].DBName.L, Equals, "test")
-		c.Assert(fields[1].TableAsName.L, Equals, "t2")
-		c.Assert(fields[1].ColumnAsName.L, Equals, "a")
+		_, _, fields, err = tk.Session().PrepareStmt("select * from prepare3 as t1 join prepare3 as t2")
+		require.NoError(t, err)
+		require.Equal(t, "test", fields[0].DBName.L)
+		require.Equal(t, "t1", fields[0].TableAsName.L)
+		require.Equal(t, "a", fields[0].ColumnAsName.L)
+		require.Equal(t, "test", fields[1].DBName.L)
+		require.Equal(t, "t2", fields[1].TableAsName.L)
+		require.Equal(t, "a", fields[1].ColumnAsName.L)
 
-		_, _, fields, err = tk.Se.PrepareStmt("update prepare3 set a = ?")
-		c.Assert(err, IsNil)
-		c.Assert(len(fields), Equals, 0)
+		_, _, fields, err = tk.Session().PrepareStmt("update prepare3 set a = ?")
+		require.NoError(t, err)
+		require.Len(t, fields, 0)
 
 		// issue 8074
 		tk.MustExec("drop table if exists prepare1;")
 		tk.MustExec("create table prepare1 (a decimal(1))")
 		tk.MustExec("insert into prepare1 values(1);")
-		_, err = tk.Exec("prepare stmt FROM @sql1")
-		c.Assert(err.Error(), Equals, "[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 4 near \"NULL\" ")
+		tk.MustGetErrMsg("prepare stmt FROM @sql1",
+			"[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 4 near \"NULL\" ")
 		tk.MustExec("SET @sql = 'update prepare1 set a=5 where a=?';")
-		_, err = tk.Exec("prepare stmt FROM @sql")
-		c.Assert(err, IsNil)
+		tk.MustExec("prepare stmt FROM @sql")
 		tk.MustExec("set @var=1;")
-		_, err = tk.Exec("execute stmt using @var")
-		c.Assert(err, IsNil)
+		tk.MustExec("execute stmt using @var")
 		tk.MustQuery("select a from prepare1;").Check(testkit.Rows("5"))
 
 		// issue 19371
 		tk.MustExec("SET @sql = 'update prepare1 set a=a+1';")
-		_, err = tk.Exec("prepare stmt FROM @SQL")
-		c.Assert(err, IsNil)
-		_, err = tk.Exec("execute stmt")
-		c.Assert(err, IsNil)
+		tk.MustExec("prepare stmt FROM @SQL")
+		tk.MustExec("execute stmt")
 		tk.MustQuery("select a from prepare1;").Check(testkit.Rows("6"))
-		_, err = tk.Exec("prepare stmt FROM @Sql")
-		c.Assert(err, IsNil)
-		_, err = tk.Exec("execute stmt")
-		c.Assert(err, IsNil)
+		tk.MustExec("prepare stmt FROM @Sql")
+		tk.MustExec("execute stmt")
 		tk.MustQuery("select a from prepare1;").Check(testkit.Rows("7"))
 
 		// Coverage.
 		exec := &executor.ExecuteExec{}
 		err = exec.Next(ctx, nil)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		err = exec.Close()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 
 		// issue 8065
-		stmtID, _, _, err = tk.Se.PrepareStmt("select ? from dual")
-		c.Assert(err, IsNil)
-		_, err = tk.Se.ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(1)})
-		c.Assert(err, IsNil)
-		stmtID, _, _, err = tk.Se.PrepareStmt("update prepare1 set a = ? where a = ?")
-		c.Assert(err, IsNil)
-		_, err = tk.Se.ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(1), types.NewDatum(1)})
-		c.Assert(err, IsNil)
+		stmtID, _, _, err = tk.Session().PrepareStmt("select ? from dual")
+		require.NoError(t, err)
+		_, err = tk.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test(1))
+		require.NoError(t, err)
+		stmtID, _, _, err = tk.Session().PrepareStmt("update prepare1 set a = ? where a = ?")
+		require.NoError(t, err)
+		_, err = tk.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test(1, 1))
+		require.NoError(t, err)
 	}
 }
 
-func (s *seqTestSuite) TestPreparedLimitOffset(c *C) {
-	orgEnable := plannercore.PreparedPlanCacheEnabled()
-	defer func() {
-		plannercore.SetPreparedPlanCache(orgEnable)
-	}()
+func TestPreparedLimitOffset(t *testing.T) {
+	store := testkit.CreateMockStore(t)
 	flags := []bool{false, true}
 	ctx := context.Background()
 	for _, flag := range flags {
-		var err error
-		plannercore.SetPreparedPlanCache(flag)
-
-		tk := testkit.NewTestKit(c, s.store)
-		tk.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
-			PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-		})
-		c.Assert(err, IsNil)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec(fmt.Sprintf(`set @@tidb_enable_prepared_plan_cache=%v`, flag))
 
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists prepare_test")
@@ -303,30 +284,23 @@ func (s *seqTestSuite) TestPreparedLimitOffset(c *C) {
 		r.Check(testkit.Rows("2"))
 
 		tk.MustExec(`set @c="-1"`)
-		_, err = tk.Exec("execute stmt_test_1 using @c, @c")
-		c.Assert(plannercore.ErrWrongArguments.Equal(err), IsTrue)
+		_, err := tk.Exec("execute stmt_test_1 using @c, @c")
+		require.True(t, plannercore.ErrWrongArguments.Equal(err))
 
-		stmtID, _, _, err := tk.Se.PrepareStmt("select id from prepare_test limit ?")
-		c.Assert(err, IsNil)
-		_, err = tk.Se.ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(1)})
-		c.Assert(err, IsNil)
+		stmtID, _, _, err := tk.Session().PrepareStmt("select id from prepare_test limit ?")
+		require.NoError(t, err)
+		rs, err := tk.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test(1))
+		require.NoError(t, err)
+		rs.Close()
 	}
 }
 
-func (s *seqTestSuite) TestPreparedNullParam(c *C) {
-	orgEnable := plannercore.PreparedPlanCacheEnabled()
-	defer func() {
-		plannercore.SetPreparedPlanCache(orgEnable)
-	}()
+func TestPreparedNullParam(t *testing.T) {
+	store := testkit.CreateMockStore(t)
 	flags := []bool{false, true}
 	for _, flag := range flags {
-		plannercore.SetPreparedPlanCache(flag)
-		tk := testkit.NewTestKit(c, s.store)
-		var err error
-		tk.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
-			PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-		})
-		c.Assert(err, IsNil)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec(fmt.Sprintf(`set @@tidb_enable_prepared_plan_cache=%v`, flag))
 
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t")
@@ -352,20 +326,18 @@ func (s *seqTestSuite) TestPreparedNullParam(c *C) {
 	}
 }
 
-func (s *seqTestSuite) TestPrepareWithAggregation(c *C) {
-	orgEnable := plannercore.PreparedPlanCacheEnabled()
-	defer func() {
-		plannercore.SetPreparedPlanCache(orgEnable)
-	}()
+func TestPrepareWithAggregation(t *testing.T) {
+	store := testkit.CreateMockStore(t)
 	flags := []bool{false, true}
 	for _, flag := range flags {
-		plannercore.SetPreparedPlanCache(flag)
-		tk := testkit.NewTestKit(c, s.store)
-		var err error
-		tk.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
-			PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec(fmt.Sprintf(`set @@tidb_enable_prepared_plan_cache=%v`, flag))
+
+		se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
+			PreparedPlanCache: plannercore.NewLRUPlanCache(100, 0.1, math.MaxUint64, plannercore.PickPlanFromBucket),
 		})
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
+		tk.SetSession(se)
 
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t")
@@ -382,20 +354,12 @@ func (s *seqTestSuite) TestPrepareWithAggregation(c *C) {
 	}
 }
 
-func (s *seqTestSuite) TestPreparedIssue7579(c *C) {
-	orgEnable := plannercore.PreparedPlanCacheEnabled()
-	defer func() {
-		plannercore.SetPreparedPlanCache(orgEnable)
-	}()
+func TestPreparedIssue7579(t *testing.T) {
+	store := testkit.CreateMockStore(t)
 	flags := []bool{false, true}
 	for _, flag := range flags {
-		plannercore.SetPreparedPlanCache(flag)
-		tk := testkit.NewTestKit(c, s.store)
-		var err error
-		tk.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
-			PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-		})
-		c.Assert(err, IsNil)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec(fmt.Sprintf(`set @@tidb_enable_prepared_plan_cache=%v`, flag))
 
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t")
@@ -428,24 +392,17 @@ func (s *seqTestSuite) TestPreparedIssue7579(c *C) {
 	}
 }
 
-func (s *seqTestSuite) TestPreparedInsert(c *C) {
-	orgEnable := plannercore.PreparedPlanCacheEnabled()
-	defer func() {
-		plannercore.SetPreparedPlanCache(orgEnable)
-	}()
+func TestPreparedInsert(t *testing.T) {
+	store := testkit.CreateMockStore(t)
 	metrics.ResettablePlanCacheCounterFortTest = true
 	metrics.PlanCacheCounter.Reset()
 	counter := metrics.PlanCacheCounter.WithLabelValues("prepare")
 	pb := &dto.Metric{}
 	flags := []bool{false, true}
 	for _, flag := range flags {
-		plannercore.SetPreparedPlanCache(flag)
-		tk := testkit.NewTestKit(c, s.store)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec(fmt.Sprintf(`set @@tidb_enable_prepared_plan_cache=%v`, flag))
 		var err error
-		tk.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
-			PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-		})
-		c.Assert(err, IsNil)
 
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists prepare_test")
@@ -454,23 +411,23 @@ func (s *seqTestSuite) TestPreparedInsert(c *C) {
 		tk.MustExec(`set @a=1,@b=1; execute stmt_insert using @a, @b;`)
 		if flag {
 			err = counter.Write(pb)
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 			hit := pb.GetCounter().GetValue()
-			c.Check(hit, Equals, float64(0))
+			require.Equal(t, float64(0), hit)
 		}
 		tk.MustExec(`set @a=2,@b=2; execute stmt_insert using @a, @b;`)
 		if flag {
 			err = counter.Write(pb)
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 			hit := pb.GetCounter().GetValue()
-			c.Check(hit, Equals, float64(1))
+			require.Equal(t, float64(1), hit)
 		}
 		tk.MustExec(`set @a=3,@b=3; execute stmt_insert using @a, @b;`)
 		if flag {
 			err = counter.Write(pb)
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 			hit := pb.GetCounter().GetValue()
-			c.Check(hit, Equals, float64(2))
+			require.Equal(t, float64(2), hit)
 		}
 
 		result := tk.MustQuery("select id, c1 from prepare_test where id = ?", 1)
@@ -484,23 +441,23 @@ func (s *seqTestSuite) TestPreparedInsert(c *C) {
 		tk.MustExec(`set @a=1; execute stmt_insert_select using @a;`)
 		if flag {
 			err = counter.Write(pb)
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 			hit := pb.GetCounter().GetValue()
-			c.Check(hit, Equals, float64(2))
+			require.Equal(t, float64(2), hit)
 		}
 		tk.MustExec(`set @a=2; execute stmt_insert_select using @a;`)
 		if flag {
 			err = counter.Write(pb)
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 			hit := pb.GetCounter().GetValue()
-			c.Check(hit, Equals, float64(2))
+			require.Equal(t, float64(3), hit)
 		}
 		tk.MustExec(`set @a=3; execute stmt_insert_select using @a;`)
 		if flag {
 			err = counter.Write(pb)
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 			hit := pb.GetCounter().GetValue()
-			c.Check(hit, Equals, float64(2))
+			require.Equal(t, float64(4), hit)
 		}
 
 		result = tk.MustQuery("select id, c1 from prepare_test where id = ?", 101)
@@ -512,24 +469,17 @@ func (s *seqTestSuite) TestPreparedInsert(c *C) {
 	}
 }
 
-func (s *seqTestSuite) TestPreparedUpdate(c *C) {
-	orgEnable := plannercore.PreparedPlanCacheEnabled()
-	defer func() {
-		plannercore.SetPreparedPlanCache(orgEnable)
-	}()
+func TestPreparedUpdate(t *testing.T) {
+	store := testkit.CreateMockStore(t)
 	metrics.ResettablePlanCacheCounterFortTest = true
 	metrics.PlanCacheCounter.Reset()
 	counter := metrics.PlanCacheCounter.WithLabelValues("prepare")
 	pb := &dto.Metric{}
 	flags := []bool{false, true}
 	for _, flag := range flags {
-		plannercore.SetPreparedPlanCache(flag)
-		tk := testkit.NewTestKit(c, s.store)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec(fmt.Sprintf(`set @@tidb_enable_prepared_plan_cache=%v`, flag))
 		var err error
-		tk.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
-			PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-		})
-		c.Assert(err, IsNil)
 
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists prepare_test")
@@ -542,23 +492,23 @@ func (s *seqTestSuite) TestPreparedUpdate(c *C) {
 		tk.MustExec(`set @a=1,@b=100; execute stmt_update using @b,@a;`)
 		if flag {
 			err = counter.Write(pb)
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 			hit := pb.GetCounter().GetValue()
-			c.Check(hit, Equals, float64(0))
+			require.Equal(t, float64(0), hit)
 		}
 		tk.MustExec(`set @a=2,@b=200; execute stmt_update using @b,@a;`)
 		if flag {
 			err = counter.Write(pb)
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 			hit := pb.GetCounter().GetValue()
-			c.Check(hit, Equals, float64(1))
+			require.Equal(t, float64(1), hit)
 		}
 		tk.MustExec(`set @a=3,@b=300; execute stmt_update using @b,@a;`)
 		if flag {
 			err = counter.Write(pb)
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 			hit := pb.GetCounter().GetValue()
-			c.Check(hit, Equals, float64(2))
+			require.Equal(t, float64(2), hit)
 		}
 
 		result := tk.MustQuery("select id, c1 from prepare_test where id = ?", 1)
@@ -570,14 +520,11 @@ func (s *seqTestSuite) TestPreparedUpdate(c *C) {
 	}
 }
 
-func (s *seqTestSuite) TestIssue21884(c *C) {
-	orgEnable := plannercore.PreparedPlanCacheEnabled()
-	defer func() {
-		plannercore.SetPreparedPlanCache(orgEnable)
-	}()
-	plannercore.SetPreparedPlanCache(false)
+func TestIssue21884(t *testing.T) {
+	store := testkit.CreateMockStore(t)
 
-	tk := testkit.NewTestKit(c, s.store)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set @@tidb_enable_prepared_plan_cache=false`)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists prepare_test")
@@ -591,27 +538,20 @@ func (s *seqTestSuite) TestIssue21884(c *C) {
 	time.Sleep(1 * time.Second)
 	tk.MustExec("execute stmt using @status")
 	newUpdateTime := tk.MustQuery("select last_update_time from prepare_test").Rows()[0][0]
-	c.Assert(updateTime == newUpdateTime, IsFalse)
+	require.NotEqual(t, newUpdateTime, updateTime)
 }
 
-func (s *seqTestSuite) TestPreparedDelete(c *C) {
-	orgEnable := plannercore.PreparedPlanCacheEnabled()
-	defer func() {
-		plannercore.SetPreparedPlanCache(orgEnable)
-	}()
+func TestPreparedDelete(t *testing.T) {
+	store := testkit.CreateMockStore(t)
 	metrics.ResettablePlanCacheCounterFortTest = true
 	metrics.PlanCacheCounter.Reset()
 	counter := metrics.PlanCacheCounter.WithLabelValues("prepare")
 	pb := &dto.Metric{}
 	flags := []bool{false, true}
 	for _, flag := range flags {
-		plannercore.SetPreparedPlanCache(flag)
-		tk := testkit.NewTestKit(c, s.store)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec(fmt.Sprintf(`set @@tidb_enable_prepared_plan_cache=%v`, flag))
 		var err error
-		tk.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
-			PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-		})
-		c.Assert(err, IsNil)
 
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists prepare_test")
@@ -624,23 +564,23 @@ func (s *seqTestSuite) TestPreparedDelete(c *C) {
 		tk.MustExec(`set @a=1; execute stmt_delete using @a;`)
 		if flag {
 			err = counter.Write(pb)
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 			hit := pb.GetCounter().GetValue()
-			c.Check(hit, Equals, float64(0))
+			require.Equal(t, float64(0), hit)
 		}
 		tk.MustExec(`set @a=2; execute stmt_delete using @a;`)
 		if flag {
 			err = counter.Write(pb)
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 			hit := pb.GetCounter().GetValue()
-			c.Check(hit, Equals, float64(1))
+			require.Equal(t, float64(1), hit)
 		}
 		tk.MustExec(`set @a=3; execute stmt_delete using @a;`)
 		if flag {
 			err = counter.Write(pb)
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 			hit := pb.GetCounter().GetValue()
-			c.Check(hit, Equals, float64(2))
+			require.Equal(t, float64(2), hit)
 		}
 
 		result := tk.MustQuery("select id, c1 from prepare_test where id = ?", 1)
@@ -652,57 +592,62 @@ func (s *seqTestSuite) TestPreparedDelete(c *C) {
 	}
 }
 
-func (s *seqTestSuite) TestPrepareDealloc(c *C) {
-	orgEnable := plannercore.PreparedPlanCacheEnabled()
-	defer func() {
-		plannercore.SetPreparedPlanCache(orgEnable)
-	}()
-	plannercore.SetPreparedPlanCache(true)
+func TestPrepareDealloc(t *testing.T) {
+	store := testkit.CreateMockStore(t)
 
-	tk := testkit.NewTestKit(c, s.store)
-	var err error
-	tk.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(3, 0.1, math.MaxUint64),
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set @@tidb_enable_prepared_plan_cache=true`)
+
+	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: plannercore.NewLRUPlanCache(3, 0.1, math.MaxUint64, plannercore.PickPlanFromBucket),
 	})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
+	tk.SetSession(se)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists prepare_test")
 	tk.MustExec("create table prepare_test (id int PRIMARY KEY, c1 int)")
 
-	c.Assert(tk.Se.PreparedPlanCache().Size(), Equals, 0)
-	tk.MustExec(`prepare stmt1 from 'select * from prepare_test'`)
+	require.Equal(t, 0, tk.Session().GetPlanCache(false).Size())
+	tk.MustExec(`prepare stmt1 from 'select id from prepare_test'`)
 	tk.MustExec("execute stmt1")
-	tk.MustExec(`prepare stmt2 from 'select * from prepare_test'`)
+	tk.MustExec(`prepare stmt2 from 'select c1 from prepare_test'`)
 	tk.MustExec("execute stmt2")
-	tk.MustExec(`prepare stmt3 from 'select * from prepare_test'`)
+	tk.MustExec(`prepare stmt3 from 'select id, c1 from prepare_test'`)
 	tk.MustExec("execute stmt3")
 	tk.MustExec(`prepare stmt4 from 'select * from prepare_test'`)
 	tk.MustExec("execute stmt4")
-	c.Assert(tk.Se.PreparedPlanCache().Size(), Equals, 3)
+	require.Equal(t, 3, tk.Session().GetPlanCache(false).Size())
 
 	tk.MustExec("deallocate prepare stmt1")
-	c.Assert(tk.Se.PreparedPlanCache().Size(), Equals, 3)
+	require.Equal(t, 3, tk.Session().GetPlanCache(false).Size())
 	tk.MustExec("deallocate prepare stmt2")
 	tk.MustExec("deallocate prepare stmt3")
 	tk.MustExec("deallocate prepare stmt4")
-	c.Assert(tk.Se.PreparedPlanCache().Size(), Equals, 0)
+	require.Equal(t, 0, tk.Session().GetPlanCache(false).Size())
+
+	tk.MustExec(`prepare stmt1 from 'select * from prepare_test'`)
+	tk.MustExec(`execute stmt1`)
+	tk.MustExec(`prepare stmt2 from 'select * from prepare_test'`)
+	tk.MustExec(`execute stmt2`)
+	require.Equal(t, 1, tk.Session().GetPlanCache(false).Size()) // use the same cached plan since they have the same statement
+
+	tk.MustExec(`drop database if exists plan_cache`)
+	tk.MustExec(`create database plan_cache`)
+	tk.MustExec(`use plan_cache`)
+	tk.MustExec(`create table prepare_test (id int PRIMARY KEY, c1 int)`)
+	tk.MustExec(`prepare stmt3 from 'select * from prepare_test'`)
+	tk.MustExec(`execute stmt3`)
+	require.Equal(t, 2, tk.Session().GetPlanCache(false).Size()) // stmt3 has different DB
 }
 
-func (s *seqTestSuite) TestPreparedIssue8153(c *C) {
-	orgEnable := plannercore.PreparedPlanCacheEnabled()
-	defer func() {
-		plannercore.SetPreparedPlanCache(orgEnable)
-	}()
+func TestPreparedIssue8153(t *testing.T) {
+	store := testkit.CreateMockStore(t)
 	flags := []bool{false, true}
 	for _, flag := range flags {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec(fmt.Sprintf(`set @@tidb_enable_prepared_plan_cache=%v`, flag))
 		var err error
-		plannercore.SetPreparedPlanCache(flag)
-		tk := testkit.NewTestKit(c, s.store)
-		tk.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
-			PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-		})
-		c.Assert(err, IsNil)
 
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t")
@@ -723,7 +668,7 @@ func (s *seqTestSuite) TestPreparedIssue8153(c *C) {
 
 		tk.MustExec(`set @param = 3`)
 		_, err = tk.Exec(`execute stmt using @param;`)
-		c.Assert(err.Error(), Equals, "[planner:1054]Unknown column '?' in 'order clause'")
+		require.EqualError(t, err, "[planner:1054]Unknown column '?' in 'order clause'")
 
 		tk.MustExec(`set @param = '##'`)
 		r = tk.MustQuery(`execute stmt using @param;`)
@@ -738,24 +683,16 @@ func (s *seqTestSuite) TestPreparedIssue8153(c *C) {
 
 		tk.MustExec(`set @a=1,@b=2`)
 		_, err = tk.Exec(`execute stmt using @a,@b;`)
-		c.Assert(err.Error(), Equals, "[planner:1056]Can't group on 'sum(a)'")
+		require.EqualError(t, err, "[planner:1056]Can't group on 'sum(a)'")
 	}
 }
 
-func (s *seqTestSuite) TestPreparedIssue8644(c *C) {
-	orgEnable := plannercore.PreparedPlanCacheEnabled()
-	defer func() {
-		plannercore.SetPreparedPlanCache(orgEnable)
-	}()
+func TestPreparedIssue8644(t *testing.T) {
+	store := testkit.CreateMockStore(t)
 	flags := []bool{false, true}
 	for _, flag := range flags {
-		plannercore.SetPreparedPlanCache(flag)
-		tk := testkit.NewTestKit(c, s.store)
-		var err error
-		tk.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
-			PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-		})
-		c.Assert(err, IsNil)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec(fmt.Sprintf(`set @@tidb_enable_prepared_plan_cache=%v`, flag))
 
 		tk.MustExec("use test")
 
@@ -794,72 +731,39 @@ func (s *seqTestSuite) TestPreparedIssue8644(c *C) {
 	}
 }
 
-// mockSessionManager is a mocked session manager which is used for test.
-type mockSessionManager1 struct {
-	Se session.Session
-}
+func TestPreparedIssue17419(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	sv := server.CreateMockServer(t, store)
+	sv.SetDomain(dom)
+	defer sv.Close()
 
-func (msm *mockSessionManager1) ShowTxnList() []*txninfo.TxnInfo {
-	panic("unimplemented!")
-}
-
-// ShowProcessList implements the SessionManager.ShowProcessList interface.
-func (msm *mockSessionManager1) ShowProcessList() map[uint64]*util.ProcessInfo {
-	ret := make(map[uint64]*util.ProcessInfo)
-	return ret
-}
-
-func (msm *mockSessionManager1) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
-	pi := msm.Se.ShowProcess()
-	return pi, true
-}
-
-// Kill implements the SessionManager.Kill interface.
-func (msm *mockSessionManager1) Kill(cid uint64, query bool) {}
-
-func (msm *mockSessionManager1) KillAllConnections() {}
-
-func (msm *mockSessionManager1) ServerID() uint64 {
-	return 1
-}
-
-func (msm *mockSessionManager1) UpdateTLSConfig(cfg *tls.Config) {}
-
-func (s *seqTestSuite) TestPreparedIssue17419(c *C) {
+	conn1 := server.CreateMockConn(t, sv)
+	tk := testkit.NewTestKitWithSession(t, store, conn1.Context().Session)
 	ctx := context.Background()
-	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int)")
 	tk.MustExec("insert into t (a) values (1), (2), (3)")
 
-	tk1 := testkit.NewTestKit(c, s.store)
-
-	var err error
-	tk1.Se, err = session.CreateSession4Test(s.store)
-	c.Assert(err, IsNil)
-	tk1.GetConnectionID()
+	conn2 := server.CreateMockConn(t, sv)
+	tk1 := testkit.NewTestKitWithSession(t, store, conn2.Context().Session)
 
 	query := "select * from test.t"
-	stmtID, _, _, err := tk1.Se.PrepareStmt(query)
-	c.Assert(err, IsNil)
+	stmtID, _, _, err := tk1.Session().PrepareStmt(query)
+	require.NoError(t, err)
 
-	sm := &mockSessionManager1{
-		Se: tk1.Se,
-	}
-	tk1.Se.SetSessionManager(sm)
-	s.domain.ExpensiveQueryHandle().SetSessionManager(sm)
+	dom.ExpensiveQueryHandle().SetSessionManager(sv)
 
-	rs, err := tk1.Se.ExecutePreparedStmt(ctx, stmtID, []types.Datum{})
-	c.Assert(err, IsNil)
-	tk1.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("1", "2", "3"))
-	tk1.Se.SetProcessInfo("", time.Now(), mysql.ComStmtExecute, 0)
+	rs, err := tk1.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test())
+	require.NoError(t, err)
+	tk1.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1", "2", "3"))
+	tk1.Session().SetProcessInfo("", time.Now(), mysql.ComStmtExecute, 0)
 
-	s.domain.ExpensiveQueryHandle().LogOnQueryExceedMemQuota(tk.Se.GetSessionVars().ConnectionID)
+	dom.ExpensiveQueryHandle().LogOnQueryExceedMemQuota(tk.Session().GetSessionVars().ConnectionID)
 
 	// After entirely fixing https://github.com/pingcap/tidb/issues/17419
-	// c.Assert(tk1.Se.ShowProcess().Plan, NotNil)
-	// _, ok := tk1.Se.ShowProcess().Plan.(*plannercore.Execute)
-	// c.Assert(ok, IsTrue)
+	// require.NotNil(t, tk1.Session().ShowProcess().Plan)
+	// _, ok := tk1.Session().ShowProcess().Plan.(*plannercore.Execute)
+	// require.True(t, ok)
 }
