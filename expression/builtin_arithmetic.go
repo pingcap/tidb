@@ -121,7 +121,11 @@ func setFlenDecimal4RealOrDecimal(ctx sessionctx.Context, retTp *types.FieldType
 		if isMultiply {
 			digitsInt = a.GetFlen() - a.GetDecimal() + b.GetFlen() - b.GetDecimal()
 		}
-		retTp.SetFlenUnderLimit(digitsInt + retTp.GetDecimal() + 1)
+		if isMultiply {
+			retTp.SetFlenUnderLimit(digitsInt + retTp.GetDecimal())
+		} else {
+			retTp.SetFlenUnderLimit(digitsInt + retTp.GetDecimal() + 1)
+		}
 		if isReal {
 			retTp.SetFlen(mathutil.Min(retTp.GetFlen(), mysql.MaxRealWidth))
 			return
