@@ -1540,6 +1540,15 @@ func (p *PhysicalUnionAll) Clone() (PhysicalPlan, error) {
 	return cloned, nil
 }
 
+// MemoryUsage return the memory usage of PhysicalUnionAll
+func (p *PhysicalUnionAll) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	return p.physicalSchemaProducer.MemoryUsage() + size.SizeOfBool
+}
+
 // AggMppRunMode defines the running mode of aggregation in MPP
 type AggMppRunMode int
 
@@ -2097,6 +2106,22 @@ type TableSampleInfo struct {
 	Partitions []table.PartitionedTable
 }
 
+// MemoryUsage return the memory usage of TableSampleInfo
+func (t *TableSampleInfo) MemoryUsage() (sum int64) {
+	if t == nil {
+		return
+	}
+
+	sum = size.SizeOfPointer*2 + size.SizeOfSlice + int64(cap(t.Partitions))*size.SizeOfInterface
+	if t.AstNode != nil {
+		sum += int64(unsafe.Sizeof(ast.TableSample{}))
+	}
+	if t.FullSchema != nil {
+		sum += t.FullSchema.MemoryUsage()
+	}
+	return
+}
+
 // NewTableSampleInfo creates a new TableSampleInfo.
 func NewTableSampleInfo(node *ast.TableSample, fullSchema *expression.Schema, pt []table.PartitionedTable) *TableSampleInfo {
 	if node == nil {
@@ -2155,9 +2180,37 @@ func (p *PhysicalCTE) ExplainID() fmt.Stringer {
 	})
 }
 
+// MemoryUsage return the memory usage of PhysicalCTE
+func (p *PhysicalCTE) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.physicalSchemaProducer.MemoryUsage() + p.cteAsName.MemoryUsage()
+	if p.SeedPlan != nil {
+		sum += p.SeedPlan.MemoryUsage()
+	}
+	if p.RecurPlan != nil {
+		sum += p.RecurPlan.MemoryUsage()
+	}
+	if p.CTE != nil {
+		sum += p.CTE.MemoryUsage()
+	}
+	return
+}
+
 // ExplainInfo overrides the ExplainInfo
 func (p *PhysicalCTETable) ExplainInfo() string {
 	return "Scan on CTE_" + strconv.Itoa(p.IDForStorage)
+}
+
+// MemoryUsage return the memory usage of PhysicalCTETable
+func (p *PhysicalCTETable) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	return p.physicalSchemaProducer.MemoryUsage() + size.SizeOfInt
 }
 
 // CTEDefinition is CTE definition for explain.
@@ -2182,6 +2235,25 @@ func (p *CTEDefinition) ExplainID() fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
 		return "CTE_" + strconv.Itoa(p.CTE.IDForStorage)
 	})
+}
+
+// MemoryUsage return the memory usage of CTEDefinition
+func (p *CTEDefinition) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.physicalSchemaProducer.MemoryUsage() + p.cteAsName.MemoryUsage()
+	if p.SeedPlan != nil {
+		sum += p.SeedPlan.MemoryUsage()
+	}
+	if p.RecurPlan != nil {
+		sum += p.RecurPlan.MemoryUsage()
+	}
+	if p.CTE != nil {
+		sum += p.CTE.MemoryUsage()
+	}
+	return
 }
 
 func appendChildCandidate(origin PhysicalPlan, pp PhysicalPlan, op *physicalOptimizeOp) {
