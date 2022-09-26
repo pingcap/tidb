@@ -36,19 +36,18 @@ run_br backup full --type kv --pd $PD_ADDR -s "local://$TEST_DIR/kv"
 # run_br backup full --type aws-ebs --skip-aws --pd $PD_ADDR -s "local://$TEST_DIR/ebs" --volume-file tests/$TEST_NAME/volume.json
 
 run_br restore full -h > $res_file 2>&1
-check_not_contains "--meta-phase"
-check_not_contains "--data-phase"
+check_not_contains "--type"
+check_not_contains "--prepare"
 check_not_contains "--output-file"
 check_not_contains "--skip-aws"
 check_not_contains "--cloud-api-concurrency"
 check_not_contains "--volume-type"
 check_not_contains "--volume-iops"
 check_not_contains "--volume-throughput"
-check_not_contains "--type"
 check_not_contains "--progress-file"
 
-run_br restore full --meta-phase --data-phase > $res_file 2>&1 || true
-check_contains "can only set either meta-phase or data-phase"
+run_br restore full --type xxx > $res_file 2>&1 || true
+check_contains "invalid full backup type"
 
 # todo: cannot run this test now, we need specified pd version.
 # run_br restore full --meta-phase --skip-aws --pd $PD_ADDR -s "local://$(cd .; pwd)/tests/$TEST_NAME/"

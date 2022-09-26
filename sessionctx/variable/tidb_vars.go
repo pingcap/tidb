@@ -20,6 +20,8 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable/featuretag/concurrencyddl"
+	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/paging"
 	"go.uber.org/atomic"
 )
@@ -840,6 +842,10 @@ const (
 	TiDBDDLEnableFastReorg = "tidb_ddl_enable_fast_reorg"
 	// TiDBDDLDiskQuota used to set disk quota for lightning add index.
 	TiDBDDLDiskQuota = "tidb_ddl_disk_quota"
+	// TiDBServerMemoryLimit indicates the memory limit of the tidb-server instance.
+	TiDBServerMemoryLimit = "tidb_server_memory_limit"
+	// TiDBServerMemoryLimitSessMinSize indicates the minimal memory used of a session, that becomes a candidate for session kill.
+	TiDBServerMemoryLimitSessMinSize = "tidb_server_memory_limit_sess_min_size"
 )
 
 // TiDB intentional limits
@@ -1077,6 +1083,7 @@ const (
 	DefTiDBForeignKeyChecks                         = false
 	DefTiDBOptRangeMaxSize                          = 0
 	DefTiDBCostModelVer                             = 1
+	DefTiDBServerMemoryLimitSessMinSize             = 128 << 20
 )
 
 // Process global variables.
@@ -1129,6 +1136,10 @@ var (
 	// EnableForeignKey indicates whether to enable foreign key feature.
 	EnableForeignKey    = atomic.NewBool(false)
 	EnableRCReadCheckTS = atomic.NewBool(false)
+
+	// DefTiDBServerMemoryLimit indicates the default value of TiDBServerMemoryLimit(TotalMem * 80%).
+	// It should be a const and shouldn't be modified after tidb is started.
+	DefTiDBServerMemoryLimit = mathutil.Max(memory.GetMemTotalIgnoreErr()/10*8, 512<<20)
 )
 
 var (

@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
+	"github.com/pingcap/tidb/br/pkg/streamhelper/daemon"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/placement"
@@ -64,6 +65,7 @@ import (
 	"github.com/pingcap/tidb/util/expensivequery"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memoryusagealarm"
+	"github.com/pingcap/tidb/util/servermemorylimit"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	pd "github.com/tikv/pd/client"
@@ -87,31 +89,32 @@ func NewMockDomain() *Domain {
 // Domain represents a storage space. Different domains can use the same database name.
 // Multiple domains can be used in parallel without synchronization.
 type Domain struct {
-	store                  kv.Storage
-	infoCache              *infoschema.InfoCache
-	privHandle             *privileges.Handle
-	bindHandle             *bindinfo.BindHandle
-	statsHandle            unsafe.Pointer
-	statsLease             time.Duration
-	ddl                    ddl.DDL
-	info                   *infosync.InfoSyncer
-	globalCfgSyncer        *globalconfigsync.GlobalConfigSyncer
-	m                      sync.Mutex
-	SchemaValidator        SchemaValidator
-	sysSessionPool         *sessionPool
-	exit                   chan struct{}
-	etcdClient             *clientv3.Client
-	sysVarCache            sysVarCache // replaces GlobalVariableCache
-	slowQuery              *topNSlowQueries
-	expensiveQueryHandle   *expensivequery.Handle
+	store                   kv.Storage
+	infoCache               *infoschema.InfoCache
+	privHandle              *privileges.Handle
+	bindHandle              *bindinfo.BindHandle
+	statsHandle             unsafe.Pointer
+	statsLease              time.Duration
+	ddl                     ddl.DDL
+	info                    *infosync.InfoSyncer
+	globalCfgSyncer         *globalconfigsync.GlobalConfigSyncer
+	m                       sync.Mutex
+	SchemaValidator         SchemaValidator
+	sysSessionPool          *sessionPool
+	exit                    chan struct{}
+	etcdClient              *clientv3.Client
+	sysVarCache             sysVarCache // replaces GlobalVariableCache
+	slowQuery               *topNSlowQueries
+	expensiveQueryHandle    *expensivequery.Handle
 	memoryUsageAlarmHandle *memoryusagealarm.Handle
-	wg                     util.WaitGroupWrapper
-	statsUpdating          atomicutil.Int32
-	cancel                 context.CancelFunc
-	indexUsageSyncLease    time.Duration
-	dumpFileGcChecker      *dumpFileGcChecker
-	expiredTimeStamp4PC    types.Time
-	logBackupAdvancer      *streamhelper.AdvancerDaemon
+	serverMemoryLimitHandle *servermemorylimit.Handle
+	wg                      util.WaitGroupWrapper
+	statsUpdating           atomicutil.Int32
+	cancel                  context.CancelFunc
+	indexUsageSyncLease     time.Duration
+	dumpFileGcChecker       *dumpFileGcChecker
+	expiredTimeStamp4PC     types.Time
+	logBackupAdvancer       *daemon.OwnerDaemon
 
 	serverID             uint64
 	serverIDSession      *concurrency.Session
@@ -887,6 +890,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)
 	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do.exit)
 	do.memoryUsageAlarmHandle = memoryusagealarm.NewMemoryUsageAlarmHandle(do.exit)
+	do.serverMemoryLimitHandle = servermemorylimit.NewServerMemoryLimitHandle(do.exit)
 	do.sysProcesses = SysProcesses{mu: &sync.RWMutex{}, procMap: make(map[uint64]sessionctx.Context)}
 	variable.SetStatsCacheCapacity.Store(do.SetStatsCacheCapacity)
 	return do
@@ -1058,7 +1062,7 @@ func (do *Domain) initLogBackup(ctx context.Context, pdClient pd.Client) error {
 		return err
 	}
 	adv := streamhelper.NewCheckpointAdvancer(env)
-	do.logBackupAdvancer = streamhelper.NewAdvancerDaemon(adv, streamhelper.OwnerManagerForLogBackup(ctx, do.etcdClient))
+	do.logBackupAdvancer = daemon.New(adv, streamhelper.OwnerManagerForLogBackup(ctx, do.etcdClient), adv.Config().TickDuration)
 	loop, err := do.logBackupAdvancer.Begin(ctx)
 	if err != nil {
 		return err
@@ -1823,6 +1827,11 @@ func (do *Domain) ExpensiveQueryHandle() *expensivequery.Handle {
 // MemoryUsageAlarmHandle returns the memory usage alarm handle.
 func (do *Domain) MemoryUsageAlarmHandle() *memoryusagealarm.Handle {
 	return do.memoryUsageAlarmHandle
+}
+
+// ServerMemoryLimitHandle returns the expensive query handle.
+func (do *Domain) ServerMemoryLimitHandle() *servermemorylimit.Handle {
+	return do.serverMemoryLimitHandle
 }
 
 const (
