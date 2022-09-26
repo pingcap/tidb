@@ -467,7 +467,7 @@ func TestPartitionTable(t *testing.T) {
 	tk.MustExec("drop table if exists t2")
 	tk.MustExec("create table t(a int not null primary key, b int not null) partition by hash(a+1) partitions 4")
 	// Looks like setting replica number of a region is not supported in mock store, a region always has n replicas(where n
-	// is the number of stores), in this test, there are 2 TiFlash store, so the TiFlash replica is always 2, so change the
+	// is the number of stores), in this test, there are 2 TiFlash store, so the TiFlash replica is always 2, change the
 	// TiFlash replica to 2 to make it consist with mock store.
 	tk.MustExec("alter table t set tiflash replica 2")
 	tb := external.GetTableByName(t, tk, "test", "t")
