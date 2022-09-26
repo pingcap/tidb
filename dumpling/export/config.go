@@ -72,6 +72,7 @@ const (
 	flagReadTimeout              = "read-timeout"
 	flagTransactionalConsistency = "transactional-consistency"
 	flagCompress                 = "compress"
+	flagBinaryEncodeFunc         = "binary-encode-function"
 
 	// FlagHelp represents the help flag
 	FlagHelp = "help"
@@ -138,6 +139,7 @@ type Config struct {
 	SessionParams       map[string]interface{}
 	Tables              DatabaseTables
 	CollationCompatible string
+	BinaryEncodeFunc    string
 
 	Labels       prometheus.Labels       `json:"-"`
 	PromFactory  promutil.Factory        `json:"-"`
@@ -190,6 +192,7 @@ func DefaultConfig() *Config {
 		specifiedTables:     false,
 		PromFactory:         promutil.NewDefaultFactory(),
 		PromRegistry:        promutil.NewDefaultRegistry(),
+		BinaryEncodeFunc:    "",
 	}
 }
 
@@ -274,6 +277,7 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.Bool(flagTransactionalConsistency, true, "Only support transactional consistency")
 	_ = flags.MarkHidden(flagTransactionalConsistency)
 	flags.StringP(flagCompress, "c", "", "Compress output file type, support 'gzip', 'no-compression' now")
+	flags.String(flagBinaryEncodeFunc, "", "SQL expression to encode binary and blob columns")
 }
 
 // ParseFromFlags parses dumpling's export.Config from flags
@@ -508,6 +512,11 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	}
 
 	err = conf.BackendOptions.ParseFromFlags(pflag.CommandLine)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	conf.BinaryEncodeFunc, err = flags.GetString(flagBinaryEncodeFunc)
 	if err != nil {
 		return errors.Trace(err)
 	}

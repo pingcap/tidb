@@ -917,24 +917,30 @@ func createConnWithConsistency(ctx context.Context, db *sql.DB, repeatableRead b
 
 // buildSelectField returns the selecting fields' string(joined by comma(`,`)),
 // and the number of writable fields.
-func buildSelectField(tctx *tcontext.Context, db *BaseConn, dbName, tableName string, completeInsert bool) (string, int, error) { // revive:disable-line:flag-parameter
+func buildSelectField(tctx *tcontext.Context, db *BaseConn, dbName, tableName string, completeInsert bool, binaryEncodeFunc string) (string, int, error) { // revive:disable-line:flag-parameter
 	query := fmt.Sprintf("SHOW COLUMNS FROM `%s`.`%s`", escapeString(dbName), escapeString(tableName))
-	results, err := db.QuerySQLWithColumns(tctx, []string{"FIELD", "EXTRA"}, query)
+	results, err := db.QuerySQLWithColumns(tctx, []string{"FIELD", "EXTRA", "TYPE"}, query)
 	if err != nil {
 		return "", 0, err
 	}
 	availableFields := make([]string, 0)
 	hasGenerateColumn := false
+	hasBinaryEncodeColumn := false
 	for _, oneRow := range results {
-		fieldName, extra := oneRow[0], oneRow[1]
+		fieldName, extra, fieldType := oneRow[0], oneRow[1], oneRow[2]
 		switch extra {
 		case "STORED GENERATED", "VIRTUAL GENERATED":
 			hasGenerateColumn = true
 			continue
 		}
-		availableFields = append(availableFields, wrapBackTicks(escapeString(fieldName)))
+		newField := wrapBackTicks(escapeString(fieldName))
+		if binaryEncodeFunc != "" && (strings.Contains(fieldType, "blob") || strings.Contains(fieldType, "binary")) {
+			hasBinaryEncodeColumn = true
+			newField = fmt.Sprintf(binaryEncodeFunc, newField)
+		}
+		availableFields = append(availableFields, newField)
 	}
-	if completeInsert || hasGenerateColumn {
+	if completeInsert || hasGenerateColumn || hasBinaryEncodeColumn {
 		return strings.Join(availableFields, ","), len(availableFields), nil
 	}
 	return "*", len(availableFields), nil
