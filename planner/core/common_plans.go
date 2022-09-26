@@ -346,6 +346,8 @@ type Update struct {
 	PartitionedTable []table.PartitionedTable
 
 	tblID2Table map[int64]table.Table
+
+	FKChecks map[int64][]*FKCheck
 }
 
 // Delete represents a delete plan.

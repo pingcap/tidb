@@ -5376,8 +5376,12 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 		tblID2table[id], _ = b.is.TableByID(id)
 	}
 	updt.TblColPosInfos, err = buildColumns2Handle(updt.OutputNames(), tblID2Handle, tblID2table, true)
+	if err != nil {
+		return nil, err
+	}
 	updt.PartitionedTable = b.partitionedTable
 	updt.tblID2Table = tblID2table
+	updt.FKChecks, err = updt.buildOnUpdateFKChecks(b.ctx, b.is, tblID2table)
 	return updt, err
 }
 

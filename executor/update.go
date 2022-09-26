@@ -66,6 +66,8 @@ type UpdateExec struct {
 	tableUpdatable []bool
 	changed        []bool
 	matches        []bool
+	// fkChecks contains the foreign key checkers. the map is tableID -> []*FKCheckExec
+	fkChecks map[int64][]*FKCheckExec
 }
 
 // prepare `handles`, `tableUpdatable`, `changed` to avoid re-computations.
@@ -191,7 +193,8 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema, row, n
 		flags := bAssignFlag[content.Start:content.End]
 
 		// Update row
-		changed, err1 := updateRecord(ctx, e.ctx, handle, oldData, newTableData, flags, tbl, false, e.memTracker, nil)
+		fkChecks := e.fkChecks[content.TblID]
+		changed, err1 := updateRecord(ctx, e.ctx, handle, oldData, newTableData, flags, tbl, false, e.memTracker, fkChecks)
 		if err1 == nil {
 			_, exist := e.updatedRowKeys[content.Start].Get(handle)
 			memDelta := e.updatedRowKeys[content.Start].Set(handle, changed)
@@ -536,4 +539,13 @@ func (e *updateRuntimeStats) Merge(other execdetails.RuntimeStats) {
 // Tp implements the RuntimeStats interface.
 func (e *updateRuntimeStats) Tp() int {
 	return execdetails.TpUpdateRuntimeStats
+}
+
+// GetFKChecks implements WithForeignKeyTrigger interface.
+func (e *UpdateExec) GetFKChecks() []*FKCheckExec {
+	fkChecks := []*FKCheckExec{}
+	for _, fkcs := range e.fkChecks {
+		fkChecks = append(fkChecks, fkcs...)
+	}
+	return fkChecks
 }
