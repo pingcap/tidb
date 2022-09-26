@@ -6,10 +6,12 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.uber.org/zap"
 )
 
 const (
@@ -23,6 +25,7 @@ const (
 func (c *CheckpointAdvancer) OnTick(ctx context.Context) (err error) {
 	defer c.recordTimeCost("tick")()
 	defer utils.PanicToErr(&err)
+	log.Debug("[log backup advancer] ticking", zap.Stringer("state", c.state))
 	return c.tick(ctx)
 }
 

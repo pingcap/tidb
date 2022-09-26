@@ -187,7 +187,7 @@ func oneStoreFailure() func(uint64) error {
 		}
 		if victim == u {
 			return status.Error(codes.NotFound,
-				"The place once lit by the warm lamplight has been swallowed up by the debris now.")
+				"The place once lit by the warm lamplight has been swallowed up by the debris nowadays.")
 		}
 		return nil
 	}

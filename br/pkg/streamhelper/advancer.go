@@ -5,6 +5,7 @@ package streamhelper
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"math"
 	"reflect"
 	"sort"
@@ -83,6 +84,8 @@ type advancerState interface {
 
 	// Descriptor returns the variant type of the advancer state as integer.
 	Descriptor() int
+
+	fmt.Stringer
 }
 
 // fullScan is the initial state of advancer.
@@ -98,6 +101,10 @@ func (f *fullScan) Descriptor() int {
 	return 1
 }
 
+func (f *fullScan) String() string {
+	return fmt.Sprintf("FULL@%d:%s", f.checkpointTillNow, logutil.StringifyKeys(f.todo))
+}
+
 // updateSmallTree is the "incremental stage" of advancer.
 // we have build a "filled" cache, and we can pop a subrange of it,
 // try to advance the checkpoint of those ranges.
@@ -108,6 +115,10 @@ type updateSmallTree struct {
 
 func (u *updateSmallTree) Descriptor() int {
 	return 2
+}
+
+func (u *updateSmallTree) String() string {
+	return "INC"
 }
 
 // NewCheckpointAdvancer creates a checkpoint advancer with the env.
@@ -466,6 +477,7 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 		c.task = e.Info
 		c.taskRange = CollapseRanges(len(e.Ranges), func(i int) kv.KeyRange { return e.Ranges[i] })
 		log.Info("added event", zap.Stringer("task", e.Info), zap.Stringer("ranges", logutil.StringifyKeys(c.taskRange)))
+		c.resetToFullScan()
 	case EventDel:
 		utils.LogBackupTaskCountDec()
 		c.task = nil
