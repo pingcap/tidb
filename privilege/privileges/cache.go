@@ -20,10 +20,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
-	"sort"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/ast"
