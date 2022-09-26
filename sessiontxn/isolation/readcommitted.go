@@ -125,6 +125,10 @@ func (p *PessimisticRCTxnContextProvider) OnStmtRetry(ctx context.Context) error
 	if err := p.baseTxnContextProvider.OnStmtRetry(ctx); err != nil {
 		return err
 	}
+	failpoint.Inject("CallOnStmtRetry", func() {
+		sessiontxn.OnStmtRetryCountInc(p.sctx)
+	})
+	p.latestOracleTSValid = false
 	p.checkTSInWriteStmt = false
 	return p.prepareStmt(false)
 }
@@ -193,15 +197,12 @@ func (p *PessimisticRCTxnContextProvider) handleAfterQueryError(queryErr error) 
 		return sessiontxn.NoIdea()
 	}
 
-	p.latestOracleTSValid = false
-
 	logutil.Logger(p.ctx).Info("RC read with ts checking has failed, retry RC read",
 		zap.String("sql", sessVars.StmtCtx.OriginalSQL), zap.Error(queryErr))
 	return sessiontxn.RetryReady()
 }
 
 func (p *PessimisticRCTxnContextProvider) handleAfterPessimisticLockError(lockErr error) (sessiontxn.StmtErrorAction, error) {
-	p.latestOracleTSValid = false
 	txnCtx := p.sctx.GetSessionVars().TxnCtx
 	retryable := false
 	if deadlock, ok := errors.Cause(lockErr).(*tikverr.ErrDeadlock); ok && deadlock.IsRetryable {

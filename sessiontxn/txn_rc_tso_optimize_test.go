@@ -790,3 +790,38 @@ func TestConflictErrorsUseRcWriteCheckTs(t *testing.T) {
 
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertPessimisticLockErr"))
 }
+
+func TestConflictErrorsUseRcReadCheckTs(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/CallOnStmtRetry", "return"))
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("rollback")
+
+	se := tk.Session()
+
+	tk2 := testkit.NewTestKit(t, store)
+	defer tk2.MustExec("rollback")
+
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+	tk.MustExec("set transaction_isolation = 'READ-COMMITTED'")
+	tk2.MustExec("set transaction_isolation = 'READ-COMMITTED'")
+	tk.MustExec("set session tidb_rc_read_check_ts = on")
+	tk2.MustExec("set session tidb_rc_read_check_ts = on")
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(id1 int, id2 int, id3 int, PRIMARY KEY(id1), UNIQUE KEY udx_id2 (id2))")
+	tk.MustExec("insert into t1 values (1, 1, 1)")
+	tk.MustExec("insert into t1 values (10, 10, 10)")
+
+	se.SetValue(sessiontxn.CallOnStmtRetryCount, 0)
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("update t1 set id3 = id3 + 1 where id1 = 1")
+	tk.MustQuery("select * from t1 where id1 = 1").Check(testkit.Rows("1 1 2"))
+	tk.MustExec("commit")
+	count, _ := se.Value(sessiontxn.CallOnStmtRetryCount).(int64)
+	require.Equal(t, count, 1)
+
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/CallOnStmtRetry"))
+}
