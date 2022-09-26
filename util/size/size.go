@@ -63,4 +63,7 @@ const (
 
 	// SizeOfUint8 is the memory each uint8 occupied
 	SizeOfUint8 = int64(unsafe.Sizeof(*new(uint8)))
+
+	// SizeOfMap is the memory each map occupied
+	SizeOfMap = int64(unsafe.Sizeof(*new(map[int]int)))
 )

@@ -357,8 +357,7 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 	}
 
 	sum = plan.MemoryUsage() + size.SizeOfSlice*2 + int64(cap(v.OutPutNames)+cap(v.ParamTypes))*size.SizeOfPointer +
-		int64(len(v.TblInfo2UnionScan))*(size.SizeOfPointer+size.SizeOfBool)
-	// todo: memtrace: size.SizeOfMap   wait for the preorder PR
+		size.SizeOfMap + int64(len(v.TblInfo2UnionScan))*(size.SizeOfPointer+size.SizeOfBool)
 
 	for _, name := range v.OutPutNames {
 		sum += name.MemoryUsage()

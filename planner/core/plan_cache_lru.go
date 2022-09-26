@@ -215,7 +215,7 @@ func (l *LRUPlanCache) MemoryUsage() (sum int64) {
 		sum += int64(l.lruList.Len()) * (size.SizeOfPointer*3 + size.SizeOfInterface)
 	}
 	for k, v := range l.buckets {
-		sum += size.SizeOfString + int64(len(k))
+		sum += size.SizeOfString + int64(len(k)) + size.SizeOfMap
 		for ele := range v {
 			if key, ok := ele.Value.(*planCacheEntry).PlanKey.(*planCacheKey); ok {
 				sum += key.MemoryUsage()
