@@ -1408,7 +1408,7 @@ func (ijHelper *indexJoinBuildHelper) removeUselessEqAndInFunc(idxCols []*expres
 }
 
 type mutableIndexJoinRange struct {
-	ranges []*ranger.Range
+	ranges ranger.Ranges
 
 	buildHelper   *indexJoinBuildHelper
 	path          *util.AccessPath
@@ -1416,7 +1416,7 @@ type mutableIndexJoinRange struct {
 	outerJoinKeys []*expression.Column
 }
 
-func (mr *mutableIndexJoinRange) Range() []*ranger.Range {
+func (mr *mutableIndexJoinRange) Range() ranger.Ranges {
 	return mr.ranges
 }
 
@@ -1457,7 +1457,7 @@ func (ijHelper *indexJoinBuildHelper) updateByTemplateRangeResult(tempRangeRes *
 	lastColPos = tempRangeRes.keyCntInRange + tempRangeRes.eqAndInCntInRange
 	ijHelper.curPossibleUsedKeys = ijHelper.curPossibleUsedKeys[:tempRangeRes.keyCntInRange]
 	for i := lastColPos; i < len(ijHelper.curIdxOff2KeyOff); i++ {
-		ijHelper.curIdxOff2KeyOff[lastColPos] = -1
+		ijHelper.curIdxOff2KeyOff[i] = -1
 	}
 	newAccesses = accesses[:tempRangeRes.eqAndInCntInRange]
 	newRemained = ranger.AppendConditionsIfNotExist(remained, accesses[tempRangeRes.eqAndInCntInRange:])
@@ -1496,7 +1496,7 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *util.AccessPath
 	}
 	// If all the index columns are covered by eq/in conditions, we don't need to consider other conditions anymore.
 	if lastColPos == len(path.IdxCols) {
-		// If there's join key matched index column. Then choose hash join is always a better idea.
+		// If there's no join key matching index column, then choosing hash join is always a better idea.
 		// e.g. select * from t1, t2 where t2.a=1 and t2.b=1. And t2 has index(a, b).
 		//      If we don't have the following check, TiDB will build index join for this case.
 		if matchedKeyCnt <= 0 {
@@ -1521,7 +1521,7 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *util.AccessPath
 	lastColAccess := ijHelper.buildLastColManager(lastPossibleCol, innerPlan, lastColManager)
 	// If the column manager holds no expression, then we fallback to find whether there're useful normal filters
 	if len(lastColAccess) == 0 {
-		// If there's join key matched index column. Then choose hash join is always a better idea.
+		// If there's no join key matching index column, then choosing hash join is always a better idea.
 		// e.g. select * from t1, t2 where t2.a=1 and t2.b=1 and t2.c > 10 and t2.c < 20. And t2 has index(a, b, c).
 		//      If we don't have the following check, TiDB will build index join for this case.
 		if matchedKeyCnt <= 0 {
@@ -1646,7 +1646,8 @@ func appendTailTemplateRange(originRanges ranger.Ranges, rangeMaxSize int64) (ra
 func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAndInFuncs []expression.Expression, nextColRange []*ranger.Range,
 	haveExtraCol bool, rangeMaxSize int64) (res *templateRangeResult) {
 	res = &templateRangeResult{}
-	sc := ijHelper.join.ctx.GetSessionVars().StmtCtx
+	ctx := ijHelper.join.ctx
+	sc := ctx.GetSessionVars().StmtCtx
 	defer func() {
 		if sc.MemTracker != nil && res != nil && len(res.ranges) > 0 {
 			sc.MemTracker.Consume(2 * types.EstimatedMemUsage(res.ranges[0].LowVal, len(res.ranges)))
@@ -1660,6 +1661,7 @@ func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAn
 			var fallback bool
 			ranges, fallback = appendTailTemplateRange(ranges, rangeMaxSize)
 			if fallback {
+				ctx.GetSessionVars().StmtCtx.RecordRangeFallback(rangeMaxSize)
 				res.ranges = ranges
 				res.keyCntInRange = i
 				res.eqAndInCntInRange = j
@@ -1687,6 +1689,7 @@ func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAn
 			var fallback bool
 			ranges, fallback = ranger.AppendRanges2PointRanges(ranges, oneColumnRan, rangeMaxSize)
 			if fallback {
+				ctx.GetSessionVars().StmtCtx.RecordRangeFallback(rangeMaxSize)
 				res.ranges = ranges
 				res.keyCntInRange = i
 				res.eqAndInCntInRange = j
@@ -1698,6 +1701,9 @@ func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAn
 	if nextColRange != nil {
 		var fallback bool
 		ranges, fallback = ranger.AppendRanges2PointRanges(ranges, nextColRange, rangeMaxSize)
+		if fallback {
+			ctx.GetSessionVars().StmtCtx.RecordRangeFallback(rangeMaxSize)
+		}
 		res.ranges = ranges
 		res.keyCntInRange = matchedKeyCnt
 		res.eqAndInCntInRange = len(eqAndInFuncs)
@@ -1707,6 +1713,9 @@ func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAn
 	if haveExtraCol {
 		var fallback bool
 		ranges, fallback = appendTailTemplateRange(ranges, rangeMaxSize)
+		if fallback {
+			ctx.GetSessionVars().StmtCtx.RecordRangeFallback(rangeMaxSize)
+		}
 		res.ranges = ranges
 		res.keyCntInRange = matchedKeyCnt
 		res.eqAndInCntInRange = len(eqAndInFuncs)
