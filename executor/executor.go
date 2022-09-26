@@ -1938,6 +1938,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	} else {
 		sc.InitMemTracker(memory.LabelForSQLText, vars.MemQuotaQuery)
 		sc.MemTracker.AttachToGlobalTracker(GlobalMemoryUsageTracker)
+		sc.MemTracker.IsRootTrackerOfSess, sc.MemTracker.SessionID = true, vars.ConnectionID
 	}
 
 	sc.InitDiskTracker(memory.LabelForSQLText, -1)

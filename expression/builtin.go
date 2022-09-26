@@ -690,6 +690,7 @@ var funcs = map[string]functionClass{
 	// TSO functions
 	ast.TiDBBoundedStaleness: &tidbBoundedStalenessFunctionClass{baseFunctionClass{ast.TiDBBoundedStaleness, 2, 2}},
 	ast.TiDBParseTso:         &tidbParseTsoFunctionClass{baseFunctionClass{ast.TiDBParseTso, 1, 1}},
+	ast.TiDBCurrentTso:       &tidbCurrentTsoFunctionClass{baseFunctionClass{ast.TiDBCurrentTso, 0, 0}},
 
 	// string functions
 	ast.ASCII:           &asciiFunctionClass{baseFunctionClass{ast.ASCII, 1, 1}},
