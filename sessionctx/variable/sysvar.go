@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	_ "github.com/pingcap/tidb/types/parser_driver" // for parser driver
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/gctuner"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
@@ -737,6 +738,7 @@ var defaultSysVars = []*SysVar{
 				return err
 			}
 			memory.ServerMemoryLimit.Store(intVal)
+			gctuner.GlobalMemoryLimitTuner.UpdateMemoryLimit()
 			return nil
 		},
 	},
@@ -761,6 +763,31 @@ var defaultSysVars = []*SysVar{
 				return err
 			}
 			memory.ServerMemoryLimitSessMinSize.Store(intVal)
+			return nil
+		},
+	},
+	{Scope: ScopeGlobal, Name: TiDBServerMemoryGCTrigger, Value: strconv.FormatFloat(DefTiDBServerMemoryGCTrigger, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: math.MaxUint64,
+		GetGlobal: func(s *SessionVars) (string, error) {
+			return strconv.FormatFloat(gctuner.GlobalMemoryLimitTuner.GetPercentage(), 'f', -1, 64), nil
+		},
+		Validation: func(s *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+			floatValue, err := strconv.ParseFloat(normalizedValue, 64)
+			if err != nil {
+				return "", err
+			}
+			if floatValue < 0.51 && floatValue > 1 { // 51% ~ 100%
+				s.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(TiDBServerMemoryGCTrigger, originalValue))
+				floatValue = DefTiDBServerMemoryGCTrigger
+			}
+			return strconv.FormatFloat(floatValue, 'f', -1, 64), nil
+		},
+		SetGlobal: func(s *SessionVars, val string) error {
+			floatValue, err := strconv.ParseFloat(val, 64)
+			if err != nil {
+				return err
+			}
+			gctuner.GlobalMemoryLimitTuner.SetPercentage(floatValue)
+			gctuner.GlobalMemoryLimitTuner.UpdateMemoryLimit()
 			return nil
 		},
 	},
