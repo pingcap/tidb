@@ -245,13 +245,7 @@ func (e *UpdateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 	fields := retTypes(e.children[0])
-	colsInfo := make([]*table.Column, len(fields))
-	for _, content := range e.tblColPosInfos {
-		tbl := e.tblID2table[content.TblID]
-		for i, c := range tbl.WritableCols() {
-			colsInfo[content.Start+i] = c
-		}
-	}
+	colsInfo := plannercore.GetUpdateColumnsInfo(e.tblID2table, e.tblColPosInfos, len(fields))
 	globalRowIdx := 0
 	chk := newFirstChunk(e.children[0])
 	if !e.allAssignmentsAreConstant {
@@ -543,9 +537,9 @@ func (e *updateRuntimeStats) Tp() int {
 
 // GetFKChecks implements WithForeignKeyTrigger interface.
 func (e *UpdateExec) GetFKChecks() []*FKCheckExec {
-	fkChecks := []*FKCheckExec{}
-	for _, fkcs := range e.fkChecks {
-		fkChecks = append(fkChecks, fkcs...)
+	fkChecks := make([]*FKCheckExec, 0, len(e.fkChecks))
+	for _, fkc := range e.fkChecks {
+		fkChecks = append(fkChecks, fkc...)
 	}
 	return fkChecks
 }

@@ -139,21 +139,15 @@ func buildOnUpdateReferredFKChecks(is infoschema.InfoSchema, dbName string, tblI
 }
 
 func (updt *Update) buildTbl2UpdateColumns() map[int64]map[string]struct{} {
-	colsInfo := make([]*model.ColumnInfo, len(updt.SelectPlan.Schema().Columns))
-	for _, content := range updt.TblColPosInfos {
-		tbl := updt.tblID2Table[content.TblID]
-		for i, c := range tbl.WritableCols() {
-			colsInfo[content.Start+i] = c.ColumnInfo
-		}
-	}
+	colsInfo := GetUpdateColumnsInfo(updt.tblID2Table, updt.TblColPosInfos, len(updt.SelectPlan.Schema().Columns))
 	tblID2UpdateColumns := make(map[int64]map[string]struct{})
-	for tid := range updt.tblID2Table {
-		tblID2UpdateColumns[tid] = make(map[string]struct{})
-	}
 	for _, assign := range updt.OrderedList {
 		col := colsInfo[assign.Col.Index]
 		for _, content := range updt.TblColPosInfos {
 			if assign.Col.Index >= content.Start && assign.Col.Index < content.End {
+				if _, ok := tblID2UpdateColumns[content.TblID]; !ok {
+					tblID2UpdateColumns[content.TblID] = make(map[string]struct{})
+				}
 				tblID2UpdateColumns[content.TblID][col.Name.L] = struct{}{}
 				break
 			}

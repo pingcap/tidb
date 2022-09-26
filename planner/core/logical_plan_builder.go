@@ -5385,6 +5385,18 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	return updt, err
 }
 
+// GetUpdateColumnsInfo get the update columns info.
+func GetUpdateColumnsInfo(tblID2Table map[int64]table.Table, tblColPosInfos TblColPosInfoSlice, size int) []*table.Column {
+	colsInfo := make([]*table.Column, size)
+	for _, content := range tblColPosInfos {
+		tbl := tblID2Table[content.TblID]
+		for i, c := range tbl.WritableCols() {
+			colsInfo[content.Start+i] = c
+		}
+	}
+	return colsInfo
+}
+
 type tblUpdateInfo struct {
 	name                string
 	pkUpdated           bool
