@@ -1452,6 +1452,18 @@ func (ijHelper *indexJoinBuildHelper) createMutableIndexJoinRange(relatedExprs [
 	return ranger.Ranges(ranges)
 }
 
+func (ijHelper *indexJoinBuildHelper) updateByTemplateRangeResult(tempRangeRes *templateRangeResult,
+	accesses, remained []expression.Expression) (lastColPos int, newAccesses, newRemained []expression.Expression) {
+	lastColPos = tempRangeRes.keyCntInRange + tempRangeRes.eqAndInCntInRange
+	ijHelper.curPossibleUsedKeys = ijHelper.curPossibleUsedKeys[:tempRangeRes.keyCntInRange]
+	for i := lastColPos; i < len(ijHelper.curIdxOff2KeyOff); i++ {
+		ijHelper.curIdxOff2KeyOff[lastColPos] = -1
+	}
+	newAccesses = accesses[:tempRangeRes.eqAndInCntInRange]
+	newRemained = ranger.AppendConditionsIfNotExist(remained, accesses[tempRangeRes.eqAndInCntInRange:])
+	return
+}
+
 func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *util.AccessPath, innerPlan *DataSource, innerJoinKeys []*expression.Column, outerJoinKeys []*expression.Column, rebuildMode bool) (emptyRange bool, err error) {
 	if len(path.IdxCols) == 0 {
 		return false, nil
@@ -1492,13 +1504,10 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *util.AccessPath
 		}
 		remained = append(remained, rangeFilterCandidates...)
 		tempRangeRes := ijHelper.buildTemplateRange(matchedKeyCnt, notKeyEqAndIn, nil, false, rangeMaxSize)
-		if tempRangeRes.err != nil || tempRangeRes.emptyRange {
+		if tempRangeRes.err != nil || tempRangeRes.emptyRange || tempRangeRes.keyCntInRange <= 0 {
 			return tempRangeRes.emptyRange, tempRangeRes.err
 		}
-		lastColPos = tempRangeRes.keyCntInRange + tempRangeRes.eqAndInCntInRange
-		ijHelper.curPossibleUsedKeys = ijHelper.curPossibleUsedKeys[:tempRangeRes.keyCntInRange]
-		remained = ranger.AppendConditionsIfNotExist(remained, accesses[tempRangeRes.eqAndInCntInRange:])
-		accesses = accesses[:tempRangeRes.eqAndInCntInRange]
+		lastColPos, accesses, remained = ijHelper.updateByTemplateRangeResult(tempRangeRes, accesses, remained)
 		mutableRange := ijHelper.createMutableIndexJoinRange(accesses, tempRangeRes.ranges, path, innerJoinKeys, outerJoinKeys)
 		ijHelper.updateBestChoice(mutableRange, path, accesses, remained, nil, lastColPos, rebuildMode)
 		return false, nil
@@ -1533,13 +1542,10 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *util.AccessPath
 			}
 		}
 		tempRangeRes := ijHelper.buildTemplateRange(matchedKeyCnt, notKeyEqAndIn, nextColRange, false, rangeMaxSize)
-		if tempRangeRes.err != nil || tempRangeRes.emptyRange {
+		if tempRangeRes.err != nil || tempRangeRes.emptyRange || tempRangeRes.keyCntInRange <= 0 {
 			return tempRangeRes.emptyRange, tempRangeRes.err
 		}
-		lastColPos = tempRangeRes.keyCntInRange + tempRangeRes.eqAndInCntInRange
-		ijHelper.curPossibleUsedKeys = ijHelper.curPossibleUsedKeys[:tempRangeRes.keyCntInRange]
-		remained = ranger.AppendConditionsIfNotExist(remained, accesses[tempRangeRes.eqAndInCntInRange:])
-		accesses = accesses[:tempRangeRes.eqAndInCntInRange]
+		lastColPos, accesses, remained = ijHelper.updateByTemplateRangeResult(tempRangeRes, accesses, remained)
 		// update accesses and remained by colAccesses and colRemained.
 		remained = append(remained, colRemained...)
 		if tempRangeRes.nextColInRange {
@@ -1559,16 +1565,16 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *util.AccessPath
 	if tempRangeRes.err != nil || tempRangeRes.emptyRange {
 		return tempRangeRes.emptyRange, tempRangeRes.err
 	}
-	lastColPos = tempRangeRes.keyCntInRange + tempRangeRes.eqAndInCntInRange
-	ijHelper.curPossibleUsedKeys = ijHelper.curPossibleUsedKeys[:tempRangeRes.keyCntInRange]
-	remained = ranger.AppendConditionsIfNotExist(remained, accesses[tempRangeRes.eqAndInCntInRange:])
-	accesses = accesses[:tempRangeRes.eqAndInCntInRange]
+	lastColPos, accesses, remained = ijHelper.updateByTemplateRangeResult(tempRangeRes, accesses, remained)
 
 	remained = append(remained, rangeFilterCandidates...)
 	if tempRangeRes.extraColInRange {
 		accesses = append(accesses, lastColAccess...)
 		lastColPos = lastColPos + 1
 	} else {
+		if tempRangeRes.keyCntInRange <= 0 {
+			return false, nil
+		}
 		lastColManager = nil
 	}
 	mutableRange := ijHelper.createMutableIndexJoinRange(accesses, tempRangeRes.ranges, path, innerJoinKeys, outerJoinKeys)
@@ -1649,7 +1655,7 @@ func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAn
 	pointLength := matchedKeyCnt + len(eqAndInFuncs)
 	ranges := ranger.Ranges{&ranger.Range{}}
 	for i, j := 0, 0; i+j < pointLength; {
-		if ijHelper.curIdxOff2KeyOff[i] != -1 {
+		if ijHelper.curIdxOff2KeyOff[i+j] != -1 {
 			// This position is occupied by join key.
 			var fallback bool
 			ranges, fallback = appendTailTemplateRange(ranges, rangeMaxSize)

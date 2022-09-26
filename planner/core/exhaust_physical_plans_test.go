@@ -46,7 +46,15 @@ func rewriteSimpleExpr(ctx sessionctx.Context, str string, schema *expression.Sc
 	return filters, nil
 }
 
-func TestIndexJoinAnalyzeLookUpFilters(t *testing.T) {
+type indexJoinContext struct {
+	dataSourceNode *DataSource
+	dsNames        types.NameSlice
+	path           *util.AccessPath
+	joinNode       *LogicalJoin
+	joinColNames   types.NameSlice
+}
+
+func prepareForAnalyzeLookUpFilters() *indexJoinContext {
 	ctx := MockContext()
 
 	ctx.GetSessionVars().PlanID = -1
@@ -101,6 +109,10 @@ func TestIndexJoinAnalyzeLookUpFilters(t *testing.T) {
 	})
 	dataSourceNode.schema = dsSchema
 	dataSourceNode.stats = &property.StatsInfo{StatsVersion: statistics.PseudoVersion}
+	path := &util.AccessPath{
+		IdxCols:    append(make([]*expression.Column, 0, 5), dsSchema.Columns...),
+		IdxColLens: []int{types.UnspecifiedLength, types.UnspecifiedLength, 2, types.UnspecifiedLength, 2},
+	}
 	outerChildSchema := expression.NewSchema()
 	var outerChildNames types.NameSlice
 	outerChildSchema.Append(&expression.Column{
@@ -140,12 +152,22 @@ func TestIndexJoinAnalyzeLookUpFilters(t *testing.T) {
 		DBName:  model.NewCIStr("test"),
 	})
 	joinNode.SetSchema(expression.MergeSchema(dsSchema, outerChildSchema))
-	path := &util.AccessPath{
-		IdxCols:    append(make([]*expression.Column, 0, 5), dsSchema.Columns...),
-		IdxColLens: []int{types.UnspecifiedLength, types.UnspecifiedLength, 2, types.UnspecifiedLength, 2},
-	}
 	joinColNames := append(dsNames.Shallow(), outerChildNames...)
+	return &indexJoinContext{
+		dataSourceNode: dataSourceNode,
+		dsNames:        dsNames,
+		path:           path,
+		joinNode:       joinNode,
+		joinColNames:   joinColNames,
+	}
+}
 
+func TestIndexJoinAnalyzeLookUpFilters(t *testing.T) {
+	indexJoinCtx := prepareForAnalyzeLookUpFilters()
+	ctx := indexJoinCtx.dataSourceNode.ctx
+	dataSourceNode := indexJoinCtx.dataSourceNode
+	dsSchema := indexJoinCtx.dataSourceNode.schema
+	joinNode := indexJoinCtx.joinNode
 	tests := []struct {
 		innerKeys       []*expression.Column
 		pushedDownConds string
@@ -237,7 +259,7 @@ func TestIndexJoinAnalyzeLookUpFilters(t *testing.T) {
 			innerKeys:       []*expression.Column{dsSchema.Columns[1]},
 			pushedDownConds: "a in (1, 2, 3) and c in ('a', 'b', 'c')",
 			otherConds:      "",
-			ranges:          "[[1 NULL \"a\",1 NULL \"a\"] [2 NULL \"a\",2 NULL \"a\"] [3 NULL \"a\",3 NULL \"a\"] [1 NULL \"b\",1 NULL \"b\"] [2 NULL \"b\",2 NULL \"b\"] [3 NULL \"b\",3 NULL \"b\"] [1 NULL \"c\",1 NULL \"c\"] [2 NULL \"c\",2 NULL \"c\"] [3 NULL \"c\",3 NULL \"c\"]]",
+			ranges:          "[[1 NULL \"a\",1 NULL \"a\"] [1 NULL \"b\",1 NULL \"b\"] [1 NULL \"c\",1 NULL \"c\"] [2 NULL \"a\",2 NULL \"a\"] [2 NULL \"b\",2 NULL \"b\"] [2 NULL \"c\",2 NULL \"c\"] [3 NULL \"a\",3 NULL \"a\"] [3 NULL \"b\",3 NULL \"b\"] [3 NULL \"c\",3 NULL \"c\"]]",
 			idxOff2KeyOff:   "[-1 0 -1 -1 -1]",
 			accesses:        "[in(Column#1, 1, 2, 3) in(Column#3, a, b, c)]",
 			remained:        "[in(Column#3, a, b, c)]",
@@ -248,7 +270,7 @@ func TestIndexJoinAnalyzeLookUpFilters(t *testing.T) {
 			innerKeys:       []*expression.Column{dsSchema.Columns[1]},
 			pushedDownConds: "a in (1, 2, 3) and c in ('a', 'b', 'c')",
 			otherConds:      "d > h and d < h + 100",
-			ranges:          "[[1 NULL \"a\" NULL,1 NULL \"a\" NULL] [2 NULL \"a\" NULL,2 NULL \"a\" NULL] [3 NULL \"a\" NULL,3 NULL \"a\" NULL] [1 NULL \"b\" NULL,1 NULL \"b\" NULL] [2 NULL \"b\" NULL,2 NULL \"b\" NULL] [3 NULL \"b\" NULL,3 NULL \"b\" NULL] [1 NULL \"c\" NULL,1 NULL \"c\" NULL] [2 NULL \"c\" NULL,2 NULL \"c\" NULL] [3 NULL \"c\" NULL,3 NULL \"c\" NULL]]",
+			ranges:          "[[1 NULL \"a\" NULL,1 NULL \"a\" NULL] [1 NULL \"b\" NULL,1 NULL \"b\" NULL] [1 NULL \"c\" NULL,1 NULL \"c\" NULL] [2 NULL \"a\" NULL,2 NULL \"a\" NULL] [2 NULL \"b\" NULL,2 NULL \"b\" NULL] [2 NULL \"c\" NULL,2 NULL \"c\" NULL] [3 NULL \"a\" NULL,3 NULL \"a\" NULL] [3 NULL \"b\" NULL,3 NULL \"b\" NULL] [3 NULL \"c\" NULL,3 NULL \"c\" NULL]]",
 			idxOff2KeyOff:   "[-1 0 -1 -1 -1]",
 			accesses:        "[in(Column#1, 1, 2, 3) in(Column#3, a, b, c) gt(Column#4, Column#9) lt(Column#4, plus(Column#9, 100))]",
 			remained:        "[in(Column#3, a, b, c)]",
@@ -277,14 +299,14 @@ func TestIndexJoinAnalyzeLookUpFilters(t *testing.T) {
 		},
 	}
 	for i, tt := range tests {
-		pushed, err := rewriteSimpleExpr(ctx, tt.pushedDownConds, dsSchema, dsNames)
+		pushed, err := rewriteSimpleExpr(ctx, tt.pushedDownConds, dsSchema, indexJoinCtx.dsNames)
 		require.NoError(t, err)
 		dataSourceNode.pushedDownConds = pushed
-		others, err := rewriteSimpleExpr(ctx, tt.otherConds, joinNode.schema, joinColNames)
+		others, err := rewriteSimpleExpr(ctx, tt.otherConds, joinNode.schema, indexJoinCtx.joinColNames)
 		require.NoError(t, err)
 		joinNode.OtherConditions = others
 		helper := &indexJoinBuildHelper{join: joinNode, lastColManager: nil, innerPlan: dataSourceNode}
-		_, err = helper.analyzeLookUpFilters(path, dataSourceNode, tt.innerKeys, tt.innerKeys, false)
+		_, err = helper.analyzeLookUpFilters(indexJoinCtx.path, dataSourceNode, tt.innerKeys, tt.innerKeys, false)
 		if helper.chosenRanges == nil {
 			helper.chosenRanges = ranger.Ranges{}
 		}
@@ -295,4 +317,8 @@ func TestIndexJoinAnalyzeLookUpFilters(t *testing.T) {
 		require.Equal(t, tt.remained, fmt.Sprintf("%v", helper.chosenRemained))
 		require.Equal(t, tt.compareFilters, fmt.Sprintf("%v", helper.lastColManager))
 	}
+}
+
+func TestRangeFallbackForAnalyzeLookUpFilters(t *testing.T) {
+
 }
