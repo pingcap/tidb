@@ -100,21 +100,12 @@ func (updt *Update) buildOnUpdateFKChecks(ctx sessionctx.Context, is infoschema.
 		if len(referredFKChecks) > 0 {
 			fkChecks[tid] = append(fkChecks[tid], referredFKChecks...)
 		}
-		for _, fk := range tblInfo.ForeignKeys {
-			if fk.Version < 1 {
-				continue
-			}
-			if !isMapContainAnyCols(updateCols, fk.Cols...) {
-				continue
-			}
-			failedErr := ErrNoReferencedRow2.FastGenByArgs(fk.String(dbInfo.Name.L, tblInfo.Name.L))
-			fkCheck, err := buildFKCheckOnModifyChildTable(is, fk, failedErr)
-			if err != nil {
-				return nil, err
-			}
-			if fkCheck != nil {
-				fkChecks[tid] = append(fkChecks[tid], fkCheck)
-			}
+		childFKChecks, err := buildOnUpdateChildFKChecks(is, dbInfo.Name.L, tblInfo, updateCols)
+		if err != nil {
+			return nil, err
+		}
+		if len(childFKChecks) > 0 {
+			fkChecks[tid] = append(fkChecks[tid], childFKChecks...)
 		}
 	}
 	return fkChecks, nil
@@ -128,6 +119,27 @@ func buildOnUpdateReferredFKChecks(is infoschema.InfoSchema, dbName string, tblI
 			continue
 		}
 		fkCheck, err := buildFKCheckOnModifyReferTable(is, referredFK)
+		if err != nil {
+			return nil, err
+		}
+		if fkCheck != nil {
+			fkChecks = append(fkChecks, fkCheck)
+		}
+	}
+	return fkChecks, nil
+}
+
+func buildOnUpdateChildFKChecks(is infoschema.InfoSchema, dbName string, tblInfo *model.TableInfo, updateCols map[string]struct{}) ([]*FKCheck, error) {
+	fkChecks := make([]*FKCheck, 0, len(tblInfo.ForeignKeys))
+	for _, fk := range tblInfo.ForeignKeys {
+		if fk.Version < 1 {
+			continue
+		}
+		if !isMapContainAnyCols(updateCols, fk.Cols...) {
+			continue
+		}
+		failedErr := ErrNoReferencedRow2.FastGenByArgs(fk.String(dbName, tblInfo.Name.L))
+		fkCheck, err := buildFKCheckOnModifyChildTable(is, fk, failedErr)
 		if err != nil {
 			return nil, err
 		}
