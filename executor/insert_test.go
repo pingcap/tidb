@@ -23,6 +23,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -39,6 +40,17 @@ import (
 
 func (s *testSuite8) TestInsertOnDuplicateKey(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	testInsertOnDuplicateKey(c, tk)
+}
+
+func (s *testSuite8) TestInsertOnDuplicateKeyWithBinlog(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	failpoint.Enable("github.com/pingcap/tidb/table/tables/forceWriteBinlog", "return")
+	defer failpoint.Disable("github.com/pingcap/tidb/table/tables/forceWriteBinlog")
+	testInsertOnDuplicateKey(c, tk)
+}
+
+func testInsertOnDuplicateKey(c *C, tk *testkit.TestKit) {
 	tk.MustExec("use test")
 
 	tk.MustExec(`drop table if exists t1, t2;`)
@@ -342,6 +354,18 @@ func (s *testSuite3) TestUpdateDuplicateKey(c *C) {
 	tk.MustExec(`insert into c values(1,2,4);`)
 	_, err := tk.Exec(`update c set i=1,j=2,k=4 where i=1 and j=2 and k=3;`)
 	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1-2-4' for key 'PRIMARY'")
+}
+
+func (s *testSuite3) TestIssue37187(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists a, b")
+	tk.MustExec("create table t1 (a int(11) ,b varchar(100) ,primary key (a));")
+	tk.MustExec("create table t2 (c int(11) ,d varchar(100) ,primary key (c));")
+	tk.MustExec("prepare in1 from 'insert into t1 (a,b) select c,null from t2 t on duplicate key update b=t.d';")
+	err := tk.ExecToErr("execute in1;")
+	c.Assert(err, IsNil)
 }
 
 func (s *testSuite3) TestInsertWrongValueForField(c *C) {
