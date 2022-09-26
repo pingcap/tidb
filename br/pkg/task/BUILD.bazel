@@ -36,6 +36,7 @@ go_library(
         "//br/pkg/stream",
         "//br/pkg/streamhelper",
         "//br/pkg/streamhelper/config",
+        "//br/pkg/streamhelper/daemon",
         "//br/pkg/summary",
         "//br/pkg/utils",
         "//br/pkg/version",
