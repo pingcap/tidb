@@ -272,12 +272,38 @@ func (p *PhysicalSort) getPlanCostVer2(taskType property.TaskType, option *PlanC
 		sortDiskCost = rows * rowSize * diskFactor
 	}
 
-	p.planCost = sortCPUCost + sortMemCost + sortDiskCost
+	childCost, err := p.children[0].GetPlanCost(taskType, option)
+	if err != nil {
+		return 0, err
+	}
+
+	p.planCost = childCost + sortCPUCost + sortMemCost + sortDiskCost
 	p.planCostInit = true
 	return p.planCost, nil
 }
 
+// getPlanCostVer2 returns the plan-cost of this sub-plan, which is:
+// plan-cost = child-cost + topn-cpu-cost + topn-mem-cost
+// topn-cpu-cost = rows * log2(N) * len(sort-items) * cpu-factor
+// topn-mem-cost = N * row-size * mem-factor
 func (p *PhysicalTopN) getPlanCostVer2(taskType property.TaskType, option *PlanCostOption) (float64, error) {
+	rows := getCardinality(p.children[0], option.CostFlag)
+	N := math.Max(1, float64(p.Count+p.Offset))
+	rowSize := getAvgRowSize(p.statsInfo(), p.Schema())
+	cpuFactor := getTaskCPUFactor(p, taskType)
+	memFactor := getTaskMemFactor(p, taskType)
+
+	topNCPUCost := rows * math.Log2(N) * float64(len(p.ByItems)) * cpuFactor
+	topNMemCost := N * rowSize * memFactor
+
+	childCost, err := p.children[0].GetPlanCost(taskType, option)
+	if err != nil {
+		return 0, err
+	}
+
+	p.planCost = childCost + topNCPUCost + topNMemCost
+	p.planCostInit = true
+	return p.planCost, nil
 }
 
 func getTaskCPUFactor(p PhysicalPlan, taskType property.TaskType) float64 {
