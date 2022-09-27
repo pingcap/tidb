@@ -171,8 +171,7 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 		}
 	}
 	if sessionVars.InTxn() {
-		if name == variable.TxnIsolationOneShot ||
-			name == variable.TiDBTxnReadTS {
+		if name == variable.TiDBTxnReadTS {
 			return errors.Trace(ErrCantChangeTxCharacteristics)
 		}
 		if name == variable.TiDBSnapshot && sessionVars.TxnCtx.IsStaleness {

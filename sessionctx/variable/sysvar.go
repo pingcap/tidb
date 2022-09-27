@@ -213,18 +213,6 @@ var defaultSysVars = []*SysVar{
 		s.EnableChunkRPC = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeSession, Name: TxnIsolationOneShot, Value: "", skipInit: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-		return checkIsolationLevel(vars, normalizedValue, originalValue, scope)
-	}, SetSession: func(s *SessionVars, val string) error {
-		s.txnIsolationLevelOneShot.state = oneShotSet
-		s.txnIsolationLevelOneShot.value = val
-		return nil
-	}, GetStateValue: func(s *SessionVars) (string, bool, error) {
-		if s.txnIsolationLevelOneShot.state != oneShotDef {
-			return s.txnIsolationLevelOneShot.value, true, nil
-		}
-		return "", false, nil
-	}},
 	{Scope: ScopeSession, Name: TiDBOptimizerSelectivityLevel, Value: strconv.Itoa(DefTiDBOptimizerSelectivityLevel), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt32, SetSession: func(s *SessionVars, val string) error {
 		s.OptimizerSelectivityLevel = tidbOptPositiveInt32(val, DefTiDBOptimizerSelectivityLevel)
 		return nil
@@ -2204,8 +2192,6 @@ const (
 	TxnIsolation = "tx_isolation"
 	// TransactionIsolation is the name of the 'transaction_isolation' system variable.
 	TransactionIsolation = "transaction_isolation"
-	// TxnIsolationOneShot is the name of the 'tx_isolation_one_shot' system variable.
-	TxnIsolationOneShot = "tx_isolation_one_shot"
 	// MaxExecutionTime is the name of the 'max_execution_time' system variable.
 	MaxExecutionTime = "max_execution_time"
 	// ReadOnly is the name of the 'read_only' system variable.
