@@ -16,6 +16,7 @@ package server
 
 import (
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -53,11 +54,21 @@ func (sh StatsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	is := sh.do.InfoSchema()
 	h := sh.do.StatsHandle()
+	var err error
+	dumpPartitionStats := true
+	dumpParams := req.URL.Query()[pDumpPartitionStats]
+	if len(dumpParams) > 0 && len(dumpParams[0]) > 0 {
+		dumpPartitionStats, err = strconv.ParseBool(dumpParams[0])
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+	}
 	tbl, err := is.TableByName(model.NewCIStr(params[pDBName]), model.NewCIStr(params[pTableName]))
 	if err != nil {
 		writeError(w, err)
 	} else {
-		js, err := h.DumpStatsToJSON(params[pDBName], tbl.Meta(), nil)
+		js, err := h.DumpStatsToJSON(params[pDBName], tbl.Meta(), nil, dumpPartitionStats)
 		if err != nil {
 			writeError(w, err)
 		} else {
@@ -95,6 +106,15 @@ func (sh StatsHistoryHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 	}
 	defer se.Close()
 
+	dumpPartitionStats := true
+	if len(params[pDumpPartitionStats]) > 0 {
+		dumpPartitionStats, err = strconv.ParseBool(params[pDumpPartitionStats])
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+	}
+
 	se.GetSessionVars().StmtCtx.TimeZone = time.Local
 	t, err := types.ParseTime(se.GetSessionVars().StmtCtx, params[pSnapshot], mysql.TypeTimestamp, 6)
 	if err != nil {
@@ -124,7 +144,7 @@ func (sh StatsHistoryHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		writeError(w, err)
 		return
 	}
-	js, err := h.DumpStatsToJSONBySnapshot(params[pDBName], tbl.Meta(), snapshot)
+	js, err := h.DumpStatsToJSONBySnapshot(params[pDBName], tbl.Meta(), snapshot, dumpPartitionStats)
 	if err != nil {
 		writeError(w, err)
 	} else {

@@ -593,7 +593,7 @@ func getStatsForTable(do *domain.Domain, pair tableNamePair) (*handle.JSONTable,
 	if err != nil {
 		return nil, err
 	}
-	js, err := h.DumpStatsToJSON(pair.DBName, tbl.Meta(), nil)
+	js, err := h.DumpStatsToJSON(pair.DBName, tbl.Meta(), nil, true)
 	return js, err
 }
 

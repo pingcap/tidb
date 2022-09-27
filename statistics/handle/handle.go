@@ -2198,7 +2198,7 @@ const maxColumnSize = 6 << 20
 // RecordHistoricalStatsToStorage records the given table's stats data to mysql.stats_history
 func (h *Handle) RecordHistoricalStatsToStorage(dbName string, tableInfo *model.TableInfo) (uint64, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	js, err := h.DumpStatsToJSON(dbName, tableInfo, nil)
+	js, err := h.DumpStatsToJSON(dbName, tableInfo, nil, true)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
