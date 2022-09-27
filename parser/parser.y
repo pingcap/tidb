@@ -13756,11 +13756,11 @@ TableLockList:
 NonTransactionalDeleteStmt:
 	"BATCH" OptionalShardColumn "LIMIT" NUM DryRunOptions DeleteFromStmt
 	{
-		$$ = &ast.NonTransactionalDeleteStmt{
+		$$ = &ast.NonTransactionalDMLStmt{
 			DryRun:      $5.(int),
 			ShardColumn: $2.(*ast.ColumnName),
 			Limit:       getUint64FromNUM($4),
-			DeleteStmt:  $6.(*ast.DeleteStmt),
+			DMLStmt:     $6.(*ast.DeleteStmt),
 		}
 	}
 

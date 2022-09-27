@@ -110,28 +110,28 @@ func TestNonTransactionalDeleteErrorMessage(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("insert into t values ('%d', %d)", i, i*2))
 	}
 	tk.MustExec("set @@tidb_nontransactional_ignore_error=1")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/batchDeleteError", `return(true)`))
-	defer failpoint.Disable("github.com/pingcap/tidb/session/batchDeleteError")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/batchDMLError", `return(true)`))
+	defer failpoint.Disable("github.com/pingcap/tidb/session/batchDMLError")
 	err := tk.ExecToErr("batch on a limit 3 delete from t")
-	require.EqualError(t, err, "Early return: error occurred in the first job. All jobs are canceled: injected batch delete error")
+	require.EqualError(t, err, "Early return: error occurred in the first job. All jobs are canceled: injected batch(non-transactional) DML error")
 
 	tk.MustExec("truncate t")
 	for i := 0; i < 100; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values ('%d', %d)", i, i*2))
 	}
 	tk.MustExec("set @@tidb_nontransactional_ignore_error=1")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/batchDeleteError", `1*return(false)->return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/batchDMLError", `1*return(false)->return(true)`))
 	err = tk.ExecToErr("batch on a limit 3 delete from t")
-	require.ErrorContains(t, err, "33/34 jobs failed in the non-transactional DML: job id: 2, estimated size: 3, sql: DELETE FROM `test`.`t` WHERE `a` BETWEEN 3 AND 5, injected batch delete error;\n")
+	require.ErrorContains(t, err, "33/34 jobs failed in the non-transactional DML: job id: 2, estimated size: 3, sql: DELETE FROM `test`.`t` WHERE `a` BETWEEN 3 AND 5, injected batch(non-transactional) DML error;\n")
 
 	tk.MustExec("truncate t")
 	for i := 0; i < 100; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values ('%d', %d)", i, i*2))
 	}
 	tk.MustExec("set @@tidb_nontransactional_ignore_error=0")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/batchDeleteError", `1*return(false)->return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/batchDMLError", `1*return(false)->return(true)`))
 	err = tk.ExecToErr("batch on a limit 3 delete from t")
-	require.EqualError(t, err, "[session:8143]non-transactional job failed, job id: 2, total jobs: 34. job range: [KindInt64 3, KindInt64 5], job sql: job id: 2, estimated size: 3, sql: DELETE FROM `test`.`t` WHERE `a` BETWEEN 3 AND 5, err: injected batch delete error")
+	require.EqualError(t, err, "[session:8143]non-transactional job failed, job id: 2, total jobs: 34. job range: [KindInt64 3, KindInt64 5], job sql: job id: 2, estimated size: 3, sql: DELETE FROM `test`.`t` WHERE `a` BETWEEN 3 AND 5, err: injected batch(non-transactional) DML error")
 }
 
 func TestNonTransactionalDeleteSplitOnTiDBRowID(t *testing.T) {

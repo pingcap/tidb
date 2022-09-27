@@ -273,8 +273,8 @@ func (tk *TestKit) ExecWithContext(ctx context.Context, sql string, args ...inte
 		for i, stmt := range stmts {
 			var rs sqlexec.RecordSet
 			var err error
-			if s, ok := stmt.(*ast.NonTransactionalDeleteStmt); ok {
-				rs, err = session.HandleNonTransactionalDelete(ctx, s, tk.Session())
+			if s, ok := stmt.(*ast.NonTransactionalDMLStmt); ok {
+				rs, err = session.HandleNonTransactionalDML(ctx, s, tk.Session())
 			} else {
 				rs, err = tk.Session().ExecuteStmt(ctx, stmt)
 			}

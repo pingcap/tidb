@@ -31,7 +31,7 @@ var (
 	_ DMLNode = &ShowStmt{}
 	_ DMLNode = &LoadDataStmt{}
 	_ DMLNode = &SplitRegionStmt{}
-	_ DMLNode = &NonTransactionalDeleteStmt{}
+	_ DMLNode = &NonTransactionalDMLStmt{}
 
 	_ Node = &Assignment{}
 	_ Node = &ByItem{}
@@ -1185,7 +1185,7 @@ func (n *WithClause) Accept(v Visitor) (Node, bool) {
 // Restore implements Node interface.
 func (n *SelectStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.WithBeforeBraces {
-		defer ctx.RestoreCTEFunc()() //nolint: all_revive
+		defer ctx.RestoreCTEFunc()() // nolint: all_revive
 		err := n.With.Restore(ctx)
 		if err != nil {
 			return err
@@ -1198,7 +1198,7 @@ func (n *SelectStmt) Restore(ctx *format.RestoreCtx) error {
 		}()
 	}
 	if !n.WithBeforeBraces && n.With != nil {
-		defer ctx.RestoreCTEFunc()() //nolint: all_revive
+		defer ctx.RestoreCTEFunc()() // nolint: all_revive
 		err := n.With.Restore(ctx)
 		if err != nil {
 			return err
@@ -1534,7 +1534,7 @@ type SetOprSelectList struct {
 // Restore implements Node interface.
 func (n *SetOprSelectList) Restore(ctx *format.RestoreCtx) error {
 	if n.With != nil {
-		defer ctx.RestoreCTEFunc()() //nolint: all_revive
+		defer ctx.RestoreCTEFunc()() // nolint: all_revive
 		if err := n.With.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore SetOprSelectList.With")
 		}
@@ -1635,7 +1635,7 @@ func (*SetOprStmt) resultSet() {}
 // Restore implements Node interface.
 func (n *SetOprStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.With != nil {
-		defer ctx.RestoreCTEFunc()() //nolint: all_revive
+		defer ctx.RestoreCTEFunc()() // nolint: all_revive
 		if err := n.With.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore UnionStmt.With")
 		}
@@ -2217,7 +2217,7 @@ type DeleteStmt struct {
 // Restore implements Node interface.
 func (n *DeleteStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.With != nil {
-		defer ctx.RestoreCTEFunc()() //nolint: all_revive
+		defer ctx.RestoreCTEFunc()() // nolint: all_revive
 		err := n.With.Restore(ctx)
 		if err != nil {
 			return err
@@ -2358,23 +2358,49 @@ func (n *DeleteStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// WhereExpr implements ShardableDMLStmt interface.
+func (n *DeleteStmt) WhereExpr() ExprNode {
+	return n.Where
+}
+
+// SetWhereExpr implements ShardableDMLStmt interface.
+func (n *DeleteStmt) SetWhereExpr(e ExprNode) {
+	n.Where = e
+}
+
+// TableSource implements ShardableDMLStmt interface.
+func (n *DeleteStmt) TableSource() (*TableSource, bool) {
+	table, ok := n.TableRefs.TableRefs.Left.(*TableSource)
+	return table, ok
+}
+
 const (
 	NoDryRun = iota
 	DryRunQuery
 	DryRunSplitDml
 )
 
-type NonTransactionalDeleteStmt struct {
+type ShardableDMLStmt = interface {
+	StmtNode
+	WhereExpr() ExprNode
+	SetWhereExpr(ExprNode)
+	// TableSource returns the *only* target table source in the statement.
+	TableSource() (table *TableSource, ok bool)
+}
+
+var _ ShardableDMLStmt = &DeleteStmt{}
+
+type NonTransactionalDMLStmt struct {
 	dmlNode
 
 	DryRun      int         // 0: no dry run, 1: dry run the query, 2: dry run split DMLs
 	ShardColumn *ColumnName // if it's nil, the handle column is automatically chosen for it
 	Limit       uint64
-	DeleteStmt  *DeleteStmt
+	DMLStmt     ShardableDMLStmt
 }
 
 // Restore implements Node interface.
-func (n *NonTransactionalDeleteStmt) Restore(ctx *format.RestoreCtx) error {
+func (n *NonTransactionalDMLStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("BATCH ")
 	if n.ShardColumn != nil {
 		ctx.WriteKeyWord("ON ")
@@ -2391,20 +2417,20 @@ func (n *NonTransactionalDeleteStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.DryRun == DryRunQuery {
 		ctx.WriteKeyWord("DRY RUN QUERY ")
 	}
-	if err := n.DeleteStmt.Restore(ctx); err != nil {
+	if err := n.DMLStmt.Restore(ctx); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
 }
 
 // Accept implements Node Accept interface.
-func (n *NonTransactionalDeleteStmt) Accept(v Visitor) (Node, bool) {
+func (n *NonTransactionalDMLStmt) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
 		return v.Leave(newNode)
 	}
 
-	n = newNode.(*NonTransactionalDeleteStmt)
+	n = newNode.(*NonTransactionalDMLStmt)
 	if n.ShardColumn != nil {
 		node, ok := n.ShardColumn.Accept(v)
 		if !ok {
@@ -2412,12 +2438,12 @@ func (n *NonTransactionalDeleteStmt) Accept(v Visitor) (Node, bool) {
 		}
 		n.ShardColumn = node.(*ColumnName)
 	}
-	if n.DeleteStmt != nil {
-		node, ok := n.DeleteStmt.Accept(v)
+	if n.DMLStmt != nil {
+		node, ok := n.DMLStmt.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.DeleteStmt = node.(*DeleteStmt)
+		n.DMLStmt = node.(ShardableDMLStmt)
 	}
 	return v.Leave(n)
 }
@@ -2442,7 +2468,7 @@ type UpdateStmt struct {
 // Restore implements Node interface.
 func (n *UpdateStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.With != nil {
-		defer ctx.RestoreCTEFunc()() //nolint: all_revive
+		defer ctx.RestoreCTEFunc()() // nolint: all_revive
 		err := n.With.Restore(ctx)
 		if err != nil {
 			return err

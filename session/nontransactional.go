@@ -61,7 +61,7 @@ type job struct {
 
 // statementBuildInfo contains information that is needed to build the split statement in a job
 type statementBuildInfo struct {
-	stmt              *ast.NonTransactionalDeleteStmt
+	stmt              *ast.NonTransactionalDMLStmt
 	shardColumnType   types.FieldType
 	shardColumnRefer  *ast.ResultField
 	originalCondition ast.ExprNode
@@ -74,8 +74,8 @@ func (j job) String(redacted bool) string {
 	return fmt.Sprintf("job id: %d, estimated size: %d, sql: %s", j.jobID, j.jobSize, j.sql)
 }
 
-// HandleNonTransactionalDelete is the entry point for a non-transactional delete
-func HandleNonTransactionalDelete(ctx context.Context, stmt *ast.NonTransactionalDeleteStmt, se Session) (sqlexec.RecordSet, error) {
+// HandleNonTransactionalDML is the entry point for a non-transactional DML statement
+func HandleNonTransactionalDML(ctx context.Context, stmt *ast.NonTransactionalDMLStmt, se Session) (sqlexec.RecordSet, error) {
 	err := core.Preprocess(se, stmt)
 	if err != nil {
 		return nil, err
@@ -83,7 +83,6 @@ func HandleNonTransactionalDelete(ctx context.Context, stmt *ast.NonTransactiona
 	if err := checkConstraint(stmt, se); err != nil {
 		return nil, err
 	}
-	metrics.NonTransactionalDeleteCount.Inc()
 	tableName, selectSQL, shardColumnInfo, err := buildSelectSQL(stmt, se)
 	if err != nil {
 		return nil, err
@@ -101,7 +100,7 @@ func HandleNonTransactionalDelete(ctx context.Context, stmt *ast.NonTransactiona
 		return nil, err
 	}
 
-	splitStmts, err := splitDeleteWorker(ctx, jobs, stmt, tableName, se, stmt.DeleteStmt.Where)
+	splitStmts, err := runJobs(ctx, jobs, stmt, tableName, se, stmt.DMLStmt.WhereExpr())
 	if err != nil {
 		return nil, err
 	}
@@ -129,7 +128,7 @@ func setMemTracker(se Session) *memory.Tracker {
 	return memTracker
 }
 
-func checkConstraint(stmt *ast.NonTransactionalDeleteStmt, se Session) error {
+func checkConstraint(stmt *ast.NonTransactionalDMLStmt, se Session) error {
 	sessVars := se.GetSessionVars()
 	if !(sessVars.IsAutocommit() && !sessVars.InTxn()) {
 		return errors.Errorf("non-transactional DML can only run in auto-commit mode. auto-commit:%v, inTxn:%v",
@@ -146,23 +145,31 @@ func checkConstraint(stmt *ast.NonTransactionalDeleteStmt, se Session) error {
 		return errors.New("can't do non-transactional DML when tidb_snapshot is set")
 	}
 
-	if stmt.DeleteStmt.TableRefs == nil || stmt.DeleteStmt.TableRefs.TableRefs == nil || stmt.DeleteStmt.TableRefs.TableRefs.Left == nil {
-		return errors.New("table reference is nil")
+	switch stmt.DMLStmt.(type) {
+	case *ast.DeleteStmt:
+		deleteStmt := stmt.DMLStmt.(*ast.DeleteStmt)
+		if deleteStmt.TableRefs == nil || deleteStmt.TableRefs.TableRefs == nil || deleteStmt.TableRefs.TableRefs.Left == nil {
+			return errors.New("table reference is nil")
+		}
+		if deleteStmt.TableRefs.TableRefs.Right != nil {
+			return errors.New("Non-transactional delete doesn't support multiple tables")
+		}
+		if deleteStmt.Limit != nil {
+			return errors.New("Non-transactional delete doesn't support limit")
+		}
+		if deleteStmt.Order != nil {
+			return errors.New("Non-transactional delete doesn't support order by")
+		}
+		metrics.NonTransactionalDeleteCount.Inc()
+	default:
+		return errors.New("Unsupported DML type for non-transactional DML")
 	}
-	if stmt.DeleteStmt.TableRefs.TableRefs.Right != nil {
-		return errors.New("Non-transactional delete doesn't support multiple tables")
-	}
-	if stmt.DeleteStmt.Limit != nil {
-		return errors.New("Non-transactional delete doesn't support limit")
-	}
-	if stmt.DeleteStmt.Order != nil {
-		return errors.New("Non-transactional delete doesn't support order by")
-	}
+
 	return nil
 }
 
 // single-threaded worker. work on the key range [start, end]
-func splitDeleteWorker(ctx context.Context, jobs []job, stmt *ast.NonTransactionalDeleteStmt,
+func runJobs(ctx context.Context, jobs []job, stmt *ast.NonTransactionalDMLStmt,
 	tableName *ast.TableName, se Session, originalCondition ast.ExprNode) ([]string, error) {
 	// prepare for the construction of statement
 	var shardColumnRefer *ast.ResultField
@@ -179,7 +186,7 @@ func splitDeleteWorker(ctx context.Context, jobs []job, stmt *ast.NonTransaction
 		}
 	}
 	if shardColumnRefer == nil && stmt.ShardColumn.Name.L != model.ExtraHandleName.L {
-		return nil, errors.New("Non-transactional delete, column not found")
+		return nil, errors.New("Non-transactional DML, shard column not found")
 	}
 
 	splitStmts := make([]string, 0, len(jobs))
@@ -193,10 +200,10 @@ func splitDeleteWorker(ctx context.Context, jobs []job, stmt *ast.NonTransaction
 				}
 			}
 			if len(failedJobs) == 0 {
-				logutil.Logger(ctx).Warn("Non-transactional delete worker exit because context canceled. No errors",
+				logutil.Logger(ctx).Warn("Non-transactional DML worker exit because context canceled. No errors",
 					zap.Int("finished", i), zap.Int("total", len(jobs)))
 			} else {
-				logutil.Logger(ctx).Warn("Non-transactional delete worker exit because context canceled. Errors found",
+				logutil.Logger(ctx).Warn("Non-transactional DML worker exit because context canceled. Errors found",
 					zap.Int("finished", i), zap.Int("total", len(jobs)), zap.Strings("errors found", failedJobs))
 			}
 			return nil, ctx.Err()
@@ -293,56 +300,56 @@ func doOneJob(ctx context.Context, job *job, totalJobCount int, options statemen
 	}
 
 	if options.originalCondition == nil {
-		options.stmt.DeleteStmt.Where = whereCondition
+		options.stmt.DMLStmt.SetWhereExpr(whereCondition)
 	} else {
-		options.stmt.DeleteStmt.Where = &ast.BinaryOperationExpr{
+		options.stmt.DMLStmt.SetWhereExpr(&ast.BinaryOperationExpr{
 			Op: opcode.LogicAnd,
 			L:  whereCondition,
 			R:  options.originalCondition,
-		}
+		})
 	}
 	var sb strings.Builder
-	err := options.stmt.DeleteStmt.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags|
+	err := options.stmt.DMLStmt.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags|
 		format.RestoreNameBackQuotes|
 		format.RestoreSpacesAroundBinaryOperation|
 		format.RestoreBracketAroundBinaryOperation|
 		format.RestoreStringWithoutCharset, &sb))
 	if err != nil {
-		logutil.Logger(ctx).Error("Non-transactional delete, failed to restore the delete statement", zap.Error(err))
-		job.err = errors.New("Failed to restore the delete statement, probably because of unsupported type of the shard column")
+		logutil.Logger(ctx).Error("Non-transactional DML, failed to restore the DML statement", zap.Error(err))
+		job.err = errors.New("Failed to restore the DML statement, probably because of unsupported type of the shard column")
 		return ""
 	}
-	deleteSQL := sb.String()
+	dmlSQL := sb.String()
 
 	if dryRun {
-		return deleteSQL
+		return dmlSQL
 	}
 
-	job.sql = deleteSQL
-	logutil.Logger(ctx).Info("start a Non-transactional delete",
+	job.sql = dmlSQL
+	logutil.Logger(ctx).Info("start a Non-transactional DML",
 		zap.String("job", job.String(se.GetSessionVars().EnableRedactLog)), zap.Int("totalJobCount", totalJobCount))
-	var deleteSQLInLog string
+	var dmlSQLInLog string
 	if se.GetSessionVars().EnableRedactLog {
-		deleteSQLInLog = parser.Normalize(deleteSQL)
+		dmlSQLInLog = parser.Normalize(dmlSQL)
 	} else {
-		deleteSQLInLog = deleteSQL
+		dmlSQLInLog = dmlSQL
 	}
 
-	options.stmt.DeleteStmt.SetText(nil, fmt.Sprintf("/* job %v/%v */ %s", job.jobID, totalJobCount, deleteSQL))
-	rs, err := se.ExecuteStmt(ctx, options.stmt.DeleteStmt)
+	options.stmt.DMLStmt.SetText(nil, fmt.Sprintf("/* job %v/%v */ %s", job.jobID, totalJobCount, dmlSQL))
+	rs, err := se.ExecuteStmt(ctx, options.stmt.DMLStmt)
 
 	// collect errors
-	failpoint.Inject("batchDeleteError", func(val failpoint.Value) {
+	failpoint.Inject("batchDMLError", func(val failpoint.Value) {
 		if val.(bool) {
-			err = errors.New("injected batch delete error")
+			err = errors.New("injected batch(non-transactional) DML error")
 		}
 	})
 	if err != nil {
-		logutil.Logger(ctx).Error("Non-transactional delete SQL failed", zap.String("job", deleteSQLInLog), zap.Error(err), zap.Int("jobID", job.jobID), zap.Int("jobSize", job.jobSize))
+		logutil.Logger(ctx).Error("Non-transactional DML SQL failed", zap.String("job", dmlSQLInLog), zap.Error(err), zap.Int("jobID", job.jobID), zap.Int("jobSize", job.jobSize))
 		job.err = err
 	} else {
-		logutil.Logger(ctx).Info("Non-transactional delete SQL finished successfully", zap.Int("jobID", job.jobID),
-			zap.Int("jobSize", job.jobSize), zap.String("deleteSQL", deleteSQLInLog))
+		logutil.Logger(ctx).Info("Non-transactional DML SQL finished successfully", zap.Int("jobID", job.jobID),
+			zap.Int("jobSize", job.jobSize), zap.String("dmlSQL", dmlSQLInLog))
 	}
 	if rs != nil {
 		_ = rs.Close()
@@ -350,7 +357,7 @@ func doOneJob(ctx context.Context, job *job, totalJobCount int, options statemen
 	return ""
 }
 
-func buildShardJobs(ctx context.Context, stmt *ast.NonTransactionalDeleteStmt, se Session,
+func buildShardJobs(ctx context.Context, stmt *ast.NonTransactionalDMLStmt, se Session,
 	selectSQL string, shardColumnInfo *model.ColumnInfo, memTracker *memory.Tracker) ([]job, error) {
 	var shardColumnCollate string
 	if shardColumnInfo != nil {
@@ -373,7 +380,7 @@ func buildShardJobs(ctx context.Context, stmt *ast.NonTransactionalDeleteStmt, s
 		return nil, err
 	}
 	if len(rss) != 1 {
-		return nil, errors.Errorf("Non-transactional delete, expecting 1 record set, but got %d", len(rss))
+		return nil, errors.Errorf("Non-transactional DML, expecting 1 record set, but got %d", len(rss))
 	}
 	rs := rss[0]
 	defer func() {
@@ -382,7 +389,7 @@ func buildShardJobs(ctx context.Context, stmt *ast.NonTransactionalDeleteStmt, s
 
 	batchSize := int(stmt.Limit)
 	if batchSize <= 0 {
-		return nil, errors.New("Non-transactional delete, batch size should be positive")
+		return nil, errors.New("Non-transactional DML, batch size should be positive")
 	}
 	jobCount := 0
 	jobs := make([]job, 0)
@@ -448,15 +455,15 @@ func appendNewJob(jobs []job, id int, start types.Datum, end types.Datum, size i
 	return jobs
 }
 
-func buildSelectSQL(stmt *ast.NonTransactionalDeleteStmt, se Session) (*ast.TableName, string, *model.ColumnInfo, error) {
+func buildSelectSQL(stmt *ast.NonTransactionalDMLStmt, se Session) (*ast.TableName, string, *model.ColumnInfo, error) {
 	// only use the first table
-	tableSource, ok := stmt.DeleteStmt.TableRefs.TableRefs.Left.(*ast.TableSource)
+	tableSource, ok := stmt.DMLStmt.TableSource()
 	if !ok {
-		return nil, "", nil, errors.New("Non-transactional delete, table source not found")
+		return nil, "", nil, errors.New("Non-transactional DML, table source not found")
 	}
 	tableName, ok := tableSource.Source.(*ast.TableName)
 	if !ok {
-		return nil, "", nil, errors.New("Non-transactional delete, table name not found")
+		return nil, "", nil, errors.New("Non-transactional DML, table name not found")
 	}
 
 	// the shard column must be indexed
@@ -465,18 +472,19 @@ func buildSelectSQL(stmt *ast.NonTransactionalDeleteStmt, se Session) (*ast.Tabl
 		return nil, "", nil, err
 	}
 	if !indexed {
-		return nil, "", nil, errors.Errorf("Non-transactional delete, shard column %s is not indexed", stmt.ShardColumn.Name.L)
+		return nil, "", nil, errors.Errorf("Non-transactional DML, shard column %s is not indexed", stmt.ShardColumn.Name.L)
 	}
 
 	var sb strings.Builder
-	if stmt.DeleteStmt.Where != nil {
-		err := stmt.DeleteStmt.Where.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags|
+	if stmt.DMLStmt.WhereExpr() != nil {
+		err := stmt.DMLStmt.WhereExpr().Restore(format.NewRestoreCtx(format.DefaultRestoreFlags|
 			format.RestoreNameBackQuotes|
 			format.RestoreSpacesAroundBinaryOperation|
 			format.RestoreBracketAroundBinaryOperation|
-			format.RestoreStringWithoutCharset, &sb))
+			format.RestoreStringWithoutCharset, &sb),
+		)
 		if err != nil {
-			return nil, "", nil, errors.Annotate(err, "Failed to restore where clause in non-transactional delete")
+			return nil, "", nil, errors.Annotate(err, "Failed to restore where clause in non-transactional DML")
 		}
 	} else {
 		sb.WriteString("TRUE")
@@ -489,7 +497,7 @@ func buildSelectSQL(stmt *ast.NonTransactionalDeleteStmt, se Session) (*ast.Tabl
 
 // it attempts to auto-select a shard column from handle if not specified, and fills back the corresponding info in the stmt,
 // making it transparent to following steps
-func selectShardColumn(stmt *ast.NonTransactionalDeleteStmt, se Session, tableName *ast.TableName, tableAsName model.CIStr) (indexed bool, shardColumnInfo *model.ColumnInfo, err error) {
+func selectShardColumn(stmt *ast.NonTransactionalDMLStmt, se Session, tableName *ast.TableName, tableAsName model.CIStr) (indexed bool, shardColumnInfo *model.ColumnInfo, err error) {
 	tbl, err := domain.GetDomain(se).InfoSchema().TableByName(tableName.Schema, tableName.Name)
 	if err != nil {
 		return false, nil, err
@@ -509,11 +517,11 @@ func selectShardColumn(stmt *ast.NonTransactionalDeleteStmt, se Session, tableNa
 						break
 					}
 					// if the clustered index contains multiple columns, we cannot automatically choose a column as the shard column
-					return false, nil, errors.New("Non-transactional delete, the clustered index contains multiple columns. Please specify a shard column")
+					return false, nil, errors.New("Non-transactional DML, the clustered index contains multiple columns. Please specify a shard column")
 				}
 			}
 			if shardColumnInfo == nil {
-				return false, nil, errors.New("Non-transactional delete, the clustered index is not found")
+				return false, nil, errors.New("Non-transactional DML, the clustered index is not found")
 			}
 		}
 
@@ -636,7 +644,7 @@ func buildExecuteResults(ctx context.Context, jobs []job, maxChunkSize int, reda
 
 	errStr := sb.String()
 	// log errors here in case the output is too long. There can be thousands of errors.
-	logutil.Logger(ctx).Error("Non-transactional delete failed",
+	logutil.Logger(ctx).Error("Non-transactional DML failed",
 		zap.Int("num_failed_jobs", len(failedJobs)), zap.String("failed_jobs", errStr))
 
 	return nil, fmt.Errorf("%d/%d jobs failed in the non-transactional DML: %s, ...(more in logs)",
