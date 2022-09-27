@@ -6126,3 +6126,34 @@ func TestGlobalMemoryControl(t *testing.T) {
 		})
 	require.Equal(t, test[0], 0) // Keep 1GB HeapInUse
 }
+
+func TestGlobalMemoryControl2(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk0 := testkit.NewTestKit(t, store)
+	tk0.MustExec("set global tidb_mem_oom_action = 'cancel'")
+	tk0.MustExec("set global tidb_server_memory_limit = 1 << 30")
+	tk0.MustExec("set global tidb_server_memory_limit_sess_min_size = 128")
+
+	sm := &testkit.MockSessionManager{
+		PS: []*util.ProcessInfo{tk0.Session().ShowProcess()},
+	}
+	dom.ServerMemoryLimitHandle().SetSessionManager(sm)
+	go dom.ServerMemoryLimitHandle().Run()
+
+	tk0.MustExec("use test")
+	tk0.MustExec("create table t(a int)")
+	tk0.MustExec("insert into t select 1")
+	for i := 1; i <= 8; i++ {
+		tk0.MustExec("insert into t select * from t") // 256 Lines
+	}
+
+	var test []int
+	go func() {
+		test = make([]int, 128<<20) // Keep 1GB
+	}()
+	sql := "select * from t t1 join t t2 join t t3 on t1.a=t2.a and t1.a=t3.a order by t1.a;" // Need 500MB
+	require.True(t, strings.Contains(tk0.QueryToErr(sql).Error(), "Out Of Memory Quota!"))
+	require.Equal(t, tk0.Session().GetSessionVars().StmtCtx.DiskTracker.MaxConsumed(), int64(0))
+	test[0] = 0
+}
