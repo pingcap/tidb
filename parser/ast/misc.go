@@ -1497,7 +1497,7 @@ func (c *CommentOrAttributeOption) Restore(ctx *format.RestoreCtx) error {
 }
 
 // CreateUserStmt creates user account.
-// See https://dev.mysql.com/doc/refman/5.7/en/create-user.html
+// See https://dev.mysql.com/doc/refman/8.0/en/create-user.html
 type CreateUserStmt struct {
 	stmtNode
 
@@ -1560,9 +1560,12 @@ func (n *CreateUserStmt) Restore(ctx *format.RestoreCtx) error {
 		}
 	}
 
-	if err := (*n.CommentOrAttributeOption).Restore(ctx); err != nil {
-		return errors.Annotatef(err, "An error occurred while restore CreateUserStmt.CommentOrAttributeOption")
+	if n.CommentOrAttributeOption != nil {
+		if err := n.CommentOrAttributeOption.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore CreateUserStmt.CommentOrAttributeOption")
+		}
 	}
+
 	return nil
 }
 
@@ -1588,7 +1591,7 @@ func (n *CreateUserStmt) SecureText() string {
 }
 
 // AlterUserStmt modifies user account.
-// See https://dev.mysql.com/doc/refman/5.7/en/alter-user.html
+// See https://dev.mysql.com/doc/refman/8.0/en/alter-user.html
 type AlterUserStmt struct {
 	stmtNode
 
@@ -1654,9 +1657,12 @@ func (n *AlterUserStmt) Restore(ctx *format.RestoreCtx) error {
 		}
 	}
 
-	if err := (*n.CommentOrAttributeOption).Restore(ctx); err != nil {
-		return errors.Annotatef(err, "An error occurred while restore AlterUserStmt.CommentOrAttributeOption")
+	if n.CommentOrAttributeOption != nil {
+		if err := n.CommentOrAttributeOption.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore AlterUserStmt.CommentOrAttributeOption")
+		}
 	}
+
 	return nil
 }
 

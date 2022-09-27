@@ -12799,15 +12799,15 @@ RequireListElement:
 
 CommentOrAttributeOption:
 	{
-		$$ = &ast.CommentOrAttributeOption{}
+		$$ = &ast.CommentOrAttributeOption{Comment: "", Attribute: ""}
 	}
 |	"COMMENT" stringLit
 	{
-		$$ = &ast.CommentOrAttributeOption{Comment: $2}
+		$$ = &ast.CommentOrAttributeOption{Comment: $2, Attribute: ""}
 	}
 |	"ATTRIBUTE" stringLit
 	{
-		$$ = &ast.CommentOrAttributeOption{Attribute: $2}
+		$$ = &ast.CommentOrAttributeOption{Comment: "", Attribute: $2}
 	}
 
 PasswordOrLockOptions:
