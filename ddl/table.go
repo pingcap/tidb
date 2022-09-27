@@ -990,11 +990,12 @@ func onRenameTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	childTableInfos, err := adjustForeignKeyChildTableInfoAfterRenameTable(d, t, job, tblInfo, oldSchemaName, oldTableName, tableName, newSchemaID)
+	fkh := newForeignKeyHelper()
+	err = adjustForeignKeyChildTableInfoAfterRenameTable(d, t, job, &fkh, tblInfo, oldSchemaName, oldTableName, tableName, newSchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, true, childTableInfos...)
+	ver, err = updateSchemaVersion(d, t, job, fkh.getLoadedTables()...)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -1016,6 +1017,7 @@ func onRenameTables(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 
 	var tblInfos = make([]*model.TableInfo, 0, len(tableNames))
 	var err error
+	fkh := newForeignKeyHelper()
 	for i, oldSchemaID := range oldSchemaIDs {
 		job.TableID = tableIDs[i]
 		job.TableName = oldTableNames[i].L
@@ -1027,10 +1029,14 @@ func onRenameTables(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+		err = adjustForeignKeyChildTableInfoAfterRenameTable(d, t, job, &fkh, tblInfo, *oldSchemaNames[i], *oldTableNames[i], *tableNames[i], newSchemaIDs[i])
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
 		tblInfos = append(tblInfos, tblInfo)
 	}
 
-	ver, err = updateSchemaVersion(d, t, job)
+	ver, err = updateSchemaVersion(d, t, job, fkh.getLoadedTables()...)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -1089,34 +1095,31 @@ func checkAndRenameTables(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo
 	return ver, nil
 }
 
-func adjustForeignKeyChildTableInfoAfterRenameTable(d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, oldSchemaName, oldTableName, newTableName model.CIStr, newSchemaID int64) ([]schemaIDAndTableInfo, error) {
+func adjustForeignKeyChildTableInfoAfterRenameTable(d *ddlCtx, t *meta.Meta, job *model.Job, fkh *foreignKeyHelper, tblInfo *model.TableInfo, oldSchemaName, oldTableName, newTableName model.CIStr, newSchemaID int64) error {
 	if !variable.EnableForeignKey.Load() || newTableName.L == oldTableName.L {
-		return nil, nil
+		return nil
 	}
 	is, err := getAndCheckLatestInfoSchema(d, t)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	newDB, ok := is.SchemaByID(newSchemaID)
 	if !ok {
 		job.State = model.JobStateCancelled
-		return nil, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(fmt.Sprintf("schema-ID: %v", newSchemaID))
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(fmt.Sprintf("schema-ID: %v", newSchemaID))
 	}
-	infos := make(map[int64]schemaIDAndTableInfo)
-	fkh := newForeignKeyHelper(newDB.Name.L, newDB.ID, tblInfo)
 	referredFKs := is.GetTableReferredForeignKeys(oldSchemaName.L, oldTableName.L)
+	if len(referredFKs) == 0 {
+		return nil
+	}
+	fkh.addLoadedTable(oldSchemaName.L, oldTableName.L, newDB.ID, tblInfo)
 	for _, referredFK := range referredFKs {
-		var childTableInfo schemaIDAndTableInfo
-		if referredFK.ChildSchema.L == oldSchemaName.L && referredFK.ChildTable.L == oldTableName.L {
-			childTableInfo = schemaIDAndTableInfo{newDB.ID, tblInfo}
-		} else {
-			childTableInfo, err = fkh.getTableFromStorage(is, t, referredFK.ChildSchema, referredFK.ChildTable)
-			if err != nil {
-				if infoschema.ErrTableNotExists.Equal(err) || infoschema.ErrDatabaseNotExists.Equal(err) {
-					continue
-				}
-				return nil, err
+		childTableInfo, err := fkh.getTableFromStorage(is, t, referredFK.ChildSchema, referredFK.ChildTable)
+		if err != nil {
+			if infoschema.ErrTableNotExists.Equal(err) || infoschema.ErrDatabaseNotExists.Equal(err) {
+				continue
 			}
+			return err
 		}
 		childFKInfo := model.FindFKInfoByName(childTableInfo.tblInfo.ForeignKeys, referredFK.ChildFKName.L)
 		if childFKInfo == nil {
@@ -1124,16 +1127,14 @@ func adjustForeignKeyChildTableInfoAfterRenameTable(d *ddlCtx, t *meta.Meta, job
 		}
 		childFKInfo.RefSchema = newDB.Name
 		childFKInfo.RefTable = newTableName
-		infos[childTableInfo.tblInfo.ID] = childTableInfo
 	}
-	infoList := make([]schemaIDAndTableInfo, 0, len(fkh.loaded))
 	for _, info := range fkh.loaded {
-		if info.tblInfo.ID == tblInfo.ID {
-			continue
+		err = updateTable(t, info.schemaID, info.tblInfo)
+		if err != nil {
+			return err
 		}
-		infoList = append(infoList, info)
 	}
-	return infoList, nil
+	return nil
 }
 
 func onModifyTableComment(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -1446,23 +1447,24 @@ func updateVersionAndTableInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo 
 		}
 	}
 
-	if tblInfo.State == model.StatePublic {
-		tblInfo.UpdateTS = t.StartTS
-	}
-	err = t.UpdateTable(job.SchemaID, tblInfo)
+	err = updateTable(t, job.SchemaID, tblInfo)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
 	for _, info := range multiInfos {
-		if info.tblInfo.State == model.StatePublic {
-			info.tblInfo.UpdateTS = t.StartTS
-		}
-		err = t.UpdateTable(info.schemaID, info.tblInfo)
+		err = updateTable(t, info.schemaID, info.tblInfo)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
 	}
 	return ver, nil
+}
+
+func updateTable(t *meta.Meta, schemaID int64, tblInfo *model.TableInfo) error {
+	if tblInfo.State == model.StatePublic {
+		tblInfo.UpdateTS = t.StartTS
+	}
+	return t.UpdateTable(schemaID, tblInfo)
 }
 
 type schemaIDAndTableInfo struct {
