@@ -589,13 +589,16 @@ func checkDatabaseHasForeignKeyReferredInOwner(d *ddlCtx, t *meta.Meta, job *mod
 	return errors.Trace(err)
 }
 
-func checkAddForeignKeyValid(is infoschema.InfoSchema, schema string, tbInfo *model.TableInfo, fk *model.FKInfo, fkCheck bool) error {
-	// Check the uniqueness of the FK.
+func checkFKDupName(tbInfo *model.TableInfo, fkName model.CIStr) error {
 	for _, fkInfo := range tbInfo.ForeignKeys {
-		if fk.Name.L == fkInfo.Name.L {
-			return dbterror.ErrFkDupName.GenWithStackByArgs(fk.Name.O)
+		if fkName.L == fkInfo.Name.L {
+			return dbterror.ErrFkDupName.GenWithStackByArgs(fkName.O)
 		}
 	}
+	return nil
+}
+
+func checkAddForeignKeyValid(is infoschema.InfoSchema, schema string, tbInfo *model.TableInfo, fk *model.FKInfo, fkCheck bool) error {
 	if !variable.EnableForeignKey.Load() {
 		return nil
 	}
@@ -618,6 +621,10 @@ func checkAddForeignKeyValid(is infoschema.InfoSchema, schema string, tbInfo *mo
 }
 
 func checkAddForeignKeyValidInOwner(d *ddlCtx, t *meta.Meta, job *model.Job, schema string, tbInfo *model.TableInfo, fk *model.FKInfo, fkCheck bool) error {
+	err := checkFKDupName(tbInfo, fk.Name)
+	if err != nil {
+		return err
+	}
 	if !variable.EnableForeignKey.Load() {
 		return nil
 	}
