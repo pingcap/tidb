@@ -2205,6 +2205,7 @@ type PhysicalCTE struct {
 	RecurPlan PhysicalPlan
 	CTE       *CTEClass
 	cteAsName model.CIStr
+	cteName   model.CIStr
 }
 
 // PhysicalCTETable is for CTE table.
