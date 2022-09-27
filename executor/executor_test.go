@@ -24,6 +24,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -6149,11 +6150,17 @@ func TestGlobalMemoryControl2(t *testing.T) {
 	}
 
 	var test []int
+	wg := sync.WaitGroup{}
+	wg.Add(1)
 	go func() {
-		test = make([]int, 128<<20) // Keep 1GB
+		time.Sleep(100 * time.Millisecond) // Make sure the sql is running.
+		test = make([]int, 128<<20)        // Keep 1GB HeapInuse
+		wg.Done()
 	}()
 	sql := "select * from t t1 join t t2 join t t3 on t1.a=t2.a and t1.a=t3.a order by t1.a;" // Need 500MB
 	require.True(t, strings.Contains(tk0.QueryToErr(sql).Error(), "Out Of Memory Quota!"))
 	require.Equal(t, tk0.Session().GetSessionVars().StmtCtx.DiskTracker.MaxConsumed(), int64(0))
+	wg.Wait()
 	test[0] = 0
+	runtime.GC()
 }
