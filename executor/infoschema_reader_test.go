@@ -693,9 +693,9 @@ func TestTiFlashSystemTableWithTiFlashV620(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 
 	tk.MustQuery("select * from information_schema.TIFLASH_TABLES;").Check(testkit.Rows(
-		"db_1 t_10 mysql tables_priv 10 0 1 0 0 0 <nil> 0 <nil> 0 <nil> <nil> 0 0 0 0 0 0 <nil> <nil> <nil> 0 0 0 0 <nil> <nil> 0 <nil> <nil> <nil> 0 <nil> <nil> <nil> 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127.0.0.1:3933",
-		"db_1 t_8 mysql db 8 0 1 0 0 0 <nil> 0 <nil> 0 <nil> <nil> 0 0 0 0 0 0 <nil> <nil> <nil> 0 0 0 0 <nil> <nil> 0 <nil> <nil> <nil> 0 <nil> <nil> <nil> 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127.0.0.1:3933",
-		"db_2 t_70 test segment 70 0 1 102000 169873868 0 0 0 <nil> 0 <nil> <nil> 0 102000 169873868 0 0 0 <nil> <nil> <nil> 1 102000 169873868 43867622 102000 169873868 0 <nil> <nil> <nil> 13 13 7846.153846153846 13067220.615384616 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127.0.0.1:3933",
+		"db_1 t_10 mysql tables_priv 10 0 1 0 0 0 <nil> 0 <nil> 0 <nil> <nil> 0 0 0 0 0 0 <nil> <nil> <nil> 0 0 0 0 <nil> <nil> 0 <nil> <nil> <nil> 0 <nil> <nil> <nil> 0 0 0  0 0 0 0 0 0  0 0 0 0 0 0  0 0 0 0 127.0.0.1:3933",
+		"db_1 t_8 mysql db 8 0 1 0 0 0 <nil> 0 <nil> 0 <nil> <nil> 0 0 0 0 0 0 <nil> <nil> <nil> 0 0 0 0 <nil> <nil> 0 <nil> <nil> <nil> 0 <nil> <nil> <nil> 0 0 0  0 0 0 0 0 0  0 0 0 0 0 0  0 0 0 0 127.0.0.1:3933",
+		"db_2 t_70 test segment 70 0 1 102000 169873868 0 0 0 <nil> 0 <nil> <nil> 0 102000 169873868 0 0 0 <nil> <nil> <nil> 1 102000 169873868 43867622 102000 169873868 0 <nil> <nil> <nil> 13 13 7846.153846153846 13067220.615384616 0 0 0  0 0 0 0 0 0  0 0 0 0 0 0  0 0 0 0 127.0.0.1:3933",
 	))
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 }
