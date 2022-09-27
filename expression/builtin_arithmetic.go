@@ -117,13 +117,11 @@ func setFlenDecimal4RealOrDecimal(ctx sessionctx.Context, retTp *types.FieldType
 			retTp.SetFlen(types.UnspecifiedLength)
 			return
 		}
-		digitsInt := mathutil.Max(a.GetFlen()-a.GetDecimal(), b.GetFlen()-b.GetDecimal())
 		if isMultiply {
-			digitsInt = a.GetFlen() - a.GetDecimal() + b.GetFlen() - b.GetDecimal()
-		}
-		if isMultiply {
+			digitsInt := a.GetFlen() - a.GetDecimal() + b.GetFlen() - b.GetDecimal()
 			retTp.SetFlenUnderLimit(digitsInt + retTp.GetDecimal())
 		} else {
+			digitsInt := mathutil.Max(a.GetFlen()-a.GetDecimal(), b.GetFlen()-b.GetDecimal())
 			retTp.SetFlenUnderLimit(digitsInt + retTp.GetDecimal() + 1)
 		}
 		if isReal {
