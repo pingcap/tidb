@@ -2635,7 +2635,9 @@ func TestRcReadCheckTSConflict(t *testing.T) {
 
 func TestRcReadCheckTSConflictExtra(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/sessiontxn/isolation/CallOnStmtRetry", "return"))
-
+	defer func() {
+		defer require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/sessiontxn/isolation/CallOnStmtRetry"))
+	}()
 	store := testkit.CreateMockStore(t)
 
 	ctx := context.Background()
@@ -2688,7 +2690,6 @@ func TestRcReadCheckTSConflictExtra(t *testing.T) {
 	require.Equal(t, 1, count)
 
 	tk.MustExec("drop table t1")
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/sessiontxn/isolation/CallOnStmtRetry"))
 }
 
 func TestRcReadCheckTS(t *testing.T) {
