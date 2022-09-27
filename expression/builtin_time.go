@@ -6440,7 +6440,7 @@ func (c *tidbParseTsoFunctionClass) getFunction(ctx sessionctx.Context, args []E
 		return nil, err
 	}
 
-	bf.tp.SetType(mysql.TypeDate)
+	bf.tp.SetType(mysql.TypeDatetime)
 	bf.tp.SetFlen(mysql.MaxDateWidth)
 	bf.tp.SetDecimal(types.DefaultFsp)
 	sig := &builtinTidbParseTsoSig{bf}
