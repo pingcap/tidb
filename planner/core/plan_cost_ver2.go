@@ -15,12 +15,12 @@
 package core
 
 import (
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"math"
 
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
 // getPlanCostVer2 returns the plan-cost of this sub-plan, which is:
