@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/planner/property"
 )
 
+// getPlanCostVer2 returns the plan-cost of this sub-plan, which is:
 // plan-cost = child-cost + sel-cost
 // sel-cost = input-rows * len(conditions) * cpu-factor
 func (p *PhysicalSelection) getPlanCostVer2(taskType property.TaskType, option *PlanCostOption) (float64, error) {
@@ -39,6 +40,7 @@ func (p *PhysicalSelection) getPlanCostVer2(taskType property.TaskType, option *
 	return p.planCost, nil
 }
 
+// getPlanCostVer2 returns the plan-cost of this sub-plan, which is:
 // plan-cost = child-cost + proj-cost / concurrency
 // proj-cost = input-rows * len(expressions) * cpu-factor
 func (p *PhysicalProjection) getPlanCostVer2(taskType property.TaskType, option *PlanCostOption) (float64, error) {
@@ -58,6 +60,7 @@ func (p *PhysicalProjection) getPlanCostVer2(taskType property.TaskType, option 
 	return p.planCost, nil
 }
 
+// getPlanCostVer2 returns the plan-cost of this sub-plan, which is:
 // plan-cost = rows * log2(row-size) * scan-factor
 // log2(row-size) is from experiments.
 func (p *PhysicalIndexScan) getPlanCostVer2(taskType property.TaskType, option *PlanCostOption) (float64, error) {
@@ -71,6 +74,7 @@ func (p *PhysicalIndexScan) getPlanCostVer2(taskType property.TaskType, option *
 	return p.planCost, nil
 }
 
+// getPlanCostVer2 returns the plan-cost of this sub-plan, which is:
 // plan-cost = rows * log2(row-size) * scan-factor
 // log2(row-size) is from experiments.
 func (p *PhysicalTableScan) getPlanCostVer2(taskType property.TaskType, option *PlanCostOption) (float64, error) {
@@ -90,6 +94,7 @@ func (p *PhysicalTableScan) getPlanCostVer2(taskType property.TaskType, option *
 	return p.planCost, nil
 }
 
+// getPlanCostVer2 returns the plan-cost of this sub-plan, which is:
 // plan-cost = (child-cost + net-cost + seek-cost) / concurrency
 // net-cost = rows * row-size * net-factor
 // seek-cost = num-tasks * seek-factor
@@ -112,6 +117,7 @@ func (p *PhysicalIndexReader) getPlanCostVer2(taskType property.TaskType, option
 	return p.planCost, nil
 }
 
+// getPlanCostVer2 returns the plan-cost of this sub-plan, which is:
 // plan-cost = (child-cost + net-cost + seek-cost) / concurrency
 // net-cost = rows * row-size * net-factor
 // seek-cost = num-tasks * seek-factor
@@ -141,6 +147,7 @@ func (p *PhysicalTableReader) getPlanCostVer2(taskType property.TaskType, option
 	return p.planCost, nil
 }
 
+// getPlanCostVer2 returns the plan-cost of this sub-plan, which is:
 // plan-cost = index-side-cost + (table-side-cost + double-read-cost) / double-read-concurrency
 // index-side-cost = (index-child-cost + index-net-cost + index-seek-cost) / dist-concurrency # same with IndexReader
 // table-side-cost = (table-child-cost + table-net-cost + table-seek-cost) / dist-concurrency # same with TableReader
@@ -190,6 +197,7 @@ func (p *PhysicalIndexLookUpReader) getPlanCostVer2(taskType property.TaskType, 
 	return p.planCost, nil
 }
 
+// getPlanCostVer2 returns the plan-cost of this sub-plan, which is:
 // plan-cost = table-side-cost + sum(index-side-cost)
 // index-side-cost = (index-child-cost + index-net-cost + index-seek-cost) / dist-concurrency # same with IndexReader
 // table-side-cost = (table-child-cost + table-net-cost + table-seek-cost) / dist-concurrency # same with TableReader
