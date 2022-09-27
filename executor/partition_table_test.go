@@ -3635,7 +3635,7 @@ func TestIssue21732(t *testing.T) {
 		tk.MustExec("alter table p add unique index idx (a, b);")
 		tk.MustExec("insert into p (a) values  (1),(2),(3);")
 		tk.MustExec("select * from p ignore index (idx);")
-		tk.MustQuery("select * from p use index (idx)").Check(testkit.Rows("2 2", "1 1", "3 3"))
+		tk.MustQuery("select * from p use index (idx)").Sort().Check(testkit.Rows("1 1", "2 2", "3 3"))
 		tk.MustExec("drop database TestIssue21732")
 	})
 }
