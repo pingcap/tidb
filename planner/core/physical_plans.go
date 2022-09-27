@@ -1544,7 +1544,7 @@ func (pl *PhysicalLock) MemoryUsage() (sum int64) {
 	}
 
 	for _, vals := range pl.TblID2Handle {
-		sum += size.SizeOfInt64 + size.SizeOfInterface + int64(cap(vals))*size.SizeOfInterface
+		sum += size.SizeOfInt64 + size.SizeOfSlice + int64(cap(vals))*size.SizeOfInterface
 		for _, val := range vals {
 			sum += val.MemoryUsage()
 		}
