@@ -602,10 +602,10 @@ func TestDirectReadingwithIndexJoin(t *testing.T) {
 		"├─TableReader(Build) 9990.00 root  data:Selection",
 		"│ └─Selection 9990.00 cop[tikv]  not(isnull(test_dr_join.touter.b))",
 		"│   └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo",
-		"└─IndexLookUp(Probe) 12487.5 root partition:all ",
-		"  ├─Selection(Build) 12487.5 cop[tikv]  not(isnull(test_dr_join.thash.b))",
+		"└─IndexLookUp(Probe) 12487.50 root partition:all ",
+		"  ├─Selection(Build) 12487.50 cop[tikv]  not(isnull(test_dr_join.thash.b))",
 		"  │ └─IndexRangeScan 12500.00 cop[tikv] table:thash, index:idx_b(b) range: decided by [eq(test_dr_join.thash.b, test_dr_join.touter.b)], keep order:false, stats:pseudo",
-		"  └─TableRowIDScan(Probe) 12487.5 cop[tikv] table:thash keep order:false, stats:pseudo")) // check if IndexLookUp is used
+		"  └─TableRowIDScan(Probe) 12487.50 cop[tikv] table:thash keep order:false, stats:pseudo")) // check if IndexLookUp is used
 	tk.MustQuery(queryPartition).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 
 	// test tableReader + hash
