@@ -115,6 +115,9 @@ func GetCreateTableWithInfoConfig(cs []CreateTableWithInfoConfigurier) CreateTab
 	for _, c := range cs {
 		c.Apply(&config)
 	}
+	if config.ShouldAllocTableID == nil {
+		config.ShouldAllocTableID = func(*model.TableInfo) bool { return true }
+	}
 	return config
 }
 
