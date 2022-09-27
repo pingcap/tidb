@@ -534,9 +534,8 @@ func (c *CheckpointAdvancer) onConsistencyCheckTick(context.Context) error {
 		log.Error("consistency check failed! log backup may lose data! rolling back to full scan for saving.", logutil.ShortError(err))
 		c.resetToFullScan()
 		return err
-	} else {
-		log.Debug("consistency check passed.")
 	}
+	log.Debug("consistency check passed.")
 	return nil
 }
 

@@ -17,15 +17,14 @@ const (
 	flagConsistencyCheckTick = "consistency-check-tick"
 	flagUpdateSmallTreeTick  = "update-small-tree-tick"
 
-	DefaultConsistencyCheckTick            = 5
+	DefaultConsistencyCheckTick            = 8
 	DefaultTickInterval                    = 3 * time.Second
 	DefaultBackOffTime                     = 5 * time.Second
-	DefaultTickBeforeUpdateCheckpointLight = 5
+	DefaultTickBeforeUpdateCheckpointLight = 4
 	DefaultTickBeforeFullScanRetry         = 2
 	DefaultAdvancingByCache                = true
 	DefaultTryAdvanceThreshold             = 108 * time.Second
-	DefaultFullScanTick                    = 4
-	DefaultAdvanceByCache                  = true
+	DefaultFullScanTick                    = 16
 )
 
 var (
