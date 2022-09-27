@@ -3030,13 +3030,13 @@ func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflas
 	return nil
 }
 
-type TiFlashSQLExecuteResponseMetaColumn struct {
+type tiFlashSQLExecuteResponseMetaColumn struct {
 	Name string `json:"name"`
 	Type string `json:"type"`
 }
 
-type TiFlashSQLExecuteResponse struct {
-	Meta []TiFlashSQLExecuteResponseMetaColumn `json:"meta"`
+type tiFlashSQLExecuteResponse struct {
+	Meta []tiFlashSQLExecuteResponseMetaColumn `json:"meta"`
 	Data [][]interface{}                       `json:"data"`
 }
 
@@ -3074,7 +3074,7 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	var result TiFlashSQLExecuteResponse
+	var result tiFlashSQLExecuteResponse
 	err = json.Unmarshal(body, &result)
 	if err != nil {
 		return nil, errors.Wrapf(err, "Failed to decode JSON from TiFlash")
