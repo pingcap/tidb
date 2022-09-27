@@ -524,12 +524,18 @@ func checkPlanCacheable(sctx sessionctx.Context, plan PhysicalPlan) {
 	}
 }
 
+// propagateProbeParents doesn't affect the execution plan, it only sets the probeParents field of a PhysicalPlan.
+// It's for handling the inconsistency between row count in the statsInfo and the recorded actual row count. Please
+// see comments in PhysicalPlan for details.
 func propagateProbeParents(plan PhysicalPlan, probeParents []PhysicalPlan) {
 	plan.setProbeParents(probeParents)
 	switch x := plan.(type) {
 	case *PhysicalApply, *PhysicalIndexJoin, *PhysicalIndexHashJoin, *PhysicalIndexMergeJoin:
 		if join, ok := plan.(interface{ getInnerChildIdx() int }); ok {
 			propagateProbeParents(plan.Children()[1-join.getInnerChildIdx()], probeParents)
+
+			// The core logic of this method:
+			// Record every Apply and Index Join we met, record it in a slice, and set it in their inner children.
 			newParents := make([]PhysicalPlan, len(probeParents), len(probeParents)+1)
 			copy(newParents, probeParents)
 			newParents = append(newParents, plan)
