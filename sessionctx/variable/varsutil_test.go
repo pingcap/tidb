@@ -120,12 +120,11 @@ func TestVarsutil(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "OFF", val)
 
-	// 1/ON is not supported (generates a warning and sets to OFF)
 	err = v.SetSystemVar("foreign_key_checks", "1")
 	require.NoError(t, err)
 	val, err = v.GetSessionOrGlobalSystemVar("foreign_key_checks")
 	require.NoError(t, err)
-	require.Equal(t, "OFF", val)
+	require.Equal(t, "ON", val)
 
 	err = v.SetSystemVar("sql_mode", "strict_trans_tables")
 	require.NoError(t, err)
@@ -712,4 +711,28 @@ func TestSessionStatesSystemVar(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "1024", val)
 	require.Equal(t, true, keep)
+}
+
+func TestOnOffHelpers(t *testing.T) {
+	require.Equal(t, "ON", trueFalseToOnOff("TRUE"))
+	require.Equal(t, "ON", trueFalseToOnOff("TRue"))
+	require.Equal(t, "ON", trueFalseToOnOff("true"))
+	require.Equal(t, "OFF", trueFalseToOnOff("FALSE"))
+	require.Equal(t, "OFF", trueFalseToOnOff("False"))
+	require.Equal(t, "OFF", trueFalseToOnOff("false"))
+	require.Equal(t, "other", trueFalseToOnOff("other"))
+	require.Equal(t, "true", OnOffToTrueFalse("ON"))
+	require.Equal(t, "true", OnOffToTrueFalse("on"))
+	require.Equal(t, "true", OnOffToTrueFalse("On"))
+	require.Equal(t, "false", OnOffToTrueFalse("OFF"))
+	require.Equal(t, "false", OnOffToTrueFalse("Off"))
+	require.Equal(t, "false", OnOffToTrueFalse("off"))
+	require.Equal(t, "other", OnOffToTrueFalse("other"))
+}
+
+func TestAssertionLevel(t *testing.T) {
+	require.Equal(t, AssertionLevelStrict, tidbOptAssertionLevel(AssertionStrictStr))
+	require.Equal(t, AssertionLevelOff, tidbOptAssertionLevel(AssertionOffStr))
+	require.Equal(t, AssertionLevelFast, tidbOptAssertionLevel(AssertionFastStr))
+	require.Equal(t, AssertionLevelOff, tidbOptAssertionLevel("bogus"))
 }

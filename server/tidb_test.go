@@ -60,6 +60,7 @@ import (
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	"go.opencensus.io/stats/view"
 )
 
 type tidbTestSuite struct {
@@ -111,6 +112,7 @@ func createTidbTestSuite(t *testing.T) *tidbTestSuite {
 		if ts.store != nil {
 			require.NoError(t, ts.store.Close())
 		}
+		view.Stop()
 	})
 
 	return ts
@@ -143,6 +145,7 @@ func createTidbTestTopSQLSuite(t *testing.T) *tidbTestTopSQLSuite {
 		cpuprofile.StopCPUProfiler()
 		topsqlstate.GlobalState.PrecisionSeconds.Store(topsqlstate.DefTiDBTopSQLPrecisionSeconds)
 		topsqlstate.GlobalState.ReportIntervalSeconds.Store(topsqlstate.DefTiDBTopSQLReportIntervalSeconds)
+		view.Stop()
 	})
 	return ts
 }
@@ -193,6 +196,7 @@ func TestAuth(t *testing.T) {
 
 	ts.runTestAuth(t)
 	ts.runTestIssue3682(t)
+	ts.runTestAccountLock(t)
 }
 
 func TestIssues(t *testing.T) {
@@ -871,6 +875,9 @@ func TestInternalSessionTxnStartTS(t *testing.T) {
 	ts := createTidbTestSuite(t)
 
 	se, err := session.CreateSession4Test(ts.store)
+	require.NoError(t, err)
+
+	_, err = se.Execute(context.Background(), "set global tidb_enable_metadata_lock=0")
 	require.NoError(t, err)
 
 	count := 10
@@ -2078,6 +2085,7 @@ func setupForTestTopSQLStatementStats(t *testing.T) (*tidbTestSuite, stmtstats.S
 		err = failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/unistoreRPCClientSendHook")
 		require.NoError(t, err)
 		stmtstats.CloseAggregator()
+		view.Stop()
 	})
 
 	return ts, total, tagChecker, collectedNotifyCh

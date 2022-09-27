@@ -426,6 +426,7 @@ func TestDupRandJoinCondsPushDown(t *testing.T) {
 }
 
 func TestTablePartition(t *testing.T) {
+	variable.EnableMDL.Store(false)
 	definitions := []model.PartitionDefinition{
 		{
 			ID:       41,
@@ -521,6 +522,7 @@ func TestPlanBuilder(t *testing.T) {
 	planSuiteUnexportedData.LoadTestCases(t, &input, &output)
 
 	s := createPlannerSuite()
+	s.ctx.GetSessionVars().CostModelVersion = modelVer1
 	ctx := context.Background()
 	for i, ca := range input {
 		comment := fmt.Sprintf("for %s", ca)
@@ -1014,6 +1016,7 @@ func TestAggPrune(t *testing.T) {
 }
 
 func TestVisitInfo(t *testing.T) {
+	variable.EnableMDL.Store(false)
 	tests := []struct {
 		sql string
 		ans []visitInfo
@@ -1668,6 +1671,7 @@ func TestWindowFunction(t *testing.T) {
 
 	s.optimizeVars = map[string]string{
 		variable.TiDBWindowConcurrency: "1",
+		variable.TiDBCostModelVersion:  "1",
 	}
 	defer func() {
 		s.optimizeVars = nil
@@ -1683,6 +1687,7 @@ func TestWindowParallelFunction(t *testing.T) {
 
 	s.optimizeVars = map[string]string{
 		variable.TiDBWindowConcurrency: "4",
+		variable.TiDBCostModelVersion:  "1",
 	}
 	defer func() {
 		s.optimizeVars = nil
