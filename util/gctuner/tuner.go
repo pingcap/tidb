@@ -93,6 +93,36 @@ type tuner struct {
 	threshold atomic.Uint64 // high water level, in bytes
 }
 
+func newTuner(threshold uint64) *tuner {
+	t := &tuner{}
+	t.gcPercent.Store(defaultGCPercent)
+	t.threshold.Store(threshold)
+	t.finalizer = newFinalizer(t.tuning) // start tuning
+	return t
+}
+
+func (t *tuner) stop() {
+	t.finalizer.stop()
+}
+
+func (t *tuner) setThreshold(threshold uint64) {
+	t.threshold.Store(threshold)
+}
+
+func (t *tuner) getThreshold() uint64 {
+	return t.threshold.Load()
+}
+
+func (t *tuner) setGCPercent(percent uint32) uint32 {
+	result := uint32(util.SetGOGC(int(percent)))
+	t.gcPercent.Store(result)
+	return result
+}
+
+func (t *tuner) getGCPercent() uint32 {
+	return t.gcPercent.Load()
+}
+
 // tuning check the memory inuse and tune GC percent dynamically.
 // Go runtime ensure that it will be called serially.
 func (t *tuner) tuning() {
@@ -127,34 +157,4 @@ func calcGCPercent(inuse, threshold uint64) uint32 {
 		return MaxGCPercent
 	}
 	return gcPercent
-}
-
-func newTuner(threshold uint64) *tuner {
-	t := &tuner{}
-	t.gcPercent.Store(defaultGCPercent)
-	t.threshold.Store(threshold)
-	t.finalizer = newFinalizer(t.tuning) // start tuning
-	return t
-}
-
-func (t *tuner) stop() {
-	t.finalizer.stop()
-}
-
-func (t *tuner) setThreshold(threshold uint64) {
-	t.threshold.Store(threshold)
-}
-
-func (t *tuner) getThreshold() uint64 {
-	return t.threshold.Load()
-}
-
-func (t *tuner) setGCPercent(percent uint32) uint32 {
-	result := uint32(util.SetGOGC(int(percent)))
-	t.gcPercent.Store(result)
-	return result
-}
-
-func (t *tuner) getGCPercent() uint32 {
-	return t.gcPercent.Load()
 }

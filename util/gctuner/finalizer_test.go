@@ -19,7 +19,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type testState struct {
@@ -28,7 +28,6 @@ type testState struct {
 
 func TestFinalizer(t *testing.T) {
 	maxCount := int32(16)
-	is := assert.New(t)
 	state := &testState{}
 	f := newFinalizer(func() {
 		n := atomic.AddInt32(&state.count, 1)
@@ -38,14 +37,14 @@ func TestFinalizer(t *testing.T) {
 	})
 	for i := int32(1); i <= maxCount; i++ {
 		runtime.GC()
-		is.Equal(atomic.LoadInt32(&state.count), i)
+		require.Equal(t, i, atomic.LoadInt32(&state.count))
 	}
-	is.Nil(f.ref)
+	require.Nil(t, f.ref)
 
 	f.stop()
-	is.Equal(atomic.LoadInt32(&state.count), maxCount)
+	require.Equal(t, maxCount, atomic.LoadInt32(&state.count))
 	runtime.GC()
-	is.Equal(atomic.LoadInt32(&state.count), maxCount)
+	require.Equal(t, maxCount, atomic.LoadInt32(&state.count))
 	runtime.GC()
-	is.Equal(atomic.LoadInt32(&state.count), maxCount)
+	require.Equal(t, maxCount, atomic.LoadInt32(&state.count))
 }
