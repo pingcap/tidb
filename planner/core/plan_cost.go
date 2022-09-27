@@ -449,9 +449,6 @@ func (p *PhysicalTableScan) GetPlanCost(taskType property.TaskType, option *Plan
 	case modelVer2:
 		return p.getPlanCostVer2(taskType, option)
 	}
-	rowCount = getCardinality(p, costFlag)
-	rowSize = p.getScanRowSize()
-	selfCost = rowCount * rowSize * scanFactor
 	if option.tracer != nil {
 		setPhysicalTableOrIndexScanCostDetail(p, option.tracer, rowCount, rowSize, scanFactor, costModelVersion)
 	}
@@ -466,20 +463,22 @@ func (p *PhysicalIndexScan) GetPlanCost(taskType property.TaskType, option *Plan
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
 		return p.planCost, nil
 	}
-	if p.ctx.GetSessionVars().CostModelVersion == modelVer2 {
-		return p.getPlanCostVer2(taskType, option)
-	}
 
 	var selfCost float64
 	var rowCount, rowSize, scanFactor float64
 	costModelVersion := p.ctx.GetSessionVars().CostModelVersion
-	scanFactor = p.ctx.GetSessionVars().GetScanFactor(p.Table)
-	if p.Desc && p.prop != nil && p.prop.ExpectedCnt >= smallScanThreshold {
-		scanFactor = p.ctx.GetSessionVars().GetDescScanFactor(p.Table)
+	switch costModelVersion {
+	case modelVer1: // scan cost: rows * row-size * scan-factor
+		scanFactor = p.ctx.GetSessionVars().GetScanFactor(p.Table)
+		if p.Desc && p.prop != nil && p.prop.ExpectedCnt >= smallScanThreshold {
+			scanFactor = p.ctx.GetSessionVars().GetDescScanFactor(p.Table)
+		}
+		rowCount = getCardinality(p, costFlag)
+		rowSize = p.getScanRowSize()
+		selfCost = rowCount * rowSize * scanFactor
+	case modelVer2:
+		return p.getPlanCostVer2(taskType, option)
 	}
-	rowCount = getCardinality(p, costFlag)
-	rowSize = p.getScanRowSize()
-	selfCost = rowCount * rowSize * scanFactor
 	if option.tracer != nil {
 		setPhysicalTableOrIndexScanCostDetail(p, option.tracer, rowCount, rowSize, scanFactor, costModelVersion)
 	}
