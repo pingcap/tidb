@@ -171,15 +171,15 @@ type RestoreConfig struct {
 	tiflashRecorder *tiflashrec.TiFlashRecorder `json:"-" toml:"-"`
 
 	// for ebs-based restore
-	MetaPhase           bool                  `json:"meta-phase"`
-	DataPhase           bool                  `json:"data-phase"`
-	OutputFile          string                `json:"output-file"`
-	SkipAWS             bool                  `json:"skip-aws"`
-	CloudAPIConcurrency uint                  `json:"cloud-api-concurrency"`
-	VolumeType          pconfig.EBSVolumeType `json:"volume-type"`
-	VolumeIOPS          int64                 `json:"volume-iops"`
-	VolumeThroughput    int64                 `json:"volume-throughput"`
-	ProgressFile        string                `json:"progress-file"`
+	FullBackupType      FullBackupType        `json:"full-backup-type" toml:"full-backup-type"`
+	Prepare             bool                  `json:"prepare" toml:"prepare"`
+	OutputFile          string                `json:"output-file" toml:"output-file"`
+	SkipAWS             bool                  `json:"skip-aws" toml:"skip-aws"`
+	CloudAPIConcurrency uint                  `json:"cloud-api-concurrency" toml:"cloud-api-concurrency"`
+	VolumeType          pconfig.EBSVolumeType `json:"volume-type" toml:"volume-type"`
+	VolumeIOPS          int64                 `json:"volume-iops" toml:"volume-iops"`
+	VolumeThroughput    int64                 `json:"volume-throughput" toml:"volume-throughput"`
+	ProgressFile        string                `json:"progress-file" toml:"progress-file"`
 }
 
 // DefineRestoreFlags defines common flags for the restore tidb command.
@@ -268,18 +268,19 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Annotatef(err, "failed to get flag %s", FlagWithPlacementPolicy)
 	}
 
-	if flags.Lookup(flagMetaPhase) != nil {
+	if flags.Lookup(flagFullBackupType) != nil {
 		// for restore full only
-		cfg.MetaPhase, err = flags.GetBool(flagMetaPhase)
+		fullBackupType, err := flags.GetString(flagFullBackupType)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		cfg.DataPhase, err = flags.GetBool(flagDataPhase)
+		if !FullBackupType(fullBackupType).Valid() {
+			return errors.New("invalid full backup type")
+		}
+		cfg.FullBackupType = FullBackupType(fullBackupType)
+		cfg.Prepare, err = flags.GetBool(flagPrepare)
 		if err != nil {
 			return errors.Trace(err)
-		}
-		if cfg.MetaPhase && cfg.DataPhase {
-			return errors.New("can only set either meta-phase or data-phase")
 		}
 		cfg.SkipAWS, err = flags.GetBool(flagSkipAWS)
 		if err != nil {
@@ -580,7 +581,8 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		TTL:      utils.DefaultBRGCSafePointTTL,
 		ID:       utils.MakeSafePointID(),
 	}
-	g.Record("BackupTS", restoreTS)
+	g.Record("BackupTS", backupMeta.EndVersion)
+	g.Record("RestoreTS", restoreTS)
 
 	// restore checksum will check safe point with its start ts, see details at
 	// https://github.com/pingcap/tidb/blob/180c02127105bed73712050594da6ead4d70a85f/store/tikv/kv.go#L186-L190

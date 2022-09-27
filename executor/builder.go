@@ -888,6 +888,11 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
 		b.err = err
 		return nil
 	}
+	ivs.fkChecks, err = buildFKCheckExecs(b.ctx, ivs.Table, v.FKChecks)
+	if err != nil {
+		b.err = err
+		return nil
+	}
 
 	if v.IsReplace {
 		return b.buildReplace(ivs)
@@ -1046,6 +1051,8 @@ func (b *executorBuilder) setTelemetryInfo(v *plannercore.DDL) {
 					b.Ti.PartitionTelemetry = &PartitionTelemetryInfo{}
 				}
 				b.Ti.PartitionTelemetry.UseAddIntervalPartition = true
+			case ast.AlterTableExchangePartition:
+				b.Ti.UesExchangePartition = true
 			}
 		}
 	case *ast.CreateTableStmt:
@@ -3963,9 +3970,9 @@ type mockPhysicalIndexReader struct {
 	e Executor
 }
 
-// MemoryUsage return the memory usage of mockPhysicalIndexReader
+// MemoryUsage of mockPhysicalIndexReader is only for testing
 func (p *mockPhysicalIndexReader) MemoryUsage() (sum int64) {
-	return // mock operator for testing only
+	return
 }
 
 func (builder *dataReaderBuilder) buildExecutorForIndexJoin(ctx context.Context, lookUpContents []*indexJoinLookUpContent,
