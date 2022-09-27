@@ -1480,17 +1480,34 @@ func (p *PasswordOrLockOption) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
+type CommentOrAttributeOption struct {
+	Comment   string
+	Attribute string
+}
+
+func (c *CommentOrAttributeOption) Restore(ctx *format.RestoreCtx) error {
+	if len(c.Comment) > 0 {
+		ctx.WriteKeyWord(" COMMENT ")
+		ctx.WriteString(c.Comment)
+	} else if len(c.Attribute) > 0 {
+		ctx.WriteKeyWord(" ATTRIBUTE ")
+		ctx.WriteString(c.Attribute)
+	}
+	return nil
+}
+
 // CreateUserStmt creates user account.
 // See https://dev.mysql.com/doc/refman/5.7/en/create-user.html
 type CreateUserStmt struct {
 	stmtNode
 
-	IsCreateRole          bool
-	IfNotExists           bool
-	Specs                 []*UserSpec
-	TLSOptions            []*TLSOption
-	ResourceOptions       []*ResourceOption
-	PasswordOrLockOptions []*PasswordOrLockOption
+	IsCreateRole             bool
+	IfNotExists              bool
+	Specs                    []*UserSpec
+	TLSOptions               []*TLSOption
+	ResourceOptions          []*ResourceOption
+	PasswordOrLockOptions    []*PasswordOrLockOption
+	CommentOrAttributeOption *CommentOrAttributeOption
 }
 
 // Restore implements Node interface.
@@ -1542,6 +1559,10 @@ func (n *CreateUserStmt) Restore(ctx *format.RestoreCtx) error {
 			return errors.Annotatef(err, "An error occurred while restore CreateUserStmt.PasswordOrLockOptions[%d]", i)
 		}
 	}
+
+	if err := (*n.CommentOrAttributeOption).Restore(ctx); err != nil {
+		return errors.Annotatef(err, "An error occurred while restore CreateUserStmt.CommentOrAttributeOption")
+	}
 	return nil
 }
 
@@ -1571,12 +1592,13 @@ func (n *CreateUserStmt) SecureText() string {
 type AlterUserStmt struct {
 	stmtNode
 
-	IfExists              bool
-	CurrentAuth           *AuthOption
-	Specs                 []*UserSpec
-	TLSOptions            []*TLSOption
-	ResourceOptions       []*ResourceOption
-	PasswordOrLockOptions []*PasswordOrLockOption
+	IfExists                 bool
+	CurrentAuth              *AuthOption
+	Specs                    []*UserSpec
+	TLSOptions               []*TLSOption
+	ResourceOptions          []*ResourceOption
+	PasswordOrLockOptions    []*PasswordOrLockOption
+	CommentOrAttributeOption *CommentOrAttributeOption
 }
 
 // Restore implements Node interface.
@@ -1630,6 +1652,10 @@ func (n *AlterUserStmt) Restore(ctx *format.RestoreCtx) error {
 		if err := v.Restore(ctx); err != nil {
 			return errors.Annotatef(err, "An error occurred while restore AlterUserStmt.PasswordOrLockOptions[%d]", i)
 		}
+	}
+
+	if err := (*n.CommentOrAttributeOption).Restore(ctx); err != nil {
+		return errors.Annotatef(err, "An error occurred while restore AlterUserStmt.CommentOrAttributeOption")
 	}
 	return nil
 }
