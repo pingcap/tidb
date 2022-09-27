@@ -126,7 +126,7 @@ func TestCompactTablePartitionInvalid(t *testing.T) {
 	`)
 	_, err := tk.Exec("alter table t compact partition p1,p2,p4 tiflash replica;")
 	require.NotNil(t, err)
-	require.Equal(t, "partition:p4 is not exist in table:t", err.Error())
+	require.Equal(t, "[table:1735]Unknown partition 'p4' in table 't'", err.Error())
 }
 
 func TestCompactTableTooBusy(t *testing.T) {
