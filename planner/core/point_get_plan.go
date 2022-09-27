@@ -19,6 +19,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
@@ -45,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/plancodec"
+	"github.com/pingcap/tidb/util/size"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
@@ -224,6 +226,53 @@ func (p *PointGetPlan) SetOutputNames(names types.NameSlice) {
 
 func (p *PointGetPlan) appendChildCandidate(_ *physicalOptimizeOp) {}
 
+const emptyPointGetPlanSize = int64(unsafe.Sizeof(PointGetPlan{}))
+
+// MemoryUsage return the memory usage of PointGetPlan
+func (p *PointGetPlan) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = emptyPointGetPlanSize + p.basePlan.MemoryUsage() + int64(len(p.dbName)) + int64(cap(p.IdxColLens))*size.SizeOfInt +
+		int64(cap(p.IndexConstants)+cap(p.ColsFieldType)+cap(p.IdxCols)+cap(p.outputNames)+cap(p.Columns)+cap(p.accessCols))*size.SizeOfPointer
+	if p.schema != nil {
+		sum += p.schema.MemoryUsage()
+	}
+	if p.PartitionInfo != nil {
+		sum += p.PartitionInfo.MemoryUsage()
+	}
+	if p.HandleConstant != nil {
+		sum += p.HandleConstant.MemoryUsage()
+	}
+	if p.handleFieldType != nil {
+		sum += p.handleFieldType.MemoryUsage()
+	}
+
+	for _, datum := range p.IndexValues {
+		sum += datum.MemUsage()
+	}
+	for _, idxConst := range p.IndexConstants {
+		sum += idxConst.MemoryUsage()
+	}
+	for _, ft := range p.ColsFieldType {
+		sum += ft.MemoryUsage()
+	}
+	for _, col := range p.IdxCols {
+		sum += col.MemoryUsage()
+	}
+	for _, cond := range p.AccessConditions {
+		sum += cond.MemoryUsage()
+	}
+	for _, name := range p.outputNames {
+		sum += name.MemoryUsage()
+	}
+	for _, col := range p.accessCols {
+		sum += col.MemoryUsage()
+	}
+	return
+}
+
 // BatchPointGetPlan represents a physical plan which contains a bunch of
 // keys reference the same table and use the same `unique key`
 type BatchPointGetPlan struct {
@@ -377,6 +426,49 @@ func (p *BatchPointGetPlan) SetOutputNames(names types.NameSlice) {
 }
 
 func (p *BatchPointGetPlan) appendChildCandidate(_ *physicalOptimizeOp) {}
+
+const emptyBatchPointGetPlanSize = int64(unsafe.Sizeof(BatchPointGetPlan{}))
+
+// MemoryUsage return the memory usage of BatchPointGetPlan
+func (p *BatchPointGetPlan) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = emptyBatchPointGetPlanSize + p.baseSchemaProducer.MemoryUsage() + int64(len(p.dbName)) +
+		int64(cap(p.IdxColLens))*size.SizeOfInt + int64(cap(p.Handles))*size.SizeOfInterface +
+		int64(cap(p.PartitionInfos)+cap(p.HandleParams)+cap(p.IndexColTypes)+cap(p.IdxCols)+cap(p.Columns)+cap(p.accessCols))*size.SizeOfPointer
+	if p.HandleType != nil {
+		sum += p.HandleType.MemoryUsage()
+	}
+
+	for _, constant := range p.HandleParams {
+		sum += constant.MemoryUsage()
+	}
+	for _, values := range p.IndexValues {
+		for _, value := range values {
+			sum += value.MemUsage()
+		}
+	}
+	for _, params := range p.IndexValueParams {
+		for _, param := range params {
+			sum += param.MemoryUsage()
+		}
+	}
+	for _, idxType := range p.IndexColTypes {
+		sum += idxType.MemoryUsage()
+	}
+	for _, cond := range p.AccessConditions {
+		sum += cond.MemoryUsage()
+	}
+	for _, col := range p.IdxCols {
+		sum += col.MemoryUsage()
+	}
+	for _, col := range p.accessCols {
+		sum += col.MemoryUsage()
+	}
+	return
+}
 
 // PointPlanKey is used to get point plan that is pre-built for multi-statement query.
 const PointPlanKey = stringutil.StringerStr("pointPlanKey")
