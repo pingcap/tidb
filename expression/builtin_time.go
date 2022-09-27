@@ -6440,7 +6440,7 @@ func (c *tidbParseTsoFunctionClass) getFunction(ctx sessionctx.Context, args []E
 		return nil, err
 	}
 
-	bf.tp.SetType(mysql.TypeDate)
+	bf.tp.SetType(mysql.TypeDatetime)
 	bf.tp.SetFlen(mysql.MaxDateWidth)
 	bf.tp.SetDecimal(types.DefaultFsp)
 	sig := &builtinTidbParseTsoSig{bf}
@@ -6613,4 +6613,37 @@ func getFspByIntArg(ctx sessionctx.Context, exps []Expression) (int, error) {
 	}
 	// Should no happen. But our tests may generate non-constant input.
 	return 0, nil
+}
+
+type tidbCurrentTsoFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *tidbCurrentTsoFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt)
+	if err != nil {
+		return nil, err
+	}
+	sig := &builtinTiDBCurrentTsoSig{bf}
+	return sig, nil
+}
+
+type builtinTiDBCurrentTsoSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinTiDBCurrentTsoSig) Clone() builtinFunc {
+	newSig := &builtinTiDBCurrentTsoSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalInt evals currentTSO().
+func (b *builtinTiDBCurrentTsoSig) evalInt(row chunk.Row) (d int64, isNull bool, err error) {
+	tso, _ := b.ctx.GetSessionVars().GetSessionOrGlobalSystemVar("tidb_current_ts")
+	itso, _ := strconv.ParseInt(tso, 10, 64)
+	return itso, false, nil
 }

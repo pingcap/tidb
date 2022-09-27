@@ -292,6 +292,31 @@ func TestIssue22828(t *testing.T) {
 	tk.MustGetErrMsg(`select group_concat((select concat(c,group_concat(c)) FROM t where xxx=xxx)) FROM t;`, "[planner:1054]Unknown column 'xxx' in 'where clause'")
 }
 
+func TestIssue35623(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t1;`)
+	tk.MustExec(`drop view if exists v1;`)
+	tk.MustExec(`CREATE TABLE t1(c0 INT UNIQUE);`)
+	tk.MustExec("CREATE definer='root'@'localhost' VIEW v1(c0) AS SELECT 1 FROM t1;")
+	err := tk.ExecToErr("SELECT v1.c0 FROM v1 WHERE (true)LIKE(v1.c0);")
+	require.NoError(t, err)
+
+	err = tk.ExecToErr("SELECT v2.c0 FROM (select 1 as c0 from t1) v2 WHERE (v2.c0)like(True);")
+	require.NoError(t, err)
+}
+
+func TestIssue37971(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t3;`)
+	tk.MustExec(`CREATE TABLE t3(c0 INT, primary key(c0));`)
+	err := tk.ExecToErr("SELECT v2.c0 FROM (select 1 as c0 from t3) v2 WHERE (v2.c0)like(True);")
+	require.NoError(t, err)
+}
+
 func TestJoinNotNullFlag(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
