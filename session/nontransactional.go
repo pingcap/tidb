@@ -161,6 +161,13 @@ func checkConstraint(stmt *ast.NonTransactionalDMLStmt, se Session) error {
 			return errors.New("Non-transactional delete doesn't support order by")
 		}
 		metrics.NonTransactionalDeleteCount.Inc()
+	case *ast.UpdateStmt:
+		updateStmt := stmt.DMLStmt.(*ast.UpdateStmt)
+		// TODO: check: (1) single target table (2) more...
+		if updateStmt.Limit != nil {
+			return errors.New("Non-transactional update doesn't support limit")
+		}
+		// TODO: metrics
 	default:
 		return errors.New("Unsupported DML type for non-transactional DML")
 	}

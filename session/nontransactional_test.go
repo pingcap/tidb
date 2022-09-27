@@ -65,19 +65,31 @@ func TestNonTransactionalDeleteShardingOnVarchar(t *testing.T) {
 }
 
 func testSharding(tables []string, tk *testkit.TestKit) {
-	tableSizes := []int{0, 1, 30, 35, 40, 100}
-	batchSizes := []int{25, 35, 50, 80, 120}
+	compositions := []struct{ tableSize, batchSize int }{
+		{0, 10},
+		{1, 1},
+		{1, 2},
+		{30, 25},
+		{30, 35},
+		{35, 25},
+		{35, 35},
+		{35, 40},
+		{40, 25},
+		{40, 35},
+		{100, 25},
+		{100, 40},
+	}
 	for _, table := range tables {
 		tk.MustExec("drop table if exists t")
 		tk.MustExec(table)
-		for _, tableSize := range tableSizes {
-			for _, batchSize := range batchSizes {
-				for i := 0; i < tableSize; i++ {
-					tk.MustExec(fmt.Sprintf("insert into t values ('%d', %d)", i, i*2))
-				}
-				tk.MustQuery(fmt.Sprintf("batch on a limit %d delete from t", batchSize)).Check(testkit.Rows(fmt.Sprintf("%d all succeeded", (tableSize+batchSize-1)/batchSize)))
-				tk.MustQuery("select count(*) from t").Check(testkit.Rows("0"))
+		for _, c := range compositions {
+			for i := 0; i < c.tableSize; i++ {
+				tk.MustExec(fmt.Sprintf("insert into t values ('%d', %d)", i, i*2))
 			}
+			tk.MustQuery(fmt.Sprintf("batch on a limit %d update t set b = b * 2", c.batchSize)).Check(testkit.Rows(fmt.Sprintf("%d all succeeded", (c.tableSize+c.batchSize-1)/c.batchSize)))
+			tk.MustQuery("select coalesce(sum(b), 0) from t").Check(testkit.Rows(fmt.Sprintf("%d", (c.tableSize-1)*c.tableSize*2)))
+			tk.MustQuery(fmt.Sprintf("batch on a limit %d delete from t", c.batchSize)).Check(testkit.Rows(fmt.Sprintf("%d all succeeded", (c.tableSize+c.batchSize-1)/c.batchSize)))
+			tk.MustQuery("select count(*) from t").Check(testkit.Rows("0"))
 		}
 	}
 }

@@ -1185,7 +1185,7 @@ func (n *WithClause) Accept(v Visitor) (Node, bool) {
 // Restore implements Node interface.
 func (n *SelectStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.WithBeforeBraces {
-		defer ctx.RestoreCTEFunc()() // nolint: all_revive
+		defer ctx.RestoreCTEFunc()() //nolint: all_revive
 		err := n.With.Restore(ctx)
 		if err != nil {
 			return err
@@ -1198,7 +1198,7 @@ func (n *SelectStmt) Restore(ctx *format.RestoreCtx) error {
 		}()
 	}
 	if !n.WithBeforeBraces && n.With != nil {
-		defer ctx.RestoreCTEFunc()() // nolint: all_revive
+		defer ctx.RestoreCTEFunc()() //nolint: all_revive
 		err := n.With.Restore(ctx)
 		if err != nil {
 			return err
@@ -1534,7 +1534,7 @@ type SetOprSelectList struct {
 // Restore implements Node interface.
 func (n *SetOprSelectList) Restore(ctx *format.RestoreCtx) error {
 	if n.With != nil {
-		defer ctx.RestoreCTEFunc()() // nolint: all_revive
+		defer ctx.RestoreCTEFunc()() //nolint: all_revive
 		if err := n.With.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore SetOprSelectList.With")
 		}
@@ -1635,7 +1635,7 @@ func (*SetOprStmt) resultSet() {}
 // Restore implements Node interface.
 func (n *SetOprStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.With != nil {
-		defer ctx.RestoreCTEFunc()() // nolint: all_revive
+		defer ctx.RestoreCTEFunc()() //nolint: all_revive
 		if err := n.With.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore UnionStmt.With")
 		}
@@ -2217,7 +2217,7 @@ type DeleteStmt struct {
 // Restore implements Node interface.
 func (n *DeleteStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.With != nil {
-		defer ctx.RestoreCTEFunc()() // nolint: all_revive
+		defer ctx.RestoreCTEFunc()() //nolint: all_revive
 		err := n.With.Restore(ctx)
 		if err != nil {
 			return err
@@ -2389,6 +2389,7 @@ type ShardableDMLStmt = interface {
 }
 
 var _ ShardableDMLStmt = &DeleteStmt{}
+var _ ShardableDMLStmt = &UpdateStmt{}
 
 type NonTransactionalDMLStmt struct {
 	dmlNode
@@ -2468,7 +2469,7 @@ type UpdateStmt struct {
 // Restore implements Node interface.
 func (n *UpdateStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.With != nil {
-		defer ctx.RestoreCTEFunc()() // nolint: all_revive
+		defer ctx.RestoreCTEFunc()() //nolint: all_revive
 		err := n.With.Restore(ctx)
 		if err != nil {
 			return err
@@ -2593,6 +2594,22 @@ func (n *UpdateStmt) Accept(v Visitor) (Node, bool) {
 		n.Limit = node.(*Limit)
 	}
 	return v.Leave(n)
+}
+
+// WhereExpr implements ShardableDMLStmt interface.
+func (n *UpdateStmt) WhereExpr() ExprNode {
+	return n.Where
+}
+
+// SetWhereExpr implements ShardableDMLStmt interface.
+func (n *UpdateStmt) SetWhereExpr(e ExprNode) {
+	n.Where = e
+}
+
+// TableSource implements ShardableDMLStmt interface.
+func (n *UpdateStmt) TableSource() (*TableSource, bool) {
+	table, ok := n.TableRefs.TableRefs.Left.(*TableSource)
+	return table, ok
 }
 
 // Limit is the limit clause.
