@@ -1379,7 +1379,8 @@ func getOperatorActRows(operator PhysicalPlan) float64 {
 
 func getCardinality(operator PhysicalPlan, costFlag uint64) float64 {
 	if hasCostFlag(costFlag, CostFlagUseTrueCardinality) {
-		return getOperatorActRows(operator)
+		actualProbeCnt := operator.getActualProbeCnt(operator.SCtx().GetSessionVars().StmtCtx.RuntimeStatsColl)
+		return getOperatorActRows(operator) / float64(actualProbeCnt)
 	}
 	return operator.StatsCount()
 }

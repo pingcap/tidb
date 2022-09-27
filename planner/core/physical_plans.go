@@ -1099,6 +1099,10 @@ type basePhysicalJoin struct {
 	RightNAJoinKeys []*expression.Column
 }
 
+func (p *basePhysicalJoin) getInnerChildIdx() int {
+	return p.InnerChildIdx
+}
+
 func (p *basePhysicalJoin) cloneWithSelf(newSelf PhysicalPlan) (*basePhysicalJoin, error) {
 	cloned := new(basePhysicalJoin)
 	base, err := p.physicalSchemaProducer.cloneWithSelf(newSelf)

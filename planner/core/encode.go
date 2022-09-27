@@ -69,7 +69,9 @@ func EncodeFlatPlan(flat *FlatPhysicalPlan) string {
 		p := op.Origin
 		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoStr(p.SCtx(), p, nil)
 		var estRows float64
-		if statsInfo := p.statsInfo(); statsInfo != nil {
+		if op.IsPhysicalPlan {
+			estRows = op.Origin.(PhysicalPlan).getEstRowCountForDisplay()
+		} else if statsInfo := p.statsInfo(); statsInfo != nil {
 			estRows = statsInfo.RowCount
 		}
 		plancodec.EncodePlanNode(
@@ -98,7 +100,9 @@ func encodeFlatPlanTree(flatTree FlatPlanTree, offset int, buf *bytes.Buffer) {
 		p := op.Origin
 		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoStr(p.SCtx(), p, nil)
 		var estRows float64
-		if statsInfo := p.statsInfo(); statsInfo != nil {
+		if op.IsPhysicalPlan {
+			estRows = op.Origin.(PhysicalPlan).getEstRowCountForDisplay()
+		} else if statsInfo := p.statsInfo(); statsInfo != nil {
 			estRows = statsInfo.RowCount
 		}
 		plancodec.EncodePlanNode(
@@ -199,8 +203,10 @@ func (pn *planEncoder) encodePlan(p Plan, isRoot bool, store kv.StoreType, depth
 	taskTypeInfo := plancodec.EncodeTaskType(isRoot, store)
 	actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoStr(p.SCtx(), p, nil)
 	rowCount := 0.0
-	if statsInfo := p.statsInfo(); statsInfo != nil {
-		rowCount = p.statsInfo().RowCount
+	if pp, ok := p.(PhysicalPlan); ok {
+		rowCount = pp.getEstRowCountForDisplay()
+	} else if statsInfo := p.statsInfo(); statsInfo != nil {
+		rowCount = statsInfo.RowCount
 	}
 	plancodec.EncodePlanNode(depth, strconv.Itoa(p.ID()), p.TP(), rowCount, taskTypeInfo, p.ExplainInfo(), actRows, analyzeInfo, memoryInfo, diskInfo, &pn.buf)
 	pn.encodedPlans[p.ID()] = true

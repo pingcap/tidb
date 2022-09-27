@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/size"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -376,6 +377,10 @@ type PhysicalPlan interface {
 
 	// MemoryUsage return the memory usage of PhysicalPlan
 	MemoryUsage() int64
+
+	setProbeParents([]PhysicalPlan)
+	getEstRowCountForDisplay() float64
+	getActualProbeCnt(*execdetails.RuntimeStatsColl) int64
 }
 
 // NewDefaultPlanCostOption returns PlanCostOption
@@ -446,6 +451,42 @@ func (*baseLogicalPlan) ExplainInfo() string {
 	return ""
 }
 
+func getEstimatedProbeCntFromProbeParents(probeParents []PhysicalPlan) float64 {
+	res := float64(1)
+	for _, pp := range probeParents {
+		switch pp.(type) {
+		case *PhysicalApply, *PhysicalIndexHashJoin, *PhysicalIndexMergeJoin, *PhysicalIndexJoin:
+			if join, ok := pp.(interface{ getInnerChildIdx() int }); ok {
+				outer := pp.Children()[1-join.getInnerChildIdx()]
+				res *= outer.statsInfo().RowCount
+			}
+		}
+	}
+	return res
+}
+
+func getActualProbeCntFromProbeParents(pps []PhysicalPlan, statsColl *execdetails.RuntimeStatsColl) int64 {
+	res := int64(1)
+	for _, pp := range pps {
+		switch pp.(type) {
+		case *PhysicalApply, *PhysicalIndexHashJoin, *PhysicalIndexMergeJoin, *PhysicalIndexJoin:
+			if join, ok := pp.(interface{ getInnerChildIdx() int }); ok {
+				outerChildID := pp.Children()[1-join.getInnerChildIdx()].ID()
+				actRows := int64(1)
+				if statsColl.ExistsRootStats(outerChildID) {
+					actRows = statsColl.GetRootStats(outerChildID).GetActRows()
+				}
+				if statsColl.ExistsCopStats(outerChildID) {
+					actRows = statsColl.GetCopStats(outerChildID).GetActRows()
+				}
+				// TODO: For PhysicalApply, we need to consider cache hit ratio in JoinRuntimeStats and use actRows/(1-ratio) here.
+				res *= actRows
+			}
+		}
+	}
+	return res
+}
+
 type basePhysicalPlan struct {
 	basePlan
 
@@ -456,6 +497,8 @@ type basePhysicalPlan struct {
 	// used by the new cost interface
 	planCostInit bool
 	planCost     float64
+
+	probeParents []PhysicalPlan
 
 	// Only for MPP. If TiFlashFineGrainedShuffleStreamCount > 0:
 	// 1. For ExchangeSender, means its output will be partitioned by hash key.
@@ -468,6 +511,7 @@ func (p *basePhysicalPlan) cloneWithSelf(newSelf PhysicalPlan) (*basePhysicalPla
 		basePlan:                             p.basePlan,
 		self:                                 newSelf,
 		TiFlashFineGrainedShuffleStreamCount: p.TiFlashFineGrainedShuffleStreamCount,
+		probeParents:                         p.probeParents,
 	}
 	for _, child := range p.children {
 		cloned, err := child.Clone()
@@ -523,6 +567,24 @@ func (p *basePhysicalPlan) MemoryUsage() (sum int64) {
 	}
 	//todo: memtrace: add children's memory
 	return
+}
+
+func (p *basePhysicalPlan) getEstRowCountForDisplay() float64 {
+	if p == nil {
+		return 0
+	}
+	return p.statsInfo().RowCount * getEstimatedProbeCntFromProbeParents(p.probeParents)
+}
+
+func (p *basePhysicalPlan) getActualProbeCnt(statsColl *execdetails.RuntimeStatsColl) int64 {
+	if p == nil {
+		return 0
+	}
+	return getActualProbeCntFromProbeParents(p.probeParents, statsColl)
+}
+
+func (p *basePhysicalPlan) setProbeParents(probeParents []PhysicalPlan) {
+	p.probeParents = probeParents
 }
 
 // GetLogicalTS4TaskMap get the logical TimeStamp now to help rollback the TaskMap changes after that.

@@ -629,10 +629,10 @@ Projection_18	10000.00	root		test.t1.c1, test.t1.c2
 └─Apply_20	10000.00	root		CARTESIAN inner join, other cond:or(and(gt(test.t1.c1, Column#8), if(ne(Column#9, 0), NULL, 1)), or(eq(Column#10, 0), if(isnull(test.t1.c1), NULL, 0)))
   ├─TableReader_22(Build)	10000.00	root		data:TableFullScan_21
   │ └─TableFullScan_21	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-  └─HashAgg_23(Probe)	1.00	root		funcs:max(Column#13)->Column#8, funcs:sum(Column#14)->Column#9, funcs:count(1)->Column#10
-    └─Projection_27	10.00	root		test.t2.c1, cast(isnull(test.t2.c1), decimal(20,0) BINARY)->Column#14
-      └─CTEFullScan_25	10.00	root	CTE:cte1	data:CTE_0
-CTE_0	10.00	root		Non-Recursive CTE
+  └─HashAgg_23(Probe)	10000.00	root		funcs:max(Column#13)->Column#8, funcs:sum(Column#14)->Column#9, funcs:count(1)->Column#10
+    └─Projection_27	100000.00	root		test.t2.c1, cast(isnull(test.t2.c1), decimal(20,0) BINARY)->Column#14
+      └─CTEFullScan_25	100000.00	root	CTE:cte1	data:CTE_0
+CTE_0	100000.00	root		Non-Recursive CTE
 └─Projection_13(Seed Part)	10.00	root		test.t2.c1
   └─TableReader_16	10.00	root		data:Selection_15
     └─Selection_15	10.00	cop[tikv]		eq(test.t2.c2, test.t1.c2)
@@ -647,8 +647,8 @@ id	estRows	task	access object	operator info
 Apply_17	10000.00	root		CARTESIAN semi join
 ├─TableReader_19(Build)	10000.00	root		data:TableFullScan_18
 │ └─TableFullScan_18	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-└─CTEFullScan_20(Probe)	10.00	root	CTE:cte1	data:CTE_0
-CTE_0	10.00	root		Non-Recursive CTE
+└─CTEFullScan_20(Probe)	100000.00	root	CTE:cte1	data:CTE_0
+CTE_0	100000.00	root		Non-Recursive CTE
 └─Projection_11(Seed Part)	10.00	root		test.t2.c1
   └─TableReader_14	10.00	root		data:Selection_13
     └─Selection_13	10.00	cop[tikv]		eq(test.t2.c2, test.t1.c2)
@@ -664,10 +664,10 @@ Projection_26	10000.00	root		test.t1.c1, test.t1.c2
 └─Apply_28	10000.00	root		CARTESIAN inner join, other cond:or(and(gt(test.t1.c1, Column#14), if(ne(Column#15, 0), NULL, 1)), or(eq(Column#16, 0), if(isnull(test.t1.c1), NULL, 0)))
   ├─TableReader_30(Build)	10000.00	root		data:TableFullScan_29
   │ └─TableFullScan_29	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-  └─HashAgg_31(Probe)	1.00	root		funcs:max(Column#19)->Column#14, funcs:sum(Column#20)->Column#15, funcs:count(1)->Column#16
-    └─Projection_35	20.00	root		test.t2.c1, cast(isnull(test.t2.c1), decimal(20,0) BINARY)->Column#20
-      └─CTEFullScan_33	20.00	root	CTE:cte1	data:CTE_0
-CTE_0	20.00	root		Recursive CTE, limit(offset:0, count:1)
+  └─HashAgg_31(Probe)	10000.00	root		funcs:max(Column#19)->Column#14, funcs:sum(Column#20)->Column#15, funcs:count(1)->Column#16
+    └─Projection_35	200000.00	root		test.t2.c1, cast(isnull(test.t2.c1), decimal(20,0) BINARY)->Column#20
+      └─CTEFullScan_33	200000.00	root	CTE:cte1	data:CTE_0
+CTE_0	200000.00	root		Recursive CTE, limit(offset:0, count:1)
 ├─Projection_19(Seed Part)	10.00	root		test.t2.c1
 │ └─TableReader_22	10.00	root		data:Selection_21
 │   └─Selection_21	10.00	cop[tikv]		eq(test.t2.c2, test.t1.c2)
@@ -683,8 +683,8 @@ id	estRows	task	access object	operator info
 Apply_25	10000.00	root		CARTESIAN semi join
 ├─TableReader_27(Build)	10000.00	root		data:TableFullScan_26
 │ └─TableFullScan_26	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-└─CTEFullScan_28(Probe)	20.00	root	CTE:cte1	data:CTE_0
-CTE_0	20.00	root		Recursive CTE, limit(offset:0, count:10)
+└─CTEFullScan_28(Probe)	200000.00	root	CTE:cte1	data:CTE_0
+CTE_0	200000.00	root		Recursive CTE, limit(offset:0, count:10)
 ├─Projection_17(Seed Part)	10.00	root		test.t2.c1
 │ └─TableReader_20	10.00	root		data:Selection_19
 │   └─Selection_19	10.00	cop[tikv]		eq(test.t2.c2, test.t1.c2)
@@ -702,10 +702,10 @@ Projection_24	10000.00	root		test.t1.c1, test.t1.c2
 └─Apply_26	10000.00	root		CARTESIAN inner join, other cond:or(and(gt(test.t1.c1, Column#18), if(ne(Column#19, 0), NULL, 1)), or(eq(Column#20, 0), if(isnull(test.t1.c1), NULL, 0)))
   ├─TableReader_28(Build)	10000.00	root		data:TableFullScan_27
   │ └─TableFullScan_27	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-  └─HashAgg_29(Probe)	1.00	root		funcs:max(Column#23)->Column#18, funcs:sum(Column#24)->Column#19, funcs:count(1)->Column#20
-    └─Projection_33	18000.00	root		test.t2.c1, cast(isnull(test.t2.c1), decimal(20,0) BINARY)->Column#24
-      └─CTEFullScan_31	18000.00	root	CTE:cte1	data:CTE_0
-CTE_0	18000.00	root		Recursive CTE
+  └─HashAgg_29(Probe)	10000.00	root		funcs:max(Column#23)->Column#18, funcs:sum(Column#24)->Column#19, funcs:count(1)->Column#20
+    └─Projection_33	180000000.00	root		test.t2.c1, cast(isnull(test.t2.c1), decimal(20,0) BINARY)->Column#24
+      └─CTEFullScan_31	180000000.00	root	CTE:cte1	data:CTE_0
+CTE_0	180000000.00	root		Recursive CTE
 ├─TableReader_19(Seed Part)	10000.00	root		data:TableFullScan_18
 │ └─TableFullScan_18	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 └─Projection_20(Recursive Part)	8000.00	root		cast(plus(test.t2.c1, 1), int(11))->test.t2.c1, cast(plus(test.t2.c2, 1), int(11))->test.t2.c2
@@ -718,8 +718,8 @@ id	estRows	task	access object	operator info
 Apply_23	10000.00	root		CARTESIAN semi join
 ├─TableReader_25(Build)	10000.00	root		data:TableFullScan_24
 │ └─TableFullScan_24	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-└─CTEFullScan_26(Probe)	18000.00	root	CTE:cte1	data:CTE_0
-CTE_0	18000.00	root		Recursive CTE
+└─CTEFullScan_26(Probe)	180000000.00	root	CTE:cte1	data:CTE_0
+CTE_0	180000000.00	root		Recursive CTE
 ├─TableReader_17(Seed Part)	10000.00	root		data:TableFullScan_16
 │ └─TableFullScan_16	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 └─Projection_18(Recursive Part)	8000.00	root		cast(plus(test.t2.c1, 1), int(11))->test.t2.c1, cast(plus(test.t2.c2, 1), int(11))->test.t2.c2

@@ -1403,9 +1403,9 @@
           "├─UnionScan(Build) 10000.00 root  ",
           "│ └─TableReader 10000.00 root  data:TableFullScan",
           "│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "└─UnionScan(Probe) 1.00 root  ",
-          "  └─TableReader 1.00 root  data:TableRangeScan",
-          "    └─TableRangeScan 1.00 cop[tikv] table:t2 range: decided by [test.t.a], keep order:false, stats:pseudo"
+          "└─UnionScan(Probe) 10000.00 root  ",
+          "  └─TableReader 10000.00 root  data:TableRangeScan",
+          "    └─TableRangeScan 10000.00 cop[tikv] table:t2 range: decided by [test.t.a], keep order:false, stats:pseudo"
         ]
       },
       {
@@ -2825,8 +2825,8 @@
           "IndexMergeJoin 12500.00 root  left outer join, inner:TableReader, outer key:test.t1.a, inner key:test.t2.a, other cond:eq(test.t1.b, test.t2.b)",
           "├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "│ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "└─TableReader(Probe) 1.00 root  data:TableRangeScan",
-          "  └─TableRangeScan 1.00 cop[tikv] table:t2 range: decided by [test.t1.a], keep order:true, stats:pseudo"
+          "└─TableReader(Probe) 10000.00 root  data:TableRangeScan",
+          "  └─TableRangeScan 10000.00 cop[tikv] table:t2 range: decided by [test.t1.a], keep order:true, stats:pseudo"
         ],
         "Result": [
           "1 1",
@@ -2839,8 +2839,8 @@
           "IndexHashJoin 12500.00 root  left outer join, inner:TableReader, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a), eq(test.t1.b, test.t2.b)",
           "├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "│ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "└─TableReader(Probe) 1.00 root  data:TableRangeScan",
-          "  └─TableRangeScan 1.00 cop[tikv] table:t2 range: decided by [test.t1.a], keep order:false, stats:pseudo"
+          "└─TableReader(Probe) 10000.00 root  data:TableRangeScan",
+          "  └─TableRangeScan 10000.00 cop[tikv] table:t2 range: decided by [test.t1.a], keep order:false, stats:pseudo"
         ],
         "Result": [
           "1 1",
@@ -2853,8 +2853,8 @@
           "IndexJoin 12500.00 root  left outer join, inner:TableReader, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a), eq(test.t1.b, test.t2.b)",
           "├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "│ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "└─TableReader(Probe) 1.00 root  data:TableRangeScan",
-          "  └─TableRangeScan 1.00 cop[tikv] table:t2 range: decided by [test.t1.a], keep order:false, stats:pseudo"
+          "└─TableReader(Probe) 10000.00 root  data:TableRangeScan",
+          "  └─TableRangeScan 10000.00 cop[tikv] table:t2 range: decided by [test.t1.a], keep order:false, stats:pseudo"
         ],
         "Result": [
           "1 1",
@@ -2901,12 +2901,12 @@
           "  ├─TableReader(Build) 9990.00 root  data:Selection",
           "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
           "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "  └─Selection(Probe) 0.80 root  not(isnull(test.t1.a))",
-          "    └─MaxOneRow 1.00 root  ",
-          "      └─IndexLookUp 0.00 root  ",
-          "        ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t1, index:idx_a(a) range:[NULL,NULL], keep order:false, stats:pseudo",
-          "        └─Selection(Probe) 0.00 cop[tikv]  eq(test.t1.b, test.t2.b)",
-          "          └─TableRowIDScan 1.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "  └─Selection(Probe) 7992.00 root  not(isnull(test.t1.a))",
+          "    └─MaxOneRow 9990.00 root  ",
+          "      └─IndexLookUp 9.99 root  ",
+          "        ├─IndexRangeScan(Build) 9990.00 cop[tikv] table:t1, index:idx_a(a) range:[NULL,NULL], keep order:false, stats:pseudo",
+          "        └─Selection(Probe) 9.99 cop[tikv]  eq(test.t1.b, test.t2.b)",
+          "          └─TableRowIDScan 9990.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Result": null
       },
@@ -2918,10 +2918,10 @@
           "  ├─TableReader(Build) 9990.00 root  data:Selection",
           "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
           "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "  └─Selection(Probe) 0.80 root  not(isnull(test.t3.a))",
-          "    └─MaxOneRow 1.00 root  ",
-          "      └─IndexReader 2.00 root  index:IndexRangeScan",
-          "        └─IndexRangeScan 2.00 cop[tikv] table:t3, index:idx_abc(a, b, c) range: decided by [eq(test.t3.a, test.t2.a)], keep order:false, stats:pseudo"
+          "  └─Selection(Probe) 7992.00 root  not(isnull(test.t3.a))",
+          "    └─MaxOneRow 9990.00 root  ",
+          "      └─IndexReader 19980.00 root  index:IndexRangeScan",
+          "        └─IndexRangeScan 19980.00 cop[tikv] table:t3, index:idx_abc(a, b, c) range: decided by [eq(test.t3.a, test.t2.a)], keep order:false, stats:pseudo"
         ],
         "Result": null
       }
@@ -5717,9 +5717,9 @@
           "  ├─TableReader(Build) 9990.00 root  data:Selection",
           "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
           "  │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "  └─TableReader(Probe) 9.99 root  data:Selection",
-          "    └─Selection 9.99 cop[tikv]  not(isnull(test.t2.b))",
-          "      └─TableRangeScan 1.00 cop[tikv] table:t2 range: decided by [eq(test.t2.a, test.t1.b)], keep order:false, stats:pseudo"
+          "  └─TableReader(Probe) 99800.10 root  data:Selection",
+          "    └─Selection 99800.10 cop[tikv]  not(isnull(test.t2.b))",
+          "      └─TableRangeScan 9990.00 cop[tikv] table:t2 range: decided by [eq(test.t2.a, test.t1.b)], keep order:false, stats:pseudo"
         ],
         "Result": [
           "1"
@@ -5750,8 +5750,8 @@
           "  └─Apply 10000.00 root  CARTESIAN left outer semi join, other cond:eq(test.t1.a, test.t2.b)",
           "    ├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "    │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "    └─TableReader(Probe) 1.00 root  data:TableRangeScan",
-          "      └─TableRangeScan 1.00 cop[tikv] table:t2 range: decided by [eq(test.t2.a, test.t1.b)], keep order:false, stats:pseudo"
+          "    └─TableReader(Probe) 10000.00 root  data:TableRangeScan",
+          "      └─TableRangeScan 10000.00 cop[tikv] table:t2 range: decided by [eq(test.t2.a, test.t1.b)], keep order:false, stats:pseudo"
         ],
         "Result": [
           "1"
@@ -5765,10 +5765,10 @@
           "└─Apply 10000.00 root  CARTESIAN inner join",
           "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "  │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "  └─StreamAgg(Probe) 1.00 root  funcs:max(Column#14)->Column#8, funcs:count(distinct Column#15)->Column#9, funcs:sum(Column#16)->Column#10, funcs:count(1)->Column#11",
-          "    └─Projection 1.00 root  test.t2.b, test.t2.b, cast(isnull(test.t2.b), decimal(20,0) BINARY)->Column#16",
-          "      └─TableReader 1.00 root  data:TableRangeScan",
-          "        └─TableRangeScan 1.00 cop[tikv] table:t2 range: decided by [eq(test.t2.a, test.t1.b)], keep order:false, stats:pseudo"
+          "  └─StreamAgg(Probe) 10000.00 root  funcs:max(Column#14)->Column#8, funcs:count(distinct Column#15)->Column#9, funcs:sum(Column#16)->Column#10, funcs:count(1)->Column#11",
+          "    └─Projection 10000.00 root  test.t2.b, test.t2.b, cast(isnull(test.t2.b), decimal(20,0) BINARY)->Column#16",
+          "      └─TableReader 10000.00 root  data:TableRangeScan",
+          "        └─TableRangeScan 10000.00 cop[tikv] table:t2 range: decided by [eq(test.t2.a, test.t1.b)], keep order:false, stats:pseudo"
         ],
         "Result": [
           "1 0",
@@ -5783,10 +5783,10 @@
           "└─Apply 10000.00 root  CARTESIAN inner join",
           "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "  │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "  └─StreamAgg(Probe) 1.00 root  funcs:max(Column#14)->Column#8, funcs:count(distinct Column#15)->Column#9, funcs:sum(Column#16)->Column#10, funcs:count(1)->Column#11",
-          "    └─Projection 1.00 root  test.t2.b, test.t2.b, cast(isnull(test.t2.b), decimal(20,0) BINARY)->Column#16",
-          "      └─TableReader 1.00 root  data:TableRangeScan",
-          "        └─TableRangeScan 1.00 cop[tikv] table:t2 range: decided by [eq(test.t2.a, test.t1.b)], keep order:false, stats:pseudo"
+          "  └─StreamAgg(Probe) 10000.00 root  funcs:max(Column#14)->Column#8, funcs:count(distinct Column#15)->Column#9, funcs:sum(Column#16)->Column#10, funcs:count(1)->Column#11",
+          "    └─Projection 10000.00 root  test.t2.b, test.t2.b, cast(isnull(test.t2.b), decimal(20,0) BINARY)->Column#16",
+          "      └─TableReader 10000.00 root  data:TableRangeScan",
+          "        └─TableRangeScan 10000.00 cop[tikv] table:t2 range: decided by [eq(test.t2.a, test.t1.b)], keep order:false, stats:pseudo"
         ],
         "Result": [
           "1 0",
@@ -5801,10 +5801,10 @@
           "└─Apply 10000.00 root  CARTESIAN inner join",
           "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "  │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "  └─StreamAgg(Probe) 1.00 root  funcs:max(Column#19)->Column#8, funcs:sum(Column#20)->Column#9, funcs:count(1)->Column#10",
-          "    └─Projection 1.00 root  test.t2.b, cast(isnull(test.t2.b), decimal(20,0) BINARY)->Column#20",
-          "      └─TableReader 1.00 root  data:TableRangeScan",
-          "        └─TableRangeScan 1.00 cop[tikv] table:t2 range: decided by [eq(test.t2.a, test.t1.b)], keep order:false, stats:pseudo"
+          "  └─StreamAgg(Probe) 10000.00 root  funcs:max(Column#19)->Column#8, funcs:sum(Column#20)->Column#9, funcs:count(1)->Column#10",
+          "    └─Projection 10000.00 root  test.t2.b, cast(isnull(test.t2.b), decimal(20,0) BINARY)->Column#20",
+          "      └─TableReader 10000.00 root  data:TableRangeScan",
+          "        └─TableRangeScan 10000.00 cop[tikv] table:t2 range: decided by [eq(test.t2.a, test.t1.b)], keep order:false, stats:pseudo"
         ],
         "Result": [
           "1 0",
@@ -5819,10 +5819,10 @@
           "└─Apply 10000.00 root  CARTESIAN inner join",
           "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "  │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "  └─StreamAgg(Probe) 1.00 root  funcs:max(Column#19)->Column#8, funcs:sum(Column#20)->Column#9, funcs:count(1)->Column#10",
-          "    └─Projection 1.00 root  test.t2.b, cast(isnull(test.t2.b), decimal(20,0) BINARY)->Column#20",
-          "      └─TableReader 1.00 root  data:TableRangeScan",
-          "        └─TableRangeScan 1.00 cop[tikv] table:t2 range: decided by [eq(test.t2.a, test.t1.b)], keep order:false, stats:pseudo"
+          "  └─StreamAgg(Probe) 10000.00 root  funcs:max(Column#19)->Column#8, funcs:sum(Column#20)->Column#9, funcs:count(1)->Column#10",
+          "    └─Projection 10000.00 root  test.t2.b, cast(isnull(test.t2.b), decimal(20,0) BINARY)->Column#20",
+          "      └─TableReader 10000.00 root  data:TableRangeScan",
+          "        └─TableRangeScan 10000.00 cop[tikv] table:t2 range: decided by [eq(test.t2.a, test.t1.b)], keep order:false, stats:pseudo"
         ],
         "Result": [
           "1 0",
@@ -5852,9 +5852,9 @@
           "└─Apply 10000.00 root  CARTESIAN left outer join",
           "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "  │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "  └─MaxOneRow(Probe) 1.00 root  ",
-          "    └─TableReader 0.20 root  data:TableRangeScan",
-          "      └─TableRangeScan 0.20 cop[tikv] table:t2 range: decided by [eq(test.t2.a, test.t1.b)], keep order:false, stats:pseudo"
+          "  └─MaxOneRow(Probe) 10000.00 root  ",
+          "    └─TableReader 2000.00 root  data:TableRangeScan",
+          "      └─TableRangeScan 2000.00 cop[tikv] table:t2 range: decided by [eq(test.t2.a, test.t1.b)], keep order:false, stats:pseudo"
         ],
         "Result": [
           "1 1",
@@ -5916,11 +5916,11 @@
           "└─Apply 10000.00 root  CARTESIAN left outer semi join",
           "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "  │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "  └─Limit(Probe) 2.00 root  offset:0, count:2",
-          "    └─TableReader 2.00 root  data:Limit",
-          "      └─Limit 2.00 cop[tikv]  offset:0, count:2",
-          "        └─Selection 2.00 cop[tikv]  eq(test.t3.a, test.t1.b)",
-          "          └─TableFullScan 2000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
+          "  └─Limit(Probe) 20000.00 root  offset:0, count:2",
+          "    └─TableReader 20000.00 root  data:Limit",
+          "      └─Limit 20000.00 cop[tikv]  offset:0, count:2",
+          "        └─Selection 20000.00 cop[tikv]  eq(test.t3.a, test.t1.b)",
+          "          └─TableFullScan 20000000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
         ],
         "Result": [
           "1",
@@ -5988,12 +5988,12 @@
           "└─Apply 10000.00 root  CARTESIAN left outer join",
           "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "  │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "  └─MaxOneRow(Probe) 1.00 root  ",
-          "    └─StreamAgg 1.00 root  funcs:count(Column#12)->Column#10",
-          "      └─TableReader 1.00 root  data:StreamAgg",
-          "        └─StreamAgg 1.00 cop[tikv]  funcs:count(test.t3.a)->Column#12",
-          "          └─Selection 10.00 cop[tikv]  eq(test.t3.b, test.t1.b)",
-          "            └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
+          "  └─MaxOneRow(Probe) 10000.00 root  ",
+          "    └─StreamAgg 10000.00 root  funcs:count(Column#12)->Column#10",
+          "      └─TableReader 10000.00 root  data:StreamAgg",
+          "        └─StreamAgg 10000.00 cop[tikv]  funcs:count(test.t3.a)->Column#12",
+          "          └─Selection 100000.00 cop[tikv]  eq(test.t3.b, test.t1.b)",
+          "            └─TableFullScan 100000000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
         ],
         "Result": [
           "0",
@@ -6025,12 +6025,12 @@
           "  ├─IndexLookUp(Build) 250.00 root  ",
           "  │ ├─IndexRangeScan(Build) 250.00 cop[tikv] table:ta, index:idx_ta_name(name) range:[\"chad999\",\"chad99:\"), keep order:false, stats:pseudo",
           "  │ └─TableRowIDScan(Probe) 250.00 cop[tikv] table:ta keep order:false, stats:pseudo",
-          "  └─MaxOneRow(Probe) 1.00 root  ",
-          "    └─HashAgg 1.00 root  funcs:sum(Column#17)->Column#13",
-          "      └─IndexLookUp 1.00 root  ",
-          "        ├─IndexRangeScan(Build) 10.00 cop[tikv] table:tb, index:idx_tb_id(id) range: decided by [eq(test.ta.id, test.tb.id)], keep order:false, stats:pseudo",
-          "        └─HashAgg(Probe) 1.00 cop[tikv]  funcs:sum(test.tb.code)->Column#17",
-          "          └─TableRowIDScan 10.00 cop[tikv] table:tb keep order:false, stats:pseudo"
+          "  └─MaxOneRow(Probe) 250.00 root  ",
+          "    └─HashAgg 250.00 root  funcs:sum(Column#17)->Column#13",
+          "      └─IndexLookUp 250.00 root  ",
+          "        ├─IndexRangeScan(Build) 2500.00 cop[tikv] table:tb, index:idx_tb_id(id) range: decided by [eq(test.ta.id, test.tb.id)], keep order:false, stats:pseudo",
+          "        └─HashAgg(Probe) 250.00 cop[tikv]  funcs:sum(test.tb.code)->Column#17",
+          "          └─TableRowIDScan 2500.00 cop[tikv] table:tb keep order:false, stats:pseudo"
         ],
         "Result": null,
         "Warning": null
@@ -6063,19 +6063,19 @@
           "  ├─IndexLookUp(Build) 250.00 root  ",
           "  │ ├─IndexRangeScan(Build) 250.00 cop[tikv] table:ta, index:idx_ta_name(name) range:[\"chad999\",\"chad99:\"), keep order:false, stats:pseudo",
           "  │ └─TableRowIDScan(Probe) 250.00 cop[tikv] table:ta keep order:false, stats:pseudo",
-          "  └─MaxOneRow(Probe) 1.00 root  ",
-          "    └─StreamAgg 1.00 root  funcs:sum(Column#33)->Column#18",
-          "      └─Projection 7.99 root  cast(test.tb.code, decimal(10,0) BINARY)->Column#33",
-          "        └─IndexJoin 7.99 root  semi join, inner:IndexLookUp, outer key:test.tb.name, inner key:test.tc.name, equal cond:eq(test.tb.name, test.tc.name)",
-          "          ├─IndexLookUp(Build) 9.99 root  ",
-          "          │ ├─IndexRangeScan(Build) 10.00 cop[tikv] table:tb, index:idx_tb_id(id) range: decided by [eq(test.ta.id, test.tb.id)], keep order:false, stats:pseudo",
-          "          │ └─Selection(Probe) 9.99 cop[tikv]  not(isnull(test.tb.name))",
-          "          │   └─TableRowIDScan 10.00 cop[tikv] table:tb keep order:false, stats:pseudo",
-          "          └─IndexLookUp(Probe) 1.25 root  ",
-          "            ├─Selection(Build) 1.56 cop[tikv]  not(isnull(test.tc.name))",
-          "            │ └─IndexRangeScan 1.56 cop[tikv] table:tc, index:idx_tc_name(name) range: decided by [eq(test.tc.name, test.tb.name)], keep order:false, stats:pseudo",
-          "            └─Selection(Probe) 1.25 cop[tikv]  like(cast(test.tc.code, var_string(20)), \"999%\", 92)",
-          "              └─TableRowIDScan 1.56 cop[tikv] table:tc keep order:false, stats:pseudo"
+          "  └─MaxOneRow(Probe) 250.00 root  ",
+          "    └─StreamAgg 250.00 root  funcs:sum(Column#33)->Column#18",
+          "      └─Projection 1998.00 root  cast(test.tb.code, decimal(10,0) BINARY)->Column#33",
+          "        └─IndexJoin 1998.00 root  semi join, inner:IndexLookUp, outer key:test.tb.name, inner key:test.tc.name, equal cond:eq(test.tb.name, test.tc.name)",
+          "          ├─IndexLookUp(Build) 2497.50 root  ",
+          "          │ ├─IndexRangeScan(Build) 2500.00 cop[tikv] table:tb, index:idx_tb_id(id) range: decided by [eq(test.ta.id, test.tb.id)], keep order:false, stats:pseudo",
+          "          │ └─Selection(Probe) 2497.50 cop[tikv]  not(isnull(test.tb.name))",
+          "          │   └─TableRowIDScan 2500.00 cop[tikv] table:tb keep order:false, stats:pseudo",
+          "          └─IndexLookUp(Probe) 3121.87 root  ",
+          "            ├─Selection(Build) 3902.34 cop[tikv]  not(isnull(test.tc.name))",
+          "            │ └─IndexRangeScan 3906.25 cop[tikv] table:tc, index:idx_tc_name(name) range: decided by [eq(test.tc.name, test.tb.name)], keep order:false, stats:pseudo",
+          "            └─Selection(Probe) 3121.87 cop[tikv]  like(cast(test.tc.code, var_string(20)), \"999%\", 92)",
+          "              └─TableRowIDScan 3902.34 cop[tikv] table:tc keep order:false, stats:pseudo"
         ],
         "Result": null,
         "Warning": null
@@ -6093,10 +6093,10 @@
           "      ├─TableReader(Build) 9990.00 root  data:Selection",
           "      │ └─Selection 9990.00 cop[tikv]  not(isnull(test.tb.id))",
           "      │   └─TableFullScan 10000.00 cop[tikv] table:tb keep order:false, stats:pseudo",
-          "      └─IndexLookUp(Probe) 8.00 root  ",
-          "        ├─IndexRangeScan(Build) 10.00 cop[tikv] table:tc, index:idx_tc_name(name) range: decided by [eq(test.tb.name, test.tc.name)], keep order:false, stats:pseudo",
-          "        └─Selection(Probe) 8.00 cop[tikv]  like(cast(test.tc.code, var_string(20)), \"999%\", 92)",
-          "          └─TableRowIDScan 10.00 cop[tikv] table:tc keep order:false, stats:pseudo"
+          "      └─IndexLookUp(Probe) 79920.00 root  ",
+          "        ├─IndexRangeScan(Build) 99900.00 cop[tikv] table:tc, index:idx_tc_name(name) range: decided by [eq(test.tb.name, test.tc.name)], keep order:false, stats:pseudo",
+          "        └─Selection(Probe) 79920.00 cop[tikv]  like(cast(test.tc.code, var_string(20)), \"999%\", 92)",
+          "          └─TableRowIDScan 99900.00 cop[tikv] table:tc keep order:false, stats:pseudo"
         ],
         "Result": null,
         "Warning": null
@@ -6109,17 +6109,17 @@
           "  ├─IndexLookUp(Build) 250.00 root  ",
           "  │ ├─IndexRangeScan(Build) 250.00 cop[tikv] table:ta, index:idx_ta_name(name) range:[\"chad999\",\"chad99:\"), keep order:false, stats:pseudo",
           "  │ └─TableRowIDScan(Probe) 250.00 cop[tikv] table:ta keep order:false, stats:pseudo",
-          "  └─MaxOneRow(Probe) 1.00 root  ",
-          "    └─StreamAgg 1.00 root  funcs:sum(Column#22)->Column#18",
-          "      └─Projection 10.00 root  cast(test.tb.code, decimal(10,0) BINARY)->Column#22",
-          "        └─Apply 10.00 root  CARTESIAN semi join",
-          "          ├─IndexLookUp(Build) 10.00 root  ",
-          "          │ ├─IndexRangeScan(Build) 10.00 cop[tikv] table:tb, index:idx_tb_id(id) range: decided by [eq(test.ta.id, test.tb.id)], keep order:false, stats:pseudo",
-          "          │ └─TableRowIDScan(Probe) 10.00 cop[tikv] table:tb keep order:false, stats:pseudo",
-          "          └─IndexLookUp(Probe) 8.00 root  ",
-          "            ├─IndexRangeScan(Build) 10.00 cop[tikv] table:tc, index:idx_tc_name(name) range: decided by [eq(test.tb.name, test.tc.name)], keep order:false, stats:pseudo",
-          "            └─Selection(Probe) 8.00 cop[tikv]  like(cast(test.tc.code, var_string(20)), \"999%\", 92)",
-          "              └─TableRowIDScan 10.00 cop[tikv] table:tc keep order:false, stats:pseudo"
+          "  └─MaxOneRow(Probe) 250.00 root  ",
+          "    └─StreamAgg 250.00 root  funcs:sum(Column#22)->Column#18",
+          "      └─Projection 2500.00 root  cast(test.tb.code, decimal(10,0) BINARY)->Column#22",
+          "        └─Apply 2500.00 root  CARTESIAN semi join",
+          "          ├─IndexLookUp(Build) 2500.00 root  ",
+          "          │ ├─IndexRangeScan(Build) 2500.00 cop[tikv] table:tb, index:idx_tb_id(id) range: decided by [eq(test.ta.id, test.tb.id)], keep order:false, stats:pseudo",
+          "          │ └─TableRowIDScan(Probe) 2500.00 cop[tikv] table:tb keep order:false, stats:pseudo",
+          "          └─IndexLookUp(Probe) 20000.00 root  ",
+          "            ├─IndexRangeScan(Build) 25000.00 cop[tikv] table:tc, index:idx_tc_name(name) range: decided by [eq(test.tb.name, test.tc.name)], keep order:false, stats:pseudo",
+          "            └─Selection(Probe) 20000.00 cop[tikv]  like(cast(test.tc.code, var_string(20)), \"999%\", 92)",
+          "              └─TableRowIDScan 25000.00 cop[tikv] table:tc keep order:false, stats:pseudo"
         ],
         "Result": null,
         "Warning": null
@@ -6151,15 +6151,15 @@
           "  ├─IndexLookUp(Build) 10.00 root  ",
           "  │ ├─IndexRangeScan(Build) 10.00 cop[tikv] table:ta, index:idx_ta_name(name) range:[\"chad999\",\"chad999\"], keep order:false, stats:pseudo",
           "  │ └─TableRowIDScan(Probe) 10.00 cop[tikv] table:ta keep order:false, stats:pseudo",
-          "  └─Selection(Probe) 0.80 root  gt(Column#9, 900)",
-          "    └─MaxOneRow 1.00 root  ",
-          "      └─StreamAgg 1.00 root  funcs:max(test.tb.code)->Column#9",
-          "        └─TopN 1.00 root  test.tb.code:desc, offset:0, count:1",
-          "          └─IndexLookUp 1.00 root  ",
-          "            ├─IndexRangeScan(Build) 10.00 cop[tikv] table:tb, index:idx_tb_id(id) range: decided by [eq(test.ta.id, test.tb.id)], keep order:false, stats:pseudo",
-          "            └─TopN(Probe) 1.00 cop[tikv]  test.tb.code:desc, offset:0, count:1",
-          "              └─Selection 9.99 cop[tikv]  not(isnull(test.tb.code))",
-          "                └─TableRowIDScan 10.00 cop[tikv] table:tb keep order:false, stats:pseudo"
+          "  └─Selection(Probe) 8.00 root  gt(Column#9, 900)",
+          "    └─MaxOneRow 10.00 root  ",
+          "      └─StreamAgg 10.00 root  funcs:max(test.tb.code)->Column#9",
+          "        └─TopN 10.00 root  test.tb.code:desc, offset:0, count:1",
+          "          └─IndexLookUp 10.00 root  ",
+          "            ├─IndexRangeScan(Build) 100.00 cop[tikv] table:tb, index:idx_tb_id(id) range: decided by [eq(test.ta.id, test.tb.id)], keep order:false, stats:pseudo",
+          "            └─TopN(Probe) 10.00 cop[tikv]  test.tb.code:desc, offset:0, count:1",
+          "              └─Selection 99.90 cop[tikv]  not(isnull(test.tb.code))",
+          "                └─TableRowIDScan 100.00 cop[tikv] table:tb keep order:false, stats:pseudo"
         ],
         "Result": null,
         "Warning": null
@@ -6206,30 +6206,30 @@
           "  │ │ │   ├─IndexRangeScan(Build) 250.00 cop[tikv] table:tb, index:idx_tb_name(name) range:[\"chad9\",\"chad:\"), keep order:false, stats:pseudo",
           "  │ │ │   └─Selection(Probe) 249.75 cop[tikv]  not(isnull(test.tb.code))",
           "  │ │ │     └─TableRowIDScan 250.00 cop[tikv] table:tb keep order:false, stats:pseudo",
-          "  │ │ └─IndexLookUp(Probe) 1.25 root  ",
-          "  │ │   ├─Selection(Build) 1.25 cop[tikv]  not(isnull(test.ta.code))",
-          "  │ │   │ └─IndexRangeScan 1.25 cop[tikv] table:ta, index:idx_ta_code(code) range: decided by [eq(test.ta.code, test.tb.code)], keep order:false, stats:pseudo",
-          "  │ │   └─TableRowIDScan(Probe) 1.25 cop[tikv] table:ta keep order:false, stats:pseudo",
-          "  │ └─Selection(Probe) 0.80 root  gt(Column#14, 100)",
-          "  │   └─MaxOneRow 1.00 root  ",
-          "  │     └─StreamAgg 1.00 root  funcs:max(test.tc.id)->Column#14",
-          "  │       └─TopN 0.25 root  test.tc.id:desc, offset:0, count:1",
-          "  │         └─IndexLookUp 0.25 root  ",
-          "  │           ├─Selection(Build) 0.25 cop[tikv]  eq(test.ta.name, test.tc.name)",
-          "  │           │ └─IndexRangeScan 250.00 cop[tikv] table:tc, index:idx_tc_name(name) range:[\"chad99\",\"chad9:\"), keep order:false, stats:pseudo",
-          "  │           └─TopN(Probe) 0.25 cop[tikv]  test.tc.id:desc, offset:0, count:1",
-          "  │             └─Selection 0.25 cop[tikv]  not(isnull(test.tc.id))",
-          "  │               └─TableRowIDScan 0.25 cop[tikv] table:tc keep order:false, stats:pseudo",
-          "  └─Selection(Probe) 0.80 root  gt(Column#19, 100)",
-          "    └─MaxOneRow 1.00 root  ",
-          "      └─StreamAgg 1.00 root  funcs:max(test.td.id)->Column#19",
-          "        └─TopN 0.25 root  test.td.id:desc, offset:0, count:1",
-          "          └─IndexLookUp 0.25 root  ",
-          "            ├─Selection(Build) 9.99 cop[tikv]  eq(test.ta.id, test.td.id)",
-          "            │ └─IndexFullScan 9990.00 cop[tikv] table:td, index:idx_tc_id(id) keep order:false, stats:pseudo",
-          "            └─TopN(Probe) 0.25 cop[tikv]  test.td.id:desc, offset:0, count:1",
-          "              └─Selection 0.25 cop[tikv]  like(test.td.name, \"chad999%\", 92)",
-          "                └─TableRowIDScan 9.99 cop[tikv] table:td keep order:false, stats:pseudo"
+          "  │ │ └─IndexLookUp(Probe) 249.75 root  ",
+          "  │ │   ├─Selection(Build) 249.75 cop[tikv]  not(isnull(test.ta.code))",
+          "  │ │   │ └─IndexRangeScan 250.00 cop[tikv] table:ta, index:idx_ta_code(code) range: decided by [eq(test.ta.code, test.tb.code)], keep order:false, stats:pseudo",
+          "  │ │   └─TableRowIDScan(Probe) 249.75 cop[tikv] table:ta keep order:false, stats:pseudo",
+          "  │ └─Selection(Probe) 199.80 root  gt(Column#14, 100)",
+          "  │   └─MaxOneRow 249.75 root  ",
+          "  │     └─StreamAgg 249.75 root  funcs:max(test.tc.id)->Column#14",
+          "  │       └─TopN 62.38 root  test.tc.id:desc, offset:0, count:1",
+          "  │         └─IndexLookUp 62.38 root  ",
+          "  │           ├─Selection(Build) 62.44 cop[tikv]  eq(test.ta.name, test.tc.name)",
+          "  │           │ └─IndexRangeScan 62437.50 cop[tikv] table:tc, index:idx_tc_name(name) range:[\"chad99\",\"chad9:\"), keep order:false, stats:pseudo",
+          "  │           └─TopN(Probe) 62.38 cop[tikv]  test.tc.id:desc, offset:0, count:1",
+          "  │             └─Selection 62.38 cop[tikv]  not(isnull(test.tc.id))",
+          "  │               └─TableRowIDScan 62.44 cop[tikv] table:tc keep order:false, stats:pseudo",
+          "  └─Selection(Probe) 199.80 root  gt(Column#19, 100)",
+          "    └─MaxOneRow 249.75 root  ",
+          "      └─StreamAgg 249.75 root  funcs:max(test.td.id)->Column#19",
+          "        └─TopN 62.38 root  test.td.id:desc, offset:0, count:1",
+          "          └─IndexLookUp 62.38 root  ",
+          "            ├─Selection(Build) 2495.00 cop[tikv]  eq(test.ta.id, test.td.id)",
+          "            │ └─IndexFullScan 2495002.50 cop[tikv] table:td, index:idx_tc_id(id) keep order:false, stats:pseudo",
+          "            └─TopN(Probe) 62.38 cop[tikv]  test.td.id:desc, offset:0, count:1",
+          "              └─Selection 62.38 cop[tikv]  like(test.td.name, \"chad999%\", 92)",
+          "                └─TableRowIDScan 2495.00 cop[tikv] table:td keep order:false, stats:pseudo"
         ],
         "Result": null,
         "Warning": null
@@ -6243,30 +6243,30 @@
           "  │ ├─Apply(Build) 10000.00 root  CARTESIAN semi join",
           "  │ │ ├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "  │ │ │ └─TableFullScan 10000.00 cop[tikv] table:ta keep order:false, stats:pseudo",
-          "  │ │ └─IndexLookUp(Probe) 0.25 root  ",
-          "  │ │   ├─IndexRangeScan(Build) 250.00 cop[tikv] table:tb, index:idx_tb_name(name) range:[\"chad9\",\"chad:\"), keep order:false, stats:pseudo",
-          "  │ │   └─Selection(Probe) 0.25 cop[tikv]  eq(test.ta.code, test.tb.code)",
-          "  │ │     └─TableRowIDScan 250.00 cop[tikv] table:tb keep order:false, stats:pseudo",
-          "  │ └─Selection(Probe) 0.80 root  gt(Column#14, 100)",
-          "  │   └─MaxOneRow 1.00 root  ",
-          "  │     └─StreamAgg 1.00 root  funcs:max(test.tc.id)->Column#14",
-          "  │       └─TopN 0.25 root  test.tc.id:desc, offset:0, count:1",
-          "  │         └─IndexLookUp 0.25 root  ",
-          "  │           ├─Selection(Build) 0.25 cop[tikv]  eq(test.ta.name, test.tc.name)",
-          "  │           │ └─IndexRangeScan 250.00 cop[tikv] table:tc, index:idx_tc_name(name) range:[\"chad99\",\"chad9:\"), keep order:false, stats:pseudo",
-          "  │           └─TopN(Probe) 0.25 cop[tikv]  test.tc.id:desc, offset:0, count:1",
-          "  │             └─Selection 0.25 cop[tikv]  not(isnull(test.tc.id))",
-          "  │               └─TableRowIDScan 0.25 cop[tikv] table:tc keep order:false, stats:pseudo",
-          "  └─Selection(Probe) 0.80 root  gt(Column#19, 100)",
-          "    └─MaxOneRow 1.00 root  ",
-          "      └─StreamAgg 1.00 root  funcs:max(test.td.id)->Column#19",
-          "        └─TopN 0.25 root  test.td.id:desc, offset:0, count:1",
-          "          └─IndexLookUp 0.25 root  ",
-          "            ├─Selection(Build) 9.99 cop[tikv]  eq(test.ta.id, test.td.id)",
-          "            │ └─IndexFullScan 9990.00 cop[tikv] table:td, index:idx_tc_id(id) keep order:false, stats:pseudo",
-          "            └─TopN(Probe) 0.25 cop[tikv]  test.td.id:desc, offset:0, count:1",
-          "              └─Selection 0.25 cop[tikv]  like(test.td.name, \"chad999%\", 92)",
-          "                └─TableRowIDScan 9.99 cop[tikv] table:td keep order:false, stats:pseudo"
+          "  │ │ └─IndexLookUp(Probe) 2500.00 root  ",
+          "  │ │   ├─IndexRangeScan(Build) 2500000.00 cop[tikv] table:tb, index:idx_tb_name(name) range:[\"chad9\",\"chad:\"), keep order:false, stats:pseudo",
+          "  │ │   └─Selection(Probe) 2500.00 cop[tikv]  eq(test.ta.code, test.tb.code)",
+          "  │ │     └─TableRowIDScan 2500000.00 cop[tikv] table:tb keep order:false, stats:pseudo",
+          "  │ └─Selection(Probe) 8000.00 root  gt(Column#14, 100)",
+          "  │   └─MaxOneRow 10000.00 root  ",
+          "  │     └─StreamAgg 10000.00 root  funcs:max(test.tc.id)->Column#14",
+          "  │       └─TopN 2497.50 root  test.tc.id:desc, offset:0, count:1",
+          "  │         └─IndexLookUp 2497.50 root  ",
+          "  │           ├─Selection(Build) 2500.00 cop[tikv]  eq(test.ta.name, test.tc.name)",
+          "  │           │ └─IndexRangeScan 2500000.00 cop[tikv] table:tc, index:idx_tc_name(name) range:[\"chad99\",\"chad9:\"), keep order:false, stats:pseudo",
+          "  │           └─TopN(Probe) 2497.50 cop[tikv]  test.tc.id:desc, offset:0, count:1",
+          "  │             └─Selection 2497.50 cop[tikv]  not(isnull(test.tc.id))",
+          "  │               └─TableRowIDScan 2500.00 cop[tikv] table:tc keep order:false, stats:pseudo",
+          "  └─Selection(Probe) 8000.00 root  gt(Column#19, 100)",
+          "    └─MaxOneRow 10000.00 root  ",
+          "      └─StreamAgg 10000.00 root  funcs:max(test.td.id)->Column#19",
+          "        └─TopN 2497.50 root  test.td.id:desc, offset:0, count:1",
+          "          └─IndexLookUp 2497.50 root  ",
+          "            ├─Selection(Build) 99900.00 cop[tikv]  eq(test.ta.id, test.td.id)",
+          "            │ └─IndexFullScan 99900000.00 cop[tikv] table:td, index:idx_tc_id(id) keep order:false, stats:pseudo",
+          "            └─TopN(Probe) 2497.50 cop[tikv]  test.td.id:desc, offset:0, count:1",
+          "              └─Selection 2497.50 cop[tikv]  like(test.td.name, \"chad999%\", 92)",
+          "                └─TableRowIDScan 99900.00 cop[tikv] table:td keep order:false, stats:pseudo"
         ],
         "Result": null,
         "Warning": null

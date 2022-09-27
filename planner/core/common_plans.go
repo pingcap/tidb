@@ -737,15 +737,18 @@ func (e *Explain) getOperatorInfo(p Plan, id string) (string, string, string, st
 			return row[1], "N/A", row[3], row[4]
 		}
 	}
+
+	pp, isPhysicalPlan := p.(PhysicalPlan)
 	estRows := "N/A"
-	if si := p.statsInfo(); si != nil {
-		estRows = strconv.FormatFloat(si.RowCount, 'f', 2, 64)
-	}
 	estCost := "N/A"
-	if pp, ok := p.(PhysicalPlan); ok {
+	if isPhysicalPlan {
+		estRows = strconv.FormatFloat(pp.getEstRowCountForDisplay(), 'f', 2, 64)
 		planCost, _ := pp.GetPlanCost(property.RootTaskType, NewDefaultPlanCostOption())
 		estCost = strconv.FormatFloat(planCost, 'f', 2, 64)
+	} else if si := p.statsInfo(); si != nil {
+		estRows = strconv.FormatFloat(si.RowCount, 'f', 2, 64)
 	}
+
 	var accessObject, operatorInfo string
 	if plan, ok := p.(dataAccesser); ok {
 		accessObject = plan.AccessObject().String()
@@ -842,15 +845,16 @@ func binaryOpFromFlatOp(explainCtx sessionctx.Context, op *FlatOperator, out *ti
 		}
 	}
 
-	// Runtime info
-	rootStats, copStats, memTracker, diskTracker := getRuntimeInfo(explainCtx, op.Origin, nil)
-	if statsInfo := op.Origin.statsInfo(); statsInfo != nil {
-		out.EstRows = statsInfo.RowCount
-	}
 	if op.IsPhysicalPlan {
 		p := op.Origin.(PhysicalPlan)
 		out.Cost, _ = p.GetPlanCost(property.RootTaskType, NewDefaultPlanCostOption())
+		out.EstRows = p.getEstRowCountForDisplay()
+	} else if statsInfo := op.Origin.statsInfo(); statsInfo != nil {
+		out.EstRows = statsInfo.RowCount
 	}
+
+	// Runtime info
+	rootStats, copStats, memTracker, diskTracker := getRuntimeInfo(explainCtx, op.Origin, nil)
 	if rootStats != nil {
 		basic, groups := rootStats.MergeStats()
 		out.RootBasicExecInfo = basic.String()

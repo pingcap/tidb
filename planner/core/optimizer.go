@@ -382,6 +382,7 @@ func postOptimize(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {
 	plan = enableParallelApply(sctx, plan)
 	handleFineGrainedShuffle(sctx, plan)
 	checkPlanCacheable(sctx, plan)
+	propagateProbeParents(plan, nil)
 	return plan
 }
 
@@ -521,6 +522,37 @@ func checkPlanCacheable(sctx sessionctx.Context, plan PhysicalPlan) {
 	if sctx.GetSessionVars().StmtCtx.UseCache && useTiFlash(plan) {
 		sctx.GetSessionVars().StmtCtx.SkipPlanCache = true
 	}
+}
+
+func propagateProbeParents(plan PhysicalPlan, probeParents []PhysicalPlan) {
+	plan.setProbeParents(probeParents)
+	switch x := plan.(type) {
+	case *PhysicalApply, *PhysicalIndexJoin, *PhysicalIndexHashJoin, *PhysicalIndexMergeJoin:
+		if join, ok := plan.(interface{ getInnerChildIdx() int }); ok {
+			propagateProbeParents(plan.Children()[1-join.getInnerChildIdx()], probeParents)
+			newParents := make([]PhysicalPlan, len(probeParents), len(probeParents)+1)
+			copy(newParents, probeParents)
+			newParents = append(newParents, plan)
+			propagateProbeParents(plan.Children()[join.getInnerChildIdx()], newParents)
+		}
+	case *PhysicalTableReader:
+		propagateProbeParents(x.tablePlan, probeParents)
+	case *PhysicalIndexReader:
+		propagateProbeParents(x.indexPlan, probeParents)
+	case *PhysicalIndexLookUpReader:
+		propagateProbeParents(x.indexPlan, probeParents)
+		propagateProbeParents(x.tablePlan, probeParents)
+	case *PhysicalIndexMergeReader:
+		for _, pchild := range x.partialPlans {
+			propagateProbeParents(pchild, probeParents)
+		}
+		propagateProbeParents(x.tablePlan, probeParents)
+	default:
+		for _, child := range plan.Children() {
+			propagateProbeParents(child, probeParents)
+		}
+	}
+	return
 }
 
 // useTiFlash used to check whether the plan use the TiFlash engine.
