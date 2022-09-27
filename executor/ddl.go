@@ -172,7 +172,7 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	case *ast.FlashBackTableStmt:
 		err = e.executeFlashbackTable(x)
 	case *ast.FlashBackClusterStmt:
-		err = e.executeFlashBackCluster(ctx, x)
+		err = e.executeFlashBackCluster(x)
 	case *ast.RenameTableStmt:
 		err = e.executeRenameTable(x)
 	case *ast.TruncateTableStmt:
@@ -523,7 +523,7 @@ func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName) (*model.J
 	return jobInfo, tableInfo, nil
 }
 
-func (e *DDLExec) executeFlashBackCluster(ctx context.Context, s *ast.FlashBackClusterStmt) error {
+func (e *DDLExec) executeFlashBackCluster(s *ast.FlashBackClusterStmt) error {
 	checker := privilege.GetPrivilegeManager(e.ctx)
 	if !checker.RequestVerification(e.ctx.GetSessionVars().ActiveRoles, "", "", "", mysql.SuperPriv) {
 		return core.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER")
