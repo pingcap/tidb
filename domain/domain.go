@@ -106,7 +106,7 @@ type Domain struct {
 	sysVarCache             sysVarCache // replaces GlobalVariableCache
 	slowQuery               *topNSlowQueries
 	expensiveQueryHandle    *expensivequery.Handle
-	memoryUsageAlarmHandle *memoryusagealarm.Handle
+	memoryUsageAlarmHandle  *memoryusagealarm.Handle
 	serverMemoryLimitHandle *servermemorylimit.Handle
 	wg                      util.WaitGroupWrapper
 	statsUpdating           atomicutil.Int32
