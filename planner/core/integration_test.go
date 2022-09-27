@@ -21,6 +21,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
@@ -5402,4 +5403,24 @@ func (s *testIntegrationSuite) TestIssue33175(c *C) {
 		}
 		tk.MustExec("drop table t")
 	}
+}
+
+// TestExplainAnalyzeDMLCommit covers the issue #37373.
+func (s *testIntegrationSuite) TestExplainAnalyzeDMLCommit(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c1 int key, c2 int);")
+	tk.MustExec("insert into t values (1, 1)")
+
+	err := failpoint.Enable("github.com/pingcap/tidb/session/mockSleepBeforeTxnCommit", "return(500)")
+	c.Assert(err, IsNil)
+	defer func() {
+		_ = failpoint.Disable("github.com/pingcap/tidb/session/mockSleepBeforeTxnCommit")
+	}()
+	// The commit is paused by the failpoint, after the fix the explain statement
+	// execution should proceed after the commit finishes.
+	_, err = tk.Exec("explain analyze delete from t;")
+	c.Assert(err, IsNil)
+	tk.MustQuery("select * from t").Check(testkit.Rows())
 }
