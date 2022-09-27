@@ -1591,6 +1591,10 @@ func (p *preprocessor) resolveAlterTableStmt(node *ast.AlterTableStmt) {
 			if table.Schema.L == "" && node.Table.Schema.L != "" {
 				table.Schema = model.NewCIStr(node.Table.Schema.L)
 			}
+			if spec.Constraint.Tp == ast.ConstraintForeignKey {
+				// when foreign_key_checks is off, should ignore err when refer table is not exists.
+				p.flag |= inCreateOrDropTable
+			}
 		}
 	}
 }

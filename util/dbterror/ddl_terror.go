@@ -414,4 +414,5 @@ var (
 	ErrForeignKeyColumnCannotChange = ClassDDL.NewStd(mysql.ErrForeignKeyColumnCannotChange)
 	// ErrForeignKeyColumnCannotChangeChild returns when change child table's column which used by foreign key.
 	ErrForeignKeyColumnCannotChangeChild = ClassDDL.NewStd(mysql.ErrForeignKeyColumnCannotChangeChild)
+	ErrNoReferencedRow2                  = ClassDDL.NewStd(mysql.ErrNoReferencedRow2)
 )

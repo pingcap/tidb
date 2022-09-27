@@ -1462,6 +1462,220 @@ func TestAddForeignKey2(t *testing.T) {
 	require.Equal(t, "[ddl:-1]Failed to add the foreign key constraint. Missing index for 'fk_1' foreign key columns in the table 't2'", addErr.Error())
 }
 
+func TestAlterTableAddForeignKeyError(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1;")
+	tk.MustExec("use test")
+	cases := []struct {
+		prepares []string
+		alter    string
+		err      string
+	}{
+		{
+			prepares: []string{
+				"create table t1 (id int, a int, b int);",
+				"create table t2 (a int, b int);",
+			},
+			alter: "alter  table t2 add foreign key fk(b) references t_unknown(id)",
+			err:   "[schema:1824]Failed to open the referenced table 't_unknown'",
+		},
+		{
+			prepares: []string{
+				"create table t1 (id int, a int, b int);",
+				"create table t2 (a int, b int);",
+			},
+			alter: "alter  table t2 add foreign key fk(b) references t1(c_unknown)",
+			err:   "[schema:3734]Failed to add the foreign key constraint. Missing column 'c_unknown' for constraint 'fk' in the referenced table 't1'",
+		},
+		{
+			prepares: []string{
+				"create table t1 (id int, a int, b int);",
+				"create table t2 (a int, b int);",
+			},
+			alter: "alter  table t2 add foreign key fk_b(b) references t1(b)",
+			err:   "[schema:1822]Failed to add the foreign key constraint. Missing index for constraint 'fk_b' in the referenced table 't1'",
+		},
+		{
+			prepares: []string{
+				"create table t1 (id int, a int, b int not null, index(b));",
+				"create table t2 (a int, b int not null);",
+			},
+			alter: "alter  table t2 add foreign key fk_b(b) references t1(b) on update set null",
+			err:   "[schema:1830]Column 'b' cannot be NOT NULL: needed in a foreign key constraint 'fk_b' SET NULL",
+		},
+		{
+			prepares: []string{
+				"create table t1 (id int, a int, b int not null, index(b));",
+				"create table t2 (a int, b int not null);",
+			},
+			alter: "alter  table t2 add foreign key fk_b(b) references t1(b) on delete set null",
+			err:   "[schema:1830]Column 'b' cannot be NOT NULL: needed in a foreign key constraint 'fk_b' SET NULL",
+		},
+		{
+			prepares: []string{
+				"create table t1 (id int key, a int, b int as (a) virtual, index(b));",
+				"create table t2 (a int, b int);",
+			},
+			alter: "alter  table t2 add foreign key fk_b(b) references t1(b)",
+			err:   "[schema:3733]Foreign key 'fk_b' uses virtual column 'b' which is not supported.",
+		},
+		{
+			prepares: []string{
+				"create table t1 (id int key, a int, b int, index(b));",
+				"create table t2 (a int, b int as (a) virtual);",
+			},
+			alter: "alter  table t2 add foreign key fk_b(b) references t1(b)",
+			err:   "[schema:3733]Foreign key 'fk_b' uses virtual column 'b' which is not supported.",
+		},
+		{
+			prepares: []string{
+				"create table t1 (id int key, a int);",
+				"create table t2 (a int, b varchar(10));",
+			},
+			alter: "alter  table t2 add foreign key fk(b) references t1(id)",
+			err:   "[ddl:3780]Referencing column 'b' and referenced column 'id' in foreign key constraint 'fk' are incompatible.",
+		},
+		{
+			prepares: []string{
+				"create table t1 (id int key, a int not null, index(a));",
+				"create table t2 (a int, b int unsigned);",
+			},
+			alter: "alter  table t2 add foreign key fk_b(b) references t1(a)",
+			err:   "[ddl:3780]Referencing column 'b' and referenced column 'a' in foreign key constraint 'fk_b' are incompatible.",
+		},
+		{
+			prepares: []string{
+				"create table t1 (id int key, a bigint, index(a));",
+				"create table t2 (a int, b int);",
+			},
+			alter: "alter  table t2 add foreign key fk_b(b) references t1(a)",
+			err:   "[ddl:3780]Referencing column 'b' and referenced column 'a' in foreign key constraint 'fk_b' are incompatible.",
+		},
+		{
+			prepares: []string{
+				"create table t1 (id int key, a varchar(10) charset utf8, index(a));",
+				"create table t2 (a int, b varchar(10) charset utf8mb4);",
+			},
+			alter: "alter  table t2 add foreign key fk_b(b) references t1(a)",
+			err:   "[ddl:3780]Referencing column 'b' and referenced column 'a' in foreign key constraint 'fk_b' are incompatible.",
+		},
+		{
+			prepares: []string{
+				"create table t1 (id int key, a varchar(10) collate utf8_bin, index(a));",
+				"create table t2 (a int, b varchar(10) collate utf8mb4_bin);",
+			},
+			alter: "alter  table t2 add foreign key fk_b(b) references t1(a)",
+			err:   "[ddl:3780]Referencing column 'b' and referenced column 'a' in foreign key constraint 'fk_b' are incompatible.",
+		},
+		{
+			prepares: []string{
+				"create table t1 (id int key, a varchar(10));",
+				"create table t2 (a int, b varchar(10));",
+			},
+			alter: "alter  table t2 add foreign key fk_b(b) references t1(a)",
+			err:   "[schema:1822]Failed to add the foreign key constraint. Missing index for constraint 'fk_b' in the referenced table 't1'",
+		},
+		{
+			prepares: []string{
+				"create table t1 (id int key, a varchar(10), index (a(5)));",
+				"create table t2 (a int, b varchar(10));",
+			},
+			alter: "alter  table t2 add foreign key fk_b(b) references t1(a)",
+			err:   "[schema:1822]Failed to add the foreign key constraint. Missing index for constraint 'fk_b' in the referenced table 't1'",
+		},
+		{
+			prepares: []string{
+				"create table t1 (id int key, a int)",
+				"create table t2 (id int,     b int, index(b))",
+				"insert into t2 values (1,1)",
+			},
+			alter: "alter table t2 add foreign key fk_b(b) references t1(id)",
+			err:   "[ddl:1452]Cannot add or update a child row: a foreign key constraint fails (`test`.`t2`, CONSTRAINT `fk_b` FOREIGN KEY (`b`) REFERENCES `t1` (`id`))",
+		},
+		{
+			prepares: []string{
+				"create table t1 (id int, a int, b int, index(a,b))",
+				"create table t2 (id int, a int, b int, index(a,b))",
+				"insert into t2 values (1, 1, null), (2, null, 1), (3, null, null), (4, 1, 1)",
+			},
+			alter: "alter table t2 add foreign key fk_b(a, b) references t1(a, b)",
+			err:   "[ddl:1452]Cannot add or update a child row: a foreign key constraint fails (`test`.`t2`, CONSTRAINT `fk_b` FOREIGN KEY (`a`, `b`) REFERENCES `t1` (`a`, `b`))",
+		},
+	}
+	for i, ca := range cases {
+		tk.MustExec("drop table if exists t2")
+		tk.MustExec("drop table if exists t1")
+		for _, sql := range ca.prepares {
+			tk.MustExec(sql)
+		}
+		err := tk.ExecToErr(ca.alter)
+		require.Error(t, err, fmt.Sprintf("%v, %v", i, ca.err))
+		require.Equal(t, ca.err, err.Error())
+	}
+
+	passCases := [][]string{
+		{
+			"create table t1 (id int key, a int, b int, index(a))",
+			"alter table t1 add foreign key fk(a) references t1(id)",
+		},
+		{
+			"create table t1 (id int key, b int not null, index(b))",
+			"create table t2 (a int, b int, index(b));",
+			"alter table t2 add foreign key fk_b(b) references t1(b)",
+		},
+		{
+			"create table t1 (id int key, a varchar(10), index(a));",
+			"create table t2 (a int, b varchar(20), index(b));",
+			"alter table t2 add foreign key fk_b(b) references t1(a)",
+		},
+		{
+			"create table t1 (id int key, a decimal(10,5), index(a));",
+			"create table t2 (a int, b decimal(20, 10), index(b));",
+			"alter table t2 add foreign key fk_b(b) references t1(a)",
+		},
+		{
+			"create table t1 (id int key, a varchar(10), index (a(10)));",
+			"create table t2 (a int, b varchar(20), index(b));",
+			"alter table t2 add foreign key fk_b(b) references t1(a)",
+		},
+		{
+			"create table t1 (id int key, a int)",
+			"create table t2 (id int,     b int, index(b))",
+			"insert into t2 values (1, null)",
+			"alter table t2 add foreign key fk_b(b) references t1(id)",
+		},
+		{
+			"create table t1 (id int, a int, b int, index(a,b))",
+			"create table t2 (id int, a int, b int, index(a,b))",
+			"insert into t2 values (1, 1, null), (2, null, 1), (3, null, null)",
+			"alter table t2 add foreign key fk_b(a, b) references t1(a, b)",
+		},
+		{
+			"set @@foreign_key_checks=0;",
+			"create table t1 (id int, a int, b int, index(a,b))",
+			"create table t2 (id int, a int, b int, index(a,b))",
+			"insert into t2 values (1, 1, 1)",
+			"alter table t2 add foreign key fk_b(a, b) references t1(a, b)",
+			"set @@foreign_key_checks=1;",
+		},
+		{
+			"set @@foreign_key_checks=0;",
+			"create table t2 (a int, b int, index(b));",
+			"alter table t2 add foreign key fk_b(b) references t_unknown(a)",
+			"set @@foreign_key_checks=1;",
+		},
+	}
+	for _, ca := range passCases {
+		tk.MustExec("drop table if exists t2")
+		tk.MustExec("drop table if exists t1")
+		for _, sql := range ca {
+			tk.MustExec(sql)
+		}
+	}
+}
+
 func TestRenameTablesWithForeignKey(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
 	tk := testkit.NewTestKit(t, store)
