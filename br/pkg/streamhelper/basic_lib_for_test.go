@@ -94,13 +94,13 @@ func overlaps(a, b kv.KeyRange) bool {
 
 func (r *region) splitAt(newID uint64, k string) *region {
 	newRegion := &region{
-		rng:        kv.KeyRange{StartKey: []byte(k), EndKey: r.rng.EndKey},
-		leader:     r.leader,
-		epoch:      r.epoch + 1,
-		id:         newID,
-		checkpoint: r.checkpoint,
-		fsim:       r.fsim.fork(),
+		rng:    kv.KeyRange{StartKey: []byte(k), EndKey: r.rng.EndKey},
+		leader: r.leader,
+		epoch:  r.epoch + 1,
+		id:     newID,
+		fsim:   r.fsim.fork(),
 	}
+	r.checkpoint.Store(r.checkpoint.Load())
 	r.rng.EndKey = []byte(k)
 	r.epoch += 1
 	r.fsim = r.fsim.fork()
@@ -367,7 +367,7 @@ func (r *region) String() string {
 		r.epoch,
 		hex.EncodeToString(r.rng.StartKey),
 		hex.EncodeToString(r.rng.EndKey),
-		r.checkpoint,
+		r.checkpoint.Load(),
 		r.leader,
 		r.fsim.flushedEpoch)
 }
