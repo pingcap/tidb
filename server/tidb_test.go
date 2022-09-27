@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	tmysql "github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/testkit"
@@ -2630,6 +2631,64 @@ func TestRcReadCheckTSConflict(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/fetchNextErr"))
 
 	tk.MustExec("drop table t")
+}
+
+func TestRcReadCheckTSConflictExtra(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/sessiontxn/isolation/CallOnStmtRetry", "return"))
+
+	store := testkit.CreateMockStore(t)
+
+	ctx := context.Background()
+	cc := &clientConn{
+		alloc:      arena.NewAllocator(1024),
+		chunkAlloc: chunk.NewAllocator(),
+		pkt: &packetIO{
+			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
+		},
+	}
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set global tidb_rc_read_check_ts = ON")
+
+	se := tk.Session()
+	cc.setCtx(&TiDBContext{Session: se, stmts: make(map[int]*TiDBStatement)})
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(id1 int, id2 int, id3 int, PRIMARY KEY(id1), UNIQUE KEY udx_id2 (id2))")
+	tk.MustExec("insert into t1 values (1, 1, 1)")
+	tk.MustExec("insert into t1 values (10, 10, 10)")
+	require.Equal(t, "ON", tk.MustQuery("show variables like 'tidb_rc_read_check_ts'").Rows()[0][1])
+
+	tk.MustExec("set transaction_isolation = 'READ-COMMITTED'")
+	tk2.MustExec("set transaction_isolation = 'READ-COMMITTED'")
+
+	// Execute in text protocol
+	se.SetValue(sessiontxn.CallOnStmtRetryCount, 0)
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("update t1 set id3 = id3 + 1 where id1 = 1")
+	err := cc.handleQuery(ctx, "select * from t1 where id1 = 1")
+	require.NoError(t, err)
+	tk.MustExec("commit")
+	count, ok := se.Value(sessiontxn.CallOnStmtRetryCount).(int)
+	require.Equal(t, true, ok)
+	require.Equal(t, 1, count)
+
+	// Execute in prepare binary protocol
+	se.SetValue(sessiontxn.CallOnStmtRetryCount, 0)
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("update t1 set id3 = id3 + 1 where id1 = 1")
+	require.NoError(t, cc.handleStmtPrepare(ctx, "select * from t1 where id1 = 1"))
+	require.NoError(t, cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0}))
+	tk.MustExec("commit")
+	count, ok = se.Value(sessiontxn.CallOnStmtRetryCount).(int)
+	require.Equal(t, true, ok)
+	require.Equal(t, 1, count)
+
+	tk.MustExec("drop table t1")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/sessiontxn/isolation/CallOnStmtRetry"))
 }
 
 func TestRcReadCheckTS(t *testing.T) {

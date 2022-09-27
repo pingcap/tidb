@@ -159,7 +159,7 @@ func TsoUseConstantCountInc(sctx sessionctx.Context) {
 // OnStmtRetryCountInc is used only for test.
 // When it is called, there is calling `(p *PessimisticRCTxnContextProvider) OnStmtRetry`.
 func OnStmtRetryCountInc(sctx sessionctx.Context) {
-	count, ok := sctx.Value(CallOnStmtRetryCount).(uint64)
+	count, ok := sctx.Value(CallOnStmtRetryCount).(int)
 	if !ok {
 		count = 0
 	}
