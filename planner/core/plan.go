@@ -378,8 +378,24 @@ type PhysicalPlan interface {
 	// MemoryUsage return the memory usage of PhysicalPlan
 	MemoryUsage() int64
 
+	// Below three methods help to handle the inconsistency between row count in the statsInfo and the recorded
+	// actual row count.
+	// For the children in the inner side (probe side) of Index Join and Apply, the row count in the statsInfo
+	// means the estimated row count for a single "probe", but the recorded actual row count is the total row
+	// count for all "probes".
+	// To handle this inconsistency without breaking anything else, we added a field `probeParents` of
+	// type `[]PhysicalPlan` into all PhysicalPlan to record all operators that are (indirect or direct) parents
+	// of this PhysicalPlan and will cause this inconsistency.
+	// Using this information, we can convert the row count between the "single probe" row count and "all probes"
+	// row count freely.
+
+	// setProbeParents sets the above stated `probeParents` field.
 	setProbeParents([]PhysicalPlan)
+	// getEstRowCountForDisplay uses the "single probe" row count in statsInfo and the probeParents to calculate
+	// the "all probe" row count.
+	// All places that display the row count for a PhysicalPlan are expected to use this method.
 	getEstRowCountForDisplay() float64
+	// getEstRowCountForDisplay uses the runtime stats and the probeParents to calculate the actual "probe" count.
 	getActualProbeCnt(*execdetails.RuntimeStatsColl) int64
 }
 
@@ -498,6 +514,8 @@ type basePhysicalPlan struct {
 	planCostInit bool
 	planCost     float64
 
+	// probeParents records the IndexJoins and Applys with this operator in their inner children.
+	// Please see comments in PhysicalPlan for details.
 	probeParents []PhysicalPlan
 
 	// Only for MPP. If TiFlashFineGrainedShuffleStreamCount > 0:
@@ -584,7 +602,7 @@ func (p *basePhysicalPlan) getEstRowCountForDisplay() float64 {
 
 func (p *basePhysicalPlan) getActualProbeCnt(statsColl *execdetails.RuntimeStatsColl) int64 {
 	if p == nil {
-		return 0
+		return 1
 	}
 	return getActualProbeCntFromProbeParents(p.probeParents, statsColl)
 }

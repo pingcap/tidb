@@ -90,6 +90,8 @@ type PointGetPlan struct {
 	// accessCols represents actual columns the PointGet will access, which are used to calculate row-size
 	accessCols []*expression.Column
 
+	// probeParents records the IndexJoins and Applys with this operator in their inner children.
+	// Please see comments in PhysicalPlan for details.
 	probeParents []PhysicalPlan
 }
 
@@ -102,7 +104,7 @@ func (p *PointGetPlan) getEstRowCountForDisplay() float64 {
 
 func (p *PointGetPlan) getActualProbeCnt(statsColl *execdetails.RuntimeStatsColl) int64 {
 	if p == nil {
-		return 0
+		return 1
 	}
 	return getActualProbeCntFromProbeParents(p.probeParents, statsColl)
 }
@@ -336,6 +338,8 @@ type BatchPointGetPlan struct {
 	// accessCols represents actual columns the PointGet will access, which are used to calculate row-size
 	accessCols []*expression.Column
 
+	// probeParents records the IndexJoins and Applys with this operator in their inner children.
+	// Please see comments in PhysicalPlan for details.
 	probeParents []PhysicalPlan
 }
 
@@ -348,7 +352,7 @@ func (p *BatchPointGetPlan) getEstRowCountForDisplay() float64 {
 
 func (p *BatchPointGetPlan) getActualProbeCnt(statsColl *execdetails.RuntimeStatsColl) int64 {
 	if p == nil {
-		return 0
+		return 1
 	}
 	return getActualProbeCntFromProbeParents(p.probeParents, statsColl)
 }
