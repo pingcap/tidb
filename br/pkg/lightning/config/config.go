@@ -98,7 +98,7 @@ const (
 var (
 	supportedStorageTypes = []string{"file", "local", "s3", "noop", "gcs", "gs"}
 
-	DefaultFilter = []string{
+	defaultFilter = []string{
 		"*.*",
 		"!mysql.*",
 		"!sys.*",
@@ -108,6 +108,13 @@ var (
 		"!INSPECTION_SCHEMA.*",
 	}
 )
+
+// GetDefaultFilter gets the default table filter used in Lightning.
+// It clones the original default filter,
+// so that the original value won't be changed when the returned slice's element is changed.
+func GetDefaultFilter() []string {
+	return append([]string{}, defaultFilter...)
+}
 
 type DBStore struct {
 	Host       string    `toml:"host" json:"host"`
@@ -715,7 +722,7 @@ func NewConfig() *Config {
 			},
 			StrictFormat:           false,
 			MaxRegionSize:          MaxRegionSize,
-			Filter:                 DefaultFilter,
+			Filter:                 GetDefaultFilter(),
 			DataCharacterSet:       defaultCSVDataCharacterSet,
 			DataInvalidCharReplace: string(defaultCSVDataInvalidCharReplace),
 		},
@@ -890,7 +897,7 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 	// mydumper.filter and black-white-list cannot co-exist.
 	if cfg.HasLegacyBlackWhiteList() {
 		log.L().Warn("the config `black-white-list` has been deprecated, please replace with `mydumper.filter`")
-		if !common.StringSliceEqual(cfg.Mydumper.Filter, DefaultFilter) {
+		if !common.StringSliceEqual(cfg.Mydumper.Filter, defaultFilter) {
 			return common.ErrInvalidConfig.GenWithStack("`mydumper.filter` and `black-white-list` cannot be simultaneously defined")
 		}
 	}
