@@ -219,6 +219,7 @@ func (task *storeCompactTask) logProgressOptionally() {
 			zap.Duration("elapsed", time.Since(task.startAt)),
 			zap.String("table", task.parentExec.tableInfo.Name.O),
 			zap.Int64("table-id", task.parentExec.tableInfo.ID),
+			zap.String("partition-id", fmt.Sprintf("%v", task.parentExec.PartitionIDs)),
 			zap.String("store-address", task.targetStore.Address),
 			zap.Int("all-physical-tables", task.allPhysicalTables),
 			zap.Int("compacted-physical-tables", task.compactedPhysicalTables),
