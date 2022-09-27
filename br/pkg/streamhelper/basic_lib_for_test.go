@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	backup "github.com/pingcap/kvproto/pkg/brpb"
@@ -61,7 +62,7 @@ type region struct {
 	leader     uint64
 	epoch      uint64
 	id         uint64
-	checkpoint uint64
+	checkpoint atomic.Uint64
 
 	fsim flushSimulator
 }
@@ -151,7 +152,7 @@ func (f *fakeStore) GetLastFlushTSOfRegion(ctx context.Context, in *logbackup.Ge
 			continue
 		}
 		resp.Checkpoints = append(resp.Checkpoints, &logbackup.RegionCheckpoint{
-			Checkpoint: region.checkpoint,
+			Checkpoint: region.checkpoint.Load(),
 			Region: &logbackup.RegionIdentity{
 				Id:           region.id,
 				EpochVersion: region.epoch,
@@ -315,9 +316,9 @@ func (f *fakeCluster) advanceCheckpoints() uint64 {
 		f.updateRegion(r.id, func(r *region) {
 			// The current implementation assumes that the server never returns checkpoint with value 0.
 			// This assumption is true for the TiKV implementation, simulating it here.
-			r.checkpoint += rand.Uint64()%256 + 1
-			if r.checkpoint < minCheckpoint {
-				minCheckpoint = r.checkpoint
+			cp := r.checkpoint.Add(rand.Uint64()%256 + 1)
+			if cp < minCheckpoint {
+				minCheckpoint = cp
 			}
 			r.fsim.flushedEpoch = 0
 		})
@@ -340,11 +341,10 @@ func createFakeCluster(t *testing.T, n int, simEnabled bool) *fakeCluster {
 		stores = append(stores, s)
 	}
 	initialRegion := &region{
-		rng:        kv.KeyRange{},
-		leader:     stores[0].id,
-		epoch:      0,
-		id:         c.idAlloc(),
-		checkpoint: 0,
+		rng:    kv.KeyRange{},
+		leader: stores[0].id,
+		epoch:  0,
+		id:     c.idAlloc(),
 		fsim: flushSimulator{
 			enabled: simEnabled,
 		},
