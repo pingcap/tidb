@@ -458,6 +458,14 @@ from version1 v1, version2 v2
 where v1.bench_type =v2.bench_type;
 id	estRows	task	access object	operator info
 HashJoin	8000.00	root		inner join, equal:[eq(test.t1.bench_type, test.t1.bench_type)]
+├─Selection(Build)	6400.00	root		eq(test.t1.version, "6.0.0"), not(isnull(test.t1.bench_type))
+│ └─CTEFullScan	8000.00	root	CTE:all_data	data:CTE_0
+└─Selection(Probe)	6400.00	root		eq(test.t1.version, "5.4.0"), not(isnull(test.t1.bench_type))
+  └─CTEFullScan	8000.00	root	CTE:all_data	data:CTE_0
+CTE_0	8000.00	root		Non-Recursive CTE
+└─Selection(Seed Part)	8000.00	root		or(and(eq(test.t1.version, "5.4.0"), not(isnull(test.t1.bench_type))), and(eq(test.t1.version, "6.0.0"), not(isnull(test.t1.bench_type))))
+  └─TableReader	10000.00	root		data:TableFullScan
+    └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 drop table if exists tbl;
 create table tbl (id int);
 explain with t1 as (select id from tbl), t2 as (select a.id from t1 a join t1 b on a.id = b.id) select * from t2 where id in (select id from t2);
