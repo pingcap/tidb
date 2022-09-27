@@ -623,7 +623,7 @@ const (
 	// TiDBAnalyzeVersion indicates how tidb collects the analyzed statistics and how use to it.
 	TiDBAnalyzeVersion = "tidb_analyze_version"
 
-	// TiDBAutoAnalyzePartitionBatchSize indicates the batch size for partition tables in auto analyze
+	// TiDBAutoAnalyzePartitionBatchSize indicates the batch size for partition tables for auto analyze in dynamic mode
 	TiDBAutoAnalyzePartitionBatchSize = "tidb_auto_analyze_partition_batch_size"
 
 	// TiDBEnableIndexMergeJoin indicates whether to enable index merge join.
