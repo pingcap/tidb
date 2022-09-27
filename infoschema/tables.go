@@ -1787,6 +1787,24 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 
 // GetStoreServerInfo returns all store nodes(TiKV or TiFlash) cluster information
 func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
+	failpoint.Inject("mockStoreServerInfo", func(val failpoint.Value) {
+		if s := val.(string); len(s) > 0 {
+			var servers []ServerInfo
+			for _, server := range strings.Split(s, ";") {
+				parts := strings.Split(server, ",")
+				servers = append(servers, ServerInfo{
+					ServerType:     parts[0],
+					Address:        parts[1],
+					StatusAddr:     parts[2],
+					Version:        parts[3],
+					GitHash:        parts[4],
+					StartTimestamp: 0,
+				})
+			}
+			failpoint.Return(servers, nil)
+		}
+	})
+
 	isTiFlashStore := func(store *metapb.Store) bool {
 		isTiFlash := false
 		for _, label := range store.Labels {

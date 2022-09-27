@@ -3037,7 +3037,7 @@ type TiFlashSQLExecuteResponseMetaColumn struct {
 
 type TiFlashSQLExecuteResponse struct {
 	Meta []TiFlashSQLExecuteResponseMetaColumn `json:"meta"`
-	Data [][]interface{} `json:"data"`
+	Data [][]interface{}                       `json:"data"`
 }
 
 func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.Context, tidbDatabases string, tidbTables string) ([][]types.Datum, error) {
