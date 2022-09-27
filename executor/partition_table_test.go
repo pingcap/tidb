@@ -602,10 +602,10 @@ func TestDirectReadingwithIndexJoin(t *testing.T) {
 		"├─TableReader(Build) 9990.00 root  data:Selection",
 		"│ └─Selection 9990.00 cop[tikv]  not(isnull(test_dr_join.touter.b))",
 		"│   └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo",
-		"└─IndexLookUp(Probe) 1.25 root partition:all ",
-		"  ├─Selection(Build) 1.25 cop[tikv]  not(isnull(test_dr_join.thash.b))",
-		"  │ └─IndexRangeScan 1.25 cop[tikv] table:thash, index:idx_b(b) range: decided by [eq(test_dr_join.thash.b, test_dr_join.touter.b)], keep order:false, stats:pseudo",
-		"  └─TableRowIDScan(Probe) 1.25 cop[tikv] table:thash keep order:false, stats:pseudo")) // check if IndexLookUp is used
+		"└─IndexLookUp(Probe) 12487.5 root partition:all ",
+		"  ├─Selection(Build) 12487.5 cop[tikv]  not(isnull(test_dr_join.thash.b))",
+		"  │ └─IndexRangeScan 12500.00 cop[tikv] table:thash, index:idx_b(b) range: decided by [eq(test_dr_join.thash.b, test_dr_join.touter.b)], keep order:false, stats:pseudo",
+		"  └─TableRowIDScan(Probe) 12487.5 cop[tikv] table:thash keep order:false, stats:pseudo")) // check if IndexLookUp is used
 	tk.MustQuery(queryPartition).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 
 	// test tableReader + hash
@@ -616,8 +616,8 @@ func TestDirectReadingwithIndexJoin(t *testing.T) {
 		"├─TableReader(Build) 9990.00 root  data:Selection",
 		"│ └─Selection 9990.00 cop[tikv]  not(isnull(test_dr_join.touter.a))",
 		"│   └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo",
-		"└─TableReader(Probe) 1.00 root partition:all data:TableRangeScan",
-		"  └─TableRangeScan 1.00 cop[tikv] table:thash range: decided by [test_dr_join.touter.a], keep order:false, stats:pseudo")) // check if tableReader is used
+		"└─TableReader(Probe) 9990.00 root partition:all data:TableRangeScan",
+		"  └─TableRangeScan 9990.00 cop[tikv] table:thash range: decided by [test_dr_join.touter.a], keep order:false, stats:pseudo")) // check if tableReader is used
 	tk.MustQuery(queryPartition).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 
 	// test indexReader + hash
@@ -628,9 +628,9 @@ func TestDirectReadingwithIndexJoin(t *testing.T) {
 		"├─TableReader(Build) 9990.00 root  data:Selection",
 		"│ └─Selection 9990.00 cop[tikv]  not(isnull(test_dr_join.touter.b))",
 		"│   └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo",
-		"└─IndexReader(Probe) 1.25 root partition:all index:Selection",
-		"  └─Selection 1.25 cop[tikv]  not(isnull(test_dr_join.thash.b))",
-		"    └─IndexRangeScan 1.25 cop[tikv] table:thash, index:idx_b(b) range: decided by [eq(test_dr_join.thash.b, test_dr_join.touter.b)], keep order:false, stats:pseudo")) // check if indexReader is used
+		"└─IndexReader(Probe) 12487.5 root partition:all index:Selection",
+		"  └─Selection 12487.5 cop[tikv]  not(isnull(test_dr_join.thash.b))",
+		"    └─IndexRangeScan 12500.00 cop[tikv] table:thash, index:idx_b(b) range: decided by [eq(test_dr_join.thash.b, test_dr_join.touter.b)], keep order:false, stats:pseudo")) // check if indexReader is used
 	tk.MustQuery(queryPartition).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 
 	// test indexLookUp + range
@@ -642,10 +642,10 @@ func TestDirectReadingwithIndexJoin(t *testing.T) {
 		"├─TableReader(Build) 9990.00 root  data:Selection",
 		"│ └─Selection 9990.00 cop[tikv]  not(isnull(test_dr_join.touter.b))",
 		"│   └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo",
-		"└─IndexLookUp(Probe) 1.25 root partition:all ",
-		"  ├─Selection(Build) 1.25 cop[tikv]  not(isnull(test_dr_join.trange.b))",
-		"  │ └─IndexRangeScan 1.25 cop[tikv] table:trange, index:idx_b(b) range: decided by [eq(test_dr_join.trange.b, test_dr_join.touter.b)], keep order:false, stats:pseudo",
-		"  └─TableRowIDScan(Probe) 1.25 cop[tikv] table:trange keep order:false, stats:pseudo")) // check if IndexLookUp is used
+		"└─IndexLookUp(Probe) 12487.5 root partition:all ",
+		"  ├─Selection(Build) 12487.5 cop[tikv]  not(isnull(test_dr_join.trange.b))",
+		"  │ └─IndexRangeScan 12500.00 cop[tikv] table:trange, index:idx_b(b) range: decided by [eq(test_dr_join.trange.b, test_dr_join.touter.b)], keep order:false, stats:pseudo",
+		"  └─TableRowIDScan(Probe) 12487.5 cop[tikv] table:trange keep order:false, stats:pseudo")) // check if IndexLookUp is used
 	tk.MustQuery(queryPartition).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 
 	// test tableReader + range
@@ -656,8 +656,8 @@ func TestDirectReadingwithIndexJoin(t *testing.T) {
 		"├─TableReader(Build) 9990.00 root  data:Selection",
 		"│ └─Selection 9990.00 cop[tikv]  not(isnull(test_dr_join.touter.a))",
 		"│   └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo",
-		"└─TableReader(Probe) 1.00 root partition:all data:TableRangeScan",
-		"  └─TableRangeScan 1.00 cop[tikv] table:trange range: decided by [test_dr_join.touter.a], keep order:false, stats:pseudo")) // check if tableReader is used
+		"└─TableReader(Probe) 9990.00 root partition:all data:TableRangeScan",
+		"  └─TableRangeScan 9990.00 cop[tikv] table:trange range: decided by [test_dr_join.touter.a], keep order:false, stats:pseudo")) // check if tableReader is used
 	tk.MustQuery(queryPartition).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 
 	// test indexReader + range
@@ -669,9 +669,9 @@ func TestDirectReadingwithIndexJoin(t *testing.T) {
 		"├─TableReader(Build) 9990.00 root  data:Selection",
 		"│ └─Selection 9990.00 cop[tikv]  not(isnull(test_dr_join.touter.b))",
 		"│   └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo",
-		"└─IndexReader(Probe) 1.25 root partition:all index:Selection",
-		"  └─Selection 1.25 cop[tikv]  not(isnull(test_dr_join.trange.b))",
-		"    └─IndexRangeScan 1.25 cop[tikv] table:trange, index:idx_b(b) range: decided by [eq(test_dr_join.trange.b, test_dr_join.touter.b)], keep order:false, stats:pseudo")) // check if indexReader is used
+		"└─IndexReader(Probe) 12487.5 root partition:all index:Selection",
+		"  └─Selection 12487.5 cop[tikv]  not(isnull(test_dr_join.trange.b))",
+		"    └─IndexRangeScan 12500.00 cop[tikv] table:trange, index:idx_b(b) range: decided by [eq(test_dr_join.trange.b, test_dr_join.touter.b)], keep order:false, stats:pseudo")) // check if indexReader is used
 	tk.MustQuery(queryPartition).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 }
 
@@ -705,9 +705,9 @@ func TestDynamicPruningUnderIndexJoin(t *testing.T) {
 		`├─TableReader(Build) 9990.00 root  data:Selection`,
 		`│ └─Selection 9990.00 cop[tikv]  not(isnull(pruing_under_index_join.touter.b))`,
 		`│   └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo`,
-		`└─IndexReader(Probe) 1.25 root partition:all index:Selection`,
-		`  └─Selection 1.25 cop[tikv]  not(isnull(pruing_under_index_join.thash.b))`,
-		`    └─IndexRangeScan 1.25 cop[tikv] table:thash, index:idx_b(b) range: decided by [eq(pruing_under_index_join.thash.b, pruing_under_index_join.touter.b)], keep order:false, stats:pseudo`))
+		`└─IndexReader(Probe) 12487.50 root partition:all index:Selection`,
+		`  └─Selection 12487.50 cop[tikv]  not(isnull(pruing_under_index_join.thash.b))`,
+		`    └─IndexRangeScan 12500.00 cop[tikv] table:thash, index:idx_b(b) range: decided by [eq(pruing_under_index_join.thash.b, pruing_under_index_join.touter.b)], keep order:false, stats:pseudo`))
 	tk.MustQuery(`select /*+ INL_JOIN(touter, thash) */ thash.b from touter join thash use index(idx_b) on touter.b = thash.b`).Sort().Check(
 		tk.MustQuery(`select /*+ INL_JOIN(touter, tnormal) */ tnormal.b from touter join tnormal use index(idx_b) on touter.b = tnormal.b`).Sort().Rows())
 
@@ -717,8 +717,8 @@ func TestDynamicPruningUnderIndexJoin(t *testing.T) {
 		`├─TableReader(Build) 9990.00 root  data:Selection`,
 		`│ └─Selection 9990.00 cop[tikv]  not(isnull(pruing_under_index_join.touter.b))`,
 		`│   └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo`,
-		`└─TableReader(Probe) 1.00 root partition:all data:TableRangeScan`,
-		`  └─TableRangeScan 1.00 cop[tikv] table:thash range: decided by [pruing_under_index_join.touter.b], keep order:false, stats:pseudo`))
+		`└─TableReader(Probe) 9990.00 root partition:all data:TableRangeScan`,
+		`  └─TableRangeScan 9990.00 cop[tikv] table:thash range: decided by [pruing_under_index_join.touter.b], keep order:false, stats:pseudo`))
 	tk.MustQuery(`select /*+ INL_JOIN(touter, thash) */ thash.* from touter join thash use index(primary) on touter.b = thash.a`).Sort().Check(
 		tk.MustQuery(`select /*+ INL_JOIN(touter, tnormal) */ tnormal.* from touter join tnormal use index(primary) on touter.b = tnormal.a`).Sort().Rows())
 
@@ -728,10 +728,10 @@ func TestDynamicPruningUnderIndexJoin(t *testing.T) {
 		`├─TableReader(Build) 9990.00 root  data:Selection`,
 		`│ └─Selection 9990.00 cop[tikv]  not(isnull(pruing_under_index_join.touter.b))`,
 		`│   └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo`,
-		`└─IndexLookUp(Probe) 1.25 root partition:all `,
-		`  ├─Selection(Build) 1.25 cop[tikv]  not(isnull(pruing_under_index_join.thash.b))`,
-		`  │ └─IndexRangeScan 1.25 cop[tikv] table:thash, index:idx_b(b) range: decided by [eq(pruing_under_index_join.thash.b, pruing_under_index_join.touter.b)], keep order:false, stats:pseudo`,
-		`  └─TableRowIDScan(Probe) 1.25 cop[tikv] table:thash keep order:false, stats:pseudo`))
+		`└─IndexLookUp(Probe) 12487.50 root partition:all `,
+		`  ├─Selection(Build) 12487.50 cop[tikv]  not(isnull(pruing_under_index_join.thash.b))`,
+		`  │ └─IndexRangeScan 12500.00 cop[tikv] table:thash, index:idx_b(b) range: decided by [eq(pruing_under_index_join.thash.b, pruing_under_index_join.touter.b)], keep order:false, stats:pseudo`,
+		`  └─TableRowIDScan(Probe) 12487.50 cop[tikv] table:thash keep order:false, stats:pseudo`))
 	tk.MustQuery(`select /*+ INL_JOIN(touter, thash) */ thash.* from touter join thash use index(idx_b) on touter.b = thash.b`).Sort().Check(
 		tk.MustQuery(`select /*+ INL_JOIN(touter, tnormal) */ tnormal.* from touter join tnormal use index(idx_b) on touter.b = tnormal.b`).Sort().Rows())
 }
@@ -2150,11 +2150,11 @@ func TestParallelApply(t *testing.T) {
 		`└─Apply 10000.00 root  CARTESIAN inner join, other cond:gt(cast(test_parallel_apply.touter.a, decimal(10,0) BINARY), Column#7)`,
 		`  ├─TableReader(Build) 10000.00 root  data:TableFullScan`,
 		`  │ └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo`,
-		`  └─StreamAgg(Probe) 1.00 root  funcs:sum(Column#9)->Column#7`,
-		`    └─IndexReader 1.00 root partition:all index:StreamAgg`, // IndexReader is a inner child of Apply
-		`      └─StreamAgg 1.00 cop[tikv]  funcs:sum(test_parallel_apply.thash.a)->Column#9`,
-		`        └─Selection 8000.00 cop[tikv]  gt(test_parallel_apply.thash.a, test_parallel_apply.touter.b)`,
-		`          └─IndexFullScan 10000.00 cop[tikv] table:thash, index:a(a) keep order:false, stats:pseudo`))
+		`  └─StreamAgg(Probe) 10000.00 root  funcs:sum(Column#9)->Column#7`,
+		`    └─IndexReader 10000.00 root partition:all index:StreamAgg`, // IndexReader is a inner child of Apply
+		`      └─StreamAgg 10000.00 cop[tikv]  funcs:sum(test_parallel_apply.thash.a)->Column#9`,
+		`        └─Selection 80000000.00 cop[tikv]  gt(test_parallel_apply.thash.a, test_parallel_apply.touter.b)`,
+		`          └─IndexFullScan 100000000.00 cop[tikv] table:thash, index:a(a) keep order:false, stats:pseudo`))
 	tk.MustQuery(`select * from touter where touter.a > (select sum(thash.a) from thash use index(a) where thash.a>touter.b)`).Sort().Check(
 		tk.MustQuery(`select * from touter where touter.a > (select sum(tinner.a) from tinner use index(a) where tinner.a>touter.b)`).Sort().Rows())
 
@@ -2164,11 +2164,11 @@ func TestParallelApply(t *testing.T) {
 		`└─Apply 10000.00 root  CARTESIAN inner join, other cond:gt(cast(test_parallel_apply.touter.a, decimal(10,0) BINARY), Column#7)`,
 		`  ├─TableReader(Build) 10000.00 root  data:TableFullScan`,
 		`  │ └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo`,
-		`  └─StreamAgg(Probe) 1.00 root  funcs:sum(Column#9)->Column#7`,
-		`    └─TableReader 1.00 root partition:all data:StreamAgg`, // TableReader is a inner child of Apply
-		`      └─StreamAgg 1.00 cop[tikv]  funcs:sum(test_parallel_apply.thash.b)->Column#9`,
-		`        └─Selection 8000.00 cop[tikv]  gt(test_parallel_apply.thash.a, test_parallel_apply.touter.b)`,
-		`          └─TableFullScan 10000.00 cop[tikv] table:thash keep order:false, stats:pseudo`))
+		`  └─StreamAgg(Probe) 10000.00 root  funcs:sum(Column#9)->Column#7`,
+		`    └─TableReader 10000.00 root partition:all data:StreamAgg`, // TableReader is a inner child of Apply
+		`      └─StreamAgg 10000.00 cop[tikv]  funcs:sum(test_parallel_apply.thash.b)->Column#9`,
+		`        └─Selection 80000000.00 cop[tikv]  gt(test_parallel_apply.thash.a, test_parallel_apply.touter.b)`,
+		`          └─TableFullScan 100000000.00 cop[tikv] table:thash keep order:false, stats:pseudo`))
 	tk.MustQuery(`select * from touter where touter.a > (select sum(thash.b) from thash ignore index(a) where thash.a>touter.b)`).Sort().Check(
 		tk.MustQuery(`select * from touter where touter.a > (select sum(tinner.b) from tinner ignore index(a) where tinner.a>touter.b)`).Sort().Rows())
 
@@ -2178,12 +2178,12 @@ func TestParallelApply(t *testing.T) {
 		`└─Apply 10000.00 root  CARTESIAN inner join, other cond:gt(cast(test_parallel_apply.touter.a, decimal(10,0) BINARY), Column#7)`,
 		`  ├─TableReader(Build) 10000.00 root  data:TableFullScan`,
 		`  │ └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo`,
-		`  └─HashAgg(Probe) 1.00 root  funcs:sum(Column#9)->Column#7`,
-		`    └─IndexLookUp 1.00 root  `, // IndexLookUp is a inner child of Apply
-		`      ├─Selection(Build) 8000.00 cop[tikv]  gt(test_parallel_apply.tinner.a, test_parallel_apply.touter.b)`,
-		`      │ └─IndexFullScan 10000.00 cop[tikv] table:tinner, index:a(a) keep order:false, stats:pseudo`,
-		`      └─HashAgg(Probe) 1.00 cop[tikv]  funcs:sum(test_parallel_apply.tinner.b)->Column#9`,
-		`        └─TableRowIDScan 8000.00 cop[tikv] table:tinner keep order:false, stats:pseudo`))
+		`  └─HashAgg(Probe) 10000.00 root  funcs:sum(Column#9)->Column#7`,
+		`    └─IndexLookUp 10000.00 root  `, // IndexLookUp is a inner child of Apply
+		`      ├─Selection(Build) 80000000.00 cop[tikv]  gt(test_parallel_apply.tinner.a, test_parallel_apply.touter.b)`,
+		`      │ └─IndexFullScan 100000000.00 cop[tikv] table:tinner, index:a(a) keep order:false, stats:pseudo`,
+		`      └─HashAgg(Probe) 10000.00 cop[tikv]  funcs:sum(test_parallel_apply.tinner.b)->Column#9`,
+		`        └─TableRowIDScan 80000000.00 cop[tikv] table:tinner keep order:false, stats:pseudo`))
 	tk.MustQuery(`select * from touter where touter.a > (select sum(thash.b) from thash use index(a) where thash.a>touter.b)`).Sort().Check(
 		tk.MustQuery(`select * from touter where touter.a > (select sum(tinner.b) from tinner use index(a) where tinner.a>touter.b)`).Sort().Rows())
 
@@ -2193,11 +2193,11 @@ func TestParallelApply(t *testing.T) {
 		`└─Apply 10000.00 root  CARTESIAN inner join, other cond:gt(cast(test_parallel_apply.touter.a, decimal(10,0) BINARY), Column#7)`,
 		`  ├─TableReader(Build) 10000.00 root  data:TableFullScan`,
 		`  │ └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo`,
-		`  └─StreamAgg(Probe) 1.00 root  funcs:sum(Column#9)->Column#7`,
-		`    └─IndexReader 1.00 root partition:all index:StreamAgg`, // IndexReader is a inner child of Apply
-		`      └─StreamAgg 1.00 cop[tikv]  funcs:sum(test_parallel_apply.trange.a)->Column#9`,
-		`        └─Selection 8000.00 cop[tikv]  gt(test_parallel_apply.trange.a, test_parallel_apply.touter.b)`,
-		`          └─IndexFullScan 10000.00 cop[tikv] table:trange, index:a(a) keep order:false, stats:pseudo`))
+		`  └─StreamAgg(Probe) 10000.00 root  funcs:sum(Column#9)->Column#7`,
+		`    └─IndexReader 10000.00 root partition:all index:StreamAgg`, // IndexReader is a inner child of Apply
+		`      └─StreamAgg 10000.00 cop[tikv]  funcs:sum(test_parallel_apply.trange.a)->Column#9`,
+		`        └─Selection 80000000.00 cop[tikv]  gt(test_parallel_apply.trange.a, test_parallel_apply.touter.b)`,
+		`          └─IndexFullScan 100000000.00 cop[tikv] table:trange, index:a(a) keep order:false, stats:pseudo`))
 	tk.MustQuery(`select * from touter where touter.a > (select sum(trange.a) from trange use index(a) where trange.a>touter.b)`).Sort().Check(
 		tk.MustQuery(`select * from touter where touter.a > (select sum(tinner.a) from tinner use index(a) where tinner.a>touter.b)`).Sort().Rows())
 
@@ -2207,11 +2207,11 @@ func TestParallelApply(t *testing.T) {
 		`└─Apply 10000.00 root  CARTESIAN inner join, other cond:gt(cast(test_parallel_apply.touter.a, decimal(10,0) BINARY), Column#7)`,
 		`  ├─TableReader(Build) 10000.00 root  data:TableFullScan`,
 		`  │ └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo`,
-		`  └─StreamAgg(Probe) 1.00 root  funcs:sum(Column#9)->Column#7`,
-		`    └─TableReader 1.00 root partition:all data:StreamAgg`, // TableReader is a inner child of Apply
-		`      └─StreamAgg 1.00 cop[tikv]  funcs:sum(test_parallel_apply.trange.b)->Column#9`,
-		`        └─Selection 8000.00 cop[tikv]  gt(test_parallel_apply.trange.a, test_parallel_apply.touter.b)`,
-		`          └─TableFullScan 10000.00 cop[tikv] table:trange keep order:false, stats:pseudo`))
+		`  └─StreamAgg(Probe) 10000.00 root  funcs:sum(Column#9)->Column#7`,
+		`    └─TableReader 10000.00 root partition:all data:StreamAgg`, // TableReader is a inner child of Apply
+		`      └─StreamAgg 10000.00 cop[tikv]  funcs:sum(test_parallel_apply.trange.b)->Column#9`,
+		`        └─Selection 80000000.00 cop[tikv]  gt(test_parallel_apply.trange.a, test_parallel_apply.touter.b)`,
+		`          └─TableFullScan 100000000.00 cop[tikv] table:trange keep order:false, stats:pseudo`))
 	tk.MustQuery(`select * from touter where touter.a > (select sum(trange.b) from trange ignore index(a) where trange.a>touter.b)`).Sort().Check(
 		tk.MustQuery(`select * from touter where touter.a > (select sum(tinner.b) from tinner ignore index(a) where tinner.a>touter.b)`).Sort().Rows())
 
@@ -2221,12 +2221,12 @@ func TestParallelApply(t *testing.T) {
 		`└─Apply 10000.00 root  CARTESIAN inner join, other cond:gt(cast(test_parallel_apply.touter.a, decimal(10,0) BINARY), Column#7)`,
 		`  ├─TableReader(Build) 10000.00 root  data:TableFullScan`,
 		`  │ └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo`,
-		`  └─HashAgg(Probe) 1.00 root  funcs:sum(Column#9)->Column#7`,
-		`    └─IndexLookUp 1.00 root  `, // IndexLookUp is a inner child of Apply
-		`      ├─Selection(Build) 8000.00 cop[tikv]  gt(test_parallel_apply.tinner.a, test_parallel_apply.touter.b)`,
-		`      │ └─IndexFullScan 10000.00 cop[tikv] table:tinner, index:a(a) keep order:false, stats:pseudo`,
-		`      └─HashAgg(Probe) 1.00 cop[tikv]  funcs:sum(test_parallel_apply.tinner.b)->Column#9`,
-		`        └─TableRowIDScan 8000.00 cop[tikv] table:tinner keep order:false, stats:pseudo`))
+		`  └─HashAgg(Probe) 10000.00 root  funcs:sum(Column#9)->Column#7`,
+		`    └─IndexLookUp 10000.00 root  `, // IndexLookUp is a inner child of Apply
+		`      ├─Selection(Build) 80000000.00 cop[tikv]  gt(test_parallel_apply.tinner.a, test_parallel_apply.touter.b)`,
+		`      │ └─IndexFullScan 100000000.00 cop[tikv] table:tinner, index:a(a) keep order:false, stats:pseudo`,
+		`      └─HashAgg(Probe) 10000.00 cop[tikv]  funcs:sum(test_parallel_apply.tinner.b)->Column#9`,
+		`        └─TableRowIDScan 80000000.00 cop[tikv] table:tinner keep order:false, stats:pseudo`))
 	tk.MustQuery(`select * from touter where touter.a > (select sum(trange.b) from trange use index(a) where trange.a>touter.b)`).Sort().Check(
 		tk.MustQuery(`select * from touter where touter.a > (select sum(tinner.b) from tinner use index(a) where tinner.a>touter.b)`).Sort().Rows())
 
