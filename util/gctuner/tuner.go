@@ -68,6 +68,7 @@ func GetGOGC() uint32 {
 }
 
 // only allow one gc tuner in one process
+// It is not thread-safe. so it is private to avoid misuse.
 var globalTuner *tuner
 
 /*
