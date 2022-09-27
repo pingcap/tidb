@@ -5221,7 +5221,7 @@ func (b *executorBuilder) buildCompactTable(v *plannercore.CompactTable) Executo
 	return &CompactTableTiFlashExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		tableInfo:    v.TableInfo,
-		PartitionIDs: partitionIDs,
+		partitionIDs: partitionIDs,
 		tikvStore:    tikvStore,
 	}
 }
