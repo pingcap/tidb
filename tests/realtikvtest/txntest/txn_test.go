@@ -200,6 +200,6 @@ func TestWriteConflictMessage(t *testing.T) {
 	tk.MustExec("insert into t2 values ('hello')")
 	err = tk.ExecToErr("commit")
 	require.Contains(t, err.Error(), "Write conflict")
-	require.Contains(t, err.Error(), "tableName=test.t2, handle=&{[1 104 101 108 108 111 0 0 0 252] [10]}")
+	require.Contains(t, err.Error(), "tableName=test.t2, handle={hello}")
 	require.Contains(t, err.Error(), "reason=Optimistic")
 }

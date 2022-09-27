@@ -17,6 +17,7 @@ package txn
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -163,8 +164,10 @@ func newWriteConflictError(conflict *kvrpcpb.WriteConflict) error {
 	var bufPrimaryKeyTableID bytes.Buffer  // table id part of primary key
 	var bufPrimaryKeyRest bytes.Buffer     // the rest part of primary key
 	prettyWriteKey(&bufConflictKeyTableID, &bufConflictKeyRest, conflict.Key)
+	bufConflictKeyRest.WriteString(", originalKey=" + hex.EncodeToString(conflict.Key))
 	bufConflictKeyRest.WriteString(", primary=")
 	prettyWriteKey(&bufPrimaryKeyTableID, &bufPrimaryKeyRest, conflict.Primary)
+	bufPrimaryKeyRest.WriteString(", originalPrimaryKey=" + hex.EncodeToString(conflict.Primary))
 	return kv.ErrWriteConflict.FastGenByArgs(conflict.StartTs, conflict.ConflictTs, conflict.ConflictCommitTs,
 		bufConflictKeyTableID.String(), bufConflictKeyRest.String(), bufPrimaryKeyTableID.String(),
 		bufPrimaryKeyRest.String(), conflict.Reason.String(),
@@ -198,7 +201,7 @@ func prettyWriteKey(bufTableID, bufRest *bytes.Buffer, key []byte) {
 		if err3 != nil {
 			logutil.BgLogger().Error("error", zap.Error(err3))
 		}
-		_, err3 = fmt.Fprintf(bufRest, ", handle=%d}", handle)
+		_, err3 = fmt.Fprintf(bufRest, ", handle=%s}", handle.String())
 		if err3 != nil {
 			logutil.BgLogger().Error("error", zap.Error(err3))
 		}
