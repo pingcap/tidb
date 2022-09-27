@@ -28,6 +28,7 @@ import (
 // MockSessionManager is a mocked session manager which is used for test.
 type MockSessionManager struct {
 	PS      []*util.ProcessInfo
+	PSMu    sync.RWMutex
 	SerID   uint64
 	TxnInfo []*txninfo.TxnInfo
 	conn    map[uint64]session.Session
@@ -36,6 +37,8 @@ type MockSessionManager struct {
 
 // ShowTxnList is to show txn list.
 func (msm *MockSessionManager) ShowTxnList() []*txninfo.TxnInfo {
+	msm.mu.Lock()
+	defer msm.mu.Unlock()
 	if len(msm.TxnInfo) > 0 {
 		return msm.TxnInfo
 	}
@@ -51,6 +54,8 @@ func (msm *MockSessionManager) ShowTxnList() []*txninfo.TxnInfo {
 
 // ShowProcessList implements the SessionManager.ShowProcessList interface.
 func (msm *MockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo {
+	msm.PSMu.RLock()
+	defer msm.PSMu.RUnlock()
 	ret := make(map[uint64]*util.ProcessInfo)
 	if len(msm.PS) > 0 {
 		for _, item := range msm.PS {
@@ -58,14 +63,18 @@ func (msm *MockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo {
 		}
 		return ret
 	}
+	msm.mu.Lock()
 	for connID, pi := range msm.conn {
 		ret[connID] = pi.ShowProcess()
 	}
+	msm.mu.Unlock()
 	return ret
 }
 
 // GetProcessInfo implements the SessionManager.GetProcessInfo interface.
 func (msm *MockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
+	msm.PSMu.RLock()
+	defer msm.PSMu.RUnlock()
 	for _, item := range msm.PS {
 		if item.ID == id {
 			return item, true
@@ -121,7 +130,9 @@ func (msm *MockSessionManager) KillNonFlashbackClusterConn() {
 
 // CheckOldRunningTxn is to get all startTS of every transactions running in the current internal sessions
 func (msm *MockSessionManager) CheckOldRunningTxn(job2ver map[int64]int64, job2ids map[int64]string) {
+	msm.mu.Lock()
 	for _, se := range msm.conn {
 		session.RemoveLockDDLJobs(se, job2ver, job2ids)
 	}
+	msm.mu.Unlock()
 }
