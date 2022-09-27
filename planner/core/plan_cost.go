@@ -68,23 +68,25 @@ func (p *PhysicalSelection) GetPlanCost(taskType property.TaskType, option *Plan
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
 		return p.planCost, nil
 	}
-	if p.ctx.GetSessionVars().CostModelVersion == modelVer2 {
-		return p.getPlanCostVer2(taskType, option)
-	}
 
 	var selfCost float64
-	var cpuFactor float64
-	switch taskType {
-	case property.RootTaskType, property.MppTaskType:
-		cpuFactor = p.ctx.GetSessionVars().GetCPUFactor()
-	case property.CopSingleReadTaskType, property.CopDoubleReadTaskType:
-		cpuFactor = p.ctx.GetSessionVars().GetCopCPUFactor()
-	default:
-		return 0, errors.Errorf("unknown task type %v", taskType)
-	}
-	selfCost = getCardinality(p.children[0], costFlag) * cpuFactor
-	if p.fromDataSource {
-		selfCost = 0 // for compatibility, see https://github.com/pingcap/tidb/issues/36243
+	switch p.ctx.GetSessionVars().CostModelVersion {
+	case modelVer1: // selection cost: rows * cpu-factor
+		var cpuFactor float64
+		switch taskType {
+		case property.RootTaskType, property.MppTaskType:
+			cpuFactor = p.ctx.GetSessionVars().GetCPUFactor()
+		case property.CopSingleReadTaskType, property.CopDoubleReadTaskType:
+			cpuFactor = p.ctx.GetSessionVars().GetCopCPUFactor()
+		default:
+			return 0, errors.Errorf("unknown task type %v", taskType)
+		}
+		selfCost = getCardinality(p.children[0], costFlag) * cpuFactor
+		if p.fromDataSource {
+			selfCost = 0 // for compatibility, see https://github.com/pingcap/tidb/issues/36243
+		}
+	case modelVer2:
+		return p.getPlanCostVer2(taskType, option)
 	}
 
 	childCost, err := p.children[0].GetPlanCost(taskType, option)
@@ -431,16 +433,21 @@ func (p *PhysicalTableScan) GetPlanCost(taskType property.TaskType, option *Plan
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
 		return p.planCost, nil
 	}
-	if p.ctx.GetSessionVars().CostModelVersion == modelVer2 {
-		return p.getPlanCostVer2(taskType, option)
-	}
 
 	var selfCost float64
 	var rowCount, rowSize, scanFactor float64
 	costModelVersion := p.ctx.GetSessionVars().CostModelVersion
-	scanFactor = p.ctx.GetSessionVars().GetScanFactor(p.Table)
-	if p.Desc && p.prop != nil && p.prop.ExpectedCnt >= smallScanThreshold {
-		scanFactor = p.ctx.GetSessionVars().GetDescScanFactor(p.Table)
+	switch costModelVersion {
+	case modelVer1: // scan cost: rows * row-size * scan-factor
+		scanFactor = p.ctx.GetSessionVars().GetScanFactor(p.Table)
+		if p.Desc && p.prop != nil && p.prop.ExpectedCnt >= smallScanThreshold {
+			scanFactor = p.ctx.GetSessionVars().GetDescScanFactor(p.Table)
+		}
+		rowCount = getCardinality(p, costFlag)
+		rowSize = p.getScanRowSize()
+		selfCost = rowCount * rowSize * scanFactor
+	case modelVer2:
+		return p.getPlanCostVer2(taskType, option)
 	}
 	rowCount = getCardinality(p, costFlag)
 	rowSize = p.getScanRowSize()
