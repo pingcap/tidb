@@ -390,7 +390,7 @@ id	estRows	task	access object	operator info
 MergeJoin_28	8000.00	root		inner join, left key:test.t1.c1, right key:test.t1.c1
 ├─Sort_26(Build)	6400.00	root		test.t1.c1
 │ └─Selection_24	6400.00	root		not(isnull(test.t1.c1))
-│   └─CTEFullScan_25	8000.00	root	CTE:dt2	data:CTE_0
+│   └─CTEFullScan_25	8000.00	root	CTE:cte1 AS dt2	data:CTE_0
 └─Sort_22(Probe)	9990.00	root		test.t1.c1
   └─TableReader_21	9990.00	root		data:Selection_20
     └─Selection_20	9990.00	cop[tikv]		not(isnull(test.t1.c1))
@@ -415,7 +415,7 @@ id	estRows	task	access object	operator info
 MergeJoin_26	8000.00	root		inner join, left key:test.tpk.c1, right key:test.tpk.c1
 ├─Sort_24(Build)	6400.00	root		test.tpk.c1
 │ └─Selection_22	6400.00	root		not(isnull(test.tpk.c1))
-│   └─CTEFullScan_23	8000.00	root	CTE:dt2	data:CTE_0
+│   └─CTEFullScan_23	8000.00	root	CTE:cte1 AS dt2	data:CTE_0
 └─TableReader_20(Probe)	10000.00	root		data:TableFullScan_19
   └─TableFullScan_19	10000.00	cop[tikv]	table:dt1	keep order:true, stats:pseudo
 CTE_0	8000.00	root		Non-Recursive CTE
@@ -433,7 +433,7 @@ id	estRows	task	access object	operator info
 MergeJoin_32	8000.00	root		inner join, left key:test.t1.c1, right key:test.t1.c1
 ├─Sort_30(Build)	6400.00	root		test.t1.c1
 │ └─Selection_28	6400.00	root		not(isnull(test.t1.c1))
-│   └─CTEFullScan_29	8000.00	root	CTE:dt2	data:CTE_0
+│   └─CTEFullScan_29	8000.00	root	CTE:cte1 AS dt2	data:CTE_0
 └─Sort_26(Probe)	9990.00	root		test.t1.c1
   └─TableReader_25	9990.00	root		data:Selection_24
     └─Selection_24	9990.00	cop[tikv]		not(isnull(test.t1.c1))
@@ -459,7 +459,7 @@ id	estRows	task	access object	operator info
 MergeJoin_35	8001.00	root		inner join, left key:test.t1.c1, right key:test.t1.c1
 ├─Sort_33(Build)	6400.80	root		test.t1.c1
 │ └─Selection_31	6400.80	root		not(isnull(test.t1.c1))
-│   └─CTEFullScan_32	8001.00	root	CTE:dt2	data:CTE_0
+│   └─CTEFullScan_32	8001.00	root	CTE:cte1 AS dt2	data:CTE_0
 └─Sort_29(Probe)	9990.00	root		test.t1.c1
   └─TableReader_28	9990.00	root		data:Selection_27
     └─Selection_27	9990.00	cop[tikv]		not(isnull(test.t1.c1))
@@ -482,7 +482,7 @@ id	estRows	task	access object	operator info
 MergeJoin_35	8001.00	root		inner join, left key:test.t1.c1, right key:test.tpk.c1
 ├─Sort_33(Build)	6400.80	root		test.tpk.c1
 │ └─Selection_31	6400.80	root		not(isnull(test.tpk.c1))
-│   └─CTEFullScan_32	8001.00	root	CTE:dt2	data:CTE_0
+│   └─CTEFullScan_32	8001.00	root	CTE:cte1 AS dt2	data:CTE_0
 └─Sort_29(Probe)	9990.00	root		test.t1.c1
   └─TableReader_28	9990.00	root		data:Selection_27
     └─Selection_27	9990.00	cop[tikv]		not(isnull(test.t1.c1))
@@ -506,7 +506,7 @@ id	estRows	task	access object	operator info
 MergeJoin_32	8000.00	root		inner join, left key:test.t1.c1, right key:test.t1.c1
 ├─Sort_30(Build)	6400.00	root		test.t1.c1
 │ └─Selection_28	6400.00	root		not(isnull(test.t1.c1))
-│   └─CTEFullScan_29	8000.00	root	CTE:dt2	data:CTE_0
+│   └─CTEFullScan_29	8000.00	root	CTE:cte1 AS dt2	data:CTE_0
 └─Sort_26(Probe)	9990.00	root		test.t1.c1
   └─TableReader_25	9990.00	root		data:Selection_24
     └─Selection_24	9990.00	cop[tikv]		not(isnull(test.t1.c1))
@@ -532,7 +532,7 @@ id	estRows	task	access object	operator info
 MergeJoin_34	8000.00	root		inner join, left key:test.t1.c1, right key:test.tpk.c1
 ├─Sort_32(Build)	6400.00	root		test.tpk.c1
 │ └─Selection_30	6400.00	root		not(isnull(test.tpk.c1))
-│   └─CTEFullScan_31	8000.00	root	CTE:dt2	data:CTE_0
+│   └─CTEFullScan_31	8000.00	root	CTE:cte1 AS dt2	data:CTE_0
 └─Sort_28(Probe)	9990.00	root		test.t1.c1
   └─TableReader_27	9990.00	root		data:Selection_26
     └─Selection_26	9990.00	cop[tikv]		not(isnull(test.t1.c1))
@@ -553,7 +553,7 @@ id	estRows	task	access object	operator info
 Sort_15	64000000.00	root		test.t1.c1, test.t1.c1
 └─HashJoin_18	64000000.00	root		CARTESIAN inner join
   ├─Selection_22(Build)	6400.00	root		eq(test.t1.c1, 1)
-  │ └─CTEFullScan_23	8000.00	root	CTE:dt2	data:CTE_0
+  │ └─CTEFullScan_23	8000.00	root	CTE:cte1 AS dt2	data:CTE_0
   └─TableReader_21(Probe)	10000.00	root		data:TableFullScan_20
     └─TableFullScan_20	10000.00	cop[tikv]	table:dt1	keep order:false, stats:pseudo
 CTE_0	8000.00	root		Non-Recursive CTE
@@ -575,7 +575,7 @@ id	estRows	task	access object	operator info
 Sort_15	64000000.00	root		test.t1.c1, test.tpk.c1
 └─HashJoin_18	64000000.00	root		CARTESIAN inner join
   ├─Selection_22(Build)	6400.00	root		eq(test.tpk.c1, 1)
-  │ └─CTEFullScan_23	8000.00	root	CTE:dt2	data:CTE_0
+  │ └─CTEFullScan_23	8000.00	root	CTE:cte1 AS dt2	data:CTE_0
   └─TableReader_21(Probe)	10000.00	root		data:TableFullScan_20
     └─TableFullScan_20	10000.00	cop[tikv]	table:dt1	keep order:false, stats:pseudo
 CTE_0	8000.00	root		Non-Recursive CTE
@@ -599,11 +599,11 @@ id	estRows	task	access object	operator info
 Projection_20	10000.00	root		test.tpk1.c1, test.tpk.c1, test.tpk.c1
 └─HashJoin_22	10000.00	root		inner join, equal:[eq(test.tpk.c1, test.tpk.c1)]
   ├─Selection_23(Build)	6400.00	root		not(isnull(test.tpk.c1))
-  │ └─CTEFullScan_24	8000.00	root	CTE:dt3	data:CTE_0
+  │ └─CTEFullScan_24	8000.00	root	CTE:cte1 AS dt3	data:CTE_0
   └─MergeJoin_25(Probe)	8000.00	root		inner join, left key:test.tpk1.c1, right key:test.tpk.c1
     ├─Sort_31(Build)	6400.00	root		test.tpk.c1
     │ └─Selection_29	6400.00	root		not(isnull(test.tpk.c1))
-    │   └─CTEFullScan_30	8000.00	root	CTE:dt2	data:CTE_0
+    │   └─CTEFullScan_30	8000.00	root	CTE:cte1 AS dt2	data:CTE_0
     └─TableReader_27(Probe)	10000.00	root		data:TableFullScan_26
       └─TableFullScan_26	10000.00	cop[tikv]	table:dt1	keep order:true, stats:pseudo
 CTE_0	8000.00	root		Non-Recursive CTE
