@@ -193,4 +193,13 @@ func TestWriteConflictMessage(t *testing.T) {
 	require.Contains(t, err.Error(), "Write conflict")
 	require.Contains(t, err.Error(), "tableName=test.t, handle=1}")
 	require.Contains(t, err.Error(), "reason=Optimistic")
+
+	tk.MustExec("create table t2 (id varchar(30) primary key clustered)")
+	tk.MustExec("begin optimistic")
+	tk2.MustExec("insert into t2 values ('hello')")
+	tk.MustExec("insert into t2 values ('hello')")
+	err = tk.ExecToErr("commit")
+	require.Contains(t, err.Error(), "Write conflict")
+	require.Contains(t, err.Error(), "tableName=test.t2, handle=&{[1 104 101 108 108 111 0 0 0 252] [10]}")
+	require.Contains(t, err.Error(), "reason=Optimistic")
 }
