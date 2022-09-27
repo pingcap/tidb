@@ -162,7 +162,7 @@ func (task *storeCompactTask) work() error {
 				break
 			}
 		}
-	} else if task.parentExec.PartitionIDs != nil {
+	} else if len(task.parentExec.PartitionIDs) != 0 {
 		// User specify partitions, let's do it partition by partition.
 		// There is no need for partition-level concurrency, as TiFlash will limit table compaction one at a time.
 		task.allPhysicalTables = len(task.parentExec.PartitionIDs)
