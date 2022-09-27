@@ -17,7 +17,6 @@ package executor
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"math"
 	"strconv"
 	"strings"
@@ -30,7 +29,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/placement"
@@ -74,7 +72,6 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
-	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 )
 
@@ -5220,12 +5217,7 @@ func (b *executorBuilder) buildCompactTable(v *plannercore.CompactTable) Executo
 			partitionIDs = append(partitionIDs, partitionID)
 		}
 	}
-	log.Info("build CompactTableTiFlashExec",
-		zap.String("table", v.TableInfo.Name.O),
-		zap.Int64("table-id", v.TableInfo.ID),
-		zap.String("partition-name", fmt.Sprintf("%v", v.PartitionNames)),
-		zap.String("partition-id", fmt.Sprintf("%v", partitionIDs)),
-	)
+
 	return &CompactTableTiFlashExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		tableInfo:    v.TableInfo,

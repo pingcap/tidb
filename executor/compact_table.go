@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
-	"fmt"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -141,33 +140,25 @@ func (task *storeCompactTask) work() error {
 	log.Info("Begin compacting table in a store",
 		zap.String("table", task.parentExec.tableInfo.Name.O),
 		zap.Int64("table-id", task.parentExec.tableInfo.ID),
-		zap.String("partition-id", fmt.Sprintf("%v", task.parentExec.PartitionIDs)),
+		zap.Int64s("partition-id", task.parentExec.PartitionIDs),
 		zap.String("store-address", task.targetStore.Address),
 	)
 
 	task.startAt = time.Now()
 	task.lastProgressOutputAt = task.startAt
 
-	if task.parentExec.tableInfo.Partition != nil && len(task.parentExec.PartitionIDs) == 0 {
-		// There are partitions, let's do it partition by partition.
+	if task.parentExec.tableInfo.Partition != nil {
 		// There is no need for partition-level concurrency, as TiFlash will limit table compaction one at a time.
-		allPartitions := task.parentExec.tableInfo.Partition.Definitions
-		task.allPhysicalTables = len(allPartitions)
-		task.compactedPhysicalTables = 0
-		for _, partition := range allPartitions {
-			stopAllTasks, err = task.compactOnePhysicalTable(partition.ID)
-			task.compactedPhysicalTables++
-			if err != nil {
-				// Stop remaining partitions when error happens.
-				break
+		allPartitions := task.parentExec.PartitionIDs
+		if len(allPartitions) == 0 {
+			// There are partitions, but user did not specify partitions.
+			for _, definition := range task.parentExec.tableInfo.Partition.Definitions {
+				allPartitions = append(allPartitions, definition.ID)
 			}
 		}
-	} else if len(task.parentExec.PartitionIDs) != 0 {
-		// User specify partitions, let's do it partition by partition.
-		// There is no need for partition-level concurrency, as TiFlash will limit table compaction one at a time.
-		task.allPhysicalTables = len(task.parentExec.PartitionIDs)
+		task.allPhysicalTables = len(allPartitions)
 		task.compactedPhysicalTables = 0
-		for _, partitionID := range task.parentExec.PartitionIDs {
+		for _, partitionID := range allPartitions {
 			stopAllTasks, err = task.compactOnePhysicalTable(partitionID)
 			task.compactedPhysicalTables++
 			if err != nil {
@@ -187,7 +178,7 @@ func (task *storeCompactTask) work() error {
 			zap.Duration("elapsed", time.Since(task.startAt)),
 			zap.String("table", task.parentExec.tableInfo.Name.O),
 			zap.Int64("table-id", task.parentExec.tableInfo.ID),
-			zap.String("partition-id", fmt.Sprintf("%v", task.parentExec.PartitionIDs)),
+			zap.Int64s("partition-id", task.parentExec.PartitionIDs),
 			zap.String("store-address", task.targetStore.Address),
 		)
 	}
@@ -204,7 +195,7 @@ func (task *storeCompactTask) logFailure(otherFields ...zap.Field) {
 	allFields := []zap.Field{
 		zap.String("table", task.parentExec.tableInfo.Name.O),
 		zap.Int64("table-id", task.parentExec.tableInfo.ID),
-		zap.String("partition-id", fmt.Sprintf("%v", task.parentExec.PartitionIDs)),
+		zap.Int64s("partition-id", task.parentExec.PartitionIDs),
 		zap.String("store-address", task.targetStore.Address),
 	}
 	log.Warn("Compact table failed", append(allFields, otherFields...)...)
@@ -219,7 +210,7 @@ func (task *storeCompactTask) logProgressOptionally() {
 			zap.Duration("elapsed", time.Since(task.startAt)),
 			zap.String("table", task.parentExec.tableInfo.Name.O),
 			zap.Int64("table-id", task.parentExec.tableInfo.ID),
-			zap.String("partition-id", fmt.Sprintf("%v", task.parentExec.PartitionIDs)),
+			zap.Int64s("partition-id", task.parentExec.PartitionIDs),
 			zap.String("store-address", task.targetStore.Address),
 			zap.Int("all-physical-tables", task.allPhysicalTables),
 			zap.Int("compacted-physical-tables", task.compactedPhysicalTables),
