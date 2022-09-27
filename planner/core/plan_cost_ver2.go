@@ -15,6 +15,7 @@
 package core
 
 import (
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"math"
 
 	"github.com/pingcap/tidb/kv"
@@ -100,7 +101,7 @@ func (p *PhysicalTableScan) getPlanCostVer2(taskType property.TaskType, option *
 // seek-cost = num-tasks * seek-factor
 func (p *PhysicalIndexReader) getPlanCostVer2(taskType property.TaskType, option *PlanCostOption) (float64, error) {
 	rows := getCardinality(p.indexPlan, option.CostFlag)
-	rowSize := getTblStats(p.indexPlan).GetAvgRowSize(p.ctx, p.indexPlan.Schema().Columns, true, false)
+	rowSize := getAvgRowSize(p.indexPlan.Stats(), p.indexPlan.Schema())
 	netFactor := getTaskNetFactor(p, taskType)
 	concurrency := float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
 
@@ -123,7 +124,7 @@ func (p *PhysicalIndexReader) getPlanCostVer2(taskType property.TaskType, option
 // seek-cost = num-tasks * seek-factor
 func (p *PhysicalTableReader) getPlanCostVer2(taskType property.TaskType, option *PlanCostOption) (float64, error) {
 	rows := getCardinality(p.tablePlan, option.CostFlag)
-	rowSize := getTblStats(p.tablePlan).GetAvgRowSize(p.ctx, p.tablePlan.Schema().Columns, true, false)
+	rowSize := getAvgRowSize(p.tablePlan.Stats(), p.tablePlan.Schema())
 	netFactor := getTaskNetFactor(p, taskType)
 	concurrency := float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
 
@@ -208,7 +209,7 @@ func (p *PhysicalIndexMergeReader) getPlanCostVer2(taskType property.TaskType, o
 	var tableSideCost float64
 	if tablePath := p.tablePlan; tablePath != nil {
 		rows := getCardinality(tablePath, option.CostFlag)
-		rowSize := getTblStats(tablePath).GetAvgRowSize(p.ctx, tablePath.Schema().Columns, false, false)
+		rowSize := getAvgRowSize(tablePath.Stats(), tablePath.Schema())
 
 		tableNetCost := rows * rowSize * netFactor
 		tableSeekCost := estimateNetSeekCost(tablePath)
@@ -222,7 +223,7 @@ func (p *PhysicalIndexMergeReader) getPlanCostVer2(taskType property.TaskType, o
 	var sumIndexSideCost float64
 	for _, indexPath := range p.partialPlans {
 		rows := getCardinality(indexPath, option.CostFlag)
-		rowSize := getTblStats(indexPath).GetAvgRowSize(p.ctx, indexPath.Schema().Columns, false, false)
+		rowSize := getAvgRowSize(indexPath.Stats(), indexPath.Schema())
 
 		indexNetCost := rows * rowSize * netFactor
 		indexSeekCost := estimateNetSeekCost(indexPath)
@@ -238,6 +239,47 @@ func (p *PhysicalIndexMergeReader) getPlanCostVer2(taskType property.TaskType, o
 	return p.planCost, nil
 }
 
+// getPlanCostVer2 returns the plan-cost of this sub-plan, which is:
+// plan-cost = child-cost + sort-cpu-cost + sort-mem-cost + sort-disk-cost
+// sort-cpu-cost = rows * log2(rows) * len(sort-items) * cpu-factor
+// if no spill:
+// 1. sort-mem-cost = rows * row-size * mem-factor
+// 2. sort-disk-cost = 0
+// else if spill:
+// 1. sort-mem-cost = mem-quota * mem-factor
+// 2. sort-disk-cost = rows * row-size * disk-factor
+func (p *PhysicalSort) getPlanCostVer2(taskType property.TaskType, option *PlanCostOption) (float64, error) {
+	rows := math.Max(getCardinality(p.children[0], option.CostFlag), 1)
+	rowSize := getAvgRowSize(p.statsInfo(), p.Schema())
+	cpuFactor := getTaskCPUFactor(p, taskType)
+	memFactor := getTaskMemFactor(p, taskType)
+	diskFactor := p.ctx.GetSessionVars().GetDiskFactor()
+	oomUseTmpStorage := variable.EnableTmpStorageOnOOM.Load()
+	memQuota := p.ctx.GetSessionVars().StmtCtx.MemTracker.GetBytesLimit()
+	spill := taskType == property.RootTaskType && // only TiDB can spill
+		oomUseTmpStorage && // spill is enabled
+		memQuota > 0 && // mem-quota is set
+		rowSize*rows > float64(memQuota) // exceed the mem-quota
+
+	sortCPUCost := rows * math.Log2(rows) * cpuFactor
+
+	var sortMemCost, sortDiskCost float64
+	if !spill {
+		sortMemCost = rows * rowSize * memFactor
+		sortDiskCost = 0
+	} else {
+		sortMemCost = float64(memQuota) * memFactor
+		sortDiskCost = rows * rowSize * diskFactor
+	}
+
+	p.planCost = sortCPUCost + sortMemCost + sortDiskCost
+	p.planCostInit = true
+	return p.planCost, nil
+}
+
+func (p *PhysicalTopN) getPlanCostVer2(taskType property.TaskType, option *PlanCostOption) (float64, error) {
+}
+
 func getTaskCPUFactor(p PhysicalPlan, taskType property.TaskType) float64 {
 	switch taskType {
 	case property.RootTaskType: // TiDB
@@ -247,6 +289,11 @@ func getTaskCPUFactor(p PhysicalPlan, taskType property.TaskType) float64 {
 	default: // TiKV
 		return p.SCtx().GetSessionVars().GetCopCPUFactor()
 	}
+}
+
+func getTaskMemFactor(p PhysicalPlan, taskType property.TaskType) float64 {
+	// TODO: introduce a dedicated mem factor for TiFlash
+	return p.SCtx().GetSessionVars().GetMemoryFactor()
 }
 
 func getTaskScanFactor(p PhysicalPlan, taskType property.TaskType) float64 {
