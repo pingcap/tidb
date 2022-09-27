@@ -552,7 +552,6 @@ func propagateProbeParents(plan PhysicalPlan, probeParents []PhysicalPlan) {
 			propagateProbeParents(child, probeParents)
 		}
 	}
-	return
 }
 
 // useTiFlash used to check whether the plan use the TiFlash engine.

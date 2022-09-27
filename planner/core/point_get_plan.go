@@ -15,7 +15,6 @@
 package core
 
 import (
-	"github.com/pingcap/tidb/util/execdetails"
 	math2 "math"
 	"sort"
 	"strconv"
@@ -43,6 +42,7 @@ import (
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/plancodec"
