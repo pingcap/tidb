@@ -1202,7 +1202,13 @@ func (h schemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			writeData(w, data.Meta())
 			return
 		}
-		writeError(w, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID))
+		// The tid maybe a partition ID of the partition-table.
+		tbl, _, _ := schema.FindTableByPartitionID(int64(tid))
+		if tbl == nil {
+			writeError(w, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID))
+			return
+		}
+		writeData(w, tbl.Meta())
 		return
 	}
 

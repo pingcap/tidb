@@ -514,11 +514,21 @@ type schemaAndTable struct {
 	table  string
 }
 
-func newForeignKeyHelper(schema string, schemaID int64, tblInfo *model.TableInfo) foreignKeyHelper {
-	h := foreignKeyHelper{loaded: make(map[schemaAndTable]schemaIDAndTableInfo)}
-	k := schemaAndTable{schema: schema, table: tblInfo.Name.L}
+func newForeignKeyHelper() foreignKeyHelper {
+	return foreignKeyHelper{loaded: make(map[schemaAndTable]schemaIDAndTableInfo)}
+}
+
+func (h *foreignKeyHelper) addLoadedTable(schemaName, tableName string, schemaID int64, tblInfo *model.TableInfo) {
+	k := schemaAndTable{schema: schemaName, table: tableName}
 	h.loaded[k] = schemaIDAndTableInfo{schemaID: schemaID, tblInfo: tblInfo}
-	return h
+}
+
+func (h *foreignKeyHelper) getLoadedTables() []schemaIDAndTableInfo {
+	tableList := make([]schemaIDAndTableInfo, 0, len(h.loaded))
+	for _, info := range h.loaded {
+		tableList = append(tableList, info)
+	}
+	return tableList
 }
 
 func (h *foreignKeyHelper) getTableFromStorage(is infoschema.InfoSchema, t *meta.Meta, schema, table model.CIStr) (result schemaIDAndTableInfo, _ error) {
