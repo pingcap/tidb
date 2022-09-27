@@ -2617,7 +2617,7 @@ func TestRcReadCheckTSConflict(t *testing.T) {
 
 	ctx := context.Background()
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/fetchNextErr", "return(\"secondNextAndRetConflict\")"))
-	err := cc.handleQuery(ctx, "select * from t")
+	err := cc.handleQuery(ctx, "select * from t limit 20")
 	require.NoError(t, err)
 
 	err = cc.handleQuery(ctx, "select * from t t1 join t t2")
