@@ -269,7 +269,7 @@ func (h *memoryDebugModeHandler) run() {
 					for _, t := range ts {
 						logs = append(logs, zap.String("Executor_"+strconv.Itoa(t.Label()), memory.FormatBytes(t.BytesConsumed())))
 					}
-					logutil.BgLogger().Warn("Memory Debug Mode, Log all trackers that consumes more than threshold * 20%", logs...)
+					logutil.BgLogger().Warn("Memory Debug Mode, Log all executors that consumes more than threshold * 20%", logs...)
 					logutil.BgLogger().Warn("Memory Debug Mode, Log all trackers and print the tracker tree", h.getTrackerTreeMemUseLogs()...)
 				}
 			}
