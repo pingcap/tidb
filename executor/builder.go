@@ -5200,9 +5200,32 @@ func (b *executorBuilder) buildCompactTable(v *plannercore.CompactTable) Executo
 		return nil
 	}
 
+	var partitionIDs []int64
+	if v.PartitionNames != nil {
+		if v.TableInfo.Partition == nil {
+			b.err = errors.Errorf("table:%s is not a partition table, but user specify partition name list:%+v", v.TableInfo.Name.O, v.PartitionNames)
+			return nil
+		}
+		// use map to avoid FindPartitionDefinitionByName
+		partitionMap := map[string]int64{}
+		for _, partition := range v.TableInfo.Partition.Definitions {
+			partitionMap[partition.Name.L] = partition.ID
+		}
+
+		for _, partitionName := range v.PartitionNames {
+			partitionID, ok := partitionMap[partitionName.L]
+			if !ok {
+				b.err = table.ErrUnknownPartition.GenWithStackByArgs(partitionName.O, v.TableInfo.Name.O)
+				return nil
+			}
+			partitionIDs = append(partitionIDs, partitionID)
+		}
+	}
+
 	return &CompactTableTiFlashExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		tableInfo:    v.TableInfo,
+		partitionIDs: partitionIDs,
 		tikvStore:    tikvStore,
 	}
 }
