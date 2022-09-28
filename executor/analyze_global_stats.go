@@ -83,7 +83,7 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, needGlobalStats boo
 					logutil.Logger(ctx).Error("save global-level stats to storage failed", zap.Error(err))
 				}
 				// Dump stats to historical storage.
-				if err := e.recordHistoricalStats(globalStatsID.tableID); err != nil {
+				if err := recordHistoricalStats(e.ctx, globalStatsID.tableID); err != nil {
 					logutil.BgLogger().Error("record historical stats failed", zap.Error(err))
 				}
 			}

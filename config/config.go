@@ -640,14 +640,15 @@ type Performance struct {
 	ProjectionPushDown bool   `toml:"projection-push-down" json:"projection-push-down"`
 	MaxTxnTTL          uint64 `toml:"max-txn-ttl" json:"max-txn-ttl"`
 	// Deprecated
-	MemProfileInterval       string `toml:"-" json:"-"`
-	IndexUsageSyncLease      string `toml:"index-usage-sync-lease" json:"index-usage-sync-lease"`
-	PlanReplayerGCLease      string `toml:"plan-replayer-gc-lease" json:"plan-replayer-gc-lease"`
-	GOGC                     int    `toml:"gogc" json:"gogc"`
-	EnforceMPP               bool   `toml:"enforce-mpp" json:"enforce-mpp"`
-	StatsLoadConcurrency     uint   `toml:"stats-load-concurrency" json:"stats-load-concurrency"`
-	StatsLoadQueueSize       uint   `toml:"stats-load-queue-size" json:"stats-load-queue-size"`
-	EnableStatsCacheMemQuota bool   `toml:"enable-stats-cache-mem-quota" json:"enable-stats-cache-mem-quota"`
+	MemProfileInterval               string `toml:"-" json:"-"`
+	IndexUsageSyncLease              string `toml:"index-usage-sync-lease" json:"index-usage-sync-lease"`
+	PlanReplayerGCLease              string `toml:"plan-replayer-gc-lease" json:"plan-replayer-gc-lease"`
+	GOGC                             int    `toml:"gogc" json:"gogc"`
+	EnforceMPP                       bool   `toml:"enforce-mpp" json:"enforce-mpp"`
+	StatsLoadConcurrency             uint   `toml:"stats-load-concurrency" json:"stats-load-concurrency"`
+	StatsLoadQueueSize               uint   `toml:"stats-load-queue-size" json:"stats-load-queue-size"`
+	AnalyzePartitionConcurrencyQuota uint   `toml:"analyze-partition-concurrency-quota" json:"analyze-partition-concurrency-quota"`
+	EnableStatsCacheMemQuota         bool   `toml:"enable-stats-cache-mem-quota" json:"enable-stats-cache-mem-quota"`
 	// The following items are deprecated. We need to keep them here temporarily
 	// to support the upgrade process. They can be removed in future.
 
@@ -902,15 +903,16 @@ var defaultConf = Config{
 		CommitterConcurrency:  defTiKVCfg.CommitterConcurrency,
 		MaxTxnTTL:             defTiKVCfg.MaxTxnTTL, // 1hour
 		// TODO: set indexUsageSyncLease to 60s.
-		IndexUsageSyncLease:      "0s",
-		GOGC:                     100,
-		EnforceMPP:               false,
-		PlanReplayerGCLease:      "10m",
-		StatsLoadConcurrency:     5,
-		StatsLoadQueueSize:       1000,
-		EnableStatsCacheMemQuota: false,
-		RunAutoAnalyze:           true,
-		EnableLoadFMSketch:       false,
+		IndexUsageSyncLease:              "0s",
+		GOGC:                             100,
+		EnforceMPP:                       false,
+		PlanReplayerGCLease:              "10m",
+		StatsLoadConcurrency:             5,
+		StatsLoadQueueSize:               1000,
+		AnalyzePartitionConcurrencyQuota: 16,
+		EnableStatsCacheMemQuota:         false,
+		RunAutoAnalyze:                   true,
+		EnableLoadFMSketch:               false,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",

@@ -1240,7 +1240,7 @@ func saveBucketsToStorage(ctx context.Context, exec sqlexec.SQLExecutor, sc *stm
 }
 
 // SaveTableStatsToStorage saves the stats of a table to storage.
-func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, needDumpFMS, analyzeSnapshot bool) (err error) {
+func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, analyzeSnapshot bool) (err error) {
 	tableID := results.TableID.GetStatisticsID()
 	statsVer := uint64(0)
 	defer func() {
@@ -1250,8 +1250,21 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, nee
 	}()
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	return SaveTableStatsToStorage(h.mu.ctx, results, analyzeSnapshot)
+}
+
+// SaveTableStatsToStorage saves the stats of a table to storage.
+func SaveTableStatsToStorage(sctx sessionctx.Context, results *statistics.AnalyzeResults, analyzeSnapshot bool) (err error) {
+	needDumpFMS := results.TableID.IsPartitionTable()
+	tableID := results.TableID.GetStatisticsID()
+	statsVer := uint64(0)
+	defer func() {
+		if err == nil && statsVer != 0 {
+			err = recordHistoricalStatsMeta(sctx, tableID, statsVer)
+		}
+	}()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+	exec := sctx.(sqlexec.SQLExecutor)
 	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
 	if err != nil {
 		return err
@@ -1259,7 +1272,7 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, nee
 	defer func() {
 		err = finishTransaction(ctx, exec, err)
 	}()
-	txn, err := h.mu.ctx.Txn(true)
+	txn, err := sctx.Txn(true)
 	if err != nil {
 		return err
 	}
@@ -1272,7 +1285,7 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, nee
 		return err
 	}
 	var rows []chunk.Row
-	rows, err = sqlexec.DrainRecordSet(ctx, rs, h.mu.ctx.GetSessionVars().MaxChunkSize)
+	rows, err = sqlexec.DrainRecordSet(ctx, rs, sctx.GetSessionVars().MaxChunkSize)
 	if err != nil {
 		return err
 	}
@@ -1369,7 +1382,7 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, nee
 			if _, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_buckets where table_id = %? and is_index = %? and hist_id = %?", tableID, result.IsIndex, hg.ID); err != nil {
 				return err
 			}
-			sc := h.mu.ctx.GetSessionVars().StmtCtx
+			sc := sctx.GetSessionVars().StmtCtx
 			var lastAnalyzePos []byte
 			lastAnalyzePos, err = saveBucketsToStorage(ctx, exec, sc, tableID, result.IsIndex, hg)
 			if err != nil {
@@ -2234,33 +2247,36 @@ func (h *Handle) RecordHistoricalStatsToStorage(dbName string, tableInfo *model.
 	return version, nil
 }
 
-// CheckHistoricalStatsEnable is used to check whether TiDBEnableHistoricalStats is enabled.
-func (h *Handle) CheckHistoricalStatsEnable() (enable bool, err error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	val, err := h.mu.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBEnableHistoricalStats)
+func checkHistoricalStatsEnable(sctx sessionctx.Context) (enable bool, err error) {
+	val, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBEnableHistoricalStats)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
 	return variable.TiDBOptOn(val), nil
 }
 
-func (h *Handle) recordHistoricalStatsMeta(tableID int64, version uint64) error {
+// CheckHistoricalStatsEnable is used to check whether TiDBEnableHistoricalStats is enabled.
+func (h *Handle) CheckHistoricalStatsEnable() (enable bool, err error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return checkHistoricalStatsEnable(h.mu.ctx)
+}
+
+func recordHistoricalStatsMeta(sctx sessionctx.Context, tableID int64, version uint64) error {
 	if tableID == 0 || version == 0 {
 		return errors.Errorf("tableID %d, version %d are invalid", tableID, version)
 	}
-	historicalStatsEnabled, err := h.CheckHistoricalStatsEnable()
+	historicalStatsEnabled, err := checkHistoricalStatsEnable(sctx)
 	if err != nil {
 		return errors.Errorf("check tidb_enable_historical_stats failed: %v", err)
 	}
 	if !historicalStatsEnabled {
 		return nil
 	}
-
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	rows, _, err := h.execRestrictedSQL(ctx, "select modify_count, count from mysql.stats_meta where table_id = %? and version = %?", tableID, version)
+	exec := sctx.(sqlexec.SQLExecutor)
+	rexec := sctx.(sqlexec.RestrictedSQLExecutor)
+	rows, _, err := rexec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, "select modify_count, count from mysql.stats_meta where table_id = %? and version = %?", tableID, version)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2269,7 +2285,6 @@ func (h *Handle) recordHistoricalStatsMeta(tableID int64, version uint64) error 
 	}
 	modifyCount, count := rows[0].GetInt64(0), rows[0].GetInt64(1)
 
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
 	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
 	if err != nil {
 		return errors.Trace(err)
@@ -2283,6 +2298,12 @@ func (h *Handle) recordHistoricalStatsMeta(tableID int64, version uint64) error 
 		return errors.Trace(err)
 	}
 	return nil
+}
+
+func (h *Handle) recordHistoricalStatsMeta(tableID int64, version uint64) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return recordHistoricalStatsMeta(h.mu.ctx, tableID, version)
 }
 
 // InsertAnalyzeJob inserts analyze job into mysql.analyze_jobs and gets job ID for further updating job.

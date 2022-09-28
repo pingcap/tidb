@@ -1288,6 +1288,9 @@ type SessionVars struct {
 
 	// LastPlanReplayerToken indicates the last plan replayer token
 	LastPlanReplayerToken string
+
+	// AnalyzePartitionConcurrency indicates concurrency for partitions in Analyze
+	AnalyzePartitionConcurrency int
 }
 
 // GetPreparedStmtByName returns the prepared statement specified by stmtName.

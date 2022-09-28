@@ -1914,6 +1914,11 @@ var defaultSysVars = []*SysVar{
 		s.RangeMaxSize = TidbOptInt64(val, DefTiDBOptRangeMaxSize)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAnalyzePartitionConcurrency, Value: strconv.FormatInt(DefTiDBAnalyzePartitionConcurrency, 10),
+		MinValue: 1, MaxValue: 16, SetSession: func(s *SessionVars, val string) error {
+			s.AnalyzePartitionConcurrency = int(TidbOptInt64(val, DefTiDBAnalyzePartitionConcurrency))
+			return nil
+		}},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.

@@ -123,6 +123,11 @@ type Domain struct {
 	sysProcesses SysProcesses
 
 	mdlCheckTableInfo *mdlCheckTableInfo
+
+	analyzeMu struct {
+		sync.Mutex
+		sctxs map[sessionctx.Context]bool
+	}
 }
 
 type mdlCheckTableInfo struct {
@@ -1565,6 +1570,43 @@ func (do *Domain) SetStatsUpdating(val bool) {
 		do.statsUpdating.Store(1)
 	} else {
 		do.statsUpdating.Store(0)
+	}
+}
+
+// ReturnAnalyzeExtraExec returned extra exec for Analyze
+func (do *Domain) ReturnAnalyzeExtraExec(sctxs []sessionctx.Context) {
+	do.analyzeMu.Lock()
+	defer do.analyzeMu.Unlock()
+	for _, ctx := range sctxs {
+		do.analyzeMu.sctxs[ctx] = false
+	}
+}
+
+// GetAnalyzeExtraExec get needed extra exec for analyze
+func (do *Domain) GetAnalyzeExtraExec(need int) []sessionctx.Context {
+	count := 0
+	r := make([]sessionctx.Context, 0)
+	do.analyzeMu.Lock()
+	defer do.analyzeMu.Unlock()
+	for sctx, used := range do.analyzeMu.sctxs {
+		if used {
+			continue
+		}
+		r = append(r, sctx)
+		do.analyzeMu.sctxs[sctx] = true
+		count++
+		if count >= need {
+			break
+		}
+	}
+	return r
+}
+
+// SetupAnalyzeExtraExec setups extra exec for Analyze
+func (do *Domain) SetupAnalyzeExtraExec(ctxs []sessionctx.Context) {
+	do.analyzeMu.sctxs = make(map[sessionctx.Context]bool)
+	for _, ctx := range ctxs {
+		do.analyzeMu.sctxs[ctx] = false
 	}
 }
 

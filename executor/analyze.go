@@ -20,6 +20,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -188,8 +189,8 @@ func (e *AnalyzeExec) saveV2AnalyzeOpts() error {
 	return nil
 }
 
-func (e *AnalyzeExec) recordHistoricalStats(tableID int64) error {
-	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
+func recordHistoricalStats(sctx sessionctx.Context, tableID int64) error {
+	statsHandle := domain.GetDomain(sctx).StatsHandle()
 	historicalStatsEnabled, err := statsHandle.CheckHistoricalStatsEnable()
 	if err != nil {
 		return errors.Errorf("check tidb_enable_historical_stats failed: %v", err)
@@ -198,7 +199,7 @@ func (e *AnalyzeExec) recordHistoricalStats(tableID int64) error {
 		return nil
 	}
 
-	is := domain.GetDomain(e.ctx).InfoSchema()
+	is := domain.GetDomain(sctx).InfoSchema()
 	tbl, existed := is.TableByID(tableID)
 	if !existed {
 		return errors.Errorf("cannot get table by id %d", tableID)
@@ -217,6 +218,18 @@ func (e *AnalyzeExec) recordHistoricalStats(tableID int64) error {
 // handleResultsError will handle the error fetch from resultsCh and record it in log
 func (e *AnalyzeExec) handleResultsError(ctx context.Context, concurrency int, needGlobalStats bool,
 	globalStatsMap globalStatsMap, resultsCh <-chan *statistics.AnalyzeResults) error {
+	partitionStatsConcurrency := e.ctx.GetSessionVars().AnalyzePartitionConcurrency
+	if partitionStatsConcurrency > 1 {
+		dom := domain.GetDomain(e.ctx)
+		subSctxs := dom.GetAnalyzeExtraExec(partitionStatsConcurrency)
+		if len(subSctxs) > 0 {
+			internalCtx := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
+			err := e.handleResultsErrorWithConcurrency(internalCtx, concurrency, needGlobalStats, subSctxs, globalStatsMap, resultsCh)
+			dom.ReturnAnalyzeExtraExec(subSctxs)
+			return err
+		}
+	}
+
 	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
 	panicCnt := 0
 	var err error
@@ -235,40 +248,66 @@ func (e *AnalyzeExec) handleResultsError(ctx context.Context, concurrency int, n
 			finishJobWithLog(e.ctx, results.Job, err)
 			continue
 		}
-		if results.TableID.IsPartitionTable() && needGlobalStats {
-			for _, result := range results.Ars {
-				if result.IsIndex == 0 {
-					// If it does not belong to the statistics of index, we need to set it to -1 to distinguish.
-					globalStatsID := globalStatsKey{tableID: results.TableID.TableID, indexID: int64(-1)}
-					histIDs := make([]int64, 0, len(result.Hist))
-					for _, hg := range result.Hist {
-						// It's normal virtual column, skip.
-						if hg == nil {
-							continue
-						}
-						histIDs = append(histIDs, hg.ID)
-					}
-					globalStatsMap[globalStatsID] = globalStatsInfo{isIndex: result.IsIndex, histIDs: histIDs, statsVersion: results.StatsVer}
-				} else {
-					for _, hg := range result.Hist {
-						globalStatsID := globalStatsKey{tableID: results.TableID.TableID, indexID: hg.ID}
-						globalStatsMap[globalStatsID] = globalStatsInfo{isIndex: result.IsIndex, histIDs: []int64{hg.ID}, statsVersion: results.StatsVer}
-					}
-				}
-			}
-		}
-		if err1 := statsHandle.SaveTableStatsToStorage(results, results.TableID.IsPartitionTable(), e.ctx.GetSessionVars().EnableAnalyzeSnapshot); err1 != nil {
+		handleGlobalStats(needGlobalStats, globalStatsMap, results)
+
+		if err1 := statsHandle.SaveTableStatsToStorage(results, e.ctx.GetSessionVars().EnableAnalyzeSnapshot); err1 != nil {
 			err = err1
 			logutil.Logger(ctx).Error("save table stats to storage failed", zap.Error(err))
 			finishJobWithLog(e.ctx, results.Job, err)
 		} else {
 			finishJobWithLog(e.ctx, results.Job, nil)
 			// Dump stats to historical storage.
-			if err := e.recordHistoricalStats(results.TableID.TableID); err != nil {
+			if err := recordHistoricalStats(e.ctx, results.TableID.TableID); err != nil {
 				logutil.BgLogger().Error("record historical stats failed", zap.Error(err))
 			}
 		}
 		invalidInfoSchemaStatCache(results.TableID.GetStatisticsID())
+	}
+	return err
+}
+
+func (e *AnalyzeExec) handleResultsErrorWithConcurrency(ctx context.Context, statsConcurrency int, needGlobalStats bool,
+	subSctxs []sessionctx.Context,
+	globalStatsMap globalStatsMap, resultsCh <-chan *statistics.AnalyzeResults) error {
+	partitionStatsConcurrency := len(subSctxs)
+	wg := &sync.WaitGroup{}
+	saveResultsCh := make(chan *statistics.AnalyzeResults, partitionStatsConcurrency)
+	errCh := make(chan error, partitionStatsConcurrency)
+	wg.Add(partitionStatsConcurrency)
+	for i := 0; i < partitionStatsConcurrency; i++ {
+		worker := newAnalyzeSaveStatsWorker(wg, saveResultsCh, subSctxs[i], errCh)
+		ctx1 := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+		go worker.run(ctx1, e.ctx.GetSessionVars().EnableAnalyzeSnapshot)
+	}
+	panicCnt := 0
+	var err error
+	for panicCnt < statsConcurrency {
+		results, ok := <-resultsCh
+		if !ok {
+			break
+		}
+		if results.Err != nil {
+			err = results.Err
+			if isAnalyzeWorkerPanic(err) {
+				panicCnt++
+			} else {
+				logutil.Logger(ctx).Error("analyze failed", zap.Error(err))
+			}
+			finishJobWithLog(e.ctx, results.Job, err)
+			continue
+		}
+		handleGlobalStats(needGlobalStats, globalStatsMap, results)
+		saveResultsCh <- results
+	}
+	close(saveResultsCh)
+	wg.Wait()
+	close(errCh)
+	if len(errCh) > 0 {
+		errMsg := make([]string, 0)
+		for err1 := range errCh {
+			errMsg = append(errMsg, err1.Error())
+		}
+		err = errors.New(strings.Join(errMsg, ","))
 	}
 	return err
 }
@@ -432,5 +471,30 @@ func finishJobWithLog(sctx sessionctx.Context, job *statistics.AnalyzeJob, analy
 			zap.Time("start time", job.StartTime),
 			zap.Time("end time", job.EndTime),
 			zap.String("cost", job.EndTime.Sub(job.StartTime).String()))
+	}
+}
+
+func handleGlobalStats(needGlobalStats bool, globalStatsMap globalStatsMap, results *statistics.AnalyzeResults) {
+	if results.TableID.IsPartitionTable() && needGlobalStats {
+		for _, result := range results.Ars {
+			if result.IsIndex == 0 {
+				// If it does not belong to the statistics of index, we need to set it to -1 to distinguish.
+				globalStatsID := globalStatsKey{tableID: results.TableID.TableID, indexID: int64(-1)}
+				histIDs := make([]int64, 0, len(result.Hist))
+				for _, hg := range result.Hist {
+					// It's normal virtual column, skip.
+					if hg == nil {
+						continue
+					}
+					histIDs = append(histIDs, hg.ID)
+				}
+				globalStatsMap[globalStatsID] = globalStatsInfo{isIndex: result.IsIndex, histIDs: histIDs, statsVersion: results.StatsVer}
+			} else {
+				for _, hg := range result.Hist {
+					globalStatsID := globalStatsKey{tableID: results.TableID.TableID, indexID: hg.ID}
+					globalStatsMap[globalStatsID] = globalStatsInfo{isIndex: result.IsIndex, histIDs: []int64{hg.ID}, statsVersion: results.StatsVer}
+				}
+			}
+		}
 	}
 }

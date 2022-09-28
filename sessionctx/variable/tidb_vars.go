@@ -770,6 +770,9 @@ const (
 	// ranges would exceed the limit, it chooses less accurate ranges such as full range. 0 indicates that there is no memory
 	// limit for ranges.
 	TiDBOptRangeMaxSize = "tidb_opt_range_max_size"
+
+	// TiDBAnalyzePartitionConcurrency indicates concurrency for partitions in Analyze
+	TiDBAnalyzePartitionConcurrency = "tidb_analyze_partition_concurrency"
 )
 
 // TiDB vars that have only global scope
@@ -1081,6 +1084,7 @@ const (
 	DefTiDBConstraintCheckInPlacePessimistic        = true
 	DefTiDBForeignKeyChecks                         = false
 	DefTiDBOptRangeMaxSize                          = 0
+	DefTiDBAnalyzePartitionConcurrency              = 4
 	DefTiDBCostModelVer                             = 1
 	DefTiDBServerMemoryLimitSessMinSize             = 128 << 20
 )
