@@ -139,7 +139,7 @@ func (e *ShowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
-func (e *ShowExec) fetchAll(ctx context.Context) (err error) {
+func (e *ShowExec) fetchAll(ctx context.Context) error {
 	// Temporary disables select limit to avoid miss the result.
 	// Because some of below fetch show result stmt functions will generate
 	// a SQL stmt and then execute the new SQL stmt to do the fetch result task
