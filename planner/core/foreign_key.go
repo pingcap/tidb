@@ -87,6 +87,7 @@ func (updt *Update) buildOnUpdateFKChecks(ctx sessionctx.Context, is infoschema.
 		tblInfo := tbl.Meta()
 		dbInfo, exist := is.SchemaByTable(tblInfo)
 		if !exist {
+			// Normally, it should never happen. Just check here to avoid panic here.
 			return nil, infoschema.ErrDatabaseNotExists
 		}
 		updateCols := tblID2UpdateColumns[tid]
