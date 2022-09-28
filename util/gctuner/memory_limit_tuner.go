@@ -21,6 +21,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/memory"
 	atomicutil "go.uber.org/atomic"
@@ -50,14 +51,20 @@ func (t *memoryLimitTuner) tuning() {
 	gogc := util.GetGOGC()
 	ratio := float64(100+gogc) / 100
 	// If theoretical NextGC(Equivalent to HeapInUse * (100 + GOGC) / 100) is bigger than MemoryLimit twice in a row,
-	// it means that the second GC is caused by the memory limit
+	// the second GC is caused by MemoryLimit.
 	if r.HeapInuse > uint64(float64(debug.SetMemoryLimit(-1))/ratio) {
 		t.times++
 		if t.times >= 2 && t.coolDown.CompareAndSwap(false, true) {
 			t.times = 0
 			go func() {
 				debug.SetMemoryLimit(math.MaxInt)
-				time.Sleep(1 * time.Minute) // 1 minute to cool down, to avoid frequent GC
+				coolDownTime := 1 * time.Minute // 1 minute to cool down, to avoid frequent GC
+				failpoint.Inject("testMemoryLimitTuner", func(val failpoint.Value) {
+					if val.(bool) {
+						coolDownTime = 1 * time.Second
+					}
+				})
+				time.Sleep(coolDownTime)
 				debug.SetMemoryLimit(t.calcSoftMemoryLimit())
 				for !t.coolDown.CompareAndSwap(true, false) {
 					continue
@@ -69,7 +76,7 @@ func (t *memoryLimitTuner) tuning() {
 	}
 }
 
-func (t *memoryLimitTuner) init() {
+func (t *memoryLimitTuner) start() {
 	t.finalizer = newFinalizer(t.tuning) // start tuning
 }
 
@@ -108,5 +115,5 @@ func (t *memoryLimitTuner) calcSoftMemoryLimit() int64 {
 }
 
 func init() {
-	GlobalMemoryLimitTuner.init()
+	GlobalMemoryLimitTuner.start()
 }

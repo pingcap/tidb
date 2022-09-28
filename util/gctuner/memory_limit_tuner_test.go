@@ -1,0 +1,75 @@
+package gctuner
+
+import (
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/util/memory"
+	"github.com/stretchr/testify/require"
+	"math"
+	"runtime"
+	"runtime/debug"
+	"testing"
+	"time"
+)
+
+type mockAllocator struct {
+	m [][]byte
+}
+
+func (a *mockAllocator) alloc(bytes int) (handle int) {
+	sli := make([]byte, bytes)
+	a.m = append(a.m, sli)
+	return len(a.m) - 1
+}
+
+func (a *mockAllocator) free(handle int) {
+	a.m[handle] = nil
+}
+
+func (a *mockAllocator) freeAll() {
+	a.m = nil
+	runtime.GC()
+}
+
+func TestGlobalMemoryTuner(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/util/gctuner/testMemoryLimitTuner", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/gctuner/testMemoryLimitTuner"))
+	}()
+	memory.ServerMemoryLimit.Store(1 << 30)   // 1GB
+	GlobalMemoryLimitTuner.SetPercentage(0.8) // 1GB * 80% = 800MB
+	GlobalMemoryLimitTuner.UpdateMemoryLimit()
+	require.True(t, GlobalMemoryLimitTuner.isTuning.Load())
+
+	allocator := &mockAllocator{}
+	defer allocator.freeAll()
+	r := &runtime.MemStats{}
+	getNowGCNum := func() uint32 {
+		runtime.ReadMemStats(r)
+		return r.NumGC
+	}
+
+	memory600mb := allocator.alloc(600 << 20)
+	gcNum := getNowGCNum()
+
+	memory210mb := allocator.alloc(210 << 20)
+	require.True(t, gcNum < getNowGCNum())
+	// Test Cool Down
+	time.Sleep(500 * time.Millisecond)
+	require.Equal(t, int64(math.MaxInt64), debug.SetMemoryLimit(-1))
+	gcNum = getNowGCNum()
+	memory100mb := allocator.alloc(100 << 20)
+	require.Equal(t, gcNum, getNowGCNum()) // No GC
+
+	allocator.free(memory210mb)
+	allocator.free(memory100mb)
+	// Can GC in 80% again
+	time.Sleep(500 * time.Millisecond)
+	require.Equal(t, GlobalMemoryLimitTuner.calcSoftMemoryLimit(), debug.SetMemoryLimit(-1))
+	gcNum = getNowGCNum()
+	memory210mb = allocator.alloc(210 << 20)
+	time.Sleep(100 * time.Millisecond)
+	require.True(t, gcNum < getNowGCNum())
+	allocator.free(memory210mb)
+	allocator.free(memory600mb)
+	time.Sleep(1 * time.Second) // If test.count > 1, wait tuning finished.
+}
