@@ -245,6 +245,9 @@ func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h kv.Handl
 	sc := ctx.GetSessionVars().StmtCtx
 	for _, fkc := range fkChecks {
 		err = fkc.deleteRowNeedToCheck(sc, data)
+		if err != nil {
+			return err
+		}
 	}
 	e.memTracker.Consume(int64(txnState.Size() - memUsageOfTxnState))
 	ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
