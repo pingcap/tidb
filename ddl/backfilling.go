@@ -320,7 +320,9 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 
 		// Dynamic change batch size.
 		w.batchCnt = int(variable.GetDDLReorgBatchSize())
+		finish := injectSpan(job.ID, "handle-backfill-task")
 		result := w.handleBackfillTask(d, task, bf)
+		finish()
 		w.resultCh <- result
 	}
 	logutil.BgLogger().Info("[ddl] backfill worker exit",
@@ -467,6 +469,7 @@ func tryDecodeToHandleString(key kv.Key) string {
 // handleRangeTasks sends tasks to workers, and returns remaining kvRanges that is not handled.
 func (dc *ddlCtx) handleRangeTasks(sessPool *sessionPool, t table.Table, workers []*backfillWorker, reorgInfo *reorgInfo,
 	totalAddedCount *int64, kvRanges []kv.KeyRange) ([]kv.KeyRange, error) {
+	defer injectSpan(reorgInfo.ID, "send-wait-tasks")()
 	batchTasks := make([]*reorgBackfillTask, 0, len(workers))
 	physicalTableID := reorgInfo.PhysicalTableID
 
@@ -618,10 +621,13 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 	jc := dc.jobContext(job)
 
 	for {
+		finish := injectSpan(job.ID, "split-table-ranges")
 		kvRanges, err := splitTableRanges(t, reorgInfo.d.store, startKey, endKey)
 		if err != nil {
+			finish()
 			return errors.Trace(err)
 		}
+		finish()
 
 		// For dynamic adjust backfill worker number.
 		if err := loadDDLReorgVars(dc.ctx, sessPool); err != nil {
