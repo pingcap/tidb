@@ -1211,7 +1211,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionRenameIndex:
 		ver, err = onRenameIndex(d, t, job)
 	case model.ActionAddForeignKey:
-		ver, err = onCreateForeignKey(d, t, job)
+		ver, err = w.onCreateForeignKey(d, t, job)
 	case model.ActionDropForeignKey:
 		ver, err = onDropForeignKey(d, t, job)
 	case model.ActionTruncateTable:
