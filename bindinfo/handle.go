@@ -108,19 +108,7 @@ type bindRecordUpdate struct {
 // NewBindHandle creates a new BindHandle.
 func NewBindHandle(ctx sessionctx.Context) *BindHandle {
 	handle := &BindHandle{}
-	handle.sctx.Context = ctx
-	handle.bindInfo.Value.Store(newBindCache())
-	handle.bindInfo.parser = parser.New()
-	handle.invalidBindRecordMap.Value.Store(make(map[string]*bindRecordUpdate))
-	handle.invalidBindRecordMap.flushFunc = func(record *BindRecord) error {
-		return handle.DropBindRecord(record.OriginalSQL, record.Db, &record.Bindings[0])
-	}
-	handle.pendingVerifyBindRecordMap.Value.Store(make(map[string]*bindRecordUpdate))
-	handle.pendingVerifyBindRecordMap.flushFunc = func(record *BindRecord) error {
-		// BindSQL has already been validated when coming here, so we use nil sctx parameter.
-		return handle.AddBindRecord(nil, record)
-	}
-	variable.RegisterStatistics(handle)
+	handle.Reset(ctx)
 	return handle
 }
 
