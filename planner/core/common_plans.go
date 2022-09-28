@@ -566,6 +566,20 @@ type LoadStats struct {
 	Path string
 }
 
+// LockStats represents a lock stats for table
+type LockStats struct {
+	baseSchemaProducer
+
+	Tables []*ast.TableName
+}
+
+// UnlockStats represents a unlock stats for table
+type UnlockStats struct {
+	baseSchemaProducer
+
+	Tables []*ast.TableName
+}
+
 // PlanReplayer represents a plan replayer plan.
 type PlanReplayer struct {
 	baseSchemaProducer

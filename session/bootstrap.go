@@ -447,6 +447,13 @@ const (
 		plan_digest VARCHAR(128) NOT NULL,
 		update_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 		PRIMARY KEY (sql_digest,plan_digest));`
+	// CreateStatsTableLocked stores the locked tables
+	CreateStatsTableLocked = `CREATE TABLE IF NOT EXISTS mysql.stats_table_locked(
+		table_id bigint(64) NOT NULL,
+		modify_count bigint(64) NOT NULL DEFAULT 0,
+		count bigint(64) NOT NULL DEFAULT 0,
+		version bigint(64) UNSIGNED NOT NULL DEFAULT 0,
+		PRIMARY KEY (table_id));`
 )
 
 // bootstrap initiates system DB for a store.
@@ -665,11 +672,13 @@ const (
 	version101 = 101
 	// version102 add mysql.plan_replayer_task table
 	version102 = 102
+	// version103 adds the tables mysql.stats_table_locked
+	version103 = 103
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version102
+var currentBootstrapVersion int64 = version103
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -776,6 +785,7 @@ var (
 		upgradeToVer100,
 		upgradeToVer101,
 		upgradeToVer102,
+		upgradeToVer103,
 	}
 )
 
@@ -2024,6 +2034,13 @@ func upgradeToVer102(s Session, ver int64) {
 	doReentrantDDL(s, CreatePlanReplayerTaskTable)
 }
 
+func upgradeToVer103(s Session, ver int64) {
+	if ver >= version103 {
+		return
+	}
+	doReentrantDDL(s, CreateStatsTableLocked)
+}
+
 func upgradeToVer99Before(s Session, ver int64) bool {
 	if ver >= version99 {
 		return false
@@ -2163,6 +2180,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreatePlanReplayerStatusTable)
 	// Create plan_replayer_task table
 	mustExecute(s, CreatePlanReplayerTaskTable)
+	// Create stats_meta_table_locked table
+	mustExecute(s, CreateStatsTableLocked)
 }
 
 // inTestSuite checks if we are bootstrapping in the context of tests.
