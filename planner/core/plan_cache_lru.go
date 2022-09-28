@@ -169,6 +169,9 @@ func (l *LRUPlanCache) SetCapacity(capacity uint) error {
 // removeOldest removes the oldest element from the cache.
 func (l *LRUPlanCache) removeOldest() {
 	lru := l.lruList.Back()
+	if lru == nil {
+		return
+	}
 	if l.onEvict != nil {
 		l.onEvict(lru.Value.(*planCacheEntry).PlanKey, lru.Value.(*planCacheEntry).PlanValue)
 	}
@@ -191,7 +194,7 @@ func (l *LRUPlanCache) memoryControl() {
 	}
 
 	memUsed, _ := memory.InstanceMemUsed()
-	for memUsed > uint64(float64(l.quota)*(1.0-l.guard)) {
+	for memUsed > uint64(float64(l.quota)*(1.0-l.guard)) && l.size > 0 {
 		l.removeOldest()
 		memUsed, _ = memory.InstanceMemUsed()
 	}

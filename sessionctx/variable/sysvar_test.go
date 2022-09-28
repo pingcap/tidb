@@ -17,6 +17,7 @@ package variable
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"strconv"
 	"sync/atomic"
 	"testing"
@@ -349,6 +350,10 @@ func TestInstanceScopedVars(t *testing.T) {
 	val, err = vars.GetSessionOrGlobalSystemVar(TiDBLogFileMaxDays)
 	require.NoError(t, err)
 	require.Equal(t, fmt.Sprint(GlobalLogMaxDays.Load()), val)
+
+	val, err = vars.GetSessionOrGlobalSystemVar(TiDBRCReadCheckTS)
+	require.NoError(t, err)
+	require.Equal(t, BoolToOnOff(EnableRCReadCheckTS.Load()), val)
 }
 
 func TestSecureAuth(t *testing.T) {
@@ -741,4 +746,81 @@ func TestSetTIDBDiskQuota(t *testing.T) {
 	val, err = mock.GetGlobalSysVar(TiDBDDLDiskQuota)
 	require.NoError(t, err)
 	require.Equal(t, strconv.FormatInt(pb, 10), val)
+}
+
+func TestTiDBServerMemoryLimit(t *testing.T) {
+	vars := NewSessionVars()
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+	var (
+		mb  uint64 = 1 << 20
+		err error
+		val string
+	)
+	// Test tidb_server_memory_limit
+	serverMemoryLimit := GetSysVar(TiDBServerMemoryLimit)
+	// Check default value
+	require.Equal(t, serverMemoryLimit.Value, strconv.FormatUint(DefTiDBServerMemoryLimit, 10))
+
+	// MinValue is 512 MB
+	err = mock.SetGlobalSysVar(TiDBServerMemoryLimit, strconv.FormatUint(100*mb, 10))
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimit)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatUint(512*mb, 10), val)
+
+	// Test Close
+	err = mock.SetGlobalSysVar(TiDBServerMemoryLimit, strconv.FormatUint(0, 10))
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimit)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatUint(0, 10), val)
+
+	// Test MaxValue
+	err = mock.SetGlobalSysVar(TiDBServerMemoryLimit, strconv.FormatUint(math.MaxUint64, 10))
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimit)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatUint(math.MaxUint64, 10), val)
+
+	// Test Normal Value
+	err = mock.SetGlobalSysVar(TiDBServerMemoryLimit, strconv.FormatUint(1024*mb, 10))
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimit)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatUint(1024*mb, 10), val)
+
+	// Test tidb_server_memory_limit_sess_min_size
+	serverMemoryLimitSessMinSize := GetSysVar(TiDBServerMemoryLimitSessMinSize)
+	// Check default value
+	require.Equal(t, serverMemoryLimitSessMinSize.Value, strconv.FormatUint(DefTiDBServerMemoryLimitSessMinSize, 10))
+
+	// MinValue is 128 Bytes
+	err = mock.SetGlobalSysVar(TiDBServerMemoryLimitSessMinSize, strconv.FormatUint(100, 10))
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimitSessMinSize)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatUint(128, 10), val)
+
+	// Test Close
+	err = mock.SetGlobalSysVar(TiDBServerMemoryLimitSessMinSize, strconv.FormatUint(0, 10))
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimitSessMinSize)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatUint(0, 10), val)
+
+	// Test MaxValue
+	err = mock.SetGlobalSysVar(TiDBServerMemoryLimitSessMinSize, strconv.FormatUint(math.MaxUint64, 10))
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimitSessMinSize)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatUint(math.MaxUint64, 10), val)
+
+	// Test Normal Value
+	err = mock.SetGlobalSysVar(TiDBServerMemoryLimitSessMinSize, strconv.FormatUint(200*mb, 10))
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimitSessMinSize)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatUint(200*mb, 10), val)
 }

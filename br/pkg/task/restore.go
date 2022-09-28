@@ -12,6 +12,7 @@ import (
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
+	pconfig "github.com/pingcap/tidb/br/pkg/config"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
@@ -168,6 +169,17 @@ type RestoreConfig struct {
 	StartTS         uint64                      `json:"start-ts" toml:"start-ts"`
 	RestoreTS       uint64                      `json:"restore-ts" toml:"restore-ts"`
 	tiflashRecorder *tiflashrec.TiFlashRecorder `json:"-" toml:"-"`
+
+	// for ebs-based restore
+	FullBackupType      FullBackupType        `json:"full-backup-type" toml:"full-backup-type"`
+	Prepare             bool                  `json:"prepare" toml:"prepare"`
+	OutputFile          string                `json:"output-file" toml:"output-file"`
+	SkipAWS             bool                  `json:"skip-aws" toml:"skip-aws"`
+	CloudAPIConcurrency uint                  `json:"cloud-api-concurrency" toml:"cloud-api-concurrency"`
+	VolumeType          pconfig.EBSVolumeType `json:"volume-type" toml:"volume-type"`
+	VolumeIOPS          int64                 `json:"volume-iops" toml:"volume-iops"`
+	VolumeThroughput    int64                 `json:"volume-throughput" toml:"volume-throughput"`
+	ProgressFile        string                `json:"progress-file" toml:"progress-file"`
 }
 
 // DefineRestoreFlags defines common flags for the restore tidb command.
@@ -210,6 +222,12 @@ func (cfg *RestoreConfig) ParseStreamRestoreFlags(flags *pflag.FlagSet) error {
 	if cfg.FullBackupStorage, err = flags.GetString(FlagStreamFullBackupStorage); err != nil {
 		return errors.Trace(err)
 	}
+
+	if cfg.StartTS > 0 && len(cfg.FullBackupStorage) > 0 {
+		return errors.Annotatef(berrors.ErrInvalidArgument, "%v and %v are mutually exclusive",
+			FlagStreamStartTS, FlagStreamFullBackupStorage)
+	}
+
 	return nil
 }
 
@@ -249,14 +267,69 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", FlagWithPlacementPolicy)
 	}
+
+	if flags.Lookup(flagFullBackupType) != nil {
+		// for restore full only
+		fullBackupType, err := flags.GetString(flagFullBackupType)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if !FullBackupType(fullBackupType).Valid() {
+			return errors.New("invalid full backup type")
+		}
+		cfg.FullBackupType = FullBackupType(fullBackupType)
+		cfg.Prepare, err = flags.GetBool(flagPrepare)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		cfg.SkipAWS, err = flags.GetBool(flagSkipAWS)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		cfg.CloudAPIConcurrency, err = flags.GetUint(flagCloudAPIConcurrency)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		cfg.OutputFile, err = flags.GetString(flagOutputMetaFile)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		volumeType, err := flags.GetString(flagVolumeType)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		cfg.VolumeType = pconfig.EBSVolumeType(volumeType)
+		if !cfg.VolumeType.Valid() {
+			return errors.New("invalid volume type: " + volumeType)
+		}
+		if cfg.VolumeIOPS, err = flags.GetInt64(flagVolumeIOPS); err != nil {
+			return errors.Trace(err)
+		}
+		if cfg.VolumeThroughput, err = flags.GetInt64(flagVolumeThroughput); err != nil {
+			return errors.Trace(err)
+		}
+
+		cfg.ProgressFile, err = flags.GetString(flagProgressFile)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		// iops: gp3 [3,000-16,000]; io1/io2 [100-32,000]
+		// throughput: gp3 [125, 1000]; io1/io2 cannot set throughput
+		// io1 and io2 volumes support up to 64,000 IOPS only on Instances built on the Nitro System.
+		// Other instance families support performance up to 32,000 IOPS.
+		// https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_CreateVolume.html
+		// todo: check lower/upper bound
+	}
+
 	return nil
 }
 
-// adjustRestoreConfig is use for BR(binary) and BR in TiDB.
+// Adjust is use for BR(binary) and BR in TiDB.
 // When new config was added and not included in parser.
 // we should set proper value in this function.
 // so that both binary and TiDB will use same default value.
-func (cfg *RestoreConfig) adjustRestoreConfig() {
+func (cfg *RestoreConfig) Adjust() {
 	cfg.Config.adjust()
 	cfg.RestoreCommonConfig.adjust()
 
@@ -274,6 +347,9 @@ func (cfg *RestoreConfig) adjustRestoreConfig() {
 	}
 	if cfg.DdlBatchSize == 0 {
 		cfg.DdlBatchSize = defaultFlagDdlBatchSize
+	}
+	if cfg.CloudAPIConcurrency == 0 {
+		cfg.CloudAPIConcurrency = defaultCloudAPIConcurrency
 	}
 }
 
@@ -399,7 +475,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		return RunStreamRestore(c, g, cmdName, cfg)
 	}
 
-	cfg.adjustRestoreConfig()
+	cfg.Adjust()
 	defer summary.Summary(cmdName)
 	ctx, cancel := context.WithCancel(c)
 	defer cancel()
@@ -504,7 +580,8 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		TTL:      utils.DefaultBRGCSafePointTTL,
 		ID:       utils.MakeSafePointID(),
 	}
-	g.Record("BackupTS", restoreTS)
+	g.Record("BackupTS", backupMeta.EndVersion)
+	g.Record("RestoreTS", restoreTS)
 
 	// restore checksum will check safe point with its start ts, see details at
 	// https://github.com/pingcap/tidb/blob/180c02127105bed73712050594da6ead4d70a85f/store/tikv/kv.go#L186-L190
@@ -612,7 +689,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	// Do not reset timestamp if we are doing incremental restore, because
 	// we are not allowed to decrease timestamp.
 	if !client.IsIncremental() {
-		if err = client.ResetTS(ctx, cfg.PD); err != nil {
+		if err = client.ResetTS(ctx, mgr.PdController); err != nil {
 			log.Error("reset pd TS failed", zap.Error(err))
 			return errors.Trace(err)
 		}

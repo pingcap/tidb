@@ -973,7 +973,8 @@ func (h flashReplicaHandler) handleStatusReport(w http.ResponseWriter, req *http
 	if available {
 		err = infosync.DeleteTiFlashTableSyncProgress(status.ID)
 	} else {
-		err = infosync.UpdateTiFlashTableSyncProgress(context.Background(), status.ID, float64(status.FlashRegionCount)/float64(status.RegionCount))
+		progress := types.TruncateFloatToString(float64(status.FlashRegionCount)/float64(status.RegionCount), 2)
+		err = infosync.UpdateTiFlashTableSyncProgress(context.Background(), status.ID, progress)
 	}
 	if err != nil {
 		writeError(w, err)
@@ -1200,7 +1201,13 @@ func (h schemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			writeData(w, data.Meta())
 			return
 		}
-		writeError(w, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID))
+		// The tid maybe a partition ID of the partition-table.
+		tbl, _, _ := schema.FindTableByPartitionID(int64(tid))
+		if tbl == nil {
+			writeError(w, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID))
+			return
+		}
+		writeData(w, tbl.Meta())
 		return
 	}
 

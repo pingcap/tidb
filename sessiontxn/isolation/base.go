@@ -119,7 +119,12 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 	if p.onInitializeTxnCtx != nil {
 		p.onInitializeTxnCtx(txnCtx)
 	}
+	sessVars.TxnCtxMu.Lock()
 	sessVars.TxnCtx = txnCtx
+	sessVars.TxnCtxMu.Unlock()
+	if variable.EnableMDL.Load() {
+		sessVars.TxnCtx.EnableMDL = true
+	}
 
 	txn, err := p.sctx.Txn(false)
 	if err != nil {
@@ -139,6 +144,10 @@ func (p *baseTxnContextProvider) GetTxnInfoSchema() infoschema.InfoSchema {
 		return is.(infoschema.InfoSchema)
 	}
 	return p.infoSchema
+}
+
+func (p *baseTxnContextProvider) SetTxnInfoSchema(is infoschema.InfoSchema) {
+	p.infoSchema = is
 }
 
 // GetTxnScope returns the current txn scope

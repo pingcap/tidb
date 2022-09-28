@@ -221,6 +221,10 @@ type TxnCtxNoNeedToRestore struct {
 	// TemporaryTables is used to store transaction-specific information for global temporary tables.
 	// It can also be stored in sessionCtx with local temporary tables, but it's easier to clean this data after transaction ends.
 	TemporaryTables map[int64]tableutil.TempTable
+	// EnableMDL indicates whether to enable the MDL lock for the transaction.
+	EnableMDL bool
+	// relatedTableForMDL records the `lock` table for metadata lock. It maps from int64 to int64(version).
+	relatedTableForMDL *sync.Map
 }
 
 // SavepointRecord indicates a transaction's savepoint record.
@@ -316,10 +320,12 @@ func (tc *TransactionContext) Cleanup() {
 	tc.History = nil
 	tc.tdmLock.Lock()
 	tc.TableDeltaMap = nil
+	tc.relatedTableForMDL = nil
 	tc.tdmLock.Unlock()
 	tc.pessimisticLockCache = nil
 	tc.IsStaleness = false
 	tc.Savepoints = nil
+	tc.EnableMDL = false
 }
 
 // ClearDelta clears the delta map.
@@ -636,6 +642,8 @@ type SessionVars struct {
 	RetryInfo *RetryInfo
 	//  TxnCtx Should be reset on transaction finished.
 	TxnCtx *TransactionContext
+	// TxnCtxMu is used to protect TxnCtx.
+	TxnCtxMu sync.Mutex
 
 	// TxnManager is used to manage txn context in session
 	TxnManager interface{}
@@ -737,6 +745,9 @@ type SessionVars struct {
 
 	// EnableSkewDistinctAgg can be set true to allow skew distinct aggregate rewrite
 	EnableSkewDistinctAgg bool
+
+	// Enable3StageDistinctAgg indicates whether to allow 3 stage distinct aggregate
+	Enable3StageDistinctAgg bool
 
 	// MultiStatementMode permits incorrect client library usage. Not recommended to be turned on.
 	MultiStatementMode int
@@ -888,6 +899,9 @@ type SessionVars struct {
 
 	// EnableOuterJoinWithJoinReorder enables TiDB to involve the outer join into the join reorder.
 	EnableOuterJoinReorder bool
+
+	// OptimizerEnableNAAJ enables TiDB to use null-aware anti join.
+	OptimizerEnableNAAJ bool
 
 	// EnableTablePartition enables table partition feature.
 	EnableTablePartition string
@@ -1157,8 +1171,8 @@ type SessionVars struct {
 	// TemporaryTableData stores committed kv values for temporary table for current session.
 	TemporaryTableData TemporaryTableData
 
-	// MPPStoreLastFailTime records the lastest fail time that a TiFlash store failed.
-	MPPStoreLastFailTime map[string]time.Time
+	// MPPStoreLastFailTime records the lastest fail time that a TiFlash store failed. It maps store address(string) to fail time(time.Time).
+	MPPStoreLastFailTime *sync.Map
 
 	// MPPStoreFailTTL indicates the duration that protect TiDB from sending task to a new recovered TiFlash.
 	MPPStoreFailTTL string
@@ -1202,8 +1216,6 @@ type SessionVars struct {
 	CostModelVersion int
 	// BatchPendingTiFlashCount shows the threshold of pending TiFlash tables when batch adding.
 	BatchPendingTiFlashCount int
-	// RcReadCheckTS indicates if ts check optimization is enabled for current session.
-	RcReadCheckTS bool
 	// RcWriteCheckTS indicates whether some special write statements don't get latest tso from PD at RC
 	RcWriteCheckTS bool
 	// RemoveOrderbyInSubquery indicates whether to remove ORDER BY in subquery.
@@ -1263,6 +1275,9 @@ type SessionVars struct {
 	// EnableTiFlashReadForWriteStmt indicates whether to enable TiFlash to read for write statements.
 	EnableTiFlashReadForWriteStmt bool
 
+	// EnableUnsafeSubstitute indicates whether to enable generate column takes unsafe substitute.
+	EnableUnsafeSubstitute bool
+
 	// ForeignKeyChecks indicates whether to enable foreign key constraint check.
 	ForeignKeyChecks bool
 
@@ -1270,6 +1285,9 @@ type SessionVars struct {
 	// ranges would exceed the limit, it chooses less accurate ranges such as full range. 0 indicates that there is no
 	// memory limit for ranges.
 	RangeMaxSize int64
+
+	// LastPlanReplayerToken indicates the last plan replayer token
+	LastPlanReplayerToken string
 }
 
 // GetPreparedStmtByName returns the prepared statement specified by stmtName.
@@ -1550,13 +1568,14 @@ func NewSessionVars() *SessionVars {
 		AllowFallbackToTiKV:           make(map[kv.StoreType]struct{}),
 		CTEMaxRecursionDepth:          DefCTEMaxRecursionDepth,
 		TMPTableSize:                  DefTiDBTmpTableMaxSize,
-		MPPStoreLastFailTime:          make(map[string]time.Time),
+		MPPStoreLastFailTime:          new(sync.Map),
 		MPPStoreFailTTL:               DefTiDBMPPStoreFailTTL,
 		Rng:                           mathutil.NewWithTime(),
 		StatsLoadSyncWait:             StatsLoadSyncWait.Load(),
 		EnableLegacyInstanceScope:     DefEnableLegacyInstanceScope,
 		RemoveOrderbyInSubquery:       DefTiDBRemoveOrderbyInSubquery,
 		EnableSkewDistinctAgg:         DefTiDBSkewDistinctAgg,
+		Enable3StageDistinctAgg:       DefTiDB3StageDistinctAgg,
 		MaxAllowedPacket:              DefMaxAllowedPacket,
 		TiFlashFastScan:               DefTiFlashFastScan,
 		EnableTiFlashReadForWriteStmt: DefTiDBEnableTiFlashReadForWriteStmt,
@@ -2168,7 +2187,12 @@ func (s *SessionVars) EncodeSessionStates(ctx context.Context, sessionStates *se
 	}
 	sessionStates.LastFoundRows = s.LastFoundRows
 	sessionStates.SequenceLatestValues = s.SequenceState.GetAllStates()
-	sessionStates.MPPStoreLastFailTime = s.MPPStoreLastFailTime
+	sessionStates.MPPStoreLastFailTime = make(map[string]time.Time, 0)
+	s.MPPStoreLastFailTime.Range(
+		func(key, value interface{}) bool {
+			sessionStates.MPPStoreLastFailTime[key.(string)] = value.(time.Time)
+			return true
+		})
 	sessionStates.FoundInPlanCache = s.PrevFoundInPlanCache
 	sessionStates.FoundInBinding = s.PrevFoundInBinding
 
@@ -2204,8 +2228,8 @@ func (s *SessionVars) DecodeSessionStates(ctx context.Context, sessionStates *se
 	}
 	s.LastFoundRows = sessionStates.LastFoundRows
 	s.SequenceState.SetAllStates(sessionStates.SequenceLatestValues)
-	if sessionStates.MPPStoreLastFailTime != nil {
-		s.MPPStoreLastFailTime = sessionStates.MPPStoreLastFailTime
+	for k, v := range sessionStates.MPPStoreLastFailTime {
+		s.MPPStoreLastFailTime.Store(k, v)
 	}
 	s.FoundInPlanCache = sessionStates.FoundInPlanCache
 	s.FoundInBinding = sessionStates.FoundInBinding
@@ -3032,6 +3056,16 @@ func (s *SessionVars) GetNegateStrMatchDefaultSelectivity() float64 {
 		return DefTiDBDefaultStrMatchSelectivity
 	}
 	return 1 - s.GetStrMatchDefaultSelectivity()
+}
+
+// GetRelatedTableForMDL gets the related table for metadata lock.
+func (s *SessionVars) GetRelatedTableForMDL() *sync.Map {
+	s.TxnCtx.tdmLock.Lock()
+	defer s.TxnCtx.tdmLock.Unlock()
+	if s.TxnCtx.relatedTableForMDL == nil {
+		s.TxnCtx.relatedTableForMDL = new(sync.Map)
+	}
+	return s.TxnCtx.relatedTableForMDL
 }
 
 // EnableForceInlineCTE returns the session variable enableForceInlineCTE

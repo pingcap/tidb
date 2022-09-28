@@ -24,6 +24,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -152,17 +153,18 @@ func TestPlanReplayer(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, index idx_a(a))")
 	tk.MustExec("alter table t set tiflash replica 1")
-	tk.MustExec("plan replayer dump explain select * from t where a=10")
-	tk.MustExec("plan replayer dump explain select /*+ read_from_storage(tiflash[t]) */ * from t")
+	tk.MustQuery("plan replayer dump explain select * from t where a=10")
+	tk.MustQuery("plan replayer dump explain select /*+ read_from_storage(tiflash[t]) */ * from t")
 
 	tk.MustExec("create table t1 (a int)")
 	tk.MustExec("create table t2 (a int)")
 	tk.MustExec("create definer=`root`@`127.0.0.1` view v1 as select * from t1")
 	tk.MustExec("create definer=`root`@`127.0.0.1` view v2 as select * from v1")
-	tk.MustExec("plan replayer dump explain with tmp as (select a from t1 group by t1.a) select * from tmp, t2 where t2.a=tmp.a;")
-	tk.MustExec("plan replayer dump explain select * from t1 where t1.a > (with cte1 as (select 1) select count(1) from cte1);")
-	tk.MustExec("plan replayer dump explain select * from v1")
-	tk.MustExec("plan replayer dump explain select * from v2")
+	tk.MustQuery("plan replayer dump explain with tmp as (select a from t1 group by t1.a) select * from tmp, t2 where t2.a=tmp.a;")
+	tk.MustQuery("plan replayer dump explain select * from t1 where t1.a > (with cte1 as (select 1) select count(1) from cte1);")
+	tk.MustQuery("plan replayer dump explain select * from v1")
+	tk.MustQuery("plan replayer dump explain select * from v2")
+	require.True(t, len(tk.Session().GetSessionVars().LastPlanReplayerToken) > 0)
 }
 
 func TestShow(t *testing.T) {
@@ -5980,6 +5982,40 @@ func TestIsFastPlan(t *testing.T) {
 	}
 }
 
+func TestCountDistinctJSON(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(j JSON)")
+	tk.MustExec("insert into t values('2010')")
+	tk.MustExec("insert into t values('2011')")
+	tk.MustExec("insert into t values('2012')")
+	tk.MustExec("insert into t values('2010.000')")
+	tk.MustExec("insert into t values(cast(? as JSON))", uint64(math.MaxUint64))
+	tk.MustExec("insert into t values(cast(? as JSON))", float64(math.MaxUint64))
+
+	tk.MustQuery("select count(distinct j) from t").Check(testkit.Rows("5"))
+}
+
+func TestHashJoinJSON(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int(11), j JSON, d DOUBLE)")
+	tk.MustExec("insert into t values(0, '2010', 2010)")
+	tk.MustExec("insert into t values(1, '2011', 2011)")
+	tk.MustExec("insert into t values(2, '2012', 2012)")
+	tk.MustExec("insert into t values(3, cast(? as JSON), ?)", uint64(math.MaxUint64), float64(math.MaxUint64))
+
+	tk.MustQuery("select /*+inl_hash_join(t2)*/ t1.id, t2.id from t t1 join t t2 on t1.j = t2.d;").Check(testkit.Rows("0 0", "1 1", "2 2"))
+}
+
 func TestBinaryStrNumericOperator(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -6000,4 +6036,131 @@ func TestBinaryStrNumericOperator(t *testing.T) {
 		"-61.56"))
 	// there should be no warning.
 	tk.MustQuery("show warnings").Check(testkit.Rows())
+}
+
+func TestTableLockPrivilege(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("create user 'testuser'@'localhost'")
+	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "testuser", Hostname: "localhost"}, nil, nil))
+	tk2.MustGetErrMsg("LOCK TABLE test.t WRITE", "[planner:1044]Access denied for user 'testuser'@'localhost' to database 'test'")
+	tk.MustExec("GRANT LOCK TABLES ON test.* to 'testuser'@'localhost'")
+	tk2.MustGetErrMsg("LOCK TABLE test.t WRITE", "[planner:1142]SELECT command denied to user 'testuser'@'localhost' for table 't'")
+	tk.MustExec("REVOKE ALL ON test.* FROM 'testuser'@'localhost'")
+	tk.MustExec("GRANT SELECT ON test.* to 'testuser'@'localhost'")
+	tk2.MustGetErrMsg("LOCK TABLE test.t WRITE", "[planner:1044]Access denied for user 'testuser'@'localhost' to database 'test'")
+	tk.MustExec("GRANT LOCK TABLES ON test.* to 'testuser'@'localhost'")
+	tk2.MustExec("LOCK TABLE test.t WRITE")
+
+	tk.MustExec("create database test2")
+	tk.MustExec("create table test2.t2(a int)")
+	tk2.MustGetErrMsg("LOCK TABLE test.t WRITE, test2.t2 WRITE", "[planner:1044]Access denied for user 'testuser'@'localhost' to database 'test2'")
+	tk.MustExec("GRANT LOCK TABLES ON test2.* to 'testuser'@'localhost'")
+	tk2.MustGetErrMsg("LOCK TABLE test.t WRITE, test2.t2 WRITE", "[planner:1142]SELECT command denied to user 'testuser'@'localhost' for table 't2'")
+	tk.MustExec("GRANT SELECT ON test2.* to 'testuser'@'localhost'")
+	tk2.MustExec("LOCK TABLE test.t WRITE, test2.t2 WRITE")
+	tk.MustExec("LOCK TABLE test.t WRITE, test2.t2 WRITE")
+}
+
+func TestGlobalMemoryControl(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk0 := testkit.NewTestKit(t, store)
+	tk0.MustExec("set global tidb_mem_oom_action = 'cancel'")
+	tk0.MustExec("set global tidb_server_memory_limit = 512 << 20")
+	tk0.MustExec("set global tidb_server_memory_limit_sess_min_size = 128")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tracker1 := tk1.Session().GetSessionVars().StmtCtx.MemTracker
+
+	tk2 := testkit.NewTestKit(t, store)
+	tracker2 := tk2.Session().GetSessionVars().StmtCtx.MemTracker
+
+	tk3 := testkit.NewTestKit(t, store)
+	tracker3 := tk3.Session().GetSessionVars().StmtCtx.MemTracker
+
+	sm := &testkit.MockSessionManager{
+		PS: []*util.ProcessInfo{tk1.Session().ShowProcess(), tk2.Session().ShowProcess(), tk3.Session().ShowProcess()},
+	}
+	dom.ServerMemoryLimitHandle().SetSessionManager(sm)
+	go dom.ServerMemoryLimitHandle().Run()
+
+	tracker1.Consume(100 << 20) // 100 MB
+	tracker2.Consume(200 << 20) // 200 MB
+	tracker3.Consume(300 << 20) // 300 MB
+
+	test := make([]int, 128<<20)       // Keep 1GB HeapInUse
+	time.Sleep(500 * time.Millisecond) // The check goroutine checks the memory usage every 100ms. The Sleep() make sure that Top1Tracker can be Canceled.
+
+	// Kill Top1
+	require.False(t, tracker1.NeedKill.Load())
+	require.False(t, tracker2.NeedKill.Load())
+	require.True(t, tracker3.NeedKill.Load())
+	require.Equal(t, memory.MemUsageTop1Tracker.Load(), tracker3)
+	util.WithRecovery( // Next Consume() will panic and cancel the SQL
+		func() {
+			tracker3.Consume(1)
+		}, func(r interface{}) {
+			require.True(t, strings.Contains(r.(string), "Out Of Memory Quota!"))
+		})
+	tracker2.Consume(300 << 20) // Sum 500MB, Not Panic, Waiting t3 cancel finish.
+	time.Sleep(500 * time.Millisecond)
+	require.False(t, tracker2.NeedKill.Load())
+	// Kill Finished
+	tracker3.Consume(-(300 << 20))
+	// Simulated SQL is Canceled and the time is updated
+	sm.PSMu.Lock()
+	ps := *sm.PS[2]
+	ps.Time = time.Now()
+	sm.PS[2] = &ps
+	sm.PSMu.Unlock()
+	time.Sleep(500 * time.Millisecond)
+	// Kill the Next SQL
+	util.WithRecovery( // Next Consume() will panic and cancel the SQL
+		func() {
+			tracker2.Consume(1)
+		}, func(r interface{}) {
+			require.True(t, strings.Contains(r.(string), "Out Of Memory Quota!"))
+		})
+	require.Equal(t, test[0], 0) // Keep 1GB HeapInUse
+}
+
+func TestGlobalMemoryControl2(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk0 := testkit.NewTestKit(t, store)
+	tk0.MustExec("set global tidb_mem_oom_action = 'cancel'")
+	tk0.MustExec("set global tidb_server_memory_limit = 1 << 30")
+	tk0.MustExec("set global tidb_server_memory_limit_sess_min_size = 128")
+
+	sm := &testkit.MockSessionManager{
+		PS: []*util.ProcessInfo{tk0.Session().ShowProcess()},
+	}
+	dom.ServerMemoryLimitHandle().SetSessionManager(sm)
+	go dom.ServerMemoryLimitHandle().Run()
+
+	tk0.MustExec("use test")
+	tk0.MustExec("create table t(a int)")
+	tk0.MustExec("insert into t select 1")
+	for i := 1; i <= 8; i++ {
+		tk0.MustExec("insert into t select * from t") // 256 Lines
+	}
+
+	var test []int
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		time.Sleep(100 * time.Millisecond) // Make sure the sql is running.
+		test = make([]int, 128<<20)        // Keep 1GB HeapInuse
+		wg.Done()
+	}()
+	sql := "select * from t t1 join t t2 join t t3 on t1.a=t2.a and t1.a=t3.a order by t1.a;" // Need 500MB
+	require.True(t, strings.Contains(tk0.QueryToErr(sql).Error(), "Out Of Memory Quota!"))
+	require.Equal(t, tk0.Session().GetSessionVars().StmtCtx.DiskTracker.MaxConsumed(), int64(0))
+	wg.Wait()
+	test[0] = 0
+	runtime.GC()
 }

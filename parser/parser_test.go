@@ -2145,6 +2145,12 @@ func TestBuiltin(t *testing.T) {
 		{"select next value for seq", true, "SELECT NEXTVAL(`seq`)"},
 		{"select next value for sequence", true, "SELECT NEXTVAL(`sequence`)"},
 		{"select NeXt vAluE for seQuEncE2", true, "SELECT NEXTVAL(`seQuEncE2`)"},
+
+		// Test regexp functions
+		{"select regexp_like('aBc', 'abc', 'im');", true, "SELECT REGEXP_LIKE(_UTF8MB4'aBc', _UTF8MB4'abc', _UTF8MB4'im')"},
+		{"select regexp_substr('aBc', 'abc', 1, 1, 'im');", true, "SELECT REGEXP_SUBSTR(_UTF8MB4'aBc', _UTF8MB4'abc', 1, 1, _UTF8MB4'im')"},
+		{"select regexp_instr('aBc', 'abc', 1, 1, 0, 'im');", true, "SELECT REGEXP_INSTR(_UTF8MB4'aBc', _UTF8MB4'abc', 1, 1, 0, _UTF8MB4'im')"},
+		{"select regexp_replace('aBc', 'abc', 'def', 1, 1, 'i');", true, "SELECT REGEXP_REPLACE(_UTF8MB4'aBc', _UTF8MB4'abc', _UTF8MB4'def', 1, 1, _UTF8MB4'i')"},
 	}
 	RunTest(t, table, false)
 
@@ -2506,6 +2512,10 @@ func TestDDL(t *testing.T) {
 		{`alter table t /*T![placement] primary_region="us" */;`, false, ""},
 		{`alter table t placement policy="ww";`, true, "ALTER TABLE `t` PLACEMENT POLICY = `ww`"},
 		{`alter table t /*T![placement] placement policy="ww" */;`, true, "ALTER TABLE `t` PLACEMENT POLICY = `ww`"},
+		{`alter table t compact;`, true, "ALTER TABLE `t` COMPACT"},
+		{`alter table t compact tiflash replica;`, true, "ALTER TABLE `t` COMPACT TIFLASH REPLICA"},
+		{`alter table t compact partition p1,p2;`, true, "ALTER TABLE `t` COMPACT PARTITION `p1`,`p2`"},
+		{`alter table t compact partition p1,p2 tiflash replica;`, true, "ALTER TABLE `t` COMPACT PARTITION `p1`,`p2` TIFLASH REPLICA"},
 		// 3. create db
 		{`create database t primary_region="us";`, false, ""},
 		{`create database t regions="us,3";`, false, ""},
@@ -6732,6 +6742,8 @@ func TestPlanReplayer(t *testing.T) {
 		{"PLAN REPLAYER DUMP EXPLAIN SLOW QUERY", true, "PLAN REPLAYER DUMP EXPLAIN SLOW QUERY"},
 		{"PLAN REPLAYER DUMP EXPLAIN ANALYZE SLOW QUERY", true, "PLAN REPLAYER DUMP EXPLAIN ANALYZE SLOW QUERY"},
 		{"PLAN REPLAYER LOAD '/tmp/sdfaalskdjf.zip'", true, "PLAN REPLAYER LOAD '/tmp/sdfaalskdjf.zip'"},
+		{"PLAN REPLAYER DUMP EXPLAIN 'sql.txt'", true, "PLAN REPLAYER DUMP EXPLAIN 'sql.txt'"},
+		{"PLAN REPLAYER DUMP EXPLAIN ANALYZE 'sql.txt'", true, "PLAN REPLAYER DUMP EXPLAIN ANALYZE 'sql.txt'"},
 	}
 	RunTest(t, table, false)
 

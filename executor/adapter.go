@@ -194,22 +194,26 @@ type TelemetryInfo struct {
 	UseNonRecursive      bool
 	UseRecursive         bool
 	UseMultiSchemaChange bool
+	UesExchangePartition bool
 	PartitionTelemetry   *PartitionTelemetryInfo
 	AccountLockTelemetry *AccountLockTelemetryInfo
 }
 
 // PartitionTelemetryInfo records table partition telemetry information during execution.
 type PartitionTelemetryInfo struct {
-	UseTablePartition              bool
-	UseTablePartitionList          bool
-	UseTablePartitionRange         bool
-	UseTablePartitionHash          bool
-	UseTablePartitionRangeColumns  bool
-	UseTablePartitionListColumns   bool
-	TablePartitionMaxPartitionsNum uint64
-	UseCreateIntervalPartition     bool
-	UseAddIntervalPartition        bool
-	UseDropIntervalPartition       bool
+	UseTablePartition                bool
+	UseTablePartitionList            bool
+	UseTablePartitionRange           bool
+	UseTablePartitionHash            bool
+	UseTablePartitionRangeColumns    bool
+	UseTablePartitionRangeColumnsGt1 bool
+	UseTablePartitionRangeColumnsGt2 bool
+	UseTablePartitionRangeColumnsGt3 bool
+	UseTablePartitionListColumns     bool
+	TablePartitionMaxPartitionsNum   uint64
+	UseCreateIntervalPartition       bool
+	UseAddIntervalPartition          bool
+	UseDropIntervalPartition         bool
 }
 
 // AccountLockTelemetryInfo records account lock/unlock information during execution
@@ -532,6 +536,10 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	}
 
 	if handled, result, err := a.handleNoDelay(ctx, e, isPessimistic); handled || err != nil {
+		if err != nil {
+			return result, err
+		}
+		err = a.handleForeignKeyTrigger(ctx, e)
 		return result, err
 	}
 
@@ -549,6 +557,21 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		stmt:       a,
 		txnStartTS: txnStartTS,
 	}, nil
+}
+
+func (a *ExecStmt) handleForeignKeyTrigger(ctx context.Context, e Executor) error {
+	exec, ok := e.(WithForeignKeyTrigger)
+	if !ok {
+		return nil
+	}
+	fkChecks := exec.GetFKChecks()
+	for _, fkCheck := range fkChecks {
+		err := fkCheck.doCheck(ctx)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic bool) (handled bool, rs sqlexec.RecordSet, err error) {
@@ -573,6 +596,7 @@ func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic 
 		if analyze := explain.getAnalyzeExecToExecutedNoDelay(); analyze != nil {
 			toCheck = analyze
 			isExplainAnalyze = true
+			a.Ctx.GetSessionVars().StmtCtx.IsExplainAnalyzeDML = isExplainAnalyze
 		}
 	}
 
@@ -752,7 +776,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) (err er
 	}
 	txnCtx := sctx.GetSessionVars().TxnCtx
 	defer func() {
-		if err != nil && !sctx.GetSessionVars().ConstraintCheckInPlacePessimistic {
+		if err != nil && !sctx.GetSessionVars().ConstraintCheckInPlacePessimistic && sctx.GetSessionVars().InTxn() {
 			// If it's not a retryable error, rollback current transaction instead of rolling back current statement like
 			// in normal transactions, because we cannot locate and rollback the statement that leads to the lock error.
 			// This is too strict, but since the feature is not for everyone, it's the easiest way to guarantee safety.
