@@ -1569,6 +1569,10 @@ partition p1022 values less than (738537),
 partition p1023 values less than (738538)
 )`)
 
+	_, err := se.Execute(ctx, "analyze table t")
+	if err != nil {
+		b.Fatal(err)
+	}
 	alloc := chunk.NewAllocator()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

@@ -320,7 +320,7 @@ func encodeHashChunkRowIdx(sc *stmtctx.StatementContext, row chunk.Row, tp *type
 		if f == 0 {
 			f = 0
 		}
-		b = (*[unsafe.Sizeof(f)]byte)(unsafe.Pointer(&f))[:]
+		b = unsafe.Slice((*byte)(unsafe.Pointer(&f)), unsafe.Sizeof(f))
 	case mysql.TypeDouble:
 		flag = floatFlag
 		f := row.GetFloat64(idx)
@@ -329,7 +329,7 @@ func encodeHashChunkRowIdx(sc *stmtctx.StatementContext, row chunk.Row, tp *type
 		if f == 0 {
 			f = 0
 		}
-		b = (*[unsafe.Sizeof(f)]byte)(unsafe.Pointer(&f))[:]
+		b = unsafe.Slice((*byte)(unsafe.Pointer(&f)), unsafe.Sizeof(f))
 	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		flag = compactBytesFlag
 		b = row.GetBytes(idx)
@@ -343,7 +343,7 @@ func encodeHashChunkRowIdx(sc *stmtctx.StatementContext, row chunk.Row, tp *type
 		if err != nil {
 			return
 		}
-		b = (*[unsafe.Sizeof(v)]byte)(unsafe.Pointer(&v))[:]
+		b = unsafe.Slice((*byte)(unsafe.Pointer(&v)), unsafe.Sizeof(v))
 	case mysql.TypeDuration:
 		flag = durationFlag
 		// duration may have negative value, so we cannot use String to encode directly.
@@ -360,7 +360,7 @@ func encodeHashChunkRowIdx(sc *stmtctx.StatementContext, row chunk.Row, tp *type
 		if mysql.HasEnumSetAsIntFlag(tp.GetFlag()) {
 			flag = uvarintFlag
 			v := row.GetEnum(idx).Value
-			b = (*[sizeUint64]byte)(unsafe.Pointer(&v))[:]
+			b = unsafe.Slice((*byte)(unsafe.Pointer(&v)), sizeUint64)
 		} else {
 			flag = compactBytesFlag
 			v := row.GetEnum(idx).Value
@@ -383,10 +383,11 @@ func encodeHashChunkRowIdx(sc *stmtctx.StatementContext, row chunk.Row, tp *type
 		flag = uvarintFlag
 		v, err1 := types.BinaryLiteral(row.GetBytes(idx)).ToInt(sc)
 		terror.Log(errors.Trace(err1))
-		b = (*[unsafe.Sizeof(v)]byte)(unsafe.Pointer(&v))[:]
+		b = unsafe.Slice((*byte)(unsafe.Pointer(&v)), unsafe.Sizeof(v))
 	case mysql.TypeJSON:
 		flag = jsonFlag
-		b = row.GetBytes(idx)
+		json := row.GetJSON(idx)
+		b = json.HashValue(b)
 	default:
 		return 0, nil, errors.Errorf("unsupport column type for encode %d", tp.GetType())
 	}
@@ -445,7 +446,7 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 				if d == 0 {
 					d = 0
 				}
-				b = (*[sizeFloat64]byte)(unsafe.Pointer(&d))[:]
+				b = unsafe.Slice((*byte)(unsafe.Pointer(&d)), sizeFloat64)
 			}
 
 			// As the golang doc described, `Hash.Write` never returns an error.
@@ -470,7 +471,7 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 				if f == 0 {
 					f = 0
 				}
-				b = (*[sizeFloat64]byte)(unsafe.Pointer(&f))[:]
+				b = unsafe.Slice((*byte)(unsafe.Pointer(&f)), sizeFloat64)
 			}
 
 			// As the golang doc described, `Hash.Write` never returns an error.
@@ -514,7 +515,7 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 				if err != nil {
 					return
 				}
-				b = (*[sizeUint64]byte)(unsafe.Pointer(&v))[:]
+				b = unsafe.Slice((*byte)(unsafe.Pointer(&v)), sizeUint64)
 			}
 
 			// As the golang doc described, `Hash.Write` never returns an error.
@@ -575,7 +576,7 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 			} else if mysql.HasEnumSetAsIntFlag(tp.GetFlag()) {
 				buf[0] = uvarintFlag
 				v := column.GetEnum(i).Value
-				b = (*[sizeUint64]byte)(unsafe.Pointer(&v))[:]
+				b = unsafe.Slice((*byte)(unsafe.Pointer(&v)), sizeUint64)
 			} else {
 				buf[0] = compactBytesFlag
 				v := column.GetEnum(i).Value
@@ -627,7 +628,7 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 				buf[0] = uvarintFlag
 				v, err1 := types.BinaryLiteral(column.GetBytes(i)).ToInt(sc)
 				terror.Log(errors.Trace(err1))
-				b = (*[sizeUint64]byte)(unsafe.Pointer(&v))[:]
+				b = unsafe.Slice((*byte)(unsafe.Pointer(&v)), sizeUint64)
 			}
 
 			// As the golang doc described, `Hash.Write` never returns an error.
@@ -645,7 +646,9 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 				isNull[i] = !ignoreNull
 			} else {
 				buf[0] = jsonFlag
-				b = column.GetBytes(i)
+				json := column.GetJSON(i)
+				b = b[:0]
+				b = json.HashValue(b)
 			}
 
 			// As the golang doc described, `Hash.Write` never returns an error..

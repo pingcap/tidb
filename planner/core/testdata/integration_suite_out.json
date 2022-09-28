@@ -4699,7 +4699,7 @@
       {
         "SQL": "desc format = 'brief' SELECT FROM_UNIXTIME(name,'%Y-%m-%d')  FROM t;",
         "Plan": [
-          "Projection 10000.00 root  from_unixtime(cast(test.t.name, decimal(65,0) BINARY), %Y-%m-%d)->Column#13",
+          "Projection 10000.00 root  from_unixtime(cast(test.t.name, decimal(65,6) BINARY), %Y-%m-%d)->Column#13",
           "└─TableReader 10000.00 root  data:TableFullScan",
           "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
@@ -4912,7 +4912,7 @@
         "Plan": [
           "TableReader 10000.00 root  data:ExchangeSender",
           "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection 10000.00 mpp[tiflash]  from_unixtime(cast(test.t.name, decimal(65,0) BINARY), %Y-%m-%d)->Column#13",
+          "  └─Projection 10000.00 mpp[tiflash]  from_unixtime(cast(test.t.name, decimal(65,6) BINARY), %Y-%m-%d)->Column#13",
           "    └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       }
@@ -5070,7 +5070,7 @@
       {
         "SQL": "desc format = 'brief' SELECT FROM_UNIXTIME(name,'%Y-%m-%d')  FROM t;",
         "Plan": [
-          "Projection 10000.00 root  from_unixtime(cast(test.t.name, decimal(65,0) BINARY), %Y-%m-%d)->Column#5",
+          "Projection 10000.00 root  from_unixtime(cast(test.t.name, decimal(65,6) BINARY), %Y-%m-%d)->Column#5",
           "└─TableReader 10000.00 root  data:TableFullScan",
           "  └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ]
@@ -5267,7 +5267,7 @@
         "Plan": [
           "TableReader 10000.00 root  data:ExchangeSender",
           "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection 10000.00 mpp[tiflash]  from_unixtime(cast(test.t.name, decimal(65,0) BINARY), %Y-%m-%d)->Column#5",
+          "  └─Projection 10000.00 mpp[tiflash]  from_unixtime(cast(test.t.name, decimal(65,6) BINARY), %Y-%m-%d)->Column#5",
           "    └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       }
