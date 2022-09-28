@@ -1546,11 +1546,10 @@ func buildPointUpdatePlan(ctx sessionctx.Context, pointPlan PhysicalPlan, dbName
 			updatePlan.PartitionedTable = append(updatePlan.PartitionedTable, pt)
 		}
 	}
-	fkChecks, err := updatePlan.buildOnUpdateFKChecks(ctx, is, updatePlan.tblID2Table)
+	err := updatePlan.buildOnUpdateFKChecks(ctx, is, updatePlan.tblID2Table)
 	if err != nil {
 		return nil
 	}
-	updatePlan.FKChecks = fkChecks
 	return updatePlan
 }
 

@@ -77,9 +77,9 @@ func (p *Insert) buildOnDuplicateUpdateColumns() map[string]struct{} {
 	return m
 }
 
-func (updt *Update) buildOnUpdateFKChecks(ctx sessionctx.Context, is infoschema.InfoSchema, tblID2table map[int64]table.Table) (map[int64][]*FKCheck, error) {
+func (updt *Update) buildOnUpdateFKChecks(ctx sessionctx.Context, is infoschema.InfoSchema, tblID2table map[int64]table.Table) error {
 	if !ctx.GetSessionVars().ForeignKeyChecks {
-		return nil, nil
+		return nil
 	}
 	tblID2UpdateColumns := updt.buildTbl2UpdateColumns()
 	fkChecks := make(map[int64][]*FKCheck)
@@ -88,7 +88,7 @@ func (updt *Update) buildOnUpdateFKChecks(ctx sessionctx.Context, is infoschema.
 		dbInfo, exist := is.SchemaByTable(tblInfo)
 		if !exist {
 			// Normally, it should never happen. Just check here to avoid panic here.
-			return nil, infoschema.ErrDatabaseNotExists
+			return infoschema.ErrDatabaseNotExists
 		}
 		updateCols := tblID2UpdateColumns[tid]
 		if len(updateCols) == 0 {
@@ -96,20 +96,21 @@ func (updt *Update) buildOnUpdateFKChecks(ctx sessionctx.Context, is infoschema.
 		}
 		referredFKChecks, err := buildOnUpdateReferredFKChecks(is, dbInfo.Name.L, tblInfo, updateCols)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if len(referredFKChecks) > 0 {
 			fkChecks[tid] = append(fkChecks[tid], referredFKChecks...)
 		}
 		childFKChecks, err := buildOnUpdateChildFKChecks(is, dbInfo.Name.L, tblInfo, updateCols)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if len(childFKChecks) > 0 {
 			fkChecks[tid] = append(fkChecks[tid], childFKChecks...)
 		}
 	}
-	return fkChecks, nil
+	updt.FKChecks = fkChecks
+	return nil
 }
 
 func buildOnUpdateReferredFKChecks(is infoschema.InfoSchema, dbName string, tblInfo *model.TableInfo, updateCols map[string]struct{}) ([]*FKCheck, error) {
