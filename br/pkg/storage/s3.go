@@ -276,7 +276,8 @@ func newS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (obj *S3St
 	qs := *backend
 	awsConfig := aws.NewConfig().
 		WithS3ForcePathStyle(qs.ForcePathStyle).
-		WithRegion(qs.Region)
+		WithRegion(qs.Region).
+		WithS3Disable100Continue(true)
 	request.WithRetryer(awsConfig, defaultS3Retryer())
 	if qs.Endpoint != "" {
 		awsConfig.WithEndpoint(qs.Endpoint)
