@@ -282,6 +282,93 @@ func GetFlashbackKeyRanges(sess sessionctx.Context, startKey kv.Key) ([]kv.KeyRa
 	return keyRanges, nil
 }
 
+func sendPrepareFlashbackToVersionRPC(
+	ctx context.Context,
+	s tikv.Storage,
+	r tikvstore.KeyRange,
+) (rangetask.TaskStat, error) {
+	startKey, rangeEndKey := r.StartKey, r.EndKey
+	var taskStat rangetask.TaskStat
+	bo := tikv.NewBackoffer(ctx, flashbackMaxBackoff)
+	for {
+		select {
+		case <-ctx.Done():
+			return taskStat, errors.WithStack(ctx.Err())
+		default:
+		}
+
+		if len(rangeEndKey) > 0 && bytes.Compare(startKey, rangeEndKey) >= 0 {
+			break
+		}
+
+		loc, err := s.GetRegionCache().LocateKey(bo, startKey)
+		if err != nil {
+			return taskStat, err
+		}
+
+		endKey := loc.EndKey
+		isLast := len(endKey) == 0 || (len(rangeEndKey) > 0 && bytes.Compare(endKey, rangeEndKey) >= 0)
+		// If it is the last region
+		if isLast {
+			endKey = rangeEndKey
+		}
+
+		req := tikvrpc.NewRequest(tikvrpc.CmdPrepareFlashbackToVersion, &kvrpcpb.PrepareFlashbackToVersionRequest{
+			StartKey: startKey,
+			EndKey:   endKey,
+		})
+
+		resp, err := s.SendReq(bo, req, loc.Region, flashbackTimeout)
+		if err != nil {
+			return taskStat, err
+		}
+		regionErr, err := resp.GetRegionError()
+		if err != nil {
+			return taskStat, err
+		}
+		if regionErr != nil {
+			err = bo.Backoff(tikv.BoRegionMiss(), errors.New(regionErr.String()))
+			if err != nil {
+				return taskStat, err
+			}
+			continue
+		}
+		if resp.Resp == nil {
+			return taskStat, errors.Errorf("prepare flashback missing resp body")
+		}
+		prepareFlashbackToVersionResp := resp.Resp.(*kvrpcpb.PrepareFlashbackToVersionResponse)
+		if err := prepareFlashbackToVersionResp.GetError(); err != "" {
+			return taskStat, errors.Errorf(err)
+		}
+		taskStat.CompletedRegions++
+		if isLast {
+			break
+		}
+		bo = tikv.NewBackoffer(ctx, flashbackMaxBackoff)
+		startKey = endKey
+	}
+	return taskStat, nil
+}
+
+func prepareFlashbackToVersion(
+	ctx context.Context,
+	d *ddlCtx,
+	startKey []byte, endKey []byte,
+) (err error) {
+	return rangetask.NewRangeTaskRunner(
+		"flashback-to-version-runner",
+		d.store.(tikv.Storage),
+		int(variable.GetDDLFlashbackConcurrency()),
+		func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
+			stats, err := sendPrepareFlashbackToVersionRPC(ctx, d.store.(tikv.Storage), r)
+			logutil.BgLogger().Info("prepare flashback to version stats",
+				zap.Int("complete region", stats.CompletedRegions),
+				zap.Error(err))
+			return stats, err
+		},
+	).RunOnRange(ctx, startKey, endKey)
+}
+
 func sendFlashbackToVersionRPC(
 	ctx context.Context,
 	s tikv.Storage,
@@ -466,9 +553,15 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		return ver, nil
 	// Stage 3, get key ranges and get locks.
 	case model.StateWriteOnly:
-		_, err := GetFlashbackKeyRanges(sess, tablecodec.EncodeTablePrefix(0))
+		keyRanges, err := GetFlashbackKeyRanges(sess, tablecodec.EncodeTablePrefix(0))
 		if err != nil {
 			return ver, errors.Trace(err)
+		}
+		for _, ranges := range keyRanges {
+			if err = prepareFlashbackToVersion(d.ctx, d, ranges.StartKey, ranges.EndKey); err != nil {
+				logutil.BgLogger().Warn("[ddl] Get error when do flashback", zap.Error(err))
+				return ver, err
+			}
 		}
 		// TODO, lock all regions.
 		job.SchemaState = model.StateWriteReorganization
