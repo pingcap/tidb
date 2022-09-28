@@ -60,6 +60,7 @@ func (t *memoryLimitTuner) tuning() {
 				time.Sleep(1 * time.Minute) // 1 minute to cool down, to avoid frequent GC
 				debug.SetMemoryLimit(t.calcSoftMemoryLimit())
 				for !t.coolDown.CompareAndSwap(true, false) {
+					continue
 				}
 			}()
 		}
