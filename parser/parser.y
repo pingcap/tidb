@@ -12815,15 +12815,15 @@ RequireListElement:
 
 CommentOrAttributeOption:
 	{
-		$$ = &ast.CommentOrAttributeOption{Comment: "", Attribute: ""}
+		$$ = nil
 	}
 |	"COMMENT" stringLit
 	{
-		$$ = &ast.CommentOrAttributeOption{Comment: $2, Attribute: ""}
+		$$ = &ast.CommentOrAttributeOption{Type: ast.UserComentType, Value: $2}
 	}
 |	"ATTRIBUTE" stringLit
 	{
-		$$ = &ast.CommentOrAttributeOption{Comment: "", Attribute: $2}
+		$$ = &ast.CommentOrAttributeOption{Type: ast.UserAttributeType, Value: $2}
 	}
 
 PasswordOrLockOptions:

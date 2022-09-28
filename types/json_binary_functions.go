@@ -1307,3 +1307,34 @@ func (bj BinaryJSON) Walk(walkFn BinaryJSONWalkFunc, pathExprList ...JSONPathExp
 	}
 	return nil
 }
+
+// MergeJSON is used to update `user_attributes` in `mysql.user` table.
+// It traverses every elem in newAttributes and merge them into oldAttributes.
+func MergeJSON(oldAttributes, newAttributes *BinaryJSON) (*BinaryJSON, error) {
+	mergedAttributes := oldAttributes.Copy()
+	var (
+		keyPE JSONPathExpression
+		err   error
+	)
+	for i := 0; i < newAttributes.GetElemCount(); i++ {
+		key, newVal := newAttributes.objectGetKey(i), newAttributes.objectGetVal(i)
+		removeFlag := false
+		if newVal.TypeCode == JSONTypeCodeLiteral && newVal.Value[0] == JSONLiteralNil {
+			removeFlag = true
+		}
+		if keyPE, err = parseJSONPathExpr(fmt.Sprintf("$.%s", key)); err != nil {
+			return nil, err
+		}
+		if removeFlag {
+			if mergedAttributes, err = mergedAttributes.Remove([]JSONPathExpression{keyPE}); err != nil {
+				return nil, err
+			}
+		} else {
+			if mergedAttributes, err = mergedAttributes.Modify([]JSONPathExpression{keyPE}, []BinaryJSON{newVal}, JSONModifySet); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	return &mergedAttributes, nil
+}

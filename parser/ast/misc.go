@@ -1457,6 +1457,9 @@ const (
 	PasswordExpireInterval
 	Lock
 	Unlock
+
+	UserComentType
+	UserAttributeType
 )
 
 type PasswordOrLockOption struct {
@@ -1487,17 +1490,17 @@ func (p *PasswordOrLockOption) Restore(ctx *format.RestoreCtx) error {
 }
 
 type CommentOrAttributeOption struct {
-	Comment   string
-	Attribute string
+	Type  int
+	Value string
 }
 
 func (c *CommentOrAttributeOption) Restore(ctx *format.RestoreCtx) error {
-	if len(c.Comment) > 0 {
+	if c.Type == UserComentType {
 		ctx.WriteKeyWord(" COMMENT ")
-		ctx.WriteString(c.Comment)
-	} else if len(c.Attribute) > 0 {
+		ctx.WriteString(c.Value)
+	} else if c.Type == UserAttributeType {
 		ctx.WriteKeyWord(" ATTRIBUTE ")
-		ctx.WriteString(c.Attribute)
+		ctx.WriteString(c.Value)
 	}
 	return nil
 }

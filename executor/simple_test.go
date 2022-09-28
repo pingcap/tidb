@@ -83,14 +83,25 @@ func TestUserAttributes(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	// https://dev.mysql.com/doc/refman/8.0/en/create-user.html#create-user-comments-attributes
-	tk.MustExec("CREATE USER testuser COMMENT '1234'")
-	tk.MustExec("CREATE USER testuser1 ATTRIBUTE '{\"name\": \"Tom\", \"age\": 19}'")
-	_, err := tk.Exec("CREATE USER testuser2 ATTRIBUTE '{\"name\": \"Tom\", age: 19}'")
+	tk.MustExec(`CREATE USER testuser COMMENT '1234'`)
+	tk.MustExec(`CREATE USER testuser1 ATTRIBUTE '{"name": "Tom", "age": 19}'`)
+	_, err := tk.Exec(`CREATE USER testuser2 ATTRIBUTE '{"name": "Tom", age: 19}'`)
 	require.Error(t, err)
-	tk.MustQuery("SELECT user_attributes FROM mysql.user WHERE user = 'testuser'").Check(testkit.Rows("{\"metadata\": {\"comment\": \"1234\"}}"))
-	tk.MustQuery("SELECT user_attributes FROM mysql.user WHERE user = 'testuser1'").Check(testkit.Rows("{\"metadata\": {\"age\": 19, \"name\": \"Tom\"}}"))
-	tk.MustQuery("SELECT `attribute` FROM mysql.user_attributes WHERE user = 'testuser'").Check(testkit.Rows("{\"comment\": \"1234\"}"))
-	tk.MustQuery("SELECT `attribute` FROM mysql.user_attributes WHERE user = 'testuser1'").Check(testkit.Rows("{\"age\": 19, \"name\": \"Tom\"}"))
-	tk.MustQuery("SELECT ATTRIBUTE->>\"$.age\" AS age, ATTRIBUTE->>\"$.name\" AS name FROM mysql.user_attributes WHERE user = 'testuser1'").Check(testkit.Rows("19 Tom"))
+	tk.MustQuery(`SELECT user_attributes FROM mysql.user WHERE user = 'testuser'`).Check(testkit.Rows(`{"metadata": {"comment": "1234"}}`))
+	tk.MustQuery(`SELECT user_attributes FROM mysql.user WHERE user = 'testuser1'`).Check(testkit.Rows(`{"metadata": {"age": 19, "name": "Tom"}}`))
+	tk.MustQuery(`SELECT attribute FROM mysql.user_attributes WHERE user = 'testuser'`).Check(testkit.Rows(`{"comment": "1234"}`))
+	tk.MustQuery(`SELECT attribute FROM mysql.user_attributes WHERE user = 'testuser1'`).Check(testkit.Rows(`{"age": 19, "name": "Tom"}`))
+	tk.MustQuery(`SELECT ATTRIBUTE->>"$.age" AS age, ATTRIBUTE->>"$.name" AS name FROM mysql.user_attributes WHERE user = 'testuser1'`).Check(testkit.Rows(`19 Tom`))
 
+	// https://dev.mysql.com/doc/refman/8.0/en/alter-user.html#alter-user-comments-attributes
+	tk.MustExec(`ALTER USER testuser1 ATTRIBUTE '{"age": 20, "sex": "male"}'`)
+	tk.MustQuery(`SELECT attribute FROM mysql.user_attributes WHERE user = 'testuser1'`).Check(testkit.Rows(`{"age": 20, "name": "Tom", "sex": "male"}`))
+	tk.MustExec(`ALTER USER testuser1 ATTRIBUTE '{"sex": null}'`)
+	tk.MustQuery(`SELECT attribute FROM mysql.user_attributes WHERE user = 'testuser1'`).Check(testkit.Rows(`{"age": 20, "name": "Tom"}`))
+	tk.MustExec(`ALTER USER testuser1 COMMENT '5678'`)
+	tk.MustQuery(`SELECT attribute FROM mysql.user_attributes WHERE user = 'testuser1'`).Check(testkit.Rows(`{"age": 20, "comment": "5678", "name": "Tom"}`))
+	tk.MustExec(`ALTER USER testuser1 COMMENT ''`)
+	tk.MustQuery(`SELECT attribute FROM mysql.user_attributes WHERE user = 'testuser1'`).Check(testkit.Rows(`{"age": 20, "comment": "", "name": "Tom"}`))
+	tk.MustExec(`ALTER USER testuser1 ATTRIBUTE '{"comment": null}'`)
+	tk.MustQuery(`SELECT attribute FROM mysql.user_attributes WHERE user = 'testuser1'`).Check(testkit.Rows(`{"age": 20, "name": "Tom"}`))
 }

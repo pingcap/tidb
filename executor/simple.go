@@ -829,10 +829,10 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 
 	userAttributes := "null"
 	if s.CommentOrAttributeOption != nil {
-		if len(s.CommentOrAttributeOption.Comment) > 0 {
-			userAttributes = fmt.Sprintf("{\"metadata\": {\"comment\": \"%s\"}}", s.CommentOrAttributeOption.Comment)
-		} else if len(s.CommentOrAttributeOption.Attribute) > 0 {
-			userAttributes = fmt.Sprintf("{\"metadata\": %s}", s.CommentOrAttributeOption.Attribute)
+		if s.CommentOrAttributeOption.Type == ast.UserComentType {
+			userAttributes = fmt.Sprintf("{\"metadata\": {\"comment\": \"%s\"}}", s.CommentOrAttributeOption.Value)
+		} else if s.CommentOrAttributeOption.Type == ast.UserAttributeType {
+			userAttributes = fmt.Sprintf("{\"metadata\": %s}", s.CommentOrAttributeOption.Value)
 		}
 	}
 
@@ -1054,6 +1054,21 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 				mysql.SystemDB, mysql.UserTable, lockAccount, spec.User.Hostname, spec.User.Username)
 			if err != nil {
 				failedUsers = append(failedUsers, spec.User.String())
+			}
+		}
+
+		if s.CommentOrAttributeOption != nil {
+			newAttributesStr := ""
+			if newAttributesStr, err = getNewAttributes(ctx, s.CommentOrAttributeOption, spec.User, exec); err != nil {
+				failedUsers = append(failedUsers, spec.User.String())
+			}
+			if len(newAttributesStr) != 0 {
+				_, _, err := exec.ExecRestrictedSQL(ctx, nil,
+					`UPDATE %n.%n SET user_attributes=%? WHERE Host=%? and User=%?;`,
+					mysql.SystemDB, mysql.UserTable, newAttributesStr, spec.User.Hostname, spec.User.Username)
+				if err != nil {
+					failedUsers = append(failedUsers, spec.User.String())
+				}
 			}
 		}
 
@@ -1800,4 +1815,48 @@ func (e *SimpleExec) executeAdminFlushPlanCache(s *ast.AdminStmt) error {
 		domain.GetDomain(e.ctx).SetExpiredTimeStamp4PC(now)
 	}
 	return nil
+}
+
+func getNewAttributes(ctx context.Context, o *ast.CommentOrAttributeOption, user *auth.UserIdentity, exec sqlexec.RestrictedSQLExecutor) (string, error) {
+	var (
+		oldAttributesStr, newAttributesStr string
+		oldAttributes, newAttributes       = &types.BinaryJSON{}, &types.BinaryJSON{}
+	)
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT attribute FROM %n.%n WHERE User=%? AND Host=%?;`, mysql.SystemDB, "user_attributes", user.Username, user.Hostname)
+	if err != nil {
+		return "", err
+	}
+
+	// no attributes set before
+	if len(rows) == 0 || len(rows[0].GetString(0)) == 0 {
+		if o.Type == ast.UserComentType {
+			return fmt.Sprintf(`{"metadata": {"comment": "%s"}}`, o.Value), nil
+		} else if o.Type == ast.UserAttributeType {
+			return fmt.Sprintf(`{"metadata": %s}`, o.Value), nil
+		} else {
+			return "", nil
+		}
+	}
+
+	oldAttributesStr = rows[0].GetString(0)
+	if *oldAttributes, err = types.ParseBinaryJSONFromString(oldAttributesStr); err != nil {
+		return "", err
+	}
+	if o.Type == ast.UserComentType {
+		newAttributesStr = fmt.Sprintf(`{"comment": "%s"}`, o.Value)
+	} else if o.Type == ast.UserAttributeType {
+		newAttributesStr = o.Value
+	} else {
+		return "", nil
+	}
+	if *newAttributes, err = types.ParseBinaryJSONFromString(newAttributesStr); err != nil {
+		return "", err
+	}
+	mergedAttributes, err := types.MergeJSON(oldAttributes, newAttributes)
+	if err != nil {
+		return "", err
+	}
+	logutil.BgLogger().Info("getNewAttributes", zap.String("mergedAttributes", mergedAttributes.String()))
+
+	return fmt.Sprintf(`{"metadata": %s}`, mergedAttributes.String()), nil
 }
