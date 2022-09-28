@@ -20,7 +20,7 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
   <tr>
     <td rowspan="2">Support JSON</td>
     <td>Support JSON function.</td>
-    <td>In business scenarios that require flexible schema definitions (such as SaaS, Web3, and gaming), the application can use JSON to store information for ODS, transaction indicators, commodities, game characters, and props.</td>
+    <td>In business scenarios that require flexible schema definitions, the application can use JSON to store information for ODS, transaction indicators, commodities, game characters, and props.</td>
   </tr>
   <tr>
     <td><ul><li>Support expression indexes.</li><li>Support generated columns.</li></ul></td>
