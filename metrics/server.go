@@ -287,6 +287,14 @@ var (
 			Help:      "Duration (us) for loading table cache.",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 30), // 1us ~ 528s
 		})
+
+	RCCheckTSWriteConfilictCounter = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "rc_check_ts_conflict_total",
+			Help:      "Counter of WriteConflict caused by RCCheckTS.",
+		})
 )
 
 // ExecuteErrorToLabel converts an execute error to label.

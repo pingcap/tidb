@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -195,6 +196,8 @@ func (p *PessimisticRCTxnContextProvider) handleAfterQueryError(queryErr error) 
 
 	p.latestOracleTSValid = false
 
+	metrics.RCCheckTSWriteConfilictCounter.Add(1)
+
 	logutil.Logger(p.ctx).Info("RC read with ts checking has failed, retry RC read",
 		zap.String("sql", sessVars.StmtCtx.OriginalSQL), zap.Error(queryErr))
 	return sessiontxn.RetryReady()
@@ -217,6 +220,9 @@ func (p *PessimisticRCTxnContextProvider) handleAfterPessimisticLockError(lockEr
 			zap.Uint64("forUpdateTS", txnCtx.GetForUpdateTS()),
 			zap.String("err", lockErr.Error()))
 		retryable = true
+		if p.checkTSInWriteStmt {
+			metrics.RCCheckTSWriteConfilictCounter.Add(1)
+		}
 	}
 
 	if retryable {
