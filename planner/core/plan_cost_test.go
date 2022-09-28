@@ -15,6 +15,7 @@
 package core_test
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
@@ -119,12 +120,13 @@ func TestScanOnSmallTable(t *testing.T) {
 	}
 
 	rs := tk.MustQuery("explain select * from t").Rows()
-	useTiKVScan := true
+	useTiKVScan := false
 	for _, r := range rs {
+		fmt.Println(">>> ", r)
 		op := r[0].(string)
 		task := r[2].(string)
 		if strings.Contains(op, "Scan") && strings.Contains(task, "tikv") {
-			useTiKVScan = false
+			useTiKVScan = true
 		}
 	}
 	require.True(t, useTiKVScan)

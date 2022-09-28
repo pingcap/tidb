@@ -88,7 +88,7 @@ func (p *PhysicalTableScan) getPlanCostVer2(taskType property.TaskType, option *
 
 	// give TiFlash a start-up cost to let the optimizer prefers to use TiKV to process small table scans.
 	if p.StoreType == kv.TiFlash {
-		p.planCost += 2000 * logRowSize * scanFactor
+		p.planCost += 10000 * logRowSize * scanFactor
 	}
 
 	p.planCostInit = true
