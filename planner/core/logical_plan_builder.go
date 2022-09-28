@@ -5085,7 +5085,7 @@ func (b *PlanBuilder) buildSemiApply(outerPlan, innerPlan LogicalPlan, condition
 	return ap, nil
 }
 
-// setIsInApplyForCTE indicates CTE is the in inner side of Apply,
+// setIsInApplyForCTE indicates CTE is the in inner side of Apply and correlate.
 // the storage of cte needs to be reset for each outer row.
 // It's better to handle this in CTEExec.Close(), but cte storage is closed when SQL is finished.
 func setIsInApplyForCTE(p LogicalPlan, apSchema *expression.Schema) {
