@@ -431,11 +431,8 @@ func TestFKOnGeneratedColumns(t *testing.T) {
 	tk.MustGetErrCode("alter table t1 add foreign key (b) references t2(a) on update set null;", errno.ErrWrongFKOptionForGeneratedColumn)
 	tk.MustExec("drop table t1, t2;")
 
-	// special case: TiDB error different from MySQL 8.0
-	// MySQL: ERROR 3104 (HY000): Cannot define foreign key with ON UPDATE SET NULL clause on a generated column.
-	// TiDB:  ERROR 1146 (42S02): Table 'test.t2' doesn't exist
 	tk.MustExec("create table t1 (a int, b int generated always as (a+1) stored);")
-	tk.MustGetErrCode("alter table t1 add foreign key (b) references t2(a) on update set null;", errno.ErrNoSuchTable)
+	tk.MustGetErrCode("alter table t1 add foreign key (b) references t2(a) on update set null;", errno.ErrWrongFKOptionForGeneratedColumn)
 	tk.MustExec("drop table t1;")
 
 	// allowed FK options on stored generated columns
