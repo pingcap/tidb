@@ -317,7 +317,11 @@ func reCalcCapacity(c *Chunk, maxChunkSize int) int {
 	if c.NumRows() < c.capacity {
 		return c.capacity
 	}
-	return mathutil.Min(c.capacity*2, maxChunkSize)
+	newCapacity := c.capacity * 2
+	if newCapacity == 0 {
+		newCapacity = InitialCapacity
+	}
+	return mathutil.Min(newCapacity, maxChunkSize)
 }
 
 // Capacity returns the capacity of the Chunk.
