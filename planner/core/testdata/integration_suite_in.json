@@ -988,5 +988,12 @@
       // But fine grained shuffle doesn't support group by for now.
       "explain format = 'brief' select row_number() over w1, count(c2) from t1 group by c1 having c1 > 10 window w1 as (partition by c1 order by c2);"
     ]
+  },
+  {
+    "name": "TestConditionPushDownToIndexScanForPrefixIndex",
+    "cases": [
+      "explain select * from t where a between 'a' and 'b' and b = 'b'",
+      "explain select * from t where a = 'a' and b < 'b'"
+    ]
   }
 ]

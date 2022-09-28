@@ -15,10 +15,14 @@
 package ranger
 
 import (
+	"unicode/utf8"
+
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 )
 
@@ -28,6 +32,7 @@ type conditionChecker struct {
 	colUniqueID   int64
 	length        int
 	shouldReserve bool // check if a access condition should be reserved in filter conditions.
+	isFullLength  bool
 }
 
 func (c *conditionChecker) check(condition expression.Expression) bool {
@@ -37,6 +42,9 @@ func (c *conditionChecker) check(condition expression.Expression) bool {
 	case *expression.Column:
 		if x.RetType.EvalType() == types.ETString {
 			return false
+		}
+		if !c.isFullLength {
+			c.shouldReserve = true
 		}
 		return c.checkColumn(x)
 	case *expression.Constant:
@@ -51,31 +59,57 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 	case ast.LogicOr, ast.LogicAnd:
 		return c.check(scalar.GetArgs()[0]) && c.check(scalar.GetArgs()[1])
 	case ast.EQ, ast.NE, ast.GE, ast.GT, ast.LE, ast.LT, ast.NullEQ:
-		if _, ok := scalar.GetArgs()[0].(*expression.Constant); ok {
+		if constVal, ok := scalar.GetArgs()[0].(*expression.Constant); ok {
 			if c.checkColumn(scalar.GetArgs()[1]) {
 				// Checks whether the scalar function is calculated use the collation compatible with the column.
 				if scalar.GetArgs()[1].GetType().EvalType() == types.ETString && !collate.CompatibleCollate(scalar.GetArgs()[1].GetType().GetCollate(), collation) {
 					return false
 				}
-				return scalar.FuncName.L != ast.NE || c.length == types.UnspecifiedLength
+				if c.isFullLength {
+					return true
+				}
+				constLen := GetLengthOfPrefixableConstant(constVal, scalar.GetArgs()[0].GetType())
+				if scalar.FuncName.L == ast.NE {
+					return constLen != -1 && constLen < c.length
+				}
+				if constLen == -1 || constLen >= c.length {
+					c.shouldReserve = true
+				}
+				return true
 			}
 		}
-		if _, ok := scalar.GetArgs()[1].(*expression.Constant); ok {
+		if constVal, ok := scalar.GetArgs()[1].(*expression.Constant); ok {
 			if c.checkColumn(scalar.GetArgs()[0]) {
 				// Checks whether the scalar function is calculated use the collation compatible with the column.
 				if scalar.GetArgs()[0].GetType().EvalType() == types.ETString && !collate.CompatibleCollate(scalar.GetArgs()[0].GetType().GetCollate(), collation) {
 					return false
 				}
-				return scalar.FuncName.L != ast.NE || c.length == types.UnspecifiedLength
+				if c.isFullLength {
+					return true
+				}
+				constLen := GetLengthOfPrefixableConstant(constVal, scalar.GetArgs()[0].GetType())
+				if scalar.FuncName.L == ast.NE {
+					return constLen != -1 && constLen < c.length
+				}
+				if constLen == -1 || constLen >= c.length {
+					c.shouldReserve = true
+				}
+				return true
 			}
 		}
 	case ast.IsNull:
+		if !c.isFullLength {
+			c.shouldReserve = true
+		}
 		return c.checkColumn(scalar.GetArgs()[0])
 	case ast.IsTruthWithoutNull, ast.IsFalsity, ast.IsTruthWithNull:
 		if s, ok := scalar.GetArgs()[0].(*expression.Column); ok {
 			if s.RetType.EvalType() == types.ETString {
 				return false
 			}
+		}
+		if !c.isFullLength {
+			c.shouldReserve = true
 		}
 		return c.checkColumn(scalar.GetArgs()[0])
 	case ast.UnaryNot:
@@ -97,12 +131,22 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 			return false
 		}
 		for _, v := range scalar.GetArgs()[1:] {
-			if _, ok := v.(*expression.Constant); !ok {
+			if constVal, ok := v.(*expression.Constant); ok {
+				if !c.isFullLength {
+					constLen := GetLengthOfPrefixableConstant(constVal, scalar.GetArgs()[0].GetType())
+					if constLen == -1 || constLen >= c.length {
+						c.shouldReserve = true
+					}
+				}
+			} else {
 				return false
 			}
 		}
 		return true
 	case ast.Like:
+		if !c.isFullLength {
+			c.shouldReserve = true
+		}
 		return c.checkLikeFunc(scalar)
 	case ast.GetParam:
 		return true
@@ -188,4 +232,19 @@ func (c *conditionChecker) checkColumn(expr expression.Expression) bool {
 		return c.checkerCol.EqualByExprAndID(nil, col)
 	}
 	return c.colUniqueID == col.UniqueID
+}
+
+// GetLengthOfPrefixableConstant returns length of characters if constant is bytes or string type and returns -1 otherwise.
+func GetLengthOfPrefixableConstant(c *expression.Constant, tp *types.FieldType) int {
+	if c == nil || c.DeferredExpr != nil || c.ParamMarker != nil {
+		return -1
+	}
+	val, err := c.Eval(chunk.Row{})
+	if err != nil || (val.Kind() != types.KindBytes && val.Kind() != types.KindString) {
+		return -1
+	}
+	if tp.GetCharset() == charset.CharsetUTF8 || tp.GetCharset() == charset.CharsetUTF8MB4 {
+		return utf8.RuneCount(val.GetBytes())
+	}
+	return len(val.GetBytes())
 }

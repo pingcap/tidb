@@ -17,6 +17,7 @@ package ranger_test
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/util/collate"
 	"testing"
 
 	"github.com/pingcap/tidb/config"
@@ -2446,4 +2447,181 @@ func TestRangeFallbackForBuildColumnRange(t *testing.T) {
 	require.Equal(t, "[[-inf,+inf]]", fmt.Sprintf("%v", ranges))
 	require.Equal(t, "[]", fmt.Sprintf("%v", access))
 	require.Equal(t, "[in(test.t.b, 10, 20, 30)]", fmt.Sprintf("%v", remained))
+}
+
+func TestPrefixIndexRange(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`
+create table t(
+	a varchar(50),
+	b varchar(50),
+	c text(50),
+	d varbinary(50),
+	index idx_a(a(2)),
+	index idx_ab(a(2), b(2)),
+	index idx_c(c(2)),
+	index idx_d(d(2))
+)`)
+
+	tests := []struct {
+		indexPos    int
+		exprStr     string
+		accessConds string
+		filterConds string
+		resultStr   string
+	}{
+		{
+			indexPos:    0,
+			exprStr:     "a >= 'a' and a <= 'b'",
+			accessConds: "[ge(test.t.a, a) le(test.t.a, b)]",
+			filterConds: "[]",
+			resultStr:   "[[\"a\",\"b\"]]",
+		},
+		{
+			indexPos:    0,
+			exprStr:     "a > 'ab'",
+			accessConds: "[gt(test.t.a, ab)]",
+			filterConds: "[gt(test.t.a, ab)]",
+			resultStr:   "[[\"ab\",+inf]]",
+		},
+		{
+			indexPos:    0,
+			exprStr:     "a < 'ab'",
+			accessConds: "[lt(test.t.a, ab)]",
+			filterConds: "[lt(test.t.a, ab)]",
+			resultStr:   "[[-inf,\"ab\")]",
+		},
+		{
+			indexPos:    0,
+			exprStr:     "a >= 'abcd'",
+			accessConds: "[ge(test.t.a, abcd)]",
+			filterConds: "[ge(test.t.a, abcd)]",
+			resultStr:   "[[\"ab\",+inf]]",
+		},
+		{
+			indexPos:    0,
+			exprStr:     "a in ('a', 'b', 'c')",
+			accessConds: "[in(test.t.a, a, b, c)]",
+			filterConds: "[]",
+			resultStr:   "[[\"a\",\"a\"] [\"b\",\"b\"] [\"c\",\"c\"]]",
+		},
+		{
+			indexPos:    0,
+			exprStr:     "a in ('a', 'bbb', 'c')",
+			accessConds: "[in(test.t.a, a, bbb, c)]",
+			filterConds: "[in(test.t.a, a, bbb, c)]",
+			resultStr:   "[[\"a\",\"a\"] [\"bb\",\"bb\"] [\"c\",\"c\"]]",
+		},
+		{
+			indexPos:    0,
+			exprStr:     "a != 'a'",
+			accessConds: "[ne(test.t.a, a)]",
+			filterConds: "[]",
+			resultStr:   "[[-inf,\"a\") (\"a\",+inf]]",
+		},
+		{
+			indexPos:    0,
+			exprStr:     "a != 'aaa'",
+			accessConds: "[]",
+			filterConds: "[ne(test.t.a, aaa)]",
+			resultStr:   "[[NULL,+inf]]",
+		},
+		{
+			indexPos:    1,
+			exprStr:     "a = 'a' and b < 'b'",
+			accessConds: "[eq(test.t.a, a) lt(test.t.b, b)]",
+			filterConds: "[]",
+			resultStr:   "[[\"a\" -inf,\"a\" \"b\")]",
+		},
+		{
+			indexPos:    1,
+			exprStr:     "a = 'aa' and b < 'bb'",
+			accessConds: "[eq(test.t.a, aa) lt(test.t.b, bb)]",
+			filterConds: "[eq(test.t.a, aa) lt(test.t.b, bb)]",
+			resultStr:   "[[\"aa\" -inf,\"aa\" \"bb\")]",
+		},
+		{
+			indexPos:    1,
+			exprStr:     "a = 'a' and b > 'bb'",
+			accessConds: "[eq(test.t.a, a) gt(test.t.b, bb)]",
+			filterConds: "[gt(test.t.b, bb)]",
+			resultStr:   "[[\"a\" \"bb\",\"a\" +inf]]",
+		},
+		{
+			indexPos:    1,
+			exprStr:     "a = 'aa' and b > 'b'",
+			accessConds: "[eq(test.t.a, aa) gt(test.t.b, b)]",
+			filterConds: "[eq(test.t.a, aa)]",
+			resultStr:   "[(\"aa\" \"b\",\"aa\" +inf]]",
+		},
+		{
+			indexPos:    2,
+			exprStr:     "c > '你'",
+			accessConds: "[gt(test.t.c, 你)]",
+			filterConds: "[]",
+			resultStr:   "[(\"你\",+inf]]",
+		},
+		{
+			indexPos:    2,
+			exprStr:     "c > '你好啊'",
+			accessConds: "[gt(test.t.c, 你好啊)]",
+			filterConds: "[gt(test.t.c, 你好啊)]",
+			resultStr:   "[[\"你好\",+inf]]",
+		},
+		{
+			indexPos:    3,
+			exprStr:     "d > 'd'",
+			accessConds: "[gt(test.t.d, d)]",
+			filterConds: "[]",
+			resultStr:   "[(0x64,+inf]]",
+		},
+		{
+			indexPos:    3,
+			exprStr:     "d > 'ddd'",
+			accessConds: "[gt(test.t.d, ddd)]",
+			filterConds: "[gt(test.t.d, ddd)]",
+			resultStr:   "[[0x6464,+inf]]",
+		},
+		{
+			indexPos:    3,
+			exprStr:     "d = '你'",
+			accessConds: "[eq(test.t.d, 你)]",
+			filterConds: "[eq(test.t.d, 你)]",
+			resultStr:   "[[0xE4BD,0xE4BD]]",
+		},
+	}
+
+	collate.SetNewCollationEnabledForTest(true)
+	defer func() { collate.SetNewCollationEnabledForTest(false) }()
+	ctx := context.Background()
+	for _, tt := range tests {
+		sql := "select * from t where " + tt.exprStr
+		sctx := tk.Session()
+		stmts, err := session.Parse(sctx, sql)
+		require.NoError(t, err, fmt.Sprintf("error %v, for expr %s", err, tt.exprStr))
+		require.Len(t, stmts, 1)
+		ret := &plannercore.PreprocessorReturn{}
+		err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
+		require.NoError(t, err, fmt.Sprintf("error %v, for resolve name, expr %s", err, tt.exprStr))
+		p, _, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
+		require.NoError(t, err, fmt.Sprintf("error %v, for build plan, expr %s", err, tt.exprStr))
+		selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
+		tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo()
+		require.NotNil(t, selection, fmt.Sprintf("expr:%v", tt.exprStr))
+		conds := make([]expression.Expression, len(selection.Conditions))
+		for i, cond := range selection.Conditions {
+			conds[i] = expression.PushDownNot(sctx, cond)
+		}
+		cols, lengths := expression.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
+		require.NotNil(t, cols)
+		res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, 0)
+		require.NoError(t, err)
+		require.Equal(t, tt.accessConds, fmt.Sprintf("%s", res.AccessConds), fmt.Sprintf("wrong access conditions for expr: %s", tt.exprStr))
+		require.Equal(t, tt.filterConds, fmt.Sprintf("%s", res.RemainedConds), fmt.Sprintf("wrong filter conditions for expr: %s", tt.exprStr))
+		got := fmt.Sprintf("%v", res.Ranges)
+		require.Equal(t, tt.resultStr, got, fmt.Sprintf("different for expr %s", tt.exprStr))
+	}
 }
