@@ -175,3 +175,14 @@ func findIdxInfo(dom *domain.Domain, dbName, tbName, idxName string) *model.Inde
 	}
 	return tbl.Meta().FindIndexByName(idxName)
 }
+
+func TestPessimisticAmendIncompatibleWithFastReorg(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 1;")
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 1;")
+
+	tk.MustGetErrMsg("set @@tidb_enable_amend_pessimistic_txn = 1;",
+		"amend pessimistic transactions is not compatible with tidb_ddl_enable_fast_reorg")
+}
