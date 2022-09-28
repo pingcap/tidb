@@ -2001,7 +2001,7 @@ func (p *PhysicalTableDual) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.physicalSchemaProducer.MemoryUsage() + size.SizeOfInt
+	sum = p.physicalSchemaProducer.MemoryUsage() + size.SizeOfInt + size.SizeOfSlice + int64(cap(p.names))*size.SizeOfPointer
 	for _, name := range p.names {
 		sum += name.MemoryUsage()
 	}
@@ -2078,7 +2078,8 @@ func (p *PhysicalWindow) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.physicalSchemaProducer.MemoryUsage() + size.SizeOfSlice*3 + size.SizeOfUint8
+	sum = p.physicalSchemaProducer.MemoryUsage() + size.SizeOfSlice*3 + int64(cap(p.WindowFuncDescs))*size.SizeOfPointer +
+		size.SizeOfUint8
 
 	for _, windowFunc := range p.WindowFuncDescs {
 		sum += windowFunc.MemoryUsage()
@@ -2120,7 +2121,9 @@ func (p *PhysicalShuffle) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.basePhysicalPlan.MemoryUsage() + size.SizeOfInt*2 + size.SizeOfSlice*(3+int64(cap(p.ByItemArrays)))
+	sum = p.basePhysicalPlan.MemoryUsage() + size.SizeOfInt*2 + size.SizeOfSlice*(3+int64(cap(p.ByItemArrays))) +
+		int64(cap(p.Tails)+cap(p.DataSources))*size.SizeOfInterface
+
 	for _, plan := range p.Tails {
 		sum += plan.MemoryUsage()
 	}
@@ -2128,6 +2131,7 @@ func (p *PhysicalShuffle) MemoryUsage() (sum int64) {
 		sum += plan.MemoryUsage()
 	}
 	for _, exprs := range p.ByItemArrays {
+		sum += int64(cap(exprs)) * size.SizeOfInterface
 		for _, expr := range exprs {
 			sum += expr.MemoryUsage()
 		}
@@ -2162,7 +2166,7 @@ func (p *PhysicalShuffleReceiverStub) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.physicalSchemaProducer.MemoryUsage() + size.SizeOfPointer + p.DataSource.MemoryUsage()
+	sum = p.physicalSchemaProducer.MemoryUsage() + size.SizeOfPointer + size.SizeOfInterface + p.DataSource.MemoryUsage()
 	return
 }
 
