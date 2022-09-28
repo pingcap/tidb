@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/plancodec"
+	"github.com/pingcap/tidb/util/size"
 	"github.com/pingcap/tidb/util/texttree"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -280,12 +281,32 @@ type Simple struct {
 	StaleTxnStartTS uint64
 }
 
+// MemoryUsage return the memory usage of Simple
+func (s *Simple) MemoryUsage() (sum int64) {
+	if s == nil {
+		return
+	}
+
+	sum = s.baseSchemaProducer.MemoryUsage() + size.SizeOfInterface + size.SizeOfBool + size.SizeOfUint64
+	return
+}
+
 // PhysicalSimpleWrapper is a wrapper of `Simple` to implement physical plan interface.
 //
 //	Used for simple statements executing in coprocessor.
 type PhysicalSimpleWrapper struct {
 	basePhysicalPlan
 	Inner Simple
+}
+
+// MemoryUsage return the memory usage of PhysicalSimpleWrapper
+func (p *PhysicalSimpleWrapper) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.basePhysicalPlan.MemoryUsage() + p.Inner.MemoryUsage()
+	return
 }
 
 // InsertGeneratedColumns is for completing generated columns in Insert.
@@ -478,8 +499,9 @@ type SplitRegionStatus struct {
 type CompactTable struct {
 	baseSchemaProducer
 
-	ReplicaKind ast.CompactReplicaKind
-	TableInfo   *model.TableInfo
+	ReplicaKind    ast.CompactReplicaKind
+	TableInfo      *model.TableInfo
+	PartitionNames []model.CIStr
 }
 
 // DDL represents a DDL statement plan.

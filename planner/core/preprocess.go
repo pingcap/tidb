@@ -92,6 +92,17 @@ func TryAddExtraLimit(ctx sessionctx.Context, node ast.StmtNode) ast.StmtNode {
 			Count: ast.NewValueExpr(ctx.GetSessionVars().SelectLimit, "", ""),
 		}
 		return &newSel
+	} else if show, ok := node.(*ast.ShowStmt); ok {
+		// Only when Limit is nil, for Show stmt Limit should always nil when be here,
+		// and the show STMT's behavior should consist with MySQL does.
+		if show.Limit != nil || !show.NeedLimitRSRow() {
+			return node
+		}
+		newShow := *show
+		newShow.Limit = &ast.Limit{
+			Count: ast.NewValueExpr(ctx.GetSessionVars().SelectLimit, "", ""),
+		}
+		return &newShow
 	} else if setOprStmt, ok := node.(*ast.SetOprStmt); ok {
 		if setOprStmt.Limit != nil {
 			return node
@@ -1633,6 +1644,10 @@ func (p *preprocessor) resolveAlterTableStmt(node *ast.AlterTableStmt) {
 			table := spec.Constraint.Refer.Table
 			if table.Schema.L == "" && node.Table.Schema.L != "" {
 				table.Schema = model.NewCIStr(node.Table.Schema.L)
+			}
+			if spec.Constraint.Tp == ast.ConstraintForeignKey {
+				// when foreign_key_checks is off, should ignore err when refer table is not exists.
+				p.flag |= inCreateOrDropTable
 			}
 		}
 	}
