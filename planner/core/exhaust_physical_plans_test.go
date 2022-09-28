@@ -346,85 +346,128 @@ func TestRangeFallbackForAnalyzeLookUpFilters(t *testing.T) {
 	ctx := ijCtx.dataSourceNode.ctx
 	dsSchema := ijCtx.dataSourceNode.schema
 
-	ijCase := &indexJoinTestCase{
-		innerKeys:       []*expression.Column{dsSchema.Columns[1], dsSchema.Columns[3]},
-		pushedDownConds: "a in (1, 3) and c in ('aaa', 'bbb')",
-		otherConds:      "",
-		ranges:          "[[1 NULL \"aa\" NULL,1 NULL \"aa\" NULL] [1 NULL \"bb\" NULL,1 NULL \"bb\" NULL] [3 NULL \"aa\" NULL,3 NULL \"aa\" NULL] [3 NULL \"bb\" NULL,3 NULL \"bb\" NULL]]",
-		idxOff2KeyOff:   "[-1 0 -1 1 -1]",
-		accesses:        "[in(Column#1, 1, 3) in(Column#3, aaa, bbb)]",
-		remained:        "[in(Column#3, aaa, bbb)]",
-		compareFilters:  "<nil>",
+	type testOutput struct {
+		ranges         string
+		idxOff2KeyOff  string
+		accesses       string
+		remained       string
+		compareFilters string
 	}
-	ijHelper := testAnalyzeLookUpFilters(t, ijCtx, ijCase)
-	checkRangeFallbackAndReset(t, ctx, false)
-	ijCase.rangeMaxSize = ijHelper.chosenRanges.Range().MemUsage() - 1
-	ijCase.ranges = "[[1 NULL \"aa\",1 NULL \"aa\"] [1 NULL \"bb\",1 NULL \"bb\"] [3 NULL \"aa\",3 NULL \"aa\"] [3 NULL \"bb\",3 NULL \"bb\"]]"
-	ijCase.idxOff2KeyOff = "[-1 0 -1 -1 -1]"
-	ijHelper = testAnalyzeLookUpFilters(t, ijCtx, ijCase)
-	checkRangeFallbackAndReset(t, ctx, true)
-	ijCase.rangeMaxSize = ijHelper.chosenRanges.Range().MemUsage() - 1
-	ijCase.ranges = "[[1 NULL,1 NULL] [3 NULL,3 NULL]]"
-	ijCase.accesses = "[in(Column#1, 1, 3)]"
-	ijHelper = testAnalyzeLookUpFilters(t, ijCtx, ijCase)
-	checkRangeFallbackAndReset(t, ctx, true)
-	ijCase.rangeMaxSize = ijHelper.chosenRanges.Range().MemUsage() - 1
-	// When there is no join key in ranges, index join would not be considered and inner ranges would not be built.
-	ijCase.ranges = "[]"
-	ijCase.idxOff2KeyOff = "[]"
-	ijCase.accesses = "[]"
-	ijCase.remained = "[]"
-	testAnalyzeLookUpFilters(t, ijCtx, ijCase)
-	checkRangeFallbackAndReset(t, ctx, true)
 
-	// test haveExtraCol
-	ijCase = &indexJoinTestCase{
-		innerKeys:       []*expression.Column{dsSchema.Columns[0]},
-		pushedDownConds: "b in (1, 3, 5)",
-		otherConds:      "c > g and c < concat(g, 'aaa')",
-		ranges:          "[[NULL 1 NULL,NULL 1 NULL] [NULL 3 NULL,NULL 3 NULL] [NULL 5 NULL,NULL 5 NULL]]",
-		idxOff2KeyOff:   "[0 -1 -1 -1 -1]",
-		accesses:        "[in(Column#2, 1, 3, 5) gt(Column#3, Column#8) lt(Column#3, concat(Column#8, aaa))]",
-		remained:        "[]",
-		compareFilters:  "gt(Column#3, Column#8) lt(Column#3, concat(Column#8, aaa))",
+	tests := []struct {
+		innerKeys       []*expression.Column
+		pushedDownConds string
+		otherConds      string
+		outputs         []testOutput
+	}{
+		{
+			innerKeys:       []*expression.Column{dsSchema.Columns[1], dsSchema.Columns[3]},
+			pushedDownConds: "a in (1, 3) and c in ('aaa', 'bbb')",
+			otherConds:      "",
+			outputs: []testOutput{
+				{
+					ranges:         "[[1 NULL \"aa\" NULL,1 NULL \"aa\" NULL] [1 NULL \"bb\" NULL,1 NULL \"bb\" NULL] [3 NULL \"aa\" NULL,3 NULL \"aa\" NULL] [3 NULL \"bb\" NULL,3 NULL \"bb\" NULL]]",
+					idxOff2KeyOff:  "[-1 0 -1 1 -1]",
+					accesses:       "[in(Column#1, 1, 3) in(Column#3, aaa, bbb)]",
+					remained:       "[in(Column#3, aaa, bbb)]",
+					compareFilters: "<nil>",
+				},
+				{
+					ranges:         "[[1 NULL \"aa\",1 NULL \"aa\"] [1 NULL \"bb\",1 NULL \"bb\"] [3 NULL \"aa\",3 NULL \"aa\"] [3 NULL \"bb\",3 NULL \"bb\"]]",
+					idxOff2KeyOff:  "[-1 0 -1 -1 -1]",
+					accesses:       "[in(Column#1, 1, 3) in(Column#3, aaa, bbb)]",
+					remained:       "[in(Column#3, aaa, bbb)]",
+					compareFilters: "<nil>",
+				},
+				{
+					ranges:         "[[1 NULL,1 NULL] [3 NULL,3 NULL]]",
+					idxOff2KeyOff:  "[-1 0 -1 -1 -1]",
+					accesses:       "[in(Column#1, 1, 3)]",
+					remained:       "[in(Column#3, aaa, bbb)]",
+					compareFilters: "<nil>",
+				},
+				{
+					ranges:         "[]",
+					idxOff2KeyOff:  "[]",
+					accesses:       "[]",
+					remained:       "[]",
+					compareFilters: "<nil>",
+				},
+			},
+		},
+		{
+			// test haveExtraCol
+			innerKeys:       []*expression.Column{dsSchema.Columns[0]},
+			pushedDownConds: "b in (1, 3, 5)",
+			otherConds:      "c > g and c < concat(g, 'aaa')",
+			outputs: []testOutput{
+				{
+					ranges:         "[[NULL 1 NULL,NULL 1 NULL] [NULL 3 NULL,NULL 3 NULL] [NULL 5 NULL,NULL 5 NULL]]",
+					idxOff2KeyOff:  "[0 -1 -1 -1 -1]",
+					accesses:       "[in(Column#2, 1, 3, 5) gt(Column#3, Column#8) lt(Column#3, concat(Column#8, aaa))]",
+					remained:       "[]",
+					compareFilters: "gt(Column#3, Column#8) lt(Column#3, concat(Column#8, aaa))",
+				},
+				{
+					ranges:         "[[NULL 1,NULL 1] [NULL 3,NULL 3] [NULL 5,NULL 5]]",
+					idxOff2KeyOff:  "[0 -1 -1 -1 -1]",
+					accesses:       "[in(Column#2, 1, 3, 5)]",
+					remained:       "[]",
+					compareFilters: "<nil>",
+				},
+				{
+					ranges:         "[[NULL,NULL]]",
+					idxOff2KeyOff:  "[0 -1 -1 -1 -1]",
+					accesses:       "[]",
+					remained:       "[in(Column#2, 1, 3, 5)]",
+					compareFilters: "<nil>",
+				},
+			},
+		},
+		{
+			// test nextColRange
+			innerKeys:       []*expression.Column{dsSchema.Columns[1]},
+			pushedDownConds: "a in (1, 3) and c > 'aaa' and c < 'bbb'",
+			otherConds:      "",
+			outputs: []testOutput{
+				{
+					ranges:         "[[1 NULL \"aa\",1 NULL \"bb\"] [3 NULL \"aa\",3 NULL \"bb\"]]",
+					idxOff2KeyOff:  "[-1 0 -1 -1 -1]",
+					accesses:       "[in(Column#1, 1, 3) gt(Column#3, aaa) lt(Column#3, bbb)]",
+					remained:       "[gt(Column#3, aaa) lt(Column#3, bbb)]",
+					compareFilters: "<nil>",
+				},
+				{
+					ranges:         "[[1 NULL,1 NULL] [3 NULL,3 NULL]]",
+					idxOff2KeyOff:  "[-1 0 -1 -1 -1]",
+					accesses:       "[in(Column#1, 1, 3)]",
+					remained:       "[gt(Column#3, aaa) lt(Column#3, bbb)]",
+					compareFilters: "<nil>",
+				},
+			},
+		},
 	}
-	ijHelper = testAnalyzeLookUpFilters(t, ijCtx, ijCase)
-	checkRangeFallbackAndReset(t, ctx, false)
-	ijCase.rangeMaxSize = ijHelper.chosenRanges.Range().MemUsage() - 1
-	ijCase.ranges = "[[NULL 1,NULL 1] [NULL 3,NULL 3] [NULL 5,NULL 5]]"
-	ijCase.accesses = "[in(Column#2, 1, 3, 5)]"
-	ijCase.compareFilters = "<nil>"
-	ijHelper = testAnalyzeLookUpFilters(t, ijCtx, ijCase)
-	checkRangeFallbackAndReset(t, ctx, true)
-	ijCase.rangeMaxSize = ijHelper.chosenRanges.Range().MemUsage() - 1
-	ijCase.ranges = "[[NULL,NULL]]"
-	ijCase.accesses = "[]"
-	ijCase.remained = "[in(Column#2, 1, 3, 5)]"
-	testAnalyzeLookUpFilters(t, ijCtx, ijCase)
-	checkRangeFallbackAndReset(t, ctx, true)
-
-	// test nextColRange
-	ijCase = &indexJoinTestCase{
-		innerKeys:       []*expression.Column{dsSchema.Columns[1]},
-		pushedDownConds: "a in (1, 3) and c > 'aaa' and c < 'bbb'",
-		otherConds:      "",
-		ranges:          "[[1 NULL \"aa\",1 NULL \"bb\"] [3 NULL \"aa\",3 NULL \"bb\"]]",
-		idxOff2KeyOff:   "[-1 0 -1 -1 -1]",
-		accesses:        "[in(Column#1, 1, 3) gt(Column#3, aaa) lt(Column#3, bbb)]",
-		remained:        "[gt(Column#3, aaa) lt(Column#3, bbb)]",
-		compareFilters:  "<nil>",
+	for _, tt := range tests {
+		ijCase := &indexJoinTestCase{
+			innerKeys:       tt.innerKeys,
+			pushedDownConds: tt.pushedDownConds,
+			otherConds:      tt.otherConds,
+			rangeMaxSize:    0,
+		}
+		for i, res := range tt.outputs {
+			ijCase.ranges = res.ranges
+			ijCase.idxOff2KeyOff = res.idxOff2KeyOff
+			ijCase.accesses = res.accesses
+			ijCase.remained = res.remained
+			ijCase.compareFilters = res.compareFilters
+			ijHelper := testAnalyzeLookUpFilters(t, ijCtx, ijCase)
+			checkRangeFallbackAndReset(t, ctx, i > 0)
+			ijCase.rangeMaxSize = ijHelper.chosenRanges.Range().MemUsage() - 1
+		}
 	}
-	ijHelper = testAnalyzeLookUpFilters(t, ijCtx, ijCase)
-	checkRangeFallbackAndReset(t, ctx, false)
-	ijCase.rangeMaxSize = ijHelper.chosenRanges.Range().MemUsage() - 1
-	ijCase.ranges = "[[1 NULL,1 NULL] [3 NULL,3 NULL]]"
-	ijCase.accesses = "[in(Column#1, 1, 3)]"
-	ijCase.remained = "[gt(Column#3, aaa) lt(Column#3, bbb)]"
-	testAnalyzeLookUpFilters(t, ijCtx, ijCase)
-	checkRangeFallbackAndReset(t, ctx, true)
 
 	// test that building ranges doesn't have mem limit under rebuild mode
-	ijCase = &indexJoinTestCase{
+	ijCase := &indexJoinTestCase{
 		innerKeys:       []*expression.Column{dsSchema.Columns[0], dsSchema.Columns[2]},
 		pushedDownConds: "b in (1, 3) and d in (2, 4)",
 		otherConds:      "",
@@ -432,7 +475,7 @@ func TestRangeFallbackForAnalyzeLookUpFilters(t *testing.T) {
 		rebuildMode:     true,
 		ranges:          "[[NULL 1 NULL 2,NULL 1 NULL 2] [NULL 1 NULL 4,NULL 1 NULL 4] [NULL 3 NULL 2,NULL 3 NULL 2] [NULL 3 NULL 4,NULL 3 NULL 4]]",
 	}
-	ijHelper = testAnalyzeLookUpFilters(t, ijCtx, ijCase)
+	ijHelper := testAnalyzeLookUpFilters(t, ijCtx, ijCase)
 	checkRangeFallbackAndReset(t, ctx, false)
 	require.Greater(t, ijHelper.chosenRanges.Range().MemUsage(), ijCase.rangeMaxSize)
 }
