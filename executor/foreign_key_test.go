@@ -443,6 +443,20 @@ func TestForeignKey(t *testing.T) {
 	tk.MustExec("insert into t2 (id, a, b) values (2, 22, 222);")
 	tk.MustGetDBError("insert into t3 (id, a, b) values (1, 1, 1)", plannercore.ErrNoReferencedRow2)
 	tk.MustGetDBError("insert into t3 (id, a, b) values (2, 3, 2)", plannercore.ErrNoReferencedRow2)
+
+	// Test table has been referenced by more than tables.
+	tk.MustExec("drop table if exists t3,t2,t1;")
+	tk.MustExec("create table t1 (id int, a int, b int,  primary key (id));")
+	tk.MustExec("create table t2 (b int,  a int, id int, primary key (a), foreign key (a) references t1(id));")
+	tk.MustExec("create table t3 (b int,  a int, id int, primary key (a), foreign key (a) references t1(id));")
+	tk.MustExec("insert into t1 (id, a, b) values (1, 1, 1);")
+	tk.MustExec("insert into t2 (id, a, b) values (1, 1, 1);")
+	tk.MustExec("insert into t3 (id, a, b) values (1, 1, 1);")
+	tk.MustGetDBError("delete from t1 where a=1", plannercore.ErrRowIsReferenced2)
+	tk.MustExec("delete from t2 where id=1")
+	tk.MustGetDBError("delete from t1 where a=1", plannercore.ErrRowIsReferenced2)
+	tk.MustExec("delete from t3 where id=1")
+	tk.MustExec("delete from t1 where id=1")
 }
 
 func TestForeignKeyConcurrentInsertChildTable(t *testing.T) {
