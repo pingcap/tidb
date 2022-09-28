@@ -3581,7 +3581,7 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
-          "description": "TiDB gernerates WriteConflict error count caused by RCCheckTS",
+          "description": "The number of WriteConflict errors caused by RCCheckTS",
           "fill": 1,
           "gridPos": {
             "h": 7,
