@@ -36,12 +36,17 @@ func onCreateForeignKey(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ e
 	}
 
 	var fkInfo model.FKInfo
-	err = job.DecodeArgs(&fkInfo)
+	var fkCheck bool
+	err = job.DecodeArgs(&fkInfo, &fkCheck)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	fkInfo.ID = AllocateIndexID(tblInfo)
+	err = checkAddForeignKeyValidInOwner(d, t, job, job.SchemaName, tblInfo, &fkInfo, fkCheck)
+	if err != nil {
+		return ver, err
+	}
+	fkInfo.ID = allocateFKIndexID(tblInfo)
 	tblInfo.ForeignKeys = append(tblInfo.ForeignKeys, &fkInfo)
 
 	originalState := fkInfo.State
@@ -186,15 +191,8 @@ func checkTableForeignKeyValid(is infoschema.InfoSchema, schema string, tbInfo *
 }
 
 func getAndCheckLatestInfoSchema(d *ddlCtx, t *meta.Meta) (infoschema.InfoSchema, error) {
-	currVer, err := t.GetSchemaVersion()
-	if err != nil {
-		return nil, err
-	}
-	is := d.infoCache.GetLatest()
-	if is.SchemaMetaVersion() != currVer {
-		return nil, errors.New("need wait owner to load latest schema")
-	}
-	return is, nil
+	// TODO(crazycs520): fix me, need to make sure the `d.infoCache` is the latest infoschema.
+	return d.infoCache.GetLatest(), nil
 }
 
 func checkTableForeignKeyValidInOwner(d *ddlCtx, t *meta.Meta, job *model.Job, tbInfo *model.TableInfo, fkCheck bool) (retryable bool, _ error) {
@@ -521,11 +519,21 @@ type schemaAndTable struct {
 	table  string
 }
 
-func newForeignKeyHelper(schema string, schemaID int64, tblInfo *model.TableInfo) foreignKeyHelper {
-	h := foreignKeyHelper{loaded: make(map[schemaAndTable]schemaIDAndTableInfo)}
-	k := schemaAndTable{schema: schema, table: tblInfo.Name.L}
+func newForeignKeyHelper() foreignKeyHelper {
+	return foreignKeyHelper{loaded: make(map[schemaAndTable]schemaIDAndTableInfo)}
+}
+
+func (h *foreignKeyHelper) addLoadedTable(schemaName, tableName string, schemaID int64, tblInfo *model.TableInfo) {
+	k := schemaAndTable{schema: schemaName, table: tableName}
 	h.loaded[k] = schemaIDAndTableInfo{schemaID: schemaID, tblInfo: tblInfo}
-	return h
+}
+
+func (h *foreignKeyHelper) getLoadedTables() []schemaIDAndTableInfo {
+	tableList := make([]schemaIDAndTableInfo, 0, len(h.loaded))
+	for _, info := range h.loaded {
+		tableList = append(tableList, info)
+	}
+	return tableList
 }
 
 func (h *foreignKeyHelper) getTableFromStorage(is infoschema.InfoSchema, t *meta.Meta, schema, table model.CIStr) (result schemaIDAndTableInfo, _ error) {
@@ -585,6 +593,56 @@ func checkDatabaseHasForeignKeyReferredInOwner(d *ddlCtx, t *meta.Meta, job *mod
 		return errors.Trace(err)
 	}
 	err = checkDatabaseHasForeignKeyReferred(is, model.NewCIStr(job.SchemaName), fkCheck)
+	if err != nil {
+		job.State = model.JobStateCancelled
+	}
+	return errors.Trace(err)
+}
+
+func checkFKDupName(tbInfo *model.TableInfo, fkName model.CIStr) error {
+	for _, fkInfo := range tbInfo.ForeignKeys {
+		if fkName.L == fkInfo.Name.L {
+			return dbterror.ErrFkDupName.GenWithStackByArgs(fkName.O)
+		}
+	}
+	return nil
+}
+
+func checkAddForeignKeyValid(is infoschema.InfoSchema, schema string, tbInfo *model.TableInfo, fk *model.FKInfo, fkCheck bool) error {
+	if !variable.EnableForeignKey.Load() {
+		return nil
+	}
+	err := checkTableForeignKeyValid(is, schema, tbInfo, fk, fkCheck)
+	if err != nil {
+		return err
+	}
+	if len(fk.Cols) == 1 && tbInfo.PKIsHandle {
+		pkCol := tbInfo.GetPkColInfo()
+		if pkCol != nil && pkCol.Name.L == fk.Cols[0].L {
+			return nil
+		}
+	}
+	// check foreign key columns should have index.
+	// TODO(crazycs520): we can remove this check after TiDB support auto create index if needed when add foreign key.
+	if model.FindIndexByColumns(tbInfo, fk.Cols...) == nil {
+		return errors.Errorf("Failed to add the foreign key constraint. Missing index for '%s' foreign key columns in the table '%s'", fk.Name, tbInfo.Name)
+	}
+	return nil
+}
+
+func checkAddForeignKeyValidInOwner(d *ddlCtx, t *meta.Meta, job *model.Job, schema string, tbInfo *model.TableInfo, fk *model.FKInfo, fkCheck bool) error {
+	err := checkFKDupName(tbInfo, fk.Name)
+	if err != nil {
+		return err
+	}
+	if !variable.EnableForeignKey.Load() {
+		return nil
+	}
+	is, err := getAndCheckLatestInfoSchema(d, t)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = checkAddForeignKeyValid(is, schema, tbInfo, fk, fkCheck)
 	if err != nil {
 		job.State = model.JobStateCancelled
 	}
