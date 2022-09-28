@@ -1380,7 +1380,7 @@ func (do *Domain) BindHandle() *bindinfo.BindHandle {
 func (do *Domain) LoadBindInfoLoop(ctxForHandle sessionctx.Context, ctxForEvolve sessionctx.Context) error {
 	ctxForHandle.GetSessionVars().InRestrictedSQL = true
 	ctxForEvolve.GetSessionVars().InRestrictedSQL = true
-	do.bindHandle = bindinfo.NewBindHandle(ctxForHandle)
+	do.bindHandle.Reset(ctxForHandle)
 	err := do.bindHandle.Update(true)
 	if err != nil || bindinfo.Lease == 0 {
 		return err
