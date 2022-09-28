@@ -1,8 +1,10 @@
 # TiDB Roadmap
 
-This roadmap brings you what's coming in the 1-year future, so you can see the new features or improvements in advance, follow the progress, learn about the key milestones on the way, and give feedback as the development work goes on.
+This roadmap brings you what's coming in the 1-year future, so you can see the new features or improvements in advance, follow the progress, learn about the key milestones on the way, and give feedback as the development work goes on. In the course of development, this roadmap is subject to change based on user needs and feedback. If you have a feature request or want to prioritize a feature, please file an issue on [GitHub](https://github.com/pingcap/tidb/issues).
 
-In the course of development, this roadmap is subject to change based on user needs and feedback. If you have a feature request or want to prioritize a feature, please file an issue on [GitHub](https://github.com/pingcap/tidb/issues).
+> **Safe harbor statement:**
+> 
+> *Any unreleased features discussed or referenced in our documents, roadmaps, blogs, websites, press releases, or public statements that are not currently available ("unreleased features") are subject to change at our discretion and may not be delivered as planned or at all. Customers acknowledge that purchase decisions are solely based on features and functions that are currently available, and that PingCAP is not obliged to deliver aforementioned unreleased features as part of the contractual agreement unless otherwise stated.*
 
 ## TiDB kernel
 
@@ -128,17 +130,13 @@ In the course of development, this roadmap is subject to change based on user ne
 </thead>
 <tbody>
   <tr>
-    <td rowspan="2">Backup and restore</td>
-    <td>Support AWS EBS snapshot-based backup.</td>
-    <td>BR provides an MVP version of AWS EBS snapshot-based backup and restore.</td>
-  </tr>
-  <tr>
+    <td>Backup and restore</td>
+    <td>EBS snapshot-based backup and restore</td>
     <td>Support backup and restore based on AWS EBS or GCP persistent disk snapshots.</td>
-    <td>BR provides a complete version of EBS snapshot-based backup and restore.</td>
   </tr>
   <tr>
     <td>Point-in-time recovery (PITR)</td>
-    <td>Support Table-level and database-level PITR.</td>
+    <td>Table-level and database-level PITR.</td>
     <td>BR supports table-level or database-level PITR.</td>
   </tr>
   <tr>

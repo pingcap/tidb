@@ -32,6 +32,7 @@ go_library(
         "//parser/mysql",
         "//sessionctx/variable",
         "//table",
+        "//util",
         "//util/generic",
         "//util/logutil",
         "//util/mathutil",
