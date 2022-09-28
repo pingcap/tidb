@@ -92,6 +92,17 @@ func TryAddExtraLimit(ctx sessionctx.Context, node ast.StmtNode) ast.StmtNode {
 			Count: ast.NewValueExpr(ctx.GetSessionVars().SelectLimit, "", ""),
 		}
 		return &newSel
+	} else if show, ok := node.(*ast.ShowStmt); ok {
+		// Only when Limit is nil, for Show stmt Limit should always nil when be here,
+		// and the show STMT's behavior should consist with MySQL does.
+		if show.Limit != nil || !show.NeedLimitRSRow() {
+			return node
+		}
+		newShow := *show
+		newShow.Limit = &ast.Limit{
+			Count: ast.NewValueExpr(ctx.GetSessionVars().SelectLimit, "", ""),
+		}
+		return &newShow
 	} else if setOprStmt, ok := node.(*ast.SetOprStmt); ok {
 		if setOprStmt.Limit != nil {
 			return node
