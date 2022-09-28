@@ -288,13 +288,13 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 30), // 1us ~ 528s
 		})
 
-	RCCheckTSWriteConfilictCounter = prometheus.NewCounter(
+	RCCheckTSWriteConfilictCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
 			Name:      "rc_check_ts_conflict_total",
 			Help:      "Counter of WriteConflict caused by RCCheckTS.",
-		})
+		}, []string{LblType})
 )
 
 // ExecuteErrorToLabel converts an execute error to label.

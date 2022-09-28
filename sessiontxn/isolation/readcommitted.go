@@ -33,6 +33,11 @@ import (
 	"go.uber.org/zap"
 )
 
+var (
+	rcReadCheckTSWriteConfilictCounter  = metrics.RCCheckTSWriteConfilictCounter.WithLabelValues(metrics.LblRCReadCheckTS)
+	rcWriteCheckTSWriteConfilictCounter = metrics.RCCheckTSWriteConfilictCounter.WithLabelValues(metrics.LblRCWriteCheckTS)
+)
+
 type stmtState struct {
 	stmtTS         uint64
 	stmtTSFuture   oracle.Future
@@ -196,7 +201,7 @@ func (p *PessimisticRCTxnContextProvider) handleAfterQueryError(queryErr error) 
 
 	p.latestOracleTSValid = false
 
-	metrics.RCCheckTSWriteConfilictCounter.Add(1)
+	rcReadCheckTSWriteConfilictCounter.Inc()
 
 	logutil.Logger(p.ctx).Info("RC read with ts checking has failed, retry RC read",
 		zap.String("sql", sessVars.StmtCtx.OriginalSQL), zap.Error(queryErr))
@@ -221,7 +226,7 @@ func (p *PessimisticRCTxnContextProvider) handleAfterPessimisticLockError(lockEr
 			zap.String("err", lockErr.Error()))
 		retryable = true
 		if p.checkTSInWriteStmt {
-			metrics.RCCheckTSWriteConfilictCounter.Add(1)
+			rcWriteCheckTSWriteConfilictCounter.Inc()
 		}
 	}
 

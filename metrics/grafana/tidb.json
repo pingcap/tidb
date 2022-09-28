@@ -3614,7 +3614,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "sum(increase(tidb_server_rc_check_ts_conflict_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (instance)",
+              "expr": "sum(increase(tidb_server_rc_check_ts_conflict_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (type)",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "{{instance}}",
