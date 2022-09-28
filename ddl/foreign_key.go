@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
@@ -26,9 +27,10 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/util/sqlexec"
 )
 
-func onCreateForeignKey(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func (w *worker) onCreateForeignKey(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
@@ -42,7 +44,7 @@ func onCreateForeignKey(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ e
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	err = checkAddForeignKeyValidInOwner(d, t, job, job.SchemaName, tblInfo, &fkInfo, fkCheck)
+	err = checkAddForeignKeyValidInOwner(w, d, t, job, job.SchemaName, tblInfo, &fkInfo, fkCheck)
 	if err != nil {
 		return ver, err
 	}
@@ -630,7 +632,7 @@ func checkAddForeignKeyValid(is infoschema.InfoSchema, schema string, tbInfo *mo
 	return nil
 }
 
-func checkAddForeignKeyValidInOwner(d *ddlCtx, t *meta.Meta, job *model.Job, schema string, tbInfo *model.TableInfo, fk *model.FKInfo, fkCheck bool) error {
+func checkAddForeignKeyValidInOwner(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, schema string, tbInfo *model.TableInfo, fk *model.FKInfo, fkCheck bool) error {
 	err := checkFKDupName(tbInfo, fk.Name)
 	if err != nil {
 		return err
@@ -645,6 +647,68 @@ func checkAddForeignKeyValidInOwner(d *ddlCtx, t *meta.Meta, job *model.Job, sch
 	err = checkAddForeignKeyValid(is, schema, tbInfo, fk, fkCheck)
 	if err != nil {
 		job.State = model.JobStateCancelled
+		return errors.Trace(err)
 	}
-	return errors.Trace(err)
+	// TODO(crazycs520): fix me. we need to do multi-schema change when add foreign key constraint.
+	// Since after this check, DML can write data which break the foreign key constraint.
+	err = checkForeignKeyConstrain(w, schema, tbInfo.Name.L, fk, fkCheck)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+func checkForeignKeyConstrain(w *worker, schema, table string, fkInfo *model.FKInfo, fkCheck bool) error {
+	if !fkCheck {
+		return nil
+	}
+	sctx, err := w.sessPool.get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer w.sessPool.put(sctx)
+
+	var buf strings.Builder
+	buf.WriteString("select 1 from %n.%n where ")
+	paramsList := make([]interface{}, 0, 4+len(fkInfo.Cols)*2)
+	paramsList = append(paramsList, schema, table)
+	for i, col := range fkInfo.Cols {
+		if i == 0 {
+			buf.WriteString("%n is not null")
+			paramsList = append(paramsList, col.L)
+		} else {
+			buf.WriteString(" and %n is not null")
+			paramsList = append(paramsList, col.L)
+		}
+	}
+	buf.WriteString(" and (")
+	for i, col := range fkInfo.Cols {
+		if i == 0 {
+			buf.WriteString("%n")
+		} else {
+			buf.WriteString(",%n")
+		}
+		paramsList = append(paramsList, col.L)
+	}
+	buf.WriteString(") not in (select ")
+	for i, col := range fkInfo.RefCols {
+		if i == 0 {
+			buf.WriteString("%n")
+		} else {
+			buf.WriteString(",%n")
+		}
+		paramsList = append(paramsList, col.L)
+	}
+	buf.WriteString(" from %n.%n ) limit 1")
+	paramsList = append(paramsList, fkInfo.RefSchema.L, fkInfo.RefTable.L)
+	rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(w.ctx, nil, buf.String(), paramsList...)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	rowCount := len(rows)
+	if rowCount != 0 {
+		return dbterror.ErrNoReferencedRow2.GenWithStackByArgs(fkInfo.String(schema, table))
+	}
+	return nil
 }
