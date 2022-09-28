@@ -261,7 +261,7 @@ func (p *PhysicalSort) getPlanCostVer2(taskType property.TaskType, option *PlanC
 		memQuota > 0 && // mem-quota is set
 		rowSize*rows > float64(memQuota) // exceed the mem-quota
 
-	sortCPUCost := rows * math.Log2(rows) * cpuFactor
+	sortCPUCost := rows * math.Log2(rows) * float64(len(p.ByItems)) * cpuFactor
 
 	var sortMemCost, sortDiskCost float64
 	if !spill {
