@@ -33,11 +33,11 @@ var GlobalMemoryLimitTuner = &memoryLimitTuner{}
 // Go runtime trigger GC when hit memory limit which managed via runtime/debug.SetMemoryLimit.
 // So we can change memory limit dynamically to avoid frequent GC when memory usage is greater than the soft limit.
 type memoryLimitTuner struct {
-	finalizer  *finalizer
-	isTuning   atomic.Bool
-	percentage atomicutil.Float64
-	coolDown   atomic.Bool
-	times      int
+	finalizer    *finalizer
+	isTuning     atomic.Bool
+	percentage   atomicutil.Float64
+	waitingReset atomic.Bool
+	times        int // The times that nextGC bigger than MemoryLimit
 }
 
 // tuning check the memory nextGC and judge whether this GC is trigger by memory limit.
@@ -54,19 +54,19 @@ func (t *memoryLimitTuner) tuning() {
 	// the second GC is caused by MemoryLimit.
 	if r.HeapInuse > uint64(float64(debug.SetMemoryLimit(-1))/ratio) {
 		t.times++
-		if t.times >= 2 && t.coolDown.CompareAndSwap(false, true) {
+		if t.times >= 2 && t.waitingReset.CompareAndSwap(false, true) {
 			t.times = 0
 			go func() {
 				debug.SetMemoryLimit(math.MaxInt)
-				coolDownTime := 1 * time.Minute // 1 minute to cool down, to avoid frequent GC
+				resetInterval := 1 * time.Minute // Wait 1 minute and set back, to avoid frequent GC
 				failpoint.Inject("testMemoryLimitTuner", func(val failpoint.Value) {
 					if val.(bool) {
-						coolDownTime = 1 * time.Second
+						resetInterval = 1 * time.Second
 					}
 				})
-				time.Sleep(coolDownTime)
+				time.Sleep(resetInterval)
 				debug.SetMemoryLimit(t.calcSoftMemoryLimit())
-				for !t.coolDown.CompareAndSwap(true, false) {
+				for !t.waitingReset.CompareAndSwap(true, false) {
 					continue
 				}
 			}()

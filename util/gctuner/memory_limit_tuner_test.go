@@ -53,7 +53,7 @@ func TestGlobalMemoryTuner(t *testing.T) {
 
 	memory210mb := allocator.alloc(210 << 20)
 	require.True(t, gcNum < getNowGCNum())
-	// Test Cool Down
+	// Test waiting for reset
 	time.Sleep(500 * time.Millisecond)
 	require.Equal(t, int64(math.MaxInt64), debug.SetMemoryLimit(-1))
 	gcNum = getNowGCNum()
