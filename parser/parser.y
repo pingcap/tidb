@@ -12587,15 +12587,18 @@ CreateUserStmt:
 	"CREATE" "USER" IfNotExists UserSpecList RequireClauseOpt ConnectionOptions PasswordOrLockOptions CommentOrAttributeOption
 	{
 		// See https://dev.mysql.com/doc/refman/8.0/en/create-user.html
-		$$ = &ast.CreateUserStmt{
-			IsCreateRole:             false,
-			IfNotExists:              $3.(bool),
-			Specs:                    $4.([]*ast.UserSpec),
-			TLSOptions:               $5.([]*ast.TLSOption),
-			ResourceOptions:          $6.([]*ast.ResourceOption),
-			PasswordOrLockOptions:    $7.([]*ast.PasswordOrLockOption),
-			CommentOrAttributeOption: $8.(*ast.CommentOrAttributeOption),
+		ret := &ast.CreateUserStmt{
+			IsCreateRole:          false,
+			IfNotExists:           $3.(bool),
+			Specs:                 $4.([]*ast.UserSpec),
+			TLSOptions:            $5.([]*ast.TLSOption),
+			ResourceOptions:       $6.([]*ast.ResourceOption),
+			PasswordOrLockOptions: $7.([]*ast.PasswordOrLockOption),
 		}
+		if $8 != nil {
+			ret.CommentOrAttributeOption = $8.(*ast.CommentOrAttributeOption)
+		}
+		$$ = ret
 	}
 
 CreateRoleStmt:
@@ -12613,14 +12616,17 @@ CreateRoleStmt:
 AlterUserStmt:
 	"ALTER" "USER" IfExists UserSpecList RequireClauseOpt ConnectionOptions PasswordOrLockOptions CommentOrAttributeOption
 	{
-		$$ = &ast.AlterUserStmt{
-			IfExists:                 $3.(bool),
-			Specs:                    $4.([]*ast.UserSpec),
-			TLSOptions:               $5.([]*ast.TLSOption),
-			ResourceOptions:          $6.([]*ast.ResourceOption),
-			PasswordOrLockOptions:    $7.([]*ast.PasswordOrLockOption),
-			CommentOrAttributeOption: $8.(*ast.CommentOrAttributeOption),
+		ret := &ast.AlterUserStmt{
+			IfExists:              $3.(bool),
+			Specs:                 $4.([]*ast.UserSpec),
+			TLSOptions:            $5.([]*ast.TLSOption),
+			ResourceOptions:       $6.([]*ast.ResourceOption),
+			PasswordOrLockOptions: $7.([]*ast.PasswordOrLockOption),
 		}
+		if $8 != nil {
+			ret.CommentOrAttributeOption = $8.(*ast.CommentOrAttributeOption)
+		}
+		$$ = ret
 	}
 |	"ALTER" "USER" IfExists "USER" '(' ')' "IDENTIFIED" "BY" AuthString
 	{
