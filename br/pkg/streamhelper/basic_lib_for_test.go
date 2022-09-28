@@ -100,7 +100,7 @@ func (r *region) splitAt(newID uint64, k string) *region {
 		id:     newID,
 		fsim:   r.fsim.fork(),
 	}
-	r.checkpoint.Store(r.checkpoint.Load())
+	newRegion.checkpoint.Store(r.checkpoint.Load())
 	r.rng.EndKey = []byte(k)
 	r.epoch += 1
 	r.fsim = r.fsim.fork()
