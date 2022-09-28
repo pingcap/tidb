@@ -124,6 +124,7 @@ func NewBindHandle(ctx sessionctx.Context) *BindHandle {
 	return handle
 }
 
+// Reset is to reset the BindHandle and clean old info.
 func (h *BindHandle) Reset(ctx sessionctx.Context) {
 	h.bindInfo.Lock()
 	defer h.bindInfo.Unlock()
