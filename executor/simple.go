@@ -810,26 +810,34 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		return err
 	}
 
-	lockAccount := false
-	if len(s.PasswordOrLockOptions) > 0 {
+	lockAccount := "N"
+	if length := len(s.PasswordOrLockOptions); length > 0 {
 		// If "ACCOUNT LOCK" or "ACCOUNT UNLOCK" appears many times,
 		// the last declaration takes effect.
-		for i := len(s.PasswordOrLockOptions) - 1; i >= 0; i-- {
+		for i := length - 1; i >= 0; i-- {
 			if s.PasswordOrLockOptions[i].Type == ast.Lock {
-				lockAccount = true
+				lockAccount = "Y"
 				break
 			} else if s.PasswordOrLockOptions[i].Type == ast.Unlock {
 				break
 			}
 		}
 	}
+	if s.IsCreateRole {
+		lockAccount = "Y"
+	}
+
+	userAttributes := "null"
+	if s.CommentOrAttributeOption != nil {
+		if len(s.CommentOrAttributeOption.Comment) > 0 {
+			userAttributes = fmt.Sprintf("{\"metadata\": {\"comment\": \"%s\"}}", s.CommentOrAttributeOption.Comment)
+		} else if len(s.CommentOrAttributeOption.Attribute) > 0 {
+			userAttributes = fmt.Sprintf("{\"metadata\": %s}", s.CommentOrAttributeOption.Attribute)
+		}
+	}
 
 	sql := new(strings.Builder)
-	if s.IsCreateRole || lockAccount {
-		sqlexec.MustFormatSQL(sql, `INSERT INTO %n.%n (Host, User, authentication_string, plugin, Account_locked) VALUES `, mysql.SystemDB, mysql.UserTable)
-	} else {
-		sqlexec.MustFormatSQL(sql, `INSERT INTO %n.%n (Host, User, authentication_string, plugin) VALUES `, mysql.SystemDB, mysql.UserTable)
-	}
+	sqlexec.MustFormatSQL(sql, `INSERT INTO %n.%n (Host, User, authentication_string, plugin, user_attributes, Account_locked) VALUES `, mysql.SystemDB, mysql.UserTable)
 
 	users := make([]*auth.UserIdentity, 0, len(s.Specs))
 	for _, spec := range s.Specs {
@@ -875,11 +883,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		}
 
 		hostName := strings.ToLower(spec.User.Hostname)
-		if s.IsCreateRole || lockAccount {
-			sqlexec.MustFormatSQL(sql, `(%?, %?, %?, %?, %?)`, hostName, spec.User.Username, pwd, authPlugin, "Y")
-		} else {
-			sqlexec.MustFormatSQL(sql, `(%?, %?, %?, %?)`, hostName, spec.User.Username, pwd, authPlugin)
-		}
+		sqlexec.MustFormatSQL(sql, `(%?, %?, %?, %?, %?, %?)`, hostName, spec.User.Username, pwd, authPlugin, userAttributes, lockAccount)
 		users = append(users, spec.User)
 	}
 	if len(users) == 0 {

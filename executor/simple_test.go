@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
+	"github.com/stretchr/testify/require"
 )
 
 func TestKillStmt(t *testing.T) {
@@ -75,4 +76,21 @@ func TestKillStmt(t *testing.T) {
 	result.Check(testkit.Rows())
 
 	// remote kill is tested in `tests/globalkilltest`
+}
+
+func TestUserAttributes(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	// https://dev.mysql.com/doc/refman/8.0/en/create-user.html#create-user-comments-attributes
+	tk.MustExec("CREATE USER testuser COMMENT '1234'")
+	tk.MustExec("CREATE USER testuser1 ATTRIBUTE '{\"name\": \"Tom\", \"age\": 19}'")
+	_, err := tk.Exec("CREATE USER testuser2 ATTRIBUTE '{\"name\": \"Tom\", age: 19}'")
+	require.Error(t, err)
+	tk.MustQuery("SELECT user_attributes FROM mysql.user WHERE user = 'testuser'").Check(testkit.Rows("{\"metadata\": {\"comment\": \"1234\"}}"))
+	tk.MustQuery("SELECT user_attributes FROM mysql.user WHERE user = 'testuser1'").Check(testkit.Rows("{\"metadata\": {\"age\": 19, \"name\": \"Tom\"}}"))
+	tk.MustQuery("SELECT `attribute` FROM mysql.user_attributes WHERE user = 'testuser'").Check(testkit.Rows("{\"comment\": \"1234\"}"))
+	tk.MustQuery("SELECT `attribute` FROM mysql.user_attributes WHERE user = 'testuser1'").Check(testkit.Rows("{\"age\": 19, \"name\": \"Tom\"}"))
+	tk.MustQuery("SELECT ATTRIBUTE->>\"$.age\" AS age, ATTRIBUTE->>\"$.name\" AS name FROM mysql.user_attributes WHERE user = 'testuser1'").Check(testkit.Rows("19 Tom"))
+
 }
