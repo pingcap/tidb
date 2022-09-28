@@ -161,11 +161,15 @@ func (record *memoryUsageAlarm) alarm4ExcessiveMemUsage(sm util.SessionManager) 
 	}
 }
 
+// AlarmReason implements alarm reason.
 type AlarmReason uint
 
 const (
+	// IncreaseFast is the reason that memory increasing too fast.
 	IncreaseFast AlarmReason = iota
+	// MemoryExceed is the reason that memory used exceed threshold.
 	MemoryExceed
+	// NoReason means no alarm
 	NoReason
 )
 
