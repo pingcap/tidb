@@ -2902,13 +2902,14 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 	}
 	s := &session{
 		store:                 store,
-		sessionVars:           variable.NewSessionVars(),
 		ddlOwnerManager:       dom.DDL().OwnerManager(),
 		client:                store.GetClient(),
 		mppClient:             store.GetMPPClient(),
 		stmtStats:             stmtstats.CreateStatementStats(),
 		sessionStatesHandlers: make(map[sessionstates.SessionStateType]sessionctx.SessionStatesHandler),
 	}
+	s.sessionVars = variable.NewSessionVars(s)
+
 	s.functionUsageMu.builtinFunctionUsage = make(telemetry.BuiltinFunctionsUsage)
 	if opt != nil && opt.PreparedPlanCache != nil {
 		s.preparedPlanCache = opt.PreparedPlanCache
@@ -2936,7 +2937,7 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, error) {
 	s := &session{
 		store:                 store,
-		sessionVars:           variable.NewSessionVars(),
+		sessionVars:           variable.NewSessionVars(nil),
 		client:                store.GetClient(),
 		mppClient:             store.GetMPPClient(),
 		stmtStats:             stmtstats.CreateStatementStats(),
