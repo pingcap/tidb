@@ -3039,6 +3039,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 			IfNotExists:           show.IfNotExists,
 			GlobalScope:           show.GlobalScope,
 			Extended:              show.Extended,
+			Limit:                 show.Limit,
 		},
 	}.Init(b.ctx)
 	isView := false
@@ -3141,6 +3142,12 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 	}
 	if show.Where != nil {
 		np, err = b.buildSelection(ctx, np, show.Where, nil)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if show.Limit != nil {
+		np, err = b.buildLimit(np, show.Limit)
 		if err != nil {
 			return nil, err
 		}
