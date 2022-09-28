@@ -1132,6 +1132,9 @@ func (p *PhysicalSort) GetPlanCost(taskType property.TaskType, option *PlanCostO
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
 		return p.planCost, nil
 	}
+	if p.ctx.GetSessionVars().CostModelVersion == modelVer2 {
+		return p.getPlanCostVer2(taskType, option)
+	}
 	childCost, err := p.children[0].GetPlanCost(taskType, option)
 	if err != nil {
 		return 0, err
