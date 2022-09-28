@@ -5838,6 +5838,10 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (Plan
 		tblID2table[id], _ = b.is.TableByID(id)
 	}
 	del.TblColPosInfos, err = buildColumns2Handle(del.names, tblID2Handle, tblID2table, false)
+	if err != nil {
+		return nil, err
+	}
+	del.FKChecks, err = buildOnDeleteFKChecks(b.ctx, b.is, tblID2table)
 	return del, err
 }
 

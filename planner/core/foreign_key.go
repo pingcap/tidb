@@ -77,6 +77,31 @@ func (p *Insert) buildOnDuplicateUpdateColumns() map[string]struct{} {
 	return m
 }
 
+func buildOnDeleteFKChecks(ctx sessionctx.Context, is infoschema.InfoSchema, tblID2table map[int64]table.Table) (map[int64][]*FKCheck, error) {
+	if !ctx.GetSessionVars().ForeignKeyChecks {
+		return nil, nil
+	}
+	fkChecks := make(map[int64][]*FKCheck)
+	for tid, tbl := range tblID2table {
+		tblInfo := tbl.Meta()
+		dbInfo, exist := is.SchemaByTable(tblInfo)
+		if !exist {
+			return nil, infoschema.ErrDatabaseNotExists
+		}
+		referredFKs := is.GetTableReferredForeignKeys(dbInfo.Name.L, tblInfo.Name.L)
+		for _, referredFK := range referredFKs {
+			fkCheck, err := buildFKCheckOnModifyReferTable(is, referredFK)
+			if err != nil {
+				return nil, err
+			}
+			if fkCheck != nil {
+				fkChecks[tid] = append(fkChecks[tid], fkCheck)
+			}
+		}
+	}
+	return fkChecks, nil
+}
+
 func buildOnUpdateReferredFKChecks(is infoschema.InfoSchema, dbName string, tblInfo *model.TableInfo, updateCols map[string]struct{}) ([]*FKCheck, error) {
 	referredFKs := is.GetTableReferredForeignKeys(dbName, tblInfo.Name.L)
 	fkChecks := make([]*FKCheck, 0, len(referredFKs))

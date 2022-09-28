@@ -472,3 +472,49 @@ func TestForeignKeyConcurrentInsertChildTable(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestForeignKeyOnDeleteParentTableCheck(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+
+	for _, ca := range foreignKeyTestCase1 {
+		tk.MustExec("drop table if exists t2;")
+		tk.MustExec("drop table if exists t1;")
+		for _, sql := range ca.prepareSQLs {
+			tk.MustExec(sql)
+		}
+		if !ca.notNull {
+			tk.MustExec("insert into t1 (id, a, b) values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, null), (6, null, 6), (7, null, null);")
+			tk.MustExec("insert into t2 (id, a, b) values (1, 1, 1), (5, 5, null), (6, null, 6), (7, null, null);;")
+
+			tk.MustExec("delete from t1 where id = 2")
+			tk.MustExec("delete from t1 where a = 3 or b = 4")
+			tk.MustExec("delete from t1 where a = 5 or b = 6 or a is null or b is null;")
+			tk.MustGetDBError("delete from t1 where id = 1", plannercore.ErrRowIsReferenced2)
+			tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 1 1"))
+		} else {
+			tk.MustExec("insert into t1 (id, a, b) values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4);")
+			tk.MustExec("insert into t2 (id, a, b) values (1, 1, 1);")
+
+			tk.MustExec("delete from t1 where id = 2")
+			tk.MustExec("delete from t1 where a = 3 or b = 4")
+			tk.MustGetDBError("delete from t1 where id = 1", plannercore.ErrRowIsReferenced2)
+			tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 1 1"))
+		}
+	}
+
+	// Case-9: test primary key is handle and contain foreign key column.
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1 (id int,a int, primary key(id));")
+	tk.MustExec("create table t2 (id int,a int, primary key(a), foreign key fk(a) references t1(id));")
+	tk.MustExec("insert into t1 values (1, 1), (2, 2), (3, 3), (4, 4);")
+	tk.MustExec("insert into t2 values (1, 1);")
+	tk.MustExec("delete from t1 where id = 2;")
+	tk.MustExec("delete from t1 where a = 3 or a = 4;")
+	tk.MustGetDBError("delete from t1 where id = 1", plannercore.ErrRowIsReferenced2)
+	tk.MustQuery("select id, a from t1 order by id").Check(testkit.Rows("1 1"))
+}
