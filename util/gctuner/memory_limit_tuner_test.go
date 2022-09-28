@@ -1,14 +1,15 @@
 package gctuner
 
 import (
-	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/util/memory"
-	"github.com/stretchr/testify/require"
 	"math"
 	"runtime"
 	"runtime/debug"
 	"testing"
 	"time"
+
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/util/memory"
+	"github.com/stretchr/testify/require"
 )
 
 type mockAllocator struct {
