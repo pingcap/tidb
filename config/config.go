@@ -657,7 +657,8 @@ type Performance struct {
 	RunAutoAnalyze       bool `toml:"run-auto-analyze" json:"run-auto-analyze"`
 
 	// ForcePriority, MemoryUsageAlarmRatio are deprecated.
-	ForcePriority         string  `toml:"force-priority" json:"force-priority"`
+	ForcePriority string `toml:"force-priority" json:"force-priority"`
+	// Deprecated: use global variable MemoryUsageAlarmRatio instead
 	MemoryUsageAlarmRatio float64 `toml:"memory-usage-alarm-ratio" json:"memory-usage-alarm-ratio"`
 
 	EnableLoadFMSketch bool `toml:"enable-load-fmsketch" json:"enable-load-fmsketch"`
