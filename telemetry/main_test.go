@@ -15,19 +15,26 @@
 package telemetry
 
 import (
+	"context"
 	"testing"
 
-	"github.com/pingcap/tidb/util/testbridge"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/testkit/testsetup"
 	"go.uber.org/goleak"
 )
 
 var (
-	GetFeatureUsage = getFeatureUsage
 	GetTxnUsageInfo = getTxnUsageInfo
 )
 
+func GetFeatureUsage(sctx sessionctx.Context) (*featureUsage, error) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTelemetry)
+	return getFeatureUsage(ctx, sctx)
+}
+
 func TestMain(m *testing.M) {
-	testbridge.SetupForCommonTest()
+	testsetup.SetupForCommonTest()
 
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),

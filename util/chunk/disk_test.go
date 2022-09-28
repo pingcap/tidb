@@ -23,13 +23,13 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	errors2 "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -54,7 +54,7 @@ func initChunks(numChk, numRow int) ([]*Chunk, []*types.FieldType) {
 			chk.AppendNull(2)
 			chk.AppendInt64(3, data)
 			if chkIdx%2 == 0 {
-				chk.AppendJSON(4, json.CreateBinary(fmt.Sprint(data)))
+				chk.AppendJSON(4, types.CreateBinaryJSON(fmt.Sprint(data)))
 			} else {
 				chk.AppendNull(4)
 			}
@@ -79,7 +79,7 @@ func TestListInDisk(t *testing.T) {
 		err := l.Add(chk)
 		assert.NoError(t, err)
 	}
-	require.True(t, strings.HasPrefix(l.dataFile.disk.Name(), filepath.Join(os.TempDir(), "oom-use-tmp-storage")))
+	require.True(t, strings.HasPrefix(l.dataFile.disk.Name(), filepath.Join(os.TempDir(), "tidb_enable_tmp_storage_on_oom")))
 	assert.Equal(t, numChk, l.NumChunks())
 	assert.Greater(t, l.GetDiskTracker().BytesConsumed(), int64(0))
 
@@ -189,7 +189,7 @@ func (l *listInDiskWriteDisk) GetRow(ptr RowPtr) (row Row, err error) {
 	if err != nil {
 		return row, err
 	}
-	row = format.toMutRow(l.fieldTypes).ToRow()
+	row, _ = format.toRow(l.fieldTypes, nil)
 	return row, err
 }
 
@@ -211,7 +211,7 @@ func checkRow(t *testing.T, row1, row2 Row) {
 	}
 }
 
-func testListInDisk(t *testing.T) {
+func testListInDisk(t *testing.T, concurrency int) {
 	numChk, numRow := 10, 1000
 	chks, fields := initChunks(numChk, numRow)
 	lChecksum := NewListInDisk(fields)
@@ -236,50 +236,137 @@ func testListInDisk(t *testing.T) {
 		}
 	}
 
+	expectRows := make([]Row, 0, len(ptrs))
 	for _, rowPtr := range ptrs {
-		row1, err := lChecksum.GetRow(rowPtr)
+		row, err := lDisk.GetRow(rowPtr)
 		require.NoError(t, err)
-		row2, err := lDisk.GetRow(rowPtr)
-		require.NoError(t, err)
-		checkRow(t, row1, row2)
+		expectRows = append(expectRows, row)
+	}
+
+	wg := sync.WaitGroup{}
+	wg.Add(concurrency)
+	for con := 0; con < concurrency; con++ {
+		go func() {
+			for i, rowPtr := range ptrs {
+				row, err := lChecksum.GetRow(rowPtr)
+				require.NoError(t, err)
+				checkRow(t, row, expectRows[i])
+			}
+			wg.Done()
+		}()
+	}
+	wg.Wait()
+}
+
+func BenchmarkListInDisk_GetChunk(b *testing.B) {
+	numChk, numRow := 10, 1000
+	chks, fields := initChunks(numChk, numRow)
+	l := NewListInDisk(fields)
+	defer l.Close()
+	for _, chk := range chks {
+		_ = l.Add(chk)
+	}
+
+	for i := 0; i < b.N; i++ {
+		v := i % numChk
+		_, _ = l.GetChunk(v)
 	}
 }
 
-func TestListInDiskWithChecksum(t *testing.T) {
+func TestListInDiskWithChecksum1(t *testing.T) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Security.SpilledFileEncryptionMethod = config.SpilledFileEncryptionMethodPlaintext
 	})
-	t.Run("testListInDisk", testListInDisk)
-
-	t.Run("testReaderWithCache", testReaderWithCache)
-	t.Run("testReaderWithCacheNoFlush", testReaderWithCacheNoFlush)
+	testListInDisk(t, 1)
 }
 
-func TestListInDiskWithChecksumAndEncrypt(t *testing.T) {
+func TestListInDiskWithChecksum2(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Security.SpilledFileEncryptionMethod = config.SpilledFileEncryptionMethodPlaintext
+	})
+	testListInDisk(t, 2)
+}
+
+func TestListInDiskWithChecksum8(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Security.SpilledFileEncryptionMethod = config.SpilledFileEncryptionMethodPlaintext
+	})
+	testListInDisk(t, 8)
+}
+
+func TestListInDiskWithChecksumReaderWithCache(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Security.SpilledFileEncryptionMethod = config.SpilledFileEncryptionMethodPlaintext
+	})
+	testReaderWithCache(t)
+}
+
+func TestListInDiskWithChecksumReaderWithCacheNoFlush(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Security.SpilledFileEncryptionMethod = config.SpilledFileEncryptionMethodPlaintext
+	})
+	testReaderWithCacheNoFlush(t)
+}
+
+func TestListInDiskWithChecksumAndEncrypt1(t *testing.T) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Security.SpilledFileEncryptionMethod = config.SpilledFileEncryptionMethodAES128CTR
 	})
-	t.Run("testListInDisk", testListInDisk)
+	testListInDisk(t, 1)
+}
 
-	t.Run("testReaderWithCache", testReaderWithCache)
-	t.Run("testReaderWithCacheNoFlush", testReaderWithCacheNoFlush)
+func TestListInDiskWithChecksumAndEncrypt2(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Security.SpilledFileEncryptionMethod = config.SpilledFileEncryptionMethodAES128CTR
+	})
+	testListInDisk(t, 2)
+}
+
+func TestListInDiskWithChecksumAndEncrypt8(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Security.SpilledFileEncryptionMethod = config.SpilledFileEncryptionMethodAES128CTR
+	})
+	testListInDisk(t, 8)
+}
+
+func TestListInDiskWithChecksumAndEncryptReaderWithCache(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Security.SpilledFileEncryptionMethod = config.SpilledFileEncryptionMethodAES128CTR
+	})
+	testReaderWithCache(t)
+}
+
+func TestListInDiskWithChecksumAndEncryptReaderWithCacheNoFlush(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Security.SpilledFileEncryptionMethod = config.SpilledFileEncryptionMethodAES128CTR
+	})
+	testReaderWithCacheNoFlush(t)
 }
 
 // Following diagram describes the testdata we use to test:
 // 4 B: checksum of this segment.
 // 8 B: all columns' length, in the following example, we will only have one column.
 // 1012 B: data in file. because max length of each segment is 1024, so we only have 1020B for user payload.
-//
-//           Data in File                                    Data in mem cache
-// +------+------------------------------------------+ +-----------------------------+
-// |      |    1020B payload                         | |                             |
-// |4Bytes| +---------+----------------------------+ | |                             |
-// |checksum|8B collen| 1012B user data            | | |  12B remained user data     |
-// |      | +---------+----------------------------+ | |                             |
-// |      |                                          | |                             |
-// +------+------------------------------------------+ +-----------------------------+
+/*
+           Data in File                                    Data in mem cache
+ +------+------------------------------------------+ +-----------------------------+
+ |      |    1020B payload                         | |                             |
+ |4Bytes| +---------+----------------------------+ | |                             |
+ |checksum|8B collen| 1012B user data            | | |  12B remained user data     |
+ |      | +---------+----------------------------+ | |                             |
+ |      |                                          | |                             |
+ +------+------------------------------------------+ +-----------------------------+
+*/
 func testReaderWithCache(t *testing.T) {
 	testData := "0123456789"
 	buf := bytes.NewBuffer(nil)

@@ -36,8 +36,7 @@ import (
 	"io"
 	"math/rand"
 	"net"
-	"net/http"
-
+	"net/http" //nolint:goimports
 	// For pprof
 	_ "net/http/pprof" // #nosec G108
 	"os"
@@ -113,7 +112,7 @@ const defaultCapability = mysql.ClientLongPassword | mysql.ClientLongFlag |
 	mysql.ClientConnectWithDB | mysql.ClientProtocol41 |
 	mysql.ClientTransactions | mysql.ClientSecureConnection | mysql.ClientFoundRows |
 	mysql.ClientMultiStatements | mysql.ClientMultiResults | mysql.ClientLocalFiles |
-	mysql.ClientConnectAtts | mysql.ClientPluginAuth | mysql.ClientInteractive
+	mysql.ClientConnectAtts | mysql.ClientPluginAuth | mysql.ClientInteractive | mysql.ClientDeprecateEOF
 
 // Server is the MySQL protocol server
 type Server struct {
@@ -206,6 +205,14 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert,
 		s.cfg.Security.AutoTLS, s.cfg.Security.RSAKeySize)
 
+	// LoadTLSCertificates will auto generate certificates if autoTLS is enabled.
+	// It only returns an error if certificates are specified and invalid.
+	// In which case, we should halt server startup as a misconfiguration could
+	// lead to a connection downgrade.
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	// Automatically reload auto-generated certificates.
 	// The certificates are re-created every 30 days and are valid for 90 days.
 	if autoReload {
@@ -223,18 +230,12 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		}()
 	}
 
-	if err != nil {
-		logutil.BgLogger().Error("secure connection cert/key/ca load fail", zap.Error(err))
-	}
 	if tlsConfig != nil {
 		setSSLVariable(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert)
 		atomic.StorePointer(&s.tlsConfig, unsafe.Pointer(tlsConfig))
 		logutil.BgLogger().Info("mysql protocol server secure connection is enabled",
 			zap.Bool("client verification enabled", len(variable.GetSysVar("ssl_ca").Value) > 0))
-	} else if cfg.Security.RequireSecureTransport {
-		return nil, errSecureTransportRequired.FastGenByArgs()
 	}
-
 	if s.tlsConfig != nil {
 		s.capability |= mysql.ClientSSL
 	}
@@ -275,7 +276,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		if proxyTarget == nil {
 			proxyTarget = s.socket
 		}
-		ppListener, err := proxyprotocol.NewListener(proxyTarget, s.cfg.ProxyProtocol.Networks,
+		ppListener, err := proxyprotocol.NewLazyListener(proxyTarget, s.cfg.ProxyProtocol.Networks,
 			int(s.cfg.ProxyProtocol.HeaderTimeout))
 		if err != nil {
 			logutil.BgLogger().Error("ProxyProtocol networks parameter invalid")
@@ -350,7 +351,7 @@ func setTxnScope() {
 // Export config-related metrics
 func (s *Server) reportConfig() {
 	metrics.ConfigStatus.WithLabelValues("token-limit").Set(float64(s.cfg.TokenLimit))
-	metrics.ConfigStatus.WithLabelValues("max-server-connections").Set(float64(s.cfg.MaxServerConnections))
+	metrics.ConfigStatus.WithLabelValues("max_connections").Set(float64(s.cfg.Instance.MaxConnections))
 }
 
 // Run runs the server.
@@ -512,11 +513,18 @@ func (s *Server) onConn(conn *clientConn) {
 			})
 			terror.Log(err)
 		}
-		if errors.Cause(err) == io.EOF {
+		switch errors.Cause(err) {
+		case io.EOF:
 			// `EOF` means the connection is closed normally, we do not treat it as a noticeable error and log it in 'DEBUG' level.
 			logutil.BgLogger().With(zap.Uint64("conn", conn.connectionID)).
 				Debug("EOF", zap.String("remote addr", conn.bufReadConn.RemoteAddr().String()))
-		} else {
+		case errConCount:
+			if err := conn.writeError(ctx, err); err != nil {
+				logutil.BgLogger().With(zap.Uint64("conn", conn.connectionID)).
+					Warn("error in writing errConCount", zap.Error(err),
+						zap.String("remote addr", conn.bufReadConn.RemoteAddr().String()))
+			}
+		default:
 			metrics.HandShakeErrorCounter.Inc()
 			logutil.BgLogger().With(zap.Uint64("conn", conn.connectionID)).
 				Warn("Server.onConn handshake", zap.Error(err),
@@ -529,6 +537,7 @@ func (s *Server) onConn(conn *clientConn) {
 	logutil.Logger(ctx).Debug("new connection", zap.String("remoteAddr", conn.bufReadConn.RemoteAddr().String()))
 
 	defer func() {
+		terror.Log(conn.Close())
 		logutil.Logger(ctx).Debug("connection closed")
 	}()
 	s.rwlock.Lock()
@@ -538,9 +547,7 @@ func (s *Server) onConn(conn *clientConn) {
 	metrics.ConnGauge.Set(float64(connections))
 
 	sessionVars := conn.ctx.GetSessionVars()
-	if plugin.IsEnable(plugin.Audit) {
-		sessionVars.ConnectionInfo = conn.connectInfo()
-	}
+	sessionVars.ConnectionInfo = conn.connectInfo()
 	err := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 		if authPlugin.OnConnectionEvent != nil {
@@ -556,10 +563,6 @@ func (s *Server) onConn(conn *clientConn) {
 	conn.Run(ctx)
 
 	err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
-		// Audit plugin may be disabled before a conn is created, leading no connectionInfo in sessionVars.
-		if sessionVars.ConnectionInfo == nil {
-			sessionVars.ConnectionInfo = conn.connectInfo()
-		}
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 		if authPlugin.OnConnectionEvent != nil {
 			sessionVars.ConnectionInfo.Duration = float64(time.Since(connectedTime)) / float64(time.Millisecond)
@@ -576,11 +579,11 @@ func (s *Server) onConn(conn *clientConn) {
 }
 
 func (cc *clientConn) connectInfo() *variable.ConnectionInfo {
-	connType := "Socket"
+	connType := variable.ConnTypeSocket
 	if cc.isUnixSocket {
-		connType = "UnixSocket"
+		connType = variable.ConnTypeUnixSocket
 	} else if cc.tlsConn != nil {
-		connType = "SSL/TLS"
+		connType = variable.ConnTypeTLS
 	}
 	connInfo := &variable.ConnectionInfo{
 		ConnectionID:      cc.connectionID,
@@ -602,8 +605,8 @@ func (cc *clientConn) connectInfo() *variable.ConnectionInfo {
 }
 
 func (s *Server) checkConnectionCount() error {
-	// When the value of MaxServerConnections is 0, the number of connections is unlimited.
-	if int(s.cfg.MaxServerConnections) == 0 {
+	// When the value of Instance.MaxConnections is 0, the number of connections is unlimited.
+	if int(s.cfg.Instance.MaxConnections) == 0 {
 		return nil
 	}
 
@@ -611,9 +614,9 @@ func (s *Server) checkConnectionCount() error {
 	conns := len(s.clients)
 	s.rwlock.RUnlock()
 
-	if conns >= int(s.cfg.MaxServerConnections) {
+	if conns >= int(s.cfg.Instance.MaxConnections) {
 		logutil.BgLogger().Error("too many connections",
-			zap.Uint32("max connections", s.cfg.MaxServerConnections), zap.Error(errConCount))
+			zap.Uint32("max connections", s.cfg.Instance.MaxConnections), zap.Error(errConCount))
 		return errConCount
 	}
 	return nil
@@ -708,6 +711,7 @@ func killConn(conn *clientConn) {
 	conn.mu.RLock()
 	cancelFunc := conn.mu.cancelFunc
 	conn.mu.RUnlock()
+
 	if cancelFunc != nil {
 		cancelFunc()
 	}
@@ -830,8 +834,12 @@ func (s *Server) GetInternalSessionStartTSList() []uint64 {
 	s.sessionMapMutex.Lock()
 	defer s.sessionMapMutex.Unlock()
 	tsList := make([]uint64, 0, len(s.internalSessions))
+	analyzeProcID := util.GetAutoAnalyzeProcID(s.ServerID)
 	for se := range s.internalSessions {
-		if ts := session.GetStartTSFromSession(se); ts != 0 {
+		if ts, processInfoID := session.GetStartTSFromSession(se); ts != 0 {
+			if processInfoID == analyzeProcID {
+				continue
+			}
 			tsList = append(tsList, ts)
 		}
 	}
@@ -862,4 +870,15 @@ func setSystemTimeZoneVariable() {
 		}
 		variable.SetSysVar("system_time_zone", tz)
 	})
+}
+
+// CheckOldRunningTxn implements SessionManager interface.
+func (s *Server) CheckOldRunningTxn(job2ver map[int64]int64, job2ids map[int64]string) {
+	s.rwlock.RLock()
+	defer s.rwlock.RUnlock()
+	for _, client := range s.clients {
+		if client.ctx.Session != nil {
+			session.RemoveLockDDLJobs(client.ctx.Session, job2ver, job2ids)
+		}
+	}
 }

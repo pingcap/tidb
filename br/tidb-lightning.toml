@@ -136,6 +136,8 @@ addr = "127.0.0.1:8287"
 # The memory cache used in for local sorting during the encode-KV phase before flushing into the engines. The memory
 # usage is bound by region-concurrency * local-writer-mem-cache-size.
 #local-writer-mem-cache-size = '128MiB'
+# Limit the write bandwidth to each tikv store. The unit is 'Bytes per second'. 0 means no limit.
+#store-write-bwlimit = 0
 
 [mydumper]
 # block size of file reading
@@ -186,7 +188,7 @@ data-invalid-char-replace = "\uFFFD"
 # different objects. Currently only affects [[routes]].
 case-sensitive = false
 
-# if strict-format is ture, lightning will use '\r' and '\n' to determine the end of each line. Make sure your data
+# if strict-format is true, lightning will use '\r' and '\n' to determine the end of each line. Make sure your data
 # doesn't contain '\r' or '\n' if strict-format is enabled, or csv parser may parse incorrect result.
 strict-format = false
 # if strict-format is true, large CSV files will be split to multiple chunks, which Lightning

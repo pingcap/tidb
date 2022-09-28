@@ -25,6 +25,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func BenchmarkPacketIOWrite(b *testing.B) {
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		var outBuffer bytes.Buffer
+		pkt := &packetIO{bufWriter: bufio.NewWriter(&outBuffer)}
+		_ = pkt.writePacket([]byte{0x6d, 0x44, 0x42, 0x3a, 0x35, 0x36, 0x0, 0x0, 0x0, 0xfc, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x68, 0x54, 0x49, 0x44, 0x3a, 0x31, 0x30, 0x38, 0x0, 0xfe})
+	}
+}
+
 func TestPacketIOWrite(t *testing.T) {
 	// Test write one packet
 	var outBuffer bytes.Buffer

@@ -20,8 +20,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
-	"runtime"
 	"runtime/pprof"
 	"strings"
 	"testing"
@@ -34,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
+	"go.opencensus.io/stats/view"
 )
 
 func TestPredefinedTables(t *testing.T) {
@@ -42,8 +41,7 @@ func TestPredefinedTables(t *testing.T) {
 }
 
 func TestPerfSchemaTables(t *testing.T) {
-	store, clean := newMockStore(t)
-	defer clean()
+	store := newMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use performance_schema")
@@ -53,9 +51,16 @@ func TestPerfSchemaTables(t *testing.T) {
 	tk.MustQuery("select * from events_stages_history_long").Check(testkit.Rows())
 }
 
+func TestSessionVariables(t *testing.T) {
+	store := newMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	res := tk.MustQuery("select variable_value from performance_schema.session_variables order by variable_name limit 10;")
+	tk.MustQuery("select variable_value from information_schema.session_variables order by variable_name limit 10;").Check(res.Rows())
+}
+
 func TestTiKVProfileCPU(t *testing.T) {
-	store, clean := newMockStore(t)
-	defer clean()
+	store := newMockStore(t)
 
 	router := http.NewServeMux()
 	mockServer := httptest.NewServer(router)
@@ -65,7 +70,7 @@ func TestTiKVProfileCPU(t *testing.T) {
 	// mock tikv profile
 	copyHandler := func(filename string) http.HandlerFunc {
 		return func(w http.ResponseWriter, _ *http.Request) {
-			file, err := os.Open(filepath.Join(currentSourceDir(), filename))
+			file, err := os.Open(filename)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
@@ -146,7 +151,7 @@ func TestTiKVProfileCPU(t *testing.T) {
 	}
 
 	// mock PD profile
-	router.HandleFunc("/pd/api/v1/debug/pprof/profile", copyHandler("../../util/profile/testdata/test.pprof"))
+	router.HandleFunc("/pd/api/v1/debug/pprof/profile", copyHandler("testdata/test.pprof"))
 	router.HandleFunc("/pd/api/v1/debug/pprof/heap", handlerFactory("heap"))
 	router.HandleFunc("/pd/api/v1/debug/pprof/mutex", handlerFactory("mutex"))
 	router.HandleFunc("/pd/api/v1/debug/pprof/allocs", handlerFactory("allocs"))
@@ -180,25 +185,20 @@ func TestTiKVProfileCPU(t *testing.T) {
 	require.Lenf(t, accessed, 5, "expect all HTTP API had been accessed, but found: %v", accessed)
 }
 
-func newMockStore(t *testing.T) (store kv.Storage, clean func()) {
-	var err error
-	store, err = mockstore.NewMockStore()
+func newMockStore(t *testing.T) kv.Storage {
+	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	session.DisableStats4Test()
 
 	dom, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 
-	clean = func() {
+	t.Cleanup(func() {
 		dom.Close()
 		err := store.Close()
 		require.NoError(t, err)
-	}
+		view.Stop()
+	})
 
-	return
-}
-
-func currentSourceDir() string {
-	_, file, _, _ := runtime.Caller(0)
-	return filepath.Dir(file)
+	return store
 }

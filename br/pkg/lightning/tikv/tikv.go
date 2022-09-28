@@ -186,7 +186,7 @@ func FetchMode(ctx context.Context, tls *common.TLS, tikvAddr string) (import_ss
 	return FetchModeFromMetrics(resp.Prometheus)
 }
 
-// FetchMode obtains the import mode status from the Prometheus metrics of a TiKV node.
+// FetchModeFromMetrics obtains the import mode status from the Prometheus metrics of a TiKV node.
 func FetchModeFromMetrics(metrics string) (import_sstpb.SwitchMode, error) {
 	m := fetchModeRegexp.FindStringSubmatch(metrics)
 	switch {
@@ -197,6 +197,16 @@ func FetchModeFromMetrics(metrics string) (import_sstpb.SwitchMode, error) {
 	default:
 		return import_sstpb.SwitchMode_Normal, nil
 	}
+}
+
+// FetchRemoteDBModelsFromTLS obtains the remote DB models from the given TLS.
+func FetchRemoteDBModelsFromTLS(ctx context.Context, tls *common.TLS) ([]*model.DBInfo, error) {
+	var dbs []*model.DBInfo
+	err := tls.GetJSON(ctx, "/schema", &dbs)
+	if err != nil {
+		return nil, errors.Annotatef(err, "cannot read db schemas from remote")
+	}
+	return dbs, nil
 }
 
 func FetchRemoteTableModelsFromTLS(ctx context.Context, tls *common.TLS, schema string) ([]*model.TableInfo, error) {

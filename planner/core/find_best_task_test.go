@@ -16,7 +16,6 @@ package core
 
 import (
 	"fmt"
-	"math"
 	"testing"
 
 	"github.com/pingcap/tidb/expression"
@@ -39,8 +38,7 @@ func (ds *mockDataSource) findBestTask(prop *property.PhysicalProperty, planCoun
 	// Just use a TableDual for convenience.
 	p := PhysicalTableDual{}.Init(ds.ctx, &property.StatsInfo{RowCount: 1}, 0)
 	task := &rootTask{
-		p:   p,
-		cst: 10000,
+		p: p,
 	}
 	planCounter.Dec(1)
 	return task, 1, nil
@@ -48,13 +46,13 @@ func (ds *mockDataSource) findBestTask(prop *property.PhysicalProperty, planCoun
 
 // mockLogicalPlan4Test is a LogicalPlan which is used for unit test.
 // The basic assumption:
-// 1. mockLogicalPlan4Test can generate tow kinds of physical plan: physicalPlan1 and
-//    physicalPlan2. physicalPlan1 can pass the property only when they are the same
-//    order; while physicalPlan2 cannot match any of the property(in other words, we can
-//    generate it only when then property is empty).
-// 2. We have a hint for physicalPlan2.
-// 3. If the property is empty, we still need to check `canGeneratePlan2` to decide
-//    whether it can generate physicalPlan2.
+//  1. mockLogicalPlan4Test can generate tow kinds of physical plan: physicalPlan1 and
+//     physicalPlan2. physicalPlan1 can pass the property only when they are the same
+//     order; while physicalPlan2 cannot match any of the property(in other words, we can
+//     generate it only when then property is empty).
+//  2. We have a hint for physicalPlan2.
+//  3. If the property is empty, we still need to check `canGeneratePlan2` to decide
+//     whether it can generate physicalPlan2.
 type mockLogicalPlan4Test struct {
 	baseLogicalPlan
 	// hasHintForPlan2 indicates whether this mockPlan contains hint.
@@ -73,7 +71,7 @@ func (p mockLogicalPlan4Test) Init(ctx sessionctx.Context) *mockLogicalPlan4Test
 }
 
 func (p *mockLogicalPlan4Test) getPhysicalPlan1(prop *property.PhysicalProperty) PhysicalPlan {
-	physicalPlan1 := mockPhysicalPlan4Test{planType: 1, costOverflow: p.costOverflow}.Init(p.ctx)
+	physicalPlan1 := mockPhysicalPlan4Test{planType: 1}.Init(p.ctx)
 	physicalPlan1.stats = &property.StatsInfo{RowCount: 1}
 	physicalPlan1.childrenReqProps = make([]*property.PhysicalProperty, 1)
 	physicalPlan1.childrenReqProps[0] = prop.CloneEssentialFields()
@@ -81,7 +79,7 @@ func (p *mockLogicalPlan4Test) getPhysicalPlan1(prop *property.PhysicalProperty)
 }
 
 func (p *mockLogicalPlan4Test) getPhysicalPlan2(prop *property.PhysicalProperty) PhysicalPlan {
-	physicalPlan2 := mockPhysicalPlan4Test{planType: 2, costOverflow: p.costOverflow}.Init(p.ctx)
+	physicalPlan2 := mockPhysicalPlan4Test{planType: 2}.Init(p.ctx)
 	physicalPlan2.stats = &property.StatsInfo{RowCount: 1}
 	physicalPlan2.childrenReqProps = make([]*property.PhysicalProperty, 1)
 	physicalPlan2.childrenReqProps[0] = property.NewPhysicalProperty(prop.TaskTp, nil, false, prop.ExpectedCnt, false)
@@ -91,7 +89,7 @@ func (p *mockLogicalPlan4Test) getPhysicalPlan2(prop *property.PhysicalProperty)
 func (p *mockLogicalPlan4Test) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
 	plan1 := make([]PhysicalPlan, 0, 1)
 	plan2 := make([]PhysicalPlan, 0, 1)
-	if prop.IsEmpty() && p.canGeneratePlan2 {
+	if prop.IsSortItemEmpty() && p.canGeneratePlan2 {
 		// Generate PhysicalPlan2 when the property is empty.
 		plan2 = append(plan2, p.getPhysicalPlan2(prop))
 		if p.hasHintForPlan2 {
@@ -104,7 +102,7 @@ func (p *mockLogicalPlan4Test) exhaustPhysicalPlans(prop *property.PhysicalPrope
 	}
 	if p.hasHintForPlan2 {
 		// The hint cannot work.
-		if prop.IsEmpty() {
+		if prop.IsSortItemEmpty() {
 			p.ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("the hint is inapplicable for plan2"))
 		}
 		return plan1, false, nil
@@ -116,8 +114,7 @@ type mockPhysicalPlan4Test struct {
 	basePhysicalPlan
 	// 1 or 2 for physicalPlan1 or physicalPlan2.
 	// See the comment of mockLogicalPlan4Test.
-	planType     int
-	costOverflow bool
+	planType int
 }
 
 func (p mockPhysicalPlan4Test) Init(ctx sessionctx.Context) *mockPhysicalPlan4Test {
@@ -128,12 +125,12 @@ func (p mockPhysicalPlan4Test) Init(ctx sessionctx.Context) *mockPhysicalPlan4Te
 func (p *mockPhysicalPlan4Test) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	attachPlan2Task(p, t)
-	if p.costOverflow {
-		t.addCost(math.MaxFloat64)
-	} else {
-		t.addCost(1)
-	}
 	return t
+}
+
+// MemoryUsage of mockPhysicalPlan4Test is only for testing
+func (p *mockPhysicalPlan4Test) MemoryUsage() (sum int64) {
+	return
 }
 
 func TestCostOverflow(t *testing.T) {
@@ -148,7 +145,6 @@ func TestCostOverflow(t *testing.T) {
 	require.NoError(t, err)
 	// The cost should be overflowed, but the task shouldn't be invalid.
 	require.False(t, task.invalid())
-	require.Equal(t, math.MaxFloat64, task.cost())
 }
 
 func TestEnforcedProperty(t *testing.T) {

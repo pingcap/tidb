@@ -16,8 +16,8 @@ package core
 
 import (
 	"context"
-	"sort"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/distsql"
@@ -30,8 +30,10 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/size"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 // Fragment is cut from the whole pushed-down plan by network communication.
@@ -47,6 +49,28 @@ type Fragment struct {
 	IsRoot bool
 
 	singleton bool // indicates if this is a task running on a single node.
+}
+
+const emptyFragmentSize = int64(unsafe.Sizeof(Fragment{}))
+
+// MemoryUsage return the memory usage of Fragment
+func (f *Fragment) MemoryUsage() (sum int64) {
+	if f == nil {
+		return
+	}
+
+	sum = emptyFragmentSize + int64(cap(f.ExchangeReceivers))*size.SizeOfPointer
+	if f.TableScan != nil {
+		sum += f.TableScan.MemoryUsage()
+	}
+	if f.ExchangeSender != nil {
+		sum += f.ExchangeSender.MemoryUsage()
+	}
+
+	for _, receiver := range f.ExchangeReceivers {
+		sum += receiver.MemoryUsage()
+	}
+	return
 }
 
 type tasksAndFrags struct {
@@ -301,7 +325,17 @@ func partitionPruning(ctx sessionctx.Context, tbl table.PartitionedTable, conds 
 		}
 	}
 	if len(ret) == 0 {
-		ret = []table.PhysicalTable{tbl.GetPartition(pi.Definitions[0].ID)}
+		// TiFlash cannot process an empty task correctly, so choose to leave it with some data to read.
+		if len(partitionNames) == 0 {
+			ret = []table.PhysicalTable{tbl.GetPartition(pi.Definitions[0].ID)}
+		} else {
+			for _, def := range pi.Definitions {
+				if def.Name.L == partitionNames[0].L {
+					ret = []table.PhysicalTable{tbl.GetPartition(def.ID)}
+					break
+				}
+			}
+		}
 	}
 	return ret, nil
 }
@@ -358,8 +392,8 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 }
 
 func (e *mppTaskGenerator) constructMPPBuildTaskReqForPartitionedTable(ts *PhysicalTableScan, splitedRanges []*ranger.Range, partitions []table.PhysicalTable) (*kv.MPPBuildTasksRequest, []int64, error) {
-	sort.Slice(partitions, func(i, j int) bool {
-		return partitions[i].GetPhysicalID() < partitions[j].GetPhysicalID()
+	slices.SortFunc(partitions, func(i, j table.PhysicalTable) bool {
+		return i.GetPhysicalID() < j.GetPhysicalID()
 	})
 	partitionIDAndRanges := make([]kv.PartitionIDAndRanges, len(partitions))
 	allPartitionsIDs := make([]int64, len(partitions))

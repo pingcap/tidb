@@ -15,6 +15,8 @@
 package handle
 
 import (
+	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 )
 
@@ -31,17 +33,21 @@ type statsCacheInner interface {
 	Map() map[int64]*statistics.Table
 	Len() int
 	FreshMemUsage()
-	FreshTableCost(int64)
 	Copy() statsCacheInner
-}
-
-type cacheItem struct {
-	key   int64
-	value *statistics.Table
-	cost  int64
+	SetCapacity(int64)
+	EnableQuota() bool
+	// Front returns the front element's owner tableID, only used for test
+	Front() int64
 }
 
 func newStatsCache() statsCache {
+	enableQuota := config.GetGlobalConfig().Performance.EnableStatsCacheMemQuota
+	if enableQuota {
+		capacity := variable.StatsCacheMemQuota.Load()
+		return statsCache{
+			statsCacheInner: newStatsLruCache(capacity),
+		}
+	}
 	return statsCache{
 		statsCacheInner: &mapCache{
 			tables:   make(map[int64]cacheItem),
@@ -101,6 +107,20 @@ func (sc statsCache) update(tables []*statistics.Table, deletedIDs []int64, newV
 		newCache.Del(id)
 	}
 	return newCache
+}
+
+type cacheItem struct {
+	key   int64
+	value *statistics.Table
+	cost  int64
+}
+
+func (c cacheItem) copy() cacheItem {
+	return cacheItem{
+		key:   c.key,
+		value: c.value,
+		cost:  c.cost,
+	}
 }
 
 type mapCache struct {
@@ -163,7 +183,7 @@ func (m *mapCache) Cost() int64 {
 
 // Keys implements statsCacheInner
 func (m *mapCache) Keys() []int64 {
-	ks := make([]int64, 0, m.Len())
+	ks := make([]int64, 0, len(m.tables))
 	for k := range m.tables {
 		ks = append(ks, k)
 	}
@@ -172,7 +192,7 @@ func (m *mapCache) Keys() []int64 {
 
 // Values implements statsCacheInner
 func (m *mapCache) Values() []*statistics.Table {
-	vs := make([]*statistics.Table, 0, m.Len())
+	vs := make([]*statistics.Table, 0, len(m.tables))
 	for _, v := range m.tables {
 		vs = append(vs, v.value)
 	}
@@ -181,7 +201,7 @@ func (m *mapCache) Values() []*statistics.Table {
 
 // Map implements statsCacheInner
 func (m *mapCache) Map() map[int64]*statistics.Table {
-	t := make(map[int64]*statistics.Table, m.Len())
+	t := make(map[int64]*statistics.Table, len(m.tables))
 	for k, v := range m.tables {
 		t[k] = v.value
 	}
@@ -202,23 +222,27 @@ func (m *mapCache) FreshMemUsage() {
 	}
 }
 
-// FreshTableCost implements statsCacheInner
-func (m *mapCache) FreshTableCost(k int64) {
-	item, ok := m.tables[k]
-	if !ok {
-		return
-	}
-	m.Put(k, item.value)
-}
-
 // Copy implements statsCacheInner
 func (m *mapCache) Copy() statsCacheInner {
 	newM := &mapCache{
-		tables:   make(map[int64]cacheItem, m.Len()),
+		tables:   make(map[int64]cacheItem, len(m.tables)),
 		memUsage: m.memUsage,
 	}
 	for k, v := range m.tables {
-		newM.tables[k] = v
+		newM.tables[k] = v.copy()
 	}
 	return newM
+}
+
+// SetCapacity implements statsCacheInner
+func (m *mapCache) SetCapacity(int64) {}
+
+// EnableQuota implements statsCacheInner
+func (m *mapCache) EnableQuota() bool {
+	return false
+}
+
+// Front implements statsCacheInner
+func (m *mapCache) Front() int64 {
+	return 0
 }

@@ -23,7 +23,6 @@ import (
 
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/memory"
@@ -34,12 +33,12 @@ import (
 func initBuildChunk(numRows int) (*chunk.Chunk, []*types.FieldType) {
 	numCols := 6
 	colTypes := make([]*types.FieldType, 0, numCols)
-	colTypes = append(colTypes, types.NewFieldTypeBuilderP().SetType(mysql.TypeLonglong).BuildP())
-	colTypes = append(colTypes, types.NewFieldTypeBuilderP().SetType(mysql.TypeLonglong).BuildP())
-	colTypes = append(colTypes, types.NewFieldTypeBuilderP().SetType(mysql.TypeVarchar).BuildP())
-	colTypes = append(colTypes, types.NewFieldTypeBuilderP().SetType(mysql.TypeVarchar).BuildP())
-	colTypes = append(colTypes, types.NewFieldTypeBuilderP().SetType(mysql.TypeNewDecimal).BuildP())
-	colTypes = append(colTypes, types.NewFieldTypeBuilderP().SetType(mysql.TypeJSON).BuildP())
+	colTypes = append(colTypes, types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).BuildP())
+	colTypes = append(colTypes, types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).BuildP())
+	colTypes = append(colTypes, types.NewFieldTypeBuilder().SetType(mysql.TypeVarchar).BuildP())
+	colTypes = append(colTypes, types.NewFieldTypeBuilder().SetType(mysql.TypeVarchar).BuildP())
+	colTypes = append(colTypes, types.NewFieldTypeBuilder().SetType(mysql.TypeNewDecimal).BuildP())
+	colTypes = append(colTypes, types.NewFieldTypeBuilder().SetType(mysql.TypeJSON).BuildP())
 
 	oldChk := chunk.NewChunkWithCapacity(colTypes, numRows)
 	for i := 0; i < numRows; i++ {
@@ -49,7 +48,7 @@ func initBuildChunk(numRows int) (*chunk.Chunk, []*types.FieldType) {
 		oldChk.AppendString(2, str)
 		oldChk.AppendString(3, str)
 		oldChk.AppendMyDecimal(4, types.NewDecFromStringForTest(str))
-		oldChk.AppendJSON(5, json.CreateBinary(str))
+		oldChk.AppendJSON(5, types.CreateBinaryJSON(str))
 	}
 	return oldChk, colTypes
 }
@@ -57,9 +56,9 @@ func initBuildChunk(numRows int) (*chunk.Chunk, []*types.FieldType) {
 func initProbeChunk(numRows int) (*chunk.Chunk, []*types.FieldType) {
 	numCols := 3
 	colTypes := make([]*types.FieldType, 0, numCols)
-	colTypes = append(colTypes, types.NewFieldTypeBuilderP().SetType(mysql.TypeLonglong).BuildP())
-	colTypes = append(colTypes, types.NewFieldTypeBuilderP().SetType(mysql.TypeLonglong).BuildP())
-	colTypes = append(colTypes, types.NewFieldTypeBuilderP().SetType(mysql.TypeVarchar).BuildP())
+	colTypes = append(colTypes, types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).BuildP())
+	colTypes = append(colTypes, types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).BuildP())
+	colTypes = append(colTypes, types.NewFieldTypeBuilder().SetType(mysql.TypeVarchar).BuildP())
 
 	oldChk := chunk.NewChunkWithCapacity(colTypes, numRows)
 	for i := 0; i < numRows; i++ {
@@ -158,7 +157,7 @@ func testHashRowContainer(t *testing.T, hashFunc func() hash.Hash64, spill bool)
 	}
 	probeCtx.hasNull = make([]bool, 1)
 	probeCtx.hashVals = append(hCtx.hashVals, hashFunc())
-	matched, _, err := rowContainer.GetMatchedRowsAndPtrs(hCtx.hashVals[1].Sum64(), probeRow, probeCtx)
+	matched, _, err := rowContainer.GetMatchedRowsAndPtrs(hCtx.hashVals[1].Sum64(), probeRow, probeCtx, nil, nil, false)
 	require.NoError(t, err)
 	require.Equal(t, 2, len(matched))
 	require.Equal(t, chk0.GetRow(1).GetDatumRow(colTypes), matched[0].GetDatumRow(colTypes))

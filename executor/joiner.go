@@ -27,8 +27,10 @@ import (
 var (
 	_ joiner = &semiJoiner{}
 	_ joiner = &antiSemiJoiner{}
+	_ joiner = &nullAwareAntiSemiJoiner{}
 	_ joiner = &leftOuterSemiJoiner{}
 	_ joiner = &antiLeftOuterSemiJoiner{}
+	_ joiner = &nullAwareAntiLeftOuterSemiJoiner{}
 	_ joiner = &leftOuterJoiner{}
 	_ joiner = &rightOuterJoiner{}
 	_ joiner = &innerJoiner{}
@@ -37,26 +39,26 @@ var (
 // joiner is used to generate join results according to the join type.
 // A typical instruction flow is:
 //
-//     hasMatch, hasNull := false, false
-//     for innerIter.Current() != innerIter.End() {
-//         matched, isNull, err := j.tryToMatchInners(outer, innerIter, chk)
-//         // handle err
-//         hasMatch = hasMatch || matched
-//         hasNull = hasNull || isNull
-//     }
-//     if !hasMatch {
-//         j.onMissMatch(hasNull, outer, chk)
-//     }
+//	hasMatch, hasNull := false, false
+//	for innerIter.Current() != innerIter.End() {
+//	    matched, isNull, err := j.tryToMatchInners(outer, innerIter, chk)
+//	    // handle err
+//	    hasMatch = hasMatch || matched
+//	    hasNull = hasNull || isNull
+//	}
+//	if !hasMatch {
+//	    j.onMissMatch(hasNull, outer, chk)
+//	}
 //
 // NOTE: This interface is **not** thread-safe.
 // TODO: unit test
 // for all join type
-//     1. no filter, no inline projection
-//     2. no filter, inline projection
-//     3. no filter, inline projection to empty column
-//     4. filter, no inline projection
-//     5. filter, inline projection
-//     6. filter, inline projection to empty column
+//  1. no filter, no inline projection
+//  2. no filter, inline projection
+//  3. no filter, inline projection to empty column
+//  4. filter, no inline projection
+//  5. filter, inline projection
+//  6. filter, inline projection to empty column
 type joiner interface {
 	// tryToMatchInners tries to join an outer row with a batch of inner rows. When
 	// 'inners.Len != 0' but all the joined rows are filtered, the outer row is
@@ -70,7 +72,7 @@ type joiner interface {
 	// NOTE: Callers need to call this function multiple times to consume all
 	// the inner rows for an outer row, and decide whether the outer row can be
 	// matched with at lease one inner row.
-	tryToMatchInners(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) (matched bool, isNull bool, err error)
+	tryToMatchInners(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk, opt ...NAAJType) (matched bool, isNull bool, err error)
 
 	// tryToMatchOuters tries to join a batch of outer rows with one inner row.
 	// It's used when the join is an outer join and the hash table is built
@@ -130,7 +132,7 @@ func JoinerType(j joiner) plannercore.JoinType {
 
 func newJoiner(ctx sessionctx.Context, joinType plannercore.JoinType,
 	outerIsRight bool, defaultInner []types.Datum, filter []expression.Expression,
-	lhsColTypes, rhsColTypes []*types.FieldType, childrenUsed [][]bool) joiner {
+	lhsColTypes, rhsColTypes []*types.FieldType, childrenUsed [][]bool, isNA bool) joiner {
 	base := baseJoiner{
 		ctx:          ctx,
 		conditions:   filter,
@@ -175,12 +177,18 @@ func newJoiner(ctx sessionctx.Context, joinType plannercore.JoinType,
 		return &semiJoiner{base}
 	case plannercore.AntiSemiJoin:
 		base.shallowRow = chunk.MutRowFromTypes(shallowRowType)
+		if isNA {
+			return &nullAwareAntiSemiJoiner{baseJoiner: base}
+		}
 		return &antiSemiJoiner{base}
 	case plannercore.LeftOuterSemiJoin:
 		base.shallowRow = chunk.MutRowFromTypes(shallowRowType)
 		return &leftOuterSemiJoiner{base}
 	case plannercore.AntiLeftOuterSemiJoin:
 		base.shallowRow = chunk.MutRowFromTypes(shallowRowType)
+		if isNA {
+			return &nullAwareAntiLeftOuterSemiJoiner{baseJoiner: base}
+		}
 		return &antiLeftOuterSemiJoiner{base}
 	case plannercore.LeftOuterJoin, plannercore.RightOuterJoin, plannercore.InnerJoin:
 		if len(base.conditions) > 0 {
@@ -251,10 +259,7 @@ func (j *baseJoiner) makeShallowJoinRow(isRightJoin bool, inner, outer chunk.Row
 // filter is used to filter the result constructed by tryToMatchInners, the result is
 // built by one outer row and multiple inner rows. The returned bool value
 // indicates whether the outer row matches any inner rows.
-func (j *baseJoiner) filter(
-	input, output *chunk.Chunk, outerColLen int,
-	lUsed, rUsed []int) (bool, error) {
-
+func (j *baseJoiner) filter(input, output *chunk.Chunk, outerColLen int, lUsed, rUsed []int) (bool, error) {
 	var err error
 	j.selected, err = expression.VectorizedFilter(j.ctx, j.conditions, chunk.NewIterator4Chunk(input), j.selected)
 	if err != nil {
@@ -284,7 +289,6 @@ func (j *baseJoiner) filter(
 			innerColOffset, outerColOffset = len(lUsed), 0
 			innerColLen, outerColLen = outerColLen, innerColLen
 		}
-
 	}
 	return chunk.CopySelectedJoinRowsWithSameOuterRows(input, innerColOffset, innerColLen, outerColOffset, outerColLen, j.selected, output)
 }
@@ -296,7 +300,6 @@ func (j *baseJoiner) filter(
 func (j *baseJoiner) filterAndCheckOuterRowStatus(
 	input, output *chunk.Chunk, innerColsLen int, outerRowStatus []outerRowStatusFlag,
 	lUsed, rUsed []int) ([]outerRowStatusFlag, error) {
-
 	var err error
 	j.selected, j.isNull, err = expression.VectorizedFilterConsiderNull(j.ctx, j.conditions, chunk.NewIterator4Chunk(input), j.selected, j.isNull)
 	if err != nil {
@@ -362,7 +365,7 @@ type semiJoiner struct {
 	baseJoiner
 }
 
-func (j *semiJoiner) tryToMatchInners(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) (matched bool, hasNull bool, err error) {
+func (j *semiJoiner) tryToMatchInners(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk, _ ...NAAJType) (matched bool, hasNull bool, err error) {
 	if inners.Len() == 0 {
 		return false, false, nil
 	}
@@ -429,12 +432,75 @@ func (j *semiJoiner) Clone() joiner {
 	return &semiJoiner{baseJoiner: j.baseJoiner.Clone()}
 }
 
+// NAAJType is join detail type only used by null-aware AntiLeftOuterSemiJoin.
+type NAAJType byte
+
+const (
+	// Unknown for those default value.
+	Unknown NAAJType = 0
+	// LeftHasNullRightNotNull means lhs is a null key, and rhs is not a null key.
+	LeftHasNullRightNotNull NAAJType = 1
+	// LeftHasNullRightHasNull means lhs is a null key, and rhs is a null key.
+	LeftHasNullRightHasNull NAAJType = 2
+	// LeftNotNullRightNotNull means lhs is in not a null key, and rhs is not a null key.
+	LeftNotNullRightNotNull NAAJType = 3
+	// LeftNotNullRightHasNull means lhs is in not a null key, and rhs is a null key.
+	LeftNotNullRightHasNull NAAJType = 4
+)
+
+type nullAwareAntiSemiJoiner struct {
+	baseJoiner
+}
+
+// tryToMatchInners implements joiner interface.
+func (naaj *nullAwareAntiSemiJoiner) tryToMatchInners(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk, _ ...NAAJType) (matched bool, hasNull bool, err error) {
+	// Step1: inner rows come from NULL-bucket OR Same-Key bucket. (no rows mean not matched)
+	if inners.Len() == 0 {
+		return false, false, nil
+	}
+	// Step2: conditions come from other condition.
+	if len(naaj.conditions) == 0 {
+		// once there is no other condition, that means right ride has non-empty valid rows. (all matched)
+		inners.ReachEnd()
+		return true, false, nil
+	}
+	for inner := inners.Current(); inner != inners.End(); inner = inners.Next() {
+		naaj.makeShallowJoinRow(naaj.outerIsRight, inner, outer)
+		valid, _, err := expression.EvalBool(naaj.ctx, naaj.conditions, naaj.shallowRow.ToRow())
+		if err != nil {
+			return false, false, err
+		}
+		// since other condition is only from inner where clause, here we can say:
+		// for x NOT IN (y set) semantics, once we found an x in y set, it's determined already. (refuse probe row, append nothing)
+		if valid {
+			inners.ReachEnd()
+			return true, false, nil
+		}
+		// false or null means that this merged row can't pass the other condition, not a valid right side row. (continue)
+	}
+	err = inners.Error()
+	return false, false, err
+}
+
+func (naaj *nullAwareAntiSemiJoiner) tryToMatchOuters(outers chunk.Iterator, inner chunk.Row, chk *chunk.Chunk, outerRowStatus []outerRowStatusFlag) (_ []outerRowStatusFlag, err error) {
+	// todo: use the outer build.
+	return outerRowStatus, err
+}
+
+func (naaj *nullAwareAntiSemiJoiner) onMissMatch(_ bool, outer chunk.Row, chk *chunk.Chunk) {
+	chk.AppendRowByColIdxs(outer, naaj.lUsed)
+}
+
+func (naaj *nullAwareAntiSemiJoiner) Clone() joiner {
+	return &nullAwareAntiSemiJoiner{baseJoiner: naaj.baseJoiner.Clone()}
+}
+
 type antiSemiJoiner struct {
 	baseJoiner
 }
 
 // tryToMatchInners implements joiner interface.
-func (j *antiSemiJoiner) tryToMatchInners(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) (matched bool, hasNull bool, err error) {
+func (j *antiSemiJoiner) tryToMatchInners(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk, _ ...NAAJType) (matched bool, hasNull bool, err error) {
 	if inners.Len() == 0 {
 		return false, false, nil
 	}
@@ -503,7 +569,7 @@ type leftOuterSemiJoiner struct {
 }
 
 // tryToMatchInners implements joiner interface.
-func (j *leftOuterSemiJoiner) tryToMatchInners(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) (matched bool, hasNull bool, err error) {
+func (j *leftOuterSemiJoiner) tryToMatchInners(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk, _ ...NAAJType) (matched bool, hasNull bool, err error) {
 	if inners.Len() == 0 {
 		return false, false, nil
 	}
@@ -580,12 +646,84 @@ func (j *leftOuterSemiJoiner) Clone() joiner {
 	return &leftOuterSemiJoiner{baseJoiner: j.baseJoiner.Clone()}
 }
 
+type nullAwareAntiLeftOuterSemiJoiner struct {
+	baseJoiner
+}
+
+func (naal *nullAwareAntiLeftOuterSemiJoiner) tryToMatchInners(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk, opt ...NAAJType) (matched bool, _ bool, err error) {
+	if inners.Len() == 0 {
+		return false, false, nil
+	}
+	// Difference between nullAwareAntiLeftOuterSemiJoiner and AntiLeftOuterSemiJoiner.
+	// AntiLeftOuterSemiJoiner conditions contain NA-EQ and inner filters. In EvalBool, once either side has a null value in NA-EQ
+	//     column operand, it will lead a false matched, and a true value of isNull. (which only admit not-null same key match)
+	// nullAwareAntiLeftOuterSemiJoiner conditions only contain inner filters. in EvalBool, any filter null or false will contribute
+	//     to false matched, in other words, the isNull is permanently false.
+	if len(naal.conditions) == 0 {
+		// no inner filter other condition means all matched. (inners are valid source)
+		naal.onMatch(outer, chk, opt...)
+		inners.ReachEnd()
+		return true, false, nil
+	}
+	for inner := inners.Current(); inner != inners.End(); inner = inners.Next() {
+		naal.makeShallowJoinRow(false, inner, outer)
+
+		valid, _, err := expression.EvalBool(naal.ctx, naal.conditions, naal.shallowRow.ToRow())
+		if err != nil {
+			return false, false, err
+		}
+		if valid {
+			// once find a valid inner row, we can determine the result already.
+			naal.onMatch(outer, chk, opt...)
+			inners.ReachEnd()
+			return true, false, nil
+		}
+	}
+	err = inners.Error()
+	return false, false, err
+}
+
+func (naal *nullAwareAntiLeftOuterSemiJoiner) onMatch(outer chunk.Row, chk *chunk.Chunk, opt ...NAAJType) {
+	switch opt[0] {
+	case LeftNotNullRightNotNull:
+		// either side are not null. (x NOT IN (x...)) --> (rhs, 0)
+		lWide := chk.AppendRowByColIdxs(outer, naal.lUsed)
+		chk.AppendInt64(lWide, 0)
+	case LeftNotNullRightHasNull:
+		// right side has a null NA-EQ key. (x NOT IN (null...)) --> (rhs, null)
+		lWide := chk.AppendRowByColIdxs(outer, naal.lUsed)
+		chk.AppendNull(lWide)
+	case LeftHasNullRightHasNull, LeftHasNullRightNotNull:
+		// left side has a null NA-EQ key. (null NOT IN (what ever valid inner)) --(rhs, null)
+		lWide := chk.AppendRowByColIdxs(outer, naal.lUsed)
+		chk.AppendNull(lWide)
+	}
+}
+
+func (naal *nullAwareAntiLeftOuterSemiJoiner) onMissMatch(_ bool, outer chunk.Row, chk *chunk.Chunk) {
+	// once come to here, it means we couldn't make it in previous short paths.
+	// cases like:
+	// 1: null/x NOT IN (empty set)
+	// 2: x NOT IN (non-empty set without x and null)
+	lWide := chk.AppendRowByColIdxs(outer, naal.lUsed)
+	chk.AppendInt64(lWide, 1)
+}
+
+func (naal *nullAwareAntiLeftOuterSemiJoiner) tryToMatchOuters(outers chunk.Iterator, inner chunk.Row, chk *chunk.Chunk, outerRowStatus []outerRowStatusFlag) (_ []outerRowStatusFlag, err error) {
+	// todo:
+	return nil, err
+}
+
+func (naal *nullAwareAntiLeftOuterSemiJoiner) Clone() joiner {
+	return &antiLeftOuterSemiJoiner{baseJoiner: naal.baseJoiner.Clone()}
+}
+
 type antiLeftOuterSemiJoiner struct {
 	baseJoiner
 }
 
 // tryToMatchInners implements joiner interface.
-func (j *antiLeftOuterSemiJoiner) tryToMatchInners(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) (matched bool, hasNull bool, err error) {
+func (j *antiLeftOuterSemiJoiner) tryToMatchInners(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk, _ ...NAAJType) (matched bool, hasNull bool, err error) {
 	if inners.Len() == 0 {
 		return false, false, nil
 	}
@@ -670,7 +808,7 @@ type leftOuterJoiner struct {
 }
 
 // tryToMatchInners implements joiner interface.
-func (j *leftOuterJoiner) tryToMatchInners(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) (matched bool, hasNull bool, err error) {
+func (j *leftOuterJoiner) tryToMatchInners(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk, _ ...NAAJType) (matched bool, hasNull bool, err error) {
 	if inners.Len() == 0 {
 		return false, false, nil
 	}
@@ -749,7 +887,7 @@ type rightOuterJoiner struct {
 }
 
 // tryToMatchInners implements joiner interface.
-func (j *rightOuterJoiner) tryToMatchInners(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) (matched bool, hasNull bool, err error) {
+func (j *rightOuterJoiner) tryToMatchInners(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk, _ ...NAAJType) (matched bool, hasNull bool, err error) {
 	if inners.Len() == 0 {
 		return false, false, nil
 	}
@@ -824,7 +962,7 @@ type innerJoiner struct {
 }
 
 // tryToMatchInners implements joiner interface.
-func (j *innerJoiner) tryToMatchInners(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) (matched bool, hasNull bool, err error) {
+func (j *innerJoiner) tryToMatchInners(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk, _ ...NAAJType) (matched bool, hasNull bool, err error) {
 	if inners.Len() == 0 {
 		return false, false, nil
 	}

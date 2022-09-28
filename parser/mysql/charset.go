@@ -78,50 +78,6 @@ var CharsetIDs = map[string]uint8{
 	"eucjpms":  97,
 }
 
-// Charsets maps charset name to its default collation name.
-var Charsets = map[string]string{
-	"big5":     "big5_chinese_ci",
-	"dec8":     "dec8_swedish_ci",
-	"cp850":    "cp850_general_ci",
-	"hp8":      "hp8_english_ci",
-	"koi8r":    "koi8r_general_ci",
-	"latin1":   "latin1_bin",
-	"latin2":   "latin2_general_ci",
-	"swe7":     "swe7_swedish_ci",
-	"ascii":    "ascii_bin",
-	"ujis":     "ujis_japanese_ci",
-	"sjis":     "sjis_japanese_ci",
-	"hebrew":   "hebrew_general_ci",
-	"tis620":   "tis620_thai_ci",
-	"euckr":    "euckr_korean_ci",
-	"koi8u":    "koi8u_general_ci",
-	"gb2312":   "gb2312_chinese_ci",
-	"greek":    "greek_general_ci",
-	"cp1250":   "cp1250_general_ci",
-	"gbk":      "gbk_chinese_ci",
-	"latin5":   "latin5_turkish_ci",
-	"armscii8": "armscii8_general_ci",
-	"utf8":     "utf8_bin",
-	"ucs2":     "ucs2_general_ci",
-	"cp866":    "cp866_general_ci",
-	"keybcs2":  "keybcs2_general_ci",
-	"macce":    "macce_general_ci",
-	"macroman": "macroman_general_ci",
-	"cp852":    "cp852_general_ci",
-	"latin7":   "latin7_general_ci",
-	"utf8mb4":  "utf8mb4_bin",
-	"cp1251":   "cp1251_general_ci",
-	"utf16":    "utf16_general_ci",
-	"utf16le":  "utf16le_general_ci",
-	"cp1256":   "cp1256_general_ci",
-	"cp1257":   "cp1257_general_ci",
-	"utf32":    "utf32_general_ci",
-	"binary":   "binary",
-	"geostd8":  "geostd8_general_ci",
-	"cp932":    "cp932_japanese_ci",
-	"eucjpms":  "eucjpms_japanese_ci",
-}
-
 // Collations maps MySQL collation ID to its name.
 var Collations = map[uint8]string{
 	1:   "big5_chinese_ci",
@@ -574,6 +530,7 @@ var CollationNames = map[string]uint8{
 const (
 	UTF8Charset    = "utf8"
 	UTF8MB4Charset = "utf8mb4"
+	Latin1Charset  = "latin1"
 	DefaultCharset = UTF8MB4Charset
 	// DefaultCollationID is utf8mb4_bin(46)
 	DefaultCollationID        = 46
@@ -592,7 +549,7 @@ const (
 	MaxBytesOfCharacter = 4
 )
 
-// IsUTF8Charset checks if charset is utf8 or utf8mb4
+// IsUTF8Charset checks if charset is utf8, utf8mb4.
 func IsUTF8Charset(charset string) bool {
 	return charset == UTF8Charset || charset == UTF8MB4Charset
 }

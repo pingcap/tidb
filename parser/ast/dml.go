@@ -93,25 +93,31 @@ func (*Join) resultSet() {}
 // NewCrossJoin builds a cross join without `on` or `using` clause.
 // If the right child is a join tree, we need to handle it differently to make the precedence get right.
 // Here is the example: t1 join t2 join t3
-//                 JOIN ON t2.a = t3.a
-//  t1    join    /    \
-//              t2      t3
+//
+//	               JOIN ON t2.a = t3.a
+//	t1    join    /    \
+//	            t2      t3
+//
 // (left)         (right)
 //
 // We can not build it directly to:
-//         JOIN
-//        /    \
-//       t1	   JOIN ON t2.a = t3.a
-//             /   \
-//            t2    t3
+//
+//	  JOIN
+//	 /    \
+//	t1	   JOIN ON t2.a = t3.a
+//	      /   \
+//	     t2    t3
+//
 // The precedence would be t1 join (t2 join t3 on t2.a=t3.a), not (t1 join t2) join t3 on t2.a=t3.a
 // We need to find the left-most child of the right child, and build a cross join of the left-hand side
 // of the left child(t1), and the right hand side with the original left-most child of the right child(t2).
-//          JOIN t2.a = t3.a
-//         /    \
-//       JOIN    t3
-//       /  \
-//      t1  t2
+//
+//	    JOIN t2.a = t3.a
+//	   /    \
+//	 JOIN    t3
+//	 /  \
+//	t1  t2
+//
 // Besides, if the right handle side join tree's join type is right join and has explicit parentheses, we need to rewrite it to left join.
 // So t1 join t2 right join t3 would be rewrite to t1 join t3 left join t2.
 // If not, t1 join (t2 right join t3) would be (t1 join t2) right join t3. After rewrite the right join to left join.
@@ -542,7 +548,6 @@ func (n *TableSource) Restore(ctx *format.RestoreCtx) error {
 			if err := tn.AsOf.Restore(ctx); err != nil {
 				return errors.Annotate(err, "An error occurred while restore TableSource.AsOf")
 			}
-
 		}
 		if err := tn.restoreIndexHints(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore TableSource.Source.(*TableName).IndexHints")
@@ -979,7 +984,6 @@ func (s *TableSample) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord(" PERCENT")
 	case SampleClauseUnitTypeRow:
 		ctx.WriteKeyWord(" ROWS")
-
 	}
 	ctx.WritePlain(")")
 	if s.RepeatableSeed != nil {
@@ -1181,7 +1185,7 @@ func (n *WithClause) Accept(v Visitor) (Node, bool) {
 // Restore implements Node interface.
 func (n *SelectStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.WithBeforeBraces {
-		defer ctx.RestoreCTEFunc()()
+		defer ctx.RestoreCTEFunc()() //nolint: all_revive
 		err := n.With.Restore(ctx)
 		if err != nil {
 			return err
@@ -1194,7 +1198,7 @@ func (n *SelectStmt) Restore(ctx *format.RestoreCtx) error {
 		}()
 	}
 	if !n.WithBeforeBraces && n.With != nil {
-		defer ctx.RestoreCTEFunc()()
+		defer ctx.RestoreCTEFunc()() //nolint: all_revive
 		err := n.With.Restore(ctx)
 		if err != nil {
 			return err
@@ -1530,7 +1534,7 @@ type SetOprSelectList struct {
 // Restore implements Node interface.
 func (n *SetOprSelectList) Restore(ctx *format.RestoreCtx) error {
 	if n.With != nil {
-		defer ctx.RestoreCTEFunc()()
+		defer ctx.RestoreCTEFunc()() //nolint: all_revive
 		if err := n.With.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore SetOprSelectList.With")
 		}
@@ -1631,7 +1635,7 @@ func (*SetOprStmt) resultSet() {}
 // Restore implements Node interface.
 func (n *SetOprStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.With != nil {
-		defer ctx.RestoreCTEFunc()()
+		defer ctx.RestoreCTEFunc()() //nolint: all_revive
 		if err := n.With.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore UnionStmt.With")
 		}
@@ -2213,7 +2217,7 @@ type DeleteStmt struct {
 // Restore implements Node interface.
 func (n *DeleteStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.With != nil {
-		defer ctx.RestoreCTEFunc()()
+		defer ctx.RestoreCTEFunc()() //nolint: all_revive
 		err := n.With.Restore(ctx)
 		if err != nil {
 			return err
@@ -2371,7 +2375,7 @@ type NonTransactionalDeleteStmt struct {
 
 // Restore implements Node interface.
 func (n *NonTransactionalDeleteStmt) Restore(ctx *format.RestoreCtx) error {
-	ctx.WriteKeyWord("SPLIT ")
+	ctx.WriteKeyWord("BATCH ")
 	if n.ShardColumn != nil {
 		ctx.WriteKeyWord("ON ")
 		if err := n.ShardColumn.Restore(ctx); err != nil {
@@ -2438,7 +2442,7 @@ type UpdateStmt struct {
 // Restore implements Node interface.
 func (n *UpdateStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.With != nil {
-		defer ctx.RestoreCTEFunc()()
+		defer ctx.RestoreCTEFunc()() //nolint: all_revive
 		err := n.With.Restore(ctx)
 		if err != nil {
 			return err
@@ -2674,6 +2678,7 @@ const (
 	ShowPlacementForTable
 	ShowPlacementForPartition
 	ShowPlacementLabels
+	ShowSessionStates
 )
 
 const (
@@ -2706,6 +2711,9 @@ type ShowStmt struct {
 	Roles       []*auth.RoleIdentity // Used for show grants .. using
 	IfNotExists bool                 // Used for `show create database if not exists`
 	Extended    bool                 // Used for `show extended columns from ...`
+	Limit       *Limit               // Used for partial Show STMTs to limit Result Set row numbers.
+
+	CountWarningsOrErrors bool // Used for showing count(*) warnings | errors
 
 	// GlobalScope is used by `show variables` and `show bindings`
 	GlobalScope bool
@@ -3023,6 +3031,8 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("PLACEMENT")
 		case ShowPlacementLabels:
 			ctx.WriteKeyWord("PLACEMENT LABELS")
+		case ShowSessionStates:
+			ctx.WriteKeyWord("SESSION_STATES")
 		default:
 			return errors.New("Unknown ShowStmt type")
 		}
@@ -3067,7 +3077,46 @@ func (n *ShowStmt) Accept(v Visitor) (Node, bool) {
 		}
 		n.Where = node.(ExprNode)
 	}
+	if n.Limit != nil {
+		node, ok := n.Limit.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Limit = node.(*Limit)
+	}
 	return v.Leave(n)
+}
+
+// Allow limit result set for partial SHOW cmd
+func (n *ShowStmt) NeedLimitRSRow() bool {
+	switch n.Tp {
+	// Show statements need to have consistence behavior with MySQL Does
+	case ShowEngines, ShowDatabases, ShowTables, ShowColumns, ShowTableStatus, ShowWarnings,
+		ShowCharset, ShowVariables, ShowStatus, ShowCollation, ShowIndex, ShowPlugins:
+		return true
+	default:
+		// There are five classes of Show STMT.
+		// 1) The STMT Only return one row:
+		//    ShowCreateTable, ShowCreateView, ShowCreateUser, ShowCreateDatabase, ShowMasterStatus,
+		//
+		// 2) The STMT is a MySQL syntax extend, so just keep it behavior as before:
+		//    ShowCreateSequence, ShowCreatePlacementPolicy, ShowConfig, ShowStatsExtended,
+		//    ShowStatsMeta, ShowStatsHistograms, ShowStatsTopN, ShowStatsBuckets, ShowStatsHealthy
+		//    ShowHistogramsInFlight, ShowColumnStatsUsage, ShowBindings, ShowBindingCacheStatus,
+		//    ShowPumpStatus, ShowDrainerStatus, ShowAnalyzeStatus, ShowRegions, ShowBuiltins,
+		//    ShowTableNextRowId, ShowBackups, ShowRestores, ShowImports, ShowCreateImport, ShowPlacement
+		//    ShowPlacementForDatabase, ShowPlacementForTable, ShowPlacementForPartition, ShowPlacementLabels
+		//
+		// 3) There is corelated statements in MySQL, but no limit result set return number also.
+		//    ShowGrants, ShowProcessList, ShowPrivileges, ShowBuiltins, ShowTableNextRowId
+		//
+		// 4) There is corelated statements in MySQL, but it seems not recommand to use them and likely deprecte in the future.
+		//    ShowProfile, ShowProfiles
+		//
+		// 5) Below STMTs do not implement fetch logic.
+		//    ShowTriggers, ShowProcedureStatus, ShowEvents, ShowErrors, ShowOpenTables.
+		return false
+	}
 }
 
 // WindowSpec is the specification of a window.
@@ -3413,7 +3462,6 @@ func (n *SplitRegionStmt) Restore(ctx *format.RestoreCtx) error {
 		}
 		if n.SplitSyntaxOpt.HasPartition {
 			ctx.WriteKeyWord("PARTITION ")
-
 		}
 	}
 	ctx.WriteKeyWord("TABLE ")

@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/util/size"
 )
 
 // baseFuncDesc describes an function signature, only used in planner.
@@ -117,9 +118,9 @@ func (a *baseFuncDesc) TypeInfer(ctx sessionctx.Context) error {
 	case ast.AggFuncVarPop, ast.AggFuncStddevPop, ast.AggFuncVarSamp, ast.AggFuncStddevSamp:
 		a.typeInfer4PopOrSamp(ctx)
 	case ast.AggFuncJsonArrayagg:
-		a.typeInfer4JsonFuncs(ctx)
+		a.typeInfer4JsonArrayAgg(ctx)
 	case ast.AggFuncJsonObjectAgg:
-		a.typeInfer4JsonFuncs(ctx)
+		return a.typeInfer4JsonObjectAgg(ctx)
 	default:
 		return errors.Errorf("unsupported agg function: %s", a.Name)
 	}
@@ -149,13 +150,13 @@ func (a *baseFuncDesc) typeInfer4ApproxPercentile(ctx sessionctx.Context) error 
 	}
 	percent, isNull, err := a.Args[1].EvalInt(ctx, chunk.Row{})
 	if err != nil {
-		return errors.New(fmt.Sprintf("APPROX_PERCENTILE: Invalid argument %s", a.Args[1].String()))
+		return fmt.Errorf("APPROX_PERCENTILE: Invalid argument %s", a.Args[1].String())
 	}
 	if percent <= 0 || percent > 100 || isNull {
 		if isNull {
 			return errors.New("APPROX_PERCENTILE: Percentage value cannot be NULL")
 		}
-		return errors.New(fmt.Sprintf("Percentage value %d is out of range [1, 100]", percent))
+		return fmt.Errorf("Percentage value %d is out of range [1, 100]", percent)
 	}
 
 	switch a.Args[0].GetType().GetType() {
@@ -185,21 +186,14 @@ func (a *baseFuncDesc) typeInfer4Sum(ctx sessionctx.Context) {
 	switch a.Args[0].GetType().GetType() {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
 		a.RetTp = types.NewFieldType(mysql.TypeNewDecimal)
-		a.RetTp.SetFlen(mathutil.Min(a.Args[0].GetType().GetFlen()+21, mysql.MaxDecimalWidth))
+		a.RetTp.SetFlenUnderLimit(a.Args[0].GetType().GetFlen() + 21)
 		a.RetTp.SetDecimal(0)
-		if a.Args[0].GetType().GetFlen() < 0 || a.RetTp.GetFlen() > mysql.MaxDecimalWidth {
+		if a.Args[0].GetType().GetFlen() < 0 {
 			a.RetTp.SetFlen(mysql.MaxDecimalWidth)
 		}
 	case mysql.TypeNewDecimal:
 		a.RetTp = types.NewFieldType(mysql.TypeNewDecimal)
-		a.RetTp.SetFlen(a.Args[0].GetType().GetFlen() + 22)
-		a.RetTp.SetDecimal(a.Args[0].GetType().GetDecimal())
-		if a.Args[0].GetType().GetFlen() < 0 || a.RetTp.GetFlen() > mysql.MaxDecimalWidth {
-			a.RetTp.SetFlen(mysql.MaxDecimalWidth)
-		}
-		if a.RetTp.GetDecimal() < 0 || a.RetTp.GetDecimal() > mysql.MaxDecimalScale {
-			a.RetTp.SetDecimal(mysql.MaxDecimalScale)
-		}
+		a.RetTp.UpdateFlenAndDecimalUnderLimit(a.Args[0].GetType(), 0, 22)
 	case mysql.TypeDouble, mysql.TypeFloat:
 		a.RetTp = types.NewFieldType(mysql.TypeDouble)
 		a.RetTp.SetFlen(mysql.MaxRealWidth)
@@ -226,20 +220,12 @@ func (a *baseFuncDesc) typeInfer4Avg(ctx sessionctx.Context) {
 	switch a.Args[0].GetType().GetType() {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		a.RetTp = types.NewFieldType(mysql.TypeNewDecimal)
-		a.RetTp.SetDecimal(types.DivFracIncr)
+		a.RetTp.SetDecimalUnderLimit(types.DivFracIncr)
 		flen, _ := mysql.GetDefaultFieldLengthAndDecimal(a.Args[0].GetType().GetType())
-		a.RetTp.SetFlen(flen + types.DivFracIncr)
+		a.RetTp.SetFlenUnderLimit(flen + types.DivFracIncr)
 	case mysql.TypeYear, mysql.TypeNewDecimal:
 		a.RetTp = types.NewFieldType(mysql.TypeNewDecimal)
-		if a.Args[0].GetType().GetDecimal() < 0 {
-			a.RetTp.SetDecimal(mysql.MaxDecimalScale)
-		} else {
-			a.RetTp.SetDecimal(mathutil.Min(a.Args[0].GetType().GetDecimal()+types.DivFracIncr, mysql.MaxDecimalScale))
-		}
-		a.RetTp.SetFlen(mathutil.Min(mysql.MaxDecimalWidth, a.Args[0].GetType().GetFlen()+types.DivFracIncr))
-		if a.Args[0].GetType().GetFlen() < 0 {
-			a.RetTp.SetFlen(mysql.MaxDecimalWidth)
-		}
+		a.RetTp.UpdateFlenAndDecimalUnderLimit(a.Args[0].GetType(), types.DivFracIncr, types.DivFracIncr)
 	case mysql.TypeDouble, mysql.TypeFloat:
 		a.RetTp = types.NewFieldType(mysql.TypeDouble)
 		a.RetTp.SetFlen(mysql.MaxRealWidth)
@@ -270,7 +256,6 @@ func (a *baseFuncDesc) typeInfer4GroupConcat(ctx sessionctx.Context) {
 			a.Args[i] = expression.BuildCastFunction(ctx, a.Args[i], tp)
 		}
 	}
-
 }
 
 func (a *baseFuncDesc) typeInfer4MaxMin(ctx sessionctx.Context) {
@@ -286,14 +271,15 @@ func (a *baseFuncDesc) typeInfer4MaxMin(ctx sessionctx.Context) {
 		a.Args[0] = expression.BuildCastFunction(ctx, a.Args[0], tp)
 	}
 	a.RetTp = a.Args[0].GetType()
-	if (a.Name == ast.AggFuncMax || a.Name == ast.AggFuncMin) && a.RetTp.GetType() != mysql.TypeBit {
+	if a.Name == ast.AggFuncMax || a.Name == ast.AggFuncMin ||
+		a.Name == ast.WindowFuncLead || a.Name == ast.WindowFuncLag {
 		a.RetTp = a.Args[0].GetType().Clone()
 		a.RetTp.DelFlag(mysql.NotNullFlag)
 	}
 	// issue #13027, #13961
 	if (a.RetTp.GetType() == mysql.TypeEnum || a.RetTp.GetType() == mysql.TypeSet) &&
 		(a.Name != ast.AggFuncFirstRow && a.Name != ast.AggFuncMax && a.Name != ast.AggFuncMin) {
-		a.RetTp = types.NewFieldTypeBuilderP().SetType(mysql.TypeString).SetFlen(mysql.MaxFieldCharLength).BuildP()
+		a.RetTp = types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlen(mysql.MaxFieldCharLength).BuildP()
 	}
 }
 
@@ -302,12 +288,19 @@ func (a *baseFuncDesc) typeInfer4BitFuncs(ctx sessionctx.Context) {
 	a.RetTp.SetFlen(21)
 	types.SetBinChsClnFlag(a.RetTp)
 	a.RetTp.AddFlag(mysql.UnsignedFlag | mysql.NotNullFlag)
-	// TODO: a.Args[0] = expression.WrapWithCastAsInt(ctx, a.Args[0])
+	a.Args[0] = expression.WrapWithCastAsInt(ctx, a.Args[0])
 }
 
-func (a *baseFuncDesc) typeInfer4JsonFuncs(ctx sessionctx.Context) {
+func (a *baseFuncDesc) typeInfer4JsonArrayAgg(ctx sessionctx.Context) {
 	a.RetTp = types.NewFieldType(mysql.TypeJSON)
 	types.SetBinChsClnFlag(a.RetTp)
+}
+
+func (a *baseFuncDesc) typeInfer4JsonObjectAgg(ctx sessionctx.Context) error {
+	a.RetTp = types.NewFieldType(mysql.TypeJSON)
+	types.SetBinChsClnFlag(a.RetTp)
+	a.Args[0] = expression.WrapWithCastAsString(ctx, a.Args[0])
+	return nil
 }
 
 func (a *baseFuncDesc) typeInfer4NumberFuncs() {
@@ -436,60 +429,22 @@ func (a *baseFuncDesc) WrapCastForAggArgs(ctx sessionctx.Context) {
 		if a.Args[i].GetType().GetType() == mysql.TypeNull {
 			continue
 		}
-		tpOld := a.Args[i].GetType().GetType()
 		a.Args[i] = castFunc(ctx, a.Args[i])
-		if a.Name != ast.AggFuncAvg && a.Name != ast.AggFuncSum {
-			continue
-		}
-		// After wrapping cast on the argument, flen etc. may not the same
-		// as the type of the aggregation function. The following part set
-		// the type of the argument exactly as the type of the aggregation
-		// function.
-		// Note: If the `tp` of argument is the same as the `tp` of the
-		// aggregation function, it will not wrap cast function on it
-		// internally. The reason of the special handling for `Column` is
-		// that the `RetType` of `Column` refers to the `infoschema`, so we
-		// need to set a new variable for it to avoid modifying the
-		// definition in `infoschema`.
-		if col, ok := a.Args[i].(*expression.Column); ok {
-			col.RetType = types.NewFieldType(col.RetType.GetType())
-		}
-		// originTp is used when the `tp` of column is TypeFloat32 while
-		// the type of the aggregation function is TypeFloat64.
-		originTp := a.Args[i].GetType().GetType()
-		*(a.Args[i].GetType()) = *(a.RetTp)
-		a.Args[i].GetType().SetType(originTp)
-
-		// refine each mysql integer type to the needed decimal precision for sum
-		if a.Name == ast.AggFuncSum {
-			adjustDecimalLenForSumInteger(a.Args[i].GetType(), tpOld)
-		}
 	}
 }
 
-func adjustDecimalLenForSumInteger(ft *types.FieldType, tpOld byte) {
-	if types.IsTypeInteger(tpOld) && ft.GetType() == mysql.TypeNewDecimal {
-		if flen, err := minimalDecimalLenForHoldingInteger(tpOld); err == nil {
-			ft.SetFlen(mathutil.Min(ft.GetFlen(), flen+ft.GetDecimal()))
-		}
+// MemoryUsage return the memory usage of baseFuncDesc
+func (a *baseFuncDesc) MemoryUsage() (sum int64) {
+	if a == nil {
+		return
 	}
-}
 
-func minimalDecimalLenForHoldingInteger(tp byte) (int, error) {
-	switch tp {
-	case mysql.TypeTiny:
-		return 3, nil
-	case mysql.TypeShort:
-		return 5, nil
-	case mysql.TypeInt24:
-		return 8, nil
-	case mysql.TypeLong:
-		return 10, nil
-	case mysql.TypeLonglong:
-		return 20, nil
-	case mysql.TypeYear:
-		return 4, nil
-	default:
-		return -1, errors.Errorf("Invalid type: %v", tp)
+	sum = size.SizeOfString + int64(len(a.Name))
+	if a.RetTp != nil {
+		sum += a.RetTp.MemoryUsage()
 	}
+	for _, expr := range a.Args {
+		sum += expr.MemoryUsage()
+	}
+	return
 }

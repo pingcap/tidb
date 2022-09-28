@@ -306,7 +306,7 @@ func NewScanner(s string) *Scanner {
 	return lexer
 }
 
-func (s *Scanner) handleIdent(lval *yySymType) int {
+func (*Scanner) handleIdent(lval *yySymType) int {
 	str := lval.ident
 	// A character string literal may have an optional character set introducer and COLLATE clause:
 	// [_charset_name]'string' [COLLATE collation_name]
@@ -478,7 +478,6 @@ func startWithSlash(s *Scanner) (tok int, pos Pos, lit string) {
 		}
 	case 'M': // '/*M' maybe MariaDB-specific comments
 		// no special treatment for now.
-		break
 
 	case '+': // '/*+' optimizer hints
 		// See https://dev.mysql.com/doc/refman/5.7/en/optimizer-hints.html
@@ -502,7 +501,6 @@ func startWithSlash(s *Scanner) (tok int, pos Pos, lit string) {
 		currentCharIsStar = true
 
 	default:
-		break
 	}
 
 	// standard C-like comment. read until we see '*/' then drop it.
@@ -514,9 +512,8 @@ func startWithSlash(s *Scanner) (tok int, pos Pos, lit string) {
 				if isOptimizerHint {
 					s.lastHintPos = pos
 					return hintComment, pos, s.r.data(&pos)
-				} else {
-					return s.scan()
 				}
+				return s.scan()
 			case '*':
 				currentCharIsStar = true
 				continue
@@ -574,7 +571,7 @@ func startWithAt(s *Scanner) (tok int, pos Pos, lit string) {
 			tok, lit = doubleAtIdentifier, s.r.data(&pos)
 		}
 	case invalid:
-		break
+		return
 	default:
 		tok = singleAtIdentifier
 	}
@@ -714,7 +711,7 @@ func (s *Scanner) scanString() (tok int, pos Pos, lit string) {
 }
 
 // handleEscape handles the case in scanString when previous char is '\'.
-func (s *Scanner) handleEscape(b byte, buf *bytes.Buffer) {
+func (*Scanner) handleEscape(b byte, buf *bytes.Buffer) {
 	var ch0 byte
 	/*
 		\" \' \\ \n \0 \b \Z \r \t ==> escape to one char
@@ -979,7 +976,7 @@ func (r *reader) inc() {
 		r.p.Line++
 		r.p.Col = 0
 	}
-	r.p.Offset += 1
+	r.p.Offset++
 	r.p.Col++
 }
 

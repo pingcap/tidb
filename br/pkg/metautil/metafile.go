@@ -55,7 +55,17 @@ const (
 	MetaV2
 )
 
+// CreateMetaFileName is the name of meta file.
+func CreateMetaFileName(ts uint64) string {
+	return fmt.Sprintf("%s_%d", MetaFile, ts)
+}
+
+// Encrypt encrypts the content according to CipherInfo.
 func Encrypt(content []byte, cipher *backuppb.CipherInfo) (encryptedContent, iv []byte, err error) {
+	if len(content) == 0 || cipher == nil {
+		return content, iv, nil
+	}
+
 	switch cipher.CipherType {
 	case encryptionpb.EncryptionMethod_PLAINTEXT:
 		return content, iv, nil
@@ -75,7 +85,12 @@ func Encrypt(content []byte, cipher *backuppb.CipherInfo) (encryptedContent, iv 
 	}
 }
 
+// Decrypt decrypts the content according to CipherInfo and IV.
 func Decrypt(content []byte, cipher *backuppb.CipherInfo, iv []byte) ([]byte, error) {
+	if len(content) == 0 || cipher == nil {
+		return content, nil
+	}
+
 	switch cipher.CipherType {
 	case encryptionpb.EncryptionMethod_PLAINTEXT:
 		return content, nil
@@ -210,7 +225,7 @@ func (reader *MetaReader) readDataFiles(ctx context.Context, output func(*backup
 }
 
 // ArchiveSize return the size of Archive data
-func (reader *MetaReader) ArchiveSize(ctx context.Context, files []*backuppb.File) uint64 {
+func (*MetaReader) ArchiveSize(_ context.Context, files []*backuppb.File) uint64 {
 	total := uint64(0)
 	for _, file := range files {
 		total += file.Size_
@@ -335,7 +350,7 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 				tableMap[tableInfo.ID] = table
 			} else {
 				// empty database
-				tableMap[0] = table
+				tableMap[dbInfo.ID] = table
 			}
 			return nil
 		})
@@ -412,13 +427,12 @@ func (op AppendOp) name() string {
 }
 
 // appends item to MetaFile
-func (op AppendOp) appendFile(a *backuppb.MetaFile, b interface{}) (int, int) {
-	size := 0
-	itemCount := 0
+func (op AppendOp) appendFile(a *backuppb.MetaFile, b interface{}) (dataFileSize int, size int, itemCount int) {
 	switch op {
 	case AppendMetaFile:
-		a.MetaFiles = append(a.MetaFiles, b.(*backuppb.File))
-		size += int(b.(*backuppb.File).Size_)
+		metaFile := b.(*backuppb.File)
+		a.MetaFiles = append(a.MetaFiles, metaFile)
+		size += metaFile.Size()
 		itemCount++
 	case AppendDataFile:
 		// receive a batch of file because we need write and default sst are adjacent.
@@ -426,7 +440,8 @@ func (op AppendOp) appendFile(a *backuppb.MetaFile, b interface{}) (int, int) {
 		a.DataFiles = append(a.DataFiles, files...)
 		for _, f := range files {
 			itemCount++
-			size += int(f.Size_)
+			size += f.Size()
+			dataFileSize += int(f.Size_)
 		}
 	case AppendSchema:
 		a.Schemas = append(a.Schemas, b.(*backuppb.Schema))
@@ -437,16 +452,16 @@ func (op AppendOp) appendFile(a *backuppb.MetaFile, b interface{}) (int, int) {
 		itemCount++
 		size += len(b.([]byte))
 	}
-
-	return size, itemCount
+	return dataFileSize, size, itemCount
 }
 
 type sizedMetaFile struct {
 	// A stack like array, we always append to the last node.
-	root      *backuppb.MetaFile
-	size      int
-	itemNum   int
-	sizeLimit int
+	root         *backuppb.MetaFile
+	dataFileSize int
+	size         int
+	itemNum      int
+	sizeLimit    int
 }
 
 // NewSizedMetaFile represents the sizedMetaFile.
@@ -464,9 +479,10 @@ func NewSizedMetaFile(sizeLimit int) *sizedMetaFile {
 func (f *sizedMetaFile) append(file interface{}, op AppendOp) bool {
 	// append to root
 	// 	TODO maybe use multi level index
-	size, itemCount := op.appendFile(f.root, file)
+	dataFileSize, size, itemCount := op.appendFile(f.root, file)
 	f.itemNum += itemCount
 	f.size += size
+	f.dataFileSize += dataFileSize
 	// f.size would reset outside
 	return f.size > f.sizeLimit
 }
@@ -494,13 +510,27 @@ type MetaWriter struct {
 	// records the total item of in one write meta job.
 	flushedItemNum int
 
+	// the filename that backupmeta has flushed into.
+	metaFileName string
+
 	cipher *backuppb.CipherInfo
+
+	// records the total datafile size
+	totalDataFileSize int
 }
 
 // NewMetaWriter creates MetaWriter.
-func NewMetaWriter(storage storage.ExternalStorage,
+func NewMetaWriter(
+	storage storage.ExternalStorage,
 	metafileSizeLimit int,
-	useV2Meta bool, cipher *backuppb.CipherInfo) *MetaWriter {
+	useV2Meta bool,
+	metaFileName string,
+	cipher *backuppb.CipherInfo,
+) *MetaWriter {
+	if len(metaFileName) == 0 {
+		metaFileName = MetaFile
+	}
+
 	return &MetaWriter{
 		start:             time.Now(),
 		storage:           storage,
@@ -512,6 +542,7 @@ func NewMetaWriter(storage storage.ExternalStorage,
 		metafileSizes:  make(map[string]int),
 		metafiles:      NewSizedMetaFile(metafileSizeLimit),
 		metafileSeqNum: make(map[string]int),
+		metaFileName:   metaFileName,
 		cipher:         cipher,
 	}
 }
@@ -530,7 +561,7 @@ func (writer *MetaWriter) Update(f func(m *backuppb.BackupMeta)) {
 }
 
 // Send sends the item to buffer.
-func (writer *MetaWriter) Send(m interface{}, op AppendOp) error {
+func (writer *MetaWriter) Send(m interface{}, _ AppendOp) error {
 	select {
 	case writer.metasCh <- m:
 	// receive an error from StartWriteMetasAsync
@@ -636,12 +667,12 @@ func (writer *MetaWriter) FlushBackupMeta(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	return writer.storage.WriteFile(ctx, MetaFile, append(iv, encryptBuff...))
+	return writer.storage.WriteFile(ctx, writer.metaFileName, append(iv, encryptBuff...))
 }
 
 // fillMetasV1 keep the compatibility for old version.
 // for MetaV1, just put in backupMeta
-func (writer *MetaWriter) fillMetasV1(ctx context.Context, op AppendOp) {
+func (writer *MetaWriter) fillMetasV1(_ context.Context, op AppendOp) {
 	switch op {
 	case AppendDataFile:
 		writer.backupMeta.Files = writer.metafiles.root.DataFiles
@@ -692,8 +723,10 @@ func (writer *MetaWriter) flushMetasV2(ctx context.Context, op AppendOp) error {
 
 	name := op.name()
 	writer.metafileSizes[name] += writer.metafiles.size
+	writer.totalDataFileSize += writer.metafiles.dataFileSize
+
 	// Flush metafiles to external storage.
-	writer.metafileSeqNum["metafiles"] += 1
+	writer.metafileSeqNum["metafiles"]++
 	fname := fmt.Sprintf("backupmeta.%s.%09d", name, writer.metafileSeqNum["metafiles"])
 
 	encyptedContent, iv, err := Encrypt(content, writer.cipher)
@@ -724,7 +757,7 @@ func (writer *MetaWriter) ArchiveSize() uint64 {
 	for _, file := range writer.backupMeta.Files {
 		total += file.Size_
 	}
-	total += uint64(writer.metafileSizes["datafile"])
+	total += uint64(writer.totalDataFileSize)
 	return total
 }
 

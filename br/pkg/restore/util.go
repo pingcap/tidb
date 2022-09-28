@@ -7,8 +7,10 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 
+	"github.com/emirpasic/gods/maps/treemap"
 	_ "github.com/go-sql-driver/mysql" // mysql driver
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
@@ -18,6 +20,8 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/redact"
+	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/parser/model"
@@ -28,39 +32,143 @@ import (
 )
 
 var (
-	recordPrefixSep = []byte("_r")
-	quoteRegexp     = regexp.MustCompile("`(?:[^`]|``)*`")
+	quoteRegexp = regexp.MustCompile("`(?:[^`]|``)*`")
 )
 
-// GetRewriteRules returns the rewrite rule of the new table and the old table.
-func GetRewriteRules(
-	newTable, oldTable *model.TableInfo, newTimeStamp uint64,
-) *RewriteRules {
-	tableIDs := make(map[int64]int64)
-	tableIDs[oldTable.ID] = newTable.ID
-	if oldTable.Partition != nil {
-		for _, srcPart := range oldTable.Partition.Definitions {
-			for _, destPart := range newTable.Partition.Definitions {
-				if srcPart.Name == destPart.Name {
-					tableIDs[srcPart.ID] = destPart.ID
-				}
+// AppliedFile has two types for now.
+// 1. SST file used by full backup/restore.
+// 2. KV file used by pitr restore.
+type AppliedFile interface {
+	GetStartKey() []byte
+	GetEndKey() []byte
+}
+
+// getTableIDMap creates a map maping old tableID to new tableID.
+func getTableIDMap(newTable, oldTable *model.TableInfo) map[int64]int64 {
+	tableIDMap := make(map[int64]int64)
+
+	if oldTable.Partition != nil && newTable.Partition != nil {
+		nameMapID := make(map[string]int64)
+
+		for _, old := range oldTable.Partition.Definitions {
+			nameMapID[old.Name.L] = old.ID
+		}
+		for _, new := range newTable.Partition.Definitions {
+			if oldID, exist := nameMapID[new.Name.L]; exist {
+				tableIDMap[oldID] = new.ID
 			}
 		}
 	}
-	indexIDs := make(map[int64]int64)
+
+	tableIDMap[oldTable.ID] = newTable.ID
+	return tableIDMap
+}
+
+// getIndexIDMap creates a map maping old indexID to new indexID.
+func getIndexIDMap(newTable, oldTable *model.TableInfo) map[int64]int64 {
+	indexIDMap := make(map[int64]int64)
 	for _, srcIndex := range oldTable.Indices {
 		for _, destIndex := range newTable.Indices {
 			if srcIndex.Name == destIndex.Name {
-				indexIDs[srcIndex.ID] = destIndex.ID
+				indexIDMap[srcIndex.ID] = destIndex.ID
 			}
 		}
 	}
 
+	return indexIDMap
+}
+
+// GetRewriteRules returns the rewrite rule of the new table and the old table.
+// getDetailRule is used for normal backup & restore.
+// if set to true, means we collect the rules like tXXX_r, tYYY_i.
+// if set to false, means we only collect the rules contain table_id, tXXX, tYYY.
+func GetRewriteRules(
+	newTable, oldTable *model.TableInfo, newTimeStamp uint64, getDetailRule bool,
+) *RewriteRules {
+	tableIDs := getTableIDMap(newTable, oldTable)
+	indexIDs := getIndexIDMap(newTable, oldTable)
+
 	dataRules := make([]*import_sstpb.RewriteRule, 0)
 	for oldTableID, newTableID := range tableIDs {
+		if getDetailRule {
+			dataRules = append(dataRules, &import_sstpb.RewriteRule{
+				OldKeyPrefix: tablecodec.GenTableRecordPrefix(oldTableID),
+				NewKeyPrefix: tablecodec.GenTableRecordPrefix(newTableID),
+				NewTimestamp: newTimeStamp,
+			})
+			for oldIndexID, newIndexID := range indexIDs {
+				dataRules = append(dataRules, &import_sstpb.RewriteRule{
+					OldKeyPrefix: tablecodec.EncodeTableIndexPrefix(oldTableID, oldIndexID),
+					NewKeyPrefix: tablecodec.EncodeTableIndexPrefix(newTableID, newIndexID),
+					NewTimestamp: newTimeStamp,
+				})
+			}
+		} else {
+			dataRules = append(dataRules, &import_sstpb.RewriteRule{
+				OldKeyPrefix: tablecodec.EncodeTablePrefix(oldTableID),
+				NewKeyPrefix: tablecodec.EncodeTablePrefix(newTableID),
+				NewTimestamp: newTimeStamp,
+			})
+		}
+	}
+
+	return &RewriteRules{
+		Data: dataRules,
+	}
+}
+
+func GetRewriteRulesMap(
+	newTable, oldTable *model.TableInfo, newTimeStamp uint64, getDetailRule bool,
+) map[int64]*RewriteRules {
+	rules := make(map[int64]*RewriteRules)
+
+	tableIDs := getTableIDMap(newTable, oldTable)
+	indexIDs := getIndexIDMap(newTable, oldTable)
+
+	for oldTableID, newTableID := range tableIDs {
+		dataRules := make([]*import_sstpb.RewriteRule, 0)
+		if getDetailRule {
+			dataRules = append(dataRules, &import_sstpb.RewriteRule{
+				OldKeyPrefix: tablecodec.GenTableRecordPrefix(oldTableID),
+				NewKeyPrefix: tablecodec.GenTableRecordPrefix(newTableID),
+				NewTimestamp: newTimeStamp,
+			})
+			for oldIndexID, newIndexID := range indexIDs {
+				dataRules = append(dataRules, &import_sstpb.RewriteRule{
+					OldKeyPrefix: tablecodec.EncodeTableIndexPrefix(oldTableID, oldIndexID),
+					NewKeyPrefix: tablecodec.EncodeTableIndexPrefix(newTableID, newIndexID),
+					NewTimestamp: newTimeStamp,
+				})
+			}
+		} else {
+			dataRules = append(dataRules, &import_sstpb.RewriteRule{
+				OldKeyPrefix: tablecodec.EncodeTablePrefix(oldTableID),
+				NewKeyPrefix: tablecodec.EncodeTablePrefix(newTableID),
+				NewTimestamp: newTimeStamp,
+			})
+		}
+
+		rules[oldTableID] = &RewriteRules{
+			Data: dataRules,
+		}
+	}
+
+	return rules
+}
+
+// GetRewriteRuleOfTable returns a rewrite rule from t_{oldID} to t_{newID}.
+func GetRewriteRuleOfTable(
+	oldTableID, newTableID int64,
+	newTimeStamp uint64,
+	indexIDs map[int64]int64,
+	getDetailRule bool,
+) *RewriteRules {
+	dataRules := make([]*import_sstpb.RewriteRule, 0)
+
+	if getDetailRule {
 		dataRules = append(dataRules, &import_sstpb.RewriteRule{
-			OldKeyPrefix: append(tablecodec.EncodeTablePrefix(oldTableID), recordPrefixSep...),
-			NewKeyPrefix: append(tablecodec.EncodeTablePrefix(newTableID), recordPrefixSep...),
+			OldKeyPrefix: tablecodec.GenTableRecordPrefix(oldTableID),
+			NewKeyPrefix: tablecodec.GenTableRecordPrefix(newTableID),
 			NewTimestamp: newTimeStamp,
 		})
 		for oldIndexID, newIndexID := range indexIDs {
@@ -70,11 +178,15 @@ func GetRewriteRules(
 				NewTimestamp: newTimeStamp,
 			})
 		}
+	} else {
+		dataRules = append(dataRules, &import_sstpb.RewriteRule{
+			OldKeyPrefix: tablecodec.EncodeTablePrefix(oldTableID),
+			NewKeyPrefix: tablecodec.EncodeTablePrefix(newTableID),
+			NewTimestamp: newTimeStamp,
+		})
 	}
 
-	return &RewriteRules{
-		Data: dataRules,
-	}
+	return &RewriteRules{Data: dataRules}
 }
 
 // GetSSTMetaFromFile compares the keys in file, region and rewrite rules, then returns a sst conn.
@@ -307,7 +419,19 @@ func ValidateFileRewriteRule(file *backuppb.File, rewriteRules *RewriteRules) er
 	return nil
 }
 
-// Rewrites a raw key and returns a encoded key.
+// Rewrites an encoded key and returns a encoded key.
+func rewriteEncodedKey(key []byte, rewriteRules *RewriteRules) ([]byte, *import_sstpb.RewriteRule) {
+	if rewriteRules == nil {
+		return key, nil
+	}
+	if len(key) > 0 {
+		_, rawKey, _ := codec.DecodeBytes(key, nil)
+		return rewriteRawKey(rawKey, rewriteRules)
+	}
+	return nil, nil
+}
+
+// Rewrites a raw key with raw key rewrite rule and returns an encoded key.
 func rewriteRawKey(key []byte, rewriteRules *RewriteRules) ([]byte, *import_sstpb.RewriteRule) {
 	if rewriteRules == nil {
 		return codec.EncodeBytes([]byte{}, key), nil
@@ -329,9 +453,22 @@ func matchOldPrefix(key []byte, rewriteRules *RewriteRules) *import_sstpb.Rewrit
 	return nil
 }
 
-func truncateTS(key []byte) []byte {
+func GetKeyTS(key []byte) (uint64, error) {
+	if len(key) < 8 {
+		return 0, errors.Annotatef(berrors.ErrInvalidArgument,
+			"the length of key is smaller than 8, key:%s", redact.Key(key))
+	}
+
+	_, ts, err := codec.DecodeUintDesc(key[len(key)-8:])
+	return ts, err
+}
+
+func TruncateTS(key []byte) []byte {
 	if len(key) == 0 {
 		return nil
+	}
+	if len(key) < 8 {
+		return key
 	}
 	return key[:len(key)-8]
 }
@@ -347,7 +484,7 @@ func SplitRanges(
 	updateCh glue.Progress,
 	isRawKv bool,
 ) error {
-	splitter := NewRegionSplitter(NewSplitClient(client.GetPDClient(), client.GetTLSConfig(), isRawKv))
+	splitter := NewRegionSplitter(split.NewSplitClient(client.GetPDClient(), client.GetTLSConfig(), isRawKv))
 
 	return splitter.Split(ctx, ranges, rewriteRules, isRawKv, func(keys [][]byte) {
 		for range keys {
@@ -356,32 +493,61 @@ func SplitRanges(
 	})
 }
 
-func findMatchedRewriteRule(file *backuppb.File, rules *RewriteRules) *import_sstpb.RewriteRule {
+func findMatchedRewriteRule(file AppliedFile, rules *RewriteRules) *import_sstpb.RewriteRule {
 	startID := tablecodec.DecodeTableID(file.GetStartKey())
 	endID := tablecodec.DecodeTableID(file.GetEndKey())
 	if startID != endID {
 		return nil
 	}
-	_, rule := rewriteRawKey(file.StartKey, rules)
+	_, rule := rewriteRawKey(file.GetStartKey(), rules)
+	if rule == nil {
+		// fall back to encoded key
+		_, rule = rewriteEncodedKey(file.GetStartKey(), rules)
+	}
 	return rule
 }
 
-func rewriteFileKeys(file *backuppb.File, rewriteRules *RewriteRules) (startKey, endKey []byte, err error) {
+// GetRewriteRawKeys rewrites rules to the raw key.
+func GetRewriteRawKeys(file AppliedFile, rewriteRules *RewriteRules) (startKey, endKey []byte, err error) {
 	startID := tablecodec.DecodeTableID(file.GetStartKey())
 	endID := tablecodec.DecodeTableID(file.GetEndKey())
 	var rule *import_sstpb.RewriteRule
 	if startID == endID {
 		startKey, rule = rewriteRawKey(file.GetStartKey(), rewriteRules)
 		if rewriteRules != nil && rule == nil {
-			log.Error("cannot find rewrite rule",
-				logutil.Key("startKey", file.GetStartKey()),
-				zap.Reflect("rewrite data", rewriteRules.Data))
-			err = errors.Annotate(berrors.ErrRestoreInvalidRewrite, "cannot find rewrite rule for start key")
+			err = errors.Annotatef(berrors.ErrRestoreInvalidRewrite, "cannot find raw rewrite rule for start key, startKey: %s", redact.Key(file.GetStartKey()))
 			return
 		}
 		endKey, rule = rewriteRawKey(file.GetEndKey(), rewriteRules)
 		if rewriteRules != nil && rule == nil {
-			err = errors.Annotate(berrors.ErrRestoreInvalidRewrite, "cannot find rewrite rule for end key")
+			err = errors.Annotatef(berrors.ErrRestoreInvalidRewrite, "cannot find raw rewrite rule for end key, endKey: %s", redact.Key(file.GetEndKey()))
+			return
+		}
+	} else {
+		log.Error("table ids dont matched",
+			zap.Int64("startID", startID),
+			zap.Int64("endID", endID),
+			logutil.Key("startKey", startKey),
+			logutil.Key("endKey", endKey))
+		err = errors.Annotate(berrors.ErrRestoreInvalidRewrite, "invalid table id")
+	}
+	return
+}
+
+// GetRewriteRawKeys rewrites rules to the encoded key
+func GetRewriteEncodedKeys(file AppliedFile, rewriteRules *RewriteRules) (startKey, endKey []byte, err error) {
+	startID := tablecodec.DecodeTableID(file.GetStartKey())
+	endID := tablecodec.DecodeTableID(file.GetEndKey())
+	var rule *import_sstpb.RewriteRule
+	if startID == endID {
+		startKey, rule = rewriteEncodedKey(file.GetStartKey(), rewriteRules)
+		if rewriteRules != nil && rule == nil {
+			err = errors.Annotatef(berrors.ErrRestoreInvalidRewrite, "cannot find encode rewrite rule for start key, startKey: %s", redact.Key(file.GetStartKey()))
+			return
+		}
+		endKey, rule = rewriteEncodedKey(file.GetEndKey(), rewriteRules)
+		if rewriteRules != nil && rule == nil {
+			err = errors.Annotatef(berrors.ErrRestoreInvalidRewrite, "cannot find encode rewrite rule for end key, endKey: %s", redact.Key(file.GetEndKey()))
 			return
 		}
 	} else {
@@ -434,4 +600,153 @@ func ParseQuoteName(name string) (db, table string) {
 func unQuoteName(name string) string {
 	name = strings.TrimPrefix(name, "`")
 	return strings.TrimSuffix(name, "`")
+}
+
+func PrefixStartKey(key []byte) []byte {
+	var sk = make([]byte, 0, len(key)+1)
+	sk = append(sk, 'z')
+	sk = append(sk, key...)
+	return sk
+}
+
+func PrefixEndKey(key []byte) []byte {
+	if len(key) == 0 {
+		return []byte{'z' + 1}
+	}
+	return PrefixStartKey(key)
+}
+
+func keyEq(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := 0; i < len(a); i++ {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func keyCmp(a, b []byte) int {
+	var length int
+	var chosen int
+	if len(a) < len(b) {
+		length = len(a)
+		chosen = -1
+	} else if len(a) == len(b) {
+		length = len(a)
+		chosen = 0
+	} else {
+		length = len(b)
+		chosen = 1
+	}
+	for i := 0; i < length; i++ {
+		if a[i] < b[i] {
+			return -1
+		} else if a[i] > b[i] {
+			return 1
+		}
+	}
+	return chosen
+}
+
+func keyCmpInterface(a, b interface{}) int {
+	return keyCmp(a.([]byte), b.([]byte))
+}
+
+type RecoverRegionInfo struct {
+	RegionId      uint64
+	RegionVersion uint64
+	StartKey      []byte
+	EndKey        []byte
+	TombStone     bool
+}
+
+func SortRecoverRegions(regions map[uint64][]*RecoverRegion) []*RecoverRegionInfo {
+	// last log term -> last index -> commit index
+	cmps := []func(a, b *RecoverRegion) int{
+		func(a, b *RecoverRegion) int {
+			return int(a.GetLastLogTerm() - b.GetLastLogTerm())
+		},
+		func(a, b *RecoverRegion) int {
+			return int(a.GetLastIndex() - b.GetLastIndex())
+		},
+		func(a, b *RecoverRegion) int {
+			return int(a.GetCommitIndex() - b.GetCommitIndex())
+		},
+	}
+
+	// Sort region peer by last log term -> last index -> commit index, and collect all regions' version.
+	var regionInfos = make([]*RecoverRegionInfo, 0, len(regions))
+	for regionId, peers := range regions {
+		sort.Slice(peers, func(i, j int) bool {
+			for _, cmp := range cmps {
+				if v := cmp(peers[i], peers[j]); v != 0 {
+					return v > 0
+				}
+			}
+			return false
+		})
+		v := peers[0].Version
+		sk := PrefixStartKey(peers[0].StartKey)
+		ek := PrefixEndKey(peers[0].EndKey)
+		regionInfos = append(regionInfos, &RecoverRegionInfo{
+			RegionId:      regionId,
+			RegionVersion: v,
+			StartKey:      sk,
+			EndKey:        ek,
+			TombStone:     peers[0].Tombstone,
+		})
+	}
+
+	sort.Slice(regionInfos, func(i, j int) bool { return regionInfos[i].RegionVersion > regionInfos[j].RegionVersion })
+	return regionInfos
+}
+
+func CheckConsistencyAndValidPeer(regionInfos []*RecoverRegionInfo) (map[uint64]struct{}, error) {
+	// split and merge in progressing during the backup, there may some overlap region, we have to handle it
+	// Resolve version conflicts.
+	var treeMap = treemap.NewWith(keyCmpInterface)
+	for _, p := range regionInfos {
+		var fk, fv interface{}
+		fk, _ = treeMap.Ceiling(p.StartKey)
+		// keyspace overlap sk within ceiling - fk
+		if fk != nil && (keyEq(fk.([]byte), p.StartKey) || keyCmp(fk.([]byte), p.EndKey) < 0) {
+			continue
+		}
+
+		// keyspace overlap sk within floor - fk.end_key
+		fk, fv = treeMap.Floor(p.StartKey)
+		if fk != nil && keyCmp(fv.(*RecoverRegionInfo).EndKey, p.StartKey) > 0 {
+			continue
+		}
+		treeMap.Put(p.StartKey, p)
+	}
+
+	// After resolved, all validPeer regions shouldn't be tombstone.
+	// do some sanity check
+	var validPeers = make(map[uint64]struct{}, 0)
+	var iter = treeMap.Iterator()
+	var prevEndKey = PrefixStartKey([]byte{})
+	var prevRegion uint64 = 0
+	for iter.Next() {
+		v := iter.Value().(*RecoverRegionInfo)
+		if v.TombStone {
+			log.Error("validPeer shouldn't be tombstone", zap.Uint64("region id", v.RegionId))
+			// TODO, some enhancement may need, a PoC or test may need for decision
+			return nil, errors.Annotatef(berrors.ErrRestoreInvalidPeer,
+				"Peer shouldn't be tombstone")
+		}
+		if !keyEq(prevEndKey, iter.Key().([]byte)) {
+			log.Error("regions are not adjacent", zap.Uint64("pre region", prevRegion), zap.Uint64("cur region", v.RegionId))
+			// TODO, some enhancement may need, a PoC or test may need for decision
+			return nil, errors.Annotatef(berrors.ErrRestoreInvalidRange,
+				"invalid region range")
+		}
+		prevEndKey = v.EndKey
+		prevRegion = v.RegionId
+		validPeers[v.RegionId] = struct{}{}
+	}
+	return validPeers, nil
 }

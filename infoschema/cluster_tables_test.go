@@ -23,6 +23,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -39,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/server"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore/mockstorage"
 	"github.com/pingcap/tidb/testkit"
@@ -63,11 +65,9 @@ type clusterTablesSuite struct {
 
 func TestForClusterServerInfo(t *testing.T) {
 	// setup suite
-	var clean func()
 	s := new(clusterTablesSuite)
-	s.store, s.dom, clean = testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0")
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
 	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
 	s.startTime = time.Now()
 	defer s.httpServer.Close()
@@ -147,11 +147,9 @@ func TestForClusterServerInfo(t *testing.T) {
 
 func TestTestDataLockWaits(t *testing.T) {
 	// setup suite
-	var clean func()
 	s := new(clusterTablesSuite)
-	s.store, s.dom, clean = testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0")
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
 	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
 	s.startTime = time.Now()
 	defer s.httpServer.Close()
@@ -166,7 +164,6 @@ func TestTestDataLockWaits(t *testing.T) {
 		{Txn: 5, WaitForTxn: 6, Key: []byte("key3"), ResourceGroupTag: resourcegrouptag.EncodeResourceGroupTag(nil, nil, tipb.ResourceGroupTagLabel_ResourceGroupTagLabelUnknown)},
 		{Txn: 7, WaitForTxn: 8, Key: []byte("key4"), ResourceGroupTag: []byte("asdfghjkl")},
 	})
-
 	tk := s.newTestKitWithRoot(t)
 
 	// Execute one of the query once, so it's stored into statements_summary.
@@ -178,16 +175,13 @@ func TestTestDataLockWaits(t *testing.T) {
 		"6B657932 <nil> 3 4 "+digest2.String()+" <nil>",
 		"6B657933 <nil> 5 6 <nil> <nil>",
 		"6B657934 <nil> 7 8 <nil> <nil>"))
-
 }
 
 func SubTestDataLockWaitsPrivilege(t *testing.T) {
 	// setup suite
-	var clean func()
 	s := new(clusterTablesSuite)
-	s.store, s.dom, clean = testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0")
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
 	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
 	s.startTime = time.Now()
 	defer s.httpServer.Close()
@@ -199,7 +193,7 @@ func SubTestDataLockWaitsPrivilege(t *testing.T) {
 
 	tk.MustExec("create user 'testuser'@'localhost'")
 	defer dropUserTk.MustExec("drop user 'testuser'@'localhost'")
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
 		Username: "testuser",
 		Hostname: "localhost",
 	}, nil, nil))
@@ -210,21 +204,18 @@ func SubTestDataLockWaitsPrivilege(t *testing.T) {
 	tk.MustExec("create user 'testuser2'@'localhost'")
 	defer dropUserTk.MustExec("drop user 'testuser2'@'localhost'")
 	tk.MustExec("grant process on *.* to 'testuser2'@'localhost'")
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
 		Username: "testuser2",
 		Hostname: "localhost",
 	}, nil, nil))
 	_ = tk.MustQuery("select * from information_schema.DATA_LOCK_WAITS")
-
 }
 
 func TestSelectClusterTable(t *testing.T) {
 	// setup suite
-	var clean func()
 	s := new(clusterTablesSuite)
-	s.store, s.dom, clean = testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0")
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
 	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
 	s.startTime = time.Now()
 	defer s.httpServer.Close()
@@ -279,11 +270,9 @@ func TestSelectClusterTable(t *testing.T) {
 
 func SubTestSelectClusterTablePrivilege(t *testing.T) {
 	// setup suite
-	var clean func()
 	s := new(clusterTablesSuite)
-	s.store, s.dom, clean = testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0")
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
 	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
 	s.startTime = time.Now()
 	defer s.httpServer.Close()
@@ -317,7 +306,7 @@ select * from t3;
 	tk.MustExec("create user user2")
 	user1 := testkit.NewTestKit(t, s.store)
 	user1.MustExec("use information_schema")
-	require.True(t, user1.Session().Auth(&auth.UserIdentity{
+	require.NoError(t, user1.Session().Auth(&auth.UserIdentity{
 		Username: "user1",
 		Hostname: "127.0.0.1",
 	}, nil, nil))
@@ -327,7 +316,7 @@ select * from t3;
 
 	user2 := testkit.NewTestKit(t, s.store)
 	user2.MustExec("use information_schema")
-	require.True(t, user2.Session().Auth(&auth.UserIdentity{
+	require.NoError(t, user2.Session().Auth(&auth.UserIdentity{
 		Username: "user2",
 		Hostname: "127.0.0.1",
 	}, nil, nil))
@@ -337,11 +326,9 @@ select * from t3;
 
 func TestStmtSummaryEvictedCountTable(t *testing.T) {
 	// setup suite
-	var clean func()
 	s := new(clusterTablesSuite)
-	s.store, s.dom, clean = testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0")
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
 	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
 	s.startTime = time.Now()
 	defer s.httpServer.Close()
@@ -383,7 +370,7 @@ func TestStmtSummaryEvictedCountTable(t *testing.T) {
 	defer tk1.MustExec("drop user 'testuser'@'localhost'")
 	defer tk1.MustExec("drop user 'testuser2'@'localhost'")
 
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
 		Username: "testuser",
 		Hostname: "localhost",
 	}, nil, nil))
@@ -392,20 +379,49 @@ func TestStmtSummaryEvictedCountTable(t *testing.T) {
 	// This error is come from cop(TiDB) fetch from rpc server.
 	require.EqualError(t, err, "other error: [planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
 
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
 		Username: "testuser2",
 		Hostname: "localhost",
 	}, nil, nil))
 	require.NoError(t, tk.QueryToErr("select * from information_schema.CLUSTER_STATEMENTS_SUMMARY_EVICTED"))
 }
 
+func TestStmtSummaryIssue35340(t *testing.T) {
+	s := new(clusterTablesSuite)
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+
+	tk := s.newTestKitWithRoot(t)
+	tk.MustExec("set global tidb_stmt_summary_refresh_interval=1800")
+	tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 3000")
+	for i := 0; i < 100; i++ {
+		user := "user" + strconv.Itoa(i)
+		tk.MustExec(fmt.Sprintf("create user '%v'@'localhost'", user))
+	}
+	tk.MustExec("flush privileges")
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			tk := s.newTestKitWithRoot(t)
+			for j := 0; j < 100; j++ {
+				user := "user" + strconv.Itoa(j)
+				require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
+					Username: user,
+					Hostname: "localhost",
+				}, nil, nil))
+				tk.MustQuery("select count(*) from information_schema.statements_summary;")
+			}
+		}()
+	}
+	wg.Wait()
+}
+
 func TestStmtSummaryHistoryTableWithUserTimezone(t *testing.T) {
 	// setup suite
-	var clean func()
 	s := new(clusterTablesSuite)
-	s.store, s.dom, clean = testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0")
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
 	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
 	s.startTime = time.Now()
 	defer s.httpServer.Close()
@@ -455,11 +471,9 @@ func TestStmtSummaryHistoryTableWithUserTimezone(t *testing.T) {
 
 func TestStmtSummaryHistoryTable(t *testing.T) {
 	// setup suite
-	var clean func()
 	s := new(clusterTablesSuite)
-	s.store, s.dom, clean = testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0")
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
 	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
 	s.startTime = time.Now()
 	defer s.httpServer.Close()
@@ -515,11 +529,9 @@ func TestStmtSummaryHistoryTable(t *testing.T) {
 }
 
 func TestIssue26379(t *testing.T) {
-	var clean func()
 	s := new(clusterTablesSuite)
-	s.store, s.dom, clean = testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0")
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
 	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
 	s.startTime = time.Now()
 	defer s.httpServer.Close()
@@ -575,11 +587,9 @@ func TestIssue26379(t *testing.T) {
 
 func TestStmtSummaryResultRows(t *testing.T) {
 	// setup suite
-	var clean func()
 	s := new(clusterTablesSuite)
-	s.store, s.dom, clean = testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0")
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
 	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
 	s.startTime = time.Now()
 	defer s.httpServer.Close()
@@ -614,11 +624,9 @@ func TestStmtSummaryResultRows(t *testing.T) {
 }
 
 func TestSlowQueryOOM(t *testing.T) {
-	var clean func()
 	s := new(clusterTablesSuite)
-	s.store, s.dom, clean = testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0")
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
 	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
 	s.startTime = time.Now()
 	defer s.httpServer.Close()
@@ -673,14 +681,15 @@ select * from t1;
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
 	newCfg.Log.SlowQueryFile = f.Name()
-	newCfg.OOMAction = config.OOMActionCancel
 	config.StoreGlobalConfig(&newCfg)
 	defer func() {
 		executor.ParseSlowLogBatchSize = 64
 		config.StoreGlobalConfig(originCfg)
 		require.NoError(t, os.Remove(newCfg.Log.SlowQueryFile))
 	}()
-
+	// The server default is CANCEL, but the testsuite defaults to LOG
+	tk.MustExec("set global tidb_mem_oom_action='CANCEL'")
+	defer tk.MustExec("set global tidb_mem_oom_action='LOG'")
 	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", f.Name()))
 	checkFn := func(quota int) {
 		tk.MustExec("set tidb_mem_quota_query=" + strconv.Itoa(quota)) // session
@@ -706,16 +715,18 @@ select * from t1;
 	tk.MustQuery("select * from `information_schema`.`cluster_slow_query` where time > '2022-04-14 00:00:00' and time < '2022-04-15 00:00:00'")
 }
 
-func (s *clusterTablesSuite) setUpRPCService(t *testing.T, addr string) (*grpc.Server, string) {
+func (s *clusterTablesSuite) setUpRPCService(t *testing.T, addr string, sm util.SessionManager) (*grpc.Server, string) {
 	lis, err := net.Listen("tcp", addr)
 	require.NoError(t, err)
 	// Fix issue 9836
-	sm := &mockSessionManager{make(map[uint64]*util.ProcessInfo, 1), nil}
-	sm.processInfoMap[1] = &util.ProcessInfo{
-		ID:      1,
-		User:    "root",
-		Host:    "127.0.0.1",
-		Command: mysql.ComQuery,
+	if sm == nil {
+		sm = &testkit.MockSessionManager{PS: make([]*util.ProcessInfo, 1)}
+		sm.(*testkit.MockSessionManager).PS[0] = &util.ProcessInfo{
+			ID:      1,
+			User:    "root",
+			Host:    "127.0.0.1",
+			Command: mysql.ComQuery,
+		}
 	}
 	srv := server.NewRPCServer(config.GetGlobalConfig(), s.dom, sm)
 	port := lis.Addr().(*net.TCPAddr).Port
@@ -795,6 +806,49 @@ func (s *clusterTablesSuite) setUpMockPDHTTPServer() (*httptest.Server, string) 
 func (s *clusterTablesSuite) newTestKitWithRoot(t *testing.T) *testkit.TestKit {
 	tk := testkit.NewTestKit(t, s.store)
 	tk.MustExec("use test")
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	return tk
+}
+
+func TestMDLView(t *testing.T) {
+	if !variable.EnableConcurrentDDL.Load() {
+		t.Skipf("test requires concurrent ddl")
+	}
+
+	// setup suite
+	s := new(clusterTablesSuite)
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	s.startTime = time.Now()
+	defer s.httpServer.Close()
+
+	tk := s.newTestKitWithRoot(t)
+	tkDDL := s.newTestKitWithRoot(t)
+	tk3 := s.newTestKitWithRoot(t)
+	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=1")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t values(1);")
+
+	tk.MustExec("begin")
+	tk.MustQuery("select 1;")
+	tk.MustQuery("select * from t;")
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		tkDDL.MustExec("alter table test.t add column b int;")
+		wg.Done()
+	}()
+
+	time.Sleep(200 * time.Millisecond)
+
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", tk3.Session().GetSessionManager())
+	defer s.rpcserver.Stop()
+
+	tk3.MustQuery("select DB_NAME, QUERY, SQL_DIGESTS from mysql.tidb_mdl_view").Check(testkit.Rows("test alter table test.t add column b int; [\"begin\",\"select ? ;\",\"select * from `t` ;\"]"))
+
+	tk.MustExec("commit")
+
+	wg.Wait()
 }

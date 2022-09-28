@@ -8,7 +8,6 @@ import (
 	"io"
 
 	"github.com/pingcap/errors"
-
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 )
 
@@ -99,7 +98,7 @@ func newInterceptReader(fileReader ExternalFileReader, compressType CompressType
 	}, nil
 }
 
-func (r *compressReader) Seek(_ int64, _ int) (int64, error) {
+func (*compressReader) Seek(_ int64, _ int) (int64, error) {
 	return int64(0), errors.Annotatef(berrors.ErrStorageInvalidConfig, "compressReader doesn't support Seek now")
 }
 
@@ -109,12 +108,12 @@ type flushStorageWriter struct {
 	closer  io.Closer
 }
 
-func (w *flushStorageWriter) Write(ctx context.Context, data []byte) (int, error) {
+func (w *flushStorageWriter) Write(_ context.Context, data []byte) (int, error) {
 	n, err := w.writer.Write(data)
 	return n, errors.Trace(err)
 }
 
-func (w *flushStorageWriter) Close(ctx context.Context) error {
+func (w *flushStorageWriter) Close(_ context.Context) error {
 	err := w.flusher.Flush()
 	if err != nil {
 		return errors.Trace(err)

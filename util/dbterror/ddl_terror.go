@@ -33,7 +33,11 @@ var (
 	// ErrCancelledDDLJob means the DDL job is cancelled.
 	ErrCancelledDDLJob = ClassDDL.NewStd(mysql.ErrCancelledDDLJob)
 	// ErrRunMultiSchemaChanges means we run multi schema changes.
-	ErrRunMultiSchemaChanges = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "multi schema change"), nil))
+	ErrRunMultiSchemaChanges = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "multi schema change for %s"), nil))
+	// ErrOperateSameColumn means we change the same columns multiple times in a DDL.
+	ErrOperateSameColumn = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "operate same column '%s'"), nil))
+	// ErrOperateSameIndex means we change the same indexes multiple times in a DDL.
+	ErrOperateSameIndex = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "operate same index '%s'"), nil))
 	// ErrWaitReorgTimeout means we wait for reorganization timeout.
 	ErrWaitReorgTimeout = ClassDDL.NewStdErr(mysql.ErrLockWaitTimeout, mysql.MySQLErrName[mysql.ErrWaitReorgTimeout])
 	// ErrInvalidStoreVer means invalid store version.
@@ -43,7 +47,9 @@ var (
 
 	// ErrCantDropColWithIndex means can't drop the column with index. We don't support dropping column with index covered now.
 	ErrCantDropColWithIndex = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "drop column with index"), nil))
-	// ErrUnsupportedAddColumn means add columns is unsupoorted
+	// ErrCantDropColWithAutoInc means can't drop column with auto_increment
+	ErrCantDropColWithAutoInc = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "can't remove column with auto_increment when @@tidb_allow_remove_auto_inc disabled"), nil))
+	// ErrUnsupportedAddColumn means add columns is unsupported
 	ErrUnsupportedAddColumn = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "add column"), nil))
 	// ErrUnsupportedModifyColumn means modify columns is unsupoorted
 	ErrUnsupportedModifyColumn = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "modify column: %s"), nil))
@@ -63,8 +69,6 @@ var (
 	ErrUnsupportedAlterTableWithoutValidation = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("ALTER TABLE WITHOUT VALIDATION is currently unsupported", nil))
 	// ErrUnsupportedAlterTableOption means we don't support the alter table option.
 	ErrUnsupportedAlterTableOption = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("This type of ALTER TABLE is currently unsupported", nil))
-	// ErrUnsupportedAlterReplicaForSysTable means we don't support the alter replica for system table.
-	ErrUnsupportedAlterReplicaForSysTable = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("ALTER table replica for tables in system database is currently unsupported", nil))
 	// ErrUnsupportedAlterCacheForSysTable means we don't support the alter cache for system table.
 	ErrUnsupportedAlterCacheForSysTable = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("ALTER table cache for tables in system database is currently unsupported", nil))
 	// ErrBlobKeyWithoutLength is used when BLOB is used as key but without a length.
@@ -91,12 +95,10 @@ var (
 	ErrReorgPanic = ClassDDL.NewStd(mysql.ErrReorgPanic)
 	// ErrFkColumnCannotDrop is used when foreign key column can't be dropped.
 	ErrFkColumnCannotDrop = ClassDDL.NewStd(mysql.ErrFkColumnCannotDrop)
+	// ErrFkColumnCannotDropChild is used when foreign key column can't be dropped.
+	ErrFkColumnCannotDropChild = ClassDDL.NewStd(mysql.ErrFkColumnCannotDropChild)
 	// ErrFKIncompatibleColumns is used when foreign key column type is incompatible.
 	ErrFKIncompatibleColumns = ClassDDL.NewStd(mysql.ErrFKIncompatibleColumns)
-
-	// ErrAlterReplicaForUnsupportedCharsetTable is used when alter table with unsupported charset.
-	ErrAlterReplicaForUnsupportedCharsetTable = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "ALTER table replica for table contain %s charset"), nil))
-
 	// ErrOnlyOnRangeListPartition is used when the partition type is range list.
 	ErrOnlyOnRangeListPartition = ClassDDL.NewStd(mysql.ErrOnlyOnRangeListPartition)
 	// ErrWrongKeyColumn is for table column cannot be indexed.
@@ -298,6 +300,8 @@ var (
 	ErrUnsupportedExpressionIndex = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "creating expression index containing unsafe functions without allow-expression-index in config"), nil))
 	// ErrPartitionExchangePartTable is returned when exchange table partition with another table is partitioned.
 	ErrPartitionExchangePartTable = ClassDDL.NewStd(mysql.ErrPartitionExchangePartTable)
+	// ErrPartitionExchangeTempTable is returned when exchange table partition with a temporary table
+	ErrPartitionExchangeTempTable = ClassDDL.NewStd(mysql.ErrPartitionExchangeTempTable)
 	// ErrTablesDifferentMetadata is returned when exchanges tables is not compatible.
 	ErrTablesDifferentMetadata = ClassDDL.NewStd(mysql.ErrTablesDifferentMetadata)
 	// ErrRowDoesNotMatchPartition is returned when the row record of exchange table does not match the partition rule.
@@ -365,8 +369,11 @@ var (
 	ErrDependentByFunctionalIndex = ClassDDL.NewStd(mysql.ErrDependentByFunctionalIndex)
 	// ErrFunctionalIndexOnBlob when the expression of expression index returns blob or text.
 	ErrFunctionalIndexOnBlob = ClassDDL.NewStd(mysql.ErrFunctionalIndexOnBlob)
-	// ErrIncompatibleTiFlashAndPlacement when placement and tiflash replica options are set at the same time
-	ErrIncompatibleTiFlashAndPlacement = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("Placement and tiflash replica options cannot be set at the same time", nil))
+
+	// ErrUnsupportedAlterTableSpec means we don't support this alter table specification (i.e. unknown)
+	ErrUnsupportedAlterTableSpec = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "Unsupported/unknown ALTER TABLE specification"), nil))
+	// ErrGeneralUnsupportedDDL as a generic error to customise by argument
+	ErrGeneralUnsupportedDDL = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "%s"), nil))
 
 	// ErrAutoConvert when auto convert happens
 	ErrAutoConvert = ClassDDL.NewStd(mysql.ErrAutoConvert)
@@ -375,4 +382,38 @@ var (
 
 	// ErrBinlogUnsafeSystemFunction when use a system function that may return a different value on the slave.
 	ErrBinlogUnsafeSystemFunction = ClassDDL.NewStd(mysql.ErrBinlogUnsafeSystemFunction)
+
+	// ErrDDLJobNotFound indicates the job id was not found.
+	ErrDDLJobNotFound = ClassDDL.NewStd(mysql.ErrDDLJobNotFound)
+	// ErrCancelFinishedDDLJob returns when cancel a finished ddl job.
+	ErrCancelFinishedDDLJob = ClassDDL.NewStd(mysql.ErrCancelFinishedDDLJob)
+	// ErrCannotCancelDDLJob returns when cancel a almost finished ddl job, because cancel in now may cause data inconsistency.
+	ErrCannotCancelDDLJob = ClassDDL.NewStd(mysql.ErrCannotCancelDDLJob)
+	// ErrDDLSetting returns when failing to enable/disable DDL
+	ErrDDLSetting = ClassDDL.NewStd(mysql.ErrDDLSetting)
+
+	// ErrColumnInChange indicates there is modification on the column in parallel.
+	ErrColumnInChange = ClassDDL.NewStd(mysql.ErrColumnInChange)
+
+	// ErrAlterTiFlashModeForTableWithoutTiFlashReplica returns when set tiflash mode on table whose tiflash_replica is null or tiflash_replica_count = 0
+	ErrAlterTiFlashModeForTableWithoutTiFlashReplica = ClassDDL.NewStdErr(0, parser_mysql.Message("TiFlash mode will take effect after at least one TiFlash replica is set for the table", nil))
+
+	// ErrUnsupportedTiFlashOperationForSysOrMemTable means we don't support the alter tiflash related action(e.g. set tiflash mode, set tiflash replica) for system table.
+	ErrUnsupportedTiFlashOperationForSysOrMemTable = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "ALTER TiFlash settings for system table and memory table"), nil))
+
+	// ErrUnsupportedTiFlashOperationForUnsupportedCharsetTable is used when alter alter tiflash related action(e.g. set tiflash mode, set tiflash replica) with unsupported charset.
+	ErrUnsupportedTiFlashOperationForUnsupportedCharsetTable = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "ALTER TiFlash settings for tables not supported by TiFlash: table contains %s charset"), nil))
+
+	// ErrDropIndexNeededInForeignKey returns when drop index which is needed in foreign key.
+	ErrDropIndexNeededInForeignKey = ClassDDL.NewStd(mysql.ErrDropIndexNeededInForeignKey)
+	// ErrForeignKeyCannotDropParent returns when drop table which has foreign key referred.
+	ErrForeignKeyCannotDropParent = ClassDDL.NewStd(mysql.ErrForeignKeyCannotDropParent)
+	// ErrTruncateIllegalForeignKey returns when truncate table which has foreign key referred.
+	ErrTruncateIllegalForeignKey = ClassDDL.NewStd(mysql.ErrTruncateIllegalForeignKey)
+	// ErrForeignKeyColumnCannotChange returns when change column which used by foreign key.
+	ErrForeignKeyColumnCannotChange = ClassDDL.NewStd(mysql.ErrForeignKeyColumnCannotChange)
+	// ErrForeignKeyColumnCannotChangeChild returns when change child table's column which used by foreign key.
+	ErrForeignKeyColumnCannotChangeChild = ClassDDL.NewStd(mysql.ErrForeignKeyColumnCannotChangeChild)
+	// ErrNoReferencedRow2 returns when there are rows in child table don't have related foreign key value in refer table.
+	ErrNoReferencedRow2 = ClassDDL.NewStd(mysql.ErrNoReferencedRow2)
 )

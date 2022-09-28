@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
@@ -189,6 +188,7 @@ func (e *countOriginalWithDistinct4Decimal) UpdatePartialResult(sctx sessionctx.
 			continue
 		}
 		memDelta += p.valSet.Insert(decStr)
+		memDelta += int64(len(decStr))
 	}
 
 	return memDelta, nil
@@ -286,6 +286,7 @@ func (e *countOriginalWithDistinct4String) UpdatePartialResult(sctx sessionctx.C
 		}
 		input = stringutil.Copy(input)
 		memDelta += p.valSet.Insert(input)
+		memDelta += int64(len(input))
 	}
 
 	return memDelta, nil
@@ -348,6 +349,7 @@ func (e *countOriginalWithDistinct) UpdatePartialResult(sctx sessionctx.Context,
 			continue
 		}
 		memDelta += p.valSet.Insert(encodedString)
+		memDelta += int64(len(encodedString))
 	}
 
 	return memDelta, nil
@@ -395,12 +397,12 @@ func evalAndEncode(
 		}
 		encodedBytes = appendDuration(encodedBytes, buf, val)
 	case types.ETJson:
-		var val json.BinaryJSON
+		var val types.BinaryJSON
 		val, isNull, err = arg.EvalJSON(sctx, row)
 		if err != nil || isNull {
 			break
 		}
-		encodedBytes = appendJSON(encodedBytes, buf, val)
+		encodedBytes = val.HashValue(encodedBytes)
 	case types.ETString:
 		var val string
 		val, isNull, err = arg.EvalString(sctx, row)
@@ -463,7 +465,7 @@ func appendDuration(encodedBytes, buf []byte, val types.Duration) []byte {
 	return encodedBytes
 }
 
-func appendJSON(encodedBytes, _ []byte, val json.BinaryJSON) []byte {
+func appendJSON(encodedBytes, _ []byte, val types.BinaryJSON) []byte {
 	encodedBytes = append(encodedBytes, val.TypeCode)
 	encodedBytes = append(encodedBytes, val.Value...)
 	return encodedBytes

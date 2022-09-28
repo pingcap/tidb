@@ -59,7 +59,7 @@ type sqlConnSession struct {
 }
 
 func (session *sqlConnSession) Close() {
-	session.conn.Close()
+	_ = session.conn.Close()
 }
 
 func (session *sqlConnSession) Execute(ctx context.Context, sql string) ([]sqlexec.RecordSet, error) {

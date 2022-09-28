@@ -36,6 +36,7 @@ const (
 	largeCSVLowerThresholdRation = 10
 )
 
+// TableRegion contains information for a table region during import.
 type TableRegion struct {
 	EngineID int32
 
@@ -46,22 +47,27 @@ type TableRegion struct {
 	Chunk Chunk
 }
 
+// RowIDMin returns the minimum row ID of this table region.
 func (reg *TableRegion) RowIDMin() int64 {
 	return reg.Chunk.PrevRowIDMax + 1
 }
 
+// Rows returns the row counts of this table region.
 func (reg *TableRegion) Rows() int64 {
 	return reg.Chunk.RowIDMax - reg.Chunk.PrevRowIDMax
 }
 
+// Offset gets the offset in the file of this table region.
 func (reg *TableRegion) Offset() int64 {
 	return reg.Chunk.Offset
 }
 
+// Size gets the size of this table region.
 func (reg *TableRegion) Size() int64 {
 	return reg.Chunk.EndOffset - reg.Chunk.Offset
 }
 
+// AllocateEngineIDs allocates the table engine IDs.
 func AllocateEngineIDs(
 	filesRegions []*TableRegion,
 	dataFileSizes []float64,
@@ -133,6 +139,7 @@ func AllocateEngineIDs(
 	}
 }
 
+// MakeTableRegions create a new table region.
 func MakeTableRegions(
 	ctx context.Context,
 	meta *MDTableMeta,
@@ -161,19 +168,19 @@ func MakeTableRegions(
 	for i := 0; i < concurrency; i++ {
 		wg.Add(1)
 		go func() {
+			defer wg.Done()
 			for info := range fileChan {
 				regions, sizes, err := makeSourceFileRegion(execCtx, meta, info, columns, cfg, ioWorkers, store)
 				select {
 				case resultChan <- fileRegionRes{info: info, regions: regions, sizes: sizes, err: err}:
 				case <-ctx.Done():
-					break
+					return
 				}
 				if err != nil {
-					log.L().Error("make source file region error", zap.Error(err), zap.String("file_path", info.FileMeta.Path))
+					log.FromContext(ctx).Error("make source file region error", zap.Error(err), zap.String("file_path", info.FileMeta.Path))
 					break
 				}
 			}
-			wg.Done()
 		}()
 	}
 
@@ -239,7 +246,7 @@ func MakeTableRegions(
 		}
 	}
 
-	log.L().Info("makeTableRegions", zap.Int("filesCount", len(meta.DataFiles)),
+	log.FromContext(ctx).Info("makeTableRegions", zap.Int("filesCount", len(meta.DataFiles)),
 		zap.Int64("MaxRegionSize", int64(cfg.Mydumper.MaxRegionSize)),
 		zap.Int("RegionsCount", len(filesRegions)),
 		zap.Float64("BatchSize", batchSize),
@@ -294,7 +301,7 @@ func makeSourceFileRegion(
 	}
 
 	if tableRegion.Size() > tableRegionSizeWarningThreshold {
-		log.L().Warn(
+		log.FromContext(ctx).Warn(
 			"file is too big to be processed efficiently; we suggest splitting it at 256 MB each",
 			zap.String("file", fi.FileMeta.Path),
 			zap.Int64("size", dataFileSize))
@@ -365,7 +372,7 @@ func SplitLargeFile(
 		if err != nil {
 			return 0, nil, nil, err
 		}
-		parser, err := NewCSVParser(&cfg.Mydumper.CSV, r, int64(cfg.Mydumper.ReadBlockSize), ioWorker, true, charsetConvertor)
+		parser, err := NewCSVParser(ctx, &cfg.Mydumper.CSV, r, int64(cfg.Mydumper.ReadBlockSize), ioWorker, true, charsetConvertor)
 		if err != nil {
 			return 0, nil, nil, err
 		}
@@ -392,7 +399,7 @@ func SplitLargeFile(
 			if err != nil {
 				return 0, nil, nil, err
 			}
-			parser, err := NewCSVParser(&cfg.Mydumper.CSV, r, int64(cfg.Mydumper.ReadBlockSize), ioWorker, false, charsetConvertor)
+			parser, err := NewCSVParser(ctx, &cfg.Mydumper.CSV, r, int64(cfg.Mydumper.ReadBlockSize), ioWorker, false, charsetConvertor)
 			if err != nil {
 				return 0, nil, nil, err
 			}
@@ -404,7 +411,7 @@ func SplitLargeFile(
 				if !errors.ErrorEqual(err, io.EOF) {
 					return 0, nil, nil, err
 				}
-				log.L().Warn("file contains no terminator at end",
+				log.FromContext(ctx).Warn("file contains no terminator at end",
 					zap.String("path", dataFile.FileMeta.Path),
 					zap.String("terminator", cfg.Mydumper.CSV.Terminator))
 				pos = dataFile.FileMeta.FileSize

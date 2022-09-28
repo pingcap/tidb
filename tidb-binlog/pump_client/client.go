@@ -214,13 +214,13 @@ func NewLocalPumpsClient(etcdURLs, binlogSocket string, timeout time.Duration, s
 		Security:           security,
 		binlogSocket:       binlogSocket,
 	}
-	newPumpsClient.getLocalPumpStatus(ctx)
+	newPumpsClient.syncLocalPumpStatus(ctx)
 
 	return newPumpsClient, nil
 }
 
-// getLocalPumpStatus gets the local pump. For compatible with kafka version tidb-binlog.
-func (c *PumpsClient) getLocalPumpStatus(pctx context.Context) {
+// getLocalPumpStatus sync the local pump. For compatible with kafka version tidb-binlog.
+func (c *PumpsClient) syncLocalPumpStatus(_ context.Context) {
 	nodeStatus := &node.Status{
 		NodeID:  localPump,
 		Addr:    c.binlogSocket,
@@ -326,7 +326,7 @@ func (c *PumpsClient) WriteBinlog(binlog *pb.Binlog) error {
 	}
 
 	log.Info("[pumps client] write binlog to available pumps all failed, will try unavailable pumps")
-	pump, err1 := c.backoffWriteBinlog(req, binlog.Tp, binlog.StartTs)
+	pump, err1 := c.backoffWriteBinlog(req, binlog.Tp)
 	if err1 == nil {
 		choosePump = pump
 		return nil
@@ -337,7 +337,7 @@ func (c *PumpsClient) WriteBinlog(binlog *pb.Binlog) error {
 
 // Return directly for non p-binlog.
 // Try every online pump for p-binlog.
-func (c *PumpsClient) backoffWriteBinlog(req *pb.WriteBinlogReq, binlogType pb.BinlogType, startTS int64) (pump *PumpStatus, err error) {
+func (c *PumpsClient) backoffWriteBinlog(req *pb.WriteBinlogReq, binlogType pb.BinlogType) (pump *PumpStatus, err error) {
 	if binlogType != pb.BinlogType_Prewrite {
 		// never return error for commit/rollback binlog.
 		return nil, nil
@@ -428,7 +428,6 @@ func (c *PumpsClient) addPump(pump *PumpStatus, updateSelector bool) {
 	if updateSelector {
 		c.Selector.SetPumps(copyPumps(c.Pumps.AvaliablePumps))
 	}
-
 }
 
 // SetSelectStrategy sets the selector's strategy, strategy should be 'range' or 'hash' now.

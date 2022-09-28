@@ -1,0 +1,12 @@
+diff -urN a/etcdserver/api/v3election/v3electionpb/gw/BUILD.bazel b/etcdserver/api/v3election/v3electionpb/gw/BUILD.bazel
+--- old/etcdserver/api/v3election/v3electionpb/gw/BUILD.bazel	2022-04-12 01:52:44.000000000 +0800
++++ new/etcdserver/api/v3election/v3electionpb/gw/BUILD.bazel	2022-04-12 01:53:38.000000000 +0800
+@@ -8,7 +8,7 @@ go_library(
+     visibility = ["//visibility:public"],
+     deps = [
+         "//etcdserver/api/v3election/v3electionpb",
+-        "@com_github_golang_protobuf//descriptor:go_default_library_gen",
++        "@com_github_golang_protobuf//descriptor:descriptor",
+         "@com_github_golang_protobuf//proto:go_default_library",
+         "@com_github_grpc_ecosystem_grpc_gateway//runtime:go_default_library",
+         "@com_github_grpc_ecosystem_grpc_gateway//utilities:go_default_library",

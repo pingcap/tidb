@@ -26,9 +26,9 @@ import (
 	"github.com/cockroachdb/pebble"
 	"github.com/cockroachdb/pebble/sstable"
 	"github.com/google/uuid"
-	"github.com/stretchr/testify/require"
-
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/stretchr/testify/require"
 )
 
 func TestIngestSSTWithClosedEngine(t *testing.T) {
@@ -57,6 +57,7 @@ func TestIngestSSTWithClosedEngine(t *testing.T) {
 		cancel:       cancel,
 		sstMetasChan: make(chan metaOrFlush, 64),
 		keyAdapter:   noopKeyAdapter{},
+		logger:       log.L(),
 	}
 	f.sstIngester = dbSSTIngester{e: f}
 	sstPath := path.Join(tmpPath, uuid.New().String()+".sst")

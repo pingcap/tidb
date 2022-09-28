@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/tikv/client-go/v2/oracle"
@@ -23,6 +24,10 @@ const (
 	checkGCSafePointGapTime         = 5 * time.Second
 	// DefaultBRGCSafePointTTL means PD keep safePoint limit at least 5min.
 	DefaultBRGCSafePointTTL = 5 * 60
+	// DefaultStreamStartSafePointTTL specifies keeping the server safepoint 30 mins when start task.
+	DefaultStreamStartSafePointTTL = 1800
+	// DefaultStreamPauseSafePointTTL specifies Keeping the server safePoint at list 24h when pause task.
+	DefaultStreamPauseSafePointTTL = 24 * 3600
 )
 
 // BRServiceSafePoint is metadata of service safe point from a BR 'instance'.
@@ -73,8 +78,8 @@ func CheckGCSafePoint(ctx context.Context, pdClient pd.Client, ts uint64) error 
 	return nil
 }
 
-// updateServiceSafePoint register BackupTS to PD, to lock down BackupTS as safePoint with TTL seconds.
-func updateServiceSafePoint(ctx context.Context, pdClient pd.Client, sp BRServiceSafePoint) error {
+// UpdateServiceSafePoint register BackupTS to PD, to lock down BackupTS as safePoint with TTL seconds.
+func UpdateServiceSafePoint(ctx context.Context, pdClient pd.Client, sp BRServiceSafePoint) error {
 	log.Debug("update PD safePoint limit with TTL", zap.Object("safePoint", sp))
 
 	lastSafePoint, err := pdClient.UpdateServiceGCSafePoint(ctx, sp.ID, sp.TTL, sp.BackupTS-1)
@@ -102,7 +107,7 @@ func StartServiceSafePointKeeper(
 	}
 	// Update service safe point immediately to cover the gap between starting
 	// update goroutine and updating service safe point.
-	if err := updateServiceSafePoint(ctx, pdClient, sp); err != nil {
+	if err := UpdateServiceSafePoint(ctx, pdClient, sp); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -119,7 +124,7 @@ func StartServiceSafePointKeeper(
 				log.Debug("service safe point keeper exited")
 				return
 			case <-updateTick.C:
-				if err := updateServiceSafePoint(ctx, pdClient, sp); err != nil {
+				if err := UpdateServiceSafePoint(ctx, pdClient, sp); err != nil {
 					log.Warn("failed to update service safe point, backup may fail if gc triggered",
 						zap.Error(err),
 					)
@@ -135,4 +140,14 @@ func StartServiceSafePointKeeper(
 		}
 	}()
 	return nil
+}
+
+type FakePDClient struct {
+	pd.Client
+	Stores []*metapb.Store
+}
+
+// GetAllStores return fake stores.
+func (c FakePDClient) GetAllStores(context.Context, ...pd.GetStoreOption) ([]*metapb.Store, error) {
+	return append([]*metapb.Store{}, c.Stores...), nil
 }

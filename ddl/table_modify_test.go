@@ -24,20 +24,20 @@ import (
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/admin"
 	"github.com/stretchr/testify/require"
 )
 
 const tableModifyLease = 600 * time.Millisecond
 
 func TestCreateTable(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, tableModifyLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, tableModifyLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE `t` (`a` double DEFAULT 1.0 DEFAULT now() DEFAULT 2.0 );")
@@ -52,7 +52,7 @@ func TestCreateTable(t *testing.T) {
 	require.Equal(t, "a", col.Name.L)
 	d, ok := col.DefaultValue.(string)
 	require.True(t, ok)
-	require.Equal(t, "2.0", d)
+	require.Equal(t, "2", d)
 
 	tk.MustExec("drop table t")
 	tk.MustGetErrCode("CREATE TABLE `t` (`a` int) DEFAULT CHARSET=abcdefg", errno.ErrUnknownCharacterSet)
@@ -113,11 +113,11 @@ func TestCreateTable(t *testing.T) {
 }
 
 func TestLockTableReadOnly(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, tableModifyLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, tableModifyLease)
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
+	tk1.MustExec("set global tidb_enable_metadata_lock=0")
 	tk2.MustExec("use test")
 	tk1.MustExec("drop table if exists t1,t2")
 	defer func() {
@@ -177,8 +177,7 @@ func TestLockTableReadOnly(t *testing.T) {
 
 // TestConcurrentLockTables test concurrent lock/unlock tables.
 func TestConcurrentLockTables(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, tableModifyLease)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, tableModifyLease)
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
@@ -226,15 +225,14 @@ func testParallelExecSQL(t *testing.T, store kv.Storage, dom *domain.Domain, sql
 		}
 		var qLen int
 		for {
-			err := kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
-				jobs, err1 := admin.GetDDLJobs(txn)
-				if err1 != nil {
-					return err1
-				}
-				qLen = len(jobs)
-				return nil
-			})
+			sess := testkit.NewTestKit(t, store).Session()
+			err := sessiontxn.NewTxn(context.Background(), sess)
 			require.NoError(t, err)
+			txn, err := sess.Txn(true)
+			require.NoError(t, err)
+			jobs, err := ddl.GetAllDDLJobs(sess, meta.NewMeta(txn))
+			require.NoError(t, err)
+			qLen = len(jobs)
 			if qLen == 2 {
 				break
 			}
@@ -255,15 +253,14 @@ func testParallelExecSQL(t *testing.T, store kv.Storage, dom *domain.Domain, sql
 	go func() {
 		var qLen int
 		for {
-			err := kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
-				jobs, err3 := admin.GetDDLJobs(txn)
-				if err3 != nil {
-					return err3
-				}
-				qLen = len(jobs)
-				return nil
-			})
+			sess := testkit.NewTestKit(t, store).Session()
+			err := sessiontxn.NewTxn(context.Background(), sess)
 			require.NoError(t, err)
+			txn, err := sess.Txn(true)
+			require.NoError(t, err)
+			jobs, err := ddl.GetAllDDLJobs(sess, meta.NewMeta(txn))
+			require.NoError(t, err)
+			qLen = len(jobs)
 			if qLen == 1 {
 				// Make sure sql2 is executed after the sql1.
 				close(ch)
@@ -285,8 +282,7 @@ func testParallelExecSQL(t *testing.T, store kv.Storage, dom *domain.Domain, sql
 }
 
 func TestUnsupportedAlterTableOption(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, tableModifyLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, tableModifyLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a char(10) not null,b char(20)) shard_row_id_bits=6")

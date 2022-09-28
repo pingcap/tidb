@@ -19,9 +19,12 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"go.uber.org/zap"
@@ -32,6 +35,7 @@ func splitPartitionTableRegion(ctx sessionctx.Context, store kv.SplittableStore,
 	regionIDs := make([]uint64, 0, len(pi.Definitions))
 	ctxWithTimeout, cancel := context.WithTimeout(context.Background(), ctx.GetSessionVars().GetSplitRegionTimeout())
 	defer cancel()
+	ctxWithTimeout = kv.WithInternalSourceType(ctxWithTimeout, kv.InternalTxnDDL)
 	if shardingBits(tbInfo) > 0 && tbInfo.PreSplitRegions > 0 {
 		for _, def := range pi.Definitions {
 			regionIDs = append(regionIDs, preSplitPhysicalTableByShardRowID(ctxWithTimeout, store, tbInfo, def.ID, scatter)...)
@@ -49,6 +53,7 @@ func splitPartitionTableRegion(ctx sessionctx.Context, store kv.SplittableStore,
 func splitTableRegion(ctx sessionctx.Context, store kv.SplittableStore, tbInfo *model.TableInfo, scatter bool) {
 	ctxWithTimeout, cancel := context.WithTimeout(context.Background(), ctx.GetSessionVars().GetSplitRegionTimeout())
 	defer cancel()
+	ctxWithTimeout = kv.WithInternalSourceType(ctxWithTimeout, kv.InternalTxnDDL)
 	var regionIDs []uint64
 	if shardingBits(tbInfo) > 0 && tbInfo.PreSplitRegions > 0 {
 		regionIDs = preSplitPhysicalTableByShardRowID(ctxWithTimeout, store, tbInfo, tbInfo.ID, scatter)
@@ -85,13 +90,19 @@ func preSplitPhysicalTableByShardRowID(ctx context.Context, store kv.SplittableS
 	// And the max _tidb_rowid is 9223372036854775807, it won't be negative number.
 
 	// Split table region.
-	shardingBits := shardingBits(tbInfo)
-	step := int64(1 << (shardingBits - tbInfo.PreSplitRegions))
-	max := int64(1 << shardingBits)
+	var ft *types.FieldType
+	if pkCol := tbInfo.GetPkColInfo(); pkCol != nil {
+		ft = &pkCol.FieldType
+	} else {
+		ft = types.NewFieldType(mysql.TypeLonglong)
+	}
+	shardFmt := autoid.NewShardIDFormat(ft, shardingBits(tbInfo), tbInfo.AutoRandomRangeBits)
+	step := int64(1 << (shardFmt.ShardBits - tbInfo.PreSplitRegions))
+	max := int64(1 << shardFmt.ShardBits)
 	splitTableKeys := make([][]byte, 0, 1<<(tbInfo.PreSplitRegions))
 	splitTableKeys = append(splitTableKeys, tablecodec.GenTablePrefix(physicalID))
 	for p := step; p < max; p += step {
-		recordID := p << (64 - shardingBits - 1)
+		recordID := p << shardFmt.IncrementalBits
 		recordPrefix := tablecodec.GenTableRecordPrefix(physicalID)
 		key := tablecodec.EncodeRecordKey(recordPrefix, kv.IntHandle(recordID))
 		splitTableKeys = append(splitTableKeys, key)

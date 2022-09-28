@@ -28,13 +28,12 @@ import (
 	testddlutil "github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
@@ -47,8 +46,7 @@ import (
 const columnModifyLease = 600 * time.Millisecond
 
 func TestAddAndDropColumn(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -258,8 +256,7 @@ DropLoop:
 // Column info from schema in build-insert-plan should be public only,
 // otherwise they will not be consisted with Table.Col(), then the server will panic.
 func TestDropColumn(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -297,8 +294,7 @@ func TestDropColumn(t *testing.T) {
 }
 
 func TestChangeColumn(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -383,8 +379,7 @@ func TestChangeColumn(t *testing.T) {
 }
 
 func TestRenameColumn(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -409,15 +404,6 @@ func TestRenameColumn(t *testing.T) {
 	// Test renaming to an exist column.
 	tk.MustGetErrCode("alter table test_rename_column rename column col2 to id", errno.ErrDupFieldName)
 
-	// Test renaming the column with foreign key.
-	tk.MustExec("drop table test_rename_column")
-	tk.MustExec("create table test_rename_column_base (base int)")
-	tk.MustExec("create table test_rename_column (col int, foreign key (col) references test_rename_column_base(base))")
-
-	tk.MustGetErrCode("alter table test_rename_column rename column col to col1", errno.ErrFKIncompatibleColumns)
-
-	tk.MustExec("drop table test_rename_column_base")
-
 	// Test renaming generated columns.
 	tk.MustExec("drop table test_rename_column")
 	tk.MustExec("create table test_rename_column (id int, col1 int generated always as (id + 1))")
@@ -438,15 +424,19 @@ func TestRenameColumn(t *testing.T) {
 
 	tk.MustExec("drop view test_rename_column_view")
 	tk.MustExec("drop table test_rename_column")
+
+	// Test rename a non-exists column. See https://github.com/pingcap/tidb/issues/34811.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int);")
+	tk.MustGetErrCode("alter table t rename column b to b;", errno.ErrBadField)
 }
 
 func TestVirtualColumnDDL(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`create global temporary table test_gv_ddl(a int, b int as (a+8) virtual, c int as (b + 2) stored) on commit delete rows;`)
-	is := tk.Session().(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
+	is := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("test_gv_ddl"))
 	require.NoError(t, err)
 	testCases := []struct {
@@ -470,7 +460,7 @@ func TestVirtualColumnDDL(t *testing.T) {
 
 	// for local temporary table
 	tk.MustExec(`create temporary table test_local_gv_ddl(a int, b int as (a+8) virtual, c int as (b + 2) stored);`)
-	is = tk.Session().(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
+	is = sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("test_local_gv_ddl"))
 	require.NoError(t, err)
 	for i, column := range tbl.Meta().Columns {
@@ -487,8 +477,7 @@ func TestVirtualColumnDDL(t *testing.T) {
 }
 
 func TestGeneratedColumnDDL(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -614,8 +603,7 @@ func TestGeneratedColumnDDL(t *testing.T) {
 }
 
 func TestColumnModifyingDefinition(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table test2 (c1 int, c2 int, c3 int default 1, index (c1));")
@@ -638,9 +626,31 @@ func TestColumnModifyingDefinition(t *testing.T) {
 	tk.MustGetErrCode("alter table test2 change c1 a1 bigint not null;", mysql.WarnDataTruncated)
 }
 
+func TestColumnModifyingDefaultValue(t *testing.T) {
+	store := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t (a int default 1);")
+	tk.MustExec("alter table t change a a int default 0.00;")
+	ret := tk.MustQuery("show create table t").Rows()[0][1]
+	require.True(t, strings.Contains(ret.(string), "`a` int(11) DEFAULT '0'"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int default 1.25);")
+	tk.MustExec("alter table t change a a int default 2.8;")
+	ret = tk.MustQuery("show create table t").Rows()[0][1]
+	require.True(t, strings.Contains(ret.(string), "`a` int(11) DEFAULT '3'"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a float default 1.25);")
+	tk.MustExec("alter table t change a a float default '0012.32';")
+	ret = tk.MustQuery("show create table t").Rows()[0][1]
+	require.True(t, strings.Contains(ret.(string), "`a` float DEFAULT '12.32'"))
+}
+
 func TestTransactionWithWriteOnlyColumn(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, columnModifyLease)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, columnModifyLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -695,8 +705,7 @@ func TestTransactionWithWriteOnlyColumn(t *testing.T) {
 }
 
 func TestColumnCheck(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists column_check")
@@ -707,8 +716,7 @@ func TestColumnCheck(t *testing.T) {
 }
 
 func TestModifyGeneratedColumn(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	modIdxColErrMsg := "[ddl:3106]'modifying an indexed column' is not supported for generated columns."
@@ -768,8 +776,7 @@ func TestModifyGeneratedColumn(t *testing.T) {
 }
 
 func TestCheckColumnDefaultValue(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists text_default_text;")
@@ -820,8 +827,7 @@ func TestCheckColumnDefaultValue(t *testing.T) {
 }
 
 func TestCheckConvertToCharacter(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a varchar(10) charset binary);")
@@ -835,8 +841,7 @@ func TestCheckConvertToCharacter(t *testing.T) {
 }
 
 func TestAddMultiColumnsIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists tidb;")
 	tk.MustExec("create database tidb;")
@@ -857,8 +862,7 @@ func TestAddMultiColumnsIndex(t *testing.T) {
 
 // For issue #31735.
 func TestAddGeneratedColumnAndInsert(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, columnModifyLease)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, columnModifyLease)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -907,8 +911,7 @@ func TestAddGeneratedColumnAndInsert(t *testing.T) {
 }
 
 func TestColumnTypeChangeGenUniqueChangingName(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, columnModifyLease)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, columnModifyLease)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1026,10 +1029,10 @@ func TestColumnTypeChangeGenUniqueChangingName(t *testing.T) {
 }
 
 func TestWriteReorgForColumnTypeChangeOnAmendTxn(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, columnModifyLease)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, columnModifyLease)
 
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_enable_metadata_lock=0")
 	tk.MustExec("set global tidb_enable_amend_pessimistic_txn = ON")
 	defer tk.MustExec("set global tidb_enable_amend_pessimistic_txn = OFF")
 

@@ -74,7 +74,7 @@ type DBReader struct {
 }
 
 // GetMvccInfoByKey fills MvccInfo reading committed keys from db
-func (r *DBReader) GetMvccInfoByKey(key []byte, isRowKey bool, mvccInfo *kvrpcpb.MvccInfo) error {
+func (r *DBReader) GetMvccInfoByKey(key []byte, _ bool, mvccInfo *kvrpcpb.MvccInfo) error {
 	it := r.GetIter()
 	it.SetAllVersions(true)
 	for it.Seek(key); it.Valid(); it.Next() {
@@ -332,6 +332,7 @@ func (r *DBReader) CheckWriteItemForRcCheckTSRead(readTS uint64, item *badger.It
 			StartTS:          readTS,
 			ConflictTS:       userMeta.StartTS(),
 			ConflictCommitTS: userMeta.CommitTS(),
+			Reason:           kvrpcpb.WriteConflict_RcCheckTs,
 		}
 	}
 	return nil

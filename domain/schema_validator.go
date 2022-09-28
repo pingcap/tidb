@@ -15,7 +15,6 @@
 package domain
 
 import (
-	"sort"
 	"sync"
 	"time"
 
@@ -27,6 +26,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 type checkResult int
@@ -48,7 +48,7 @@ type SchemaValidator interface {
 	// which is produced when the oldSchemaVer is updated to the newSchemaVer.
 	Update(leaseGrantTime uint64, oldSchemaVer, newSchemaVer int64, change *transaction.RelatedSchemaChange)
 	// Check is it valid for a transaction to use schemaVer and related tables, at timestamp txnTS.
-	Check(txnTS uint64, schemaVer int64, relatedPhysicalTableIDs []int64) (*transaction.RelatedSchemaChange, checkResult)
+	Check(txnTS uint64, schemaVer int64, relatedPhysicalTableIDs []int64, needCheckSchema bool) (*transaction.RelatedSchemaChange, checkResult)
 	// Stop stops checking the valid of transaction.
 	Stop()
 	// Restart restarts the schema validator after it is stopped.
@@ -199,7 +199,7 @@ func (s *schemaValidator) isRelatedTablesChanged(currVer int64, tableIDs []int64
 		for id := range changedTblMap {
 			tblIds = append(tblIds, id)
 		}
-		sort.Slice(tblIds, func(i, j int) bool { return tblIds[i] < tblIds[j] })
+		slices.Sort(tblIds)
 		for _, tblID := range tblIds {
 			actionTypes = append(actionTypes, changedTblMap[tblID])
 		}
@@ -223,7 +223,7 @@ func (s *schemaValidator) findNewerDeltas(currVer int64) []deltaSchemaInfo {
 }
 
 // Check checks schema validity, returns true if use schemaVer and related tables at txnTS is legal.
-func (s *schemaValidator) Check(txnTS uint64, schemaVer int64, relatedPhysicalTableIDs []int64) (*transaction.RelatedSchemaChange, checkResult) {
+func (s *schemaValidator) Check(txnTS uint64, schemaVer int64, relatedPhysicalTableIDs []int64, needCheckSchema bool) (*transaction.RelatedSchemaChange, checkResult) {
 	s.mux.RLock()
 	defer s.mux.RUnlock()
 	if !s.isStarted {
@@ -245,13 +245,17 @@ func (s *schemaValidator) Check(txnTS uint64, schemaVer int64, relatedPhysicalTa
 			return nil, ResultFail
 		}
 
-		relatedChanges, changed := s.isRelatedTablesChanged(schemaVer, relatedPhysicalTableIDs)
-		if changed {
-			if relatedChanges.Amendable {
-				relatedChanges.LatestInfoSchema = s.latestInfoSchema
-				return &relatedChanges, ResultFail
+		// When disabling MDL -> enabling MDL, the old transaction's needCheckSchema is true, we need to check it.
+		// When enabling MDL -> disabling MDL, the old transaction's needCheckSchema is false, so still need to check it, and variable EnableMDL is false now.
+		if needCheckSchema || !variable.EnableMDL.Load() {
+			relatedChanges, changed := s.isRelatedTablesChanged(schemaVer, relatedPhysicalTableIDs)
+			if changed {
+				if relatedChanges.Amendable {
+					relatedChanges.LatestInfoSchema = s.latestInfoSchema
+					return &relatedChanges, ResultFail
+				}
+				return nil, ResultFail
 			}
-			return nil, ResultFail
 		}
 		return nil, ResultSucc
 	}

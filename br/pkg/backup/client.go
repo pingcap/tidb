@@ -22,7 +22,9 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/conn"
+	connutil "github.com/pingcap/tidb/br/pkg/conn/util"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/redact"
@@ -30,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -99,6 +102,16 @@ func NewBackupClient(ctx context.Context, mgr ClientMgr) (*Client, error) {
 		clusterID: clusterID,
 		mgr:       mgr,
 	}, nil
+}
+
+// GetTS gets a new timestamp from PD.
+func (bc *Client) GetCurerntTS(ctx context.Context) (uint64, error) {
+	p, l, err := bc.mgr.GetPDClient().GetTS(ctx)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	restoreTS := oracle.ComposeTS(p, l)
+	return restoreTS, nil
 }
 
 // GetTS returns the latest timestamp.
@@ -311,7 +324,7 @@ func BuildBackupRangeAndSchema(
 	}
 
 	ranges := make([]rtree.Range, 0)
-	backupSchemas := newBackupSchemas()
+	backupSchemas := NewBackupSchemas()
 	dbs, err := m.ListDatabases()
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
@@ -330,7 +343,7 @@ func BuildBackupRangeAndSchema(
 
 		if len(tables) == 0 {
 			log.Info("backup empty database", zap.Stringer("db", dbInfo.Name))
-			backupSchemas.addSchema(dbInfo, nil)
+			backupSchemas.AddSchema(dbInfo, nil)
 			continue
 		}
 
@@ -375,6 +388,9 @@ func BuildBackupRangeAndSchema(
 				tableInfo.ClearPlacement()
 			}
 
+			// Treat cached table as normal table.
+			tableInfo.TableCacheStatusType = model.TableCacheStatusDisable
+
 			if tableInfo.PKIsHandle && tableInfo.ContainsAutoRandomBits() {
 				// this table has auto_random id, we need backup and rebase in restoration
 				var globalAutoRandID int64
@@ -399,7 +415,7 @@ func BuildBackupRangeAndSchema(
 			}
 			tableInfo.Indices = tableInfo.Indices[:n]
 
-			backupSchemas.addSchema(dbInfo, tableInfo)
+			backupSchemas.AddSchema(dbInfo, tableInfo)
 
 			tableRanges, err := BuildTableRanges(tableInfo)
 			if err != nil {
@@ -421,6 +437,37 @@ func BuildBackupRangeAndSchema(
 	return ranges, backupSchemas, policies, nil
 }
 
+// BuildFullSchema builds a full backup schemas for databases and tables.
+func BuildFullSchema(storage kv.Storage, backupTS uint64) (*Schemas, error) {
+	snapshot := storage.GetSnapshot(kv.NewVersion(backupTS))
+	m := meta.NewSnapshotMeta(snapshot)
+
+	newBackupSchemas := NewBackupSchemas()
+	dbs, err := m.ListDatabases()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	for _, db := range dbs {
+		tables, err := m.ListTables(db.ID)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		// backup this empty db if this schema is empty.
+		if len(tables) == 0 {
+			newBackupSchemas.AddSchema(db, nil)
+		}
+
+		for _, table := range tables {
+			// add table
+			newBackupSchemas.AddSchema(db, table)
+		}
+	}
+
+	return newBackupSchemas, nil
+}
+
 func skipUnsupportedDDLJob(job *model.Job) bool {
 	switch job.Type {
 	// TiDB V5.3.0 supports TableAttributes and TablePartitionAttributes.
@@ -440,29 +487,39 @@ func skipUnsupportedDDLJob(job *model.Job) bool {
 }
 
 // WriteBackupDDLJobs sends the ddl jobs are done in (lastBackupTS, backupTS] to metaWriter.
-func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, store kv.Storage, lastBackupTS, backupTS uint64) error {
+func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, g glue.Glue, store kv.Storage, lastBackupTS, backupTS uint64, needDomain bool) error {
 	snapshot := store.GetSnapshot(kv.NewVersion(backupTS))
 	snapMeta := meta.NewSnapshotMeta(snapshot)
 	lastSnapshot := store.GetSnapshot(kv.NewVersion(lastBackupTS))
 	lastSnapMeta := meta.NewSnapshotMeta(lastSnapshot)
-	lastSchemaVersion, err := lastSnapMeta.GetSchemaVersion()
+	lastSchemaVersion, err := lastSnapMeta.GetSchemaVersionWithNonEmptyDiff()
 	if err != nil {
 		return errors.Trace(err)
 	}
+	backupSchemaVersion, err := snapMeta.GetSchemaVersionWithNonEmptyDiff()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	version, err := store.CurrentVersion(kv.GlobalTxnScope)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	newestMeta := meta.NewSnapshotMeta(store.GetSnapshot(kv.NewVersion(version.Ver)))
 	allJobs := make([]*model.Job, 0)
-	defaultJobs, err := snapMeta.GetAllDDLJobsInQueue(meta.DefaultJobListKey)
+	err = g.UseOneShotSession(store, !needDomain, func(se glue.Session) error {
+		allJobs, err = ddl.GetAllDDLJobs(se.GetSessionCtx(), newestMeta)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		log.Debug("get all jobs", zap.Int("jobs", len(allJobs)))
+		return nil
+	})
 	if err != nil {
 		return errors.Trace(err)
 	}
-	log.Debug("get default jobs", zap.Int("jobs", len(defaultJobs)))
-	allJobs = append(allJobs, defaultJobs...)
-	addIndexJobs, err := snapMeta.GetAllDDLJobsInQueue(meta.AddIndexJobListKey)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	log.Debug("get add index jobs", zap.Int("jobs", len(addIndexJobs)))
-	allJobs = append(allJobs, addIndexJobs...)
-	historyJobs, err := snapMeta.GetAllHistoryDDLJobs()
+
+	historyJobs, err := ddl.GetAllHistoryDDLJobs(newestMeta)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -476,7 +533,7 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, store kv.Storage, lastB
 		}
 
 		if (job.State == model.JobStateDone || job.State == model.JobStateSynced) &&
-			(job.BinlogInfo != nil && job.BinlogInfo.SchemaVersion > lastSchemaVersion) {
+			(job.BinlogInfo != nil && job.BinlogInfo.SchemaVersion > lastSchemaVersion && job.BinlogInfo.SchemaVersion <= backupSchemaVersion) {
 			if job.BinlogInfo.DBInfo != nil {
 				// ignore all placement policy info during incremental backup for now.
 				job.BinlogInfo.DBInfo.PlacementPolicyRef = nil
@@ -509,8 +566,12 @@ func (bc *Client) BackupRanges(
 	metaWriter *metautil.MetaWriter,
 	progressCallBack func(ProgressUnit),
 ) error {
+	log.Info("Backup Ranges Started", rtree.ZapRanges(ranges))
 	init := time.Now()
-	defer log.Info("Backup Ranges", zap.Duration("take", time.Since(init)))
+
+	defer func() {
+		log.Info("Backup Ranges Completed", zap.Duration("take", time.Since(init)))
+	}()
 
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("Client.BackupRanges", opentracing.ChildOf(span.Context()))
@@ -533,9 +594,8 @@ func (bc *Client) BackupRanges(
 				// The error due to context cancel, stack trace is meaningless, the stack shall be suspended (also clear)
 				if errors.Cause(err) == context.Canceled {
 					return errors.SuspendStack(err)
-				} else {
-					return errors.Trace(err)
 				}
+				return errors.Trace(err)
 			}
 			return nil
 		})
@@ -554,29 +614,32 @@ func (bc *Client) BackupRange(
 	start := time.Now()
 	defer func() {
 		elapsed := time.Since(start)
-		logutil.CL(ctx).Info("backup range finished", zap.Duration("take", elapsed))
+		logutil.CL(ctx).Info("backup range completed",
+			logutil.Key("startKey", req.StartKey), logutil.Key("endKey", req.EndKey),
+			zap.Duration("take", elapsed))
 		key := "range start:" + hex.EncodeToString(req.StartKey) + " end:" + hex.EncodeToString(req.EndKey)
 		if err != nil {
 			summary.CollectFailureUnit(key, err)
 		}
 	}()
-	logutil.CL(ctx).Info("backup started",
+	logutil.CL(ctx).Info("backup range started",
 		logutil.Key("startKey", req.StartKey), logutil.Key("endKey", req.EndKey),
 		zap.Uint64("rateLimit", req.RateLimit),
 		zap.Uint32("concurrency", req.Concurrency))
 
 	var allStores []*metapb.Store
-	allStores, err = conn.GetAllTiKVStoresWithRetry(ctx, bc.mgr.GetPDClient(), conn.SkipTiFlash)
+	allStores, err = conn.GetAllTiKVStoresWithRetry(ctx, bc.mgr.GetPDClient(), connutil.SkipTiFlash)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
+	logutil.CL(ctx).Info("backup push down started")
 	push := newPushDown(bc.mgr, len(allStores))
 	results, err := push.pushBackup(ctx, req, allStores, progressCallBack)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	logutil.CL(ctx).Info("finish backup push down", zap.Int("small-range-count", results.Len()))
+	logutil.CL(ctx).Info("backup push down completed", zap.Int("small-range-count", results.Len()))
 
 	// Find and backup remaining ranges.
 	// TODO: test fine grained backup.
@@ -593,9 +656,9 @@ func (bc *Client) BackupRange(
 			logutil.Key("endKey", req.EndKey),
 			zap.String("cf", req.Cf))
 	} else {
-		logutil.CL(ctx).Info("time range backed up",
-			zap.Reflect("StartVersion", req.StartVersion),
-			zap.Reflect("EndVersion", req.EndVersion))
+		logutil.CL(ctx).Info("transactional range backup completed",
+			zap.Reflect("StartTS", req.StartVersion),
+			zap.Reflect("EndTS", req.EndVersion))
 	}
 
 	var ascendErr error
@@ -626,9 +689,7 @@ func (bc *Client) BackupRange(
 func (bc *Client) findRegionLeader(ctx context.Context, key []byte, isRawKv bool) (*metapb.Peer, error) {
 	// Keys are saved in encoded format in TiKV, so the key must be encoded
 	// in order to find the correct region.
-	if !isRawKv {
-		key = codec.EncodeBytes([]byte{}, key)
-	}
+	key = codec.EncodeBytesExt([]byte{}, key, isRawKv)
 	for i := 0; i < 5; i++ {
 		// better backoff.
 		region, err := bc.mgr.GetPDClient().GetRegion(ctx, key)
@@ -1023,10 +1084,9 @@ func SendBackup(
 			}
 			logutil.CL(ctx).Error("fail to backup", zap.Uint64("StoreID", storeID), zap.Int("retry", retry))
 			return berrors.ErrFailedToConnect.Wrap(errBackup).GenWithStack("failed to create backup stream to store %d", storeID)
-		} else {
-			// finish backup
-			break
 		}
+		// finish backup
+		break
 	}
 	return nil
 }

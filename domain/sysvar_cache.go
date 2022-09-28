@@ -21,12 +21,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
+	"golang.org/x/exp/maps"
 )
 
 // The sysvar cache replaces the GlobalVariableCache.
@@ -67,9 +69,7 @@ func (do *Domain) GetSessionCache() (map[string]string, error) {
 	defer do.sysVarCache.RUnlock()
 	// Perform a deep copy since this will be assigned directly to the session
 	newMap := make(map[string]string, len(do.sysVarCache.session))
-	for k, v := range do.sysVarCache.session {
-		newMap[k] = v
-	}
+	maps.Copy(newMap, do.sysVarCache.session)
 	return newMap, nil
 }
 
@@ -88,11 +88,12 @@ func (do *Domain) GetGlobalVar(name string) (string, error) {
 	return "", variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 }
 
-func (do *Domain) fetchTableValues(ctx sessionctx.Context) (map[string]string, error) {
+func (do *Domain) fetchTableValues(sctx sessionctx.Context) (map[string]string, error) {
 	tableContents := make(map[string]string)
 	// Copy all variables from the table to tableContents
-	exec := ctx.(sqlexec.RestrictedSQLExecutor)
-	rows, _, err := exec.ExecRestrictedSQL(context.TODO(), nil, `SELECT variable_name, variable_value FROM mysql.global_variables`)
+	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnSysVar)
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT variable_name, variable_value FROM mysql.global_variables`)
 	if err != nil {
 		return nil, err
 	}
@@ -201,4 +202,10 @@ func (do *Domain) SetPDClientDynamicOption(option pd.DynamicOption, val interfac
 		return nil
 	}
 	return pdClient.UpdateOption(option, val)
+}
+
+// SetStatsCacheCapacity sets statsCache cap
+func (do *Domain) SetStatsCacheCapacity(c int64) {
+	do.StatsHandle().SetStatsCacheCapacity(c)
+	logutil.BgLogger().Info("update stats cache capacity successfully", zap.Int64("capacity", c))
 }

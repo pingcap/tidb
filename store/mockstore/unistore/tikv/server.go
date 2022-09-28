@@ -44,6 +44,9 @@ var _ tikvpb.TikvServer = new(Server)
 
 // Server implements the tikvpb.TikvServer interface.
 type Server struct {
+	// After updating the kvproto, some methods of TikvServer are not implemented.
+	// Construct `Server` based on `UnimplementedTikvServer`, in order to compile successfully
+	tikvpb.UnimplementedTikvServer
 	mvccStore     *MVCCStore
 	regionManager RegionManager
 	innerServer   InnerServer
@@ -646,7 +649,7 @@ func (mrm *MockRegionManager) removeMPPTaskHandler(taskID int64, storeID uint64)
 
 // IsAlive implements the tikvpb.TikvServer interface.
 func (svr *Server) IsAlive(_ context.Context, _ *mpp.IsAliveRequest) (*mpp.IsAliveResponse, error) {
-	panic("todo")
+	return &mpp.IsAliveResponse{Available: true}, nil
 }
 
 // DispatchMPPTask implements the tikvpb.TikvServer interface.
@@ -864,6 +867,11 @@ func (svr *Server) SplitRegion(ctx context.Context, req *kvrpcpb.SplitRegionRequ
 	return svr.regionManager.SplitRegion(req), nil
 }
 
+// Compact implements the tikvpb.TikvServer interface.
+func (svr *Server) Compact(ctx context.Context, req *kvrpcpb.CompactRequest) (*kvrpcpb.CompactResponse, error) {
+	panic("unimplemented")
+}
+
 // ReadIndex implements implements the tikvpb.TikvServer interface.
 func (svr *Server) ReadIndex(context.Context, *kvrpcpb.ReadIndexRequest) (*kvrpcpb.ReadIndexResponse, error) {
 	// TODO:
@@ -1028,6 +1036,7 @@ func convertToKeyError(err error) *kvrpcpb.KeyError {
 				ConflictTs:       x.ConflictTS,
 				ConflictCommitTs: x.ConflictCommitTS,
 				Key:              x.Key,
+				Reason:           x.Reason,
 			},
 		}
 	case *kverrors.ErrDeadlock:

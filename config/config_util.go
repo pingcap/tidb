@@ -40,12 +40,9 @@ var (
 		"Performance.MaxProcs":            {},
 		"Performance.MaxMemory":           {},
 		"Performance.CrossJoin":           {},
-		"Performance.FeedbackProbability": {},
-		"Performance.QueryFeedbackLimit":  {},
 		"Performance.PseudoEstimateRatio": {},
 		"Performance.StmtCountLimit":      {},
 		"Performance.TCPKeepAlive":        {},
-		"OOMAction":                       {},
 		"TiKVClient.StoreLimit":           {},
 		"Log.Level":                       {},
 		"Log.ExpensiveThreshold":          {},
@@ -55,7 +52,6 @@ var (
 		"CompatibleKillQuery":             {},
 		"TreatOldVersionUTF8AsUTF8MB4":    {},
 		"OpenTracing.Enable":              {},
-		"PreparedPlanCache.Enabled":       {},
 	}
 )
 

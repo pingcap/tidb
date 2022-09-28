@@ -25,9 +25,9 @@
 package expression
 
 import (
-	"sort"
 	"strings"
 	"sync"
+	"unsafe"
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
@@ -38,10 +38,11 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tipb/go-tipb"
+	"golang.org/x/exp/slices"
 )
 
 // baseBuiltinFunc will be contained in every struct that implement builtinFunc interface.
@@ -87,10 +88,32 @@ func (b *baseBuiltinFunc) collator() collate.Collator {
 	return b.ctor
 }
 
-func newBaseBuiltinFunc(ctx sessionctx.Context, funcName string, args []Expression, retType types.EvalType) (baseBuiltinFunc, error) {
+func adjustNullFlagForReturnType(funcName string, args []Expression, bf baseBuiltinFunc) {
+	if functionSetForReturnTypeAlwaysNotNull.Exist(funcName) {
+		bf.tp.AddFlag(mysql.NotNullFlag)
+	} else if functionSetForReturnTypeAlwaysNullable.Exist(funcName) {
+		bf.tp.DelFlag(mysql.NotNullFlag)
+	} else if functionSetForReturnTypeNotNullOnNotNull.Exist(funcName) {
+		returnNullable := false
+		for _, arg := range args {
+			if !mysql.HasNotNullFlag(arg.GetType().GetFlag()) {
+				returnNullable = true
+				break
+			}
+		}
+		if returnNullable {
+			bf.tp.DelFlag(mysql.NotNullFlag)
+		} else {
+			bf.tp.AddFlag(mysql.NotNullFlag)
+		}
+	}
+}
+
+func newBaseBuiltinFunc(ctx sessionctx.Context, funcName string, args []Expression, tp *types.FieldType) (baseBuiltinFunc, error) {
 	if ctx == nil {
 		return baseBuiltinFunc{}, errors.New("unexpected nil session ctx")
 	}
+	retType := tp.EvalType()
 	ec, err := deriveCollation(ctx, funcName, args, retType, retType)
 	if err != nil {
 		return baseBuiltinFunc{}, err
@@ -103,12 +126,13 @@ func newBaseBuiltinFunc(ctx sessionctx.Context, funcName string, args []Expressi
 
 		args: args,
 		ctx:  ctx,
-		tp:   types.NewFieldType(mysql.TypeUnspecified),
+		tp:   tp,
 	}
 	bf.SetCharsetAndCollation(ec.Charset, ec.Collation)
 	bf.setCollator(collate.GetCollator(ec.Collation))
 	bf.SetCoercibility(ec.Coer)
 	bf.SetRepertoire(ec.Repe)
+	adjustNullFlagForReturnType(funcName, args, bf)
 	return bf, nil
 }
 
@@ -155,21 +179,21 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 	var fieldType *types.FieldType
 	switch retType {
 	case types.ETInt:
-		fieldType = types.NewFieldTypeBuilderP().SetType(mysql.TypeLonglong).SetFlag(mysql.BinaryFlag).SetFlen(mysql.MaxIntWidth).BuildP()
+		fieldType = types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).SetFlag(mysql.BinaryFlag).SetFlen(mysql.MaxIntWidth).BuildP()
 	case types.ETReal:
-		fieldType = types.NewFieldTypeBuilderP().SetType(mysql.TypeDouble).SetFlag(mysql.BinaryFlag).SetFlen(mysql.MaxRealWidth).SetDecimal(types.UnspecifiedLength).BuildP()
+		fieldType = types.NewFieldTypeBuilder().SetType(mysql.TypeDouble).SetFlag(mysql.BinaryFlag).SetFlen(mysql.MaxRealWidth).SetDecimal(types.UnspecifiedLength).BuildP()
 	case types.ETDecimal:
-		fieldType = types.NewFieldTypeBuilderP().SetType(mysql.TypeNewDecimal).SetFlag(mysql.BinaryFlag).SetFlen(11).BuildP()
+		fieldType = types.NewFieldTypeBuilder().SetType(mysql.TypeNewDecimal).SetFlag(mysql.BinaryFlag).SetFlen(11).BuildP()
 	case types.ETString:
-		fieldType = types.NewFieldTypeBuilderP().SetType(mysql.TypeVarString).SetFlen(types.UnspecifiedLength).SetDecimal(types.UnspecifiedLength).SetCharset(ec.Charset).SetCollate(ec.Collation).BuildP()
+		fieldType = types.NewFieldTypeBuilder().SetType(mysql.TypeVarString).SetFlen(types.UnspecifiedLength).SetDecimal(types.UnspecifiedLength).SetCharset(ec.Charset).SetCollate(ec.Collation).BuildP()
 	case types.ETDatetime:
-		fieldType = types.NewFieldTypeBuilderP().SetType(mysql.TypeDatetime).SetFlag(mysql.BinaryFlag).SetFlen(mysql.MaxDatetimeWidthWithFsp).SetDecimal(types.MaxFsp).BuildP()
+		fieldType = types.NewFieldTypeBuilder().SetType(mysql.TypeDatetime).SetFlag(mysql.BinaryFlag).SetFlen(mysql.MaxDatetimeWidthWithFsp).SetDecimal(types.MaxFsp).BuildP()
 	case types.ETTimestamp:
-		fieldType = types.NewFieldTypeBuilderP().SetType(mysql.TypeTimestamp).SetFlag(mysql.BinaryFlag).SetFlen(mysql.MaxDatetimeWidthWithFsp).SetDecimal(types.MaxFsp).BuildP()
+		fieldType = types.NewFieldTypeBuilder().SetType(mysql.TypeTimestamp).SetFlag(mysql.BinaryFlag).SetFlen(mysql.MaxDatetimeWidthWithFsp).SetDecimal(types.MaxFsp).BuildP()
 	case types.ETDuration:
-		fieldType = types.NewFieldTypeBuilderP().SetType(mysql.TypeDuration).SetFlag(mysql.BinaryFlag).SetFlen(mysql.MaxDurationWidthWithFsp).SetDecimal(types.MaxFsp).BuildP()
+		fieldType = types.NewFieldTypeBuilder().SetType(mysql.TypeDuration).SetFlag(mysql.BinaryFlag).SetFlen(mysql.MaxDurationWidthWithFsp).SetDecimal(types.MaxFsp).BuildP()
 	case types.ETJson:
-		fieldType = types.NewFieldTypeBuilderP().SetType(mysql.TypeJSON).SetFlag(mysql.BinaryFlag).SetFlen(mysql.MaxBlobWidth).SetCharset(mysql.DefaultCharset).SetCollate(mysql.DefaultCollationName).BuildP()
+		fieldType = types.NewFieldTypeBuilder().SetType(mysql.TypeJSON).SetFlag(mysql.BinaryFlag).SetFlen(mysql.MaxBlobWidth).SetCharset(mysql.DefaultCharset).SetCollate(mysql.DefaultCollationName).BuildP()
 	}
 	if mysql.HasBinaryFlag(fieldType.GetFlag()) && fieldType.GetType() != mysql.TypeJSON {
 		fieldType.SetCharset(charset.CharsetBin)
@@ -191,6 +215,8 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 	bf.setCollator(collate.GetCollator(ec.Collation))
 	bf.SetCoercibility(ec.Coer)
 	bf.SetRepertoire(ec.Repe)
+	// note this function must be called after wrap cast function to the args
+	adjustNullFlagForReturnType(funcName, args, bf)
 	return bf, nil
 }
 
@@ -207,7 +233,7 @@ func newBaseBuiltinFuncWithFieldType(ctx sessionctx.Context, tp *types.FieldType
 
 		args: args,
 		ctx:  ctx,
-		tp:   types.NewFieldType(mysql.TypeUnspecified),
+		tp:   tp,
 	}
 	bf.SetCharsetAndCollation(tp.GetCharset(), tp.GetCollate())
 	bf.setCollator(collate.GetCollator(tp.GetCollate()))
@@ -270,8 +296,8 @@ func (b *baseBuiltinFunc) evalDuration(row chunk.Row) (types.Duration, bool, err
 	return types.Duration{}, false, errors.Errorf("baseBuiltinFunc.evalDuration() should never be called, please contact the TiDB team for help")
 }
 
-func (b *baseBuiltinFunc) evalJSON(row chunk.Row) (json.BinaryJSON, bool, error) {
-	return json.BinaryJSON{}, false, errors.Errorf("baseBuiltinFunc.evalJSON() should never be called, please contact the TiDB team for help")
+func (b *baseBuiltinFunc) evalJSON(row chunk.Row) (types.BinaryJSON, bool, error) {
+	return types.BinaryJSON{}, false, errors.Errorf("baseBuiltinFunc.evalJSON() should never be called, please contact the TiDB team for help")
 }
 
 func (b *baseBuiltinFunc) vectorized() bool {
@@ -452,7 +478,7 @@ type builtinFunc interface {
 	// evalDuration evaluates duration representation of builtinFunc by given row.
 	evalDuration(row chunk.Row) (val types.Duration, isNull bool, err error)
 	// evalJSON evaluates JSON representation of builtinFunc by given row.
-	evalJSON(row chunk.Row) (val json.BinaryJSON, isNull bool, err error)
+	evalJSON(row chunk.Row) (val types.BinaryJSON, isNull bool, err error)
 	// getArgs returns the arguments expressions.
 	getArgs() []Expression
 	// equal check if this function equals to another function.
@@ -475,6 +501,8 @@ type builtinFunc interface {
 	metadata() proto.Message
 	// Clone returns a copy of itself.
 	Clone() builtinFunc
+
+	MemoryUsage() int64
 
 	CollationInfo
 }
@@ -527,6 +555,32 @@ type functionClassWithName interface {
 	getDisplayName() string
 }
 
+// functions that always return not null type
+// todo add more functions to this set
+var functionSetForReturnTypeAlwaysNotNull = set.StringSet{
+	ast.IsNull: {},
+	ast.NullEQ: {},
+}
+
+// functions that always return nullable type
+// todo add more functions to this set
+var functionSetForReturnTypeAlwaysNullable = set.StringSet{
+	ast.Div:    {}, // divide by zero
+	ast.IntDiv: {}, // divide by zero
+	ast.Mod:    {}, // mod by zero
+}
+
+// functions that if all the inputs are not null, then the result is not null
+// Although most of the functions should belong to this, there may be some unknown
+// bugs in TiDB that makes it not true in TiDB's implementation, so only add a few
+// this time. The others can be added to the set case by case in the future
+// todo add more functions to this set
+var functionSetForReturnTypeNotNullOnNotNull = set.StringSet{
+	ast.Plus:  {},
+	ast.Minus: {},
+	ast.Mul:   {},
+}
+
 // funcs holds all registered builtin functions. When new function is added,
 // check expression/function_traits.go to see if it should be appended to
 // any set there.
@@ -570,10 +624,10 @@ var funcs = map[string]functionClass{
 	ast.Truncate: &truncateFunctionClass{baseFunctionClass{ast.Truncate, 2, 2}},
 
 	// time functions
-	ast.AddDate:          &addDateFunctionClass{baseFunctionClass{ast.AddDate, 3, 3}},
-	ast.DateAdd:          &addDateFunctionClass{baseFunctionClass{ast.DateAdd, 3, 3}},
-	ast.SubDate:          &subDateFunctionClass{baseFunctionClass{ast.SubDate, 3, 3}},
-	ast.DateSub:          &subDateFunctionClass{baseFunctionClass{ast.DateSub, 3, 3}},
+	ast.AddDate:          &addSubDateFunctionClass{baseFunctionClass{ast.AddDate, 3, 3}, addTime, addDuration, setAdd},
+	ast.DateAdd:          &addSubDateFunctionClass{baseFunctionClass{ast.DateAdd, 3, 3}, addTime, addDuration, setAdd},
+	ast.SubDate:          &addSubDateFunctionClass{baseFunctionClass{ast.SubDate, 3, 3}, subTime, subDuration, setSub},
+	ast.DateSub:          &addSubDateFunctionClass{baseFunctionClass{ast.DateSub, 3, 3}, subTime, subDuration, setSub},
 	ast.AddTime:          &addTimeFunctionClass{baseFunctionClass{ast.AddTime, 2, 2}},
 	ast.ConvertTz:        &convertTzFunctionClass{baseFunctionClass{ast.ConvertTz, 3, 3}},
 	ast.Curdate:          &currentDateFunctionClass{baseFunctionClass{ast.Curdate, 0, 0}},
@@ -636,6 +690,7 @@ var funcs = map[string]functionClass{
 	// TSO functions
 	ast.TiDBBoundedStaleness: &tidbBoundedStalenessFunctionClass{baseFunctionClass{ast.TiDBBoundedStaleness, 2, 2}},
 	ast.TiDBParseTso:         &tidbParseTsoFunctionClass{baseFunctionClass{ast.TiDBParseTso, 1, 1}},
+	ast.TiDBCurrentTso:       &tidbCurrentTsoFunctionClass{baseFunctionClass{ast.TiDBCurrentTso, 0, 0}},
 
 	// string functions
 	ast.ASCII:           &asciiFunctionClass{baseFunctionClass{ast.ASCII, 1, 1}},
@@ -775,7 +830,11 @@ var funcs = map[string]functionClass{
 	ast.IsTruthWithNull:    &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsTruthWithNull, 1, 1}, opcode.IsTruth, true},
 	ast.IsFalsity:          &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsFalsity, 1, 1}, opcode.IsFalsity, false},
 	ast.Like:               &likeFunctionClass{baseFunctionClass{ast.Like, 3, 3}},
-	ast.Regexp:             &regexpFunctionClass{baseFunctionClass{ast.Regexp, 2, 2}},
+	ast.Regexp:             &regexpLikeFunctionClass{baseFunctionClass{ast.Regexp, 2, 2}},
+	ast.RegexpLike:         &regexpLikeFunctionClass{baseFunctionClass{ast.RegexpLike, 2, 3}},
+	ast.RegexpSubstr:       &regexpSubstrFunctionClass{baseFunctionClass{ast.RegexpSubstr, 2, 5}},
+	ast.RegexpInStr:        &regexpInStrFunctionClass{baseFunctionClass{ast.RegexpInStr, 2, 6}},
+	ast.RegexpReplace:      &regexpReplaceFunctionClass{baseFunctionClass{ast.RegexpReplace, 3, 6}},
 	ast.Case:               &caseWhenFunctionClass{baseFunctionClass{ast.Case, 1, -1}},
 	ast.RowFunc:            &rowFunctionClass{baseFunctionClass{ast.RowFunc, 2, -1}},
 	ast.SetVar:             &setVarFunctionClass{baseFunctionClass{ast.SetVar, 2, 2}},
@@ -798,6 +857,7 @@ var funcs = map[string]functionClass{
 	ast.SHA1:                     &sha1FunctionClass{baseFunctionClass{ast.SHA1, 1, 1}},
 	ast.SHA:                      &sha1FunctionClass{baseFunctionClass{ast.SHA, 1, 1}},
 	ast.SHA2:                     &sha2FunctionClass{baseFunctionClass{ast.SHA2, 2, 2}},
+	ast.SM3:                      &sm3FunctionClass{baseFunctionClass{ast.SM3, 1, 1}},
 	ast.Uncompress:               &uncompressFunctionClass{baseFunctionClass{ast.Uncompress, 1, 1}},
 	ast.UncompressedLength:       &uncompressedLengthFunctionClass{baseFunctionClass{ast.UncompressedLength, 1, 1}},
 	ast.ValidatePasswordStrength: &validatePasswordStrengthFunctionClass{baseFunctionClass{ast.ValidatePasswordStrength, 1, 1}},
@@ -834,6 +894,7 @@ var funcs = map[string]functionClass{
 	ast.TiDBVersion:          &tidbVersionFunctionClass{baseFunctionClass{ast.TiDBVersion, 0, 0}},
 	ast.TiDBIsDDLOwner:       &tidbIsDDLOwnerFunctionClass{baseFunctionClass{ast.TiDBIsDDLOwner, 0, 0}},
 	ast.TiDBDecodePlan:       &tidbDecodePlanFunctionClass{baseFunctionClass{ast.TiDBDecodePlan, 1, 1}},
+	ast.TiDBDecodeBinaryPlan: &tidbDecodePlanFunctionClass{baseFunctionClass{ast.TiDBDecodeBinaryPlan, 1, 1}},
 	ast.TiDBDecodeSQLDigests: &tidbDecodeSQLDigestsFunctionClass{baseFunctionClass{ast.TiDBDecodeSQLDigests, 1, 2}},
 
 	// TiDB Sequence function.
@@ -882,16 +943,16 @@ func GetBuiltinList() []string {
 		}
 		res = append(res, funcName)
 	}
-	sort.Strings(res)
+	slices.Sort(res)
 	return res
 }
 
 func (b *baseBuiltinFunc) setDecimalAndFlenForDatetime(fsp int) {
-	b.tp.SetDecimal(fsp)
-	b.tp.SetFlen(mysql.MaxDatetimeWidthNoFsp + fsp)
+	b.tp.SetDecimalUnderLimit(fsp)
+	b.tp.SetFlenUnderLimit(mysql.MaxDatetimeWidthNoFsp + fsp)
 	if fsp > 0 {
 		// Add the length for `.`.
-		b.tp.SetFlen(b.tp.GetFlen() + 1)
+		b.tp.SetFlenUnderLimit(b.tp.GetFlen() + 1)
 	}
 }
 
@@ -902,10 +963,33 @@ func (b *baseBuiltinFunc) setDecimalAndFlenForDate() {
 }
 
 func (b *baseBuiltinFunc) setDecimalAndFlenForTime(fsp int) {
-	b.tp.SetDecimal(fsp)
-	b.tp.SetFlen(mysql.MaxDurationWidthNoFsp + fsp)
+	b.tp.SetDecimalUnderLimit(fsp)
+	b.tp.SetFlenUnderLimit(mysql.MaxDurationWidthNoFsp + fsp)
 	if fsp > 0 {
 		// Add the length for `.`.
-		b.tp.SetFlen(b.tp.GetFlen() + 1)
+		b.tp.SetFlenUnderLimit(b.tp.GetFlen() + 1)
 	}
+}
+
+const emptyBaseBuiltinFunc = int64(unsafe.Sizeof(baseBuiltinFunc{}))
+const onceSize = int64(unsafe.Sizeof(sync.Once{}))
+
+// MemoryUsage return the memory usage of baseBuiltinFunc
+func (b *baseBuiltinFunc) MemoryUsage() (sum int64) {
+	if b == nil {
+		return
+	}
+
+	sum = emptyBaseBuiltinFunc + b.bufAllocator.MemoryUsage() +
+		b.tp.MemoryUsage() + int64(len(b.charset)+len(b.collation))
+	if b.childrenVectorizedOnce != nil {
+		sum += onceSize
+	}
+	if b.childrenReversedOnce != nil {
+		sum += onceSize
+	}
+	for _, e := range b.args {
+		sum += e.MemoryUsage()
+	}
+	return
 }

@@ -18,7 +18,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tipb/go-tipb"
@@ -95,7 +94,7 @@ func InferType4ControlFuncs(ctx sessionctx.Context, funcName string, lexp, rexp 
 			if lhs.GetDecimal() == types.UnspecifiedLength || rhs.GetDecimal() == types.UnspecifiedLength {
 				resultFieldType.SetDecimal(types.UnspecifiedLength)
 			} else {
-				resultFieldType.SetDecimal(mathutil.Max(lhs.GetDecimal(), rhs.GetDecimal()))
+				resultFieldType.SetDecimalUnderLimit(mathutil.Max(lhs.GetDecimal(), rhs.GetDecimal()))
 			}
 		}
 
@@ -146,8 +145,7 @@ func InferType4ControlFuncs(ctx sessionctx.Context, funcName string, lexp, rexp 
 				rhsFlen -= rhs.GetDecimal()
 			}
 			flen := maxlen(lhsFlen, rhsFlen) + resultFieldType.GetDecimal() + 1 // account for -1 len fields
-			resultFieldType.SetFlen(mathutil.Min(flen, mysql.MaxDecimalWidth))  // make sure it doesn't overflow
-
+			resultFieldType.SetFlenUnderLimit(flen)
 		} else {
 			resultFieldType.SetFlen(maxlen(lhs.GetFlen(), rhs.GetFlen()))
 		}
@@ -225,7 +223,7 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	// Set retType to BINARY(0) if all arguments are of type NULL.
 	if fieldTp.GetType() == mysql.TypeNull {
 		fieldTp.SetFlen(0)
-		fieldTp.SetDecimal(types.UnspecifiedLength)
+		fieldTp.SetDecimal(0)
 		types.SetBinChsClnFlag(fieldTp)
 	}
 	argTps := make([]types.EvalType, 0, l)
@@ -510,7 +508,7 @@ func (b *builtinCaseWhenJSONSig) Clone() builtinFunc {
 
 // evalJSON evals a builtinCaseWhenJSONSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#operator_case
-func (b *builtinCaseWhenJSONSig) evalJSON(row chunk.Row) (ret json.BinaryJSON, isNull bool, err error) {
+func (b *builtinCaseWhenJSONSig) evalJSON(row chunk.Row) (ret types.BinaryJSON, isNull bool, err error) {
 	var condition int64
 	args, l := b.getArgs(), len(b.getArgs())
 	for i := 0; i < l-1; i += 2 {
@@ -719,7 +717,7 @@ func (b *builtinIfJSONSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinIfJSONSig) evalJSON(row chunk.Row) (ret json.BinaryJSON, isNull bool, err error) {
+func (b *builtinIfJSONSig) evalJSON(row chunk.Row) (ret types.BinaryJSON, isNull bool, err error) {
 	arg0, isNull0, err := b.args[0].EvalInt(b.ctx, row)
 	if err != nil {
 		return ret, true, err
@@ -748,7 +746,7 @@ func (c *ifNullFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	if lhs.GetType() == mysql.TypeNull && rhs.GetType() == mysql.TypeNull {
 		retTp.SetType(mysql.TypeNull)
 		retTp.SetFlen(0)
-		retTp.SetDecimal(-1)
+		retTp.SetDecimal(0)
 		types.SetBinChsClnFlag(retTp)
 	}
 	evalTps := retTp.EvalType()
@@ -907,7 +905,7 @@ func (b *builtinIfNullJSONSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinIfNullJSONSig) evalJSON(row chunk.Row) (json.BinaryJSON, bool, error) {
+func (b *builtinIfNullJSONSig) evalJSON(row chunk.Row) (types.BinaryJSON, bool, error) {
 	arg0, isNull, err := b.args[0].EvalJSON(b.ctx, row)
 	if !isNull {
 		return arg0, err != nil, err

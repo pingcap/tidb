@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -155,8 +156,8 @@ func testDropColumns(tk *testkit.TestKit, t *testing.T, ctx sessionctx.Context, 
 }
 
 func TestColumnBasic(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithDDLChecker())
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (c1 int, c2 int, c3 int);")
@@ -191,7 +192,7 @@ func TestColumnBasic(t *testing.T) {
 
 	require.Nil(t, table.FindCol(tbl.Cols(), "c4"))
 
-	jobID := testCreateColumn(tk, t, testNewContext(store), tableID, "c4", "after c3", 100, dom)
+	jobID := testCreateColumn(tk, t, testkit.NewTestKit(t, store).Session(), tableID, "c4", "after c3", 100, dom)
 	testCheckJobDone(t, store, jobID, true)
 
 	tbl = testGetTable(t, dom, tableID)
@@ -221,7 +222,7 @@ func TestColumnBasic(t *testing.T) {
 	require.Len(t, values, 4)
 	require.Equal(t, values[3].GetInt64(), int64(14))
 
-	jobID = testDropColumnInternal(tk, t, testNewContext(store), tableID, "c4", false, dom)
+	jobID = testDropColumnInternal(tk, t, testkit.NewTestKit(t, store).Session(), tableID, "c4", false, dom)
 	testCheckJobDone(t, store, jobID, false)
 
 	tbl = testGetTable(t, dom, tableID)
@@ -231,7 +232,7 @@ func TestColumnBasic(t *testing.T) {
 	require.Len(t, values, 3)
 	require.Equal(t, values[2].GetInt64(), int64(13))
 
-	jobID = testCreateColumn(tk, t, testNewContext(store), tableID, "c4", "", 111, dom)
+	jobID = testCreateColumn(tk, t, testkit.NewTestKit(t, store).Session(), tableID, "c4", "", 111, dom)
 	testCheckJobDone(t, store, jobID, true)
 
 	tbl = testGetTable(t, dom, tableID)
@@ -241,7 +242,7 @@ func TestColumnBasic(t *testing.T) {
 	require.Len(t, values, 4)
 	require.Equal(t, values[3].GetInt64(), int64(111))
 
-	jobID = testCreateColumn(tk, t, testNewContext(store), tableID, "c5", "", 101, dom)
+	jobID = testCreateColumn(tk, t, testkit.NewTestKit(t, store).Session(), tableID, "c5", "", 101, dom)
 	testCheckJobDone(t, store, jobID, true)
 
 	tbl = testGetTable(t, dom, tableID)
@@ -251,7 +252,7 @@ func TestColumnBasic(t *testing.T) {
 	require.Len(t, values, 5)
 	require.Equal(t, values[4].GetInt64(), int64(101))
 
-	jobID = testCreateColumn(tk, t, testNewContext(store), tableID, "c6", "first", 202, dom)
+	jobID = testCreateColumn(tk, t, testkit.NewTestKit(t, store).Session(), tableID, "c6", "first", 202, dom)
 	testCheckJobDone(t, store, jobID, true)
 
 	tbl = testGetTable(t, dom, tableID)
@@ -277,7 +278,7 @@ func TestColumnBasic(t *testing.T) {
 	require.Equal(t, values[0].GetInt64(), int64(202))
 	require.Equal(t, values[5].GetInt64(), int64(101))
 
-	jobID = testDropColumnInternal(tk, t, testNewContext(store), tableID, "c2", false, dom)
+	jobID = testDropColumnInternal(tk, t, testkit.NewTestKit(t, store).Session(), tableID, "c2", false, dom)
 	testCheckJobDone(t, store, jobID, false)
 
 	tbl = testGetTable(t, dom, tableID)
@@ -288,22 +289,22 @@ func TestColumnBasic(t *testing.T) {
 	require.Equal(t, values[0].GetInt64(), int64(202))
 	require.Equal(t, values[4].GetInt64(), int64(101))
 
-	jobID = testDropColumnInternal(tk, t, testNewContext(store), tableID, "c1", false, dom)
+	jobID = testDropColumnInternal(tk, t, testkit.NewTestKit(t, store).Session(), tableID, "c1", false, dom)
 	testCheckJobDone(t, store, jobID, false)
 
-	jobID = testDropColumnInternal(tk, t, testNewContext(store), tableID, "c3", false, dom)
+	jobID = testDropColumnInternal(tk, t, testkit.NewTestKit(t, store).Session(), tableID, "c3", false, dom)
 	testCheckJobDone(t, store, jobID, false)
 
-	jobID = testDropColumnInternal(tk, t, testNewContext(store), tableID, "c4", false, dom)
+	jobID = testDropColumnInternal(tk, t, testkit.NewTestKit(t, store).Session(), tableID, "c4", false, dom)
 	testCheckJobDone(t, store, jobID, false)
 
-	jobID = testCreateIndex(tk, t, testNewContext(store), tableID, false, "c5_idx", "c5", dom)
+	jobID = testCreateIndex(tk, t, testkit.NewTestKit(t, store).Session(), tableID, false, "c5_idx", "c5", dom)
 	testCheckJobDone(t, store, jobID, true)
 
-	jobID = testDropColumnInternal(tk, t, testNewContext(store), tableID, "c5", false, dom)
+	jobID = testDropColumnInternal(tk, t, testkit.NewTestKit(t, store).Session(), tableID, "c5", false, dom)
 	testCheckJobDone(t, store, jobID, false)
 
-	jobID = testDropColumnInternal(tk, t, testNewContext(store), tableID, "c6", true, dom)
+	jobID = testDropColumnInternal(tk, t, testkit.NewTestKit(t, store).Session(), tableID, "c6", true, dom)
 	testCheckJobDone(t, store, jobID, false)
 
 	testDropTable(tk, t, "test", "t1", dom)
@@ -640,8 +641,10 @@ func testGetColumn(t table.Table, name string, isExist bool) error {
 }
 
 func TestAddColumn(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithDDLChecker())
+
+	d := dom.DDL()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (c1 int, c2 int, c3 int);")
@@ -669,7 +672,6 @@ func TestAddColumn(t *testing.T) {
 
 	checkOK := false
 
-	d := dom.DDL()
 	tc := &ddl.TestDDLCallback{Do: dom}
 	tc.OnJobUpdatedExported = func(job *model.Job) {
 		if checkOK {
@@ -691,7 +693,7 @@ func TestAddColumn(t *testing.T) {
 
 	d.SetHook(tc)
 
-	jobID := testCreateColumn(tk, t, testNewContext(store), tableID, newColName, "", defaultColValue, dom)
+	jobID := testCreateColumn(tk, t, testkit.NewTestKit(t, store).Session(), tableID, newColName, "", defaultColValue, dom)
 	testCheckJobDone(t, store, jobID, true)
 
 	require.True(t, checkOK)
@@ -701,8 +703,10 @@ func TestAddColumn(t *testing.T) {
 }
 
 func TestAddColumns(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithDDLChecker())
+
+	d := dom.DDL()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (c1 int, c2 int, c3 int);")
@@ -736,7 +740,6 @@ func TestAddColumns(t *testing.T) {
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 
-	d := dom.DDL()
 	tc := &ddl.TestDDLCallback{Do: dom}
 	tc.OnJobUpdatedExported = func(job *model.Job) {
 		mu.Lock()
@@ -762,7 +765,7 @@ func TestAddColumns(t *testing.T) {
 
 	d.SetHook(tc)
 
-	jobID := testCreateColumns(tk, t, testNewContext(store), tableID, newColNames, positions, defaultColValue, dom)
+	jobID := testCreateColumns(tk, t, testkit.NewTestKit(t, store).Session(), tableID, newColNames, positions, defaultColValue, dom)
 
 	testCheckJobDone(t, store, jobID, true)
 	mu.Lock()
@@ -777,8 +780,7 @@ func TestAddColumns(t *testing.T) {
 }
 
 func TestDropColumnInColumnTest(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (c1 int, c2 int, c3 int, c4 int);")
@@ -825,7 +827,7 @@ func TestDropColumnInColumnTest(t *testing.T) {
 
 	d.SetHook(tc)
 
-	jobID := testDropColumnInternal(tk, t, testNewContext(store), tableID, colName, false, dom)
+	jobID := testDropColumnInternal(tk, t, testkit.NewTestKit(t, store).Session(), tableID, colName, false, dom)
 	testCheckJobDone(t, store, jobID, false)
 	mu.Lock()
 	hErr := hookErr
@@ -839,8 +841,7 @@ func TestDropColumnInColumnTest(t *testing.T) {
 }
 
 func TestDropColumns(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (c1 int, c2 int, c3 int, c4 int);")
@@ -890,7 +891,7 @@ func TestDropColumns(t *testing.T) {
 
 	d.SetHook(tc)
 
-	jobID := testDropColumns(tk, t, testNewContext(store), tableID, colNames, false, dom)
+	jobID := testDropColumns(tk, t, testkit.NewTestKit(t, store).Session(), tableID, colNames, false, dom)
 	testCheckJobDone(t, store, jobID, false)
 	mu.Lock()
 	hErr := hookErr
@@ -911,8 +912,7 @@ func testGetTable(t *testing.T, dom *domain.Domain, tableID int64) table.Table {
 }
 
 func TestGetDefaultValueOfColumn(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (da date default '1962-03-03 23:33:34', dt datetime default '1962-03-03'," +

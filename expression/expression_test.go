@@ -79,6 +79,30 @@ func TestEvaluateExprWithNullAndParameters(t *testing.T) {
 	require.True(t, isScalarFunc) // the expression with parameters is not evaluated
 }
 
+func TestEvaluateExprWithNullNoChangeRetType(t *testing.T) {
+	ctx := createContext(t)
+	tblInfo := newTestTableBuilder("").add("col_str", mysql.TypeString, 0).build()
+	schema := tableInfoToSchemaForTest(tblInfo)
+
+	castStrAsJSON := BuildCastFunction(ctx, schema.Columns[0], types.NewFieldType(mysql.TypeJSON))
+	jsonConstant := &Constant{Value: types.NewDatum("123"), RetType: types.NewFieldType(mysql.TypeJSON)}
+
+	// initially has ParseToJSONFlag
+	flagInCast := castStrAsJSON.(*ScalarFunction).RetType.GetFlag()
+	require.True(t, mysql.HasParseToJSONFlag(flagInCast))
+
+	// cast's ParseToJSONFlag removed by `DisableParseJSONFlag4Expr`
+	eq, err := newFunctionForTest(ctx, ast.EQ, jsonConstant, castStrAsJSON)
+	require.NoError(t, err)
+	flagInCast = eq.(*ScalarFunction).GetArgs()[1].(*ScalarFunction).RetType.GetFlag()
+	require.False(t, mysql.HasParseToJSONFlag(flagInCast))
+
+	// after EvaluateExprWithNull, this flag should be still false
+	EvaluateExprWithNull(ctx, schema, eq)
+	flagInCast = eq.(*ScalarFunction).GetArgs()[1].(*ScalarFunction).RetType.GetFlag()
+	require.False(t, mysql.HasParseToJSONFlag(flagInCast))
+}
+
 func TestConstant(t *testing.T) {
 	ctx := createContext(t)
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
@@ -252,4 +276,16 @@ func TestEvalExpr(t *testing.T) {
 			require.Equal(t, string(colBuf2.GetRaw(j)), string(colBuf.GetRaw(j)))
 		}
 	}
+}
+
+func TestExpressionMemeoryUsage(t *testing.T) {
+	c1 := &Column{OrigName: "Origin"}
+	c2 := Column{OrigName: "OriginName"}
+	require.Greater(t, c2.MemoryUsage(), c1.MemoryUsage())
+	c1 = nil
+	require.Equal(t, c1.MemoryUsage(), int64(0))
+
+	c3 := Constant{Value: types.NewIntDatum(1)}
+	c4 := Constant{Value: types.NewStringDatum("11")}
+	require.Greater(t, c4.MemoryUsage(), c3.MemoryUsage())
 }

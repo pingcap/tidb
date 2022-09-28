@@ -23,6 +23,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
@@ -31,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/vitess"
 	"github.com/pingcap/tipb/go-tipb"
@@ -200,7 +200,7 @@ func (b *builtinLockSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull {
 		return 0, false, errUserLockWrongName.GenWithStackByArgs("NULL")
 	}
-	if lockName == "" || len(lockName) > 64 {
+	if lockName == "" || utf8.RuneCountInString(lockName) > 64 {
 		return 0, false, errUserLockWrongName.GenWithStackByArgs(lockName)
 	}
 	maxTimeout := int64(variable.GetSysVar(variable.InnodbLockWaitTimeout).MaxValue)
@@ -209,7 +209,7 @@ func (b *builtinLockSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, false, err
 	}
 	if isNullTimeout {
-		timeout = maxTimeout // Observed behavior in MySQL
+		timeout = 0 // Observed in MySQL, gets converted to 1s in TiDB because of min timeout.
 	}
 	// A timeout less than zero is expected to be treated as unlimited.
 	// Because of our implementation being based on pessimistic locks,
@@ -220,10 +220,11 @@ func (b *builtinLockSig) evalInt(row chunk.Row) (int64, bool, error) {
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		timeout = maxTimeout
 	}
+
 	// Lock names are case insensitive. Because we can't rely on collations
 	// being enabled on the internal table, we have to lower it.
 	lockName = strings.ToLower(lockName)
-	if len(lockName) > 64 {
+	if utf8.RuneCountInString(lockName) > 64 {
 		return 0, false, errIncorrectArgs.GenWithStackByArgs("get_lock")
 	}
 	err = b.ctx.GetAdvisoryLock(lockName, timeout)
@@ -281,13 +282,13 @@ func (b *builtinReleaseLockSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull {
 		return 0, false, errUserLockWrongName.GenWithStackByArgs("NULL")
 	}
-	if lockName == "" || len(lockName) > 64 {
+	if lockName == "" || utf8.RuneCountInString(lockName) > 64 {
 		return 0, false, errUserLockWrongName.GenWithStackByArgs(lockName)
 	}
 	// Lock names are case insensitive. Because we can't rely on collations
 	// being enabled on the internal table, we have to lower it.
 	lockName = strings.ToLower(lockName)
-	if len(lockName) > 64 {
+	if utf8.RuneCountInString(lockName) > 64 {
 		return 0, false, errIncorrectArgs.GenWithStackByArgs("release_lock")
 	}
 	released := int64(0)
@@ -407,7 +408,7 @@ func (b *builtinJSONAnyValueSig) Clone() builtinFunc {
 
 // evalJSON evals a builtinJSONAnyValueSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_any-value
-func (b *builtinJSONAnyValueSig) evalJSON(row chunk.Row) (json.BinaryJSON, bool, error) {
+func (b *builtinJSONAnyValueSig) evalJSON(row chunk.Row) (types.BinaryJSON, bool, error) {
 	return b.args[0].EvalJSON(b.ctx, row)
 }
 
@@ -1103,7 +1104,7 @@ func (b *builtinNameConstJSONSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinNameConstJSONSig) evalJSON(row chunk.Row) (json.BinaryJSON, bool, error) {
+func (b *builtinNameConstJSONSig) evalJSON(row chunk.Row) (types.BinaryJSON, bool, error) {
 	return b.args[1].EvalJSON(b.ctx, row)
 }
 

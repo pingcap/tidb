@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
@@ -139,9 +140,10 @@ func ExtractCorColumns(expr Expression) (cols []*CorrelatedColumn) {
 // It's often observed that the pattern of the caller like this:
 //
 // cols := ExtractColumns(...)
-// for _, col := range cols {
-//     if xxx(col) {...}
-// }
+//
+//	for _, col := range cols {
+//	    if xxx(col) {...}
+//	}
 //
 // Provide an additional filter argument, this can be done in one step.
 // To avoid allocation for cols that not need.
@@ -364,7 +366,8 @@ func extractColumnSet(expr Expression, set *intsets.Sparse) {
 	}
 }
 
-func setExprColumnInOperand(expr Expression) Expression {
+// SetExprColumnInOperand is used to set columns in expr as InOperand.
+func SetExprColumnInOperand(expr Expression) Expression {
 	switch v := expr.(type) {
 	case *Column:
 		col := v.Clone().(*Column)
@@ -373,53 +376,85 @@ func setExprColumnInOperand(expr Expression) Expression {
 	case *ScalarFunction:
 		args := v.GetArgs()
 		for i, arg := range args {
-			args[i] = setExprColumnInOperand(arg)
+			args[i] = SetExprColumnInOperand(arg)
 		}
 	}
 	return expr
 }
 
+// ColumnSubstitute4PPD substitutes the columns in filter to expressions in select fields.
+// Only used for predicate push down to projection. Some columns can not be substituted for some reasons.
+// So we should return the bool value to indicate some expressions can not be pushed down.
+// e.g. CREATE TABLE t3(c0 INT, primary key(c0));
+// SELECT v2.c0 FROM (select 1 as c0 from t3) v2 WHERE (v2.c0)like(True);
+// The cond `(v2.c0)like(True)` can not be substituted when the new collation enable. So we shouldn't push the cond down to the projection.
+func ColumnSubstitute4PPD(expr Expression, schema *Schema, newExprs []Expression) (bool, Expression) {
+	substituted, _, resExpr := ColumnSubstituteImpl(expr, schema, newExprs, false)
+	return substituted, resExpr
+}
+
 // ColumnSubstitute substitutes the columns in filter to expressions in select fields.
 // e.g. select * from (select b as a from t) k where a < 10 => select * from (select b as a from t where b < 10) k.
 func ColumnSubstitute(expr Expression, schema *Schema, newExprs []Expression) Expression {
-	_, resExpr := ColumnSubstituteImpl(expr, schema, newExprs)
+	_, _, resExpr := ColumnSubstituteImpl(expr, schema, newExprs, false)
 	return resExpr
+}
+
+// ColumnSubstituteAll substitutes the columns just like ColumnSubstitute, but we don't accept partial substitution.
+// Only accept:
+//
+//	1: substitute them all once find col in schema.
+//	2: nothing in expr can be substituted.
+func ColumnSubstituteAll(expr Expression, schema *Schema, newExprs []Expression) (bool, Expression) {
+	_, hasFail, resExpr := ColumnSubstituteImpl(expr, schema, newExprs, true)
+	return hasFail, resExpr
 }
 
 // ColumnSubstituteImpl tries to substitute column expr using newExprs,
 // the newFunctionInternal is only called if its child is substituted
-func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression) (bool, Expression) {
+// @return bool means whether the expr has changed.
+// @return bool means whether the expr should change (has the dependency in schema, while the corresponding expr has some compatibility), but finally fallback.
+// @return Expression, the original expr or the changed expr, it depends on the first @return bool.
+func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression, fail1Return bool) (bool, bool, Expression) {
 	switch v := expr.(type) {
 	case *Column:
 		id := schema.ColumnIndex(v)
 		if id == -1 {
-			return false, v
+			return false, false, v
 		}
 		newExpr := newExprs[id]
 		if v.InOperand {
-			newExpr = setExprColumnInOperand(newExpr)
+			newExpr = SetExprColumnInOperand(newExpr)
 		}
 		newExpr.SetCoercibility(v.Coercibility())
-		return true, newExpr
+		return true, false, newExpr
 	case *ScalarFunction:
 		substituted := false
+		hasFail := false
 		if v.FuncName.L == ast.Cast {
 			newFunc := v.Clone().(*ScalarFunction)
-			substituted, newFunc.GetArgs()[0] = ColumnSubstituteImpl(newFunc.GetArgs()[0], schema, newExprs)
+			substituted, hasFail, newFunc.GetArgs()[0] = ColumnSubstituteImpl(newFunc.GetArgs()[0], schema, newExprs, fail1Return)
+			if fail1Return && hasFail {
+				return substituted, hasFail, newFunc
+			}
 			if substituted {
 				// Workaround for issue https://github.com/pingcap/tidb/issues/28804
 				e := NewFunctionInternal(v.GetCtx(), v.FuncName.L, v.RetType, newFunc.GetArgs()...)
 				e.SetCoercibility(v.Coercibility())
-				return true, e
+				return true, false, e
 			}
-			return false, newFunc
+			return false, false, newFunc
 		}
 		// cowExprRef is a copy-on-write util, args array allocation happens only
 		// when expr in args is changed
 		refExprArr := cowExprRef{v.GetArgs(), nil}
 		_, coll := DeriveCollationFromExprs(v.GetCtx(), v.GetArgs()...)
 		for idx, arg := range v.GetArgs() {
-			changed, newFuncExpr := ColumnSubstituteImpl(arg, schema, newExprs)
+			changed, hasFail, newFuncExpr := ColumnSubstituteImpl(arg, schema, newExprs, fail1Return)
+			if fail1Return && hasFail {
+				return changed, hasFail, v
+			}
+			oldChanged := changed
 			if collate.NewCollationEnabled() {
 				// Make sure the collation used by the ScalarFunction isn't changed and its result collation is not weaker than the collation used by the ScalarFunction.
 				if changed {
@@ -432,16 +467,24 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 					}
 				}
 			}
+			if fail1Return && oldChanged != changed {
+				// Only when the oldChanged is true and changed is false, we will get here.
+				// And this means there some dependency in this arg can be substituted with
+				// given expressions, while it has some collation compatibility, finally we
+				// fall back to use the origin args. (commonly used in projection elimination
+				// in which fallback usage is unacceptable)
+				return changed, true, v
+			}
 			refExprArr.Set(idx, changed, newFuncExpr)
 			if changed {
 				substituted = true
 			}
 		}
 		if substituted {
-			return true, NewFunctionInternal(v.GetCtx(), v.FuncName.L, v.RetType, refExprArr.Result()...)
+			return true, false, NewFunctionInternal(v.GetCtx(), v.FuncName.L, v.RetType, refExprArr.Result()...)
 		}
 	}
-	return false, expr
+	return false, false, expr
 }
 
 // checkCollationStrictness check collation strictness-ship between `coll` and `newFuncColl`
@@ -547,8 +590,8 @@ func SubstituteCorCol2Constant(expr Expression) (Expression, error) {
 
 func locateStringWithCollation(str, substr, coll string) int64 {
 	collator := collate.GetCollator(coll)
-	strKey := collator.Key(str)
-	subStrKey := collator.Key(substr)
+	strKey := collator.KeyWithoutTrimRightSpace(str)
+	subStrKey := collator.KeyWithoutTrimRightSpace(substr)
 
 	index := bytes.Index(strKey, subStrKey)
 	if index == -1 || index == 0 {
@@ -559,9 +602,9 @@ func locateStringWithCollation(str, substr, coll string) int64 {
 	count := int64(0)
 	for {
 		r, size := utf8.DecodeRuneInString(str)
-		count += 1
-		index -= len(collator.Key(string(r)))
-		if index == 0 {
+		count++
+		index -= len(collator.KeyWithoutTrimRightSpace(string(r)))
+		if index <= 0 {
 			return count + 1
 		}
 		str = str[size:]
@@ -687,6 +730,21 @@ func pushNotAcrossExpr(ctx sessionctx.Context, expr Expression, not bool) (_ Exp
 	return expr, not
 }
 
+// GetExprInsideIsTruth get the expression inside the `istrue_with_null` and `istrue`.
+// This is useful when handling expressions from "not" or "!", because we might wrap `istrue_with_null` or `istrue`
+// when handling them. See pushNotAcrossExpr() and wrapWithIsTrue() for details.
+func GetExprInsideIsTruth(expr Expression) Expression {
+	if f, ok := expr.(*ScalarFunction); ok {
+		switch f.FuncName.L {
+		case ast.IsTruthWithNull, ast.IsTruthWithoutNull:
+			return GetExprInsideIsTruth(f.GetArgs()[0])
+		default:
+			return expr
+		}
+	}
+	return expr
+}
+
 // PushDownNot pushes the `not` function down to the expression's arguments.
 func PushDownNot(ctx sessionctx.Context, expr Expression) Expression {
 	newExpr, _ := pushNotAcrossExpr(ctx, expr, false)
@@ -702,8 +760,9 @@ func ContainOuterNot(expr Expression) bool {
 // Input `not` means whether there is `not` outside `expr`
 //
 // eg.
-//    not(0+(t.a == 1 and t.b == 2)) returns true
-//    not(t.a) and not(t.b) returns false
+//
+//	not(0+(t.a == 1 and t.b == 2)) returns true
+//	not(t.a) and not(t.b) returns false
 func containOuterNot(expr Expression, not bool) bool {
 	if f, ok := expr.(*ScalarFunction); ok {
 		switch f.FuncName.L {
@@ -922,6 +981,26 @@ func ParamMarkerExpression(ctx sessionctx.Context, v *driver.ParamMarkerExpr, ne
 		}
 	}
 	return value, nil
+}
+
+// ParamMarkerInPrepareChecker checks whether the given ast tree has paramMarker and is in prepare statement.
+type ParamMarkerInPrepareChecker struct {
+	InPrepareStmt bool
+}
+
+// Enter implements Visitor Interface.
+func (pc *ParamMarkerInPrepareChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+	switch v := in.(type) {
+	case *driver.ParamMarkerExpr:
+		pc.InPrepareStmt = !v.InExecute
+		return v, true
+	}
+	return in, false
+}
+
+// Leave implements Visitor Interface.
+func (pc *ParamMarkerInPrepareChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
+	return in, true
 }
 
 // DisableParseJSONFlag4Expr disables ParseToJSONFlag for `expr` except Column.
@@ -1346,6 +1425,7 @@ func (r *SQLDigestTextRetriever) runMockQuery(data map[string]string, inValues [
 // queries information_schema.statements_summary and information_schema.statements_summary_history; otherwise, it
 // queries the cluster version of these two tables.
 func (r *SQLDigestTextRetriever) runFetchDigestQuery(ctx context.Context, sctx sessionctx.Context, queryGlobal bool, inValues []interface{}) (map[string]string, error) {
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
 	// If mock data is set, query the mock data instead of the real statements_summary tables.
 	if !queryGlobal && r.mockLocalData != nil {
 		return r.runMockQuery(r.mockLocalData, inValues)

@@ -21,11 +21,10 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
-	. "github.com/pingcap/tidb/parser/types"
-	"github.com/stretchr/testify/require"
-
 	// import parser_driver
 	_ "github.com/pingcap/tidb/parser/test_driver"
+	. "github.com/pingcap/tidb/parser/types"
+	"github.com/stretchr/testify/require"
 )
 
 func TestFieldType(t *testing.T) {
@@ -271,7 +270,6 @@ func TestEnumSetFlen(t *testing.T) {
 		require.NoError(t, err)
 		col := stmt.(*ast.CreateTableStmt).Cols[0]
 		require.Equal(t, ca.ex, col.Tp.GetFlen())
-
 	}
 }
 

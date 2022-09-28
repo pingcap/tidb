@@ -262,7 +262,7 @@ func TestTimeCodec(t *testing.T) {
 		"2016-06-23 11:30:45")
 	require.NoError(t, err)
 	row[2] = types.NewDatum(ts)
-	du, err := types.ParseDuration(nil, "12:59:59.999999", 6)
+	du, _, err := types.ParseDuration(nil, "12:59:59.999999", 6)
 	require.NoError(t, err)
 	row[3] = types.NewDatum(du)
 
@@ -588,4 +588,25 @@ func TestUntouchedIndexKValue(t *testing.T) {
 	untouchedIndexKey := []byte("t00000001_i000000001")
 	untouchedIndexValue := []byte{0, 0, 0, 0, 0, 0, 0, 1, 49}
 	require.True(t, IsUntouchedIndexKValue(untouchedIndexKey, untouchedIndexValue))
+}
+
+func TestTempIndexKey(t *testing.T) {
+	values := []types.Datum{types.NewIntDatum(1), types.NewBytesDatum([]byte("abc")), types.NewFloat64Datum(5.5)}
+	encodedValue, err := codec.EncodeKey(&stmtctx.StatementContext{TimeZone: time.UTC}, nil, values...)
+	require.NoError(t, err)
+	tableID := int64(4)
+	indexID := int64(5)
+	indexKey := EncodeIndexSeekKey(tableID, indexID, encodedValue)
+	IndexKey2TempIndexKey(indexID, indexKey)
+	tid, iid, _, err := DecodeKeyHead(indexKey)
+	require.NoError(t, err)
+	require.Equal(t, tid, tableID)
+	require.NotEqual(t, indexID, iid)
+	require.Equal(t, indexID, iid&IndexIDMask)
+
+	TempIndexKey2IndexKey(indexID, indexKey)
+	tid, iid, _, err = DecodeKeyHead(indexKey)
+	require.NoError(t, err)
+	require.Equal(t, tid, tableID)
+	require.Equal(t, indexID, iid)
 }

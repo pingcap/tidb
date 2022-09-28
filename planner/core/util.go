@@ -16,7 +16,6 @@ package core
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/pingcap/tidb/expression"
@@ -26,6 +25,8 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
+	"github.com/pingcap/tidb/util/size"
+	"golang.org/x/exp/slices"
 )
 
 // AggregateFuncExtractor visits Expr tree.
@@ -176,6 +177,16 @@ func (s *physicalSchemaProducer) SetSchema(schema *expression.Schema) {
 	s.schema = schema
 }
 
+// MemoryUsage return the memory usage of physicalSchemaProducer
+func (s *physicalSchemaProducer) MemoryUsage() (sum int64) {
+	if s == nil {
+		return
+	}
+
+	sum = s.basePhysicalPlan.MemoryUsage() + size.SizeOfPointer
+	return
+}
+
 // baseSchemaProducer stores the schema for the base plans who can produce schema directly.
 type baseSchemaProducer struct {
 	schema *expression.Schema
@@ -208,6 +219,19 @@ func (s *baseSchemaProducer) SetSchema(schema *expression.Schema) {
 func (s *baseSchemaProducer) setSchemaAndNames(schema *expression.Schema, names types.NameSlice) {
 	s.schema = schema
 	s.names = names
+}
+
+// MemoryUsage return the memory usage of baseSchemaProducer
+func (s *baseSchemaProducer) MemoryUsage() (sum int64) {
+	if s == nil {
+		return
+	}
+
+	sum = size.SizeOfPointer + size.SizeOfSlice + int64(cap(s.names))*size.SizeOfPointer + s.basePlan.MemoryUsage()
+	if s.schema != nil {
+		sum += s.schema.MemoryUsage()
+	}
+	return
 }
 
 // Schema implements the Plan.Schema interface.
@@ -256,7 +280,26 @@ func BuildPhysicalJoinSchema(joinType JoinType, join PhysicalPlan) *expression.S
 	return newSchema
 }
 
+// GetStatsInfoFromFlatPlan gets the statistics info from a FlatPhysicalPlan.
+func GetStatsInfoFromFlatPlan(flat *FlatPhysicalPlan) map[string]uint64 {
+	res := make(map[string]uint64)
+	for _, op := range flat.Main {
+		switch p := op.Origin.(type) {
+		case *PhysicalIndexScan:
+			if _, ok := res[p.Table.Name.O]; p.stats != nil && !ok {
+				res[p.Table.Name.O] = p.stats.StatsVersion
+			}
+		case *PhysicalTableScan:
+			if _, ok := res[p.Table.Name.O]; p.stats != nil && !ok {
+				res[p.Table.Name.O] = p.stats.StatsVersion
+			}
+		}
+	}
+	return res
+}
+
 // GetStatsInfo gets the statistics info from a physical plan tree.
+// Deprecated: FlattenPhysicalPlan() + GetStatsInfoFromFlatPlan() is preferred.
 func GetStatsInfo(i interface{}) map[string]uint64 {
 	if i == nil {
 		// it's a workaround for https://github.com/pingcap/tidb/issues/17419
@@ -294,7 +337,7 @@ func extractStringFromStringSet(set set.StringSet) string {
 	for k := range set {
 		l = append(l, fmt.Sprintf(`"%s"`, k))
 	}
-	sort.Strings(l)
+	slices.Sort(l)
 	return strings.Join(l, ",")
 }
 
@@ -303,7 +346,7 @@ func extractStringFromStringSlice(ss []string) string {
 	if len(ss) < 1 {
 		return ""
 	}
-	sort.Strings(ss)
+	slices.Sort(ss)
 	return strings.Join(ss, ",")
 }
 
@@ -316,7 +359,7 @@ func extractStringFromUint64Slice(slice []uint64) string {
 	for _, k := range slice {
 		l = append(l, fmt.Sprintf(`%d`, k))
 	}
-	sort.Strings(l)
+	slices.Sort(l)
 	return strings.Join(l, ",")
 }
 
@@ -329,7 +372,7 @@ func extractStringFromBoolSlice(slice []bool) string {
 	for _, k := range slice {
 		l = append(l, fmt.Sprintf(`%t`, k))
 	}
-	sort.Strings(l)
+	slices.Sort(l)
 	return strings.Join(l, ",")
 }
 

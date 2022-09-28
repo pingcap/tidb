@@ -1,0 +1,12 @@
+diff -urN a/descriptor/BUILD.bazel b/descriptor/BUILD.bazel
+--- a/descriptor/BUILD.bazel	1969-12-31 19:00:00.000000000 -0500
++++ b/descriptor/BUILD.bazel	2000-01-01 00:00:00.000000000 -0000
+@@ -21,7 +21,7 @@
+     visibility = ["//visibility:public"],
+     deps = [
+         "//proto:go_default_library",
+-        "@io_bazel_rules_go//proto/wkt:descriptor_go_proto",
++        "@com_github_golang_protobuf//protoc-gen-go/descriptor:go_default_library",
+         "@org_golang_google_protobuf//reflect/protodesc:go_default_library",
+         "@org_golang_google_protobuf//reflect/protoreflect:go_default_library",
+         "@org_golang_google_protobuf//runtime/protoimpl:go_default_library",
