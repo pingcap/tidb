@@ -31,32 +31,44 @@ func TestIfNeedDoRecord(t *testing.T) {
 
 	// mem usage ratio < 70% will not be recorded
 	memUsed := 0.69 * float64(record.serverMemoryQuota)
-	assert.False(t, record.needRecord(uint64(memUsed)))
+	needRecord, reason := record.needRecord(uint64(memUsed))
+	assert.False(t, needRecord)
+	assert.Equal(t, NoReason, reason)
 
 	// mem usage ratio > 70% will not be recorded
 	memUsed = 0.71 * float64(record.serverMemoryQuota)
-	assert.True(t, record.needRecord(uint64(memUsed)))
+	needRecord, reason = record.needRecord(uint64(memUsed))
+	assert.True(t, needRecord)
+	assert.Equal(t, MemoryExceed, reason)
 	record.lastCheckTime = time.Now()
 	record.lastRecordMemUsed = uint64(memUsed)
 
 	// check time - last record time < 60s will not be recorded
 	memUsed = 0.71 * float64(record.serverMemoryQuota)
-	assert.False(t, record.needRecord(uint64(memUsed)))
+	needRecord, reason = record.needRecord(uint64(memUsed))
+	assert.False(t, needRecord)
+	assert.Equal(t, NoReason, reason)
 
 	// check time - last record time > 60s will be recorded
 	record.lastCheckTime = record.lastCheckTime.Add(-60 * time.Second)
 	memUsed = 0.71 * float64(record.serverMemoryQuota)
-	assert.True(t, record.needRecord(uint64(memUsed)))
+	needRecord, reason = record.needRecord(uint64(memUsed))
+	assert.True(t, needRecord)
+	assert.Equal(t, MemoryExceed, reason)
 	record.lastCheckTime = time.Now()
 	record.lastRecordMemUsed = uint64(memUsed)
 
 	// mem usage ratio - last mem usage ratio < 10% will not be recorded
 	memUsed = 0.80 * float64(record.serverMemoryQuota)
-	assert.False(t, record.needRecord(uint64(memUsed)))
+	needRecord, reason = record.needRecord(uint64(memUsed))
+	assert.False(t, needRecord)
+	assert.Equal(t, NoReason, reason)
 
 	// mem usage ratio - last mem usage ratio > 10% will not be recorded even though check time - last record time
 	memUsed = 0.82 * float64(record.serverMemoryQuota)
-	assert.True(t, record.needRecord(uint64(memUsed)))
+	needRecord, reason = record.needRecord(uint64(memUsed))
+	assert.True(t, needRecord)
+	assert.Equal(t, IncreaseFast, reason)
 }
 
 func genTime(sec int64) time.Time {

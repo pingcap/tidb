@@ -20,7 +20,6 @@ import (
 	"path/filepath"
 	"runtime"
 	rpprof "runtime/pprof"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -154,36 +153,46 @@ func (record *memoryUsageAlarm) alarm4ExcessiveMemUsage(sm util.SessionManager) 
 	}
 
 	// TODO: Consider NextGC to record SQLs.
-	if record.needRecord(memoryUsage) {
+	if needRecord, reason := record.needRecord(memoryUsage); needRecord {
 		record.lastCheckTime = time.Now()
 		record.lastRecordMemUsed = memoryUsage
-		record.doRecord(memoryUsage, instanceStats.HeapAlloc, sm)
+		record.doRecord(memoryUsage, instanceStats.HeapAlloc, sm, reason)
 		record.tryRemoveNoNeedRecords()
 	}
 }
 
-func (record *memoryUsageAlarm) needRecord(memoryUsage uint64) bool {
+type AlarmReason uint
+
+const (
+	IncreaseFast AlarmReason = iota
+	MemoryExceed
+	NoReason
+)
+
+func (reason AlarmReason) String() string {
+	return [...]string{"memory increase too fast", "memory used exceed", "no reason"}[reason]
+}
+
+func (record *memoryUsageAlarm) needRecord(memoryUsage uint64) (bool, AlarmReason) {
 	// At least 60 seconds between two recordings that memory usage is less than threshold (default 70% system memory).
 	// If the memory is still exceeded, only records once.
 	// If the memory used ratio recorded this time is 0.1 higher than last time, we will force record this time.
 	if float64(memoryUsage) <= float64(record.serverMemoryQuota)*record.memoryUsageAlarmRatio {
-		return false
+		return false, NoReason
 	}
 
 	interval := time.Since(record.lastCheckTime)
 	memDiff := int64(memoryUsage) - int64(record.lastRecordMemUsed)
-	if interval > 5*time.Second {
-		logutil.BgLogger().Warn("Record Memory Information.", zap.String("record time", time.Now().String()), zap.String("last record time", record.lastCheckTime.String()))
-		return true
+	if interval > 60*time.Second {
+		return true, MemoryExceed
 	}
 	if float64(memDiff) > 0.1*float64(record.serverMemoryQuota) {
-		logutil.BgLogger().Warn("Record Memory Information.", zap.String("record memory", strconv.FormatUint(memoryUsage, 10)), zap.String("last record memory", strconv.FormatUint(record.lastRecordMemUsed, 10)))
-		return true
+		return true, IncreaseFast
 	}
-	return false
+	return false, NoReason
 }
 
-func (record *memoryUsageAlarm) doRecord(memUsage uint64, instanceMemoryUsage uint64, sm util.SessionManager) {
+func (record *memoryUsageAlarm) doRecord(memUsage uint64, instanceMemoryUsage uint64, sm util.SessionManager, alarmReason AlarmReason) {
 	fields := make([]zap.Field, 0, 6)
 	fields = append(fields, zap.Bool("is server-memory-quota set", record.isServerMemoryQuotaSet))
 	if record.isServerMemoryQuotaSet {
@@ -196,7 +205,7 @@ func (record *memoryUsageAlarm) doRecord(memUsage uint64, instanceMemoryUsage ui
 	}
 	fields = append(fields, zap.Any("memory-usage-alarm-ratio", record.memoryUsageAlarmRatio))
 	fields = append(fields, zap.Any("record path", record.baseRecordDir))
-	logutil.BgLogger().Warn("tidb-server has the risk of OOM. Running SQLs and heap profile will be recorded in record path", fields...)
+	logutil.BgLogger().Warn(fmt.Sprintf("tidb-server has the risk of OOM because of %s. Running SQLs and heap profile will be recorded in record path", alarmReason.String()), fields...)
 	recordDir := filepath.Join(record.baseRecordDir, "record"+record.lastCheckTime.Format(time.RFC3339))
 	if record.err = disk.CheckAndCreateDir(recordDir); record.err != nil {
 		return

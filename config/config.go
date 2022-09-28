@@ -82,6 +82,8 @@ const (
 	DefDDLSlowOprThreshold = 300
 	// DefExpensiveQueryTimeThreshold indicates the time threshold of expensive query.
 	DefExpensiveQueryTimeThreshold = 60
+	// DefMemoryUsageAlarmRatio is the threshold triggering an alarm which the memory usage of tidb-server instance exceeds.
+	DefMemoryUsageAlarmRatio = 0.8
 	// DefTempDir is the default temporary directory path for TiDB.
 	DefTempDir = "/tmp/tidb"
 )
@@ -481,6 +483,8 @@ type Instance struct {
 	RecordPlanInSlowLog uint32     `toml:"tidb_record_plan_in_slow_log" json:"tidb_record_plan_in_slow_log"`
 	CheckMb4ValueInUTF8 AtomicBool `toml:"tidb_check_mb4_value_in_utf8" json:"tidb_check_mb4_value_in_utf8"`
 	ForcePriority       string     `toml:"tidb_force_priority" json:"tidb_force_priority"`
+	// Deprecated: use global variable MemoryUsageAlarmRatio instead
+	MemoryUsageAlarmRatio float64 `toml:"tidb_memory_usage_alarm_ratio" json:"tidb_memory_usage_alarm_ratio"`
 	// EnableCollectExecutionInfo enables the TiDB to collect execution info.
 	EnableCollectExecutionInfo bool   `toml:"tidb_enable_collect_execution_info" json:"tidb_enable_collect_execution_info"`
 	PluginDir                  string `toml:"plugin_dir" json:"plugin_dir"`
@@ -860,6 +864,7 @@ var defaultConf = Config{
 		RecordPlanInSlowLog:         logutil.DefaultRecordPlanInSlowLog,
 		CheckMb4ValueInUTF8:         *NewAtomicBool(true),
 		ForcePriority:               "NO_PRIORITY",
+		MemoryUsageAlarmRatio:       DefMemoryUsageAlarmRatio,
 		EnableCollectExecutionInfo:  true,
 		PluginDir:                   "/data/deploy/plugin",
 		PluginLoad:                  "",
@@ -1235,6 +1240,10 @@ func (c *Config) Valid() error {
 
 	if c.Performance.TxnTotalSizeLimit > 1<<40 {
 		return fmt.Errorf("txn-total-size-limit should be less than %d", 1<<40)
+	}
+
+	if c.Instance.MemoryUsageAlarmRatio > 1 || c.Instance.MemoryUsageAlarmRatio < 0 {
+		return fmt.Errorf("tidb_memory_usage_alarm_ratio in [Instance] must be greater than or equal to 0 and less than or equal to 1")
 	}
 
 	if len(c.IsolationRead.Engines) < 1 {
