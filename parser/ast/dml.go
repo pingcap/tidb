@@ -3069,6 +3069,7 @@ func (n *ShowStmt) Accept(v Visitor) (Node, bool) {
 		}
 		n.Pattern = node.(*PatternLikeExpr)
 	}
+
 	if n.Where != nil {
 		node, ok := n.Where.Accept(v)
 		if !ok {
