@@ -3,7 +3,7 @@
 This roadmap brings you what's coming in the 1-year future, so you can see the new features or improvements in advance, follow the progress, learn about the key milestones on the way, and give feedback as the development work goes on. In the course of development, this roadmap is subject to change based on user needs and feedback. If you have a feature request or want to prioritize a feature, please file an issue on [GitHub](https://github.com/pingcap/tidb/issues).
 
 > **Safe harbor statement:**
-> 
+>
 > *Any unreleased features discussed or referenced in our documents, roadmaps, blogs, websites, press releases, or public statements that are not currently available ("unreleased features") are subject to change at our discretion and may not be delivered as planned or at all. Customers acknowledge that purchase decisions are solely based on features and functions that are currently available, and that PingCAP is not obliged to deliver aforementioned unreleased features as part of the contractual agreement unless otherwise stated.*
 
 ## TiDB kernel
@@ -20,7 +20,7 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
   <tr>
     <td rowspan="2">Support JSON</td>
     <td>Support JSON function.</td>
-    <td>In business scenarios that require flexible schema definitions (such as SaaS, Web3, and gaming), the application can use JSON to store information for ODS, transaction indicators, commodities, game characters, and props.</td>
+    <td>In business scenarios that require flexible schema definitions, the application can use JSON to store information for ODS, transaction indicators, commodities, game characters, and props.</td>
   </tr>
   <tr>
     <td><ul><li>Support expression indexes.</li><li>Support generated columns.</li></ul></td>
@@ -69,7 +69,7 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
   <tr>
     <td>Non-prepared Plan Cache</td>
     <td>Support plan cache for general SQL statements in a session to save cache resources, improve the hit rate of general execution plans, and improve SQL performance.</td>
-    <td>Non-prepared plan cache. Improve real-time and throughputs of OLTP in general scenarios, save PoC time, and increase PoC win rate.</td>
+    <td>Non-prepared plan cache. Improve real-time and throughputs of OLTP in general scenarios.</td>
   </tr>
   <tr>
     <td>SQL blocklist</td>
