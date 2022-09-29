@@ -479,13 +479,14 @@
         "SQL": "desc format = 'brief' select /*+ INL_JOIN(t2) */ * from t t1, t t2 where t1.a = t2.b order by t2.a",
         "Plan": [
           "Sort 12487.50 root  test.t.a",
-          "└─IndexJoin 12487.50 root  inner join, inner:IndexLookUp, outer key:test.t.a, inner key:test.t.b, equal cond:eq(test.t.a, test.t.b)",
-          "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
-          "  │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "  └─IndexLookUp(Probe) 1.25 root  ",
-          "    ├─Selection(Build) 1.25 cop[tikv]  not(isnull(test.t.b))",
-          "    │ └─IndexRangeScan 1.25 cop[tikv] table:t2, index:b(b) range: decided by [eq(test.t.b, test.t.a)], keep order:false, stats:pseudo",
-          "    └─TableRowIDScan(Probe) 1.25 cop[tikv] table:t2 keep order:false, stats:pseudo"
+          "└─Projection 12487.50 root  test.t.a, test.t.b, test.t.c, test.t.a, test.t.b, test.t.c",
+          "  └─IndexJoin 12487.50 root  inner join, inner:IndexLookUp, outer key:test.t.a, inner key:test.t.b, equal cond:eq(test.t.a, test.t.b)",
+          "    ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "    │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "    └─IndexLookUp(Probe) 1.25 root  ",
+          "      ├─Selection(Build) 1.25 cop[tikv]  not(isnull(test.t.b))",
+          "      │ └─IndexRangeScan 1.25 cop[tikv] table:t2, index:b(b) range: decided by [eq(test.t.b, test.t.a)], keep order:false, stats:pseudo",
+          "      └─TableRowIDScan(Probe) 1.25 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "Warnings": []
       },
@@ -493,13 +494,14 @@
         "SQL": "desc format = 'brief' select /*+ INL_HASH_JOIN(t2) */ * from t t1, t t2 where t1.a = t2.b order by t2.a",
         "Plan": [
           "Sort 12487.50 root  test.t.a",
-          "└─IndexHashJoin 12487.50 root  inner join, inner:IndexLookUp, outer key:test.t.a, inner key:test.t.b, equal cond:eq(test.t.a, test.t.b)",
-          "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
-          "  │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "  └─IndexLookUp(Probe) 1.25 root  ",
-          "    ├─Selection(Build) 1.25 cop[tikv]  not(isnull(test.t.b))",
-          "    │ └─IndexRangeScan 1.25 cop[tikv] table:t2, index:b(b) range: decided by [eq(test.t.b, test.t.a)], keep order:false, stats:pseudo",
-          "    └─TableRowIDScan(Probe) 1.25 cop[tikv] table:t2 keep order:false, stats:pseudo"
+          "└─Projection 12487.50 root  test.t.a, test.t.b, test.t.c, test.t.a, test.t.b, test.t.c",
+          "  └─IndexHashJoin 12487.50 root  inner join, inner:IndexLookUp, outer key:test.t.a, inner key:test.t.b, equal cond:eq(test.t.a, test.t.b)",
+          "    ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "    │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "    └─IndexLookUp(Probe) 1.25 root  ",
+          "      ├─Selection(Build) 1.25 cop[tikv]  not(isnull(test.t.b))",
+          "      │ └─IndexRangeScan 1.25 cop[tikv] table:t2, index:b(b) range: decided by [eq(test.t.b, test.t.a)], keep order:false, stats:pseudo",
+          "      └─TableRowIDScan(Probe) 1.25 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "Warnings": []
       },
@@ -509,11 +511,11 @@
           "HashJoin 15625.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
           "├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "│ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
-          "└─IndexMergeJoin(Probe) 12500.00 root  inner join, inner:TableReader, outer key:test.t.a, inner key:test.t.a",
+          "└─MergeJoin(Probe) 12500.00 root  inner join, left key:test.t.a, right key:test.t.a",
           "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
-          "  │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "  └─TableReader(Probe) 1.00 root  data:TableRangeScan",
-          "    └─TableRangeScan 1.00 cop[tikv] table:t2 range: decided by [test.t.a], keep order:true, stats:pseudo"
+          "  │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:true, stats:pseudo",
+          "  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
         ],
         "Warnings": []
       },
@@ -548,12 +550,13 @@
         "SQL": "desc format = 'brief' select /*+ INL_JOIN(t2) */ * from t t1, t t2 where t1.a = t2.c order by t1.a",
         "Plan": [
           "Sort 12487.50 root  test.t.a",
-          "└─HashJoin 12487.50 root  inner join, equal:[eq(test.t.a, test.t.c)]",
-          "  ├─TableReader(Build) 9990.00 root  data:Selection",
-          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t.c))",
-          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
-          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "└─Projection 12487.50 root  test.t.a, test.t.b, test.t.c, test.t.a, test.t.b, test.t.c",
+          "  └─HashJoin 12487.50 root  inner join, equal:[eq(test.t.c, test.t.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t.c))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warnings": [
           "[planner:1815]Optimizer Hint /*+ INL_JOIN(t2) */ or /*+ TIDB_INLJ(t2) */ is inapplicable",
@@ -1934,6 +1937,76 @@
     ]
   },
   {
+    "Name": "TestIndexJoinCost",
+    "Cases": [
+      {
+        "SQL": "select /*+ TIDB_INLJ(t_outer, t_inner_pk) */ * from t_outer, t_inner_pk where t_outer.a=t_inner_pk.a",
+        "Plan": [
+          "IndexJoin_12 12487.50 206368.09 root  inner join, inner:TableReader_9, outer key:test.t_outer.a, inner key:test.t_inner_pk.a, equal cond:eq(test.t_outer.a, test.t_inner_pk.a)",
+          "├─TableReader_19(Build) 9990.00 36412.58 root  data:Selection_18",
+          "│ └─Selection_18 9990.00 465000.00 cop[tikv]  not(isnull(test.t_outer.a))",
+          "│   └─TableFullScan_17 10000.00 435000.00 cop[tikv] table:t_outer keep order:false, stats:pseudo",
+          "└─TableReader_9(Probe) 1.00 3.88 root  data:TableRangeScan_8",
+          "  └─TableRangeScan_8 1.00 30.00 cop[tikv] table:t_inner_pk range: decided by [test.t_outer.a], keep order:false, stats:pseudo"
+        ],
+        "Warnings": null
+      },
+      {
+        "SQL": "select /*+ TIDB_INLJ(t_outer, t_inner_idx) */ t_inner_idx.a from t_outer, t_inner_idx where t_outer.a=t_inner_idx.a",
+        "Plan": [
+          "IndexJoin_11 12487.50 235192.19 root  inner join, inner:IndexReader_10, outer key:test.t_outer.a, inner key:test.t_inner_idx.a, equal cond:eq(test.t_outer.a, test.t_inner_idx.a)",
+          "├─TableReader_21(Build) 9990.00 36412.58 root  data:Selection_20",
+          "│ └─Selection_20 9990.00 465000.00 cop[tikv]  not(isnull(test.t_outer.a))",
+          "│   └─TableFullScan_19 10000.00 435000.00 cop[tikv] table:t_outer keep order:false, stats:pseudo",
+          "└─IndexReader_10(Probe) 1.25 5.89 root  index:Selection_9",
+          "  └─Selection_9 1.25 58.18 cop[tikv]  not(isnull(test.t_inner_idx.a))",
+          "    └─IndexRangeScan_8 1.25 54.43 cop[tikv] table:t_inner_idx, index:a(a) range: decided by [eq(test.t_inner_idx.a, test.t_outer.a)], keep order:false, stats:pseudo"
+        ],
+        "Warnings": null
+      },
+      {
+        "SQL": "select /*+ TIDB_INLJ(t_outer, t_inner_idx) */ * from t_outer, t_inner_idx where t_outer.a=t_inner_idx.a",
+        "Plan": [
+          "IndexJoin_12 12487.50 531469.38 root  inner join, inner:IndexLookUp_11, outer key:test.t_outer.a, inner key:test.t_inner_idx.a, equal cond:eq(test.t_outer.a, test.t_inner_idx.a)",
+          "├─TableReader_24(Build) 9990.00 36412.58 root  data:Selection_23",
+          "│ └─Selection_23 9990.00 465000.00 cop[tikv]  not(isnull(test.t_outer.a))",
+          "│   └─TableFullScan_22 10000.00 435000.00 cop[tikv] table:t_outer keep order:false, stats:pseudo",
+          "└─IndexLookUp_11(Probe) 1.25 35.55 root  ",
+          "  ├─Selection_10(Build) 1.25 75.08 cop[tikv]  not(isnull(test.t_inner_idx.a))",
+          "  │ └─IndexRangeScan_8 1.25 71.32 cop[tikv] table:t_inner_idx, index:a(a) range: decided by [eq(test.t_inner_idx.a, test.t_outer.a)], keep order:false, stats:pseudo",
+          "  └─TableRowIDScan_9(Probe) 1.25 71.25 cop[tikv] table:t_inner_idx keep order:false, stats:pseudo"
+        ],
+        "Warnings": null
+      },
+      {
+        "SQL": "select /*+ inl_hash_join(t_outer, t_inner_idx) */ t_inner_idx.a from t_outer, t_inner_idx where t_outer.a=t_inner_idx.a",
+        "Plan": [
+          "IndexHashJoin_13 12487.50 235192.19 root  inner join, inner:IndexReader_10, outer key:test.t_outer.a, inner key:test.t_inner_idx.a, equal cond:eq(test.t_outer.a, test.t_inner_idx.a)",
+          "├─TableReader_21(Build) 9990.00 36412.58 root  data:Selection_20",
+          "│ └─Selection_20 9990.00 465000.00 cop[tikv]  not(isnull(test.t_outer.a))",
+          "│   └─TableFullScan_19 10000.00 435000.00 cop[tikv] table:t_outer keep order:false, stats:pseudo",
+          "└─IndexReader_10(Probe) 1.25 5.89 root  index:Selection_9",
+          "  └─Selection_9 1.25 58.18 cop[tikv]  not(isnull(test.t_inner_idx.a))",
+          "    └─IndexRangeScan_8 1.25 54.43 cop[tikv] table:t_inner_idx, index:a(a) range: decided by [eq(test.t_inner_idx.a, test.t_outer.a)], keep order:false, stats:pseudo"
+        ],
+        "Warnings": null
+      },
+      {
+        "SQL": "select /*+ inl_merge_join(t_outer, t_inner_idx) */ t_inner_idx.a from t_outer, t_inner_idx where t_outer.a=t_inner_idx.a",
+        "Plan": [
+          "IndexMergeJoin_18 12487.50 229210.68 root  inner join, inner:IndexReader_16, outer key:test.t_outer.a, inner key:test.t_inner_idx.a",
+          "├─TableReader_21(Build) 9990.00 36412.58 root  data:Selection_20",
+          "│ └─Selection_20 9990.00 465000.00 cop[tikv]  not(isnull(test.t_outer.a))",
+          "│   └─TableFullScan_19 10000.00 435000.00 cop[tikv] table:t_outer keep order:false, stats:pseudo",
+          "└─IndexReader_16(Probe) 1.25 5.89 root  index:Selection_15",
+          "  └─Selection_15 1.25 58.18 cop[tikv]  not(isnull(test.t_inner_idx.a))",
+          "    └─IndexRangeScan_14 1.25 54.43 cop[tikv] table:t_inner_idx, index:a(a) range: decided by [eq(test.t_inner_idx.a, test.t_outer.a)], keep order:true, stats:pseudo"
+        ],
+        "Warnings": null
+      }
+    ]
+  },
+  {
     "Name": "TestOutputSkylinePruningInfo",
     "Cases": [
       {
@@ -2617,16 +2690,16 @@
       {
         "SQL": "explain format = 'verbose' select /*+ merge_join(t1) */ count(*) from t1 join t2 on t1.a = t2.a",
         "Plan": [
-          "StreamAgg_14 1.00 59.65 root  funcs:count(1)->Column#7",
-          "└─MergeJoin_32 3.00 50.65 root  inner join, left key:test.t1.a, right key:test.t2.a",
-          "  ├─Sort_30(Build) 3.00 20.83 root  test.t2.a",
-          "  │ └─TableReader_29 3.00 6.56 root  data:Selection_28",
-          "  │   └─Selection_28 3.00 54.00 cop[tiflash]  not(isnull(test.t2.a))",
-          "  │     └─TableFullScan_27 3.00 45.00 cop[tiflash] table:t2 keep order:false",
-          "  └─Sort_23(Probe) 3.00 20.83 root  test.t1.a",
-          "    └─TableReader_22 3.00 6.56 root  data:Selection_21",
-          "      └─Selection_21 3.00 54.00 cop[tiflash]  not(isnull(test.t1.a))",
-          "        └─TableFullScan_20 3.00 45.00 cop[tiflash] table:t1 keep order:false"
+          "StreamAgg_15 1.00 59.65 root  funcs:count(1)->Column#7",
+          "└─MergeJoin_33 3.00 50.65 root  inner join, left key:test.t1.a, right key:test.t2.a",
+          "  ├─Sort_31(Build) 3.00 20.83 root  test.t2.a",
+          "  │ └─TableReader_30 3.00 6.56 root  data:Selection_29",
+          "  │   └─Selection_29 3.00 54.00 cop[tiflash]  not(isnull(test.t2.a))",
+          "  │     └─TableFullScan_28 3.00 45.00 cop[tiflash] table:t2 keep order:false",
+          "  └─Sort_24(Probe) 3.00 20.83 root  test.t1.a",
+          "    └─TableReader_23 3.00 6.56 root  data:Selection_22",
+          "      └─Selection_22 3.00 54.00 cop[tiflash]  not(isnull(test.t1.a))",
+          "        └─TableFullScan_21 3.00 45.00 cop[tiflash] table:t1 keep order:false"
         ]
       }
     ]
@@ -4464,15 +4537,16 @@
       {
         "SQL": "explain format = 'brief' select /*+ inl_join(s) */ * from t join s on t.a=s.a and t.a = s.b",
         "Plan": [
-          "IndexJoin 12475.01 root  inner join, inner:IndexLookUp, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a), eq(test.t.a, test.s.b)",
-          "├─TableReader(Build) 9990.00 root  data:Selection",
-          "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
-          "│   └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
-          "└─IndexLookUp(Probe) 1.25 root  ",
-          "  ├─Selection(Build) 1.25 cop[tikv]  not(isnull(test.s.a))",
-          "  │ └─IndexRangeScan 1.25 cop[tikv] table:s, index:a(a) range: decided by [eq(test.s.a, test.t.a)], keep order:false, stats:pseudo",
-          "  └─Selection(Probe) 1.25 cop[tikv]  not(isnull(test.s.b))",
-          "    └─TableRowIDScan 1.25 cop[tikv] table:s keep order:false, stats:pseudo"
+          "Projection 12475.01 root  test.t.a, test.t.b, test.s.a, test.s.b",
+          "└─IndexJoin 12475.01 root  inner join, inner:IndexLookUp, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a), eq(test.t.a, test.s.b)",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "  └─IndexLookUp(Probe) 1.25 root  ",
+          "    ├─Selection(Build) 1.25 cop[tikv]  not(isnull(test.s.a))",
+          "    │ └─IndexRangeScan 1.25 cop[tikv] table:s, index:a(a) range: decided by [eq(test.s.a, test.t.a)], keep order:false, stats:pseudo",
+          "    └─Selection(Probe) 1.25 cop[tikv]  not(isnull(test.s.b))",
+          "      └─TableRowIDScan 1.25 cop[tikv] table:s keep order:false, stats:pseudo"
         ]
       },
       {
@@ -4505,15 +4579,16 @@
       {
         "SQL": "explain format = 'brief' select /*+ inl_hash_join(s) */ * from t join s on t.a=s.a and t.a = s.b",
         "Plan": [
-          "IndexHashJoin 12475.01 root  inner join, inner:IndexLookUp, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a), eq(test.t.a, test.s.b)",
-          "├─TableReader(Build) 9990.00 root  data:Selection",
-          "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
-          "│   └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
-          "└─IndexLookUp(Probe) 1.25 root  ",
-          "  ├─Selection(Build) 1.25 cop[tikv]  not(isnull(test.s.a))",
-          "  │ └─IndexRangeScan 1.25 cop[tikv] table:s, index:a(a) range: decided by [eq(test.s.a, test.t.a)], keep order:false, stats:pseudo",
-          "  └─Selection(Probe) 1.25 cop[tikv]  not(isnull(test.s.b))",
-          "    └─TableRowIDScan 1.25 cop[tikv] table:s keep order:false, stats:pseudo"
+          "Projection 12475.01 root  test.t.a, test.t.b, test.s.a, test.s.b",
+          "└─IndexHashJoin 12475.01 root  inner join, inner:IndexLookUp, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a), eq(test.t.a, test.s.b)",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "  └─IndexLookUp(Probe) 1.25 root  ",
+          "    ├─Selection(Build) 1.25 cop[tikv]  not(isnull(test.s.a))",
+          "    │ └─IndexRangeScan 1.25 cop[tikv] table:s, index:a(a) range: decided by [eq(test.s.a, test.t.a)], keep order:false, stats:pseudo",
+          "    └─Selection(Probe) 1.25 cop[tikv]  not(isnull(test.s.b))",
+          "      └─TableRowIDScan 1.25 cop[tikv] table:s keep order:false, stats:pseudo"
         ]
       }
     ]

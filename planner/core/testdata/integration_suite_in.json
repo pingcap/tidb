@@ -355,6 +355,16 @@
     ]
   },
   {
+    "name": "TestIndexJoinCost",
+    "cases": [
+      "select /*+ TIDB_INLJ(t_outer, t_inner_pk) */ * from t_outer, t_inner_pk where t_outer.a=t_inner_pk.a", // IndexJoin with inner TableScan
+      "select /*+ TIDB_INLJ(t_outer, t_inner_idx) */ t_inner_idx.a from t_outer, t_inner_idx where t_outer.a=t_inner_idx.a", // IndexJoin with inner IndexScan
+      "select /*+ TIDB_INLJ(t_outer, t_inner_idx) */ * from t_outer, t_inner_idx where t_outer.a=t_inner_idx.a", // IndexJoin with inner IndexLookup
+      "select /*+ inl_hash_join(t_outer, t_inner_idx) */ t_inner_idx.a from t_outer, t_inner_idx where t_outer.a=t_inner_idx.a",
+      "select /*+ inl_merge_join(t_outer, t_inner_idx) */ t_inner_idx.a from t_outer, t_inner_idx where t_outer.a=t_inner_idx.a"
+    ]
+  },
+  {
     "name": "TestOutputSkylinePruningInfo",
     "cases": [
       "select * from t where a > 1 order by f",
