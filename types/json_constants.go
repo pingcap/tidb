@@ -216,28 +216,41 @@ const (
 )
 
 var (
+	// also register these values in the TiKV class, as the errors from TiKV are all `Synthesize`d in ClassTiKV
+
 	// ErrInvalidJSONText means invalid JSON text.
 	ErrInvalidJSONText = dbterror.ClassJSON.NewStd(mysql.ErrInvalidJSONText)
+	_                  = dbterror.ClassTiKV.NewStd(mysql.ErrInvalidJSONText)
 	// ErrInvalidJSONPath means invalid JSON path.
 	ErrInvalidJSONPath = dbterror.ClassJSON.NewStd(mysql.ErrInvalidJSONPath)
+	_                  = dbterror.ClassTiKV.NewStd(mysql.ErrInvalidJSONPath)
 	// ErrInvalidJSONCharset means invalid JSON charset.
 	ErrInvalidJSONCharset = dbterror.ClassJSON.NewStd(mysql.ErrInvalidJSONCharset)
+	_                     = dbterror.ClassTiKV.NewStd(mysql.ErrInvalidJSONCharset)
 	// ErrInvalidJSONData means invalid JSON data.
 	ErrInvalidJSONData = dbterror.ClassJSON.NewStd(mysql.ErrInvalidJSONData)
+	_                  = dbterror.ClassTiKV.NewStd(mysql.ErrInvalidJSONData)
 	// ErrInvalidJSONPathWildcard means invalid JSON path that contain wildcard characters.
 	ErrInvalidJSONPathWildcard = dbterror.ClassJSON.NewStd(mysql.ErrInvalidJSONPathWildcard)
+	_                          = dbterror.ClassTiKV.NewStd(mysql.ErrInvalidJSONPathWildcard)
 	// ErrInvalidJSONContainsPathType means invalid JSON contains path type.
 	ErrInvalidJSONContainsPathType = dbterror.ClassJSON.NewStd(mysql.ErrInvalidJSONContainsPathType)
+	_                              = dbterror.ClassTiKV.NewStd(mysql.ErrInvalidJSONContainsPathType)
 	// ErrJSONDocumentNULLKey means that json's key is null
 	ErrJSONDocumentNULLKey = dbterror.ClassJSON.NewStd(mysql.ErrJSONDocumentNULLKey)
+	_                      = dbterror.ClassTiKV.NewStd(mysql.ErrJSONDocumentNULLKey)
 	// ErrJSONDocumentTooDeep means that json's depth is too deep.
 	ErrJSONDocumentTooDeep = dbterror.ClassJSON.NewStd(mysql.ErrJSONDocumentTooDeep)
+	_                      = dbterror.ClassTiKV.NewStd(mysql.ErrJSONDocumentTooDeep)
 	// ErrJSONObjectKeyTooLong means JSON object with key length >= 65536 which is not yet supported.
 	ErrJSONObjectKeyTooLong = dbterror.ClassTypes.NewStdErr(mysql.ErrJSONObjectKeyTooLong, mysql.MySQLErrName[mysql.ErrJSONObjectKeyTooLong])
+	_                       = dbterror.ClassTiKV.NewStdErr(mysql.ErrJSONObjectKeyTooLong, mysql.MySQLErrName[mysql.ErrJSONObjectKeyTooLong])
 	// ErrInvalidJSONPathArrayCell means invalid JSON path for an array cell.
 	ErrInvalidJSONPathArrayCell = dbterror.ClassJSON.NewStd(mysql.ErrInvalidJSONPathArrayCell)
+	_                           = dbterror.ClassTiKV.NewStd(mysql.ErrInvalidJSONPathArrayCell)
 	// ErrUnsupportedSecondArgumentType means unsupported second argument type in json_objectagg
 	ErrUnsupportedSecondArgumentType = dbterror.ClassJSON.NewStd(mysql.ErrUnsupportedSecondArgumentType)
+	_                                = dbterror.ClassTiKV.NewStd(mysql.ErrUnsupportedSecondArgumentType)
 )
 
 // json_contains_path function type choices
