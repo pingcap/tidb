@@ -20,6 +20,7 @@ package tables
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"strconv"
 	"strings"
@@ -845,7 +846,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 		}
 		if err == nil {
 			handleStr := getDuplicateErrorHandleString(t, recordID, r)
-			return recordID, kv.ErrKeyExists.FastGenByArgs(handleStr, "PRIMARY")
+			return recordID, kv.ErrKeyExists.FastGenByArgs(handleStr, t.Meta().Name.String()+".PRIMARY")
 		} else if !kv.ErrNotExist.Equal(err) {
 			return recordID, err
 		}
@@ -975,7 +976,7 @@ func (t *TableCommon) addIndices(sctx sessionctx.Context, recordID kv.Handle, r 
 				return nil, err
 			}
 			idxMeta := v.Meta()
-			dupErr = kv.ErrKeyExists.FastGenByArgs(entryKey, idxMeta.Name.String())
+			dupErr = kv.ErrKeyExists.FastGenByArgs(entryKey, fmt.Sprintf("%s.%s", idxMeta.Table.String(), idxMeta.Name.String()))
 		}
 		rsData := TryGetHandleRestoredDataWrapper(t, r, nil, v.Meta())
 		if dupHandle, err := v.Create(sctx, txn, indexVals, recordID, rsData, opts...); err != nil {
@@ -1355,7 +1356,7 @@ func (t *TableCommon) buildIndexForRow(ctx sessionctx.Context, h kv.Handle, vals
 				return err
 			}
 
-			return kv.ErrKeyExists.FastGenByArgs(entryKey, idx.Meta().Name)
+			return kv.ErrKeyExists.FastGenByArgs(entryKey, fmt.Sprintf("%s.%s", idx.Meta().Table.String(), idx.Meta().Name.String()))
 		}
 		return err
 	}

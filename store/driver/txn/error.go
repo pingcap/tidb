@@ -45,7 +45,7 @@ func genKeyExistsError(name string, value string, err error) error {
 }
 
 func extractKeyExistsErrFromHandle(key kv.Key, value []byte, tblInfo *model.TableInfo) error {
-	const name = "PRIMARY"
+	name := tblInfo.Name.String() + ".PRIMARY"
 	_, handle, err := tablecodec.DecodeRecordKey(key)
 	if err != nil {
 		return genKeyExistsError(name, key.String(), err)

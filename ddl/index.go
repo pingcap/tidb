@@ -1389,7 +1389,7 @@ func (w *addIndexWorker) checkHandleExists(key kv.Key, value []byte, handle kv.H
 	if err != nil {
 		return err
 	}
-	indexName := w.index.Meta().Name.String()
+	indexName := fmt.Sprintf("%s.%s", w.index.Meta().Table.String(), w.index.Meta().Name.String())
 	valueStr := make([]string, 0, idxColLen)
 	for i, val := range values[:idxColLen] {
 		d, err := tablecodec.DecodeColumnValue(val, colInfos[i].Ft, time.Local)

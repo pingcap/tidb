@@ -193,3 +193,22 @@ func TestWriteConflictReason(t *testing.T) {
 	require.Contains(t, err.Error(), "Write conflict")
 	require.Contains(t, err.Error(), "reason=Optimistic")
 }
+
+func TestDuplicateErrorMessage(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tx_isolation='read-committed'")
+	tk2.MustExec("use test")
+	tk.MustExec("set @@tidb_constraint_check_in_place_pessimistic=off")
+	tk.MustExec("create table t (c int primary key, v int)")
+	tk.MustExec("create table t2 (c int primary key, v int)")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t values (1, 1)")
+	tk2.MustExec("insert into t values (1, 1)")
+	tk2.MustExec("insert into t2 values (1, 2)")
+	_, err := tk.Exec("update t set v = v + 1 where c = 1")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Duplicate entry '1' for key 't.PRIMARY'")
+}
