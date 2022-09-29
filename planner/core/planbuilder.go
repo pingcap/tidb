@@ -1277,6 +1277,10 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 				ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 				continue
 			}
+			if path.Index != nil && path.Index.Global {
+				ignored = append(ignored, path)
+				continue
+			}
 			if hint.HintType == ast.HintIgnore {
 				// Collect all the ignored index hints.
 				ignored = append(ignored, path)
@@ -3039,6 +3043,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 			IfNotExists:           show.IfNotExists,
 			GlobalScope:           show.GlobalScope,
 			Extended:              show.Extended,
+			Limit:                 show.Limit,
 		},
 	}.Init(b.ctx)
 	isView := false
@@ -3141,6 +3146,12 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 	}
 	if show.Where != nil {
 		np, err = b.buildSelection(ctx, np, show.Where, nil)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if show.Limit != nil {
+		np, err = b.buildLimit(np, show.Limit)
 		if err != nil {
 			return nil, err
 		}
@@ -5016,8 +5027,9 @@ func (b *PlanBuilder) buildCompactTable(node *ast.CompactTableStmt) (Plan, error
 
 	tblInfo := node.Table.TableInfo
 	p := &CompactTable{
-		ReplicaKind: node.ReplicaKind,
-		TableInfo:   tblInfo,
+		ReplicaKind:    node.ReplicaKind,
+		TableInfo:      tblInfo,
+		PartitionNames: node.PartitionNames,
 	}
 	return p, nil
 }
