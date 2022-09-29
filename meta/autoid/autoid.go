@@ -584,6 +584,7 @@ func NewAllocatorsFromTblInfo(store kv.Storage, schemaID int64, tblInfo *model.T
 		}
 		cli := pdStore.GetPDClient()
 		addr := cli.GetLeaderAddr()
+		fmt.Println("--------------- addr ===", addr)
 		grpcConn, err := grpcutil.GetClientConn(context.Background(), addr, nil)
 		if err != nil {
 			panic(err)

@@ -15,9 +15,12 @@
 package autoid
 
 import (
+	// "fmt"
 	"context"
+	"time"
 
 	"github.com/pingcap/kvproto/pkg/pdpb"
+	"github.com/pingcap/tidb/metrics"
 )
 
 var _ Allocator = &singlePointAlloc{}
@@ -29,6 +32,7 @@ type singlePointAlloc struct {
 
 	lastAllocated int64
 }
+
 
 // Alloc allocs N consecutive autoID for table with tableID, returning (min, max] of the allocated autoID batch.
 // It gets a batch of autoIDs at a time. So it does not need to access storage for each call.
@@ -42,10 +46,15 @@ func (sp *singlePointAlloc) Alloc(ctx context.Context, n uint64, increment, offs
 		panic("increment and offset is not implemented!")
 	}
 
+	start := time.Now()
 	resp, err := sp.PDClient.AllocAutoID(ctx, &pdpb.AutoIDRequest{
 		DbID: sp.dbID,
 		TblID: sp.tblID,
 	})
+	du := time.Since(start)
+	metrics.AutoIDReqDuration.Observe(du.Seconds())
+	// fmt.Println("du == ", du)
+
 	if err == nil {
 		sp.lastAllocated = resp.Id
 	}
