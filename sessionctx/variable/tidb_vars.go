@@ -1085,7 +1085,7 @@ const (
 	DefTiDBOptRangeMaxSize                          = 0
 	DefTiDBCostModelVer                             = 1
 	DefTiDBServerMemoryLimitSessMinSize             = 128 << 20
-	DefTiDBEnableGOGCTuner                          = false
+	DefTiDBEnableGOGCTuner                          = true
 )
 
 // Process global variables.
