@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
@@ -26,9 +27,10 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/util/sqlexec"
 )
 
-func onCreateForeignKey(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func (w *worker) onCreateForeignKey(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
@@ -36,12 +38,17 @@ func onCreateForeignKey(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ e
 	}
 
 	var fkInfo model.FKInfo
-	err = job.DecodeArgs(&fkInfo)
+	var fkCheck bool
+	err = job.DecodeArgs(&fkInfo, &fkCheck)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	fkInfo.ID = AllocateIndexID(tblInfo)
+	err = checkAddForeignKeyValidInOwner(w, d, t, job, job.SchemaName, tblInfo, &fkInfo, fkCheck)
+	if err != nil {
+		return ver, err
+	}
+	fkInfo.ID = allocateFKIndexID(tblInfo)
 	tblInfo.ForeignKeys = append(tblInfo.ForeignKeys, &fkInfo)
 
 	originalState := fkInfo.State
@@ -592,4 +599,116 @@ func checkDatabaseHasForeignKeyReferredInOwner(d *ddlCtx, t *meta.Meta, job *mod
 		job.State = model.JobStateCancelled
 	}
 	return errors.Trace(err)
+}
+
+func checkFKDupName(tbInfo *model.TableInfo, fkName model.CIStr) error {
+	for _, fkInfo := range tbInfo.ForeignKeys {
+		if fkName.L == fkInfo.Name.L {
+			return dbterror.ErrFkDupName.GenWithStackByArgs(fkName.O)
+		}
+	}
+	return nil
+}
+
+func checkAddForeignKeyValid(is infoschema.InfoSchema, schema string, tbInfo *model.TableInfo, fk *model.FKInfo, fkCheck bool) error {
+	if !variable.EnableForeignKey.Load() {
+		return nil
+	}
+	err := checkTableForeignKeyValid(is, schema, tbInfo, fk, fkCheck)
+	if err != nil {
+		return err
+	}
+	if len(fk.Cols) == 1 && tbInfo.PKIsHandle {
+		pkCol := tbInfo.GetPkColInfo()
+		if pkCol != nil && pkCol.Name.L == fk.Cols[0].L {
+			return nil
+		}
+	}
+	// check foreign key columns should have index.
+	// TODO(crazycs520): we can remove this check after TiDB support auto create index if needed when add foreign key.
+	if model.FindIndexByColumns(tbInfo, fk.Cols...) == nil {
+		return errors.Errorf("Failed to add the foreign key constraint. Missing index for '%s' foreign key columns in the table '%s'", fk.Name, tbInfo.Name)
+	}
+	return nil
+}
+
+func checkAddForeignKeyValidInOwner(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, schema string, tbInfo *model.TableInfo, fk *model.FKInfo, fkCheck bool) error {
+	err := checkFKDupName(tbInfo, fk.Name)
+	if err != nil {
+		return err
+	}
+	if !variable.EnableForeignKey.Load() {
+		return nil
+	}
+	is, err := getAndCheckLatestInfoSchema(d, t)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = checkAddForeignKeyValid(is, schema, tbInfo, fk, fkCheck)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return errors.Trace(err)
+	}
+	// TODO(crazycs520): fix me. we need to do multi-schema change when add foreign key constraint.
+	// Since after this check, DML can write data which break the foreign key constraint.
+	err = checkForeignKeyConstrain(w, schema, tbInfo.Name.L, fk, fkCheck)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+func checkForeignKeyConstrain(w *worker, schema, table string, fkInfo *model.FKInfo, fkCheck bool) error {
+	if !fkCheck {
+		return nil
+	}
+	sctx, err := w.sessPool.get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer w.sessPool.put(sctx)
+
+	var buf strings.Builder
+	buf.WriteString("select 1 from %n.%n where ")
+	paramsList := make([]interface{}, 0, 4+len(fkInfo.Cols)*2)
+	paramsList = append(paramsList, schema, table)
+	for i, col := range fkInfo.Cols {
+		if i == 0 {
+			buf.WriteString("%n is not null")
+			paramsList = append(paramsList, col.L)
+		} else {
+			buf.WriteString(" and %n is not null")
+			paramsList = append(paramsList, col.L)
+		}
+	}
+	buf.WriteString(" and (")
+	for i, col := range fkInfo.Cols {
+		if i == 0 {
+			buf.WriteString("%n")
+		} else {
+			buf.WriteString(",%n")
+		}
+		paramsList = append(paramsList, col.L)
+	}
+	buf.WriteString(") not in (select ")
+	for i, col := range fkInfo.RefCols {
+		if i == 0 {
+			buf.WriteString("%n")
+		} else {
+			buf.WriteString(",%n")
+		}
+		paramsList = append(paramsList, col.L)
+	}
+	buf.WriteString(" from %n.%n ) limit 1")
+	paramsList = append(paramsList, fkInfo.RefSchema.L, fkInfo.RefTable.L)
+	rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(w.ctx, nil, buf.String(), paramsList...)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	rowCount := len(rows)
+	if rowCount != 0 {
+		return dbterror.ErrNoReferencedRow2.GenWithStackByArgs(fkInfo.String(schema, table))
+	}
+	return nil
 }
