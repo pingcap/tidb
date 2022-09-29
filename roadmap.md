@@ -56,8 +56,12 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
     <td>Implement automatic load balancing so that upgrading a cluster or modifying configurations does not affect the application. After scaling out or scaling in the cluster, the application can automatically rebalance the connection without reconnecting.</td>
     <td>In scenarios such as upgrades and configuration changes, TiDB proxy is more business-friendly.</td>
   </tr>
-  <tr>
-    <td>PB-level scalability</td>
+    <tr>
+    <td rowspan="2">PB-level scalability</td>
+    <td>Support dynamic region size adjustment (heterogeneous).</td>
+    <td>For scenarios with fast business growth and a large amount of data.</td>
+  </tr>
+    <tr>
     <td>Support huge region size.</td>
     <td>Scenarios with fast business growth and a large amount of data</td>
   </tr>
@@ -85,11 +89,6 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
     <td>Prepared Plan Cache</td>
     <td>Support in-session subquery, expression index, and prepared plan cache for Partition.</td>
     <td>Expand the usage scenarios of plan cache.</td>
-  </tr>
-  <tr>
-    <td>PB-level scalability</td>
-    <td>Support dynamic region size adjustment (heterogeneous).</td>
-    <td>For scenarios with fast business growth and a large amount of data.</td>
   </tr>
   <tr>
     <td>Instance plan cache</td>
@@ -141,7 +140,7 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
   </tr>
   <tr>
     <td rowspan="2">Data replication to downstream systems via TiCDC</td>
-    <td>Reduce TiCDC replication latency in planned offline scenarios.</td>
+    <td>Reduce TiCDC replication latency in daily operations.</td>
     <td>When TiKV, TiDB, PD, or TiCDC nodes are offline in a planned maintenance window, the replication latency of TiCDC can be reduced to less than 10 seconds.</td>
   </tr>
   <tr>
@@ -168,17 +167,8 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
 </thead>
 <tbody>
   <tr>
-    <td rowspan="2">ShangMi (SM) algorithms</td>
-    <td>Encryption-at-rest (TiKV and TiFlash) supports the SM4 algorithm.</td>
-    <td>Supports encrypting data stored in TiKV and TiFlash based on the SM4 algorithm.</td>
-  </tr>
-  <tr>
-    <td>TiDB authentication supports the SM3 algorithm. </td>
-    <td>Provide a user authentication plugin based on the SM3 algorithm, which encrypts the password using the SM3 algorithm.</td>
-  </tr>
-  <tr>
     <td>Log redaction</td>
-    <td><ul><li>Data redaction in execution plans in TiDB Dashboard.</li><li>Data redaction in TiDB-related logs.</li></ul></td>
+    <td><ul><li>Support data redaction in execution plans in TiDB Dashboard.</li><li>Enhance data redaction in TiDB-related logs.</li></ul></td>
     <td>Redact sensitive information in execution plans and various logs to enhance the security of user data.</td>
   </tr>
   <tr>
@@ -202,7 +192,7 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
     <td>TiDB already supports cluster-level, database-level, and table-level privilege management. On top of that, TiDB will support column-level privilege management to meet the principle of least privilege and provide fine-grained data access control.</td>
   </tr>
   <tr>
-    <td>Audit logging capability refactor</td>
+    <td>Audit logging capability enhancement</td>
     <td>Support configurable audit log policies, configurable audit filters (filter by objects, users, and operation types), and visual access to audit logs.</td>
     <td>Improve the completeness and usability of the audit log feature.</td>
   </tr>
