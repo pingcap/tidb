@@ -143,7 +143,7 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
   </tr>
   <tr>
     <td>Data migration</td>
-    <td>TiDB Lightning supports table-level and partition-level incremental data import.</td>
+    <td>TiDB Lightning supports table-level and partition-level online data import.</td>
     <td>TiDB Lightning provides comprehensive table-level and partition-level data import capabilities.</td>
   </tr>
 </tbody>
