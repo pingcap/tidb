@@ -569,6 +569,9 @@ func (p *PhysicalIndexJoin) GetPlanCost(taskType property.TaskType, option *Plan
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
 		return p.planCost, nil
 	}
+	if p.ctx.GetSessionVars().CostModelVersion == modelVer2 {
+		return p.getPlanCostVer2(taskType, option)
+	}
 	outerChild, innerChild := p.children[1-p.InnerChildIdx], p.children[p.InnerChildIdx]
 	outerCost, err := outerChild.GetPlanCost(taskType, option)
 	if err != nil {
@@ -657,6 +660,9 @@ func (p *PhysicalIndexHashJoin) GetPlanCost(taskType property.TaskType, option *
 	costFlag := option.CostFlag
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
 		return p.planCost, nil
+	}
+	if p.ctx.GetSessionVars().CostModelVersion == modelVer2 {
+		return p.getPlanCostVer2(taskType, option)
 	}
 	outerChild, innerChild := p.children[1-p.InnerChildIdx], p.children[p.InnerChildIdx]
 	outerCost, err := outerChild.GetPlanCost(taskType, option)
@@ -749,6 +755,9 @@ func (p *PhysicalIndexMergeJoin) GetPlanCost(taskType property.TaskType, option 
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
 		return p.planCost, nil
 	}
+	if p.ctx.GetSessionVars().CostModelVersion == modelVer2 {
+		return p.getPlanCostVer2(taskType, option)
+	}
 	outerChild, innerChild := p.children[1-p.InnerChildIdx], p.children[p.InnerChildIdx]
 	outerCost, err := outerChild.GetPlanCost(taskType, option)
 	if err != nil {
@@ -801,6 +810,9 @@ func (p *PhysicalApply) GetPlanCost(taskType property.TaskType, option *PlanCost
 	costFlag := option.CostFlag
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
 		return p.planCost, nil
+	}
+	if p.ctx.GetSessionVars().CostModelVersion == modelVer2 {
+		return p.getPlanCostVer2(taskType, option)
 	}
 	outerChild, innerChild := p.children[1-p.InnerChildIdx], p.children[p.InnerChildIdx]
 	outerCost, err := outerChild.GetPlanCost(taskType, option)
@@ -875,6 +887,9 @@ func (p *PhysicalMergeJoin) GetPlanCost(taskType property.TaskType, option *Plan
 	costFlag := option.CostFlag
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
 		return p.planCost, nil
+	}
+	if p.ctx.GetSessionVars().CostModelVersion == modelVer2 {
+		return p.getPlanCostVer2(taskType, option)
 	}
 	p.planCost = 0
 	for _, child := range p.children {
@@ -994,6 +1009,9 @@ func (p *PhysicalHashJoin) GetPlanCost(taskType property.TaskType, option *PlanC
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
 		return p.planCost, nil
 	}
+	if p.ctx.GetSessionVars().CostModelVersion == modelVer2 {
+		return p.getPlanCostVer2(taskType, option)
+	}
 	p.planCost = 0
 	for _, child := range p.children {
 		childCost, err := child.GetPlanCost(taskType, option)
@@ -1035,6 +1053,9 @@ func (p *PhysicalStreamAgg) GetPlanCost(taskType property.TaskType, option *Plan
 	costFlag := option.CostFlag
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
 		return p.planCost, nil
+	}
+	if p.ctx.GetSessionVars().CostModelVersion == modelVer2 {
+		return p.getPlanCostVer2(taskType, option)
 	}
 	childCost, err := p.children[0].GetPlanCost(taskType, option)
 	if err != nil {
@@ -1083,6 +1104,9 @@ func (p *PhysicalHashAgg) GetPlanCost(taskType property.TaskType, option *PlanCo
 	costFlag := option.CostFlag
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
 		return p.planCost, nil
+	}
+	if p.ctx.GetSessionVars().CostModelVersion == modelVer2 {
+		return p.getPlanCostVer2(taskType, option)
 	}
 	childCost, err := p.children[0].GetPlanCost(taskType, option)
 	if err != nil {
