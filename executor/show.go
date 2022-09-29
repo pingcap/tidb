@@ -1528,7 +1528,9 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 
-	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT plugin, Account_locked FROM %n.%n WHERE User=%? AND Host=%?`, mysql.SystemDB, mysql.UserTable, userName, strings.ToLower(hostName))
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT plugin, Account_locked, JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.metadata'))
+		FROM %n.%n WHERE User=%? AND Host=%?`,
+		mysql.SystemDB, mysql.UserTable, userName, strings.ToLower(hostName))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1548,6 +1550,11 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 	accountLocked := "LOCK"
 	if accountLockedRaw[len(accountLockedRaw)-1:] == "N" {
 		accountLocked = "UNLOCK"
+	}
+
+	userAttributes := rows[0].GetString(2)
+	if len(userAttributes) > 0 {
+		userAttributes = " ATTRIBUTE " + userAttributes
 	}
 
 	rows, _, err = exec.ExecRestrictedSQL(ctx, nil, `SELECT Priv FROM %n.%n WHERE User=%? AND Host=%?`, mysql.SystemDB, mysql.GlobalPrivTable, userName, hostName)
@@ -1573,8 +1580,8 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 	}
 
 	// FIXME: the returned string is not escaped safely
-	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH '%s'%s REQUIRE %s PASSWORD EXPIRE DEFAULT ACCOUNT %s",
-		e.User.Username, e.User.Hostname, authplugin, authStr, require, accountLocked)
+	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH '%s'%s REQUIRE %s PASSWORD EXPIRE DEFAULT ACCOUNT %s%s",
+		e.User.Username, e.User.Hostname, authplugin, authStr, require, accountLocked, userAttributes)
 	e.appendRow([]interface{}{showStr})
 	return nil
 }
