@@ -29,7 +29,7 @@ func TestTuner(t *testing.T) {
 	threshold := memLimit / 2
 	tn := newTuner(threshold)
 	require.Equal(t, threshold, tn.threshold.Load())
-	require.Equal(t, defaultGCPercent, tn.getGCPercent())
+	require.Equal(t, DefaultGCPercent, tn.getGCPercent())
 
 	// no heap
 	testHeap = make([]byte, 1)
@@ -77,9 +77,9 @@ func TestTuner(t *testing.T) {
 func TestCalcGCPercent(t *testing.T) {
 	const gb = 1024 * 1024 * 1024
 	// use default value when invalid params
-	require.Equal(t, defaultGCPercent, calcGCPercent(0, 0))
-	require.Equal(t, defaultGCPercent, calcGCPercent(0, 1))
-	require.Equal(t, defaultGCPercent, calcGCPercent(1, 0))
+	require.Equal(t, DefaultGCPercent, calcGCPercent(0, 0))
+	require.Equal(t, DefaultGCPercent, calcGCPercent(0, 1))
+	require.Equal(t, DefaultGCPercent, calcGCPercent(1, 0))
 
 	require.Equal(t, MaxGCPercent, calcGCPercent(1, 3*gb))
 	require.Equal(t, MaxGCPercent, calcGCPercent(gb/10, 4*gb))
