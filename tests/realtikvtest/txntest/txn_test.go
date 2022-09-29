@@ -208,7 +208,5 @@ func TestDuplicateErrorMessage(t *testing.T) {
 	tk.MustExec("insert into t values (1, 1)")
 	tk2.MustExec("insert into t values (1, 1)")
 	tk2.MustExec("insert into t2 values (1, 2)")
-	_, err := tk.Exec("update t set v = v + 1 where c = 1")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "Duplicate entry '1' for key 't.PRIMARY'")
+	tk.MustContainErrMsg("update t set v = v + 1 where c = 1", "Duplicate entry '1' for key 't.PRIMARY'")
 }
