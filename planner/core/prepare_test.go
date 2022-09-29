@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -1624,6 +1625,32 @@ func (s *testPlanSerialSuite) TestIssue28254(c *C) {
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows("1"))
 }
 
+func (s *testPlanSerialSuite) TestIssue33067(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		dom.Close()
+		err = store.Close()
+		c.Assert(err, IsNil)
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+
+	tk.MustExec("use test")
+	tk.MustExec("DROP TABLE IF EXISTS `t`")
+	tk.MustExec("CREATE TABLE `t` (`COL1` char(20) DEFAULT NULL, `COL2` bit(16),`COL3` date, KEY `U_M_COL5` (`COL3`,`COL2`))")
+	tk.MustExec("insert into t values ('','>d','9901-06-17')")
+	tk.MustExec("prepare stmt from 'select * from t where col1 is not null and col2 not in (?, ?, ?) and col3 in (?, ?, ?)'")
+	tk.MustExec(`set @a=-21188, @b=26824, @c=31855, @d="5597-1-4", @e="5755-12-6", @f="1253-7-12"`)
+	tk.MustQuery(`execute stmt using @a,@b,@c,@d,@e,@f`).Check(testkit.Rows())
+	tk.MustExec(`set @a=-5360, @b=-11715, @c=9399, @d="9213-09-13", @e="4705-12-24", @f="9901-06-17"`)
+	tk.MustQuery(`execute stmt using @a,@b,@c,@d,@e,@f`).Check(testkit.Rows(" >d 9901-06-17"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
+
 func (s *testPlanSerialSuite) TestIssue29486(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
@@ -2693,4 +2720,53 @@ func (s *testPlanSerialSuite) TestPartitionWithVariedDatasources(c *C) {
 			}
 		}
 	}
+}
+
+func (s *testPlanSerialSuite) TestPlanCacheWithRCWhenInfoSchemaChange(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		dom.Close()
+		err = store.Close()
+		c.Assert(err, IsNil)
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+
+	ctx := context.Background()
+
+	tk1 := testkit.NewTestKit(c, store)
+	tk2 := testkit.NewTestKit(c, store)
+	tk1.MustExec("use test")
+	tk2.MustExec("use test")
+	tk1.MustExec("drop table if exists t1")
+	tk1.MustExec("create table t1(id int primary key, c int, index ic (c))")
+	// prepare text protocol
+	tk1.MustExec("prepare s from 'select /*+use_index(t1, ic)*/ * from t1 where 1'")
+	// prepare binary protocol
+	stmtID, _, _, err := tk2.Se.PrepareStmt("select /*+use_index(t1, ic)*/ * from t1 where 1")
+	c.Assert(err, IsNil)
+	tk1.MustExec("set tx_isolation='READ-COMMITTED'")
+	tk1.MustExec("begin pessimistic")
+	tk2.MustExec("set tx_isolation='READ-COMMITTED'")
+	tk2.MustExec("begin pessimistic")
+	tk1.MustQuery("execute s").Check(testkit.Rows())
+	rs, err := tk2.Se.ExecutePreparedStmt(ctx, stmtID, []types.Datum{})
+	c.Assert(err, IsNil)
+	tk2.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows())
+
+	tk3 := testkit.NewTestKit(c, store)
+	tk3.MustExec("use test")
+	tk3.MustExec("alter table t1 drop index ic")
+	tk3.MustExec("insert into t1 values(1, 0)")
+
+	// The execution after schema changed should not hit plan cache.
+	// execute text protocol
+	tk1.MustQuery("execute s").Check(testkit.Rows("1 0"))
+	tk1.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	// execute binary protocol
+	rs, err = tk2.Se.ExecutePreparedStmt(ctx, stmtID, []types.Datum{})
+	c.Assert(err, IsNil)
+	tk2.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("1 0"))
+	tk2.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }

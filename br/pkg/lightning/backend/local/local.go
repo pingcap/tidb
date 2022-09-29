@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	tikverror "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/oracle"
@@ -1445,6 +1446,10 @@ func (local *local) ResolveDuplicateRows(ctx context.Context, tbl table.Table, t
 				err := local.deleteDuplicateRows(ctx, logger, handleRows, decoder)
 				if err == nil {
 					return nil
+				}
+				if types.ErrBadNumber.Equal(err) {
+					logger.Warn("delete duplicate rows encounter error", log.ShortError(err))
+					return errors.Errorf("resolve duplicate rows error on table '%s'", tableName)
 				}
 				if log.IsContextCanceledError(err) {
 					return err
