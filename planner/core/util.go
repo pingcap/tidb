@@ -221,6 +221,19 @@ func (s *baseSchemaProducer) setSchemaAndNames(schema *expression.Schema, names 
 	s.names = names
 }
 
+// MemoryUsage return the memory usage of baseSchemaProducer
+func (s *baseSchemaProducer) MemoryUsage() (sum int64) {
+	if s == nil {
+		return
+	}
+
+	sum = size.SizeOfPointer + size.SizeOfSlice + int64(cap(s.names))*size.SizeOfPointer + s.basePlan.MemoryUsage()
+	if s.schema != nil {
+		sum += s.schema.MemoryUsage()
+	}
+	return
+}
+
 // Schema implements the Plan.Schema interface.
 func (p *LogicalMaxOneRow) Schema() *expression.Schema {
 	s := p.Children()[0].Schema().Clone()

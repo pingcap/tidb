@@ -49,6 +49,7 @@ type featureUsage struct {
 	NonTransactionalUsage *m.NonTransactionalStmtCounter   `json:"nonTransactional"`
 	GlobalKill            bool                             `json:"globalKill"`
 	MultiSchemaChange     *m.MultiSchemaChangeUsageCounter `json:"multiSchemaChange"`
+	ExchangePartition     *m.ExchangePartitionUsageCounter `json:"exchangePartition"`
 	TablePartition        *m.TablePartitionUsageCounter    `json:"tablePartition"`
 	LogBackup             bool                             `json:"logBackup"`
 	EnablePaging          bool                             `json:"enablePaging"`
@@ -81,6 +82,8 @@ func getFeatureUsage(ctx context.Context, sctx sessionctx.Context) (*featureUsag
 	usage.AccountLock = getAccountLockUsageInfo()
 
 	usage.MultiSchemaChange = getMultiSchemaChangeUsageInfo()
+
+	usage.ExchangePartition = getExchangePartitionUsageInfo()
 
 	usage.TablePartition = getTablePartitionUsageInfo()
 
@@ -228,6 +231,7 @@ var initialCTECounter m.CTEUsageCounter
 var initialAccountLockCounter m.AccountLockCounter
 var initialNonTransactionalCounter m.NonTransactionalStmtCounter
 var initialMultiSchemaChangeCounter m.MultiSchemaChangeUsageCounter
+var initialExchangePartitionCounter m.ExchangePartitionUsageCounter
 var initialTablePartitionCounter m.TablePartitionUsageCounter
 var initialSavepointStmtCounter int64
 var initialLazyPessimisticUniqueCheckSetCount int64
@@ -316,6 +320,16 @@ func getMultiSchemaChangeUsageInfo() *m.MultiSchemaChangeUsageCounter {
 	return &diff
 }
 
+func postReportExchangePartitionUsage() {
+	initialExchangePartitionCounter = m.GetExchangePartitionCounter()
+}
+
+func getExchangePartitionUsageInfo() *m.ExchangePartitionUsageCounter {
+	curr := m.GetExchangePartitionCounter()
+	diff := curr.Sub(initialExchangePartitionCounter)
+	return &diff
+}
+
 func postReportTablePartitionUsage() {
 	initialTablePartitionCounter = m.ResetTablePartitionCounter(initialTablePartitionCounter)
 }
@@ -353,7 +367,7 @@ func getGlobalKillUsageInfo() bool {
 }
 
 func getLogBackupUsageInfo(ctx sessionctx.Context) bool {
-	return utils.CheckLogBackupEnabled(ctx) && utils.CheckLogBackupTaskExist()
+	return utils.IsLogBackupInUse(ctx)
 }
 
 func getCostModelVer2UsageInfo(ctx sessionctx.Context) bool {

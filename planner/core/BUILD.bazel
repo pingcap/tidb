@@ -13,6 +13,7 @@ go_library(
         "expression_rewriter.go",
         "find_best_task.go",
         "flat_plan.go",
+        "foreign_key.go",
         "fragment.go",
         "handle_cols.go",
         "hashcode.go",

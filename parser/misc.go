@@ -723,6 +723,7 @@ var tokenMap = map[string]int{
 	"THAN":                     than,
 	"THEN":                     then,
 	"TIDB":                     tidb,
+	"TIDB_CURRENT_TSO":         tidbCurrentTSO,
 	"TIFLASH":                  tiFlash,
 	"TIKV_IMPORTER":            tikvImporter,
 	"TIME":                     timeType,
@@ -944,6 +945,7 @@ var hintTokenMap = map[string]int{
 	"STRAIGHT_JOIN":           hintStraightJoin,
 	"LEADING":                 hintLeading,
 	"SEMI_JOIN_REWRITE":       hintSemiJoinRewrite,
+	"NO_DECORRELATE":          hintNoDecorrelate,
 
 	// TiDB hint aliases
 	"TIDB_HJ":   hintHashJoin,

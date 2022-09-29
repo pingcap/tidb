@@ -1211,7 +1211,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionRenameIndex:
 		ver, err = onRenameIndex(d, t, job)
 	case model.ActionAddForeignKey:
-		ver, err = onCreateForeignKey(d, t, job)
+		ver, err = w.onCreateForeignKey(d, t, job)
 	case model.ActionDropForeignKey:
 		ver, err = onDropForeignKey(d, t, job)
 	case model.ActionTruncateTable:
@@ -1400,7 +1400,7 @@ func buildPlacementAffects(oldIDs []int64, newIDs []int64) []*model.AffectedOpti
 }
 
 // updateSchemaVersion increments the schema version by 1 and sets SchemaDiff.
-func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, error) {
+func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job, multiInfos ...schemaIDAndTableInfo) (int64, error) {
 	schemaVersion, err := d.setSchemaVersion(job, d.store)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -1530,6 +1530,26 @@ func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, error)
 		}
 	default:
 		diff.TableID = job.TableID
+	}
+	if len(multiInfos) > 0 {
+		existsMap := make(map[int64]struct{})
+		existsMap[diff.TableID] = struct{}{}
+		for _, affect := range diff.AffectedOpts {
+			existsMap[affect.TableID] = struct{}{}
+		}
+		for _, info := range multiInfos {
+			_, exist := existsMap[info.tblInfo.ID]
+			if exist {
+				continue
+			}
+			existsMap[info.tblInfo.ID] = struct{}{}
+			diff.AffectedOpts = append(diff.AffectedOpts, &model.AffectedOption{
+				SchemaID:    info.schemaID,
+				OldSchemaID: info.schemaID,
+				TableID:     info.tblInfo.ID,
+				OldTableID:  info.tblInfo.ID,
+			})
+		}
 	}
 	err = t.SetSchemaDiff(diff)
 	return schemaVersion, errors.Trace(err)

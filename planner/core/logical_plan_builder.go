@@ -123,10 +123,12 @@ const (
 	HintIgnorePlanCache = "ignore_plan_cache"
 	// HintLimitToCop is a hint enforce pushing limit or topn to coprocessor.
 	HintLimitToCop = "limit_to_cop"
-	//HintMerge is a hint which can switch turning inline for the CTE.
+	// HintMerge is a hint which can switch turning inline for the CTE.
 	HintMerge = "merge"
 	// HintSemiJoinRewrite is a hint to force we rewrite the semi join operator as much as possible.
 	HintSemiJoinRewrite = "semi_join_rewrite"
+	// HintNoDecorrelate indicates a LogicalApply not to be decorrelated.
+	HintNoDecorrelate = "no_decorrelate"
 )
 
 const (
@@ -350,7 +352,7 @@ func (b *PlanBuilder) buildTableRefs(ctx context.Context, from *ast.TableRefsCla
 }
 
 func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSetNode, IsCTE bool) (p LogicalPlan, err error) {
-	//If it is building the CTE queries, we will mark them.
+	// If it is building the CTE queries, we will mark them.
 	b.isCTE = IsCTE
 	switch x := node.(type) {
 	case *ast.Join:
@@ -3682,11 +3684,17 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 			}
 			leadingHintCnt++
 		case HintSemiJoinRewrite:
-			if !b.checkSemiJoinHint {
+			if b.subQueryCtx != handlingExistsSubquery {
 				b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("The SEMI_JOIN_REWRITE hint is not used correctly, maybe it's not in a subquery or the subquery is not EXISTS clause."))
 				continue
 			}
-			b.hasValidSemiJoinHint = true
+			b.subQueryHintFlags |= HintFlagSemiJoinRewrite
+		case HintNoDecorrelate:
+			if b.subQueryCtx == notHandlingSubquery {
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("NO_DECORRELATE() is inapplicable because it's not in an IN subquery, an EXISTS subquery, an ANY/ALL/SOME subquery or a scalar subquery."))
+				continue
+			}
+			b.subQueryHintFlags |= HintFlagNoDecorrelate
 		default:
 			// ignore hints that not implemented
 		}
@@ -3842,13 +3850,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		b.isForUpdateRead = true
 	}
 
-	// If the session variable "tidb_opt_force_inline_cte" is true, all of CTEs will be inlined.
-	// Otherwise, whether CTEs are inlined depends on whether the merge() hint is declared.
-	if b.ctx.GetSessionVars().EnableForceInlineCTE() {
-		if b.buildingCTE && b.isCTE {
-			b.outerCTEs[len(b.outerCTEs)-1].isInline = true
-		}
-	} else if hints := b.TableHints(); hints != nil && hints.MergeHints.preferMerge {
+	if hints := b.TableHints(); hints != nil && hints.MergeHints.preferMerge {
 		// Verify Merge hints in the current query,
 		// we will update parameters for those that meet the rules, and warn those that do not.
 		// If the current query uses Merge Hint and the query is a CTE,
@@ -3858,9 +3860,9 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		// In particular, recursive CTE have separate warnings, so they are no longer called.
 		if b.buildingCTE {
 			if b.isCTE {
-				b.outerCTEs[len(b.outerCTEs)-1].isInline = hints.MergeHints.preferMerge
+				b.outerCTEs[len(b.outerCTEs)-1].isInline = true
 			} else if !b.buildingRecursivePartForCTE {
-				//If there has subquery which is not CTE and using `MERGE()` hint, we will show this warning;
+				// If there has subquery which is not CTE and using `MERGE()` hint, we will show this warning;
 				b.ctx.GetSessionVars().StmtCtx.AppendWarning(
 					ErrInternal.GenWithStack("Hint merge() is inapplicable. " +
 						"Please check whether the hint is used in the right place, " +
@@ -4254,7 +4256,7 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 					LimitEnd: limitEnd, pushDownPredicates: make([]expression.Expression, 0), ColumnMap: make(map[string]*expression.Column)}
 			}
 			var p LogicalPlan
-			lp := LogicalCTE{cteAsName: tn.Name, cte: cte.cteClass, seedStat: cte.seedStat, isOuterMostCTE: !b.buildingCTE}.Init(b.ctx, b.getSelectOffset())
+			lp := LogicalCTE{cteAsName: tn.Name, cteName: tn.Name, cte: cte.cteClass, seedStat: cte.seedStat, isOuterMostCTE: !b.buildingCTE}.Init(b.ctx, b.getSelectOffset())
 			prevSchema := cte.seedLP.Schema().Clone()
 			lp.SetSchema(getResultCTESchema(cte.seedLP.Schema(), b.ctx.GetSessionVars()))
 
@@ -4303,6 +4305,7 @@ func (b *PlanBuilder) buildDataSourceFromCTEMerge(ctx context.Context, cte *ast.
 	if err != nil {
 		return nil, err
 	}
+	b.handleHelper.popMap()
 	outPutNames := p.OutputNames()
 	for _, name := range outPutNames {
 		name.TblName = cte.Name
@@ -4932,8 +4935,8 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 	originalVisitInfo := b.visitInfo
 	b.visitInfo = make([]visitInfo, 0)
 
-	//For the case that views appear in CTE queries,
-	//we need to save the CTEs after the views are established.
+	// For the case that views appear in CTE queries,
+	// we need to save the CTEs after the views are established.
 	var saveCte []*cteInfo
 	if len(b.outerCTEs) > 0 {
 		saveCte = make([]*cteInfo, len(b.outerCTEs))
@@ -5041,10 +5044,10 @@ func (b *PlanBuilder) buildProjUponView(_ context.Context, dbName model.CIStr, t
 
 // buildApplyWithJoinType builds apply plan with outerPlan and innerPlan, which apply join with particular join type for
 // every row from outerPlan and the whole innerPlan.
-func (b *PlanBuilder) buildApplyWithJoinType(outerPlan, innerPlan LogicalPlan, tp JoinType) LogicalPlan {
+func (b *PlanBuilder) buildApplyWithJoinType(outerPlan, innerPlan LogicalPlan, tp JoinType, markNoDecorrelate bool) LogicalPlan {
 	b.optFlag = b.optFlag | flagPredicatePushDown | flagBuildKeyInfo | flagDecorrelate
 	setIsInApplyForCTE(innerPlan)
-	ap := LogicalApply{LogicalJoin: LogicalJoin{JoinType: tp}}.Init(b.ctx, b.getSelectOffset())
+	ap := LogicalApply{LogicalJoin: LogicalJoin{JoinType: tp}, NoDecorrelate: markNoDecorrelate}.Init(b.ctx, b.getSelectOffset())
 	ap.SetChildren(outerPlan, innerPlan)
 	ap.names = make([]*types.FieldName, outerPlan.Schema().Len()+innerPlan.Schema().Len())
 	copy(ap.names, outerPlan.OutputNames())
@@ -5061,7 +5064,8 @@ func (b *PlanBuilder) buildApplyWithJoinType(outerPlan, innerPlan LogicalPlan, t
 }
 
 // buildSemiApply builds apply plan with outerPlan and innerPlan, which apply semi-join for every row from outerPlan and the whole innerPlan.
-func (b *PlanBuilder) buildSemiApply(outerPlan, innerPlan LogicalPlan, condition []expression.Expression, asScalar, not, considerRewrite bool) (LogicalPlan, error) {
+func (b *PlanBuilder) buildSemiApply(outerPlan, innerPlan LogicalPlan, condition []expression.Expression,
+	asScalar, not, considerRewrite, markNoDecorrelate bool) (LogicalPlan, error) {
 	b.optFlag = b.optFlag | flagPredicatePushDown | flagBuildKeyInfo | flagDecorrelate
 
 	join, err := b.buildSemiJoin(outerPlan, innerPlan, condition, asScalar, not, considerRewrite)
@@ -5070,7 +5074,7 @@ func (b *PlanBuilder) buildSemiApply(outerPlan, innerPlan LogicalPlan, condition
 	}
 
 	setIsInApplyForCTE(innerPlan)
-	ap := &LogicalApply{LogicalJoin: *join}
+	ap := &LogicalApply{LogicalJoin: *join, NoDecorrelate: markNoDecorrelate}
 	ap.tp = plancodec.TypeApply
 	ap.self = ap
 	return ap, nil
@@ -7085,6 +7089,12 @@ func (b *PlanBuilder) buildWith(ctx context.Context, w *ast.WithClause) error {
 		saveFlag := b.optFlag
 		// Init the flag to flagPrunColumns, otherwise it's missing.
 		b.optFlag = flagPrunColumns
+		// Case1: If the current CTE has only one consumer, the default is set to inline CTE
+		// Case2: If the session variable "tidb_opt_force_inline_cte" is true, all of CTEs will be inlined.
+		// Otherwise, whether CTEs are inlined depends on whether the merge() hint is declared.
+		if !cte.IsRecursive && (cte.ConsumerCount == 1 || b.ctx.GetSessionVars().EnableForceInlineCTE()) {
+			b.outerCTEs[len(b.outerCTEs)-1].isInline = true
+		}
 		_, err := b.buildCte(ctx, cte, w.IsRecursive)
 		if err != nil {
 			return err
