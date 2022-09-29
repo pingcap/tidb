@@ -234,7 +234,7 @@ func TestGCS(t *testing.T) {
 	require.Equal(t, "gcs://testbucket/a/b/", stg.URI())
 }
 
-func TestnewGCSStorage(t *testing.T) {
+func TestNewGCSStorage(t *testing.T) {
 	ctx := context.Background()
 
 	opts := fakestorage.Options{
