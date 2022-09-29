@@ -1730,7 +1730,7 @@ func TestIndexJoinTableRange(t *testing.T) {
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(a int, b int, primary key (a), key idx_t1_b (b))")
 	tk.MustExec("create table t2(a int, b int, primary key (a), key idx_t1_b (b))")
-	tk.MustExec("create table t3(a int)")
+	tk.MustExec("create table t3(a int, b int, c int)")
 	tk.MustExec("create table t4(a int, b int, c int, primary key (a, b) clustered)")
 
 	var input []string
