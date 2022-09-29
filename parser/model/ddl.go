@@ -679,6 +679,10 @@ func (job *Job) hasDependentTableForExchangePartition(other *Job) (bool, error) 
 // 1. The two jobs handle the same database when one of the two jobs is an ActionDropSchema or ActionCreateSchema type.
 // 2. Or the two jobs handle the same table.
 func (job *Job) IsDependentOn(other *Job) (bool, error) {
+	if other.Type == ActionFlashbackCluster {
+		return true, nil
+	}
+
 	isDependent, err := job.hasDependentSchema(other)
 	if err != nil || isDependent {
 		return isDependent, errors.Trace(err)

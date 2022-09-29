@@ -162,6 +162,44 @@ func TestFlashbackCloseAndResetPDSchedule(t *testing.T) {
 	require.NoError(t, failpoint.Disable("tikvclient/injectSafeTS"))
 }
 
+func TestAddDDLDuringFlashback(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	originHook := dom.DDL().GetHook()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+
+	ts, err := tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
+	require.NoError(t, err)
+
+	injectSafeTS := oracle.GoTimeToTS(oracle.GetTimeFromTS(ts).Add(10 * time.Second))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockFlashbackTest", `return(true)`))
+	require.NoError(t, failpoint.Enable("tikvclient/injectSafeTS",
+		fmt.Sprintf("return(%v)", injectSafeTS)))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/expression/injectSafeTS",
+		fmt.Sprintf("return(%v)", injectSafeTS)))
+
+	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
+	defer resetGC()
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+
+	hook := &ddl.TestDDLCallback{Do: dom}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		assert.Equal(t, model.ActionFlashbackCluster, job.Type)
+		if job.SchemaState == model.StateWriteReorganization {
+			_, err := tk.Exec("alter table t add column b int")
+			assert.ErrorContains(t, err, "Can't add to ddl table, cluster is flashing back now")
+		}
+	}
+	dom.DDL().SetHook(hook)
+	tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts)))
+
+	dom.DDL().SetHook(originHook)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockFlashbackTest"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS"))
+	require.NoError(t, failpoint.Disable("tikvclient/injectSafeTS"))
+}
+
 func TestGlobalVariablesOnFlashback(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	originHook := dom.DDL().GetHook()
@@ -247,12 +285,16 @@ func TestCancelFlashbackCluster(t *testing.T) {
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 
 	// Try canceled on StateWriteOnly, cancel success
+	tk.MustExec("set global tidb_super_read_only = off")
 	hook := newCancelJobHook(t, store, dom, func(job *model.Job) bool {
 		return job.SchemaState == model.StateWriteOnly
 	})
 	dom.DDL().SetHook(hook)
 	tk.MustGetErrCode(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts)), errno.ErrCancelledDDLJob)
 	hook.MustCancelDone(t)
+	rs, err := tk.Exec("show variables like 'tidb_super_read_only'")
+	require.NoError(t, err)
+	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.Off)
 
 	// Try canceled on StateWriteReorganization, cancel failed
 	hook = newCancelJobHook(t, store, dom, func(job *model.Job) bool {
