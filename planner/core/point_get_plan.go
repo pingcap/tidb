@@ -115,12 +115,12 @@ func (p *PointGetPlan) SetCost(cost float64) {
 
 // attach2Task makes the current physical plan as the father of task's physicalPlan and updates the cost of
 // current task. If the child's task is cop task, some operator may close this task and return a new rootTask.
-func (p *PointGetPlan) attach2Task(...task) task {
+func (*PointGetPlan) attach2Task(...task) task {
 	return nil
 }
 
 // ToPB converts physical plan to tipb executor.
-func (p *PointGetPlan) ToPB(_ sessionctx.Context, _ kv.StoreType) (*tipb.Executor, error) {
+func (*PointGetPlan) ToPB(_ sessionctx.Context, _ kv.StoreType) (*tipb.Executor, error) {
 	return nil, nil
 }
 
@@ -176,17 +176,17 @@ func (p *PointGetPlan) OperatorInfo(normalized bool) string {
 }
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.
-func (p *PointGetPlan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+func (*PointGetPlan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	return nil
 }
 
 // GetChildReqProps gets the required property by child index.
-func (p *PointGetPlan) GetChildReqProps(_ int) *property.PhysicalProperty {
+func (*PointGetPlan) GetChildReqProps(_ int) *property.PhysicalProperty {
 	return nil
 }
 
 // StatsCount will return the the RowCount of property.StatsInfo for this plan.
-func (p *PointGetPlan) StatsCount() float64 {
+func (*PointGetPlan) StatsCount() float64 {
 	return 1
 }
 
@@ -200,15 +200,15 @@ func (p *PointGetPlan) statsInfo() *property.StatsInfo {
 }
 
 // Children gets all the children.
-func (p *PointGetPlan) Children() []PhysicalPlan {
+func (*PointGetPlan) Children() []PhysicalPlan {
 	return nil
 }
 
 // SetChildren sets the children for the plan.
-func (p *PointGetPlan) SetChildren(...PhysicalPlan) {}
+func (*PointGetPlan) SetChildren(...PhysicalPlan) {}
 
 // SetChild sets a specific child for the plan.
-func (p *PointGetPlan) SetChild(_ int, _ PhysicalPlan) {}
+func (*PointGetPlan) SetChild(_ int, _ PhysicalPlan) {}
 
 // ResolveIndices resolves the indices for columns. After doing this, the columns can evaluate the rows by their indices.
 func (p *PointGetPlan) ResolveIndices() error {
@@ -225,7 +225,7 @@ func (p *PointGetPlan) SetOutputNames(names types.NameSlice) {
 	p.outputNames = names
 }
 
-func (p *PointGetPlan) appendChildCandidate(_ *physicalOptimizeOp) {}
+func (*PointGetPlan) appendChildCandidate(_ *physicalOptimizeOp) {}
 
 const emptyPointGetPlanSize = int64(unsafe.Sizeof(PointGetPlan{}))
 
@@ -333,18 +333,18 @@ func (p *BatchPointGetPlan) Clone() (PhysicalPlan, error) {
 }
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.
-func (p *BatchPointGetPlan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+func (*BatchPointGetPlan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	return nil
 }
 
 // attach2Task makes the current physical plan as the father of task's physicalPlan and updates the cost of
 // current task. If the child's task is cop task, some operator may close this task and return a new rootTask.
-func (p *BatchPointGetPlan) attach2Task(...task) task {
+func (*BatchPointGetPlan) attach2Task(...task) task {
 	return nil
 }
 
 // ToPB converts physical plan to tipb executor.
-func (p *BatchPointGetPlan) ToPB(_ sessionctx.Context, _ kv.StoreType) (*tipb.Executor, error) {
+func (*BatchPointGetPlan) ToPB(_ sessionctx.Context, _ kv.StoreType) (*tipb.Executor, error) {
 	return nil, nil
 }
 
@@ -386,7 +386,7 @@ func (p *BatchPointGetPlan) OperatorInfo(normalized bool) string {
 }
 
 // GetChildReqProps gets the required property by child index.
-func (p *BatchPointGetPlan) GetChildReqProps(_ int) *property.PhysicalProperty {
+func (*BatchPointGetPlan) GetChildReqProps(_ int) *property.PhysicalProperty {
 	return nil
 }
 
@@ -401,15 +401,15 @@ func (p *BatchPointGetPlan) statsInfo() *property.StatsInfo {
 }
 
 // Children gets all the children.
-func (p *BatchPointGetPlan) Children() []PhysicalPlan {
+func (*BatchPointGetPlan) Children() []PhysicalPlan {
 	return nil
 }
 
 // SetChildren sets the children for the plan.
-func (p *BatchPointGetPlan) SetChildren(...PhysicalPlan) {}
+func (*BatchPointGetPlan) SetChildren(...PhysicalPlan) {}
 
 // SetChild sets a specific child for the plan.
-func (p *BatchPointGetPlan) SetChild(_ int, _ PhysicalPlan) {}
+func (*BatchPointGetPlan) SetChild(_ int, _ PhysicalPlan) {}
 
 // ResolveIndices resolves the indices for columns. After doing this, the columns can evaluate the rows by their indices.
 func (p *BatchPointGetPlan) ResolveIndices() error {
@@ -426,7 +426,7 @@ func (p *BatchPointGetPlan) SetOutputNames(names types.NameSlice) {
 	p.names = names
 }
 
-func (p *BatchPointGetPlan) appendChildCandidate(_ *physicalOptimizeOp) {}
+func (*BatchPointGetPlan) appendChildCandidate(_ *physicalOptimizeOp) {}
 
 const emptyBatchPointGetPlanSize = int64(unsafe.Sizeof(BatchPointGetPlan{}))
 
@@ -1547,6 +1547,10 @@ func buildPointUpdatePlan(ctx sessionctx.Context, pointPlan PhysicalPlan, dbName
 			updatePlan.PartitionedTable = append(updatePlan.PartitionedTable, pt)
 		}
 	}
+	err := updatePlan.buildOnUpdateFKChecks(ctx, is, updatePlan.tblID2Table)
+	if err != nil {
+		return nil
+	}
 	return updatePlan
 }
 
@@ -1638,7 +1642,7 @@ func buildPointDeletePlan(ctx sessionctx.Context, pointPlan PhysicalPlan, dbName
 	is := sessiontxn.GetTxnManager(ctx).GetTxnInfoSchema()
 	t, _ := is.TableByID(tbl.ID)
 	tblID2Table := map[int64]table.Table{tbl.ID: t}
-	delPlan.FKChecks, err = buildOnDeleteFKChecks(ctx, is, tblID2Table)
+	err = delPlan.buildOnDeleteFKChecks(ctx, is, tblID2Table)
 	if err != nil {
 		return nil
 	}

@@ -77,29 +77,66 @@ func (p *Insert) buildOnDuplicateUpdateColumns() map[string]struct{} {
 	return m
 }
 
-func buildOnDeleteFKChecks(ctx sessionctx.Context, is infoschema.InfoSchema, tblID2table map[int64]table.Table) (map[int64][]*FKCheck, error) {
+func (updt *Update) buildOnUpdateFKChecks(ctx sessionctx.Context, is infoschema.InfoSchema, tblID2table map[int64]table.Table) error {
 	if !ctx.GetSessionVars().ForeignKeyChecks {
-		return nil, nil
+		return nil
+	}
+	tblID2UpdateColumns := updt.buildTbl2UpdateColumns()
+	fkChecks := make(map[int64][]*FKCheck)
+	for tid, tbl := range tblID2table {
+		tblInfo := tbl.Meta()
+		dbInfo, exist := is.SchemaByTable(tblInfo)
+		if !exist {
+			// Normally, it should never happen. Just check here to avoid panic here.
+			return infoschema.ErrDatabaseNotExists
+		}
+		updateCols := tblID2UpdateColumns[tid]
+		if len(updateCols) == 0 {
+			continue
+		}
+		referredFKChecks, err := buildOnUpdateReferredFKChecks(is, dbInfo.Name.L, tblInfo, updateCols)
+		if err != nil {
+			return err
+		}
+		if len(referredFKChecks) > 0 {
+			fkChecks[tid] = append(fkChecks[tid], referredFKChecks...)
+		}
+		childFKChecks, err := buildOnUpdateChildFKChecks(is, dbInfo.Name.L, tblInfo, updateCols)
+		if err != nil {
+			return err
+		}
+		if len(childFKChecks) > 0 {
+			fkChecks[tid] = append(fkChecks[tid], childFKChecks...)
+		}
+	}
+	updt.FKChecks = fkChecks
+	return nil
+}
+
+func (del *Delete) buildOnDeleteFKChecks(ctx sessionctx.Context, is infoschema.InfoSchema, tblID2table map[int64]table.Table) error {
+	if !ctx.GetSessionVars().ForeignKeyChecks {
+		return nil
 	}
 	fkChecks := make(map[int64][]*FKCheck)
 	for tid, tbl := range tblID2table {
 		tblInfo := tbl.Meta()
 		dbInfo, exist := is.SchemaByTable(tblInfo)
 		if !exist {
-			return nil, infoschema.ErrDatabaseNotExists
+			return infoschema.ErrDatabaseNotExists
 		}
 		referredFKs := is.GetTableReferredForeignKeys(dbInfo.Name.L, tblInfo.Name.L)
 		for _, referredFK := range referredFKs {
 			fkCheck, err := buildFKCheckOnModifyReferTable(is, referredFK)
 			if err != nil {
-				return nil, err
+				return err
 			}
 			if fkCheck != nil {
 				fkChecks[tid] = append(fkChecks[tid], fkCheck)
 			}
 		}
 	}
-	return fkChecks, nil
+	del.FKChecks = fkChecks
+	return nil
 }
 
 func buildOnUpdateReferredFKChecks(is infoschema.InfoSchema, dbName string, tblInfo *model.TableInfo, updateCols map[string]struct{}) ([]*FKCheck, error) {
@@ -118,6 +155,61 @@ func buildOnUpdateReferredFKChecks(is infoschema.InfoSchema, dbName string, tblI
 		}
 	}
 	return fkChecks, nil
+}
+
+func buildOnUpdateChildFKChecks(is infoschema.InfoSchema, dbName string, tblInfo *model.TableInfo, updateCols map[string]struct{}) ([]*FKCheck, error) {
+	fkChecks := make([]*FKCheck, 0, len(tblInfo.ForeignKeys))
+	for _, fk := range tblInfo.ForeignKeys {
+		if fk.Version < 1 {
+			continue
+		}
+		if !isMapContainAnyCols(updateCols, fk.Cols...) {
+			continue
+		}
+		failedErr := ErrNoReferencedRow2.FastGenByArgs(fk.String(dbName, tblInfo.Name.L))
+		fkCheck, err := buildFKCheckOnModifyChildTable(is, fk, failedErr)
+		if err != nil {
+			return nil, err
+		}
+		if fkCheck != nil {
+			fkChecks = append(fkChecks, fkCheck)
+		}
+	}
+	return fkChecks, nil
+}
+
+func (updt *Update) buildTbl2UpdateColumns() map[int64]map[string]struct{} {
+	colsInfo := GetUpdateColumnsInfo(updt.tblID2Table, updt.TblColPosInfos, len(updt.SelectPlan.Schema().Columns))
+	tblID2UpdateColumns := make(map[int64]map[string]struct{})
+	for _, assign := range updt.OrderedList {
+		col := colsInfo[assign.Col.Index]
+		for _, content := range updt.TblColPosInfos {
+			if assign.Col.Index >= content.Start && assign.Col.Index < content.End {
+				if _, ok := tblID2UpdateColumns[content.TblID]; !ok {
+					tblID2UpdateColumns[content.TblID] = make(map[string]struct{})
+				}
+				tblID2UpdateColumns[content.TblID][col.Name.L] = struct{}{}
+				break
+			}
+		}
+	}
+	for tid, tbl := range updt.tblID2Table {
+		updateCols := tblID2UpdateColumns[tid]
+		if len(updateCols) == 0 {
+			continue
+		}
+		for _, col := range tbl.WritableCols() {
+			if !col.IsGenerated() || !col.GeneratedStored {
+				continue
+			}
+			for depCol := range col.Dependences {
+				if _, ok := updateCols[depCol]; ok {
+					tblID2UpdateColumns[tid][col.Name.L] = struct{}{}
+				}
+			}
+		}
+	}
+	return tblID2UpdateColumns
 }
 
 func isMapContainAnyCols(colsMap map[string]struct{}, cols ...model.CIStr) bool {

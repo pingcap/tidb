@@ -2248,6 +2248,10 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 		tblColPosInfos:            v.TblColPosInfos,
 		assignFlag:                assignFlag,
 	}
+	updateExec.fkChecks, b.err = buildTblID2FKCheckExecs(b.ctx, tblID2table, v.FKChecks)
+	if b.err != nil {
+		return nil
+	}
 	return updateExec
 }
 
