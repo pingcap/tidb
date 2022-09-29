@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	_ "github.com/pingcap/tidb/types/parser_driver" // for parser driver
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/gctuner"
 	"github.com/pingcap/tidb/util/logutil"
@@ -625,7 +624,7 @@ var defaultSysVars = []*SysVar{
 		on := TiDBOptOn(val)
 		gctuner.EnableGOGCTuner.Store(on)
 		if !on {
-			util.SetGOGC(int(gctuner.DefaultGCPercent))
+			gctuner.SetDefaultGOGC()
 		}
 		return nil
 	}},

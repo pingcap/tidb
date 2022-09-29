@@ -30,15 +30,19 @@ const (
 	MinGCPercent uint32 = 20
 )
 
-var DefaultGCPercent uint32 = 100
+var defaultGCPercent uint32 = 100
 
 // EnableGOGCTuner is to control whether enable the GOGC tuner.
 var EnableGOGCTuner atomic.Bool
 
 func init() {
 	if val, err := strconv.Atoi(os.Getenv("GOGC")); err == nil {
-		DefaultGCPercent = uint32(val)
+		defaultGCPercent = uint32(val)
 	}
+}
+
+func SetDefaultGOGC() {
+	util.SetGOGC(int(defaultGCPercent))
 }
 
 // Tuning sets the threshold of heap which will be respect by gc tuner.
@@ -62,7 +66,7 @@ func Tuning(threshold uint64) {
 // GetGOGC returns the current GCPercent.
 func GetGOGC() uint32 {
 	if globalTuner == nil {
-		return DefaultGCPercent
+		return defaultGCPercent
 	}
 	return globalTuner.getGCPercent()
 }
@@ -93,7 +97,7 @@ type tuner struct {
 
 func newTuner(threshold uint64) *tuner {
 	t := &tuner{}
-	t.gcPercent.Store(DefaultGCPercent)
+	t.gcPercent.Store(defaultGCPercent)
 	t.threshold.Store(threshold)
 	t.finalizer = newFinalizer(t.tuning) // start tuning
 	return t
@@ -142,7 +146,7 @@ func (t *tuner) tuning() {
 func calcGCPercent(inuse, threshold uint64) uint32 {
 	// invalid params
 	if inuse == 0 || threshold == 0 {
-		return DefaultGCPercent
+		return defaultGCPercent
 	}
 	// inuse heap larger than threshold, use min percent
 	if threshold <= inuse {
