@@ -265,7 +265,7 @@ func TestTruncateSafepointForGCS(t *testing.T) {
 		CredentialsBlob: "Fake Credentials",
 	}
 
-	l, err := storage.NewGCSStorage(ctx, gcs, &storage.ExternalStorageOptions{
+	l, err := storage.NewGCSStorageForTest(ctx, gcs, &storage.ExternalStorageOptions{
 		SendCredentials:  false,
 		CheckPermissions: []storage.Permission{storage.AccessBuckets},
 		HTTPClient:       server.HTTPClient(),
