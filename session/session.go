@@ -1013,7 +1013,9 @@ func (s *session) tryReplaceWriteConflictError(oldErr error) (newErr error) {
 	inErr, _ := originErr.(*errors.Error)
 	args := inErr.Args()
 	is := sessiontxn.GetTxnManager(s).GetTxnInfoSchema()
-
+	if is == nil {
+		return nil
+	}
 	newKeyTableField, ok := addTableNameInTableIDField(args[3], is)
 	if ok {
 		args[3] = newKeyTableField
@@ -1025,6 +1027,7 @@ func (s *session) tryReplaceWriteConflictError(oldErr error) (newErr error) {
 	return kv.ErrWriteConflict.FastGenByArgs(args...)
 }
 
+// precondition: is != nil
 func addTableNameInTableIDField(tableIDField interface{}, is infoschema.InfoSchema) (enhancedMsg string, done bool) {
 	keyTableID, ok := tableIDField.(string)
 	if !ok {
