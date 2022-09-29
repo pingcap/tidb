@@ -55,7 +55,7 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
     <td>Implement automatic load balancing so that upgrading a cluster or modifying configurations does not affect the application. After scaling out or scaling in the cluster, the application can automatically rebalance the connection without reconnecting.</td>
     <td>In scenarios such as upgrades and configuration changes, TiDB proxy is more business-friendly.</td>
   </tr>
-    <tr>
+  <tr>
     <td>PB-level scalability</td>
     <td><ul><li>Support dynamic region size adjustment (heterogeneous).</li><li>Support huge region size.</li></ul></td>
     <td>For scenarios with fast business growth and a large amount of data.</td>
@@ -124,7 +124,7 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
 <tbody>
   <tr>
     <td>Backup and restore</td>
-    <td>EBS snapshot-based backup and restore</td>
+    <td>AWS EBS or GCP persistent disk snapshot-based backup and restore</td>
     <td>Support backup and restore based on AWS EBS or GCP persistent disk snapshots.</td>
   </tr>
   <tr>
