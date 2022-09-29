@@ -152,7 +152,7 @@ func check(t *testing.T, record []int64, ids ...int64) {
 				return false
 			}
 		}
-		require.FailNow(t, "should not reach here")
+		require.FailNow(t, "should not reach here", record)
 		return false
 	}
 
@@ -163,7 +163,7 @@ func check(t *testing.T, record []int64, ids ...int64) {
 			if id == j {
 				meet = true
 			}
-			require.False(t, meet && id == i)
+			require.False(t, meet && id == i, record)
 		}
 	}
 
