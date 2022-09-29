@@ -690,7 +690,7 @@ func RunStreamPause(
 		utils.BRServiceSafePoint{
 			ID:       buildPauseSafePointName(ti.Info.Name),
 			TTL:      cfg.SafePointTTL,
-			BackupTS: globalCheckPointTS - 1,
+			BackupTS: globalCheckPointTS,
 		},
 	); err != nil {
 		return errors.Trace(err)
