@@ -183,8 +183,12 @@ func (l *LRUPlanCache) removeOldest() {
 
 // removeFromBucket remove element from bucket
 func (l *LRUPlanCache) removeFromBucket(element *list.Element) {
-	bucket := l.buckets[string(hack.String(element.Value.(*planCacheEntry).PlanKey.Hash()))]
+	hash := string(hack.String(element.Value.(*planCacheEntry).PlanKey.Hash()))
+	bucket := l.buckets[hash]
 	delete(bucket, element)
+	if len(bucket) == 0 {
+		delete(l.buckets, hash)
+	}
 }
 
 // memoryControl control the memory by quota and guard
