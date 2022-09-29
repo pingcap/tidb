@@ -11,7 +11,7 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
 <table>
 <thead>
   <tr>
-    <th>Scenario</th>
+    <th>Domain</th>
     <th>Feature</th>
     <th>Description</th>
   </tr>
@@ -103,7 +103,7 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
 <table>
 <thead>
   <tr>
-    <th>Scenario</th>
+    <th>Domain</th>
     <th>Feature</th>
     <th>Description</th>
   </tr>
@@ -122,7 +122,7 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
 <table>
 <thead>
   <tr>
-    <th>Scenario</th>
+    <th>Domain</th>
     <th>Feature</th>
     <th>Description</th>
   </tr>
@@ -160,7 +160,7 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
 <table>
 <thead>
   <tr>
-    <th>Scenario</th>
+    <th>Domain</th>
     <th>Feature</th>
     <th>Description</th>
   </tr>
