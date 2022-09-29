@@ -320,7 +320,7 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 
 		// Dynamic change batch size.
 		w.batchCnt = int(variable.GetDDLReorgBatchSize())
-		finish := injectSpan(job.ID, "handle-backfill-task")
+		finish := injectSpan(job.ID, fmt.Sprintf("%s-%d", "handle-backfill-task", w.id))
 		result := w.handleBackfillTask(d, task, bf)
 		finish()
 		w.resultCh <- result

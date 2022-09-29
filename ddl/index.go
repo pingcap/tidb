@@ -1485,7 +1485,7 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 
 	oprStartTime := time.Now()
 	ctx := kv.WithInternalSourceType(context.Background(), w.jobContext.ddlJobSourceType())
-	defer injectSpan(w.reorgInfo.Job.ID, "fetch-create-txn")()
+	defer injectSpan(w.reorgInfo.Job.ID, fmt.Sprintf("%s-%d", "fetch-create-txn", w.id))()
 	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
@@ -1494,7 +1494,7 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 			txn.SetOption(kv.ResourceGroupTagger, tagger)
 		}
 
-		finishSpan := injectSpan(w.reorgInfo.Job.ID, "fetch-rows")
+		finishSpan := injectSpan(w.reorgInfo.Job.ID, fmt.Sprintf("%s-%d", "fetch-rows", w.id))
 		idxRecords, nextKey, taskDone, err := w.fetchRowColVals(txn, handleRange)
 		finishSpan()
 		if err != nil {
@@ -1508,7 +1508,7 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 			return errors.Trace(err)
 		}
 
-		defer injectSpan(w.reorgInfo.Job.ID, "create-records")()
+		defer injectSpan(w.reorgInfo.Job.ID, fmt.Sprintf("%s-%d", "create-records", w.id))()
 		for _, idxRecord := range idxRecords {
 			taskCtx.scanCount++
 			// The index is already exists, we skip it, no needs to backfill it.
