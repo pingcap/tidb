@@ -49,6 +49,7 @@ func Tuning(threshold uint64) {
 	if threshold <= 0 && globalTuner != nil {
 		globalTuner.stop()
 		globalTuner = nil
+		util.SetGOGC(int(defaultGCPercent))
 		return
 	}
 
