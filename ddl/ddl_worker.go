@@ -330,7 +330,7 @@ func (d *ddl) addBatchDDLJobs2Queue(tasks []*limitJobTask) error {
 		}
 		for _, job := range jobs {
 			if job.Type == model.ActionFlashbackCluster {
-				return errors.Errorf("Can't add to ddl queue, have flashback cluster job in queue")
+				return errors.Errorf("Can't add ddl job, have flashback cluster job")
 			}
 		}
 
@@ -400,7 +400,7 @@ func (d *ddl) addBatchDDLJobs2Table(tasks []*limitJobTask) error {
 		return errors.Trace(err)
 	}
 	if len(job) != 0 {
-		return errors.Errorf("Can't add to ddl table, have flashback cluster job in table")
+		return errors.Errorf("Can't add ddl job, have flashback cluster job")
 	}
 
 	startTS := uint64(0)
