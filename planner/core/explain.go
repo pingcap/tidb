@@ -171,15 +171,10 @@ func (p *PhysicalTableScan) ExplainNormalizedInfo() string {
 // OperatorInfo implements dataAccesser interface.
 func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 	var buffer strings.Builder
-	if len(p.rangeDecidedBy) > 0 {
-		buffer.WriteString("range: decided by [")
-		for i, rangeDecidedBy := range p.rangeDecidedBy {
-			if i != 0 {
-				buffer.WriteString(" ")
-			}
-			buffer.WriteString(rangeDecidedBy.String())
-		}
-		buffer.WriteString("], ")
+	if len(p.rangeInfo) > 0 {
+		buffer.WriteString("range: decided by ")
+		buffer.WriteString(p.rangeInfo)
+		buffer.WriteString(", ")
 	} else if p.haveCorCol() {
 		if normalized {
 			buffer.WriteString("range: decided by ")
@@ -230,7 +225,7 @@ func (p *PhysicalTableScan) haveCorCol() bool {
 }
 
 func (p *PhysicalTableScan) isFullScan() bool {
-	if len(p.rangeDecidedBy) > 0 || p.haveCorCol() {
+	if len(p.rangeInfo) > 0 || p.haveCorCol() {
 		return false
 	}
 	var unsignedIntHandle bool
