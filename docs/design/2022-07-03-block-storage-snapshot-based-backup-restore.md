@@ -26,7 +26,7 @@
     * [TiDB Operator](#tidb-operator)
       * [Backup design](#backup-design)
       * [Restore design](#restore-design)
-    * [Backup & Restore](#backup-estore)
+    * [Backup Restore](#backup-restore)
       * [BR Backup](#br-backup)
       * [BR Restore](#br-restore)
     * [TiKV](#tikv)
@@ -36,10 +36,6 @@
       * [TiKV - PD](#tikv-pd)
       * [BR - TiKV](#br-tikv)
       * [BR - restore worker](#br-restore-worker)
-    * [Backup & Restore](#backup-estore)
-    * [Backup & Restore](#backup-estore)
-    * [Backup & Restore](#backup-estore)
-    * [Backup & Restore](#backup-estore)
 * [Exception Handling](#exception-handling)
 * [Backward / Forward Compatibility](#backward-forward-compatibility)
 * [Security](#security)
@@ -87,7 +83,7 @@ Backup and Restore a TiDB cluster using the EBS snapshot on the AWS, it is expec
 
 ## Solution overview
 
-## 
+
 ![alt_text](imgs/ebs-solution-overview.png "image_tooltip")
 
 
@@ -107,7 +103,7 @@ The Backup & Restore Controller detects the CRD. Then, creates a new POD to load
 1. The backup started by a backup CRD where the customer submitted.
 2. TiDB Operator creates/starts the Backup Worker (Job in the above figure) based on the CRD.
 3. The Backup Worker gets the global resolved_ts of the TiDB cluster through PD and saves it into metadata.
-4. The Backup Worker queries the topology information of the TiDB cluster and the corresponding EBS volume info of all TiKV nodes  and saves them in metadata. The Backup Worker configures the PD to prohibit operations such as replica, merge, and GC etc, and waits for the completion of the ongoing replica scheduling. At the same time, The Backup Worker gets the max allocated ID on the PD, and saves them in metadata.
+4. The Backup Worker queries the topology information of the TiDB cluster and the corresponding EBS volume info of all TiKV nodes  and saves them in metadata. The Backup Worker configures the PD to prohibit operations such as replica, merge, and GC etc, and waits for the completion of the ongoing replica scheduling.
 5. The Backup Worker initiates an EBS snapshot to all nodes, and records the snapshot information in metadata.
 6. The Backup Worker reconfigures the PD to get it back to its original state where we start backup.
 7. The Backup Worker queries the status of the snapshot in each node, and waits until all snapshot states changed from pending to completed. The Backup Worker is automatically destroyed according to the configured CRD policy.
@@ -149,7 +145,7 @@ Step 1 assume time &lt; 5 minute (included fault tolerance, e.g. retry)
 
 Step 2 TiKV already maintains the resolved_ts component.
 
-Step 3 snapshot depends on the customer's EBS volume type and data change. Excluding full snapshot at first time, one day data change with gp3 type takes ~ 10 minutes.  
+Step 3 snapshot depends on the customer's EBS volume type and data change. Excluding full snapshot at first time, one day data change with gp3 type may takes ~ 10 minutes in our test.  
 
 
 ### Restore
@@ -158,7 +154,7 @@ For Restore, as Restore Worker states, there are mainly 3 steps:
 
 
 
-1. Init snapshot restore and prepare restored volume.
+1. Initialize snapshot restore and prepare restored volume.
 2. Region recovery, select a leader, and align raft log.
 3. Resolved data by cluster level resolved_ts.
 
@@ -170,10 +166,6 @@ Step 3, assume takes &lt; 30 minutes,  Resolved data by removing all key-values 
 
 Note: For EBS volume fully initialized, there are extra steps suggested by [AWS](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ebs-initialize.html). 
 
-Backup impact
-
-EC2 IOPS may have some impact, we believed impact should be very few. Since EBS snapshot taken by AWS EBS service does not go through EC2, so that the impact should be very small, see next chapter.
-
 
 ## Data Consistency
 
@@ -181,7 +173,7 @@ TiDB Cluster On AWS EBS, a key-value write workflow as follows:
 
 TiDB->TiKV->OS->EBS
 
-![alt_text](imgs/ebs-overview.jpeg "image_tooltip")
+![alt_text](imgs/ebs-overview.png "image_tooltip")
 
 
 
@@ -274,8 +266,6 @@ In our solution, we get this resolved_ts from PD and use it as ts to resolve bac
 
 The key-value of the same transaction will be written to different Raft Groups. In the restore phase, after a Raft Group is handled to consistency, we use transaction-consistent resolved_ts to go to each TiKV to delete the data of incomplete transactions. For this step, see the detailed design of the Backup and Restore ResolvedData phase.
 
-For more detailed design and demonstration process, see [EBS Backup Restore Demo](https://pingcap.feishu.cn/docs/doccntvRspfpQoojAlS5bHlXjsf)
-
 
 #### A Raft Group consistency
 
@@ -295,26 +285,27 @@ For each Raft Group, we process the meta and data of the Region through BR Regio
 
 
 1. In the restore phase,  put TiKV in the recovery mode, and TiKV reports all peer lists to BR.
-2. For each raft group, find the peer with the largest commit index in the Region, and force it to be the leader. For other peers to be silent, start the raft state machine.
-3. Wait for all peers in the Region until applied index == commit index, and then set the correct raft status to exit data RegionRecover recovery.
+2. For each raft group, find the peer with the largest log index in the Region, and force it to be the leader. For other peers to be silent, start the raft state machine.
+3. Wait for all peers in the Region until applied index == last index, and then set the correct raft status to exit data RegionRecover recovery.
 * Region data
 
-In the previous step of RegionRecover phase, the second step is to start the raft state machine, so that the raft log of each Region non-leader node is applied to the largest commit index. Region-level data consistency achieved.
+In the previous step of RegionRecover phase, the second step is to start the raft state machine, so that the raft log of each Region non-leader node is applied to the largest log index. Region-level data consistency achieved.
 
 
 #### Multi Raft Group consistency
 
-Turn off replica replication. The reason is that when there are a large number of write scenarios to TiDB Cluster, the snapshot is sync. It is very likely that replica replication between 2 volumes has been snapshotted. At block-level data may be lost. At the same time, replica scheduling makes the epoch version change, and there are many intermediate states that need to be processed. These states make it very complicated to deal with such problems. Currently PD supports the following methods to turn off replica replication:
+Turn off pd scheduler. The reason is that when there are a large number of write scenarios to TiDB Cluster, the snapshot is sync. It is very likely that peer replication from one tikv volume to another, while 2 volumes has been snapshotted asynchronously. At block-level data may be lost. At the same time, replica scheduling makes the epoch version change, and there are many intermediate states that need to be processed. These states make it very complicated to deal with such problems. Currently PD supports the following methods to turn off peer replication:
 
 
 ```
 ./pd-ctl --pd=http://127.0.0.1:2379 config set merge-schedule-limit 0
 ./pd-ctl --pd=http://127.0.0.1:2379 config set region-schedule-limit 0
 ./pd-ctl --pd=http://127.0.0.1:2379 config set replica-schedule-limit 0
+./pd-ctl --pd=http://127.0.0.1:2379 config set hot-region-schedule-limit 0
 ```
 
 
-After the above schedule is limited to 0, replica addition, deletion and replication (from one TiKV to another) are prohibited. At the same time, functions such as merge and scatter across TiKV are also prohibited. For Regions that may have overlapping Ranges due to splits, after PD scheduling is resumed. please refer to the Recover function design for details, and for details about replicas, please refer to Q&A
+After the above schedule is limited to 0, peer addition, deletion and replication (from one TiKV to another) are prohibited. At the same time, functions such as merge and scatter across TiKV are also prohibited. For Regions that may have overlapping Ranges due to splits, after PD scheduling is resumed. please refer to the Recover function design for details, and for details about replicas, please refer to Q&A
 
 
 # **Feature Detail Design**
@@ -324,29 +315,25 @@ After the above schedule is limited to 0, replica addition, deletion and replica
 
 
 
-![alt_text](imgs/ebs-backup-worker.jpeg "image_tooltip")
+![alt_text](imgs/ebs-backup-overview.png "image_tooltip")
 
 
 After the TiDB Operator starts the Backup Worker, the backup job starts.
 
 
 
-1. Get the cluster level consistency resolved_ts. Get it directly from PD ([report_min_resolved_ts_interval](https://github.com/tikv/pd/issues/4686) is configured) or
-    1. Query PD to get all store IDs, see [GetAllStoresRequest](https://github.com/fengou1/kvproto/blob/bd679cab506b8b8b75af2595624c3c3cd4254354/proto/pdpb.proto#L235).
-    2. Get the resolved_ts of each store through the store ID. See the [interface definition](#bookmark=id.n24qqyjt75si).
-    3. Calculate the cluster level resolved_ts of the current cluster.
-2. Configure the PD scheduler to stop cluster replica replication. Stop GC.
-3. Backup the max allocated ID of the PD.
-4. Take snapshots for all TiKV volumes in the cluster through CSI to save metadata information to S3. For details, refer to the definition of[ metadata information](#bookmark=id.pm5ucdf8u44s)
-5. Wait for the snapshot to complete and save the cluster meta information to S3.
-6. Resume scheduling of the PD cluster.
-7. Exit the backup.
+1. Get the cluster level consistency min_resolved_ts. 
+2. Configure the PD scheduler to stop cluster peer replication. And also stop GC.
+3. Take snapshots for all TiKV volumes in the cluster through aws api, save metadata information to S3. For details, refer to the definition of[ metadata information](#bookmark=id.pm5ucdf8u44s)
+4. Wait for the snapshot to complete and save the cluster meta information to S3.
+5. Resume scheduling of the PD cluster.
+6. Exit the backup.
 
 
 ### **Restore workflow**
 
 
-![alt_text](imgs/ebs-restore-worker.jpeg "image_tooltip")
+![alt_text](imgs/ebs-restore-overview.png "image_tooltip")
 
 
 After the TiDB Operator starts the Restore Worker, it starts to restore work.
@@ -357,12 +344,12 @@ After the TiDB Operator starts the Restore Worker, it starts to restore work.
 
 * The customer already has a cluster to be restored and specified in the CRD.
 * The backup data has been specified in the CRD.
-1. The Restore Worker retrieves the backup metadata, which includes cluster topology information and cluster level resolved_ts during backup.
+1. The Restore Worker retrieves the backup metadata, which includes cluster topology information and cluster level min_resolved_ts during backup.
 2. The Restore Worker gets the topology information of the present TiDB cluster through PD. (e.g: the number of TiKVs, replica). see [GetAllStoresRequest](https://github.com/fengou1/kvproto/blob/bd679cab506b8b8b75af2595624c3c3cd4254354/proto/pdpb.proto#L235).
 3. The Restore Worker checks whether the topology information of the target cluster to be restored is consistent with the original cluster information. If they are identical, start the restoration, otherwise exit directly.
-4. The Restore Worker stops the related scheduling of the PD, and the PD stops the scheduling interface definition [NewConfigSchedulerCommand](https://github.com/fengou1/pd/blob/7baf94c8644ccd55930d213e298fc0104bc7a453/tools/pd-ctl/pdctl/command/scheduler.go#L434)
-5. The Restore Worker restores the PD with Cluster ID and max allocated ID. See [recoverFromNewPDCluster](https://github.com/fengou1/pd/blob/7baf94c8644ccd55930d213e298fc0104bc7a453/tools/pd-recover/main.go#L112).
-6. The Restore Worker stops TiKV, and restores snapshot to volume according to the snapshot id in the metadata, mounts volume to TiKV.
+4. The Restore Worker stops the related scheduling of the PD, and the PD stops the scheduler.
+5. The Restore Worker stops TiKV, and restores snapshot to volume according to the snapshot id in the metadata, mounts volume to TiKV.
+6. The Restore Worker restores the PD with max allocated ID which caculate from region meta report by tikv.
 7. Using the cluster level resolved_ts in the backup metadata, call the BR Recover to process all TiKV data into a cluster level consistent state.
 8. The Restore Worker resumes the PD scheduler to bring TiDB cluster online, the restoration work is completed, and the restore worker exits.
 
@@ -375,7 +362,7 @@ After the TiDB Operator starts the Restore Worker, it starts to restore work.
 ```json
 {
  "cluster_info": {
-   "cluster_version": "v6.1.0",
+   "cluster_version": "v6.3.0",
    "max_alloc_id": "6000",
    "resolved_ts": "456745777823347",
  },
@@ -467,7 +454,7 @@ After the TiDB Operator starts the Restore Worker, it starts to restore work.
 
 Backup worker has implements the following functions:
 
-1. Obtain the configuration information of the online backup cluster, such as resolved_ts, max allocate ID.
+1. Obtain the configuration information of the online backup cluster, such as resolved_ts.
 
 2. Configure cluster PD scheduling, stop replica scheduling, turn off GC during backup, and then turn on GC after backup.
 
@@ -476,16 +463,15 @@ Backup worker has implements the following functions:
 Worker container contains: 1. backup-manager, 2. BR
 
 
-```
-//TODO: command name is not finalized, it may change during implementation
-br backup ebs --pd "172.16.2.1:2379" -s "s3:/bucket/backup_folder" --volumes-file=backup.json
+```bash
+backup full --type=aws-ebs --pd "172.16.2.1:2379" -s "s3:/bucket/backup_folder" --volumes-file=backup.json
 ```
 
 
 Backup worker workflow
 
 
-![alt_text](imgs/ebs-backup-worker.jpeg "image_tooltip")
+![alt_text](imgs/ebs-backup-worker.png "image_tooltip")
 
 
 1. TiDB Operator retrieves the PD address of the target cluster and all TiKV volume information.
@@ -582,15 +568,14 @@ Worker container contains: 1. backup-manager, 2. BR
 Restore worker workflow:
 
 
-![alt_text](imgs/ebs-restore-worker.jpeg "image_tooltip")
+![alt_text](imgs/ebs-restore-worker.png "image_tooltip")
 
 
 1. backup-manager starts BR to read backup information from S3, get all snapshotIDs, set PD to the recovery mode. Examples of BR commands are as follows:
 
 
-```
-//TODO: command name is not finalized, it may change during implmenentation
-/br restore ebs --pd "172.16.2.1:2379" -s "s3:///us-west-2/meta/&sk=xx..." --output=topology.json
+```bash
+br restore full  --type=aws-ebs --prepare --pd "172.16.2.1:2379" -s "s3:///us-west-2/meta/&sk=xx..." --output=topology.json
 ```
 
 
@@ -600,7 +585,7 @@ BR command output as follows:
 ```json
 {
  "cluster_info": {
-   "cluster_version": "v6.1.0",
+   "cluster_version": "v6.3.0",
    "max_alloc_id": "6000",
    "resolved_ts": "456745777823347",
  },
@@ -689,7 +674,7 @@ BR command output as follows:
 
 
 ```bash
-/br restore data --pd "172.16.2.1:2379" -s "s3:///us-west-2/meta/&sk=xx..."
+br restore full --type=aws-ebs --pd "172.16.2.1:2379" -s "s3:///us-west-2/meta/&sk=xx..."
 ```
 
 
@@ -719,23 +704,23 @@ BR command output as follows:
 
 
 
-1.  Expand CR: Restore of TiDB Operator, add snapshot restore type, expand restore state machine, add volume restore completion status and data restore complete status.
-2.  Set the recovery mark of CR-TiDBCluster and let the TiDBCluster Controller handle it. After the PD is created and running normally, it blocks the creation of TiKV-StatefulSet and waits for the mark of successful volume recovery to be cleared.
+1. Expand CR: Restore of TiDB Operator, add snapshot restore type, expand restore state machine, add volume restore completion status and data restore complete status.
+2. Set the recovery mark of CR-TiDBCluster and let the TiDBCluster Controller handle it. After the PD is created and running normally, it blocks the creation of TiKV-StatefulSet and waits for the mark of successful volume recovery to be cleared.
 3. When PD is running and TiKV is not running, create Job-1 through Restore Manager, configure storage such as S3, process permissions such as iam + serviceaccount or secret, and finally call BR to restore the volume snapshot, and set the PD flag to be in recovery mode.
 4. Wait for the BR execution to complete, report the metadata information of the update output, set the Restore status to volume recovery complete, and exit Job-1.
 5. When the volume recovery is complete, the Restore Manager resets the blocking flag of TiKV, processes the volume information according to different Provisioners, converts the settings into the corresponding PVs, and clears the metadata information used for the binding of PVs and PVCs. In the scenario, you need to rename the corresponding PVs, and submit the above tags and newly constructed PVs / PVCs resources.
-6.  After the TiKV member Manager is unblocked, it continues to execute the StatefulSet creation process, and then processes the submitted PVCs/PVs and other information. After TiKV starts running and interacts with the PD with the recovery mark for the first time, it enters the recovery mode to run.
-7.  After the Restore Manager monitors that TiKV / PD is running, and there is a recovery mark, it creates Job-2, and finally calls BR to execute the data consistency of TiKV according to its own CR-Restore configuration parameters, metadata information, and current status. Process, clear data after min_resolved_ts, also clear PD flag and resume normal operation mode.
+6. After the TiKV member Manager is unblocked, it continues to execute the StatefulSet creation process, and then processes the submitted PVCs/PVs and other information. After TiKV starts running and interacts with the PD with the recovery mark for the first time, it enters the recovery mode to run.
+7. After the Restore Manager monitors that TiKV / PD is running, and there is a recovery mark, it creates Job-2, and finally calls BR to execute the data consistency of TiKV according to its own CR-Restore configuration parameters, metadata information, and current status. Process, clear data after min_resolved_ts, also clear PD flag and resume normal operation mode.
 8. Wait for the BR execution to complete, report the updated Restore status as data recovery complete, and exit Job-2.
 9. After the Restore Manager clears the recovery mark and monitors the normal operation of CR-TiDBCluster and provides services, set the Restore status to recovery complete.
 
 
-### Backup & Restore 
+### Backup Restore 
 
 
 #### BR Backup
 
-1. Backup cluster basic metadata, such as resolved_ts, Allocate ID,
+1. Backup cluster basic metadata, such as resolved_ts,
 
 2. Configure cluster scheduling, stop replica scheduling, turn off GC during backup, and turn on GC after backup
 
@@ -744,34 +729,32 @@ BR command output as follows:
 Backup workflow
 
 
-
-<p id="gdcalert12" ><span style="color: red; font-weight: bold">>>>>>  gd2md-html alert: inline image link here (to imgs/image12.jpg). Store image on your image server and adjust path/filename/extension if necessary. </span><br>(<a href="#">Back to top</a>)(<a href="#gdcalert13">Next alert</a>)<br><span style="color: red; font-weight: bold">>>>>> </span></p>
-
-
-![alt_text](imgs/image12.jpg "image_tooltip")
+![alt_text](imgs/ebs-backup-detail.png "image_tooltip")
 
 
-1. The BR is connected to the PD, and the BR stops the copy scheduling of the PD, mainly by setting the number of PD operators to limit the copy scheduling. Before setting, you need to read the current operator configuration information, and restore the cluster configuration immediately after the snapshot is completed. The main PD operator needs to contain:
-
+1. The BR is connected to the PD, and the BR stops the peer related scheduler of the PD, mainly by setting the number of PD operators to limit. Before setting, it need to read the current operator configuration information, and restore the cluster configuration immediately after the snapshot is completed. The main PD operator needs to contain:
+```go
+	const enableTiKVSplitRegion = "enable-tikv-split-region"
+	scheduleLimitParams := []string{
+		"hot-region-schedule-limit",
+		"leader-schedule-limit",
+		"merge-schedule-limit",
+		"region-schedule-limit",
+		"replica-schedule-limit",
+		enableTiKVSplitRegion,
+	}
+```
 2. Read resolved_ts and save it in the backup data.
 
-3. Shut down the GC and start a background safepoint keeper. Continuously update the GC safepoint to stop the GC.
+3. Shut down the GC by start a background safepoint keeper. Continuously update the GC safepoint to stop the GC.
 
-4. Get the ongoing replica scheduling operator operation and wait until the scheduling is complete.
+4. Get the ongoing peer scheduling operator operation and wait until the scheduling is complete.
 
-5. The BR calls the PD interface to read the allocatedID, and the cluster version is stored in the backup data.
+56. After the Snapshot returns (EBS snapshot returns immediately), enable copy scheduling and enable GC.
 
-6. For all tikv volume snapshots, the snapshot order is as follows:
+6. Wait for the AWS snapshot to complete
 
-   1. The same TiKV uses different raft log volumes and kv db volumes, the order of snapshots raft log volumes --> kv db volumes
-
-snapshot required parameter --volume-id, other parameters are not required. aws ebs example:
-
-7. After the Snapshot returns (EBS snapshot returns immediately), enable copy scheduling and enable GC.
-
-8. Wait for the AWS snapshot to complete
-
-9. Summarize all backup data information and upload to the target storage S3.
+7. Summarize all backup data information and upload to the target storage S3.
 
 
 #### BR Restore
@@ -779,26 +762,21 @@ snapshot required parameter --volume-id, other parameters are not required. aws 
 There are mainly 2 phase implementations, RegionRecover and ResolvedData.
 
 
-
 * RegionRecover design
-1. After the BR Recover function is invoked by TiDB Operator, BR first switches TiKV to recovery mode. At the same time, BR starts the recover_regions service. Monitor TiKV's Region information report.
-2. TiKV scans the metadata of all local regions (including those in the Tombstone state), and sends it to the BR by a stream through the recover_regions service.
+1. After the 1st BR is invoked by TiDB Operator, BR first put a recovery marker in pd, and all startup TiKV read the marker at very early startup, then TiKV switches to recovery mode. At the same time, TiKV starts the recovery service.
+2. BR send a read region meta request to TiKV, TiKV scans the metadata of all local regions, and sends it to the BR by a stream.
 3. After the BR receives the reports of all Region info (peer list) of all TiKV instances, it makes a decision based on the reported peer list. And send the recovery command to all TiKV instances for each region; close gRPC stream after sending. The BR decision as follows:
-    1. Within a Region, force the peer with the largest commit index as the leader.
-    2. Set the tombstone to true when the pear is learner in the peer list.
-4. TiKV deals with the BR Adviser recovery command accordingly. After completion, TiKV reports the completion status of the local peer.
-5. When the BR receives all the reports of the recovery command complete, it starts the Region raft state machine and waits for the applied index == commit index. Then, report the result to the BR for data that has reached applied index == commit index. After that the BR cancels the leader. Exit the recovery mode.
-6. RegionRecover completes.
+    1. for any region, select a peer as leader, peer has the max last log term as qualified leader, or
+    2. if the last log term is the same, select peer has the max last log index
+    3. if the last log index is the same, select peer has the max commit index
+4. BR send recover region command to TiKV, TiKV assign a leader and then wait all region peer apply to last index.
+5. RegionRecover completes.
 * ResolvedData design
+start 2 worker to delete data with ts > min_resolved_ts
 
-Delete RocksDB data according to the cluster level resolved_ts which get during the backup.
-
-
-
-1. Scan the KV DB of each TiKV through resolved_ts.
+1. Scan the KV DB of each TiKV through min_resolved_ts.
 2. Directly delete the Lock CF data of each KV DB.
-3. For each KV DB's Data CF key-value, if start_ts > resolved_ts, delete this key-value.
-4. Do not process the Write CF data of each KV DB.
+3. For each KV DB's write CF key-value, if commit_ts > resolved_ts, delete this key-value in write CF and delete this key in default CF also. 
 
 
 ### TiKV
@@ -807,128 +785,110 @@ Newly added recovery service/recovery mode
 
 1. Definitions
 
-After TiKV starts raft-engine and kv engine, when establishing pdclient, it actively reads recovery Mode, cluster ID, and the first message of the connection between TiKV and PD from PD.
+After TiKV starts raft-engine and kv engine, when establishing pdclient, it actively reads recovery marker from pd at very beginning of the connection between TiKV and PD.
 
-TiKV performs data recovery in recovery mode. It mainly performs raft state machine and data consistency adjustment in the recovery phase. TiKV mainly completes the recovery work in three steps in Recovery mode:
+TiKV performs data recovery in recovery mode. It mainly performs raft state machine and data consistency adjustment in the recovery phase. TiKV mainly completes the recovery work in two steps in Recovery mode:
 
 Step 1: Report metadata, and adjust local metadata.
 
-  1. Before TiKV starts, read the cold data of the disk to make recovery decisions for BR. Scan all local Region metadata and wait for BR to read and process. For details, see: RegionRecover Function Design in Recovery Phase. Code refer: demo
+  1. Before TiKV starts, read the cold data of the disk. Update TiKV the cluster ID while pd connected. Also, TiKV initialize a bootstrapped cluster to PD, put PD in bootstrapped status.
+  2. TiKV startup, and start recovery service, BR sends read region meta to TiKV, TiKV collect all region meta and sent to BR
+  3. BR make a leader list, send to TiKV.TiKV assign a leader for region, and wait leader apply to last log
+  4. BR send wait apply to TiKV, TiKV wait and check all region apply to last log
 
-  2. After BR sends RecoveryCmd to TiKV, TiKV immediately performs metadata adjustment and saves the list of force leaders.
+Step 3: Delete data
 
-    1. Update the cluster id of the current kvdb. Under RecoveryMode, the latest cluster id generated by PD shall prevail.
+  7. TiKV start 2 thread to resolve data, one for clean up the lock cf, another is to delete data from write cf and data cf.
 
-    2. All raft states are inconsistent, the region peer state is normal, adjust and update the raft state. The purpose is to allow all normal peers to be created normally. TODO: @Ophone Ou
-
-Step 2: Align raft log
-
-  3. Stop raft's election by setting the maximum election timeout, in order to prevent all peers from electing. Only BRs can specify peers to initiate campaigns.
-
-  4. Set the timeout time of the peer's maximum unowned state, so that even if the peer is still in the unowned state for a long time, it will not be considered invalid and will be deleted as a tombstone.
-
-  5. Perform force leader processing, force the peers of the current node to launch elections, and confirm that they all become leaders.
-
-  6. All region peers are aligned to the region's largest commit index. That is: applied index == commit index.
-
-Step 3: Delete data (start a recovery service?)
-
-  7. Delete data according to the resolved_ts given by BR.
-
-In recover mode, data consistency recovery is mainly completed. For details, see Recover function design in recovery phase.
+In recover mode, data consistency recovery is mainly completed. 
 
 
 ### Interface Definition
 
 
-### restore worker - PD / TiKV
+### BR - PD
+1. enable  snapshot recovery marker in pd
 
+```bash
+curl "172.16.5.31:3279/pd/api/v1/admin/snapshot-recovering" -XPOST
+```
 
-
-1. Get cluster level consistency timestamp resolved_ts from PD directly.
-
-HTTP API
-
-
-
-<p id="gdcalert13" ><span style="color: red; font-weight: bold">>>>>>  gd2md-html alert: inline image link here (to imgs/image13.png). Store image on your image server and adjust path/filename/extension if necessary. </span><br>(<a href="#">Back to top</a>)(<a href="#gdcalert14">Next alert</a>)<br><span style="color: red; font-weight: bold">>>>>> </span></p>
-
-
-![alt_text](imgs/image13.png "image_tooltip")
-
+2. Get cluster level consistency timestamp resolved_ts from PD directly.
 
 More info, please refer to[ PR](https://github.com/tikv/pd/pull/4716)
 
 
-
-1. Get TiKV level consistency timestamp resolved_ts.
-
-```go
-message GetMinResolvedTsRequest {
-   uint64 store_id = 1;
-}
-
-message GetMinResolvedTsResponse {
-   uint64 store_id = 1;
-   uint64 min_resolved_ts = 2;
-}
+```bash
+curl "172.16.5.31:3279/pd/api/v1/min-resolved-ts"
 ```
 
+3. set max allocate id
 
-
-
-### BR - PD
-
-
-```go
-type Client interface {
-   // SetRecoveryMode for the cluster from BR.
-   SetRecoveryMode(ctx context.Context, mode bool) error
-}
+```bash
+curl "172.16.5.31:3279/pd/api/v1/admin/base-alloc-id" -XPOST -d "10000"
 ```
-
-
 
 ### TiKV - PD
 
 
 ```go
-type Client interface {
-   // TiKV  GetRecoveryMode from PD.
-   GetRecoveryMode(ctx context.Context) bool
-}
+    message IsSnapshotRecoveringRequest {
+        RequestHeader header = 1;
+    }
+
+    message IsSnapshotRecoveringResponse {
+        ResponseHeader header = 1;
+        bool marked = 2;
+    }
+    rpc IsSnapshotRecovering(IsSnapshotRecoveringRequest) returns (IsSnapshotRecoveringResponse) {}
 ```
-
-
 
 ### BR - TiKV
 
-During the BR data recovery RegionRecover phase:
-
-TiKV enters the recovery mode interface.
-
-
+During the BR backup, a admin check op interface to check if region has ongoing interface
 ```go
-message SwitchModeRequest {
-   string pd_addr = 1;
-   SwitchModeRequest request = 2;
-   recover_server = 3;
-   recover_server_port = 4;
-}
-message SwitchModeResponse {
-}
+    message CheckAdminRequest {
+    }
+
+    message CheckAdminResponse {
+        Error error = 1;
+        metapb.Region region = 2;
+        bool has_pending_admin = 3;
+    }
+
+    // CheckPendingAdminOp used for snapshot backup. before we start snapshot for a TiKV. 
+    // we need stop all schedule first and make sure all in-flight schedule has finished.  
+    // this rpc check all pending conf change for leader.
+    rpc CheckPendingAdminOp(CheckAdminRequest) returns (stream CheckAdminResponse) {}
 ```
+
+TiKV enters the recovery mode when pd is marked as Snapshot Recovery.
 
 
 TiKV report region meta interface.
 
 
 ```go
-message RegionMeta {
-   uint64 region_id = 1;
-   uint64 commit_index = 2;
-   uint64 term = 3;
-}
+    message RegionMeta {
+        uint64 region_id = 1;
+        uint64 peer_id = 2;
+        uint64 last_log_term = 3;
+        uint64 last_index = 4;
+        uint64 commit_index = 5;
+        uint64 version = 6;
+        bool tombstone = 7; //reserved, it may be used in late phase for peer check
+        bytes start_key = 8;
+        bytes end_key = 9;
+    }
+
+    // command to store for recover region
+    message RecoverRegionRequest {
+        uint64 region_id = 1;
+        bool as_leader = 2; // force region_id as leader
+        bool tombstone = 3; // set Peer to tombstoned in late phase
+    }
+    // read region meta to ready region meta
+    rpc ReadRegionMeta(ReadRegionMetaRequest) returns (stream RegionMeta) {}
 ```
 
 
@@ -936,12 +896,20 @@ BR RegionRecover command interface
 
 
 ```go
-message RegionRecover {
-   uint64 region_id = 1;
-   bool force_leader = 2; // force the peer to be a leader
-   bool silence = 3; // disable the voter
-   bool tombstone = 4; // set this peer as tombstone
-}
+    // command to store for recover region
+    message RecoverRegionRequest {
+        uint64 region_id = 1;
+        bool as_leader = 2; // force region_id as leader
+        bool tombstone = 3; // set Peer to tombstoned in late phase
+    }
+
+    message RecoverRegionResponse {
+        Error error = 1;
+        uint64 store_id = 2;
+    }
+
+    // execute the recovery command
+    rpc RecoverRegion(stream RecoverRegionRequest) returns (RecoverRegionResponse) {}
 ```
 
 
@@ -949,20 +917,39 @@ During the BR ResolvedData phase, delete data interface:
 
 
 ```go
-message DeleteKVByTsRequest {
-   Context context = 1;
-   string cf = 2;
-   uint64 start_ts = 3;
-}
+    // resolve data by resolved_ts
+    message ResolveKvDataRequest {
+        uint64 resolved_ts = 1;
+    }
 
-message DeleteKVByTsResponse {
-   errorpb.Error error = 1;
-}
+    message ResolveKvDataResponse {
+        Error error = 1;
+        uint64 store_id = 2;
+        uint64 resolved_key_count = 3; // reserved for summary of restore 
+        // cursor of delete key.commit_ts, reserved for progress of restore
+        // progress is (current_commit_ts - resolved_ts) / (backup_ts - resolved_ts) x 100%
+        uint64 current_commit_ts = 4;   
+    }
+
+    // execute delete data from kv db
+    rpc ResolveKvData(ResolveKvDataRequest) returns (stream ResolveKvDataResponse) {}
 ```
 
 
 
 ### BR - restore worker
+
+backup phase
+
+```bash
+backup full --type=aws-ebs --pd "172.16.2.1:2379" -s "s3:/bucket/backup_folder" --volumes-file=backup.json
+```
+
+volume prepare phase
+
+```bash
+br restore full  --type=aws-ebs --prepare --pd "172.16.2.1:2379" -s "s3:///us-west-2/meta/&sk=xx..." --output=topology.json
+```
 
 recovery phase
 
@@ -970,7 +957,7 @@ During the recovery phase, TiDB Operator needs to pass two parameters --pd and -
 
 
 ```bash
-/usr/bin/br recover --pd "172.16.2.1:2379" -resolved_ts=467775486547
+br restore full --type=aws-ebs --pd "172.16.2.1:2379" -s "s3:///us-west-2/meta/&sk=xx..."
 ```
 
 
@@ -982,35 +969,16 @@ During the recovery phase, TiDB Operator needs to pass two parameters --pd and -
 * Backup
 
 
-
-<p id="gdcalert14" ><span style="color: red; font-weight: bold">>>>>>  gd2md-html alert: inline image link here (to imgs/image14.png). Store image on your image server and adjust path/filename/extension if necessary. </span><br>(<a href="#">Back to top</a>)(<a href="#gdcalert15">Next alert</a>)<br><span style="color: red; font-weight: bold">>>>>> </span></p>
-
-
-![alt_text](imgs/image14.png "image_tooltip")
-
-
-
-
-1. TiKV does not configure report_min_resolved_ts_interval, and directly obtains TiKV level resolved_ts from TiKV. 
-2. Failed to stop PD scheduler, try again. If multiple retries fail within some minutes, the entire backup fails, and then stops snapshot and removes metadata.
+1. TiKV does not configure report_min_resolved_ts_interval, backup directly failed backup. 
+2. Failed to stop PD scheduler, try again. If multiple retries fail within some minutes, the entire backup fails, and then stops snapshot and removes metadata. At the same time, delete snapshot already taken.
 3. Snapshot takes too long or failure
 
       In the version, we just simply fail the entire backup. Meanwhile, the snapshot taken shall be deleted since the backup shall be a failure.
 
-
-
 4. If the PD cannot be connected, retry is required, and the retry logic can refer to the existing logic of BR.
-5. Failed to start PD scheduler, try again. If multiple retries fail, the entire backup completed with exception, it shows key log / instruction to the user how to set backup to normal.
+
+
 * Restore
-
-
-
-<p id="gdcalert15" ><span style="color: red; font-weight: bold">>>>>>  gd2md-html alert: inline image link here (to imgs/image15.png). Store image on your image server and adjust path/filename/extension if necessary. </span><br>(<a href="#">Back to top</a>)(<a href="#gdcalert16">Next alert</a>)<br><span style="color: red; font-weight: bold">>>>>> </span></p>
-
-
-![alt_text](imgs/image15.png "image_tooltip")
-
-
 
 
 1. Unable to obtain S3 data due to permissions, fail the restore.
@@ -1023,14 +991,49 @@ During the recovery phase, TiDB Operator needs to pass two parameters --pd and -
 
 ## Backward / Forward Compatibility
 
-Only support v6.0.0 or late
+Only support v6.3.0 or late
 
 
-## Security
+## Security & Privilege
 
 We prefer the IAM role to backup and restore, however, we are able to use the secret key-id way to launch the backup and restore. Here we re-use the TiDB Operator logic to handle the security part.
 
+an extra permission need for EBS backup IAM role:
+```json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "s3:*",
+                "s3-object-lambda:*"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Effect": "Allow",
+            "Action": [
+                "ec2:AttachVolume",
+                "ec2:CreateSnapshot",
+                "ec2:CreateTags",
+                "ec2:CreateVolume",
+                "ec2:DeleteSnapshot",
+                "ec2:DeleteTags",
+                "ec2:DeleteVolume",
+                "ec2:DescribeInstances",
+                "ec2:DescribeSnapshots",
+                "ec2:DescribeTags",
+                "ec2:DescribeVolumes",
+                "ec2:DetachVolume"
+            ],
+            "Resource": "*"
+        }
+    ]
+}
+```
 
+Notice: prefix with ec2 Action is require to do the ebs backup and restore.
 ## Dependencies
 
 [AWS API](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/Welcome.html)
@@ -1049,446 +1052,33 @@ All block issues had been identified. However some part of design may need some 
 
 
 
-* White Box - CI:
+* Transaction consistency
 
-1. Use Linux LVM or ceph to simulate EBS
+1. using the sync-diff-inspector to do a consistency validation, [sync-diff-inspector](https://docs.pingcap.com/tidb/stable/sync-diff-inspector-overview)
 
-2. Data consistency verification
+2. using the tidb-snapshot with checksum to validate consistency
 
-  1. Generate data across multiple TiKV within a single Raft Group
+  1. create a tidbcluster by tidb-operator
 
-  2. Multi Raft Group data is inconsistent
+  2. luanch a tpcc to prepare some data
 
-  3. The transaction data (including the verification of async commit) is inconsistent
+  3. apply a ebs backup yaml, check Commint-Ts
 
-  4. Mix the above scenarios
+  4. using the Commit-Ts to take a session level tidb snapshot
+  5. do database admin checksum
 
-3. The LVM snapshots created contain the above scenario.
+* On-premise backup and restore
 
-4. Develop a set of tools to read region meta and KV DB information from TiKV
+4. setup a enviroment with LVM disk
 
-  1. Maximum applied index per region
+  1. prepare a lvm snapshot script
 
-  2. The minimum start_ts of lock CF in each TiKV, and the maximum commit_ts of commit CF
+  2. add --skip-AWS in tidb-operator backup and restore yaml
 
-  3. Backup start time backup_ts, snapshot completion time snap_ts
-
-5. Verify the correctness of the backup data
-
-All data in TiKV lockCF has a timestamp larger than resolved_ts.
-
-6. Verification of recovered data
-
-  1. Use the tool to check the maximum applied index of all Regions
-
-  2. resolved_ts, compare resolved_ts during backup and resolved_ts after cluster restored
-
-
-
-* Black Box - SQL Validation Method:
-
-Stale Read method for online data verification
-
-Write a script, use the backup resolved_ts, Stale Read the original cluster data, compare with restore the cluster data
-
-More verification methods are added in the implementation phase.
-
-**Feature Breakdown**
-
-
-<table>
-  <tr>
-   <td><strong>User Story</strong>
-   </td>
-   <td><strong>Description</strong>
-   </td>
-   <td><strong>Impact Component</strong>
-   </td>
-   <td><strong>Size</strong>
-   </td>
-   <td><strong>Comment</strong>
-   </td>
-  </tr>
-  <tr>
-   <td>#1
-   </td>
-   <td>Introduce some interfaces among restore worker PD and TiKV
-   </td>
-   <td>PD Client/kvproto
-   </td>
-   <td>~2 point
-   </td>
-   <td>
-   </td>
-  </tr>
-  <tr>
-   <td>#2
-   </td>
-   <td>Define interface between BR and TiKV
-   </td>
-   <td>kvproto
-   </td>
-   <td>~2 point
-   </td>
-   <td>
-   </td>
-  </tr>
-  <tr>
-   <td>#3
-   </td>
-   <td>Introducing a new recovery mode in TiKV.  Maybe some spike is needed.
-   </td>
-   <td>TiKV
-   </td>
-   <td>~XL
-   </td>
-   <td>
-   </td>
-  </tr>
-  <tr>
-   <td>#4
-   </td>
-   <td>Implement BR RegionRecover service and demo it
-   </td>
-   <td>BR/TiKV
-   </td>
-   <td>~2XL
-   </td>
-   <td>
-   </td>
-  </tr>
-  <tr>
-   <td>#5
-   </td>
-   <td>Implement BR ResolvedData function and demo it
-   </td>
-   <td>BR/TiKV
-   </td>
-   <td>~XL
-   </td>
-   <td>
-   </td>
-  </tr>
-  <tr>
-   <td>#6
-   </td>
-   <td>Implement get resolved_ts function
-   </td>
-   <td>TiDB Operator
-   </td>
-   <td>~3 point
-   </td>
-   <td>
-   </td>
-  </tr>
-  <tr>
-   <td>#7
-   </td>
-   <td>Implement stop scheduler and start scheduler function
-   </td>
-   <td>TiDB Operator
-   </td>
-   <td>3~5 point
-   </td>
-   <td>
-   </td>
-  </tr>
-  <tr>
-   <td>#8
-   </td>
-   <td>Adapt PD Recovery (backup and restore Cluster ID and Max Allocated ID)
-   </td>
-   <td>TiDB Operator
-   </td>
-   <td>~2 point
-   </td>
-   <td>
-   </td>
-  </tr>
-  <tr>
-   <td>#9
-   </td>
-   <td>CSI-EBS snapshot function design
-   </td>
-   <td>TiDB Operator
-   </td>
-   <td>~XL
-   </td>
-   <td>
-   </td>
-  </tr>
-  <tr>
-   <td>#10
-   </td>
-   <td>MetaData design
-   </td>
-   <td>TiDB Operator
-   </td>
-   <td>~5 point
-   </td>
-   <td>
-   </td>
-  </tr>
-  <tr>
-   <td>#11
-   </td>
-   <td>CI function design and implementation
-   </td>
-   <td>TiDB Operator/BR/TiKV
-   </td>
-   <td>~2XL
-   </td>
-   <td>
-   </td>
-  </tr>
-  <tr>
-   <td>#12
-   </td>
-   <td>Demo
-   </td>
-   <td>TiDB Operator/BR/TiKV
-   </td>
-   <td>~5 point
-   </td>
-   <td>
-   </td>
-  </tr>
-  <tr>
-   <td>#13
-   </td>
-   <td>Full coverage validation design and test.
-   </td>
-   <td>TiDB Operator/BR/TiKV
-   </td>
-   <td>~3XL
-   </td>
-   <td>
-   </td>
-  </tr>
-</table>
-
-
-Total: 11 XL
-
-Note:
-
-1 point = 1 person/day
-
-XL = 1 person/month
-
-**Glossary and Acronyms**
-
-Raft Group
-
-A Raft Group contains a Region and a raft state machine that drives the data changes of the entire Region. Here we mainly focus on
-
-Main structure descriptions related to: RegionLocalState, RaftLocalState and RaftApplyState
-
-E.g:
-
-
-
-<p id="gdcalert16" ><span style="color: red; font-weight: bold">>>>>>  gd2md-html alert: inline image link here (to imgs/image16.png). Store image on your image server and adjust path/filename/extension if necessary. </span><br>(<a href="#">Back to top</a>)(<a href="#gdcalert17">Next alert</a>)<br><span style="color: red; font-weight: bold">>>>>> </span></p>
-
-
-![alt_text](imgs/image16.png "image_tooltip")
-
-
-The Region objects/instances of Region 4 on Store1, Store 2 and Store 4, the replica/peer and raft state machines contained in the Region are represented as a Raft Group. 
-
-Region
-
-The following protobuf definition is a TiKV Region. We call the objects or instances defined below as Region objects or instances. There is only one Region object with unique id in the one TiKV, and there may be multiple Region objects with the same id from different TiKVs. The collection of these Region objects with the same id is called Region.
-
-
-```
-message Region {
-   uint64 id = 1;
-   // Region key range [start_key, end_key).
-   bytes start_key = 2;
-   bytes end_key = 3;
-   RegionEpoch region_epoch = 4;
-   repeated Peer peers = 5;
-   encryptio@npb.EncryptionMeta encryption_meta = 6;
-}
-```
-
-
-Peer
-
-The following protobuf definition as Peer or Replica
-
-
-```
-message Peer {
-   uint64 id = 1;
-   uint64 store_id = 2;
-   PeerRole role = 3;
-}
-```
-
+  3. change some code in BR for --skip-AWS, run prepare scripts
 
 **Reference**
 
 
-
 1. [TiKV 源码分析](https://pingcap.com/zh/blog/?tag=TiKV%20%26%2328304%3B%26%2330721%3B%26%2335299%3B%26%2326512%3B)
 2. [AWS EBS ](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/AmazonEBS.html)
-
-**Feature Crew**
-
-
-<table>
-  <tr>
-   <td><strong>Role</strong>
-   </td>
-   <td><strong>Name</strong>
-   </td>
-   <td>
-   </td>
-  </tr>
-  <tr>
-   <td>Product Manager (PM)
-   </td>
-   <td>@Albert @Ian Zhai 
-   </td>
-   <td>R/I/C
-   </td>
-  </tr>
-  <tr>
-   <td>Dev Lead
-   </td>
-   <td>@Henry Long @Cheng Luan @Neil Shen 
-   </td>
-   <td>R/C/I
-   </td>
-  </tr>
-  <tr>
-   <td>TiKV
-   </td>
-   <td>@Peng Qu @Wei Liu
-   </td>
-   <td>C/I/V
-   </td>
-  </tr>
-  <tr>
-   <td>PD
-   </td>
-   <td>@Haizhi Geng 
-   </td>
-   <td>C/I
-   </td>
-  </tr>
-  <tr>
-   <td>TiDB Operator
-   </td>
-   <td>@Yingan Xu @Xuecheng Zhang 
-   </td>
-   <td>C/I
-   </td>
-  </tr>
-  <tr>
-   <td>Transaction
-   </td>
-   <td>@Yilin Chen @Rui Xu 
-   </td>
-   <td>C
-   </td>
-  </tr>
-  <tr>
-   <td>Backup & Restore
-   </td>
-   <td>@Juncen Yu @Kennytm Chen @Zak Zhao @Le Wang 
-   </td>
-   <td>C/I/V
-   </td>
-  </tr>
-  <tr>
-   <td>Author
-   </td>
-   <td>@Shawn Yu(Architect) @Ophone Ou @Yingan Xu 
-   </td>
-   <td>C/R/I
-   </td>
-  </tr>
-  <tr>
-   <td>Feature Owner
-   </td>
-   <td>@Ophone Ou 
-   </td>
-   <td>A/V
-   </td>
-  </tr>
-</table>
-
-
-R - Responsible, A - Accountable, C - Consulted, I - Informed, V - Verified, S - Signatory
-
-
-# **Design review**
-
-2022/03/30
-
-Meeting Minutes:
-
-Summary: The feature solution is feasible, but the details need to be clarified (already discussed this with Jay, Qupeng and Bokang on 31/03).
-
-Q1: Why delete the raft log. from Shawn 
-
-Answer: after the applied index in the recovery phase.
-
-region raft log > applied index, delete to speed up recovery. The question is not important any more, since we have a new proposal here.
-
-Q2: Why should the raft log be consistent? form longheng.
-
-Convenient and fast recovery, saving recovery time. Possibly the TiKV startup time is particularly long. Whether it is necessary needs to be further confirmed. AP: Ophone setup already group meeting with Jay and QuPeng – done
-
-Q3: After closing the replica replication, there may be replicas that are being scheduled. from jay
-
-Wait for all tikv copies to apply to the current last index, and then back up from jay
-
-Optional solution: send readindex
-
-We can also check operator status by PD, so that we know the ongoing operator.
-
-Q4: How to deal with restore failover from longheng during restore
-
-Complete failure scenarios - has general description, more detail may come during the coding design.
-
-Q5: The backup process is as short as possible
-
-read index is optional, flush memtable is not considered for the time being.
-
-Q6: How does EBS snapshot ensure data consistency when raft RocksDB and KV RocksDB are on different volumes?
-
-Solution suggested by Jay:
-
-1. Turn off GC first, 
-
-2. get resolved_ts
-
-3.take raft log snapshot
-
-4. kv data snapshot. 
-
-Q7: Backup and restore online business data consistency verification.
-
-See Testing design
-
-2022/02/09
-
-1. Minimal demo plan @Peng Qu @Ophone Ou @Shawn Yu
-
-Based on the current detailed design document, decompose key points, and conduct feasibility verification and demo for these key points. After the key points are clearly decomposed, more people may be required to participate, mainly requiring PD and TiKV skills
-
-2. Organize and verify EBS snapshot related issues Owner: @Ophone Ou
-
-The meeting raised a number of issues that do not currently affect the current programme
-
-1. In the non-stop Split/Merge backup, whether there may be holes between regions from: @Wallace Liu
-
-Need to add a few pictures to explain these scenarios.
-
-2. Use raft log to track the copy of the region or to track the copy through the data of one of the pears, whether it is possible to fall into extremely complex raft logic processing when the raft log is used to track the copy from: @Wallace Liu
-
-3. Whether to stop Split / Merge, and whether to stop from: @Neil Shen
