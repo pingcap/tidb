@@ -243,6 +243,7 @@ func (rc *Client) Init(g glue.Glue, store kv.Storage) error {
 
 func (rc *Client) allocTableIDs(ctx context.Context, tables []*metautil.Table) error {
 	rc.preallocedTableIDs = tidalloc.New(tables)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
 	err := kv.RunInNewTxn(ctx, rc.GetDomain().Store(), true, func(_ context.Context, txn kv.Transaction) error {
 		return rc.preallocedTableIDs.Alloc(meta.NewMeta(txn))
 	})
