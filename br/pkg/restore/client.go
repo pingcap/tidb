@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/config"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
@@ -1765,6 +1766,93 @@ func (rc *Client) ReadStreamMetaByTS(ctx context.Context, shiftedStartTS uint64,
 	return streamBackupMetaFiles.metas, nil
 }
 
+func (rc *Client) StreamingMetaByTS(ctx context.Context, shiftedStartTS uint64, restoreTS uint64) (iter.TryNextor[*backuppb.Metadata], error) {
+	it, err := rc.ReadStreamMetadata(ctx, rc.storage)
+	if err != nil {
+		return nil, err
+	}
+	filtered := iter.FilterOut(it, func(metadata *backuppb.Metadata) bool {
+		return restoreTS < metadata.MinTs || metadata.MaxTs < shiftedStartTS
+	})
+	return filtered, nil
+}
+
+func (rc *Client) ReadStreamMetadata(ctx context.Context, s storage.ExternalStorage) (iter.TryNextor[*backuppb.Metadata], error) {
+	opt := &storage.WalkOption{SubDir: stream.GetStreamBackupMetaPrefix()}
+	names := []string{}
+	err := s.WalkDir(ctx, opt, func(path string, size int64) error {
+		if !strings.HasSuffix(path, ".meta") {
+			return nil
+		}
+		names = append(names, path)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	namesIter := iter.FromSlice(names)
+	readMeta := func(ctx context.Context, name string) (*backuppb.Metadata, error) {
+		f, err := s.ReadFile(ctx, name)
+		if err != nil {
+			return nil, err
+		}
+		meta, err := rc.helper.ParseToMetadata(f)
+		if err != nil {
+			return nil, err
+		}
+		return meta, nil
+	}
+	reader := iter.Transform(namesIter, readMeta,
+		iter.WithChunkSize[string, *backuppb.Metadata](512),
+		iter.WithConcurrency[string, *backuppb.Metadata](128))
+	return reader, nil
+}
+
+func (rc *Client) FilterDataFiles(ms iter.TryNextor[*backuppb.Metadata]) iter.TryNextor[*backuppb.DataFileInfo] {
+	return iter.FlatMap(ms, func(m *backuppb.Metadata) iter.TryNextor[*backuppb.DataFileInfo] {
+		return iter.FlatMap(iter.FromSlice(m.FileGroups), func(g *backuppb.DataFileGroup) iter.TryNextor[*backuppb.DataFileInfo] {
+			return iter.FilterOut(iter.FromSlice(g.DataFilesInfo), func(d *backuppb.DataFileInfo) bool {
+				// Modify the data internally, a little hacky.
+				if m.MetaVersion > backuppb.MetaVersion_V1 {
+					d.Path = g.Path
+				}
+				return d.IsMeta || rc.ShouldFilterOut(d)
+			})
+		})
+	})
+}
+
+// ShouldFilterOut checks whether a file should be filtered out via the current client.
+func (rc *Client) ShouldFilterOut(d *backuppb.DataFileInfo) bool {
+	return d.MinTs > rc.restoreTS ||
+		(d.Cf == stream.WriteCF && d.MaxTs < rc.startTS) ||
+		(d.Cf == stream.DefaultCF && d.MaxTs < rc.shiftStartTS)
+}
+
+type DDLMetaGroup struct {
+	Path      string
+	FileMetas []*backuppb.DataFileInfo
+}
+
+func (rc *Client) FilterMetaFiles(ms iter.TryNextor[*backuppb.Metadata]) iter.TryNextor[DDLMetaGroup] {
+	return iter.FlatMap(ms, func(m *backuppb.Metadata) iter.TryNextor[DDLMetaGroup] {
+		return iter.Map(iter.FromSlice(m.FileGroups), func(g *backuppb.DataFileGroup) DDLMetaGroup {
+			metas := iter.FilterOut(iter.FromSlice(g.DataFilesInfo), func(d *backuppb.DataFileInfo) bool {
+				// Modify the data internally, a little hacky.
+				if m.MetaVersion > backuppb.MetaVersion_V1 {
+					d.Path = g.Path
+				}
+				return !d.IsMeta || rc.ShouldFilterOut(d)
+			})
+			return DDLMetaGroup{
+				Path: g.Path,
+				// NOTE: the metas iterator is pure. No context or cancel needs.
+				FileMetas: iter.CollectAll(context.Background(), metas).Item,
+			}
+		})
+	})
+}
+
 // ReadStreamDataFiles is used for streaming task. collect all meta file by TS.
 func (rc *Client) ReadStreamDataFiles(
 	ctx context.Context,
@@ -1876,21 +1964,20 @@ func (rc *Client) FixIndicesOfTable(ctx context.Context, schema string, table *m
 func (rc *Client) RestoreKVFiles(
 	ctx context.Context,
 	rules map[int64]*RewriteRules,
-	files []*backuppb.DataFileInfo,
+	files iter.TryNextor[*backuppb.DataFileInfo],
 	updateStats func(kvCount uint64, size uint64),
 	onProgress func(),
 ) error {
 	var err error
+	fileCount := 0
 	start := time.Now()
 	defer func() {
 		elapsed := time.Since(start)
 		if err == nil {
 			log.Info("Restore KV files", zap.Duration("take", elapsed))
-			summary.CollectSuccessUnit("files", len(files), elapsed)
+			summary.CollectSuccessUnit("files", fileCount, elapsed)
 		}
 	}()
-
-	log.Debug("start to restore files", zap.Int("files", len(files)))
 
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("Client.RestoreKVFiles", opentracing.ChildOf(span.Context()))
@@ -1931,7 +2018,11 @@ func (rc *Client) RestoreKVFiles(
 			})
 		}
 	}
-	for _, file := range files {
+	for r := files.TryNext(ctx); !r.Finished; r = files.TryNext(ctx) {
+		if r.Err != nil {
+			return err
+		}
+		file := r.Item
 		if file.Type == backuppb.FileType_Delete {
 			// collect delete type file and apply it later.
 			deleteFiles = append(deleteFiles, file)
@@ -2056,6 +2147,24 @@ func SortMetaKVFiles(files []*backuppb.DataFileInfo) []*backuppb.DataFileInfo {
 		return true
 	})
 	return files
+}
+
+func (rc *Client) PrepareDDLFileCache(
+	ctx context.Context,
+	files iter.TryNextor[DDLMetaGroup],
+) ([]*backuppb.DataFileInfo, error) {
+	fs := iter.CollectAll(ctx, files)
+	if fs.Err != nil {
+		return nil, fs.Err
+	}
+
+	dataFileInfos := make([]*backuppb.DataFileInfo, 0)
+	for _, g := range fs.Item {
+		rc.helper.InitCacheEntry(g.Path, len(g.FileMetas))
+		dataFileInfos = append(dataFileInfos, g.FileMetas...)
+	}
+
+	return dataFileInfos, nil
 }
 
 // RestoreMetaKVFiles tries to restore files about meta kv-event from stream-backup.

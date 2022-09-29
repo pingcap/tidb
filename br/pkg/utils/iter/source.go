@@ -1,0 +1,69 @@
+package iter
+
+import (
+	"context"
+
+	"golang.org/x/exp/constraints"
+)
+
+type fromSlice[T any] []T
+
+func (s *fromSlice[T]) TryNext(ctx context.Context) IterResult[T] {
+	if s == nil || len(*s) == 0 {
+		return Done[T]()
+	}
+
+	var item T
+	item, *s = (*s)[0], (*s)[1:]
+	return Emit(item)
+}
+
+// FromSlice creates an iterator from a slice, the iterator would
+func FromSlice[T any](s []T) TryNextor[T] {
+	sa := fromSlice[T](s)
+	return &sa
+}
+
+type ofRange[T constraints.Integer] struct {
+	end          T
+	endExclusive bool
+
+	current T
+}
+
+func (r *ofRange[T]) TryNext(ctx context.Context) IterResult[T] {
+	if r.current > r.end || (r.current == r.end && r.endExclusive) {
+		return Done[T]()
+	}
+
+	result := Emit(r.current)
+	r.current++
+	return result
+}
+
+func OfRange[T constraints.Integer](begin, end T) TryNextor[T] {
+	return &ofRange[T]{
+		end:          end,
+		endExclusive: true,
+
+		current: begin,
+	}
+}
+
+type empty[T any] struct{}
+
+func (empty[T]) TryNext(ctx context.Context) IterResult[T] {
+	return Done[T]()
+}
+
+type failure[T any] struct {
+	error
+}
+
+func (f failure[T]) TryNext(ctx context.Context) IterResult[T] {
+	return Throw[T](f)
+}
+
+func Fail[T any](err error) TryNextor[T] {
+	return failure[T]{error: err}
+}

@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/streamhelper/daemon"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -1123,25 +1124,27 @@ func restoreStream(
 	}
 
 	// read meta by given ts.
-	metas, err := client.ReadStreamMetaByTS(ctx, shiftStartTS, cfg.RestoreTS)
+	metas, err := client.StreamingMetaByTS(ctx, shiftStartTS, cfg.RestoreTS)
 	if err != nil {
 		return errors.Trace(err)
-	}
-	if len(metas) == 0 {
-		log.Info("nothing to restore.")
-		return nil
 	}
 
 	client.SetRestoreRangeTS(cfg.StartTS, cfg.RestoreTS, shiftStartTS)
+	dataFileCount := 0
+	metas = iter.Tap(metas, func(m *backuppb.Metadata) {
+		for _, fg := range m.FileGroups {
+			for _, f := range fg.DataFilesInfo {
+				if !f.IsMeta && !client.ShouldFilterOut(f) {
+					dataFileCount += 1
+				}
+			}
+		}
+	})
 
 	// read data file by given ts.
-	dmlFiles, ddlFiles, err := client.ReadStreamDataFiles(ctx, metas)
+	metaFiles := client.FilterMetaFiles(metas)
 	if err != nil {
 		return errors.Trace(err)
-	}
-	if len(dmlFiles) == 0 && len(ddlFiles) == 0 {
-		log.Info("nothing to restore.")
-		return nil
 	}
 
 	// get full backup meta to generate rewrite rules.
@@ -1173,6 +1176,10 @@ func restoreStream(
 		totalKVCount += kvCount
 		totalSize += size
 	}
+	ddlFiles, err := client.PrepareDDLFileCache(ctx, metaFiles)
+	if err != nil {
+		return err
+	}
 	pm := g.StartProgress(ctx, "Restore Meta Files", int64(len(ddlFiles)), !cfg.LogProgress)
 	if err = withProgress(pm, func(p glue.Progress) error {
 		client.RunGCRowsLoader(ctx)
@@ -1188,7 +1195,9 @@ func restoreStream(
 	}
 	updateRewriteRules(rewriteRules, schemasReplace)
 
-	pd := g.StartProgress(ctx, "Restore KV Files", int64(len(dmlFiles)), !cfg.LogProgress)
+	metas, err = client.StreamingMetaByTS(ctx, shiftStartTS, cfg.RestoreTS)
+	pd := g.StartProgress(ctx, "Restore KV Files", int64(dataFileCount), !cfg.LogProgress)
+	dmlFiles := client.FilterDataFiles(metas)
 	err = withProgress(pd, func(p glue.Progress) error {
 		return client.RestoreKVFiles(ctx, rewriteRules, dmlFiles, updateStats, p.Inc)
 	})
