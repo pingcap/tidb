@@ -5373,9 +5373,25 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 		tblID2table[id], _ = b.is.TableByID(id)
 	}
 	updt.TblColPosInfos, err = buildColumns2Handle(updt.OutputNames(), tblID2Handle, tblID2table, true)
+	if err != nil {
+		return nil, err
+	}
 	updt.PartitionedTable = b.partitionedTable
 	updt.tblID2Table = tblID2table
+	err = updt.buildOnUpdateFKChecks(b.ctx, b.is, tblID2table)
 	return updt, err
+}
+
+// GetUpdateColumnsInfo get the update columns info.
+func GetUpdateColumnsInfo(tblID2Table map[int64]table.Table, tblColPosInfos TblColPosInfoSlice, size int) []*table.Column {
+	colsInfo := make([]*table.Column, size)
+	for _, content := range tblColPosInfos {
+		tbl := tblID2Table[content.TblID]
+		for i, c := range tbl.WritableCols() {
+			colsInfo[content.Start+i] = c
+		}
+	}
+	return colsInfo
 }
 
 type tblUpdateInfo struct {
