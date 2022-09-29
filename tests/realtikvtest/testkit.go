@@ -36,6 +36,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
+	"go.opencensus.io/stats/view"
 	"go.uber.org/goleak"
 )
 
@@ -57,7 +58,6 @@ func RunTestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/internal/retry.newBackoffFn.func1"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/v3.waitRetryBackoff"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
-		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 		goleak.IgnoreTopFunction("google.golang.org/grpc.(*addrConn).resetTransport"),
 		goleak.IgnoreTopFunction("google.golang.org/grpc.(*ccBalancerWrapper).watcher"),
 		goleak.IgnoreTopFunction("google.golang.org/grpc/internal/transport.(*controlBuffer).get"),
@@ -126,6 +126,7 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...mockstore.MockTiKVSt
 		dom.Close()
 		require.NoError(t, store.Close())
 		transaction.PrewriteMaxBackoff.Store(20000)
+		view.Stop()
 	})
 	return store, dom
 }

@@ -3407,8 +3407,8 @@ def go_deps():
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        sum = "h1:p8XInTnkUlLabBT7bDS3aZCeemO6tJ/7b5mHN8WbSIE=",
-        version = "v2.0.1-0.20220913051514-ffaaf7131a8d",
+        sum = "h1:GJNu6XDT8W2Oahh+w/fhb37PNhFr4EZjdehIklZnhU4=",
+        version = "v2.0.1-0.20220921101651-ce9203ef66e9",
     )
     go_repository(
         name = "com_github_tikv_pd_client",
@@ -4072,8 +4072,9 @@ def go_deps():
         name = "io_opencensus_go",
         build_file_proto_mode = "disable_global",
         importpath = "go.opencensus.io",
-        sum = "h1:gqCw0LfLxScz8irSi8exQc7fyQ0fKQU/qnC/X8+V/1M=",
-        version = "v0.23.0",
+        replace = "go.opencensus.io",
+        sum = "h1:+KpZCwn3HdqM4KgXC+ywfGPIC40XIwj6C5p+6mbC9a8=",
+        version = "v0.23.1-0.20220331163232-052120675fac",
     )
     go_repository(
         name = "io_opencensus_go_contrib_exporter_ocagent",
@@ -4452,8 +4453,8 @@ def go_deps():
         name = "org_uber_go_goleak",
         build_file_proto_mode = "disable_global",
         importpath = "go.uber.org/goleak",
-        sum = "h1:gZAh5/EyT/HQwlpkCy6wTpqfH9H8Lz8zbm3dZh+OyzA=",
-        version = "v1.1.12",
+        sum = "h1:xqgm/S+aQvhWFTtR0XK3Jvg7z8kGV8P4X14IzwN3Eqk=",
+        version = "v1.2.0",
     )
     go_repository(
         name = "org_uber_go_multierr",

@@ -254,6 +254,11 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 	if rs == nil {
 		return false, cc.writeOK(ctx)
 	}
+	if result, ok := rs.(*tidbResultSet); ok {
+		if planCacheStmt, ok := prepStmt.(*plannercore.PlanCacheStmt); ok {
+			result.preparedStmt = planCacheStmt
+		}
+	}
 
 	// if the client wants to use cursor
 	// we should hold the ResultSet in PreparedStatement for next stmt_fetch, and only send back ColumnInfo.

@@ -93,6 +93,42 @@ func TestCompactTableNoTiFlashReplica(t *testing.T) {
 	))
 }
 
+func TestCompactTableNoPartition(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+	_, err := tk.Exec("alter table t compact partition p1,p2 tiflash replica;")
+	require.NotNil(t, err)
+	require.Equal(t, "table:t is not a partition table, but user specify partition name list:[p1 p2]", err.Error())
+}
+
+func TestCompactTablePartitionInvalid(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec(`
+	CREATE TABLE t  (
+		id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		fname VARCHAR(25) NOT NULL,
+		lname VARCHAR(25) NOT NULL,
+		store_id INT NOT NULL,
+		department_id INT NOT NULL
+	)
+	PARTITION BY RANGE(id)  (
+		PARTITION p0 VALUES LESS THAN (5),
+		PARTITION p1 VALUES LESS THAN (10),
+		PARTITION p2 VALUES LESS THAN (15),
+		PARTITION p3 VALUES LESS THAN MAXVALUE
+	);
+	`)
+	_, err := tk.Exec("alter table t compact partition p1,p2,p4 tiflash replica;")
+	require.NotNil(t, err)
+	require.Equal(t, "[table:1735]Unknown partition 'p4' in table 't'", err.Error())
+}
+
 func TestCompactTableTooBusy(t *testing.T) {
 	mocker := newCompactRequestMocker(t)
 	mocker.MockFrom(`tiflash0/#1`, func(req *kvrpcpb.CompactRequest) (*kvrpcpb.CompactResponse, error) {
@@ -676,6 +712,136 @@ func TestCompactTableWithTiFlashDown(t *testing.T) {
 	tk.MustQuery(`show warnings;`).Sort().Check(testkit.Rows(
 		"Warning 1105 compact on store tiflash1 failed: Bad network",
 	))
+}
+
+// TestCompactTableWithSpecifiedRangePartition: 1 TiFlash, table has 4 partitions.
+// only compact Partition 1: 3 Partials
+// There will be 3 requests sent in series.
+func TestCompactTableWithSpecifiedRangePartition(t *testing.T) {
+	mocker := newCompactRequestMocker(t)
+	defer mocker.RequireAllHandlersHit()
+	store, do := testkit.CreateMockStoreAndDomain(t, withMockTiFlash(1), mocker.AsOpt())
+	tk := testkit.NewTestKit(t, store)
+
+	mocker.MockFrom(`tiflash0/#1`, func(req *kvrpcpb.CompactRequest) (*kvrpcpb.CompactResponse, error) {
+		tableID := do.MustGetTableID(t, "test", "employees")
+		pid := do.MustGetPartitionAt(t, "test", "employees", 1)
+		require.Empty(t, req.StartKey)
+		require.EqualValues(t, req.PhysicalTableId, pid)
+		require.EqualValues(t, req.LogicalTableId, tableID)
+		return &kvrpcpb.CompactResponse{
+			HasRemaining:      true,
+			CompactedStartKey: []byte{},
+			CompactedEndKey:   []byte{0xCC},
+		}, nil
+	})
+	mocker.MockFrom(`tiflash0/#2`, func(req *kvrpcpb.CompactRequest) (*kvrpcpb.CompactResponse, error) {
+		tableID := do.MustGetTableID(t, "test", "employees")
+		pid := do.MustGetPartitionAt(t, "test", "employees", 1)
+		require.Equal(t, []byte{0xCC}, req.StartKey)
+		require.EqualValues(t, req.PhysicalTableId, pid)
+		require.EqualValues(t, req.LogicalTableId, tableID)
+		return &kvrpcpb.CompactResponse{
+			HasRemaining:      true,
+			CompactedStartKey: []byte{},
+			CompactedEndKey:   []byte{0xFF},
+		}, nil
+	})
+	mocker.MockFrom(`tiflash0/#3`, func(req *kvrpcpb.CompactRequest) (*kvrpcpb.CompactResponse, error) {
+		tableID := do.MustGetTableID(t, "test", "employees")
+		pid := do.MustGetPartitionAt(t, "test", "employees", 1)
+		require.Equal(t, []byte{0xFF}, req.StartKey)
+		require.EqualValues(t, req.PhysicalTableId, pid)
+		require.EqualValues(t, req.LogicalTableId, tableID)
+		return &kvrpcpb.CompactResponse{
+			HasRemaining:      false,
+			CompactedStartKey: []byte{},
+			CompactedEndKey:   []byte{0xFF, 0xAA},
+		}, nil
+	})
+
+	tk.MustExec("use test")
+	tk.MustExec(`
+	CREATE TABLE employees  (
+		id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		fname VARCHAR(25) NOT NULL,
+		lname VARCHAR(25) NOT NULL,
+		store_id INT NOT NULL,
+		department_id INT NOT NULL
+	)
+	PARTITION BY RANGE(id)  (
+		PARTITION p0 VALUES LESS THAN (5),
+		PARTITION p1 VALUES LESS THAN (10),
+		PARTITION p2 VALUES LESS THAN (15),
+		PARTITION p3 VALUES LESS THAN MAXVALUE
+	);
+	`)
+	tk.MustExec(`alter table employees set tiflash replica 1;`)
+	tk.MustExec(`alter table employees compact partition p1 tiflash replica;`)
+	tk.MustQuery(`show warnings;`).Check(testkit.Rows())
+}
+
+// TestCompactTableWithSpecifiedHashPartition: 1 TiFlash, table has 3 partitions (hash partition).
+// only compact p1, p2
+// During compacting the partition, one partition will return failure PhysicalTableNotExist. The remaining partitions should be still compacted.
+func TestCompactTableWithSpecifiedHashPartitionAndOnePartitionFailed(t *testing.T) {
+	mocker := newCompactRequestMocker(t)
+	defer mocker.RequireAllHandlersHit()
+	store, do := testkit.CreateMockStoreAndDomain(t, withMockTiFlash(1), mocker.AsOpt())
+	tk := testkit.NewTestKit(t, store)
+
+	mocker.MockFrom(`tiflash0/#1`, func(req *kvrpcpb.CompactRequest) (*kvrpcpb.CompactResponse, error) {
+		tableID := do.MustGetTableID(t, "test", "employees")
+		pid := do.MustGetPartitionAt(t, "test", "employees", 1)
+		require.Empty(t, req.StartKey)
+		require.EqualValues(t, req.PhysicalTableId, pid)
+		require.EqualValues(t, req.LogicalTableId, tableID)
+		return &kvrpcpb.CompactResponse{
+			HasRemaining:      true,
+			CompactedStartKey: []byte{},
+			CompactedEndKey:   []byte{0xA0},
+		}, nil
+	})
+	mocker.MockFrom(`tiflash0/#2`, func(req *kvrpcpb.CompactRequest) (*kvrpcpb.CompactResponse, error) {
+		tableID := do.MustGetTableID(t, "test", "employees")
+		pid := do.MustGetPartitionAt(t, "test", "employees", 1)
+		require.Equal(t, []byte{0xA0}, req.StartKey)
+		require.EqualValues(t, req.PhysicalTableId, pid)
+		require.EqualValues(t, req.LogicalTableId, tableID)
+		return &kvrpcpb.CompactResponse{
+			Error: &kvrpcpb.CompactError{Error: &kvrpcpb.CompactError_ErrPhysicalTableNotExist{}}, // For example, may be this partition got dropped
+		}, nil
+	})
+	mocker.MockFrom(`tiflash0/#3`, func(req *kvrpcpb.CompactRequest) (*kvrpcpb.CompactResponse, error) {
+		tableID := do.MustGetTableID(t, "test", "employees")
+		pid := do.MustGetPartitionAt(t, "test", "employees", 2)
+		require.Empty(t, req.StartKey)
+		require.EqualValues(t, req.PhysicalTableId, pid)
+		require.EqualValues(t, req.LogicalTableId, tableID)
+		return &kvrpcpb.CompactResponse{
+			HasRemaining:      false,
+			CompactedStartKey: []byte{},
+			CompactedEndKey:   []byte{0xCD},
+		}, nil
+	})
+
+	tk.MustExec("use test")
+	tk.MustExec(`
+	CREATE TABLE employees (
+		id INT NOT NULL,
+		fname VARCHAR(30),
+		lname VARCHAR(30),
+		hired DATE NOT NULL DEFAULT '1970-01-01',
+		separated DATE DEFAULT '9999-12-31',
+		job_code INT,
+		store_id INT
+	)
+	PARTITION BY HASH(store_id)
+	PARTITIONS 3;
+	`)
+	tk.MustExec(`alter table employees set tiflash replica 1;`)
+	tk.MustExec(`alter table employees compact PARTITION p1,p2 tiflash replica;`)
+	tk.MustQuery(`show warnings;`).Check(testkit.Rows())
 }
 
 // TestCompactTableWithTiFlashDownAndRestore: 2 TiFlash stores.

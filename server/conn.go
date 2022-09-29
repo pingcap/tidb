@@ -923,11 +923,6 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshakeRespon
 	// method to match the one configured for that specific user.
 	if (cc.authPlugin != userplugin) || (cc.authPlugin != resp.AuthPlugin) {
 		if resp.Capability&mysql.ClientPluginAuth > 0 {
-			// For compatibility, since most mysql client doesn't support 'tidb_sm3_password',
-			// they can connect to TiDB using a `tidb_sm3_password` user with a 'caching_sha2_password' plugin.
-			if userplugin == mysql.AuthTiDBSM3Password {
-				userplugin = mysql.AuthCachingSha2Password
-			}
 			authData, err := cc.authSwitchRequest(ctx, userplugin)
 			if err != nil {
 				return nil, err
@@ -2238,6 +2233,7 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 	req := rs.NewChunk(cc.chunkAlloc)
 	gotColumnInfo := false
 	firstNext := true
+	validNextCount := 0
 	var start time.Time
 	var stmtDetail *execdetails.StmtExecDetails
 	stmtDetailRaw := ctx.Value(execdetails.StmtExecDetailKey)
@@ -2255,6 +2251,10 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 				if !firstNext {
 					failpoint.Return(firstNext, storeerr.ErrTiFlashServerTimeout)
 				}
+			case "secondNextAndRetConflict":
+				if !firstNext && validNextCount > 1 {
+					failpoint.Return(firstNext, kv.ErrWriteConflict)
+				}
 			}
 		})
 		// Here server.tidbResultSet implements Next method.
@@ -2262,7 +2262,6 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 		if err != nil {
 			return firstNext, err
 		}
-		firstNext = false
 		if !gotColumnInfo {
 			// We need to call Next before we get columns.
 			// Otherwise, we will get incorrect columns info.
@@ -2288,6 +2287,8 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 		if rowCount == 0 {
 			break
 		}
+		validNextCount++
+		firstNext = false
 		reg := trace.StartRegion(ctx, "WriteClientConn")
 		if stmtDetail != nil {
 			start = time.Now()
