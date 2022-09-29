@@ -288,6 +288,7 @@ func (*TableName) resultSet() {}
 
 // Restore implements Node interface.
 func (n *TableName) restoreName(ctx *format.RestoreCtx) {
+	// restore db name
 	if n.Schema.String() != "" {
 		ctx.WriteName(n.Schema.String())
 		ctx.WritePlain(".")
@@ -298,6 +299,7 @@ func (n *TableName) restoreName(ctx *format.RestoreCtx) {
 			ctx.WritePlain(".")
 		}
 	}
+	// restore table name
 	ctx.WriteName(n.Name.String())
 }
 
@@ -1047,6 +1049,9 @@ type CommonTableExpression struct {
 	Query       *SubqueryExpr
 	ColNameList []model.CIStr
 	IsRecursive bool
+
+	// Record how many consumers the current cte has
+	ConsumerCount int
 }
 
 // Restore implements Node interface
