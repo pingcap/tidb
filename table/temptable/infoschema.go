@@ -26,7 +26,9 @@ func AttachLocalTemporaryTableInfoSchema(sctx sessionctx.Context, is infoschema.
 		return is
 	}
 	if se, ok := is.(*infoschema.SessionExtendedInfoSchema); ok {
-		se.LocalTemporaryTables = localTemporaryTables
+		se.LocalTemporaryTablesOnce.Do(func() {
+			se.LocalTemporaryTables = localTemporaryTables
+		})
 		return is
 	}
 
