@@ -57,14 +57,9 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
     <td>In scenarios such as upgrades and configuration changes, TiDB proxy is more business-friendly.</td>
   </tr>
     <tr>
-    <td rowspan="2">PB-level scalability</td>
-    <td>Support dynamic region size adjustment (heterogeneous).</td>
+    <td>PB-level scalability</td>
+    <td><ul><li>Support dynamic region size adjustment (heterogeneous).</li><li>Support huge region size.</li></ul></td>
     <td>For scenarios with fast business growth and a large amount of data.</td>
-  </tr>
-    <tr>
-    <td>Support huge region size.</td>
-    <td>Scenarios with fast business growth and a large amount of data</td>
-  </tr>
   <tr>
     <td>Distributed DDL parallel framework</td>
     <td>Implement a distributed parallel DDL execution framework, so that DDL tasks executed by only one TiDB Owner node can be coordinated and executed by all TiDB nodes in the cluster. Improve the execution speed of DDL tasks and cluster resource utilization.</td>
