@@ -24,7 +24,7 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
   </tr>
   <tr>
     <td>Enhance the plan cache feature.</td>
-    <td><ul><li>Support in-session subquery, expression index, and prepared plan cache for Partition, which expands the usage scenarios of plan cache.</li><li>Support plan cache for general SQL statements in a session to save cache resources, improve the hit rate of general execution plans, and improve SQL performance.</li><li>Support cross-session plan cache, save cache resources, improve the hit rate of general execution plans, and improve SQL performance. In general scenarios, reusing execution plans can improve memory utilization and to achieve higher throughputs.</li></ul></td>
+    <td><ul><li>Support in-session subquery, expression index, and prepared plan cache for partitions, which expands the usage scenarios of plan cache.</li><li>Support plan cache for general SQL statements in a session to save cache resources, improve the hit rate of general execution plans, and improve SQL performance.</li><li>Support cross-session plan cache, save cache resources, improve the hit rate of general execution plans, and improve SQL performance. In general scenarios, reusing execution plans can improve memory utilization and to achieve higher throughputs.</li></ul></td>
   </tr>
   <tr>
     <td>Support dynamic region.</td>
