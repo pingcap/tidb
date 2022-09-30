@@ -32,6 +32,13 @@ go_register_toolchains(
     version = "1.19.3",
 )
 
+go_download_sdk(
+    urls = [
+        "https://dl.google.com/go/{}",
+        "https://gomirrors.org/go/{}",
+    ],
+)
+
 gazelle_dependencies()
 
 http_archive(
