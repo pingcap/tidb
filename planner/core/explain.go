@@ -29,9 +29,11 @@ import (
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
 )
 
 // ExplainInfo implements Plan interface.
@@ -249,7 +251,7 @@ func (p *PhysicalTableReader) ExplainInfo() string {
 }
 
 // ExplainNormalizedInfo implements Plan interface.
-func (p *PhysicalTableReader) ExplainNormalizedInfo() string {
+func (*PhysicalTableReader) ExplainNormalizedInfo() string {
 	return ""
 }
 
@@ -283,7 +285,7 @@ func (p *PhysicalIndexLookUpReader) ExplainInfo() string {
 }
 
 // ExplainInfo implements Plan interface.
-func (p *PhysicalIndexMergeReader) ExplainInfo() string {
+func (*PhysicalIndexMergeReader) ExplainInfo() string {
 	return ""
 }
 
@@ -425,6 +427,7 @@ func (p *PhysicalIndexJoin) explainInfo(normalized bool, isIndexMergeJoin bool) 
 		for i := range p.OuterHashKeys {
 			expr, err := expression.NewFunctionBase(MockContext(), ast.EQ, types.NewFieldType(mysql.TypeLonglong), p.OuterHashKeys[i], p.InnerHashKeys[i])
 			if err != nil {
+				logutil.BgLogger().Warn("fail to NewFunctionBase", zap.Error(err))
 			}
 			exprs = append(exprs, expr)
 		}
@@ -598,7 +601,7 @@ func (p *PhysicalTopN) ExplainNormalizedInfo() string {
 	return buffer.String()
 }
 
-func (p *PhysicalWindow) formatFrameBound(buffer *bytes.Buffer, bound *FrameBound) {
+func (*PhysicalWindow) formatFrameBound(buffer *bytes.Buffer, bound *FrameBound) {
 	if bound.Type == ast.CurrentRow {
 		buffer.WriteString("current row")
 		return
@@ -865,10 +868,10 @@ func (p *LogicalSort) ExplainInfo() string {
 }
 
 // ExplainInfo implements Plan interface.
-func (p *LogicalTopN) ExplainInfo() string {
+func (lt *LogicalTopN) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
-	buffer = explainByItems(buffer, p.ByItems)
-	fmt.Fprintf(buffer, ", offset:%v, count:%v", p.Offset, p.Count)
+	buffer = explainByItems(buffer, lt.ByItems)
+	fmt.Fprintf(buffer, ", offset:%v, count:%v", lt.Offset, lt.Count)
 	return buffer.String()
 }
 
