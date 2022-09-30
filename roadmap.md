@@ -102,7 +102,7 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
 <tbody>
   <tr>
     <td>Backup and restore</td>
-    <td>AWS EBS or GCP persistent disk snapshot-based backup and restore</td>
+    <td>AWS EBS or GCP persistent disk snapshot-based backup and restore.</td>
     <td>Support backup and restore based on AWS EBS or GCP persistent disk snapshots.</td>
   </tr>
   <tr>
