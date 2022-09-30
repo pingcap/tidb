@@ -623,8 +623,9 @@ func (is *SessionTables) schemaTables(schema model.CIStr) *schemaTables {
 // So when a database is dropped, its temporary tables still exist and can be returned by TableByName/TableByID.
 type SessionExtendedInfoSchema struct {
 	InfoSchema
-	LocalTemporaryTables *SessionTables
-	MdlTables            *SessionTables
+	LocalTemporaryTablesOnce sync.Once
+	LocalTemporaryTables     *SessionTables
+	MdlTables                *SessionTables
 }
 
 // TableByName implements InfoSchema.TableByName
