@@ -842,7 +842,7 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 			if i != 0 {
 				buffer.WriteString(" ")
 			}
-			buffer.WriteString(fmt.Sprintf("eq(%v, %v)", pkCol, key))
+			buffer.WriteString(key.String())
 		}
 		buffer.WriteString("]")
 		rangeInfo := buffer.String()
