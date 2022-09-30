@@ -15,63 +15,27 @@
 package util_test
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"fmt"
 	"io"
-	"io/ioutil"
+	"math/big"
 	"net"
 	"net/http"
-	"net/http/httptest"
-	"net/url"
 	"os"
-	"path"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
 )
-
-func respondPathHandler(w http.ResponseWriter, req *http.Request) {
-	io.WriteString(w, `{"path":"`)
-	io.WriteString(w, req.URL.Path)
-	io.WriteString(w, `"}`)
-}
-
-func TestGetJSONInsecure(t *testing.T) {
-	mockServer := httptest.NewServer(http.HandlerFunc(respondPathHandler))
-	defer mockServer.Close()
-
-	u, err := url.Parse(mockServer.URL)
-	require.NoError(t, err)
-
-	tls, err := util.NewTLS("", "", "", u.Host, nil)
-	require.NoError(t, err)
-
-	var result struct{ Path string }
-	err = tls.GetJSON("/aaa", &result)
-	require.NoError(t, err)
-	require.Equal(t, "/aaa", result.Path)
-	err = tls.GetJSON("/bbbb", &result)
-	require.NoError(t, err)
-	require.Equal(t, "/bbbb", result.Path)
-}
-
-func TestGetJSONSecure(t *testing.T) {
-	mockServer := httptest.NewTLSServer(http.HandlerFunc(respondPathHandler))
-	defer mockServer.Close()
-
-	tls := util.NewTLSFromMockServer(mockServer)
-
-	var result struct{ Path string }
-	err := tls.GetJSON("/ccc", &result)
-	require.NoError(t, err)
-	require.Equal(t, "/ccc", result.Path)
-	err = tls.GetJSON("/dddd", &result)
-	require.NoError(t, err)
-	require.Equal(t, "/dddd", result.Path)
-}
 
 func TestInvalidTLS(t *testing.T) {
 	tempDir := t.TempDir()
@@ -80,7 +44,7 @@ func TestInvalidTLS(t *testing.T) {
 	_, err := util.NewTLS(caPath, "", "", "localhost", nil)
 	require.Regexp(t, "could not read ca certificate:.*", err.Error())
 
-	err = ioutil.WriteFile(caPath, []byte("invalid ca content"), 0644)
+	err = os.WriteFile(caPath, []byte("invalid ca content"), 0644)
 	require.NoError(t, err)
 	_, err = util.NewTLS(caPath, "", "", "localhost", nil)
 	require.Regexp(t, "failed to append ca certs", err.Error())
@@ -90,36 +54,27 @@ func TestInvalidTLS(t *testing.T) {
 	_, err = util.NewTLS(caPath, certPath, keyPath, "localhost", nil)
 	require.Regexp(t, "could not load client key pair: open.*", err.Error())
 
-	err = ioutil.WriteFile(certPath, []byte("invalid cert content"), 0644)
+	err = os.WriteFile(certPath, []byte("invalid cert content"), 0644)
 	require.NoError(t, err)
-	err = ioutil.WriteFile(keyPath, []byte("invalid key content"), 0600)
+	err = os.WriteFile(keyPath, []byte("invalid key content"), 0600)
 	require.NoError(t, err)
 	_, err = util.NewTLS(caPath, certPath, keyPath, "localhost", nil)
 	require.Regexp(t, "could not load client key pair: tls.*", err.Error())
 }
 
-func TestCheckCN(t *testing.T) {
-	dir, err := os.Getwd()
-	require.NoError(t, err)
+func TestVerifyCommonNameAndRotate(t *testing.T) {
+	caData, certs, keys := generateCerts(t, []string{"server", "client1", "client2"})
+	serverCert, serverKey := certs[0], keys[0]
+	client1Cert, client1Key := certs[1], keys[1]
+	client2Cert, client2Key := certs[2], keys[2]
 
-	dir = path.Join(dir, "tls_test")
-	caPath, certPath, keyPath := getTestCertFile(dir, "server")
 	// only allow client1 to visit
-	serverTLS, err := util.ToTLSConfigWithVerify(caPath, certPath, keyPath, []string{"client1"})
+	serverTLS, err := util.NewTLSConfig(
+		util.WithCAContent(caData),
+		util.WithCertAndKeyContent(serverCert, serverKey),
+		util.WithVerifyCommonName([]string{"client1"}),
+	)
 	require.NoError(t, err)
-
-	caPath1, certPath1, keyPath1 := getTestCertFile(dir, "client1")
-	caData, certData, keyData := loadTLSContent(t, caPath1, certPath1, keyPath1)
-	clientTLS1, err := util.ToTLSConfigWithVerifyByRawbytes(caData, certData, keyData, []string{})
-	require.NoError(t, err)
-
-	_, err = util.ToTLSConfigWithVerifyByRawbytes(caData, []byte{}, []byte{}, []string{})
-	require.NoError(t, err)
-
-	caPath2, certPath2, keyPath2 := getTestCertFile(dir, "client2")
-	clientTLS2, err := util.ToTLSConfigWithVerify(caPath2, certPath2, keyPath2, nil)
-	require.NoError(t, err)
-
 	port := 9292
 	url := fmt.Sprintf("https://127.0.0.1:%d", port)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -129,16 +84,114 @@ func TestCheckCN(t *testing.T) {
 		server.Close()
 	}()
 
+	clientTLS1, err := util.NewTLSConfig(
+		util.WithCAContent(caData),
+		util.WithCertAndKeyContent(client1Cert, client1Key),
+	)
+	require.NoError(t, err)
+	resp, err := util.ClientWithTLS(clientTLS1).Get(url)
+	require.NoError(t, err)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, "This an example server", string(body))
+	require.NoError(t, resp.Body.Close())
+
+	// client2 can't visit server
+	dir := t.TempDir()
+	certPath := filepath.Join(dir, "client.pem")
+	keyPath := filepath.Join(dir, "client.key")
+	err = os.WriteFile(certPath, client2Cert, 0600)
+	require.NoError(t, err)
+	err = os.WriteFile(keyPath, client2Key, 0600)
+	require.NoError(t, err)
+
+	clientTLS2, err := util.NewTLSConfig(
+		util.WithCAContent(caData),
+		util.WithCertAndKeyPath(certPath, keyPath),
+	)
+	require.NoError(t, err)
+	client2 := util.ClientWithTLS(clientTLS2)
+	resp, err = client2.Get(url)
+	require.ErrorContains(t, err, "tls: bad certificate")
+	if resp != nil {
+		require.NoError(t, resp.Body.Close())
+	}
+
+	// test certificate rotation
+	err = os.WriteFile(certPath, client1Cert, 0600)
+	require.NoError(t, err)
+	err = os.WriteFile(keyPath, client1Key, 0600)
+	require.NoError(t, err)
+
+	resp, err = client2.Get(url)
+	require.NoError(t, err)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, "This an example server", string(body))
+	require.NoError(t, resp.Body.Close())
+}
+
+func TestCA(t *testing.T) {
+	caData, certs, keys := generateCerts(t, []string{"server", "client"})
+	serverCert, serverKey := certs[0], keys[0]
+	clientCert, clientKey := certs[1], keys[1]
+
+	caData2, _, _ := generateCerts(t, nil)
+
+	serverTLS, err := util.NewTLSConfig(
+		util.WithCAContent(caData),
+		util.WithCertAndKeyContent(serverCert, serverKey),
+	)
+	require.NoError(t, err)
+	port := 9293
+	url := fmt.Sprintf("https://127.0.0.1:%d", port)
+	ctx, cancel := context.WithCancel(context.Background())
+	server := runServer(ctx, serverTLS, port, t)
+	defer func() {
+		cancel()
+		server.Close()
+	}()
+
+	// test only CA
+	clientTLS1, err := util.NewTLSConfig(
+		util.WithCAContent(caData),
+	)
+	require.NoError(t, err)
 	resp, err := util.ClientWithTLS(clientTLS1).Get(url)
 	require.NoError(t, err)
 	defer resp.Body.Close()
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	require.Equal(t, "This an example server", string(body))
 
-	// client2 can't visit server
+	// test without CA
+	clientTLS2, err := util.NewTLSConfig(
+		util.WithCertAndKeyContent(clientCert, clientKey),
+	)
+	require.NoError(t, err)
+	// inject CA to imitate our generated CA is a trusted CA
+	clientTLS2.RootCAs = clientTLS1.RootCAs
 	resp, err = util.ClientWithTLS(clientTLS2).Get(url)
-	require.Regexp(t, ".*tls: bad certificate", err.Error())
+	require.NoError(t, err)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, "This an example server", string(body))
+	require.NoError(t, resp.Body.Close())
+
+	// test wrong CA should fail
+	clientTLS3, err := util.NewTLSConfig(
+		util.WithCAContent(caData2),
+	)
+	require.NoError(t, err)
+	// inject CA to imitate our generated CA is a trusted CA
+	certPool := x509.NewCertPool()
+	ok := certPool.AppendCertsFromPEM(caData)
+	require.True(t, ok)
+	ok = certPool.AppendCertsFromPEM(caData2)
+	require.True(t, ok)
+	clientTLS3.RootCAs = certPool
+	resp, err = util.ClientWithTLS(clientTLS3).Get(url)
+	require.ErrorContains(t, err, "different CA is used")
 	if resp != nil {
 		err = resp.Body.Close()
 		require.NoError(t, err)
@@ -164,20 +217,81 @@ func runServer(ctx context.Context, tlsCfg *tls.Config, port int, t *testing.T) 
 	return server
 }
 
-func getTestCertFile(dir, role string) (string, string, string) {
-	return path.Join(dir, "ca.pem"), path.Join(dir, fmt.Sprintf("%s.pem", role)), path.Join(dir, fmt.Sprintf("%s.key", role))
-}
+// generateCerts returns the PEM contents of a CA certificate and some certificates and private keys per Common Name in
+// commonNames.
+// thanks to https://shaneutt.com/blog/golang-ca-and-signed-cert-go/.
+func generateCerts(t *testing.T, commonNames []string) (caCert []byte, certs [][]byte, keys [][]byte) {
+	caPrivKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	ca := &x509.Certificate{
+		SerialNumber: big.NewInt(2019),
+		Subject: pkix.Name{
+			Organization: []string{"test"},
+		},
+		NotBefore:             time.Now(),
+		NotAfter:              time.Now().AddDate(10, 0, 0),
+		IsCA:                  true,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		BasicConstraintsValid: true,
+	}
 
-func loadTLSContent(t *testing.T, caPath, certPath, keyPath string) (caData, certData, keyData []byte) {
-	// NOTE we make sure the file exists,so we don't need to check the error
-	var err error
-	caData, err = ioutil.ReadFile(caPath)
+	caBytes, err := x509.CreateCertificate(rand.Reader, ca, ca, &caPrivKey.PublicKey, caPrivKey)
 	require.NoError(t, err)
 
-	certData, err = ioutil.ReadFile(certPath)
+	caPEM := new(bytes.Buffer)
+	err = pem.Encode(caPEM, &pem.Block{
+		Type:  "CERTIFICATE",
+		Bytes: caBytes,
+	})
 	require.NoError(t, err)
 
-	keyData, err = ioutil.ReadFile(keyPath)
+	caPrivKeyPEM := new(bytes.Buffer)
+	err = pem.Encode(caPrivKeyPEM, &pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: x509.MarshalPKCS1PrivateKey(caPrivKey),
+	})
 	require.NoError(t, err)
-	return
+
+	caBytes = caPEM.Bytes()
+
+	for _, cn := range commonNames {
+		cert := &x509.Certificate{
+			SerialNumber: big.NewInt(1658),
+			Subject: pkix.Name{
+				Organization: []string{"test"},
+				CommonName:   cn,
+			},
+			IPAddresses:  []net.IP{net.IPv4(127, 0, 0, 1), net.IPv6loopback},
+			NotBefore:    time.Now(),
+			NotAfter:     time.Now().AddDate(10, 0, 0),
+			SubjectKeyId: []byte{1, 2, 3, 4, 6},
+			ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
+			KeyUsage:     x509.KeyUsageDigitalSignature,
+		}
+
+		certPrivKey, err2 := rsa.GenerateKey(rand.Reader, 4096)
+		require.NoError(t, err2)
+
+		certBytes, err2 := x509.CreateCertificate(rand.Reader, cert, ca, &certPrivKey.PublicKey, caPrivKey)
+		require.NoError(t, err2)
+
+		certPEM := new(bytes.Buffer)
+		err2 = pem.Encode(certPEM, &pem.Block{
+			Type:  "CERTIFICATE",
+			Bytes: certBytes,
+		})
+		require.NoError(t, err2)
+
+		certPrivKeyPEM := new(bytes.Buffer)
+		err2 = pem.Encode(certPrivKeyPEM, &pem.Block{
+			Type:  "RSA PRIVATE KEY",
+			Bytes: x509.MarshalPKCS1PrivateKey(certPrivKey),
+		})
+		require.NoError(t, err2)
+		certs = append(certs, certPEM.Bytes())
+		keys = append(keys, certPrivKeyPEM.Bytes())
+	}
+
+	return caBytes, certs, keys
 }
