@@ -385,26 +385,32 @@ const (
 type CompactTableStmt struct {
 	stmtNode
 
-	Table       *TableName
-	ReplicaKind CompactReplicaKind
+	Table          *TableName
+	PartitionNames []model.CIStr
+	ReplicaKind    CompactReplicaKind
 }
 
 // Restore implements Node interface.
 func (n *CompactTableStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("ALTER TABLE ")
-	if err := n.Table.Restore(ctx); err != nil {
-		return errors.Annotate(err, "An error occurred while add table")
-	}
+	n.Table.restoreName(ctx)
 
-	if n.ReplicaKind == CompactReplicaKindAll {
-		ctx.WriteKeyWord(" COMPACT")
-	} else {
+	ctx.WriteKeyWord(" COMPACT")
+	if len(n.PartitionNames) != 0 {
+		ctx.WriteKeyWord(" PARTITION ")
+		for i, partition := range n.PartitionNames {
+			if i != 0 {
+				ctx.WritePlain(",")
+			}
+			ctx.WriteName(partition.O)
+		}
+	}
+	if n.ReplicaKind != CompactReplicaKindAll {
+		ctx.WriteKeyWord(" ")
 		// Note: There is only TiFlash replica available now. TiKV will be added later.
-		ctx.WriteKeyWord(" COMPACT ")
 		ctx.WriteKeyWord(string(n.ReplicaKind))
 		ctx.WriteKeyWord(" REPLICA")
 	}
-
 	return nil
 }
 
@@ -3571,7 +3577,7 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 	}
 	// Hints without args except query block.
 	switch n.HintName.L {
-	case "hash_agg", "stream_agg", "agg_to_cop", "read_consistent_replica", "no_index_merge", "qb_name", "ignore_plan_cache", "limit_to_cop", "straight_join", "merge":
+	case "hash_agg", "stream_agg", "agg_to_cop", "read_consistent_replica", "no_index_merge", "qb_name", "ignore_plan_cache", "limit_to_cop", "straight_join", "merge", "no_decorrelate":
 		ctx.WritePlain(")")
 		return nil
 	}

@@ -593,12 +593,18 @@ func (d *ddl) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt) (er
 		}
 		return infoschema.ErrDatabaseDropExists.GenWithStackByArgs(stmt.Name)
 	}
+	fkCheck := ctx.GetSessionVars().ForeignKeyChecks
+	err = checkDatabaseHasForeignKeyReferred(is, old.Name, fkCheck)
+	if err != nil {
+		return err
+	}
 	job := &model.Job{
 		SchemaID:    old.ID,
 		SchemaName:  old.Name.L,
 		SchemaState: old.State,
 		Type:        model.ActionDropSchema,
 		BinlogInfo:  &model.HistoryInfo{},
+		Args:        []interface{}{fkCheck},
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -4809,10 +4815,6 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 		return infoschema.ErrColumnExists.GenWithStackByArgs(newColName)
 	}
 
-	if fkInfo := GetColumnForeignKeyInfo(oldColName.L, tbl.Meta().ForeignKeys); fkInfo != nil {
-		return dbterror.ErrFKIncompatibleColumns.GenWithStackByArgs(oldColName, fkInfo.Name)
-	}
-
 	// Check generated expression.
 	for _, col := range allCols {
 		if col.GeneratedExpr == nil {
@@ -6198,16 +6200,21 @@ func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName mode
 		return infoschema.ErrCannotAddForeign
 	}
 
-	// Check the uniqueness of the FK.
-	for _, fk := range t.Meta().ForeignKeys {
-		if fk.Name.L == fkName.L {
-			return dbterror.ErrFkDupName.GenWithStackByArgs(fkName.O)
-		}
+	if fkName.L == "" {
+		fkName = model.NewCIStr(fmt.Sprintf("fk_%d", t.Meta().MaxForeignKeyID+1))
 	}
-
+	err = checkFKDupName(t.Meta(), fkName)
+	if err != nil {
+		return err
+	}
 	fkInfo, err := buildFKInfo(ctx, fkName, keys, refer, t.Cols())
 	if err != nil {
 		return errors.Trace(err)
+	}
+	fkCheck := ctx.GetSessionVars().ForeignKeyChecks
+	err = checkAddForeignKeyValid(is, schema.Name.L, t.Meta(), fkInfo, fkCheck)
+	if err != nil {
+		return err
 	}
 
 	job := &model.Job{
@@ -6217,7 +6224,7 @@ func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName mode
 		TableName:  t.Meta().Name.L,
 		Type:       model.ActionAddForeignKey,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{fkInfo},
+		Args:       []interface{}{fkInfo, fkCheck},
 	}
 
 	err = d.DoDDLJob(ctx, job)
