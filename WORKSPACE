@@ -33,9 +33,10 @@ go_register_toolchains(
 )
 
 go_download_sdk(
+    name = "tidb_sdk",
     urls = [
-        "https://dl.google.com/go/{}",
         "https://gomirrors.org/go/{}",
+        "https://dl.google.com/go/{}",
     ],
 )
 
