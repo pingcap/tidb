@@ -1698,7 +1698,7 @@ func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAn
 			j++
 		}
 	}
-	if nextColRange != nil {
+	if len(nextColRange) > 0 {
 		var fallback bool
 		ranges, fallback = ranger.AppendRanges2PointRanges(ranges, nextColRange, rangeMaxSize)
 		if fallback {
