@@ -1245,7 +1245,7 @@ func (p *BatchPointGetPlan) GetPlanCost(taskType property.TaskType, option *Plan
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
 		return p.planCost, nil
 	}
-	if p.ctx.GetSessionVars().CostModelVersion == modelVer2 {
+	if p.ctx != nil && p.ctx.GetSessionVars() != nil && p.ctx.GetSessionVars().CostModelVersion == modelVer2 {
 		return p.getPlanCostVer2(taskType, option)
 	}
 	p.planCost = p.GetCost(option.tracer)
@@ -1296,7 +1296,7 @@ func (p *PointGetPlan) GetPlanCost(taskType property.TaskType, option *PlanCostO
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
 		return p.planCost, nil
 	}
-	if p.ctx.GetSessionVars().CostModelVersion == modelVer2 {
+	if p.ctx != nil && p.ctx.GetSessionVars() != nil && p.ctx.GetSessionVars().CostModelVersion == modelVer2 {
 		return p.getPlanCostVer2(taskType, option)
 	}
 	p.planCost = p.GetCost(option.tracer)
