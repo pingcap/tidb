@@ -507,6 +507,47 @@ func (p *PhysicalExchangeReceiver) getPlanCostVer2(taskType property.TaskType, o
 	return p.planCost, nil
 }
 
+// getPlanCostVer2 returns the plan-cost of this sub-plan, which is:
+// plan-cost = seek-cost + net-cost
+func (p *PointGetPlan) getPlanCostVer2(taskType property.TaskType, _ *PlanCostOption) (float64, error) {
+	if p.accessCols == nil { // from fast plan code path
+		p.planCost = 0
+		p.planCostInit = true
+		return 0, nil
+	}
+	rowSize := getAvgRowSize(p.stats, p.schema)
+	netFactor := getTaskNetFactor(p, taskType)
+	seekFactor := getTaskSeekFactor(p, taskType)
+
+	netCost := netCostVer2(1, rowSize, netFactor)
+	seekCost := 1 * seekFactor / 20 // 20 times faster than general request
+
+	p.planCost = netCost + seekCost
+	p.planCostInit = true
+	return p.planCost, nil
+}
+
+// getPlanCostVer2 returns the plan-cost of this sub-plan, which is:
+// plan-cost = seek-cost + net-cost
+func (p *BatchPointGetPlan) getPlanCostVer2(taskType property.TaskType, option *PlanCostOption) (float64, error) {
+	if p.accessCols == nil { // from fast plan code path
+		p.planCost = 0
+		p.planCostInit = true
+		return 0, nil
+	}
+	rows := getCardinality(p, option.CostFlag)
+	rowSize := getAvgRowSize(p.stats, p.schema)
+	netFactor := getTaskNetFactor(p, taskType)
+	seekFactor := getTaskSeekFactor(p, taskType)
+
+	netCost := netCostVer2(rows, rowSize, netFactor)
+	seekCost := 1 * seekFactor / 20 // in one batch
+
+	p.planCost = netCost + seekCost
+	p.planCostInit = true
+	return p.planCost, nil
+}
+
 func scanCostVer2(rows, rowSize, scanFactor float64) float64 {
 	// log2 from experiments
 	return rows * math.Log2(math.Max(1, rowSize)) * scanFactor

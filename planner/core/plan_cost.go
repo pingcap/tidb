@@ -1240,10 +1240,13 @@ func (p *BatchPointGetPlan) GetCost(opt *physicalOptimizeOp) float64 {
 }
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *BatchPointGetPlan) GetPlanCost(_ property.TaskType, option *PlanCostOption) (float64, error) {
+func (p *BatchPointGetPlan) GetPlanCost(taskType property.TaskType, option *PlanCostOption) (float64, error) {
 	costFlag := option.CostFlag
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
 		return p.planCost, nil
+	}
+	if p.ctx.GetSessionVars().CostModelVersion == modelVer2 {
+		return p.getPlanCostVer2(taskType, option)
 	}
 	p.planCost = p.GetCost(option.tracer)
 	p.planCostInit = true
@@ -1288,10 +1291,13 @@ func (p *PointGetPlan) GetCost(opt *physicalOptimizeOp) float64 {
 }
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PointGetPlan) GetPlanCost(_ property.TaskType, option *PlanCostOption) (float64, error) {
+func (p *PointGetPlan) GetPlanCost(taskType property.TaskType, option *PlanCostOption) (float64, error) {
 	costFlag := option.CostFlag
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
 		return p.planCost, nil
+	}
+	if p.ctx.GetSessionVars().CostModelVersion == modelVer2 {
+		return p.getPlanCostVer2(taskType, option)
 	}
 	p.planCost = p.GetCost(option.tracer)
 	p.planCostInit = true
@@ -1335,18 +1341,16 @@ func (p *PhysicalExchangeReceiver) GetPlanCost(taskType property.TaskType, optio
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
 		return p.planCost, nil
 	}
+	if p.ctx.GetSessionVars().CostModelVersion == modelVer2 {
+		return p.getPlanCostVer2(taskType, option)
+	}
 	childCost, err := p.children[0].GetPlanCost(taskType, option)
 	if err != nil {
 		return 0, err
 	}
 	p.planCost = childCost
 	// accumulate net cost
-	if p.ctx.GetSessionVars().CostModelVersion == modelVer1 {
-		p.planCost += getCardinality(p.children[0], costFlag) * p.ctx.GetSessionVars().GetNetworkFactor(nil)
-	} else { // to avoid regression, only consider row-size on model ver2
-		rowSize := getTblStats(p.children[0]).GetAvgRowSize(p.ctx, p.children[0].Schema().Columns, false, false)
-		p.planCost += getCardinality(p.children[0], costFlag) * rowSize * p.ctx.GetSessionVars().GetNetworkFactor(nil)
-	}
+	p.planCost += getCardinality(p.children[0], costFlag) * p.ctx.GetSessionVars().GetNetworkFactor(nil)
 	p.planCostInit = true
 	return p.planCost, nil
 }
