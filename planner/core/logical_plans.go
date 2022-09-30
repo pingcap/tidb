@@ -16,6 +16,7 @@ package core
 
 import (
 	"math"
+	"unsafe"
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -33,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/size"
 	"go.uber.org/zap"
 )
 
@@ -1882,9 +1884,10 @@ type ShowContents struct {
 	CountWarningsOrErrors bool // Used for showing count(*) warnings | errors
 
 	Full        bool
-	IfNotExists bool // Used for `show create database if not exists`.
-	GlobalScope bool // Used by show variables.
-	Extended    bool // Used for `show extended columns from ...`
+	IfNotExists bool       // Used for `show create database if not exists`.
+	GlobalScope bool       // Used by show variables.
+	Extended    bool       // Used for `show extended columns from ...`
+	Limit       *ast.Limit // Used for limit Result Set row number.
 }
 
 // LogicalShow represents a show plan.
@@ -1926,12 +1929,38 @@ type CTEClass struct {
 	ColumnMap          map[string]*expression.Column
 }
 
+const emptyCTEClassSize = int64(unsafe.Sizeof(CTEClass{}))
+
+// MemoryUsage return the memory usage of CTEClass
+func (cc *CTEClass) MemoryUsage() (sum int64) {
+	if cc == nil {
+		return
+	}
+
+	sum = emptyCTEClassSize
+	if cc.seedPartPhysicalPlan != nil {
+		sum += cc.seedPartPhysicalPlan.MemoryUsage()
+	}
+	if cc.recursivePartPhysicalPlan != nil {
+		sum += cc.recursivePartPhysicalPlan.MemoryUsage()
+	}
+
+	for _, expr := range cc.pushDownPredicates {
+		sum += expr.MemoryUsage()
+	}
+	for key, val := range cc.ColumnMap {
+		sum += size.SizeOfString + int64(len(key)) + size.SizeOfPointer + val.MemoryUsage()
+	}
+	return
+}
+
 // LogicalCTE is for CTE.
 type LogicalCTE struct {
 	logicalSchemaProducer
 
 	cte            *CTEClass
 	cteAsName      model.CIStr
+	cteName        model.CIStr
 	seedStat       *property.StatsInfo
 	isOuterMostCTE bool
 }
