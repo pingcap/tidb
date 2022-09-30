@@ -367,6 +367,8 @@ type Update struct {
 	PartitionedTable []table.PartitionedTable
 
 	tblID2Table map[int64]table.Table
+
+	FKChecks map[int64][]*FKCheck
 }
 
 // Delete represents a delete plan.
@@ -499,8 +501,9 @@ type SplitRegionStatus struct {
 type CompactTable struct {
 	baseSchemaProducer
 
-	ReplicaKind ast.CompactReplicaKind
-	TableInfo   *model.TableInfo
+	ReplicaKind    ast.CompactReplicaKind
+	TableInfo      *model.TableInfo
+	PartitionNames []model.CIStr
 }
 
 // DDL represents a DDL statement plan.
