@@ -1721,7 +1721,7 @@ func TestInvisibleIndex(t *testing.T) {
 	tk.MustExec("admin check index t i_a")
 }
 
-// for issue #14822
+// for issue #14822 and #38258
 func TestIndexJoinTableRange(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1730,6 +1730,8 @@ func TestIndexJoinTableRange(t *testing.T) {
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(a int, b int, primary key (a), key idx_t1_b (b))")
 	tk.MustExec("create table t2(a int, b int, primary key (a), key idx_t1_b (b))")
+	tk.MustExec("create table t3(a int, b int, c int)")
+	tk.MustExec("create table t4(a int, b int, c int, primary key (a, b) clustered)")
 
 	var input []string
 	var output []struct {
