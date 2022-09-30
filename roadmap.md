@@ -18,7 +18,7 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
 </thead>
 <tbody>
   <tr>
-    <td rowspan="3">Support JSON</td>
+    <td rowspan="3">JSON</td>
     <td>Support JSON function.</td>
     <td>In business scenarios that require flexible schema definitions, the application can use JSON to store information for ODS, transaction indicators, commodities, game characters, and props.</td>
   </tr>
@@ -46,12 +46,12 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
     <td>This feature enables automatic data cleanup in limited data archiving scenarios.</td>
   </tr>
   <tr>
-    <td>TiFlash kernel optimization</td>
+    <td>Hybrid Transactional and Analytical Processing (HTAP)</td>
     <td><ul><li>FastScan provides weak consistency but faster table scan capability.</li><li>Further optimize the join order, shuffle, and exchange algorithms to improve computing efficiency and boost performance for complex queries.</li><li>Add a fine-grained data sharding mechanism to optimize the <code>COUNT(DISTINCT)</code> function and high cardinality aggregation.</li></ul></td>
     <td>Improve the basic computing capability of TiFlash, and optimize the performance and reliability of the underlying algorithms of the columnar storage and MPP engine.</td>
   </tr>
   <tr>
-    <td>TiDB proxy</td>
+    <td>Proxy</td>
     <td>Implement automatic load balancing so that upgrading a cluster or modifying configurations does not affect the application. After scaling out or scaling in the cluster, the application can automatically rebalance the connection without reconnecting.</td>
     <td>In scenarios such as upgrades and configuration changes, TiDB proxy is more business-friendly.</td>
   </tr>
@@ -60,7 +60,7 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
     <td><ul><li>Support dynamic region size adjustment (heterogeneous).</li><li>Support huge region size.</li></ul></td>
     <td>For scenarios with fast business growth and a large amount of data.</td>
   <tr>
-    <td>Distributed DDL parallel framework</td>
+    <td>SQL</td>
     <td>Implement a distributed parallel DDL execution framework, so that DDL tasks executed by only one TiDB Owner node can be coordinated and executed by all TiDB nodes in the cluster. Improve the execution speed of DDL tasks and cluster resource utilization.</td>
     <td>By converting the execution of DDL tasks to distributed mode, this feature accelerates the execution speed of DDL tasks and improves the utilization of computing resources in the entire cluster. At present, DDL tasks that need to improve the speed include large table indexing and lossy column type modification tasks.</td>
   </tr>
@@ -70,12 +70,12 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
     <td>Non-prepared plan cache. Improve real-time and throughputs of OLTP in general scenarios.</td>
   </tr>
   <tr>
-    <td>SQL blocklist</td>
+    <td>Maintenance</td>
     <td>Support a rule-based SQL blocklist mechanism.</td>
     <td>In multi-service aggregation scenarios, provide SQL management and control capabilities, and improve cluster stability by prohibiting high-resource-consuming SQL statements.</td>
   </tr>
   <tr>
-    <td>Resource management</td>
+    <td>Scalability & Stability</td>
     <td>Provide a basic resource management and control framework to effectively control the resource squeeze of background tasks on front-end tasks (user operations), and improve cluster stability.</td>
     <td>Refine resource management in the multi-service aggregation scenario.</td>
   </tr>
