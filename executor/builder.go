@@ -1644,12 +1644,6 @@ func (b *executorBuilder) buildProjection(v *plannercore.PhysicalProjection) Exe
 	if int64(v.StatsCount()) < int64(b.ctx.GetSessionVars().MaxChunkSize) {
 		e.numWorkers = 0
 	}
-
-	// Use un-parallel projection for query that write on memdb to avoid data race.
-	// See also https://github.com/pingcap/tidb/issues/26832
-	if b.inUpdateStmt || b.inDeleteStmt || b.inInsertStmt || b.hasLock {
-		e.numWorkers = 0
-	}
 	return e
 }
 
