@@ -18,6 +18,21 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
 </thead>
 <tbody>
   <tr>
+    <td>PB-level scalability</td>
+    <td><ul><li>Support dynamic region size adjustment (heterogeneous).</li><li>Support huge region size.</li></ul></td>
+    <td>For scenarios with fast business growth and a large amount of data.</td>
+  </tr>
+  <tr>
+    <td>Non-prepared Plan Cache</td>
+    <td>Support plan cache for general SQL statements in a session to save cache resources, improve the hit rate of general execution plans, and improve SQL performance.</td>
+    <td>Non-prepared plan cache. Improve real-time and throughputs of OLTP in general scenarios.</td>
+  </tr>
+  <tr>
+    <td>Scalability & Stability</td>
+    <td>Provide a basic resource management and control framework to effectively control the resource squeeze of background tasks on front-end tasks (user operations), and improve cluster stability.</td>
+    <td>Refine resource management in the multi-service aggregation scenario.</td>
+  </tr>
+  <tr>
     <td rowspan="3">JSON</td>
     <td>Support JSON function.</td>
     <td>In business scenarios that require flexible schema definitions, the application can use JSON to store information for ODS, transaction indicators, commodities, game characters, and props.</td>
@@ -36,14 +51,19 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
     <td>In game rollback scenarios, the flashback can be used to achieve a fast rollback of the current cluster. This solves the common problems in the gaming industry such as version errors and bugs.</td>
   </tr>
   <tr>
-    <td>TiFlash result write-back (supports <code>INSERT INTO SELECT</code>)</td>
-    <td><ul><li>Easily write the analysis results in TiFlash back to TiDB.</li><li>Provide complete ACID transactions, more convenient and reliable than general ETL solutions.</li><li>Set a hard limit on the threshold of intermediate result size, and report an error if the threshold is exceeded.</li><li>Support fully distributed transactions, and remove or relax the limit on the intermediate result size.</li></ul></td>
-    <td>These features combined enable a way to materialize intermediate results. The analysis results can be easily reused, which reduces unnecessary ad-hoc queries, improves the performance of BI and other applications (by pulling results directly) and reduces system load (by avoiding duplicated computation), thereby improving the overall data pipeline efficiency and reducing costs. It will make TiFlash an online service.</td>
-  </tr>
-  <tr>
     <td>Time to live (TTL)</td>
     <td>Support automatically deleting expired table data based on custom rules. </td>
     <td>This feature enables automatic data cleanup in limited data archiving scenarios.</td>
+  </tr>
+  <tr>
+    <td>SQL</td>
+    <td>Implement a distributed parallel DDL execution framework, so that DDL tasks executed by only one TiDB Owner node can be coordinated and executed by all TiDB nodes in the cluster. Improve the execution speed of DDL tasks and cluster resource utilization.</td>
+    <td>By converting the execution of DDL tasks to distributed mode, this feature accelerates the execution speed of DDL tasks and improves the utilization of computing resources in the entire cluster. At present, DDL tasks that need to improve the speed include large table indexing and lossy column type modification tasks.</td>
+  </tr>
+  <tr>
+    <td>TiFlash result write-back</td>
+    <td><p>Support <code>INSERT INTO SELECT</code>.</p><ul><li>Easily write the analysis results in TiFlash back to TiDB.</li><li>Provide complete ACID transactions, more convenient and reliable than general ETL solutions.</li><li>Set a hard limit on the threshold of intermediate result size, and report an error if the threshold is exceeded.</li><li>Support fully distributed transactions, and remove or relax the limit on the intermediate result size.</li></ul></td>
+    <td>These features combined enable a way to materialize intermediate results. The analysis results can be easily reused, which reduces unnecessary ad-hoc queries, improves the performance of BI and other applications (by pulling results directly) and reduces system load (by avoiding duplicated computation), thereby improving the overall data pipeline efficiency and reducing costs. It will make TiFlash an online service.</td>
   </tr>
   <tr>
     <td>Hybrid Transactional and Analytical Processing (HTAP)</td>
@@ -51,33 +71,14 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
     <td>Improve the basic computing capability of TiFlash, and optimize the performance and reliability of the underlying algorithms of the columnar storage and MPP engine.</td>
   </tr>
   <tr>
-    <td>Proxy</td>
-    <td>Implement automatic load balancing so that upgrading a cluster or modifying configurations does not affect the application. After scaling out or scaling in the cluster, the application can automatically rebalance the connection without reconnecting.</td>
-    <td>In scenarios such as upgrades and configuration changes, TiDB proxy is more business-friendly.</td>
-  </tr>
-  <tr>
-    <td>PB-level scalability</td>
-    <td><ul><li>Support dynamic region size adjustment (heterogeneous).</li><li>Support huge region size.</li></ul></td>
-    <td>For scenarios with fast business growth and a large amount of data.</td>
-  <tr>
-    <td>SQL</td>
-    <td>Implement a distributed parallel DDL execution framework, so that DDL tasks executed by only one TiDB Owner node can be coordinated and executed by all TiDB nodes in the cluster. Improve the execution speed of DDL tasks and cluster resource utilization.</td>
-    <td>By converting the execution of DDL tasks to distributed mode, this feature accelerates the execution speed of DDL tasks and improves the utilization of computing resources in the entire cluster. At present, DDL tasks that need to improve the speed include large table indexing and lossy column type modification tasks.</td>
-  </tr>
-  <tr>
-    <td>Non-prepared Plan Cache</td>
-    <td>Support plan cache for general SQL statements in a session to save cache resources, improve the hit rate of general execution plans, and improve SQL performance.</td>
-    <td>Non-prepared plan cache. Improve real-time and throughputs of OLTP in general scenarios.</td>
-  </tr>
-  <tr>
     <td>Maintenance</td>
     <td>Support a rule-based SQL blocklist mechanism.</td>
     <td>In multi-service aggregation scenarios, provide SQL management and control capabilities, and improve cluster stability by prohibiting high-resource-consuming SQL statements.</td>
   </tr>
   <tr>
-    <td>Scalability & Stability</td>
-    <td>Provide a basic resource management and control framework to effectively control the resource squeeze of background tasks on front-end tasks (user operations), and improve cluster stability.</td>
-    <td>Refine resource management in the multi-service aggregation scenario.</td>
+    <td>Proxy</td>
+    <td>Implement automatic load balancing so that upgrading a cluster or modifying configurations does not affect the application. After scaling out or scaling in the cluster, the application can automatically rebalance the connection without reconnecting.</td>
+    <td>In scenarios such as upgrades and configuration changes, TiDB proxy is more business-friendly.</td>
   </tr>
   <tr>
     <td>Prepared Plan Cache</td>
