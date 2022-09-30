@@ -292,6 +292,31 @@ func TestIssue22828(t *testing.T) {
 	tk.MustGetErrMsg(`select group_concat((select concat(c,group_concat(c)) FROM t where xxx=xxx)) FROM t;`, "[planner:1054]Unknown column 'xxx' in 'where clause'")
 }
 
+func TestIssue35623(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t1;`)
+	tk.MustExec(`drop view if exists v1;`)
+	tk.MustExec(`CREATE TABLE t1(c0 INT UNIQUE);`)
+	tk.MustExec("CREATE definer='root'@'localhost' VIEW v1(c0) AS SELECT 1 FROM t1;")
+	err := tk.ExecToErr("SELECT v1.c0 FROM v1 WHERE (true)LIKE(v1.c0);")
+	require.NoError(t, err)
+
+	err = tk.ExecToErr("SELECT v2.c0 FROM (select 1 as c0 from t1) v2 WHERE (v2.c0)like(True);")
+	require.NoError(t, err)
+}
+
+func TestIssue37971(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t3;`)
+	tk.MustExec(`CREATE TABLE t3(c0 INT, primary key(c0));`)
+	err := tk.ExecToErr("SELECT v2.c0 FROM (select 1 as c0 from t3) v2 WHERE (v2.c0)like(True);")
+	require.NoError(t, err)
+}
+
 func TestJoinNotNullFlag(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1696,7 +1721,7 @@ func TestInvisibleIndex(t *testing.T) {
 	tk.MustExec("admin check index t i_a")
 }
 
-// for issue #14822
+// for issue #14822 and #38258
 func TestIndexJoinTableRange(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1705,6 +1730,8 @@ func TestIndexJoinTableRange(t *testing.T) {
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(a int, b int, primary key (a), key idx_t1_b (b))")
 	tk.MustExec("create table t2(a int, b int, primary key (a), key idx_t1_b (b))")
+	tk.MustExec("create table t3(a int, b int, c int)")
+	tk.MustExec("create table t4(a int, b int, c int, primary key (a, b) clustered)")
 
 	var input []string
 	var output []struct {
@@ -7106,6 +7133,31 @@ func TestHexIntOrStrPushDownToTiFlash(t *testing.T) {
 		{"    └─TableFullScan_7", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 	}
 	tk.MustQuery("explain select hex(b) from t;").CheckAt([]int{0, 2, 4}, rows)
+}
+
+func TestBinPushDownToTiFlash(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t values(1);")
+	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
+	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
+
+	tbl, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t", L: "t"})
+	require.NoError(t, err)
+	// Set the hacked TiFlash replica for explain tests.
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+
+	rows := [][]interface{}{
+		{"TableReader_9", "root", "data:ExchangeSender_8"},
+		{"└─ExchangeSender_8", "mpp[tiflash]", "ExchangeType: PassThrough"},
+		{"  └─Projection_4", "mpp[tiflash]", "bin(test.t.a)->Column#3"},
+		{"    └─TableFullScan_7", "mpp[tiflash]", "keep order:false, stats:pseudo"},
+	}
+	tk.MustQuery("explain select bin(a) from t;").CheckAt([]int{0, 2, 4}, rows)
 }
 
 func TestEltPushDownToTiFlash(t *testing.T) {

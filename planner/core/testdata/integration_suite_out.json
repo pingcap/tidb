@@ -469,6 +469,30 @@
           "  └─Selection 1.00 cop[tikv]  not(isnull(test.t2.b))",
           "    └─TableRangeScan 1.00 cop[tikv] table:t2 range: decided by [test.t1.a test.t1.b], keep order:false, stats:pseudo"
         ]
+      },
+      {
+        "SQL": "desc format = 'brief' select /*+ INL_JOIN(t4) */ * from t3 join t4 on t3.a = t4.a where t4.b = 1",
+        "Plan": [
+          "IndexJoin 12.50 root  inner join, inner:TableReader, outer key:test.t3.a, inner key:test.t4.a, equal cond:eq(test.t3.a, test.t4.a)",
+          "├─TableReader(Build) 9990.00 root  data:Selection",
+          "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 0.00 root  data:Selection",
+          "  └─Selection 0.00 cop[tikv]  eq(test.t4.b, 1)",
+          "    └─TableRangeScan 1.00 cop[tikv] table:t4 range: decided by [eq(test.t4.a, test.t3.a) eq(test.t4.b, 1)], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc format = 'brief' select /*+ INL_JOIN(t4) */ * from t3 join t4 on t3.b = t4.b where t4.a = 1",
+        "Plan": [
+          "IndexJoin 12.50 root  inner join, inner:TableReader, outer key:test.t3.b, inner key:test.t4.b, equal cond:eq(test.t3.b, test.t4.b)",
+          "├─TableReader(Build) 9990.00 root  data:Selection",
+          "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.b))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 0.00 root  data:Selection",
+          "  └─Selection 0.00 cop[tikv]  eq(test.t4.a, 1)",
+          "    └─TableRangeScan 1.00 cop[tikv] table:t4 range: decided by [eq(test.t4.b, test.t3.b) eq(test.t4.a, 1)], keep order:false, stats:pseudo"
+        ]
       }
     ]
   },
@@ -1105,7 +1129,7 @@
           "├─TableReader(Build) 3.00 root  data:TableFullScan",
           "│ └─TableFullScan 3.00 cop[tikv] table:t1 keep order:false",
           "└─TableReader(Probe) 1.00 root  data:TableRangeScan",
-          "  └─TableRangeScan 1.00 cop[tikv] table:t2 range: decided by [test.t.a], keep order:false"
+          "  └─TableRangeScan 1.00 cop[tikv] table:t2 range: decided by [eq(test.t.a, test.t.a)], keep order:false"
         ],
         "Res": [
           "1 111 1.1000000000 11 1 111 1.1000000000 11",
@@ -1120,7 +1144,7 @@
           "├─TableReader(Build) 3.00 root  data:TableFullScan",
           "│ └─TableFullScan 3.00 cop[tikv] table:t1 keep order:false",
           "└─TableReader(Probe) 1.00 root  data:TableRangeScan",
-          "  └─TableRangeScan 1.00 cop[tikv] table:t2 range: decided by [test.t.a], keep order:true"
+          "  └─TableRangeScan 1.00 cop[tikv] table:t2 range: decided by [eq(test.t.a, test.t.a)], keep order:true"
         ],
         "Res": [
           "1 111 1.1000000000 11 1 111 1.1000000000 11",
@@ -1135,7 +1159,7 @@
           "├─TableReader(Build) 3.00 root  data:TableFullScan",
           "│ └─TableFullScan 3.00 cop[tikv] table:t1 keep order:false",
           "└─TableReader(Probe) 1.00 root  data:TableRangeScan",
-          "  └─TableRangeScan 1.00 cop[tikv] table:t2 range: decided by [test.t.a], keep order:false"
+          "  └─TableRangeScan 1.00 cop[tikv] table:t2 range: decided by [eq(test.t.a, test.t.a)], keep order:false"
         ],
         "Res": [
           "1 111 1.1000000000 11 1 111 1.1000000000 11",
@@ -1150,7 +1174,7 @@
           "├─TableReader(Build) 3.00 root  data:TableFullScan",
           "│ └─TableFullScan 3.00 cop[tikv] table:t1 keep order:false",
           "└─TableReader(Probe) 1.00 root  data:TableRangeScan",
-          "  └─TableRangeScan 1.00 cop[tikv] table:t2 range: decided by [test.t.a test.t.b], keep order:false"
+          "  └─TableRangeScan 1.00 cop[tikv] table:t2 range: decided by [eq(test.t.a, test.t.a) eq(test.t.b, test.t.b)], keep order:false"
         ],
         "Res": [
           "1 111 1.1000000000 11 1 111 1.1000000000 11",
