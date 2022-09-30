@@ -3615,8 +3615,8 @@ func TestIssue21732(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
-	for _, mode := range []string{variable.StaticOnly, variable.DynamicOnly} {
-		testkit.WithPruneMode(tk, variable.DynamicOnly, func() {
+	for _, mode := range []variable.PartitionPruneMode{variable.StaticOnly, variable.DynamicOnly} {
+		testkit.WithPruneMode(tk, mode, func() {
 			tk.MustExec("create database TestIssue21732")
 			tk.MustExec("use TestIssue21732")
 			tk.MustExec("drop table if exists p")
