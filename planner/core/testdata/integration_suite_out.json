@@ -1129,7 +1129,7 @@
           "├─TableReader(Build) 3.00 root  data:TableFullScan",
           "│ └─TableFullScan 3.00 cop[tikv] table:t1 keep order:false",
           "└─TableReader(Probe) 1.00 root  data:TableRangeScan",
-          "  └─TableRangeScan 1.00 cop[tikv] table:t2 range: decided by [test.t.a], keep order:false"
+          "  └─TableRangeScan 1.00 cop[tikv] table:t2 range: decided by [eq(test.t.a, test.t.a)], keep order:false"
         ],
         "Res": [
           "1 111 1.1000000000 11 1 111 1.1000000000 11",
@@ -1144,7 +1144,7 @@
           "├─TableReader(Build) 3.00 root  data:TableFullScan",
           "│ └─TableFullScan 3.00 cop[tikv] table:t1 keep order:false",
           "└─TableReader(Probe) 1.00 root  data:TableRangeScan",
-          "  └─TableRangeScan 1.00 cop[tikv] table:t2 range: decided by [test.t.a], keep order:true"
+          "  └─TableRangeScan 1.00 cop[tikv] table:t2 range: decided by [eq(test.t.a, test.t.a)], keep order:true"
         ],
         "Res": [
           "1 111 1.1000000000 11 1 111 1.1000000000 11",
@@ -1159,7 +1159,7 @@
           "├─TableReader(Build) 3.00 root  data:TableFullScan",
           "│ └─TableFullScan 3.00 cop[tikv] table:t1 keep order:false",
           "└─TableReader(Probe) 1.00 root  data:TableRangeScan",
-          "  └─TableRangeScan 1.00 cop[tikv] table:t2 range: decided by [test.t.a], keep order:false"
+          "  └─TableRangeScan 1.00 cop[tikv] table:t2 range: decided by [eq(test.t.a, test.t.a)], keep order:false"
         ],
         "Res": [
           "1 111 1.1000000000 11 1 111 1.1000000000 11",
@@ -1174,7 +1174,7 @@
           "├─TableReader(Build) 3.00 root  data:TableFullScan",
           "│ └─TableFullScan 3.00 cop[tikv] table:t1 keep order:false",
           "└─TableReader(Probe) 1.00 root  data:TableRangeScan",
-          "  └─TableRangeScan 1.00 cop[tikv] table:t2 range: decided by [test.t.a test.t.b], keep order:false"
+          "  └─TableRangeScan 1.00 cop[tikv] table:t2 range: decided by [eq(test.t.a, test.t.a) eq(test.t.b, test.t.b)], keep order:false"
         ],
         "Res": [
           "1 111 1.1000000000 11 1 111 1.1000000000 11",
