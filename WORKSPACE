@@ -27,17 +27,16 @@ go_deps()
 
 go_rules_dependencies()
 
-go_register_toolchains(
-    nogo = "@//build:tidb_nogo",
-    version = "1.19.3",
-)
-
 go_download_sdk(
     name = "tidb_sdk",
     urls = [
         "https://gomirrors.org/go/{}",
-        "https://dl.google.com/go/{}",
     ],
+    version = "1.19.1",
+)
+
+go_register_toolchains(
+    nogo = "@//build:tidb_nogo",
 )
 
 gazelle_dependencies()
