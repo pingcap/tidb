@@ -788,7 +788,7 @@ type PhysicalTableScan struct {
 
 	physicalTableID int64
 
-	rangeDecidedBy []*expression.Column
+	rangeInfo string
 
 	// HandleIdx is the index of handle, which is only used for admin check table.
 	HandleIdx  []int
@@ -839,7 +839,7 @@ func (ts *PhysicalTableScan) Clone() (PhysicalPlan, error) {
 	if ts.Hist != nil {
 		clonedScan.Hist = ts.Hist.Copy()
 	}
-	clonedScan.rangeDecidedBy = cloneCols(ts.rangeDecidedBy)
+	clonedScan.rangeInfo = ts.rangeInfo
 	return clonedScan, nil
 }
 
@@ -961,9 +961,7 @@ func (ts *PhysicalTableScan) MemoryUsage() (sum int64) {
 	for _, rang := range ts.Ranges {
 		sum += rang.MemUsage()
 	}
-	for _, col := range ts.rangeDecidedBy {
-		sum += col.MemoryUsage()
-	}
+	sum += int64(len(ts.rangeInfo))
 	for _, col := range ts.tblCols {
 		sum += col.MemoryUsage()
 	}
