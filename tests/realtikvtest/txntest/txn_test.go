@@ -209,4 +209,12 @@ func TestDuplicateErrorMessage(t *testing.T) {
 	tk2.MustExec("insert into t values (1, 1)")
 	tk2.MustExec("insert into t2 values (1, 2)")
 	tk.MustContainErrMsg("update t set v = v + 1 where c = 1", "Duplicate entry '1' for key 't.PRIMARY'")
+
+	tk.MustExec("create table t3 (c int, v int, unique key i1(v))")
+	tk.MustExec("create table t4 (c int, v int, unique key i1(v))")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t3 values (1, 1)")
+	tk2.MustExec("insert into t3 values (1, 1)")
+	tk2.MustExec("insert into t4 values (1, 2)")
+	tk.MustContainErrMsg("update t3 set c = c + 1 where v = 1", "Duplicate entry '1' for key 't3.i1'")
 }

@@ -114,7 +114,7 @@ func extractKeyExistsErrFromIndex(key kv.Key, value []byte, tblInfo *model.Table
 	if idxInfo == nil {
 		return genKeyExistsError("UNKNOWN", key.String(), errors.New("cannot find index info"))
 	}
-	name := idxInfo.Name.String()
+	name := tblInfo.Name.String() + "." + idxInfo.Name.String()
 
 	if len(value) == 0 {
 		return genKeyExistsError(name, key.String(), errors.New("missing value"))
