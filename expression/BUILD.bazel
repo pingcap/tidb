@@ -98,6 +98,7 @@ go_library(
         "//util/plancodec",
         "//util/printer",
         "//util/set",
+        "//util/size",
         "//util/sqlexec",
         "//util/stringutil",
         "//util/vitess",

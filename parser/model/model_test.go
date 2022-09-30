@@ -442,6 +442,19 @@ func TestJobCodec(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, isDependent)
 
+	// test ActionFlashbackCluster with other ddl jobs are dependent.
+	job15 := &Job{
+		ID:         16,
+		Type:       ActionFlashbackCluster,
+		BinlogInfo: &HistoryInfo{},
+		Args:       []interface{}{0, map[string]interface{}{}, "ON", true},
+	}
+	job15.RawArgs, err = json.Marshal(job15.Args)
+	require.NoError(t, err)
+	isDependent, err = job.IsDependentOn(job15)
+	require.NoError(t, err)
+	require.True(t, isDependent)
+
 	require.Equal(t, false, job.IsCancelled())
 	b, err := job.Encode(false)
 	require.NoError(t, err)
