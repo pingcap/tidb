@@ -30,7 +30,7 @@ go_rules_dependencies()
 go_download_sdk(
     name = "tidb_sdk",
     urls = [
-        "https://gomirrors.org/go/{}",
+        "https://mirrors.aliyun.com/golang/{}",
     ],
     version = "1.19.1",
 )
