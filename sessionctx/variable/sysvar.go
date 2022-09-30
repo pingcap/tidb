@@ -1666,7 +1666,11 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableAmendPessimisticTxn, Value: BoolToOnOff(DefTiDBEnableAmendPessimisticTxn), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
-		s.EnableAmendPessimisticTxn = TiDBOptOn(val)
+		enableAmend := TiDBOptOn(val)
+		if enableAmend && EnableFastReorg.Load() {
+			return errors.Errorf("amend pessimistic transactions is not compatible with tidb_ddl_enable_fast_reorg")
+		}
+		s.EnableAmendPessimisticTxn = enableAmend
 		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableAsyncCommit, Value: BoolToOnOff(DefTiDBEnableAsyncCommit), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
