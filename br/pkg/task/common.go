@@ -102,7 +102,7 @@ const (
 	flagPort     = "port"
 	flagUser     = "user"
 	flagPassword = "password"
-  
+
 	flagFullBackupType = "type"
 )
 
