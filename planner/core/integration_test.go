@@ -3064,7 +3064,7 @@ func TestScalarFunctionPushDown(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(id int signed, id2 int unsigned, c varchar(11), d datetime, b double, e bit(10))")
-	tk.MustExec("insert into t(id, id2, c, d) values (-1, 1, 'abc', '2021-12-12')")
+	tk.MustExec("insert into t(id, id2, c, d) values (-1, 1, '{\"a\":1}', '2021-12-12')")
 	rows := [][]interface{}{
 		{"TableReader_7", "root", "data:Selection_6"},
 		{"└─Selection_6", "cop[tikv]", "right(test.t.c, 1)"},
