@@ -274,7 +274,7 @@ func TestBoolValidation(t *testing.T) {
 
 func TestTimeValidation(t *testing.T) {
 	sv := SysVar{Scope: ScopeSession, Name: "mynewsysvar", Value: "23:59 +0000", Type: TypeTime}
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 
 	val, err := sv.Validate(vars, "23:59 +0000", ScopeSession)
 	require.NoError(t, err)
@@ -643,7 +643,7 @@ func TestInstanceScope(t *testing.T) {
 }
 
 func TestSetSysVar(t *testing.T) {
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 	vars.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
 	originalVal := GetSysVar(SystemTimeZone).Value
 	SetSysVar(SystemTimeZone, "America/New_York")
