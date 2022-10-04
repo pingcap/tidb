@@ -1027,7 +1027,6 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 		countAfterAccess = math.Min(1.0, countAfterAccess)
 	}
 	ts.stats = &property.StatsInfo{
-		// TableScan as inner child of IndexJoin can return at most 1 tuple for each outer row.
 		RowCount:     countAfterAccess,
 		StatsVersion: ds.stats.StatsVersion,
 		// NDV would not be used in cost computation of IndexJoin, set leave it as default nil.
