@@ -25,6 +25,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
@@ -493,6 +495,10 @@ func TestRenameTableWithForeignKeyMetaInfo(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (id int key, a int, b int, foreign key fk(a) references t1(id))")
 	tk.MustExec("rename table test.t1 to test2.t2")
+	// check the schema diff
+	diff := getLatestSchemaDiff(t, tk)
+	require.Equal(t, model.ActionRenameTable, diff.Type)
+	require.Equal(t, 0, len(diff.AffectedOpts))
 	tk.MustQuery("show create table test2.t2").Check(testkit.Rows("t2 CREATE TABLE `t2` (\n" +
 		"  `id` int(11) NOT NULL,\n" +
 		"  `a` int(11) DEFAULT NULL,\n" +
@@ -528,6 +534,10 @@ func TestRenameTableWithForeignKeyMetaInfo(t *testing.T) {
 	tk.MustExec("create table t2 (id int key, b int, foreign key fk_b(b) references test.t1(id))")
 	tk.MustExec("use test2")
 	tk.MustExec("rename table test.t2 to test2.tt2")
+	// check the schema diff
+	diff = getLatestSchemaDiff(t, tk)
+	require.Equal(t, model.ActionRenameTable, diff.Type)
+	require.Equal(t, 0, len(diff.AffectedOpts))
 	tb1Info := getTableInfo(t, dom, "test", "t1")
 	tb2Info := getTableInfo(t, dom, "test2", "tt2")
 	require.Equal(t, 0, len(tb1Info.ForeignKeys))
@@ -561,6 +571,10 @@ func TestRenameTableWithForeignKeyMetaInfo(t *testing.T) {
 	tb1ReferredFKs = getTableInfoReferredForeignKeys(t, dom, "test3", "tt1")
 	require.Equal(t, 1, len(tb1ReferredFKs))
 	require.Equal(t, 1, len(tb1ReferredFKs[0].Cols))
+	// check the schema diff
+	diff = getLatestSchemaDiff(t, tk)
+	require.Equal(t, model.ActionRenameTable, diff.Type)
+	require.Equal(t, 1, len(diff.AffectedOpts))
 	require.Equal(t, model.ReferredFKInfo{
 		Cols:        []model.CIStr{model.NewCIStr("id")},
 		ChildSchema: model.NewCIStr("test2"),
@@ -1389,4 +1403,346 @@ func TestDropDatabaseWithForeignKeyReferred2(t *testing.T) {
 	require.Equal(t, "[ddl:3730]Cannot drop table 't2' referenced by a foreign key constraint 'fk_b' on table 't3'.", dropErr.Error())
 	tk.MustExec("drop table test2.t3")
 	tk.MustExec("drop database test")
+}
+
+func TestAddForeignKey(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1;")
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int key, b int);")
+	tk.MustExec("create table t2 (id int key, b int);")
+	err := tk.ExecToErr("alter table t2 add foreign key (b) references t1(id);")
+	require.Error(t, err)
+	require.Equal(t, "Failed to add the foreign key constraint. Missing index for 'fk_1' foreign key columns in the table 't2'", err.Error())
+	tk.MustExec("alter table t2 add index(b)")
+	tk.MustExec("alter table t2 add foreign key (b) references t1(id);")
+	tbl2Info := getTableInfo(t, dom, "test", "t2")
+	require.Equal(t, int64(1), tbl2Info.MaxForeignKeyID)
+	tk.MustGetDBError("alter table t2 add foreign key (b) references t1(b);", infoschema.ErrForeignKeyNoIndexInParent)
+	tk.MustExec("alter table t1 add index(b)")
+	tk.MustExec("alter table t2 add foreign key (b) references t1(b);")
+	tk.MustGetDBError("alter table t2 add foreign key (b) references t2(b);", infoschema.ErrCannotAddForeign)
+}
+
+func TestAddForeignKey2(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
+	d := dom.DDL()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1;")
+	tk.MustExec("use test")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk.MustExec("create table t1 (id int key, b int, index(b));")
+	tk.MustExec("create table t2 (id int key, b int, index(b));")
+	var wg sync.WaitGroup
+	var addErr error
+	tc := &ddl.TestDDLCallback{}
+	tc.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.SchemaState != model.StatePublic || job.Type != model.ActionDropIndex {
+			return
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			addErr = tk2.ExecToErr("alter table t2 add foreign key (b) references t1(id);")
+		}()
+		// make sure tk2's ddl job already put into ddl job queue.
+		time.Sleep(time.Millisecond * 100)
+	}
+	originalHook := d.GetHook()
+	defer d.SetHook(originalHook)
+	d.SetHook(tc)
+
+	tk.MustExec("alter table t2 drop index b")
+	wg.Wait()
+	require.Error(t, addErr)
+	require.Equal(t, "[ddl:-1]Failed to add the foreign key constraint. Missing index for 'fk_1' foreign key columns in the table 't2'", addErr.Error())
+}
+
+func TestAlterTableAddForeignKeyError(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1;")
+	tk.MustExec("use test")
+	cases := []struct {
+		prepares []string
+		alter    string
+		err      string
+	}{
+		{
+			prepares: []string{
+				"create table t1 (id int, a int, b int);",
+				"create table t2 (a int, b int);",
+			},
+			alter: "alter  table t2 add foreign key fk(b) references t_unknown(id)",
+			err:   "[schema:1824]Failed to open the referenced table 't_unknown'",
+		},
+		{
+			prepares: []string{
+				"create table t1 (id int, a int, b int);",
+				"create table t2 (a int, b int);",
+			},
+			alter: "alter  table t2 add foreign key fk(b) references t1(c_unknown)",
+			err:   "[schema:3734]Failed to add the foreign key constraint. Missing column 'c_unknown' for constraint 'fk' in the referenced table 't1'",
+		},
+		{
+			prepares: []string{
+				"create table t1 (id int, a int, b int);",
+				"create table t2 (a int, b int);",
+			},
+			alter: "alter  table t2 add foreign key fk_b(b) references t1(b)",
+			err:   "[schema:1822]Failed to add the foreign key constraint. Missing index for constraint 'fk_b' in the referenced table 't1'",
+		},
+		{
+			prepares: []string{
+				"create table t1 (id int, a int, b int not null, index(b));",
+				"create table t2 (a int, b int not null);",
+			},
+			alter: "alter  table t2 add foreign key fk_b(b) references t1(b) on update set null",
+			err:   "[schema:1830]Column 'b' cannot be NOT NULL: needed in a foreign key constraint 'fk_b' SET NULL",
+		},
+		{
+			prepares: []string{
+				"create table t1 (id int, a int, b int not null, index(b));",
+				"create table t2 (a int, b int not null);",
+			},
+			alter: "alter  table t2 add foreign key fk_b(b) references t1(b) on delete set null",
+			err:   "[schema:1830]Column 'b' cannot be NOT NULL: needed in a foreign key constraint 'fk_b' SET NULL",
+		},
+		{
+			prepares: []string{
+				"create table t1 (id int key, a int, b int as (a) virtual, index(b));",
+				"create table t2 (a int, b int);",
+			},
+			alter: "alter  table t2 add foreign key fk_b(b) references t1(b)",
+			err:   "[schema:3733]Foreign key 'fk_b' uses virtual column 'b' which is not supported.",
+		},
+		{
+			prepares: []string{
+				"create table t1 (id int key, a int, b int, index(b));",
+				"create table t2 (a int, b int as (a) virtual);",
+			},
+			alter: "alter  table t2 add foreign key fk_b(b) references t1(b)",
+			err:   "[schema:3733]Foreign key 'fk_b' uses virtual column 'b' which is not supported.",
+		},
+		{
+			prepares: []string{
+				"create table t1 (id int key, a int);",
+				"create table t2 (a int, b varchar(10));",
+			},
+			alter: "alter  table t2 add foreign key fk(b) references t1(id)",
+			err:   "[ddl:3780]Referencing column 'b' and referenced column 'id' in foreign key constraint 'fk' are incompatible.",
+		},
+		{
+			prepares: []string{
+				"create table t1 (id int key, a int not null, index(a));",
+				"create table t2 (a int, b int unsigned);",
+			},
+			alter: "alter  table t2 add foreign key fk_b(b) references t1(a)",
+			err:   "[ddl:3780]Referencing column 'b' and referenced column 'a' in foreign key constraint 'fk_b' are incompatible.",
+		},
+		{
+			prepares: []string{
+				"create table t1 (id int key, a bigint, index(a));",
+				"create table t2 (a int, b int);",
+			},
+			alter: "alter  table t2 add foreign key fk_b(b) references t1(a)",
+			err:   "[ddl:3780]Referencing column 'b' and referenced column 'a' in foreign key constraint 'fk_b' are incompatible.",
+		},
+		{
+			prepares: []string{
+				"create table t1 (id int key, a varchar(10) charset utf8, index(a));",
+				"create table t2 (a int, b varchar(10) charset utf8mb4);",
+			},
+			alter: "alter  table t2 add foreign key fk_b(b) references t1(a)",
+			err:   "[ddl:3780]Referencing column 'b' and referenced column 'a' in foreign key constraint 'fk_b' are incompatible.",
+		},
+		{
+			prepares: []string{
+				"create table t1 (id int key, a varchar(10) collate utf8_bin, index(a));",
+				"create table t2 (a int, b varchar(10) collate utf8mb4_bin);",
+			},
+			alter: "alter  table t2 add foreign key fk_b(b) references t1(a)",
+			err:   "[ddl:3780]Referencing column 'b' and referenced column 'a' in foreign key constraint 'fk_b' are incompatible.",
+		},
+		{
+			prepares: []string{
+				"create table t1 (id int key, a varchar(10));",
+				"create table t2 (a int, b varchar(10));",
+			},
+			alter: "alter  table t2 add foreign key fk_b(b) references t1(a)",
+			err:   "[schema:1822]Failed to add the foreign key constraint. Missing index for constraint 'fk_b' in the referenced table 't1'",
+		},
+		{
+			prepares: []string{
+				"create table t1 (id int key, a varchar(10), index (a(5)));",
+				"create table t2 (a int, b varchar(10));",
+			},
+			alter: "alter  table t2 add foreign key fk_b(b) references t1(a)",
+			err:   "[schema:1822]Failed to add the foreign key constraint. Missing index for constraint 'fk_b' in the referenced table 't1'",
+		},
+		{
+			prepares: []string{
+				"create table t1 (id int key, a int)",
+				"create table t2 (id int,     b int, index(b))",
+				"insert into t2 values (1,1)",
+			},
+			alter: "alter table t2 add foreign key fk_b(b) references t1(id)",
+			err:   "[ddl:1452]Cannot add or update a child row: a foreign key constraint fails (`test`.`t2`, CONSTRAINT `fk_b` FOREIGN KEY (`b`) REFERENCES `t1` (`id`))",
+		},
+		{
+			prepares: []string{
+				"create table t1 (id int, a int, b int, index(a,b))",
+				"create table t2 (id int, a int, b int, index(a,b))",
+				"insert into t2 values (1, 1, null), (2, null, 1), (3, null, null), (4, 1, 1)",
+			},
+			alter: "alter table t2 add foreign key fk_b(a, b) references t1(a, b)",
+			err:   "[ddl:1452]Cannot add or update a child row: a foreign key constraint fails (`test`.`t2`, CONSTRAINT `fk_b` FOREIGN KEY (`a`, `b`) REFERENCES `t1` (`a`, `b`))",
+		},
+	}
+	for i, ca := range cases {
+		tk.MustExec("drop table if exists t2")
+		tk.MustExec("drop table if exists t1")
+		for _, sql := range ca.prepares {
+			tk.MustExec(sql)
+		}
+		err := tk.ExecToErr(ca.alter)
+		require.Error(t, err, fmt.Sprintf("%v, %v", i, ca.err))
+		require.Equal(t, ca.err, err.Error())
+	}
+
+	passCases := [][]string{
+		{
+			"create table t1 (id int key, a int, b int, index(a))",
+			"alter table t1 add foreign key fk(a) references t1(id)",
+		},
+		{
+			"create table t1 (id int key, b int not null, index(b))",
+			"create table t2 (a int, b int, index(b));",
+			"alter table t2 add foreign key fk_b(b) references t1(b)",
+		},
+		{
+			"create table t1 (id int key, a varchar(10), index(a));",
+			"create table t2 (a int, b varchar(20), index(b));",
+			"alter table t2 add foreign key fk_b(b) references t1(a)",
+		},
+		{
+			"create table t1 (id int key, a decimal(10,5), index(a));",
+			"create table t2 (a int, b decimal(20, 10), index(b));",
+			"alter table t2 add foreign key fk_b(b) references t1(a)",
+		},
+		{
+			"create table t1 (id int key, a varchar(10), index (a(10)));",
+			"create table t2 (a int, b varchar(20), index(b));",
+			"alter table t2 add foreign key fk_b(b) references t1(a)",
+		},
+		{
+			"create table t1 (id int key, a int)",
+			"create table t2 (id int,     b int, index(b))",
+			"insert into t2 values (1, null)",
+			"alter table t2 add foreign key fk_b(b) references t1(id)",
+		},
+		{
+			"create table t1 (id int, a int, b int, index(a,b))",
+			"create table t2 (id int, a int, b int, index(a,b))",
+			"insert into t2 values (1, 1, null), (2, null, 1), (3, null, null)",
+			"alter table t2 add foreign key fk_b(a, b) references t1(a, b)",
+		},
+		{
+			"set @@foreign_key_checks=0;",
+			"create table t1 (id int, a int, b int, index(a,b))",
+			"create table t2 (id int, a int, b int, index(a,b))",
+			"insert into t2 values (1, 1, 1)",
+			"alter table t2 add foreign key fk_b(a, b) references t1(a, b)",
+			"set @@foreign_key_checks=1;",
+		},
+		{
+			"set @@foreign_key_checks=0;",
+			"create table t2 (a int, b int, index(b));",
+			"alter table t2 add foreign key fk_b(b) references t_unknown(a)",
+			"set @@foreign_key_checks=1;",
+		},
+	}
+	for _, ca := range passCases {
+		tk.MustExec("drop table if exists t2")
+		tk.MustExec("drop table if exists t1")
+		for _, sql := range ca {
+			tk.MustExec(sql)
+		}
+	}
+}
+
+func TestRenameTablesWithForeignKey(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=0;")
+	tk.MustExec("create database test1")
+	tk.MustExec("create database test2")
+	tk.MustExec("use test")
+	tk.MustExec("create table t0 (id int key, b int);")
+	tk.MustExec("create table t1 (id int key, b int, index(b), foreign key fk(b) references t2(id));")
+	tk.MustExec("create table t2 (id int key, b int, index(b), foreign key fk(b) references t1(id));")
+	tk.MustExec("rename table test.t1 to test1.tt1, test.t2 to test2.tt2, test.t0 to test.tt0")
+
+	// check the schema diff
+	diff := getLatestSchemaDiff(t, tk)
+	require.Equal(t, model.ActionRenameTables, diff.Type)
+	require.Equal(t, 3, len(diff.AffectedOpts))
+
+	// check referred foreign key information.
+	t1ReferredFKs := getTableInfoReferredForeignKeys(t, dom, "test", "t1")
+	t2ReferredFKs := getTableInfoReferredForeignKeys(t, dom, "test", "t2")
+	require.Equal(t, 0, len(t1ReferredFKs))
+	require.Equal(t, 0, len(t2ReferredFKs))
+	tt1ReferredFKs := getTableInfoReferredForeignKeys(t, dom, "test1", "tt1")
+	tt2ReferredFKs := getTableInfoReferredForeignKeys(t, dom, "test2", "tt2")
+	require.Equal(t, 1, len(tt1ReferredFKs))
+	require.Equal(t, 1, len(tt2ReferredFKs))
+	require.Equal(t, model.ReferredFKInfo{
+		Cols:        []model.CIStr{model.NewCIStr("id")},
+		ChildSchema: model.NewCIStr("test2"),
+		ChildTable:  model.NewCIStr("tt2"),
+		ChildFKName: model.NewCIStr("fk"),
+	}, *tt1ReferredFKs[0])
+	require.Equal(t, model.ReferredFKInfo{
+		Cols:        []model.CIStr{model.NewCIStr("id")},
+		ChildSchema: model.NewCIStr("test1"),
+		ChildTable:  model.NewCIStr("tt1"),
+		ChildFKName: model.NewCIStr("fk"),
+	}, *tt2ReferredFKs[0])
+
+	// check show create table information
+	tk.MustQuery("show create table test1.tt1").Check(testkit.Rows("tt1 CREATE TABLE `tt1` (\n" +
+		"  `id` int(11) NOT NULL,\n" +
+		"  `b` int(11) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n" +
+		"  KEY `b` (`b`),\n" +
+		"  CONSTRAINT `fk` FOREIGN KEY (`b`) REFERENCES `test2`.`tt2` (`id`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("show create table test2.tt2").Check(testkit.Rows("tt2 CREATE TABLE `tt2` (\n" +
+		"  `id` int(11) NOT NULL,\n" +
+		"  `b` int(11) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n" +
+		"  KEY `b` (`b`),\n" +
+		"  CONSTRAINT `fk` FOREIGN KEY (`b`) REFERENCES `test1`.`tt1` (`id`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+}
+
+func getLatestSchemaDiff(t *testing.T, tk *testkit.TestKit) *model.SchemaDiff {
+	ctx := tk.Session()
+	err := sessiontxn.NewTxn(context.Background(), ctx)
+	require.NoError(t, err)
+	txn, err := ctx.Txn(true)
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	ver, err := m.GetSchemaVersion()
+	require.NoError(t, err)
+	diff, err := m.GetSchemaDiff(ver)
+	require.NoError(t, err)
+	return diff
 }

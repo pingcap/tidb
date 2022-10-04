@@ -90,7 +90,7 @@ func TestRegistrationOfNewSysVar(t *testing.T) {
 	sysVar := GetSysVar("mynewsysvar")
 	require.NotNil(t, sysVar)
 
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 
 	// It is a boolean, try to set it to a bogus value
 	_, err := sysVar.Validate(vars, "ABCD", ScopeSession)
@@ -114,7 +114,7 @@ func TestRegistrationOfNewSysVar(t *testing.T) {
 
 func TestIntValidation(t *testing.T) {
 	sv := SysVar{Scope: ScopeGlobal | ScopeSession, Name: "mynewsysvar", Value: "123", Type: TypeInt, MinValue: 10, MaxValue: 300, AllowAutoValue: true}
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 
 	_, err := sv.Validate(vars, "oN", ScopeSession)
 	require.Equal(t, "[variable:1232]Incorrect argument type to variable 'mynewsysvar'", err.Error())
@@ -139,7 +139,7 @@ func TestIntValidation(t *testing.T) {
 
 func TestUintValidation(t *testing.T) {
 	sv := SysVar{Scope: ScopeGlobal | ScopeSession, Name: "mynewsysvar", Value: "123", Type: TypeUnsigned, MinValue: 10, MaxValue: 300, AllowAutoValue: true}
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 
 	_, err := sv.Validate(vars, "oN", ScopeSession)
 	require.Equal(t, "[variable:1232]Incorrect argument type to variable 'mynewsysvar'", err.Error())
@@ -174,7 +174,7 @@ func TestUintValidation(t *testing.T) {
 
 func TestEnumValidation(t *testing.T) {
 	sv := SysVar{Scope: ScopeGlobal | ScopeSession, Name: "mynewsysvar", Value: On, Type: TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 
 	_, err := sv.Validate(vars, "randomstring", ScopeSession)
 	require.Equal(t, "[variable:1231]Variable 'mynewsysvar' can't be set to the value of 'randomstring'", err.Error())
@@ -199,7 +199,7 @@ func TestEnumValidation(t *testing.T) {
 
 func TestDurationValidation(t *testing.T) {
 	sv := SysVar{Scope: ScopeGlobal | ScopeSession, Name: "mynewsysvar", Value: "10m0s", Type: TypeDuration, MinValue: int64(time.Second), MaxValue: uint64(time.Hour)}
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 
 	_, err := sv.Validate(vars, "1hr", ScopeSession)
 	require.Equal(t, "[variable:1232]Incorrect argument type to variable 'mynewsysvar'", err.Error())
@@ -215,7 +215,7 @@ func TestDurationValidation(t *testing.T) {
 
 func TestFloatValidation(t *testing.T) {
 	sv := SysVar{Scope: ScopeGlobal | ScopeSession, Name: "mynewsysvar", Value: "10m0s", Type: TypeFloat, MinValue: 2, MaxValue: 7}
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 
 	_, err := sv.Validate(vars, "stringval", ScopeSession)
 	require.Equal(t, "[variable:1232]Incorrect argument type to variable 'mynewsysvar'", err.Error())
@@ -234,7 +234,7 @@ func TestFloatValidation(t *testing.T) {
 
 func TestBoolValidation(t *testing.T) {
 	sv := SysVar{Scope: ScopeGlobal | ScopeSession, Name: "mynewsysvar", Value: Off, Type: TypeBool}
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 
 	_, err := sv.Validate(vars, "0.000", ScopeSession)
 	require.Equal(t, "[variable:1231]Variable 'mynewsysvar' can't be set to the value of '0.000'", err.Error())
@@ -327,7 +327,7 @@ func TestSynonyms(t *testing.T) {
 	sysVar := GetSysVar(TxnIsolation)
 	require.NotNil(t, sysVar)
 
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 
 	// It does not permit SERIALIZABLE by default.
 	_, err := sysVar.Validate(vars, "SERIALIZABLE", ScopeSession)
@@ -358,7 +358,7 @@ func TestDeprecation(t *testing.T) {
 	sysVar := GetSysVar(TiDBIndexLookupConcurrency)
 	require.NotNil(t, sysVar)
 
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 
 	_, err := sysVar.Validate(vars, "123", ScopeSession)
 	require.NoError(t, err)
@@ -430,7 +430,7 @@ func TestIsNoop(t *testing.T) {
 // the default itself must validate without error provided the scope and read-only is correct.
 // The default values should also be normalized for consistency.
 func TestDefaultValuesAreSettable(t *testing.T) {
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 	vars.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
 	for _, sv := range GetSysVars() {
 		if sv.HasSessionScope() && !sv.ReadOnly {
@@ -549,7 +549,7 @@ func TestScopeToString(t *testing.T) {
 
 func TestValidateWithRelaxedValidation(t *testing.T) {
 	sv := GetSysVar(SecureAuth)
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 	val := sv.ValidateWithRelaxedValidation(vars, "1", ScopeGlobal)
 	require.Equal(t, "ON", val)
 
@@ -620,7 +620,7 @@ func TestInstanceScope(t *testing.T) {
 	sysVar := GetSysVar("newinstancesysvar")
 	require.NotNil(t, sysVar)
 
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 
 	// It is a boolean, try to set it to a bogus value
 	_, err := sysVar.Validate(vars, "ABCD", ScopeInstance)
