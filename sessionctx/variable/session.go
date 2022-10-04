@@ -598,6 +598,11 @@ func (s *SessionVars) GetUserVarType(name string) (*types.FieldType, bool) {
 	return ft, ok
 }
 
+// HookContext contains the necessary variables for executing set/get hook
+type HookContext interface {
+	GetStore() kv.Storage
+}
+
 // SessionVars is to handle user-defined or global variables in the current session.
 type SessionVars struct {
 	Concurrency
@@ -1288,6 +1293,8 @@ type SessionVars struct {
 
 	// LastPlanReplayerToken indicates the last plan replayer token
 	LastPlanReplayerToken string
+
+	HookContext
 }
 
 // GetPreparedStmtByName returns the prepared statement specified by stmtName.
@@ -1478,7 +1485,7 @@ func (connInfo *ConnectionInfo) IsSecureTransport() bool {
 }
 
 // NewSessionVars creates a session vars object.
-func NewSessionVars() *SessionVars {
+func NewSessionVars(hctx HookContext) *SessionVars {
 	vars := &SessionVars{
 		userVars: struct {
 			lock   sync.RWMutex
@@ -1580,6 +1587,7 @@ func NewSessionVars() *SessionVars {
 		TiFlashFastScan:               DefTiFlashFastScan,
 		EnableTiFlashReadForWriteStmt: DefTiDBEnableTiFlashReadForWriteStmt,
 		ForeignKeyChecks:              DefTiDBForeignKeyChecks,
+		HookContext:                   hctx,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
