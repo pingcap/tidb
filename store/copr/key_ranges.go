@@ -75,26 +75,24 @@ func (r *KeyRanges) At(i int) kv.KeyRange {
 // Slice returns the sub ranges [from, to).
 func (r *KeyRanges) Slice(from, to int) *KeyRanges {
 	var ran KeyRanges
+	if to == 0 || from >= to {
+		return &ran
+	}
 	if r.first != nil {
-		if from == 0 && to > 0 {
+		if from == 0 {
 			ran.first = r.first
 		}
 		if from > 0 {
 			from--
 		}
-		if to > 0 {
-			to--
-		}
+		to--
 	}
-	if to <= len(r.mid) {
+	if to > len(r.mid) {
+		ran.last = r.last
+		to = len(r.mid)
+	}
+	if from < to {
 		ran.mid = r.mid[from:to]
-	} else {
-		if from <= len(r.mid) {
-			ran.mid = r.mid[from:]
-		}
-		if from < to {
-			ran.last = r.last
-		}
 	}
 	return &ran
 }
