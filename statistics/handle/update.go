@@ -406,6 +406,7 @@ func needDumpStatsDelta(h *Handle, id int64, item variable.TableDelta, currentTi
 	}
 	tbl, ok := h.statsCache.Load().(statsCache).Get(id)
 	if !ok {
+		// TODO: do we need to return true here?
 		// No need to dump if the stats is invalid.
 		return false
 	}
@@ -540,9 +541,11 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 	updateStatsMeta := func(id int64) error {
 		var err error
 		if delta.Delta < 0 {
-			_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %?, count = count - %?, modify_count = modify_count + %? where table_id = %? and count >= %?", startTS, -delta.Delta, delta.Count, id, -delta.Delta)
+			_, err = exec.ExecuteInternal(ctx, "insert into mysql.stats_meta (version, table_id, modify_count, count) values (%?, %?, %?, 0) on duplicate key "+
+				"update modify_count = modify_count + values(modify_count), count = greatest(count - %?, 0)", startTS, id, delta.Count, -delta.Delta)
 		} else {
-			_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %?, count = count + %?, modify_count = modify_count + %? where table_id = %?", startTS, delta.Delta, delta.Count, id)
+			_, err = exec.ExecuteInternal(ctx, "insert into mysql.stats_meta (version, table_id, modify_count, count) values (%?, %?, %?, %?) on duplicate key "+
+				"update modify_count = modify_count + values(modify_count), count = count + values(count)", startTS, id, delta.Count, delta.Delta)
 		}
 		statsVer = startTS
 		return errors.Trace(err)
