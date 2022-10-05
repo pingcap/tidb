@@ -494,7 +494,7 @@ func TestModifyColumn(t *testing.T) {
 
 	// Test unsupported statements.
 	tk.MustExec("create table t1(a int) partition by hash (a) partitions 2")
-	tk.MustGetErrMsg("alter table t1 modify column a mediumint", "[ddl:8200]Unsupported modify column: table is partition table")
+	tk.Mustexec("alter table t1 modify column a mediumint")
 	tk.MustExec("create table t2(id int, a int, b int generated always as (abs(a)) virtual, c int generated always as (a+1) stored)")
 	tk.MustGetErrMsg("alter table t2 modify column b mediumint", "[ddl:8200]Unsupported modify column: newCol IsGenerated false, oldCol IsGenerated true")
 	tk.MustGetErrMsg("alter table t2 modify column c mediumint", "[ddl:8200]Unsupported modify column: newCol IsGenerated false, oldCol IsGenerated true")

@@ -4566,6 +4566,7 @@ func TestAlterModifyColumnOnPartitionedTable(t *testing.T) {
 		"34 34💥",
 		"46 46",
 		"57 57"))
+	tk.MustExec(`alter table t change b c varchar(200) charset utf8mb4`)
 	tk.MustExec(`drop table t`)
 	tk.MustExec(`create table t (a int unsigned PRIMARY KEY, b varchar(255), key (b)) partition by range (a) ` +
 		`(partition p0 values less than (10),` +
@@ -4620,6 +4621,33 @@ func TestAlterModifyColumnOnPartitionedTable(t *testing.T) {
 		"7 07",
 		"8 08"))
 	tk.MustQuery(`select * from t order by b`).Check(testkit.Rows(""+
+		"7 07",
+		"8 08",
+		"23 23",
+		"34 34💥",
+		"46 46",
+		"57 57"))
+	tk.MustExec(`alter table t change b c varchar(150) charset utf8mb4`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `a` int(10) unsigned NOT NULL,\n" +
+			"  `c` varchar(150) DEFAULT NULL,\n" +
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+			"  KEY `b` (`c`)\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			"PARTITION BY RANGE (`a`)\n" +
+			"(PARTITION `p0` VALUES LESS THAN (10),\n" +
+			" PARTITION `p1` VALUES LESS THAN (20),\n" +
+			" PARTITION `p2` VALUES LESS THAN (30),\n" +
+			" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
+	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows(""+
+		"23 23",
+		"34 34💥",
+		"46 46",
+		"57 57",
+		"7 07",
+		"8 08"))
+	tk.MustQuery(`select * from t order by c`).Check(testkit.Rows(""+
 		"7 07",
 		"8 08",
 		"23 23",
