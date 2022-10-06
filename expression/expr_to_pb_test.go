@@ -1168,6 +1168,11 @@ func TestExprPushDownToFlash(t *testing.T) {
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
+	// instr
+	function, err = NewFunction(mock.NewContext(), ast.Instr, types.NewFieldType(mysql.TypeString), stringColumn, stringColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
 	// HexStr
 	function, err = NewFunction(mock.NewContext(), ast.Hex, types.NewFieldType(mysql.TypeString), stringColumn)
 	require.NoError(t, err)
