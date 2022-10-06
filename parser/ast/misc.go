@@ -1458,7 +1458,7 @@ const (
 	Lock
 	Unlock
 
-	UserComentType
+	UserCommentType
 	UserAttributeType
 )
 
@@ -1495,7 +1495,7 @@ type CommentOrAttributeOption struct {
 }
 
 func (c *CommentOrAttributeOption) Restore(ctx *format.RestoreCtx) error {
-	if c.Type == UserComentType {
+	if c.Type == UserCommentType {
 		ctx.WriteKeyWord(" COMMENT ")
 		ctx.WriteString(c.Value)
 	} else if c.Type == UserAttributeType {

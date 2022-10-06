@@ -4457,9 +4457,11 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 		if len(v.Cols) != schema.Len() {
 			return nil, dbterror.ErrViewWrongList
 		}
-		if b.ctx.GetSessionVars().User != nil {
-			authErr = ErrTableaccessDenied.GenWithStackByArgs("CREATE VIEW", b.ctx.GetSessionVars().User.AuthUsername,
-				b.ctx.GetSessionVars().User.AuthHostname, v.ViewName.Name.L)
+		user := b.ctx.GetSessionVars().User
+		logutil.BgLogger().Info("CreateViewStmt User", zap.String("User", user.String()))
+		if user != nil {
+			authErr = ErrTableaccessDenied.GenWithStackByArgs("CREATE VIEW", user.AuthUsername,
+				user.AuthHostname, v.ViewName.Name.L)
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateViewPriv, v.ViewName.Schema.L,
 			v.ViewName.Name.L, "", authErr)

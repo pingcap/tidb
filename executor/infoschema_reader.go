@@ -172,6 +172,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataForClusterTrxSummary(sctx)
 		case infoschema.TableVariablesInfo:
 			err = e.setDataForVariablesInfo(sctx)
+		case infoschema.TableUserAttributes:
+			err = e.setDataForUserAttributes(ctx, sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -448,6 +450,33 @@ func (e *memtableRetriever) setDataForVariablesInfo(ctx sessionctx.Context) erro
 		}
 		rows = append(rows, row)
 	}
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataForUserAttributes(ctx context.Context, sctx sessionctx.Context) error {
+	var rows [][]types.Datum
+	exec, _ := sctx.(sqlexec.RestrictedSQLExecutor)
+	logutil.BgLogger().Info(sctx.GetSessionVars().RequestSourceType)
+	chunkRows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT user, host, JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.metadata')) FROM mysql.user`)
+	if err != nil {
+		return err
+	}
+	if len(chunkRows) == 0 {
+		return nil
+	}
+	for _, chunkRow := range chunkRows {
+		if chunkRow.Len() != 3 {
+			continue
+		}
+		// TODO: add checker
+		user := chunkRow.GetString(0)
+		host := chunkRow.GetString(1)
+		attribute := chunkRow.GetString(2)
+		row := types.MakeDatums(user, host, attribute)
+		rows = append(rows, row)
+	}
+
 	e.rows = rows
 	return nil
 }

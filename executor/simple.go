@@ -829,7 +829,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 
 	userAttributes := "null"
 	if s.CommentOrAttributeOption != nil {
-		if s.CommentOrAttributeOption.Type == ast.UserComentType {
+		if s.CommentOrAttributeOption.Type == ast.UserCommentType {
 			userAttributes = fmt.Sprintf("{\"metadata\": {\"comment\": \"%s\"}}", s.CommentOrAttributeOption.Value)
 		} else if s.CommentOrAttributeOption.Type == ast.UserAttributeType {
 			userAttributes = fmt.Sprintf("{\"metadata\": %s}", s.CommentOrAttributeOption.Value)
@@ -1822,14 +1822,14 @@ func getNewAttributes(ctx context.Context, o *ast.CommentOrAttributeOption, user
 		oldAttributesStr, newAttributesStr string
 		oldAttributes, newAttributes       = &types.BinaryJSON{}, &types.BinaryJSON{}
 	)
-	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT attribute FROM %n.%n WHERE User=%? AND Host=%?;`, mysql.SystemDB, "user_attributes", user.Username, user.Hostname)
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT attribute FROM %n.%n WHERE User=%? AND Host=%?;`, "information_schema", "user_attributes", user.Username, user.Hostname)
 	if err != nil {
 		return "", err
 	}
 
 	// no attributes set before
 	if len(rows) == 0 || len(rows[0].GetString(0)) == 0 {
-		if o.Type == ast.UserComentType {
+		if o.Type == ast.UserCommentType {
 			return fmt.Sprintf(`{"metadata": {"comment": "%s"}}`, o.Value), nil
 		} else if o.Type == ast.UserAttributeType {
 			return fmt.Sprintf(`{"metadata": %s}`, o.Value), nil
@@ -1842,7 +1842,7 @@ func getNewAttributes(ctx context.Context, o *ast.CommentOrAttributeOption, user
 	if *oldAttributes, err = types.ParseBinaryJSONFromString(oldAttributesStr); err != nil {
 		return "", err
 	}
-	if o.Type == ast.UserComentType {
+	if o.Type == ast.UserCommentType {
 		newAttributesStr = fmt.Sprintf(`{"comment": "%s"}`, o.Value)
 	} else if o.Type == ast.UserAttributeType {
 		newAttributesStr = o.Value

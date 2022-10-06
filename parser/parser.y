@@ -12825,7 +12825,7 @@ CommentOrAttributeOption:
 	}
 |	"COMMENT" stringLit
 	{
-		$$ = &ast.CommentOrAttributeOption{Type: ast.UserComentType, Value: $2}
+		$$ = &ast.CommentOrAttributeOption{Type: ast.UserCommentType, Value: $2}
 	}
 |	"ATTRIBUTE" stringLit
 	{

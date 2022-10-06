@@ -815,10 +815,9 @@ func TestForbidCacheTableForSystemTable(t *testing.T) {
 		for _, one := range sysTables {
 			err := tk.ExecToErr(fmt.Sprintf("alter table `%s` cache", one))
 			if db == "MySQL" {
-				switch one {
-				case "tidb_mdl_view", "user_attributes":
-					require.EqualError(t, err, fmt.Sprintf("[ddl:1347]'MySQL.%s' is not BASE TABLE", one))
-				default:
+				if one == "tidb_mdl_view" {
+					require.EqualError(t, err, "[ddl:1347]'MySQL.tidb_mdl_view' is not BASE TABLE")
+				} else {
 					require.EqualError(t, err, "[ddl:8200]ALTER table cache for tables in system database is currently unsupported")
 				}
 			} else {

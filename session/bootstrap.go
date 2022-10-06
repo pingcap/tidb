@@ -429,8 +429,6 @@ const (
 	CreateMDLView = `CREATE OR REPLACE VIEW mysql.tidb_mdl_view as (
 	select JOB_ID, DB_NAME, TABLE_NAME, QUERY, SESSION_ID, TxnStart, TIDB_DECODE_SQL_DIGESTS(ALL_SQL_DIGESTS, 4096) AS SQL_DIGESTS from information_schema.ddl_jobs, information_schema.CLUSTER_TIDB_TRX, information_schema.CLUSTER_PROCESSLIST where ddl_jobs.STATE = 'running' and find_in_set(ddl_jobs.table_id, CLUSTER_TIDB_TRX.RELATED_TABLE_IDS) and CLUSTER_TIDB_TRX.SESSION_ID=CLUSTER_PROCESSLIST.ID
 	);`
-	// CreateUserAttributeView is a view about ATTRIBUTE in mysql.user
-	CreateUserAttributeView = `CREATE OR REPLACE VIEW mysql.user_attributes AS select mysql.user.User AS USER, mysql.user.Host AS HOST, json_unquote(json_extract(mysql.user.User_attributes, '$.metadata')) AS ATTRIBUTE from mysql.user`
 )
 
 // bootstrap initiates system DB for a store.
@@ -635,7 +633,7 @@ const (
 	// version93 converts oom-use-tmp-storage to a sysvar
 	version93 = 93
 	version94 = 94
-	// version95 add a column `User_attributes` to `mysql.user` and create a new table `mysql.user_attributes`
+	// version95 add a column `User_attributes` to `mysql.user`
 	version95 = 95
 )
 
@@ -1942,7 +1940,6 @@ func upgradeToVer95(s Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `User_attributes` JSON")
-	doReentrantDDL(s, CreateUserAttributeView)
 }
 
 func writeOOMAction(s Session) {
@@ -2041,8 +2038,6 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateAdvisoryLocks)
 	// Create mdl view.
 	mustExecute(s, CreateMDLView)
-	// Create user_attributes view.
-	mustExecute(s, CreateUserAttributeView)
 }
 
 // inTestSuite checks if we are bootstrapping in the context of tests.
