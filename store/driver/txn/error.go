@@ -137,7 +137,7 @@ func extractKeyExistsErrFromIndex(key kv.Key, value []byte, tblInfo *model.Table
 		}
 		valueStr = append(valueStr, str)
 	}
-	var nonUnicodeValueStr []string;
+	var nonUnicodeValueStr []string
 	for i := 0; i < len(valueStr); i++ {
 		nonUnicodeValueStr[i] = fmt.Sprintf("\\u%X", valueStr[i])
 	}
