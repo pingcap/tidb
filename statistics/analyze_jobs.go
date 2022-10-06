@@ -47,7 +47,7 @@ func (p *AnalyzeProgress) Update(rowCount int64) (dumpCount int64) {
 	defer p.Unlock()
 	p.deltaCount += rowCount
 	t := time.Now()
-	const maxDelta int64 = 10000000
+	const maxDelta int64 = 1000000
 	const dumpTimeInterval = 5 * time.Second
 	if p.deltaCount > maxDelta && t.Sub(p.lastDumpTime) > dumpTimeInterval {
 		dumpCount = p.deltaCount

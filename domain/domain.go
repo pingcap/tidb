@@ -1608,7 +1608,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 	do.SetStatsUpdating(true)
 	do.wg.Run(func() { do.updateStatsWorker(ctx, owner) })
 	do.wg.Run(func() { do.autoAnalyzeWorker(owner) })
-	do.wg.Run(func() { do.gcAnalyzeHistory(owner) })
+	do.wg.Run(func() { do.cleanAnalyzeJobWorker(owner) })
 	return nil
 }
 
@@ -1795,14 +1795,13 @@ func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
 	}
 }
 
-func (do *Domain) gcAnalyzeHistory(owner owner.Manager) {
-	defer util.Recover(metrics.LabelDomain, "gcAnalyzeHistory", nil, false)
-	const gcInterval = time.Hour
-	statsHandle := do.StatsHandle()
-	gcTicker := time.NewTicker(gcInterval)
+func (do *Domain) cleanAnalyzeJobWorker(owner owner.Manager) {
+	defer util.Recover(metrics.LabelDomain, "cleanAnalyzeJobWorker", nil, false)
+	gcTicker := time.NewTicker(time.Hour)
+	handleZombieTicker := time.NewTicker(10 * time.Minute)
 	defer func() {
 		gcTicker.Stop()
-		logutil.BgLogger().Info("gcAnalyzeHistory exited.")
+		logutil.BgLogger().Info("cleanAnalyzeJobWorker exited.")
 	}()
 	for {
 		select {
@@ -1810,9 +1809,20 @@ func (do *Domain) gcAnalyzeHistory(owner owner.Manager) {
 			if owner.IsOwner() {
 				const DaysToKeep = 7
 				updateTime := time.Now().AddDate(0, 0, -DaysToKeep)
-				err := statsHandle.DeleteAnalyzeJobs(updateTime)
+				err := do.StatsHandle().DeleteAnalyzeJobs(updateTime)
 				if err != nil {
 					logutil.BgLogger().Warn("gc analyze history failed", zap.Error(err))
+				}
+			}
+		case <-handleZombieTicker.C:
+			err := do.StatsHandle().HandleMyZombieAnalyzeJobs()
+			if err != nil {
+				logutil.BgLogger().Warn("handle my zombie analyze jobs failed", zap.Error(err))
+			}
+			if owner.IsOwner() {
+				err = do.StatsHandle().HandleOtherZombieAnalyzeJobs()
+				if err != nil {
+					logutil.BgLogger().Warn("handle other servers' zombie analyze jobs failed", zap.Error(err))
 				}
 			}
 		case <-do.exit:

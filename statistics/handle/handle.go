@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
@@ -2316,6 +2317,74 @@ func (h *Handle) DeleteAnalyzeJobs(updateTime time.Time) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	_, _, err := h.execRestrictedSQL(ctx, "DELETE FROM mysql.analyze_jobs WHERE update_time < CONVERT_TZ(%?, '+00:00', @@TIME_ZONE)", updateTime.UTC().Format(types.TimeFormat))
 	return err
+}
+
+func (h *Handle) getLiveAnalyzeProcessIDs() map[uint64]struct{} {
+	analyzeProcessIDs := make(map[uint64]struct{}, 8)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	processes := h.mu.ctx.GetSessionManager().ShowProcessList()
+	for _, process := range processes {
+		if strings.HasPrefix(strings.ToLower(process.Info), "analyze table") {
+			analyzeProcessIDs[process.ID] = struct{}{}
+		}
+	}
+	return analyzeProcessIDs
+}
+
+// HandleMyZombieAnalyzeJobs updates the server's own analyze jobs which are terminated by server down.
+func (h *Handle) HandleMyZombieAnalyzeJobs() error {
+	analyzeProcessIDs := h.getLiveAnalyzeProcessIDs()
+	serverInfo, err := infosync.GetServerInfo()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	instance := fmt.Sprintf("%s:%d", serverInfo.IP, serverInfo.Port)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	rows, _, err := h.execRestrictedSQL(ctx, "SELECT id, process_id FROM mysql.analyze_jobs WHERE instance = %? AND status IN ('pending', 'running')", instance)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, row := range rows {
+		jobID := row.GetUint64(0)
+		if row.IsNull(1) {
+			continue
+		}
+		processID := row.GetUint64(1)
+		if _, ok := analyzeProcessIDs[processID]; !ok {
+			_, _, err = h.execRestrictedSQL(ctx, "UPDATE mysql.analyze_jobs SET state = 'failed', fail_reason = 'TiDB Server is down when running the analyze job', process_id = NULL SET WHERE id = %?", jobID)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
+	return nil
+}
+
+// HandleOtherZombieAnalyzeJobs updates other servers' analyze jobs which are terminated by server down.
+func (h *Handle) HandleOtherZombieAnalyzeJobs() error {
+	// TODO: outside ctx?
+	serverInfos, err := infosync.GetAllServerInfo(context.Background())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	instances := make([]string, 0, len(serverInfos))
+	for _, serverInfo := range serverInfos {
+		instances = append(instances, fmt.Sprintf("%s:%d", serverInfo.IP, serverInfo.Port))
+	}
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	rows, _, err := h.execRestrictedSQL(ctx, "SELECT id FROM mysql.analyze_jobs WHERE instance NOT IN (%?) AND status IN ('pending', 'running') AND TIMESTAMPDIFF(MINUTE, update_time, NOW()) > 10", instances)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, row := range rows {
+		jobID := row.GetUint64(0)
+		_, _, err = h.execRestrictedSQL(ctx, "UPDATE mysql.analyze_jobs SET state = 'failed', fail_reason = 'TiDB Server is down when running the analyze job', process_id = NULL SET WHERE id = %?", jobID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
 }
 
 type tableStatsOption struct {
