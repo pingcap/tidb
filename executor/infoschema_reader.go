@@ -469,7 +469,6 @@ func (e *memtableRetriever) setDataForUserAttributes(ctx context.Context, sctx s
 		if chunkRow.Len() != 3 {
 			continue
 		}
-		// TODO: add checker
 		user := chunkRow.GetString(0)
 		host := chunkRow.GetString(1)
 		attribute := chunkRow.GetString(2)

@@ -1856,7 +1856,6 @@ func getNewAttributes(ctx context.Context, o *ast.CommentOrAttributeOption, user
 	if err != nil {
 		return "", err
 	}
-	logutil.BgLogger().Info("getNewAttributes", zap.String("mergedAttributes", mergedAttributes.String()))
 
 	return fmt.Sprintf(`{"metadata": %s}`, mergedAttributes.String()), nil
 }
