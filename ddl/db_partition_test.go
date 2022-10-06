@@ -4534,11 +4534,14 @@ func TestReorganizePartition(t *testing.T) {
 	tk.MustExec("create database ReorgPartition")
 	tk.MustExec("use ReorgPartition")
 	tk.MustExec(`create table t (a int unsigned PRIMARY KEY, b varchar(255)) partition by range (a) ` +
-		`(partition p0 values less than (1000000),` +
-		` partition p1 values less than (2000000),` +
+		`(partition p0 values less than (10),` +
+		` partition p1 values less than (20),` +
 		` partition pMax values less than (MAXVALUE))`)
-	tk.MustExec(`insert into t values (1, "1"), (1000001, "1000001"),(2000002,"2000002"),(3000003,"3000003"),(4000004,"4000004"),(5000005,"5000005")`)
-	tk.MustExec(`alter table t reorganize partition pMax into (partition p2 values less than (4000000), partition pMax values less than (MAXVALUE))`)
-	tk.MustExec(`alter table t reorganize partition p2,pMax into (partition p2 values less than (3000000),partition p3 values less than (4000000), partition pMax values less than (MAXVALUE))`)
-	tk.MustExec(`alter table t reorganize partition p0,p1 into (partition p1 values less than (2000000))`)
+	tk.MustExec(`insert into t values (1, "1"), (12, "12"),(23,"23"),(34,"34"),(45,"45"),(56,"56")`)
+	//tk.MustExec(`create table t2 (a int unsigned PRIMARY KEY, b varchar(255))`)
+	//tk.MustExec(`insert into t2 values (1, "1"), (12, "12"),(23,"23"),(34,"34"),(45,"45"),(56,"56")`)
+	//tk.MustExec(`alter table t2 modify b varchar(200) charset latin1`)
+	tk.MustExec(`alter table t reorganize partition pMax into (partition p2 values less than (30), partition pMax values less than (MAXVALUE))`)
+	tk.MustExec(`alter table t reorganize partition p2,pMax into (partition p2 values less than (35),partition p3 values less than (47), partition pMax values less than (MAXVALUE))`)
+	tk.MustExec(`alter table t reorganize partition p0,p1 into (partition p1 values less than (20))`)
 }

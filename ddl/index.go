@@ -1646,6 +1646,7 @@ func (w *worker) updateReorgInfo(t table.PartitionedTable, reorg *reorgInfo) (bo
 
 // findNextPartitionID finds the next partition ID in the PartitionDefinition array.
 // Returns 0 if current partition is already the last one.
+// TODO: Update to check for DroppingDefinitions in case of Reorganize Partition
 func findNextPartitionID(currentPartition int64, defs []model.PartitionDefinition) (int64, error) {
 	for i, def := range defs {
 		if currentPartition == def.ID {

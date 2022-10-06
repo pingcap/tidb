@@ -56,6 +56,7 @@ const (
 	typeUpdateColumnWorker     backfillWorkerType = 1
 	typeCleanUpIndexWorker     backfillWorkerType = 2
 	typeAddIndexMergeTmpWorker backfillWorkerType = 3
+	typeReorgPartitionWorker   backfillWorkerType = 4
 )
 
 // By now the DDL jobs that need backfilling include:
@@ -674,6 +675,10 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 				go updateWorker.backfillWorker.run(reorgInfo.d, updateWorker, job)
 			case typeCleanUpIndexWorker:
 				idxWorker := newCleanUpIndexWorker(sessCtx, i, t, decodeColMap, reorgInfo, jc)
+				backfillWorkers = append(backfillWorkers, idxWorker.backfillWorker)
+				go idxWorker.backfillWorker.run(reorgInfo.d, idxWorker, job)
+			case typeReorgPartitionWorker:
+				idxWorker := newReorgPartitionWorker(sessCtx, i, t, decodeColMap, reorgInfo, jc)
 				backfillWorkers = append(backfillWorkers, idxWorker.backfillWorker)
 				go idxWorker.backfillWorker.run(reorgInfo.d, idxWorker, job)
 			default:

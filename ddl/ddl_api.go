@@ -3800,19 +3800,24 @@ func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec
 	// old partitions to check all partitions is strictly increasing.
 	clonedMeta := meta.Clone()
 	tmp := *partInfo
+	tmpDefs := make([]model.PartitionDefinition, 0, len(tmp.Definitions)+len(pi.Definitions)-len(idMap))
 	if pi.Type == model.PartitionTypeList {
-		tmp.Definitions = tmp.Definitions[:0]
+		// There is no order to keep in LIST partitioning
 		for i := range pi.Definitions {
 			if _, ok := idMap[i]; ok {
 				continue
 			}
-			tmp.Definitions = append(tmp.Definitions, pi.Definitions[i])
+			tmpDefs = append(tmpDefs, pi.Definitions[i])
 		}
-		tmp.Definitions = append(tmp.Definitions, tmp.Definitions...)
+		tmp.Definitions = append(tmpDefs, tmp.Definitions...)
 	} else {
 		// Range
-		tmp.Definitions = append(pi.Definitions[:firstPartIdx], tmp.Definitions...)
-		tmp.Definitions = append(tmp.Definitions, pi.Definitions[lastPartIdx:]...)
+		tmpDefs = append(tmpDefs, pi.Definitions[:firstPartIdx]...)
+		tmpDefs = append(tmpDefs, tmp.Definitions...)
+		if len(pi.Definitions) > (lastPartIdx + 1) {
+			tmpDefs = append(tmpDefs, pi.Definitions[lastPartIdx+1:]...)
+		}
+		tmp.Definitions = tmpDefs
 	}
 	clonedMeta.Partition = &tmp
 	if err := checkPartitionDefinitionConstraints(ctx, clonedMeta); err != nil {
@@ -3831,6 +3836,14 @@ func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec
 		Type:       model.ActionReorganizePartition,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{spec.PartitionNames, partInfo},
+		ReorgMeta: &model.DDLReorgMeta{
+			// We should not depend on SQL Mode (TODO: check vs MySQL for zero date etc.)
+			SQLMode:       mysql.ModeNone,
+			Warnings:      make(map[errors.ErrorID]*terror.Error),
+			WarningsCount: make(map[errors.ErrorID]int64),
+			// We should not evaluate any new values? (TODO: Check with virtual/generated columns with indexes?)
+			Location: &model.TimeZoneLocation{Name: time.UTC.String(), Offset: 0},
+		},
 	}
 
 	err = d.DoDDLJob(ctx, job)

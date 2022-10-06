@@ -114,6 +114,25 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Tabl
 	return ret, nil
 }
 
+/*
+func GetDroppingPartition(tbl table.PartitionedTable, pid int64) (table.PhysicalTable, error) {
+	for _, p := range tbl.Meta().Partition.DroppingDefinitions {
+		if pid == p.ID {
+			tblInfo := tbl.Meta()
+			var t partition
+			// TODO: set correct allocs! (test with auto_increment!)
+			// TODO: check if tbl.Cols() is the correct set of columns?
+			err := initTableCommonWithIndices(&t.TableCommon, tblInfo, p.ID, tbl.Cols(), nil)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+	}
+	return nil, table.ErrUnknownPartition.GenWithStackByArgs()
+}
+
+*/
+
 func newPartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error) {
 	// a partitioned table cannot rely on session context/sql modes, so use a default one!
 	ctx := mock.NewContext()
