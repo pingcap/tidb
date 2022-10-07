@@ -479,8 +479,6 @@ var defaultSysVars = []*SysVar{
 		return BoolToOnOff(EnableRCReadCheckTS.Load()), nil
 	}},
 	{Scope: ScopeInstance, Name: TmpDir, Value: config.GetGlobalConfig().Instance.TmpDir.Load(), Type: TypeStr, SetGlobal: func(s *SessionVars, val string) error {
-		disk.TmpDirMutex.Lock()
-		defer disk.TmpDirMutex.Unlock()
 		oldVal := config.GetGlobalConfig().Instance.TmpDir.Load()
 		config.GetGlobalConfig().Instance.TmpDir.Store(val)
 		config.GetGlobalConfig().UpdateTmpDir()

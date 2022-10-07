@@ -110,12 +110,10 @@ func NewListInDisk(fieldTypes []*types.FieldType) *ListInDisk {
 }
 
 func (l *ListInDisk) initDiskFile() (err error) {
-	disk.TmpDirMutex.RLock()
-	defer disk.TmpDirMutex.RUnlock()
-	if err = disk.CheckAndInitTempDir(); err != nil {
+	tmpdir := config.GetGlobalConfig().Instance.TmpDir.Load()
+	if err = disk.CheckAndInitTempDir(tmpdir); err != nil {
 		return
 	}
-	tmpdir := config.GetGlobalConfig().Instance.TmpDir.Load()
 	if err = l.dataFile.initWithFileName(tmpdir, defaultChunkListInDiskPath+strconv.Itoa(l.diskTracker.Label())); err != nil {
 		return
 	}

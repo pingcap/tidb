@@ -17,7 +17,6 @@ package disk
 import (
 	"os"
 	"path/filepath"
-	"sync"
 
 	"github.com/danjacques/gofslock/fslock"
 	"github.com/pingcap/errors"
@@ -31,8 +30,6 @@ import (
 var (
 	tempDirLock fslock.Handle
 	sf          singleflight.Group
-	// TmpDirMutex is used for changing sysvar TmpDir
-	TmpDirMutex sync.RWMutex
 )
 
 const (
@@ -42,50 +39,47 @@ const (
 
 // CheckAndInitTempDir check whether the temp directory is existed.
 // If not, initializes the temp directory.
-func CheckAndInitTempDir() (err error) {
+func CheckAndInitTempDir(path string) (err error) {
 	_, err, _ = sf.Do("tempDir", func() (value interface{}, err error) {
-		if !checkTempDirExist() {
+		if !checkTempDirExist(path) {
 			log.Info("Tmp-storage-path not found. Try to initialize TempDir.")
-			err = InitializeTempDir()
+			err = initialzeTempDirWithPath(path)
 		}
 		return
 	})
 	return
 }
 
-func checkTempDirExist() bool {
-	tempDir := config.GetGlobalConfig().Instance.TmpDir.Load()
-	_, err := os.Stat(tempDir)
+func checkTempDirExist(path string) bool {
+	_, err := os.Stat(path)
 	if err != nil && !os.IsExist(err) {
 		return false
 	}
 	return true
 }
 
-// InitializeTempDir initializes the temp directory.
-func InitializeTempDir() error {
-	tempDir := config.GetGlobalConfig().Instance.TmpDir.Load()
-	_, err := os.Stat(tempDir)
+func initialzeTempDirWithPath(path string) error {
+	_, err := os.Stat(path)
 	if err != nil && !os.IsExist(err) {
-		err = os.MkdirAll(tempDir, 0750)
+		err = os.MkdirAll(path, 0750)
 		if err != nil {
 			return err
 		}
 	}
 	CleanUp()
-	tempDirLock, err = fslock.Lock(filepath.Join(tempDir, lockFile))
+	tempDirLock, err = fslock.Lock(filepath.Join(path, lockFile))
 	if err != nil {
 		switch err {
 		case fslock.ErrLockHeld:
 			log.Error("The current temporary storage dir has been occupied by another instance, "+
-				"check [instance].tmpdir config and make sure they are different.", zap.String("TempStoragePath", tempDir), zap.Error(err))
+				"check [instance].tmpdir config and make sure they are different.", zap.String("TempStoragePath", path), zap.Error(err))
 		default:
-			log.Error("Failed to acquire exclusive lock on the temporary storage dir.", zap.String("TempStoragePath", tempDir), zap.Error(err))
+			log.Error("Failed to acquire exclusive lock on the temporary storage dir.", zap.String("TempStoragePath", path), zap.Error(err))
 		}
 		return err
 	}
 
-	subDirs, err := os.ReadDir(tempDir)
+	subDirs, err := os.ReadDir(path)
 	if err != nil {
 		return err
 	}
@@ -99,15 +93,20 @@ func InitializeTempDir() error {
 				case lockFile, recordDir:
 					continue
 				}
-				err := os.RemoveAll(filepath.Join(tempDir, subDir.Name()))
+				err := os.RemoveAll(filepath.Join(path, subDir.Name()))
 				if err != nil {
 					log.Warn("Remove temporary file error",
-						zap.String("tempStorageSubDir", filepath.Join(tempDir, subDir.Name())), zap.Error(err))
+						zap.String("tempStorageSubDir", filepath.Join(path, subDir.Name())), zap.Error(err))
 				}
 			}
 		}()
 	}
 	return nil
+}
+
+// InitializeTempDir initializes the temp directory.
+func InitializeTempDir() error {
+	return initialzeTempDirWithPath(config.GetGlobalConfig().Instance.TmpDir.Load())
 }
 
 // CleanUp releases the directory lock when exiting TiDB or changing tmpdir.
