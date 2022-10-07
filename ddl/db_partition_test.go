@@ -4707,7 +4707,8 @@ func TestReorganizePartition(t *testing.T) {
 		"PARTITION BY RANGE (`a`)\n" +
 		"(PARTITION `p0` VALUES LESS THAN (10),\n" +
 		" PARTITION `p1` VALUES LESS THAN (20),\n" +
-		" PARTITION `p2` VALUES LESS THAN (30),\n" +
+		" PARTITION `p2` VALUES LESS THAN (35),\n" +
+		" PARTITION `p3` VALUES LESS THAN (47),\n" +
 		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
 	tk.MustExec(`alter table t reorganize partition p0,p1 into (partition p1 values less than (20))`)
 	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows(""+
@@ -4724,8 +4725,8 @@ func TestReorganizePartition(t *testing.T) {
 		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 		"PARTITION BY RANGE (`a`)\n" +
-		"(PARTITION `p0` VALUES LESS THAN (10),\n" +
-		" PARTITION `p1` VALUES LESS THAN (20),\n" +
-		" PARTITION `p2` VALUES LESS THAN (30),\n" +
+		"(PARTITION `p1` VALUES LESS THAN (20),\n" +
+		" PARTITION `p2` VALUES LESS THAN (35),\n" +
+		" PARTITION `p3` VALUES LESS THAN (47),\n" +
 		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
 }
