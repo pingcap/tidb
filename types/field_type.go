@@ -16,7 +16,9 @@ package types
 
 import (
 	"fmt"
+	"runtime"
 	"strconv"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/charset"
@@ -186,7 +188,16 @@ func DefaultParamTypeForValue(value interface{}, tp *FieldType) {
 	default:
 		DefaultTypeForValue(value, tp, mysql.DefaultCharset, mysql.DefaultCollationName)
 		if hasVariantFieldLength(tp) {
-			tp.SetFlen(UnspecifiedLength)
+			pc, _, _, ok := runtime.Caller(1)
+			name := ""
+			if ok {
+				n := runtime.FuncForPC(pc).Name()
+				split := strings.Split(n, ".")
+				name = split[len(split)-1]
+			}
+			if name != "ParamMarkerExpression" {
+				tp.SetFlen(UnspecifiedLength)
+			}
 		}
 		if tp.GetType() == mysql.TypeUnspecified {
 			tp.SetType(mysql.TypeVarString)
