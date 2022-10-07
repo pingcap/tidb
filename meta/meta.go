@@ -78,7 +78,6 @@ var (
 	mPolicyMagicByte         = CurrentMagicByteVer
 	mDDLTableVersion         = []byte("DDLTableVersion")
 	mConcurrentDDL           = []byte("concurrentDDL")
-	mInFlashbackCluster      = []byte("InFlashbackCluster")
 	mFlashbackHistoryTSRange = []byte("FlashbackHistoryTSRange")
 )
 
@@ -604,24 +603,6 @@ func (m *Meta) CheckMDLTableExists() (bool, error) {
 		return false, errors.Trace(err)
 	}
 	return bytes.Equal(v, []byte("2")), nil
-}
-
-// SetFlashbackClusterJobID set flashback cluster jobID
-func (m *Meta) SetFlashbackClusterJobID(jobID int64) error {
-	return errors.Trace(m.txn.Set(mInFlashbackCluster, m.jobIDKey(jobID)))
-}
-
-// GetFlashbackClusterJobID returns flashback cluster jobID.
-func (m *Meta) GetFlashbackClusterJobID() (int64, error) {
-	val, err := m.txn.Get(mInFlashbackCluster)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	if len(val) == 0 {
-		return 0, nil
-	}
-
-	return int64(binary.BigEndian.Uint64(val)), nil
 }
 
 // TSRange store a range time

@@ -439,11 +439,11 @@ func (*Context) Close() {}
 func NewContext() *Context {
 	ctx, cancel := context.WithCancel(context.Background())
 	sctx := &Context{
-		values:      make(map[fmt.Stringer]interface{}),
-		sessionVars: variable.NewSessionVars(),
-		ctx:         ctx,
-		cancel:      cancel,
+		values: make(map[fmt.Stringer]interface{}),
+		ctx:    ctx,
+		cancel: cancel,
 	}
+	sctx.sessionVars = variable.NewSessionVars(sctx)
 	sctx.sessionVars.InitChunkSize = 2
 	sctx.sessionVars.MaxChunkSize = 32
 	sctx.sessionVars.StmtCtx.TimeZone = time.UTC
