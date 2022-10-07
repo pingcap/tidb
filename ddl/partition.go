@@ -19,6 +19,8 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/terror"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/prometheus/client_golang/prometheus"
 	"math"
@@ -2319,12 +2321,37 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 				return ver, errors.Trace(err)
 			}
 		}
-		// TODO: Create background reorg job
-		//var done bool
-		_, ver, err = doPartitionReorgWork(w, d, t, job, tbl, physicalTableIDs)
+		// TODO: Create background reorg job, also do indexes!
+		var done bool
+		done, ver, err = doPartitionReorgWork(w, d, t, job, tbl, physicalTableIDs)
 
+		if !done {
+			return ver, err
+		}
+
+		firstPartIdx, lastPartIdx, idMap, err := getReplacedPartitionIDs(partNamesCIStr, tblInfo.Partition)
+		if err != nil {
+			return ver, err
+		}
+		newDefs := getReorganizedDefinitions(tblInfo.Partition, firstPartIdx, lastPartIdx, idMap)
+
+		tblInfo.Partition.Definitions = newDefs
+		tblInfo.Partition.AddingDefinitions = nil
+		definitionsToDrop := tblInfo.Partition.DroppingDefinitions
 		tblInfo.Partition.DroppingDefinitions = nil
-		// used by ApplyDiff in updateSchemaVersion
+
+		// I assume these must be here still?
+		err = dropLabelRules(d, job.SchemaName, tblInfo.Name.L, partNames)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Wrapf(err, "failed to notify PD the label rules")
+		}
+
+		if err := alterTableLabelRule(job.SchemaName, tblInfo, getIDs([]*model.TableInfo{tblInfo})); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, err
+		}
+
 		job.CtxVars = []interface{}{physicalTableIDs}
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
 		if err != nil {
@@ -2332,7 +2359,8 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		}
 		job.SchemaState = model.StateNone
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
-		asyncNotifyEvent(d, &util.Event{Tp: model.ActionDropTablePartition, TableInfo: tblInfo, PartInfo: &model.PartitionInfo{Definitions: tblInfo.Partition.Definitions}})
+		// How to handle this?
+		asyncNotifyEvent(d, &util.Event{Tp: model.ActionDropTablePartition, TableInfo: tblInfo, PartInfo: &model.PartitionInfo{Definitions: definitionsToDrop}})
 		// A background job will be created to delete old partition data.
 		job.Args = []interface{}{physicalTableIDs}
 	case model.StateReplicaOnly:
@@ -2442,15 +2470,176 @@ func newReorgPartitionWorker(sessCtx sessionctx.Context, id int, t table.Physica
 		backfillWorker: newBackfillWorker(sessCtx, id, t, reorgInfo, typeReorgPartitionWorker),
 		metricCounter:  metrics.BackfillTotalCounter.WithLabelValues(metrics.GenerateReorgLabel("reorg_partition_rate", reorgInfo.SchemaName, t.Meta().Name.String())),
 		rowDecoder:     decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap),
-		// TODO: why not longer than one row?
-		rowMap:     make(map[int64]types.Datum, len(decodeColMap)),
-		jobContext: jc,
+		rowMap:         make(map[int64]types.Datum, len(decodeColMap)),
+		jobContext:     jc,
 	}
 }
 
 func (w *reorgPartitionWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
-	panic("TODO:!!!")
+	oprStartTime := time.Now()
+	ctx := kv.WithInternalSourceType(context.Background(), w.jobContext.ddlJobSourceType())
+	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
+		taskCtx.addedCount = 0
+		taskCtx.scanCount = 0
+		txn.SetOption(kv.Priority, w.priority)
+		if tagger := w.reorgInfo.d.getResourceGroupTaggerForTopSQL(w.reorgInfo.Job); tagger != nil {
+			txn.SetOption(kv.ResourceGroupTagger, tagger)
+		}
+
+		rowRecords, nextKey, taskDone, err := w.fetchRowColVals(txn, handleRange)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		taskCtx.nextKey = nextKey
+		taskCtx.done = taskDone
+
+		/*
+			writeTable, err := w.table.(table.PartitionedTable).GetReorganizedPartitionedTable()
+			if err != nil {
+				return errors.Trace(err)
+			}
+		*/
+		warningsMap := make(map[errors.ErrorID]*terror.Error, len(rowRecords))
+		warningsCountMap := make(map[errors.ErrorID]int64, len(rowRecords))
+		for _, prr := range rowRecords {
+			taskCtx.scanCount++
+
+			err = txn.Set(prr.key, prr.vals)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			taskCtx.addedCount++
+			if prr.warning != nil {
+				if _, ok := warningsCountMap[prr.warning.ID()]; ok {
+					warningsCountMap[prr.warning.ID()]++
+				} else {
+					warningsCountMap[prr.warning.ID()] = 1
+					warningsMap[prr.warning.ID()] = prr.warning
+				}
+			}
+		}
+
+		// Collect the warnings.
+		taskCtx.warnings, taskCtx.warningsCount = warningsMap, warningsCountMap
+
+		// also add the index entries here? And make sure they are not added somewhere else
+
+		return nil
+	})
+	logSlowOperations(time.Since(oprStartTime), "BackfillDataInTxn", 3000)
+
 	return
+}
+
+// Duplicate of updateColumnWorker getNextKey TODO: combine!
+// getNextKey gets next handle of entry that we are going to process.
+func (*reorgPartitionWorker) getNextKey(taskRange reorgBackfillTask,
+	taskDone bool, lastAccessedHandle kv.Key) (nextHandle kv.Key) {
+	if !taskDone {
+		// The task is not done. So we need to pick the last processed entry's handle and add one.
+		return lastAccessedHandle.Next()
+	}
+
+	return taskRange.endKey.Next()
+}
+
+// Duplicate of updateColumnWorker fetchRowColVals TODO: combine!
+func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBackfillTask) ([]*rowRecord, kv.Key, bool, error) {
+	w.rowRecords = w.rowRecords[:0]
+	startTime := time.Now()
+
+	// taskDone means that the added handle is out of taskRange.endHandle.
+	taskDone := false
+	sysTZ := w.sessCtx.GetSessionVars().StmtCtx.TimeZone
+	partTbl, ok := w.table.(table.PartitionedTable)
+	if !ok {
+		return nil, nil, true, dbterror.ErrUnsupportedReorganizePartition.GenWithStackByArgs()
+	}
+	reorgedTbl, err := partTbl.GetReorganizedPartitionedTable()
+	if err != nil {
+		return nil, nil, true, errors.Trace(err)
+	}
+	physTbl := partTbl.GetPartition(w.reorgInfo.PhysicalTableID)
+	partColIDs := partTbl.GetPartitionColumnIDs()
+	writeColOffsetMap := make(map[int64]int, len(partColIDs))
+	maxOffset := 0
+	for _, col := range w.table.Cols() {
+		found := false
+		for _, id := range partColIDs {
+			if col.ID == id {
+				found = true
+				break
+			}
+		}
+		if !found {
+			continue
+		}
+		writeColOffsetMap[col.ID] = col.Offset
+		maxOffset = mathutil.Max[int](maxOffset, col.Offset)
+	}
+	tmpRow := make([]types.Datum, maxOffset+1)
+	var lastAccessedHandle kv.Key
+	oprStartTime := startTime
+	err = iterateSnapshotKeys(w.reorgInfo.d.jobContext(w.reorgInfo.Job), w.sessCtx.GetStore(), w.priority, physTbl.RecordPrefix(), txn.StartTS(), taskRange.startKey, taskRange.endKey,
+		func(handle kv.Handle, recordKey kv.Key, rawRow []byte) (bool, error) {
+			oprEndTime := time.Now()
+			logSlowOperations(oprEndTime.Sub(oprStartTime), "iterateSnapshotKeys in updateColumnWorker fetchRowColVals", 0)
+			oprStartTime = oprEndTime
+
+			if taskRange.endInclude {
+				taskDone = recordKey.Cmp(taskRange.endKey) > 0
+			} else {
+				taskDone = recordKey.Cmp(taskRange.endKey) >= 0
+			}
+
+			if taskDone || len(w.rowRecords) >= w.batchCnt {
+				return false, nil
+			}
+
+			w.rowDecoder.DecodeTheExistedColumnMap(w.sessCtx, handle, rawRow, sysTZ, w.rowMap)
+
+			//tmpChk := w.rowDecoder.CurrentRowWithDefaultVal()
+			//tmpDatum := tmpChk.GetDatumRow(w.reorgInfo.)
+			// Set the partitioning columns and calculate which partition to write to
+			for colID, offset := range writeColOffsetMap {
+				if d, ok := w.rowMap[colID]; ok {
+					tmpRow[offset] = d
+				} else {
+					return true, dbterror.ErrUnsupportedReorganizePartition.GenWithStackByArgs()
+				}
+			}
+			p, err := reorgedTbl.GetPartitionByRow(w.sessCtx, tmpRow)
+			if err != nil {
+				return false, errors.Trace(err)
+			}
+			pid := p.GetPhysicalID()
+			newKey := tablecodec.EncodeTablePrefix(pid)
+			newKey = append(newKey, recordKey[len(newKey):]...)
+			w.rowRecords = append(w.rowRecords, &rowRecord{
+				key: newKey, vals: rawRow,
+			})
+
+			w.cleanRowMap()
+			lastAccessedHandle = recordKey
+			if recordKey.Cmp(taskRange.endKey) == 0 {
+				taskDone = true
+				return false, nil
+			}
+			return true, nil
+		})
+
+	if len(w.rowRecords) == 0 {
+		taskDone = true
+	}
+
+	logutil.BgLogger().Debug("[ddl] txn fetches handle info", zap.Uint64("txnStartTS", txn.StartTS()), zap.String("taskRange", taskRange.String()), zap.Duration("takeTime", time.Since(startTime)))
+	return w.rowRecords, w.getNextKey(taskRange, taskDone, lastAccessedHandle), taskDone, errors.Trace(err)
+}
+
+func (w *reorgPartitionWorker) cleanRowMap() {
+	for id := range w.rowMap {
+		delete(w.rowMap, id)
+	}
 }
 
 func (w *reorgPartitionWorker) AddMetricInfo(cnt float64) {

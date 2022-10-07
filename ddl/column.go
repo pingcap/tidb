@@ -1029,7 +1029,11 @@ func (w *worker) updatePhysicalTableRow(t table.Table, reorgInfo *reorgInfo) err
 			if p == nil {
 				return dbterror.ErrCancelledDDLJob.GenWithStack("Can not find partition id %d for table %d", reorgInfo.PhysicalTableID, t.Meta().ID)
 			}
-			err := w.writePhysicalTableRecord(w.sessPool, p, typeUpdateColumnWorker, reorgInfo)
+			workType := typeUpdateColumnWorker
+			if reorgInfo.Job.Type == model.ActionReorganizePartition {
+				workType = typeReorgPartitionWorker
+			}
+			err := w.writePhysicalTableRecord(w.sessPool, t.(table.PhysicalTable), workType, reorgInfo)
 			if err != nil {
 				return err
 			}

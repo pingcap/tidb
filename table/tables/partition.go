@@ -84,7 +84,7 @@ type partitionedTable struct {
 	evalBufferPool  sync.Pool
 }
 
-func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Table, error) {
+func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.PartitionedTable, error) {
 	ret := &partitionedTable{TableCommon: *tbl}
 	partitionExpr, err := newPartitionExpr(tblInfo)
 	if err != nil {
@@ -958,11 +958,17 @@ func (t *partitionedTable) PartitionExpr() (*PartitionExpr, error) {
 	return t.partitionExpr, nil
 }
 
-func (t *partitionedTable) GetPartitionColumnNames() []model.CIStr {
+func (t *partitionedTable) GetPartitionColumnIDs() []int64 {
 	// PARTITION BY {LIST|RANGE} COLUMNS uses columns directly without expressions
 	pi := t.Meta().Partition
 	if len(pi.Columns) > 0 {
-		return pi.Columns
+		colIDs := make([]int64, 0, len(pi.Columns))
+		// TODO: find the column ids
+		for _, name := range pi.Columns {
+			col := table.FindCol(t.Cols(), name.O)
+			colIDs = append(colIDs, col.ID)
+		}
+		return colIDs
 	}
 
 	partitionCols := expression.ExtractColumns(t.partitionExpr.Expr)
@@ -970,7 +976,16 @@ func (t *partitionedTable) GetPartitionColumnNames() []model.CIStr {
 	for _, col := range partitionCols {
 		colIDs = append(colIDs, col.ID)
 	}
-	colNames := make([]model.CIStr, 0, len(partitionCols))
+	return colIDs
+}
+
+func (t *partitionedTable) GetPartitionColumnNames() []model.CIStr {
+	pi := t.Meta().Partition
+	if len(pi.Columns) > 0 {
+		return pi.Columns
+	}
+	colIDs := t.GetPartitionColumnIDs()
+	colNames := make([]model.CIStr, 0, len(colIDs))
 	for _, colID := range colIDs {
 		for _, col := range t.Cols() {
 			if col.ID == colID {
@@ -1173,6 +1188,35 @@ func (t *partitionedTable) GetPartition(pid int64) table.PhysicalTable {
 	return p
 }
 
+// GetReorganizedPartitionedTable returns the same table
+// but only with the AddingDefinitions used.
+func (t *partitionedTable) GetReorganizedPartitionedTable() (table.PartitionedTable, error) {
+	// This is used during Reorganize partitions; All data from DroppingDefinitions
+	// will be copied to AddingDefinitions, so only setup with AddingDefinitions!
+	var (
+		pt       partitionedTable
+		meta     model.TableInfo
+		partInfo model.PartitionInfo
+	)
+
+	// Clone t (only replace the underlying Definitions
+	pt = *t
+	meta = *(*t).Meta()
+	pt.meta = &meta
+	partInfo = *(*t).Meta().Partition
+	// TODO: if range partitioning, add the definition before the first DroppingDefinitions
+	// then set its partitions[pid] = nil, to find rows that does not belong to the first
+	// AddingDefinitions
+	partInfo.Definitions = partInfo.AddingDefinitions
+	partInfo.DroppingDefinitions = nil
+	partInfo.AddingDefinitions = nil
+	pt.meta.Partition = &partInfo
+
+	// and rebuild the partitioning structure
+
+	return newPartitionedTable(&pt.TableCommon, pt.Meta())
+}
+
 // GetPartitionByRow returns a Table, which is actually a Partition.
 func (t *partitionedTable) GetPartitionByRow(ctx sessionctx.Context, r []types.Datum) (table.PhysicalTable, error) {
 	pid, err := t.locatePartition(ctx, t.Meta().GetPartitionInfo(), r)
@@ -1201,6 +1245,7 @@ func (t *partitionedTable) AddRecord(ctx sessionctx.Context, r []types.Datum, op
 
 func partitionedTableAddRecord(ctx sessionctx.Context, t *partitionedTable, r []types.Datum, partitionSelection map[int64]struct{}, opts []table.AddRecordOption) (recordID kv.Handle, err error) {
 	partitionInfo := t.meta.GetPartitionInfo()
+	// TODO: Double write to AddingDefinitions!
 	pid, err := t.locatePartition(ctx, partitionInfo, r)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1255,6 +1300,7 @@ func (t *partitionedTable) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r [
 		return errors.Trace(err)
 	}
 
+	// TODO: Double write to AddingDefinitions!
 	tbl := t.GetPartition(pid)
 	return tbl.RemoveRecord(ctx, h, r)
 }
@@ -1297,6 +1343,8 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx sessionctx.Context, 
 			return errors.WithStack(table.ErrRowDoesNotMatchGivenPartitionSet)
 		}
 	}
+
+	// TODO: Double write to AddingDefinitions!
 
 	// The old and new data locate in different partitions.
 	// Remove record from old partition and add record to new partition.

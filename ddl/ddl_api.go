@@ -3719,6 +3719,53 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 	return errors.Trace(err)
 }
 
+func getReorganizedDefinitions(pi *model.PartitionInfo, firstPartIdx, lastPartIdx int, idMap map[int]interface{}) []model.PartitionDefinition {
+	tmpDefs := make([]model.PartitionDefinition, 0, len(pi.Definitions)+len(pi.AddingDefinitions)-len(pi.DroppingDefinitions))
+	if pi.Type == model.PartitionTypeList {
+		// There is no order to keep in LIST partitioning
+		for i := range pi.Definitions {
+			if _, ok := idMap[i]; ok {
+				continue
+			}
+			tmpDefs = append(tmpDefs, pi.Definitions[i])
+		}
+		return append(tmpDefs, pi.Definitions...)
+	}
+	// Range
+	tmpDefs = append(tmpDefs, pi.Definitions[:firstPartIdx]...)
+	tmpDefs = append(tmpDefs, pi.AddingDefinitions...)
+	if len(pi.Definitions) > (lastPartIdx + 1) {
+		tmpDefs = append(tmpDefs, pi.Definitions[lastPartIdx+1:]...)
+	}
+	return tmpDefs
+}
+
+func getReplacedPartitionIDs(names []model.CIStr, pi *model.PartitionInfo) (int, int, map[int]interface{}, error) {
+	idMap := make(map[int]interface{})
+	var firstPartIdx, lastPartIdx int = -1, -1
+	for _, name := range names {
+		partIdx := pi.FindPartitionDefinitionByName(name.L)
+		if partIdx == -1 {
+			return 0, 0, nil, errors.Trace(dbterror.ErrWrongPartitionName)
+		}
+		if _, ok := idMap[partIdx]; ok {
+			return 0, 0, nil, errors.Trace(dbterror.ErrSameNamePartition)
+		}
+		idMap[partIdx] = nil
+		if firstPartIdx == -1 {
+			firstPartIdx = partIdx
+		} else {
+			firstPartIdx = mathutil.Min[int](firstPartIdx, partIdx)
+		}
+		if lastPartIdx == -1 {
+			lastPartIdx = partIdx
+		} else {
+			lastPartIdx = mathutil.Max[int](lastPartIdx, partIdx)
+		}
+	}
+	return firstPartIdx, lastPartIdx, idMap, nil
+}
+
 // ReorganizePartitions reorganize one set of partitions to a new set of partitions.
 func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
 	is := d.infoCache.GetLatest()
@@ -3751,40 +3798,22 @@ func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec
 	switch pi.Type {
 	// Only supporting RANGE/LIST
 	case model.PartitionTypeRange:
-		// TODO, check that the existing partitions are in one range
 		// TODO, check that the new partitions are in one range, not overlapping the kept ones
 	case model.PartitionTypeList:
 	default:
 		return errors.Trace(dbterror.ErrUnsupportedReorganizePartition)
 	}
-	idMap := make(map[int]interface{})
-	var firstPartIdx, lastPartIdx int = -1, -1
-	for _, name := range spec.PartitionNames {
-		partIdx := pi.FindPartitionDefinitionByName(name.L)
-		if partIdx == -1 {
-			return errors.Trace(dbterror.ErrWrongPartitionName)
-		}
-		if _, ok := idMap[partIdx]; ok {
-			return errors.Trace(dbterror.ErrSameNamePartition)
-		}
-		idMap[partIdx] = nil
-		if firstPartIdx == -1 {
-			firstPartIdx = partIdx
-		} else {
-			firstPartIdx = mathutil.Min[int](firstPartIdx, partIdx)
-		}
-		if lastPartIdx == -1 {
-			lastPartIdx = partIdx
-		} else {
-			lastPartIdx = mathutil.Max[int](lastPartIdx, partIdx)
-		}
-	}
+	firstPartIdx, lastPartIdx, idMap, err := getReplacedPartitionIDs(spec.PartitionNames, pi)
 	if pi.Type == model.PartitionTypeRange {
 		if len(idMap) != (lastPartIdx - firstPartIdx + 1) {
 			// Not continues range
 			// TODO: Better error message?
 			return errors.Trace(dbterror.ErrUnsupportedReorganizePartition)
 		}
+		// TODO, check that the new partitions are not overlapping the kept ones
+		// I.e. lastPartIdx partition needs either to be the last partition
+		//   OK to increase/decrease range, will error out if any row is out of the new range)
+		// or partition definition range, must be the same as the last partition it replaces
 	}
 
 	partInfo, err := BuildAddedPartitionInfo(ctx, meta, spec)
@@ -3799,27 +3828,7 @@ func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec
 	// partInfo contains only the new added partition, we have to combine it with the
 	// old partitions to check all partitions is strictly increasing.
 	clonedMeta := meta.Clone()
-	tmp := *partInfo
-	tmpDefs := make([]model.PartitionDefinition, 0, len(tmp.Definitions)+len(pi.Definitions)-len(idMap))
-	if pi.Type == model.PartitionTypeList {
-		// There is no order to keep in LIST partitioning
-		for i := range pi.Definitions {
-			if _, ok := idMap[i]; ok {
-				continue
-			}
-			tmpDefs = append(tmpDefs, pi.Definitions[i])
-		}
-		tmp.Definitions = append(tmpDefs, tmp.Definitions...)
-	} else {
-		// Range
-		tmpDefs = append(tmpDefs, pi.Definitions[:firstPartIdx]...)
-		tmpDefs = append(tmpDefs, tmp.Definitions...)
-		if len(pi.Definitions) > (lastPartIdx + 1) {
-			tmpDefs = append(tmpDefs, pi.Definitions[lastPartIdx+1:]...)
-		}
-		tmp.Definitions = tmpDefs
-	}
-	clonedMeta.Partition = &tmp
+	clonedMeta.Partition.Definitions = getReorganizedDefinitions(pi, firstPartIdx, lastPartIdx, idMap)
 	if err := checkPartitionDefinitionConstraints(ctx, clonedMeta); err != nil {
 		return errors.Trace(err)
 	}
