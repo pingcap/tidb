@@ -1187,6 +1187,16 @@ func TestExprPushDownToFlash(t *testing.T) {
 	function, err = NewFunction(mock.NewContext(), ast.Elt, types.NewFieldType(mysql.TypeString), intColumn, stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
+	
+	// OctInt
+	function, err = NewFunction(mock.NewContext(), ast.Oct, types.NewFieldType(mysql.TypeString), intColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// OctString
+	function, err = NewFunction(mock.NewContext(), ast.Oct, types.NewFieldType(mysql.TypeString), stringColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
 
 	// CastTimeAsDuration
 	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeDuration), datetimeColumn)
