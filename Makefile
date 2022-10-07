@@ -25,7 +25,10 @@ buildsucc:
 
 all: dev server benchkv
 
-dev: checklist check explaintest gogenerate br_unit_test test_part_parser_dev ut check-file-perm
+dev-check:
+	@./build/check.sh
+
+dev: dev-check checklist check explaintest gogenerate br_unit_test test_part_parser_dev ut check-file-perm
 	@>&2 echo "Great, all tests passed."
 
 # Install the check tools.
