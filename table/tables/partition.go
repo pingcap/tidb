@@ -101,6 +101,9 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 		return nil, errors.Trace(err)
 	}
 	pi := tblInfo.GetPartitionInfo()
+	if len(pi.Definitions) == 0 {
+		return nil, table.ErrUnknownPartition
+	}
 	partitions := make(map[int64]*partition, len(pi.Definitions))
 	for _, p := range pi.Definitions {
 		var t partition
@@ -113,25 +116,6 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 	ret.partitions = partitions
 	return ret, nil
 }
-
-/*
-func GetDroppingPartition(tbl table.PartitionedTable, pid int64) (table.PhysicalTable, error) {
-	for _, p := range tbl.Meta().Partition.DroppingDefinitions {
-		if pid == p.ID {
-			tblInfo := tbl.Meta()
-			var t partition
-			// TODO: set correct allocs! (test with auto_increment!)
-			// TODO: check if tbl.Cols() is the correct set of columns?
-			err := initTableCommonWithIndices(&t.TableCommon, tblInfo, p.ID, tbl.Cols(), nil)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-		}
-	}
-	return nil, table.ErrUnknownPartition.GenWithStackByArgs()
-}
-
-*/
 
 func newPartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error) {
 	// a partitioned table cannot rely on session context/sql modes, so use a default one!
@@ -1193,28 +1177,23 @@ func (t *partitionedTable) GetPartition(pid int64) table.PhysicalTable {
 func (t *partitionedTable) GetReorganizedPartitionedTable() (table.PartitionedTable, error) {
 	// This is used during Reorganize partitions; All data from DroppingDefinitions
 	// will be copied to AddingDefinitions, so only setup with AddingDefinitions!
-	var (
-		pt       partitionedTable
-		meta     model.TableInfo
-		partInfo model.PartitionInfo
-	)
 
-	// Clone t (only replace the underlying Definitions
-	pt = *t
-	meta = *(*t).Meta()
-	pt.meta = &meta
-	partInfo = *(*t).Meta().Partition
+	// Do not change any Definitions of t, but create a new struct
+	tc := t.TableCommon
+	tblInfo := t.TableCommon.Meta().Clone()
+	partInfo := *tblInfo.Partition
 	// TODO: if range partitioning, add the definition before the first DroppingDefinitions
 	// then set its partitions[pid] = nil, to find rows that does not belong to the first
 	// AddingDefinitions
 	partInfo.Definitions = partInfo.AddingDefinitions
 	partInfo.DroppingDefinitions = nil
 	partInfo.AddingDefinitions = nil
-	pt.meta.Partition = &partInfo
+	tblInfo.Partition = &partInfo
+	tc.meta = tblInfo
 
 	// and rebuild the partitioning structure
 
-	return newPartitionedTable(&pt.TableCommon, pt.Meta())
+	return newPartitionedTable(&tc, tblInfo)
 }
 
 // GetPartitionByRow returns a Table, which is actually a Partition.

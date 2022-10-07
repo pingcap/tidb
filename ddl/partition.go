@@ -2438,14 +2438,32 @@ func doPartitionReorgWork(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tb
 	elements := BuildElements(tbl.Meta().Columns[0], tbl.Meta().Indices)
 	partTbl, ok := tbl.(table.PartitionedTable)
 	if !ok {
-		return true, ver, dbterror.ErrUnsupportedReorganizePartition.GenWithStackByArgs()
+		return false, ver, dbterror.ErrUnsupportedReorganizePartition.GenWithStackByArgs()
 	}
 	reorgInfo, err := getReorgInfoFromPartitions(d.jobContext(job), d, rh, job, partTbl, physTblIDs, elements)
 	err = w.runReorgJob(rh, reorgInfo, tbl.Meta(), d.lease, func() (reorgErr error) {
-		// Defer recover for picking up possible panic?
+		defer tidbutil.Recover(metrics.LabelDDL, "doPartitionReorgWork",
+			func() {
+				reorgErr = dbterror.ErrCancelledDDLJob.GenWithStack("reorganize partition for table `%v` panic", tbl.Meta().Name)
+			}, false)
 		return w.reorgPartitionData(tbl, reorgInfo)
 	})
-	// Should ver be set somewhere?
+	if err != nil {
+		if dbterror.ErrWaitReorgTimeout.Equal(err) {
+			// If timeout, we should return, check for the owner and re-wait job done.
+			return false, ver, nil
+		}
+		if kv.IsTxnRetryableError(err) {
+			return false, ver, errors.Trace(err)
+		}
+		if err1 := rh.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
+			logutil.BgLogger().Warn("[ddl] reorg partition job failed, RemoveDDLReorgHandle failed, can't convert job to rollback",
+				zap.String("job", job.String()), zap.Error(err1))
+		}
+		logutil.BgLogger().Warn("[ddl] reorg partition job failed, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
+		job.State = model.JobStateRollingback
+		return false, ver, errors.Trace(err)
+	}
 	return true, ver, err
 }
 
