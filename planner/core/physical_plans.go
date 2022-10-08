@@ -1963,6 +1963,15 @@ func (p *PhysicalMaxOneRow) Clone() (PhysicalPlan, error) {
 	return cloned, nil
 }
 
+// MemoryUsage return the memory usage of PhysicalMaxOneRow
+func (p *PhysicalMaxOneRow) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	return p.basePhysicalPlan.MemoryUsage()
+}
+
 // PhysicalTableDual is the physical operator of dual.
 type PhysicalTableDual struct {
 	physicalSchemaProducer
@@ -1982,6 +1991,19 @@ func (p *PhysicalTableDual) OutputNames() types.NameSlice {
 // SetOutputNames sets the outputting name by the given slice.
 func (p *PhysicalTableDual) SetOutputNames(names types.NameSlice) {
 	p.names = names
+}
+
+// MemoryUsage return the memory usage of PhysicalTableDual
+func (p *PhysicalTableDual) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.physicalSchemaProducer.MemoryUsage() + size.SizeOfInt + size.SizeOfSlice + int64(cap(p.names))*size.SizeOfPointer
+	for _, name := range p.names {
+		sum += name.MemoryUsage()
+	}
+	return
 }
 
 // PhysicalWindow is the physical operator of window function.
@@ -2048,6 +2070,27 @@ func (p *PhysicalWindow) Clone() (PhysicalPlan, error) {
 	return cloned, nil
 }
 
+// MemoryUsage return the memory usage of PhysicalWindow
+func (p *PhysicalWindow) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.physicalSchemaProducer.MemoryUsage() + size.SizeOfSlice*3 + int64(cap(p.WindowFuncDescs))*size.SizeOfPointer +
+		size.SizeOfUint8
+
+	for _, windowFunc := range p.WindowFuncDescs {
+		sum += windowFunc.MemoryUsage()
+	}
+	for _, item := range p.PartitionBy {
+		sum += item.MemoryUsage()
+	}
+	for _, item := range p.OrderBy {
+		sum += item.MemoryUsage()
+	}
+	return
+}
+
 // PhysicalShuffle represents a shuffle plan.
 // `Tails` and `DataSources` are the last plan within and the first plan following the "shuffle", respectively,
 //
@@ -2070,6 +2113,30 @@ type PhysicalShuffle struct {
 	ByItemArrays [][]expression.Expression
 }
 
+// MemoryUsage return the memory usage of PhysicalShuffle
+func (p *PhysicalShuffle) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.basePhysicalPlan.MemoryUsage() + size.SizeOfInt*2 + size.SizeOfSlice*(3+int64(cap(p.ByItemArrays))) +
+		int64(cap(p.Tails)+cap(p.DataSources))*size.SizeOfInterface
+
+	for _, plan := range p.Tails {
+		sum += plan.MemoryUsage()
+	}
+	for _, plan := range p.DataSources {
+		sum += plan.MemoryUsage()
+	}
+	for _, exprs := range p.ByItemArrays {
+		sum += int64(cap(exprs)) * size.SizeOfInterface
+		for _, expr := range exprs {
+			sum += expr.MemoryUsage()
+		}
+	}
+	return
+}
+
 // PartitionSplitterType is the type of `Shuffle` executor splitter, which splits data source into partitions.
 type PartitionSplitterType int
 
@@ -2089,6 +2156,16 @@ type PhysicalShuffleReceiverStub struct {
 	Receiver unsafe.Pointer
 	// DataSource is the PhysicalPlan of the Receiver.
 	DataSource PhysicalPlan
+}
+
+// MemoryUsage return the memory usage of PhysicalShuffleReceiverStub
+func (p *PhysicalShuffleReceiverStub) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.physicalSchemaProducer.MemoryUsage() + size.SizeOfPointer + size.SizeOfInterface + p.DataSource.MemoryUsage()
+	return
 }
 
 // CollectPlanStatsVersion uses to collect the statistics version of the plan.
@@ -2123,11 +2200,29 @@ type PhysicalShow struct {
 	Extractor ShowPredicateExtractor
 }
 
+// MemoryUsage return the memory usage of PhysicalShow
+func (p *PhysicalShow) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.physicalSchemaProducer.MemoryUsage() + p.ShowContents.MemoryUsage() + size.SizeOfInterface
+	return
+}
+
 // PhysicalShowDDLJobs is for showing DDL job list.
 type PhysicalShowDDLJobs struct {
 	physicalSchemaProducer
 
 	JobNumber int64
+}
+
+// MemoryUsage return the memory usage of PhysicalShowDDLJobs
+func (p *PhysicalShowDDLJobs) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+	return p.physicalSchemaProducer.MemoryUsage() + size.SizeOfInt64
 }
 
 // BuildMergeJoinPlan builds a PhysicalMergeJoin from the given fields. Currently, it is only used for test purpose.
