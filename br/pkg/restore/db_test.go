@@ -28,8 +28,8 @@ import (
 )
 
 type testRestoreSchemaSuite struct {
-	mock     *mock.Cluster
-	storage  storage.ExternalStorage
+	mock    *mock.Cluster
+	storage storage.ExternalStorage
 }
 
 func createRestoreSchemaSuite(t *testing.T) (s *testRestoreSchemaSuite, clean func()) {
