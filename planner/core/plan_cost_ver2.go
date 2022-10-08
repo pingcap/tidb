@@ -51,7 +51,7 @@ func (p *PhysicalProjection) getPlanCostVer2(taskType property.TaskType, option 
 	cpuFactor := getTaskCPUFactor(p, taskType)
 	concurrency := float64(p.ctx.GetSessionVars().ProjectionConcurrency())
 
-	projCost := inputRows * float64(len(p.Exprs)) * cpuFactor
+	projCost := inputRows * float64(len(p.Exprs)) * cpuFactor.Value
 
 	childCost, err := p.children[0].GetPlanCost(taskType, option)
 	if err != nil {
@@ -186,11 +186,11 @@ func (p *PhysicalIndexLookUpReader) getPlanCostVer2(taskType property.TaskType, 
 	tableSideCost := (tableNetCost + tableSeekCost + tableChildCost) / distConcurrency
 
 	// double-read
-	doubleReadCPUCost := indexRows * cpuFactor
+	doubleReadCPUCost := indexRows * cpuFactor.Value
 	batchSize := float64(p.ctx.GetSessionVars().IndexLookupSize)
 	taskPerBatch := 40.0 // TODO: remove this magic number
 	doubleReadTasks := indexRows / batchSize * taskPerBatch
-	doubleReadSeekCost := doubleReadTasks * seekFactor
+	doubleReadSeekCost := doubleReadTasks * seekFactor.Value
 	doubleReadCost := doubleReadCPUCost + doubleReadSeekCost
 
 	p.planCost = indexSideCost + (tableSideCost+doubleReadCost)/doubleReadConcurrency
@@ -261,14 +261,14 @@ func (p *PhysicalSort) getPlanCostVer2(taskType property.TaskType, option *PlanC
 		memQuota > 0 && // mem-quota is set
 		rowSize*rows > float64(memQuota) // exceed the mem-quota
 
-	sortCPUCost := rows * math.Log2(rows) * float64(len(p.ByItems)) * cpuFactor
+	sortCPUCost := rows * math.Log2(rows) * float64(len(p.ByItems)) * cpuFactor.Value
 
 	var sortMemCost, sortDiskCost float64
 	if !spill {
-		sortMemCost = rows * rowSize * memFactor
+		sortMemCost = rows * rowSize * memFactor.Value
 		sortDiskCost = 0
 	} else {
-		sortMemCost = float64(memQuota) * memFactor
+		sortMemCost = float64(memQuota) * memFactor.Value
 		sortDiskCost = rows * rowSize * diskFactor
 	}
 
@@ -293,8 +293,8 @@ func (p *PhysicalTopN) getPlanCostVer2(taskType property.TaskType, option *PlanC
 	cpuFactor := getTaskCPUFactor(p, taskType)
 	memFactor := getTaskMemFactor(p, taskType)
 
-	topNCPUCost := rows * math.Log2(N) * float64(len(p.ByItems)) * cpuFactor
-	topNMemCost := N * rowSize * memFactor
+	topNCPUCost := rows * math.Log2(N) * float64(len(p.ByItems)) * cpuFactor.Value
+	topNMemCost := N * rowSize * memFactor.Value
 
 	childCost, err := p.children[0].GetPlanCost(taskType, option)
 	if err != nil {
@@ -494,7 +494,7 @@ func (p *PhysicalApply) getPlanCostVer2(taskType property.TaskType, option *Plan
 func (p *PhysicalExchangeReceiver) getPlanCostVer2(taskType property.TaskType, option *PlanCostOption) (float64, error) {
 	rows := getCardinality(p, option.CostFlag)
 	rowSize := getAvgRowSize(p.stats, p.Schema())
-	netFactor := getTableNetFactor(p)
+	netFactor := getTaskNetFactor(p, taskType)
 
 	netCost := netCostVer2(rows, rowSize, netFactor)
 	childCost, err := p.children[0].GetPlanCost(taskType, option)
@@ -520,7 +520,7 @@ func (p *PointGetPlan) getPlanCostVer2(taskType property.TaskType, _ *PlanCostOp
 	seekFactor := getTaskSeekFactor(p, taskType)
 
 	netCost := netCostVer2(1, rowSize, netFactor)
-	seekCost := 1 * seekFactor / 20 // 20 times faster than general request
+	seekCost := 1 * seekFactor.Value / 20 // 20 times faster than general request
 
 	p.planCost = netCost + seekCost
 	p.planCostInit = true
@@ -541,88 +541,94 @@ func (p *BatchPointGetPlan) getPlanCostVer2(taskType property.TaskType, option *
 	seekFactor := getTaskSeekFactor(p, taskType)
 
 	netCost := netCostVer2(rows, rowSize, netFactor)
-	seekCost := 1 * seekFactor / 20 // in one batch
+	seekCost := 1 * seekFactor.Value / 20 // in one batch
 
 	p.planCost = netCost + seekCost
 	p.planCostInit = true
 	return p.planCost, nil
 }
 
-func scanCostVer2(rows, rowSize, scanFactor float64) float64 {
+func scanCostVer2(rows, rowSize float64, scanFactor costVer2Factor) float64 {
 	// log2 from experiments
-	return rows * math.Log2(math.Max(1, rowSize)) * scanFactor
+	return rows * math.Log2(math.Max(1, rowSize)) * scanFactor.Value
 }
 
-func netCostVer2(rows, rowSize, netFactor float64) float64 {
-	return rows * rowSize * netFactor
+func netCostVer2(rows, rowSize float64, netFactor costVer2Factor) float64 {
+	return rows * rowSize * netFactor.Value
 }
 
-func filterCostVer2(rows float64, filters []expression.Expression, cpuFactor float64) float64 {
+func filterCostVer2(rows float64, filters []expression.Expression, cpuFactor costVer2Factor) float64 {
 	// TODO: consider types of filters
-	return rows * float64(len(filters)) * cpuFactor
+	return rows * float64(len(filters)) * cpuFactor.Value
 }
 
-func aggCostVer2(rows float64, aggFuncs []*aggregation.AggFuncDesc, cpuFactor float64) float64 {
+func aggCostVer2(rows float64, aggFuncs []*aggregation.AggFuncDesc, cpuFactor costVer2Factor) float64 {
 	// TODO: consider types of agg-funcs
-	return rows * float64(len(aggFuncs)) * cpuFactor
+	return rows * float64(len(aggFuncs)) * cpuFactor.Value
 }
 
-func groupCostVer2(rows float64, groupItems []expression.Expression, cpuFactor float64) float64 {
-	return rows * float64(len(groupItems)) * cpuFactor
+func groupCostVer2(rows float64, groupItems []expression.Expression, cpuFactor costVer2Factor) float64 {
+	return rows * float64(len(groupItems)) * cpuFactor.Value
 }
 
-func hashBuildCostVer2(buildRows, buildRowSize float64, keys []expression.Expression, cpuFactor, memFactor float64) float64 {
+func hashBuildCostVer2(buildRows, buildRowSize float64, keys []expression.Expression, cpuFactor, memFactor costVer2Factor) float64 {
 	// TODO: 1) consider types of keys, 2) dedicated factor for build-probe hash table
-	hashKeyCost := buildRows * float64(len(keys)) * cpuFactor
-	hashMemCost := buildRows * buildRowSize * memFactor
-	hashBuildCost := buildRows * float64(len(keys)) * cpuFactor
+	hashKeyCost := buildRows * float64(len(keys)) * cpuFactor.Value
+	hashMemCost := buildRows * buildRowSize * memFactor.Value
+	hashBuildCost := buildRows * float64(len(keys)) * cpuFactor.Value
 	return hashKeyCost + hashMemCost + hashBuildCost
 }
 
-func hashProbeCostVer2(probeRows float64, keys []expression.Expression, cpuFactor float64) float64 {
+func hashProbeCostVer2(probeRows float64, keys []expression.Expression, cpuFactor costVer2Factor) float64 {
 	// TODO: 1) consider types of keys, 2) dedicated factor for build-probe hash table
-	hashKeyCost := probeRows * float64(len(keys)) * cpuFactor
-	hashProbeCost := probeRows * float64(len(keys)) * cpuFactor
+	hashKeyCost := probeRows * float64(len(keys)) * cpuFactor.Value
+	hashProbeCost := probeRows * float64(len(keys)) * cpuFactor.Value
 	return hashKeyCost + hashProbeCost
 }
 
-// CostVer2Factors collects all cost factors required by cost model ver2.
+type costVer2Factor struct {
+	Name  string
+	Value float64
+}
+
 // In Cost Ver2, we hide cost factors from users and deprecate SQL variables like `tidb_opt_scan_factor`.
-type CostVer2Factors struct {
-	TiKVScan      float64 // per byte
-	TiKVDescScan  float64 // per byte
-	TiFlashScan   float64 // per byte
-	TiDBCPU       float64 // per column or expression
-	TiKVCPU       float64 // per column or expression
-	TiFlashCPU    float64 // per column or expression
-	TiDB2KVNet    float64 // per byte
-	TiDB2FlashNet float64 // per byte
-	TiFlashMPPNet float64 // per byte
-	TiDBMem       float64 // per byte
-	TiKVMem       float64 // per byte
-	TiFlashMem    float64 // per byte
-	TiDBDisk      float64 // per byte
-	TiDBRequest   float64 // per net request
+type costVer2Factors struct {
+	TiDBTempScan  costVer2Factor // TiDB temporary table scan
+	TiKVScan      costVer2Factor // per byte
+	TiKVDescScan  costVer2Factor // per byte
+	TiFlashScan   costVer2Factor // per byte
+	TiDBCPU       costVer2Factor // per column or expression
+	TiKVCPU       costVer2Factor // per column or expression
+	TiFlashCPU    costVer2Factor // per column or expression
+	TiDB2KVNet    costVer2Factor // per byte
+	TiDB2FlashNet costVer2Factor // per byte
+	TiFlashMPPNet costVer2Factor // per byte
+	TiDBMem       costVer2Factor // per byte
+	TiKVMem       costVer2Factor // per byte
+	TiFlashMem    costVer2Factor // per byte
+	TiDBDisk      costVer2Factor // per byte
+	TiDBRequest   costVer2Factor // per net request
 }
 
-var defaultVer2Factors = CostVer2Factors{
-	TiKVScan:      100,
-	TiKVDescScan:  150,
-	TiFlashScan:   5,
-	TiDBCPU:       30,
-	TiKVCPU:       30,
-	TiFlashCPU:    5,
-	TiDB2KVNet:    8,
-	TiDB2FlashNet: 4,
-	TiFlashMPPNet: 4,
-	TiDBMem:       1,
-	TiKVMem:       1,
-	TiFlashMem:    1,
-	TiDBDisk:      1000,
-	TiDBRequest:   9500000,
+var defaultVer2Factors = costVer2Factors{
+	TiDBTempScan:  costVer2Factor{"tidb_temp_table_scan_factor", 0},
+	TiKVScan:      costVer2Factor{"tikv_scan_factor", 100},
+	TiKVDescScan:  costVer2Factor{"tikv_desc_scan_factor", 150},
+	TiFlashScan:   costVer2Factor{"tiflash_scan_factor", 5},
+	TiDBCPU:       costVer2Factor{"tidb_cpu_factor", 30},
+	TiKVCPU:       costVer2Factor{"tikv_cpu_factor", 30},
+	TiFlashCPU:    costVer2Factor{"tiflash_cpu_factor", 5},
+	TiDB2KVNet:    costVer2Factor{"tidb_kv_net_factor", 8},
+	TiDB2FlashNet: costVer2Factor{"tidb_flash_net_factor", 4},
+	TiFlashMPPNet: costVer2Factor{"tiflash_mpp_net_factor", 4},
+	TiDBMem:       costVer2Factor{"tidb_mem_factor", 1},
+	TiKVMem:       costVer2Factor{"tikv_mem_factor", 1},
+	TiFlashMem:    costVer2Factor{"tiflash_mem_factor", 1},
+	TiDBDisk:      costVer2Factor{"tidb_disk_factor", 1000},
+	TiDBRequest:   costVer2Factor{"tidb_request_factor", 9500000},
 }
 
-func getTaskCPUFactor(p PhysicalPlan, taskType property.TaskType) float64 {
+func getTaskCPUFactor(p PhysicalPlan, taskType property.TaskType) costVer2Factor {
 	switch taskType {
 	case property.RootTaskType: // TiDB
 		return defaultVer2Factors.TiDBCPU
@@ -633,7 +639,7 @@ func getTaskCPUFactor(p PhysicalPlan, taskType property.TaskType) float64 {
 	}
 }
 
-func getTaskMemFactor(p PhysicalPlan, taskType property.TaskType) float64 {
+func getTaskMemFactor(p PhysicalPlan, taskType property.TaskType) costVer2Factor {
 	switch taskType {
 	case property.RootTaskType: // TiDB
 		return defaultVer2Factors.TiDBMem
@@ -644,7 +650,7 @@ func getTaskMemFactor(p PhysicalPlan, taskType property.TaskType) float64 {
 	}
 }
 
-func getTaskScanFactor(p PhysicalPlan, taskType property.TaskType) float64 {
+func getTaskScanFactor(p PhysicalPlan, taskType property.TaskType) costVer2Factor {
 	switch taskType {
 	case property.MppTaskType: // TiFlash
 		return defaultVer2Factors.TiFlashScan
@@ -660,7 +666,7 @@ func getTaskScanFactor(p PhysicalPlan, taskType property.TaskType) float64 {
 			tbl = tableScan.Table
 		}
 		if tbl != nil && tbl.TempTableType != model.TempTableNone {
-			return 0 // temp table
+			return defaultVer2Factors.TiDBTempScan // temp table
 		}
 		if desc {
 			return defaultVer2Factors.TiKVDescScan
@@ -669,7 +675,7 @@ func getTaskScanFactor(p PhysicalPlan, taskType property.TaskType) float64 {
 	}
 }
 
-func getTaskNetFactor(p PhysicalPlan, _ property.TaskType) float64 {
+func getTaskNetFactor(p PhysicalPlan, _ property.TaskType) costVer2Factor {
 	if _, ok := p.(*PhysicalExchangeReceiver); ok { // TiFlash MPP
 		return defaultVer2Factors.TiFlashMPPNet
 	}
@@ -681,7 +687,7 @@ func getTaskNetFactor(p PhysicalPlan, _ property.TaskType) float64 {
 	return defaultVer2Factors.TiDB2KVNet
 }
 
-func getTaskSeekFactor(p PhysicalPlan, _ property.TaskType) float64 {
+func getTaskSeekFactor(p PhysicalPlan, _ property.TaskType) costVer2Factor {
 	return defaultVer2Factors.TiDBRequest
 }
 
