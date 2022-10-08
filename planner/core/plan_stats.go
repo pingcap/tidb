@@ -32,7 +32,7 @@ import (
 
 type collectPredicateColumnsPoint struct{}
 
-func (c collectPredicateColumnsPoint) optimize(_ context.Context, plan LogicalPlan, _ *logicalOptimizeOp) (LogicalPlan, error) {
+func (collectPredicateColumnsPoint) optimize(_ context.Context, plan LogicalPlan, _ *logicalOptimizeOp) (LogicalPlan, error) {
 	if plan.SCtx().GetSessionVars().InRestrictedSQL {
 		return plan, nil
 	}
@@ -55,13 +55,13 @@ func (c collectPredicateColumnsPoint) optimize(_ context.Context, plan LogicalPl
 	return plan, nil
 }
 
-func (c collectPredicateColumnsPoint) name() string {
+func (collectPredicateColumnsPoint) name() string {
 	return "collect_predicate_columns_point"
 }
 
 type syncWaitStatsLoadPoint struct{}
 
-func (s syncWaitStatsLoadPoint) optimize(_ context.Context, plan LogicalPlan, _ *logicalOptimizeOp) (LogicalPlan, error) {
+func (syncWaitStatsLoadPoint) optimize(_ context.Context, plan LogicalPlan, _ *logicalOptimizeOp) (LogicalPlan, error) {
 	if plan.SCtx().GetSessionVars().InRestrictedSQL {
 		return plan, nil
 	}
@@ -69,7 +69,7 @@ func (s syncWaitStatsLoadPoint) optimize(_ context.Context, plan LogicalPlan, _ 
 	return plan, err
 }
 
-func (s syncWaitStatsLoadPoint) name() string {
+func (syncWaitStatsLoadPoint) name() string {
 	return "sync_wait_stats_load_point"
 }
 

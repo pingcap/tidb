@@ -469,6 +469,30 @@
           "  └─Selection 1.00 cop[tikv]  not(isnull(test.t2.b))",
           "    └─TableRangeScan 1.00 cop[tikv] table:t2 range: decided by [test.t1.a test.t1.b], keep order:false, stats:pseudo"
         ]
+      },
+      {
+        "SQL": "desc format = 'brief' select /*+ INL_JOIN(t4) */ * from t3 join t4 on t3.a = t4.a where t4.b = 1",
+        "Plan": [
+          "IndexJoin 12.50 root  inner join, inner:TableReader, outer key:test.t3.a, inner key:test.t4.a, equal cond:eq(test.t3.a, test.t4.a)",
+          "├─TableReader(Build) 9990.00 root  data:Selection",
+          "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 0.00 root  data:Selection",
+          "  └─Selection 0.00 cop[tikv]  eq(test.t4.b, 1)",
+          "    └─TableRangeScan 1.00 cop[tikv] table:t4 range: decided by [eq(test.t4.a, test.t3.a) eq(test.t4.b, 1)], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc format = 'brief' select /*+ INL_JOIN(t4) */ * from t3 join t4 on t3.b = t4.b where t4.a = 1",
+        "Plan": [
+          "IndexJoin 12.50 root  inner join, inner:TableReader, outer key:test.t3.b, inner key:test.t4.b, equal cond:eq(test.t3.b, test.t4.b)",
+          "├─TableReader(Build) 9990.00 root  data:Selection",
+          "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.b))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 0.00 root  data:Selection",
+          "  └─Selection 0.00 cop[tikv]  eq(test.t4.a, 1)",
+          "    └─TableRangeScan 1.00 cop[tikv] table:t4 range: decided by [eq(test.t4.b, test.t3.b) eq(test.t4.a, 1)], keep order:false, stats:pseudo"
+        ]
       }
     ]
   },
@@ -1105,7 +1129,7 @@
           "├─TableReader(Build) 3.00 root  data:TableFullScan",
           "│ └─TableFullScan 3.00 cop[tikv] table:t1 keep order:false",
           "└─TableReader(Probe) 1.00 root  data:TableRangeScan",
-          "  └─TableRangeScan 1.00 cop[tikv] table:t2 range: decided by [test.t.a], keep order:false"
+          "  └─TableRangeScan 1.00 cop[tikv] table:t2 range: decided by [eq(test.t.a, test.t.a)], keep order:false"
         ],
         "Res": [
           "1 111 1.1000000000 11 1 111 1.1000000000 11",
@@ -1120,7 +1144,7 @@
           "├─TableReader(Build) 3.00 root  data:TableFullScan",
           "│ └─TableFullScan 3.00 cop[tikv] table:t1 keep order:false",
           "└─TableReader(Probe) 1.00 root  data:TableRangeScan",
-          "  └─TableRangeScan 1.00 cop[tikv] table:t2 range: decided by [test.t.a], keep order:true"
+          "  └─TableRangeScan 1.00 cop[tikv] table:t2 range: decided by [eq(test.t.a, test.t.a)], keep order:true"
         ],
         "Res": [
           "1 111 1.1000000000 11 1 111 1.1000000000 11",
@@ -1135,7 +1159,7 @@
           "├─TableReader(Build) 3.00 root  data:TableFullScan",
           "│ └─TableFullScan 3.00 cop[tikv] table:t1 keep order:false",
           "└─TableReader(Probe) 1.00 root  data:TableRangeScan",
-          "  └─TableRangeScan 1.00 cop[tikv] table:t2 range: decided by [test.t.a], keep order:false"
+          "  └─TableRangeScan 1.00 cop[tikv] table:t2 range: decided by [eq(test.t.a, test.t.a)], keep order:false"
         ],
         "Res": [
           "1 111 1.1000000000 11 1 111 1.1000000000 11",
@@ -1150,7 +1174,7 @@
           "├─TableReader(Build) 3.00 root  data:TableFullScan",
           "│ └─TableFullScan 3.00 cop[tikv] table:t1 keep order:false",
           "└─TableReader(Probe) 1.00 root  data:TableRangeScan",
-          "  └─TableRangeScan 1.00 cop[tikv] table:t2 range: decided by [test.t.a test.t.b], keep order:false"
+          "  └─TableRangeScan 1.00 cop[tikv] table:t2 range: decided by [eq(test.t.a, test.t.a) eq(test.t.b, test.t.b)], keep order:false"
         ],
         "Res": [
           "1 111 1.1000000000 11 1 111 1.1000000000 11",
@@ -7368,6 +7392,178 @@
     ]
   },
   {
+    "Name": "TestIndexJoinRangeFallback",
+    "Cases": [
+      {
+        "SQL": "set @@tidb_opt_range_max_size = 0",
+        "Plan": null,
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select /*+ inl_join(t1) */ * from t1 join t2 on t1.b = t2.e and t1.d = t2.g where t1.a in (1, 3) and t1.c in ('aaa', 'bbb')",
+        "Plan": [
+          "IndexJoin 0.50 root  inner join, inner:IndexLookUp, outer key:test.t2.e, test.t2.g, inner key:test.t1.b, test.t1.d, equal cond:eq(test.t2.e, test.t1.b), eq(test.t2.g, test.t1.d)",
+          "├─TableReader(Build) 9980.01 root  data:Selection",
+          "│ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.e)), not(isnull(test.t2.g))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─IndexLookUp(Probe) 0.00 root  ",
+          "  ├─Selection(Build) 0.03 cop[tikv]  not(isnull(test.t1.b))",
+          "  │ └─IndexRangeScan 0.03 cop[tikv] table:t1, index:idx_a_b_c_d(a, b, c, d) range: decided by [eq(test.t1.b, test.t2.e) eq(test.t1.d, test.t2.g) in(test.t1.a, 1, 3) in(test.t1.c, aaa, bbb)], keep order:false, stats:pseudo",
+          "  └─Selection(Probe) 0.00 cop[tikv]  in(test.t1.c, \"aaa\", \"bbb\"), not(isnull(test.t1.d))",
+          "    └─TableRowIDScan 0.03 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "set @@tidb_opt_range_max_size = 2900",
+        "Plan": null,
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select /*+ inl_join(t1) */ * from t1 join t2 on t1.b = t2.e and t1.d = t2.g where t1.a in (1, 3) and t1.c in ('aaa', 'bbb')",
+        "Plan": [
+          "IndexJoin 0.50 root  inner join, inner:IndexLookUp, outer key:test.t2.e, inner key:test.t1.b, equal cond:eq(test.t2.e, test.t1.b), eq(test.t2.g, test.t1.d)",
+          "├─TableReader(Build) 9980.01 root  data:Selection",
+          "│ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.e)), not(isnull(test.t2.g))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─IndexLookUp(Probe) 0.00 root  ",
+          "  ├─Selection(Build) 0.03 cop[tikv]  not(isnull(test.t1.b))",
+          "  │ └─IndexRangeScan 0.03 cop[tikv] table:t1, index:idx_a_b_c_d(a, b, c, d) range: decided by [eq(test.t1.b, test.t2.e) in(test.t1.a, 1, 3) in(test.t1.c, aaa, bbb)], keep order:false, stats:pseudo",
+          "  └─Selection(Probe) 0.00 cop[tikv]  in(test.t1.c, \"aaa\", \"bbb\"), not(isnull(test.t1.d))",
+          "    └─TableRowIDScan 0.03 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "Memory capacity of 2900 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen"
+        ]
+      },
+      {
+        "SQL": "set @@tidb_opt_range_max_size = 2300",
+        "Plan": null,
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select /*+ inl_join(t1) */ * from t1 join t2 on t1.b = t2.e and t1.d = t2.g where t1.a in (1, 3) and t1.c in ('aaa', 'bbb')",
+        "Plan": [
+          "IndexJoin 0.50 root  inner join, inner:IndexLookUp, outer key:test.t2.e, inner key:test.t1.b, equal cond:eq(test.t2.e, test.t1.b), eq(test.t2.g, test.t1.d)",
+          "├─TableReader(Build) 9980.01 root  data:Selection",
+          "│ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.e)), not(isnull(test.t2.g))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─IndexLookUp(Probe) 0.00 root  ",
+          "  ├─Selection(Build) 0.03 cop[tikv]  not(isnull(test.t1.b))",
+          "  │ └─IndexRangeScan 0.03 cop[tikv] table:t1, index:idx_a_b_c_d(a, b, c, d) range: decided by [eq(test.t1.b, test.t2.e) in(test.t1.a, 1, 3)], keep order:false, stats:pseudo",
+          "  └─Selection(Probe) 0.00 cop[tikv]  in(test.t1.c, \"aaa\", \"bbb\"), not(isnull(test.t1.d))",
+          "    └─TableRowIDScan 0.03 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "Memory capacity of 2300 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen"
+        ]
+      },
+      {
+        "SQL": "set @@tidb_opt_range_max_size = 700",
+        "Plan": null,
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select /*+ inl_join(t1) */ * from t1 join t2 on t1.b = t2.e and t1.d = t2.g where t1.a in (1, 3) and t1.c in ('aaa', 'bbb')",
+        "Plan": [
+          "HashJoin 0.05 root  inner join, equal:[eq(test.t1.b, test.t2.e) eq(test.t1.d, test.t2.g)]",
+          "├─IndexLookUp(Build) 0.04 root  ",
+          "│ ├─Selection(Build) 19.98 cop[tikv]  not(isnull(test.t1.b))",
+          "│ │ └─IndexRangeScan 20.00 cop[tikv] table:t1, index:idx_a_b_c_d(a, b, c, d) range:[1,1], [3,3], keep order:false, stats:pseudo",
+          "│ └─Selection(Probe) 0.04 cop[tikv]  in(test.t1.c, \"aaa\", \"bbb\"), not(isnull(test.t1.d))",
+          "│   └─TableRowIDScan 19.98 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 9980.01 root  data:Selection",
+          "  └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.e)), not(isnull(test.t2.g))",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "Memory capacity of 700 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen",
+          "[planner:1815]Optimizer Hint /*+ INL_JOIN(t1) */ or /*+ TIDB_INLJ(t1) */ is inapplicable"
+        ]
+      },
+      {
+        "SQL": "set @@tidb_opt_range_max_size = 0",
+        "Plan": null,
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select /*+ inl_join(t1) */ * from t1 join t2 on t1.a = t2.e where t1.b > 1 and t1.b < 10",
+        "Plan": [
+          "IndexJoin 312.19 root  inner join, inner:IndexLookUp, outer key:test.t2.e, inner key:test.t1.a, equal cond:eq(test.t2.e, test.t1.a)",
+          "├─TableReader(Build) 9990.00 root  data:Selection",
+          "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.e))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─IndexLookUp(Probe) 0.03 root  ",
+          "  ├─Selection(Build) 0.03 cop[tikv]  not(isnull(test.t1.a))",
+          "  │ └─IndexRangeScan 0.03 cop[tikv] table:t1, index:idx_a_b_c_d(a, b, c, d) range: decided by [eq(test.t1.a, test.t2.e) gt(test.t1.b, 1) lt(test.t1.b, 10)], keep order:false, stats:pseudo",
+          "  └─TableRowIDScan(Probe) 0.03 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "set @@tidb_opt_range_max_size = 300",
+        "Plan": null,
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select /*+ inl_join(t1) */ * from t1 join t2 on t1.a = t2.e where t1.b > 1 and t1.b < 10",
+        "Plan": [
+          "IndexJoin 312.19 root  inner join, inner:IndexLookUp, outer key:test.t2.e, inner key:test.t1.a, equal cond:eq(test.t2.e, test.t1.a)",
+          "├─TableReader(Build) 9990.00 root  data:Selection",
+          "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.e))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─IndexLookUp(Probe) 0.03 root  ",
+          "  ├─Selection(Build) 0.03 cop[tikv]  gt(test.t1.b, 1), lt(test.t1.b, 10), not(isnull(test.t1.a))",
+          "  │ └─IndexRangeScan 1.25 cop[tikv] table:t1, index:idx_a_b_c_d(a, b, c, d) range: decided by [eq(test.t1.a, test.t2.e)], keep order:false, stats:pseudo",
+          "  └─TableRowIDScan(Probe) 0.03 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "Memory capacity of 300 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen"
+        ]
+      },
+      {
+        "SQL": "set @@tidb_opt_range_max_size = 0",
+        "Plan": null,
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select /*+ inl_join(t1) */ * from t1 join t2 on t1.a = t2.e where t1.b > t2.f and t1.b < t2.f + 10",
+        "Plan": [
+          "IndexJoin 12475.01 root  inner join, inner:IndexLookUp, outer key:test.t2.e, inner key:test.t1.a, equal cond:eq(test.t2.e, test.t1.a), other cond:gt(test.t1.b, test.t2.f), lt(test.t1.b, plus(test.t2.f, 10))",
+          "├─TableReader(Build) 9980.01 root  data:Selection",
+          "│ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.e)), not(isnull(test.t2.f))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─IndexLookUp(Probe) 1.25 root  ",
+          "  ├─Selection(Build) 1.25 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "  │ └─IndexRangeScan 1.25 cop[tikv] table:t1, index:idx_a_b_c_d(a, b, c, d) range: decided by [eq(test.t1.a, test.t2.e) gt(test.t1.b, test.t2.f) lt(test.t1.b, plus(test.t2.f, 10))], keep order:false, stats:pseudo",
+          "  └─TableRowIDScan(Probe) 1.25 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "set @@tidb_opt_range_max_size = 300",
+        "Plan": null,
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select /*+ inl_join(t1) */ * from t1 join t2 on t1.a = t2.e where t1.b > t2.f and t1.b < t2.f + 10",
+        "Plan": [
+          "IndexJoin 12475.01 root  inner join, inner:IndexLookUp, outer key:test.t2.e, inner key:test.t1.a, equal cond:eq(test.t2.e, test.t1.a), other cond:gt(test.t1.b, test.t2.f), lt(test.t1.b, plus(test.t2.f, 10))",
+          "├─TableReader(Build) 9980.01 root  data:Selection",
+          "│ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.e)), not(isnull(test.t2.f))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─IndexLookUp(Probe) 1.25 root  ",
+          "  ├─Selection(Build) 1.25 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "  │ └─IndexRangeScan 1.25 cop[tikv] table:t1, index:idx_a_b_c_d(a, b, c, d) range: decided by [eq(test.t1.a, test.t2.e)], keep order:false, stats:pseudo",
+          "  └─TableRowIDScan(Probe) 1.25 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "Memory capacity of 300 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen"
+        ]
+      }
+    ]
+  },
+  {
     "Name": "TestConditionPushDownToIndexScanForPrefixIndex",
     "Cases": [
       {
@@ -7387,6 +7583,6 @@
           "└─TableRowIDScan_9(Probe) 33.23 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       }
-    ]
+    ]  
   }
 ]
