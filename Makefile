@@ -399,7 +399,7 @@ bazel_test: failpoint-enable bazel_ci_prepare
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test
 
 
-bazel_coverage_test: failpoint-enable bazel_ci_prepare
+bazel_coverage_test: bazel_build failpoint-enable bazel_ci_prepare
 	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) \
 		--build_event_json_file=bazel_1.json --@io_bazel_rules_go//go/config:cover_format=go_cover \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
