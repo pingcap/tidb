@@ -311,7 +311,7 @@ func TableExists(ctx context.Context, db utils.QueryExecutor, schema, table stri
 
 // SchemaExists return whether schema with specified name exists.
 func SchemaExists(ctx context.Context, db utils.QueryExecutor, schema string) (bool, error) {
-	query := "SELECT 1 from INFORMATION_SCHEMA.TABLES WHERE SCHEMATA = ?"
+	query := "SELECT 1 from INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = ?"
 	var exist string
 	err := db.QueryRowContext(ctx, query, schema).Scan(&exist)
 	switch {
