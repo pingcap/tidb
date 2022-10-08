@@ -74,7 +74,5 @@ const (
 	SizeOfInt64 = int64(unsafe.Sizeof(*new(int64)))
 
 	// SizeOfMap is the memory each map itsel occupied
-
-	// SizeOfMap is the memory each map occupied
 	SizeOfMap = int64(unsafe.Sizeof(*new(map[int]int)))
 )
