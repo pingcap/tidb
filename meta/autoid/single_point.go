@@ -19,8 +19,10 @@ import (
 	"context"
 	"time"
 
-	"github.com/pingcap/kvproto/pkg/pdpb"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/autoid"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/opentracing/opentracing-go"
 )
 
 var _ Allocator = &singlePointAlloc{}
@@ -28,61 +30,77 @@ var _ Allocator = &singlePointAlloc{}
 type singlePointAlloc struct {
 	dbID int64
 	tblID int64
-	pdpb.PDClient
+	autoid.AutoIDAllocClient
 
 	lastAllocated int64
 }
 
 
 // Alloc allocs N consecutive autoID for table with tableID, returning (min, max] of the allocated autoID batch.
-// It gets a batch of autoIDs at a time. So it does not need to access storage for each call.
 // The consecutive feature is used to insert multiple rows in a statement.
 // increment & offset is used to validate the start position (the allocator's base is not always the last allocated id).
 // The returned range is (min, max]:
 // case increment=1 & offset=1: you can derive the ids like min+1, min+2... max.
 // case increment=x & offset=y: you firstly need to seek to firstID by `SeekToFirstAutoIDXXX`, then derive the IDs like firstID, firstID + increment * 2... in the caller.
 func (sp *singlePointAlloc) Alloc(ctx context.Context, n uint64, increment, offset int64) (int64, int64, error) {
-	if increment != 1 || offset != 1 || n != 1 {
-		panic("increment and offset is not implemented!")
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("autoid.Alloc", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
 	start := time.Now()
-	resp, err := sp.PDClient.AllocAutoID(ctx, &pdpb.AutoIDRequest{
+	resp, err := sp.AutoIDAllocClient.AllocAutoID(ctx, &autoid.AutoIDRequest{
 		DbID: sp.dbID,
 		TblID: sp.tblID,
+		N: n,
+		Increment: increment,
+		Offset: offset,
 	})
 	du := time.Since(start)
 	metrics.AutoIDReqDuration.Observe(du.Seconds())
-	// fmt.Println("du == ", du)
-
 	if err == nil {
-		sp.lastAllocated = resp.Id
+		sp.lastAllocated = resp.Min
 	}
-	return resp.Id, resp.Id, err
+	return resp.Min, resp.Max, err
 }
 
 // AllocSeqCache allocs sequence batch value cached in table level（rather than in alloc), the returned range covering
 // the size of sequence cache with it's increment. The returned round indicates the sequence cycle times if it is with
 // cycle option.
 func (sp *singlePointAlloc) AllocSeqCache() (min int64, max int64, round int64, err error) {
-	panic("not implement AllocSeqCache")
+	return 0, 0, 0, errors.New("AllocSeqCache not implemented")
 }
 
 // Rebase rebases the autoID base for table with tableID and the new base value.
 // If allocIDs is true, it will allocate some IDs and save to the cache.
 // If allocIDs is false, it will not allocate IDs.
 func (sp *singlePointAlloc) Rebase(ctx context.Context, newBase int64, allocIDs bool) error {
-	panic("not implement Rebase")
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("autoid.Rebase", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
+
+	_, err := sp.AutoIDAllocClient.Rebase(ctx, &autoid.RebaseRequest{
+		DbID: sp.dbID,
+		TblID: sp.tblID,
+		Base: newBase,
+	})
+	if err == nil {
+		sp.lastAllocated = newBase
+	}
+	return err
 }
 
 // ForceRebase set the next global auto ID to newBase.
 func (sp *singlePointAlloc) ForceRebase(newBase int64) error {
-	panic("not implement ForceRebase")
+	return sp.Rebase(context.Background(), newBase, false)
 }
 
 // RebaseSeq rebases the sequence value in number axis with tableID and the new base value.
 func (sp *singlePointAlloc) RebaseSeq(newBase int64) (int64, bool, error) {
-	panic("not implement RebaseSeq")
+	return 0, false, errors.New("RebaseSeq not implemented")
 }
 
 // Base return the current base of Allocator.
@@ -91,12 +109,13 @@ func (sp *singlePointAlloc) Base() int64 {
 }
 // End is only used for test.
 func (sp *singlePointAlloc) End() int64 {
-	panic("not implement end")
+	return sp.lastAllocated
 }
 
 // NextGlobalAutoID returns the next global autoID.
+// Used by 'show create table'
 func (sp *singlePointAlloc) NextGlobalAutoID() (int64, error) {
-	panic("not implement NextGlobalAutoID")
+	return sp.lastAllocated, nil
 }
 
 func (sp *singlePointAlloc) GetType() AllocatorType {

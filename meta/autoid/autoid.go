@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/kvproto/pkg/pdpb"
+	"github.com/pingcap/kvproto/pkg/autoid"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
@@ -592,7 +592,7 @@ func NewAllocatorsFromTblInfo(store kv.Storage, schemaID int64, tblInfo *model.T
 		alloc := &singlePointAlloc{
 			dbID: dbID,
 			tblID: tblInfo.ID,
-			PDClient: pdpb.NewPDClient(grpcConn),
+			AutoIDAllocClient: autoid.NewAutoIDAllocClient(grpcConn),
 		}
 		allocs = append(allocs, alloc)
 	}
