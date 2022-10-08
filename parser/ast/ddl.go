@@ -259,7 +259,7 @@ type IndexPartSpecification struct {
 
 	Column *ColumnName
 	Length int
-	// Desc should be ignored because TiDB not support index sort direction.
+	// Order is parsed but should be ignored because MySQL v5.7 doesn't support it.
 	Desc bool
 	Expr ExprNode
 }
