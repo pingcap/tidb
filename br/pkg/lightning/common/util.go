@@ -295,7 +295,7 @@ func InterpolateMySQLString(s string) string {
 }
 
 // TableExists return whether table with specified name exists in target db
-func TableExists(ctx context.Context, db *sql.DB, schema, table string) (bool, error) {
+func TableExists(ctx context.Context, db utils.QueryExecutor, schema, table string) (bool, error) {
 	query := "SELECT 1 from INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?"
 	var exist string
 	err := db.QueryRowContext(ctx, query, schema, table).Scan(&exist)
@@ -306,6 +306,21 @@ func TableExists(ctx context.Context, db *sql.DB, schema, table string) (bool, e
 		return false, nil
 	default:
 		return false, errors.Annotatef(err, "check table exists failed")
+	}
+}
+
+// SchemaExists return whether schema with specified name exists.
+func SchemaExists(ctx context.Context, db utils.QueryExecutor, schema string) (bool, error) {
+	query := "SELECT 1 from INFORMATION_SCHEMA.TABLES WHERE SCHEMATA = ?"
+	var exist string
+	err := db.QueryRowContext(ctx, query, schema).Scan(&exist)
+	switch {
+	case err == nil:
+		return true, nil
+	case err == sql.ErrNoRows:
+		return false, nil
+	default:
+		return false, errors.Annotatef(err, "check schema exists failed")
 	}
 }
 

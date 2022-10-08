@@ -658,7 +658,24 @@ loop:
 				err = sqlWithRetry.Exec(worker.ctx, "run create schema job", stmt)
 				task.End(zap.ErrorLevel, err)
 				if err != nil {
-					// here?
+					// try to imitate IF NOT EXISTS behavior for parsing errors
+					var (
+						exists = false
+						err2   error
+					)
+
+					switch job.stmtType {
+					case schemaCreateDatabase:
+						exists, err2 = common.SchemaExists(worker.ctx, session, job.dbName)
+					case schemaCreateTable:
+						exists, err2 = common.TableExists(worker.ctx, session, job.dbName, job.tblName)
+					}
+					if err2 != nil {
+						task.Error("failed to check table exists", zap.Error(err2))
+					}
+					if exists {
+						continue
+					}
 					err = common.ErrCreateSchema.Wrap(err).GenWithStackByArgs(common.UniqueTable(job.dbName, job.tblName), job.stmtType.String())
 					worker.wg.Done()
 					worker.throw(err)
