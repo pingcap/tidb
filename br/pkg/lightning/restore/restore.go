@@ -658,6 +658,7 @@ loop:
 				err = sqlWithRetry.Exec(worker.ctx, "run create schema job", stmt)
 				task.End(zap.ErrorLevel, err)
 				if err != nil {
+					// here?
 					err = common.ErrCreateSchema.Wrap(err).GenWithStackByArgs(common.UniqueTable(job.dbName, job.tblName), job.stmtType.String())
 					worker.wg.Done()
 					worker.throw(err)
