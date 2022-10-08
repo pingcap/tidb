@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/atomic"
 )
 
 // ExprCollation is a struct that store the collation related information.
@@ -36,7 +37,7 @@ type ExprCollation struct {
 
 type collationInfo struct {
 	coer       Coercibility
-	coerInit   bool
+	coerInit   atomic.Bool
 	repertoire Repertoire
 
 	charset   string
@@ -44,7 +45,7 @@ type collationInfo struct {
 }
 
 func (c *collationInfo) HasCoercibility() bool {
-	return c.coerInit
+	return c.coerInit.Load()
 }
 
 func (c *collationInfo) Coercibility() Coercibility {
@@ -54,7 +55,7 @@ func (c *collationInfo) Coercibility() Coercibility {
 // SetCoercibility implements CollationInfo SetCoercibility interface.
 func (c *collationInfo) SetCoercibility(val Coercibility) {
 	c.coer = val
-	c.coerInit = true
+	c.coerInit.Store(true)
 }
 
 func (c *collationInfo) Repertoire() Repertoire {
