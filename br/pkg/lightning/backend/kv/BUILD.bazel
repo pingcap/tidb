@@ -50,6 +50,7 @@ go_test(
         "sql2kv_test.go",
     ],
     flaky = True,
+    race = "on",
     deps = [
         ":kv",
         "//br/pkg/lightning/common",
