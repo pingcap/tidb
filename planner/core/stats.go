@@ -277,7 +277,7 @@ func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
 			path.IsSingleScan = true
 		} else {
 			ds.deriveIndexPathStats(path, ds.pushedDownConds, false)
-			path.IsSingleScan = ds.isCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo)
+			path.IsSingleScan = ds.isCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, path.ColumnValues, ds.tableInfo)
 		}
 		// Try some heuristic rules to select access path.
 		if len(path.Ranges) == 0 {

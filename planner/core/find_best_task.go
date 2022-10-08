@@ -627,7 +627,7 @@ func (ds *DataSource) isMatchProp(path *util.AccessPath, prop *property.Physical
 					i++
 					break
 				}
-				if path.ConstCols == nil || i >= len(path.ConstCols) || !path.ConstCols[i] {
+				if path.ColumnValues == nil || i >= len(path.ColumnValues) || path.ColumnValues[i] == nil {
 					break
 				}
 			}
@@ -1297,9 +1297,24 @@ func indexCoveringCol(col *expression.Column, constVal *expression.Constant, ind
 	return false
 }
 
-func (ds *DataSource) isCoveringIndex(columns, indexColumns []*expression.Column, idxColLens []int, tblInfo *model.TableInfo) bool {
+func (ds *DataSource) isCoveringIndex(columns, indexColumns []*expression.Column, idxColLens []int, idxColVals []*ranger.ValueInfo, tblInfo *model.TableInfo) bool {
 	for _, col := range columns {
-		if !ds.indexCanHandleCol(col, nil, indexColumns, idxColLens, tblInfo) {
+		var valueInfo *ranger.ValueInfo
+		for i, indexCol := range indexColumns {
+			if indexCol != nil && col.EqualByExprAndID(nil, indexCol) {
+				if i < len(idxColVals) {
+					valueInfo = idxColVals[i]
+				}
+				break
+			}
+		}
+		var constVal *expression.Constant
+		if valueInfo != nil && valueInfo.GetValue() != nil {
+			// TODO: use expression.Constant in ValueInfo
+			constVal = &expression.Constant{RetType: col.RetType}
+			valueInfo.GetValue().Copy(&constVal.Value)
+		}
+		if !ds.indexCanHandleCol(col, constVal, indexColumns, idxColLens, tblInfo) {
 			return false
 		}
 	}

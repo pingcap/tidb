@@ -189,12 +189,12 @@ func getPotentialEqOrInColOffset(sctx sessionctx.Context, expr expression.Expres
 // e.g, for input CNF expressions ((a,b) in ((1,1),(2,2))) and a > 1 and ((a,b,c) in (1,1,1),(2,2,2))
 // ((a,b,c) in (1,1,1),(2,2,2)) would be extracted.
 func extractIndexPointRangesForCNF(sctx sessionctx.Context, conds []expression.Expression, cols []*expression.Column,
-	lengths []int, rangeMaxSize int64) (*DetachRangeResult, int, []*valueInfo, error) {
+	lengths []int, rangeMaxSize int64) (*DetachRangeResult, int, []*ValueInfo, error) {
 	if len(conds) < 2 {
 		return nil, -1, nil, nil
 	}
 	var r *DetachRangeResult
-	columnValues := make([]*valueInfo, len(cols))
+	columnValues := make([]*ValueInfo, len(cols))
 	maxNumCols := int(0)
 	offset := int(-1)
 	for i, cond := range conds {
@@ -244,7 +244,7 @@ func extractIndexPointRangesForCNF(sctx sessionctx.Context, conds []expression.E
 	return r, offset, columnValues, nil
 }
 
-func unionColumnValues(lhs, rhs []*valueInfo) []*valueInfo {
+func unionColumnValues(lhs, rhs []*ValueInfo) []*ValueInfo {
 	if lhs == nil {
 		return rhs
 	}
@@ -551,15 +551,15 @@ func accessCondShouldReserve(access expression.Expression, length int) bool {
 	return true
 }
 
-func extractValueInfo(expr expression.Expression) *valueInfo {
+func extractValueInfo(expr expression.Expression) *ValueInfo {
 	if f, ok := expr.(*expression.ScalarFunction); ok && (f.FuncName.L == ast.EQ || f.FuncName.L == ast.NullEQ) {
-		getValueInfo := func(c *expression.Constant) *valueInfo {
+		getValueInfo := func(c *expression.Constant) *ValueInfo {
 			mutable := c.ParamMarker != nil || c.DeferredExpr != nil
 			var value *types.Datum
 			if !mutable {
 				value = &c.Value
 			}
-			return &valueInfo{value, mutable}
+			return &ValueInfo{value, mutable}
 		}
 		if c, ok := f.GetArgs()[0].(*expression.Constant); ok {
 			return getValueInfo(c)
@@ -581,14 +581,14 @@ func extractValueInfo(expr expression.Expression) *valueInfo {
 // columnValues: the constant column values for all index columns. columnValues[i] is nil if cols[i] is not constant.
 // bool: indicate whether there's nil range when merging eq and in conditions.
 func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Expression, cols []*expression.Column,
-	lengths []int) ([]expression.Expression, []expression.Expression, []expression.Expression, []*valueInfo, bool) {
+	lengths []int) ([]expression.Expression, []expression.Expression, []expression.Expression, []*ValueInfo, bool) {
 	var filters []expression.Expression
 	rb := builder{sc: sctx.GetSessionVars().StmtCtx}
 	accesses := make([]expression.Expression, len(cols))
 	points := make([][]*point, len(cols))
 	mergedAccesses := make([]expression.Expression, len(cols))
 	newConditions := make([]expression.Expression, 0, len(conditions))
-	columnValues := make([]*valueInfo, len(cols))
+	columnValues := make([]*ValueInfo, len(cols))
 	offsets := make([]int, len(conditions))
 	for i, cond := range conditions {
 		offset := getPotentialEqOrInColOffset(sctx, cond, cols)
@@ -647,7 +647,7 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 			if f, ok := accesses[i].(*expression.ScalarFunction); ok && f.FuncName.L == ast.EQ {
 				// Actually the constant column value may not be mutable. Here we assume it is mutable to keep it simple.
 				// Maybe we can improve it later.
-				columnValues[i] = &valueInfo{mutable: true}
+				columnValues[i] = &ValueInfo{mutable: true}
 			}
 			if expression.MaybeOverOptimized4PlanCache(sctx, conditions) {
 				// TODO: optimize it more elaborately, e.g. return [2 3, 2 3] as accesses for 'where a = 2 and b = 3 and c >= ? and c <= ?'
@@ -683,7 +683,7 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 
 // detachDNFCondAndBuildRangeForIndex will detach the index filters from table filters when it's a DNF.
 // We will detach the conditions of every DNF items, then compose them to a DNF.
-func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression.ScalarFunction, newTpSlice []*types.FieldType) (Ranges, []expression.Expression, []*valueInfo, bool, error) {
+func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression.ScalarFunction, newTpSlice []*types.FieldType) (Ranges, []expression.Expression, []*ValueInfo, bool, error) {
 	firstColumnChecker := &conditionChecker{
 		checkerCol:   d.cols[0],
 		length:       d.lengths[0],
@@ -694,7 +694,7 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 	newAccessItems := make([]expression.Expression, 0, len(dnfItems))
 	var totalRanges Ranges
 	var totalRangesMemUsage int64
-	columnValues := make([]*valueInfo, len(d.cols))
+	columnValues := make([]*ValueInfo, len(d.cols))
 	hasResidual := false
 	for i, item := range dnfItems {
 		if sf, ok := item.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicAnd {
@@ -790,15 +790,23 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 	return totalRanges, []expression.Expression{expression.ComposeDNFCondition(d.sctx, newAccessItems...)}, columnValues, hasResidual, nil
 }
 
-// valueInfo is used for recording the constant column value in DetachCondAndBuildRangeForIndex.
-type valueInfo struct {
+// ValueInfo is used for recording the constant column value in DetachCondAndBuildRangeForIndex.
+type ValueInfo struct {
 	value   *types.Datum // If not mutable, value is the constant column value. Otherwise value is nil.
 	mutable bool         // If true, the constant column value depends on mutable constant.
 }
 
-func isSameValue(sc *stmtctx.StatementContext, lhs, rhs *valueInfo) (bool, error) {
+func (v *ValueInfo) GetValue() *types.Datum {
+	return v.value
+}
+
+func (v *ValueInfo) IsMutable() bool {
+	return v.mutable
+}
+
+func isSameValue(sc *stmtctx.StatementContext, lhs, rhs *ValueInfo) (bool, error) {
 	// We assume `lhs` and `rhs` are not the same when either `lhs` or `rhs` is mutable to keep it simple. If we consider
-	// mutable valueInfo, we need to set `sc.OptimDependOnMutableConst = true`, which makes the plan not able to be cached.
+	// mutable ValueInfo, we need to set `sc.OptimDependOnMutableConst = true`, which makes the plan not able to be cached.
 	// On the other hand, the equal condition may not be used for optimization. Hence we simply regard mutable valueInfos different
 	// from others. Maybe we can improve it later.
 	// TODO: is `lhs.value.Kind() != rhs.value.Kind()` necessary?
@@ -823,7 +831,7 @@ type DetachRangeResult struct {
 	RemainedConds []expression.Expression
 	// ColumnValues records the constant column values for all index columns.
 	// For the ith column, if it is evaluated as constant, ColumnValues[i] is its value. Otherwise ColumnValues[i] is nil.
-	ColumnValues []*valueInfo
+	ColumnValues []*ValueInfo
 	// EqCondCount is the number of equal conditions extracted.
 	EqCondCount int
 	// EqOrInCount is the number of equal/in conditions extracted.
@@ -1022,7 +1030,7 @@ func MergeDNFItems4Col(ctx sessionctx.Context, dnfItems []expression.Expression)
 func AddGcColumnCond(sctx sessionctx.Context,
 	cols []*expression.Column,
 	accessesCond []expression.Expression,
-	columnValues []*valueInfo) ([]expression.Expression, error) {
+	columnValues []*ValueInfo) ([]expression.Expression, error) {
 	if cond := accessesCond[1]; cond != nil {
 		if f, ok := cond.(*expression.ScalarFunction); ok {
 			switch f.FuncName.L {
@@ -1108,12 +1116,12 @@ func AddGcColumn4InCond(sctx sessionctx.Context,
 // For param explanation, please refer to the function `AddGcColumnCond`.
 // @retval -  []expression.Expression   the new conditions after adding `tidb_shard() = xxx` prefix
 //
-//	[]*valueInfo              the values of every columns in the returned new conditions
+//	[]*ValueInfo              the values of every columns in the returned new conditions
 //	error                     if error gernerated, return error
 func AddGcColumn4EqCond(sctx sessionctx.Context,
 	cols []*expression.Column,
 	accessesCond []expression.Expression,
-	columnValues []*valueInfo) ([]expression.Expression, error) {
+	columnValues []*ValueInfo) ([]expression.Expression, error) {
 	expr := cols[0].VirtualExpr.Clone()
 	record := make([]types.Datum, len(columnValues)-1)
 
@@ -1130,7 +1138,7 @@ func AddGcColumn4EqCond(sctx sessionctx.Context,
 	if err != nil {
 		return accessesCond, err
 	}
-	vi := &valueInfo{&evaluated, false}
+	vi := &ValueInfo{&evaluated, false}
 	con := &expression.Constant{Value: evaluated, RetType: cols[0].RetType}
 	// make a tidb_shard() function, e.g. `tidb_shard(a) = 8`
 	cond, err := expression.NewFunction(sctx, ast.EQ, cols[0].RetType, cols[0], con)
@@ -1155,7 +1163,7 @@ func AddGcColumn4EqCond(sctx sessionctx.Context,
 func AddExpr4EqAndInCondition(sctx sessionctx.Context, conditions []expression.Expression,
 	cols []*expression.Column) ([]expression.Expression, error) {
 	accesses := make([]expression.Expression, len(cols))
-	columnValues := make([]*valueInfo, len(cols))
+	columnValues := make([]*ValueInfo, len(cols))
 	offsets := make([]int, len(conditions))
 	addGcCond := true
 
@@ -1226,7 +1234,7 @@ func AddExpr4EqAndInCondition(sctx sessionctx.Context, conditions []expression.E
 func NeedAddGcColumn4ShardIndex(
 	cols []*expression.Column,
 	accessCond []expression.Expression,
-	columnValues []*valueInfo) bool {
+	columnValues []*ValueInfo) bool {
 	// the columns of shard index shoude be more than 2, like (tidb_shard(a),a,...)
 	// check cols and columnValues in the sub call function
 	if len(accessCond) < 2 || len(cols) < 2 {
@@ -1259,7 +1267,7 @@ func NeedAddGcColumn4ShardIndex(
 // (1) columns in accessCond are all columns of the index except the first.
 // (2) every column in accessCond has a constan value
 func NeedAddColumn4EqCond(cols []*expression.Column,
-	accessCond []expression.Expression, columnValues []*valueInfo) bool {
+	accessCond []expression.Expression, columnValues []*ValueInfo) bool {
 	valCnt := 0
 	matchedKeyFldCnt := 0
 

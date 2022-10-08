@@ -1340,7 +1340,7 @@ func (ds *DataSource) Convert2Gathers() (gathers []LogicalPlan) {
 			path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, path.Index)
 			path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.schema.Columns, path.Index)
 			// If index columns can cover all of the needed columns, we can use a IndexGather + IndexScan.
-			if ds.isCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo) {
+			if ds.isCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, path.ColumnValues, ds.tableInfo) {
 				gathers = append(gathers, ds.buildIndexGather(path))
 			}
 			// TODO: If index columns can not cover the schema, use IndexLookUpGather.
@@ -1364,12 +1364,7 @@ func (ds *DataSource) detachCondAndBuildRangeForPath(path *util.AccessPath, cond
 	path.EqCondCount = res.EqCondCount
 	path.EqOrInCondCount = res.EqOrInCount
 	path.IsDNFCond = res.IsDNFCond
-	path.ConstCols = make([]bool, len(path.IdxCols))
-	if res.ColumnValues != nil {
-		for i := range path.ConstCols {
-			path.ConstCols[i] = res.ColumnValues[i] != nil
-		}
-	}
+	path.ColumnValues = res.ColumnValues
 	path.CountAfterAccess, err = ds.tableStats.HistColl.GetRowCountByIndexRanges(ds.ctx, path.Index.ID, path.Ranges)
 	return err
 }

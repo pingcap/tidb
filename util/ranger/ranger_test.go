@@ -2058,14 +2058,16 @@ func TestShardIndexFuncSuites(t *testing.T) {
 	// -------------------------------------------
 	// test NeedAddColumn4EqCond function
 	// -------------------------------------------
-	// ranger.valueInfo is not export by package, we can.t test NeedAddColumn4EqCond
+	// ranger.ValueInfo is not export by package, we can.t test NeedAddColumn4EqCond
+	// TODO
 	eqAccessCond := []expression.Expression{nil, exprEq}
 	require.False(t, ranger.NeedAddColumn4EqCond(shardIndexCols, eqAccessCond, nil))
 
 	// -------------------------------------------
 	// test NeedAddGcColumn4ShardIndex function
 	// -------------------------------------------
-	// ranger.valueInfo is not export by package, we can.t test NeedAddGcColumn4ShardIndex
+	// ranger.ValueInfo is not export by package, we can.t test NeedAddGcColumn4ShardIndex
+	// TODO
 	require.False(t, ranger.NeedAddGcColumn4ShardIndex(shardIndexCols, nil, nil))
 
 	// -------------------------------------------
