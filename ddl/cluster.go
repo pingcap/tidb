@@ -502,45 +502,16 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 	switch job.SchemaState {
 	// Stage 1, check and set FlashbackClusterJobID, and update job args.
 	case model.StateNone:
-		flashbackJobID, err := t.GetFlashbackClusterJobID()
+		if err = savePDSchedule(job); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+		gcEnableValue, err := gcutil.CheckGCEnable(sess)
 		if err != nil {
 			job.State = model.JobStateCancelled
-			return ver, err
+			return ver, errors.Trace(err)
 		}
-		if flashbackJobID == 0 || flashbackJobID == job.ID {
-			err = kv.RunInNewTxn(w.ctx, w.store, true, func(ctx context.Context, txn kv.Transaction) error {
-				return meta.NewMeta(txn).SetFlashbackClusterJobID(job.ID)
-			})
-			if err != nil {
-				job.State = model.JobStateCancelled
-				return ver, errors.Trace(err)
-			}
-			if err = savePDSchedule(job); err != nil {
-				job.State = model.JobStateCancelled
-				return ver, errors.Trace(err)
-			}
-			gcEnableValue, err := gcutil.CheckGCEnable(sess)
-			if err != nil {
-				job.State = model.JobStateCancelled
-				return ver, errors.Trace(err)
-			}
-			job.Args[gcEnabledArgsOffset] = &gcEnableValue
-			autoAnalyzeValue, err = getTiDBEnableAutoAnalyze(sess)
-			if err != nil {
-				job.State = model.JobStateCancelled
-				return ver, errors.Trace(err)
-			}
-			job.Args[autoAnalyzeOffset] = &autoAnalyzeValue
-			maxAutoAnalyzeTimeValue, err = getTiDBMaxAutoAnalyzeTime(sess)
-			if err != nil {
-				job.State = model.JobStateCancelled
-				return ver, errors.Trace(err)
-			}
-			job.Args[maxAutoAnalyzeTimeOffset] = &maxAutoAnalyzeTimeValue
-		} else {
-			job.State = model.JobStateCancelled
-			return ver, errors.Errorf("Other flashback job(ID: %d) is running", job.ID)
-		}
+		job.Args[gcEnabledArgsOffset] = &gcEnableValue
 		job.SchemaState = model.StateDeleteOnly
 		return ver, nil
 	// Stage 2, check flashbackTS, close GC and PD schedule.
@@ -600,11 +571,15 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 }
 
 func finishFlashbackCluster(w *worker, job *model.Job) error {
+	// Didn't do anything during flashback, return directly
+	if job.SchemaState == model.StateNone {
+		return nil
+	}
+
 	var flashbackTS uint64
 	var pdScheduleValue map[string]interface{}
 	var autoAnalyzeValue, maxAutoAnalyzeTime string
 	var gcEnabled bool
-	var jobID int64
 
 	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue, &gcEnabled, &autoAnalyzeValue, &maxAutoAnalyzeTime); err != nil {
 		return errors.Trace(err)
@@ -616,27 +591,22 @@ func finishFlashbackCluster(w *worker, job *model.Job) error {
 	defer w.sessPool.put(sess)
 
 	err = kv.RunInNewTxn(w.ctx, w.store, true, func(ctx context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		jobID, err = t.GetFlashbackClusterJobID()
-		if err != nil {
+		if err = recoverPDSchedule(pdScheduleValue); err != nil {
 			return err
 		}
-		if jobID == job.ID {
-			if err = recoverPDSchedule(pdScheduleValue); err != nil {
+		if gcEnabled {
+			if err = gcutil.EnableGC(sess); err != nil {
 				return err
 			}
-			if err = setTiDBEnableAutoAnalyze(sess, autoAnalyzeValue); err != nil {
-				return err
-			}
-			if err = setTiDBMaxAutoAnalyzeTime(sess, maxAutoAnalyzeTime); err != nil {
-				return err
-			}
-			if gcEnabled {
-				if err = gcutil.EnableGC(sess); err != nil {
-					return err
-				}
-			}
-			if err = t.SetFlashbackClusterJobID(0); err != nil {
+		}
+		if err = setTiDBEnableAutoAnalyze(sess, autoAnalyzeValue); err != nil {
+			return err
+		}
+		if err = setTiDBMaxAutoAnalyzeTime(sess, maxAutoAnalyzeTime); err != nil {
+			return err
+		}
+		if gcEnabled {
+			if err = gcutil.EnableGC(sess); err != nil {
 				return err
 			}
 		}

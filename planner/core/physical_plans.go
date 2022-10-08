@@ -756,6 +756,17 @@ type PhysicalMemTable struct {
 	QueryTimeRange QueryTimeRange
 }
 
+// MemoryUsage return the memory usage of PhysicalMemTable
+func (p *PhysicalMemTable) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.physicalSchemaProducer.MemoryUsage() + p.DBName.MemoryUsage() + size.SizeOfPointer + size.SizeOfSlice +
+		int64(cap(p.Columns))*size.SizeOfPointer + size.SizeOfInterface + p.QueryTimeRange.MemoryUsage()
+	return
+}
+
 // PhysicalTableScan represents a table scan plan.
 type PhysicalTableScan struct {
 	physicalSchemaProducer
@@ -777,7 +788,7 @@ type PhysicalTableScan struct {
 
 	physicalTableID int64
 
-	rangeDecidedBy []*expression.Column
+	rangeInfo string
 
 	// HandleIdx is the index of handle, which is only used for admin check table.
 	HandleIdx  []int
@@ -828,7 +839,7 @@ func (ts *PhysicalTableScan) Clone() (PhysicalPlan, error) {
 	if ts.Hist != nil {
 		clonedScan.Hist = ts.Hist.Copy()
 	}
-	clonedScan.rangeDecidedBy = cloneCols(ts.rangeDecidedBy)
+	clonedScan.rangeInfo = ts.rangeInfo
 	return clonedScan, nil
 }
 
@@ -950,9 +961,7 @@ func (ts *PhysicalTableScan) MemoryUsage() (sum int64) {
 	for _, rang := range ts.Ranges {
 		sum += rang.MemUsage()
 	}
-	for _, col := range ts.rangeDecidedBy {
-		sum += col.MemoryUsage()
-	}
+	sum += int64(len(ts.rangeInfo))
 	for _, col := range ts.tblCols {
 		sum += col.MemoryUsage()
 	}
@@ -1445,6 +1454,21 @@ func (p *PhysicalExchangeReceiver) GetExchangeSender() *PhysicalExchangeSender {
 	return p.children[0].(*PhysicalExchangeSender)
 }
 
+const emptyMPPTaskSize = int64(unsafe.Sizeof(mppTask{}))
+
+// MemoryUsage return the memory usage of PhysicalExchangeReceiver
+func (p *PhysicalExchangeReceiver) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.basePhysicalPlan.MemoryUsage() + size.SizeOfSlice*2 + int64(cap(p.Tasks)+cap(p.frags))*size.SizeOfPointer
+	for _, frag := range p.frags {
+		sum += frag.MemoryUsage()
+	}
+	return
+}
+
 // PhysicalExchangeSender dispatches data to upstream tasks. That means push mode processing,
 type PhysicalExchangeSender struct {
 	basePhysicalPlan
@@ -1469,6 +1493,20 @@ func (p *PhysicalExchangeSender) Clone() (PhysicalPlan, error) {
 	return np, nil
 }
 
+// MemoryUsage return the memory usage of PhysicalExchangeSender
+func (p *PhysicalExchangeSender) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.basePhysicalPlan.MemoryUsage() + size.SizeOfSlice*3 + size.SizeOfInt32 +
+		int64(cap(p.TargetTasks)+cap(p.HashCols)+cap(p.Tasks))*size.SizeOfPointer
+	for _, hCol := range p.HashCols {
+		sum += hCol.MemoryUsage()
+	}
+	return
+}
+
 // Clone implements PhysicalPlan interface.
 func (p *PhysicalMergeJoin) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalMergeJoin)
@@ -1490,6 +1528,29 @@ type PhysicalLock struct {
 
 	TblID2Handle       map[int64][]HandleCols
 	TblID2PhysTblIDCol map[int64]*expression.Column
+}
+
+// MemoryUsage return the memory usage of PhysicalLock
+func (pl *PhysicalLock) MemoryUsage() (sum int64) {
+	if pl == nil {
+		return
+	}
+
+	sum = pl.basePhysicalPlan.MemoryUsage() + size.SizeOfPointer + size.SizeOfMap*2
+	if pl.Lock != nil {
+		sum += int64(unsafe.Sizeof(ast.SelectLockInfo{}))
+	}
+
+	for _, vals := range pl.TblID2Handle {
+		sum += size.SizeOfInt64 + size.SizeOfSlice + int64(cap(vals))*size.SizeOfInterface
+		for _, val := range vals {
+			sum += val.MemoryUsage()
+		}
+	}
+	for _, val := range pl.TblID2PhysTblIDCol {
+		sum += size.SizeOfInt64 + size.SizeOfPointer + val.MemoryUsage()
+	}
+	return
 }
 
 // PhysicalLimit is the physical operator of Limit.
@@ -2142,6 +2203,7 @@ type PhysicalCTE struct {
 	RecurPlan PhysicalPlan
 	CTE       *CTEClass
 	cteAsName model.CIStr
+	cteName   model.CIStr
 }
 
 // PhysicalCTETable is for CTE table.

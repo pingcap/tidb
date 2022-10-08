@@ -59,26 +59,25 @@ var (
 //
 
 var (
-	mMetaPrefix         = []byte("m")
-	mNextGlobalIDKey    = []byte("NextGlobalID")
-	mSchemaVersionKey   = []byte("SchemaVersionKey")
-	mDBs                = []byte("DBs")
-	mDBPrefix           = "DB"
-	mTablePrefix        = "Table"
-	mSequencePrefix     = "SID"
-	mSeqCyclePrefix     = "SequenceCycle"
-	mTableIDPrefix      = "TID"
-	mIncIDPrefix        = "IID"
-	mRandomIDPrefix     = "TARID"
-	mBootstrapKey       = []byte("BootstrapKey")
-	mSchemaDiffPrefix   = "Diff"
-	mPolicies           = []byte("Policies")
-	mPolicyPrefix       = "Policy"
-	mPolicyGlobalID     = []byte("PolicyGlobalID")
-	mPolicyMagicByte    = CurrentMagicByteVer
-	mDDLTableVersion    = []byte("DDLTableVersion")
-	mConcurrentDDL      = []byte("concurrentDDL")
-	mInFlashbackCluster = []byte("InFlashbackCluster")
+	mMetaPrefix       = []byte("m")
+	mNextGlobalIDKey  = []byte("NextGlobalID")
+	mSchemaVersionKey = []byte("SchemaVersionKey")
+	mDBs              = []byte("DBs")
+	mDBPrefix         = "DB"
+	mTablePrefix      = "Table"
+	mSequencePrefix   = "SID"
+	mSeqCyclePrefix   = "SequenceCycle"
+	mTableIDPrefix    = "TID"
+	mIncIDPrefix      = "IID"
+	mRandomIDPrefix   = "TARID"
+	mBootstrapKey     = []byte("BootstrapKey")
+	mSchemaDiffPrefix = "Diff"
+	mPolicies         = []byte("Policies")
+	mPolicyPrefix     = "Policy"
+	mPolicyGlobalID   = []byte("PolicyGlobalID")
+	mPolicyMagicByte  = CurrentMagicByteVer
+	mDDLTableVersion  = []byte("DDLTableVersion")
+	mConcurrentDDL    = []byte("concurrentDDL")
 )
 
 const (
@@ -603,24 +602,6 @@ func (m *Meta) CheckMDLTableExists() (bool, error) {
 		return false, errors.Trace(err)
 	}
 	return bytes.Equal(v, []byte("2")), nil
-}
-
-// SetFlashbackClusterJobID set flashback cluster jobID
-func (m *Meta) SetFlashbackClusterJobID(jobID int64) error {
-	return errors.Trace(m.txn.Set(mInFlashbackCluster, m.jobIDKey(jobID)))
-}
-
-// GetFlashbackClusterJobID returns flashback cluster jobID.
-func (m *Meta) GetFlashbackClusterJobID() (int64, error) {
-	val, err := m.txn.Get(mInFlashbackCluster)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	if len(val) == 0 {
-		return 0, nil
-	}
-
-	return int64(binary.BigEndian.Uint64(val)), nil
 }
 
 // SetConcurrentDDL set the concurrent DDL flag.
