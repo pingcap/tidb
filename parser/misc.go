@@ -937,6 +937,7 @@ var hintTokenMap = map[string]int{
 	"FORCE_INDEX":             hintForceIndex,
 	"STRAIGHT_JOIN":           hintStraightJoin,
 	"LEADING":                 hintLeading,
+	"SEMI_JOIN_REWRITE":       hintSemiJoinRewrite,
 
 	// TiDB hint aliases
 	"TIDB_HJ":   hintHashJoin,

@@ -175,7 +175,9 @@ func TestEncodeDecodePlan(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1,t2")
 	tk.MustExec("create table t1 (a int key,b int,c int, index (b));")
+	tk.MustExec("create table tp (a int ,b int,c int) partition by hash(b) partitions 5;")
 	tk.MustExec("set tidb_enable_collect_execution_info=1;")
+	tk.MustExec("set tidb_partition_prune_mode='static';")
 
 	tk.Session().GetSessionVars().PlanID = 0
 	getPlanTree := func() string {
@@ -190,28 +192,37 @@ func TestEncodeDecodePlan(t *testing.T) {
 	}
 	tk.MustExec("select max(a) from t1 where a>0;")
 	planTree := getPlanTree()
-	require.True(t, strings.Contains(planTree, "time"))
-	require.True(t, strings.Contains(planTree, "loops"))
+	require.Contains(t, planTree, "time")
+	require.Contains(t, planTree, "loops")
 
 	tk.MustExec("insert into t1 values (1,1,1);")
 	planTree = getPlanTree()
-	require.True(t, strings.Contains(planTree, "Insert"))
-	require.True(t, strings.Contains(planTree, "time"))
-	require.True(t, strings.Contains(planTree, "loops"))
+	require.Contains(t, planTree, "Insert")
+	require.Contains(t, planTree, "time")
+	require.Contains(t, planTree, "loops")
 
 	tk.MustExec("with cte(a) as (select 1) select * from cte")
 	planTree = getPlanTree()
-	require.True(t, strings.Contains(planTree, "CTE"))
-	require.True(t, strings.Contains(planTree, "1->Column#1"))
-	require.True(t, strings.Contains(planTree, "time"))
-	require.True(t, strings.Contains(planTree, "loops"))
+	require.Contains(t, planTree, "CTE")
+	require.Contains(t, planTree, "1->Column#1")
+	require.Contains(t, planTree, "time")
+	require.Contains(t, planTree, "loops")
 
 	tk.MustExec("with cte(a) as (select 2) select * from cte")
 	planTree = getPlanTree()
-	require.True(t, strings.Contains(planTree, "CTE"))
-	require.True(t, strings.Contains(planTree, "2->Column#1"))
-	require.True(t, strings.Contains(planTree, "time"))
-	require.True(t, strings.Contains(planTree, "loops"))
+	require.Contains(t, planTree, "CTE")
+	require.Contains(t, planTree, "2->Column#1")
+	require.Contains(t, planTree, "time")
+	require.Contains(t, planTree, "loops")
+
+	tk.MustExec("select * from tp")
+	planTree = getPlanTree()
+	require.Contains(t, planTree, "PartitionUnion")
+
+	tk.MustExec("select row_number() over (partition by c) from t1;")
+	planTree = getPlanTree()
+	require.Contains(t, planTree, "Shuffle")
+	require.Contains(t, planTree, "ShuffleReceiver")
 }
 
 func TestNormalizedDigest(t *testing.T) {

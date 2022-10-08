@@ -258,3 +258,8 @@ desc format='brief' with all_data as
 select v1.tps v1_tps,v2.tps v2_tps
 from version1 v1, version2 v2
 where v1.bench_type =v2.bench_type;
+
+# issue 35404
+drop table if exists tbl;
+create table tbl (id int);
+explain with t1 as (select id from tbl), t2 as (select a.id from t1 a join t1 b on a.id = b.id) select * from t2 where id in (select id from t2);

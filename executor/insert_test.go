@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -39,6 +40,19 @@ func TestInsertOnDuplicateKey(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
+	testInsertOnDuplicateKey(t, tk)
+}
+
+func TestInsertOnDuplicateKeyWithBinlog(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	failpoint.Enable("github.com/pingcap/tidb/table/tables/forceWriteBinlog", "return")
+	defer failpoint.Disable("github.com/pingcap/tidb/table/tables/forceWriteBinlog")
+	testInsertOnDuplicateKey(t, tk)
+}
+
+func testInsertOnDuplicateKey(t *testing.T, tk *testkit.TestKit) {
 	tk.MustExec("use test")
 
 	tk.MustExec(`drop table if exists t1, t2;`)
@@ -379,7 +393,7 @@ func TestInsertWrongValueForField(t *testing.T) {
 	tk.MustExec(`CREATE TABLE ts (id int DEFAULT NULL, time1 TIMESTAMP NULL DEFAULT NULL)`)
 	tk.MustExec(`SET @@sql_mode=''`)
 	tk.MustExec(`INSERT INTO ts (id, time1) VALUES (1, TIMESTAMP '1018-12-23 00:00:00')`)
-	tk.MustQuery(`SHOW WARNINGS`).Check(testkit.Rows(`Warning 1292 Incorrect timestamp value: '1018-12-23 00:00:00'`))
+	tk.MustQuery(`SHOW WARNINGS`).Check(testkit.Rows(`Warning 1292 Incorrect timestamp value: '1018-12-23 00:00:00' for column 'time1' at row 1`))
 	tk.MustQuery(`SELECT * FROM ts ORDER BY id`).Check(testkit.Rows(`1 0000-00-00 00:00:00`))
 
 	tk.MustExec(`SET @@sql_mode='STRICT_TRANS_TABLES'`)
@@ -1677,7 +1691,7 @@ func TestIssue10402(t *testing.T) {
 	tk.MustExec("insert into vctt values ('ab\\n\\n\\n', 'ab\\n\\n\\n'), ('ab\\t\\t\\t', 'ab\\t\\t\\t'), ('ab    ', 'ab    '), ('ab\\r\\r\\r', 'ab\\r\\r\\r')")
 	require.Equal(t, uint16(4), tk.Session().GetSessionVars().StmtCtx.WarningCount())
 	warns := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
-	require.Equal(t, "[{Warning [types:1265]Data truncated, field len 4, data len 5} {Warning [types:1265]Data truncated, field len 4, data len 5} {Warning [types:1265]Data truncated, field len 4, data len 6} {Warning [types:1265]Data truncated, field len 4, data len 5}]",
+	require.Equal(t, "[{Warning [types:1265]Data truncated for column 'v' at row 1} {Warning [types:1265]Data truncated for column 'v' at row 2} {Warning [types:1265]Data truncated for column 'v' at row 3} {Warning [types:1265]Data truncated for column 'v' at row 4}]",
 		fmt.Sprintf("%v", warns))
 	tk.MustQuery("select * from vctt").Check(testkit.Rows("ab\n\n ab\n\n", "ab\t\t ab\t\t", "ab   ab", "ab\r\r ab\r\r"))
 	tk.MustQuery("select length(v), length(c) from vctt").Check(testkit.Rows("4 4", "4 4", "4 2", "4 4"))
@@ -1895,7 +1909,8 @@ func TestStringtoDecimal(t *testing.T) {
 	tk.MustGetErrCode("insert into t values('1.2.')", errno.ErrTruncatedWrongValueForField)
 	tk.MustGetErrCode("insert into t values('1,999.00')", errno.ErrTruncatedWrongValueForField)
 	tk.MustExec("insert into t values('12e-3')")
-	tk.MustQuery("show warnings;").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect DECIMAL value: '0.012'"))
+	// TODO: MySQL8.0 reports Note 1265 Data truncated for column 'id' at row 1
+	tk.MustQuery("show warnings;").Check(testkit.RowsWithSep("|", "Warning|1366|Incorrect decimal value: '12e-3' for column 'id' at row 1"))
 	tk.MustQuery("select id from t").Check(testkit.Rows("0"))
 	tk.MustExec("drop table if exists t")
 }
@@ -1910,7 +1925,7 @@ func TestIssue17745(t *testing.T) {
 	tk.MustGetErrCode("insert into tt1 values(89000000000000000000000000000000000000000000000000000000000000000000000000000000000000000)", errno.ErrWarnDataOutOfRange)
 	tk.MustGetErrCode("insert into tt1 values(89123456789012345678901234567890123456789012345678901234567890123456789012345678900000000)", errno.ErrWarnDataOutOfRange)
 	tk.MustExec("insert ignore into tt1 values(89123456789012345678901234567890123456789012345678901234567890123456789012345678900000000)")
-	tk.MustQuery("show warnings;").Check(testkit.Rows(`Warning 1690 DECIMAL value is out of range in '(64, 0)'`, `Warning 1292 Truncated incorrect DECIMAL value: '789012345678901234567890123456789012345678901234567890123456789012345678900000000'`))
+	tk.MustQuery("show warnings;").Check(testkit.Rows(`Warning 1264 Out of range value for column 'c1' at row 1`, `Warning 1292 Truncated incorrect DECIMAL value: '789012345678901234567890123456789012345678901234567890123456789012345678900000000'`))
 	tk.MustQuery("select c1 from tt1").Check(testkit.Rows("9999999999999999999999999999999999999999999999999999999999999999"))
 	tk.MustGetErrCode("update tt1 set c1 = 89123456789012345678901234567890123456789012345678901234567890123456789012345678900000000", errno.ErrWarnDataOutOfRange)
 	tk.MustExec("drop table if exists tt1")
