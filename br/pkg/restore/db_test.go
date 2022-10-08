@@ -13,7 +13,6 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/tidb/br/pkg/backup"
-	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/restore"
@@ -30,14 +29,12 @@ import (
 
 type testRestoreSchemaSuite struct {
 	mock     *mock.Cluster
-	mockGlue *gluetidb.MockGlue
 	storage  storage.ExternalStorage
 }
 
 func createRestoreSchemaSuite(t *testing.T) (s *testRestoreSchemaSuite, clean func()) {
 	var err error
 	s = new(testRestoreSchemaSuite)
-	s.mockGlue = &gluetidb.MockGlue{}
 	s.mock, err = mock.NewCluster()
 	require.NoError(t, err)
 	base := t.TempDir()
