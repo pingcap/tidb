@@ -1030,8 +1030,6 @@ func (p *PhysicalStreamAgg) GetCost(inputRows float64, isRoot, isMPP bool, costF
 	sessVars := p.ctx.GetSessionVars()
 	if isRoot {
 		cpuCost = inputRows * sessVars.GetCPUFactor() * aggFuncFactor
-	} else if isMPP {
-		cpuCost = inputRows * sessVars.GetCopCPUFactor() * aggFuncFactor
 	} else {
 		cpuCost = inputRows * sessVars.GetCopCPUFactor() * aggFuncFactor
 	}
@@ -1074,8 +1072,6 @@ func (p *PhysicalHashAgg) GetCost(inputRows float64, isRoot, isMPP bool, costFla
 			// Cost of additional goroutines.
 			cpuCost += (con + 1) * sessVars.GetConcurrencyFactor()
 		}
-	} else if isMPP {
-		cpuCost = inputRows * sessVars.GetCopCPUFactor() * aggFuncFactor
 	} else {
 		cpuCost = inputRows * sessVars.GetCopCPUFactor() * aggFuncFactor
 	}
