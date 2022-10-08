@@ -253,7 +253,7 @@ func (p *PhysicalSort) getPlanCostVer2(taskType property.TaskType, option *PlanC
 	rowSize := getAvgRowSize(p.statsInfo(), p.Schema())
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 	memFactor := getTaskMemFactorVer2(p, taskType)
-	diskFactor := p.ctx.GetSessionVars().GetDiskFactor()
+	diskFactor := defaultVer2Factors.TiDBDisk
 	oomUseTmpStorage := variable.EnableTmpStorageOnOOM.Load()
 	memQuota := p.ctx.GetSessionVars().StmtCtx.MemTracker.GetBytesLimit()
 	spill := taskType == property.RootTaskType && // only TiDB can spill
