@@ -2514,6 +2514,10 @@ func TestDDL(t *testing.T) {
 		{`alter table t /*T![placement] primary_region="us" */;`, false, ""},
 		{`alter table t placement policy="ww";`, true, "ALTER TABLE `t` PLACEMENT POLICY = `ww`"},
 		{`alter table t /*T![placement] placement policy="ww" */;`, true, "ALTER TABLE `t` PLACEMENT POLICY = `ww`"},
+		{`alter table t compact;`, true, "ALTER TABLE `t` COMPACT"},
+		{`alter table t compact tiflash replica;`, true, "ALTER TABLE `t` COMPACT TIFLASH REPLICA"},
+		{`alter table t compact partition p1,p2;`, true, "ALTER TABLE `t` COMPACT PARTITION `p1`,`p2`"},
+		{`alter table t compact partition p1,p2 tiflash replica;`, true, "ALTER TABLE `t` COMPACT PARTITION `p1`,`p2` TIFLASH REPLICA"},
 		// 3. create db
 		{`create database t primary_region="us";`, false, ""},
 		{`create database t regions="us,3";`, false, ""},
