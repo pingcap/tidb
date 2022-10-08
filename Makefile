@@ -409,11 +409,6 @@ bazel_coverage_test: failpoint-enable bazel_ci_prepare
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test -//tests/realtikvtest/...
 
-bazel_all_build: bazel_ci_prepare
-	mkdir -p bin
-	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
-		//... --//build:with_nogo_flag=true
-
 bazel_build: bazel_ci_prepare
 	mkdir -p bin
 	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
