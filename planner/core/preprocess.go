@@ -176,6 +176,33 @@ type PreprocessorReturn struct {
 type preprocessWith struct {
 	cteCanUsed      []string
 	cteBeforeOffset []int
+	// A stack is implemented using a two-dimensional array.
+	// Each layer stores the cteList of the current query block.
+	// For example:
+	// Query: with cte1 as (with cte2 as (select * from t) select * from cte2) select * from cte1;
+	// Query Block1: select * from t
+	// cteStack: [[cte1],[cte2]] (when withClause is null, the cteStack will not be appended)
+	// Query Block2: with cte2 as (xxx) select * from cte2
+	// cteStack: [[cte1],[cte2]]
+	// Query Block3: with cte1 as (xxx) select * from cte1;
+	// cteStack: [[cte1]]
+	// ** Only the cteStack of SelectStmt and SetOprStmt will be set. **
+	cteStack [][]*ast.CommonTableExpression
+}
+
+func (pw *preprocessWith) UpdateCTEConsumerCount(tableName string) {
+	// must search from the back to the front (from the inner layer to the outer layer)
+	// For example:
+	// Query: with cte1 as (with cte1 as (select * from t) select * from cte1) select * from cte1;
+	// cteStack: [[cte1: outer, consumerCount=1], [cte1: inner, consumerCount=1]]
+	for i := len(pw.cteStack) - 1; i >= 0; i-- {
+		for _, cte := range pw.cteStack[i] {
+			if cte.Name.L == tableName {
+				cte.ConsumerCount++
+				return
+			}
+		}
+	}
 }
 
 // preprocessor is an ast.Visitor that preprocess
@@ -206,6 +233,13 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.stmtTp = TypeDelete
 	case *ast.SelectStmt:
 		p.stmtTp = TypeSelect
+		if node.With != nil {
+			p.preprocessWith.cteStack = append(p.preprocessWith.cteStack, node.With.CTEs)
+		}
+	case *ast.SetOprStmt:
+		if node.With != nil {
+			p.preprocessWith.cteStack = append(p.preprocessWith.cteStack, node.With.CTEs)
+		}
 	case *ast.UpdateStmt:
 		p.stmtTp = TypeUpdate
 	case *ast.InsertStmt:
@@ -580,6 +614,14 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		with.cteCanUsed = with.cteCanUsed[:beforeOffset]
 		if cteNode, exist := x.(*ast.CommonTableExpression); exist {
 			with.cteCanUsed = append(with.cteCanUsed, cteNode.Name.L)
+		}
+	case *ast.SelectStmt:
+		if x.With != nil {
+			p.preprocessWith.cteStack = p.preprocessWith.cteStack[0 : len(p.preprocessWith.cteStack)-1]
+		}
+	case *ast.SetOprStmt:
+		if x.With != nil {
+			p.preprocessWith.cteStack = p.preprocessWith.cteStack[0 : len(p.preprocessWith.cteStack)-1]
 		}
 	}
 
@@ -1448,6 +1490,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	if tn.Schema.L == "" {
 		for _, cte := range p.preprocessWith.cteCanUsed {
 			if cte == tn.Name.L {
+				p.preprocessWith.UpdateCTEConsumerCount(tn.Name.L)
 				return
 			}
 		}
@@ -1601,6 +1644,10 @@ func (p *preprocessor) resolveAlterTableStmt(node *ast.AlterTableStmt) {
 			table := spec.Constraint.Refer.Table
 			if table.Schema.L == "" && node.Table.Schema.L != "" {
 				table.Schema = model.NewCIStr(node.Table.Schema.L)
+			}
+			if spec.Constraint.Tp == ast.ConstraintForeignKey {
+				// when foreign_key_checks is off, should ignore err when refer table is not exists.
+				p.flag |= inCreateOrDropTable
 			}
 		}
 	}
