@@ -128,13 +128,13 @@ func (l *LRUPlanCache) Delete(key kvcache.Key) {
 	defer l.lock.Unlock()
 
 	hash := strHashKey(key, false)
-	bucket, bucketExist := l.buckets[string(hash)]
+	bucket, bucketExist := l.buckets[hash]
 	if bucketExist {
 		for element := range bucket {
 			l.lruList.Remove(element)
 			l.size--
 		}
-		delete(l.buckets, string(hash))
+		delete(l.buckets, hash)
 	}
 }
 
