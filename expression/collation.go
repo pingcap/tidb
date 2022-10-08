@@ -15,7 +15,7 @@
 package expression
 
 import (
-	"sync/atomic"
+	goatomic "sync/atomic"
 
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/atomic"
 )
 
 // ExprCollation is a struct that store the collation related information.
@@ -50,12 +51,12 @@ func (c *collationInfo) HasCoercibility() bool {
 }
 
 func (c *collationInfo) Coercibility() Coercibility {
-	return Coercibility(atomic.LoadInt32((*int32)(&c.coer)))
+	return Coercibility(goatomic.LoadInt32((*int32)(&c.coer)))
 }
 
 // SetCoercibility implements CollationInfo SetCoercibility interface.
 func (c *collationInfo) SetCoercibility(val Coercibility) {
-	atomic.StoreInt32((*int32)(&c.coer), int32(val))
+	goatomic.StoreInt32((*int32)(&c.coer), int32(val))
 	c.coerInit.Store(true)
 }
 
