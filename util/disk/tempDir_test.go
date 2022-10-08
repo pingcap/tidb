@@ -34,22 +34,22 @@ func TestRemoveDir(t *testing.T) {
 	err = os.MkdirAll(path, 0755)
 	require.NoError(t, err)
 
-	err = CheckAndInitTempDir()
+	err = CheckAndInitTempDir(path)
 	require.NoError(t, err)
-	require.Equal(t, checkTempDirExist(), true)
+	require.Equal(t, checkTempDirExist(path), true)
 	require.NoError(t, os.RemoveAll(config.GetGlobalConfig().Instance.TmpDir.Load()))
-	require.Equal(t, checkTempDirExist(), false)
+	require.Equal(t, checkTempDirExist(path), false)
 	wg := sync.WaitGroup{}
 	for i := 0; i < 10; i++ {
 		wg.Add(1)
 		go func(t *testing.T) {
-			err := CheckAndInitTempDir()
+			err := CheckAndInitTempDir(path)
 			require.NoError(t, err)
 			wg.Done()
 		}(t)
 	}
 	wg.Wait()
-	err = CheckAndInitTempDir()
+	err = CheckAndInitTempDir(path)
 	require.NoError(t, err)
-	require.Equal(t, checkTempDirExist(), true)
+	require.Equal(t, checkTempDirExist(path), true)
 }
