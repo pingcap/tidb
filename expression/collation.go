@@ -15,6 +15,8 @@
 package expression
 
 import (
+	"sync/atomic"
+
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -24,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/atomic"
 )
 
 // ExprCollation is a struct that store the collation related information.
@@ -49,12 +50,12 @@ func (c *collationInfo) HasCoercibility() bool {
 }
 
 func (c *collationInfo) Coercibility() Coercibility {
-	return c.coer
+	return Coercibility(atomic.LoadInt32((*int32)(&c.coer)))
 }
 
 // SetCoercibility implements CollationInfo SetCoercibility interface.
 func (c *collationInfo) SetCoercibility(val Coercibility) {
-	c.coer = val
+	atomic.StoreInt32((*int32)(&c.coer), int32(val))
 	c.coerInit.Store(true)
 }
 
@@ -100,7 +101,7 @@ type CollationInfo interface {
 
 // Coercibility values are used to check whether the collation of one item can be coerced to
 // the collation of other. See https://dev.mysql.com/doc/refman/8.0/en/charset-collation-coercibility.html
-type Coercibility int
+type Coercibility int32
 
 const (
 	// CoercibilityExplicit is derived from an explicit COLLATE clause.
