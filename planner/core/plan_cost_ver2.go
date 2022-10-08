@@ -269,7 +269,7 @@ func (p *PhysicalSort) getPlanCostVer2(taskType property.TaskType, option *PlanC
 		sortDiskCost = 0
 	} else {
 		sortMemCost = float64(memQuota) * memFactor.Value
-		sortDiskCost = rows * rowSize * diskFactor
+		sortDiskCost = rows * rowSize * diskFactor.Value
 	}
 
 	childCost, err := p.children[0].GetPlanCost(taskType, option)
