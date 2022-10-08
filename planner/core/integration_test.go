@@ -7684,3 +7684,20 @@ func TestConditionPushDownToIndexScanForPrefixIndex(t *testing.T) {
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 	}
 }
+
+func TestPrefixMultipleColumnIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t (
+  id char(1) DEFAULT NULL,
+  c1 varchar(255) DEFAULT NULL,
+  c2 text DEFAULT NULL,
+  KEY idx1 (c1),
+  KEY idx2 (c1,c2(5))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
+	tk.MustQuery("explain format='brief' select count(c2) from t where c1 = '0x8245245eaa72e43544ab632323' and c2 = '123'").Check(testkit.Rows(
+		"StreamAgg 1.00 root  funcs:count(test.t.c2)->Column#5",
+		"└─IndexReader 0.10 root  index:IndexRangeScan",
+		"  └─IndexRangeScan 0.10 cop[tikv] table:t, index:idx2(c1, c2) range:[\"0x8245245eaa72e43544ab632323\" \"123\",\"0x8245245eaa72e43544ab632323\" \"123\"], keep order:false, stats:pseudo"))
+}
