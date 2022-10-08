@@ -84,3 +84,4 @@ run_sql 'CREATE TABLE charsets.greek (c VARCHAR(20) PRIMARY KEY);'
 run_lightning --config "tests/$TEST_NAME/greek.toml" -d "tests/$TEST_NAME/greek"
 run_sql "SELECT count(*) FROM charsets.greek WHERE c = 'α';"
 check_contains 'count(*): 1'
+# TODO: test tidb backend
