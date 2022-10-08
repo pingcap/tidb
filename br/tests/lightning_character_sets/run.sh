@@ -77,5 +77,10 @@ check_contains 's: 5291'
 
 # test about unsupported charset in UTF-8 encoding dump files
 
-run_lightning --config "tests/$TEST_NAME/greek.toml" -d "tests/$TEST_NAME/greek" 2>&1
-exit 1
+run_lightning --config "tests/$TEST_NAME/greek.toml" -d "tests/$TEST_NAME/greek" 2>&1 | grep -q "Unknown character set: 'greek'"
+run_sql 'DROP DATABASE IF EXISTS charsets;'
+run_sql 'CREATE DATABASE charsets;'
+run_sql 'CREATE TABLE charsets.greek (c VARCHAR(20) PRIMARY KEY);'
+run_lightning --config "tests/$TEST_NAME/greek.toml" -d "tests/$TEST_NAME/greek"
+run_sql "SELECT count(*) FROM charsets.greek WHERE c = 'α';"
+check_contains 'count(*): 1'
