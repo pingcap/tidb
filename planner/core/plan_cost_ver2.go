@@ -593,7 +593,7 @@ type costVer2Factor struct {
 
 // In Cost Ver2, we hide cost factors from users and deprecate SQL variables like `tidb_opt_scan_factor`.
 type costVer2Factors struct {
-	TiDBTempScan  costVer2Factor // TiDB temporary table scan
+	TiDBTemp      costVer2Factor // operations on TiDB temporary table
 	TiKVScan      costVer2Factor // per byte
 	TiKVDescScan  costVer2Factor // per byte
 	TiFlashScan   costVer2Factor // per byte
@@ -611,7 +611,7 @@ type costVer2Factors struct {
 }
 
 var defaultVer2Factors = costVer2Factors{
-	TiDBTempScan:  costVer2Factor{"tidb_temp_table_scan_factor", 0},
+	TiDBTemp:      costVer2Factor{"tidb_temp_table_factor", 0},
 	TiKVScan:      costVer2Factor{"tikv_scan_factor", 100},
 	TiKVDescScan:  costVer2Factor{"tikv_desc_scan_factor", 150},
 	TiFlashScan:   costVer2Factor{"tiflash_scan_factor", 5},
@@ -651,22 +651,19 @@ func getTaskMemFactorVer2(p PhysicalPlan, taskType property.TaskType) costVer2Fa
 }
 
 func getTaskScanFactorVer2(p PhysicalPlan, taskType property.TaskType) costVer2Factor {
+	if isTemporaryTable(getTableInfo(p)) {
+		return defaultVer2Factors.TiDBTemp
+	}
 	switch taskType {
 	case property.MppTaskType: // TiFlash
 		return defaultVer2Factors.TiFlashScan
 	default: // TiKV
 		var desc bool
-		var tbl *model.TableInfo
 		if indexScan, ok := p.(*PhysicalIndexScan); ok {
 			desc = indexScan.Desc
-			tbl = indexScan.Table
 		}
 		if tableScan, ok := p.(*PhysicalTableScan); ok {
 			desc = tableScan.Desc
-			tbl = tableScan.Table
-		}
-		if tbl != nil && tbl.TempTableType != model.TempTableNone {
-			return defaultVer2Factors.TiDBTempScan // temp table
 		}
 		if desc {
 			return defaultVer2Factors.TiKVDescScan
@@ -676,6 +673,9 @@ func getTaskScanFactorVer2(p PhysicalPlan, taskType property.TaskType) costVer2F
 }
 
 func getTaskNetFactorVer2(p PhysicalPlan, _ property.TaskType) costVer2Factor {
+	if isTemporaryTable(getTableInfo(p)) {
+		return defaultVer2Factors.TiDBTemp
+	}
 	if _, ok := p.(*PhysicalExchangeReceiver); ok { // TiFlash MPP
 		return defaultVer2Factors.TiFlashMPPNet
 	}
@@ -688,7 +688,39 @@ func getTaskNetFactorVer2(p PhysicalPlan, _ property.TaskType) costVer2Factor {
 }
 
 func getTaskSeekFactorVer2(p PhysicalPlan, _ property.TaskType) costVer2Factor {
+	if isTemporaryTable(getTableInfo(p)) {
+		return defaultVer2Factors.TiDBTemp
+	}
 	return defaultVer2Factors.TiDBRequest
+}
+
+func isTemporaryTable(tbl *model.TableInfo) bool {
+	return tbl != nil && tbl.TempTableType != model.TempTableNone
+}
+
+func getTableInfo(p PhysicalPlan) *model.TableInfo {
+	switch x := p.(type) {
+	case *PhysicalIndexReader:
+		return getTableInfo(x.indexPlan)
+	case *PhysicalTableReader:
+		return getTableInfo(x.tablePlan)
+	case *PhysicalIndexLookUpReader:
+		return getTableInfo(x.tablePlan)
+	case *PhysicalIndexMergeReader:
+		if x.tablePlan != nil {
+			return getTableInfo(x.tablePlan)
+		}
+		return getTableInfo(x.partialPlans[0])
+	case *PhysicalTableScan:
+		return x.Table
+	case *PhysicalIndexScan:
+		return x.Table
+	default:
+		if len(x.Children()) == 0 {
+			return nil
+		}
+		return getTableInfo(x.Children()[0])
+	}
 }
 
 func cols2Exprs(cols []*expression.Column) []expression.Expression {
