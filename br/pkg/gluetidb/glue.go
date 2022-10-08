@@ -114,8 +114,6 @@ func (g Glue) GetVersion() string {
 	return g.tikvGlue.GetVersion()
 }
 
-<<<<<<< HEAD
-=======
 // UseOneShotSession implements glue.Glue.
 func (g Glue) UseOneShotSession(store kv.Storage, closeDomain bool, fn func(glue.Session) error) error {
 	se, err := session.CreateSession(store)
@@ -155,7 +153,6 @@ func (gs *tidbSession) GetSessionCtx() sessionctx.Context {
 	return gs.se
 }
 
->>>>>>> 6ae88c430... br: use one shot session to close domain ASAP (#36558)
 // Execute implements glue.Session.
 func (gs *tidbSession) Execute(ctx context.Context, sql string) error {
 	return gs.ExecuteInternal(ctx, sql)

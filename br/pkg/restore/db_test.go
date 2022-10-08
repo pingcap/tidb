@@ -195,12 +195,7 @@ func TestFilterDDLJobs(t *testing.T) {
 	metaWriter := metautil.NewMetaWriter(s.storage, metautil.MetaFileSize, false, "", &cipher)
 	ctx := context.Background()
 	metaWriter.StartWriteMetasAsync(ctx, metautil.AppendDDL)
-<<<<<<< HEAD
 	err = backup.WriteBackupDDLJobs(metaWriter, s.mock.Storage, lastTS, ts)
-=======
-	s.mockGlue.SetSession(tk.Session())
-	err = backup.WriteBackupDDLJobs(metaWriter, s.mockGlue, s.mock.Storage, lastTS, ts, false)
->>>>>>> 6ae88c430... br: use one shot session to close domain ASAP (#36558)
 	require.NoErrorf(t, err, "Error get ddl jobs: %s", err)
 	err = metaWriter.FinishWriteMetas(ctx, metautil.AppendDDL)
 	require.NoErrorf(t, err, "Flush failed", err)
@@ -264,12 +259,7 @@ func TestFilterDDLJobsV2(t *testing.T) {
 	metaWriter := metautil.NewMetaWriter(s.storage, metautil.MetaFileSize, true, "", &cipher)
 	ctx := context.Background()
 	metaWriter.StartWriteMetasAsync(ctx, metautil.AppendDDL)
-<<<<<<< HEAD
 	err = backup.WriteBackupDDLJobs(metaWriter, s.mock.Storage, lastTS, ts)
-=======
-	s.mockGlue.SetSession(tk.Session())
-	err = backup.WriteBackupDDLJobs(metaWriter, s.mockGlue, s.mock.Storage, lastTS, ts, false)
->>>>>>> 6ae88c430... br: use one shot session to close domain ASAP (#36558)
 	require.NoErrorf(t, err, "Error get ddl jobs: %s", err)
 	err = metaWriter.FinishWriteMetas(ctx, metautil.AppendDDL)
 	require.NoErrorf(t, err, "Flush failed", err)

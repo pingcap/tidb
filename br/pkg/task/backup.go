@@ -401,11 +401,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		}
 
 		metawriter.StartWriteMetasAsync(ctx, metautil.AppendDDL)
-<<<<<<< HEAD
 		err = backup.WriteBackupDDLJobs(metawriter, mgr.GetStorage(), cfg.LastBackupTS, backupTS)
-=======
-		err = backup.WriteBackupDDLJobs(metawriter, g, mgr.GetStorage(), cfg.LastBackupTS, backupTS, needDomain)
->>>>>>> 6ae88c430... br: use one shot session to close domain ASAP (#36558)
 		if err != nil {
 			return errors.Trace(err)
 		}

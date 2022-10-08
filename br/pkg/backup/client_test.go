@@ -326,12 +326,7 @@ func TestSkipUnsupportedDDLJob(t *testing.T) {
 	metaWriter := metautil.NewMetaWriter(s.storage, metautil.MetaFileSize, false, "", &cipher)
 	ctx := context.Background()
 	metaWriter.StartWriteMetasAsync(ctx, metautil.AppendDDL)
-<<<<<<< HEAD
 	err = backup.WriteBackupDDLJobs(metaWriter, s.cluster.Storage, lastTS, ts)
-=======
-	s.mockGlue.SetSession(tk.Session())
-	err = backup.WriteBackupDDLJobs(metaWriter, s.mockGlue, s.cluster.Storage, lastTS, ts, false)
->>>>>>> 6ae88c430... br: use one shot session to close domain ASAP (#36558)
 	require.NoErrorf(t, err, "Error get ddl jobs: %s", err)
 	err = metaWriter.FinishWriteMetas(ctx, metautil.AppendDDL)
 	require.NoError(t, err, "Flush failed", err)

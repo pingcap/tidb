@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/redact"
@@ -472,11 +471,7 @@ func skipUnsupportedDDLJob(job *model.Job) bool {
 }
 
 // WriteBackupDDLJobs sends the ddl jobs are done in (lastBackupTS, backupTS] to metaWriter.
-<<<<<<< HEAD
 func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, store kv.Storage, lastBackupTS, backupTS uint64) error {
-=======
-func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, g glue.Glue, store kv.Storage, lastBackupTS, backupTS uint64, needDomain bool) error {
->>>>>>> 6ae88c430... br: use one shot session to close domain ASAP (#36558)
 	snapshot := store.GetSnapshot(kv.NewVersion(backupTS))
 	snapMeta := meta.NewSnapshotMeta(snapshot)
 	lastSnapshot := store.GetSnapshot(kv.NewVersion(lastBackupTS))
@@ -490,7 +485,6 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, g glue.Glue, store kv.S
 	if err != nil {
 		return errors.Trace(err)
 	}
-<<<<<<< HEAD
 	log.Debug("get default jobs", zap.Int("jobs", len(defaultJobs)))
 	allJobs = append(allJobs, defaultJobs...)
 	addIndexJobs, err := snapMeta.GetAllDDLJobsInQueue(meta.AddIndexJobListKey)
@@ -500,28 +494,6 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, g glue.Glue, store kv.S
 	log.Debug("get add index jobs", zap.Int("jobs", len(addIndexJobs)))
 	allJobs = append(allJobs, addIndexJobs...)
 	historyJobs, err := snapMeta.GetAllHistoryDDLJobs()
-=======
-
-	version, err := store.CurrentVersion(kv.GlobalTxnScope)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	newestMeta := meta.NewSnapshotMeta(store.GetSnapshot(kv.NewVersion(version.Ver)))
-	allJobs := make([]*model.Job, 0)
-	err = g.UseOneShotSession(store, !needDomain, func(se glue.Session) error {
-		allJobs, err = ddl.GetAllDDLJobs(se.GetSessionCtx(), newestMeta)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		log.Debug("get all jobs", zap.Int("jobs", len(allJobs)))
-		return nil
-	})
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	historyJobs, err := ddl.GetAllHistoryDDLJobs(newestMeta)
->>>>>>> 6ae88c430... br: use one shot session to close domain ASAP (#36558)
 	if err != nil {
 		return errors.Trace(err)
 	}
