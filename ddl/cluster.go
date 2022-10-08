@@ -524,6 +524,11 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		return ver, nil
 	// Stage 3, get key ranges and get locks.
 	case model.StateWriteOnly:
+		// TODO: Support flashback in unistore.
+		if inFlashbackTest {
+			job.SchemaState = model.StateWriteReorganization
+			return updateSchemaVersion(d, t, job)
+		}
 		keyRanges, err := GetFlashbackKeyRanges(sess, tablecodec.EncodeTablePrefix(0))
 		if err != nil {
 			return ver, errors.Trace(err)

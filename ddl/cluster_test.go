@@ -185,7 +185,7 @@ func TestAddDDLDuringFlashback(t *testing.T) {
 	hook := &ddl.TestDDLCallback{Do: dom}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		assert.Equal(t, model.ActionFlashbackCluster, job.Type)
-		if job.SchemaState == model.StateWriteReorganization {
+		if job.SchemaState == model.StateWriteOnly {
 			_, err := tk.Exec("alter table t add column b int")
 			assert.ErrorContains(t, err, "Can't add ddl job, have flashback cluster job")
 		}
