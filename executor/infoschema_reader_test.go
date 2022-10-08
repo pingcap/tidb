@@ -16,11 +16,13 @@ package executor_test
 
 import (
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/jarcoal/httpmock"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
@@ -633,7 +635,7 @@ func TestForTableTiFlashReplica(t *testing.T) {
 	tbl, err := domain.GetDomain(tk.Session()).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tbl.Meta().TiFlashReplica.Available = true
-	tk.MustQuery("select TABLE_SCHEMA,TABLE_NAME,REPLICA_COUNT,LOCATION_LABELS,AVAILABLE,PROGRESS from information_schema.tiflash_replica").Check(testkit.Rows("test t 2 a,b 1 1"))
+	tk.MustQuery("select TABLE_SCHEMA,TABLE_NAME,REPLICA_COUNT,LOCATION_LABELS,AVAILABLE,PROGRESS from information_schema.tiflash_replica").Check(testkit.Rows("test t 2 a,b 1 0"))
 }
 
 func TestSequences(t *testing.T) {
@@ -649,11 +651,97 @@ func TestSequences(t *testing.T) {
 	tk.MustQuery("SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME , TABLE_TYPE, ENGINE, TABLE_ROWS FROM information_schema.tables WHERE TABLE_TYPE='SEQUENCE' AND TABLE_NAME='seq2'").Check(testkit.Rows("def test seq2 SEQUENCE InnoDB 1"))
 }
 
-func TestTiFlashSystemTables(t *testing.T) {
+func TestTiFlashSystemTableWithTiFlashV620(t *testing.T) {
+	httpmock.Activate()
+	defer httpmock.DeactivateAndReset()
+
+	instances := []string{
+		"tiflash,127.0.0.1:3933,127.0.0.1:7777,,",
+		"tikv,127.0.0.1:11080,127.0.0.1:10080,,",
+	}
+	fpName := "github.com/pingcap/tidb/infoschema/mockStoreServerInfo"
+	fpExpr := `return("` + strings.Join(instances, ";") + `")`
+	require.NoError(t, failpoint.Enable(fpName, fpExpr))
+	defer func() { require.NoError(t, failpoint.Disable(fpName)) }()
+
+	httpmock.RegisterResponder("GET", "http://127.0.0.1:7777/config",
+		httpmock.NewStringResponder(200, `
+{
+	"raftstore-proxy": {},
+	"engine-store":{
+		"http_port":8123,
+		"tcp_port":9000
+	}
+}
+	`))
+
+	data, err := os.ReadFile("testdata/tiflash_v620_dt_segments.json")
+	require.NoError(t, err)
+	httpmock.RegisterResponder("GET", "http://127.0.0.1:8123?default_format=JSONCompact&query=SELECT+%2A+FROM+system.dt_segments+LIMIT+0%2C+1024", httpmock.NewBytesResponder(200, data))
+
+	data, err = os.ReadFile("testdata/tiflash_v620_dt_tables.json")
+	require.NoError(t, err)
+	httpmock.RegisterResponder("GET", "http://127.0.0.1:8123?default_format=JSONCompact&query=SELECT+%2A+FROM+system.dt_tables+LIMIT+0%2C+1024", httpmock.NewBytesResponder(200, data))
+
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("select * from information_schema.TIFLASH_TABLES;")
-	tk.MustExec("select * from information_schema.TIFLASH_SEGMENTS;")
+	tk.MustQuery("select * from information_schema.TIFLASH_SEGMENTS;").Check(testkit.Rows(
+		"db_1 t_10 mysql tables_priv 10 0 1 [-9223372036854775808,9223372036854775807) <nil> 0 0 <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> 0 2032 <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> 127.0.0.1:3933",
+		"db_1 t_8 mysql db 8 0 1 [-9223372036854775808,9223372036854775807) <nil> 0 0 <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> 0 2032 <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> 127.0.0.1:3933",
+		"db_2 t_70 test segment 70 0 1 [01,FA) <nil> 30511 50813627 0.6730359542460096 <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> 3578860 409336 <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> 127.0.0.1:3933",
+	))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+
+	tk.MustQuery("select * from information_schema.TIFLASH_TABLES;").Check(testkit.Rows(
+		"db_1 t_10 mysql tables_priv 10 0 1 0 0 0 <nil> 0 <nil> 0 <nil> <nil> 0 0 0 0 0 0 <nil> <nil> <nil> 0 0 0 0 <nil> <nil> 0 <nil> <nil> <nil> 0 <nil> <nil> <nil> 0 0 0  0 0 0 0 0 0  0 0 0 0 0 0  0 0 0 0 127.0.0.1:3933",
+		"db_1 t_8 mysql db 8 0 1 0 0 0 <nil> 0 <nil> 0 <nil> <nil> 0 0 0 0 0 0 <nil> <nil> <nil> 0 0 0 0 <nil> <nil> 0 <nil> <nil> <nil> 0 <nil> <nil> <nil> 0 0 0  0 0 0 0 0 0  0 0 0 0 0 0  0 0 0 0 127.0.0.1:3933",
+		"db_2 t_70 test segment 70 0 1 102000 169873868 0 0 0 <nil> 0 <nil> <nil> 0 102000 169873868 0 0 0 <nil> <nil> <nil> 1 102000 169873868 43867622 102000 169873868 0 <nil> <nil> <nil> 13 13 7846.153846153846 13067220.615384616 0 0 0  0 0 0 0 0 0  0 0 0 0 0 0  0 0 0 0 127.0.0.1:3933",
+	))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+}
+
+func TestTiFlashSystemTableWithTiFlashV630(t *testing.T) {
+	httpmock.Activate()
+	defer httpmock.DeactivateAndReset()
+
+	instances := []string{
+		"tiflash,127.0.0.1:3933,127.0.0.1:7777,,",
+		"tikv,127.0.0.1:11080,127.0.0.1:10080,,",
+	}
+	fpName := "github.com/pingcap/tidb/infoschema/mockStoreServerInfo"
+	fpExpr := `return("` + strings.Join(instances, ";") + `")`
+	require.NoError(t, failpoint.Enable(fpName, fpExpr))
+	defer func() { require.NoError(t, failpoint.Disable(fpName)) }()
+
+	httpmock.RegisterResponder("GET", "http://127.0.0.1:7777/config",
+		httpmock.NewStringResponder(200, `
+{
+	"raftstore-proxy": {},
+	"engine-store":{
+		"http_port":8123,
+		"tcp_port":9000
+	}
+}
+	`))
+
+	data, err := os.ReadFile("testdata/tiflash_v630_dt_segments.json")
+	require.NoError(t, err)
+	httpmock.RegisterResponder("GET", "http://127.0.0.1:8123?default_format=JSONCompact&query=SELECT+%2A+FROM+system.dt_segments+LIMIT+0%2C+1024", httpmock.NewBytesResponder(200, data))
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustQuery("select * from information_schema.TIFLASH_SEGMENTS;").Check(testkit.Rows(
+		"db_1 t_10 mysql tables_priv 10 0 1 [-9223372036854775808,9223372036854775807) 0 0 0 <nil> 0 0 0 0 2 0 0 0 0 0 2032 3 0 0 1 1 0 0 0 0 127.0.0.1:3933",
+		"db_2 t_70 test segment 70 436272981189328904 1 [01,FA) 5 102000 169874232 0 0 0 0 0 2 0 0 0 0 0 2032 3 102000 169874232 1 68 102000 169874232 43951837 20 127.0.0.1:3933",
+		"db_2 t_75 test segment 75 0 1 [01,013130303030393535FF61653666642D6136FF61382D343032382DFF616436312D663736FF3062323736643461FF3600000000000000F8) 2 0 0 <nil> 0 0 1 1 110 0 0 4 4 0 2032 111 0 0 1 70 0 0 0 0 127.0.0.1:3933",
+		"db_2 t_75 test segment 75 0 113 [013130303030393535FF61653666642D6136FF61382D343032382DFF616436312D663736FF3062323736643461FF3600000000000000F8,013139393938363264FF33346535382D3735FF31382D343661612DFF626235392D636264FF3139333434623736FF3100000000000000F9) 2 10167 16932617 0.4887380741615029 0 0 0 0 114 4969 8275782 2 0 0 63992 112 5198 8656835 1 71 5198 8656835 2254100 1 127.0.0.1:3933",
+		"db_2 t_75 test segment 75 0 116 [013139393938363264FF33346535382D3735FF31382D343661612DFF626235392D636264FF3139333434623736FF3100000000000000F9,013330303131383034FF61323537662D6638FF63302D346466622DFF383235632D353361FF3236306338616662FF3400000000000000F8) 3 8 13322 0.5 3 4986 1 0 117 1 1668 4 3 4986 2032 115 4 6668 1 78 4 6668 6799 1 127.0.0.1:3933",
+		"db_2 t_75 test segment 75 0 125 [013330303131383034FF61323537662D6638FF63302D346466622DFF383235632D353361FF3236306338616662FF3400000000000000F8,013339393939613861FF30663062332D6537FF32372D346234642DFF396535632D363865FF3336323066383431FF6300000000000000F9) 2 8677 14451079 0.4024432407514118 3492 5816059 3 0 126 0 0 0 0 5816059 2032 124 5185 8635020 1 79 5185 8635020 2247938 1 127.0.0.1:3933",
+		"db_2 t_75 test segment 75 0 128 [013339393939613861FF30663062332D6537FF32372D346234642DFF396535632D363865FF3336323066383431FF6300000000000000F9,013730303031636230FF32663330652D3539FF62352D346134302DFF613539312D383930FF6132316364633466FF3200000000000000F8) 0 1 1668 1 0 0 0 0 129 1 1668 5 4 0 2032 127 0 0 1 78 4 6668 6799 1 127.0.0.1:3933",
+		"db_2 t_75 test segment 75 0 119 [013730303031636230FF32663330652D3539FF62352D346134302DFF613539312D383930FF6132316364633466FF3200000000000000F8,013739393939386561FF36393566612D3534FF64302D346437642DFF383136612D646335FF6432613130353533FF3200000000000000F9) 2 10303 17158730 0.489372027564787 0 0 0 0 120 5042 8397126 2 0 0 63992 118 5261 8761604 1 77 5261 8761604 2280506 1 127.0.0.1:3933",
+		"db_2 t_75 test segment 75 0 122 [013739393939386561FF36393566612D3534FF64302D346437642DFF383136612D646335FF6432613130353533FF3200000000000000F9,FA) 0 1 1663 1 0 0 0 0 123 1 1663 4 3 0 2032 121 0 0 1 78 4 6668 6799 1 127.0.0.1:3933",
+	))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 }
 
 func TestTablesPKType(t *testing.T) {

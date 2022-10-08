@@ -20,6 +20,8 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable/featuretag/concurrencyddl"
+	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/paging"
 	"go.uber.org/atomic"
 )
@@ -623,6 +625,9 @@ const (
 	// TiDBAnalyzeVersion indicates how tidb collects the analyzed statistics and how use to it.
 	TiDBAnalyzeVersion = "tidb_analyze_version"
 
+	// TiDBAutoAnalyzePartitionBatchSize indicates the batch size for partition tables for auto analyze in dynamic mode
+	TiDBAutoAnalyzePartitionBatchSize = "tidb_auto_analyze_partition_batch_size"
+
 	// TiDBEnableIndexMergeJoin indicates whether to enable index merge join.
 	TiDBEnableIndexMergeJoin = "tidb_enable_index_merge_join"
 
@@ -837,6 +842,10 @@ const (
 	TiDBDDLEnableFastReorg = "tidb_ddl_enable_fast_reorg"
 	// TiDBDDLDiskQuota used to set disk quota for lightning add index.
 	TiDBDDLDiskQuota = "tidb_ddl_disk_quota"
+	// TiDBServerMemoryLimit indicates the memory limit of the tidb-server instance.
+	TiDBServerMemoryLimit = "tidb_server_memory_limit"
+	// TiDBServerMemoryLimitSessMinSize indicates the minimal memory used of a session, that becomes a candidate for session kill.
+	TiDBServerMemoryLimitSessMinSize = "tidb_server_memory_limit_sess_min_size"
 )
 
 // TiDB intentional limits
@@ -988,6 +997,7 @@ const (
 	DefTiDBEnable1PC                               = false
 	DefTiDBGuaranteeLinearizability                = true
 	DefTiDBAnalyzeVersion                          = 2
+	DefTiDBAutoAnalyzePartitionBatchSize           = 1
 	DefTiDBEnableIndexMergeJoin                    = false
 	DefTiDBTrackAggregateMemoryUsage               = true
 	DefTiDBEnableExchangePartition                 = true
@@ -1045,7 +1055,7 @@ const (
 	DefTiDBPrepPlanCacheMemoryGuardRatio           = 0.1
 	DefTiDBEnableConcurrentDDL                     = concurrencyddl.TiDBEnableConcurrentDDL
 	DefTiDBSimplifiedMetrics                       = false
-	DefTiDBEnablePaging                            = false
+	DefTiDBEnablePaging                            = true
 	DefTiFlashFineGrainedShuffleStreamCount        = 0
 	DefStreamCountWhenMaxThreadsNotSet             = 8
 	DefTiFlashFineGrainedShuffleBatchSize          = 8192
@@ -1072,6 +1082,7 @@ const (
 	DefTiDBForeignKeyChecks                         = false
 	DefTiDBOptRangeMaxSize                          = 0
 	DefTiDBCostModelVer                             = 1
+	DefTiDBServerMemoryLimitSessMinSize             = 128 << 20
 )
 
 // Process global variables.
@@ -1116,6 +1127,7 @@ var (
 	DDLForce2Queue                    = atomic.NewBool(false)
 	EnableNoopVariables               = atomic.NewBool(DefTiDBEnableNoopVariables)
 	EnableMDL                         = atomic.NewBool(DefTiDBEnableMDL)
+	AutoAnalyzePartitionBatchSize     = atomic.NewInt64(DefTiDBAutoAnalyzePartitionBatchSize)
 	// EnableFastReorg indicates whether to use lightning to enhance DDL reorg performance.
 	EnableFastReorg = atomic.NewBool(DefTiDBEnableFastReorg)
 	// DDLDiskQuota is the temporary variable for set disk quota for lightning
@@ -1123,6 +1135,10 @@ var (
 	// EnableForeignKey indicates whether to enable foreign key feature.
 	EnableForeignKey    = atomic.NewBool(false)
 	EnableRCReadCheckTS = atomic.NewBool(false)
+
+	// DefTiDBServerMemoryLimit indicates the default value of TiDBServerMemoryLimit(TotalMem * 80%).
+	// It should be a const and shouldn't be modified after tidb is started.
+	DefTiDBServerMemoryLimit = mathutil.Max(memory.GetMemTotalIgnoreErr()/10*8, 512<<20)
 )
 
 var (
