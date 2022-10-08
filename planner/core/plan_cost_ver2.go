@@ -586,26 +586,68 @@ func hashProbeCostVer2(probeRows float64, keys []expression.Expression, cpuFacto
 	return hashKeyCost + hashProbeCost
 }
 
+// CostVer2Factors collects all cost factors required by cost model ver2.
+// In Cost Ver2, we hide cost factors from users and deprecate SQL variables like `tidb_opt_scan_factor`.
+type CostVer2Factors struct {
+	TiKVScan      float64 // per byte
+	TiKVDescScan  float64 // per byte
+	TiFlashScan   float64 // per byte
+	TiDBCPU       float64 // per column or expression
+	TiKVCPU       float64 // per column or expression
+	TiFlashCPU    float64 // per column or expression
+	TiDB2KVNet    float64 // per byte
+	TiDB2FlashNet float64 // per byte
+	TiFlashMPPNet float64 // per byte
+	TiDBMem       float64 // per byte
+	TiKVMem       float64 // per byte
+	TiFlashMem    float64 // per byte
+	TiDBDisk      float64 // per byte
+	TiDBRequest   float64 // per net request
+}
+
+var defaultVer2Factors = CostVer2Factors{
+	TiKVScan:      100,
+	TiKVDescScan:  150,
+	TiFlashScan:   5,
+	TiDBCPU:       30,
+	TiKVCPU:       30,
+	TiFlashCPU:    5,
+	TiDB2KVNet:    8,
+	TiDB2FlashNet: 4,
+	TiFlashMPPNet: 4,
+	TiDBMem:       1,
+	TiKVMem:       1,
+	TiFlashMem:    1,
+	TiDBDisk:      1000,
+	TiDBRequest:   9500000,
+}
+
 func getTaskCPUFactor(p PhysicalPlan, taskType property.TaskType) float64 {
 	switch taskType {
 	case property.RootTaskType: // TiDB
-		return p.SCtx().GetSessionVars().GetCPUFactor()
+		return defaultVer2Factors.TiDBCPU
 	case property.MppTaskType: // TiFlash
-		return p.SCtx().GetSessionVars().GetTiFlashCPUFactor()
+		return defaultVer2Factors.TiFlashCPU
 	default: // TiKV
-		return p.SCtx().GetSessionVars().GetCopCPUFactor()
+		return defaultVer2Factors.TiKVCPU
 	}
 }
 
 func getTaskMemFactor(p PhysicalPlan, taskType property.TaskType) float64 {
-	// TODO: introduce a dedicated mem factor for TiFlash
-	return p.SCtx().GetSessionVars().GetMemoryFactor()
+	switch taskType {
+	case property.RootTaskType: // TiDB
+		return defaultVer2Factors.TiDBMem
+	case property.MppTaskType: // TiFlash
+		return defaultVer2Factors.TiFlashMem
+	default: // TiKV
+		return defaultVer2Factors.TiKVMem
+	}
 }
 
 func getTaskScanFactor(p PhysicalPlan, taskType property.TaskType) float64 {
 	switch taskType {
 	case property.MppTaskType: // TiFlash
-		return p.SCtx().GetSessionVars().GetTiFlashScanFactor()
+		return defaultVer2Factors.TiFlashScan
 	default: // TiKV
 		var desc bool
 		var tbl *model.TableInfo
@@ -617,40 +659,30 @@ func getTaskScanFactor(p PhysicalPlan, taskType property.TaskType) float64 {
 			desc = tableScan.Desc
 			tbl = tableScan.Table
 		}
-		if desc {
-			return p.SCtx().GetSessionVars().GetDescScanFactor(tbl)
+		if tbl != nil && tbl.TempTableType != model.TempTableNone {
+			return 0 // temp table
 		}
-		return p.SCtx().GetSessionVars().GetScanFactor(tbl)
+		if desc {
+			return defaultVer2Factors.TiKVDescScan
+		}
+		return defaultVer2Factors.TiKVScan
 	}
 }
 
 func getTaskNetFactor(p PhysicalPlan, _ property.TaskType) float64 {
-	// TODO: introduce a dedicated net factor for TiFlash
-	return p.SCtx().GetSessionVars().GetNetworkFactor(getTableInfo(p))
+	if _, ok := p.(*PhysicalExchangeReceiver); ok { // TiFlash MPP
+		return defaultVer2Factors.TiFlashMPPNet
+	}
+	if tblReader, ok := p.(*PhysicalTableReader); ok {
+		if _, isMPP := tblReader.tablePlan.(*PhysicalExchangeSender); isMPP { // TiDB to TiFlash with mpp protocol
+			return defaultVer2Factors.TiDB2FlashNet
+		}
+	}
+	return defaultVer2Factors.TiDB2KVNet
 }
 
 func getTaskSeekFactor(p PhysicalPlan, _ property.TaskType) float64 {
-	return p.SCtx().GetSessionVars().GetSeekFactor(getTableInfo(p))
-}
-
-func getTableInfo(p PhysicalPlan) *model.TableInfo {
-	switch x := p.(type) {
-	case *PhysicalIndexReader:
-		return getTableInfo(x.indexPlan)
-	case *PhysicalTableReader:
-		return getTableInfo(x.tablePlan)
-	case *PhysicalIndexLookUpReader:
-		return getTableInfo(x.tablePlan)
-	case *PhysicalTableScan:
-		return x.Table
-	case *PhysicalIndexScan:
-		return x.Table
-	default:
-		if len(x.Children()) == 0 {
-			return nil
-		}
-		return getTableInfo(x.Children()[0])
-	}
+	return defaultVer2Factors.TiDBRequest
 }
 
 func cols2Exprs(cols []*expression.Column) []expression.Expression {
