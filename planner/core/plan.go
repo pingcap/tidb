@@ -518,9 +518,6 @@ func (p *basePhysicalPlan) MemoryUsage() (sum int64) {
 	sum = p.basePlan.MemoryUsage() + size.SizeOfSlice + int64(cap(p.childrenReqProps))*size.SizeOfPointer +
 		size.SizeOfSlice + int64(cap(p.children)+1)*size.SizeOfInterface + size.SizeOfFloat64 +
 		size.SizeOfUint64 + size.SizeOfBool
-	if p.self != nil {
-		sum += p.self.MemoryUsage()
-	}
 
 	for _, prop := range p.childrenReqProps {
 		sum += prop.MemoryUsage()
