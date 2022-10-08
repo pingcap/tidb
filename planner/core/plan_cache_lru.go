@@ -70,6 +70,7 @@ func NewLRUPlanCache(capacity uint, guard float64, quota uint64,
 	}
 }
 
+// strHashKey control deep or Shallow copy of string
 func strHashKey(key kvcache.Key, deepCopy bool) string {
 	if deepCopy {
 		return string(key.Hash())
