@@ -275,6 +275,7 @@ func buildFKCheck(tbl table.Table, cols []model.CIStr, failedErr error) (*FKChec
 	}, nil
 }
 
+// FKToBeCheckedKeys contains the keys which need to be checked by foreign key constraint.
 type FKToBeCheckedKeys struct {
 	Keys       []kv.Key
 	PrefixKeys []kv.Key
