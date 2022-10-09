@@ -468,12 +468,17 @@ func TestLcTimeNamesReadOnly(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestLcMessagesReadOnly(t *testing.T) {
+func TestLcMessages(t *testing.T) {
 	sv := GetSysVar("lc_messages")
 	vars := NewSessionVars(nil)
 	vars.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
-	_, err := sv.Validate(vars, "newvalue", ScopeGlobal)
-	require.Error(t, err)
+	_, err := sv.Validate(vars, "zh_CN", ScopeGlobal)
+	require.NoError(t, err)
+	err = sv.SetSessionFromHook(vars, "zh_CN")
+	require.NoError(t, err)
+	val, err := vars.GetSessionOrGlobalSystemVar("lc_messages")
+	require.NoError(t, err)
+	require.Equal(t, val, "zh_CN")
 }
 
 func TestDDLWorkers(t *testing.T) {
