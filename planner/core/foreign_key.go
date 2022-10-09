@@ -16,6 +16,7 @@ package core
 
 import (
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -35,6 +36,8 @@ type FKCheck struct {
 
 	CheckExist bool
 	FailedErr  error
+
+	ToBeCheckedKeys *FKToBeCheckedKeys
 }
 
 func (p *Insert) buildOnInsertFKChecks(ctx sessionctx.Context, is infoschema.InfoSchema, dbName string) ([]*FKCheck, error) {
@@ -239,6 +242,7 @@ func buildFKCheck(tbl table.Table, cols []model.CIStr, failedErr error) (*FKChec
 				IdxIsPrimaryKey: true,
 				IdxIsExclusive:  true,
 				FailedErr:       failedErr,
+				//ToBeCheckedKeys: NewFKToBeCheckedKeys(),
 			}, nil
 		}
 	}
@@ -263,5 +267,30 @@ func buildFKCheck(tbl table.Table, cols []model.CIStr, failedErr error) (*FKChec
 		IdxIsExclusive:  len(cols) == len(referTbIdxInfo.Columns),
 		IdxIsPrimaryKey: referTbIdxInfo.Primary && tblInfo.IsCommonHandle,
 		FailedErr:       failedErr,
+		//ToBeCheckedKeys: NewFKToBeCheckedKeys(),
 	}, nil
+}
+
+type FKToBeCheckedKeys struct {
+	Keys       []kv.Key
+	PrefixKeys []kv.Key
+	addedKeys  map[string]struct{}
+}
+
+func NewFKToBeCheckedKeys() *FKToBeCheckedKeys {
+	return &FKToBeCheckedKeys{
+		addedKeys: make(map[string]struct{}),
+	}
+}
+
+func (fk *FKToBeCheckedKeys) AddKey(k kv.Key, isPrefix bool) {
+	if _, ok := fk.addedKeys[string(k)]; ok {
+		return
+	}
+	fk.addedKeys[string(k)] = struct{}{}
+	if isPrefix {
+		fk.PrefixKeys = append(fk.PrefixKeys, k)
+	} else {
+		fk.Keys = append(fk.Keys, k)
+	}
 }

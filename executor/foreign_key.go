@@ -16,6 +16,8 @@ package executor
 
 import (
 	"context"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 	"sync/atomic"
 
 	"github.com/pingcap/tidb/kv"
@@ -44,9 +46,7 @@ type FKCheckExec struct {
 	*fkValueHelper
 	ctx sessionctx.Context
 
-	toBeCheckedKeys       []kv.Key
-	toBeCheckedPrefixKeys []kv.Key
-	toBeLockedKeys        []kv.Key
+	toBeLockedKeys []kv.Key
 
 	checkRowsCache map[string]bool
 }
@@ -92,6 +92,7 @@ func buildFKCheckExec(sctx sessionctx.Context, tbl table.Table, fkCheck *planner
 		colsOffsets: colsOffsets,
 		fkValuesSet: set.NewStringSet(),
 	}
+	fkCheck.ToBeCheckedKeys = plannercore.NewFKToBeCheckedKeys()
 	return &FKCheckExec{
 		ctx:           sctx,
 		FKCheck:       fkCheck,
@@ -121,11 +122,7 @@ func (fkc *FKCheckExec) addRowNeedToCheck(sc *stmtctx.StatementContext, row []ty
 	if err != nil {
 		return err
 	}
-	if isPrefix {
-		fkc.toBeCheckedPrefixKeys = append(fkc.toBeCheckedPrefixKeys, key)
-	} else {
-		fkc.toBeCheckedKeys = append(fkc.toBeCheckedKeys, key)
-	}
+	fkc.ToBeCheckedKeys.AddKey(key, isPrefix)
 	return nil
 }
 
@@ -134,6 +131,11 @@ func (fkc *FKCheckExec) doCheck(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	txnCtx := fkc.ctx.GetSessionVars().TxnCtx
+	//txn.GetSnapshot().SetOption(kv.IsolationLevel, kv.RC)
+	logutil.BgLogger().Info("------fk do check---------", zap.Uint64("start_ts", txnCtx.StartTS), zap.Uint64("update_ts", txnCtx.GetForUpdateTS()),
+		zap.Int("unique_keys", len(fkc.ToBeCheckedKeys.Keys)),
+		zap.Int("prefix_keys", len(fkc.ToBeCheckedKeys.PrefixKeys)))
 	err = fkc.checkKeys(ctx, txn)
 	if err != nil {
 		return err
@@ -194,14 +196,15 @@ func (fkc *FKCheckExec) buildHandleFromFKValues(sc *stmtctx.StatementContext, va
 }
 
 func (fkc *FKCheckExec) checkKeys(ctx context.Context, txn kv.Transaction) error {
-	if len(fkc.toBeCheckedKeys) == 0 {
+	keys := fkc.ToBeCheckedKeys.Keys
+	if len(keys) == 0 {
 		return nil
 	}
-	err := fkc.prefetchKeys(ctx, txn, fkc.toBeCheckedKeys)
+	err := fkc.prefetchKeys(ctx, txn, keys)
 	if err != nil {
 		return err
 	}
-	for _, k := range fkc.toBeCheckedKeys {
+	for _, k := range keys {
 		err = fkc.checkKey(ctx, txn, k)
 		if err != nil {
 			return err
@@ -250,7 +253,8 @@ func (fkc *FKCheckExec) checkKeyNotExist(ctx context.Context, txn kv.Transaction
 }
 
 func (fkc *FKCheckExec) checkIndexKeys(ctx context.Context, txn kv.Transaction) error {
-	if len(fkc.toBeCheckedPrefixKeys) == 0 {
+	prefixKeys := fkc.ToBeCheckedKeys.PrefixKeys
+	if len(prefixKeys) == 0 {
 		return nil
 	}
 	memBuffer := txn.GetMemBuffer()
@@ -259,7 +263,7 @@ func (fkc *FKCheckExec) checkIndexKeys(ctx context.Context, txn kv.Transaction) 
 	defer func() {
 		snap.SetOption(kv.ScanBatchSize, txnsnapshot.DefaultScanBatchSize)
 	}()
-	for _, key := range fkc.toBeCheckedPrefixKeys {
+	for _, key := range prefixKeys {
 		err := fkc.checkPrefixKey(ctx, memBuffer, snap, key)
 		if err != nil {
 			return err
@@ -431,7 +435,7 @@ type fkCheckKey struct {
 	isPrefix bool
 }
 
-func (fkc FKCheckExec) checkRows(ctx context.Context, sc *stmtctx.StatementContext, txn kv.Transaction, rows []toBeCheckedRow) error {
+func (fkc *FKCheckExec) checkRows(ctx context.Context, sc *stmtctx.StatementContext, txn kv.Transaction, rows []toBeCheckedRow) error {
 	if len(rows) == 0 {
 		return nil
 	}
