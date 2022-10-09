@@ -610,7 +610,7 @@ func (e *Explain) RenderResult() error {
 	if e.Analyze && strings.ToLower(e.Format) == types.ExplainFormatTrueCardCost {
 		pp, ok := e.TargetPlan.(PhysicalPlan)
 		if ok {
-			if _, err := pp.GetPlanCost(property.RootTaskType,
+			if _, err := getPlanCost(pp, property.RootTaskType,
 				NewDefaultPlanCostOption().WithCostFlag(CostFlagRecalculate|CostFlagUseTrueCardinality)); err != nil {
 				return err
 			}
@@ -780,7 +780,7 @@ func (e *Explain) getOperatorInfo(p Plan, id string) (string, string, string, st
 	}
 	estCost := "N/A"
 	if pp, ok := p.(PhysicalPlan); ok {
-		planCost, _ := pp.GetPlanCost(property.RootTaskType, NewDefaultPlanCostOption())
+		planCost, _ := getPlanCost(pp, property.RootTaskType, NewDefaultPlanCostOption())
 		estCost = strconv.FormatFloat(planCost, 'f', 2, 64)
 	}
 	var accessObject, operatorInfo string
@@ -886,7 +886,7 @@ func binaryOpFromFlatOp(explainCtx sessionctx.Context, op *FlatOperator, out *ti
 	}
 	if op.IsPhysicalPlan {
 		p := op.Origin.(PhysicalPlan)
-		out.Cost, _ = p.GetPlanCost(property.RootTaskType, NewDefaultPlanCostOption())
+		out.Cost, _ = getPlanCost(p, property.RootTaskType, NewDefaultPlanCostOption())
 	}
 	if rootStats != nil {
 		basic, groups := rootStats.MergeStats()
