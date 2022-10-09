@@ -3,7 +3,10 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 go_test(
     name = "fktest_test",
     timeout = "short",
-    srcs = ["foreign_key_test.go"],
+    srcs = [
+        "main_test.go",
+        "foreign_key_test.go",
+    ],
     flaky = True,
     deps = [
         "//config",
