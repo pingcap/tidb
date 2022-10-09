@@ -172,7 +172,7 @@ func (record *memoryUsageAlarm) needRecord(memoryUsage uint64) bool {
 
 	interval := time.Since(record.lastCheckTime)
 	memDiff := int64(memoryUsage) - int64(record.lastRecordMemUsed)
-	if interval > 5*time.Second {
+	if interval > 60*time.Second {
 		logutil.BgLogger().Warn("Record Memory Information.", zap.String("record time", time.Now().String()), zap.String("last record time", record.lastCheckTime.String()))
 		return true
 	}
