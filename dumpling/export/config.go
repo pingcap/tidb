@@ -218,6 +218,30 @@ func (conf *Config) GetDSN(db string) string {
 	return dsn
 }
 
+func (conf *Config) GetDriverConfig(db string) *mysql.Config {
+	driverCfg := mysql.NewConfig()
+	// maxAllowedPacket=0 can be used to automatically fetch the max_allowed_packet variable from server on every connection.
+	// https://github.com/go-sql-driver/mysql#maxallowedpacket
+	hostPort := net.JoinHostPort(conf.Host, strconv.Itoa(conf.Port))
+	driverCfg.User = conf.User
+	driverCfg.Passwd = conf.Password
+	driverCfg.Net = "tcp"
+	driverCfg.Addr = hostPort
+	driverCfg.DBName = db
+	driverCfg.Collation = "utf8mb4_general_ci"
+	driverCfg.ReadTimeout = conf.ReadTimeout
+	driverCfg.WriteTimeout = 30 * time.Second
+	driverCfg.InterpolateParams = true
+	driverCfg.MaxAllowedPacket = 0
+	if conf.Security.DriveTLSName != "" {
+		driverCfg.TLSConfig = conf.Security.DriveTLSName
+	}
+	if conf.AllowCleartextPasswords {
+		driverCfg.AllowCleartextPasswords = true
+	}
+	return driverCfg
+}
+
 func timestampDirName() string {
 	return fmt.Sprintf("./export-%s", time.Now().Format(time.RFC3339))
 }
