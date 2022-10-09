@@ -98,7 +98,7 @@ func (p *PhysicalProjection) getPlanCostVer2(taskType property.TaskType, option 
 		return zeroCostVer2, err
 	}
 
-	p.planCostVer2 = divCostVer2(sumCostVer2(childCost, projCost), concurrency)
+	p.planCostVer2 = sumCostVer2(childCost, divCostVer2(projCost, concurrency))
 	p.planCostInit = true
 	return p.planCostVer2, nil
 }
