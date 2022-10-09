@@ -44,7 +44,9 @@ type FKCheckExec struct {
 	*fkValueHelper
 	ctx sessionctx.Context
 
-	toBeLockedKeys []kv.Key
+	toBeCheckedKeys       []kv.Key
+	toBeCheckedPrefixKeys []kv.Key
+	toBeLockedKeys        []kv.Key
 
 	checkRowsCache map[string]bool
 }
@@ -119,7 +121,11 @@ func (fkc *FKCheckExec) addRowNeedToCheck(sc *stmtctx.StatementContext, row []ty
 	if err != nil {
 		return err
 	}
-	fkc.ToBeCheckedKeys.AddKey(key, isPrefix)
+	if isPrefix {
+		fkc.toBeCheckedPrefixKeys = append(fkc.toBeCheckedPrefixKeys, key)
+	} else {
+		fkc.toBeCheckedKeys = append(fkc.toBeCheckedKeys, key)
+	}
 	return nil
 }
 
@@ -188,15 +194,14 @@ func (fkc *FKCheckExec) buildHandleFromFKValues(sc *stmtctx.StatementContext, va
 }
 
 func (fkc *FKCheckExec) checkKeys(ctx context.Context, txn kv.Transaction) error {
-	keys := fkc.ToBeCheckedKeys.Keys
-	if len(keys) == 0 {
+	if len(fkc.toBeCheckedKeys) == 0 {
 		return nil
 	}
-	err := fkc.prefetchKeys(ctx, txn, keys)
+	err := fkc.prefetchKeys(ctx, txn, fkc.toBeCheckedKeys)
 	if err != nil {
 		return err
 	}
-	for _, k := range keys {
+	for _, k := range fkc.toBeCheckedKeys {
 		err = fkc.checkKey(ctx, txn, k)
 		if err != nil {
 			return err
@@ -245,8 +250,7 @@ func (fkc *FKCheckExec) checkKeyNotExist(ctx context.Context, txn kv.Transaction
 }
 
 func (fkc *FKCheckExec) checkIndexKeys(ctx context.Context, txn kv.Transaction) error {
-	prefixKeys := fkc.ToBeCheckedKeys.PrefixKeys
-	if len(prefixKeys) == 0 {
+	if len(fkc.toBeCheckedPrefixKeys) == 0 {
 		return nil
 	}
 	memBuffer := txn.GetMemBuffer()
@@ -255,7 +259,7 @@ func (fkc *FKCheckExec) checkIndexKeys(ctx context.Context, txn kv.Transaction) 
 	defer func() {
 		snap.SetOption(kv.ScanBatchSize, txnsnapshot.DefaultScanBatchSize)
 	}()
-	for _, key := range prefixKeys {
+	for _, key := range fkc.toBeCheckedPrefixKeys {
 		err := fkc.checkPrefixKey(ctx, memBuffer, snap, key)
 		if err != nil {
 			return err
@@ -427,7 +431,7 @@ type fkCheckKey struct {
 	isPrefix bool
 }
 
-func (fkc *FKCheckExec) checkRows(ctx context.Context, sc *stmtctx.StatementContext, txn kv.Transaction, rows []toBeCheckedRow) error {
+func (fkc FKCheckExec) checkRows(ctx context.Context, sc *stmtctx.StatementContext, txn kv.Transaction, rows []toBeCheckedRow) error {
 	if len(rows) == 0 {
 		return nil
 	}
