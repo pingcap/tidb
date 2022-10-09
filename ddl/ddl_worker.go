@@ -319,16 +319,19 @@ func (d *ddl) addBatchDDLJobs2Queue(tasks []*limitJobTask) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	return kv.RunInNewTxn(ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		jobID, err := t.GetFlashbackClusterJobID()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if jobID != 0 {
-			return errors.Errorf("Can't add to ddl table, cluster is flashing back now")
-		}
 		ids, err := t.GenGlobalIDs(len(tasks))
 		if err != nil {
 			return errors.Trace(err)
+		}
+
+		jobs, err := t.GetAllDDLJobsInQueue(meta.DefaultJobListKey)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		for _, job := range jobs {
+			if job.Type == model.ActionFlashbackCluster {
+				return errors.Errorf("Can't add ddl job, have flashback cluster job")
+			}
 		}
 
 		for i, task := range tasks {
@@ -386,17 +389,24 @@ func setJobStateToQueueing(job *model.Job) {
 func (d *ddl) addBatchDDLJobs2Table(tasks []*limitJobTask) error {
 	var ids []int64
 	var err error
+
+	sess, err := d.sessPool.get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer d.sessPool.put(sess)
+	job, err := getJobsBySQL(newSession(sess), JobTable, fmt.Sprintf("type = %d", model.ActionFlashbackCluster))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(job) != 0 {
+		return errors.Errorf("Can't add ddl job, have flashback cluster job")
+	}
+
 	startTS := uint64(0)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err = kv.RunInNewTxn(ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		jobID, err := t.GetFlashbackClusterJobID()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if jobID != 0 {
-			return errors.Errorf("Can't add to ddl table, cluster is flashing back now")
-		}
 		ids, err = t.GenGlobalIDs(len(tasks))
 		if err != nil {
 			return errors.Trace(err)
@@ -415,13 +425,8 @@ func (d *ddl) addBatchDDLJobs2Table(tasks []*limitJobTask) error {
 			jobTasks[i] = job
 			injectModifyJobArgFailPoint(job)
 		}
-		sess, err1 := d.sessPool.get()
-		if err1 == nil {
-			sess.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
-			err1 = insertDDLJobs2Table(newSession(sess), true, jobTasks...)
-			d.sessPool.put(sess)
-		}
-		err = err1
+		sess.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
+		err = insertDDLJobs2Table(newSession(sess), true, jobTasks...)
 	}
 	return errors.Trace(err)
 }
@@ -483,6 +488,56 @@ func (w *worker) updateDDLJob(t *meta.Meta, job *model.Job, meetErr bool) error 
 		err = t.UpdateDDLJob(0, job, updateRawArgs)
 	}
 	return errors.Trace(err)
+}
+
+// registerMDLInfo registers metadata lock info.
+func (w *worker) registerMDLInfo(job *model.Job, ver int64) error {
+	if !variable.EnableMDL.Load() {
+		return nil
+	}
+	if ver == 0 {
+		return nil
+	}
+	rows, err := w.sess.execute(context.Background(), fmt.Sprintf("select table_ids from mysql.tidb_ddl_job where job_id = %d", job.ID), "register-mdl-info")
+	if err != nil {
+		return err
+	}
+	if len(rows) == 0 {
+		return errors.Errorf("can't find ddl job %d", job.ID)
+	}
+	ids := rows[0].GetString(0)
+	sql := fmt.Sprintf("replace into mysql.tidb_mdl_info (job_id, version, table_ids) values (%d, %d, '%s')", job.ID, ver, ids)
+	_, err = w.sess.execute(context.Background(), sql, "register-mdl-info")
+	return err
+}
+
+// cleanMDLInfo cleans metadata lock info.
+func cleanMDLInfo(pool *sessionPool, jobID int64) {
+	if !variable.EnableMDL.Load() {
+		return
+	}
+	sql := fmt.Sprintf("delete from mysql.tidb_mdl_info where job_id = %d", jobID)
+	sctx, _ := pool.get()
+	defer pool.put(sctx)
+	sess := newSession(sctx)
+	sess.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
+	_, err := sess.execute(context.Background(), sql, "delete-mdl-info")
+	if err != nil {
+		logutil.BgLogger().Warn("unexpected error when clean mdl info", zap.Error(err))
+	}
+}
+
+// checkMDLInfo checks if metadata lock info exists. It means the schema is locked by some TiDBs if exists.
+func checkMDLInfo(jobID int64, pool *sessionPool) (bool, error) {
+	sql := fmt.Sprintf("select * from mysql.tidb_mdl_info where job_id = %d", jobID)
+	sctx, _ := pool.get()
+	defer pool.put(sctx)
+	sess := newSession(sctx)
+	rows, err := sess.execute(context.Background(), sql, "check-mdl-info")
+	if err != nil {
+		return false, err
+	}
+	return len(rows) > 0, nil
 }
 
 func needUpdateRawArgs(job *model.Job, meetErr bool) bool {
@@ -770,6 +825,12 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 		schemaVer = 0
 	}
 
+	err = w.registerMDLInfo(job, schemaVer)
+	if err != nil {
+		w.sess.rollback()
+		d.unlockSchemaVersion(job.ID)
+		return 0, err
+	}
 	err = w.updateDDLJob(t, job, runJobErr != nil)
 	if err = w.handleUpdateJobError(t, job, err); err != nil {
 		w.sess.rollback()
@@ -868,7 +929,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			}
 
 			if once {
-				err = w.waitSchemaSynced(d, job, waitTime)
+				err = waitSchemaSynced(d, job, waitTime)
 				if err == nil {
 					once = false
 				}
@@ -1074,19 +1135,6 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	if job.Type != model.ActionMultiSchemaChange {
 		logutil.Logger(w.logCtx).Info("[ddl] run DDL job", zap.String("job", job.String()))
 	}
-
-	// Should check flashbackClusterJobID.
-	// Some ddl jobs maybe added between check and insert into ddl job table.
-	flashbackJobID, err := t.GetFlashbackClusterJobID()
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, err
-	}
-	if flashbackJobID != 0 && flashbackJobID != job.ID {
-		job.State = model.JobStateCancelled
-		return ver, errors.Errorf("Can't do ddl job, cluster is flashing back now")
-	}
-
 	timeStart := time.Now()
 	if job.RealStartTS == 0 {
 		job.RealStartTS = t.StartTS
@@ -1155,7 +1203,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionRenameIndex:
 		ver, err = onRenameIndex(d, t, job)
 	case model.ActionAddForeignKey:
-		ver, err = onCreateForeignKey(d, t, job)
+		ver, err = w.onCreateForeignKey(d, t, job)
 	case model.ActionDropForeignKey:
 		ver, err = onDropForeignKey(d, t, job)
 	case model.ActionTruncateTable:
@@ -1282,13 +1330,13 @@ func waitSchemaChanged(ctx context.Context, d *ddlCtx, waitTime time.Duration, l
 		}
 	}
 
-	// OwnerCheckAllVersions returns only when  all TiDB schemas are synced(exclude the isolated TiDB).
-	err = d.schemaSyncer.OwnerCheckAllVersions(ctx, latestSchemaVersion)
+	// OwnerCheckAllVersions returns only when all TiDB schemas are synced(exclude the isolated TiDB).
+	err = d.schemaSyncer.OwnerCheckAllVersions(context.Background(), job.ID, latestSchemaVersion)
 	if err != nil {
 		logutil.Logger(d.ctx).Info("[ddl] wait latest schema version encounter error", zap.Int64("ver", latestSchemaVersion), zap.Error(err))
 		return
 	}
-	logutil.Logger(d.ctx).Info("[ddl] wait latest schema version changed",
+	logutil.Logger(d.ctx).Info("[ddl] wait latest schema version changed(get the metadata lock if tidb_enable_metadata_lock is true)",
 		zap.Int64("ver", latestSchemaVersion),
 		zap.Duration("take time", time.Since(timeStart)),
 		zap.String("job", job.String()))
@@ -1300,17 +1348,17 @@ func waitSchemaChanged(ctx context.Context, d *ddlCtx, waitTime time.Duration, l
 // but in this case we don't wait enough 2 * lease time to let other servers update the schema.
 // So here we get the latest schema version to make sure all servers' schema version update to the latest schema version
 // in a cluster, or to wait for 2 * lease time.
-func (w *worker) waitSchemaSynced(d *ddlCtx, job *model.Job, waitTime time.Duration) error {
+func waitSchemaSynced(d *ddlCtx, job *model.Job, waitTime time.Duration) error {
 	if !job.IsRunning() && !job.IsRollingback() && !job.IsDone() && !job.IsRollbackDone() {
 		return nil
 	}
 
-	ver, _ := w.store.CurrentVersion(kv.GlobalTxnScope)
-	snapshot := w.store.GetSnapshot(ver)
+	ver, _ := d.store.CurrentVersion(kv.GlobalTxnScope)
+	snapshot := d.store.GetSnapshot(ver)
 	m := meta.NewSnapshotMeta(snapshot)
 	latestSchemaVersion, err := m.GetSchemaVersionWithNonEmptyDiff()
 	if err != nil {
-		logutil.Logger(w.logCtx).Warn("[ddl] get global version failed", zap.Error(err))
+		logutil.Logger(d.ctx).Warn("[ddl] get global version failed", zap.Error(err))
 		return err
 	}
 
@@ -1344,7 +1392,7 @@ func buildPlacementAffects(oldIDs []int64, newIDs []int64) []*model.AffectedOpti
 }
 
 // updateSchemaVersion increments the schema version by 1 and sets SchemaDiff.
-func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, error) {
+func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job, multiInfos ...schemaIDAndTableInfo) (int64, error) {
 	schemaVersion, err := d.setSchemaVersion(job, d.store)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -1474,6 +1522,26 @@ func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, error)
 		}
 	default:
 		diff.TableID = job.TableID
+	}
+	if len(multiInfos) > 0 {
+		existsMap := make(map[int64]struct{})
+		existsMap[diff.TableID] = struct{}{}
+		for _, affect := range diff.AffectedOpts {
+			existsMap[affect.TableID] = struct{}{}
+		}
+		for _, info := range multiInfos {
+			_, exist := existsMap[info.tblInfo.ID]
+			if exist {
+				continue
+			}
+			existsMap[info.tblInfo.ID] = struct{}{}
+			diff.AffectedOpts = append(diff.AffectedOpts, &model.AffectedOption{
+				SchemaID:    info.schemaID,
+				OldSchemaID: info.schemaID,
+				TableID:     info.tblInfo.ID,
+				OldTableID:  info.tblInfo.ID,
+			})
+		}
 	}
 	err = t.SetSchemaDiff(diff)
 	return schemaVersion, errors.Trace(err)

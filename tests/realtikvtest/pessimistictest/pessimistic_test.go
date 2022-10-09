@@ -1839,6 +1839,7 @@ func TestPessimisticTxnWithDDLAddDropColumn(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_enable_metadata_lock=0")
 	tk.MustExec("use test")
 	tk2.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -1870,6 +1871,7 @@ func TestPessimisticTxnWithDDLChangeColumn(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=0")
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
 
@@ -2136,6 +2138,7 @@ func TestAmendTxnVariable(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=0")
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
 	tk3 := testkit.NewTestKit(t, store)
@@ -2415,7 +2418,6 @@ func Test1PCWithSchemaChange(t *testing.T) {
 }
 
 func TestAmendForUniqueIndex(t *testing.T) {
-	t.Skip("Skip this unstable test(#25986) and bring it back before 2021-07-29.")
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -2541,6 +2543,7 @@ func TestAmendWithColumnTypeChange(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=0")
 	tk2.MustExec("use test")
 
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
@@ -2893,6 +2896,7 @@ func TestAmendForIndexChange(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=0")
 	tk2.MustExec("use test")
 
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = ON;")
@@ -2967,6 +2971,7 @@ func TestAmendForColumnChange(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=0")
 	tk2.MustExec("use test")
 
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = ON;")

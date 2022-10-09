@@ -61,6 +61,16 @@ error = '''
 version mismatch
 '''
 
+["BR:EBS:ErrRestoreInvalidPeer"]
+error = '''
+restore met a invalid peer
+'''
+
+["BR:EBS:ErrRestoreTotalKVMismatch"]
+error = '''
+restore total tikvs mismatch
+'''
+
 ["BR:ExternalStorage:ErrStorageInvalidConfig"]
 error = '''
 invalid external storage config
@@ -819,6 +829,11 @@ In definition of view, derived table or common table expression, SELECT list and
 ["ddl:1391"]
 error = '''
 Key part '%-.192s' length cannot be 0
+'''
+
+["ddl:1452"]
+error = '''
+Cannot add or update a child row: a foreign key constraint fails (%.192s)
 '''
 
 ["ddl:1470"]
@@ -1924,6 +1939,16 @@ View '%-.192s.%-.192s' references invalid table(s) or column(s) or function(s) o
 ["planner:1391"]
 error = '''
 Key part '%-.192s' length cannot be 0
+'''
+
+["planner:1451"]
+error = '''
+Cannot delete or update a parent row: a foreign key constraint fails (%.192s)
+'''
+
+["planner:1452"]
+error = '''
+Cannot add or update a child row: a foreign key constraint fails (%.192s)
 '''
 
 ["planner:1462"]

@@ -15,7 +15,6 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -413,10 +412,12 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 	defer c.taskMu.Unlock()
 	switch e.Type {
 	case EventAdd:
+		utils.LogBackupTaskCountInc()
 		c.task = e.Info
 		c.taskRange = CollapseRanges(len(e.Ranges), func(i int) kv.KeyRange { return e.Ranges[i] })
 		log.Info("added event", zap.Stringer("task", e.Info), zap.Stringer("ranges", logutil.StringifyKeys(c.taskRange)))
 	case EventDel:
+		utils.LogBackupTaskCountDec()
 		c.task = nil
 		c.taskRange = nil
 		c.state = &fullScan{}
@@ -457,22 +458,6 @@ func (c *CheckpointAdvancer) advanceCheckpointBy(ctx context.Context, getCheckpo
 	c.lastCheckpoint = cp
 	metrics.LastCheckpoint.WithLabelValues(c.task.GetName()).Set(float64(c.lastCheckpoint))
 	return nil
-}
-
-// OnTick advances the inner logic clock for the advancer.
-// It's synchronous: this would only return after the events triggered by the clock has all been done.
-// It's generally panic-free, you may not need to trying recover a panic here.
-func (c *CheckpointAdvancer) OnTick(ctx context.Context) (err error) {
-	defer c.recordTimeCost("tick")()
-	defer func() {
-		e := recover()
-		if e != nil {
-			log.Error("panic during handing tick", zap.Stack("stack"), logutil.ShortError(err))
-			err = errors.Annotatef(berrors.ErrUnknown, "panic during handling tick: %s", e)
-		}
-	}()
-	err = c.tick(ctx)
-	return
 }
 
 func (c *CheckpointAdvancer) onConsistencyCheckTick(s *updateSmallTree) error {

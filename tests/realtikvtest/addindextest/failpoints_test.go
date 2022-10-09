@@ -25,7 +25,9 @@ func initTestFailpoint(t *testing.T) *suiteContext {
 }
 
 func TestFailpointsCreateNonUniqueIndex(t *testing.T) {
-	t.Skip()
+	if !*FullMode {
+		t.Skip()
+	}
 	var colIDs = [][]int{
 		{1, 4, 7, 10, 13, 16, 19, 22, 25},
 		{2, 5, 8, 11, 14, 17, 20, 23, 26},
@@ -36,7 +38,9 @@ func TestFailpointsCreateNonUniqueIndex(t *testing.T) {
 }
 
 func TestFailpointsCreateUniqueIndex(t *testing.T) {
-	t.Skip()
+	if !*FullMode {
+		t.Skip()
+	}
 	var colIDs = [][]int{
 		{1, 6, 7, 8, 11, 13, 15, 16, 18, 19, 22, 26},
 		{2, 9, 11, 17},
@@ -47,19 +51,25 @@ func TestFailpointsCreateUniqueIndex(t *testing.T) {
 }
 
 func TestFailpointsCreatePrimaryKeyFailpoints(t *testing.T) {
-	t.Skip()
+	if !*FullMode {
+		t.Skip()
+	}
 	ctx := initTest(t)
 	testOneIndexFrame(ctx, 0, addIndexPK)
 }
 
 func TestFailpointsCreateGenColIndex(t *testing.T) {
-	t.Skip()
+	if !*FullMode {
+		t.Skip()
+	}
 	ctx := initTestFailpoint(t)
 	testOneIndexFrame(ctx, 29, addIndexGenCol)
 }
 
 func TestFailpointsCreateMultiColsIndex(t *testing.T) {
-	t.Skip()
+	if !*FullMode {
+		t.Skip()
+	}
 	var coliIDs = [][]int{
 		{1, 4, 7},
 		{2, 5, 8},

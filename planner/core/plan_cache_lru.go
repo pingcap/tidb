@@ -70,12 +70,20 @@ func NewLRUPlanCache(capacity uint, guard float64, quota uint64,
 	}
 }
 
+// strHashKey control deep or Shallow copy of string
+func strHashKey(key kvcache.Key, deepCopy bool) string {
+	if deepCopy {
+		return string(key.Hash())
+	}
+	return string(hack.String(key.Hash()))
+}
+
 // Get tries to find the corresponding value according to the given key.
 func (l *LRUPlanCache) Get(key kvcache.Key, paramTypes []*types.FieldType) (value kvcache.Value, ok bool) {
 	l.lock.Lock()
 	defer l.lock.Unlock()
 
-	bucket, bucketExist := l.buckets[string(hack.String(key.Hash()))]
+	bucket, bucketExist := l.buckets[strHashKey(key, false)]
 	if bucketExist {
 		if element, exist := l.pickFromBucket(bucket, paramTypes); exist {
 			l.lruList.MoveToFront(element)
@@ -90,7 +98,7 @@ func (l *LRUPlanCache) Put(key kvcache.Key, value kvcache.Value, paramTypes []*t
 	l.lock.Lock()
 	defer l.lock.Unlock()
 
-	hash := string(key.Hash())
+	hash := strHashKey(key, true)
 	bucket, bucketExist := l.buckets[hash]
 	if bucketExist {
 		if element, exist := l.pickFromBucket(bucket, paramTypes); exist {
@@ -120,14 +128,14 @@ func (l *LRUPlanCache) Delete(key kvcache.Key) {
 	l.lock.Lock()
 	defer l.lock.Unlock()
 
-	hash := hack.String(key.Hash())
-	bucket, bucketExist := l.buckets[string(hash)]
+	hash := strHashKey(key, false)
+	bucket, bucketExist := l.buckets[hash]
 	if bucketExist {
 		for element := range bucket {
 			l.lruList.Remove(element)
 			l.size--
 		}
-		delete(l.buckets, string(hash))
+		delete(l.buckets, hash)
 	}
 }
 
@@ -169,6 +177,9 @@ func (l *LRUPlanCache) SetCapacity(capacity uint) error {
 // removeOldest removes the oldest element from the cache.
 func (l *LRUPlanCache) removeOldest() {
 	lru := l.lruList.Back()
+	if lru == nil {
+		return
+	}
 	if l.onEvict != nil {
 		l.onEvict(lru.Value.(*planCacheEntry).PlanKey, lru.Value.(*planCacheEntry).PlanValue)
 	}
@@ -180,8 +191,12 @@ func (l *LRUPlanCache) removeOldest() {
 
 // removeFromBucket remove element from bucket
 func (l *LRUPlanCache) removeFromBucket(element *list.Element) {
-	bucket := l.buckets[string(hack.String(element.Value.(*planCacheEntry).PlanKey.Hash()))]
+	hash := strHashKey(element.Value.(*planCacheEntry).PlanKey, false)
+	bucket := l.buckets[hash]
 	delete(bucket, element)
+	if len(bucket) == 0 {
+		delete(l.buckets, hash)
+	}
 }
 
 // memoryControl control the memory by quota and guard
@@ -191,7 +206,7 @@ func (l *LRUPlanCache) memoryControl() {
 	}
 
 	memUsed, _ := memory.InstanceMemUsed()
-	for memUsed > uint64(float64(l.quota)*(1.0-l.guard)) {
+	for memUsed > uint64(float64(l.quota)*(1.0-l.guard)) && l.size > 0 {
 		l.removeOldest()
 		memUsed, _ = memory.InstanceMemUsed()
 	}
