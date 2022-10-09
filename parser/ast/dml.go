@@ -288,6 +288,7 @@ func (*TableName) resultSet() {}
 
 // Restore implements Node interface.
 func (n *TableName) restoreName(ctx *format.RestoreCtx) {
+	// restore db name
 	if n.Schema.String() != "" {
 		ctx.WriteName(n.Schema.String())
 		ctx.WritePlain(".")
@@ -298,6 +299,7 @@ func (n *TableName) restoreName(ctx *format.RestoreCtx) {
 			ctx.WritePlain(".")
 		}
 	}
+	// restore table name
 	ctx.WriteName(n.Name.String())
 }
 
@@ -1047,6 +1049,9 @@ type CommonTableExpression struct {
 	Query       *SubqueryExpr
 	ColNameList []model.CIStr
 	IsRecursive bool
+
+	// Record how many consumers the current cte has
+	ConsumerCount int
 }
 
 // Restore implements Node interface
@@ -2711,6 +2716,7 @@ type ShowStmt struct {
 	Roles       []*auth.RoleIdentity // Used for show grants .. using
 	IfNotExists bool                 // Used for `show create database if not exists`
 	Extended    bool                 // Used for `show extended columns from ...`
+	Limit       *Limit               // Used for partial Show STMTs to limit Result Set row numbers.
 
 	CountWarningsOrErrors bool // Used for showing count(*) warnings | errors
 
@@ -3076,7 +3082,46 @@ func (n *ShowStmt) Accept(v Visitor) (Node, bool) {
 		}
 		n.Where = node.(ExprNode)
 	}
+	if n.Limit != nil {
+		node, ok := n.Limit.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Limit = node.(*Limit)
+	}
 	return v.Leave(n)
+}
+
+// Allow limit result set for partial SHOW cmd
+func (n *ShowStmt) NeedLimitRSRow() bool {
+	switch n.Tp {
+	// Show statements need to have consistence behavior with MySQL Does
+	case ShowEngines, ShowDatabases, ShowTables, ShowColumns, ShowTableStatus, ShowWarnings,
+		ShowCharset, ShowVariables, ShowStatus, ShowCollation, ShowIndex, ShowPlugins:
+		return true
+	default:
+		// There are five classes of Show STMT.
+		// 1) The STMT Only return one row:
+		//    ShowCreateTable, ShowCreateView, ShowCreateUser, ShowCreateDatabase, ShowMasterStatus,
+		//
+		// 2) The STMT is a MySQL syntax extend, so just keep it behavior as before:
+		//    ShowCreateSequence, ShowCreatePlacementPolicy, ShowConfig, ShowStatsExtended,
+		//    ShowStatsMeta, ShowStatsHistograms, ShowStatsTopN, ShowStatsBuckets, ShowStatsHealthy
+		//    ShowHistogramsInFlight, ShowColumnStatsUsage, ShowBindings, ShowBindingCacheStatus,
+		//    ShowPumpStatus, ShowDrainerStatus, ShowAnalyzeStatus, ShowRegions, ShowBuiltins,
+		//    ShowTableNextRowId, ShowBackups, ShowRestores, ShowImports, ShowCreateImport, ShowPlacement
+		//    ShowPlacementForDatabase, ShowPlacementForTable, ShowPlacementForPartition, ShowPlacementLabels
+		//
+		// 3) There is corelated statements in MySQL, but no limit result set return number also.
+		//    ShowGrants, ShowProcessList, ShowPrivileges, ShowBuiltins, ShowTableNextRowId
+		//
+		// 4) There is corelated statements in MySQL, but it seems not recommand to use them and likely deprecte in the future.
+		//    ShowProfile, ShowProfiles
+		//
+		// 5) Below STMTs do not implement fetch logic.
+		//    ShowTriggers, ShowProcedureStatus, ShowEvents, ShowErrors, ShowOpenTables.
+		return false
+	}
 }
 
 // WindowSpec is the specification of a window.

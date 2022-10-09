@@ -666,6 +666,19 @@ var defaultSysVars = []*SysVar{
 		TableCacheLease.Store(val)
 		return nil
 	}},
+	{Scope: ScopeGlobal, Name: TiDBAutoAnalyzePartitionBatchSize,
+		Value: strconv.Itoa(DefTiDBAutoAnalyzePartitionBatchSize),
+		Type:  TypeUnsigned, MinValue: 1, MaxValue: 1024,
+		SetGlobal: func(vars *SessionVars, s string) error {
+			var val int64
+			val, err := strconv.ParseInt(s, 10, 64)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			AutoAnalyzePartitionBatchSize.Store(val)
+			return nil
+		}},
+
 	// variable for top SQL feature.
 	// TopSQL enable only be controlled by TopSQL pub/sub sinker.
 	// This global variable only uses to update the global config which store in PD(ETCD).
@@ -1659,7 +1672,11 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableAmendPessimisticTxn, Value: BoolToOnOff(DefTiDBEnableAmendPessimisticTxn), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
-		s.EnableAmendPessimisticTxn = TiDBOptOn(val)
+		enableAmend := TiDBOptOn(val)
+		if enableAmend && EnableFastReorg.Load() {
+			return errors.Errorf("amend pessimistic transactions is not compatible with tidb_ddl_enable_fast_reorg")
+		}
+		s.EnableAmendPessimisticTxn = enableAmend
 		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableAsyncCommit, Value: BoolToOnOff(DefTiDBEnableAsyncCommit), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
