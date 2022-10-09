@@ -665,23 +665,21 @@ loop:
 				task.End(zap.ErrorLevel, err)
 				if err != nil {
 					// try to imitate IF NOT EXISTS behavior for parsing errors
-					var (
-						exists = false
-						err2   error
-					)
-
+					exists := false
 					switch job.stmtType {
 					case schemaCreateDatabase:
+						var err2 error
 						exists, err2 = common.SchemaExists(worker.ctx, session, job.dbName)
+						if err2 != nil {
+							task.Error("failed to check database existence", zap.Error(err2))
+						}
 					case schemaCreateTable:
-						exists, err2 = common.TableExists(worker.ctx, session, job.dbName, job.tblName)
-					}
-					if err2 != nil {
-						task.Error("failed to check table exists", zap.Error(err2))
+						exists, _ = common.TableExists(worker.ctx, session, job.dbName, job.tblName)
 					}
 					if exists {
 						continue
 					}
+
 					err = common.ErrCreateSchema.Wrap(err).GenWithStackByArgs(common.UniqueTable(job.dbName, job.tblName), job.stmtType.String())
 					worker.wg.Done()
 					worker.throw(err)
