@@ -300,6 +300,7 @@ deprecate-integer-display-length = false
 enable-enum-length-limit = true
 
 [instance]
+tidb_memory_usage_alarm_ratio = 0.7
 
 # The maximum permitted number of simultaneous client connections. When the value is 0, the number of connections is unlimited.
 max_connections = 0
@@ -646,7 +647,7 @@ allow-expression-index = false
 [isolation-read]
 # engines means allow the tidb server read data from which types of engines. options: "tikv", "tiflash", "tidb".
 engines = ["tikv", "tiflash", "tidb"]
-		`, errors.New("The following configuration options are no longer supported in this version of TiDB. Check the release notes for more information: check-mb4-value-in-utf8, enable-batch-dml, log.enable-slow-log, log.expensive-threshold, log.query-log-max-len, log.record-plan-in-slow-log, log.slow-threshold, lower-case-table-names, mem-quota-query, oom-action, performance.committer-concurrency, performance.feedback-probability, performance.force-priority, performance.memory-usage-alarm-ratio, performance.query-feedback-limit, performance.run-auto-analyze, prepared-plan-cache.capacity, prepared-plan-cache.enabled, prepared-plan-cache.memory-guard-ratio")},
+		`, errors.New("The following configuration options are no longer supported in this version of TiDB. Check the release notes for more information: check-mb4-value-in-utf8, enable-batch-dml, instance.tidb_memory_usage_alarm_ratio, log.enable-slow-log, log.expensive-threshold, log.query-log-max-len, log.record-plan-in-slow-log, log.slow-threshold, lower-case-table-names, mem-quota-query, oom-action, performance.committer-concurrency, performance.feedback-probability, performance.force-priority, performance.memory-usage-alarm-ratio, performance.query-feedback-limit, performance.run-auto-analyze, prepared-plan-cache.capacity, prepared-plan-cache.enabled, prepared-plan-cache.memory-guard-ratio")},
 	}
 
 	for _, test := range configTest {
@@ -767,7 +768,6 @@ grpc-initial-window-size = 10240
 grpc-max-send-msg-size = 40960
 [instance]
 max_connections = 200
-tidb_memory_usage_alarm_ratio = 0.7
 `)
 
 	require.NoError(t, err)

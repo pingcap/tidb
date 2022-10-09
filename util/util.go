@@ -105,7 +105,7 @@ func Str2Int64Map(str string) map[int64]struct{} {
 }
 
 // GenLogFields generate log fields.
-func GenLogFields(costTime time.Duration, info *ProcessInfo, sqlTruncate, sqlForceDesensitization bool) []zap.Field {
+func GenLogFields(costTime time.Duration, info *ProcessInfo, needTruncateSQL bool) []zap.Field {
 	logFields := make([]zap.Field, 0, 20)
 	logFields = append(logFields, zap.String("cost_time", strconv.FormatFloat(costTime.Seconds(), 'f', -1, 64)+"s"))
 	execDetail := info.StmtCtx.GetExecDetails()
@@ -159,11 +159,11 @@ func GenLogFields(costTime time.Duration, info *ProcessInfo, sqlTruncate, sqlFor
 	var sql string
 	if len(info.Info) > 0 {
 		sql = info.Info
-		if info.RedactSQL || sqlForceDesensitization {
+		if info.RedactSQL {
 			sql = parser.Normalize(sql)
 		}
 	}
-	if len(sql) > logSQLLen && sqlTruncate {
+	if len(sql) > logSQLLen && needTruncateSQL {
 		sql = fmt.Sprintf("%s len(%d)", sql[:logSQLLen], len(sql))
 	}
 	logFields = append(logFields, zap.String("sql", sql))

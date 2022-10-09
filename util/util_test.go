@@ -45,7 +45,7 @@ func TestLogFormat(t *testing.T) {
 	}
 	costTime := time.Second * 233
 	logSQLTruncateLen := 1024 * 8
-	logFields := GenLogFields(costTime, info, true, false)
+	logFields := GenLogFields(costTime, info, true)
 
 	assert.Len(t, logFields, 7)
 	assert.Equal(t, "cost_time", logFields[0].Key)
@@ -63,17 +63,11 @@ func TestLogFormat(t *testing.T) {
 	assert.Equal(t, "sql", logFields[6].Key)
 	assert.Equal(t, "select * from table where a > 1", logFields[6].String)
 
-	logFields = GenLogFields(costTime, info, true, false)
+	logFields = GenLogFields(costTime, info, true)
 	assert.Equal(t, "select * from table where a > 1", logFields[6].String)
-	logFields = GenLogFields(costTime, info, true, true)
-	assert.Equal(t, "select * from table where `a` > ?", logFields[6].String)
-	info.RedactSQL = true
-	logFields = GenLogFields(costTime, info, true, false)
-	assert.Equal(t, "select * from table where `a` > ?", logFields[6].String)
-	info.RedactSQL = false
 	info.Info = string(mockTooLongQuery)
-	logFields = GenLogFields(costTime, info, true, false)
+	logFields = GenLogFields(costTime, info, true)
 	assert.Equal(t, len(logFields[6].String), logSQLTruncateLen+10)
-	logFields = GenLogFields(costTime, info, false, false)
+	logFields = GenLogFields(costTime, info, false)
 	assert.Equal(t, len(logFields[6].String), len(mockTooLongQuery))
 }
