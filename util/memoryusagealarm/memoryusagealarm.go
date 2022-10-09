@@ -157,7 +157,7 @@ func (record *memoryUsageAlarm) alarm4ExcessiveMemUsage(sm util.SessionManager) 
 		record.lastCheckTime = time.Now()
 		record.lastRecordMemUsed = memoryUsage
 		record.doRecord(memoryUsage, instanceStats.HeapAlloc, sm, reason)
-		record.tryRemoveNoNeedRecords()
+		record.tryRemoveRedundantRecords()
 	}
 }
 
@@ -165,16 +165,16 @@ func (record *memoryUsageAlarm) alarm4ExcessiveMemUsage(sm util.SessionManager) 
 type AlarmReason uint
 
 const (
-	// IncreaseFast is the reason that memory increasing too fast.
-	IncreaseFast AlarmReason = iota
-	// MemoryExceed is the reason that memory used exceed threshold.
-	MemoryExceed
+	// GrowTooFast is the reason that memory increasing too fast.
+	GrowTooFast AlarmReason = iota
+	// ExceedAlarmRatio is the reason that memory used exceed threshold.
+	ExceedAlarmRatio
 	// NoReason means no alarm
 	NoReason
 )
 
 func (reason AlarmReason) String() string {
-	return [...]string{"memory increase too fast", "memory used exceed", "no reason"}[reason]
+	return [...]string{"memory usage grows too fast", "memory usage exceeds alarm ratio", "no reason"}[reason]
 }
 
 func (record *memoryUsageAlarm) needRecord(memoryUsage uint64) (bool, AlarmReason) {
@@ -188,10 +188,10 @@ func (record *memoryUsageAlarm) needRecord(memoryUsage uint64) (bool, AlarmReaso
 	interval := time.Since(record.lastCheckTime)
 	memDiff := int64(memoryUsage) - int64(record.lastRecordMemUsed)
 	if interval > 60*time.Second {
-		return true, MemoryExceed
+		return true, ExceedAlarmRatio
 	}
 	if float64(memDiff) > 0.1*float64(record.serverMemoryQuota) {
-		return true, IncreaseFast
+		return true, GrowTooFast
 	}
 	return false, NoReason
 }
@@ -223,7 +223,7 @@ func (record *memoryUsageAlarm) doRecord(memUsage uint64, instanceMemoryUsage ui
 	}
 }
 
-func (record *memoryUsageAlarm) tryRemoveNoNeedRecords() {
+func (record *memoryUsageAlarm) tryRemoveRedundantRecords() {
 	filename := &record.lastRecordDirName
 	for len(*filename) > int(record.memoryUsageAlarmKeepRecordNum) {
 		err := os.RemoveAll((*filename)[0])
@@ -282,7 +282,7 @@ func (record *memoryUsageAlarm) getTop10SqlInfo(cmp func(i, j *util.ProcessInfo)
 		buf.WriteString(fmt.Sprintf("SQL %v: \n", i))
 		fields := util.GenLogFields(record.lastCheckTime.Sub(info.Time), info, false, true)
 		fields = append(fields, zap.Int("analyze-version", info.OomAlarmVariablesInfo.SessionAnalyzeVersion))
-		fields = append(fields, zap.Bool("enable_rate_limit_action", info.OomAlarmVariablesInfo.SessionEnabledRateLimitAction))
+		fields = append(fields, zap.Bool("tidb_enable_rate_limit_action", info.OomAlarmVariablesInfo.SessionEnabledRateLimitAction))
 		fields = append(fields, zap.String("current_analyze_plan", getCurrentAnalyzePlan(info)))
 		for _, field := range fields {
 			switch field.Type {

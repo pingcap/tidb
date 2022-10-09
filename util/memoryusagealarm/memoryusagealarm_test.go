@@ -39,7 +39,7 @@ func TestIfNeedDoRecord(t *testing.T) {
 	memUsed = 0.71 * float64(record.serverMemoryQuota)
 	needRecord, reason = record.needRecord(uint64(memUsed))
 	assert.True(t, needRecord)
-	assert.Equal(t, MemoryExceed, reason)
+	assert.Equal(t, ExceedAlarmRatio, reason)
 	record.lastCheckTime = time.Now()
 	record.lastRecordMemUsed = uint64(memUsed)
 
@@ -54,7 +54,7 @@ func TestIfNeedDoRecord(t *testing.T) {
 	memUsed = 0.71 * float64(record.serverMemoryQuota)
 	needRecord, reason = record.needRecord(uint64(memUsed))
 	assert.True(t, needRecord)
-	assert.Equal(t, MemoryExceed, reason)
+	assert.Equal(t, ExceedAlarmRatio, reason)
 	record.lastCheckTime = time.Now()
 	record.lastRecordMemUsed = uint64(memUsed)
 
@@ -68,7 +68,7 @@ func TestIfNeedDoRecord(t *testing.T) {
 	memUsed = 0.82 * float64(record.serverMemoryQuota)
 	needRecord, reason = record.needRecord(uint64(memUsed))
 	assert.True(t, needRecord)
-	assert.Equal(t, IncreaseFast, reason)
+	assert.Equal(t, GrowTooFast, reason)
 }
 
 func genTime(sec int64) time.Time {
