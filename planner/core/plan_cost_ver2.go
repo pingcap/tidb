@@ -25,15 +25,43 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
+func getPlanCost(p PhysicalPlan, taskType property.TaskType, option *PlanCostOption) (float64, error) {
+	if p.SCtx().GetSessionVars().CostModelVersion == modelVer1 {
+		return p.getPlanCostVer1(taskType, option)
+	}
+	return p.getPlanCostVer2(taskType, option)
+}
+
+// getPlanCostVer2 calculates the cost of the plan if it has not been calculated yet and returns the cost.
+func (p *basePhysicalPlan) getPlanCostVer2(taskType property.TaskType, option *PlanCostOption) (float64, error) {
+	if p.planCostInit && !hasCostFlag(option.CostFlag, CostFlagRecalculate) {
+		return p.planCost, nil
+	}
+	p.planCost = 0 // the default implementation, the operator have no cost
+	for _, child := range p.children {
+		childCost, err := child.getPlanCostVer2(taskType, option)
+		if err != nil {
+			return 0, err
+		}
+		p.planCost += childCost
+	}
+	p.planCostInit = true
+	return p.planCost, nil
+}
+
 // getPlanCostVer2 returns the plan-cost of this sub-plan, which is:
 // plan-cost = child-cost + filter-cost
 func (p *PhysicalSelection) getPlanCostVer2(taskType property.TaskType, option *PlanCostOption) (float64, error) {
+	if p.planCostInit && !hasCostFlag(option.CostFlag, CostFlagRecalculate) {
+		return p.planCost, nil
+	}
+
 	inputRows := getCardinality(p.children[0], option.CostFlag)
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 
 	filterCost := filterCostVer2(inputRows, p.Conditions, cpuFactor)
 
-	childCost, err := p.children[0].GetPlanCost(taskType, option)
+	childCost, err := p.children[0].getPlanCostVer2(taskType, option)
 	if err != nil {
 		return 0, err
 	}
@@ -47,13 +75,17 @@ func (p *PhysicalSelection) getPlanCostVer2(taskType property.TaskType, option *
 // plan-cost = child-cost + proj-cost / concurrency
 // proj-cost = input-rows * len(expressions) * cpu-factor
 func (p *PhysicalProjection) getPlanCostVer2(taskType property.TaskType, option *PlanCostOption) (float64, error) {
+	if p.planCostInit && !hasCostFlag(option.CostFlag, CostFlagRecalculate) {
+		return p.planCost, nil
+	}
+
 	inputRows := getCardinality(p.children[0], option.CostFlag)
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 	concurrency := float64(p.ctx.GetSessionVars().ProjectionConcurrency())
 
 	projCost := inputRows * float64(len(p.Exprs)) * cpuFactor.Value
 
-	childCost, err := p.children[0].GetPlanCost(taskType, option)
+	childCost, err := p.children[0].getPlanCostVer2(taskType, option)
 	if err != nil {
 		return 0, err
 	}
@@ -67,6 +99,10 @@ func (p *PhysicalProjection) getPlanCostVer2(taskType property.TaskType, option 
 // plan-cost = rows * log2(row-size) * scan-factor
 // log2(row-size) is from experiments.
 func (p *PhysicalIndexScan) getPlanCostVer2(taskType property.TaskType, option *PlanCostOption) (float64, error) {
+	if p.planCostInit && !hasCostFlag(option.CostFlag, CostFlagRecalculate) {
+		return p.planCost, nil
+	}
+
 	rows := getCardinality(p, option.CostFlag)
 	rowSize := math.Max(p.getScanRowSize(), 2.0)
 	scanFactor := getTaskScanFactorVer2(p, taskType)
@@ -80,6 +116,10 @@ func (p *PhysicalIndexScan) getPlanCostVer2(taskType property.TaskType, option *
 // plan-cost = rows * log2(row-size) * scan-factor
 // log2(row-size) is from experiments.
 func (p *PhysicalTableScan) getPlanCostVer2(taskType property.TaskType, option *PlanCostOption) (float64, error) {
+	if p.planCostInit && !hasCostFlag(option.CostFlag, CostFlagRecalculate) {
+		return p.planCost, nil
+	}
+
 	rows := getCardinality(p, option.CostFlag)
 	rowSize := math.Max(p.getScanRowSize(), 2.0)
 	scanFactor := getTaskScanFactorVer2(p, taskType)
@@ -100,6 +140,10 @@ func (p *PhysicalTableScan) getPlanCostVer2(taskType property.TaskType, option *
 // net-cost = rows * row-size * net-factor
 // seek-cost = num-tasks * seek-factor
 func (p *PhysicalIndexReader) getPlanCostVer2(taskType property.TaskType, option *PlanCostOption) (float64, error) {
+	if p.planCostInit && !hasCostFlag(option.CostFlag, CostFlagRecalculate) {
+		return p.planCost, nil
+	}
+
 	rows := getCardinality(p.indexPlan, option.CostFlag)
 	rowSize := getAvgRowSize(p.indexPlan.Stats(), p.indexPlan.Schema())
 	netFactor := getTaskNetFactorVer2(p, taskType)
@@ -108,7 +152,7 @@ func (p *PhysicalIndexReader) getPlanCostVer2(taskType property.TaskType, option
 	netCost := netCostVer2(rows, rowSize, netFactor)
 	seekCost := estimateNetSeekCost(p.indexPlan)
 
-	childCost, err := p.indexPlan.GetPlanCost(property.CopSingleReadTaskType, option)
+	childCost, err := p.indexPlan.getPlanCostVer2(property.CopSingleReadTaskType, option)
 	if err != nil {
 		return 0, err
 	}
@@ -123,6 +167,10 @@ func (p *PhysicalIndexReader) getPlanCostVer2(taskType property.TaskType, option
 // net-cost = rows * row-size * net-factor
 // seek-cost = num-tasks * seek-factor
 func (p *PhysicalTableReader) getPlanCostVer2(taskType property.TaskType, option *PlanCostOption) (float64, error) {
+	if p.planCostInit && !hasCostFlag(option.CostFlag, CostFlagRecalculate) {
+		return p.planCost, nil
+	}
+
 	rows := getCardinality(p.tablePlan, option.CostFlag)
 	rowSize := getAvgRowSize(p.tablePlan.Stats(), p.tablePlan.Schema())
 	netFactor := getTaskNetFactorVer2(p, taskType)
@@ -131,7 +179,7 @@ func (p *PhysicalTableReader) getPlanCostVer2(taskType property.TaskType, option
 	netCost := netCostVer2(rows, rowSize, netFactor)
 	seekCost := estimateNetSeekCost(p.tablePlan)
 
-	childCost, err := p.tablePlan.GetPlanCost(property.CopSingleReadTaskType, option)
+	childCost, err := p.tablePlan.getPlanCostVer2(property.CopSingleReadTaskType, option)
 	if err != nil {
 		return 0, err
 	}
@@ -157,6 +205,10 @@ func (p *PhysicalTableReader) getPlanCostVer2(taskType property.TaskType, option
 // double-read-cpu-cost = index-rows * cpu-factor
 // double-read-tasks = index-rows / batch-size * task-per-batch # task-per-batch is a magic number now
 func (p *PhysicalIndexLookUpReader) getPlanCostVer2(taskType property.TaskType, option *PlanCostOption) (float64, error) {
+	if p.planCostInit && !hasCostFlag(option.CostFlag, CostFlagRecalculate) {
+		return p.planCost, nil
+	}
+
 	indexRows := getCardinality(p.indexPlan, option.CostFlag)
 	tableRows := getCardinality(p.indexPlan, option.CostFlag)
 	indexRowSize := getTblStats(p.indexPlan).GetAvgRowSize(p.ctx, p.indexPlan.Schema().Columns, true, false)
@@ -170,7 +222,7 @@ func (p *PhysicalIndexLookUpReader) getPlanCostVer2(taskType property.TaskType, 
 	// index-side
 	indexNetCost := netCostVer2(indexRows, indexRowSize, netFactor)
 	indexSeekCost := estimateNetSeekCost(p.indexPlan)
-	indexChildCost, err := p.indexPlan.GetPlanCost(property.CopDoubleReadTaskType, option)
+	indexChildCost, err := p.indexPlan.getPlanCostVer2(property.CopDoubleReadTaskType, option)
 	if err != nil {
 		return 0, err
 	}
@@ -179,7 +231,7 @@ func (p *PhysicalIndexLookUpReader) getPlanCostVer2(taskType property.TaskType, 
 	// table-side
 	tableNetCost := netCostVer2(tableRows, tableRowSize, netFactor)
 	tableSeekCost := estimateNetSeekCost(p.tablePlan)
-	tableChildCost, err := p.tablePlan.GetPlanCost(property.CopDoubleReadTaskType, option)
+	tableChildCost, err := p.tablePlan.getPlanCostVer2(property.CopDoubleReadTaskType, option)
 	if err != nil {
 		return 0, err
 	}
@@ -203,6 +255,10 @@ func (p *PhysicalIndexLookUpReader) getPlanCostVer2(taskType property.TaskType, 
 // index-side-cost = (index-child-cost + index-net-cost + index-seek-cost) / dist-concurrency # same with IndexReader
 // table-side-cost = (table-child-cost + table-net-cost + table-seek-cost) / dist-concurrency # same with TableReader
 func (p *PhysicalIndexMergeReader) getPlanCostVer2(taskType property.TaskType, option *PlanCostOption) (float64, error) {
+	if p.planCostInit && !hasCostFlag(option.CostFlag, CostFlagRecalculate) {
+		return p.planCost, nil
+	}
+
 	netFactor := getTaskNetFactorVer2(p, taskType)
 	distConcurrency := float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
 
@@ -213,7 +269,7 @@ func (p *PhysicalIndexMergeReader) getPlanCostVer2(taskType property.TaskType, o
 
 		tableNetCost := netCostVer2(rows, rowSize, netFactor)
 		tableSeekCost := estimateNetSeekCost(tablePath)
-		tableChildCost, err := tablePath.GetPlanCost(taskType, option)
+		tableChildCost, err := tablePath.getPlanCostVer2(taskType, option)
 		if err != nil {
 			return 0, err
 		}
@@ -227,7 +283,7 @@ func (p *PhysicalIndexMergeReader) getPlanCostVer2(taskType property.TaskType, o
 
 		indexNetCost := netCostVer2(rows, rowSize, netFactor)
 		indexSeekCost := estimateNetSeekCost(indexPath)
-		indexChildCost, err := indexPath.GetPlanCost(taskType, option)
+		indexChildCost, err := indexPath.getPlanCostVer2(taskType, option)
 		if err != nil {
 			return 0, err
 		}
@@ -249,6 +305,10 @@ func (p *PhysicalIndexMergeReader) getPlanCostVer2(taskType property.TaskType, o
 // 1. sort-mem-cost = mem-quota * mem-factor
 // 2. sort-disk-cost = rows * row-size * disk-factor
 func (p *PhysicalSort) getPlanCostVer2(taskType property.TaskType, option *PlanCostOption) (float64, error) {
+	if p.planCostInit && !hasCostFlag(option.CostFlag, CostFlagRecalculate) {
+		return p.planCost, nil
+	}
+
 	rows := math.Max(getCardinality(p.children[0], option.CostFlag), 1)
 	rowSize := getAvgRowSize(p.statsInfo(), p.Schema())
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
@@ -272,7 +332,7 @@ func (p *PhysicalSort) getPlanCostVer2(taskType property.TaskType, option *PlanC
 		sortDiskCost = rows * rowSize * diskFactor.Value
 	}
 
-	childCost, err := p.children[0].GetPlanCost(taskType, option)
+	childCost, err := p.children[0].getPlanCostVer2(taskType, option)
 	if err != nil {
 		return 0, err
 	}
@@ -287,6 +347,10 @@ func (p *PhysicalSort) getPlanCostVer2(taskType property.TaskType, option *PlanC
 // topn-cpu-cost = rows * log2(N) * len(sort-items) * cpu-factor
 // topn-mem-cost = N * row-size * mem-factor
 func (p *PhysicalTopN) getPlanCostVer2(taskType property.TaskType, option *PlanCostOption) (float64, error) {
+	if p.planCostInit && !hasCostFlag(option.CostFlag, CostFlagRecalculate) {
+		return p.planCost, nil
+	}
+
 	rows := getCardinality(p.children[0], option.CostFlag)
 	N := math.Max(1, float64(p.Count+p.Offset))
 	rowSize := getAvgRowSize(p.statsInfo(), p.Schema())
@@ -296,7 +360,7 @@ func (p *PhysicalTopN) getPlanCostVer2(taskType property.TaskType, option *PlanC
 	topNCPUCost := rows * math.Log2(N) * float64(len(p.ByItems)) * cpuFactor.Value
 	topNMemCost := N * rowSize * memFactor.Value
 
-	childCost, err := p.children[0].GetPlanCost(taskType, option)
+	childCost, err := p.children[0].getPlanCostVer2(taskType, option)
 	if err != nil {
 		return 0, err
 	}
@@ -309,13 +373,17 @@ func (p *PhysicalTopN) getPlanCostVer2(taskType property.TaskType, option *PlanC
 // getPlanCostVer2 returns the plan-cost of this sub-plan, which is:
 // plan-cost = child-cost + agg-cost + group-cost
 func (p *PhysicalStreamAgg) getPlanCostVer2(taskType property.TaskType, option *PlanCostOption) (float64, error) {
+	if p.planCostInit && !hasCostFlag(option.CostFlag, CostFlagRecalculate) {
+		return p.planCost, nil
+	}
+
 	rows := getCardinality(p.children[0], option.CostFlag)
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 
 	aggCost := aggCostVer2(rows, p.AggFuncs, cpuFactor)
 	groupCost := groupCostVer2(rows, p.GroupByItems, cpuFactor)
 
-	childCost, err := p.children[0].GetPlanCost(taskType, option)
+	childCost, err := p.children[0].getPlanCostVer2(taskType, option)
 	if err != nil {
 		return 0, err
 	}
@@ -328,6 +396,10 @@ func (p *PhysicalStreamAgg) getPlanCostVer2(taskType property.TaskType, option *
 // getPlanCostVer2 returns the plan-cost of this sub-plan, which is:
 // plan-cost = child-cost + (agg-cost + group-cost + hash-build-cost + hash-probe-cost) / concurrency
 func (p *PhysicalHashAgg) getPlanCostVer2(taskType property.TaskType, option *PlanCostOption) (float64, error) {
+	if p.planCostInit && !hasCostFlag(option.CostFlag, CostFlagRecalculate) {
+		return p.planCost, nil
+	}
+
 	inputRows := getCardinality(p.children[0], option.CostFlag)
 	outputRows := getCardinality(p, option.CostFlag)
 	outputRowSize := getAvgRowSize(p.Stats(), p.Schema())
@@ -340,7 +412,7 @@ func (p *PhysicalHashAgg) getPlanCostVer2(taskType property.TaskType, option *Pl
 	hashBuildCost := hashBuildCostVer2(outputRows, outputRowSize, p.GroupByItems, cpuFactor, memFactor)
 	hashProbeCost := hashProbeCostVer2(inputRows, p.GroupByItems, cpuFactor)
 
-	childCost, err := p.children[0].GetPlanCost(taskType, option)
+	childCost, err := p.children[0].getPlanCostVer2(taskType, option)
 	if err != nil {
 		return 0, err
 	}
@@ -353,6 +425,10 @@ func (p *PhysicalHashAgg) getPlanCostVer2(taskType property.TaskType, option *Pl
 // getPlanCostVer2 returns the plan-cost of this sub-plan, which is:
 // plan-cost = left-child-cost + right-child-cost + filter-cost + group-cost
 func (p *PhysicalMergeJoin) getPlanCostVer2(taskType property.TaskType, option *PlanCostOption) (float64, error) {
+	if p.planCostInit && !hasCostFlag(option.CostFlag, CostFlagRecalculate) {
+		return p.planCost, nil
+	}
+
 	leftRows := getCardinality(p.children[0], option.CostFlag)
 	rightRows := getCardinality(p.children[1], option.CostFlag)
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
@@ -362,11 +438,11 @@ func (p *PhysicalMergeJoin) getPlanCostVer2(taskType property.TaskType, option *
 	groupCost := groupCostVer2(leftRows, cols2Exprs(p.LeftJoinKeys), cpuFactor) +
 		groupCostVer2(rightRows, cols2Exprs(p.LeftJoinKeys), cpuFactor)
 
-	leftChildCost, err := p.children[0].GetPlanCost(taskType, option)
+	leftChildCost, err := p.children[0].getPlanCostVer2(taskType, option)
 	if err != nil {
 		return 0, err
 	}
-	rightChildCost, err := p.children[1].GetPlanCost(taskType, option)
+	rightChildCost, err := p.children[1].getPlanCostVer2(taskType, option)
 	if err != nil {
 		return 0, err
 	}
@@ -381,6 +457,10 @@ func (p *PhysicalMergeJoin) getPlanCostVer2(taskType property.TaskType, option *
 // build-hash-cost + build-filter-cost +
 // (probe-filter-cost + probe-hash-cost) / concurrency
 func (p *PhysicalHashJoin) getPlanCostVer2(taskType property.TaskType, option *PlanCostOption) (float64, error) {
+	if p.planCostInit && !hasCostFlag(option.CostFlag, CostFlagRecalculate) {
+		return p.planCost, nil
+	}
+
 	build, probe := p.children[0], p.children[1]
 	buildFilters, probeFilters := p.LeftConditions, p.RightConditions
 	buildKeys, probeKeys := p.LeftJoinKeys, p.RightJoinKeys
@@ -401,11 +481,11 @@ func (p *PhysicalHashJoin) getPlanCostVer2(taskType property.TaskType, option *P
 	probeFilterCost := filterCostVer2(probeRows, probeFilters, cpuFactor)
 	probeHashCost := hashProbeCostVer2(probeRows, cols2Exprs(probeKeys), cpuFactor)
 
-	buildChildCost, err := build.GetPlanCost(taskType, option)
+	buildChildCost, err := build.getPlanCostVer2(taskType, option)
 	if err != nil {
 		return 0, err
 	}
-	probeChildCost, err := probe.GetPlanCost(taskType, option)
+	probeChildCost, err := probe.getPlanCostVer2(taskType, option)
 	if err != nil {
 		return 0, err
 	}
@@ -421,6 +501,10 @@ func (p *PhysicalHashJoin) getPlanCostVer2(taskType property.TaskType, option *P
 // (probe-cost + probe-filter-cost) / concurrency
 // probe-cost = probe-child-cost * build-rows / batchRatio
 func (p *PhysicalIndexJoin) getPlanCostVer2(taskType property.TaskType, option *PlanCostOption) (float64, error) {
+	if p.planCostInit && !hasCostFlag(option.CostFlag, CostFlagRecalculate) {
+		return p.planCost, nil
+	}
+
 	build, probe := p.children[1-p.InnerChildIdx], p.children[p.InnerChildIdx]
 	buildRows := getCardinality(build, option.CostFlag)
 	probeRowsOne := getCardinality(probe, option.CostFlag)
@@ -430,13 +514,13 @@ func (p *PhysicalIndexJoin) getPlanCostVer2(taskType property.TaskType, option *
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 
 	buildFilterCost := filterCostVer2(buildRows, buildFilters, cpuFactor)
-	buildChildCost, err := build.GetPlanCost(taskType, option)
+	buildChildCost, err := build.getPlanCostVer2(taskType, option)
 	if err != nil {
 		return 0, err
 	}
 
 	probeFilterCost := filterCostVer2(probeRowsTot, probeFilters, cpuFactor)
-	probeChildCost, err := probe.GetPlanCost(taskType, option)
+	probeChildCost, err := probe.getPlanCostVer2(taskType, option)
 	if err != nil {
 		return 0, err
 	}
@@ -466,19 +550,23 @@ func (p *PhysicalIndexMergeJoin) getPlanCostVer2(taskType property.TaskType, opt
 // plan-cost = build-child-cost + build-filter-cost + probe-cost + probe-filter-cost
 // probe-cost = probe-child-cost * build-rows
 func (p *PhysicalApply) getPlanCostVer2(taskType property.TaskType, option *PlanCostOption) (float64, error) {
+	if p.planCostInit && !hasCostFlag(option.CostFlag, CostFlagRecalculate) {
+		return p.planCost, nil
+	}
+
 	buildRows := getCardinality(p.children[0], option.CostFlag)
 	probeRowsOne := getCardinality(p.children[1], option.CostFlag)
 	probeRowsTot := buildRows * probeRowsOne
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 
 	buildFilterCost := filterCostVer2(buildRows, p.LeftConditions, cpuFactor)
-	buildChildCost, err := p.children[0].GetPlanCost(taskType, option)
+	buildChildCost, err := p.children[0].getPlanCostVer2(taskType, option)
 	if err != nil {
 		return 0, err
 	}
 
 	probeFilterCost := filterCostVer2(probeRowsTot, p.RightConditions, cpuFactor)
-	probeChildCost, err := p.children[1].GetPlanCost(taskType, option)
+	probeChildCost, err := p.children[1].getPlanCostVer2(taskType, option)
 	if err != nil {
 		return 0, err
 	}
@@ -489,15 +577,40 @@ func (p *PhysicalApply) getPlanCostVer2(taskType property.TaskType, option *Plan
 	return p.planCost, nil
 }
 
+// getPlanCostVer2 calculates the cost of the plan if it has not been calculated yet and returns the cost.
+// plan-cost = sum(child-cost) / concurrency
+func (p *PhysicalUnionAll) getPlanCostVer2(taskType property.TaskType, option *PlanCostOption) (float64, error) {
+	if p.planCostInit && !hasCostFlag(option.CostFlag, CostFlagRecalculate) {
+		return p.planCost, nil
+	}
+
+	concurrency := p.ctx.GetSessionVars().GetConcurrencyFactor()
+	var sumChildCost float64
+	for _, child := range p.children {
+		childCost, err := child.getPlanCostVer2(taskType, option)
+		if err != nil {
+			return 0, err
+		}
+		sumChildCost += childCost
+	}
+	p.planCost = sumChildCost / concurrency
+	p.planCostInit = true
+	return p.planCost, nil
+}
+
 // getPlanCostVer2 returns the plan-cost of this sub-plan, which is:
 // plan-cost = child-cost + net-cost
 func (p *PhysicalExchangeReceiver) getPlanCostVer2(taskType property.TaskType, option *PlanCostOption) (float64, error) {
+	if p.planCostInit && !hasCostFlag(option.CostFlag, CostFlagRecalculate) {
+		return p.planCost, nil
+	}
+
 	rows := getCardinality(p, option.CostFlag)
 	rowSize := getAvgRowSize(p.stats, p.Schema())
 	netFactor := getTaskNetFactorVer2(p, taskType)
 
 	netCost := netCostVer2(rows, rowSize, netFactor)
-	childCost, err := p.children[0].GetPlanCost(taskType, option)
+	childCost, err := p.children[0].getPlanCostVer2(taskType, option)
 	if err != nil {
 		return 0, err
 	}
@@ -509,7 +622,11 @@ func (p *PhysicalExchangeReceiver) getPlanCostVer2(taskType property.TaskType, o
 
 // getPlanCostVer2 returns the plan-cost of this sub-plan, which is:
 // plan-cost = seek-cost + net-cost
-func (p *PointGetPlan) getPlanCostVer2(taskType property.TaskType, _ *PlanCostOption) (float64, error) {
+func (p *PointGetPlan) getPlanCostVer2(taskType property.TaskType, option *PlanCostOption) (float64, error) {
+	if p.planCostInit && !hasCostFlag(option.CostFlag, CostFlagRecalculate) {
+		return p.planCost, nil
+	}
+
 	if p.accessCols == nil { // from fast plan code path
 		p.planCost = 0
 		p.planCostInit = true
@@ -530,6 +647,10 @@ func (p *PointGetPlan) getPlanCostVer2(taskType property.TaskType, _ *PlanCostOp
 // getPlanCostVer2 returns the plan-cost of this sub-plan, which is:
 // plan-cost = seek-cost + net-cost
 func (p *BatchPointGetPlan) getPlanCostVer2(taskType property.TaskType, option *PlanCostOption) (float64, error) {
+	if p.planCostInit && !hasCostFlag(option.CostFlag, CostFlagRecalculate) {
+		return p.planCost, nil
+	}
+
 	if p.accessCols == nil { // from fast plan code path
 		p.planCost = 0
 		p.planCostInit = true
