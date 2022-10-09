@@ -218,6 +218,7 @@ func (conf *Config) GetDSN(db string) string {
 	return dsn
 }
 
+// GetDriverConfig returns the MySQL driver config from Config.
 func (conf *Config) GetDriverConfig(db string) *mysql.Config {
 	driverCfg := mysql.NewConfig()
 	// maxAllowedPacket=0 can be used to automatically fetch the max_allowed_packet variable from server on every connection.

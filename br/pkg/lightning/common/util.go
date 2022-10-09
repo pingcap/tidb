@@ -66,7 +66,7 @@ func (param *MySQLConnectParam) ToDriverConfig() *mysql.Config {
 	cfg.Net = "tcp"
 	cfg.Addr = net.JoinHostPort(param.Host, strconv.Itoa(param.Port))
 	cfg.Params["charset"] = "utf8mb4"
-	cfg.Params["sql_mode"] = param.SQLMode
+	cfg.Params["sql_mode"] = fmt.Sprintf("'%s'", param.SQLMode)
 	cfg.MaxAllowedPacket = int(param.MaxAllowedPacket)
 	cfg.TLSConfig = param.TLS
 
