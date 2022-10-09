@@ -707,7 +707,7 @@ func GetSpecifiedColumnValuesAndClose(rows *sql.Rows, columnName ...string) ([][
 	for i, col := range columns {
 		addr[i] = &oneRow[i]
 		for j, name := range columnName {
-			if strings.ToUpper(col) == strings.ToUpper(name) {
+			if strings.EqualFold(strings.ToUpper(col), strings.ToUpper(name)) {
 				fieldIndexMp[i] = j
 			}
 		}
