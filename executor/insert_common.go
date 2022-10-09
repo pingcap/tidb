@@ -287,12 +287,7 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 	return nil
 }
 
-func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int, err error) error {
-	if err == nil {
-		return nil
-	}
-
-	// Convert the error with full messages.
+func completeInsertErr(col *model.ColumnInfo, val *types.Datum, rowIdx int, err error) error {
 	var (
 		colTp   byte
 		colName string
@@ -323,6 +318,20 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 	} else if types.ErrWarnDataOutOfRange.Equal(err) {
 		err = types.ErrWarnDataOutOfRange.GenWithStackByArgs(colName, rowIdx+1)
 	}
+	return err
+}
+
+func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int, err error) error {
+	if err == nil {
+		return nil
+	}
+
+	// Convert the error with full messages.
+	var c *model.ColumnInfo
+	if col != nil {
+		c = col.ColumnInfo
+	}
+	err = completeInsertErr(c, val, rowIdx, err)
 
 	if !e.ctx.GetSessionVars().StmtCtx.DupKeyAsWarning {
 		return err
@@ -350,6 +359,8 @@ func (e *InsertValues) evalRow(ctx context.Context, list []expression.Expression
 	}
 
 	e.evalBuffer.SetDatums(row...)
+	sc := e.ctx.GetSessionVars().StmtCtx
+	warnCnt := int(sc.WarningCount())
 	for i, expr := range list {
 		val, err := expr.Eval(e.evalBuffer.ToRow())
 		if err != nil {
@@ -358,6 +369,13 @@ func (e *InsertValues) evalRow(ctx context.Context, list []expression.Expression
 		val1, err := table.CastValue(e.ctx, val, e.insertColumns[i].ToInfo(), false, false)
 		if err = e.handleErr(e.insertColumns[i], &val, rowIdx, err); err != nil {
 			return nil, err
+		}
+		if newWarnings := sc.TruncateWarnings(warnCnt); len(newWarnings) > 0 {
+			for k := range newWarnings {
+				newWarnings[k].Err = completeInsertErr(e.insertColumns[i].ColumnInfo, &val, rowIdx, newWarnings[k].Err)
+			}
+			sc.AppendWarnings(newWarnings)
+			warnCnt += len(newWarnings)
 		}
 
 		offset := e.insertColumns[i].Offset
@@ -378,6 +396,8 @@ func (e *InsertValues) fastEvalRow(ctx context.Context, list []expression.Expres
 	}
 	row := make([]types.Datum, rowLen)
 	hasValue := make([]bool, rowLen)
+	sc := e.ctx.GetSessionVars().StmtCtx
+	warnCnt := int(sc.WarningCount())
 	for i, expr := range list {
 		con := expr.(*expression.Constant)
 		val, err := con.Eval(emptyRow)
@@ -387,6 +407,13 @@ func (e *InsertValues) fastEvalRow(ctx context.Context, list []expression.Expres
 		val1, err := table.CastValue(e.ctx, val, e.insertColumns[i].ToInfo(), false, false)
 		if err = e.handleErr(e.insertColumns[i], &val, rowIdx, err); err != nil {
 			return nil, err
+		}
+		if newWarnings := sc.TruncateWarnings(warnCnt); len(newWarnings) > 0 {
+			for k := range newWarnings {
+				newWarnings[k].Err = completeInsertErr(e.insertColumns[i].ColumnInfo, &val, rowIdx, newWarnings[k].Err)
+			}
+			sc.AppendWarnings(newWarnings)
+			warnCnt += len(newWarnings)
 		}
 		offset := e.insertColumns[i].Offset
 		row[offset], hasValue[offset] = val1, true
