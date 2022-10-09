@@ -92,6 +92,7 @@ go_test(
         "//parser/terror",
         "//planner/core",
         "//sessionctx/stmtctx",
+        "//testkit",
         "//testkit/testsetup",
         "//types",
         "//util/execdetails",
