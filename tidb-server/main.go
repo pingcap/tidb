@@ -587,6 +587,8 @@ func setGlobalVars() {
 				case "force-priority":
 					cfg.Instance.ForcePriority = cfg.Performance.ForcePriority
 				}
+			case "memory-usage-alarm-ratio":
+				cfg.Instance.MemoryUsageAlarmRatio = cfg.Performance.MemoryUsageAlarmRatio
 			case "plugin":
 				switch oldName {
 				case "load":
@@ -667,6 +669,7 @@ func setGlobalVars() {
 	variable.SetSysVar(variable.TiDBSlowQueryFile, cfg.Log.SlowQueryFile)
 	variable.SetSysVar(variable.TiDBIsolationReadEngines, strings.Join(cfg.IsolationRead.Engines, ","))
 	variable.SetSysVar(variable.TiDBEnforceMPPExecution, variable.BoolToOnOff(config.GetGlobalConfig().Performance.EnforceMPP))
+	variable.MemoryUsageAlarmRatio.Store(cfg.Instance.MemoryUsageAlarmRatio)
 	if hostname, err := os.Hostname(); err == nil {
 		variable.SetSysVar(variable.Hostname, hostname)
 	}
