@@ -41,6 +41,7 @@ func init() {
 	}
 }
 
+// SetDefaultGOGC is to set the default GOGC value.
 func SetDefaultGOGC() {
 	util.SetGOGC(int(defaultGCPercent))
 }
