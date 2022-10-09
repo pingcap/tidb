@@ -433,6 +433,40 @@ func TestForeignKeyCheckAndLock(t *testing.T) {
 	}
 }
 
+func TestForeignKeyCheckAndLock2(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("set @@foreign_key_checks=1")
+	tk2.MustExec("use test")
+
+	tk.MustExec("create table t1 (id int, name varchar(10), unique index (id))")
+	tk.MustExec("create table t2 (a int,  name varchar(10), unique index (a), foreign key fk(a) references t1(id))")
+	tk.MustExec("insert into t1 values (0, ''),(1,'a')")
+
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t2 values (1, 'a')")
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		tk2.MustExec("begin pessimistic")
+		err := tk2.ExecToErr("update t1 set id=2 where id=1")
+		require.NotNil(t, err)
+		require.Equal(t, "[planner:1451]Cannot delete or update a parent row: a foreign key constraint fails (`test`.`t2`, CONSTRAINT `fk` FOREIGN KEY (`a`) REFERENCES `t1` (`id`))", err.Error())
+		tk2.MustExec("commit")
+	}()
+	time.Sleep(time.Millisecond * 50)
+	tk.MustExec("commit")
+	wg.Wait()
+	tk.MustQuery("select id, name from t1 order by name").Check(testkit.Rows("0 ", "1 a"))
+	tk.MustQuery("select a,  name from t2 order by name").Check(testkit.Rows("1 a"))
+}
+
 func TestForeignKeyOnInsertIgnore(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

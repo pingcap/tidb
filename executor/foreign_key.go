@@ -16,8 +16,6 @@ package executor
 
 import (
 	"context"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 	"sync/atomic"
 
 	"github.com/pingcap/tidb/kv"
@@ -92,7 +90,6 @@ func buildFKCheckExec(sctx sessionctx.Context, tbl table.Table, fkCheck *planner
 		colsOffsets: colsOffsets,
 		fkValuesSet: set.NewStringSet(),
 	}
-	fkCheck.ToBeCheckedKeys = plannercore.NewFKToBeCheckedKeys()
 	return &FKCheckExec{
 		ctx:           sctx,
 		FKCheck:       fkCheck,
@@ -131,11 +128,6 @@ func (fkc *FKCheckExec) doCheck(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	txnCtx := fkc.ctx.GetSessionVars().TxnCtx
-	//txn.GetSnapshot().SetOption(kv.IsolationLevel, kv.RC)
-	logutil.BgLogger().Info("------fk do check---------", zap.Uint64("start_ts", txnCtx.StartTS), zap.Uint64("update_ts", txnCtx.GetForUpdateTS()),
-		zap.Int("unique_keys", len(fkc.ToBeCheckedKeys.Keys)),
-		zap.Int("prefix_keys", len(fkc.ToBeCheckedKeys.PrefixKeys)))
 	err = fkc.checkKeys(ctx, txn)
 	if err != nil {
 		return err

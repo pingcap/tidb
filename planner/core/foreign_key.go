@@ -37,7 +37,11 @@ type FKCheck struct {
 	CheckExist bool
 	FailedErr  error
 
-	ToBeCheckedKeys *FKToBeCheckedKeys
+	// ToBeCheckedKeys uses to store the keys which need to do foreign key check.
+	// put ToBeCheckedKeys here instead of FKCheckExec is because in pessimistic txn mode,
+	// in function handlePessimisticDML may rebuild a Executor when handlePessimisticLockError.
+	// so, if put ToBeCheckedKeys in the FKCheckExec, we may lost `ToBeCheckedKeys` after function handlePessimisticDML return.
+	ToBeCheckedKeys FKToBeCheckedKeys
 }
 
 func (p *Insert) buildOnInsertFKChecks(ctx sessionctx.Context, is infoschema.InfoSchema, dbName string) ([]*FKCheck, error) {
@@ -242,7 +246,7 @@ func buildFKCheck(tbl table.Table, cols []model.CIStr, failedErr error) (*FKChec
 				IdxIsPrimaryKey: true,
 				IdxIsExclusive:  true,
 				FailedErr:       failedErr,
-				//ToBeCheckedKeys: NewFKToBeCheckedKeys(),
+				ToBeCheckedKeys: newFKToBeCheckedKeys(),
 			}, nil
 		}
 	}
@@ -267,7 +271,7 @@ func buildFKCheck(tbl table.Table, cols []model.CIStr, failedErr error) (*FKChec
 		IdxIsExclusive:  len(cols) == len(referTbIdxInfo.Columns),
 		IdxIsPrimaryKey: referTbIdxInfo.Primary && tblInfo.IsCommonHandle,
 		FailedErr:       failedErr,
-		//ToBeCheckedKeys: NewFKToBeCheckedKeys(),
+		ToBeCheckedKeys: newFKToBeCheckedKeys(),
 	}, nil
 }
 
@@ -277,12 +281,13 @@ type FKToBeCheckedKeys struct {
 	addedKeys  map[string]struct{}
 }
 
-func NewFKToBeCheckedKeys() *FKToBeCheckedKeys {
-	return &FKToBeCheckedKeys{
+func newFKToBeCheckedKeys() FKToBeCheckedKeys {
+	return FKToBeCheckedKeys{
 		addedKeys: make(map[string]struct{}),
 	}
 }
 
+// AddKey adds key.
 func (fk *FKToBeCheckedKeys) AddKey(k kv.Key, isPrefix bool) {
 	if _, ok := fk.addedKeys[string(k)]; ok {
 		return
