@@ -1536,11 +1536,11 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 	s.processInfo.Store(&pi)
 }
 
-func (s *session) getOomAlarmVariablesInfo() []zap.Field {
-	logFields := make([]zap.Field, 0, 2)
-	logFields = append(logFields, zap.Int("analyze-version", s.sessionVars.AnalyzeVersion))
-	logFields = append(logFields, zap.Bool("enable_rate_limit_action", s.sessionVars.EnabledRateLimitAction))
-	return logFields
+func (s *session) getOomAlarmVariablesInfo() util.OomAlarmVariablesInfo {
+	return util.OomAlarmVariablesInfo{
+		SessionAnalyzeVersion:         s.sessionVars.AnalyzeVersion,
+		SessionEnabledRateLimitAction: s.sessionVars.EnabledRateLimitAction,
+	}
 }
 
 func (s *session) getCurrentAnalyzePlan(p interface{}, runtimeStatsColl *execdetails.RuntimeStatsColl) [][]string {

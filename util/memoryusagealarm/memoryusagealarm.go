@@ -281,7 +281,8 @@ func (record *memoryUsageAlarm) getTop10SqlInfo(cmp func(i, j *util.ProcessInfo)
 	for i, info := range list {
 		buf.WriteString(fmt.Sprintf("SQL %v: \n", i))
 		fields := util.GenLogFields(record.lastCheckTime.Sub(info.Time), info, false, true)
-		fields = append(fields, info.OomAlarmVariablesInfo...)
+		fields = append(fields, zap.Int("analyze-version", info.OomAlarmVariablesInfo.SessionAnalyzeVersion))
+		fields = append(fields, zap.Bool("enable_rate_limit_action", info.OomAlarmVariablesInfo.SessionEnabledRateLimitAction))
 		fields = append(fields, zap.String("current_analyze_plan", getCurrentAnalyzePlan(info)))
 		for _, field := range fields {
 			switch field.Type {
