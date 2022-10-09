@@ -2645,7 +2645,7 @@ func InitDDLJobTables(store kv.Storage) error {
 		}
 		p := parser.New()
 		for _, tbl := range DDLJobTables {
-			logutil.BgLogger().Info(fmt.Sprintf("tbl:%#v, tbl ver:%v", tbl, tableVer))
+			logutil.BgLogger().Info("init DDL job tables", zap.Reflect("tbl", tbl), zap.String("tbl version", tableVer))
 			if tableVer == meta.DDLTableVersion1 && tbl.id > ddl.BackfillTableID {
 				continue
 			}

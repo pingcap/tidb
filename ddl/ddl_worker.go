@@ -146,7 +146,6 @@ func newWorker(ctx context.Context, tp workerType, sessPool *sessionPool, delRan
 		delRangeManager: delRangeMgr,
 		concurrentDDL:   concurrentDDL,
 	}
-	logutil.BgLogger().Info("[ddl] new worker -----------------" + fmt.Sprintf("pool:%v", sessPool))
 	worker.addingDDLJobKey = addingDDLJobPrefix + worker.typeStr()
 	worker.logCtx = logutil.WithKeyValue(context.Background(), "worker", worker.String())
 	return worker

@@ -1068,10 +1068,10 @@ func (w *baseIndexWorker) FinishTask(job *model.BackfillJob) error {
 	sess := w.backfillCtx.sessCtx.(*session)
 	_, err := sess.execute(context.Background(), "begin", "finish_backfill_job")
 	if err == nil {
-		err = removeBackfillJob(sess, job)
+		err = removeBackfillJob(sess, false, job)
 	}
 	if err == nil {
-		err = addBackfillHistoryJob(sess, job)
+		err = addBackfillHistoryJob(sess, []*model.BackfillJob{job})
 	}
 	if err == nil {
 		_, err = sess.execute(context.Background(), "commit", "finish_backfill_job")

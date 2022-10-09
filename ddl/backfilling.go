@@ -127,23 +127,6 @@ type backfillResult struct {
 	err        error
 }
 
-// type backfillJobContext struct {
-// 	tbl table.PhysicalTable
-// 	// below fields are cache for top sql
-// 	cacheSQL           string
-// 	cacheNormalizedSQL string
-// 	cacheDigest        *parser.Digest
-// }
-//
-// // newBackfillJobContext returns a new backfill job context.
-// func newBackfillJobContext(sql string) *backfillJobContext {
-// 	return &backfillJobContext{
-// 		cacheSQL:           sql,
-// 		cacheNormalizedSQL: "",
-// 		cacheDigest:        nil,
-// 	}
-// }
-
 // backfillTaskContext is the context of the batch adding indices or updating column values.
 // After finishing the batch adding indices or updating column values, result in backfillTaskContext will be merged into backfillResult.
 type backfillTaskContext struct {
@@ -220,13 +203,6 @@ func newBackfillWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable
 
 func (w *backfillWorker) String() string {
 	return fmt.Sprintf("worker %d, tp backfill", w.id)
-}
-
-func (w *backfillWorker) initInfo(t table.PhysicalTable) {
-	w.table = t
-}
-
-func (w *backfillWorker) closeAndClean() {
 }
 
 func (w *backfillWorker) Close() {
@@ -328,9 +304,11 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 		// small ranges. This will cause the `redo` action in reorganization.
 		// So for added count and warnings collection, it is recommended to collect the statistics in every
 		// successfully committed small ranges rather than fetching it in the total result.
-		// TODO:
-		//	rc.increaseRowCount(int64(taskCtx.addedCount))
-		//	rc.mergeWarnings(taskCtx.warnings, taskCtx.warningsCount)
+		if !enableDistReorg {
+			rc := d.getReorgCtx(task.bfJob.JobID)
+			rc.increaseRowCount(int64(taskCtx.addedCount))
+			rc.mergeWarnings(taskCtx.warnings, taskCtx.warningsCount)
+		}
 
 		if num := result.scanCount - lastLogCount; num >= 30000 {
 			lastLogCount = result.scanCount
@@ -395,9 +373,7 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, jobID int64, jobQuery str
 		})
 
 		// Dynamic change batch size.
-		// TODO:
-		// w.batchCnt = int(variable.GetDDLReorgBatchSize())
-		w.batchCnt = 1024
+		w.batchCnt = int(variable.GetDDLReorgBatchSize())
 		result := w.handleBackfillTask(d, task, bf)
 
 		w.resultCh <- result
@@ -914,6 +890,7 @@ func (dc *ddlCtx) controlWritePhysicalTableRecord(sess *session, t table.Physica
 			if err = addBackfillJobs(sess, bJobs); err != nil {
 				return errors.Trace(err)
 			}
+			asyncNotify(dc.backfillJobCh)
 
 			logutil.BgLogger().Info("[ddl] split backfill jobs to the backfill table",
 				zap.Int("batchTasksCnt", len(batchTasks)),
@@ -921,6 +898,7 @@ func (dc *ddlCtx) controlWritePhysicalTableRecord(sess *session, t table.Physica
 				zap.String("startHandle", tryDecodeToHandleString(startKey)),
 				zap.String("endHandle", tryDecodeToHandleString(endKey)))
 
+			// TODO: adjust these ranges
 			remains := kvRanges[len(batchTasks):]
 			if len(remains) == 0 {
 				break
@@ -972,7 +950,7 @@ func checkBackfillJobState(sess *session, jobID, currEleID int64) (bool, error) 
 		return true, errors.Errorf(bJobs[0].Mate.ErrMsg)
 	}
 
-	bJobs, err = getBackfillJobsForOneEle(sess, 1, isIncluded, runningJobIDs, 10*time.Second)
+	bJobs, err = getBackfillJobsForOneEle(sess, 1, isIncluded, runningJobIDs, instanceLease)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -988,23 +966,31 @@ func finishFailedBackfillJobs(sess sessionctx.Context, runningJobID int64) error
 	isIncluded := true
 	// TODO: set batch value
 	batch := 128
-	for {
-		bJobs, err := getBackfillJobsForOneEle(sess.(*session), batch, isIncluded, []int64{runningJobID}, 10*time.Second)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if len(bJobs) == 0 {
-			return nil
-		}
 
-		for _, job := range bJobs {
-			err := removeBackfillJob(nil, job)
-			if err != nil {
-				return err
-			}
-			return addBackfillHistoryJob(nil, job)
-		}
+	_, err := sess.(*session).execute(context.Background(), "begin", "finish_backfill_jobs")
+	if err != nil {
+		return errors.Trace(err)
 	}
+
+	bJobs, err := getBackfillJobsForOneEle(sess.(*session), batch, isIncluded, []int64{runningJobID}, instanceLease)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(bJobs) == 0 {
+		_, err = sess.(*session).execute(context.Background(), "rollback", "finish_backfill_jobs")
+		return errors.Trace(err)
+	}
+
+	if err == nil {
+		err = removeBackfillJob(sess.(*session), true, nil)
+	}
+	if err == nil {
+		err = addBackfillHistoryJob(sess.(*session), bJobs)
+	}
+	if err == nil {
+		_, err = sess.(*session).execute(context.Background(), "commit", "finish_backfill_jobs")
+	}
+	return errors.Trace(err)
 }
 
 // recordIterFunc is used for low-level record iteration.

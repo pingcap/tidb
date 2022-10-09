@@ -228,8 +228,6 @@ type ddl struct {
 	backfillWorkerPool   *backfillWorkerPool
 	// get notification if any DDL coming.
 	ddlJobCh chan struct{}
-	// get notification if any backfill jobs coming.
-	backfillJobCh chan struct{}
 }
 
 // waitSchemaSyncedController is to control whether to waitSchemaSynced or not.
@@ -283,6 +281,8 @@ type ddlCtx struct {
 	statsHandle  *handle.Handle
 	tableLockCkr util.DeadTableLockChecker
 	etcdCli      *clientv3.Client
+	// backfillJobCh gets notification if any backfill jobs coming.
+	backfillJobCh chan struct{}
 
 	*waitSchemaSyncedController
 	*schemaVersionManager
@@ -676,7 +676,6 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 
 	d.wg.Run(d.limitDDLJobs)
 	d.sessPool = newSessionPool(ctxPool, d.store)
-	logutil.BgLogger().Info("[ddl] start -----------------" + fmt.Sprintf("pool:%v", d.sessPool))
 	d.ownerManager.SetBeOwnerHook(func() {
 		var err error
 		d.ddlSeqNumMu.seqNum, err = d.GetNextDDLSeqNum()
@@ -768,6 +767,9 @@ func (d *ddl) close() {
 	d.schemaSyncer.Close()
 	if d.reorgWorkerPool != nil {
 		d.reorgWorkerPool.close()
+	}
+	if d.backfillWorkerPool != nil {
+		d.backfillWorkerPool.close()
 	}
 	if d.generalDDLWorkerPool != nil {
 		d.generalDDLWorkerPool.close()

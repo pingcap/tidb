@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -4012,5 +4013,8 @@ func TestAddIndexX(t *testing.T) {
 	tk.MustExec("insert into test_add_index values(1, 2),(2,2)")
 	tk.MustExec("alter table test_add_index add index idx(b)")
 	tk.MustExec("admin check table test_add_index")
+	logutil.BgLogger().Info("-------------------------------------------------- add index finished")
+	tk.MustQuery("select count(1) from mysql.tidb_ddl_backfill").Check(testkit.Rows("0"))
+	tk.MustQuery("select count(1) from mysql.tidb_ddl_backfill_history").Check(testkit.Rows("1"))
 	// tk.MustExec("alter table test_add_index add unique index idx1(b)")
 }

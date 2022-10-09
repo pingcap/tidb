@@ -190,6 +190,6 @@ func (bwp *backfillWorkerPool) close() {
 		return
 	}
 	bwp.exit.Store(true)
-	logutil.BgLogger().Info("[ddl] closing workerPool")
+	logutil.BgLogger().Info("[ddl] closing backfillWorkerPool")
 	bwp.resPool.Close()
 }
