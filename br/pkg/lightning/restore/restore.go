@@ -662,7 +662,6 @@ loop:
 			for _, stmt := range job.stmts {
 				task := logger.Begin(zap.DebugLevel, fmt.Sprintf("execute SQL: %s", stmt))
 				err = sqlWithRetry.Exec(worker.ctx, "run create schema job", stmt)
-				task.End(zap.ErrorLevel, err)
 				if err != nil {
 					// try to imitate IF NOT EXISTS behavior for parsing errors
 					exists := false
@@ -677,9 +676,12 @@ loop:
 						exists, _ = common.TableExists(worker.ctx, session, job.dbName, job.tblName)
 					}
 					if exists {
-						continue
+						err = nil
 					}
+				}
+				task.End(zap.ErrorLevel, err)
 
+				if err != nil {
 					err = common.ErrCreateSchema.Wrap(err).GenWithStackByArgs(common.UniqueTable(job.dbName, job.tblName), job.stmtType.String())
 					worker.wg.Done()
 					worker.throw(err)
