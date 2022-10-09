@@ -767,6 +767,7 @@ grpc-initial-window-size = 10240
 grpc-max-send-msg-size = 40960
 [instance]
 max_connections = 200
+tidb_memory_usage_alarm_ratio = 0.7
 `)
 
 	require.NoError(t, err)

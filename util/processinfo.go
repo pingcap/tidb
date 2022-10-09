@@ -30,7 +30,8 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 )
 
-type OomAlarmVariablesInfo struct {
+// OOMAlarmVariablesInfo is a struct for OOM alarm variables.
+type OOMAlarmVariablesInfo struct {
 	SessionAnalyzeVersion         int
 	SessionEnabledRateLimitAction bool
 }
@@ -51,7 +52,7 @@ type ProcessInfo struct {
 	Host                      string
 	Info                      string
 	PlanExplainRows           [][]string
-	OomAlarmVariablesInfo     OomAlarmVariablesInfo
+	OOMAlarmVariablesInfo     OOMAlarmVariablesInfo
 	ID                        uint64
 	CurTxnStartTS             uint64
 	MaxExecutionTime          uint64

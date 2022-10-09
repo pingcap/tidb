@@ -1503,7 +1503,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		Info:                  sql,
 		CurTxnStartTS:         curTxnStartTS,
 		StmtCtx:               s.sessionVars.StmtCtx,
-		OomAlarmVariablesInfo: s.getOomAlarmVariablesInfo(),
+		OOMAlarmVariablesInfo: s.getOomAlarmVariablesInfo(),
 		StatsInfo:             plannercore.GetStatsInfo,
 		MaxExecutionTime:      maxExecutionTime,
 		RedactSQL:             s.sessionVars.EnableRedactLog,
@@ -1536,8 +1536,8 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 	s.processInfo.Store(&pi)
 }
 
-func (s *session) getOomAlarmVariablesInfo() util.OomAlarmVariablesInfo {
-	return util.OomAlarmVariablesInfo{
+func (s *session) getOomAlarmVariablesInfo() util.OOMAlarmVariablesInfo {
+	return util.OOMAlarmVariablesInfo{
 		SessionAnalyzeVersion:         s.sessionVars.AnalyzeVersion,
 		SessionEnabledRateLimitAction: s.sessionVars.EnabledRateLimitAction,
 	}
