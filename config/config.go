@@ -478,13 +478,12 @@ type Instance struct {
 	// These variables exist in both 'instance' section and another place.
 	// The configuration in 'instance' section takes precedence.
 
-	EnableSlowLog       AtomicBool `toml:"tidb_enable_slow_log" json:"tidb_enable_slow_log"`
-	SlowThreshold       uint64     `toml:"tidb_slow_log_threshold" json:"tidb_slow_log_threshold"`
-	RecordPlanInSlowLog uint32     `toml:"tidb_record_plan_in_slow_log" json:"tidb_record_plan_in_slow_log"`
-	CheckMb4ValueInUTF8 AtomicBool `toml:"tidb_check_mb4_value_in_utf8" json:"tidb_check_mb4_value_in_utf8"`
-	ForcePriority       string     `toml:"tidb_force_priority" json:"tidb_force_priority"`
-	// Deprecated: use global variable MemoryUsageAlarmRatio instead
-	MemoryUsageAlarmRatio float64 `toml:"tidb_memory_usage_alarm_ratio" json:"tidb_memory_usage_alarm_ratio"`
+	EnableSlowLog         AtomicBool `toml:"tidb_enable_slow_log" json:"tidb_enable_slow_log"`
+	SlowThreshold         uint64     `toml:"tidb_slow_log_threshold" json:"tidb_slow_log_threshold"`
+	RecordPlanInSlowLog   uint32     `toml:"tidb_record_plan_in_slow_log" json:"tidb_record_plan_in_slow_log"`
+	CheckMb4ValueInUTF8   AtomicBool `toml:"tidb_check_mb4_value_in_utf8" json:"tidb_check_mb4_value_in_utf8"`
+	ForcePriority         string     `toml:"tidb_force_priority" json:"tidb_force_priority"`
+	MemoryUsageAlarmRatio float64    `toml:"tidb_memory_usage_alarm_ratio" json:"tidb_memory_usage_alarm_ratio"`
 	// EnableCollectExecutionInfo enables the TiDB to collect execution info.
 	EnableCollectExecutionInfo bool   `toml:"tidb_enable_collect_execution_info" json:"tidb_enable_collect_execution_info"`
 	PluginDir                  string `toml:"plugin_dir" json:"plugin_dir"`
@@ -657,8 +656,7 @@ type Performance struct {
 	RunAutoAnalyze       bool `toml:"run-auto-analyze" json:"run-auto-analyze"`
 
 	// ForcePriority, MemoryUsageAlarmRatio are deprecated.
-	ForcePriority string `toml:"force-priority" json:"force-priority"`
-	// Deprecated: use global variable MemoryUsageAlarmRatio instead
+	ForcePriority         string  `toml:"force-priority" json:"force-priority"`
 	MemoryUsageAlarmRatio float64 `toml:"memory-usage-alarm-ratio" json:"memory-usage-alarm-ratio"`
 
 	EnableLoadFMSketch bool `toml:"enable-load-fmsketch" json:"enable-load-fmsketch"`
@@ -886,22 +884,23 @@ var defaultConf = Config{
 		GRPCMaxSendMsgSize:    math.MaxInt32,
 	},
 	Performance: Performance{
-		MaxMemory:            0,
-		ServerMemoryQuota:    0,
-		TCPKeepAlive:         true,
-		TCPNoDelay:           true,
-		CrossJoin:            true,
-		StatsLease:           "3s",
-		StmtCountLimit:       5000,
-		PseudoEstimateRatio:  0.8,
-		ForcePriority:        "NO_PRIORITY",
-		BindInfoLease:        "3s",
-		TxnEntrySizeLimit:    DefTxnEntrySizeLimit,
-		TxnTotalSizeLimit:    DefTxnTotalSizeLimit,
-		DistinctAggPushDown:  false,
-		ProjectionPushDown:   false,
-		CommitterConcurrency: defTiKVCfg.CommitterConcurrency,
-		MaxTxnTTL:            defTiKVCfg.MaxTxnTTL, // 1hour
+		MaxMemory:             0,
+		ServerMemoryQuota:     0,
+		MemoryUsageAlarmRatio: DefMemoryUsageAlarmRatio,
+		TCPKeepAlive:          true,
+		TCPNoDelay:            true,
+		CrossJoin:             true,
+		StatsLease:            "3s",
+		StmtCountLimit:        5000,
+		PseudoEstimateRatio:   0.8,
+		ForcePriority:         "NO_PRIORITY",
+		BindInfoLease:         "3s",
+		TxnEntrySizeLimit:     DefTxnEntrySizeLimit,
+		TxnTotalSizeLimit:     DefTxnTotalSizeLimit,
+		DistinctAggPushDown:   false,
+		ProjectionPushDown:    false,
+		CommitterConcurrency:  defTiKVCfg.CommitterConcurrency,
+		MaxTxnTTL:             defTiKVCfg.MaxTxnTTL, // 1hour
 		// TODO: set indexUsageSyncLease to 60s.
 		IndexUsageSyncLease:      "0s",
 		GOGC:                     100,
@@ -1023,27 +1022,26 @@ var removedConfig = map[string]struct{}{
 	"experimental.enable-global-kill":    {},
 	"performance.run-auto-analyze":       {}, //use tidb_enable_auto_analyze
 	// use tidb_enable_prepared_plan_cache, tidb_prepared_plan_cache_size and tidb_prepared_plan_cache_memory_guard_ratio
-	"prepared-plan-cache.enabled":               {},
-	"prepared-plan-cache.capacity":              {},
-	"prepared-plan-cache.memory-guard-ratio":    {},
-	"oom-action":                                {},
-	"check-mb4-value-in-utf8":                   {}, // use tidb_check_mb4_value_in_utf8
-	"enable-collect-execution-info":             {}, // use tidb_enable_collect_execution_info
-	"log.enable-slow-log":                       {}, // use tidb_enable_slow_log
-	"log.slow-threshold":                        {}, // use tidb_slow_log_threshold
-	"log.record-plan-in-slow-log":               {}, // use tidb_record_plan_in_slow_log
-	"log.expensive-threshold":                   {},
-	"performance.force-priority":                {}, // use tidb_force_priority
-	"performance.memory-usage-alarm-ratio":      {}, // use tidb_memory_usage_alarm_ratio
-	"plugin.load":                               {}, // use plugin_load
-	"plugin.dir":                                {}, // use plugin_dir
-	"performance.feedback-probability":          {}, // This feature is deprecated
-	"performance.query-feedback-limit":          {},
-	"oom-use-tmp-storage":                       {}, // use tidb_enable_tmp_storage_on_oom
-	"max-server-connections":                    {}, // use sysvar max_connections
-	"run-ddl":                                   {}, // use sysvar tidb_enable_ddl
-	"instance.tidb_memory_usage_alarm_ratio":    {}, // use sysvar tidb_memory_usage_alarm_ratio
-	"performance.tidb_memory_usage_alarm_ratio": {}, // use sysvar tidb_memory_usage_alarm_ratio
+	"prepared-plan-cache.enabled":            {},
+	"prepared-plan-cache.capacity":           {},
+	"prepared-plan-cache.memory-guard-ratio": {},
+	"oom-action":                             {},
+	"check-mb4-value-in-utf8":                {}, // use tidb_check_mb4_value_in_utf8
+	"enable-collect-execution-info":          {}, // use tidb_enable_collect_execution_info
+	"log.enable-slow-log":                    {}, // use tidb_enable_slow_log
+	"log.slow-threshold":                     {}, // use tidb_slow_log_threshold
+	"log.record-plan-in-slow-log":            {}, // use tidb_record_plan_in_slow_log
+	"log.expensive-threshold":                {},
+	"performance.force-priority":             {}, // use tidb_force_priority
+	"performance.memory-usage-alarm-ratio":   {}, // use tidb_memory_usage_alarm_ratio
+	"plugin.load":                            {}, // use plugin_load
+	"plugin.dir":                             {}, // use plugin_dir
+	"performance.feedback-probability":       {}, // This feature is deprecated
+	"performance.query-feedback-limit":       {},
+	"oom-use-tmp-storage":                    {}, // use tidb_enable_tmp_storage_on_oom
+	"max-server-connections":                 {}, // use sysvar max_connections
+	"run-ddl":                                {}, // use sysvar tidb_enable_ddl
+	"instance.tidb_memory_usage_alarm_ratio": {}, // use sysvar tidb_memory_usage_alarm_ratio
 }
 
 // isAllRemovedConfigItems returns true if all the items that couldn't validate

@@ -587,8 +587,6 @@ func setGlobalVars() {
 				case "force-priority":
 					cfg.Instance.ForcePriority = cfg.Performance.ForcePriority
 				}
-			case "memory-usage-alarm-ratio":
-				cfg.Instance.MemoryUsageAlarmRatio = cfg.Performance.MemoryUsageAlarmRatio
 			case "plugin":
 				switch oldName {
 				case "load":
