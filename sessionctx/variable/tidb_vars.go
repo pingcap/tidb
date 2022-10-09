@@ -306,30 +306,6 @@ const (
 	// TiDBOptForceInlineCTE is used to enable/disable inline CTE
 	TiDBOptForceInlineCTE = "tidb_opt_force_inline_cte"
 
-	// Variables for the Cost Model Ver2
-	// TiDBOptCPUFactorV2 is the CPU factor for the Cost Model Ver2
-	TiDBOptCPUFactorV2 = "tidb_opt_cpu_factor_v2"
-	// TiDBOptCopCPUFactorV2 is the CopCPU factor for the Cost Model Ver2
-	TiDBOptCopCPUFactorV2 = "tidb_opt_copcpu_factor_v2"
-	// TiDBOptTiFlashCPUFactorV2 is the TiFlashCPU factor for the Cost Model Ver2
-	TiDBOptTiFlashCPUFactorV2 = "tidb_opt_tiflash_cpu_factor_v2"
-	// TiDBOptNetworkFactorV2 is the network factor for the Cost Model Ver2
-	TiDBOptNetworkFactorV2 = "tidb_opt_network_factor_v2"
-	// TiDBOptScanFactorV2 is the scan factor for the Cost Model Ver2
-	TiDBOptScanFactorV2 = "tidb_opt_scan_factor_v2"
-	// TiDBOptDescScanFactorV2 is the desc scan factor for the Cost Model Ver2
-	TiDBOptDescScanFactorV2 = "tidb_opt_desc_factor_v2"
-	// TiDBOptTiFlashScanFactorV2 is the TiFlashScan factor for the Cost Model Ver2
-	TiDBOptTiFlashScanFactorV2 = "tidb_opt_tiflash_scan_factor_v2"
-	// TiDBOptSeekFactorV2 is the seek factor for the Cost Model Ver2
-	TiDBOptSeekFactorV2 = "tidb_opt_seek_factor_v2"
-	// TiDBOptMemoryFactorV2 is the memory factor for the Cost Model Ver2
-	TiDBOptMemoryFactorV2 = "tidb_opt_memory_factor_v2"
-	// TiDBOptDiskFactorV2 is the disk factor for the Cost Model Ver2
-	TiDBOptDiskFactorV2 = "tidb_opt_disk_factor_v2"
-	// TiDBOptConcurrencyFactorV2 is the concurrency factor for the Cost Model Ver2
-	TiDBOptConcurrencyFactorV2 = "tidb_opt_concurrency_factor_v2"
-
 	// TiDBIndexJoinBatchSize is used to set the batch size of an index lookup join.
 	// The index lookup join fetches batches of data from outer executor and constructs ranges for inner executor.
 	// This value controls how much of data in a batch to do the index join.
@@ -625,6 +601,9 @@ const (
 	// TiDBAnalyzeVersion indicates how tidb collects the analyzed statistics and how use to it.
 	TiDBAnalyzeVersion = "tidb_analyze_version"
 
+	// TiDBAutoAnalyzePartitionBatchSize indicates the batch size for partition tables for auto analyze in dynamic mode
+	TiDBAutoAnalyzePartitionBatchSize = "tidb_auto_analyze_partition_batch_size"
+
 	// TiDBEnableIndexMergeJoin indicates whether to enable index merge join.
 	TiDBEnableIndexMergeJoin = "tidb_enable_index_merge_join"
 
@@ -890,17 +869,6 @@ const (
 	DefOptMemoryFactor                             = 0.001
 	DefOptDiskFactor                               = 1.5
 	DefOptConcurrencyFactor                        = 3.0
-	DefOptCPUFactorV2                              = 30.0
-	DefOptCopCPUFactorV2                           = 30.0
-	DefOptTiFlashCPUFactorV2                       = 2.0
-	DefOptNetworkFactorV2                          = 4.0
-	DefOptScanFactorV2                             = 100.0
-	DefOptDescScanFactorV2                         = 150.0
-	DefOptTiFlashScanFactorV2                      = 15.0
-	DefOptSeekFactorV2                             = 9500000.0
-	DefOptMemoryFactorV2                           = 0.001
-	DefOptDiskFactorV2                             = 1.5
-	DefOptConcurrencyFactorV2                      = 3.0
 	DefOptForceInlineCTE                           = false
 	DefOptInSubqToJoinAndAgg                       = true
 	DefOptPreferRangeScan                          = false
@@ -994,6 +962,7 @@ const (
 	DefTiDBEnable1PC                               = false
 	DefTiDBGuaranteeLinearizability                = true
 	DefTiDBAnalyzeVersion                          = 2
+	DefTiDBAutoAnalyzePartitionBatchSize           = 1
 	DefTiDBEnableIndexMergeJoin                    = false
 	DefTiDBTrackAggregateMemoryUsage               = true
 	DefTiDBEnableExchangePartition                 = true
@@ -1051,7 +1020,7 @@ const (
 	DefTiDBPrepPlanCacheMemoryGuardRatio           = 0.1
 	DefTiDBEnableConcurrentDDL                     = concurrencyddl.TiDBEnableConcurrentDDL
 	DefTiDBSimplifiedMetrics                       = false
-	DefTiDBEnablePaging                            = false
+	DefTiDBEnablePaging                            = true
 	DefTiFlashFineGrainedShuffleStreamCount        = 0
 	DefStreamCountWhenMaxThreadsNotSet             = 8
 	DefTiFlashFineGrainedShuffleBatchSize          = 8192
@@ -1123,6 +1092,7 @@ var (
 	DDLForce2Queue                    = atomic.NewBool(false)
 	EnableNoopVariables               = atomic.NewBool(DefTiDBEnableNoopVariables)
 	EnableMDL                         = atomic.NewBool(DefTiDBEnableMDL)
+	AutoAnalyzePartitionBatchSize     = atomic.NewInt64(DefTiDBAutoAnalyzePartitionBatchSize)
 	// EnableFastReorg indicates whether to use lightning to enhance DDL reorg performance.
 	EnableFastReorg = atomic.NewBool(DefTiDBEnableFastReorg)
 	// DDLDiskQuota is the temporary variable for set disk quota for lightning
