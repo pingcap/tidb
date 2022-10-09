@@ -920,9 +920,6 @@ func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64, isMPP bool, costFlag uint
 	spill := oomUseTmpStorage && memQuota > 0 && rowSize*buildCnt > float64(memQuota) && p.storeTp != kv.TiFlash
 	// Cost of building hash table.
 	cpuFactor := sessVars.GetCPUFactor()
-	if isMPP && p.ctx.GetSessionVars().CostModelVersion == modelVer2 {
-		cpuFactor = sessVars.GetTiFlashCPUFactor() // use the dedicated TiFlash CPU Factor on modelVer2
-	}
 	diskFactor := sessVars.GetDiskFactor()
 	memoryFactor := sessVars.GetMemoryFactor()
 	concurrencyFactor := sessVars.GetConcurrencyFactor()
@@ -1033,13 +1030,6 @@ func (p *PhysicalStreamAgg) GetCost(inputRows float64, isRoot, isMPP bool, costF
 	sessVars := p.ctx.GetSessionVars()
 	if isRoot {
 		cpuCost = inputRows * sessVars.GetCPUFactor() * aggFuncFactor
-	} else if isMPP {
-		if p.ctx.GetSessionVars().CostModelVersion == modelVer2 {
-			// use the dedicated CPU factor for TiFlash on modelVer2
-			cpuCost = inputRows * sessVars.GetTiFlashCPUFactor() * aggFuncFactor
-		} else {
-			cpuCost = inputRows * sessVars.GetCopCPUFactor() * aggFuncFactor
-		}
 	} else {
 		cpuCost = inputRows * sessVars.GetCopCPUFactor() * aggFuncFactor
 	}
@@ -1081,13 +1071,6 @@ func (p *PhysicalHashAgg) GetCost(inputRows float64, isRoot, isMPP bool, costFla
 			cpuCost /= divisor
 			// Cost of additional goroutines.
 			cpuCost += (con + 1) * sessVars.GetConcurrencyFactor()
-		}
-	} else if isMPP {
-		if p.ctx.GetSessionVars().CostModelVersion == modelVer2 {
-			// use the dedicated CPU factor for TiFlash on modelVer2
-			cpuCost = inputRows * sessVars.GetTiFlashCPUFactor() * aggFuncFactor
-		} else {
-			cpuCost = inputRows * sessVars.GetCopCPUFactor() * aggFuncFactor
 		}
 	} else {
 		cpuCost = inputRows * sessVars.GetCopCPUFactor() * aggFuncFactor
