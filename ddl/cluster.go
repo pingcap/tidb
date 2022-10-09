@@ -42,6 +42,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/txnkv/rangetask"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 )
@@ -62,6 +63,7 @@ const (
 	gcEnabledArgsOffset      = 2
 	autoAnalyzeOffset        = 3
 	maxAutoAnalyzeTimeOffset = 4
+	totalLockedRegionsOffset = 5
 )
 
 func closePDSchedule() error {
@@ -353,19 +355,14 @@ func sendPrepareFlashbackToVersionRPC(
 func prepareFlashbackToVersion(
 	ctx context.Context,
 	d *ddlCtx,
+	handler rangetask.TaskHandler,
 	startKey []byte, endKey []byte,
 ) (err error) {
 	return rangetask.NewRangeTaskRunner(
 		"flashback-to-version-runner",
 		d.store.(tikv.Storage),
 		int(variable.GetDDLFlashbackConcurrency()),
-		func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
-			stats, err := sendPrepareFlashbackToVersionRPC(ctx, d.store.(tikv.Storage), r)
-			logutil.BgLogger().Info("prepare flashback to version stats",
-				zap.Int("complete region", stats.CompletedRegions),
-				zap.Error(err))
-			return stats, err
-		},
+		handler,
 	).RunOnRange(ctx, startKey, endKey)
 }
 
@@ -447,21 +444,14 @@ func sendFlashbackToVersionRPC(
 func flashbackToVersion(
 	ctx context.Context,
 	d *ddlCtx,
-	version uint64,
-	startTS, commitTS uint64,
+	handler rangetask.TaskHandler,
 	startKey []byte, endKey []byte,
 ) (err error) {
 	return rangetask.NewRangeTaskRunner(
 		"flashback-to-version-runner",
 		d.store.(tikv.Storage),
 		int(variable.GetDDLFlashbackConcurrency()),
-		func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
-			stats, err := sendFlashbackToVersionRPC(ctx, d.store.(tikv.Storage), version, startTS, commitTS, r)
-			logutil.BgLogger().Info("flashback cluster stats",
-				zap.Int("complete region", stats.CompletedRegions),
-				zap.Error(err))
-			return stats, err
-		},
+		handler,
 	).RunOnRange(ctx, startKey, endKey)
 }
 
@@ -483,14 +473,17 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		return ver, errors.Errorf("Not support flashback cluster in non-TiKV env")
 	}
 
-	var flashbackTS uint64
+	var flashbackTS, lockedRegions uint64
 	var pdScheduleValue map[string]interface{}
 	var autoAnalyzeValue, maxAutoAnalyzeTimeValue string
 	var gcEnabledValue bool
-	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue, &gcEnabledValue, &autoAnalyzeValue, &maxAutoAnalyzeTimeValue); err != nil {
+	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue, &gcEnabledValue, &autoAnalyzeValue, &maxAutoAnalyzeTimeValue, &lockedRegions); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+
+	var totalRegions, completedRegions atomic.Uint64
+	totalRegions.Store(lockedRegions)
 
 	sess, err := w.sessPool.get()
 	if err != nil {
@@ -541,17 +534,23 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			job.SchemaState = model.StateWriteReorganization
 			return updateSchemaVersion(d, t, job)
 		}
+		totalRegions.Store(0)
 		keyRanges, err := GetFlashbackKeyRanges(sess, tablecodec.EncodeTablePrefix(0))
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 		for _, ranges := range keyRanges {
-			if err = prepareFlashbackToVersion(d.ctx, d, ranges.StartKey, ranges.EndKey); err != nil {
+			if err = prepareFlashbackToVersion(d.ctx, d,
+				func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
+					stats, err := sendPrepareFlashbackToVersionRPC(ctx, d.store.(tikv.Storage), r)
+					totalRegions.Add(uint64(stats.CompletedRegions))
+					return stats, err
+				}, ranges.StartKey, ranges.EndKey); err != nil {
 				logutil.BgLogger().Warn("[ddl] Get error when do flashback", zap.Error(err))
 				return ver, err
 			}
 		}
-		// TODO, lock all regions.
+		job.Args[totalLockedRegionsOffset] = totalRegions.Load()
 		job.SchemaState = model.StateWriteReorganization
 		return updateSchemaVersion(d, t, job)
 	// Stage 4, get key ranges and send flashback RPC.
@@ -573,7 +572,16 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			return ver, errors.Trace(err)
 		}
 		for _, ranges := range keyRanges {
-			if err = flashbackToVersion(d.ctx, d, flashbackTS, t.StartTS, commitTS, ranges.StartKey, ranges.EndKey); err != nil {
+			if err = flashbackToVersion(d.ctx, d,
+				func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
+					stats, err := sendFlashbackToVersionRPC(ctx, d.store.(tikv.Storage), flashbackTS, t.StartTS, commitTS, r)
+					completedRegions.Add(uint64(stats.CompletedRegions))
+					logutil.BgLogger().Info("flashback cluster stats",
+						zap.Uint64("complete regions", completedRegions.Load()),
+						zap.Uint64("total regions", totalRegions.Load()),
+						zap.Error(err))
+					return stats, err
+				}, ranges.StartKey, ranges.EndKey); err != nil {
 				logutil.BgLogger().Warn("[ddl] Get error when do flashback", zap.Error(err))
 				return ver, err
 			}
