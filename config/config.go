@@ -1023,25 +1023,27 @@ var removedConfig = map[string]struct{}{
 	"experimental.enable-global-kill":    {},
 	"performance.run-auto-analyze":       {}, //use tidb_enable_auto_analyze
 	// use tidb_enable_prepared_plan_cache, tidb_prepared_plan_cache_size and tidb_prepared_plan_cache_memory_guard_ratio
-	"prepared-plan-cache.enabled":            {},
-	"prepared-plan-cache.capacity":           {},
-	"prepared-plan-cache.memory-guard-ratio": {},
-	"oom-action":                             {},
-	"check-mb4-value-in-utf8":                {}, // use tidb_check_mb4_value_in_utf8
-	"enable-collect-execution-info":          {}, // use tidb_enable_collect_execution_info
-	"log.enable-slow-log":                    {}, // use tidb_enable_slow_log
-	"log.slow-threshold":                     {}, // use tidb_slow_log_threshold
-	"log.record-plan-in-slow-log":            {}, // use tidb_record_plan_in_slow_log
-	"log.expensive-threshold":                {},
-	"performance.force-priority":             {}, // use tidb_force_priority
-	"performance.memory-usage-alarm-ratio":   {}, // use tidb_memory_usage_alarm_ratio
-	"plugin.load":                            {}, // use plugin_load
-	"plugin.dir":                             {}, // use plugin_dir
-	"performance.feedback-probability":       {}, // This feature is deprecated
-	"performance.query-feedback-limit":       {},
-	"oom-use-tmp-storage":                    {}, // use tidb_enable_tmp_storage_on_oom
-	"max-server-connections":                 {}, // use sysvar max_connections
-	"run-ddl":                                {}, // use sysvar tidb_enable_ddl
+	"prepared-plan-cache.enabled":               {},
+	"prepared-plan-cache.capacity":              {},
+	"prepared-plan-cache.memory-guard-ratio":    {},
+	"oom-action":                                {},
+	"check-mb4-value-in-utf8":                   {}, // use tidb_check_mb4_value_in_utf8
+	"enable-collect-execution-info":             {}, // use tidb_enable_collect_execution_info
+	"log.enable-slow-log":                       {}, // use tidb_enable_slow_log
+	"log.slow-threshold":                        {}, // use tidb_slow_log_threshold
+	"log.record-plan-in-slow-log":               {}, // use tidb_record_plan_in_slow_log
+	"log.expensive-threshold":                   {},
+	"performance.force-priority":                {}, // use tidb_force_priority
+	"performance.memory-usage-alarm-ratio":      {}, // use tidb_memory_usage_alarm_ratio
+	"plugin.load":                               {}, // use plugin_load
+	"plugin.dir":                                {}, // use plugin_dir
+	"performance.feedback-probability":          {}, // This feature is deprecated
+	"performance.query-feedback-limit":          {},
+	"oom-use-tmp-storage":                       {}, // use tidb_enable_tmp_storage_on_oom
+	"max-server-connections":                    {}, // use sysvar max_connections
+	"run-ddl":                                   {}, // use sysvar tidb_enable_ddl
+	"instance.tidb_memory_usage_alarm_ratio":    {}, // use sysvar tidb_memory_usage_alarm_ratio
+	"performance.tidb_memory_usage_alarm_ratio": {}, // use sysvar tidb_memory_usage_alarm_ratio
 }
 
 // isAllRemovedConfigItems returns true if all the items that couldn't validate
