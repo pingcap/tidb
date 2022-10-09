@@ -32,11 +32,9 @@ func getPlanCost(p PhysicalPlan, taskType property.TaskType, option *PlanCostOpt
 	return p.getPlanCostVer2(taskType, option)
 }
 
-// getPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
+// getPlanCostVer2 calculates the cost of the plan if it has not been calculated yet and returns the cost.
 func (p *basePhysicalPlan) getPlanCostVer2(taskType property.TaskType, option *PlanCostOption) (float64, error) {
-	costFlag := option.CostFlag
-	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
-		// just calculate the cost once and always reuse it
+	if p.planCostInit && !hasCostFlag(option.CostFlag, CostFlagRecalculate) {
 		return p.planCost, nil
 	}
 	p.planCost = 0 // the default implementation, the operator have no cost
@@ -586,10 +584,7 @@ func (p *PhysicalUnionAll) getPlanCostVer2(taskType property.TaskType, option *P
 		return p.planCost, nil
 	}
 
-	costFlag := option.CostFlag
-	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
-		return p.planCost, nil
-	}
+	concurrency := p.ctx.GetSessionVars().GetConcurrencyFactor()
 	var sumChildCost float64
 	for _, child := range p.children {
 		childCost, err := child.getPlanCostVer2(taskType, option)
@@ -598,7 +593,7 @@ func (p *PhysicalUnionAll) getPlanCostVer2(taskType property.TaskType, option *P
 		}
 		sumChildCost += childCost
 	}
-	p.planCost = sumChildCost / p.ctx.GetSessionVars().GetConcurrencyFactor()
+	p.planCost = sumChildCost / concurrency
 	p.planCostInit = true
 	return p.planCost, nil
 }
