@@ -535,6 +535,8 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		return a.handlePessimisticSelectForUpdate(ctx, e)
 	}
 
+	// In function handlePessimisticDML may rebuild a Executor when handlePessimisticLockError,
+	// so need to return the rebuild executor.
 	if handled, result, e, err := a.handleNoDelay(ctx, e, isPessimistic); handled || err != nil {
 		if err != nil {
 			return result, err
