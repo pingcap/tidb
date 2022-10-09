@@ -56,10 +56,7 @@ func ValidateSnapshot(ctx sessionctx.Context, snapshotTS uint64) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if safePointTS > snapshotTS {
-		return variable.ErrSnapshotTooOld.GenWithStackByArgs(model.TSConvert2Time(safePointTS).String())
-	}
-	return nil
+	return ValidateSnapshotWithGCSafePoint(snapshotTS, safePointTS)
 }
 
 // ValidateSnapshotWithGCSafePoint checks that the newly set snapshot time is after GC safe point time.
@@ -79,6 +76,11 @@ func GetGCSafePoint(sctx sessionctx.Context) (uint64, error) {
 		return 0, errors.Trace(err)
 	}
 	if len(rows) != 1 {
+		// In a non-real TiKV environment, tidb will not start GCWorker.
+		// This means all MVCC records will not be deleted, so flashback/recover should be supported.
+		if _, ok := sctx.GetStore().(kv.EtcdBackend); ok {
+			return 0, nil
+		}
 		return 0, errors.New("can not get 'tikv_gc_safe_point'")
 	}
 	safePointString := rows[0].GetString(0)

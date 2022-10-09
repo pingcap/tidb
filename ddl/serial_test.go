@@ -506,9 +506,6 @@ func TestRecoverTableByJobID(t *testing.T) {
 	}
 	jobID := getDDLJobID("test_recover", "drop table")
 
-	// if GC safe point is not exists in mysql.tidb
-	err := tk.ExecToErr(fmt.Sprintf("recover table by job %d", jobID))
-	require.EqualError(t, err, "can not get 'tikv_gc_safe_point'")
 	// set GC safe point
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 
@@ -516,7 +513,7 @@ func TestRecoverTableByJobID(t *testing.T) {
 	tk.MustExec(fmt.Sprintf("recover table by job %d", jobID))
 	tk.MustExec("DROP TABLE t_recover")
 
-	err = gcutil.EnableGC(tk.Session())
+	err := gcutil.EnableGC(tk.Session())
 	require.NoError(t, err)
 
 	// recover job is before GC safe point

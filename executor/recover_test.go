@@ -52,12 +52,8 @@ func TestRecoverTable(t *testing.T) {
 	tk.MustExec("insert into t_recover values (1),(2),(3)")
 	tk.MustExec("drop table t_recover")
 
-	// if GC safe point is not exists in mysql.tidb
-	tk.MustGetErrMsg("recover table t_recover", "can not get 'tikv_gc_safe_point'")
-	// set GC safe point
-	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
-
-	// Should recover, and we can drop it straight away.
+	// Can recover table without GC safe point in non-real TiKV env,
+	// and we can drop it straight away.
 	tk.MustExec("recover table t_recover")
 	tk.MustExec("drop table t_recover")
 
@@ -137,11 +133,9 @@ func TestFlashbackTable(t *testing.T) {
 	tk.MustExec("drop table if exists t_flashback")
 	tk.MustExec("create table t_flashback (a int);")
 
-	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
+	_, _, _, resetGC := MockGC(tk)
 	defer resetGC()
 
-	// Set GC safe point
-	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 	// Set GC enable.
 	require.NoError(t, gcutil.EnableGC(tk.Session()))
 
@@ -252,10 +246,8 @@ func TestRecoverTempTable(t *testing.T) {
 	tk.MustExec("drop table if exists tmp2_recover")
 	tk.MustExec("create temporary table tmp2_recover (a int);")
 
-	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
+	_, _, _, resetGC := MockGC(tk)
 	defer resetGC()
-	// Set GC safe point
-	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 
 	tk.MustExec("drop table t_recover")
 	tk.MustGetErrCode("recover table t_recover;", errno.ErrUnsupportedDDLOperation)
@@ -274,14 +266,11 @@ func TestRecoverTableMeetError(t *testing.T) {
 	tk.MustExec("drop table if exists t_recover")
 	tk.MustExec("create table t_recover (a int);")
 
-	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
+	_, _, _, resetGC := MockGC(tk)
 	defer resetGC()
 
 	tk.MustExec("insert into t_recover values (1),(2),(3)")
 	tk.MustExec("drop table t_recover")
-
-	// Set GC safe point
-	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 
 	// Should recover, and we can drop it straight away.
 	tk.MustExec("recover table t_recover")
@@ -312,7 +301,6 @@ func TestRecoverClusterMeetError(t *testing.T) {
 
 	// Get GC safe point error.
 	tk.MustContainErrMsg(fmt.Sprintf("flashback cluster to timestamp '%s'", time.Now().Add(30*time.Second)), "cannot set flashback timestamp to future time")
-	tk.MustContainErrMsg(fmt.Sprintf("flashback cluster to timestamp '%s'", time.Now().Add(0-30*time.Second)), "can not get 'tikv_gc_safe_point'")
 
 	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
 	defer resetGC()
