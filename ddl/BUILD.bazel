@@ -194,6 +194,7 @@ go_test(
     ],
     embed = [":ddl"],
     flaky = True,
+    race = "on",
     shard_count = 50,
     deps = [
         "//config",
