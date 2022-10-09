@@ -19,6 +19,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -70,7 +71,7 @@ func (param *MySQLConnectParam) ToDriverConfig() *mysql.Config {
 	cfg.TLSConfig = param.TLS
 
 	for k, v := range param.Vars {
-		cfg.Params[k] = v
+		cfg.Params[k] = fmt.Sprintf("'%s'", v)
 	}
 	return cfg
 }
