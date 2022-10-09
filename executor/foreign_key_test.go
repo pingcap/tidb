@@ -259,6 +259,7 @@ func TestForeignKeyOnInsertDuplicateUpdateChildTable(t *testing.T) {
 }
 
 func TestForeignKeyCheckAndLock(t *testing.T) {
+	t.Skip("not stable, please fix me @crazycs520")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
