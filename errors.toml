@@ -1236,11 +1236,6 @@ error = '''
 Failed to split region ranges: %s
 '''
 
-["ddl:8213"]
-error = '''
-Version %d of DDL job is greater than current one: %d
-'''
-
 ["ddl:8214"]
 error = '''
 Cancelled DDL job

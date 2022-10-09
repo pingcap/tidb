@@ -365,7 +365,6 @@ func (sub *SubJob) ToProxyJob(parentJob *Job) Job {
 		DependencyID:    parentJob.DependencyID,
 		Query:           parentJob.Query,
 		BinlogInfo:      parentJob.BinlogInfo,
-		Version:         parentJob.Version,
 		ReorgMeta:       parentJob.ReorgMeta,
 		MultiSchemaInfo: &MultiSchemaInfo{Revertible: sub.Revertible},
 		Priority:        parentJob.Priority,
@@ -421,9 +420,6 @@ type Job struct {
 	// Query string of the ddl job.
 	Query      string       `json:"query"`
 	BinlogInfo *HistoryInfo `json:"binlog"`
-
-	// Version indicates the DDL job version. For old jobs, it will be 0.
-	Version int64 `json:"version"`
 
 	// ReorgMeta is meta info of ddl reorganization.
 	ReorgMeta *DDLReorgMeta `json:"reorg_meta"`

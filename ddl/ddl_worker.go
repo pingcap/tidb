@@ -336,7 +336,6 @@ func (d *ddl) addBatchDDLJobs2Queue(tasks []*limitJobTask) error {
 
 		for i, task := range tasks {
 			job := task.job
-			job.Version = currentVersion
 			job.StartTS = txn.StartTS()
 			job.ID = ids[i]
 			setJobStateToQueueing(job)
@@ -418,7 +417,6 @@ func (d *ddl) addBatchDDLJobs2Table(tasks []*limitJobTask) error {
 		jobTasks := make([]*model.Job, len(tasks))
 		for i, task := range tasks {
 			job := task.job
-			job.Version = currentVersion
 			job.StartTS = startTS
 			job.ID = ids[i]
 			setJobStateToQueueing(job)
@@ -551,16 +549,6 @@ func needUpdateRawArgs(job *model.Job, meetErr bool) bool {
 	return true
 }
 
-func (w *worker) deleteRange(ctx context.Context, job *model.Job) error {
-	var err error
-	if job.Version <= currentVersion {
-		err = w.delRangeManager.addDelRangeJob(ctx, job)
-	} else {
-		err = dbterror.ErrInvalidDDLJobVersion.GenWithStackByArgs(job.Version, currentVersion)
-	}
-	return errors.Trace(err)
-}
-
 func jobNeedGC(job *model.Job) bool {
 	if !job.IsCancelled() {
 		if job.Warning != nil && dbterror.ErrCantDropFieldOrKey.Equal(job.Warning) {
@@ -596,7 +584,7 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	}()
 
 	if jobNeedGC(job) {
-		err = w.deleteRange(w.ctx, job)
+		err = w.delRangeManager.addDelRangeJob(w.ctx, job)
 		if err != nil {
 			return errors.Trace(err)
 		}
