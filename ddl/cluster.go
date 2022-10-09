@@ -512,6 +512,18 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			return ver, errors.Trace(err)
 		}
 		job.Args[gcEnabledArgsOffset] = &gcEnableValue
+		autoAnalyzeValue, err = getTiDBEnableAutoAnalyze(sess)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+		job.Args[autoAnalyzeOffset] = &autoAnalyzeValue
+		maxAutoAnalyzeTimeValue, err = getTiDBMaxAutoAnalyzeTime(sess)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+		job.Args[maxAutoAnalyzeTimeOffset] = &maxAutoAnalyzeTimeValue
 		job.SchemaState = model.StateDeleteOnly
 		return ver, nil
 	// Stage 2, check flashbackTS, close GC and PD schedule.
