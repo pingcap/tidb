@@ -40,7 +40,6 @@ import (
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
-	"go.opencensus.io/stats/view"
 )
 
 func TestSelectNormal(t *testing.T) {
@@ -75,7 +74,6 @@ func TestSelectMemTracker(t *testing.T) {
 }
 
 func TestSelectNormalChunkSize(t *testing.T) {
-	defer view.Stop()
 	sctx := newMockSessionContext()
 	sctx.GetSessionVars().EnableChunkRPC = false
 	response, colTypes := createSelectNormal(t, 100, 1000000, nil, sctx)
@@ -85,7 +83,6 @@ func TestSelectNormalChunkSize(t *testing.T) {
 }
 
 func TestSelectWithRuntimeStats(t *testing.T) {
-	defer view.Stop()
 	planIDs := []int{1, 2, 3}
 	response, colTypes := createSelectNormal(t, 1, 2, planIDs, nil)
 
@@ -110,7 +107,6 @@ func TestSelectWithRuntimeStats(t *testing.T) {
 }
 
 func TestSelectResultRuntimeStats(t *testing.T) {
-	defer view.Stop()
 	basic := &execdetails.BasicRuntimeStats{}
 	basic.Record(time.Second, 20)
 	s1 := &selectResultRuntimeStats{
@@ -158,7 +154,6 @@ func TestSelectResultRuntimeStats(t *testing.T) {
 }
 
 func TestAnalyze(t *testing.T) {
-	defer view.Stop()
 	sctx := newMockSessionContext()
 	sctx.GetSessionVars().EnableChunkRPC = false
 	request, err := (&RequestBuilder{}).SetKeyRanges(nil).
@@ -184,7 +179,6 @@ func TestAnalyze(t *testing.T) {
 }
 
 func TestChecksum(t *testing.T) {
-	defer view.Stop()
 	sctx := newMockSessionContext()
 	sctx.GetSessionVars().EnableChunkRPC = false
 	request, err := (&RequestBuilder{}).SetKeyRanges(nil).
@@ -327,7 +321,7 @@ func createSelectNormalByBenchmarkTest(batch, totalRows int, ctx sessionctx.Cont
 		SetDAGRequest(&tipb.DAGRequest{}).
 		SetDesc(false).
 		SetKeepOrder(false).
-		SetFromSessionVars(variable.NewSessionVars()).
+		SetFromSessionVars(variable.NewSessionVars(nil)).
 		SetMemTracker(memory.NewTracker(-1, -1)).
 		Build()
 
@@ -396,7 +390,7 @@ func createSelectNormal(t *testing.T, batch, totalRows int, planIDs []int, sctx 
 		SetDAGRequest(&tipb.DAGRequest{}).
 		SetDesc(false).
 		SetKeepOrder(false).
-		SetFromSessionVars(variable.NewSessionVars()).
+		SetFromSessionVars(variable.NewSessionVars(nil)).
 		SetMemTracker(memory.NewTracker(-1, -1)).
 		Build()
 	require.NoError(t, err)

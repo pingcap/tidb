@@ -68,9 +68,9 @@ func TestCTEPreviewAndReport(t *testing.T) {
 
 	jsonParsed, err := gabs.ParseJSON([]byte(res))
 	require.NoError(t, err)
-	require.Equal(t, 2, int(jsonParsed.Path("featureUsage.cte.nonRecursiveCTEUsed").Data().(float64)))
+	require.Equal(t, 1, int(jsonParsed.Path("featureUsage.cte.nonRecursiveCTEUsed").Data().(float64)))
 	require.Equal(t, 1, int(jsonParsed.Path("featureUsage.cte.recursiveUsed").Data().(float64)))
-	require.Equal(t, 3, int(jsonParsed.Path("featureUsage.cte.nonCTEUsed").Data().(float64)))
+	require.Equal(t, 4, int(jsonParsed.Path("featureUsage.cte.nonCTEUsed").Data().(float64)))
 
 	err = telemetry.ReportUsageData(s.se, s.etcdCluster.RandClient())
 	require.NoError(t, err)
