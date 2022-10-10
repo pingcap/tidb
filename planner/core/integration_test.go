@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/auth"
@@ -1721,7 +1722,7 @@ func TestInvisibleIndex(t *testing.T) {
 	tk.MustExec("admin check index t i_a")
 }
 
-// for issue #14822
+// for issue #14822 and #38258
 func TestIndexJoinTableRange(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1730,6 +1731,8 @@ func TestIndexJoinTableRange(t *testing.T) {
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(a int, b int, primary key (a), key idx_t1_b (b))")
 	tk.MustExec("create table t2(a int, b int, primary key (a), key idx_t1_b (b))")
+	tk.MustExec("create table t3(a int, b int, c int)")
+	tk.MustExec("create table t4(a int, b int, c int, primary key (a, b) clustered)")
 
 	var input []string
 	var output []struct {
@@ -7582,4 +7585,93 @@ func TestExplainAnalyzeDMLCommit(t *testing.T) {
 	_, err = tk.Exec("explain analyze delete from t;")
 	require.NoError(t, err)
 	tk.MustQuery("select * from t").Check(testkit.Rows())
+}
+
+func TestIndexJoinRangeFallback(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, b int, c varchar(10), d varchar(10), index idx_a_b_c_d(a, b, c(2), d(2)))")
+	tk.MustExec("create table t2(e int, f int, g varchar(10), h varchar(10))")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Warn []string
+	}
+	integrationSuiteData := core.GetIntegrationSuiteData()
+	integrationSuiteData.LoadTestCases(t, &input, &output)
+	for i, tt := range input {
+		setStmt := strings.HasPrefix(tt, "set")
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			if !setStmt {
+				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+				output[i].Warn = testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+			}
+		})
+		if setStmt {
+			tk.MustExec(tt)
+		} else {
+			tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+			require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
+		}
+	}
+}
+
+func TestPlanCacheForIndexJoinRangeFallback(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set @@tidb_enable_prepared_plan_cache=1`)
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, b varchar(10), c varchar(10), index idx_a_b(a, b))")
+	tk.MustExec("create table t2(d int)")
+	tk.MustExec("set @@tidb_opt_range_max_size=1275")
+	// 1275 is enough for [? a,? a], [? b,? b], [? c,? c] but is not enough for [? aaaaaa,? aaaaaa], [? bbbbbb,? bbbbbb], [? cccccc,? cccccc].
+	rows := tk.MustQuery("explain format='brief' select /*+ inl_join(t1) */ * from  t1 join t2 on t1.a = t2.d where t1.b in ('a', 'b', 'c')").Rows()
+	require.True(t, strings.Contains(rows[6][4].(string), "range: decided by [eq(test.t1.a, test.t2.d) in(test.t1.b, a, b, c)]"))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	rows = tk.MustQuery("explain format='brief' select /*+ inl_join(t1) */ * from  t1 join t2 on t1.a = t2.d where t1.b in ('aaaaaa', 'bbbbbb', 'cccccc');").Rows()
+	require.True(t, strings.Contains(rows[6][4].(string), "range: decided by [eq(test.t1.a, test.t2.d)]"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Memory capacity of 1275 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen"))
+
+	tk.MustExec("prepare stmt1 from 'select /*+ inl_join(t1) */ * from  t1 join t2 on t1.a = t2.d where t1.b in (?, ?, ?)'")
+	tk.MustExec("set @a='a', @b='b', @c='c'")
+	tk.MustExec("execute stmt1 using @a, @b, @c")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustExec("set @a='aaaaaa', @b='bbbbbb', @c='cccccc'")
+	tk.MustExec("execute stmt1 using @a, @b, @c")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustExec("execute stmt1 using @a, @b, @c")
+	tkProcess := tk.Session().ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	rows = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
+	// We don't limit range mem usage when rebuilding index join ranges for the cached plan. So [? aaaaaa,? aaaaaa], [? bbbbbb,? bbbbbb], [? cccccc,? cccccc] can be built.
+	require.True(t, strings.Contains(rows[6][4].(string), "range: decided by [eq(test.t1.a, test.t2.d) in(test.t1.b, aaaaaa, bbbbbb, cccccc)]"))
+
+	// Test the plan with range fallback would not be put into cache.
+	tk.MustExec("prepare stmt2 from 'select /*+ inl_join(t1) */ * from  t1 join t2 on t1.a = t2.d where t1.b in (?, ?, ?, ?, ?)'")
+	tk.MustExec("set @a='a', @b='b', @c='c', @d='d', @e='e'")
+	tk.MustExec("execute stmt2 using @a, @b, @c, @d, @e")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Memory capacity of 1275 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen"))
+	tk.MustExec("execute stmt2 using @a, @b, @c, @d, @e")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
+
+// https://github.com/pingcap/tidb/issues/38295.
+func TestIssue38295(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t0(c0 BLOB(298) , c1 BLOB(182) , c2 NUMERIC);")
+	tk.MustExec("CREATE VIEW v0(c0) AS SELECT t0.c1 FROM t0;")
+	tk.MustExec("INSERT INTO t0 VALUES (-1, 'a', '2046549365');")
+	tk.MustExec("CREATE INDEX i0 ON t0(c2);")
+	tk.MustGetErrCode("SELECT t0.c1, t0.c2 FROM t0 GROUP BY MOD(t0.c0, DEFAULT(t0.c2));", errno.ErrFieldNotInGroupBy)
+	tk.MustExec("UPDATE t0 SET c2=1413;")
 }

@@ -321,7 +321,7 @@ func createSelectNormalByBenchmarkTest(batch, totalRows int, ctx sessionctx.Cont
 		SetDAGRequest(&tipb.DAGRequest{}).
 		SetDesc(false).
 		SetKeepOrder(false).
-		SetFromSessionVars(variable.NewSessionVars()).
+		SetFromSessionVars(variable.NewSessionVars(nil)).
 		SetMemTracker(memory.NewTracker(-1, -1)).
 		Build()
 
@@ -390,7 +390,7 @@ func createSelectNormal(t *testing.T, batch, totalRows int, planIDs []int, sctx 
 		SetDAGRequest(&tipb.DAGRequest{}).
 		SetDesc(false).
 		SetKeepOrder(false).
-		SetFromSessionVars(variable.NewSessionVars()).
+		SetFromSessionVars(variable.NewSessionVars(nil)).
 		SetMemTracker(memory.NewTracker(-1, -1)).
 		Build()
 	require.NoError(t, err)

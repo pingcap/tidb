@@ -1,0 +1,20 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "fktest_test",
+    timeout = "short",
+    srcs = [
+        "foreign_key_test.go",
+        "main_test.go",
+    ],
+    flaky = True,
+    deps = [
+        "//config",
+        "//meta/autoid",
+        "//planner/core",
+        "//testkit",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)
