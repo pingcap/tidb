@@ -193,5 +193,4 @@ func (worker *topnStatsMergeWorker) Run(timeZone *time.Location, isIndex bool,
 		resp.PopedTopn = leftTopN
 		worker.respCh <- resp
 	}
-	return
 }
