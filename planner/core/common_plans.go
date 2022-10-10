@@ -348,6 +348,15 @@ type Insert struct {
 	FKChecks []*FKCheck
 }
 
+// MemoryUsage return the memory usage of Insert
+func (p *Insert) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	return
+}
+
 // Update represents Update plan.
 type Update struct {
 	baseSchemaProducer
