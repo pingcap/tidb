@@ -70,7 +70,7 @@ it will use all these schema change stages:
       - TODO: Should we also set placement rules? (Lable Rules)
       - Set the state to StateDeleteOnly
       
-      // StateDeleteOnly means we can only delete items for this schema element.
+      // StateDeleteOnly means we can only delete items for this schema element (the new  partition).
       StateDeleteOnly
       - Set the state to StateWriteOnly
 
