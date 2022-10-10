@@ -19,10 +19,6 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/terror"
-	decoder "github.com/pingcap/tidb/util/rowDecoder"
-	"github.com/prometheus/client_golang/prometheus"
 	"math"
 	"strconv"
 	"strings"
@@ -38,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser"
@@ -46,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
@@ -59,9 +57,11 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/mock"
+	decoder "github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/slice"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
@@ -2193,7 +2193,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		return ver, err
 	}
 	partNames := make([]string, len(partNamesCIStr))
-	for i, _ := range partNamesCIStr {
+	for i := range partNamesCIStr {
 		partNames[i] = partNamesCIStr[i].L
 	}
 
