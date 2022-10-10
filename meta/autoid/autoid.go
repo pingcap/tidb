@@ -26,8 +26,8 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/kvproto/pkg/autoid"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
@@ -36,11 +36,12 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/tikv/pd/client/grpcutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	tikvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 // Attention:
@@ -585,13 +586,14 @@ func NewAllocatorsFromTblInfo(store kv.Storage, schemaID int64, tblInfo *model.T
 		cli := pdStore.GetPDClient()
 		addr := cli.GetLeaderAddr()
 		fmt.Println("--------------- addr ===", addr)
-		grpcConn, err := grpcutil.GetClientConn(context.Background(), addr, nil)
+		// grpcConn, err := grpcutil.GetClientConn(context.Background(), addr, nil)
+		grpcConn, err := grpc.Dial("127.0.0.1:50052", grpc.WithTransportCredentials(insecure.NewCredentials()))
 		if err != nil {
 			panic(err)
 		}
 		alloc := &singlePointAlloc{
-			dbID: dbID,
-			tblID: tblInfo.ID,
+			dbID:              dbID,
+			tblID:             tblInfo.ID,
 			AutoIDAllocClient: autoid.NewAutoIDAllocClient(grpcConn),
 		}
 		allocs = append(allocs, alloc)
