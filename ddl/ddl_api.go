@@ -638,7 +638,7 @@ func (d *ddl) RecoverSchema(ctx sessionctx.Context, recoverSchemaInfo *RecoverSc
 	job := &model.Job{
 		Type:       model.ActionRecoverSchema,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{recoverSchemaInfo, recoverSchemaCheckFlagNone},
+		Args:       []interface{}{recoverSchemaInfo, recoverCheckFlagNone},
 	}
 	err := d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
@@ -2707,7 +2707,7 @@ func (d *ddl) RecoverTable(ctx sessionctx.Context, recoverInfo *RecoverInfo) (er
 
 		Type:       model.ActionRecoverTable,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{recoverInfo, recoverTableCheckFlagNone},
+		Args:       []interface{}{recoverInfo, recoverCheckFlagNone},
 	}
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)

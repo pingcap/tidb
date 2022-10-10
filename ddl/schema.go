@@ -253,18 +253,11 @@ func onDropSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 	return ver, errors.Trace(err)
 }
 
-const (
-	recoverSchemaCheckFlagNone int64 = iota
-	recoverSchemaCheckFlagEnableGC
-	recoverSchemaCheckFlagDisableGC
-)
-
 func (w *worker) onRecoverSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var (
 		recoverSchemaInfo      *RecoverSchemaInfo
 		recoverSchemaCheckFlag int64
 	)
-	const checkFlagIndexInJobArgs = 1 // The index of `recoverSchemaCheckFlag` in job arg list.
 	if err := job.DecodeArgs(&recoverSchemaInfo, &recoverSchemaCheckFlag); err != nil {
 		// Invalid arguments, cancel this job.
 		job.State = model.JobStateCancelled
@@ -282,9 +275,9 @@ func (w *worker) onRecoverSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver i
 		// none -> write only
 		// check GC enable and update flag.
 		if gcEnable {
-			job.Args[checkFlagIndexInJobArgs] = recoverSchemaCheckFlagEnableGC
+			job.Args[checkFlagIndexInJobArgs] = recoverCheckFlagEnableGC
 		} else {
-			job.Args[checkFlagIndexInJobArgs] = recoverSchemaCheckFlagDisableGC
+			job.Args[checkFlagIndexInJobArgs] = recoverCheckFlagDisableGC
 		}
 		// Clear all placement when recover
 		for _, recoverTabInfo := range recoverSchemaInfo.RecoverTabsInfo {

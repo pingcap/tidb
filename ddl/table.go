@@ -391,18 +391,11 @@ func onDropTableOrView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ er
 	return ver, errors.Trace(err)
 }
 
-const (
-	recoverTableCheckFlagNone int64 = iota
-	recoverTableCheckFlagEnableGC
-	recoverTableCheckFlagDisableGC
-)
-
 func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	var (
 		recoverInfo           *RecoverInfo
 		recoverTableCheckFlag int64
 	)
-	const checkFlagIndexInJobArgs = 1 // The index of `recoverTableCheckFlag` in job arg list.
 	if err = job.DecodeArgs(&recoverInfo, &recoverTableCheckFlag); err != nil {
 		// Invalid arguments, cancel this job.
 		job.State = model.JobStateCancelled
@@ -455,9 +448,9 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		// none -> write only
 		// check GC enable and update flag.
 		if gcEnable {
-			job.Args[checkFlagIndexInJobArgs] = recoverTableCheckFlagEnableGC
+			job.Args[checkFlagIndexInJobArgs] = recoverCheckFlagEnableGC
 		} else {
-			job.Args[checkFlagIndexInJobArgs] = recoverTableCheckFlagDisableGC
+			job.Args[checkFlagIndexInJobArgs] = recoverCheckFlagDisableGC
 		}
 
 		// Clear all placement when recover

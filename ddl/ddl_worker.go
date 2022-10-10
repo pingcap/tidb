@@ -658,7 +658,7 @@ func finishRecoverTable(w *worker, job *model.Job) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if recoverTableCheckFlag == recoverTableCheckFlagEnableGC {
+	if recoverTableCheckFlag == recoverCheckFlagEnableGC {
 		err = enableGC(w)
 		if err != nil {
 			return errors.Trace(err)
@@ -676,7 +676,7 @@ func finishRecoverSchema(w *worker, job *model.Job) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if recoverSchemaCheckFlag == recoverSchemaCheckFlagEnableGC {
+	if recoverSchemaCheckFlag == recoverCheckFlagEnableGC {
 		err = enableGC(w)
 		if err != nil {
 			return errors.Trace(err)
@@ -1548,7 +1548,6 @@ func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job, multiInfos ...
 			recoverSchemaInfo      *RecoverSchemaInfo
 			recoverSchemaCheckFlag int64
 		)
-		const checkFlagIndexInJobArgs = 1 // The index of `recoverSchemaCheckFlag` in job arg list.
 		err = job.DecodeArgs(&recoverSchemaInfo, &recoverSchemaCheckFlag)
 		if err != nil {
 			return 0, errors.Trace(err)

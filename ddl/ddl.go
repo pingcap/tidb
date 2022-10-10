@@ -85,6 +85,16 @@ const (
 
 	reorgWorkerCnt   = 10
 	generalWorkerCnt = 1
+
+	// checkFlagIndexInJobArgs is the recoverCheckFlag index used in RecoverTable/RecoverSchema job arg list.
+	checkFlagIndexInJobArgs = 1
+)
+
+const (
+	// The recoverCheckFlag is used to judge the gc work status when RecoverTable/RecoverSchema.
+	recoverCheckFlagNone int64 = iota
+	recoverCheckFlagEnableGC
+	recoverCheckFlagDisableGC
 )
 
 // OnExist specifies what to do when a new object has a name collision.
