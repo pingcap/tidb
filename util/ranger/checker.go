@@ -50,7 +50,11 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 	switch scalar.FuncName.L {
 	case ast.LogicOr, ast.LogicAnd:
 		return c.check(scalar.GetArgs()[0]) && c.check(scalar.GetArgs()[1])
-	case ast.EQ, ast.NE, ast.GE, ast.GT, ast.LE, ast.LT, ast.NullEQ:
+	case ast.NullEQ:
+		_, ok1 := scalar.GetArgs()[0].(*expression.Column)
+		_, ok2 := scalar.GetArgs()[1].(*expression.Column)
+		return ok1 && ok2
+	case ast.EQ, ast.NE, ast.GE, ast.GT, ast.LE:
 		if _, ok := scalar.GetArgs()[0].(*expression.Constant); ok {
 			if c.checkColumn(scalar.GetArgs()[1]) {
 				// Checks whether the scalar function is calculated use the collation compatible with the column.
