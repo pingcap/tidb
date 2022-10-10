@@ -825,6 +825,8 @@ const (
 	TiDBServerMemoryLimit = "tidb_server_memory_limit"
 	// TiDBServerMemoryLimitSessMinSize indicates the minimal memory used of a session, that becomes a candidate for session kill.
 	TiDBServerMemoryLimitSessMinSize = "tidb_server_memory_limit_sess_min_size"
+	// TiDBEnableGOGCTuner is to enable GOGC tuner. it can tuner GOGC
+	TiDBEnableGOGCTuner = "tidb_enable_gogc_tuner"
 )
 
 // TiDB intentional limits
@@ -1052,6 +1054,7 @@ const (
 	DefTiDBCostModelVer                             = 1
 	DefTiDBServerMemoryLimitSessMinSize             = 128 << 20
 	DefTiDBMergePartitionStatsConcurrency           = 1
+	DefTiDBEnableGOGCTuner                          = true
 )
 
 // Process global variables.
