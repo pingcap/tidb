@@ -417,6 +417,26 @@ func TestForeignKeyCheckAndLock(t *testing.T) {
 		wg.Wait()
 		tk.MustQuery("select id, name from t1 order by name").Check(testkit.Rows("1 a", "2 b"))
 		tk.MustQuery("select a,  name from t2 order by name").Check(testkit.Rows("2 a"))
+
+		// Test delete parent table
+		// Test in pessimistic txn
+		// Test insert child table
+		tk.MustExec("begin pessimistic")
+		tk.MustExec("insert into t2 (a, name) values (1, 'a');")
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			tk2.MustExec("begin pessimistic")
+			err := tk2.ExecToErr("delete from t1 where id = 1")
+			require.NotNil(t, err)
+			require.Equal(t, "[planner:1451]Cannot delete or update a parent row: a foreign key constraint fails (`test`.`t2`, CONSTRAINT `fk` FOREIGN KEY (`a`) REFERENCES `t1` (`id`))", err.Error())
+			tk2.MustExec("commit")
+		}()
+		time.Sleep(time.Millisecond * 50)
+		tk.MustExec("commit")
+		wg.Wait()
+		tk.MustQuery("select id, name from t1 order by name").Check(testkit.Rows("1 a", "2 b"))
+		tk.MustQuery("select a,  name from t2 order by a").Check(testkit.Rows("1 a", "2 a"))
 	}
 }
 
