@@ -272,6 +272,22 @@ func TestBoolValidation(t *testing.T) {
 	require.Equal(t, Off, val)
 }
 
+func TestTimeValidation(t *testing.T) {
+	sv := SysVar{Scope: ScopeSession, Name: "mynewsysvar", Value: "23:59 +0000", Type: TypeTime}
+	vars := NewSessionVars(nil)
+
+	val, err := sv.Validate(vars, "23:59 +0000", ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "23:59 +0000", val)
+
+	val, err = sv.Validate(vars, "3:00 +0000", ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "03:00 +0000", val)
+
+	_, err = sv.Validate(vars, "0.000", ScopeSession)
+	require.Error(t, err)
+}
+
 func TestGetNativeValType(t *testing.T) {
 	sv := SysVar{Scope: ScopeGlobal | ScopeSession, Name: "mynewsysvar", Value: Off, Type: TypeBool}
 
@@ -382,6 +398,9 @@ func TestScope(t *testing.T) {
 	require.False(t, sv.HasGlobalScope())
 	require.True(t, sv.HasInstanceScope())
 	require.False(t, sv.HasNoneScope())
+
+	sv = SysVar{Scope: ScopeSession, Name: "mynewsysvar", Value: On, Type: TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
+	require.Error(t, sv.validateScope(ScopeGlobal))
 }
 
 func TestBuiltInCase(t *testing.T) {
@@ -515,11 +534,38 @@ func TestSkipInitIsUsed(t *testing.T) {
 	}
 }
 
+func TestScopeToString(t *testing.T) {
+	require.Equal(t, "GLOBAL", ScopeGlobal.String())
+	require.Equal(t, "SESSION", ScopeSession.String())
+	require.Equal(t, "INSTANCE", ScopeInstance.String())
+	require.Equal(t, "NONE", ScopeNone.String())
+	tmp := ScopeSession + ScopeGlobal
+	require.Equal(t, "SESSION,GLOBAL", tmp.String())
+	// this is not currently possible, but might be in future.
+	// *but* global + instance is not possible. these are mutually exclusive by design.
+	tmp = ScopeSession + ScopeInstance
+	require.Equal(t, "SESSION,INSTANCE", tmp.String())
+}
+
 func TestValidateWithRelaxedValidation(t *testing.T) {
 	sv := GetSysVar(SecureAuth)
 	vars := NewSessionVars(nil)
 	val := sv.ValidateWithRelaxedValidation(vars, "1", ScopeGlobal)
 	require.Equal(t, "ON", val)
+
+	// Relaxed validation catches the error and squashes it.
+	// The incorrect value is returned as-is.
+	// I am not sure this is the correct behavior, we might need to
+	// change it to return the default instead in future.
+	sv = GetSysVar(DefaultAuthPlugin)
+	val = sv.ValidateWithRelaxedValidation(vars, "RandomText", ScopeGlobal)
+	require.Equal(t, "RandomText", val)
+
+	// Validation func fails, the error is also caught and squashed.
+	// The incorrect value is returned as-is.
+	sv = GetSysVar(InitConnect)
+	val = sv.ValidateWithRelaxedValidation(vars, "RandomText - should be valid SQL", ScopeGlobal)
+	require.Equal(t, "RandomText - should be valid SQL", val)
 }
 
 func TestInstanceConfigHasMatchingSysvar(t *testing.T) {
@@ -597,11 +643,17 @@ func TestInstanceScope(t *testing.T) {
 }
 
 func TestSetSysVar(t *testing.T) {
-	val := GetSysVar(SystemTimeZone).Value
+	vars := NewSessionVars(nil)
+	vars.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
+	originalVal := GetSysVar(SystemTimeZone).Value
 	SetSysVar(SystemTimeZone, "America/New_York")
 	require.Equal(t, "America/New_York", GetSysVar(SystemTimeZone).Value)
-	SetSysVar(SystemTimeZone, val) // restore
-	require.Equal(t, val, GetSysVar(SystemTimeZone).Value)
+	// Test alternative Get
+	val, err := GetSysVar(SystemTimeZone).GetGlobalFromHook(vars)
+	require.Nil(t, err)
+	require.Equal(t, "America/New_York", val)
+	SetSysVar(SystemTimeZone, originalVal) // restore
+	require.Equal(t, originalVal, GetSysVar(SystemTimeZone).Value)
 }
 
 func TestSkipSysvarCache(t *testing.T) {
