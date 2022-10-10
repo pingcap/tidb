@@ -2617,7 +2617,10 @@ func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reo
 				return false, nil
 			}
 
-			w.rowDecoder.DecodeTheExistedColumnMap(w.sessCtx, handle, rawRow, sysTZ, w.rowMap)
+			_, err = w.rowDecoder.DecodeTheExistedColumnMap(w.sessCtx, handle, rawRow, sysTZ, w.rowMap)
+			if err != nil {
+				return nil, nil, true, errors.Trace(err)
+			}
 
 			//tmpChk := w.rowDecoder.CurrentRowWithDefaultVal()
 			//tmpDatum := tmpChk.GetDatumRow(w.reorgInfo.)
