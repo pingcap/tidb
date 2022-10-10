@@ -889,7 +889,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do.exit)
 	do.serverMemoryLimitHandle = servermemorylimit.NewServerMemoryLimitHandle(do.exit)
 	do.sysProcesses = SysProcesses{mu: &sync.RWMutex{}, procMap: make(map[uint64]sessionctx.Context)}
-	variable.SetStatsCacheCapacity.Store(do.SetStatsCacheCapacity)
+	do.initDomainSysVars()
 	return do
 }
 
