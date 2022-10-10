@@ -21,8 +21,13 @@ go_library(
 
 go_test(
     name = "model_test",
-    srcs = ["model_test.go"],
+    timeout = "short",
+    srcs = [
+        "ddl_test.go",
+        "model_test.go",
+    ],
     embed = [":model"],
+    flaky = True,
     deps = [
         "//parser/charset",
         "//parser/mysql",

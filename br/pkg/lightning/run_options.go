@@ -16,8 +16,10 @@ package lightning
 
 import (
 	"github.com/pingcap/tidb/br/pkg/lightning/glue"
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/util/promutil"
+	"go.uber.org/zap"
 )
 
 type options struct {
@@ -27,6 +29,7 @@ type options struct {
 	checkpointName    string
 	promFactory       promutil.Factory
 	promRegistry      promutil.Registry
+	logger            log.Logger
 }
 
 type Option func(*options)
@@ -69,5 +72,12 @@ func WithPromFactory(f promutil.Factory) Option {
 func WithPromRegistry(r promutil.Registry) Option {
 	return func(o *options) {
 		o.promRegistry = r
+	}
+}
+
+// WithLogger sets the logger to a lightning task.
+func WithLogger(logger *zap.Logger) Option {
+	return func(o *options) {
+		o.logger = log.Logger{Logger: logger}
 	}
 }

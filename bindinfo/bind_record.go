@@ -69,9 +69,9 @@ type Binding struct {
 	Charset    string
 	Collation  string
 	// Hint is the parsed hints, it is used to bind hints to stmt node.
-	Hint *hint.HintsSet
+	Hint *hint.HintsSet `json:"-"`
 	// ID is the string form of Hint. It would be non-empty only when the status is `Using` or `PendingVerify`.
-	ID string
+	ID string `json:"-"`
 }
 
 func (b *Binding) isSame(rb *Binding) bool {

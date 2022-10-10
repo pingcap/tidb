@@ -5,15 +5,14 @@ package export
 import (
 	"context"
 	"database/sql"
-	"sort"
 	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
-	clientv3 "go.etcd.io/etcd/client/v3"
-
 	"github.com/pingcap/tidb/br/pkg/version"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
+	clientv3 "go.etcd.io/etcd/client/v3"
+	"golang.org/x/exp/slices"
 )
 
 const tidbServerInformationPath = "/tidb/server/info"
@@ -50,8 +49,8 @@ func checkSameCluster(tctx *tcontext.Context, db *sql.DB, pdAddrs []string) (boo
 	if err != nil {
 		return false, err
 	}
-	sort.Strings(tidbDDLIDs)
-	sort.Strings(pdDDLIDs)
+	slices.Sort(tidbDDLIDs)
+	slices.Sort(pdDDLIDs)
 
 	return sameStringArray(tidbDDLIDs, pdDDLIDs), nil
 }

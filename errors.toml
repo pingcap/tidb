@@ -61,6 +61,16 @@ error = '''
 version mismatch
 '''
 
+["BR:EBS:ErrRestoreInvalidPeer"]
+error = '''
+restore met a invalid peer
+'''
+
+["BR:EBS:ErrRestoreTotalKVMismatch"]
+error = '''
+restore total tikvs mismatch
+'''
+
 ["BR:ExternalStorage:ErrStorageInvalidConfig"]
 error = '''
 invalid external storage config
@@ -171,9 +181,19 @@ error = '''
 task not found
 '''
 
+["BR:Restore:ErrDatabasesAlreadyExisted"]
+error = '''
+databases already existed in restored cluster
+'''
+
 ["BR:Restore:ErrRestoreChecksumMismatch"]
 error = '''
 restore checksum mismatch
+'''
+
+["BR:Restore:ErrRestoreIncompatibleSys"]
+error = '''
+incompatible system table
 '''
 
 ["BR:Restore:ErrRestoreInvalidBackup"]
@@ -199,6 +219,11 @@ restore mode mismatch
 ["BR:Restore:ErrRestoreNoPeer"]
 error = '''
 region does not have peer
+'''
+
+["BR:Restore:ErrRestoreNotFreshCluster"]
+error = '''
+cluster is not fresh
 '''
 
 ["BR:Restore:ErrRestoreRangeMismatch"]
@@ -366,9 +391,24 @@ error = '''
 create kv client error
 '''
 
+["Lightning:KV:ErrKVIngestFailed"]
+error = '''
+ingest tikv failed
+'''
+
+["Lightning:KV:ErrKVRaftProposalDropped"]
+error = '''
+raft proposal dropped
+'''
+
 ["Lightning:KV:NotLeader"]
 error = '''
 not leader
+'''
+
+["Lightning:KV:ReadIndexNotReady"]
+error = '''
+read index not ready
 '''
 
 ["Lightning:KV:RegionNotFound"]
@@ -389,6 +429,11 @@ invalid schema file
 ["Lightning:Loader:ErrTableRoute"]
 error = '''
 table route error
+'''
+
+["Lightning:Loader:ErrTooManySourceFiles"]
+error = '''
+too many source files
 '''
 
 ["Lightning:MetaMgr:ErrMetaMgrUnknown"]
@@ -486,6 +531,11 @@ error = '''
 open duplicate db error
 '''
 
+["Lightning:Restore:ErrResolveDuplicateRows"]
+error = '''
+resolve duplicate rows error on table '%s'
+'''
+
 ["Lightning:Restore:ErrRestoreTable"]
 error = '''
 restore table %s failed
@@ -559,6 +609,11 @@ Invalid allocator type
 ["autoid:8059"]
 error = '''
 Failed to read auto-random value from storage engine
+'''
+
+["ddl:0"]
+error = '''
+TiFlash mode will take effect after at least one TiFlash replica is set for the table
 '''
 
 ["ddl:1025"]
@@ -776,6 +831,11 @@ error = '''
 Key part '%-.192s' length cannot be 0
 '''
 
+["ddl:1452"]
+error = '''
+Cannot add or update a child row: a foreign key constraint fails (%.192s)
+'''
+
 ["ddl:1470"]
 error = '''
 String '%-.70s' is too long for %s (should be no longer than %d)
@@ -851,6 +911,11 @@ error = '''
 Duplicate partition name %-.192s
 '''
 
+["ddl:1553"]
+error = '''
+Cannot drop index '%-.192s': needed in a foreign key constraint
+'''
+
 ["ddl:1562"]
 error = '''
 Cannot create temporary table with partitions
@@ -911,6 +976,11 @@ error = '''
 VALUES value for partition '%-.64s' must have type INT
 '''
 
+["ddl:1701"]
+error = '''
+Cannot truncate a table referenced in a foreign key constraint (%.192s)
+'''
+
 ["ddl:1731"]
 error = '''
 Non matching attribute '%-.64s' between partition and table
@@ -919,6 +989,11 @@ Non matching attribute '%-.64s' between partition and table
 ["ddl:1732"]
 error = '''
 Table to exchange with partition is partitioned: '%-.64s'
+'''
+
+["ddl:1733"]
+error = '''
+Table to exchange with partition is temporary: '%-.64s'
 '''
 
 ["ddl:1736"]
@@ -949,6 +1024,21 @@ Duplicate foreign key constraint name '%s'
 ["ddl:1828"]
 error = '''
 Cannot drop column '%-.192s': needed in a foreign key constraint '%-.192s'
+'''
+
+["ddl:1829"]
+error = '''
+Cannot drop column '%-.192s': needed in a foreign key constraint '%-.192s' of table '%-.192s'
+'''
+
+["ddl:1832"]
+error = '''
+Cannot change column '%-.192s': used in a foreign key constraint '%-.192s'
+'''
+
+["ddl:1833"]
+error = '''
+Cannot change column '%-.192s': used in a foreign key constraint '%-.192s' of table '%-.192s'
 '''
 
 ["ddl:1846"]
@@ -1006,6 +1096,11 @@ error = '''
 You cannot use the window function '%s' in this context.'
 '''
 
+["ddl:3730"]
+error = '''
+Cannot drop table '%s' referenced by a foreign key constraint '%s' on table '%s'.
+'''
+
 ["ddl:3753"]
 error = '''
 Cannot create an expression index on a function that returns a JSON or GEOMETRY value
@@ -1053,7 +1148,7 @@ Default value expression of column '%s' contains a disallowed function: `%s`.
 
 ["ddl:3780"]
 error = '''
-Referencing column '%s' in foreign key constraint '%s' are incompatible
+Referencing column '%s' and referenced column '%s' in foreign key constraint '%s' are incompatible.
 '''
 
 ["ddl:3800"]
@@ -1229,6 +1324,16 @@ Placement policy '%-.192s' is still in use
 ["ddl:8242"]
 error = '''
 '%s' is unsupported on cache tables.
+'''
+
+["ddl:8245"]
+error = '''
+column %s id %d does not exist, this column may have been updated by other DDL ran in parallel
+'''
+
+["ddl:8246"]
+error = '''
+Error happened when enable/disable DDL: %s
 '''
 
 ["domain:8027"]
@@ -1451,6 +1556,16 @@ error = '''
 modifying %s will require SET GLOBAL in a future version of TiDB
 '''
 
+["executor:8144"]
+error = '''
+setting %s has no effect in TiDB
+'''
+
+["executor:8147"]
+error = '''
+transaction aborted because lazy uniqueness check is enabled and an error occurred: %s
+'''
+
 ["executor:8212"]
 error = '''
 Failed to split region ranges: %s
@@ -1511,6 +1626,11 @@ error = '''
 Incorrect type for argument %s in function %s.
 '''
 
+["expression:3146"]
+error = '''
+Invalid data type for JSON data in argument %d to function %s; a JSON string or JSON type is required.
+'''
+
 ["expression:8128"]
 error = '''
 Invalid TABLESAMPLE: %s
@@ -1528,7 +1648,7 @@ Invalid JSON text: %-.192s
 
 ["json:3143"]
 error = '''
-Invalid JSON path expression %s.
+Invalid JSON path expression. The error is around character position %d.
 '''
 
 ["json:3144"]
@@ -1544,6 +1664,11 @@ In this situation, path expressions may not contain the * and ** tokens.
 ["json:3150"]
 error = '''
 The second argument can only be either 'one' or 'all'.
+'''
+
+["json:3157"]
+error = '''
+The JSON document exceeds the maximum depth.
 '''
 
 ["json:3158"]
@@ -1608,7 +1733,7 @@ not implemented
 
 ["kv:9007"]
 error = '''
-Write conflict, txnStartTS=%d, conflictStartTS=%d, conflictCommitTS=%d, key=%s [try again later]
+Write conflict, txnStartTS=%d, conflictStartTS=%d, conflictCommitTS=%d, key=%s, reason=%s [try again later]
 '''
 
 ["meta:1007"]
@@ -1814,6 +1939,16 @@ View '%-.192s.%-.192s' references invalid table(s) or column(s) or function(s) o
 ["planner:1391"]
 error = '''
 Key part '%-.192s' length cannot be 0
+'''
+
+["planner:1451"]
+error = '''
+Cannot delete or update a parent row: a foreign key constraint fails (%.192s)
+'''
+
+["planner:1452"]
+error = '''
+Cannot add or update a child row: a foreign key constraint fails (%.192s)
 '''
 
 ["planner:1462"]
@@ -2071,9 +2206,19 @@ error = '''
 Column '%s' in ANALYZE column option does not exist in table '%s'
 '''
 
+["planner:8145"]
+error = '''
+variable %s has no effect in TiDB
+'''
+
 ["planner:8242"]
 error = '''
 '%s' is unsupported on cache tables.
+'''
+
+["privilege:1045"]
+error = '''
+Access denied for user '%-.48s'@'%-.255s' (using password: %s)
 '''
 
 ["privilege:1141"]
@@ -2196,6 +2341,21 @@ error = '''
 Changing schema from '%-.192s' to '%-.192s' is not allowed.
 '''
 
+["schema:1822"]
+error = '''
+Failed to add the foreign key constraint. Missing index for constraint '%s' in the referenced table '%s'
+'''
+
+["schema:1824"]
+error = '''
+Failed to open the referenced table '%s'
+'''
+
+["schema:1830"]
+error = '''
+Column '%-.192s' cannot be NOT NULL: needed in a foreign key constraint '%-.192s' SET NULL
+'''
+
 ["schema:1831"]
 error = '''
 Duplicate index '%-.64s' defined on the table '%-.64s.%-.64s'. This is deprecated and will be disallowed in a future release.
@@ -2209,6 +2369,21 @@ User %s does not exist.
 ["schema:3163"]
 error = '''
 User %s already exists.
+'''
+
+["schema:3733"]
+error = '''
+Foreign key '%s' uses virtual column '%s' which is not supported.
+'''
+
+["schema:3734"]
+error = '''
+Failed to add the foreign key constraint. Missing column '%s' for constraint '%s' in the referenced table '%s'
+'''
+
+["schema:3750"]
+error = '''
+Unable to create or change a table without a primary key, when the system variable 'sql_require_primary_key' is set. Add a primary key to the table or unset this variable to avoid this message. Note that tables without a primary key can cause performance problems in row-based replication, so please consult your DBA before changing this setting.
 '''
 
 ["schema:4139"]
@@ -2244,6 +2419,11 @@ error = '''
 ["session:8143"]
 error = '''
 non-transactional job failed, job id: %d, total jobs: %d. job range: [%s, %s], job sql: %s, err: %v
+'''
+
+["session:8146"]
+error = '''
+cannot migrate the current session: %s
 '''
 
 ["structure:8217"]

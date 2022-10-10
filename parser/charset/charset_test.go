@@ -84,7 +84,7 @@ func TestGetDefaultCollation(t *testing.T) {
 		if collate.IsDefault {
 			if desc, ok := CharacterSetInfos[collate.CharsetName]; ok {
 				require.Equal(t, desc.DefaultCollation, collate.Name)
-				charsetNum += 1
+				charsetNum++
 			}
 		}
 	}

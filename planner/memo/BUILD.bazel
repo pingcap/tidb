@@ -20,6 +20,7 @@ go_library(
 
 go_test(
     name = "memo_test",
+    timeout = "short",
     srcs = [
         "expr_iterator_test.go",
         "group_expr_test.go",
@@ -28,6 +29,7 @@ go_test(
         "pattern_test.go",
     ],
     embed = [":memo"],
+    flaky = True,
     deps = [
         "//domain",
         "//expression",
@@ -36,8 +38,10 @@ go_test(
         "//parser/model",
         "//planner/core",
         "//planner/property",
+        "//sessionctx/variable",
         "//testkit/testsetup",
         "@com_github_stretchr_testify//require",
+        "@io_opencensus_go//stats/view",
         "@org_uber_go_goleak//:goleak",
     ],
 )

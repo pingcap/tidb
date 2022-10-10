@@ -17,9 +17,12 @@ package kv_test
 import (
 	"bytes"
 	"errors"
+	"strconv"
 	"testing"
 	"time"
+	"unsafe"
 
+	"github.com/pingcap/kvproto/pkg/coprocessor"
 	. "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/testkit/testutil"
@@ -211,6 +214,18 @@ func TestHandleMap(t *testing.T) {
 	assert.Equal(t, 2, cnt)
 }
 
+func TestKeyRangeDefinition(t *testing.T) {
+	// The struct layout for kv.KeyRange and coprocessor.KeyRange should be exactly the same.
+	// This allow us to use unsafe pointer to convert them and reduce allocation.
+	var r1 KeyRange
+	var r2 coprocessor.KeyRange
+	// Same size.
+	require.Equal(t, unsafe.Sizeof(r1), unsafe.Sizeof(r2))
+	// And same default value.
+	require.Equal(t, (*coprocessor.KeyRange)(unsafe.Pointer(&r1)), &r2)
+	require.Equal(t, &r1, (*KeyRange)(unsafe.Pointer(&r2)))
+}
+
 func BenchmarkIsPoint(b *testing.B) {
 	b.ReportAllocs()
 	kr := KeyRange{
@@ -219,5 +234,85 @@ func BenchmarkIsPoint(b *testing.B) {
 	}
 	for i := 0; i < b.N; i++ {
 		kr.IsPoint()
+	}
+}
+
+var result int
+
+var inputs = []struct {
+	input int
+}{
+	{input: 1},
+	{input: 100},
+	{input: 10000},
+	{input: 1000000},
+}
+
+func memAwareIntMap(size int, handles []Handle) int {
+	var x int
+	m := NewMemAwareHandleMap[int]()
+	for j := 0; j < size; j++ {
+		m.Set(handles[j], j)
+	}
+	for j := 0; j < size; j++ {
+		x, _ = m.Get(handles[j])
+	}
+	return x
+}
+
+func nativeIntMap(size int, handles []Handle) int {
+	var x int
+	m := make(map[Handle]int)
+	for j := 0; j < size; j++ {
+		m[handles[j]] = j
+	}
+
+	for j := 0; j < size; j++ {
+		x = m[handles[j]]
+	}
+	return x
+}
+
+func BenchmarkMemAwareHandleMap(b *testing.B) {
+	var sc stmtctx.StatementContext
+	for _, s := range inputs {
+		handles := make([]Handle, s.input)
+		for i := 0; i < s.input; i++ {
+			if i%2 == 0 {
+				handles[i] = IntHandle(i)
+			} else {
+				handleBytes, _ := codec.EncodeKey(&sc, nil, types.NewIntDatum(int64(i)))
+				handles[i], _ = NewCommonHandle(handleBytes)
+			}
+		}
+		b.Run("MemAwareIntMap_"+strconv.Itoa(s.input), func(b *testing.B) {
+			var x int
+			for i := 0; i < b.N; i++ {
+				x = memAwareIntMap(s.input, handles)
+			}
+			result = x
+		})
+	}
+}
+
+func BenchmarkNativeHandleMap(b *testing.B) {
+	var sc stmtctx.StatementContext
+	for _, s := range inputs {
+		handles := make([]Handle, s.input)
+		for i := 0; i < s.input; i++ {
+			if i%2 == 0 {
+				handles[i] = IntHandle(i)
+			} else {
+				handleBytes, _ := codec.EncodeKey(&sc, nil, types.NewIntDatum(int64(i)))
+				handles[i], _ = NewCommonHandle(handleBytes)
+			}
+		}
+		b.Run("NativeIntMap_"+strconv.Itoa(s.input), func(b *testing.B) {
+			var x int
+			for i := 0; i < b.N; i++ {
+				x = nativeIntMap(s.input, handles)
+			}
+			result = x
+		})
 	}
 }

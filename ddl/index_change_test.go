@@ -33,8 +33,7 @@ import (
 )
 
 func TestIndexChange(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -52,7 +51,7 @@ func TestIndexChange(t *testing.T) {
 		writeOnlyTable  table.Table
 		publicTable     table.Table
 	)
-	tc.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if job.SchemaState == prevState {
 			return
 		}
@@ -79,6 +78,7 @@ func TestIndexChange(t *testing.T) {
 			}
 		}
 	}
+	tc.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	d.SetHook(tc)
 	tk.MustExec("alter table t add index c2(c2)")
 	// We need to make sure onJobUpdated is called in the first hook.
@@ -95,7 +95,7 @@ func TestIndexChange(t *testing.T) {
 
 	prevState = model.StateNone
 	var noneTable table.Table
-	tc.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc2 := func(job *model.Job) {
 		jobID = job.ID
 		if job.SchemaState == prevState {
 			return
@@ -120,6 +120,7 @@ func TestIndexChange(t *testing.T) {
 			require.Equalf(t, 0, len(noneTable.Indices()), "index should have been dropped")
 		}
 	}
+	tc.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc2)
 	tk.MustExec("alter table t drop index c2")
 	v = getSchemaVer(t, tk.Session())
 	checkHistoryJobArgs(t, tk.Session(), jobID, &historyJobArgs{ver: v, tbl: noneTable.Meta()})

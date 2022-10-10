@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/glue"
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/stretchr/testify/require"
 )
@@ -65,6 +66,7 @@ func TestRun(t *testing.T) {
 		glue:         invalidGlue,
 		promRegistry: lightning.promRegistry,
 		promFactory:  lightning.promFactory,
+		logger:       log.L(),
 	}
 	err = lightning.run(ctx, &config.Config{
 		Mydumper: config.MydumperRuntime{

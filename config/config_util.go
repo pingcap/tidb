@@ -40,8 +40,6 @@ var (
 		"Performance.MaxProcs":            {},
 		"Performance.MaxMemory":           {},
 		"Performance.CrossJoin":           {},
-		"Performance.FeedbackProbability": {},
-		"Performance.QueryFeedbackLimit":  {},
 		"Performance.PseudoEstimateRatio": {},
 		"Performance.StmtCountLimit":      {},
 		"Performance.TCPKeepAlive":        {},

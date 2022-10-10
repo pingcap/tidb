@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -122,9 +123,11 @@ func (h *stateRemoteHandle) LockForRead(ctx context.Context, tid int64, newLease
 		}
 		// The old lock is outdated, clear orphan lock.
 		if now > lease {
-			succ = true
-			if err := h.updateRow(ctx, tid, "READ", newLease); err != nil {
-				return errors.Trace(err)
+			if newLease > now { // Note the check, don't decrease the lease value!
+				succ = true
+				if err := h.updateRow(ctx, tid, "READ", newLease); err != nil {
+					return errors.Trace(err)
+				}
 			}
 			return nil
 		}
@@ -208,11 +211,15 @@ func (h *stateRemoteHandle) lockForWriteOnce(ctx context.Context, tid int64, lea
 				_lease = ts
 			}
 		case CachedTableLockRead:
+			newLease := ts
+			if newLease < lease { // Never, never decrease lease
+				newLease = lease
+			}
 			// Change from READ to INTEND
 			if _, err = h.execSQL(ctx,
 				"update mysql.table_cache_meta set lock_type='INTEND', oldReadLease=%?, lease=%? where tid=%?",
 				lease,
-				ts,
+				newLease,
 				tid); err != nil {
 				return errors.Trace(err)
 			}
@@ -242,13 +249,15 @@ func (h *stateRemoteHandle) lockForWriteOnce(ctx context.Context, tid int64, lea
 			// And then retry changing the lock to WRITE
 			waitAndRetry = waitForLeaseExpire(oldReadLease, now)
 		case CachedTableLockWrite:
-			if err = h.updateRow(ctx, tid, "WRITE", ts); err != nil {
-				return errors.Trace(err)
-			}
-			{
-				_updateLocal = true
-				_lockType = CachedTableLockWrite
-				_lease = ts
+			if ts > lease { // Note the check, don't decrease lease value!
+				if err = h.updateRow(ctx, tid, "WRITE", ts); err != nil {
+					return errors.Trace(err)
+				}
+				{
+					_updateLocal = true
+					_lockType = CachedTableLockWrite
+					_lease = ts
+				}
 			}
 		}
 		return nil
@@ -385,6 +394,7 @@ func (h *stateRemoteHandle) rollbackTxn(ctx context.Context) error {
 }
 
 func (h *stateRemoteHandle) runInTxn(ctx context.Context, pessimistic bool, fn func(ctx context.Context, txnTS uint64) error) error {
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
 	err := h.beginTxn(ctx, pessimistic)
 	if err != nil {
 		return errors.Trace(err)
@@ -415,6 +425,7 @@ func (h *stateRemoteHandle) runInTxn(ctx context.Context, pessimistic bool, fn f
 }
 
 func (h *stateRemoteHandle) loadRow(ctx context.Context, tid int64, forUpdate bool) (CachedTableLockType, uint64, uint64, error) {
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
 	var chunkRows []chunk.Row
 	var err error
 	if forUpdate {
@@ -450,6 +461,7 @@ func (h *stateRemoteHandle) updateRow(ctx context.Context, tid int64, lockType s
 func (h *stateRemoteHandle) execSQL(ctx context.Context, sql string, args ...interface{}) ([]chunk.Row, error) {
 	rs, err := h.exec.ExecuteInternal(ctx, sql, args...)
 	if rs != nil {
+		//nolint: errcheck
 		defer rs.Close()
 	}
 	if err != nil {

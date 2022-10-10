@@ -20,18 +20,19 @@ import (
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/client"
 	"github.com/aws/aws-sdk-go/aws/credentials"
+	"github.com/aws/aws-sdk-go/aws/credentials/stscreds"
 	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3iface"
+	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
-	"github.com/spf13/pflag"
-	"go.uber.org/zap"
-
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/spf13/pflag"
+	"go.uber.org/zap"
 )
 
 const (
@@ -42,6 +43,8 @@ const (
 	s3SseKmsKeyIDOption  = "s3.sse-kms-key-id"
 	s3ACLOption          = "s3.acl"
 	s3ProviderOption     = "s3.provider"
+	s3RoleARNOption      = "s3.role-arn"
+	s3ExternalIDOption   = "s3.external-id"
 	notFound             = "NotFound"
 	// number of retries to make of operations.
 	maxRetries = 7
@@ -54,6 +57,7 @@ const (
 
 	// TODO make this configurable, 5 mb is a good minimum size but on low latency/high bandwidth network you can go a lot bigger
 	hardcodedS3ChunkSize = 5 * 1024 * 1024
+	defaultRegion        = "us-east-1"
 	// to check the cloud type by endpoint tag.
 	domainAliyun = "aliyuncs.com"
 )
@@ -128,13 +132,13 @@ type S3BackendOptions struct {
 	Provider              string `json:"provider" toml:"provider"`
 	ForcePathStyle        bool   `json:"force-path-style" toml:"force-path-style"`
 	UseAccelerateEndpoint bool   `json:"use-accelerate-endpoint" toml:"use-accelerate-endpoint"`
+	RoleARN               string `json:"role-arn" toml:"role-arn"`
+	ExternalID            string `json:"external-id" toml:"external-id"`
+	ObjectLockEnabled     bool   `json:"object-lock-enabled" toml:"object-lock-enabled"`
 }
 
 // Apply apply s3 options on backuppb.S3.
 func (options *S3BackendOptions) Apply(s3 *backuppb.S3) error {
-	if options.Region == "" {
-		options.Region = "us-east-1"
-	}
 	if options.Endpoint != "" {
 		u, err := url.Parse(options.Endpoint)
 		if err != nil {
@@ -170,6 +174,8 @@ func (options *S3BackendOptions) Apply(s3 *backuppb.S3) error {
 	s3.AccessKey = options.AccessKey
 	s3.SecretAccessKey = options.SecretAccessKey
 	s3.ForcePathStyle = options.ForcePathStyle
+	s3.RoleArn = options.RoleARN
+	s3.ExternalId = options.ExternalID
 	return nil
 }
 
@@ -185,6 +191,8 @@ func defineS3Flags(flags *pflag.FlagSet) {
 		"Leave empty to use S3 owned key.")
 	flags.String(s3ACLOption, "", "(experimental) Set the S3 canned ACLs, e.g. authenticated-read")
 	flags.String(s3ProviderOption, "", "(experimental) Set the S3 provider, e.g. aws, alibaba, ceph")
+	flags.String(s3RoleARNOption, "", "(experimental) Set the ARN of the IAM role to assume when accessing AWS S3")
+	flags.String(s3ExternalIDOption, "", "(experimental) Set the external ID when assuming the role to access AWS S3")
 }
 
 // parseFromFlags parse S3BackendOptions from command line flags.
@@ -217,6 +225,14 @@ func (options *S3BackendOptions) parseFromFlags(flags *pflag.FlagSet) error {
 	}
 	options.ForcePathStyle = true
 	options.Provider, err = flags.GetString(s3ProviderOption)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	options.RoleARN, err = flags.GetString(s3RoleARNOption)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	options.ExternalID, err = flags.GetString(s3ExternalIDOption)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -257,13 +273,13 @@ func autoNewCred(qs *backuppb.S3) (cred *credentials.Credentials, err error) {
 	}
 	// if it Contains 'aliyuncs', fetch the sts token.
 	if strings.Contains(endpoint, domainAliyun) {
-		return createOssRamCred()
+		return createOssRAMCred()
 	}
 	// other case ,return no error and run default(aws) follow.
 	return nil, nil
 }
 
-func createOssRamCred() (*credentials.Credentials, error) {
+func createOssRAMCred() (*credentials.Credentials, error) {
 	cred, err := aliproviders.NewInstanceMetadataProvider().Retrieve()
 	if err != nil {
 		return nil, errors.Annotate(err, "Alibaba RAM Provider Retrieve")
@@ -276,8 +292,19 @@ func newS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (obj *S3St
 	qs := *backend
 	awsConfig := aws.NewConfig().
 		WithS3ForcePathStyle(qs.ForcePathStyle).
-		WithRegion(qs.Region)
-	request.WithRetryer(awsConfig, defaultS3Retryer())
+		WithCredentialsChainVerboseErrors(true)
+	if qs.Region == "" {
+		awsConfig.WithRegion(defaultRegion)
+	} else {
+		awsConfig.WithRegion(qs.Region)
+	}
+
+	if opts.S3Retryer != nil {
+		request.WithRetryer(awsConfig, opts.S3Retryer)
+	} else {
+		request.WithRetryer(awsConfig, defaultS3Retryer())
+	}
+
 	if qs.Endpoint != "" {
 		awsConfig.WithEndpoint(qs.Endpoint)
 	}
@@ -315,7 +342,47 @@ func newS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (obj *S3St
 		}
 	}
 
-	c := s3.New(ses)
+	s3CliConfigs := []*aws.Config{}
+	// if role ARN and external ID are provided, try to get the credential using this way
+	if len(qs.RoleArn) > 0 {
+		creds := stscreds.NewCredentials(ses, qs.RoleArn, func(p *stscreds.AssumeRoleProvider) {
+			if len(qs.ExternalId) > 0 {
+				p.ExternalID = &qs.ExternalId
+			}
+		})
+		s3CliConfigs = append(s3CliConfigs,
+			aws.NewConfig().WithCredentials(creds),
+		)
+	}
+	c := s3.New(ses, s3CliConfigs...)
+	// s3manager.GetBucketRegionWithClient will set credential anonymous, which works with s3.
+	// we need reassign credential to be compatible with minio authentication.
+	confCred := ses.Config.Credentials
+	setCredOpt := func(req *request.Request) {
+		if confCred != nil {
+			req.Config.Credentials = confCred
+		}
+	}
+	region, err := s3manager.GetBucketRegionWithClient(context.Background(), c, qs.Bucket, setCredOpt)
+	if err != nil {
+		return nil, errors.Annotatef(err, "failed to get region of bucket %s", qs.Bucket)
+	}
+
+	if qs.Region != region {
+		if qs.Region != "" {
+			return nil, errors.Trace(fmt.Errorf("s3 bucket and region are not matched, bucket=%s, input region=%s, real region=%s",
+				qs.Bucket, qs.Region, region))
+		}
+
+		qs.Region = region
+		backend.Region = region
+		if region != defaultRegion {
+			s3CliConfigs = append(s3CliConfigs, aws.NewConfig().WithRegion(region))
+			c = s3.New(ses, s3CliConfigs...)
+		}
+	}
+	log.Info("succeed to get bucket region from s3", zap.String("bucket region", region))
+
 	if len(qs.Prefix) > 0 && !strings.HasSuffix(qs.Prefix, "/") {
 		qs.Prefix += "/"
 	}
@@ -327,11 +394,15 @@ func newS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (obj *S3St
 		}
 	}
 
-	return &S3Storage{
+	s3Storage := &S3Storage{
 		session: ses,
 		svc:     c,
 		options: &qs,
-	}, nil
+	}
+	if opts.CheckS3ObjectLockOptions {
+		backend.ObjectLockEnabled = s3Storage.isObjectLockEnabled()
+	}
+	return s3Storage, nil
 }
 
 // checkBucket checks if a bucket exists.
@@ -376,6 +447,23 @@ func getObject(svc *s3.S3, qs *backuppb.S3) error {
 	return nil
 }
 
+func (rs *S3Storage) isObjectLockEnabled() bool {
+	input := &s3.GetObjectLockConfigurationInput{
+		Bucket: aws.String(rs.options.Bucket),
+	}
+	resp, err := rs.svc.GetObjectLockConfiguration(input)
+	if err != nil {
+		log.Warn("failed to check object lock for bucket", zap.String("bucket", rs.options.Bucket), zap.Error(err))
+		return false
+	}
+	if resp.ObjectLockConfiguration != nil {
+		if s3.ObjectLockEnabledEnabled == *resp.ObjectLockConfiguration.ObjectLockEnabled {
+			return true
+		}
+	}
+	return false
+}
+
 // WriteFile writes data to a file to storage.
 func (rs *S3Storage) WriteFile(ctx context.Context, file string, data []byte) error {
 	input := &s3.PutObjectInput{
@@ -395,7 +483,9 @@ func (rs *S3Storage) WriteFile(ctx context.Context, file string, data []byte) er
 	if rs.options.StorageClass != "" {
 		input = input.SetStorageClass(rs.options.StorageClass)
 	}
-
+	// we don't need to calculate contentMD5 if s3 object lock enabled.
+	// since aws-go-sdk already did it in #computeBodyHashes
+	// https://github.com/aws/aws-sdk-go/blob/bcb2cf3fc2263c8c28b3119b07d2dbb44d7c93a0/service/s3/body_hash.go#L30
 	_, err := rs.svc.PutObjectWithContext(ctx, input)
 	if err != nil {
 		return errors.Trace(err)
@@ -524,7 +614,6 @@ func (rs *S3Storage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 			if err = fn(path, itemSize); err != nil {
 				return errors.Trace(err)
 			}
-
 		}
 		if !aws.BoolValue(res.IsTruncated) {
 			break

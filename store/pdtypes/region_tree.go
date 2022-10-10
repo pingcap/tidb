@@ -16,9 +16,9 @@ package pdtypes
 
 import (
 	"bytes"
-	"sort"
 
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"golang.org/x/exp/slices"
 )
 
 // Region is a mock of PD's core.RegionInfo. For testing purpose.
@@ -52,8 +52,8 @@ func (t *RegionTree) SetRegion(region *Region) {
 // ScanRange scans regions intersecting [start key, end key), returns at most
 // `limit` regions. limit <= 0 means no limit.
 func (t *RegionTree) ScanRange(startKey, endKey []byte, limit int) []*Region {
-	sort.Slice(t.Regions, func(i, j int) bool {
-		return bytes.Compare(t.Regions[i].Meta.StartKey, t.Regions[j].Meta.StartKey) < 0
+	slices.SortFunc(t.Regions, func(i, j *Region) bool {
+		return bytes.Compare(i.Meta.StartKey, j.Meta.StartKey) < 0
 	})
 	pivot := NewRegionInfo(&metapb.Region{StartKey: startKey, EndKey: endKey}, nil)
 	var res []*Region

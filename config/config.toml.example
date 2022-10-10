@@ -18,9 +18,6 @@ path = "/tmp/tidb"
 # The socket file to use for connection.
 socket = "/tmp/tidb-{Port}.sock"
 
-# Run ddl worker on this tidb-server.
-run-ddl = true
-
 # Schema lease duration, very dangerous to change only if you know what you do.
 lease = "45s"
 
@@ -31,15 +28,15 @@ split-table = true
 # The limit of concurrent executed sessions.
 token-limit = 1000
 
-# Controls whether to enable the temporary storage for some operators when a single SQL statement exceeds the memory quota specified by the memory quota.
-oom-use-tmp-storage = true
+# The temporary directory to store the intermediate compute results.
+temp-dir = "/tmp/tidb"
 
 # Specifies the temporary storage path for some operators when a single SQL statement exceeds the memory quota specified by the memory quota.
 # It defaults to a generated directory in `<TMPDIR>/<os/user.Current().Uid>_tidb/` if it is unset.
-# It only takes effect when `oom-use-tmp-storage` is `true`.
+# It only takes effect when `tidb_enable_tmp_storage_on_oom` is `true`.
 # tmp-storage-path = "/tmp/<os/user.Current().Uid>_tidb/MC4wLjAuMDo0MDAwLzAuMC4wLjA6MTAwODA=/tmp-storage"
 
-# Specifies the maximum use of temporary storage (bytes) for all active queries when `oom-use-tmp-storage` is enabled.
+# Specifies the maximum use of temporary storage (bytes) for all active queries when `tidb_enable_tmp_storage_on_oom` is enabled.
 # If the `tmp-storage-quota` exceeds the capacity of the temporary storage directory, tidb-server would return an error and exit.
 # The default value of tmp-storage-quota is under 0 which means tidb-server wouldn't check the capacity.
 tmp-storage-quota = -1
@@ -89,9 +86,6 @@ repair-mode = false
 # In repair mode, repairing table which is not in repair list will get wrong database or wrong table error.
 repair-table-list = []
 
-# The maximum permitted number of simultaneous client connections. When the value is 0, the number of connections is unlimited.
-max-server-connections = 0
-
 # Whether new collations are enabled, as indicated by its name, this configuration entry take effect ONLY when a TiDB cluster bootstraps for the first time.
 new_collations_enabled_on_first_bootstrap = true
 
@@ -135,9 +129,6 @@ format = "text"
 
 # Stores slow query log into separated files.
 slow-query-file = "tidb-slow.log"
-
-# Queries with internal result greater than this value will be logged.
-expensive-threshold = 10000
 
 # File logging.
 [log.file]
@@ -226,17 +217,14 @@ stmt-count-limit = 5000
 # Set keep alive option for tcp connection.
 tcp-keep-alive = true
 
+# Set nodelay option for tcp connection.
+tcp-no-delay = true
+
 # Whether support cartesian product.
 cross-join = true
 
 # Stats lease duration, which influences the time of analyze and stats load.
 stats-lease = "3s"
-
-# Probability to use the query feedback to update stats, 0.0 or 1.0 for always false/true.
-feedback-probability = 0.0
-
-# The max number of query feedback that cache in memory.
-query-feedback-limit = 512
 
 # Pseudo stats will be used if the ratio between the modify count and
 # row count in statistics of a table is greater than it.
@@ -465,3 +453,9 @@ tidb_slow_log_threshold = 300
 # tidb_record_plan_in_slow_log is used to enable record query plan in slow log.
 # 0 is disable. 1 is enable.
 tidb_record_plan_in_slow_log = 1
+
+# The maximum permitted number of simultaneous client connections. When the value is 0, the number of connections is unlimited.
+max_connections = 0
+
+# Run ddl worker on this tidb-server.
+tidb_enable_ddl = true

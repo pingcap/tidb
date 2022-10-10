@@ -190,7 +190,7 @@ func (p *UserPrivileges) isValidHash(record *UserRecord) bool {
 		if len(pwd) == mysql.PWDHashLen+1 {
 			return true
 		}
-		logutil.BgLogger().Error("user password from system DB not like a mysql_native_password format", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
+		logutil.BgLogger().Error("the password from the mysql.user table does not match the definition of a mysql_native_password", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
 		return false
 	}
 
@@ -198,7 +198,15 @@ func (p *UserPrivileges) isValidHash(record *UserRecord) bool {
 		if len(pwd) == mysql.SHAPWDHashLen {
 			return true
 		}
-		logutil.BgLogger().Error("user password from system DB not like a caching_sha2_password format", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
+		logutil.BgLogger().Error("the password from the mysql.user table does not match the definition of a caching_sha2_password", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
+		return false
+	}
+
+	if record.AuthPlugin == mysql.AuthTiDBSM3Password {
+		if len(pwd) == mysql.SM3PWDHashLen {
+			return true
+		}
+		logutil.BgLogger().Error("the password from the mysql.user table does not match the definition of a tidb_sm3_password", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
 		return false
 	}
 
@@ -206,7 +214,7 @@ func (p *UserPrivileges) isValidHash(record *UserRecord) bool {
 		return true
 	}
 
-	logutil.BgLogger().Error("user password from system DB not like a known hash format", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
+	logutil.BgLogger().Error("user password from the mysql.user table not like a known hash format", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
 	return false
 }
 
@@ -285,95 +293,87 @@ func (p *UserPrivileges) GetAuthWithoutVerification(user, host string) (success 
 }
 
 // ConnectionVerification implements the Manager interface.
-func (p *UserPrivileges) ConnectionVerification(user, host string, authentication, salt []byte, tlsState *tls.ConnectionState) (success bool) {
+func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUser, authHost string, authentication, salt []byte, tlsState *tls.ConnectionState) error {
+	hasPassword := "YES"
+	if len(authentication) == 0 {
+		hasPassword = "NO"
+	}
 	if SkipWithGrant {
-		p.user = user
-		p.host = host
-		success = true
-		return
+		p.user = authUser
+		p.host = authHost
+		return nil
 	}
 
 	mysqlPriv := p.Handle.Get()
-	record := mysqlPriv.connectionVerification(user, host)
+	record := mysqlPriv.connectionVerification(authUser, authHost)
 	if record == nil {
-		logutil.BgLogger().Error("get user privilege record fail",
-			zap.String("user", user), zap.String("host", host))
-		return
+		logutil.BgLogger().Error("get authUser privilege record fail",
+			zap.String("authUser", authUser), zap.String("authHost", authHost))
+		return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 	}
 
-	globalPriv := mysqlPriv.matchGlobalPriv(user, host)
+	globalPriv := mysqlPriv.matchGlobalPriv(authUser, authHost)
 	if globalPriv != nil {
 		if !p.checkSSL(globalPriv, tlsState) {
 			logutil.BgLogger().Error("global priv check ssl fail",
-				zap.String("user", user), zap.String("host", host))
-			success = false
-			return
+				zap.String("authUser", authUser), zap.String("authHost", authHost))
+			return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+		}
+	}
+
+	pwd := record.AuthenticationString
+	if !p.isValidHash(record) {
+		return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+	}
+
+	if len(pwd) > 0 && len(authentication) > 0 {
+		switch record.AuthPlugin {
+		case mysql.AuthNativePassword:
+			hpwd, err := auth.DecodePassword(pwd)
+			if err != nil {
+				logutil.BgLogger().Error("decode password string failed", zap.Error(err))
+				return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+			}
+
+			if !auth.CheckScrambledPassword(salt, hpwd, authentication) {
+				return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+			}
+		case mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:
+			authok, err := auth.CheckHashingPassword([]byte(pwd), string(authentication), record.AuthPlugin)
+			if err != nil {
+				logutil.BgLogger().Error("Failed to check caching_sha2_password", zap.Error(err))
+			}
+
+			if !authok {
+				return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+			}
+		case mysql.AuthSocket:
+			if string(authentication) != authUser && string(authentication) != pwd {
+				logutil.BgLogger().Error("Failed socket auth", zap.String("authUser", authUser),
+					zap.String("socket_user", string(authentication)),
+					zap.String("authentication_string", pwd))
+				return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+			}
+		default:
+			logutil.BgLogger().Error("unknown authentication plugin", zap.String("authUser", authUser), zap.String("plugin", record.AuthPlugin))
+			return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+		}
+	} else if len(pwd) > 0 || len(authentication) > 0 {
+		if record.AuthPlugin != mysql.AuthSocket {
+			return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 		}
 	}
 
 	// Login a locked account is not allowed.
 	locked := record.AccountLocked
 	if locked {
-		logutil.BgLogger().Error("try to login a locked account",
-			zap.String("user", user), zap.String("host", host))
-		success = false
-		return
+		logutil.BgLogger().Error(fmt.Sprintf("Access denied for authUser '%s'@'%s'. Account is locked.", authUser, authHost))
+		return errAccountHasBeenLocked.FastGenByArgs(user.Username, user.Hostname)
 	}
 
-	pwd := record.AuthenticationString
-	if !p.isValidHash(record) {
-		return
-	}
-
-	// empty password
-	if len(pwd) == 0 && len(authentication) == 0 {
-		p.user = user
-		p.host = record.Host
-		success = true
-		return
-	}
-
-	if len(pwd) == 0 || len(authentication) == 0 {
-		if record.AuthPlugin != mysql.AuthSocket {
-			return
-		}
-	}
-
-	if record.AuthPlugin == mysql.AuthNativePassword {
-		hpwd, err := auth.DecodePassword(pwd)
-		if err != nil {
-			logutil.BgLogger().Error("decode password string failed", zap.Error(err))
-			return
-		}
-
-		if !auth.CheckScrambledPassword(salt, hpwd, authentication) {
-			return
-		}
-	} else if record.AuthPlugin == mysql.AuthCachingSha2Password {
-		authok, err := auth.CheckShaPassword([]byte(pwd), string(authentication))
-		if err != nil {
-			logutil.BgLogger().Error("Failed to check caching_sha2_password", zap.Error(err))
-		}
-
-		if !authok {
-			return
-		}
-	} else if record.AuthPlugin == mysql.AuthSocket {
-		if string(authentication) != user && string(authentication) != pwd {
-			logutil.BgLogger().Error("Failed socket auth", zap.String("user", user),
-				zap.String("socket_user", string(authentication)),
-				zap.String("authentication_string", pwd))
-			return
-		}
-	} else {
-		logutil.BgLogger().Error("unknown authentication plugin", zap.String("user", user), zap.String("plugin", record.AuthPlugin))
-		return
-	}
-
-	p.user = user
+	p.user = authUser
 	p.host = record.Host
-	success = true
-	return
+	return nil
 }
 
 type checkResult int

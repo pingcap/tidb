@@ -17,15 +17,18 @@ package session
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"strconv"
 	"testing"
 
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
@@ -140,7 +143,7 @@ func prepareTestData(
 			oldData.ops = append(oldData.ops, keyOp)
 			oldData.rowValue = append(oldData.rowValue, thisRowValue)
 			if keyOp == kvrpcpb.Op_Del {
-				mutations.Push(keyOp, rowKey, []byte{}, true, false, false)
+				mutations.Push(keyOp, rowKey, []byte{}, true, false, false, false)
 			}
 		}
 		oldRowValues[i] = thisRowValue
@@ -168,9 +171,9 @@ func prepareTestData(
 		}
 		require.NoError(t, err)
 		if keyOp == kvrpcpb.Op_Put || keyOp == kvrpcpb.Op_Insert {
-			mutations.Push(keyOp, rowKey, rowValue, true, false, false)
+			mutations.Push(keyOp, rowKey, rowValue, true, false, false, false)
 		} else if keyOp == kvrpcpb.Op_Lock {
-			mutations.Push(keyOp, rowKey, []byte{}, true, false, false)
+			mutations.Push(keyOp, rowKey, []byte{}, true, false, false, false)
 		}
 		newRowValues[i] = thisRowValue
 		newRowKvMap[string(rowKey)] = thisRowValue
@@ -209,7 +212,7 @@ func prepareTestData(
 					if info.indexInfoAtCommit.Meta().Unique {
 						isPessimisticLock = true
 					}
-					oldIdxKeyMutation.Push(kvrpcpb.Op_Del, idxKey, []byte{}, isPessimisticLock, false, false)
+					oldIdxKeyMutation.Push(kvrpcpb.Op_Del, idxKey, []byte{}, isPessimisticLock, false, false, false)
 				}
 			}
 			if addIndexNeedAddOp(info.AmendOpType) && mayGenPutIndexRowKeyOp(keyOp) {
@@ -221,7 +224,7 @@ func prepareTestData(
 					mutOp = kvrpcpb.Op_Insert
 					isPessimisticLock = true
 				}
-				newIdxKeyMutation.Push(mutOp, idxKey, idxVal, isPessimisticLock, false, false)
+				newIdxKeyMutation.Push(mutOp, idxKey, idxVal, isPessimisticLock, false, false, false)
 			}
 			skipMerge := false
 			if info.AmendOpType == AmendNeedAddDeleteAndInsert {
@@ -252,8 +255,10 @@ func TestAmendCollectAndGenMutations(t *testing.T) {
 	defer func() { require.NoError(t, store.Close()) }()
 	se := &session{
 		store:       store,
-		sessionVars: variable.NewSessionVars(),
+		sessionVars: variable.NewSessionVars(nil),
 	}
+	se.mu.values = make(map[fmt.Stringer]interface{})
+	domain.BindDomain(se, domain.NewMockDomain())
 	startStates := []model.SchemaState{model.StateNone, model.StateDeleteOnly, model.StateWriteOnly, model.StateWriteReorganization}
 	for _, startState := range startStates {
 		endStatMap := ConstOpAddIndex[startState]
@@ -404,10 +409,9 @@ func TestAmendCollectAndGenMutations(t *testing.T) {
 
 			logutil.BgLogger().Info("[TEST]finish to write old txn data")
 			// Write data for this new transaction, its memory buffer will be used by schema amender.
-			txn, err := se.store.Begin()
+			err = sessiontxn.NewTxn(ctx, se)
 			require.NoError(t, err)
-			se.txn.changeInvalidToValid(txn)
-			txn, err = se.Txn(true)
+			txn, err := se.Txn(false)
 			require.NoError(t, err)
 			var checkKeys []kv.Key
 			for i, key := range mutations.GetKeys() {
@@ -436,7 +440,7 @@ func TestAmendCollectAndGenMutations(t *testing.T) {
 				idxKey := tablecodec.EncodeIndexSeekKey(oldTbInfo.Meta().ID, oldTbInfo.Indices()[i].Meta().ID, idxValue)
 				err = txn.Set(idxKey, idxValue)
 				require.NoError(t, err)
-				mutations.Push(kvrpcpb.Op_Put, idxKey, idxValue, false, false, false)
+				mutations.Push(kvrpcpb.Op_Put, idxKey, idxValue, false, false, false, false)
 			}
 
 			res, err := schemaAmender.genAllAmendMutations(ctx, &mutations, collector)

@@ -52,8 +52,8 @@ func NewKafkaSeeker(addr []string, config *sarama.Config) (*KafkaSeeker, error) 
 
 // Close releases resources of KafkaSeeker
 func (ks *KafkaSeeker) Close() {
-	ks.consumer.Close()
-	ks.client.Close()
+	_ = ks.consumer.Close()
+	_ = ks.client.Close()
 }
 
 // Seek seeks the first offset which binlog CommitTs bigger than ts
@@ -178,7 +178,7 @@ func (ks *KafkaSeeker) getTSAtOffset(topic string, partition int32, offset int64
 		err = errors.Trace(err)
 		return
 	}
-	defer pc.Close()
+	defer func() { _ = pc.Close() }()
 
 	errorCnt := 0
 	for {

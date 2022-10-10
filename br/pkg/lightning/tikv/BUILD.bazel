@@ -25,7 +25,9 @@ go_library(
 
 go_test(
     name = "tikv_test",
+    timeout = "short",
     srcs = ["tikv_test.go"],
+    flaky = True,
     deps = [
         ":tikv",
         "//br/pkg/lightning/common",

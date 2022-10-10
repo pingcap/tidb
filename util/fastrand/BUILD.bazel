@@ -9,11 +9,13 @@ go_library(
 
 go_test(
     name = "fastrand_test",
+    timeout = "short",
     srcs = [
         "main_test.go",
         "random_test.go",
     ],
     embed = [":fastrand"],
+    flaky = True,
     deps = [
         "//testkit/testsetup",
         "@com_github_stretchr_testify//require",

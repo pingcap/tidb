@@ -102,7 +102,7 @@ func (h *HashSelector) Select(binlog *pb.Binlog, retryTime int) *PumpStatus {
 }
 
 // Feedback implement PumpSelector.Feedback
-func (h *HashSelector) Feedback(startTS int64, binlogType pb.BinlogType, pump *PumpStatus) {
+func (*HashSelector) Feedback(startTS int64, binlogType pb.BinlogType, pump *PumpStatus) {
 	maintainTSMap(startTS, binlogType, pump)
 }
 
@@ -132,7 +132,7 @@ func (r *RangeSelector) SetPumps(pumps []*PumpStatus) {
 }
 
 // Select implement PumpSelector.Select.
-func (r *RangeSelector) Select(binlog *pb.Binlog, retryTime int) *PumpStatus {
+func (r *RangeSelector) Select(binlog *pb.Binlog, _ int) *PumpStatus {
 	// TODO: use status' label to match suitable pump.
 	selectorLock.Lock()
 	defer selectorLock.Unlock()
@@ -163,7 +163,7 @@ func (r *RangeSelector) Select(binlog *pb.Binlog, retryTime int) *PumpStatus {
 }
 
 // Feedback implement PumpSelector.Select
-func (r *RangeSelector) Feedback(startTS int64, binlogType pb.BinlogType, pump *PumpStatus) {
+func (*RangeSelector) Feedback(startTS int64, binlogType pb.BinlogType, pump *PumpStatus) {
 	maintainTSMap(startTS, binlogType, pump)
 }
 
@@ -190,7 +190,7 @@ func (u *LocalUnixSelector) SetPumps(pumps []*PumpStatus) {
 }
 
 // Select implement PumpSelector.Select.
-func (u *LocalUnixSelector) Select(binlog *pb.Binlog, retryTime int) *PumpStatus {
+func (u *LocalUnixSelector) Select(_ *pb.Binlog, _ int) *PumpStatus {
 	selectorLock.RLock()
 	defer selectorLock.RUnlock()
 
@@ -198,8 +198,7 @@ func (u *LocalUnixSelector) Select(binlog *pb.Binlog, retryTime int) *PumpStatus
 }
 
 // Feedback implement PumpSelector.Feedback
-func (u *LocalUnixSelector) Feedback(startTS int64, binlogType pb.BinlogType, pump *PumpStatus) {
-}
+func (*LocalUnixSelector) Feedback(_ int64, _ pb.BinlogType, _ *PumpStatus) {}
 
 // ScoreSelector select a pump by pump's score.
 type ScoreSelector struct{}
@@ -210,18 +209,18 @@ func NewScoreSelector() PumpSelector {
 }
 
 // SetPumps implement PumpSelector.SetPumps.
-func (s *ScoreSelector) SetPumps(pumps []*PumpStatus) {
+func (*ScoreSelector) SetPumps(_ []*PumpStatus) {
 	// TODO
 }
 
 // Select implement PumpSelector.Select.
-func (s *ScoreSelector) Select(binlog *pb.Binlog, retryTime int) *PumpStatus {
+func (*ScoreSelector) Select(_ *pb.Binlog, _ int) *PumpStatus {
 	// TODO
 	return nil
 }
 
 // Feedback implement PumpSelector.Feedback
-func (s *ScoreSelector) Feedback(startTS int64, binlogType pb.BinlogType, pump *PumpStatus) {
+func (*ScoreSelector) Feedback(_ int64, _ pb.BinlogType, _ *PumpStatus) {
 	// TODO
 }
 

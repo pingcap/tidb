@@ -7,5 +7,11 @@
       "select t1.a from t1 group by t1.a having (a, count(1)) in (select a, b from t2)",
       "select t1.a from t1 group by t1.a having (a, count(1)) not in (select a, b from t2)"
     ]
+  },
+  {
+    "name": "TestBitFuncsReturnType",
+    "cases": [
+      "select bit_or(a * b) from t"
+    ]
   }
 ]

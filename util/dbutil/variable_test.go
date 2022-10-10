@@ -35,7 +35,7 @@ func TestShowGrants(t *testing.T) {
 	for _, g := range mockGrants {
 		rows.AddRow(g)
 	}
-	mock.ExpectQuery("SHOW GRANTS").WillReturnRows(rows)
+	mock.ExpectQuery("^SHOW GRANTS FOR CURRENT_USER$").WillReturnRows(rows)
 
 	grants, err := ShowGrants(ctx, db, "", "")
 	require.NoError(t, err)
@@ -56,7 +56,7 @@ func TestShowGrantsWithRoles(t *testing.T) {
 	for _, g := range mockGrantsWithoutRoles {
 		rows1.AddRow(g)
 	}
-	mock.ExpectQuery("SHOW GRANTS").WillReturnRows(rows1)
+	mock.ExpectQuery("^SHOW GRANTS FOR CURRENT_USER$").WillReturnRows(rows1)
 
 	mockGrantsWithRoles := []string{
 		"GRANT USAGE ON *.* TO `u1`@`localhost`",
@@ -67,7 +67,7 @@ func TestShowGrantsWithRoles(t *testing.T) {
 	for _, g := range mockGrantsWithRoles {
 		rows2.AddRow(g)
 	}
-	mock.ExpectQuery("SHOW GRANTS").WillReturnRows(rows2)
+	mock.ExpectQuery("^SHOW GRANTS FOR CURRENT_USER USING `r1`@`%`, `r2`@`%`$").WillReturnRows(rows2)
 
 	grants, err := ShowGrants(ctx, db, "", "")
 	require.NoError(t, err)
@@ -105,7 +105,7 @@ func TestShowGrantsPasswordMasked(t *testing.T) {
 	for _, ca := range cases {
 		rows := sqlmock.NewRows([]string{"Grants for root@localhost"})
 		rows.AddRow(ca.original)
-		mock.ExpectQuery("SHOW GRANTS").WillReturnRows(rows)
+		mock.ExpectQuery("^SHOW GRANTS FOR CURRENT_USER$").WillReturnRows(rows)
 
 		grants, err := ShowGrants(ctx, db, "", "")
 		require.NoError(t, err)

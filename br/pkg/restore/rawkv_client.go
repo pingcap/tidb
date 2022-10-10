@@ -64,7 +64,7 @@ func NewRawKVBatchClient(
 
 // Close closes the RawKVBatchClient.
 func (c *RawKVBatchClient) Close() {
-	c.rawkvClient.Close()
+	_ = c.rawkvClient.Close()
 }
 
 // SetColumnFamily set the columnFamily for the client.

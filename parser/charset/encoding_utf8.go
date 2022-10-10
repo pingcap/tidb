@@ -43,17 +43,17 @@ type encodingUTF8 struct {
 }
 
 // Name implements Encoding interface.
-func (e *encodingUTF8) Name() string {
+func (*encodingUTF8) Name() string {
 	return CharsetUTF8MB4
 }
 
 // Tp implements Encoding interface.
-func (e *encodingUTF8) Tp() EncodingTp {
+func (*encodingUTF8) Tp() EncodingTp {
 	return EncodingTpUTF8
 }
 
 // Peek implements Encoding interface.
-func (e *encodingUTF8) Peek(src []byte) []byte {
+func (*encodingUTF8) Peek(src []byte) []byte {
 	nextLen := 4
 	if len(src) == 0 || src[0] < 0x80 {
 		nextLen = 1
@@ -68,7 +68,7 @@ func (e *encodingUTF8) Peek(src []byte) []byte {
 	return src[:nextLen]
 }
 
-func (e *encodingUTF8) MbLen(bs string) int {
+func (*encodingUTF8) MbLen(bs string) int {
 	_, size := utf8.DecodeRuneInString(bs)
 	if size <= 1 {
 		return 0
@@ -93,7 +93,7 @@ func (e *encodingUTF8) Transform(dest *bytes.Buffer, src []byte, op Op) ([]byte,
 }
 
 // Foreach implements Encoding interface.
-func (e *encodingUTF8) Foreach(src []byte, op Op, fn func(from, to []byte, ok bool) bool) {
+func (*encodingUTF8) Foreach(src []byte, _ Op, fn func(from, to []byte, ok bool) bool) {
 	var rv rune
 	for i, w := 0, 0; i < len(src); i += w {
 		rv, w = utf8.DecodeRune(src[i:])
@@ -116,7 +116,7 @@ func (e *encodingUTF8MB3Strict) IsValid(src []byte) bool {
 }
 
 // Foreach implements Encoding interface.
-func (e *encodingUTF8MB3Strict) Foreach(src []byte, op Op, fn func(srcCh, dstCh []byte, ok bool) bool) {
+func (*encodingUTF8MB3Strict) Foreach(src []byte, _ Op, fn func(srcCh, dstCh []byte, ok bool) bool) {
 	for i, w := 0, 0; i < len(src); i += w {
 		var rv rune
 		rv, w = utf8.DecodeRune(src[i:])

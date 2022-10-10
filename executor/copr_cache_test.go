@@ -41,20 +41,16 @@ func TestIntegrationCopCache(t *testing.T) {
 		return cli
 	}
 	var cluster testutils.Cluster
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t,
+	store, dom := testkit.CreateMockStoreAndDomain(t,
 		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockstore.BootstrapWithSingleStore(c)
 			cluster = c
 		}),
 		mockstore.WithClientHijacker(hijackClient))
-	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int primary key)")
-
-	// TODO(tiancaiamao) update the test and support cop cache for paging.
-	tk.MustExec("set @@tidb_enable_paging = off")
 
 	tblInfo, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)

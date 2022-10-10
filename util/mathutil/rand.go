@@ -24,9 +24,9 @@ const maxRandValue = 0x3FFFFFFF
 // MysqlRng is random number generator and this implementation is ported from MySQL.
 // See https://github.com/tikv/tikv/pull/6117#issuecomment-562489078.
 type MysqlRng struct {
+	mu    *sync.Mutex
 	seed1 uint32
 	seed2 uint32
-	mu    *sync.Mutex
 }
 
 // NewWithSeed create a rng with random seed.
@@ -66,4 +66,18 @@ func (rng *MysqlRng) SetSeed2(seed uint32) {
 	rng.mu.Lock()
 	defer rng.mu.Unlock()
 	rng.seed2 = seed
+}
+
+// GetSeed1 is an interface to get seed1. It's only used for getting session states.
+func (rng *MysqlRng) GetSeed1() uint32 {
+	rng.mu.Lock()
+	defer rng.mu.Unlock()
+	return rng.seed1
+}
+
+// GetSeed2 is an interface to get seed2. It's only used for getting session states.
+func (rng *MysqlRng) GetSeed2() uint32 {
+	rng.mu.Lock()
+	defer rng.mu.Unlock()
+	return rng.seed2
 }

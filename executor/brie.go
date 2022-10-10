@@ -17,7 +17,6 @@ package executor
 import (
 	"bytes"
 	"context"
-	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -78,6 +77,16 @@ func (p *brieTaskProgress) Inc() {
 	atomic.AddInt64(&p.current, 1)
 }
 
+// IncBy implements glue.Progress
+func (p *brieTaskProgress) IncBy(cnt int64) {
+	atomic.AddInt64(&p.current, cnt)
+}
+
+// GetCurrent implements glue.Progress
+func (p *brieTaskProgress) GetCurrent() int64 {
+	return atomic.LoadInt64(&p.current)
+}
+
 // Close implements glue.Progress
 func (p *brieTaskProgress) Close() {
 	p.lock.Lock()
@@ -93,6 +102,7 @@ type brieTaskInfo struct {
 	storage     string
 	connID      uint64
 	backupTS    uint64
+	restoreTS   uint64
 	archiveSize uint64
 	message     string
 }
@@ -225,7 +235,7 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 		},
 	}
 
-	storageURL, err := url.Parse(s.Storage)
+	storageURL, err := storage.ParseRawURL(s.Storage)
 	if err != nil {
 		b.err = errors.Annotate(err, "invalid destination URL")
 		return nil
@@ -249,7 +259,6 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 			return nil
 		}
 	default:
-		break
 	}
 
 	if tidbCfg.Store != "tikv" {
@@ -403,9 +412,17 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	req.AppendString(0, e.info.storage)
 	req.AppendUint64(1, e.info.archiveSize)
-	req.AppendUint64(2, e.info.backupTS)
-	req.AppendTime(3, e.info.queueTime)
-	req.AppendTime(4, e.info.execTime)
+	switch e.info.kind {
+	case ast.BRIEKindBackup:
+		req.AppendUint64(2, e.info.backupTS)
+		req.AppendTime(3, e.info.queueTime)
+		req.AppendTime(4, e.info.execTime)
+	case ast.BRIEKindRestore:
+		req.AppendUint64(2, e.info.backupTS)
+		req.AppendUint64(3, e.info.restoreTS)
+		req.AppendTime(4, e.info.queueTime)
+		req.AppendTime(5, e.info.execTime)
+	}
 	e.info = nil
 	return nil
 }
@@ -449,7 +466,12 @@ type tidbGlueSession struct {
 	info     *brieTaskInfo
 }
 
-// BootstrapSession implements glue.Glue
+// GetSessionCtx implements glue.Glue
+func (gs *tidbGlueSession) GetSessionCtx() sessionctx.Context {
+	return gs.se
+}
+
+// GetDomain implements glue.Glue
 func (gs *tidbGlueSession) GetDomain(store kv.Storage) (*domain.Domain, error) {
 	return domain.GetDomain(gs.se), nil
 }
@@ -464,11 +486,13 @@ func (gs *tidbGlueSession) CreateSession(store kv.Storage) (glue.Session, error)
 // such as BACKUP and RESTORE have already been privilege checked.
 // NOTE: Maybe drain the restult too? See `gluetidb.tidbSession.ExecuteInternal` for more details.
 func (gs *tidbGlueSession) Execute(ctx context.Context, sql string) error {
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
 	_, _, err := gs.se.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, nil, sql)
 	return err
 }
 
 func (gs *tidbGlueSession) ExecuteInternal(ctx context.Context, sql string, args ...interface{}) error {
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
 	exec := gs.se.(sqlexec.SQLExecutor)
 	_, err := exec.ExecuteInternal(ctx, sql, args...)
 	return err
@@ -554,6 +578,8 @@ func (gs *tidbGlueSession) Record(name string, value uint64) {
 	switch name {
 	case "BackupTS":
 		gs.info.backupTS = value
+	case "RestoreTS":
+		gs.info.restoreTS = value
 	case "Size":
 		gs.info.archiveSize = value
 	}
@@ -561,4 +587,10 @@ func (gs *tidbGlueSession) Record(name string, value uint64) {
 
 func (gs *tidbGlueSession) GetVersion() string {
 	return "TiDB\n" + printer.GetTiDBInfo()
+}
+
+// UseOneShotSession implements glue.Glue
+func (gs *tidbGlueSession) UseOneShotSession(store kv.Storage, closeDomain bool, fn func(se glue.Session) error) error {
+	// in SQL backup. we don't need to close domain.
+	return fn(gs)
 }

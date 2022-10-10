@@ -31,7 +31,7 @@ import (
 type columnPruner struct {
 }
 
-func (s *columnPruner) optimize(ctx context.Context, lp LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
+func (*columnPruner) optimize(_ context.Context, lp LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	err := lp.PruneColumns(lp.Schema().Columns, opt)
 	return lp, err
 }
@@ -115,6 +115,7 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column, 
 	}
 	appendColumnPruneTraceStep(la, prunedColumns, opt)
 	appendFunctionPruneTraceStep(la, prunedFunctions, opt)
+	//nolint: prealloc
 	var selfUsedCols []*expression.Column
 	for _, aggrFunc := range la.AggFuncs {
 		selfUsedCols = expression.ExtractColumnsFromExpressions(selfUsedCols, aggrFunc.Args, nil)
@@ -191,19 +192,17 @@ func pruneByItems(p LogicalPlan, old []*util.ByItems, opt *logicalOptimizeOp) (b
 		_, hashMatch := seen[hash]
 		seen[hash] = struct{}{}
 		cols := expression.ExtractColumns(byItem.Expr)
-		if hashMatch {
-			// do nothing, should be filtered
-		} else if len(cols) == 0 {
-			if !expression.IsRuntimeConstExpr(byItem.Expr) {
+		if !hashMatch {
+			if len(cols) == 0 {
+				if !expression.IsRuntimeConstExpr(byItem.Expr) {
+					pruned = false
+					byItems = append(byItems, byItem)
+				}
+			} else if byItem.Expr.GetType().GetType() != mysql.TypeNull {
 				pruned = false
+				parentUsedCols = append(parentUsedCols, cols...)
 				byItems = append(byItems, byItem)
 			}
-		} else if byItem.Expr.GetType().GetType() == mysql.TypeNull {
-			// do nothing, should be filtered
-		} else {
-			pruned = false
-			parentUsedCols = append(parentUsedCols, cols...)
-			byItems = append(byItems, byItem)
 		}
 		if pruned {
 			prunedByItems = append(prunedByItems, byItem)
@@ -411,6 +410,9 @@ func (p *LogicalJoin) extractUsedCols(parentUsedCols []*expression.Column) (left
 	}
 	for _, otherCond := range p.OtherConditions {
 		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(otherCond)...)
+	}
+	for _, naeqCond := range p.NAEQConditions {
+		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(naeqCond)...)
 	}
 	lChild := p.children[0]
 	rChild := p.children[1]

@@ -2,11 +2,13 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "simpletest_test",
+    timeout = "short",
     srcs = [
         "main_test.go",
         "simple_test.go",
     ],
     flaky = True,
+    race = "on",
     shard_count = 30,
     deps = [
         "//config",
@@ -23,6 +25,7 @@ go_test(
         "//testkit",
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
+        "@io_opencensus_go//stats/view",
         "@org_uber_go_goleak//:goleak",
     ],
 )

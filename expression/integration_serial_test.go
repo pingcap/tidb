@@ -1,4 +1,4 @@
-// Copyright 2021 PingCAP, Inc.
+// Copyright 2022 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -31,27 +31,15 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 )
 
 func TestIssue17727(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
-	orgEnable := plannercore.PreparedPlanCacheEnabled()
-	defer func() {
-		plannercore.SetPreparedPlanCache(orgEnable)
-	}()
-	plannercore.SetPreparedPlanCache(true)
-	var err error
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	tk.SetSession(se)
-	require.NoError(t, err)
+	tk.MustExec("set tidb_enable_prepared_plan_cache=ON")
 
 	tk.MustExec("use test;")
 	tk.MustExec("DROP TABLE IF EXISTS t1;")
@@ -77,8 +65,7 @@ func TestIssue17727(t *testing.T) {
 }
 
 func TestIssue17891(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -89,8 +76,7 @@ func TestIssue17891(t *testing.T) {
 }
 
 func TestIssue31174(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -109,8 +95,7 @@ func TestIssue31174(t *testing.T) {
 }
 
 func TestIssue20268(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -121,8 +106,7 @@ func TestIssue20268(t *testing.T) {
 }
 
 func TestCollationBasic(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -196,8 +180,7 @@ func TestCollationBasic(t *testing.T) {
 }
 
 func TestWeightString(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -269,8 +252,7 @@ func TestWeightString(t *testing.T) {
 }
 
 func TestCollationCreateIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -302,8 +284,7 @@ func TestCollationCreateIndex(t *testing.T) {
 }
 
 func TestCollateConstantPropagation(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -372,8 +353,7 @@ func TestCollateConstantPropagation(t *testing.T) {
 }
 
 func TestMixCollation(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -467,8 +447,7 @@ func prepare4Join(tk *testkit.TestKit) {
 }
 
 func TestCollateHashJoin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	prepare4Join(tk)
@@ -491,8 +470,7 @@ func TestCollateHashJoin(t *testing.T) {
 }
 
 func TestCollateHashJoin2(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	prepare4Join2(tk)
@@ -511,8 +489,7 @@ func prepare4Join2(tk *testkit.TestKit) {
 }
 
 func TestCollateMergeJoin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	prepare4Join(tk)
@@ -535,8 +512,7 @@ func TestCollateMergeJoin(t *testing.T) {
 }
 
 func TestCollateMergeJoin2(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	prepare4Join2(tk)
@@ -545,8 +521,7 @@ func TestCollateMergeJoin2(t *testing.T) {
 }
 
 func TestCollateIndexMergeJoin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -560,8 +535,7 @@ func TestCollateIndexMergeJoin(t *testing.T) {
 }
 
 func TestNewCollationCheckClusterIndexTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -587,8 +561,7 @@ func prepare4Collation(tk *testkit.TestKit, hasIndex bool) {
 }
 
 func TestCollateSelection(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	prepare4Collation(tk, false)
@@ -599,8 +572,7 @@ func TestCollateSelection(t *testing.T) {
 }
 
 func TestCollateSort(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	prepare4Collation(tk, false)
@@ -618,8 +590,7 @@ func TestCollateSort(t *testing.T) {
 }
 
 func TestCollateHashAgg(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	prepare4Collation(tk, false)
@@ -644,8 +615,7 @@ func TestCollateHashAgg(t *testing.T) {
 }
 
 func TestCollateStreamAgg(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	prepare4Collation(tk, true)
@@ -660,8 +630,7 @@ func TestCollateStreamAgg(t *testing.T) {
 }
 
 func TestCollateIndexReader(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	prepare4Collation(tk, true)
@@ -676,8 +645,7 @@ func TestCollateIndexReader(t *testing.T) {
 }
 
 func TestCollateIndexLookup(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	prepare4Collation(tk, true)
@@ -693,8 +661,7 @@ func TestCollateIndexLookup(t *testing.T) {
 }
 
 func TestIssue16668(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -705,8 +672,7 @@ func TestIssue16668(t *testing.T) {
 }
 
 func TestIssue27091(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -722,8 +688,7 @@ func TestIssue27091(t *testing.T) {
 }
 
 func TestCollateStringFunction(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -812,9 +777,16 @@ func TestCollateStringFunction(t *testing.T) {
 	tk.MustQuery("select locate('S', 'a' collate utf8mb4_general_ci);").Check(testkit.Rows("0"))
 	// MySQL return 0 here, I believe it is a bug in MySQL since 'ß' == 's' under utf8mb4_general_ci collation.
 	tk.MustQuery("select locate('ß', 's' collate utf8mb4_general_ci);").Check(testkit.Rows("1"))
+	tk.MustQuery("select locate('world', 'hello world' collate utf8mb4_general_ci);").Check(testkit.Rows("7"))
+	tk.MustQuery("select locate(' ', 'hello world' collate utf8mb4_general_ci);").Check(testkit.Rows("6"))
+	tk.MustQuery("select locate('  ', 'hello world' collate utf8mb4_general_ci);").Check(testkit.Rows("0"))
+
 	tk.MustQuery("select locate('S', 's' collate utf8mb4_unicode_ci);").Check(testkit.Rows("1"))
 	tk.MustQuery("select locate('S', 'a' collate utf8mb4_unicode_ci);").Check(testkit.Rows("0"))
 	tk.MustQuery("select locate('ß', 'ss' collate utf8mb4_unicode_ci);").Check(testkit.Rows("1"))
+	tk.MustQuery("select locate('world', 'hello world' collate utf8mb4_unicode_ci);").Check(testkit.Rows("7"))
+	tk.MustQuery("select locate(' ', 'hello world' collate utf8mb4_unicode_ci);").Check(testkit.Rows("6"))
+	tk.MustQuery("select locate('  ', 'hello world' collate utf8mb4_unicode_ci);").Check(testkit.Rows("0"))
 
 	tk.MustExec("truncate table t1;")
 	tk.MustExec("insert into t1 (a) values (1);")
@@ -847,8 +819,7 @@ func TestCollateStringFunction(t *testing.T) {
 }
 
 func TestCollateLike(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set names utf8mb4 collate utf8mb4_general_ci")
@@ -880,8 +851,7 @@ func TestCollateLike(t *testing.T) {
 }
 
 func TestCollateSubQuery(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	prepare4Collation(tk, false)
@@ -896,8 +866,7 @@ func TestCollateSubQuery(t *testing.T) {
 }
 
 func TestCollateDDL(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database t;")
@@ -906,8 +875,7 @@ func TestCollateDDL(t *testing.T) {
 }
 
 func TestNewCollationWithClusterIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -919,8 +887,7 @@ func TestNewCollationWithClusterIndex(t *testing.T) {
 }
 
 func TestNewCollationBinaryFlag(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -962,8 +929,7 @@ func TestNewCollationBinaryFlag(t *testing.T) {
 }
 
 func TestIssue17176(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -977,8 +943,7 @@ func TestIssue17176(t *testing.T) {
 }
 
 func TestIssue18638(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -990,8 +955,7 @@ func TestIssue18638(t *testing.T) {
 }
 
 func TestCollationText(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1004,8 +968,7 @@ func TestCollationText(t *testing.T) {
 }
 
 func TestIssue18662(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1019,8 +982,7 @@ func TestIssue18662(t *testing.T) {
 }
 
 func TestIssue19116(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1043,8 +1005,7 @@ func TestIssue19116(t *testing.T) {
 }
 
 func TestIssue17063(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test;`)
@@ -1060,8 +1021,7 @@ func TestIssue17063(t *testing.T) {
 }
 
 func TestIssue11177(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustQuery("SELECT 'lvuleck' BETWEEN '2008-09-16 22:23:50' AND 0;").Check(testkit.Rows("0"))
@@ -1075,8 +1035,7 @@ func TestIssue11177(t *testing.T) {
 }
 
 func TestIssue19804(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test;`)
@@ -1094,8 +1053,7 @@ func TestIssue19804(t *testing.T) {
 }
 
 func TestIssue20209(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test;`)
@@ -1105,8 +1063,7 @@ func TestIssue20209(t *testing.T) {
 }
 
 func TestIssue18949(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test;`)
@@ -1120,8 +1077,7 @@ func TestIssue18949(t *testing.T) {
 }
 
 func TestClusteredIndexAndNewCollationIndexEncodeDecodeV5(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1190,8 +1146,7 @@ func TestClusteredIndexAndNewCollationIndexEncodeDecodeV5(t *testing.T) {
 }
 
 func TestClusteredIndexAndNewCollation(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1221,16 +1176,14 @@ func TestClusteredIndexAndNewCollation(t *testing.T) {
 }
 
 func TestIssue20608(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustQuery("select '䇇Հ' collate utf8mb4_bin like '___Հ';").Check(testkit.Rows("0"))
 }
 
 func TestIssue20161(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test;`)
@@ -1242,8 +1195,7 @@ func TestIssue20161(t *testing.T) {
 }
 
 func TestCollationIndexJoin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1277,8 +1229,7 @@ func TestCollationIndexJoin(t *testing.T) {
 }
 
 func TestCollationMergeJoin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1304,8 +1255,7 @@ func TestCollationMergeJoin(t *testing.T) {
 }
 
 func TestIssue20876(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1324,8 +1274,7 @@ func TestIssue20876(t *testing.T) {
 }
 
 func TestLikeWithCollation(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustQuery(`select 'a' like 'A' collate utf8mb4_unicode_ci;`).Check(testkit.Rows("1"))
@@ -1337,8 +1286,7 @@ func TestLikeWithCollation(t *testing.T) {
 }
 
 func TestCollationPrefixClusteredIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1352,8 +1300,7 @@ func TestCollationPrefixClusteredIndex(t *testing.T) {
 }
 
 func TestIssue23805(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1372,8 +1319,7 @@ func TestIssue23805(t *testing.T) {
 }
 
 func TestIssue26662(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1385,8 +1331,7 @@ func TestIssue26662(t *testing.T) {
 }
 
 func TestIssue30245(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustGetErrCode("select case 1 when 1 then 'a' collate utf8mb4_unicode_ci else 'b' collate utf8mb4_general_ci end", mysql.ErrCantAggregate2collations)
@@ -1395,8 +1340,7 @@ func TestIssue30245(t *testing.T) {
 }
 
 func TestCollationForBinaryLiteral(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1410,8 +1354,7 @@ func TestCollationForBinaryLiteral(t *testing.T) {
 func TestMathBuiltin(t *testing.T) {
 	t.Skip("it has been broken. Please fix it as soon as possible.")
 	ctx := context.Background()
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1801,8 +1744,7 @@ func TestMathBuiltin(t *testing.T) {
 }
 
 func TestTimeBuiltin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	originSQLMode := tk.Session().GetSessionVars().StrictSQLMode
@@ -2380,6 +2322,12 @@ func TestTimeBuiltin(t *testing.T) {
 
 	// for unix_timestamp
 	tk.MustExec("SET time_zone = '+00:00';")
+	tk.MustQuery("SELECT UNIX_TIMESTAMP('1970-01-01 00:00:00.000001');").Check(testkit.Rows("0.000000"))
+	tk.MustQuery("SELECT UNIX_TIMESTAMP('1970-01-01 00:00:00.999999');").Check(testkit.Rows("0.000000"))
+	tk.MustQuery("SELECT UNIX_TIMESTAMP('1970-01-01 00:00:01.000000');").Check(testkit.Rows("1.000000"))
+	tk.MustQuery("SELECT UNIX_TIMESTAMP('2038-01-19 03:14:07.999999');").Check(testkit.Rows("2147483647.999999"))
+	tk.MustQuery("SELECT UNIX_TIMESTAMP('2038-01-19 03:14:08.000000');").Check(testkit.Rows("0.000000"))
+
 	result = tk.MustQuery("SELECT UNIX_TIMESTAMP(151113);")
 	result.Check(testkit.Rows("1447372800"))
 	result = tk.MustQuery("SELECT UNIX_TIMESTAMP(20151113);")
@@ -2599,6 +2547,10 @@ func TestTimeBuiltin(t *testing.T) {
 	result.Check(testkit.Rows("112 36 12 24"))
 	result = tk.MustQuery("select extract(day_microsecond from cast('2017-01-01 12:12:12' as datetime)), extract(day_second from cast('2017-01-01 12:12:12' as datetime)), extract(day_minute from cast('2017-01-01 12:12:12' as datetime)), extract(day_hour from cast('2017-01-01 12:12:12' as datetime))")
 	result.Check(testkit.Rows("1121212000000 1121212 11212 112"))
+	result = tk.MustQuery("select extract(day_microsecond from cast(20010101020304.050607 as decimal(20,6))), extract(day_second from cast(20010101020304.050607 as decimal(20,6))), extract(day_minute from cast(20010101020304.050607 as decimal(20,6))), extract(day_hour from cast(20010101020304.050607 as decimal(20,6))), extract(day from cast(20010101020304.050607 as decimal(20,6)))")
+	result.Check(testkit.Rows("1020304050607 1020304 10203 102 1"))
+	result = tk.MustQuery("select extract(day_microsecond from cast(1020304.050607 as decimal(20,6))), extract(day_second from cast(1020304.050607 as decimal(20,6))), extract(day_minute from cast(1020304.050607 as decimal(20,6))), extract(day_hour from cast(1020304.050607 as decimal(20,6))), extract(day from cast(1020304.050607 as decimal(20,6)))")
+	result.Check(testkit.Rows("1020304050607 1020304 10203 102 4"))
 
 	// for adddate, subdate
 	dateArithmeticalTests := []struct {
@@ -2959,8 +2911,7 @@ func TestTimeBuiltin(t *testing.T) {
 }
 
 func TestBuiltin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3730,8 +3681,7 @@ func TestBuiltin(t *testing.T) {
 }
 
 func TestSetVariables(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	_, err := tk.Exec("set sql_mode='adfasdfadsfdasd';")
@@ -3813,31 +3763,21 @@ func TestSetVariables(t *testing.T) {
 	require.Error(t, err)
 	require.Error(t, err, variable.ErrWrongTypeForVar.GenWithStackByArgs("max_prepared_stmt_count").Error())
 
+	tk.MustExec("set @@global.tidb_enable_concurrent_ddl=1")
 	tk.MustQuery("select @@global.tidb_enable_concurrent_ddl").Check(testkit.Rows("1"))
 	require.True(t, variable.EnableConcurrentDDL.Load())
 	tk.MustExec("set @@global.tidb_enable_concurrent_ddl=0")
 	tk.MustQuery("select @@global.tidb_enable_concurrent_ddl").Check(testkit.Rows("0"))
 	require.False(t, variable.EnableConcurrentDDL.Load())
 	testkit.NewTestKit(t, store).MustQuery("select @@global.tidb_enable_concurrent_ddl").Check(testkit.Rows("0"))
+	tk.MustExec("set @@global.tidb_enable_concurrent_ddl=1")
 }
 
 func TestPreparePlanCache(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
-
-	orgEnable := plannercore.PreparedPlanCacheEnabled()
-	defer func() {
-		plannercore.SetPreparedPlanCache(orgEnable)
-	}()
-	plannercore.SetPreparedPlanCache(true)
-	var err error
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk.SetSession(se)
+	tk.MustExec("set tidb_enable_prepared_plan_cache=ON")
 	// Use the example from the docs https://docs.pingcap.com/tidb/stable/sql-prepare-plan-cache
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
@@ -3851,17 +3791,14 @@ func TestPreparePlanCache(t *testing.T) {
 }
 
 func TestPreparePlanCacheOnCachedTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
-
-	plannercore.SetPreparedPlanCache(true)
-	require.True(t, plannercore.PreparedPlanCacheEnabled())
+	tk.MustExec("set tidb_enable_prepared_plan_cache=ON")
 
 	var err error
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+		PreparedPlanCache: plannercore.NewLRUPlanCache(100, 0.1, math.MaxUint64, plannercore.PickPlanFromBucket),
 	})
 	require.NoError(t, err)
 	tk.SetSession(se)
@@ -3893,22 +3830,10 @@ func TestPreparePlanCacheOnCachedTable(t *testing.T) {
 }
 
 func TestIssue16205(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
-	orgEnable := plannercore.PreparedPlanCacheEnabled()
-	defer func() {
-		plannercore.SetPreparedPlanCache(orgEnable)
-	}()
-	plannercore.SetPreparedPlanCache(true)
-	var err error
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk.SetSession(se)
-
+	tk.MustExec("set tidb_enable_prepared_plan_cache=ON")
 	tk.MustExec("use test")
 	tk.MustExec("prepare stmt from 'select random_bytes(3)'")
 	rows1 := tk.MustQuery("execute stmt").Rows()
@@ -3919,22 +3844,10 @@ func TestIssue16205(t *testing.T) {
 }
 
 func TestRowCountPlanCache(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
-	orgEnable := plannercore.PreparedPlanCacheEnabled()
-	defer func() {
-		plannercore.SetPreparedPlanCache(orgEnable)
-	}()
-	plannercore.SetPreparedPlanCache(true)
-	var err error
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk.SetSession(se)
-
+	tk.MustExec("set tidb_enable_prepared_plan_cache=ON")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int auto_increment primary key)")
@@ -3950,22 +3863,10 @@ func TestRowCountPlanCache(t *testing.T) {
 }
 
 func TestCacheRegexpr(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
-	orgEnable := plannercore.PreparedPlanCacheEnabled()
-	defer func() {
-		plannercore.SetPreparedPlanCache(orgEnable)
-	}()
-	plannercore.SetPreparedPlanCache(true)
-	var err error
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk.SetSession(se)
-
+	tk.MustExec("set tidb_enable_prepared_plan_cache=ON")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a varchar(40))")
@@ -3978,21 +3879,10 @@ func TestCacheRegexpr(t *testing.T) {
 }
 
 func TestCacheRefineArgs(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
-	orgEnable := plannercore.PreparedPlanCacheEnabled()
-	defer func() {
-		plannercore.SetPreparedPlanCache(orgEnable)
-	}()
-	plannercore.SetPreparedPlanCache(true)
-	var err error
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk.SetSession(se)
+	tk.MustExec("set tidb_enable_prepared_plan_cache=ON")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(col_int int)")
@@ -4015,21 +3905,10 @@ func TestCacheRefineArgs(t *testing.T) {
 }
 
 func TestCacheConstEval(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
-	orgEnable := plannercore.PreparedPlanCacheEnabled()
-	defer func() {
-		plannercore.SetPreparedPlanCache(orgEnable)
-	}()
-	plannercore.SetPreparedPlanCache(true)
-	var err error
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk.SetSession(se)
+	tk.MustExec("set tidb_enable_prepared_plan_cache=ON")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(col_double double)")
@@ -4051,8 +3930,7 @@ func TestCacheConstEval(t *testing.T) {
 }
 
 func TestIssue24502(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -4072,8 +3950,7 @@ func TestIssue24502(t *testing.T) {
 }
 
 func TestIssue17233(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -4156,8 +4033,7 @@ func TestIssue17233(t *testing.T) {
 }
 
 func TestIssue17989(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -4171,8 +4047,7 @@ func TestIssue17989(t *testing.T) {
 }
 
 func TestNullValueRange(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -4193,8 +4068,7 @@ func TestNullValueRange(t *testing.T) {
 }
 
 func TestIssue18652(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -4205,8 +4079,7 @@ func TestIssue18652(t *testing.T) {
 }
 
 func TestIssue19045(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -4238,8 +4111,7 @@ func TestIssue19045(t *testing.T) {
 
 // issues 14448, 19383, 17734
 func TestNoopFunctions(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -4303,8 +4175,7 @@ func TestNoopFunctions(t *testing.T) {
 }
 
 func TestIssue19315(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -4319,8 +4190,7 @@ func TestIssue19315(t *testing.T) {
 }
 
 func TestIssue18674(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustQuery("select -1.0 % -1.0").Check(testkit.Rows("0.0"))
@@ -4336,8 +4206,7 @@ func TestIssue18674(t *testing.T) {
 }
 
 func TestJsonObjectCompare(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -4352,8 +4221,7 @@ func TestJsonObjectCompare(t *testing.T) {
 }
 
 func TestIssue21290(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -4365,8 +4233,7 @@ func TestIssue21290(t *testing.T) {
 
 // for issue 20128
 func TestIssue20128(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -4380,8 +4247,7 @@ func TestIssue20128(t *testing.T) {
 }
 
 func TestCrossDCQuery(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -4508,8 +4374,7 @@ PARTITION BY RANGE (c) (
 
 func TestCollationUnion2(t *testing.T) {
 	// For issue 22179
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -4538,8 +4403,7 @@ func TestPartitionPruningRelaxOP(t *testing.T) {
 	// We can't say:
 	// datetime < 2020-02-11 16:18:42 => to_days(datetime) < to_days(2020-02-11)
 
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

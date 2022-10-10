@@ -60,13 +60,19 @@ type blockParser struct {
 	metrics *metric.Metrics
 }
 
-func makeBlockParser(reader ReadSeekCloser, blockBufSize int64, ioWorkers *worker.Pool, metrics *metric.Metrics) blockParser {
+func makeBlockParser(
+	reader ReadSeekCloser,
+	blockBufSize int64,
+	ioWorkers *worker.Pool,
+	metrics *metric.Metrics,
+	logger log.Logger,
+) blockParser {
 	return blockParser{
 		reader:    MakePooledReader(reader, ioWorkers),
 		blockBuf:  make([]byte, blockBufSize*config.BufferSizeScale),
 		remainBuf: &bytes.Buffer{},
 		appendBuf: &bytes.Buffer{},
-		Logger:    log.L(),
+		Logger:    logger,
 		rowPool: &sync.Pool{
 			New: func() interface{} {
 				return make([]types.Datum, 0, 16)
@@ -116,6 +122,7 @@ const (
 	backslashEscapeFlavorMySQLWithNull
 )
 
+// Parser provides some methods to parse a source data file.
 type Parser interface {
 	Pos() (pos int64, rowID int64)
 	SetPos(pos int64, rowID int64) error
@@ -147,7 +154,7 @@ func NewChunkParser(
 	}
 	metrics, _ := metric.FromContext(ctx)
 	return &ChunkParser{
-		blockParser: makeBlockParser(reader, blockBufSize, ioWorkers, metrics),
+		blockParser: makeBlockParser(reader, blockBufSize, ioWorkers, metrics, log.FromContext(ctx)),
 		escFlavor:   escFlavor,
 	}
 }
@@ -167,7 +174,7 @@ func (parser *blockParser) SetPos(pos int64, rowID int64) error {
 }
 
 // Pos returns the current file offset.
-func (parser *blockParser) Pos() (int64, int64) {
+func (parser *blockParser) Pos() (pos int64, lastRowID int64) {
 	return parser.pos, parser.lastRow.RowID
 }
 
@@ -544,7 +551,11 @@ func (parser *blockParser) RecycleRow(row Row) {
 
 // acquireDatumSlice allocates an empty []types.Datum
 func (parser *blockParser) acquireDatumSlice() []types.Datum {
-	return parser.rowPool.Get().([]types.Datum)
+	datum, ok := parser.rowPool.Get().([]types.Datum)
+	if !ok {
+		return []types.Datum{}
+	}
+	return datum
 }
 
 // ReadChunks parses the entire file and splits it into continuous chunks of

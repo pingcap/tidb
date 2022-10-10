@@ -17,11 +17,13 @@ go_library(
 
 go_test(
     name = "printer_test",
+    timeout = "short",
     srcs = [
         "main_test.go",
         "printer_test.go",
     ],
     embed = [":printer"],
+    flaky = True,
     deps = [
         "//testkit/testsetup",
         "@com_github_stretchr_testify//require",

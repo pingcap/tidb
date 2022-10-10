@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math/rand"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -27,9 +28,15 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/bindinfo"
+	"github.com/pingcap/tidb/br/pkg/streamhelper"
+	"github.com/pingcap/tidb/br/pkg/streamhelper/daemon"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/placement"
+	"github.com/pingcap/tidb/ddl/schematracker"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain/globalconfigsync"
 	"github.com/pingcap/tidb/domain/infosync"
@@ -46,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/telemetry"
@@ -53,8 +61,10 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/domainutil"
+	"github.com/pingcap/tidb/util/engine"
 	"github.com/pingcap/tidb/util/expensivequery"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/servermemorylimit"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	pd "github.com/tikv/pd/client"
@@ -66,32 +76,43 @@ import (
 	"google.golang.org/grpc/keepalive"
 )
 
+// NewMockDomain is only used for test
+func NewMockDomain() *Domain {
+	do := &Domain{
+		infoCache: infoschema.NewCache(1),
+	}
+	do.infoCache.Insert(infoschema.MockInfoSchema(nil), 1)
+	return do
+}
+
 // Domain represents a storage space. Different domains can use the same database name.
 // Multiple domains can be used in parallel without synchronization.
 type Domain struct {
-	store                kv.Storage
-	infoCache            *infoschema.InfoCache
-	privHandle           *privileges.Handle
-	bindHandle           *bindinfo.BindHandle
-	statsHandle          unsafe.Pointer
-	statsLease           time.Duration
-	ddl                  ddl.DDL
-	info                 *infosync.InfoSyncer
-	globalCfgSyncer      *globalconfigsync.GlobalConfigSyncer
-	m                    sync.Mutex
-	SchemaValidator      SchemaValidator
-	sysSessionPool       *sessionPool
-	exit                 chan struct{}
-	etcdClient           *clientv3.Client
-	sysVarCache          sysVarCache // replaces GlobalVariableCache
-	slowQuery            *topNSlowQueries
-	expensiveQueryHandle *expensivequery.Handle
-	wg                   util.WaitGroupWrapper
-	statsUpdating        atomicutil.Int32
-	cancel               context.CancelFunc
-	indexUsageSyncLease  time.Duration
-	dumpFileGcChecker    *dumpFileGcChecker
-	expiredTimeStamp4PC  types.Time
+	store                   kv.Storage
+	infoCache               *infoschema.InfoCache
+	privHandle              *privileges.Handle
+	bindHandle              atomic.Pointer[bindinfo.BindHandle]
+	statsHandle             unsafe.Pointer
+	statsLease              time.Duration
+	ddl                     ddl.DDL
+	info                    *infosync.InfoSyncer
+	globalCfgSyncer         *globalconfigsync.GlobalConfigSyncer
+	m                       sync.Mutex
+	SchemaValidator         SchemaValidator
+	sysSessionPool          *sessionPool
+	exit                    chan struct{}
+	etcdClient              *clientv3.Client
+	sysVarCache             sysVarCache // replaces GlobalVariableCache
+	slowQuery               *topNSlowQueries
+	expensiveQueryHandle    *expensivequery.Handle
+	serverMemoryLimitHandle *servermemorylimit.Handle
+	wg                      util.WaitGroupWrapper
+	statsUpdating           atomicutil.Int32
+	cancel                  context.CancelFunc
+	indexUsageSyncLease     time.Duration
+	dumpFileGcChecker       *dumpFileGcChecker
+	expiredTimeStamp4PC     types.Time
+	logBackupAdvancer       *daemon.OwnerDaemon
 
 	serverID             uint64
 	serverIDSession      *concurrency.Session
@@ -100,6 +121,15 @@ type Domain struct {
 	sysExecutorFactory   func(*Domain) (pools.Resource, error)
 
 	sysProcesses SysProcesses
+
+	mdlCheckTableInfo *mdlCheckTableInfo
+}
+
+type mdlCheckTableInfo struct {
+	mu         sync.Mutex
+	newestVer  int64
+	jobsVerMap map[int64]int64
+	jobsIdsMap map[int64]string
 }
 
 // InfoCache export for test.
@@ -122,7 +152,7 @@ func (do *Domain) EtcdClient() *clientv3.Client {
 func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, int64, *transaction.RelatedSchemaChange, error) {
 	snapshot := do.store.GetSnapshot(kv.NewVersion(startTS))
 	m := meta.NewSnapshotMeta(snapshot)
-	neededSchemaVersion, err := m.GetSchemaVersion()
+	neededSchemaVersion, err := m.GetSchemaVersionWithNonEmptyDiff()
 	if err != nil {
 		return nil, false, 0, nil, err
 	}
@@ -286,8 +316,9 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 			return nil, nil, err
 		}
 		if diff == nil {
-			// If diff is missing for any version between used and new version, we fall back to full reload.
-			return nil, nil, fmt.Errorf("failed to get schemadiff")
+			// Empty diff means the txn of generating schema version is committed, but the txn of `runDDLJob` is not or fail.
+			// It is safe to skip the empty diff because the infoschema is new enough and consistent.
+			continue
 		}
 		diffs = append(diffs, diff)
 	}
@@ -366,6 +397,11 @@ func (do *Domain) DDL() ddl.DDL {
 	return do.ddl
 }
 
+// SetDDL sets DDL to domain, it's only used in tests.
+func (do *Domain) SetDDL(d ddl.DDL) {
+	do.ddl = d
+}
+
 // InfoSyncer gets infoSyncer from domain.
 func (do *Domain) InfoSyncer() *infosync.InfoSyncer {
 	return do.info
@@ -424,7 +460,7 @@ func (do *Domain) Reload() error {
 		// loaded newer schema
 		if oldSchemaVersion < is.SchemaMetaVersion() {
 			// Update self schema version to etcd.
-			err = do.ddl.SchemaSyncer().UpdateSelfVersion(context.Background(), is.SchemaMetaVersion())
+			err = do.ddl.SchemaSyncer().UpdateSelfVersion(context.Background(), 0, is.SchemaMetaVersion())
 			if err != nil {
 				logutil.BgLogger().Info("update self version failed",
 					zap.Int64("oldSchemaVersion", oldSchemaVersion),
@@ -583,6 +619,110 @@ func (do *Domain) topologySyncerKeeper() {
 	}
 }
 
+func (do *Domain) refreshMDLCheckTableInfo() {
+	se, err := do.sysSessionPool.Get()
+
+	if err != nil {
+		logutil.BgLogger().Warn("get system session failed", zap.Error(err))
+		return
+	}
+	defer do.sysSessionPool.Put(se)
+	exec := se.(sqlexec.RestrictedSQLExecutor)
+	domainSchemaVer := do.InfoSchema().SchemaMetaVersion()
+	rows, _, err := exec.ExecRestrictedSQL(kv.WithInternalSourceType(context.Background(), kv.InternalTxnTelemetry), nil, fmt.Sprintf("select job_id, version, table_ids from mysql.tidb_mdl_info where version <= %d", domainSchemaVer))
+	if err != nil {
+		logutil.BgLogger().Warn("get mdl info from tidb_mdl_info failed", zap.Error(err))
+		return
+	}
+	do.mdlCheckTableInfo.mu.Lock()
+	defer do.mdlCheckTableInfo.mu.Unlock()
+
+	do.mdlCheckTableInfo.newestVer = domainSchemaVer
+	do.mdlCheckTableInfo.jobsVerMap = make(map[int64]int64, len(rows))
+	do.mdlCheckTableInfo.jobsIdsMap = make(map[int64]string, len(rows))
+	for i := 0; i < len(rows); i++ {
+		do.mdlCheckTableInfo.jobsVerMap[rows[i].GetInt64(0)] = rows[i].GetInt64(1)
+		do.mdlCheckTableInfo.jobsIdsMap[rows[i].GetInt64(0)] = rows[i].GetString(2)
+	}
+}
+
+func (do *Domain) mdlCheckLoop() {
+	ticker := time.Tick(time.Millisecond * 50)
+	var saveMaxSchemaVersion int64
+	jobNeedToSync := false
+	jobCache := make(map[int64]int64, 1000)
+
+	for {
+		select {
+		case <-ticker:
+			if !variable.EnableMDL.Load() {
+				continue
+			}
+
+			do.mdlCheckTableInfo.mu.Lock()
+			maxVer := do.mdlCheckTableInfo.newestVer
+			if maxVer > saveMaxSchemaVersion {
+				saveMaxSchemaVersion = maxVer
+			} else if !jobNeedToSync {
+				// Schema doesn't change, and no job to check in the last run.
+				do.mdlCheckTableInfo.mu.Unlock()
+				continue
+			}
+
+			jobNeedToCheckCnt := len(do.mdlCheckTableInfo.jobsVerMap)
+			if jobNeedToCheckCnt == 0 {
+				jobNeedToSync = false
+				do.mdlCheckTableInfo.mu.Unlock()
+				continue
+			}
+
+			jobsVerMap := make(map[int64]int64, len(do.mdlCheckTableInfo.jobsVerMap))
+			jobsIdsMap := make(map[int64]string, len(do.mdlCheckTableInfo.jobsIdsMap))
+			for k, v := range do.mdlCheckTableInfo.jobsVerMap {
+				jobsVerMap[k] = v
+			}
+			for k, v := range do.mdlCheckTableInfo.jobsIdsMap {
+				jobsIdsMap[k] = v
+			}
+			do.mdlCheckTableInfo.mu.Unlock()
+
+			jobNeedToSync = true
+
+			sm := do.InfoSyncer().GetSessionManager()
+			if sm == nil {
+				logutil.BgLogger().Info("session manager is nil")
+			} else {
+				sm.CheckOldRunningTxn(jobsVerMap, jobsIdsMap)
+			}
+
+			if len(jobsVerMap) == jobNeedToCheckCnt {
+				jobNeedToSync = false
+			}
+
+			// Try to gc jobCache.
+			if len(jobCache) > 1000 {
+				jobCache = make(map[int64]int64, 1000)
+			}
+
+			for jobID, ver := range jobsVerMap {
+				if cver, ok := jobCache[jobID]; ok && cver >= ver {
+					// Already update, skip it.
+					continue
+				}
+				logutil.BgLogger().Info("mdl gets lock, update to owner", zap.Int64("jobID", jobID), zap.Int64("version", ver))
+				err := do.ddl.SchemaSyncer().UpdateSelfVersion(context.Background(), jobID, ver)
+				if err != nil {
+					logutil.BgLogger().Warn("update self version failed", zap.Error(err))
+				} else {
+					jobCache[jobID] = ver
+				}
+			}
+		case <-do.exit:
+			return
+		}
+	}
+}
+
 func (do *Domain) loadSchemaInLoop(ctx context.Context, lease time.Duration) {
 	defer util.Recover(metrics.LabelDomain, "loadSchemaInLoop", nil, true)
 	// Lease renewal can run at any frequency.
@@ -639,6 +779,7 @@ func (do *Domain) loadSchemaInLoop(ctx context.Context, lease time.Duration) {
 		case <-do.exit:
 			return
 		}
+		do.refreshMDLCheckTableInfo()
 	}
 }
 
@@ -714,7 +855,7 @@ func (do *Domain) Close() {
 	}
 	do.wg.Wait()
 	do.sysSessionPool.Close()
-	variable.UnregisterStatistics(do.bindHandle)
+	variable.UnregisterStatistics(do.bindHandle.Load())
 	if do.onClose != nil {
 		do.onClose()
 	}
@@ -737,19 +878,29 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		dumpFileGcChecker:   &dumpFileGcChecker{gcLease: dumpFileGcLease, paths: []string{GetPlanReplayerDirName(), GetOptimizerTraceDirName()}},
 		onClose:             onClose,
 		expiredTimeStamp4PC: types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, types.DefaultFsp),
+		mdlCheckTableInfo: &mdlCheckTableInfo{
+			mu:         sync.Mutex{},
+			jobsVerMap: make(map[int64]int64),
+			jobsIdsMap: make(map[int64]string),
+		},
 	}
 
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)
 	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do.exit)
+	do.serverMemoryLimitHandle = servermemorylimit.NewServerMemoryLimitHandle(do.exit)
 	do.sysProcesses = SysProcesses{mu: &sync.RWMutex{}, procMap: make(map[uint64]sessionctx.Context)}
-	variable.SetStatsCacheCapacity.Store(do.SetStatsCacheCapacity)
+	do.initDomainSysVars()
 	return do
 }
 
 const serverIDForStandalone = 1 // serverID for standalone deployment.
 
 // Init initializes a domain.
-func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) (pools.Resource, error)) error {
+func (do *Domain) Init(
+	ddlLease time.Duration,
+	sysExecutorFactory func(*Domain) (pools.Resource, error),
+	ddlInjector func(ddl.DDL) *schematracker.Checker,
+) error {
 	do.sysExecutorFactory = sysExecutorFactory
 	perfschema.Init()
 	if ebd, ok := do.store.(kv.EtcdBackend); ok {
@@ -817,6 +968,11 @@ func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) 
 			do.ddl = d
 		}
 	})
+	if ddlInjector != nil {
+		checker := ddlInjector(do.ddl)
+		checker.CreateTestDB()
+		do.ddl = checker
+	}
 
 	if config.GetGlobalConfig().EnableGlobalKill {
 		if do.etcdClient != nil {
@@ -871,6 +1027,7 @@ func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) 
 		// Local store needs to get the change information for every DDL state in each session.
 		go do.loadSchemaInLoop(ctx, ddlLease)
 	}
+	do.wg.Run(do.mdlCheckLoop)
 	do.wg.Add(3)
 	go do.topNSlowQueryLoop()
 	go do.infoSyncerKeeper()
@@ -879,7 +1036,125 @@ func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) 
 		do.wg.Add(1)
 		go do.topologySyncerKeeper()
 	}
+	if pdClient != nil {
+		do.wg.Add(1)
+		go do.closestReplicaReadCheckLoop(ctx, pdClient)
+	}
+	err = do.initLogBackup(ctx, pdClient)
+	if err != nil {
+		return err
+	}
 
+	return nil
+}
+
+func (do *Domain) initLogBackup(ctx context.Context, pdClient pd.Client) error {
+	cfg := config.GetGlobalConfig()
+	if pdClient == nil || do.etcdClient == nil {
+		log.Warn("pd / etcd client not provided, won't begin Advancer.")
+		return nil
+	}
+	env, err := streamhelper.TiDBEnv(pdClient, do.etcdClient, cfg)
+	if err != nil {
+		return err
+	}
+	adv := streamhelper.NewCheckpointAdvancer(env)
+	do.logBackupAdvancer = daemon.New(adv, streamhelper.OwnerManagerForLogBackup(ctx, do.etcdClient), adv.Config().TickDuration)
+	loop, err := do.logBackupAdvancer.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	do.wg.Run(loop)
+	return nil
+}
+
+// when tidb_replica_read = 'closest-adaptive', check tidb and tikv's zone label matches.
+// if not match, disable replica_read to avoid uneven read traffic distribution.
+func (do *Domain) closestReplicaReadCheckLoop(ctx context.Context, pdClient pd.Client) {
+	defer util.Recover(metrics.LabelDomain, "closestReplicaReadCheckLoop", nil, false)
+
+	// trigger check once instantly.
+	if err := do.checkReplicaRead(ctx, pdClient); err != nil {
+		logutil.BgLogger().Warn("refresh replicaRead flag failed", zap.Error(err))
+	}
+
+	ticker := time.NewTicker(time.Minute)
+	defer func() {
+		ticker.Stop()
+		do.wg.Done()
+		logutil.BgLogger().Info("closestReplicaReadCheckLoop exited.")
+	}()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := do.checkReplicaRead(ctx, pdClient); err != nil {
+				logutil.BgLogger().Warn("refresh replicaRead flag failed", zap.Error(err))
+			}
+		}
+	}
+}
+
+func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) error {
+	// fast path
+	do.sysVarCache.RLock()
+	replicaRead := do.sysVarCache.global[variable.TiDBReplicaRead]
+	do.sysVarCache.RUnlock()
+
+	if !strings.EqualFold(replicaRead, "closest-adaptive") {
+		logutil.BgLogger().Debug("closest replica read is not enabled, skip check!", zap.String("mode", replicaRead))
+		return nil
+	}
+	stores, err := pdClient.GetAllStores(ctx, pd.WithExcludeTombstone())
+	if err != nil {
+		return err
+	}
+
+	storeZones := make(map[string]int)
+	for _, s := range stores {
+		// skip tumbstone stores or tiflash
+		if s.NodeState == metapb.NodeState_Removing || s.NodeState == metapb.NodeState_Removed || engine.IsTiFlash(s) {
+			continue
+		}
+		for _, label := range s.Labels {
+			if label.Key == placement.DCLabelKey && label.Value != "" {
+				storeZones[label.Value] = 0
+				break
+			}
+		}
+	}
+
+	enabled := false
+	// if stores don't have zone labels or are distribued in 1 zone, just disable cloeset replica read.
+	if len(storeZones) > 1 {
+		enabled = true
+		servers, err := infosync.GetAllServerInfo(ctx)
+		if err != nil {
+			return err
+		}
+		for _, s := range servers {
+			if v, ok := s.Labels[placement.DCLabelKey]; ok && v != "" {
+				if _, ok := storeZones[v]; !ok {
+					enabled = false
+					break
+				}
+				storeZones[v] += 1
+			}
+		}
+		if enabled {
+			for _, count := range storeZones {
+				if count == 0 {
+					enabled = false
+					break
+				}
+			}
+		}
+	}
+
+	if variable.SetEnableAdaptiveReplicaRead(enabled) {
+		logutil.BgLogger().Info("tidb server adaptive closest replica read is changed", zap.Bool("enable", enabled))
+	}
 	return nil
 }
 
@@ -970,14 +1245,15 @@ func (do *Domain) GetEtcdClient() *clientv3.Client {
 
 // LoadPrivilegeLoop create a goroutine loads privilege tables in a loop, it
 // should be called only once in BootstrapSession.
-func (do *Domain) LoadPrivilegeLoop(ctx sessionctx.Context) error {
-	ctx.GetSessionVars().InRestrictedSQL = true
-	_, err := ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), "set @@autocommit = 1")
+func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
+	sctx.GetSessionVars().InRestrictedSQL = true
+	_, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "set @@autocommit = 1")
 	if err != nil {
 		return err
 	}
 	do.privHandle = privileges.NewHandle()
-	err = do.privHandle.Update(ctx)
+	err = do.privHandle.Update(sctx)
 	if err != nil {
 		return err
 	}
@@ -1016,7 +1292,7 @@ func (do *Domain) LoadPrivilegeLoop(ctx sessionctx.Context) error {
 			}
 
 			count = 0
-			err := do.privHandle.Update(ctx)
+			err := do.privHandle.Update(sctx)
 			metrics.LoadPrivilegeCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 			if err != nil {
 				logutil.BgLogger().Error("load privilege failed", zap.Error(err))
@@ -1096,7 +1372,7 @@ func (do *Domain) PrivilegeHandle() *privileges.Handle {
 
 // BindHandle returns domain's bindHandle.
 func (do *Domain) BindHandle() *bindinfo.BindHandle {
-	return do.bindHandle
+	return do.bindHandle.Load()
 }
 
 // LoadBindInfoLoop create a goroutine loads BindInfo in a loop, it should
@@ -1104,8 +1380,11 @@ func (do *Domain) BindHandle() *bindinfo.BindHandle {
 func (do *Domain) LoadBindInfoLoop(ctxForHandle sessionctx.Context, ctxForEvolve sessionctx.Context) error {
 	ctxForHandle.GetSessionVars().InRestrictedSQL = true
 	ctxForEvolve.GetSessionVars().InRestrictedSQL = true
-	do.bindHandle = bindinfo.NewBindHandle(ctxForHandle)
-	err := do.bindHandle.Update(true)
+	if !do.bindHandle.CompareAndSwap(nil, bindinfo.NewBindHandle(ctxForHandle)) {
+		do.bindHandle.Load().Reset(ctxForHandle)
+	}
+
+	err := do.bindHandle.Load().Update(true)
 	if err != nil || bindinfo.Lease == 0 {
 		return err
 	}
@@ -1135,22 +1414,23 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 			case <-do.exit:
 				return
 			case <-bindWorkerTicker.C:
-				err := do.bindHandle.Update(false)
+				bindHandle := do.bindHandle.Load()
+				err := bindHandle.Update(false)
 				if err != nil {
 					logutil.BgLogger().Error("update bindinfo failed", zap.Error(err))
 				}
-				do.bindHandle.DropInvalidBindRecord()
+				bindHandle.DropInvalidBindRecord()
 				// Get Global
 				optVal, err := do.GetGlobalVar(variable.TiDBCapturePlanBaseline)
 				if err == nil && variable.TiDBOptOn(optVal) {
-					do.bindHandle.CaptureBaselines()
+					bindHandle.CaptureBaselines()
 				}
-				do.bindHandle.SaveEvolveTasksToStore()
+				bindHandle.SaveEvolveTasksToStore()
 			case <-gcBindTicker.C:
 				if !owner.IsOwner() {
 					continue
 				}
-				err := do.bindHandle.GCBindRecord()
+				err := do.bindHandle.Load().GCBindRecord()
 				if err != nil {
 					logutil.BgLogger().Error("GC bind record failed", zap.Error(err))
 				}
@@ -1175,7 +1455,7 @@ func (do *Domain) handleEvolvePlanTasksLoop(ctx sessionctx.Context, owner owner.
 			case <-time.After(bindinfo.Lease):
 			}
 			if owner.IsOwner() {
-				err := do.bindHandle.HandleEvolvePlanTask(ctx, false)
+				err := do.bindHandle.Load().HandleEvolvePlanTask(ctx, false)
 				if err != nil {
 					logutil.BgLogger().Info("evolve plan failed", zap.Error(err))
 				}
@@ -1545,6 +1825,11 @@ func (do *Domain) ExpensiveQueryHandle() *expensivequery.Handle {
 	return do.expensiveQueryHandle
 }
 
+// ServerMemoryLimitHandle returns the expensive query handle.
+func (do *Domain) ServerMemoryLimitHandle() *servermemorylimit.Handle {
+	return do.serverMemoryLimitHandle
+}
+
 const (
 	privilegeKey   = "/tidb/privilege"
 	sysVarCacheKey = "/tidb/sysvars"
@@ -1596,6 +1881,26 @@ func (do *Domain) NotifyUpdateSysVarCache() {
 	if err := do.rebuildSysVarCache(nil); err != nil {
 		logutil.BgLogger().Error("rebuilding sysvar cache failed", zap.Error(err))
 	}
+}
+
+// LoadSigningCertLoop loads the signing cert periodically to make sure it's fresh new.
+func (do *Domain) LoadSigningCertLoop() {
+	do.wg.Add(1)
+	go func() {
+		defer func() {
+			do.wg.Done()
+			logutil.BgLogger().Debug("loadSigningCertLoop exited.")
+			util.Recover(metrics.LabelDomain, "LoadSigningCertLoop", nil, false)
+		}()
+		for {
+			select {
+			case <-time.After(sessionstates.LoadCertInterval):
+				sessionstates.ReloadSigningCert()
+			case <-do.exit:
+				return
+			}
+		}
+	}()
 }
 
 // ServerID gets serverID.

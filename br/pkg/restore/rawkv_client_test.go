@@ -12,10 +12,9 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/rawkv"
-
-	"github.com/pingcap/tidb/util/codec"
 )
 
 // fakeRawkvClient is a mock for rawkv.client

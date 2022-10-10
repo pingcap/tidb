@@ -324,6 +324,7 @@ func (b *builtinConcatSig) Clone() builtinFunc {
 // evalString evals a builtinConcatSig
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_concat
 func (b *builtinConcatSig) evalString(row chunk.Row) (d string, isNull bool, err error) {
+	//nolint: prealloc
 	var s []byte
 	for _, a := range b.getArgs() {
 		d, isNull, err = a.EvalString(b.ctx, row)
@@ -1902,7 +1903,6 @@ func (b *builtinTrim3ArgsSig) evalString(row chunk.Row) (d string, isNull bool, 
 	default:
 		d = trimLeft(str, remstr)
 		d = trimRight(d, remstr)
-
 	}
 	return d, false, nil
 }

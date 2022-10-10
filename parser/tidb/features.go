@@ -39,6 +39,7 @@ var featureIDs = map[string]struct{}{
 	FeatureIDPlacement:      {},
 }
 
+// CanParseFeature is used to check if a feature can be parsed.
 func CanParseFeature(fs ...string) bool {
 	for _, f := range fs {
 		if _, ok := featureIDs[f]; !ok {

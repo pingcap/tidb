@@ -1,0 +1,13 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "util",
+    srcs = ["util.go"],
+    importpath = "github.com/pingcap/tidb/build/linter/util",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@co_honnef_go_tools//analysis/report",
+        "@org_golang_x_tools//go/analysis",
+        "@org_golang_x_tools//go/loader",
+    ],
+)
