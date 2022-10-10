@@ -870,7 +870,7 @@ func TestModifyColumnTypeWhenInterception(t *testing.T) {
 	// addedCount and warnings count in the job are all equal to `4096 - reorg batch size`.
 	// In the next round of this ddl job, the last reorg batch will be finished.
 	var middleWarningsCount = int64(defaultBatchSize*4 - defaultReorgBatchSize)
-	hook.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if job.SchemaState == model.StateWriteReorganization || job.SnapshotVer != 0 {
 			if len(job.ReorgMeta.WarningsCount) == len(job.ReorgMeta.Warnings) {
 				for _, v := range job.ReorgMeta.WarningsCount {
@@ -884,6 +884,7 @@ func TestModifyColumnTypeWhenInterception(t *testing.T) {
 			}
 		}
 	}
+	hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	d.SetHook(hook)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/MockReorgTimeoutInOneRegion", `return(true)`))
 	defer func() {
