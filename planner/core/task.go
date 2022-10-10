@@ -1688,7 +1688,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 		//           +- Exchange HashPartition by a
 		//               +- HashAgg count(b) #3, group by a       -> partial agg
 		//                   +- TableScan foo
-		var middleAgg *PhysicalHashAgg = nil
+		var middleAgg *PhysicalHashAgg
 		if partialAgg != nil && canUse3StageAgg {
 			clonedAgg, err := finalAgg.Clone()
 			if err != nil {
