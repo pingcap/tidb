@@ -2151,6 +2151,9 @@ func TestBuiltin(t *testing.T) {
 		{"select regexp_substr('aBc', 'abc', 1, 1, 'im');", true, "SELECT REGEXP_SUBSTR(_UTF8MB4'aBc', _UTF8MB4'abc', 1, 1, _UTF8MB4'im')"},
 		{"select regexp_instr('aBc', 'abc', 1, 1, 0, 'im');", true, "SELECT REGEXP_INSTR(_UTF8MB4'aBc', _UTF8MB4'abc', 1, 1, 0, _UTF8MB4'im')"},
 		{"select regexp_replace('aBc', 'abc', 'def', 1, 1, 'i');", true, "SELECT REGEXP_REPLACE(_UTF8MB4'aBc', _UTF8MB4'abc', _UTF8MB4'def', 1, 1, _UTF8MB4'i')"},
+
+		// Restore INSERT_METHOD table option
+		{"create table t (a int) insert_method=first", true, "CREATE TABLE `t` (`a` INT) INSERT_METHOD=FIRST"},
 	}
 	RunTest(t, table, false)
 
