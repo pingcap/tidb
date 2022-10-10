@@ -243,6 +243,10 @@ func (e *RevokeExec) revokeDBPriv(internalSession sessionctx.Context, priv *ast.
 	sqlexec.MustFormatSQL(sql, " WHERE User=%? AND Host=%? AND DB=%?", userName, host, dbName)
 
 	_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql.String())
+
+	sql = new(strings.Builder)
+	sqlexec.MustFormatSQL(sql, "DELETE FROM %n.%n WHERE User=%? AND Host=%? AND DB=%? AND Select_priv='N' AND Insert_priv='N' AND Update_priv='N' AND Delete_priv='N' AND Create_priv='N' AND Drop_priv='N' AND Grant_priv='N' AND References_priv='N' AND Index_priv='N' AND Alter_priv='N' AND Create_tmp_table_priv='N' AND Lock_tables_priv='N' AND Create_view_priv='N' AND Show_view_priv='N' AND Create_routine_priv='N' AND Alter_routine_priv='N' AND Execute_priv='N' AND Event_priv='N' AND Trigger_priv='N'", mysql.SystemDB, mysql.DBTable, userName, host, dbName)
+	_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql.String())
 	return err
 }
 
