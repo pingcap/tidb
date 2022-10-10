@@ -137,24 +137,13 @@ type Client struct {
 
 	supportPolicy bool
 
-	// startTS and restoreTS are used for kv file restore.
-	// TiKV will filter the key space that don't belong to [startTS, restoreTS].
-	startTS   uint64
-	restoreTS uint64
-
-	// If the commitTS of txn-entry belong to [startTS, restoreTS],
-	// the startTS of txn-entry may be smaller than startTS.
-	// We need maintain and restore more entries in default cf
-	// (the startTS in these entries belong to [shiftStartTS, startTS]).
-	shiftStartTS uint64
-
 	// currentTS is used for rewrite meta kv when restore stream.
 	// Can not use `restoreTS` directly, because schema created in `full backup` maybe is new than `restoreTS`.
 	currentTS uint64
 
-	storage storage.ExternalStorage
+	*logFileManager
 
-	helper *stream.MetadataHelper
+	storage storage.ExternalStorage
 
 	// if fullClusterRestore = true:
 	// - if there's system tables in the backup(backup data since br 5.1.0), the cluster should be a fresh cluster
@@ -1710,196 +1699,18 @@ func (rc *Client) PreCheckTableClusterIndex(
 	return nil
 }
 
-func (rc *Client) GetShiftTS(ctx context.Context, startTS uint64, restoreTS uint64) (uint64, error) {
-	shiftTS := struct {
-		sync.Mutex
-		value  uint64
-		exists bool
-	}{}
-	err := stream.FastUnmarshalMetaData(ctx, rc.storage, func(path string, raw []byte) error {
-		m, err := rc.helper.ParseToMetadata(raw)
-		if err != nil {
-			return err
-		}
-		shiftTS.Lock()
-		defer shiftTS.Unlock()
-
-		ts, ok := UpdateShiftTS(m, startTS, restoreTS)
-		if ok && (!shiftTS.exists || shiftTS.value > ts) {
-			shiftTS.value = ts
-			shiftTS.exists = true
-		}
-		return nil
-	})
+func (rc *Client) InstallLogFileManager(ctx context.Context, startTS, restoreTS uint64) error {
+	init := LogFileManagerInit{
+		StartTS:   startTS,
+		RestoreTS: restoreTS,
+		Storage:   rc.storage,
+	}
+	var err error
+	rc.logFileManager, err = CreateLogFileManager(ctx, init)
 	if err != nil {
-		return 0, err
+		return err
 	}
-	if !shiftTS.exists {
-		return startTS, nil
-	}
-	return shiftTS.value, nil
-}
-
-// ReadStreamMetaByTS is used for streaming task. collect all meta file by TS.
-func (rc *Client) ReadStreamMetaByTS(ctx context.Context, shiftedStartTS uint64, restoreTS uint64) ([]*backuppb.Metadata, error) {
-	streamBackupMetaFiles := struct {
-		sync.Mutex
-		metas []*backuppb.Metadata
-	}{}
-	streamBackupMetaFiles.metas = make([]*backuppb.Metadata, 0, 128)
-
-	err := stream.FastUnmarshalMetaData(ctx, rc.storage, func(path string, raw []byte) error {
-		metadata, err := rc.helper.ParseToMetadata(raw)
-		if err != nil {
-			return err
-		}
-		streamBackupMetaFiles.Lock()
-		if restoreTS >= metadata.MinTs && metadata.MaxTs >= shiftedStartTS {
-			streamBackupMetaFiles.metas = append(streamBackupMetaFiles.metas, metadata)
-		}
-		streamBackupMetaFiles.Unlock()
-		return nil
-	})
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return streamBackupMetaFiles.metas, nil
-}
-
-func (rc *Client) StreamingMetaByTS(ctx context.Context, shiftedStartTS uint64, restoreTS uint64) (iter.TryNextor[*backuppb.Metadata], error) {
-	it, err := rc.ReadStreamMetadata(ctx, rc.storage)
-	if err != nil {
-		return nil, err
-	}
-	filtered := iter.FilterOut(it, func(metadata *backuppb.Metadata) bool {
-		return restoreTS < metadata.MinTs || metadata.MaxTs < shiftedStartTS
-	})
-	return filtered, nil
-}
-
-func (rc *Client) ReadStreamMetadata(ctx context.Context, s storage.ExternalStorage) (iter.TryNextor[*backuppb.Metadata], error) {
-	opt := &storage.WalkOption{SubDir: stream.GetStreamBackupMetaPrefix()}
-	names := []string{}
-	err := s.WalkDir(ctx, opt, func(path string, size int64) error {
-		if !strings.HasSuffix(path, ".meta") {
-			return nil
-		}
-		names = append(names, path)
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	namesIter := iter.FromSlice(names)
-	readMeta := func(ctx context.Context, name string) (*backuppb.Metadata, error) {
-		f, err := s.ReadFile(ctx, name)
-		if err != nil {
-			return nil, err
-		}
-		meta, err := rc.helper.ParseToMetadata(f)
-		if err != nil {
-			return nil, err
-		}
-		return meta, nil
-	}
-	reader := iter.Transform(namesIter, readMeta,
-		iter.WithChunkSize[string, *backuppb.Metadata](512),
-		iter.WithConcurrency[string, *backuppb.Metadata](128))
-	return reader, nil
-}
-
-func (rc *Client) FilterDataFiles(ms iter.TryNextor[*backuppb.Metadata]) iter.TryNextor[*backuppb.DataFileInfo] {
-	return iter.FlatMap(ms, func(m *backuppb.Metadata) iter.TryNextor[*backuppb.DataFileInfo] {
-		return iter.FlatMap(iter.FromSlice(m.FileGroups), func(g *backuppb.DataFileGroup) iter.TryNextor[*backuppb.DataFileInfo] {
-			return iter.FilterOut(iter.FromSlice(g.DataFilesInfo), func(d *backuppb.DataFileInfo) bool {
-				// Modify the data internally, a little hacky.
-				if m.MetaVersion > backuppb.MetaVersion_V1 {
-					d.Path = g.Path
-				}
-				return d.IsMeta || rc.ShouldFilterOut(d)
-			})
-		})
-	})
-}
-
-// ShouldFilterOut checks whether a file should be filtered out via the current client.
-func (rc *Client) ShouldFilterOut(d *backuppb.DataFileInfo) bool {
-	return d.MinTs > rc.restoreTS ||
-		(d.Cf == stream.WriteCF && d.MaxTs < rc.startTS) ||
-		(d.Cf == stream.DefaultCF && d.MaxTs < rc.shiftStartTS)
-}
-
-type DDLMetaGroup struct {
-	Path      string
-	FileMetas []*backuppb.DataFileInfo
-}
-
-func (rc *Client) FilterMetaFiles(ms iter.TryNextor[*backuppb.Metadata]) iter.TryNextor[DDLMetaGroup] {
-	return iter.FlatMap(ms, func(m *backuppb.Metadata) iter.TryNextor[DDLMetaGroup] {
-		return iter.Map(iter.FromSlice(m.FileGroups), func(g *backuppb.DataFileGroup) DDLMetaGroup {
-			metas := iter.FilterOut(iter.FromSlice(g.DataFilesInfo), func(d *backuppb.DataFileInfo) bool {
-				// Modify the data internally, a little hacky.
-				if m.MetaVersion > backuppb.MetaVersion_V1 {
-					d.Path = g.Path
-				}
-				return !d.IsMeta || rc.ShouldFilterOut(d)
-			})
-			return DDLMetaGroup{
-				Path: g.Path,
-				// NOTE: the metas iterator is pure. No context or cancel needs.
-				FileMetas: iter.CollectAll(context.Background(), metas).Item,
-			}
-		})
-	})
-}
-
-// ReadStreamDataFiles is used for streaming task. collect all meta file by TS.
-func (rc *Client) ReadStreamDataFiles(
-	ctx context.Context,
-	metas []*backuppb.Metadata,
-) (dataFiles, metaFiles []*backuppb.DataFileInfo, err error) {
-	dFiles := make([]*backuppb.DataFileInfo, 0)
-	mFiles := make([]*backuppb.DataFileInfo, 0)
-
-	for _, m := range metas {
-		_, exists := backuppb.MetaVersion_name[int32(m.MetaVersion)]
-		if !exists {
-			log.Warn("metaversion too new", zap.Reflect("version id", m.MetaVersion))
-		}
-		for _, ds := range m.FileGroups {
-			metaRef := 0
-			for _, d := range ds.DataFilesInfo {
-				if d.MinTs > rc.restoreTS {
-					continue
-				} else if d.Cf == stream.WriteCF && d.MaxTs < rc.startTS {
-					continue
-				} else if d.Cf == stream.DefaultCF && d.MaxTs < rc.shiftStartTS {
-					continue
-				}
-
-				// If ds.Path is empty, it is MetadataV1.
-				// Try to be compatible with newer metadata version
-				if m.MetaVersion > backuppb.MetaVersion_V1 {
-					d.Path = ds.Path
-				}
-
-				if d.IsMeta {
-					mFiles = append(mFiles, d)
-					metaRef += 1
-				} else {
-					dFiles = append(dFiles, d)
-				}
-				log.Debug("backup stream collect data partition", zap.Uint64("offset", d.RangeOffset), zap.Uint64("length", d.Length))
-			}
-			// metadatav1 doesn't use cache
-			// Try to be compatible with newer metadata version
-			if m.MetaVersion > backuppb.MetaVersion_V1 {
-				rc.helper.InitCacheEntry(ds.Path, metaRef)
-			}
-		}
-	}
-
-	return dFiles, mFiles, nil
+	return nil
 }
 
 // FixIndex tries to fix a single index.
@@ -1964,7 +1775,7 @@ func (rc *Client) FixIndicesOfTable(ctx context.Context, schema string, table *m
 func (rc *Client) RestoreKVFiles(
 	ctx context.Context,
 	rules map[int64]*RewriteRules,
-	files iter.TryNextor[*backuppb.DataFileInfo],
+	files LogIter,
 	updateStats func(kvCount uint64, size uint64),
 	onProgress func(),
 ) error {
@@ -2151,7 +1962,7 @@ func SortMetaKVFiles(files []*backuppb.DataFileInfo) []*backuppb.DataFileInfo {
 
 func (rc *Client) PrepareDDLFileCache(
 	ctx context.Context,
-	files iter.TryNextor[DDLMetaGroup],
+	files MetaGroupIter,
 ) ([]*backuppb.DataFileInfo, error) {
 	fs := iter.CollectAll(ctx, files)
 	if fs.Err != nil {

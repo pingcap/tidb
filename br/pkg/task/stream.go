@@ -1118,18 +1118,17 @@ func restoreStream(
 	// mode or emptied schedulers
 	defer restorePostWork(ctx, client, restoreSchedulers)
 
-	shiftStartTS, err := client.GetShiftTS(ctx, cfg.StartTS, cfg.RestoreTS)
+	err = client.InstallLogFileManager(ctx, cfg.StartTS, cfg.RestoreTS)
 	if err != nil {
-		return errors.Annotate(err, "failed to get shift TS")
+		return err
 	}
 
 	// read meta by given ts.
-	metas, err := client.StreamingMetaByTS(ctx, shiftStartTS, cfg.RestoreTS)
+	metas, err := client.StreamingMetaByTS(ctx, cfg.RestoreTS)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	client.SetRestoreRangeTS(cfg.StartTS, cfg.RestoreTS, shiftStartTS)
 	dataFileCount := 0
 	metas = iter.Tap(metas, func(m *backuppb.Metadata) {
 		for _, fg := range m.FileGroups {
@@ -1195,7 +1194,7 @@ func restoreStream(
 	}
 	updateRewriteRules(rewriteRules, schemasReplace)
 
-	metas, err = client.StreamingMetaByTS(ctx, shiftStartTS, cfg.RestoreTS)
+	metas, err = client.StreamingMetaByTS(ctx, cfg.RestoreTS)
 	pd := g.StartProgress(ctx, "Restore KV Files", int64(dataFileCount), !cfg.LogProgress)
 	dmlFiles := client.FilterDataFiles(metas)
 	err = withProgress(pd, func(p glue.Progress) error {
@@ -1283,8 +1282,6 @@ func createRestoreClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, m
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
-	client.InitMetadataHelper()
 
 	return client, nil
 }

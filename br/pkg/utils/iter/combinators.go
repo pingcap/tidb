@@ -7,11 +7,15 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-type chunkMapping[T, R any] struct {
-	inner     TryNextor[T]
-	mapper    func(context.Context, T) (R, error)
+type chunkMappingCfg struct {
 	chunkSize uint
 	quota     *utils.WorkerPool
+}
+
+type chunkMapping[T, R any] struct {
+	chunkMappingCfg
+	inner  TryNextor[T]
+	mapper func(context.Context, T) (R, error)
 
 	buffer fromSlice[R]
 }
@@ -55,16 +59,16 @@ func (m *chunkMapping[T, R]) TryNext(ctx context.Context) IterResult[R] {
 	return DoneBy[R](r2)
 }
 
-type TransformConfig[T, R any] func(*chunkMapping[T, R])
+type TransformConfig func(*chunkMappingCfg)
 
-func WithConcurrency[T, R any](n uint) TransformConfig[T, R] {
-	return func(c *chunkMapping[T, R]) {
+func WithConcurrency(n uint) TransformConfig {
+	return func(c *chunkMappingCfg) {
 		c.quota = utils.NewWorkerPool(n, "transforming")
 	}
 }
 
-func WithChunkSize[T, R any](n uint) TransformConfig[T, R] {
-	return func(c *chunkMapping[T, R]) {
+func WithChunkSize(n uint) TransformConfig {
+	return func(c *chunkMappingCfg) {
 		c.chunkSize = n
 	}
 }
@@ -73,14 +77,16 @@ func WithChunkSize[T, R any](n uint) TransformConfig[T, R] {
 // then emitting the result of that procedure.
 // The execution of that procedure can be paralleled with the config `WithConcurrency`.
 // You may also need to config the `WithChunkSize`, because the concurrent execution is only available intra-batch.
-func Transform[T, R any](it TryNextor[T], with func(context.Context, T) (R, error), cs ...TransformConfig[T, R]) TryNextor[R] {
+func Transform[T, R any](it TryNextor[T], with func(context.Context, T) (R, error), cs ...TransformConfig) TryNextor[R] {
 	r := &chunkMapping[T, R]{
-		inner:     it,
-		mapper:    with,
-		chunkSize: 1,
+		inner:  it,
+		mapper: with,
+		chunkMappingCfg: chunkMappingCfg{
+			chunkSize: 1,
+		},
 	}
 	for _, c := range cs {
-		c(r)
+		c(&r.chunkMappingCfg)
 	}
 	if r.quota == nil {
 		r.quota = utils.NewWorkerPool(r.chunkSize, "max-concurrency")

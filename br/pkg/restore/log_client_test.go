@@ -11,6 +11,8 @@ import (
 	"math"
 	"os"
 	"path"
+	"sort"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -19,6 +21,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
+	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -26,8 +29,20 @@ import (
 
 var id uint64
 
-// wd is the shortcut for making a fake data file from write CF.
-func wd(start, end uint64, minBegin uint64) *backuppb.DataFileInfo {
+func wm(start, end, minBegin uint64) *backuppb.DataFileInfo {
+	i := wr(start, end, minBegin)
+	i.IsMeta = true
+	return i
+}
+
+func dm(start, end uint64) *backuppb.DataFileInfo {
+	i := dr(start, end)
+	i.IsMeta = true
+	return i
+}
+
+// wr is the shortcut for making a fake data file from write CF.
+func wr(start, end uint64, minBegin uint64) *backuppb.DataFileInfo {
 	id := atomic.AddUint64(&id, 1)
 	return &backuppb.DataFileInfo{
 		Path:                  fmt.Sprintf("default-%06d", id),
@@ -38,8 +53,8 @@ func wd(start, end uint64, minBegin uint64) *backuppb.DataFileInfo {
 	}
 }
 
-// dd is the shortcut for making a fake data file from default CF.
-func dd(start, end uint64) *backuppb.DataFileInfo {
+// dr is the shortcut for making a fake data file from default CF.
+func dr(start, end uint64) *backuppb.DataFileInfo {
 	id := atomic.AddUint64(&id, 1)
 	return &backuppb.DataFileInfo{
 		Path:  fmt.Sprintf("write-%06d", id),
@@ -76,12 +91,14 @@ func m2(files ...*backuppb.DataFileInfo) *backuppb.Metadata {
 		MinTs:       uint64(math.MaxUint64),
 		MetaVersion: backuppb.MetaVersion_V2,
 	}
-	fileGroups := &backuppb.DataFileGroup{}
+	fileGroups := &backuppb.DataFileGroup{
+		MinTs: uint64(math.MaxUint64),
+	}
 	for _, file := range files {
-		if meta.MaxTs < file.MaxTs {
+		if fileGroups.MaxTs < file.MaxTs {
 			fileGroups.MaxTs = file.MaxTs
 		}
-		if meta.MinTs > file.MinTs {
+		if fileGroups.MinTs > file.MinTs {
 			fileGroups.MinTs = file.MinTs
 		}
 		fileGroups.DataFilesInfo = append(fileGroups.DataFilesInfo, file)
@@ -151,9 +168,9 @@ func TestReadMetaBetweenTS(t *testing.T) {
 	cases := []Case{
 		{
 			items: []*backuppb.Metadata{
-				m(wd(4, 10, 3), wd(5, 13, 5)),
-				m(dd(1, 3)),
-				m(wd(10, 42, 9), dd(6, 9)),
+				m(wr(4, 10, 3), wr(5, 13, 5)),
+				m(dr(1, 3)),
+				m(wr(10, 42, 9), dr(6, 9)),
 			},
 			startTS:         4,
 			endTS:           5,
@@ -162,8 +179,8 @@ func TestReadMetaBetweenTS(t *testing.T) {
 		},
 		{
 			items: []*backuppb.Metadata{
-				m(wd(1, 100, 1), wd(5, 13, 5), dd(1, 101)),
-				m(wd(100, 200, 98), dd(100, 200)),
+				m(wr(1, 100, 1), wr(5, 13, 5), dr(1, 101)),
+				m(wr(100, 200, 98), dr(100, 200)),
 			},
 			startTS:         50,
 			endTS:           99,
@@ -172,9 +189,9 @@ func TestReadMetaBetweenTS(t *testing.T) {
 		},
 		{
 			items: []*backuppb.Metadata{
-				m(wd(1, 100, 1), wd(5, 13, 5), dd(1, 101)),
-				m(wd(100, 200, 98), dd(100, 200)),
-				m(wd(200, 300, 200), dd(200, 300)),
+				m(wr(1, 100, 1), wr(5, 13, 5), dr(1, 101)),
+				m(wr(100, 200, 98), dr(100, 200)),
+				m(wr(200, 300, 200), dr(200, 300)),
 			},
 			startTS:         150,
 			endTS:           199,
@@ -183,9 +200,9 @@ func TestReadMetaBetweenTS(t *testing.T) {
 		},
 		{
 			items: []*backuppb.Metadata{
-				m(wd(1, 100, 1), wd(5, 13, 5)),
-				m(wd(101, 200, 101), dd(100, 200)),
-				m(wd(200, 300, 200), dd(200, 300)),
+				m(wr(1, 100, 1), wr(5, 13, 5)),
+				m(wr(101, 200, 101), dr(100, 200)),
+				m(wr(200, 300, 200), dr(200, 300)),
 			},
 			startTS:         150,
 			endTS:           199,
@@ -206,14 +223,15 @@ func TestReadMetaBetweenTS(t *testing.T) {
 				os.RemoveAll(temp)
 			}
 		}()
-		cli := Client{
-			storage: loc,
-			helper:  stream.NewMetadataHelper(),
+		init := LogFileManagerInit{
+			StartTS:   c.startTS,
+			RestoreTS: c.endTS,
+			Storage:   loc,
 		}
-		shift, err := cli.GetShiftTS(ctx, c.startTS, c.endTS)
-		req.Equal(shift, c.expectedShiftTS)
+		cli, err := CreateLogFileManager(ctx, init)
+		req.Equal(cli.ShiftTS(), c.expectedShiftTS)
 		req.NoError(err)
-		metas, err := cli.ReadStreamMetaByTS(ctx, shift, c.endTS)
+		metas, err := cli.ReadStreamMetaByTS(ctx, cli.ShiftTS(), c.endTS)
 		req.NoError(err)
 		actualStoreIDs := make([]int64, 0, len(metas))
 		for _, meta := range metas {
@@ -246,9 +264,9 @@ func TestReadMetaBetweenTSV2(t *testing.T) {
 	cases := []Case{
 		{
 			items: []*backuppb.Metadata{
-				m2(wd(4, 10, 3), wd(5, 13, 5)),
-				m2(dd(1, 3)),
-				m2(wd(10, 42, 9), dd(6, 9)),
+				m2(wr(4, 10, 3), wr(5, 13, 5)),
+				m2(dr(1, 3)),
+				m2(wr(10, 42, 9), dr(6, 9)),
 			},
 			startTS:         4,
 			endTS:           5,
@@ -257,8 +275,8 @@ func TestReadMetaBetweenTSV2(t *testing.T) {
 		},
 		{
 			items: []*backuppb.Metadata{
-				m2(wd(1, 100, 1), wd(5, 13, 5), dd(1, 101)),
-				m2(wd(100, 200, 98), dd(100, 200)),
+				m2(wr(1, 100, 1), wr(5, 13, 5), dr(1, 101)),
+				m2(wr(100, 200, 98), dr(100, 200)),
 			},
 			startTS:         50,
 			endTS:           99,
@@ -267,9 +285,9 @@ func TestReadMetaBetweenTSV2(t *testing.T) {
 		},
 		{
 			items: []*backuppb.Metadata{
-				m2(wd(1, 100, 1), wd(5, 13, 5), dd(1, 101)),
-				m2(wd(100, 200, 98), dd(100, 200)),
-				m2(wd(200, 300, 200), dd(200, 300)),
+				m2(wr(1, 100, 1), wr(5, 13, 5), dr(1, 101)),
+				m2(wr(100, 200, 98), dr(100, 200)),
+				m2(wr(200, 300, 200), dr(200, 300)),
 			},
 			startTS:         150,
 			endTS:           199,
@@ -278,9 +296,9 @@ func TestReadMetaBetweenTSV2(t *testing.T) {
 		},
 		{
 			items: []*backuppb.Metadata{
-				m2(wd(1, 100, 1), wd(5, 13, 5)),
-				m2(wd(101, 200, 101), dd(100, 200)),
-				m2(wd(200, 300, 200), dd(200, 300)),
+				m2(wr(1, 100, 1), wr(5, 13, 5)),
+				m2(wr(101, 200, 101), dr(100, 200)),
+				m2(wr(200, 300, 200), dr(200, 300)),
 			},
 			startTS:         150,
 			endTS:           199,
@@ -301,14 +319,15 @@ func TestReadMetaBetweenTSV2(t *testing.T) {
 				os.RemoveAll(temp)
 			}
 		}()
-		cli := Client{
-			storage: loc,
-			helper:  stream.NewMetadataHelper(),
+		init := LogFileManagerInit{
+			StartTS:   c.startTS,
+			RestoreTS: c.endTS,
+			Storage:   loc,
 		}
-		shift, err := cli.GetShiftTS(ctx, c.startTS, c.endTS)
-		req.Equal(shift, c.expectedShiftTS)
+		cli, err := CreateLogFileManager(ctx, init)
+		req.Equal(cli.ShiftTS(), c.expectedShiftTS)
 		req.NoError(err)
-		metas, err := cli.ReadStreamMetaByTS(ctx, shift, c.endTS)
+		metas, err := cli.ReadStreamMetaByTS(ctx, cli.ShiftTS(), c.endTS)
 		req.NoError(err)
 		actualStoreIDs := make([]int64, 0, len(metas))
 		for _, meta := range metas {
@@ -338,17 +357,17 @@ func TestReadFromMetadata(t *testing.T) {
 	cases := []Case{
 		{
 			items: []*backuppb.Metadata{
-				m(wd(4, 10, 3), wd(5, 13, 5)),
-				m(dd(1, 3)),
-				m(wd(10, 42, 9), dd(6, 9)),
+				m(wr(4, 10, 3), wr(5, 13, 5)),
+				m(dr(1, 3)),
+				m(wr(10, 42, 9), dr(6, 9)),
 			},
 			untilTS:  10,
 			expected: []int{0, 1, 2},
 		},
 		{
 			items: []*backuppb.Metadata{
-				m(wd(1, 100, 1), wd(5, 13, 5), dd(1, 101)),
-				m(wd(100, 200, 98), dd(100, 200)),
+				m(wr(1, 100, 1), wr(5, 13, 5), dr(1, 101)),
+				m(wr(100, 200, 98), dr(100, 200)),
 			},
 			untilTS:  99,
 			expected: []int{0},
@@ -404,17 +423,17 @@ func TestReadFromMetadataV2(t *testing.T) {
 	cases := []Case{
 		{
 			items: []*backuppb.Metadata{
-				m2(wd(4, 10, 3), wd(5, 13, 5)),
-				m2(dd(1, 3)),
-				m2(wd(10, 42, 9), dd(6, 9)),
+				m2(wr(4, 10, 3), wr(5, 13, 5)),
+				m2(dr(1, 3)),
+				m2(wr(10, 42, 9), dr(6, 9)),
 			},
 			untilTS:  10,
 			expected: []int{0, 1, 2},
 		},
 		{
 			items: []*backuppb.Metadata{
-				m2(wd(1, 100, 1), wd(5, 13, 5), dd(1, 101)),
-				m2(wd(100, 200, 98), dd(100, 200)),
+				m2(wr(1, 100, 1), wr(5, 13, 5), dr(1, 101)),
+				m2(wr(100, 200, 98), dr(100, 200)),
 			},
 			untilTS:  99,
 			expected: []int{0},
@@ -457,5 +476,121 @@ func TestReadFromMetadataV2(t *testing.T) {
 		t.Run(fmt.Sprintf("case#%d", i), func(t *testing.T) {
 			run(t, c)
 		})
+	}
+}
+
+func dataFileInfoMatches(t *testing.T, listA []*backuppb.DataFileInfo, listB ...*backuppb.DataFileInfo) {
+	sortL := func(l []*backuppb.DataFileInfo) {
+		sort.Slice(l, func(i, j int) bool {
+			return l[i].MinTs < l[j].MinTs
+		})
+	}
+
+	sortL(listA)
+	sortL(listB)
+
+	if len(listA) != len(listB) {
+		t.Fatalf("failed: list length not match: %s vs %s", formatL(listA), formatL(listB))
+	}
+
+	for i := range listA {
+		require.True(t, equals(listA[i], listB[i]), "remaining: %s vs %s", formatL(listA[i:]), formatL(listB[i:]))
+	}
+}
+
+func equals(a, b *backuppb.DataFileInfo) bool {
+	return a.IsMeta == b.IsMeta &&
+		a.MinTs == b.MinTs &&
+		a.MaxTs == b.MaxTs &&
+		a.Cf == b.Cf &&
+		a.MinBeginTsInDefaultCf == b.MinBeginTsInDefaultCf
+}
+
+func formatI(i *backuppb.DataFileInfo) string {
+	ty := "d"
+	if i.Cf == "write" {
+		ty = "w"
+	}
+	isMeta := "r"
+	if i.IsMeta {
+		isMeta = "m"
+	}
+	shift := ""
+	if i.MinBeginTsInDefaultCf > 0 {
+		shift = fmt.Sprintf(", %d", i.MinBeginTsInDefaultCf)
+	}
+
+	return fmt.Sprintf("%s%s(%d, %d%s)", ty, isMeta, i.MinTs, i.MaxTs, shift)
+}
+
+func formatL(l []*backuppb.DataFileInfo) string {
+	r := iter.CollectAll(context.TODO(), iter.Map(iter.FromSlice(l), formatI))
+	return "[" + strings.Join(r.Item, ", ") + "]"
+}
+
+func TestFileManager(t *testing.T) {
+	type Case struct {
+		Metadata  []*backuppb.Metadata
+		StartTS   int
+		RestoreTS int
+
+		SearchMeta bool
+		Requires   []*backuppb.DataFileInfo
+	}
+
+	cases := []Case{
+		{
+			Metadata: []*backuppb.Metadata{
+				m2(wm(5, 10, 1), dm(1, 8), dr(2, 6), wr(4, 5, 2)),
+				m2(wr(50, 54, 42), dr(42, 50), wr(70, 78, 0)),
+				m2(dr(100, 101), wr(102, 104, 100)),
+			},
+			StartTS:   2,
+			RestoreTS: 60,
+			Requires: []*backuppb.DataFileInfo{
+				dr(2, 6), wr(4, 5, 2), wr(50, 54, 42), dr(42, 50),
+			},
+		},
+	}
+
+	run := func(t *testing.T, c Case) {
+		req := require.New(t)
+		items := c.Metadata
+		start := uint64(c.StartTS)
+		end := uint64(c.RestoreTS)
+		loc, temp := (&mockMetaBuilder{
+			metas: items,
+		}).b(true)
+		defer func() {
+			t.Log("temp dir", temp)
+			if !t.Failed() {
+				os.RemoveAll(temp)
+			}
+		}()
+		ctx := context.Background()
+		fm, err := CreateLogFileManager(ctx, LogFileManagerInit{
+			StartTS:   start,
+			RestoreTS: end,
+			Storage:   loc,
+		})
+		req.NoError(err)
+
+		metas, err := fm.StreamingMetaByTS(ctx, end)
+		req.NoError(err)
+		metas = iter.Tap(metas, func(m *backuppb.Metadata) {
+			fmt.Printf("%d-%d:%s", m.MinTs, m.MaxTs, formatL(m.FileGroups[0].DataFilesInfo))
+		})
+		var datas LogIter
+		if !c.SearchMeta {
+			datas = fm.FilterDataFiles(metas)
+		} else {
+			datas = iter.FlatMap(fm.FilterMetaFiles(metas), func(g DDLMetaGroup) iter.TryNextor[*backuppb.DataFileInfo] { return iter.FromSlice(g.FileMetas) })
+		}
+		r := iter.CollectAll(ctx, datas)
+		dataFileInfoMatches(t, r.Item, c.Requires...)
+	}
+
+	for i, c := range cases {
+		t.Run(fmt.Sprintf("#%d", i), func(t *testing.T) { run(t, c) })
 	}
 }

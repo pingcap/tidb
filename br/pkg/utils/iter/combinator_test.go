@@ -19,7 +19,7 @@ func TestParTrans(t *testing.T) {
 		case <-time.After(100 * time.Millisecond):
 		}
 		return i + 100, nil
-	}, iter.WithChunkSize[int, int](128), iter.WithConcurrency[int, int](64))
+	}, iter.WithChunkSize(128), iter.WithConcurrency(64))
 	cx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
 	r := iter.CollectAll(cx, mapped)
@@ -55,6 +55,16 @@ func TestCollect(t *testing.T) {
 	coll := iter.CollectMany(ctx, items, 10)
 	require.Len(t, coll.Item, 10, "%s", coll)
 	require.Equal(t, coll.Item, iter.CollectAll(ctx, iter.OfRange(0, 10)).Item)
+}
+
+func TestTapping(t *testing.T) {
+	items := iter.OfRange(0, 101)
+	ctx := context.Background()
+	n := 0
+
+	items = iter.Tap(items, func(i int) { n += i })
+	iter.CollectAll(ctx, items)
+	require.Equal(t, 5050, n)
 }
 
 func TestSome(t *testing.T) {
