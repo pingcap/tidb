@@ -1390,51 +1390,57 @@ func writeSettingItemToBuilder(sb *strings.Builder, item string) {
 	}
 	sb.WriteString(item)
 }
+func writeSettingStringToBuilder(sb *strings.Builder, item string, value string) {
+	writeSettingItemToBuilder(sb, fmt.Sprintf("%s=\"%s\"", item, strings.ReplaceAll(value, "\"", "\\\"")))
+}
+func writeSettingIntegerToBuilder(sb *strings.Builder, item string, value uint64) {
+	writeSettingItemToBuilder(sb, fmt.Sprintf("%s=%d", item, value))
+}
 
 func (p *PlacementSettings) String() string {
 	sb := new(strings.Builder)
 	if len(p.PrimaryRegion) > 0 {
-		writeSettingItemToBuilder(sb, fmt.Sprintf("PRIMARY_REGION=\"%s\"", p.PrimaryRegion))
+		writeSettingStringToBuilder(sb, "PRIMARY_REGION", p.PrimaryRegion)
 	}
 
 	if len(p.Regions) > 0 {
-		writeSettingItemToBuilder(sb, fmt.Sprintf("REGIONS=\"%s\"", p.Regions))
+		writeSettingStringToBuilder(sb, "REGIONS", p.Regions)
 	}
 
 	if len(p.Schedule) > 0 {
-		writeSettingItemToBuilder(sb, fmt.Sprintf("SCHEDULE=\"%s\"", p.Schedule))
+		writeSettingStringToBuilder(sb, "SCHEDULE", p.Schedule)
 	}
 
 	if len(p.Constraints) > 0 {
-		writeSettingItemToBuilder(sb, fmt.Sprintf("CONSTRAINTS=\"%s\"", p.Constraints))
+		writeSettingStringToBuilder(sb, "CONSTRAINTS", p.Constraints)
 	}
 
 	if len(p.LeaderConstraints) > 0 {
-		writeSettingItemToBuilder(sb, fmt.Sprintf("LEADER_CONSTRAINTS=\"%s\"", p.LeaderConstraints))
+		writeSettingStringToBuilder(sb, "LEADER_CONSTRAINTS", p.LeaderConstraints)
 	}
 
 	if p.Voters > 0 {
-		writeSettingItemToBuilder(sb, fmt.Sprintf("VOTERS=%d", p.Voters))
+		writeSettingIntegerToBuilder(sb, "VOTERS", p.Voters)
 	}
 
 	if len(p.VoterConstraints) > 0 {
-		writeSettingItemToBuilder(sb, fmt.Sprintf("VOTER_CONSTRAINTS=\"%s\"", p.VoterConstraints))
+		writeSettingStringToBuilder(sb, "VOTER_CONSTRAINTS", p.VoterConstraints)
 	}
 
 	if p.Followers > 0 {
-		writeSettingItemToBuilder(sb, fmt.Sprintf("FOLLOWERS=%d", p.Followers))
+		writeSettingIntegerToBuilder(sb, "FOLLOWERS", p.Followers)
 	}
 
 	if len(p.FollowerConstraints) > 0 {
-		writeSettingItemToBuilder(sb, fmt.Sprintf("FOLLOWER_CONSTRAINTS=\"%s\"", p.FollowerConstraints))
+		writeSettingStringToBuilder(sb, "FOLLOWER_CONSTRAINTS", p.FollowerConstraints)
 	}
 
 	if p.Learners > 0 {
-		writeSettingItemToBuilder(sb, fmt.Sprintf("LEARNERS=%d", p.Learners))
+		writeSettingIntegerToBuilder(sb, "LEARNERS", p.Learners)
 	}
 
 	if len(p.LearnerConstraints) > 0 {
-		writeSettingItemToBuilder(sb, fmt.Sprintf("LEARNER_CONSTRAINTS=\"%s\"", p.LearnerConstraints))
+		writeSettingStringToBuilder(sb, "LEARNER_CONSTRAINTS", p.LearnerConstraints)
 	}
 
 	return sb.String()
