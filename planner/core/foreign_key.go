@@ -15,12 +15,26 @@
 package core
 
 import (
+	"context"
+	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/statistics"
+
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/ranger"
 )
+
+type FKTrigger struct {
+	*FKCheck
+	*FKCascade
+}
 
 // FKCheck indicates the foreign key constraint checker.
 type FKCheck struct {
@@ -35,6 +49,19 @@ type FKCheck struct {
 
 	CheckExist bool
 	FailedErr  error
+}
+
+// FKCascade indicates the foreign key constraint cascade behaviour.
+type FKCascade struct {
+	OnDelete *FKCascadeInfo
+	OnUpdate *FKCascadeInfo
+}
+
+// FKCascadeInfo contains the foreign key constraint information.
+type FKCascadeInfo struct {
+	ReferredFK *model.ReferredFKInfo
+	ChildTable table.Table
+	FK         *model.FKInfo
 }
 
 func (p *Insert) buildOnInsertFKChecks(ctx sessionctx.Context, is infoschema.InfoSchema, dbName string) ([]*FKCheck, error) {
@@ -186,6 +213,54 @@ func (updt *Update) buildTbl2UpdateColumns() map[int64]map[string]struct{} {
 	return tblID2UpdateColumns
 }
 
+func (del *Delete) buildOnDeleteFKTriggers(ctx sessionctx.Context, is infoschema.InfoSchema, tblID2table map[int64]table.Table) error {
+	if !ctx.GetSessionVars().ForeignKeyChecks {
+		return nil
+	}
+	fkTriggers := make(map[int64][]*FKTrigger)
+	for tid, tbl := range tblID2table {
+		tblInfo := tbl.Meta()
+		dbInfo, exist := is.SchemaByTable(tblInfo)
+		if !exist {
+			return infoschema.ErrDatabaseNotExists
+		}
+		referredFKs := is.GetTableReferredForeignKeys(dbInfo.Name.L, tblInfo.Name.L)
+		for _, referredFK := range referredFKs {
+			fkTrigger, err := buildOnDeleteFKTrigger(is, referredFK)
+			if err != nil {
+				return err
+			}
+			if fkTrigger != nil {
+				fkTriggers[tid] = append(fkTriggers[tid], fkTrigger)
+			}
+		}
+	}
+	del.FKTriggers = fkTriggers
+	return nil
+}
+
+func buildOnDeleteFKTrigger(is infoschema.InfoSchema, referredFK *model.ReferredFKInfo) (*FKTrigger, error) {
+	childTable, err := is.TableByName(referredFK.ChildSchema, referredFK.ChildTable)
+	if err != nil {
+		return nil, nil
+	}
+	fk := model.FindFKInfoByName(childTable.Meta().ForeignKeys, referredFK.ChildFKName.L)
+	if fk == nil || fk.Version < 1 {
+		return nil, nil
+	}
+	switch model.ReferOptionType(fk.OnDelete) {
+	case model.ReferOptionCascade:
+		return &FKTrigger{
+			FKCascade: &FKCascade{
+				OnDelete: &FKCascadeInfo{
+					ReferredFK: referredFK,
+					ChildTable: childTable,
+					FK:         fk,
+				}}}, nil
+	}
+	return nil, nil
+}
+
 func isMapContainAnyCols(colsMap map[string]struct{}, cols ...model.CIStr) bool {
 	for _, col := range cols {
 		_, exist := colsMap[col.L]
@@ -264,4 +339,199 @@ func buildFKCheck(tbl table.Table, cols []model.CIStr, failedErr error) (*FKChec
 		IdxIsPrimaryKey: referTbIdxInfo.Primary && tblInfo.IsCommonHandle,
 		FailedErr:       failedErr,
 	}, nil
+}
+
+// FKTriggerPlan is the foreign key trigger plan
+type FKTriggerPlan interface {
+	Plan
+
+	GetCols() []model.CIStr
+
+	SetRangeForSelectPlan([][]types.Datum) error
+}
+
+type FKOnDeleteCascadePlan struct {
+	baseFKTriggerPlan
+
+	*Delete
+}
+
+type baseFKTriggerPlan struct {
+	fk   *model.FKInfo
+	cols []model.CIStr
+}
+
+func (p *baseFKTriggerPlan) GetCols() []model.CIStr {
+	return p.cols
+}
+
+func (p *baseFKTriggerPlan) setRangeForSelectPlan(selectPlan PhysicalPlan, fkValues [][]types.Datum) error {
+	if us, ok := selectPlan.(*PhysicalUnionScan); ok {
+		return p.setRangeForSelectPlan(us.children[0], fkValues)
+	}
+	ranges := make([]*ranger.Range, 0, len(fkValues))
+	for _, vals := range fkValues {
+		ranges = append(ranges, &ranger.Range{
+			LowVal:      vals,
+			HighVal:     vals,
+			LowExclude:  false,
+			HighExclude: false,
+		})
+	}
+
+	switch v := selectPlan.(type) {
+	case *PhysicalIndexLookUpReader:
+		is := v.IndexPlans[0].(*PhysicalIndexScan)
+		is.Ranges = ranges
+	case *PhysicalTableReader:
+		reader := v.tablePlan.(*PhysicalTableScan)
+		reader.Ranges = ranges
+	default:
+		return errors.Errorf("unknown plan %v#", v)
+	}
+	return nil
+}
+
+func (p *FKOnDeleteCascadePlan) SetRangeForSelectPlan(fkValues [][]types.Datum) error {
+	return p.setRangeForSelectPlan(p.SelectPlan, fkValues)
+}
+
+func (b *PlanBuilder) BuildOnDeleteFKTriggerPlan(ctx context.Context, onModifyReferredTable *FKCascadeInfo) (FKTriggerPlan, error) {
+	fk, referredFK, childTable := onModifyReferredTable.FK, onModifyReferredTable.ReferredFK, onModifyReferredTable.ChildTable
+	switch model.ReferOptionType(fk.OnDelete) {
+	case model.ReferOptionCascade:
+		return b.buildForeignKeyCascadeDelete(ctx, referredFK.ChildSchema, childTable, fk)
+	}
+	return nil, nil
+}
+
+func (b *PlanBuilder) buildForeignKeyCascadeDelete(ctx context.Context, dbName model.CIStr, tbl table.Table, fk *model.FKInfo) (FKTriggerPlan, error) {
+	b.pushSelectOffset(0)
+	b.pushTableHints(nil, 0)
+	defer func() {
+		b.popSelectOffset()
+		// table hints are only visible in the current DELETE statement.
+		b.popTableHints()
+	}()
+
+	b.inDeleteStmt = true
+	b.isForUpdateRead = true
+
+	ds, tableReader, err := b.buildTableReaderForFK(ctx, dbName, tbl.Meta().Name, fk.Cols)
+	if err != nil {
+		return nil, err
+	}
+	del := Delete{
+		SelectPlan: tableReader,
+	}.Init(b.ctx)
+	del.names = ds.names
+
+	tblID2Handle := make(map[int64][]HandleCols)
+	tblID2Table := make(map[int64]table.Table)
+	tid := ds.tableInfo.ID
+	tblID2Handle[tid] = []HandleCols{ds.handleCols}
+	tblID2Table[tid] = ds.table
+	tblID2Handle, err = resolveIndicesForTblID2Handle(tblID2Handle, tableReader.Schema())
+	if err != nil {
+		return nil, err
+	}
+	del.TblColPosInfos, err = buildColumns2Handle(del.names, tblID2Handle, tblID2Table, false)
+	if err != nil {
+		return nil, err
+	}
+	err = del.buildOnDeleteFKTriggers(b.ctx, b.is, tblID2Table)
+	return &FKOnDeleteCascadePlan{
+		Delete:            del,
+		baseFKTriggerPlan: baseFKTriggerPlan{fk, fk.RefCols},
+	}, err
+}
+
+func (b *PlanBuilder) buildTableReaderForFK(ctx context.Context, dbName, tblName model.CIStr, cols []model.CIStr) (*DataSource, PhysicalPlan, error) {
+	tn := &ast.TableName{
+		Schema: dbName,
+		Name:   tblName,
+	}
+	datasource, err := b.buildDataSource(ctx, tn, &model.CIStr{})
+	if err != nil {
+		return nil, nil, err
+	}
+	var ds *DataSource
+	var logicalUnionScan *LogicalUnionScan
+	switch v := datasource.(type) {
+	case *DataSource:
+		ds = v
+	case *LogicalUnionScan:
+		ds = v.children[0].(*DataSource)
+		logicalUnionScan = v
+	default:
+		return nil, nil, errors.Errorf("unknown datasource plan: %#v", datasource)
+	}
+
+	tableReader, err := b.buildPhysicalTableReaderForFK(ds, cols)
+	if err != nil {
+		return nil, nil, err
+	}
+	if logicalUnionScan == nil {
+		return ds, tableReader, nil
+	}
+	physicalUnionScan := PhysicalUnionScan{
+		Conditions: logicalUnionScan.conditions,
+		HandleCols: logicalUnionScan.handleCols,
+	}.Init(logicalUnionScan.ctx, tableReader.statsInfo(), logicalUnionScan.blockOffset, nil)
+	physicalUnionScan.SetChildren(tableReader)
+	return ds, physicalUnionScan, nil
+}
+
+func (b *PlanBuilder) buildPhysicalTableReaderForFK(ds *DataSource, cols []model.CIStr) (PhysicalPlan, error) {
+	tblInfo := ds.tableInfo
+	if tblInfo.PKIsHandle && len(cols) == 1 {
+		colInfo := model.FindColumnInfo(tblInfo.Columns, cols[0].L)
+		if colInfo != nil && mysql.HasPriKeyFlag(colInfo.GetFlag()) {
+			return b.buildPhysicalTableReader(ds)
+		}
+	}
+	idx := model.FindIndexByColumns(tblInfo, cols...)
+	if idx == nil {
+		return nil, errors.Errorf("foreign key doesn't have related index to use, should never happen")
+	}
+	if ds.tableInfo.IsCommonHandle && idx.Primary {
+		return b.buildPhysicalTableReader(ds)
+	}
+
+	return b.buildPhysicalIndexLookUpReader(ds.DBName, ds.table, idx, ds.schema, ds.Columns)
+}
+
+func (b *PlanBuilder) buildPhysicalTableReader(ds *DataSource) (PhysicalPlan, error) {
+	tblInfo := ds.tableInfo
+	ts := PhysicalTableScan{
+		Table:           tblInfo,
+		Columns:         ds.Columns,
+		DBName:          ds.DBName,
+		TableAsName:     &tblInfo.Name,
+		physicalTableID: ds.physicalTableID,
+		isPartition:     ds.isPartition,
+		tblCols:         ds.TblCols,
+		tblColHists:     &(statistics.PseudoTable(tblInfo)).HistColl,
+	}.Init(b.ctx, b.getSelectOffset())
+	ts.SetSchema(ds.schema)
+	ts.stats = &property.StatsInfo{}
+	var extraCol *expression.Column
+	for _, col := range ds.schema.Columns {
+		if col.ID == model.ExtraHandleID {
+			extraCol = col
+		}
+	}
+	_, commonCols, _ := tryGetCommonHandleCols(ds.table, ds.schema)
+	cop := &copTask{
+		tablePlan:         ts,
+		indexPlanFinished: true,
+		tblColHists:       ts.tblColHists,
+		extraHandleCol:    extraCol,
+		commonHandleCols:  commonCols,
+	}
+	rootT := cop.convertToRootTask(b.ctx)
+	if err := rootT.p.ResolveIndices(); err != nil {
+		return nil, err
+	}
+	return rootT.p, nil
 }

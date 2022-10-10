@@ -543,3 +543,7 @@ func (e *UpdateExec) GetFKChecks() []*FKCheckExec {
 	}
 	return fkChecks
 }
+
+func (e *UpdateExec) GetFKCascades() []*FKCascadeExec {
+	return nil
+}

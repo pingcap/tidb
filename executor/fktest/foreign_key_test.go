@@ -703,3 +703,198 @@ func TestForeignKeyOnUpdateParentTableCheck(t *testing.T) {
 	tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 11 21", "4 14 24", "102 12 22", "103 13 23"))
 	tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("11 1 21 a"))
 }
+
+func TestForeignKeyOnDeleteCascade(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+	cases := []struct {
+		prepareSQLs []string
+	}{
+		// Case-1: test unique index only contain foreign key columns.
+		{
+			prepareSQLs: []string{
+				"create table t1 (id int, a int, b int,  unique index(a, b));",
+				"create table t2 (b int, name varchar(10), a int, id int, unique index (a,b), foreign key fk(a, b) references t1(a, b) ON DELETE CASCADE);",
+			},
+		},
+		// Case-2: test unique index contain foreign key columns and other columns.
+		{
+			prepareSQLs: []string{
+				"create table t1 (id int key, a int, b int, unique index(a, b, id));",
+				"create table t2 (b int, a int, id int key, name varchar(10), unique index (a,b, id), foreign key fk(a, b) references t1(a, b) ON DELETE CASCADE);",
+			},
+		},
+		// Case-3: test non-unique index only contain foreign key columns.
+		{
+			prepareSQLs: []string{
+				"create table t1 (id int key,a int, b int, index(a, b));",
+				"create table t2 (b int, a int, name varchar(10), id int key, index (a, b), foreign key fk(a, b) references t1(a, b) ON DELETE CASCADE);",
+			},
+		},
+		// Case-4: test non-unique index contain foreign key columns and other columns.
+		{
+			prepareSQLs: []string{
+				"create table t1 (id int key,a int, b int,  index(a, b, id));",
+				"create table t2 (name varchar(10), b int, a int, id int key, index (a, b, id), foreign key fk(a, b) references t1(a, b) ON DELETE CASCADE);",
+			},
+		},
+	}
+
+	for idx, ca := range cases {
+		tk.MustExec("drop table if exists t2;")
+		tk.MustExec("drop table if exists t1;")
+		for _, sql := range ca.prepareSQLs {
+			tk.MustExec(sql)
+		}
+		tk.MustExec("insert into t1 values (1, 1, 1),(2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, null), (6, null, 6), (7, null, null);")
+		tk.MustExec("insert into t2 (id, a, b, name) values (1, 1, 1, 'a'),(2, 2, 2, 'b'), (3, 3, 3, 'c'), (4, 4, 4, 'd'), (5, 5, null, 'e'), (6, null, 6, 'f'), (7, null, null, 'g');")
+		tk.MustExec("delete from t1 where id = 1")
+		tk.MustExec("delete from t1 where id = 2 or a = 2")
+		tk.MustExec("delete from t1 where a in (2,3,4) or b in (5,6,7) or id=7")
+		tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("5 5 <nil>"))
+		tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("5 5 <nil> e", "6 <nil> 6 f", "7 <nil> <nil> g"))
+
+		// Test in transaction.
+		tk.MustExec("delete from t2")
+		tk.MustExec("delete from t1")
+		tk.MustExec("begin")
+		tk.MustExec("insert into t1 values (1, 1, 1),(2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, null), (6, null, 6), (7, null, null);")
+		tk.MustExec("insert into t2 (id, a, b, name) values (1, 1, 1, 'a'),(2, 2, 2, 'b'), (3, 3, 3, 'c'), (4, 4, 4, 'd'), (5, 5, null, 'e'), (6, null, 6, 'f'), (7, null, null, 'g');")
+		tk.MustExec("delete from t1 where id = 1 or a = 2")
+		tk.MustExec("delete from t1 where a in (2,3,4) or b in (5,6,7)")
+		tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("5 5 <nil> e", "6 <nil> 6 f", "7 <nil> <nil> g"))
+		tk.MustExec("rollback")
+		tk.MustQuery("select * from t1").Check(testkit.Rows())
+		tk.MustQuery("select * from t2").Check(testkit.Rows())
+
+		tk.MustExec("insert into t1 values (1, 1, 1),(2, 2, 2);")
+		tk.MustExec("begin")
+		tk.MustExec("insert into t2 (id, a, b, name) values (1, 1, 1, 'a'),(2, 2, 2, 'b')")
+		tk.MustExec("delete from t1 where id = 1")
+		tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("2 2 2"))
+		tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("2 2 2 b"))
+		err := tk.ExecToErr("insert into t2 (id, a, b, name) values (1, 1, 1, 'a')")
+		require.Error(t, err)
+		require.True(t, plannercore.ErrNoReferencedRow2.Equal(err), err.Error())
+		tk.MustExec("insert into t1 values (1, 1, 1);")
+		tk.MustExec("insert into t2 (id, a, b, name) values (1, 1, 1, 'c')")
+		tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 1 1", "2 2 2"))
+		tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 1 1 c", "2 2 2 b"))
+		tk.MustExec("delete from t1")
+		tk.MustExec("commit")
+		tk.MustQuery("select * from t1").Check(testkit.Rows())
+		tk.MustQuery("select * from t2").Check(testkit.Rows())
+
+		// only test in non-unique index
+		if idx >= 2 {
+			tk.MustExec("insert into t1 values (1, 1, 1),(2, 1, 1);")
+			tk.MustExec("begin")
+			tk.MustExec("delete from t1 where id = 1")
+			tk.MustExec("insert into t2 (id, a, b, name) values (1, 1, 1, 'a')")
+			tk.MustExec("delete from t1 where id = 2")
+			tk.MustQuery("select * from t1").Check(testkit.Rows())
+			tk.MustQuery("select * from t2").Check(testkit.Rows())
+			err := tk.ExecToErr("insert into t2 (id, a, b, name) values (1, 1, 1, 'a')")
+			require.Error(t, err)
+			require.True(t, plannercore.ErrNoReferencedRow2.Equal(err), err.Error())
+			tk.MustExec("insert into t1 values (3, 1, 1);")
+			tk.MustExec("insert into t2 (id, a, b, name) values (3, 1, 1, 'e')")
+			tk.MustExec("commit")
+			tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("3 1 1"))
+			tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("3 1 1 e"))
+		}
+	}
+
+	cases = []struct {
+		prepareSQLs []string
+	}{
+		// Case-5: test primary key only contain foreign key columns, and disable tidb_enable_clustered_index.
+		{
+			prepareSQLs: []string{
+				"set @@tidb_enable_clustered_index=0;",
+				"create table t1 (id int, a int, b int,  primary key (a, b));",
+				"create table t2 (b int, name varchar(10),  a int, id int, primary key (a, b), foreign key fk(a, b) references t1(a, b) ON DELETE CASCADE);",
+			},
+		},
+		// Case-6: test primary key only contain foreign key columns, and enable tidb_enable_clustered_index.
+		{
+			prepareSQLs: []string{
+				"set @@tidb_enable_clustered_index=1;",
+				"create table t1 (id int, a int, b int,  primary key (a, b));",
+				"create table t2 (name varchar(10), b int,  a int, id int, primary key (a, b), foreign key fk(a, b) references t1(a, b) ON DELETE CASCADE);",
+			},
+		},
+		// Case-7: test primary key contain foreign key columns and other column, and disable tidb_enable_clustered_index.
+		{
+			prepareSQLs: []string{
+				"set @@tidb_enable_clustered_index=0;",
+				"create table t1 (id int, a int, b int,  primary key (a, b, id));",
+				"create table t2 (b int,  a int, name varchar(10), id int, primary key (a, b, id), foreign key fk(a, b) references t1(a, b) ON DELETE CASCADE);",
+			},
+		},
+		// Case-8: test primary key contain foreign key columns and other column, and enable tidb_enable_clustered_index.
+		{
+			prepareSQLs: []string{
+				"set @@tidb_enable_clustered_index=1;",
+				"create table t1 (id int, a int, b int,  primary key (a, b, id));",
+				"create table t2 (b int, name varchar(10),  a int, id int, primary key (a, b, id), foreign key fk(a, b) references t1(a, b) ON DELETE CASCADE);",
+			},
+		},
+		// Case-9: test primary key is handle and contain foreign key column.
+		{
+			prepareSQLs: []string{
+				"set @@tidb_enable_clustered_index=0;",
+				"create table t1 (id int, a int, b int,  primary key (id));",
+				"create table t2 (b int,  a int, id int, name varchar(10), primary key (a), foreign key fk(a) references t1(id) ON DELETE CASCADE);",
+			},
+		},
+	}
+	for _, ca := range cases {
+		tk.MustExec("drop table if exists t2;")
+		tk.MustExec("drop table if exists t1;")
+		for _, sql := range ca.prepareSQLs {
+			tk.MustExec(sql)
+		}
+		tk.MustExec("insert into t1 values (1, 1, 1),(2, 2, 2), (3, 3, 3), (4, 4, 4);")
+		tk.MustExec("insert into t2 (id, a, b, name) values (1, 1, 1, 'a'),(2, 2, 2, 'b'), (3, 3, 3, 'c'), (4, 4, 4, 'd');")
+		tk.MustExec("delete from t1 where id = 1 or a = 2")
+		tk.MustQuery("select id, a, b from t2 order by id").Check(testkit.Rows("3 3 3", "4 4 4"))
+		tk.MustExec("delete from t1 where a in (2,3) or b < 5")
+		tk.MustQuery("select * from t1").Check(testkit.Rows())
+		tk.MustQuery("select * from t2").Check(testkit.Rows())
+
+		// test in transaction.
+		tk.MustExec("delete from t2")
+		tk.MustExec("delete from t1")
+		tk.MustExec("begin")
+		tk.MustExec("insert into t1 values (1, 1, 1),(2, 2, 2), (3, 3, 3), (4, 4, 4);")
+		tk.MustExec("insert into t2 (id, a, b, name) values (1, 1, 1, 'a'),(2, 2, 2, 'b'), (3, 3, 3, 'c'), (4, 4, 4, 'd');")
+		tk.MustExec("delete from t1 where id = 1 or a = 2")
+		tk.MustExec("delete from t1 where a in (2,3,4) or b in (5,6,7)")
+		tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows())
+		tk.MustExec("rollback")
+		tk.MustQuery("select * from t1").Check(testkit.Rows())
+		tk.MustQuery("select * from t2").Check(testkit.Rows())
+
+		tk.MustExec("insert into t1 values (1, 1, 1),(2, 2, 2);")
+		tk.MustExec("begin")
+		tk.MustExec("insert into t2 (id, a, b, name) values (1, 1, 1, 'a'),(2, 2, 2, 'b')")
+		tk.MustExec("delete from t1 where id = 1")
+		tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("2 2 2"))
+		tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("2 2 2 b"))
+		err := tk.ExecToErr("insert into t2 (id, a, b, name) values (1, 1, 1, 'a')")
+		require.Error(t, err)
+		require.True(t, plannercore.ErrNoReferencedRow2.Equal(err), err.Error())
+		tk.MustExec("insert into t1 values (1, 1, 1);")
+		tk.MustExec("insert into t2 (id, a, b, name) values (1, 1, 1, 'c')")
+		tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 1 1", "2 2 2"))
+		tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 1 1 c", "2 2 2 b"))
+		tk.MustExec("delete from t1")
+		tk.MustExec("commit")
+		tk.MustQuery("select * from t1").Check(testkit.Rows())
+		tk.MustQuery("select * from t2").Check(testkit.Rows())
+	}
+}

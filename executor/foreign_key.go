@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	"fmt"
 	"sync/atomic"
 
 	"github.com/pingcap/tidb/kv"
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 )
@@ -34,6 +36,11 @@ import (
 // WithForeignKeyTrigger indicates the executor has foreign key check or cascade.
 type WithForeignKeyTrigger interface {
 	GetFKChecks() []*FKCheckExec
+	GetFKCascades() []*FKCascadeExec
+}
+
+type FKTriggerExecutor interface {
+	onDeleteRow(sc *stmtctx.StatementContext, row []types.Datum) error
 }
 
 // FKCheckExec uses to check foreign key constraint.
@@ -49,6 +56,15 @@ type FKCheckExec struct {
 	toBeLockedKeys        []kv.Key
 
 	checkRowsCache map[string]bool
+}
+
+type FKCascadeExec struct {
+	*plannercore.FKCascade
+	*fkValueHelper
+	ctx sessionctx.Context
+	b   *executorBuilder
+
+	fkValues [][]types.Datum
 }
 
 func buildTblID2FKCheckExecs(sctx sessionctx.Context, tblID2Table map[int64]table.Table, tblID2FKChecks map[int64][]*plannercore.FKCheck) (map[int64][]*FKCheckExec, error) {
@@ -110,6 +126,10 @@ func (fkc *FKCheckExec) updateRowNeedToCheck(sc *stmtctx.StatementContext, oldRo
 		return fkc.addRowNeedToCheck(sc, oldRow)
 	}
 	return nil
+}
+
+func (fkc *FKCheckExec) onDeleteRow(sc *stmtctx.StatementContext, row []types.Datum) error {
+	return fkc.addRowNeedToCheck(sc, row)
 }
 
 func (fkc *FKCheckExec) addRowNeedToCheck(sc *stmtctx.StatementContext, row []types.Datum) error {
@@ -498,4 +518,105 @@ func (fkc FKCheckExec) checkRows(ctx context.Context, sc *stmtctx.StatementConte
 		fkc.checkRowsCache[string(k)] = false
 	}
 	return nil
+}
+
+func (b *executorBuilder) buildTblID2FKTriggerExecs(sctx sessionctx.Context, tblID2Table map[int64]table.Table, tblID2FKTriggers map[int64][]*plannercore.FKTrigger) (map[int64][]FKTriggerExecutor, error) {
+	var err error
+	fkTriggers := make(map[int64][]FKTriggerExecutor)
+	for tid, tbl := range tblID2Table {
+		fkTriggers[tid], err = b.buildFKTriggerExecs(sctx, tbl, tblID2FKTriggers[tid])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return fkTriggers, nil
+}
+
+func (b *executorBuilder) buildFKTriggerExecs(sctx sessionctx.Context, tbl table.Table, fkTriggers []*plannercore.FKTrigger) ([]FKTriggerExecutor, error) {
+	fkTriggerExecs := make([]FKTriggerExecutor, 0, len(fkTriggers))
+	for _, fkTrigger := range fkTriggers {
+		fkTriggerExec, err := b.buildFKTriggerExec(sctx, tbl, fkTrigger)
+		if err != nil {
+			return nil, err
+		}
+		if fkTriggerExec != nil {
+			fkTriggerExecs = append(fkTriggerExecs, fkTriggerExec)
+		}
+	}
+	return fkTriggerExecs, nil
+}
+
+func (b *executorBuilder) buildFKTriggerExec(sctx sessionctx.Context, tbl table.Table, fkTrigger *plannercore.FKTrigger) (FKTriggerExecutor, error) {
+	if fkTrigger.FKCheck != nil {
+		return buildFKCheckExec(sctx, tbl, fkTrigger.FKCheck)
+	} else if fkTrigger.FKCascade != nil {
+		return b.buildFKCascadeExec(sctx, tbl, fkTrigger.FKCascade)
+	}
+	return nil, nil
+}
+
+func (b *executorBuilder) buildFKCascadeExec(sctx sessionctx.Context, tbl table.Table, fkCascade *plannercore.FKCascade) (*FKCascadeExec, error) {
+	var cols []model.CIStr
+	if fkCascade.OnDelete != nil {
+		cols = fkCascade.OnDelete.ReferredFK.Cols
+	} else if fkCascade.OnUpdate != nil {
+		cols = fkCascade.OnUpdate.ReferredFK.Cols
+	}
+	colsOffsets, err := getFKColumnsOffsets(tbl.Meta(), cols)
+	if err != nil {
+		return nil, err
+	}
+	helper := &fkValueHelper{
+		colsOffsets: colsOffsets,
+		fkValuesSet: set.NewStringSet(),
+	}
+	return &FKCascadeExec{
+		ctx:           sctx,
+		FKCascade:     fkCascade,
+		fkValueHelper: helper,
+		b:             b,
+	}, nil
+}
+
+func (fkc *FKCascadeExec) onDeleteRow(sc *stmtctx.StatementContext, row []types.Datum) error {
+	vals, err := fkc.fetchFKValuesWithCheck(sc, row)
+	if err != nil || len(vals) == 0 {
+		return err
+	}
+	fkc.fkValues = append(fkc.fkValues, vals)
+	return nil
+}
+
+func (fkc *FKCascadeExec) buildExecutor(ctx context.Context) (Executor, error) {
+	p, err := fkc.buildFKTriggerPlan(ctx)
+	if err != nil || p == nil {
+		return nil, err
+	}
+
+	err = fkc.buildIndexReaderRange(p)
+	if err != nil {
+		return nil, err
+	}
+	var e Executor
+	switch x := p.(type) {
+	case *plannercore.FKOnDeleteCascadePlan:
+		e = fkc.b.build(x.Delete)
+	default:
+		return nil, fmt.Errorf("unknown foreign key trigger plan: %#v", x)
+	}
+	return e, fkc.b.err
+}
+
+func (fkc *FKCascadeExec) buildFKTriggerPlan(ctx context.Context) (plannercore.FKTriggerPlan, error) {
+	planBuilder, _ := plannercore.NewPlanBuilder().Init(fkc.ctx, fkc.b.is, &hint.BlockHintProcessor{})
+	if fkc.OnDelete != nil {
+		return planBuilder.BuildOnDeleteFKTriggerPlan(ctx, fkc.OnDelete)
+	}
+	panic("should never happen")
+}
+
+func (fkc *FKCascadeExec) buildIndexReaderRange(fkTriggerPlan plannercore.FKTriggerPlan) error {
+	valsList := make([][]types.Datum, 0, len(fkc.fkValues))
+	valsList = append(valsList, fkc.fkValues...)
+	return fkTriggerPlan.SetRangeForSelectPlan(valsList)
 }

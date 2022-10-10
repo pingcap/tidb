@@ -44,6 +44,8 @@ type DeleteExec struct {
 	// the columns ordinals is present in ordinal range format, @see plannercore.TblColPosInfos
 	tblColPosInfos plannercore.TblColPosInfoSlice
 	memTracker     *memory.Tracker
+
+	fkTriggers map[int64][]FKTriggerExecutor
 }
 
 // Next implements the Executor Next interface.
@@ -239,9 +241,35 @@ func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h kv.Handl
 	if err != nil {
 		return err
 	}
+	fkTriggers := e.fkTriggers[t.Meta().ID]
+	sc := ctx.GetSessionVars().StmtCtx
+	for _, fkt := range fkTriggers {
+		err = fkt.onDeleteRow(sc, data)
+		if err != nil {
+			return err
+		}
+	}
 	e.memTracker.Consume(int64(txnState.Size() - memUsageOfTxnState))
 	ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 	return nil
+}
+
+// GetFKChecks implements WithForeignKeyTrigger interface.
+func (e *DeleteExec) GetFKChecks() []*FKCheckExec {
+	return nil
+}
+
+func (e *DeleteExec) GetFKCascades() []*FKCascadeExec {
+	fkCascades := []*FKCascadeExec{}
+	for _, fkts := range e.fkTriggers {
+		for _, fkt := range fkts {
+			fkc, ok := fkt.(*FKCascadeExec)
+			if ok {
+				fkCascades = append(fkCascades, fkc)
+			}
+		}
+	}
+	return fkCascades
 }
 
 // Close implements the Executor Close interface.

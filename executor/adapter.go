@@ -541,7 +541,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		if err != nil {
 			return result, err
 		}
-		err = a.handleForeignKeyTrigger(ctx, e)
+		err = a.handleForeignKeyTrigger(ctx, e, isPessimistic)
 		return result, err
 	}
 
@@ -561,7 +561,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	}, nil
 }
 
-func (a *ExecStmt) handleForeignKeyTrigger(ctx context.Context, e Executor) error {
+func (a *ExecStmt) handleForeignKeyTrigger(ctx context.Context, e Executor, isPessimistic bool) error {
 	exec, ok := e.(WithForeignKeyTrigger)
 	if !ok {
 		return nil
@@ -572,6 +572,38 @@ func (a *ExecStmt) handleForeignKeyTrigger(ctx context.Context, e Executor) erro
 		if err != nil {
 			return err
 		}
+	}
+
+	fkCascades := exec.GetFKCascades()
+	return a.handleForeignKeyCascades(ctx, fkCascades, isPessimistic)
+}
+
+func (a *ExecStmt) handleForeignKeyCascades(ctx context.Context, fkCascades []*FKCascadeExec, isPessimistic bool) error {
+	for _, fkCascade := range fkCascades {
+		err := a.handleForeignKeyCascade(ctx, fkCascade, isPessimistic)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (a *ExecStmt) handleForeignKeyCascade(ctx context.Context, fkc *FKCascadeExec, isPessimistic bool) error {
+	e, err := fkc.buildExecutor(ctx)
+	if err != nil || e == nil {
+		return err
+	}
+	if err := e.Open(ctx); err != nil {
+		terror.Call(e.Close)
+		return err
+	}
+	_, _, e, err = a.handleNoDelay(ctx, e, isPessimistic)
+	if err != nil {
+		return err
+	}
+	err = a.handleForeignKeyTrigger(ctx, e, isPessimistic)
+	if err != nil {
+		return err
 	}
 	return nil
 }

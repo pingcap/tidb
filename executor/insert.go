@@ -453,3 +453,7 @@ func (e *InsertExec) setMessage() {
 func (e *InsertExec) GetFKChecks() []*FKCheckExec {
 	return e.fkChecks
 }
+
+func (e *InsertExec) GetFKCascades() []*FKCascadeExec {
+	return nil
+}

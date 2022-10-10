@@ -1538,7 +1538,7 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, 
 	return ret, nil
 }
 
-func (b *PlanBuilder) buildPhysicalIndexLookUpReader(_ context.Context, dbName model.CIStr, tbl table.Table, idx *model.IndexInfo) (Plan, error) {
+func (b *PlanBuilder) buildPhysicalIndexLookUpReader(dbName model.CIStr, tbl table.Table, idx *model.IndexInfo, tblScanSchema *expression.Schema, tblScanColumns []*model.ColumnInfo) (PhysicalPlan, error) {
 	tblInfo := tbl.Meta()
 	physicalID, isPartition := getPhysicalID(tbl)
 	fullExprCols, _, err := expression.TableInfo2SchemaAndNames(b.ctx, dbName, tblInfo)
@@ -1580,37 +1580,49 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(_ context.Context, dbName m
 		Columns:         idxColInfos,
 		Table:           tblInfo,
 		TableAsName:     &tblInfo.Name,
-		DBName:          dbName,
 		physicalTableID: physicalID,
 		isPartition:     isPartition,
 		tblColHists:     &(statistics.PseudoTable(tblInfo)).HistColl,
 	}.Init(b.ctx, b.getSelectOffset())
-	ts.SetSchema(idxColSchema)
-	ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
-	switch {
-	case hasExtraCol:
-		ts.Columns = append(ts.Columns, extraInfo)
-		ts.schema.Append(extraCol)
-		ts.HandleIdx = []int{len(ts.Columns) - 1}
-	case hasPkIsHandle:
-		ts.Columns = append(ts.Columns, pkHandleInfo)
-		ts.schema.Append(pkHandleCol)
-		ts.HandleIdx = []int{len(ts.Columns) - 1}
-	case hasCommonCols:
-		ts.HandleIdx = make([]int, 0, len(commonCols))
-		for pkOffset, cInfo := range commonInfos {
-			found := false
-			for i, c := range ts.Columns {
-				if c.ID == cInfo.ID {
-					found = true
-					ts.HandleIdx = append(ts.HandleIdx, i)
-					break
-				}
+	if tblScanSchema == nil {
+		ts.SetSchema(idxColSchema)
+	} else {
+		ts.SetSchema(tblScanSchema)
+		ts.Columns = tblScanColumns
+		for _, col := range tblScanSchema.Columns {
+			if col.ID == model.ExtraHandleID {
+				extraCol = col
 			}
-			if !found {
-				ts.Columns = append(ts.Columns, cInfo.ColumnInfo)
-				ts.schema.Append(commonCols[pkOffset])
-				ts.HandleIdx = append(ts.HandleIdx, len(ts.Columns)-1)
+		}
+	}
+	ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
+	if tblScanSchema == nil {
+		switch {
+		case hasExtraCol:
+			ts.Columns = append(ts.Columns, extraInfo)
+			ts.schema.Append(extraCol)
+			ts.HandleIdx = []int{len(ts.Columns) - 1}
+		case hasPkIsHandle:
+			ts.Columns = append(ts.Columns, pkHandleInfo)
+			ts.schema.Append(pkHandleCol)
+			ts.HandleIdx = []int{len(ts.Columns) - 1}
+		case hasCommonCols:
+			ts.HandleIdx = make([]int, 0, len(commonCols))
+			for pkOffset, cInfo := range commonInfos {
+				found := false
+				for i, c := range ts.Columns {
+					if c.ID == cInfo.ID {
+						found = true
+						ts.HandleIdx = append(ts.HandleIdx, i)
+						break
+					}
+				}
+				if !found {
+					ts.Columns = append(ts.Columns, cInfo.ColumnInfo)
+					ts.schema.Append(commonCols[pkOffset])
+					ts.HandleIdx = append(ts.HandleIdx, len(ts.Columns)-1)
+				}
+
 			}
 		}
 	}
@@ -1744,7 +1756,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReaders(ctx context.Context, dbNam
 		if pi := tbl.Meta().GetPartitionInfo(); pi != nil {
 			for _, def := range pi.Definitions {
 				t := tbl.(table.PartitionedTable).GetPartition(def.ID)
-				reader, err := b.buildPhysicalIndexLookUpReader(ctx, dbName, t, idxInfo)
+				reader, err := b.buildPhysicalIndexLookUpReader(dbName, t, idxInfo, nil, nil)
 				if err != nil {
 					return nil, nil, err
 				}
@@ -1753,7 +1765,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReaders(ctx context.Context, dbNam
 			continue
 		}
 		// For non-partition tables.
-		reader, err := b.buildPhysicalIndexLookUpReader(ctx, dbName, tbl, idxInfo)
+		reader, err := b.buildPhysicalIndexLookUpReader(dbName, tbl, idxInfo, nil, nil)
 		if err != nil {
 			return nil, nil, err
 		}
