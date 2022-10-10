@@ -436,6 +436,22 @@ type Delete struct {
 	TblColPosInfos TblColPosInfoSlice
 }
 
+// MemoryUsage return the memory usage of Delete
+func (p *Delete) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.baseSchemaProducer.MemoryUsage() + size.SizeOfBool + size.SizeOfSlice
+	if p.SelectPlan != nil {
+		sum += p.SelectPlan.MemoryUsage()
+	}
+	for _, colInfo := range p.TblColPosInfos {
+		sum += colInfo.MemoryUsage()
+	}
+	return
+}
+
 // AnalyzeInfo is used to store the database name, table name and partition name of analyze task.
 type AnalyzeInfo struct {
 	DBName        string
