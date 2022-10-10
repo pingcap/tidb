@@ -1493,7 +1493,7 @@ func unionJoinFieldType(a, b *types.FieldType) *types.FieldType {
 	resultTp.SetDecimal(mathutil.Max(a.GetDecimal(), b.GetDecimal()))
 	// `flen - decimal` is the fraction before '.'
 	if a.GetFlen() == -1 || b.GetFlen() == -1 {
-		resultTp.SetFlenUnderLimit(-1)
+		resultTp.SetFlen(-1)
 	} else {
 		resultTp.SetFlen(mathutil.Max(a.GetFlen()-a.GetDecimal(), b.GetFlen()-b.GetDecimal()) + resultTp.GetDecimal())
 	}
