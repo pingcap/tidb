@@ -431,6 +431,34 @@ type Update struct {
 	FKChecks map[int64][]*FKCheck
 }
 
+// MemoryUsage return the memory usage of Update
+func (p *Update) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.baseSchemaProducer.MemoryUsage() + size.SizeOfSlice*3 + int64(cap(p.OrderedList))*size.SizeOfPointer +
+		size.SizeOfBool + size.SizeOfInt + int64(cap(p.PartitionedTable))*size.SizeOfInterface +
+		int64(len(p.tblID2Table))*(size.SizeOfInt64+size.SizeOfInterface)
+	if p.SelectPlan != nil {
+		sum += p.SelectPlan.MemoryUsage()
+	}
+
+	for _, as := range p.OrderedList {
+		sum += as.MemoryUsage()
+	}
+	for _, colInfo := range p.TblColPosInfos {
+		sum += colInfo.MemoryUsage()
+	}
+	for _, v := range p.FKChecks {
+		sum += size.SizeOfInt64 + size.SizeOfSlice + int64(cap(v))*size.SizeOfPointer
+		for _, fkc := range v {
+			sum += fkc.MemoryUsage()
+		}
+	}
+	return
+}
+
 // Delete represents a delete plan.
 type Delete struct {
 	baseSchemaProducer
