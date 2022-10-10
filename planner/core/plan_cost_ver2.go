@@ -250,7 +250,7 @@ func (p *PhysicalIndexLookUpReader) getPlanCostVer2(taskType property.TaskType, 
 	// double-read
 	doubleReadCPUCost := newCostVer2(option, cpuFactor,
 		indexRows*cpuFactor.Value,
-		"double-read-cpu(%v*%v)", indexRows, cpuFactor.Value)
+		"double-read-cpu(%v*%v)", indexRows, cpuFactor)
 	batchSize := float64(p.ctx.GetSessionVars().IndexLookupSize)
 	taskPerBatch := 40.0 // TODO: remove this magic number
 	doubleReadTasks := indexRows / batchSize * taskPerBatch
@@ -338,21 +338,21 @@ func (p *PhysicalSort) getPlanCostVer2(taskType property.TaskType, option *PlanC
 
 	sortCPUCost := newCostVer2(option, cpuFactor,
 		rows*math.Log2(rows)*float64(len(p.ByItems))*cpuFactor.Value,
-		"sortCPU(%v*log2(%v)*%v*%v)", rows, rows, len(p.ByItems), cpuFactor.Value)
+		"sortCPU(%v*log2(%v)*%v*%v)", rows, rows, len(p.ByItems), cpuFactor)
 
 	var sortMemCost, sortDiskCost costVer2
 	if !spill {
 		sortMemCost = newCostVer2(option, memFactor,
 			rows*rowSize*memFactor.Value,
-			"sortMem(%v*%v*%v)", rows, rowSize, memFactor.Value)
+			"sortMem(%v*%v*%v)", rows, rowSize, memFactor)
 		sortDiskCost = zeroCostVer2
 	} else {
 		sortMemCost = newCostVer2(option, memFactor,
 			float64(memQuota)*memFactor.Value,
-			"sortMem(%v*%v)", memQuota, memFactor.Value)
+			"sortMem(%v*%v)", memQuota, memFactor)
 		sortDiskCost = newCostVer2(option, diskFactor,
 			rows*rowSize*diskFactor.Value,
-			"sortDisk(%v*%v*%v)", rows, rowSize, diskFactor.Value)
+			"sortDisk(%v*%v*%v)", rows, rowSize, diskFactor)
 	}
 
 	childCost, err := p.children[0].getPlanCostVer2(taskType, option)
@@ -382,10 +382,10 @@ func (p *PhysicalTopN) getPlanCostVer2(taskType property.TaskType, option *PlanC
 
 	topNCPUCost := newCostVer2(option, cpuFactor,
 		rows*math.Log2(N)*float64(len(p.ByItems))*cpuFactor.Value,
-		"topCPU(%v*%v*%v*%v)", rows, math.Log2(N), len(p.ByItems), cpuFactor.Value)
+		"topCPU(%v*%v*%v*%v)", rows, math.Log2(N), len(p.ByItems), cpuFactor)
 	topNMemCost := newCostVer2(option, memFactor,
 		N*rowSize*memFactor.Value,
-		"topMem(%v*%v*%v)", N, rowSize, memFactor.Value)
+		"topMem(%v*%v*%v)", N, rowSize, memFactor)
 
 	childCost, err := p.children[0].getPlanCostVer2(taskType, option)
 	if err != nil {
@@ -707,39 +707,39 @@ func scanCostVer2(option *PlanCostOption, rows, rowSize float64, scanFactor cost
 func netCostVer2(option *PlanCostOption, rows, rowSize float64, netFactor costVer2Factor) costVer2 {
 	return newCostVer2(option, netFactor,
 		rows*rowSize*netFactor.Value,
-		"net(%v*rowsize(%v)*%v)", rows, rowSize, netFactor.Value)
+		"net(%v*rowsize(%v)*%v)", rows, rowSize, netFactor)
 }
 
 func filterCostVer2(option *PlanCostOption, rows float64, filters []expression.Expression, cpuFactor costVer2Factor) costVer2 {
 	return newCostVer2(option, cpuFactor,
 		rows*float64(len(filters))*cpuFactor.Value,
-		"cpu(%v*filters(%v)*%v)", rows, len(filters), cpuFactor.Value)
+		"cpu(%v*filters(%v)*%v)", rows, len(filters), cpuFactor)
 }
 
 func aggCostVer2(option *PlanCostOption, rows float64, aggFuncs []*aggregation.AggFuncDesc, cpuFactor costVer2Factor) costVer2 {
 	return newCostVer2(option, cpuFactor,
 		// TODO: consider types of agg-funcs
 		rows*float64(len(aggFuncs))*cpuFactor.Value,
-		"agg(%v*aggs(%v)*%v)", rows, len(aggFuncs), cpuFactor.Value)
+		"agg(%v*aggs(%v)*%v)", rows, len(aggFuncs), cpuFactor)
 }
 
 func groupCostVer2(option *PlanCostOption, rows float64, groupItems []expression.Expression, cpuFactor costVer2Factor) costVer2 {
 	return newCostVer2(option, cpuFactor,
 		rows*float64(len(groupItems))*cpuFactor.Value,
-		"group(%v*cols(%v)*%v)", rows, len(groupItems), cpuFactor.Value)
+		"group(%v*cols(%v)*%v)", rows, len(groupItems), cpuFactor)
 }
 
 func hashBuildCostVer2(option *PlanCostOption, buildRows, buildRowSize float64, keys []expression.Expression, cpuFactor, memFactor costVer2Factor) costVer2 {
 	// TODO: 1) consider types of keys, 2) dedicated factor for build-probe hash table
 	hashKeyCost := newCostVer2(option, cpuFactor,
 		buildRows*float64(len(keys))*cpuFactor.Value,
-		"hashkey(%v*%v*%v)", buildRows, len(keys), cpuFactor.Value)
+		"hashkey(%v*%v*%v)", buildRows, len(keys), cpuFactor)
 	hashMemCost := newCostVer2(option, memFactor,
 		buildRows*buildRowSize*memFactor.Value,
-		"hashmem(%v*%v*%v)", buildRows, buildRowSize, memFactor.Value)
+		"hashmem(%v*%v*%v)", buildRows, buildRowSize, memFactor)
 	hashBuildCost := newCostVer2(option, cpuFactor,
 		buildRows*float64(len(keys))*cpuFactor.Value,
-		"hashbuild(%v*%v*%v)", buildRows, len(keys), cpuFactor.Value)
+		"hashbuild(%v*%v*%v)", buildRows, len(keys), cpuFactor)
 	return sumCostVer2(hashKeyCost, hashMemCost, hashBuildCost)
 }
 
@@ -747,17 +747,17 @@ func hashProbeCostVer2(option *PlanCostOption, probeRows float64, keys []express
 	// TODO: 1) consider types of keys, 2) dedicated factor for build-probe hash table
 	hashKeyCost := newCostVer2(option, cpuFactor,
 		probeRows*float64(len(keys))*cpuFactor.Value,
-		"hashkey(%v*%v*%v)", probeRows, len(keys), cpuFactor.Value)
+		"hashkey(%v*%v*%v)", probeRows, len(keys), cpuFactor)
 	hashProbeCost := newCostVer2(option, cpuFactor,
 		probeRows*float64(len(keys))*cpuFactor.Value,
-		"hashmem(%v*%v*%v)", probeRows, len(keys), cpuFactor.Value)
+		"hashmem(%v*%v*%v)", probeRows, len(keys), cpuFactor)
 	return sumCostVer2(hashKeyCost, hashProbeCost)
 }
 
 func seekCostVer2(option *PlanCostOption, numTasks float64, seekFactor costVer2Factor) costVer2 {
 	return newCostVer2(option, seekFactor,
 		numTasks*seekFactor.Value,
-		"seek(tasks(%v)*%v)", numTasks, seekFactor.Value)
+		"seek(tasks(%v)*%v)", numTasks, seekFactor)
 }
 
 func estimateNumTasks(copTaskPlan PhysicalPlan) float64 {
@@ -777,6 +777,10 @@ func estimateNumTasks(copTaskPlan PhysicalPlan) float64 {
 type costVer2Factor struct {
 	Name  string
 	Value float64
+}
+
+func (f costVer2Factor) String() string {
+	return fmt.Sprintf("(%s)%v", f.Name, f.Value)
 }
 
 // In Cost Ver2, we hide cost factors from users and deprecate SQL variables like `tidb_opt_scan_factor`.
@@ -937,6 +941,7 @@ func newZeroCostVer2(trace bool) (ret costVer2) {
 	if trace {
 		ret.trace = true
 		ret.factorCosts = make(map[string]float64)
+		ret.formula = "0"
 	}
 	return
 }
