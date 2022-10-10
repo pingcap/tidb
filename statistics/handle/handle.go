@@ -610,22 +610,27 @@ func (h *Handle) mergeGlobalStatsTopNByConcurrency(mergeConcurrency, mergeBatchS
 	if len(wrapper.AllTopN) < mergeConcurrency {
 		mergeConcurrency = len(wrapper.AllTopN)
 	}
-	wg := &sync.WaitGroup{}
-	taskCh := make(chan *statistics.TopnStatsMergeTask, mergeConcurrency)
-	respCh := make(chan *statistics.TopnStatsMergeResponse, mergeConcurrency)
-	wg.Add(mergeConcurrency)
-	for i := 0; i < mergeConcurrency; i++ {
-		worker := statistics.NewTopnStatsMergeWorker(wg, taskCh, respCh, wrapper)
-		go worker.Run(timeZone, isIndex, n, version)
-	}
+	tasks := make([]*statistics.TopnStatsMergeTask, 0)
 	for start := 0; start < len(wrapper.AllTopN); {
 		end := start + mergeBatchSize
 		if end > len(wrapper.AllTopN) {
 			end = len(wrapper.AllTopN)
 		}
 		task := statistics.NewTopnStatsMergeTask(start, end)
-		taskCh <- task
+		tasks = append(tasks, task)
 		start = end
+	}
+	taskNum := len(tasks)
+	wg := &sync.WaitGroup{}
+	taskCh := make(chan *statistics.TopnStatsMergeTask, taskNum)
+	respCh := make(chan *statistics.TopnStatsMergeResponse, taskNum)
+	wg.Add(mergeConcurrency)
+	for i := 0; i < mergeConcurrency; i++ {
+		worker := statistics.NewTopnStatsMergeWorker(wg, taskCh, respCh, wrapper)
+		go worker.Run(timeZone, isIndex, n, version)
+	}
+	for _, task := range tasks {
+		taskCh <- task
 	}
 	close(taskCh)
 	wg.Wait()

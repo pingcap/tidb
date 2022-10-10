@@ -17,6 +17,7 @@ package executor_test
 import (
 	"fmt"
 	"io/ioutil"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -337,4 +338,51 @@ func TestAnalyzePartitionTableForFloat(t *testing.T) {
 		tk.MustExec(sql)
 	}
 	tk.MustExec("analyze table t1")
+}
+
+func TestAnalyzePartitionTableByConcurrencyInDynamic(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int) partition by hash(id) partitions 4")
+
+	for i := 1; i <= 500; i++ {
+		for j := 1; j <= 20; j++ {
+			tk.MustExec(fmt.Sprintf("insert into t (id) values (%v)", j))
+		}
+	}
+	var expected [][]interface{}
+	for i := 1; i <= 20; i++ {
+		expected = append(expected, []interface{}{
+			strconv.FormatInt(int64(i), 10), "500",
+		})
+	}
+	testcases := []struct {
+		concurrency string
+	}{
+		{
+			concurrency: "1",
+		},
+		{
+			concurrency: "2",
+		},
+		{
+			concurrency: "3",
+		},
+		{
+			concurrency: "4",
+		},
+		{
+			concurrency: "5",
+		},
+	}
+	for _, tc := range testcases {
+		concurrency := tc.concurrency
+		fmt.Println("testcase ", concurrency)
+		tk.MustExec(fmt.Sprintf("set @@tidb_merge_partition_stats_concurrency=%v", concurrency))
+		tk.MustQuery("select @@tidb_merge_partition_stats_concurrency").Check(testkit.Rows(concurrency))
+		tk.MustExec("analyze table t")
+		tk.MustQuery("show stats_topn where partition_name = 'global' and table_name = 't'").CheckAt([]int{5, 6}, expected)
+	}
 }
