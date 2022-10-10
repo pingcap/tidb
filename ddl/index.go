@@ -1595,7 +1595,7 @@ func (w *worker) updateReorgInfo(t table.PartitionedTable, reorg *reorgInfo) (bo
 		return true, nil
 	}
 
-	pid, err := findNextPartitionID(reorg.PhysicalTableID, pi.Definitions)
+	pid, err := findNextPartitionID(reorg.PhysicalTableID, pi)
 	if err != nil {
 		// Fatal error, should not run here.
 		logutil.BgLogger().Error("[ddl] find next partition ID failed", zap.Reflect("table", t), zap.Error(err))
@@ -1646,8 +1646,11 @@ func (w *worker) updateReorgInfo(t table.PartitionedTable, reorg *reorgInfo) (bo
 
 // findNextPartitionID finds the next partition ID in the PartitionDefinition array.
 // Returns 0 if current partition is already the last one.
-// TODO: Update to check for DroppingDefinitions in case of Reorganize Partition
-func findNextPartitionID(currentPartition int64, defs []model.PartitionDefinition) (int64, error) {
+func findNextPartitionID(currentPartition int64, pi *model.PartitionInfo) (int64, error) {
+	defs := pi.Definitions
+	if len(pi.DroppingDefinitions) > 0 {
+		defs = pi.DroppingDefinitions
+	}
 	for i, def := range defs {
 		if currentPartition == def.ID {
 			if i == len(defs)-1 {

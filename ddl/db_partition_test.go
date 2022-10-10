@@ -4731,27 +4731,23 @@ func TestReorganizePartition(t *testing.T) {
 		"45 45"))
 	tk.MustQuery(`select * from t partition (pMax)`).Sort().Check(testkit.Rows("" +
 		"56 56"))
-	if false {
-		// WASHERE
-		// Looks like it also read data from p2 which it should not do!
-		tk.MustExec(`alter table t reorganize partition p0,p1 into (partition p1 values less than (20))`)
-		tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows(""+
-			"1 1",
-			"12 12",
-			"23 23",
-			"34 34",
-			"45 45",
-			"56 56"))
-		tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
-			"t CREATE TABLE `t` (\n" +
-			"  `a` int(10) unsigned NOT NULL,\n" +
-			"  `b` varchar(255) DEFAULT NULL,\n" +
-			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-			"PARTITION BY RANGE (`a`)\n" +
-			"(PARTITION `p1` VALUES LESS THAN (20),\n" +
-			" PARTITION `p2` VALUES LESS THAN (35),\n" +
-			" PARTITION `p3` VALUES LESS THAN (47),\n" +
-			" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
-	}
+	tk.MustExec(`alter table t reorganize partition p0,p1 into (partition p1 values less than (20))`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(10) unsigned NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE (`a`)\n" +
+		"(PARTITION `p1` VALUES LESS THAN (20),\n" +
+		" PARTITION `p2` VALUES LESS THAN (35),\n" +
+		" PARTITION `p3` VALUES LESS THAN (47),\n" +
+		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
+	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows(""+
+		"1 1",
+		"12 12",
+		"23 23",
+		"34 34",
+		"45 45",
+		"56 56"))
 }
