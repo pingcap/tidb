@@ -544,6 +544,21 @@ func TestIssue32422(t *testing.T) {
 	tk.MustExec("rollback")
 }
 
+func TestIssue36903(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_vwvgdc")
+
+	tk.MustExec("CREATE TABLE t_vwvgdc (wkey int, pkey int NOT NULL, c_rdsfbc double DEFAULT NULL, PRIMARY KEY (`pkey`));")
+	tk.MustExec("insert into t_vwvgdc values (2, 15000, 61.75);")
+	tk.MustExec("BEGIN OPTIMISTIC;")
+	tk.MustExec("insert into t_vwvgdc (wkey, pkey, c_rdsfbc) values (155, 228000, 99.50);")
+	tk.MustQuery("select pkey from t_vwvgdc where 0 <> 0 union select pkey from t_vwvgdc;")
+}
+
 func BenchmarkUnionScanRead(b *testing.B) {
 	store, clean := testkit.CreateMockStore(b)
 	defer clean()

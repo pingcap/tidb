@@ -32,11 +32,13 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/docker/go-units"
 	gomysql "github.com/go-sql-driver/mysql"
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	tidbcfg "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/util"
 	filter "github.com/pingcap/tidb/util/table-filter"
 	router "github.com/pingcap/tidb/util/table-router"
 	"go.uber.org/atomic"
@@ -155,7 +157,15 @@ func (cfg *Config) String() string {
 
 func (cfg *Config) ToTLS() (*common.TLS, error) {
 	hostPort := net.JoinHostPort(cfg.TiDB.Host, strconv.Itoa(cfg.TiDB.StatusPort))
-	return common.NewTLS(cfg.Security.CAPath, cfg.Security.CertPath, cfg.Security.KeyPath, hostPort)
+	return common.NewTLS(
+		cfg.Security.CAPath,
+		cfg.Security.CertPath,
+		cfg.Security.KeyPath,
+		hostPort,
+		cfg.Security.CABytes,
+		cfg.Security.CertBytes,
+		cfg.Security.KeyBytes,
+	)
 }
 
 type Lightning struct {
@@ -558,6 +568,11 @@ type Security struct {
 	// TLSConfigName is used to set tls config for lightning in DM, so we don't expose this field to user
 	// DM may running many lightning instances at same time, so we need to set different tls config name for each lightning
 	TLSConfigName string `toml:"-" json:"-"`
+
+	// When DM/engine uses lightning as a library, it can directly pass in the content
+	CABytes   []byte `toml:"-" json:"-"`
+	CertBytes []byte `toml:"-" json:"-"`
+	KeyBytes  []byte `toml:"-" json:"-"`
 }
 
 // RegisterMySQL registers the TLS config with name "cluster" or security.TLSConfigName
@@ -566,7 +581,13 @@ func (sec *Security) RegisterMySQL() error {
 	if sec == nil {
 		return nil
 	}
-	tlsConfig, err := common.ToTLSConfig(sec.CAPath, sec.CertPath, sec.KeyPath)
+
+	tlsConfig, err := util.NewTLSConfig(
+		util.WithCAPath(sec.CAPath),
+		util.WithCertAndKeyPath(sec.CertPath, sec.KeyPath),
+		util.WithCAContent(sec.CABytes),
+		util.WithCertAndKeyContent(sec.CertBytes, sec.KeyBytes),
+	)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1142,9 +1163,11 @@ func (cfg *Config) CheckAndAdjustSecurity() error {
 
 	switch cfg.TiDB.TLS {
 	case "":
-		if len(cfg.TiDB.Security.CAPath) > 0 {
+		if len(cfg.TiDB.Security.CAPath) > 0 || len(cfg.TiDB.Security.CABytes) > 0 ||
+			len(cfg.TiDB.Security.CertPath) > 0 || len(cfg.TiDB.Security.CertBytes) > 0 ||
+			len(cfg.TiDB.Security.KeyPath) > 0 || len(cfg.TiDB.Security.KeyBytes) > 0 {
 			if cfg.TiDB.Security.TLSConfigName == "" {
-				cfg.TiDB.Security.TLSConfigName = "cluster" // adjust this the default value
+				cfg.TiDB.Security.TLSConfigName = uuid.New().String() // adjust this the default value
 			}
 			cfg.TiDB.TLS = cfg.TiDB.Security.TLSConfigName
 		} else {

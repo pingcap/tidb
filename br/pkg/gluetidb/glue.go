@@ -114,6 +114,45 @@ func (g Glue) GetVersion() string {
 	return g.tikvGlue.GetVersion()
 }
 
+// UseOneShotSession implements glue.Glue.
+func (g Glue) UseOneShotSession(store kv.Storage, closeDomain bool, fn func(glue.Session) error) error {
+	se, err := session.CreateSession(store)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	glueSession := &tidbSession{
+		se: se,
+	}
+	defer func() {
+		se.Close()
+		log.Info("one shot session closed")
+	}()
+	// dom will be created during session.CreateSession.
+	dom, err := session.GetDomain(store)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// because domain was created during the whole program exists.
+	// and it will register br info to info syncer.
+	// we'd better close it as soon as possible.
+	if closeDomain {
+		defer func() {
+			dom.Close()
+			log.Info("one shot domain closed")
+		}()
+	}
+	err = fn(glueSession)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+// GetSessionCtx implements glue.Glue
+func (gs *tidbSession) GetSessionCtx() sessionctx.Context {
+	return gs.se
+}
+
 // Execute implements glue.Session.
 func (gs *tidbSession) Execute(ctx context.Context, sql string) error {
 	return gs.ExecuteInternal(ctx, sql)
