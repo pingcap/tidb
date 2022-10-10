@@ -435,6 +435,23 @@ func TestForeignKeyCheckAndLock(t *testing.T) {
 		wg.Wait()
 		tk.MustQuery("select id, name from t1 order by name").Check(testkit.Rows("1 a", "2 b"))
 		tk.MustQuery("select a,  name from t2 order by a").Check(testkit.Rows("1 a", "2 a"))
+
+		// Test delete parent table in auto-commit txn
+		// TODO(crazycs520): fix following test.
+		/*
+			tk.MustExec("delete from t2")
+			tk.MustExec("begin pessimistic")
+			tk.MustExec("delete from t2;") // active txn
+			tk.MustExec("insert into t2 (a, name) values (1, 'a');")
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				tk2.MustGetDBError("delete from t1 where id = 1", plannercore.ErrRowIsReferenced2)
+			}()
+			time.Sleep(time.Millisecond * 50)
+			tk.MustExec("commit")
+			wg.Wait()
+		*/
 	}
 }
 
