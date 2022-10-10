@@ -700,8 +700,7 @@ func scanCostVer2(option *PlanCostOption, rows, rowSize float64, scanFactor cost
 	return newCostVer2(option, scanFactor,
 		// rows * log(row-size) * scanFactor, log2 from experiments
 		rows*math.Log2(math.Max(1, rowSize))*scanFactor.Value,
-		"scan(%v*logrowsize(%v)*%v)", rows, rowSize, scanFactor.Value,
-	)
+		"scan(%v*logrowsize(%v)*%v)", rows, rowSize, scanFactor)
 }
 
 func netCostVer2(option *PlanCostOption, rows, rowSize float64, netFactor costVer2Factor) costVer2 {
