@@ -60,7 +60,6 @@ Since this operation will:
 - create new partitions
 - drop existing partitions
 - copy data from dropped partitions to new partitions
-- 
 it will use all these schema change stages:
 
       // StateNone means this schema element is absent and can't be used.
