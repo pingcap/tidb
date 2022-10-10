@@ -3627,7 +3627,7 @@ func TestDDL(t *testing.T) {
 		{"ALTER TABLE t STATS_OPTIONS", false, ""},
 
 		// Restore INSERT_METHOD table option
-		{"create table t (a int) INSERT_METHOD=FIRST", true, "CREATE TABLE `t` (`a` INT) INSERT_METHOD = FIRST"},
+		{"CREATE TABLE t (a int) INSERT_METHOD=FIRST", true, "CREATE TABLE `t` (`a` INT) INSERT_METHOD = FIRST"},
 	}
 	RunTest(t, table, false)
 }
