@@ -6164,3 +6164,23 @@ func TestGlobalMemoryControl2(t *testing.T) {
 	test[0] = 0
 	runtime.GC()
 }
+
+func TestCompileOutOfMemoryQuota(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	// Test for issue: https://github.com/pingcap/tidb/issues/38322
+	defer tk.MustExec("set global tidb_mem_oom_action = DEFAULT")
+	tk.MustExec("set global tidb_mem_oom_action='CANCEL'")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, index idx(a))")
+	tk.MustExec("create table t1(a int, c int, index idx(a))")
+	tk.MustExec("insert into t values(1, 1), (2,2), (3,3), (4,4), (5,5), (7, 7), (9,9)")
+	tk.MustExec("insert into t1 values(1, 1), (1, 10), (3, 10), (5, 5), (10, 11)")
+	tk.MustExec("split table t index idx between (1) and (10001) regions 10")
+	tk.MustExec("split table t1 index idx between (1) and (10001) regions 10")
+	tk.MustExec("set tidb_distsql_scan_concurrency=10")
+	tk.MustExec("set tidb_mem_quota_query=10")
+	err := tk.ExecToErr("select t.a, t1.a from t use index(idx), t1 use index(idx) where t.a = t1.a")
+	require.EqualError(t, err, "Out Of Memory Quota![conn_id=1]")
+}
