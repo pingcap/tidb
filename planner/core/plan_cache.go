@@ -305,24 +305,21 @@ func RebuildPlan4CachedPlan(p Plan) error {
 	return rebuildRange(p)
 }
 
-func updateRange(p PhysicalPlan, ranges ranger.Ranges, rangeInfo string) error {
+func updateRange(p PhysicalPlan, ranges ranger.Ranges, rangeInfo string) {
 	switch x := p.(type) {
 	case *PhysicalTableScan:
 		x.Ranges = ranges
 		x.rangeInfo = rangeInfo
-		return nil
 	case *PhysicalIndexScan:
 		x.Ranges = ranges
 		x.rangeInfo = rangeInfo
-		return nil
 	case *PhysicalTableReader:
-		return updateRange(x.TablePlans[0], ranges, rangeInfo)
+		updateRange(x.TablePlans[0], ranges, rangeInfo)
 	case *PhysicalIndexReader:
-		return updateRange(x.IndexPlans[0], ranges, rangeInfo)
+		updateRange(x.IndexPlans[0], ranges, rangeInfo)
 	case *PhysicalIndexLookUpReader:
-		return updateRange(x.IndexPlans[0], ranges, rangeInfo)
+		updateRange(x.IndexPlans[0], ranges, rangeInfo)
 	}
-	return nil
 }
 
 // rebuildRange doesn't set mem limit for building ranges. There are two reasons why we don't restrict range mem usage here.
@@ -351,10 +348,7 @@ func rebuildRange(p Plan) error {
 			helper := mutableRange.buildHelper
 			rangeInfo := helper.buildRangeDecidedByInformation(helper.chosenPath.IdxCols, mutableRange.outerJoinKeys)
 			innerPlan := x.Children()[x.InnerChildIdx]
-			err = updateRange(innerPlan, x.Ranges.Range(), rangeInfo)
-			if err != nil {
-				return err
-			}
+			updateRange(innerPlan, x.Ranges.Range(), rangeInfo)
 		}
 		for _, child := range x.Children() {
 			err = rebuildRange(child)
