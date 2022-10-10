@@ -18,7 +18,6 @@ import (
 	"math"
 	"runtime"
 	"runtime/debug"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/failpoint"
@@ -34,9 +33,9 @@ var GlobalMemoryLimitTuner = &memoryLimitTuner{}
 // So we can change memory limit dynamically to avoid frequent GC when memory usage is greater than the soft limit.
 type memoryLimitTuner struct {
 	finalizer    *finalizer
-	isTuning     atomic.Bool
+	isTuning     atomicutil.Bool
 	percentage   atomicutil.Float64
-	waitingReset atomic.Bool
+	waitingReset atomicutil.Bool
 	times        int // The times that nextGC bigger than MemoryLimit
 }
 
@@ -52,9 +51,9 @@ func (t *memoryLimitTuner) tuning() {
 	ratio := float64(100+gogc) / 100
 	// If theoretical NextGC(Equivalent to HeapInUse * (100 + GOGC) / 100) is bigger than MemoryLimit twice in a row,
 	// the second GC is caused by MemoryLimit.
-	if r.HeapInuse > uint64(float64(debug.SetMemoryLimit(-1))/ratio) {
+	if float64(r.HeapInuse)*ratio > float64(debug.SetMemoryLimit(-1)) {
 		t.times++
-		if t.times >= 2 && t.waitingReset.CompareAndSwap(false, true) {
+		if t.times >= 2 && t.waitingReset.CAS(false, true) {
 			t.times = 0
 			go func() {
 				debug.SetMemoryLimit(math.MaxInt)
@@ -65,8 +64,8 @@ func (t *memoryLimitTuner) tuning() {
 					}
 				})
 				time.Sleep(resetInterval)
-				debug.SetMemoryLimit(t.calcSoftMemoryLimit())
-				for !t.waitingReset.CompareAndSwap(true, false) {
+				debug.SetMemoryLimit(t.calcMemoryLimit())
+				for !t.waitingReset.CAS(true, false) {
 					continue
 				}
 			}()
@@ -97,7 +96,7 @@ func (t *memoryLimitTuner) GetPercentage() float64 {
 // UpdateMemoryLimit updates the memory limit.
 // This function should be called when `tidb_server_memory_limit` or `tidb_server_memory_limit_gc_trigger` is modified.
 func (t *memoryLimitTuner) UpdateMemoryLimit() {
-	softLimit := t.calcSoftMemoryLimit()
+	softLimit := t.calcMemoryLimit()
 	if softLimit == math.MaxInt64 {
 		t.isTuning.Store(false)
 	} else {
@@ -106,7 +105,7 @@ func (t *memoryLimitTuner) UpdateMemoryLimit() {
 	debug.SetMemoryLimit(softLimit)
 }
 
-func (t *memoryLimitTuner) calcSoftMemoryLimit() int64 {
+func (t *memoryLimitTuner) calcMemoryLimit() int64 {
 	softLimit := int64(float64(memory.ServerMemoryLimit.Load()) * t.percentage.Load()) // `tidb_server_memory_limit` * `tidb_server_memory_limit_gc_trigger`
 	if softLimit == 0 {
 		softLimit = math.MaxInt64

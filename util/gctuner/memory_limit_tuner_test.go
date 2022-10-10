@@ -79,7 +79,7 @@ func TestGlobalMemoryTuner(t *testing.T) {
 	allocator.free(memory100mb)
 	// Can GC in 80% again
 	time.Sleep(500 * time.Millisecond)
-	require.Equal(t, GlobalMemoryLimitTuner.calcSoftMemoryLimit(), debug.SetMemoryLimit(-1))
+	require.Equal(t, GlobalMemoryLimitTuner.calcMemoryLimit(), debug.SetMemoryLimit(-1))
 	gcNum = getNowGCNum()
 	memory210mb = allocator.alloc(210 << 20)
 	time.Sleep(100 * time.Millisecond)
