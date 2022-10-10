@@ -44,7 +44,7 @@ These different use cases can have different optimizations, but the generic form
 - N partitions, where each partition has M indexes
 
 First implementation should be based on the merge-txn (row-by-row read, update record, write) transactional batches.
-Later we can implement the ingest (lightning way) optimization, since it is not yet completely done.
+Later we can implement the ingest (lightning way) optimization, since DDL module are on the way of evolution to do reorg tasks more efficiency.
 
 ## Detailed Design
 
