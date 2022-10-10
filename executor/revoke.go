@@ -250,7 +250,7 @@ func (e *RevokeExec) revokeDBPriv(internalSession sessionctx.Context, priv *ast.
 	sql = new(strings.Builder)
 	sqlexec.MustFormatSQL(sql, "DELETE FROM %n.%n WHERE User=%? AND Host=%? AND DB=%?", mysql.SystemDB, mysql.DBTable, userName, host, dbName)
 
-	for _, v := range mysql.AllDBPrivs {
+	for _, v := range append(mysql.AllDBPrivs, mysql.GrantPriv) {
 		privSQL := " AND " + mysql.Priv2UserCol[v] + "='N'"
 		sqlexec.MustFormatSQL(sql, privSQL)
 	}
