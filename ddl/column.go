@@ -1033,7 +1033,11 @@ func (w *worker) updatePhysicalTableRow(t table.Table, reorgInfo *reorgInfo) err
 			if reorgInfo.Job.Type == model.ActionReorganizePartition {
 				workType = typeReorgPartitionWorker
 			}
-			err := w.writePhysicalTableRecord(w.sessPool, t.(table.PhysicalTable), workType, reorgInfo)
+			physTbl, ok := t.(table.PhysicalTable)
+			if !ok {
+				return dbterror.ErrCancelledDDLJob.GenWithStack("Internal error, partitioned table, not a physical table?!? table %d", reorgInfo.PhysicalTableID, t.Meta().ID)
+			}
+			err := w.writePhysicalTableRecord(w.sessPool, physTbl, workType, reorgInfo)
 			if err != nil {
 				return err
 			}

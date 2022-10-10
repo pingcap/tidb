@@ -3804,6 +3804,9 @@ func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec
 		return errors.Trace(dbterror.ErrUnsupportedReorganizePartition)
 	}
 	firstPartIdx, lastPartIdx, idMap, err := getReplacedPartitionIDs(spec.PartitionNames, pi)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	if pi.Type == model.PartitionTypeRange {
 		if len(idMap) != (lastPartIdx - firstPartIdx + 1) {
 			// Not continues range

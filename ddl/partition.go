@@ -2188,7 +2188,8 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 
 	// notice: addingDefinitions is empty when job is in state model.StateNone
 	// TODO: add droppingDefinitions and use it later...
-	tblInfo, partNamesCIStr, partInfo, droppingDefinitions, addingDefinitions, err := checkReorgPartition(t, job)
+	//tblInfo, partNamesCIStr, partInfo, droppingDefinitions, addingDefinitions, err := checkReorgPartition(t, job)
+	tblInfo, partNamesCIStr, partInfo, _, addingDefinitions, err := checkReorgPartition(t, job)
 	if err != nil {
 		return ver, err
 	}
@@ -2225,9 +2226,11 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		physicalTableIDs = updateDroppingPartitionInfo(tblInfo, partNames)
 		// Reset original partitions, and keep DroppedDefinitions
 		tblInfo.Partition.Definitions = orgDefs
-		if len(physicalTableIDs) != len(droppingDefinitions) {
-			droppingDefinitions = tblInfo.Partition.DroppingDefinitions
-		}
+		/*
+			if len(physicalTableIDs) != len(droppingDefinitions) {
+				droppingDefinitions = tblInfo.Partition.DroppingDefinitions
+			}
+		*/
 		// TODO: Why is this not done last, after setting the job.SchemaState?
 		ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, true)
 		if err != nil {
