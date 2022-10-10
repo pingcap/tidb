@@ -53,7 +53,7 @@ func (t *memoryLimitTuner) tuning() {
 	// the second GC is caused by MemoryLimit.
 	if float64(r.HeapInuse)*ratio > float64(debug.SetMemoryLimit(-1)) {
 		t.times++
-		if t.times >= 2 && t.waitingReset.CAS(false, true) {
+		if t.times >= 2 && t.waitingReset.CompareAndSwap(false, true) {
 			t.times = 0
 			go func() {
 				debug.SetMemoryLimit(math.MaxInt)
@@ -65,7 +65,7 @@ func (t *memoryLimitTuner) tuning() {
 				})
 				time.Sleep(resetInterval)
 				debug.SetMemoryLimit(t.calcMemoryLimit())
-				for !t.waitingReset.CAS(true, false) {
+				for !t.waitingReset.CompareAndSwap(true, false) {
 					continue
 				}
 			}()
@@ -106,11 +106,11 @@ func (t *memoryLimitTuner) UpdateMemoryLimit() {
 }
 
 func (t *memoryLimitTuner) calcMemoryLimit() int64 {
-	softLimit := int64(float64(memory.ServerMemoryLimit.Load()) * t.percentage.Load()) // `tidb_server_memory_limit` * `tidb_server_memory_limit_gc_trigger`
-	if softLimit == 0 {
-		softLimit = math.MaxInt64
+	memoryLimit := int64(float64(memory.ServerMemoryLimit.Load()) * t.percentage.Load()) // `tidb_server_memory_limit` * `tidb_server_memory_limit_gc_trigger`
+	if memoryLimit == 0 {
+		memoryLimit = math.MaxInt64
 	}
-	return softLimit
+	return memoryLimit
 }
 
 func init() {
