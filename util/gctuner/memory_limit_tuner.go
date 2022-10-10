@@ -64,7 +64,7 @@ func (t *memoryLimitTuner) tuning() {
 				debug.SetMemoryLimit(math.MaxInt)
 				resetInterval := 1 * time.Minute // Wait 1 minute and set back, to avoid frequent GC
 				failpoint.Inject("testMemoryLimitTuner", func(val failpoint.Value) {
-					if val.(bool) {
+					if val, ok := val.(bool); val && ok {
 						resetInterval = 1 * time.Second
 					}
 				})
