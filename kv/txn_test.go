@@ -42,17 +42,18 @@ func TestRetryExceedCountError(t *testing.T) {
 	}(maxRetryCnt)
 
 	maxRetryCnt = 5
-	err := RunInNewTxn(context.Background(), &mockStorage{}, true, func(ctx context.Context, txn Transaction) error {
+	ctx := WithInternalSourceType(context.Background(), InternalTxnOthers)
+	err := RunInNewTxn(ctx, &mockStorage{}, true, func(ctx context.Context, txn Transaction) error {
 		return nil
 	})
 	assert.NotNil(t, err)
 
-	err = RunInNewTxn(context.Background(), &mockStorage{}, true, func(ctx context.Context, txn Transaction) error {
+	err = RunInNewTxn(ctx, &mockStorage{}, true, func(ctx context.Context, txn Transaction) error {
 		return ErrTxnRetryable
 	})
 	assert.NotNil(t, err)
 
-	err = RunInNewTxn(context.Background(), &mockStorage{}, true, func(ctx context.Context, txn Transaction) error {
+	err = RunInNewTxn(ctx, &mockStorage{}, true, func(ctx context.Context, txn Transaction) error {
 		return errors.New("do not retry")
 	})
 	assert.NotNil(t, err)
@@ -62,7 +63,7 @@ func TestRetryExceedCountError(t *testing.T) {
 	cfg.SetGetError(err1)
 	cfg.SetCommitError(err1)
 	storage := NewInjectedStore(newMockStorage(), &cfg)
-	err = RunInNewTxn(context.Background(), storage, true, func(ctx context.Context, txn Transaction) error {
+	err = RunInNewTxn(ctx, storage, true, func(ctx context.Context, txn Transaction) error {
 		return nil
 	})
 	assert.NotNil(t, err)

@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/hex"
+	"fmt"
 	"net/url"
 	"os"
 	"path"
@@ -21,6 +22,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/conn"
+	"github.com/pingcap/tidb/br/pkg/conn/util"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
@@ -74,10 +76,16 @@ const (
 	// flagEnableOpenTracing is whether to enable opentracing
 	flagEnableOpenTracing = "enable-opentracing"
 	flagSkipCheckPath     = "skip-check-path"
+	flagDryRun            = "dry-run"
+	// TODO used for local test, should be removed later
+	flagSkipAWS             = "skip-aws"
+	flagCloudAPIConcurrency = "cloud-api-concurrency"
+	flagWithSysTable        = "with-sys-table"
 
 	defaultSwitchInterval       = 5 * time.Minute
 	defaultGRPCKeepaliveTime    = 10 * time.Second
 	defaultGRPCKeepaliveTimeout = 3 * time.Second
+	defaultCloudAPIConcurrency  = 8
 
 	flagCipherType    = "crypter.method"
 	flagCipherKey     = "crypter.key"
@@ -89,7 +97,22 @@ const (
 	crypterAES256KeyLen = 32
 
 	tidbNewCollationEnabled = "new_collation_enabled"
+
+	flagFullBackupType = "type"
 )
+
+// FullBackupType type when doing full backup or restore
+type FullBackupType string
+
+const (
+	FullBackupTypeKV  FullBackupType = "kv" // default type
+	FullBackupTypeEBS FullBackupType = "aws-ebs"
+)
+
+// Valid whether the type is valid
+func (t FullBackupType) Valid() bool {
+	return t == FullBackupTypeKV || t == FullBackupTypeEBS
+}
 
 // TLSConfig is the common configuration for TLS connection.
 type TLSConfig struct {
@@ -208,6 +231,9 @@ type Config struct {
 	GRPCKeepaliveTimeout time.Duration `json:"grpc-keepalive-timeout" toml:"grpc-keepalive-timeout"`
 
 	CipherInfo backuppb.CipherInfo `json:"-" toml:"-"`
+
+	// whether there's explicit filter
+	ExplicitFilter bool `json:"-" toml:"-"`
 }
 
 // DefineCommonFlags defines the flags common to all BRIE commands.
@@ -467,6 +493,7 @@ func (cfg *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	cfg.Tables = make(map[string]struct{})
 	var caseSensitive bool
 	if filterFlag := flags.Lookup(flagFilter); filterFlag != nil {
+		cfg.ExplicitFilter = flags.Changed(flagFilter)
 		cfg.FilterStr = filterFlag.Value.(pflag.SliceValue).GetSlice()
 		cfg.TableFilter, err = filter.Parse(cfg.FilterStr)
 		if err != nil {
@@ -562,6 +589,7 @@ func NewMgr(ctx context.Context,
 	keepalive keepalive.ClientParameters,
 	checkRequirements bool,
 	needDomain bool,
+	versionCheckerType conn.VersionCheckerType,
 ) (*conn.Mgr, error) {
 	var (
 		tlsConf *tls.Config
@@ -585,8 +613,8 @@ func NewMgr(ctx context.Context,
 
 	// Is it necessary to remove `StoreBehavior`?
 	return conn.NewMgr(
-		ctx, g, pdAddress, tlsConf, securityOption, keepalive, conn.SkipTiFlash,
-		checkRequirements, needDomain,
+		ctx, g, pdAddress, tlsConf, securityOption, keepalive, util.SkipTiFlash,
+		checkRequirements, needDomain, versionCheckerType,
 	)
 }
 
@@ -737,4 +765,30 @@ func normalizePDURL(pd string, useTLS bool) (string, error) {
 // see details https://github.com/pingcap/br/issues/675#issuecomment-753780742
 func gcsObjectNotFound(err error) bool {
 	return errors.Cause(err) == gcs.ErrObjectNotExist // nolint:errorlint
+}
+
+// write progress in tmp file for tidb-operator, so tidb-operator can retrieve the
+// progress of ebs backup. and user can get the progress through `kubectl get job`
+// todo: maybe change to http api later
+func progressFileWriterRoutine(ctx context.Context, progress glue.Progress, total int64, progressFile string) {
+	// remove tmp file
+	defer func() {
+		_ = os.Remove(progressFile)
+	}()
+
+	for progress.GetCurrent() < total {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(500 * time.Millisecond):
+			break
+		}
+		cur := progress.GetCurrent()
+		p := float64(cur) / float64(total)
+		p *= 100
+		err := os.WriteFile(progressFile, []byte(fmt.Sprintf("%.2f", p)), 0600)
+		if err != nil {
+			log.Warn("failed to update tmp progress file", zap.Error(err))
+		}
+	}
 }

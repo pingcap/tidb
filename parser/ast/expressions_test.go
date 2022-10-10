@@ -353,7 +353,6 @@ func TestPositionExprRestore(t *testing.T) {
 		return node.(*SelectStmt).OrderBy.Items[0]
 	}
 	runNodeRestoreTest(t, testCases, "select * from t order by %s", extractNodeFunc)
-
 }
 
 func TestExistsSubqueryExprRestore(t *testing.T) {

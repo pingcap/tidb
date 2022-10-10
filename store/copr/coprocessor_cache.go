@@ -41,6 +41,10 @@ type coprCacheValue struct {
 	TimeStamp         uint64
 	RegionID          uint64
 	RegionDataVersion uint64
+
+	// Used in coprocessor paging protocol
+	PageStart []byte
+	PageEnd   []byte
 }
 
 func (v *coprCacheValue) String() string {
@@ -54,7 +58,7 @@ func (v *coprCacheValue) String() string {
 const coprCacheValueSize = int(unsafe.Sizeof(coprCacheValue{}))
 
 func (v *coprCacheValue) Len() int {
-	return coprCacheValueSize + len(v.Key) + len(v.Data)
+	return coprCacheValueSize + len(v.Key) + len(v.Data) + len(v.PageStart) + len(v.PageEnd)
 }
 
 func newCoprCache(config *config.CoprocessorCache) (*coprCache, error) {
@@ -108,6 +112,9 @@ func coprCacheBuildKey(copReq *coprocessor.Request) ([]byte, error) {
 		}
 		totalLength += 2 + len(r.Start) + 2 + len(r.End)
 	}
+	if copReq.PagingSize > 0 {
+		totalLength++
+	}
 
 	key := make([]byte, totalLength)
 
@@ -139,6 +146,11 @@ func coprCacheBuildKey(copReq *coprocessor.Request) ([]byte, error) {
 		// N bytes Key
 		copy(key[dest:], r.End)
 		dest += len(r.End)
+	}
+
+	// 1 byte when use paging protocol
+	if copReq.PagingSize > 0 {
+		key[dest] = 1
 	}
 
 	return key, nil
@@ -173,14 +185,22 @@ func (c *coprCache) CheckRequestAdmission(ranges int) bool {
 }
 
 // CheckResponseAdmission checks whether a response item is worth caching.
-func (c *coprCache) CheckResponseAdmission(dataSize int, processTime time.Duration) bool {
+func (c *coprCache) CheckResponseAdmission(dataSize int, processTime time.Duration, pagingTaskIdx uint32) bool {
 	if c == nil {
 		return false
 	}
 	if dataSize == 0 || dataSize > c.admissionMaxSize {
 		return false
 	}
-	if processTime < c.admissionMinProcessTime {
+	if pagingTaskIdx > 50 {
+		return false
+	}
+
+	admissionMinProcessTime := c.admissionMinProcessTime
+	if pagingTaskIdx > 0 {
+		admissionMinProcessTime = admissionMinProcessTime / 3
+	}
+	if processTime < admissionMinProcessTime {
 		return false
 	}
 	return true

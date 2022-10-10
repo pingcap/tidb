@@ -9,7 +9,9 @@ go_library(
         "//kv",
         "//metrics",
         "//parser/model",
+        "//sessionctx/sessionstates",
         "//sessionctx/variable",
+        "//types",
         "//util",
         "//util/kvcache",
         "//util/sli",
@@ -23,11 +25,13 @@ go_library(
 
 go_test(
     name = "sessionctx_test",
+    timeout = "short",
     srcs = [
         "context_test.go",
         "main_test.go",
     ],
     embed = [":sessionctx"],
+    flaky = True,
     deps = [
         "//testkit/testsetup",
         "@com_github_stretchr_testify//require",

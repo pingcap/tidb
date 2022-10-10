@@ -13,8 +13,10 @@ go_library(
 
 go_test(
     name = "etcd_test",
+    timeout = "short",
     srcs = ["etcd_test.go"],
     embed = [":etcd"],
+    flaky = True,
     deps = [
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",

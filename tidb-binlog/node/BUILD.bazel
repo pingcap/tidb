@@ -20,8 +20,10 @@ go_library(
 
 go_test(
     name = "node_test",
+    timeout = "short",
     srcs = ["registry_test.go"],
     embed = [":node"],
+    flaky = True,
     deps = [
         "//util/etcd",
         "@com_github_stretchr_testify//require",

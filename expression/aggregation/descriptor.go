@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/size"
 )
 
 // AggFuncDesc describes an aggregation function signature, only used in planner.
@@ -123,8 +124,6 @@ func (a *AggFuncDesc) Split(ordinal []int) (partialAggDesc, finalAggDesc *AggFun
 		partialAggDesc.Mode = Partial1Mode
 	} else if a.Mode == FinalMode {
 		partialAggDesc.Mode = Partial2Mode
-	} else {
-		panic("Error happened during AggFuncDesc.Split, the AggFunctionMode is not CompleteMode or FinalMode.")
 	}
 	finalAggDesc = &AggFuncDesc{
 		Mode:        FinalMode, // We only support FinalMode now in final phase.
@@ -230,7 +229,7 @@ func (a *AggFuncDesc) GetAggFunc(ctx sessionctx.Context) Aggregation {
 		var s string
 		var err error
 		var maxLen uint64
-		s, err = variable.GetSessionOrGlobalSystemVar(ctx.GetSessionVars(), variable.GroupConcatMaxLen)
+		s, err = ctx.GetSessionVars().GetSessionOrGlobalSystemVar(variable.GroupConcatMaxLen)
 		if err != nil {
 			panic(fmt.Sprintf("Error happened when GetAggFunc: no system variable named '%s'", variable.GroupConcatMaxLen))
 		}
@@ -332,4 +331,17 @@ func (a *AggFuncDesc) UpdateNotNullFlag4RetType(hasGroupBy, allAggsFirstRow bool
 		a.RetTp.DelFlag(mysql.NotNullFlag)
 	}
 	return nil
+}
+
+// MemoryUsage the memory usage of AggFuncDesc
+func (a *AggFuncDesc) MemoryUsage() (sum int64) {
+	if a == nil {
+		return
+	}
+
+	sum = a.baseFuncDesc.MemoryUsage() + size.SizeOfInt + size.SizeOfBool
+	for _, item := range a.OrderByItems {
+		sum += item.MemoryUsage()
+	}
+	return
 }

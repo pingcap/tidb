@@ -26,16 +26,17 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	gotime "time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -118,12 +119,11 @@ func (c *castAsIntFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	b, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp.EvalType())
+	b, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp)
 	if err != nil {
 		return nil, err
 	}
 	bf := newBaseBuiltinCastFunc(b, ctx.Value(inUnionCastContext) != nil)
-	bf.tp = c.tp
 	if args[0].GetType().Hybrid() || IsBinaryLiteral(args[0]) {
 		sig = &builtinCastIntAsIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastIntAsInt)
@@ -168,12 +168,11 @@ func (c *castAsRealFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	b, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp.EvalType())
+	b, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp)
 	if err != nil {
 		return nil, err
 	}
 	bf := newBaseBuiltinCastFunc(b, ctx.Value(inUnionCastContext) != nil)
-	bf.tp = c.tp
 	if IsBinaryLiteral(args[0]) {
 		sig = &builtinCastRealAsRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastRealAsReal)
@@ -224,12 +223,11 @@ func (c *castAsDecimalFunctionClass) getFunction(ctx sessionctx.Context, args []
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	b, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp.EvalType())
+	b, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp)
 	if err != nil {
 		return nil, err
 	}
 	bf := newBaseBuiltinCastFunc(b, ctx.Value(inUnionCastContext) != nil)
-	bf.tp = c.tp
 	if IsBinaryLiteral(args[0]) {
 		sig = &builtinCastDecimalAsDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastDecimalAsDecimal)
@@ -279,11 +277,10 @@ func (c *castAsStringFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp.EvalType())
+	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp)
 	if err != nil {
 		return nil, err
 	}
-	bf.tp = c.tp
 	if args[0].GetType().Hybrid() {
 		sig = &builtinCastStringAsStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsString)
@@ -334,11 +331,10 @@ func (c *castAsTimeFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp.EvalType())
+	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp)
 	if err != nil {
 		return nil, err
 	}
-	bf.tp = c.tp
 	argTp := args[0].GetType().EvalType()
 	switch argTp {
 	case types.ETInt:
@@ -378,11 +374,10 @@ func (c *castAsDurationFunctionClass) getFunction(ctx sessionctx.Context, args [
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp.EvalType())
+	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp)
 	if err != nil {
 		return nil, err
 	}
-	bf.tp = c.tp
 	argTp := args[0].GetType().EvalType()
 	switch argTp {
 	case types.ETInt:
@@ -422,11 +417,10 @@ func (c *castAsJSONFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp.EvalType())
+	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp)
 	if err != nil {
 		return nil, err
 	}
-	bf.tp = c.tp
 	argTp := args[0].GetType().EvalType()
 	switch argTp {
 	case types.ETInt:
@@ -523,13 +517,14 @@ func (b *builtinCastIntAsDecimalSig) evalDecimal(row chunk.Row) (res *types.MyDe
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-
 	if unsignedArgs0 := mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag()); !mysql.HasUnsignedFlag(b.tp.GetFlag()) && !unsignedArgs0 {
+		//revive:disable:empty-lines
 		res = types.NewDecFromInt(val)
 		// Round up to 0 if the value is negative but the expression eval type is unsigned in `UNION` statement
 		// NOTE: the following expressions are equal (so choose the more efficient one):
 		// `b.inUnion && mysql.HasUnsignedFlag(b.tp.GetFlag()) && !unsignedArgs0 && val < 0`
 		// `b.inUnion && !unsignedArgs0 && val < 0`
+		//revive:enable:empty-lines
 	} else if b.inUnion && !unsignedArgs0 && val < 0 {
 		res = &types.MyDecimal{}
 	} else {
@@ -640,17 +635,17 @@ func (b *builtinCastIntAsJSONSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastIntAsJSONSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isNull bool, err error) {
+func (b *builtinCastIntAsJSONSig) evalJSON(row chunk.Row) (res types.BinaryJSON, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, err
 	}
 	if mysql.HasIsBooleanFlag(b.args[0].GetType().GetFlag()) {
-		res = json.CreateBinary(val != 0)
+		res = types.CreateBinaryJSON(val != 0)
 	} else if mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag()) {
-		res = json.CreateBinary(uint64(val))
+		res = types.CreateBinaryJSON(uint64(val))
 	} else {
-		res = json.CreateBinary(val)
+		res = types.CreateBinaryJSON(val)
 	}
 	return res, false, nil
 }
@@ -665,10 +660,10 @@ func (b *builtinCastRealAsJSONSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastRealAsJSONSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isNull bool, err error) {
+func (b *builtinCastRealAsJSONSig) evalJSON(row chunk.Row) (res types.BinaryJSON, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalReal(b.ctx, row)
 	// FIXME: `select json_type(cast(1111.11 as json))` should return `DECIMAL`, we return `DOUBLE` now.
-	return json.CreateBinary(val), isNull, err
+	return types.CreateBinaryJSON(val), isNull, err
 }
 
 type builtinCastDecimalAsJSONSig struct {
@@ -681,17 +676,17 @@ func (b *builtinCastDecimalAsJSONSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastDecimalAsJSONSig) evalJSON(row chunk.Row) (json.BinaryJSON, bool, error) {
+func (b *builtinCastDecimalAsJSONSig) evalJSON(row chunk.Row) (types.BinaryJSON, bool, error) {
 	val, isNull, err := b.args[0].EvalDecimal(b.ctx, row)
 	if isNull || err != nil {
-		return json.BinaryJSON{}, true, err
+		return types.BinaryJSON{}, true, err
 	}
 	// FIXME: `select json_type(cast(1111.11 as json))` should return `DECIMAL`, we return `DOUBLE` now.
 	f64, err := val.ToFloat64()
 	if err != nil {
-		return json.BinaryJSON{}, true, err
+		return types.BinaryJSON{}, true, err
 	}
-	return json.CreateBinary(f64), isNull, err
+	return types.CreateBinaryJSON(f64), isNull, err
 }
 
 type builtinCastStringAsJSONSig struct {
@@ -704,15 +699,31 @@ func (b *builtinCastStringAsJSONSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastStringAsJSONSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isNull bool, err error) {
+func (b *builtinCastStringAsJSONSig) evalJSON(row chunk.Row) (res types.BinaryJSON, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	if mysql.HasParseToJSONFlag(b.tp.GetFlag()) {
-		res, err = json.ParseBinaryFromString(val)
+
+	typ := b.args[0].GetType()
+	if types.IsBinaryStr(typ) {
+		buf := []byte(val)
+		if typ.GetType() == mysql.TypeString {
+			// the tailing zero should also be in the opaque json
+			buf = make([]byte, typ.GetFlen())
+			copy(buf, val)
+		}
+
+		res := types.CreateBinaryJSON(types.Opaque{
+			TypeCode: b.args[0].GetType().GetType(),
+			Buf:      buf,
+		})
+
+		return res, false, err
+	} else if mysql.HasParseToJSONFlag(b.tp.GetFlag()) {
+		res, err = types.ParseBinaryJSONFromString(val)
 	} else {
-		res = json.CreateBinary(val)
+		res = types.CreateBinaryJSON(val)
 	}
 	return res, false, err
 }
@@ -727,13 +738,13 @@ func (b *builtinCastDurationAsJSONSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastDurationAsJSONSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isNull bool, err error) {
+func (b *builtinCastDurationAsJSONSig) evalJSON(row chunk.Row) (res types.BinaryJSON, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalDuration(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, err
 	}
 	val.Fsp = types.MaxFsp
-	return json.CreateBinary(val.String()), false, nil
+	return types.CreateBinaryJSON(val), false, nil
 }
 
 type builtinCastTimeAsJSONSig struct {
@@ -746,7 +757,7 @@ func (b *builtinCastTimeAsJSONSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastTimeAsJSONSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isNull bool, err error) {
+func (b *builtinCastTimeAsJSONSig) evalJSON(row chunk.Row) (res types.BinaryJSON, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalTime(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, err
@@ -754,7 +765,7 @@ func (b *builtinCastTimeAsJSONSig) evalJSON(row chunk.Row) (res json.BinaryJSON,
 	if val.Type() == mysql.TypeDatetime || val.Type() == mysql.TypeTimestamp {
 		val.SetFsp(types.MaxFsp)
 	}
-	return json.CreateBinary(val.String()), false, nil
+	return types.CreateBinaryJSON(val), false, nil
 }
 
 type builtinCastRealAsRealSig struct {
@@ -890,7 +901,7 @@ func (b *builtinCastRealAsTimeSig) evalTime(row chunk.Row) (types.Time, bool, er
 		return types.ZeroTime, false, nil
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
-	res, err := types.ParseTime(sc, fv, b.tp.GetType(), b.tp.GetDecimal())
+	res, err := types.ParseTimeFromFloatString(sc, fv, b.tp.GetType(), b.tp.GetDecimal())
 	if err != nil {
 		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, err)
 	}
@@ -916,7 +927,7 @@ func (b *builtinCastRealAsDurationSig) evalDuration(row chunk.Row) (res types.Du
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	res, err = types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, strconv.FormatFloat(val, 'f', -1, 64), b.tp.GetDecimal())
+	res, _, err = types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, strconv.FormatFloat(val, 'f', -1, 64), b.tp.GetDecimal())
 	if err != nil {
 		if types.ErrTruncatedWrongVal.Equal(err) {
 			err = b.ctx.GetSessionVars().StmtCtx.HandleTruncate(err)
@@ -1094,7 +1105,7 @@ func (b *builtinCastDecimalAsDurationSig) evalDuration(row chunk.Row) (res types
 	if isNull || err != nil {
 		return res, true, err
 	}
-	res, err = types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, string(val.ToString()), b.tp.GetDecimal())
+	res, _, err = types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, string(val.ToString()), b.tp.GetDecimal())
 	if types.ErrTruncatedWrongVal.Equal(err) {
 		err = b.ctx.GetSessionVars().StmtCtx.HandleTruncate(err)
 		// ErrTruncatedWrongVal needs to be considered NULL.
@@ -1317,16 +1328,12 @@ func (b *builtinCastStringAsDurationSig) evalDuration(row chunk.Row) (res types.
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	res, err = types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, val, b.tp.GetDecimal())
+	res, isNull, err = types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, val, b.tp.GetDecimal())
 	if types.ErrTruncatedWrongVal.Equal(err) {
 		sc := b.ctx.GetSessionVars().StmtCtx
 		err = sc.HandleTruncate(err)
-		// ZeroDuration of error ErrTruncatedWrongVal needs to be considered NULL.
-		if res == types.ZeroDuration {
-			return res, true, err
-		}
 	}
-	return res, false, err
+	return res, isNull, err
 }
 
 type builtinCastTimeAsTimeSig struct {
@@ -1610,7 +1617,11 @@ func (b *builtinCastDurationAsTimeSig) evalTime(row chunk.Row) (res types.Time, 
 		return res, isNull, err
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
-	res, err = val.ConvertToTime(sc, b.tp.GetType())
+	ts, err := getStmtTimestamp(b.ctx)
+	if err != nil {
+		ts = gotime.Now()
+	}
+	res, err = val.ConvertToTimeWithTimestamp(sc, b.tp.GetType(), ts)
 	if err != nil {
 		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, err)
 	}
@@ -1628,7 +1639,7 @@ func (b *builtinCastJSONAsJSONSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastJSONAsJSONSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isNull bool, err error) {
+func (b *builtinCastJSONAsJSONSig) evalJSON(row chunk.Row) (res types.BinaryJSON, isNull bool, err error) {
 	return b.args[0].EvalJSON(b.ctx, row)
 }
 
@@ -1729,20 +1740,49 @@ func (b *builtinCastJSONAsTimeSig) evalTime(row chunk.Row) (res types.Time, isNu
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	s, err := val.Unquote()
-	if err != nil {
-		return res, false, err
+
+	switch val.TypeCode {
+	case types.JSONTypeCodeDate, types.JSONTypeCodeDatetime, types.JSONTypeCodeTimestamp:
+		res = val.GetTime()
+		res.SetType(b.tp.GetType())
+		if b.tp.GetType() == mysql.TypeDate {
+			// Truncate hh:mm:ss part if the type is Date.
+			res.SetCoreTime(types.FromDate(res.Year(), res.Month(), res.Day(), 0, 0, 0, 0))
+		}
+		return res, isNull, err
+	case types.JSONTypeCodeDuration:
+		duration := val.GetDuration()
+
+		sc := b.ctx.GetSessionVars().StmtCtx
+		ts, err := getStmtTimestamp(b.ctx)
+		if err != nil {
+			ts = gotime.Now()
+		}
+		res, err = duration.ConvertToTimeWithTimestamp(sc, b.tp.GetType(), ts)
+		if err != nil {
+			return types.ZeroTime, true, handleInvalidTimeError(b.ctx, err)
+		}
+		res, err = res.RoundFrac(sc, b.tp.GetDecimal())
+		return res, isNull, err
+	case types.JSONTypeCodeString:
+		s, err := val.Unquote()
+		if err != nil {
+			return res, false, err
+		}
+		sc := b.ctx.GetSessionVars().StmtCtx
+		res, err = types.ParseTime(sc, s, b.tp.GetType(), b.tp.GetDecimal())
+		if err != nil {
+			return types.ZeroTime, true, handleInvalidTimeError(b.ctx, err)
+		}
+		if b.tp.GetType() == mysql.TypeDate {
+			// Truncate hh:mm:ss part if the type is Date.
+			res.SetCoreTime(types.FromDate(res.Year(), res.Month(), res.Day(), 0, 0, 0, 0))
+		}
+		return res, isNull, err
+	default:
+		err = types.ErrTruncatedWrongVal.GenWithStackByArgs(types.TypeStr(b.tp.GetType()), val.String())
+		return res, true, b.ctx.GetSessionVars().StmtCtx.HandleTruncate(err)
 	}
-	sc := b.ctx.GetSessionVars().StmtCtx
-	res, err = types.ParseTime(sc, s, b.tp.GetType(), b.tp.GetDecimal())
-	if err != nil {
-		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, err)
-	}
-	if b.tp.GetType() == mysql.TypeDate {
-		// Truncate hh:mm:ss part if the type is Date.
-		res.SetCoreTime(types.FromDate(res.Year(), res.Month(), res.Day(), 0, 0, 0, 0))
-	}
-	return
 }
 
 type builtinCastJSONAsDurationSig struct {
@@ -1760,23 +1800,43 @@ func (b *builtinCastJSONAsDurationSig) evalDuration(row chunk.Row) (res types.Du
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	s, err := val.Unquote()
-	if err != nil {
-		return res, false, err
+
+	stmtCtx := b.ctx.GetSessionVars().StmtCtx
+
+	switch val.TypeCode {
+	case types.JSONTypeCodeDate, types.JSONTypeCodeDatetime, types.JSONTypeCodeTimestamp:
+		time := val.GetTime()
+		res, err = time.ConvertToDuration()
+		if err != nil {
+			return res, false, err
+		}
+		res, err = res.RoundFrac(b.tp.GetDecimal(), b.ctx.GetSessionVars().Location())
+		return res, isNull, err
+	case types.JSONTypeCodeDuration:
+		res = val.GetDuration()
+		return res, isNull, err
+	case types.JSONTypeCodeString:
+		s, err := val.Unquote()
+		if err != nil {
+			return res, false, err
+		}
+		res, _, err = types.ParseDuration(stmtCtx, s, b.tp.GetDecimal())
+		if types.ErrTruncatedWrongVal.Equal(err) {
+			sc := b.ctx.GetSessionVars().StmtCtx
+			err = sc.HandleTruncate(err)
+		}
+		return res, isNull, err
+	default:
+		err = types.ErrTruncatedWrongVal.GenWithStackByArgs("TIME", val.String())
+		return res, true, stmtCtx.HandleTruncate(err)
 	}
-	res, err = types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, s, b.tp.GetDecimal())
-	if types.ErrTruncatedWrongVal.Equal(err) {
-		sc := b.ctx.GetSessionVars().StmtCtx
-		err = sc.HandleTruncate(err)
-	}
-	return
 }
 
 // inCastContext is session key type that indicates whether executing
 // in special cast context that negative unsigned num will be zero.
 type inCastContext int
 
-func (i inCastContext) String() string {
+func (inCastContext) String() string {
 	return "__cast_ctx"
 }
 
@@ -1790,12 +1850,8 @@ const inUnionCastContext inCastContext = 0
 // This is a nasty way to match the weird behavior of MySQL functions like `dayname()` being implicitly evaluated as integer.
 // See https://github.com/mysql/mysql-server/blob/ee4455a33b10f1b1886044322e4893f587b319ed/sql/item_timefunc.h#L423 for details.
 func CanImplicitEvalInt(expr Expression) bool {
-	switch f := expr.(type) {
-	case *ScalarFunction:
-		switch f.FuncName.L {
-		case ast.DayName:
-			return true
-		}
+	if f, ok := expr.(*ScalarFunction); ok {
+		return f.FuncName.L == ast.DayName
 	}
 	return false
 }
@@ -1805,12 +1861,8 @@ func CanImplicitEvalInt(expr Expression) bool {
 // This is a nasty way to match the weird behavior of MySQL functions like `dayname()` being implicitly evaluated as real.
 // See https://github.com/mysql/mysql-server/blob/ee4455a33b10f1b1886044322e4893f587b319ed/sql/item_timefunc.h#L423 for details.
 func CanImplicitEvalReal(expr Expression) bool {
-	switch f := expr.(type) {
-	case *ScalarFunction:
-		switch f.FuncName.L {
-		case ast.DayName:
-			return true
-		}
+	if f, ok := expr.(*ScalarFunction); ok {
+		return f.FuncName.L == ast.DayName
 	}
 	return false
 }
@@ -1840,6 +1892,15 @@ func BuildCastCollationFunction(ctx sessionctx.Context, expr Expression, ec *Exp
 		} else {
 			return expr
 		}
+	} else if ec.Charset == charset.CharsetBin {
+		// When cast character string to binary string, if we still use fixed length representation,
+		// then 0 padding will be used, which can affect later execution.
+		// e.g. https://github.com/pingcap/tidb/issues/34823.
+		// On the other hand, we can not directly return origin expr back,
+		// since we need binary collation to do string comparison later.
+		// e.g. https://github.com/pingcap/tidb/pull/35053#discussion_r894155052
+		// Here we use VarString type of cast, i.e `cast(a as binary)`, to avoid this problem.
+		tp.SetType(mysql.TypeVarString)
 	}
 	tp.SetCharset(ec.Charset)
 	tp.SetCollate(ec.Collation)
@@ -1927,6 +1988,25 @@ func WrapWithCastAsReal(ctx sessionctx.Context, expr Expression) Expression {
 	return BuildCastFunction(ctx, expr, tp)
 }
 
+func minimalDecimalLenForHoldingInteger(tp byte) int {
+	switch tp {
+	case mysql.TypeTiny:
+		return 3
+	case mysql.TypeShort:
+		return 5
+	case mysql.TypeInt24:
+		return 8
+	case mysql.TypeLong:
+		return 10
+	case mysql.TypeLonglong:
+		return 20
+	case mysql.TypeYear:
+		return 4
+	default:
+		return mysql.MaxIntWidth
+	}
+}
+
 // WrapWithCastAsDecimal wraps `expr` with `cast` if the return type of expr is
 // not type decimal, otherwise, returns `expr` directly.
 func WrapWithCastAsDecimal(ctx sessionctx.Context, expr Expression) Expression {
@@ -1934,11 +2014,12 @@ func WrapWithCastAsDecimal(ctx sessionctx.Context, expr Expression) Expression {
 		return expr
 	}
 	tp := types.NewFieldType(mysql.TypeNewDecimal)
-	tp.SetFlen(expr.GetType().GetFlen())
-	tp.SetDecimal(expr.GetType().GetDecimal())
+	tp.SetFlenUnderLimit(expr.GetType().GetFlen())
+	tp.SetDecimalUnderLimit(expr.GetType().GetDecimal())
 
 	if expr.GetType().EvalType() == types.ETInt {
-		tp.SetFlen(mysql.MaxIntWidth)
+		tp.SetFlen(minimalDecimalLenForHoldingInteger(expr.GetType().GetType()))
+		tp.SetDecimal(0)
 	}
 	if tp.GetFlen() == types.UnspecifiedLength || tp.GetFlen() > mysql.MaxDecimalWidth {
 		tp.SetFlen(mysql.MaxDecimalWidth)
@@ -1952,14 +2033,8 @@ func WrapWithCastAsDecimal(ctx sessionctx.Context, expr Expression) Expression {
 		if !isnull && err == nil {
 			precision, frac := val.PrecisionAndFrac()
 			castTp := castExpr.GetType()
-			castTp.SetDecimal(frac)
-			castTp.SetFlen(precision)
-			if castTp.GetFlen() > mysql.MaxDecimalWidth {
-				castTp.SetFlen(mysql.MaxDecimalWidth)
-			}
-			if castTp.GetDecimal() > mysql.MaxDecimalScale {
-				castTp.SetDecimal(mysql.MaxDecimalScale)
-			}
+			castTp.SetDecimalUnderLimit(frac)
+			castTp.SetFlenUnderLimit(precision)
 		}
 	}
 	return castExpr

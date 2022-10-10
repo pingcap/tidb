@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 )
@@ -169,7 +168,7 @@ func (decoder *DatumMapDecoder) decodeColDatum(col *ColInfo, colData []byte) (ty
 		byteSize := (col.Ft.GetFlen() + 7) >> 3
 		d.SetMysqlBit(types.NewBinaryLiteralFromUint(decodeUint(colData), byteSize))
 	case mysql.TypeJSON:
-		var j json.BinaryJSON
+		var j types.BinaryJSON
 		j.TypeCode = colData[0]
 		j.Value = colData[1:]
 		d.SetMysqlJSON(j)
@@ -344,7 +343,7 @@ func (decoder *ChunkDecoder) decodeColToChunk(colIdx int, col *ColInfo, colData 
 		byteSize := (col.Ft.GetFlen() + 7) >> 3
 		chk.AppendBytes(colIdx, types.NewBinaryLiteralFromUint(decodeUint(colData), byteSize))
 	case mysql.TypeJSON:
-		var j json.BinaryJSON
+		var j types.BinaryJSON
 		j.TypeCode = colData[0]
 		j.Value = colData[1:]
 		chk.AppendJSON(colIdx, j)
@@ -463,7 +462,7 @@ func (decoder *BytesDecoder) DecodeToBytes(outputOffset map[int64]int, handle kv
 	return decoder.decodeToBytesInternal(outputOffset, handle, value, cacheBytes)
 }
 
-func (decoder *BytesDecoder) encodeOldDatum(tp byte, val []byte) []byte {
+func (*BytesDecoder) encodeOldDatum(tp byte, val []byte) []byte {
 	buf := make([]byte, 0, 1+binary.MaxVarintLen64+len(val))
 	switch tp {
 	case BytesFlag:

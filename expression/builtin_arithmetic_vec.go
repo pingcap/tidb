@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 )
 
+//revive:disable:defer
 func (b *builtinArithmeticMultiplyRealSig) vectorized() bool {
 	return true
 }
@@ -673,7 +674,6 @@ func (b *builtinArithmeticMultiplyIntSig) vecEvalInt(input *chunk.Chunk, result 
 	result.MergeNulls(buf)
 	var tmp int64
 	for i := 0; i < n; i++ {
-
 		tmp = x[i] * y[i]
 		if (x[i] != 0 && tmp/x[i] != y[i]) || (tmp == math.MinInt64 && x[i] == -1) {
 			if result.IsNull(i) {
@@ -788,7 +788,6 @@ func (b *builtinArithmeticIntDivideIntSig) divideUU(result *chunk.Column, lhsI64
 		} else {
 			resultI64s[i] = int64(uint64(lhs) / uint64(rhs))
 		}
-
 	}
 	return nil
 }
@@ -1039,7 +1038,6 @@ func (b *builtinArithmeticMultiplyIntUnsignedSig) vecEvalInt(input *chunk.Chunk,
 	result.MergeNulls(buf)
 	var res uint64
 	for i := 0; i < n; i++ {
-
 		res = x[i] * y[i]
 		if x[i] != 0 && res/x[i] != y[i] {
 			if result.IsNull(i) {

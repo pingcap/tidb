@@ -34,12 +34,12 @@ import (
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
+	"go.opencensus.io/stats/view"
 	"go.uber.org/zap"
 )
 
 func TestHotRegion(t *testing.T) {
-	store, clean := createMockStore(t)
-	defer clean()
+	store := createMockStore(t)
 
 	h := helper.Helper{
 		Store:       store,
@@ -73,8 +73,7 @@ func TestHotRegion(t *testing.T) {
 }
 
 func TestGetRegionsTableInfo(t *testing.T) {
-	store, clean := createMockStore(t)
-	defer clean()
+	store := createMockStore(t)
 
 	h := helper.NewHelper(store)
 	regionsInfo := getMockTiKVRegionsInfo()
@@ -84,8 +83,7 @@ func TestGetRegionsTableInfo(t *testing.T) {
 }
 
 func TestTiKVRegionsInfo(t *testing.T) {
-	store, clean := createMockStore(t)
-	defer clean()
+	store := createMockStore(t)
 
 	h := helper.Helper{
 		Store:       store,
@@ -97,8 +95,7 @@ func TestTiKVRegionsInfo(t *testing.T) {
 }
 
 func TestTiKVStoresStat(t *testing.T) {
-	store, clean := createMockStore(t)
-	defer clean()
+	store := createMockStore(t)
 
 	h := helper.Helper{
 		Store:       store,
@@ -140,7 +137,7 @@ func (s *mockStore) Describe() string {
 	return ""
 }
 
-func createMockStore(t *testing.T) (store helper.Storage, clean func()) {
+func createMockStore(t *testing.T) (store helper.Storage) {
 	s, err := mockstore.NewMockStore(
 		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockstore.BootstrapWithMultiRegions(c, []byte("x"))
@@ -155,10 +152,11 @@ func createMockStore(t *testing.T) (store helper.Storage, clean func()) {
 		[]string{"invalid_pd_address", server.URL[len("http://"):]},
 	}
 
-	clean = func() {
+	t.Cleanup(func() {
 		server.Close()
+		view.Stop()
 		require.NoError(t, store.Close())
-	}
+	})
 
 	return
 }
@@ -202,7 +200,6 @@ func mockHotRegionResponse(w http.ResponseWriter, _ *http.Request) {
 	if err != nil {
 		log.Panic("write http response failed", zap.Error(err))
 	}
-
 }
 
 func getMockRegionsTableInfoSchema() []*model.DBInfo {

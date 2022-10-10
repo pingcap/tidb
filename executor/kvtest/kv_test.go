@@ -22,8 +22,7 @@ import (
 )
 
 func TestDropStatsFromKV(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (c1 varchar(20), c2 varchar(20))")

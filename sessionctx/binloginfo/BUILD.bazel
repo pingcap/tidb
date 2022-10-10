@@ -25,11 +25,13 @@ go_library(
 
 go_test(
     name = "binloginfo_test",
+    timeout = "short",
     srcs = [
         "binloginfo_test.go",
         "main_test.go",
     ],
     embed = [":binloginfo"],
+    flaky = True,
     deps = [
         "//ddl",
         "//domain",

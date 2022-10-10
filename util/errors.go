@@ -18,7 +18,7 @@ import (
 	"github.com/pingcap/errors"
 )
 
-//OriginError return original err
+// OriginError return original err
 func OriginError(err error) error {
 	for {
 		e := errors.Cause(err)

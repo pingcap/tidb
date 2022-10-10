@@ -22,13 +22,13 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )
 
 func TestRenameIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (pk int primary key, c int default 1, c1 int default 1, unique key k1(c), key k2(c1))")
@@ -58,8 +58,9 @@ func TestRenameTableWithLocked(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.EnableTableLock = true
 	})
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database renamedb")
 	tk.MustExec("create database renamedb2")
@@ -93,8 +94,8 @@ func TestAlterTableRenameTable(t *testing.T) {
 }
 
 func renameTableTest(t *testing.T, sql string, isAlterTable bool) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustGetErrCode("rename table tb1 to tb2;", errno.ErrNoSuchTable)
@@ -134,23 +135,11 @@ func renameTableTest(t *testing.T, sql string, isAlterTable bool) {
 
 	// for failure case
 	failSQL := fmt.Sprintf(sql, "test_not_exist.t", "test_not_exist.t")
-	if isAlterTable {
-		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
-	} else {
-		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
-	}
+	tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
 	failSQL = fmt.Sprintf(sql, "test.test_not_exist", "test.test_not_exist")
-	if isAlterTable {
-		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
-	} else {
-		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
-	}
+	tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
 	failSQL = fmt.Sprintf(sql, "test.t_not_exist", "test_not_exist.t")
-	if isAlterTable {
-		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
-	} else {
-		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
-	}
+	tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
 	failSQL = fmt.Sprintf(sql, "test1.t2", "test_not_exist.t")
 	tk.MustGetErrCode(failSQL, errno.ErrErrorOnRename)
 
@@ -172,8 +161,6 @@ func renameTableTest(t *testing.T, sql string, isAlterTable bool) {
 	}
 	failSQL = fmt.Sprintf(sql, "test_not_exist.t", "test1.t_not_exist")
 	if isAlterTable {
-		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
-	} else {
 		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
 	}
 
@@ -197,8 +184,8 @@ func renameTableTest(t *testing.T, sql string, isAlterTable bool) {
 }
 
 func TestRenameMultiTables(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1(id int)")

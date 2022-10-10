@@ -9,46 +9,46 @@ import (
 type noopStorage struct{}
 
 // DeleteFile delete the file in storage
-func (s *noopStorage) DeleteFile(ctx context.Context, name string) error {
+func (*noopStorage) DeleteFile(_ context.Context, _ string) error {
 	return nil
 }
 
 // WriteFile file to storage.
-func (*noopStorage) WriteFile(ctx context.Context, name string, data []byte) error {
+func (*noopStorage) WriteFile(_ context.Context, _ string, _ []byte) error {
 	return nil
 }
 
 // ReadFile storage file.
-func (*noopStorage) ReadFile(ctx context.Context, name string) ([]byte, error) {
+func (*noopStorage) ReadFile(_ context.Context, _ string) ([]byte, error) {
 	return []byte{}, nil
 }
 
 // FileExists return true if file exists.
-func (*noopStorage) FileExists(ctx context.Context, name string) (bool, error) {
+func (*noopStorage) FileExists(_ context.Context, _ string) (bool, error) {
 	return false, nil
 }
 
 // Open a Reader by file path.
-func (*noopStorage) Open(ctx context.Context, path string) (ExternalFileReader, error) {
+func (*noopStorage) Open(_ context.Context, _ string) (ExternalFileReader, error) {
 	return noopReader{}, nil
 }
 
 // WalkDir traverse all the files in a dir.
-func (*noopStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(string, int64) error) error {
+func (*noopStorage) WalkDir(_ context.Context, _ *WalkOption, _ func(string, int64) error) error {
 	return nil
 }
 
-func (s *noopStorage) URI() string {
+func (*noopStorage) URI() string {
 	return "noop:///"
 }
 
 // Create implements ExternalStorage interface.
-func (*noopStorage) Create(ctx context.Context, name string) (ExternalFileWriter, error) {
+func (*noopStorage) Create(_ context.Context, _ string) (ExternalFileWriter, error) {
 	return &noopWriter{}, nil
 }
 
 // Rename implements ExternalStorage interface.
-func (*noopStorage) Rename(ctx context.Context, oldFileName, newFileName string) error {
+func (*noopStorage) Rename(_ context.Context, _, _ string) error {
 	return nil
 }
 
@@ -66,16 +66,16 @@ func (noopReader) Close() error {
 	return nil
 }
 
-func (noopReader) Seek(offset int64, whence int) (int64, error) {
+func (noopReader) Seek(offset int64, _ int) (int64, error) {
 	return offset, nil
 }
 
 type noopWriter struct{}
 
-func (noopWriter) Write(ctx context.Context, p []byte) (int, error) {
+func (noopWriter) Write(_ context.Context, p []byte) (int, error) {
 	return len(p), nil
 }
 
-func (noopWriter) Close(ctx context.Context) error {
+func (noopWriter) Close(_ context.Context) error {
 	return nil
 }

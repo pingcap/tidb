@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"runtime/trace"
-	"sort"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -43,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/util/mvmap"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 var _ Executor = &IndexLookUpJoin{}
@@ -372,6 +372,7 @@ func (ow *outerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 	}()
 	for {
 		failpoint.Inject("TestIssue30211", nil)
+		failpoint.Inject("ConsumeRandomPanic", nil)
 		task, err := ow.buildTask(ctx)
 		if err != nil {
 			task.doneCh <- err
@@ -412,6 +413,7 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 	task.memTracker = memory.NewTracker(-1, -1)
 	task.outerResult.GetMemTracker().AttachTo(task.memTracker)
 	task.memTracker.AttachTo(ow.parentMemTracker)
+	failpoint.Inject("ConsumeRandomPanic", nil)
 
 	ow.increaseBatchSize()
 	requiredRows := ow.batchSize
@@ -555,6 +557,7 @@ func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*indexJoi
 				}
 				return nil, err
 			}
+			failpoint.Inject("ConsumeRandomPanic", nil)
 			if rowIdx == 0 {
 				iw.memTracker.Consume(types.EstimatedMemUsage(dLookUpKey, numRows))
 			}
@@ -644,12 +647,12 @@ func (iw *innerWorker) sortAndDedupLookUpContents(lookUpContents []*indexJoinLoo
 		return lookUpContents
 	}
 	sc := iw.ctx.GetSessionVars().StmtCtx
-	sort.Slice(lookUpContents, func(i, j int) bool {
-		cmp := compareRow(sc, lookUpContents[i].keys, lookUpContents[j].keys, iw.keyCollators)
+	slices.SortFunc(lookUpContents, func(i, j *indexJoinLookUpContent) bool {
+		cmp := compareRow(sc, i.keys, j.keys, iw.keyCollators)
 		if cmp != 0 || iw.nextColCompareFilters == nil {
 			return cmp < 0
 		}
-		return iw.nextColCompareFilters.CompareRow(lookUpContents[i].row, lookUpContents[j].row) < 0
+		return iw.nextColCompareFilters.CompareRow(i.row, j.row) < 0
 	})
 	deDupedLookupKeys := lookUpContents[:1]
 	for i := 1; i < len(lookUpContents); i++ {
@@ -700,6 +703,7 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 		default:
 		}
 		err := Next(ctx, innerExec, iw.executorChk)
+		failpoint.Inject("ConsumeRandomPanic", nil)
 		if err != nil {
 			return err
 		}

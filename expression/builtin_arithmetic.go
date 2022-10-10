@@ -63,16 +63,32 @@ var (
 // performed with the / operator.
 const precIncrement = 4
 
+// isConstantBinaryLiteral return true if expr is constant binary literal
+func isConstantBinaryLiteral(expr Expression) bool {
+	if types.IsBinaryStr(expr.GetType()) {
+		if v, ok := expr.(*Constant); ok {
+			if k := v.Value.Kind(); k == types.KindBinaryLiteral {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // numericContextResultType returns types.EvalType for numeric function's parameters.
 // the returned types.EvalType should be one of: types.ETInt, types.ETDecimal, types.ETReal
-func numericContextResultType(ft *types.FieldType) types.EvalType {
+func numericContextResultType(expr Expression) types.EvalType {
+	ft := expr.GetType()
 	if types.IsTypeTemporal(ft.GetType()) {
 		if ft.GetDecimal() > 0 {
 			return types.ETDecimal
 		}
 		return types.ETInt
 	}
-	if types.IsBinaryStr(ft) || ft.GetType() == mysql.TypeBit {
+	// to solve https://github.com/pingcap/tidb/issues/27698
+	// if expression is constant binary literal, like `0x1234`, `0b00011`, cast to integer
+	// for other binary str column related expression, like varbinary, cast to float/double.
+	if isConstantBinaryLiteral(expr) || ft.GetType() == mysql.TypeBit {
 		return types.ETInt
 	}
 	evalTp4Ft := types.ETReal
@@ -90,9 +106,9 @@ func numericContextResultType(ft *types.FieldType) types.EvalType {
 func setFlenDecimal4RealOrDecimal(ctx sessionctx.Context, retTp *types.FieldType, arg0, arg1 Expression, isReal bool, isMultiply bool) {
 	a, b := arg0.GetType(), arg1.GetType()
 	if a.GetDecimal() != types.UnspecifiedLength && b.GetDecimal() != types.UnspecifiedLength {
-		retTp.SetDecimal(a.GetDecimal() + b.GetDecimal())
+		retTp.SetDecimalUnderLimit(a.GetDecimal() + b.GetDecimal())
 		if !isMultiply {
-			retTp.SetDecimal(mathutil.Max(a.GetDecimal(), b.GetDecimal()))
+			retTp.SetDecimalUnderLimit(mathutil.Max(a.GetDecimal(), b.GetDecimal()))
 		}
 		if !isReal && retTp.GetDecimal() > mysql.MaxDecimalScale {
 			retTp.SetDecimal(mysql.MaxDecimalScale)
@@ -101,16 +117,18 @@ func setFlenDecimal4RealOrDecimal(ctx sessionctx.Context, retTp *types.FieldType
 			retTp.SetFlen(types.UnspecifiedLength)
 			return
 		}
-		digitsInt := mathutil.Max(a.GetFlen()-a.GetDecimal(), b.GetFlen()-b.GetDecimal())
 		if isMultiply {
-			digitsInt = a.GetFlen() - a.GetDecimal() + b.GetFlen() - b.GetDecimal()
+			digitsInt := a.GetFlen() - a.GetDecimal() + b.GetFlen() - b.GetDecimal()
+			retTp.SetFlenUnderLimit(digitsInt + retTp.GetDecimal())
+		} else {
+			digitsInt := mathutil.Max(a.GetFlen()-a.GetDecimal(), b.GetFlen()-b.GetDecimal())
+			retTp.SetFlenUnderLimit(digitsInt + retTp.GetDecimal() + 1)
 		}
-		retTp.SetFlen(digitsInt + retTp.GetDecimal() + 1)
 		if isReal {
 			retTp.SetFlen(mathutil.Min(retTp.GetFlen(), mysql.MaxRealWidth))
 			return
 		}
-		retTp.SetFlen(mathutil.Min(retTp.GetFlen(), mysql.MaxDecimalWidth))
+		retTp.SetFlenUnderLimit(mathutil.Min(retTp.GetFlen(), mysql.MaxDecimalWidth))
 		return
 	}
 	if isReal {
@@ -130,20 +148,14 @@ func (c *arithmeticDivideFunctionClass) setType4DivDecimal(retTp, a, b *types.Fi
 	if decb == types.UnspecifiedFsp {
 		decb = 0
 	}
-	retTp.SetDecimal(deca + precIncrement)
-	if retTp.GetDecimal() > mysql.MaxDecimalScale {
-		retTp.SetDecimal(mysql.MaxDecimalScale)
-	}
+	retTp.SetDecimalUnderLimit(deca + precIncrement)
 	if a.GetFlen() == types.UnspecifiedLength {
 		retTp.SetFlen(mysql.MaxDecimalWidth)
 		return
 	}
 	aPrec := types.DecimalLength2Precision(a.GetFlen(), a.GetDecimal(), mysql.HasUnsignedFlag(a.GetFlag()))
-	retTp.SetFlen(aPrec + decb + precIncrement)
-	retTp.SetFlen(types.Precision2LengthNoTruncation(retTp.GetFlen(), retTp.GetDecimal(), mysql.HasUnsignedFlag(retTp.GetFlag())))
-	if retTp.GetFlen() > mysql.MaxDecimalWidth {
-		retTp.SetFlen(mysql.MaxDecimalWidth)
-	}
+	retTp.SetFlenUnderLimit(aPrec + decb + precIncrement)
+	retTp.SetFlenUnderLimit(types.Precision2LengthNoTruncation(retTp.GetFlen(), retTp.GetDecimal(), mysql.HasUnsignedFlag(retTp.GetFlag())))
 }
 
 func (c *arithmeticDivideFunctionClass) setType4DivReal(retTp *types.FieldType) {
@@ -159,8 +171,7 @@ func (c *arithmeticPlusFunctionClass) getFunction(ctx sessionctx.Context, args [
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	lhsTp, rhsTp := args[0].GetType(), args[1].GetType()
-	lhsEvalTp, rhsEvalTp := numericContextResultType(lhsTp), numericContextResultType(rhsTp)
+	lhsEvalTp, rhsEvalTp := numericContextResultType(args[0]), numericContextResultType(args[1])
 	if lhsEvalTp == types.ETReal || rhsEvalTp == types.ETReal {
 		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal, types.ETReal)
 		if err != nil {
@@ -311,8 +322,7 @@ func (c *arithmeticMinusFunctionClass) getFunction(ctx sessionctx.Context, args 
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	lhsTp, rhsTp := args[0].GetType(), args[1].GetType()
-	lhsEvalTp, rhsEvalTp := numericContextResultType(lhsTp), numericContextResultType(rhsTp)
+	lhsEvalTp, rhsEvalTp := numericContextResultType(args[0]), numericContextResultType(args[1])
 	if lhsEvalTp == types.ETReal || rhsEvalTp == types.ETReal {
 		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal, types.ETReal)
 		if err != nil {
@@ -332,7 +342,6 @@ func (c *arithmeticMinusFunctionClass) getFunction(ctx sessionctx.Context, args 
 		sig.setPbCode(tipb.ScalarFuncSig_MinusDecimal)
 		return sig, nil
 	} else {
-
 		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETInt, types.ETInt)
 		if err != nil {
 			return nil, err
@@ -498,7 +507,7 @@ func (c *arithmeticMultiplyFunctionClass) getFunction(ctx sessionctx.Context, ar
 		return nil, err
 	}
 	lhsTp, rhsTp := args[0].GetType(), args[1].GetType()
-	lhsEvalTp, rhsEvalTp := numericContextResultType(lhsTp), numericContextResultType(rhsTp)
+	lhsEvalTp, rhsEvalTp := numericContextResultType(args[0]), numericContextResultType(args[1])
 	if lhsEvalTp == types.ETReal || rhsEvalTp == types.ETReal {
 		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal, types.ETReal)
 		if err != nil {
@@ -645,7 +654,7 @@ func (c *arithmeticDivideFunctionClass) getFunction(ctx sessionctx.Context, args
 		return nil, err
 	}
 	lhsTp, rhsTp := args[0].GetType(), args[1].GetType()
-	lhsEvalTp, rhsEvalTp := numericContextResultType(lhsTp), numericContextResultType(rhsTp)
+	lhsEvalTp, rhsEvalTp := numericContextResultType(args[0]), numericContextResultType(args[1])
 	if lhsEvalTp == types.ETReal || rhsEvalTp == types.ETReal {
 		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal, types.ETReal)
 		if err != nil {
@@ -738,9 +747,8 @@ func (c *arithmeticIntDivideFunctionClass) getFunction(ctx sessionctx.Context, a
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-
 	lhsTp, rhsTp := args[0].GetType(), args[1].GetType()
-	lhsEvalTp, rhsEvalTp := numericContextResultType(lhsTp), numericContextResultType(rhsTp)
+	lhsEvalTp, rhsEvalTp := numericContextResultType(args[0]), numericContextResultType(args[1])
 	if lhsEvalTp == types.ETInt && rhsEvalTp == types.ETInt {
 		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETInt, types.ETInt)
 		if err != nil {
@@ -883,10 +891,7 @@ func (c *arithmeticModFunctionClass) setType4ModRealOrDecimal(retTp, a, b *types
 	if a.GetDecimal() == types.UnspecifiedLength || b.GetDecimal() == types.UnspecifiedLength {
 		retTp.SetDecimal(types.UnspecifiedLength)
 	} else {
-		retTp.SetDecimal(mathutil.Max(a.GetDecimal(), b.GetDecimal()))
-		if isDecimal && retTp.GetDecimal() > mysql.MaxDecimalScale {
-			retTp.SetDecimal(mysql.MaxDecimalScale)
-		}
+		retTp.SetDecimalUnderLimit(mathutil.Max(a.GetDecimal(), b.GetDecimal()))
 	}
 
 	if a.GetFlen() == types.UnspecifiedLength || b.GetFlen() == types.UnspecifiedLength {
@@ -894,7 +899,7 @@ func (c *arithmeticModFunctionClass) setType4ModRealOrDecimal(retTp, a, b *types
 	} else {
 		retTp.SetFlen(mathutil.Max(a.GetFlen(), b.GetFlen()))
 		if isDecimal {
-			retTp.SetFlen(mathutil.Min(retTp.GetFlen(), mysql.MaxDecimalWidth))
+			retTp.SetFlenUnderLimit(retTp.GetFlen())
 			return
 		}
 		retTp.SetFlen(mathutil.Min(retTp.GetFlen(), mysql.MaxRealWidth))
@@ -906,7 +911,7 @@ func (c *arithmeticModFunctionClass) getFunction(ctx sessionctx.Context, args []
 		return nil, err
 	}
 	lhsTp, rhsTp := args[0].GetType(), args[1].GetType()
-	lhsEvalTp, rhsEvalTp := numericContextResultType(lhsTp), numericContextResultType(rhsTp)
+	lhsEvalTp, rhsEvalTp := numericContextResultType(args[0]), numericContextResultType(args[1])
 	if lhsEvalTp == types.ETReal || rhsEvalTp == types.ETReal {
 		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal, types.ETReal)
 		if err != nil {

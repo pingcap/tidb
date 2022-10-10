@@ -48,7 +48,7 @@ func (r *EtcdRegistry) Close() error {
 	return errors.Trace(err)
 }
 
-func (r *EtcdRegistry) prefixed(p ...string) string {
+func (*EtcdRegistry) prefixed(p ...string) string {
 	return path.Join(p...)
 }
 
@@ -173,14 +173,13 @@ func AnalyzeNodeID(key string) string {
 	paths := strings.Split(key, "/")
 	nodeIDOffset := 3
 
-	if len(paths) >= 2 {
-		// version string start with 'v'
-		if !strings.HasPrefix(paths[1], "v") {
-			nodeIDOffset = 2
-		}
-	} else {
+	if len(paths) < 2 {
 		log.Error("can't get nodeID or node type", zap.String("key", key))
 		return ""
+	}
+	// version string start with 'v'
+	if !strings.HasPrefix(paths[1], "v") {
+		nodeIDOffset = 2
 	}
 
 	if len(paths) < nodeIDOffset+1 {

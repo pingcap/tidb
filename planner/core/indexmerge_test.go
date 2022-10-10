@@ -59,7 +59,7 @@ func getIndexMergePathDigest(paths []*util.AccessPath, startIndex int) string {
 
 func TestIndexMergePathGeneration(t *testing.T) {
 	var input, output []string
-	indexMergeSuiteData.GetTestCases(t, &input, &output)
+	indexMergeSuiteData.LoadTestCases(t, &input, &output)
 	ctx := context.TODO()
 	sctx := MockContext()
 	is := infoschema.MockInfoSchema([]*model.TableInfo{MockSignedTable(), MockView()})

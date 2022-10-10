@@ -55,31 +55,32 @@ type RestrictedSQLExecutor interface {
 
 // ExecOption is a struct defined for ExecRestrictedStmt/SQL option.
 type ExecOption struct {
-	IgnoreWarning      bool
-	SnapshotTS         uint64
-	AnalyzeVer         int
-	PartitionPruneMode string
-	UseCurSession      bool
-	TrackSysProcID     uint64
+	AnalyzeSnapshot    *bool
 	TrackSysProc       func(id uint64, ctx sessionctx.Context) error
 	UnTrackSysProc     func(id uint64)
+	PartitionPruneMode string
+	SnapshotTS         uint64
+	AnalyzeVer         int
+	TrackSysProcID     uint64
+	IgnoreWarning      bool
+	UseCurSession      bool
 }
 
 // OptionFuncAlias is defined for the optional parameter of ExecRestrictedStmt/SQL.
 type OptionFuncAlias = func(option *ExecOption)
 
 // ExecOptionIgnoreWarning tells ExecRestrictedStmt/SQL to ignore the warnings.
-var ExecOptionIgnoreWarning OptionFuncAlias = func(option *ExecOption) {
+var ExecOptionIgnoreWarning = func(option *ExecOption) {
 	option.IgnoreWarning = true
 }
 
 // ExecOptionAnalyzeVer1 tells ExecRestrictedStmt/SQL to collect statistics with version1.
-var ExecOptionAnalyzeVer1 OptionFuncAlias = func(option *ExecOption) {
+var ExecOptionAnalyzeVer1 = func(option *ExecOption) {
 	option.AnalyzeVer = 1
 }
 
 // ExecOptionAnalyzeVer2 tells ExecRestrictedStmt/SQL to collect statistics with version2.
-var ExecOptionAnalyzeVer2 OptionFuncAlias = func(option *ExecOption) {
+var ExecOptionAnalyzeVer2 = func(option *ExecOption) {
 	option.AnalyzeVer = 2
 }
 
@@ -90,14 +91,22 @@ func GetPartitionPruneModeOption(pruneMode string) OptionFuncAlias {
 	}
 }
 
+// GetAnalyzeSnapshotOption returns a function which tells ExecRestrictedStmt/SQL to run with analyzeSnapshot.
+func GetAnalyzeSnapshotOption(analyzeSnapshot bool) OptionFuncAlias {
+	return func(option *ExecOption) {
+		option.AnalyzeSnapshot = new(bool)
+		*option.AnalyzeSnapshot = analyzeSnapshot
+	}
+}
+
 // ExecOptionUseCurSession tells ExecRestrictedStmt/SQL to use current session.
-var ExecOptionUseCurSession OptionFuncAlias = func(option *ExecOption) {
+var ExecOptionUseCurSession = func(option *ExecOption) {
 	option.UseCurSession = true
 }
 
 // ExecOptionUseSessionPool tells ExecRestrictedStmt/SQL to use session pool.
 // UseCurSession is false by default, sometimes we set it explicitly for readability
-var ExecOptionUseSessionPool OptionFuncAlias = func(option *ExecOption) {
+var ExecOptionUseSessionPool = func(option *ExecOption) {
 	option.UseCurSession = false
 }
 
@@ -173,6 +182,9 @@ type Statement interface {
 
 	// RebuildPlan rebuilds the plan of the statement.
 	RebuildPlan(ctx context.Context) (schemaVersion int64, err error)
+
+	// GetStmtNode returns the stmtNode inside Statement
+	GetStmtNode() ast.StmtNode
 }
 
 // RecordSet is an abstract result set interface to help get data from Plan.

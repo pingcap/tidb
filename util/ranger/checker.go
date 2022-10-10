@@ -24,10 +24,10 @@ import (
 
 // conditionChecker checks if this condition can be pushed to index planner.
 type conditionChecker struct {
-	colUniqueID   int64
 	checkerCol    *expression.Column
-	shouldReserve bool // check if a access condition should be reserved in filter conditions.
+	colUniqueID   int64
 	length        int
+	shouldReserve bool // check if a access condition should be reserved in filter conditions.
 }
 
 func (c *conditionChecker) check(condition expression.Expression) bool {
@@ -80,12 +80,12 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 		return c.checkColumn(scalar.GetArgs()[0])
 	case ast.UnaryNot:
 		// TODO: support "not like" convert to access conditions.
-		if s, ok := scalar.GetArgs()[0].(*expression.ScalarFunction); ok {
-			if s.FuncName.L == ast.Like {
-				return false
-			}
-		} else {
+		s, ok := scalar.GetArgs()[0].(*expression.ScalarFunction)
+		if !ok {
 			// "not column" or "not constant" can't lead to a range.
+			return false
+		}
+		if s.FuncName.L == ast.Like {
 			return false
 		}
 		return c.check(scalar.GetArgs()[0])
@@ -131,7 +131,6 @@ func (c *conditionChecker) checkLikeFunc(scalar *expression.ScalarFunction) bool
 	pattern, ok := scalar.GetArgs()[1].(*expression.Constant)
 	if !ok {
 		return false
-
 	}
 	if pattern.Value.IsNull() {
 		return false

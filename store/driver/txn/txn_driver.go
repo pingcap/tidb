@@ -34,6 +34,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
+	"github.com/tikv/client-go/v2/txnkv"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	"go.uber.org/zap"
 )
@@ -232,7 +233,7 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 	case kv.TxnScope:
 		txn.SetScope(val.(string))
 	case kv.IsStalenessReadOnly:
-		txn.KVTxn.GetSnapshot().SetIsStatenessReadOnly(val.(bool))
+		txn.KVTxn.GetSnapshot().SetIsStalenessReadOnly(val.(bool))
 	case kv.MatchStoreLabels:
 		txn.KVTxn.GetSnapshot().SetMatchStoreLabels(val.([]*metapb.StoreLabel))
 	case kv.ResourceGroupTag:
@@ -251,6 +252,12 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		txn.KVTxn.SetAssertionLevel(val.(kvrpcpb.AssertionLevel))
 	case kv.TableToColumnMaps:
 		txn.columnMapsCache = val
+	case kv.RequestSourceInternal:
+		txn.KVTxn.SetRequestSourceInternal(val.(bool))
+	case kv.RequestSourceType:
+		txn.KVTxn.SetRequestSourceType(val.(string))
+	case kv.ReplicaReadAdjuster:
+		txn.KVTxn.GetSnapshot().SetReplicaReadAdjuster(val.(txnkv.ReplicaReadAdjuster))
 	}
 }
 
@@ -262,6 +269,8 @@ func (txn *tikvTxn) GetOption(opt int) interface{} {
 		return txn.KVTxn.GetScope()
 	case kv.TableToColumnMaps:
 		return txn.columnMapsCache
+	case kv.RequestSourceType:
+		return txn.RequestSourceType
 	default:
 		return nil
 	}
@@ -290,6 +299,7 @@ func (txn *tikvTxn) extractKeyExistsErr(key kv.Key) error {
 	if err != nil {
 		return genKeyExistsError("UNKNOWN", key.String(), err)
 	}
+	indexID = tablecodec.IndexIDMask & indexID
 
 	tblInfo := txn.GetTableInfo(tableID)
 	if tblInfo == nil {
@@ -315,8 +325,12 @@ func (txn *tikvTxn) SetAssertion(key []byte, assertion ...kv.FlagsOp) error {
 	if err == nil && f.HasAssertionFlags() {
 		return nil
 	}
-	txn.GetUnionStore().GetMemBuffer().UpdateFlags(key, getTiKVFlagsOps(assertion)...)
+	txn.UpdateMemBufferFlags(key, assertion...)
 	return nil
+}
+
+func (txn *tikvTxn) UpdateMemBufferFlags(key []byte, flags ...kv.FlagsOp) {
+	txn.GetUnionStore().GetMemBuffer().UpdateFlags(key, getTiKVFlagsOps(flags)...)
 }
 
 // TiDBKVFilter is the filter specific to TiDB to filter out KV pairs that needn't be committed.

@@ -141,7 +141,7 @@ func handleCopDAGRequest(dbReader *dbreader.DBReader, lockStore *lockstore.MemSt
 		return resp
 	}
 
-	exec, chunks, counts, ndvs, err := buildAndRunMPPExecutor(dagCtx, dagReq)
+	exec, chunks, lastRange, counts, ndvs, err := buildAndRunMPPExecutor(dagCtx, dagReq, req.PagingSize)
 
 	if err != nil {
 		errMsg := err.Error()
@@ -149,12 +149,12 @@ func handleCopDAGRequest(dbReader *dbreader.DBReader, lockStore *lockstore.MemSt
 			resp.OtherError = err.Error()
 			return resp
 		}
-		return genRespWithMPPExec(nil, nil, nil, exec, dagReq, err, dagCtx.sc.GetWarnings(), time.Since(startTime))
+		return genRespWithMPPExec(nil, lastRange, nil, nil, exec, dagReq, err, dagCtx.sc.GetWarnings(), time.Since(startTime))
 	}
-	return genRespWithMPPExec(chunks, counts, ndvs, exec, dagReq, err, dagCtx.sc.GetWarnings(), time.Since(startTime))
+	return genRespWithMPPExec(chunks, lastRange, counts, ndvs, exec, dagReq, err, dagCtx.sc.GetWarnings(), time.Since(startTime))
 }
 
-func buildAndRunMPPExecutor(dagCtx *dagContext, dagReq *tipb.DAGRequest) (mppExec, []tipb.Chunk, []int64, []int64, error) {
+func buildAndRunMPPExecutor(dagCtx *dagContext, dagReq *tipb.DAGRequest, pagingSize uint64) (mppExec, []tipb.Chunk, *coprocessor.KeyRange, []int64, []int64, error) {
 	rootExec := dagReq.RootExecutor
 	if rootExec == nil {
 		rootExec = ExecutorListsToTree(dagReq.Executors)
@@ -175,15 +175,25 @@ func buildAndRunMPPExecutor(dagCtx *dagContext, dagReq *tipb.DAGRequest) (mppExe
 		counts:   counts,
 		ndvs:     ndvs,
 	}
+	var lastRange *coprocessor.KeyRange
+	if pagingSize > 0 {
+		lastRange = &coprocessor.KeyRange{}
+		builder.paging = lastRange
+		builder.pagingSize = pagingSize
+	}
 	exec, err := builder.buildMPPExecutor(rootExec)
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
-	chunks, err := mppExecute(exec, dagCtx, dagReq)
-	return exec, chunks, counts, ndvs, err
+	chunks, err := mppExecute(exec, dagCtx, dagReq, pagingSize)
+	if lastRange != nil && len(lastRange.Start) == 0 && len(lastRange.End) == 0 {
+		// When should this happen, something is wrong?
+		lastRange = nil
+	}
+	return exec, chunks, lastRange, counts, ndvs, err
 }
 
-func mppExecute(exec mppExec, dagCtx *dagContext, dagReq *tipb.DAGRequest) (chunks []tipb.Chunk, err error) {
+func mppExecute(exec mppExec, dagCtx *dagContext, dagReq *tipb.DAGRequest, pagingSize uint64) (chunks []tipb.Chunk, err error) {
 	err = exec.open()
 	defer func() {
 		err := exec.stop()
@@ -195,6 +205,7 @@ func mppExecute(exec mppExec, dagCtx *dagContext, dagReq *tipb.DAGRequest) (chun
 		return
 	}
 
+	var totalRows uint64
 	var chk *chunk.Chunk
 	fields := exec.getFieldTypes()
 	for {
@@ -208,6 +219,12 @@ func mppExecute(exec mppExec, dagCtx *dagContext, dagReq *tipb.DAGRequest) (chun
 			chunks, err = useDefaultEncoding(chk, dagCtx, dagReq, fields, chunks)
 		case tipb.EncodeType_TypeChunk:
 			chunks = useChunkEncoding(chk, dagReq, fields, chunks)
+			if pagingSize > 0 {
+				totalRows += uint64(chk.NumRows())
+				if totalRows > pagingSize {
+					return
+				}
+			}
 		default:
 			err = fmt.Errorf("unsupported DAG request encode type %s", dagReq.EncodeType)
 		}
@@ -444,8 +461,10 @@ func (e *ErrLocked) Error() string {
 	return fmt.Sprintf("key is locked, key: %q, Type: %v, primary: %q, startTS: %v", e.Key, e.LockType, e.Primary, e.StartTS)
 }
 
-func genRespWithMPPExec(chunks []tipb.Chunk, counts, ndvs []int64, exec mppExec, dagReq *tipb.DAGRequest, err error, warnings []stmtctx.SQLWarn, dur time.Duration) *coprocessor.Response {
-	resp := &coprocessor.Response{}
+func genRespWithMPPExec(chunks []tipb.Chunk, lastRange *coprocessor.KeyRange, counts, ndvs []int64, exec mppExec, dagReq *tipb.DAGRequest, err error, warnings []stmtctx.SQLWarn, dur time.Duration) *coprocessor.Response {
+	resp := &coprocessor.Response{
+		Range: lastRange,
+	}
 	selResp := &tipb.SelectResponse{
 		Error:        toPBError(err),
 		Chunks:       chunks,
@@ -483,7 +502,7 @@ func genRespWithMPPExec(chunks []tipb.Chunk, counts, ndvs []int64, exec mppExec,
 		}
 	}
 	resp.ExecDetails = &kvrpcpb.ExecDetails{
-		TimeDetail: &kvrpcpb.TimeDetail{ProcessWallTimeMs: int64(dur / time.Millisecond)},
+		TimeDetail: &kvrpcpb.TimeDetail{ProcessWallTimeMs: uint64(dur / time.Millisecond)},
 	}
 	resp.ExecDetailsV2 = &kvrpcpb.ExecDetailsV2{
 		TimeDetail: resp.ExecDetails.TimeDetail,

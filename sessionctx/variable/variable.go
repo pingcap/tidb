@@ -42,21 +42,21 @@ const (
 	ScopeInstance ScopeFlag = 1 << 2
 
 	// TypeStr is the default
-	TypeStr TypeFlag = 0
+	TypeStr TypeFlag = iota
 	// TypeBool for boolean
-	TypeBool TypeFlag = 1
+	TypeBool
 	// TypeInt for integer
-	TypeInt TypeFlag = 2
+	TypeInt
 	// TypeEnum for Enum
-	TypeEnum TypeFlag = 3
+	TypeEnum
 	// TypeFloat for Double
-	TypeFloat TypeFlag = 4
+	TypeFloat
 	// TypeUnsigned for Unsigned integer
-	TypeUnsigned TypeFlag = 5
+	TypeUnsigned
 	// TypeTime for time of day (a TiDB extension)
-	TypeTime TypeFlag = 6
+	TypeTime
 	// TypeDuration for a golang duration (a TiDB extension)
-	TypeDuration TypeFlag = 7
+	TypeDuration
 
 	// On is the canonical string for ON
 	On = "ON"
@@ -85,6 +85,23 @@ const (
 const (
 	GlobalConfigEnableTopSQL = "enable_resource_metering"
 )
+
+func (s ScopeFlag) String() string {
+	var scopes []string
+	if s == ScopeNone {
+		return "NONE"
+	}
+	if s&ScopeSession != 0 {
+		scopes = append(scopes, "SESSION")
+	}
+	if s&ScopeGlobal != 0 {
+		scopes = append(scopes, "GLOBAL")
+	}
+	if s&ScopeInstance != 0 {
+		scopes = append(scopes, "INSTANCE")
+	}
+	return strings.Join(scopes, ",")
+}
 
 // SysVar is for system variable.
 // All the fields of SysVar should be READ ONLY after created.
@@ -122,7 +139,8 @@ type SysVar struct {
 	SetGlobal func(*SessionVars, string) error
 	// IsHintUpdatable indicate whether it's updatable via SET_VAR() hint (optional)
 	IsHintUpdatable bool
-	// Hidden means that it still responds to SET but doesn't show up in SHOW VARIABLES
+	// Deprecated: Hidden previously meant that the variable still responds to SET but doesn't show up in SHOW VARIABLES
+	// However, this feature is no longer used. All variables are visble.
 	Hidden bool
 	// Aliases is a list of sysvars that should also be updated when this sysvar is updated.
 	// Updating aliases calls the SET function of the aliases, but does not update their aliases (preventing SET recursion)
@@ -132,6 +150,9 @@ type SysVar struct {
 	GetSession func(*SessionVars) (string, error)
 	// GetGlobal is a getter function for global scope.
 	GetGlobal func(*SessionVars) (string, error)
+	// GetStateValue gets the value for session states, which is used for migrating sessions.
+	// We need a function to override GetSession sometimes, because GetSession may not return the real value.
+	GetStateValue func(*SessionVars) (string, bool, error)
 	// skipInit defines if the sysvar should be loaded into the session on init.
 	// This is only important to set for sysvars that include session scope,
 	// since global scoped sysvars are not-applicable.
@@ -512,12 +533,6 @@ func (sv *SysVar) GetNativeValType(val string) (types.Datum, byte, uint) {
 func (sv *SysVar) SkipInit() bool {
 	if sv.skipInit || sv.IsNoop {
 		return true
-	}
-	// These a special "Global-only" sysvars that for backward compatibility
-	// are currently cached in the session. Please don't add to this list.
-	switch sv.Name {
-	case TiDBRowFormatVersion:
-		return false
 	}
 	return !sv.HasSessionScope()
 }

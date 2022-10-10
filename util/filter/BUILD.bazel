@@ -17,10 +17,12 @@ go_library(
 
 go_test(
     name = "filter_test",
+    timeout = "short",
     srcs = [
         "filter_test.go",
         "schema_test.go",
     ],
     embed = [":filter"],
+    flaky = True,
     deps = ["@com_github_stretchr_testify//require"],
 )

@@ -243,7 +243,7 @@ func parseAndValidateAsOf(sctx sessionctx.Context, asOf *ast.AsOfClause) (uint64
 		return 0, nil
 	}
 
-	ts, err := CalculateAsOfTsExpr(sctx, asOf)
+	ts, err := CalculateAsOfTsExpr(sctx, asOf.TsExpr)
 	if err != nil {
 		return 0, err
 	}

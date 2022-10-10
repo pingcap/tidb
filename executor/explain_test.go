@@ -17,10 +17,14 @@ package executor_test
 import (
 	"bytes"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/auth"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
@@ -29,11 +33,10 @@ import (
 )
 
 func TestExplainPrivileges(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
-	require.True(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk := testkit.NewTestKit(t, store)
 	tk.SetSession(se)
 
@@ -46,7 +49,7 @@ func TestExplainPrivileges(t *testing.T) {
 	tk1 := testkit.NewTestKit(t, store)
 	se, err = session.CreateSession4Test(store)
 	require.NoError(t, err)
-	require.True(t, se.Auth(&auth.UserIdentity{Username: "explain", Hostname: "%"}, nil, nil))
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "explain", Hostname: "%"}, nil, nil))
 	tk1.SetSession(se)
 
 	tk.MustExec(`grant select on explaindatabase.v to 'explain'@'%'`)
@@ -64,11 +67,29 @@ func TestExplainPrivileges(t *testing.T) {
 
 	err = tk1.ExecToErr("explain format = 'brief' select * from v")
 	require.Equal(t, plannercore.ErrTableaccessDenied.GenWithStackByArgs("SELECT", "explain", "%", "v").Error(), err.Error())
+
+	// https://github.com/pingcap/tidb/issues/34326
+	tk.MustExec("create table t1 (i int)")
+	tk.MustExec("create table t2 (j int)")
+	tk.MustExec("create table t3 (k int, secret int)")
+
+	tk.MustExec("create view v1 as select * from t1")
+	tk.MustExec("create view v2 as select * from v1, t2")
+	tk.MustExec("create view v3 as select k from t3")
+
+	tk.MustExec("grant select, show view on explaindatabase.v2 to 'explain'@'%'")
+	tk.MustExec("grant         show view on explaindatabase.v1 to 'explain'@'%'")
+	tk.MustExec("grant select, show view on explaindatabase.t3 to 'explain'@'%'")
+	tk.MustExec("grant select, show view on explaindatabase.v3 to 'explain'@'%'")
+
+	tk1.MustGetErrMsg("explain select * from v1", "[planner:1142]SELECT command denied to user 'explain'@'%' for table 'v1'")
+	tk1.MustGetErrCode("explain select * from v2", errno.ErrViewNoExplain)
+	tk1.MustQuery("explain select * from t3")
+	tk1.MustQuery("explain select * from v3")
 }
 
 func TestExplainCartesianJoin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -98,8 +119,7 @@ func TestExplainCartesianJoin(t *testing.T) {
 }
 
 func TestExplainWrite(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -116,8 +136,7 @@ func TestExplainWrite(t *testing.T) {
 }
 
 func TestExplainAnalyzeMemory(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -169,8 +188,7 @@ func checkMemoryInfo(t *testing.T, tk *testkit.TestKit, sql string) {
 }
 
 func TestMemoryAndDiskUsageAfterClose(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -207,8 +225,7 @@ func TestMemoryAndDiskUsageAfterClose(t *testing.T) {
 }
 
 func TestExplainAnalyzeExecutionInfo(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -259,8 +276,7 @@ func checkExecutionInfo(t *testing.T, tk *testkit.TestKit, sql string) {
 }
 
 func TestExplainAnalyzeActRowsNotEmpty(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -301,8 +317,7 @@ func TestCheckActRowsWithUnistore(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.EnableCollectExecutionInfo = true
 	})
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	// testSuite1 use default mockstore which is unistore
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -310,6 +325,7 @@ func TestCheckActRowsWithUnistore(t *testing.T) {
 	tk.MustExec("create table t_unistore_act_rows(a int, b int, index(a, b))")
 	tk.MustExec("insert into t_unistore_act_rows values (1, 0), (1, 0), (2, 0), (2, 1)")
 	tk.MustExec("analyze table t_unistore_act_rows")
+	tk.MustExec("set @@tidb_merge_join_concurrency= 5;")
 
 	type testStruct struct {
 		sql      string
@@ -353,6 +369,14 @@ func TestCheckActRowsWithUnistore(t *testing.T) {
 			sql:      "with cte(a) as (select a from t_unistore_act_rows) select (select 1 from cte limit 1) from cte;",
 			expected: []string{"4", "4", "4", "4", "4"},
 		},
+		{
+			sql:      "select a, row_number() over (partition by b) from t_unistore_act_rows;",
+			expected: []string{"4", "4", "4", "4", "4", "4", "4"},
+		},
+		{
+			sql:      "select /*+ merge_join(t1, t2) */ * from t_unistore_act_rows t1 join t_unistore_act_rows t2 on t1.b = t2.b;",
+			expected: []string{"10", "10", "4", "4", "4", "4", "4", "4", "4", "4", "4", "4"},
+		},
 	}
 
 	// Default RPC encoding may cause statistics explain result differ and then the test unstable.
@@ -364,8 +388,7 @@ func TestCheckActRowsWithUnistore(t *testing.T) {
 }
 
 func TestExplainAnalyzeCTEMemoryAndDiskInfo(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -387,8 +410,7 @@ func TestExplainAnalyzeCTEMemoryAndDiskInfo(t *testing.T) {
 }
 
 func TestExplainStatementsSummary(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustQuery("desc select * from information_schema.statements_summary").Check(testkit.Rows(
@@ -402,8 +424,7 @@ func TestExplainStatementsSummary(t *testing.T) {
 }
 
 func TestFix29401(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tt123;")
@@ -423,4 +444,73 @@ func TestFix29401(t *testing.T) {
   KEY f (f)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
 	tk.MustExec(" explain select /*+ inl_hash_join(t1) */ * from tt123 t1 join tt123 t2 on t1.b=t2.e;")
+}
+
+func TestIssue35296(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int , c int, d int, e int,index ia(a), index ib(b), index ic(c), index idd(d), index ie(e));")
+
+	rows := tk.MustQuery("explain analyze select * from t where a = 10 or b = 30 or c = 10 or d = 1 or e = 90;").Rows()
+
+	require.Contains(t, rows[0][0], "IndexMerge")
+	require.NotRegexp(t, "^time:0s", rows[1][5])
+	require.NotRegexp(t, "^time:0s", rows[2][5])
+	require.NotRegexp(t, "^time:0s", rows[3][5])
+	require.NotRegexp(t, "^time:0s", rows[4][5])
+	require.NotRegexp(t, "^time:0s", rows[5][5])
+}
+
+func TestIssue35911(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t1(a int, b int);")
+	tk.MustExec("create table t2(a int, b int, index ia(a));")
+	tk.MustExec("insert into t1 value (1,1), (2,2), (3,3), (4,4), (5,5), (6,6);")
+	tk.MustExec("insert into t2 value (1,1), (2,2), (3,3), (4,4), (5,5), (6,6);")
+	tk.MustExec("set @@tidb_executor_concurrency = 5;")
+
+	// case 1 of #35911
+	tk.MustExec("set @@tidb_enable_parallel_apply = 0;")
+	rows := tk.MustQuery("explain analyze select * from t1 where exists (select tt1.* from (select * from t2 where a = t1.b) as tt1 join (select * from t2 where a = t1.b) as tt2 on tt1.b = tt2.b);").Rows()
+
+	extractTime, err := regexp.Compile("^time:(.*?),")
+	require.NoError(t, err)
+	timeStr1 := extractTime.FindStringSubmatch(rows[4][5].(string))[1]
+	time1, err := time.ParseDuration(timeStr1)
+	require.NoError(t, err)
+	timeStr2 := extractTime.FindStringSubmatch(rows[5][5].(string))[1]
+	time2, err := time.ParseDuration(timeStr2)
+	require.NoError(t, err)
+	// The duration of IndexLookUp should be longer than its build side child
+	require.LessOrEqual(t, time2, time1)
+
+	// case 2 of #35911
+	tk.MustExec("set @@tidb_enable_parallel_apply = 1;")
+	rows = tk.MustQuery("explain analyze select * from t1 where exists (select tt1.* from (select * from t2 where a = t1.b) as tt1 join (select * from t2 where a = t1.b) as tt2 on tt1.b = tt2.b);").Rows()
+
+	extractConcurrency, err := regexp.Compile(`table_task: [{].*concurrency: (\d+)[}]`)
+	require.NoError(t, err)
+	concurrencyStr := extractConcurrency.FindStringSubmatch(rows[4][5].(string))[1]
+	concurrency, err := strconv.ParseInt(concurrencyStr, 10, 64)
+	require.NoError(t, err)
+	// To be consistent with other operators, we should not aggregate the concurrency in the runtime stats.
+	require.EqualValues(t, 5, concurrency)
+}
+
+func TestIssue35105(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int primary key)")
+	tk.MustExec("insert into t values (2)")
+	tk.MustExec("set @@tidb_constraint_check_in_place=1")
+	require.Error(t, tk.ExecToErr("explain analyze insert into t values (1), (2), (3)"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("2"))
 }

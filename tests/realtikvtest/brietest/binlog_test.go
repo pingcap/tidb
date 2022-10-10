@@ -51,8 +51,7 @@ func (m mockPumpPullBinlogsClient) Recv() (*binlog.PullBinlogResp, error) {
 
 func TestForCoverage(t *testing.T) {
 	// Just for test coverage.
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

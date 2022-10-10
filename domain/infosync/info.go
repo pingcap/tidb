@@ -22,14 +22,17 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/coreos/go-semver/semver"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/ddl/placement"
@@ -43,14 +46,15 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/helper"
-	"github.com/pingcap/tidb/types"
 	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/util/engine"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/versioninfo"
 	"github.com/tikv/client-go/v2/oracle"
+	pd "github.com/tikv/pd/client"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
 	"go.uber.org/zap"
@@ -67,8 +71,6 @@ const (
 	keyOpDefaultRetryCnt = 5
 	// keyOpDefaultTimeout is the default time out for etcd store.
 	keyOpDefaultTimeout = 1 * time.Second
-	// InfoSessionTTL is the ETCD session's TTL in seconds.
-	InfoSessionTTL = 10 * 60
 	// ReportInterval is interval of infoSyncerKeeper reporting min startTS.
 	ReportInterval = 30 * time.Second
 	// TopologyInformationPath means etcd path for storing topology info.
@@ -107,6 +109,7 @@ type InfoSyncer struct {
 	modifyTime              time.Time
 	labelRuleManager        LabelRuleManager
 	placementManager        PlacementManager
+	scheduleManager         ScheduleManager
 	tiflashPlacementManager TiFlashPlacementManager
 }
 
@@ -188,6 +191,7 @@ func GlobalInfoSyncerInit(ctx context.Context, id string, serverIDGetter func() 
 	}
 	is.labelRuleManager = initLabelRuleManager(etcdCli)
 	is.placementManager = initPlacementManager(etcdCli)
+	is.scheduleManager = initScheduleManager(etcdCli)
 	is.tiflashPlacementManager = initTiFlashPlacementManager(etcdCli)
 	setGlobalInfoSyncer(is)
 	return is, nil
@@ -240,6 +244,13 @@ func initTiFlashPlacementManager(etcdCli *clientv3.Client) TiFlashPlacementManag
 	}
 	logutil.BgLogger().Warn("init TiFlashPlacementManager", zap.Strings("pd addrs", etcdCli.Endpoints()))
 	return &TiFlashPDPlacementManager{etcdCli: etcdCli}
+}
+
+func initScheduleManager(etcdCli *clientv3.Client) ScheduleManager {
+	if etcdCli == nil {
+		return &mockScheduleManager{}
+	}
+	return &PDScheduleManager{etcdCli: etcdCli}
 }
 
 // GetMockTiFlash can only be used in tests to get MockTiFlash
@@ -305,6 +316,21 @@ func (is *InfoSyncer) getServerInfoByID(ctx context.Context, id string) (*Server
 
 // GetAllServerInfo gets all servers static information from etcd.
 func GetAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
+	failpoint.Inject("mockGetAllServerInfo", func() {
+		res := map[string]*ServerInfo{
+			"fa598405-a08e-4e74-83ff-75c30b1daedc": {
+				Labels: map[string]string{
+					"zone": "zone1",
+				},
+			},
+			"ad84dbbd-5a50-4742-a73c-4f674d41d4bd": {
+				Labels: map[string]string{
+					"zone": "zone2",
+				},
+			},
+		}
+		failpoint.Return(res, nil)
+	})
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return nil, err
@@ -313,7 +339,7 @@ func GetAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
 }
 
 // UpdateTiFlashTableSyncProgress is used to update the tiflash table replica sync progress.
-func UpdateTiFlashTableSyncProgress(ctx context.Context, tid int64, progress float64) error {
+func UpdateTiFlashTableSyncProgress(ctx context.Context, tid int64, progressString string) error {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return err
@@ -322,8 +348,6 @@ func UpdateTiFlashTableSyncProgress(ctx context.Context, tid int64, progress flo
 		return nil
 	}
 	key := fmt.Sprintf("%s/%v", TiFlashTableSyncProgressPath, tid)
-	// truncate progress with 2 decimal digits so that it will not be rounded to 1 when the progress is 0.995
-	progressString := types.TruncateFloatToString(progress, 2)
 	return util.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, key, progressString)
 }
 
@@ -426,6 +450,54 @@ func doRequest(ctx context.Context, apiName string, addrs []string, route, metho
 		)
 	}
 	return nil, err
+}
+
+func removeVAndHash(v string) string {
+	if v == "" {
+		return v
+	}
+	versionHash := regexp.MustCompile("-[0-9]+-g[0-9a-f]{7,}(-dev)?")
+	v = versionHash.ReplaceAllLiteralString(v, "")
+	v = strings.TrimSuffix(v, "-dirty")
+	return strings.TrimPrefix(v, "v")
+}
+
+// CheckTiKVVersion is used to check the tikv version.
+func CheckTiKVVersion(store kv.Storage, minVersion semver.Version) error {
+	if store, ok := store.(kv.StorageWithPD); ok {
+		pdClient := store.GetPDClient()
+		var stores []*metapb.Store
+		var err error
+		// Wait at most 3 second to make sure pd has updated the store information.
+		for i := 0; i < 60; i++ {
+			stores, err = pdClient.GetAllStores(context.Background(), pd.WithExcludeTombstone())
+			if err == nil {
+				break
+			}
+			time.Sleep(time.Millisecond * 50)
+		}
+
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		for _, s := range stores {
+			// empty version means the store is a mock store. Don't require tiflash version either.
+			if s.Version == "" || engine.IsTiFlash(s) {
+				continue
+			}
+			ver, err := semver.NewVersion(removeVAndHash(s.Version))
+			if err != nil {
+				return errors.Trace(errors.Annotate(err, "invalid TiKV version"))
+			}
+			v := ver.Compare(minVersion)
+			if v < 0 {
+				return errors.New("TiKV version must greater than or equal to " + minVersion.String())
+			}
+		}
+	}
+
+	return nil
 }
 
 func doRequestWithFailpoint(req *http.Request) (resp *http.Response, err error) {
@@ -720,7 +792,7 @@ func (is *InfoSyncer) newSessionAndStoreServerInfo(ctx context.Context, retryCnt
 		return nil
 	}
 	logPrefix := fmt.Sprintf("[Info-syncer] %s", is.serverInfoPath)
-	session, err := util2.NewSession(ctx, logPrefix, is.etcdCli, retryCnt, InfoSessionTTL)
+	session, err := util2.NewSession(ctx, logPrefix, is.etcdCli, retryCnt, util.SessionTTL)
 	if err != nil {
 		return err
 	}
@@ -973,6 +1045,16 @@ func GetLabelRules(ctx context.Context, ruleIDs []string) (map[string]*label.Rul
 	return is.labelRuleManager.GetLabelRules(ctx, ruleIDs)
 }
 
+// SetTiFlashGroupConfig is a helper function to set tiflash rule group config
+func SetTiFlashGroupConfig(ctx context.Context) error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	logutil.BgLogger().Info("SetTiFlashGroupConfig")
+	return is.tiflashPlacementManager.SetTiFlashGroupConfig(ctx)
+}
+
 // SetTiFlashPlacementRule is a helper function to set placement rule.
 // It is discouraged to use SetTiFlashPlacementRule directly,
 // use `ConfigureTiFlashPDForTable`/`ConfigureTiFlashPDForPartitions` instead.
@@ -1103,4 +1185,42 @@ func DeleteInternalSession(se interface{}) {
 		return
 	}
 	sm.DeleteInternalSession(se)
+}
+
+// SetEtcdClient is only used for test.
+func SetEtcdClient(etcdCli *clientv3.Client) {
+	is, err := getGlobalInfoSyncer()
+
+	if err != nil {
+		return
+	}
+	is.etcdCli = etcdCli
+}
+
+// GetEtcdClient is only used for test.
+func GetEtcdClient() *clientv3.Client {
+	is, err := getGlobalInfoSyncer()
+
+	if err != nil {
+		return nil
+	}
+	return is.etcdCli
+}
+
+// GetPDScheduleConfig gets the schedule information from pd
+func GetPDScheduleConfig(ctx context.Context) (map[string]interface{}, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return is.scheduleManager.GetPDScheduleConfig(ctx)
+}
+
+// SetPDScheduleConfig sets the schedule information for pd
+func SetPDScheduleConfig(ctx context.Context, config map[string]interface{}) error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return is.scheduleManager.SetPDScheduleConfig(ctx, config)
 }

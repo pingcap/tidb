@@ -21,7 +21,6 @@ import (
 	"strings"
 	"testing"
 	"unsafe"
-	_ "unsafe" // required by go:linkname
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"

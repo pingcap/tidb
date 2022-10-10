@@ -35,13 +35,11 @@ import (
 	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestColumnAdd(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
 	tk := testkit.NewTestKit(t, store)
 	internal := testkit.NewTestKit(t, store)
@@ -82,7 +80,7 @@ func TestColumnAdd(t *testing.T) {
 			require.NoError(t, checkAddPublic(ct, writeOnlyTable, publicTable))
 		}
 	}
-	d.SetHook(tc)
+	d.SetHook(tc.Clone())
 	tk.MustExec("alter table t add column c3 int default 3")
 	tb := publicTable
 	v := getSchemaVer(t, tk.Session())
@@ -103,11 +101,11 @@ func TestColumnAdd(t *testing.T) {
 		tbl := external.GetTableByName(t, internal, "test", "t")
 		if job.SchemaState != model.StatePublic {
 			for _, col := range tbl.Cols() {
-				assert.NotEqualf(t, col.ID, dropCol.ID, "column is not dropped")
+				require.NotEqualf(t, col.ID, dropCol.ID, "column is not dropped")
 			}
 		}
 	}
-	d.SetHook(tc)
+	d.SetHook(tc.Clone())
 	tk.MustExec("alter table t drop column c3")
 	v = getSchemaVer(t, tk.Session())
 	// Don't check column, so it's ok to use tb.
@@ -141,8 +139,7 @@ func TestColumnAdd(t *testing.T) {
 }
 
 func TestModifyAutoRandColumnWithMetaKeyChanged(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -162,7 +159,8 @@ func TestModifyAutoRandColumnWithMetaKeyChanged(t *testing.T) {
 		tID = job.TableID
 		if atomic.LoadInt32(&errCount) > 0 && job.Type == model.ActionModifyColumn {
 			atomic.AddInt32(&errCount, -1)
-			genAutoRandErr = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+			ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBackfillDDLPrefix+ddl.DDLBackfillers[model.ActionModifyColumn])
+			genAutoRandErr = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 				t := meta.NewMeta(txn)
 				_, err1 := t.GetAutoIDAccessors(dbID, tID).RandomID().Inc(1)
 				return err1
@@ -177,7 +175,8 @@ func TestModifyAutoRandColumnWithMetaKeyChanged(t *testing.T) {
 	const newAutoRandomBits uint64 = 10
 	testCheckJobDone(t, store, jobID, true)
 	var newTbInfo *model.TableInfo
-	err := kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		var err error
 		newTbInfo, err = t.GetTable(dbID, tID)
@@ -418,7 +417,13 @@ func testCheckJobDone(t *testing.T, store kv.Storage, jobID int64, isAdd bool) {
 	require.NoError(t, err)
 	require.Equal(t, historyJob.State, model.JobStateSynced)
 	if isAdd {
-		require.Equal(t, historyJob.SchemaState, model.StatePublic)
+		if historyJob.Type == model.ActionMultiSchemaChange {
+			for _, sub := range historyJob.MultiSchemaInfo.SubJobs {
+				require.Equal(t, sub.SchemaState, model.StatePublic)
+			}
+		} else {
+			require.Equal(t, historyJob.SchemaState, model.StatePublic)
+		}
 	} else {
 		require.Equal(t, historyJob.SchemaState, model.StateNone)
 	}

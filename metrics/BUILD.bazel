@@ -9,6 +9,7 @@ go_library(
         "domain.go",
         "executor.go",
         "gc_worker.go",
+        "log_backup.go",
         "meta.go",
         "metrics.go",
         "owner.go",
@@ -23,21 +24,26 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//parser/terror",
+        "//util/logutil",
+        "//util/mathutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_prometheus_client_golang//prometheus",
         "@com_github_prometheus_client_golang//prometheus/collectors",
         "@com_github_prometheus_client_model//go",
         "@com_github_tikv_client_go_v2//metrics",
+        "@org_uber_go_zap//:zap",
     ],
 )
 
 go_test(
     name = "metrics_test",
+    timeout = "short",
     srcs = [
         "main_test.go",
         "metrics_test.go",
     ],
     embed = [":metrics"],
+    flaky = True,
     deps = [
         "//parser/terror",
         "//testkit/testsetup",

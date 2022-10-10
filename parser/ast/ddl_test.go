@@ -16,10 +16,9 @@ package ast_test
 import (
 	"testing"
 
-	"github.com/stretchr/testify/require"
-
 	. "github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/format"
+	"github.com/stretchr/testify/require"
 )
 
 func TestDDLVisitorCover(t *testing.T) {
@@ -460,6 +459,7 @@ func TestAlterTableSpecRestore(t *testing.T) {
 		{"ROW_FORMAT = tokudb_fast", "ROW_FORMAT = TOKUDB_FAST"},
 		{"ROW_FORMAT = tokudb_small", "ROW_FORMAT = TOKUDB_SMALL"},
 		{"ROW_FORMAT = tokudb_zlib", "ROW_FORMAT = TOKUDB_ZLIB"},
+		{"ROW_FORMAT = tokudb_zstd", "ROW_FORMAT = TOKUDB_ZSTD"},
 		{"ROW_FORMAT = tokudb_quicklz", "ROW_FORMAT = TOKUDB_QUICKLZ"},
 		{"ROW_FORMAT = tokudb_lzma", "ROW_FORMAT = TOKUDB_LZMA"},
 		{"ROW_FORMAT = tokudb_snappy", "ROW_FORMAT = TOKUDB_SNAPPY"},

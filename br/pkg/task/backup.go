@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/checksum"
+	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
@@ -56,6 +57,7 @@ const (
 	DBBackupCmd    = "Database Backup"
 	TableBackupCmd = "Table Backup"
 	RawBackupCmd   = "Raw Backup"
+	EBSBackupCmd   = "EBS Backup"
 )
 
 // CompressionConfig is the configuration for sst file compression.
@@ -76,6 +78,13 @@ type BackupConfig struct {
 	IgnoreStats      bool          `json:"ignore-stats" toml:"ignore-stats"`
 	UseBackupMetaV2  bool          `json:"use-backupmeta-v2"`
 	CompressionConfig
+
+	// for ebs-based backup
+	FullBackupType      FullBackupType `json:"full-backup-type" toml:"full-backup-type"`
+	VolumeFile          string         `json:"volume-file" toml:"volume-file"`
+	SkipAWS             bool           `json:"skip-aws" toml:"skip-aws"`
+	CloudAPIConcurrency uint           `json:"cloud-api-concurrency" toml:"cloud-api-concurrency"`
+	ProgressFile        string         `json:"progress-file" toml:"progress-file"`
 }
 
 // DefineBackupFlags defines common flags for the backup command.
@@ -137,7 +146,7 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	cfg.BackupTS, err = ParseTSString(backupTS)
+	cfg.BackupTS, err = ParseTSString(backupTS, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -165,7 +174,39 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 	cfg.UseBackupMetaV2, err = flags.GetBool(flagUseBackupMetaV2)
-	return errors.Trace(err)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if flags.Lookup(flagFullBackupType) != nil {
+		// for backup full
+		fullBackupType, err := flags.GetString(flagFullBackupType)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if !FullBackupType(fullBackupType).Valid() {
+			return errors.New("invalid full backup type")
+		}
+		cfg.FullBackupType = FullBackupType(fullBackupType)
+		cfg.SkipAWS, err = flags.GetBool(flagSkipAWS)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		cfg.CloudAPIConcurrency, err = flags.GetUint(flagCloudAPIConcurrency)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		cfg.VolumeFile, err = flags.GetString(flagBackupVolumeFile)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		cfg.ProgressFile, err = flags.GetString(flagProgressFile)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	return nil
 }
 
 // parseCompressionFlags parses the backup-related flags from the flag set.
@@ -188,11 +229,11 @@ func parseCompressionFlags(flags *pflag.FlagSet) (*CompressionConfig, error) {
 	}, nil
 }
 
-// adjustBackupConfig is use for BR(binary) and BR in TiDB.
+// Adjust is use for BR(binary) and BR in TiDB.
 // When new config was add and not included in parser.
 // we should set proper value in this function.
 // so that both binary and TiDB will use same default value.
-func (cfg *BackupConfig) adjustBackupConfig() {
+func (cfg *BackupConfig) Adjust() {
 	cfg.adjust()
 	usingDefaultConcurrency := false
 	if cfg.Config.Concurrency == 0 {
@@ -223,6 +264,9 @@ func (cfg *BackupConfig) adjustBackupConfig() {
 	if cfg.CompressionType == backuppb.CompressionType_UNKNOWN {
 		cfg.CompressionType = backuppb.CompressionType_ZSTD
 	}
+	if cfg.CloudAPIConcurrency == 0 {
+		cfg.CloudAPIConcurrency = defaultCloudAPIConcurrency
+	}
 }
 
 func isFullBackup(cmdName string) bool {
@@ -231,7 +275,7 @@ func isFullBackup(cmdName string) bool {
 
 // RunBackup starts a backup task inside the current goroutine.
 func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig) error {
-	cfg.adjustBackupConfig()
+	cfg.Adjust()
 
 	defer summary.Summary(cmdName)
 	ctx, cancel := context.WithCancel(c)
@@ -252,7 +296,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	// Domain loads all table info into memory. By skipping Domain, we save
 	// lots of memory (about 500MB for 40K 40 fields YCSB tables).
 	needDomain := !skipStats
-	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config), cfg.CheckRequirements, needDomain)
+	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config), cfg.CheckRequirements, needDomain, conn.NormalVersionChecker)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -262,24 +306,28 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		statsHandle = mgr.GetDomain().StatsHandle()
 	}
 
-	se, err := g.CreateSession(mgr.GetStorage())
+	var newCollationEnable string
+	err = g.UseOneShotSession(mgr.GetStorage(), !needDomain, func(se glue.Session) error {
+		newCollationEnable, err = se.GetGlobalVariable(tidbNewCollationEnabled)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		log.Info("get new_collations_enabled_on_first_bootstrap config from system table",
+			zap.String(tidbNewCollationEnabled, newCollationEnable))
+		return nil
+	})
 	if err != nil {
 		return errors.Trace(err)
 	}
-	newCollationEnable, err := se.GetGlobalVariable(tidbNewCollationEnabled)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	log.Info("get new_collations_enabled_on_first_bootstrap config from system table",
-		zap.String(tidbNewCollationEnabled, newCollationEnable))
 
 	client, err := backup.NewBackupClient(ctx, mgr)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	opts := storage.ExternalStorageOptions{
-		NoCredentials:   cfg.NoCreds,
-		SendCredentials: cfg.SendCreds,
+		NoCredentials:            cfg.NoCreds,
+		SendCredentials:          cfg.SendCreds,
+		CheckS3ObjectLockOptions: true,
 	}
 	if err = client.SetStorage(ctx, u, &opts); err != nil {
 		return errors.Trace(err)
@@ -398,7 +446,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		}
 
 		metawriter.StartWriteMetasAsync(ctx, metautil.AppendDDL)
-		err = backup.WriteBackupDDLJobs(metawriter, mgr.GetStorage(), cfg.LastBackupTS, backupTS)
+		err = backup.WriteBackupDDLJobs(metawriter, g, mgr.GetStorage(), cfg.LastBackupTS, backupTS, needDomain)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -528,7 +576,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 }
 
 // ParseTSString port from tidb setSnapshotTS.
-func ParseTSString(ts string) (uint64, error) {
+func ParseTSString(ts string, tzCheck bool) (uint64, error) {
 	if len(ts) == 0 {
 		return 0, nil
 	}
@@ -539,6 +587,12 @@ func ParseTSString(ts string) (uint64, error) {
 	loc := time.Local
 	sc := &stmtctx.StatementContext{
 		TimeZone: loc,
+	}
+	if tzCheck {
+		tzIdx, _, _, _, _ := types.GetTimezone(ts)
+		if tzIdx < 0 {
+			return 0, errors.Errorf("must set timezone when using datetime format ts, e.g. '2018-05-11 01:42:23+0800'")
+		}
 	}
 	t, err := types.ParseTime(sc, ts, mysql.TypeTimestamp, types.MaxFsp)
 	if err != nil {
