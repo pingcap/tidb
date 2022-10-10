@@ -370,14 +370,17 @@ func (p *Insert) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.baseSchemaProducer.MemoryUsage() + size.SizeOfSlice*7 + int64(cap(p.tableColNames)+cap(p.Columns)+cap(p.SetList)+cap(p.OnDuplicate)+
-		cap(p.names4OnDuplicate)+cap(p.FKChecks))*size.SizeOfPointer + p.GenCols.MemoryUsage() + p.SelectPlan.MemoryUsage() + size.SizeOfBool*3 +
+	sum = p.baseSchemaProducer.MemoryUsage() + size.SizeOfInterface + size.SizeOfSlice*7 + int64(cap(p.tableColNames)+cap(p.Columns)+cap(p.SetList)+cap(p.OnDuplicate)+
+		cap(p.names4OnDuplicate)+cap(p.FKChecks))*size.SizeOfPointer + p.GenCols.MemoryUsage() + size.SizeOfBool*3 +
 		size.SizeOfBool
 	if p.tableSchema != nil {
 		sum += p.tableSchema.MemoryUsage()
 	}
 	if p.Schema4OnDuplicate != nil {
 		sum += p.Schema4OnDuplicate.MemoryUsage()
+	}
+	if p.SelectPlan != nil {
+		sum += p.SelectPlan.MemoryUsage()
 	}
 
 	for _, name := range p.tableColNames {
@@ -397,6 +400,9 @@ func (p *Insert) MemoryUsage() (sum int64) {
 	}
 	for _, name := range p.names4OnDuplicate {
 		sum += name.MemoryUsage()
+	}
+	for _, fkC := range p.FKChecks {
+		sum += fkC.MemoryUsage()
 	}
 
 	return
