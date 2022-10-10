@@ -2619,7 +2619,7 @@ func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reo
 
 			_, err = w.rowDecoder.DecodeTheExistedColumnMap(w.sessCtx, handle, rawRow, sysTZ, w.rowMap)
 			if err != nil {
-				return nil, nil, true, errors.Trace(err)
+				return false, errors.Trace(err)
 			}
 
 			//tmpChk := w.rowDecoder.CurrentRowWithDefaultVal()
@@ -2629,7 +2629,7 @@ func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reo
 				if d, ok := w.rowMap[colID]; ok {
 					tmpRow[offset] = d
 				} else {
-					return true, dbterror.ErrUnsupportedReorganizePartition.GenWithStackByArgs()
+					return false, dbterror.ErrUnsupportedReorganizePartition.GenWithStackByArgs()
 				}
 			}
 			p, err := reorgedTbl.GetPartitionByRow(w.sessCtx, tmpRow)
