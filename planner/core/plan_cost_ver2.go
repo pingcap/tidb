@@ -950,7 +950,7 @@ func newCostVer2(option *PlanCostOption, factor costVer2Factor, cost float64,
 	formulaFormat string, formulaArgs ...any) costVer2 {
 	ret := newZeroCostVer2(traceCost(option))
 	ret.cost = cost
-	if traceCost(option) {
+	if ret.trace {
 		ret.factorCosts[factor.Name] = cost
 		ret.formula = fmt.Sprintf(formulaFormat, formulaArgs...)
 	}
