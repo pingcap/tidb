@@ -68,6 +68,7 @@ go_test(
     ],
     embed = [":copr"],
     flaky = True,
+    race = "on",
     deps = [
         "//kv",
         "//store/driver/backoff",
