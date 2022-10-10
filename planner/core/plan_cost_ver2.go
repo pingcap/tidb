@@ -40,7 +40,7 @@ func (p *basePhysicalPlan) getPlanCostVer2(taskType property.TaskType, option *P
 	if p.planCostInit && !hasCostFlag(option.CostFlag, CostFlagRecalculate) {
 		return p.planCostVer2, nil
 	}
-	var childCosts []costVer2
+	childCosts := make([]costVer2, 0, len(p.children))
 	for _, child := range p.children {
 		childCost, err := child.getPlanCostVer2(taskType, option)
 		if err != nil {
@@ -289,7 +289,7 @@ func (p *PhysicalIndexMergeReader) getPlanCostVer2(taskType property.TaskType, o
 		tableSideCost = divCostVer2(sumCostVer2(tableNetCost, tableSeekCost, tableChildCost), distConcurrency)
 	}
 
-	var indexSideCost []costVer2
+	indexSideCost := make([]costVer2, 0, len(p.partialPlans))
 	for _, indexPath := range p.partialPlans {
 		rows := getCardinality(indexPath, option.CostFlag)
 		rowSize := getAvgRowSize(indexPath.Stats(), indexPath.Schema())
@@ -612,7 +612,7 @@ func (p *PhysicalUnionAll) getPlanCostVer2(taskType property.TaskType, option *P
 	}
 
 	concurrency := p.ctx.GetSessionVars().GetConcurrencyFactor()
-	var childCosts []costVer2
+	childCosts := make([]costVer2, 0, len(p.children))
 	for _, child := range p.children {
 		childCost, err := child.getPlanCostVer2(taskType, option)
 		if err != nil {
