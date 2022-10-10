@@ -120,7 +120,7 @@ func RunBackupEBS(c context.Context, g glue.Glue, cfg *BackupConfig) error {
 		NoCredentials:   cfg.NoCreds,
 		SendCredentials: cfg.SendCreds,
 	}
-	if err = client.SetStorage(ctx, backend, &opts); err != nil {
+	if err = client.SetStorageAndCheckNotInUse(ctx, backend, &opts); err != nil {
 		return errors.Trace(err)
 	}
 	err = client.SetLockFile(ctx)
