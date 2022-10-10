@@ -780,7 +780,7 @@ type costVer2Factor struct {
 }
 
 func (f costVer2Factor) String() string {
-	return fmt.Sprintf("(%s)%v", f.Name, f.Value)
+	return fmt.Sprintf("%s(%v)", f.Name, f.Value)
 }
 
 // In Cost Ver2, we hide cost factors from users and deprecate SQL variables like `tidb_opt_scan_factor`.
