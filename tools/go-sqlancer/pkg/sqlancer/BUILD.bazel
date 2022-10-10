@@ -1,0 +1,48 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "sqlancer",
+    srcs = [
+        "config.go",
+        "mutasql.go",
+        "sqlancer.go",
+    ],
+    importpath = "github.com/pingcap/tidb/tools/go-sqlancer/pkg/sqlancer",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//parser/ast",
+        "//parser/model",
+        "//parser/types",
+        "//tools/go-sqlancer/pkg/connection",
+        "//tools/go-sqlancer/pkg/executor",
+        "//tools/go-sqlancer/pkg/generator",
+        "//tools/go-sqlancer/pkg/knownbugs",
+        "//tools/go-sqlancer/pkg/mutation",
+        "//tools/go-sqlancer/pkg/transformer",
+        "//tools/go-sqlancer/pkg/types",
+        "//tools/go-sqlancer/pkg/types/mutasql",
+        "//tools/go-sqlancer/pkg/util",
+        "@com_github_juju_errors//:errors",
+        "@com_github_pingcap_log//:log",
+        "@org_golang_x_sync//errgroup",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "sqlancer_test",
+    timeout = "short",
+    srcs = [
+        "config_test.go",
+        "sqlancer_test.go",
+    ],
+    embed = [":sqlancer"],
+    flaky = True,
+    shard_count = 6,
+    deps = [
+        "//tools/go-sqlancer/pkg/connection",
+        "//tools/go-sqlancer/pkg/types",
+        "//tools/go-sqlancer/pkg/util",
+        "@com_github_stretchr_testify//assert",
+    ],
+)

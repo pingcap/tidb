@@ -1,0 +1,16 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "mutation",
+    srcs = [
+        "addition_select.go",
+        "rollback.go",
+    ],
+    importpath = "github.com/pingcap/tidb/tools/go-sqlancer/pkg/mutation",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//parser/ast",
+        "//tools/go-sqlancer/pkg/generator",
+        "//tools/go-sqlancer/pkg/types/mutasql",
+    ],
+)

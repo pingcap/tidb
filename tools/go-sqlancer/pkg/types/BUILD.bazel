@@ -1,0 +1,34 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "types",
+    srcs = [
+        "argument.go",
+        "column.go",
+        "op.go",
+        "sql.go",
+        "string.go",
+        "table.go",
+        "table_column.go",
+    ],
+    importpath = "github.com/pingcap/tidb/tools/go-sqlancer/pkg/types",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//parser/ast",
+        "//parser/model",
+        "//parser/opcode",
+        "//types/parser_driver",
+    ],
+)
+
+go_test(
+    name = "types_test",
+    timeout = "short",
+    srcs = [
+        "column_test.go",
+        "table_test.go",
+    ],
+    embed = [":types"],
+    flaky = True,
+    deps = ["@com_github_stretchr_testify//assert"],
+)

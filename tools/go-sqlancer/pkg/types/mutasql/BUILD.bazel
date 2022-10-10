@@ -1,0 +1,34 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "mutasql",
+    srcs = ["mutasql.go"],
+    importpath = "github.com/pingcap/tidb/tools/go-sqlancer/pkg/types/mutasql",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//parser",
+        "//parser/ast",
+        "//parser/format",
+        "//parser/model",
+        "//tools/go-sqlancer/pkg/connection",
+        "//tools/go-sqlancer/pkg/generator",
+        "//tools/go-sqlancer/pkg/types",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "mutasql_test",
+    timeout = "short",
+    srcs = ["mutasql_test.go"],
+    embed = [":mutasql"],
+    flaky = True,
+    deps = [
+        "//parser",
+        "//parser/ast",
+        "//parser/format",
+        "//tools/go-sqlancer/pkg/types",
+        "@com_github_stretchr_testify//assert",
+        "@org_uber_go_zap//:zap",
+    ],
+)

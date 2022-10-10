@@ -281,6 +281,7 @@
       "cmd/pluginpkg/pluginpkg.go": "ignore cmd/pluginpkg code",
       "tools/check/xprog.go:": "ignore tools/check code",
       "cmd/explaintest/main.go": "ignore cmd/explaintest code",
+      "tools/go-sqlancer/pkg/logger/logger.go": "ignore tools/go-sqlancer code",
       "GOROOT/": "ignore code",
       ".*_generated\\.go$": "ignore generated code"
     }
@@ -436,6 +437,7 @@
   "misspell": {
     "exclude_files": {
       "parser/parser.go": "parser/parser.go code",
+      "src/io/fs/walk.go": "false positives",
       "/cgo/": "ignore cgo code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
@@ -485,7 +487,7 @@
       "external/": "no need to vet third party code",
       "GOROOT/": "ignore code",
       "/cgo/": "ignore cgo",
-      "tools/": "ignore tool code",
+      "tools/check": "ignore tool code",
       "parser/goyacc/": "ignore goyacc code",
       "parser/ast/": "ignore parser/ast code",
       "parser/test_driver/": "ignore parser/test_driver code",
@@ -498,6 +500,9 @@
       "autoid_service/": "autoid_service",
       "bindinfo/": "bindinfo",
       "br/pkg/lightning/": "br/pkg/lightning/",
+      "tools/go-sqlancer": "ignore tool code",
+      "br/pkg/lightning/mydump/": "br/pkg/lightning/mydump/",
+      "br/pkg/lightning/restore/opts": "br/pkg/lightning/restore/opts",
       "executor/aggregate.go": "executor/aggregate.go",
       "executor/analyze_utils.go": "executor/analyze_utils.go",
       "executor/internal/": "executor/internal/",

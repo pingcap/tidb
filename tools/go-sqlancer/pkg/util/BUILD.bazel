@@ -1,0 +1,24 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "util",
+    srcs = [
+        "generator.go",
+        "pivot.go",
+        "rand.go",
+    ],
+    importpath = "github.com/pingcap/tidb/tools/go-sqlancer/pkg/util",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//parser/ast",
+        "//parser/charset",
+        "//parser/format",
+        "//parser/mysql",
+        "//parser/types",
+        "//sessionctx/stmtctx",
+        "//tools/go-sqlancer/pkg/types",
+        "//types",
+        "//types/parser_driver",
+        "//util/collate",
+    ],
+)

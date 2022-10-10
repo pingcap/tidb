@@ -1,0 +1,15 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "hint",
+    srcs = ["hint.go"],
+    importpath = "github.com/pingcap/tidb/tools/go-sqlancer/pkg/generator/hint",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//parser/ast",
+        "//parser/model",
+        "//tools/go-sqlancer/pkg/types",
+        "//tools/go-sqlancer/pkg/util",
+        "//util/mathutil",
+    ],
+)

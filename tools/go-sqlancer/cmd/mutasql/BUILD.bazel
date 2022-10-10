@@ -1,0 +1,18 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "mutasql_lib",
+    srcs = ["main.go"],
+    importpath = "github.com/pingcap/tidb/tools/go-sqlancer/cmd/mutasql",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//tools/go-sqlancer/pkg/sqlancer",
+        "@com_github_go_sql_driver_mysql//:mysql",
+    ],
+)
+
+go_binary(
+    name = "mutasql",
+    embed = [":mutasql_lib"],
+    visibility = ["//visibility:public"],
+)

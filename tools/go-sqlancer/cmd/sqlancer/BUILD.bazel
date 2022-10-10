@@ -1,0 +1,19 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "sqlancer_lib",
+    srcs = ["main.go"],
+    importpath = "github.com/pingcap/tidb/tools/go-sqlancer/cmd/sqlancer",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//tools/go-sqlancer/pkg/sqlancer",
+        "@com_github_go_sql_driver_mysql//:mysql",
+        "@com_github_pingcap_log//:log",
+    ],
+)
+
+go_binary(
+    name = "sqlancer",
+    embed = [":sqlancer_lib"],
+    visibility = ["//visibility:public"],
+)

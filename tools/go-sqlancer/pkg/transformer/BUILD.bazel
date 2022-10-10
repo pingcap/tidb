@@ -1,0 +1,45 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "transformer",
+    srcs = [
+        "clause-move.go",
+        "combine.go",
+        "no-rec.go",
+        "tlp.go",
+        "transform.go",
+        "union.go",
+    ],
+    importpath = "github.com/pingcap/tidb/tools/go-sqlancer/pkg/transformer",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//parser/ast",
+        "//parser/model",
+        "//parser/mysql",
+        "//parser/opcode",
+        "//tools/go-sqlancer/pkg/util",
+        "//types",
+        "//types/parser_driver",
+        "@com_github_juju_errors//:errors",
+        "@com_github_pingcap_log//:log",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "transformer_test",
+    timeout = "short",
+    srcs = [
+        "tlp_test.go",
+        "transform_test.go",
+    ],
+    embed = [":transformer"],
+    flaky = True,
+    shard_count = 3,
+    deps = [
+        "//parser",
+        "//parser/ast",
+        "//tools/go-sqlancer/pkg/util",
+        "@com_github_stretchr_testify//assert",
+    ],
+)
