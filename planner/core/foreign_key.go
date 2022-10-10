@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/util/size"
 )
 
 // FKCheck indicates the foreign key constraint checker.
@@ -48,7 +47,7 @@ func (f *FKCheck) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = emptyFkCheckSize + int64(cap(f.Cols))*size.SizeOfString*2
+	sum = emptyFkCheckSize
 	for _, cis := range f.Cols {
 		sum += cis.MemoryUsage()
 	}
