@@ -51,6 +51,11 @@ func (t *memoryLimitTuner) tuning() {
 	ratio := float64(100+gogc) / 100
 	// If theoretical NextGC(Equivalent to HeapInUse * (100 + GOGC) / 100) is bigger than MemoryLimit twice in a row,
 	// the second GC is caused by MemoryLimit.
+	// All GC is divided into the following three cases:
+	// 1. In normal, HeapInUse * (100 + GOGC) / 100 < MemoryLimit, NextGC = HeapInUse * (100 + GOGC) / 100.
+	// 2. The first time HeapInUse * (100 + GOGC) / 100 >= MemoryLimit, NextGC = MemoryLimit. But this GC is trigger by GOGC.
+	// 3. The second time HeapInUse * (100 + GOGC) / 100 >= MemoryLimit. This GC is trigger by MemoryLimit.
+	//    We set MemoryLimit to MaxInt, so the NextGC will be HeapInUse * (100 + GOGC) / 100 again.
 	if float64(r.HeapInuse)*ratio > float64(debug.SetMemoryLimit(-1)) {
 		t.times++
 		if t.times >= 2 && t.waitingReset.CompareAndSwap(false, true) {
@@ -97,6 +102,9 @@ func (t *memoryLimitTuner) GetPercentage() float64 {
 // This function should be called when `tidb_server_memory_limit` or `tidb_server_memory_limit_gc_trigger` is modified.
 func (t *memoryLimitTuner) UpdateMemoryLimit() {
 	softLimit := t.calcMemoryLimit()
+	if EnableGOGCTuner.Load() {
+		softLimit = math.MaxInt64
+	}
 	if softLimit == math.MaxInt64 {
 		t.isTuning.Store(false)
 	} else {

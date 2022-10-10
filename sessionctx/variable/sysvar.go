@@ -626,6 +626,7 @@ var defaultSysVars = []*SysVar{
 		if !on {
 			gctuner.SetDefaultGOGC()
 		}
+		gctuner.GlobalMemoryLimitTuner.UpdateMemoryLimit()
 		return nil
 	}},
 	{Scope: ScopeGlobal, Name: TiDBEnableTelemetry, Value: BoolToOnOff(DefTiDBEnableTelemetry), Type: TypeBool},
