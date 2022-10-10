@@ -52,7 +52,7 @@ There are two parts of the design:
 - Schema change states throughout the operation
 - Reorganization implementation
 
-Where the schema change states will clarify which different steps that will be done in which schema state transisions.
+Where the schema change states will clarify which different steps that will be done in which schema state transitions.
 
 ### Schema change states for REORGANIZE PARTITION
 
