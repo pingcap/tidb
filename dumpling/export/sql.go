@@ -663,14 +663,13 @@ func GetSpecifiedColumnValueAndClose(rows *sql.Rows, columnName string) ([]strin
 		return []string{}, nil
 	}
 	defer rows.Close()
-	columnName = strings.ToUpper(columnName)
 	var strs []string
 	columns, _ := rows.Columns()
 	addr := make([]interface{}, len(columns))
 	oneRow := make([]sql.NullString, len(columns))
 	fieldIndex := -1
 	for i, col := range columns {
-		if strings.ToUpper(col) == columnName {
+		if strings.EqualFold(col, columnName) {
 			fieldIndex = i
 		}
 		addr[i] = &oneRow[i]
@@ -707,7 +706,7 @@ func GetSpecifiedColumnValuesAndClose(rows *sql.Rows, columnName ...string) ([][
 	for i, col := range columns {
 		addr[i] = &oneRow[i]
 		for j, name := range columnName {
-			if strings.EqualFold(strings.ToUpper(col), strings.ToUpper(name)) {
+			if strings.EqualFold(col, name) {
 				fieldIndexMp[i] = j
 			}
 		}
