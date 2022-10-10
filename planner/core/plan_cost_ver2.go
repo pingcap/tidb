@@ -960,6 +960,9 @@ func newCostVer2(option *PlanCostOption, factor costVer2Factor, cost float64, fo
 }
 
 func sumCostVer2(costs ...costVer2) costVer2 {
+	if len(costs) == 0 {
+		return newZeroCostVer2(false)
+	}
 	ret := newZeroCostVer2(costs[0].trace)
 	var subFormulas []string
 	for _, c := range costs {
