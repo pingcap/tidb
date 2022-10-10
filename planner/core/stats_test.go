@@ -55,7 +55,7 @@ func TestGroupNDVs(t *testing.T) {
 		stmt, err := p.ParseOneStmt(tt, "", "")
 		require.NoError(t, err, comment)
 		ret := &core.PreprocessorReturn{}
-		err = core.Preprocess(tk.Session(), stmt, core.WithPreprocessorReturn(ret))
+		err = core.Preprocess(context.Background(), tk.Session(), stmt, core.WithPreprocessorReturn(ret))
 		require.NoError(t, err)
 		tk.Session().GetSessionVars().PlanColumnID = 0
 		builder, _ := core.NewPlanBuilder().Init(tk.Session(), ret.InfoSchema, &hint.BlockHintProcessor{})

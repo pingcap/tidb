@@ -76,7 +76,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 	c.Ctx.GetSessionVars().StmtCtx.IsReadOnly = plannercore.IsReadOnly(stmtNode, c.Ctx.GetSessionVars())
 
 	ret := &plannercore.PreprocessorReturn{}
-	err = plannercore.Preprocess(c.Ctx,
+	err = plannercore.Preprocess(ctx, c.Ctx,
 		stmtNode,
 		plannercore.WithPreprocessorReturn(ret),
 		plannercore.InitTxnContextProvider,

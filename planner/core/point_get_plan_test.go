@@ -328,7 +328,7 @@ func TestPointGetId(t *testing.T) {
 		require.Len(t, stmts, 1)
 		stmt := stmts[0]
 		ret := &core.PreprocessorReturn{}
-		err = core.Preprocess(ctx, stmt, core.WithPreprocessorReturn(ret))
+		err = core.Preprocess(context.Background(), ctx, stmt, core.WithPreprocessorReturn(ret))
 		require.NoError(t, err)
 		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, ret.InfoSchema)
 		require.NoError(t, err)

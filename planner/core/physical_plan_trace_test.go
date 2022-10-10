@@ -90,7 +90,7 @@ func TestPhysicalOptimizeWithTraceEnabled(t *testing.T) {
 		sql := testcase.sql
 		stmt, err := p.ParseOneStmt(sql, "", "")
 		require.NoError(t, err)
-		err = core.Preprocess(ctx, stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: dom.InfoSchema()}))
+		err = core.Preprocess(context.Background(), ctx, stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: dom.InfoSchema()}))
 		require.NoError(t, err)
 		sctx := core.MockContext()
 		sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true
@@ -144,7 +144,7 @@ func TestPhysicalOptimizerTrace(t *testing.T) {
 
 	stmt, err := p.ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
-	err = core.Preprocess(ctx, stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: dom.InfoSchema()}))
+	err = core.Preprocess(context.Background(), ctx, stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: dom.InfoSchema()}))
 	require.NoError(t, err)
 	sctx := core.MockContext()
 	sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true
@@ -207,7 +207,7 @@ func TestPhysicalOptimizerTraceChildrenNotDuplicated(t *testing.T) {
 	sql := "select * from t"
 	stmt, err := p.ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
-	err = core.Preprocess(ctx, stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: dom.InfoSchema()}))
+	err = core.Preprocess(context.Background(), ctx, stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: dom.InfoSchema()}))
 	require.NoError(t, err)
 	sctx := core.MockContext()
 	sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true

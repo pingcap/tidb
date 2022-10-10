@@ -76,7 +76,7 @@ func (j job) String(redacted bool) string {
 
 // HandleNonTransactionalDelete is the entry point for a non-transactional delete
 func HandleNonTransactionalDelete(ctx context.Context, stmt *ast.NonTransactionalDeleteStmt, se Session) (sqlexec.RecordSet, error) {
-	err := core.Preprocess(se, stmt)
+	err := core.Preprocess(ctx, se, stmt)
 	if err != nil {
 		return nil, err
 	}

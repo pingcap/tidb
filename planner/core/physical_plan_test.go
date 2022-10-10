@@ -123,7 +123,7 @@ func TestAnalyzeBuildSucc(t *testing.T) {
 		} else if err != nil {
 			continue
 		}
-		err = core.Preprocess(tk.Session(), stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))
+		err = core.Preprocess(context.Background(), tk.Session(), stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err)
 		_, _, err = planner.Optimize(context.Background(), tk.Session(), stmt, is)
 		if tt.succ {
@@ -165,7 +165,7 @@ func TestAnalyzeSetRate(t *testing.T) {
 		stmt, err := p.ParseOneStmt(tt.sql, "", "")
 		require.NoError(t, err, comment)
 
-		err = core.Preprocess(tk.Session(), stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))
+		err = core.Preprocess(context.Background(), tk.Session(), stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err, comment)
 		p, _, err := planner.Optimize(context.Background(), tk.Session(), stmt, is)
 		require.NoError(t, err, comment)
@@ -310,7 +310,7 @@ func TestDAGPlanBuilderBasePhysicalPlan(t *testing.T) {
 		stmt, err := p.ParseOneStmt(tt, "", "")
 		require.NoError(t, err, comment)
 
-		err = core.Preprocess(se, stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))
+		err = core.Preprocess(context.Background(), se, stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err)
 		p, _, err := planner.Optimize(context.TODO(), se, stmt, is)
 		require.NoError(t, err)
@@ -1657,7 +1657,7 @@ func TestDAGPlanBuilderSplitAvg(t *testing.T) {
 		stmt, err := p.ParseOneStmt(tt.sql, "", "")
 		require.NoError(t, err, comment)
 
-		err = core.Preprocess(tk.Session(), stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))
+		err = core.Preprocess(context.Background(), tk.Session(), stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err)
 		p, _, err := planner.Optimize(context.TODO(), tk.Session(), stmt, is)
 		require.NoError(t, err, comment)

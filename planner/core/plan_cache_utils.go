@@ -84,7 +84,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	}
 
 	ret := &PreprocessorReturn{}
-	err := Preprocess(sctx, stmt, InPrepare, WithPreprocessorReturn(ret))
+	err := Preprocess(ctx, sctx, stmt, InPrepare, WithPreprocessorReturn(ret))
 	if err != nil {
 		return nil, nil, 0, err
 	}

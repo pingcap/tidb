@@ -399,7 +399,7 @@ func TestSingleRuleTraceStep(t *testing.T) {
 		comment := fmt.Sprintf("case:%v sql:%s", i, sql)
 		stmt, err := s.p.ParseOneStmt(sql, "", "")
 		require.NoError(t, err, comment)
-		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+		err = Preprocess(context.Background(), s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		require.NoError(t, err, comment)
 		sctx := MockContext()
 		sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true
