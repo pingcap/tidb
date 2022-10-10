@@ -21,6 +21,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -729,7 +730,7 @@ func NewTopN(n int) *TopN {
 //  1. `*TopN` is the final global-level topN.
 //  2. `[]TopNMeta` is the left topN value from the partition-level TopNs, but is not placed to global-level TopN. We should put them back to histogram latter.
 //  3. `[]*Histogram` are the partition-level histograms which just delete some values when we merge the global-level topN.
-func MergePartTopN2GlobalTopN(sc *stmtctx.StatementContext, version int, topNs []*TopN, n uint32, hists []*Histogram, isIndex bool) (*TopN, []TopNMeta, []*Histogram, error) {
+func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n uint32, hists []*Histogram, isIndex bool) (*TopN, []TopNMeta, []*Histogram, error) {
 	if checkEmptyTopNs(topNs) {
 		return nil, nil, hists, nil
 	}
@@ -781,7 +782,7 @@ func MergePartTopN2GlobalTopN(sc *stmtctx.StatementContext, version int, topNs [
 						var err error
 						if types.IsTypeTime(hists[0].Tp.GetType()) {
 							// handle datetime values specially since they are encoded to int and we'll get int values if using DecodeOne.
-							_, d, err = codec.DecodeAsDateTime(val.Encoded, hists[0].Tp.GetType(), sc.TimeZone)
+							_, d, err = codec.DecodeAsDateTime(val.Encoded, hists[0].Tp.GetType(), loc)
 						} else if types.IsTypeFloat(hists[0].Tp.GetType()) {
 							_, d, err = codec.DecodeAsFloat32(val.Encoded, hists[0].Tp.GetType())
 						} else {
@@ -864,6 +865,22 @@ func checkEmptyTopNs(topNs []*TopN) bool {
 		count += topN.TotalCount()
 	}
 	return count == 0
+}
+
+// SortTopnMeta sort topnMeta
+func SortTopnMeta(topnMetas []TopNMeta) []TopNMeta {
+	slices.SortFunc(topnMetas, func(i, j TopNMeta) bool {
+		if i.Count != j.Count {
+			return i.Count > j.Count
+		}
+		return bytes.Compare(i.Encoded, j.Encoded) < 0
+	})
+	return topnMetas
+}
+
+// GetMergedTopNFromSortedSlice returns merged topn
+func GetMergedTopNFromSortedSlice(sorted []TopNMeta, n uint32) (*TopN, []TopNMeta) {
+	return getMergedTopNFromSortedSlice(sorted, n)
 }
 
 func getMergedTopNFromSortedSlice(sorted []TopNMeta, n uint32) (*TopN, []TopNMeta) {

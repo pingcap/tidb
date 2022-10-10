@@ -746,6 +746,9 @@ const (
 	// ranges would exceed the limit, it chooses less accurate ranges such as full range. 0 indicates that there is no memory
 	// limit for ranges.
 	TiDBOptRangeMaxSize = "tidb_opt_range_max_size"
+
+	// TiDBMergePartitionStatsConcurrency indicates the concurrecny when merge partition stats into global stats
+	TiDBMergePartitionStatsConcurrency = "tidb_merge_partition_stats_concurrency"
 )
 
 // TiDB vars that have only global scope
@@ -1048,6 +1051,7 @@ const (
 	DefTiDBOptRangeMaxSize                          = 0
 	DefTiDBCostModelVer                             = 1
 	DefTiDBServerMemoryLimitSessMinSize             = 128 << 20
+	DefTiDBMergePartitionStatsConcurrency           = 1
 )
 
 // Process global variables.

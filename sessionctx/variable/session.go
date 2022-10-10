@@ -1271,6 +1271,9 @@ type SessionVars struct {
 	// LastPlanReplayerToken indicates the last plan replayer token
 	LastPlanReplayerToken string
 
+	// AnalyzePartitionMergeConcurrency indicates concurrency for merging partition stats
+	AnalyzePartitionMergeConcurrency int
+
 	HookContext
 }
 
