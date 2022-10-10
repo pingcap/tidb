@@ -49,7 +49,7 @@ func TestTiDBOptOn(t *testing.T) {
 }
 
 func TestNewSessionVars(t *testing.T) {
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 
 	require.Equal(t, DefIndexJoinBatchSize, vars.IndexJoinBatchSize)
 	require.Equal(t, DefIndexLookupSize, vars.IndexLookupSize)
@@ -103,7 +103,7 @@ func assertFieldsGreaterThanZero(t *testing.T, val reflect.Value) {
 }
 
 func TestVarsutil(t *testing.T) {
-	v := NewSessionVars()
+	v := NewSessionVars(nil)
 	v.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
 
 	err := v.SetSystemVar("autocommit", "1")
@@ -457,7 +457,7 @@ func TestVarsutil(t *testing.T) {
 }
 
 func TestValidate(t *testing.T) {
-	v := NewSessionVars()
+	v := NewSessionVars(nil)
 	v.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
 	v.TimeZone = time.UTC
 
@@ -586,7 +586,7 @@ func TestValidate(t *testing.T) {
 }
 
 func TestValidateStmtSummary(t *testing.T) {
-	v := NewSessionVars()
+	v := NewSessionVars(nil)
 	v.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
 	v.TimeZone = time.UTC
 
@@ -628,7 +628,7 @@ func TestValidateStmtSummary(t *testing.T) {
 }
 
 func TestConcurrencyVariables(t *testing.T) {
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 	vars.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
 
 	wdConcurrency := 2
@@ -685,7 +685,7 @@ func TestHelperFuncs(t *testing.T) {
 }
 
 func TestStmtVars(t *testing.T) {
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 	err := vars.SetStmtVar("bogussysvar", "1")
 	require.Equal(t, "[variable:1193]Unknown system variable 'bogussysvar'", err.Error())
 	err = vars.SetStmtVar(MaxExecutionTime, "ACDC")
@@ -695,7 +695,7 @@ func TestStmtVars(t *testing.T) {
 }
 
 func TestSessionStatesSystemVar(t *testing.T) {
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 	err := vars.SetSystemVar("autocommit", "1")
 	require.NoError(t, err)
 	val, keep, err := vars.GetSessionStatesSystemVar("autocommit")

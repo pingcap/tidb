@@ -43,7 +43,7 @@ func NewMockGlobalAccessor4Tests() *MockGlobalAccessor {
 	// mock.SessionVars = vars
 	// vars.GlobalVarsAccessor = mock
 
-	tmp.SessionVars = NewSessionVars()
+	tmp.SessionVars = NewSessionVars(nil)
 
 	// Set all sysvars to the default value
 	for k, sv := range GetSysVars() {
