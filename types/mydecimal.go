@@ -1401,7 +1401,13 @@ func (d *MyDecimal) FromBin(bin []byte, precision, frac int) (binSize int, err e
 	if bin[binIdx]&0x80 > 0 {
 		mask = 0
 	}
-	binSize = DecimalBinSize(precision, frac)
+	binSize, err = DecimalBinSize(precision, frac)
+	if err != nil {
+		return 0, err
+	}
+	if binSize < 0 || binSize > 40 {
+		return 0, ErrBadNumber
+	}
 	dCopy := make([]byte, 40)
 	dCopy = dCopy[:binSize]
 	copy(dCopy, bin)
@@ -1477,13 +1483,16 @@ func (d *MyDecimal) FromBin(bin []byte, precision, frac int) (binSize int, err e
 }
 
 // DecimalBinSize returns the size of array to hold a binary representation of a decimal.
-func DecimalBinSize(precision, frac int) int {
+func DecimalBinSize(precision, frac int) (int, error) {
 	digitsInt := precision - frac
 	wordsInt := digitsInt / digitsPerWord
 	wordsFrac := frac / digitsPerWord
 	xInt := digitsInt - wordsInt*digitsPerWord
 	xFrac := frac - wordsFrac*digitsPerWord
-	return wordsInt*wordSize + dig2bytes[xInt] + wordsFrac*wordSize + dig2bytes[xFrac]
+	if xInt < 0 || xInt >= len(dig2bytes) || xFrac < 0 || xFrac >= len(dig2bytes) {
+		return 0, ErrBadNumber
+	}
+	return wordsInt*wordSize + dig2bytes[xInt] + wordsFrac*wordSize + dig2bytes[xFrac], nil
 }
 
 func readWord(b []byte, size int) int32 {
@@ -2340,7 +2349,11 @@ func DecimalPeak(b []byte) (int, error) {
 	}
 	precision := int(b[0])
 	frac := int(b[1])
-	return DecimalBinSize(precision, frac) + 2, nil
+	binSize, err := DecimalBinSize(precision, frac)
+	if err != nil {
+		return 0, err
+	}
+	return binSize + 2, nil
 }
 
 // NewDecFromInt creates a MyDecimal from int.
