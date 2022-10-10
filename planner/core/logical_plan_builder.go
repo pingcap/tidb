@@ -1491,7 +1491,15 @@ func unionJoinFieldType(a, b *types.FieldType) *types.FieldType {
 	}
 	resultTp.SetDecimal(mathutil.Max(a.GetDecimal(), b.GetDecimal()))
 	// `flen - decimal` is the fraction before '.'
+<<<<<<< HEAD
 	resultTp.SetFlen(mathutil.Max(a.GetFlen()-a.GetDecimal(), b.GetFlen()-b.GetDecimal()) + resultTp.GetDecimal())
+=======
+	if a.GetFlen() == -1 || b.GetFlen() == -1 {
+		resultTp.SetFlenUnderLimit(-1)
+	} else {
+		resultTp.SetFlenUnderLimit(mathutil.Max(a.GetFlen()-a.GetDecimal(), b.GetFlen()-b.GetDecimal()) + resultTp.GetDecimal())
+	}
+>>>>>>> 9cee5ba4d2 (planner: fix prepare insert statement with union can not work (#38311))
 	types.TryToFixFlenOfDatetime(resultTp)
 	if resultTp.EvalType() != types.ETInt && (a.EvalType() == types.ETInt || b.EvalType() == types.ETInt) && resultTp.GetFlen() < mysql.MaxIntWidth {
 		resultTp.SetFlen(mysql.MaxIntWidth)
@@ -1501,7 +1509,14 @@ func unionJoinFieldType(a, b *types.FieldType) *types.FieldType {
 }
 
 // Set the flen of the union column using the max flen in children.
+<<<<<<< HEAD
 func (b *PlanBuilder) setUnionFlen(resultTp *types.FieldType, cols []expression.Expression) {
+=======
+func (*PlanBuilder) setUnionFlen(resultTp *types.FieldType, cols []expression.Expression) {
+	if resultTp.GetFlen() == -1 {
+		return
+	}
+>>>>>>> 9cee5ba4d2 (planner: fix prepare insert statement with union can not work (#38311))
 	isBinary := resultTp.GetCharset() == charset.CharsetBin
 	for i := 0; i < len(cols); i++ {
 		childTp := cols[i].GetType()
