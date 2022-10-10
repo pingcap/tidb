@@ -767,7 +767,7 @@ func (a *Assignment) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = size.SizeOfPointer + a.ColName.MemoryUsage() + size.SizeOfInterface
+	sum = size.SizeOfPointer + a.ColName.MemoryUsage() + size.SizeOfInterface*2
 	if a.Expr != nil {
 		sum += a.Expr.MemoryUsage()
 	}

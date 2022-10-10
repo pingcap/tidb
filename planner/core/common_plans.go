@@ -370,9 +370,9 @@ func (p *Insert) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.baseSchemaProducer.MemoryUsage() + size.SizeOfInterface + size.SizeOfSlice*7 + int64(cap(p.tableColNames)+cap(p.Columns)+cap(p.SetList)+cap(p.OnDuplicate)+
-		cap(p.names4OnDuplicate)+cap(p.FKChecks))*size.SizeOfPointer + p.GenCols.MemoryUsage() + size.SizeOfBool*3 +
-		size.SizeOfBool
+	sum = p.baseSchemaProducer.MemoryUsage() + size.SizeOfInterface + size.SizeOfSlice*7 + int64(cap(p.tableColNames)+
+		cap(p.Columns)+cap(p.SetList)+cap(p.OnDuplicate)+cap(p.names4OnDuplicate)+cap(p.FKChecks))*size.SizeOfPointer +
+		p.GenCols.MemoryUsage() + size.SizeOfInterface + size.SizeOfBool*3 + size.SizeOfInt
 	if p.tableSchema != nil {
 		sum += p.tableSchema.MemoryUsage()
 	}
@@ -387,7 +387,7 @@ func (p *Insert) MemoryUsage() (sum int64) {
 		sum += name.MemoryUsage()
 	}
 	for _, exprs := range p.Lists {
-		sum += int64(cap(exprs)) * size.SizeOfInterface
+		sum += size.SizeOfSlice + int64(cap(exprs))*size.SizeOfInterface
 		for _, expr := range exprs {
 			sum += expr.MemoryUsage()
 		}
@@ -438,7 +438,7 @@ func (p *Update) MemoryUsage() (sum int64) {
 	}
 
 	sum = p.baseSchemaProducer.MemoryUsage() + size.SizeOfSlice*3 + int64(cap(p.OrderedList))*size.SizeOfPointer +
-		size.SizeOfBool + size.SizeOfInt + int64(cap(p.PartitionedTable))*size.SizeOfInterface +
+		size.SizeOfBool + size.SizeOfInt + size.SizeOfInterface + int64(cap(p.PartitionedTable))*size.SizeOfInterface +
 		int64(len(p.tblID2Table))*(size.SizeOfInt64+size.SizeOfInterface)
 	if p.SelectPlan != nil {
 		sum += p.SelectPlan.MemoryUsage()
@@ -476,7 +476,7 @@ func (p *Delete) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.baseSchemaProducer.MemoryUsage() + size.SizeOfBool + size.SizeOfSlice
+	sum = p.baseSchemaProducer.MemoryUsage() + size.SizeOfBool + size.SizeOfInterface + size.SizeOfSlice
 	if p.SelectPlan != nil {
 		sum += p.SelectPlan.MemoryUsage()
 	}
