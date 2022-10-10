@@ -30,7 +30,7 @@ import (
 var GlobalMemoryLimitTuner = &memoryLimitTuner{}
 
 // Go runtime trigger GC when hit memory limit which managed via runtime/debug.SetMemoryLimit.
-// So we can change memory limit dynamically to avoid frequent GC when memory usage is greater than the soft limit.
+// So we can change memory limit dynamically to avoid frequent GC when memory usage is greater than the limit.
 type memoryLimitTuner struct {
 	finalizer    *finalizer
 	isTuning     atomicutil.Bool
@@ -101,16 +101,16 @@ func (t *memoryLimitTuner) GetPercentage() float64 {
 // UpdateMemoryLimit updates the memory limit.
 // This function should be called when `tidb_server_memory_limit` or `tidb_server_memory_limit_gc_trigger` is modified.
 func (t *memoryLimitTuner) UpdateMemoryLimit() {
-	softLimit := t.calcMemoryLimit()
+	memoryLimit := t.calcMemoryLimit()
 	if EnableGOGCTuner.Load() {
-		softLimit = math.MaxInt64
+		memoryLimit = math.MaxInt64
 	}
-	if softLimit == math.MaxInt64 {
+	if memoryLimit == math.MaxInt64 {
 		t.isTuning.Store(false)
 	} else {
 		t.isTuning.Store(true)
 	}
-	debug.SetMemoryLimit(softLimit)
+	debug.SetMemoryLimit(memoryLimit)
 }
 
 func (t *memoryLimitTuner) calcMemoryLimit() int64 {
