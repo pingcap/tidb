@@ -317,6 +317,22 @@ type InsertGeneratedColumns struct {
 	OnDuplicates []*expression.Assignment
 }
 
+// MemoryUsage return the memory usage of InsertGeneratedColumns
+func (i *InsertGeneratedColumns) MemoryUsage() (sum int64) {
+	if i == nil {
+		return
+	}
+	sum = size.SizeOfSlice*3 + int64(cap(i.Columns)+cap(i.OnDuplicates))*size.SizeOfPointer + int64(cap(i.Exprs))*size.SizeOfInterface
+
+	for _, expr := range i.Exprs {
+		sum += expr.MemoryUsage()
+	}
+	for _, as := range i.OnDuplicates {
+		sum += as.MemoryUsage()
+	}
+	return
+}
+
 // Insert represents an insert plan.
 type Insert struct {
 	baseSchemaProducer
@@ -352,6 +368,35 @@ type Insert struct {
 func (p *Insert) MemoryUsage() (sum int64) {
 	if p == nil {
 		return
+	}
+
+	sum = p.baseSchemaProducer.MemoryUsage() + size.SizeOfSlice*7 + int64(cap(p.tableColNames)+cap(p.Columns)+cap(p.SetList)+cap(p.OnDuplicate)+
+		cap(p.names4OnDuplicate)+cap(p.FKChecks))*size.SizeOfPointer + p.GenCols.MemoryUsage() + p.SelectPlan.MemoryUsage() + size.SizeOfBool*3 +
+		size.SizeOfBool
+	if p.tableSchema != nil {
+		sum += p.tableSchema.MemoryUsage()
+	}
+	if p.Schema4OnDuplicate != nil {
+		sum += p.Schema4OnDuplicate.MemoryUsage()
+	}
+
+	for _, name := range p.tableColNames {
+		sum += name.MemoryUsage()
+	}
+	for _, exprs := range p.Lists {
+		sum += int64(cap(exprs)) * size.SizeOfInterface
+		for _, expr := range exprs {
+			sum += expr.MemoryUsage()
+		}
+	}
+	for _, as := range p.SetList {
+		sum += as.MemoryUsage()
+	}
+	for _, as := range p.OnDuplicate {
+		sum += as.MemoryUsage()
+	}
+	for _, name := range p.names4OnDuplicate {
+		sum += name.MemoryUsage()
 	}
 
 	return

@@ -15,11 +15,14 @@
 package core
 
 import (
+	"unsafe"
+
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/util/size"
 )
 
 // FKCheck indicates the foreign key constraint checker.
@@ -35,6 +38,21 @@ type FKCheck struct {
 
 	CheckExist bool
 	FailedErr  error
+}
+
+const emptyFkCheckSize = int64(unsafe.Sizeof(FKCheck{}))
+
+// MemoryUsage return the memory usage of FKCheck
+func (f *FKCheck) MemoryUsage() (sum int64) {
+	if f == nil {
+		return
+	}
+
+	sum = emptyFkCheckSize + int64(cap(f.Cols))*size.SizeOfString*2
+	for _, cis := range f.Cols {
+		sum += cis.MemoryUsage()
+	}
+	return
 }
 
 func (p *Insert) buildOnInsertFKChecks(ctx sessionctx.Context, is infoschema.InfoSchema, dbName string) ([]*FKCheck, error) {
