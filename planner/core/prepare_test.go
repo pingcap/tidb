@@ -2931,3 +2931,17 @@ func TestPlanCacheWithRCWhenInfoSchemaChange(t *testing.T) {
 	tk2.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 0"))
 	tk2.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
+
+func TestIssue37901(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t4`)
+	tk.MustExec(`create table t4 (a date)`)
+	tk.MustExec(`prepare st1 from "insert into t4(a) select dt from (select ? as dt from dual union all select sysdate() ) a";`)
+	tk.MustExec(`set @t='2022-01-01 00:00:00.000000'`)
+	tk.MustExec(`execute st1 using @t`)
+	tk.MustQuery(`select count(*) from t4`).Check(testkit.Rows("2"))
+}
