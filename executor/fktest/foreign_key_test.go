@@ -418,9 +418,7 @@ func TestForeignKeyCheckAndLock(t *testing.T) {
 		tk.MustQuery("select id, name from t1 order by name").Check(testkit.Rows("1 a", "2 b"))
 		tk.MustQuery("select a,  name from t2 order by name").Check(testkit.Rows("2 a"))
 
-		// Test delete parent table
-		// Test in pessimistic txn
-		// Test insert child table
+		// Test delete parent table in pessimistic txn
 		tk.MustExec("begin pessimistic")
 		tk.MustExec("insert into t2 (a, name) values (1, 'a');")
 		wg.Add(1)
@@ -768,6 +766,22 @@ func TestForeignKeyOnDeleteParentTableCheck(t *testing.T) {
 			tk.MustExec("delete from t1 where a = 3 or b = 4")
 			tk.MustGetDBError("delete from t1 where id = 1", plannercore.ErrRowIsReferenced2)
 			tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 1 1"))
+		}
+		models := []string{"pessimistic", "optimistic"}
+		for _, model := range models {
+			// Test in transaction.
+			tk.MustExec("delete from t2")
+			tk.MustExec("delete from t1")
+			tk.MustExec("begin " + model)
+			tk.MustExec("insert into t1 (id, a, b) values (1, 1, 1), (2, 2, 2);")
+			tk.MustExec("insert into t2 (id, a, b) values (1, 1, 1);")
+			tk.MustGetDBError("delete from t1 where id = 1", plannercore.ErrRowIsReferenced2)
+			tk.MustExec("delete from t1 where id = 2")
+			tk.MustExec("delete from t2 where id = 1")
+			tk.MustExec("delete from t1 where id = 1")
+			tk.MustExec("commit")
+			tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows())
+			tk.MustQuery("select id, a, b from t2 order by id").Check(testkit.Rows())
 		}
 	}
 
