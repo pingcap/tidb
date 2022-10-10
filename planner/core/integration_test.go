@@ -7675,3 +7675,22 @@ func TestIssue38295(t *testing.T) {
 	tk.MustGetErrCode("SELECT t0.c1, t0.c2 FROM t0 GROUP BY MOD(t0.c0, DEFAULT(t0.c2));", errno.ErrFieldNotInGroupBy)
 	tk.MustExec("UPDATE t0 SET c2=1413;")
 }
+
+func TestIssue38294(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(a int, b int)")
+	tk.MustExec("create table t2(a int, b int, c int, primary key (a, b) clustered)")
+	tk.MustExec("insert into t1 values (1,1), (1,2), (1,3), (1,4), (1,5), (1,6), (1,7), (1,8)")
+	tk.MustExec("insert into t2 (a,b) values (1,1), (1,2), (1,3), (1,4), (1,5), (1,6), (1,7), (1,8)")
+	tk.MustExec("analyze table t1, t2")
+	tk.MustQuery("explain format='brief' select /*+ inl_join(t2) */ * from t1 join t2 on t1.a = t2.a where t2.b > 0 and t2.b < 10").Check(testkit.Rows(
+		"IndexJoin 64.00 root  inner join, inner:TableReader, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+		"├─TableReader(Build) 8.00 root  data:Selection",
+		"│ └─Selection 8.00 cop[tikv]  not(isnull(test.t1.a))",
+		"│   └─TableFullScan 8.00 cop[tikv] table:t1 keep order:false",
+		"└─TableReader(Probe) 8.00 root  data:TableRangeScan",
+		"  └─TableRangeScan 8.00 cop[tikv] table:t2 range: decided by [eq(test.t2.a, test.t1.a) gt(test.t2.b, 0) lt(test.t2.b, 10)], keep order:false"))
+}
+
