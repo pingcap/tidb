@@ -16,6 +16,7 @@ package tables
 
 import (
 	"context"
+	"encoding/hex"
 	"sync"
 
 	"github.com/opentracing/opentracing-go"
@@ -27,7 +28,9 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/rowcodec"
+	"go.uber.org/zap"
 )
 
 // index is the data structure for index data in the KV store.
@@ -114,6 +117,9 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 	key, distinct, err := c.GenIndexKey(vars.StmtCtx, indexedValues, h, writeBufs.IndexKeyBuf)
 	if err != nil {
 		return nil, err
+	}
+	if c.idxInfo.Name.L == "i1" || c.idxInfo.Name.L == "i0" {
+		logutil.BgLogger().Info("index.Create()", zap.String("key", hex.EncodeToString(key)))
 	}
 
 	var (

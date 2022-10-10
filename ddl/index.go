@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -1185,6 +1186,7 @@ type addIndexWorker struct {
 	baseIndexWorker
 	index     table.Index
 	writerCtx *ingest.WriterContext
+	coprCtx   *copContext
 
 	// The following attributes are used to reduce memory allocation.
 	idxKeyBufs         [][]byte
@@ -1218,6 +1220,13 @@ func newAddIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable
 			return nil, err
 		}
 	}
+	var coprCtx *copContext
+	if variable.EnableCoprRead.Load() {
+		coprCtx = newCopContext(t.Meta(), indexInfo)
+		logutil.BgLogger().Info("[ddl] fetch index values with coprocessor",
+			zap.String("table", t.Meta().Name.O),
+			zap.String("index", indexInfo.Name.O))
+	}
 
 	return &addIndexWorker{
 		baseIndexWorker: baseIndexWorker{
@@ -1232,6 +1241,7 @@ func newAddIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable
 		},
 		index:     index,
 		writerCtx: lwCtx,
+		coprCtx:   coprCtx,
 	}, nil
 }
 
@@ -1319,6 +1329,7 @@ func (w *baseIndexWorker) updateRowDecoder(handle kv.Handle, rawRecord []byte) e
 // 3. Boolean indicates whether the task is done.
 // 4. error occurs in fetchRowColVals. nil if no error occurs.
 func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBackfillTask) ([]*indexRecord, kv.Key, bool, error) {
+	defer injectSpan(w.reorgInfo.Job.ID, fmt.Sprintf("%s-%d", "fetch-rows", w.id))()
 	// TODO: use tableScan to prune columns.
 	w.idxRecords = w.idxRecords[:0]
 	startTime := time.Now()
@@ -1486,7 +1497,7 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 	oprStartTime := time.Now()
 	ctx := kv.WithInternalSourceType(context.Background(), w.jobContext.ddlJobSourceType())
 	defer injectSpan(w.reorgInfo.Job.ID, fmt.Sprintf("%s-%d", "fetch-create-txn", w.id))()
-	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
+	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) (err error) {
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
 		txn.SetOption(kv.Priority, w.priority)
@@ -1494,9 +1505,16 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 			txn.SetOption(kv.ResourceGroupTagger, tagger)
 		}
 
-		finishSpan := injectSpan(w.reorgInfo.Job.ID, fmt.Sprintf("%s-%d", "fetch-rows", w.id))
-		idxRecords, nextKey, taskDone, err := w.fetchRowColVals(txn, handleRange)
-		finishSpan()
+		var (
+			idxRecords []*indexRecord
+			nextKey    kv.Key
+			taskDone   bool
+		)
+		if w.coprCtx != nil {
+			idxRecords, nextKey, taskDone, err = w.fetchRowColValsFromSelect(ctx, txn, handleRange)
+		} else {
+			idxRecords, nextKey, taskDone, err = w.fetchRowColVals(txn, handleRange)
+		}
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1519,7 +1537,7 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 
 			// When the backfill-merge process is used, the writes from DML are redirected to a temp index.
 			// The write-conflict will be handled by the merge worker. Thus, the locks are unnecessary.
-			if !needMergeTmpIdx {
+			if !needMergeTmpIdx && idxRecord.key != nil {
 				// We need to add this lock to make sure pessimistic transaction can realize this operation.
 				// For the normal pessimistic transaction, it's ok. But if async commit is used, it may lead to inconsistent data and index.
 				err := txn.LockKeys(context.Background(), new(kv.LockCtx), idxRecord.key)

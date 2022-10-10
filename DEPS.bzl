@@ -3430,8 +3430,8 @@ def go_deps():
         name = "com_github_tikv_minitrace_go",
         build_file_proto_mode = "disable",
         importpath = "github.com/tikv/minitrace-go",
-        sum = "h1:5j4UidaEmHWinqgzzO6alg1EW9qlO28gpKcOJj3088E=",
-        version = "v0.0.0-20210623164044-529c511f20f8",
+        sum = "h1:nvIrUVo5YJZMsCn6yTxrpgrokIo/wug5N/nL5mc7v50=",
+        version = "v0.0.0-20220923091513-8e6316bb4097",
     )
 
     go_repository(

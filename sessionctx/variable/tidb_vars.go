@@ -837,6 +837,8 @@ const (
 	TiDBDDLEnableFastReorg = "tidb_ddl_enable_fast_reorg"
 	// TiDBDDLDiskQuota used to set disk quota for lightning add index.
 	TiDBDDLDiskQuota = "tidb_ddl_disk_quota"
+	// TiDBDDLEnableCoprRead is used to control whether to read with coprocessor for adding index.
+	TiDBDDLEnableCoprRead = "tidb_ddl_enable_copr_read"
 )
 
 // TiDB intentional limits
@@ -1058,6 +1060,7 @@ const (
 	DefTiDBEnableMDL                               = false
 	DefTiFlashFastScan                             = false
 	DefTiDBEnableFastReorg                         = false
+	DefTiDBDDLEnableCoprRead                       = false
 	DefTiDBDDLDiskQuota                            = 100 * 1024 * 1024 * 1024 // 100GB
 	DefExecutorConcurrency                         = 5
 	DefTiDBEnableGeneralPlanCache                  = false
@@ -1118,6 +1121,8 @@ var (
 	EnableMDL                         = atomic.NewBool(DefTiDBEnableMDL)
 	// EnableFastReorg indicates whether to use lightning to enhance DDL reorg performance.
 	EnableFastReorg = atomic.NewBool(DefTiDBEnableFastReorg)
+	// EnableCoprRead indicates whether to read with coprocessor for adding index.
+	EnableCoprRead = atomic.NewBool(DefTiDBDDLEnableCoprRead)
 	// DDLDiskQuota is the temporary variable for set disk quota for lightning
 	DDLDiskQuota = atomic.NewUint64(DefTiDBDDLDiskQuota)
 	// EnableForeignKey indicates whether to enable foreign key feature.
