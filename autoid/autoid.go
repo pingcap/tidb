@@ -50,10 +50,7 @@ func New() *Service {
 	l := &leaderShip{cli: cli}
 	go l.campaignLoop(context.Background())
 
-	p := &mockPersist{
-		data: make(map[autoIDKey]uint64),
-	}
-
+	p := &etcdPersist{cli: cli}
 	return &Service{
 		autoIDMap:  make(map[autoIDKey]*autoIDValue),
 		leaderShip: l,
@@ -100,6 +97,23 @@ const batch = 10000
 // AllocID implements gRPC PDServer.
 func (s *Service) AllocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*autoid.AutoIDResponse, error) {
 	fmt.Println("recieve request ==", *req)
+	var res *autoid.AutoIDResponse
+	for  {
+		var err error
+		res, err = s.allocAutoID(ctx, req)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if res != nil {
+			break
+		}
+		fmt.Println("fuck, another loop??")
+	}
+	fmt.Println("handle auto id service success")
+	return res, nil
+}
+
+func (s *Service) allocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*autoid.AutoIDResponse, error) {
 	if !s.IsLeader() {
 		fmt.Println("not leader!!!!!!!!!!!  fuck~~")
 		return nil, errors.New("not leader")
@@ -110,8 +124,13 @@ func (s *Service) AllocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*
 	val, ok := s.autoIDMap[key]
 	if !ok {
 		s.autoIDLock.Unlock()
-		s.initKV(key)
-		return s.AllocAutoID(ctx, req)
+		err := s.initKV(ctx, key)
+		if err != nil {
+			fmt.Println("init kv error ==", err)
+			return nil,  errors.Trace(err)
+		}
+		fmt.Println("retry, because first init kv")
+		return nil, nil // retry
 	}
 
 	// calcNeededBatchSize calculates the total batch size needed.
@@ -126,47 +145,67 @@ func (s *Service) AllocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*
 	if base < max {
 		// Safe to alloc directly
 		val.base = base
+		fmt.Println("normal ... base == ", base, " and max ==", max)
 	} else {
 		// Need to sync the ID first, in case the server panic and lost the ID.
 		s.autoIDLock.Unlock()
 		val.token <- struct{}{}
-		s.syncID(req.DbID, req.TblID, uint64(base)+batch, val.max, val.token)
+		fmt.Println("base ==", base, "max ==", max)
+		err := s.syncID(ctx, req.DbID, req.TblID, uint64(base)+batch, val.max, val.token)
+		if err != nil {
+			fmt.Println("sync id error", err)
+			return nil, errors.Trace(err)
+		}
 		// And then retry
-		return s.AllocAutoID(ctx, req)
+		return nil, nil
 	}
 	s.autoIDLock.Unlock()
 
-	if max-(batch/2) > base {
+	if max-(batch/2) < base {
+		fmt.Println("async pre-alloc id... max ==", max, "base ==", base)
 		// Trigger sync in the background gorotuine, pre-alloc the ID.
 		select {
 		case val.token <- struct{}{}:
-			go s.syncID(req.DbID, req.TblID, uint64(base)+batch, val.max, val.token)
+			go s.syncID(ctx, req.DbID, req.TblID, uint64(base)+batch, val.max, val.token)
 		default:
 		}
 	}
 
 	fmt.Println("return ..", min, base)
-
 	return &autoid.AutoIDResponse{
 		Min: min,
 		Max: base,
 	}, nil
 }
 
-func (s *Service) initKV(key autoIDKey) {
+func (s *Service) initKV(ctx context.Context, key autoIDKey) error {
 	// Initialize the value.
 	val := &autoIDValue{
 		token: make(chan struct{}, 1),
 		max:   new(int64),
 	}
 
+	fmt.Println("run into initKV!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!", key)
+
 	val.token <- struct{}{}
-	min := s.loadID(key.dbID, key.tblID)
-	s.syncID(key.dbID, key.tblID, min+batch, val.max, val.token)
+	min, err := s.loadID(ctx, key.dbID, key.tblID)
+	if err != nil {
+		fmt.Println("init kv err ===", err)
+		return errors.Trace(err)
+	}
+	val.base = int64(min)
+	max := min+batch
+	err = s.syncID(ctx, key.dbID, key.tblID, max, val.max, val.token)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	s.autoIDLock.Lock()
 	s.autoIDMap[key] = val
 	s.autoIDLock.Unlock()
+
+	fmt.Println("init kv success ==", key, val)
+	return nil
 }
 
 func (s *Service) Rebase(ctx context.Context, req *autoid.RebaseRequest) (*autoid.RebaseResponse, error) {
@@ -179,7 +218,11 @@ func (s *Service) Rebase(ctx context.Context, req *autoid.RebaseRequest) (*autoi
 	val, ok := s.autoIDMap[key]
 	if !ok {
 		s.autoIDLock.Unlock()
-		s.initKV(key)
+		err := s.initKV(ctx, key)
+		if err != nil {
+			fmt.Println("init kv error ==", err)
+			return nil, errors.Trace(err)
+		}
 		return s.Rebase(ctx, req)
 	}
 
@@ -188,7 +231,10 @@ func (s *Service) Rebase(ctx context.Context, req *autoid.RebaseRequest) (*autoi
 	} else {
 		s.autoIDLock.Unlock()
 		val.token <- struct{}{}
-		s.syncID(req.DbID, req.TblID, uint64(req.Base)+batch, val.max, val.token)
+		err := s.syncID(ctx, req.DbID, req.TblID, uint64(req.Base)+batch, val.max, val.token)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		return s.Rebase(ctx, req)
 	}
 	s.autoIDLock.Unlock()

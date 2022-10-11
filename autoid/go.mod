@@ -2,7 +2,7 @@ module github.com/tiancaiamao/autoid
 
 go 1.19
 
-replace github.com/pingcap/kvproto => ../github.com/pingcap/kvproto
+replace github.com/pingcap/kvproto => ../../kvproto
 
 require (
 	github.com/juju/errors v1.0.0
