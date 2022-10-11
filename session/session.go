@@ -664,7 +664,11 @@ func (s *session) doCommit(ctx context.Context) error {
 	s.txn.SetOption(kv.InfoSchema, s.sessionVars.TxnCtx.InfoSchema)
 	s.txn.SetOption(kv.CommitHook, func(info string, _ error) { s.sessionVars.LastTxnInfo = info })
 	if sessVars.EnableAmendPessimisticTxn {
-		s.txn.SetOption(kv.SchemaAmender, NewSchemaAmenderForTikvTxn(s))
+		if !variable.EnableFastReorg.Load() {
+			s.txn.SetOption(kv.SchemaAmender, NewSchemaAmenderForTikvTxn(s))
+		} else {
+			logutil.BgLogger().Warn("@@tidb_enable_amend_pessimistic_txn takes no effect when @@tidb_ddl_enable_fast_reorg is true")
+		}
 	}
 	s.txn.SetOption(kv.EnableAsyncCommit, sessVars.EnableAsyncCommit)
 	s.txn.SetOption(kv.Enable1PC, sessVars.Enable1PC)
@@ -946,6 +950,12 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 	}
 	err = s.doCommit(ctx)
 	if err != nil {
+		// polish the Write Conflict error message
+		newErr := s.tryReplaceWriteConflictError(err)
+		if newErr != nil {
+			err = newErr
+		}
+
 		commitRetryLimit := s.sessionVars.RetryLimit
 		if !s.sessionVars.TxnCtx.CouldRetry {
 			commitRetryLimit = 0
@@ -988,6 +998,64 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 	}
 	s.updateStatsDeltaToCollector()
 	return nil
+}
+
+// adds more information about the table in the error message
+// precondition: oldErr is a 9007:WriteConflict Error
+func (s *session) tryReplaceWriteConflictError(oldErr error) (newErr error) {
+	if !kv.ErrWriteConflict.Equal(oldErr) {
+		return nil
+	}
+	if errors.RedactLogEnabled.Load() {
+		return nil
+	}
+	originErr := errors.Cause(oldErr)
+	inErr, _ := originErr.(*errors.Error)
+	args := inErr.Args()
+	is := sessiontxn.GetTxnManager(s).GetTxnInfoSchema()
+	if is == nil {
+		return nil
+	}
+	newKeyTableField, ok := addTableNameInTableIDField(args[3], is)
+	if ok {
+		args[3] = newKeyTableField
+	}
+	newPrimaryKeyTableField, ok := addTableNameInTableIDField(args[5], is)
+	if ok {
+		args[5] = newPrimaryKeyTableField
+	}
+	return kv.ErrWriteConflict.FastGenByArgs(args...)
+}
+
+// precondition: is != nil
+func addTableNameInTableIDField(tableIDField interface{}, is infoschema.InfoSchema) (enhancedMsg string, done bool) {
+	keyTableID, ok := tableIDField.(string)
+	if !ok {
+		return "", false
+	}
+	stringsInTableIDField := strings.Split(keyTableID, "=")
+	if len(stringsInTableIDField) == 0 {
+		return "", false
+	}
+	tableIDStr := stringsInTableIDField[len(stringsInTableIDField)-1]
+	tableID, err := strconv.ParseInt(tableIDStr, 10, 64)
+	if err != nil {
+		return "", false
+	}
+	var tableName string
+	tbl, ok := is.TableByID(tableID)
+	if !ok {
+		tableName = "unknown"
+	} else {
+		dbInfo, ok := is.SchemaByTable(tbl.Meta())
+		if !ok {
+			tableName = "unknown." + tbl.Meta().Name.String()
+		} else {
+			tableName = dbInfo.Name.String() + "." + tbl.Meta().Name.String()
+		}
+	}
+	enhancedMsg = keyTableID + ", tableName=" + tableName
+	return enhancedMsg, true
 }
 
 func (s *session) updateStatsDeltaToCollector() {
@@ -2906,13 +2974,14 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 	}
 	s := &session{
 		store:                 store,
-		sessionVars:           variable.NewSessionVars(),
 		ddlOwnerManager:       dom.DDL().OwnerManager(),
 		client:                store.GetClient(),
 		mppClient:             store.GetMPPClient(),
 		stmtStats:             stmtstats.CreateStatementStats(),
 		sessionStatesHandlers: make(map[sessionstates.SessionStateType]sessionctx.SessionStatesHandler),
 	}
+	s.sessionVars = variable.NewSessionVars(s)
+
 	s.functionUsageMu.builtinFunctionUsage = make(telemetry.BuiltinFunctionsUsage)
 	if opt != nil && opt.PreparedPlanCache != nil {
 		s.preparedPlanCache = opt.PreparedPlanCache
@@ -2940,7 +3009,7 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, error) {
 	s := &session{
 		store:                 store,
-		sessionVars:           variable.NewSessionVars(),
+		sessionVars:           variable.NewSessionVars(nil),
 		client:                store.GetClient(),
 		mppClient:             store.GetMPPClient(),
 		stmtStats:             stmtstats.CreateStatementStats(),
@@ -3057,11 +3126,14 @@ func (s *session) PrepareTxnCtx(ctx context.Context) error {
 	}
 
 	txnMode := ast.Optimistic
-	if !s.sessionVars.IsAutocommit() || s.sessionVars.RetryInfo.Retrying ||
-		config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load() {
+	if !s.sessionVars.IsAutocommit() || config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load() {
 		if s.sessionVars.TxnMode == ast.Pessimistic {
 			txnMode = ast.Pessimistic
 		}
+	}
+
+	if s.sessionVars.RetryInfo.Retrying {
+		txnMode = ast.Pessimistic
 	}
 
 	return sessiontxn.GetTxnManager(s).EnterNewTxn(ctx, &sessiontxn.EnterNewTxnRequest{

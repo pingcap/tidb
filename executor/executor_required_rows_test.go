@@ -861,6 +861,11 @@ func (mp *mockPlan) Schema() *expression.Schema {
 	return mp.exec.Schema()
 }
 
+// MemoryUsage of mockPlan is only for testing
+func (mp *mockPlan) MemoryUsage() (sum int64) {
+	return
+}
+
 func TestVecGroupCheckerDATARACE(t *testing.T) {
 	ctx := mock.NewContext()
 

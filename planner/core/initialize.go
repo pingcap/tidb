@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/plancodec"
+	"github.com/pingcap/tidb/util/size"
 )
 
 // Init initializes LogicalAggregation.
@@ -470,6 +471,19 @@ func (p PhysicalTableSample) Init(ctx sessionctx.Context, offset int) *PhysicalT
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeTableSample, &p, offset)
 	p.stats = &property.StatsInfo{RowCount: 1}
 	return &p
+}
+
+// MemoryUsage return the memory usage of PhysicalTableSample
+func (p *PhysicalTableSample) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.physicalSchemaProducer.MemoryUsage() + size.SizeOfInterface + size.SizeOfBool
+	if p.TableSampleInfo != nil {
+		sum += p.TableSampleInfo.MemoryUsage()
+	}
+	return
 }
 
 // Init initializes PhysicalIndexReader.

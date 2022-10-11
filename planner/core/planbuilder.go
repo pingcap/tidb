@@ -23,6 +23,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/bindinfo"
@@ -171,6 +172,17 @@ type QueryTimeRange struct {
 // Condition returns a WHERE clause base on it's value
 func (tr *QueryTimeRange) Condition() string {
 	return fmt.Sprintf("where time>='%s' and time<='%s'", tr.From.Format(MetricTableTimeFormat), tr.To.Format(MetricTableTimeFormat))
+}
+
+const emptyQueryTimeRangeSize = int64(unsafe.Sizeof(QueryTimeRange{}))
+
+// MemoryUsage return the memory usage of QueryTimeRange
+func (tr *QueryTimeRange) MemoryUsage() (sum int64) {
+	if tr == nil {
+		return
+	}
+
+	return emptyQueryTimeRangeSize
 }
 
 func tableNames2HintTableInfo(ctx sessionctx.Context, hintName string, hintTables []ast.HintTable, p *hint.BlockHintProcessor, currentOffset int) []hintTableInfo {
@@ -1265,6 +1277,10 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 				ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 				continue
 			}
+			if path.Index != nil && path.Index.Global {
+				ignored = append(ignored, path)
+				continue
+			}
 			if hint.HintType == ast.HintIgnore {
 				// Collect all the ignored index hints.
 				ignored = append(ignored, path)
@@ -1779,7 +1795,7 @@ func (b *PlanBuilder) buildAdminCheckTable(ctx context.Context, as *ast.AdminStm
 			}
 		}
 		if idx == nil {
-			return nil, errors.Errorf("index %s do not exist", as.Index)
+			return nil, errors.Errorf("secondary index %s does not exist", as.Index)
 		}
 		if idx.Meta().State != model.StatePublic {
 			return nil, errors.Errorf("index %s state %s isn't public", as.Index, idx.Meta().State)
@@ -3032,6 +3048,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 			IfNotExists:           show.IfNotExists,
 			GlobalScope:           show.GlobalScope,
 			Extended:              show.Extended,
+			Limit:                 show.Limit,
 		},
 	}.Init(b.ctx)
 	isView := false
@@ -3134,6 +3151,12 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 	}
 	if show.Where != nil {
 		np, err = b.buildSelection(ctx, np, show.Where, nil)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if show.Limit != nil {
+		np, err = b.buildLimit(np, show.Limit)
 		if err != nil {
 			return nil, err
 		}
@@ -3418,7 +3441,7 @@ func (b *PlanBuilder) getDefaultValue(col *table.Column) (*expression.Constant, 
 	if err != nil {
 		return nil, err
 	}
-	return &expression.Constant{Value: value, RetType: &col.FieldType}, nil
+	return &expression.Constant{Value: value, RetType: col.FieldType.Clone()}, nil
 }
 
 // resolveGeneratedColumns resolves generated columns with their generation
@@ -3595,6 +3618,10 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 	}
 
 	err = insertPlan.ResolveIndices()
+	if err != nil {
+		return nil, err
+	}
+	insertPlan.FKChecks, err = insertPlan.buildOnInsertFKChecks(b.ctx, b.is, tn.DBInfo.Name.L)
 	return insertPlan, err
 }
 
@@ -4278,8 +4305,8 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 			return nil, ErrNoDB
 		}
 		if b.ctx.GetSessionVars().User != nil {
-			authErr = ErrDBaccessDenied.GenWithStackByArgs("ALTER", b.ctx.GetSessionVars().User.AuthUsername,
-				b.ctx.GetSessionVars().User.AuthHostname, v.Name)
+			authErr = ErrDBaccessDenied.GenWithStackByArgs(b.ctx.GetSessionVars().User.AuthUsername,
+				b.ctx.GetSessionVars().User.AuthHostname, v.Name.O)
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AlterPriv, v.Name.L, "", "", authErr)
 	case *ast.AlterTableStmt:
@@ -4619,6 +4646,10 @@ func (b *PlanBuilder) buildTrace(trace *ast.TraceStmt) (Plan, error) {
 }
 
 func (b *PlanBuilder) buildExplainPlan(targetPlan Plan, format string, explainRows [][]string, analyze bool, execStmt ast.StmtNode, runtimeStats *execdetails.RuntimeStatsColl) (Plan, error) {
+	if strings.ToLower(format) == types.ExplainFormatTrueCardCost && !analyze {
+		return nil, errors.Errorf("'explain format=%v' cannot work without 'analyze', please use 'explain analyze format=%v'", format, format)
+	}
+
 	p := &Explain{
 		TargetPlan:       targetPlan,
 		Format:           format,
@@ -5005,8 +5036,9 @@ func (b *PlanBuilder) buildCompactTable(node *ast.CompactTableStmt) (Plan, error
 
 	tblInfo := node.Table.TableInfo
 	p := &CompactTable{
-		ReplicaKind: node.ReplicaKind,
-		TableInfo:   tblInfo,
+		ReplicaKind:    node.ReplicaKind,
+		TableInfo:      tblInfo,
+		PartitionNames: node.PartitionNames,
 	}
 	return p, nil
 }

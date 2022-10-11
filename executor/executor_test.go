@@ -24,6 +24,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -6062,4 +6063,119 @@ func TestTableLockPrivilege(t *testing.T) {
 	tk.MustExec("GRANT SELECT ON test2.* to 'testuser'@'localhost'")
 	tk2.MustExec("LOCK TABLE test.t WRITE, test2.t2 WRITE")
 	tk.MustExec("LOCK TABLE test.t WRITE, test2.t2 WRITE")
+}
+
+func TestGlobalMemoryControl(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk0 := testkit.NewTestKit(t, store)
+	tk0.MustExec("set global tidb_mem_oom_action = 'cancel'")
+	tk0.MustExec("set global tidb_server_memory_limit = 512 << 20")
+	tk0.MustExec("set global tidb_server_memory_limit_sess_min_size = 128")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tracker1 := tk1.Session().GetSessionVars().StmtCtx.MemTracker
+
+	tk2 := testkit.NewTestKit(t, store)
+	tracker2 := tk2.Session().GetSessionVars().StmtCtx.MemTracker
+
+	tk3 := testkit.NewTestKit(t, store)
+	tracker3 := tk3.Session().GetSessionVars().StmtCtx.MemTracker
+
+	sm := &testkit.MockSessionManager{
+		PS: []*util.ProcessInfo{tk1.Session().ShowProcess(), tk2.Session().ShowProcess(), tk3.Session().ShowProcess()},
+	}
+	dom.ServerMemoryLimitHandle().SetSessionManager(sm)
+	go dom.ServerMemoryLimitHandle().Run()
+
+	tracker1.Consume(100 << 20) // 100 MB
+	tracker2.Consume(200 << 20) // 200 MB
+	tracker3.Consume(300 << 20) // 300 MB
+
+	test := make([]int, 128<<20)       // Keep 1GB HeapInUse
+	time.Sleep(500 * time.Millisecond) // The check goroutine checks the memory usage every 100ms. The Sleep() make sure that Top1Tracker can be Canceled.
+
+	// Kill Top1
+	require.False(t, tracker1.NeedKill.Load())
+	require.False(t, tracker2.NeedKill.Load())
+	require.True(t, tracker3.NeedKill.Load())
+	require.Equal(t, memory.MemUsageTop1Tracker.Load(), tracker3)
+	util.WithRecovery( // Next Consume() will panic and cancel the SQL
+		func() {
+			tracker3.Consume(1)
+		}, func(r interface{}) {
+			require.True(t, strings.Contains(r.(string), "Out Of Memory Quota!"))
+		})
+	tracker2.Consume(300 << 20) // Sum 500MB, Not Panic, Waiting t3 cancel finish.
+	time.Sleep(500 * time.Millisecond)
+	require.False(t, tracker2.NeedKill.Load())
+	// Kill Finished
+	tracker3.Consume(-(300 << 20))
+	// Simulated SQL is Canceled and the time is updated
+	sm.PSMu.Lock()
+	ps := *sm.PS[2]
+	ps.Time = time.Now()
+	sm.PS[2] = &ps
+	sm.PSMu.Unlock()
+	time.Sleep(500 * time.Millisecond)
+	// Kill the Next SQL
+	util.WithRecovery( // Next Consume() will panic and cancel the SQL
+		func() {
+			tracker2.Consume(1)
+		}, func(r interface{}) {
+			require.True(t, strings.Contains(r.(string), "Out Of Memory Quota!"))
+		})
+	require.Equal(t, test[0], 0) // Keep 1GB HeapInUse
+}
+
+func TestGlobalMemoryControl2(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk0 := testkit.NewTestKit(t, store)
+	tk0.MustExec("set global tidb_mem_oom_action = 'cancel'")
+	tk0.MustExec("set global tidb_server_memory_limit = 1 << 30")
+	tk0.MustExec("set global tidb_server_memory_limit_sess_min_size = 128")
+
+	sm := &testkit.MockSessionManager{
+		PS: []*util.ProcessInfo{tk0.Session().ShowProcess()},
+	}
+	dom.ServerMemoryLimitHandle().SetSessionManager(sm)
+	go dom.ServerMemoryLimitHandle().Run()
+
+	tk0.MustExec("use test")
+	tk0.MustExec("create table t(a int)")
+	tk0.MustExec("insert into t select 1")
+	for i := 1; i <= 8; i++ {
+		tk0.MustExec("insert into t select * from t") // 256 Lines
+	}
+
+	var test []int
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		time.Sleep(100 * time.Millisecond) // Make sure the sql is running.
+		test = make([]int, 128<<20)        // Keep 1GB HeapInuse
+		wg.Done()
+	}()
+	sql := "select * from t t1 join t t2 join t t3 on t1.a=t2.a and t1.a=t3.a order by t1.a;" // Need 500MB
+	require.True(t, strings.Contains(tk0.QueryToErr(sql).Error(), "Out Of Memory Quota!"))
+	require.Equal(t, tk0.Session().GetSessionVars().StmtCtx.DiskTracker.MaxConsumed(), int64(0))
+	wg.Wait()
+	test[0] = 0
+	runtime.GC()
+}
+
+func TestCompileOutOfMemoryQuota(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	// Test for issue: https://github.com/pingcap/tidb/issues/38322
+	defer tk.MustExec("set global tidb_mem_oom_action = DEFAULT")
+	tk.MustExec("set global tidb_mem_oom_action='CANCEL'")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, index idx(a))")
+	tk.MustExec("create table t1(a int, c int, index idx(a))")
+	tk.MustExec("set tidb_mem_quota_query=10")
+	err := tk.ExecToErr("select t.a, t1.a from t use index(idx), t1 use index(idx) where t.a = t1.a")
+	require.Contains(t, err.Error(), "Out Of Memory Quota!")
 }

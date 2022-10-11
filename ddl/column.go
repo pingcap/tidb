@@ -1464,7 +1464,8 @@ func adjustForeignKeyChildTableInfoAfterModifyColumn(d *ddlCtx, t *meta.Meta, jo
 	if len(referredFKs) == 0 {
 		return nil, nil
 	}
-	fkh := newForeignKeyHelper(job.SchemaName, job.SchemaID, tblInfo)
+	fkh := newForeignKeyHelper()
+	fkh.addLoadedTable(job.SchemaName, tblInfo.Name.L, job.SchemaID, tblInfo)
 	for _, referredFK := range referredFKs {
 		info, err := fkh.getTableFromStorage(is, t, referredFK.ChildSchema, referredFK.ChildTable)
 		if err != nil {

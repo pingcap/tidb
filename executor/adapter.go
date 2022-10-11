@@ -535,7 +535,13 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		return a.handlePessimisticSelectForUpdate(ctx, e)
 	}
 
-	if handled, result, err := a.handleNoDelay(ctx, e, isPessimistic); handled || err != nil {
+	// In function handlePessimisticDML may rebuild a Executor when handlePessimisticLockError,
+	// so need to return the rebuild executor.
+	if handled, result, e, err := a.handleNoDelay(ctx, e, isPessimistic); handled || err != nil {
+		if err != nil {
+			return result, err
+		}
+		err = a.handleForeignKeyTrigger(ctx, e)
 		return result, err
 	}
 
@@ -555,7 +561,22 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	}, nil
 }
 
-func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic bool) (handled bool, rs sqlexec.RecordSet, err error) {
+func (a *ExecStmt) handleForeignKeyTrigger(ctx context.Context, e Executor) error {
+	exec, ok := e.(WithForeignKeyTrigger)
+	if !ok {
+		return nil
+	}
+	fkChecks := exec.GetFKChecks()
+	for _, fkCheck := range fkChecks {
+		err := fkCheck.doCheck(ctx)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic bool) (handled bool, rs sqlexec.RecordSet, _ Executor, err error) {
 	sc := a.Ctx.GetSessionVars().StmtCtx
 	defer func() {
 		// If the stmt have no rs like `insert`, The session tracker detachment will be directly
@@ -585,19 +606,20 @@ func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic 
 	if toCheck.Schema().Len() == 0 {
 		handled = !isExplainAnalyze
 		if isPessimistic {
-			return handled, nil, a.handlePessimisticDML(ctx, toCheck)
+			e, err := a.handlePessimisticDML(ctx, toCheck)
+			return handled, nil, e, err
 		}
 		r, err := a.handleNoDelayExecutor(ctx, toCheck)
-		return handled, r, err
+		return handled, r, e, err
 	} else if proj, ok := toCheck.(*ProjectionExec); ok && proj.calculateNoDelay {
 		// Currently this is only for the "DO" statement. Take "DO 1, @a=2;" as an example:
 		// the Projection has two expressions and two columns in the schema, but we should
 		// not return the result of the two expressions.
 		r, err := a.handleNoDelayExecutor(ctx, e)
-		return true, r, err
+		return true, r, e, err
 	}
 
-	return false, nil, nil
+	return false, nil, e, nil
 }
 
 func isNoResultPlan(p plannercore.Plan) bool {
@@ -746,14 +768,14 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e Executor) (sqlex
 	return nil, err
 }
 
-func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) (err error) {
+func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) (_ Executor, err error) {
 	sctx := a.Ctx
 	// Do not activate the transaction here.
 	// When autocommit = 0 and transaction in pessimistic mode,
 	// statements like set xxx = xxx; should not active the transaction.
 	txn, err := sctx.Txn(false)
 	if err != nil {
-		return err
+		return e, err
 	}
 	txnCtx := sctx.GetSessionVars().TxnCtx
 	defer func() {
@@ -781,7 +803,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) (err er
 		startPointGetLocking := time.Now()
 		_, err = a.handleNoDelayExecutor(ctx, e)
 		if !txn.Valid() {
-			return err
+			return e, err
 		}
 		if err != nil {
 			// It is possible the DML has point get plan that locks the key.
@@ -790,24 +812,24 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) (err er
 				if ErrDeadlock.Equal(err) {
 					metrics.StatementDeadlockDetectDuration.Observe(time.Since(startPointGetLocking).Seconds())
 				}
-				return err
+				return e, err
 			}
 			continue
 		}
 		keys, err1 := txn.(pessimisticTxn).KeysNeedToLock()
 		if err1 != nil {
-			return err1
+			return e, err1
 		}
 		keys = txnCtx.CollectUnchangedRowKeys(keys)
 		if len(keys) == 0 {
-			return nil
+			return e, nil
 		}
 		keys = filterTemporaryTableKeys(sctx.GetSessionVars(), keys)
 		seVars := sctx.GetSessionVars()
 		keys = filterLockTableKeys(seVars.StmtCtx, keys)
 		lockCtx, err := newLockCtx(sctx, seVars.LockWaitTimeout, len(keys))
 		if err != nil {
-			return err
+			return e, err
 		}
 		var lockKeyStats *util.LockKeysDetails
 		ctx = context.WithValue(ctx, util.LockKeysDetailCtxKey, &lockKeyStats)
@@ -818,7 +840,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) (err er
 			seVars.StmtCtx.MergeLockKeysExecDetails(lockKeyStats)
 		}
 		if err == nil {
-			return nil
+			return e, nil
 		}
 		e, err = a.handlePessimisticLockError(ctx, err)
 		if err != nil {
@@ -826,7 +848,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) (err er
 			if ErrDeadlock.Equal(err) {
 				metrics.StatementDeadlockDetectDuration.Observe(time.Since(startLocking).Seconds())
 			}
-			return err
+			return e, err
 		}
 	}
 }
@@ -1196,9 +1218,12 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	if execDetail.CommitDetail != nil && execDetail.CommitDetail.WriteSize > 0 {
 		a.Ctx.GetTxnWriteThroughputSLI().AddTxnWriteSize(execDetail.CommitDetail.WriteSize, execDetail.CommitDetail.WriteKeys)
 	}
-	if execDetail.ScanDetail != nil && execDetail.ScanDetail.ProcessedKeys > 0 && sessVars.StmtCtx.AffectedRows() > 0 {
-		// Only record the read keys in write statement which affect row more than 0.
-		a.Ctx.GetTxnWriteThroughputSLI().AddReadKeys(execDetail.ScanDetail.ProcessedKeys)
+	if execDetail.ScanDetail != nil && sessVars.StmtCtx.AffectedRows() > 0 {
+		processedKeys := atomic.LoadInt64(&execDetail.ScanDetail.ProcessedKeys)
+		if processedKeys > 0 {
+			// Only record the read keys in write statement which affect row more than 0.
+			a.Ctx.GetTxnWriteThroughputSLI().AddReadKeys(processedKeys)
+		}
 	}
 	succ := err == nil
 	if a.Plan != nil {

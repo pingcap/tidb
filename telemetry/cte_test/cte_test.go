@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/testkit/testsetup"
 	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/tests/v3/integration"
+	"go.opencensus.io/stats/view"
 	"go.uber.org/goleak"
 )
 
@@ -37,7 +38,6 @@ func TestMain(m *testing.M) {
 
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
-		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
 	}
 
@@ -68,9 +68,9 @@ func TestCTEPreviewAndReport(t *testing.T) {
 
 	jsonParsed, err := gabs.ParseJSON([]byte(res))
 	require.NoError(t, err)
-	require.Equal(t, 2, int(jsonParsed.Path("featureUsage.cte.nonRecursiveCTEUsed").Data().(float64)))
+	require.Equal(t, 1, int(jsonParsed.Path("featureUsage.cte.nonRecursiveCTEUsed").Data().(float64)))
 	require.Equal(t, 1, int(jsonParsed.Path("featureUsage.cte.recursiveUsed").Data().(float64)))
-	require.Equal(t, 3, int(jsonParsed.Path("featureUsage.cte.nonCTEUsed").Data().(float64)))
+	require.Equal(t, 4, int(jsonParsed.Path("featureUsage.cte.nonCTEUsed").Data().(float64)))
 
 	err = telemetry.ReportUsageData(s.se, s.etcdCluster.RandClient())
 	require.NoError(t, err)
@@ -120,6 +120,7 @@ func newSuite(t *testing.T) *testSuite {
 		suite.dom.Close()
 		err = suite.store.Close()
 		require.NoError(t, err)
+		view.Stop()
 	}
 
 	return suite
