@@ -32,11 +32,11 @@ var GlobalMemoryLimitTuner = &memoryLimitTuner{}
 // Go runtime trigger GC when hit memory limit which managed via runtime/debug.SetMemoryLimit.
 // So we can change memory limit dynamically to avoid frequent GC when memory usage is greater than the limit.
 type memoryLimitTuner struct {
-	finalizer    *finalizer
-	isTuning     atomicutil.Bool
-	percentage   atomicutil.Float64
-	waitingReset atomicutil.Bool
-	times        int // The times that nextGC bigger than MemoryLimit
+	finalizer                    *finalizer
+	isTuning                     atomicutil.Bool
+	percentage                   atomicutil.Float64
+	waitingReset                 atomicutil.Bool
+	nextGCTriggeredByMemoryLimit bool
 }
 
 // tuning check the memory nextGC and judge whether this GC is trigger by memory limit.
@@ -49,19 +49,19 @@ func (t *memoryLimitTuner) tuning() {
 	runtime.ReadMemStats(r)
 	gogc := util.GetGOGC()
 	ratio := float64(100+gogc) / 100
-	// If theoretical NextGC(Equivalent to HeapInUse * (100 + GOGC) / 100) is bigger than MemoryLimit twice in a row,
-	// the second GC is caused by MemoryLimit.
-	// All GC is divided into the following three cases:
-	// 1. In normal, HeapInUse * (100 + GOGC) / 100 < MemoryLimit, NextGC = HeapInUse * (100 + GOGC) / 100.
-	// 2. The first time HeapInUse * (100 + GOGC) / 100 >= MemoryLimit, NextGC = MemoryLimit. But this GC is trigger by GOGC.
-	// 3. The second time HeapInUse * (100 + GOGC) / 100 >= MemoryLimit. This GC is trigger by MemoryLimit.
-	//    We set MemoryLimit to MaxInt, so the NextGC will be HeapInUse * (100 + GOGC) / 100 again.
+	// This `if` checks whether the **last** GC was triggered by MemoryLimit as far as possible.
+	// If the **last** GC was triggered by MemoryLimit, we'll set MemoryLimit to MAXVALUE to return control back to GOGC
+	// to avoid frequent GC when memory usage fluctuates above and below MemoryLimit.
+	// The logic we judge whether the **last** GC was triggered by MemoryLimit is as follows:
+	// suppose `NextGC` = `HeapInUse * (100 + GOGC) / 100)`,
+	// - If NextGC < MemoryLimit, the **next** GC will **not** be triggered by MemoryLimit thus we do not care about
+	//   why the **last** GC is triggered. And MemoryLimit will not be reset this time.
+	// - Only if NextGC >= MemoryLimit , the **next** GC will be triggered by MemoryLimit. Thus, we need to reset
+	//   MemoryLimit after the **next** GC happens if needed.
 	if float64(r.HeapInuse)*ratio > float64(debug.SetMemoryLimit(-1)) {
-		t.times++
-		if t.times >= 2 && t.waitingReset.CompareAndSwap(false, true) {
-			t.times = 0
+		if t.nextGCTriggeredByMemoryLimit && t.waitingReset.CompareAndSwap(false, true) {
 			go func() {
-				debug.SetMemoryLimit(math.MaxInt)
+				debug.SetMemoryLimit(math.MaxInt64)
 				resetInterval := 1 * time.Minute // Wait 1 minute and set back, to avoid frequent GC
 				failpoint.Inject("testMemoryLimitTuner", func(val failpoint.Value) {
 					if val, ok := val.(bool); val && ok {
@@ -75,8 +75,9 @@ func (t *memoryLimitTuner) tuning() {
 				}
 			}()
 		}
+		t.nextGCTriggeredByMemoryLimit = true
 	} else {
-		t.times = 0
+		t.nextGCTriggeredByMemoryLimit = false
 	}
 }
 
