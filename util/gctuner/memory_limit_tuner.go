@@ -102,9 +102,9 @@ func (t *memoryLimitTuner) GetPercentage() float64 {
 // UpdateMemoryLimit updates the memory limit.
 // This function should be called when `tidb_server_memory_limit` or `tidb_server_memory_limit_gc_trigger` is modified.
 func (t *memoryLimitTuner) UpdateMemoryLimit() {
-	memoryLimit := t.calcMemoryLimit()
-	if EnableGOGCTuner.Load() {
-		memoryLimit = math.MaxInt64
+	var memoryLimit int64 = math.MaxInt64
+	if !EnableGOGCTuner.Load() {
+		memoryLimit = t.calcMemoryLimit()
 	}
 	if memoryLimit == math.MaxInt64 {
 		t.isTuning.Store(false)
