@@ -69,7 +69,13 @@ func (s *testSuite1) TestRevokeDBScope(c *C) {
 
 		tk.MustQuery(check).Check(testkit.Rows("Y"))
 		tk.MustExec(sql)
-		tk.MustQuery(check).Check(testkit.Rows("N"))
+		if v == mysql.AllDBPrivs[len(mysql.AllDBPrivs)-1] {
+			// When all privileges are set to 'N', then the record should be removed as well.
+			// https://github.com/pingcap/tidb/issues/38363
+			tk.MustQuery(check).Check(testkit.Rows())
+		} else {
+			tk.MustQuery(check).Check(testkit.Rows("N"))
+		}
 	}
 }
 
