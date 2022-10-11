@@ -515,7 +515,7 @@ func (b *executorBuilder) buildRecoverIndex(v *plannercore.RecoverIndex) Executo
 	idxName := strings.ToLower(v.IndexName)
 	index := tables.GetWritableIndexByName(idxName, t)
 	if index == nil {
-		b.err = errors.Errorf("index `%v` is not found in table `%v`", v.IndexName, v.Table.Name.O)
+		b.err = errors.Errorf("secondary index `%v` is not found in table `%v`", v.IndexName, v.Table.Name.O)
 		return nil
 	}
 	e := &RecoverIndexExec{
@@ -575,7 +575,7 @@ func (b *executorBuilder) buildCleanupIndex(v *plannercore.CleanupIndex) Executo
 	}
 
 	if index == nil {
-		b.err = errors.Errorf("index `%v` is not found in table `%v`", v.IndexName, v.Table.Name.O)
+		b.err = errors.Errorf("secondary index `%v` is not found in table `%v`", v.IndexName, v.Table.Name.O)
 		return nil
 	}
 	e := &CleanupIndexExec{

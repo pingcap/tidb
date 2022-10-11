@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 
 	"github.com/pingcap/tidb/infoschema"
@@ -50,7 +51,7 @@ type TestDDLCallback struct {
 	onJobRunBefore         func(*model.Job)
 	OnJobRunBeforeExported func(*model.Job)
 	onJobUpdated           func(*model.Job)
-	OnJobUpdatedExported   func(*model.Job)
+	OnJobUpdatedExported   atomic.Pointer[func(*model.Job)]
 	onWatched              func(ctx context.Context)
 	OnGetJobBeforeExported func(string)
 	OnGetJobAfterExported  func(string, *model.Job)
@@ -98,8 +99,8 @@ func (tc *TestDDLCallback) OnJobRunBefore(job *model.Job) {
 // OnJobUpdated is used to run the user customized logic of `OnJobUpdated` first.
 func (tc *TestDDLCallback) OnJobUpdated(job *model.Job) {
 	logutil.BgLogger().Info("on job updated", zap.String("job", job.String()))
-	if tc.OnJobUpdatedExported != nil {
-		tc.OnJobUpdatedExported(job)
+	if onJobUpdatedExportedFunc := tc.OnJobUpdatedExported.Load(); onJobUpdatedExportedFunc != nil {
+		(*onJobUpdatedExportedFunc)(job)
 		return
 	}
 	if tc.onJobUpdated != nil {
