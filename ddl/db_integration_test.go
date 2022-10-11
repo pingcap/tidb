@@ -1213,14 +1213,14 @@ func TestBitDefaultValue(t *testing.T) {
 	);`)
 }
 
-func backgroundExec(s kv.Storage, sql string, done chan error) {
+func backgroundExec(s kv.Storage, schema, sql string, done chan error) {
 	se, err := session.CreateSession4Test(s)
 	if err != nil {
 		done <- errors.Trace(err)
 		return
 	}
 	defer se.Close()
-	_, err = se.Execute(context.Background(), "use test")
+	_, err = se.Execute(context.Background(), "use "+schema)
 	if err != nil {
 		done <- errors.Trace(err)
 		return
