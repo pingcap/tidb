@@ -532,16 +532,16 @@ func accessCondShouldReserve(access expression.Expression, length int) bool {
 		var ok bool
 		var constLen int
 		if c, ok = f.GetArgs()[0].(*expression.Constant); ok {
-			constLen = GetLengthOfPrefixableConstant(c, f.GetArgs()[1].GetType())
+			constLen = GetConstantLength(c, f.GetArgs()[1].GetType())
 		} else {
 			c, _ = f.GetArgs()[1].(*expression.Constant)
-			constLen = GetLengthOfPrefixableConstant(c, f.GetArgs()[0].GetType())
+			constLen = GetConstantLength(c, f.GetArgs()[0].GetType())
 		}
 		return constLen == -1 || constLen >= length
 	case ast.In:
 		for _, v := range f.GetArgs()[1:] {
 			c, _ := v.(*expression.Constant)
-			constLen := GetLengthOfPrefixableConstant(c, f.GetArgs()[0].GetType())
+			constLen := GetConstantLength(c, f.GetArgs()[0].GetType())
 			if constLen == -1 || constLen >= length {
 				return true
 			}

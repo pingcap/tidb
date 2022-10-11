@@ -68,9 +68,9 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 				if c.isFullLength {
 					return true
 				}
-				constLen := GetLengthOfPrefixableConstant(constVal, scalar.GetArgs()[0].GetType())
+				constLen := GetConstantLength(constVal, scalar.GetArgs()[0].GetType())
 				if scalar.FuncName.L == ast.NE {
-					return constLen != -1 && constLen < c.length
+					return constLen != types.UnspecifiedLength && constLen < c.length
 				}
 				if constLen == -1 || constLen >= c.length {
 					c.shouldReserve = true
@@ -87,7 +87,7 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 				if c.isFullLength {
 					return true
 				}
-				constLen := GetLengthOfPrefixableConstant(constVal, scalar.GetArgs()[0].GetType())
+				constLen := GetConstantLength(constVal, scalar.GetArgs()[0].GetType())
 				if scalar.FuncName.L == ast.NE {
 					return constLen != -1 && constLen < c.length
 				}
@@ -133,7 +133,7 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 		for _, v := range scalar.GetArgs()[1:] {
 			if constVal, ok := v.(*expression.Constant); ok {
 				if !c.isFullLength {
-					constLen := GetLengthOfPrefixableConstant(constVal, scalar.GetArgs()[0].GetType())
+					constLen := GetConstantLength(constVal, scalar.GetArgs()[0].GetType())
 					if constLen == -1 || constLen >= c.length {
 						c.shouldReserve = true
 					}
@@ -234,14 +234,19 @@ func (c *conditionChecker) checkColumn(expr expression.Expression) bool {
 	return c.colUniqueID == col.UniqueID
 }
 
-// GetLengthOfPrefixableConstant returns length of characters if constant is bytes or string type and returns -1 otherwise.
-func GetLengthOfPrefixableConstant(c *expression.Constant, tp *types.FieldType) int {
+// GetConstantLength returns the length of the constant.
+// If the type is not prefixable or the constant is mutable, return unspecifiedLength.
+// Otherwise, return the length of the constant.
+func GetConstantLength(c *expression.Constant, tp *types.FieldType) int {
+	if tp == nil || !types.IsTypePrefixable(tp.GetType()) {
+		return types.UnspecifiedLength
+	}
 	if c == nil || c.DeferredExpr != nil || c.ParamMarker != nil {
-		return -1
+		return types.UnspecifiedLength
 	}
 	val, err := c.Eval(chunk.Row{})
 	if err != nil || (val.Kind() != types.KindBytes && val.Kind() != types.KindString) {
-		return -1
+		return types.UnspecifiedLength
 	}
 	if tp.GetCharset() == charset.CharsetUTF8 || tp.GetCharset() == charset.CharsetUTF8MB4 {
 		return utf8.RuneCount(val.GetBytes())

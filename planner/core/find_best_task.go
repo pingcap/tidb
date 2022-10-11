@@ -1282,7 +1282,7 @@ func extractFiltersForIndexMerge(sc *stmtctx.StatementContext, client kv.Client,
 }
 
 func indexCoveringCol(col *expression.Column, constVal *expression.Constant, indexCols []*expression.Column, idxColLens []int) bool {
-	constLen := ranger.GetLengthOfPrefixableConstant(constVal, col.GetType())
+	constLen := ranger.GetConstantLength(constVal, col.GetType())
 	for i, indexCol := range indexCols {
 		if indexCol != nil && col.EqualByExprAndID(nil, indexCol) {
 			isFullLen := idxColLens[i] == types.UnspecifiedLength || idxColLens[i] == col.RetType.GetFlen()
