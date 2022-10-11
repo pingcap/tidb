@@ -359,7 +359,11 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 	case PhysicalPlan:
 		sum = x.MemoryUsage()
 	case *Insert:
-		sum = x.MemoryUsage() + int64(unsafe.Sizeof(Insert{}))
+		sum = x.MemoryUsage()
+	case *Update:
+		sum = x.MemoryUsage()
+	case *Delete:
+		sum = x.MemoryUsage()
 	default:
 		logutil.BgLogger().Info("add this type memory usage ")
 	}
