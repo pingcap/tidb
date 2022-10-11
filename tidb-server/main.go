@@ -61,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/domainutil"
+	"github.com/pingcap/tidb/util/gctuner"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
@@ -204,7 +205,7 @@ func main() {
 	printInfo()
 	setupBinlogClient()
 	setupMetrics()
-
+	setupGCTuner()
 	storage, dom := createStoreAndDomain()
 	svr := createServer(storage, dom)
 
@@ -746,6 +747,7 @@ func createServer(storage kv.Storage, dom *domain.Domain) *server.Server {
 	svr.SetDomain(dom)
 	svr.InitGlobalConnID(dom.ServerID)
 	go dom.ExpensiveQueryHandle().SetSessionManager(svr).Run()
+	go dom.ServerMemoryLimitHandle().SetSessionManager(svr).Run()
 	dom.InfoSyncer().SetSessionManager(svr)
 	return svr
 }
@@ -780,6 +782,15 @@ func setupTracing() {
 		log.Fatal("setup jaeger tracer failed", zap.String("error message", err.Error()))
 	}
 	opentracing.SetGlobalTracer(tracer)
+}
+
+func setupGCTuner() {
+	limit, err := memory.MemTotal()
+	if err != nil {
+		log.Fatal("setupGCTuner failed", zap.Error(err))
+	}
+	threshold := limit * 7 / 10
+	gctuner.Tuning(threshold)
 }
 
 func closeDomainAndStorage(storage kv.Storage, dom *domain.Domain) {

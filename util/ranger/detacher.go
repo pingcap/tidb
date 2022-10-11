@@ -370,12 +370,12 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 				return &DetachRangeResult{}, nil
 			}
 			if len(tailRes.AccessConds) > 0 {
-				newRanges, rangeFallback := appendRanges2PointRanges(pointRanges, tailRes.Ranges, d.rangeMaxSize)
+				newRanges, rangeFallback := AppendRanges2PointRanges(pointRanges, tailRes.Ranges, d.rangeMaxSize)
 				if rangeFallback {
 					d.sctx.GetSessionVars().StmtCtx.RecordRangeFallback(d.rangeMaxSize)
 					res.RemainedConds = append(res.RemainedConds, tailRes.AccessConds...)
-					// Some conditions may be in both tailRes.AccessConds and tailRes.RemainedConds so we call appendConditionsIfNotExist here.
-					res.RemainedConds = appendConditionsIfNotExist(res.RemainedConds, tailRes.RemainedConds)
+					// Some conditions may be in both tailRes.AccessConds and tailRes.RemainedConds so we call AppendConditionsIfNotExist here.
+					res.RemainedConds = AppendConditionsIfNotExist(res.RemainedConds, tailRes.RemainedConds)
 					return res, nil
 				}
 				res.Ranges = newRanges
@@ -405,7 +405,7 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 		// [10, 10] [30, 30] exceeds range mem limit, we add `a = 10 or a = 30` back to RemainedConds, which is actually
 		// unnecessary because `(a = 10 and b = 20) or (a = 30 and b = 40)` is already in RemainedConds.
 		// TODO: we will optimize it later.
-		res.RemainedConds = appendConditionsIfNotExist(res.RemainedConds, remainedConds)
+		res.RemainedConds = AppendConditionsIfNotExist(res.RemainedConds, remainedConds)
 		res.Ranges = ranges
 		return res, nil
 	}
@@ -542,7 +542,7 @@ func extractValueInfo(expr expression.Expression) *valueInfo {
 
 // ExtractEqAndInCondition will split the given condition into three parts by the information of index columns and their lengths.
 // accesses: The condition will be used to build range.
-// filters: filters is the part that some access conditions need to be evaluate again since it's only the prefix part of char column.
+// filters: filters is the part that some access conditions need to be evaluated again since it's only the prefix part of char column.
 // newConditions: We'll simplify the given conditions if there're multiple in conditions or eq conditions on the same column.
 //
 //	e.g. if there're a in (1, 2, 3) and a in (2, 3, 4). This two will be combined to a in (2, 3) and pushed to newConditions.
@@ -904,7 +904,8 @@ func removeConditions(conditions, condsToRemove []expression.Expression) []expre
 	return filterConds
 }
 
-func appendConditionsIfNotExist(conditions, condsToAppend []expression.Expression) []expression.Expression {
+// AppendConditionsIfNotExist appends conditions if they are absent.
+func AppendConditionsIfNotExist(conditions, condsToAppend []expression.Expression) []expression.Expression {
 	shouldAppend := make([]expression.Expression, 0, len(condsToAppend))
 	for _, cond := range condsToAppend {
 		if !expression.Contains(conditions, cond) {

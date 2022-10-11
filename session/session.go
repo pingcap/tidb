@@ -664,7 +664,11 @@ func (s *session) doCommit(ctx context.Context) error {
 	s.txn.SetOption(kv.InfoSchema, s.sessionVars.TxnCtx.InfoSchema)
 	s.txn.SetOption(kv.CommitHook, func(info string, _ error) { s.sessionVars.LastTxnInfo = info })
 	if sessVars.EnableAmendPessimisticTxn {
-		s.txn.SetOption(kv.SchemaAmender, NewSchemaAmenderForTikvTxn(s))
+		if !variable.EnableFastReorg.Load() {
+			s.txn.SetOption(kv.SchemaAmender, NewSchemaAmenderForTikvTxn(s))
+		} else {
+			logutil.BgLogger().Warn("@@tidb_enable_amend_pessimistic_txn takes no effect when @@tidb_ddl_enable_fast_reorg is true")
+		}
 	}
 	s.txn.SetOption(kv.EnableAsyncCommit, sessVars.EnableAsyncCommit)
 	s.txn.SetOption(kv.Enable1PC, sessVars.Enable1PC)
@@ -2898,13 +2902,14 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 	}
 	s := &session{
 		store:                 store,
-		sessionVars:           variable.NewSessionVars(),
 		ddlOwnerManager:       dom.DDL().OwnerManager(),
 		client:                store.GetClient(),
 		mppClient:             store.GetMPPClient(),
 		stmtStats:             stmtstats.CreateStatementStats(),
 		sessionStatesHandlers: make(map[sessionstates.SessionStateType]sessionctx.SessionStatesHandler),
 	}
+	s.sessionVars = variable.NewSessionVars(s)
+
 	s.functionUsageMu.builtinFunctionUsage = make(telemetry.BuiltinFunctionsUsage)
 	if opt != nil && opt.PreparedPlanCache != nil {
 		s.preparedPlanCache = opt.PreparedPlanCache
@@ -2932,7 +2937,7 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, error) {
 	s := &session{
 		store:                 store,
-		sessionVars:           variable.NewSessionVars(),
+		sessionVars:           variable.NewSessionVars(nil),
 		client:                store.GetClient(),
 		mppClient:             store.GetMPPClient(),
 		stmtStats:             stmtstats.CreateStatementStats(),
@@ -3049,11 +3054,14 @@ func (s *session) PrepareTxnCtx(ctx context.Context) error {
 	}
 
 	txnMode := ast.Optimistic
-	if !s.sessionVars.IsAutocommit() || s.sessionVars.RetryInfo.Retrying ||
-		config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load() {
+	if !s.sessionVars.IsAutocommit() || config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load() {
 		if s.sessionVars.TxnMode == ast.Pessimistic {
 			txnMode = ast.Pessimistic
 		}
+	}
+
+	if s.sessionVars.RetryInfo.Retrying {
+		txnMode = ast.Pessimistic
 	}
 
 	return sessiontxn.GetTxnManager(s).EnterNewTxn(ctx, &sessiontxn.EnterNewTxnRequest{
@@ -3550,15 +3558,21 @@ func (s *session) setRequestSource(ctx context.Context, stmtLabel string, stmtNo
 
 // RemoveLockDDLJobs removes the DDL jobs which doesn't get the metadata lock from job2ver.
 func RemoveLockDDLJobs(s Session, job2ver map[int64]int64, job2ids map[int64]string) {
-	if s.GetSessionVars().InRestrictedSQL {
+	sv := s.GetSessionVars()
+	if sv.InRestrictedSQL {
 		return
 	}
-	s.GetSessionVars().GetRelatedTableForMDL().Range(func(tblID, value any) bool {
+	sv.TxnCtxMu.Lock()
+	defer sv.TxnCtxMu.Unlock()
+	if sv.TxnCtx == nil {
+		return
+	}
+	sv.GetRelatedTableForMDL().Range(func(tblID, value any) bool {
 		for jobID, ver := range job2ver {
 			ids := util.Str2Int64Map(job2ids[jobID])
 			if _, ok := ids[tblID.(int64)]; ok && value.(int64) < ver {
 				delete(job2ver, jobID)
-				logutil.BgLogger().Debug("old running transaction block DDL", zap.Int64("table ID", tblID.(int64)), zap.Uint64("conn ID", s.GetSessionVars().ConnectionID))
+				logutil.BgLogger().Debug("old running transaction block DDL", zap.Int64("table ID", tblID.(int64)), zap.Uint64("conn ID", sv.ConnectionID))
 			}
 		}
 		return true

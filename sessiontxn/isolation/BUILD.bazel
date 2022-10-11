@@ -15,6 +15,7 @@ go_library(
         "//config",
         "//infoschema",
         "//kv",
+        "//metrics",
         "//parser/ast",
         "//parser/mysql",
         "//parser/terror",

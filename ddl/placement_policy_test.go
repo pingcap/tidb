@@ -137,7 +137,7 @@ func TestPlacementPolicy(t *testing.T) {
 
 	hook := &ddl.TestDDLCallback{Do: dom}
 	var policyID int64
-	hook.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if policyID != 0 {
 			return
 		}
@@ -147,6 +147,7 @@ func TestPlacementPolicy(t *testing.T) {
 			return
 		}
 	}
+	hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	dom.DDL().SetHook(hook)
 
 	tk.MustExec("create placement policy x " +

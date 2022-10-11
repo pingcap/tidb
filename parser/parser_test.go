@@ -2512,6 +2512,10 @@ func TestDDL(t *testing.T) {
 		{`alter table t /*T![placement] primary_region="us" */;`, false, ""},
 		{`alter table t placement policy="ww";`, true, "ALTER TABLE `t` PLACEMENT POLICY = `ww`"},
 		{`alter table t /*T![placement] placement policy="ww" */;`, true, "ALTER TABLE `t` PLACEMENT POLICY = `ww`"},
+		{`alter table t compact;`, true, "ALTER TABLE `t` COMPACT"},
+		{`alter table t compact tiflash replica;`, true, "ALTER TABLE `t` COMPACT TIFLASH REPLICA"},
+		{`alter table t compact partition p1,p2;`, true, "ALTER TABLE `t` COMPACT PARTITION `p1`,`p2`"},
+		{`alter table t compact partition p1,p2 tiflash replica;`, true, "ALTER TABLE `t` COMPACT PARTITION `p1`,`p2` TIFLASH REPLICA"},
 		// 3. create db
 		{`create database t primary_region="us";`, false, ""},
 		{`create database t regions="us,3";`, false, ""},
@@ -2979,8 +2983,8 @@ func TestDDL(t *testing.T) {
 		{"ALTER TABLE t ENGINE = 'innodb'", true, "ALTER TABLE `t` ENGINE = innodb"},
 		{"ALTER TABLE t ENGINE = innodb", true, "ALTER TABLE `t` ENGINE = innodb"},
 		{"ALTER TABLE `db`.`t` ENGINE = ``", true, "ALTER TABLE `db`.`t` ENGINE = ''"},
-		{"ALTER TABLE t INSERT_METHOD = FIRST", true, "ALTER TABLE `t` INSERT_METHOD = 'FIRST'"},
-		{"ALTER TABLE t INSERT_METHOD LAST", true, "ALTER TABLE `t` INSERT_METHOD = 'LAST'"},
+		{"ALTER TABLE t INSERT_METHOD = FIRST", true, "ALTER TABLE `t` INSERT_METHOD = FIRST"},
+		{"ALTER TABLE t INSERT_METHOD LAST", true, "ALTER TABLE `t` INSERT_METHOD = LAST"},
 		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED, ADD COLUMN a SMALLINT", true, "ALTER TABLE `t` ADD COLUMN `a` SMALLINT UNSIGNED, ADD COLUMN `a` SMALLINT"},
 		{"ALTER TABLE t ADD COLUMN a SMALLINT, ENGINE = '', default COLLATE = UTF8_GENERAL_CI", true, "ALTER TABLE `t` ADD COLUMN `a` SMALLINT, ENGINE = '', DEFAULT COLLATE = UTF8_GENERAL_CI"},
 		{"ALTER TABLE t ENGINE = '', COMMENT='', default COLLATE = UTF8_GENERAL_CI", true, "ALTER TABLE `t` ENGINE = '', COMMENT = '', DEFAULT COLLATE = UTF8_GENERAL_CI"},
@@ -3625,6 +3629,9 @@ func TestDDL(t *testing.T) {
 		{"ALTER TABLE t STATS_OPTIONS=default", true, "ALTER TABLE `t` STATS_OPTIONS=DEFAULT"},
 		{"ALTER TABLE t STATS_OPTIONS=DeFaUlT", true, "ALTER TABLE `t` STATS_OPTIONS=DEFAULT"},
 		{"ALTER TABLE t STATS_OPTIONS", false, ""},
+
+		// Restore INSERT_METHOD table option
+		{"CREATE TABLE t (a int) INSERT_METHOD=FIRST", true, "CREATE TABLE `t` (`a` INT) INSERT_METHOD = FIRST"},
 	}
 	RunTest(t, table, false)
 }

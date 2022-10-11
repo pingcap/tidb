@@ -11,25 +11,21 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-//go:build linux
 
-package ingest
+package gctuner
 
 import (
-	"syscall"
+	"testing"
 
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
+	"github.com/stretchr/testify/require"
 )
 
-func genRLimit() uint64 {
-	rLimit := uint64(1024)
-	var rl syscall.Rlimit
-	err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &rl)
-	if err != nil {
-		logutil.BgLogger().Warn(LitErrGetSysLimitErr, zap.Error(err), zap.String("default", "1024"))
-	} else {
-		rLimit = rl.Cur
-	}
-	return rLimit
+func TestMem(t *testing.T) {
+	const mb = 1024 * 1024
+
+	heap := make([]byte, 100*mb+1)
+	inuse := readMemoryInuse()
+	t.Logf("mem inuse: %d MB", inuse/mb)
+	require.GreaterOrEqual(t, inuse, uint64(100*mb))
+	heap[0] = 0
 }
