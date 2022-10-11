@@ -3872,7 +3872,6 @@ func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec
 }
 
 func checkReorgPartitionDefs(ctx sessionctx.Context, tblInfo *model.TableInfo, partInfo *model.PartitionInfo, firstPartIdx, lastPartIdx int, idMap map[int]interface{}) error {
-
 	// partInfo contains only the new added partition, we have to combine it with the
 	// old partitions to check all partitions is strictly increasing.
 	pi := tblInfo.Partition
@@ -3916,6 +3915,9 @@ func checkReorgPartitionDefs(ctx sessionctx.Context, tblInfo *model.TableInfo, p
 			return errors.Trace(err)
 		}
 		newRangeValue, _, err := getRangeValue(ctx, partInfo.Definitions[len(partInfo.Definitions)-1].LessThan[0], isUnsigned)
+		if err != nil {
+			return errors.Trace(err)
+		}
 
 		if currentRangeValue != newRangeValue {
 			return errors.Trace(dbterror.ErrRangeNotIncreasing)
