@@ -236,7 +236,22 @@ func (e *RevokeExec) revokeDBPriv(internalSession sessionctx.Context, priv *ast.
 	}
 	sqlexec.MustFormatSQL(sql, " WHERE User=%? AND Host=%? AND DB=%?", userName, host, dbName)
 
+<<<<<<< HEAD
 	_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql.String())
+=======
+	_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql.String())
+	if err != nil {
+		return err
+	}
+
+	sql = new(strings.Builder)
+	sqlexec.MustFormatSQL(sql, "DELETE FROM %n.%n WHERE User=%? AND Host=%? AND DB=%?", mysql.SystemDB, mysql.DBTable, userName, host, dbName)
+
+	for _, v := range append(mysql.AllDBPrivs, mysql.GrantPriv) {
+		sqlexec.MustFormatSQL(sql, " AND %n='N'", v.ColumnString())
+	}
+	_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql.String())
+>>>>>>> 8c9f5cfb0c (executor: cleanup entries from mysql.db on revoke (#38370))
 	return err
 }
 
