@@ -1622,7 +1622,6 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(dbName model.CIStr, tbl tab
 					ts.schema.Append(commonCols[pkOffset])
 					ts.HandleIdx = append(ts.HandleIdx, len(ts.Columns)-1)
 				}
-
 			}
 		}
 	}
