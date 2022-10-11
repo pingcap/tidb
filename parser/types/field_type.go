@@ -382,7 +382,6 @@ func (ft *FieldType) CompactStr() string {
 		}
 	case mysql.TypeYear:
 		suffix = fmt.Sprintf("(%d)", ft.flen)
-
 	case mysql.TypeNull:
 		suffix = "(0)"
 	}
