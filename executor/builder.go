@@ -2296,7 +2296,7 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
 		IsMultiTable:   v.IsMultiTable,
 		tblColPosInfos: v.TblColPosInfos,
 	}
-	deleteExec.fkCascades, b.err = b.buildTblID2FKCascadeExecs(b.ctx, tblID2table, v.FKCascades)
+	deleteExec.fkCascades, b.err = b.buildTblID2FKCascadeExecs(tblID2table, v.FKCascades)
 	if b.err != nil {
 		return nil
 	}

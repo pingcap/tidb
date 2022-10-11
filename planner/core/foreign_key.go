@@ -373,7 +373,7 @@ func (p *baseFKCascadePlan) setRangeForSelectPlan(selectPlan PhysicalPlan, fkVal
 		reader := v.tablePlan.(*PhysicalTableScan)
 		reader.Ranges = ranges
 	default:
-		return errors.Errorf("unknown plan %v#", v)
+		return errors.Errorf("unknown plan %#v", v)
 	}
 	return nil
 }

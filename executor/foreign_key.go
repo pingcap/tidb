@@ -58,9 +58,7 @@ type FKCheckExec struct {
 type FKCascadeExec struct {
 	*plannercore.FKCascade
 	*fkValueHelper
-	ctx sessionctx.Context
-	b   *executorBuilder
-
+	b        *executorBuilder
 	fkValues [][]types.Datum
 }
 
@@ -123,10 +121,6 @@ func (fkc *FKCheckExec) updateRowNeedToCheck(sc *stmtctx.StatementContext, oldRo
 		return fkc.addRowNeedToCheck(sc, oldRow)
 	}
 	return nil
-}
-
-func (fkc *FKCheckExec) onDeleteRow(sc *stmtctx.StatementContext, row []types.Datum) error {
-	return fkc.addRowNeedToCheck(sc, row)
 }
 
 func (fkc *FKCheckExec) addRowNeedToCheck(sc *stmtctx.StatementContext, row []types.Datum) error {
@@ -517,11 +511,11 @@ func (fkc FKCheckExec) checkRows(ctx context.Context, sc *stmtctx.StatementConte
 	return nil
 }
 
-func (b *executorBuilder) buildTblID2FKCascadeExecs(sctx sessionctx.Context, tblID2Table map[int64]table.Table, tblID2FKCascades map[int64][]*plannercore.FKCascade) (map[int64][]*FKCascadeExec, error) {
+func (b *executorBuilder) buildTblID2FKCascadeExecs(tblID2Table map[int64]table.Table, tblID2FKCascades map[int64][]*plannercore.FKCascade) (map[int64][]*FKCascadeExec, error) {
 	var err error
 	fkCascades := make(map[int64][]*FKCascadeExec)
 	for tid, tbl := range tblID2Table {
-		fkCascades[tid], err = b.buildFKCascadeExecs(sctx, tbl, tblID2FKCascades[tid])
+		fkCascades[tid], err = b.buildFKCascadeExecs(tbl, tblID2FKCascades[tid])
 		if err != nil {
 			return nil, err
 		}
@@ -529,10 +523,10 @@ func (b *executorBuilder) buildTblID2FKCascadeExecs(sctx sessionctx.Context, tbl
 	return fkCascades, nil
 }
 
-func (b *executorBuilder) buildFKCascadeExecs(sctx sessionctx.Context, tbl table.Table, fkCascades []*plannercore.FKCascade) ([]*FKCascadeExec, error) {
+func (b *executorBuilder) buildFKCascadeExecs(tbl table.Table, fkCascades []*plannercore.FKCascade) ([]*FKCascadeExec, error) {
 	fkCascadeExecs := make([]*FKCascadeExec, 0, len(fkCascades))
 	for _, fkCascade := range fkCascades {
-		fkCascadeExec, err := b.buildFKCascadeExec(sctx, tbl, fkCascade)
+		fkCascadeExec, err := b.buildFKCascadeExec(tbl, fkCascade)
 		if err != nil {
 			return nil, err
 		}
@@ -543,7 +537,7 @@ func (b *executorBuilder) buildFKCascadeExecs(sctx sessionctx.Context, tbl table
 	return fkCascadeExecs, nil
 }
 
-func (b *executorBuilder) buildFKCascadeExec(sctx sessionctx.Context, tbl table.Table, fkCascade *plannercore.FKCascade) (*FKCascadeExec, error) {
+func (b *executorBuilder) buildFKCascadeExec(tbl table.Table, fkCascade *plannercore.FKCascade) (*FKCascadeExec, error) {
 	var cols []model.CIStr
 	if fkCascade.OnDelete != nil {
 		cols = fkCascade.OnDelete.ReferredFK.Cols
@@ -559,7 +553,6 @@ func (b *executorBuilder) buildFKCascadeExec(sctx sessionctx.Context, tbl table.
 		fkValuesSet: set.NewStringSet(),
 	}
 	return &FKCascadeExec{
-		ctx:           sctx,
 		FKCascade:     fkCascade,
 		fkValueHelper: helper,
 		b:             b,
@@ -580,8 +573,7 @@ func (fkc *FKCascadeExec) buildExecutor(ctx context.Context) (Executor, error) {
 	if err != nil || p == nil {
 		return nil, err
 	}
-
-	err = fkc.buildIndexReaderRange(p)
+	err = p.SetRangeForSelectPlan(fkc.fkValues)
 	if err != nil {
 		return nil, err
 	}
@@ -596,15 +588,9 @@ func (fkc *FKCascadeExec) buildExecutor(ctx context.Context) (Executor, error) {
 }
 
 func (fkc *FKCascadeExec) buildFKCascadePlan(ctx context.Context) (plannercore.FKCascadePlan, error) {
-	planBuilder, _ := plannercore.NewPlanBuilder().Init(fkc.ctx, fkc.b.is, &hint.BlockHintProcessor{})
+	planBuilder, _ := plannercore.NewPlanBuilder().Init(fkc.b.ctx, fkc.b.is, &hint.BlockHintProcessor{})
 	if fkc.OnDelete != nil {
 		return planBuilder.BuildOnDeleteFKCascadePlan(ctx, fkc.OnDelete)
 	}
 	panic("should never happen")
-}
-
-func (fkc *FKCascadeExec) buildIndexReaderRange(p plannercore.FKCascadePlan) error {
-	valsList := make([][]types.Datum, 0, len(fkc.fkValues))
-	valsList = append(valsList, fkc.fkValues...)
-	return p.SetRangeForSelectPlan(valsList)
 }

@@ -575,10 +575,6 @@ func (a *ExecStmt) handleForeignKeyTrigger(ctx context.Context, e Executor, isPe
 	}
 
 	fkCascades := exec.GetFKCascades()
-	return a.handleForeignKeyCascades(ctx, fkCascades, isPessimistic)
-}
-
-func (a *ExecStmt) handleForeignKeyCascades(ctx context.Context, fkCascades []*FKCascadeExec, isPessimistic bool) error {
 	for _, fkCascade := range fkCascades {
 		err := a.handleForeignKeyCascade(ctx, fkCascade, isPessimistic)
 		if err != nil {
@@ -602,10 +598,7 @@ func (a *ExecStmt) handleForeignKeyCascade(ctx context.Context, fkc *FKCascadeEx
 		return err
 	}
 	err = a.handleForeignKeyTrigger(ctx, e, isPessimistic)
-	if err != nil {
-		return err
-	}
-	return nil
+	return err
 }
 
 func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic bool) (handled bool, rs sqlexec.RecordSet, _ Executor, err error) {
