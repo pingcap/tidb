@@ -295,6 +295,7 @@ const (
 	ReqTypeDAG      = 103
 	ReqTypeAnalyze  = 104
 	ReqTypeChecksum = 105
+	ReqTypeDDL      = 106
 
 	ReqSubTypeBasic      = 0
 	ReqSubTypeDesc       = 10000

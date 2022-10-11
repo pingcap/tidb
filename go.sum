@@ -764,8 +764,6 @@ github.com/pingcap/log v1.1.0 h1:ELiPxACz7vdo1qAvvaWJg1NrYFoY6gqAh/+Uo6aXdD8=
 github.com/pingcap/log v1.1.0/go.mod h1:DWQW5jICDR7UJh4HtxXSM20Churx4CQL0fwL/SoOSA4=
 github.com/pingcap/sysutil v0.0.0-20220114020952-ea68d2dbf5b4 h1:HYbcxtnkN3s5tqrZ/z3eJS4j3Db8wMphEm1q10lY/TM=
 github.com/pingcap/sysutil v0.0.0-20220114020952-ea68d2dbf5b4/go.mod h1:sDCsM39cGiv2vwunZkaFA917vVkqDTGSPbbV7z4Oops=
-github.com/pingcap/tipb v0.0.0-20220824081009-0714a57aff1d h1:kWYridgsn8xSKYJ2EkXp7uj5HwJnG5snpY3XP8oYmPU=
-github.com/pingcap/tipb v0.0.0-20220824081009-0714a57aff1d/go.mod h1:A7mrd7WHBl1o63LE2bIBGEJMTNWXqhgmYiOvMLxozfs=
 github.com/pkg/browser v0.0.0-20180916011732-0a3d74bf9ce4 h1:49lOXmGaUpV9Fz3gd7TFZY106KVlPVa5jcYD1gaQf98=
 github.com/pkg/browser v0.0.0-20180916011732-0a3d74bf9ce4/go.mod h1:4OwLy04Bl9Ef3GJJCoec+30X3LQs/0/m4HFRt/2LUSA=
 github.com/pkg/errors v0.8.0/go.mod h1:bwawxfHBFNV+L2hUp1rHADufV3IMtnDRdf1r5NINEl0=
@@ -906,8 +904,6 @@ github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2 h1:mbAskLJ0oJf
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2/go.mod h1:2PfKggNGDuadAa0LElHrByyrz4JPZ9fFx6Gs7nx7ZZU=
 github.com/tikv/client-go/v2 v2.0.1-0.20220913051514-ffaaf7131a8d h1:p8XInTnkUlLabBT7bDS3aZCeemO6tJ/7b5mHN8WbSIE=
 github.com/tikv/client-go/v2 v2.0.1-0.20220913051514-ffaaf7131a8d/go.mod h1:6pedLz7wiINLHXwCT1+yMZmzuG42+ubtBkkfcwoukIo=
-github.com/tikv/minitrace-go v0.0.0-20210623164044-529c511f20f8 h1:5j4UidaEmHWinqgzzO6alg1EW9qlO28gpKcOJj3088E=
-github.com/tikv/minitrace-go v0.0.0-20210623164044-529c511f20f8/go.mod h1:ukJr0BfYeYbO3n15LAV2Dp4jvFpIPF2g14NU227ZTLY=
 github.com/tikv/minitrace-go v0.0.0-20220923091513-8e6316bb4097 h1:nvIrUVo5YJZMsCn6yTxrpgrokIo/wug5N/nL5mc7v50=
 github.com/tikv/minitrace-go v0.0.0-20220923091513-8e6316bb4097/go.mod h1:ukJr0BfYeYbO3n15LAV2Dp4jvFpIPF2g14NU227ZTLY=
 github.com/tikv/pd/client v0.0.0-20220725055910-7187a7ab72db h1:r1eMh9Rny3hfWuBuxOnbsCRrR4FhthiNxLQ5rAUtaww=
@@ -940,6 +936,8 @@ github.com/valyala/fasttemplate v1.0.1/go.mod h1:UQGH1tvbgY+Nz5t2n7tXsz52dQxojPU
 github.com/valyala/tcplisten v0.0.0-20161114210144-ceec8f93295a/go.mod h1:v3UYOV9WzVtRmSR+PDvWpU/qWl4Wa5LApYYX4ZtKbio=
 github.com/wangjohn/quickselect v0.0.0-20161129230411-ed8402a42d5f h1:9DDCDwOyEy/gId+IEMrFHLuQ5R/WV0KNxWLler8X2OY=
 github.com/wangjohn/quickselect v0.0.0-20161129230411-ed8402a42d5f/go.mod h1:8sdOQnirw1PrcnTJYkmW1iOHtUmblMmGdUOHyWYycLI=
+github.com/wjhuang2016/tipb v0.0.0-20221008063631-6d62ac9c19a2 h1:13LEN/7sdwcoTRDlBxqPUixvUqPrzHzn3J0EaasrpXg=
+github.com/wjhuang2016/tipb v0.0.0-20221008063631-6d62ac9c19a2/go.mod h1:A7mrd7WHBl1o63LE2bIBGEJMTNWXqhgmYiOvMLxozfs=
 github.com/xdg/scram v1.0.3/go.mod h1:lB8K/P019DLNhemzwFU4jHLhdvlE6uDZjXFejJXr49I=
 github.com/xdg/stringprep v1.0.3/go.mod h1:Jhud4/sHMO4oL310DaZAKk9ZaJ08SJfe+sJh0HrGL1Y=
 github.com/xeipuuv/gojsonpointer v0.0.0-20180127040702-4e3ac2762d5f/go.mod h1:N2zxlSyiKSe5eX1tZViRH5QA0qijqEDrYZiPEAiq3wU=

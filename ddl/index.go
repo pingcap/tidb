@@ -1164,6 +1164,12 @@ type indexRecord struct {
 	vals   []types.Datum // It's the index values.
 	rsData []types.Datum // It's the restored data for handle.
 	skip   bool          // skip indicates that the index key is already exists, we should not add it.
+	idxKV  *indexKV
+}
+
+type indexKV struct {
+	key   []byte
+	value []byte
 }
 
 type baseIndexWorker struct {
@@ -1221,7 +1227,7 @@ func newAddIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable
 		}
 	}
 	var coprCtx *copContext
-	if variable.EnableCoprRead.Load() {
+	if variable.EnableCoprRead.Load() != "0" {
 		coprCtx = newCopContext(t.Meta(), indexInfo)
 		logutil.BgLogger().Info("[ddl] fetch index values with coprocessor",
 			zap.String("table", t.Meta().Name.O),
@@ -1506,12 +1512,18 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 		}
 
 		var (
-			idxRecords []*indexRecord
-			nextKey    kv.Key
-			taskDone   bool
+			idxRecords  []*indexRecord
+			nextKey     kv.Key
+			taskDone    bool
+			encPushDown bool
 		)
 		if w.coprCtx != nil {
-			idxRecords, nextKey, taskDone, err = w.fetchRowColValsFromSelect(ctx, txn, handleRange)
+			encPushDown = variable.EnableCoprRead.Load() == "2"
+			if encPushDown {
+				idxRecords, nextKey, taskDone, err = w.fetchRowColValsFromCopr(ctx, txn, handleRange)
+			} else {
+				idxRecords, nextKey, taskDone, err = w.fetchRowColValsFromSelect(ctx, txn, handleRange)
+			}
 		} else {
 			idxRecords, nextKey, taskDone, err = w.fetchRowColVals(txn, handleRange)
 		}
@@ -1548,31 +1560,44 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 
 			// Create the index.
 			if w.writerCtx == nil {
-				handle, err := w.index.Create(w.sessCtx, txn, idxRecord.vals, idxRecord.handle, idxRecord.rsData, table.WithIgnoreAssertion, table.FromBackfill)
-				if err != nil {
-					if kv.ErrKeyExists.Equal(err) && idxRecord.handle.Equal(handle) {
-						// Index already exists, skip it.
-						continue
+				if encPushDown {
+					err := txn.GetMemBuffer().Set(idxRecord.idxKV.key, idxRecord.idxKV.value)
+					if err != nil {
+						return errors.Trace(err)
 					}
-
-					return errors.Trace(err)
+				} else {
+					handle, err := w.index.Create(w.sessCtx, txn, idxRecord.vals, idxRecord.handle, idxRecord.rsData, table.WithIgnoreAssertion, table.FromBackfill)
+					if err != nil {
+						if kv.ErrKeyExists.Equal(err) && idxRecord.handle.Equal(handle) {
+							// Index already exists, skip it.
+							continue
+						}
+						return errors.Trace(err)
+					}
 				}
 			} else { // The lightning environment is ready.
-				vars := w.sessCtx.GetSessionVars()
-				sCtx, writeBufs := vars.StmtCtx, vars.GetWriteStmtBufs()
-				key, distinct, err := w.index.GenIndexKey(sCtx, idxRecord.vals, idxRecord.handle, writeBufs.IndexKeyBuf)
-				if err != nil {
-					return errors.Trace(err)
+				if encPushDown {
+					err = w.writerCtx.WriteRow(idxRecord.idxKV.key, idxRecord.idxKV.value)
+					if err != nil {
+						return errors.Trace(err)
+					}
+				} else {
+					vars := w.sessCtx.GetSessionVars()
+					sCtx, writeBufs := vars.StmtCtx, vars.GetWriteStmtBufs()
+					key, distinct, err := w.index.GenIndexKey(sCtx, idxRecord.vals, idxRecord.handle, writeBufs.IndexKeyBuf)
+					if err != nil {
+						return errors.Trace(err)
+					}
+					idxVal, err := w.index.GenIndexValue(sCtx, distinct, idxRecord.vals, idxRecord.handle, idxRecord.rsData)
+					if err != nil {
+						return errors.Trace(err)
+					}
+					err = w.writerCtx.WriteRow(key, idxVal)
+					if err != nil {
+						return errors.Trace(err)
+					}
+					writeBufs.IndexKeyBuf = key
 				}
-				idxVal, err := w.index.GenIndexValue(sCtx, distinct, idxRecord.vals, idxRecord.handle, idxRecord.rsData)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				err = w.writerCtx.WriteRow(key, idxVal)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				writeBufs.IndexKeyBuf = key
 			}
 			taskCtx.addedCount++
 		}

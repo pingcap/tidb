@@ -1826,10 +1826,10 @@ var defaultSysVars = []*SysVar{
 		EnableFastReorg.Store(TiDBOptOn(val))
 		return nil
 	}},
-	{Scope: ScopeGlobal, Name: TiDBDDLEnableCoprRead, Value: BoolToOnOff(DefTiDBDDLEnableCoprRead), Type: TypeBool, GetGlobal: func(sv *SessionVars) (string, error) {
-		return BoolToOnOff(EnableCoprRead.Load()), nil
+	{Scope: ScopeGlobal, Name: TiDBDDLEnableCoprRead, Value: DefTiDBDDLEnableCoprRead, PossibleValues: []string{"0", "1", "2"}, Type: TypeEnum, GetGlobal: func(sv *SessionVars) (string, error) {
+		return EnableCoprRead.Load(), nil
 	}, SetGlobal: func(s *SessionVars, val string) error {
-		EnableCoprRead.Store(TiDBOptOn(val))
+		EnableCoprRead.Store(val)
 		return nil
 	}},
 	// This system var is set disk quota for lightning sort dir, from 100 GB to 1PB.

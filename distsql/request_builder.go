@@ -181,6 +181,17 @@ func (builder *RequestBuilder) SetChecksumRequest(checksum *tipb.ChecksumRequest
 	return builder
 }
 
+// SetDDLRequest sets the request type to "ReqTypeDDL" and construct request data.
+func (builder *RequestBuilder) SetDDLRequest(ddl *tipb.DDLRequest) *RequestBuilder {
+	if builder.err == nil {
+		builder.Request.Tp = kv.ReqTypeDDL
+		builder.Request.Data, builder.err = ddl.Marshal()
+		builder.Request.NotFillCache = true
+	}
+
+	return builder
+}
+
 // SetKeyRanges sets "KeyRanges" for "kv.Request".
 func (builder *RequestBuilder) SetKeyRanges(keyRanges []kv.KeyRange) *RequestBuilder {
 	builder.Request.KeyRanges = keyRanges

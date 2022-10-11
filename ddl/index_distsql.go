@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"sync/atomic"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -31,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/timeutil"
@@ -99,6 +101,25 @@ func (w *addIndexWorker) buildTableScan(ctx context.Context, txn kv.Transaction,
 	return distsql.Select(ctx, w.sessCtx, kvReq, w.coprCtx.fieldTps, statistics.NewQueryFeedback(0, nil, 0, false))
 }
 
+func (w *addIndexWorker) buildDDLPB(colInfos []*model.ColumnInfo) (*tipb.DDLRequest, error) {
+	ddlReq := &tipb.DDLRequest{}
+	ddlReq.TableInfo = new(tipb.TableInfo)
+	ddlReq.IndexInfo = new(tipb.IndexInfo)
+	ddlReq.TableInfo.TableId = w.table.Meta().ID
+	ddlReq.TableInfo.Columns = util.ColumnsToProto(colInfos, w.table.Meta().PKIsHandle)
+	ddlReq.IndexInfo.TableId = w.table.Meta().ID
+	ddlReq.IndexInfo.IndexId = w.index.Meta().ID
+	indexColInfos := make([]*model.ColumnInfo, 0, len(w.index.Meta().Columns))
+	for _, idxCol := range w.index.Meta().Columns {
+		indexColInfos = append(indexColInfos, w.table.Cols()[idxCol.Offset].ColumnInfo)
+	}
+	ddlReq.IndexInfo.Columns = util.ColumnsToProto(indexColInfos, w.table.Meta().PKIsHandle)
+	ddlReq.Columns = ddlReq.TableInfo.Columns
+	ddlReq.IndexInfo.Unique = w.index.Meta().Unique
+
+	return ddlReq, nil
+}
+
 func (w *addIndexWorker) buildDAGPB(colInfos []*model.ColumnInfo) (*tipb.DAGRequest, error) {
 	dagReq := &tipb.DAGRequest{}
 	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(w.sessCtx.GetSessionVars().Location())
@@ -121,6 +142,102 @@ func (w *addIndexWorker) constructTableScanPB(tblInfo *model.TableInfo, colInfos
 	tblScan.TableId = w.table.Meta().ID
 	err := setPBColumnsDefaultValue(w.sessCtx, tblScan.Columns, colInfos)
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tblScan}, err
+}
+
+func (w *addIndexWorker) fetchRowColValsFromCopr(ctx context.Context, txn kv.Transaction,
+	handleRange reorgBackfillTask) ([]*indexRecord, kv.Key, bool, error) {
+	if w.coprCtx.isNewTask(handleRange) {
+		w.coprCtx.recordTask(handleRange)
+		w.coprCtx.indexRecordChan = make(chan *indexRecord, variable.MaxDDLReorgBatchSize)
+		go func() {
+			defer injectSpan(w.reorgInfo.Job.ID, fmt.Sprintf("%s-%d", "fetch-rows", w.id))()
+			defer close(w.coprCtx.indexRecordChan)
+			resp, err := w.buildScanIndexKV(w.jobContext.ddlJobCtx, txn, handleRange.startKey, handleRange.excludedEndKey())
+			if err != nil {
+				w.coprCtx.err.Store(err)
+				return
+			}
+			for {
+				data, err := resp.Next(ctx)
+				if err != nil {
+					w.coprCtx.err.Store(err)
+					return
+				}
+				if data == nil {
+					break
+				}
+				colResp := &tipb.DDLResponse{}
+				if err = colResp.Unmarshal(data.GetData()); err != nil {
+					w.coprCtx.err.Store(err)
+					return
+				}
+				for i := 0; i < len(colResp.Keys); i++ {
+					w.coprCtx.indexRecordChan <- &indexRecord{idxKV: &indexKV{key: colResp.Keys[i], value: colResp.Values[i]}}
+				}
+			}
+		}()
+	}
+	w.idxRecords = w.idxRecords[:0]
+	taskDone := false
+	var current *indexKV
+	for {
+		record, ok := <-w.coprCtx.indexRecordChan
+		if !ok { // The channel is closed.
+			taskDone = true
+			break
+		}
+		w.idxRecords = append(w.idxRecords, record)
+		current = record.idxKV
+		if len(w.idxRecords) >= w.batchCnt {
+			break
+		}
+	}
+	nextKey := handleRange.endKey
+	if current != nil {
+		h, err := tablecodec.DecodeIndexHandle(current.key, current.value, len(w.index.Meta().Columns))
+		if err != nil {
+			return nil, nil, false, errors.Trace(err)
+		}
+		nextKey = tablecodec.EncodeRecordKey(w.table.RecordPrefix(), h).Next()
+	}
+	err := w.coprCtx.err.Load()
+	if err != nil {
+		return nil, nil, false, err.(error)
+	}
+	return w.idxRecords, nextKey, taskDone, nil
+}
+
+func (w *addIndexWorker) buildScanIndexKV(ctx context.Context, txn kv.Transaction, start, end kv.Key) (kv.Response, error) {
+	ddlPB, err := w.buildDDLPB(w.coprCtx.colInfos)
+	if err != nil {
+		return nil, err
+	}
+
+	ddlPB.Ranges = append(ddlPB.Ranges, tipb.KeyRange{Low: start, High: end})
+
+	var builder distsql.RequestBuilder
+	kvReq, err := builder.
+		SetDDLRequest(ddlPB).
+		SetStartTS(txn.StartTS()).
+		SetKeyRanges([]kv.KeyRange{{StartKey: start, EndKey: end}}).
+		SetKeepOrder(true).
+		SetFromSessionVars(w.sessCtx.GetSessionVars()).
+		SetFromInfoSchema(w.sessCtx.GetDomainInfoSchema()).
+		Build()
+	if err != nil {
+		return nil, err
+	}
+
+	kvReq.Concurrency = 1
+	option := &kv.ClientSendOption{
+		SessionMemTracker: w.sessCtx.GetSessionVars().StmtCtx.MemTracker,
+	}
+
+	resp := w.sessCtx.GetClient().Send(ctx, kvReq, w.sessCtx.GetSessionVars().KVVars, option)
+	if resp == nil {
+		return nil, errors.New("client returns nil response")
+	}
+	return resp, nil
 }
 
 func (w *addIndexWorker) fetchRowColValsFromSelect(ctx context.Context, txn kv.Transaction,

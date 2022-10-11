@@ -1060,7 +1060,7 @@ const (
 	DefTiDBEnableMDL                               = false
 	DefTiFlashFastScan                             = false
 	DefTiDBEnableFastReorg                         = false
-	DefTiDBDDLEnableCoprRead                       = false
+	DefTiDBDDLEnableCoprRead                       = "0"
 	DefTiDBDDLDiskQuota                            = 100 * 1024 * 1024 * 1024 // 100GB
 	DefExecutorConcurrency                         = 5
 	DefTiDBEnableGeneralPlanCache                  = false
@@ -1122,7 +1122,7 @@ var (
 	// EnableFastReorg indicates whether to use lightning to enhance DDL reorg performance.
 	EnableFastReorg = atomic.NewBool(DefTiDBEnableFastReorg)
 	// EnableCoprRead indicates whether to read with coprocessor for adding index.
-	EnableCoprRead = atomic.NewBool(DefTiDBDDLEnableCoprRead)
+	EnableCoprRead = atomic.NewString(DefTiDBDDLEnableCoprRead)
 	// DDLDiskQuota is the temporary variable for set disk quota for lightning
 	DDLDiskQuota = atomic.NewUint64(DefTiDBDDLDiskQuota)
 	// EnableForeignKey indicates whether to enable foreign key feature.
