@@ -15,7 +15,6 @@ package core
 
 import (
 	"container/list"
-	"strconv"
 	"sync"
 	"unsafe"
 
@@ -97,13 +96,9 @@ func (l *LRUPlanCache) Get(key kvcache.Key, paramTypes []*types.FieldType) (valu
 	if bucketExist {
 		if element, exist := l.pickFromBucket(bucket, paramTypes); exist {
 			l.lruList.MoveToFront(element)
-			memTotal := "TestPlanCacheMemoryUsage: " + strconv.FormatInt(l.TestMemoryUseTotal, 10) + " Bytes " + memory.FormatBytes(l.TestMemoryUseTotal) + " ---PlanNum: " + strconv.Itoa(int(l.size))
-			logutil.BgLogger().Info(memTotal)
 			return element.Value.(*planCacheEntry).PlanValue, true
 		}
 	}
-	memTotal := "TestPlanCacheMemoryUsage: " + strconv.FormatInt(l.TestMemoryUseTotal, 10) + " Bytes " + memory.FormatBytes(l.TestMemoryUseTotal) + " ---PlanNum: " + strconv.Itoa(int(l.size))
-	logutil.BgLogger().Info(memTotal)
 	return nil, false
 }
 
@@ -138,8 +133,7 @@ func (l *LRUPlanCache) Put(key kvcache.Key, value kvcache.Value, paramTypes []*t
 	l.buckets[hash][element] = struct{}{}
 	l.size++
 	// todo: consume
-	l.TestMemoryUseTotal += value.(*PlanCacheValue).PlanCacheValueMem + value.(*PlanCacheValue).PlanCacheKeyMem +
-		size.SizeOfPointer
+	l.TestMemoryUseTotal += elementMemoryUsage(element) + size.SizeOfPointer
 	if l.size > l.capacity {
 		l.removeOldest()
 	}
@@ -157,8 +151,7 @@ func (l *LRUPlanCache) Delete(key kvcache.Key) {
 		for element := range bucket {
 			l.lruList.Remove(element)
 			l.size--
-			l.TestMemoryUseTotal -= element.Value.(*planCacheEntry).PlanValue.(*PlanCacheValue).PlanCacheValueMem +
-				element.Value.(*planCacheEntry).PlanValue.(*PlanCacheValue).PlanCacheKeyMem + size.SizeOfPointer
+			l.TestMemoryUseTotal -= elementMemoryUsage(element) + size.SizeOfPointer
 		}
 		delete(l.buckets, hash)
 		l.TestMemoryUseTotal -= hashMem + size.SizeOfMap
@@ -211,8 +204,7 @@ func (l *LRUPlanCache) removeOldest() {
 		l.onEvict(lru.Value.(*planCacheEntry).PlanKey, lru.Value.(*planCacheEntry).PlanValue)
 	}
 
-	l.TestMemoryUseTotal -= lru.Value.(*planCacheEntry).PlanValue.(*PlanCacheValue).PlanCacheKeyMem +
-		lru.Value.(*planCacheEntry).PlanValue.(*PlanCacheValue).PlanCacheValueMem + size.SizeOfPointer
+	l.TestMemoryUseTotal -= elementMemoryUsage(lru) + size.SizeOfPointer
 	l.lruList.Remove(lru)
 	l.removeFromBucket(lru)
 	l.size--
@@ -265,4 +257,13 @@ func setKVMemoryUsage(key kvcache.Key, val kvcache.Value) {
 		planVal.PlanCacheKeyMem = key.(*planCacheKey).MemoryUsage()
 	}
 	planVal.PlanCacheValueMem = planVal.MemoryUsage()
+}
+
+// elementMemoryUsage return the sum of planCacheKey and planCacheValue
+func elementMemoryUsage(e *list.Element) (sum int64) {
+	pVal := e.Value.(*planCacheEntry).PlanValue.(*PlanCacheValue)
+	if pVal == nil {
+		return
+	}
+	return pVal.PlanCacheKeyMem + pVal.PlanCacheValueMem
 }
