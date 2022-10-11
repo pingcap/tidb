@@ -21,7 +21,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
@@ -300,15 +299,7 @@ func TestIssue28650(t *testing.T) {
 		tk.MustExec("set @@tidb_mem_quota_query = 33554432") // 32MB, out of memory during executing
 		require.True(t, strings.Contains(tk.QueryToErr(sql).Error(), "Out Of Memory Quota!"))
 		tk.MustExec("set @@tidb_mem_quota_query = 65536") // 64KB, out of memory during building the plan
-		func() {
-			defer func() {
-				r := recover()
-				require.NotNil(t, r)
-				err := errors.Errorf("%v", r)
-				require.True(t, strings.Contains(err.Error(), "Out Of Memory Quota!"))
-			}()
-			tk.MustExec(sql)
-		}()
+		require.True(t, strings.Contains(tk.ExecToErr(sql).Error(), "Out Of Memory Quota!"))
 	}
 }
 

@@ -16,6 +16,7 @@ package core
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -380,6 +381,8 @@ type Delete struct {
 	SelectPlan PhysicalPlan
 
 	TblColPosInfos TblColPosInfoSlice
+
+	FKChecks map[int64][]*FKCheck
 }
 
 // AnalyzeInfo is used to store the database name, table name and partition name of analyze task.
@@ -599,9 +602,19 @@ func (e *Explain) RenderResult() error {
 	if e.Analyze && strings.ToLower(e.Format) == types.ExplainFormatTrueCardCost {
 		pp, ok := e.TargetPlan.(PhysicalPlan)
 		if ok {
-			if _, err := pp.GetPlanCost(property.RootTaskType,
-				NewDefaultPlanCostOption().WithCostFlag(CostFlagRecalculate|CostFlagUseTrueCardinality)); err != nil {
+			if _, err := getPlanCost(pp, property.RootTaskType,
+				NewDefaultPlanCostOption().WithCostFlag(CostFlagRecalculate|CostFlagUseTrueCardinality|CostFlagTrace)); err != nil {
 				return err
+			}
+			if pp.SCtx().GetSessionVars().CostModelVersion == modelVer2 {
+				// output cost formula and factor costs through warning under model ver2 and true_card_cost mode for cost calibration.
+				trace, _ := pp.getPlanCostVer2(property.RootTaskType, NewDefaultPlanCostOption())
+				pp.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("cost formula: %v", trace.formula))
+				data, err := json.Marshal(trace.factorCosts)
+				if err != nil {
+					pp.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("marshal factor costs error %v", err))
+				}
+				pp.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("factor costs: %v", string(data)))
 			}
 		} else {
 			e.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("'explain format=true_card_cost' cannot support this plan"))
@@ -769,7 +782,7 @@ func (e *Explain) getOperatorInfo(p Plan, id string) (string, string, string, st
 	}
 	estCost := "N/A"
 	if pp, ok := p.(PhysicalPlan); ok {
-		planCost, _ := pp.GetPlanCost(property.RootTaskType, NewDefaultPlanCostOption())
+		planCost, _ := getPlanCost(pp, property.RootTaskType, NewDefaultPlanCostOption())
 		estCost = strconv.FormatFloat(planCost, 'f', 2, 64)
 	}
 	var accessObject, operatorInfo string
@@ -875,7 +888,7 @@ func binaryOpFromFlatOp(explainCtx sessionctx.Context, op *FlatOperator, out *ti
 	}
 	if op.IsPhysicalPlan {
 		p := op.Origin.(PhysicalPlan)
-		out.Cost, _ = p.GetPlanCost(property.RootTaskType, NewDefaultPlanCostOption())
+		out.Cost, _ = getPlanCost(p, property.RootTaskType, NewDefaultPlanCostOption())
 	}
 	if rootStats != nil {
 		basic, groups := rootStats.MergeStats()

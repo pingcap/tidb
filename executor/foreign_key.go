@@ -112,6 +112,10 @@ func (fkc *FKCheckExec) updateRowNeedToCheck(sc *stmtctx.StatementContext, oldRo
 	return nil
 }
 
+func (fkc *FKCheckExec) deleteRowNeedToCheck(sc *stmtctx.StatementContext, row []types.Datum) error {
+	return fkc.addRowNeedToCheck(sc, row)
+}
+
 func (fkc *FKCheckExec) addRowNeedToCheck(sc *stmtctx.StatementContext, row []types.Datum) error {
 	vals, err := fkc.fetchFKValuesWithCheck(sc, row)
 	if err != nil || len(vals) == 0 {

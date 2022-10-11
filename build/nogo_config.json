@@ -181,6 +181,7 @@
       "util/tracing/": "util/tracing/ code",
       "util/trxevents/": "util/trxevents/ code",
       "util/watcher/": "util/watcher/ code",
+      "util/gctuner": "util/gctuner",
       "store/mockstore/unistore/util": "store/mockstore/unistore/util code",
       "ddl/util/": "ddl/util code"
     }
@@ -197,6 +198,7 @@
       ".*_generated\\.go$": "ignore generated code"
     },
     "only_files": {
+      "util/gctuner": "util/gctuner",
       "br/pkg/lightning/mydump/": "br/pkg/lightning/mydump/",
       "br/pkg/lightning/restore/opts": "br/pkg/lightning/restore/opts",
       "executor/aggregate.go": "executor/aggregate.go",
@@ -743,6 +745,7 @@
       ".*_generated\\.go$": "ignore generated code"
     },
     "only_files": {
+      "util/gctuner": "util/gctuner",
       "br/pkg/lightning/mydump/": "br/pkg/lightning/mydump/",
       "br/pkg/lightning/restore/opts": "br/pkg/lightning/restore/opts",
       "executor/aggregate.go": "executor/aggregate.go",
