@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/generatedexpr"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/size"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -758,6 +759,19 @@ type Assignment struct {
 	// LazyErr is used in statement like `INSERT INTO t1 (a) VALUES (1) ON DUPLICATE KEY UPDATE a= (SELECT b FROM source);`, ErrSubqueryMoreThan1Row
 	// should be evaluated after the duplicate situation is detected in the executing procedure.
 	LazyErr error
+}
+
+// MemoryUsage return the memory usage of Assignment
+func (a *Assignment) MemoryUsage() (sum int64) {
+	if a == nil {
+		return
+	}
+
+	sum = size.SizeOfPointer + a.ColName.MemoryUsage() + size.SizeOfInterface*2
+	if a.Expr != nil {
+		sum += a.Expr.MemoryUsage()
+	}
+	return
 }
 
 // VarAssignment represents a variable assignment in Set, such as set global a = 1.

@@ -318,6 +318,22 @@ type InsertGeneratedColumns struct {
 	OnDuplicates []*expression.Assignment
 }
 
+// MemoryUsage return the memory usage of InsertGeneratedColumns
+func (i *InsertGeneratedColumns) MemoryUsage() (sum int64) {
+	if i == nil {
+		return
+	}
+	sum = size.SizeOfSlice*3 + int64(cap(i.Columns)+cap(i.OnDuplicates))*size.SizeOfPointer + int64(cap(i.Exprs))*size.SizeOfInterface
+
+	for _, expr := range i.Exprs {
+		sum += expr.MemoryUsage()
+	}
+	for _, as := range i.OnDuplicates {
+		sum += as.MemoryUsage()
+	}
+	return
+}
+
 // Insert represents an insert plan.
 type Insert struct {
 	baseSchemaProducer
@@ -349,6 +365,50 @@ type Insert struct {
 	FKChecks []*FKCheck
 }
 
+// MemoryUsage return the memory usage of Insert
+func (p *Insert) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.baseSchemaProducer.MemoryUsage() + size.SizeOfInterface + size.SizeOfSlice*7 + int64(cap(p.tableColNames)+
+		cap(p.Columns)+cap(p.SetList)+cap(p.OnDuplicate)+cap(p.names4OnDuplicate)+cap(p.FKChecks))*size.SizeOfPointer +
+		p.GenCols.MemoryUsage() + size.SizeOfInterface + size.SizeOfBool*3 + size.SizeOfInt
+	if p.tableSchema != nil {
+		sum += p.tableSchema.MemoryUsage()
+	}
+	if p.Schema4OnDuplicate != nil {
+		sum += p.Schema4OnDuplicate.MemoryUsage()
+	}
+	if p.SelectPlan != nil {
+		sum += p.SelectPlan.MemoryUsage()
+	}
+
+	for _, name := range p.tableColNames {
+		sum += name.MemoryUsage()
+	}
+	for _, exprs := range p.Lists {
+		sum += size.SizeOfSlice + int64(cap(exprs))*size.SizeOfInterface
+		for _, expr := range exprs {
+			sum += expr.MemoryUsage()
+		}
+	}
+	for _, as := range p.SetList {
+		sum += as.MemoryUsage()
+	}
+	for _, as := range p.OnDuplicate {
+		sum += as.MemoryUsage()
+	}
+	for _, name := range p.names4OnDuplicate {
+		sum += name.MemoryUsage()
+	}
+	for _, fkC := range p.FKChecks {
+		sum += fkC.MemoryUsage()
+	}
+
+	return
+}
+
 // Update represents Update plan.
 type Update struct {
 	baseSchemaProducer
@@ -372,6 +432,34 @@ type Update struct {
 	FKChecks map[int64][]*FKCheck
 }
 
+// MemoryUsage return the memory usage of Update
+func (p *Update) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.baseSchemaProducer.MemoryUsage() + size.SizeOfSlice*3 + int64(cap(p.OrderedList))*size.SizeOfPointer +
+		size.SizeOfBool + size.SizeOfInt + size.SizeOfInterface + int64(cap(p.PartitionedTable))*size.SizeOfInterface +
+		int64(len(p.tblID2Table))*(size.SizeOfInt64+size.SizeOfInterface)
+	if p.SelectPlan != nil {
+		sum += p.SelectPlan.MemoryUsage()
+	}
+
+	for _, as := range p.OrderedList {
+		sum += as.MemoryUsage()
+	}
+	for _, colInfo := range p.TblColPosInfos {
+		sum += colInfo.MemoryUsage()
+	}
+	for _, v := range p.FKChecks {
+		sum += size.SizeOfInt64 + size.SizeOfSlice + int64(cap(v))*size.SizeOfPointer
+		for _, fkc := range v {
+			sum += fkc.MemoryUsage()
+		}
+	}
+	return
+}
+
 // Delete represents a delete plan.
 type Delete struct {
 	baseSchemaProducer
@@ -381,6 +469,24 @@ type Delete struct {
 	SelectPlan PhysicalPlan
 
 	TblColPosInfos TblColPosInfoSlice
+
+	FKChecks map[int64][]*FKCheck
+}
+
+// MemoryUsage return the memory usage of Delete
+func (p *Delete) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.baseSchemaProducer.MemoryUsage() + size.SizeOfBool + size.SizeOfInterface + size.SizeOfSlice
+	if p.SelectPlan != nil {
+		sum += p.SelectPlan.MemoryUsage()
+	}
+	for _, colInfo := range p.TblColPosInfos {
+		sum += colInfo.MemoryUsage()
+	}
+	return
 }
 
 // AnalyzeInfo is used to store the database name, table name and partition name of analyze task.
