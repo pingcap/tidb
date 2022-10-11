@@ -822,6 +822,8 @@ const (
 	TiDBServerMemoryLimit = "tidb_server_memory_limit"
 	// TiDBServerMemoryLimitSessMinSize indicates the minimal memory used of a session, that becomes a candidate for session kill.
 	TiDBServerMemoryLimitSessMinSize = "tidb_server_memory_limit_sess_min_size"
+	// TiDBEnableGOGCTuner is to enable GOGC tuner. it can tuner GOGC
+	TiDBEnableGOGCTuner = "tidb_enable_gogc_tuner"
 )
 
 // TiDB intentional limits
@@ -1048,6 +1050,7 @@ const (
 	DefTiDBOptRangeMaxSize                          = 0
 	DefTiDBCostModelVer                             = 1
 	DefTiDBServerMemoryLimitSessMinSize             = 128 << 20
+	DefTiDBEnableGOGCTuner                          = true
 )
 
 // Process global variables.
@@ -1113,6 +1116,8 @@ var (
 	GetMemQuotaAnalyze func() int64 = nil
 	// SetStatsCacheCapacity is the func registered by domain to set statsCache memory quota.
 	SetStatsCacheCapacity atomic.Value
+	// SetPDClientDynamicOption is the func registered by domain
+	SetPDClientDynamicOption atomic.Pointer[func(string, string)]
 	// SwitchConcurrentDDL is the func registered by DDL to switch concurrent DDL.
 	SwitchConcurrentDDL func(bool) error = nil
 	// SwitchMDL is the func registered by DDL to switch MDL.

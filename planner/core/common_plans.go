@@ -16,6 +16,7 @@ package core
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -468,6 +469,8 @@ type Delete struct {
 	SelectPlan PhysicalPlan
 
 	TblColPosInfos TblColPosInfoSlice
+
+	FKChecks map[int64][]*FKCheck
 }
 
 // MemoryUsage return the memory usage of Delete
@@ -704,8 +707,18 @@ func (e *Explain) RenderResult() error {
 		pp, ok := e.TargetPlan.(PhysicalPlan)
 		if ok {
 			if _, err := getPlanCost(pp, property.RootTaskType,
-				NewDefaultPlanCostOption().WithCostFlag(CostFlagRecalculate|CostFlagUseTrueCardinality)); err != nil {
+				NewDefaultPlanCostOption().WithCostFlag(CostFlagRecalculate|CostFlagUseTrueCardinality|CostFlagTrace)); err != nil {
 				return err
+			}
+			if pp.SCtx().GetSessionVars().CostModelVersion == modelVer2 {
+				// output cost formula and factor costs through warning under model ver2 and true_card_cost mode for cost calibration.
+				trace, _ := pp.getPlanCostVer2(property.RootTaskType, NewDefaultPlanCostOption())
+				pp.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("cost formula: %v", trace.formula))
+				data, err := json.Marshal(trace.factorCosts)
+				if err != nil {
+					pp.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("marshal factor costs error %v", err))
+				}
+				pp.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("factor costs: %v", string(data)))
 			}
 		} else {
 			e.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("'explain format=true_card_cost' cannot support this plan"))
