@@ -193,3 +193,26 @@ func TestWriteConflictReason(t *testing.T) {
 	require.Contains(t, err.Error(), "Write conflict")
 	require.Contains(t, err.Error(), "reason=Optimistic")
 }
+
+func TestAssertionWhenPessimisticLockLost(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk1.MustExec("set @@tidb_constraint_check_in_place_pessimistic=0")
+	tk1.MustExec("set @@tidb_txn_assertion_level=strict")
+	tk2.MustExec("set @@tidb_constraint_check_in_place_pessimistic=0")
+	tk2.MustExec("set @@tidb_txn_assertion_level=strict")
+	tk1.MustExec("use test")
+	tk2.MustExec("use test")
+	tk1.MustExec("create table t (id int primary key, val text)")
+	tk1.MustExec("begin pessimistic")
+	tk1.MustExec("select * from t where id = 1 for update")
+	tk2.MustExec("begin pessimistic")
+	tk2.MustExec("insert into t values (1, 'b')")
+	tk2.MustExec("insert into t values (2, 'b')")
+	tk2.MustExec("commit")
+	tk1.MustExec("select * from t where id = 2 for update")
+	tk1.MustExec("insert into t values (1, 'a') on duplicate key update val = concat(val, 'a')")
+	err := tk1.ExecToErr("commit")
+	require.NotContains(t, err.Error(), "assertion")
+}
