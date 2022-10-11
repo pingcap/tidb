@@ -1305,7 +1305,7 @@ func filterPathByIsolationRead(ctx sessionctx.Context, paths []*util.AccessPath,
 	availableEngine := map[kv.StoreType]struct{}{}
 	var availableEngineStr string
 	for i := len(paths) - 1; i >= 0; i-- {
-		// For warning message.
+		// availableEngineStr is for warning message.
 		if _, ok := availableEngine[paths[i].StoreType]; !ok {
 			availableEngine[paths[i].StoreType] = struct{}{}
 			if availableEngineStr != "" {
@@ -1316,8 +1316,8 @@ func filterPathByIsolationRead(ctx sessionctx.Context, paths []*util.AccessPath,
 		_, exists := isolationReadEngines[paths[i].StoreType]
 		// Prune this path if:
 		// 1. path.StoreType doesn't exists in isolationReadEngines or
-		// 2. TiFlash is disaggregated and the number of ReadNode is zero.
-		if (!exists && paths[i].StoreType != kv.TiDB) || (exists && paths[i].StoreType == kv.TiFlash && config.GetGlobalConfig().DisaggregatedTiFlash && !isTiFlashReadNodeAvailable(ctx)) {
+		// 2. TiFlash is disaggregated and the number of tiflash_compute node is zero.
+		if (!exists && paths[i].StoreType != kv.TiDB) || (exists && paths[i].StoreType == kv.TiFlash && config.GetGlobalConfig().DisaggregatedTiFlash && !isTiFlashComputeNodeAvailable(ctx)) {
 			paths = append(paths[:i], paths[i+1:]...)
 		}
 	}

@@ -572,16 +572,16 @@ func buildBatchCopTasksConsistentHash(bo *backoff.Backoffer, store *kvStore, ran
 		return nil, err
 	}
 	cache := store.GetRegionCache()
-	mppStores, err := cache.GetTiFlashMPPStores(bo.TiKVBackoffer())
+	stores, err := cache.GetTiFlashComputeStores(bo.TiKVBackoffer())
 	if err != nil {
 		return nil, err
 	}
-	if len(mppStores) == 0 {
-		return nil, errors.New("Number of tiflash_mpp node is zero")
+	if len(stores) == 0 {
+		return nil, errors.New("Number of tiflash_compute node is zero")
 	}
 
 	hasher := consistent.New()
-	for _, store := range mppStores {
+	for _, store := range stores {
 		hasher.Add(store.GetAddr())
 	}
 	for _, task := range batchTasks {
@@ -590,14 +590,14 @@ func buildBatchCopTasksConsistentHash(bo *backoff.Backoffer, store *kvStore, ran
 			return nil, err
 		}
 		var store *tikv.Store
-		for _, s := range mppStores {
+		for _, s := range stores {
 			if s.GetAddr() == addr {
 				store = s
 				break
 			}
 		}
 		if store == nil {
-			return nil, errors.New("cannot find mpp store: " + addr)
+			return nil, errors.New("cannot find tiflash_compute store: " + addr)
 		}
 
 		task.storeAddr = addr

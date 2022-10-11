@@ -251,7 +251,7 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 		sender := NewRegionBatchRequestSender(m.store.GetRegionCache(), m.store.GetTiKVClient(), m.enableCollectExecutionInfo)
 		rpcResp, retry, _, err = sender.SendReqToAddr(bo, originalTask.ctx, originalTask.regionInfos, wrappedReq, tikv.ReadTimeoutMedium)
 		if err != nil && disaggregatedTiFlash {
-			m.store.GetRegionCache().InvalidateTiFlashMPPStoresIfGRPCError(err)
+			m.store.GetRegionCache().InvalidateTiFlashComputeStoresIfGRPCError(err)
 		}
 		// No matter what the rpc error is, we won't retry the mpp dispatch tasks.
 		// TODO: If we want to retry, we must redo the plan fragment cutting and task scheduling.
@@ -271,7 +271,7 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 			retry = false
 		} else if err != nil {
 			if disaggregatedTiFlash {
-				m.store.GetRegionCache().InvalidateTiFlashMPPStoresIfGRPCError(err)
+				m.store.GetRegionCache().InvalidateTiFlashComputeStoresIfGRPCError(err)
 			}
 			if bo.Backoff(tikv.BoTiFlashRPC(), err) == nil {
 				retry = true
@@ -360,7 +360,7 @@ func (m *mppIterator) cancelMppTasks() {
 			if err != nil {
 				logutil.BgLogger().Error("cancel task error", zap.Error(err), zap.Uint64("query id", m.startTs), zap.String("on addr", storeAddr))
 				if disaggregatedTiFlash {
-					m.store.GetRegionCache().InvalidateTiFlashMPPStoresIfGRPCError(err)
+					m.store.GetRegionCache().InvalidateTiFlashComputeStoresIfGRPCError(err)
 				}
 			}
 		})
@@ -396,7 +396,7 @@ func (m *mppIterator) establishMPPConns(bo *Backoffer, req *kv.MPPDispatchReques
 			m.sendError(err)
 		}
 		if disaggregatedTiFlash {
-			m.store.GetRegionCache().InvalidateTiFlashMPPStoresIfGRPCError(err)
+			m.store.GetRegionCache().InvalidateTiFlashComputeStoresIfGRPCError(err)
 		}
 		return
 	}

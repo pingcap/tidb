@@ -101,7 +101,7 @@ func (ss *RegionBatchRequestSender) onSendFailForBatchRegions(bo *Backoffer, ctx
 	}
 
 	if config.GetGlobalConfig().DisaggregatedTiFlash {
-		ss.GetRegionCache().InvalidateTiFlashMPPStoresIfGRPCError(err)
+		ss.GetRegionCache().InvalidateTiFlashComputeStoresIfGRPCError(err)
 	} else {
 		// The reload region param is always true. Because that every time we try, we must
 		// re-build the range then re-create the batch sender. As a result, the len of "failStores"

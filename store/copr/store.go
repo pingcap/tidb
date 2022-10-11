@@ -124,7 +124,7 @@ func getEndPointType(t kv.StoreType) tikvrpc.EndpointType {
 		return tikvrpc.TiKV
 	case kv.TiFlash:
 		if tidb_config.GetGlobalConfig().DisaggregatedTiFlash {
-			return tikvrpc.TiFlashMPP
+			return tikvrpc.TiFlashCompute
 		}
 		return tikvrpc.TiFlash
 	case kv.TiDB:

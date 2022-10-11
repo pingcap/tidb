@@ -677,8 +677,9 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 			ds.preferStoreType = 0
 			return
 		}
-		if config.GetGlobalConfig().DisaggregatedTiFlash && !isTiFlashReadNodeAvailable(ds.ctx) {
-			errMsg := "The number of TiFlash ReadNode is zero, cannot use TiFlash"
+		if config.GetGlobalConfig().DisaggregatedTiFlash && !isTiFlashComputeNodeAvailable(ds.ctx) {
+			// TiFlash is in disaggregated mode, need to make sure tiflash_compute node is available.
+			errMsg := "Number of tiflash_compute nodes is zero"
 			warning := ErrInternal.GenWithStack(errMsg)
 			ds.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 			return
@@ -700,10 +701,10 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 	}
 }
 
-func isTiFlashReadNodeAvailable(ctx sessionctx.Context) bool {
+func isTiFlashComputeNodeAvailable(ctx sessionctx.Context) bool {
 	bo := backoff.NewBackofferWithVars(context.Background(), 5000, nil)
-	mppStores, err := ctx.GetStore().(tikv.Storage).GetRegionCache().GetTiFlashMPPStores(bo.TiKVBackoffer())
-	if err != nil || len(mppStores) == 0 {
+	stores, err := ctx.GetStore().(tikv.Storage).GetRegionCache().GetTiFlashComputeStores(bo.TiKVBackoffer())
+	if err != nil || len(stores) == 0 {
 		return false
 	}
 	return true

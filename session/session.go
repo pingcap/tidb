@@ -2799,8 +2799,8 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	}
 
 	if !config.GetGlobalConfig().DisaggregatedTiFlash {
-		// Invalid client-go tiflash_mpp stores if necessary.
-		err = dom.WatchTiFlashMPPStoreChange()
+		// Invalid client-go tiflash_compute store cache if necessary.
+		err = dom.WatchTiFlashComputeStoreChange()
 		if err != nil {
 			return nil, err
 		}
