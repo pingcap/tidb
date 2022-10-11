@@ -184,6 +184,10 @@ const (
 	TableTrxSummary = "TRX_SUMMARY"
 	// TableVariablesInfo is the string constant of variables_info table.
 	TableVariablesInfo = "VARIABLES_INFO"
+	// TableMemoryUsage is the memory usage status of tidb instance.
+	TableMemoryUsage = "MEMORY_USAGE"
+	// TableMemoryUsageOpsHistory is the memory control operators history.
+	TableMemoryUsageOpsHistory = "MEMORY_USAGE_OPS_HISTORY"
 )
 
 const (
@@ -285,6 +289,10 @@ var tableIDMap = map[string]int64{
 	TableTrxSummary:                      autoid.InformationSchemaDBID + 80,
 	ClusterTableTrxSummary:               autoid.InformationSchemaDBID + 81,
 	TableVariablesInfo:                   autoid.InformationSchemaDBID + 82,
+	TableMemoryUsage:                     autoid.InformationSchemaDBID + 83,
+	TableMemoryUsageOpsHistory:           autoid.InformationSchemaDBID + 84,
+	ClusterTableMemoryUsage:              autoid.InformationSchemaDBID + 85,
+	ClusterTableMemoryUsageOpsHistory:    autoid.InformationSchemaDBID + 86,
 }
 
 // columnInfo represents the basic column information of all kinds of INFORMATION_SCHEMA tables
@@ -1536,6 +1544,36 @@ var tableVariablesInfoCols = []columnInfo{
 	{name: "IS_NOOP", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
 }
 
+var tableMemoryUsageCols = []columnInfo{
+	{name: "MEMORY_TOTAL", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+	{name: "MEMORY_LIMIT", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+	{name: "MEMORY_CURRENT", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+	{name: "MEMORY_MAX_USED", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+	{name: "CURRENT_OPS", tp: mysql.TypeVarchar, size: 64},
+	{name: "SESSION_KILL_LAST", tp: mysql.TypeDatetime, size: 64},
+	{name: "SESSION_KILL_TOTAL", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+	{name: "GC_LAST", tp: mysql.TypeDatetime, size: 64},
+	{name: "GC_TOTAL", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+	{name: "DISK_USAGE", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+	{name: "QUERY_FORCE_DISK", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+}
+
+var tableMemoryUsageOpsHistoryCols = []columnInfo{
+	{name: "TIME", tp: mysql.TypeDatetime, size: 64, flag: mysql.NotNullFlag},
+	{name: "OPS", tp: mysql.TypeVarchar, size: 10, flag: mysql.NotNullFlag},
+	{name: "MEMORY_LIMIT", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+	{name: "MEMORY_CURRENT", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+	{name: "PROCESSID", tp: mysql.TypeLonglong, size: 64},
+	{name: "MEMORY", tp: mysql.TypeLonglong, size: 64},
+	{name: "DISK", tp: mysql.TypeLonglong, size: 64},
+	{name: "CLIENT", tp: mysql.TypeVarchar, size: 64},
+	{name: "DB", tp: mysql.TypeVarchar, size: 64},
+	{name: "USER", tp: mysql.TypeVarchar, size: 64},
+	{name: "SQL_DIGEST", tp: mysql.TypeVarchar, size: 64},
+	{name: "SQL_TEXT", tp: mysql.TypeVarchar, size: 64},
+	{name: "TXNSTART", tp: mysql.TypeVarchar, size: 64},
+}
+
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
 // The returned description string may be:
 //   - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
@@ -1995,6 +2033,8 @@ var tableNameToColumns = map[string][]columnInfo{
 	TablePlacementPolicies:                  tablePlacementPoliciesCols,
 	TableTrxSummary:                         tableTrxSummaryCols,
 	TableVariablesInfo:                      tableVariablesInfoCols,
+	TableMemoryUsage:                        tableMemoryUsageCols,
+	TableMemoryUsageOpsHistory:              tableMemoryUsageOpsHistoryCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {

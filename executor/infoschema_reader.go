@@ -172,6 +172,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataForClusterTrxSummary(sctx)
 		case infoschema.TableVariablesInfo:
 			err = e.setDataForVariablesInfo(sctx)
+		case infoschema.TableMemoryUsage:
+			err = e.setDataForMemoryUsage(sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -2346,6 +2348,10 @@ func (e *memtableRetriever) setDataForClusterTrxSummary(ctx sessionctx.Context) 
 		return err
 	}
 	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataForMemoryUsage(ctx sessionctx.Context) error {
 	return nil
 }
 
