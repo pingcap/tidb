@@ -19,7 +19,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/util/gpool"
 )
 
@@ -236,7 +235,6 @@ func (p *Pool[T, U, C]) AddProducer(producer func() (T, error), constArg C, size
 	tc := NewTaskController(closeCh, &wg)
 	taskCh := make(chan T, size)
 	for i := 0; i < size; i++ {
-		log.Info("create goro")
 		err := p.run()
 		if err == gpool.ErrPoolClosed {
 			break

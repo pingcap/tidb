@@ -76,50 +76,110 @@ func TestPool(t *testing.T) {
 	pool.ReleaseAndWait()
 }
 
-func TestPool2(t *testing.T) {
+func TestPoolWithEnoughCapa(t *testing.T) {
 	const RunTimes = 1000
-	p := NewSPMCPool[struct{}, struct{}, int](10, WithExpiryDuration(DefaultExpiredTime))
+	p := NewSPMCPool[struct{}, struct{}, int](30, WithExpiryDuration(DefaultExpiredTime))
 	defer p.ReleaseAndWait()
 	p.SetConsumerFunc(func(a struct{}, b int) struct{} {
 		return struct{}{}
 	})
-	sema := make(chan struct{}, 10)
-	var wg util.WaitGroupWrapper
-	exitCh := make(chan struct{})
-	wg.Run(func() {
-		for j := 0; j < RunTimes; j++ {
-			sema <- struct{}{}
-		}
-		close(exitCh)
-	})
-	producerFunc := func() (struct{}, error) {
-		for {
-			select {
-			case <-sema:
-				return struct{}{}, nil
-			default:
-				select {
-				case <-exitCh:
-					return struct{}{}, errors.New("not job")
-				default:
+	var twg util.WaitGroupWrapper
+	for i := 0; i < 3; i++ {
+		twg.Run(func() {
+			sema := make(chan struct{}, 10)
+			var wg util.WaitGroupWrapper
+			exitCh := make(chan struct{})
+			wg.Run(func() {
+				for j := 0; j < RunTimes; j++ {
+					sema <- struct{}{}
+				}
+				close(exitCh)
+			})
+			producerFunc := func() (struct{}, error) {
+				for {
+					select {
+					case <-sema:
+						return struct{}{}, nil
+					default:
+						select {
+						case <-exitCh:
+							return struct{}{}, errors.New("not job")
+						default:
+						}
+					}
 				}
 			}
-		}
+			resultCh, ctl := p.AddProducer(producerFunc, RunTimes, 6)
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for {
+					select {
+					case <-resultCh:
+					default:
+						if ctl.IsProduceClose() {
+							return
+						}
+					}
+				}
+			}()
+			ctl.Wait()
+			wg.Wait()
+		})
 	}
-	resultCh, ctl := p.AddProducer(producerFunc, RunTimes, 6)
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for {
-			select {
-			case <-resultCh:
-			default:
-				if ctl.IsProduceClose() {
-					return
+	twg.Wait()
+}
+
+func TestPoolWithoutEnoughCapa(t *testing.T) {
+	const RunTimes = 1000
+	p := NewSPMCPool[struct{}, struct{}, int](30, WithExpiryDuration(DefaultExpiredTime))
+	defer p.ReleaseAndWait()
+	p.SetConsumerFunc(func(a struct{}, b int) struct{} {
+		return struct{}{}
+	})
+	var twg util.WaitGroupWrapper
+	for i := 0; i < 3; i++ {
+		twg.Run(func() {
+			sema := make(chan struct{}, 10)
+			var wg util.WaitGroupWrapper
+			exitCh := make(chan struct{})
+			wg.Run(func() {
+				for j := 0; j < RunTimes; j++ {
+					sema <- struct{}{}
+				}
+				close(exitCh)
+			})
+			producerFunc := func() (struct{}, error) {
+				for {
+					select {
+					case <-sema:
+						return struct{}{}, nil
+					default:
+						select {
+						case <-exitCh:
+							return struct{}{}, errors.New("not job")
+						default:
+						}
+					}
 				}
 			}
-		}
-	}()
-	ctl.Wait()
-	wg.Wait()
+			resultCh, ctl := p.AddProducer(producerFunc, RunTimes, 6)
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for {
+					select {
+					case <-resultCh:
+					default:
+						if ctl.IsProduceClose() {
+							return
+						}
+					}
+				}
+			}()
+			ctl.Wait()
+			wg.Wait()
+		})
+	}
+	twg.Wait()
 }
