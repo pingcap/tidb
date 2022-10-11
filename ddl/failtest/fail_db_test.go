@@ -529,7 +529,7 @@ func TestModifyColumn(t *testing.T) {
 	tk.MustExec("insert into t5 values (1,1),(2,2),(3,3),(4,4),(5,5);")
 	tk.MustExec("alter table t5 modify a int not null;")
 
-	tk.MustExec("drop table t, t1, t2, t3, t4, t5")
+	tk.MustExec("drop table t, t2, t3, t4, t5")
 }
 
 func TestPartitionAddPanic(t *testing.T) {
