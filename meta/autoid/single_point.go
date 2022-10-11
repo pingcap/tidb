@@ -15,26 +15,64 @@
 package autoid
 
 import (
-	// "fmt"
 	"context"
+	"fmt"
+	"strings"
 	"time"
 
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/autoid"
 	"github.com/pingcap/tidb/metrics"
-	"github.com/opentracing/opentracing-go"
+	clientv3 "go.etcd.io/etcd/client/v3"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 var _ Allocator = &singlePointAlloc{}
 
 type singlePointAlloc struct {
-	dbID int64
-	tblID int64
-	autoid.AutoIDAllocClient
-
+	dbID          int64
+	tblID         int64
 	lastAllocated int64
+	clientDiscover
 }
 
+type clientDiscover struct {
+	// This the etcd client for service discover
+	etcdCli *clientv3.Client
+	// This is the real client for the AutoIDAlloc service
+	autoid.AutoIDAllocClient
+}
+
+const (
+	autoIDLeaderPath = "tidb/autoid/leader"
+)
+
+func (d *clientDiscover) GetClient(ctx context.Context) (autoid.AutoIDAllocClient, error) {
+	if d.AutoIDAllocClient != nil {
+		return d.AutoIDAllocClient, nil
+	}
+
+	resp, err := d.etcdCli.Get(ctx, autoIDLeaderPath, clientv3.WithFirstCreate()...)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if len(resp.Kvs) == 0 {
+		return nil, errors.New("autoid service leader not found")
+	}
+
+	addr := string(resp.Kvs[0].Value)
+	fmt.Println("get autoid service addr ==", addr)
+	grpcConn, err := grpc.Dial(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	cli := autoid.NewAutoIDAllocClient(grpcConn)
+	d.AutoIDAllocClient = cli
+	return cli, nil
+}
 
 // Alloc allocs N consecutive autoID for table with tableID, returning (min, max] of the allocated autoID batch.
 // The consecutive feature is used to insert multiple rows in a statement.
@@ -49,14 +87,29 @@ func (sp *singlePointAlloc) Alloc(ctx context.Context, n uint64, increment, offs
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
+retry:
+	cli, err := sp.GetClient(ctx)
+	if err != nil {
+		return 0, 0, errors.Trace(err)
+	}
+
 	start := time.Now()
-	resp, err := sp.AutoIDAllocClient.AllocAutoID(ctx, &autoid.AutoIDRequest{
-		DbID: sp.dbID,
-		TblID: sp.tblID,
-		N: n,
+	resp, err := cli.AllocAutoID(ctx, &autoid.AutoIDRequest{
+		DbID:      sp.dbID,
+		TblID:     sp.tblID,
+		N:         n,
 		Increment: increment,
-		Offset: offset,
+		Offset:    offset,
 	})
+	if err != nil {
+		fmt.Println("request auto id error ===", err)
+		if strings.Contains(err.Error(), "rpc error") {
+			sp.AutoIDAllocClient = nil
+			goto retry
+		}
+		return 0, 0, errors.Trace(err)
+	}
+
 	du := time.Since(start)
 	metrics.AutoIDReqDuration.Observe(du.Seconds())
 	if err == nil {
@@ -82,10 +135,15 @@ func (sp *singlePointAlloc) Rebase(ctx context.Context, newBase int64, allocIDs 
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	_, err := sp.AutoIDAllocClient.Rebase(ctx, &autoid.RebaseRequest{
-		DbID: sp.dbID,
+	cli, err := sp.GetClient(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	_, err = cli.Rebase(ctx, &autoid.RebaseRequest{
+		DbID:  sp.dbID,
 		TblID: sp.tblID,
-		Base: newBase,
+		Base:  newBase,
 	})
 	if err == nil {
 		sp.lastAllocated = newBase
@@ -107,6 +165,7 @@ func (sp *singlePointAlloc) RebaseSeq(newBase int64) (int64, bool, error) {
 func (sp *singlePointAlloc) Base() int64 {
 	return sp.lastAllocated
 }
+
 // End is only used for test.
 func (sp *singlePointAlloc) End() int64 {
 	return sp.lastAllocated

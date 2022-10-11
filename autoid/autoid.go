@@ -36,7 +36,7 @@ type Service struct {
 	persist
 }
 
-func New() *Service {
+func New(selfAddr string) *Service {
 	cli, err := clientv3.New(clientv3.Config{
 		Endpoints:   []string{"0.0.0.0:2379"},
 		DialTimeout: time.Second,
@@ -48,7 +48,7 @@ func New() *Service {
 	fmt.Println("run here in service new!!")
 
 	l := &leaderShip{cli: cli}
-	go l.campaignLoop(context.Background())
+	go l.campaignLoop(context.Background(), selfAddr)
 
 	p := &etcdPersist{cli: cli}
 	return &Service{

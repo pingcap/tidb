@@ -13,6 +13,10 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	autoIDLeaderPath = "tidb/autoid/leader"
+)
+
 type leaderShip struct {
 	cli      *clientv3.Client
 	isLeader atomic.Bool
@@ -22,9 +26,9 @@ func (ls *leaderShip) IsLeader() bool {
 	return ls.isLeader.Load()
 }
 
-func (ls *leaderShip) campaignLoop(ctx context.Context) {
+func (ls *leaderShip) campaignLoop(ctx context.Context, addr string) {
 	fmt.Println("before new session!!!")
-	s, err := newSession(ctx, "xxx", ls.cli, 50, 15)
+	s, err := newSession(ctx, ls.cli, 50, 15)
 	if err != nil {
 		// TODO
 		fmt.Println("error not printed???")
@@ -35,7 +39,7 @@ func (ls *leaderShip) campaignLoop(ctx context.Context) {
 	for {
 		select {
 		case <-s.Done():
-			s, err = newSession(ctx, "xxx", ls.cli, 50, 15)
+			s, err = newSession(ctx, ls.cli, 50, 15)
 			if err != nil {
 				// TODO
 				log.Error("new session error?")
@@ -43,11 +47,11 @@ func (ls *leaderShip) campaignLoop(ctx context.Context) {
 		default:
 		}
 
-		e := concurrency.NewElection(s, "path")
+		e := concurrency.NewElection(s, autoIDLeaderPath)
 		// follower blocks here.
 
 		fmt.Println("before campaign leader!!!")
-		err := e.Campaign(ctx, "id")
+		err := e.Campaign(ctx, addr)
 		if err != nil {
 			log.Warn("fail to campaign?")
 			continue
@@ -62,7 +66,7 @@ func (ls *leaderShip) campaignLoop(ctx context.Context) {
 		}
 
 		s := string(resp.Kvs[0].Value)
-		if s != "id" {
+		if s != addr {
 			log.Fatal("wrong election result. got %s, wanted id")
 		}
 		fmt.Println(resp)
@@ -71,7 +75,7 @@ func (ls *leaderShip) campaignLoop(ctx context.Context) {
 	}
 }
 
-func newSession(ctx context.Context, logPrefix string, etcdCli *clientv3.Client, retryCnt, ttl int) (*concurrency.Session, error) {
+func newSession(ctx context.Context, etcdCli *clientv3.Client, retryCnt, ttl int) (*concurrency.Session, error) {
 	var err error
 
 	var etcdSession *concurrency.Session
@@ -92,7 +96,7 @@ func newSession(ctx context.Context, logPrefix string, etcdCli *clientv3.Client,
 
 		fmt.Println("retry session success?")
 		if failedCnt%5 == 0 {
-			log.Warn("failed to new session to etcd", zap.String("ownerInfo", logPrefix), zap.Error(err))
+			log.Warn("failed to new session to etcd", zap.Error(err))
 		}
 
 		time.Sleep(200 * time.Millisecond)

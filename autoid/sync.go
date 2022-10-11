@@ -34,7 +34,7 @@ func (p *mockPersist) loadID(ctx context.Context, dbID, tblID int64) (uint64, er
 }
 
 const (
-	AutoIDKeyPattern = "tidb/autoid/db/%d/tbl/%d"
+	autoIDKeyPattern = "tidb/autoid/db/%d/tbl/%d"
 )
 
 type etcdPersist struct {
@@ -42,7 +42,7 @@ type etcdPersist struct {
 }
 
 func (p *etcdPersist) syncID(ctx context.Context, dbID, tblID int64, val uint64, addr *int64, done <-chan struct{}) error {
-	key := fmt.Sprintf(AutoIDKeyPattern, dbID, tblID)
+	key := fmt.Sprintf(autoIDKeyPattern, dbID, tblID)
 	fmt.Println("before syncID... put", key, val)
 	_, err := p.cli.Put(ctx, key, strconv.FormatUint(val, 10))
 	fmt.Println("after syncID... put", key, val)
@@ -57,7 +57,7 @@ func (p *etcdPersist) syncID(ctx context.Context, dbID, tblID int64, val uint64,
 }
 
 func (p *etcdPersist) loadID(ctx context.Context, dbID, tblID int64) (uint64, error) {
-	key := fmt.Sprintf(AutoIDKeyPattern, dbID, tblID)
+	key := fmt.Sprintf(autoIDKeyPattern, dbID, tblID)
 	resp, err := p.cli.Get(ctx, key)
 	if err != nil {
 		return 0, errors.Trace(err)

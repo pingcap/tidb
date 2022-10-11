@@ -26,7 +26,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/kvproto/pkg/autoid"
+	// "github.com/pingcap/kvproto/pkg/autoid"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
@@ -39,9 +39,10 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	tikvutil "github.com/tikv/client-go/v2/util"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
+	// "google.golang.org/grpc"
+	// "google.golang.org/grpc/credentials/insecure"
 )
 
 // Attention:
@@ -579,24 +580,36 @@ func NewAllocatorsFromTblInfo(store kv.Storage, schemaID int64, tblInfo *model.T
 	hasAutoIncID := tblInfo.GetAutoIncrementColInfo() != nil
 	if hasRowID || hasAutoIncID {
 		// alloc := NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(), RowIDAllocType, idCacheOpt, tblVer)
-		pdStore, ok := store.(kv.StorageWithPD)
-		if !ok {
-			panic("pd store should be used")
+		// pdStore, ok := store.(kv.StorageWithPD)
+		// if !ok {
+		// 	panic("pd store should be used")
+		// }
+		// cli := pdStore.GetPDClient()
+		// addr := cli.GetLeaderAddr()
+		// fmt.Println("--------------- addr ===", addr)
+		// // grpcConn, err := grpcutil.GetClientConn(context.Background(), addr, nil)
+		// grpcConn, err := grpc.Dial("127.0.0.1:50052", grpc.WithTransportCredentials(insecure.NewCredentials()))
+		// if err != nil {
+		// 	panic(err)
+		// }
+		if ebd, ok := store.(kv.EtcdBackend); ok {
+			addrs, err := ebd.EtcdAddrs()
+			if err != nil {
+				panic(err)
+			}
+			etcdCli, err := clientv3.New(clientv3.Config{
+				Endpoints: addrs,
+				TLS:       ebd.TLSConfig(),
+			})
+			alloc := &singlePointAlloc{
+				dbID:  dbID,
+				tblID: tblInfo.ID,
+				clientDiscover: clientDiscover{
+					etcdCli: etcdCli,
+				},
+			}
+			allocs = append(allocs, alloc)
 		}
-		cli := pdStore.GetPDClient()
-		addr := cli.GetLeaderAddr()
-		fmt.Println("--------------- addr ===", addr)
-		// grpcConn, err := grpcutil.GetClientConn(context.Background(), addr, nil)
-		grpcConn, err := grpc.Dial("127.0.0.1:50052", grpc.WithTransportCredentials(insecure.NewCredentials()))
-		if err != nil {
-			panic(err)
-		}
-		alloc := &singlePointAlloc{
-			dbID:              dbID,
-			tblID:             tblInfo.ID,
-			AutoIDAllocClient: autoid.NewAutoIDAllocClient(grpcConn),
-		}
-		allocs = append(allocs, alloc)
 	}
 	hasAutoRandID := tblInfo.ContainsAutoRandomBits()
 	if hasAutoRandID {

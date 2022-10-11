@@ -28,7 +28,7 @@ func main() {
 	}
 	s := grpc.NewServer()
 	pb.RegisterAutoIDAllocServer(s, &server{
-		Service: autoid.New(),
+		Service: autoid.New(lis.Addr().String()),
 	})
 	log.Printf("server listening at %v", lis.Addr())
 	if err := s.Serve(lis); err != nil {
