@@ -248,8 +248,8 @@ func GetConstantLength(c *expression.Constant, tp *types.FieldType) int {
 	if err != nil || (val.Kind() != types.KindBytes && val.Kind() != types.KindString) {
 		return types.UnspecifiedLength
 	}
-	if tp.GetCharset() == charset.CharsetUTF8 || tp.GetCharset() == charset.CharsetUTF8MB4 {
-		return utf8.RuneCount(val.GetBytes())
+	if tp.GetCharset() == charset.CharsetBin || tp.GetCharset() == charset.CharsetASCII {
+		return len(val.GetBytes())
 	}
-	return len(val.GetBytes())
+	return utf8.RuneCount(val.GetBytes())
 }
