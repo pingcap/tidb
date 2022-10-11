@@ -678,24 +678,6 @@ func pushNotAcrossArgs(ctx sessionctx.Context, exprs []Expression, not bool) ([]
 	return newExprs, flag
 }
 
-// checkValidExprForPushNot check whether it should push `NOT`
-// Do not push `NOT` if the condition has the following cases;
-func checkValidExprForPushNot(expr Expression) bool {
-	if f, ok := expr.(*ScalarFunction); ok {
-		if f.FuncName.L == ast.NullEQ {
-			return false
-		}
-		valid := true
-		for _, arg := range f.GetArgs() {
-			valid = checkValidExprForPushNot(arg) && valid
-			if !valid {
-				return false
-			}
-		}
-	}
-	return true
-}
-
 // pushNotAcrossExpr try to eliminate the NOT expr in expression tree.
 // Input `not` indicates whether there's a `NOT` be pushed down.
 // Output `changed` indicates whether the output expression differs from the
@@ -765,10 +747,6 @@ func GetExprInsideIsTruth(expr Expression) Expression {
 
 // PushDownNot pushes the `not` function down to the expression's arguments.
 func PushDownNot(ctx sessionctx.Context, expr Expression) Expression {
-	valid := checkValidExprForPushNot(expr)
-	if !valid {
-		return expr
-	}
 	newExpr, _ := pushNotAcrossExpr(ctx, expr, false)
 	return newExpr
 }

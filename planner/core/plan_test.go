@@ -1066,7 +1066,13 @@ func TestNullEQConditionPlan(t *testing.T) {
 	tk.MustQuery("explain SELECT * FROM t0 WHERE NOT (('4')AND(t0.c0<=>FALSE))").CheckAt(
 		[]int{0, 2, 4}, [][]interface{}{
 			{"TableReader_7", "root", "data:Selection_6"},
-			{"└─Selection_6", "cop[tikv]", "not(and(1, nulleq(test.t0.c0, 0)))"},
+			{"└─Selection_6", "cop[tikv]", "or(0, not(nulleq(test.t0.c0, 0)))"},
 			{"  └─TableFullScan_5", "cop[tikv]", "keep order:false, stats:pseudo"},
+		})
+
+	tk.MustQuery("SELECT * FROM t0 WHERE (('4')AND(t0.c0<=>FALSE));").Check(testkit.Rows("0"))
+	tk.MustQuery("explain SELECT * FROM t0 WHERE (('4')AND(t0.c0<=>FALSE))").CheckAt(
+		[]int{0, 2, 4}, [][]interface{}{
+			{"Point_Get_5", "root", "handle:0"},
 		})
 }
