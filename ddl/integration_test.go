@@ -86,14 +86,16 @@ func TestDDLStatementsBackFill(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	needReorg := false
-	dom.DDL().SetHook(&ddl.TestDDLCallback{
+	callback := &ddl.TestDDLCallback{
 		Do: dom,
-		OnJobUpdatedExported: func(job *model.Job) {
-			if job.SchemaState == model.StateWriteReorganization {
-				needReorg = true
-			}
-		},
-	})
+	}
+	onJobUpdatedExportedFunc := func(job *model.Job) {
+		if job.SchemaState == model.StateWriteReorganization {
+			needReorg = true
+		}
+	}
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
+	dom.DDL().SetHook(callback)
 	tk.MustExec("create table t (a int, b char(65));")
 	tk.MustExec("insert into t values (1, '123');")
 	testCases := []struct {
