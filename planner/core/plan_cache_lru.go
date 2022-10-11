@@ -15,6 +15,7 @@ package core
 
 import (
 	"container/list"
+	"strconv"
 	"sync"
 	"unsafe"
 
@@ -96,6 +97,8 @@ func (l *LRUPlanCache) Get(key kvcache.Key, paramTypes []*types.FieldType) (valu
 	if bucketExist {
 		if element, exist := l.pickFromBucket(bucket, paramTypes); exist {
 			l.lruList.MoveToFront(element)
+			memTotal := "TestPlanCacheMemoryUsage: " + strconv.FormatInt(l.TestMemoryUseTotal, 10) + " Bytes " + memory.FormatBytes(l.TestMemoryUseTotal) + " ---PlanNum: " + strconv.Itoa(int(l.size))
+			logutil.BgLogger().Info(memTotal)
 			return element.Value.(*planCacheEntry).PlanValue, true
 		}
 	}
