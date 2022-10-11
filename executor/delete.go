@@ -45,7 +45,7 @@ type DeleteExec struct {
 	tblColPosInfos plannercore.TblColPosInfoSlice
 	memTracker     *memory.Tracker
 
-	fkTriggers map[int64][]FKTriggerExecutor
+	fkCascades map[int64][]*FKCascadeExec
 }
 
 // Next implements the Executor Next interface.
@@ -241,9 +241,9 @@ func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h kv.Handl
 	if err != nil {
 		return err
 	}
-	fkTriggers := e.fkTriggers[t.Meta().ID]
+	fkCascades := e.fkCascades[t.Meta().ID]
 	sc := ctx.GetSessionVars().StmtCtx
-	for _, fkt := range fkTriggers {
+	for _, fkt := range fkCascades {
 		err = fkt.onDeleteRow(sc, data)
 		if err != nil {
 			return err
@@ -259,15 +259,11 @@ func (e *DeleteExec) GetFKChecks() []*FKCheckExec {
 	return nil
 }
 
+// GetFKCascades implements WithForeignKeyTrigger interface.
 func (e *DeleteExec) GetFKCascades() []*FKCascadeExec {
 	fkCascades := []*FKCascadeExec{}
-	for _, fkts := range e.fkTriggers {
-		for _, fkt := range fkts {
-			fkc, ok := fkt.(*FKCascadeExec)
-			if ok {
-				fkCascades = append(fkCascades, fkc)
-			}
-		}
+	for _, fkcs := range e.fkCascades {
+		fkCascades = append(fkCascades, fkcs...)
 	}
 	return fkCascades
 }

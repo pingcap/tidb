@@ -454,6 +454,7 @@ func (e *InsertExec) GetFKChecks() []*FKCheckExec {
 	return e.fkChecks
 }
 
+// GetFKCascades implements WithForeignKeyTrigger interface.
 func (e *InsertExec) GetFKCascades() []*FKCascadeExec {
 	return nil
 }

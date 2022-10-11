@@ -544,6 +544,7 @@ func (e *UpdateExec) GetFKChecks() []*FKCheckExec {
 	return fkChecks
 }
 
+// GetFKCascades implements WithForeignKeyTrigger interface.
 func (e *UpdateExec) GetFKCascades() []*FKCascadeExec {
 	return nil
 }

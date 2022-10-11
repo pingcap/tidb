@@ -31,11 +31,6 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 )
 
-type FKTrigger struct {
-	*FKCheck
-	*FKCascade
-}
-
 // FKCheck indicates the foreign key constraint checker.
 type FKCheck struct {
 	FK         *model.FKInfo
@@ -217,7 +212,7 @@ func (del *Delete) buildOnDeleteFKTriggers(ctx sessionctx.Context, is infoschema
 	if !ctx.GetSessionVars().ForeignKeyChecks {
 		return nil
 	}
-	fkTriggers := make(map[int64][]*FKTrigger)
+	fkCascades := make(map[int64][]*FKCascade)
 	for tid, tbl := range tblID2table {
 		tblInfo := tbl.Meta()
 		dbInfo, exist := is.SchemaByTable(tblInfo)
@@ -226,20 +221,20 @@ func (del *Delete) buildOnDeleteFKTriggers(ctx sessionctx.Context, is infoschema
 		}
 		referredFKs := is.GetTableReferredForeignKeys(dbInfo.Name.L, tblInfo.Name.L)
 		for _, referredFK := range referredFKs {
-			fkTrigger, err := buildOnDeleteFKTrigger(is, referredFK)
+			fkCascade, err := buildOnDeleteFKTrigger(is, referredFK)
 			if err != nil {
 				return err
 			}
-			if fkTrigger != nil {
-				fkTriggers[tid] = append(fkTriggers[tid], fkTrigger)
+			if fkCascade != nil {
+				fkCascades[tid] = append(fkCascades[tid], fkCascade)
 			}
 		}
 	}
-	del.FKTriggers = fkTriggers
+	del.FKCascades = fkCascades
 	return nil
 }
 
-func buildOnDeleteFKTrigger(is infoschema.InfoSchema, referredFK *model.ReferredFKInfo) (*FKTrigger, error) {
+func buildOnDeleteFKTrigger(is infoschema.InfoSchema, referredFK *model.ReferredFKInfo) (*FKCascade, error) {
 	childTable, err := is.TableByName(referredFK.ChildSchema, referredFK.ChildTable)
 	if err != nil {
 		return nil, nil
@@ -250,13 +245,12 @@ func buildOnDeleteFKTrigger(is infoschema.InfoSchema, referredFK *model.Referred
 	}
 	switch model.ReferOptionType(fk.OnDelete) {
 	case model.ReferOptionCascade:
-		return &FKTrigger{
-			FKCascade: &FKCascade{
-				OnDelete: &FKCascadeInfo{
-					ReferredFK: referredFK,
-					ChildTable: childTable,
-					FK:         fk,
-				}}}, nil
+		return &FKCascade{
+			OnDelete: &FKCascadeInfo{
+				ReferredFK: referredFK,
+				ChildTable: childTable,
+				FK:         fk,
+			}}, nil
 	}
 	return nil, nil
 }
@@ -341,31 +335,23 @@ func buildFKCheck(tbl table.Table, cols []model.CIStr, failedErr error) (*FKChec
 	}, nil
 }
 
-// FKTriggerPlan is the foreign key trigger plan
-type FKTriggerPlan interface {
+// FKCascadePlan is the foreign key cascade plan
+type FKCascadePlan interface {
 	Plan
-
-	GetCols() []model.CIStr
 
 	SetRangeForSelectPlan([][]types.Datum) error
 }
 
+// FKOnDeleteCascadePlan is the foreign key cascade delete plan.
 type FKOnDeleteCascadePlan struct {
-	baseFKTriggerPlan
+	baseFKCascadePlan
 
 	*Delete
 }
 
-type baseFKTriggerPlan struct {
-	fk   *model.FKInfo
-	cols []model.CIStr
-}
+type baseFKCascadePlan struct{}
 
-func (p *baseFKTriggerPlan) GetCols() []model.CIStr {
-	return p.cols
-}
-
-func (p *baseFKTriggerPlan) setRangeForSelectPlan(selectPlan PhysicalPlan, fkValues [][]types.Datum) error {
+func (p *baseFKCascadePlan) setRangeForSelectPlan(selectPlan PhysicalPlan, fkValues [][]types.Datum) error {
 	if us, ok := selectPlan.(*PhysicalUnionScan); ok {
 		return p.setRangeForSelectPlan(us.children[0], fkValues)
 	}
@@ -392,11 +378,13 @@ func (p *baseFKTriggerPlan) setRangeForSelectPlan(selectPlan PhysicalPlan, fkVal
 	return nil
 }
 
+// SetRangeForSelectPlan implements the FKCascadePlan interface.
 func (p *FKOnDeleteCascadePlan) SetRangeForSelectPlan(fkValues [][]types.Datum) error {
 	return p.setRangeForSelectPlan(p.SelectPlan, fkValues)
 }
 
-func (b *PlanBuilder) BuildOnDeleteFKTriggerPlan(ctx context.Context, onModifyReferredTable *FKCascadeInfo) (FKTriggerPlan, error) {
+// BuildOnDeleteFKCascadePlan builds on delete cascade plan.
+func (b *PlanBuilder) BuildOnDeleteFKCascadePlan(ctx context.Context, onModifyReferredTable *FKCascadeInfo) (FKCascadePlan, error) {
 	fk, referredFK, childTable := onModifyReferredTable.FK, onModifyReferredTable.ReferredFK, onModifyReferredTable.ChildTable
 	switch model.ReferOptionType(fk.OnDelete) {
 	case model.ReferOptionCascade:
@@ -405,7 +393,7 @@ func (b *PlanBuilder) BuildOnDeleteFKTriggerPlan(ctx context.Context, onModifyRe
 	return nil, nil
 }
 
-func (b *PlanBuilder) buildForeignKeyCascadeDelete(ctx context.Context, dbName model.CIStr, tbl table.Table, fk *model.FKInfo) (FKTriggerPlan, error) {
+func (b *PlanBuilder) buildForeignKeyCascadeDelete(ctx context.Context, dbName model.CIStr, tbl table.Table, fk *model.FKInfo) (FKCascadePlan, error) {
 	b.pushSelectOffset(0)
 	b.pushTableHints(nil, 0)
 	defer func() {
@@ -441,8 +429,7 @@ func (b *PlanBuilder) buildForeignKeyCascadeDelete(ctx context.Context, dbName m
 	}
 	err = del.buildOnDeleteFKTriggers(b.ctx, b.is, tblID2Table)
 	return &FKOnDeleteCascadePlan{
-		Delete:            del,
-		baseFKTriggerPlan: baseFKTriggerPlan{fk, fk.RefCols},
+		Delete: del,
 	}, err
 }
 

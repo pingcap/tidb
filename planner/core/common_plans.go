@@ -382,7 +382,7 @@ type Delete struct {
 
 	TblColPosInfos TblColPosInfoSlice
 
-	FKTriggers map[int64][]*FKTrigger
+	FKCascades map[int64][]*FKCascade
 }
 
 // AnalyzeInfo is used to store the database name, table name and partition name of analyze task.
