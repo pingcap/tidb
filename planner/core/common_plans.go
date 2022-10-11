@@ -666,12 +666,14 @@ func (e *Explain) prepareSchema() error {
 	switch {
 	case (format == types.ExplainFormatROW || format == types.ExplainFormatBrief) && (!e.Analyze && e.RuntimeStatsColl == nil):
 		fieldNames = []string{"id", "estRows", "task", "access object", "operator info"}
-	case format == types.ExplainFormatVerbose || format == types.ExplainFormatTrueCardCost:
+	case format == types.ExplainFormatVerbose:
 		if e.Analyze || e.RuntimeStatsColl != nil {
 			fieldNames = []string{"id", "estRows", "estCost", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
 		} else {
 			fieldNames = []string{"id", "estRows", "estCost", "task", "access object", "operator info"}
 		}
+	case format == types.ExplainFormatTrueCardCost:
+		fieldNames = []string{"id", "estRows", "estCost", "costFormula", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
 	case (format == types.ExplainFormatROW || format == types.ExplainFormatBrief) && (e.Analyze || e.RuntimeStatsColl != nil):
 		fieldNames = []string{"id", "estRows", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
 	case format == types.ExplainFormatDOT:
@@ -850,13 +852,16 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, id string) {
 		return
 	}
 
-	estRows, estCost, accessObject, operatorInfo := e.getOperatorInfo(p, id)
+	estRows, estCost, costFormula, accessObject, operatorInfo := e.getOperatorInfo(p, id)
 
 	var row []string
 	if e.Analyze || e.RuntimeStatsColl != nil {
 		row = []string{id, estRows}
 		if strings.ToLower(e.Format) == types.ExplainFormatVerbose || strings.ToLower(e.Format) == types.ExplainFormatTrueCardCost {
 			row = append(row, estCost)
+		}
+		if strings.ToLower(e.Format) == types.ExplainFormatTrueCardCost {
+			row = append(row, costFormula)
 		}
 		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoStr(e.ctx, p, e.RuntimeStatsColl)
 		row = append(row, actRows, taskType, accessObject, analyzeInfo, operatorInfo, memoryInfo, diskInfo)
@@ -870,14 +875,14 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, id string) {
 	e.Rows = append(e.Rows, row)
 }
 
-func (e *Explain) getOperatorInfo(p Plan, id string) (string, string, string, string) {
+func (e *Explain) getOperatorInfo(p Plan, id string) (string, string, string, string, string) {
 	// For `explain for connection` statement, `e.ExplainRows` will be set.
 	for _, row := range e.ExplainRows {
 		if len(row) < 5 {
 			panic("should never happen")
 		}
 		if row[0] == id {
-			return row[1], "N/A", row[3], row[4]
+			return row[1], "N/A", "N/A", row[3], row[4]
 		}
 	}
 	estRows := "N/A"
@@ -885,9 +890,16 @@ func (e *Explain) getOperatorInfo(p Plan, id string) (string, string, string, st
 		estRows = strconv.FormatFloat(si.RowCount, 'f', 2, 64)
 	}
 	estCost := "N/A"
+	costFormula := "N/A"
 	if pp, ok := p.(PhysicalPlan); ok {
-		planCost, _ := getPlanCost(pp, property.RootTaskType, NewDefaultPlanCostOption())
-		estCost = strconv.FormatFloat(planCost, 'f', 2, 64)
+		if e.ctx != nil && e.ctx.GetSessionVars().CostModelVersion == modelVer2 {
+			costVer2, _ := pp.getPlanCostVer2(property.RootTaskType, NewDefaultPlanCostOption())
+			estCost = strconv.FormatFloat(costVer2.cost, 'f', 2, 64)
+			costFormula = costVer2.formula
+		} else {
+			planCost, _ := getPlanCost(pp, property.RootTaskType, NewDefaultPlanCostOption())
+			estCost = strconv.FormatFloat(planCost, 'f', 2, 64)
+		}
 	}
 	var accessObject, operatorInfo string
 	if plan, ok := p.(dataAccesser); ok {
@@ -899,7 +911,7 @@ func (e *Explain) getOperatorInfo(p Plan, id string) (string, string, string, st
 		}
 		operatorInfo = p.ExplainInfo()
 	}
-	return estRows, estCost, accessObject, operatorInfo
+	return estRows, estCost, costFormula, accessObject, operatorInfo
 }
 
 // BinaryPlanStrFromFlatPlan generates the compressed and encoded binary plan from a FlatPhysicalPlan.
