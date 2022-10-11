@@ -2198,7 +2198,6 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		partNames[i] = partNamesCIStr[i].L
 	}
 
-	var physicalTableIDs []int64
 	// In order to skip maintaining the state check in partitionDefinition, TiDB use dropping/addingDefinition instead of state field.
 	// So here using `job.SchemaState` to judge what the stage of this job is.
 	originalState := job.SchemaState
@@ -2223,14 +2222,10 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		// move the adding definition into tableInfo.
 		updateAddingPartitionInfo(partInfo, tblInfo)
 		orgDefs := tblInfo.Partition.Definitions
-		physicalTableIDs = updateDroppingPartitionInfo(tblInfo, partNames)
+		_ = updateDroppingPartitionInfo(tblInfo, partNames)
 		// Reset original partitions, and keep DroppedDefinitions
 		tblInfo.Partition.Definitions = orgDefs
-		/*
-			if len(physicalTableIDs) != len(droppingDefinitions) {
-				droppingDefinitions = tblInfo.Partition.DroppingDefinitions
-			}
-		*/
+
 		// TODO: Why is this not done last, after setting the job.SchemaState?
 		ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, true)
 		if err != nil {
@@ -2287,7 +2282,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		job.SchemaState = model.StateWriteReorganization
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != job.SchemaState)
 	case model.StateWriteReorganization:
-		physicalTableIDs = getPartitionIDsFromDefinitions(tblInfo.Partition.DroppingDefinitions)
+		physicalTableIDs := getPartitionIDsFromDefinitions(tblInfo.Partition.DroppingDefinitions)
 		tbl, err := getTable(d.store, job.SchemaID, tblInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -2385,7 +2380,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 				return ver, errors.Trace(err)
 			}
 		*/
-		physicalTableIDs = updateDroppingPartitionInfo(tblInfo, partNames)
+		_ = updateDroppingPartitionInfo(tblInfo, partNames)
 		err = dropLabelRules(d, job.SchemaName, tblInfo.Name.L, partNames)
 		if err != nil {
 			job.State = model.JobStateCancelled
