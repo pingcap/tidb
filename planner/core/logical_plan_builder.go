@@ -63,6 +63,7 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/set"
+	"github.com/pingcap/tidb/util/size"
 )
 
 const (
@@ -5202,6 +5203,19 @@ type TblColPosInfo struct {
 	Start, End int
 	// HandleOrdinal represents the ordinal of the handle column.
 	HandleCols HandleCols
+}
+
+// MemoryUsage return the memory usage of TblColPosInfo
+func (t *TblColPosInfo) MemoryUsage() (sum int64) {
+	if t == nil {
+		return
+	}
+
+	sum = size.SizeOfInt64 + size.SizeOfInt*2
+	if t.HandleCols != nil {
+		sum += t.HandleCols.MemoryUsage()
+	}
+	return
 }
 
 // TblColPosInfoSlice attaches the methods of sort.Interface to []TblColPosInfos sorting in increasing order.
