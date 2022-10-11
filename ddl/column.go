@@ -1082,7 +1082,12 @@ func (w *worker) updateCurrentElement(t table.Table, reorgInfo *reorgInfo) error
 
 	var physTbl table.PhysicalTable
 	if tbl, ok := t.(table.PartitionedTable); ok {
-		physTbl = tbl.GetPartition(reorgInfo.PhysicalTableID)
+		if len(tbl.Meta().Partition.DroppingDefinitions) > 0 {
+			reorgInfo.PhysicalTableID = tbl.Meta().Partition.DroppingDefinitions[0].ID
+			physTbl = tbl.GetPartition(reorgInfo.PhysicalTableID)
+		} else {
+			physTbl = tbl.GetPartition(reorgInfo.PhysicalTableID)
+		}
 	} else if tbl, ok := t.(table.PhysicalTable); ok {
 		physTbl = tbl
 	}

@@ -2293,38 +2293,10 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 			return ver, errors.Trace(err)
 		}
 		// TODO: If table has global indexes, we need reorg to clean up them.
-		if pt, ok := tbl.(table.PartitionedTable); ok && hasGlobalIndex(tblInfo) {
-			// Build elements for compatible with modify column type. elements will not be used when reorganizing.
-			elements := make([]*meta.Element, 0, len(tblInfo.Indices))
-			for _, idxInfo := range tblInfo.Indices {
-				if idxInfo.Global {
-					elements = append(elements, &meta.Element{ID: idxInfo.ID, TypeKey: meta.IndexElementKey})
-				}
-			}
-			rh := newReorgHandler(t, w.sess, w.concurrentDDL)
-			reorgInfo, err := getReorgInfoFromPartitions(d.jobContext(job), d, rh, job, tbl.(table.PartitionedTable), physicalTableIDs, elements)
-
-			if err != nil || reorgInfo.first {
-				// If we run reorg firstly, we should update the job snapshot version
-				// and then run the reorg next time.
-				return ver, errors.Trace(err)
-			}
-			err = w.runReorgJob(rh, reorgInfo, tbl.Meta(), d.lease, func() (dropIndexErr error) {
-				defer tidbutil.Recover(metrics.LabelDDL, "onReorgPartition",
-					func() {
-						dropIndexErr = dbterror.ErrCancelledDDLJob.GenWithStack("drop partition panic")
-					}, false)
-				return w.cleanupGlobalIndexes(pt, physicalTableIDs, reorgInfo)
-			})
-			if err != nil {
-				if dbterror.ErrWaitReorgTimeout.Equal(err) {
-					// if timeout, we should return, check for the owner and re-wait job done.
-					return ver, nil
-				}
-				return ver, errors.Trace(err)
-			}
+		// and then add the new partition ids back...
+		if _, ok := tbl.(table.PartitionedTable); ok && hasGlobalIndex(tblInfo) {
+			return ver, errors.Trace(dbterror.ErrCancelledDDLJob.GenWithStack("global indexes is not supported yet for reorganize partition"))
 		}
-		// TODO: Create background reorg job, also do indexes!
 		var done bool
 		done, ver, err = doPartitionReorgWork(w, d, t, job, tbl, physicalTableIDs)
 
@@ -2435,6 +2407,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 }
 
 func doPartitionReorgWork(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, physTblIDs []int64) (done bool, ver int64, err error) {
+	// TODO: Is only the first phyTblIDs ever used? (then it check internal states for the rest of the partition ids?)
 	job.ReorgMeta.ReorgTp = model.ReorgTypeTxn
 	rh := newReorgHandler(t, w.sess, w.concurrentDDL)
 	// TODO: create fail point for internal testing?
@@ -2538,6 +2511,11 @@ func (w *reorgPartitionWorker) BackfillDataInTxn(handleRange reorgBackfillTask) 
 					warningsMap[prr.warning.ID()] = prr.warning
 				}
 			}
+			// TODO: Should we also write the indexes here?
+			// What if the transaction limit is just enough for a single row, without index?
+			// Hmm, how could that be in the first place?
+			// For now, implement the batch-txn w.addTableIndex,
+			// since it already exists and is in use
 		}
 
 		// Collect the warnings.
@@ -2677,8 +2655,103 @@ func (w *worker) reorgPartitionData(t table.Table, reorgInfo *reorgInfo) error {
 	// from each of the DroppingDefinitions partitions
 	// Create all indexes on the AddingDefinitions partitions
 
-	// For now, just reuse updateCurrentElement
-	return w.updateCurrentElement(t, reorgInfo)
+	/*
+			failpoint.Inject("mockInfiniteReorgLogic", func(val failpoint.Value) {
+			//nolint:forcetypeassert
+			if val.(bool) {
+				a := new(interface{})
+				TestReorgGoroutineRunning <- a
+				for {
+					time.Sleep(30 * time.Millisecond)
+					if w.getReorgCtx(reorgInfo.Job).isReorgCanceled() {
+						// Job is cancelled. So it can't be done.
+						failpoint.Return(dbterror.ErrCancelledDDLJob)
+					}
+				}
+			}
+		})
+	*/
+
+	// Copy the data from the DroppingDefinitions to the AddingDefinitions
+	if bytes.Equal(reorgInfo.currElement.TypeKey, meta.ColumnElementKey) {
+		err := w.updatePhysicalTableRow(t, reorgInfo)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	// Rewrite this to do all indexes at once in addTableIndex
+	// instead of calling it once per index (meaning reading the table multiple times)
+	// But for now, try to understand how it works...
+	firstNewPartitionID := t.Meta().Partition.AddingDefinitions[0].ID
+	startElementOffset := 0
+	//startElementOffsetToResetHandle := -1
+	// This backfill job starts with backfilling index data, whose index ID is currElement.ID.
+	if !bytes.Equal(reorgInfo.currElement.TypeKey, meta.IndexElementKey) {
+		// First run, have not yet started backfilling index data
+		// Restart with the first new partition.
+		// TODO: handle remove partitioning
+		reorgInfo.PhysicalTableID = firstNewPartitionID
+	} else {
+		// The job was interrupted and has been restarted,
+		// reset and start from where it was done
+		for i, element := range reorgInfo.elements[1:] {
+			if reorgInfo.currElement.ID == element.ID {
+				startElementOffset = i
+				//startElementOffsetToResetHandle = i
+				break
+			}
+		}
+	}
+
+	for i := startElementOffset; i < len(reorgInfo.elements[1:]); i++ {
+		// Now build the indexes in the new partitions
+		var physTbl table.PhysicalTable
+		if tbl, ok := t.(table.PartitionedTable); ok {
+			physTbl = tbl.GetPartition(reorgInfo.PhysicalTableID)
+		} else if tbl, ok := t.(table.PhysicalTable); ok {
+			// This may be used when partitioning a non-partitioned table
+			physTbl = tbl
+		}
+		// Get the original start handle and end handle.
+		currentVer, err := getValidCurrentVersion(reorgInfo.d.store)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		startHandle, endHandle, err := getTableRange(reorgInfo.d.jobContext(reorgInfo.Job), reorgInfo.d, physTbl, currentVer.Ver, reorgInfo.Job.Priority)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		// This backfill job has been exited during processing. At that time, the element is reorgInfo.elements[i+1] and handle range is [reorgInfo.StartHandle, reorgInfo.EndHandle].
+		// Then the handle range of the rest elements' is [originalStartHandle, originalEndHandle].
+		//if i == startElementOffsetToResetHandle+1 {
+		reorgInfo.StartKey, reorgInfo.EndKey = startHandle, endHandle
+		//}
+
+		// Update the element in the reorgCtx to keep the atomic access for daemon-worker.
+		w.getReorgCtx(reorgInfo.Job).setCurrentElement(reorgInfo.elements[i+1])
+
+		// Update the element in the reorgInfo for updating the reorg meta below.
+		reorgInfo.currElement = reorgInfo.elements[i+1]
+		// Write the reorg info to store so the whole reorganize process can recover from panic.
+		err = reorgInfo.UpdateReorgMeta(reorgInfo.StartKey, w.sessPool)
+		logutil.BgLogger().Info("[ddl] update column and indexes",
+			zap.Int64("jobID", reorgInfo.Job.ID),
+			zap.ByteString("elementType", reorgInfo.currElement.TypeKey),
+			zap.Int64("elementID", reorgInfo.currElement.ID),
+			zap.String("startHandle", tryDecodeToHandleString(reorgInfo.StartKey)),
+			zap.String("endHandle", tryDecodeToHandleString(reorgInfo.EndKey)))
+		if err != nil {
+			return errors.Trace(err)
+		}
+		err = w.addTableIndex(t, reorgInfo)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		reorgInfo.PhysicalTableID = firstNewPartitionID
+	}
+	return nil
 }
 
 func bundlesForExchangeTablePartition(t *meta.Meta, job *model.Job, pt *model.TableInfo, newPar *model.PartitionDefinition, nt *model.TableInfo) ([]*placement.Bundle, error) {

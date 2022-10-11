@@ -1167,6 +1167,25 @@ func (t *partitionedTable) GetPartition(pid int64) table.PhysicalTable {
 	// Because A nil of type *partition is a kind of `table.PhysicalTable`
 	p, ok := t.partitions[pid]
 	if !ok {
+		// We might want an old or new partition
+		pi := t.meta.Partition
+		for _, defs := range [][]model.PartitionDefinition{
+			pi.AddingDefinitions,
+			pi.DroppingDefinitions,
+		} {
+			for _, def := range defs {
+				if pid != def.ID {
+					continue
+				}
+				var newPart partition
+				err := initTableCommonWithIndices(&newPart.TableCommon, t.meta, def.ID, t.Columns, t.allocs)
+				if err != nil {
+					return nil
+				}
+				t.partitions[pid] = &newPart
+				return &newPart
+			}
+		}
 		return nil
 	}
 	return p
