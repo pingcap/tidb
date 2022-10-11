@@ -1601,6 +1601,9 @@ func (w *worker) updateReorgInfo(t table.PartitionedTable, reorg *reorgInfo) (bo
 		// During index re-creation, process data from partitions to be added
 		nextPartitionDefs = pi.AddingDefinitions
 	}
+	if nextPartitionDefs == nil {
+		nextPartitionDefs = pi.Definitions
+	}
 	pid, err := findNextPartitionID(reorg.PhysicalTableID, nextPartitionDefs)
 	if err != nil {
 		// Fatal error, should not run here.

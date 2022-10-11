@@ -4818,3 +4818,43 @@ func TestReorganizeRangePartition(t *testing.T) {
 		" PARTITION `p3` VALUES LESS THAN (47),\n" +
 		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
 }
+
+func TestReorganizeListPartition(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database ReorgListPartition")
+	tk.MustExec("use ReorgListPartition")
+	tk.MustExec(`create table t (a int, b varchar(55), c int) partition by list (a)` +
+		` (partition p1 values in (12,23,51,14), partition p2 values in (24,63), partition p3 values in (45))`)
+	tk.MustExec(`insert into t values (12,"12",21), (24,"24",42),(51,"51",15),(23,"23",32),(63,"63",36),(45,"45",54)`)
+	tk.MustExec(`alter table t reorganize partition p1 into (partition p0 values in (12,51,13), partition p1 values in (23))`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  `b` varchar(55) DEFAULT NULL,\n" +
+		"  `c` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY LIST (`a`)\n" +
+		"(PARTITION `p0` VALUES IN (12,51,13),\n" +
+		" PARTITION `p1` VALUES IN (23),\n" +
+		" PARTITION `p2` VALUES IN (24,63),\n" +
+		" PARTITION `p3` VALUES IN (45))"))
+	tk.MustExec(`alter table t add primary key (a), add key (b), add key (c,b)`)
+
+	// Note: MySQL cannot reorganize two non-consecutive list partitions :)
+	// ERROR 1519 (HY000): When reorganizing a set of partitions they must be in consecutive order
+	tk.MustExec(`alter table t reorganize partition p1, p3 into (partition pa values in (45,23,15))`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(11) NOT NULL,\n" +
+		"  `b` varchar(55) DEFAULT NULL,\n" +
+		"  `c` int(11) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */,\n" +
+		"  KEY `b` (`b`),\n" +
+		"  KEY `c` (`c`,`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY LIST (`a`)\n" +
+		"(PARTITION `p0` VALUES IN (12,51,13),\n" +
+		" PARTITION `pa` VALUES IN (45,23,15),\n" +
+		" PARTITION `p2` VALUES IN (24,63))"))
+}

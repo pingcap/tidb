@@ -3723,14 +3723,22 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 func getReorganizedDefinitions(pi *model.PartitionInfo, firstPartIdx, lastPartIdx int, idMap map[int]interface{}) []model.PartitionDefinition {
 	tmpDefs := make([]model.PartitionDefinition, 0, len(pi.Definitions)+len(pi.AddingDefinitions)-len(idMap))
 	if pi.Type == model.PartitionTypeList {
-		// There is no order to keep in LIST partitioning
+		replaced := false
 		for i := range pi.Definitions {
 			if _, ok := idMap[i]; ok {
+				if !replaced {
+					tmpDefs = append(tmpDefs, pi.AddingDefinitions...)
+					replaced = true
+				}
 				continue
 			}
 			tmpDefs = append(tmpDefs, pi.Definitions[i])
 		}
-		return append(tmpDefs, pi.Definitions...)
+		if !replaced {
+			// For safety, for future non-partitioned table -> partitioned
+			tmpDefs = append(tmpDefs, pi.AddingDefinitions...)
+		}
+		return tmpDefs
 	}
 	// Range
 	tmpDefs = append(tmpDefs, pi.Definitions[:firstPartIdx]...)
