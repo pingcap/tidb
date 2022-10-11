@@ -139,7 +139,7 @@ func TestCostModelShowFormula(t *testing.T) {
 
 	tk.MustExecToErr("explain format='true_card_cost' select * from t") // 'true_card_cost' must work with 'explain analyze'
 	plan := tk.MustQuery("explain analyze format='true_card_cost' select * from t where a<3").Rows()
-	var actual [][]interface{}
+	actual := make([][]interface{}, 0, len(plan))
 	for _, row := range plan {
 		actual = append(actual, []interface{}{row[0], row[3]}) // id,costFormula
 		fmt.Println(actual)
