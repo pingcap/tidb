@@ -1883,8 +1883,8 @@ func (do *Domain) ServerMemoryLimitHandle() *servermemorylimit.Handle {
 }
 
 const (
-	privilegeKey       = "/tidb/privilege"
-	sysVarCacheKey     = "/tidb/sysvars"
+	privilegeKey           = "/tidb/privilege"
+	sysVarCacheKey         = "/tidb/sysvars"
 	tiflashComputeStoreKey = "/tiflash/new_tiflash_compute_stores"
 )
 

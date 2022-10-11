@@ -65,8 +65,8 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/set"
-	"github.com/tikv/client-go/v2/tikv"
 	"github.com/pingcap/tidb/util/size"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 const (
