@@ -4661,12 +4661,11 @@ func TestAlterModifyColumnOnPartitionedTable(t *testing.T) {
 		"57 57"))
 }
 
-func TestReorganizePartition(t *testing.T) {
+func TestReorganizeRangePartition(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database ReorgPartition")
 	tk.MustExec("use ReorgPartition")
-	// TODO Test with/without PK, indexes, UK, virtual, virtual stored columns
 	tk.MustExec(`create table t (a int unsigned PRIMARY KEY, b varchar(255), c int, key (b), key (c,b)) partition by range (a) ` +
 		`(partition p0 values less than (10),` +
 		` partition p1 values less than (20),` +
@@ -4779,4 +4778,43 @@ func TestReorganizePartition(t *testing.T) {
 		"34 34 43",
 		"45 45 54",
 		"56 56 65"))
+	// TODO Test with/without PK, indexes, UK, virtual, virtual stored columns
+	tk.MustExec(`alter table t drop index b`)
+	tk.MustExec(`alter table t drop index c`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(10) unsigned NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  `c` int(11) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE (`a`)\n" +
+		"(PARTITION `p1` VALUES LESS THAN (20),\n" +
+		" PARTITION `p2` VALUES LESS THAN (35),\n" +
+		" PARTITION `p3` VALUES LESS THAN (47),\n" +
+		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
+	tk.MustExec(`create table t2 (a int unsigned not null, b varchar(255), c int, key (b), key (c,b)) partition by range (a) ` +
+		"(PARTITION `p1` VALUES LESS THAN (20),\n" +
+		" PARTITION `p2` VALUES LESS THAN (35),\n" +
+		" PARTITION `p3` VALUES LESS THAN (47),\n" +
+		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))")
+	tk.MustExec(`insert into t2 select * from t`)
+	// Not allowed to change the start range!
+	tk.MustGetErrCode(`alter table t2 reorganize partition p2 into (partition p2a values less than (16), partition p2b values less than (36))`,
+		mysql.ErrRangeNotIncreasing)
+	// Not allowed to change the end range!
+	tk.MustGetErrCode(`alter table t2 reorganize partition p2 into (partition p2a values less than (30), partition p2b values less than (36))`, mysql.ErrRangeNotIncreasing)
+	tk.MustQuery(`show create table t2`).Check(testkit.Rows("" +
+		"t2 CREATE TABLE `t2` (\n" +
+		"  `a` int(10) unsigned NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  `c` int(11) DEFAULT NULL,\n" +
+		"  KEY `b` (`b`),\n" +
+		"  KEY `c` (`c`,`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE (`a`)\n" +
+		"(PARTITION `p1` VALUES LESS THAN (20),\n" +
+		" PARTITION `p2` VALUES LESS THAN (35),\n" +
+		" PARTITION `p3` VALUES LESS THAN (47),\n" +
+		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
 }

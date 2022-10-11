@@ -3719,8 +3719,9 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 	return errors.Trace(err)
 }
 
+// Return the definitions as it would look like after the REORGANIZE PARTITION is done
 func getReorganizedDefinitions(pi *model.PartitionInfo, firstPartIdx, lastPartIdx int, idMap map[int]interface{}) []model.PartitionDefinition {
-	tmpDefs := make([]model.PartitionDefinition, 0, len(pi.Definitions)+len(pi.AddingDefinitions)-len(pi.DroppingDefinitions))
+	tmpDefs := make([]model.PartitionDefinition, 0, len(pi.Definitions)+len(pi.AddingDefinitions)-len(idMap))
 	if pi.Type == model.PartitionTypeList {
 		// There is no order to keep in LIST partitioning
 		for i := range pi.Definitions {
@@ -3824,15 +3825,11 @@ func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec
 		return errors.Trace(err)
 	}
 
-	if err := d.assignPartitionIDs(partInfo.Definitions); err != nil {
+	if err = d.assignPartitionIDs(partInfo.Definitions); err != nil {
 		return errors.Trace(err)
 	}
 
-	// partInfo contains only the new added partition, we have to combine it with the
-	// old partitions to check all partitions is strictly increasing.
-	clonedMeta := meta.Clone()
-	clonedMeta.Partition.Definitions = getReorganizedDefinitions(pi, firstPartIdx, lastPartIdx, idMap)
-	if err := checkPartitionDefinitionConstraints(ctx, clonedMeta); err != nil {
+	if err = checkReorgPartitionDefs(ctx, meta, partInfo, firstPartIdx, lastPartIdx, idMap); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -3864,6 +3861,59 @@ func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec
 	}
 	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
+}
+
+func checkReorgPartitionDefs(ctx sessionctx.Context, tblInfo *model.TableInfo, partInfo *model.PartitionInfo, firstPartIdx, lastPartIdx int, idMap map[int]interface{}) error {
+
+	// partInfo contains only the new added partition, we have to combine it with the
+	// old partitions to check all partitions is strictly increasing.
+	pi := tblInfo.Partition
+	clonedMeta := tblInfo.Clone()
+	clonedPartInfo := *tblInfo.Partition
+	clonedPartInfo.AddingDefinitions = partInfo.Definitions
+	clonedMeta.Partition = &clonedPartInfo
+	clonedMeta.Partition.Definitions = getReorganizedDefinitions(&clonedPartInfo, firstPartIdx, lastPartIdx, idMap)
+	if err := checkPartitionDefinitionConstraints(ctx, clonedMeta); err != nil {
+		return errors.Trace(err)
+	}
+	if pi.Type == model.PartitionTypeRange {
+		if lastPartIdx == len(pi.Definitions)-1 {
+			// Last partition dropped, OK to change the end range
+			// Also includes MAXVALUE
+			return nil
+		}
+		// Check if the replaced end range is the same as before
+		lastAddingPartition := partInfo.Definitions[len(partInfo.Definitions)-1]
+		lastOldPartition := pi.Definitions[lastPartIdx]
+		if len(pi.Columns) > 0 {
+			newGtOld, err := checkTwoRangeColumns(ctx, &lastAddingPartition, &lastOldPartition, pi, tblInfo)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if newGtOld {
+				return errors.Trace(dbterror.ErrRangeNotIncreasing)
+			}
+			oldGtNew, err := checkTwoRangeColumns(ctx, &lastOldPartition, &lastAddingPartition, pi, tblInfo)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if oldGtNew {
+				return errors.Trace(dbterror.ErrRangeNotIncreasing)
+			}
+		}
+
+		isUnsigned := isPartExprUnsigned(tblInfo)
+		currentRangeValue, _, err := getRangeValue(ctx, pi.Definitions[lastPartIdx].LessThan[0], isUnsigned)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		newRangeValue, _, err := getRangeValue(ctx, partInfo.Definitions[len(partInfo.Definitions)-1].LessThan[0], isUnsigned)
+
+		if currentRangeValue != newRangeValue {
+			return errors.Trace(dbterror.ErrRangeNotIncreasing)
+		}
+	}
+	return nil
 }
 
 // CoalescePartitions coalesce partitions can be used with a table that is partitioned by hash or key to reduce the number of partitions by number.
