@@ -274,15 +274,6 @@ func (rc *Client) GetSupportPolicy() bool {
 	return rc.supportPolicy
 }
 
-// GetTruncateSafepoint read the truncate checkpoint from the storage bind to the client.
-func (rc *Client) GetTruncateSafepoint(ctx context.Context) (uint64, error) {
-	ts, err := GetTSFromFile(ctx, rc.storage, TruncateSafePointFileName)
-	if err != nil {
-		log.Warn("failed to get truncate safepoint, using 0", logutil.ShortError(err))
-	}
-	return ts, err
-}
-
 func (rc *Client) GetDomain() *domain.Domain {
 	return rc.dom
 }
@@ -480,14 +471,11 @@ func (rc *Client) GetTS(ctx context.Context) (uint64, error) {
 }
 
 // ResetTS resets the timestamp of PD to a bigger value.
-func (rc *Client) ResetTS(ctx context.Context, pdAddrs []string) error {
+func (rc *Client) ResetTS(ctx context.Context, pdCtrl *pdutil.PdController) error {
 	restoreTS := rc.backupMeta.GetEndVersion()
 	log.Info("reset pd timestamp", zap.Uint64("ts", restoreTS))
-	i := 0
 	return utils.WithRetry(ctx, func() error {
-		idx := i % len(pdAddrs)
-		i++
-		return pdutil.ResetTS(ctx, pdAddrs[idx], restoreTS, rc.tlsConf)
+		return pdCtrl.ResetTS(ctx, restoreTS)
 	}, utils.NewPDReqBackoffer())
 }
 
@@ -1777,6 +1765,10 @@ func (rc *Client) ReadStreamDataFiles(
 	mFiles := make([]*backuppb.DataFileInfo, 0)
 
 	for _, m := range metas {
+		_, exists := backuppb.MetaVersion_name[int32(m.MetaVersion)]
+		if !exists {
+			log.Warn("metaversion too new", zap.Reflect("version id", m.MetaVersion))
+		}
 		for _, ds := range m.FileGroups {
 			metaRef := 0
 			for _, d := range ds.DataFilesInfo {
@@ -1789,7 +1781,8 @@ func (rc *Client) ReadStreamDataFiles(
 				}
 
 				// If ds.Path is empty, it is MetadataV1.
-				if m.MetaVersion == backuppb.MetaVersion_V2 {
+				// Try to be compatible with newer metadata version
+				if m.MetaVersion > backuppb.MetaVersion_V1 {
 					d.Path = ds.Path
 				}
 
@@ -1799,10 +1792,11 @@ func (rc *Client) ReadStreamDataFiles(
 				} else {
 					dFiles = append(dFiles, d)
 				}
-				log.Debug("backup stream collect data partition", zap.Uint64("offset", d.Offset), zap.Uint64("length", d.Length))
+				log.Debug("backup stream collect data partition", zap.Uint64("offset", d.RangeOffset), zap.Uint64("length", d.Length))
 			}
 			// metadatav1 doesn't use cache
-			if m.MetaVersion == backuppb.MetaVersion_V2 {
+			// Try to be compatible with newer metadata version
+			if m.MetaVersion > backuppb.MetaVersion_V1 {
 				rc.helper.InitCacheEntry(ds.Path, metaRef)
 			}
 		}
@@ -2257,7 +2251,7 @@ func (rc *Client) readAllEntries(
 	kvEntries := make([]*KvEntryWithTS, 0)
 	nextKvEntries := make([]*KvEntryWithTS, 0)
 
-	buff, err := rc.helper.ReadFile(ctx, file.Path, file.Offset, file.CompressLength, rc.storage)
+	buff, err := rc.helper.ReadFile(ctx, file.Path, file.RangeOffset, file.RangeLength, file.CompressionType, rc.storage)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}

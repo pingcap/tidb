@@ -687,13 +687,14 @@ func TestUpdateMultipleTable(t *testing.T) {
 
 	d := dom.DDL()
 	hook := &ddl.TestDDLCallback{Do: dom}
-	hook.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if job.SchemaState == model.StateWriteOnly {
 			tk2.MustExec("update t1, t2 set t1.c1 = 8, t2.c2 = 10 where t1.c2 = t2.c1")
 			tk2.MustQuery("select * from t1").Check(testkit.Rows("8 1", "8 2"))
 			tk2.MustQuery("select * from t2").Check(testkit.Rows("1 10", "2 10"))
 		}
 	}
+	hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	d.SetHook(hook)
 
 	tk.MustExec("alter table t1 add column c3 bigint default 9")
@@ -4097,4 +4098,40 @@ func TestDDLLastInfo(t *testing.T) {
 
 	tk.MustExec("drop table t, t2")
 	tk.MustQuery("select json_extract(@@tidb_last_ddl_info, '$.query'), json_extract(@@tidb_last_ddl_info, '$.seq_num')").Check(testkit.Rows(fmt.Sprintf("\"drop table t, t2\" %d", firstSequence+3)))
+}
+
+func TestRegexpFunctionsGeneratedColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// test regexp_like
+	tk.MustExec("drop table if exists reg_like")
+	tk.MustExec("create table reg_like(a varchar(50), b varchar(50), c int generated always as (regexp_like(a, b)))")
+	tk.MustExec("insert into reg_like(a, b) values('123', '2')")
+	tk.MustExec("insert into reg_like(a, b) values('456', '1')")
+	tk.MustQuery("select * from reg_like").Check(testkit.Rows("123 2 1", "456 1 0"))
+
+	// test regexp_substr
+	tk.MustExec("drop table if exists reg_sub;")
+	tk.MustExec("create table reg_sub(a varchar(50),b varchar(50),c varchar(50) generated always as (regexp_substr(a, b)))")
+	tk.MustExec("insert into reg_sub(a, b) values('abcd', 'bc.')")
+	tk.MustExec("insert into reg_sub(a, b) values('1234', '23.')")
+	tk.MustQuery("select * from reg_sub").Check(testkit.Rows("abcd bc. bcd", "1234 23. 234"))
+
+	// test regexp_instr
+	tk.MustExec("drop table if exists reg_instr;")
+	tk.MustExec("create table reg_instr(a varchar(50),b varchar(50),c varchar(50) generated always as (regexp_instr(a, b)))")
+	tk.MustExec("insert into reg_instr(a, b) values('abcd', 'bc.')")
+	tk.MustExec("insert into reg_instr(a, b) values('1234', '23.')")
+	tk.MustQuery("select * from reg_instr").Check(testkit.Rows("abcd bc. 2", "1234 23. 2"))
+
+	// test regexp_replace
+	tk.MustExec("drop table if exists reg_replace;")
+	tk.MustExec("create table reg_replace(a varchar(50),b varchar(50),c varchar(50),d varchar(50) generated always as (regexp_replace(a, b, c)));")
+	tk.MustExec("insert into reg_replace(a, b, c) values('abcd', 'bc.', 'xzx')")
+	tk.MustExec("insert into reg_replace(a, b, c) values('1234', '23.', 'xzx')")
+	tk.MustQuery("select * from reg_replace").Check(testkit.Rows("abcd bc. xzx axzx", "1234 23. xzx 1xzx"))
+
+	tk.MustExec("drop table if exists reg_like")
 }

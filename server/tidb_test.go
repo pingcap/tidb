@@ -16,6 +16,8 @@
 package server
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
@@ -50,6 +52,8 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/arena"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/cpuprofile"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
@@ -60,6 +64,7 @@ import (
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	"go.opencensus.io/stats/view"
 )
 
 type tidbTestSuite struct {
@@ -111,6 +116,7 @@ func createTidbTestSuite(t *testing.T) *tidbTestSuite {
 		if ts.store != nil {
 			require.NoError(t, ts.store.Close())
 		}
+		view.Stop()
 	})
 
 	return ts
@@ -143,6 +149,7 @@ func createTidbTestTopSQLSuite(t *testing.T) *tidbTestTopSQLSuite {
 		cpuprofile.StopCPUProfiler()
 		topsqlstate.GlobalState.PrecisionSeconds.Store(topsqlstate.DefTiDBTopSQLPrecisionSeconds)
 		topsqlstate.GlobalState.ReportIntervalSeconds.Store(topsqlstate.DefTiDBTopSQLReportIntervalSeconds)
+		view.Stop()
 	})
 	return ts
 }
@@ -872,6 +879,9 @@ func TestInternalSessionTxnStartTS(t *testing.T) {
 	ts := createTidbTestSuite(t)
 
 	se, err := session.CreateSession4Test(ts.store)
+	require.NoError(t, err)
+
+	_, err = se.Execute(context.Background(), "set global tidb_enable_metadata_lock=0")
 	require.NoError(t, err)
 
 	count := 10
@@ -2079,6 +2089,7 @@ func setupForTestTopSQLStatementStats(t *testing.T) (*tidbTestSuite, stmtstats.S
 		err = failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/unistoreRPCClientSendHook")
 		require.NoError(t, err)
 		stmtstats.CloseAggregator()
+		view.Stop()
 	})
 
 	return ts, total, tagChecker, collectedNotifyCh
@@ -2573,6 +2584,52 @@ func TestLocalhostClientMapping(t *testing.T) {
 	defer dbSocket.Close()
 	err = dbSocket.Ping()
 	require.Errorf(t, err, "Connection successful without matching host for unix domain socket!")
+}
+
+func TestRcReadCheckTSConflict(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	cc := &clientConn{
+		alloc:      arena.NewAllocator(1024),
+		chunkAlloc: chunk.NewAllocator(),
+		pkt: &packetIO{
+			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
+		},
+	}
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set global tidb_rc_read_check_ts = ON")
+	tk.RefreshSession()
+	cc.setCtx(&TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)})
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int not null primary key, b int not null)")
+	dml := "insert into t values"
+	for i := 0; i < 50; i++ {
+		dml += fmt.Sprintf("(%v, 0)", i)
+		if i != 49 {
+			dml += ","
+		}
+	}
+	tk.MustExec(dml)
+	tk.MustQuery("select count(*) from t").Check(testkit.Rows("50"))
+	require.Equal(t, "ON", tk.MustQuery("show variables like 'tidb_rc_read_check_ts'").Rows()[0][1])
+
+	ctx := context.Background()
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/fetchNextErr", "return(\"secondNextAndRetConflict\")"))
+	err := cc.handleQuery(ctx, "select * from t limit 20")
+	require.NoError(t, err)
+
+	err = cc.handleQuery(ctx, "select * from t t1 join t t2")
+	require.Equal(t, kv.ErrWriteConflict, err)
+
+	tk.MustExec("set session tidb_max_chunk_size = 4096")
+	require.Equal(t, "4096", tk.MustQuery("show variables like 'tidb_max_chunk_size'").Rows()[0][1])
+	err = cc.handleQuery(ctx, "select * from t t1 join t t2")
+	require.NoError(t, err)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/fetchNextErr"))
+
+	tk.MustExec("drop table t")
 }
 
 func TestRcReadCheckTS(t *testing.T) {

@@ -2565,6 +2565,7 @@ func TestPlanCacheWithRCWhenInfoSchemaChange(t *testing.T) {
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
+	tk1.MustExec("set global tidb_enable_metadata_lock=0")
 	tk2.MustExec("use test")
 	tk1.MustExec("drop table if exists t1")
 	tk1.MustExec("create table t1(id int primary key, c int, index ic (c))")
@@ -2604,6 +2605,7 @@ func TestConsistencyBetweenPrepareExecuteAndNormalSql(t *testing.T) {
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
+	tk1.MustExec("set global tidb_enable_metadata_lock=0")
 	tk1.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 	tk2.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 	tk1.MustExec("use test")
@@ -2678,6 +2680,7 @@ func TestCacheHitInRc(t *testing.T) {
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
+	tk1.MustExec("set global tidb_enable_metadata_lock=0")
 	tk1.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 	tk2.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 	tk1.MustExec("use test")
@@ -2780,4 +2783,17 @@ func TestPreparedShowStatements(t *testing.T) {
 	tk.MustExec("create table t1 (a int, b int);")
 	tk.MustExec(`prepare p3 from "show tables where tables_in_test = 't1'";`) // Only table `t1` is selected.
 	tk.MustQuery("execute p3;").Check(testkit.Rows("t1"))
+}
+
+func TestIssue37901(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t4`)
+	tk.MustExec(`create table t4 (a date)`)
+	tk.MustExec(`prepare st1 from "insert into t4(a) select dt from (select ? as dt from dual union all select sysdate() ) a";`)
+	tk.MustExec(`set @t='2022-01-01 00:00:00.000000'`)
+	tk.MustExec(`execute st1 using @t`)
+	tk.MustQuery(`select count(*) from t4`).Check(testkit.Rows("2"))
 }

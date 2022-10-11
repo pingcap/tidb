@@ -127,11 +127,14 @@ func (d *ddl) getJob(sess *session, tp jobType, filter func(*model.Job) (bool, e
 func (d *ddl) getGeneralJob(sess *session) (*model.Job, error) {
 	return d.getJob(sess, general, func(job *model.Job) (bool, error) {
 		if job.Type == model.ActionDropSchema {
-			sql := fmt.Sprintf("select job_id from mysql.tidb_ddl_job where CONCAT(',', schema_ids, ',') REGEXP CONCAT(',', '%s', ',') != 0 and processing limit 1", strconv.Quote(strconv.FormatInt(job.SchemaID, 10)))
+			// Check if there is any reorg job on this schema.
+			sql := fmt.Sprintf("select job_id from mysql.tidb_ddl_job where CONCAT(',', schema_ids, ',') REGEXP CONCAT(',', %s, ',') != 0 and processing limit 1", strconv.Quote(strconv.FormatInt(job.SchemaID, 10)))
 			return d.checkJobIsRunnable(sess, sql)
 		}
-
-		sql := fmt.Sprintf("select job_id from mysql.tidb_ddl_job t1, (select table_ids from mysql.tidb_ddl_job where job_id = %d) t2 where processing and CONCAT(',', t2.table_ids, ',') REGEXP CONCAT(',', REPLACE(t1.table_ids, ',', '|'), ',') != 0", job.ID)
+		// Check if there is any running job works on the same table.
+		sql := fmt.Sprintf("select job_id from mysql.tidb_ddl_job t1, (select table_ids from mysql.tidb_ddl_job where job_id = %d) t2 where "+
+			"(processing and CONCAT(',', t2.table_ids, ',') REGEXP CONCAT(',', REPLACE(t1.table_ids, ',', '|'), ',') != 0)"+
+			"or (type = %d and processing)", job.ID, model.ActionFlashbackCluster)
 		return d.checkJobIsRunnable(sess, sql)
 	})
 }
@@ -143,8 +146,12 @@ func (d *ddl) checkJobIsRunnable(sess *session, sql string) (bool, error) {
 
 func (d *ddl) getReorgJob(sess *session) (*model.Job, error) {
 	return d.getJob(sess, reorg, func(job *model.Job) (bool, error) {
-		sql := fmt.Sprintf("select job_id from mysql.tidb_ddl_job where (CONCAT(',', schema_ids, ',') REGEXP CONCAT(',', '%s', ',') != 0 and type = %d and processing) or (CONCAT(',', schema_ids, ',') REGEXP CONCAT(',', '%s', ',') != 0 and processing) limit 1",
-			strconv.Quote(strconv.FormatInt(job.SchemaID, 10)), model.ActionDropSchema, strconv.Quote(strconv.FormatInt(job.TableID, 10)))
+		// Check if there is any block ddl running, like drop schema and flashback cluster.
+		sql := fmt.Sprintf("select job_id from mysql.tidb_ddl_job where "+
+			"(CONCAT(',', schema_ids, ',') REGEXP CONCAT(',', %s, ',') != 0 and type = %d and processing) "+
+			"or (CONCAT(',', table_ids, ',') REGEXP CONCAT(',', %s, ',') != 0 and processing) "+
+			"or (type = %d and processing) limit 1",
+			strconv.Quote(strconv.FormatInt(job.SchemaID, 10)), model.ActionDropSchema, strconv.Quote(strconv.FormatInt(job.TableID, 10)), model.ActionFlashbackCluster)
 		return d.checkJobIsRunnable(sess, sql)
 	})
 }
@@ -215,6 +222,7 @@ func (d *ddl) loadDDLJobAndRun(sess *session, pool *workerPool, getJob func(*ses
 	d.delivery2worker(wk, pool, job)
 }
 
+// delivery2worker owns the worker, need to put it back to the pool in this function.
 func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 	injectFailPointForGetJob(job)
 	d.insertRunningDDLJobMap(job.ID)
@@ -225,18 +233,42 @@ func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 			asyncNotify(d.ddlJobCh)
 			metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Dec()
 		}()
-		// we should wait 2 * d.lease time to guarantee all TiDB server have finished the schema change.
-		// see waitSchemaSynced for more details.
+		// check if this ddl job is synced to all servers.
 		if !d.isSynced(job) || d.once.Load() {
-			err := wk.waitSchemaSynced(d.ddlCtx, job, 2*d.lease)
-			if err == nil {
-				d.once.Store(false)
+			if variable.EnableMDL.Load() {
+				exist, err := checkMDLInfo(job.ID, d.sessPool)
+				if err != nil {
+					logutil.BgLogger().Warn("[ddl] check MDL info failed", zap.Error(err), zap.String("job", job.String()))
+					// Release the worker resource.
+					pool.put(wk)
+					return
+				} else if exist {
+					// Release the worker resource.
+					pool.put(wk)
+					err = waitSchemaSynced(d.ddlCtx, job, 2*d.lease)
+					if err != nil {
+						logutil.BgLogger().Warn("[ddl] wait ddl job sync failed", zap.Error(err), zap.String("job", job.String()))
+						time.Sleep(time.Second)
+						return
+					}
+					d.once.Store(false)
+					cleanMDLInfo(d.sessPool, job.ID)
+					// Don't have a worker now.
+					return
+				}
 			} else {
-				logutil.BgLogger().Warn("[ddl] wait ddl job sync failed", zap.Error(err), zap.String("job", job.String()))
-				time.Sleep(time.Second)
-				return
+				err := waitSchemaSynced(d.ddlCtx, job, 2*d.lease)
+				if err != nil {
+					logutil.BgLogger().Warn("[ddl] wait ddl job sync failed", zap.Error(err), zap.String("job", job.String()))
+					time.Sleep(time.Second)
+					// Release the worker resource.
+					pool.put(wk)
+					return
+				}
+				d.once.Store(false)
 			}
 		}
+
 		schemaVer, err := wk.HandleDDLJobTable(d.ddlCtx, job)
 		pool.put(wk)
 		if err != nil {
@@ -255,6 +287,7 @@ func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 			// If the job is done or still running or rolling back, we will wait 2 * lease time to guarantee other servers to update
 			// the newest schema.
 			waitSchemaChanged(context.Background(), d.ddlCtx, d.lease*2, schemaVer, job)
+			cleanMDLInfo(d.sessPool, job.ID)
 			d.synced(job)
 
 			if RunInGoTest {

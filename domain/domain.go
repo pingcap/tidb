@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
+	"github.com/pingcap/tidb/br/pkg/streamhelper/daemon"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/placement"
@@ -63,6 +64,7 @@ import (
 	"github.com/pingcap/tidb/util/engine"
 	"github.com/pingcap/tidb/util/expensivequery"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/servermemorylimit"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	pd "github.com/tikv/pd/client"
@@ -86,30 +88,31 @@ func NewMockDomain() *Domain {
 // Domain represents a storage space. Different domains can use the same database name.
 // Multiple domains can be used in parallel without synchronization.
 type Domain struct {
-	store                kv.Storage
-	infoCache            *infoschema.InfoCache
-	privHandle           *privileges.Handle
-	bindHandle           *bindinfo.BindHandle
-	statsHandle          unsafe.Pointer
-	statsLease           time.Duration
-	ddl                  ddl.DDL
-	info                 *infosync.InfoSyncer
-	globalCfgSyncer      *globalconfigsync.GlobalConfigSyncer
-	m                    sync.Mutex
-	SchemaValidator      SchemaValidator
-	sysSessionPool       *sessionPool
-	exit                 chan struct{}
-	etcdClient           *clientv3.Client
-	sysVarCache          sysVarCache // replaces GlobalVariableCache
-	slowQuery            *topNSlowQueries
-	expensiveQueryHandle *expensivequery.Handle
-	wg                   util.WaitGroupWrapper
-	statsUpdating        atomicutil.Int32
-	cancel               context.CancelFunc
-	indexUsageSyncLease  time.Duration
-	dumpFileGcChecker    *dumpFileGcChecker
-	expiredTimeStamp4PC  types.Time
-	logBackupAdvancer    *streamhelper.AdvancerDaemon
+	store                   kv.Storage
+	infoCache               *infoschema.InfoCache
+	privHandle              *privileges.Handle
+	bindHandle              atomic.Pointer[bindinfo.BindHandle]
+	statsHandle             unsafe.Pointer
+	statsLease              time.Duration
+	ddl                     ddl.DDL
+	info                    *infosync.InfoSyncer
+	globalCfgSyncer         *globalconfigsync.GlobalConfigSyncer
+	m                       sync.Mutex
+	SchemaValidator         SchemaValidator
+	sysSessionPool          *sessionPool
+	exit                    chan struct{}
+	etcdClient              *clientv3.Client
+	sysVarCache             sysVarCache // replaces GlobalVariableCache
+	slowQuery               *topNSlowQueries
+	expensiveQueryHandle    *expensivequery.Handle
+	serverMemoryLimitHandle *servermemorylimit.Handle
+	wg                      util.WaitGroupWrapper
+	statsUpdating           atomicutil.Int32
+	cancel                  context.CancelFunc
+	indexUsageSyncLease     time.Duration
+	dumpFileGcChecker       *dumpFileGcChecker
+	expiredTimeStamp4PC     types.Time
+	logBackupAdvancer       *daemon.OwnerDaemon
 
 	serverID             uint64
 	serverIDSession      *concurrency.Session
@@ -118,6 +121,15 @@ type Domain struct {
 	sysExecutorFactory   func(*Domain) (pools.Resource, error)
 
 	sysProcesses SysProcesses
+
+	mdlCheckTableInfo *mdlCheckTableInfo
+}
+
+type mdlCheckTableInfo struct {
+	mu         sync.Mutex
+	newestVer  int64
+	jobsVerMap map[int64]int64
+	jobsIdsMap map[int64]string
 }
 
 // InfoCache export for test.
@@ -448,7 +460,7 @@ func (do *Domain) Reload() error {
 		// loaded newer schema
 		if oldSchemaVersion < is.SchemaMetaVersion() {
 			// Update self schema version to etcd.
-			err = do.ddl.SchemaSyncer().UpdateSelfVersion(context.Background(), is.SchemaMetaVersion())
+			err = do.ddl.SchemaSyncer().UpdateSelfVersion(context.Background(), 0, is.SchemaMetaVersion())
 			if err != nil {
 				logutil.BgLogger().Info("update self version failed",
 					zap.Int64("oldSchemaVersion", oldSchemaVersion),
@@ -607,6 +619,110 @@ func (do *Domain) topologySyncerKeeper() {
 	}
 }
 
+func (do *Domain) refreshMDLCheckTableInfo() {
+	se, err := do.sysSessionPool.Get()
+
+	if err != nil {
+		logutil.BgLogger().Warn("get system session failed", zap.Error(err))
+		return
+	}
+	defer do.sysSessionPool.Put(se)
+	exec := se.(sqlexec.RestrictedSQLExecutor)
+	domainSchemaVer := do.InfoSchema().SchemaMetaVersion()
+	rows, _, err := exec.ExecRestrictedSQL(kv.WithInternalSourceType(context.Background(), kv.InternalTxnTelemetry), nil, fmt.Sprintf("select job_id, version, table_ids from mysql.tidb_mdl_info where version <= %d", domainSchemaVer))
+	if err != nil {
+		logutil.BgLogger().Warn("get mdl info from tidb_mdl_info failed", zap.Error(err))
+		return
+	}
+	do.mdlCheckTableInfo.mu.Lock()
+	defer do.mdlCheckTableInfo.mu.Unlock()
+
+	do.mdlCheckTableInfo.newestVer = domainSchemaVer
+	do.mdlCheckTableInfo.jobsVerMap = make(map[int64]int64, len(rows))
+	do.mdlCheckTableInfo.jobsIdsMap = make(map[int64]string, len(rows))
+	for i := 0; i < len(rows); i++ {
+		do.mdlCheckTableInfo.jobsVerMap[rows[i].GetInt64(0)] = rows[i].GetInt64(1)
+		do.mdlCheckTableInfo.jobsIdsMap[rows[i].GetInt64(0)] = rows[i].GetString(2)
+	}
+}
+
+func (do *Domain) mdlCheckLoop() {
+	ticker := time.Tick(time.Millisecond * 50)
+	var saveMaxSchemaVersion int64
+	jobNeedToSync := false
+	jobCache := make(map[int64]int64, 1000)
+
+	for {
+		select {
+		case <-ticker:
+			if !variable.EnableMDL.Load() {
+				continue
+			}
+
+			do.mdlCheckTableInfo.mu.Lock()
+			maxVer := do.mdlCheckTableInfo.newestVer
+			if maxVer > saveMaxSchemaVersion {
+				saveMaxSchemaVersion = maxVer
+			} else if !jobNeedToSync {
+				// Schema doesn't change, and no job to check in the last run.
+				do.mdlCheckTableInfo.mu.Unlock()
+				continue
+			}
+
+			jobNeedToCheckCnt := len(do.mdlCheckTableInfo.jobsVerMap)
+			if jobNeedToCheckCnt == 0 {
+				jobNeedToSync = false
+				do.mdlCheckTableInfo.mu.Unlock()
+				continue
+			}
+
+			jobsVerMap := make(map[int64]int64, len(do.mdlCheckTableInfo.jobsVerMap))
+			jobsIdsMap := make(map[int64]string, len(do.mdlCheckTableInfo.jobsIdsMap))
+			for k, v := range do.mdlCheckTableInfo.jobsVerMap {
+				jobsVerMap[k] = v
+			}
+			for k, v := range do.mdlCheckTableInfo.jobsIdsMap {
+				jobsIdsMap[k] = v
+			}
+			do.mdlCheckTableInfo.mu.Unlock()
+
+			jobNeedToSync = true
+
+			sm := do.InfoSyncer().GetSessionManager()
+			if sm == nil {
+				logutil.BgLogger().Info("session manager is nil")
+			} else {
+				sm.CheckOldRunningTxn(jobsVerMap, jobsIdsMap)
+			}
+
+			if len(jobsVerMap) == jobNeedToCheckCnt {
+				jobNeedToSync = false
+			}
+
+			// Try to gc jobCache.
+			if len(jobCache) > 1000 {
+				jobCache = make(map[int64]int64, 1000)
+			}
+
+			for jobID, ver := range jobsVerMap {
+				if cver, ok := jobCache[jobID]; ok && cver >= ver {
+					// Already update, skip it.
+					continue
+				}
+				logutil.BgLogger().Info("mdl gets lock, update to owner", zap.Int64("jobID", jobID), zap.Int64("version", ver))
+				err := do.ddl.SchemaSyncer().UpdateSelfVersion(context.Background(), jobID, ver)
+				if err != nil {
+					logutil.BgLogger().Warn("update self version failed", zap.Error(err))
+				} else {
+					jobCache[jobID] = ver
+				}
+			}
+		case <-do.exit:
+			return
+		}
+	}
+}
+
 func (do *Domain) loadSchemaInLoop(ctx context.Context, lease time.Duration) {
 	defer util.Recover(metrics.LabelDomain, "loadSchemaInLoop", nil, true)
 	// Lease renewal can run at any frequency.
@@ -663,6 +779,7 @@ func (do *Domain) loadSchemaInLoop(ctx context.Context, lease time.Duration) {
 		case <-do.exit:
 			return
 		}
+		do.refreshMDLCheckTableInfo()
 	}
 }
 
@@ -738,7 +855,7 @@ func (do *Domain) Close() {
 	}
 	do.wg.Wait()
 	do.sysSessionPool.Close()
-	variable.UnregisterStatistics(do.bindHandle)
+	variable.UnregisterStatistics(do.bindHandle.Load())
 	if do.onClose != nil {
 		do.onClose()
 	}
@@ -761,12 +878,18 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		dumpFileGcChecker:   &dumpFileGcChecker{gcLease: dumpFileGcLease, paths: []string{GetPlanReplayerDirName(), GetOptimizerTraceDirName()}},
 		onClose:             onClose,
 		expiredTimeStamp4PC: types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, types.DefaultFsp),
+		mdlCheckTableInfo: &mdlCheckTableInfo{
+			mu:         sync.Mutex{},
+			jobsVerMap: make(map[int64]int64),
+			jobsIdsMap: make(map[int64]string),
+		},
 	}
 
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)
 	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do.exit)
+	do.serverMemoryLimitHandle = servermemorylimit.NewServerMemoryLimitHandle(do.exit)
 	do.sysProcesses = SysProcesses{mu: &sync.RWMutex{}, procMap: make(map[uint64]sessionctx.Context)}
-	variable.SetStatsCacheCapacity.Store(do.SetStatsCacheCapacity)
+	do.initDomainSysVars()
 	return do
 }
 
@@ -904,6 +1027,7 @@ func (do *Domain) Init(
 		// Local store needs to get the change information for every DDL state in each session.
 		go do.loadSchemaInLoop(ctx, ddlLease)
 	}
+	do.wg.Run(do.mdlCheckLoop)
 	do.wg.Add(3)
 	go do.topNSlowQueryLoop()
 	go do.infoSyncerKeeper()
@@ -935,7 +1059,7 @@ func (do *Domain) initLogBackup(ctx context.Context, pdClient pd.Client) error {
 		return err
 	}
 	adv := streamhelper.NewCheckpointAdvancer(env)
-	do.logBackupAdvancer = streamhelper.NewAdvancerDaemon(adv, streamhelper.OwnerManagerForLogBackup(ctx, do.etcdClient))
+	do.logBackupAdvancer = daemon.New(adv, streamhelper.OwnerManagerForLogBackup(ctx, do.etcdClient), adv.Config().TickDuration)
 	loop, err := do.logBackupAdvancer.Begin(ctx)
 	if err != nil {
 		return err
@@ -1248,7 +1372,7 @@ func (do *Domain) PrivilegeHandle() *privileges.Handle {
 
 // BindHandle returns domain's bindHandle.
 func (do *Domain) BindHandle() *bindinfo.BindHandle {
-	return do.bindHandle
+	return do.bindHandle.Load()
 }
 
 // LoadBindInfoLoop create a goroutine loads BindInfo in a loop, it should
@@ -1256,8 +1380,11 @@ func (do *Domain) BindHandle() *bindinfo.BindHandle {
 func (do *Domain) LoadBindInfoLoop(ctxForHandle sessionctx.Context, ctxForEvolve sessionctx.Context) error {
 	ctxForHandle.GetSessionVars().InRestrictedSQL = true
 	ctxForEvolve.GetSessionVars().InRestrictedSQL = true
-	do.bindHandle = bindinfo.NewBindHandle(ctxForHandle)
-	err := do.bindHandle.Update(true)
+	if !do.bindHandle.CompareAndSwap(nil, bindinfo.NewBindHandle(ctxForHandle)) {
+		do.bindHandle.Load().Reset(ctxForHandle)
+	}
+
+	err := do.bindHandle.Load().Update(true)
 	if err != nil || bindinfo.Lease == 0 {
 		return err
 	}
@@ -1287,22 +1414,23 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 			case <-do.exit:
 				return
 			case <-bindWorkerTicker.C:
-				err := do.bindHandle.Update(false)
+				bindHandle := do.bindHandle.Load()
+				err := bindHandle.Update(false)
 				if err != nil {
 					logutil.BgLogger().Error("update bindinfo failed", zap.Error(err))
 				}
-				do.bindHandle.DropInvalidBindRecord()
+				bindHandle.DropInvalidBindRecord()
 				// Get Global
 				optVal, err := do.GetGlobalVar(variable.TiDBCapturePlanBaseline)
 				if err == nil && variable.TiDBOptOn(optVal) {
-					do.bindHandle.CaptureBaselines()
+					bindHandle.CaptureBaselines()
 				}
-				do.bindHandle.SaveEvolveTasksToStore()
+				bindHandle.SaveEvolveTasksToStore()
 			case <-gcBindTicker.C:
 				if !owner.IsOwner() {
 					continue
 				}
-				err := do.bindHandle.GCBindRecord()
+				err := do.bindHandle.Load().GCBindRecord()
 				if err != nil {
 					logutil.BgLogger().Error("GC bind record failed", zap.Error(err))
 				}
@@ -1327,7 +1455,7 @@ func (do *Domain) handleEvolvePlanTasksLoop(ctx sessionctx.Context, owner owner.
 			case <-time.After(bindinfo.Lease):
 			}
 			if owner.IsOwner() {
-				err := do.bindHandle.HandleEvolvePlanTask(ctx, false)
+				err := do.bindHandle.Load().HandleEvolvePlanTask(ctx, false)
 				if err != nil {
 					logutil.BgLogger().Info("evolve plan failed", zap.Error(err))
 				}
@@ -1695,6 +1823,11 @@ func (do *Domain) gcAnalyzeHistory(owner owner.Manager) {
 // ExpensiveQueryHandle returns the expensive query handle.
 func (do *Domain) ExpensiveQueryHandle() *expensivequery.Handle {
 	return do.expensiveQueryHandle
+}
+
+// ServerMemoryLimitHandle returns the expensive query handle.
+func (do *Domain) ServerMemoryLimitHandle() *servermemorylimit.Handle {
+	return do.serverMemoryLimitHandle
 }
 
 const (

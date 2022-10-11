@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -30,6 +31,11 @@ import (
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
+)
+
+var (
+	rcReadCheckTSWriteConfilictCounter  = metrics.RCCheckTSWriteConfilictCounter.WithLabelValues(metrics.LblRCReadCheckTS)
+	rcWriteCheckTSWriteConfilictCounter = metrics.RCCheckTSWriteConfilictCounter.WithLabelValues(metrics.LblRCWriteCheckTS)
 )
 
 type stmtState struct {
@@ -101,7 +107,7 @@ func (p *PessimisticRCTxnContextProvider) OnStmtStart(ctx context.Context, node 
 // NeedSetRCCheckTSFlag checks whether it's needed to set `RCCheckTS` flag in current stmtctx.
 func NeedSetRCCheckTSFlag(ctx sessionctx.Context, node ast.Node) bool {
 	sessionVars := ctx.GetSessionVars()
-	if sessionVars.ConnectionID > 0 && sessionVars.RcReadCheckTS && sessionVars.InTxn() &&
+	if sessionVars.ConnectionID > 0 && variable.EnableRCReadCheckTS.Load() && sessionVars.InTxn() &&
 		!sessionVars.RetryInfo.Retrying && plannercore.IsReadOnly(node, sessionVars) {
 		return true
 	}
@@ -195,6 +201,8 @@ func (p *PessimisticRCTxnContextProvider) handleAfterQueryError(queryErr error) 
 
 	p.latestOracleTSValid = false
 
+	rcReadCheckTSWriteConfilictCounter.Inc()
+
 	logutil.Logger(p.ctx).Info("RC read with ts checking has failed, retry RC read",
 		zap.String("sql", sessVars.StmtCtx.OriginalSQL), zap.Error(queryErr))
 	return sessiontxn.RetryReady()
@@ -217,6 +225,9 @@ func (p *PessimisticRCTxnContextProvider) handleAfterPessimisticLockError(lockEr
 			zap.Uint64("forUpdateTS", txnCtx.GetForUpdateTS()),
 			zap.String("err", lockErr.Error()))
 		retryable = true
+		if p.checkTSInWriteStmt {
+			rcWriteCheckTSWriteConfilictCounter.Inc()
+		}
 	}
 
 	if retryable {

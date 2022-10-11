@@ -78,7 +78,6 @@ var (
 	mPolicyMagicByte         = CurrentMagicByteVer
 	mDDLTableVersion         = []byte("DDLTableVersion")
 	mConcurrentDDL           = []byte("concurrentDDL")
-	mInFlashbackCluster      = []byte("InFlashbackCluster")
 	mFlashbackHistoryTSRange = []byte("FlashbackHistoryTSRange")
 )
 
@@ -546,6 +545,12 @@ func (m *Meta) SetDDLTables() error {
 	return errors.Trace(err)
 }
 
+// SetMDLTables write a key into storage.
+func (m *Meta) SetMDLTables() error {
+	err := m.txn.Set(mDDLTableVersion, []byte("2"))
+	return errors.Trace(err)
+}
+
 // CreateMySQLDatabaseIfNotExists creates mysql schema and return its DB ID.
 func (m *Meta) CreateMySQLDatabaseIfNotExists() (int64, error) {
 	id, err := m.GetSystemDBID()
@@ -591,22 +596,13 @@ func (m *Meta) CheckDDLTableExists() (bool, error) {
 	return len(v) != 0, nil
 }
 
-// SetFlashbackClusterJobID set flashback cluster jobID
-func (m *Meta) SetFlashbackClusterJobID(jobID int64) error {
-	return errors.Trace(m.txn.Set(mInFlashbackCluster, m.jobIDKey(jobID)))
-}
-
-// GetFlashbackClusterJobID returns flashback cluster jobID.
-func (m *Meta) GetFlashbackClusterJobID() (int64, error) {
-	val, err := m.txn.Get(mInFlashbackCluster)
+// CheckMDLTableExists check if the tables related to concurrent DDL exists.
+func (m *Meta) CheckMDLTableExists() (bool, error) {
+	v, err := m.txn.Get(mDDLTableVersion)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return false, errors.Trace(err)
 	}
-	if len(val) == 0 {
-		return 0, nil
-	}
-
-	return int64(binary.BigEndian.Uint64(val)), nil
+	return bytes.Equal(v, []byte("2")), nil
 }
 
 // TSRange store a range time

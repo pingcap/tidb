@@ -18,10 +18,12 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"go.opencensus.io/stats/view"
 )
 
 func TestMockAPI(t *testing.T) {
-	vars := NewSessionVars()
+	defer view.Stop()
+	vars := NewSessionVars(nil)
 	mock := NewMockGlobalAccessor4Tests()
 	mock.SessionVars = vars
 	vars.GlobalVarsAccessor = mock
