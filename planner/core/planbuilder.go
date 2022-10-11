@@ -90,6 +90,7 @@ type tableHintInfo struct {
 	indexNestedLoopJoinTables
 	sortMergeJoinTables []hintTableInfo
 	broadcastJoinTables []hintTableInfo
+	shuffleJoinTables   []hintTableInfo
 	hashJoinTables      []hintTableInfo
 	indexHintList       []indexHintInfo
 	tiflashTables       []hintTableInfo
@@ -225,6 +226,10 @@ func (info *tableHintInfo) ifPreferMergeJoin(tableNames ...*hintTableInfo) bool 
 
 func (info *tableHintInfo) ifPreferBroadcastJoin(tableNames ...*hintTableInfo) bool {
 	return info.matchTableName(tableNames, info.broadcastJoinTables)
+}
+
+func (info *tableHintInfo) ifPreferShuffleJoin(tableNames ...*hintTableInfo) bool {
+	return info.matchTableName(tableNames, info.shuffleJoinTables)
 }
 
 func (info *tableHintInfo) ifPreferHashJoin(tableNames ...*hintTableInfo) bool {
