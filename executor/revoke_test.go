@@ -72,9 +72,8 @@ func TestRevokeDBScope(t *testing.T) {
 
 		tk.MustQuery(check).Check(testkit.Rows("Y"))
 		tk.MustExec(sql)
-		if v == mysql.TriggerPriv {
-			// TriggerPriv is the last privilege, when all privs are
-			// removed, then the record should be removed as well.
+		if v == mysql.AllDBPrivs[len(mysql.AllDBPrivs)-1] {
+			// When all privileges are set to 'N', then the record should be removed as well.
 			// https://github.com/pingcap/tidb/issues/38363
 			tk.MustQuery(check).Check(testkit.Rows())
 		} else {
