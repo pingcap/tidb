@@ -1890,6 +1890,19 @@ type ShowContents struct {
 	Limit       *ast.Limit // Used for limit Result Set row number.
 }
 
+const emptyShowContentsSize = int64(unsafe.Sizeof(ShowContents{}))
+
+// MemoryUsage return the memory usage of ShowContents
+func (s *ShowContents) MemoryUsage() (sum int64) {
+	if s == nil {
+		return
+	}
+
+	sum = emptyShowContentsSize + int64(len(s.DBName)) + s.Partition.MemoryUsage() + s.IndexName.MemoryUsage() +
+		int64(cap(s.Roles))*size.SizeOfPointer
+	return
+}
+
 // LogicalShow represents a show plan.
 type LogicalShow struct {
 	logicalSchemaProducer
