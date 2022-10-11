@@ -15,7 +15,6 @@
 package core
 
 import (
-	"github.com/pingcap/tidb/sessiontxn"
 	math2 "math"
 	"sort"
 	"strconv"
@@ -37,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
