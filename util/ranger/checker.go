@@ -51,8 +51,8 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 	case ast.LogicOr, ast.LogicAnd:
 		return c.check(scalar.GetArgs()[0]) && c.check(scalar.GetArgs()[1])
 	case ast.NullEQ:
-		_, ok1 := scalar.GetArgs()[0].(*expression.Column)
-		_, ok2 := scalar.GetArgs()[1].(*expression.Column)
+		_, ok1 := scalar.GetArgs()[0].(*expression.Constant)
+		_, ok2 := scalar.GetArgs()[1].(*expression.Constant)
 		return ok1 && ok2
 	case ast.EQ, ast.NE, ast.GE, ast.GT, ast.LE, ast.LT:
 		if _, ok := scalar.GetArgs()[0].(*expression.Constant); ok {
