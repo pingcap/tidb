@@ -449,9 +449,9 @@ func TestGrantOnNonExistTable(t *testing.T) {
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableNotExists))
 
 	tk.MustExec("create table if not exists xx (id int)")
-	// Case sensitive
-	_, err = tk.Exec("grant Select,Insert on XX to 'genius'")
-	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableNotExists))
+	// Case insensitive, differ from MySQL default behaviour.
+	// In TiDB, system variable lower_case_table_names = 2, which means compare table name using lower case.
+	tk.MustExec("grant Select,Insert on XX to 'genius'")
 
 	_, err = tk.Exec("grant Select,Insert on xx to 'genius'")
 	require.NoError(t, err)
@@ -605,4 +605,24 @@ func TestNonExistTableIllegalGrant(t *testing.T) {
 	tk.MustGetErrCode("grant lock tables on test.NotExistsT29302 to u29302", mysql.ErrIllegalGrantForTable)
 	// Column level, not existing table, illegal privilege
 	tk.MustGetErrCode("grant create temporary tables (NotExistsCol) on NotExistsD29302.NotExistsT29302 to u29302;", mysql.ErrWrongUsage)
+}
+
+func TestIssue34610(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("DROP DATABASE IF EXISTS d1;")
+	tk.MustExec("CREATE DATABASE d1;")
+	tk.MustExec("USE d1;")
+	tk.MustExec("CREATE USER user_1@localhost;")
+	defer func() {
+		tk.MustExec("DROP DATABASE d1;")
+		tk.MustExec("DROP USER user_1@localhost;")
+	}()
+
+	tk.MustExec("CREATE TABLE T1(f1 INT);")
+	tk.MustGetErrCode("CREATE TABLE t1(f1 INT);", mysql.ErrTableExists)
+	tk.MustExec("GRANT SELECT ON T1 to user_1@localhost;")
+	tk.MustExec("GRANT SELECT ON t1 to user_1@localhost;")
 }
