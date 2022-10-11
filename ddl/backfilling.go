@@ -335,6 +335,47 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 	return result
 }
 
+func (w *backfillWorker) runTask(d *ddlCtx, bf backfiller, task *reorgBackfillTask, jobQuery string) {
+	defer func() {
+		w.resultCh <- &backfillResult{err: dbterror.ErrReorgPanic}
+	}()
+	defer util.Recover(metrics.LabelDDL, "backfillWorker.run", nil, false)
+	logutil.BgLogger().Info("[ddl] run backfill worker",
+		zap.Int("workerID", w.id), zap.String("task", task.String()), zap.String("bj", task.bfJob.IDStr()))
+	d.setDDLLabelForTopSQL(task.bfJob.JobID, jobQuery)
+
+	w.backfillJob = task.bfJob
+	if err := w.updateLease(d.uuid, bf); err != nil {
+		logutil.BgLogger().Info("[ddl] run backfill worker got task failed",
+			zap.Int("workerID", w.id), zap.String("task", task.String()), zap.String("bj", task.bfJob.IDStr()), zap.Error(err))
+		return
+	}
+
+	logutil.BgLogger().Debug("[ddl] run backfill worker got task", zap.Int("workerID", w.id), zap.String("task", task.String()))
+	failpoint.Inject("mockBackfillRunErr", func() {
+		if w.id == 0 {
+			result := &backfillResult{addedCount: 0, nextKey: nil, err: errors.Errorf("mock backfill error")}
+			w.resultCh <- result
+			failpoint.Continue()
+		}
+	})
+	failpoint.Inject("mockHighLoadForAddIndex", func() {
+		sqlPrefixes := []string{"alter"}
+		topsql.MockHighCPULoad(jobQuery, sqlPrefixes, 5)
+	})
+	failpoint.Inject("mockBackfillSlow", func() {
+		time.Sleep(100 * time.Millisecond)
+	})
+
+	// Dynamic change batch size.
+	w.batchCnt = int(variable.GetDDLReorgBatchSize())
+	result := w.handleBackfillTask(d, task, bf)
+
+	w.resultCh <- result
+	w.finishJob(bf)
+	logutil.BgLogger().Info("[ddl] backfill worker exit", zap.Int("workerID", w.id))
+}
+
 func (w *backfillWorker) run(d *ddlCtx, bf backfiller, jobID int64, jobQuery string) {
 	defer func() {
 		w.resultCh <- &backfillResult{err: dbterror.ErrReorgPanic}

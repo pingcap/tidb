@@ -221,7 +221,47 @@ func (d *ddl) loadBackfillJobAndRun() {
 	// TODO:
 	// workerCnt := int(variable.GetDDLReorgWorkerCounter())
 	workerCnt := 6
+	/*
+		workerCnt := int32(6)
+		pool := spmc.NewSPMCPool[task, int, ConstArgs](workerCnt)
+		pool.SetConsumerFunc(func(task *reorgBackfillTask, constArgs ConstArgs) int {
 
+			return
+		})
+
+		proFunc := func() (task *reorgBackfillTask, err error) {
+			bJobs, err := getAndMarkBackfillJobsForOneEle(sess, workerCnt, isIncluded, runningJobIDs, d.uuid, instanceLease*time.Second)
+			task := d.backfillJob2Task(t, bJobs[0], priority)
+		}
+
+		// add new task
+		resultCh, control := pool.AddProducer(proFunc, myArgs, 2)
+
+		var count atomic.Uint32
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case result := <-resultCh:
+					count.Add(1)
+					require.Greater(t, result, 10)
+				default:
+					if control.IsProduceClose() {
+						return
+					}
+				}
+			}
+		}()
+		// Waiting task finishing
+		control.Wait()
+		wg.Wait()
+		require.Equal(t, uint32(10), count.Load())
+
+		// close pool
+		pool.ReleaseAndWait()
+	*/
 	isIncluded := false
 	d.backfillCtx.Lock()
 	jobCtxMapLen := len(d.backfillCtx.jobCtxMap)
@@ -338,7 +378,8 @@ func (d *ddl) loadBackfillJobAndRun() {
 				delete(d.backfillCtx.backfillCtxMap, bJobs[num].ID)
 				d.backfillCtx.Unlock()
 			}()
-			bwTemp.run(d.ddlCtx, bfTemp, bJobs[num].JobID, job.Query)
+			task := <-bwTemp.taskCh
+			bwTemp.runTask(d.ddlCtx, bfTemp, task, job.Query)
 		}(i, bw, bf)
 		d.sendBackfillJob(bw, bJobs[i], tbl, job.Priority)
 	}
