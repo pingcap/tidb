@@ -9,11 +9,9 @@ import (
 
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
-	"go.uber.org/zap"
 )
 
 const (
@@ -191,76 +189,14 @@ func (rc *logFileManager) FilterMetaFiles(ms MetaIter) MetaGroupIter {
 }
 
 // ReadStreamMetaByTS is used for streaming task. collect all meta file by TS.
-func (rc *logFileManager) ReadStreamMetaByTS(ctx context.Context, shiftedStartTS uint64, restoreTS uint64) ([]*backuppb.Metadata, error) {
-	streamBackupMetaFiles := struct {
-		sync.Mutex
-		metas []*backuppb.Metadata
-	}{}
-	streamBackupMetaFiles.metas = make([]*backuppb.Metadata, 0, 128)
-
-	err := stream.FastUnmarshalMetaData(ctx, rc.storage, func(path string, raw []byte) error {
-		metadata, err := rc.helper.ParseToMetadata(raw)
-		if err != nil {
-			return err
-		}
-		streamBackupMetaFiles.Lock()
-		if restoreTS >= metadata.MinTs && metadata.MaxTs >= shiftedStartTS {
-			streamBackupMetaFiles.metas = append(streamBackupMetaFiles.metas, metadata)
-		}
-		streamBackupMetaFiles.Unlock()
-		return nil
-	})
+func (rc *logFileManager) ReadStreamMetaByTS(ctx context.Context, restoreTS uint64) ([]*backuppb.Metadata, error) {
+	metas, err := rc.StreamingMetaByTS(ctx, restoreTS)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
-	return streamBackupMetaFiles.metas, nil
-}
-
-// ReadStreamDataFiles is used for streaming task. collect all meta file by TS.
-func (rc *logFileManager) ReadStreamDataFiles(
-	ctx context.Context,
-	metas []*backuppb.Metadata,
-) (dataFiles, metaFiles []*backuppb.DataFileInfo, err error) {
-	dFiles := make([]*backuppb.DataFileInfo, 0)
-	mFiles := make([]*backuppb.DataFileInfo, 0)
-
-	for _, m := range metas {
-		_, exists := backuppb.MetaVersion_name[int32(m.MetaVersion)]
-		if !exists {
-			log.Warn("metaversion too new", zap.Reflect("version id", m.MetaVersion))
-		}
-		for _, ds := range m.FileGroups {
-			metaRef := 0
-			for _, d := range ds.DataFilesInfo {
-				if d.MinTs > rc.restoreTS {
-					continue
-				} else if d.Cf == stream.WriteCF && d.MaxTs < rc.startTS {
-					continue
-				} else if d.Cf == stream.DefaultCF && d.MaxTs < rc.shiftStartTS {
-					continue
-				}
-
-				// If ds.Path is empty, it is MetadataV1.
-				// Try to be compatible with newer metadata version
-				if m.MetaVersion > backuppb.MetaVersion_V1 {
-					d.Path = ds.Path
-				}
-
-				if d.IsMeta {
-					mFiles = append(mFiles, d)
-					metaRef += 1
-				} else {
-					dFiles = append(dFiles, d)
-				}
-				log.Debug("backup stream collect data partition", zap.Uint64("offset", d.RangeOffset), zap.Uint64("length", d.Length))
-			}
-			// metadatav1 doesn't use cache
-			// Try to be compatible with newer metadata version
-			if m.MetaVersion > backuppb.MetaVersion_V1 {
-				rc.helper.InitCacheEntry(ds.Path, metaRef)
-			}
-		}
+	r := iter.CollectAll(ctx, metas)
+	if r.Err != nil {
+		return nil, errors.Trace(r.Err)
 	}
-
-	return dFiles, mFiles, nil
+	return r.Item, nil
 }
