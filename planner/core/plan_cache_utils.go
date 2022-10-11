@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/kvcache"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/size"
 	atomic2 "go.uber.org/atomic"
 	"golang.org/x/exp/slices"
@@ -340,6 +341,8 @@ type PlanCacheValue struct {
 	OutPutNames       []*types.FieldName
 	TblInfo2UnionScan map[*model.TableInfo]bool
 	ParamTypes        FieldSlice
+	PlanCacheKeyMem   int64
+	PlanCacheValueMem int64
 }
 
 func (v *PlanCacheValue) varTypesUnchanged(txtVarTps []*types.FieldType) bool {
@@ -351,13 +354,18 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 	if v == nil {
 		return
 	}
-	plan, ok := v.Plan.(PhysicalPlan)
-	if !ok {
-		return
+
+	switch x := v.Plan.(type) {
+	case PhysicalPlan:
+		sum = x.MemoryUsage()
+	case *Insert:
+		sum = x.MemoryUsage() + int64(unsafe.Sizeof(Insert{}))
+	default:
+		logutil.BgLogger().Info("add this type memory usage ")
 	}
 
-	sum = plan.MemoryUsage() + size.SizeOfSlice*2 + int64(cap(v.OutPutNames)+cap(v.ParamTypes))*size.SizeOfPointer +
-		size.SizeOfMap + int64(len(v.TblInfo2UnionScan))*(size.SizeOfPointer+size.SizeOfBool)
+	sum += size.SizeOfInterface + size.SizeOfSlice*2 + int64(cap(v.OutPutNames)+cap(v.ParamTypes))*size.SizeOfPointer +
+		size.SizeOfMap + int64(len(v.TblInfo2UnionScan))*(size.SizeOfPointer+size.SizeOfBool) + size.SizeOfInt64*2
 
 	for _, name := range v.OutPutNames {
 		sum += name.MemoryUsage()
