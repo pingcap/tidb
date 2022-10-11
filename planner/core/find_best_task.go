@@ -1289,7 +1289,14 @@ func indexCoveringCol(col *expression.Column, constVal *expression.Constant, ind
 			if isFullLen {
 				return true
 			}
-			if constLen != -1 && constLen < idxColLens[i] {
+			// Note we must use `constLen < idxColLens[i]` rather than `constLen <= idxColLens[i]`. Here is an example:
+			// ```
+			// create table t(a varchar(10), index idx_a(a(2)));
+			// insert into t values ('xx', 'xx1', 'xx2');
+			// select * from t use index (idx_a) where a='xx';
+			// ```
+			// When we apply `a = 'xx'` on index `idx_a`, we get three records. Therefore, we need to apply `a = 'xx'` again on table.
+			if constLen != types.UnspecifiedLength && constLen < idxColLens[i] {
 				return true
 			}
 		}
