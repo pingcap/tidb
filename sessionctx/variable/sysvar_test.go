@@ -339,7 +339,7 @@ func TestInstanceScopedVars(t *testing.T) {
 
 	val, err = vars.GetSessionOrGlobalSystemVar(TiDBEnableCollectExecutionInfo)
 	require.NoError(t, err)
-	require.Equal(t, BoolToOnOff(config.GetGlobalConfig().Instance.EnableCollectExecutionInfo), val)
+	require.Equal(t, BoolToOnOff(config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load()), val)
 
 	val, err = vars.GetSessionOrGlobalSystemVar(TiDBConfig)
 	require.NoError(t, err)
