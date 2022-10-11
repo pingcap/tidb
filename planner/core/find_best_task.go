@@ -1546,8 +1546,10 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 			}
 			tableSel.stats = copTask.plan().statsInfo().Scale(selectivity)
 		}
-		tableSel.SetChildren(copTask.tablePlan)
-		copTask.tablePlan = tableSel
+		if copTask.tablePlan != nil {
+			tableSel.SetChildren(copTask.tablePlan)
+			copTask.tablePlan = tableSel
+		}
 	}
 }
 
