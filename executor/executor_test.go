@@ -6177,5 +6177,5 @@ func TestCompileOutOfMemoryQuota(t *testing.T) {
 	tk.MustExec("create table t1(a int, c int, index idx(a))")
 	tk.MustExec("set tidb_mem_quota_query=10")
 	err := tk.ExecToErr("select t.a, t1.a from t use index(idx), t1 use index(idx) where t.a = t1.a")
-	require.EqualError(t, err, "Out Of Memory Quota![conn_id=1]")
+	require.Contains(t, err.Error(), "Out Of Memory Quota!")
 }
