@@ -264,15 +264,6 @@ func (rc *Client) GetSupportPolicy() bool {
 	return rc.supportPolicy
 }
 
-// GetTruncateSafepoint read the truncate checkpoint from the storage bind to the client.
-func (rc *Client) GetTruncateSafepoint(ctx context.Context) (uint64, error) {
-	ts, err := GetTSFromFile(ctx, rc.storage, TruncateSafePointFileName)
-	if err != nil {
-		log.Warn("failed to get truncate safepoint, using 0", logutil.ShortError(err))
-	}
-	return ts, err
-}
-
 func (rc *Client) GetDomain() *domain.Domain {
 	return rc.dom
 }
