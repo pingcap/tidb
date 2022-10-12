@@ -2659,7 +2659,8 @@ func (d *ddl) FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) error
 			true,        /* tidb_gc_enable */
 			variable.On, /* tidb_enable_auto_analyze */
 			"1",         /* tidb_max_auto_analyze_time */
-			0 /* totalRegions */},
+			0,           /* totalRegions */
+			0 /* newCommitTS */},
 	}
 	err := d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)

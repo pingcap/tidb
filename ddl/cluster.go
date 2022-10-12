@@ -64,6 +64,7 @@ const (
 	autoAnalyzeOffset        = 3
 	maxAutoAnalyzeTimeOffset = 4
 	totalLockedRegionsOffset = 5
+	commitTSOffset           = 6
 )
 
 func closePDSchedule() error {
@@ -473,11 +474,11 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		return ver, errors.Errorf("Not support flashback cluster in non-TiKV env")
 	}
 
-	var flashbackTS, lockedRegions uint64
+	var flashbackTS, lockedRegions, commitTS uint64
 	var pdScheduleValue map[string]interface{}
 	var autoAnalyzeValue, maxAutoAnalyzeTimeValue string
 	var gcEnabledValue bool
-	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue, &gcEnabledValue, &autoAnalyzeValue, &maxAutoAnalyzeTimeValue, &lockedRegions); err != nil {
+	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue, &gcEnabledValue, &autoAnalyzeValue, &maxAutoAnalyzeTimeValue, &lockedRegions, &commitTS); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
@@ -551,6 +552,13 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			}
 		}
 		job.Args[totalLockedRegionsOffset] = totalRegions.Load()
+
+		// We should get commitTS here to avoid lost commitTS when TiDB crashed during send flashback RPC.
+		commitTS, err = d.store.GetOracle().GetTimestamp(d.ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.Args[commitTSOffset] = commitTS
 		job.SchemaState = model.StateWriteReorganization
 		return updateSchemaVersion(d, t, job)
 	// Stage 4, get key ranges and send flashback RPC.
@@ -567,14 +575,11 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			return ver, errors.Trace(err)
 		}
 
-		commitTS, err := d.store.GetOracle().GetTimestamp(d.ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
 		for _, ranges := range keyRanges {
 			if err = flashbackToVersion(d.ctx, d,
 				func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
-					stats, err := sendFlashbackToVersionRPC(ctx, d.store.(tikv.Storage), flashbackTS, t.StartTS, commitTS, r)
+					// use commitTS - 1 as startTS, make sure it less than commitTS.
+					stats, err := sendFlashbackToVersionRPC(ctx, d.store.(tikv.Storage), flashbackTS, commitTS-1, commitTS, r)
 					completedRegions.Add(uint64(stats.CompletedRegions))
 					logutil.BgLogger().Info("flashback cluster stats",
 						zap.Uint64("complete regions", completedRegions.Load()),
