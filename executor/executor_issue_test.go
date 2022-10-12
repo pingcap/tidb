@@ -490,7 +490,7 @@ func TestIndexJoin31494(t *testing.T) {
 func TestFix31038(t *testing.T) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Instance.EnableCollectExecutionInfo = false
+		conf.Instance.EnableCollectExecutionInfo.Store(false)
 	})
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

@@ -20,6 +20,7 @@ import (
 	"math"
 	"sync"
 
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	us "github.com/pingcap/tidb/store/mockstore/unistore/tikv"
 	pd "github.com/tikv/pd/client"
@@ -162,4 +163,17 @@ func (c *pdClient) GetRegionFromMember(ctx context.Context, key []byte, memberUR
 
 func (c *pdClient) UpdateOption(option pd.DynamicOption, value interface{}) error {
 	return nil
+}
+
+// LoadKeyspace loads and returns target keyspace's metadata.
+func (c *pdClient) LoadKeyspace(ctx context.Context, name string) (*keyspacepb.KeyspaceMeta, error) {
+	return nil, nil
+}
+
+// WatchKeyspaces watches keyspace meta changes.
+// It returns a stream of slices of keyspace metadata.
+// The first message in stream contains all current keyspaceMeta,
+// all subsequent messages contains new put events for all keyspaces.
+func (c *pdClient) WatchKeyspaces(ctx context.Context) (chan []*keyspacepb.KeyspaceMeta, error) {
+	return nil, nil
 }
