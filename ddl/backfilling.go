@@ -140,6 +140,7 @@ type backfillTaskContext struct {
 
 type reorgBackfillTask struct {
 	bfJob           *model.BackfillJob
+	sqlQuery        string
 	physicalTableID int64
 	startKey        kv.Key
 	endKey          kv.Key
@@ -182,22 +183,23 @@ func newBackfillCtx(ctx *ddlCtx, sessCtx sessionctx.Context, tbl table.Table, ba
 }
 
 type backfillWorker struct {
-	*backfillCtx
-	ddlID       []byte
-	id          int
-	backfillJob *model.BackfillJob
-	taskCh      chan *reorgBackfillTask
-	resultCh    chan *backfillResult
-	closed      bool
+	backfiller
+	*ddlCtx
+	state    int
+	id       int
+	batchCnt int32
+	taskCh   chan *reorgBackfillTask
+	resultCh chan *backfillResult
+	closed   bool
 }
 
-func newBackfillWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable, dCtx *ddlCtx) *backfillWorker {
+func newBackfillWorker(id int, dCtx *ddlCtx, bf backfiller) *backfillWorker {
 	return &backfillWorker{
-		backfillCtx: newBackfillCtx(dCtx, sessCtx, t, int(variable.GetDDLReorgBatchSize())),
-		ddlID:       []byte(dCtx.uuid),
-		id:          id,
-		taskCh:      make(chan *reorgBackfillTask, 1),
-		resultCh:    make(chan *backfillResult, 1),
+		backfiller: bf,
+		ddlCtx:     dCtx,
+		id:         id,
+		taskCh:     make(chan *reorgBackfillTask, 1),
+		resultCh:   make(chan *backfillResult, 1),
 	}
 }
 
@@ -230,41 +232,43 @@ func getOracleTime(store kv.Storage) (time.Time, error) {
 	return oracle.GetTimeFromTS(currentVer.Ver), nil
 }
 
-func (w *backfillWorker) updateLease(exec_id string, bf backfiller) error {
+func (w *backfillWorker) updateLease(exec_id string, bJob *model.BackfillJob) error {
 	if !enableDistReorg {
 		return nil
 	}
 
-	leaseTime, err := getOracleTime(w.sessCtx.GetStore())
+	leaseTime, err := getOracleTime(w.ddlCtx.store)
 	if err != nil {
 		return err
 	}
-	w.backfillJob.Instance_ID = exec_id
+	bJob.Instance_ID = exec_id
 	// TODO: w.backfillJob.Instance_Lease = types.NewTime(types.FromGoTime(lease), mysql.TypeTimestamp, types.DefaultFsp)
-	w.backfillJob.Instance_Lease = leaseTime.Add(instanceLease * time.Second)
-	return bf.UpdateTask(w.backfillJob)
+	bJob.Instance_Lease = leaseTime.Add(instanceLease * time.Second)
+	return w.backfiller.UpdateTask(bJob)
 }
 
-func (w *backfillWorker) finishJob(bf backfiller) error {
+func (w *backfillWorker) finishJob(bJob *model.BackfillJob) error {
 	if !enableDistReorg {
 		return nil
 	}
 
-	w.backfillJob.State = model.JobStateDone
-	return bf.FinishTask(w.backfillJob)
+	bJob.State = model.JobStateDone
+	return w.backfiller.FinishTask(bJob)
 }
 
-func (w *backfillWorker) releaseJob(bf backfiller) error {
+func (w *backfillWorker) releaseJob(bJob *model.BackfillJob) error {
 	if !enableDistReorg {
 		return nil
 	}
 
-	w.backfillJob.Instance_ID = string(w.ddlID)
-	return bf.UpdateTask(w.backfillJob)
+	bJob.Instance_ID = w.uuid
+	return w.backfiller.UpdateTask(bJob)
 }
 
 // handleBackfillTask backfills range [task.startHandle, task.endHandle) handle's index to table.
 func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, bf backfiller) *backfillResult {
+	traceID := task.bfJob.JobID + 100
+	defer injectSpan(traceID, fmt.Sprintf("handle-task-id-%d", task.bfJob.ID))()
 	handleRange := *task
 	result := &backfillResult{
 		err:        nil,
@@ -276,6 +280,8 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 	startTime := lastLogTime
 	// rc := d.getReorgCtx(task.bfJob.JobID)
 
+	batchStartTime := time.Now()
+	cnt := 0
 	for {
 		// Give job chance to be canceled, if we not check it here,
 		// if there is panic in bf.BackfillDataInTxn we will never cancel the job.
@@ -287,7 +293,9 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 			return result
 		}
 
+		finish := injectSpan(traceID, fmt.Sprintf("handle-task-id-%d-batch-%d", task.bfJob.ID, cnt))
 		taskCtx, err := bf.BackfillDataInTxn(handleRange)
+		finish()
 		if err != nil {
 			result.err = err
 			return result
@@ -325,6 +333,19 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 		if taskCtx.done {
 			break
 		}
+
+		// TODO: Adjust the updating lease frequency by batch processing time carefully.
+		if time.Since(batchStartTime) < instanceLease*time.Second/2 {
+			continue
+		}
+		batchStartTime = time.Now()
+		task.bfJob.Mate.CurrKey = result.nextKey
+		if err := w.updateLease(w.uuid, task.bfJob); err != nil {
+			logutil.BgLogger().Info("[ddl] handle backfill task, update lease failed",
+				zap.Int("workerID", w.id), zap.String("task", task.String()), zap.String("bj", task.bfJob.AbbrStr()), zap.Error(err))
+			result.err = err
+			return result
+		}
 	}
 	logutil.BgLogger().Info("[ddl] backfill worker finish task", zap.Int("workerID", w.id),
 		zap.String("task", task.String()),
@@ -335,23 +356,13 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 	return result
 }
 
-func (w *backfillWorker) runTask(d *ddlCtx, bf backfiller, task *reorgBackfillTask, jobQuery string) {
-	defer func() {
-		w.resultCh <- &backfillResult{err: dbterror.ErrReorgPanic}
-	}()
-	defer util.Recover(metrics.LabelDDL, "backfillWorker.run", nil, false)
+func (w *backfillWorker) runTask(task *reorgBackfillTask) {
 	logutil.BgLogger().Info("[ddl] run backfill worker",
-		zap.Int("workerID", w.id), zap.String("task", task.String()), zap.String("bj", task.bfJob.IDStr()))
-	d.setDDLLabelForTopSQL(task.bfJob.JobID, jobQuery)
+		zap.Int("workerID", w.id), zap.String("task", task.String()), zap.String("bj", task.bfJob.AbbrStr()),
+		zap.String("current key", tryDecodeToHandleString(task.bfJob.Mate.StartKey)), zap.String("end key", tryDecodeToHandleString(task.bfJob.Mate.EndKey)))
+	w.setDDLLabelForTopSQL(task.bfJob.JobID, task.sqlQuery)
 
-	w.backfillJob = task.bfJob
-	if err := w.updateLease(d.uuid, bf); err != nil {
-		logutil.BgLogger().Info("[ddl] run backfill worker got task failed",
-			zap.Int("workerID", w.id), zap.String("task", task.String()), zap.String("bj", task.bfJob.IDStr()), zap.Error(err))
-		return
-	}
-
-	logutil.BgLogger().Debug("[ddl] run backfill worker got task", zap.Int("workerID", w.id), zap.String("task", task.String()))
+	// TODO: update failpoint
 	failpoint.Inject("mockBackfillRunErr", func() {
 		if w.id == 0 {
 			result := &backfillResult{addedCount: 0, nextKey: nil, err: errors.Errorf("mock backfill error")}
@@ -361,19 +372,21 @@ func (w *backfillWorker) runTask(d *ddlCtx, bf backfiller, task *reorgBackfillTa
 	})
 	failpoint.Inject("mockHighLoadForAddIndex", func() {
 		sqlPrefixes := []string{"alter"}
-		topsql.MockHighCPULoad(jobQuery, sqlPrefixes, 5)
+		topsql.MockHighCPULoad(task.sqlQuery, sqlPrefixes, 5)
 	})
 	failpoint.Inject("mockBackfillSlow", func() {
 		time.Sleep(100 * time.Millisecond)
 	})
 
 	// Dynamic change batch size.
-	w.batchCnt = int(variable.GetDDLReorgBatchSize())
-	result := w.handleBackfillTask(d, task, bf)
+	w.batchCnt = variable.GetDDLReorgBatchSize()
+	result := w.handleBackfillTask(w.ddlCtx, task, w.backfiller)
 
+	if result.err == nil {
+		w.finishJob(task.bfJob)
+	}
 	w.resultCh <- result
-	w.finishJob(bf)
-	logutil.BgLogger().Info("[ddl] backfill worker exit", zap.Int("workerID", w.id))
+	logutil.BgLogger().Info("[ddl] run backfill worker finish", zap.Int("workerID", w.id))
 }
 
 func (w *backfillWorker) run(d *ddlCtx, bf backfiller, jobID int64, jobQuery string) {
@@ -386,16 +399,7 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, jobID int64, jobQuery str
 		if !more {
 			break
 		}
-		logutil.BgLogger().Info("[ddl] run backfill worker",
-			zap.Bool("more", more), zap.Int("workerID", w.id), zap.String("task", task.String()), zap.String("bj", task.bfJob.IDStr()))
 		d.setDDLLabelForTopSQL(jobID, jobQuery)
-
-		w.backfillJob = task.bfJob
-		if err := w.updateLease(d.uuid, bf); err != nil {
-			logutil.BgLogger().Info("[ddl] run backfill worker got task failed",
-				zap.Int("workerID", w.id), zap.String("task", task.String()), zap.String("bj", task.bfJob.IDStr()), zap.Error(err))
-			return
-		}
 
 		logutil.BgLogger().Debug("[ddl] run backfill worker got task", zap.Int("workerID", w.id), zap.String("task", task.String()))
 		failpoint.Inject("mockBackfillRunErr", func() {
@@ -414,11 +418,10 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, jobID int64, jobQuery str
 		})
 
 		// Dynamic change batch size.
-		w.batchCnt = int(variable.GetDDLReorgBatchSize())
+		w.batchCnt = variable.GetDDLReorgBatchSize()
 		result := w.handleBackfillTask(d, task, bf)
 
 		w.resultCh <- result
-		w.finishJob(bf)
 	}
 	logutil.BgLogger().Info("[ddl] backfill worker exit", zap.Int("workerID", w.id))
 }
@@ -568,6 +571,7 @@ func getBatchTasks(t table.Table, reorgInfo *reorgInfo, kvRanges []kv.KeyRange, 
 			logutil.BgLogger().Info("[ddl] get range task, get reverse key failed", zap.Error(err))
 		} else {
 			logutil.BgLogger().Info("[ddl] get range task, change end key",
+				zap.String("start key", tryDecodeToHandleString(keyRange.StartKey)),
 				zap.String("end key", tryDecodeToHandleString(endKey)), zap.String("current end key", tryDecodeToHandleString(endK)))
 			endKey = endK
 		}
@@ -757,22 +761,22 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 
 			switch bfWorkerType {
 			case model.TypeAddIndexBackfill:
-				backfillWorker := newBackfillWorker(sessCtx, i, t, reorgInfo.d)
 				idxWorker := newAddIndexWorker(decodeColMap, newBackfillCtx(reorgInfo.d, sessCtx, t, int(variable.GetDDLReorgBatchSize())),
-					jc, reorgInfo.currElement.ID, reorgInfo.currElement.TypeKey, reorgInfo.Query)
+					jc, reorgInfo.currElement.ID, reorgInfo.currElement.TypeKey)
+				backfillWorker := newBackfillWorker(i, reorgInfo.d, idxWorker)
 				backfillWorkers = append(backfillWorkers, backfillWorker)
 				go backfillWorker.run(reorgInfo.d, idxWorker, job.ID, job.Query)
 			case model.TypeUpdateColumnBackfill:
 				// Setting InCreateOrAlterStmt tells the difference between SELECT casting and ALTER COLUMN casting.
 				sessCtx.GetSessionVars().StmtCtx.InCreateOrAlterStmt = true
-				backfillWorker := newBackfillWorker(sessCtx, i, t, reorgInfo.d)
 				// TODO: remove the argument of reorgInfo
-				updateWorker := newUpdateColumnWorker(reorgInfo, backfillWorker.backfillCtx, decodeColMap, jc)
+				updateWorker := newUpdateColumnWorker(reorgInfo.d, reorgInfo, sessCtx, t, decodeColMap, jc)
+				backfillWorker := newBackfillWorker(i, reorgInfo.d, updateWorker)
 				backfillWorkers = append(backfillWorkers, backfillWorker)
 				go backfillWorker.run(reorgInfo.d, updateWorker, job.ID, job.Query)
 			case model.TypeCleanUpIndexBackfill:
-				backfillWorker := newBackfillWorker(sessCtx, i, t, reorgInfo.d)
-				idxWorker := newCleanUpIndexWorker(backfillWorker.backfillCtx, decodeColMap, jc)
+				idxWorker := newCleanUpIndexWorker(reorgInfo.d, sessCtx, t, decodeColMap, jc)
+				backfillWorker := newBackfillWorker(i, reorgInfo.d, idxWorker)
 				backfillWorkers = append(backfillWorkers, backfillWorker)
 				go backfillWorker.run(reorgInfo.d, idxWorker, job.ID, job.Query)
 			default:
@@ -824,30 +828,33 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 	return nil
 }
 
-func (dc *ddlCtx) backfillJob2Task(t table.Table, bfJob *model.BackfillJob, priority int) *reorgBackfillTask {
+func (dc *ddlCtx) backfillJob2Task(t table.Table, bfJob *model.BackfillJob) *reorgBackfillTask {
 	// Build reorg tasks.
 	endKey := bfJob.Mate.EndKey
-	endK, err := getRangeEndKey(dc.jobContext(bfJob.JobID), dc.store, priority, t, bfJob.Mate.StartKey, endKey)
+	endK, err := getRangeEndKey(dc.jobContext(bfJob.JobID), dc.store, bfJob.Mate.Priority, t, bfJob.Mate.StartKey, endKey)
 	if err != nil {
-		logutil.BgLogger().Info("[ddl] send range task to worker, get reverse key failed", zap.String("backfill job ID", bfJob.IDStr()), zap.Error(err))
+		logutil.BgLogger().Info("[ddl] convert backfill job to task, get reverse key failed", zap.String("backfill job", bfJob.AbbrStr()), zap.Error(err))
 	} else {
-		logutil.BgLogger().Info("[ddl] send range task to worker, change end key",
-			zap.String("backfill job ID", bfJob.IDStr()), zap.String("end key", tryDecodeToHandleString(endKey)), zap.String("current end key", tryDecodeToHandleString(endK)))
+		logutil.BgLogger().Info("[ddl] convert backfill job to task, change end key",
+			zap.String("backfill job", bfJob.AbbrStr()), zap.String("current key", tryDecodeToHandleString(bfJob.Mate.StartKey)), zap.Bool("end include", bfJob.Mate.EndInclude),
+			zap.String("end key", tryDecodeToHandleString(endKey)), zap.String("current end key", tryDecodeToHandleString(endK)))
 		endKey = endK
 	}
 
 	return &reorgBackfillTask{
-		bfJob:           bfJob,
+		bfJob: bfJob,
+		// TODO: Remove these fields after remove the old logic.
+		sqlQuery:        bfJob.Mate.Query,
 		physicalTableID: bfJob.PhysicalID,
 		startKey:        bfJob.Mate.StartKey,
 		endKey:          endKey,
 		endInclude:      bfJob.Mate.EndInclude,
-		priority:        priority}
+		priority:        bfJob.Mate.Priority}
 }
 
-func (dc *ddlCtx) sendBackfillJob(worker *backfillWorker, bfJob *model.BackfillJob, t table.Table, priority int) {
-	task := dc.backfillJob2Task(t, bfJob, priority)
-	logutil.BgLogger().Warn("--------------------------- send backfill job " + worker.String() + " bfJob:" + task.bfJob.IDStr())
+func (dc *ddlCtx) sendBackfillJob(worker *backfillWorker, bfJob *model.BackfillJob, t table.Table) {
+	task := dc.backfillJob2Task(t, bfJob)
+	logutil.BgLogger().Warn("--------------------------- send backfill job " + worker.String() + " bfJob:" + task.bfJob.AbbrStr())
 	// Wait task finish.
 	worker.taskCh <- task
 }
@@ -877,6 +884,7 @@ func (dc *ddlCtx) waitBackfillJob(worker *backfillWorker, bfJob *model.BackfillJ
 }
 
 func (dc *ddlCtx) controlWritePhysicalTableRecord(sess *session, t table.PhysicalTable, bfWorkerType model.BackfillType, reorgInfo *reorgInfo) error {
+	defer injectSpan(reorgInfo.Job.ID, "control-write-records")()
 	startKey, endKey := reorgInfo.StartKey, reorgInfo.EndKey
 	if startKey == nil && endKey == nil {
 		return nil
@@ -886,7 +894,7 @@ func (dc *ddlCtx) controlWritePhysicalTableRecord(sess *session, t table.Physica
 		return errors.Trace(err)
 	}
 
-	existBackfillJob, err := checkBackfillJobState(sess, reorgInfo.Job.ID, reorgInfo.currElement.ID)
+	existBackfillJob, err := checkBackfillJobState(sess, reorgInfo.Job.ID, reorgInfo.currElement.ID, reorgInfo.currElement.TypeKey)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -913,6 +921,11 @@ func (dc *ddlCtx) controlWritePhysicalTableRecord(sess *session, t table.Physica
 					// TODO: StartTS
 					SQLMode:  reorgInfo.ReorgMeta.SQLMode,
 					Location: reorgInfo.ReorgMeta.Location,
+					JobMeta: &model.JobMeta{
+						SchemaID: reorgInfo.Job.SchemaID,
+						TableID:  reorgInfo.Job.TableID,
+						Query:    reorgInfo.Job.Query,
+					},
 				}
 				bj := &model.BackfillJob{
 					ID:         id,
@@ -926,12 +939,12 @@ func (dc *ddlCtx) controlWritePhysicalTableRecord(sess *session, t table.Physica
 				}
 				id++
 				bJobs = append(bJobs, bj)
-				logutil.BgLogger().Info("[ddl] control write physical table record ----------------- 11 " + fmt.Sprintf("job:%#v", bj))
 			}
 			if err = addBackfillJobs(sess, bJobs); err != nil {
 				return errors.Trace(err)
 			}
 			asyncNotify(dc.backfillJobCh)
+			logutil.BgLogger().Info("[ddl] control write physical table record ----------------- 11 ", zap.Int("job count", len(bJobs)))
 
 			logutil.BgLogger().Info("[ddl] split backfill jobs to the backfill table",
 				zap.Int("batchTasksCnt", len(batchTasks)),
@@ -939,7 +952,7 @@ func (dc *ddlCtx) controlWritePhysicalTableRecord(sess *session, t table.Physica
 				zap.String("startHandle", tryDecodeToHandleString(startKey)),
 				zap.String("endHandle", tryDecodeToHandleString(endKey)))
 
-			// TODO: adjust these ranges
+			// TODO: Adjust these ranges, make it batch by batch.
 			remains := kvRanges[len(batchTasks):]
 			if len(remains) == 0 {
 				break
@@ -948,8 +961,9 @@ func (dc *ddlCtx) controlWritePhysicalTableRecord(sess *session, t table.Physica
 		}
 	}
 
-	ticker := time.NewTicker(1 * time.Second)
+	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
+	defer injectSpan(reorgInfo.Job.ID, "control-write-records-check-state")()
 	for {
 		if err := dc.isReorgRunnable(reorgInfo.Job.ID); err != nil {
 			return errors.Trace(err)
@@ -957,7 +971,7 @@ func (dc *ddlCtx) controlWritePhysicalTableRecord(sess *session, t table.Physica
 
 		select {
 		case <-ticker.C:
-			isExist, err := checkBackfillJobState(sess, reorgInfo.Job.ID, reorgInfo.currElement.ID)
+			isExist, err := checkBackfillJobState(sess, reorgInfo.Job.ID, reorgInfo.currElement.ID, reorgInfo.currElement.TypeKey)
 			logutil.BgLogger().Info("[ddl] *** control write physical table record ----------------- 22", zap.Bool("isExist", isExist))
 			if err != nil {
 				logutil.BgLogger().Info("[ddl] finish backfill jobs")
@@ -974,28 +988,24 @@ func (dc *ddlCtx) controlWritePhysicalTableRecord(sess *session, t table.Physica
 	return nil
 }
 
-func checkBackfillJobState(sess *session, jobID, currEleID int64) (bool, error) {
-	isIncluded := true
-	runningJobIDs := []int64{jobID}
-
-	bJobs, err := getInterruptBackfillJobsForOneEle(sess, jobID, currEleID)
+func checkBackfillJobState(sess *session, jobID, currEleID int64, currEleKey []byte) (bool, error) {
+	bJobs, err := getInterruptBackfillJobsForOneEle(sess, jobID, currEleID, currEleKey)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	// logutil.BgLogger().Info("[ddl] check backfill job state -----------------22", zap.Int("interrupt backfill job cnt", len(bJobs)))
 	if len(bJobs) != 0 {
 		// TODO: bJobs[0].Mate errMsg
-		if err = finishFailedBackfillJobs(sess, jobID); err != nil {
+		if err = finishFailedBackfillJobs(sess, bJobs[0]); err != nil {
 			return true, errors.Trace(err)
 		}
 		return true, errors.Errorf(bJobs[0].Mate.ErrMsg)
 	}
 
-	bJobs, err = getBackfillJobsForOneEle(sess, 1, isIncluded, runningJobIDs, instanceLease)
+	bJobs, err = getBackfillJobs(sess, BackfillTable, fmt.Sprintf("job_id = %d and ele_id = %d and ele_key = '%s' limit 1",
+		jobID, currEleID, currEleKey), "check_backfill_job_state")
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	// logutil.BgLogger().Info("[ddl] check backfill job state -----------------22", zap.Int("all backfill job cnt", len(bJobs)))
 	if len(bJobs) != 0 {
 		return true, nil
 	}
@@ -1003,17 +1013,15 @@ func checkBackfillJobState(sess *session, jobID, currEleID int64) (bool, error) 
 	return false, nil
 }
 
-func finishFailedBackfillJobs(sess sessionctx.Context, runningJobID int64) error {
-	isIncluded := true
-	// TODO: set batch value
-	batch := 128
-
+func finishFailedBackfillJobs(sess sessionctx.Context, bJob *model.BackfillJob) error {
 	_, err := sess.(*session).execute(context.Background(), "begin", "finish_backfill_jobs")
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	bJobs, err := getBackfillJobsForOneEle(sess.(*session), batch, isIncluded, []int64{runningJobID}, instanceLease)
+	// TODO: Batch by batch update backfill jobs and insert backfill history jobs.
+	bJobs, err := getBackfillJobs(sess.(*session), BackfillTable, fmt.Sprintf("job_id = %d and ele_id = %d and ele_key = '%s'",
+		bJob.JobID, bJob.EleID, bJob.EleKey), "update_backfill_job")
 	if err != nil {
 		return errors.Trace(err)
 	}

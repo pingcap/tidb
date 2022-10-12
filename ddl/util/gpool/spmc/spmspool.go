@@ -19,8 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/util/gpool"
+	"github.com/pingcap/tidb/ddl/util/gpool"
 )
 
 // Pool is a single producer, multiple consumer goroutine pool.
@@ -228,7 +227,7 @@ func (p *Pool[T, U, C]) AddProduce(task T, constArg C) (<-chan U, TaskController
 }
 
 // AddProducer is to add producer.
-func (p *Pool[T, U, C]) AddProducer(producer func() (T, error), constArg C, size int) (<-chan U, TaskController) {
+func (p *Pool[T, U, C]) AddProducer(producer func() ([]T, error), constArg C, size int) (<-chan U, TaskController) {
 	result := make(chan U, 10)
 
 	var wg sync.WaitGroup
@@ -236,7 +235,6 @@ func (p *Pool[T, U, C]) AddProducer(producer func() (T, error), constArg C, size
 	tc := NewTaskController(closeCh, &wg)
 	taskCh := make(chan T, size)
 	for i := 0; i < size; i++ {
-		log.Info("create goro")
 		err := p.run()
 		if err == gpool.ErrPoolClosed {
 			break
@@ -249,20 +247,23 @@ func (p *Pool[T, U, C]) AddProducer(producer func() (T, error), constArg C, size
 		}
 		p.taskCh <- &taskBox
 	}
-	go func(constArg C) {
+	go func() {
 		defer func() {
 			close(closeCh)
 			close(taskCh)
 		}()
 		for {
-			task, err := producer()
+			tasks, err := producer()
 			if err != nil {
 				return
 			}
-			wg.Add(1)
-			taskCh <- task
+			for _, task := range tasks {
+				wg.Add(1)
+				taskCh <- task
+			}
 		}
-	}(constArg)
+	}()
+
 	return result, tc
 }
 

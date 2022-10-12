@@ -37,7 +37,7 @@ func TestBackfillWorkerPool(t *testing.T) {
 	dCtx := &ddlCtx{uuid: "test_backfill_worker"}
 	f := func() func() (pools.Resource, error) {
 		return func() (pools.Resource, error) {
-			wk := newBackfillWorker(nil, 1, nil, dCtx)
+			wk := newBackfillWorker(1, dCtx, nil)
 			return wk, nil
 		}
 	}

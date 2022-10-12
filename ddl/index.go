@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -593,6 +594,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 			return ver, err
 		}
 		logutil.BgLogger().Info("[ddl] run add index job", zap.String("job", job.String()), zap.Reflect("indexInfo", indexInfo))
+		initializeTrace(job.ID)
 	}
 	originalState := indexInfo.State
 	switch indexInfo.State {
@@ -633,6 +635,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		job.SnapshotVer = 0
 		job.SchemaState = model.StateWriteReorganization
 	case model.StateWriteReorganization:
+		defer injectSpan(job.ID, "write-reorg")()
 		// reorganization -> public
 		tbl, err := getTable(d.store, schemaID, tblInfo)
 		if err != nil {
@@ -663,6 +666,9 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		}
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+		details := collectTrace(job.ID)
+		logutil.BgLogger().Info("[ddl] &&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&--------------------------  finish add index job", zap.String("job", job.String()),
+			zap.String("time details", details))
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", tblInfo.State)
 	}
@@ -1010,9 +1016,9 @@ type addIndexWorker struct {
 	distinctCheckFlags []bool
 }
 
-func newAddIndexWorker(decodeColMap map[int64]decoder.Column, bfCtx *backfillCtx, jc *JobContext, eleID int64, eleTp []byte, sql string) *addIndexWorker {
+func newAddIndexWorker(decodeColMap map[int64]decoder.Column, bfCtx *backfillCtx, jc *JobContext, eleID int64, eleTp []byte) *addIndexWorker {
 	if !bytes.Equal(eleTp, meta.IndexElementKey) {
-		logutil.BgLogger().Error("[ddl] Element type for addIndexWorker incorrect", zap.String("jobQuery", sql))
+		logutil.BgLogger().Error("[ddl] Element type for addIndexWorker incorrect", zap.String("jobQuery", jc.cacheSQL))
 		return nil
 	}
 	t := bfCtx.table
@@ -1046,35 +1052,54 @@ func (w *baseIndexWorker) GetTask() (*model.BackfillJob, error) {
 	return nil, nil
 }
 
-func (w *baseIndexWorker) UpdateTask(job *model.BackfillJob) error {
+func (w *baseIndexWorker) UpdateTask(bJob *model.BackfillJob) error {
 	sess := w.backfillCtx.sessCtx.(*session)
-	_, err := sess.execute(context.Background(), "begin", "update_backfill_job")
-	if err == nil {
-		jobs, err := getBackfillJobs(sess, BackfillTable, fmt.Sprintf("exec_ID = '' or exec_lease < '%v'", job.Instance_Lease))
-		if err != nil {
-			return err
-		}
-		if len(jobs) == 0 {
-			return errors.Errorf("get the backfill job:%#v, lease is timeout", job)
-		}
+	_, err := sess.execute(context.Background(), "begin", "update_backfill_task")
+	if err != nil {
+		return err
 	}
-	if err = updateBackfillJob(sess, job); err == nil {
-		_, err = sess.execute(context.Background(), "commit", "update_backfill_job")
+
+	jobs, err := getBackfillJobs(sess, BackfillTable, fmt.Sprintf("job_id = %d and ele_id = %d and section_id = %d and ele_key = '%s'",
+		bJob.JobID, bJob.EleID, bJob.ID, bJob.EleKey), "update_backfill_task")
+	if err == nil {
+		if len(jobs) == 0 {
+			return dbterror.ErrDDLJobNotFound.FastGen("get zero backfill bJob, lease is timeout")
+		}
+		if jobs[0].Instance_ID != bJob.Instance_ID {
+			return dbterror.ErrDDLJobNotFound.FastGenByArgs("get a backfill bJob %v, want instance ID %d", jobs[0], bJob.Instance_ID)
+		}
+		err = updateBackfillJob(sess, bJob, "update_backfill_task")
+	}
+
+	if err == nil {
+		_, err = sess.execute(context.Background(), "commit", "update_backfill_task")
+	} else {
+		_, err1 := sess.execute(context.Background(), "rollback", "update_backfill_task")
+		if err1 != nil {
+			logutil.BgLogger().Info("[ddl] index worker update task rollback failed", zap.Error(err1))
+		}
 	}
 	return err
 }
 
-func (w *baseIndexWorker) FinishTask(job *model.BackfillJob) error {
+func (w *baseIndexWorker) FinishTask(bJob *model.BackfillJob) error {
 	sess := w.backfillCtx.sessCtx.(*session)
-	_, err := sess.execute(context.Background(), "begin", "finish_backfill_job")
-	if err == nil {
-		err = removeBackfillJob(sess, false, job)
+	_, err := sess.execute(context.Background(), "begin", "finish_backfill_task")
+	if err != nil {
+		return err
 	}
-	if err == nil {
-		err = addBackfillHistoryJob(sess, []*model.BackfillJob{job})
+
+	if err = removeBackfillJob(sess, false, bJob); err == nil {
+		err = addBackfillHistoryJob(sess, []*model.BackfillJob{bJob})
 	}
+
 	if err == nil {
-		_, err = sess.execute(context.Background(), "commit", "finish_backfill_job")
+		_, err = sess.execute(context.Background(), "commit", "finish_backfill_task")
+	} else {
+		_, err1 := sess.execute(context.Background(), "rollback", "finish_backfill_task")
+		if err1 != nil {
+			logutil.BgLogger().Info("[ddl] index worker finish task rollback failed", zap.Error(err1))
+		}
 	}
 	return err
 }
@@ -1209,6 +1234,7 @@ func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBac
 		taskDone = true
 	}
 
+	// TODO: add worker id info?
 	logutil.BgLogger().Debug("[ddl] txn fetches handle info", zap.Uint64("txnStartTS", txn.StartTS()),
 		zap.String("taskRange", taskRange.String()), zap.Duration("takeTime", time.Since(startTime)))
 	return w.idxRecords, w.getNextKey(taskRange, taskDone), taskDone, errors.Trace(err)
@@ -1512,8 +1538,7 @@ type cleanUpIndexWorker struct {
 	baseIndexWorker
 }
 
-func newCleanUpIndexWorker(bfCtx *backfillCtx, decodeColMap map[int64]decoder.Column, jc *JobContext) *cleanUpIndexWorker {
-	t := bfCtx.table
+func newCleanUpIndexWorker(dCtx *ddlCtx, sessCtx sessionctx.Context, t table.Table, decodeColMap map[int64]decoder.Column, jc *JobContext) *cleanUpIndexWorker {
 	indexes := make([]table.Index, 0, len(t.Indices()))
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 	for _, index := range t.Indices() {
@@ -1523,7 +1548,7 @@ func newCleanUpIndexWorker(bfCtx *backfillCtx, decodeColMap map[int64]decoder.Co
 	}
 	return &cleanUpIndexWorker{
 		baseIndexWorker: baseIndexWorker{
-			backfillCtx:   bfCtx,
+			backfillCtx:   newBackfillCtx(dCtx, sessCtx, t, int(variable.GetDDLReorgBatchSize())),
 			indexes:       indexes,
 			rowDecoder:    rowDecoder,
 			defaultVals:   make([]types.Datum, len(t.WritableCols())),

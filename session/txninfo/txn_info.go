@@ -100,8 +100,8 @@ func TxnStatusEnteringCounter(state TxnRunningState) prometheus.Counter {
 }
 
 const (
-	// IDStr is the column name of the TIDB_TRX table's ID column.
-	IDStr = "ID"
+	// AbbrStr is the column name of the TIDB_TRX table's ID column.
+	AbbrStr = "ID"
 	// StartTimeStr is the column name of the TIDB_TRX table's StartTime column.
 	StartTimeStr = "START_TIME"
 	// CurrentSQLDigestStr is the column name of the TIDB_TRX table's CurrentSQLDigest column.
@@ -171,7 +171,7 @@ type TxnInfo struct {
 }
 
 var columnValueGetterMap = map[string]func(*TxnInfo) types.Datum{
-	IDStr: func(info *TxnInfo) types.Datum {
+	AbbrStr: func(info *TxnInfo) types.Datum {
 		return types.NewDatum(info.StartTS)
 	},
 	StartTimeStr: func(info *TxnInfo) types.Datum {

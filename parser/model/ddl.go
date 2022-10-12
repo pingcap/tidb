@@ -399,8 +399,18 @@ func (bj *BackfillJob) IsRunning() bool {
 	return bj.State == JobStateRunning
 }
 
-func (bj *BackfillJob) IDStr() string {
-	return fmt.Sprintf("ID:%d, JobID:%d, EleID:%d, EleKey:%v", bj.ID, bj.JobID, bj.EleID, bj.EleKey)
+func (bj *BackfillJob) AbbrStr() string {
+	return fmt.Sprintf("ID:%d, JobID:%d, EleID:%d, EleKey:%v, PhysicalID:%d, Type:%s, State:%s, Instance_ID:%s, Instance_Lease:%s",
+		bj.ID, bj.JobID, bj.EleID, bj.EleKey, bj.PhysicalID, bj.Tp, bj.State, bj.Instance_ID, bj.Instance_Lease)
+}
+
+type JobMeta struct {
+	SchemaID int64 `json:"schema_id"`
+	TableID  int64 `json:"table_id"`
+	// Query string of the ddl job.
+	Query string `json:"query"`
+	// Priority is only used to set the operation priority of adding indices.
+	Priority int `json:"priority"`
 }
 
 type BackfillMeta struct {
@@ -417,6 +427,7 @@ type BackfillMeta struct {
 	Warnings      map[errors.ErrorID]*terror.Error `json:"warnings"`
 	WarningsCount map[errors.ErrorID]int64         `json:"warnings_count"`
 	Location      *TimeZoneLocation                `json:"location"`
+	*JobMeta      `json:"job_meta"`
 }
 
 // Encode encodes BackfillMeta with json format.

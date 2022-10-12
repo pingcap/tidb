@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -1106,8 +1107,7 @@ type updateColumnWorker struct {
 	jobContext *JobContext
 }
 
-func newUpdateColumnWorker(reorgInfo *reorgInfo, bfCtx *backfillCtx, decodeColMap map[int64]decoder.Column, jc *JobContext) *updateColumnWorker {
-	t := bfCtx.table
+func newUpdateColumnWorker(dCtx *ddlCtx, reorgInfo *reorgInfo, sessCtx sessionctx.Context, t table.Table, decodeColMap map[int64]decoder.Column, jc *JobContext) *updateColumnWorker {
 	if !bytes.Equal(reorgInfo.currElement.TypeKey, meta.ColumnElementKey) {
 		logutil.BgLogger().Error("Element type for updateColumnWorker incorrect", zap.String("jobQuery", reorgInfo.Query),
 			zap.String("reorgInfo", reorgInfo.String()))
@@ -1123,7 +1123,7 @@ func newUpdateColumnWorker(reorgInfo *reorgInfo, bfCtx *backfillCtx, decodeColMa
 	}
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 	return &updateColumnWorker{
-		backfillCtx:   bfCtx,
+		backfillCtx:   newBackfillCtx(dCtx, sessCtx, t, int(variable.GetDDLReorgBatchSize())),
 		oldColInfo:    oldCol,
 		newColInfo:    newCol,
 		metricCounter: metrics.BackfillTotalCounter.WithLabelValues(metrics.GenerateReorgLabel("update_col_rate", t.Meta().Name.L, t.Meta().Name.String())),

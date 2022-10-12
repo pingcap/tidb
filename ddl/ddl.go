@@ -638,18 +638,13 @@ func (d *ddl) prepareWorkers4ConcurrencyDDL() {
 func (d *ddl) prepareBackfillWorkers() {
 	workerFactory := func() func() (pools.Resource, error) {
 		return func() (pools.Resource, error) {
-			sessForJob, err := d.sessPool.get()
-			if err != nil {
-				return nil, err
-			}
-			sessForJob.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
-			// TODO: Set sess variables.
-			bk := newBackfillWorker(sessForJob, int(genBackfillWorkerID()), nil, d.ddlCtx)
+			bk := newBackfillWorker(int(genBackfillWorkerID()), d.ddlCtx, nil)
 			metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_%s", metrics.CreateDDL, bk.String())).Inc()
 			return bk, nil
 		}
 	}
 	d.backfillWorkerPool = newBackfillWorkerPool(pools.NewResourcePool(workerFactory(), backfillWorkerCnt, backfillWorkerCnt, 0))
+	d.backfillJobCh = make(chan struct{}, 1)
 	d.wg.Run(d.startDispatchBackfillJobsLoop)
 }
 

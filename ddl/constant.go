@@ -62,7 +62,7 @@ const (
 		exec_lease Time,
 		state int,
 		backfill_meta longblob,
-		unique key(job_id, ele_id, section_id, ele_key(20)))`
+		unique key(job_id, ele_id, ele_key(20), section_id))`
 	// BackfillHistoryTableSQL is the CREATE TABLE SQL of `tidb_ddl_backfill_history`.
 	BackfillHistoryTableSQL = "create table " + BackfillHistoryTable + `(
 		section_id bigint not null,
@@ -75,5 +75,5 @@ const (
 		exec_lease Time,
 		state int,
 		backfill_meta longblob,
-		unique key(job_id, ele_id, section_id, ele_key(20)))`
+		unique key(job_id, ele_id, ele_key(20), section_id))`
 )

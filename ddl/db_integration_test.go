@@ -51,7 +51,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/dbterror"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -4010,11 +4009,11 @@ func TestAddIndexX(t *testing.T) {
 	tk.MustExec("use test")
 
 	tk.MustExec("create table test_add_index(a int, b int not null default '0')")
-	tk.MustExec("insert into test_add_index values(1, 2),(2,2)")
+	tk.MustExec("insert into test_add_index values(1, 1),(20,20),(300,300),(4000,4000),(50000,50000),(123456,123456),(1234567,1234567),(12345678,12345678)")
+	tk.MustExec("split table test_add_index BETWEEN (0) AND (10000000) REGIONS 7;")
 	tk.MustExec("alter table test_add_index add index idx(b)")
 	tk.MustExec("admin check table test_add_index")
-	logutil.BgLogger().Info("-------------------------------------------------- add index finished")
 	tk.MustQuery("select count(1) from mysql.tidb_ddl_backfill").Check(testkit.Rows("0"))
-	tk.MustQuery("select count(1) from mysql.tidb_ddl_backfill_history").Check(testkit.Rows("1"))
+	tk.MustQuery("select section_id, ele_id, ele_key, type, state from mysql.tidb_ddl_backfill_history").Check(testkit.Rows("1 1 _idx_ 1 4"))
 	// tk.MustExec("alter table test_add_index add unique index idx1(b)")
 }

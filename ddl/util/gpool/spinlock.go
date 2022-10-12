@@ -45,5 +45,3 @@ func (sl *spinLock) Unlock() {
 func NewSpinLock() sync.Locker {
 	return new(spinLock)
 }
-37
-util/gpool/spmc/BUILD.bazel
