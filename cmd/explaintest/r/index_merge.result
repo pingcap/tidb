@@ -798,14 +798,12 @@ create table t1(c1 int, c2 int, c3 int, c4 int, c5 int, key(c1), key(c2), key(c3
 insert into t1 values(1, 1, 1, 1, 1), (2, 2, 2, 2, 2), (3, 3, 3, 3, 3), (4, 4, 4, 4, 4), (5, 5, 5, 5, 5);
 explain with cte1 as (select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 < 10) select * from cte1 order by 1;
 id	estRows	task	access object	operator info
-Sort_13	2250.55	root		test.t1.c1
-└─CTEFullScan_16	2250.55	root	CTE:cte1	data:CTE_0
-CTE_0	2250.55	root		Non-Recursive CTE
-└─IndexMerge_12(Seed Part)	2250.55	root		
-  ├─IndexRangeScan_8(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-  ├─IndexRangeScan_9(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-  └─Selection_11(Probe)	2250.55	cop[tikv]		or(lt(test.t1.c1, 10), and(lt(test.t1.c2, 10), lt(test.t1.c3, 10)))
-    └─TableRowIDScan_10	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+Sort_10	4060.74	root		test.t1.c1
+└─IndexMerge_17	2250.55	root		
+  ├─IndexRangeScan_13(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+  ├─IndexRangeScan_14(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+  └─Selection_16(Probe)	2250.55	cop[tikv]		or(lt(test.t1.c1, 10), and(lt(test.t1.c2, 10), lt(test.t1.c3, 10)))
+    └─TableRowIDScan_15	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
 with cte1 as (select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 < 10) select * from cte1 order by 1;
 c1	c2	c3	c4	c5
 1	1	1	1	1

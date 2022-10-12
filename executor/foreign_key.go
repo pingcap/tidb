@@ -51,6 +51,18 @@ type FKCheckExec struct {
 	checkRowsCache map[string]bool
 }
 
+func buildTblID2FKCheckExecs(sctx sessionctx.Context, tblID2Table map[int64]table.Table, tblID2FKChecks map[int64][]*plannercore.FKCheck) (map[int64][]*FKCheckExec, error) {
+	var err error
+	fkChecks := make(map[int64][]*FKCheckExec)
+	for tid, tbl := range tblID2Table {
+		fkChecks[tid], err = buildFKCheckExecs(sctx, tbl, tblID2FKChecks[tid])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return fkChecks, nil
+}
+
 func buildFKCheckExecs(sctx sessionctx.Context, tbl table.Table, fkChecks []*plannercore.FKCheck) ([]*FKCheckExec, error) {
 	fkCheckExecs := make([]*FKCheckExec, 0, len(fkChecks))
 	for _, fkCheck := range fkChecks {
@@ -98,6 +110,10 @@ func (fkc *FKCheckExec) updateRowNeedToCheck(sc *stmtctx.StatementContext, oldRo
 		return fkc.addRowNeedToCheck(sc, oldRow)
 	}
 	return nil
+}
+
+func (fkc *FKCheckExec) deleteRowNeedToCheck(sc *stmtctx.StatementContext, row []types.Datum) error {
+	return fkc.addRowNeedToCheck(sc, row)
 }
 
 func (fkc *FKCheckExec) addRowNeedToCheck(sc *stmtctx.StatementContext, row []types.Datum) error {

@@ -3610,3 +3610,22 @@ func TestIssue35181(t *testing.T) {
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
 	tk.MustExec(`insert into t select * from t where a=3000`)
 }
+
+func TestIssue21732(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	for _, mode := range []variable.PartitionPruneMode{variable.StaticOnly, variable.DynamicOnly} {
+		testkit.WithPruneMode(tk, mode, func() {
+			tk.MustExec("create database TestIssue21732")
+			tk.MustExec("use TestIssue21732")
+			tk.MustExec("drop table if exists p")
+			tk.MustExec(`create table p (a int, b int GENERATED ALWAYS AS (3*a-2*a) VIRTUAL) partition by hash(b) partitions 2;`)
+			tk.MustExec("alter table p add unique index idx (a, b);")
+			tk.MustExec("insert into p (a) values  (1),(2),(3);")
+			tk.MustExec("select * from p ignore index (idx);")
+			tk.MustQuery("select * from p use index (idx)").Sort().Check(testkit.Rows("1 1", "2 2", "3 3"))
+			tk.MustExec("drop database TestIssue21732")
+		})
+	}
+}
