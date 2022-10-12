@@ -102,7 +102,7 @@ func newMergeTempIndexWorker(sessCtx sessionctx.Context, id int, t table.Physica
 }
 
 // BackfillDataInTxn merge temp index data in txn.
-func (w *mergeIndexWorker) BackfillDataInTxn(taskRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
+func (w *mergeIndexWorker) BackfillDataInTxn(taskRanges []*reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
 	oprStartTime := time.Now()
 	ctx := kv.WithInternalSourceType(context.Background(), w.jobContext.ddlJobSourceType())
 	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
@@ -113,7 +113,7 @@ func (w *mergeIndexWorker) BackfillDataInTxn(taskRange reorgBackfillTask) (taskC
 			txn.SetOption(kv.ResourceGroupTagger, tagger)
 		}
 
-		tmpIdxRecords, nextKey, taskDone, err := w.fetchTempIndexVals(txn, taskRange)
+		tmpIdxRecords, nextKey, taskDone, err := w.fetchTempIndexVals(txn, taskRanges[0])
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -156,7 +156,7 @@ func (w *mergeIndexWorker) BackfillDataInTxn(taskRange reorgBackfillTask) (taskC
 func (w *mergeIndexWorker) AddMetricInfo(cnt float64) {
 }
 
-func (w *mergeIndexWorker) fetchTempIndexVals(txn kv.Transaction, taskRange reorgBackfillTask) ([]*temporaryIndexRecord, kv.Key, bool, error) {
+func (w *mergeIndexWorker) fetchTempIndexVals(txn kv.Transaction, taskRange *reorgBackfillTask) ([]*temporaryIndexRecord, kv.Key, bool, error) {
 	startTime := time.Now()
 	w.tmpIdxRecords = w.tmpIdxRecords[:0]
 	w.tmpIdxKeys = w.tmpIdxKeys[:0]

@@ -1490,7 +1490,7 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 // BackfillDataInTxn will backfill table index in a transaction. A lock corresponds to a rowKey if the value of rowKey is changed,
 // Note that index columns values may change, and an index is not allowed to be added, so the txn will rollback and retry.
 // BackfillDataInTxn will add w.batchCnt indices once, default value of w.batchCnt is 128.
-func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
+func (w *addIndexWorker) BackfillDataInTxn(handleRange []*reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
 	failpoint.Inject("errorMockPanic", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		if val.(bool) {
@@ -1512,20 +1512,14 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 		}
 
 		var (
-			idxRecords  []*indexRecord
-			nextKey     kv.Key
-			taskDone    bool
-			encPushDown bool
+			idxRecords []*indexRecord
+			nextKey    kv.Key
+			taskDone   bool
 		)
 		if w.coprCtx != nil {
-			encPushDown = variable.EnableCoprRead.Load() == "2"
-			if encPushDown {
-				idxRecords, nextKey, taskDone, err = w.fetchRowColValsFromCopr(ctx, txn, handleRange)
-			} else {
-				idxRecords, nextKey, taskDone, err = w.fetchRowColValsFromSelect(ctx, txn, handleRange)
-			}
+			idxRecords, nextKey, taskDone, err = w.fetchRowColValsFromCop(ctx, txn, handleRange)
 		} else {
-			idxRecords, nextKey, taskDone, err = w.fetchRowColVals(txn, handleRange)
+			idxRecords, nextKey, taskDone, err = w.fetchRowColVals(txn, *handleRange[0])
 		}
 		if err != nil {
 			return errors.Trace(err)
@@ -1560,7 +1554,7 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 
 			// Create the index.
 			if w.writerCtx == nil {
-				if encPushDown {
+				if idxRecord.idxKV != nil {
 					err := txn.GetMemBuffer().Set(idxRecord.idxKV.key, idxRecord.idxKV.value)
 					if err != nil {
 						return errors.Trace(err)
@@ -1576,7 +1570,7 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 					}
 				}
 			} else { // The lightning environment is ready.
-				if encPushDown {
+				if idxRecord.idxKV != nil {
 					err = w.writerCtx.WriteRow(idxRecord.idxKV.key, idxRecord.idxKV.value)
 					if err != nil {
 						return errors.Trace(err)
@@ -1775,7 +1769,7 @@ func newCleanUpIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalT
 	}
 }
 
-func (w *cleanUpIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
+func (w *cleanUpIndexWorker) BackfillDataInTxn(handleRanges []*reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
 	failpoint.Inject("errorMockPanic", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		if val.(bool) {
@@ -1793,7 +1787,7 @@ func (w *cleanUpIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (t
 			txn.SetOption(kv.ResourceGroupTagger, tagger)
 		}
 
-		idxRecords, nextKey, taskDone, err := w.fetchRowColVals(txn, handleRange)
+		idxRecords, nextKey, taskDone, err := w.fetchRowColVals(txn, *handleRanges[0])
 		if err != nil {
 			return errors.Trace(err)
 		}
