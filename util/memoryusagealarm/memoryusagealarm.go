@@ -197,9 +197,9 @@ func (record *memoryUsageAlarm) needRecord(memoryUsage uint64) (bool, AlarmReaso
 
 func (record *memoryUsageAlarm) doRecord(memUsage uint64, instanceMemoryUsage uint64, sm util.SessionManager, alarmReason AlarmReason) {
 	fields := make([]zap.Field, 0, 6)
-	fields = append(fields, zap.Bool("is server-memory-limit set", record.isServerMemoryLimitSet))
+	fields = append(fields, zap.Bool("is tidb_server_memory_limit set", record.isServerMemoryLimitSet))
 	if record.isServerMemoryLimitSet {
-		fields = append(fields, zap.Any("server-memory-limit", record.ServerMemoryLimit))
+		fields = append(fields, zap.Any("tidb_server_memory_limit", record.ServerMemoryLimit))
 		fields = append(fields, zap.Any("tidb-server memory usage", memUsage))
 	} else {
 		fields = append(fields, zap.Any("system memory total", record.ServerMemoryLimit))
