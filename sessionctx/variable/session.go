@@ -604,7 +604,6 @@ func (s *SessionVars) GetUserVarType(name string) (*types.FieldType, bool) {
 // HookContext contains the necessary variables for executing set/get hook
 type HookContext interface {
 	GetStore() kv.Storage
-	GetSessionManager() util.SessionManager
 }
 
 // SessionVars is to handle user-defined or global variables in the current session.

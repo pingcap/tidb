@@ -42,6 +42,7 @@ type ProcessInfo struct {
 	Time                  time.Time
 	Plan                  interface{}
 	StmtCtx               *stmtctx.StatementContext
+	CurrentAnalyzeRows    func(interface{}, *execdetails.RuntimeStatsColl) [][]string
 	MemTracker            *memory.Tracker
 	DiskTracker           *disk.Tracker
 	StatsInfo             func(interface{}) map[string]uint64
@@ -53,10 +54,9 @@ type ProcessInfo struct {
 	Info                  string
 	Port                  string
 	PlanExplainRows       [][]string
-	CurrentAnalyzeRows    func(interface{}, *execdetails.RuntimeStatsColl) [][]string
 	OOMAlarmVariablesInfo OOMAlarmVariablesInfo
-	CurTxnStartTS         uint64
 	ID                    uint64
+	CurTxnStartTS         uint64
 	// MaxExecutionTime is the timeout for select statement, in milliseconds.
 	// If the query takes too long, kill it.
 	MaxExecutionTime          uint64
