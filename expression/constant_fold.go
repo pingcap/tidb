@@ -181,11 +181,10 @@ func foldConstant(expr Expression) (Expression, bool) {
 			if !hasNullArg || !sc.InNullRejectCheck || x.FuncName.L == ast.NullEQ {
 				return expr, isDeferredConst
 			}
-			if hasNullArg {
-				switch x.FuncName.L {
-				case ast.LogicAnd, ast.LogicOr:
-					return expr, isDeferredConst
-				}
+			// For `AND` and `OR`, if any of the arguments is null and not all arguments are constant, then it is unFoldAble.
+			switch x.FuncName.L {
+			case ast.LogicAnd, ast.LogicOr:
+				return expr, isDeferredConst
 			}
 			constArgs := make([]Expression, len(args))
 			for i, arg := range args {
