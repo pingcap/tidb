@@ -15,7 +15,6 @@
 package util
 
 import (
-	"context"
 	"crypto/tls"
 	"errors"
 	"fmt"
@@ -54,6 +53,7 @@ type ProcessInfo struct {
 	Info                  string
 	Port                  string
 	PlanExplainRows       [][]string
+	CurrentAnalyzeRows    func(interface{}, *execdetails.RuntimeStatsColl) [][]string
 	OOMAlarmVariablesInfo OOMAlarmVariablesInfo
 	CurTxnStartTS         uint64
 	ID                    uint64
