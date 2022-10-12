@@ -818,20 +818,31 @@ func EvaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expressio
 	if MaybeOverOptimized4PlanCache(ctx, []Expression{expr}) {
 		return expr
 	}
-	return evaluateExprWithNull(ctx, schema, expr)
+	return evaluateExprWithNull(ctx, schema, expr, nil)
 }
 
-func evaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expression) Expression {
+func evaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expression, parExpr Expression) Expression {
 	switch x := expr.(type) {
 	case *ScalarFunction:
 		args := make([]Expression, len(x.GetArgs()))
 		for i, arg := range x.GetArgs() {
-			args[i] = evaluateExprWithNull(ctx, schema, arg)
+			args[i] = evaluateExprWithNull(ctx, schema, arg, expr)
 		}
-		return NewFunctionInternal(ctx, x.FuncName.L, x.RetType.Clone(), args...)
+		c := NewFunctionInternal(ctx, x.FuncName.L, x.RetType.Clone(), args...)
+		return c
 	case *Column:
 		if !schema.Contains(x) {
 			return x
+		}
+		if parExpr != nil {
+			if sf, ok := parExpr.(*ScalarFunction); ok {
+				if sf.FuncName.L == ast.LogicAnd {
+					return NewOne()
+				}
+				if sf.FuncName.L == ast.LogicOr {
+					return NewZero()
+				}
+			}
 		}
 		return &Constant{Value: types.Datum{}, RetType: types.NewFieldType(mysql.TypeNull)}
 	case *Constant:

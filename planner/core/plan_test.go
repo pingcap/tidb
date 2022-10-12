@@ -1085,7 +1085,6 @@ func TestOuterJoinOnNull(t *testing.T) {
 	tk.MustExec("CREATE TABLE t0(c0 BLOB(5), c1 BLOB(5));")
 	tk.MustExec("CREATE TABLE t1 (c0 BOOL);")
 	tk.MustExec("INSERT INTO t1 VALUES(false);")
-	tk.MustExec("")
 	tk.MustExec("INSERT INTO t0(c0, c1) VALUES ('>', true);")
 	tk.MustQuery("SELECT * FROM t0 LEFT OUTER JOIN t1 ON NULL; ").Check(testkit.Rows("> 1 <nil>"))
 	tk.MustQuery("SELECT NOT '2' =(t1.c0 AND t0.c1 IS NULL) FROM t0 LEFT OUTER JOIN t1 ON NULL; ").Check(testkit.Rows("1"))
