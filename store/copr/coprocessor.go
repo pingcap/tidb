@@ -67,7 +67,7 @@ var (
 const (
 	copBuildTaskMaxBackoff = 5000
 	copNextMaxBackoff      = 20000
-	copSmallTaskRow        = 6
+	CopSmallTaskRow        = 32 // 32 is the initial batch size of TiKV
 	smallTaskSigma         = 0.5
 )
 
@@ -80,9 +80,6 @@ type CopClient struct {
 
 // Send builds the request and gets the coprocessor iterator response.
 func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interface{}, option *kv.ClientSendOption) kv.Response {
-	eventCb := option.EventCb
-	enabledRateLimitAction := option.EnabledRateLimitAction
-	sessionMemTracker := option.SessionMemTracker
 	vars, ok := variables.(*tikv.Variables)
 	if !ok {
 		return copErrorResponse{errors.Errorf("unsupported variables:%+v", variables)}
@@ -91,6 +88,24 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 		logutil.BgLogger().Debug("send batch requests")
 		return c.sendBatch(ctx, req, vars, option)
 	}
+	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTs)
+	ctx = context.WithValue(ctx, util.RequestSourceKey, req.RequestSource)
+	enabledRateLimitAction := option.EnabledRateLimitAction
+	sessionMemTracker := option.SessionMemTracker
+	it, errRes := c.BuildCopIterator(ctx, req, vars, option)
+	if errRes != nil {
+		return errRes
+	}
+	ctx = context.WithValue(ctx, tikv.RPCCancellerCtxKey{}, it.rpcCancel)
+	if sessionMemTracker != nil && enabledRateLimitAction {
+		sessionMemTracker.FallbackOldAndSetNewAction(it.actionOnExceed)
+	}
+	it.open(ctx, enabledRateLimitAction, option.EnableCollectExecutionInfo)
+	return it
+}
+
+func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars *tikv.Variables, option *kv.ClientSendOption) (*copIterator, kv.Response) {
+	eventCb := option.EventCb
 	failpoint.Inject("DisablePaging", func(_ failpoint.Value) {
 		req.Paging.Enable = false
 	})
@@ -103,11 +118,6 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 		// coprocessor request but type is not DAG
 		req.Paging.Enable = false
 	}
-	if req.RequestSource.RequestSourceInternal {
-		// disable extra concurrency for internal tasks.
-		req.FixedRowCountHint = nil
-	}
-
 	failpoint.Inject("checkKeyRangeSortedForPaging", func(_ failpoint.Value) {
 		if req.Paging.Enable {
 			isSorted := slices.IsSortedFunc(req.KeyRanges, func(i, j kv.KeyRange) bool {
@@ -118,9 +128,14 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 			}
 		}
 	})
+	if req.RequestSource.RequestSourceInternal || req.Tp != kv.ReqTypeDAG {
+		// disable extra concurrency for internal tasks.
+		req.FixedRowCountHint = nil
+	}
+	failpoint.Inject("disableFixedRowCountHint", func(_ failpoint.Value) {
+		req.FixedRowCountHint = nil
+	})
 
-	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTs)
-	ctx = context.WithValue(ctx, util.RequestSourceKey, req.RequestSource)
 	bo := backoff.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
 	ranges := NewKeyRanges(req.KeyRanges)
 	tasks, err := buildCopTasks(bo, c.store.GetRegionCache(), ranges, req, eventCb)
@@ -133,7 +148,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 	}
 	tidbmetrics.DistSQLCoprClosestReadCounter.WithLabelValues(reqType).Inc()
 	if err != nil {
-		return copErrorResponse{err}
+		return nil, copErrorResponse{err}
 	}
 	it := &copIterator{
 		store:           c.store,
@@ -186,16 +201,10 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 		it.respChan = nil
 	} else {
 		it.respChan = make(chan *copResponse)
-		it.sendRate = util.NewRateLimit(it.concurrency)
+		it.sendRate = util.NewRateLimit(it.concurrency + it.smallTaskConcurrency)
 	}
 	it.actionOnExceed = newRateLimitAction(uint(it.sendRate.GetCapacity()))
-	if sessionMemTracker != nil && enabledRateLimitAction {
-		sessionMemTracker.FallbackOldAndSetNewAction(it.actionOnExceed)
-	}
-
-	ctx = context.WithValue(ctx, tikv.RPCCancellerCtxKey{}, it.rpcCancel)
-	it.open(ctx, enabledRateLimitAction, option.EnableCollectExecutionInfo)
-	return it
+	return it, nil
 }
 
 // copTask contains a related Region and KeyRange for a kv.Request.
@@ -269,6 +278,10 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 			if req.FixedRowCountHint != nil {
 				startKey, endKey := loc.Ranges.At(i).StartKey, loc.Ranges.At(nextI-1).EndKey
 				// move to the previous range if startKey of current range is lower than endKey of previous location.
+				// In the following example, task1 will move origRangeIdx to region(i, z).
+				// When counting the row hint for task2, we need to move origRangeIdx back to region(a, h).
+				// |<-      region(a, h)    ->| |<-   region(i, z)   ->|
+				// |<- task1 ->| |<- task2 ->| ...
 				if origRangeIdx > 0 && ranges.At(origRangeIdx-1).EndKey.Cmp(startKey) > 0 {
 					origRangeIdx--
 				}
@@ -351,7 +364,7 @@ func isSmallTask(task *copTask) bool {
 	// strictly, only RowCountHint == -1 stands for unknown task rows,
 	// but when RowCountHint == 0, it may be caused by initialized value,
 	// to avoid the future bugs, let the tasks with RowCountHint == 0 be non-small tasks.
-	return task.RowCountHint > 0 && task.RowCountHint <= copSmallTaskRow
+	return task.RowCountHint > 0 && task.RowCountHint <= CopSmallTaskRow
 }
 
 // smallTaskConcurrency counts the small tasks of tasks,
@@ -649,6 +662,14 @@ func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copRes
 			return
 		}
 	}
+}
+
+func (it *copIterator) GetConcurrency() (int, int) {
+	return it.concurrency, it.smallTaskConcurrency
+}
+
+func (it *copIterator) GetSendRate() *util.RateLimit {
+	return it.sendRate
 }
 
 func (sender *copIteratorTaskSender) sendToTaskCh(t *copTask, sendTo chan<- *copTask) (exit bool) {
@@ -1475,4 +1496,15 @@ func isolationLevelToPB(level kv.IsoLevel) kvrpcpb.IsolationLevel {
 	default:
 		return kvrpcpb.IsolationLevel_SI
 	}
+}
+
+func BuildKeyRanges(keys ...string) []kv.KeyRange {
+	var ranges []kv.KeyRange
+	for i := 0; i < len(keys); i += 2 {
+		ranges = append(ranges, kv.KeyRange{
+			StartKey: []byte(keys[i]),
+			EndKey:   []byte(keys[i+1]),
+		})
+	}
+	return ranges
 }
