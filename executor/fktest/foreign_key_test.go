@@ -934,6 +934,16 @@ func TestForeignKeyOnDeleteCascade(t *testing.T) {
 			tk.MustExec("commit")
 			tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("3 1 1"))
 			tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("3 1 1 e"))
+
+			tk.MustExec("delete from t2")
+			tk.MustExec("delete from t1")
+			tk.MustExec("begin")
+			tk.MustExec("insert into t1 values (1, 1, 1),(2, 1, 1);")
+			tk.MustExec("insert into t2 (id, a, b, name) values (1, 1, 1, 'a'), (2, 1, 1, 'b')")
+			tk.MustExec("delete from t1 where id = 1")
+			tk.MustExec("commit")
+			tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("2 1 1"))
+			tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows())
 		}
 	}
 
