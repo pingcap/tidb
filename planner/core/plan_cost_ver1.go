@@ -848,7 +848,7 @@ func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64, isMPP bool, costFlag uint
 	}
 	sessVars := p.ctx.GetSessionVars()
 	oomUseTmpStorage := variable.EnableTmpStorageOnOOM.Load()
-	memQuota := sessVars.StmtCtx.MemTracker.GetBytesLimit() // sessVars.MemQuotaQuery && hint
+	memQuota := sessVars.MemTracker.GetBytesLimit() // sessVars.MemQuotaQuery && hint
 	rowSize := getAvgRowSize(build.statsInfo(), build.Schema())
 	spill := oomUseTmpStorage && memQuota > 0 && rowSize*buildCnt > float64(memQuota) && p.storeTp != kv.TiFlash
 	// Cost of building hash table.
@@ -1045,7 +1045,7 @@ func (p *PhysicalSort) GetCost(count float64, schema *expression.Schema) float64
 	memoryCost := count * sessVars.GetMemoryFactor()
 
 	oomUseTmpStorage := variable.EnableTmpStorageOnOOM.Load()
-	memQuota := sessVars.StmtCtx.MemTracker.GetBytesLimit() // sessVars.MemQuotaQuery && hint
+	memQuota := sessVars.MemTracker.GetBytesLimit() // sessVars.MemQuotaQuery && hint
 	rowSize := getAvgRowSize(p.statsInfo(), schema)
 	spill := oomUseTmpStorage && memQuota > 0 && rowSize*count > float64(memQuota)
 	diskCost := count * sessVars.GetDiskFactor() * rowSize

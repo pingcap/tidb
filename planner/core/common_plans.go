@@ -721,8 +721,8 @@ func getRuntimeInfo(ctx sessionctx.Context, p Plan, runtimeStatsColl *execdetail
 	if runtimeStatsColl != nil && runtimeStatsColl.ExistsCopStats(explainID) {
 		copStats = runtimeStatsColl.GetCopStats(explainID)
 	}
-	memTracker = ctx.GetSessionVars().StmtCtx.MemTracker.SearchTrackerWithoutLock(p.ID())
-	diskTracker = ctx.GetSessionVars().StmtCtx.DiskTracker.SearchTrackerWithoutLock(p.ID())
+	memTracker = ctx.GetSessionVars().MemTracker.SearchTrackerWithoutLock(p.ID())
+	diskTracker = ctx.GetSessionVars().DiskTracker.SearchTrackerWithoutLock(p.ID())
 	return
 }
 

@@ -210,7 +210,7 @@ func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager) {
 
 	_, err = f.WriteString("The 10 SQLs with the most memory usage for OOM analysis\n")
 	printTop10(func(i, j *util.ProcessInfo) bool {
-		return i.StmtCtx.MemTracker.MaxConsumed() > j.StmtCtx.MemTracker.MaxConsumed()
+		return i.MemTracker.MaxConsumed() > j.MemTracker.MaxConsumed()
 	})
 
 	_, err = f.WriteString("The 10 SQLs with the most time usage for OOM analysis\n")

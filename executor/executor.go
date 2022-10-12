@@ -167,9 +167,6 @@ func init() {
 	schematracker.ConstructResultOfShowCreateTable = ConstructResultOfShowCreateTable
 }
 
-// SetLogHook sets a hook for PanicOnExceed.
-func (a *globalPanicOnExceed) SetLogHook(hook func(uint64)) {}
-
 // Action panics when storage usage exceeds storage quota.
 func (a *globalPanicOnExceed) Action(t *memory.Tracker) {
 	a.mutex.Lock()
@@ -1939,29 +1936,17 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 
 	if _, ok := s.(*ast.AnalyzeTableStmt); ok {
 		sc.InitMemTracker(memory.LabelForAnalyzeMemory, -1)
-		sc.MemTracker.AttachTo(GlobalAnalyzeMemoryTracker)
+		sc.MemTracker.AttachTo(vars.MemTracker)
 	} else {
 		sc.InitMemTracker(memory.LabelForSQLText, vars.MemQuotaQuery)
-		sc.MemTracker.AttachToGlobalTracker(GlobalMemoryUsageTracker)
-		sc.MemTracker.IsRootTrackerOfSess, sc.MemTracker.SessionID = true, vars.ConnectionID
+		sc.MemTracker.AttachTo(vars.MemTracker)
+		sc.MemTracker.SessionID = vars.ConnectionID
 	}
 
 	sc.InitDiskTracker(memory.LabelForSQLText, -1)
 	globalConfig := config.GetGlobalConfig()
-	if variable.EnableTmpStorageOnOOM.Load() && GlobalDiskUsageTracker != nil {
-		sc.DiskTracker.AttachToGlobalTracker(GlobalDiskUsageTracker)
-	}
-	switch variable.OOMAction.Load() {
-	case variable.OOMActionCancel:
-		action := &memory.PanicOnExceed{ConnID: ctx.GetSessionVars().ConnectionID}
-		action.SetLogHook(domain.GetDomain(ctx).ExpensiveQueryHandle().LogOnQueryExceedMemQuota)
-		sc.MemTracker.SetActionOnExceed(action)
-	case variable.OOMActionLog:
-		fallthrough
-	default:
-		action := &memory.LogOnExceed{ConnID: ctx.GetSessionVars().ConnectionID}
-		action.SetLogHook(domain.GetDomain(ctx).ExpensiveQueryHandle().LogOnQueryExceedMemQuota)
-		sc.MemTracker.SetActionOnExceed(action)
+	if variable.EnableTmpStorageOnOOM.Load() && vars.DiskTracker != nil {
+		sc.DiskTracker.AttachTo(vars.DiskTracker)
 	}
 	if execStmt, ok := s.(*ast.ExecuteStmt); ok {
 		prepareStmt, err := plannercore.GetPreparedStmt(execStmt, vars)

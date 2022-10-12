@@ -25,7 +25,9 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/tikv/client-go/v2/oracle"
 )
 
@@ -34,6 +36,8 @@ type ProcessInfo struct {
 	Time             time.Time
 	Plan             interface{}
 	StmtCtx          *stmtctx.StatementContext
+	MemTracker       *memory.Tracker
+	DiskTracker      *disk.Tracker
 	StatsInfo        func(interface{}) map[string]uint64
 	RuntimeStatsColl *execdetails.RuntimeStatsColl
 	DB               string
@@ -106,11 +110,11 @@ func (pi *ProcessInfo) ToRow(tz *time.Location) []interface{} {
 	bytesConsumed := int64(0)
 	diskConsumed := int64(0)
 	if pi.StmtCtx != nil {
-		if pi.StmtCtx.MemTracker != nil {
-			bytesConsumed = pi.StmtCtx.MemTracker.BytesConsumed()
+		if pi.MemTracker != nil {
+			bytesConsumed = pi.MemTracker.BytesConsumed()
 		}
-		if pi.StmtCtx.DiskTracker != nil {
-			diskConsumed = pi.StmtCtx.DiskTracker.BytesConsumed()
+		if pi.DiskTracker != nil {
+			diskConsumed = pi.DiskTracker.BytesConsumed()
 		}
 	}
 	return append(pi.ToRowForShow(true), pi.Digest, bytesConsumed, diskConsumed, pi.txnStartTs(tz))

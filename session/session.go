@@ -90,6 +90,7 @@ import (
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/logutil/consistency"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/sli"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -1501,6 +1502,8 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		Info:             sql,
 		CurTxnStartTS:    curTxnStartTS,
 		StmtCtx:          s.sessionVars.StmtCtx,
+		MemTracker:       s.sessionVars.MemTracker,
+		DiskTracker:      s.sessionVars.DiskTracker,
 		StatsInfo:        plannercore.GetStatsInfo,
 		MaxExecutionTime: maxExecutionTime,
 		RedactSQL:        s.sessionVars.EnableRedactLog,
@@ -1994,7 +1997,8 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		return nil, err
 	}
 
-	s.sessionVars.StartTime = time.Now()
+	sessVars := s.sessionVars
+	sessVars.StartTime = time.Now()
 
 	// Some executions are done in compile stage, so we reset them before compile.
 	if err := executor.ResetContextOfStmt(s, stmtNode); err != nil {
@@ -2947,6 +2951,19 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 	s.mu.values = make(map[fmt.Stringer]interface{})
 	s.lockedTables = make(map[int64]model.TableLockTpInfo)
 	domain.BindDomain(s, dom)
+	logOnQueryExceedMemQuota := dom.ExpensiveQueryHandle().LogOnQueryExceedMemQuota
+	switch config.GetGlobalConfig().OOMAction {
+	case variable.OOMActionCancel:
+		action := &memory.PanicOnExceed{ConnID: s.sessionVars.ConnectionID}
+		action.SetLogHook(logOnQueryExceedMemQuota)
+		s.sessionVars.MemTracker.SetActionOnExceed(action)
+	case variable.OOMActionLog:
+		fallthrough
+	default:
+		action := &memory.LogOnExceed{ConnID: s.sessionVars.ConnectionID}
+		action.SetLogHook(logOnQueryExceedMemQuota)
+		s.sessionVars.MemTracker.SetActionOnExceed(action)
+	}
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
 	s.sessionVars.GlobalVarsAccessor = s
 	s.txn.init()

@@ -1308,11 +1308,6 @@ func (e *rateLimitAction) Action(t *memory.Tracker) {
 	})
 }
 
-// SetLogHook implements ActionOnExceed.SetLogHook
-func (e *rateLimitAction) SetLogHook(hook func(uint64)) {
-
-}
-
 // GetPriority get the priority of the Action.
 func (e *rateLimitAction) GetPriority() int64 {
 	return memory.DefRateLimitPriority

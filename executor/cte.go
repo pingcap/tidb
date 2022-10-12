@@ -438,7 +438,7 @@ func setupCTEStorageTracker(tbl cteutil.Storage, ctx sessionctx.Context, parentM
 				actionSpill = tbl.(*cteutil.StorageRC).ActionSpillForTest()
 			}
 		})
-		ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(actionSpill)
+		ctx.GetSessionVars().MemTracker.FallbackOldAndSetNewAction(actionSpill)
 	}
 	return actionSpill
 }

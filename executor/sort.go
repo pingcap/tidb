@@ -189,7 +189,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 				defer e.spillAction.WaitForTest()
 			}
 		})
-		e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(e.spillAction)
+		e.ctx.GetSessionVars().MemTracker.FallbackOldAndSetNewAction(e.spillAction)
 		e.rowChunks.GetDiskTracker().AttachTo(e.diskTracker)
 		e.rowChunks.GetDiskTracker().SetLabel(memory.LabelForRowChunks)
 	}
@@ -218,7 +218,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 						defer e.spillAction.WaitForTest()
 					}
 				})
-				e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(e.spillAction)
+				e.ctx.GetSessionVars().MemTracker.FallbackOldAndSetNewAction(e.spillAction)
 				err = e.rowChunks.Add(chk)
 			}
 			if err != nil {

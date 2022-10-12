@@ -94,8 +94,9 @@ func HandleNonTransactionalDelete(ctx context.Context, stmt *ast.NonTransactiona
 
 	// TODO: choose an appropriate quota.
 	// Use the mem-quota-query as a workaround. As a result, a NT-DML may consume 2x of the memory quota.
-	memTracker := setMemTracker(se)
-	defer memTracker.DetachFromGlobalTracker()
+	memTracker := memory.NewTracker(memory.LabelForNonTransactionalDML, -1)
+	memTracker.AttachTo(se.GetSessionVars().MemTracker)
+	defer memTracker.Detach()
 	jobs, err := buildShardJobs(ctx, stmt, se, selectSQL, shardColumnInfo, memTracker)
 	if err != nil {
 		return nil, err
@@ -109,24 +110,6 @@ func HandleNonTransactionalDelete(ctx context.Context, stmt *ast.NonTransactiona
 		return buildDryRunResults(stmt.DryRun, splitStmts, se.GetSessionVars().BatchSize.MaxChunkSize)
 	}
 	return buildExecuteResults(ctx, jobs, se.GetSessionVars().BatchSize.MaxChunkSize, se.GetSessionVars().EnableRedactLog)
-}
-
-func setMemTracker(se Session) *memory.Tracker {
-	memTracker := memory.NewTracker(memory.LabelForNonTransactionalDML, se.GetSessionVars().MemQuotaQuery)
-	switch variable.OOMAction.Load() {
-	case variable.OOMActionCancel:
-		action := &memory.PanicOnExceed{ConnID: se.GetSessionVars().ConnectionID}
-		action.SetLogHook(domain.GetDomain(se).ExpensiveQueryHandle().LogOnQueryExceedMemQuota)
-		memTracker.SetActionOnExceed(action)
-	case variable.OOMActionLog:
-		fallthrough
-	default:
-		action := &memory.LogOnExceed{ConnID: se.GetSessionVars().ConnectionID}
-		action.SetLogHook(domain.GetDomain(se).ExpensiveQueryHandle().LogOnQueryExceedMemQuota)
-		memTracker.SetActionOnExceed(action)
-	}
-	memTracker.AttachToGlobalTracker(executor.GlobalMemoryUsageTracker)
-	return memTracker
 }
 
 func checkConstraint(stmt *ast.NonTransactionalDeleteStmt, se Session) error {

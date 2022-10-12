@@ -45,10 +45,13 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	pumpcli "github.com/pingcap/tidb/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tableutil"
@@ -601,6 +604,7 @@ func (s *SessionVars) GetUserVarType(name string) (*types.FieldType, bool) {
 // HookContext contains the necessary variables for executing set/get hook
 type HookContext interface {
 	GetStore() kv.Storage
+	GetSessionManager() util.SessionManager
 }
 
 // SessionVars is to handle user-defined or global variables in the current session.
@@ -1272,6 +1276,10 @@ type SessionVars struct {
 	LastPlanReplayerToken string
 
 	HookContext
+
+	// MemTracker indicates the memory tracker of current session.
+	MemTracker  *memory.Tracker
+	DiskTracker *memory.Tracker
 }
 
 // GetPreparedStmtByName returns the prepared statement specified by stmtName.
@@ -1600,6 +1608,10 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	vars.enforceMPPExecution = DefTiDBEnforceMPPExecution
 	vars.TiFlashMaxThreads = DefTiFlashMaxThreads
 	vars.MPPStoreFailTTL = DefTiDBMPPStoreFailTTL
+	vars.DiskTracker = disk.NewTracker(memory.LabelForSession, -1)
+	vars.DiskTracker.IsRootTrackerOfSess = true
+	vars.MemTracker = memory.NewTracker(memory.LabelForSession, vars.MemQuotaQuery)
+	vars.MemTracker.IsRootTrackerOfSess = true
 
 	for _, engine := range config.GetGlobalConfig().IsolationRead.Engines {
 		switch engine {

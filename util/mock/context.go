@@ -443,17 +443,21 @@ func NewContext() *Context {
 		ctx:    ctx,
 		cancel: cancel,
 	}
-	sctx.sessionVars = variable.NewSessionVars(sctx)
-	sctx.sessionVars.InitChunkSize = 2
-	sctx.sessionVars.MaxChunkSize = 32
-	sctx.sessionVars.StmtCtx.TimeZone = time.UTC
-	sctx.sessionVars.StmtCtx.MemTracker = memory.NewTracker(-1, -1)
-	sctx.sessionVars.StmtCtx.DiskTracker = disk.NewTracker(-1, -1)
-	sctx.sessionVars.GlobalVarsAccessor = variable.NewMockGlobalAccessor()
-	sctx.sessionVars.EnablePaging = variable.DefTiDBEnablePaging
-	sctx.sessionVars.MinPagingSize = variable.DefMinPagingSize
-	sctx.sessionVars.CostModelVersion = variable.DefTiDBCostModelVer
-	sctx.sessionVars.EnableChunkRPC = true
+	vars := variable.NewSessionVars(sctx)
+	sctx.sessionVars = vars
+	vars.InitChunkSize = 2
+	vars.MaxChunkSize = 32
+	vars.StmtCtx.TimeZone = time.UTC
+	vars.MemTracker.SetBytesLimit(-1)
+	vars.DiskTracker.SetBytesLimit(-1)
+	vars.StmtCtx.MemTracker, vars.StmtCtx.DiskTracker = memory.NewTracker(-1, -1), disk.NewTracker(-1, -1)
+	vars.MemTracker.AttachTo(vars.MemTracker)
+	vars.DiskTracker.AttachTo(vars.DiskTracker)
+	vars.GlobalVarsAccessor = variable.NewMockGlobalAccessor()
+	vars.EnablePaging = variable.DefTiDBEnablePaging
+	vars.MinPagingSize = variable.DefMinPagingSize
+	vars.CostModelVersion = variable.DefTiDBCostModelVer
+	vars.EnableChunkRPC = true
 	if err := sctx.GetSessionVars().SetSystemVar(variable.MaxAllowedPacket, "67108864"); err != nil {
 		panic(err)
 	}

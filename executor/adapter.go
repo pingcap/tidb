@@ -479,7 +479,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	}
 
 	if sctx.GetSessionVars().StmtCtx.HasMemQuotaHint {
-		sctx.GetSessionVars().StmtCtx.MemTracker.SetBytesLimit(sctx.GetSessionVars().StmtCtx.MemQuotaQuery)
+		sctx.GetSessionVars().MemTracker.SetBytesLimit(sctx.GetSessionVars().StmtCtx.MemQuotaQuery)
 	}
 
 	e, err := a.buildExecutor()
@@ -1324,8 +1324,8 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	execDetail := stmtCtx.GetExecDetails()
 	copTaskInfo := stmtCtx.CopTasksDetails()
 	statsInfos := plannercore.GetStatsInfoFromFlatPlan(flat)
-	memMax := stmtCtx.MemTracker.MaxConsumed()
-	diskMax := stmtCtx.DiskTracker.MaxConsumed()
+	memMax := sessVars.MemTracker.MaxConsumed()
+	diskMax := sessVars.DiskTracker.MaxConsumed()
 	_, planDigest := getPlanDigest(stmtCtx)
 
 	binaryPlan := ""
@@ -1595,8 +1595,8 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 
 	execDetail := stmtCtx.GetExecDetails()
 	copTaskInfo := stmtCtx.CopTasksDetails()
-	memMax := stmtCtx.MemTracker.MaxConsumed()
-	diskMax := stmtCtx.DiskTracker.MaxConsumed()
+	memMax := sessVars.MemTracker.MaxConsumed()
+	diskMax := sessVars.DiskTracker.MaxConsumed()
 	sql := a.GetTextToLog()
 	var stmtDetail execdetails.StmtExecDetails
 	stmtDetailRaw := a.GoCtx.Value(execdetails.StmtExecDetailKey)

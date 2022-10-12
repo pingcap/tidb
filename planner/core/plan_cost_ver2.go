@@ -315,7 +315,7 @@ func (p *PhysicalSort) getPlanCostVer2(taskType property.TaskType, option *PlanC
 	memFactor := getTaskMemFactorVer2(p, taskType)
 	diskFactor := defaultVer2Factors.TiDBDisk
 	oomUseTmpStorage := variable.EnableTmpStorageOnOOM.Load()
-	memQuota := p.ctx.GetSessionVars().StmtCtx.MemTracker.GetBytesLimit()
+	memQuota := p.ctx.GetSessionVars().MemTracker.GetBytesLimit()
 	spill := taskType == property.RootTaskType && // only TiDB can spill
 		oomUseTmpStorage && // spill is enabled
 		memQuota > 0 && // mem-quota is set

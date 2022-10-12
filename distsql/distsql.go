@@ -88,7 +88,7 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 
 	ctx = WithSQLKvExecCounterInterceptor(ctx, sctx.GetSessionVars().StmtCtx)
 	option := &kv.ClientSendOption{
-		SessionMemTracker:          sctx.GetSessionVars().StmtCtx.MemTracker,
+		SessionMemTracker:          sctx.GetSessionVars().MemTracker,
 		EnabledRateLimitAction:     enabledRateLimitAction,
 		EventCb:                    eventCb,
 		EnableCollectExecutionInfo: config.GetGlobalConfig().Instance.EnableCollectExecutionInfo,
