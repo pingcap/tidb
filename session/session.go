@@ -2723,15 +2723,19 @@ func InitDDLJobTables(store kv.Storage) error {
 		if err != nil {
 			return err
 		}
+		if s, ok := store.(kv.SplittableStore); ok && atomic.LoadUint32(&ddl.EnableSplitTableRegion) == 1 {
+			ctxWithTimeout, cancel := context.WithTimeout(context.Background(), variable.DefWaitSplitRegionTimeout*time.Second)
+			var regionIDs []uint64
+			for _, tbl := range DDLJobTables {
+				regionIDs = append(regionIDs, ddl.SplitRecordRegion(ctxWithTimeout, s, tbl.id, variable.DefTiDBScatterRegion))
+			}
+			if variable.DefTiDBScatterRegion {
+				ddl.WaitScatterRegionFinish(ctxWithTimeout, s, regionIDs...)
+			}
+			cancel()
+		}
 		p := parser.New()
 		for _, tbl := range DDLJobTables {
-			id, err := t.GetGlobalID()
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if id >= meta.MaxGlobalID {
-				return errors.Errorf("It is unreasonable that the global ID grows such a big value: %d, please contact TiDB team", id)
-			}
 			stmt, err := p.ParseOneStmt(tbl.SQL, "", "")
 			if err != nil {
 				return errors.Trace(err)
@@ -2764,14 +2768,16 @@ func InitMDLTable(store kv.Storage) error {
 		if err != nil {
 			return err
 		}
+		if s, ok := store.(kv.SplittableStore); ok && atomic.LoadUint32(&ddl.EnableSplitTableRegion) == 1 {
+			ctxWithTimeout, cancel := context.WithTimeout(context.Background(), variable.DefWaitSplitRegionTimeout*time.Second)
+			var regionIDs []uint64
+			regionIDs = append(regionIDs, ddl.SplitRecordRegion(ctxWithTimeout, s, ddl.MDLTableID, variable.DefTiDBScatterRegion))
+			if variable.DefTiDBScatterRegion {
+				ddl.WaitScatterRegionFinish(ctxWithTimeout, s, regionIDs...)
+			}
+			cancel()
+		}
 		p := parser.New()
-		id, err := t.GetGlobalID()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if id >= meta.MaxGlobalID {
-			return errors.Errorf("It is unreasonable that the global ID grows such a big value: %d, please contact TiDB team", id)
-		}
 		stmt, err := p.ParseOneStmt(mdlTable, "", "")
 		if err != nil {
 			return errors.Trace(err)
