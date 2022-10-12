@@ -841,6 +841,7 @@ var btFuncTokenMap = map[string]int{
 	"SYSDATE":               builtinSysDate,
 	"TRANSLATE":             builtinTranslate,
 	"TRIM":                  builtinTrim,
+	"TIDB_ROW_META":         builtinRowMeta,
 	"VARIANCE":              builtinVarPop,
 	"VAR_POP":               builtinVarPop,
 	"VAR_SAMP":              builtinVarSamp,

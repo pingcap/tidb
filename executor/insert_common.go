@@ -631,6 +631,11 @@ func (e *InsertValues) fillColValue(ctx context.Context, datum types.Datum, idx 
 		return d, nil
 	}
 	if !hasValue {
+		if column.IsMeta() {
+			return types.NewMetaDatum(map[string]any{
+				"tidb_meta_test": e.ctx.GetSessionVars().TiDBMetaTest,
+			}), nil
+		}
 		d, err := e.getColDefaultValue(idx, column)
 		if e.handleErr(column, &datum, 0, err) != nil {
 			return types.Datum{}, err

@@ -17,6 +17,8 @@ package infoschema
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/types"
 	"strings"
 
 	"github.com/ngaut/pools"
@@ -642,6 +644,32 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 			fmt.Sprintf("(Table ID %d)", tableID),
 		)
 	}
+
+	//for _, col := range tblInfo.Columns {
+	//	col.Offset += 1
+	//}
+	//tblInfo.Columns = append([]*model.ColumnInfo{{
+	//	ID:                 0,
+	//	Name:               model.NewCIStr("_tidb_row_meta"),
+	//	FieldType:          *types.NewFieldType(mysql.TypeJSON),
+	//	Offset:             0,
+	//	Hidden:             true,
+	//	State:              model.StatePublic,
+	//	OriginDefaultValue: types.CreateBinaryJSON(`"_tidb_row_meta"`),
+	//	Version:            2,
+	//}}, tblInfo.Columns...)
+
+	tblInfo.Columns = append(tblInfo.Columns, &model.ColumnInfo{
+		ID:                 0,
+		Name:               model.NewCIStr("_tidb_row_meta"),
+		FieldType:          *types.NewFieldType(mysql.TypeJSON),
+		Offset:             len(tblInfo.Columns),
+		Hidden:             true,
+		State:              model.StatePublic,
+		OriginDefaultValue: types.CreateBinaryJSON(`"_tidb_row_meta"`),
+		DefaultValue:       types.CreateBinaryJSON(`"_tidb_row_meta"`),
+		Version:            2,
+	})
 
 	switch tp {
 	case model.ActionDropTablePartition:

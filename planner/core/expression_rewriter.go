@@ -1210,6 +1210,8 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 
 		er.ctxStack[len(er.ctxStack)-1] = castFunction
 		er.ctxNameStk[len(er.ctxNameStk)-1] = types.EmptyName
+	case *ast.FuncRowMetaExpr:
+		er.RowMetaToExpression(v)
 	case *ast.PatternLikeExpr:
 		er.patternLikeToExpression(v)
 	case *ast.PatternRegexpExpr:
@@ -1939,6 +1941,34 @@ func (er *expressionRewriter) rewriteFuncCall(v *ast.FuncCallExpr) bool {
 	default:
 		return false
 	}
+}
+
+func (er *expressionRewriter) RowMetaToExpression(v *ast.FuncRowMetaExpr) {
+	if !er.schema.Single {
+		er.err = errors.New("RowMetaToExpression: schema is not single")
+		return
+	}
+
+	col := &ast.ColumnName{
+		Name:   model.NewCIStr("_tidb_row_meta"),
+		Schema: er.names[0].DBName,
+		Table:  er.names[0].TblName,
+	}
+	idx, err := expression.FindFieldName(er.names, col)
+	if err != nil {
+		er.err = err
+		return
+	}
+	if idx == -1 {
+		er.err = errors.New("RowMetaToExpression: can't find " + col.String())
+		return
+	}
+	column := er.schema.Columns[idx]
+	expr := expression.BuildTiDBRowMetaFunc(er.sctx, column, &expression.Constant{
+		Value:   types.NewDatum(v.Name),
+		RetType: types.NewFieldType(mysql.TypeVarchar),
+	})
+	er.ctxStackAppend(expr, types.EmptyName)
 }
 
 func (er *expressionRewriter) funcCallToExpression(v *ast.FuncCallExpr) {

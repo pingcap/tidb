@@ -376,7 +376,7 @@ const columnPrefix = "Column#"
 
 // String implements Stringer interface.
 func (col *Column) String() string {
-	if col.IsHidden {
+	if col.IsHidden && col.VirtualExpr != nil {
 		// A hidden column must be a virtual generated column, we should output its expression.
 		return col.VirtualExpr.String()
 	}

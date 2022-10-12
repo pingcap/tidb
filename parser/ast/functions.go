@@ -349,6 +349,7 @@ const (
 	// TiDB internal function.
 	TiDBDecodeKey       = "tidb_decode_key"
 	TiDBDecodeBase64Key = "tidb_decode_base64_key"
+	TiDBRowMeta         = "tidb_row_meta"
 
 	// MVCC information fetching function.
 	GetMvccInfo = "get_mvcc_info"
@@ -626,6 +627,38 @@ func (n *FuncCastExpr) Accept(v Visitor) (Node, bool) {
 		return n, false
 	}
 	n.Expr = node.(ExprNode)
+	return v.Leave(n)
+}
+
+// FuncRowMetaExpr is the cast function converting value to another type, e.g, cast(expr AS signed).
+// See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html
+type FuncRowMetaExpr struct {
+	funcNode
+
+	Name string
+}
+
+// Restore implements Node interface.
+func (n *FuncRowMetaExpr) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("TIDB_ROW_META")
+	ctx.WritePlain("(")
+	ctx.WriteName(n.Name)
+	ctx.WritePlain(")")
+	return nil
+}
+
+// Format the ExprNode into a Writer.
+func (n *FuncRowMetaExpr) Format(w io.Writer) {
+	fmt.Fprint(w, "TIDB_ROW_META(", n.Name, ")")
+}
+
+// Accept implements Node Accept interface.
+func (n *FuncRowMetaExpr) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*FuncRowMetaExpr)
 	return v.Leave(n)
 }
 

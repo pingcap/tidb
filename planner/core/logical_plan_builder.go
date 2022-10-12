@@ -4543,6 +4543,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	}.Init(b.ctx, b.getSelectOffset())
 	var handleCols HandleCols
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(columns))...)
+	schema.Single = true
 	names := make([]*types.FieldName, 0, len(columns))
 	for i, col := range columns {
 		ds.Columns = append(ds.Columns, col.ToInfo())
@@ -4568,6 +4569,31 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		schema.Append(newCol)
 		ds.TblCols = append(ds.TblCols, newCol)
 	}
+	//names = append(names, &types.FieldName{
+	//	DBName:            dbName,
+	//	TblName:           tableInfo.Name,
+	//	ColName:           model.NewCIStr("_tidb_row_meta"),
+	//	OrigTblName:       tableInfo.Name,
+	//	OrigColName:       model.NewCIStr("_tidb_row_meta"),
+	//	NotExplicitUsable: false,
+	//})
+	//newCol := &expression.Column{
+	//	UniqueID: sessionVars.AllocPlanColumnID(),
+	//	ID:       0,
+	//	RetType:  types.NewFieldType(mysql.TypeJSON),
+	//	OrigName: names[len(names)-1].String(),
+	//	IsHidden: true,
+	//}
+	//schema.Append(newCol)
+	//ds.TblCols = append(ds.TblCols, newCol)
+	//ds.Columns = append(ds.Columns, &model.ColumnInfo{
+	//	ID: 0,
+	//	FieldType: *types.NewFieldType(mysql.TypeJSON),
+	//	Name: model.NewCIStr("_tidb_row_meta"),
+	//	State: model.StatePublic,
+	//	Hidden: true,
+	//	OriginDefaultValue: types.CreateBinaryJSON("tidbRowMeta"),
+	//})
 	// We append an extra handle column to the schema when the handle
 	// column is not the primary key of "ds".
 	if handleCols == nil {
@@ -5529,6 +5555,7 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 	// If columns in set list contains generated columns, raise error.
 	// And, fill virtualAssignments here; that's for generated columns.
 	virtualAssignments := make([]*ast.Assignment, 0)
+	metaAssignments := make([]*ast.Assignment, 0)
 	for _, tn := range tableList {
 		if isCTE(tn) || tn.TableInfo.IsView() || tn.TableInfo.IsSequence() {
 			continue
@@ -5540,7 +5567,7 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 			return nil, nil, false, infoschema.ErrTableNotExists.GenWithStackByArgs(tn.DBInfo.Name.O, tableInfo.Name.O)
 		}
 		for i, colInfo := range tableVal.Cols() {
-			if !colInfo.IsGenerated() {
+			if !colInfo.IsGenerated() && !colInfo.IsMeta() {
 				continue
 			}
 			columnFullName := fmt.Sprintf("%s.%s.%s", tn.DBInfo.Name.L, tn.Name.L, colInfo.Name.L)
@@ -5552,6 +5579,13 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 			// see https://dev.mysql.com/doc/refman/8.0/en/create-table-generated-columns.html
 			if ok && !isDefault {
 				return nil, nil, false, ErrBadGeneratedColumn.GenWithStackByArgs(colInfo.Name.O, tableInfo.Name.O)
+			}
+			if colInfo.IsMeta() {
+				metaAssignments = append(metaAssignments, &ast.Assignment{
+					Column: &ast.ColumnName{Schema: tn.Schema, Table: tn.Name, Name: colInfo.Name},
+					Expr:   &ast.DefaultExpr{},
+				})
+				continue
 			}
 			virtualAssignments = append(virtualAssignments, &ast.Assignment{
 				Column: &ast.ColumnName{Schema: tn.Schema, Table: tn.Name, Name: colInfo.Name},
@@ -5570,7 +5604,7 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 		tblDbMap[tbl.Name.L] = tbl.DBInfo.Name.L
 	}
 
-	allAssignments := append(list, virtualAssignments...)
+	allAssignments := append(append(list, virtualAssignments...), metaAssignments...)
 	dependentColumnsModified := make(map[int64]bool)
 	for i, assign := range allAssignments {
 		var idx int
@@ -5601,7 +5635,7 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 				return nil, nil, false, err
 			}
 			dependentColumnsModified[col.UniqueID] = true
-		} else {
+		} else if i < len(list)+len(virtualAssignments) {
 			// rewrite with generation expression
 			rewritePreprocess := func(assign *ast.Assignment) func(expr ast.Node) ast.Node {
 				return func(expr ast.Node) ast.Node {
@@ -5635,6 +5669,12 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 			if !isModified {
 				continue
 			}
+		} else {
+			// rewrite with meta expression
+			newExpr = &expression.Constant{Value: types.NewMetaDatum(map[string]any{
+				"tidb_meta_test": b.ctx.GetSessionVars().TiDBMetaTest,
+			}), RetType: col.RetType.Clone()}
+			np = p
 		}
 		if _, isConst := newExpr.(*expression.Constant); !isConst {
 			allAssignmentsAreConstant = false

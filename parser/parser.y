@@ -764,6 +764,7 @@ import (
 	builtinBitOr
 	builtinBitXor
 	builtinCast
+	builtinRowMeta
 	builtinCount
 	builtinApproxCountDistinct
 	builtinApproxPercentile
@@ -7138,6 +7139,11 @@ SimpleExpr:
 			FunctionType:    ast.CastFunction,
 			ExplicitCharSet: explicitCharset,
 		}
+	}
+|
+	builtinRowMeta '(' identifier ')'
+	{
+		$$ = &ast.FuncRowMetaExpr{Name: strings.ToUpper($3)}
 	}
 |	"CASE" ExpressionOpt WhenClauseList ElseOpt "END"
 	{

@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -77,6 +78,7 @@ var (
 	_ builtinFunc = &builtinValuesJSONSig{}
 	_ builtinFunc = &builtinBitCountSig{}
 	_ builtinFunc = &builtinGetParamStringSig{}
+	_ builtinFunc = &builtinTiDBRowMetaSig{}
 )
 
 type inFunctionClass struct {
@@ -1485,4 +1487,38 @@ func (b *builtinGetParamStringSig) evalString(row chunk.Row) (string, bool, erro
 		return "", true, nil
 	}
 	return str, false, nil
+}
+
+func BuildTiDBRowMetaFunc(ctx sessionctx.Context, col, name Expression) (res Expression) {
+	f, err := newBaseBuiltinFuncWithTp(ctx, ast.TiDBRowMeta, []Expression{col, name}, types.ETString, types.ETJson, types.ETString)
+	terror.Log(err)
+	bf := &builtinTiDBRowMetaSig{f}
+	res = &ScalarFunction{
+		FuncName: model.NewCIStr(ast.TiDBRowMeta),
+		RetType:  bf.getRetTp(),
+		Function: bf,
+	}
+	return
+}
+
+type builtinTiDBRowMetaSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinTiDBRowMetaSig) Clone() builtinFunc {
+	newSig := &builtinTiDBRowMetaSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinTiDBRowMetaSig) evalString(row chunk.Row) (string, bool, error) {
+	val, isNull, err := b.args[0].EvalJSON(b.ctx, row)
+	if isNull || err != nil {
+		return "", isNull, err
+	}
+	str, isNull, err := b.args[1].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", isNull, err
+	}
+	return val.String() + str, false, nil
 }

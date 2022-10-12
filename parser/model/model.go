@@ -263,6 +263,11 @@ func (c *ColumnInfo) IsGenerated() bool {
 	return len(c.GeneratedExprString) != 0
 }
 
+// IsMeta returns true if the column is meta column.
+func (c *ColumnInfo) IsMeta() bool {
+	return c.ID == 0
+}
+
 // SetOriginDefaultValue sets the origin default value.
 // For mysql.TypeBit type, the default value storage format must be a string.
 // Other value such as int must convert to string format first.

@@ -1033,6 +1033,10 @@ type SessionVars struct {
 
 	// MetricSchemaStep indicates the step when query metric schema.
 	MetricSchemaStep int64
+
+	// TiDBMetaTest is used to test the meta data.
+	TiDBMetaTest int64
+
 	// MetricSchemaRangeDuration indicates the step when query metric schema.
 	MetricSchemaRangeDuration int64
 

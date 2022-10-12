@@ -28,6 +28,7 @@ import (
 	"flag"
 	"fmt"
 	"math/rand"
+	"runtime/debug"
 	"runtime/pprof"
 	"runtime/trace"
 	"strconv"
@@ -2164,6 +2165,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 
 	if err != nil {
 		if !errIsNoisy(err) {
+			debug.PrintStack()
 			logutil.Logger(ctx).Warn("run statement failed",
 				zap.Int64("schemaVersion", s.GetInfoSchema().SchemaMetaVersion()),
 				zap.Error(err),
