@@ -32,6 +32,9 @@ const (
 
 	// CostFlagUseTrueCardinality indicates the optimizer to use true cardinality to calculate the cost.
 	CostFlagUseTrueCardinality
+
+	// CostFlagTrace indicates whether to trace the cost calculation.
+	CostFlagTrace
 )
 
 const (

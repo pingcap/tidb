@@ -1218,9 +1218,12 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	if execDetail.CommitDetail != nil && execDetail.CommitDetail.WriteSize > 0 {
 		a.Ctx.GetTxnWriteThroughputSLI().AddTxnWriteSize(execDetail.CommitDetail.WriteSize, execDetail.CommitDetail.WriteKeys)
 	}
-	if execDetail.ScanDetail != nil && execDetail.ScanDetail.ProcessedKeys > 0 && sessVars.StmtCtx.AffectedRows() > 0 {
-		// Only record the read keys in write statement which affect row more than 0.
-		a.Ctx.GetTxnWriteThroughputSLI().AddReadKeys(execDetail.ScanDetail.ProcessedKeys)
+	if execDetail.ScanDetail != nil && sessVars.StmtCtx.AffectedRows() > 0 {
+		processedKeys := atomic.LoadInt64(&execDetail.ScanDetail.ProcessedKeys)
+		if processedKeys > 0 {
+			// Only record the read keys in write statement which affect row more than 0.
+			a.Ctx.GetTxnWriteThroughputSLI().AddReadKeys(processedKeys)
+		}
 	}
 	succ := err == nil
 	if a.Plan != nil {

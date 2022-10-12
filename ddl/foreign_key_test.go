@@ -120,7 +120,7 @@ func TestForeignKey(t *testing.T) {
 	checkOK := false
 	var hookErr error
 	tc := &ddl.TestDDLCallback{}
-	tc.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if job.State != model.JobStateDone {
 			return
 		}
@@ -139,6 +139,7 @@ func TestForeignKey(t *testing.T) {
 		}
 		checkOK = true
 	}
+	tc.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	originalHook := d.GetHook()
 	defer d.SetHook(originalHook)
 	d.SetHook(tc)
@@ -161,7 +162,7 @@ func TestForeignKey(t *testing.T) {
 	mu.Unlock()
 	// fix data race pr/#9491
 	tc2 := &ddl.TestDDLCallback{}
-	tc2.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc2 := func(job *model.Job) {
 		if job.State != model.JobStateDone {
 			return
 		}
@@ -180,6 +181,7 @@ func TestForeignKey(t *testing.T) {
 		}
 		checkOK = true
 	}
+	tc2.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc2)
 	d.SetHook(tc2)
 
 	job = testDropForeignKey(t, ctx, d, dbInfo, tblInfo, "c1_fk")

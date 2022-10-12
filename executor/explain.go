@@ -188,6 +188,17 @@ func (h *memoryDebugModeHandler) genInfo(status string, needProfile bool, heapIn
 	return h.infoField, err
 }
 
+func updateTriggerIntervalByHeapInUse(heapInUse uint64) (time.Duration, int) {
+	const GB uint64 = 1 << 30
+	if heapInUse < 30*GB {
+		return 5 * time.Second, 6
+	} else if heapInUse < 40*GB {
+		return 15 * time.Second, 2
+	} else {
+		return 30 * time.Second, 1
+	}
+}
+
 func (h *memoryDebugModeHandler) run() {
 	var err error
 	var fields []zap.Field
@@ -213,7 +224,9 @@ func (h *memoryDebugModeHandler) run() {
 		zap.String("minHeapInUse", memory.FormatBytes(h.minHeapInUse)),
 		zap.Int64("alarmRatio", h.alarmRatio),
 	)
-	ticker, loop := time.NewTicker(5*time.Second), 0
+	triggerInterval := 5 * time.Second
+	printMod := 6
+	ticker, loop := time.NewTicker(triggerInterval), 0
 	for {
 		select {
 		case <-h.ctx.Done():
@@ -221,13 +234,15 @@ func (h *memoryDebugModeHandler) run() {
 		case <-ticker.C:
 			heapInUse, trackedMem := h.fetchCurrentMemoryUsage(h.autoGC)
 			loop++
-			if loop%6 == 0 {
+			if loop%printMod == 0 {
 				fields, err = h.genInfo("running", false, int64(heapInUse), int64(trackedMem))
 				logutil.BgLogger().Info("Memory Debug Mode", fields...)
 				if err != nil {
 					return
 				}
 			}
+			triggerInterval, printMod = updateTriggerIntervalByHeapInUse(heapInUse)
+			ticker.Reset(triggerInterval)
 
 			if !h.autoGC {
 				if heapInUse > uint64(h.minHeapInUse) && trackedMem/100*uint64(100+h.alarmRatio) < heapInUse {

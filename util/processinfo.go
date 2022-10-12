@@ -15,6 +15,7 @@
 package util
 
 import (
+	"context"
 	"crypto/tls"
 	"errors"
 	"fmt"
@@ -31,24 +32,31 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 )
 
+// OOMAlarmVariablesInfo is a struct for OOM alarm variables.
+type OOMAlarmVariablesInfo struct {
+	SessionAnalyzeVersion         int
+	SessionEnabledRateLimitAction bool
+}
+
 // ProcessInfo is a struct used for show processlist statement.
 type ProcessInfo struct {
-	Time             time.Time
-	Plan             interface{}
-	StmtCtx          *stmtctx.StatementContext
-	MemTracker       *memory.Tracker
-	DiskTracker      *disk.Tracker
-	StatsInfo        func(interface{}) map[string]uint64
-	RuntimeStatsColl *execdetails.RuntimeStatsColl
-	DB               string
-	Digest           string
-	Host             string
-	User             string
-	Info             string
-	Port             string
-	PlanExplainRows  [][]string
-	CurTxnStartTS    uint64
-	ID               uint64
+	Time                  time.Time
+	Plan                  interface{}
+	StmtCtx               *stmtctx.StatementContext
+	MemTracker            *memory.Tracker
+	DiskTracker           *disk.Tracker
+	StatsInfo             func(interface{}) map[string]uint64
+	RuntimeStatsColl      *execdetails.RuntimeStatsColl
+	DB                    string
+	Digest                string
+	Host                  string
+	User                  string
+	Info                  string
+	Port                  string
+	PlanExplainRows       [][]string
+	OOMAlarmVariablesInfo OOMAlarmVariablesInfo
+	CurTxnStartTS         uint64
+	ID                    uint64
 	// MaxExecutionTime is the timeout for select statement, in milliseconds.
 	// If the query takes too long, kill it.
 	MaxExecutionTime          uint64
