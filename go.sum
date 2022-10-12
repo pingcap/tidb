@@ -904,8 +904,8 @@ github.com/tenntenn/text/transform v0.0.0-20200319021203-7eef512accb3 h1:f+jULpR
 github.com/tenntenn/text/transform v0.0.0-20200319021203-7eef512accb3/go.mod h1:ON8b8w4BN/kE1EOhwT0o+d62W65a6aPw1nouo9LMgyY=
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2 h1:mbAskLJ0oJfDRtkanvQPiooDH8HvJ2FBh+iKT/OmiQQ=
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2/go.mod h1:2PfKggNGDuadAa0LElHrByyrz4JPZ9fFx6Gs7nx7ZZU=
-github.com/tikv/client-go/v2 v2.0.1-0.20221011062739-dc130aa0d3b1 h1:Q4eFt700Y6F9VBy9TJYa3ZxAQv1o6SEH695YvBpBz4E=
-github.com/tikv/client-go/v2 v2.0.1-0.20221011062739-dc130aa0d3b1/go.mod h1:gdXot2ofS2EOGtrXQ2qyESonQX/gFmgtfBCqCOSWg9E=
+github.com/tikv/client-go/v2 v2.0.1-0.20221012074856-6def8d7b90c4 h1:/13jzD/AR7v3dCLweFQ2JG8bihh3HLVIci2tbOHHGW0=
+github.com/tikv/client-go/v2 v2.0.1-0.20221012074856-6def8d7b90c4/go.mod h1:gdXot2ofS2EOGtrXQ2qyESonQX/gFmgtfBCqCOSWg9E=
 github.com/tikv/pd/client v0.0.0-20221010134149-d50e5fe43f14 h1:REQOR1XraH1fT9BCoNBPZs1CAe+w7VPLU+d+si7DLYo=
 github.com/tikv/pd/client v0.0.0-20221010134149-d50e5fe43f14/go.mod h1:E/7+Fkqzwsrp4duzJ2gLPqFl6awU7QG+5yFRXaQwimM=
 github.com/timakin/bodyclose v0.0.0-20210704033933-f49887972144 h1:kl4KhGNsJIbDHS9/4U9yQo1UcPQM0kOMJHn29EoH/Ro=
