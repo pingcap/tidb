@@ -2223,6 +2223,8 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(ctx sessionctx.Context, s
 					progress += progressMap[p.ID]
 				}
 				progress = progress / float64(len(pi.Definitions))
+				progressString := types.TruncateFloatToString(progress, 2)
+				progress, _ = strconv.ParseFloat(progressString, 64)
 			} else {
 				progress = progressMap[tbl.ID]
 			}
