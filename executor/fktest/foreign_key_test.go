@@ -417,6 +417,59 @@ func TestForeignKeyCheckAndLock(t *testing.T) {
 		wg.Wait()
 		tk.MustQuery("select id, name from t1 order by name").Check(testkit.Rows("1 a", "2 b"))
 		tk.MustQuery("select a,  name from t2 order by name").Check(testkit.Rows("2 a"))
+
+		// Test delete parent table in pessimistic txn
+		tk.MustExec("begin pessimistic")
+		tk.MustExec("insert into t2 (a, name) values (1, 'a');")
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			tk2.MustExec("begin pessimistic")
+			err := tk2.ExecToErr("delete from t1 where id = 1")
+			require.NotNil(t, err)
+			require.Equal(t, "[planner:1451]Cannot delete or update a parent row: a foreign key constraint fails (`test`.`t2`, CONSTRAINT `fk` FOREIGN KEY (`a`) REFERENCES `t1` (`id`))", err.Error())
+			tk2.MustExec("commit")
+		}()
+		time.Sleep(time.Millisecond * 50)
+		tk.MustExec("commit")
+		wg.Wait()
+		tk.MustQuery("select id, name from t1 order by name").Check(testkit.Rows("1 a", "2 b"))
+		tk.MustQuery("select a,  name from t2 order by a").Check(testkit.Rows("1 a", "2 a"))
+
+		tk.MustExec("delete from t2")
+		tk.MustExec("begin pessimistic")
+		tk.MustExec("insert into t2 (a, name) values (1, 'a');")
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			tk2.MustExec("begin pessimistic")
+			err := tk2.ExecToErr("delete from t1 where id < 5") // Also test the non-fast path
+			require.NotNil(t, err)
+			require.Equal(t, "[planner:1451]Cannot delete or update a parent row: a foreign key constraint fails (`test`.`t2`, CONSTRAINT `fk` FOREIGN KEY (`a`) REFERENCES `t1` (`id`))", err.Error())
+			tk2.MustExec("commit")
+		}()
+		time.Sleep(time.Millisecond * 50)
+		tk.MustExec("commit")
+		wg.Wait()
+		tk.MustQuery("select id, name from t1 order by name").Check(testkit.Rows("1 a", "2 b"))
+		tk.MustQuery("select a,  name from t2 order by a").Check(testkit.Rows("1 a"))
+
+		// Test delete parent table in auto-commit txn
+		// TODO(crazycs520): fix following test.
+		/*
+			tk.MustExec("delete from t2")
+			tk.MustExec("begin pessimistic")
+			tk.MustExec("delete from t2;") // active txn
+			tk.MustExec("insert into t2 (a, name) values (1, 'a');")
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				tk2.MustGetDBError("delete from t1 where id = 1", plannercore.ErrRowIsReferenced2)
+			}()
+			time.Sleep(time.Millisecond * 50)
+			tk.MustExec("commit")
+			wg.Wait()
+		*/
 	}
 }
 
@@ -527,6 +580,20 @@ func TestForeignKey(t *testing.T) {
 	tk.MustGetDBError(" update t1 set id=2 where id = 1", plannercore.ErrRowIsReferenced2)
 	tk.MustExec(" update t1 set a=2 where id = 1")
 	tk.MustExec(" update t1 set b=2 where id = 1")
+
+	// Test table has been referenced by more than tables.
+	tk.MustExec("drop table if exists t3,t2,t1;")
+	tk.MustExec("create table t1 (id int, a int, b int,  primary key (id));")
+	tk.MustExec("create table t2 (b int,  a int, id int, primary key (a), foreign key (a) references t1(id));")
+	tk.MustExec("create table t3 (b int,  a int, id int, primary key (a), foreign key (a) references t1(id));")
+	tk.MustExec("insert into t1 (id, a, b) values (1, 1, 1);")
+	tk.MustExec("insert into t2 (id, a, b) values (1, 1, 1);")
+	tk.MustExec("insert into t3 (id, a, b) values (1, 1, 1);")
+	tk.MustGetDBError("delete from t1 where a=1", plannercore.ErrRowIsReferenced2)
+	tk.MustExec("delete from t2 where id=1")
+	tk.MustGetDBError("delete from t1 where a=1", plannercore.ErrRowIsReferenced2)
+	tk.MustExec("delete from t3 where id=1")
+	tk.MustExec("delete from t1 where id=1")
 }
 
 func TestForeignKeyConcurrentInsertChildTable(t *testing.T) {
@@ -702,6 +769,68 @@ func TestForeignKeyOnUpdateParentTableCheck(t *testing.T) {
 	tk.MustGetDBError("update t1 set id = id+10 where id = 1 or b = 24", plannercore.ErrRowIsReferenced2)
 	tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 11 21", "4 14 24", "102 12 22", "103 13 23"))
 	tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("11 1 21 a"))
+}
+
+func TestForeignKeyOnDeleteParentTableCheck(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+
+	for _, ca := range foreignKeyTestCase1 {
+		tk.MustExec("drop table if exists t2;")
+		tk.MustExec("drop table if exists t1;")
+		for _, sql := range ca.prepareSQLs {
+			tk.MustExec(sql)
+		}
+		if !ca.notNull {
+			tk.MustExec("insert into t1 (id, a, b) values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, null), (6, null, 6), (7, null, null);")
+			tk.MustExec("insert into t2 (id, a, b) values (1, 1, 1), (5, 5, null), (6, null, 6), (7, null, null);;")
+
+			tk.MustExec("delete from t1 where id = 2")
+			tk.MustExec("delete from t1 where a = 3 or b = 4")
+			tk.MustExec("delete from t1 where a = 5 or b = 6 or a is null or b is null;")
+			tk.MustGetDBError("delete from t1 where id = 1", plannercore.ErrRowIsReferenced2)
+			tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 1 1"))
+		} else {
+			tk.MustExec("insert into t1 (id, a, b) values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4);")
+			tk.MustExec("insert into t2 (id, a, b) values (1, 1, 1);")
+
+			tk.MustExec("delete from t1 where id = 2")
+			tk.MustExec("delete from t1 where a = 3 or b = 4")
+			tk.MustGetDBError("delete from t1 where id = 1", plannercore.ErrRowIsReferenced2)
+			tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 1 1"))
+		}
+		models := []string{"pessimistic", "optimistic"}
+		for _, model := range models {
+			// Test in transaction.
+			tk.MustExec("delete from t2")
+			tk.MustExec("delete from t1")
+			tk.MustExec("begin " + model)
+			tk.MustExec("insert into t1 (id, a, b) values (1, 1, 1), (2, 2, 2);")
+			tk.MustExec("insert into t2 (id, a, b) values (1, 1, 1);")
+			tk.MustGetDBError("delete from t1 where id = 1", plannercore.ErrRowIsReferenced2)
+			tk.MustExec("delete from t1 where id = 2")
+			tk.MustExec("delete from t2 where id = 1")
+			tk.MustExec("delete from t1 where id = 1")
+			tk.MustExec("commit")
+			tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows())
+			tk.MustQuery("select id, a, b from t2 order by id").Check(testkit.Rows())
+		}
+	}
+
+	// Case-9: test primary key is handle and contain foreign key column.
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1 (id int,a int, primary key(id));")
+	tk.MustExec("create table t2 (id int,a int, primary key(a), foreign key fk(a) references t1(id));")
+	tk.MustExec("insert into t1 values (1, 1), (2, 2), (3, 3), (4, 4);")
+	tk.MustExec("insert into t2 values (1, 1);")
+	tk.MustExec("delete from t1 where id = 2;")
+	tk.MustExec("delete from t1 where a = 3 or a = 4;")
+	tk.MustGetDBError("delete from t1 where id = 1", plannercore.ErrRowIsReferenced2)
+	tk.MustQuery("select id, a from t1 order by id").Check(testkit.Rows("1 1"))
 }
 
 func TestForeignKeyOnDeleteCascade(t *testing.T) {

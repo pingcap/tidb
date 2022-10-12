@@ -45,6 +45,9 @@ type DeleteExec struct {
 	tblColPosInfos plannercore.TblColPosInfoSlice
 	memTracker     *memory.Tracker
 
+	// fkChecks contains the foreign key checkers. the map is tableID -> []*FKCheckExec
+	fkChecks map[int64][]*FKCheckExec
+	// fkCascades contains the foreign key cascade. the map is tableID -> []*FKCascadeExec
 	fkCascades map[int64][]*FKCascadeExec
 }
 
@@ -241,31 +244,32 @@ func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h kv.Handl
 	if err != nil {
 		return err
 	}
-	fkCascades := e.fkCascades[t.Meta().ID]
-	sc := ctx.GetSessionVars().StmtCtx
-	for _, fkt := range fkCascades {
-		err = fkt.onDeleteRow(sc, data)
-		if err != nil {
-			return err
-		}
+	err = e.onRemoveRowForFK(ctx, t, data)
+	if err != nil {
+		return err
 	}
 	e.memTracker.Consume(int64(txnState.Size() - memUsageOfTxnState))
 	ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 	return nil
 }
 
-// GetFKChecks implements WithForeignKeyTrigger interface.
-func (e *DeleteExec) GetFKChecks() []*FKCheckExec {
-	return nil
-}
-
-// GetFKCascades implements WithForeignKeyTrigger interface.
-func (e *DeleteExec) GetFKCascades() []*FKCascadeExec {
-	fkCascades := []*FKCascadeExec{}
-	for _, fkcs := range e.fkCascades {
-		fkCascades = append(fkCascades, fkcs...)
+func (e *DeleteExec) onRemoveRowForFK(ctx sessionctx.Context, t table.Table, data []types.Datum) error {
+	fkChecks := e.fkChecks[t.Meta().ID]
+	sc := ctx.GetSessionVars().StmtCtx
+	for _, fkc := range fkChecks {
+		err := fkc.deleteRowNeedToCheck(sc, data)
+		if err != nil {
+			return err
+		}
 	}
-	return fkCascades
+	fkCascades := e.fkCascades[t.Meta().ID]
+	for _, fkc := range fkCascades {
+		err := fkc.onDeleteRow(sc, data)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Close implements the Executor Close interface.
@@ -280,6 +284,24 @@ func (e *DeleteExec) Open(ctx context.Context) error {
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
 	return e.children[0].Open(ctx)
+}
+
+// GetFKChecks implements WithForeignKeyTrigger interface.
+func (e *DeleteExec) GetFKChecks() []*FKCheckExec {
+	fkChecks := []*FKCheckExec{}
+	for _, fkcs := range e.fkChecks {
+		fkChecks = append(fkChecks, fkcs...)
+	}
+	return fkChecks
+}
+
+// GetFKCascades implements WithForeignKeyTrigger interface.
+func (e *DeleteExec) GetFKCascades() []*FKCascadeExec {
+	fkCascades := []*FKCascadeExec{}
+	for _, fkcs := range e.fkCascades {
+		fkCascades = append(fkCascades, fkcs...)
+	}
+	return fkCascades
 }
 
 // tableRowMapType is a map for unique (Table, Row) pair. key is the tableID.
