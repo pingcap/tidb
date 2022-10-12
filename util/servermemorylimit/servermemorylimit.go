@@ -21,6 +21,15 @@ import (
 
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/memory"
+	atomicutil "go.uber.org/atomic"
+)
+
+// Process global Observation indicators for memory limit.
+var (
+	MemoryMaxUsed    = atomicutil.NewUint64(0)
+	SessionKillLast  = atomicutil.NewTime(time.Time{})
+	SessionKillTotal = atomicutil.NewInt64(0)
+	IsKilling        = atomicutil.NewBool(false)
 )
 
 // Handle is the handler for server memory limit.
@@ -76,6 +85,7 @@ func killSessIfNeeded(s *sessionToBeKilled, bt uint64, sm util.SessionManager) {
 			}
 		}
 		s.isKilling = false
+		IsKilling.Store(false)
 		//nolint: all_revive,revive
 		runtime.GC()
 	}
@@ -85,6 +95,9 @@ func killSessIfNeeded(s *sessionToBeKilled, bt uint64, sm util.SessionManager) {
 	}
 	instanceStats := &runtime.MemStats{}
 	runtime.ReadMemStats(instanceStats)
+	if instanceStats.HeapInuse > MemoryMaxUsed.Load() {
+		MemoryMaxUsed.Store(instanceStats.HeapInuse)
+	}
 	if instanceStats.HeapInuse > bt {
 		t := memory.MemUsageTop1Tracker.Load()
 		if t != nil {
@@ -93,6 +106,10 @@ func killSessIfNeeded(s *sessionToBeKilled, bt uint64, sm util.SessionManager) {
 				s.sqlStartTime = info.Time
 				s.isKilling = true
 				t.NeedKill.Store(true)
+
+				SessionKillTotal.Add(1)
+				SessionKillLast.Store(time.Now())
+				IsKilling.Store(true)
 			}
 		}
 	}

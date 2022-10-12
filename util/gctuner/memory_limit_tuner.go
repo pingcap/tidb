@@ -74,10 +74,12 @@ func (t *memoryLimitTuner) tuning() {
 					continue
 				}
 			}()
+			memory.TriggerMemoryLimitGC.Store(true)
 		}
 		t.nextGCTriggeredByMemoryLimit = true
 	} else {
 		t.nextGCTriggeredByMemoryLimit = false
+		memory.TriggerMemoryLimitGC.Store(false)
 	}
 }
 

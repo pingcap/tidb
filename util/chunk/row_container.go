@@ -136,6 +136,7 @@ func (c *RowContainer) SpillToDisk() {
 		defer c.actionSpill.setStatus(spilledYet)
 	}
 	var err error
+	memory.QueryForceDisk.Add(1)
 	n := c.m.records.inMemory.NumChunks()
 	c.m.records.inDisk = NewListInDisk(c.m.records.inMemory.FieldTypes())
 	c.m.records.inDisk.diskTracker.AttachTo(c.diskTracker)

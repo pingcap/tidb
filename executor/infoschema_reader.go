@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -62,9 +63,11 @@ import (
 	"github.com/pingcap/tidb/util/keydecoder"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
 	"github.com/pingcap/tidb/util/sem"
+	"github.com/pingcap/tidb/util/servermemorylimit"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stmtsummary"
@@ -174,6 +177,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataForVariablesInfo(sctx)
 		case infoschema.TableMemoryUsage:
 			err = e.setDataForMemoryUsage(sctx)
+		case infoschema.ClusterTableMemoryUsage:
+			err = e.setDataForClusterMemoryUsage(sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -2354,6 +2359,45 @@ func (e *memtableRetriever) setDataForClusterTrxSummary(ctx sessionctx.Context) 
 }
 
 func (e *memtableRetriever) setDataForMemoryUsage(ctx sessionctx.Context) error {
+	r := &runtime.MemStats{}
+	runtime.ReadMemStats(r)
+	currentOps, sessionKillLastDatum := types.NewDatum(nil), types.NewDatum(nil)
+	if memory.TriggerMemoryLimitGC.Load() || servermemorylimit.IsKilling.Load() {
+		currentOps.SetString("shrink", mysql.DefaultCollationName)
+	}
+	sessionKillLast := servermemorylimit.SessionKillLast.Load()
+	if !sessionKillLast.IsZero() {
+		sessionKillLastDatum.SetMysqlTime(types.NewTime(types.FromGoTime(sessionKillLast), mysql.TypeDatetime, 0))
+	}
+	gcLast := types.NewTime(types.FromGoTime(time.Unix(0, int64(r.LastGC))), mysql.TypeDatetime, 0)
+
+	row := []types.Datum{
+		types.NewIntDatum(int64(memory.GetMemTotalIgnoreErr())),          // MEMORY_TOTAL
+		types.NewIntDatum(int64(memory.ServerMemoryLimit.Load())),        // MEMORY_LIMIT
+		types.NewIntDatum(int64(r.HeapInuse)),                            // MEMORY_CURRENT
+		types.NewIntDatum(int64(servermemorylimit.MemoryMaxUsed.Load())), // MEMORY_MAX_USED
+		currentOps,           // CURRENT_OPS
+		sessionKillLastDatum, // SESSION_KILL_LAST
+		types.NewIntDatum(servermemorylimit.SessionKillTotal.Load()), // SESSION_KILL_TOTAL
+		types.NewTimeDatum(gcLast),                                   // GC_LAST
+		types.NewIntDatum(int64(r.NumGC)),                            // GC_TOTAL
+		types.NewDatum(GlobalDiskUsageTracker.BytesConsumed()),       // DISK_USAGE
+		types.NewDatum(memory.QueryForceDisk.Load()),                 // QUERY_FORCE_DISK
+	}
+	e.rows = append(e.rows, row)
+	return nil
+}
+
+func (e *memtableRetriever) setDataForClusterMemoryUsage(ctx sessionctx.Context) error {
+	err := e.setDataForMemoryUsage(ctx)
+	if err != nil {
+		return err
+	}
+	rows, err := infoschema.AppendHostInfoToRows(ctx, e.rows)
+	if err != nil {
+		return err
+	}
+	e.rows = rows
 	return nil
 }
 

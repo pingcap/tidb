@@ -34,6 +34,9 @@ const TrackMemWhenExceeds = 104857600 // 100MB
 var (
 	ServerMemoryLimit            = atomicutil.NewUint64(0)
 	ServerMemoryLimitSessMinSize = atomicutil.NewUint64(128 << 20)
+
+	QueryForceDisk       = atomicutil.NewInt64(0)
+	TriggerMemoryLimitGC = atomicutil.NewBool(false)
 )
 
 // Tracker is used to track the memory usage during query execution.
