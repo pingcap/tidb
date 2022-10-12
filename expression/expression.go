@@ -818,39 +818,40 @@ func EvaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expressio
 	if MaybeOverOptimized4PlanCache(ctx, []Expression{expr}) {
 		return expr
 	}
-	return evaluateExprWithNull(ctx, schema, expr, nil)
+	expr, _ = evaluateExprWithNull(ctx, schema, expr)
+	return expr
 }
 
-func evaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expression, parExpr Expression) Expression {
+func evaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expression) (Expression, bool) {
 	switch x := expr.(type) {
 	case *ScalarFunction:
 		args := make([]Expression, len(x.GetArgs()))
+		hasNullFromSet := false
 		for i, arg := range x.GetArgs() {
-			args[i] = evaluateExprWithNull(ctx, schema, arg, expr)
-		}
-		c := NewFunctionInternal(ctx, x.FuncName.L, x.RetType.Clone(), args...)
-		return c
-	case *Column:
-		if !schema.Contains(x) {
-			return x
-		}
-		if parExpr != nil {
-			if sf, ok := parExpr.(*ScalarFunction); ok {
-				if sf.FuncName.L == ast.LogicAnd {
-					return NewOne()
+			nullFromSet := false
+			args[i], nullFromSet = evaluateExprWithNull(ctx, schema, arg)
+			if cons, ok := args[i].(*Constant); nullFromSet && ok && cons.Value.IsNull() {
+				hasNullFromSet = true
+				if x.FuncName.L == ast.LogicAnd {
+					args[i] = NewOne()
 				}
-				if sf.FuncName.L == ast.LogicOr {
-					return NewZero()
+				if x.FuncName.L == ast.LogicOr {
+					args[i] = NewZero()
 				}
 			}
 		}
-		return &Constant{Value: types.Datum{}, RetType: types.NewFieldType(mysql.TypeNull)}
+		return NewFunctionInternal(ctx, x.FuncName.L, x.RetType.Clone(), args...), hasNullFromSet
+	case *Column:
+		if !schema.Contains(x) {
+			return x, false
+		}
+		return &Constant{Value: types.Datum{}, RetType: types.NewFieldType(mysql.TypeNull)}, true
 	case *Constant:
 		if x.DeferredExpr != nil {
-			return FoldConstant(x)
+			return FoldConstant(x), false
 		}
 	}
-	return expr
+	return expr, false
 }
 
 // TableInfo2SchemaAndNames converts the TableInfo to the schema and name slice.
