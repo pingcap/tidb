@@ -273,10 +273,9 @@ func TestGeneratePartitionExpr(t *testing.T) {
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
 	type partitionExpr interface {
-		PartitionExpr() (*tables.PartitionExpr, error)
+		PartitionExpr() *tables.PartitionExpr
 	}
-	pe, err := tbl.(partitionExpr).PartitionExpr()
-	require.NoError(t, err)
+	pe := tbl.(partitionExpr).PartitionExpr()
 
 	upperBounds := []string{
 		"lt(t1.id, 4)",

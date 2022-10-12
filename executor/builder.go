@@ -4066,12 +4066,9 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 	}
 	tbl, _ := builder.is.TableByID(tbInfo.ID)
 	pt := tbl.(table.PartitionedTable)
-	pe, err := tbl.(interface {
-		PartitionExpr() (*tables.PartitionExpr, error)
+	pe := tbl.(interface {
+		PartitionExpr() *tables.PartitionExpr
 	}).PartitionExpr()
-	if err != nil {
-		return nil, err
-	}
 	partitionInfo := &v.PartitionInfo
 	usedPartitionList, err := builder.partitionPruning(pt, partitionInfo.PruningConds, partitionInfo.PartitionNames, partitionInfo.Columns, partitionInfo.ColumnNames)
 	if err != nil {
