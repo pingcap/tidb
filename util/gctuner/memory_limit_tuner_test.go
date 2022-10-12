@@ -63,7 +63,7 @@ func TestGlobalMemoryTuner(t *testing.T) {
 		time.Sleep(1 * time.Second) // If test.count > 1, wait tuning finished.
 		require.True(t, GlobalMemoryLimitTuner.isTuning.Load())
 		require.False(t, GlobalMemoryLimitTuner.waitingReset.Load())
-		require.Equal(t, GlobalMemoryLimitTuner.nextGCTriggeredByMemoryLimit, false)
+		require.Equal(t, GlobalMemoryLimitTuner.nextGCTriggeredByMemoryLimit.Load(), false)
 	}()
 
 	allocator := &mockAllocator{}
