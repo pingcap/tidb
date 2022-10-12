@@ -104,6 +104,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 	return it
 }
 
+// BuildCopIterator builds the iterator without calling `open`.
 func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars *tikv.Variables, option *kv.ClientSendOption) (*copIterator, kv.Response) {
 	eventCb := option.EventCb
 	failpoint.Inject("DisablePaging", func(_ failpoint.Value) {
@@ -664,10 +665,12 @@ func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copRes
 	}
 }
 
+// GetConcurrency returns the concurrency and small task concurrency.
 func (it *copIterator) GetConcurrency() (int, int) {
 	return it.concurrency, it.smallTaskConcurrency
 }
 
+// GetSendRate returns the rate-limit object.
 func (it *copIterator) GetSendRate() *util.RateLimit {
 	return it.sendRate
 }
@@ -1498,6 +1501,7 @@ func isolationLevelToPB(level kv.IsoLevel) kvrpcpb.IsolationLevel {
 	}
 }
 
+// BuildKeyRanges is used for test, quickly build key ranges from paired keys.
 func BuildKeyRanges(keys ...string) []kv.KeyRange {
 	var ranges []kv.KeyRange
 	for i := 0; i < len(keys); i += 2 {
