@@ -233,6 +233,9 @@ func (s *baseSchemaProducer) MemoryUsage() (sum int64) {
 	if s.schema != nil {
 		sum += s.schema.MemoryUsage()
 	}
+	for _, name := range s.names {
+		sum += name.MemoryUsage()
+	}
 	return
 }
 
