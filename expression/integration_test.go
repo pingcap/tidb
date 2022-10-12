@@ -890,7 +890,7 @@ func TestStringBuiltin(t *testing.T) {
 
 	// for insert
 	result = tk.MustQuery(`select insert("中文", 1, 1, cast("aaa" as binary)), insert("ba", -1, 1, "aaa"), insert("ba", 1, 100, "aaa"), insert("ba", 100, 1, "aaa");`)
-	result.Check(testkit.Rows("aaa\xb8\xad文 ba aaa ba"))
+	result.Check(testkit.Rows("aaa文 ba aaa ba"))
 	result = tk.MustQuery(`select insert("bb", NULL, 1, "aa"), insert("bb", 1, NULL, "aa"), insert(NULL, 1, 1, "aaa"), insert("bb", 1, 1, NULL);`)
 	result.Check(testkit.Rows("<nil> <nil> <nil> <nil>"))
 	result = tk.MustQuery(`SELECT INSERT("bb", 0, 1, NULL), INSERT("bb", 0, NULL, "aaa");`)
@@ -7754,4 +7754,27 @@ func TestFix38127(t *testing.T) {
 	tk.MustQuery("select from_unixtime(varc) from t").Check(testkit.Rows("<nil>"))
 	tk.MustQuery("select from_unixtime(dou, '%Y-%m-%d') from t").Check(testkit.Rows("<nil>"))
 	tk.MustQuery("select from_unixtime(varc, '%Y-%m-%d') from t").Check(testkit.Rows("<nil>"))
+}
+
+func TestIssue19654(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustQuery("SELECT HEX(INSERT(_utf8 0xD18FD18E, 2, 1, 0x20))").Check(testkit.Rows("D18F20"))
+	tk.MustQuery("SELECT HEX(INSERT(_utf8 0xD18FD18E, 2, 1, 0xD18FD18E))").Check(testkit.Rows("D18FD18FD18E"))
+	require.True(t, terror.ErrorEqual(tk.QueryToErr("SELECT HEX(INSERT(_utf8 0xD18FD18E, 2, 1, 0xC328));"), expression.ErrCannotConvertString))
+
+	tk.MustQuery("SELECT HEX(LPAD(_utf8 0xD18FD18E, 1, 0xD18FD18E))").Check(testkit.Rows("D18F"))
+	tk.MustQuery("SELECT HEX(LPAD(_utf8 0xD18FD18E, 4, 0xD18FD18E))").Check(testkit.Rows("D18FD18ED18FD18E"))
+	tk.MustQuery("SELECT HEX(LPAD(_utf8 0xD18FD18E, 5, 0xD18FD18E))").Check(testkit.Rows("D18FD18ED18FD18FD18E"))
+	require.True(t, terror.ErrorEqual(tk.QueryToErr("SELECT HEX(LPAD(_utf8 0xD18FD18E, 5, 0xC328));"), expression.ErrCannotConvertString))
+
+	tk.MustQuery("SELECT HEX(RPAD(_utf8 0xD18FD18E, 1, 0xD18FD18E))").Check(testkit.Rows("D18F"))
+	tk.MustQuery("SELECT HEX(RPAD(_utf8 0xD18FD18E, 4, 0xD18FD18E))").Check(testkit.Rows("D18FD18ED18FD18E"))
+	tk.MustQuery("SELECT HEX(RPAD(_utf8 0xD18FD18E, 5, 0xD18FD18E))").Check(testkit.Rows("D18FD18ED18FD18ED18F"))
+	require.True(t, terror.ErrorEqual(tk.QueryToErr("SELECT HEX(RPAD(_utf8 0xD18FD18E, 5, 0xC328));"), expression.ErrCannotConvertString))
+
+	tk.MustExec("create table t(a char(10) charset gbk)")
+	tk.MustExec(`insert into t values ('啊')`)
+	tk.MustQuery("select hex(insert(_utf8 'ㅂ', 1, 1, a)) from t").Check(testkit.Rows("E5958A"))
 }

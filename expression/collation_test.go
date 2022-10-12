@@ -353,7 +353,7 @@ func TestDeriveCollation(t *testing.T) {
 			[]types.EvalType{types.ETString, types.ETInt, types.ETInt, types.ETString},
 			types.ETString,
 			false,
-			&ExprCollation{CoercibilityExplicit, UNICODE, charset.CharsetBin, charset.CollationBin},
+			&ExprCollation{CoercibilityExplicit, ASCII, charset.CharsetUTF8MB4, charset.CollationUTF8MB4},
 		},
 		{
 			[]string{ast.InsertFunc},
@@ -366,7 +366,7 @@ func TestDeriveCollation(t *testing.T) {
 			[]types.EvalType{types.ETString, types.ETInt, types.ETInt, types.ETString},
 			types.ETString,
 			false,
-			&ExprCollation{CoercibilityImplicit, UNICODE, charset.CharsetUTF8MB4, charset.CollationUTF8MB4},
+			&ExprCollation{CoercibilityImplicit, ASCII, charset.CharsetUTF8MB4, charset.CollationUTF8MB4},
 		},
 		{
 			[]string{ast.InsertFunc},
@@ -378,8 +378,8 @@ func TestDeriveCollation(t *testing.T) {
 			},
 			[]types.EvalType{types.ETString, types.ETInt, types.ETInt, types.ETString},
 			types.ETString,
-			true,
-			nil,
+			false,
+			&ExprCollation{CoercibilityImplicit, UNICODE, charset.CharsetUTF8MB4, charset.CollationUTF8MB4},
 		},
 		{
 			[]string{ast.Lpad, ast.Rpad},
@@ -390,8 +390,8 @@ func TestDeriveCollation(t *testing.T) {
 			},
 			[]types.EvalType{types.ETString, types.ETInt, types.ETString},
 			types.ETString,
-			true,
-			nil,
+			false,
+			&ExprCollation{CoercibilityImplicit, UNICODE, charset.CharsetUTF8MB4, charset.CollationUTF8MB4},
 		},
 		{
 			[]string{ast.Lpad, ast.Rpad},

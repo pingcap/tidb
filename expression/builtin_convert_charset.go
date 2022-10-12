@@ -42,8 +42,8 @@ var (
 )
 
 var (
-	// errCannotConvertString returns when the string can not convert to other charset.
-	errCannotConvertString = dbterror.ClassExpression.NewStd(errno.ErrCannotConvertString)
+	// ErrCannotConvertString returns when the string can not convert to other charset.
+	ErrCannotConvertString = dbterror.ClassExpression.NewStd(errno.ErrCannotConvertString)
 )
 
 // InternalFuncToBinary accepts a string and returns another string encoded in a given charset.
@@ -179,7 +179,7 @@ func (b *builtinInternalFromBinarySig) evalString(row chunk.Row) (res string, is
 	ret, err := enc.Transform(nil, valBytes, charset.OpDecode)
 	if err != nil {
 		strHex := formatInvalidChars(valBytes)
-		err = errCannotConvertString.GenWithStackByArgs(strHex, charset.CharsetBin, b.tp.GetCharset())
+		err = ErrCannotConvertString.GenWithStackByArgs(strHex, charset.CharsetBin, b.tp.GetCharset())
 	}
 	return string(ret), false, err
 }
@@ -210,7 +210,7 @@ func (b *builtinInternalFromBinarySig) vecEvalString(input *chunk.Chunk, result 
 		val, err := enc.Transform(encodedBuf, str, charset.OpDecode)
 		if err != nil {
 			strHex := formatInvalidChars(str)
-			return errCannotConvertString.GenWithStackByArgs(strHex, charset.CharsetBin, b.tp.GetCharset())
+			return ErrCannotConvertString.GenWithStackByArgs(strHex, charset.CharsetBin, b.tp.GetCharset())
 		}
 		result.AppendBytes(val)
 	}

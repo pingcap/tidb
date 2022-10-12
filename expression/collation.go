@@ -196,9 +196,9 @@ func deriveCollation(ctx sessionctx.Context, funcName string, args []Expression,
 	case ast.Left, ast.Right, ast.Repeat, ast.Trim, ast.LTrim, ast.RTrim, ast.Substr, ast.SubstringIndex, ast.Replace, ast.Substring, ast.Mid, ast.Translate:
 		return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args[0])
 	case ast.InsertFunc:
-		return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args[0], args[3])
+		return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args[0])
 	case ast.Lpad, ast.Rpad:
-		return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args[0], args[2])
+		return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args[0])
 	case ast.Elt, ast.ExportSet, ast.MakeSet:
 		return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args[1:]...)
 	case ast.FindInSet, ast.Regexp:

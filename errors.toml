@@ -1631,6 +1631,11 @@ error = '''
 Invalid data type for JSON data in argument %d to function %s; a JSON string or JSON type is required.
 '''
 
+["expression:3854"]
+error = '''
+Cannot convert string '%.64s' from %s to %s
+'''
+
 ["expression:8128"]
 error = '''
 Invalid TABLESAMPLE: %s
