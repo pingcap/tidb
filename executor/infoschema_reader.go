@@ -931,6 +931,8 @@ ForColumnsTag:
 			} else if decimal != -1 {
 				numericScale = decimal
 			}
+		} else if ft.GetType() == mysql.TypeNull {
+			charMaxLen, charOctLen = 0, 0
 		}
 		columnType := ft.InfoSchemaStr()
 		columnDesc := table.NewColDesc(table.ToColumn(col))
