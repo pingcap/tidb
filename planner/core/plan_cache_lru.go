@@ -255,7 +255,10 @@ func setKVMemoryUsage(key kvcache.Key, val kvcache.Value) {
 		return
 	}
 
-	planVal := val.(*PlanCacheValue)
+	planVal, ok := val.(*PlanCacheValue)
+	if !ok {
+		return
+	}
 	if key != nil {
 		planVal.PlanCacheKeyMem = key.(*planCacheKey).MemoryUsage()
 	}
@@ -264,8 +267,8 @@ func setKVMemoryUsage(key kvcache.Key, val kvcache.Value) {
 
 // elementMemoryUsage return the sum of planCacheKey and planCacheValue
 func elementMemoryUsage(e *list.Element) (sum int64) {
-	pVal := e.Value.(*planCacheEntry).PlanValue.(*PlanCacheValue)
-	if pVal == nil {
+	pVal, ok := e.Value.(*planCacheEntry).PlanValue.(*PlanCacheValue)
+	if !ok {
 		return
 	}
 	return pVal.PlanCacheKeyMem + pVal.PlanCacheValueMem
