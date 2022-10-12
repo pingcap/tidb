@@ -573,7 +573,6 @@ func (a *ExecStmt) handleForeignKeyTrigger(ctx context.Context, e Executor, isPe
 			return err
 		}
 	}
-
 	fkCascades := exec.GetFKCascades()
 	for _, fkCascade := range fkCascades {
 		err := a.handleForeignKeyCascade(ctx, fkCascade, isPessimistic)

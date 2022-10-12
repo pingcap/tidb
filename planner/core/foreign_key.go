@@ -61,8 +61,9 @@ type FKCascadeInfo struct {
 }
 
 const (
-	emptyFkCheckSize   = int64(unsafe.Sizeof(FKCheck{}))
-	emptyFkCascadeSize = int64(unsafe.Sizeof(FKCascade{}))
+	emptyFkCheckSize       = int64(unsafe.Sizeof(FKCheck{}))
+	emptyFkCascadeSize     = int64(unsafe.Sizeof(FKCascade{}))
+	emptyFkCascadeInfoSize = int64(unsafe.Sizeof(FKCascadeInfo{}))
 )
 
 // MemoryUsage return the memory usage of FKCheck
@@ -78,11 +79,12 @@ func (f *FKCheck) MemoryUsage() (sum int64) {
 	return
 }
 
+// MemoryUsage return the memory usage of FKCascade
 func (f *FKCascade) MemoryUsage() (sum int64) {
 	if f == nil {
 		return
 	}
-	sum = emptyFkCascadeSize
+	sum = emptyFkCascadeSize + emptyFkCascadeInfoSize
 	return
 }
 
@@ -193,32 +195,6 @@ func (del *Delete) buildOnDeleteFKTriggers(ctx sessionctx.Context, is infoschema
 	return nil
 }
 
-func (del *Delete) buildOnDeleteFKChecks(ctx sessionctx.Context, is infoschema.InfoSchema, tblID2table map[int64]table.Table) error {
-	if !ctx.GetSessionVars().ForeignKeyChecks {
-		return nil
-	}
-	fkChecks := make(map[int64][]*FKCheck)
-	for tid, tbl := range tblID2table {
-		tblInfo := tbl.Meta()
-		dbInfo, exist := is.SchemaByTable(tblInfo)
-		if !exist {
-			return infoschema.ErrDatabaseNotExists
-		}
-		referredFKs := is.GetTableReferredForeignKeys(dbInfo.Name.L, tblInfo.Name.L)
-		for _, referredFK := range referredFKs {
-			fkCheck, err := buildFKCheckOnModifyReferTable(is, referredFK)
-			if err != nil {
-				return err
-			}
-			if fkCheck != nil {
-				fkChecks[tid] = append(fkChecks[tid], fkCheck)
-			}
-		}
-	}
-	del.FKChecks = fkChecks
-	return nil
-}
-
 func buildOnUpdateReferredFKChecks(is infoschema.InfoSchema, dbName string, tblInfo *model.TableInfo, updateCols map[string]struct{}) ([]*FKCheck, error) {
 	referredFKs := is.GetTableReferredForeignKeys(dbName, tblInfo.Name.L)
 	fkChecks := make([]*FKCheck, 0, len(referredFKs))
@@ -311,7 +287,7 @@ func buildOnDeleteFKTrigger(is infoschema.InfoSchema, referredFK *model.Referred
 			}}
 		return nil, fkCascade, nil
 	default:
-		fkCheck, err := buildFKCheckOnModifyReferTable(is, referredFK)
+		fkCheck, err := buildFKCheckForReferredFK(childTable, fk, referredFK)
 		return fkCheck, nil, err
 	}
 }
@@ -349,6 +325,10 @@ func buildFKCheckOnModifyReferTable(is infoschema.InfoSchema, referredFK *model.
 	if fk == nil || fk.Version < 1 {
 		return nil, nil
 	}
+	return buildFKCheckForReferredFK(childTable, fk, referredFK)
+}
+
+func buildFKCheckForReferredFK(childTable table.Table, fk *model.FKInfo, referredFK *model.ReferredFKInfo) (*FKCheck, error) {
 	failedErr := ErrRowIsReferenced2.GenWithStackByArgs(fk.String(referredFK.ChildSchema.L, referredFK.ChildTable.L))
 	fkCheck, err := buildFKCheck(childTable, fk.Cols, failedErr)
 	if err != nil {
