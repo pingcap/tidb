@@ -1041,6 +1041,7 @@ var removedConfig = map[string]struct{}{
 	"oom-use-tmp-storage":                    {}, // use tidb_enable_tmp_storage_on_oom
 	"max-server-connections":                 {}, // use sysvar max_connections
 	"run-ddl":                                {}, // use sysvar tidb_enable_ddl
+	"instance.tidb_memory_usage_alarm_ratio": {}, // use sysvar tidb_memory_usage_alarm_ratio
 }
 
 // isAllRemovedConfigItems returns true if all the items that couldn't validate

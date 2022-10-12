@@ -804,6 +804,11 @@ func (p *basePlan) SCtx() sessionctx.Context {
 	return p.ctx
 }
 
+// SetSCtx Context implements Plan Set Context interface.
+func (p *basePlan) SetSCtx(ctx sessionctx.Context) {
+	p.ctx = ctx
+}
+
 // buildPlanTrace implements Plan
 func (p *basePhysicalPlan) buildPlanTrace() *tracing.PlanTrace {
 	planTrace := &tracing.PlanTrace{ID: p.ID(), TP: p.self.TP(), ExplainInfo: p.self.ExplainInfo()}

@@ -587,8 +587,6 @@ func setGlobalVars() {
 				switch oldName {
 				case "force-priority":
 					cfg.Instance.ForcePriority = cfg.Performance.ForcePriority
-				case "memory-usage-alarm-ratio":
-					cfg.Instance.MemoryUsageAlarmRatio = cfg.Performance.MemoryUsageAlarmRatio
 				}
 			case "plugin":
 				switch oldName {
@@ -747,6 +745,7 @@ func createServer(storage kv.Storage, dom *domain.Domain) *server.Server {
 	svr.SetDomain(dom)
 	svr.InitGlobalConnID(dom.ServerID)
 	go dom.ExpensiveQueryHandle().SetSessionManager(svr).Run()
+	go dom.MemoryUsageAlarmHandle().SetSessionManager(svr).Run()
 	go dom.ServerMemoryLimitHandle().SetSessionManager(svr).Run()
 	dom.InfoSyncer().SetSessionManager(svr)
 	return svr

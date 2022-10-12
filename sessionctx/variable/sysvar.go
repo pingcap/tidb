@@ -426,12 +426,6 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(s *SessionVars) (string, error) {
 		return strconv.FormatUint(atomic.LoadUint64(&ExpensiveQueryTimeThreshold), 10), nil
 	}},
-	{Scope: ScopeInstance, Name: TiDBMemoryUsageAlarmRatio, Value: strconv.FormatFloat(config.GetGlobalConfig().Instance.MemoryUsageAlarmRatio, 'f', -1, 64), Type: TypeFloat, MinValue: 0.0, MaxValue: 1.0, SetGlobal: func(s *SessionVars, val string) error {
-		MemoryUsageAlarmRatio.Store(tidbOptFloat64(val, 0.8))
-		return nil
-	}, GetGlobal: func(s *SessionVars) (string, error) {
-		return fmt.Sprintf("%g", MemoryUsageAlarmRatio.Load()), nil
-	}},
 	{Scope: ScopeInstance, Name: TiDBEnableCollectExecutionInfo, Value: BoolToOnOff(DefTiDBEnableCollectExecutionInfo), Type: TypeBool, SetGlobal: func(s *SessionVars, val string) error {
 		oldConfig := config.GetGlobalConfig()
 		newValue := TiDBOptOn(val)
@@ -626,6 +620,7 @@ var defaultSysVars = []*SysVar{
 		if !on {
 			gctuner.SetDefaultGOGC()
 		}
+		gctuner.GlobalMemoryLimitTuner.UpdateMemoryLimit()
 		return nil
 	}},
 	{Scope: ScopeGlobal, Name: TiDBEnableTelemetry, Value: BoolToOnOff(DefTiDBEnableTelemetry), Type: TypeBool},
@@ -759,6 +754,7 @@ var defaultSysVars = []*SysVar{
 				return err
 			}
 			memory.ServerMemoryLimit.Store(intVal)
+			gctuner.GlobalMemoryLimitTuner.UpdateMemoryLimit()
 			return nil
 		},
 	},
@@ -783,6 +779,31 @@ var defaultSysVars = []*SysVar{
 				return err
 			}
 			memory.ServerMemoryLimitSessMinSize.Store(intVal)
+			return nil
+		},
+	},
+	{Scope: ScopeGlobal, Name: TiDBServerMemoryLimitGCTrigger, Value: strconv.FormatFloat(DefTiDBServerMemoryLimitGCTrigger, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: math.MaxUint64,
+		GetGlobal: func(s *SessionVars) (string, error) {
+			return strconv.FormatFloat(gctuner.GlobalMemoryLimitTuner.GetPercentage(), 'f', -1, 64), nil
+		},
+		Validation: func(s *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+			floatValue, err := strconv.ParseFloat(normalizedValue, 64)
+			if err != nil {
+				return "", err
+			}
+			if floatValue < 0.51 && floatValue > 1 { // 51% ~ 100%
+				s.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(TiDBServerMemoryLimitGCTrigger, originalValue))
+				floatValue = DefTiDBServerMemoryLimitGCTrigger
+			}
+			return strconv.FormatFloat(floatValue, 'f', -1, 64), nil
+		},
+		SetGlobal: func(s *SessionVars, val string) error {
+			floatValue, err := strconv.ParseFloat(val, 64)
+			if err != nil {
+				return err
+			}
+			gctuner.GlobalMemoryLimitTuner.SetPercentage(floatValue)
+			gctuner.GlobalMemoryLimitTuner.UpdateMemoryLimit()
 			return nil
 		},
 	},
@@ -971,6 +992,18 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}, GetGlobal: func(s *SessionVars) (string, error) {
 		return BoolToOnOff(EnableTmpStorageOnOOM.Load()), nil
+	}},
+	{Scope: ScopeGlobal, Name: TiDBMemoryUsageAlarmRatio, Value: strconv.FormatFloat(DefMemoryUsageAlarmRatio, 'f', -1, 64), Type: TypeFloat, MinValue: 0.0, MaxValue: 1.0, SetGlobal: func(s *SessionVars, val string) error {
+		MemoryUsageAlarmRatio.Store(tidbOptFloat64(val, DefMemoryUsageAlarmRatio))
+		return nil
+	}, GetGlobal: func(s *SessionVars) (string, error) {
+		return fmt.Sprintf("%g", MemoryUsageAlarmRatio.Load()), nil
+	}},
+	{Scope: ScopeGlobal, Name: TiDBMemoryUsageAlarmKeepRecordNum, Value: strconv.Itoa(DefMemoryUsageAlarmKeepRecordNum), Type: TypeInt, MinValue: 1, MaxValue: 10000, SetGlobal: func(s *SessionVars, val string) error {
+		MemoryUsageAlarmKeepRecordNum.Store(TidbOptInt64(val, DefMemoryUsageAlarmKeepRecordNum))
+		return nil
+	}, GetGlobal: func(s *SessionVars) (string, error) {
+		return fmt.Sprintf("%d", MemoryUsageAlarmKeepRecordNum.Load()), nil
 	}},
 
 	/* The system variables below have GLOBAL and SESSION scope  */
