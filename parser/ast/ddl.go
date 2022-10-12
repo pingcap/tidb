@@ -2310,7 +2310,7 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 	case TableOptionInsertMethod:
 		ctx.WriteKeyWord("INSERT_METHOD ")
 		ctx.WritePlain("= ")
-		ctx.WriteString(n.StrValue)
+		ctx.WriteKeyWord(n.StrValue)
 	case TableOptionTableCheckSum:
 		ctx.WriteKeyWord("TABLE_CHECKSUM ")
 		ctx.WritePlain("= ")
