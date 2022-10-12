@@ -1157,6 +1157,33 @@ func (c *RegionCache) insertRegionToCache(cachedRegion *Region) {
 	if !ok || latest.GetVer() < newVer.GetVer() || latest.GetConfVer() < newVer.GetConfVer() {
 		c.mu.latestVersions[cachedRegion.VerID().id] = newVer
 	}
+	// The intersecting regions in the cache are probably stale, clear them.
+	deleted := c.removeIntersecting(cachedRegion)
+	for _, r := range deleted {
+		c.removeVersionFromCache(r.cachedRegion.VerID(), r.cachedRegion.GetID())
+	}
+}
+
+// removeIntersecting removes all items that have intersection with the key range of given region.
+// If the region itself is in the cache, it's not removed.
+func (c *RegionCache) removeIntersecting(r *Region) []*btreeItem {
+	var deleted []*btreeItem
+	c.mu.sorted.AscendGreaterOrEqual(newBtreeSearchItem(r.StartKey()), func(item_ btree.Item) bool {
+		item := item_.(*btreeItem)
+		// Skip the item that is equal to the given region.
+		if item.cachedRegion.VerID() == r.VerID() {
+			return true
+		}
+		if len(r.EndKey()) > 0 && bytes.Compare(item.cachedRegion.StartKey(), r.EndKey()) >= 0 {
+			return false
+		}
+		deleted = append(deleted, item)
+		return true
+	})
+	for _, item := range deleted {
+		c.mu.sorted.Delete(item)
+	}
+	return deleted
 }
 
 // searchCachedRegion finds a region from cache by key. Like `getCachedRegion`,
