@@ -392,6 +392,17 @@ func simplifyOuterJoin(p *LogicalJoin, predicates []expression.Expression) {
 	if p.JoinType != LeftOuterJoin && p.JoinType != RightOuterJoin && p.JoinType != InnerJoin {
 		return
 	}
+	// "LeftOuterJoin/RightOuterJoin" shouldn't be transformed to "InnerJoin" when "ON NULL"
+	checkConds := p.RightConditions
+	if p.JoinType == RightOuterJoin {
+		checkConds = p.LeftConditions
+	}
+	for _, cond := range checkConds {
+		cons, ok := cond.(*expression.Constant)
+		if ok && cons.Value.IsNull() {
+			return
+		}
+	}
 
 	innerTable := p.children[0]
 	outerTable := p.children[1]
