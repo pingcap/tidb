@@ -5,7 +5,6 @@ package restore
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
@@ -39,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/config"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
@@ -304,14 +302,6 @@ func (rc *Client) Close() {
 	log.Info("Restore client closed")
 }
 
-func (rc *Client) SetRestoreRangeTS(startTs, restoreTS, shiftStartTS uint64) {
-	rc.startTS = startTs
-	rc.restoreTS = restoreTS
-	rc.shiftStartTS = shiftStartTS
-	log.Info("set restore range ts", zap.Uint64("shift-start-ts", shiftStartTS),
-		zap.Uint64("start-ts", startTs), zap.Uint64("restored-ts", restoreTS))
-}
-
 func (rc *Client) SetCurrentTS(ts uint64) {
 	rc.currentTS = ts
 }
@@ -372,10 +362,6 @@ func (rc *Client) InitBackupMeta(
 // IsRawKvMode checks whether the backup data is in raw kv format, in which case transactional recover is forbidden.
 func (rc *Client) IsRawKvMode() bool {
 	return rc.backupMeta.IsRawKv
-}
-
-func (rc *Client) InitMetadataHelper() {
-	rc.helper = stream.NewMetadataHelper()
 }
 
 // GetFilesInRawRange gets all files that are in the given range or intersects with the given range.
@@ -1831,6 +1817,8 @@ func (rc *Client) RestoreKVFiles(
 			continue
 		}
 		fileReplica := file
+		// applyFunc blocks once there aren't enough workers.
+		// this would help us don't load too many DML file info.
 		applyFunc(fileReplica)
 	}
 	if len(deleteFiles) > 0 {
@@ -1949,24 +1937,6 @@ func SortMetaKVFiles(files []*backuppb.DataFileInfo) []*backuppb.DataFileInfo {
 		return true
 	})
 	return files
-}
-
-func (rc *Client) PrepareDDLFileCache(
-	ctx context.Context,
-	files MetaGroupIter,
-) ([]*backuppb.DataFileInfo, error) {
-	fs := iter.CollectAll(ctx, files)
-	if fs.Err != nil {
-		return nil, fs.Err
-	}
-
-	dataFileInfos := make([]*backuppb.DataFileInfo, 0)
-	for _, g := range fs.Item {
-		rc.helper.InitCacheEntry(g.Path, len(g.FileMetas))
-		dataFileInfos = append(dataFileInfos, g.FileMetas...)
-	}
-
-	return dataFileInfos, nil
 }
 
 // RestoreMetaKVFiles tries to restore files about meta kv-event from stream-backup.
@@ -2136,7 +2106,7 @@ func (rc *Client) RestoreBatchMetaKVFiles(
 
 	// read all of entries from files.
 	for _, f := range files {
-		es, nextEs, err := rc.readAllEntries(ctx, f, filterTS)
+		es, nextEs, err := rc.ReadAllEntries(ctx, f, filterTS)
 		if err != nil {
 			return nextKvEntries, errors.Trace(err)
 		}
@@ -2161,72 +2131,6 @@ func (rc *Client) RestoreBatchMetaKVFiles(
 		progressInc()
 	}
 	return nextKvEntries, nil
-}
-
-func (rc *Client) readAllEntries(
-	ctx context.Context,
-	file *backuppb.DataFileInfo,
-	filterTS uint64,
-) ([]*KvEntryWithTS, []*KvEntryWithTS, error) {
-	kvEntries := make([]*KvEntryWithTS, 0)
-	nextKvEntries := make([]*KvEntryWithTS, 0)
-
-	buff, err := rc.helper.ReadFile(ctx, file.Path, file.RangeOffset, file.RangeLength, file.CompressionType, rc.storage)
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-
-	if checksum := sha256.Sum256(buff); !bytes.Equal(checksum[:], file.GetSha256()) {
-		return nil, nil, errors.Annotatef(berrors.ErrInvalidMetaFile,
-			"checksum mismatch expect %x, got %x", file.GetSha256(), checksum[:])
-	}
-
-	iter := stream.NewEventIterator(buff)
-	for iter.Valid() {
-		iter.Next()
-		if iter.GetError() != nil {
-			return nil, nil, errors.Trace(iter.GetError())
-		}
-
-		txnEntry := kv.Entry{Key: iter.Key(), Value: iter.Value()}
-
-		if !stream.MaybeDBOrDDLJobHistoryKey(txnEntry.Key) {
-			// only restore mDB and mDDLHistory
-			continue
-		}
-
-		ts, err := GetKeyTS(txnEntry.Key)
-		if err != nil {
-			return nil, nil, errors.Trace(err)
-		}
-
-		// The commitTs in write CF need be limited on [startTs, restoreTs].
-		// We can restore more key-value in default CF.
-		if ts > rc.restoreTS {
-			continue
-		} else if file.Cf == stream.WriteCF && ts < rc.startTS {
-			continue
-		} else if file.Cf == stream.DefaultCF && ts < rc.shiftStartTS {
-			continue
-		}
-
-		if len(txnEntry.Value) == 0 {
-			// we might record duplicated prewrite keys in some conor cases.
-			// the first prewrite key has the value but the second don't.
-			// so we can ignore the empty value key.
-			// see details at https://github.com/pingcap/tiflow/issues/5468.
-			log.Warn("txn entry is null", zap.Uint64("key-ts", ts), zap.ByteString("tnxKey", txnEntry.Key))
-			continue
-		}
-
-		if ts < filterTS {
-			kvEntries = append(kvEntries, &KvEntryWithTS{e: txnEntry, ts: ts})
-		} else {
-			nextKvEntries = append(nextKvEntries, &KvEntryWithTS{e: txnEntry, ts: ts})
-		}
-	}
-
-	return kvEntries, nextKvEntries, nil
 }
 
 func (rc *Client) restoreMetaKvEntries(
