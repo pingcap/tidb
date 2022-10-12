@@ -76,7 +76,7 @@ func TestShowCreateTable(t *testing.T) {
 	prevState := model.StateNone
 	callback := &ddl.TestDDLCallback{}
 	currTestCaseOffset := 0
-	callback.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if job.SchemaState == prevState || checkErr != nil {
 			return
 		}
@@ -111,6 +111,7 @@ func TestShowCreateTable(t *testing.T) {
 			terror.Log(result.Close())
 		}
 	}
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	d := dom.DDL()
 	originalCallback := d.GetHook()
 	defer d.SetHook(originalCallback)
@@ -144,7 +145,7 @@ func TestDropNotNullColumn(t *testing.T) {
 	originalCallback := d.GetHook()
 	callback := &ddl.TestDDLCallback{}
 	sqlNum := 0
-	callback.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
@@ -163,7 +164,7 @@ func TestDropNotNullColumn(t *testing.T) {
 			}
 		}
 	}
-
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	d.SetHook(callback)
 	tk.MustExec("alter table t drop column a")
 	require.NoError(t, checkErr)
@@ -227,7 +228,7 @@ func TestTwoStates(t *testing.T) {
 
 	times := 0
 	var checkErr error
-	callback.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if job.SchemaState == prevState || checkErr != nil || times >= 3 {
 			return
 		}
@@ -275,6 +276,7 @@ func TestTwoStates(t *testing.T) {
 			}
 		}
 	}
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	d := dom.DDL()
 	originalCallback := d.GetHook()
 	defer d.SetHook(originalCallback)
@@ -831,7 +833,7 @@ func runTestInSchemaState(
 		}
 	}
 	if isOnJobUpdated {
-		callback.OnJobUpdatedExported = cbFunc
+		callback.OnJobUpdatedExported.Store(&cbFunc)
 	} else {
 		callback.OnJobRunBeforeExported = cbFunc
 	}
@@ -874,7 +876,7 @@ func TestShowIndex(t *testing.T) {
 	prevState := model.StateNone
 	showIndexSQL := `show index from t`
 	var checkErr error
-	callback.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if job.SchemaState == prevState || checkErr != nil {
 			return
 		}
@@ -893,7 +895,7 @@ func TestShowIndex(t *testing.T) {
 			}
 		}
 	}
-
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	d := dom.DDL()
 	originalCallback := d.GetHook()
 	d.SetHook(callback)
@@ -1433,13 +1435,13 @@ func dbChangeTestParallelExecSQL(t *testing.T, store kv.Storage, dom *domain.Dom
 
 	callback := &ddl.TestDDLCallback{}
 	once := sync.Once{}
-	callback.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		// sleep a while, let other job enqueue.
 		once.Do(func() {
 			time.Sleep(time.Millisecond * 10)
 		})
 	}
-
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	d := dom.DDL()
 	originalCallback := d.GetHook()
 	defer d.SetHook(originalCallback)
@@ -1665,7 +1667,7 @@ func TestCreateExpressionIndex(t *testing.T) {
 	originalCallback := d.GetHook()
 	defer d.SetHook(originalCallback)
 	callback := &ddl.TestDDLCallback{}
-	callback.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
@@ -1704,6 +1706,7 @@ func TestCreateExpressionIndex(t *testing.T) {
 		}
 	}
 
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	d.SetHook(callback)
 	tk.MustExec("alter table t add index idx((b+1))")
 	require.NoError(t, checkErr)
@@ -1731,7 +1734,7 @@ func TestCreateUniqueExpressionIndex(t *testing.T) {
 	originalCallback := d.GetHook()
 	defer d.SetHook(originalCallback)
 	callback := &ddl.TestDDLCallback{}
-	callback.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
@@ -1815,7 +1818,7 @@ func TestCreateUniqueExpressionIndex(t *testing.T) {
 			// (1, 7), (2, 7), (5, 7), (8, 8), (13, 9), (11, 10), (0, 11)
 		}
 	}
-
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	d.SetHook(callback)
 	tk.MustExec("alter table t add unique index idx((a*b+1))")
 	require.NoError(t, checkErr)
@@ -1842,7 +1845,7 @@ func TestDropExpressionIndex(t *testing.T) {
 	originalCallback := d.GetHook()
 	defer d.SetHook(originalCallback)
 	callback := &ddl.TestDDLCallback{}
-	callback.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
@@ -1875,7 +1878,7 @@ func TestDropExpressionIndex(t *testing.T) {
 			// (1, 7), (2, 7), (5, 7), (8, 8), (0, 9), (10, 10), (0, 11)
 		}
 	}
-
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	d.SetHook(callback)
 	tk.MustExec("alter table t drop index idx")
 	require.NoError(t, checkErr)

@@ -63,6 +63,7 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/set"
+	"github.com/pingcap/tidb/util/size"
 )
 
 const (
@@ -1732,7 +1733,7 @@ func (b *PlanBuilder) buildIntersect(ctx context.Context, selects []ast.Node) (L
 		leftPlan, err = b.buildSelect(ctx, x)
 	case *ast.SetOprSelectList:
 		afterSetOperator = x.AfterSetOperator
-		leftPlan, err = b.buildSetOpr(ctx, &ast.SetOprStmt{SelectList: x})
+		leftPlan, err = b.buildSetOpr(ctx, &ast.SetOprStmt{SelectList: x, With: x.With})
 	}
 	if err != nil {
 		return nil, nil, err
@@ -1756,7 +1757,7 @@ func (b *PlanBuilder) buildIntersect(ctx context.Context, selects []ast.Node) (L
 				// TODO: support intersect all
 				return nil, nil, errors.Errorf("TiDB do not support intersect all")
 			}
-			rightPlan, err = b.buildSetOpr(ctx, &ast.SetOprStmt{SelectList: x})
+			rightPlan, err = b.buildSetOpr(ctx, &ast.SetOprStmt{SelectList: x, With: x.With})
 		}
 		if err != nil {
 			return nil, nil, err
@@ -5204,6 +5205,19 @@ type TblColPosInfo struct {
 	HandleCols HandleCols
 }
 
+// MemoryUsage return the memory usage of TblColPosInfo
+func (t *TblColPosInfo) MemoryUsage() (sum int64) {
+	if t == nil {
+		return
+	}
+
+	sum = size.SizeOfInt64 + size.SizeOfInt*2
+	if t.HandleCols != nil {
+		sum += t.HandleCols.MemoryUsage()
+	}
+	return
+}
+
 // TblColPosInfoSlice attaches the methods of sort.Interface to []TblColPosInfos sorting in increasing order.
 type TblColPosInfoSlice []TblColPosInfo
 
@@ -5857,6 +5871,10 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (Plan
 		tblID2table[id], _ = b.is.TableByID(id)
 	}
 	del.TblColPosInfos, err = buildColumns2Handle(del.names, tblID2Handle, tblID2table, false)
+	if err != nil {
+		return nil, err
+	}
+	err = del.buildOnDeleteFKChecks(b.ctx, b.is, tblID2table)
 	return del, err
 }
 
