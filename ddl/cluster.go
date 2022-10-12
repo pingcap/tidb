@@ -221,7 +221,7 @@ func addToSlice(schema string, tableName string, tableID int64, flashbackIDs []f
 
 // GetFlashbackKeyRanges make keyRanges efficiently for flashback cluster when many tables in cluster,
 // The time complexity is O(nlogn).
-func GetFlashbackKeyRanges(sess sessionctx.Context, startKey kv.Key) ([]kv.KeyRange, error) {
+func GetFlashbackKeyRanges(sess sessionctx.Context) ([]kv.KeyRange, error) {
 	schemas := sess.GetDomainInfoSchema().(infoschema.InfoSchema).AllSchemas()
 
 	// The semantic of keyRanges(output).
@@ -266,20 +266,6 @@ func GetFlashbackKeyRanges(sess sessionctx.Context, startKey kv.Key) ([]kv.KeyRa
 			StartKey: tablecodec.EncodeTablePrefix(flashbackIDs[lastExcludeIdx+1].id),
 			EndKey:   tablecodec.EncodeTablePrefix(flashbackIDs[len(flashbackIDs)-1].id + 1),
 		})
-	}
-
-	for i, ranges := range keyRanges {
-		// startKey smaller than ranges.StartKey, ranges begin with [ranges.StartKey, ranges.EndKey)
-		if ranges.StartKey.Cmp(startKey) > 0 {
-			keyRanges = keyRanges[i:]
-			break
-		}
-		// startKey in [ranges.StartKey, ranges.EndKey), ranges begin with [startKey, ranges.EndKey)
-		if ranges.StartKey.Cmp(startKey) <= 0 && ranges.EndKey.Cmp(startKey) > 0 {
-			keyRanges = keyRanges[i:]
-			keyRanges[0].StartKey = startKey
-			break
-		}
 	}
 
 	return keyRanges, nil
@@ -456,6 +442,15 @@ func flashbackToVersion(
 	).RunOnRange(ctx, startKey, endKey)
 }
 
+func splitTablesRegions(d *ddlCtx, keyRanges []kv.KeyRange) {
+	if s, ok := d.store.(kv.SplittableStore); ok {
+		for _, keys := range keyRanges {
+			splitRecordRegion(d.ctx, s, tablecodec.DecodeTableID(keys.StartKey), false)
+			splitRecordRegion(d.ctx, s, tablecodec.DecodeTableID(keys.EndKey), false)
+		}
+	}
+}
+
 // A Flashback has 4 different stages.
 // 1. before lock flashbackClusterJobID, check clusterJobID and lock it.
 // 2. before flashback start, check timestamp, disable GC and close PD schedule.
@@ -535,11 +530,13 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			job.SchemaState = model.StateWriteReorganization
 			return updateSchemaVersion(d, t, job)
 		}
-		totalRegions.Store(0)
-		keyRanges, err := GetFlashbackKeyRanges(sess, tablecodec.EncodeTablePrefix(0))
+		keyRanges, err := GetFlashbackKeyRanges(sess)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+		// Split region by keyRanges, make sure no unrelated key ranges be locked.
+		splitTablesRegions(d, keyRanges)
+		totalRegions.Store(0)
 		for _, ranges := range keyRanges {
 			if err = prepareFlashbackToVersion(d.ctx, d,
 				func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
@@ -570,7 +567,7 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			job.SchemaState = model.StatePublic
 			return ver, nil
 		}
-		keyRanges, err := GetFlashbackKeyRanges(sess, tablecodec.EncodeTablePrefix(0))
+		keyRanges, err := GetFlashbackKeyRanges(sess)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
