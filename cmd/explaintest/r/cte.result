@@ -365,12 +365,12 @@ TableReader_9	10000.00	root		data:TableFullScan_8
 create SESSION binding for with cte as (select * from t) select * from cte using with cte as (select * from t use index(b)) select * from cte;
 desc with cte as (select * from t) select * from cte;
 id	estRows	task	access object	operator info
-IndexLookUp_10	10000.00	root
+IndexLookUp_10	10000.00	root		
 ├─IndexFullScan_8(Build)	10000.00	cop[tikv]	table:t, index:b(b)	keep order:false, stats:pseudo
 └─TableRowIDScan_9(Probe)	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 desc with cte as (select * from t use index()) select * from cte;
 id	estRows	task	access object	operator info
-IndexLookUp_10	10000.00	root
+IndexLookUp_10	10000.00	root		
 ├─IndexFullScan_8(Build)	10000.00	cop[tikv]	table:t, index:b(b)	keep order:false, stats:pseudo
 └─TableRowIDScan_9(Probe)	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists t1, tpk;
@@ -594,11 +594,11 @@ Projection_16	10000.00	root		test.t1.c1, test.t1.c2
 └─Apply_18	10000.00	root		CARTESIAN inner join, other cond:or(and(gt(test.t1.c1, Column#11), if(ne(Column#12, 0), NULL, 1)), or(eq(Column#13, 0), if(isnull(test.t1.c1), NULL, 0)))
   ├─TableReader_20(Build)	10000.00	root		data:TableFullScan_19
   │ └─TableFullScan_19	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-  └─StreamAgg_35(Probe)	1.00	root		funcs:max(Column#19)->Column#11, funcs:sum(Column#20)->Column#12, funcs:count(Column#21)->Column#13
-    └─TableReader_36	1.00	root		data:StreamAgg_24
-      └─StreamAgg_24	1.00	cop[tikv]		funcs:max(test.t2.c1)->Column#19, funcs:sum(isnull(test.t2.c1))->Column#20, funcs:count(1)->Column#21
-        └─Selection_34	10.00	cop[tikv]		eq(test.t2.c2, test.t1.c2)
-          └─TableFullScan_33	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  └─StreamAgg_35(Probe)	10000.00	root		funcs:max(Column#19)->Column#11, funcs:sum(Column#20)->Column#12, funcs:count(Column#21)->Column#13
+    └─TableReader_36	10000.00	root		data:StreamAgg_24
+      └─StreamAgg_24	10000.00	cop[tikv]		funcs:max(test.t2.c1)->Column#19, funcs:sum(isnull(test.t2.c1))->Column#20, funcs:count(1)->Column#21
+        └─Selection_34	100000.00	cop[tikv]		eq(test.t2.c2, test.t1.c2)
+          └─TableFullScan_33	100000000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 select * from t1 where c1 > all(with cte1 as (select c1 from t2 where t2.c2 = t1.c2) select c1 from cte1);
 c1	c2
 2	1
@@ -792,10 +792,10 @@ with cte1 as (select 1), cte2 as (select 2) select * from cte1 union (with cte2 
 explain with cte1 as (select 1), cte2 as (select 2) select * from cte1 union (with cte2 as (select 3) select * from cte2 union all select * from cte2);
 id	estRows	task	access object	operator info
 HashAgg_24	3.00	root		group by:Column#9, funcs:firstrow(Column#9)->Column#9
-└─Union_25	3.00	root
+└─Union_25	3.00	root		
   ├─Projection_26	1.00	root		1->Column#9
   │ └─TableDual_27	1.00	root		rows:1
-  └─Union_29	2.00	root
+  └─Union_29	2.00	root		
     ├─CTEFullScan_31	1.00	root	CTE:cte2	data:CTE_2
     └─CTEFullScan_33	1.00	root	CTE:cte2	data:CTE_2
 CTE_2	1.00	root		Non-Recursive CTE
