@@ -3336,9 +3336,6 @@ func TestPartitionErrorCode(t *testing.T) {
 		);`)
 	tk.MustGetDBError("alter table t_part coalesce partition 4;", dbterror.ErrCoalesceOnlyOnHashPartition)
 
-	tk.MustGetErrCode(`alter table t_part reorganize partition p0, p1 into (
-			partition p0 values less than (1980));`, errno.ErrUnsupportedDDLOperation)
-
 	tk.MustGetErrCode("alter table t_part check partition p0, p1;", errno.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t_part optimize partition p0,p1;", errno.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t_part rebuild partition p0,p1;", errno.ErrUnsupportedDDLOperation)
@@ -4857,4 +4854,59 @@ func TestReorganizeListPartition(t *testing.T) {
 		"(PARTITION `p0` VALUES IN (12,51,13),\n" +
 		" PARTITION `pa` VALUES IN (45,23,15),\n" +
 		" PARTITION `p2` VALUES IN (24,63))"))
+}
+
+func TestReorgPartitionConcurrent(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	schemaName := "ReorgPartConcurrent"
+	tk.MustExec("create database " + schemaName)
+	tk.MustExec("use " + schemaName)
+	tk.MustExec(`create table t (a int unsigned PRIMARY KEY, b varchar(255), c int, key (b), key (c,b))` +
+		` partition by range (a) ` +
+		`(partition p0 values less than (10),` +
+		` partition p1 values less than (20),` +
+		` partition pMax values less than (MAXVALUE))`)
+	tk.MustExec(`insert into t values (1,"1",1), (12,"12",21),(23,"23",32),(34,"34",43),(45,"45",54),(56,"56",65)`)
+	dom := domain.GetDomain(tk.Session())
+	originHook := dom.DDL().GetHook()
+	defer dom.DDL().SetHook(originHook)
+	hook := &ddl.TestDDLCallback{Do: dom}
+	dom.DDL().SetHook(hook)
+
+	wait := make(chan bool)
+	defer close(wait)
+
+	injected := false
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.Type == model.ActionReorganizePartition && job.SchemaState == model.StateWriteReorganization && !injected {
+			injected = true
+			<-wait
+			<-wait
+		}
+	}
+	alterErr := make(chan error, 1)
+	go backgroundExec(store, schemaName, "alter table t reorganize partition p1 into (partition p1a values less than (15), partition p1b values less than (20))", alterErr)
+	wait <- true
+	tk.MustExec(`insert into t values (14, "14", 14),(15, "15",15)`)
+	wait <- true
+	require.NoError(t, <-alterErr)
+	tk.MustQuery(`select * from t where c between 10 and 22`).Sort().Check(testkit.Rows(""+
+		"12 12 21",
+		"14 14 14",
+		"15 15 15"))
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(10) unsigned NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  `c` int(11) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+		"  KEY `b` (`b`),\n" +
+		"  KEY `c` (`c`,`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE (`a`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (10),\n" +
+		" PARTITION `p1a` VALUES LESS THAN (15),\n" +
+		" PARTITION `p1b` VALUES LESS THAN (20),\n" +
+		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
 }

@@ -3462,12 +3462,9 @@ func (builder *dataReaderBuilder) prunePartitionForInnerExecutor(tbl table.Table
 
 	// check whether can runtime prune.
 	type partitionExpr interface {
-		PartitionExpr() (*tables.PartitionExpr, error)
+		PartitionExpr() *tables.PartitionExpr
 	}
-	pe, err := tbl.(partitionExpr).PartitionExpr()
-	if err != nil {
-		return nil, false, nil, err
-	}
+	pe := tbl.(partitionExpr).PartitionExpr()
 
 	// recalculate key column offsets
 	if len(lookUpContent) == 0 {
