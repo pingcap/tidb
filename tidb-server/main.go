@@ -788,8 +788,9 @@ func setupGCTuner() {
 	if err != nil {
 		log.Fatal("setupGCTuner failed", zap.Error(err))
 	}
-	threshold := limit * 7 / 10
-	gctuner.Tuning(threshold)
+
+	threshold := float64(limit) * (variable.DefTiDBServerMemoryLimitGCTrigger - variable.DefTiDBGOGCTunerThresholdFactor)
+	gctuner.Tuning(uint64(threshold))
 }
 
 func closeDomainAndStorage(storage kv.Storage, dom *domain.Domain) {

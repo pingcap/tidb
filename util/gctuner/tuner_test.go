@@ -87,7 +87,7 @@ func TestCalcGCPercent(t *testing.T) {
 	require.Equal(t, uint32(300), calcGCPercent(1*gb, 4*gb))
 	require.Equal(t, uint32(166), calcGCPercent(1.5*gb, 4*gb))
 	require.Equal(t, uint32(100), calcGCPercent(2*gb, 4*gb))
-	require.Equal(t, uint32(33), calcGCPercent(3*gb, 4*gb))
+	require.Equal(t, uint32(100), calcGCPercent(3*gb, 4*gb))
 	require.Equal(t, MinGCPercent, calcGCPercent(4*gb, 4*gb))
 	require.Equal(t, MinGCPercent, calcGCPercent(5*gb, 4*gb))
 }

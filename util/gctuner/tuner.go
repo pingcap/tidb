@@ -27,7 +27,7 @@ const (
 	// MaxGCPercent is the default max cost of memory.
 	MaxGCPercent uint32 = 500
 	// MinGCPercent is the default min cost of memory.
-	MinGCPercent uint32 = 20
+	MinGCPercent uint32 = 100
 )
 
 var defaultGCPercent uint32 = 100
@@ -46,7 +46,7 @@ func SetDefaultGOGC() {
 	util.SetGOGC(int(defaultGCPercent))
 }
 
-// Tuning sets the threshold of heap which will be respect by gc tuner.
+// Tuning sets the threshold of heap which will be respect by gogc tuner.
 // When Tuning, the env GOGC will not be take effect.
 // threshold: disable tuning if threshold == 0
 func Tuning(threshold uint64) {
