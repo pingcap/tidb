@@ -79,32 +79,31 @@ type memoryUsageAlarm struct {
 	lastRecordMemUsed             uint64
 	memoryUsageAlarmRatio         float64
 	memoryUsageAlarmKeepRecordNum int64
-	serverMemoryQuota             uint64
-	isServerMemoryQuotaSet        bool
+	ServerMemoryLimit             uint64
+	isServerMemoryLimitSet        bool
 	initialized                   bool
 }
 
 func (record *memoryUsageAlarm) updateVariable() {
 	record.memoryUsageAlarmRatio = variable.MemoryUsageAlarmRatio.Load()
 	record.memoryUsageAlarmKeepRecordNum = variable.MemoryUsageAlarmKeepRecordNum.Load()
-}
-
-func (record *memoryUsageAlarm) initMemoryUsageAlarmRecord() {
-	record.memoryUsageAlarmRatio = variable.MemoryUsageAlarmRatio.Load()
-	record.memoryUsageAlarmKeepRecordNum = variable.MemoryUsageAlarmKeepRecordNum.Load()
-	if quota := config.GetGlobalConfig().Performance.ServerMemoryQuota; quota != 0 {
-		record.serverMemoryQuota = quota
-		record.isServerMemoryQuotaSet = true
+	record.ServerMemoryLimit = memory.ServerMemoryLimit.Load()
+	if record.ServerMemoryLimit != 0 {
+		record.isServerMemoryLimitSet = true
 	} else {
-		record.serverMemoryQuota, record.err = memory.MemTotal()
+		record.ServerMemoryLimit, record.err = memory.MemTotal()
 		if record.err != nil {
 			logutil.BgLogger().Error("get system total memory fail", zap.Error(record.err))
 			return
 		}
-		record.isServerMemoryQuotaSet = false
+		record.isServerMemoryLimitSet = false
 	}
+}
+
+func (record *memoryUsageAlarm) initMemoryUsageAlarmRecord() {
+	record.updateVariable()
 	record.lastCheckTime = time.Time{}
-	record.lastRecordMemUsed = uint64(float64(record.serverMemoryQuota) * record.memoryUsageAlarmRatio)
+	record.lastRecordMemUsed = uint64(float64(record.ServerMemoryLimit) * record.memoryUsageAlarmRatio)
 	tidbLogDir, _ := filepath.Split(config.GetGlobalConfig().Log.File.Filename)
 	record.baseRecordDir = filepath.Join(tidbLogDir, "oom_record")
 	if record.err = disk.CheckAndCreateDir(record.baseRecordDir); record.err != nil {
@@ -142,7 +141,7 @@ func (record *memoryUsageAlarm) alarm4ExcessiveMemUsage(sm util.SessionManager) 
 	var memoryUsage uint64
 	instanceStats := &runtime.MemStats{}
 	runtime.ReadMemStats(instanceStats)
-	if record.isServerMemoryQuotaSet {
+	if record.isServerMemoryLimitSet {
 		memoryUsage = instanceStats.HeapAlloc
 	} else {
 		memoryUsage, record.err = memory.MemUsed()
@@ -181,7 +180,7 @@ func (record *memoryUsageAlarm) needRecord(memoryUsage uint64) (bool, AlarmReaso
 	// At least 60 seconds between two recordings that memory usage is less than threshold (default 70% system memory).
 	// If the memory is still exceeded, only records once.
 	// If the memory used ratio recorded this time is 0.1 higher than last time, we will force record this time.
-	if float64(memoryUsage) <= float64(record.serverMemoryQuota)*record.memoryUsageAlarmRatio {
+	if float64(memoryUsage) <= float64(record.ServerMemoryLimit)*record.memoryUsageAlarmRatio {
 		return false, NoReason
 	}
 
@@ -190,7 +189,7 @@ func (record *memoryUsageAlarm) needRecord(memoryUsage uint64) (bool, AlarmReaso
 	if interval > 60*time.Second {
 		return true, ExceedAlarmRatio
 	}
-	if float64(memDiff) > 0.1*float64(record.serverMemoryQuota) {
+	if float64(memDiff) > 0.1*float64(record.ServerMemoryLimit) {
 		return true, GrowTooFast
 	}
 	return false, NoReason
@@ -198,12 +197,12 @@ func (record *memoryUsageAlarm) needRecord(memoryUsage uint64) (bool, AlarmReaso
 
 func (record *memoryUsageAlarm) doRecord(memUsage uint64, instanceMemoryUsage uint64, sm util.SessionManager, alarmReason AlarmReason) {
 	fields := make([]zap.Field, 0, 6)
-	fields = append(fields, zap.Bool("is server-memory-quota set", record.isServerMemoryQuotaSet))
-	if record.isServerMemoryQuotaSet {
-		fields = append(fields, zap.Any("server-memory-quota", record.serverMemoryQuota))
+	fields = append(fields, zap.Bool("is server-memory-limit set", record.isServerMemoryLimitSet))
+	if record.isServerMemoryLimitSet {
+		fields = append(fields, zap.Any("server-memory-limit", record.ServerMemoryLimit))
 		fields = append(fields, zap.Any("tidb-server memory usage", memUsage))
 	} else {
-		fields = append(fields, zap.Any("system memory total", record.serverMemoryQuota))
+		fields = append(fields, zap.Any("system memory total", record.ServerMemoryLimit))
 		fields = append(fields, zap.Any("system memory usage", memUsage))
 		fields = append(fields, zap.Any("tidb-server memory usage", instanceMemoryUsage))
 	}
@@ -232,16 +231,6 @@ func (record *memoryUsageAlarm) tryRemoveRedundantRecords() {
 		}
 		*filename = (*filename)[1:]
 	}
-}
-
-func getRelevantSystemVariableBuf() string {
-	var buf strings.Builder
-	buf.WriteString("System variables : \n")
-	buf.WriteString(fmt.Sprintf("oom-action: %v \n", config.GetGlobalConfig().OOMAction))
-	buf.WriteString(fmt.Sprintf("mem-quota-query : %v \n", config.GetGlobalConfig().MemQuotaQuery))
-	buf.WriteString(fmt.Sprintf("server-memory-quota : %v \n", config.GetGlobalConfig().Performance.ServerMemoryQuota))
-	buf.WriteString("\n")
-	return buf.String()
 }
 
 func getCurrentAnalyzePlan(info *util.ProcessInfo) string {
@@ -281,7 +270,10 @@ func (record *memoryUsageAlarm) getTop10SqlInfo(cmp func(i, j *util.ProcessInfo)
 	for i, info := range list {
 		buf.WriteString(fmt.Sprintf("SQL %v: \n", i))
 		fields := util.GenLogFields(record.lastCheckTime.Sub(info.Time), info, false)
-		fields = append(fields, zap.Int("analyze-version", info.OOMAlarmVariablesInfo.SessionAnalyzeVersion))
+		fields = append(fields, zap.String("tidb_mem_oom_action", variable.OOMAction.Load()))
+		fields = append(fields, zap.Uint64("tidb_server_memory_limit", memory.ServerMemoryLimit.Load()))
+		fields = append(fields, zap.Int64("tidb_mem_quota_query", info.OOMAlarmVariablesInfo.SessionMemQuotaQuery))
+		fields = append(fields, zap.Int("tidb_analyze_version", info.OOMAlarmVariablesInfo.SessionAnalyzeVersion))
 		fields = append(fields, zap.Bool("tidb_enable_rate_limit_action", info.OOMAlarmVariablesInfo.SessionEnabledRateLimitAction))
 		fields = append(fields, zap.String("current_analyze_plan", getCurrentAnalyzePlan(info)))
 		for _, field := range fields {
@@ -334,9 +326,6 @@ func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager, recordDir stri
 			logutil.BgLogger().Error("close oom record file fail", zap.Error(err))
 		}
 	}()
-	if _, err = f.WriteString(getRelevantSystemVariableBuf()); err != nil {
-		logutil.BgLogger().Error("write oom record file fail", zap.Error(err))
-	}
 	record.printTop10SqlInfo(pinfo, f)
 	return nil
 }
