@@ -190,12 +190,10 @@ func (h *memoryDebugModeHandler) genInfo(status string, needProfile bool, heapIn
 
 func updateTriggerIntervalByHeapInUse(heapInUse uint64) (time.Duration, int) {
 	const GB uint64 = 1 << 30
-	if heapInUse < 20*GB {
+	if heapInUse < 30*GB {
 		return 5 * time.Second, 6
-	} else if heapInUse < 30*GB {
-		return 10 * time.Second, 3
 	} else if heapInUse < 40*GB {
-		return 20 * time.Second, 2
+		return 15 * time.Second, 2
 	} else {
 		return 30 * time.Second, 1
 	}
