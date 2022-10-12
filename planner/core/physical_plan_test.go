@@ -2378,3 +2378,13 @@ func TestNoDecorrelateHint(t *testing.T) {
 		tk.MustQuery("show warnings").Check(testkit.Rows(output[i].Warning...))
 	}
 }
+
+func TestIssue38305(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("create table t0(c0 int)")
+	tk.MustExec("alter table t0 add primary key(c0)")
+	tk.MustExec("select t0.c0 from t0 where t0.c0 group by true having (case t0.c0 when true then (t0.c0) else elt(sum(t0.c0), null) end)")
+}
