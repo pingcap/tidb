@@ -64,6 +64,7 @@ import (
 	"github.com/pingcap/tidb/util/engine"
 	"github.com/pingcap/tidb/util/expensivequery"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/memoryusagealarm"
 	"github.com/pingcap/tidb/util/servermemorylimit"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
@@ -105,6 +106,7 @@ type Domain struct {
 	sysVarCache             sysVarCache // replaces GlobalVariableCache
 	slowQuery               *topNSlowQueries
 	expensiveQueryHandle    *expensivequery.Handle
+	memoryUsageAlarmHandle  *memoryusagealarm.Handle
 	serverMemoryLimitHandle *servermemorylimit.Handle
 	wg                      util.WaitGroupWrapper
 	statsUpdating           atomicutil.Int32
@@ -887,9 +889,10 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)
 	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do.exit)
+	do.memoryUsageAlarmHandle = memoryusagealarm.NewMemoryUsageAlarmHandle(do.exit)
 	do.serverMemoryLimitHandle = servermemorylimit.NewServerMemoryLimitHandle(do.exit)
 	do.sysProcesses = SysProcesses{mu: &sync.RWMutex{}, procMap: make(map[uint64]sessionctx.Context)}
-	variable.SetStatsCacheCapacity.Store(do.SetStatsCacheCapacity)
+	do.initDomainSysVars()
 	return do
 }
 
@@ -1823,6 +1826,11 @@ func (do *Domain) gcAnalyzeHistory(owner owner.Manager) {
 // ExpensiveQueryHandle returns the expensive query handle.
 func (do *Domain) ExpensiveQueryHandle() *expensivequery.Handle {
 	return do.expensiveQueryHandle
+}
+
+// MemoryUsageAlarmHandle returns the memory usage alarm handle.
+func (do *Domain) MemoryUsageAlarmHandle() *memoryusagealarm.Handle {
+	return do.memoryUsageAlarmHandle
 }
 
 // ServerMemoryLimitHandle returns the expensive query handle.
