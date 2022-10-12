@@ -24,6 +24,7 @@ go_test(
     ],
     embed = [":gctuner"],
     flaky = True,
+    race = "on",
     deps = [
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
