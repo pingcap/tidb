@@ -477,9 +477,9 @@
           "├─TableReader(Build) 9990.00 root  data:Selection",
           "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
           "│   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
-          "└─TableReader(Probe) 0.00 root  data:Selection",
-          "  └─Selection 0.00 cop[tikv]  eq(test.t4.b, 1)",
-          "    └─TableRangeScan 1.00 cop[tikv] table:t4 range: decided by [eq(test.t4.a, test.t3.a) eq(test.t4.b, 1)], keep order:false, stats:pseudo"
+          "└─TableReader(Probe) 9.99 root  data:Selection",
+          "  └─Selection 9.99 cop[tikv]  eq(test.t4.b, 1)",
+          "    └─TableRangeScan 9990.00 cop[tikv] table:t4 range: decided by [eq(test.t4.a, test.t3.a) eq(test.t4.b, 1)], keep order:false, stats:pseudo"
         ]
       },
       {
@@ -489,9 +489,9 @@
           "├─TableReader(Build) 9990.00 root  data:Selection",
           "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.b))",
           "│   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
-          "└─TableReader(Probe) 0.00 root  data:Selection",
-          "  └─Selection 0.00 cop[tikv]  eq(test.t4.a, 1)",
-          "    └─TableRangeScan 1.00 cop[tikv] table:t4 range: decided by [eq(test.t4.b, test.t3.b) eq(test.t4.a, 1)], keep order:false, stats:pseudo"
+          "└─TableReader(Probe) 9.99 root  data:Selection",
+          "  └─Selection 9.99 cop[tikv]  eq(test.t4.a, 1)",
+          "    └─TableRangeScan 9990.00 cop[tikv] table:t4 range: decided by [eq(test.t4.b, test.t3.b) eq(test.t4.a, 1)], keep order:false, stats:pseudo"
         ]
       }
     ]
@@ -7406,11 +7406,11 @@
           "├─TableReader(Build) 9980.01 root  data:Selection",
           "│ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.e)), not(isnull(test.t2.g))",
           "│   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "└─IndexLookUp(Probe) 0.00 root  ",
-          "  ├─Selection(Build) 0.03 cop[tikv]  not(isnull(test.t1.b))",
-          "  │ └─IndexRangeScan 0.03 cop[tikv] table:t1, index:idx_a_b_c_d(a, b, c, d) range: decided by [eq(test.t1.b, test.t2.e) eq(test.t1.d, test.t2.g) in(test.t1.a, 1, 3) in(test.t1.c, aaa, bbb)], keep order:false, stats:pseudo",
-          "  └─Selection(Probe) 0.00 cop[tikv]  in(test.t1.c, \"aaa\", \"bbb\"), not(isnull(test.t1.d))",
-          "    └─TableRowIDScan 0.03 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "└─IndexLookUp(Probe) 0.50 root  ",
+          "  ├─Selection(Build) 249.75 cop[tikv]  not(isnull(test.t1.b))",
+          "  │ └─IndexRangeScan 250.00 cop[tikv] table:t1, index:idx_a_b_c_d(a, b, c, d) range: decided by [eq(test.t1.b, test.t2.e) eq(test.t1.d, test.t2.g) in(test.t1.a, 1, 3) in(test.t1.c, aaa, bbb)], keep order:false, stats:pseudo",
+          "  └─Selection(Probe) 0.50 cop[tikv]  in(test.t1.c, \"aaa\", \"bbb\"), not(isnull(test.t1.d))",
+          "    └─TableRowIDScan 249.75 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -7426,11 +7426,11 @@
           "├─TableReader(Build) 9980.01 root  data:Selection",
           "│ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.e)), not(isnull(test.t2.g))",
           "│   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "└─IndexLookUp(Probe) 0.00 root  ",
-          "  ├─Selection(Build) 0.03 cop[tikv]  not(isnull(test.t1.b))",
-          "  │ └─IndexRangeScan 0.03 cop[tikv] table:t1, index:idx_a_b_c_d(a, b, c, d) range: decided by [eq(test.t1.b, test.t2.e) in(test.t1.a, 1, 3) in(test.t1.c, aaa, bbb)], keep order:false, stats:pseudo",
-          "  └─Selection(Probe) 0.00 cop[tikv]  in(test.t1.c, \"aaa\", \"bbb\"), not(isnull(test.t1.d))",
-          "    └─TableRowIDScan 0.03 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "└─IndexLookUp(Probe) 0.50 root  ",
+          "  ├─Selection(Build) 249.75 cop[tikv]  not(isnull(test.t1.b))",
+          "  │ └─IndexRangeScan 250.00 cop[tikv] table:t1, index:idx_a_b_c_d(a, b, c, d) range: decided by [eq(test.t1.b, test.t2.e) in(test.t1.a, 1, 3) in(test.t1.c, aaa, bbb)], keep order:false, stats:pseudo",
+          "  └─Selection(Probe) 0.50 cop[tikv]  in(test.t1.c, \"aaa\", \"bbb\"), not(isnull(test.t1.d))",
+          "    └─TableRowIDScan 249.75 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": [
           "Memory capacity of 2900 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen"
@@ -7448,11 +7448,11 @@
           "├─TableReader(Build) 9980.01 root  data:Selection",
           "│ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.e)), not(isnull(test.t2.g))",
           "│   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "└─IndexLookUp(Probe) 0.00 root  ",
-          "  ├─Selection(Build) 0.03 cop[tikv]  not(isnull(test.t1.b))",
-          "  │ └─IndexRangeScan 0.03 cop[tikv] table:t1, index:idx_a_b_c_d(a, b, c, d) range: decided by [eq(test.t1.b, test.t2.e) in(test.t1.a, 1, 3)], keep order:false, stats:pseudo",
-          "  └─Selection(Probe) 0.00 cop[tikv]  in(test.t1.c, \"aaa\", \"bbb\"), not(isnull(test.t1.d))",
-          "    └─TableRowIDScan 0.03 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "└─IndexLookUp(Probe) 0.50 root  ",
+          "  ├─Selection(Build) 249.75 cop[tikv]  not(isnull(test.t1.b))",
+          "  │ └─IndexRangeScan 250.00 cop[tikv] table:t1, index:idx_a_b_c_d(a, b, c, d) range: decided by [eq(test.t1.b, test.t2.e) in(test.t1.a, 1, 3)], keep order:false, stats:pseudo",
+          "  └─Selection(Probe) 0.50 cop[tikv]  in(test.t1.c, \"aaa\", \"bbb\"), not(isnull(test.t1.d))",
+          "    └─TableRowIDScan 249.75 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": [
           "Memory capacity of 2300 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen"
@@ -7493,10 +7493,10 @@
           "├─TableReader(Build) 9990.00 root  data:Selection",
           "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.e))",
           "│   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "└─IndexLookUp(Probe) 0.03 root  ",
-          "  ├─Selection(Build) 0.03 cop[tikv]  not(isnull(test.t1.a))",
-          "  │ └─IndexRangeScan 0.03 cop[tikv] table:t1, index:idx_a_b_c_d(a, b, c, d) range: decided by [eq(test.t1.a, test.t2.e) gt(test.t1.b, 1) lt(test.t1.b, 10)], keep order:false, stats:pseudo",
-          "  └─TableRowIDScan(Probe) 0.03 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "└─IndexLookUp(Probe) 312.19 root  ",
+          "  ├─Selection(Build) 312.19 cop[tikv]  not(isnull(test.t1.a))",
+          "  │ └─IndexRangeScan 312.50 cop[tikv] table:t1, index:idx_a_b_c_d(a, b, c, d) range: decided by [eq(test.t1.a, test.t2.e) gt(test.t1.b, 1) lt(test.t1.b, 10)], keep order:false, stats:pseudo",
+          "  └─TableRowIDScan(Probe) 312.19 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -7512,10 +7512,10 @@
           "├─TableReader(Build) 9990.00 root  data:Selection",
           "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.e))",
           "│   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "└─IndexLookUp(Probe) 0.03 root  ",
-          "  ├─Selection(Build) 0.03 cop[tikv]  gt(test.t1.b, 1), lt(test.t1.b, 10), not(isnull(test.t1.a))",
-          "  │ └─IndexRangeScan 1.25 cop[tikv] table:t1, index:idx_a_b_c_d(a, b, c, d) range: decided by [eq(test.t1.a, test.t2.e)], keep order:false, stats:pseudo",
-          "  └─TableRowIDScan(Probe) 0.03 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "└─IndexLookUp(Probe) 312.19 root  ",
+          "  ├─Selection(Build) 312.19 cop[tikv]  gt(test.t1.b, 1), lt(test.t1.b, 10), not(isnull(test.t1.a))",
+          "  │ └─IndexRangeScan 12500.00 cop[tikv] table:t1, index:idx_a_b_c_d(a, b, c, d) range: decided by [eq(test.t1.a, test.t2.e)], keep order:false, stats:pseudo",
+          "  └─TableRowIDScan(Probe) 312.19 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": [
           "Memory capacity of 300 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen"
@@ -7533,10 +7533,10 @@
           "├─TableReader(Build) 9980.01 root  data:Selection",
           "│ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.e)), not(isnull(test.t2.f))",
           "│   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "└─IndexLookUp(Probe) 1.25 root  ",
-          "  ├─Selection(Build) 1.25 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
-          "  │ └─IndexRangeScan 1.25 cop[tikv] table:t1, index:idx_a_b_c_d(a, b, c, d) range: decided by [eq(test.t1.a, test.t2.e) gt(test.t1.b, test.t2.f) lt(test.t1.b, plus(test.t2.f, 10))], keep order:false, stats:pseudo",
-          "  └─TableRowIDScan(Probe) 1.25 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "└─IndexLookUp(Probe) 12475.01 root  ",
+          "  ├─Selection(Build) 12475.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "  │ └─IndexRangeScan 12500.00 cop[tikv] table:t1, index:idx_a_b_c_d(a, b, c, d) range: decided by [eq(test.t1.a, test.t2.e) gt(test.t1.b, test.t2.f) lt(test.t1.b, plus(test.t2.f, 10))], keep order:false, stats:pseudo",
+          "  └─TableRowIDScan(Probe) 12475.01 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -7552,10 +7552,10 @@
           "├─TableReader(Build) 9980.01 root  data:Selection",
           "│ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.e)), not(isnull(test.t2.f))",
           "│   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "└─IndexLookUp(Probe) 1.25 root  ",
-          "  ├─Selection(Build) 1.25 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
-          "  │ └─IndexRangeScan 1.25 cop[tikv] table:t1, index:idx_a_b_c_d(a, b, c, d) range: decided by [eq(test.t1.a, test.t2.e)], keep order:false, stats:pseudo",
-          "  └─TableRowIDScan(Probe) 1.25 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "└─IndexLookUp(Probe) 12475.01 root  ",
+          "  ├─Selection(Build) 12475.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "  │ └─IndexRangeScan 12500.00 cop[tikv] table:t1, index:idx_a_b_c_d(a, b, c, d) range: decided by [eq(test.t1.a, test.t2.e)], keep order:false, stats:pseudo",
+          "  └─TableRowIDScan(Probe) 12475.01 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": [
           "Memory capacity of 300 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen"
