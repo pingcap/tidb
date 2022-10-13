@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
@@ -1639,6 +1640,14 @@ func buildPointDeletePlan(ctx sessionctx.Context, pointPlan PhysicalPlan, dbName
 			},
 		},
 	}.Init(ctx)
+	var err error
+	is := sessiontxn.GetTxnManager(ctx).GetTxnInfoSchema()
+	t, _ := is.TableByID(tbl.ID)
+	tblID2Table := map[int64]table.Table{tbl.ID: t}
+	err = delPlan.buildOnDeleteFKChecks(ctx, is, tblID2Table)
+	if err != nil {
+		return nil
+	}
 	return delPlan
 }
 
