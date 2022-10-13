@@ -42,6 +42,7 @@ go_library(
         "//util/dbterror",
         "//util/disk",
         "//util/execdetails",
+        "//util/gctuner",
         "//util/kvcache",
         "//util/logutil",
         "//util/mathutil",

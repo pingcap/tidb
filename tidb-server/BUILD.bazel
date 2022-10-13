@@ -36,6 +36,7 @@ go_library(
         "//util/deadlockhistory",
         "//util/disk",
         "//util/domainutil",
+        "//util/gctuner",
         "//util/kvcache",
         "//util/logutil",
         "//util/memory",

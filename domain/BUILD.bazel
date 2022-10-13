@@ -4,6 +4,7 @@ go_library(
     name = "domain",
     srcs = [
         "domain.go",
+        "domain_sysvars.go",
         "domainctx.go",
         "optimize_trace.go",
         "plan_replayer.go",
@@ -51,6 +52,7 @@ go_library(
         "//util/execdetails",
         "//util/expensivequery",
         "//util/logutil",
+        "//util/memoryusagealarm",
         "//util/servermemorylimit",
         "//util/sqlexec",
         "@com_github_ngaut_pools//:pools",
