@@ -110,7 +110,7 @@ func (p pbProgress) Wait(ctx context.Context) error {
 	}
 }
 
-// ProgressWaiter is the extended `Progress``: which provides a `wait` method to
+// ProgressWaiter is the extended `Progress“: which provides a `wait` method to
 // allow caller wait until all unit in the progress finished.
 type ProgressWaiter interface {
 	Progress
@@ -137,7 +137,9 @@ func (ops ConsoleOperations) OutputIsTTY() bool {
 
 // StartProgressBar starts a progress bar with the console operations.
 // Note: This function has overlapped function with `glue.StartProgress`, however this supports display extra fields
-//       after success, and implement by `mpb` (instead of `pb`).
+//
+//	after success, and implement by `mpb` (instead of `pb`).
+//
 // Note': Maybe replace the old `StartProgress` with `mpb` too.
 func (ops ConsoleOperations) StartProgressBar(title string, total int, extraFields ...ExtraField) ProgressWaiter {
 	console := ops.Out()
@@ -218,7 +220,7 @@ func (ops ConsoleOperations) IsInteractive() bool {
 	return term.IsTerminal(int(f.Fd()))
 }
 
-func (ops ConsoleOperations) Scanln(args ...interface{}) (int ,error) {
+func (ops ConsoleOperations) Scanln(args ...interface{}) (int, error) {
 	return fmt.Fscanln(ops.In(), args...)
 }
 
@@ -245,7 +247,7 @@ func (ops ConsoleOperations) Print(args ...interface{}) {
 }
 
 func (ops ConsoleOperations) Println(args ...interface{}) {
-	_, _ =fmt.Fprintln(ops.Out(), args...)
+	_, _ = fmt.Fprintln(ops.Out(), args...)
 }
 
 func (ops ConsoleOperations) Printf(format string, args ...interface{}) {
@@ -311,7 +313,6 @@ type ConsoleGlue interface {
 	// Usually is should be an *os.File.
 	In() io.Reader
 }
-
 
 type NoOPConsoleGlue struct{}
 
