@@ -584,6 +584,9 @@ func (a *ExecStmt) handleForeignKeyTrigger(ctx context.Context, e Executor, isPe
 }
 
 func (a *ExecStmt) handleForeignKeyCascade(ctx context.Context, fkc *FKCascadeExec, isPessimistic bool) error {
+	if len(fkc.fkValues) == 0 {
+		return nil
+	}
 	e, err := fkc.buildExecutor(ctx)
 	if err != nil || e == nil {
 		return err

@@ -1,0 +1,626 @@
+goroutine 744851 [running]:
+runtime/pprof.writeGoroutineStacks({0x75ad7a0, 0xc0222521c0})
+	/usr/local/go/src/runtime/pprof/pprof.go:692 +0x70
+runtime/pprof.writeGoroutine({0x75ad7a0?, 0xc0222521c0?}, 0xc0043456c0?)
+	/usr/local/go/src/runtime/pprof/pprof.go:681 +0x2b
+runtime/pprof.(*Profile).WriteTo(0x6c01b60?, {0x75ad7a0?, 0xc0222521c0?}, 0xc?)
+	/usr/local/go/src/runtime/pprof/pprof.go:330 +0x14b
+net/http/pprof.handler.ServeHTTP({0xc0006c0101, 0x9}, {0x75cc890, 0xc0222521c0}, 0x2e302e302e373231?)
+	/usr/local/go/src/net/http/pprof/pprof.go:253 +0x4a5
+net/http/pprof.Index({0x75cc890?, 0xc0222521c0}, 0xc005b40100)
+	/usr/local/go/src/net/http/pprof/pprof.go:371 +0x13e
+net/http.HandlerFunc.ServeHTTP(0xc0317edaf0?, {0x75cc890?, 0xc0222521c0?}, 0x0?)
+	/usr/local/go/src/net/http/server.go:2109 +0x2f
+net/http.(*ServeMux).ServeHTTP(0xc0006c010b?, {0x75cc890, 0xc0222521c0}, 0xc005b40100)
+	/usr/local/go/src/net/http/server.go:2487 +0x149
+net/http.serverHandler.ServeHTTP({0xc03580c7b0?}, {0x75cc890, 0xc0222521c0}, 0xc005b40100)
+	/usr/local/go/src/net/http/server.go:2947 +0x30c
+net/http.(*conn).serve(0xc000bc0640, {0x75cf6f8, 0xc007548f30})
+	/usr/local/go/src/net/http/server.go:1991 +0x607
+created by net/http.(*Server).Serve
+	/usr/local/go/src/net/http/server.go:3102 +0x4db
+
+goroutine 1 [chan receive]:
+testing.(*T).Run(0xc000194d00, {0x6f050bf?, 0x2aa7c8acf127?}, 0x6ff00e0)
+	/usr/local/go/src/testing/testing.go:1494 +0x37a
+testing.runTests.func1(0xc000194d00?)
+	/usr/local/go/src/testing/testing.go:1846 +0x6e
+testing.tRunner(0xc000194d00, 0xc000dbfb50)
+	/usr/local/go/src/testing/testing.go:1446 +0x10b
+testing.runTests(0xc0009be820?, {0x988dd80, 0xc, 0xc}, {0x0?, 0x0?, 0x98fdfc0?})
+	/usr/local/go/src/testing/testing.go:1844 +0x456
+testing.(*M).Run(0xc0009be820)
+	/usr/local/go/src/testing/testing.go:1726 +0x5d9
+go.uber.org/goleak.VerifyTestMain({0x75adba0?, 0xc0009be820?}, {0xc0065e3e78, 0x4, 0x4})
+	/Users/cs/code/goread/pkg/mod/go.uber.org/goleak@v1.2.0/testmain.go:53 +0x6b
+github.com/pingcap/tidb/executor/fktest_test.TestMain(0xffffffffffffffff?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/fktest/main_test.go:42 +0x288
+main.main()
+	_testmain.go:71 +0x1d3
+
+goroutine 12 [select]:
+go.opencensus.io/stats/view.(*worker).start(0xc000a4ef00)
+	/Users/cs/code/goread/pkg/mod/go.opencensus.io@v0.23.1-0.20220331163232-052120675fac/stats/view/worker.go:292 +0xad
+created by go.opencensus.io/stats/view.init.0
+	/Users/cs/code/goread/pkg/mod/go.opencensus.io@v0.23.1-0.20220331163232-052120675fac/stats/view/worker.go:34 +0x8d
+
+goroutine 13 [chan receive]:
+github.com/golang/glog.(*loggingT).flushDaemon(0x0?)
+	/Users/cs/code/goread/pkg/mod/github.com/golang/glog@v1.0.0/glog.go:882 +0x6a
+created by github.com/golang/glog.init.0
+	/Users/cs/code/goread/pkg/mod/github.com/golang/glog@v1.0.0/glog.go:410 +0x1bf
+
+goroutine 73 [runnable]:
+context.propagateCancel({0x75cf650, 0xc024de0700}, {0x75b3750, 0xc023f16c80})
+	/usr/local/go/src/context/context.go:250 +0x233
+context.WithCancel({0x75cf650, 0xc024de0700})
+	/usr/local/go/src/context/context.go:237 +0xc5
+github.com/pingcap/tidb/executor.(*IndexLookUpExecutor).startTableWorker(0xc000b2a280, {0x75cf650, 0xc024de0700}, 0xc004a53f20)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/distsql.go:681 +0x1a5
+github.com/pingcap/tidb/executor.(*IndexLookUpExecutor).startWorkers(0xc000b2a280, {0x75cf6f8?, 0xc00573e1e0?}, 0x1a034d40?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/distsql.go:535 +0xc8
+github.com/pingcap/tidb/executor.(*IndexLookUpExecutor).Next(0xc000b2a280, {0x75cf6f8?, 0xc00573e1e0?}, 0xc00438fd10)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/distsql.go:755 +0x85
+github.com/pingcap/tidb/executor.Next({0x75cf6f8, 0xc00573e1e0}, {0x75d38c0, 0xc000b2a280}, 0xc00438fd10)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/executor.go:324 +0x4f3
+github.com/pingcap/tidb/executor.(*UnionScanExec).getSnapshotRow(0xc000be7340, {0x75cf6f8, 0xc00573e1e0})
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/union_scan.go:245 +0x145
+github.com/pingcap/tidb/executor.(*UnionScanExec).getOneRow(0xc000be7340, {0x75cf6f8?, 0xc00573e1e0?})
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/union_scan.go:197 +0x32
+github.com/pingcap/tidb/executor.(*UnionScanExec).Next(0xc000be7340, {0x75cf6f8, 0xc00573e1e0}, 0xc00438fdb0)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/union_scan.go:147 +0x1c5
+github.com/pingcap/tidb/executor.Next({0x75cf6f8, 0xc00573e1e0}, {0x75d4600, 0xc000be7340}, 0xc00438fdb0)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/executor.go:324 +0x4f3
+github.com/pingcap/tidb/executor.(*DeleteExec).deleteSingleTableByChunk(0xc000be3810, {0x75cf6f8, 0xc00573e1e0})
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/delete.go:111 +0x52b
+github.com/pingcap/tidb/executor.(*DeleteExec).Next(0x75cf6f8?, {0x75cf6f8?, 0xc00573e1e0?}, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/delete.go:59 +0x74
+github.com/pingcap/tidb/executor.Next({0x75cf6f8, 0xc00573e1e0}, {0x75d3700, 0xc000be3810}, 0xc00438fd60)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/executor.go:324 +0x4f3
+github.com/pingcap/tidb/executor.(*ExecStmt).next(0xc007133590, {0x75cf6f8, 0xc00573e1e0}, {0x75d3700, 0xc000be3810}, 0x63c5ee8?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:1014 +0x78
+github.com/pingcap/tidb/executor.(*ExecStmt).handleNoDelayExecutor(0xc007133590, {0x75cf6f8, 0xc00573e1e0}, {0x75d3700?, 0xc000be3810})
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:788 +0x5c7
+github.com/pingcap/tidb/executor.(*ExecStmt).handleNoDelay(0xc007133590, {0x75cf6f8, 0xc00573e1e0}, {0x75d3700?, 0xc000be3810?}, 0x0)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:636 +0x265
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyCascade(0x75d3700?, {0x75cf6f8, 0xc00573e1e0}, 0x75d3700?, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:595 +0xa7
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyTrigger(0xc007133590?, {0x75cf6f8, 0xc00573e1e0}, {0x75d3700?, 0xc000be31e0?}, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:578 +0x131
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyCascade(0x75d3700?, {0x75cf6f8, 0xc00573e1e0}, 0x75d3700?, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:599 +0xdc
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyTrigger(0xc007133590?, {0x75cf6f8, 0xc00573e1e0}, {0x75d3700?, 0xc000be2bb0?}, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:578 +0x131
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyCascade(0x75d3700?, {0x75cf6f8, 0xc00573e1e0}, 0x75d3700?, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:599 +0xdc
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyTrigger(0xc007133590?, {0x75cf6f8, 0xc00573e1e0}, {0x75d3700?, 0xc000be2580?}, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:578 +0x131
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyCascade(0x75d3700?, {0x75cf6f8, 0xc00573e1e0}, 0x75d3700?, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:599 +0xdc
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyTrigger(0xc007133590?, {0x75cf6f8, 0xc00573e1e0}, {0x75d3700?, 0xc000a47ef0?}, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:578 +0x131
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyCascade(0x75d3700?, {0x75cf6f8, 0xc00573e1e0}, 0x75d3700?, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:599 +0xdc
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyTrigger(0xc007133590?, {0x75cf6f8, 0xc00573e1e0}, {0x75d3700?, 0xc000c0b130?}, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:578 +0x131
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyCascade(0x75d3700?, {0x75cf6f8, 0xc00573e1e0}, 0x75d3700?, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:599 +0xdc
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyTrigger(0xc007133590?, {0x75cf6f8, 0xc00573e1e0}, {0x75d3700?, 0xc000c0ab00?}, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:578 +0x131
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyCascade(0x75d3700?, {0x75cf6f8, 0xc00573e1e0}, 0x75d3700?, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:599 +0xdc
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyTrigger(0xc007133590?, {0x75cf6f8, 0xc00573e1e0}, {0x75d3700?, 0xc000c0a4d0?}, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:578 +0x131
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyCascade(0x75d3700?, {0x75cf6f8, 0xc00573e1e0}, 0x75d3700?, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:599 +0xdc
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyTrigger(0xc007133590?, {0x75cf6f8, 0xc00573e1e0}, {0x75d3700?, 0xc000b78f20?}, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:578 +0x131
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyCascade(0x75d3700?, {0x75cf6f8, 0xc00573e1e0}, 0x75d3700?, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:599 +0xdc
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyTrigger(0xc007133590?, {0x75cf6f8, 0xc00573e1e0}, {0x75d3700?, 0xc00dd26bb0?}, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:578 +0x131
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyCascade(0x75d3700?, {0x75cf6f8, 0xc00573e1e0}, 0x75d3700?, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:599 +0xdc
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyTrigger(0xc007133590?, {0x75cf6f8, 0xc00573e1e0}, {0x75d3700?, 0xc006969e40?}, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:578 +0x131
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyCascade(0x75d3700?, {0x75cf6f8, 0xc00573e1e0}, 0x75d3700?, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:599 +0xdc
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyTrigger(0xc007133590?, {0x75cf6f8, 0xc00573e1e0}, {0x75d3700?, 0xc000b788f0?}, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:578 +0x131
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyCascade(0x75d3700?, {0x75cf6f8, 0xc00573e1e0}, 0x75d3700?, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:599 +0xdc
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyTrigger(0xc007133590?, {0x75cf6f8, 0xc00573e1e0}, {0x75d3700?, 0xc000b782c0?}, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:578 +0x131
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyCascade(0x75d3700?, {0x75cf6f8, 0xc00573e1e0}, 0x75d3700?, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:599 +0xdc
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyTrigger(0xc007133590?, {0x75cf6f8, 0xc00573e1e0}, {0x75d3700?, 0xc01a247c30?}, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:578 +0x131
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyCascade(0x75d3700?, {0x75cf6f8, 0xc00573e1e0}, 0x75d3700?, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:599 +0xdc
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyTrigger(0xc007133590?, {0x75cf6f8, 0xc00573e1e0}, {0x75d3700?, 0xc01a247550?}, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:578 +0x131
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyCascade(0x75d3700?, {0x75cf6f8, 0xc00573e1e0}, 0x75d3700?, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:599 +0xdc
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyTrigger(0xc007133590?, {0x75cf6f8, 0xc00573e1e0}, {0x75d3700?, 0xc01a246c60?}, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:578 +0x131
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyCascade(0x75d3700?, {0x75cf6f8, 0xc00573e1e0}, 0x75d3700?, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:599 +0xdc
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyTrigger(0xc007133590?, {0x75cf6f8, 0xc00573e1e0}, {0x75d3700?, 0xc00dd260b0?}, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:578 +0x131
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyCascade(0x75d3700?, {0x75cf6f8, 0xc00573e1e0}, 0x75d3700?, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:599 +0xdc
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyTrigger(0xc007133590?, {0x75cf6f8, 0xc00573e1e0}, {0x75d3700?, 0xc00d6d9130?}, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:578 +0x131
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyCascade(0x75d3700?, {0x75cf6f8, 0xc00573e1e0}, 0x75d3700?, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:599 +0xdc
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyTrigger(0xc007133590?, {0x75cf6f8, 0xc00573e1e0}, {0x75d3700?, 0xc006969290?}, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:578 +0x131
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyCascade(0x75d3700?, {0x75cf6f8, 0xc00573e1e0}, 0x75d3700?, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:599 +0xdc
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyTrigger(0xc007133590?, {0x75cf6f8, 0xc00573e1e0}, {0x75d3700?, 0xc00d6d8b00?}, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:578 +0x131
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyCascade(0x75d3700?, {0x75cf6f8, 0xc00573e1e0}, 0x75d3700?, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:599 +0xdc
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyTrigger(0xc007133590?, {0x75cf6f8, 0xc00573e1e0}, {0x75d3700?, 0xc00d6d84d0?}, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:578 +0x131
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyCascade(0x75d3700?, {0x75cf6f8, 0xc00573e1e0}, 0x75d3700?, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:599 +0xdc
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyTrigger(0xc007133590?, {0x75cf6f8, 0xc00573e1e0}, {0x75d3700?, 0xc00d5d1ce0?}, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:578 +0x131
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyCascade(0x75d3700?, {0x75cf6f8, 0xc00573e1e0}, 0x75d3700?, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:599 +0xdc
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyTrigger(0xc007133590?, {0x75cf6f8, 0xc00573e1e0}, {0x75d3700?, 0xc00d5d14a0?}, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:578 +0x131
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyCascade(0x75d3700?, {0x75cf6f8, 0xc00573e1e0}, 0x75d3700?, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:599 +0xdc
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyTrigger(0xc007133590?, {0x75cf6f8, 0xc00573e1e0}, {0x75d3700?, 0xc006968c60?}, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:578 +0x131
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyCascade(0x75d3700?, {0x75cf6f8, 0xc00573e1e0}, 0x75d3700?, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:599 +0xdc
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyTrigger(0xc007133590?, {0x75cf6f8, 0xc00573e1e0}, {0x75d3700?, 0xc00d5d0e70?}, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:578 +0x131
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyCascade(0x75d3700?, {0x75cf6f8, 0xc00573e1e0}, 0x75d3700?, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:599 +0xdc
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyTrigger(0xc007133590?, {0x75cf6f8, 0xc00573e1e0}, {0x75d3700?, 0xc00d5d0840?}, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:578 +0x131
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyCascade(0x75d3700?, {0x75cf6f8, 0xc00573e1e0}, 0x75d3700?, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:599 +0xdc
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyTrigger(0xc007133590?, {0x75cf6f8, 0xc00573e1e0}, {0x75d3700?, 0xc00d5d0210?}, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:578 +0x131
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyCascade(0x75d3700?, {0x75cf6f8, 0xc00573e1e0}, 0x75d3700?, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:599 +0xdc
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyTrigger(0xc007133590?, {0x75cf6f8, 0xc00573e1e0}, {0x75d3700?, 0xc00dd0da20?}, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:578 +0x131
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyCascade(0x75d3700?, {0x75cf6f8, 0xc00573e1e0}, 0x75d3700?, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:599 +0xdc
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyTrigger(0xc007133590?, {0x75cf6f8, 0xc00573e1e0}, {0x75d3700?, 0xc00dd0d340?}, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:578 +0x131
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyCascade(0x75d3700?, {0x75cf6f8, 0xc00573e1e0}, 0x75d3700?, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:599 +0xdc
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyTrigger(0xc007133590?, {0x75cf6f8, 0xc00573e1e0}, {0x75d3700?, 0xc00dd0ca50?}, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:578 +0x131
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyCascade(0x75d3700?, {0x75cf6f8, 0xc00573e1e0}, 0x75d3700?, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:599 +0xdc
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyTrigger(0xc007133590?, {0x75cf6f8, 0xc00573e1e0}, {0x75d3700?, 0xc00c0918c0?}, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:578 +0x131
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyCascade(0x75d3700?, {0x75cf6f8, 0xc00573e1e0}, 0x75d3700?, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:599 +0xdc
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyTrigger(0xc007133590?, {0x75cf6f8, 0xc00573e1e0}, {0x75d3700?, 0xc00c091290?}, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:578 +0x131
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyCascade(0x75d3700?, {0x75cf6f8, 0xc00573e1e0}, 0x75d3700?, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:599 +0xdc
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyTrigger(0xc007133590?, {0x75cf6f8, 0xc00573e1e0}, {0x75d3700?, 0xc00c090c60?}, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:578 +0x131
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyCascade(0x75d3700?, {0x75cf6f8, 0xc00573e1e0}, 0x75d3700?, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:599 +0xdc
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyTrigger(0xc007133590?, {0x75cf6f8, 0xc00573e1e0}, {0x75d3700?, 0xc00c090630?}, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:578 +0x131
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyCascade(0x75d3700?, {0x75cf6f8, 0xc00573e1e0}, 0x75d3700?, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:599 +0xdc
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyTrigger(0xc007133590?, {0x75cf6f8, 0xc00573e1e0}, {0x75d3700?, 0xc00c090000?}, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:578 +0x131
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyCascade(0x75d3700?, {0x75cf6f8, 0xc00573e1e0}, 0x75d3700?, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:599 +0xdc
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyTrigger(0xc007133590?, {0x75cf6f8, 0xc00573e1e0}, {0x75d3700?, 0xc004cbf970?}, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:578 +0x131
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyCascade(0x75d3700?, {0x75cf6f8, 0xc00573e1e0}, 0x75d3700?, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:599 +0xdc
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyTrigger(0xc007133590?, {0x75cf6f8, 0xc00573e1e0}, {0x75d3700?, 0xc004cbf340?}, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:578 +0x131
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyCascade(0x75d3700?, {0x75cf6f8, 0xc00573e1e0}, 0x75d3700?, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:599 +0xdc
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyTrigger(0xc007133590?, {0x75cf6f8, 0xc00573e1e0}, {0x75d3700?, 0xc004cbed10?}, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:578 +0x131
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyCascade(0x75d3700?, {0x75cf6f8, 0xc00573e1e0}, 0x75d3700?, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:599 +0xdc
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyTrigger(0xc007133590?, {0x75cf6f8, 0xc00573e1e0}, {0x75d3700?, 0xc004cbe2c0?}, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:578 +0x131
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyCascade(0x75d3700?, {0x75cf6f8, 0xc00573e1e0}, 0x75d3700?, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:599 +0xdc
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyTrigger(0xc007133590?, {0x75cf6f8, 0xc00573e1e0}, {0x75d3700?, 0xc00530fc30?}, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:578 +0x131
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyCascade(0x75d3700?, {0x75cf6f8, 0xc00573e1e0}, 0x75d3700?, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:599 +0xdc
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyTrigger(0xc007133590?, {0x75cf6f8, 0xc00573e1e0}, {0x75d3700?, 0xc01a246630?}, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:578 +0x131
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyCascade(0x75d3700?, {0x75cf6f8, 0xc00573e1e0}, 0x75d3700?, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:599 +0xdc
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyTrigger(0xc007133590?, {0x75cf6f8, 0xc00573e1e0}, {0x75d3700?, 0xc01a246000?}, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:578 +0x131
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyCascade(0x75d3700?, {0x75cf6f8, 0xc00573e1e0}, 0x75d3700?, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:599 +0xdc
+github.com/pingcap/tidb/executor.(*ExecStmt).handleForeignKeyTrigger(0xc007133590?, {0x75cf6f8, 0xc00573e1e0}, {0x75d3700?, 0xc021ef9600?}, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/adapter.go:578 +0x131
+...additional frames elided...
+created by testing.(*T).Run
+	/usr/local/go/src/testing/testing.go:1493 +0x35f
+
+goroutine 74 [select]:
+github.com/pingcap/badger.(*DB).updateSize(0x0?, 0xc000aea9a8)
+	/Users/cs/code/goread/pkg/mod/github.com/pingcap/badger@v1.5.1-0.20220314162537-ab58fbf40580/db.go:1039 +0x105
+created by github.com/pingcap/badger.Open
+	/Users/cs/code/goread/pkg/mod/github.com/pingcap/badger@v1.5.1-0.20220314162537-ab58fbf40580/db.go:328 +0xf5c
+
+goroutine 75 [select]:
+github.com/pingcap/badger/epoch.(*ResourceManager).collectLoop(0x0?, 0xc000aea9d8)
+	/Users/cs/code/goread/pkg/mod/github.com/pingcap/badger@v1.5.1-0.20220314162537-ab58fbf40580/epoch/manager.go:101 +0xd3
+created by github.com/pingcap/badger/epoch.NewResourceManager
+	/Users/cs/code/goread/pkg/mod/github.com/pingcap/badger@v1.5.1-0.20220314162537-ab58fbf40580/epoch/manager.go:79 +0xdd
+
+goroutine 76 [select]:
+github.com/pingcap/badger.Open.func4()
+	/Users/cs/code/goread/pkg/mod/github.com/pingcap/badger@v1.5.1-0.20220314162537-ab58fbf40580/db.go:342 +0x155
+created by github.com/pingcap/badger.Open
+	/Users/cs/code/goread/pkg/mod/github.com/pingcap/badger@v1.5.1-0.20220314162537-ab58fbf40580/db.go:339 +0x11f8
+
+goroutine 77 [select]:
+github.com/pingcap/badger.(*blobGCHandler).run(0xc000c46180, 0xc000610048)
+	/Users/cs/code/goread/pkg/mod/github.com/pingcap/badger@v1.5.1-0.20220314162537-ab58fbf40580/blob.go:468 +0xd6
+created by github.com/pingcap/badger.(*blobManager).Open
+	/Users/cs/code/goread/pkg/mod/github.com/pingcap/badger@v1.5.1-0.20220314162537-ab58fbf40580/blob.go:292 +0x5bd
+
+goroutine 78 [select]:
+github.com/pingcap/badger.(*levelsController).runWorker(0xc000afe000, 0xc000610078, 0x0)
+	/Users/cs/code/goread/pkg/mod/github.com/pingcap/badger@v1.5.1-0.20220314162537-ab58fbf40580/levels.go:212 +0x1fb
+created by github.com/pingcap/badger.(*levelsController).startCompact
+	/Users/cs/code/goread/pkg/mod/github.com/pingcap/badger@v1.5.1-0.20220314162537-ab58fbf40580/levels.go:180 +0x65
+
+goroutine 79 [chan receive]:
+github.com/pingcap/badger.(*DB).runFlushMemTable(0xc0008cc480, 0x0?)
+	/Users/cs/code/goread/pkg/mod/github.com/pingcap/badger@v1.5.1-0.20220314162537-ab58fbf40580/db.go:920 +0xdd
+created by github.com/pingcap/badger.Open
+	/Users/cs/code/goread/pkg/mod/github.com/pingcap/badger@v1.5.1-0.20220314162537-ab58fbf40580/db.go:361 +0x158d
+
+goroutine 85 [chan receive]:
+github.com/pingcap/badger.(*writeWorker).runMergeLSM(0xc000a5a240?, 0xc0006100c0?)
+	/Users/cs/code/goread/pkg/mod/github.com/pingcap/badger@v1.5.1-0.20220314162537-ab58fbf40580/writer.go:154 +0x9b
+created by github.com/pingcap/badger.startWriteWorker
+	/Users/cs/code/goread/pkg/mod/github.com/pingcap/badger@v1.5.1-0.20220314162537-ab58fbf40580/writer.go:66 +0x2a5
+
+goroutine 84 [chan receive, locked to thread]:
+github.com/pingcap/badger.(*writeWorker).runWriteLSM(0xc000a5a3c0, 0x0?)
+	/Users/cs/code/goread/pkg/mod/github.com/pingcap/badger@v1.5.1-0.20220314162537-ab58fbf40580/writer.go:141 +0x15e
+created by github.com/pingcap/badger.startWriteWorker
+	/Users/cs/code/goread/pkg/mod/github.com/pingcap/badger@v1.5.1-0.20220314162537-ab58fbf40580/writer.go:65 +0x24d
+
+goroutine 83 [select]:
+github.com/pingcap/badger.(*writeWorker).runWriteVLog(0xc000a5a3c0, 0xc000610138)
+	/Users/cs/code/goread/pkg/mod/github.com/pingcap/badger@v1.5.1-0.20220314162537-ab58fbf40580/writer.go:94 +0x137
+created by github.com/pingcap/badger.startWriteWorker
+	/Users/cs/code/goread/pkg/mod/github.com/pingcap/badger@v1.5.1-0.20220314162537-ab58fbf40580/writer.go:64 +0x1f9
+
+goroutine 86 [select]:
+github.com/pingcap/tidb/store/mockstore/unistore/tikv.writeDBWorker.run({0xc000158840?, 0xc000c46280?})
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/store/mockstore/unistore/tikv/write.go:96 +0x145
+created by github.com/pingcap/tidb/store/mockstore/unistore/tikv.(*dbWriter).Open
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/store/mockstore/unistore/tikv/write.go:199 +0xc5
+
+goroutine 87 [select]:
+github.com/pingcap/tidb/store/mockstore/unistore/tikv.writeLockWorker.run({0xc0001588a0?, 0xc000c46280?})
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/store/mockstore/unistore/tikv/write.go:148 +0x15f
+created by github.com/pingcap/tidb/store/mockstore/unistore/tikv.(*dbWriter).Open
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/store/mockstore/unistore/tikv/write.go:206 +0x159
+
+goroutine 88 [select]:
+github.com/pingcap/tidb/store/mockstore/unistore/tikv.(*MVCCStore).runUpdateSafePointLoop(0xc000787700)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/store/mockstore/unistore/tikv/mvcc.go:1742 +0x217
+created by github.com/pingcap/tidb/store/mockstore/unistore/tikv.NewMVCCStore
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/store/mockstore/unistore/tikv/mvcc.go:87 +0x337
+
+goroutine 89 [select]:
+github.com/pingcap/tidb/store/mockstore/unistore/tikv.(*MVCCStore).StartDeadlockDetection.func1()
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/store/mockstore/unistore/tikv/mvcc.go:1415 +0x7b
+created by github.com/pingcap/tidb/store/mockstore/unistore/tikv.(*MVCCStore).StartDeadlockDetection
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/store/mockstore/unistore/tikv/mvcc.go:1413 +0xb6
+
+goroutine 30 [select]:
+github.com/tikv/client-go/v2/oracle/oracles.(*pdOracle).updateTS(0xc0009ca000, {0x75cf688, 0xc00005e118}, 0xc000c46280?)
+	/Users/cs/code/goread/pkg/mod/github.com/tikv/client-go/v2@v2.0.1-0.20220923061703-33efe476e022/oracle/oracles/pd.go:229 +0x128
+created by github.com/tikv/client-go/v2/oracle/oracles.NewPdOracle
+	/Users/cs/code/goread/pkg/mod/github.com/tikv/client-go/v2@v2.0.1-0.20220923061703-33efe476e022/oracle/oracles/pd.go:77 +0x119
+
+goroutine 31 [select]:
+github.com/tikv/client-go/v2/internal/locate.(*RegionCache).asyncCheckAndResolveLoop(0xc0002012b0, 0xc000b1ffb8?)
+	/Users/cs/code/goread/pkg/mod/github.com/tikv/client-go/v2@v2.0.1-0.20220923061703-33efe476e022/internal/locate/region_cache.go:448 +0xea
+created by github.com/tikv/client-go/v2/internal/locate.NewRegionCache
+	/Users/cs/code/goread/pkg/mod/github.com/tikv/client-go/v2@v2.0.1-0.20220923061703-33efe476e022/internal/locate/region_cache.go:419 +0x2e6
+
+goroutine 32 [select]:
+github.com/tikv/client-go/v2/tikv.(*KVStore).runSafePointChecker(0xc0004ee280)
+	/Users/cs/code/goread/pkg/mod/github.com/tikv/client-go/v2@v2.0.1-0.20220923061703-33efe476e022/tikv/kv.go:234 +0x12b
+created by github.com/tikv/client-go/v2/tikv.NewKVStore
+	/Users/cs/code/goread/pkg/mod/github.com/tikv/client-go/v2@v2.0.1-0.20220923061703-33efe476e022/tikv/kv.go:189 +0x416
+
+goroutine 33 [select]:
+github.com/tikv/client-go/v2/tikv.(*KVStore).safeTSUpdater(0xc0004ee280)
+	/Users/cs/code/goread/pkg/mod/github.com/tikv/client-go/v2@v2.0.1-0.20220923061703-33efe476e022/tikv/kv.go:530 +0x1ed
+created by github.com/tikv/client-go/v2/tikv.NewKVStore
+	/Users/cs/code/goread/pkg/mod/github.com/tikv/client-go/v2@v2.0.1-0.20220923061703-33efe476e022/tikv/kv.go:190 +0x456
+
+goroutine 98 [select]:
+github.com/dgraph-io/ristretto.(*lfuPolicy).processItems(0xc000af8240)
+	/Users/cs/code/goread/pkg/mod/github.com/dgraph-io/ristretto@v0.1.1-0.20220403145359-8e850b710d6d/policy.go:67 +0x91
+created by github.com/dgraph-io/ristretto.newPolicy
+	/Users/cs/code/goread/pkg/mod/github.com/dgraph-io/ristretto@v0.1.1-0.20220403145359-8e850b710d6d/policy.go:51 +0x156
+
+goroutine 99 [select]:
+github.com/dgraph-io/ristretto.(*Cache).processItems(0xc0009ca0e0)
+	/Users/cs/code/goread/pkg/mod/github.com/dgraph-io/ristretto@v0.1.1-0.20220403145359-8e850b710d6d/cache.go:476 +0x18a
+created by github.com/dgraph-io/ristretto.NewCache
+	/Users/cs/code/goread/pkg/mod/github.com/dgraph-io/ristretto@v0.1.1-0.20220403145359-8e850b710d6d/cache.go:213 +0x776
+
+goroutine 10346 [select]:
+github.com/pingcap/tidb/ddl.(*ddl).startDispatchLoop(0xc0063fc700)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/ddl/job_table.go:181 +0x4be
+github.com/pingcap/tidb/util.(*WaitGroupWrapper).Run.func1()
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/util/wait_group_wrapper.go:33 +0x5a
+created by github.com/pingcap/tidb/util.(*WaitGroupWrapper).Run
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/util/wait_group_wrapper.go:31 +0x85
+
+goroutine 10345 [select]:
+github.com/pingcap/tidb/ddl.(*delRange).startEmulator(0xc00779db00)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/ddl/delete_range.go:160 +0x125
+created by github.com/pingcap/tidb/ddl.(*delRange).start
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/ddl/delete_range.go:142 +0x6d
+
+goroutine 10348 [select]:
+github.com/pingcap/tidb/ddl.(*worker).start(0xc0063fce80, 0xc005cd6480)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/ddl/ddl_worker.go:194 +0x31b
+created by github.com/pingcap/tidb/ddl.(*ddl).prepareWorkers4legacyDDL
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/ddl/ddl.go:637 +0x22e
+
+goroutine 10347 [select]:
+github.com/pingcap/tidb/ddl.(*worker).start(0xc0063fce00, 0xc005cd6480)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/ddl/ddl_worker.go:194 +0x31b
+created by github.com/pingcap/tidb/ddl.(*ddl).prepareWorkers4legacyDDL
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/ddl/ddl.go:637 +0x22e
+
+goroutine 10350 [select]:
+github.com/pingcap/tidb/domain.(*Domain).loadSchemaInLoop(0xc007b02b00, {0x75cf650, 0xc0078a7840}, 0xc0004aa7b8?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/domain/domain.go:739 +0x1b7
+created by github.com/pingcap/tidb/domain.(*Domain).Init
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/domain/domain.go:1028 +0xefc
+
+goroutine 10344 [select]:
+github.com/pingcap/tidb/ddl.(*ddl).limitDDLJobs(0xc0063fc700)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/ddl/ddl_worker.go:278 +0x13d
+github.com/pingcap/tidb/util.(*WaitGroupWrapper).Run.func1()
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/util/wait_group_wrapper.go:33 +0x5a
+created by github.com/pingcap/tidb/util.(*WaitGroupWrapper).Run
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/util/wait_group_wrapper.go:31 +0x85
+
+goroutine 10437 [select]:
+github.com/pingcap/tidb/domain.(*Domain).globalBindHandleWorkerLoop.func1()
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/domain/domain.go:1413 +0x16f
+created by github.com/pingcap/tidb/domain.(*Domain).globalBindHandleWorkerLoop
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/domain/domain.go:1400 +0xad
+
+goroutine 744929 [select]:
+github.com/pingcap/tidb/store/copr.(*copIterator).recvFromRespCh(0xc000b7e000, {0x75cf650, 0xc024c50340}, 0xc037a08060)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/store/copr/coprocessor.go:538 +0x168
+github.com/pingcap/tidb/store/copr.(*copIterator).Next(0xc000b7e000, {0x75cf650, 0xc024c50340})
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/store/copr/coprocessor.go:638 +0xaf
+github.com/pingcap/tidb/distsql.(*selectResult).fetchResp(0xc006da4000, {0x75cf650, 0xc024c50340})
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/distsql/select_result.go:188 +0xd8
+github.com/pingcap/tidb/distsql.(*selectResult).Next(0xc006da4000, {0x75cf650, 0xc024c50340}, 0xc037a0c000)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/distsql/select_result.go:256 +0x86
+github.com/pingcap/tidb/executor.(*indexWorker).extractTaskHandles(0xc02b2fff60, {0x75cf650, 0xc024c50340}, 0xc037a0c000, {0x75c6ef0, 0xc006da4000})
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/distsql.go:934 +0x2b9
+github.com/pingcap/tidb/executor.(*indexWorker).fetchHandles(0xc02b2fff60, {0x75cf650, 0xc024c50340}, {0x75c6ef0, 0xc006da4000})
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/distsql.go:878 +0x225
+github.com/pingcap/tidb/executor.(*IndexLookUpExecutor).startIndexWorker.func1()
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/distsql.go:645 +0x718
+created by github.com/pingcap/tidb/executor.(*IndexLookUpExecutor).startIndexWorker
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/distsql.go:578 +0x275
+
+goroutine 10546 [select]:
+github.com/pingcap/tidb/domain.(*Domain).globalConfigSyncerKeeper(0xc007b02b00)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/domain/domain.go:580 +0xf5
+created by github.com/pingcap/tidb/domain.(*Domain).Init
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/domain/domain.go:1034 +0x103c
+
+goroutine 10628 [select]:
+github.com/pingcap/tidb/statistics/handle.(*Handle).drainColTask(0xc00746f9e0, 0xc00075e480)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/statistics/handle/handle_hist.go:393 +0xe5
+github.com/pingcap/tidb/statistics/handle.(*Handle).HandleOneTask(0xc004dc7754?, 0xc004d517a0?, 0xc00075f318?, {0xafbd0d8, 0xc007779900}, 0xc00075f2c0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/statistics/handle/handle_hist.go:203 +0xc7
+github.com/pingcap/tidb/statistics/handle.(*Handle).SubLoadWorker(0xc00746f9e0, {0x76398e8?, 0xc007779900}, 0x5beada6?, 0xc005843140?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/statistics/handle/handle_hist.go:179 +0x11b
+created by github.com/pingcap/tidb/domain.(*Domain).StartLoadStatsSubWorkers
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/domain/domain.go:1620 +0x173
+
+goroutine 10634 [select]:
+github.com/pingcap/tidb/domain.(*Domain).LoadSigningCertLoop.func1()
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/domain/domain.go:1896 +0xc5
+created by github.com/pingcap/tidb/domain.(*Domain).LoadSigningCertLoop
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/domain/domain.go:1889 +0x6c
+
+goroutine 744930 [runnable]:
+github.com/pingcap/tidb/executor.(*IndexLookUpExecutor).startTableWorker.func1()
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/distsql.go:682
+created by github.com/pingcap/tidb/executor.(*IndexLookUpExecutor).startTableWorker
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/distsql.go:682 +0x71
+
+goroutine 10635 [IO wait]:
+internal/poll.runtime_pollWait(0x13702f98, 0x72)
+	/usr/local/go/src/runtime/netpoll.go:305 +0x89
+internal/poll.(*pollDesc).wait(0xc007364100?, 0x4?, 0x0)
+	/usr/local/go/src/internal/poll/fd_poll_runtime.go:84 +0x32
+internal/poll.(*pollDesc).waitRead(...)
+	/usr/local/go/src/internal/poll/fd_poll_runtime.go:89
+internal/poll.(*FD).Accept(0xc007364100)
+	/usr/local/go/src/internal/poll/fd_unix.go:614 +0x234
+net.(*netFD).accept(0xc007364100)
+	/usr/local/go/src/net/fd_unix.go:172 +0x35
+net.(*TCPListener).accept(0xc0077021f8)
+	/usr/local/go/src/net/tcpsock_posix.go:142 +0x28
+net.(*TCPListener).Accept(0xc0077021f8)
+	/usr/local/go/src/net/tcpsock.go:288 +0x3d
+net/http.(*Server).Serve(0xc006da40f0, {0x75cc680, 0xc0077021f8})
+	/usr/local/go/src/net/http/server.go:3070 +0x385
+net/http.(*Server).ListenAndServe(0xc006da40f0)
+	/usr/local/go/src/net/http/server.go:2999 +0x7d
+net/http.ListenAndServe(...)
+	/usr/local/go/src/net/http/server.go:3255
+github.com/pingcap/tidb/executor/fktest_test.TestForeignKeyOnDeleteCascade2.func1()
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/fktest/foreign_key_test.go:1050 +0x45
+created by github.com/pingcap/tidb/executor/fktest_test.TestForeignKeyOnDeleteCascade2
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/executor/fktest/foreign_key_test.go:1049 +0xe5
+
+goroutine 10547 [select]:
+github.com/pingcap/tidb/domain.(*Domain).topologySyncerKeeper(0xc007b02b00)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/domain/domain.go:603 +0x165
+created by github.com/pingcap/tidb/domain.(*Domain).Init
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/domain/domain.go:1037 +0x109d
+
+goroutine 701873 [runnable]:
+github.com/pingcap/tidb/store/copr.(*copIterator).open.func2()
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/store/copr/coprocessor.go:488
+runtime.goexit()
+	/usr/local/go/src/runtime/asm_amd64.s:1594 +0x1
+created by github.com/pingcap/tidb/store/copr.(*copIterator).open
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/store/copr/coprocessor.go:488 +0x78
+
+goroutine 10633 [select]:
+github.com/pingcap/tidb/domain.(*Domain).DumpFileGcCheckerLoop.func1()
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/domain/domain.go:1536 +0xf6
+created by github.com/pingcap/tidb/domain.(*Domain).DumpFileGcCheckerLoop
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/domain/domain.go:1527 +0x6c
+
+goroutine 10629 [select]:
+github.com/pingcap/tidb/statistics/handle.(*Handle).drainColTask(0xc00746f9e0, 0xc00075e480)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/statistics/handle/handle_hist.go:393 +0xe5
+github.com/pingcap/tidb/statistics/handle.(*Handle).HandleOneTask(0x5e34640?, 0xc0065ab380?, 0x0?, {0xafbd0d8, 0xc007779b80}, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/statistics/handle/handle_hist.go:203 +0xc7
+github.com/pingcap/tidb/statistics/handle.(*Handle).SubLoadWorker(0xc00746f9e0, {0x76398e8?, 0xc007779b80}, 0xc00746f9b0?, 0xc004d9b7b8?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/statistics/handle/handle_hist.go:179 +0x11b
+created by github.com/pingcap/tidb/domain.(*Domain).StartLoadStatsSubWorkers
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/domain/domain.go:1620 +0x173
+
+goroutine 10632 [select]:
+github.com/pingcap/tidb/statistics/handle.(*Handle).drainColTask(0xc00746f9e0, 0xc00075e480)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/statistics/handle/handle_hist.go:393 +0xe5
+github.com/pingcap/tidb/statistics/handle.(*Handle).HandleOneTask(0xc004b41f54?, 0xc000756f00?, 0xc0068d63b8?, {0xafbd0d8, 0xc0005fd680}, 0xc0068d6360?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/statistics/handle/handle_hist.go:203 +0xc7
+github.com/pingcap/tidb/statistics/handle.(*Handle).SubLoadWorker(0xc00746f9e0, {0x76398e8?, 0xc0005fd680}, 0x5beada6?, 0xc0076eb6c0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/statistics/handle/handle_hist.go:179 +0x11b
+created by github.com/pingcap/tidb/domain.(*Domain).StartLoadStatsSubWorkers
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/domain/domain.go:1620 +0x173
+
+goroutine 10631 [select]:
+github.com/pingcap/tidb/statistics/handle.(*Handle).drainColTask(0xc00746f9e0, 0xc00075e480)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/statistics/handle/handle_hist.go:393 +0xe5
+github.com/pingcap/tidb/statistics/handle.(*Handle).HandleOneTask(0xc007639500?, 0x0?, 0x0?, {0xafbd0d8, 0xc0005fc000}, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/statistics/handle/handle_hist.go:203 +0xc7
+github.com/pingcap/tidb/statistics/handle.(*Handle).SubLoadWorker(0xc00746f9e0, {0x76398e8?, 0xc0005fc000}, 0x0?, 0xc00505fe68?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/statistics/handle/handle_hist.go:179 +0x11b
+created by github.com/pingcap/tidb/domain.(*Domain).StartLoadStatsSubWorkers
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/domain/domain.go:1620 +0x173
+
+goroutine 10351 [select]:
+github.com/pingcap/tidb/domain.(*Domain).mdlCheckLoop(0xc007b02b00)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/domain/domain.go:656 +0xea
+github.com/pingcap/tidb/util.(*WaitGroupWrapper).Run.func1()
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/util/wait_group_wrapper.go:33 +0x5a
+created by github.com/pingcap/tidb/util.(*WaitGroupWrapper).Run
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/util/wait_group_wrapper.go:31 +0x85
+
+goroutine 10438 [select]:
+github.com/pingcap/tidb/domain.(*Domain).handleEvolvePlanTasksLoop.func1()
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/domain/domain.go:1451 +0x107
+created by github.com/pingcap/tidb/domain.(*Domain).handleEvolvePlanTasksLoop
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/domain/domain.go:1444 +0xe5
+
+goroutine 10548 [select]:
+github.com/pingcap/tidb/domain.(*Domain).closestReplicaReadCheckLoop(0xc007b02b00, {0x75cf650?, 0xc0078a7840?}, {0x76056d0, 0xc000b50020})
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/domain/domain.go:1088 +0x2ed
+created by github.com/pingcap/tidb/domain.(*Domain).Init
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/domain/domain.go:1041 +0x1172
+
+goroutine 10352 [select]:
+github.com/pingcap/tidb/domain.(*Domain).topNSlowQueryLoop(0xc007b02b00)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/domain/domain.go:525 +0x194
+created by github.com/pingcap/tidb/domain.(*Domain).Init
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/domain/domain.go:1032 +0xfb3
+
+goroutine 744946 [runnable]:
+github.com/pingcap/tidb/store/copr.(*copIterator).open.func3()
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/store/copr/coprocessor.go:505
+runtime.goexit()
+	/usr/local/go/src/runtime/asm_amd64.s:1594 +0x1
+created by github.com/pingcap/tidb/store/copr.(*copIterator).open
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/store/copr/coprocessor.go:505 +0x3a5
+
+goroutine 744852 [IO wait]:
+internal/poll.runtime_pollWait(0x13702ea8, 0x72)
+	/usr/local/go/src/runtime/netpoll.go:305 +0x89
+internal/poll.(*pollDesc).wait(0xc0063fcf00?, 0xc03580c7c1?, 0x0)
+	/usr/local/go/src/internal/poll/fd_poll_runtime.go:84 +0x32
+internal/poll.(*pollDesc).waitRead(...)
+	/usr/local/go/src/internal/poll/fd_poll_runtime.go:89
+internal/poll.(*FD).Read(0xc0063fcf00, {0xc03580c7c1, 0x1, 0x1})
+	/usr/local/go/src/internal/poll/fd_unix.go:167 +0x25a
+net.(*netFD).Read(0xc0063fcf00, {0xc03580c7c1?, 0xc02f02bf58?, 0x63c77c6?})
+	/usr/local/go/src/net/fd_posix.go:55 +0x29
+net.(*conn).Read(0xc0374d8da8, {0xc03580c7c1?, 0x0?, 0x75cf650?})
+	/usr/local/go/src/net/net.go:183 +0x45
+net/http.(*connReader).backgroundRead(0xc03580c7b0)
+	/usr/local/go/src/net/http/server.go:678 +0x3f
+created by net/http.(*connReader).startBackgroundRead
+	/usr/local/go/src/net/http/server.go:674 +0xca
+
+goroutine 10353 [select]:
+github.com/pingcap/tidb/domain.(*Domain).infoSyncerKeeper(0xc007b02b00)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/domain/domain.go:557 +0x165
+created by github.com/pingcap/tidb/domain.(*Domain).Init
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/domain/domain.go:1033 +0xff8
+
+goroutine 10349 [select]:
+github.com/pingcap/tidb/ddl.(*ddl).PollTiFlashRoutine(0xc0063fc700)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/ddl/ddl_tiflash_api.go:697 +0x29f
+github.com/pingcap/tidb/util.(*WaitGroupWrapper).Run.func1()
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/util/wait_group_wrapper.go:33 +0x5a
+created by github.com/pingcap/tidb/util.(*WaitGroupWrapper).Run
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/util/wait_group_wrapper.go:31 +0x85
+
+goroutine 10611 [select]:
+github.com/pingcap/tidb/domain.(*Domain).LoadPrivilegeLoop.func1()
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/domain/domain.go:1278 +0x145
+created by github.com/pingcap/tidb/domain.(*Domain).LoadPrivilegeLoop
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/domain/domain.go:1269 +0x24c
+
+goroutine 10557 [select]:
+github.com/pingcap/tidb/domain.(*Domain).LoadSysVarCacheLoop.func1()
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/domain/domain.go:1328 +0x145
+created by github.com/pingcap/tidb/domain.(*Domain).LoadSysVarCacheLoop
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/domain/domain.go:1319 +0x172
+
+goroutine 10630 [select]:
+github.com/pingcap/tidb/statistics/handle.(*Handle).drainColTask(0xc00746f9e0, 0xc00075e480)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/statistics/handle/handle_hist.go:393 +0xe5
+github.com/pingcap/tidb/statistics/handle.(*Handle).HandleOneTask(0xc004ae43f0?, 0x0?, 0x0?, {0xafbd0d8, 0xc0008d9b80}, 0x0?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/statistics/handle/handle_hist.go:203 +0xc7
+github.com/pingcap/tidb/statistics/handle.(*Handle).SubLoadWorker(0xc00746f9e0, {0x76398e8?, 0xc0008d9b80}, 0x75cf6f8?, 0xc005f01e90?)
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/statistics/handle/handle_hist.go:179 +0x11b
+created by github.com/pingcap/tidb/domain.(*Domain).StartLoadStatsSubWorkers
+	/Users/cs/code/goread/src/github.com/pingcap/tidb/domain/domain.go:1620 +0x173

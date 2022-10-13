@@ -873,8 +873,7 @@ func TestForeignKeyOnDeleteCascade(t *testing.T) {
 	}
 
 	for idx, ca := range cases {
-		tk.MustExec("drop table if exists t2;")
-		tk.MustExec("drop table if exists t1;")
+		tk.MustExec("drop table if exists t1, t2;")
 		for _, sql := range ca.prepareSQLs {
 			tk.MustExec(sql)
 		}
@@ -992,8 +991,7 @@ func TestForeignKeyOnDeleteCascade(t *testing.T) {
 		},
 	}
 	for _, ca := range cases {
-		tk.MustExec("drop table if exists t2;")
-		tk.MustExec("drop table if exists t1;")
+		tk.MustExec("drop table if exists t1, t2;")
 		for _, sql := range ca.prepareSQLs {
 			tk.MustExec(sql)
 		}
@@ -1006,8 +1004,7 @@ func TestForeignKeyOnDeleteCascade(t *testing.T) {
 		tk.MustQuery("select * from t2").Check(testkit.Rows())
 
 		// test in transaction.
-		tk.MustExec("delete from t2")
-		tk.MustExec("delete from t1")
+		tk.MustExec("delete from t1, t2")
 		tk.MustExec("begin")
 		tk.MustExec("insert into t1 values (1, 1, 1),(2, 2, 2), (3, 3, 3), (4, 4, 4);")
 		tk.MustExec("insert into t2 (id, a, b, name) values (1, 1, 1, 'a'),(2, 2, 2, 'b'), (3, 3, 3, 'c'), (4, 4, 4, 'd');")
@@ -1036,4 +1033,25 @@ func TestForeignKeyOnDeleteCascade(t *testing.T) {
 		tk.MustQuery("select * from t1").Check(testkit.Rows())
 		tk.MustQuery("select * from t2").Check(testkit.Rows())
 	}
+
+}
+
+func TestForeignKeyOnDeleteCascade2(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+	// Test cascade delete in self table.
+	tk.MustExec("create table t1 (id int key, name varchar(10), leader int,  index(leader), foreign key (leader) references t1(id) ON DELETE CASCADE);")
+	tk.MustExec("insert into t1 values (1, 'boss', null)")
+	tk.MustExec("insert into t1 values (10, 'l1_a', 1), (11, 'l1_b', 1), (12, 'l1_c', 1)")
+	tk.MustExec("insert into t1 values (100, 'l2_a1', 10), (101, 'l2_a2', 10), (102, 'l2_a3', 10)")
+	tk.MustExec("insert into t1 values (110, 'l2_b1', 11), (111, 'l2_b2', 11), (112, 'l2_b3', 11)")
+	tk.MustExec("insert into t1 values (120, 'l2_c1', 12), (121, 'l2_c2', 12), (122, 'l2_c3', 12)")
+	tk.MustExec("insert into t1 values (1000,'l3_a1', 100)")
+	tk.MustExec("delete from t1 where id=11")
+	tk.MustQuery("select id from t1 order by id").Check(testkit.Rows("1", "10", "12", "100", "101", "102", "120", "121", "122", "1000"))
+	tk.MustExec("delete from t1 where id=1")
+	tk.MustQuery("select id from t1 order by id").Check(testkit.Rows())
 }
