@@ -398,6 +398,10 @@ func getTiFlashTableSyncProgress(pollTiFlashContext *TiFlashManagementContext, t
 			zap.Int64("tableID", tableID), zap.Int("tiflashPeerCount", tiflashPeerCount), zap.Int("regionCount", regionCount), zap.Uint64("replicaCount", replicaCount))
 		progress = 1
 	}
+	if progress < 1 {
+		logutil.BgLogger().Debug("TiFlash replica progress < 1.",
+			zap.Int64("tableID", tableID), zap.Int("tiflashPeerCount", tiflashPeerCount), zap.Int("regionCount", regionCount), zap.Uint64("replicaCount", replicaCount))
+	}
 	return types.TruncateFloatToString(progress, 2), nil
 }
 

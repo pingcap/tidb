@@ -178,7 +178,7 @@ func TestStatementErrorInTransaction(t *testing.T) {
 	tk.MustQuery("select * from test where a = 1 and b = 11").Check(testkit.Rows())
 }
 
-func TestWriteConflictReason(t *testing.T) {
+func TestWriteConflictMessage(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -191,6 +191,16 @@ func TestWriteConflictReason(t *testing.T) {
 	tk.MustExec("insert into t values (1)")
 	err := tk.ExecToErr("commit")
 	require.Contains(t, err.Error(), "Write conflict")
+	require.Contains(t, err.Error(), "tableName=test.t, handle=1}")
+	require.Contains(t, err.Error(), "reason=Optimistic")
+
+	tk.MustExec("create table t2 (id varchar(30) primary key clustered)")
+	tk.MustExec("begin optimistic")
+	tk2.MustExec("insert into t2 values ('hello')")
+	tk.MustExec("insert into t2 values ('hello')")
+	err = tk.ExecToErr("commit")
+	require.Contains(t, err.Error(), "Write conflict")
+	require.Contains(t, err.Error(), "tableName=test.t2, handle={hello}")
 	require.Contains(t, err.Error(), "reason=Optimistic")
 }
 
