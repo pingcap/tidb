@@ -2406,21 +2406,7 @@ func (e *memtableRetriever) setDataForClusterMemoryUsage(ctx sessionctx.Context)
 }
 
 func (e *memtableRetriever) setDataForMemoryUsageOpsHistory(ctx sessionctx.Context) error {
-	row := []types.Datum{
-		types.NewDatum(nil), // TIME
-		types.NewDatum(nil), // OPS
-		types.NewDatum(nil), // MEMORY_LIMIT
-		types.NewDatum(nil), // MEMORY_CURRENT
-		types.NewDatum(nil), // PROCESSID
-		types.NewDatum(nil), // MEM
-		types.NewDatum(nil), // DISK
-		types.NewDatum(nil), // CLIENT
-		types.NewDatum(nil), // DB
-		types.NewDatum(nil), // USER
-		types.NewDatum(nil), // SQL_DIGEST
-		types.NewDatum(nil), // SQL_TEXT
-	}
-	e.rows = append(e.rows, row)
+	e.rows = servermemorylimit.GlobalMemoryOpsHistoryManager.GetRows()
 	return nil
 }
 
