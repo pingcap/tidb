@@ -267,7 +267,10 @@ func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRang
 		expBackoffSuccess := false
 		// Due to the limitation of calcFraction and convertDatumToScalar, the histogram actually won't estimate anything.
 		// If the first column's range is point.
-		if rangePosition := GetOrdinalOfRangeCond(sc, indexRange); rangePosition > 0 && idx.StatsVer >= Version2 && coll != nil {
+		if rangePosition := GetOrdinalOfRangeCond(sc, indexRange); rangePosition > 0 &&
+			len(indexRange.LowVal) > 1 &&
+			idx.StatsVer >= Version2 &&
+			coll != nil {
 			var expBackoffSel float64
 			expBackoffSel, expBackoffSuccess, err = idx.expBackoffEstimation(sctx, coll, indexRange)
 			if err != nil {
