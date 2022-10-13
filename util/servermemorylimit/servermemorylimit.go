@@ -150,7 +150,7 @@ func (m *memoryOpsHistoryManager) recordOne(info *util.ProcessInfo, killTime tim
 func (m *memoryOpsHistoryManager) GetRows() [][]types.Datum {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	var rows [][]types.Datum
+	rows := make([][]types.Datum, 0, len(m.infos))
 	for _, info := range m.infos {
 		killTime := types.NewTime(types.FromGoTime(info.killTime), mysql.TypeDatetime, 0)
 		op := "SessionKill"
