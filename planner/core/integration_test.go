@@ -6667,7 +6667,8 @@ func TestOuterJoinEliminationForIssue18216(t *testing.T) {
 
 // TestExplainAnalyzeDMLCommit covers the issue #37373.
 func TestExplainAnalyzeDMLCommit(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
