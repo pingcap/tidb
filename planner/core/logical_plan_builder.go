@@ -5635,7 +5635,7 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 				return nil, nil, false, err
 			}
 			dependentColumnsModified[col.UniqueID] = true
-		} else if i < len(list) + 1 {
+		} else if i < len(list)+1 {
 			// rewrite with meta expression
 			newExpr = &expression.Constant{Value: types.NewMetaDatum(b.ctx.GetSessionVars().TiDBMetaTest), RetType: col.RetType.Clone()}
 			np = p

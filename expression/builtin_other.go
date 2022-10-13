@@ -1489,6 +1489,7 @@ func (b *builtinGetParamStringSig) evalString(row chunk.Row) (string, bool, erro
 	return str, false, nil
 }
 
+// BuildTiDBRowMetaFunc builds a builtin function for TiDBRowMeta.
 func BuildTiDBRowMetaFunc(ctx sessionctx.Context, col, name Expression) (res Expression) {
 	f, err := newBaseBuiltinFuncWithTp(ctx, ast.TiDBRowMeta, []Expression{col, name}, types.ETString, types.ETJson, types.ETString)
 	terror.Log(err)
