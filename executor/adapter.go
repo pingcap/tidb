@@ -566,6 +566,11 @@ func (a *ExecStmt) handleForeignKeyTrigger(ctx context.Context, e Executor, isPe
 	if !ok {
 		return nil
 	}
+	originStmtCtx := a.Ctx.GetSessionVars().StmtCtx
+	defer func() {
+		// Reset to the original stmtCtx.
+		a.Ctx.GetSessionVars().StmtCtx = originStmtCtx
+	}()
 	fkChecks := exec.GetFKChecks()
 	for _, fkCheck := range fkChecks {
 		err := fkCheck.doCheck(ctx)

@@ -584,26 +584,28 @@ func (fkc *FKCascadeExec) buildExecutor(ctx context.Context) (Executor, error) {
 }
 
 func (fkc *FKCascadeExec) buildFKCascadePlan(ctx context.Context) (plannercore.Plan, error) {
-	if fkc.OnDelete != nil {
-		return fkc.buildOnDeleteFKCascadePlan(ctx, fkc.OnDelete)
-	}
-	panic("should never happen")
-}
-
-func (fkc *FKCascadeExec) buildOnDeleteFKCascadePlan(ctx context.Context, info *plannercore.FKCascadeInfo) (plannercore.Plan, error) {
 	if len(fkc.fkValues) == 0 {
 		return nil, nil
 	}
+	var sqlStr string
+	var err error
+	if fkc.OnDelete != nil {
+		sqlStr, err = genCascadeDeleteSQL(fkc.OnDelete.ReferredFK.ChildSchema, fkc.OnDelete.ChildTable, fkc.OnDelete.FK, fkc.fkValues)
+	}
+	if err != nil || sqlStr == "" {
+		return nil, err
+	}
+
 	sctx := fkc.b.ctx
 	exec, ok := sctx.(sqlexec.RestrictedSQLExecutor)
 	if !ok {
 		return nil, nil
 	}
-	sqlStr, err := genCascadeDeleteSQL(info.ReferredFK.ChildSchema, info.ChildTable, info.FK, fkc.fkValues)
+	stmtNode, err := exec.ParseWithParams(ctx, sqlStr)
 	if err != nil {
 		return nil, err
 	}
-	stmtNode, err := exec.ParseWithParams(ctx, sqlStr)
+	err = ResetContextOfStmt(sctx, stmtNode)
 	if err != nil {
 		return nil, err
 	}

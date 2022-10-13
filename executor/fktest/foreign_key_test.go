@@ -1053,6 +1053,8 @@ func TestForeignKeyOnDeleteCascade2(t *testing.T) {
 	tk.MustExec("delete from t1 where id=11")
 	tk.MustQuery("select id from t1 order by id").Check(testkit.Rows("1", "10", "12", "100", "101", "102", "120", "121", "122", "1000"))
 	tk.MustExec("delete from t1 where id=1")
+	// The affect rows doesn't contain the cascade deleted rows, the behavior is compatible with MySQL.
+	require.Equal(t, uint64(1), tk.Session().GetSessionVars().StmtCtx.AffectedRows())
 	tk.MustQuery("select id from t1 order by id").Check(testkit.Rows())
 
 	// Test string type foreign key.
@@ -1067,5 +1069,6 @@ func TestForeignKeyOnDeleteCascade2(t *testing.T) {
 	tk.MustExec("delete from t1 where id=11")
 	tk.MustQuery("select id from t1 order by id").Check(testkit.Rows("1", "10", "100", "1000", "101", "102", "12", "120", "121", "122"))
 	tk.MustExec("delete from t1 where id=1")
+	require.Equal(t, uint64(1), tk.Session().GetSessionVars().StmtCtx.AffectedRows())
 	tk.MustQuery("select id from t1 order by id").Check(testkit.Rows())
 }
