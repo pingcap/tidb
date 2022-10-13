@@ -15,12 +15,16 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"go.uber.org/zap"
 	"sync/atomic"
 
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -29,7 +33,9 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hint"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/set"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 )
 
@@ -573,21 +579,12 @@ func (fkc *FKCascadeExec) onDeleteRow(sc *stmtctx.StatementContext, row []types.
 }
 
 func (fkc *FKCascadeExec) buildExecutor(ctx context.Context) (Executor, error) {
-	p, err := fkc.buildFKCascadePlan(ctx)
+	p, err := buildForeignKeyCascadeDelete(ctx, fkc.b.ctx, fkc.b.is, fkc.OnDelete.ReferredFK.ChildSchema,
+		fkc.OnDelete.ChildTable, fkc.OnDelete.FK, fkc.fkValues)
 	if err != nil || p == nil {
 		return nil, err
 	}
-	err = p.SetRangeForSelectPlan(fkc.fkValues)
-	if err != nil {
-		return nil, err
-	}
-	var e Executor
-	switch x := p.(type) {
-	case *plannercore.FKOnDeleteCascadePlan:
-		e = fkc.b.build(x.Delete)
-	default:
-		return nil, fmt.Errorf("unknown foreign key cascade plan: %#v", x)
-	}
+	e := fkc.b.build(p)
 	return e, fkc.b.err
 }
 
@@ -597,4 +594,78 @@ func (fkc *FKCascadeExec) buildFKCascadePlan(ctx context.Context) (plannercore.F
 		return planBuilder.BuildOnDeleteFKCascadePlan(ctx, fkc.OnDelete)
 	}
 	panic("should never happen")
+}
+
+func buildForeignKeyCascadeDelete(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, dbName model.CIStr, tbl table.Table, fk *model.FKInfo, fkValues [][]types.Datum) (plannercore.Plan, error) {
+	if len(fkValues) == 0 {
+		return nil, nil
+	}
+	session, ok := sctx.(sqlexec.RestrictedSQLExecutor)
+	if !ok {
+		return nil, nil
+	}
+
+	sqlStr, err := genCascadeDeleteSQL(dbName, tbl, fk, fkValues)
+	if err != nil {
+		return nil, err
+	}
+
+	stmtNode, err := session.ParseWithParams(ctx, sqlStr)
+	if err != nil {
+		return nil, err
+	}
+	ret := &plannercore.PreprocessorReturn{}
+	err = plannercore.Preprocess(sctx,
+		stmtNode,
+		plannercore.WithPreprocessorReturn(ret),
+		plannercore.InitTxnContextProvider,
+	)
+	if err != nil {
+		return nil, err
+	}
+	finalPlan, _, err := planner.Optimize(ctx, sctx, stmtNode, is)
+	if err != nil {
+		return nil, err
+	}
+	return finalPlan, err
+}
+
+func genCascadeDeleteSQL(dbName model.CIStr, tbl table.Table, fk *model.FKInfo, fkValues [][]types.Datum) (string, error) {
+	buf := bytes.NewBuffer(nil)
+	buf.WriteString("DELETE FROM `")
+	buf.WriteString(dbName.L)
+	buf.WriteString("`.`")
+	buf.WriteString(tbl.Meta().Name.L)
+	buf.WriteString("` WHERE (")
+	for i, col := range fk.Cols {
+		if i > 0 {
+			buf.WriteString(", ")
+		}
+		buf.WriteString(fmt.Sprintf("`%s`", col.L))
+	}
+	buf.WriteString(") IN (")
+	for i, vs := range fkValues {
+		if i > 0 {
+			buf.WriteString(", (")
+		} else {
+			buf.WriteString("(")
+		}
+		for i := range vs {
+			val, err := vs[i].ToString()
+			if err != nil {
+				return "", err
+			}
+			if i > 0 {
+				buf.WriteString(",")
+			}
+			buf.WriteString("'")
+			buf.WriteString(val)
+			buf.WriteString("'")
+		}
+		buf.WriteString(")")
+	}
+	buf.WriteString(")")
+	logutil.BgLogger().Info("------gen cascade sql", zap.String("sql", buf.String()))
+
+	return buf.String(), nil
 }
