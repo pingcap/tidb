@@ -15,7 +15,6 @@
 package spmc
 
 import (
-	"sync"
 	"testing"
 	"time"
 
@@ -25,34 +24,10 @@ import (
 
 const (
 	RunTimes           = 1000000
-	BenchParam         = 10
-	BenchAntsSize      = 200000
 	DefaultExpiredTime = 10 * time.Second
 )
 
-func demoFunc() {
-	time.Sleep(time.Duration(BenchParam) * time.Millisecond)
-}
-
-func BenchmarkSemaphore(b *testing.B) {
-	var wg sync.WaitGroup
-	sema := make(chan struct{}, BenchAntsSize)
-
-	for i := 0; i < b.N; i++ {
-		wg.Add(RunTimes)
-		for j := 0; j < RunTimes; j++ {
-			sema <- struct{}{}
-			go func() {
-				demoFunc()
-				<-sema
-				wg.Done()
-			}()
-		}
-		wg.Wait()
-	}
-}
-
-func BenchmarkAntsPool(b *testing.B) {
+func BenchmarkGPool(b *testing.B) {
 	p := NewSPMCPool[struct{}, struct{}, int](10, WithExpiryDuration(DefaultExpiredTime))
 	defer p.ReleaseAndWait()
 	p.SetConsumerFunc(func(a struct{}, b int) struct{} {
@@ -61,19 +36,24 @@ func BenchmarkAntsPool(b *testing.B) {
 
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
+		sema := make(chan struct{}, 10)
 		var wg util.WaitGroupWrapper
-		sema := make(chan struct{}, 50)
+
 		wg.Run(func() {
 			for j := 0; j < RunTimes; j++ {
 				sema <- struct{}{}
 			}
+			close(sema)
 		})
 		producerFunc := func() (struct{}, error) {
-			select {
-			case <-sema:
-				return struct{}{}, nil
-			default:
-				return struct{}{}, errors.New("not job")
+			for {
+				select {
+				case _, ok := <-sema:
+					if ok {
+						return struct{}{}, nil
+					}
+					return struct{}{}, errors.New("not job")
+				}
 			}
 		}
 		resultCh, ctl := p.AddProducer(producerFunc, RunTimes, 6)
@@ -92,6 +72,51 @@ func BenchmarkAntsPool(b *testing.B) {
 			}
 		}()
 		ctl.Wait()
+		wg.Wait()
+	}
+	b.StopTimer()
+}
+
+func BenchmarkGoCommon(b *testing.B) {
+	b.StartTimer()
+	for i := 0; i < b.N; i++ {
+		var wg util.WaitGroupWrapper
+		var wgp util.WaitGroupWrapper
+		sema := make(chan struct{}, 10)
+		result := make(chan struct{}, 10)
+		wg.Run(func() {
+			for j := 0; j < RunTimes; j++ {
+				sema <- struct{}{}
+			}
+			close(sema)
+		})
+
+		for n := 0; n < 6; n++ {
+			wg.Run(func() {
+				for {
+					select {
+					case item, ok := <-sema:
+						if !ok {
+							return
+						}
+						result <- item
+					}
+				}
+			})
+		}
+		exitCh := make(chan struct{})
+		wgp.Run(func() {
+			for {
+				select {
+				case <-result:
+				case <-exitCh:
+					return
+				}
+			}
+		})
+		wg.Wait()
+		close(exitCh)
+		wgp.Wait()
 	}
 	b.StopTimer()
 }

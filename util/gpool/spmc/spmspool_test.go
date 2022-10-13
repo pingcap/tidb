@@ -15,7 +15,6 @@
 package spmc
 
 import (
-	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -193,20 +192,27 @@ func TestBenchPool(t *testing.T) {
 	})
 
 	for i := 0; i < 10; i++ {
-		fmt.Println(i)
 		sema := make(chan struct{}, 10)
 		var wg util.WaitGroupWrapper
+		exitCh := make(chan struct{})
 		wg.Run(func() {
 			for j := 0; j < RunTimes; j++ {
 				sema <- struct{}{}
 			}
+			close(exitCh)
 		})
 		producerFunc := func() (struct{}, error) {
-			select {
-			case <-sema:
-				return struct{}{}, nil
-			default:
-				return struct{}{}, errors.New("not job")
+			for {
+				select {
+				case <-sema:
+					return struct{}{}, nil
+				default:
+					select {
+					case <-exitCh:
+						return struct{}{}, errors.New("not job")
+					default:
+					}
+				}
 			}
 		}
 		resultCh, ctl := p.AddProducer(producerFunc, RunTimes, 6)
@@ -218,18 +224,14 @@ func TestBenchPool(t *testing.T) {
 				select {
 				case <-resultCh:
 				default:
-					fmt.Println("checking")
 					if ctl.IsProduceClose() {
 						return
 					}
 				}
 			}
 		}()
-		fmt.Println("waiting")
-		wg.Done()
-		fmt.Println("waiting ctl")
 		ctl.Wait()
-		fmt.Println("stop")
+		wg.Wait()
 	}
 	p.ReleaseAndWait()
 }
