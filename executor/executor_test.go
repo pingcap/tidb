@@ -5198,12 +5198,9 @@ func TestHistoryRead(t *testing.T) {
 	require.Greater(t, snapshotTS, curVer1.Ver)
 	require.Less(t, snapshotTS, curVer2.Ver)
 	tk.MustQuery("select * from history_read").Check(testkit.Rows("1"))
-	_, err = tk.Exec("insert history_read values (2)")
-	require.Error(t, err)
-	_, err = tk.Exec("update history_read set a = 3 where a = 1")
-	require.Error(t, err)
-	_, err = tk.Exec("delete from history_read where a = 1")
-	require.Error(t, err)
+	tk.MustExecToErr("insert history_read values (2)")
+	tk.MustExecToErr("update history_read set a = 3 where a = 1")
+	tk.MustExecToErr("delete from history_read where a = 1")
 	tk.MustExec("set @@tidb_snapshot = ''")
 	tk.MustQuery("select * from history_read").Check(testkit.Rows("1", "2"))
 	tk.MustExec("insert history_read values (3)")
@@ -6163,4 +6160,19 @@ func TestGlobalMemoryControl2(t *testing.T) {
 	wg.Wait()
 	test[0] = 0
 	runtime.GC()
+}
+
+func TestCompileOutOfMemoryQuota(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	// Test for issue: https://github.com/pingcap/tidb/issues/38322
+	defer tk.MustExec("set global tidb_mem_oom_action = DEFAULT")
+	tk.MustExec("set global tidb_mem_oom_action='CANCEL'")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, index idx(a))")
+	tk.MustExec("create table t1(a int, c int, index idx(a))")
+	tk.MustExec("set tidb_mem_quota_query=10")
+	err := tk.ExecToErr("select t.a, t1.a from t use index(idx), t1 use index(idx) where t.a = t1.a")
+	require.Contains(t, err.Error(), "Out Of Memory Quota!")
 }

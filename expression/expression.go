@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/generatedexpr"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/size"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -760,6 +761,19 @@ type Assignment struct {
 	LazyErr error
 }
 
+// MemoryUsage return the memory usage of Assignment
+func (a *Assignment) MemoryUsage() (sum int64) {
+	if a == nil {
+		return
+	}
+
+	sum = size.SizeOfPointer + a.ColName.MemoryUsage() + size.SizeOfInterface*2
+	if a.Expr != nil {
+		sum += a.Expr.MemoryUsage()
+	}
+	return
+}
+
 // VarAssignment represents a variable assignment in Set, such as set global a = 1.
 type VarAssignment struct {
 	Name        string
@@ -989,7 +1003,7 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		ast.JSONType, ast.JSONExtract, ast.JSONObject, ast.JSONArray, ast.JSONMerge, ast.JSONSet,
 		ast.JSONInsert /*ast.JSONReplace,*/, ast.JSONRemove, ast.JSONLength,
 		// FIXME: JSONUnquote is incompatible with Coprocessor
-		ast.JSONUnquote,
+		ast.JSONUnquote, ast.JSONContains,
 
 		// date functions.
 		ast.Date, ast.Week /* ast.YearWeek, ast.ToSeconds */, ast.DateDiff,
