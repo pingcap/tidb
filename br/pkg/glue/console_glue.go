@@ -12,11 +12,8 @@ import (
 	"time"
 
 	"github.com/fatih/color"
-	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/vbauerster/mpb/v7"
 	"github.com/vbauerster/mpb/v7/decor"
-	"go.uber.org/zap"
 	"golang.org/x/term"
 )
 
@@ -80,6 +77,15 @@ func (p pbProgress) Inc() {
 	p.bar.Increment()
 }
 
+// IncBy increases the progress by n.
+func (p pbProgress) IncBy(n int64) {
+	p.bar.IncrBy(int(n))
+}
+
+func (p pbProgress) GetCurrent() int64 {
+	return p.bar.Current()
+}
+
 // Close marks the progress as 100% complete and that Inc() can no longer be
 // called.
 func (p pbProgress) Close() {
@@ -121,16 +127,24 @@ func cbOnComplete(decl decor.Decorator, cb func() string) decor.DecorFunc {
 	}
 }
 
+func (ops ConsoleOperations) OutputIsTTY() bool {
+	f, ok := ops.Out().(*os.File)
+	if !ok {
+		return false
+	}
+	return term.IsTerminal(int(f.Fd()))
+}
+
 // StartProgressBar starts a progress bar with the console operations.
 // Note: This function has overlapped function with `glue.StartProgress`, however this supports display extra fields
 //       after success, and implement by `mpb` (instead of `pb`).
 // Note': Maybe replace the old `StartProgress` with `mpb` too.
 func (ops ConsoleOperations) StartProgressBar(title string, total int, extraFields ...ExtraField) ProgressWaiter {
-	console := io.Writer(ops)
-	if !ops.IsInteractive() {
-		console = nil
+	console := ops.Out()
+	if !ops.OutputIsTTY() {
+		console = io.Discard
 	}
-	pb := mpb.New(mpb.WithOutput(console), mpb.WithWidth(ops.GetWidth()))
+	pb := mpb.New(mpb.WithOutput(console))
 	greenTitle := color.GreenString(title)
 	bar := pb.New(int64(total),
 		// Play as if the old BR style.
@@ -196,26 +210,50 @@ func (ops ConsoleOperations) PromptBool(p string) bool {
 	}
 }
 
-func (ops *ConsoleOperations) CreateTable() *Table {
+func (ops ConsoleOperations) IsInteractive() bool {
+	f, ok := ops.In().(*os.File)
+	if !ok {
+		return false
+	}
+	return term.IsTerminal(int(f.Fd()))
+}
+
+func (ops ConsoleOperations) Scanln(args ...interface{}) (int ,error) {
+	return fmt.Fscanln(ops.In(), args...)
+}
+
+func (ops ConsoleOperations) GetWidth() int {
+	f, ok := ops.In().(*os.File)
+	if !ok {
+		return defaultTerminalWidth
+	}
+	w, _, err := term.GetSize(int(f.Fd()))
+	if err != nil {
+		return defaultTerminalWidth
+	}
+	return w
+}
+
+func (ops ConsoleOperations) CreateTable() *Table {
 	return &Table{
 		console: ops,
 	}
 }
 
 func (ops ConsoleOperations) Print(args ...interface{}) {
-	fmt.Fprint(ops, args...)
+	_, _ = fmt.Fprint(ops.Out(), args...)
 }
 
 func (ops ConsoleOperations) Println(args ...interface{}) {
-	fmt.Fprintln(ops, args...)
+	_, _ =fmt.Fprintln(ops.Out(), args...)
 }
 
 func (ops ConsoleOperations) Printf(format string, args ...interface{}) {
-	fmt.Fprintf(ops, format, args...)
+	_, _ = fmt.Fprintf(ops.Out(), format, args...)
 }
 
 type Table struct {
-	console *ConsoleOperations
+	console ConsoleOperations
 	items   [][2]string
 }
 
@@ -268,32 +306,21 @@ func (t *Table) Print() {
 // ConsoleGlue is the glue between BR and some type of console,
 // which is the port for interact with the user.
 type ConsoleGlue interface {
-	io.Writer
-
-	// IsInteractive checks whether the shell supports input.
-	IsInteractive() bool
-	Scanln(args ...interface{}) (int, error)
-	GetWidth() int
+	Out() io.Writer
+	// In returns the input of the console.
+	// Usually is should be an *os.File.
+	In() io.Reader
 }
+
 
 type NoOPConsoleGlue struct{}
 
-func (NoOPConsoleGlue) Write(bs []byte) (int, error) {
-	return len(bs), nil
+func (NoOPConsoleGlue) In() io.Reader {
+	return strings.NewReader("")
 }
 
-func (NoOPConsoleGlue) IsInteractive() bool {
-	return false
-}
-
-func (NoOPConsoleGlue) Scanln(args ...interface{}) (int, error) {
-	return 0, nil
-}
-
-func (NoOPConsoleGlue) GetWidth() int {
-	// act as if a std console...
-	// so if someone wants to fill one line of terminal won't get OOM.
-	return defaultTerminalWidth
+func (NoOPConsoleGlue) Out() io.Writer {
+	return io.Discard
 }
 
 func GetConsole(g Glue) ConsoleOperations {
@@ -305,28 +332,13 @@ func GetConsole(g Glue) ConsoleOperations {
 
 type StdIOGlue struct{}
 
-func (s StdIOGlue) Write(p []byte) (n int, err error) {
-	return os.Stdout.Write(p)
+func (s StdIOGlue) Out() io.Writer {
+	return os.Stdout
 }
 
-// IsInteractive checks whether the shell supports input.
-func (s StdIOGlue) IsInteractive() bool {
+func (s StdIOGlue) In() io.Reader {
 	// should we detach whether we are in a interactive tty here?
-	return term.IsTerminal(int(os.Stdin.Fd()))
-}
-
-func (s StdIOGlue) Scanln(args ...interface{}) (int, error) {
-	return fmt.Scanln(args...)
-}
-
-func (s StdIOGlue) GetWidth() int {
-	width, _, err := term.GetSize(int(os.Stdin.Fd()))
-	if err != nil {
-		log.Warn("failed to get terminal size, assuming normal", logutil.ShortError(err), zap.Int("fd", int(os.Stdin.Fd())))
-		return defaultTerminalWidth
-	}
-	log.Debug("terminal width got.", zap.Int("width", width))
-	return width
+	return os.Stdin
 }
 
 // PrettyString is a string with ANSI escape sequence which would change its color.

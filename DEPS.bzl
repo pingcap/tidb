@@ -3595,8 +3595,8 @@ def go_deps():
         name = "com_github_vbauerster_mpb_v7",
         build_file_proto_mode = "disable",
         importpath = "github.com/vbauerster/mpb/v7",
-        sum = "h1:n917F4d8EWdUKc9c81wFkksyG6P6Mg7IETfKCE1Xqng=",
-        version = "v7.4.2",
+        sum = "h1:BkGfmb6nMrrBQDFECR/Q7RkKCw7ylMetCb4079CGs4w=",
+        version = "v7.5.3",
     )
 
     go_repository(
