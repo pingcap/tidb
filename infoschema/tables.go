@@ -2051,6 +2051,11 @@ func (it *infoschemaTable) FullHiddenColsAndVisibleCols() []*table.Column {
 	return it.cols
 }
 
+// MetaColum implements table MetaColum interface.
+func (it *infoschemaTable) MetaColum() *table.Column {
+	return nil
+}
+
 // Indices implements table.Table Indices interface.
 func (it *infoschemaTable) Indices() []table.Index {
 	return nil
@@ -2131,6 +2136,11 @@ func (vt *VirtualTable) DeletableCols() []*table.Column {
 
 // FullHiddenColsAndVisibleCols implements table FullHiddenColsAndVisibleCols interface.
 func (vt *VirtualTable) FullHiddenColsAndVisibleCols() []*table.Column {
+	return nil
+}
+
+// MetaColum implements table MetaColum interface.
+func (vt *VirtualTable) MetaColum() *table.Column {
 	return nil
 }
 

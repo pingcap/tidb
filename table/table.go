@@ -164,6 +164,9 @@ type columnAPI interface {
 
 	// FullHiddenColsAndVisibleCols returns hidden columns in all states and unhidden columns in public states.
 	FullHiddenColsAndVisibleCols() []*Column
+
+	// MetaColumn returns the columns of the table which is used in meta data.
+	MetaColum() *Column
 }
 
 // Table is used to retrieve and modify rows in table.

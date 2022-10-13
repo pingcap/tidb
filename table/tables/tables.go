@@ -246,7 +246,7 @@ const (
 func (t *TableCommon) getCols(mode getColsMode) []*table.Column {
 	columns := make([]*table.Column, 0, len(t.Columns))
 	for _, col := range t.Columns {
-		if col.State != model.StatePublic {
+		if col.State != model.StatePublic || col.ID == 0 {
 			continue
 		}
 		if (mode == visible && col.Hidden) || (mode == hidden && !col.Hidden) {
@@ -288,7 +288,7 @@ func (t *TableCommon) WritableCols() []*table.Column {
 	}
 	writableColumns := make([]*table.Column, 0, len(t.Columns))
 	for _, col := range t.Columns {
-		if col.State == model.StateDeleteOnly || col.State == model.StateDeleteReorganization {
+		if col.State == model.StateDeleteOnly || col.State == model.StateDeleteReorganization || col.IsMeta() {
 			continue
 		}
 		writableColumns = append(writableColumns, col)
@@ -314,6 +314,16 @@ func (t *TableCommon) FullHiddenColsAndVisibleCols() []*table.Column {
 		}
 	}
 	return cols
+}
+
+// MetaColum implements table MetaColum interface.
+func (t *TableCommon) MetaColum() *table.Column {
+	for _, col := range t.Columns {
+		if col.IsMeta() {
+			return col
+		}
+	}
+	return nil
 }
 
 // RecordPrefix implements table.Table interface.
@@ -366,6 +376,9 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 
 	for _, col := range t.Columns {
 		var value types.Datum
+		if col.IsMeta() {
+			continue
+		}
 		if col.State == model.StateDeleteOnly || col.State == model.StateDeleteReorganization {
 			if col.ChangeStateInfo != nil {
 				// TODO: Check overflow or ignoreTruncate.
@@ -425,6 +438,9 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 			return err
 		}
 	}
+
+	colIDs = append(colIDs, 0)
+	row = append(row, types.NewMetaDatum(sctx.GetSessionVars().TiDBMetaTest))
 
 	key := t.RecordKey(h)
 	sc, rd := sessVars.StmtCtx, &sessVars.RowEncoder
@@ -813,6 +829,9 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 			row = append(row, value)
 		}
 	}
+
+	colIDs = append(colIDs, 0)
+	row = append(row, types.NewMetaDatum(sctx.GetSessionVars().TiDBMetaTest))
 
 	writeBufs := sessVars.GetWriteStmtBufs()
 	adjustRowValuesBuf(writeBufs, len(row))

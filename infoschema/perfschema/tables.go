@@ -186,6 +186,11 @@ func (vt *perfSchemaTable) FullHiddenColsAndVisibleCols() []*table.Column {
 	return vt.cols
 }
 
+// MetaColum implements table MetaColum interface.
+func (vt *perfSchemaTable) MetaColum() *table.Column {
+	return nil
+}
+
 // GetPhysicalID implements table.Table GetID interface.
 func (vt *perfSchemaTable) GetPhysicalID() int64 {
 	return vt.meta.ID

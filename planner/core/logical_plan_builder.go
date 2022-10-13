@@ -4484,7 +4484,12 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		columns = tbl.DeletableCols()
 	} else {
 		columns = tbl.Cols()
+		m := tbl.MetaColum()
+		if m != nil {
+			columns = append(columns, m)
+		}
 	}
+
 	// extract the IndexMergeHint
 	var indexMergeHints []indexHintInfo
 	if hints := b.TableHints(); hints != nil {
@@ -4592,7 +4597,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	//	Name: model.NewCIStr("_tidb_row_meta"),
 	//	State: model.StatePublic,
 	//	Hidden: true,
-	//	OriginDefaultValue: types.CreateBinaryJSON("tidbRowMeta"),
+	//	OriginDefaultValue: nil,
 	//})
 	// We append an extra handle column to the schema when the handle
 	// column is not the primary key of "ds".
@@ -5580,13 +5585,13 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 			if ok && !isDefault {
 				return nil, nil, false, ErrBadGeneratedColumn.GenWithStackByArgs(colInfo.Name.O, tableInfo.Name.O)
 			}
-			if colInfo.IsMeta() {
-				metaAssignments = append(metaAssignments, &ast.Assignment{
-					Column: &ast.ColumnName{Schema: tn.Schema, Table: tn.Name, Name: colInfo.Name},
-					Expr:   &ast.DefaultExpr{},
-				})
-				continue
-			}
+			//if colInfo.IsMeta() {
+			//	metaAssignments = append(metaAssignments, &ast.Assignment{
+			//		Column: &ast.ColumnName{Schema: tn.Schema, Table: tn.Name, Name: colInfo.Name},
+			//		Expr:   &ast.DefaultExpr{},
+			//	})
+			//	continue
+			//}
 			virtualAssignments = append(virtualAssignments, &ast.Assignment{
 				Column: &ast.ColumnName{Schema: tn.Schema, Table: tn.Name, Name: colInfo.Name},
 				Expr:   tableVal.Cols()[i].GeneratedExpr,
@@ -5635,10 +5640,10 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 				return nil, nil, false, err
 			}
 			dependentColumnsModified[col.UniqueID] = true
-		} else if i < len(list)+1 {
-			// rewrite with meta expression
-			newExpr = &expression.Constant{Value: types.NewMetaDatum(b.ctx.GetSessionVars().TiDBMetaTest), RetType: col.RetType.Clone()}
-			np = p
+		//} else if i < len(list)+1 {
+		//	// rewrite with meta expression
+		//	newExpr = &expression.Constant{Value: types.NewMetaDatum(b.ctx.GetSessionVars().TiDBMetaTest), RetType: col.RetType.Clone()}
+		//	np = p
 		} else {
 			// rewrite with generation expression
 			rewritePreprocess := func(assign *ast.Assignment) func(expr ast.Node) ast.Node {

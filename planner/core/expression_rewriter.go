@@ -1964,6 +1964,13 @@ func (er *expressionRewriter) RowMetaToExpression(v *ast.FuncRowMetaExpr) {
 		return
 	}
 	column := er.schema.Columns[idx]
+	//column := &expression.Column{
+	//	UniqueID: er.sctx.GetSessionVars().AllocPlanColumnID(),
+	//	ID:       0,
+	//	RetType:  types.NewFieldType(mysql.TypeJSON),
+	//	OrigName: "_tidb_row_meta",
+	//	IsHidden: true,
+	//}
 	expr := expression.BuildTiDBRowMetaFunc(er.sctx, column, &expression.Constant{
 		Value:   types.NewDatum(v.Name),
 		RetType: types.NewFieldType(mysql.TypeVarchar),
