@@ -255,16 +255,9 @@ type StatementContext struct {
 	IsSQLAndPlanRegistered atomic2.Bool
 	// ColRefFromPlan mark the column ref used by assignment in update statement.
 	ColRefFromUpdatePlan []int64
-<<<<<<< HEAD
-=======
-
-	// RangeFallback indicates that building complete ranges exceeds the memory limit so it falls back to less accurate ranges such as full range.
-	RangeFallback bool
-
 	// IsExplainAnalyzeDML is true if the statement is "explain analyze DML executors", before responding the explain
 	// results to the client, the transaction should be committed first. See issue #37373 for more details.
 	IsExplainAnalyzeDML bool
->>>>>>> b0e073478f (execution: commit the transaction before responding explain analyze results to the client (#38044))
 }
 
 // StmtHints are SessionVars related sql hints.
