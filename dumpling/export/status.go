@@ -4,6 +4,7 @@ package export
 
 import (
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -48,6 +49,7 @@ type DumpStatus struct {
 	FinishedRows      float64
 	EstimateTotalRows float64
 	TotalTables       int64
+	CurrentSpeedBPS   int64
 }
 
 // GetStatus returns the status of dumping by reading metrics.
@@ -58,6 +60,7 @@ func (d *Dumper) GetStatus() *DumpStatus {
 	ret.FinishedBytes = ReadGauge(d.metrics.finishedSizeGauge)
 	ret.FinishedRows = ReadGauge(d.metrics.finishedRowsGauge)
 	ret.EstimateTotalRows = ReadCounter(d.metrics.estimateTotalRowsCounter)
+	ret.CurrentSpeedBPS = d.statusRecorder.getSpeed(int64(ret.FinishedBytes))
 	return ret
 }
 
@@ -71,4 +74,44 @@ func calculateTableCount(m DatabaseTables) int {
 		}
 	}
 	return cnt
+}
+
+type statusRecorder struct {
+	mu             sync.Mutex
+	lastFinished   int64
+	lastUpdateTime time.Time
+	speedBPS       int64
+}
+
+func newStatusRecorder() *statusRecorder {
+	return &statusRecorder{
+		lastUpdateTime: time.Now(),
+	}
+}
+
+func (s *statusRecorder) getSpeed(finished int64) int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if finished == s.lastFinished {
+		// for finished bytes does not get forwarded, use old speed to avoid
+		// display zero. We may find better strategy in future.
+		return s.speedBPS
+	}
+
+	now := time.Now()
+	elapsed := int64(now.Sub(s.lastUpdateTime).Seconds())
+	if elapsed == 0 {
+		elapsed = 1
+	}
+	currentSpeed := (finished - s.lastFinished) / elapsed
+	if currentSpeed == 0 {
+		currentSpeed = 1
+	}
+
+	s.lastFinished = finished
+	s.lastUpdateTime = now
+	s.speedBPS = currentSpeed
+
+	return currentSpeed
 }

@@ -55,6 +55,8 @@ type Dumper struct {
 	selectTiDBTableRegionFunc     func(tctx *tcontext.Context, conn *BaseConn, meta TableMeta) (pkFields []string, pkVals [][]string, err error)
 	totalTables                   int64
 	charsetAndDefaultCollationMap map[string]string
+
+	statusRecorder *statusRecorder
 }
 
 // NewDumper returns a new Dumper
@@ -78,6 +80,7 @@ func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 		conf:                      conf,
 		cancelCtx:                 cancelFn,
 		selectTiDBTableRegionFunc: selectTiDBTableRegion,
+		statusRecorder:            newStatusRecorder(),
 	}
 
 	var err error
