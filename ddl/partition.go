@@ -425,8 +425,11 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 		}
 	case model.PartitionTypeHash:
 		// Partition by hash is enabled by default.
-		// Note that linear hash is not enabled.
-		if !s.Linear && s.Sub == nil {
+		// Note that linear hash is simply ignored, and creates non-linear hash.
+		if s.Linear {
+			ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedCreatePartition.GenWithStack("LINEAR HASH is not supported, using non-linear HASH instead"))
+		}
+		if s.Sub == nil {
 			enable = true
 		}
 	case model.PartitionTypeList:

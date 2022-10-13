@@ -383,13 +383,14 @@ func TestCreateTableWithHashPartition(t *testing.T) {
 ) PARTITION BY HASH(store_id) PARTITIONS 102400000000;`, errno.ErrTooManyPartitions)
 
 	tk.MustExec("CREATE TABLE t_linear (a int, b varchar(128)) PARTITION BY LINEAR HASH(a) PARTITIONS 4")
-	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 8200 Unsupported partition type HASH, treat as normal table"))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 8200 LINEAR HASH is not supported, using non-linear HASH instead"))
 	tk.MustQuery(`show create table t_linear`).Check(testkit.Rows("" +
 		"t_linear CREATE TABLE `t_linear` (\n" +
 		"  `a` int(11) DEFAULT NULL,\n" +
 		"  `b` varchar(128) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-	tk.MustGetErrCode("select * from t_linear partition (p0)", errno.ErrPartitionClauseOnNonpartitioned)
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY HASH (`a`) PARTITIONS 4"))
+	tk.MustQuery("select * from t_linear partition (p0)").Check(testkit.Rows())
 
 	tk.MustExec(`CREATE TABLE t_sub (a int, b varchar(128)) PARTITION BY RANGE( a ) SUBPARTITION BY HASH( a )
                                    SUBPARTITIONS 2 (
