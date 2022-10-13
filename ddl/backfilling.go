@@ -277,6 +277,7 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 				zap.Float64("speed(rows/s)", float64(num)/time.Since(lastLogTime).Seconds()))
 			lastLogTime = time.Now()
 		}
+
 		handleRange.startKey = taskCtx.nextKey
 		if taskCtx.done {
 			break
@@ -509,8 +510,8 @@ func (dc *ddlCtx) handleRangeTasks(sessPool *sessionPool, t table.Table, workers
 			endKey:          endKey,
 			// If the boundaries overlap, we should ignore the preceding endKey.
 			endInclude: endK.Cmp(keyRange.EndKey) != 0 || i == len(kvRanges)-1}
-
 		batchTasks = append(batchTasks, task)
+
 		if len(batchTasks) >= len(workers) {
 			break
 		}
@@ -645,7 +646,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 		if err := loadDDLReorgVars(dc.ctx, sessPool); err != nil {
 			logutil.BgLogger().Error("[ddl] load DDL reorganization variable failed", zap.Error(err))
 		}
-		workerCnt := variable.GetDDLReorgWorkerCounter()
+		workerCnt = variable.GetDDLReorgWorkerCounter()
 		rowFormat := variable.GetDDLReorgRowFormat()
 		// If only have 1 range, we can only start 1 worker.
 		if len(kvRanges) < int(workerCnt) {
