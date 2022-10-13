@@ -73,6 +73,7 @@ func (eqh *Handle) Run() {
 
 type memoryUsageAlarm struct {
 	lastCheckTime                 time.Time
+	lastUpdateVariableTime        time.Time
 	err                           error
 	baseRecordDir                 string
 	lastRecordDirName             []string
@@ -85,6 +86,9 @@ type memoryUsageAlarm struct {
 }
 
 func (record *memoryUsageAlarm) updateVariable() {
+	if time.Since(record.lastUpdateVariableTime) < 60*time.Second {
+		return
+	}
 	record.memoryUsageAlarmRatio = variable.MemoryUsageAlarmRatio.Load()
 	record.memoryUsageAlarmKeepRecordNum = variable.MemoryUsageAlarmKeepRecordNum.Load()
 	record.ServerMemoryLimit = memory.ServerMemoryLimit.Load()
@@ -98,11 +102,13 @@ func (record *memoryUsageAlarm) updateVariable() {
 		}
 		record.isServerMemoryLimitSet = false
 	}
+	record.lastUpdateVariableTime = time.Now()
 }
 
 func (record *memoryUsageAlarm) initMemoryUsageAlarmRecord() {
-	record.updateVariable()
 	record.lastCheckTime = time.Time{}
+	record.lastUpdateVariableTime = time.Time{}
+	record.updateVariable()
 	record.lastRecordMemUsed = uint64(float64(record.ServerMemoryLimit) * record.memoryUsageAlarmRatio)
 	tidbLogDir, _ := filepath.Split(config.GetGlobalConfig().Log.File.Filename)
 	record.baseRecordDir = filepath.Join(tidbLogDir, "oom_record")

@@ -15,6 +15,7 @@
 package memoryusagealarm
 
 import (
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"testing"
 	"time"
 
@@ -24,6 +25,32 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/stretchr/testify/assert"
 )
+
+func TestUpdateVariables(t *testing.T) {
+	variable.MemoryUsageAlarmRatio.Store(0.3)
+	variable.MemoryUsageAlarmKeepRecordNum.Store(3)
+	memory.ServerMemoryLimit.Store(1024)
+
+	record := memoryUsageAlarm{}
+
+	record.initMemoryUsageAlarmRecord()
+	assert.Equal(t, 0.3, record.memoryUsageAlarmRatio)
+	assert.Equal(t, int64(3), record.memoryUsageAlarmKeepRecordNum)
+	assert.Equal(t, uint64(1024), record.ServerMemoryLimit)
+	variable.MemoryUsageAlarmRatio.Store(0.6)
+	variable.MemoryUsageAlarmKeepRecordNum.Store(6)
+	memory.ServerMemoryLimit.Store(2048)
+
+	record.updateVariable()
+	assert.Equal(t, 0.3, record.memoryUsageAlarmRatio)
+	assert.Equal(t, int64(3), record.memoryUsageAlarmKeepRecordNum)
+	assert.Equal(t, uint64(1024), record.ServerMemoryLimit)
+	record.lastUpdateVariableTime = record.lastUpdateVariableTime.Add(-60 * time.Second)
+	record.updateVariable()
+	assert.Equal(t, 0.6, record.memoryUsageAlarmRatio)
+	assert.Equal(t, int64(6), record.memoryUsageAlarmKeepRecordNum)
+	assert.Equal(t, uint64(2048), record.ServerMemoryLimit)
+}
 
 func TestIfNeedDoRecord(t *testing.T) {
 	record := memoryUsageAlarm{}
