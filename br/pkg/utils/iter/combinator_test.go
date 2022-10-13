@@ -5,6 +5,7 @@ package iter_test
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -77,4 +78,23 @@ func TestSome(t *testing.T) {
 	req.Equal(it.TryNext(c), iter.Emit(1))
 	req.Equal(it.TryNext(c), iter.Done[int]())
 	req.Equal(it.TryNext(c), iter.Done[int]())
+}
+
+func TestErrorDuringTransforming(t *testing.T) {
+	req := require.New(t)
+	items := iter.OfRange(1, 20)
+	running := new(atomic.Int32)
+	items = iter.Transform(items, func(ctx context.Context, i int) (int, error) {
+		if i == 10 {
+			return 0, errors.New("meow")
+		}
+		running.Add(1)
+		return i, nil
+	}, iter.WithChunkSize(16), iter.WithConcurrency(8))
+
+	coll := iter.CollectAll(context.TODO(), items)
+	req.Greater(running.Load(), int32(8))
+	// Should be melted down.
+	req.Less(running.Load(), int32(16))
+	req.ErrorContains(coll.Err, "meow")
 }
