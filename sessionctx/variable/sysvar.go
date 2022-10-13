@@ -429,14 +429,14 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeInstance, Name: TiDBEnableCollectExecutionInfo, Value: BoolToOnOff(DefTiDBEnableCollectExecutionInfo), Type: TypeBool, SetGlobal: func(s *SessionVars, val string) error {
 		oldConfig := config.GetGlobalConfig()
 		newValue := TiDBOptOn(val)
-		if oldConfig.Instance.EnableCollectExecutionInfo != newValue {
+		if oldConfig.Instance.EnableCollectExecutionInfo.Load() != newValue {
 			newConfig := *oldConfig
-			newConfig.Instance.EnableCollectExecutionInfo = newValue
+			newConfig.Instance.EnableCollectExecutionInfo.Store(newValue)
 			config.StoreGlobalConfig(&newConfig)
 		}
 		return nil
 	}, GetGlobal: func(s *SessionVars) (string, error) {
-		return BoolToOnOff(config.GetGlobalConfig().Instance.EnableCollectExecutionInfo), nil
+		return BoolToOnOff(config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load()), nil
 	}},
 	{Scope: ScopeInstance, Name: PluginLoad, Value: "", ReadOnly: true, GetGlobal: func(s *SessionVars) (string, error) {
 		return config.GetGlobalConfig().Instance.PluginLoad, nil
