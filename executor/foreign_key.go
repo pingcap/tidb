@@ -18,10 +18,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"go.uber.org/zap"
 	"sync/atomic"
 
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/planner"
@@ -32,8 +30,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/hint"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
@@ -579,8 +575,7 @@ func (fkc *FKCascadeExec) onDeleteRow(sc *stmtctx.StatementContext, row []types.
 }
 
 func (fkc *FKCascadeExec) buildExecutor(ctx context.Context) (Executor, error) {
-	p, err := buildForeignKeyCascadeDelete(ctx, fkc.b.ctx, fkc.b.is, fkc.OnDelete.ReferredFK.ChildSchema,
-		fkc.OnDelete.ChildTable, fkc.OnDelete.FK, fkc.fkValues)
+	p, err := fkc.buildFKCascadePlan(ctx)
 	if err != nil || p == nil {
 		return nil, err
 	}
@@ -588,42 +583,36 @@ func (fkc *FKCascadeExec) buildExecutor(ctx context.Context) (Executor, error) {
 	return e, fkc.b.err
 }
 
-func (fkc *FKCascadeExec) buildFKCascadePlan(ctx context.Context) (plannercore.FKCascadePlan, error) {
-	planBuilder, _ := plannercore.NewPlanBuilder().Init(fkc.b.ctx, fkc.b.is, &hint.BlockHintProcessor{})
+func (fkc *FKCascadeExec) buildFKCascadePlan(ctx context.Context) (plannercore.Plan, error) {
 	if fkc.OnDelete != nil {
-		return planBuilder.BuildOnDeleteFKCascadePlan(ctx, fkc.OnDelete)
+		return fkc.buildOnDeleteFKCascadePlan(ctx, fkc.OnDelete)
 	}
 	panic("should never happen")
 }
 
-func buildForeignKeyCascadeDelete(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, dbName model.CIStr, tbl table.Table, fk *model.FKInfo, fkValues [][]types.Datum) (plannercore.Plan, error) {
-	if len(fkValues) == 0 {
+func (fkc *FKCascadeExec) buildOnDeleteFKCascadePlan(ctx context.Context, info *plannercore.FKCascadeInfo) (plannercore.Plan, error) {
+	if len(fkc.fkValues) == 0 {
 		return nil, nil
 	}
-	session, ok := sctx.(sqlexec.RestrictedSQLExecutor)
+	sctx := fkc.b.ctx
+	exec, ok := sctx.(sqlexec.RestrictedSQLExecutor)
 	if !ok {
 		return nil, nil
 	}
-
-	sqlStr, err := genCascadeDeleteSQL(dbName, tbl, fk, fkValues)
+	sqlStr, err := genCascadeDeleteSQL(info.ReferredFK.ChildSchema, info.ChildTable, info.FK, fkc.fkValues)
 	if err != nil {
 		return nil, err
 	}
-
-	stmtNode, err := session.ParseWithParams(ctx, sqlStr)
+	stmtNode, err := exec.ParseWithParams(ctx, sqlStr)
 	if err != nil {
 		return nil, err
 	}
 	ret := &plannercore.PreprocessorReturn{}
-	err = plannercore.Preprocess(sctx,
-		stmtNode,
-		plannercore.WithPreprocessorReturn(ret),
-		plannercore.InitTxnContextProvider,
-	)
+	err = plannercore.Preprocess(sctx, stmtNode, plannercore.WithPreprocessorReturn(ret), plannercore.InitTxnContextProvider)
 	if err != nil {
 		return nil, err
 	}
-	finalPlan, _, err := planner.Optimize(ctx, sctx, stmtNode, is)
+	finalPlan, _, err := planner.Optimize(ctx, sctx, stmtNode, fkc.b.is)
 	if err != nil {
 		return nil, err
 	}
@@ -643,6 +632,7 @@ func genCascadeDeleteSQL(dbName model.CIStr, tbl table.Table, fk *model.FKInfo, 
 		}
 		buf.WriteString(fmt.Sprintf("`%s`", col.L))
 	}
+	// TODO(crazycs520): control the size of IN expression.
 	buf.WriteString(") IN (")
 	for i, vs := range fkValues {
 		if i > 0 {
@@ -651,21 +641,30 @@ func genCascadeDeleteSQL(dbName model.CIStr, tbl table.Table, fk *model.FKInfo, 
 			buf.WriteString("(")
 		}
 		for i := range vs {
-			val, err := vs[i].ToString()
+			val, err := genFKValueString(vs[i])
 			if err != nil {
 				return "", err
 			}
 			if i > 0 {
 				buf.WriteString(",")
 			}
-			buf.WriteString("'")
 			buf.WriteString(val)
-			buf.WriteString("'")
 		}
 		buf.WriteString(")")
 	}
 	buf.WriteString(")")
-	logutil.BgLogger().Info("------gen cascade sql", zap.String("sql", buf.String()))
-
 	return buf.String(), nil
+}
+
+func genFKValueString(v types.Datum) (string, error) {
+	val, err := v.ToString()
+	if err != nil {
+		return "", err
+	}
+	switch v.Kind() {
+	case types.KindInt64, types.KindUint64, types.KindFloat32, types.KindFloat64, types.KindMysqlDecimal:
+		return val, nil
+	default:
+		return "'" + val + "'", nil
+	}
 }
