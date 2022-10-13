@@ -77,7 +77,7 @@ This is done with the help of etcd. All the auto ID service processes regist the
 
 A network round-trip is involved, so the performance is not as good as the old way. But it should still be acceptable. Within the same data center, the latency is below 500 microsecond on average.
 
-Some preliminary test shows that to get getting 20~40K QPS, it cost about 100~200% CPU on my local machine, this should be enough for the basic usage.
+Some preliminary test shows that to get getting 20-40K QPS, it cost about 100-200% CPU on my local machine, this should be enough for the basic usage.
 `AUTO_INCREMENT` is not of high performance, and is not scalable compare to TiDB alternatives like `AUTO_RANDOM` and `SHARD_ROW_ID`.
 
 | worker count | qps    | avg latency (ms) | server cpu |
