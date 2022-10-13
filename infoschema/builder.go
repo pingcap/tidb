@@ -666,8 +666,8 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 		Offset:             len(tblInfo.Columns),
 		Hidden:             true,
 		State:              model.StatePublic,
-		OriginDefaultValue: types.CreateBinaryJSON(`"_tidb_row_meta"`),
-		DefaultValue:       types.CreateBinaryJSON(`"_tidb_row_meta"`),
+		OriginDefaultValue: nil,
+		DefaultValue:       nil,
 		Version:            2,
 	})
 

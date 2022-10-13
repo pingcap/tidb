@@ -5604,7 +5604,7 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 		tblDbMap[tbl.Name.L] = tbl.DBInfo.Name.L
 	}
 
-	allAssignments := append(append(list, virtualAssignments...), metaAssignments...)
+	allAssignments := append(append(list, metaAssignments...), virtualAssignments...)
 	dependentColumnsModified := make(map[int64]bool)
 	for i, assign := range allAssignments {
 		var idx int
@@ -5635,7 +5635,11 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 				return nil, nil, false, err
 			}
 			dependentColumnsModified[col.UniqueID] = true
-		} else if i < len(list)+len(virtualAssignments) {
+		} else if i < len(list) + 1 {
+			// rewrite with meta expression
+			newExpr = &expression.Constant{Value: types.NewMetaDatum(b.ctx.GetSessionVars().TiDBMetaTest), RetType: col.RetType.Clone()}
+			np = p
+		} else {
 			// rewrite with generation expression
 			rewritePreprocess := func(assign *ast.Assignment) func(expr ast.Node) ast.Node {
 				return func(expr ast.Node) ast.Node {
@@ -5669,12 +5673,6 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 			if !isModified {
 				continue
 			}
-		} else {
-			// rewrite with meta expression
-			newExpr = &expression.Constant{Value: types.NewMetaDatum(map[string]any{
-				"tidb_meta_test": b.ctx.GetSessionVars().TiDBMetaTest,
-			}), RetType: col.RetType.Clone()}
-			np = p
 		}
 		if _, isConst := newExpr.(*expression.Constant); !isConst {
 			allAssignmentsAreConstant = false

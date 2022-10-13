@@ -271,9 +271,8 @@ func (do *Domain) fetchAllSchemasWithTables(m *meta.Meta) ([]*model.DBInfo, erro
 				Offset:             len(tbl.Columns),
 				Hidden:             true,
 				State:              model.StatePublic,
-				OriginDefaultValue: types.CreateBinaryJSON(`"_tidb_row_meta"`),
-				DefaultValue:       types.CreateBinaryJSON(`"_tidb_row_meta"`),
-				Version:            2,
+				OriginDefaultValue: nil,
+				Version:            1,
 			})
 		}
 	}

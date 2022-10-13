@@ -2094,8 +2094,13 @@ func invalidConv(d *Datum, tp byte) (Datum, error) {
 }
 
 // NewMetaDatum creates a new Datum from an interface{}.
-func NewMetaDatum(val map[string]any) (d Datum) {
-	return NewJSONDatum(CreateBinaryJSON(val))
+func NewMetaDatum(rs int64) (d Datum) {
+	if rs == 0 {
+		return NewDatum(nil)
+	}
+	return NewJSONDatum(CreateBinaryJSON(map[string]any{
+		"tidb_meta_test": rs,
+	}))
 }
 
 // NewDatum creates a new Datum from an interface{}.
