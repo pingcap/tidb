@@ -818,6 +818,10 @@ func EvaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expressio
 	if MaybeOverOptimized4PlanCache(ctx, []Expression{expr}) {
 		return expr
 	}
+	if ctx.GetSessionVars().StmtCtx.InNullRejectCheck {
+		expr, _ = evaluateExprWithNullInNullRejectCheck(ctx, schema, expr)
+		return expr
+	}
 	return evaluateExprWithNull(ctx, schema, expr)
 }
 
@@ -840,6 +844,70 @@ func evaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expressio
 		}
 	}
 	return expr
+}
+
+// evaluateExprWithNullInNullRejectCheck sets columns in schema as null and calculate the final result of the scalar function.
+// If the Expression is a non-constant value, it means the result is unknown.
+// The returned bool values indicates whether the value is influenced by the Null Constant transformed from schema column
+// when the value is Null Constant.
+func evaluateExprWithNullInNullRejectCheck(ctx sessionctx.Context, schema *Schema, expr Expression) (Expression, bool) {
+	switch x := expr.(type) {
+	case *ScalarFunction:
+		args := make([]Expression, len(x.GetArgs()))
+		nullFromSets := make([]bool, len(x.GetArgs()))
+		for i, arg := range x.GetArgs() {
+			args[i], nullFromSets[i] = evaluateExprWithNullInNullRejectCheck(ctx, schema, arg)
+		}
+
+		// allNullFromSet indicates whether all arguments are Null Constant and the Null Constant is affected by the column of the schema.
+		allNullFromSet := true
+		for i := range args {
+			if cons, ok := args[i].(*Constant); ok && cons.Value.IsNull() && !nullFromSets[i] {
+				allNullFromSet = false
+				break
+			}
+		}
+
+		// allArgsNullFromSet indicates whether all Null Constant are affected by the column of the schema
+		allArgsNullFromSet := true
+		for i := range args {
+			if cons, ok := args[i].(*Constant); ok && cons.Value.IsNull() && nullFromSets[i] {
+				continue
+			}
+			allArgsNullFromSet = false
+		}
+
+		// If all the args are Null Constant and affected by the column schema, then we should keep it.
+		// Otherwise, we shouldn't let Null Constant which affected by the column schema participate in computing in `And` and `OR`
+		// due to the result of `AND` and `OR are uncertain if one of the arguments is NULL.
+		if !allArgsNullFromSet {
+			for i := range args {
+				if cons, ok := args[i].(*Constant); ok && cons.Value.IsNull() && nullFromSets[i] {
+					if x.FuncName.L == ast.LogicAnd {
+						args[i] = NewOne()
+					}
+					if x.FuncName.L == ast.LogicOr {
+						args[i] = NewZero()
+					}
+				}
+			}
+		}
+		c := NewFunctionInternal(ctx, x.FuncName.L, x.RetType.Clone(), args...)
+		cons, ok := c.(*Constant)
+		// If the return expr is Null Constant, and all the Null Constant arguments are affected by column schema,
+		// then we think the result Null Constant is also affected by the column schema
+		return c, ok && cons.Value.IsNull() && allNullFromSet
+	case *Column:
+		if !schema.Contains(x) {
+			return x, false
+		}
+		return &Constant{Value: types.Datum{}, RetType: types.NewFieldType(mysql.TypeNull)}, true
+	case *Constant:
+		if x.DeferredExpr != nil {
+			return FoldConstant(x), false
+		}
+	}
+	return expr, false
 }
 
 // TableInfo2SchemaAndNames converts the TableInfo to the schema and name slice.
