@@ -1076,3 +1076,19 @@ func TestNullEQConditionPlan(t *testing.T) {
 			{"Point_Get_5", "root", "handle:0"},
 		})
 }
+
+// https://github.com/pingcap/tidb/issues/38304
+func TestOuterJoinOnNull(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t0(c0 BLOB(5), c1 BLOB(5));")
+	tk.MustExec("CREATE TABLE t1 (c0 BOOL);")
+	tk.MustExec("INSERT INTO t1 VALUES(false);")
+	tk.MustExec("INSERT INTO t0(c0, c1) VALUES ('>', true);")
+	tk.MustQuery("SELECT * FROM t0 LEFT OUTER JOIN t1 ON NULL; ").Check(testkit.Rows("> 1 <nil>"))
+	tk.MustQuery("SELECT NOT '2' =(t1.c0 AND t0.c1 IS NULL) FROM t0 LEFT OUTER JOIN t1 ON NULL; ").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT * FROM t0 LEFT JOIN t1 ON NULL WHERE NOT '2' =(t1.c0 AND t0.c1 IS NULL); ").Check(testkit.Rows("> 1 <nil>"))
+	tk.MustQuery("SELECT * FROM t0 LEFT JOIN t1 ON NULL WHERE t1.c0 or true; ").Check(testkit.Rows("> 1 <nil>"))
+	tk.MustQuery("SELECT * FROM t0 LEFT JOIN t1 ON NULL WHERE not(t1.c0 and false); ").Check(testkit.Rows("> 1 <nil>"))
+}
