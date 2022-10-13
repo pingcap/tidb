@@ -32,7 +32,7 @@ type flushSimulator struct {
 	enabled      bool
 }
 
-func (c flushSimulator) makeError(requestedEpoch uint64) *errorpb.Error {
+func (c *flushSimulator) makeError(requestedEpoch uint64) *errorpb.Error {
 	if !c.enabled {
 		return nil
 	}
@@ -51,7 +51,7 @@ func (c flushSimulator) makeError(requestedEpoch uint64) *errorpb.Error {
 	return nil
 }
 
-func (c flushSimulator) fork() flushSimulator {
+func (c *flushSimulator) fork() flushSimulator {
 	return flushSimulator{
 		enabled: c.enabled,
 	}
@@ -369,7 +369,7 @@ func (r *region) String() string {
 		hex.EncodeToString(r.rng.EndKey),
 		r.checkpoint.Load(),
 		r.leader,
-		r.fsim.flushedEpoch)
+		r.fsim.flushedEpoch.Load())
 }
 
 func (f *fakeStore) String() string {
