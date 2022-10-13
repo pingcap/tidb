@@ -23,12 +23,12 @@ import (
 )
 
 const (
-	RunTimes           = 1000000
+	RunTimes           = 100000
 	DefaultExpiredTime = 10 * time.Second
 )
 
 func BenchmarkGPool(b *testing.B) {
-	p := NewSPMCPool[struct{}, struct{}, int](10, WithExpiryDuration(DefaultExpiredTime))
+	p := NewSPMCPool[struct{}, struct{}, int](10)
 	defer p.ReleaseAndWait()
 	p.SetConsumerFunc(func(a struct{}, b int) struct{} {
 		return struct{}{}
@@ -38,7 +38,6 @@ func BenchmarkGPool(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		sema := make(chan struct{}, 10)
 		var wg util.WaitGroupWrapper
-
 		wg.Run(func() {
 			for j := 0; j < RunTimes; j++ {
 				sema <- struct{}{}
@@ -58,20 +57,18 @@ func BenchmarkGPool(b *testing.B) {
 		}
 		resultCh, ctl := p.AddProducer(producerFunc, RunTimes, 6)
 
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		exitCh := make(chan struct{})
+		wg.Run(func() {
 			for {
 				select {
+				case <-exitCh:
+					return
 				case <-resultCh:
-				default:
-					if ctl.IsProduceClose() {
-						return
-					}
 				}
 			}
-		}()
+		})
 		ctl.Wait()
+		close(exitCh)
 		wg.Wait()
 	}
 	b.StopTimer()

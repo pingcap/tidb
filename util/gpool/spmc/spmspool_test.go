@@ -191,7 +191,7 @@ func TestBenchPool(t *testing.T) {
 		return struct{}{}
 	})
 
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 1000; i++ {
 		sema := make(chan struct{}, 10)
 		var wg util.WaitGroupWrapper
 		exitCh := make(chan struct{})
@@ -216,21 +216,20 @@ func TestBenchPool(t *testing.T) {
 			}
 		}
 		resultCh, ctl := p.AddProducer(producerFunc, RunTimes, 6)
-
+		exitCh2 := make(chan struct{})
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for {
 				select {
+				case <-exitCh2:
+					return
 				case <-resultCh:
-				default:
-					if ctl.IsProduceClose() {
-						return
-					}
 				}
 			}
 		}()
 		ctl.Wait()
+		close(exitCh2)
 		wg.Wait()
 	}
 	p.ReleaseAndWait()
