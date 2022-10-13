@@ -2818,8 +2818,8 @@ def go_deps():
         name = "com_github_pingcap_kvproto",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/kvproto",
-        sum = "h1:/92S0s/TCoCmK2vv6WbkXNeqtLn90sHRJ5Vlx1Sigas=",
-        version = "v0.0.0-20220913025519-586cff113d10",
+        sum = "h1:ceg4xjEEXNgPsScTQ5dtidiltLF4h17Y/jUqfyLAy9E=",
+        version = "v0.0.0-20220929075948-06e08d5ed64c",
     )
     go_repository(
         name = "com_github_pingcap_log",
@@ -3422,15 +3422,15 @@ def go_deps():
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        sum = "h1:TxDSQAmtGdE34BvOaYF35mRrAXePeZEq8quvuAwrKsI=",
-        version = "v2.0.1-0.20220923061703-33efe476e022",
+        sum = "h1:/13jzD/AR7v3dCLweFQ2JG8bihh3HLVIci2tbOHHGW0=",
+        version = "v2.0.1-0.20221012074856-6def8d7b90c4",
     )
     go_repository(
         name = "com_github_tikv_pd_client",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/pd/client",
-        sum = "h1:r1eMh9Rny3hfWuBuxOnbsCRrR4FhthiNxLQ5rAUtaww=",
-        version = "v0.0.0-20220725055910-7187a7ab72db",
+        sum = "h1:REQOR1XraH1fT9BCoNBPZs1CAe+w7VPLU+d+si7DLYo=",
+        version = "v0.0.0-20221010134149-d50e5fe43f14",
     )
     go_repository(
         name = "com_github_timakin_bodyclose",
@@ -4250,8 +4250,8 @@ def go_deps():
         name = "org_golang_x_crypto",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/crypto",
-        sum = "h1:7I4JAnoQBe7ZtJcBaYHi5UtiO8tQHbUSXxL+pnGRANg=",
-        version = "v0.0.0-20210921155107-089bfa567519",
+        sum = "h1:kUhD7nTDoI3fVd9G4ORWrbV5NY0liEs/Jg2pv5f+bBA=",
+        version = "v0.0.0-20220411220226-7b82a4e95df4",
     )
     go_repository(
         name = "org_golang_x_exp",

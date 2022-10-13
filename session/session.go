@@ -82,6 +82,7 @@ import (
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/telemetry"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
@@ -1553,21 +1554,23 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		p = explain.TargetPlan
 	}
 	pi := util.ProcessInfo{
-		ID:               s.sessionVars.ConnectionID,
-		Port:             s.sessionVars.Port,
-		DB:               s.sessionVars.CurrentDB,
-		Command:          command,
-		Plan:             p,
-		PlanExplainRows:  plannercore.GetExplainRowsForPlan(p),
-		RuntimeStatsColl: s.sessionVars.StmtCtx.RuntimeStatsColl,
-		Time:             t,
-		State:            s.Status(),
-		Info:             sql,
-		CurTxnStartTS:    curTxnStartTS,
-		StmtCtx:          s.sessionVars.StmtCtx,
-		StatsInfo:        plannercore.GetStatsInfo,
-		MaxExecutionTime: maxExecutionTime,
-		RedactSQL:        s.sessionVars.EnableRedactLog,
+		ID:                    s.sessionVars.ConnectionID,
+		Port:                  s.sessionVars.Port,
+		DB:                    s.sessionVars.CurrentDB,
+		Command:               command,
+		Plan:                  p,
+		PlanExplainRows:       plannercore.GetExplainRowsForPlan(p),
+		CurrentAnalyzeRows:    s.getCurrentAnalyzePlan,
+		RuntimeStatsColl:      s.sessionVars.StmtCtx.RuntimeStatsColl,
+		Time:                  t,
+		State:                 s.Status(),
+		Info:                  sql,
+		CurTxnStartTS:         curTxnStartTS,
+		StmtCtx:               s.sessionVars.StmtCtx,
+		OOMAlarmVariablesInfo: s.getOomAlarmVariablesInfo(),
+		StatsInfo:             plannercore.GetStatsInfo,
+		MaxExecutionTime:      maxExecutionTime,
+		RedactSQL:             s.sessionVars.EnableRedactLog,
 	}
 	oldPi := s.ShowProcess()
 	if p == nil {
@@ -1595,6 +1598,24 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		pi.Host = s.sessionVars.User.Hostname
 	}
 	s.processInfo.Store(&pi)
+}
+
+func (s *session) getOomAlarmVariablesInfo() util.OOMAlarmVariablesInfo {
+	return util.OOMAlarmVariablesInfo{
+		SessionAnalyzeVersion:         s.sessionVars.AnalyzeVersion,
+		SessionEnabledRateLimitAction: s.sessionVars.EnabledRateLimitAction,
+	}
+}
+
+func (s *session) getCurrentAnalyzePlan(p interface{}, runtimeStatsColl *execdetails.RuntimeStatsColl) [][]string {
+	explain := &plannercore.Explain{
+		TargetPlan:       p.(plannercore.Plan),
+		Format:           types.ExplainFormatROW,
+		Analyze:          false,
+		RuntimeStatsColl: runtimeStatsColl,
+	}
+	explain.SetSCtx(s)
+	return plannercore.GetExplainAnalyzeRowsForPlan(explain)
 }
 
 func (s *session) SetDiskFullOpt(level kvrpcpb.DiskFullOpt) {
