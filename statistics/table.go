@@ -1087,13 +1087,9 @@ func (coll *HistColl) getIndexRowCount(sctx sessionctx.Context, idxID int64, ind
 				colID = colIDs[rangePosition]
 			}
 			// prefer index stats over column stats
-			if idxIDs, ok := coll.ColID2IdxIDs[colID]; ok {
-				for _, idxID := range idxIDs {
-					count, err = coll.GetRowCountByIndexRanges(sctx, idxID, []*ranger.Range{&rang})
-					if err == nil {
-						break
-					}
-				}
+			if idxIDs, ok := coll.ColID2IdxIDs[colID]; ok && len(idxIDs) > 0 {
+				idxID := idxIDs[0]
+				count, err = coll.GetRowCountByIndexRanges(sctx, idxID, []*ranger.Range{&rang})
 			} else {
 				count, err = coll.GetRowCountByColumnRanges(sctx, colID, []*ranger.Range{&rang})
 			}
