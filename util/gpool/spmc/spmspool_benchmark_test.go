@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/util"
 )
 
 const (
@@ -60,10 +61,13 @@ func BenchmarkAntsPool(b *testing.B) {
 
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
-		sema := make(chan struct{}, 10)
-		for j := 0; j < RunTimes; j++ {
-			sema <- struct{}{}
-		}
+		var wg util.WaitGroupWrapper
+		sema := make(chan struct{}, 50)
+		wg.Run(func() {
+			for j := 0; j < RunTimes; j++ {
+				sema <- struct{}{}
+			}
+		})
 		producerFunc := func() (struct{}, error) {
 			select {
 			case <-sema:
@@ -72,7 +76,21 @@ func BenchmarkAntsPool(b *testing.B) {
 				return struct{}{}, errors.New("not job")
 			}
 		}
-		_, ctl := p.AddProducer(producerFunc, RunTimes, 6)
+		resultCh, ctl := p.AddProducer(producerFunc, RunTimes, 6)
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-resultCh:
+				default:
+					if ctl.IsProduceClose() {
+						return
+					}
+				}
+			}
+		}()
 		ctl.Wait()
 	}
 	b.StopTimer()

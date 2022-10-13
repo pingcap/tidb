@@ -15,6 +15,7 @@
 package spmc
 
 import (
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -182,4 +183,53 @@ func TestPoolWithoutEnoughCapa(t *testing.T) {
 		})
 	}
 	twg.Wait()
+}
+
+func TestBenchPool(t *testing.T) {
+	p := NewSPMCPool[struct{}, struct{}, int](10, WithExpiryDuration(DefaultExpiredTime))
+	defer p.ReleaseAndWait()
+	p.SetConsumerFunc(func(a struct{}, b int) struct{} {
+		return struct{}{}
+	})
+
+	for i := 0; i < 10; i++ {
+		fmt.Println(i)
+		sema := make(chan struct{}, 10)
+		var wg util.WaitGroupWrapper
+		wg.Run(func() {
+			for j := 0; j < RunTimes; j++ {
+				sema <- struct{}{}
+			}
+		})
+		producerFunc := func() (struct{}, error) {
+			select {
+			case <-sema:
+				return struct{}{}, nil
+			default:
+				return struct{}{}, errors.New("not job")
+			}
+		}
+		resultCh, ctl := p.AddProducer(producerFunc, RunTimes, 6)
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-resultCh:
+				default:
+					fmt.Println("checking")
+					if ctl.IsProduceClose() {
+						return
+					}
+				}
+			}
+		}()
+		fmt.Println("waiting")
+		wg.Done()
+		fmt.Println("waiting ctl")
+		ctl.Wait()
+		fmt.Println("stop")
+	}
+	p.ReleaseAndWait()
 }
