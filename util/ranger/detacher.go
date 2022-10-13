@@ -410,7 +410,8 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 		return res, nil
 	}
 	for _, cond := range newConditions {
-		if !checker.check(cond) {
+		isAccess, _ := checker.check(cond)
+		if !isAccess {
 			filterConds = append(filterConds, cond)
 			continue
 		}
@@ -537,12 +538,12 @@ func accessCondShouldReserve(access expression.Expression, length int) bool {
 			c, _ = f.GetArgs()[1].(*expression.Constant)
 			constLen = GetConstantLength(c, f.GetArgs()[0].GetType())
 		}
-		return constLen == -1 || constLen >= length
+		return constLen == types.UnspecifiedLength || constLen >= length
 	case ast.In:
 		for _, v := range f.GetArgs()[1:] {
 			c, _ := v.(*expression.Constant)
 			constLen := GetConstantLength(c, f.GetArgs()[0].GetType())
-			if constLen == -1 || constLen >= length {
+			if constLen == types.UnspecifiedLength || constLen >= length {
 				return true
 			}
 		}
