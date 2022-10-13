@@ -868,7 +868,6 @@ func evaluateExprWithNullInNullRejectCheck(ctx sessionctx.Context, schema *Schem
 				continue
 			}
 			allNullFromSet = false
-			break
 		}
 		// hasOriginNull indicates whether exists Null Constant which is not affected by column schema
 		hasOriginNull := false
