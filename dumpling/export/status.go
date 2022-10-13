@@ -76,20 +76,20 @@ func calculateTableCount(m DatabaseTables) int {
 	return cnt
 }
 
-type statusRecorder struct {
+type StatusRecorder struct {
 	mu             sync.Mutex
 	lastFinished   int64
 	lastUpdateTime time.Time
 	speedBPS       int64
 }
 
-func newStatusRecorder() *statusRecorder {
-	return &statusRecorder{
+func NewStatusRecorder() *StatusRecorder {
+	return &StatusRecorder{
 		lastUpdateTime: time.Now(),
 	}
 }
 
-func (s *statusRecorder) getSpeed(finished int64) int64 {
+func (s *StatusRecorder) getSpeed(finished int64) int64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
