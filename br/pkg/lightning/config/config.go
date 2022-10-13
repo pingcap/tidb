@@ -32,11 +32,13 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/docker/go-units"
 	gomysql "github.com/go-sql-driver/mysql"
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	tidbcfg "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/util"
 	filter "github.com/pingcap/tidb/util/table-filter"
 	router "github.com/pingcap/tidb/util/table-router"
 	"go.uber.org/atomic"
@@ -96,7 +98,7 @@ const (
 var (
 	supportedStorageTypes = []string{"file", "local", "s3", "noop", "gcs", "gs"}
 
-	DefaultFilter = []string{
+	defaultFilter = []string{
 		"*.*",
 		"!mysql.*",
 		"!sys.*",
@@ -106,6 +108,13 @@ var (
 		"!INSPECTION_SCHEMA.*",
 	}
 )
+
+// GetDefaultFilter gets the default table filter used in Lightning.
+// It clones the original default filter,
+// so that the original value won't be changed when the returned slice's element is changed.
+func GetDefaultFilter() []string {
+	return append([]string{}, defaultFilter...)
+}
 
 type DBStore struct {
 	Host       string    `toml:"host" json:"host"`
@@ -155,7 +164,15 @@ func (cfg *Config) String() string {
 
 func (cfg *Config) ToTLS() (*common.TLS, error) {
 	hostPort := net.JoinHostPort(cfg.TiDB.Host, strconv.Itoa(cfg.TiDB.StatusPort))
-	return common.NewTLS(cfg.Security.CAPath, cfg.Security.CertPath, cfg.Security.KeyPath, hostPort)
+	return common.NewTLS(
+		cfg.Security.CAPath,
+		cfg.Security.CertPath,
+		cfg.Security.KeyPath,
+		hostPort,
+		cfg.Security.CABytes,
+		cfg.Security.CertBytes,
+		cfg.Security.KeyBytes,
+	)
 }
 
 type Lightning struct {
@@ -559,6 +576,11 @@ type Security struct {
 	// TLSConfigName is used to set tls config for lightning in DM, so we don't expose this field to user
 	// DM may running many lightning instances at same time, so we need to set different tls config name for each lightning
 	TLSConfigName string `toml:"-" json:"-"`
+
+	// When DM/engine uses lightning as a library, it can directly pass in the content
+	CABytes   []byte `toml:"-" json:"-"`
+	CertBytes []byte `toml:"-" json:"-"`
+	KeyBytes  []byte `toml:"-" json:"-"`
 }
 
 // RegisterMySQL registers the TLS config with name "cluster" or security.TLSConfigName
@@ -567,7 +589,13 @@ func (sec *Security) RegisterMySQL() error {
 	if sec == nil {
 		return nil
 	}
-	tlsConfig, err := common.ToTLSConfig(sec.CAPath, sec.CertPath, sec.KeyPath)
+
+	tlsConfig, err := util.NewTLSConfig(
+		util.WithCAPath(sec.CAPath),
+		util.WithCertAndKeyPath(sec.CertPath, sec.KeyPath),
+		util.WithCAContent(sec.CABytes),
+		util.WithCertAndKeyContent(sec.CertBytes, sec.KeyBytes),
+	)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -694,7 +722,7 @@ func NewConfig() *Config {
 			},
 			StrictFormat:           false,
 			MaxRegionSize:          MaxRegionSize,
-			Filter:                 DefaultFilter,
+			Filter:                 GetDefaultFilter(),
 			DataCharacterSet:       defaultCSVDataCharacterSet,
 			DataInvalidCharReplace: string(defaultCSVDataInvalidCharReplace),
 		},
@@ -869,7 +897,7 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 	// mydumper.filter and black-white-list cannot co-exist.
 	if cfg.HasLegacyBlackWhiteList() {
 		log.L().Warn("the config `black-white-list` has been deprecated, please replace with `mydumper.filter`")
-		if !common.StringSliceEqual(cfg.Mydumper.Filter, DefaultFilter) {
+		if !common.StringSliceEqual(cfg.Mydumper.Filter, defaultFilter) {
 			return common.ErrInvalidConfig.GenWithStack("`mydumper.filter` and `black-white-list` cannot be simultaneously defined")
 		}
 	}
@@ -1151,9 +1179,11 @@ func (cfg *Config) CheckAndAdjustSecurity() error {
 
 	switch cfg.TiDB.TLS {
 	case "":
-		if len(cfg.TiDB.Security.CAPath) > 0 {
+		if len(cfg.TiDB.Security.CAPath) > 0 || len(cfg.TiDB.Security.CABytes) > 0 ||
+			len(cfg.TiDB.Security.CertPath) > 0 || len(cfg.TiDB.Security.CertBytes) > 0 ||
+			len(cfg.TiDB.Security.KeyPath) > 0 || len(cfg.TiDB.Security.KeyBytes) > 0 {
 			if cfg.TiDB.Security.TLSConfigName == "" {
-				cfg.TiDB.Security.TLSConfigName = "cluster" // adjust this the default value
+				cfg.TiDB.Security.TLSConfigName = uuid.NewString() // adjust this the default value
 			}
 			cfg.TiDB.TLS = cfg.TiDB.Security.TLSConfigName
 		} else {

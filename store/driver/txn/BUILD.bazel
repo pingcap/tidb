@@ -46,6 +46,7 @@ go_library(
 
 go_test(
     name = "txn_test",
+    timeout = "short",
     srcs = [
         "batch_getter_test.go",
         "driver_test.go",

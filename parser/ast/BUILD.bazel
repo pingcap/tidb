@@ -33,6 +33,7 @@ go_library(
 
 go_test(
     name = "ast_test",
+    timeout = "short",
     srcs = [
         "base_test.go",
         "ddl_test.go",

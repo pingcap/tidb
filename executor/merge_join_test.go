@@ -239,11 +239,6 @@ func checkPlanAndRun(tk *testkit.TestKit, t *testing.T, plan string, sql string)
 }
 
 func TestShuffleMergeJoinInDisk(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.OOMUseTmpStorage = true
-	})
-
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testMergeJoinRowContainerSpill", "return(true)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testMergeJoinRowContainerSpill"))
@@ -280,7 +275,6 @@ func TestMergeJoinInDisk(t *testing.T) {
 	restore := config.RestoreFunc()
 	defer restore()
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.OOMUseTmpStorage = true
 		conf.TempStoragePath = t.TempDir()
 	})
 

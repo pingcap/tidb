@@ -34,6 +34,7 @@ go_library(
 
 go_test(
     name = "perfschema_test",
+    timeout = "short",
     srcs = [
         "main_test.go",
         "tables_test.go",
@@ -50,6 +51,7 @@ go_test(
         "//testkit/testsetup",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
+        "@io_opencensus_go//stats/view",
         "@org_uber_go_goleak//:goleak",
     ],
 )

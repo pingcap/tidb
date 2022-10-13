@@ -17,6 +17,7 @@ package expression
 import (
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -29,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -847,7 +847,7 @@ func TestNowAndUTCTimestamp(t *testing.T) {
 		// we canot use a constant value to check timestamp funcs, so here
 		// just to check the fractional seconds part and the time delta.
 		require.False(t, strings.Contains(mt.String(), "."))
-		require.LessOrEqual(t, ts.Sub(gotime(mt, ts.Location())), 3*time.Second)
+		require.LessOrEqual(t, ts.Sub(gotime(mt, ts.Location())), 5*time.Second)
 
 		f, err = x.fc.getFunction(ctx, datumsToConstants(types.MakeDatums(6)))
 		require.NoError(t, err)
@@ -857,7 +857,7 @@ func TestNowAndUTCTimestamp(t *testing.T) {
 		require.NoError(t, err)
 		mt = v.GetMysqlTime()
 		require.True(t, strings.Contains(mt.String(), "."))
-		require.LessOrEqual(t, ts.Sub(gotime(mt, ts.Location())), 3*time.Second)
+		require.LessOrEqual(t, ts.Sub(gotime(mt, ts.Location())), 5*time.Second)
 
 		resetStmtContext(ctx)
 		_, err = x.fc.getFunction(ctx, datumsToConstants(types.MakeDatums(8)))
@@ -869,9 +869,9 @@ func TestNowAndUTCTimestamp(t *testing.T) {
 	}
 
 	// Test that "timestamp" and "time_zone" variable may affect the result of Now() builtin function.
-	err := variable.SetSessionSystemVar(ctx.GetSessionVars(), "time_zone", "+00:00")
+	err := ctx.GetSessionVars().SetSystemVar("time_zone", "+00:00")
 	require.NoError(t, err)
-	err = variable.SetSessionSystemVar(ctx.GetSessionVars(), "timestamp", "1234")
+	err = ctx.GetSessionVars().SetSystemVar("timestamp", "1234")
 	require.NoError(t, err)
 	fc := funcs[ast.Now]
 	resetStmtContext(ctx)
@@ -882,9 +882,9 @@ func TestNowAndUTCTimestamp(t *testing.T) {
 	result, err := v.ToString()
 	require.NoError(t, err)
 	require.Equal(t, "1970-01-01 00:20:34", result)
-	err = variable.SetSessionSystemVar(ctx.GetSessionVars(), "timestamp", "0")
+	err = ctx.GetSessionVars().SetSystemVar("timestamp", "0")
 	require.NoError(t, err)
-	err = variable.SetSessionSystemVar(ctx.GetSessionVars(), "time_zone", "system")
+	err = ctx.GetSessionVars().SetSystemVar("time_zone", "system")
 	require.NoError(t, err)
 }
 
@@ -1132,7 +1132,7 @@ func TestSysDate(t *testing.T) {
 	timezones := []string{"1234", "0"}
 	for _, timezone := range timezones {
 		// sysdate() result is not affected by "timestamp" session variable.
-		err := variable.SetSessionSystemVar(ctx.GetSessionVars(), "timestamp", timezone)
+		err := ctx.GetSessionVars().SetSystemVar("timestamp", timezone)
 		require.NoError(t, err)
 		f, err := fc.getFunction(ctx, datumsToConstants(nil))
 		require.NoError(t, err)
@@ -1703,7 +1703,7 @@ func TestWeekWithoutModeSig(t *testing.T) {
 			err = ctx.GetSessionVars().SetSystemVar("default_week_format", "6")
 			require.NoError(t, err)
 		} else if i == 3 {
-			err = ctx.GetSessionVars().SetSystemVar("default_week_format", "")
+			err = ctx.GetSessionVars().SetSystemVarWithoutValidation("default_week_format", "")
 			require.NoError(t, err)
 		}
 	}
@@ -2746,7 +2746,7 @@ func TestConvertTz(t *testing.T) {
 		{"2021-10-31 02:59:59", "Europe/Amsterdam", "+02:00", true, "2021-10-31 03:59:59"},
 		{"2021-10-31 02:00:00", "Europe/Amsterdam", "+01:00", true, "2021-10-31 02:00:00"},
 		{"2021-10-31 03:00:00", "Europe/Amsterdam", "+01:00", true, "2021-10-31 03:00:00"},
-		{"2021-03-28 02:30:00", "Europe/Amsterdam", "UTC", true, ""},
+		{"2021-03-28 02:30:00", "Europe/Amsterdam", "UTC", true, "2021-03-28 01:00:00"},
 		{"2021-10-22 10:00:00", "Europe/Tallinn", "SYSTEM", true, t1.In(loc2).Format("2006-01-02 15:04:00")},
 		{"2021-10-22 10:00:00", "SYSTEM", "Europe/Tallinn", true, t2.In(loc1).Format("2006-01-02 15:04:00")},
 	}
@@ -3101,4 +3101,18 @@ func TestGetIntervalFromDecimal(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, test.expect, interval)
 	}
+}
+
+func TestCurrentTso(t *testing.T) {
+	ctx := createContext(t)
+	fc := funcs[ast.TiDBCurrentTso]
+	f, err := fc.getFunction(mock.NewContext(), datumsToConstants(nil))
+	require.NoError(t, err)
+	resetStmtContext(ctx)
+	v, err := evalBuiltinFunc(f, chunk.Row{})
+	require.NoError(t, err)
+	n := v.GetInt64()
+	tso, _ := ctx.GetSessionVars().GetSessionOrGlobalSystemVar("tidb_current_ts")
+	itso, _ := strconv.ParseInt(tso, 10, 64)
+	require.Equal(t, itso, n, v.Kind())
 }

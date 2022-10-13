@@ -93,25 +93,31 @@ func (*Join) resultSet() {}
 // NewCrossJoin builds a cross join without `on` or `using` clause.
 // If the right child is a join tree, we need to handle it differently to make the precedence get right.
 // Here is the example: t1 join t2 join t3
-//                 JOIN ON t2.a = t3.a
-//  t1    join    /    \
-//              t2      t3
+//
+//	               JOIN ON t2.a = t3.a
+//	t1    join    /    \
+//	            t2      t3
+//
 // (left)         (right)
 //
 // We can not build it directly to:
-//         JOIN
-//        /    \
-//       t1	   JOIN ON t2.a = t3.a
-//             /   \
-//            t2    t3
+//
+//	  JOIN
+//	 /    \
+//	t1	   JOIN ON t2.a = t3.a
+//	      /   \
+//	     t2    t3
+//
 // The precedence would be t1 join (t2 join t3 on t2.a=t3.a), not (t1 join t2) join t3 on t2.a=t3.a
 // We need to find the left-most child of the right child, and build a cross join of the left-hand side
 // of the left child(t1), and the right hand side with the original left-most child of the right child(t2).
-//          JOIN t2.a = t3.a
-//         /    \
-//       JOIN    t3
-//       /  \
-//      t1  t2
+//
+//	    JOIN t2.a = t3.a
+//	   /    \
+//	 JOIN    t3
+//	 /  \
+//	t1  t2
+//
 // Besides, if the right handle side join tree's join type is right join and has explicit parentheses, we need to rewrite it to left join.
 // So t1 join t2 right join t3 would be rewrite to t1 join t3 left join t2.
 // If not, t1 join (t2 right join t3) would be (t1 join t2) right join t3. After rewrite the right join to left join.
@@ -282,6 +288,7 @@ func (*TableName) resultSet() {}
 
 // Restore implements Node interface.
 func (n *TableName) restoreName(ctx *format.RestoreCtx) {
+	// restore db name
 	if n.Schema.String() != "" {
 		ctx.WriteName(n.Schema.String())
 		ctx.WritePlain(".")
@@ -292,6 +299,7 @@ func (n *TableName) restoreName(ctx *format.RestoreCtx) {
 			ctx.WritePlain(".")
 		}
 	}
+	// restore table name
 	ctx.WriteName(n.Name.String())
 }
 
@@ -1041,6 +1049,9 @@ type CommonTableExpression struct {
 	Query       *SubqueryExpr
 	ColNameList []model.CIStr
 	IsRecursive bool
+
+	// Record how many consumers the current cte has
+	ConsumerCount int
 }
 
 // Restore implements Node interface
@@ -2705,6 +2716,7 @@ type ShowStmt struct {
 	Roles       []*auth.RoleIdentity // Used for show grants .. using
 	IfNotExists bool                 // Used for `show create database if not exists`
 	Extended    bool                 // Used for `show extended columns from ...`
+	Limit       *Limit               // Used for partial Show STMTs to limit Result Set row numbers.
 
 	CountWarningsOrErrors bool // Used for showing count(*) warnings | errors
 
@@ -3070,7 +3082,46 @@ func (n *ShowStmt) Accept(v Visitor) (Node, bool) {
 		}
 		n.Where = node.(ExprNode)
 	}
+	if n.Limit != nil {
+		node, ok := n.Limit.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Limit = node.(*Limit)
+	}
 	return v.Leave(n)
+}
+
+// Allow limit result set for partial SHOW cmd
+func (n *ShowStmt) NeedLimitRSRow() bool {
+	switch n.Tp {
+	// Show statements need to have consistence behavior with MySQL Does
+	case ShowEngines, ShowDatabases, ShowTables, ShowColumns, ShowTableStatus, ShowWarnings,
+		ShowCharset, ShowVariables, ShowStatus, ShowCollation, ShowIndex, ShowPlugins:
+		return true
+	default:
+		// There are five classes of Show STMT.
+		// 1) The STMT Only return one row:
+		//    ShowCreateTable, ShowCreateView, ShowCreateUser, ShowCreateDatabase, ShowMasterStatus,
+		//
+		// 2) The STMT is a MySQL syntax extend, so just keep it behavior as before:
+		//    ShowCreateSequence, ShowCreatePlacementPolicy, ShowConfig, ShowStatsExtended,
+		//    ShowStatsMeta, ShowStatsHistograms, ShowStatsTopN, ShowStatsBuckets, ShowStatsHealthy
+		//    ShowHistogramsInFlight, ShowColumnStatsUsage, ShowBindings, ShowBindingCacheStatus,
+		//    ShowPumpStatus, ShowDrainerStatus, ShowAnalyzeStatus, ShowRegions, ShowBuiltins,
+		//    ShowTableNextRowId, ShowBackups, ShowRestores, ShowImports, ShowCreateImport, ShowPlacement
+		//    ShowPlacementForDatabase, ShowPlacementForTable, ShowPlacementForPartition, ShowPlacementLabels
+		//
+		// 3) There is corelated statements in MySQL, but no limit result set return number also.
+		//    ShowGrants, ShowProcessList, ShowPrivileges, ShowBuiltins, ShowTableNextRowId
+		//
+		// 4) There is corelated statements in MySQL, but it seems not recommand to use them and likely deprecte in the future.
+		//    ShowProfile, ShowProfiles
+		//
+		// 5) Below STMTs do not implement fetch logic.
+		//    ShowTriggers, ShowProcedureStatus, ShowEvents, ShowErrors, ShowOpenTables.
+		return false
+	}
 }
 
 // WindowSpec is the specification of a window.

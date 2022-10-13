@@ -21,6 +21,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
@@ -29,6 +30,8 @@ import (
 )
 
 func TestHashPartitionPruner(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_partition")
@@ -250,6 +253,8 @@ func TestRangeColumnPartitionPruningForInString(t *testing.T) {
 }
 
 func TestListPartitionPruner(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists test_partition;")
@@ -321,6 +326,8 @@ func TestListPartitionPruner(t *testing.T) {
 }
 
 func TestListColumnsPartitionPruner(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
@@ -422,14 +429,15 @@ type testTablePartitionInfo struct {
 }
 
 // getPartitionInfoFromPlan uses to extract table partition information from the plan tree string. Here is an example, the plan is like below:
-//          "Projection_7 80.00 root  test_partition.t1.id, test_partition.t1.a, test_partition.t1.b, test_partition.t2.id, test_partition.t2.a, test_partition.t2.b",
-//          "└─HashJoin_9 80.00 root  CARTESIAN inner join",
-//          "  ├─TableReader_12(Build) 8.00 root partition:p1 data:Selection_11",
-//          "  │ └─Selection_11 8.00 cop[tikv]  1, eq(test_partition.t2.b, 6), in(test_partition.t2.a, 6, 7, 8)",
-//          "  │   └─TableFullScan_10 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-//          "  └─TableReader_15(Probe) 10.00 root partition:p0 data:Selection_14",
-//          "    └─Selection_14 10.00 cop[tikv]  1, eq(test_partition.t1.a, 5)",
-//          "      └─TableFullScan_13 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+//
+//	"Projection_7 80.00 root  test_partition.t1.id, test_partition.t1.a, test_partition.t1.b, test_partition.t2.id, test_partition.t2.a, test_partition.t2.b",
+//	"└─HashJoin_9 80.00 root  CARTESIAN inner join",
+//	"  ├─TableReader_12(Build) 8.00 root partition:p1 data:Selection_11",
+//	"  │ └─Selection_11 8.00 cop[tikv]  1, eq(test_partition.t2.b, 6), in(test_partition.t2.a, 6, 7, 8)",
+//	"  │   └─TableFullScan_10 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+//	"  └─TableReader_15(Probe) 10.00 root partition:p0 data:Selection_14",
+//	"    └─Selection_14 10.00 cop[tikv]  1, eq(test_partition.t1.a, 5)",
+//	"      └─TableFullScan_13 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
 //
 // The return table partition info is: t1: p0; t2: p1
 func getPartitionInfoFromPlan(plan []string) string {
@@ -531,6 +539,8 @@ func TestListColumnsPartitionPrunerRandom(t *testing.T) {
 }
 
 func TestIssue22635(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test;")
@@ -638,7 +648,7 @@ partition by range (a) (
 	tk.MustQuery("select * from t3 where not (a != 1)").Check(testkit.Rows("1"))
 }
 
-//issue 22079
+// issue 22079
 func TestRangePartitionPredicatePruner(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

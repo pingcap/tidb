@@ -261,23 +261,23 @@ func TestEncodeDecodePlan(t *testing.T) {
 
 	tk.MustExec("with cte(a) as (select 1) select * from cte")
 	planTree, newplanTree = getPlanTree()
-	require.Contains(t, planTree, "CTE")
-	require.Contains(t, planTree, "1->Column#1")
+	require.Contains(t, planTree, "Projection_7")
+	require.Contains(t, planTree, "1->Column#3")
 	require.Contains(t, planTree, "time")
 	require.Contains(t, planTree, "loops")
-	require.Contains(t, newplanTree, "CTE")
-	require.Contains(t, newplanTree, "1->Column#1")
+	require.Contains(t, newplanTree, "Projection_7")
+	require.Contains(t, newplanTree, "1->Column#3")
 	require.Contains(t, newplanTree, "time")
 	require.Contains(t, newplanTree, "loops")
 
 	tk.MustExec("with cte(a) as (select 2) select * from cte")
 	planTree, newplanTree = getPlanTree()
-	require.Contains(t, planTree, "CTE")
-	require.Contains(t, planTree, "2->Column#1")
+	require.Contains(t, planTree, "Projection_7")
+	require.Contains(t, planTree, "2->Column#3")
 	require.Contains(t, planTree, "time")
 	require.Contains(t, planTree, "loops")
-	require.Contains(t, newplanTree, "CTE")
-	require.Contains(t, newplanTree, "2->Column#1")
+	require.Contains(t, newplanTree, "Projection_7")
+	require.Contains(t, newplanTree, "2->Column#3")
 	require.Contains(t, newplanTree, "time")
 	require.Contains(t, newplanTree, "loops")
 
@@ -559,14 +559,14 @@ func TestExplainFormatHintRecoverableForTiFlashReplica(t *testing.T) {
 	}
 
 	rows := tk.MustQuery("explain select * from t").Rows()
-	require.Equal(t, rows[len(rows)-1][2], "cop[tiflash]")
+	require.Equal(t, rows[len(rows)-1][2], "mpp[tiflash]")
 
 	rows = tk.MustQuery("explain format='hint' select * from t").Rows()
 	require.Equal(t, rows[0][0], "read_from_storage(@`sel_1` tiflash[`test`.`t`])")
 
 	hints := tk.MustQuery("explain format='hint' select * from t;").Rows()[0][0]
 	rows = tk.MustQuery(fmt.Sprintf("explain select /*+ %s */ * from t", hints)).Rows()
-	require.Equal(t, rows[len(rows)-1][2], "cop[tiflash]")
+	require.Equal(t, rows[len(rows)-1][2], "mpp[tiflash]")
 }
 
 func TestNthPlanHint(t *testing.T) {
@@ -708,6 +708,29 @@ func BenchmarkEncodeFlatPlan(b *testing.B) {
 		flat := core.FlattenPhysicalPlan(p, false)
 		core.EncodeFlatPlan(flat)
 	}
+}
+
+func TestIssue35090(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists p, t;")
+	tk.MustExec("create table p (id int, c int, key i_id(id), key i_c(c));")
+	tk.MustExec("create table t (id int);")
+	tk.MustExec("insert into p values (3,3), (4,4), (6,6), (9,9);")
+	tk.MustExec("insert into t values (4), (9);")
+	tk.MustExec("select /*+ INL_JOIN(p) */ * from p, t where p.id = t.id;")
+	rows := [][]interface{}{
+		{"IndexJoin"},
+		{"├─TableReader(Build)"},
+		{"│ └─Selection"},
+		{"│   └─TableFullScan"},
+		{"└─IndexLookUp(Probe)"},
+		{"  ├─Selection(Build)"},
+		{"  │ └─IndexRangeScan"},
+		{"  └─TableRowIDScan(Probe)"},
+	}
+	tk.MustQuery("explain analyze format='brief' select /*+ INL_JOIN(p) */ * from p, t where p.id = t.id;").CheckAt([]int{0}, rows)
 }
 
 // Close issue 25729
@@ -1029,4 +1052,27 @@ func TestTableDualAsSubQuery(t *testing.T) {
 	tk.MustExec("CREATE VIEW v0(c0) AS SELECT NULL;")
 	tk.MustQuery("SELECT v0.c0 FROM v0 WHERE (v0.c0 IS NULL) LIKE(NULL);").Check(testkit.Rows())
 	tk.MustQuery("SELECT v0.c0 FROM (SELECT null as c0) v0 WHERE (v0.c0 IS NULL) like (NULL);").Check(testkit.Rows())
+}
+
+// https://github.com/pingcap/tidb/issues/38310
+func TestNullEQConditionPlan(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t0(c0 BOOL, PRIMARY KEY(c0));")
+	tk.MustExec("INSERT INTO t0 VALUES (FALSE);")
+	tk.MustQuery("SELECT * FROM t0 WHERE NOT (('4')AND(t0.c0<=>FALSE));").Check(testkit.Rows())
+
+	tk.MustQuery("explain SELECT * FROM t0 WHERE NOT (('4')AND(t0.c0<=>FALSE))").CheckAt(
+		[]int{0, 2, 4}, [][]interface{}{
+			{"TableReader_7", "root", "data:Selection_6"},
+			{"└─Selection_6", "cop[tikv]", "or(0, not(nulleq(test.t0.c0, 0)))"},
+			{"  └─TableFullScan_5", "cop[tikv]", "keep order:false, stats:pseudo"},
+		})
+
+	tk.MustQuery("SELECT * FROM t0 WHERE (('4')AND(t0.c0<=>FALSE));").Check(testkit.Rows("0"))
+	tk.MustQuery("explain SELECT * FROM t0 WHERE (('4')AND(t0.c0<=>FALSE))").CheckAt(
+		[]int{0, 2, 4}, [][]interface{}{
+			{"Point_Get_5", "root", "handle:0"},
+		})
 }

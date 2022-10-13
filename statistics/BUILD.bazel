@@ -62,6 +62,7 @@ go_library(
 
 go_test(
     name = "statistics_test",
+    timeout = "short",
     srcs = [
         "cmsketch_test.go",
         "feedback_test.go",
@@ -98,7 +99,6 @@ go_test(
         "//testkit/testmain",
         "//testkit/testsetup",
         "//types",
-        "//types/json",
         "//util/chunk",
         "//util/codec",
         "//util/collate",

@@ -269,10 +269,12 @@ func TestJobNeedGC(t *testing.T) {
 	job := &model.Job{Type: model.ActionAddIndex, State: model.JobStateCancelled}
 	require.False(t, ddl.JobNeedGCForTest(job))
 
+	job = &model.Job{Type: model.ActionAddColumn, State: model.JobStateDone}
+	require.False(t, ddl.JobNeedGCForTest(job))
 	job = &model.Job{Type: model.ActionAddIndex, State: model.JobStateDone}
-	require.False(t, ddl.JobNeedGCForTest(job))
+	require.True(t, ddl.JobNeedGCForTest(job))
 	job = &model.Job{Type: model.ActionAddPrimaryKey, State: model.JobStateDone}
-	require.False(t, ddl.JobNeedGCForTest(job))
+	require.True(t, ddl.JobNeedGCForTest(job))
 	job = &model.Job{Type: model.ActionAddIndex, State: model.JobStateRollbackDone}
 	require.True(t, ddl.JobNeedGCForTest(job))
 	job = &model.Job{Type: model.ActionAddPrimaryKey, State: model.JobStateRollbackDone}
@@ -280,11 +282,17 @@ func TestJobNeedGC(t *testing.T) {
 
 	job = &model.Job{Type: model.ActionMultiSchemaChange, State: model.JobStateDone, MultiSchemaInfo: &model.MultiSchemaInfo{
 		SubJobs: []*model.SubJob{
-			{Type: model.ActionAddIndex, State: model.JobStateDone},
 			{Type: model.ActionAddColumn, State: model.JobStateDone},
 			{Type: model.ActionRebaseAutoID, State: model.JobStateDone},
 		}}}
 	require.False(t, ddl.JobNeedGCForTest(job))
+	job = &model.Job{Type: model.ActionMultiSchemaChange, State: model.JobStateDone, MultiSchemaInfo: &model.MultiSchemaInfo{
+		SubJobs: []*model.SubJob{
+			{Type: model.ActionAddIndex, State: model.JobStateDone},
+			{Type: model.ActionAddColumn, State: model.JobStateDone},
+			{Type: model.ActionRebaseAutoID, State: model.JobStateDone},
+		}}}
+	require.True(t, ddl.JobNeedGCForTest(job))
 	job = &model.Job{Type: model.ActionMultiSchemaChange, State: model.JobStateDone, MultiSchemaInfo: &model.MultiSchemaInfo{
 		SubJobs: []*model.SubJob{
 			{Type: model.ActionAddIndex, State: model.JobStateDone},

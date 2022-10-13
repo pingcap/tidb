@@ -54,6 +54,7 @@ go_library(
 
 go_test(
     name = "kv_test",
+    timeout = "short",
     srcs = [
         "checker_test.go",
         "error_test.go",
@@ -78,6 +79,7 @@ go_test(
         "//types",
         "//util/codec",
         "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/coprocessor",
         "@com_github_pingcap_kvproto//pkg/deadlock",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
         "@com_github_stretchr_testify//assert",

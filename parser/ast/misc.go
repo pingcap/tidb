@@ -265,7 +265,10 @@ type PlanReplayerStmt struct {
 	Stmt    StmtNode
 	Analyze bool
 	Load    bool
-	File    string
+	// File is used to store 2 cases:
+	// 1. plan replayer load 'file';
+	// 2. plan replayer dump explain <analyze> 'file'
+	File string
 	// Where is the where clause in select statement.
 	Where ExprNode
 	// OrderBy is the ordering expression list.
@@ -286,6 +289,10 @@ func (n *PlanReplayerStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("ANALYZE ")
 	}
 	if n.Stmt == nil {
+		if len(n.File) > 0 {
+			ctx.WriteString(n.File)
+			return nil
+		}
 		ctx.WriteKeyWord("SLOW QUERY")
 		if n.Where != nil {
 			ctx.WriteKeyWord(" WHERE ")
@@ -378,26 +385,32 @@ const (
 type CompactTableStmt struct {
 	stmtNode
 
-	Table       *TableName
-	ReplicaKind CompactReplicaKind
+	Table          *TableName
+	PartitionNames []model.CIStr
+	ReplicaKind    CompactReplicaKind
 }
 
 // Restore implements Node interface.
 func (n *CompactTableStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("ALTER TABLE ")
-	if err := n.Table.Restore(ctx); err != nil {
-		return errors.Annotate(err, "An error occurred while add table")
-	}
+	n.Table.restoreName(ctx)
 
-	if n.ReplicaKind == CompactReplicaKindAll {
-		ctx.WriteKeyWord(" COMPACT")
-	} else {
+	ctx.WriteKeyWord(" COMPACT")
+	if len(n.PartitionNames) != 0 {
+		ctx.WriteKeyWord(" PARTITION ")
+		for i, partition := range n.PartitionNames {
+			if i != 0 {
+				ctx.WritePlain(",")
+			}
+			ctx.WriteName(partition.O)
+		}
+	}
+	if n.ReplicaKind != CompactReplicaKindAll {
+		ctx.WriteKeyWord(" ")
 		// Note: There is only TiFlash replica available now. TiKV will be added later.
-		ctx.WriteKeyWord(" COMPACT ")
 		ctx.WriteKeyWord(string(n.ReplicaKind))
 		ctx.WriteKeyWord(" REPLICA")
 	}
-
 	return nil
 }
 
@@ -506,8 +519,12 @@ type ExecuteStmt struct {
 	Name       string
 	UsingVars  []ExprNode
 	BinaryArgs interface{}
-	ExecID     uint32
+	PrepStmt   interface{} // the corresponding prepared statement
 	IdxInMulti int
+
+	// FromGeneralStmt indicates whether this execute-stmt is converted from a general query.
+	// e.g. select * from t where a>2 --> execute 'select * from t where a>?' using 2
+	FromGeneralStmt bool
 }
 
 // Restore implements Node interface.
@@ -1328,8 +1345,8 @@ func (n *UserSpec) EncodedPassword() (string, bool) {
 	opt := n.AuthOpt
 	if opt.ByAuthString {
 		switch opt.AuthPlugin {
-		case mysql.AuthCachingSha2Password:
-			return auth.NewSha2Password(opt.AuthString), true
+		case mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:
+			return auth.NewHashPassword(opt.AuthString, opt.AuthPlugin), true
 		case mysql.AuthSocket:
 			return "", true
 		default:
@@ -1346,6 +1363,10 @@ func (n *UserSpec) EncodedPassword() (string, bool) {
 	switch opt.AuthPlugin {
 	case mysql.AuthCachingSha2Password:
 		if len(opt.HashString) != mysql.SHAPWDHashLen {
+			return "", false
+		}
+	case mysql.AuthTiDBSM3Password:
+		if len(opt.HashString) != mysql.SM3PWDHashLen {
 			return "", false
 		}
 	case "", mysql.AuthNativePassword:
@@ -1885,9 +1906,10 @@ type StatisticsSpec struct {
 
 // CreateStatisticsStmt is a statement to create extended statistics.
 // Examples:
-//   CREATE STATISTICS stats1 (cardinality) ON t(a, b, c);
-//   CREATE STATISTICS stats2 (dependency) ON t(a, b);
-//   CREATE STATISTICS stats3 (correlation) ON t(a, b);
+//
+//	CREATE STATISTICS stats1 (cardinality) ON t(a, b, c);
+//	CREATE STATISTICS stats2 (dependency) ON t(a, b);
+//	CREATE STATISTICS stats3 (correlation) ON t(a, b);
 type CreateStatisticsStmt struct {
 	stmtNode
 
@@ -1955,7 +1977,8 @@ func (n *CreateStatisticsStmt) Accept(v Visitor) (Node, bool) {
 
 // DropStatisticsStmt is a statement to drop extended statistics.
 // Examples:
-//   DROP STATISTICS stats1;
+//
+//	DROP STATISTICS stats1;
 type DropStatisticsStmt struct {
 	stmtNode
 
@@ -2087,6 +2110,7 @@ const (
 )
 
 // ShowSlow is used for the following command:
+//
 //	admin show slow top [ internal | all] N
 //	admin show slow recent N
 type ShowSlow struct {
@@ -3553,7 +3577,7 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 	}
 	// Hints without args except query block.
 	switch n.HintName.L {
-	case "hash_agg", "stream_agg", "agg_to_cop", "read_consistent_replica", "no_index_merge", "qb_name", "ignore_plan_cache", "limit_to_cop", "straight_join", "merge":
+	case "hash_agg", "stream_agg", "agg_to_cop", "read_consistent_replica", "no_index_merge", "qb_name", "ignore_plan_cache", "limit_to_cop", "straight_join", "merge", "no_decorrelate":
 		ctx.WritePlain(")")
 		return nil
 	}
@@ -3566,7 +3590,7 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlainf("%d", n.HintData.(uint64))
 	case "nth_plan":
 		ctx.WritePlainf("%d", n.HintData.(int64))
-	case "tidb_hj", "tidb_smj", "tidb_inlj", "hash_join", "ordered_hash_join", "merge_join", "inl_join", "broadcast_join", "inl_hash_join", "inl_merge_join", "leading":
+	case "tidb_hj", "tidb_smj", "tidb_inlj", "hash_join", "hash_join_build", "hash_join_probe", "merge_join", "inl_join", "broadcast_join", "inl_hash_join", "inl_merge_join", "leading":
 		for i, table := range n.Tables {
 			if i != 0 {
 				ctx.WritePlain(", ")

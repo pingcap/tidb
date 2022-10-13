@@ -243,6 +243,8 @@ type SessionOptions struct {
 	SysVars   map[string]string
 	// a seed used for tableKvEncoder's auto random bits value
 	AutoRandomSeed int64
+	// IndexID is used by the DuplicateManager. Only the key range with the specified index ID is scanned.
+	IndexID int64
 }
 
 // NewSession creates a new trimmed down Session matching the options.
@@ -251,8 +253,11 @@ func NewSession(options *SessionOptions, logger log.Logger) sessionctx.Context {
 }
 
 func newSession(options *SessionOptions, logger log.Logger) *session {
+	s := &session{
+		values: make(map[fmt.Stringer]interface{}, 1),
+	}
 	sqlMode := options.SQLMode
-	vars := variable.NewSessionVars()
+	vars := variable.NewSessionVars(s)
 	vars.SkipUTF8Check = true
 	vars.StmtCtx.InInsertStmt = true
 	vars.StmtCtx.BatchCheck = true
@@ -264,6 +269,16 @@ func newSession(options *SessionOptions, logger log.Logger) *session {
 	vars.SQLMode = sqlMode
 	if options.SysVars != nil {
 		for k, v := range options.SysVars {
+			// since 6.3(current master) tidb checks whether we can set a system variable
+			// lc_time_names is a read-only variable for now, but might be implemented later,
+			// so we not remove it from defaultImportantVariables and check it in below way.
+			if sv := variable.GetSysVar(k); sv == nil {
+				logger.DPanic("unknown system var", zap.String("key", k))
+				continue
+			} else if sv.ReadOnly {
+				logger.Debug("skip read-only variable", zap.String("key", k))
+				continue
+			}
 			if err := vars.SetSystemVar(k, v); err != nil {
 				logger.DPanic("new session: failed to set system var",
 					log.ShortError(err),
@@ -277,10 +292,7 @@ func newSession(options *SessionOptions, logger log.Logger) *session {
 			log.ShortError(err))
 	}
 	vars.TxnCtx = nil
-	s := &session{
-		vars:   vars,
-		values: make(map[fmt.Stringer]interface{}, 1),
-	}
+	s.vars = vars
 	s.txn.kvPairs = &KvPairs{}
 
 	return s

@@ -30,6 +30,12 @@ import (
 // TrackMemWhenExceeds is the threshold when memory usage needs to be tracked.
 const TrackMemWhenExceeds = 104857600 // 100MB
 
+// Process global variables for memory limit.
+var (
+	ServerMemoryLimit            = atomicutil.NewUint64(0)
+	ServerMemoryLimitSessMinSize = atomicutil.NewUint64(128 << 20)
+)
+
 // Tracker is used to track the memory usage during query execution.
 // It contains an optional limit and can be arranged into a tree structure
 // such that the consumption tracked by a Tracker is also tracked by
@@ -58,30 +64,32 @@ const TrackMemWhenExceeds = 104857600 // 100MB
 // The actions that could be triggered are: SpillDiskAction, SortAndSpillDiskAction, rateLimitAction,
 // PanicOnExceed, globalPanicOnExceed, LogOnExceed.
 type Tracker struct {
-	mu struct {
-		sync.Mutex
+	bytesLimit           atomic.Value
+	actionMuForHardLimit actionMu
+	actionMuForSoftLimit actionMu
+	mu                   struct {
 		// The children memory trackers. If the Tracker is the Global Tracker, like executor.GlobalDiskUsageTracker,
 		// we wouldn't maintain its children in order to avoiding mutex contention.
 		children map[int][]*Tracker
-	}
-	actionMuForHardLimit actionMu
-	actionMuForSoftLimit actionMu
-	parMu                struct {
 		sync.Mutex
-		parent *Tracker // The parent memory tracker.
 	}
-
-	label         int   // Label of this "Tracker".
-	bytesConsumed int64 // Consumed bytes.
-	bytesReleased int64 // Released bytes.
-	bytesLimit    atomic.Value
-	maxConsumed   atomicutil.Int64 // max number of bytes consumed during execution.
-	isGlobal      bool             // isGlobal indicates whether this tracker is global tracker
+	parMu struct {
+		parent *Tracker // The parent memory tracker.
+		sync.Mutex
+	}
+	label               int              // Label of this "Tracker".
+	bytesConsumed       int64            // Consumed bytes.
+	bytesReleased       int64            // Released bytes.
+	maxConsumed         atomicutil.Int64 // max number of bytes consumed during execution.
+	SessionID           uint64           // SessionID indicates the sessionID the tracker is bound.
+	NeedKill            atomic.Bool      // NeedKill indicates whether this session need kill because OOM
+	IsRootTrackerOfSess bool             // IsRootTrackerOfSess indicates whether this tracker is bound for session
+	isGlobal            bool             // isGlobal indicates whether this tracker is global tracker
 }
 
 type actionMu struct {
-	sync.Mutex
 	actionOnExceed ActionOnExceed
+	sync.Mutex
 }
 
 // EnableGCAwareMemoryTrack is used to turn on/off the GC-aware memory track
@@ -102,9 +110,13 @@ type bytesLimits struct {
 	bytesSoftLimit int64 // bytesSoftLimit <= 0 means no limit, used for actionMuForSoftLimit.
 }
 
+// MemUsageTop1Tracker record the use memory top1 session's tracker for kill.
+var MemUsageTop1Tracker atomic.Pointer[Tracker]
+
 // InitTracker initializes a memory tracker.
-//	1. "label" is the label used in the usage string.
-//	2. "bytesLimit <= 0" means no limit.
+//  1. "label" is the label used in the usage string.
+//  2. "bytesLimit <= 0" means no limit.
+//
 // For the common tracker, isGlobal is default as false
 func InitTracker(t *Tracker, label int, bytesLimit int64, action ActionOnExceed) {
 	t.mu.children = nil
@@ -122,8 +134,9 @@ func InitTracker(t *Tracker, label int, bytesLimit int64, action ActionOnExceed)
 }
 
 // NewTracker creates a memory tracker.
-//	1. "label" is the label used in the usage string.
-//	2. "bytesLimit <= 0" means no limit.
+//  1. "label" is the label used in the usage string.
+//  2. "bytesLimit <= 0" means no limit.
+//
 // For the common tracker, isGlobal is default as false
 func NewTracker(label int, bytesLimit int64) *Tracker {
 	t := &Tracker{
@@ -191,7 +204,7 @@ func (t *Tracker) SetActionOnExceed(a ActionOnExceed) {
 func (t *Tracker) FallbackOldAndSetNewAction(a ActionOnExceed) {
 	t.actionMuForHardLimit.Lock()
 	defer t.actionMuForHardLimit.Unlock()
-	t.actionMuForHardLimit.actionOnExceed = reArrangeFallback(t.actionMuForHardLimit.actionOnExceed, a)
+	t.actionMuForHardLimit.actionOnExceed = reArrangeFallback(a, t.actionMuForHardLimit.actionOnExceed)
 }
 
 // FallbackOldAndSetNewActionForSoftLimit sets the action when memory usage exceeds bytesSoftLimit
@@ -199,7 +212,7 @@ func (t *Tracker) FallbackOldAndSetNewAction(a ActionOnExceed) {
 func (t *Tracker) FallbackOldAndSetNewActionForSoftLimit(a ActionOnExceed) {
 	t.actionMuForSoftLimit.Lock()
 	defer t.actionMuForSoftLimit.Unlock()
-	t.actionMuForSoftLimit.actionOnExceed = reArrangeFallback(t.actionMuForSoftLimit.actionOnExceed, a)
+	t.actionMuForSoftLimit.actionOnExceed = reArrangeFallback(a, t.actionMuForSoftLimit.actionOnExceed)
 }
 
 // GetFallbackForTest get the oom action used by test.
@@ -222,10 +235,8 @@ func reArrangeFallback(a ActionOnExceed, b ActionOnExceed) ActionOnExceed {
 	}
 	if a.GetPriority() < b.GetPriority() {
 		a, b = b, a
-		a.SetFallback(b)
-	} else {
-		a.SetFallback(reArrangeFallback(a.GetFallback(), b))
 	}
+	a.SetFallback(reArrangeFallback(a.GetFallback(), b))
 	return a
 }
 
@@ -355,8 +366,11 @@ func (t *Tracker) Consume(bs int64) {
 	if bs == 0 {
 		return
 	}
-	var rootExceed, rootExceedForSoftLimit *Tracker
+	var rootExceed, rootExceedForSoftLimit, sessionRootTracker *Tracker
 	for tracker := t; tracker != nil; tracker = tracker.getParent() {
+		if tracker.IsRootTrackerOfSess {
+			sessionRootTracker = tracker
+		}
 		bytesConsumed := atomic.AddInt64(&tracker.bytesConsumed, bs)
 		bytesReleased := atomic.LoadInt64(&tracker.bytesReleased)
 		limits := tracker.bytesLimit.Load().(*bytesLimits)
@@ -391,11 +405,43 @@ func (t *Tracker) Consume(bs int64) {
 		}
 	}
 
-	if bs > 0 && rootExceedForSoftLimit != nil {
-		tryAction(&rootExceedForSoftLimit.actionMuForSoftLimit, rootExceedForSoftLimit)
+	tryActionLastOne := func(mu *actionMu, tracker *Tracker) {
+		mu.Lock()
+		defer mu.Unlock()
+		if currentAction := mu.actionOnExceed; currentAction != nil {
+			for nextAction := currentAction.GetFallback(); nextAction != nil; {
+				currentAction = nextAction
+				nextAction = currentAction.GetFallback()
+			}
+			currentAction.Action(tracker)
+		}
 	}
+
+	if bs > 0 && sessionRootTracker != nil {
+		// Kill the Top1 session
+		if sessionRootTracker.NeedKill.Load() {
+			tryActionLastOne(&sessionRootTracker.actionMuForHardLimit, sessionRootTracker)
+		}
+		// Update the Top1 session
+		memUsage := sessionRootTracker.BytesConsumed()
+		limitSessMinSize := ServerMemoryLimitSessMinSize.Load()
+		if uint64(memUsage) >= limitSessMinSize {
+			oldTracker := MemUsageTop1Tracker.Load()
+			for oldTracker.LessThan(sessionRootTracker) {
+				if MemUsageTop1Tracker.CompareAndSwap(oldTracker, sessionRootTracker) {
+					break
+				}
+				oldTracker = MemUsageTop1Tracker.Load()
+			}
+		}
+	}
+
 	if bs > 0 && rootExceed != nil {
 		tryAction(&rootExceed.actionMuForHardLimit, rootExceed)
+	}
+
+	if bs > 0 && rootExceedForSoftLimit != nil {
+		tryAction(&rootExceedForSoftLimit.actionMuForSoftLimit, rootExceedForSoftLimit)
 	}
 }
 
@@ -421,9 +467,12 @@ func (t *Tracker) Release(bytes int64) {
 		if tracker.shouldRecordRelease() {
 			// use fake ref instead of obj ref, otherwise obj will be reachable again and gc in next cycle
 			newRef := &finalizerRef{}
-			runtime.SetFinalizer(newRef, func(ref *finalizerRef) {
-				tracker.release(bytes)
-			})
+			finalizer := func(tracker *Tracker) func(ref *finalizerRef) {
+				return func(ref *finalizerRef) {
+					tracker.release(bytes) // finalizer func is called async
+				}
+			}
+			runtime.SetFinalizer(newRef, finalizer(tracker))
 			tracker.recordRelease(bytes)
 			return
 		}
@@ -539,6 +588,17 @@ func (t *Tracker) toString(indent string, buffer *bytes.Buffer) {
 // FormatBytes uses to format bytes, this function will prune precision before format bytes.
 func (*Tracker) FormatBytes(numBytes int64) string {
 	return FormatBytes(numBytes)
+}
+
+// LessThan indicates whether t byteConsumed is less than t2 byteConsumed.
+func (t *Tracker) LessThan(t2 *Tracker) bool {
+	if t == nil {
+		return true
+	}
+	if t2 == nil {
+		return false
+	}
+	return t.BytesConsumed() < t2.BytesConsumed()
 }
 
 // BytesToString converts the memory consumption to a readable string.

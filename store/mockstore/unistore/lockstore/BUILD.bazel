@@ -19,6 +19,7 @@ go_library(
 
 go_test(
     name = "lockstore_test",
+    timeout = "short",
     srcs = [
         "lockstore_test.go",
         "main_test.go",

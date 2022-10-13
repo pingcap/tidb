@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
@@ -144,11 +145,7 @@ func TestInvalidNameWhenCreateTable(t *testing.T) {
 
 // TestCreateTableIfNotExistsLike for issue #6879
 func TestCreateTableIfNotExistsLike(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -175,11 +172,7 @@ func TestCreateTableIfNotExistsLike(t *testing.T) {
 
 // for issue #9910
 func TestCreateTableWithKeyWord(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -190,11 +183,7 @@ func TestCreateTableWithKeyWord(t *testing.T) {
 }
 
 func TestUniqueKeyNullValue(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test")
@@ -211,10 +200,7 @@ func TestUniqueKeyNullValue(t *testing.T) {
 }
 
 func TestUniqueKeyNullValueClusterIndex(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -232,11 +218,7 @@ func TestUniqueKeyNullValueClusterIndex(t *testing.T) {
 
 // TestModifyColumnAfterAddIndex Issue 5134
 func TestModifyColumnAfterAddIndex(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -246,11 +228,7 @@ func TestModifyColumnAfterAddIndex(t *testing.T) {
 }
 
 func TestIssue2293(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -278,11 +256,7 @@ func TestIssue6101(t *testing.T) {
 }
 
 func TestIssue19229(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -306,11 +280,9 @@ func TestIssue19229(t *testing.T) {
 }
 
 func TestIndexLength(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithDDLChecker())
 
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	ddlChecker := dom.DDL().(*schematracker.Checker)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -361,11 +333,7 @@ func TestIssue3833(t *testing.T) {
 }
 
 func TestIssue2858And2717(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -384,11 +352,7 @@ func TestIssue2858And2717(t *testing.T) {
 }
 
 func TestIssue4432(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -415,11 +379,9 @@ func TestIssue4432(t *testing.T) {
 }
 
 func TestIssue5092(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithDDLChecker())
 
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	ddlChecker := dom.DDL().(*schematracker.Checker)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -688,11 +650,7 @@ func TestTableDDLWithFloatType(t *testing.T) {
 }
 
 func TestTableDDLWithTimeType(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -729,13 +687,14 @@ func TestUpdateMultipleTable(t *testing.T) {
 
 	d := dom.DDL()
 	hook := &ddl.TestDDLCallback{Do: dom}
-	hook.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if job.SchemaState == model.StateWriteOnly {
 			tk2.MustExec("update t1, t2 set t1.c1 = 8, t2.c2 = 10 where t1.c2 = t2.c1")
 			tk2.MustQuery("select * from t1").Check(testkit.Rows("8 1", "8 2"))
 			tk2.MustQuery("select * from t2").Check(testkit.Rows("1 10", "2 10"))
 		}
 	}
+	hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	d.SetHook(hook)
 
 	tk.MustExec("alter table t1 add column c3 bigint default 9")
@@ -744,11 +703,7 @@ func TestUpdateMultipleTable(t *testing.T) {
 }
 
 func TestNullGeneratedColumn(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -768,11 +723,7 @@ func TestNullGeneratedColumn(t *testing.T) {
 }
 
 func TestDependedGeneratedColumnPrior2GeneratedColumn(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -798,11 +749,9 @@ func TestDependedGeneratedColumnPrior2GeneratedColumn(t *testing.T) {
 }
 
 func TestChangingTableCharset(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithDDLChecker())
 
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	ddlChecker := dom.DDL().(*schematracker.Checker)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -959,11 +908,7 @@ func TestChangingTableCharset(t *testing.T) {
 }
 
 func TestModifyColumnOption(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test")
@@ -998,11 +943,7 @@ func TestModifyColumnOption(t *testing.T) {
 }
 
 func TestIndexOnMultipleGeneratedColumn(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test")
@@ -1019,11 +960,7 @@ func TestIndexOnMultipleGeneratedColumn(t *testing.T) {
 }
 
 func TestIndexOnMultipleGeneratedColumn1(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test")
@@ -1040,11 +977,7 @@ func TestIndexOnMultipleGeneratedColumn1(t *testing.T) {
 }
 
 func TestIndexOnMultipleGeneratedColumn2(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test")
@@ -1061,11 +994,7 @@ func TestIndexOnMultipleGeneratedColumn2(t *testing.T) {
 }
 
 func TestIndexOnMultipleGeneratedColumn3(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test")
@@ -1082,11 +1011,7 @@ func TestIndexOnMultipleGeneratedColumn3(t *testing.T) {
 }
 
 func TestIndexOnMultipleGeneratedColumn4(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test")
@@ -1103,11 +1028,7 @@ func TestIndexOnMultipleGeneratedColumn4(t *testing.T) {
 }
 
 func TestIndexOnMultipleGeneratedColumn5(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test")
@@ -1186,11 +1107,7 @@ func TestCaseInsensitiveCharsetAndCollate(t *testing.T) {
 }
 
 func TestZeroFillCreateTable(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1217,11 +1134,9 @@ func TestZeroFillCreateTable(t *testing.T) {
 }
 
 func TestBitDefaultValue(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithDDLChecker())
 
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	ddlChecker := dom.DDL().(*schematracker.Checker)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1360,11 +1275,7 @@ func TestCreateTableTooManyIndexes(t *testing.T) {
 }
 
 func TestChangeColumnPosition(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1417,11 +1328,7 @@ func TestChangeColumnPosition(t *testing.T) {
 }
 
 func TestAddIndexAfterAddColumn(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1436,11 +1343,7 @@ func TestAddIndexAfterAddColumn(t *testing.T) {
 }
 
 func TestResolveCharset(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1473,11 +1376,7 @@ func TestResolveCharset(t *testing.T) {
 
 func TestAddColumnDefaultNow(t *testing.T) {
 	// Related Issue: https://github.com/pingcap/tidb/issues/31968
-	mockStore, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	mockStore := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, mockStore)
 	const dateHourLength = len("yyyy-mm-dd hh:")
@@ -1669,12 +1568,7 @@ CREATE TABLE t (
 }
 
 func TestAlterColumn(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	d := dom.DDL()
-	ddlChecker := schematracker.NewChecker(d)
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1884,11 +1778,7 @@ func assertAlterWarnExec(tk *testkit.TestKit, t *testing.T, sql string) {
 }
 
 func TestAlterAlgorithm(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2246,10 +2136,7 @@ func TestDefaultColumnWithUUID(t *testing.T) {
 }
 
 func TestChangingDBCharset(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -2443,11 +2330,7 @@ func TestInsertIntoGeneratedColumnWithDefaultExpr(t *testing.T) {
 }
 
 func TestSqlFunctionsInGeneratedColumns(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test")
@@ -2491,11 +2374,7 @@ func TestSqlFunctionsInGeneratedColumns(t *testing.T) {
 }
 
 func TestParserIssue284(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2587,6 +2466,104 @@ func TestAddExpressionIndex(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Experimental.AllowsExpressionIndex = true
 	})
+}
+
+func TestCreateExpressionIndexWithJSONFunction(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int, b json);")
+	tk.MustExec("insert into t values (1, '{\"a\": 1}');")
+
+	tk.MustExec("alter table t add index idx((cast(b->'$.a' as char(255))));")
+	tk.MustQuery("select * from t force index(idx);").Check(testkit.Rows("1 {\"a\": 1}"))
+	tk.MustQuery("select * from t ignore index(idx);").Check(testkit.Rows("1 {\"a\": 1}"))
+
+	tk.MustExec("alter table t add index idx1((cast(b->>'$.a' as char(255))));")
+	tk.MustQuery("select * from t force index(idx1);").Check(testkit.Rows("1 {\"a\": 1}"))
+	tk.MustQuery("select * from t ignore index(idx1);").Check(testkit.Rows("1 {\"a\": 1}"))
+
+	tk.MustExec("alter table t add index idx2((json_type(b)));")
+	tk.MustQuery("select * from t force index(idx2) where json_type(b) = 'OBJECT';").Check(testkit.Rows("1 {\"a\": 1}"))
+	tk.MustQuery("select * from t ignore index(idx2) where json_type(b) = 'OBJECT';").Check(testkit.Rows("1 {\"a\": 1}"))
+
+	tk.MustGetErrCode("alter table t add index idx_wrong((b->'$.a'));", errno.ErrFunctionalIndexOnJSONOrGeometryFunction)
+	tk.MustGetErrCode("alter table t add index idx_wrong((b->>'$.a'));", errno.ErrFunctionalIndexOnBlob)
+	tk.MustGetErrCode("alter table t add index idx_wrong((json_pretty(b)));", errno.ErrFunctionalIndexOnBlob)
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustGetErrCode("create table t(a char(255), index idx((json_quote(a))));", errno.ErrTooLongKey)
+	tk.MustExec("create table t(a char(40));")
+	tk.MustExec("insert into t values ('[1, 2, 3]')")
+	tk.MustExec("alter table t add index idx3((json_quote(a)));")
+	tk.MustQuery("select * from t force index(idx3) where json_quote(a) = '\"[1, 2, 3]\"';").Check(testkit.Rows("[1, 2, 3]"))
+	tk.MustQuery("select * from t ignore index(idx3) where json_quote(a) = '\"[1, 2, 3]\"';").Check(testkit.Rows("[1, 2, 3]"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int, b json);")
+	tk.MustGetErrCode(`alter table t add index idx_wrong((json_array(b)));`, errno.ErrFunctionalIndexOnJSONOrGeometryFunction)
+	tk.MustGetErrCode(`alter table t add index idx_wrong((json_object('key', b)));`, errno.ErrFunctionalIndexOnJSONOrGeometryFunction)
+	tk.MustGetErrCode(`alter table t add index idx_wrong((json_merge_preserve(b, '{"k": "v"}')));`, errno.ErrFunctionalIndexOnJSONOrGeometryFunction)
+	tk.MustGetErrCode(`alter table t add index idx_wrong((json_set(b, '$.a', 'v')));`, errno.ErrFunctionalIndexOnJSONOrGeometryFunction)
+	tk.MustGetErrCode(`alter table t add index idx_wrong((json_insert(b, '$.a', 'v')));`, errno.ErrFunctionalIndexOnJSONOrGeometryFunction)
+	tk.MustGetErrCode(`alter table t add index idx_wrong((json_replace(b, '$.a', 'v')));`, errno.ErrFunctionalIndexOnJSONOrGeometryFunction)
+	tk.MustGetErrCode(`alter table t add index idx_wrong((json_remove(b, '$.a')));`, errno.ErrFunctionalIndexOnJSONOrGeometryFunction)
+	tk.MustGetErrCode(`alter table t add index idx_wrong((json_array_append(b, '$.a', 1)));`, errno.ErrFunctionalIndexOnJSONOrGeometryFunction)
+	tk.MustGetErrCode(`alter table t add index idx_wrong((json_merge_patch(b, '{"k": "v"}')));`, errno.ErrFunctionalIndexOnJSONOrGeometryFunction)
+	tk.MustGetErrCode(`alter table t add index idx_wrong((json_search(b, 'one', 'a')));`, errno.ErrFunctionalIndexOnJSONOrGeometryFunction)
+	tk.MustGetErrCode(`alter table t add index idx_wrong((json_keys(b)));`, errno.ErrFunctionalIndexOnJSONOrGeometryFunction)
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int, b json);")
+	tk.MustExec("insert into t values (1, '{\"a\": 1}');")
+	tk.MustExec(`alter table t add index idx0((json_type(json_search(b, 'one', 'a'))));`)
+	tk.MustExec(`alter table t add index idx1((json_type(json_array(b))));`)
+	tk.MustExec(`alter table t add index idx2((json_type(json_object('key', b))));`)
+	tk.MustExec(`alter table t add index idx3((json_type(json_merge_preserve(b, '{"k": "v"}'))));`)
+	tk.MustExec(`alter table t add index idx4((json_type(json_set(b, '$.a', 'v'))));`)
+	tk.MustExec(`alter table t add index idx5((json_type(json_insert(b, '$.a', 'v'))));`)
+	tk.MustExec(`alter table t add index idx6((json_type(json_replace(b, '$.a', 'v'))));`)
+	tk.MustExec(`alter table t add index idx7((json_type(json_remove(b, '$.a'))));`)
+	tk.MustExec(`alter table t add index idx8((json_type(json_array_append(b, '$.a', 1))));`)
+	tk.MustExec(`alter table t add index idx9((json_type(json_merge_patch(b, '{"k": "v"}'))));`)
+	tk.MustExec(`alter table t add index idx10((json_type(json_keys(b))));`)
+	tk.MustExec(`alter table t add index idx11((cast(json_quote(cast(a as char(10))) as char(64))));`)
+	tk.MustExec(`alter table t add index idx12((json_storage_size(b)));`)
+	tk.MustExec(`alter table t add index idx13((json_depth(b)));`)
+	tk.MustExec(`alter table t add index idx14((json_length(b)));`)
+
+	tk.MustQuery(`select * from t force index(idx0) where json_type(json_search(b, 'one', 'a')) is NULL;`).Check(testkit.Rows("1 {\"a\": 1}"))
+	tk.MustQuery(`select * from t force index(idx1) where json_type(json_array(b)) = 'ARRAY';`).Check(testkit.Rows("1 {\"a\": 1}"))
+	tk.MustQuery(`select * from t force index(idx2) where json_type(json_object('key', b)) = 'OBJECT';`).Check(testkit.Rows("1 {\"a\": 1}"))
+	tk.MustQuery(`select * from t force index(idx3) where json_type(json_merge_preserve(b, '{"k": "v"}')) = 'OBJECT';`).Check(testkit.Rows("1 {\"a\": 1}"))
+	tk.MustQuery(`select * from t force index(idx4) where json_type(json_set(b, '$.a', 'v')) = 'OBJECT';`).Check(testkit.Rows("1 {\"a\": 1}"))
+	tk.MustQuery(`select * from t force index(idx5) where json_type(json_insert(b, '$.a', 'v')) = 'OBJECT';`).Check(testkit.Rows("1 {\"a\": 1}"))
+	tk.MustQuery(`select * from t force index(idx6) where json_type(json_replace(b, '$.a', 'v')) = 'OBJECT';`).Check(testkit.Rows("1 {\"a\": 1}"))
+	tk.MustQuery(`select * from t force index(idx7) where json_type(json_remove(b, '$.a')) = 'OBJECT';`).Check(testkit.Rows("1 {\"a\": 1}"))
+	tk.MustQuery(`select * from t force index(idx8) where json_type(json_array_append(b, '$.a', 1)) = 'OBJECT';`).Check(testkit.Rows("1 {\"a\": 1}"))
+	tk.MustQuery(`select * from t force index(idx9) where json_type(json_merge_patch(b, '{"k": "v"}')) = 'OBJECT';`).Check(testkit.Rows("1 {\"a\": 1}"))
+	tk.MustQuery(`select * from t force index(idx10) where json_type(json_keys(b)) = 'ARRAY';`).Check(testkit.Rows("1 {\"a\": 1}"))
+	tk.MustQuery(`select * from t force index(idx11) where cast(json_quote(cast(a as char(10))) as char(64)) = '"1"';`).Check(testkit.Rows("1 {\"a\": 1}"))
+	tk.MustQuery(`select * from t force index(idx12) where json_storage_size(b) > 1;`).Check(testkit.Rows("1 {\"a\": 1}"))
+	tk.MustQuery(`select * from t force index(idx13) where json_depth(b) > 0;`).Check(testkit.Rows("1 {\"a\": 1}"))
+	tk.MustQuery(`select * from t force index(idx14) where json_length(b) > 0;`).Check(testkit.Rows("1 {\"a\": 1}"))
+
+	tk.MustQuery(`select * from t ignore index(idx0) where json_type(json_search(b, 'one', 'a')) is NULL;`).Check(testkit.Rows("1 {\"a\": 1}"))
+	tk.MustQuery(`select * from t ignore index(idx1) where json_type(json_array(b)) = 'ARRAY';`).Check(testkit.Rows("1 {\"a\": 1}"))
+	tk.MustQuery(`select * from t ignore index(idx2) where json_type(json_object('key', b)) = 'OBJECT';`).Check(testkit.Rows("1 {\"a\": 1}"))
+	tk.MustQuery(`select * from t ignore index(idx3) where json_type(json_merge_preserve(b, '{"k": "v"}')) = 'OBJECT';`).Check(testkit.Rows("1 {\"a\": 1}"))
+	tk.MustQuery(`select * from t ignore index(idx4) where json_type(json_set(b, '$.a', 'v')) = 'OBJECT';`).Check(testkit.Rows("1 {\"a\": 1}"))
+	tk.MustQuery(`select * from t ignore index(idx5) where json_type(json_insert(b, '$.a', 'v')) = 'OBJECT';`).Check(testkit.Rows("1 {\"a\": 1}"))
+	tk.MustQuery(`select * from t ignore index(idx6) where json_type(json_replace(b, '$.a', 'v')) = 'OBJECT';`).Check(testkit.Rows("1 {\"a\": 1}"))
+	tk.MustQuery(`select * from t ignore index(idx7) where json_type(json_remove(b, '$.a')) = 'OBJECT';`).Check(testkit.Rows("1 {\"a\": 1}"))
+	tk.MustQuery(`select * from t ignore index(idx8) where json_type(json_array_append(b, '$.a', 1)) = 'OBJECT';`).Check(testkit.Rows("1 {\"a\": 1}"))
+	tk.MustQuery(`select * from t ignore index(idx9) where json_type(json_merge_patch(b, '{"k": "v"}')) = 'OBJECT';`).Check(testkit.Rows("1 {\"a\": 1}"))
+	tk.MustQuery(`select * from t ignore index(idx10) where json_type(json_keys(b)) = 'ARRAY';`).Check(testkit.Rows("1 {\"a\": 1}"))
+	tk.MustQuery(`select * from t ignore index(idx11) where cast(json_quote(cast(a as char(10))) as char(64)) = '"1"';`).Check(testkit.Rows("1 {\"a\": 1}"))
+	tk.MustQuery(`select * from t ignore index(idx12) where json_storage_size(b) > 1;`).Check(testkit.Rows("1 {\"a\": 1}"))
+	tk.MustQuery(`select * from t ignore index(idx13) where json_depth(b) > 0;`).Check(testkit.Rows("1 {\"a\": 1}"))
+	tk.MustQuery(`select * from t ignore index(idx14) where json_length(b) > 0;`).Check(testkit.Rows("1 {\"a\": 1}"))
 }
 
 func TestCreateExpressionIndexError(t *testing.T) {
@@ -2818,10 +2795,7 @@ func queryIndexOnTable(dbName, tableName string) string {
 }
 
 func TestDropColumnWithCompositeIndex(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	query := queryIndexOnTable("drop_composite_index_test", "t_drop_column_with_comp_idx")
@@ -2840,11 +2814,7 @@ func TestDropColumnWithCompositeIndex(t *testing.T) {
 }
 
 func TestDropColumnWithIndex(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2857,11 +2827,7 @@ func TestDropColumnWithIndex(t *testing.T) {
 }
 
 func TestDropColumnWithAutoInc(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2878,11 +2844,7 @@ func TestDropColumnWithAutoInc(t *testing.T) {
 }
 
 func TestDropColumnWithMultiIndex(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2896,11 +2858,7 @@ func TestDropColumnWithMultiIndex(t *testing.T) {
 }
 
 func TestDropColumnsWithMultiIndex(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2929,11 +2887,7 @@ func TestDropLastVisibleColumnOrColumns(t *testing.T) {
 }
 
 func TestAutoIncrementTableOption(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists test_auto_inc_table_opt;")
@@ -3062,11 +3016,7 @@ func TestAutoIncrementForce(t *testing.T) {
 }
 
 func TestIssue20490(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -3081,11 +3031,7 @@ func TestIssue20490(t *testing.T) {
 }
 
 func TestIssue20741WithEnumField(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3118,11 +3064,7 @@ func TestIssue20741WithSetField(t *testing.T) {
 
 // TestDefaultValueIsLatin1 for issue #18977
 func TestEnumAndSetDefaultValue(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3211,11 +3153,7 @@ func TestDuplicateErrorMessage(t *testing.T) {
 }
 
 func TestIssue22028(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3621,7 +3559,7 @@ func TestDropTemporaryTable(t *testing.T) {
 	require.NoError(t, err)
 	sessionVars := tk.Session().GetSessionVars()
 	sessVarsTempTable := sessionVars.LocalTemporaryTables
-	localTemporaryTable := sessVarsTempTable.(*infoschema.LocalTemporaryTables)
+	localTemporaryTable := sessVarsTempTable.(*infoschema.SessionTables)
 	tbl, exist := localTemporaryTable.TableByName(model.NewCIStr("test"), model.NewCIStr("a_local_temp_table_7"))
 	require.True(t, exist)
 	tblInfo := tbl.Meta()
@@ -3880,7 +3818,7 @@ func TestTruncateLocalTemporaryTable(t *testing.T) {
 	tk.MustExec("create temporary table t1 (id int primary key auto_increment)")
 
 	// truncate temporary table will clear session data
-	localTemporaryTables := tk.Session().GetSessionVars().LocalTemporaryTables.(*infoschema.LocalTemporaryTables)
+	localTemporaryTables := tk.Session().GetSessionVars().LocalTemporaryTables.(*infoschema.SessionTables)
 	tb1, exist := localTemporaryTables.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	tbl1Info := tb1.Meta()
 	tablePrefix := tablecodec.EncodeTablePrefix(tbl1Info.ID)
@@ -3962,8 +3900,15 @@ func TestCreateTempTableInTxn(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("begin")
-	tk.MustExec("create temporary table t1(id int)")
-	tk.MustQuery("select * from t1")
+	// new created temporary table should be visible
+	tk.MustExec("create temporary table t1(id int primary key, v int)")
+	tk.MustQuery("select * from t1").Check(testkit.Rows())
+	// new inserted data should be visible
+	tk.MustExec("insert into t1 values(123, 456)")
+	tk.MustQuery("select * from t1 where id=123").Check(testkit.Rows("123 456"))
+	// truncate table will clear data but table still visible
+	tk.MustExec("truncate table t1")
+	tk.MustQuery("select * from t1 where id=123").Check(testkit.Rows())
 	tk.MustExec("commit")
 
 	tk1 := testkit.NewTestKit(t, store)
@@ -3973,15 +3918,21 @@ func TestCreateTempTableInTxn(t *testing.T) {
 	tk1.MustExec("create temporary table t1(id int)")
 	tk1.MustExec("insert into tt select * from t1")
 	tk1.MustExec("drop table tt")
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk2.MustExec("create table t2(id int primary key, v int)")
+	tk2.MustExec("insert into t2 values(234, 567)")
+	tk2.MustExec("begin")
+	// create a new temporary table with the same name will override physical table
+	tk2.MustExec("create temporary table t2(id int primary key, v int)")
+	tk2.MustQuery("select * from t2 where id=234").Check(testkit.Rows())
+	tk2.MustExec("commit")
 }
 
 // See https://github.com/pingcap/tidb/issues/29327
 func TestEnumDefaultValue(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -4147,4 +4098,40 @@ func TestDDLLastInfo(t *testing.T) {
 
 	tk.MustExec("drop table t, t2")
 	tk.MustQuery("select json_extract(@@tidb_last_ddl_info, '$.query'), json_extract(@@tidb_last_ddl_info, '$.seq_num')").Check(testkit.Rows(fmt.Sprintf("\"drop table t, t2\" %d", firstSequence+3)))
+}
+
+func TestRegexpFunctionsGeneratedColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// test regexp_like
+	tk.MustExec("drop table if exists reg_like")
+	tk.MustExec("create table reg_like(a varchar(50), b varchar(50), c int generated always as (regexp_like(a, b)))")
+	tk.MustExec("insert into reg_like(a, b) values('123', '2')")
+	tk.MustExec("insert into reg_like(a, b) values('456', '1')")
+	tk.MustQuery("select * from reg_like").Check(testkit.Rows("123 2 1", "456 1 0"))
+
+	// test regexp_substr
+	tk.MustExec("drop table if exists reg_sub;")
+	tk.MustExec("create table reg_sub(a varchar(50),b varchar(50),c varchar(50) generated always as (regexp_substr(a, b)))")
+	tk.MustExec("insert into reg_sub(a, b) values('abcd', 'bc.')")
+	tk.MustExec("insert into reg_sub(a, b) values('1234', '23.')")
+	tk.MustQuery("select * from reg_sub").Check(testkit.Rows("abcd bc. bcd", "1234 23. 234"))
+
+	// test regexp_instr
+	tk.MustExec("drop table if exists reg_instr;")
+	tk.MustExec("create table reg_instr(a varchar(50),b varchar(50),c varchar(50) generated always as (regexp_instr(a, b)))")
+	tk.MustExec("insert into reg_instr(a, b) values('abcd', 'bc.')")
+	tk.MustExec("insert into reg_instr(a, b) values('1234', '23.')")
+	tk.MustQuery("select * from reg_instr").Check(testkit.Rows("abcd bc. 2", "1234 23. 2"))
+
+	// test regexp_replace
+	tk.MustExec("drop table if exists reg_replace;")
+	tk.MustExec("create table reg_replace(a varchar(50),b varchar(50),c varchar(50),d varchar(50) generated always as (regexp_replace(a, b, c)));")
+	tk.MustExec("insert into reg_replace(a, b, c) values('abcd', 'bc.', 'xzx')")
+	tk.MustExec("insert into reg_replace(a, b, c) values('1234', '23.', 'xzx')")
+	tk.MustQuery("select * from reg_replace").Check(testkit.Rows("abcd bc. xzx axzx", "1234 23. xzx 1xzx"))
+
+	tk.MustExec("drop table if exists reg_like")
 }

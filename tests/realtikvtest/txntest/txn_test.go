@@ -19,10 +19,10 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
-	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -41,7 +41,7 @@ func TestInTxnPSProtoPointGet(t *testing.T) {
 	require.NoError(t, err)
 	idForUpdate, _, _, err := tk.Session().PrepareStmt("select c1, c2 from t1 where c1 = ? for update")
 	require.NoError(t, err)
-	params := []types.Datum{types.NewDatum(1)}
+	params := expression.Args2Expressions4Test(1)
 	rs, err := tk.Session().ExecutePreparedStmt(ctx, id, params)
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 10"))
@@ -176,4 +176,30 @@ func TestStatementErrorInTransaction(t *testing.T) {
 	tk.MustExec("update test set b = 11 where a = 1 and b = 2;")
 	tk.MustExec("rollback")
 	tk.MustQuery("select * from test where a = 1 and b = 11").Check(testkit.Rows())
+}
+
+func TestWriteConflictMessage(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c int primary key)")
+	tk.MustExec("begin optimistic")
+	tk2.MustExec("insert into t values (1)")
+	tk.MustExec("insert into t values (1)")
+	err := tk.ExecToErr("commit")
+	require.Contains(t, err.Error(), "Write conflict")
+	require.Contains(t, err.Error(), "tableName=test.t, handle=1}")
+	require.Contains(t, err.Error(), "reason=Optimistic")
+
+	tk.MustExec("create table t2 (id varchar(30) primary key clustered)")
+	tk.MustExec("begin optimistic")
+	tk2.MustExec("insert into t2 values ('hello')")
+	tk.MustExec("insert into t2 values ('hello')")
+	err = tk.ExecToErr("commit")
+	require.Contains(t, err.Error(), "Write conflict")
+	require.Contains(t, err.Error(), "tableName=test.t2, handle={hello}")
+	require.Contains(t, err.Error(), "reason=Optimistic")
 }

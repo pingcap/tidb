@@ -42,21 +42,21 @@ const (
 	ScopeInstance ScopeFlag = 1 << 2
 
 	// TypeStr is the default
-	TypeStr TypeFlag = 0
+	TypeStr TypeFlag = iota
 	// TypeBool for boolean
-	TypeBool TypeFlag = 1
+	TypeBool
 	// TypeInt for integer
-	TypeInt TypeFlag = 2
+	TypeInt
 	// TypeEnum for Enum
-	TypeEnum TypeFlag = 3
+	TypeEnum
 	// TypeFloat for Double
-	TypeFloat TypeFlag = 4
+	TypeFloat
 	// TypeUnsigned for Unsigned integer
-	TypeUnsigned TypeFlag = 5
+	TypeUnsigned
 	// TypeTime for time of day (a TiDB extension)
-	TypeTime TypeFlag = 6
+	TypeTime
 	// TypeDuration for a golang duration (a TiDB extension)
-	TypeDuration TypeFlag = 7
+	TypeDuration
 
 	// On is the canonical string for ON
 	On = "ON"
@@ -85,6 +85,23 @@ const (
 const (
 	GlobalConfigEnableTopSQL = "enable_resource_metering"
 )
+
+func (s ScopeFlag) String() string {
+	var scopes []string
+	if s == ScopeNone {
+		return "NONE"
+	}
+	if s&ScopeSession != 0 {
+		scopes = append(scopes, "SESSION")
+	}
+	if s&ScopeGlobal != 0 {
+		scopes = append(scopes, "GLOBAL")
+	}
+	if s&ScopeInstance != 0 {
+		scopes = append(scopes, "INSTANCE")
+	}
+	return strings.Join(scopes, ",")
+}
 
 // SysVar is for system variable.
 // All the fields of SysVar should be READ ONLY after created.
@@ -516,11 +533,6 @@ func (sv *SysVar) GetNativeValType(val string) (types.Datum, byte, uint) {
 func (sv *SysVar) SkipInit() bool {
 	if sv.skipInit || sv.IsNoop {
 		return true
-	}
-	// These a special "Global-only" sysvars that for backward compatibility
-	// are currently cached in the session. Please don't add to this list.
-	if sv.Name == TiDBRowFormatVersion {
-		return false
 	}
 	return !sv.HasSessionScope()
 }

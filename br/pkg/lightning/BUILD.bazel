@@ -44,6 +44,7 @@ go_library(
 
 go_test(
     name = "lightning_test",
+    timeout = "short",
     srcs = [
         "lightning_serial_test.go",
         "lightning_server_serial_test.go",

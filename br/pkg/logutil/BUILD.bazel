@@ -27,6 +27,7 @@ go_library(
 
 go_test(
     name = "logutil_test",
+    timeout = "short",
     srcs = ["logging_test.go"],
     flaky = True,
     deps = [

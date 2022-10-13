@@ -23,7 +23,6 @@ go_library(
         "//sessionctx",
         "//sessionctx/stmtctx",
         "//types",
-        "//types/json",
         "//util/dbterror",
         "//util/hack",
         "//util/logutil",
@@ -45,6 +44,7 @@ go_test(
     ],
     embed = [":table"],
     flaky = True,
+    race = "on",
     shard_count = 50,
     deps = [
         "//errno",
@@ -58,7 +58,6 @@ go_test(
         "//sessionctx/stmtctx",
         "//testkit/testsetup",
         "//types",
-        "//types/json",
         "//util/collate",
         "//util/mock",
         "@com_github_stretchr_testify//require",

@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/ddl/schematracker"
 	testddlutil "github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
@@ -36,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
@@ -71,7 +71,7 @@ func TestTableForeignKey(t *testing.T) {
 	failSQL = "alter table t4 modify column d bigint;"
 	tk.MustGetErrCode(failSQL, errno.ErrFKIncompatibleColumns)
 	tk.MustQuery("select count(*) from information_schema.KEY_COLUMN_USAGE;")
-	tk.MustExec("alter table t4 drop foreign key d")
+	tk.MustExec("alter table t4 drop foreign key fk_1")
 	tk.MustExec("alter table t4 modify column d bigint;")
 	tk.MustExec("drop table if exists t1,t2,t3,t4;")
 }
@@ -157,7 +157,7 @@ func TestAddNotNullColumnWhileInsertOnDupUpdate(t *testing.T) {
 }
 
 func TestTransactionOnAddDropColumn(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, time.Microsecond*500)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@global.tidb_max_delta_schema_count= 4096")
 	tk.MustExec("use test")
@@ -223,11 +223,7 @@ func TestTransactionOnAddDropColumn(t *testing.T) {
 }
 
 func TestCreateTableWithSetCol(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -284,11 +280,7 @@ func TestCreateTableWithSetCol(t *testing.T) {
 }
 
 func TestCreateTableWithEnumCol(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -320,11 +312,7 @@ func TestCreateTableWithEnumCol(t *testing.T) {
 }
 
 func TestCreateTableWithIntegerColWithDefault(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -393,7 +381,7 @@ func TestAlterTableWithValidation(t *testing.T) {
 }
 
 func TestBatchCreateTable(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, time.Microsecond*500)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tables_1")
@@ -612,9 +600,10 @@ func TestWriteLocal(t *testing.T) {
 }
 
 func TestLockTables(t *testing.T) {
-	store := testkit.CreateMockStoreWithSchemaLease(t, time.Microsecond*500)
+	store := testkit.CreateMockStore(t)
 	setTxnTk := testkit.NewTestKit(t, store)
 	setTxnTk.MustExec("set global tidb_txn_mode=''")
+	setTxnTk.MustExec("set global tidb_enable_metadata_lock=0")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1,t2")
@@ -846,7 +835,7 @@ func TestDDLWithInvalidTableInfo(t *testing.T) {
 }
 
 func TestAddColumn2(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, time.Microsecond*500)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -914,11 +903,7 @@ func TestAddColumn2(t *testing.T) {
 }
 
 func TestDropTables(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

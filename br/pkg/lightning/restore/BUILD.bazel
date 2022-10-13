@@ -31,6 +31,7 @@ go_library(
         "//br/pkg/lightning/log",
         "//br/pkg/lightning/metric",
         "//br/pkg/lightning/mydump",
+        "//br/pkg/lightning/restore/opts",
         "//br/pkg/lightning/tikv",
         "//br/pkg/lightning/verification",
         "//br/pkg/lightning/web",
@@ -57,6 +58,7 @@ go_library(
         "//table/tables",
         "//types",
         "//util/collate",
+        "//util/dbterror",
         "//util/engine",
         "//util/mathutil",
         "//util/mock",
@@ -84,6 +86,7 @@ go_library(
 
 go_test(
     name = "restore_test",
+    timeout = "short",
     srcs = [
         "check_info_test.go",
         "checksum_test.go",
@@ -113,6 +116,7 @@ go_test(
         "//br/pkg/lightning/metric",
         "//br/pkg/lightning/mydump",
         "//br/pkg/lightning/restore/mock",
+        "//br/pkg/lightning/restore/opts",
         "//br/pkg/lightning/verification",
         "//br/pkg/lightning/web",
         "//br/pkg/lightning/worker",
@@ -149,6 +153,8 @@ go_test(
         "@com_github_stretchr_testify//suite",
         "@com_github_tikv_client_go_v2//oracle",
         "@com_github_tikv_pd_client//:client",
+        "@com_github_xitongsys_parquet_go//writer",
+        "@com_github_xitongsys_parquet_go_source//buffer",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
     ],

@@ -30,6 +30,7 @@ import (
 	"go.uber.org/zap"
 )
 
+// MDDatabaseMeta contains some parsed metadata for a database in the source by MyDumper Loader.
 type MDDatabaseMeta struct {
 	Name       string
 	SchemaFile FileInfo
@@ -45,6 +46,7 @@ func NewMDDatabaseMeta(charSet string) *MDDatabaseMeta {
 	}
 }
 
+// GetSchema gets the schema SQL for a source database.
 func (m *MDDatabaseMeta) GetSchema(ctx context.Context, store storage.ExternalStorage) string {
 	if m.SchemaFile.FileMeta.Path != "" {
 		schema, err := ExportStatement(ctx, store, m.SchemaFile, m.charSet)
@@ -61,6 +63,7 @@ func (m *MDDatabaseMeta) GetSchema(ctx context.Context, store storage.ExternalSt
 	return "CREATE DATABASE IF NOT EXISTS " + common.EscapeIdentifier(m.Name)
 }
 
+// MDTableMeta contains some parsed metadata for a table in the source by MyDumper Loader.
 type MDTableMeta struct {
 	DB           string
 	Name         string
@@ -72,6 +75,7 @@ type MDTableMeta struct {
 	IsRowOrdered bool
 }
 
+// SourceFileMeta contains some analyzed metadata for a source file by MyDumper Loader.
 type SourceFileMeta struct {
 	Path        string
 	Type        SourceType
@@ -87,7 +91,19 @@ func NewMDTableMeta(charSet string) *MDTableMeta {
 	}
 }
 
+// GetSchema gets the table-creating SQL for a source table.
 func (m *MDTableMeta) GetSchema(ctx context.Context, store storage.ExternalStorage) (string, error) {
+	schemaFilePath := m.SchemaFile.FileMeta.Path
+	if len(schemaFilePath) <= 0 {
+		return "", errors.Errorf("schema file is missing for the table '%s.%s'", m.DB, m.Name)
+	}
+	fileExists, err := store.FileExists(ctx, schemaFilePath)
+	if err != nil {
+		return "", errors.Annotate(err, "check table schema file exists error")
+	}
+	if !fileExists {
+		return "", errors.Errorf("the provided schema file (%s) for the table '%s.%s' doesn't exist", schemaFilePath, m.DB, m.Name)
+	}
 	schema, err := ExportStatement(ctx, store, m.SchemaFile, m.charSet)
 	if err != nil {
 		log.FromContext(ctx).Error("failed to extract table schema",
@@ -99,9 +115,47 @@ func (m *MDTableMeta) GetSchema(ctx context.Context, store storage.ExternalStora
 	return string(schema), nil
 }
 
-/*
-	Mydumper File Loader
-*/
+// MDLoaderSetupConfig stores the configs when setting up a MDLoader.
+// This can control the behavior when constructing an MDLoader.
+type MDLoaderSetupConfig struct {
+	// MaxScanFiles specifies the maximum number of files to scan.
+	// If the value is <= 0, it means the number of data source files will be scanned as many as possible.
+	MaxScanFiles int
+	// ReturnPartialResultOnError specifies whether the currently scanned files are analyzed,
+	// and return the partial result.
+	ReturnPartialResultOnError bool
+}
+
+// DefaultMDLoaderSetupConfig generates a default MDLoaderSetupConfig.
+func DefaultMDLoaderSetupConfig() *MDLoaderSetupConfig {
+	return &MDLoaderSetupConfig{
+		MaxScanFiles:               0, // By default, the loader will scan all the files.
+		ReturnPartialResultOnError: false,
+	}
+}
+
+// MDLoaderSetupOption is the option type for setting up a MDLoaderSetupConfig.
+type MDLoaderSetupOption func(cfg *MDLoaderSetupConfig)
+
+// WithMaxScanFiles generates an option that limits the max scan files when setting up a MDLoader.
+func WithMaxScanFiles(maxScanFiles int) MDLoaderSetupOption {
+	return func(cfg *MDLoaderSetupConfig) {
+		if maxScanFiles > 0 {
+			cfg.MaxScanFiles = maxScanFiles
+			cfg.ReturnPartialResultOnError = true
+		}
+	}
+}
+
+// ReturnPartialResultOnError generates an option that controls
+// whether return the partial scanned result on error when setting up a MDLoader.
+func ReturnPartialResultOnError(supportPartialResult bool) MDLoaderSetupOption {
+	return func(cfg *MDLoaderSetupConfig) {
+		cfg.ReturnPartialResultOnError = supportPartialResult
+	}
+}
+
+// MDLoader is for 'Mydumper File Loader', which loads the files in the data source and generates a set of metadata.
 type MDLoader struct {
 	store  storage.ExternalStorage
 	dbs    []*MDDatabaseMeta
@@ -120,9 +174,11 @@ type mdLoaderSetup struct {
 	tableDatas    []FileInfo
 	dbIndexMap    map[string]int
 	tableIndexMap map[filter.Table]int
+	setupCfg      *MDLoaderSetupConfig
 }
 
-func NewMyDumpLoader(ctx context.Context, cfg *config.Config) (*MDLoader, error) {
+// NewMyDumpLoader constructs a MyDumper loader that scanns the data source and constructs a set of metadatas.
+func NewMyDumpLoader(ctx context.Context, cfg *config.Config, opts ...MDLoaderSetupOption) (*MDLoader, error) {
 	u, err := storage.ParseBackend(cfg.Mydumper.SourceDir, nil)
 	if err != nil {
 		return nil, common.NormalizeError(err)
@@ -132,12 +188,18 @@ func NewMyDumpLoader(ctx context.Context, cfg *config.Config) (*MDLoader, error)
 		return nil, common.NormalizeError(err)
 	}
 
-	return NewMyDumpLoaderWithStore(ctx, cfg, s)
+	return NewMyDumpLoaderWithStore(ctx, cfg, s, opts...)
 }
 
-func NewMyDumpLoaderWithStore(ctx context.Context, cfg *config.Config, store storage.ExternalStorage) (*MDLoader, error) {
+// NewMyDumpLoaderWithStore constructs a MyDumper loader with the provided external storage that scanns the data source and constructs a set of metadatas.
+func NewMyDumpLoaderWithStore(ctx context.Context, cfg *config.Config, store storage.ExternalStorage, opts ...MDLoaderSetupOption) (*MDLoader, error) {
 	var r *regexprrouter.RouteTable
 	var err error
+
+	mdLoaderSetupCfg := DefaultMDLoaderSetupConfig()
+	for _, o := range opts {
+		o(mdLoaderSetupCfg)
+	}
 
 	if len(cfg.Routes) > 0 && len(cfg.Mydumper.FileRouters) > 0 {
 		return nil, common.ErrInvalidConfig.GenWithStack("table route is deprecated, can't config both [routes] and [mydumper.files]")
@@ -186,9 +248,13 @@ func NewMyDumpLoaderWithStore(ctx context.Context, cfg *config.Config, store sto
 		loader:        mdl,
 		dbIndexMap:    make(map[string]int),
 		tableIndexMap: make(map[filter.Table]int),
+		setupCfg:      mdLoaderSetupCfg,
 	}
 
 	if err := setup.setup(ctx, mdl.store); err != nil {
+		if mdLoaderSetupCfg.ReturnPartialResultOnError {
+			return mdl, errors.Trace(err)
+		}
 		return nil, errors.Trace(err)
 	}
 
@@ -203,6 +269,7 @@ const (
 	fileTypeTableData
 )
 
+// String implements the Stringer interface.
 func (ftype fileType) String() string {
 	switch ftype {
 	case fileTypeDatabaseSchema:
@@ -216,6 +283,7 @@ func (ftype fileType) String() string {
 	}
 }
 
+// FileInfo contains the information for a data file in a table.
 type FileInfo struct {
 	TableName filter.Table
 	FileMeta  SourceFileMeta
@@ -242,8 +310,13 @@ func (s *mdLoaderSetup) setup(ctx context.Context, store storage.ExternalStorage
 			table —— {db}.{table}-schema.sql
 			sql   —— {db}.{table}.{part}.sql / {db}.{table}.sql
 	*/
+	var gerr error
 	if err := s.listFiles(ctx, store); err != nil {
-		return common.ErrStorageUnknown.Wrap(err).GenWithStack("list file failed")
+		if s.setupCfg.ReturnPartialResultOnError {
+			gerr = err
+		} else {
+			return common.ErrStorageUnknown.Wrap(err).GenWithStack("list file failed")
+		}
 	}
 	if err := s.route(); err != nil {
 		return common.ErrTableRoute.Wrap(err).GenWithStackByArgs()
@@ -304,16 +377,20 @@ func (s *mdLoaderSetup) setup(ctx context.Context, store storage.ExternalStorage
 		}
 	}
 
-	return nil
+	return gerr
 }
 
 func (s *mdLoaderSetup) listFiles(ctx context.Context, store storage.ExternalStorage) error {
 	// `filepath.Walk` yields the paths in a deterministic (lexicographical) order,
 	// meaning the file and chunk orders will be the same everytime it is called
 	// (as long as the source is immutable).
+	totalScannedFileCount := 0
 	err := store.WalkDir(ctx, &storage.WalkOption{}, func(path string, size int64) error {
 		logger := log.FromContext(ctx).With(zap.String("path", path))
-
+		totalScannedFileCount++
+		if s.setupCfg.MaxScanFiles > 0 && totalScannedFileCount > s.setupCfg.MaxScanFiles {
+			return common.ErrTooManySourceFiles
+		}
 		res, err := s.loader.fileRouter.Route(filepath.ToSlash(path))
 		if err != nil {
 			return errors.Annotatef(err, "apply file routing on file '%s' failed", path)
@@ -458,7 +535,7 @@ func (s *mdLoaderSetup) insertDB(f FileInfo) (*MDDatabaseMeta, bool) {
 	return ptr, false
 }
 
-func (s *mdLoaderSetup) insertTable(fileInfo FileInfo) (*MDTableMeta, bool, bool) {
+func (s *mdLoaderSetup) insertTable(fileInfo FileInfo) (tblMeta *MDTableMeta, dbExists bool, tableExists bool) {
 	dbFileInfo := FileInfo{
 		TableName: filter.Table{
 			Schema: fileInfo.TableName.Schema,
@@ -484,7 +561,7 @@ func (s *mdLoaderSetup) insertTable(fileInfo FileInfo) (*MDTableMeta, bool, bool
 	return ptr, dbExists, false
 }
 
-func (s *mdLoaderSetup) insertView(fileInfo FileInfo) (bool, bool) {
+func (s *mdLoaderSetup) insertView(fileInfo FileInfo) (dbExists bool, tableExists bool) {
 	dbFileInfo := FileInfo{
 		TableName: filter.Table{
 			Schema: fileInfo.TableName.Schema,
@@ -507,10 +584,12 @@ func (s *mdLoaderSetup) insertView(fileInfo FileInfo) (bool, bool) {
 	return dbExists, ok
 }
 
+// GetDatabases gets the list of scanned MDDatabaseMeta for the loader.
 func (l *MDLoader) GetDatabases() []*MDDatabaseMeta {
 	return l.dbs
 }
 
+// GetStore gets the external storage used by the loader.
 func (l *MDLoader) GetStore() storage.ExternalStorage {
 	return l.store
 }

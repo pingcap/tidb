@@ -2,22 +2,27 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "brietest_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = [
         "backup_restore_test.go",
         "binlog_test.go",
+        "flashback_test.go",
         "main_test.go",
     ],
     flaky = True,
+    race = "on",
     deps = [
         "//config",
+        "//ddl/util",
         "//parser/mysql",
         "//sessionctx/binloginfo",
         "//store/mockstore/mockcopr",
         "//testkit",
         "//tests/realtikvtest",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_tipb//go-binlog",
         "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//oracle",
         "@org_golang_google_grpc//:grpc",
     ],
 )

@@ -29,7 +29,7 @@ func (smj *semiJoinRewriter) optimize(_ context.Context, p LogicalPlan, _ *logic
 	return smj.recursivePlan(p)
 }
 
-func (smj *semiJoinRewriter) name() string {
+func (*semiJoinRewriter) name() string {
 	return "semi_join_rewrite"
 }
 
@@ -49,6 +49,8 @@ func (smj *semiJoinRewriter) recursivePlan(p LogicalPlan) (LogicalPlan, error) {
 	if !ok || !(join.JoinType == SemiJoin || join.JoinType == LeftOuterSemiJoin) || (join.preferJoinType&preferRewriteSemiJoin == 0) {
 		return p, nil
 	}
+	// The preferRewriteSemiJoin flag only be used here. We should reset it in order to not affect other parts.
+	join.preferJoinType &= ^preferRewriteSemiJoin
 
 	if join.JoinType == LeftOuterSemiJoin {
 		p.SCtx().GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("SEMI_JOIN_REWRITE() is inapplicable for LeftOuterSemiJoin."))
@@ -99,6 +101,9 @@ func (smj *semiJoinRewriter) recursivePlan(p LogicalPlan) (LogicalPlan, error) {
 
 	innerJoin := LogicalJoin{
 		JoinType:        InnerJoin,
+		hintInfo:        join.hintInfo,
+		preferJoinType:  join.preferJoinType,
+		preferJoinOrder: join.preferJoinOrder,
 		EqualConditions: make([]*expression.ScalarFunction, 0, len(join.EqualConditions)),
 	}.Init(p.SCtx(), p.SelectBlockOffset())
 	innerJoin.SetChildren(join.Children()[0], subAgg)

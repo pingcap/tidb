@@ -44,11 +44,13 @@ go_library(
 
 go_test(
     name = "kv_test",
+    timeout = "short",
     srcs = [
         "session_test.go",
         "sql2kv_test.go",
     ],
     flaky = True,
+    race = "on",
     deps = [
         ":kv",
         "//br/pkg/lightning/common",

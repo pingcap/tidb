@@ -208,14 +208,11 @@ token-limit = 1000
 # The maximum memory available for a single SQL statement. Default: 1GB
 mem-quota-query = 1073741824
 
-# Controls whether to enable the temporary storage for some operators when a single SQL statement exceeds the memory quota specified by mem-quota-query.
-oom-use-tmp-storage = true
-
 # Specifies the temporary storage path for some operators when a single SQL statement exceeds the memory quota specified by mem-quota-query.
 # <snip>
 # tmp-storage-path = "/tmp/<os/user.Current().Uid>_tidb/MC4wLjAuMDo0MDAwLzAuMC4wLjA6MTAwODA=/tmp-storage"
 
-# Specifies the maximum use of temporary storage (bytes) for all active queries when oom-use-tmp-storage is enabled.
+# Specifies the maximum use of temporary storage (bytes) for all active queries when tidb_enable_tmp_storage_on_oom is enabled.
 # If the tmp-storage-quota exceeds the capacity of the temporary storage directory, tidb-server would return an error and exit.
 # The default value of tmp-storage-quota is under 0 which means tidb-server wouldn't check the capacity.
 tmp-storage-quota = -1
@@ -303,6 +300,7 @@ deprecate-integer-display-length = false
 enable-enum-length-limit = true
 
 [instance]
+tidb_memory_usage_alarm_ratio = 0.7
 
 # The maximum permitted number of simultaneous client connections. When the value is 0, the number of connections is unlimited.
 max_connections = 0
@@ -424,10 +422,10 @@ max-procs = 0
 server-memory-quota = 0
 
 # The alarm threshold when memory usage of the tidb-server exceeds. The valid value range is greater than or equal to 0
-# and less than or equal to 1. The default value is 0.8.
+# and less than or equal to 1. The default value is 0.7.
 # If this configuration is set to 0 or 1, it'll disable the alarm.
 # <snip>
-memory-usage-alarm-ratio = 0.8
+memory-usage-alarm-ratio = 0.7
 
 # StmtCountLimit limits the max count of statement inside a transaction.
 stmt-count-limit = 5000
@@ -649,7 +647,7 @@ allow-expression-index = false
 [isolation-read]
 # engines means allow the tidb server read data from which types of engines. options: "tikv", "tiflash", "tidb".
 engines = ["tikv", "tiflash", "tidb"]
-		`, errors.New("The following configuration options are no longer supported in this version of TiDB. Check the release notes for more information: check-mb4-value-in-utf8, enable-batch-dml, log.enable-slow-log, log.query-log-max-len, log.record-plan-in-slow-log, log.slow-threshold, lower-case-table-names, mem-quota-query, oom-action, performance.committer-concurrency, performance.feedback-probability, performance.force-priority, performance.memory-usage-alarm-ratio, performance.query-feedback-limit, performance.run-auto-analyze, prepared-plan-cache.capacity, prepared-plan-cache.enabled, prepared-plan-cache.memory-guard-ratio")},
+		`, errors.New("The following configuration options are no longer supported in this version of TiDB. Check the release notes for more information: check-mb4-value-in-utf8, enable-batch-dml, instance.tidb_memory_usage_alarm_ratio, log.enable-slow-log, log.expensive-threshold, log.query-log-max-len, log.record-plan-in-slow-log, log.slow-threshold, lower-case-table-names, mem-quota-query, oom-action, performance.committer-concurrency, performance.feedback-probability, performance.force-priority, performance.memory-usage-alarm-ratio, performance.query-feedback-limit, performance.run-auto-analyze, prepared-plan-cache.capacity, prepared-plan-cache.enabled, prepared-plan-cache.memory-guard-ratio")},
 	}
 
 	for _, test := range configTest {

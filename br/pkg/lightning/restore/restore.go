@@ -517,9 +517,15 @@ type restoreSchemaWorker struct {
 func (worker *restoreSchemaWorker) addJob(sqlStr string, job *schemaJob) error {
 	stmts, err := createIfNotExistsStmt(worker.glue.GetParser(), sqlStr, job.dbName, job.tblName)
 	if err != nil {
-		return err
+		worker.logger.Warn("failed to rewrite statement, will use raw input instead",
+			zap.String("db", job.dbName),
+			zap.String("table", job.tblName),
+			zap.String("statement", sqlStr),
+			zap.Error(err))
+		job.stmts = []string{sqlStr}
+	} else {
+		job.stmts = stmts
 	}
-	job.stmts = stmts
 	return worker.appendJob(job)
 }
 
@@ -656,7 +662,25 @@ loop:
 			for _, stmt := range job.stmts {
 				task := logger.Begin(zap.DebugLevel, fmt.Sprintf("execute SQL: %s", stmt))
 				err = sqlWithRetry.Exec(worker.ctx, "run create schema job", stmt)
+				if err != nil {
+					// try to imitate IF NOT EXISTS behavior for parsing errors
+					exists := false
+					switch job.stmtType {
+					case schemaCreateDatabase:
+						var err2 error
+						exists, err2 = common.SchemaExists(worker.ctx, session, job.dbName)
+						if err2 != nil {
+							task.Error("failed to check database existence", zap.Error(err2))
+						}
+					case schemaCreateTable:
+						exists, _ = common.TableExists(worker.ctx, session, job.dbName, job.tblName)
+					}
+					if exists {
+						err = nil
+					}
+				}
 				task.End(zap.ErrorLevel, err)
+
 				if err != nil {
 					err = common.ErrCreateSchema.Wrap(err).GenWithStackByArgs(common.UniqueTable(job.dbName, job.tblName), job.stmtType.String())
 					worker.wg.Done()
@@ -1966,8 +1990,6 @@ func isTiDBBackend(cfg *config.Config) bool {
 // 4. Lightning configuration
 // before restore tables start.
 func (rc *Controller) preCheckRequirements(ctx context.Context) error {
-	ctx = WithPreInfoGetterSysVarsCache(ctx, rc.sysVars)
-	ctx = WithPreInfoGetterTableStructuresCache(ctx, rc.dbInfos)
 	if err := rc.DataCheck(ctx); err != nil {
 		return errors.Trace(err)
 	}
@@ -2036,18 +2058,17 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 				needCheck = taskCheckpoints == nil
 			}
 			if needCheck {
-				withSizeCacheCtx := WithPreInfoGetterEstimatedSrcSizeCache(ctx, estimatedSizeResult)
-				err = rc.localResource(withSizeCacheCtx)
+				err = rc.localResource(ctx)
 				if err != nil {
 					return common.ErrCheckLocalResource.Wrap(err).GenWithStackByArgs()
 				}
-				if err := rc.clusterResource(withSizeCacheCtx); err != nil {
+				if err := rc.clusterResource(ctx); err != nil {
 					if err1 := rc.taskMgr.CleanupTask(ctx); err1 != nil {
 						log.FromContext(ctx).Warn("cleanup task failed", zap.Error(err1))
 						return common.ErrMetaMgrUnknown.Wrap(err).GenWithStackByArgs()
 					}
 				}
-				if err := rc.checkClusterRegion(withSizeCacheCtx); err != nil {
+				if err := rc.checkClusterRegion(ctx); err != nil {
 					return common.ErrCheckClusterRegion.Wrap(err).GenWithStackByArgs()
 				}
 			}
@@ -2330,7 +2351,16 @@ func (cr *chunkRestore) deliverLoop(
 		cr.chunk.Chunk.PrevRowIDMax = rowID
 
 		if m, ok := metric.FromContext(ctx); ok {
-			m.BytesCounter.WithLabelValues(metric.BytesStateRestored).Add(float64(currOffset - startOffset))
+			// value of currOffset comes from parser.pos which increase monotonically. the init value of parser.pos
+			// comes from chunk.Chunk.Offset. so it shouldn't happen that currOffset - startOffset < 0.
+			// but we met it one time, but cannot reproduce it now, we add this check to make code more robust
+			// TODO: reproduce and find the root cause and fix it completely
+			if currOffset >= startOffset {
+				m.BytesCounter.WithLabelValues(metric.BytesStateRestored).Add(float64(currOffset - startOffset))
+			} else {
+				deliverLogger.Warn("offset go back", zap.Int64("curr", currOffset),
+					zap.Int64("start", startOffset))
+			}
 		}
 
 		if currOffset > lastOffset || dataChecksum.SumKVS() != 0 || indexChecksum.SumKVS() != 0 {

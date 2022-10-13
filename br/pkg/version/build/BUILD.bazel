@@ -16,6 +16,7 @@ go_library(
 
 go_test(
     name = "build_test",
+    timeout = "short",
     srcs = ["info_test.go"],
     embed = [":build"],
     flaky = True,

@@ -40,6 +40,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
@@ -97,11 +98,7 @@ func TestInTxnExecDDLInvalid(t *testing.T) {
 }
 
 func TestCreateTable(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -440,10 +437,9 @@ func TestCreateViewWithOverlongColName(t *testing.T) {
 }
 
 func TestCreateDropDatabase(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithDDLChecker())
 
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
+	ddlChecker := dom.DDL().(*schematracker.Checker)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists drop_test;")
@@ -1313,7 +1309,7 @@ func TestGeneratedColumnRelatedDDL(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	// Test create an exist database
-	_, err := tk.Exec("CREATE database test")
+	err := tk.ExecToErr("CREATE database test")
 	require.Error(t, err)
 
 	tk.MustGetErrMsg("create table t1 (a bigint not null primary key auto_increment, b bigint as (a + 1));",
@@ -1467,11 +1463,7 @@ func TestRenameTable(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"))
 	}()
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -1553,11 +1545,7 @@ func TestRenameMultiTables(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"))
 	}()
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 

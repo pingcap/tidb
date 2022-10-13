@@ -14,7 +14,7 @@
 
 include Makefile.common
 
-.PHONY: all clean test server dev benchkv benchraw check checklist parser tidy ddltest build_br build_lightning build_lightning-ctl build_dumpling ut bazel_build bazel_prepare bazel_test
+.PHONY: all clean test server dev benchkv benchraw check checklist parser tidy ddltest build_br build_lightning build_lightning-ctl build_dumpling ut bazel_build bazel_prepare bazel_test check-file-perm bazel_lint
 
 default: server buildsucc
 
@@ -25,23 +25,24 @@ buildsucc:
 
 all: dev server benchkv
 
-dev: checklist check explaintest gogenerate br_unit_test test_part_parser_dev ut
+dev: checklist check explaintest gogenerate br_unit_test test_part_parser_dev ut check-file-perm
 	@>&2 echo "Great, all tests passed."
 
 # Install the check tools.
-check-setup:tools/bin/revive tools/bin/goword
+check-setup:tools/bin/revive
 
-check: check-parallel lint tidy testSuite check-static errdoc
+check: parser_yacc check-parallel lint tidy testSuite errdoc
 
 fmt:
 	@echo "gofmt (simplify)"
 	@gofmt -s -l -w $(FILES) 2>&1 | $(FAIL_ON_STDOUT)
 
-goword:tools/bin/goword
-	tools/bin/goword $(FILES) 2>&1 | $(FAIL_ON_STDOUT)
-
 check-static: tools/bin/golangci-lint
 	GO111MODULE=on CGO_ENABLED=0 tools/bin/golangci-lint run -v $$($(PACKAGE_DIRECTORIES)) --config .golangci.yml
+
+check-file-perm:
+	@echo "check file permission"
+	./tools/check/check-file-perm.sh
 
 gogenerate:
 	@echo "go generate ./..."
@@ -54,10 +55,6 @@ errdoc:tools/bin/errdoc-gen
 lint:tools/bin/revive
 	@echo "linting"
 	@tools/bin/revive -formatter friendly -config tools/check/revive.toml $(FILES_TIDB_TESTS)
-
-vet:
-	@echo "vet"
-	$(GO) vet -all $(PACKAGES_TIDB_TESTS) 2>&1 | $(FAIL_ON_STDOUT)
 
 tidy:
 	@echo "go mod tidy"
@@ -211,17 +208,17 @@ tools/bin/revive:
 	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/mgechev/revive@v1.2.1
 
 tools/bin/failpoint-ctl:
-	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/pingcap/failpoint/failpoint-ctl@master
+	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/pingcap/failpoint/failpoint-ctl@2eaa328
 
 tools/bin/errdoc-gen:
-	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/pingcap/errors/errdoc-gen@master
+	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/pingcap/errors/errdoc-gen@518f63d
 
 tools/bin/golangci-lint:
 	# Build from source is not recommand. See https://golangci-lint.run/usage/install/
 	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.47.2
 
 tools/bin/vfsgendev:
-	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/shurcooL/vfsgen/cmd/vfsgendev@master
+	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/shurcooL/vfsgen/cmd/vfsgendev@0d455de
 
 tools/bin/gotestsum:
 	GOBIN=$(shell pwd)/tools/bin $(GO) install gotest.tools/gotestsum@v1.8.1
@@ -252,6 +249,7 @@ endif
 bench-daily:
 	go test github.com/pingcap/tidb/session -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/executor -run TestBenchDaily -bench Ignore --outfile bench_daily.json
+	go test github.com/pingcap/tidb/executor/splittest -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/tablecodec -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/expression -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/util/rowcodec -run TestBenchDaily -bench Ignore --outfile bench_daily.json
@@ -325,20 +323,14 @@ br_compatibility_test_prepare:
 br_compatibility_test:
 	@cd br && tests/run_compatible.sh run
 
+mock_s3iface:
+	@mockgen -package mock github.com/aws/aws-sdk-go/service/s3/s3iface S3API > br/pkg/mock/s3iface.go
+
 # There is no FreeBSD environment for GitHub actions. So cross-compile on Linux
 # but that doesn't work with CGO_ENABLED=1, so disable cgo. The reason to have
 # cgo enabled on regular builds is performance.
 ifeq ("$(GOOS)", "freebsd")
         GOBUILD  = CGO_ENABLED=0 GO111MODULE=on go build -trimpath -ldflags '$(LDFLAGS)'
-endif
-
-br_coverage:
-	tools/bin/gocovmerge "$(TEST_DIR)"/cov.* | grep -vE ".*.pb.go|.*__failpoint_binding__.go" > "$(TEST_DIR)/all_cov.out"
-ifeq ("$(JenkinsCI)", "1")
-	tools/bin/goveralls -coverprofile=$(TEST_DIR)/all_cov.out -service=jenkins-ci -repotoken $(COVERALLS_TOKEN)
-else
-	go tool cover -html "$(TEST_DIR)/all_cov.out" -o "$(TEST_DIR)/all_cov.html"
-	grep -F '<option' "$(TEST_DIR)/all_cov.html"
 endif
 
 # TODO: adjust bins when br integraion tests reformat.
@@ -379,7 +371,8 @@ dumpling_unit_test_in_verify_ci: failpoint-enable tools/bin/gotestsum
 	$(RACE_FLAG) -coverprofile="$(TEST_COVERAGE_DIR)/dumpling_cov.unit_test.out" || ( make failpoint-disable && exit 1 )
 	@make failpoint-disable
 
-dumpling_integration_test: dumpling_bins failpoint-enable build_dumpling
+dumpling_integration_test: dumpling_bins failpoint-enable
+	@make build_dumpling
 	@make failpoint-disable
 	./dumpling/tests/run.sh $(CASE)
 
@@ -394,39 +387,77 @@ generate_grafana_scripts:
 	@cd metrics/grafana && mv tidb_summary.json tidb_summary.json.committed && ./generate_json.sh && diff -u tidb_summary.json.committed tidb_summary.json && rm tidb_summary.json.committed
 
 bazel_ci_prepare:
-	bazel --output_user_root=/home/jenkins/.tidb/tmp run --config=ci  //:gazelle
+	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) //:gazelle
 
 bazel_prepare:
-	bazel run  //:gazelle
+	bazel run //:gazelle
+	bazel run //:gazelle -- update-repos -from_file=go.mod -to_macro DEPS.bzl%go_deps  -build_file_proto_mode=disable
 
 bazel_test: failpoint-enable bazel_ci_prepare
-	bazel --output_user_root=/home/jenkins/.tidb/tmp test --config=ci  \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test
 
 
 bazel_coverage_test: failpoint-enable bazel_ci_prepare
-	bazel --output_user_root=/home/jenkins/.tidb/tmp coverage --config=ci --build_event_json_file=bazel_1.json --@io_bazel_rules_go//go/config:cover_format=go_cover \
+	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) \
+		--build_event_json_file=bazel_1.json --@io_bazel_rules_go//go/config:cover_format=go_cover \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
-		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test
-	bazel --output_user_root=/home/jenkins/.tidb/tmp coverage --config=ci --build_event_json_file=bazel_2.json --@io_bazel_rules_go//go/config:cover_format=go_cover --define gotags=featuretag \
+		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test -//tests/realtikvtest/...
+	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) \
+		--build_event_json_file=bazel_2.json --@io_bazel_rules_go//go/config:cover_format=go_cover --define gotags=featuretag \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
-		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test
+		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test -//tests/realtikvtest/...
 
 bazel_build: bazel_ci_prepare
 	mkdir -p bin
-	bazel --output_user_root=/home/jenkins/.tidb/tmp build -k --config=ci //... --//build:with_nogo_flag=true
+	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
+		//... --//build:with_nogo_flag=true
 	cp bazel-out/k8-fastbuild/bin/tidb-server/tidb-server_/tidb-server ./bin
 	cp bazel-out/k8-fastbuild/bin/cmd/importer/importer_/importer      ./bin
 	cp bazel-out/k8-fastbuild/bin/tidb-server/tidb-server-check_/tidb-server-check ./bin
 
 bazel_fail_build:  failpoint-enable bazel_ci_prepare
-	bazel --output_user_root=/home/jenkins/.tidb/tmp build --config=ci  //...
+	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
+		//...
 
 bazel_clean:
-	bazel --output_user_root=/home/jenkins/.tidb/tmp clean
+	bazel $(BAZEL_GLOBAL_CONFIG) clean
 
 bazel_junit:
 	bazel_collect
 	@mkdir -p $(TEST_COVERAGE_DIR)
 	mv ./junit.xml `$(TEST_COVERAGE_DIR)/junit.xml`
+
+bazel_golangcilinter:
+	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) \
+		--run_under="cd $(CURDIR) && " \
+		@com_github_golangci_golangci_lint//cmd/golangci-lint:golangci-lint \
+	-- run  $$($(PACKAGE_DIRECTORIES)) --config ./.golangci.yaml
+
+bazel_brietest: failpoint-enable bazel_ci_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv \
+		-- //tests/realtikvtest/brietest/...
+
+bazel_pessimistictest: failpoint-enable bazel_ci_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv \
+		-- //tests/realtikvtest/pessimistictest/...
+
+bazel_sessiontest: failpoint-enable bazel_ci_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv \
+		-- //tests/realtikvtest/sessiontest/...
+
+bazel_statisticstest: failpoint-enable bazel_ci_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv \
+		-- //tests/realtikvtest/statisticstest/...
+
+bazel_txntest: failpoint-enable bazel_ci_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv \
+		-- //tests/realtikvtest/txntest/...
+
+bazel_addindextest: failpoint-enable bazel_ci_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv \
+		-- //tests/realtikvtest/addindextest/...
+
+bazel_lint: bazel_prepare
+	bazel build //... --//build:with_nogo_flag=true

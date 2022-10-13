@@ -25,6 +25,7 @@ go_library(
 
 go_test(
     name = "backend_test",
+    timeout = "short",
     srcs = ["backend_test.go"],
     flaky = True,
     deps = [

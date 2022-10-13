@@ -36,6 +36,7 @@ go_library(
         "//util/deadlockhistory",
         "//util/disk",
         "//util/domainutil",
+        "//util/gctuner",
         "//util/kvcache",
         "//util/logutil",
         "//util/memory",
@@ -103,6 +104,7 @@ go_test(
         "//sessionctx/variable",
         "//testkit/testsetup",
         "@com_github_stretchr_testify//require",
+        "@io_opencensus_go//stats/view",
         "@org_uber_go_goleak//:goleak",
     ],
 )

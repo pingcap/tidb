@@ -151,42 +151,53 @@ var (
 			Help:      "Bucketed histogram of different states of a transaction.",
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 29), // 0.5ms ~ 1.5days
 		}, []string{LblType, LblHasLock})
+	LazyPessimisticUniqueCheckSetCount = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "session",
+			Name:      "lazy_pessimistic_unique_check_set_count",
+			Help:      "Counter of setting tidb_constraint_check_in_place to false",
+		},
+	)
 )
 
 // Label constants.
 const (
-	LblUnretryable = "unretryable"
-	LblReachMax    = "reach_max"
-	LblOK          = "ok"
-	LblError       = "error"
-	LblCommit      = "commit"
-	LblAbort       = "abort"
-	LblRollback    = "rollback"
-	LblType        = "type"
-	LblDb          = "db"
-	LblResult      = "result"
-	LblSQLType     = "sql_type"
-	LblCoprType    = "copr_type"
-	LblGeneral     = "general"
-	LblInternal    = "internal"
-	LblTxnMode     = "txn_mode"
-	LblPessimistic = "pessimistic"
-	LblOptimistic  = "optimistic"
-	LblStore       = "store"
-	LblAddress     = "address"
-	LblBatchGet    = "batch_get"
-	LblGet         = "get"
-	LblLockKeys    = "lock_keys"
-	LblInTxn       = "in_txn"
-	LblVersion     = "version"
-	LblHash        = "hash"
-	LblCTEType     = "cte_type"
-	LblIdle        = "idle"
-	LblRunning     = "executing_sql"
-	LblLockWaiting = "waiting_for_lock"
-	LblCommitting  = "committing"
-	LblRollingBack = "rolling_back"
-	LblHasLock     = "has_lock"
-	LblPhase       = "phase"
-	LblModule      = "module"
+	LblUnretryable    = "unretryable"
+	LblReachMax       = "reach_max"
+	LblOK             = "ok"
+	LblError          = "error"
+	LblCommit         = "commit"
+	LblAbort          = "abort"
+	LblRollback       = "rollback"
+	LblType           = "type"
+	LblDb             = "db"
+	LblResult         = "result"
+	LblSQLType        = "sql_type"
+	LblCoprType       = "copr_type"
+	LblGeneral        = "general"
+	LblInternal       = "internal"
+	LblTxnMode        = "txn_mode"
+	LblPessimistic    = "pessimistic"
+	LblOptimistic     = "optimistic"
+	LblStore          = "store"
+	LblAddress        = "address"
+	LblBatchGet       = "batch_get"
+	LblGet            = "get"
+	LblLockKeys       = "lock_keys"
+	LblInTxn          = "in_txn"
+	LblVersion        = "version"
+	LblHash           = "hash"
+	LblCTEType        = "cte_type"
+	LblAccountLock    = "account_lock"
+	LblIdle           = "idle"
+	LblRunning        = "executing_sql"
+	LblLockWaiting    = "waiting_for_lock"
+	LblCommitting     = "committing"
+	LblRollingBack    = "rolling_back"
+	LblHasLock        = "has_lock"
+	LblPhase          = "phase"
+	LblModule         = "module"
+	LblRCReadCheckTS  = "read_check"
+	LblRCWriteCheckTS = "write_check"
 )

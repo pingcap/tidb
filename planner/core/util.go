@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
+	"github.com/pingcap/tidb/util/size"
 	"golang.org/x/exp/slices"
 )
 
@@ -39,7 +40,7 @@ type AggregateFuncExtractor struct {
 }
 
 // Enter implements Visitor interface.
-func (a *AggregateFuncExtractor) Enter(n ast.Node) (ast.Node, bool) {
+func (*AggregateFuncExtractor) Enter(n ast.Node) (ast.Node, bool) {
 	switch n.(type) {
 	case *ast.SelectStmt, *ast.SetOprStmt:
 		return n, true
@@ -49,6 +50,7 @@ func (a *AggregateFuncExtractor) Enter(n ast.Node) (ast.Node, bool) {
 
 // Leave implements Visitor interface.
 func (a *AggregateFuncExtractor) Leave(n ast.Node) (ast.Node, bool) {
+	//nolint: revive
 	switch v := n.(type) {
 	case *ast.AggregateFuncExpr:
 		if _, ok := a.skipAggMap[v]; !ok {
@@ -66,7 +68,7 @@ type WindowFuncExtractor struct {
 }
 
 // Enter implements Visitor interface.
-func (a *WindowFuncExtractor) Enter(n ast.Node) (ast.Node, bool) {
+func (*WindowFuncExtractor) Enter(n ast.Node) (ast.Node, bool) {
 	switch n.(type) {
 	case *ast.SelectStmt, *ast.SetOprStmt:
 		return n, true
@@ -76,6 +78,7 @@ func (a *WindowFuncExtractor) Enter(n ast.Node) (ast.Node, bool) {
 
 // Leave implements Visitor interface.
 func (a *WindowFuncExtractor) Leave(n ast.Node) (ast.Node, bool) {
+	//nolint: revive
 	switch v := n.(type) {
 	case *ast.WindowFuncExpr:
 		a.windowFuncs = append(a.windowFuncs, v)
@@ -176,6 +179,16 @@ func (s *physicalSchemaProducer) SetSchema(schema *expression.Schema) {
 	s.schema = schema
 }
 
+// MemoryUsage return the memory usage of physicalSchemaProducer
+func (s *physicalSchemaProducer) MemoryUsage() (sum int64) {
+	if s == nil {
+		return
+	}
+
+	sum = s.basePhysicalPlan.MemoryUsage() + size.SizeOfPointer
+	return
+}
+
 // baseSchemaProducer stores the schema for the base plans who can produce schema directly.
 type baseSchemaProducer struct {
 	schema *expression.Schema
@@ -208,6 +221,19 @@ func (s *baseSchemaProducer) SetSchema(schema *expression.Schema) {
 func (s *baseSchemaProducer) setSchemaAndNames(schema *expression.Schema, names types.NameSlice) {
 	s.schema = schema
 	s.names = names
+}
+
+// MemoryUsage return the memory usage of baseSchemaProducer
+func (s *baseSchemaProducer) MemoryUsage() (sum int64) {
+	if s == nil {
+		return
+	}
+
+	sum = size.SizeOfPointer + size.SizeOfSlice + int64(cap(s.names))*size.SizeOfPointer + s.basePlan.MemoryUsage()
+	if s.schema != nil {
+		sum += s.schema.MemoryUsage()
+	}
+	return
 }
 
 // Schema implements the Plan.Schema interface.

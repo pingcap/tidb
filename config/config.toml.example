@@ -28,15 +28,15 @@ split-table = true
 # The limit of concurrent executed sessions.
 token-limit = 1000
 
-# Controls whether to enable the temporary storage for some operators when a single SQL statement exceeds the memory quota specified by the memory quota.
-oom-use-tmp-storage = true
+# The temporary directory to store the intermediate compute results.
+temp-dir = "/tmp/tidb"
 
 # Specifies the temporary storage path for some operators when a single SQL statement exceeds the memory quota specified by the memory quota.
 # It defaults to a generated directory in `<TMPDIR>/<os/user.Current().Uid>_tidb/` if it is unset.
-# It only takes effect when `oom-use-tmp-storage` is `true`.
+# It only takes effect when `tidb_enable_tmp_storage_on_oom` is `true`.
 # tmp-storage-path = "/tmp/<os/user.Current().Uid>_tidb/MC4wLjAuMDo0MDAwLzAuMC4wLjA6MTAwODA=/tmp-storage"
 
-# Specifies the maximum use of temporary storage (bytes) for all active queries when `oom-use-tmp-storage` is enabled.
+# Specifies the maximum use of temporary storage (bytes) for all active queries when `tidb_enable_tmp_storage_on_oom` is enabled.
 # If the `tmp-storage-quota` exceeds the capacity of the temporary storage directory, tidb-server would return an error and exit.
 # The default value of tmp-storage-quota is under 0 which means tidb-server wouldn't check the capacity.
 tmp-storage-quota = -1
@@ -129,9 +129,6 @@ format = "text"
 
 # Stores slow query log into separated files.
 slow-query-file = "tidb-slow.log"
-
-# Queries with internal result greater than this value will be logged.
-expensive-threshold = 10000
 
 # File logging.
 [log.file]
@@ -435,14 +432,6 @@ tidb_expensive_query_time_threshold = 60
 # Force the priority of all statements in a specified priority.
 # The value could be "NO_PRIORITY", "LOW_PRIORITY", "HIGH_PRIORITY" or "DELAYED".
 tidb_force_priority = "NO_PRIORITY"
-
-# The alarm threshold when memory usage of the tidb-server exceeds. The valid value range is greater than or equal to 0
-# and less than or equal to 1. The default value is 0.8.
-# If this configuration is set to 0 or 1, it'll disable the alarm.
-# Otherwise, related information will be recorded in the directory `tmp-storage-path/record`.
-# Note: If the configuration `server-memory-quota` is set and larger than 0, the alarm threshold will be
-# `tidb_memory_usage_alarm_ratio * server-memory-quota`; otherwise, it'll be `tidb_memory_usage_alarm_ratio * system memory size`.
-tidb_memory_usage_alarm_ratio = 0.8
 
 # check mb4 value in utf8 is used to control whether to check the mb4 characters when the charset is utf8.
 tidb_check_mb4_value_in_utf8 = true

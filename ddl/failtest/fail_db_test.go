@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
+	"go.opencensus.io/stats/view"
 )
 
 type failedSuite struct {
@@ -62,6 +63,7 @@ func createFailDBSuite(t *testing.T) (s *failedSuite) {
 	t.Cleanup(func() {
 		s.dom.Close()
 		require.NoError(t, s.store.Close())
+		view.Stop()
 	})
 
 	return
@@ -437,12 +439,9 @@ func TestPartitionAddIndexGC(t *testing.T) {
 
 func TestModifyColumn(t *testing.T) {
 	s := createFailDBSuite(t)
-	tk := testkit.NewTestKit(t, s.store)
+	tk := testkit.NewTestKit(t, schematracker.NewStorageDDLInjector(s.store))
 
 	dom := domain.GetDomain(tk.Session())
-	ddlChecker := schematracker.NewChecker(dom.DDL())
-	dom.SetDDL(ddlChecker)
-	ddlChecker.CreateTestDB()
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")

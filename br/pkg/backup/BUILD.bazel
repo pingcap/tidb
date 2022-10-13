@@ -58,6 +58,7 @@ go_library(
 
 go_test(
     name = "backup_test",
+    timeout = "short",
     srcs = [
         "client_test.go",
         "main_test.go",
@@ -92,6 +93,7 @@ go_test(
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_client_go_v2//txnkv/txnlock",
         "@com_github_tikv_pd_client//:client",
+        "@io_opencensus_go//stats/view",
         "@org_uber_go_goleak//:goleak",
     ],
 )

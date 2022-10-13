@@ -43,10 +43,8 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/versioninfo"
@@ -493,8 +491,8 @@ func TestConvertToBit(t *testing.T) {
 	tk.MustExec("create table t(a tinyint, b bit(63));")
 	tk.MustExec("insert ignore  into t values(599999999, -1);")
 	tk.MustQuery("show warnings;").Check(testkit.Rows(
-		"Warning 1690 constant 599999999 overflows tinyint",
-		"Warning 1406 Data Too Long, field len 63"))
+		"Warning 1264 Out of range value for column 'a' at row 1",
+		"Warning 1406 Data too long for column 'b' at row 1"))
 	tk.MustQuery("select * from t;").Check(testkit.Rows("127 \u007f\xff\xff\xff\xff\xff\xff\xff"))
 
 	// For issue 24900
@@ -502,8 +500,8 @@ func TestConvertToBit(t *testing.T) {
 	tk.MustExec("create table t(b bit(16));")
 	tk.MustExec("insert ignore into t values(0x3635313836),(0x333830);")
 	tk.MustQuery("show warnings;").Check(testkit.Rows(
-		"Warning 1406 Data Too Long, field len 16",
-		"Warning 1406 Data Too Long, field len 16"))
+		"Warning 1406 Data too long for column 'b' at row 1",
+		"Warning 1406 Data too long for column 'b' at row 2"))
 	tk.MustQuery("select * from t;").Check(testkit.Rows("\xff\xff", "\xff\xff"))
 }
 
@@ -1017,6 +1015,22 @@ func TestEncryptionBuiltin(t *testing.T) {
 	result = tk.MustQuery("select sha2('123', 512), sha2(123, 512), sha2('', 512), sha2('你好', 224), sha2(NULL, 256), sha2('foo', 123)")
 	result.Check(testkit.Rows(`3c9909afec25354d551dae21590bb26e38d53f2173b8d3dc3eee4c047e7ab1c1eb8b85103e3be7ba613b31bb5c9c36214dc9f14a42fd7a2fdb84856bca5c44c2 3c9909afec25354d551dae21590bb26e38d53f2173b8d3dc3eee4c047e7ab1c1eb8b85103e3be7ba613b31bb5c9c36214dc9f14a42fd7a2fdb84856bca5c44c2 cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e e91f006ed4e0882de2f6a3c96ec228a6a5c715f356d00091bce842b5 <nil> <nil>`))
 
+	// for sm3
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(10), b int, c double, d datetime, e time, f bit(4), g binary(20), h blob(10), i text(30))")
+	tk.MustExec(`insert into t values('2', 2, 2.3, "2017-01-01 12:01:01", "12:01:01", 0b1010, "512", "48", "tidb")`)
+	result = tk.MustQuery("select sm3(a), sm3(b), sm3(c), sm3(d), sm3(e), sm3(f), sm3(g), sm3(h), sm3(i) from t")
+	result.Check(testkit.Rows("a0dc2d74b9b0e3c87e076003dbfe472a424cb3032463cb339e351460765a822e a0dc2d74b9b0e3c87e076003dbfe472a424cb3032463cb339e351460765a822e b01f6234a2c1d98af2d8bfb79a8c95677c6e9f5750eb756890f29b33b712f804 8485b2ccde69acf41e333e8fba2f55a1b3556e1a42443095235db1d5c78b25d1 f71ab1aad211e14a47b549e8df55b627c36fa75c1aa75b9682cccae2de00babc f4051d239b766c4111e92979aa31af0b35def053646e347bc41e8b73cfd080bc d42cb1657149a8057cef0ba0ededef7f23c9a2f133bfd286ad0f4a6a8bdb5cb2 19dfccdab83e610f04c414a96edb45007b9a022af01473fccf2073b546ad092e 5e0fb8467c33dae5879fb296c9766c78b0a6fc966372f76ac000cc1fcafc2876"))
+	result = tk.MustQuery("select sm3('123'), sm3(123), sm3(''), sm3('你好'), sm3(NULL)")
+	result.Check(testkit.Rows(`6e0f9e14344c5406a0cf5a3b4dfb665f87f4a771a31f7edbb5c72874a32b2957 6e0f9e14344c5406a0cf5a3b4dfb665f87f4a771a31f7edbb5c72874a32b2957 1ab21d8355cfa17f8e61194831e81a8f22bec8c728fefb747ed035eb5082aa2b 78e5c78c5322ca174089e58dc7790acf8ce9d542bee6ae4a5a0797d5e356be61 <nil>`))
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(10), b int, c double, d datetime, e time, f bit(4), g binary(20), h blob(10), i text(30))")
+	tk.MustExec(`insert into t values('2', 2, 2.3, "2017-01-01 12:01:01", "12:01:01", 0b1010, "512", "48", "tidb")`)
+	result = tk.MustQuery("select sm3(a), sm3(b), sm3(c), sm3(d), sm3(e), sm3(f), sm3(g), sm3(h), sm3(i) from t")
+	result.Check(testkit.Rows("a0dc2d74b9b0e3c87e076003dbfe472a424cb3032463cb339e351460765a822e a0dc2d74b9b0e3c87e076003dbfe472a424cb3032463cb339e351460765a822e b01f6234a2c1d98af2d8bfb79a8c95677c6e9f5750eb756890f29b33b712f804 8485b2ccde69acf41e333e8fba2f55a1b3556e1a42443095235db1d5c78b25d1 f71ab1aad211e14a47b549e8df55b627c36fa75c1aa75b9682cccae2de00babc f4051d239b766c4111e92979aa31af0b35def053646e347bc41e8b73cfd080bc d42cb1657149a8057cef0ba0ededef7f23c9a2f133bfd286ad0f4a6a8bdb5cb2 19dfccdab83e610f04c414a96edb45007b9a022af01473fccf2073b546ad092e 5e0fb8467c33dae5879fb296c9766c78b0a6fc966372f76ac000cc1fcafc2876"))
+	result = tk.MustQuery("select sm3('123'), sm3(123), sm3(''), sm3('你好'), sm3(NULL)")
+	result.Check(testkit.Rows(`6e0f9e14344c5406a0cf5a3b4dfb665f87f4a771a31f7edbb5c72874a32b2957 6e0f9e14344c5406a0cf5a3b4dfb665f87f4a771a31f7edbb5c72874a32b2957 1ab21d8355cfa17f8e61194831e81a8f22bec8c728fefb747ed035eb5082aa2b 78e5c78c5322ca174089e58dc7790acf8ce9d542bee6ae4a5a0797d5e356be61 <nil>`))
+
 	// for AES_ENCRYPT
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a char(10), b int, c double, d datetime, e time, f bit(4), g binary(20), h blob(10), i text(30))")
@@ -1227,6 +1241,23 @@ func TestIssue11648(t *testing.T) {
 	tk.MustExec("insert into t values (1), (NULL), (2);")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1048 Column 'id' cannot be null"))
 	tk.MustQuery("select * from t").Check(testkit.Rows("1", "0", "2"))
+}
+
+func TestExprDateTimeOnDST(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// insert DST datetime
+	tk.MustExec("set @@session.time_zone = 'Europe/Amsterdam'")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int, dt datetime, primary key (id, dt))")
+	tk.MustExec("insert into t values (1, date_add('2023-03-26 00:00:00', interval 2 hour))")
+	tk.MustExec("insert into t values (4,'2023-03-26 02:00:00')")
+
+	// check DST datetime
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2023-03-26 02:00:00", "4 2023-03-26 02:00:00"))
 }
 
 func TestInfoBuiltin(t *testing.T) {
@@ -1811,10 +1842,10 @@ func TestCompareBuiltin(t *testing.T) {
 		"21 0 0 0 1 <nil> <nil> 0 0 1 1 0 <nil> <nil> 0 0 0 0 <nil>",
 		"22 0 0 0 1 <nil> <nil> 0 0 0 1 0 <nil> <nil> 0 0 0 0 <nil>",
 		"23 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
-		"24 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 1 0 <nil>",
-		"25 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 1 0 0 <nil>",
-		"26 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 1 0 0 0 <nil>",
-		"27 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 1 0 <nil>",
+		"24 0 0 0 0 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 1 0 <nil>",
+		"25 0 0 0 0 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 1 0 0 <nil>",
+		"26 0 0 0 0 <nil> <nil> 0 0 0 0 0 <nil> <nil> 1 0 0 0 <nil>",
+		"27 0 0 0 0 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 1 0 <nil>",
 		"28 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>"))
 
 	// for coalesce
@@ -2110,11 +2141,11 @@ func TestAggregationBuiltinJSONArrayagg(t *testing.T) {
 	result = tk.MustQuery("select b, json_arrayagg(c) from t group by b order by b;")
 	result.Check(testkit.Rows(`ab [5.5]`))
 	result = tk.MustQuery("select e, json_arrayagg(f) from t group by e order by e;")
-	result.Check(testkit.Rows(`2020-01-10 ["11:12:13"]`))
+	result.Check(testkit.Rows(`2020-01-10 ["11:12:13.000000"]`))
 	result = tk.MustQuery("select f, json_arrayagg(g) from t group by f order by f;")
-	result.Check(testkit.Rows(`11:12:13 ["2020-01-11 00:00:00"]`))
+	result.Check(testkit.Rows(`11:12:13 ["2020-01-11 00:00:00.000000"]`))
 	result = tk.MustQuery("select g, json_arrayagg(h) from t group by g order by g;")
-	result.Check(testkit.Rows(`2020-01-11 00:00:00 ["2020-10-18 00:00:00"]`))
+	result.Check(testkit.Rows(`2020-01-11 00:00:00 ["2020-10-18 00:00:00.000000"]`))
 	result = tk.MustQuery("select h, json_arrayagg(i) from t group by h order by h;")
 	result.Check(testkit.Rows(`2020-10-18 00:00:00 ["first"]`))
 	result = tk.MustQuery("select i, json_arrayagg(j) from t group by i order by i;")
@@ -2151,11 +2182,11 @@ func TestAggregationBuiltinJSONObjectAgg(t *testing.T) {
 	result = tk.MustQuery("select json_objectagg(b, c) from t group by b order by b;")
 	result.Check(testkit.Rows(`{"ab": 5.5}`))
 	result = tk.MustQuery("select json_objectagg(e, f) from t group by e order by e;")
-	result.Check(testkit.Rows(`{"2020-01-10": "11:12:13"}`))
+	result.Check(testkit.Rows(`{"2020-01-10": "11:12:13.000000"}`))
 	result = tk.MustQuery("select json_objectagg(f, g) from t group by f order by f;")
-	result.Check(testkit.Rows(`{"11:12:13": "2020-01-11 00:00:00"}`))
+	result.Check(testkit.Rows(`{"11:12:13": "2020-01-11 00:00:00.000000"}`))
 	result = tk.MustQuery("select json_objectagg(g, h) from t group by g order by g;")
-	result.Check(testkit.Rows(`{"2020-01-11 00:00:00": "2020-10-18 00:00:00"}`))
+	result.Check(testkit.Rows(`{"2020-01-11 00:00:00": "2020-10-18 00:00:00.000000"}`))
 	result = tk.MustQuery("select json_objectagg(h, i) from t group by h order by h;")
 	result.Check(testkit.Rows(`{"2020-10-18 00:00:00": "first"}`))
 	result = tk.MustQuery("select json_objectagg(i, j) from t group by i order by i;")
@@ -2386,6 +2417,14 @@ func TestJSONBuiltin(t *testing.T) {
 
 	r = tk.MustQuery(`select json_valid('"2019-8-19"');`)
 	r.Check(testkit.Rows("1"))
+
+	tk.MustGetErrCode(`select json_merge(1, 2);`, mysql.ErrInvalidTypeForJSON)
+	tk.MustGetErrCode(`select json_merge_preserve(1, 2);`, mysql.ErrInvalidTypeForJSON)
+	tk.MustGetErrCode(`select json_merge_patch(1, 2);`, mysql.ErrInvalidTypeForJSON)
+	tk.MustGetErrCode(`select JSON_CONTAINS_PATH(1, 'one', '$.a');`, mysql.ErrInvalidTypeForJSON)
+	tk.MustGetErrCode(`select json_search(1, 'one', '$.a');`, mysql.ErrInvalidTypeForJSON)
+	tk.MustGetErrCode(`select json_keys(1, '$.a');`, mysql.ErrInvalidTypeForJSON)
+	tk.MustGetErrCode(`select JSON_extract(1, '$.a');`, mysql.ErrInvalidTypeForJSON)
 }
 
 func TestTimeLiteral(t *testing.T) {
@@ -3107,15 +3146,6 @@ func TestValuesInNonInsertStmt(t *testing.T) {
 	res.Check(testkit.Rows(`<nil> <nil> <nil> <nil> <nil> <nil> <nil>`))
 }
 
-func TestForeignKeyVar(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec("SET FOREIGN_KEY_CHECKS=1")
-	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 8047 variable 'foreign_key_checks' does not yet support value: 1"))
-}
-
 func TestUserVarMockWindFunc(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -3201,7 +3231,7 @@ func TestCastAsTime(t *testing.T) {
 	tk.MustExec(`insert into t values (1, 1, 1, "1", "1");`)
 	tk.MustExec(`insert into t values (null, null, null, null, null);`)
 	tk.MustQuery(`select cast(col1 as time), cast(col2 as time), cast(col3 as time), cast(col4 as time), cast(col5 as time) from t where col1 = 1;`).Check(testkit.Rows(
-		`00:00:01 00:00:01 00:00:01 00:00:01 00:00:01`,
+		`00:00:01 00:00:01 00:00:01 00:00:01 <nil>`,
 	))
 	tk.MustQuery(`select cast(col1 as time), cast(col2 as time), cast(col3 as time), cast(col4 as time), cast(col5 as time) from t where col1 is null;`).Check(testkit.Rows(
 		`<nil> <nil> <nil> <nil> <nil>`,
@@ -3646,6 +3676,42 @@ func TestIssue16973(t *testing.T) {
 	require.Equal(t, "table:t2", fmt.Sprintf("%v", rows[9][3]))
 	tk.MustQuery("SELECT /*+ INL_MERGE_JOIN(t1,t2) */ COUNT(*) FROM  t1 LEFT JOIN t2 ON t1.id = t2.order_id WHERE t1.ns = 'a' AND t1.org_id IN (1) " +
 		"AND t1.status IN (2,6,10) AND timestampdiff(month, t2.begin_time, date'2020-05-06') = 0;").Check(testkit.Rows("1"))
+}
+
+func TestShardIndexOnTiFlash(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int primary key clustered, a int, b int, unique key uk_expr((tidb_shard(a)),a))")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Session())
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	require.True(t, exists)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+	tk.MustExec("set @@session.tidb_enforce_mpp = 1")
+	rows := tk.MustQuery("explain select max(b) from t").Rows()
+	for _, row := range rows {
+		line := fmt.Sprintf("%v", row)
+		require.NotContains(t, line, "tiflash")
+	}
+	tk.MustExec("set @@session.tidb_enforce_mpp = 0")
+	tk.MustExec("set @@session.tidb_allow_mpp = 0")
+	rows = tk.MustQuery("explain select max(b) from t").Rows()
+	for _, row := range rows {
+		line := fmt.Sprintf("%v", row)
+		require.NotContains(t, line, "tiflash")
+	}
 }
 
 func TestExprPushdownBlacklist(t *testing.T) {
@@ -4208,17 +4274,7 @@ func TestOrderByFuncPlanCache(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
-	orgEnable := plannercore.PreparedPlanCacheEnabled()
-	defer func() {
-		plannercore.SetPreparedPlanCache(orgEnable)
-	}()
-	plannercore.SetPreparedPlanCache(true)
-	var err error
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk.SetSession(se)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
@@ -4232,17 +4288,7 @@ func TestSelectLimitPlanCache(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
-	orgEnable := plannercore.PreparedPlanCacheEnabled()
-	defer func() {
-		plannercore.SetPreparedPlanCache(orgEnable)
-	}()
-	plannercore.SetPreparedPlanCache(true)
-	var err error
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk.SetSession(se)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
@@ -4812,17 +4858,7 @@ func TestIssue17287(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
-	orgEnable := plannercore.PreparedPlanCacheEnabled()
-	defer func() {
-		plannercore.SetPreparedPlanCache(orgEnable)
-	}()
-	plannercore.SetPreparedPlanCache(true)
-	var err error
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk.SetSession(se)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("set @@tidb_enable_vectorized_expression = false;")
@@ -4895,6 +4931,8 @@ func TestSchemaDMLNotChange(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=0")
+	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 	tk2.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int primary key, c_json json);")
@@ -5219,7 +5257,7 @@ func TestIssue19892(t *testing.T) {
 
 			tk.MustExec("TRUNCATE TABLE dd")
 			tk.MustExec("INSERT INTO dd(c) values('0000-00-00 20:00:00')")
-			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect timestamp value: '0000-00-00 20:00:00'"))
+			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect timestamp value: '0000-00-00 20:00:00' for column 'c' at row 1"))
 			tk.MustQuery("SELECT c FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
 
 			tk.MustExec("TRUNCATE TABLE dd")
@@ -5233,7 +5271,7 @@ func TestIssue19892(t *testing.T) {
 		{
 			tk.MustExec("TRUNCATE TABLE dd")
 			tk.MustExec("INSERT INTO dd(b) values('0000-0-00')")
-			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect datetime value: '0000-0-00'"))
+			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect datetime value: '0000-0-00' for column 'b' at row 1"))
 			tk.MustQuery("SELECT b FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
 
 			tk.MustExec("TRUNCATE TABLE dd")
@@ -5254,7 +5292,7 @@ func TestIssue19892(t *testing.T) {
 			tk.MustExec("TRUNCATE TABLE dd")
 			tk.MustGetErrMsg("INSERT INTO dd(c) VALUES ('0000-00-00 20:00:00')", "[table:1292]Incorrect timestamp value: '0000-00-00 20:00:00' for column 'c' at row 1")
 			tk.MustExec("INSERT IGNORE INTO dd(c) VALUES ('0000-00-00 20:00:00')")
-			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect timestamp value: '0000-00-00 20:00:00'"))
+			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect timestamp value: '0000-00-00 20:00:00' for column 'c' at row 1"))
 			tk.MustQuery("SELECT c FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
 
 			tk.MustExec("TRUNCATE TABLE dd")
@@ -5305,7 +5343,7 @@ func TestIssue19892(t *testing.T) {
 		{
 			tk.MustExec("TRUNCATE TABLE dd")
 			tk.MustExec("INSERT INTO dd(a) values('2000-01-00')")
-			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect date value: '2000-01-00'"))
+			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect date value: '2000-01-00' for column 'a' at row 1"))
 			tk.MustQuery("SELECT a FROM dd").Check(testkit.Rows("0000-00-00"))
 
 			tk.MustExec("TRUNCATE TABLE dd")
@@ -5333,7 +5371,7 @@ func TestIssue19892(t *testing.T) {
 			tk.MustExec("TRUNCATE TABLE dd")
 			tk.MustGetErrMsg("INSERT INTO dd(b) VALUES ('2000-01-00')", "[table:1292]Incorrect datetime value: '2000-01-00' for column 'b' at row 1")
 			tk.MustExec("INSERT IGNORE INTO dd(b) VALUES ('2000-00-01')")
-			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect datetime value: '2000-00-01'"))
+			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect datetime value: '2000-00-01' for column 'b' at row 1"))
 			tk.MustQuery("SELECT b FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
 
 			tk.MustExec("TRUNCATE TABLE dd")
@@ -5386,7 +5424,7 @@ func TestIssue19892(t *testing.T) {
 		tk.MustExec("TRUNCATE TABLE dd")
 		tk.MustGetErrMsg("INSERT INTO dd(b) VALUES ('2000-01-00')", "[table:1292]Incorrect datetime value: '2000-01-00' for column 'b' at row 1")
 		tk.MustExec("INSERT IGNORE INTO dd(b) VALUES ('2000-00-01')")
-		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect datetime value: '2000-00-01'"))
+		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect datetime value: '2000-00-01' for column 'b' at row 1"))
 		tk.MustQuery("SELECT b FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
 
 		tk.MustExec("TRUNCATE TABLE dd")
@@ -6101,6 +6139,19 @@ func TestRedundantColumnResolve(t *testing.T) {
 	tk.MustQuery("select t1.a, t2.a from t1 natural join t2").Check(testkit.Rows("1 1"))
 }
 
+func TestIssue37414(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists foo")
+	tk.MustExec("drop table if exists bar")
+	tk.MustExec("create table foo(a decimal(65,0));")
+	tk.MustExec("create table bar(a decimal(65,0), b decimal(65,0));")
+	tk.MustExec("insert into bar values(0,0),(1,1),(2,2);")
+	tk.MustExec("insert into foo select if(b>0, if(a/b>1, 1, 2), null) from bar;")
+}
+
 func TestControlFunctionWithEnumOrSet(t *testing.T) {
 	// issue 23114
 	store := testkit.CreateMockStore(t)
@@ -6275,7 +6326,7 @@ func TestBuiltinFuncJSONMergePatch_InColumn(t *testing.T) {
 			if tt.expected == nil {
 				result.Check(testkit.Rows("<nil>"))
 			} else {
-				j, e := json.ParseBinaryFromString(tt.expected.(string))
+				j, e := types.ParseBinaryJSONFromString(tt.expected.(string))
 				require.NoError(t, e)
 				result.Check(testkit.Rows(j.String()))
 			}
@@ -6395,7 +6446,7 @@ func TestBuiltinFuncJSONMergePatch_InExpression(t *testing.T) {
 			if tt.expected == nil {
 				result.Check(testkit.Rows("<nil>"))
 			} else {
-				j, e := json.ParseBinaryFromString(tt.expected.(string))
+				j, e := types.ParseBinaryJSONFromString(tt.expected.(string))
 				require.NoError(t, e)
 				result.Check(testkit.Rows(j.String()))
 			}
@@ -6493,6 +6544,59 @@ func TestIssue24953(t *testing.T) {
 	tk.MustExec("CREATE TABLE `tbl_0` (\n  `col_76` bigint(20) unsigned DEFAULT NULL,\n  `col_1` time NOT NULL DEFAULT '13:11:28',\n  `col_2` datetime DEFAULT '1990-07-29 00:00:00',\n  `col_3` date NOT NULL DEFAULT '1976-09-16',\n  `col_4` date DEFAULT NULL,\n  `col_143` varbinary(208) DEFAULT 'lXRTXUkTeWaJ',\n  KEY `idx_0` (`col_2`,`col_1`,`col_76`,`col_4`,`col_3`),\n  PRIMARY KEY (`col_1`,`col_3`) /*T![clustered_index] NONCLUSTERED */,\n  KEY `idx_2` (`col_1`,`col_4`,`col_76`,`col_3`),\n  KEY `idx_3` (`col_4`,`col_76`,`col_3`,`col_2`,`col_1`),\n  UNIQUE KEY `idx_4` (`col_76`,`col_3`,`col_1`,`col_4`),\n  KEY `idx_5` (`col_3`,`col_4`,`col_76`,`col_2`),\n  KEY `idx_6` (`col_2`),\n  KEY `idx_7` (`col_76`,`col_3`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
 	tk.MustExec("insert into tbl_9 values (-5765442,-597990898,384599625723370089,\"ZdfkUJiHcOfi\");")
 	tk.MustQuery("(select col_76,col_1,col_143,col_2 from tbl_0) union (select   col_54,col_57,col_55,col_56 from tbl_9);").Check(testkit.Rows("-5765442 ZdfkUJiHcOfi -597990898 384599625723370089"))
+}
+
+// issue https://github.com/pingcap/tidb/issues/28544
+func TestPrimaryKeyRequiredSysvar(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t (
+		name varchar(60),
+		age int
+	  )`)
+	tk.MustExec(`DROP TABLE t`)
+
+	tk.MustExec("set @@sql_require_primary_key=true")
+
+	// creating table without primary key should now fail
+	tk.MustGetErrCode(`CREATE TABLE t (
+		name varchar(60),
+		age int
+	  )`, errno.ErrTableWithoutPrimaryKey)
+	// but with primary key should work as usual
+	tk.MustExec(`CREATE TABLE t (
+		id bigint(20) NOT NULL PRIMARY KEY AUTO_RANDOM,
+		name varchar(60),
+		age int
+	  )`)
+	tk.MustGetErrMsg(`ALTER TABLE t
+       DROP COLUMN id`, "[ddl:8200]Unsupported drop integer primary key")
+
+	// test with non-clustered primary key
+	tk.MustExec(`CREATE TABLE t2 (
+       id int(11) NOT NULL,
+       c1 int(11) DEFAULT NULL,
+       PRIMARY KEY(id) NONCLUSTERED)`)
+	tk.MustGetErrMsg(`ALTER TABLE t2
+       DROP COLUMN id`, "[ddl:8200]can't drop column id with composite index covered or Primary Key covered now")
+	tk.MustGetErrCode(`ALTER TABLE t2 DROP PRIMARY KEY`, errno.ErrTableWithoutPrimaryKey)
+
+	// this sysvar is ignored in internal sessions
+	tk.Session().GetSessionVars().InRestrictedSQL = true
+	ctx := context.Background()
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
+	sql := `CREATE TABLE t3 (
+		id int(11) NOT NULL,
+		c1 int(11) DEFAULT NULL)`
+	stmts, err := tk.Session().Parse(ctx, sql)
+	require.NoError(t, err)
+	res, err := tk.Session().ExecuteStmt(ctx, stmts[0])
+	require.NoError(t, err)
+	if res != nil {
+		require.NoError(t, res.Close())
+	}
 }
 
 // issue https://github.com/pingcap/tidb/issues/26111
@@ -6893,6 +6997,16 @@ func TestIssue28739(t *testing.T) {
 		"<nil> <nil>"))
 }
 
+func TestIssue30081(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`USE test`)
+	tk.MustQuery(`SELECT CONVERT_TZ('2007-03-11 2:00:00','US/Eastern','US/Central');`).
+		Check(testkit.Rows(`2007-03-11 01:00:00`))
+	tk.MustQuery(`SELECT CONVERT_TZ('2007-03-11 3:00:00','US/Eastern','US/Central');`).
+		Check(testkit.Rows(`2007-03-11 01:00:00`))
+}
+
 func TestIssue30326(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -7255,6 +7369,27 @@ func TestIssue31600(t *testing.T) {
 	tk.MustExec("drop table t")
 }
 
+func TestIssue31569(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c int primary key, c2 enum('a', 'b'))")
+	tk.MustExec("set session sql_mode = ''")
+	tk.MustExec("insert into t values(4, 'a')")
+	tk.MustExec("insert into t values(4, 0) on duplicate key update c=values(c), c2=values(c2)")
+	// tidb produces two warnings here (when eval (4, 0) & values(c2)), which is slightly incompatible with mysql
+	tk.MustQuery("show warnings").Check([][]interface{}{
+		{"Warning", "1265", "Data truncated for column 'c2' at row 1"},
+		{"Warning", "1265", "Data truncated for column 'c2' at row 1"},
+	})
+	tk.MustExec("insert into t values(4, 'a') on duplicate key update c=values(c), c2=values(c2)")
+	tk.MustQuery("show warnings").Check([][]interface{}{})
+	tk.MustExec("drop table t")
+}
+
 func TestDateAddForNonExistingTimestamp(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -7306,6 +7441,21 @@ func TestImcompleteDateFunc(t *testing.T) {
 	tk.MustQuery("select YEARWEEK('1998-00-11')").Check(testkit.Rows("<nil>"))
 }
 
+func TestIssue31640(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a json);")
+	tk.MustExec(`insert into t values ('"a"'), ('"B"'), ('"c"'), ('"D"'), ('{"a": 1}'), ('1'), ('{"b": 2}'), ('[1, 2]'), ('[3, 4]');`)
+	tk.MustQuery("select min(a) from t;").Check(testkit.Rows("1"))
+	tk.MustQuery("select max(a) from t;").Check(testkit.Rows("[3, 4]"))
+	tk.MustQuery("select min(a collate utf8mb4_bin) from t;").Check(testkit.Rows("\"B\""))
+	tk.MustQuery("select max(a collate utf8mb4_bin) from t;").Check(testkit.Rows("{\"b\": 2}"))
+	tk.MustQuery("select min(a collate utf8mb4_unicode_ci) from t;").Check(testkit.Rows("\"a\""))
+	tk.MustQuery("select max(a collate utf8mb4_unicode_ci) from t;").Check(testkit.Rows("1"))
+}
+
 func TestIssue36279(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -7340,4 +7490,268 @@ func TestIssue36358(t *testing.T) {
 	tk.MustExec("insert into t values('2001-01-01 02:03:04.050607')")
 	tk.MustQuery("select extract(day_microsecond from cast('2001-01-01 02:03:04.050607' as datetime(6))) from t").Check(testkit.Rows("1020304050607"))
 	tk.MustQuery("select extract(day_microsecond from c) from t").Check(testkit.Rows("1020304050607"))
+}
+
+func TestJSONObjectWithBinaryCharset(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a char(20), b blob);")
+	tk.MustExec("insert into t values ('a string', 'a binary string');")
+	tk.MustExec("select json_object(a, b) from t;")
+	tk.MustExec("select json_objectagg(a, b) from t;")
+	tk.MustGetErrCode("select json_object(b, a) from t;", errno.ErrInvalidJSONCharset)
+	err := tk.QueryToErr("select json_objectagg(b, a) from t;")
+	require.Error(t, err)
+	require.Equal(t, "[json:3144]Cannot create a JSON value from a string with CHARACTER SET 'binary'.", err.Error())
+}
+
+func TestCastJSONOpaqueValueToNumeric(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustQuery("select cast(cast(b'010101' as json) as signed);").Check(testkit.Rows("0"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect INTEGER value: '\"base64:type253:FQ==\"'"))
+	tk.MustQuery("select cast(json_extract(json_objectagg('a', b'010101'), '$.a') as signed);").Check(testkit.Rows("0"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect INTEGER value: '\"base64:type253:FQ==\"'"))
+	tk.MustQuery("select cast(json_extract(json_objectagg('a', b'010101'), '$.a') as double);").Check(testkit.Rows("0"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect FLOAT value: '\"base64:type253:FQ==\"'"))
+}
+
+func TestCompareJSONWithOtherType(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a JSON)")
+	tk.MustExec("insert into t values ('{}'), ('true'), ('5')")
+	tk.MustQuery("select * from t where a = TRUE;").Check(testkit.Rows("true"))
+	tk.MustQuery("select * from t where a < 6;").Check(testkit.Rows("5"))
+	tk.MustQuery("select * from t where a > 5;").Check(testkit.Rows("{}", "true"))
+}
+
+func TestCastRealAsTime(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(d1 double, f float, d2 decimal(24,8))")
+
+	// zero input
+	tk.MustExec("insert into t values(0, 0, 0)")
+
+	// const
+	tk.MustQuery("select cast(111.1 as datetime) from t").Check(testkit.Rows("2000-01-11 00:00:00"))
+	tk.MustQuery("select cast(1311.1 as datetime) from t").Check(testkit.Rows("<nil>"))
+
+	// vec
+	// valid input
+	tk.MustExec("insert into t values(111.1, 1122.1, 31212.111)")
+	tk.MustExec("insert into t values(121212.1111, 1121212.111111, 11121212.111111)")
+	tk.MustExec("insert into t values(99991111.1111111, 101.1111111, 20121212121212.1111111)")
+	// null input
+	tk.MustExec("insert into t values(NULL, NULL, NULL)")
+	// invalid input
+	tk.MustExec("insert into t values(1.1, 48.1, 100.1)")
+	tk.MustExec("insert into t values(1301.11, 1131.111, 100001111.111)")
+	tk.MustExec("insert into t values(20121212121260.1111111, 20121212126012.1111111, 20121212241212.1111111)")
+	tk.MustQuery("select cast(d1 as datetime), cast(f as datetime), cast(d2 as datetime) from t").Check(testkit.Rows(
+		"0000-00-00 00:00:00 0000-00-00 00:00:00 0000-00-00 00:00:00",
+		"2000-01-11 00:00:00 2000-11-22 00:00:00 2003-12-12 00:00:00",
+		"2012-12-12 00:00:00 0112-12-12 00:00:00 1112-12-12 00:00:00",
+		"9999-11-11 00:00:00 2000-01-01 00:00:00 2012-12-12 12:12:12",
+		"<nil> <nil> <nil>",
+		"<nil> <nil> <nil>",
+		"<nil> <nil> <nil>",
+		"<nil> <nil> <nil>"))
+}
+
+func TestJSONDepth(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a JSON)")
+	tk.MustGetErrCode(`insert into t
+with recursive c1 as (select cast(1 as signed) c, json_array(1) as a
+                      union
+                      select c + 1, json_array_insert(a, concat('$', repeat('[0]', c)), json_array(1))
+                      from c1
+                      where c < 101)
+select a from c1 where c > 100;`, errno.ErrJSONDocumentTooDeep)
+	tk.MustExec(`insert into t
+with recursive c1 as (select cast(1 as signed) c, json_array(1) as a
+                      union
+                      select c + 1, json_array_insert(a, concat('$', repeat('[0]', c)), json_array(1))
+                      from c1
+                      where c < 100)
+select a from c1 where c > 99;`)
+
+	err := tk.QueryToErr(`select json_array(a, 1) from t`)
+	require.Error(t, err)
+	// FIXME: mysql client shows the error.
+	//err = tk.QueryToErr(`select json_objectagg(1, a) from t;`)
+	//require.Error(t, err)
+	err = tk.QueryToErr(`select json_object(1, a) from t;`)
+	require.Error(t, err)
+	err = tk.QueryToErr(`select json_set(a, concat('$', repeat('[0]', 100)), json_array(json_array(3))) from t;`)
+	require.Error(t, err)
+	err = tk.QueryToErr(`select json_array_append(a, concat('$', repeat('[0]', 100)), 1) from t;`)
+	require.Error(t, err)
+	// FIXME: mysql client shows the error.
+	//err = tk.QueryToErr(`select json_arrayagg(a) from t;`)
+	//require.Error(t, err)
+}
+
+func TestCastJSONTimeDuration(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(i INT, j JSON)")
+
+	nowDate := time.Now().Format("2006-01-02")
+
+	// DATE/DATETIME/TIME will be automatically converted to json date/datetime/duration
+	tk.MustExec("insert into t values (0, DATE('1998-06-13'))")
+	tk.MustExec("insert into t values (1, CAST('1998-06-13 12:12:12' as DATETIME))")
+	tk.MustExec("insert into t values (2, DATE('1596-03-31'))")
+	tk.MustExec("insert into t values (3, CAST('1596-03-31 12:12:12' as DATETIME))")
+	tk.MustExec(`insert into t values (4, '"1596-03-31 12:12:12"')`)
+	tk.MustExec(`insert into t values (5, '"12:12:12"')`)
+	tk.MustExec("insert into t values (6, CAST('12:12:12' as TIME))")
+	tk.MustQuery("select i, cast(j as date), cast(j as datetime), cast(j as time), json_type(j) from t").Check(testkit.Rows(
+		"0 1998-06-13 1998-06-13 00:00:00 00:00:00 DATE",
+		"1 1998-06-13 1998-06-13 12:12:12 12:12:12 DATETIME",
+		"2 1596-03-31 1596-03-31 00:00:00 00:00:00 DATE",
+		"3 1596-03-31 1596-03-31 12:12:12 12:12:12 DATETIME",
+		"4 1596-03-31 1596-03-31 12:12:12 12:12:12 STRING",
+		"5 2012-12-12 2012-12-12 00:00:00 12:12:12 STRING",
+		fmt.Sprintf("6 %s %s 12:12:12 12:12:12 TIME", nowDate, nowDate),
+	))
+}
+
+func TestRegexpPushdown(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists reg")
+	tk.MustExec("create table reg(a varchar(20) null,b varchar(20) null,rep varchar(20) null) charset=utf8mb4 collate=utf8mb4_general_ci;")
+
+	tk.MustQuery("explain select a from reg where regexp_like(a, b);").Check(testkit.Rows(
+		"Projection_4 8000.00 root  test.reg.a",
+		"└─TableReader_7 8000.00 root  data:Selection_6",
+		"  └─Selection_6 8000.00 cop[tikv]  regexp_like(test.reg.a, test.reg.b)",
+		"    └─TableFullScan_5 10000.00 cop[tikv] table:reg keep order:false, stats:pseudo"))
+
+	tk.MustQuery("explain select a from reg where regexp_instr(a, b);").Check(testkit.Rows(
+		"Projection_4 8000.00 root  test.reg.a",
+		"└─TableReader_7 8000.00 root  data:Selection_6",
+		"  └─Selection_6 8000.00 cop[tikv]  regexp_instr(test.reg.a, test.reg.b)",
+		"    └─TableFullScan_5 10000.00 cop[tikv] table:reg keep order:false, stats:pseudo"))
+
+	tk.MustQuery("explain select a from reg where regexp_substr(a, b);").Check(testkit.Rows(
+		"Projection_4 8000.00 root  test.reg.a",
+		"└─TableReader_7 8000.00 root  data:Selection_6",
+		"  └─Selection_6 8000.00 cop[tikv]  regexp_substr(test.reg.a, test.reg.b)",
+		"    └─TableFullScan_5 10000.00 cop[tikv] table:reg keep order:false, stats:pseudo"))
+
+	tk.MustQuery("explain select a from reg where regexp_replace(a, b, rep);").Check(testkit.Rows(
+		"Projection_4 8000.00 root  test.reg.a",
+		"└─TableReader_7 8000.00 root  data:Selection_6",
+		"  └─Selection_6 8000.00 cop[tikv]  regexp_replace(test.reg.a, test.reg.b, test.reg.rep)",
+		"    └─TableFullScan_5 10000.00 cop[tikv] table:reg keep order:false, stats:pseudo"))
+
+	tk.MustExec("drop table if exists regbin")
+	tk.MustExec("create table regbin(a varchar(20) null,b varchar(20) null,rep varchar(20) null) charset=binary collate=binary;")
+
+	tk.MustQuery("explain select a from regbin where regexp_like(a, b);").Check(testkit.Rows(
+		"Projection_4 8000.00 root  test.regbin.a",
+		"└─Selection_5 8000.00 root  regexp_like(test.regbin.a, test.regbin.b)",
+		"  └─TableReader_7 10000.00 root  data:TableFullScan_6",
+		"    └─TableFullScan_6 10000.00 cop[tikv] table:regbin keep order:false, stats:pseudo"))
+}
+
+func TestIssue35184(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists ft")
+	tk.MustExec("create table ft (tint int, tdou double, tdec decimal(22,9),tchar char(44))")
+	tk.MustExec("insert into ft values(1234567890,123467890.1234,123467890.1234,'123467890.1234')")
+	tk.MustExec("insert into ft values(1234567890,123467890.123456789,123467890.123456789,'123467890.123456789')")
+
+	result := tk.MustQuery("SELECT FROM_UNIXTIME(tchar) from ft")
+	unixTime1 := "1973-11-30 08:38:10.123400"
+	unixTime2 := "1973-11-30 08:38:10.123457"
+	result.Check(testkit.Rows(unixTime1, unixTime2))
+
+	tk.MustExec("drop table if exists ft")
+	tk.MustExec("create table ft (tint int, tdou double, tdec decimal(22,9),tchar varchar(44))")
+	tk.MustExec("insert into ft values(1234567890,123467890.1234,123467890.1234,'123467890.1234')")
+	tk.MustExec("insert into ft values(1234567890,123467890.123456789,123467890.123456789,'123467890.123456789')")
+	result = tk.MustQuery("SELECT FROM_UNIXTIME(tchar) from ft")
+	result.Check(testkit.Rows(unixTime1, unixTime2))
+
+	tk.MustExec("drop table if exists ft")
+	tk.MustExec("create table ft (tint int, tdou double, tdec decimal(22,9),tchar blob)")
+	tk.MustExec("insert into ft values(1234567890,123467890.1234,123467890.1234,'123467890.1234')")
+	tk.MustExec("insert into ft values(1234567890,123467890.123456789,123467890.123456789,'123467890.123456789')")
+	result = tk.MustQuery("SELECT FROM_UNIXTIME(tchar) from ft")
+	result.Check(testkit.Rows(unixTime1, unixTime2))
+
+	tk.MustExec("drop table if exists ft")
+	tk.MustExec("create table ft (tint int, tdou double, tdec decimal(22,9),tchar tinyblob)")
+	tk.MustExec("insert into ft values(1234567890,123467890.1234,123467890.1234,'123467890.1234')")
+	tk.MustExec("insert into ft values(1234567890,123467890.123456789,123467890.123456789,'123467890.123456789')")
+	result = tk.MustQuery("SELECT FROM_UNIXTIME(tchar) from ft")
+	result.Check(testkit.Rows(unixTime1, unixTime2))
+
+	tk.MustExec("drop table if exists ft")
+	tk.MustExec("create table ft (tint int, tdou double, tdec decimal(22,9),tchar mediumblob)")
+	tk.MustExec("insert into ft values(1234567890,123467890.1234,123467890.1234,'123467890.1234')")
+	tk.MustExec("insert into ft values(1234567890,123467890.123456789,123467890.123456789,'123467890.123456789')")
+	result = tk.MustQuery("SELECT FROM_UNIXTIME(tchar) from ft")
+	result.Check(testkit.Rows(unixTime1, unixTime2))
+
+	tk.MustExec("drop table if exists ft")
+	tk.MustExec("create table ft (tint int, tdou double, tdec decimal(22,9),tchar longblob)")
+	tk.MustExec("insert into ft values(1234567890,123467890.1234,123467890.1234,'123467890.1234')")
+	tk.MustExec("insert into ft values(1234567890,123467890.123456789,123467890.123456789,'123467890.123456789')")
+	result = tk.MustQuery("SELECT FROM_UNIXTIME(tchar) from ft")
+	result.Check(testkit.Rows(unixTime1, unixTime2))
+
+	tk.MustExec("truncate table ft")
+	tk.MustExec("insert into ft values(1234567890,123467890.1234,123467890.1234,'123467890.1234000000000000000000100111111111')")
+	result = tk.MustQuery("SELECT FROM_UNIXTIME(tchar) from ft")
+	result.Check(testkit.Rows(unixTime1))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect DECIMAL value: '123467890.1234000000000000000000100111111111'"))
+
+	tk.MustExec("truncate table ft")
+	tk.MustExec("insert into ft values(1234567890,123467890.1234,123467890.1234,'11111123467890.1234')")
+	result = tk.MustQuery("SELECT FROM_UNIXTIME(tchar) from ft")
+	result.Check(testkit.Rows("<nil>"))
+
+	tk.MustExec("drop table if exists ft")
+	tk.MustExec("create table ft (tint int, tdou double, tdec decimal(22,9),tchar char(44))")
+	tk.MustExec("insert into ft values(1234567890,123467890.1234,123467890.1234,'123467890.1234')")
+	result = tk.MustQuery("SELECT FROM_UNIXTIME(tchar) from ft where FROM_UNIXTIME(tchar)= '1973-11-30 08:38:10.123400' ")
+	result.Check(testkit.Rows(unixTime1))
+
+	result = tk.MustQuery("SELECT FROM_UNIXTIME(cast(tchar as decimal(44,1))) from ft where FROM_UNIXTIME(tchar)= '1973-11-30 08:38:10.123400' ")
+	result.Check(testkit.Rows("1973-11-30 08:38:10.1"))
+
+	result = tk.MustQuery("SELECT FROM_UNIXTIME(tchar,'%Y%m%d') from ft where FROM_UNIXTIME(tchar)= '1973-11-30 08:38:10.123400' ")
+	result.Check(testkit.Rows("19731130"))
+}
+
+func TestFix38127(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(dou double, varc varchar(100))")
+	tk.MustExec("insert into t values (1.23e23, '111111111111111111111111111111111111111111111111111111111111111111111111111')")
+	tk.MustQuery("select from_unixtime(dou) from t").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select from_unixtime(varc) from t").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select from_unixtime(dou, '%Y-%m-%d') from t").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select from_unixtime(varc, '%Y-%m-%d') from t").Check(testkit.Rows("<nil>"))
 }

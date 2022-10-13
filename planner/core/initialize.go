@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/plancodec"
+	"github.com/pingcap/tidb/util/size"
 )
 
 // Init initializes LogicalAggregation.
@@ -472,6 +473,19 @@ func (p PhysicalTableSample) Init(ctx sessionctx.Context, offset int) *PhysicalT
 	return &p
 }
 
+// MemoryUsage return the memory usage of PhysicalTableSample
+func (p *PhysicalTableSample) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.physicalSchemaProducer.MemoryUsage() + size.SizeOfInterface + size.SizeOfBool
+	if p.TableSampleInfo != nil {
+		sum += p.TableSampleInfo.MemoryUsage()
+	}
+	return
+}
+
 // Init initializes PhysicalIndexReader.
 func (p PhysicalIndexReader) Init(ctx sessionctx.Context, offset int) *PhysicalIndexReader {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeIndexReader, &p, offset)
@@ -493,6 +507,7 @@ func (p PhysicalIndexMergeJoin) Init(ctx sessionctx.Context) *PhysicalIndexMerge
 	p.tp = plancodec.TypeIndexMergeJoin
 	p.id = ctx.GetSessionVars().PlanID
 	p.ctx = ctx
+	p.self = &p
 	return &p
 }
 
@@ -502,6 +517,7 @@ func (p PhysicalIndexHashJoin) Init(ctx sessionctx.Context) *PhysicalIndexHashJo
 	p.tp = plancodec.TypeIndexHashJoin
 	p.id = ctx.GetSessionVars().PlanID
 	p.ctx = ctx
+	p.self = &p
 	return &p
 }
 

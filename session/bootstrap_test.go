@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/telemetry"
 	"github.com/stretchr/testify/require"
 )
 
@@ -57,8 +58,7 @@ func TestBootstrap(t *testing.T) {
 	match(t, rows, `%`, "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y")
 	r.Close()
 
-	ok := se.Auth(&auth.UserIdentity{Username: "root", Hostname: "anyhost"}, []byte(""), []byte(""))
-	require.True(t, ok)
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "anyhost"}, []byte(""), []byte("")))
 
 	mustExec(t, se, "use test")
 
@@ -141,12 +141,15 @@ func TestBootstrapWithError(t *testing.T) {
 	{
 		se := &session{
 			store:       store,
-			sessionVars: variable.NewSessionVars(),
+			sessionVars: variable.NewSessionVars(nil),
 		}
+		se.functionUsageMu.builtinFunctionUsage = make(telemetry.BuiltinFunctionsUsage)
 		se.txn.init()
 		se.mu.values = make(map[fmt.Stringer]interface{})
 		se.SetValue(sessionctx.Initing, true)
 		err := InitDDLJobTables(store)
+		require.NoError(t, err)
+		err = InitMDLTable(store)
 		require.NoError(t, err)
 		dom, err := domap.Get(store)
 		require.NoError(t, err)

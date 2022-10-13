@@ -21,6 +21,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -391,6 +392,8 @@ func TestIssue24547(t *testing.T) {
 }
 
 func TestIssue27138(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -431,7 +434,7 @@ PARTITIONS 1`)
 		"[│     └─Selection_24 10.00 cop[tikv]  eq(test.t2.postfiller, 1)]\n" +
 		"[│       └─TableFullScan_23 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo]\n" +
 		"[└─TableReader_14(Probe) 1.00 root partition:all data:TableRangeScan_13]\n" +
-		"[  └─TableRangeScan_13 1.00 cop[tikv] table:t1 range: decided by [test.t2.prefiller], keep order:false, stats:pseudo"))
+		"[  └─TableRangeScan_13 1.00 cop[tikv] table:t1 range: decided by [eq(test.t1.id, test.t2.prefiller)], keep order:false, stats:pseudo"))
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 	// without fix it fails with: "runtime error: index out of range [0] with length 0"
 	tk.MustQuery("select /* +INL_JOIN(t1,t2) */ t1.id, t1.pc from t1 where id in ( select prefiller from t2 where t2.postfiller = 1 )").Check(testkit.Rows())
