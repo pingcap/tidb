@@ -59,6 +59,7 @@ go_test(
         "processinfo_test.go",
         "security_test.go",
         "urls_test.go",
+        "util_test.go",
         "wait_group_wrapper_test.go",
     ],
     data = glob(["tls_test/**"]),
