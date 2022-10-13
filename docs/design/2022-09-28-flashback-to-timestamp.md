@@ -18,9 +18,44 @@ Therefore, we propose to use a series of new SQL syntaxes to support this featur
 
 ### Implementation Overview
 
-In TiKV, a multi-version concurrency control (MVCC) mechanism is introduced to avoid the overhead of introducing locks when data is updated concurrently. Under this mechanism, when TiDB modified data, it doesn't directly operate on the original value, but writes a data with the latest timestamp to cover it. The GC Worker in the background of TiDB will periodically update `tikv_gc_safe_point` and delete the version older than this point. `Flashback To Timestamp` developmente based on this feature of TiKV. In order to improve execution efficiency and reduce data transmission overhead, TiKV has added two RPC interfaces called `PrepareFlashbackToVersion` and `FlashbackToVersion`.
+In TiKV, a multi-version concurrency control (MVCC) mechanism is introduced to avoid the overhead of introducing locks when data is updated concurrently. Under this mechanism, when TiDB modified data, it doesn't directly operate on the original value, but writes a data with the latest timestamp to cover it. The GC Worker in the background of TiDB will periodically update `tikv_gc_safe_point` and delete the version older than this point. `Flashback To Timestamp` developmente based on this feature of TiKV. In order to improve execution efficiency and reduce data transmission overhead, TiKV has added two RPC interfaces called `PrepareFlashbackToVersion` and `FlashbackToVersion`. The protobuf related change shown below:
 
-Then a `Flashback To Timestamp` DDL job can be simply divided into the following stages
+```protobuf
+// Preparing the flashback for a region/key range will "lock" the region
+// so that there is no any read, write or schedule operation could be proposed before
+// the actual flashback operation.
+message PrepareFlashbackToVersionRequest {
+    Context context = 1;
+    bytes start_key = 2;
+    bytes end_key = 3;
+}
+
+message PrepareFlashbackToVersionResponse {
+    errorpb.Error region_error = 1;
+    string error = 2;
+}
+
+// Flashback the region to a specific point with the given `version`, please
+// make sure the region is "locked" by `PrepareFlashbackToVersionRequest` first,
+// otherwise this request will fail.
+message FlashbackToVersionRequest {
+    Context context = 1;
+    // The TS version which the data should flashback to.
+    uint64 version = 2;
+    bytes start_key = 3;
+    bytes end_key = 4;
+    // The `start_ts`` and `commit_ts` which the newly written MVCC version will use.
+    uint64 start_ts = 5;
+    uint64 commit_ts = 6;
+}
+
+message FlashbackToVersionResponse {
+    errorpb.Error region_error = 1;
+    string error = 2;
+}
+```
+
+Then a `Flashback To Timestamp` DDL job can be simply divided into the following steps
 
 * Save values of some global variables and PD schedule. Those values will be changed during `Flashback`.
 
@@ -29,7 +64,7 @@ Then a `Flashback To Timestamp` DDL job can be simply divided into the following
     * No related DDL history in flashback time range.
     * No running related DDL jobs.
 
-* TiDB get flashback key ranges and send `PrepareFlashbackToVersion` RPC requests to lock them in TiKV. Once locked, no more read, write and scheduling operations are allowed for those key ranges.
+* TiDB get flashback key ranges and splits them into separate regions to avoid locking unrelated key ranges. Then TiDB send `PrepareFlashbackToVersion` RPC requests to lock regions in TiKV. Once locked, no more read, write and scheduling operations are allowed for those regions.
 
 * After locked all relevant key ranges, the DDL Owner will update schema version and synchronize it to other TiDBs. When other TiDB applies the `SchemaDiff` of type `Flashback To Timestamp`, it will disconnect all relevant links.
 
