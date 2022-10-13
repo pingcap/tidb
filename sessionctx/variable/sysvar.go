@@ -743,7 +743,7 @@ var defaultSysVars = []*SysVar{
 				return "", err
 			}
 			globalMemoryLimitTuner := gctuner.GlobalMemoryLimitTuner.GetPercentage()
-			if floatValue < 0 && floatValue > 0.9 || globalMemoryLimitTuner < floatValue+0.05 { // 512 MB
+			if floatValue < 0 && floatValue > 0.9 || globalMemoryLimitTuner < floatValue+0.05 {
 				return "", ErrTruncatedWrongValue.GenWithStackByArgs(TiDBGOGCTunerThreshold, originalValue)
 			}
 			return strconv.FormatFloat(floatValue, 'f', -1, 64), nil
