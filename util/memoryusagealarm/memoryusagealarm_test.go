@@ -15,11 +15,11 @@
 package memoryusagealarm
 
 import (
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
