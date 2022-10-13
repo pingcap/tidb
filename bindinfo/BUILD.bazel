@@ -57,6 +57,7 @@ go_test(
     ],
     embed = [":bindinfo"],
     flaky = True,
+    race = "on",
     shard_count = 50,
     deps = [
         "//config",
