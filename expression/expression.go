@@ -858,28 +858,29 @@ func evaluateExprWithNullInNullRejectCheck(ctx sessionctx.Context, schema *Schem
 		for i, arg := range x.GetArgs() {
 			args[i], nullFromSets[i] = evaluateExprWithNullInNullRejectCheck(ctx, schema, arg)
 		}
-		// allNullFromSet indicates whether the args[i] are all "Null Constant and transformed from the column schema"
+
+		// allNullFromSet indicates whether all arguments are Null Constant and the Null Constant is affected by the column of the schema.
 		allNullFromSet := true
-		// hasNullFromSet indicates any argument is "Null Constant and transformed from the column schema"
-		hasNullFromSet := false
-		for i := range args {
-			if cons, ok := args[i].(*Constant); ok && cons.Value.IsNull() && nullFromSets[i] {
-				hasNullFromSet = true
-				continue
-			}
-			allNullFromSet = false
-		}
-		// hasOriginNull indicates whether exists Null Constant which is not affected by column schema
-		hasOriginNull := false
 		for i := range args {
 			if cons, ok := args[i].(*Constant); ok && cons.Value.IsNull() && !nullFromSets[i] {
-				hasOriginNull = true
+				allNullFromSet = false
 				break
 			}
 		}
-		// If not all the args[i] are "Null Constant and transformed from the column schema", then we should make these
-		// args into other value which won't affect the result for `AND` and `OR`, otherwise we should keep them as original.
-		if !allNullFromSet {
+
+		// allArgsNullFromSet indicates whether all Null Constant are affected by the column of the schema
+		allArgsNullFromSet := true
+		for i := range args {
+			if cons, ok := args[i].(*Constant); ok && cons.Value.IsNull() && nullFromSets[i] {
+				continue
+			}
+			allArgsNullFromSet = false
+		}
+
+		// If all the args are Null Constant and affected by the column schema, then we should keep it.
+		// Otherwise, we shouldn't let Null Constant which affected by the column schema participate in computing in `And` and `OR`
+		// due to the result of `AND` and `OR are uncertain if one of the arguments is NULL.
+		if !allArgsNullFromSet {
 			for i := range args {
 				if cons, ok := args[i].(*Constant); ok && cons.Value.IsNull() && nullFromSets[i] {
 					if x.FuncName.L == ast.LogicAnd {
@@ -893,9 +894,9 @@ func evaluateExprWithNullInNullRejectCheck(ctx sessionctx.Context, schema *Schem
 		}
 		c := NewFunctionInternal(ctx, x.FuncName.L, x.RetType.Clone(), args...)
 		cons, ok := c.(*Constant)
-		// If the result expr is Null Constant and the arguments has Null Constant which is only affected by column schema,
-		// we will still think the result expr is affected by the column schema.
-		return c, ok && cons.Value.IsNull() && hasNullFromSet && !hasOriginNull
+		// If the return expr is Null Constant, and all the Null Constant arguments are affected by column schema,
+		// then we think the result Null Constant is also affected by the column schema
+		return c, ok && cons.Value.IsNull() && allNullFromSet
 	case *Column:
 		if !schema.Contains(x) {
 			return x, false
