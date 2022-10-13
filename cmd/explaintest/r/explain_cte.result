@@ -115,7 +115,7 @@ Apply_24	10000.00	root		CARTESIAN semi join
 │ └─TableFullScan_25	10000.00	cop[tikv]	table:dt	keep order:false, stats:pseudo
 └─Selection_29(Probe)	14400.00	root		eq(Column#8, 1)
   └─CTEFullScan_30	18000.00	root	CTE:qn	data:CTE_0
-CTE_0	18000.00	root		Recursive CTE
+CTE_0	1.80	root		Recursive CTE
 ├─Projection_17(Seed Part)	1.00	root		plus(mul(test.t1.c1, 0), 1)->Column#4
 │ └─TableDual_18	1.00	root		rows:1
 └─Projection_19(Recursive Part)	0.80	root		plus(Column#5, 1)->Column#7

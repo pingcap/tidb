@@ -627,7 +627,7 @@ Projection_26	10000.00	root		test.t1.c1, test.t1.c2
   └─HashAgg_31(Probe)	10000.00	root		funcs:max(Column#19)->Column#14, funcs:sum(Column#20)->Column#15, funcs:count(1)->Column#16
     └─Projection_35	200000.00	root		test.t2.c1, cast(isnull(test.t2.c1), decimal(20,0) BINARY)->Column#20
       └─CTEFullScan_33	200000.00	root	CTE:cte1	data:CTE_0
-CTE_0	200000.00	root		Recursive CTE, limit(offset:0, count:1)
+CTE_0	20.00	root		Recursive CTE, limit(offset:0, count:1)
 ├─Projection_19(Seed Part)	10.00	root		test.t2.c1
 │ └─TableReader_22	10.00	root		data:Selection_21
 │   └─Selection_21	10.00	cop[tikv]		eq(test.t2.c2, test.t1.c2)
@@ -644,7 +644,7 @@ Apply_25	10000.00	root		CARTESIAN semi join
 ├─TableReader_27(Build)	10000.00	root		data:TableFullScan_26
 │ └─TableFullScan_26	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 └─CTEFullScan_28(Probe)	200000.00	root	CTE:cte1	data:CTE_0
-CTE_0	200000.00	root		Recursive CTE, limit(offset:0, count:10)
+CTE_0	20.00	root		Recursive CTE, limit(offset:0, count:10)
 ├─Projection_17(Seed Part)	10.00	root		test.t2.c1
 │ └─TableReader_20	10.00	root		data:Selection_19
 │   └─Selection_19	10.00	cop[tikv]		eq(test.t2.c2, test.t1.c2)
@@ -665,7 +665,7 @@ Projection_24	10000.00	root		test.t1.c1, test.t1.c2
   └─HashAgg_29(Probe)	10000.00	root		funcs:max(Column#23)->Column#18, funcs:sum(Column#24)->Column#19, funcs:count(1)->Column#20
     └─Projection_33	180000000.00	root		test.t2.c1, cast(isnull(test.t2.c1), decimal(20,0) BINARY)->Column#24
       └─CTEFullScan_31	180000000.00	root	CTE:cte1	data:CTE_0
-CTE_0	180000000.00	root		Recursive CTE
+CTE_0	18000.00	root		Recursive CTE
 ├─TableReader_19(Seed Part)	10000.00	root		data:TableFullScan_18
 │ └─TableFullScan_18	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 └─Projection_20(Recursive Part)	8000.00	root		cast(plus(test.t2.c1, 1), int(11))->test.t2.c1, cast(plus(test.t2.c2, 1), int(11))->test.t2.c2
@@ -679,7 +679,7 @@ Apply_23	10000.00	root		CARTESIAN semi join
 ├─TableReader_25(Build)	10000.00	root		data:TableFullScan_24
 │ └─TableFullScan_24	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 └─CTEFullScan_26(Probe)	180000000.00	root	CTE:cte1	data:CTE_0
-CTE_0	180000000.00	root		Recursive CTE
+CTE_0	18000.00	root		Recursive CTE
 ├─TableReader_17(Seed Part)	10000.00	root		data:TableFullScan_16
 │ └─TableFullScan_16	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 └─Projection_18(Recursive Part)	8000.00	root		cast(plus(test.t2.c1, 1), int(11))->test.t2.c1, cast(plus(test.t2.c2, 1), int(11))->test.t2.c2

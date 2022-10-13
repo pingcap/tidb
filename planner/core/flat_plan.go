@@ -339,7 +339,11 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 		target, childIdx = f.flattenRecursively(plan.DataSource, childCtx, target)
 		childIdxs = append(childIdxs, childIdx)
 	case *PhysicalCTE:
-		f.ctesToFlatten = append(f.ctesToFlatten, plan)
+		// We shallow copy the PhysicalCTE here because we don't want the probeParents (see comments in PhysicalPlan
+		// for details) to affect the row count display of the independent CTE plan tree.
+		copiedCTE := *plan
+		copiedCTE.probeParents = nil
+		f.ctesToFlatten = append(f.ctesToFlatten, &copiedCTE)
 	case *Insert:
 		if plan.SelectPlan != nil {
 			childCtx.isRoot = true
