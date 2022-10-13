@@ -231,7 +231,7 @@ func TestReadMetaBetweenTS(t *testing.T) {
 		cli, err := CreateLogFileManager(ctx, init)
 		req.Equal(cli.ShiftTS(), c.expectedShiftTS)
 		req.NoError(err)
-		metas, err := cli.ReadStreamMetaByTS(ctx, c.endTS)
+		metas, err := cli.readStreamMeta(ctx)
 		req.NoError(err)
 		actualStoreIDs := make([]int64, 0, len(metas))
 		for _, meta := range metas {
@@ -327,7 +327,7 @@ func TestReadMetaBetweenTSV2(t *testing.T) {
 		cli, err := CreateLogFileManager(ctx, init)
 		req.Equal(cli.ShiftTS(), c.expectedShiftTS)
 		req.NoError(err)
-		metas, err := cli.ReadStreamMetaByTS(ctx, c.endTS)
+		metas, err := cli.readStreamMeta(ctx)
 		req.NoError(err)
 		actualStoreIDs := make([]int64, 0, len(metas))
 		for _, meta := range metas {
@@ -534,10 +534,13 @@ func TestFileManager(t *testing.T) {
 		StartTS   int
 		RestoreTS int
 
-		SearchMeta bool
-		Requires   []*backuppb.DataFileInfo
+		SearchMeta   bool
+		DMLFileCount *int
+
+		Requires []*backuppb.DataFileInfo
 	}
 
+	indirect := func(i int) *int { return &i }
 	cases := []Case{
 		{
 			Metadata: []*backuppb.Metadata{
@@ -550,6 +553,20 @@ func TestFileManager(t *testing.T) {
 			Requires: []*backuppb.DataFileInfo{
 				dr(2, 6), wr(4, 5, 2), wr(50, 54, 42), dr(42, 50),
 			},
+		},
+		{
+			Metadata: []*backuppb.Metadata{
+				m2(wm(4, 10, 1), dm(1, 8), dr(2, 6), wr(4, 5, 2)),
+				m2(wr(50, 54, 42), dr(42, 50), wr(70, 78, 0), wm(80, 81, 0), wm(90, 92, 0)),
+				m2(dr(100, 101), wr(102, 104, 100)),
+			},
+			StartTS:   5,
+			RestoreTS: 80,
+			Requires: []*backuppb.DataFileInfo{
+				wm(80, 81, 0), wm(4, 10, 1), dm(1, 8),
+			},
+			SearchMeta:   true,
+			DMLFileCount: indirect(5),
 		},
 		{
 			Metadata: []*backuppb.Metadata{
@@ -588,16 +605,21 @@ func TestFileManager(t *testing.T) {
 		})
 		req.NoError(err)
 
-		metas, err := fm.StreamingMetaByTS(ctx, end)
-		req.NoError(err)
-		metas = iter.Tap(metas, func(m *backuppb.Metadata) {
-			fmt.Printf("%d-%d:%s", m.MinTs, m.MaxTs, formatL(m.FileGroups[0].DataFilesInfo))
-		})
 		var datas LogIter
 		if !c.SearchMeta {
-			datas = fm.FilterDataFiles(metas)
+			datas, err = fm.LoadDMLFiles(ctx)
+			req.NoError(err)
 		} else {
-			datas = iter.FlatMap(fm.FilterMetaFiles(metas), func(g DDLMetaGroup) iter.TryNextor[*backuppb.DataFileInfo] { return iter.FromSlice(g.FileMetas) })
+			var counter *int
+			if c.DMLFileCount != nil {
+				counter = new(int)
+			}
+			data, err := fm.LoadDDLFilesAndCountDMLFiles(ctx, counter)
+			req.NoError(err)
+			if counter != nil {
+				req.Equal(*c.DMLFileCount, *counter)
+			}
+			datas = iter.FromSlice(data)
 		}
 		r := iter.CollectAll(ctx, datas)
 		dataFileInfoMatches(t, r.Item, c.Requires...)

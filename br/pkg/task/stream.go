@@ -46,7 +46,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/streamhelper/daemon"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -1123,29 +1122,6 @@ func restoreStream(
 		return err
 	}
 
-	// read meta by given ts.
-	metas, err := client.StreamingMetaByTS(ctx, cfg.RestoreTS)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	dataFileCount := 0
-	metas = iter.Tap(metas, func(m *backuppb.Metadata) {
-		for _, fg := range m.FileGroups {
-			for _, f := range fg.DataFilesInfo {
-				if !f.IsMeta && !client.ShouldFilterOut(f) {
-					dataFileCount += 1
-				}
-			}
-		}
-	})
-
-	// read data file by given ts.
-	metaFiles := client.FilterMetaFiles(metas)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	// get full backup meta to generate rewrite rules.
 	fullBackupTables, err := initFullBackupTables(ctx, cfg)
 	if err != nil {
@@ -1175,7 +1151,8 @@ func restoreStream(
 		totalKVCount += kvCount
 		totalSize += size
 	}
-	ddlFiles, err := client.PrepareDDLFileCache(ctx, metaFiles)
+	dataFileCount := 0
+	ddlFiles, err := client.LoadDDLFilesAndCountDMLFiles(ctx, &dataFileCount)
 	if err != nil {
 		return err
 	}
@@ -1194,9 +1171,8 @@ func restoreStream(
 	}
 	updateRewriteRules(rewriteRules, schemasReplace)
 
-	metas, err = client.StreamingMetaByTS(ctx, cfg.RestoreTS)
+	dmlFiles, err := client.LoadDMLFiles(ctx)
 	pd := g.StartProgress(ctx, "Restore KV Files", int64(dataFileCount), !cfg.LogProgress)
-	dmlFiles := client.FilterDataFiles(metas)
 	err = withProgress(pd, func(p glue.Progress) error {
 		return client.RestoreKVFiles(ctx, rewriteRules, dmlFiles, updateStats, p.Inc)
 	})
