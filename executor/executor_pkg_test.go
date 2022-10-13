@@ -258,7 +258,7 @@ func getGrowing(m aggPartialResultMapper) bool {
 }
 
 func TestFilterTemporaryTableKeys(t *testing.T) {
-	vars := variable.NewSessionVars()
+	vars := variable.NewSessionVars(nil)
 	const tableID int64 = 3
 	vars.TxnCtx = &variable.TransactionContext{
 		TxnCtxNoNeedToRestore: variable.TxnCtxNoNeedToRestore{

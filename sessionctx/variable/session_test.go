@@ -26,6 +26,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
@@ -33,7 +34,7 @@ import (
 )
 
 func TestSetSystemVariable(t *testing.T) {
-	v := variable.NewSessionVars()
+	v := variable.NewSessionVars(nil)
 	v.GlobalVarsAccessor = variable.NewMockGlobalAccessor4Tests()
 	v.TimeZone = time.UTC
 	mtx := new(sync.Mutex)
@@ -291,7 +292,7 @@ func TestIsolationRead(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.IsolationRead.Engines = []string{"tiflash", "tidb"}
 	})
-	sessVars := variable.NewSessionVars()
+	sessVars := variable.NewSessionVars(nil)
 	_, ok := sessVars.IsolationReadEngines[kv.TiDB]
 	require.True(t, ok)
 	_, ok = sessVars.IsolationReadEngines[kv.TiKV]
@@ -393,7 +394,7 @@ func TestTransactionContextSavepoint(t *testing.T) {
 }
 
 func TestGeneralPlanCacheStmt(t *testing.T) {
-	sessVars := variable.NewSessionVars()
+	sessVars := variable.NewSessionVars(nil)
 	sessVars.GeneralPlanCacheSize = 100
 	sql1 := "select * from t where a>?"
 	sql2 := "select * from t where a<?"
@@ -407,4 +408,17 @@ func TestGeneralPlanCacheStmt(t *testing.T) {
 	sessVars.AddGeneralPlanCacheStmt(sql2, new(plannercore.PlanCacheStmt))
 	require.NotNil(t, sessVars.GetGeneralPlanCacheStmt(sql1))
 	require.NotNil(t, sessVars.GetGeneralPlanCacheStmt(sql2))
+}
+
+func TestHookContext(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	ctx := mock.NewContext()
+	ctx.Store = store
+	sv := variable.SysVar{Scope: variable.ScopeGlobal | variable.ScopeSession, Name: "testhooksysvar", Value: variable.On, Type: variable.TypeBool, SetSession: func(s *variable.SessionVars, val string) error {
+		require.Equal(t, s.GetStore(), store)
+		return nil
+	}}
+	variable.RegisterSysVar(&sv)
+
+	ctx.GetSessionVars().SetSystemVar("testhooksysvar", "test")
 }

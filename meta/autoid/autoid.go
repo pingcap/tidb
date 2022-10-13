@@ -26,7 +26,6 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	// "github.com/pingcap/kvproto/pkg/autoid"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
@@ -41,8 +40,6 @@ import (
 	tikvutil "github.com/tikv/client-go/v2/util"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
-	// "google.golang.org/grpc"
-	// "google.golang.org/grpc/credentials/insecure"
 )
 
 // Attention:

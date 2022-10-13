@@ -405,10 +405,22 @@ func (t *Tracker) Consume(bs int64) {
 		}
 	}
 
+	tryActionLastOne := func(mu *actionMu, tracker *Tracker) {
+		mu.Lock()
+		defer mu.Unlock()
+		if currentAction := mu.actionOnExceed; currentAction != nil {
+			for nextAction := currentAction.GetFallback(); nextAction != nil; {
+				currentAction = nextAction
+				nextAction = currentAction.GetFallback()
+			}
+			currentAction.Action(tracker)
+		}
+	}
+
 	if bs > 0 && sessionRootTracker != nil {
 		// Kill the Top1 session
 		if sessionRootTracker.NeedKill.Load() {
-			tryAction(&sessionRootTracker.actionMuForHardLimit, sessionRootTracker)
+			tryActionLastOne(&sessionRootTracker.actionMuForHardLimit, sessionRootTracker)
 		}
 		// Update the Top1 session
 		memUsage := sessionRootTracker.BytesConsumed()
