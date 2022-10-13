@@ -4543,9 +4543,6 @@ func GetModifiableColumnJob(
 		if err = isGeneratedRelatedColumn(t.Meta(), newCol.ColumnInfo, col.ColumnInfo); err != nil {
 			return nil, errors.Trace(err)
 		}
-		if t.Meta().Partition != nil {
-			return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("table is partition table")
-		}
 	}
 
 	// We don't support modifying column from not_auto_increment to auto_increment.
