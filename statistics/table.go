@@ -101,10 +101,10 @@ type HistColl struct {
 	Indices    map[int64]*Index
 	// Idx2ColumnIDs maps the index id to its column ids. It's used to calculate the selectivity in planner.
 	Idx2ColumnIDs map[int64][]int64
-	// ColID2IdxID maps the column id to index id whose first column is it. It's used to calculate the selectivity in planner.
-	ColID2IdxID map[int64]int64
-	Count       int64
-	ModifyCount int64 // Total modify count in a table.
+	// ColID2IdxIDs maps the column id to a list index ids whose first column is it. It's used to calculate the selectivity in planner.
+	ColID2IdxIDs map[int64][]int64
+	Count        int64
+	ModifyCount  int64 // Total modify count in a table.
 
 	// HavePhysicalID is true means this HistColl is from single table and have its ID's information.
 	// The physical id is used when try to load column stats from storage.
@@ -846,7 +846,7 @@ func (coll *HistColl) ID2UniqueID(columns []*expression.Column) *HistColl {
 	return newColl
 }
 
-// GenerateHistCollFromColumnInfo generates a new HistColl whose ColID2IdxID and IdxID2ColIDs is built from the given parameter.
+// GenerateHistCollFromColumnInfo generates a new HistColl whose ColID2IdxIDs and IdxID2ColIDs is built from the given parameter.
 func (coll *HistColl) GenerateHistCollFromColumnInfo(infos []*model.ColumnInfo, columns []*expression.Column) *HistColl {
 	newColHistMap := make(map[int64]*Column)
 	colInfoID2UniqueID := make(map[int64]int64, len(columns))
@@ -869,7 +869,7 @@ func (coll *HistColl) GenerateHistCollFromColumnInfo(infos []*model.ColumnInfo, 
 	}
 	newIdxHistMap := make(map[int64]*Index)
 	idx2Columns := make(map[int64][]int64)
-	colID2IdxID := make(map[int64]int64)
+	colID2IdxIDs := make(map[int64][]int64)
 	for _, idxHist := range coll.Indices {
 		ids := make([]int64, 0, len(idxHist.Info.Columns))
 		for _, idxCol := range idxHist.Info.Columns {
@@ -883,9 +883,12 @@ func (coll *HistColl) GenerateHistCollFromColumnInfo(infos []*model.ColumnInfo, 
 		if len(ids) == 0 {
 			continue
 		}
-		colID2IdxID[ids[0]] = idxHist.ID
+		colID2IdxIDs[ids[0]] = append(colID2IdxIDs[ids[0]], idxHist.ID)
 		newIdxHistMap[idxHist.ID] = idxHist
 		idx2Columns[idxHist.ID] = ids
+	}
+	for _, idxIDs := range colID2IdxIDs {
+		slices.Sort(idxIDs)
 	}
 	newColl := &HistColl{
 		PhysicalID:     coll.PhysicalID,
@@ -895,7 +898,7 @@ func (coll *HistColl) GenerateHistCollFromColumnInfo(infos []*model.ColumnInfo, 
 		ModifyCount:    coll.ModifyCount,
 		Columns:        newColHistMap,
 		Indices:        newIdxHistMap,
-		ColID2IdxID:    colID2IdxID,
+		ColID2IdxIDs:   colID2IdxIDs,
 		Idx2ColumnIDs:  idx2Columns,
 	}
 	return newColl
@@ -1084,8 +1087,13 @@ func (coll *HistColl) getIndexRowCount(sctx sessionctx.Context, idxID int64, ind
 				colID = colIDs[rangePosition]
 			}
 			// prefer index stats over column stats
-			if idx, ok := coll.ColID2IdxID[colID]; ok {
-				count, err = coll.GetRowCountByIndexRanges(sctx, idx, []*ranger.Range{&rang})
+			if idxIDs, ok := coll.ColID2IdxIDs[colID]; ok {
+				for _, idxID := range idxIDs {
+					count, err = coll.GetRowCountByIndexRanges(sctx, idxID, []*ranger.Range{&rang})
+					if err == nil {
+						break
+					}
+				}
 			} else {
 				count, err = coll.GetRowCountByColumnRanges(sctx, colID, []*ranger.Range{&rang})
 			}

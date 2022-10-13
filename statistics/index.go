@@ -349,8 +349,16 @@ func (idx *Index) expBackoffEstimation(sctx sessionctx.Context, coll *HistColl, 
 			count float64
 			err   error
 		)
-		if anotherIdxID, ok := coll.ColID2IdxID[colID]; ok && anotherIdxID != idx.Histogram.ID {
-			count, err = coll.GetRowCountByIndexRanges(sctx, anotherIdxID, tmpRan)
+		if idxIDs, ok := coll.ColID2IdxIDs[colID]; ok {
+			for _, idxID := range idxIDs {
+				if idxID == idx.Histogram.ID {
+					continue
+				}
+				count, err = coll.GetRowCountByIndexRanges(sctx, idxID, tmpRan)
+				if err == nil {
+					break
+				}
+			}
 		} else if col, ok := coll.Columns[colID]; ok && !col.IsInvalid(sctx, coll.Pseudo) {
 			count, err = coll.GetRowCountByColumnRanges(sctx, colID, tmpRan)
 		} else {
