@@ -822,7 +822,7 @@ var defaultSysVars = []*SysVar{
 				return "", err
 			}
 			gogcTunerThreshold := GOGCTunerThreshold.Load()
-			if floatValue < 0.51 && floatValue > 1 || floatValue < gogcTunerThreshold { // 51% ~ 100%
+			if floatValue < 0.51 && floatValue > 1 || floatValue < gogcTunerThreshold+0.05 { // 51% ~ 100%
 				return "", ErrTruncatedWrongValue.GenWithStackByArgs(TiDBServerMemoryLimitGCTrigger, originalValue)
 			}
 			return strconv.FormatFloat(floatValue, 'f', -1, 64), nil
