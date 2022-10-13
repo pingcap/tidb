@@ -1020,9 +1020,38 @@ func BuildElements(changingCol *model.ColumnInfo, changingIdxs []*model.IndexInf
 	return elements
 }
 
-func (w *worker) updatePhysicalTableRow(t table.PhysicalTable, reorgInfo *reorgInfo) error {
+func (w *worker) updatePhysicalTableRow(t table.Table, reorgInfo *reorgInfo) error {
 	logutil.BgLogger().Info("[ddl] start to update table row", zap.String("job", reorgInfo.Job.String()), zap.String("reorgInfo", reorgInfo.String()))
-	return w.writePhysicalTableRecord(w.sessPool, t, typeUpdateColumnWorker, reorgInfo)
+	if tbl, ok := t.(table.PartitionedTable); ok {
+		done := false
+		for !done {
+			p := tbl.GetPartition(reorgInfo.PhysicalTableID)
+			if p == nil {
+				return dbterror.ErrCancelledDDLJob.GenWithStack("Can not find partition id %d for table %d", reorgInfo.PhysicalTableID, t.Meta().ID)
+			}
+			workType := typeUpdateColumnWorker
+			if reorgInfo.Job.Type == model.ActionReorganizePartition {
+				workType = typeReorgPartitionWorker
+			}
+			physTbl, ok := t.(table.PhysicalTable)
+			if !ok {
+				return dbterror.ErrCancelledDDLJob.GenWithStack("Internal error, partitioned table, not a physical table?!? table %d", reorgInfo.PhysicalTableID, t.Meta().ID)
+			}
+			err := w.writePhysicalTableRecord(w.sessPool, physTbl, workType, reorgInfo)
+			if err != nil {
+				return err
+			}
+			done, err = w.updateReorgInfo(tbl, reorgInfo)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+		return nil
+	}
+	if tbl, ok := t.(table.PhysicalTable); ok {
+		return w.writePhysicalTableRecord(w.sessPool, tbl, typeUpdateColumnWorker, reorgInfo)
+	}
+	return dbterror.ErrCancelledDDLJob.GenWithStack("internal error for phys tbl id: %d tbl id: %d", reorgInfo.PhysicalTableID, t.Meta().ID)
 }
 
 // TestReorgGoroutineRunning is only used in test to indicate the reorg goroutine has been started.
@@ -1044,22 +1073,30 @@ func (w *worker) updateCurrentElement(t table.Table, reorgInfo *reorgInfo) error
 			}
 		}
 	})
-	// TODO: Support partition tables.
 	if bytes.Equal(reorgInfo.currElement.TypeKey, meta.ColumnElementKey) {
-		//nolint:forcetypeassert
-		err := w.updatePhysicalTableRow(t.(table.PhysicalTable), reorgInfo)
+		err := w.updatePhysicalTableRow(t, reorgInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
 
+	var physTbl table.PhysicalTable
+	if tbl, ok := t.(table.PartitionedTable); ok {
+		if len(tbl.Meta().Partition.DroppingDefinitions) > 0 {
+			reorgInfo.PhysicalTableID = tbl.Meta().Partition.DroppingDefinitions[0].ID
+			physTbl = tbl.GetPartition(reorgInfo.PhysicalTableID)
+		} else {
+			physTbl = tbl.GetPartition(reorgInfo.PhysicalTableID)
+		}
+	} else if tbl, ok := t.(table.PhysicalTable); ok {
+		physTbl = tbl
+	}
 	// Get the original start handle and end handle.
 	currentVer, err := getValidCurrentVersion(reorgInfo.d.store)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	//nolint:forcetypeassert
-	originalStartHandle, originalEndHandle, err := getTableRange(reorgInfo.d.jobContext(reorgInfo.Job), reorgInfo.d, t.(table.PhysicalTable), currentVer.Ver, reorgInfo.Job.Priority)
+	originalStartHandle, originalEndHandle, err := getTableRange(reorgInfo.d.jobContext(reorgInfo.Job), reorgInfo.d, physTbl, currentVer.Ver, reorgInfo.Job.Priority)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1180,8 +1217,15 @@ func (w *updateColumnWorker) fetchRowColVals(txn kv.Transaction, taskRange reorg
 	// taskDone means that the added handle is out of taskRange.endHandle.
 	taskDone := false
 	var lastAccessedHandle kv.Key
+	// TODO: Should not this be done at a different level?
+	var recPrefix kv.Key
+	if t, ok := w.table.(table.PartitionedTable); ok {
+		recPrefix = t.GetPartition(w.reorgInfo.PhysicalTableID).RecordPrefix()
+	} else {
+		recPrefix = w.table.RecordPrefix()
+	}
 	oprStartTime := startTime
-	err := iterateSnapshotKeys(w.reorgInfo.d.jobContext(w.reorgInfo.Job), w.sessCtx.GetStore(), w.priority, w.table.RecordPrefix(), txn.StartTS(), taskRange.startKey, taskRange.endKey,
+	err := iterateSnapshotKeys(w.reorgInfo.d.jobContext(w.reorgInfo.Job), w.sessCtx.GetStore(), w.priority, recPrefix, txn.StartTS(), taskRange.startKey, taskRange.endKey,
 		func(handle kv.Handle, recordKey kv.Key, rawRow []byte) (bool, error) {
 			oprEndTime := time.Now()
 			logSlowOperations(oprEndTime.Sub(oprStartTime), "iterateSnapshotKeys in updateColumnWorker fetchRowColVals", 0)

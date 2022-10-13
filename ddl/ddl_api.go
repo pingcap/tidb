@@ -3167,7 +3167,8 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 		case ast.AlterTableCoalescePartitions:
 			err = d.CoalescePartitions(sctx, ident, spec)
 		case ast.AlterTableReorganizePartition:
-			err = errors.Trace(dbterror.ErrUnsupportedReorganizePartition)
+			// TODO: Implement :)
+			err = d.ReorganizePartitions(sctx, ident, spec)
 		case ast.AlterTableReorganizeFirstPartition:
 			err = dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("MERGE FIRST PARTITION")
 		case ast.AlterTableReorganizeLastPartition:
@@ -3716,6 +3717,213 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 	}
 	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
+}
+
+// Return the definitions as it would look like after the REORGANIZE PARTITION is done
+func getReorganizedDefinitions(pi *model.PartitionInfo, firstPartIdx, lastPartIdx int, idMap map[int]interface{}) []model.PartitionDefinition {
+	tmpDefs := make([]model.PartitionDefinition, 0, len(pi.Definitions)+len(pi.AddingDefinitions)-len(idMap))
+	if pi.Type == model.PartitionTypeList {
+		replaced := false
+		for i := range pi.Definitions {
+			if _, ok := idMap[i]; ok {
+				if !replaced {
+					tmpDefs = append(tmpDefs, pi.AddingDefinitions...)
+					replaced = true
+				}
+				continue
+			}
+			tmpDefs = append(tmpDefs, pi.Definitions[i])
+		}
+		if !replaced {
+			// For safety, for future non-partitioned table -> partitioned
+			tmpDefs = append(tmpDefs, pi.AddingDefinitions...)
+		}
+		return tmpDefs
+	}
+	// Range
+	tmpDefs = append(tmpDefs, pi.Definitions[:firstPartIdx]...)
+	tmpDefs = append(tmpDefs, pi.AddingDefinitions...)
+	if len(pi.Definitions) > (lastPartIdx + 1) {
+		tmpDefs = append(tmpDefs, pi.Definitions[lastPartIdx+1:]...)
+	}
+	return tmpDefs
+}
+
+func getReplacedPartitionIDs(names []model.CIStr, pi *model.PartitionInfo) (int, int, map[int]interface{}, error) {
+	idMap := make(map[int]interface{})
+	var firstPartIdx, lastPartIdx int = -1, -1
+	for _, name := range names {
+		partIdx := pi.FindPartitionDefinitionByName(name.L)
+		if partIdx == -1 {
+			return 0, 0, nil, errors.Trace(dbterror.ErrWrongPartitionName)
+		}
+		if _, ok := idMap[partIdx]; ok {
+			return 0, 0, nil, errors.Trace(dbterror.ErrSameNamePartition)
+		}
+		idMap[partIdx] = nil
+		if firstPartIdx == -1 {
+			firstPartIdx = partIdx
+		} else {
+			firstPartIdx = mathutil.Min[int](firstPartIdx, partIdx)
+		}
+		if lastPartIdx == -1 {
+			lastPartIdx = partIdx
+		} else {
+			lastPartIdx = mathutil.Max[int](lastPartIdx, partIdx)
+		}
+	}
+	return firstPartIdx, lastPartIdx, idMap, nil
+}
+
+// ReorganizePartitions reorganize one set of partitions to a new set of partitions.
+func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	is := d.infoCache.GetLatest()
+	schema, ok := is.SchemaByName(ident.Schema)
+	if !ok {
+		return errors.Trace(infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schema))
+	}
+	t, err := is.TableByName(ident.Schema, ident.Name)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
+	}
+
+	meta := t.Meta()
+	pi := meta.GetPartitionInfo()
+	if pi == nil {
+		return errors.Trace(dbterror.ErrPartitionMgmtOnNonpartitioned)
+	}
+
+	// TODO:
+	// 1 Check everything is OK
+	//   only allow for RANGE and LIST partitioning
+	//   existing partitions can be found
+	//     existing partitions is in a continues RANGE if range partitioning
+	//   New partitions does not collide with non-touched partitions (different for RANGE vs LIST)
+	// 2 Create the new partitions
+	//   Including placement etc.
+	// 3 create a DDL job for it (including implementing the ddl_worker counter part...
+
+	// Various checks
+	switch pi.Type {
+	// Only supporting RANGE/LIST
+	case model.PartitionTypeRange:
+		// TODO, check that the new partitions are in one range, not overlapping the kept ones
+	case model.PartitionTypeList:
+	default:
+		return errors.Trace(dbterror.ErrUnsupportedReorganizePartition)
+	}
+	firstPartIdx, lastPartIdx, idMap, err := getReplacedPartitionIDs(spec.PartitionNames, pi)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if pi.Type == model.PartitionTypeRange {
+		if len(idMap) != (lastPartIdx - firstPartIdx + 1) {
+			// Not continues range
+			// TODO: Better error message?
+			return errors.Trace(dbterror.ErrUnsupportedReorganizePartition)
+		}
+		// TODO, check that the new partitions are not overlapping the kept ones
+		// I.e. lastPartIdx partition needs either to be the last partition
+		//   OK to increase/decrease range, will error out if any row is out of the new range)
+		// or partition definition range, must be the same as the last partition it replaces
+	}
+
+	partInfo, err := BuildAddedPartitionInfo(ctx, meta, spec)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if err = d.assignPartitionIDs(partInfo.Definitions); err != nil {
+		return errors.Trace(err)
+	}
+
+	if err = checkReorgPartitionDefs(ctx, meta, partInfo, firstPartIdx, lastPartIdx, idMap); err != nil {
+		return errors.Trace(err)
+	}
+
+	if err = handlePartitionPlacement(ctx, partInfo); err != nil {
+		return errors.Trace(err)
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    meta.ID,
+		SchemaName: schema.Name.L,
+		TableName:  t.Meta().Name.L,
+		Type:       model.ActionReorganizePartition,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{spec.PartitionNames, partInfo},
+		ReorgMeta: &model.DDLReorgMeta{
+			// We should not depend on SQL Mode (TODO: check vs MySQL for zero date etc.)
+			SQLMode:       mysql.ModeNone,
+			Warnings:      make(map[errors.ErrorID]*terror.Error),
+			WarningsCount: make(map[errors.ErrorID]int64),
+			// We should not evaluate any new values? (TODO: Check with virtual/generated columns with indexes?)
+			Location: &model.TimeZoneLocation{Name: time.UTC.String(), Offset: 0},
+		},
+	}
+
+	err = d.DoDDLJob(ctx, job)
+	if err == nil {
+		d.preSplitAndScatter(ctx, meta, partInfo)
+	}
+	err = d.callHookOnChanged(job, err)
+	return errors.Trace(err)
+}
+
+func checkReorgPartitionDefs(ctx sessionctx.Context, tblInfo *model.TableInfo, partInfo *model.PartitionInfo, firstPartIdx, lastPartIdx int, idMap map[int]interface{}) error {
+	// partInfo contains only the new added partition, we have to combine it with the
+	// old partitions to check all partitions is strictly increasing.
+	pi := tblInfo.Partition
+	clonedMeta := tblInfo.Clone()
+	clonedPartInfo := *tblInfo.Partition
+	clonedPartInfo.AddingDefinitions = partInfo.Definitions
+	clonedMeta.Partition = &clonedPartInfo
+	clonedMeta.Partition.Definitions = getReorganizedDefinitions(&clonedPartInfo, firstPartIdx, lastPartIdx, idMap)
+	if err := checkPartitionDefinitionConstraints(ctx, clonedMeta); err != nil {
+		return errors.Trace(err)
+	}
+	if pi.Type == model.PartitionTypeRange {
+		if lastPartIdx == len(pi.Definitions)-1 {
+			// Last partition dropped, OK to change the end range
+			// Also includes MAXVALUE
+			return nil
+		}
+		// Check if the replaced end range is the same as before
+		lastAddingPartition := partInfo.Definitions[len(partInfo.Definitions)-1]
+		lastOldPartition := pi.Definitions[lastPartIdx]
+		if len(pi.Columns) > 0 {
+			newGtOld, err := checkTwoRangeColumns(ctx, &lastAddingPartition, &lastOldPartition, pi, tblInfo)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if newGtOld {
+				return errors.Trace(dbterror.ErrRangeNotIncreasing)
+			}
+			oldGtNew, err := checkTwoRangeColumns(ctx, &lastOldPartition, &lastAddingPartition, pi, tblInfo)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if oldGtNew {
+				return errors.Trace(dbterror.ErrRangeNotIncreasing)
+			}
+		}
+
+		isUnsigned := isPartExprUnsigned(tblInfo)
+		currentRangeValue, _, err := getRangeValue(ctx, pi.Definitions[lastPartIdx].LessThan[0], isUnsigned)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		newRangeValue, _, err := getRangeValue(ctx, partInfo.Definitions[len(partInfo.Definitions)-1].LessThan[0], isUnsigned)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		if currentRangeValue != newRangeValue {
+			return errors.Trace(dbterror.ErrRangeNotIncreasing)
+		}
+	}
+	return nil
 }
 
 // CoalescePartitions coalesce partitions can be used with a table that is partitioned by hash or key to reduce the number of partitions by number.
@@ -4542,9 +4750,6 @@ func GetModifiableColumnJob(
 	if needChangeColData {
 		if err = isGeneratedRelatedColumn(t.Meta(), newCol.ColumnInfo, col.ColumnInfo); err != nil {
 			return nil, errors.Trace(err)
-		}
-		if t.Meta().Partition != nil {
-			return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("table is partition table")
 		}
 	}
 

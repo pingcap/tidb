@@ -243,8 +243,10 @@ type PartitionedTable interface {
 	GetPartition(physicalID int64) PhysicalTable
 	GetPartitionByRow(sessionctx.Context, []types.Datum) (PhysicalTable, error)
 	GetAllPartitionIDs() []int64
+	GetPartitionColumnIDs() []int64
 	GetPartitionColumnNames() []model.CIStr
 	CheckForExchangePartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum, pid int64) error
+	GetReorganizedPartitionedTable() (PartitionedTable, error)
 }
 
 // TableFromMeta builds a table.Table from *model.TableInfo.

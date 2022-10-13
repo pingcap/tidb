@@ -3336,9 +3336,6 @@ func TestPartitionErrorCode(t *testing.T) {
 		);`)
 	tk.MustGetDBError("alter table t_part coalesce partition 4;", dbterror.ErrCoalesceOnlyOnHashPartition)
 
-	tk.MustGetErrCode(`alter table t_part reorganize partition p0, p1 into (
-			partition p0 values less than (1980));`, errno.ErrUnsupportedDDLOperation)
-
 	tk.MustGetErrCode("alter table t_part check partition p0, p1;", errno.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t_part optimize partition p0,p1;", errno.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t_part rebuild partition p0,p1;", errno.ErrUnsupportedDDLOperation)
@@ -3750,9 +3747,9 @@ func TestTruncatePartitionMultipleTimes(t *testing.T) {
 	}
 	hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	done1 := make(chan error, 1)
-	go backgroundExec(store, "alter table test.t truncate partition p0;", done1)
+	go backgroundExec(store, "test", "alter table test.t truncate partition p0;", done1)
 	done2 := make(chan error, 1)
-	go backgroundExec(store, "alter table test.t truncate partition p0;", done2)
+	go backgroundExec(store, "test", "alter table test.t truncate partition p0;", done2)
 	<-done1
 	<-done2
 	require.LessOrEqual(t, errCount, int32(1))
@@ -4527,4 +4524,335 @@ func TestPartitionTableWithAnsiQuotes(t *testing.T) {
 		` PARTITION "p3" VALUES LESS THAN ('''''',''''''),` + "\n" +
 		` PARTITION "p4" VALUES LESS THAN ('\\''\t\n','\\''\t\n'),` + "\n" +
 		` PARTITION "pMax" VALUES LESS THAN (MAXVALUE,MAXVALUE))`))
+}
+
+func TestAlterModifyColumnOnPartitionedTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database AlterPartTable")
+	tk.MustExec("use AlterPartTable")
+	tk.MustExec(`create table t (a int unsigned PRIMARY KEY, b varchar(255), key (b))`)
+	tk.MustExec(`insert into t values (7, "07"), (8, "08"),(23,"23"),(34,"34💥"),(46,"46"),(57,"57")`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `a` int(10) unsigned NOT NULL,\n" +
+			"  `b` varchar(255) DEFAULT NULL,\n" +
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+			"  KEY `b` (`b`)\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	// TODO: Why does it allow 💥 as a latin1 character?
+	tk.MustQuery(`select hex(b) from t where a = 34`).Check(testkit.Rows("3334F09F92A5"))
+	tk.MustExec(`alter table t modify b varchar(200) charset latin1`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `a` int(10) unsigned NOT NULL,\n" +
+			"  `b` varchar(200) CHARACTER SET latin1 COLLATE latin1_bin DEFAULT NULL,\n" +
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+			"  KEY `b` (`b`)\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery(`select hex(b) from t where a = 34`).Check(testkit.Rows("3334F09F92A5"))
+	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows(""+
+		"23 23",
+		"34 34💥",
+		"46 46",
+		"57 57",
+		"7 07",
+		"8 08"))
+	tk.MustQuery(`select * from t order by b`).Check(testkit.Rows(""+
+		"7 07",
+		"8 08",
+		"23 23",
+		"34 34💥",
+		"46 46",
+		"57 57"))
+	tk.MustExec(`alter table t change b c varchar(200) charset utf8mb4`)
+	tk.MustExec(`drop table t`)
+	tk.MustExec(`create table t (a int unsigned PRIMARY KEY, b varchar(255), key (b)) partition by range (a) ` +
+		`(partition p0 values less than (10),` +
+		` partition p1 values less than (20),` +
+		` partition p2 values less than (30),` +
+		` partition pMax values less than (MAXVALUE))`)
+	tk.MustExec(`insert into t values (7, "07"), (8, "08"),(23,"23"),(34,"34💥"),(46,"46"),(57,"57")`)
+	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows(""+
+		"23 23",
+		"34 34💥",
+		"46 46",
+		"57 57",
+		"7 07",
+		"8 08"))
+	tk.MustQuery(`select * from t order by b`).Check(testkit.Rows(""+
+		"7 07",
+		"8 08",
+		"23 23",
+		"34 34💥",
+		"46 46",
+		"57 57"))
+	tk.MustQuery(`show create table t`).Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `a` int(10) unsigned NOT NULL,\n" +
+			"  `b` varchar(255) DEFAULT NULL,\n" +
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+			"  KEY `b` (`b`)\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			"PARTITION BY RANGE (`a`)\n" +
+			"(PARTITION `p0` VALUES LESS THAN (10),\n" +
+			" PARTITION `p1` VALUES LESS THAN (20),\n" +
+			" PARTITION `p2` VALUES LESS THAN (30),\n" +
+			" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
+	tk.MustExec(`alter table t modify b varchar(200) charset latin1`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `a` int(10) unsigned NOT NULL,\n" +
+			"  `b` varchar(200) CHARACTER SET latin1 COLLATE latin1_bin DEFAULT NULL,\n" +
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+			"  KEY `b` (`b`)\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			"PARTITION BY RANGE (`a`)\n" +
+			"(PARTITION `p0` VALUES LESS THAN (10),\n" +
+			" PARTITION `p1` VALUES LESS THAN (20),\n" +
+			" PARTITION `p2` VALUES LESS THAN (30),\n" +
+			" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
+	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows(""+
+		"23 23",
+		"34 34💥",
+		"46 46",
+		"57 57",
+		"7 07",
+		"8 08"))
+	tk.MustQuery(`select * from t order by b`).Check(testkit.Rows(""+
+		"7 07",
+		"8 08",
+		"23 23",
+		"34 34💥",
+		"46 46",
+		"57 57"))
+	tk.MustExec(`alter table t change b c varchar(150) charset utf8mb4`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `a` int(10) unsigned NOT NULL,\n" +
+			"  `c` varchar(150) DEFAULT NULL,\n" +
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+			"  KEY `b` (`c`)\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			"PARTITION BY RANGE (`a`)\n" +
+			"(PARTITION `p0` VALUES LESS THAN (10),\n" +
+			" PARTITION `p1` VALUES LESS THAN (20),\n" +
+			" PARTITION `p2` VALUES LESS THAN (30),\n" +
+			" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
+	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows(""+
+		"23 23",
+		"34 34💥",
+		"46 46",
+		"57 57",
+		"7 07",
+		"8 08"))
+	tk.MustQuery(`select * from t order by c`).Check(testkit.Rows(""+
+		"7 07",
+		"8 08",
+		"23 23",
+		"34 34💥",
+		"46 46",
+		"57 57"))
+	tk.MustQuery(`select * from t where c > "3"`).Sort().Check(testkit.Rows(""+
+		"34 34💥",
+		"46 46",
+		"57 57"))
+}
+
+func TestReorganizeRangePartition(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database ReorgPartition")
+	tk.MustExec("use ReorgPartition")
+	tk.MustExec(`create table t (a int unsigned PRIMARY KEY, b varchar(255), c int, key (b), key (c,b)) partition by range (a) ` +
+		`(partition p0 values less than (10),` +
+		` partition p1 values less than (20),` +
+		` partition pMax values less than (MAXVALUE))`)
+	tk.MustExec(`insert into t values (1,"1",1), (12,"12",21),(23,"23",32),(34,"34",43),(45,"45",54),(56,"56",65)`)
+	tk.MustQuery(`select * from t where c < 40`).Sort().Check(testkit.Rows(""+
+		"1 1 1",
+		"12 12 21",
+		"23 23 32"))
+	//tk.MustExec(`create table t2 (a int unsigned PRIMARY KEY, b varchar(255))`)
+	//tk.MustExec(`insert into t2 values (1, "1"), (12, "12"),(23,"23"),(34,"34"),(45,"45"),(56,"56")`)
+	//tk.MustExec(`alter table t2 modify b varchar(200) charset latin1`)
+	tk.MustExec(`alter table t reorganize partition pMax into (partition p2 values less than (30), partition pMax values less than (MAXVALUE))`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(10) unsigned NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  `c` int(11) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+		"  KEY `b` (`b`),\n" +
+		"  KEY `c` (`c`,`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE (`a`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (10),\n" +
+		" PARTITION `p1` VALUES LESS THAN (20),\n" +
+		" PARTITION `p2` VALUES LESS THAN (30),\n" +
+		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
+	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows(""+
+		"1 1 1",
+		"12 12 21",
+		"23 23 32",
+		"34 34 43",
+		"45 45 54",
+		"56 56 65"))
+	tk.MustQuery(`select * from t partition (p0)`).Sort().Check(testkit.Rows("" +
+		"1 1 1"))
+	tk.MustQuery(`select * from t partition (p1)`).Sort().Check(testkit.Rows("" +
+		"12 12 21"))
+	tk.MustQuery(`select * from t partition (p2)`).Sort().Check(testkit.Rows("" +
+		"23 23 32"))
+	tk.MustQuery(`select * from t partition (pMax)`).Sort().Check(testkit.Rows(""+
+		"34 34 43",
+		"45 45 54",
+		"56 56 65"))
+	//tk.MustQuery(`explain select * from t where b > "1"`).Check(testkit.Rows(""))
+	tk.MustQuery(`select * from t where b > "1"`).Sort().Check(testkit.Rows(""+
+		"12 12 21",
+		"23 23 32",
+		"34 34 43",
+		"45 45 54",
+		"56 56 65"))
+	//tk.MustQuery(`explain select * from t where c < 40`).Check(testkit.Rows(""))
+	tk.MustQuery(`select * from t where c < 40`).Sort().Check(testkit.Rows(""+
+		"1 1 1",
+		"12 12 21",
+		"23 23 32"))
+	tk.MustExec(`alter table t reorganize partition p2,pMax into (partition p2 values less than (35),partition p3 values less than (47), partition pMax values less than (MAXVALUE))`)
+	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows(""+
+		"1 1 1",
+		"12 12 21",
+		"23 23 32",
+		"34 34 43",
+		"45 45 54",
+		"56 56 65"))
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(10) unsigned NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  `c` int(11) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+		"  KEY `b` (`b`),\n" +
+		"  KEY `c` (`c`,`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE (`a`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (10),\n" +
+		" PARTITION `p1` VALUES LESS THAN (20),\n" +
+		" PARTITION `p2` VALUES LESS THAN (35),\n" +
+		" PARTITION `p3` VALUES LESS THAN (47),\n" +
+		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
+	tk.MustQuery(`select * from t partition (p0)`).Sort().Check(testkit.Rows("" +
+		"1 1 1"))
+	tk.MustQuery(`select * from t partition (p1)`).Sort().Check(testkit.Rows("" +
+		"12 12 21"))
+	tk.MustQuery(`select * from t partition (p2)`).Sort().Check(testkit.Rows(""+
+		"23 23 32",
+		"34 34 43"))
+	tk.MustQuery(`select * from t partition (p3)`).Sort().Check(testkit.Rows("" +
+		"45 45 54"))
+	tk.MustQuery(`select * from t partition (pMax)`).Sort().Check(testkit.Rows("" +
+		"56 56 65"))
+	tk.MustExec(`alter table t reorganize partition p0,p1 into (partition p1 values less than (20))`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(10) unsigned NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  `c` int(11) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+		"  KEY `b` (`b`),\n" +
+		"  KEY `c` (`c`,`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE (`a`)\n" +
+		"(PARTITION `p1` VALUES LESS THAN (20),\n" +
+		" PARTITION `p2` VALUES LESS THAN (35),\n" +
+		" PARTITION `p3` VALUES LESS THAN (47),\n" +
+		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
+	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows(""+
+		"1 1 1",
+		"12 12 21",
+		"23 23 32",
+		"34 34 43",
+		"45 45 54",
+		"56 56 65"))
+	// TODO Test with/without PK, indexes, UK, virtual, virtual stored columns
+	tk.MustExec(`alter table t drop index b`)
+	tk.MustExec(`alter table t drop index c`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(10) unsigned NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  `c` int(11) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE (`a`)\n" +
+		"(PARTITION `p1` VALUES LESS THAN (20),\n" +
+		" PARTITION `p2` VALUES LESS THAN (35),\n" +
+		" PARTITION `p3` VALUES LESS THAN (47),\n" +
+		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
+	tk.MustExec(`create table t2 (a int unsigned not null, b varchar(255), c int, key (b), key (c,b)) partition by range (a) ` +
+		"(PARTITION `p1` VALUES LESS THAN (20),\n" +
+		" PARTITION `p2` VALUES LESS THAN (35),\n" +
+		" PARTITION `p3` VALUES LESS THAN (47),\n" +
+		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))")
+	tk.MustExec(`insert into t2 select * from t`)
+	// Not allowed to change the start range!
+	tk.MustGetErrCode(`alter table t2 reorganize partition p2 into (partition p2a values less than (16), partition p2b values less than (36))`,
+		mysql.ErrRangeNotIncreasing)
+	// Not allowed to change the end range!
+	tk.MustGetErrCode(`alter table t2 reorganize partition p2 into (partition p2a values less than (30), partition p2b values less than (36))`, mysql.ErrRangeNotIncreasing)
+	tk.MustQuery(`show create table t2`).Check(testkit.Rows("" +
+		"t2 CREATE TABLE `t2` (\n" +
+		"  `a` int(10) unsigned NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  `c` int(11) DEFAULT NULL,\n" +
+		"  KEY `b` (`b`),\n" +
+		"  KEY `c` (`c`,`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE (`a`)\n" +
+		"(PARTITION `p1` VALUES LESS THAN (20),\n" +
+		" PARTITION `p2` VALUES LESS THAN (35),\n" +
+		" PARTITION `p3` VALUES LESS THAN (47),\n" +
+		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
+}
+
+func TestReorganizeListPartition(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database ReorgListPartition")
+	tk.MustExec("use ReorgListPartition")
+	tk.MustExec(`create table t (a int, b varchar(55), c int) partition by list (a)` +
+		` (partition p1 values in (12,23,51,14), partition p2 values in (24,63), partition p3 values in (45))`)
+	tk.MustExec(`insert into t values (12,"12",21), (24,"24",42),(51,"51",15),(23,"23",32),(63,"63",36),(45,"45",54)`)
+	tk.MustExec(`alter table t reorganize partition p1 into (partition p0 values in (12,51,13), partition p1 values in (23))`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  `b` varchar(55) DEFAULT NULL,\n" +
+		"  `c` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY LIST (`a`)\n" +
+		"(PARTITION `p0` VALUES IN (12,51,13),\n" +
+		" PARTITION `p1` VALUES IN (23),\n" +
+		" PARTITION `p2` VALUES IN (24,63),\n" +
+		" PARTITION `p3` VALUES IN (45))"))
+	tk.MustExec(`alter table t add primary key (a), add key (b), add key (c,b)`)
+
+	// Note: MySQL cannot reorganize two non-consecutive list partitions :)
+	// ERROR 1519 (HY000): When reorganizing a set of partitions they must be in consecutive order
+	tk.MustExec(`alter table t reorganize partition p1, p3 into (partition pa values in (45,23,15))`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(11) NOT NULL,\n" +
+		"  `b` varchar(55) DEFAULT NULL,\n" +
+		"  `c` int(11) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */,\n" +
+		"  KEY `b` (`b`),\n" +
+		"  KEY `c` (`c`,`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY LIST (`a`)\n" +
+		"(PARTITION `p0` VALUES IN (12,51,13),\n" +
+		" PARTITION `pa` VALUES IN (45,23,15),\n" +
+		" PARTITION `p2` VALUES IN (24,63))"))
 }

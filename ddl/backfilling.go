@@ -56,6 +56,7 @@ const (
 	typeUpdateColumnWorker     backfillWorkerType = 1
 	typeCleanUpIndexWorker     backfillWorkerType = 2
 	typeAddIndexMergeTmpWorker backfillWorkerType = 3
+	typeReorgPartitionWorker   backfillWorkerType = 4
 )
 
 // By now the DDL jobs that need backfilling include:
@@ -471,6 +472,9 @@ func (dc *ddlCtx) handleRangeTasks(sessPool *sessionPool, t table.Table, workers
 	physicalTableID := reorgInfo.PhysicalTableID
 
 	var prefix kv.Key
+	if tbl, ok := t.(table.PartitionedTable); ok {
+		t = tbl.GetPartition(physicalTableID)
+	}
 	if reorgInfo.mergingTmpIdx {
 		prefix = t.IndexPrefix()
 	} else {
@@ -676,6 +680,10 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 				idxWorker := newCleanUpIndexWorker(sessCtx, i, t, decodeColMap, reorgInfo, jc)
 				backfillWorkers = append(backfillWorkers, idxWorker.backfillWorker)
 				go idxWorker.backfillWorker.run(reorgInfo.d, idxWorker, job)
+			case typeReorgPartitionWorker:
+				partWorker := newReorgPartitionWorker(sessCtx, i, t, decodeColMap, reorgInfo, jc)
+				backfillWorkers = append(backfillWorkers, partWorker.backfillWorker)
+				go partWorker.backfillWorker.run(reorgInfo.d, partWorker, job)
 			default:
 				return errors.New("unknow backfill type")
 			}
