@@ -198,12 +198,7 @@ func (h *memoryDebugModeHandler) getTrackerTreeMemUseLogs() []zap.Field {
 	}
 	sort.Strings(keys)
 	for _, k := range keys {
-		var name string
-		l := len(k)
-		if l > 4 {
-			name = k[:l-4]
-		}
-		logs = append(logs, zap.String("TrackerTree "+name, memory.FormatBytes(trackerMemUseMap[k])))
+		logs = append(logs, zap.String("TrackerTree "+k, memory.FormatBytes(trackerMemUseMap[k])))
 	}
 	return logs
 }

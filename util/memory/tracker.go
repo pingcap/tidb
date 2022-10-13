@@ -720,13 +720,13 @@ func (t *Tracker) CountAllChildrenMemUse() map[string]int64 {
 }
 
 func countChildMem(t *Tracker, familyTreeName string, trackerMemUseMap map[string]int64) {
-	familyTreeName += "[" + strconv.Itoa(t.Label()) + "] <- "
+	if len(familyTreeName) > 0 {
+		familyTreeName += " <- "
+	}
+	familyTreeName += "[" + strconv.Itoa(t.Label()) + "]"
 	trackerMemUseMap[familyTreeName] += t.BytesConsumed()
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if len(t.mu.children) == 0 {
-		return
-	}
 	for _, sli := range t.mu.children {
 		for _, tracker := range sli {
 			countChildMem(tracker, familyTreeName, trackerMemUseMap)
