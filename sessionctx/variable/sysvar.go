@@ -733,22 +733,18 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
-	{Scope: ScopeGlobal, Name: TiDBGOGCTunerThresholdFactor, Value: strconv.FormatFloat(DefTiDBGOGCTunerThresholdFactor, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: math.MaxUint64,
+	{Scope: ScopeGlobal, Name: TiDBGOGCTunerThreshold, Value: strconv.FormatFloat(DefTiDBGOGCTunerThreshold, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: math.MaxUint64,
 		GetGlobal: func(s *SessionVars) (string, error) {
-			return strconv.FormatFloat(GOGCTunerThresholdFactor.Load(), 'f', -1, 64), nil
+			return strconv.FormatFloat(GOGCTunerThreshold.Load(), 'f', -1, 64), nil
 		},
 		Validation: func(s *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 			floatValue, err := strconv.ParseFloat(normalizedValue, 64)
 			if err != nil {
 				return "", err
 			}
-			if floatValue < 0 && floatValue > 0.3 { // 512 MB
-				s.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(TiDBGOGCTunerThresholdFactor, originalValue))
-				if floatValue < 0 {
-					floatValue = 0.1
-				} else {
-					floatValue = 0.3
-				}
+			globalMemoryLimitTuner := gctuner.GlobalMemoryLimitTuner.GetPercentage()
+			if floatValue < 0 && floatValue > 0.9 || globalMemoryLimitTuner < floatValue+0.05 { // 512 MB
+				return "", ErrTruncatedWrongValue.GenWithStackByArgs(TiDBGOGCTunerThreshold, originalValue)
 			}
 			return strconv.FormatFloat(floatValue, 'f', -1, 64), nil
 		},
@@ -757,7 +753,7 @@ var defaultSysVars = []*SysVar{
 			if err != nil {
 				return err
 			}
-			GOGCTunerThresholdFactor.Store(factor)
+			GOGCTunerThreshold.Store(factor)
 			memTotal, err := memory.MemTotal()
 			if err != nil {
 				return err
@@ -825,9 +821,9 @@ var defaultSysVars = []*SysVar{
 			if err != nil {
 				return "", err
 			}
-			if floatValue < 0.51 && floatValue > 1 { // 51% ~ 100%
-				s.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(TiDBServerMemoryLimitGCTrigger, originalValue))
-				floatValue = DefTiDBServerMemoryLimitGCTrigger
+			gogcTunerThreshold := GOGCTunerThreshold.Load()
+			if floatValue < 0.51 && floatValue > 1 || floatValue < gogcTunerThreshold { // 51% ~ 100%
+				return "", ErrTruncatedWrongValue.GenWithStackByArgs(TiDBServerMemoryLimitGCTrigger, originalValue)
 			}
 			return strconv.FormatFloat(floatValue, 'f', -1, 64), nil
 		},
@@ -837,13 +833,10 @@ var defaultSysVars = []*SysVar{
 				return err
 			}
 
-			factor := GOGCTunerThresholdFactor.Load()
 			memTotal, err := memory.MemTotal()
 			if err != nil {
 				return err
 			}
-			threshold := float64(memTotal) * factor
-			gctuner.Tuning(uint64(threshold))
 			gctuner.GlobalMemoryLimitTuner.SetPercentage(floatValue)
 			gctuner.GlobalMemoryLimitTuner.UpdateMemoryLimit()
 			return nil

@@ -829,8 +829,8 @@ const (
 	TiDBServerMemoryLimitGCTrigger = "tidb_server_memory_limit_gc_trigger"
 	// TiDBEnableGOGCTuner is to enable GOGC tuner. it can tuner GOGC
 	TiDBEnableGOGCTuner = "tidb_enable_gogc_tuner"
-	// TiDBGOGCTunerThresholdFactor is to control the threshold of GOGC tuner.
-	TiDBGOGCTunerThresholdFactor = "tidb_gogc_tuner_threshold_factor"
+	// TiDBGOGCTunerThreshold is to control the threshold of GOGC tuner.
+	TiDBGOGCTunerThreshold = "tidb_gogc_tuner_threshold"
 )
 
 // TiDB intentional limits
@@ -1061,9 +1061,8 @@ const (
 	DefTiDBServerMemoryLimitSessMinSize             = 128 << 20
 	DefTiDBServerMemoryLimitGCTrigger               = 0.7
 	DefTiDBEnableGOGCTuner                          = true
-	// DefTiDBGOGCTunerThresholdFactor is to limit TiDBGOGCTunerThreshold.
-	// so that GOGCTuner's Threshold is DefTiDBServerMemoryLimitGCTrigger - DefTiDBGOGCTunerThresholdFactor
-	DefTiDBGOGCTunerThresholdFactor float64 = 0.1
+	// DefTiDBGOGCTunerThreshold is to limit TiDBGOGCTunerThreshold.
+	DefTiDBGOGCTunerThreshold float64 = 0.6
 )
 
 // Process global variables.
@@ -1121,7 +1120,7 @@ var (
 	// DefTiDBServerMemoryLimit indicates the default value of TiDBServerMemoryLimit(TotalMem * 80%).
 	// It should be a const and shouldn't be modified after tidb is started.
 	DefTiDBServerMemoryLimit = mathutil.Max(memory.GetMemTotalIgnoreErr()/10*8, 512<<20)
-	GOGCTunerThresholdFactor = atomic.NewFloat64(DefTiDBGOGCTunerThresholdFactor)
+	GOGCTunerThreshold       = atomic.NewFloat64(DefTiDBGOGCTunerThreshold)
 )
 
 var (

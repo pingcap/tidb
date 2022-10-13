@@ -789,7 +789,7 @@ func setupGCTuner() {
 		log.Fatal("setupGCTuner failed", zap.Error(err))
 	}
 
-	threshold := float64(limit) * (variable.DefTiDBServerMemoryLimitGCTrigger - variable.DefTiDBGOGCTunerThresholdFactor)
+	threshold := float64(limit) * (variable.DefTiDBServerMemoryLimitGCTrigger - variable.DefTiDBGOGCTunerThreshold)
 	gctuner.Tuning(uint64(threshold))
 }
 
