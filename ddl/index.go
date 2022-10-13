@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -1226,13 +1225,6 @@ func newAddIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable
 			return nil, err
 		}
 	}
-	var coprCtx *copContext
-	if variable.EnableCoprRead.Load() != "0" {
-		coprCtx = newCopContext(t.Meta(), indexInfo)
-		logutil.BgLogger().Info("[ddl] fetch index values with coprocessor",
-			zap.String("table", t.Meta().Name.O),
-			zap.String("index", indexInfo.Name.O))
-	}
 
 	return &addIndexWorker{
 		baseIndexWorker: baseIndexWorker{
@@ -1247,7 +1239,6 @@ func newAddIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable
 		},
 		index:     index,
 		writerCtx: lwCtx,
-		coprCtx:   coprCtx,
 	}, nil
 }
 
@@ -1297,7 +1288,7 @@ func (w *baseIndexWorker) getIndexRecord(idxInfo *model.IndexInfo, handle kv.Han
 		idxVal[j] = idxColumnVal
 	}
 
-	rsData := tables.TryGetHandleRestoredDataWrapper(w.table, nil, w.rowMap, idxInfo)
+	rsData := tables.TryGetHandleRestoredDataWrapper(w.table.Meta(), nil, w.rowMap, idxInfo)
 	idxRecord := &indexRecord{handle: handle, key: recordKey, vals: idxVal, rsData: rsData}
 	return idxRecord, nil
 }
@@ -1490,7 +1481,7 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 // BackfillDataInTxn will backfill table index in a transaction. A lock corresponds to a rowKey if the value of rowKey is changed,
 // Note that index columns values may change, and an index is not allowed to be added, so the txn will rollback and retry.
 // BackfillDataInTxn will add w.batchCnt indices once, default value of w.batchCnt is 128.
-func (w *addIndexWorker) BackfillDataInTxn(handleRange []*reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
+func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
 	failpoint.Inject("errorMockPanic", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		if val.(bool) {
@@ -1516,10 +1507,10 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange []*reorgBackfillTask) (ta
 			nextKey    kv.Key
 			taskDone   bool
 		)
-		if w.coprCtx != nil {
-			idxRecords, nextKey, taskDone, err = w.fetchRowColValsFromCop(ctx, txn, handleRange)
+		if w.copReqReaders != nil {
+			idxRecords, nextKey, taskDone, err = w.fetchRowColValsFromCop(handleRange)
 		} else {
-			idxRecords, nextKey, taskDone, err = w.fetchRowColVals(txn, *handleRange[0])
+			idxRecords, nextKey, taskDone, err = w.fetchRowColVals(txn, handleRange)
 		}
 		if err != nil {
 			return errors.Trace(err)
@@ -1769,7 +1760,7 @@ func newCleanUpIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalT
 	}
 }
 
-func (w *cleanUpIndexWorker) BackfillDataInTxn(handleRanges []*reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
+func (w *cleanUpIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
 	failpoint.Inject("errorMockPanic", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		if val.(bool) {
@@ -1787,7 +1778,7 @@ func (w *cleanUpIndexWorker) BackfillDataInTxn(handleRanges []*reorgBackfillTask
 			txn.SetOption(kv.ResourceGroupTagger, tagger)
 		}
 
-		idxRecords, nextKey, taskDone, err := w.fetchRowColVals(txn, *handleRanges[0])
+		idxRecords, nextKey, taskDone, err := w.fetchRowColVals(txn, handleRange)
 		if err != nil {
 			return errors.Trace(err)
 		}

@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/distsql"
@@ -36,13 +37,18 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
 )
 
 type copContext struct {
+	tblInfo          *model.TableInfo
+	idxInfo          *model.IndexInfo
 	colInfos         []*model.ColumnInfo
 	fieldTps         []*types.FieldType
+	sessCtx          sessionctx.Context
 	pushDownEncoding bool
 
 	srcChunks       []*chunk.Chunk
@@ -54,42 +60,91 @@ type copContext struct {
 	mu              sync.Mutex
 }
 
-func (c *copContext) spawnCopRead(w *addIndexWorker, ctx context.Context, txn kv.Transaction, seq int, task *reorgBackfillTask) {
-	if _, found := c.bfTasks[string(task.endKey)]; found {
-		// The task has been processed by an existing goroutine.
-		return
-	}
-	c.bfTasks[string(task.endKey)] = struct{}{}
-	c.readerCnt.Add(1)
-	go func() {
-		defer injectSpan(w.reorgInfo.Job.ID, fmt.Sprintf("%s-%d-%d", "fetch-rows", w.id, seq))()
-		defer func() {
-			w.coprCtx.readerCnt.Add(-1)
-			w.coprCtx.doneChan <- struct{}{}
-		}()
-		var err error
-		if c.pushDownEncoding {
-			err = w.sendEncodedIdxRecords(ctx, txn, task.startKey, task.excludedEndKey())
-		} else {
-			err = w.sendIdxRecords(ctx, txn, task.startKey, task.excludedEndKey(), seq)
-		}
-		if err != nil {
-			w.coprCtx.err.Store(err)
-			return
-		}
-	}()
+type copReqReaders struct {
+	tasksCh chan *reorgBackfillTask
+	readers []*copReqReader
 }
 
-func (c *copContext) getChunk(i int) *chunk.Chunk {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	for j := len(c.srcChunks); j <= i; j++ {
-		c.srcChunks = append(c.srcChunks, chunk.NewChunkWithCapacity(c.fieldTps, 1024))
+func (p *copReqReaders) getReader(task *reorgBackfillTask) *copReqReader {
+	for {
+		for _, r := range p.readers {
+			r.mu.Lock()
+			if string(r.currentTask.endKey) == string(task.endKey) {
+				r.mu.Unlock()
+				return r
+			}
+			r.mu.Unlock()
+		}
+		logutil.BgLogger().Info("[ddl] coprocessor reader not found, wait a while",
+			zap.String("task", task.String()))
+		time.Sleep(time.Millisecond * 300)
 	}
-	return c.srcChunks[i]
 }
 
-func newCopContext(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) *copContext {
+type copReqReader struct {
+	id            int
+	traceID       int64
+	copCtx        *copContext
+	idxRecordChan chan *indexRecord
+	srcChunk      *chunk.Chunk
+	err           error
+	done          chan struct{}
+	currentTask   *reorgBackfillTask
+	mu            sync.Mutex
+}
+
+func (c *copReqReader) run(ctx context.Context, tasks chan *reorgBackfillTask) {
+	for {
+		select {
+		case task, ok := <-tasks:
+			if !ok {
+				return
+			}
+			c.mu.Lock()
+			c.currentTask = task
+			c.idxRecordChan = make(chan *indexRecord, variable.MaxDDLReorgBatchSize)
+			c.mu.Unlock()
+			finish := injectSpan(c.traceID, fmt.Sprintf("%s-%d", "fetch-rows", c.id))
+			err := kv.RunInNewTxn(ctx, c.copCtx.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
+				if c.copCtx.pushDownEncoding {
+					return c.copCtx.sendEncodedIdxRecords(ctx, c.idxRecordChan, txn, task.startKey, task.excludedEndKey())
+				} else {
+					return c.copCtx.sendIdxRecords(ctx, c.idxRecordChan, c.srcChunk, txn, task.startKey, task.excludedEndKey())
+				}
+			})
+			finish()
+			c.mu.Lock()
+			c.err = err
+			c.mu.Unlock()
+			close(c.idxRecordChan)
+			<-c.done
+		}
+	}
+}
+
+func newCopReqReaders(ctx context.Context, copCtx *copContext, jobID int64, readerCnt int, tasks chan *reorgBackfillTask) *copReqReaders {
+	p := &copReqReaders{
+		tasksCh: tasks,
+	}
+	for i := 0; i < readerCnt; i++ {
+		r := &copReqReader{
+			id:            i,
+			traceID:       jobID,
+			copCtx:        copCtx,
+			idxRecordChan: make(chan *indexRecord, variable.MaxDDLReorgBatchSize),
+			srcChunk:      chunk.NewChunkWithCapacity(copCtx.fieldTps, 1024),
+			err:           nil,
+			done:          make(chan struct{}),
+			currentTask:   nil,
+			mu:            sync.Mutex{},
+		}
+		p.readers = append(p.readers, r)
+		go r.run(ctx, tasks)
+	}
+	return p
+}
+
+func newCopContext(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, sessCtx sessionctx.Context) *copContext {
 	colInfos := make([]*model.ColumnInfo, 0, len(idxInfo.Columns))
 	fieldTps := make([]*types.FieldType, 0, len(idxInfo.Columns))
 	for _, idxCol := range idxInfo.Columns {
@@ -103,8 +158,11 @@ func newCopContext(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) *copConte
 	fieldTps = append(fieldTps, pkFieldTps...)
 
 	return &copContext{
+		tblInfo:          tblInfo,
+		idxInfo:          idxInfo,
 		colInfos:         colInfos,
 		fieldTps:         fieldTps,
+		sessCtx:          sessCtx,
 		pushDownEncoding: variable.EnableCoprRead.Load() == "2",
 		indexRecordChan:  make(chan *indexRecord, variable.MaxDDLReorgBatchSize),
 		doneChan:         make(chan struct{}, 1),
@@ -112,8 +170,8 @@ func newCopContext(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) *copConte
 	}
 }
 
-func (w *addIndexWorker) buildTableScan(ctx context.Context, txn kv.Transaction, start, end kv.Key) (distsql.SelectResult, error) {
-	dagPB, err := w.buildDAGPB(w.coprCtx.colInfos)
+func (c *copContext) buildTableScan(ctx context.Context, txn kv.Transaction, start, end kv.Key) (distsql.SelectResult, error) {
+	dagPB, err := buildDAGPB(c.sessCtx, c.tblInfo, c.colInfos)
 	if err != nil {
 		return nil, err
 	}
@@ -124,62 +182,62 @@ func (w *addIndexWorker) buildTableScan(ctx context.Context, txn kv.Transaction,
 		SetStartTS(txn.StartTS()).
 		SetKeyRanges([]kv.KeyRange{{StartKey: start, EndKey: end}}).
 		SetKeepOrder(true).
-		SetFromSessionVars(w.sessCtx.GetSessionVars()).
-		SetFromInfoSchema(w.sessCtx.GetDomainInfoSchema()).
+		SetFromSessionVars(c.sessCtx.GetSessionVars()).
+		SetFromInfoSchema(c.sessCtx.GetDomainInfoSchema()).
 		Build()
 	if err != nil {
 		return nil, err
 	}
 
 	kvReq.Concurrency = 1
-	return distsql.Select(ctx, w.sessCtx, kvReq, w.coprCtx.fieldTps, statistics.NewQueryFeedback(0, nil, 0, false))
+	return distsql.Select(ctx, c.sessCtx, kvReq, c.fieldTps, statistics.NewQueryFeedback(0, nil, 0, false))
 }
 
-func (w *addIndexWorker) buildDDLPB(colInfos []*model.ColumnInfo) (*tipb.DDLRequest, error) {
+func buildDDLPB(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, colInfos []*model.ColumnInfo) (*tipb.DDLRequest, error) {
 	ddlReq := &tipb.DDLRequest{}
 	ddlReq.TableInfo = new(tipb.TableInfo)
 	ddlReq.IndexInfo = new(tipb.IndexInfo)
-	ddlReq.TableInfo.TableId = w.table.Meta().ID
-	ddlReq.TableInfo.Columns = util.ColumnsToProto(colInfos, w.table.Meta().PKIsHandle)
-	ddlReq.IndexInfo.TableId = w.table.Meta().ID
-	ddlReq.IndexInfo.IndexId = w.index.Meta().ID
-	indexColInfos := make([]*model.ColumnInfo, 0, len(w.index.Meta().Columns))
-	for _, idxCol := range w.index.Meta().Columns {
-		indexColInfos = append(indexColInfos, w.table.Cols()[idxCol.Offset].ColumnInfo)
+	ddlReq.TableInfo.TableId = tblInfo.ID
+	ddlReq.TableInfo.Columns = util.ColumnsToProto(colInfos, tblInfo.PKIsHandle)
+	ddlReq.IndexInfo.TableId = tblInfo.ID
+	ddlReq.IndexInfo.IndexId = idxInfo.ID
+	indexColInfos := make([]*model.ColumnInfo, 0, len(idxInfo.Columns))
+	for _, idxCol := range idxInfo.Columns {
+		indexColInfos = append(indexColInfos, tblInfo.Cols()[idxCol.Offset])
 	}
-	ddlReq.IndexInfo.Columns = util.ColumnsToProto(indexColInfos, w.table.Meta().PKIsHandle)
+	ddlReq.IndexInfo.Columns = util.ColumnsToProto(indexColInfos, tblInfo.PKIsHandle)
 	ddlReq.Columns = ddlReq.TableInfo.Columns
-	ddlReq.IndexInfo.Unique = w.index.Meta().Unique
+	ddlReq.IndexInfo.Unique = idxInfo.Unique
 
 	return ddlReq, nil
 }
 
-func (w *addIndexWorker) buildDAGPB(colInfos []*model.ColumnInfo) (*tipb.DAGRequest, error) {
+func buildDAGPB(sCtx sessionctx.Context, tblInfo *model.TableInfo, colInfos []*model.ColumnInfo) (*tipb.DAGRequest, error) {
 	dagReq := &tipb.DAGRequest{}
-	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(w.sessCtx.GetSessionVars().Location())
-	sc := w.sessCtx.GetSessionVars().StmtCtx
+	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(sCtx.GetSessionVars().Location())
+	sc := sCtx.GetSessionVars().StmtCtx
 	dagReq.Flags = sc.PushDownFlags()
 	for i := range colInfos {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
 	}
-	execPB, err := w.constructTableScanPB(w.table.Meta(), colInfos)
+	execPB, err := constructTableScanPB(sCtx, tblInfo, colInfos)
 	if err != nil {
 		return nil, err
 	}
 	dagReq.Executors = append(dagReq.Executors, execPB)
-	distsql.SetEncodeType(w.sessCtx, dagReq)
+	distsql.SetEncodeType(sCtx, dagReq)
 	return dagReq, nil
 }
 
-func (w *addIndexWorker) constructTableScanPB(tblInfo *model.TableInfo, colInfos []*model.ColumnInfo) (*tipb.Executor, error) {
+func constructTableScanPB(sCtx sessionctx.Context, tblInfo *model.TableInfo, colInfos []*model.ColumnInfo) (*tipb.Executor, error) {
 	tblScan := tables.BuildTableScanFromInfos(tblInfo, colInfos)
-	tblScan.TableId = w.table.Meta().ID
-	err := setPBColumnsDefaultValue(w.sessCtx, tblScan.Columns, colInfos)
+	tblScan.TableId = tblInfo.ID
+	err := setPBColumnsDefaultValue(sCtx, tblScan.Columns, colInfos)
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tblScan}, err
 }
 
-func (w *addIndexWorker) buildScanIndexKV(ctx context.Context, txn kv.Transaction, start, end kv.Key) (kv.Response, error) {
-	ddlPB, err := w.buildDDLPB(w.coprCtx.colInfos)
+func (c *copContext) buildScanIndexKV(ctx context.Context, txn kv.Transaction, start, end kv.Key) (kv.Response, error) {
+	ddlPB, err := buildDDLPB(c.tblInfo, c.idxInfo, c.colInfos)
 	if err != nil {
 		return nil, err
 	}
@@ -192,8 +250,8 @@ func (w *addIndexWorker) buildScanIndexKV(ctx context.Context, txn kv.Transactio
 		SetStartTS(txn.StartTS()).
 		SetKeyRanges([]kv.KeyRange{{StartKey: start, EndKey: end}}).
 		SetKeepOrder(true).
-		SetFromSessionVars(w.sessCtx.GetSessionVars()).
-		SetFromInfoSchema(w.sessCtx.GetDomainInfoSchema()).
+		SetFromSessionVars(c.sessCtx.GetSessionVars()).
+		SetFromInfoSchema(c.sessCtx.GetDomainInfoSchema()).
 		Build()
 	if err != nil {
 		return nil, err
@@ -201,46 +259,46 @@ func (w *addIndexWorker) buildScanIndexKV(ctx context.Context, txn kv.Transactio
 
 	kvReq.Concurrency = 1
 	option := &kv.ClientSendOption{
-		SessionMemTracker: w.sessCtx.GetSessionVars().StmtCtx.MemTracker,
+		SessionMemTracker: c.sessCtx.GetSessionVars().StmtCtx.MemTracker,
 	}
 
-	resp := w.sessCtx.GetClient().Send(ctx, kvReq, w.sessCtx.GetSessionVars().KVVars, option)
+	resp := c.sessCtx.GetClient().Send(ctx, kvReq, c.sessCtx.GetSessionVars().KVVars, option)
 	if resp == nil {
 		return nil, errors.New("client returns nil response")
 	}
 	return resp, nil
 }
 
-func (w *addIndexWorker) sendIdxRecords(ctx context.Context, txn kv.Transaction, start, end kv.Key, seq int) error {
-	sctx := w.sessCtx.GetSessionVars().StmtCtx
-	srcResult, err := w.buildTableScan(ctx, txn, start, end)
+func (c *copContext) sendIdxRecords(ctx context.Context, ch chan *indexRecord, srcChk *chunk.Chunk,
+	txn kv.Transaction, start, end kv.Key) error {
+	sctx := c.sessCtx.GetSessionVars().StmtCtx
+	srcResult, err := c.buildTableScan(ctx, txn, start, end)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	srcChunk := w.coprCtx.getChunk(seq)
 	for {
-		err := srcResult.Next(ctx, srcChunk)
+		err := srcResult.Next(ctx, srcChk)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if srcChunk.NumRows() == 0 {
+		if srcChk.NumRows() == 0 {
 			return nil
 		}
-		iter := chunk.NewIterator4Chunk(srcChunk)
+		iter := chunk.NewIterator4Chunk(srcChk)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-			idxDt, hdDt := extractIdxValsAndHandle(row, w.index.Meta(), w.coprCtx.fieldTps)
-			handle, err := buildHandle(hdDt, w.table.Meta(), w.index.Meta(), sctx)
+			idxDt, hdDt := extractIdxValsAndHandle(row, c.idxInfo, c.fieldTps)
+			handle, err := buildHandle(hdDt, c.tblInfo, c.idxInfo, sctx)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			rsData := tables.TryGetHandleRestoredDataWrapper(w.table, hdDt, nil, w.index.Meta())
-			w.coprCtx.indexRecordChan <- &indexRecord{handle: handle, key: nil, vals: idxDt, rsData: rsData, skip: false}
+			rsData := tables.TryGetHandleRestoredDataWrapper(c.tblInfo, hdDt, nil, c.idxInfo)
+			ch <- &indexRecord{handle: handle, key: nil, vals: idxDt, rsData: rsData, skip: false}
 		}
 	}
 }
 
-func (w *addIndexWorker) sendEncodedIdxRecords(ctx context.Context, txn kv.Transaction, start, end kv.Key) error {
-	resp, err := w.buildScanIndexKV(w.jobContext.ddlJobCtx, txn, start, end)
+func (c *copContext) sendEncodedIdxRecords(ctx context.Context, ch chan *indexRecord, txn kv.Transaction, start, end kv.Key) error {
+	resp, err := c.buildScanIndexKV(ctx, txn, start, end)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -257,48 +315,33 @@ func (w *addIndexWorker) sendEncodedIdxRecords(ctx context.Context, txn kv.Trans
 			return errors.Trace(err)
 		}
 		for i := 0; i < len(colResp.Keys); i++ {
-			w.coprCtx.indexRecordChan <- &indexRecord{idxKV: &indexKV{key: colResp.Keys[i], value: colResp.Values[i]}}
+			ch <- &indexRecord{idxKV: &indexKV{key: colResp.Keys[i], value: colResp.Values[i]}}
 		}
 	}
 }
 
-func (w *addIndexWorker) fetchRowColValsFromCop(ctx context.Context, txn kv.Transaction,
-	handleRanges []*reorgBackfillTask) ([]*indexRecord, kv.Key, bool, error) {
-	for rid, hRange := range handleRanges {
-		w.coprCtx.spawnCopRead(w, ctx, txn, rid, hRange)
-	}
+func (w *addIndexWorker) fetchRowColValsFromCop(handleRange reorgBackfillTask) ([]*indexRecord, kv.Key, bool, error) {
+	copReader := w.copReqReaders.getReader(&handleRange)
 	w.idxRecords = w.idxRecords[:0]
 	taskDone := false
 	for {
 		select {
-		case record := <-w.coprCtx.indexRecordChan:
-			w.idxRecords = append(w.idxRecords, record)
-		case <-w.coprCtx.doneChan:
-			if w.coprCtx.readerCnt.Load() == 0 {
+		case record, more := <-copReader.idxRecordChan:
+			if !more {
 				taskDone = true
-				for { // consume all the remaining records.
-					exit := false
-					select {
-					case record := <-w.coprCtx.indexRecordChan:
-						w.idxRecords = append(w.idxRecords, record)
-					default:
-						exit = true
-					}
-					if exit {
-						break
-					}
-				}
+				break
 			}
+			w.idxRecords = append(w.idxRecords, record)
 		}
-		if taskDone || len(w.idxRecords) >= w.batchCnt {
+		if len(w.idxRecords) >= w.batchCnt {
+			break
+		}
+		if taskDone {
+			copReader.done <- struct{}{}
 			break
 		}
 	}
-	err := w.coprCtx.err.Load()
-	if err != nil {
-		return nil, nil, false, err.(error)
-	}
-	return w.idxRecords, handleRanges[0].startKey, taskDone, nil
+	return w.idxRecords, handleRange.startKey, taskDone, copReader.err
 }
 
 func buildHandleColInfoAndFieldTypes(tbInfo *model.TableInfo) ([]*model.ColumnInfo, []*types.FieldType) {
