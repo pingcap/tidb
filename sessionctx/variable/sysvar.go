@@ -832,11 +832,6 @@ var defaultSysVars = []*SysVar{
 			if err != nil {
 				return err
 			}
-
-			memTotal, err := memory.MemTotal()
-			if err != nil {
-				return err
-			}
 			gctuner.GlobalMemoryLimitTuner.SetPercentage(floatValue)
 			gctuner.GlobalMemoryLimitTuner.UpdateMemoryLimit()
 			return nil
