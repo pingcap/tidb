@@ -17,8 +17,6 @@ import (
 	"go.uber.org/zap"
 )
 
-type TableIDs struct{}
-
 // ParseKey parse key by given format.
 func ParseKey(format, key string) ([]byte, error) {
 	switch format {
