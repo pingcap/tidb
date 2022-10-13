@@ -826,12 +826,22 @@ func evaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expressio
 	switch x := expr.(type) {
 	case *ScalarFunction:
 		args := make([]Expression, len(x.GetArgs()))
-		hasNullFromSet := false
+		nullFromSets := make([]bool, len(x.GetArgs()))
 		for i, arg := range x.GetArgs() {
-			nullFromSet := false
-			args[i], nullFromSet = evaluateExprWithNull(ctx, schema, arg)
-			if cons, ok := args[i].(*Constant); nullFromSet && ok && cons.Value.IsNull() {
+			args[i], nullFromSets[i] = evaluateExprWithNull(ctx, schema, arg)
+		}
+		hasNullFromSet := false
+		allNull := true
+		for i := range args {
+			if cons, ok := args[i].(*Constant); ok && cons.Value.IsNull() && nullFromSets[i] {
 				hasNullFromSet = true
+				continue
+			}
+			allNull = false
+			break
+		}
+		if !allNull {
+			for i := range args {
 				if x.FuncName.L == ast.LogicAnd {
 					args[i] = NewOne()
 				}
@@ -840,7 +850,11 @@ func evaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expressio
 				}
 			}
 		}
-		return NewFunctionInternal(ctx, x.FuncName.L, x.RetType.Clone(), args...), hasNullFromSet
+		c := NewFunctionInternal(ctx, x.FuncName.L, x.RetType.Clone(), args...)
+		if cons, ok := c.(*Constant); !ok || !cons.Value.IsNull() {
+			hasNullFromSet = false
+		}
+		return c, hasNullFromSet
 	case *Column:
 		if !schema.Contains(x) {
 			return x, false

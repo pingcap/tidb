@@ -438,11 +438,10 @@ func isNullRejected(ctx sessionctx.Context, schema *expression.Schema, expr expr
 	if expression.ContainOuterNot(expr) {
 		return false
 	}
+	sc := ctx.GetSessionVars().StmtCtx
+	sc.InNullRejectCheck = true
 	for _, cond := range expression.SplitCNFItems(expr) {
-		sc := ctx.GetSessionVars().StmtCtx
-		sc.InNullRejectCheck = true
 		result := expression.EvaluateExprWithNull(ctx, schema, cond)
-		sc.InNullRejectCheck = false
 		x, ok := result.(*expression.Constant)
 		if !ok {
 			continue
@@ -453,6 +452,7 @@ func isNullRejected(ctx sessionctx.Context, schema *expression.Schema, expr expr
 			return true
 		}
 	}
+	sc.InNullRejectCheck = false
 	return false
 }
 
