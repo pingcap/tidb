@@ -838,6 +838,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrAccountHasBeenLocked:                                  mysql.Message("Access denied for user '%s'@'%s'. Account is locked.", nil),
 	ErrWarnConflictingHint:                                   mysql.Message("Hint %s is ignored as conflicting/duplicated.", nil),
 	ErrUnresolvedHintName:                                    mysql.Message("Unresolved name '%s' for %s hint", nil),
+	ErrForeignKeyCascadeDepthExceeded:                        mysql.Message("Foreign key cascade delete/update exceeds max depth of 15.", nil),
 	ErrInvalidFieldSize:                                      mysql.Message("Invalid size for column '%s'.", nil),
 	ErrInvalidArgumentForLogarithm:                           mysql.Message("Invalid argument for logarithm", nil),
 	ErrAggregateOrderNonAggQuery:                             mysql.Message("Expression #%d of ORDER BY contains aggregate function and applies to the result of a non-aggregated query", nil),

@@ -263,6 +263,9 @@ type ExecStmt struct {
 	OutputNames []*types.FieldName
 	PsStmt      *plannercore.PlanCacheStmt
 	Ti          *TelemetryInfo
+
+	// fkCascaded store the handled foreign cascade values.
+	fkCascaded fkHandledCache
 }
 
 // GetStmtNode returns the stmtNode inside Statement
@@ -541,7 +544,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		if err != nil {
 			return result, err
 		}
-		err = a.handleForeignKeyTrigger(ctx, e, isPessimistic)
+		err = a.handleForeignKeyTrigger(ctx, e, isPessimistic, 1)
 		return result, err
 	}
 
@@ -561,7 +564,9 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	}, nil
 }
 
-func (a *ExecStmt) handleForeignKeyTrigger(ctx context.Context, e Executor, isPessimistic bool) error {
+var maxForeignKeyCascadeDepth = 15
+
+func (a *ExecStmt) handleForeignKeyTrigger(ctx context.Context, e Executor, isPessimistic bool, depth int) error {
 	exec, ok := e.(WithForeignKeyTrigger)
 	if !ok {
 		return nil
@@ -580,7 +585,7 @@ func (a *ExecStmt) handleForeignKeyTrigger(ctx context.Context, e Executor, isPe
 	}
 	fkCascades := exec.GetFKCascades()
 	for _, fkCascade := range fkCascades {
-		err := a.handleForeignKeyCascade(ctx, fkCascade, isPessimistic)
+		err := a.handleForeignKeyCascade(ctx, fkCascade, isPessimistic, depth)
 		if err != nil {
 			return err
 		}
@@ -588,9 +593,18 @@ func (a *ExecStmt) handleForeignKeyTrigger(ctx context.Context, e Executor, isPe
 	return nil
 }
 
-func (a *ExecStmt) handleForeignKeyCascade(ctx context.Context, fkc *FKCascadeExec, isPessimistic bool) error {
-	if len(fkc.fkValues) == 0 {
-		return nil
+func (a *ExecStmt) handleForeignKeyCascade(ctx context.Context, fkc *FKCascadeExec, isPessimistic bool, depth int) error {
+	if a.fkCascaded.handled == nil {
+		a.fkCascaded.handled = make(map[tableIDAndFKID]map[string]struct{})
+	}
+	var err error
+	stmtCtx := a.Ctx.GetSessionVars().StmtCtx
+	fkc.fkValues, err = a.fkCascaded.removeHandledFKValue(stmtCtx, fkc.childTable.ID, fkc.fk.ID, fkc.fkValues)
+	if err != nil || len(fkc.fkValues) == 0 {
+		return err
+	}
+	if depth > maxForeignKeyCascadeDepth {
+		return ErrForeignKeyCascadeDepthExceeded
 	}
 	e, err := fkc.buildExecutor(ctx)
 	if err != nil || e == nil {
@@ -604,8 +618,11 @@ func (a *ExecStmt) handleForeignKeyCascade(ctx context.Context, fkc *FKCascadeEx
 	if err != nil {
 		return err
 	}
-	err = a.handleForeignKeyTrigger(ctx, e, isPessimistic)
-	return err
+	err = a.fkCascaded.addHandledFKValue(stmtCtx, fkc.childTable.ID, fkc.fk.ID, fkc.fkValues)
+	if err != nil {
+		return err
+	}
+	return a.handleForeignKeyTrigger(ctx, e, isPessimistic, depth+1)
 }
 
 func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic bool) (handled bool, rs sqlexec.RecordSet, _ Executor, err error) {

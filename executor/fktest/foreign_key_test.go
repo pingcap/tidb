@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/executor"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
@@ -1071,4 +1072,13 @@ func TestForeignKeyOnDeleteCascade2(t *testing.T) {
 	tk.MustExec("delete from t1 where id=1")
 	require.Equal(t, uint64(1), tk.Session().GetSessionVars().StmtCtx.AffectedRows())
 	tk.MustQuery("select id from t1 order by id").Check(testkit.Rows())
+
+	// Test cascade delete depth.
+	tk.MustExec("drop table t1")
+	tk.MustExec("create table t1(id int primary key, pid int, index(pid), foreign key(pid) references t1(id) on delete cascade);")
+	tk.MustExec("insert into t1 values(0,0),(1,0),(2,1),(3,2),(4,3),(5,4),(6,5),(7,6),(8,7),(9,8),(10,9),(11,10),(12,11),(13,12),(14,13),(15,14);")
+	tk.MustGetDBError("delete from t1 where id=0;", executor.ErrForeignKeyCascadeDepthExceeded)
+	tk.MustExec("delete from t1 where id=15;")
+	tk.MustExec("delete from t1 where id=0;")
+	tk.MustQuery("select * from t1").Check(testkit.Rows())
 }

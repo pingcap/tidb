@@ -1456,6 +1456,11 @@ error = '''
 The password hash doesn't have the expected format. Check if the correct password algorithm is being used with the PASSWORD() function.
 '''
 
+["executor:3008"]
+error = '''
+Foreign key cascade delete/update exceeds max depth of 15.
+'''
+
 ["executor:3523"]
 error = '''
 Unknown authorization ID %.256s

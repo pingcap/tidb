@@ -823,6 +823,7 @@ const (
 	ErrRowInWrongPartition                                   = 1863
 	ErrErrorLast                                             = 1863
 	ErrMaxExecTimeExceeded                                   = 1907
+	ErrForeignKeyCascadeDepthExceeded                        = 3008
 	ErrInvalidFieldSize                                      = 3013
 	ErrInvalidArgumentForLogarithm                           = 3020
 	ErrAggregateOrderNonAggQuery                             = 3029

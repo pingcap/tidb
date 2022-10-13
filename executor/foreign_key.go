@@ -58,10 +58,13 @@ type FKCheckExec struct {
 
 // FKCascadeExec uses to execute foreign key cascade behaviour.
 type FKCascadeExec struct {
-	*plannercore.FKCascade
 	*fkValueHelper
-	b        *executorBuilder
-	fkValues [][]types.Datum
+	b          *executorBuilder
+	tp         plannercore.FKCascadeType
+	referredFK *model.ReferredFKInfo
+	childTable *model.TableInfo
+	fk         *model.FKInfo
+	fkValues   [][]types.Datum
 }
 
 func buildTblID2FKCheckExecs(sctx sessionctx.Context, tblID2Table map[int64]table.Table, tblID2FKChecks map[int64][]*plannercore.FKCheck) (map[int64][]*FKCheckExec, error) {
@@ -544,13 +547,7 @@ func (b *executorBuilder) buildFKCascadeExecs(tbl table.Table, fkCascades []*pla
 }
 
 func (b *executorBuilder) buildFKCascadeExec(tbl table.Table, fkCascade *plannercore.FKCascade) (*FKCascadeExec, error) {
-	var cols []model.CIStr
-	if fkCascade.OnDelete != nil {
-		cols = fkCascade.OnDelete.ReferredFK.Cols
-	} else if fkCascade.OnUpdate != nil {
-		cols = fkCascade.OnUpdate.ReferredFK.Cols
-	}
-	colsOffsets, err := getFKColumnsOffsets(tbl.Meta(), cols)
+	colsOffsets, err := getFKColumnsOffsets(tbl.Meta(), fkCascade.ReferredFK.Cols)
 	if err != nil {
 		return nil, err
 	}
@@ -559,9 +556,12 @@ func (b *executorBuilder) buildFKCascadeExec(tbl table.Table, fkCascade *planner
 		fkValuesSet: set.NewStringSet(),
 	}
 	return &FKCascadeExec{
-		FKCascade:     fkCascade,
-		fkValueHelper: helper,
 		b:             b,
+		fkValueHelper: helper,
+		tp:            fkCascade.Tp,
+		referredFK:    fkCascade.ReferredFK,
+		childTable:    fkCascade.ChildTable.Meta(),
+		fk:            fkCascade.FK,
 	}, nil
 }
 
@@ -589,8 +589,9 @@ func (fkc *FKCascadeExec) buildFKCascadePlan(ctx context.Context) (plannercore.P
 	}
 	var sqlStr string
 	var err error
-	if fkc.OnDelete != nil {
-		sqlStr, err = genCascadeDeleteSQL(fkc.OnDelete.ReferredFK.ChildSchema, fkc.OnDelete.ChildTable, fkc.OnDelete.FK, fkc.fkValues)
+	switch fkc.tp {
+	case plannercore.FKCascadeOnDelete:
+		sqlStr, err = fkc.genCascadeDeleteSQL()
 	}
 	if err != nil || sqlStr == "" {
 		return nil, err
@@ -621,14 +622,14 @@ func (fkc *FKCascadeExec) buildFKCascadePlan(ctx context.Context) (plannercore.P
 	return finalPlan, err
 }
 
-func genCascadeDeleteSQL(dbName model.CIStr, tbl table.Table, fk *model.FKInfo, fkValues [][]types.Datum) (string, error) {
+func (fkc *FKCascadeExec) genCascadeDeleteSQL() (string, error) {
 	buf := bytes.NewBuffer(nil)
 	buf.WriteString("DELETE FROM `")
-	buf.WriteString(dbName.L)
+	buf.WriteString(fkc.referredFK.ChildSchema.L)
 	buf.WriteString("`.`")
-	buf.WriteString(tbl.Meta().Name.L)
+	buf.WriteString(fkc.childTable.Name.L)
 	buf.WriteString("` WHERE (")
-	for i, col := range fk.Cols {
+	for i, col := range fkc.fk.Cols {
 		if i > 0 {
 			buf.WriteString(", ")
 		}
@@ -636,7 +637,7 @@ func genCascadeDeleteSQL(dbName model.CIStr, tbl table.Table, fk *model.FKInfo, 
 	}
 	// TODO(crazycs520): control the size of IN expression.
 	buf.WriteString(") IN (")
-	for i, vs := range fkValues {
+	for i, vs := range fkc.fkValues {
 		if i > 0 {
 			buf.WriteString(", (")
 		} else {
@@ -669,4 +670,52 @@ func genFKValueString(v types.Datum) (string, error) {
 	default:
 		return "'" + val + "'", nil
 	}
+}
+
+type tableIDAndFKID struct {
+	tid  int64
+	fkID int64
+}
+
+type fkHandledCache struct {
+	handled map[tableIDAndFKID]map[string]struct{}
+}
+
+func (c *fkHandledCache) addHandledFKValue(sc *stmtctx.StatementContext, tid, fkID int64, fkValues [][]types.Datum) error {
+	key := tableIDAndFKID{tid, fkID}
+	tableCache := c.handled[key]
+	if tableCache == nil {
+		tableCache = make(map[string]struct{})
+		c.handled[key] = tableCache
+	}
+	for _, vals := range fkValues {
+		keyBuf, err := codec.EncodeKey(sc, nil, vals...)
+		if err != nil {
+			return err
+		}
+		tableCache[string(keyBuf)] = struct{}{}
+	}
+	return nil
+}
+
+func (c *fkHandledCache) removeHandledFKValue(sc *stmtctx.StatementContext, tid, fkID int64, fkValues [][]types.Datum) ([][]types.Datum, error) {
+	key := tableIDAndFKID{tid, fkID}
+	tableCache := c.handled[key]
+	if tableCache == nil {
+		return fkValues, nil
+	}
+	idx := 0
+	for _, vals := range fkValues {
+		keyBuf, err := codec.EncodeKey(sc, nil, vals...)
+		if err != nil {
+			return nil, err
+		}
+		_, handled := tableCache[string(keyBuf)]
+		if handled {
+			continue
+		}
+		fkValues[idx] = vals
+		idx++
+	}
+	return fkValues[:idx], nil
 }

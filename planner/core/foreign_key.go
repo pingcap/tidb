@@ -41,21 +41,21 @@ type FKCheck struct {
 
 // FKCascade indicates the foreign key constraint cascade behaviour.
 type FKCascade struct {
-	OnDelete *FKCascadeInfo
-	OnUpdate *FKCascadeInfo
-}
-
-// FKCascadeInfo contains the foreign key constraint information.
-type FKCascadeInfo struct {
+	Tp         FKCascadeType
 	ReferredFK *model.ReferredFKInfo
 	ChildTable table.Table
 	FK         *model.FKInfo
 }
 
+// FKCascadeType indicates in which (delete/update) statements.
+type FKCascadeType int8
+
 const (
-	emptyFkCheckSize       = int64(unsafe.Sizeof(FKCheck{}))
-	emptyFkCascadeSize     = int64(unsafe.Sizeof(FKCascade{}))
-	emptyFkCascadeInfoSize = int64(unsafe.Sizeof(FKCascadeInfo{}))
+	// FKCascadeOnDelete indicates in delete statement.
+	FKCascadeOnDelete FKCascadeType = 1
+
+	emptyFkCheckSize   = int64(unsafe.Sizeof(FKCheck{}))
+	emptyFkCascadeSize = int64(unsafe.Sizeof(FKCascade{}))
 )
 
 // MemoryUsage return the memory usage of FKCheck
@@ -76,7 +76,7 @@ func (f *FKCascade) MemoryUsage() (sum int64) {
 	if f == nil {
 		return
 	}
-	sum = emptyFkCascadeSize + emptyFkCascadeInfoSize
+	sum = emptyFkCascadeSize
 	return
 }
 
@@ -272,11 +272,11 @@ func buildOnDeleteFKTrigger(is infoschema.InfoSchema, referredFK *model.Referred
 	switch model.ReferOptionType(fk.OnDelete) {
 	case model.ReferOptionCascade:
 		fkCascade := &FKCascade{
-			OnDelete: &FKCascadeInfo{
-				ReferredFK: referredFK,
-				ChildTable: childTable,
-				FK:         fk,
-			}}
+			Tp:         FKCascadeOnDelete,
+			ReferredFK: referredFK,
+			ChildTable: childTable,
+			FK:         fk,
+		}
 		return nil, fkCascade, nil
 	default:
 		fkCheck, err := buildFKCheckForReferredFK(childTable, fk, referredFK)
