@@ -109,7 +109,6 @@ func (record *memoryUsageAlarm) initMemoryUsageAlarmRecord() {
 	record.lastCheckTime = time.Time{}
 	record.lastUpdateVariableTime = time.Time{}
 	record.updateVariable()
-	record.lastRecordMemUsed = uint64(float64(record.ServerMemoryLimit) * record.memoryUsageAlarmRatio)
 	tidbLogDir, _ := filepath.Split(config.GetGlobalConfig().Log.File.Filename)
 	record.baseRecordDir = filepath.Join(tidbLogDir, "oom_record")
 	if record.err = disk.CheckAndCreateDir(record.baseRecordDir); record.err != nil {
