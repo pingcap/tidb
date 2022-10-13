@@ -764,9 +764,7 @@ func readWriteRatio(totalWorker int32, tp backfillWorkerType) (read int32, write
 	if tp != typeAddIndexWorker || variable.EnableCoprRead.Load() == "0" {
 		return 1, totalWorker
 	}
-	write = totalWorker / 3
-	read = (totalWorker-write)/write + 1
-	return read, write
+	return totalWorker * 2, totalWorker
 }
 
 // recordIterFunc is used for low-level record iteration.
