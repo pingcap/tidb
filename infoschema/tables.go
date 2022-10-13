@@ -1545,33 +1545,32 @@ var tableVariablesInfoCols = []columnInfo{
 }
 
 var tableMemoryUsageCols = []columnInfo{
-	{name: "MEMORY_TOTAL", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
-	{name: "MEMORY_LIMIT", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
-	{name: "MEMORY_CURRENT", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
-	{name: "MEMORY_MAX_USED", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
-	{name: "CURRENT_OPS", tp: mysql.TypeVarchar, size: 64},
-	{name: "SESSION_KILL_LAST", tp: mysql.TypeDatetime, size: 64},
-	{name: "SESSION_KILL_TOTAL", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
-	{name: "GC_LAST", tp: mysql.TypeDatetime, size: 64},
-	{name: "GC_TOTAL", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
-	{name: "DISK_USAGE", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
-	{name: "QUERY_FORCE_DISK", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+	{name: "MEMORY_TOTAL", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
+	{name: "MEMORY_LIMIT", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
+	{name: "MEMORY_CURRENT", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
+	{name: "MEMORY_MAX_USED", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
+	{name: "CURRENT_OPS", tp: mysql.TypeVarchar, size: 50},
+	{name: "SESSION_KILL_LAST", tp: mysql.TypeDatetime},
+	{name: "SESSION_KILL_TOTAL", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
+	{name: "GC_LAST", tp: mysql.TypeDatetime},
+	{name: "GC_TOTAL", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
+	{name: "DISK_USAGE", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
+	{name: "QUERY_FORCE_DISK", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
 }
 
 var tableMemoryUsageOpsHistoryCols = []columnInfo{
 	{name: "TIME", tp: mysql.TypeDatetime, size: 64, flag: mysql.NotNullFlag},
-	{name: "OPS", tp: mysql.TypeVarchar, size: 10, flag: mysql.NotNullFlag},
-	{name: "MEMORY_LIMIT", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
-	{name: "MEMORY_CURRENT", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
-	{name: "PROCESSID", tp: mysql.TypeLonglong, size: 64},
-	{name: "MEMORY", tp: mysql.TypeLonglong, size: 64},
-	{name: "DISK", tp: mysql.TypeLonglong, size: 64},
+	{name: "OPS", tp: mysql.TypeVarchar, size: 20, flag: mysql.NotNullFlag},
+	{name: "MEMORY_LIMIT", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
+	{name: "MEMORY_CURRENT", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
+	{name: "PROCESSID", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
+	{name: "MEM", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
+	{name: "DISK", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
 	{name: "CLIENT", tp: mysql.TypeVarchar, size: 64},
 	{name: "DB", tp: mysql.TypeVarchar, size: 64},
-	{name: "USER", tp: mysql.TypeVarchar, size: 64},
+	{name: "USER", tp: mysql.TypeVarchar, size: 16},
 	{name: "SQL_DIGEST", tp: mysql.TypeVarchar, size: 64},
-	{name: "SQL_TEXT", tp: mysql.TypeVarchar, size: 64},
-	{name: "TXNSTART", tp: mysql.TypeVarchar, size: 64},
+	{name: "SQL_TEXT", tp: mysql.TypeVarchar, size: 256},
 }
 
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
