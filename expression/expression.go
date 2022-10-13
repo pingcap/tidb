@@ -818,17 +818,41 @@ func EvaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expressio
 	if MaybeOverOptimized4PlanCache(ctx, []Expression{expr}) {
 		return expr
 	}
-	expr, _ = evaluateExprWithNull(ctx, schema, expr)
+	if ctx.GetSessionVars().StmtCtx.InNullRejectCheck {
+		expr, _ = evaluateExprWithNullInNullRejectCheck(ctx, schema, expr)
+		return expr
+	}
+	return evaluateExprWithNull(ctx, schema, expr)
+}
+
+func evaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expression) Expression {
+	switch x := expr.(type) {
+	case *ScalarFunction:
+		args := make([]Expression, len(x.GetArgs()))
+		for i, arg := range x.GetArgs() {
+			args[i] = evaluateExprWithNull(ctx, schema, arg)
+		}
+		return NewFunctionInternal(ctx, x.FuncName.L, x.RetType.Clone(), args...)
+	case *Column:
+		if !schema.Contains(x) {
+			return x
+		}
+		return &Constant{Value: types.Datum{}, RetType: types.NewFieldType(mysql.TypeNull)}
+	case *Constant:
+		if x.DeferredExpr != nil {
+			return FoldConstant(x)
+		}
+	}
 	return expr
 }
 
-func evaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expression) (Expression, bool) {
+func evaluateExprWithNullInNullRejectCheck(ctx sessionctx.Context, schema *Schema, expr Expression) (Expression, bool) {
 	switch x := expr.(type) {
 	case *ScalarFunction:
 		args := make([]Expression, len(x.GetArgs()))
 		nullFromSets := make([]bool, len(x.GetArgs()))
 		for i, arg := range x.GetArgs() {
-			args[i], nullFromSets[i] = evaluateExprWithNull(ctx, schema, arg)
+			args[i], nullFromSets[i] = evaluateExprWithNullInNullRejectCheck(ctx, schema, arg)
 		}
 		hasNullFromSet := false
 		allNull := true
@@ -842,11 +866,13 @@ func evaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expressio
 		}
 		if !allNull {
 			for i := range args {
-				if x.FuncName.L == ast.LogicAnd {
-					args[i] = NewOne()
-				}
-				if x.FuncName.L == ast.LogicOr {
-					args[i] = NewZero()
+				if cons, ok := args[i].(*Constant); ok && cons.Value.IsNull() && nullFromSets[i] {
+					if x.FuncName.L == ast.LogicAnd {
+						args[i] = NewOne()
+					}
+					if x.FuncName.L == ast.LogicOr {
+						args[i] = NewZero()
+					}
 				}
 			}
 		}
