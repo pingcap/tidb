@@ -2456,7 +2456,7 @@ func TestExchangePartitionHook(t *testing.T) {
 			tkCancel.MustGetErrCode("insert into nt values (5)", errno.ErrRowDoesNotMatchGivenPartitionSet)
 		}
 	}
-	hook.OnJobUpdatedExported = hookFunc
+	hook.OnJobUpdatedExported.Store(&hookFunc)
 
 	tk.MustExec("alter table pt exchange partition p0 with table nt")
 	tk.MustQuery("select * from pt partition(p0)").Check(testkit.Rows("1"))
@@ -3743,11 +3743,12 @@ func TestTruncatePartitionMultipleTimes(t *testing.T) {
 		}
 	}
 	var errCount int32
-	hook.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if job.Type == model.ActionTruncateTablePartition && job.Error != nil {
 			atomic.AddInt32(&errCount, 1)
 		}
 	}
+	hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	done1 := make(chan error, 1)
 	go backgroundExec(store, "alter table test.t truncate partition p0;", done1)
 	done2 := make(chan error, 1)

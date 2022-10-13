@@ -306,30 +306,6 @@ const (
 	// TiDBOptForceInlineCTE is used to enable/disable inline CTE
 	TiDBOptForceInlineCTE = "tidb_opt_force_inline_cte"
 
-	// Variables for the Cost Model Ver2
-	// TiDBOptCPUFactorV2 is the CPU factor for the Cost Model Ver2
-	TiDBOptCPUFactorV2 = "tidb_opt_cpu_factor_v2"
-	// TiDBOptCopCPUFactorV2 is the CopCPU factor for the Cost Model Ver2
-	TiDBOptCopCPUFactorV2 = "tidb_opt_copcpu_factor_v2"
-	// TiDBOptTiFlashCPUFactorV2 is the TiFlashCPU factor for the Cost Model Ver2
-	TiDBOptTiFlashCPUFactorV2 = "tidb_opt_tiflash_cpu_factor_v2"
-	// TiDBOptNetworkFactorV2 is the network factor for the Cost Model Ver2
-	TiDBOptNetworkFactorV2 = "tidb_opt_network_factor_v2"
-	// TiDBOptScanFactorV2 is the scan factor for the Cost Model Ver2
-	TiDBOptScanFactorV2 = "tidb_opt_scan_factor_v2"
-	// TiDBOptDescScanFactorV2 is the desc scan factor for the Cost Model Ver2
-	TiDBOptDescScanFactorV2 = "tidb_opt_desc_factor_v2"
-	// TiDBOptTiFlashScanFactorV2 is the TiFlashScan factor for the Cost Model Ver2
-	TiDBOptTiFlashScanFactorV2 = "tidb_opt_tiflash_scan_factor_v2"
-	// TiDBOptSeekFactorV2 is the seek factor for the Cost Model Ver2
-	TiDBOptSeekFactorV2 = "tidb_opt_seek_factor_v2"
-	// TiDBOptMemoryFactorV2 is the memory factor for the Cost Model Ver2
-	TiDBOptMemoryFactorV2 = "tidb_opt_memory_factor_v2"
-	// TiDBOptDiskFactorV2 is the disk factor for the Cost Model Ver2
-	TiDBOptDiskFactorV2 = "tidb_opt_disk_factor_v2"
-	// TiDBOptConcurrencyFactorV2 is the concurrency factor for the Cost Model Ver2
-	TiDBOptConcurrencyFactorV2 = "tidb_opt_concurrency_factor_v2"
-
 	// TiDBIndexJoinBatchSize is used to set the batch size of an index lookup join.
 	// The index lookup join fetches batches of data from outer executor and constructs ranges for inner executor.
 	// This value controls how much of data in a batch to do the index join.
@@ -610,6 +586,9 @@ const (
 	// TiDBMemoryUsageAlarmRatio indicates the alarm threshold when memory usage of the tidb-server exceeds.
 	TiDBMemoryUsageAlarmRatio = "tidb_memory_usage_alarm_ratio"
 
+	// TiDBMemoryUsageAlarmKeepRecordNum indicates the number of saved alarm files.
+	TiDBMemoryUsageAlarmKeepRecordNum = "tidb_memory_usage_alarm_keep_record_num"
+
 	// TiDBEnableRateLimitAction indicates whether enabled ratelimit action
 	TiDBEnableRateLimitAction = "tidb_enable_rate_limit_action"
 
@@ -846,6 +825,10 @@ const (
 	TiDBServerMemoryLimit = "tidb_server_memory_limit"
 	// TiDBServerMemoryLimitSessMinSize indicates the minimal memory used of a session, that becomes a candidate for session kill.
 	TiDBServerMemoryLimitSessMinSize = "tidb_server_memory_limit_sess_min_size"
+	// TiDBServerMemoryLimitGCTrigger indicates the gc percentage of the TiDBServerMemoryLimit.
+	TiDBServerMemoryLimitGCTrigger = "tidb_server_memory_limit_gc_trigger"
+	// TiDBEnableGOGCTuner is to enable GOGC tuner. it can tuner GOGC
+	TiDBEnableGOGCTuner = "tidb_enable_gogc_tuner"
 )
 
 // TiDB intentional limits
@@ -893,17 +876,6 @@ const (
 	DefOptMemoryFactor                             = 0.001
 	DefOptDiskFactor                               = 1.5
 	DefOptConcurrencyFactor                        = 3.0
-	DefOptCPUFactorV2                              = 30.0
-	DefOptCopCPUFactorV2                           = 30.0
-	DefOptTiFlashCPUFactorV2                       = 2.0
-	DefOptNetworkFactorV2                          = 4.0
-	DefOptScanFactorV2                             = 100.0
-	DefOptDescScanFactorV2                         = 150.0
-	DefOptTiFlashScanFactorV2                      = 15.0
-	DefOptSeekFactorV2                             = 9500000.0
-	DefOptMemoryFactorV2                           = 0.001
-	DefOptDiskFactorV2                             = 1.5
-	DefOptConcurrencyFactorV2                      = 3.0
 	DefOptForceInlineCTE                           = false
 	DefOptInSubqToJoinAndAgg                       = true
 	DefOptPreferRangeScan                          = false
@@ -1055,7 +1027,7 @@ const (
 	DefTiDBPrepPlanCacheMemoryGuardRatio           = 0.1
 	DefTiDBEnableConcurrentDDL                     = concurrencyddl.TiDBEnableConcurrentDDL
 	DefTiDBSimplifiedMetrics                       = false
-	DefTiDBEnablePaging                            = false
+	DefTiDBEnablePaging                            = true
 	DefTiFlashFineGrainedShuffleStreamCount        = 0
 	DefStreamCountWhenMaxThreadsNotSet             = 8
 	DefTiFlashFineGrainedShuffleBatchSize          = 8192
@@ -1067,6 +1039,8 @@ const (
 	DefTiDBEnableTmpStorageOnOOM                   = true
 	DefTiDBEnableMDL                               = false
 	DefTiFlashFastScan                             = false
+	DefMemoryUsageAlarmRatio                       = 0.7
+	DefMemoryUsageAlarmKeepRecordNum               = 5
 	DefTiDBEnableFastReorg                         = false
 	DefTiDBDDLDiskQuota                            = 100 * 1024 * 1024 * 1024 // 100GB
 	DefExecutorConcurrency                         = 5
@@ -1083,6 +1057,8 @@ const (
 	DefTiDBOptRangeMaxSize                          = 0
 	DefTiDBCostModelVer                             = 1
 	DefTiDBServerMemoryLimitSessMinSize             = 128 << 20
+	DefTiDBServerMemoryLimitGCTrigger               = 0.7
+	DefTiDBEnableGOGCTuner                          = true
 )
 
 // Process global variables.
@@ -1101,26 +1077,27 @@ var (
 	ddlReorgRowFormat       int64 = DefTiDBRowFormatV2
 	maxDeltaSchemaCount     int64 = DefTiDBMaxDeltaSchemaCount
 	// DDLSlowOprThreshold is the threshold for ddl slow operations, uint is millisecond.
-	DDLSlowOprThreshold                = config.GetGlobalConfig().Instance.DDLSlowOprThreshold
-	ForcePriority                      = int32(DefTiDBForcePriority)
-	MaxOfMaxAllowedPacket       uint64 = 1073741824
-	ExpensiveQueryTimeThreshold uint64 = DefTiDBExpensiveQueryTimeThreshold
-	MemoryUsageAlarmRatio              = atomic.NewFloat64(config.GetGlobalConfig().Instance.MemoryUsageAlarmRatio)
-	EnableLocalTxn                     = atomic.NewBool(DefTiDBEnableLocalTxn)
-	MaxTSOBatchWaitInterval            = atomic.NewFloat64(DefTiDBTSOClientBatchMaxWaitTime)
-	EnableTSOFollowerProxy             = atomic.NewBool(DefTiDBEnableTSOFollowerProxy)
-	RestrictedReadOnly                 = atomic.NewBool(DefTiDBRestrictedReadOnly)
-	VarTiDBSuperReadOnly               = atomic.NewBool(DefTiDBSuperReadOnly)
-	PersistAnalyzeOptions              = atomic.NewBool(DefTiDBPersistAnalyzeOptions)
-	TableCacheLease                    = atomic.NewInt64(DefTiDBTableCacheLease)
-	EnableColumnTracking               = atomic.NewBool(DefTiDBEnableColumnTracking)
-	StatsLoadSyncWait                  = atomic.NewInt64(DefTiDBStatsLoadSyncWait)
-	StatsLoadPseudoTimeout             = atomic.NewBool(DefTiDBStatsLoadPseudoTimeout)
-	MemQuotaBindingCache               = atomic.NewInt64(DefTiDBMemQuotaBindingCache)
-	GCMaxWaitTime                      = atomic.NewInt64(DefTiDBGCMaxWaitTime)
-	StatsCacheMemQuota                 = atomic.NewInt64(DefTiDBStatsCacheMemQuota)
-	OOMAction                          = atomic.NewString(DefTiDBMemOOMAction)
-	MaxAutoAnalyzeTime                 = atomic.NewInt64(DefTiDBMaxAutoAnalyzeTime)
+	DDLSlowOprThreshold                  = config.GetGlobalConfig().Instance.DDLSlowOprThreshold
+	ForcePriority                        = int32(DefTiDBForcePriority)
+	MaxOfMaxAllowedPacket         uint64 = 1073741824
+	ExpensiveQueryTimeThreshold   uint64 = DefTiDBExpensiveQueryTimeThreshold
+	MemoryUsageAlarmRatio                = atomic.NewFloat64(DefMemoryUsageAlarmRatio)
+	MemoryUsageAlarmKeepRecordNum        = atomic.NewInt64(DefMemoryUsageAlarmKeepRecordNum)
+	EnableLocalTxn                       = atomic.NewBool(DefTiDBEnableLocalTxn)
+	MaxTSOBatchWaitInterval              = atomic.NewFloat64(DefTiDBTSOClientBatchMaxWaitTime)
+	EnableTSOFollowerProxy               = atomic.NewBool(DefTiDBEnableTSOFollowerProxy)
+	RestrictedReadOnly                   = atomic.NewBool(DefTiDBRestrictedReadOnly)
+	VarTiDBSuperReadOnly                 = atomic.NewBool(DefTiDBSuperReadOnly)
+	PersistAnalyzeOptions                = atomic.NewBool(DefTiDBPersistAnalyzeOptions)
+	TableCacheLease                      = atomic.NewInt64(DefTiDBTableCacheLease)
+	EnableColumnTracking                 = atomic.NewBool(DefTiDBEnableColumnTracking)
+	StatsLoadSyncWait                    = atomic.NewInt64(DefTiDBStatsLoadSyncWait)
+	StatsLoadPseudoTimeout               = atomic.NewBool(DefTiDBStatsLoadPseudoTimeout)
+	MemQuotaBindingCache                 = atomic.NewInt64(DefTiDBMemQuotaBindingCache)
+	GCMaxWaitTime                        = atomic.NewInt64(DefTiDBGCMaxWaitTime)
+	StatsCacheMemQuota                   = atomic.NewInt64(DefTiDBStatsCacheMemQuota)
+	OOMAction                            = atomic.NewString(DefTiDBMemOOMAction)
+	MaxAutoAnalyzeTime                   = atomic.NewInt64(DefTiDBMaxAutoAnalyzeTime)
 	// variables for plan cache
 	PreparedPlanCacheMemoryGuardRatio = atomic.NewFloat64(DefTiDBPrepPlanCacheMemoryGuardRatio)
 	EnableConcurrentDDL               = atomic.NewBool(DefTiDBEnableConcurrentDDL)
@@ -1148,6 +1125,8 @@ var (
 	GetMemQuotaAnalyze func() int64 = nil
 	// SetStatsCacheCapacity is the func registered by domain to set statsCache memory quota.
 	SetStatsCacheCapacity atomic.Value
+	// SetPDClientDynamicOption is the func registered by domain
+	SetPDClientDynamicOption atomic.Pointer[func(string, string)]
 	// SwitchConcurrentDDL is the func registered by DDL to switch concurrent DDL.
 	SwitchConcurrentDDL func(bool) error = nil
 	// SwitchMDL is the func registered by DDL to switch MDL.
