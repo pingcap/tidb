@@ -129,6 +129,28 @@ func TestCostModelVer2(t *testing.T) {
 	}
 }
 
+func TestCostModelShowFormula(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int)`)
+	tk.MustExec("insert into t values (1), (2), (3)")
+	tk.MustExec("set @@tidb_cost_model_version=2")
+
+	tk.MustExecToErr("explain format='true_card_cost' select * from t") // 'true_card_cost' must work with 'explain analyze'
+	plan := tk.MustQuery("explain analyze format='true_card_cost' select * from t where a<3").Rows()
+	actual := make([][]interface{}, 0, len(plan))
+	for _, row := range plan {
+		actual = append(actual, []interface{}{row[0], row[3]}) // id,costFormula
+		fmt.Println(actual)
+	}
+	require.Equal(t, actual, [][]interface{}{
+		{"TableReader_7", "((Selection_6) + (net(2*rowsize(16)*tidb_kv_net_factor(8))) + (seek(tasks(20)*tidb_request_factor(9.5e+06))))/15"},
+		{"└─Selection_6", "(cpu(3*filters(1)*tikv_cpu_factor(30))) + (TableFullScan_5)"},
+		{"  └─TableFullScan_5", "scan(3*logrowsize(29)*tikv_scan_factor(100))"},
+	})
+}
+
 func TestCostModelTraceVer2(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
