@@ -121,6 +121,8 @@ func TypeToStr(tp byte, cs string) (r string) {
 		ts = strings.Replace(ts, "text", "blob", 1)
 	} else if IsTypeChar(tp) {
 		ts = strings.Replace(ts, "char", "binary", 1)
+	} else if tp == mysql.TypeNull {
+		ts = "binary"
 	}
 	return ts
 }

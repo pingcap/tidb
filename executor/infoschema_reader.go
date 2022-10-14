@@ -395,23 +395,6 @@ func hasPriv(ctx sessionctx.Context, priv mysql.PrivilegeType) bool {
 	return pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, "", "", "", priv)
 }
 
-func scopeStr(sv *variable.SysVar) string {
-	var scopes []string
-	if sv.HasNoneScope() {
-		return "NONE"
-	}
-	if sv.HasSessionScope() {
-		scopes = append(scopes, "SESSION")
-	}
-	if sv.HasGlobalScope() {
-		scopes = append(scopes, "GLOBAL")
-	}
-	if sv.HasInstanceScope() {
-		scopes = append(scopes, "INSTANCE")
-	}
-	return strings.Join(scopes, ",")
-}
-
 func (e *memtableRetriever) setDataForVariablesInfo(ctx sessionctx.Context) error {
 	sysVars := variable.GetSysVars()
 	rows := make([][]types.Datum, 0, len(sysVars))
@@ -428,14 +411,14 @@ func (e *memtableRetriever) setDataForVariablesInfo(ctx sessionctx.Context) erro
 			isNoop = "YES"
 		}
 		row := types.MakeDatums(
-			sv.Name,      // VARIABLE_NAME
-			scopeStr(sv), // VARIABLE_SCOPE
-			sv.Value,     // DEFAULT_VALUE
-			currentVal,   // CURRENT_VALUE
-			sv.MinValue,  // MIN_VALUE
-			sv.MaxValue,  // MAX_VALUE
-			nil,          // POSSIBLE_VALUES
-			isNoop,       // IS_NOOP
+			sv.Name,           // VARIABLE_NAME
+			sv.Scope.String(), // VARIABLE_SCOPE
+			sv.Value,          // DEFAULT_VALUE
+			currentVal,        // CURRENT_VALUE
+			sv.MinValue,       // MIN_VALUE
+			sv.MaxValue,       // MAX_VALUE
+			nil,               // POSSIBLE_VALUES
+			isNoop,            // IS_NOOP
 		)
 		// min and max value is only supported for numeric types
 		if !(sv.Type == variable.TypeUnsigned || sv.Type == variable.TypeInt || sv.Type == variable.TypeFloat) {
@@ -946,6 +929,8 @@ ForColumnsTag:
 			} else if decimal != -1 {
 				numericScale = decimal
 			}
+		} else if ft.GetType() == mysql.TypeNull {
+			charMaxLen, charOctLen = 0, 0
 		}
 		columnType := ft.InfoSchemaStr()
 		columnDesc := table.NewColDesc(table.ToColumn(col))
@@ -2238,6 +2223,8 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(ctx sessionctx.Context, s
 					progress += progressMap[p.ID]
 				}
 				progress = progress / float64(len(pi.Definitions))
+				progressString := types.TruncateFloatToString(progress, 2)
+				progress, _ = strconv.ParseFloat(progressString, 64)
 			} else {
 				progress = progressMap[tbl.ID]
 			}
