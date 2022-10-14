@@ -162,13 +162,13 @@ func TsoUseConstantCountInc(sctx sessionctx.Context) {
 }
 
 // GetPessmisticLockErrRetryTime is used only for test.
-// When it is called, sets the retry info of processing the pessimitic lock error.
+// When it is called, sets the retry info of processing the pessimistic lock error.
 func SetPessmisticLockErrRetryStartTime(sctx sessionctx.Context,
 	retryTime time.Time, retryCount uint) {
 	sctx.SetValue(PessmiticLockErrRetryInfo, pessLockErrRretrInfo{retryTime, retryCount})
 }
 
-// GetPessmisticLockErrRetryStartTime is used to get the retry info of processing the pessimitic lock error.
+// GetPessmisticLockErrRetryStartTime is used to get the retry info of processing the pessimistic lock error.
 func GetPessmisticLockErrRetryStartTime(
 	sctx sessionctx.Context) (time.Time, uint) {
 	info, ok := sctx.Value(PessmiticLockErrRetryInfo).(pessLockErrRretrInfo)
