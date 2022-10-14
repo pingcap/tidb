@@ -2265,7 +2265,6 @@ type Concurrency struct {
 	indexLookupJoinConcurrency int
 
 	// distSQLScanConcurrency is the number of concurrent dist SQL scan worker.
-	// distSQLScanConcurrency is deprecated, use ExecutorConcurrency instead.
 	distSQLScanConcurrency int
 
 	// hashJoinConcurrency is the number of concurrent hash join outer worker.

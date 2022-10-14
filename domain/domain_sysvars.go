@@ -31,7 +31,8 @@ import (
 // which is overwritten here.
 func (do *Domain) initDomainSysVars() {
 	variable.SetStatsCacheCapacity.Store(do.setStatsCacheCapacity)
-	variable.SetPDClientDynamicOption = do.setPDClientDynamicOption
+	pdClientDynamicOptionFunc := do.setPDClientDynamicOption
+	variable.SetPDClientDynamicOption.Store(&pdClientDynamicOptionFunc)
 }
 
 // setStatsCacheCapacity sets statsCache cap
