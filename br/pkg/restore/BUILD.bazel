@@ -143,6 +143,7 @@ go_test(
         "//types",
         "//util/codec",
         "//util/mathutil",
+        "@com_github_fsouza_fake_gcs_server//fakestorage",
         "@com_github_golang_protobuf//proto",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
