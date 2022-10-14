@@ -1554,6 +1554,16 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 }
 
 func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error {
+	if x, ok := s.Expr.(*ast.FuncCallExpr); ok {
+		if x.FnName.L == ast.ConnectionID {
+			sm := e.ctx.GetSessionManager()
+			sm.Kill(e.ctx.GetSessionVars().ConnectionID, s.Query)
+			return nil
+		}
+		err := errors.New("Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] [connectionID | CONNECTION_ID()]' instead")
+		e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		return nil
+	}
 	if !config.GetGlobalConfig().EnableGlobalKill {
 		conf := config.GetGlobalConfig()
 		if s.TiDBExtension || conf.CompatibleKillQuery {
@@ -1563,7 +1573,7 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 			}
 			sm.Kill(s.ConnectionID, s.Query)
 		} else {
-			err := errors.New("Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] connectionID' instead")
+			err := errors.New("Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] [connectionID | CONNECTION_ID()]' instead")
 			e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		}
 		return nil

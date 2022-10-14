@@ -52,7 +52,7 @@ func TestKillStmt(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec(fmt.Sprintf("kill %d", connID))
 	result := tk.MustQuery("show warnings")
-	result.Check(testkit.Rows("Warning 1105 Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] connectionID' instead"))
+	result.Check(testkit.Rows("Warning 1105 Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] [connectionID | CONNECTION_ID()]' instead"))
 
 	newCfg2 := *originCfg
 	newCfg2.EnableGlobalKill = true
