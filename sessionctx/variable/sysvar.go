@@ -754,10 +754,7 @@ var defaultSysVars = []*SysVar{
 				return err
 			}
 			GOGCTunerThreshold.Store(factor)
-			memTotal, err := memory.MemTotal()
-			if err != nil {
-				return err
-			}
+			memTotal := memory.ServerMemoryLimit.Load()
 			threshold := float64(memTotal) * factor
 			gctuner.Tuning(uint64(threshold))
 			return nil
