@@ -263,9 +263,6 @@ type ExecStmt struct {
 	OutputNames []*types.FieldName
 	PsStmt      *plannercore.PlanCacheStmt
 	Ti          *TelemetryInfo
-
-	// fkCascaded store the handled foreign cascade values.
-	fkCascaded fkHandledCache
 }
 
 // GetStmtNode returns the stmtNode inside Statement
@@ -538,13 +535,17 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		return a.handlePessimisticSelectForUpdate(ctx, e)
 	}
 
+	fkCtx, err := a.prepareFKCascadeContext(e)
+	if err != nil {
+		return nil, err
+	}
 	// In function handlePessimisticDML may rebuild a Executor when handlePessimisticLockError,
 	// so need to return the rebuild executor.
 	if handled, result, e, err := a.handleNoDelay(ctx, e, isPessimistic); handled || err != nil {
 		if err != nil {
 			return result, err
 		}
-		err = a.handleForeignKeyTrigger(ctx, e, isPessimistic, 1)
+		err = a.handleStmtForeignKeyTrigger(ctx, fkCtx, e, isPessimistic)
 		return result, err
 	}
 
@@ -562,6 +563,28 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		stmt:       a,
 		txnStartTS: txnStartTS,
 	}, nil
+}
+
+func (a *ExecStmt) handleStmtForeignKeyTrigger(ctx context.Context, fkCtx FKCascadeContext, e Executor, isPessimistic bool) error {
+	if fkCtx.hasCascades {
+		// If the ExecStmt has foreign key cascade to be executed, we need call `StmtCommit` to commit the ExecStmt itself
+		// change first.
+		// Since `UnionScanExec` use `SnapshotIter` and `SnapshotGetter` to read txn mem-buffer, if we don't  do `StmtCommit`,
+		// then the fk cascade executor can't read the mem-buffer changed by the ExecStmt.
+		a.Ctx.StmtCommit()
+	}
+	err := a.handleForeignKeyTrigger(ctx, e, isPessimistic, 1)
+	if err != nil {
+		err1 := a.handleFKTriggerError(fkCtx)
+		if err1 != nil {
+			return errors.Errorf("handle foreign key trigger error failed, err: %v, original_err: %v", err1, err)
+		}
+		return err
+	}
+	if fkCtx.savepointName != "" {
+		a.Ctx.GetSessionVars().TxnCtx.ReleaseSavepoint(fkCtx.savepointName)
+	}
+	return nil
 }
 
 var maxForeignKeyCascadeDepth = 15
@@ -594,14 +617,8 @@ func (a *ExecStmt) handleForeignKeyTrigger(ctx context.Context, e Executor, isPe
 }
 
 func (a *ExecStmt) handleForeignKeyCascade(ctx context.Context, fkc *FKCascadeExec, isPessimistic bool, depth int) error {
-	if a.fkCascaded.handled == nil {
-		a.fkCascaded.handled = make(map[tableIDAndFKID]map[string]struct{})
-	}
-	var err error
-	stmtCtx := a.Ctx.GetSessionVars().StmtCtx
-	fkc.fkValues, err = a.fkCascaded.removeHandledFKValue(stmtCtx, fkc.childTable.ID, fkc.fk.ID, fkc.fkValues)
-	if err != nil || len(fkc.fkValues) == 0 {
-		return err
+	if len(fkc.fkValues) == 0 {
+		return nil
 	}
 	if depth > maxForeignKeyCascadeDepth {
 		return ErrForeignKeyCascadeDepthExceeded
@@ -618,11 +635,52 @@ func (a *ExecStmt) handleForeignKeyCascade(ctx context.Context, fkc *FKCascadeEx
 	if err != nil {
 		return err
 	}
-	err = a.fkCascaded.addHandledFKValue(stmtCtx, fkc.childTable.ID, fkc.fk.ID, fkc.fkValues)
-	if err != nil {
+	// Call `StmtCommit` uses to flush the fk cascade executor change into txn mem-buffer,
+	// then the later fk cascade executors can see the mem-buffer changes.
+	a.Ctx.StmtCommit()
+	return a.handleForeignKeyTrigger(ctx, e, isPessimistic, depth+1)
+}
+
+// prepareFKCascadeContext records a transaction savepoint for foreign key cascade when this ExecStmt has foreign key
+// cascade behaviour and this ExecStmt is in transaction.
+func (a *ExecStmt) prepareFKCascadeContext(e Executor) (FKCascadeContext, error) {
+	fkCtx := FKCascadeContext{}
+	exec, ok := e.(WithForeignKeyTrigger)
+	if !ok || !exec.HasFKCascades() {
+		return fkCtx, nil
+	}
+	fkCtx.hasCascades = true
+	sessVar := a.Ctx.GetSessionVars()
+	if !sessVar.InTxn() {
+		return fkCtx, nil
+	}
+	txn, err := a.Ctx.Txn(false)
+	if err != nil || !txn.Valid() {
+		return fkCtx, nil
+	}
+	// Record a txn savepoint if ExecStmt in transaction, the savepoint is use to do rollback when handle foreign key
+	// cascade failed.
+	fkCtx.savepointName = "fk_sp_" + strconv.FormatUint(txn.StartTS(), 10)
+	memDBCheckpoint := txn.GetMemDBCheckpoint()
+	sessVar.TxnCtx.AddSavepoint(fkCtx.savepointName, memDBCheckpoint)
+	return fkCtx, nil
+}
+
+func (a *ExecStmt) handleFKTriggerError(fkCtx FKCascadeContext) error {
+	if fkCtx.savepointName == "" {
+		return nil
+	}
+	txn, err := a.Ctx.Txn(false)
+	if err != nil || !txn.Valid() {
 		return err
 	}
-	return a.handleForeignKeyTrigger(ctx, e, isPessimistic, depth+1)
+	savepointRecord := a.Ctx.GetSessionVars().TxnCtx.RollbackToSavepoint(fkCtx.savepointName)
+	if savepointRecord == nil {
+		return errors.Errorf("foreign key cascade savepoint '%s' not found, should never happen", fkCtx.savepointName)
+	}
+	txn.RollbackMemDBToCheckpoint(savepointRecord.MemDBCheckpoint)
+	a.Ctx.GetSessionVars().TxnCtx.ReleaseSavepoint(fkCtx.savepointName)
+	return nil
 }
 
 func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic bool) (handled bool, rs sqlexec.RecordSet, _ Executor, err error) {

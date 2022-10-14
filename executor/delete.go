@@ -303,6 +303,11 @@ func (e *DeleteExec) GetFKCascades() []*FKCascadeExec {
 	return fkCascades
 }
 
+// HasFKCascades implements WithForeignKeyTrigger interface.
+func (e *DeleteExec) HasFKCascades() bool {
+	return len(e.fkCascades) > 0
+}
+
 // tableRowMapType is a map for unique (Table, Row) pair. key is the tableID.
 // the key in map[int64]Row is the joined table handle, which represent a unique reference row.
 // the value in map[int64]Row is the deleting row.

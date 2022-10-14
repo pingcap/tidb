@@ -17,7 +17,6 @@ package executor
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"sync/atomic"
 
 	"github.com/pingcap/tidb/kv"
@@ -39,6 +38,7 @@ import (
 type WithForeignKeyTrigger interface {
 	GetFKChecks() []*FKCheckExec
 	GetFKCascades() []*FKCascadeExec
+	HasFKCascades() bool
 }
 
 // FKCheckExec uses to check foreign key constraint.
@@ -521,15 +521,17 @@ func (fkc FKCheckExec) checkRows(ctx context.Context, sc *stmtctx.StatementConte
 }
 
 func (b *executorBuilder) buildTblID2FKCascadeExecs(tblID2Table map[int64]table.Table, tblID2FKCascades map[int64][]*plannercore.FKCascade) (map[int64][]*FKCascadeExec, error) {
-	var err error
-	fkCascades := make(map[int64][]*FKCascadeExec)
+	fkCascadesMap := make(map[int64][]*FKCascadeExec)
 	for tid, tbl := range tblID2Table {
-		fkCascades[tid], err = b.buildFKCascadeExecs(tbl, tblID2FKCascades[tid])
+		fkCascades, err := b.buildFKCascadeExecs(tbl, tblID2FKCascades[tid])
 		if err != nil {
 			return nil, err
 		}
+		if len(fkCascades) > 0 {
+			fkCascadesMap[tid] = fkCascades
+		}
 	}
-	return fkCascades, nil
+	return fkCascadesMap, nil
 }
 
 func (b *executorBuilder) buildFKCascadeExecs(tbl table.Table, fkCascades []*plannercore.FKCascade) ([]*FKCascadeExec, error) {
@@ -633,7 +635,7 @@ func (fkc *FKCascadeExec) genCascadeDeleteSQL() (string, error) {
 		if i > 0 {
 			buf.WriteString(", ")
 		}
-		buf.WriteString(fmt.Sprintf("`%s`", col.L))
+		buf.WriteString("`" + col.L + "`")
 	}
 	// TODO(crazycs520): control the size of IN expression.
 	buf.WriteString(") IN (")
@@ -672,50 +674,8 @@ func genFKValueString(v types.Datum) (string, error) {
 	}
 }
 
-type tableIDAndFKID struct {
-	tid  int64
-	fkID int64
-}
-
-type fkHandledCache struct {
-	handled map[tableIDAndFKID]map[string]struct{}
-}
-
-func (c *fkHandledCache) addHandledFKValue(sc *stmtctx.StatementContext, tid, fkID int64, fkValues [][]types.Datum) error {
-	key := tableIDAndFKID{tid, fkID}
-	tableCache := c.handled[key]
-	if tableCache == nil {
-		tableCache = make(map[string]struct{})
-		c.handled[key] = tableCache
-	}
-	for _, vals := range fkValues {
-		keyBuf, err := codec.EncodeKey(sc, nil, vals...)
-		if err != nil {
-			return err
-		}
-		tableCache[string(keyBuf)] = struct{}{}
-	}
-	return nil
-}
-
-func (c *fkHandledCache) removeHandledFKValue(sc *stmtctx.StatementContext, tid, fkID int64, fkValues [][]types.Datum) ([][]types.Datum, error) {
-	key := tableIDAndFKID{tid, fkID}
-	tableCache := c.handled[key]
-	if tableCache == nil {
-		return fkValues, nil
-	}
-	idx := 0
-	for _, vals := range fkValues {
-		keyBuf, err := codec.EncodeKey(sc, nil, vals...)
-		if err != nil {
-			return nil, err
-		}
-		_, handled := tableCache[string(keyBuf)]
-		if handled {
-			continue
-		}
-		fkValues[idx] = vals
-		idx++
-	}
-	return fkValues[:idx], nil
+// FKCascadeContext is the contain information for foreign key cascade execution.
+type FKCascadeContext struct {
+	savepointName string
+	hasCascades   bool
 }
