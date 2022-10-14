@@ -789,6 +789,82 @@ func TestStillWriteConflictAfterRetry(t *testing.T) {
 	})
 }
 
+func TestPessimisticRetryTime(t *testing.T) {
+	store, _ := setupTxnContextTest(t)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/getPessimisticLockErrorStartRetryTime", "return"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/getPessimisticLockErrorStartRetryTime"))
+	}()
+
+	/*
+		queries := []string{
+			"select * from t1 where id=1 for update",
+			"update t1 set v=v+1 where id=1",
+		} */
+
+	testfork.RunTest(t, func(t *testfork.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("truncate table t1")
+		tk.MustExec("insert into t1 values(1, 10)")
+		tk2 := testkit.NewSteppedTestKit(t, store)
+		defer tk2.MustExec("rollback")
+
+		tk2.MustExec("use test")
+		tk2.MustExec("set @@tidb_txn_mode = 'pessimistic'")
+		tk2.MustExec(fmt.Sprintf("set tx_isolation = '%s'", testfork.PickEnum(t, ast.RepeatableRead, ast.ReadCommitted)))
+
+		tk2.MustExec("begin")
+
+		tk2.SetBreakPoints(
+			sessiontxn.BreakPointBeforeExecutorFirstRun,
+			sessiontxn.BreakPointOnStmtRetryAfterLockError,
+		)
+
+		// query := testfork.Pick(t, queries)
+		query := "select * from t1 where id=1 for update"
+		switch {
+		case strings.HasPrefix(query, "select"):
+			tk2.SteppedMustQuery(query)
+		case strings.HasPrefix(query, "update"):
+			tk2.SteppedMustExec(query)
+		default:
+			require.FailNowf(t, "invalid query: ", query)
+		}
+
+		session2 := tk2.Session()
+		// Pause the session before the executor first run and then update the record in another session
+		tk2.ExpectStopOnBreakPoint(sessiontxn.BreakPointBeforeExecutorFirstRun)
+		tk.MustExec("update t1 set v=v+1")
+
+		// Session continues, it should get a lock error and retry, we pause the session before the executor's next run
+		// and then update the record in another session again.
+		tk2.Continue().ExpectStopOnBreakPoint(sessiontxn.BreakPointOnStmtRetryAfterLockError)
+		tk.MustExec("update t1 set v=v+1")
+		firstRetryStartTime := time.Now()
+		time.Sleep(time.Millisecond * 10)
+
+		// Because the record is updated by another session again, when this session continues, it will get a lock error again.
+		tk2.Continue().ExpectStopOnBreakPoint(sessiontxn.BreakPointOnStmtRetryAfterLockError)
+		tk2.Continue().ExpectIdle()
+
+		realRetryStartTime, ok := session2.Value(sessiontxn.PessmiticLockErrRetryStartTime).(time.Time)
+		require.Equal(t, true, ok)
+		tk2.MustExec("commit")
+		fmt.Println("firstRetryStartTime:", firstRetryStartTime, "realRetryStartTime:", realRetryStartTime)
+
+		/*
+			switch {
+			case isSelect:
+				tk2.GetQueryResult().Check(testkit.Rows("1 12"))
+			case isUpdate:
+				tk2.MustExec("commit")
+				tk2.MustQuery("select * from t1").Check(testkit.Rows("1 13"))
+			}
+		*/
+	})
+}
+
 func TestOptimisticTxnRetryInPessimisticMode(t *testing.T) {
 	store, _ := setupTxnContextTest(t)
 

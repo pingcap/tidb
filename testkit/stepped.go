@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util/breakpoint"
 	"github.com/stretchr/testify/require"
 )
@@ -253,4 +254,9 @@ func (tk *SteppedTestKit) GetQueryResult() *Result {
 	tk.ExpectIdle()
 	require.IsType(tk.t, &Result{}, tk.cmdResult)
 	return tk.cmdResult.(*Result)
+}
+
+// Session return the session associated with the testkit
+func (tk *SteppedTestKit) Session() session.Session {
+	return tk.tk.Session()
 }
