@@ -890,7 +890,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 		a.retryStartTime = time.Now()
 	}
 	failpoint.Inject("getPessimisticLockErrorStartRetryTime", func() {
-		sessiontxn.SetPessmisticLockErrRetryStartTime(a.Ctx, a.retryStartTime, a.retryCount)
+		sessiontxn.SetPessmisticLockErrRetryInfo(a.Ctx, a.retryStartTime, a.retryCount)
 	})
 
 	err = txnManager.OnStmtRetry(ctx)

@@ -56,7 +56,7 @@ var TsoUseConstantCount stringutil.StringerStr = "tsoUseConstantCount"
 // Only for test
 var AssertLockErr stringutil.StringerStr = "assertLockError"
 
-// PessmiticLockErrRetryStartTime is used to store retry info of processing the pessmistic lock error.
+// PessmiticLockErrRetryInfo is used to store retry info of processing the pessmistic lock error.
 var PessmiticLockErrRetryInfo stringutil.StringerStr = "pessmiticLockErrRetryTime"
 
 type pessLockErrRretrInfo struct {
@@ -161,15 +161,15 @@ func TsoUseConstantCountInc(sctx sessionctx.Context) {
 	sctx.SetValue(TsoUseConstantCount, count)
 }
 
-// GetPessmisticLockErrRetryTime is used only for test.
+// SetPessmisticLockErrRetryInfo is used only for test.
 // When it is called, sets the retry info of processing the pessimistic lock error.
-func SetPessmisticLockErrRetryStartTime(sctx sessionctx.Context,
+func SetPessmisticLockErrRetryInfo(sctx sessionctx.Context,
 	retryTime time.Time, retryCount uint) {
 	sctx.SetValue(PessmiticLockErrRetryInfo, pessLockErrRretrInfo{retryTime, retryCount})
 }
 
-// GetPessmisticLockErrRetryStartTime is used to get the retry info of processing the pessimistic lock error.
-func GetPessmisticLockErrRetryStartTime(
+// GetPessmisticLockErrRetryInfo is used to get the retry info of processing the pessimistic lock error.
+func GetPessmisticLockErrRetryInfo(
 	sctx sessionctx.Context) (time.Time, uint) {
 	info, ok := sctx.Value(PessmiticLockErrRetryInfo).(pessLockErrRretrInfo)
 	if !ok {

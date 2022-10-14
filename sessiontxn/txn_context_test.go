@@ -846,7 +846,7 @@ func TestPessimisticRetryTime(t *testing.T) {
 		tk2.Continue().ExpectStopOnBreakPoint(sessiontxn.BreakPointOnStmtRetryAfterLockError)
 		tk2.Continue().ExpectIdle()
 
-		realRetryStartTime, retryCount := sessiontxn.GetPessmisticLockErrRetryStartTime(session2)
+		realRetryStartTime, retryCount := sessiontxn.GetPessmisticLockErrRetryInfo(session2)
 		tk2.MustExec("commit")
 		require.Equal(t, uint(2), retryCount)
 		require.True(t, firstRetryStartTime.After(realRetryStartTime))
