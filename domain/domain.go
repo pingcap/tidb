@@ -264,8 +264,11 @@ func (do *Domain) fetchAllSchemasWithTables(m *meta.Meta) ([]*model.DBInfo, erro
 			//	OriginDefaultValue: types.CreateBinaryJSON(`"_tidb_row_meta"`),
 			//	Version:            2,
 			//}}, tbl.Columns...)
+			if tbl.IsView() {
+				continue
+			}
 			tbl.Columns = append(tbl.Columns, &model.ColumnInfo{
-				ID:                 0,
+				ID:                 model.ExtraMetaColID,
 				Name:               model.NewCIStr("_tidb_row_meta"),
 				FieldType:          *types.NewFieldType(mysql.TypeJSON),
 				Offset:             len(tbl.Columns),

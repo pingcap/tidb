@@ -265,7 +265,7 @@ func (c *ColumnInfo) IsGenerated() bool {
 
 // IsMeta returns true if the column is meta column.
 func (c *ColumnInfo) IsMeta() bool {
-	return c.ID == 0
+	return c.ID == ExtraMetaColID
 }
 
 // SetOriginDefaultValue sets the origin default value.
@@ -419,6 +419,9 @@ const ExtraPidColID = -2
 // Using a dedicated id for this, since in the future ExtraPidColID and ExtraPhysTblID may be used for the same request.
 // Must be after ExtraPidColID!
 const ExtraPhysTblID = -3
+
+// ExtraMetaColID is the column ID of column that should be filled in with the meta data.
+const ExtraMetaColID = -4
 
 const (
 	// TableInfoVersion0 means the table info version is 0.

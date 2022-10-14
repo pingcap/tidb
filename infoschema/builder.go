@@ -658,18 +658,19 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 	//	OriginDefaultValue: types.CreateBinaryJSON(`"_tidb_row_meta"`),
 	//	Version:            2,
 	//}}, tblInfo.Columns...)
-
-	tblInfo.Columns = append(tblInfo.Columns, &model.ColumnInfo{
-		ID:                 0,
-		Name:               model.NewCIStr("_tidb_row_meta"),
-		FieldType:          *types.NewFieldType(mysql.TypeJSON),
-		Offset:             len(tblInfo.Columns),
-		Hidden:             true,
-		State:              model.StatePublic,
-		OriginDefaultValue: nil,
-		DefaultValue:       nil,
-		Version:            2,
-	})
+	if !tblInfo.IsView() {
+		tblInfo.Columns = append(tblInfo.Columns, &model.ColumnInfo{
+			ID:                 model.ExtraMetaColID,
+			Name:               model.NewCIStr("_tidb_row_meta"),
+			FieldType:          *types.NewFieldType(mysql.TypeJSON),
+			Offset:             len(tblInfo.Columns),
+			Hidden:             true,
+			State:              model.StatePublic,
+			OriginDefaultValue: nil,
+			DefaultValue:       nil,
+			Version:            2,
+		})
+	}
 
 	switch tp {
 	case model.ActionDropTablePartition:

@@ -246,7 +246,7 @@ const (
 func (t *TableCommon) getCols(mode getColsMode) []*table.Column {
 	columns := make([]*table.Column, 0, len(t.Columns))
 	for _, col := range t.Columns {
-		if col.State != model.StatePublic || col.ID == 0 {
+		if col.State != model.StatePublic || col.IsMeta() {
 			continue
 		}
 		if (mode == visible && col.Hidden) || (mode == hidden && !col.Hidden) {
