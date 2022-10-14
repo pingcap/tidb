@@ -848,7 +848,7 @@ func TestPessimisticRetryTime(t *testing.T) {
 
 		realRetryStartTime, retryCount := sessiontxn.GetPessmisticLockErrRetryStartTime(session2)
 		tk2.MustExec("commit")
-		require.Equal(t, 2, retryCount)
+		require.Equal(t, uint(2), retryCount)
 		require.True(t, firstRetryStartTime.After(realRetryStartTime))
 	})
 }
