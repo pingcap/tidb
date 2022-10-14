@@ -39,10 +39,10 @@ func (c *conditionChecker) isFullLengthColumn() bool {
 	return c.length == types.UnspecifiedLength || c.length == c.checkerCol.GetType().GetFlen()
 }
 
-// check returns two values, isIndexFilter and shouldReserve.
-// isIndexFilter indicates whether the condition can be pushed to index.
+// check returns two values, isIndexCond and shouldReserve.
+// isIndexCond indicates whether the condition can be pushed to index.
 // shouldReserve indicates whether the condition should be reserved on table.
-func (c *conditionChecker) check(condition expression.Expression) (isIndexFilter bool, shouldReserve bool) {
+func (c *conditionChecker) check(condition expression.Expression) (isIndexCond bool, shouldReserve bool) {
 	switch x := condition.(type) {
 	case *expression.ScalarFunction:
 		return c.checkScalarFunction(x)
@@ -60,13 +60,13 @@ func (c *conditionChecker) check(condition expression.Expression) (isIndexFilter
 	return false, true
 }
 
-func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction) (isIndexFilter bool, shouldReserve bool) {
+func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction) (isIndexCond bool, shouldReserve bool) {
 	_, collation := scalar.CharsetAndCollation()
 	switch scalar.FuncName.L {
 	case ast.LogicOr, ast.LogicAnd:
-		isIndexFilter0, shouldReserve0 := c.check(scalar.GetArgs()[0])
-		isIndexFilter1, shouldReserve1 := c.check(scalar.GetArgs()[1])
-		if isIndexFilter0 && isIndexFilter1 {
+		isIndexCond0, shouldReserve0 := c.check(scalar.GetArgs()[0])
+		isIndexCond1, shouldReserve1 := c.check(scalar.GetArgs()[1])
+		if isIndexCond0 && isIndexCond1 {
 			return true, shouldReserve0 || shouldReserve1
 		}
 		return false, true
@@ -107,7 +107,8 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 		}
 	case ast.IsNull:
 		if c.checkColumn(scalar.GetArgs()[0]) {
-			return true, !c.isFullLengthColumn()
+			// We can know whether the column is null from prefix column of any length.
+			return true, false
 		}
 		return false, true
 	case ast.IsTruthWithoutNull, ast.IsFalsity, ast.IsTruthWithNull:
@@ -161,7 +162,7 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 	return false, true
 }
 
-func (c *conditionChecker) checkLikeFunc(scalar *expression.ScalarFunction) (isIndexFilter bool, shouldReserve bool) {
+func (c *conditionChecker) checkLikeFunc(scalar *expression.ScalarFunction) (isIndexCond bool, shouldReserve bool) {
 	_, collation := scalar.CharsetAndCollation()
 	if collate.NewCollationEnabled() && !collate.IsBinCollation(collation) {
 		// The algorithm constructs the range in byte-level: for example, ab% is mapped to [ab, ac] by adding 1 to the last byte.
