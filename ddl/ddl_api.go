@@ -2448,9 +2448,11 @@ func (d *ddl) CreateTableWithInfo(
 	ctx sessionctx.Context,
 	dbName model.CIStr,
 	tbInfo *model.TableInfo,
-	onExist OnExist,
+	cs ...CreateTableWithInfoConfigurier,
 ) (err error) {
-	job, err := d.createTableWithInfoJob(ctx, dbName, tbInfo, onExist, false)
+	c := GetCreateTableWithInfoConfig(cs)
+
+	job, err := d.createTableWithInfoJob(ctx, dbName, tbInfo, c.OnExist, !c.ShouldAllocTableID(tbInfo))
 	if err != nil {
 		return err
 	}
@@ -2461,7 +2463,7 @@ func (d *ddl) CreateTableWithInfo(
 	err = d.DoDDLJob(ctx, job)
 	if err != nil {
 		// table exists, but if_not_exists flags is true, so we ignore this error.
-		if onExist == OnExistIgnore && infoschema.ErrTableExists.Equal(err) {
+		if c.OnExist == OnExistIgnore && infoschema.ErrTableExists.Equal(err) {
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
 			err = nil
 		}
@@ -2476,7 +2478,10 @@ func (d *ddl) CreateTableWithInfo(
 func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 	dbName model.CIStr,
 	infos []*model.TableInfo,
-	onExist OnExist) error {
+	cs ...CreateTableWithInfoConfigurier,
+) error {
+	c := GetCreateTableWithInfoConfig(cs)
+
 	jobs := &model.Job{
 		BinlogInfo: &model.HistoryInfo{},
 	}
@@ -2491,7 +2496,7 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 	for _, info := range infos {
 		if _, ok := duplication[info.Name.L]; ok {
 			err = infoschema.ErrTableExists.FastGenByArgs("can not batch create tables with same name")
-			if onExist == OnExistIgnore && infoschema.ErrTableExists.Equal(err) {
+			if c.OnExist == OnExistIgnore && infoschema.ErrTableExists.Equal(err) {
 				ctx.GetSessionVars().StmtCtx.AppendNote(err)
 				err = nil
 			}
@@ -2515,15 +2520,17 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 	}
 
 	for _, info := range infos {
-		info.ID, genIDs = genIDs[0], genIDs[1:]
+		if c.ShouldAllocTableID(info) {
+			info.ID, genIDs = genIDs[0], genIDs[1:]
 
-		if parts := info.GetPartitionInfo(); parts != nil {
-			for i := range parts.Definitions {
-				parts.Definitions[i].ID, genIDs = genIDs[0], genIDs[1:]
+			if parts := info.GetPartitionInfo(); parts != nil {
+				for i := range parts.Definitions {
+					parts.Definitions[i].ID, genIDs = genIDs[0], genIDs[1:]
+				}
 			}
 		}
 
-		job, err := d.createTableWithInfoJob(ctx, dbName, info, onExist, true)
+		job, err := d.createTableWithInfoJob(ctx, dbName, info, c.OnExist, true)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -2555,7 +2562,7 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 	err = d.DoDDLJob(ctx, jobs)
 	if err != nil {
 		// table exists, but if_not_exists flags is true, so we ignore this error.
-		if onExist == OnExistIgnore && infoschema.ErrTableExists.Equal(err) {
+		if c.OnExist == OnExistIgnore && infoschema.ErrTableExists.Equal(err) {
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
 			err = nil
 		}
