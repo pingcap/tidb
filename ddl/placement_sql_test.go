@@ -599,12 +599,8 @@ func checkTiflashReplicaSet(t *testing.T, do *domain.Domain, db, tb string, cnt 
 }
 
 func TestPlacementTiflashCheck(t *testing.T) {
-<<<<<<< HEAD
-	store, clean := testkit.CreateMockStore(t)
+	store, do, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
-=======
-	store, do := testkit.CreateMockStoreAndDomain(t)
->>>>>>> 75e0885eff (*: allow setting placement policy and tiflash replica at the same time in one table (#37252))
 	tk := testkit.NewTestKit(t, store)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`))
 	defer func() {
