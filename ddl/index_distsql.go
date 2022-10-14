@@ -63,22 +63,48 @@ type copContext struct {
 type copReqReaders struct {
 	tasksCh chan *reorgBackfillTask
 	readers []*copReqReader
+	results map[string]struct {
+		ch  chan *indexRecord
+		err error
+	}
+	mu sync.Mutex
 }
 
-func (p *copReqReaders) getReader(task *reorgBackfillTask) *copReqReader {
+func (p *copReqReaders) getResult(task *reorgBackfillTask) (chan *indexRecord, error) {
 	for {
 		for _, r := range p.readers {
 			r.mu.Lock()
-			if string(r.currentTask.endKey) == string(task.endKey) {
+			if r.currentTask != nil && string(r.currentTask.endKey) == string(task.endKey) {
 				r.mu.Unlock()
-				return r
+				return r.idxRecordChan, r.err
 			}
 			r.mu.Unlock()
 		}
-		logutil.BgLogger().Info("[ddl] coprocessor reader not found, wait a while",
+		p.mu.Lock()
+		if res, ok := p.results[string(task.endKey)]; ok {
+			p.mu.Unlock()
+			return res.ch, res.err
+		}
+		p.mu.Unlock()
+		logutil.BgLogger().Info("[ddl] coprocessor result not found, wait a while",
 			zap.String("task", task.String()))
 		time.Sleep(time.Millisecond * 300)
 	}
+}
+
+func (p *copReqReaders) appendResult(task *reorgBackfillTask, ch chan *indexRecord, err error) {
+	p.mu.Lock()
+	p.results[string(task.endKey)] = struct {
+		ch  chan *indexRecord
+		err error
+	}{ch, err}
+	p.mu.Unlock()
+}
+
+func (p *copReqReaders) deleteResult(task *reorgBackfillTask) {
+	p.mu.Lock()
+	delete(p.results, string(task.endKey))
+	p.mu.Unlock()
 }
 
 type copReqReader struct {
@@ -88,9 +114,9 @@ type copReqReader struct {
 	idxRecordChan chan *indexRecord
 	srcChunk      *chunk.Chunk
 	err           error
-	done          chan struct{}
 	currentTask   *reorgBackfillTask
 	mu            sync.Mutex
+	onReadDone    func(task *reorgBackfillTask, ch chan *indexRecord, err error)
 }
 
 func (c *copReqReader) run(ctx context.Context, tasks chan *reorgBackfillTask) {
@@ -117,7 +143,7 @@ func (c *copReqReader) run(ctx context.Context, tasks chan *reorgBackfillTask) {
 			c.err = err
 			c.mu.Unlock()
 			close(c.idxRecordChan)
-			<-c.done
+			c.onReadDone(c.currentTask, c.idxRecordChan, err)
 		}
 	}
 }
@@ -125,6 +151,12 @@ func (c *copReqReader) run(ctx context.Context, tasks chan *reorgBackfillTask) {
 func newCopReqReaders(ctx context.Context, copCtx *copContext, jobID int64, readerCnt int, tasks chan *reorgBackfillTask) *copReqReaders {
 	p := &copReqReaders{
 		tasksCh: tasks,
+		readers: make([]*copReqReader, 0, readerCnt),
+		results: make(map[string]struct {
+			ch  chan *indexRecord
+			err error
+		}),
+		mu: sync.Mutex{},
 	}
 	for i := 0; i < readerCnt; i++ {
 		r := &copReqReader{
@@ -134,9 +166,9 @@ func newCopReqReaders(ctx context.Context, copCtx *copContext, jobID int64, read
 			idxRecordChan: make(chan *indexRecord, variable.MaxDDLReorgBatchSize),
 			srcChunk:      chunk.NewChunkWithCapacity(copCtx.fieldTps, 1024),
 			err:           nil,
-			done:          make(chan struct{}),
 			currentTask:   nil,
 			mu:            sync.Mutex{},
+			onReadDone:    p.appendResult,
 		}
 		p.readers = append(p.readers, r)
 		go r.run(ctx, tasks)
@@ -321,27 +353,29 @@ func (c *copContext) sendEncodedIdxRecords(ctx context.Context, ch chan *indexRe
 }
 
 func (w *addIndexWorker) fetchRowColValsFromCop(handleRange reorgBackfillTask) ([]*indexRecord, kv.Key, bool, error) {
-	copReader := w.copReqReaders.getReader(&handleRange)
+	ch, err := w.copReqReaders.getResult(&handleRange)
 	w.idxRecords = w.idxRecords[:0]
 	taskDone := false
 	for {
 		select {
-		case record, more := <-copReader.idxRecordChan:
+		case record, more := <-ch:
 			if !more {
 				taskDone = true
 				break
 			}
 			w.idxRecords = append(w.idxRecords, record)
 		}
+		if taskDone {
+			_, err = w.copReqReaders.getResult(&handleRange)
+			w.copReqReaders.deleteResult(&handleRange)
+			break
+		}
 		if len(w.idxRecords) >= w.batchCnt {
 			break
 		}
-		if taskDone {
-			copReader.done <- struct{}{}
-			break
-		}
 	}
-	return w.idxRecords, handleRange.startKey, taskDone, copReader.err
+
+	return w.idxRecords, handleRange.startKey, taskDone, err
 }
 
 func buildHandleColInfoAndFieldTypes(tbInfo *model.TableInfo) ([]*model.ColumnInfo, []*types.FieldType) {

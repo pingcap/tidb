@@ -1191,7 +1191,6 @@ type addIndexWorker struct {
 	baseIndexWorker
 	index     table.Index
 	writerCtx *ingest.WriterContext
-	coprCtx   *copContext
 
 	// The following attributes are used to reduce memory allocation.
 	idxKeyBufs         [][]byte
