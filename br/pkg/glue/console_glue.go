@@ -3,7 +3,6 @@
 package glue
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"os"
@@ -12,8 +11,6 @@ import (
 	"time"
 
 	"github.com/fatih/color"
-	"github.com/vbauerster/mpb/v7"
-	"github.com/vbauerster/mpb/v7/decor"
 	"golang.org/x/term"
 )
 
@@ -36,7 +33,7 @@ type ExtraField func() [2]string
 func WithTimeCost() ExtraField {
 	start := time.Now()
 	return func() [2]string {
-		return [2]string{"take", time.Since(start).String()}
+		return [2]string{"take", time.Since(start).Round(time.Millisecond).String()}
 	}
 }
 
@@ -54,12 +51,6 @@ func WithCallbackExtraField(key string, value func() string) ExtraField {
 	}
 }
 
-type pbProgress struct {
-	bar      *mpb.Bar
-	progress *mpb.Progress
-	ops      ConsoleOperations
-}
-
 func printFinalMessage(extraFields []ExtraField) func() string {
 	return func() string {
 		fields := make([]string, 0, len(extraFields))
@@ -67,104 +58,7 @@ func printFinalMessage(extraFields []ExtraField) func() string {
 			field := fieldFunc()
 			fields = append(fields, fmt.Sprintf("%s = %s", field[0], color.New(color.Bold).Sprint(field[1])))
 		}
-		return fmt.Sprintf("%s; %s", color.HiGreenString("DONE"), strings.Join(fields, ", "))
-	}
-}
-
-// Inc increases the progress. This method must be goroutine-safe, and can
-// be called from any goroutine.
-func (p pbProgress) Inc() {
-	p.bar.Increment()
-}
-
-// IncBy increases the progress by n.
-func (p pbProgress) IncBy(n int64) {
-	p.bar.IncrBy(int(n))
-}
-
-func (p pbProgress) GetCurrent() int64 {
-	return p.bar.Current()
-}
-
-// Close marks the progress as 100% complete and that Inc() can no longer be
-// called.
-func (p pbProgress) Close() {
-	if p.bar.Completed() || p.bar.Aborted() {
-		return
-	}
-	p.bar.Abort(false)
-}
-
-// Wait implements the ProgressWaiter interface.
-func (p pbProgress) Wait(ctx context.Context) error {
-	ch := make(chan struct{})
-	go func() {
-		p.progress.Wait()
-		close(ch)
-	}()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-ch:
-		return nil
-	}
-}
-
-// ProgressWaiter is the extended `Progress“: which provides a `wait` method to
-// allow caller wait until all unit in the progress finished.
-type ProgressWaiter interface {
-	Progress
-	Wait(context.Context) error
-}
-
-// cbOnComplete like `decor.OnComplete`, however allow the message provided by a function.
-func cbOnComplete(decl decor.Decorator, cb func() string) decor.DecorFunc {
-	return func(s decor.Statistics) string {
-		if s.Completed {
-			return cb()
-		}
-		return decl.Decor(s)
-	}
-}
-
-func (ops ConsoleOperations) OutputIsTTY() bool {
-	f, ok := ops.Out().(*os.File)
-	if !ok {
-		return false
-	}
-	return term.IsTerminal(int(f.Fd()))
-}
-
-// StartProgressBar starts a progress bar with the console operations.
-// Note: This function has overlapped function with `glue.StartProgress`, however this supports display extra fields
-//
-//	after success, and implement by `mpb` (instead of `pb`).
-//
-// Note': Maybe replace the old `StartProgress` with `mpb` too.
-func (ops ConsoleOperations) StartProgressBar(title string, total int, extraFields ...ExtraField) ProgressWaiter {
-	console := ops.Out()
-	if !ops.OutputIsTTY() {
-		console = io.Discard
-	}
-	pb := mpb.New(mpb.WithOutput(console))
-	greenTitle := color.GreenString(title)
-	bar := pb.New(int64(total),
-		// Play as if the old BR style.
-		mpb.BarStyle().Lbound("<").Filler("-").Padding(".").Rbound(">").Tip("-", "/", "-", "\\", "|", "/").TipOnComplete("-"),
-		mpb.BarFillerClearOnComplete(),
-		mpb.PrependDecorators(decor.OnComplete(decor.Name(greenTitle), fmt.Sprintf("%s...", title))),
-		mpb.AppendDecorators(decor.OnAbort(decor.Any(cbOnComplete(decor.NewPercentage("%02.2f"), printFinalMessage(extraFields))), color.RedString("ABORT"))),
-	)
-
-	// If total is zero, finish right now.
-	if total == 0 {
-		bar.SetTotal(0, true)
-	}
-
-	return pbProgress{
-		bar:      bar,
-		ops:      ops,
-		progress: pb,
+		return fmt.Sprintf("%s { %s }", color.HiGreenString("DONE"), strings.Join(fields, ", "))
 	}
 }
 
@@ -307,7 +201,9 @@ func (t *Table) Print() {
 
 // ConsoleGlue is the glue between BR and some type of console,
 // which is the port for interact with the user.
+// Generally, this is a abstraction of an UNIX terminal.
 type ConsoleGlue interface {
+	// Out returns the output port of the console.
 	Out() io.Writer
 	// In returns the input of the console.
 	// Usually is should be an *os.File.
