@@ -352,6 +352,9 @@ func (idx *Index) expBackoffEstimation(sctx sessionctx.Context, coll *HistColl, 
 		if col, ok := coll.Columns[colID]; ok && !col.IsInvalid(sctx, coll.Pseudo) {
 			count, err = coll.GetRowCountByColumnRanges(sctx, colID, tmpRan)
 		} else if idxIDs, ok := coll.ColID2IdxIDs[colID]; ok && len(indexRange.LowVal) > 1 {
+			// Note the `len(indexRange.LowVal) > 1` condition here, it means we only recursively call
+			// `GetRowCountByIndexRanges()` when the input `indexRange` is a multi-column range. This
+			// check avoids infinite recursion.
 			for _, idxID := range idxIDs {
 				if idxID == idx.Histogram.ID {
 					continue
