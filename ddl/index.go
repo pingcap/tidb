@@ -1506,11 +1506,13 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 			nextKey    kv.Key
 			taskDone   bool
 		)
+		finish := injectSpan(w.reorgInfo.Job.ID, fmt.Sprintf("%s-%d", "fetch-rows", w.id))
 		if w.copReqReaders != nil {
 			idxRecords, nextKey, taskDone, err = w.fetchRowColValsFromCop(handleRange)
 		} else {
 			idxRecords, nextKey, taskDone, err = w.fetchRowColVals(txn, handleRange)
 		}
+		finish()
 		if err != nil {
 			return errors.Trace(err)
 		}

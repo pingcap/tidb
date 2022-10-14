@@ -130,7 +130,7 @@ func (c *copReqReader) run(ctx context.Context, tasks chan *reorgBackfillTask) {
 			c.currentTask = task
 			c.idxRecordChan = make(chan *indexRecord, variable.MaxDDLReorgBatchSize)
 			c.mu.Unlock()
-			finish := injectSpan(c.traceID, fmt.Sprintf("%s-%d", "fetch-rows", c.id))
+			finish := injectSpan(c.traceID, fmt.Sprintf("cop-read-%d", c.id))
 			err := kv.RunInNewTxn(ctx, c.copCtx.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
 				if c.copCtx.pushDownEncoding {
 					return c.copCtx.sendEncodedIdxRecords(ctx, c.idxRecordChan, txn, task.startKey, task.excludedEndKey())

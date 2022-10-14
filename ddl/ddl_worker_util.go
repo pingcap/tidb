@@ -137,15 +137,14 @@ func analyzeTrace(trace minitrace.Trace) string {
 				max = dur
 			}
 		}
-		avg := sum / uint64(len(spans))
 		sb.WriteString(orderedEvents[i])
 		sb.WriteString(":")
 		if len(spans) < 20 {
 			sb.WriteString(fmt.Sprintf("%f", time.Duration(sum).Seconds()))
 		} else {
-			sb.WriteString(fmt.Sprintf(`{sum: %f, min: %f, max: %f, avg: %f}`,
+			sb.WriteString(fmt.Sprintf(`{sum: %f, min: %f, max: %f, cnt: %d}`,
 				time.Duration(sum).Seconds(), time.Duration(min).Seconds(),
-				time.Duration(max).Seconds(), time.Duration(avg).Seconds()))
+				time.Duration(max).Seconds(), len(spans)))
 		}
 		if i != len(orderedEvents)-1 {
 			sb.WriteString(", ")
