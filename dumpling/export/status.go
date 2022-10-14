@@ -60,7 +60,7 @@ func (d *Dumper) GetStatus() *DumpStatus {
 	ret.FinishedBytes = ReadGauge(d.metrics.finishedSizeGauge)
 	ret.FinishedRows = ReadGauge(d.metrics.finishedRowsGauge)
 	ret.EstimateTotalRows = ReadCounter(d.metrics.estimateTotalRowsCounter)
-	ret.CurrentSpeedBPS = d.statusRecorder.getSpeed(int64(ret.FinishedBytes))
+	ret.CurrentSpeedBPS = d.statusRecorder.GetSpeed(int64(ret.FinishedBytes))
 	return ret
 }
 
@@ -76,6 +76,7 @@ func calculateTableCount(m DatabaseTables) int {
 	return cnt
 }
 
+// StatusRecorder record the finished bytes and calculate its speed.
 type StatusRecorder struct {
 	mu             sync.Mutex
 	lastFinished   int64
@@ -83,13 +84,15 @@ type StatusRecorder struct {
 	speedBPS       int64
 }
 
+// NewStatusRecorder new a StatusRecorder.
 func NewStatusRecorder() *StatusRecorder {
 	return &StatusRecorder{
 		lastUpdateTime: time.Now(),
 	}
 }
 
-func (s *StatusRecorder) getSpeed(finished int64) int64 {
+// GetSpeed calculate status speed.
+func (s *StatusRecorder) GetSpeed(finished int64) int64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
