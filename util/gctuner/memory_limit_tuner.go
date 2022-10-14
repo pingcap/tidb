@@ -126,7 +126,7 @@ func (t *memoryLimitTuner) calcMemoryLimit() int64 {
 
 func init() {
 	// In test, we should enable global_memory_limit_tuner by manual
-	if !strings.HasSuffix(os.Args[0], ".test") {
+	if !strings.HasSuffix(os.Args[0], "test") {
 		GlobalMemoryLimitTuner.start()
 	}
 }
