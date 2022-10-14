@@ -108,8 +108,8 @@ type writerGlue struct {
 	w io.Writer
 }
 
-func (w writerGlue) Write(b []byte) (int, error) {
-	return w.w.Write(b)
+func (w writerGlue) Out() io.Writer {
+	return w.w
 }
 
 func testPrintFrame(t *testing.T) {

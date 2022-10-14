@@ -210,6 +210,8 @@ type ConsoleGlue interface {
 	In() io.Reader
 }
 
+// NoOPConsoleGlue is the glue for "embedded" BR, say, BRIE via SQL.
+// This Glue simply drop all console operations.
 type NoOPConsoleGlue struct{}
 
 func (NoOPConsoleGlue) In() io.Reader {
@@ -227,6 +229,7 @@ func GetConsole(g Glue) ConsoleOperations {
 	return ConsoleOperations{ConsoleGlue: NoOPConsoleGlue{}}
 }
 
+// StdIOGlue is the console glue for CLI applications, like the BR CLI.
 type StdIOGlue struct{}
 
 func (s StdIOGlue) Out() io.Writer {
