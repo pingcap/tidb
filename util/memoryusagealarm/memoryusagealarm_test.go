@@ -31,13 +31,13 @@ func TestIfNeedDoRecord(t *testing.T) {
 	record.initMemoryUsageAlarmRecord()
 
 	// mem usage ratio < 70% will not be recorded
-	memUsed := 0.69 * float64(record.ServerMemoryLimit)
+	memUsed := 0.69 * float64(record.serverMemoryLimit)
 	needRecord, reason := record.needRecord(uint64(memUsed))
 	assert.False(t, needRecord)
 	assert.Equal(t, NoReason, reason)
 
 	// mem usage ratio > 70% will not be recorded
-	memUsed = 0.71 * float64(record.ServerMemoryLimit)
+	memUsed = 0.71 * float64(record.serverMemoryLimit)
 	needRecord, reason = record.needRecord(uint64(memUsed))
 	assert.True(t, needRecord)
 	assert.Equal(t, ExceedAlarmRatio, reason)
@@ -45,14 +45,14 @@ func TestIfNeedDoRecord(t *testing.T) {
 	record.lastRecordMemUsed = uint64(memUsed)
 
 	// check time - last record time < 60s will not be recorded
-	memUsed = 0.71 * float64(record.ServerMemoryLimit)
+	memUsed = 0.71 * float64(record.serverMemoryLimit)
 	needRecord, reason = record.needRecord(uint64(memUsed))
 	assert.False(t, needRecord)
 	assert.Equal(t, NoReason, reason)
 
 	// check time - last record time > 60s will be recorded
 	record.lastCheckTime = record.lastCheckTime.Add(-60 * time.Second)
-	memUsed = 0.71 * float64(record.ServerMemoryLimit)
+	memUsed = 0.71 * float64(record.serverMemoryLimit)
 	needRecord, reason = record.needRecord(uint64(memUsed))
 	assert.True(t, needRecord)
 	assert.Equal(t, ExceedAlarmRatio, reason)
@@ -60,13 +60,13 @@ func TestIfNeedDoRecord(t *testing.T) {
 	record.lastRecordMemUsed = uint64(memUsed)
 
 	// mem usage ratio - last mem usage ratio < 10% will not be recorded
-	memUsed = 0.80 * float64(record.ServerMemoryLimit)
+	memUsed = 0.80 * float64(record.serverMemoryLimit)
 	needRecord, reason = record.needRecord(uint64(memUsed))
 	assert.False(t, needRecord)
 	assert.Equal(t, NoReason, reason)
 
 	// mem usage ratio - last mem usage ratio > 10% will not be recorded even though check time - last record time
-	memUsed = 0.82 * float64(record.ServerMemoryLimit)
+	memUsed = 0.82 * float64(record.serverMemoryLimit)
 	needRecord, reason = record.needRecord(uint64(memUsed))
 	assert.True(t, needRecord)
 	assert.Equal(t, GrowTooFast, reason)
@@ -129,7 +129,7 @@ func TestUpdateVariables(t *testing.T) {
 	record.initMemoryUsageAlarmRecord()
 	assert.Equal(t, 0.3, record.memoryUsageAlarmRatio)
 	assert.Equal(t, int64(3), record.memoryUsageAlarmKeepRecordNum)
-	assert.Equal(t, uint64(1024), record.ServerMemoryLimit)
+	assert.Equal(t, uint64(1024), record.serverMemoryLimit)
 	variable.MemoryUsageAlarmRatio.Store(0.6)
 	variable.MemoryUsageAlarmKeepRecordNum.Store(6)
 	memory.ServerMemoryLimit.Store(2048)
@@ -137,10 +137,10 @@ func TestUpdateVariables(t *testing.T) {
 	record.updateVariable()
 	assert.Equal(t, 0.3, record.memoryUsageAlarmRatio)
 	assert.Equal(t, int64(3), record.memoryUsageAlarmKeepRecordNum)
-	assert.Equal(t, uint64(1024), record.ServerMemoryLimit)
+	assert.Equal(t, uint64(1024), record.serverMemoryLimit)
 	record.lastUpdateVariableTime = record.lastUpdateVariableTime.Add(-60 * time.Second)
 	record.updateVariable()
 	assert.Equal(t, 0.6, record.memoryUsageAlarmRatio)
 	assert.Equal(t, int64(6), record.memoryUsageAlarmKeepRecordNum)
-	assert.Equal(t, uint64(2048), record.ServerMemoryLimit)
+	assert.Equal(t, uint64(2048), record.serverMemoryLimit)
 }
