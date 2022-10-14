@@ -10,7 +10,7 @@ import (
 
 func TestGetParameters(t *testing.T) {
 	conf := defaultConfigForTest(t)
-	d := &Dumper{conf: conf}
+	d := &Dumper{conf: conf, statusRecorder: NewStatusRecorder()}
 	d.metrics = newMetrics(conf.PromFactory, nil)
 
 	mid := d.GetStatus()
