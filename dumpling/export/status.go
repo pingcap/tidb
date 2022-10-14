@@ -93,7 +93,7 @@ func (s *StatusRecorder) getSpeed(finished int64) int64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if finished == s.lastFinished {
+	if finished <= s.lastFinished {
 		// for finished bytes does not get forwarded, use old speed to avoid
 		// display zero. We may find better strategy in future.
 		return s.speedBPS
