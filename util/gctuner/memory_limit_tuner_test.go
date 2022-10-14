@@ -55,8 +55,6 @@ func TestGlobalMemoryTuner(t *testing.T) {
 	EnableGOGCTuner.Store(false)
 	defer EnableGOGCTuner.Store(gogcTuner)
 
-	GlobalMemoryLimitTuner.start()
-	defer GlobalMemoryLimitTuner.stop()
 	memory.ServerMemoryLimit.Store(1 << 30)   // 1GB
 	GlobalMemoryLimitTuner.SetPercentage(0.8) // 1GB * 80% = 800MB
 	GlobalMemoryLimitTuner.UpdateMemoryLimit()

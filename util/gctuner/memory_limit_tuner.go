@@ -16,10 +16,8 @@ package gctuner
 
 import (
 	"math"
-	"os"
 	"runtime"
 	"runtime/debug"
-	"strings"
 	"time"
 
 	"github.com/pingcap/failpoint"
@@ -83,11 +81,13 @@ func (t *memoryLimitTuner) tuning() {
 	}
 }
 
-func (t *memoryLimitTuner) start() {
-	t.finalizer = newFinalizer(t.tuning) // start tuning
+// Start starts the memory limit tuner.
+func (t *memoryLimitTuner) Start() {
+	t.finalizer = newFinalizer(t.tuning) // Start tuning
 }
 
-func (t *memoryLimitTuner) stop() {
+// Stop stops the memory limit tuner.
+func (t *memoryLimitTuner) Stop() {
 	t.finalizer.stop()
 }
 
@@ -125,8 +125,5 @@ func (t *memoryLimitTuner) calcMemoryLimit() int64 {
 }
 
 func init() {
-	// In test, we should enable global_memory_limit_tuner by manual
-	if !strings.HasSuffix(os.Args[0], "test") {
-		GlobalMemoryLimitTuner.start()
-	}
+	GlobalMemoryLimitTuner.Start()
 }
