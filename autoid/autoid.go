@@ -11,6 +11,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/autoid"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"google.golang.org/grpc"
 )
 
 var (
@@ -55,6 +56,28 @@ func New(selfAddr string) *Service {
 		autoIDMap:  make(map[autoIDKey]*autoIDValue),
 		leaderShip: l,
 		persist:    p,
+	}
+}
+
+type mockClient struct {
+	Service
+}
+
+func (m *mockClient) AllocAutoID(ctx context.Context, in *autoid.AutoIDRequest, opts ...grpc.CallOption) (*autoid.AutoIDResponse, error) {
+	return m.Service.AllocAutoID(ctx, in)
+}
+
+func (m *mockClient) Rebase(ctx context.Context, in *autoid.RebaseRequest, opts ...grpc.CallOption) (*autoid.RebaseResponse, error) {
+	return m.Service.Rebase(ctx, in)
+}
+
+func MockForTest() *mockClient {
+	return &mockClient{
+		Service{
+			autoIDMap:  make(map[autoIDKey]*autoIDValue),
+			leaderShip: &leaderShip{mock: true},
+			persist: &mockPersist{data : make(map[autoIDKey]uint64)},
+		},
 	}
 }
 

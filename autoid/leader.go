@@ -20,9 +20,14 @@ const (
 type leaderShip struct {
 	cli      *clientv3.Client
 	isLeader atomic.Bool
+
+	mock bool // For test
 }
 
 func (ls *leaderShip) IsLeader() bool {
+	if ls.mock {
+		return true
+	}
 	return ls.isLeader.Load()
 }
 
