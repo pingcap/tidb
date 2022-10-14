@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/distsql"
@@ -37,10 +36,9 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/generic"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
-	"go.uber.org/zap"
 )
 
 type copContext struct {
@@ -61,118 +59,66 @@ type copContext struct {
 }
 
 type copReqReaders struct {
-	tasksCh chan *reorgBackfillTask
-	readers []*copReqReader
-	results map[string]struct {
-		ch  chan *indexRecord
-		err error
-	}
-	mu sync.Mutex
-}
-
-func (p *copReqReaders) getResult(task *reorgBackfillTask) (chan *indexRecord, error) {
-	for {
-		for _, r := range p.readers {
-			r.mu.Lock()
-			if r.currentTask != nil && string(r.currentTask.endKey) == string(task.endKey) {
-				r.mu.Unlock()
-				return r.idxRecordChan, r.err
-			}
-			r.mu.Unlock()
-		}
-		p.mu.Lock()
-		if res, ok := p.results[string(task.endKey)]; ok {
-			p.mu.Unlock()
-			return res.ch, res.err
-		}
-		p.mu.Unlock()
-		logutil.BgLogger().Info("[ddl] coprocessor result not found, wait a while",
-			zap.String("task", task.String()))
-		time.Sleep(time.Millisecond * 300)
-	}
-}
-
-func (p *copReqReaders) appendResult(task *reorgBackfillTask, ch chan *indexRecord, err error) {
-	p.mu.Lock()
-	p.results[string(task.endKey)] = struct {
-		ch  chan *indexRecord
-		err error
-	}{ch, err}
-	p.mu.Unlock()
-}
-
-func (p *copReqReaders) deleteResult(task *reorgBackfillTask) {
-	p.mu.Lock()
-	delete(p.results, string(task.endKey))
-	p.mu.Unlock()
+	tasksCh   chan *reorgBackfillTask
+	resultsCh chan *indexRecord
+	results   generic.SyncMap[string, error]
 }
 
 type copReqReader struct {
-	id            int
-	traceID       int64
-	copCtx        *copContext
+	id       int
+	traceID  int64
+	copCtx   *copContext
+	srcChunk *chunk.Chunk
+
 	idxRecordChan chan *indexRecord
-	srcChunk      *chunk.Chunk
-	err           error
-	currentTask   *reorgBackfillTask
-	mu            sync.Mutex
-	onReadDone    func(task *reorgBackfillTask, ch chan *indexRecord, err error)
+	results       *generic.SyncMap[string, error]
 }
 
-func (c *copReqReader) run(ctx context.Context, tasks chan *reorgBackfillTask) {
+func (c *copReqReader) run(ctx context.Context, wg *sync.WaitGroup, tasks chan *reorgBackfillTask) {
 	for {
 		select {
 		case task, ok := <-tasks:
 			if !ok {
+				wg.Done()
 				return
 			}
-			c.mu.Lock()
-			c.currentTask = task
-			c.idxRecordChan = make(chan *indexRecord, variable.MaxDDLReorgBatchSize)
-			c.mu.Unlock()
 			finish := injectSpan(c.traceID, fmt.Sprintf("cop-read-%d", c.id))
 			err := kv.RunInNewTxn(ctx, c.copCtx.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
 				if c.copCtx.pushDownEncoding {
-					return c.copCtx.sendEncodedIdxRecords(ctx, c.idxRecordChan, txn, task.startKey, task.excludedEndKey())
+					return c.copCtx.sendEncodedIdxRecords(ctx, c.idxRecordChan, txn.StartTS(), task.startKey, task.excludedEndKey())
 				} else {
-					return c.copCtx.sendIdxRecords(ctx, c.idxRecordChan, c.srcChunk, txn, task.startKey, task.excludedEndKey())
+					return c.copCtx.sendIdxRecords(ctx, c.idxRecordChan, c.srcChunk, txn.StartTS(), task.startKey, task.excludedEndKey())
 				}
 			})
 			finish()
-			c.mu.Lock()
-			c.err = err
-			c.mu.Unlock()
-			close(c.idxRecordChan)
-			c.onReadDone(c.currentTask, c.idxRecordChan, err)
+			c.results.Store(string(task.endKey), err)
 		}
 	}
 }
 
 func newCopReqReaders(ctx context.Context, copCtx *copContext, jobID int64, readerCnt int, tasks chan *reorgBackfillTask) *copReqReaders {
 	p := &copReqReaders{
-		tasksCh: tasks,
-		readers: make([]*copReqReader, 0, readerCnt),
-		results: make(map[string]struct {
-			ch  chan *indexRecord
-			err error
-		}),
-		mu: sync.Mutex{},
+		tasksCh:   tasks,
+		resultsCh: make(chan *indexRecord, int(variable.MaxDDLReorgBatchSize)*readerCnt),
+		results:   generic.NewSyncMap[string, error](readerCnt),
 	}
+	wg := &sync.WaitGroup{}
 	for i := 0; i < readerCnt; i++ {
+		wg.Add(1)
 		r := &copReqReader{
 			id:            i,
 			traceID:       jobID,
 			copCtx:        copCtx,
-			idxRecordChan: make(chan *indexRecord, variable.MaxDDLReorgBatchSize),
+			idxRecordChan: p.resultsCh,
 			srcChunk:      chunk.NewChunkWithCapacity(copCtx.fieldTps, 1024),
-			err:           nil,
-			currentTask:   nil,
-			mu:            sync.Mutex{},
-			onReadDone:    p.appendResult,
+			results:       &p.results,
 		}
-		p.readers = append(p.readers, r)
-		go r.run(ctx, tasks)
+		go r.run(ctx, wg, tasks)
 	}
+	go func() {
+		wg.Wait()
+		close(p.resultsCh)
+	}()
 	return p
 }
 
@@ -202,7 +148,7 @@ func newCopContext(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, sessCtx s
 	}
 }
 
-func (c *copContext) buildTableScan(ctx context.Context, txn kv.Transaction, start, end kv.Key) (distsql.SelectResult, error) {
+func (c *copContext) buildTableScan(ctx context.Context, startTS uint64, start, end kv.Key) (distsql.SelectResult, error) {
 	dagPB, err := buildDAGPB(c.sessCtx, c.tblInfo, c.colInfos)
 	if err != nil {
 		return nil, err
@@ -211,7 +157,7 @@ func (c *copContext) buildTableScan(ctx context.Context, txn kv.Transaction, sta
 	var builder distsql.RequestBuilder
 	kvReq, err := builder.
 		SetDAGRequest(dagPB).
-		SetStartTS(txn.StartTS()).
+		SetStartTS(startTS).
 		SetKeyRanges([]kv.KeyRange{{StartKey: start, EndKey: end}}).
 		SetKeepOrder(true).
 		SetFromSessionVars(c.sessCtx.GetSessionVars()).
@@ -268,7 +214,7 @@ func constructTableScanPB(sCtx sessionctx.Context, tblInfo *model.TableInfo, col
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tblScan}, err
 }
 
-func (c *copContext) buildScanIndexKV(ctx context.Context, txn kv.Transaction, start, end kv.Key) (kv.Response, error) {
+func (c *copContext) buildScanIndexKV(ctx context.Context, startTS uint64, start, end kv.Key) (kv.Response, error) {
 	ddlPB, err := buildDDLPB(c.tblInfo, c.idxInfo, c.colInfos)
 	if err != nil {
 		return nil, err
@@ -279,7 +225,7 @@ func (c *copContext) buildScanIndexKV(ctx context.Context, txn kv.Transaction, s
 	var builder distsql.RequestBuilder
 	kvReq, err := builder.
 		SetDDLRequest(ddlPB).
-		SetStartTS(txn.StartTS()).
+		SetStartTS(startTS).
 		SetKeyRanges([]kv.KeyRange{{StartKey: start, EndKey: end}}).
 		SetKeepOrder(true).
 		SetFromSessionVars(c.sessCtx.GetSessionVars()).
@@ -302,9 +248,9 @@ func (c *copContext) buildScanIndexKV(ctx context.Context, txn kv.Transaction, s
 }
 
 func (c *copContext) sendIdxRecords(ctx context.Context, ch chan *indexRecord, srcChk *chunk.Chunk,
-	txn kv.Transaction, start, end kv.Key) error {
+	startTS uint64, start, end kv.Key) error {
 	sctx := c.sessCtx.GetSessionVars().StmtCtx
-	srcResult, err := c.buildTableScan(ctx, txn, start, end)
+	srcResult, err := c.buildTableScan(ctx, startTS, start, end)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -329,8 +275,8 @@ func (c *copContext) sendIdxRecords(ctx context.Context, ch chan *indexRecord, s
 	}
 }
 
-func (c *copContext) sendEncodedIdxRecords(ctx context.Context, ch chan *indexRecord, txn kv.Transaction, start, end kv.Key) error {
-	resp, err := c.buildScanIndexKV(ctx, txn, start, end)
+func (c *copContext) sendEncodedIdxRecords(ctx context.Context, ch chan *indexRecord, startTS uint64, start, end kv.Key) error {
+	resp, err := c.buildScanIndexKV(ctx, startTS, start, end)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -353,21 +299,23 @@ func (c *copContext) sendEncodedIdxRecords(ctx context.Context, ch chan *indexRe
 }
 
 func (w *addIndexWorker) fetchRowColValsFromCop(handleRange reorgBackfillTask) ([]*indexRecord, kv.Key, bool, error) {
-	ch, err := w.copReqReaders.getResult(&handleRange)
 	w.idxRecords = w.idxRecords[:0]
 	taskDone := false
+	var err error
+	curRangeKey := string(handleRange.endKey)
 	for {
 		select {
-		case record, more := <-ch:
+		case record, more := <-w.copReqReaders.resultsCh:
 			if !more {
 				taskDone = true
 				break
 			}
 			w.idxRecords = append(w.idxRecords, record)
+		default:
+			err, taskDone = w.copReqReaders.results.Load(curRangeKey)
 		}
 		if taskDone {
-			_, err = w.copReqReaders.getResult(&handleRange)
-			w.copReqReaders.deleteResult(&handleRange)
+			w.copReqReaders.results.Delete(curRangeKey)
 			break
 		}
 		if len(w.idxRecords) >= w.batchCnt {
