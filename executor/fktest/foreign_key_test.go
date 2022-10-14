@@ -1033,7 +1033,6 @@ func TestForeignKeyOnDeleteCascade(t *testing.T) {
 		tk.MustQuery("select * from t1").Check(testkit.Rows())
 		tk.MustQuery("select * from t2").Check(testkit.Rows())
 	}
-
 }
 
 func TestForeignKeyOnDeleteCascade2(t *testing.T) {
@@ -1081,4 +1080,54 @@ func TestForeignKeyOnDeleteCascade2(t *testing.T) {
 	tk.MustExec("delete from t1 where id=15;")
 	tk.MustExec("delete from t1 where id=0;")
 	tk.MustQuery("select * from t1").Check(testkit.Rows())
+	tk.MustExec("insert into t1 values(0,0)")
+	tk.MustExec("delete from t1 where id=0;")
+	tk.MustQuery("select * from t1").Check(testkit.Rows())
+
+	// Test for cascade delete failed.
+	tk.MustExec("drop table t1")
+	tk.MustExec("create table t1 (id int key)")
+	tk.MustExec("create table t2 (id int key, foreign key (id) references t1 (id) on delete cascade)")
+	tk.MustExec("create table t3 (id int key, foreign key (id) references t2(id))")
+	tk.MustExec("insert into t1 values (1)")
+	tk.MustExec("insert into t2 values (1)")
+	tk.MustExec("insert into t3 values (1)")
+	// test in autocommit transaction
+	tk.MustGetDBError("delete from t1 where id = 1", plannercore.ErrRowIsReferenced2)
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from t2").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from t3").Check(testkit.Rows("1"))
+	// Test in transaction and commit transaction.
+	tk.MustExec("begin")
+	tk.MustExec("insert into t1 values (2),(3),(4)")
+	tk.MustExec("insert into t2 values (2),(3)")
+	tk.MustExec("insert into t3 values (3)")
+	tk.MustGetDBError("delete from t1 where id = 1", plannercore.ErrRowIsReferenced2)
+	tk.MustExec("delete from t1 where id = 2")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1", "3", "4"))
+	tk.MustQuery("select * from t2").Check(testkit.Rows("1", "3"))
+	tk.MustQuery("select * from t3").Check(testkit.Rows("1", "3"))
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1", "3", "4"))
+	tk.MustQuery("select * from t2").Check(testkit.Rows("1", "3"))
+	tk.MustQuery("select * from t3").Check(testkit.Rows("1", "3"))
+	// Test in transaction and rollback transaction.
+	tk.MustExec("begin")
+	tk.MustExec("insert into t1 values (5), (6)")
+	tk.MustExec("insert into t2 values (4), (5), (6)")
+	tk.MustExec("insert into t3 values (5)")
+	tk.MustGetDBError("delete from t1 where id = 1", plannercore.ErrRowIsReferenced2)
+	tk.MustExec("delete from t1 where id = 4")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1", "3", "5", "6"))
+	tk.MustQuery("select * from t2").Check(testkit.Rows("1", "3", "5", "6"))
+	tk.MustQuery("select * from t3").Check(testkit.Rows("1", "3", "5"))
+	tk.MustExec("rollback")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1", "3", "4"))
+	tk.MustQuery("select * from t2").Check(testkit.Rows("1", "3"))
+	tk.MustQuery("select * from t3").Check(testkit.Rows("1", "3"))
+	tk.MustExec("delete from t3 where id = 1")
+	tk.MustExec("delete from t1 where id = 1")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("3", "4"))
+	tk.MustQuery("select * from t2").Check(testkit.Rows("3"))
+	tk.MustQuery("select * from t3").Check(testkit.Rows("3"))
 }
