@@ -382,7 +382,7 @@ func smallTaskConcurrency(tasks []*copTask) (int, int) {
 	}
 	// Calculate the extra concurrency for small tasks
 	// extra concurrency = tasks / (1 + sigma * sqrt(log(tasks ^ 2)))
-	extraConc := float64(res) / (1 + smallTaskSigma*math.Sqrt(math.Log(float64(res*res))))
+	extraConc := float64(res) / (1 + smallTaskSigma*math.Sqrt(2*math.Log(float64(res))))
 	return res, int(extraConc)
 }
 
