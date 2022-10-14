@@ -1,4 +1,4 @@
-module github.com/tiancaiamao/autoid
+module github.com/pingcap/tidb/autoid
 
 go 1.19
 
