@@ -796,11 +796,10 @@ func TestPessimisticRetryTime(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/getPessimisticLockErrorStartRetryTime"))
 	}()
 
-	/*
-		queries := []string{
-			"select * from t1 where id=1 for update",
-			"update t1 set v=v+1 where id=1",
-		} */
+	queries := []string{
+		"select * from t1 where id=1 for update",
+		"update t1 set v=v+1 where id=1",
+	}
 
 	testfork.RunTest(t, func(t *testfork.T) {
 		tk := testkit.NewTestKit(t, store)
@@ -821,8 +820,7 @@ func TestPessimisticRetryTime(t *testing.T) {
 			sessiontxn.BreakPointOnStmtRetryAfterLockError,
 		)
 
-		// query := testfork.Pick(t, queries)
-		query := "select * from t1 where id=1 for update"
+		query := testfork.Pick(t, queries)
 		switch {
 		case strings.HasPrefix(query, "select"):
 			tk2.SteppedMustQuery(query)
@@ -848,20 +846,10 @@ func TestPessimisticRetryTime(t *testing.T) {
 		tk2.Continue().ExpectStopOnBreakPoint(sessiontxn.BreakPointOnStmtRetryAfterLockError)
 		tk2.Continue().ExpectIdle()
 
-		realRetryStartTime, ok := session2.Value(sessiontxn.PessmiticLockErrRetryStartTime).(time.Time)
-		require.Equal(t, true, ok)
+		realRetryStartTime, retryCount := sessiontxn.GetPessmisticLockErrRetryStartTime(session2)
 		tk2.MustExec("commit")
-		fmt.Println("firstRetryStartTime:", firstRetryStartTime, "realRetryStartTime:", realRetryStartTime)
-
-		/*
-			switch {
-			case isSelect:
-				tk2.GetQueryResult().Check(testkit.Rows("1 12"))
-			case isUpdate:
-				tk2.MustExec("commit")
-				tk2.MustQuery("select * from t1").Check(testkit.Rows("1 13"))
-			}
-		*/
+		require.Equal(t, 2, retryCount)
+		require.True(t, firstRetryStartTime.After(realRetryStartTime))
 	})
 }
 
