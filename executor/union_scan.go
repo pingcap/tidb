@@ -129,7 +129,8 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	us.snapshotChunkBuffer = newFirstChunk(us)
+	//us.snapshotChunkBuffer = newFirstChunk(us)
+	us.snapshotChunkBuffer = newCacheChunk(us.ctx.GetSessionVars(), us)
 	return nil
 }
 

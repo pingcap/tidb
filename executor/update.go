@@ -247,7 +247,8 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 	fields := retTypes(e.children[0])
 	colsInfo := plannercore.GetUpdateColumnsInfo(e.tblID2table, e.tblColPosInfos, len(fields))
 	globalRowIdx := 0
-	chk := newFirstChunk(e.children[0])
+	//chk := newFirstChunk(e.children[0])
+	chk := newCacheChunk(e.ctx.GetSessionVars(), e.children[0])
 	if !e.allAssignmentsAreConstant {
 		e.evalBuffer = chunk.MutRowFromTypes(fields)
 	}

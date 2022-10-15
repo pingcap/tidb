@@ -714,7 +714,8 @@ func (a *ExecStmt) runPessimisticSelectForUpdate(ctx context.Context, e Executor
 	}()
 	var rows []chunk.Row
 	var err error
-	req := newFirstChunk(e)
+	//req := newFirstChunk(e)
+	req := newCacheChunk(e.base().ctx.GetSessionVars(), e)
 	for {
 		err = a.next(ctx, e, req)
 		if err != nil {
@@ -761,7 +762,8 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e Executor) (sqlex
 		}
 	}
 
-	err = a.next(ctx, e, newFirstChunk(e))
+	//err = a.next(ctx, e, newFirstChunk(e))
+	err = a.next(ctx, e, newCacheChunk(sctx.GetSessionVars(), e))
 	if err != nil {
 		return nil, err
 	}

@@ -414,10 +414,11 @@ func (e *IndexNestedLoopHashJoin) newInnerWorker(taskCh chan *indexHashJoinTask,
 	}
 	iw := &indexHashJoinInnerWorker{
 		innerWorker: innerWorker{
-			innerCtx:      e.innerCtx,
-			outerCtx:      e.outerCtx,
-			ctx:           e.ctx,
-			executorChk:   chunk.NewChunkWithCapacity(e.innerCtx.rowTypes, e.maxChunkSize),
+			innerCtx: e.innerCtx,
+			outerCtx: e.outerCtx,
+			ctx:      e.ctx,
+			//executorChk:   chunk.NewChunkWithCapacity(e.innerCtx.rowTypes, e.maxChunkSize),
+			executorChk:   e.ctx.GetSessionVars().GetNewChunk(e.innerCtx.rowTypes, e.maxChunkSize),
 			indexRanges:   copiedRanges,
 			keyOff2IdxOff: e.keyOff2IdxOff,
 			stats:         innerStats,

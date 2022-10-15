@@ -1272,6 +1272,47 @@ type SessionVars struct {
 	LastPlanReplayerToken string
 
 	HookContext
+	// chunkPool Several chunks and columns are cached
+	chunkPool struct {
+		lock  sync.Mutex
+		alloc chunk.Allocator
+	}
+}
+
+// GetNewChunk Attempt to request memory from the chunk pool
+// thread safety
+func (s *SessionVars) GetNewChunk(fields []*types.FieldType, capacity int) *chunk.Chunk {
+	//Chunk memory pool is not set
+	if s.chunkPool.alloc == nil {
+		return chunk.NewChunkWithCapacity(fields, capacity)
+	}
+
+	s.chunkPool.lock.Lock()
+	defer s.chunkPool.lock.Unlock()
+	chk := chunk.NewChunkWithAllocCapacity(fields, capacity, s.chunkPool.alloc)
+	return chk
+}
+
+// GetNewChunkWithCapacity Attempt to request memory from the chunk pool
+// thread safety
+func (s *SessionVars) GetNewChunkWithCapacity(fields []*types.FieldType, capacity int, maxCachesize int) *chunk.Chunk {
+	if s.chunkPool.alloc == nil {
+		return chunk.New(fields, capacity, maxCachesize)
+	}
+	s.chunkPool.lock.Lock()
+	defer s.chunkPool.lock.Unlock()
+	chk := s.chunkPool.alloc.Alloc(fields, capacity, maxCachesize)
+	return chk
+}
+
+func (s *SessionVars) SetAlloc(alloc chunk.Allocator) {
+	if mysql.HasCursorExistsFlag(s.Status) {
+		alloc = nil
+	}
+	s.chunkPool = struct {
+		lock  sync.Mutex
+		alloc chunk.Allocator
+	}{alloc: alloc}
 }
 
 // GetPreparedStmtByName returns the prepared statement specified by stmtName.

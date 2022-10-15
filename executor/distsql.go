@@ -866,7 +866,8 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 		}
 	}()
 	retTps := w.idxLookup.getRetTpsByHandle()
-	chk := chunk.NewChunkWithCapacity(retTps, w.idxLookup.maxChunkSize)
+	//	chk := chunk.NewChunkWithCapacity(retTps, w.idxLookup.maxChunkSize)
+	chk := w.idxLookup.ctx.GetSessionVars().GetNewChunk(retTps, w.idxLookup.maxChunkSize)
 	idxID := w.idxLookup.getIndexPlanRootID()
 	if w.idxLookup.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
 		if idxID != w.idxLookup.id && w.idxLookup.stats != nil {
@@ -960,7 +961,8 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 		}
 		if w.checkIndexValue != nil {
 			if retChk == nil {
-				retChk = chunk.NewChunkWithCapacity(w.idxColTps, w.batchSize)
+				//retChk = chunk.NewChunkWithCapacity(w.idxColTps, w.batchSize)
+				retChk = w.idxLookup.ctx.GetSessionVars().GetNewChunk(w.idxColTps, w.batchSize)
 			}
 			retChk.Append(chk, 0, chk.NumRows())
 		}
@@ -1161,7 +1163,8 @@ func (e *IndexLookUpRunTimeStats) Tp() int {
 }
 
 func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, tableReader Executor) error {
-	chk := newFirstChunk(tableReader)
+	//chk := newFirstChunk(tableReader)
+	chk := newCacheChunk(w.idxLookup.ctx.GetSessionVars(), tableReader)
 	tblInfo := w.idxLookup.table.Meta()
 	vals := make([]types.Datum, 0, len(w.idxTblCols))
 
@@ -1317,7 +1320,8 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 	handleCnt := len(task.handles)
 	task.rows = make([]chunk.Row, 0, handleCnt)
 	for {
-		chk := newFirstChunk(tableReader)
+		//chk := newFirstChunk(tableReader)
+		chk := newCacheChunk(w.idxLookup.ctx.GetSessionVars(), tableReader)
 		err = Next(ctx, tableReader, chk)
 		if err != nil {
 			logutil.Logger(ctx).Error("table reader fetch next chunk failed", zap.Error(err))

@@ -1535,7 +1535,7 @@ func (b *executorBuilder) buildHashAgg(v *plannercore.PhysicalHashAgg) Executor 
 		e.defaultVal = nil
 	} else {
 		if v.IsFinalAgg() {
-			e.defaultVal = chunk.NewChunkWithCapacity(retTypes(e), 1)
+			e.defaultVal = e.ctx.GetSessionVars().GetNewChunk(retTypes(e), 0)
 		}
 	}
 	for _, aggDesc := range v.AggFuncs {
@@ -1598,7 +1598,7 @@ func (b *executorBuilder) buildStreamAgg(v *plannercore.PhysicalStreamAgg) Execu
 	} else {
 		// Only do this for final agg, see issue #35295, #30923
 		if v.IsFinalAgg() {
-			e.defaultVal = chunk.NewChunkWithCapacity(retTypes(e), 1)
+			e.defaultVal = e.ctx.GetSessionVars().GetNewChunk(retTypes(e), 0)
 		}
 	}
 	for i, aggDesc := range v.AggFuncs {

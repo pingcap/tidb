@@ -35,6 +35,7 @@ func NewAllocator() *allocator {
 }
 
 var _ Allocator = &allocator{}
+var MaxCachedLen = 16 * 1024
 
 // allocator try to reuse objects.
 // It uses `poolColumnAllocator` to alloc chunk column objects.
@@ -71,17 +72,18 @@ func (a *allocator) Alloc(fields []*types.FieldType, capacity, maxChunkSize int)
 }
 
 const (
-	maxFreeChunks         = 64
-	maxFreeColumnsPerType = 256
+	maxFreeChunks         = 128
+	maxFreeColumnsPerType = 1024
 )
 
 // Reset implements the Allocator interface.
 func (a *allocator) Reset() {
-	a.free = a.free[:0]
+	//a.free = a.free[:0]
 	for i, chk := range a.allocated {
 		a.allocated[i] = nil
 		// Decouple chunk into chunk column objects and put them back to the column allocator for reuse.
 		for _, col := range chk.columns {
+			col.reset()
 			a.columnAlloc.put(col)
 		}
 		// Reset the chunk and put it to the free list for reuse.
@@ -105,7 +107,9 @@ func (alloc *poolColumnAllocator) NewColumn(ft *types.FieldType, count int) *Col
 	typeSize := getFixedLen(ft)
 	l := alloc.pool[typeSize]
 	if l != nil && !l.empty() {
-		col := l.pop()
+		//col := l.pop()
+		col := alloc.pool[typeSize][len(l)-1]
+		alloc.pool[typeSize] = alloc.pool[typeSize][:len(alloc.pool[typeSize])-1]
 		return col
 	}
 	return newColumn(typeSize, count)
@@ -120,39 +124,53 @@ func (alloc *poolColumnAllocator) put(col *Column) {
 		return
 	}
 	typeSize := col.typeSize()
-	if typeSize <= 0 {
+	if typeSize <= 0 && typeSize != varElemLen {
 		return
 	}
 
 	l := alloc.pool[typeSize]
 	if l == nil {
-		l = make(map[*Column]struct{}, 8)
+		//l = make(map[*Column]struct{}, 8)
+		l = make([]*Column, 0, maxFreeColumnsPerType)
 		alloc.pool[typeSize] = l
 	}
-	l.push(col)
+	//l.push(col)
+	alloc.push(col, typeSize)
 }
 
 // freeList is defined as a map, rather than a list, because when recycling chunk
 // columns, there could be duplicated one: some of the chunk columns are just the
 // reference to the others.
-type freeList map[*Column]struct{}
+// type freeList map[*Column]struct{}
+type freeList []*Column
 
 func (l freeList) empty() bool {
 	return len(l) == 0
 }
 
-func (l freeList) pop() *Column {
-	for k := range l {
-		delete(l, k)
-		return k
-	}
-	return nil
-}
+// func (l freeList) pop() *Column {
+// 	for k := range l {
+// 		delete(l, k)
+// 		return k
+// 	}
+// 	return nil
+// }
 
-func (l freeList) push(c *Column) {
-	if len(l) >= maxFreeColumnsPerType {
-		// Don't cache too much to save memory.
+// func (l freeList) push(c *Column) {
+// 	if len(l) >= maxFreeColumnsPerType {
+// 		// Don't cache too much to save memory.
+// 		return
+// 	}
+// 	l[c] = struct{}{}
+// }
+
+func (alloc *poolColumnAllocator) push(col *Column, typeSize int) {
+	if len(alloc.pool[typeSize]) >= maxFreeColumnsPerType {
 		return
 	}
-	l[c] = struct{}{}
+	if (typeSize == varElemLen) && cap(col.data) > MaxCachedLen {
+		return
+	}
+	alloc.pool[typeSize] = append(alloc.pool[typeSize], col)
+
 }

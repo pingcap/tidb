@@ -234,6 +234,11 @@ func newFirstChunk(e Executor) *chunk.Chunk {
 	return chunk.New(base.retFieldTypes, base.initCap, base.maxChunkSize)
 }
 
+func newCacheChunk(s *variable.SessionVars, e Executor) *chunk.Chunk {
+	base := e.base()
+	return s.GetNewChunkWithCapacity(base.retFieldTypes, base.initCap, base.maxChunkSize)
+}
+
 // newList creates a new List to buffer current executor's result.
 func newList(e Executor) *chunk.List {
 	base := e.base()
@@ -1382,7 +1387,8 @@ func (e *LimitExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
-	e.childResult = newFirstChunk(e.children[0])
+	//e.childResult = newFirstChunk(e.children[0])
+	e.childResult = newCacheChunk(e.ctx.GetSessionVars(), e.children[0])
 	e.cursor = 0
 	e.meetFirstBatch = e.begin == 0
 	return nil
@@ -1515,7 +1521,8 @@ func (e *SelectionExec) Open(ctx context.Context) error {
 func (e *SelectionExec) open(ctx context.Context) error {
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
-	e.childResult = newFirstChunk(e.children[0])
+	//e.childResult = newFirstChunk(e.children[0])
+	e.childResult = newCacheChunk(e.ctx.GetSessionVars(), e.children[0])
 	e.memTracker.Consume(e.childResult.MemoryUsage())
 	e.batched = expression.Vectorizable(e.filters)
 	if e.batched {
@@ -1778,7 +1785,8 @@ func (e *UnionExec) initialize(ctx context.Context) {
 		e.concurrency = len(e.children)
 	}
 	for i := 0; i < e.concurrency; i++ {
-		e.results = append(e.results, newFirstChunk(e.children[0]))
+		//e.results = append(e.results, newFirstChunk(e.children[0]))
+		e.results = append(e.results, newCacheChunk(e.ctx.GetSessionVars(), e.children[0]))
 	}
 	e.resultPool = make(chan *unionWorkerResult, e.concurrency)
 	e.resourcePools = make([]chan *chunk.Chunk, e.concurrency)
@@ -2161,6 +2169,10 @@ func ResetUpdateStmtCtx(sc *stmtctx.StatementContext, stmt *ast.UpdateStmt, vars
 // expression using rows from a chunk, and then fill this value into the chunk
 func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnIndex []int,
 	schema *expression.Schema, columns []*model.ColumnInfo, sctx sessionctx.Context, req *chunk.Chunk) error {
+	if len(virtualColumnIndex) == 0 {
+		return nil
+	}
+
 	virCols := chunk.NewChunkWithCapacity(virtualRetTypes, req.Capacity())
 	iter := chunk.NewIterator4Chunk(req)
 	for i, idx := range virtualColumnIndex {

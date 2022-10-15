@@ -60,6 +60,11 @@ func NewChunkWithCapacity(fields []*types.FieldType, capacity int) *Chunk {
 	return New(fields, capacity, capacity)
 }
 
+// NewChunkWithAllocCapacity creates a new chunk with field types and capacity from Allocator
+func NewChunkWithAllocCapacity(fields []*types.FieldType, capacity int, alloc Allocator) *Chunk {
+	return alloc.Alloc(fields, capacity, capacity)
+}
+
 // New creates a new chunk.
 //
 //	cap: the limit for the max number of rows.

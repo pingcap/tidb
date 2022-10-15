@@ -1272,7 +1272,8 @@ func (e *StreamAggExec) Open(ctx context.Context) error {
 	// If panic in Open, the children executor should be closed because they are open.
 	defer closeBaseExecutor(&e.baseExecutor)
 
-	e.childResult = newFirstChunk(e.children[0])
+	//e.childResult = newFirstChunk(e.children[0])
+	e.childResult = newCacheChunk(e.ctx.GetSessionVars(), e.children[0])
 	e.executed = false
 	e.isChildReturnEmpty = true
 	e.inputIter = chunk.NewIterator4Chunk(e.childResult)

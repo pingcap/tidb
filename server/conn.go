@@ -1100,9 +1100,11 @@ func (cc *clientConn) Run(ctx context.Context) {
 			return
 		}
 
+		cc.ctx.GetSessionVars().SetAlloc(cc.chunkAlloc)
 		startTime := time.Now()
 		err = cc.dispatch(ctx, data)
 		cc.chunkAlloc.Reset()
+		cc.ctx.GetSessionVars().SetAlloc(nil)
 		if err != nil {
 			cc.audit(plugin.Error) // tell the plugin API there was a dispatch error
 			if terror.ErrorEqual(err, io.EOF) {
@@ -2231,6 +2233,7 @@ func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo) error {
 func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool, serverStatus uint16) (bool, error) {
 	data := cc.alloc.AllocWithLen(4, 1024)
 	req := rs.NewChunk(cc.chunkAlloc)
+	//cc.ctx.GetSessionVars().SetAlloc(cc.chunkAlloc)
 	gotColumnInfo := false
 	firstNext := true
 	validNextCount := 0
@@ -2332,6 +2335,7 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 // fetchSize, the desired number of rows to be fetched each time when client uses cursor.
 func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet, serverStatus uint16, fetchSize int) error {
 	fetchedRows := rs.GetFetchedRows()
+	//cc.ctx.GetSessionVars().SetAlloc(nil)
 	// if fetchedRows is not enough, getting data from recordSet.
 	// NOTE: chunk should not be allocated from the allocator
 	// the allocator will reset every statement

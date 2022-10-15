@@ -311,7 +311,7 @@ func (r *selectResult) readFromDefault(ctx context.Context, chk *chunk.Chunk) er
 func (r *selectResult) readFromChunk(ctx context.Context, chk *chunk.Chunk) error {
 	if r.respChunkDecoder == nil {
 		r.respChunkDecoder = chunk.NewDecoder(
-			chunk.NewChunkWithCapacity(r.fieldTypes, 0),
+			r.ctx.GetSessionVars().GetNewChunk(r.fieldTypes, 0),
 			r.fieldTypes,
 		)
 	}

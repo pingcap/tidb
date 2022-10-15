@@ -109,7 +109,8 @@ func (e *ProjectionExec) open(ctx context.Context) error {
 	}
 
 	if e.isUnparallelExec() {
-		e.childResult = newFirstChunk(e.children[0])
+		//e.childResult = newFirstChunk(e.children[0])
+		e.childResult = newCacheChunk(e.ctx.GetSessionVars(), e.children[0])
 		e.memTracker.Consume(e.childResult.MemoryUsage())
 	}
 
