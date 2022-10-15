@@ -325,7 +325,6 @@ func (e *InsertExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return err
 	}
 	return nil
-
 }
 
 // Close implements the Executor Close interface.
