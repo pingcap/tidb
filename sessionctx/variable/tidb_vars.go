@@ -749,6 +749,8 @@ const (
 	// ranges would exceed the limit, it chooses less accurate ranges such as full range. 0 indicates that there is no memory
 	// limit for ranges.
 	TiDBOptRangeMaxSize = "tidb_opt_range_max_size"
+
+	TiDBEnableReusechunk = "tidb_enable_reuse_chunk"
 )
 
 // TiDB vars that have only global scope
@@ -1059,6 +1061,7 @@ const (
 	DefTiDBServerMemoryLimitSessMinSize             = 128 << 20
 	DefTiDBServerMemoryLimitGCTrigger               = 0.7
 	DefTiDBEnableGOGCTuner                          = true
+	DefTiDBEnableReusechunk                         = true
 )
 
 // Process global variables.

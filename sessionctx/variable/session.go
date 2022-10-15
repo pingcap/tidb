@@ -1272,6 +1272,53 @@ type SessionVars struct {
 	LastPlanReplayerToken string
 
 	HookContext
+
+	EnableReuseCheck bool
+	// ChunkPool Several chunks and columns are cached
+	ChunkPool struct {
+		Lock  sync.Mutex
+		Alloc chunk.Allocator
+	}
+}
+
+// GetNewChunk Attempt to request memory from the chunk pool
+// thread safety
+func (s *SessionVars) GetNewChunk(fields []*types.FieldType, capacity int) *chunk.Chunk {
+	//Chunk memory pool is not set
+	if s.ChunkPool.Alloc == nil {
+		return chunk.NewChunkWithCapacity(fields, capacity)
+	}
+
+	s.ChunkPool.Lock.Lock()
+	defer s.ChunkPool.Lock.Unlock()
+	chk := chunk.NewChunkWithAllocCapacity(fields, capacity, s.ChunkPool.Alloc)
+	return chk
+}
+
+// GetNewChunkWithCapacity Attempt to request memory from the chunk pool
+// thread safety
+func (s *SessionVars) GetNewChunkWithCapacity(fields []*types.FieldType, capacity int, maxCachesize int) *chunk.Chunk {
+	if s.ChunkPool.Alloc == nil {
+		return chunk.New(fields, capacity, maxCachesize)
+	}
+	s.ChunkPool.Lock.Lock()
+	defer s.ChunkPool.Lock.Unlock()
+	chk := s.ChunkPool.Alloc.Alloc(fields, capacity, maxCachesize)
+	return chk
+}
+
+func (s *SessionVars) SetAlloc(alloc chunk.Allocator) {
+	if mysql.HasCursorExistsFlag(s.Status) || !s.EnableReuseCheck {
+		alloc = nil
+	}
+	s.ChunkPool = struct {
+		Lock  sync.Mutex
+		Alloc chunk.Allocator
+	}{Alloc: alloc}
+}
+
+func (s *SessionVars) GetAlloc() chunk.Allocator {
+	return s.ChunkPool.Alloc
 }
 
 // GetPreparedStmtByName returns the prepared statement specified by stmtName.
