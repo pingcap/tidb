@@ -1207,7 +1207,7 @@ func GetReorganizedPartitionedTable(t table.Table) (table.PartitionedTable, erro
 	// will be copied to AddingDefinitions, so only setup with AddingDefinitions!
 
 	// Do not change any Definitions of t, but create a new struct
-	if t.Meta().Partition == nil {
+	if t.GetPartitionedTable() == nil {
 		return nil, dbterror.ErrUnsupportedReorganizePartition.GenWithStackByArgs()
 	}
 	tblInfo := t.Meta().Clone()
