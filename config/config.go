@@ -962,6 +962,7 @@ var defaultConf = Config{
 	NewCollationsEnabledOnFirstBootstrap: true,
 	EnableGlobalKill:                     true,
 	TrxSummary:                           DefaultTrxSummary(),
+	DisaggregatedTiFlash:                 false,
 }
 
 var (
