@@ -181,6 +181,7 @@
       "util/tracing/": "util/tracing/ code",
       "util/trxevents/": "util/trxevents/ code",
       "util/watcher/": "util/watcher/ code",
+      "util/gctuner": "util/gctuner",
       "store/mockstore/unistore/util": "store/mockstore/unistore/util code",
       "ddl/util/": "ddl/util code"
     }
@@ -197,6 +198,7 @@
       ".*_generated\\.go$": "ignore generated code"
     },
     "only_files": {
+      "util/gctuner": "util/gctuner",
       "br/pkg/lightning/mydump/": "br/pkg/lightning/mydump/",
       "br/pkg/lightning/restore/opts": "br/pkg/lightning/restore/opts",
       "executor/aggregate.go": "executor/aggregate.go",
@@ -377,8 +379,23 @@
       "planner/util": "planner code",
       "planner/implementation": "planner code",
       "planner/cascades": "planner code",
+      "planner/core/explain.go": "planner/core/explain.go",
+      "planner/core/handle_cols.go": "planner/core/handle_cols.go",
+      "planner/core/hints.go": "planner/core/hints.go",
+      "planner/core/logical_plan_builder.go": "planner/core/logical_plan_builder.go",
+      "planner/core/memtable_predicate_extractor.go": "planner/core/memtable_predicate_extractor.go",
+      "planner/core/pb_to_plan.go": "planner/core/pb_to_plan.go",
+      "planner/core/plan_stats.go": "planner/core/plan_stats.go",
       "planner/core/plan_cache.go": "planner code",
       "planner/core/plan.go": "planner/core/plan.go",
+      "planner/core/point_get_plan.go": "planner/core/point_get_plan.go",
+      "planner/core/property_cols_prune.go": "planner/core/property_cols_prune.go",
+      "planner/core/rule_aggregation_elimination.go": "planner/core/rule_aggregation_elimination.go",
+      "planner/core/rule_build_key_info.go": "planner/core/rule_build_key_info.go",
+      "planner/core/rule_column_pruning.go": "planner/core/rule_column_pruning.go",
+      "planner/core/rule_join_elimination.go": "planner/core/rule_join_elimination.go",
+      "planner/core/rule_semi_join_rewrite.go": "planner/core/rule_semi_join_rewrite.go",
+      "planner/core/util.go": "planner/core/util.go",
       "util/": "util code",
       "parser/": "parser code",
       "meta/": "parser code"
@@ -727,6 +744,7 @@
       ".*_generated\\.go$": "ignore generated code"
     },
     "only_files": {
+      "util/gctuner": "util/gctuner",
       "br/pkg/lightning/mydump/": "br/pkg/lightning/mydump/",
       "br/pkg/lightning/restore/opts": "br/pkg/lightning/restore/opts",
       "executor/aggregate.go": "executor/aggregate.go",

@@ -84,7 +84,7 @@ func (o *outerJoinEliminator) tryToEliminateOuterJoin(p *LogicalJoin, aggCols []
 }
 
 // extract join keys as a schema for inner child of a outer join
-func (o *outerJoinEliminator) extractInnerJoinKeys(join *LogicalJoin, innerChildIdx int) *expression.Schema {
+func (*outerJoinEliminator) extractInnerJoinKeys(join *LogicalJoin, innerChildIdx int) *expression.Schema {
 	joinKeys := make([]*expression.Column, 0, len(join.EqualConditions))
 	for _, eqCond := range join.EqualConditions {
 		joinKeys = append(joinKeys, eqCond.GetArgs()[innerChildIdx].(*expression.Column))
@@ -109,7 +109,7 @@ func IsColsAllFromOuterTable(cols []*expression.Column, outerUniqueIDs set.Int64
 }
 
 // check whether one of unique keys sets is contained by inner join keys
-func (o *outerJoinEliminator) isInnerJoinKeysContainUniqueKey(innerPlan LogicalPlan, joinKeys *expression.Schema) (bool, error) {
+func (*outerJoinEliminator) isInnerJoinKeysContainUniqueKey(innerPlan LogicalPlan, joinKeys *expression.Schema) (bool, error) {
 	for _, keyInfo := range innerPlan.Schema().Keys {
 		joinKeysContainKeyInfo := true
 		for _, col := range keyInfo {
@@ -126,7 +126,7 @@ func (o *outerJoinEliminator) isInnerJoinKeysContainUniqueKey(innerPlan LogicalP
 }
 
 // check whether one of index sets is contained by inner join index
-func (o *outerJoinEliminator) isInnerJoinKeysContainIndex(innerPlan LogicalPlan, joinKeys *expression.Schema) (bool, error) {
+func (*outerJoinEliminator) isInnerJoinKeysContainIndex(innerPlan LogicalPlan, joinKeys *expression.Schema) (bool, error) {
 	ds, ok := innerPlan.(*DataSource)
 	if !ok {
 		return false, nil
@@ -210,6 +210,9 @@ func (o *outerJoinEliminator) doOptimize(p LogicalPlan, aggCols []*expression.Co
 		for _, aggDesc := range x.AggFuncs {
 			for _, expr := range aggDesc.Args {
 				parentCols = append(parentCols, expression.ExtractColumns(expr)...)
+			}
+			for _, byItem := range aggDesc.OrderByItems {
+				parentCols = append(parentCols, expression.ExtractColumns(byItem.Expr)...)
 			}
 		}
 	default:

@@ -831,6 +831,11 @@ error = '''
 Key part '%-.192s' length cannot be 0
 '''
 
+["ddl:1452"]
+error = '''
+Cannot add or update a child row: a foreign key constraint fails (%.192s)
+'''
+
 ["ddl:1470"]
 error = '''
 String '%-.70s' is too long for %s (should be no longer than %d)
@@ -1728,7 +1733,7 @@ not implemented
 
 ["kv:9007"]
 error = '''
-Write conflict, txnStartTS=%d, conflictStartTS=%d, conflictCommitTS=%d, key=%s, reason=%s [try again later]
+Write conflict, txnStartTS=%d, conflictStartTS=%d, conflictCommitTS=%d, key=%s%s%s%s, reason=%s [try again later]
 '''
 
 ["meta:1007"]

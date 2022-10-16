@@ -253,8 +253,11 @@ func NewSession(options *SessionOptions, logger log.Logger) sessionctx.Context {
 }
 
 func newSession(options *SessionOptions, logger log.Logger) *session {
+	s := &session{
+		values: make(map[fmt.Stringer]interface{}, 1),
+	}
 	sqlMode := options.SQLMode
-	vars := variable.NewSessionVars()
+	vars := variable.NewSessionVars(s)
 	vars.SkipUTF8Check = true
 	vars.StmtCtx.InInsertStmt = true
 	vars.StmtCtx.BatchCheck = true
@@ -289,10 +292,7 @@ func newSession(options *SessionOptions, logger log.Logger) *session {
 			log.ShortError(err))
 	}
 	vars.TxnCtx = nil
-	s := &session{
-		vars:   vars,
-		values: make(map[fmt.Stringer]interface{}, 1),
-	}
+	s.vars = vars
 	s.txn.kvPairs = &KvPairs{}
 
 	return s

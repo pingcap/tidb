@@ -16,12 +16,16 @@ package util
 
 import (
 	"encoding/json"
+	"fmt"
 	"io/ioutil"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/parser"
+	"go.uber.org/zap"
 )
 
 // SliceToMap converts slice to map
@@ -98,4 +102,70 @@ func Str2Int64Map(str string) map[int64]struct{} {
 		res[id] = struct{}{}
 	}
 	return res
+}
+
+// GenLogFields generate log fields.
+func GenLogFields(costTime time.Duration, info *ProcessInfo, needTruncateSQL bool) []zap.Field {
+	logFields := make([]zap.Field, 0, 20)
+	logFields = append(logFields, zap.String("cost_time", strconv.FormatFloat(costTime.Seconds(), 'f', -1, 64)+"s"))
+	execDetail := info.StmtCtx.GetExecDetails()
+	logFields = append(logFields, execDetail.ToZapFields()...)
+	if copTaskInfo := info.StmtCtx.CopTasksDetails(); copTaskInfo != nil {
+		logFields = append(logFields, copTaskInfo.ToZapFields()...)
+	}
+	if statsInfo := info.StatsInfo(info.Plan); len(statsInfo) > 0 {
+		var buf strings.Builder
+		firstComma := false
+		vStr := ""
+		for k, v := range statsInfo {
+			if v == 0 {
+				vStr = "pseudo"
+			} else {
+				vStr = strconv.FormatUint(v, 10)
+			}
+			if firstComma {
+				buf.WriteString("," + k + ":" + vStr)
+			} else {
+				buf.WriteString(k + ":" + vStr)
+				firstComma = true
+			}
+		}
+		logFields = append(logFields, zap.String("stats", buf.String()))
+	}
+	if info.ID != 0 {
+		logFields = append(logFields, zap.Uint64("conn_id", info.ID))
+	}
+	if len(info.User) > 0 {
+		logFields = append(logFields, zap.String("user", info.User))
+	}
+	if len(info.DB) > 0 {
+		logFields = append(logFields, zap.String("database", info.DB))
+	}
+	var tableIDs, indexNames string
+	if len(info.StmtCtx.TableIDs) > 0 {
+		tableIDs = strings.Replace(fmt.Sprintf("%v", info.StmtCtx.TableIDs), " ", ",", -1)
+		logFields = append(logFields, zap.String("table_ids", tableIDs))
+	}
+	if len(info.StmtCtx.IndexNames) > 0 {
+		indexNames = strings.Replace(fmt.Sprintf("%v", info.StmtCtx.IndexNames), " ", ",", -1)
+		logFields = append(logFields, zap.String("index_names", indexNames))
+	}
+	logFields = append(logFields, zap.Uint64("txn_start_ts", info.CurTxnStartTS))
+	if memTracker := info.StmtCtx.MemTracker; memTracker != nil {
+		logFields = append(logFields, zap.String("mem_max", fmt.Sprintf("%d Bytes (%v)", memTracker.MaxConsumed(), memTracker.FormatBytes(memTracker.MaxConsumed()))))
+	}
+
+	const logSQLLen = 1024 * 8
+	var sql string
+	if len(info.Info) > 0 {
+		sql = info.Info
+		if info.RedactSQL {
+			sql = parser.Normalize(sql)
+		}
+	}
+	if len(sql) > logSQLLen && needTruncateSQL {
+		sql = fmt.Sprintf("%s len(%d)", sql[:logSQLLen], len(sql))
+	}
+	logFields = append(logFields, zap.String("sql", sql))
+	return logFields
 }

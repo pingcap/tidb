@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/redact"
+	tidalloc "github.com/pingcap/tidb/br/pkg/restore/prealloc_table_id"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	"github.com/pingcap/tidb/br/pkg/rtree"
@@ -173,6 +174,9 @@ type Client struct {
 
 	// see RestoreCommonConfig.WithSysTable
 	withSysTable bool
+
+	// the successfully preallocated table IDs.
+	preallocedTableIDs *tidalloc.PreallocIDs
 }
 
 // NewRestoreClient returns a new RestoreClient.
@@ -237,6 +241,26 @@ func (rc *Client) Init(g glue.Glue, store kv.Storage) error {
 	return errors.Trace(err)
 }
 
+func (rc *Client) allocTableIDs(ctx context.Context, tables []*metautil.Table) error {
+	rc.preallocedTableIDs = tidalloc.New(tables)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
+	err := kv.RunInNewTxn(ctx, rc.GetDomain().Store(), true, func(_ context.Context, txn kv.Transaction) error {
+		return rc.preallocedTableIDs.Alloc(meta.NewMeta(txn))
+	})
+	if err != nil {
+		return err
+	}
+
+	log.Info("registering the table IDs", zap.Stringer("ids", rc.preallocedTableIDs))
+	for i := range rc.dbPool {
+		rc.dbPool[i].registerPreallocatedIDs(rc.preallocedTableIDs)
+	}
+	if rc.db != nil {
+		rc.db.registerPreallocatedIDs(rc.preallocedTableIDs)
+	}
+	return nil
+}
+
 // SetPlacementPolicyMode to policy mode.
 func (rc *Client) SetPlacementPolicyMode(withPlacementPolicy string) {
 	switch strings.ToUpper(withPlacementPolicy) {
@@ -272,15 +296,6 @@ func (rc *Client) GetPolicyMap() *sync.Map {
 // GetSupportPolicy tells whether target tidb support placement policy.
 func (rc *Client) GetSupportPolicy() bool {
 	return rc.supportPolicy
-}
-
-// GetTruncateSafepoint read the truncate checkpoint from the storage bind to the client.
-func (rc *Client) GetTruncateSafepoint(ctx context.Context) (uint64, error) {
-	ts, err := GetTSFromFile(ctx, rc.storage, TruncateSafePointFileName)
-	if err != nil {
-		log.Warn("failed to get truncate safepoint, using 0", logutil.ShortError(err))
-	}
-	return ts, err
 }
 
 func (rc *Client) GetDomain() *domain.Domain {
@@ -733,6 +748,11 @@ func (rc *Client) GoCreateTables(
 	}
 	outCh := make(chan CreatedTable, len(tables))
 	rater := logutil.TraceRateOver(logutil.MetricTableCreatedCounter)
+	if err := rc.allocTableIDs(ctx, tables); err != nil {
+		errCh <- err
+		close(outCh)
+		return outCh
+	}
 
 	var err error
 
