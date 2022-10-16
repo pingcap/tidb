@@ -2402,10 +2402,9 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 }
 
 func doPartitionReorgWork(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, physTblIDs []int64) (done bool, ver int64, err error) {
-	// TODO: Is only the first phyTblIDs ever used? (then it check internal states for the rest of the partition ids?)
 	job.ReorgMeta.ReorgTp = model.ReorgTypeTxn
 	rh := newReorgHandler(t, w.sess, w.concurrentDDL)
-	// TODO: create fail point for internal testing?
+	// TODO: create fail point for internal testing
 	elements := BuildElements(tbl.Meta().Columns[0], tbl.Meta().Indices)
 	partTbl, ok := tbl.(table.PartitionedTable)
 	if !ok {
@@ -2427,6 +2426,7 @@ func doPartitionReorgWork(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tb
 		if kv.IsTxnRetryableError(err) {
 			return false, ver, errors.Trace(err)
 		}
+		// TODO: Create tests for this!
 		if err1 := rh.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
 			logutil.BgLogger().Warn("[ddl] reorg partition job failed, RemoveDDLReorgHandle failed, can't convert job to rollback",
 				zap.String("job", job.String()), zap.Error(err1))
@@ -2443,13 +2443,14 @@ type reorgPartitionWorker struct {
 	metricCounter prometheus.Counter
 
 	// Static allocated to limit memory allocations
-	// TODO: benchmark?
 	rowRecords []*rowRecord
 	rowDecoder *decoder.RowDecoder
 	rowMap     map[int64]types.Datum
 
 	// SQL MODE should be ignored for reorganize partition?
 	// TODO: Test with zero date? and NULL timestamp?
+	// Test with generated/virtual stored columns.
+	// Can indexes be affected?
 
 	jobContext *JobContext
 }
@@ -2482,12 +2483,6 @@ func (w *reorgPartitionWorker) BackfillDataInTxn(handleRange reorgBackfillTask) 
 		taskCtx.nextKey = nextKey
 		taskCtx.done = taskDone
 
-		/*
-			writeTable, err := w.table.(table.PartitionedTable).GetReorganizedPartitionedTable()
-			if err != nil {
-				return errors.Trace(err)
-			}
-		*/
 		warningsMap := make(map[errors.ErrorID]*terror.Error, len(rowRecords))
 		warningsCountMap := make(map[errors.ErrorID]int64, len(rowRecords))
 		for _, prr := range rowRecords {
@@ -2506,7 +2501,7 @@ func (w *reorgPartitionWorker) BackfillDataInTxn(handleRange reorgBackfillTask) 
 					warningsMap[prr.warning.ID()] = prr.warning
 				}
 			}
-			// TODO: Should we also write the indexes here?
+			// TODO: Future optimization: also write the indexes here?
 			// What if the transaction limit is just enough for a single row, without index?
 			// Hmm, how could that be in the first place?
 			// For now, implement the batch-txn w.addTableIndex,
@@ -2523,18 +2518,6 @@ func (w *reorgPartitionWorker) BackfillDataInTxn(handleRange reorgBackfillTask) 
 	logSlowOperations(time.Since(oprStartTime), "BackfillDataInTxn", 3000)
 
 	return
-}
-
-// Duplicate of updateColumnWorker getNextKey TODO: combine!
-// getNextKey gets next handle of entry that we are going to process.
-func (*reorgPartitionWorker) getNextKey(taskRange reorgBackfillTask,
-	taskDone bool, lastAccessedHandle kv.Key) (nextHandle kv.Key) {
-	if !taskDone {
-		// The task is not done. So we need to pick the last processed entry's handle and add one.
-		return lastAccessedHandle.Next()
-	}
-
-	return taskRange.endKey.Next()
 }
 
 // Duplicate of updateColumnWorker fetchRowColVals TODO: combine!
@@ -2630,7 +2613,7 @@ func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reo
 	}
 
 	logutil.BgLogger().Debug("[ddl] txn fetches handle info", zap.Uint64("txnStartTS", txn.StartTS()), zap.String("taskRange", taskRange.String()), zap.Duration("takeTime", time.Since(startTime)))
-	return w.rowRecords, w.getNextKey(taskRange, taskDone, lastAccessedHandle), taskDone, errors.Trace(err)
+	return w.rowRecords, getNextHandleKey(taskRange, taskDone, lastAccessedHandle), taskDone, errors.Trace(err)
 }
 
 func (w *reorgPartitionWorker) cleanRowMap() {

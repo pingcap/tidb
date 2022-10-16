@@ -181,7 +181,7 @@ type backfillWorker struct {
 	sessCtx   sessionctx.Context
 	taskCh    chan *reorgBackfillTask
 	resultCh  chan *backfillResult
-	table     table.Table
+	table     table.PhysicalTable
 	closed    bool
 	priority  int
 	tp        backfillWorkerType
