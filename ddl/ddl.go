@@ -90,6 +90,47 @@ const (
 // OnExist specifies what to do when a new object has a name collision.
 type OnExist uint8
 
+// AllocTableIDIf specifies whether to retain the old table ID.
+// If this returns "false", then we would assume the table ID has been
+// allocated before calling `CreateTableWithInfo` family.
+type AllocTableIDIf func(*model.TableInfo) bool
+
+// CreateTableWithInfoConfig is the configuration of `CreateTableWithInfo`.
+type CreateTableWithInfoConfig struct {
+	OnExist            OnExist
+	ShouldAllocTableID AllocTableIDIf
+}
+
+// CreateTableWithInfoConfigurier is the "diff" which can be applied to the
+// CreateTableWithInfoConfig, currently implementations are "OnExist" and "AllocTableIDIf".
+type CreateTableWithInfoConfigurier interface {
+	// Apply the change over the config.
+	Apply(*CreateTableWithInfoConfig)
+}
+
+// GetCreateTableWithInfoConfig applies the series of configurier from default config
+// and returns the final config.
+func GetCreateTableWithInfoConfig(cs []CreateTableWithInfoConfigurier) CreateTableWithInfoConfig {
+	config := CreateTableWithInfoConfig{}
+	for _, c := range cs {
+		c.Apply(&config)
+	}
+	if config.ShouldAllocTableID == nil {
+		config.ShouldAllocTableID = func(*model.TableInfo) bool { return true }
+	}
+	return config
+}
+
+// Apply implements Configurier.
+func (o OnExist) Apply(c *CreateTableWithInfoConfig) {
+	c.OnExist = o
+}
+
+// Apply implements Configurier.
+func (a AllocTableIDIf) Apply(c *CreateTableWithInfoConfig) {
+	c.ShouldAllocTableID = a
+}
+
 const (
 	// OnExistError throws an error on name collision.
 	OnExistError OnExist = iota
@@ -155,13 +196,13 @@ type DDL interface {
 		ctx sessionctx.Context,
 		schema model.CIStr,
 		info *model.TableInfo,
-		onExist OnExist) error
+		cs ...CreateTableWithInfoConfigurier) error
 
 	// BatchCreateTableWithInfo is like CreateTableWithInfo, but can handle multiple tables.
 	BatchCreateTableWithInfo(ctx sessionctx.Context,
 		schema model.CIStr,
 		info []*model.TableInfo,
-		onExist OnExist) error
+		cs ...CreateTableWithInfoConfigurier) error
 
 	// CreatePlacementPolicyWithInfo creates a placement policy
 	//
