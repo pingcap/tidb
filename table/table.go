@@ -234,6 +234,7 @@ func AllocBatchAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.
 type PhysicalTable interface {
 	Table
 	GetPhysicalID() int64
+	GetPartitionedTable() PartitionedTable
 }
 
 // PartitionedTable is a Table, and it has a GetPartition() method.
@@ -246,7 +247,6 @@ type PartitionedTable interface {
 	GetPartitionColumnIDs() []int64
 	GetPartitionColumnNames() []model.CIStr
 	CheckForExchangePartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum, pid int64) error
-	GetReorganizedPartitionedTable() (PartitionedTable, error)
 }
 
 // TableFromMeta builds a table.Table from *model.TableInfo.

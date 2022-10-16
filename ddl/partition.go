@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"github.com/pingcap/tidb/table/tables"
 	"math"
 	"strconv"
 	"strings"
@@ -2528,16 +2529,16 @@ func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reo
 	// taskDone means that the added handle is out of taskRange.endHandle.
 	taskDone := false
 	sysTZ := w.sessCtx.GetSessionVars().StmtCtx.TimeZone
-	partTbl, ok := w.table.(table.PartitionedTable)
-	if !ok {
-		return nil, nil, true, dbterror.ErrUnsupportedReorganizePartition.GenWithStackByArgs()
-	}
-	reorgedTbl, err := partTbl.GetReorganizedPartitionedTable()
+	reorgedTbl, err := tables.GetReorganizedPartitionedTable(w.table)
 	if err != nil {
 		return nil, nil, true, errors.Trace(err)
 	}
-	physTbl := partTbl.GetPartition(w.reorgInfo.PhysicalTableID)
-	partColIDs := partTbl.GetPartitionColumnIDs()
+	p, ok := w.table.(table.PhysicalTable)
+	t := p.GetPartitionedTable()
+	if !ok || t == nil {
+		return nil, nil, true, dbterror.ErrUnsupportedReorganizePartition.GenWithStackByArgs()
+	}
+	partColIDs := t.GetPartitionColumnIDs()
 	writeColOffsetMap := make(map[int64]int, len(partColIDs))
 	maxOffset := 0
 	for _, col := range w.table.Cols() {
@@ -2557,7 +2558,7 @@ func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reo
 	tmpRow := make([]types.Datum, maxOffset+1)
 	var lastAccessedHandle kv.Key
 	oprStartTime := startTime
-	err = iterateSnapshotKeys(w.reorgInfo.d.jobContext(w.reorgInfo.Job), w.sessCtx.GetStore(), w.priority, physTbl.RecordPrefix(), txn.StartTS(), taskRange.startKey, taskRange.endKey,
+	err = iterateSnapshotKeys(w.reorgInfo.d.jobContext(w.reorgInfo.Job), w.sessCtx.GetStore(), w.priority, p.RecordPrefix(), txn.StartTS(), taskRange.startKey, taskRange.endKey,
 		func(handle kv.Handle, recordKey kv.Key, rawRow []byte) (bool, error) {
 			oprEndTime := time.Now()
 			logSlowOperations(oprEndTime.Sub(oprStartTime), "iterateSnapshotKeys in updateColumnWorker fetchRowColVals", 0)

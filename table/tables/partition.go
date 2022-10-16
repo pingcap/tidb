@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
@@ -67,11 +68,17 @@ var _ table.PartitionedTable = &partitionedTable{}
 // partition also implements the table.Table interface.
 type partition struct {
 	TableCommon
+	table *partitionedTable
 }
 
 // GetPhysicalID implements table.Table GetPhysicalID interface.
 func (p *partition) GetPhysicalID() int64 {
 	return p.physicalTableID
+}
+
+// GetPartitionedTable implements table.Table GetPhysicalID interface.
+func (p *partition) GetPartitionedTable() table.PartitionedTable {
+	return p.table
 }
 
 // partitionedTable implements the table.PartitionedTable interface.
@@ -111,6 +118,7 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		t.table = ret
 		partitions[p.ID] = &t
 	}
 	ret.partitions = partitions
@@ -1182,6 +1190,7 @@ func (t *partitionedTable) GetPartition(pid int64) table.PhysicalTable {
 				if err != nil {
 					return nil
 				}
+				newPart.table = t
 				t.partitions[pid] = &newPart
 				return &newPart
 			}
@@ -1193,13 +1202,15 @@ func (t *partitionedTable) GetPartition(pid int64) table.PhysicalTable {
 
 // GetReorganizedPartitionedTable returns the same table
 // but only with the AddingDefinitions used.
-func (t *partitionedTable) GetReorganizedPartitionedTable() (table.PartitionedTable, error) {
+func GetReorganizedPartitionedTable(t table.Table) (table.PartitionedTable, error) {
 	// This is used during Reorganize partitions; All data from DroppingDefinitions
 	// will be copied to AddingDefinitions, so only setup with AddingDefinitions!
 
 	// Do not change any Definitions of t, but create a new struct
-	tc := t.TableCommon
-	tblInfo := t.TableCommon.Meta().Clone()
+	if t.Meta().Partition == nil {
+		return nil, dbterror.ErrUnsupportedReorganizePartition.GenWithStackByArgs()
+	}
+	tblInfo := t.Meta().Clone()
 	partInfo := *tblInfo.Partition
 	// TODO: if range partitioning, add the definition before the first DroppingDefinitions
 	// then set its partitions[pid] = nil, to find rows that does not belong to the first
@@ -1208,6 +1219,7 @@ func (t *partitionedTable) GetReorganizedPartitionedTable() (table.PartitionedTa
 	partInfo.DroppingDefinitions = nil
 	partInfo.AddingDefinitions = nil
 	tblInfo.Partition = &partInfo
+	var tc TableCommon
 	tc.meta = tblInfo
 
 	// and rebuild the partitioning structure

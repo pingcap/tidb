@@ -234,6 +234,11 @@ func (t *TableCommon) GetPhysicalID() int64 {
 	return t.physicalTableID
 }
 
+// GetPartitionedTable implements table.Table GetPhysicalID interface.
+func (t *TableCommon) GetPartitionedTable() *table.PartitionedTable {
+	return nil
+}
+
 type getColsMode int64
 
 const (
