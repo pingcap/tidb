@@ -5,12 +5,15 @@ go_library(
     srcs = [
         "finalizer.go",
         "mem.go",
+        "memory_limit_tuner.go",
         "tuner.go",
     ],
     importpath = "github.com/pingcap/tidb/util/gctuner",
     visibility = ["//visibility:public"],
     deps = [
         "//util",
+        "//util/memory",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@org_uber_go_atomic//:atomic",
     ],
 )
@@ -20,13 +23,15 @@ go_test(
     srcs = [
         "finalizer_test.go",
         "mem_test.go",
+        "memory_limit_tuner_test.go",
         "tuner_test.go",
     ],
     embed = [":gctuner"],
     flaky = True,
     race = "on",
     deps = [
-        "@com_github_stretchr_testify//assert",
+        "//util/memory",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
     ],
 )
