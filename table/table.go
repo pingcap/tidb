@@ -196,6 +196,9 @@ type Table interface {
 
 	// Type returns the type of table
 	Type() Type
+
+	// GetPartitionedTable returns nil if not partitioned
+	GetPartitionedTable() PartitionedTable
 }
 
 // AllocAutoIncrementValue allocates an auto_increment value for a new row.
@@ -234,7 +237,6 @@ func AllocBatchAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.
 type PhysicalTable interface {
 	Table
 	GetPhysicalID() int64
-	GetPartitionedTable() PartitionedTable
 }
 
 // PartitionedTable is a Table, and it has a GetPartition() method.

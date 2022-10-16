@@ -235,7 +235,7 @@ func (t *TableCommon) GetPhysicalID() int64 {
 }
 
 // GetPartitionedTable implements table.Table GetPhysicalID interface.
-func (t *TableCommon) GetPartitionedTable() *table.PartitionedTable {
+func (t *TableCommon) GetPartitionedTable() table.PartitionedTable {
 	return nil
 }
 
