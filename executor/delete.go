@@ -44,6 +44,8 @@ type DeleteExec struct {
 	// the columns ordinals is present in ordinal range format, @see plannercore.TblColPosInfos
 	tblColPosInfos plannercore.TblColPosInfoSlice
 	memTracker     *memory.Tracker
+	// fkChecks contains the foreign key checkers. the map is tableID -> []*FKCheckExec
+	fkChecks map[int64][]*FKCheckExec
 }
 
 // Next implements the Executor Next interface.
@@ -239,6 +241,14 @@ func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h kv.Handl
 	if err != nil {
 		return err
 	}
+	fkChecks := e.fkChecks[t.Meta().ID]
+	sc := ctx.GetSessionVars().StmtCtx
+	for _, fkc := range fkChecks {
+		err = fkc.deleteRowNeedToCheck(sc, data)
+		if err != nil {
+			return err
+		}
+	}
 	e.memTracker.Consume(int64(txnState.Size() - memUsageOfTxnState))
 	ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 	return nil
@@ -256,6 +266,15 @@ func (e *DeleteExec) Open(ctx context.Context) error {
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
 	return e.children[0].Open(ctx)
+}
+
+// GetFKChecks implements WithForeignKeyTrigger interface.
+func (e *DeleteExec) GetFKChecks() []*FKCheckExec {
+	fkChecks := []*FKCheckExec{}
+	for _, fkcs := range e.fkChecks {
+		fkChecks = append(fkChecks, fkcs...)
+	}
+	return fkChecks
 }
 
 // tableRowMapType is a map for unique (Table, Row) pair. key is the tableID.

@@ -15,7 +15,9 @@
 package core_test
 
 import (
+	"encoding/json"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"testing"
@@ -124,5 +126,79 @@ func TestCostModelVer2(t *testing.T) {
 
 	for _, cases := range seriesCases {
 		testCostQueries(t, tk, cases)
+	}
+}
+
+func TestCostModelShowFormula(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int)`)
+	tk.MustExec("insert into t values (1), (2), (3)")
+	tk.MustExec("set @@tidb_cost_model_version=2")
+
+	tk.MustExecToErr("explain format='true_card_cost' select * from t") // 'true_card_cost' must work with 'explain analyze'
+	plan := tk.MustQuery("explain analyze format='true_card_cost' select * from t where a<3").Rows()
+	actual := make([][]interface{}, 0, len(plan))
+	for _, row := range plan {
+		actual = append(actual, []interface{}{row[0], row[3]}) // id,costFormula
+		fmt.Println(actual)
+	}
+	require.Equal(t, actual, [][]interface{}{
+		{"TableReader_7", "((Selection_6) + (net(2*rowsize(16)*tidb_kv_net_factor(8))) + (seek(tasks(20)*tidb_request_factor(9.5e+06))))/15"},
+		{"└─Selection_6", "(cpu(3*filters(1)*tikv_cpu_factor(30))) + (TableFullScan_5)"},
+		{"  └─TableFullScan_5", "scan(3*logrowsize(29)*tikv_scan_factor(100))"},
+	})
+}
+
+func TestCostModelTraceVer2(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int primary key, b int, c int, key(b))`)
+	vals := make([]string, 0, 10)
+	for i := 0; i < 10; i++ {
+		vals = append(vals, fmt.Sprintf("(%v, %v, %v)", i, i, i))
+	}
+	tk.MustExec(fmt.Sprintf("insert into t values %v", strings.Join(vals, ", ")))
+	tk.MustExec("analyze table t")
+	tk.MustExec("set @@tidb_cost_model_version=2")
+
+	for _, q := range []string{
+		"select * from t",
+		"select * from t where a<4",
+		"select * from t use index(b) where b<4",
+		"select * from t where a<4 order by b",
+		"select * from t where a<4 order by b limit 3",
+		"select sum(a) from t where a<4 group by b, c",
+		"select max(a), b, c from t where a<4 group by b, c",
+		"select * from t t1, t t2",
+		"select * from t t1, t t2 where t1.a=t2.a",
+		"select /*+ tidb_inlj(t1, t2) */ * from t t1, t t2 where t1.b=t2.b",
+	} {
+		plan := tk.MustQuery("explain analyze format='true_card_cost' " + q).Rows()
+		planCost, err := strconv.ParseFloat(plan[0][2].(string), 64)
+		require.Nil(t, err)
+
+		// check the accuracy of factor costs
+		ok := false
+		warns := tk.MustQuery("show warnings").Rows()
+		for _, warn := range warns {
+			msg := warn[2].(string)
+			if strings.HasPrefix(msg, "factor costs: ") {
+				costData := msg[len("factor costs: "):]
+				var factorCosts map[string]float64
+				require.Nil(t, json.Unmarshal([]byte(costData), &factorCosts))
+				var sum float64
+				for _, factorCost := range factorCosts {
+					sum += factorCost
+				}
+				absDiff := math.Abs(sum - planCost)
+				if absDiff < 5 || absDiff/planCost < 0.01 {
+					ok = true
+				}
+			}
+		}
+		require.True(t, ok)
 	}
 }
