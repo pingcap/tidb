@@ -1472,7 +1472,7 @@ func TestShowBuiltin(t *testing.T) {
 	res := tk.MustQuery("show builtins;")
 	require.NotNil(t, res)
 	rows := res.Rows()
-	const builtinFuncNum = 281
+	const builtinFuncNum = 282
 	require.Equal(t, builtinFuncNum, len(rows))
 	require.Equal(t, rows[0][0].(string), "abs")
 	require.Equal(t, rows[builtinFuncNum-1][0].(string), "yearweek")
@@ -1920,4 +1920,59 @@ func TestShowViewWithWindowFunction(t *testing.T) {
 	tk.MustExec("CREATE TABLE `test1` (`id` int(0) NOT NULL,`num` int(0) DEFAULT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin;")
 	tk.MustExec("create or replace view test1_v as(select id,row_number() over (partition by num) from test1);")
 	tk.MustQuery("desc test1_v;").Check(testkit.Rows("id int(0) NO  <nil> ", "row_number() over (partition by num) bigint(21) YES  <nil> "))
+}
+
+func TestShowLimitReturnRow(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t1(a int, b int, c int, d int, index idx_a(a), index idx_b(b))")
+	tk.MustExec("create table t2(a int, b int, c int, d int, index idx_a(a), index idx_b(b))")
+	tk.MustExec("INSERT INTO t1 VALUES(1,2,3,4)")
+	tk.MustExec("INSERT INTO t1 VALUES(4,3,1,2)")
+	tk.MustExec("SET @@sql_select_limit=1")
+	tk.MustExec("PREPARE stmt FROM \"SHOW COLUMNS FROM t1\"")
+	result := tk.MustQuery("EXECUTE stmt")
+	rows := result.Rows()
+	require.Equal(t, len(rows), 1)
+
+	tk.MustExec("PREPARE stmt FROM \"select * FROM t1\"")
+	result = tk.MustQuery("EXECUTE stmt")
+	rows = result.Rows()
+	require.Equal(t, len(rows), 1)
+
+	// Test case for other scenarios.
+	result = tk.MustQuery("SHOW ENGINES")
+	rows = result.Rows()
+	require.Equal(t, len(rows), 1)
+
+	tk.MustQuery("SHOW DATABASES like '%SCHEMA'").Check(testkit.RowsWithSep("|", "INFORMATION_SCHEMA"))
+
+	tk.MustQuery("SHOW TABLES where tables_in_test='t2'").Check(testkit.RowsWithSep("|", "t2"))
+
+	result = tk.MustQuery("SHOW TABLE STATUS where name='t2'")
+	rows = result.Rows()
+	require.Equal(t, rows[0][0], "t2")
+
+	tk.MustQuery("SHOW COLUMNS FROM t1 where Field ='d'").Check(testkit.RowsWithSep("|", ""+
+		"d int(11) YES  <nil> "))
+
+	tk.MustQuery("Show Charset where charset='gbk'").Check(testkit.RowsWithSep("|", ""+
+		"gbk Chinese Internal Code Specification gbk_chinese_ci 2"))
+
+	tk.MustQuery("Show Variables where variable_name ='max_allowed_packet'").Check(testkit.RowsWithSep("|", ""+
+		"max_allowed_packet 67108864"))
+
+	result = tk.MustQuery("SHOW status where variable_name ='server_id'")
+	rows = result.Rows()
+	require.Equal(t, rows[0][0], "server_id")
+
+	tk.MustQuery("Show Collation where collation='utf8_bin'").Check(testkit.RowsWithSep("|", ""+
+		"utf8_bin utf8 83 Yes Yes 1"))
+
+	result = tk.MustQuery("show index from t1 where key_name='idx_b'")
+	rows = result.Rows()
+	require.Equal(t, rows[0][2], "idx_b")
 }

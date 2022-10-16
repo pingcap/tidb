@@ -330,8 +330,11 @@ type LogicalPlan interface {
 type PhysicalPlan interface {
 	Plan
 
-	// GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
-	GetPlanCost(taskType property.TaskType, option *PlanCostOption) (float64, error)
+	// getPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost on model ver1.
+	getPlanCostVer1(taskType property.TaskType, option *PlanCostOption) (float64, error)
+
+	// getPlanCostVer2 calculates the cost of the plan if it has not been calculated yet and returns the cost on model ver2.
+	getPlanCostVer2(taskType property.TaskType, option *PlanCostOption) (costVer2, error)
 
 	// attach2Task makes the current physical plan as the father of task's physicalPlan and updates the cost of
 	// current task. If the child's task is cop task, some operator may close this task and return a new rootTask.
@@ -456,6 +459,7 @@ type basePhysicalPlan struct {
 	// used by the new cost interface
 	planCostInit bool
 	planCost     float64
+	planCostVer2 costVer2
 
 	// Only for MPP. If TiFlashFineGrainedShuffleStreamCount > 0:
 	// 1. For ExchangeSender, means its output will be partitioned by hash key.
@@ -516,12 +520,18 @@ func (p *basePhysicalPlan) MemoryUsage() (sum int64) {
 	}
 
 	sum = p.basePlan.MemoryUsage() + size.SizeOfSlice + int64(cap(p.childrenReqProps))*size.SizeOfPointer +
-		size.SizeOfSlice + int64(cap(p.children)+1)*size.SizeOfInterface + size.SizeOfFloat64*2 +
+		size.SizeOfSlice + int64(cap(p.children)+1)*size.SizeOfInterface + size.SizeOfFloat64 +
 		size.SizeOfUint64 + size.SizeOfBool
+	if p.self != nil {
+		sum += p.self.MemoryUsage()
+	}
+
 	for _, prop := range p.childrenReqProps {
 		sum += prop.MemoryUsage()
 	}
-	//todo: memtrace: add children's memory
+	for _, plan := range p.children {
+		sum += plan.MemoryUsage()
+	}
 	return
 }
 
@@ -792,6 +802,11 @@ func (p *basePhysicalPlan) SetChild(i int, child PhysicalPlan) {
 // Context implements Plan Context interface.
 func (p *basePlan) SCtx() sessionctx.Context {
 	return p.ctx
+}
+
+// SetSCtx Context implements Plan Set Context interface.
+func (p *basePlan) SetSCtx(ctx sessionctx.Context) {
+	p.ctx = ctx
 }
 
 // buildPlanTrace implements Plan

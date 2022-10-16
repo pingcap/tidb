@@ -1884,9 +1884,23 @@ type ShowContents struct {
 	CountWarningsOrErrors bool // Used for showing count(*) warnings | errors
 
 	Full        bool
-	IfNotExists bool // Used for `show create database if not exists`.
-	GlobalScope bool // Used by show variables.
-	Extended    bool // Used for `show extended columns from ...`
+	IfNotExists bool       // Used for `show create database if not exists`.
+	GlobalScope bool       // Used by show variables.
+	Extended    bool       // Used for `show extended columns from ...`
+	Limit       *ast.Limit // Used for limit Result Set row number.
+}
+
+const emptyShowContentsSize = int64(unsafe.Sizeof(ShowContents{}))
+
+// MemoryUsage return the memory usage of ShowContents
+func (s *ShowContents) MemoryUsage() (sum int64) {
+	if s == nil {
+		return
+	}
+
+	sum = emptyShowContentsSize + int64(len(s.DBName)) + s.Partition.MemoryUsage() + s.IndexName.MemoryUsage() +
+		int64(cap(s.Roles))*size.SizeOfPointer
+	return
 }
 
 // LogicalShow represents a show plan.
@@ -1959,6 +1973,7 @@ type LogicalCTE struct {
 
 	cte            *CTEClass
 	cteAsName      model.CIStr
+	cteName        model.CIStr
 	seedStat       *property.StatsInfo
 	isOuterMostCTE bool
 }
