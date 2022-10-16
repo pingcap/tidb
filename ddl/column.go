@@ -1033,11 +1033,7 @@ func (w *worker) updatePhysicalTableRow(t table.Table, reorgInfo *reorgInfo) err
 			if reorgInfo.Job.Type == model.ActionReorganizePartition {
 				workType = typeReorgPartitionWorker
 			}
-			physTbl, ok := t.(table.PhysicalTable)
-			if !ok {
-				return dbterror.ErrCancelledDDLJob.GenWithStack("Internal error, partitioned table, not a physical table?!? table %d", reorgInfo.PhysicalTableID, t.Meta().ID)
-			}
-			err := w.writePhysicalTableRecord(w.sessPool, physTbl, workType, reorgInfo)
+			err := w.writePhysicalTableRecord(w.sessPool, p, workType, reorgInfo)
 			if err != nil {
 				return err
 			}
@@ -1217,15 +1213,9 @@ func (w *updateColumnWorker) fetchRowColVals(txn kv.Transaction, taskRange reorg
 	// taskDone means that the added handle is out of taskRange.endHandle.
 	taskDone := false
 	var lastAccessedHandle kv.Key
-	// TODO: Should not this be done at a different level?
-	var recPrefix kv.Key
-	if t, ok := w.table.(table.PartitionedTable); ok {
-		recPrefix = t.GetPartition(w.reorgInfo.PhysicalTableID).RecordPrefix()
-	} else {
-		recPrefix = w.table.RecordPrefix()
-	}
+
 	oprStartTime := startTime
-	err := iterateSnapshotKeys(w.reorgInfo.d.jobContext(w.reorgInfo.Job), w.sessCtx.GetStore(), w.priority, recPrefix, txn.StartTS(), taskRange.startKey, taskRange.endKey,
+	err := iterateSnapshotKeys(w.reorgInfo.d.jobContext(w.reorgInfo.Job), w.sessCtx.GetStore(), w.priority, w.table.RecordPrefix(), txn.StartTS(), taskRange.startKey, taskRange.endKey,
 		func(handle kv.Handle, recordKey kv.Key, rawRow []byte) (bool, error) {
 			oprEndTime := time.Now()
 			logSlowOperations(oprEndTime.Sub(oprStartTime), "iterateSnapshotKeys in updateColumnWorker fetchRowColVals", 0)

@@ -466,15 +466,12 @@ func tryDecodeToHandleString(key kv.Key) string {
 }
 
 // handleRangeTasks sends tasks to workers, and returns remaining kvRanges that is not handled.
-func (dc *ddlCtx) handleRangeTasks(sessPool *sessionPool, t table.Table, workers []*backfillWorker, reorgInfo *reorgInfo,
+func (dc *ddlCtx) handleRangeTasks(sessPool *sessionPool, t table.PhysicalTable, workers []*backfillWorker, reorgInfo *reorgInfo,
 	totalAddedCount *int64, kvRanges []kv.KeyRange) ([]kv.KeyRange, error) {
 	batchTasks := make([]*reorgBackfillTask, 0, len(workers))
 	physicalTableID := reorgInfo.PhysicalTableID
 
 	var prefix kv.Key
-	if tbl, ok := t.(table.PartitionedTable); ok {
-		t = tbl.GetPartition(physicalTableID)
-	}
 	if reorgInfo.mergingTmpIdx {
 		prefix = t.IndexPrefix()
 	} else {
