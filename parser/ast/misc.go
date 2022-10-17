@@ -953,7 +953,7 @@ func (n *KillStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.Expr != nil {
 		ctx.WriteKeyWord(" ")
 		if err := n.Expr.Restore(ctx); err != nil {
-			return errors.Annotate(err, "An error occurred while splicing ColumnOption GENERATED ALWAYS Expr")
+			return errors.Trace(err)
 		}
 	} else {
 		ctx.WritePlainf(" %d", n.ConnectionID)
