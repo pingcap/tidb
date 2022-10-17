@@ -2600,9 +2600,6 @@ create table t(
 	defer func() { collate.SetNewCollationEnabledForTest(false) }()
 	ctx := context.Background()
 	for _, tt := range tests {
-		if tt.exprStr == "d > 'd'" {
-			fmt.Println("hi")
-		}
 		sql := "select * from t where " + tt.exprStr
 		sctx := tk.Session()
 		stmts, err := session.Parse(sctx, sql)
