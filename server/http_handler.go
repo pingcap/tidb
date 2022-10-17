@@ -1839,10 +1839,12 @@ func (h mvccTxnHandler) handleMvccGetByKey(params map[string]string, values url.
 	for i := range tb.Meta().Columns {
 		m = append(m, tb.Meta().Columns[i].Clone())
 	}
+	ft := types.NewFieldType(mysql.TypeBit)
+	ft.SetFlen(1)
 	m = append(m, &model.ColumnInfo{
 		ID:        model.ExtraMetaColID,
 		Name:      model.ExtraMetaColName,
-		FieldType: *types.NewFieldType(mysql.TypeJSON),
+		FieldType: *ft,
 	})
 	for _, col := range m {
 		colMap[col.ID] = &(col.FieldType)

@@ -2098,9 +2098,7 @@ func NewMetaDatum(rs bool) (d Datum) {
 	if !rs {
 		return NewDatum(nil)
 	}
-	return NewJSONDatum(CreateBinaryJSON(map[string]any{
-		"tidb_meta_test": rs,
-	}))
+	return NewDatum(NewBinaryLiteralFromUint(1, 1))
 }
 
 // NewDatum creates a new Datum from an interface{}.
