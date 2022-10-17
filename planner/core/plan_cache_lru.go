@@ -15,6 +15,7 @@ package core
 
 import (
 	"container/list"
+	"github.com/pingcap/tidb/metrics"
 	"sync"
 
 	"github.com/pingcap/errors"
@@ -104,6 +105,7 @@ func (l *LRUPlanCache) Put(key kvcache.Key, value kvcache.Value, paramTypes []*t
 		if element, exist := l.pickFromBucket(bucket, paramTypes); exist {
 			element.Value.(*planCacheEntry).PlanValue = value
 			l.lruList.MoveToFront(element)
+			updateMonitorMetric()
 			return
 		}
 	} else {
@@ -121,6 +123,7 @@ func (l *LRUPlanCache) Put(key kvcache.Key, value kvcache.Value, paramTypes []*t
 		l.removeOldest()
 	}
 	l.memoryControl()
+	updateMonitorMetric()
 }
 
 // Delete deletes the multi-values from the LRU Cache.
@@ -137,6 +140,7 @@ func (l *LRUPlanCache) Delete(key kvcache.Key) {
 		}
 		delete(l.buckets, hash)
 	}
+	updateMonitorMetric()
 }
 
 // DeleteAll deletes all elements from the LRU Cache.
@@ -149,6 +153,7 @@ func (l *LRUPlanCache) DeleteAll() {
 		l.size--
 	}
 	l.buckets = make(map[string]map[*list.Element]struct{}, 1)
+	updateMonitorMetric()
 }
 
 // Size gets the current cache size.
@@ -171,6 +176,7 @@ func (l *LRUPlanCache) SetCapacity(capacity uint) error {
 	for l.size > l.capacity {
 		l.removeOldest()
 	}
+	updateMonitorMetric()
 	return nil
 }
 
@@ -221,4 +227,11 @@ func PickPlanFromBucket(bucket map[*list.Element]struct{}, paramTypes []*types.F
 		}
 	}
 	return nil, false
+}
+
+// updateMonitor update the memory usage monitor to show in grafana
+func updateMonitorMetric() {
+	consume := float64(1011)
+	// todo: wait for the preorder pr, pass tracker's consumed memory to metric
+	metrics.PlanCacheMemoryUsage.WithLabelValues("memory_usage").Set(consume)
 }
