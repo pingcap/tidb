@@ -2579,8 +2579,6 @@ func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reo
 				return false, errors.Trace(err)
 			}
 
-			//tmpChk := w.rowDecoder.CurrentRowWithDefaultVal()
-			//tmpDatum := tmpChk.GetDatumRow(w.reorgInfo.)
 			// Set the partitioning columns and calculate which partition to write to
 			for colID, offset := range writeColOffsetMap {
 				if d, ok := w.rowMap[colID]; ok {
@@ -2697,16 +2695,17 @@ func (w *worker) reorgPartitionData(t table.Table, reorgInfo *reorgInfo) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
+		// TODO: Can we improve this incase or a crash?
+		// like where the regInfo PhysicalTableID and element is the same,
+		// and the tableid in the key-prefix regInfo.StartKey and regInfo.EndKey matches with PhysicalTableID
+		// do not change the reorgInfo start/end key
 		startHandle, endHandle, err := getTableRange(reorgInfo.d.jobContext(reorgInfo.Job), reorgInfo.d, physTbl, currentVer.Ver, reorgInfo.Job.Priority)
 		if err != nil {
 			return errors.Trace(err)
 		}
 
-		// This backfill job has been exited during processing. At that time, the element is reorgInfo.elements[i+1] and handle range is [reorgInfo.StartHandle, reorgInfo.EndHandle].
-		// Then the handle range of the rest elements' is [originalStartHandle, originalEndHandle].
-		//if i == startElementOffsetToResetHandle+1 {
+		// Always (re)start with the full PhysicalTable range
 		reorgInfo.StartKey, reorgInfo.EndKey = startHandle, endHandle
-		//}
 
 		// Update the element in the reorgCtx to keep the atomic access for daemon-worker.
 		w.getReorgCtx(reorgInfo.Job).setCurrentElement(reorgInfo.elements[i+1])
