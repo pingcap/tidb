@@ -23,11 +23,11 @@ import (
 
 type registry struct {
 	sync.RWMutex
-	factories    map[string]func() ([]Option, error)
-	factoryNames []string
-	setup        bool
-	extensions   *Extensions
-	close        func()
+	factories      map[string]func() ([]Option, error)
+	extensionNames []string
+	setup          bool
+	extensions     *Extensions
+	close          func()
 }
 
 // Extensions returns the extensions after setup
@@ -62,8 +62,8 @@ func (r *registry) RegisterFactory(name string, factory func() ([]Option, error)
 	}
 
 	r.factories[name] = factory
-	r.factoryNames = append(r.factoryNames, name)
-	sort.Strings(r.factoryNames)
+	r.extensionNames = append(r.extensionNames, name)
+	sort.Strings(r.extensionNames)
 	return nil
 }
 
@@ -89,7 +89,7 @@ func (r *registry) Setup() (err error) {
 	}()
 
 	manifests := make([]*Manifest, 0, len(r.factories))
-	for _, name := range r.factoryNames {
+	for _, name := range r.extensionNames {
 		err = clearBuilder.DoWithCollectClear(func() (func(), error) {
 			factory := r.factories[name]
 			m, clear, err := newManifestWithSetup(name, factory)
@@ -120,7 +120,7 @@ func (r *registry) Reset() {
 		r.close = nil
 	}
 	r.factories = nil
-	r.factoryNames = nil
+	r.extensionNames = nil
 	r.extensions = nil
 	r.setup = false
 }
