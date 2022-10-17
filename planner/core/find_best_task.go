@@ -1304,9 +1304,9 @@ func indexCoveringCol(col *expression.Column, constVal *expression.Constant, ind
 	return false
 }
 
-func (ds *DataSource) isCoveringIndex(columns, indexColumns []*expression.Column, idxColLens []int, idxColVals []*ranger.ValueInfo, tblInfo *model.TableInfo) bool {
+func (ds *DataSource) isCoveringIndex(columns, indexColumns []*expression.Column, idxColLens []int, idxColVals []*ranger.ColumnValueInfo, tblInfo *model.TableInfo) bool {
 	for _, col := range columns {
-		var valueInfo *ranger.ValueInfo
+		var valueInfo *ranger.ColumnValueInfo
 		for i, indexCol := range indexColumns {
 			if indexCol != nil && col.EqualByExprAndID(nil, indexCol) {
 				if i < len(idxColVals) {
@@ -1316,10 +1316,8 @@ func (ds *DataSource) isCoveringIndex(columns, indexColumns []*expression.Column
 			}
 		}
 		var constVal *expression.Constant
-		if valueInfo != nil && valueInfo.GetValue() != nil {
-			// TODO: use expression.Constant in ValueInfo
-			constVal = &expression.Constant{RetType: col.RetType}
-			valueInfo.GetValue().Copy(&constVal.Value)
+		if valueInfo != nil {
+			constVal = valueInfo.GetConstValue()
 		}
 		if !ds.indexCanHandleCol(col, constVal, indexColumns, idxColLens, tblInfo) {
 			return false
