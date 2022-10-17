@@ -4,13 +4,14 @@ package export
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
 
 func TestGetParameters(t *testing.T) {
 	conf := defaultConfigForTest(t)
-	d := &Dumper{conf: conf}
+	d := &Dumper{conf: conf, speedRecorder: NewSpeedRecorder()}
 	d.metrics = newMetrics(conf.PromFactory, nil)
 
 	mid := d.GetStatus()
@@ -29,4 +30,23 @@ func TestGetParameters(t *testing.T) {
 	require.EqualValues(t, float64(20), mid.FinishedBytes)
 	require.EqualValues(t, float64(30), mid.FinishedRows)
 	require.EqualValues(t, float64(40), mid.EstimateTotalRows)
+}
+
+func TestSpeedRecorder(t *testing.T) {
+	testCases := []struct {
+		spentTime int64
+		finished  int64
+		expected  int64
+	}{
+		{spentTime: 1, finished: 100, expected: 100},
+		{spentTime: 2, finished: 200, expected: 50},
+		// already finished, will return last speed
+		{spentTime: 3, finished: 200, expected: 50},
+	}
+	speedRecorder := NewSpeedRecorder()
+	for _, tc := range testCases {
+		time.Sleep(time.Duration(tc.spentTime) * time.Second)
+		recentSpeed := speedRecorder.GetSpeed(tc.finished)
+		require.Equal(t, tc.expected, recentSpeed)
+	}
 }
