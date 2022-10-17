@@ -2093,6 +2093,16 @@ func invalidConv(d *Datum, tp byte) (Datum, error) {
 	return Datum{}, errors.Errorf("cannot convert datum from %s to type %s", KindStr(d.Kind()), TypeStr(tp))
 }
 
+// NewMetaDatum creates a new Datum from an interface{}.
+func NewMetaDatum(rs int64) (d Datum) {
+	if rs == 0 {
+		return NewDatum(nil)
+	}
+	return NewJSONDatum(CreateBinaryJSON(map[string]any{
+		"tidb_meta_test": rs,
+	}))
+}
+
 // NewDatum creates a new Datum from an interface{}.
 func NewDatum(in interface{}) (d Datum) {
 	switch x := in.(type) {

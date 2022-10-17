@@ -415,6 +415,9 @@ const ExtraPidColID = -2
 // Must be after ExtraPidColID!
 const ExtraPhysTblID = -3
 
+// ExtraMetaColID is the column ID of column that should be filled in with the meta data.
+const ExtraMetaColID = 0
+
 const (
 	// TableInfoVersion0 means the table info version is 0.
 	// Upgrade from v2.1.1 or v2.1.2 to v2.1.3 and later, and then execute a "change/modify column" statement
@@ -458,6 +461,9 @@ var ExtraPartitionIdName = NewCIStr("_tidb_pid") //nolint:revive
 
 // ExtraPhysTblIdName is the name of ExtraPhysTblID Column.
 var ExtraPhysTblIdName = NewCIStr("_tidb_tid") //nolint:revive
+
+// ExtraMetaColName is the name of ExtraMeta Column.
+var ExtraMetaColName = NewCIStr("_tidb_row_meta") //nolint:revive
 
 // TableInfo provides meta data describing a DB table.
 type TableInfo struct {
