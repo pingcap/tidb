@@ -253,7 +253,10 @@ func setKVMemoryUsage(key kvcache.Key, val kvcache.Value) {
 	if val == nil || key == nil {
 		return
 	}
-	planVal := val.(*PlanCacheValue)
+	planVal, ok := val.(*PlanCacheValue)
+	if !ok {
+		return
+	}
 	planVal.PlanCacheKeyMem = key.(*planCacheKey).MemoryUsage()
 	planVal.PlanCacheValueMem = planVal.MemoryUsage()
 }
