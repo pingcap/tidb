@@ -25,6 +25,7 @@ import (
 // TxnRetryableMark is used to uniform the commit error messages which could retry the transaction.
 // *WARNING*: changing this string will affect the backward compatibility.
 const TxnRetryableMark = "[try again later]"
+const ConflictReasonPos = 7
 
 var (
 	// ErrNotExist is used when try to get an entry with an unexist key from KV store.

@@ -1815,12 +1815,22 @@ func convertStatusIntoString(sctx sessionctx.Context, statsLoadStatus map[model.
 }
 
 func getPessiticLockRetryReason(lockError error) string {
+	ok := false
 	reason := ""
-	if _, ok := errors.Cause(lockError).(*tikverr.ErrDeadlock); ok {
-		reason = "DeadLock"
+	causedError := errors.Cause(lockError)
+
+	if nil == causedError {
+		return ""
 	}
-	if err, ok := errors.Cause(lockError).(*tikverr.ErrWriteConflict); ok {
-		reason = err.Reason.String()
+
+	if _, ok = causedError.(*tikverr.ErrDeadlock); ok {
+		return "DeadLock"
 	}
+
+	if terror.ErrorEqual(kv.ErrWriteConflict, lockError) {
+		err, _ := causedError.(*errors.Error)
+		reason, ok = err.Args()[kv.ConflictReasonPos].(string)
+	}
+
 	return reason
 }
