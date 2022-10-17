@@ -25,6 +25,8 @@ import (
 // TxnRetryableMark is used to uniform the commit error messages which could retry the transaction.
 // *WARNING*: changing this string will affect the backward compatibility.
 const TxnRetryableMark = "[try again later]"
+
+// ConflictReasonPos is the argument position for reason of ErrWriteConflict
 const ConflictReasonPos = 7
 
 var (
