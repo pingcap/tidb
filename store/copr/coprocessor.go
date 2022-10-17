@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"sync"
@@ -66,6 +67,8 @@ var (
 const (
 	copBuildTaskMaxBackoff = 5000
 	copNextMaxBackoff      = 20000
+	CopSmallTaskRow        = 32 // 32 is the initial batch size of TiKV
+	smallTaskSigma         = 0.5
 )
 
 // CopClient is coprocessor client.
@@ -77,9 +80,6 @@ type CopClient struct {
 
 // Send builds the request and gets the coprocessor iterator response.
 func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interface{}, option *kv.ClientSendOption) kv.Response {
-	eventCb := option.EventCb
-	enabledRateLimitAction := option.EnabledRateLimitAction
-	sessionMemTracker := option.SessionMemTracker
 	vars, ok := variables.(*tikv.Variables)
 	if !ok {
 		return copErrorResponse{errors.Errorf("unsupported variables:%+v", variables)}
@@ -88,18 +88,37 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 		logutil.BgLogger().Debug("send batch requests")
 		return c.sendBatch(ctx, req, vars, option)
 	}
+	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTs)
+	ctx = context.WithValue(ctx, util.RequestSourceKey, req.RequestSource)
+	enabledRateLimitAction := option.EnabledRateLimitAction
+	sessionMemTracker := option.SessionMemTracker
+	it, errRes := c.BuildCopIterator(ctx, req, vars, option)
+	if errRes != nil {
+		return errRes
+	}
+	ctx = context.WithValue(ctx, tikv.RPCCancellerCtxKey{}, it.rpcCancel)
+	if sessionMemTracker != nil && enabledRateLimitAction {
+		sessionMemTracker.FallbackOldAndSetNewAction(it.actionOnExceed)
+	}
+	it.open(ctx, enabledRateLimitAction, option.EnableCollectExecutionInfo)
+	return it
+}
+
+// BuildCopIterator builds the iterator without calling `open`.
+func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars *tikv.Variables, option *kv.ClientSendOption) (*copIterator, kv.Response) {
+	eventCb := option.EventCb
 	failpoint.Inject("DisablePaging", func(_ failpoint.Value) {
 		req.Paging.Enable = false
 	})
 	if req.StoreType == kv.TiDB {
 		// coprocessor on TiDB doesn't support paging
 		req.Paging.Enable = false
+		req.FixedRowCountHint = nil
 	}
 	if req.Tp != kv.ReqTypeDAG {
 		// coprocessor request but type is not DAG
 		req.Paging.Enable = false
 	}
-
 	failpoint.Inject("checkKeyRangeSortedForPaging", func(_ failpoint.Value) {
 		if req.Paging.Enable {
 			isSorted := slices.IsSortedFunc(req.KeyRanges, func(i, j kv.KeyRange) bool {
@@ -110,9 +129,14 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 			}
 		}
 	})
+	if req.RequestSource.RequestSourceInternal || req.Tp != kv.ReqTypeDAG {
+		// disable extra concurrency for internal tasks.
+		req.FixedRowCountHint = nil
+	}
+	failpoint.Inject("disableFixedRowCountHint", func(_ failpoint.Value) {
+		req.FixedRowCountHint = nil
+	})
 
-	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTs)
-	ctx = context.WithValue(ctx, util.RequestSourceKey, req.RequestSource)
 	bo := backoff.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
 	ranges := NewKeyRanges(req.KeyRanges)
 	tasks, err := buildCopTasks(bo, c.store.GetRegionCache(), ranges, req, eventCb)
@@ -125,7 +149,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 	}
 	tidbmetrics.DistSQLCoprClosestReadCounter.WithLabelValues(reqType).Inc()
 	if err != nil {
-		return copErrorResponse{err}
+		return nil, copErrorResponse{err}
 	}
 	it := &copIterator{
 		store:           c.store,
@@ -140,6 +164,13 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 	it.tasks = tasks
 	if it.concurrency > len(tasks) {
 		it.concurrency = len(tasks)
+	}
+	if req.FixedRowCountHint != nil {
+		var smallTasks int
+		smallTasks, it.smallTaskConcurrency = smallTaskConcurrency(tasks)
+		if len(tasks)-smallTasks < it.concurrency {
+			it.concurrency = len(tasks) - smallTasks
+		}
 	}
 	if it.concurrency < 1 {
 		// Make sure that there is at least one worker.
@@ -164,20 +195,17 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 				}
 			})
 		}
-		it.sendRate = util.NewRateLimit(2 * it.concurrency)
+		if it.smallTaskConcurrency > 20 {
+			it.smallTaskConcurrency = 20
+		}
+		it.sendRate = util.NewRateLimit(2 * (it.concurrency + it.smallTaskConcurrency))
 		it.respChan = nil
 	} else {
 		it.respChan = make(chan *copResponse)
-		it.sendRate = util.NewRateLimit(it.concurrency)
+		it.sendRate = util.NewRateLimit(it.concurrency + it.smallTaskConcurrency)
 	}
 	it.actionOnExceed = newRateLimitAction(uint(it.sendRate.GetCapacity()))
-	if sessionMemTracker != nil && enabledRateLimitAction {
-		sessionMemTracker.FallbackOldAndSetNewAction(it.actionOnExceed)
-	}
-
-	ctx = context.WithValue(ctx, tikv.RPCCancellerCtxKey{}, it.rpcCancel)
-	it.open(ctx, enabledRateLimitAction, option.EnableCollectExecutionInfo)
-	return it
+	return it, nil
 }
 
 // copTask contains a related Region and KeyRange for a kv.Request.
@@ -198,6 +226,7 @@ type copTask struct {
 
 	partitionIndex int64 // used by balanceBatchCopTask in PartitionTableScan
 	requestSource  util.RequestSource
+	RowCountHint   int // used for extra concurrency of small tasks, -1 for unknown row count
 }
 
 func (r *copTask) String() string {
@@ -231,7 +260,8 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 		chanSize = 18
 	}
 
-	var tasks []*copTask
+	tasks := make([]*copTask, 0, len(locs))
+	origRangeIdx := 0
 	for _, loc := range locs {
 		// TiKV will return gRPC error if the message is too large. So we need to limit the length of the ranges slice
 		// to make sure the message can be sent successfully.
@@ -244,6 +274,28 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 		}
 		for i := 0; i < rLen; {
 			nextI := mathutil.Min(i+rangesPerTask, rLen)
+			hint := -1
+			// calculate the row count hint
+			if req.FixedRowCountHint != nil {
+				startKey, endKey := loc.Ranges.At(i).StartKey, loc.Ranges.At(nextI-1).EndKey
+				// move to the previous range if startKey of current range is lower than endKey of previous location.
+				// In the following example, task1 will move origRangeIdx to region(i, z).
+				// When counting the row hint for task2, we need to move origRangeIdx back to region(a, h).
+				// |<-      region(a, h)    ->| |<-   region(i, z)   ->|
+				// |<- task1 ->| |<- task2 ->| ...
+				if origRangeIdx > 0 && ranges.At(origRangeIdx-1).EndKey.Cmp(startKey) > 0 {
+					origRangeIdx--
+				}
+				hint = 0
+				for nextOrigRangeIdx := origRangeIdx; nextOrigRangeIdx < ranges.Len(); nextOrigRangeIdx++ {
+					rangeStart := ranges.At(nextOrigRangeIdx).StartKey
+					if rangeStart.Cmp(endKey) > 0 {
+						origRangeIdx = nextOrigRangeIdx
+						break
+					}
+					hint += req.FixedRowCountHint[nextOrigRangeIdx]
+				}
+			}
 			tasks = append(tasks, &copTask{
 				region:        loc.Location.Region,
 				bucketsVer:    loc.getBucketVersion(),
@@ -255,6 +307,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 				paging:        req.Paging.Enable,
 				pagingSize:    pagingSize,
 				requestSource: req.RequestSource,
+				RowCountHint:  hint,
 			})
 			i = nextI
 			if req.Paging.Enable {
@@ -290,11 +343,12 @@ func buildTiDBMemCopTasks(ranges *KeyRanges, req *kv.Request) ([]*copTask, error
 
 		addr := ser.IP + ":" + strconv.FormatUint(uint64(ser.StatusPort), 10)
 		tasks = append(tasks, &copTask{
-			ranges:    ranges,
-			respChan:  make(chan *copResponse, 2),
-			cmdType:   cmdType,
-			storeType: req.StoreType,
-			storeAddr: addr,
+			ranges:       ranges,
+			respChan:     make(chan *copResponse, 2),
+			cmdType:      cmdType,
+			storeType:    req.StoreType,
+			storeAddr:    addr,
+			RowCountHint: -1,
 		})
 	}
 	return tasks, nil
@@ -307,11 +361,37 @@ func reverseTasks(tasks []*copTask) {
 	}
 }
 
+func isSmallTask(task *copTask) bool {
+	// strictly, only RowCountHint == -1 stands for unknown task rows,
+	// but when RowCountHint == 0, it may be caused by initialized value,
+	// to avoid the future bugs, let the tasks with RowCountHint == 0 be non-small tasks.
+	return task.RowCountHint > 0 && task.RowCountHint <= CopSmallTaskRow
+}
+
+// smallTaskConcurrency counts the small tasks of tasks,
+// then returns the task count and extra concurrency for small tasks.
+func smallTaskConcurrency(tasks []*copTask) (int, int) {
+	res := 0
+	for _, task := range tasks {
+		if isSmallTask(task) {
+			res++
+		}
+	}
+	if res == 0 {
+		return 0, 0
+	}
+	// Calculate the extra concurrency for small tasks
+	// extra concurrency = tasks / (1 + sigma * sqrt(log(tasks ^ 2)))
+	extraConc := float64(res) / (1 + smallTaskSigma*math.Sqrt(2*math.Log(float64(res))))
+	return res, int(extraConc)
+}
+
 type copIterator struct {
-	store       *Store
-	req         *kv.Request
-	concurrency int
-	finishCh    chan struct{}
+	store                *Store
+	req                  *kv.Request
+	concurrency          int
+	smallTaskConcurrency int
+	finishCh             chan struct{}
 
 	// If keepOrder, results are stored in copTask.respChan, read them out one by one.
 	tasks []*copTask
@@ -366,12 +446,13 @@ type copIteratorWorker struct {
 
 // copIteratorTaskSender sends tasks to taskCh then wait for the workers to exit.
 type copIteratorTaskSender struct {
-	taskCh   chan<- *copTask
-	wg       *sync.WaitGroup
-	tasks    []*copTask
-	finishCh <-chan struct{}
-	respChan chan<- *copResponse
-	sendRate *util.RateLimit
+	taskCh      chan<- *copTask
+	smallTaskCh chan<- *copTask
+	wg          *sync.WaitGroup
+	tasks       []*copTask
+	finishCh    <-chan struct{}
+	respChan    chan<- *copResponse
+	sendRate    *util.RateLimit
 }
 
 type copResponse struct {
@@ -468,11 +549,18 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 // open starts workers and sender goroutines.
 func (it *copIterator) open(ctx context.Context, enabledRateLimitAction, enableCollectExecutionInfo bool) {
 	taskCh := make(chan *copTask, 1)
-	it.wg.Add(it.concurrency)
+	smallTaskCh := make(chan *copTask, 1)
+	it.wg.Add(it.concurrency + it.smallTaskConcurrency)
 	// Start it.concurrency number of workers to handle cop requests.
-	for i := 0; i < it.concurrency; i++ {
+	for i := 0; i < it.concurrency+it.smallTaskConcurrency; i++ {
+		var ch chan *copTask
+		if i < it.concurrency {
+			ch = taskCh
+		} else {
+			ch = smallTaskCh
+		}
 		worker := &copIteratorWorker{
-			taskCh:                     taskCh,
+			taskCh:                     ch,
 			wg:                         &it.wg,
 			store:                      it.store,
 			req:                        it.req,
@@ -488,11 +576,12 @@ func (it *copIterator) open(ctx context.Context, enabledRateLimitAction, enableC
 		go worker.run(ctx)
 	}
 	taskSender := &copIteratorTaskSender{
-		taskCh:   taskCh,
-		wg:       &it.wg,
-		tasks:    it.tasks,
-		finishCh: it.finishCh,
-		sendRate: it.sendRate,
+		taskCh:      taskCh,
+		smallTaskCh: smallTaskCh,
+		wg:          &it.wg,
+		tasks:       it.tasks,
+		finishCh:    it.finishCh,
+		sendRate:    it.sendRate,
 	}
 	taskSender.respChan = it.respChan
 	it.actionOnExceed.setEnabled(enabledRateLimitAction)
@@ -517,12 +606,19 @@ func (sender *copIteratorTaskSender) run() {
 		if exit {
 			break
 		}
-		exit = sender.sendToTaskCh(t)
+		var sendTo chan<- *copTask
+		if isSmallTask(t) {
+			sendTo = sender.smallTaskCh
+		} else {
+			sendTo = sender.taskCh
+		}
+		exit = sender.sendToTaskCh(t, sendTo)
 		if exit {
 			break
 		}
 	}
 	close(sender.taskCh)
+	close(sender.smallTaskCh)
 
 	// Wait for worker goroutines to exit.
 	sender.wg.Wait()
@@ -569,9 +665,19 @@ func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copRes
 	}
 }
 
-func (sender *copIteratorTaskSender) sendToTaskCh(t *copTask) (exit bool) {
+// GetConcurrency returns the concurrency and small task concurrency.
+func (it *copIterator) GetConcurrency() (int, int) {
+	return it.concurrency, it.smallTaskConcurrency
+}
+
+// GetSendRate returns the rate-limit object.
+func (it *copIterator) GetSendRate() *util.RateLimit {
+	return it.sendRate
+}
+
+func (sender *copIteratorTaskSender) sendToTaskCh(t *copTask, sendTo chan<- *copTask) (exit bool) {
 	select {
-	case sender.taskCh <- t:
+	case sendTo <- t:
 	case <-sender.finishCh:
 		exit = true
 	}
@@ -1393,4 +1499,16 @@ func isolationLevelToPB(level kv.IsoLevel) kvrpcpb.IsolationLevel {
 	default:
 		return kvrpcpb.IsolationLevel_SI
 	}
+}
+
+// BuildKeyRanges is used for test, quickly build key ranges from paired keys.
+func BuildKeyRanges(keys ...string) []kv.KeyRange {
+	var ranges []kv.KeyRange
+	for i := 0; i < len(keys); i += 2 {
+		ranges = append(ranges, kv.KeyRange{
+			StartKey: []byte(keys[i]),
+			EndKey:   []byte(keys[i+1]),
+		})
+	}
+	return ranges
 }
