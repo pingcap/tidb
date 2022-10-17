@@ -183,7 +183,8 @@
       "util/watcher/": "util/watcher/ code",
       "util/gctuner": "util/gctuner",
       "store/mockstore/unistore/util": "store/mockstore/unistore/util code",
-      "ddl/util/": "ddl/util code"
+      "ddl/util/": "ddl/util code",
+      "extension/": "extension code"
     }
   },
   "findcall": {
@@ -213,7 +214,8 @@
       "server/conn_stmt.go": "server/conn_stmt.go",
       "server/conn_test.go": "server/conn_test.go",
       "planner/core/plan.go": "planner/core/plan.go",
-      "errno/": "only table code"
+      "errno/": "only table code",
+      "extension/": "extension code"
     }
   },
   "gofmt": {
@@ -332,7 +334,8 @@
       "kv/": "kv code",
       "util/memory": "util/memory",
       "ddl/": "ddl",
-      "planner/": "planner"
+      "planner/": "planner",
+      "extension/": "extension code"
     }
   },
   "pkgfact": {
@@ -399,7 +402,8 @@
       "planner/core/util.go": "planner/core/util.go",
       "util/": "util code",
       "parser/": "parser code",
-      "meta/": "parser code"
+      "meta/": "parser code",
+      "extension/": "extension code"
     }
   },
   "shift": {
@@ -757,7 +761,8 @@
       "planner/core/plan.go": "planner/core/plan.go",
       "server/conn.go": "server/conn.go",
       "server/conn_stmt.go": "server/conn_stmt.go",
-      "server/conn_test.go": "server/conn_test.go"
+      "server/conn_test.go": "server/conn_test.go",
+      "extension/": "extension code"
     }
   },
   "SA2000": {
