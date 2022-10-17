@@ -2533,7 +2533,7 @@ func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reo
 	if err != nil {
 		return nil, nil, true, errors.Trace(err)
 	}
-	t := p.GetPartitionedTable()
+	t := w.table.GetPartitionedTable()
 	if t == nil {
 		return nil, nil, true, dbterror.ErrUnsupportedReorganizePartition.GenWithStackByArgs()
 	}
@@ -2557,7 +2557,7 @@ func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reo
 	tmpRow := make([]types.Datum, maxOffset+1)
 	var lastAccessedHandle kv.Key
 	oprStartTime := startTime
-	err = iterateSnapshotKeys(w.reorgInfo.d.jobContext(w.reorgInfo.Job), w.sessCtx.GetStore(), w.priority, p.RecordPrefix(), txn.StartTS(), taskRange.startKey, taskRange.endKey,
+	err = iterateSnapshotKeys(w.reorgInfo.d.jobContext(w.reorgInfo.Job), w.sessCtx.GetStore(), w.priority, w.table.RecordPrefix(), txn.StartTS(), taskRange.startKey, taskRange.endKey,
 		func(handle kv.Handle, recordKey kv.Key, rawRow []byte) (bool, error) {
 			oprEndTime := time.Now()
 			logSlowOperations(oprEndTime.Sub(oprStartTime), "iterateSnapshotKeys in updateColumnWorker fetchRowColVals", 0)
