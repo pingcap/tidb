@@ -745,6 +745,9 @@ const (
 	// TODO(crazycs520): remove this after foreign key GA.
 	TiDBEnableForeignKey = "tidb_enable_foreign_key"
 
+	// TiDBOptAdvancedJoinHint indicates whether the join method hint is compatible with join order hint.
+	TiDBOptAdvancedJoinHint = "tidb_opt_advanced_join_hint"
+
 	// TiDBOptRangeMaxSize is the max memory limit for ranges. When the optimizer estimates that the memory usage of complete
 	// ranges would exceed the limit, it chooses less accurate ranges such as full range. 0 indicates that there is no memory
 	// limit for ranges.
@@ -1054,6 +1057,7 @@ const (
 	DefTiDBRcWriteCheckTs                           = false
 	DefTiDBConstraintCheckInPlacePessimistic        = true
 	DefTiDBForeignKeyChecks                         = false
+	DefTiDBOptAdvancedJoinHint                      = true
 	DefTiDBOptRangeMaxSize                          = 0
 	DefTiDBCostModelVer                             = 1
 	DefTiDBServerMemoryLimitSessMinSize             = 128 << 20

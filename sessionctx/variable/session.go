@@ -1268,6 +1268,9 @@ type SessionVars struct {
 	// memory limit for ranges.
 	RangeMaxSize int64
 
+	// EnableAdvancedJoinHInt indicates whether the join method hint is compatible with join order hint.
+	EnableAdvancedJoinHInt bool
+
 	// LastPlanReplayerToken indicates the last plan replayer token
 	LastPlanReplayerToken string
 

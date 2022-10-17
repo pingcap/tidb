@@ -169,12 +169,12 @@ func TestIndexJoinOnSinglePartitionTable(t *testing.T) {
 		sql = "select /*+ INL_HASH_JOIN(t1,t2) */ * from t1 join t2 partition(p0) on t1.c_int = t2.c_int and t1.c_str < t2.c_str"
 		tk.MustQuery(sql).Check(testkit.Rows("1 Alice 1 Bob"))
 		rows = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + sql).Rows())
-		require.Equal(t, 0, strings.Index(rows[0], "IndexHashJoin"))
+		require.Equal(t, true, strings.Index(rows[1], "IndexHashJoin") >= 0)
 
 		sql = "select /*+ INL_JOIN(t1,t2) */ * from t1 join t2 partition(p0) on t1.c_int = t2.c_int and t1.c_str < t2.c_str"
 		tk.MustQuery(sql).Check(testkit.Rows("1 Alice 1 Bob"))
 		rows = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + sql).Rows())
-		require.Equal(t, 0, strings.Index(rows[0], "IndexJoin"))
+		require.Equal(t, true, strings.Index(rows[1], "IndexJoin") >= 0)
 	}
 }
 
