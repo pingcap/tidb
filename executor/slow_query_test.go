@@ -118,7 +118,7 @@ func TestParseSlowLogFile(t *testing.T) {
 		`# Time: 2019-04-28T15:24:04.309074+08:00
 # Txn_start_ts: 405888132465033227
 # User@Host: root[root] @ localhost [127.0.0.1]
-# Exec_retry_time: 0.12 Exec_retry_count: 57 Exec_retry_reason: [PessimisticRetry]
+# Exec_retry_time: 0.12 Exec_retry_count: 57
 # Query_time: 0.216905
 # Cop_time: 0.38 Process_time: 0.021 Request_count: 1 Total_keys: 637 Processed_keys: 436
 # Rocksdb_delete_skipped_count: 10 Rocksdb_key_skipped_count: 10 Rocksdb_block_cache_hit_count: 10 Rocksdb_block_read_count: 10 Rocksdb_block_read_byte: 100
@@ -158,86 +158,85 @@ select * from t;`
 		recordString += str
 	}
 	expectRecordString := `2019-04-28 15:24:04.309074,` +
-		`405888132465033227,root,localhost,0,[PessimisticRetry],57,0.12,0.216905,` +
+		`405888132465033227,root,localhost,0,,57,0.12,0.216905,` +
 		`0,0,0,0,0,0,0,0,0,0,0,0,,0,0,0,0,0,0,0.38,0.021,0,0,0,1,637,0,10,10,10,10,100,,,1,42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772,t1:1,t2:2,` +
 		`0.1,0.2,0.03,127.0.0.1:20160,0.05,0.6,0.8,0.0.0.0:20160,70724,65536,0,0,0,0,0,` +
 		`Cop_backoff_regionMiss_total_times: 200 Cop_backoff_regionMiss_total_time: 0.2 Cop_backoff_regionMiss_max_time: 0.2 Cop_backoff_regionMiss_max_addr: 127.0.0.1 Cop_backoff_regionMiss_avg_time: 0.2 Cop_backoff_regionMiss_p90_time: 0.2 Cop_backoff_rpcPD_total_times: 200 Cop_backoff_rpcPD_total_time: 0.2 Cop_backoff_rpcPD_max_time: 0.2 Cop_backoff_rpcPD_max_addr: 127.0.0.1 Cop_backoff_rpcPD_avg_time: 0.2 Cop_backoff_rpcPD_p90_time: 0.2 Cop_backoff_rpcTiKV_total_times: 200 Cop_backoff_rpcTiKV_total_time: 0.2 Cop_backoff_rpcTiKV_max_time: 0.2 Cop_backoff_rpcTiKV_max_addr: 127.0.0.1 Cop_backoff_rpcTiKV_avg_time: 0.2 Cop_backoff_rpcTiKV_p90_time: 0.2,` +
 		`0,0,1,0,1,1,0,,60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4,` +
 		`,update t set i = 1;,select * from t;`
 	require.Equal(t, expectRecordString, recordString)
-	/*
-	   	// Issue 20928
-	   	reader = bufio.NewReader(bytes.NewBufferString(slowLogStr))
-	   	rows, err = parseSlowLog(ctx, reader)
-	   	require.NoError(t, err)
-	   	require.Len(t, rows, 1)
-	   	recordString = ""
-	   	for i, value := range rows[0] {
-	   		str, err := value.ToString()
-	   		require.NoError(t, err)
-	   		if i > 0 {
-	   			recordString += ","
-	   		}
-	   		recordString += str
-	   	}
-	   	expectRecordString = `2019-04-28 15:24:04.309074,` +
-	   		`405888132465033227,root,localhost,0,57,0.12,[PessimisticRetry],0.216905,` +
-	   		`0,0,0,0,0,0,0,0,0,0,0,0,,0,0,0,0,0,0,0.38,0.021,0,0,0,1,637,0,10,10,10,10,100,,,1,42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772,t1:1,t2:2,` +
-	   		`0.1,0.2,0.03,127.0.0.1:20160,0.05,0.6,0.8,0.0.0.0:20160,70724,65536,0,0,0,0,0,` +
-	   		`Cop_backoff_regionMiss_total_times: 200 Cop_backoff_regionMiss_total_time: 0.2 Cop_backoff_regionMiss_max_time: 0.2 Cop_backoff_regionMiss_max_addr: 127.0.0.1 Cop_backoff_regionMiss_avg_time: 0.2 Cop_backoff_regionMiss_p90_time: 0.2 Cop_backoff_rpcPD_total_times: 200 Cop_backoff_rpcPD_total_time: 0.2 Cop_backoff_rpcPD_max_time: 0.2 Cop_backoff_rpcPD_max_addr: 127.0.0.1 Cop_backoff_rpcPD_avg_time: 0.2 Cop_backoff_rpcPD_p90_time: 0.2 Cop_backoff_rpcTiKV_total_times: 200 Cop_backoff_rpcTiKV_total_time: 0.2 Cop_backoff_rpcTiKV_max_time: 0.2 Cop_backoff_rpcTiKV_max_addr: 127.0.0.1 Cop_backoff_rpcTiKV_avg_time: 0.2 Cop_backoff_rpcTiKV_p90_time: 0.2,` +
-	   		`0,0,1,0,1,1,0,,60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4,` +
-	   		`,update t set i = 1;,select * from t;`
-	   	require.Equal(t, expectRecordString, recordString)
 
-	   	// fix sql contain '# ' bug
-	   	slowLog := bytes.NewBufferString(
-	   		`# Time: 2019-04-28T15:24:04.309074+08:00
-	   select a# from t;
-	   # Time: 2019-01-24T22:32:29.313255+08:00
-	   # Txn_start_ts: 405888132465033227
-	   # Query_time: 0.216905
-	   # Process_time: 0.021 Request_count: 1 Total_keys: 637 Processed_keys: 436
-	   # Is_internal: true
-	   # Digest: 42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772
-	   # Stats: t1:1,t2:2
-	   # Succ: false
-	   select * from t;
-	   `)
-	   	reader = bufio.NewReader(slowLog)
-	   	_, err = parseSlowLog(ctx, reader)
-	   	require.NoError(t, err)
+	// Issue 20928
+	reader = bufio.NewReader(bytes.NewBufferString(slowLogStr))
+	rows, err = parseSlowLog(ctx, reader)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	recordString = ""
+	for i, value := range rows[0] {
+		str, err := value.ToString()
+		require.NoError(t, err)
+		if i > 0 {
+			recordString += ","
+		}
+		recordString += str
+	}
+	expectRecordString = `2019-04-28 15:24:04.309074,` +
+		`405888132465033227,root,localhost,0,,57,0.12,0.216905,` +
+		`0,0,0,0,0,0,0,0,0,0,0,0,,0,0,0,0,0,0,0.38,0.021,0,0,0,1,637,0,10,10,10,10,100,,,1,42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772,t1:1,t2:2,` +
+		`0.1,0.2,0.03,127.0.0.1:20160,0.05,0.6,0.8,0.0.0.0:20160,70724,65536,0,0,0,0,0,` +
+		`Cop_backoff_regionMiss_total_times: 200 Cop_backoff_regionMiss_total_time: 0.2 Cop_backoff_regionMiss_max_time: 0.2 Cop_backoff_regionMiss_max_addr: 127.0.0.1 Cop_backoff_regionMiss_avg_time: 0.2 Cop_backoff_regionMiss_p90_time: 0.2 Cop_backoff_rpcPD_total_times: 200 Cop_backoff_rpcPD_total_time: 0.2 Cop_backoff_rpcPD_max_time: 0.2 Cop_backoff_rpcPD_max_addr: 127.0.0.1 Cop_backoff_rpcPD_avg_time: 0.2 Cop_backoff_rpcPD_p90_time: 0.2 Cop_backoff_rpcTiKV_total_times: 200 Cop_backoff_rpcTiKV_total_time: 0.2 Cop_backoff_rpcTiKV_max_time: 0.2 Cop_backoff_rpcTiKV_max_addr: 127.0.0.1 Cop_backoff_rpcTiKV_avg_time: 0.2 Cop_backoff_rpcTiKV_p90_time: 0.2,` +
+		`0,0,1,0,1,1,0,,60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4,` +
+		`,update t set i = 1;,select * from t;`
+	require.Equal(t, expectRecordString, recordString)
 
-	   	// test for time format compatibility.
-	   	slowLog = bytes.NewBufferString(
-	   		`# Time: 2019-04-28T15:24:04.309074+08:00
-	   select * from t;
-	   # Time: 2019-04-24-19:41:21.716221 +0800
-	   select * from t;
-	   `)
-	   	reader = bufio.NewReader(slowLog)
-	   	rows, err = parseSlowLog(ctx, reader)
-	   	require.NoError(t, err)
-	   	require.Len(t, rows, 2)
-	   	t0Str, err := rows[0][0].ToString()
-	   	require.NoError(t, err)
-	   	require.Equal(t, t0Str, "2019-04-28 15:24:04.309074")
-	   	t1Str, err := rows[1][0].ToString()
-	   	require.NoError(t, err)
-	   	require.Equal(t, t1Str, "2019-04-24 19:41:21.716221")
+	// fix sql contain '# ' bug
+	slowLog := bytes.NewBufferString(
+		`# Time: 2019-04-28T15:24:04.309074+08:00
+select a# from t;
+# Time: 2019-01-24T22:32:29.313255+08:00
+# Txn_start_ts: 405888132465033227
+# Query_time: 0.216905
+# Process_time: 0.021 Request_count: 1 Total_keys: 637 Processed_keys: 436
+# Is_internal: true
+# Digest: 42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772
+# Stats: t1:1,t2:2
+# Succ: false
+select * from t;
+`)
+	reader = bufio.NewReader(slowLog)
+	_, err = parseSlowLog(ctx, reader)
+	require.NoError(t, err)
 
-	   	// Add parse error check.
-	   	slowLog = bytes.NewBufferString(
-	   		`# Time: 2019-04-28T15:24:04.309074+08:00
-	   # Succ: abc
-	   select * from t;
-	   `)
-	   	reader = bufio.NewReader(slowLog)
-	   	_, err = parseSlowLog(ctx, reader)
-	   	require.NoError(t, err)
-	   	warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
-	   	require.Len(t, warnings, 1)
-	   	require.Equal(t, warnings[0].Err.Error(), "Parse slow log at line 2, failed field is Succ, failed value is abc, error is strconv.ParseBool: parsing \"abc\": invalid syntax")
-	*/
+	// test for time format compatibility.
+	slowLog = bytes.NewBufferString(
+		`# Time: 2019-04-28T15:24:04.309074+08:00
+select * from t;
+# Time: 2019-04-24-19:41:21.716221 +0800
+select * from t;
+`)
+	reader = bufio.NewReader(slowLog)
+	rows, err = parseSlowLog(ctx, reader)
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+	t0Str, err := rows[0][0].ToString()
+	require.NoError(t, err)
+	require.Equal(t, t0Str, "2019-04-28 15:24:04.309074")
+	t1Str, err := rows[1][0].ToString()
+	require.NoError(t, err)
+	require.Equal(t, t1Str, "2019-04-24 19:41:21.716221")
+
+	// Add parse error check.
+	slowLog = bytes.NewBufferString(
+		`# Time: 2019-04-28T15:24:04.309074+08:00
+# Succ: abc
+select * from t;
+`)
+	reader = bufio.NewReader(slowLog)
+	_, err = parseSlowLog(ctx, reader)
+	require.NoError(t, err)
+	warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
+	require.Len(t, warnings, 1)
+	require.Equal(t, warnings[0].Err.Error(), "Parse slow log at line 2, failed field is Succ, failed value is abc, error is strconv.ParseBool: parsing \"abc\": invalid syntax")
 }
 
 // It changes variable.MaxOfMaxAllowedPacket, so must be stayed in SerialSuite.
@@ -279,6 +278,35 @@ func TestSlowLogParseTime(t *testing.T) {
 	require.Equal(t, t1.Unix(), t2.Unix())
 	t1Format := t1.In(loc).Format(logutil.SlowLogTimeFormat)
 	require.Equal(t, t1Format, t1Str)
+}
+
+func TestParseSlowLogRetryInfo(t *testing.T) {
+	ctx := mock.NewContext()
+	slowLog := bytes.NewBufferString(
+		`# Time: 2019-04-28T15:24:04.309074+08:00
+# Exec_retry_time: 0.12 Exec_retry_count: 57 Exec_retry_reason: [PessimisticRetry]
+select * from t;
+`)
+	reader := bufio.NewReader(slowLog)
+	rows, err := parseSlowLog(ctx, reader)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	t0Str, err := rows[0][5].ToString()
+	require.NoError(t, err)
+	require.Equal(t, t0Str, "[PessimisticRetry]")
+
+	slowLog = bytes.NewBufferString(
+		`# Time: 2019-04-28T15:24:04.309074+08:00
+# Exec_retry_time: 0.12 Exec_retry_count: 57 Exec_retry_reason: [PessimisticRetry, RcCheckTS, DeadLock]
+select * from t;
+`)
+	reader = bufio.NewReader(slowLog)
+	rows, err = parseSlowLog(ctx, reader)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	t0Str, err = rows[0][5].ToString()
+	require.NoError(t, err)
+	require.Equal(t, t0Str, "[PessimisticRetry, RcCheckTS, DeadLock]")
 }
 
 // TestFixParseSlowLogFile bugfix

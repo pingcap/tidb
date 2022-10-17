@@ -206,7 +206,7 @@ func TestSlowLogFormat(t *testing.T) {
 	resultFields := `# Txn_start_ts: 406649736972468225
 # User@Host: root[root] @ 192.168.0.1 [192.168.0.1]
 # Conn_ID: 1
-# Exec_retry_time: 5.1 Exec_retry_count: 3
+# Exec_retry_time: 5.1 Exec_retry_count: 3 Exec_retry_reason: [RcCheckTs]
 # Query_time: 1
 # Parse_time: 0.00000001
 # Compile_time: 0.00000001
@@ -274,6 +274,7 @@ func TestSlowLogFormat(t *testing.T) {
 		},
 		ExecRetryCount:    3,
 		ExecRetryTime:     5*time.Second + time.Millisecond*100,
+		ExecRetryReason:   "[RcCheckTs]",
 		IsExplicitTxn:     true,
 		IsWriteCacheTable: true,
 		StatsLoadStatus:   loadStatus,
