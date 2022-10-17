@@ -946,7 +946,7 @@ func TestLocalTemporaryTableInsertIgnore(t *testing.T) {
 
 	// test outside transaction
 	tk.MustExec("insert ignore into tmp1 values(1, 100, 1000)")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '1' for key 'PRIMARY'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '1' for key 'tmp1.PRIMARY'"))
 	tk.MustQuery("select * from tmp1 where id=1").Check(testkit.Rows("1 11 101"))
 	tk.MustExec("insert ignore into tmp1 values(5, 15, 105)")
 	tk.MustQuery("show warnings").Check(testkit.Rows())
@@ -955,13 +955,13 @@ func TestLocalTemporaryTableInsertIgnore(t *testing.T) {
 	// test in transaction and rollback
 	tk.MustExec("begin")
 	tk.MustExec("insert ignore into tmp1 values(1, 100, 1000)")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '1' for key 'PRIMARY'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '1' for key 'tmp1.PRIMARY'"))
 	tk.MustQuery("select * from tmp1 where id=1").Check(testkit.Rows("1 11 101"))
 	tk.MustExec("insert ignore into tmp1 values(3, 13, 103)")
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 	tk.MustQuery("select * from tmp1 where id=3").Check(testkit.Rows("3 13 103"))
 	tk.MustExec("insert ignore into tmp1 values(3, 100, 1000)")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '3' for key 'PRIMARY'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '3' for key 'tmp1.PRIMARY'"))
 	tk.MustQuery("select * from tmp1 where id=3").Check(testkit.Rows("3 13 103"))
 	tk.MustExec("rollback")
 	tk.MustQuery("select * from tmp1").Check(testkit.Rows("1 11 101", "2 12 102", "5 15 105"))
@@ -969,11 +969,11 @@ func TestLocalTemporaryTableInsertIgnore(t *testing.T) {
 	// test commit
 	tk.MustExec("begin")
 	tk.MustExec("insert ignore into tmp1 values(1, 100, 1000)")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '1' for key 'PRIMARY'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '1' for key 'tmp1.PRIMARY'"))
 	tk.MustExec("insert ignore into tmp1 values(3, 13, 103)")
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 	tk.MustExec("insert ignore into tmp1 values(3, 100, 1000)")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '3' for key 'PRIMARY'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '3' for key 'tmp1.PRIMARY'"))
 	tk.MustExec("commit")
 	tk.MustQuery("select * from tmp1").Check(testkit.Rows("1 11 101", "2 12 102", "3 13 103", "5 15 105"))
 }
@@ -989,7 +989,7 @@ func TestLocalTemporaryTableInsertOnDuplicateKeyUpdate(t *testing.T) {
 
 	// test outside transaction
 	tk.MustExec("insert ignore into tmp1 values(1, 100, 1000) on duplicate key update u=12")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '12' for key 'u'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '12' for key 'tmp1.u'"))
 	tk.MustQuery("select * from tmp1 where id=1").Check(testkit.Rows("1 11 101"))
 	tk.MustExec("insert into tmp1 values(2, 100, 1000) on duplicate key update v=202")
 	tk.MustQuery("show warnings").Check(testkit.Rows())
@@ -1001,7 +1001,7 @@ func TestLocalTemporaryTableInsertOnDuplicateKeyUpdate(t *testing.T) {
 	// test in transaction and rollback
 	tk.MustExec("begin")
 	tk.MustExec("insert ignore into tmp1 values(1, 100, 1000) on duplicate key update u=12")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '12' for key 'u'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '12' for key 'tmp1.u'"))
 	tk.MustQuery("select * from tmp1 where id=1").Check(testkit.Rows("1 11 101"))
 	tk.MustExec("insert into tmp1 values(2, 100, 1000) on duplicate key update v=302")
 	tk.MustQuery("show warnings").Check(testkit.Rows())
@@ -1015,7 +1015,7 @@ func TestLocalTemporaryTableInsertOnDuplicateKeyUpdate(t *testing.T) {
 	// test commit
 	tk.MustExec("begin")
 	tk.MustExec("insert ignore into tmp1 values(1, 100, 1000) on duplicate key update u=12")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '12' for key 'u'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '12' for key 'tmp1.u'"))
 	tk.MustExec("insert into tmp1 values(2, 100, 1000) on duplicate key update v=302")
 	tk.MustExec("insert into tmp1 values(4, 14, 104) on duplicate key update v=204")
 	tk.MustExec("commit")
@@ -3170,12 +3170,12 @@ func TestUnique(t *testing.T) {
 	require.Error(t, err)
 	// Check error type and error message
 	require.True(t, terror.ErrorEqual(err, kv.ErrKeyExists), fmt.Sprintf("err %v", err))
-	require.Equal(t, "previous statement: insert into test(id, val) values(1, 1);: [kv:1062]Duplicate entry '1' for key 'PRIMARY'", err.Error())
+	require.Equal(t, "previous statement: insert into test(id, val) values(1, 1);: [kv:1062]Duplicate entry '1' for key 'test.PRIMARY'", err.Error())
 
 	_, err = tk1.Exec("commit")
 	require.Error(t, err)
 	require.True(t, terror.ErrorEqual(err, kv.ErrKeyExists), fmt.Sprintf("err %v", err))
-	require.Equal(t, "previous statement: insert into test(id, val) values(2, 2);: [kv:1062]Duplicate entry '2' for key 'val'", err.Error())
+	require.Equal(t, "previous statement: insert into test(id, val) values(2, 2);: [kv:1062]Duplicate entry '2' for key 'test.val'", err.Error())
 
 	// Test for https://github.com/pingcap/tidb/issues/463
 	tk.MustExec("drop table test;")

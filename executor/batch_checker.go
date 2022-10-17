@@ -186,7 +186,7 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 		}
 		uniqueKeys = append(uniqueKeys, &keyValueWithDupInfo{
 			newKey:       key,
-			dupErr:       kv.ErrKeyExists.FastGenByArgs(colValStr, fmt.Sprintf("%s.%s", v.Meta().Table.String(), v.Meta().Name.String())),
+			dupErr:       kv.ErrKeyExists.FastGenByArgs(colValStr, fmt.Sprintf("%s.%s", v.TableMeta().Name.String(), v.Meta().Name.String())),
 			commonHandle: t.Meta().IsCommonHandle,
 		})
 	}
