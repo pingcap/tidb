@@ -184,9 +184,9 @@
           "  └─Apply 4.00 root  CARTESIAN left outer join",
           "    ├─IndexReader(Build) 4.00 root  index:IndexFullScan",
           "    │ └─IndexFullScan 4.00 cop[tikv] table:t1, index:a(a, b) keep order:true",
-          "    └─MaxOneRow(Probe) 1.00 root  ",
-          "      └─IndexReader 2.00 root  index:IndexRangeScan",
-          "        └─IndexRangeScan 2.00 cop[tikv] table:t2, index:a(a, b) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false"
+          "    └─MaxOneRow(Probe) 4.00 root  ",
+          "      └─IndexReader 8.00 root  index:IndexRangeScan",
+          "        └─IndexRangeScan 8.00 cop[tikv] table:t2, index:a(a, b) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false"
         ]
       },
       {
@@ -196,10 +196,10 @@
           "└─Apply 4.00 root  left outer semi join, equal:[eq(test.t1.b, test.t2.b)]",
           "  ├─IndexReader(Build) 4.00 root  index:IndexFullScan",
           "  │ └─IndexFullScan 4.00 cop[tikv] table:t1, index:a(a, b) keep order:true",
-          "  └─Limit(Probe) 3.00 root  offset:0, count:3",
-          "    └─IndexReader 3.00 root  index:Limit",
-          "      └─Limit 3.00 cop[tikv]  offset:0, count:3",
-          "        └─IndexRangeScan 3.00 cop[tikv] table:t2, index:a(a, b) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false"
+          "  └─Limit(Probe) 12.00 root  offset:0, count:3",
+          "    └─IndexReader 12.00 root  index:Limit",
+          "      └─Limit 12.00 cop[tikv]  offset:0, count:3",
+          "        └─IndexRangeScan 12.00 cop[tikv] table:t2, index:a(a, b) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false"
         ]
       },
       {
@@ -209,10 +209,10 @@
           "└─Apply 4.00 root  anti left outer semi join, equal:[eq(test.t1.b, test.t2.b)]",
           "  ├─IndexReader(Build) 4.00 root  index:IndexFullScan",
           "  │ └─IndexFullScan 4.00 cop[tikv] table:t1, index:a(a, b) keep order:true",
-          "  └─Limit(Probe) 3.00 root  offset:0, count:3",
-          "    └─IndexReader 3.00 root  index:Limit",
-          "      └─Limit 3.00 cop[tikv]  offset:0, count:3",
-          "        └─IndexRangeScan 3.00 cop[tikv] table:t2, index:a(a, b) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false"
+          "  └─Limit(Probe) 12.00 root  offset:0, count:3",
+          "    └─IndexReader 12.00 root  index:Limit",
+          "      └─Limit 12.00 cop[tikv]  offset:0, count:3",
+          "        └─IndexRangeScan 12.00 cop[tikv] table:t2, index:a(a, b) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false"
         ]
       },
       {

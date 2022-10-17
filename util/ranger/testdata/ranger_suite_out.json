@@ -9,12 +9,12 @@
           "└─Apply 2.00 root  CARTESIAN left outer semi join, other cond:eq(test.t.e, Column#26)",
           "  ├─TableReader(Build) 2.00 root  data:TableFullScan",
           "  │ └─TableFullScan 2.00 cop[tikv] table:t keep order:false",
-          "  └─StreamAgg(Probe) 1.00 root  funcs:count(1)->Column#26",
-          "    └─HashJoin 2.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
-          "      ├─TableReader(Build) 2.00 root  data:TableFullScan",
-          "      │ └─TableFullScan 2.00 cop[tikv] table:t1 keep order:false",
-          "      └─IndexReader(Probe) 2.00 root  index:IndexRangeScan",
-          "        └─IndexRangeScan 2.00 cop[tikv] table:s, index:idx(b, c, d) range: decided by [eq(test.t.b, 1) in(test.t.c, 1, 2) eq(test.t.d, test.t.a)], keep order:false"
+          "  └─StreamAgg(Probe) 2.00 root  funcs:count(1)->Column#26",
+          "    └─HashJoin 4.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "      ├─TableReader(Build) 4.00 root  data:TableFullScan",
+          "      │ └─TableFullScan 4.00 cop[tikv] table:t1 keep order:false",
+          "      └─IndexReader(Probe) 4.00 root  index:IndexRangeScan",
+          "        └─IndexRangeScan 4.00 cop[tikv] table:s, index:idx(b, c, d) range: decided by [eq(test.t.b, 1) in(test.t.c, 1, 2) eq(test.t.d, test.t.a)], keep order:false"
         ]
       },
       {
