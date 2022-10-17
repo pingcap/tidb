@@ -125,7 +125,7 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 			// "not column" or "not constant" can't lead to a range.
 			return false, true
 		}
-		if s.FuncName.L == ast.Like {
+		if s.FuncName.L == ast.Like || s.FuncName.L == ast.NullEQ {
 			return false, true
 		}
 		return c.check(scalar.GetArgs()[0])

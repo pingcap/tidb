@@ -15,6 +15,8 @@
 package core
 
 import (
+	"unsafe"
+
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -35,6 +37,21 @@ type FKCheck struct {
 
 	CheckExist bool
 	FailedErr  error
+}
+
+const emptyFkCheckSize = int64(unsafe.Sizeof(FKCheck{}))
+
+// MemoryUsage return the memory usage of FKCheck
+func (f *FKCheck) MemoryUsage() (sum int64) {
+	if f == nil {
+		return
+	}
+
+	sum = emptyFkCheckSize
+	for _, cis := range f.Cols {
+		sum += cis.MemoryUsage()
+	}
+	return
 }
 
 func (p *Insert) buildOnInsertFKChecks(ctx sessionctx.Context, is infoschema.InfoSchema, dbName string) ([]*FKCheck, error) {
@@ -110,6 +127,32 @@ func (updt *Update) buildOnUpdateFKChecks(ctx sessionctx.Context, is infoschema.
 		}
 	}
 	updt.FKChecks = fkChecks
+	return nil
+}
+
+func (del *Delete) buildOnDeleteFKChecks(ctx sessionctx.Context, is infoschema.InfoSchema, tblID2table map[int64]table.Table) error {
+	if !ctx.GetSessionVars().ForeignKeyChecks {
+		return nil
+	}
+	fkChecks := make(map[int64][]*FKCheck)
+	for tid, tbl := range tblID2table {
+		tblInfo := tbl.Meta()
+		dbInfo, exist := is.SchemaByTable(tblInfo)
+		if !exist {
+			return infoschema.ErrDatabaseNotExists
+		}
+		referredFKs := is.GetTableReferredForeignKeys(dbInfo.Name.L, tblInfo.Name.L)
+		for _, referredFK := range referredFKs {
+			fkCheck, err := buildFKCheckOnModifyReferTable(is, referredFK)
+			if err != nil {
+				return err
+			}
+			if fkCheck != nil {
+				fkChecks[tid] = append(fkChecks[tid], fkCheck)
+			}
+		}
+	}
+	del.FKChecks = fkChecks
 	return nil
 }
 
