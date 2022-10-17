@@ -227,8 +227,9 @@ func (p *Pool[T, U, C]) AddProduce(task T, constArg C) (<-chan U, TaskController
 }
 
 // AddProduceBySlice is to add Produce by a slice.
-func (p *Pool[T, U, C]) AddProduceBySlice(tasks []T, size int, constArg C) (<-chan U, TaskController) {
-	result := make(chan U, len(tasks))
+func (p *Pool[T, U, C]) AddProduceBySlice(producer func() ([]T, error), constArg C, size int) (<-chan U, TaskController) {
+	result := make(chan U, 10)
+
 	var wg sync.WaitGroup
 	closeCh := make(chan struct{})
 	tc := NewTaskController(closeCh, &wg)
@@ -246,12 +247,22 @@ func (p *Pool[T, U, C]) AddProduceBySlice(tasks []T, size int, constArg C) (<-ch
 		}
 		p.taskCh <- &taskBox
 	}
-	for _, task := range tasks {
-		wg.Add(1)
-		taskCh <- task
-	}
-	close(closeCh)
-	close(taskCh)
+	go func() {
+		defer func() {
+			close(closeCh)
+			close(taskCh)
+		}()
+		for {
+			tasks, err := producer()
+			if err != nil {
+				return
+			}
+			for _, task := range tasks {
+				wg.Add(1)
+				taskCh <- task
+			}
+		}
+	}()
 	return result, tc
 }
 
