@@ -83,7 +83,7 @@ type partitionedTable struct {
 	evalBufferTypes []*types.FieldType
 	evalBufferPool  sync.Pool
 	// Only used during Reorganize partition
-	reorgPartitions map[int64]interface{}
+	reorgPartitions    map[int64]interface{}
 	reorgPartitionExpr *PartitionExpr
 }
 
@@ -1295,22 +1295,22 @@ func (t *partitionedTable) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r [
 
 	tbl := t.GetPartition(pid)
 	err = tbl.RemoveRecord(ctx, h, r)
- 	if err != nil {
- 		return errors.Trace(err)
- 	}
- 
- 	if _, ok := t.reorgPartitions[pid]; ok {
- 		pid, err = t.locateReorgPartition(ctx, r)
- 		if err != nil {
- 			return errors.Trace(err)
- 		}
- 		tbl = t.GetPartition(pid)
- 		err = tbl.RemoveRecord(ctx, h, r)
- 		if err != nil {
- 			return errors.Trace(err)
- 		}
- 	}
- 	return nil
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if _, ok := t.reorgPartitions[pid]; ok {
+		pid, err = t.locateReorgPartition(ctx, r)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		tbl = t.GetPartition(pid)
+		err = tbl.RemoveRecord(ctx, h, r)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
 }
 
 func (t *partitionedTable) GetAllPartitionIDs() []int64 {
