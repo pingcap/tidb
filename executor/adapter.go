@@ -941,7 +941,7 @@ func (a *ExecStmt) setPessmiticLockRetryInfo(lockErr error) {
 func (a *ExecStmt) convertRetryReasonToString() string {
 	buf := bytes.NewBuffer(make([]byte, 0, 16))
 	buf.WriteByte('[')
-	for k, _ := range a.retryReason {
+	for k := range a.retryReason {
 		if buf.Len() > 1 {
 			buf.WriteByte(',')
 		}
@@ -1820,6 +1820,7 @@ func getPessiticLockRetryReason(lockError error) string {
 	causedError := errors.Cause(lockError)
 
 	if nil == causedError {
+		log.Warn("get internal pessimistic lock error failed")
 		return ""
 	}
 
@@ -1830,7 +1831,13 @@ func getPessiticLockRetryReason(lockError error) string {
 	if terror.ErrorEqual(kv.ErrWriteConflict, lockError) {
 		err, _ := causedError.(*errors.Error)
 		reason, ok = err.Args()[kv.ConflictReasonPos].(string)
+		if !ok {
+			log.Warn("get the reason of pessimistic lock error failed")
+			reason = ""
+		}
+		return reason
 	}
 
+	log.Warn("It is a unexpected pessimistic error causing retry", zap.Error(lockError))
 	return reason
 }
