@@ -2533,9 +2533,8 @@ func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reo
 	if err != nil {
 		return nil, nil, true, errors.Trace(err)
 	}
-	p, ok := w.table.(table.PhysicalTable)
 	t := p.GetPartitionedTable()
-	if !ok || t == nil {
+	if t == nil {
 		return nil, nil, true, dbterror.ErrUnsupportedReorganizePartition.GenWithStackByArgs()
 	}
 	partColIDs := t.GetPartitionColumnIDs()
