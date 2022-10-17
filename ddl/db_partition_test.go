@@ -4858,7 +4858,6 @@ func TestReorganizeListPartition(t *testing.T) {
 }
 
 func TestReorgPartitionConcurrent(t *testing.T) {
-	t.Skip("Needs PR 38460 as well")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	schemaName := "ReorgPartConcurrent"
@@ -4881,14 +4880,14 @@ func TestReorgPartitionConcurrent(t *testing.T) {
 
 	injected := false
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		if /* TODO: uncomment!! job.Type == model.ActionReorganizePartition && */ job.SchemaState == model.StateWriteReorganization && !injected {
+		if job.Type == model.ActionReorganizePartition && job.SchemaState == model.StateWriteReorganization && !injected {
 			injected = true
 			<-wait
 			<-wait
 		}
 	}
 	alterErr := make(chan error, 1)
-	go backgroundExec(store /* TODO: uncomment!! schemaName, */, "alter table t reorganize partition p1 into (partition p1a values less than (15), partition p1b values less than (20))", alterErr)
+	go backgroundExec(store, schemaName, "alter table t reorganize partition p1 into (partition p1a values less than (15), partition p1b values less than (20))", alterErr)
 	wait <- true
 	tk.MustExec(`insert into t values (14, "14", 14),(15, "15",15)`)
 	wait <- true
