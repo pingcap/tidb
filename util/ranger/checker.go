@@ -28,11 +28,8 @@ import (
 
 // conditionChecker checks if this condition can be pushed to index planner.
 type conditionChecker struct {
-	checkerCol    *expression.Column
-	colUniqueID   int64
-	length        int
-	shouldReserve bool // check if a access condition should be reserved in filter conditions.
-	isFullLength  bool
+	checkerCol *expression.Column
+	length     int
 }
 
 func (c *conditionChecker) isFullLengthColumn() bool {
