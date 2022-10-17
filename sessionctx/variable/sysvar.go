@@ -300,7 +300,7 @@ var defaultSysVars = []*SysVar{
 		s.MetricSchemaStep = TidbOptInt64(val, DefTiDBMetricSchemaStep)
 		return nil
 	}},
-	{Scope: ScopeSession, Name: TiDBWriteByTiCDC, Value: strconv.Itoa(0), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeSession, Name: TiDBWriteByTiCDC, Value: BoolToOnOff(false), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.TiDBWriteByTiCDC = TiDBOptOn(val)
 		return nil
 	}},

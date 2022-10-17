@@ -422,14 +422,14 @@ func TestTxnWriteThroughputSLI(t *testing.T) {
 	writeSLI := tk.Session().GetTxnWriteThroughputSLI()
 	require.False(t, writeSLI.IsInvalid())
 	require.True(t, writeSLI.IsSmallTxn())
-	require.Equal(t, "invalid: false, affectRow: 2, writeSize: 58, readKeys: 0, writeKeys: 2, writeTime: 1s", tk.Session().GetTxnWriteThroughputSLI().String())
+	require.Equal(t, "invalid: false, affectRow: 2, writeSize: 60, readKeys: 0, writeKeys: 2, writeTime: 1s", tk.Session().GetTxnWriteThroughputSLI().String())
 	tk.Session().GetTxnWriteThroughputSLI().Reset()
 
 	// Test insert ... select ... from
 	mustExec("insert into t select b, a from t")
 	require.True(t, writeSLI.IsInvalid())
 	require.True(t, writeSLI.IsSmallTxn())
-	require.Equal(t, "invalid: true, affectRow: 2, writeSize: 58, readKeys: 0, writeKeys: 2, writeTime: 1s", tk.Session().GetTxnWriteThroughputSLI().String())
+	require.Equal(t, "invalid: true, affectRow: 2, writeSize: 60, readKeys: 0, writeKeys: 2, writeTime: 1s", tk.Session().GetTxnWriteThroughputSLI().String())
 	tk.Session().GetTxnWriteThroughputSLI().Reset()
 
 	// Test for delete
@@ -450,7 +450,7 @@ func TestTxnWriteThroughputSLI(t *testing.T) {
 	require.False(t, writeSLI.IsSmallTxn())
 	mustExec("commit")
 	require.False(t, writeSLI.IsInvalid())
-	require.Equal(t, "invalid: false, affectRow: 21, writeSize: 609, readKeys: 0, writeKeys: 21, writeTime: 22s", tk.Session().GetTxnWriteThroughputSLI().String())
+	require.Equal(t, "invalid: false, affectRow: 21, writeSize: 630, readKeys: 0, writeKeys: 21, writeTime: 22s", tk.Session().GetTxnWriteThroughputSLI().String())
 	tk.Session().GetTxnWriteThroughputSLI().Reset()
 
 	// Test invalid when transaction has replace ... select ... from ... statement.
@@ -461,7 +461,7 @@ func TestTxnWriteThroughputSLI(t *testing.T) {
 	mustExec("replace into t select b, a from t")
 	mustExec("commit")
 	require.True(t, writeSLI.IsInvalid())
-	require.Equal(t, "invalid: true, affectRow: 4, writeSize: 116, readKeys: 0, writeKeys: 4, writeTime: 3s", tk.Session().GetTxnWriteThroughputSLI().String())
+	require.Equal(t, "invalid: true, affectRow: 4, writeSize: 120, readKeys: 0, writeKeys: 4, writeTime: 3s", tk.Session().GetTxnWriteThroughputSLI().String())
 	tk.Session().GetTxnWriteThroughputSLI().Reset()
 
 	// Test clean last failed transaction information.
@@ -476,7 +476,7 @@ func TestTxnWriteThroughputSLI(t *testing.T) {
 	mustExec("begin")
 	mustExec("insert into t values (5, 6)")
 	mustExec("commit")
-	require.Equal(t, "invalid: false, affectRow: 1, writeSize: 29, readKeys: 0, writeKeys: 1, writeTime: 2s", tk.Session().GetTxnWriteThroughputSLI().String())
+	require.Equal(t, "invalid: false, affectRow: 1, writeSize: 30, readKeys: 0, writeKeys: 1, writeTime: 2s", tk.Session().GetTxnWriteThroughputSLI().String())
 
 	// Test for reset
 	tk.Session().GetTxnWriteThroughputSLI().Reset()
