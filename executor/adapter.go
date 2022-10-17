@@ -886,7 +886,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 	if a.retryCount >= config.GetGlobalConfig().PessimisticTxn.MaxRetryCount {
 		return nil, errors.New("pessimistic lock retry limit reached")
 	}
-	a.setPessmiticLockRretryInfo(lockErr)
+	a.setPessmiticLockRetryInfo(lockErr)
 
 	err = txnManager.OnStmtRetry(ctx)
 	if err != nil {
@@ -922,7 +922,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 	return e, nil
 }
 
-func (a *ExecStmt) setPessmiticLockRretryInfo(lockErr error) {
+func (a *ExecStmt) setPessmiticLockRetryInfo(lockErr error) {
 	a.retryCount++
 	a.retryStartTime = time.Now()
 
