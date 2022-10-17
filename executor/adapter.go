@@ -1818,6 +1818,7 @@ func getPessiticLockRetryReason(lockError error) string {
 	ok := false
 	reason := ""
 	causedError := errors.Cause(lockError)
+	fmt.Println("================xxxxxxxxxxxxxxxxxx=======", lockError)
 
 	if nil == causedError {
 		log.Warn("get internal pessimistic lock error failed")
@@ -1830,7 +1831,12 @@ func getPessiticLockRetryReason(lockError error) string {
 
 	if terror.ErrorEqual(kv.ErrWriteConflict, lockError) {
 		err, _ := causedError.(*errors.Error)
-		reason, ok = err.Args()[kv.ConflictReasonPos].(string)
+		args := err.Args()
+		if len(args)-1 != kv.ConflictReasonPos {
+			log.Warn("the argument count of ErrWriteConflict is not correct", zap.Error(lockError))
+			return ""
+		}
+		reason, ok = args[kv.ConflictReasonPos].(string)
 		if !ok {
 			log.Warn("get the reason of pessimistic lock error failed")
 			reason = ""
