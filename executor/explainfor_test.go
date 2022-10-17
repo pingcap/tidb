@@ -466,7 +466,7 @@ func TestPointGetUserVarPlanCache(t *testing.T) {
 		`  │ └─Point_Get_43 1.00 root table:t2, index:idx_a(a) `,
 		`  └─TableReader_13(Probe) 0.00 root  data:Selection_12`,
 		`    └─Selection_12 0.00 cop[tikv]  eq(test.t1.a, 1)`,
-		`      └─TableRangeScan_11 1.00 cop[tikv] table:t1 range: decided by [test.t2.a], keep order:false, stats:pseudo`))
+		`      └─TableRangeScan_11 1.00 cop[tikv] table:t1 range: decided by [eq(test.t1.a, test.t2.a)], keep order:false, stats:pseudo`))
 
 	tk.MustExec("set @a=2")
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows(
@@ -482,7 +482,7 @@ func TestPointGetUserVarPlanCache(t *testing.T) {
 		`  │ └─Point_Get_43 1.00 root table:t2, index:idx_a(a) `,
 		`  └─TableReader_13(Probe) 0.00 root  data:Selection_12`,
 		`    └─Selection_12 0.00 cop[tikv]  eq(test.t1.a, 2)`,
-		`      └─TableRangeScan_11 1.00 cop[tikv] table:t1 range: decided by [test.t2.a], keep order:false, stats:pseudo`))
+		`      └─TableRangeScan_11 1.00 cop[tikv] table:t1 range: decided by [eq(test.t1.a, test.t2.a)], keep order:false, stats:pseudo`))
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows(
 		"2 4 2 2",
 	))

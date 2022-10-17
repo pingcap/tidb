@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -30,6 +31,11 @@ import (
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
+)
+
+var (
+	rcReadCheckTSWriteConfilictCounter  = metrics.RCCheckTSWriteConfilictCounter.WithLabelValues(metrics.LblRCReadCheckTS)
+	rcWriteCheckTSWriteConfilictCounter = metrics.RCCheckTSWriteConfilictCounter.WithLabelValues(metrics.LblRCWriteCheckTS)
 )
 
 type stmtState struct {
@@ -197,6 +203,8 @@ func (p *PessimisticRCTxnContextProvider) handleAfterQueryError(queryErr error) 
 		return sessiontxn.NoIdea()
 	}
 
+	rcReadCheckTSWriteConfilictCounter.Inc()
+
 	logutil.Logger(p.ctx).Info("RC read with ts checking has failed, retry RC read",
 		zap.String("sql", sessVars.StmtCtx.OriginalSQL), zap.Error(queryErr))
 	return sessiontxn.RetryReady()
@@ -218,6 +226,9 @@ func (p *PessimisticRCTxnContextProvider) handleAfterPessimisticLockError(lockEr
 			zap.Uint64("forUpdateTS", txnCtx.GetForUpdateTS()),
 			zap.String("err", lockErr.Error()))
 		retryable = true
+		if p.checkTSInWriteStmt {
+			rcWriteCheckTSWriteConfilictCounter.Inc()
+		}
 	}
 
 	if retryable {

@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	backup "github.com/pingcap/kvproto/pkg/brpb"
@@ -27,21 +28,21 @@ import (
 )
 
 type flushSimulator struct {
-	flushedEpoch uint64
+	flushedEpoch atomic.Uint64
 	enabled      bool
 }
 
-func (c flushSimulator) makeError(requestedEpoch uint64) *errorpb.Error {
+func (c *flushSimulator) makeError(requestedEpoch uint64) *errorpb.Error {
 	if !c.enabled {
 		return nil
 	}
-	if c.flushedEpoch == 0 {
+	if c.flushedEpoch.Load() == 0 {
 		e := errorpb.Error{
 			Message: "not flushed",
 		}
 		return &e
 	}
-	if c.flushedEpoch != requestedEpoch {
+	if c.flushedEpoch.Load() != requestedEpoch {
 		e := errorpb.Error{
 			Message: "flushed epoch not match",
 		}
@@ -50,7 +51,7 @@ func (c flushSimulator) makeError(requestedEpoch uint64) *errorpb.Error {
 	return nil
 }
 
-func (c flushSimulator) fork() flushSimulator {
+func (c *flushSimulator) fork() flushSimulator {
 	return flushSimulator{
 		enabled: c.enabled,
 	}
@@ -61,7 +62,7 @@ type region struct {
 	leader     uint64
 	epoch      uint64
 	id         uint64
-	checkpoint uint64
+	checkpoint atomic.Uint64
 
 	fsim flushSimulator
 }
@@ -93,13 +94,13 @@ func overlaps(a, b kv.KeyRange) bool {
 
 func (r *region) splitAt(newID uint64, k string) *region {
 	newRegion := &region{
-		rng:        kv.KeyRange{StartKey: []byte(k), EndKey: r.rng.EndKey},
-		leader:     r.leader,
-		epoch:      r.epoch + 1,
-		id:         newID,
-		checkpoint: r.checkpoint,
-		fsim:       r.fsim.fork(),
+		rng:    kv.KeyRange{StartKey: []byte(k), EndKey: r.rng.EndKey},
+		leader: r.leader,
+		epoch:  r.epoch + 1,
+		id:     newID,
+		fsim:   r.fsim.fork(),
 	}
+	newRegion.checkpoint.Store(r.checkpoint.Load())
 	r.rng.EndKey = []byte(k)
 	r.epoch += 1
 	r.fsim = r.fsim.fork()
@@ -107,7 +108,7 @@ func (r *region) splitAt(newID uint64, k string) *region {
 }
 
 func (r *region) flush() {
-	r.fsim.flushedEpoch = r.epoch
+	r.fsim.flushedEpoch.Store(r.epoch)
 }
 
 func (f *fakeStore) GetLastFlushTSOfRegion(ctx context.Context, in *logbackup.GetLastFlushTSOfRegionRequest, opts ...grpc.CallOption) (*logbackup.GetLastFlushTSOfRegionResponse, error) {
@@ -151,7 +152,7 @@ func (f *fakeStore) GetLastFlushTSOfRegion(ctx context.Context, in *logbackup.Ge
 			continue
 		}
 		resp.Checkpoints = append(resp.Checkpoints, &logbackup.RegionCheckpoint{
-			Checkpoint: region.checkpoint,
+			Checkpoint: region.checkpoint.Load(),
 			Region: &logbackup.RegionIdentity{
 				Id:           region.id,
 				EpochVersion: region.epoch,
@@ -315,11 +316,11 @@ func (f *fakeCluster) advanceCheckpoints() uint64 {
 		f.updateRegion(r.id, func(r *region) {
 			// The current implementation assumes that the server never returns checkpoint with value 0.
 			// This assumption is true for the TiKV implementation, simulating it here.
-			r.checkpoint += rand.Uint64()%256 + 1
-			if r.checkpoint < minCheckpoint {
-				minCheckpoint = r.checkpoint
+			cp := r.checkpoint.Add(rand.Uint64()%256 + 1)
+			if cp < minCheckpoint {
+				minCheckpoint = cp
 			}
-			r.fsim.flushedEpoch = 0
+			r.fsim.flushedEpoch.Store(0)
 		})
 	}
 	log.Info("checkpoint updated", zap.Uint64("to", minCheckpoint))
@@ -340,11 +341,10 @@ func createFakeCluster(t *testing.T, n int, simEnabled bool) *fakeCluster {
 		stores = append(stores, s)
 	}
 	initialRegion := &region{
-		rng:        kv.KeyRange{},
-		leader:     stores[0].id,
-		epoch:      0,
-		id:         c.idAlloc(),
-		checkpoint: 0,
+		rng:    kv.KeyRange{},
+		leader: stores[0].id,
+		epoch:  0,
+		id:     c.idAlloc(),
 		fsim: flushSimulator{
 			enabled: simEnabled,
 		},
@@ -367,9 +367,9 @@ func (r *region) String() string {
 		r.epoch,
 		hex.EncodeToString(r.rng.StartKey),
 		hex.EncodeToString(r.rng.EndKey),
-		r.checkpoint,
+		r.checkpoint.Load(),
 		r.leader,
-		r.fsim.flushedEpoch)
+		r.fsim.flushedEpoch.Load())
 }
 
 func (f *fakeStore) String() string {
