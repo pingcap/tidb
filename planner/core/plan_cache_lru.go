@@ -250,17 +250,11 @@ func PickPlanFromBucket(bucket map[*list.Element]struct{}, paramTypes []*types.F
 
 // setKVMemoryUsage get the planCacheKeyMem and planCacheValueMem and
 func setKVMemoryUsage(key kvcache.Key, val kvcache.Value) {
-	if val == nil {
+	if val == nil || key == nil {
 		return
 	}
-
-	planVal, ok := val.(*PlanCacheValue)
-	if !ok {
-		return
-	}
-	if key != nil {
-		planVal.PlanCacheKeyMem = key.(*planCacheKey).MemoryUsage()
-	}
+	planVal := val.(*PlanCacheValue)
+	planVal.PlanCacheKeyMem = key.(*planCacheKey).MemoryUsage()
 	planVal.PlanCacheValueMem = planVal.MemoryUsage()
 }
 
