@@ -17,7 +17,6 @@ package ranger_test
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/util/collate"
 	"testing"
 
 	"github.com/pingcap/tidb/config"
@@ -32,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/stretchr/testify/require"
 )
@@ -2600,6 +2600,9 @@ create table t(
 	defer func() { collate.SetNewCollationEnabledForTest(false) }()
 	ctx := context.Background()
 	for _, tt := range tests {
+		if tt.exprStr == "d > 'd'" {
+			fmt.Println("hi")
+		}
 		sql := "select * from t where " + tt.exprStr
 		sctx := tk.Session()
 		stmts, err := session.Parse(sctx, sql)
