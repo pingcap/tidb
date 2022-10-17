@@ -103,6 +103,7 @@ func (a *LogOnExceed) Action(t *Tracker) {
 	if !a.acted {
 		a.acted = true
 		if a.logHook == nil {
+			logutil.BgLogger().Error("LogOnExceed xhy")
 			logutil.BgLogger().Warn("memory exceeds quota",
 				zap.Error(errMemExceedThreshold.GenWithStackByArgs(t.label, t.BytesConsumed(), t.GetBytesLimit(), t.String())))
 			return
@@ -135,6 +136,7 @@ func (a *PanicOnExceed) Action(t *Tracker) {
 	a.mutex.Lock()
 	if !a.acted {
 		if a.logHook == nil {
+			logutil.BgLogger().Error("PanicOnExceed xhy")
 			logutil.BgLogger().Warn("memory exceeds quota",
 				zap.Error(errMemExceedThreshold.GenWithStackByArgs(t.label, t.BytesConsumed(), t.GetBytesLimit(), t.String())))
 			return

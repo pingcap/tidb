@@ -95,6 +95,7 @@ func HandleNonTransactionalDelete(ctx context.Context, stmt *ast.NonTransactiona
 	// Use the mem-quota-query as a workaround. As a result, a NT-DML may consume 2x of the memory quota.
 	memTracker := memory.NewTracker(memory.LabelForNonTransactionalDML, -1)
 	memTracker.AttachTo(se.GetSessionVars().MemTracker)
+	se.GetSessionVars().MemTracker.SetBytesLimit(se.GetSessionVars().MemQuotaQuery)
 	defer memTracker.Detach()
 	jobs, err := buildShardJobs(ctx, stmt, se, selectSQL, shardColumnInfo, memTracker)
 	if err != nil {

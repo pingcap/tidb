@@ -747,7 +747,7 @@ func (e *Explain) RenderResult() error {
 				e.SCtx().GetSessionVars().MemoryDebugModeMinHeapInUse != 0 &&
 				e.SCtx().GetSessionVars().MemoryDebugModeAlarmRatio > 0 {
 				row := e.Rows[0]
-				tracker := e.SCtx().GetSessionVars().StmtCtx.MemTracker
+				tracker := e.SCtx().GetSessionVars().MemTracker
 				row[7] = row[7] + "(Total: " + tracker.FormatBytes(tracker.MaxConsumed()) + ")"
 			}
 		}

@@ -1820,6 +1820,7 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMemQuotaQuery, Value: strconv.Itoa(DefTiDBMemQuotaQuery), Type: TypeInt, MinValue: -1, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
 		s.MemQuotaQuery = TidbOptInt64(val, DefTiDBMemQuotaQuery)
+		s.MemTracker.SetBytesLimit(s.MemQuotaQuery)
 		return nil
 	}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		intVal := TidbOptInt64(normalizedValue, DefTiDBMemQuotaQuery)
