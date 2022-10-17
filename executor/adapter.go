@@ -1688,7 +1688,6 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	}
 	if a.retryCount > 0 {
 		stmtExecInfo.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)
-		stmtExecInfo.ExecRetryReason = a.convertRetryReasonToString()
 	}
 	stmtsummary.StmtSummaryByDigestMap.AddStatement(stmtExecInfo)
 }
