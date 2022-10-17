@@ -300,8 +300,8 @@ var defaultSysVars = []*SysVar{
 		s.MetricSchemaStep = TidbOptInt64(val, DefTiDBMetricSchemaStep)
 		return nil
 	}},
-	{Scope: ScopeSession, Name: TiDBMetaTest, Value: strconv.Itoa(0), Type: TypeUnsigned, skipInit: true, MinValue: 0, MaxValue: 1000, SetSession: func(s *SessionVars, val string) error {
-		s.TiDBMetaTest = TidbOptInt64(val, 0)
+	{Scope: ScopeSession, Name: TiDBWriteByTiCDC, Value: strconv.Itoa(0), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.TiDBWriteByTiCDC = TiDBOptOn(val)
 		return nil
 	}},
 	{Scope: ScopeSession, Name: TiDBMetricSchemaRangeDuration, Value: strconv.Itoa(DefTiDBMetricSchemaRangeDuration), skipInit: true, Type: TypeUnsigned, MinValue: 10, MaxValue: 60 * 60 * 60, SetSession: func(s *SessionVars, val string) error {

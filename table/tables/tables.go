@@ -428,7 +428,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 	}
 
 	colIDs = append(colIDs, model.ExtraMetaColID)
-	row = append(row, types.NewMetaDatum(sctx.GetSessionVars().TiDBMetaTest))
+	row = append(row, types.NewMetaDatum(sctx.GetSessionVars().TiDBWriteByTiCDC))
 
 	key := t.RecordKey(h)
 	sc, rd := sessVars.StmtCtx, &sessVars.RowEncoder
@@ -819,7 +819,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 	}
 
 	colIDs = append(colIDs, model.ExtraMetaColID)
-	row = append(row, types.NewMetaDatum(sctx.GetSessionVars().TiDBMetaTest))
+	row = append(row, types.NewMetaDatum(sctx.GetSessionVars().TiDBWriteByTiCDC))
 
 	writeBufs := sessVars.GetWriteStmtBufs()
 	adjustRowValuesBuf(writeBufs, len(row))
