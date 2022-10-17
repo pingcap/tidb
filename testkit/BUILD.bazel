@@ -27,6 +27,7 @@ go_library(
         "//store/mockstore",
         "//util",
         "//util/breakpoint",
+        "//util/gctuner",
         "//util/sqlexec",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",

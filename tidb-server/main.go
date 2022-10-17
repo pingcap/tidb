@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/extension"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -189,7 +190,11 @@ func main() {
 		checkTempStorageQuota()
 	}
 	setupLog()
-	err := cpuprofile.StartCPUProfiler()
+
+	err := extension.Setup()
+	terror.MustNil(err)
+
+	err = cpuprofile.StartCPUProfiler()
 	terror.MustNil(err)
 
 	// Enable failpoints in tikv/client-go if the test API is enabled.
