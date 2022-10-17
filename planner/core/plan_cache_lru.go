@@ -74,7 +74,7 @@ func NewLRUPlanCache(capacity uint, guard float64, quota uint64,
 		pickFromBucket: pickFromBucket,
 		quota:          quota,
 		guard:          guard,
-		MemTracker:     memory.NewTracker(memory.LabelForPreparedPlanCache, -1),
+		MemTracker:     newTrackerForLRUPC(),
 	}
 }
 
@@ -172,9 +172,7 @@ func (l *LRUPlanCache) DeleteAll() {
 		l.size--
 	}
 	l.buckets = make(map[string]map[*list.Element]struct{}, 1)
-	l.MemTracker = memory.NewTracker(memory.LabelForPreparedPlanCache, -1)
-	l.MemTracker.Consume(emptyLRUPlanCacheSize)
-	// todo: maybe need attach
+	l.MemTracker = newTrackerForLRUPC()
 }
 
 // Size gets the current cache size.
@@ -239,8 +237,6 @@ func (l *LRUPlanCache) memoryControl() {
 	}
 }
 
-const emptyLRUPlanCacheSize = int64(unsafe.Sizeof(LRUPlanCache{}))
-
 // PickPlanFromBucket pick one plan from bucket
 func PickPlanFromBucket(bucket map[*list.Element]struct{}, paramTypes []*types.FieldType) (*list.Element, bool) {
 	for k := range bucket {
@@ -266,6 +262,17 @@ func setKVMemoryUsage(key kvcache.Key, val kvcache.Value) {
 		planVal.PlanCacheKeyMem = key.(*planCacheKey).MemoryUsage()
 	}
 	planVal.PlanCacheValueMem = planVal.MemoryUsage()
+}
+
+const emptyLRUPlanCacheSize = int64(unsafe.Sizeof(LRUPlanCache{}))
+
+// newTrackerForLRUPC return a tracker which consumed emptyLRUPlanCacheSize
+// todo: pass label when track general plan cache memory
+func newTrackerForLRUPC() *memory.Tracker {
+	m := memory.NewTracker(memory.LabelForPreparedPlanCache, -1)
+	m.Consume(emptyLRUPlanCacheSize)
+	//todo: maybe need attach here
+	return m
 }
 
 // elementMemoryUsage return the sum of planCacheKey and planCacheValue
