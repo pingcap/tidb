@@ -525,11 +525,11 @@ func extractValueInfo(expr expression.Expression) *ColumnValueInfo {
 	if f, ok := expr.(*expression.ScalarFunction); ok && (f.FuncName.L == ast.EQ || f.FuncName.L == ast.NullEQ) {
 		getValueInfo := func(c *expression.Constant) *ColumnValueInfo {
 			mutable := c.ParamMarker != nil || c.DeferredExpr != nil
-			var value *types.Datum
+			var constVal *expression.Constant
 			if !mutable {
-				value = &c.Value
+				constVal = c
 			}
-			return &ColumnValueInfo{value, mutable}
+			return &ColumnValueInfo{constVal: constVal, mutable: mutable}
 		}
 		if c, ok := f.GetArgs()[0].(*expression.Constant); ok {
 			return getValueInfo(c)
