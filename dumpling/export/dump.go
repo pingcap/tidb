@@ -56,7 +56,7 @@ type Dumper struct {
 	totalTables                   int64
 	charsetAndDefaultCollationMap map[string]string
 
-	statusRecorder *StatusRecorder
+	speedRecorder *SpeedRecorder
 }
 
 // NewDumper returns a new Dumper
@@ -80,7 +80,7 @@ func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 		conf:                      conf,
 		cancelCtx:                 cancelFn,
 		selectTiDBTableRegionFunc: selectTiDBTableRegion,
-		statusRecorder:            NewStatusRecorder(),
+		speedRecorder:             NewSpeedRecorder(),
 	}
 
 	var err error
