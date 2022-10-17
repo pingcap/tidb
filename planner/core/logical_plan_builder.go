@@ -4484,10 +4484,14 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		columns = tbl.DeletableCols()
 	} else {
 		columns = tbl.Cols()
-		//m := tbl.MetaColum()
-		//if m != nil {
-		//	columns = append(columns, m)
-		//}
+		//columns = append(columns, &table.Column{
+		//	ColumnInfo: &model.ColumnInfo{
+		//		ID:        model.ExtraMetaColID,
+		//		Name:      model.NewCIStr("_tidb_row_meta"),
+		//		FieldType: *types.NewFieldType(mysql.TypeJSON),
+		//		Hidden:    true,
+		//	},
+		//})
 	}
 
 	// extract the IndexMergeHint

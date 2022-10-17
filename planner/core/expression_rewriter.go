@@ -1949,18 +1949,15 @@ func (er *expressionRewriter) RowMetaToExpression(v *ast.FuncRowMetaExpr) {
 		return
 	}
 
-	col := &ast.ColumnName{
-		Name:   model.NewCIStr("_tidb_row_meta"),
-		Schema: er.names[0].DBName,
-		Table:  er.names[0].TblName,
-	}
-	idx, err := expression.FindFieldName(er.names, col)
-	if err != nil {
-		er.err = err
-		return
+	var idx = -1
+	for i, name := range er.names {
+		if name.ColName.L == "_tidb_row_meta" {
+			idx = i
+			break
+		}
 	}
 	if idx == -1 {
-		er.err = errors.New("RowMetaToExpression: can't find " + col.String())
+		er.err = errors.New("RowMetaToExpression: can't find _tidb_row_meta")
 		return
 	}
 	column := er.schema.Columns[idx]

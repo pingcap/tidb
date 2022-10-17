@@ -21,6 +21,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/parser/mysql"
 	"math"
 	"net/http"
 	"net/url"
@@ -1832,7 +1833,16 @@ func (h mvccTxnHandler) handleMvccGetByKey(params map[string]string, values url.
 		return resp, nil
 	}
 	colMap := make(map[int64]*types.FieldType, 3)
-	for _, col := range tb.Meta().Columns {
+	m := make([]*model.ColumnInfo, 0, len(tb.Meta().Columns)+1)
+	for i := range tb.Meta().Columns {
+		m = append(m, tb.Meta().Columns[i].Clone())
+	}
+	m = append(m, &model.ColumnInfo{
+		ID:        model.ExtraMetaColID,
+		Name:      model.NewCIStr("row_meta"),
+		FieldType: *types.NewFieldType(mysql.TypeJSON),
+	})
+	for _, col := range m {
 		colMap[col.ID] = &(col.FieldType)
 	}
 
@@ -1842,13 +1852,13 @@ func (h mvccTxnHandler) handleMvccGetByKey(params map[string]string, values url.
 		datas := make(map[string]map[string]string)
 		for _, w := range respValue.Info.Writes {
 			if len(w.ShortValue) > 0 {
-				datas[strconv.FormatUint(w.StartTs, 10)], err = h.decodeMvccData(w.ShortValue, colMap, tb.Meta())
+				datas[strconv.FormatUint(w.StartTs, 10)], err = h.decodeMvccData(w.ShortValue, colMap, m)
 			}
 		}
 
 		for _, v := range respValue.Info.Values {
 			if len(v.Value) > 0 {
-				datas[strconv.FormatUint(v.StartTs, 10)], err = h.decodeMvccData(v.Value, colMap, tb.Meta())
+				datas[strconv.FormatUint(v.StartTs, 10)], err = h.decodeMvccData(v.Value, colMap, m)
 			}
 		}
 
@@ -1868,10 +1878,10 @@ func (h mvccTxnHandler) handleMvccGetByKey(params map[string]string, values url.
 	return result, nil
 }
 
-func (h mvccTxnHandler) decodeMvccData(bs []byte, colMap map[int64]*types.FieldType, tb *model.TableInfo) (map[string]string, error) {
+func (h mvccTxnHandler) decodeMvccData(bs []byte, colMap map[int64]*types.FieldType, cols []*model.ColumnInfo) (map[string]string, error) {
 	rs, err := tablecodec.DecodeRowToDatumMap(bs, colMap, time.UTC)
-	record := make(map[string]string, len(tb.Columns))
-	for _, col := range tb.Columns {
+	record := make(map[string]string, len(cols))
+	for _, col := range cols {
 		if c, ok := rs[col.ID]; ok {
 			data := "nil"
 			if !c.IsNull() {

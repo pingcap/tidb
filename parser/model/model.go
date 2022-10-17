@@ -421,7 +421,7 @@ const ExtraPidColID = -2
 const ExtraPhysTblID = -3
 
 // ExtraMetaColID is the column ID of column that should be filled in with the meta data.
-const ExtraMetaColID = -4
+const ExtraMetaColID = 0
 
 const (
 	// TableInfoVersion0 means the table info version is 0.
