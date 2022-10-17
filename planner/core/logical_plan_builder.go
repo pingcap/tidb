@@ -4484,10 +4484,10 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		columns = tbl.DeletableCols()
 	} else {
 		columns = tbl.Cols()
-		m := tbl.MetaColum()
-		if m != nil {
-			columns = append(columns, m)
-		}
+		//m := tbl.MetaColum()
+		//if m != nil {
+		//	columns = append(columns, m)
+		//}
 	}
 
 	// extract the IndexMergeHint

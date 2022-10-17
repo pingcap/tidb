@@ -29,10 +29,8 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
@@ -658,19 +656,19 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 	//	OriginDefaultValue: types.CreateBinaryJSON(`"_tidb_row_meta"`),
 	//	Version:            2,
 	//}}, tblInfo.Columns...)
-	if !tblInfo.IsView() {
-		tblInfo.Columns = append(tblInfo.Columns, &model.ColumnInfo{
-			ID:                 model.ExtraMetaColID,
-			Name:               model.NewCIStr("_tidb_row_meta"),
-			FieldType:          *types.NewFieldType(mysql.TypeJSON),
-			Offset:             len(tblInfo.Columns),
-			Hidden:             true,
-			State:              model.StatePublic,
-			OriginDefaultValue: nil,
-			DefaultValue:       nil,
-			Version:            2,
-		})
-	}
+	//if !tblInfo.IsView() {
+	//	tblInfo.Columns = append(tblInfo.Columns, &model.ColumnInfo{
+	//		ID:                 model.ExtraMetaColID,
+	//		Name:               model.NewCIStr("_tidb_row_meta"),
+	//		FieldType:          *types.NewFieldType(mysql.TypeJSON),
+	//		Offset:             len(tblInfo.Columns),
+	//		Hidden:             true,
+	//		State:              model.StatePublic,
+	//		OriginDefaultValue: nil,
+	//		DefaultValue:       nil,
+	//		Version:            2,
+	//	})
+	//}
 
 	switch tp {
 	case model.ActionDropTablePartition:

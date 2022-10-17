@@ -249,36 +249,36 @@ func (do *Domain) fetchAllSchemasWithTables(m *meta.Meta) ([]*model.DBInfo, erro
 			return nil, err
 		}
 	}
-	for i := range allSchemas {
-		for _, tbl := range allSchemas[i].Tables {
-			//for _, col := range tbl.Columns {
-			//	col.Offset += 1
-			//}
-			//tbl.Columns = append([]*model.ColumnInfo{{
-			//	ID:                 0,
-			//	Name:               model.NewCIStr("_tidb_row_meta"),
-			//	FieldType:          *types.NewFieldType(mysql.TypeJSON),
-			//	Offset:             0,
-			//	Hidden:             true,
-			//	State:              model.StatePublic,
-			//	OriginDefaultValue: types.CreateBinaryJSON(`"_tidb_row_meta"`),
-			//	Version:            2,
-			//}}, tbl.Columns...)
-			if tbl.IsView() {
-				continue
-			}
-			tbl.Columns = append(tbl.Columns, &model.ColumnInfo{
-				ID:                 model.ExtraMetaColID,
-				Name:               model.NewCIStr("_tidb_row_meta"),
-				FieldType:          *types.NewFieldType(mysql.TypeJSON),
-				Offset:             len(tbl.Columns),
-				Hidden:             true,
-				State:              model.StatePublic,
-				OriginDefaultValue: nil,
-				Version:            1,
-			})
-		}
-	}
+	//for i := range allSchemas {
+	//	for _, tbl := range allSchemas[i].Tables {
+	//		//for _, col := range tbl.Columns {
+	//		//	col.Offset += 1
+	//		//}
+	//		//tbl.Columns = append([]*model.ColumnInfo{{
+	//		//	ID:                 0,
+	//		//	Name:               model.NewCIStr("_tidb_row_meta"),
+	//		//	FieldType:          *types.NewFieldType(mysql.TypeJSON),
+	//		//	Offset:             0,
+	//		//	Hidden:             true,
+	//		//	State:              model.StatePublic,
+	//		//	OriginDefaultValue: types.CreateBinaryJSON(`"_tidb_row_meta"`),
+	//		//	Version:            2,
+	//		//}}, tbl.Columns...)
+	//		if tbl.IsView() {
+	//			continue
+	//		}
+	//		tbl.Columns = append(tbl.Columns, &model.ColumnInfo{
+	//			ID:                 model.ExtraMetaColID,
+	//			Name:               model.NewCIStr("_tidb_row_meta"),
+	//			FieldType:          *types.NewFieldType(mysql.TypeJSON),
+	//			Offset:             len(tbl.Columns),
+	//			Hidden:             true,
+	//			State:              model.StatePublic,
+	//			OriginDefaultValue: nil,
+	//			Version:            1,
+	//		})
+	//	}
+	//}
 	return allSchemas, nil
 }
 
