@@ -394,6 +394,8 @@ type Request struct {
 	}
 	// RequestSource indicates whether the request is an internal request.
 	RequestSource util.RequestSource
+	// FixedRowCountHint is the optimization hint for copr request for task scheduling.
+	FixedRowCountHint []int
 }
 
 // CoprRequestAdjuster is used to check and adjust a copr request according to specific rules.
