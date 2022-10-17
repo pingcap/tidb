@@ -40,11 +40,7 @@ func NewTaskController(closeCh chan struct{}, wg *sync.WaitGroup) TaskController
 
 // Wait is to wait the task to stop.
 func (c *TaskController) Wait() {
-	for {
-		if c.IsProduceClose() {
-			break
-		}
-	}
+	<-c.close
 	c.wg.Wait()
 }
 
