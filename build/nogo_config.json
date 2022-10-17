@@ -183,8 +183,7 @@
       "util/watcher/": "util/watcher/ code",
       "util/gctuner": "util/gctuner",
       "store/mockstore/unistore/util": "store/mockstore/unistore/util code",
-      "ddl/util/": "ddl/util code",
-      "extension/": "extension code"
+      "ddl/util/": "ddl/util code"
     }
   },
   "findcall": {

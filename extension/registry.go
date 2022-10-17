@@ -89,7 +89,8 @@ func (r *registry) Setup() (err error) {
 	}()
 
 	manifests := make([]*Manifest, 0, len(r.factories))
-	for _, name := range r.extensionNames {
+	for i := range r.extensionNames {
+		name := r.extensionNames[i]
 		err = clearBuilder.DoWithCollectClear(func() (func(), error) {
 			factory := r.factories[name]
 			m, clear, err := newManifestWithSetup(name, factory)
