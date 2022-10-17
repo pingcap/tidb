@@ -23,7 +23,7 @@ import (
 )
 
 const (
-	RunTimes           = 100000
+	RunTimes           = 10000
 	DefaultExpiredTime = 10 * time.Second
 )
 
@@ -33,8 +33,7 @@ func BenchmarkGPool(b *testing.B) {
 	p.SetConsumerFunc(func(a struct{}, b int) struct{} {
 		return struct{}{}
 	})
-
-	b.StartTimer()
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		sema := make(chan struct{}, 10)
 		var wg util.WaitGroupWrapper
@@ -56,14 +55,13 @@ func BenchmarkGPool(b *testing.B) {
 			}
 		}
 		resultCh, ctl := p.AddProducer(producerFunc, RunTimes, 6)
-
 		exitCh := make(chan struct{})
 		wg.Run(func() {
 			for {
 				select {
+				case <-resultCh:
 				case <-exitCh:
 					return
-				case <-resultCh:
 				}
 			}
 		})
@@ -71,11 +69,10 @@ func BenchmarkGPool(b *testing.B) {
 		close(exitCh)
 		wg.Wait()
 	}
-	b.StopTimer()
 }
 
 func BenchmarkGoCommon(b *testing.B) {
-	b.StartTimer()
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		var wg util.WaitGroupWrapper
 		var wgp util.WaitGroupWrapper
@@ -115,5 +112,4 @@ func BenchmarkGoCommon(b *testing.B) {
 		close(exitCh)
 		wgp.Wait()
 	}
-	b.StopTimer()
 }

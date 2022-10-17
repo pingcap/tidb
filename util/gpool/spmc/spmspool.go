@@ -19,7 +19,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/util/gpool"
+	"go.uber.org/zap"
 )
 
 // Pool is a single producer, multiple consumer goroutine pool.
@@ -166,6 +168,7 @@ func (p *Pool[T, U, C]) addWaiting(delta int) {
 
 // Release closes this pool and releases the worker queue.
 func (p *Pool[T, U, C]) Release() {
+	log.Info("release", zap.Stack("stack"))
 	if !p.state.CompareAndSwap(gpool.OPENED, gpool.CLOSED) {
 		return
 	}
@@ -216,7 +219,7 @@ func (p *Pool[T, U, C]) AddProduce(task T, constArg C) (<-chan U, TaskController
 	taskCh := make(chan T)
 	taskBox := taskBox[T, U, C]{
 		task:      taskCh,
-		constArgs: &constArg,
+		constArgs: constArg,
 		wg:        &wg,
 		resultCh:  result,
 	}
@@ -240,7 +243,7 @@ func (p *Pool[T, U, C]) AddProduceBySlice(producer func() ([]T, error), constArg
 			break
 		}
 		taskBox := taskBox[T, U, C]{
-			constArgs: &constArg,
+			constArgs: constArg,
 			wg:        &wg,
 			task:      taskCh,
 			resultCh:  result,
@@ -268,7 +271,7 @@ func (p *Pool[T, U, C]) AddProduceBySlice(producer func() ([]T, error), constArg
 
 // AddProducer is to add producer.
 func (p *Pool[T, U, C]) AddProducer(producer func() (T, error), constArg C, size int) (<-chan U, TaskController) {
-	result := make(chan U, 10)
+	result := make(chan U, 100)
 
 	var wg sync.WaitGroup
 	closeCh := make(chan struct{})
@@ -280,7 +283,7 @@ func (p *Pool[T, U, C]) AddProducer(producer func() (T, error), constArg C, size
 			break
 		}
 		taskBox := taskBox[T, U, C]{
-			constArgs: &constArg,
+			constArgs: constArg,
 			wg:        &wg,
 			task:      taskCh,
 			resultCh:  result,
@@ -374,6 +377,7 @@ func (p *Pool[T, U, C]) retrieveWorker() (w *goWorker[T, U, C]) {
 // revertWorker puts a worker back into free pool, recycling the goroutines.
 func (p *Pool[T, U, C]) revertWorker(worker *goWorker[T, U, C]) bool {
 	if capacity := p.Cap(); (capacity > 0 && p.Running() > capacity) || p.IsClosed() {
+		log.Info("wwz", zap.Int("running", p.Running()), zap.Int("capacity", capacity))
 		p.cond.Broadcast()
 		return false
 	}
@@ -384,6 +388,7 @@ func (p *Pool[T, U, C]) revertWorker(worker *goWorker[T, U, C]) bool {
 	// Issue: https://github.com/panjf2000/ants/issues/113
 	if p.IsClosed() {
 		p.lock.Unlock()
+		log.Info("wwz close")
 		return false
 	}
 

@@ -40,6 +40,7 @@ type goWorker[T any, U any, C any, CT any, TF pooltask.Context[CT]] struct {
 func (w *goWorker[T, U, C, CT, TF]) run() {
 	w.pool.addRunning(1)
 	go func() {
+		//log.Info("worker start")
 		defer func() {
 			w.pool.addRunning(-1)
 			w.pool.workerCache.Put(w)
@@ -52,10 +53,12 @@ func (w *goWorker[T, U, C, CT, TF]) run() {
 			}
 			// Call Signal() here in case there are goroutines waiting for available workers.
 			w.pool.cond.Signal()
+			//log.Info("worker exiting")
 		}()
 
 		for f := range w.taskBoxCh {
 			if f == nil {
+				//log.Info("worker got task nil")
 				return
 			}
 			w.pool.subWaitingTask()
@@ -67,8 +70,10 @@ func (w *goWorker[T, U, C, CT, TF]) run() {
 				}
 			}
 			if ok := w.pool.revertWorker(w); !ok {
+				//log.Info("exit here")
 				return
 			}
 		}
+		//log.Info("exit here2")
 	}()
 }

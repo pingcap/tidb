@@ -19,7 +19,7 @@ import (
 )
 
 type taskBox[T any, U any, C any] struct {
-	constArgs *C
+	constArgs C
 	wg        *sync.WaitGroup
 	task      chan T
 	resultCh  chan U

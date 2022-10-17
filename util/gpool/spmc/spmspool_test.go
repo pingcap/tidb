@@ -48,7 +48,7 @@ func TestPool(t *testing.T) {
 		}
 	}
 	// add new task
-	resultCh, control := pool.AddProducer(pfunc, myArgs, 2)
+	resultCh, control := pool.AddProducer(pfunc, myArgs, 4)
 
 	var count atomic.Uint32
 	var wg sync.WaitGroup
