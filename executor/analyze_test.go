@@ -346,6 +346,34 @@ func TestAnalyzePartitionTableByConcurrencyInDynamic(t *testing.T) {
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	tk.MustExec("use test")
 	tk.MustExec("create table t(id int) partition by hash(id) partitions 4")
+	testcases := []struct {
+		concurrency string
+	}{
+		{
+			concurrency: "1",
+		},
+		{
+			concurrency: "2",
+		},
+		{
+			concurrency: "3",
+		},
+		{
+			concurrency: "4",
+		},
+		{
+			concurrency: "5",
+		},
+	}
+	// assert empty table
+	for _, tc := range testcases {
+		concurrency := tc.concurrency
+		fmt.Println("testcase ", concurrency)
+		tk.MustExec(fmt.Sprintf("set @@tidb_merge_partition_stats_concurrency=%v", concurrency))
+		tk.MustQuery("select @@tidb_merge_partition_stats_concurrency").Check(testkit.Rows(concurrency))
+		tk.MustExec("analyze table t")
+		tk.MustQuery("show stats_topn where partition_name = 'global' and table_name = 't'")
+	}
 
 	for i := 1; i <= 500; i++ {
 		for j := 1; j <= 20; j++ {
@@ -358,7 +386,7 @@ func TestAnalyzePartitionTableByConcurrencyInDynamic(t *testing.T) {
 			strconv.FormatInt(int64(i), 10), "500",
 		})
 	}
-	testcases := []struct {
+	testcases = []struct {
 		concurrency string
 	}{
 		{

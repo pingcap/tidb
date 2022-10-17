@@ -26,23 +26,22 @@ import (
 // StatsWrapper wrapper stats
 type StatsWrapper struct {
 	AllHg   []*Histogram
-	AllCms  []*CMSketch
 	AllTopN []*TopN
 }
 
 // NewStatsWrapper returns wrapper
-func NewStatsWrapper(hg []*Histogram, cms []*CMSketch, topN []*TopN) *StatsWrapper {
+func NewStatsWrapper(hg []*Histogram, topN []*TopN) *StatsWrapper {
 	return &StatsWrapper{
 		AllHg:   hg,
-		AllCms:  cms,
 		AllTopN: topN,
 	}
 }
 
 type topnStatsMergeWorker struct {
-	wg           *sync.WaitGroup
-	taskCh       <-chan *TopnStatsMergeTask
-	respCh       chan<- *TopnStatsMergeResponse
+	wg     *sync.WaitGroup
+	taskCh <-chan *TopnStatsMergeTask
+	respCh chan<- *TopnStatsMergeResponse
+	// the stats in the wrapper should only be read during the worker
 	statsWrapper *StatsWrapper
 }
 
@@ -159,7 +158,7 @@ func (worker *topnStatsMergeWorker) Run(timeZone *time.Location, isIndex bool,
 							if err != nil {
 								resp.Err = err
 								worker.respCh <- resp
-								continue
+								return
 							}
 						}
 						datumMap[encodedVal] = d

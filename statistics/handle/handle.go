@@ -58,6 +58,7 @@ const (
 	// TiDBGlobalStats represents the global-stats for a partitioned table.
 	TiDBGlobalStats = "global"
 
+	// maxPartitionMergeBatchSize indicates the max batch size for a worker to merge partition stats
 	maxPartitionMergeBatchSize = 256
 )
 
@@ -550,7 +551,7 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 		// Because after merging TopN, some numbers will be left.
 		// These remaining topN numbers will be used as a separate bucket for later histogram merging.
 		var popedTopN []statistics.TopNMeta
-		wrapper := statistics.NewStatsWrapper(allHg[i], nil, allTopN[i])
+		wrapper := statistics.NewStatsWrapper(allHg[i], allTopN[i])
 		globalStats.TopN[i], popedTopN, allHg[i], err = h.mergeGlobalStatsTopN(sc, wrapper, sc.GetSessionVars().StmtCtx.TimeZone, sc.GetSessionVars().AnalyzeVersion, uint32(opts[ast.AnalyzeOptNumTopN]), isIndex == 1)
 		if err != nil {
 			return
@@ -587,7 +588,7 @@ func (h *Handle) mergeGlobalStatsTopN(sc sessionctx.Context, wrapper *statistics
 	timeZone *time.Location, version int, n uint32, isIndex bool) (*statistics.TopN,
 	[]statistics.TopNMeta, []*statistics.Histogram, error) {
 	mergeConcurrency := sc.GetSessionVars().AnalyzePartitionMergeConcurrency
-	// use original method if concurrency equals 1
+	// use original method if concurrency equals 1 or for version1
 	if mergeConcurrency < 2 {
 		return statistics.MergePartTopN2GlobalTopN(timeZone, version, wrapper.AllTopN, n, wrapper.AllHg, isIndex)
 	}
