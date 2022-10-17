@@ -247,6 +247,7 @@ type ExecStmt struct {
 	isSelectForUpdate bool
 	retryCount        uint
 	retryStartTime    time.Time
+	retryReason       map[string]struct{}
 
 	// Phase durations are splited into two parts: 1. trying to lock keys (but
 	// failed); 2. the final iteration of the retry loop. Here we use
@@ -885,8 +886,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 	if a.retryCount >= config.GetGlobalConfig().PessimisticTxn.MaxRetryCount {
 		return nil, errors.New("pessimistic lock retry limit reached")
 	}
-	a.retryCount++
-	a.retryStartTime = time.Now()
+	a.setPessmiticLockRretryInfo(lockErr)
 
 	err = txnManager.OnStmtRetry(ctx)
 	if err != nil {
@@ -920,6 +920,35 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 		return nil, err
 	}
 	return e, nil
+}
+
+func (a *ExecStmt) setPessmiticLockRretryInfo(lockErr error) {
+	a.retryCount++
+	a.retryStartTime = time.Now()
+
+	if nil == a.retryReason {
+		a.retryReason = make(map[string]struct{})
+	}
+	reason := getPessiticLockRetryReason(lockErr)
+	if 0 == len(reason) {
+		return
+	}
+	if _, ok := a.retryReason[reason]; !ok {
+		a.retryReason[reason] = struct{}{}
+	}
+}
+
+func (a *ExecStmt) convertRetryReasonToString() string {
+	buf := bytes.NewBuffer(make([]byte, 0, 16))
+	buf.WriteByte('[')
+	for k, _ := range a.retryReason {
+		if buf.Len() > 1 {
+			buf.WriteByte(',')
+		}
+		buf.WriteString(k)
+	}
+	buf.WriteByte(']')
+	return buf.String()
 }
 
 type pessimisticTxn interface {
@@ -1385,6 +1414,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	})
 	if a.retryCount > 0 {
 		slowItems.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)
+		slowItems.ExecRetryReason = a.convertRetryReasonToString()
 	}
 	if _, ok := a.StmtNode.(*ast.CommitStmt); ok {
 		slowItems.PrevStmt = sessVars.PrevStmt.String()
@@ -1658,6 +1688,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	}
 	if a.retryCount > 0 {
 		stmtExecInfo.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)
+		stmtExecInfo.ExecRetryReason = a.convertRetryReasonToString()
 	}
 	stmtsummary.StmtSummaryByDigestMap.AddStatement(stmtExecInfo)
 }
@@ -1782,4 +1813,15 @@ func convertStatusIntoString(sctx sessionctx.Context, statsLoadStatus map[model.
 		r[tableName][itemName] = status
 	}
 	return r
+}
+
+func getPessiticLockRetryReason(lockError error) string {
+	reason := ""
+	if _, ok := errors.Cause(lockError).(*tikverr.ErrDeadlock); ok {
+		reason = "DeadLock"
+	}
+	if err, ok := errors.Cause(lockError).(*tikverr.ErrWriteConflict); ok {
+		reason = err.Reason.String()
+	}
+	return reason
 }
