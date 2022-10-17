@@ -20,6 +20,7 @@ import (
 	"go/token"
 	"io/ioutil"
 	"reflect"
+	"runtime/debug"
 	"strings"
 
 	"golang.org/x/tools/go/analysis"
@@ -102,6 +103,7 @@ var Directives = &analysis.Analyzer{
 // SkipAnalyzer updates an analyzer from `staticcheck` and `golangci-linter` to make it work on nogo.
 // They have "lint:ignore" or "nolint" to make the analyzer ignore the code.
 func SkipAnalyzer(analyzer *analysis.Analyzer) {
+	debug.SetGCPercent(50)
 	analyzer.Requires = append(analyzer.Requires, Directives)
 	oldRun := analyzer.Run
 	analyzer.Run = func(p *analysis.Pass) (interface{}, error) {
