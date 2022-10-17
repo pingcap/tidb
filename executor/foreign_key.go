@@ -593,7 +593,7 @@ func (fkc *FKCascadeExec) buildFKCascadePlan(ctx context.Context) (plannercore.P
 	var err error
 	switch fkc.tp {
 	case plannercore.FKCascadeOnDelete:
-		sqlStr, err = fkc.genCascadeDeleteSQL()
+		sqlStr, err = GenCascadeDeleteSQL(fkc.referredFK.ChildSchema, fkc.childTable.Name, fkc.fk, fkc.fkValues)
 	}
 	if err != nil || sqlStr == "" {
 		return nil, err
@@ -624,14 +624,15 @@ func (fkc *FKCascadeExec) buildFKCascadePlan(ctx context.Context) (plannercore.P
 	return finalPlan, err
 }
 
-func (fkc *FKCascadeExec) genCascadeDeleteSQL() (string, error) {
+// GenCascadeDeleteSQL uses to generate cascade delete SQL, export for test.
+func GenCascadeDeleteSQL(schema, table model.CIStr, fk *model.FKInfo, fkValues [][]types.Datum) (string, error) {
 	buf := bytes.NewBuffer(nil)
 	buf.WriteString("DELETE FROM `")
-	buf.WriteString(fkc.referredFK.ChildSchema.L)
+	buf.WriteString(schema.L)
 	buf.WriteString("`.`")
-	buf.WriteString(fkc.childTable.Name.L)
+	buf.WriteString(table.L)
 	buf.WriteString("` WHERE (")
-	for i, col := range fkc.fk.Cols {
+	for i, col := range fk.Cols {
 		if i > 0 {
 			buf.WriteString(", ")
 		}
@@ -639,7 +640,7 @@ func (fkc *FKCascadeExec) genCascadeDeleteSQL() (string, error) {
 	}
 	// TODO(crazycs520): control the size of IN expression.
 	buf.WriteString(") IN (")
-	for i, vs := range fkc.fkValues {
+	for i, vs := range fkValues {
 		if i > 0 {
 			buf.WriteString(", (")
 		} else {

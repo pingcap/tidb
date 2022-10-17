@@ -16,13 +16,17 @@ package fk_test
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/parser/model"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -1166,4 +1170,55 @@ func TestForeignKeyOnDeleteCascade2(t *testing.T) {
 	require.Equal(t, 0, len(tk.Session().GetSessionVars().TxnCtx.Savepoints))
 	tk.MustQuery("select * from t0").Check(testkit.Rows())
 	tk.MustQuery("select * from t1").Check(testkit.Rows())
+
+	// Test multi-foreign key cascade in one table.
+	tk.MustExec("drop table if exists t1,t2,t3")
+	tk.MustExec("create table t1 (id int key)")
+	tk.MustExec("create table t2 (id int key)")
+	tk.MustExec("create table t3 (id1 int, id2 int, constraint fk_id1 foreign key (id1) references t1 (id) on delete cascade, " +
+		"constraint fk_id2 foreign key (id2) references t2 (id) on delete cascade)")
+	tk.MustExec("insert into t1 values (1), (2), (3)")
+	tk.MustExec("insert into t2 values (1), (2), (3)")
+	tk.MustExec("insert into t3 values (1,1), (1, 2), (1, 3), (2, 1), (2, 2)")
+	tk.MustExec("delete from t1 where id=1")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("2", "3"))
+	tk.MustQuery("select * from t2").Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery("select * from t3 order by id1").Check(testkit.Rows("2 1", "2 2"))
+	tk.MustExec("create table t4 (id3 int key, constraint fk_id3 foreign key (id3) references t3 (id2))")
+	tk.MustExec("insert into t4 values (2)")
+	tk.MustGetDBError("delete from t1 where id = 2", plannercore.ErrRowIsReferenced2)
+	tk.MustGetDBError("delete from t2 where id = 2", plannercore.ErrRowIsReferenced2)
+	tk.MustExec("delete from t2 where id=1")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("2", "3"))
+	tk.MustQuery("select * from t2").Check(testkit.Rows("2", "3"))
+	tk.MustQuery("select * from t3 order by id1").Check(testkit.Rows("2 2"))
+
+	// Test multi-foreign key cascade in one table.
+	tk.MustExec("drop table if exists t1,t2,t3, t4")
+	tk.MustExec(`create table t1 (c0 int, index(c0))`)
+	cnt := 20
+	for i := 1; i < cnt; i++ {
+		tk.MustExec(fmt.Sprintf("alter table t1 add column c%v int", i))
+		tk.MustExec(fmt.Sprintf("alter table t1 add index idx_%v (c%v) ", i, i))
+		tk.MustExec(fmt.Sprintf("alter table t1 add foreign key (c%v) references t1 (c%v) on delete cascade", i, i-1))
+	}
+	for i := 0; i < cnt; i++ {
+		vals := strings.Repeat(strconv.Itoa(i)+",", 20)
+		tk.MustExec(fmt.Sprintf("insert into t1 values (%v)", vals[:len(vals)-1]))
+	}
+	tk.MustExec("delete from t1 where c0 in (0, 1, 2, 3, 4)")
+	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("15"))
+}
+
+func TestForeignKeyOnDeleteCascadeSQL(t *testing.T) {
+	fk := &model.FKInfo{
+		Cols: []model.CIStr{model.NewCIStr("c0"), model.NewCIStr("c1")},
+	}
+	fkValues := [][]types.Datum{
+		{types.NewDatum(1), types.NewDatum("a")},
+		{types.NewDatum(2), types.NewDatum("b")},
+	}
+	sql, err := executor.GenCascadeDeleteSQL(model.NewCIStr("test"), model.NewCIStr("t"), fk, fkValues)
+	require.NoError(t, err)
+	require.Equal(t, "DELETE FROM `test`.`t` WHERE (`c0`, `c1`) IN ((1,'a'), (2,'b'))", sql)
 }
