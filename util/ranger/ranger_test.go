@@ -2532,6 +2532,20 @@ create table t(
 			resultStr:   "[[NULL,+inf]]",
 		},
 		{
+			indexPos:    0,
+			exprStr:     "a is null",
+			accessConds: "[isnull(test.t.a)]",
+			filterConds: "[]",
+			resultStr:   "[[NULL,NULL]]",
+		},
+		{
+			indexPos:    0,
+			exprStr:     "a is not null",
+			accessConds: "[not(isnull(test.t.a))]",
+			filterConds: "[]",
+			resultStr:   "[[-inf,+inf]]",
+		},
+		{
 			indexPos:    1,
 			exprStr:     "a = 'a' and b < 'b'",
 			accessConds: "[eq(test.t.a, a) lt(test.t.b, b)]",
@@ -2559,6 +2573,20 @@ create table t(
 			filterConds: "[eq(test.t.a, aa)]",
 			resultStr:   "[(\"aa\" \"b\",\"aa\" +inf]]",
 		},
+		//{
+		//	indexPos:    1,
+		//	exprStr:     "a = 'a' and b is null",
+		//	accessConds: "[eq(test.t.a, a) isnull(test.t.b)]",
+		//	filterConds: "[]",
+		//	resultStr:   "[[\"a\" NULL,\"a\" NULL]]",
+		//},
+		//{
+		//	indexPos:    1,
+		//	exprStr:     "a = 'a' and c is not null",
+		//	accessConds: "[eq(test.t.a, a) not(isnull(test.t.c))]",
+		//	filterConds: "[]",
+		//	resultStr:   "[[\"a\" -inf,\"a\" +inf]]",
+		//},
 		{
 			indexPos:    2,
 			exprStr:     "c > '你'",
@@ -2572,6 +2600,20 @@ create table t(
 			accessConds: "[gt(test.t.c, 你好啊)]",
 			filterConds: "[gt(test.t.c, 你好啊)]",
 			resultStr:   "[[\"你好\",+inf]]",
+		},
+		{
+			indexPos:    2,
+			exprStr:     "c is null",
+			accessConds: "[isnull(test.t.c)]",
+			filterConds: "[]",
+			resultStr:   "[[NULL,NULL]]",
+		},
+		{
+			indexPos:    2,
+			exprStr:     "c is not null",
+			accessConds: "[not(isnull(test.t.c))]",
+			filterConds: "[]",
+			resultStr:   "[[-inf,+inf]]",
 		},
 		{
 			indexPos:    3,
@@ -2593,6 +2635,20 @@ create table t(
 			accessConds: "[eq(test.t.d, 你)]",
 			filterConds: "[eq(test.t.d, 你)]",
 			resultStr:   "[[0xE4BD,0xE4BD]]",
+		},
+		{
+			indexPos:    3,
+			exprStr:     "d is null",
+			accessConds: "[isnull(test.t.d)]",
+			filterConds: "[]",
+			resultStr:   "[[NULL,NULL]]",
+		},
+		{
+			indexPos:    3,
+			exprStr:     "d is not null",
+			accessConds: "[not(isnull(test.t.d))]",
+			filterConds: "[]",
+			resultStr:   "[[-inf,+inf]]",
 		},
 	}
 

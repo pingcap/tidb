@@ -246,10 +246,6 @@ func GetConstantLength(c *expression.Constant, tp *types.FieldType) int {
 	if c == nil || c.DeferredExpr != nil || c.ParamMarker != nil {
 		return types.UnspecifiedLength
 	}
-	if c.RetType.GetCharset() != tp.GetCharset() {
-		//
-		return types.UnspecifiedLength
-	}
 	val, err := c.Eval(chunk.Row{})
 	if err != nil || (val.Kind() != types.KindBytes && val.Kind() != types.KindString) {
 		return types.UnspecifiedLength
