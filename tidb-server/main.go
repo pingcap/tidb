@@ -190,11 +190,9 @@ func main() {
 		checkTempStorageQuota()
 	}
 	setupLog()
+	setupExtension()
 
-	err := extension.Setup()
-	terror.MustNil(err)
-
-	err = cpuprofile.StartCPUProfiler()
+	err := cpuprofile.StartCPUProfiler()
 	terror.MustNil(err)
 
 	// Enable failpoints in tikv/client-go if the test API is enabled.
@@ -728,6 +726,16 @@ func setupLog() {
 
 	// trigger internal http(s) client init.
 	util.InternalHTTPClient()
+}
+
+func setupExtension() *extension.Extensions {
+	err := extension.Setup()
+	terror.MustNil(err)
+
+	extensions, err := extension.GetExtensions()
+	terror.MustNil(err)
+
+	return extensions
 }
 
 func printInfo() {
