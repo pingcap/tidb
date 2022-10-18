@@ -229,9 +229,12 @@ func PickPlanFromBucket(bucket map[*list.Element]struct{}, paramTypes []*types.F
 	return nil, false
 }
 
+var aa = 0
+
 // updateMonitor update the memory usage monitor to show in grafana
 func updateMonitorMetric() {
-	consume := float64(1011)
+	aa += 1024 * 1024
+	consume := float64(aa)
 	// todo: wait for the preorder pr, pass tracker's consumed memory to metric
 	metrics.PlanCacheMemoryUsage.WithLabelValues("memory_usage").Set(consume)
 }
