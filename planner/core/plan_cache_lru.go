@@ -15,7 +15,6 @@ package core
 
 import (
 	"container/list"
-	"strconv"
 	"sync"
 	"unsafe"
 
@@ -93,10 +92,6 @@ func strHashKey(key kvcache.Key, deepCopy bool) (string, int64) {
 func (l *LRUPlanCache) Get(key kvcache.Key, paramTypes []*types.FieldType) (value kvcache.Value, ok bool) {
 	l.lock.Lock()
 	defer l.lock.Unlock()
-	defer func() {
-		memTotal := "TestPlanCacheMemoryUsage: " + strconv.FormatInt(l.memTracker.BytesConsumed(), 10) + " Bytes " + memory.FormatBytes(l.memTracker.BytesConsumed()) + " ---PlanNum: " + strconv.Itoa(int(l.size))
-		logutil.BgLogger().Info(memTotal)
-	}()
 
 	hash, _ := strHashKey(key, false)
 	bucket, bucketExist := l.buckets[hash]
