@@ -62,9 +62,8 @@ const (
 	pdScheduleArgsOffset     = 1
 	gcEnabledArgsOffset      = 2
 	autoAnalyzeOffset        = 3
-	maxAutoAnalyzeTimeOffset = 4
-	totalLockedRegionsOffset = 5
-	commitTSOffset           = 6
+	totalLockedRegionsOffset = 4
+	commitTSOffset           = 5
 )
 
 func closePDSchedule() error {
@@ -471,9 +470,9 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 
 	var flashbackTS, lockedRegions, commitTS uint64
 	var pdScheduleValue map[string]interface{}
-	var autoAnalyzeValue, maxAutoAnalyzeTimeValue string
+	var autoAnalyzeValue string
 	var gcEnabledValue bool
-	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue, &gcEnabledValue, &autoAnalyzeValue, &maxAutoAnalyzeTimeValue, &lockedRegions, &commitTS); err != nil {
+	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue, &gcEnabledValue, &autoAnalyzeValue, &lockedRegions, &commitTS); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
@@ -507,12 +506,6 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			return ver, errors.Trace(err)
 		}
 		job.Args[autoAnalyzeOffset] = &autoAnalyzeValue
-		maxAutoAnalyzeTimeValue, err = getTiDBMaxAutoAnalyzeTime(sess)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
-		}
-		job.Args[maxAutoAnalyzeTimeOffset] = &maxAutoAnalyzeTimeValue
 		job.SchemaState = model.StateDeleteOnly
 		return ver, nil
 	// Stage 2, check flashbackTS, close GC and PD schedule.
@@ -605,10 +598,10 @@ func finishFlashbackCluster(w *worker, job *model.Job) error {
 
 	var flashbackTS uint64
 	var pdScheduleValue map[string]interface{}
-	var autoAnalyzeValue, maxAutoAnalyzeTime string
+	var autoAnalyzeValue string
 	var gcEnabled bool
 
-	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue, &gcEnabled, &autoAnalyzeValue, &maxAutoAnalyzeTime); err != nil {
+	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue, &gcEnabled, &autoAnalyzeValue); err != nil {
 		return errors.Trace(err)
 	}
 	sess, err := w.sessPool.get()
@@ -627,9 +620,6 @@ func finishFlashbackCluster(w *worker, job *model.Job) error {
 			}
 		}
 		if err = setTiDBEnableAutoAnalyze(sess, autoAnalyzeValue); err != nil {
-			return err
-		}
-		if err = setTiDBMaxAutoAnalyzeTime(sess, maxAutoAnalyzeTime); err != nil {
 			return err
 		}
 		if gcEnabled {
