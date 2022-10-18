@@ -43,8 +43,11 @@ func TestDefaultRouter(t *testing.T) {
 	assert.NoError(t, err)
 
 	inputOutputMap := map[string][]string{
+		"a/test-schema-create.sql":            {"test", "", "", "", SchemaSchema},
 		"test-schema-create.sql.gz":           {"test", "", "", "gz", SchemaSchema},
+		"c/d/test.t-schema.sql":               {"test", "t", "", "", TableSchema},
 		"test.t-schema.sql.lzo":               {"test", "t", "", "lzo", TableSchema},
+		"/bc/dc/test.v1-schema-view.sql":      {"test", "v1", "", "", ViewSchema},
 		"test.v1-schema-view.sql.snappy":      {"test", "v1", "", "snappy", ViewSchema},
 		"my_schema.my_table.sql":              {"my_schema", "my_table", "", "", "sql"},
 		"/test/123/my_schema.my_table.sql.gz": {"my_schema", "my_table", "", "gz", "sql"},

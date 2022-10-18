@@ -136,14 +136,14 @@ var expandVariablePattern = regexp.MustCompile(`\$(?:\$|[\pL\p{Nd}_]+|\{[\pL\p{N
 
 var defaultFileRouteRules = []*config.FileRouteRule{
 	// ignore *-schema-trigger.sql, *-schema-post.sql files
-	{Pattern: `(?i).*(-schema-trigger|-schema-post)\.sql(?:\.(\w*?))$`, Type: "ignore"},
-	// db schema create file pattern, matches files like '{schema}-schema-create.sql{.compress}'
-	{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)-schema-create\.sql(?:\.(\w*?))$`, Schema: "$1", Table: "", Type: SchemaSchema, Compression: "$2", Unescape: true},
-	// table schema create file pattern, matches files like '{schema}.{table}-schema.sql{.compress}'
-	{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)\.(.*?)-schema\.sql(?:\.(\w*?))$`, Schema: "$1", Table: "$2", Type: TableSchema, Compression: "$3", Unescape: true},
-	// view schema create file pattern, matches files like '{schema}.{table}-schema-view.sql{.compress}'
-	{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)\.(.*?)-schema-view\.sql(?:\.(\w*?))$`, Schema: "$1", Table: "$2", Type: ViewSchema, Compression: "$3", Unescape: true},
-	// source file pattern, matches files like '{schema}.{table}.0001.{sql|csv}{.compress}'
+	{Pattern: `(?i).*(-schema-trigger|-schema-post)\.sql(?:\.(\w*?))?$`, Type: "ignore"},
+	// db schema create file pattern, matches files like '{schema}-schema-create.sql(.compress)'
+	{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)-schema-create\.sql(?:\.(\w*?))?$`, Schema: "$1", Table: "", Type: SchemaSchema, Compression: "$2", Unescape: true},
+	// table schema create file pattern, matches files like '{schema}.{table}-schema.sql(.compress)'
+	{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)\.(.*?)-schema\.sql(?:\.(\w*?))?$`, Schema: "$1", Table: "$2", Type: TableSchema, Compression: "$3", Unescape: true},
+	// view schema create file pattern, matches files like '{schema}.{table}-schema-view.sql(.compress)'
+	{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)\.(.*?)-schema-view\.sql(?:\.(\w*?))?$`, Schema: "$1", Table: "$2", Type: ViewSchema, Compression: "$3", Unescape: true},
+	// source file pattern, matches files like '{schema}.{table}.0001.{sql|csv}(.compress)'
 	{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)\.(.*?)(?:\.([0-9]+))?\.(sql|csv|parquet)(?:\.(\w+))?$`, Schema: "$1", Table: "$2", Type: "$4", Key: "$3", Compression: "$5", Unescape: true},
 }
 
