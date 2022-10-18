@@ -791,17 +791,18 @@ func TestShowGlobalStats(t *testing.T) {
 	tk.MustExec("create table t (a int, key(a)) partition by hash(a) partitions 2")
 	tk.MustExec("insert into t values (1), (2), (3), (4)")
 	tk.MustExec("analyze table t with 1 buckets")
-	require.Len(t, tk.MustQuery("show stats_meta").Rows(), 2)
-	require.Len(t, tk.MustQuery("show stats_meta where partition_name='global'").Rows(), 0)
-	require.Len(t, tk.MustQuery("show stats_buckets").Rows(), 4) // 2 partitions * (1 for the column_a and 1 for the index_a)
-	require.Len(t, tk.MustQuery("show stats_buckets where partition_name='global'").Rows(), 0)
-	require.Len(t, tk.MustQuery("show stats_histograms").Rows(), 4)
-	require.Len(t, tk.MustQuery("show stats_histograms where partition_name='global'").Rows(), 0)
-	require.Len(t, tk.MustQuery("show stats_healthy").Rows(), 2)
-	require.Len(t, tk.MustQuery("show stats_healthy where partition_name='global'").Rows(), 0)
+	require.Len(t, tk.MustQuery("show stats_meta").Rows(), 3)
+	require.Len(t, tk.MustQuery("show stats_meta where partition_name='global'").Rows(), 1)
+	require.Len(t, tk.MustQuery("show stats_buckets").Rows(), 6)
+	require.Len(t, tk.MustQuery("show stats_buckets where partition_name='global'").Rows(), 2)
+	require.Len(t, tk.MustQuery("show stats_histograms").Rows(), 6)
+	require.Len(t, tk.MustQuery("show stats_histograms where partition_name='global'").Rows(), 2)
+	require.Len(t, tk.MustQuery("show stats_healthy").Rows(), 3)
+	require.Len(t, tk.MustQuery("show stats_healthy where partition_name='global'").Rows(), 1)
 
 	tk.MustExec("set @@tidb_analyze_version = 2")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec(`drop stats t`)
 	tk.MustExec("analyze table t with 0 topn, 1 buckets")
 	require.Len(t, tk.MustQuery("show stats_meta").Rows(), 3)
 	require.Len(t, tk.MustQuery("show stats_meta where partition_name='global'").Rows(), 1)
@@ -828,12 +829,13 @@ func TestBuildGlobalLevelStats(t *testing.T) {
 	testKit.MustExec("create index idx_t_b on t(b);")
 	testKit.MustExec("analyze table t, t1;")
 	result := testKit.MustQuery("show stats_meta where table_name = 't';").Sort()
-	require.Len(t, result.Rows(), 3)
-	require.Equal(t, "1", result.Rows()[0][5])
-	require.Equal(t, "2", result.Rows()[1][5])
+	require.Len(t, result.Rows(), 4)
+	require.Equal(t, "5", result.Rows()[0][5])
+	require.Equal(t, "1", result.Rows()[1][5])
 	require.Equal(t, "2", result.Rows()[2][5])
+	require.Equal(t, "2", result.Rows()[3][5])
 	result = testKit.MustQuery("show stats_histograms where table_name = 't';").Sort()
-	require.Len(t, result.Rows(), 15)
+	require.Len(t, result.Rows(), 20)
 
 	result = testKit.MustQuery("show stats_meta where table_name = 't1';").Sort()
 	require.Len(t, result.Rows(), 1)
@@ -843,6 +845,8 @@ func TestBuildGlobalLevelStats(t *testing.T) {
 
 	// Test the 'dynamic' mode
 	testKit.MustExec("set @@tidb_partition_prune_mode = 'dynamic';")
+	testKit.MustExec("drop stats t1")
+	testKit.MustExec("drop stats t")
 	testKit.MustExec("analyze table t, t1;")
 	result = testKit.MustQuery("show stats_meta where table_name = 't'").Sort()
 	require.Len(t, result.Rows(), 4)
@@ -1665,7 +1669,7 @@ partition by range (a) (
 	tk.MustExec("set @@tidb_partition_prune_mode='static'")
 	tk.MustExec("set @@session.tidb_analyze_version=1")
 	tk.MustExec("analyze table t") // both p0 and p1 are in ver1
-	require.Len(t, tk.MustQuery("show stats_meta").Rows(), 2)
+	require.Len(t, tk.MustQuery("show stats_meta").Rows(), 3)
 
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	tk.MustExec("set @@session.tidb_analyze_version=1")
@@ -2089,16 +2093,16 @@ func TestStaticPartitionPruneMode(t *testing.T) {
 					partition p1 values less than (22))`)
 	tk.MustExec(`insert into t values (1), (2), (3), (10), (11)`)
 	tk.MustExec(`analyze table t`)
-	require.True(t, tk.MustNoGlobalStats("t"))
+	require.True(t, tk.MustGlobalStats("t"))
 	tk.MustExec("set @@tidb_partition_prune_mode='" + string(variable.Dynamic) + "'")
-	require.True(t, tk.MustNoGlobalStats("t"))
+	require.True(t, tk.MustGlobalStats("t"))
 
 	tk.MustExec("set @@tidb_partition_prune_mode='" + string(variable.Static) + "'")
 	tk.MustExec(`insert into t values (4), (5), (6)`)
 	tk.MustExec(`analyze table t partition p0`)
-	require.True(t, tk.MustNoGlobalStats("t"))
+	require.True(t, tk.MustGlobalStats("t"))
 	tk.MustExec("set @@tidb_partition_prune_mode='" + string(variable.Dynamic) + "'")
-	require.True(t, tk.MustNoGlobalStats("t"))
+	require.True(t, tk.MustGlobalStats("t"))
 	tk.MustExec("set @@tidb_partition_prune_mode='" + string(variable.Static) + "'")
 }
 
@@ -2149,9 +2153,6 @@ func TestAnalyzeWithDynamicPartitionPruneMode(t *testing.T) {
 }
 
 func TestPartitionPruneModeSessionVariable(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
-
 	store := testkit.CreateMockStore(t)
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")

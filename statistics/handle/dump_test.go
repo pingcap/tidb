@@ -133,13 +133,19 @@ func TestDumpGlobalStats(t *testing.T) {
 	tk.MustExec("insert into t values (1), (2)")
 	tk.MustExec("analyze table t")
 
-	// global-stats is not existed
+	// global-stats is also generated even in static prune mode
 	stats := getStatsJSON(t, dom, "test", "t")
 	require.NotNil(t, stats.Partitions["p0"])
 	require.NotNil(t, stats.Partitions["p1"])
+	require.NotNil(t, stats.Partitions["global"])
+
+	tk.MustExec(`DROP STATS t`)
+	stats = getStatsJSON(t, dom, "test", "t")
+	require.Nil(t, stats.Partitions["p0"])
+	require.Nil(t, stats.Partitions["p1"])
 	require.Nil(t, stats.Partitions["global"])
 
-	// global-stats is existed
+	// global-stats is created also for dynamic prune mode
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
 	tk.MustExec("analyze table t")
 	stats = getStatsJSON(t, dom, "test", "t")

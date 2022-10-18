@@ -20,7 +20,6 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/hint"
@@ -273,8 +272,6 @@ func TestCollectPredicateColumns(t *testing.T) {
 }
 
 func TestCollectHistNeededColumns(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	tests := []struct {
 		pruneMode string
 		sql       string

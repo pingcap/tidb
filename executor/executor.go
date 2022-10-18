@@ -1927,13 +1927,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc.StatsLoadStatus = make(map[model.TableItemID]string)
 	sc.IsSyncStatsFailed = false
 	sc.IsExplainAnalyzeDML = false
-	// Firstly we assume that UseDynamicPruneMode can be enabled according session variable, then we will check other conditions
-	// in PlanBuilder.buildDataSource
-	if ctx.GetSessionVars().IsDynamicPartitionPruneEnabled() {
-		sc.UseDynamicPruneMode = true
-	} else {
-		sc.UseDynamicPruneMode = false
-	}
 
 	sc.SysdateIsNow = ctx.GetSessionVars().SysdateIsNow
 
