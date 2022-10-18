@@ -14,6 +14,7 @@
 
 package bytespool
 
+// SmallPool is to pool small bytes
 var SmallPool Bpool
 
 func init() {

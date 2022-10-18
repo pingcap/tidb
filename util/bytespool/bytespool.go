@@ -97,8 +97,8 @@ func (bp *Bpool) Get(sz int, alloc bool) ([]byte, bool) {
 	var buf []byte
 	slice := (*reflect.SliceHeader)(unsafe.Pointer(&buf))
 	slice.Data = uintptr(p)
-	slice.Len = int(sz)
-	slice.Cap = int(max)
+	slice.Len = sz
+	slice.Cap = max
 	runtime.KeepAlive(p)
 	return buf, true
 }
@@ -147,11 +147,11 @@ func szPoolIdx(sz, roundTo, minSz int) int {
 	return (diff - 1) / roundTo
 }
 
-func idxSzRange(idx, roundTo, minSz int) (int, int) {
+func idxSzRange(idx, roundTo, minSz int) (size int, max int) {
 	if idx < 0 {
 		return 0, 0
 	}
 	// pool[0] = minSz+1 - minsSz+roundTo
-	max := (idx+1)*roundTo + minSz
+	max = (idx+1)*roundTo + minSz
 	return max - roundTo + 1, max
 }
