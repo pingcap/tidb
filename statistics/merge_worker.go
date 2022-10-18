@@ -15,7 +15,6 @@
 package statistics
 
 import (
-	"sync"
 	"time"
 
 	"github.com/pingcap/tidb/types"
@@ -38,7 +37,6 @@ func NewStatsWrapper(hg []*Histogram, topN []*TopN) *StatsWrapper {
 }
 
 type topnStatsMergeWorker struct {
-	wg     *sync.WaitGroup
 	taskCh <-chan *TopnStatsMergeTask
 	respCh chan<- *TopnStatsMergeResponse
 	// the stats in the wrapper should only be read during the worker
@@ -47,12 +45,10 @@ type topnStatsMergeWorker struct {
 
 // NewTopnStatsMergeWorker returns topn merge worker
 func NewTopnStatsMergeWorker(
-	wg *sync.WaitGroup,
 	taskCh <-chan *TopnStatsMergeTask,
 	respCh chan<- *TopnStatsMergeResponse,
 	wrapper *StatsWrapper) *topnStatsMergeWorker {
 	worker := &topnStatsMergeWorker{
-		wg:     wg,
 		taskCh: taskCh,
 		respCh: respCh,
 	}
@@ -86,9 +82,6 @@ type TopnStatsMergeResponse struct {
 func (worker *topnStatsMergeWorker) Run(timeZone *time.Location, isIndex bool,
 	n uint32,
 	version int) {
-	defer func() {
-		worker.wg.Done()
-	}()
 	for task := range worker.taskCh {
 		start := task.start
 		end := task.end
