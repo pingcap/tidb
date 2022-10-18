@@ -42,14 +42,8 @@ func BenchmarkGoCommon(b *testing.B) {
 
 		for n := 0; n < 6; n++ {
 			wg.Run(func() {
-				for {
-					select {
-					case item, ok := <-sema:
-						if !ok {
-							return
-						}
-						result <- item
-					}
+				for item := range sema {
+					result <- item
 				}
 			})
 		}
