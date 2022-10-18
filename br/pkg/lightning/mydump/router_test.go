@@ -38,6 +38,31 @@ func TestRouteParser(t *testing.T) {
 	}
 }
 
+func TestDefaultRouter(t *testing.T) {
+	r, err := NewFileRouter(defaultFileRouteRules, log.L())
+	assert.NoError(t, err)
+
+	inputOutputMap := map[string][]string{
+		"test-schema-create.sql.gz":           {"test", "", "", "gz", SchemaSchema},
+		"test.t-schema.sql.lzo":               {"test", "t", "", "lzo", TableSchema},
+		"test.v1-schema-view.sql.snappy":      {"test", "v1", "", "snappy", ViewSchema},
+		"my_schema.my_table.sql":              {"my_schema", "my_table", "", "", "sql"},
+		"/test/123/my_schema.my_table.sql.gz": {"my_schema", "my_table", "", "gz", "sql"},
+		"my_dir/my_schema.my_table.csv.lzo":   {"my_schema", "my_table", "", "lzo", "csv"},
+		"my_schema.my_table.0001.sql.snappy":  {"my_schema", "my_table", "0001", "snappy", "sql"},
+	}
+	for path, fields := range inputOutputMap {
+		res, err := r.Route(path)
+		assert.NoError(t, err)
+		compress, e := parseCompressionType(fields[3])
+		assert.NoError(t, e)
+		ty, e := parseSourceType(fields[4])
+		assert.NoError(t, e)
+		exp := &RouteResult{filter.Table{Schema: fields[0], Name: fields[1]}, fields[2], compress, ty}
+		assert.Equal(t, exp, res)
+	}
+}
+
 func TestInvalidRouteRule(t *testing.T) {
 	rule := &config.FileRouteRule{}
 	rules := []*config.FileRouteRule{rule}
