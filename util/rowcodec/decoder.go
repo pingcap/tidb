@@ -17,6 +17,7 @@ package rowcodec
 import (
 	"encoding/binary"
 	"fmt"
+	"runtime"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -38,11 +39,13 @@ type decoder struct {
 
 // NewDecoder creates a decoder.
 func NewDecoder(columns []ColInfo, handleColIDs []int64, loc *time.Location) *decoder {
-	return &decoder{
+	result := &decoder{
 		columns:      columns,
 		handleColIDs: handleColIDs,
 		loc:          loc,
 	}
+	runtime.SetFinalizer(result, result.destory)
+	return result
 }
 
 // ColInfo is used as column meta info for row decoder.

@@ -16,6 +16,8 @@ package rowcodec
 
 import (
 	"encoding/binary"
+
+	"github.com/pingcap/tidb/util/bytespool"
 )
 
 // row is the struct type used to access a row.
@@ -33,6 +35,13 @@ type row struct {
 	// for large row
 	colIDs32  []uint32
 	offsets32 []uint32
+}
+
+func (r *row) destory() {
+	if r.colIDs != nil {
+		bytespool.SmallPool.Put(r.colIDs)
+		r.colIDs = nil
+	}
 }
 
 func (r *row) getData(i int) []byte {
@@ -163,7 +172,7 @@ func (r *row) initColIDs() {
 	if cap(r.colIDs) >= numCols {
 		r.colIDs = r.colIDs[:numCols]
 	} else {
-		r.colIDs = make([]byte, numCols)
+		r.colIDs, _ = bytespool.SmallPool.Get(numCols, true)
 	}
 }
 
