@@ -145,26 +145,24 @@ func checkConstraint(stmt *ast.NonTransactionalDMLStmt, se Session) error {
 		return errors.New("can't do non-transactional DML when tidb_snapshot is set")
 	}
 
-	switch stmt.DMLStmt.(type) {
+	switch s := stmt.DMLStmt.(type) {
 	case *ast.DeleteStmt:
-		deleteStmt := stmt.DMLStmt.(*ast.DeleteStmt)
-		if deleteStmt.TableRefs == nil || deleteStmt.TableRefs.TableRefs == nil || deleteStmt.TableRefs.TableRefs.Left == nil {
+		if s.TableRefs == nil || s.TableRefs.TableRefs == nil || s.TableRefs.TableRefs.Left == nil {
 			return errors.New("table reference is nil")
 		}
-		if deleteStmt.TableRefs.TableRefs.Right != nil {
+		if s.TableRefs.TableRefs.Right != nil {
 			return errors.New("Non-transactional delete doesn't support multiple tables")
 		}
-		if deleteStmt.Limit != nil {
+		if s.Limit != nil {
 			return errors.New("Non-transactional delete doesn't support limit")
 		}
-		if deleteStmt.Order != nil {
+		if s.Order != nil {
 			return errors.New("Non-transactional delete doesn't support order by")
 		}
 		metrics.NonTransactionalDeleteCount.Inc()
 	case *ast.UpdateStmt:
-		updateStmt := stmt.DMLStmt.(*ast.UpdateStmt)
 		// TODO: check: (1) single target table (2) more...
-		if updateStmt.Limit != nil {
+		if s.Limit != nil {
 			return errors.New("Non-transactional update doesn't support limit")
 		}
 		// TODO: metrics
