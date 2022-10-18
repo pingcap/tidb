@@ -54,7 +54,7 @@ type LRUPlanCache struct {
 	guard float64
 
 	// MemTracker track the memory usage of prepared plan cache
-	MemTracker *memory.Tracker
+	memTracker *memory.Tracker
 }
 
 // NewLRUPlanCache creates a PCLRUCache object, whose capacity is "capacity".
@@ -74,7 +74,7 @@ func NewLRUPlanCache(capacity uint, guard float64, quota uint64,
 		pickFromBucket: pickFromBucket,
 		quota:          quota,
 		guard:          guard,
-		MemTracker:     newTrackerForLRUPC(),
+		memTracker:     newTrackerForLRUPC(),
 	}
 }
 
@@ -94,7 +94,7 @@ func (l *LRUPlanCache) Get(key kvcache.Key, paramTypes []*types.FieldType) (valu
 	l.lock.Lock()
 	defer l.lock.Unlock()
 	defer func() {
-		memTotal := "TestPlanCacheMemoryUsage: " + strconv.FormatInt(l.MemTracker.BytesConsumed(), 10) + " Bytes " + memory.FormatBytes(l.MemTracker.BytesConsumed()) + " ---PlanNum: " + strconv.Itoa(int(l.size))
+		memTotal := "TestPlanCacheMemoryUsage: " + strconv.FormatInt(l.memTracker.BytesConsumed(), 10) + " Bytes " + memory.FormatBytes(l.memTracker.BytesConsumed()) + " ---PlanNum: " + strconv.Itoa(int(l.size))
 		logutil.BgLogger().Info(memTotal)
 	}()
 
@@ -121,13 +121,13 @@ func (l *LRUPlanCache) Put(key kvcache.Key, value kvcache.Value, paramTypes []*t
 		if element, exist := l.pickFromBucket(bucket, paramTypes); exist {
 			element.Value.(*planCacheEntry).PlanValue = value
 			l.lruList.MoveToFront(element)
-			l.MemTracker.Consume(value.(*PlanCacheValue).PlanCacheValueMem -
+			l.memTracker.Consume(value.(*PlanCacheValue).PlanCacheValueMem -
 				element.Value.(*planCacheEntry).PlanValue.(*PlanCacheValue).PlanCacheValueMem)
 			return
 		}
 	} else {
 		l.buckets[hash] = make(map[*list.Element]struct{}, 1)
-		l.MemTracker.Consume(hashMem + size.SizeOfMap)
+		l.memTracker.Consume(hashMem + size.SizeOfMap)
 	}
 
 	newCacheEntry := &planCacheEntry{
@@ -137,7 +137,7 @@ func (l *LRUPlanCache) Put(key kvcache.Key, value kvcache.Value, paramTypes []*t
 	element := l.lruList.PushFront(newCacheEntry)
 	l.buckets[hash][element] = struct{}{}
 	l.size++
-	l.MemTracker.Consume(elementMemoryUsage(element) + size.SizeOfPointer)
+	l.memTracker.Consume(elementMemoryUsage(element) + size.SizeOfPointer)
 	if l.size > l.capacity {
 		l.removeOldest()
 	}
@@ -155,10 +155,10 @@ func (l *LRUPlanCache) Delete(key kvcache.Key) {
 		for element := range bucket {
 			l.lruList.Remove(element)
 			l.size--
-			l.MemTracker.Consume(-(elementMemoryUsage(element) + size.SizeOfPointer))
+			l.memTracker.Consume(-(elementMemoryUsage(element) + size.SizeOfPointer))
 		}
 		delete(l.buckets, hash)
-		l.MemTracker.Consume(-(hashMem + size.SizeOfMap))
+		l.memTracker.Consume(-(hashMem + size.SizeOfMap))
 	}
 }
 
@@ -172,7 +172,7 @@ func (l *LRUPlanCache) DeleteAll() {
 		l.size--
 	}
 	l.buckets = make(map[string]map[*list.Element]struct{}, 1)
-	l.MemTracker = newTrackerForLRUPC()
+	l.memTracker = newTrackerForLRUPC()
 }
 
 // Size gets the current cache size.
@@ -208,7 +208,7 @@ func (l *LRUPlanCache) removeOldest() {
 		l.onEvict(lru.Value.(*planCacheEntry).PlanKey, lru.Value.(*planCacheEntry).PlanValue)
 	}
 
-	l.MemTracker.Consume(-(elementMemoryUsage(lru) + size.SizeOfPointer))
+	l.memTracker.Consume(-(elementMemoryUsage(lru) + size.SizeOfPointer))
 	l.lruList.Remove(lru)
 	l.removeFromBucket(lru)
 	l.size--
