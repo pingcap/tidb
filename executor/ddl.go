@@ -153,7 +153,7 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	case *ast.CreateTableStmt:
 		err = e.executeCreateTable(x)
 	case *ast.CreateViewStmt:
-		err = e.executeCreateView(x)
+		err = e.executeCreateView(ctx, x)
 	case *ast.DropIndexStmt:
 		err = e.executeDropIndex(x)
 	case *ast.DropDatabaseStmt:
@@ -281,9 +281,9 @@ func (e *DDLExec) createSessionTemporaryTable(s *ast.CreateTableStmt) error {
 	return nil
 }
 
-func (e *DDLExec) executeCreateView(s *ast.CreateViewStmt) error {
+func (e *DDLExec) executeCreateView(ctx context.Context, s *ast.CreateViewStmt) error {
 	ret := &core.PreprocessorReturn{}
-	err := core.Preprocess(e.ctx, s.Select, core.WithPreprocessorReturn(ret))
+	err := core.Preprocess(ctx, e.ctx, s.Select, core.WithPreprocessorReturn(ret))
 	if err != nil {
 		return errors.Trace(err)
 	}
