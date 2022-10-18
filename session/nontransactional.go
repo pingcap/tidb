@@ -76,7 +76,7 @@ func (j job) String(redacted bool) string {
 
 // HandleNonTransactionalDML is the entry point for a non-transactional DML statement
 func HandleNonTransactionalDML(ctx context.Context, stmt *ast.NonTransactionalDMLStmt, se Session) (sqlexec.RecordSet, error) {
-	err := core.Preprocess(se, stmt)
+	err := core.Preprocess(ctx, se, stmt)
 	if err != nil {
 		return nil, err
 	}

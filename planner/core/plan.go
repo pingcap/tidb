@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/size"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -379,6 +380,26 @@ type PhysicalPlan interface {
 
 	// MemoryUsage return the memory usage of PhysicalPlan
 	MemoryUsage() int64
+
+	// Below three methods help to handle the inconsistency between row count in the statsInfo and the recorded
+	// actual row count.
+	// For the children in the inner side (probe side) of Index Join and Apply, the row count in the statsInfo
+	// means the estimated row count for a single "probe", but the recorded actual row count is the total row
+	// count for all "probes".
+	// To handle this inconsistency without breaking anything else, we added a field `probeParents` of
+	// type `[]PhysicalPlan` into all PhysicalPlan to record all operators that are (indirect or direct) parents
+	// of this PhysicalPlan and will cause this inconsistency.
+	// Using this information, we can convert the row count between the "single probe" row count and "all probes"
+	// row count freely.
+
+	// setProbeParents sets the above stated `probeParents` field.
+	setProbeParents([]PhysicalPlan)
+	// getEstRowCountForDisplay uses the "single probe" row count in statsInfo and the probeParents to calculate
+	// the "all probe" row count.
+	// All places that display the row count for a PhysicalPlan are expected to use this method.
+	getEstRowCountForDisplay() float64
+	// getEstRowCountForDisplay uses the runtime stats and the probeParents to calculate the actual "probe" count.
+	getActualProbeCnt(*execdetails.RuntimeStatsColl) int64
 }
 
 // NewDefaultPlanCostOption returns PlanCostOption
@@ -449,6 +470,42 @@ func (*baseLogicalPlan) ExplainInfo() string {
 	return ""
 }
 
+func getEstimatedProbeCntFromProbeParents(probeParents []PhysicalPlan) float64 {
+	res := float64(1)
+	for _, pp := range probeParents {
+		switch pp.(type) {
+		case *PhysicalApply, *PhysicalIndexHashJoin, *PhysicalIndexMergeJoin, *PhysicalIndexJoin:
+			if join, ok := pp.(interface{ getInnerChildIdx() int }); ok {
+				outer := pp.Children()[1-join.getInnerChildIdx()]
+				res *= outer.statsInfo().RowCount
+			}
+		}
+	}
+	return res
+}
+
+func getActualProbeCntFromProbeParents(pps []PhysicalPlan, statsColl *execdetails.RuntimeStatsColl) int64 {
+	res := int64(1)
+	for _, pp := range pps {
+		switch pp.(type) {
+		case *PhysicalApply, *PhysicalIndexHashJoin, *PhysicalIndexMergeJoin, *PhysicalIndexJoin:
+			if join, ok := pp.(interface{ getInnerChildIdx() int }); ok {
+				outerChildID := pp.Children()[1-join.getInnerChildIdx()].ID()
+				actRows := int64(1)
+				if statsColl.ExistsRootStats(outerChildID) {
+					actRows = statsColl.GetRootStats(outerChildID).GetActRows()
+				}
+				if statsColl.ExistsCopStats(outerChildID) {
+					actRows = statsColl.GetCopStats(outerChildID).GetActRows()
+				}
+				// TODO: For PhysicalApply, we need to consider cache hit ratio in JoinRuntimeStats and use actRows/(1-ratio) here.
+				res *= actRows
+			}
+		}
+	}
+	return res
+}
+
 type basePhysicalPlan struct {
 	basePlan
 
@@ -461,6 +518,10 @@ type basePhysicalPlan struct {
 	planCost     float64
 	planCostVer2 costVer2
 
+	// probeParents records the IndexJoins and Applys with this operator in their inner children.
+	// Please see comments in PhysicalPlan for details.
+	probeParents []PhysicalPlan
+
 	// Only for MPP. If TiFlashFineGrainedShuffleStreamCount > 0:
 	// 1. For ExchangeSender, means its output will be partitioned by hash key.
 	// 2. For ExchangeReceiver/Window/Sort, means its input is already partitioned.
@@ -472,6 +533,7 @@ func (p *basePhysicalPlan) cloneWithSelf(newSelf PhysicalPlan) (*basePhysicalPla
 		basePlan:                             p.basePlan,
 		self:                                 newSelf,
 		TiFlashFineGrainedShuffleStreamCount: p.TiFlashFineGrainedShuffleStreamCount,
+		probeParents:                         p.probeParents,
 	}
 	for _, child := range p.children {
 		cloned, err := child.Clone()
@@ -533,6 +595,24 @@ func (p *basePhysicalPlan) MemoryUsage() (sum int64) {
 		sum += plan.MemoryUsage()
 	}
 	return
+}
+
+func (p *basePhysicalPlan) getEstRowCountForDisplay() float64 {
+	if p == nil {
+		return 0
+	}
+	return p.statsInfo().RowCount * getEstimatedProbeCntFromProbeParents(p.probeParents)
+}
+
+func (p *basePhysicalPlan) getActualProbeCnt(statsColl *execdetails.RuntimeStatsColl) int64 {
+	if p == nil {
+		return 1
+	}
+	return getActualProbeCntFromProbeParents(p.probeParents, statsColl)
+}
+
+func (p *basePhysicalPlan) setProbeParents(probeParents []PhysicalPlan) {
+	p.probeParents = probeParents
 }
 
 // GetLogicalTS4TaskMap get the logical TimeStamp now to help rollback the TaskMap changes after that.

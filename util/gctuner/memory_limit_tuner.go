@@ -81,11 +81,13 @@ func (t *memoryLimitTuner) tuning() {
 	}
 }
 
-func (t *memoryLimitTuner) start() {
-	t.finalizer = newFinalizer(t.tuning) // start tuning
+// Start starts the memory limit tuner.
+func (t *memoryLimitTuner) Start() {
+	t.finalizer = newFinalizer(t.tuning) // Start tuning
 }
 
-func (t *memoryLimitTuner) stop() {
+// Stop stops the memory limit tuner.
+func (t *memoryLimitTuner) Stop() {
 	t.finalizer.stop()
 }
 
@@ -123,5 +125,5 @@ func (t *memoryLimitTuner) calcMemoryLimit() int64 {
 }
 
 func init() {
-	GlobalMemoryLimitTuner.start()
+	GlobalMemoryLimitTuner.Start()
 }
