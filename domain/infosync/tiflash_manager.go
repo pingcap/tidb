@@ -64,6 +64,8 @@ type TiFlashPlacementManager interface {
 	UpdateTiFlashProgressCache(tableID int64, progress string)
 	// GetTiFlashProgressFromCache gets tiflash replica progress from tiflashProgressCache
 	GetTiFlashProgressFromCache(tableID int64) string
+	// CleanTiFlashProgressCache clean progress cache
+	CleanTiFlashProgressCache()
 	// Close is to close TiFlashPlacementManager
 	Close(ctx context.Context)
 }
@@ -145,6 +147,11 @@ func (m *TiFlashPDPlacementManager) GetTiFlashProgressFromCache(tableID int64) s
 		return progress
 	}
 	return ""
+}
+
+// CleanTiFlashProgressCache clean progress cache
+func (m *TiFlashPDPlacementManager) CleanTiFlashProgressCache() {
+	m.tiflashProgressCache = make(map[int64]string)
 }
 
 // SetTiFlashGroupConfig sets the tiflash's rule group config
@@ -751,6 +758,11 @@ func (m *mockTiFlashPlacementManager) GetTiFlashProgressFromCache(tableID int64)
 		return progress
 	}
 	return ""
+}
+
+// CleanTiFlashProgressCache clean progress cache
+func (m *mockTiFlashPlacementManager) CleanTiFlashProgressCache() {
+	m.tiflashProgressCache = make(map[int64]string)
 }
 
 // SetMockTiFlash is set a mock TiFlash server.

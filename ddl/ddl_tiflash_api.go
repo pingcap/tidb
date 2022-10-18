@@ -233,8 +233,6 @@ var (
 	PollTiFlashBackoffRate TiFlashTick = 1.5
 	// RefreshProgressMaxTableCount is the max count of table to refresh progress after available each poll.
 	RefreshProgressMaxTableCount uint64 = 1000
-	// PollCleanProgressCacheInterval is the inteval (PollTiFlashInterval * PollCleanProgressCacheInterval) of cleaning progress cache to avoid data race when ddl owner switchover
-	PollCleanProgressCacheInterval uint64 = 300
 )
 
 func getTiflashHTTPAddr(host string, statusAddr string) (string, error) {
@@ -477,14 +475,6 @@ func (d *ddl) refreshTiFlashTicker(ctx sessionctx.Context, pollTiFlashContext *T
 			pollTiFlashContext.PollCounter = 0
 			return err
 		}
-	}
-
-	failpoint.Inject("PollTiFlashReplicaStatusCleanProgressCache", func() {
-		pollTiFlashContext.PollCounter = PollCleanProgressCacheInterval
-	})
-	// 10min clean progress cache to avoid data race
-	if pollTiFlashContext.PollCounter > 0 && pollTiFlashContext.PollCounter%PollCleanProgressCacheInterval == 0 {
-
 	}
 	pollTiFlashContext.PollCounter++
 
@@ -734,7 +724,7 @@ func (d *ddl) PollTiFlashRoutine() {
 						}
 					}
 				} else {
-					pollTiflashContext.ProgressCache = make(map[int64]string)
+					infosync.CleanTiFlashProgressCache()
 				}
 				d.sessPool.put(sctx)
 			} else {

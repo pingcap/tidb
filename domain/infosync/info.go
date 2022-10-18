@@ -338,19 +338,6 @@ func GetAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
 	return is.getAllServerInfo(ctx)
 }
 
-// UpdateTiFlashTableSyncProgress is used to update the tiflash table replica sync progress.
-func UpdateTiFlashTableSyncProgress(ctx context.Context, tid int64, progressString string) error {
-	is, err := getGlobalInfoSyncer()
-	if err != nil {
-		return err
-	}
-	if is.etcdCli == nil {
-		return nil
-	}
-	key := fmt.Sprintf("%s/%v", TiFlashTableSyncProgressPath, tid)
-	return util.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, key, progressString)
-}
-
 // DeleteTiFlashTableSyncProgress is used to delete the tiflash table replica sync progress.
 func DeleteTiFlashTableSyncProgress(tableInfo *model.TableInfo) error {
 	is, err := getGlobalInfoSyncer()
@@ -375,39 +362,42 @@ func DeleteTiFlashTableSyncProgress(tableInfo *model.TableInfo) error {
 	return nil
 }
 
-// GetTiFlashTableSyncProgress uses to get all the tiflash table replica sync progress.
-func GetTiFlashTableSyncProgress(ctx context.Context) (map[int64]float64, error) {
+// MustGetTiFlashProgress gets tiflash replica progress from tiflashProgressCache, if cache noe exist, get and insert progress into cache.
+func MustGetTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores *map[int64]helper.StoreStat) string {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
-		return nil, err
+		return "0"
 	}
-	progressMap := make(map[int64]float64)
-	if is.etcdCli == nil {
-		return progressMap, nil
+	progressCache := is.tiflashPlacementManager.GetTiFlashProgressFromCache(tableID)
+	if progressCache != "" {
+		return progressCache
 	}
-	for i := 0; i < keyOpDefaultRetryCnt; i++ {
-		resp, err := is.etcdCli.Get(ctx, TiFlashTableSyncProgressPath+"/", clientv3.WithPrefix())
+	if tiFlashStores == nil {
+		// We need the up-to-date information about TiFlash stores.
+		// Since TiFlash Replica synchronize may happen immediately after new TiFlash stores are added.
+		tikvStats, err := is.tiflashPlacementManager.GetStoresStat(context.Background())
+		// If MockTiFlash is not set, will issue a MockTiFlashError here.
 		if err != nil {
-			logutil.BgLogger().Info("get tiflash table replica sync progress failed, continue checking.", zap.Error(err))
-			continue
+			return "0"
 		}
-		for _, kv := range resp.Kvs {
-			tid, err := strconv.ParseInt(string(kv.Key[len(TiFlashTableSyncProgressPath)+1:]), 10, 64)
-			if err != nil {
-				logutil.BgLogger().Info("invalid tiflash table replica sync progress key.", zap.String("key", string(kv.Key)))
-				continue
+		stores := make(map[int64]helper.StoreStat)
+		for _, store := range tikvStats.Stores {
+			for _, l := range store.Store.Labels {
+				if l.Key == "engine" && l.Value == "tiflash" {
+					stores[store.Store.ID] = store
+					logutil.BgLogger().Debug("Found tiflash store", zap.Int64("id", store.Store.ID), zap.String("Address", store.Store.Address), zap.String("StatusAddress", store.Store.StatusAddress))
+				}
 			}
-			progress, err := strconv.ParseFloat(string(kv.Value), 64)
-			if err != nil {
-				logutil.BgLogger().Info("invalid tiflash table replica sync progress value.",
-					zap.String("key", string(kv.Key)), zap.String("value", string(kv.Value)))
-				continue
-			}
-			progressMap[tid] = progress
 		}
-		break
+		tiFlashStores = &stores
+		logutil.BgLogger().Debug("updateTiFlashStores finished", zap.Int("TiFlash store count", len(*tiFlashStores)))
 	}
-	return progressMap, nil
+	progress, err := is.tiflashPlacementManager.GetTiFlashProgress(tableID, replicaCount, *tiFlashStores)
+	if err != nil {
+		return "0"
+	}
+	is.tiflashPlacementManager.UpdateTiFlashProgressCache(tableID, progress)
+	return progress
 }
 
 func doRequest(ctx context.Context, apiName string, addrs []string, route, method string, body io.Reader) ([]byte, error) {
@@ -1078,6 +1068,14 @@ func GetTiFlashProgressFromCache(tableID int64) (string, error) {
 		return "", err
 	}
 	return is.tiflashPlacementManager.GetTiFlashProgressFromCache(tableID), nil
+}
+
+func CleanTiFlashProgressCache() {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return
+	}
+	is.tiflashPlacementManager.CleanTiFlashProgressCache()
 }
 
 // SetTiFlashGroupConfig is a helper function to set tiflash rule group config
