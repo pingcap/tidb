@@ -92,7 +92,7 @@ func (e *slowQueryRetriever) initialize(ctx context.Context, sctx sessionctx.Con
 	var err error
 	var hasProcessPriv bool
 	if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
-		hasProcessPriv = pm.RequestVerification(sctx.GetSessionVars().ActiveRoles, "", "", "", mysql.ProcessPriv)
+		hasProcessPriv = pm.RequestVerification(sctx.GetSessionVars().ActiveRoles, "", "", "", mysql.ProcessPriv, nil)
 	}
 	// initialize column value factories.
 	e.columnValueFactoryMap = make(map[string]slowQueryColumnValueFactory, len(e.outputCols))

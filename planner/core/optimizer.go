@@ -159,7 +159,7 @@ func CheckPrivilege(activeRoles []*auth.RoleIdentity, pm privilege.Manager, vs [
 				}
 				return v.err
 			}
-		} else if !pm.RequestVerification(activeRoles, v.db, v.table, v.column, v.privilege) {
+		} else if !pm.RequestVerification(activeRoles, v.db, v.table, v.column, v.privilege, v.err) {
 			if v.err == nil {
 				return ErrPrivilegeCheckFail.GenWithStackByArgs(v.privilege.String())
 			}

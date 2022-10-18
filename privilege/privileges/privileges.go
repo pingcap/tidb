@@ -107,7 +107,7 @@ func (p *UserPrivileges) RequestDynamicVerification(activeRoles []*auth.RoleIden
 }
 
 // RequestVerification implements the Manager interface.
-func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, db, table, column string, priv mysql.PrivilegeType) bool {
+func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, db, table, column string, priv mysql.PrivilegeType, err error) bool {
 	if SkipWithGrant {
 		return true
 	}
@@ -153,7 +153,11 @@ func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, d
 	}
 
 	mysqlPriv := p.Handle.Get()
-	return mysqlPriv.RequestVerification(activeRoles, p.user, p.host, db, table, column, priv)
+	result := mysqlPriv.RequestVerification(activeRoles, p.user, p.host, db, table, column, priv, err)
+	if result {
+		err = nil
+	}
+	return result
 }
 
 // RequestVerificationWithUser implements the Manager interface.
@@ -174,7 +178,7 @@ func (p *UserPrivileges) RequestVerificationWithUser(db, table, column string, p
 
 	mysqlPriv := p.Handle.Get()
 	roles := mysqlPriv.getDefaultRoles(user.Username, user.Hostname)
-	return mysqlPriv.RequestVerification(roles, user.Username, user.Hostname, db, table, column, priv)
+	return mysqlPriv.RequestVerification(roles, user.Username, user.Hostname, db, table, column, priv, nil)
 }
 
 func (p *UserPrivileges) isValidHash(record *UserRecord) bool {
