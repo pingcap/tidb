@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/distsql"
@@ -303,6 +304,7 @@ func (w *addIndexWorker) fetchRowColValsFromCop(handleRange reorgBackfillTask) (
 	taskDone := false
 	var err error
 	curRangeKey := string(handleRange.endKey)
+	timer := time.NewTimer(200 * time.Millisecond)
 	for {
 		select {
 		case record, more := <-w.copReqReaders.resultsCh:
@@ -311,7 +313,7 @@ func (w *addIndexWorker) fetchRowColValsFromCop(handleRange reorgBackfillTask) (
 				break
 			}
 			w.idxRecords = append(w.idxRecords, record)
-		default:
+		case <-timer.C:
 			err, taskDone = w.copReqReaders.results.Load(curRangeKey)
 		}
 		if taskDone {
@@ -323,6 +325,7 @@ func (w *addIndexWorker) fetchRowColValsFromCop(handleRange reorgBackfillTask) (
 		}
 	}
 
+	timer.Stop()
 	return w.idxRecords, handleRange.startKey, taskDone, err
 }
 
