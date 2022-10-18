@@ -9,14 +9,12 @@
 * [Introduction](#introduction)
 * [Motivation or Background](#motivation-or-background)
 * [Detailed Design](#detailed-design)
+    * [Schema change states for REORGANIZE PARTITION](#schema-change-states-for-reorganize-partition)
+    * [Error Handling](#error-handling)
+    * [Notes](#notes)
 * [Test Design](#test-design)
-    * [Functional Tests](#functional-tests)
-    * [Scenario Tests](#scenario-tests)
-    * [Compatibility Tests](#compatibility-tests)
     * [Benchmark Tests](#benchmark-tests)
 * [Impacts & Risks](#impacts--risks)
-* [Investigation & Alternatives](#investigation--alternatives)
-* [Unresolved Questions](#unresolved-questions)
 
 ## Introduction
 
@@ -27,14 +25,14 @@ Support ALTER TABLE t REORGANIZE PARTITION p1,p2 INTO (partition pNew1 values...
 TiDB is currently lacking the support of changing the partitions of a partitioned table, it only supports adding and dropping LIST/RANGE partitions.
 Supporting REORGANIZE PARTITIONs will allow RANGE partitioned tables to have a MAXVALUE partition to catch all values and split it into new ranges. Similar with LIST partitions where one can split or merge different partitions.
 
-When this is implemented, it will also allow transforming a non-partitioned table into a partitioned table as well as remove partitioning and make a partitioned table a normal non-partitioned table, which is different ALTER statements but can use the same implementation as REORGANIZE PARTITION
+When this is implemented, it will also allow future PRs transforming a non-partitioned table into a partitioned table as well as remove partitioning and make a partitioned table a normal non-partitioned table, as well as COALESCE PARTITION and ADD PARTITION for HASH partitioned tables, which is different ALTER statements but can use the same implementation as REORGANIZE PARTITION
 
 The operation should be online, and must handle multiple partitions as well as large data sets.
 
 Possible usage scenarios:
 - Full table copy
   - merging all partitions to a single table (ALTER TABLE t REMOVE PARTITIONING)
-  - splitting data from many to many partitions, like change the number of hash partitions
+  - splitting data from many to many partitions, like change the number of HASH partitions
   - splitting a table to many partitions (ALTER TABLE t PARTITION BY ...)
 - Partial table copy (not full table/all partitions)
   - split one or more partitions
@@ -43,7 +41,7 @@ Possible usage scenarios:
 These different use cases can have different optimizations, but the generic form must still be solved:
 - N partitions, where each partition has M indexes
 
-First implementation should be based on the merge-txn (row-by-row read, update record, write) transactional batches.
+First implementation should be based on the merge-txn (row-by-row batch read, update record key with new Physical Table ID, write) transactional batches and then create the indexes in batches index by index, partition by partition.
 Later we can implement the ingest (lightning way) optimization, since DDL module are on the way of evolution to do reorg tasks more efficiency.
 
 ## Detailed Design
@@ -60,14 +58,17 @@ Since this operation will:
 - create new partitions
 - drop existing partitions
 - copy data from dropped partitions to new partitions
-it will use all these schema change stages:
+
+It will use all these schema change stages:
 
       // StateNone means this schema element is absent and can't be used.
       StateNone SchemaState = iota
       - Check if the table structure after the ALTER is valid
       - Generate physical table ids to each new partition
       - Update the meta data with the new partitions and which partitions to be dropped (so that new transaction can double write)
-      - TODO: Should we also set placement rules? (Lable Rules)
+      - Set placement rules
+      - Set TiFlash Replicas
+      - Set legacy Bundles (non-sql placement)
       - Set the state to StateDeleteOnly
       
       // StateDeleteOnly means we can only delete items for this schema element (the new  partition).
@@ -92,6 +93,12 @@ it will use all these schema change stages:
       - Note that there is a background job for the GCWorker to do in its deleteRange function.
 
 During the reorganization happens in the background the normal write path needs to check if there are any new partitions in the metadata and also check if the updated/deleted/inserted row would match a new partition, and if so, also do the same operation in the new partition, just like during adding index or modify column operations currently does. (To be implemented in `(*partitionedTable) AddRecord/UpdateRecord/RemoveRecord`)
+
+### Error handling
+
+If any non-retryable error occurs, we will call onDropTablePartition and adjust the logic in that function to also handle the roll back of reorganize partition, in a similar way as it does with model.ActionAddTablePartition.
+
+### Notes
 
 Note that parser support already exists.
 There should be no issues with upgrading, and downgrade will not be supported during the DDL.
