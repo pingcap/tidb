@@ -2784,3 +2784,16 @@ func TestPreparedShowStatements(t *testing.T) {
 	tk.MustExec(`prepare p3 from "show tables where tables_in_test = 't1'";`) // Only table `t1` is selected.
 	tk.MustQuery("execute p3;").Check(testkit.Rows("t1"))
 }
+
+func TestIssue37901(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t4`)
+	tk.MustExec(`create table t4 (a date)`)
+	tk.MustExec(`prepare st1 from "insert into t4(a) select dt from (select ? as dt from dual union all select sysdate() ) a";`)
+	tk.MustExec(`set @t='2022-01-01 00:00:00.000000'`)
+	tk.MustExec(`execute st1 using @t`)
+	tk.MustQuery(`select count(*) from t4`).Check(testkit.Rows("2"))
+}

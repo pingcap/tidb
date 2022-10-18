@@ -1790,7 +1790,7 @@ func (b *PlanBuilder) buildAdminCheckTable(ctx context.Context, as *ast.AdminStm
 			}
 		}
 		if idx == nil {
-			return nil, errors.Errorf("index %s do not exist", as.Index)
+			return nil, errors.Errorf("secondary index %s does not exist", as.Index)
 		}
 		if idx.Meta().State != model.StatePublic {
 			return nil, errors.Errorf("index %s state %s isn't public", as.Index, idx.Meta().State)
@@ -3436,7 +3436,7 @@ func (b *PlanBuilder) getDefaultValue(col *table.Column) (*expression.Constant, 
 	if err != nil {
 		return nil, err
 	}
-	return &expression.Constant{Value: value, RetType: &col.FieldType}, nil
+	return &expression.Constant{Value: value, RetType: col.FieldType.Clone()}, nil
 }
 
 // resolveGeneratedColumns resolves generated columns with their generation
@@ -4641,6 +4641,10 @@ func (b *PlanBuilder) buildTrace(trace *ast.TraceStmt) (Plan, error) {
 }
 
 func (b *PlanBuilder) buildExplainPlan(targetPlan Plan, format string, explainRows [][]string, analyze bool, execStmt ast.StmtNode, runtimeStats *execdetails.RuntimeStatsColl) (Plan, error) {
+	if strings.ToLower(format) == types.ExplainFormatTrueCardCost && !analyze {
+		return nil, errors.Errorf("'explain format=%v' cannot work without 'analyze', please use 'explain analyze format=%v'", format, format)
+	}
+
 	p := &Explain{
 		TargetPlan:       targetPlan,
 		Format:           format,

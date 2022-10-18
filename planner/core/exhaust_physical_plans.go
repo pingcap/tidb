@@ -1598,7 +1598,10 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *util.AccessPath
 func (ijHelper *indexJoinBuildHelper) updateBestChoice(ranges ranger.MutableRanges, path *util.AccessPath, accesses,
 	remained []expression.Expression, lastColManager *ColWithCmpFuncManager, usedColsLen int, rebuildMode bool) {
 	if rebuildMode { // rebuild the range for plan-cache, update the chosenRanges anyway
+		ijHelper.chosenPath = path
 		ijHelper.chosenRanges = ranges
+		ijHelper.chosenAccess = accesses
+		ijHelper.idxOff2KeyOff = ijHelper.curIdxOff2KeyOff
 		return
 	}
 
