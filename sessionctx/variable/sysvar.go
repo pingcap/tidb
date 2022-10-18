@@ -1578,6 +1578,97 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+<<<<<<< HEAD
+=======
+	{Scope: ScopeGlobal | ScopeSession, Name: TiFlashFineGrainedShuffleStreamCount, Value: strconv.Itoa(DefTiFlashFineGrainedShuffleStreamCount), Type: TypeInt, MinValue: -1, MaxValue: 1024,
+		SetSession: func(s *SessionVars, val string) error {
+			s.TiFlashFineGrainedShuffleStreamCount = TidbOptInt64(val, DefTiFlashFineGrainedShuffleStreamCount)
+			return nil
+		}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiFlashFineGrainedShuffleBatchSize, Value: strconv.Itoa(DefTiFlashFineGrainedShuffleBatchSize), Type: TypeUnsigned, MinValue: 1, MaxValue: math.MaxUint64,
+		SetSession: func(s *SessionVars, val string) error {
+			s.TiFlashFineGrainedShuffleBatchSize = uint64(TidbOptInt64(val, DefTiFlashFineGrainedShuffleBatchSize))
+			return nil
+		}},
+	{Scope: ScopeGlobal, Name: TiDBSimplifiedMetrics, Value: BoolToOnOff(DefTiDBSimplifiedMetrics), Type: TypeBool,
+		SetGlobal: func(_ context.Context, vars *SessionVars, s string) error {
+			metrics.ToggleSimplifiedMode(TiDBOptOn(s))
+			return nil
+		}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMinPagingSize, Value: strconv.Itoa(DefMinPagingSize), Type: TypeUnsigned, MinValue: 1, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
+		s.MinPagingSize = tidbOptPositiveInt32(val, DefMinPagingSize)
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMaxPagingSize, Value: strconv.Itoa(DefMaxPagingSize), Type: TypeUnsigned, MinValue: 1, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
+		s.MaxPagingSize = tidbOptPositiveInt32(val, DefMaxPagingSize)
+		return nil
+	}},
+	{Scope: ScopeSession, Name: TiDBMemoryDebugModeMinHeapInUse, Value: strconv.Itoa(0), Type: TypeInt, MinValue: math.MinInt64, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
+		s.MemoryDebugModeMinHeapInUse = TidbOptInt64(val, 0)
+		return nil
+	}},
+	{Scope: ScopeSession, Name: TiDBMemoryDebugModeAlarmRatio, Value: strconv.Itoa(0), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
+		s.MemoryDebugModeAlarmRatio = TidbOptInt64(val, 0)
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: SQLRequirePrimaryKey, Value: Off, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.PrimaryKeyRequired = TiDBOptOn(val)
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableAnalyzeSnapshot, Value: BoolToOnOff(DefTiDBEnableAnalyzeSnapshot), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableAnalyzeSnapshot = TiDBOptOn(val)
+		return nil
+	}},
+	{Scope: ScopeGlobal, Name: TiDBGenerateBinaryPlan, Value: BoolToOnOff(DefTiDBGenerateBinaryPlan), Type: TypeBool, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		GenerateBinaryPlan.Store(TiDBOptOn(val))
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBDefaultStrMatchSelectivity, Value: strconv.FormatFloat(DefTiDBDefaultStrMatchSelectivity, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: 1,
+		SetSession: func(s *SessionVars, val string) error {
+			s.DefaultStrMatchSelectivity = tidbOptFloat64(val, DefTiDBDefaultStrMatchSelectivity)
+			return nil
+		}},
+	{Scope: ScopeGlobal, Name: TiDBDDLEnableFastReorg, Value: BoolToOnOff(DefTiDBEnableFastReorg), Type: TypeBool, GetGlobal: func(_ context.Context, sv *SessionVars) (string, error) {
+		return BoolToOnOff(EnableFastReorg.Load()), nil
+	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		EnableFastReorg.Store(TiDBOptOn(val))
+		return nil
+	}},
+	// This system var is set disk quota for lightning sort dir, from 100 GB to 1PB.
+	{Scope: ScopeGlobal, Name: TiDBDDLDiskQuota, Value: strconv.Itoa(DefTiDBDDLDiskQuota), Type: TypeInt, MinValue: DefTiDBDDLDiskQuota, MaxValue: 1024 * 1024 * DefTiDBDDLDiskQuota / 100, GetGlobal: func(_ context.Context, sv *SessionVars) (string, error) {
+		return strconv.FormatUint(DDLDiskQuota.Load(), 10), nil
+	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		DDLDiskQuota.Store(TidbOptUint64(val, DefTiDBDDLDiskQuota))
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBConstraintCheckInPlacePessimistic, Value: BoolToOnOff(DefTiDBConstraintCheckInPlacePessimistic), Type: TypeBool,
+		SetSession: func(s *SessionVars, val string) error {
+			s.ConstraintCheckInPlacePessimistic = TiDBOptOn(val)
+			if !s.ConstraintCheckInPlacePessimistic {
+				metrics.LazyPessimisticUniqueCheckSetCount.Inc()
+			}
+			return nil
+		}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableTiFlashReadForWriteStmt, Value: BoolToOnOff(DefTiDBEnableTiFlashReadForWriteStmt), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableTiFlashReadForWriteStmt = TiDBOptOn(val)
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableUnsafeSubstitute, Value: BoolToOnOff(false), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableUnsafeSubstitute = TiDBOptOn(val)
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptRangeMaxSize, Value: strconv.FormatInt(DefTiDBOptRangeMaxSize, 10), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
+		s.RangeMaxSize = TidbOptInt64(val, DefTiDBOptRangeMaxSize)
+		return nil
+	}},
+	{
+		Scope: ScopeGlobal | ScopeSession, Name: TiDBMergePartitionStatsConcurrency, Value: strconv.FormatInt(DefTiDBMergePartitionStatsConcurrency, 10), Type: TypeInt, MinValue: 1, MaxValue: MaxConfigurableConcurrency,
+		SetSession: func(s *SessionVars, val string) error {
+			s.AnalyzePartitionMergeConcurrency = TidbOptInt(val, DefTiDBMergePartitionStatsConcurrency)
+			return nil
+		},
+	},
+>>>>>>> e8d265981a (statistics: support merge global topn in concurrency (#38358))
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.
