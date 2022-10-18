@@ -93,6 +93,8 @@ retry:
 		return 0, 0, errors.Trace(err)
 	}
 
+	fmt.Println("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAlloc  ", sp.dbID, sp.tblID)
+
 	start := time.Now()
 	resp, err := cli.AllocAutoID(ctx, &autoid.AutoIDRequest{
 		DbID:      sp.dbID,

@@ -71,14 +71,21 @@ func (m *mockClient) Rebase(ctx context.Context, in *autoid.RebaseRequest, opts 
 	return m.Service.Rebase(ctx, in)
 }
 
-func MockForTest() *mockClient {
-	return &mockClient{
-		Service{
-			autoIDMap:  make(map[autoIDKey]*autoIDValue),
-			leaderShip: &leaderShip{mock: true},
-			persist: &mockPersist{data : make(map[autoIDKey]uint64)},
-		},
+var global = make(map[string]*mockClient)
+
+func MockForTest(uuid string) *mockClient {
+	ret, ok := global[uuid]
+	if !ok {
+		ret =  &mockClient{
+			Service{
+				autoIDMap:  make(map[autoIDKey]*autoIDValue),
+				leaderShip: &leaderShip{mock: true},
+				persist: &mockPersist{data : make(map[autoIDKey]uint64)},
+			},
+		}
+		global[uuid] = ret
 	}
+	return ret
 }
 
 func (s *Service) Close() {
@@ -208,8 +215,6 @@ func (s *Service) initKV(ctx context.Context, key autoIDKey) error {
 		max:   new(int64),
 	}
 
-	fmt.Println("run into initKV!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!", key)
-
 	val.token <- struct{}{}
 	min, err := s.loadID(ctx, key.dbID, key.tblID)
 	if err != nil {
@@ -225,6 +230,7 @@ func (s *Service) initKV(ctx context.Context, key autoIDKey) error {
 
 	s.autoIDLock.Lock()
 	s.autoIDMap[key] = val
+	fmt.Println("run into initKV!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!", key, val, s)
 	s.autoIDLock.Unlock()
 
 	fmt.Println("init kv success ==", key, val)

@@ -929,6 +929,7 @@ var defaultSysVars = []*SysVar{
 			return OOMAction.Load(), nil
 		},
 		SetGlobal: func(s *SessionVars, val string) error {
+			fmt.Println("!!!!!!!!!!! set global oom action !!!!!!!!!!!!!!!")
 			OOMAction.Store(val)
 			return nil
 		}},

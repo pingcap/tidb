@@ -577,13 +577,13 @@ func NewAllocatorsFromTblInfo(store kv.Storage, schemaID int64, tblInfo *model.T
 	hasRowID := !tblInfo.PKIsHandle && !tblInfo.IsCommonHandle
 	hasAutoIncID := tblInfo.GetAutoIncrementColInfo() != nil
 	if hasRowID || hasAutoIncID {
-		var alloc *singlePointAlloc
+		var alloc Allocator
 		if ebd, ok := store.(kv.EtcdBackend); ok {
 			addrs, err := ebd.EtcdAddrs()
 			if err != nil {
 				panic(err)
 			}
-			alloc = &singlePointAlloc{
+			spa := &singlePointAlloc{
 				dbID:  dbID,
 				tblID: tblInfo.ID,
 			}
@@ -595,12 +595,18 @@ func NewAllocatorsFromTblInfo(store kv.Storage, schemaID int64, tblInfo *model.T
 				if err != nil {
 					panic(err)
 				}
-				alloc.clientDiscover = clientDiscover{etcdCli: etcdCli}
+				spa.clientDiscover = clientDiscover{etcdCli: etcdCli}
 			} else {
-				alloc.clientDiscover = clientDiscover{
-					AutoIDAllocClient: autoidservice.MockForTest(),
+				spa.clientDiscover = clientDiscover{
+					AutoIDAllocClient: autoidservice.MockForTest(store.UUID()),
 				}
 			}
+			alloc = spa
+			failpoint.Inject("mockAutoIDChange", func(val failpoint.Value) {
+				if val.(bool) {
+					alloc = NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(), RowIDAllocType, idCacheOpt, tblVer)
+				}
+			})
 			allocs = append(allocs, alloc)
 		}
 	}

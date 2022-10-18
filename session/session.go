@@ -1466,6 +1466,7 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 // SetGlobalSysVar implements GlobalVarAccessor.SetGlobalSysVar interface.
 // it is called (but skipped) when setting instance scope
 func (s *session) SetGlobalSysVar(name, value string) (err error) {
+	fmt.Println("set global sys var =========", name, value)
 	sv := variable.GetSysVar(name)
 	if sv == nil {
 		return variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
@@ -3110,6 +3111,7 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	}
 	for varName, varVal := range sessionCache {
 		if _, ok := vars.GetSystemVar(varName); !ok {
+			fmt.Println("load common global variable ....", varName, varVal)
 			err = vars.SetSystemVarWithRelaxedValidation(varName, varVal)
 			if err != nil {
 				if variable.ErrUnknownSystemVar.Equal(err) {

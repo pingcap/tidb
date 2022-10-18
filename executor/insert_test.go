@@ -999,6 +999,7 @@ func TestInsertWithAutoidSchema(t *testing.T) {
 			tk.MustExec(tt.insert[8:])
 			tk.Session().GetSessionVars().RetryInfo = &variable.RetryInfo{}
 		} else {
+			fmt.Println("====", tt.insert)
 			tk.MustExec(tt.insert)
 		}
 		if tt.query == "set session sql_mode = `ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION,NO_AUTO_VALUE_ON_ZERO`" ||
