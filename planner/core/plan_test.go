@@ -1053,3 +1053,42 @@ func TestTableDualAsSubQuery(t *testing.T) {
 	tk.MustQuery("SELECT v0.c0 FROM v0 WHERE (v0.c0 IS NULL) LIKE(NULL);").Check(testkit.Rows())
 	tk.MustQuery("SELECT v0.c0 FROM (SELECT null as c0) v0 WHERE (v0.c0 IS NULL) like (NULL);").Check(testkit.Rows())
 }
+
+// https://github.com/pingcap/tidb/issues/38310
+func TestNullEQConditionPlan(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t0(c0 BOOL, PRIMARY KEY(c0));")
+	tk.MustExec("INSERT INTO t0 VALUES (FALSE);")
+	tk.MustQuery("SELECT * FROM t0 WHERE NOT (('4')AND(t0.c0<=>FALSE));").Check(testkit.Rows())
+
+	tk.MustQuery("explain SELECT * FROM t0 WHERE NOT (('4')AND(t0.c0<=>FALSE))").CheckAt(
+		[]int{0, 2, 4}, [][]interface{}{
+			{"TableReader_7", "root", "data:Selection_6"},
+			{"└─Selection_6", "cop[tikv]", "or(0, not(nulleq(test.t0.c0, 0)))"},
+			{"  └─TableFullScan_5", "cop[tikv]", "keep order:false, stats:pseudo"},
+		})
+
+	tk.MustQuery("SELECT * FROM t0 WHERE (('4')AND(t0.c0<=>FALSE));").Check(testkit.Rows("0"))
+	tk.MustQuery("explain SELECT * FROM t0 WHERE (('4')AND(t0.c0<=>FALSE))").CheckAt(
+		[]int{0, 2, 4}, [][]interface{}{
+			{"Point_Get_5", "root", "handle:0"},
+		})
+}
+
+// https://github.com/pingcap/tidb/issues/38304
+func TestOuterJoinOnNull(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t0(c0 BLOB(5), c1 BLOB(5));")
+	tk.MustExec("CREATE TABLE t1 (c0 BOOL);")
+	tk.MustExec("INSERT INTO t1 VALUES(false);")
+	tk.MustExec("INSERT INTO t0(c0, c1) VALUES ('>', true);")
+	tk.MustQuery("SELECT * FROM t0 LEFT OUTER JOIN t1 ON NULL; ").Check(testkit.Rows("> 1 <nil>"))
+	tk.MustQuery("SELECT NOT '2' =(t1.c0 AND t0.c1 IS NULL) FROM t0 LEFT OUTER JOIN t1 ON NULL; ").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT * FROM t0 LEFT JOIN t1 ON NULL WHERE NOT '2' =(t1.c0 AND t0.c1 IS NULL); ").Check(testkit.Rows("> 1 <nil>"))
+	tk.MustQuery("SELECT * FROM t0 LEFT JOIN t1 ON NULL WHERE t1.c0 or true; ").Check(testkit.Rows("> 1 <nil>"))
+	tk.MustQuery("SELECT * FROM t0 LEFT JOIN t1 ON NULL WHERE not(t1.c0 and false); ").Check(testkit.Rows("> 1 <nil>"))
+}

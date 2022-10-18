@@ -304,6 +304,10 @@ func TestInstanceScopedVars(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, fmt.Sprintf("%g", MemoryUsageAlarmRatio.Load()), val)
 
+	val, err = vars.GetSessionOrGlobalSystemVar(TiDBMemoryUsageAlarmKeepRecordNum)
+	require.NoError(t, err)
+	require.Equal(t, fmt.Sprintf("%d", MemoryUsageAlarmKeepRecordNum.Load()), val)
+
 	val, err = vars.GetSessionOrGlobalSystemVar(TiDBForcePriority)
 	require.NoError(t, err)
 	require.Equal(t, mysql.Priority2Str[mysql.PriorityEnum(atomic.LoadInt32(&ForcePriority))], val)
@@ -339,7 +343,7 @@ func TestInstanceScopedVars(t *testing.T) {
 
 	val, err = vars.GetSessionOrGlobalSystemVar(TiDBEnableCollectExecutionInfo)
 	require.NoError(t, err)
-	require.Equal(t, BoolToOnOff(config.GetGlobalConfig().Instance.EnableCollectExecutionInfo), val)
+	require.Equal(t, BoolToOnOff(config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load()), val)
 
 	val, err = vars.GetSessionOrGlobalSystemVar(TiDBConfig)
 	require.NoError(t, err)

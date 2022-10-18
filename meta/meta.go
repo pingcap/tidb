@@ -166,6 +166,23 @@ func (m *Meta) GenGlobalID() (int64, error) {
 	return newID, err
 }
 
+// AdvanceGlobalIDs advances the global ID by n.
+// return the old global ID.
+func (m *Meta) AdvanceGlobalIDs(n int) (int64, error) {
+	globalIDMutex.Lock()
+	defer globalIDMutex.Unlock()
+
+	newID, err := m.txn.Inc(mNextGlobalIDKey, int64(n))
+	if err != nil {
+		return 0, err
+	}
+	if newID > MaxGlobalID {
+		return 0, errors.Errorf("global id:%d exceeds the limit:%d", newID, MaxGlobalID)
+	}
+	origID := newID - int64(n)
+	return origID, nil
+}
+
 // GenGlobalIDs generates the next n global IDs.
 func (m *Meta) GenGlobalIDs(n int) ([]int64, error) {
 	globalIDMutex.Lock()

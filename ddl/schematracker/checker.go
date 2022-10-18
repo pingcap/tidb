@@ -443,13 +443,13 @@ func (d Checker) CreateSchemaWithInfo(ctx sessionctx.Context, info *model.DBInfo
 }
 
 // CreateTableWithInfo implements the DDL interface.
-func (d Checker) CreateTableWithInfo(ctx sessionctx.Context, schema model.CIStr, info *model.TableInfo, onExist ddl.OnExist) error {
+func (d Checker) CreateTableWithInfo(ctx sessionctx.Context, schema model.CIStr, info *model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
 	//TODO implement me
 	panic("implement me")
 }
 
 // BatchCreateTableWithInfo implements the DDL interface.
-func (d Checker) BatchCreateTableWithInfo(ctx sessionctx.Context, schema model.CIStr, info []*model.TableInfo, onExist ddl.OnExist) error {
+func (d Checker) BatchCreateTableWithInfo(ctx sessionctx.Context, schema model.CIStr, info []*model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
 	//TODO implement me
 	panic("implement me")
 }
