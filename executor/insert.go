@@ -316,7 +316,7 @@ func (e *InsertExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	err := insertRows(ctx, e)
 	if err != nil {
 		terr, ok := errors.Cause(err).(*terror.Error)
-		if ok &&
+		if ok && len(e.OnDuplicate) == 0 &&
 			e.ctx.GetSessionVars().StmtCtx.ErrAutoincReadFailedAsWarning &&
 			terr.Code() == errno.ErrAutoincReadFailed {
 			e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
