@@ -21,6 +21,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/pingcap/tidb/sessionctx"
 
@@ -701,10 +702,17 @@ func NewTopN(n int) *TopN {
 //     2. `n` is the size of the global-level topN. Notice: This value can be 0 and has no default value, we must explicitly specify this value.
 //     3. `hists` are the partition-level histograms. Some values not in topN may be placed in the histogram. We need it here to make the value in the global-level TopN more accurate.
 // The output parameters:
+<<<<<<< HEAD
 //     1. `*TopN` is the final global-level topN.
 //     2. `[]TopNMeta` is the left topN value from the partition-level TopNs, but is not placed to global-level TopN. We should put them back to histogram latter.
 //     3. `[]*Histogram` are the partition-level histograms which just delete some values when we merge the global-level topN.
 func MergePartTopN2GlobalTopN(sc *stmtctx.StatementContext, version int, topNs []*TopN, n uint32, hists []*Histogram, isIndex bool) (*TopN, []TopNMeta, []*Histogram, error) {
+=======
+//  1. `*TopN` is the final global-level topN.
+//  2. `[]TopNMeta` is the left topN value from the partition-level TopNs, but is not placed to global-level TopN. We should put them back to histogram latter.
+//  3. `[]*Histogram` are the partition-level histograms which just delete some values when we merge the global-level topN.
+func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n uint32, hists []*Histogram, isIndex bool) (*TopN, []TopNMeta, []*Histogram, error) {
+>>>>>>> e8d265981a (statistics: support merge global topn in concurrency (#38358))
 	if checkEmptyTopNs(topNs) {
 		return nil, nil, hists, nil
 	}
@@ -756,7 +764,13 @@ func MergePartTopN2GlobalTopN(sc *stmtctx.StatementContext, version int, topNs [
 						var err error
 						if types.IsTypeTime(hists[0].Tp.Tp) {
 							// handle datetime values specially since they are encoded to int and we'll get int values if using DecodeOne.
+<<<<<<< HEAD
 							_, d, err = codec.DecodeAsDateTime(val.Encoded, hists[0].Tp.Tp, sc.TimeZone)
+=======
+							_, d, err = codec.DecodeAsDateTime(val.Encoded, hists[0].Tp.GetType(), loc)
+						} else if types.IsTypeFloat(hists[0].Tp.GetType()) {
+							_, d, err = codec.DecodeAsFloat32(val.Encoded, hists[0].Tp.GetType())
+>>>>>>> e8d265981a (statistics: support merge global topn in concurrency (#38358))
 						} else {
 							_, d, err = codec.DecodeOne(val.Encoded)
 						}
@@ -837,6 +851,22 @@ func checkEmptyTopNs(topNs []*TopN) bool {
 		count += topN.TotalCount()
 	}
 	return count == 0
+}
+
+// SortTopnMeta sort topnMeta
+func SortTopnMeta(topnMetas []TopNMeta) []TopNMeta {
+	slices.SortFunc(topnMetas, func(i, j TopNMeta) bool {
+		if i.Count != j.Count {
+			return i.Count > j.Count
+		}
+		return bytes.Compare(i.Encoded, j.Encoded) < 0
+	})
+	return topnMetas
+}
+
+// GetMergedTopNFromSortedSlice returns merged topn
+func GetMergedTopNFromSortedSlice(sorted []TopNMeta, n uint32) (*TopN, []TopNMeta) {
+	return getMergedTopNFromSortedSlice(sorted, n)
 }
 
 func getMergedTopNFromSortedSlice(sorted []TopNMeta, n uint32) (*TopN, []TopNMeta) {

@@ -1866,6 +1866,7 @@ var defaultSysVars = []*SysVar{
 		s.EnablePseudoForOutdatedStats = TiDBOptOn(val)
 		return nil
 	}},
+<<<<<<< HEAD
 
 	{Scope: ScopeNone, Name: "version_compile_os", Value: runtime.GOOS},
 	{Scope: ScopeNone, Name: "version_compile_machine", Value: runtime.GOARCH},
@@ -1888,6 +1889,15 @@ var GAFunction4ExpressionIndex = map[string]struct{}{
 	ast.MD5:        {},
 	ast.Reverse:    {},
 	ast.VitessHash: {},
+=======
+	{
+		Scope: ScopeGlobal | ScopeSession, Name: TiDBMergePartitionStatsConcurrency, Value: strconv.FormatInt(DefTiDBMergePartitionStatsConcurrency, 10), Type: TypeInt, MinValue: 1, MaxValue: MaxConfigurableConcurrency,
+		SetSession: func(s *SessionVars, val string) error {
+			s.AnalyzePartitionMergeConcurrency = TidbOptInt(val, DefTiDBMergePartitionStatsConcurrency)
+			return nil
+		},
+	},
+>>>>>>> e8d265981a (statistics: support merge global topn in concurrency (#38358))
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.
