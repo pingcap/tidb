@@ -264,7 +264,7 @@ func TestTableRange(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, stmts, 1)
 			ret := &plannercore.PreprocessorReturn{}
-			err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
+			err = plannercore.Preprocess(context.Background(), sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
 			require.NoError(t, err)
 			p, _, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
 			require.NoError(t, err)
@@ -453,7 +453,7 @@ create table t(
 			require.NoError(t, err)
 			require.Len(t, stmts, 1)
 			ret := &plannercore.PreprocessorReturn{}
-			err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
+			err = plannercore.Preprocess(context.Background(), sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
 			require.NoError(t, err)
 			p, _, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
 			require.NoError(t, err)
@@ -814,7 +814,7 @@ func TestColumnRange(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, stmts, 1)
 			ret := &plannercore.PreprocessorReturn{}
-			err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
+			err = plannercore.Preprocess(context.Background(), sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
 			require.NoError(t, err)
 			p, _, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
 			require.NoError(t, err)
@@ -1196,7 +1196,7 @@ func TestIndexRangeForYear(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, stmts, 1)
 			ret := &plannercore.PreprocessorReturn{}
-			err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
+			err = plannercore.Preprocess(context.Background(), sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
 			require.NoError(t, err)
 			p, _, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
 			require.NoError(t, err)
@@ -1264,7 +1264,7 @@ func TestPrefixIndexRangeScan(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, stmts, 1)
 			ret := &plannercore.PreprocessorReturn{}
-			err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
+			err = plannercore.Preprocess(context.Background(), sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
 			require.NoError(t, err)
 			p, _, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
 			require.NoError(t, err)
@@ -1673,7 +1673,7 @@ create table t(
 			require.NoError(t, err)
 			require.Len(t, stmts, 1)
 			ret := &plannercore.PreprocessorReturn{}
-			err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
+			err = plannercore.Preprocess(context.Background(), sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
 			require.NoError(t, err)
 			p, _, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
 			require.NoError(t, err)
@@ -1914,7 +1914,7 @@ func TestTableShardIndex(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, stmts, 1)
 			ret := &plannercore.PreprocessorReturn{}
-			err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
+			err = plannercore.Preprocess(context.Background(), sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
 			require.NoError(t, err)
 			p, _, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
 			require.NoError(t, err)
@@ -1942,7 +1942,7 @@ func TestTableShardIndex(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, stmts, 1)
 		ret := &plannercore.PreprocessorReturn{}
-		err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
+		err = plannercore.Preprocess(context.Background(), sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
 		require.NoError(t, err)
 		p, _, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
 		require.NoError(t, err)
@@ -1960,7 +1960,7 @@ func TestTableShardIndex(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, stmts, 1)
 		ret := &plannercore.PreprocessorReturn{}
-		err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
+		err = plannercore.Preprocess(context.Background(), sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
 		require.NoError(t, err)
 		p, _, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
 		require.NoError(t, err)
@@ -2105,7 +2105,7 @@ func getSelectionFromQuery(t *testing.T, sctx sessionctx.Context, sql string) *p
 	require.NoError(t, err)
 	require.Len(t, stmts, 1)
 	ret := &plannercore.PreprocessorReturn{}
-	err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
+	err = plannercore.Preprocess(context.Background(), sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
 	require.NoError(t, err)
 	p, _, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
 	require.NoError(t, err)
