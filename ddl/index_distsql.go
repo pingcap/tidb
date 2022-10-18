@@ -79,9 +79,11 @@ func (c *copReqReader) run(ctx context.Context, wg *sync.WaitGroup, tasks chan *
 			finish := injectSpan(c.traceID, fmt.Sprintf("cop-read-%d", c.id))
 			err := kv.RunInNewTxn(ctx, c.copCtx.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
 				if c.copCtx.pushDownEncoding {
-					return c.copCtx.sendEncodedIdxRecords(ctx, c.idxKVChan, txn.StartTS(), task.startKey, task.excludedEndKey())
+					return c.copCtx.sendEncodedIdxRecords(ctx, c.idxKVChan, txn.StartTS(),
+						task.startKey, task.excludedEndKey(), c.traceID, c.id)
 				} else {
-					return c.copCtx.sendIdxRecords(ctx, c.idxRecordChan, c.srcChunk, txn.StartTS(), task.startKey, task.excludedEndKey())
+					return c.copCtx.sendIdxRecords(ctx, c.idxRecordChan, c.srcChunk, txn.StartTS(),
+						task.startKey, task.excludedEndKey())
 				}
 			})
 			finish()
@@ -281,33 +283,40 @@ type idxKV struct {
 	val []byte
 }
 
-func (c *copContext) sendEncodedIdxRecords(ctx context.Context, ch chan idxKV, startTS uint64, start, end kv.Key) error {
+func (c *copContext) sendEncodedIdxRecords(ctx context.Context, ch chan idxKV, startTS uint64,
+	start, end kv.Key, traceID int64, wid int) error {
 	resp, err := c.buildScanIndexKV(ctx, startTS, start, end)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	colResp := &tipb.DDLResponse{}
 	for {
+		finish := injectSpan(traceID, fmt.Sprintf("cop-req-%d", wid))
 		data, err := resp.Next(ctx)
 		if err != nil {
+			finish()
 			return errors.Trace(err)
 		}
 		if data == nil {
+			finish()
 			return nil
 		}
 		colResp.Reset()
 		colResp.Keys = make([][]byte, 0, 2*1024*1024)
 		colResp.Values = make([][]byte, 0, 2*1024*1024)
 		if err = colResp.Unmarshal(data.GetData()); err != nil {
+			finish()
 			return errors.Trace(err)
 		}
+		finish()
 		for i := 0; i < len(colResp.Keys); i++ {
 			ch <- idxKV{key: colResp.Keys[i], val: colResp.Values[i]}
 		}
 	}
 }
 
-func fetchRowColValsFromCop[V *indexRecord | idxKV](w *addIndexWorker, ch chan V, buf []V, handleRange reorgBackfillTask) ([]V, kv.Key, bool, error) {
+func fetchRowColValsFromCop[V *indexRecord | idxKV](w *addIndexWorker, ch chan V, buf []V,
+	handleRange reorgBackfillTask) ([]V, kv.Key, bool, error) {
 	taskDone := false
 	var err error
 	curRangeKey := string(handleRange.endKey)
