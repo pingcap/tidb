@@ -37,7 +37,7 @@ type row struct {
 	offsets32 []uint32
 }
 
-func (r *row) destory() {
+func (r *row) destroy() {
 	if r.colIDs != nil {
 		bytespool.SmallPool.Put(r.colIDs)
 		r.colIDs = nil
