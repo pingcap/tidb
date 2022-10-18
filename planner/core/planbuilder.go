@@ -4641,6 +4641,10 @@ func (b *PlanBuilder) buildTrace(trace *ast.TraceStmt) (Plan, error) {
 }
 
 func (b *PlanBuilder) buildExplainPlan(targetPlan Plan, format string, explainRows [][]string, analyze bool, execStmt ast.StmtNode, runtimeStats *execdetails.RuntimeStatsColl) (Plan, error) {
+	if strings.ToLower(format) == types.ExplainFormatTrueCardCost && !analyze {
+		return nil, errors.Errorf("'explain format=%v' cannot work without 'analyze', please use 'explain analyze format=%v'", format, format)
+	}
+
 	p := &Explain{
 		TargetPlan:       targetPlan,
 		Format:           format,
