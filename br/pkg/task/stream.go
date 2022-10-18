@@ -57,6 +57,7 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"golang.org/x/exp/slices"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -67,6 +68,8 @@ const (
 	flagStreamStartTS    = "start-ts"
 	flagStreamEndTS      = "end-ts"
 	flagGCSafePointTTS   = "gc-ttl"
+
+	notDeletedBecameFatalThreshold = 128
 )
 
 var (
@@ -949,42 +952,58 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	)
 	defer p.Close()
 	worker := utils.NewWorkerPool(128, "delete files")
+	eg, cx := errgroup.WithContext(ctx)
 	const keepFirstNFailure = 16
-	var notDeleted []string
+	var notDeleted struct {
+		item []string
+		sync.Mutex
+	}
 	for _, f := range removed {
-		worker.Apply(func() {
+		worker.ApplyOnErrorGroup(eg, func() error {
 			// NOTE: We cannot get the returned value from deleting, so polling the context here again.
 			//       Maybe we'd better use an `ErrGroup` and fail fast for some types of error (or if len(notDeleted) > N)?
 			//       (It would be a disaster if we have waiting for 6hrs and eventually found out nothing deleted :| )
-			if ctx.Err() != nil {
+			if cx.Err() != nil {
 				p.Close()
-				return
+				return cx.Err()
 			}
 			defer p.Inc()
 			if cfg.DryRun {
-				return
+				return nil
 			}
 			if err := storage.DeleteFile(ctx, f.Path); err != nil {
 				log.Warn("File not deleted.", zap.String("path", f.Path), logutil.ShortError(err))
-				notDeleted = append(notDeleted, f.Path)
+				notDeleted.Lock()
+				defer notDeleted.Unlock()
+				notDeleted.item = append(notDeleted.item, f.Path)
+				if len(notDeleted.item) > notDeletedBecameFatalThreshold {
+					return errors.Annotatef(berrors.ErrPiTRMalformedMetadata, "too many failure when truncating")
+				}
 			}
+			return nil
 		})
 	}
 	if err := p.Wait(ctx); err != nil {
 		return err
 	}
-	if len(notDeleted) > 0 {
+	if err := eg.Wait(); err != nil {
+		return err
+	}
+
+	notDeleted.Lock()
+	if len(notDeleted.item) > 0 {
 		console.Println("Files below are not deleted due to error, you may clear it manually, check log for detail error:")
-		console.Println("- Total", em(len(notDeleted)), "items.")
-		if len(notDeleted) > keepFirstNFailure {
-			console.Println("-", em(len(notDeleted)-keepFirstNFailure), "items omitted.")
+		console.Println("- Total", em(len(notDeleted.item)), "items.")
+		if len(notDeleted.item) > keepFirstNFailure {
+			console.Println("-", em(len(notDeleted.item)-keepFirstNFailure), "items omitted.")
 			// TODO: maybe don't add them at the very first.
-			notDeleted = notDeleted[:keepFirstNFailure]
+			notDeleted.item = notDeleted.item[:keepFirstNFailure]
 		}
-		for _, f := range notDeleted {
+		for _, f := range notDeleted.item {
 			console.Println(f)
 		}
 	}
+	notDeleted.Unlock()
 
 	// remove metadata
 	pw := console.StartProgressBar("Removing Metadata", metas.PendingMeta(), glue.WithTimeCost(), glue.WithConstExtraField("metas", metas.PendingMeta()))
