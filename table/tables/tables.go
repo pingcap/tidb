@@ -56,6 +56,7 @@ import (
 
 // TableCommon is shared by both Table and partition.
 type TableCommon struct {
+	// TODO: Why do we need tableID, when it is already in meta.ID ?
 	tableID int64
 	// physicalTableID is a unique int64 to identify a physical table.
 	physicalTableID                 int64
@@ -1303,9 +1304,22 @@ func (t *TableCommon) removeRowData(ctx sessionctx.Context, h kv.Handle) error {
 			}
 		}
 	})
-	err = txn.SetAssertion(key, kv.SetAssertExist)
-	if err != nil {
-		return err
+	doAssert := true
+	p := t.Meta().Partition
+	if p != nil {
+		// If there where an easy way to get from a TableCommon back to the partitioned table...
+		for i := range p.AddingDefinitions {
+			if t.physicalTableID == p.AddingDefinitions[i].ID {
+				doAssert = false
+				break
+			}
+		}
+	}
+	if doAssert {
+		err = txn.SetAssertion(key, kv.SetAssertExist)
+		if err != nil {
+			return err
+		}
 	}
 	return txn.Delete(key)
 }
@@ -1325,6 +1339,7 @@ func (t *TableCommon) removeRowIndices(ctx sessionctx.Context, h kv.Handle, rec 
 			logutil.BgLogger().Info("remove row index failed", zap.Any("index", v.Meta()), zap.Uint64("txnStartTS", txn.StartTS()), zap.String("handle", h.String()), zap.Any("record", rec), zap.Error(err))
 			return err
 		}
+		// TODO: Handle Assertion Failures?
 		if err = v.Delete(ctx.GetSessionVars().StmtCtx, txn, vals, h); err != nil {
 			if v.Meta().State != model.StatePublic && kv.ErrNotExist.Equal(err) {
 				// If the index is not in public state, we may have not created the index,

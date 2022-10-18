@@ -2656,6 +2656,13 @@ func (w *worker) reorgPartitionData(t table.Table, reorgInfo *reorgInfo) error {
 		}
 	}
 
+	failpoint.Inject("reorgPartitionAfterDataCopy", func(val failpoint.Value) {
+		//nolint:forcetypeassert
+		if val.(bool) {
+			panic("panic test")
+		}
+	})
+
 	// Rewrite this to do all indexes at once in addTableIndex
 	// instead of calling it once per index (meaning reading the table multiple times)
 	// But for now, try to understand how it works...
@@ -2667,6 +2674,7 @@ func (w *worker) reorgPartitionData(t table.Table, reorgInfo *reorgInfo) error {
 		// First run, have not yet started backfilling index data
 		// Restart with the first new partition.
 		// TODO: handle remove partitioning
+		// TODO: Check if there is a better way to restart?
 		reorgInfo.PhysicalTableID = firstNewPartitionID
 	} else {
 		// The job was interrupted and has been restarted,
@@ -2728,6 +2736,12 @@ func (w *worker) reorgPartitionData(t table.Table, reorgInfo *reorgInfo) error {
 		}
 		reorgInfo.PhysicalTableID = firstNewPartitionID
 	}
+	failpoint.Inject("reorgPartitionAfterIndex", func(val failpoint.Value) {
+		//nolint:forcetypeassert
+		if val.(bool) {
+			panic("panic test")
+		}
+	})
 	return nil
 }
 

@@ -314,7 +314,18 @@ func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexed
 	}
 	if c.idxInfo.State == model.StatePublic {
 		// If the index is in public state, delete this index means it must exists.
-		err = txn.SetAssertion(key, kv.SetAssertExist)
+		doAssert := true
+		if c.tblInfo.Partition != nil {
+			defs := c.tblInfo.Partition.AddingDefinitions
+			for i := range defs {
+				if c.phyTblID == defs[i].ID {
+					doAssert = false
+				}
+			}
+		}
+		if doAssert {
+			err = txn.SetAssertion(key, kv.SetAssertExist)
+		}
 	}
 	return err
 }

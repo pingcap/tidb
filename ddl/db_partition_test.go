@@ -53,6 +53,48 @@ import (
 	"go.uber.org/zap"
 )
 
+type allTableData struct {
+	keys [][]byte
+	vals [][]byte
+	tp   []string
+}
+
+func getAllDataForPhysicalTable(t *testing.T, ctx sessionctx.Context, physTable table.PhysicalTable) allTableData {
+	require.NoError(t, sessiontxn.NewTxn(context.Background(), ctx))
+	txn, err := ctx.Txn(true)
+	require.NoError(t, err)
+	defer func() {
+		err := txn.Rollback()
+		require.NoError(t, err)
+	}()
+
+	all := allTableData{
+		keys: make([][]byte, 0),
+		vals: make([][]byte, 0),
+		tp:   make([]string, 0),
+	}
+	prefix := tablecodec.EncodeTablePrefix(physTable.GetPhysicalID())
+	it, err := txn.Iter(prefix, nil)
+	require.NoError(t, err)
+	for it.Valid() {
+		if !it.Key().HasPrefix(prefix) {
+			break
+		}
+		all.keys = append(all.keys, it.Key())
+		all.vals = append(all.vals, it.Value())
+		if tablecodec.IsRecordKey(it.Key()) {
+			all.tp = append(all.tp, "Record")
+		} else if tablecodec.IsIndexKey(it.Key()) {
+			all.tp = append(all.tp, "Index")
+		} else {
+			all.tp = append(all.tp, "Other")
+		}
+		err = it.Next()
+		require.NoError(t, err)
+	}
+	return all
+}
+
 func checkGlobalIndexCleanUpDone(t *testing.T, ctx sessionctx.Context, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, pid int64) int {
 	require.NoError(t, sessiontxn.NewTxn(context.Background(), ctx))
 	txn, err := ctx.Txn(true)
@@ -4776,7 +4818,6 @@ func TestReorganizeRangePartition(t *testing.T) {
 		"34 34 43",
 		"45 45 54",
 		"56 56 65"))
-	// TODO Test with/without PK, indexes, UK, virtual, virtual stored columns
 	tk.MustExec(`alter table t drop index b`)
 	tk.MustExec(`alter table t drop index c`)
 	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
@@ -4911,3 +4952,190 @@ func TestReorgPartitionConcurrent(t *testing.T) {
 		" PARTITION `p1b` VALUES LESS THAN (20),\n" +
 		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
 }
+
+func TestReorgPartitionFailConcurrent(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	schemaName := "ReorgPartConcurrent"
+	tk.MustExec("create database " + schemaName)
+	tk.MustExec("use " + schemaName)
+	tk.MustExec(`create table t (a int unsigned PRIMARY KEY, b varchar(255), c int, key (b), key (c,b))` +
+		` partition by range (a) ` +
+		`(partition p0 values less than (10),` +
+		` partition p1 values less than (20),` +
+		` partition pMax values less than (MAXVALUE))`)
+	tk.MustExec(`insert into t values (1,"1",1), (12,"12",21),(23,"23",32),(34,"34",43),(45,"45",54),(56,"56",65)`)
+	dom := domain.GetDomain(tk.Session())
+	originHook := dom.DDL().GetHook()
+	defer dom.DDL().SetHook(originHook)
+	hook := &ddl.TestDDLCallback{Do: dom}
+	dom.DDL().SetHook(hook)
+
+	wait := make(chan bool)
+	defer close(wait)
+
+	// Test insert of duplicate key during copy phase
+	injected := false
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.Type == model.ActionReorganizePartition && job.SchemaState == model.StateWriteReorganization && !injected {
+			injected = true
+			<-wait
+			<-wait
+		}
+	}
+	alterErr := make(chan error, 1)
+	go backgroundExec(store, schemaName, "alter table t reorganize partition p1 into (partition p1a values less than (15), partition p1b values less than (20))", alterErr)
+	wait <- true
+	tk.MustExec(`insert into t values (14, "14", 14),(15, "15",15)`)
+	tk.MustGetErrCode(`insert into t values (11, "11", 11),(12,"duplicate PK 💥", 13)`, mysql.ErrDupEntry)
+	wait <- true
+	require.NoError(t, <-alterErr)
+	tk.MustQuery(`select * from t where c between 10 and 22`).Sort().Check(testkit.Rows(""+
+		"12 12 21",
+		"14 14 14",
+		"15 15 15"))
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(10) unsigned NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  `c` int(11) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+		"  KEY `b` (`b`),\n" +
+		"  KEY `c` (`c`,`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE (`a`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (10),\n" +
+		" PARTITION `p1a` VALUES LESS THAN (15),\n" +
+		" PARTITION `p1b` VALUES LESS THAN (20),\n" +
+		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
+
+	// Test reorg of duplicate key
+	beforeSnapshot := false
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.Type == model.ActionReorganizePartition &&
+			job.SchemaState == model.StateWriteReorganization &&
+			job.SnapshotVer == 0 &&
+			!beforeSnapshot {
+			beforeSnapshot = true
+			<-wait
+			<-wait
+		}
+	}
+	go backgroundExec(store, schemaName, "alter table t reorganize partition p1a,p1b into (partition p1a values less than (14), partition p1b values less than (17), partition p1c values less than (20))", alterErr)
+	wait <- true
+	require.Equal(t, 0, getNumRowsFromAddingPartitions(t, tk, schemaName, "t"))
+	tk.MustExec(`delete from t where a = 14`)
+	tk.MustExec(`insert into t values (13, "13", 31),(14,"14b",14),(16, "16",16)`)
+	failpoint.Enable("github.com/pingcap/tidb/ddl/reorgPartitionAfterIndex", `pause`)
+	wait <- true
+	require.Equal(t, 3, getNumRowsFromAddingPartitions(t, tk, schemaName, "t"))
+	tk.MustExec(`delete from t where a = 15`)
+	tk.MustExec(`insert into t values (11, "11", 11),(15,"15b",15),(17, "17",17)`)
+	failpoint.Disable("github.com/pingcap/tidb/ddl/reorgPartitionAfterIndex")
+	require.NoError(t, <-alterErr)
+
+	tk.MustQuery(`select * from t where a between 10 and 22`).Sort().Check(testkit.Rows(""+
+		"11 11 11",
+		"12 12 21",
+		"13 13 31",
+		"14 14b 14",
+		"15 15b 15",
+		"16 16 16",
+		"17 17 17"))
+	tk.MustQuery(`select * from t where c between 10 and 22`).Sort().Check(testkit.Rows(""+
+		"11 11 11",
+		"12 12 21",
+		"14 14b 14",
+		"15 15b 15",
+		"16 16 16",
+		"17 17 17"))
+	tk.MustQuery(`select * from t where b between "10" and "22"`).Sort().Check(testkit.Rows(""+
+		"11 11 11",
+		"12 12 21",
+		"13 13 31",
+		"14 14b 14",
+		"15 15b 15",
+		"16 16 16",
+		"17 17 17"))
+}
+
+func getNumRowsFromAddingPartitions(t *testing.T, tk *testkit.TestKit, schemaName, table string) int {
+	ctx := tk.Session()
+	is := domain.GetDomain(ctx).InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
+	require.NoError(t, err)
+	pt := tbl.GetPartitionedTable()
+	require.NotNil(t, pt)
+	cnt := 0
+	for _, def := range pt.Meta().Partition.AddingDefinitions {
+		data := getAllDataForPhysicalTable(t, ctx, pt.GetPartition(def.ID))
+		require.True(t, len(data.keys) == len(data.vals))
+		require.True(t, len(data.keys) == len(data.tp))
+		for _, s := range data.tp {
+			if s == "Record" {
+				cnt++
+			}
+		}
+	}
+	return cnt
+}
+
+// TODO Test with/without PK, indexes, UK, virtual, virtual stored columns
+func TestReorgPartitionFailInject(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	schemaName := "ReorgPartConcurrent"
+	tk.MustExec("create database " + schemaName)
+	tk.MustExec("use " + schemaName)
+	tk.MustExec(`create table t (a int unsigned PRIMARY KEY, b varchar(255), c int, key (b), key (c,b))` +
+		` partition by range (a) ` +
+		`(partition p0 values less than (10),` +
+		` partition p1 values less than (20),` +
+		` partition pMax values less than (MAXVALUE))`)
+	tk.MustExec(`insert into t values (1,"1",1), (12,"12",21),(23,"23",32),(34,"34",43),(45,"45",54),(56,"56",65)`)
+
+	dom := domain.GetDomain(tk.Session())
+	originHook := dom.DDL().GetHook()
+	defer dom.DDL().SetHook(originHook)
+	hook := &ddl.TestDDLCallback{Do: dom}
+	dom.DDL().SetHook(hook)
+
+	wait := make(chan bool)
+	defer close(wait)
+
+	injected := false
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.Type == model.ActionReorganizePartition && job.SchemaState == model.StateWriteReorganization && !injected {
+			injected = true
+			<-wait
+			<-wait
+		}
+	}
+	alterErr := make(chan error, 1)
+	go backgroundExec(store, schemaName, "alter table t reorganize partition p1 into (partition p1a values less than (15), partition p1b values less than (20))", alterErr)
+	wait <- true
+	tk.MustExec(`insert into t values (14, "14", 14),(15, "15",15)`)
+	tk.MustGetErrCode(`insert into t values (11, "11", 11),(12,"duplicate PK 💥", 13)`, mysql.ErrDupEntry)
+	wait <- true
+	require.NoError(t, <-alterErr)
+	tk.MustQuery(`select * from t where c between 10 and 22`).Sort().Check(testkit.Rows(""+
+		"12 12 21",
+		"14 14 14",
+		"15 15 15"))
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(10) unsigned NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  `c` int(11) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+		"  KEY `b` (`b`),\n" +
+		"  KEY `c` (`c`,`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE (`a`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (10),\n" +
+		" PARTITION `p1a` VALUES LESS THAN (15),\n" +
+		" PARTITION `p1b` VALUES LESS THAN (20),\n" +
+		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
+}
+
+// TODO Test with/without PK, indexes, UK, virtual, virtual stored columns
