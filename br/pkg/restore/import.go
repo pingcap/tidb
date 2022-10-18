@@ -250,8 +250,7 @@ type FileImporter struct {
 	rawEndKey          []byte
 	supportMultiIngest bool
 
-	cacheKey   string
-	apiVersion kvrpcpb.APIVersion
+	cacheKey string
 }
 
 // NewFileImporter returns a new file importClient.
@@ -260,7 +259,6 @@ func NewFileImporter(
 	importClient ImporterClient,
 	backend *backuppb.StorageBackend,
 	isRawKvMode bool,
-	version kvrpcpb.APIVersion,
 ) FileImporter {
 	return FileImporter{
 		metaClient:   metaClient,
@@ -268,7 +266,6 @@ func NewFileImporter(
 		importClient: importClient,
 		isRawKvMode:  isRawKvMode,
 		cacheKey:     fmt.Sprintf("BR-%s-%d", time.Now().Format("20060102150405"), rand.Int63()),
-		apiVersion:   version,
 	}
 }
 
@@ -320,7 +317,7 @@ func (importer *FileImporter) getKeyRangeForFiles(
 		if importer.isRawKvMode {
 			start, end = f.GetStartKey(), f.GetEndKey()
 		} else {
-			start, end, err = GetRewriteRawKeys(f, rewriteRules, importer.apiVersion)
+			start, end, err = GetRewriteRawKeys(f, rewriteRules)
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
@@ -646,6 +643,8 @@ func (importer *FileImporter) downloadSST(
 		RewriteRule:    *fileRule,
 		CipherInfo:     cipher,
 		StorageCacheId: importer.cacheKey,
+		// For the older version of TiDB, the request type will  be default to `import_sstpb.RequestType_Legacy`
+		RequestType: import_sstpb.DownloadRequestType_Keyspace,
 	}
 	log.Debug("download SST",
 		logutil.SSTMeta(sstMeta),

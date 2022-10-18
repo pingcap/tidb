@@ -17,6 +17,8 @@ package tablecodec
 import (
 	"bytes"
 	"encoding/binary"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/tikv/client-go/v2/tikv"
 	"math"
 	"strings"
 	"time"
@@ -267,6 +269,11 @@ func DecodeKeyHead(key kv.Key) (tableID int64, indexID int64, isRecordKey bool, 
 
 // DecodeTableID decodes the table ID of the key, if the key is not table key, returns 0.
 func DecodeTableID(key kv.Key) int64 {
+	// If the key is in API V2, then ignore the prefix
+	_, k, err := tikv.DecodeKey(key, kvrpcpb.APIVersion_V2)
+	if err == nil {
+		key = k
+	}
 	if !key.HasPrefix(tablePrefix) {
 		return 0
 	}

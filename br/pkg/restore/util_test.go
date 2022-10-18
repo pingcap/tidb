@@ -317,7 +317,7 @@ func TestRewriteFileKeys(t *testing.T) {
 		StartKey: tablecodec.GenTableRecordPrefix(1),
 		EndKey:   tablecodec.GenTableRecordPrefix(1).PrefixNext(),
 	}
-	start, end, err := restore.GetRewriteRawKeys(&rawKeyFile, &rewriteRules, kvrpcpb.APIVersion_V1)
+	start, end, err := restore.GetRewriteRawKeys(&rawKeyFile, &rewriteRules)
 	require.NoError(t, err)
 	_, end, err = codec.DecodeBytes(end, nil)
 	require.NoError(t, err)
@@ -343,7 +343,7 @@ func TestRewriteFileKeys(t *testing.T) {
 		EndKey:   codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(767).PrefixNext()),
 	}
 	// use raw rewrite should no error but not equal
-	start, end, err = restore.GetRewriteRawKeys(&encodeKeyFile767, &rewriteRules, kvrpcpb.APIVersion_V1)
+	start, end, err = restore.GetRewriteRawKeys(&encodeKeyFile767, &rewriteRules)
 	require.NoError(t, err)
 	require.NotEqual(t, codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(511)), start)
 	require.NotEqual(t, codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(511).PrefixNext()), end)

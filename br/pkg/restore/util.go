@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -294,18 +293,8 @@ func EstimateRangeSize(files []*backuppb.File) int {
 func MapTableToFiles(files []*backuppb.File, version kvrpcpb.APIVersion) map[int64][]*backuppb.File {
 	result := map[int64][]*backuppb.File{}
 	for _, file := range files {
-		_, start, err := tikv.DecodeKey(file.GetStartKey(), version)
-		if err != nil {
-			log.Panic("decode key error", logutil.File(file), logutil.Key("startKey", file.GetStartKey()), zap.Error(err))
-		}
-
-		_, end, err := tikv.DecodeKey(file.GetEndKey(), version)
-		if err != nil {
-			log.Panic("decode key error", logutil.File(file), logutil.Key("startKey", file.GetStartKey()), zap.Error(err))
-		}
-
-		tableID := tablecodec.DecodeTableID(start)
-		tableEndID := tablecodec.DecodeTableID(end)
+		tableID := tablecodec.DecodeTableID(file.GetStartKey())
+		tableEndID := tablecodec.DecodeTableID(file.GetEndKey())
 		if tableID != tableEndID {
 			log.Panic("key range spread between many files.",
 				zap.String("file name", file.Name),
@@ -534,16 +523,7 @@ func findMatchedRewriteRule(file AppliedFile, rules *RewriteRules) *import_sstpb
 }
 
 // GetRewriteRawKeys rewrites rules to the raw key.
-func GetRewriteRawKeys(file AppliedFile, rewriteRules *RewriteRules, apiVersion kvrpcpb.APIVersion) (startKey, endKey []byte, err error) {
-	_, startKey, err = tikv.DecodeKey(file.GetStartKey(), apiVersion)
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-	_, endKey, err = tikv.DecodeKey(file.GetEndKey(), apiVersion)
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-
+func GetRewriteRawKeys(file AppliedFile, rewriteRules *RewriteRules) (startKey, endKey []byte, err error) {
 	startID := tablecodec.DecodeTableID(file.GetStartKey())
 	endID := tablecodec.DecodeTableID(file.GetEndKey())
 	var rule *import_sstpb.RewriteRule

@@ -668,28 +668,28 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 
 	tableStream := client.GoCreateTables(ctx, mgr.GetDomain(), tables, newTS, errCh)
 
-	var oldKeyspace []byte
-	oldKeyspace, _, err = tikv.DecodeKey(files[0].GetStartKey(), backupMeta.ApiVersion)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	// Hijack the tableStream and rewrite the rewrite rules.
-	tableStream = util.ChanMap(tableStream, func(t restore.CreatedTable) restore.CreatedTable {
-		t.RewriteRule.OldKeyspace = oldKeyspace
-		t.RewriteRule.NewKeyspace = codec.GetKeyspace()
-
-		for _, rule := range t.RewriteRule.Data {
-			rule.OldKeyPrefix = append(append([]byte{}, oldKeyspace...), rule.OldKeyPrefix...)
-			rule.NewKeyPrefix = codec.EncodeKey(rule.NewKeyPrefix)
-		}
-		return t
-	})
-
 	if len(files) == 0 {
 		log.Info("no files, empty databases and tables are restored")
 		summary.SetSuccessStatus(true)
 		// don't return immediately, wait all pipeline done.
+	} else {
+		var oldKeyspace []byte
+		oldKeyspace, _, err = tikv.DecodeKey(files[0].GetStartKey(), backupMeta.ApiVersion)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		// Hijack the tableStream and rewrite the rewrite rules.
+		tableStream = util.ChanMap(tableStream, func(t restore.CreatedTable) restore.CreatedTable {
+			t.RewriteRule.OldKeyspace = oldKeyspace
+			t.RewriteRule.NewKeyspace = codec.GetKeyspace()
+
+			for _, rule := range t.RewriteRule.Data {
+				rule.OldKeyPrefix = append(append([]byte{}, oldKeyspace...), rule.OldKeyPrefix...)
+				rule.NewKeyPrefix = codec.EncodeKey(rule.NewKeyPrefix)
+			}
+			return t
+		})
 	}
 
 	if cfg.tiflashRecorder != nil {

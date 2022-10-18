@@ -9,7 +9,6 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"github.com/tikv/client-go/v2/tikv"
 	"sync"
 	"time"
 
@@ -291,11 +290,7 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 	// put all files in memory due to https://github.com/pingcap/br/issues/705
 	fileMap := make(map[int64][]*backuppb.File)
 	outputFn := func(file *backuppb.File) {
-		_, start, err := tikv.DecodeKey(file.GetStartKey(), reader.backupMeta.ApiVersion)
-		if err != nil {
-			log.Panic("decode key error", zap.Error(err))
-		}
-		tableID := tablecodec.DecodeTableID(start)
+		tableID := tablecodec.DecodeTableID(file.GetStartKey())
 		if tableID == 0 {
 			log.Panic("tableID must not equal to 0", logutil.File(file))
 		}

@@ -9,7 +9,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"math"
 	"strconv"
 	"strings"
@@ -345,7 +344,7 @@ func (rc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBacke
 func (rc *Client) InitClients(backend *backuppb.StorageBackend, isRawKvMode bool) {
 	metaClient := split.NewSplitClient(rc.pdClient, rc.tlsConf, isRawKvMode)
 	importCli := NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
-	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode, rc.backupMeta.ApiVersion)
+	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode)
 }
 
 func (rc *Client) SetRawKVClient(c *RawKVBatchClient) {
@@ -1041,7 +1040,7 @@ func MockCallSetSpeedLimit(ctx context.Context, fakeImportClient ImporterClient,
 	rc.SetRateLimit(42)
 	rc.SetConcurrency(concurrency)
 	rc.hasSpeedLimited = false
-	rc.fileImporter = NewFileImporter(nil, fakeImportClient, nil, false, kvrpcpb.APIVersion_V1)
+	rc.fileImporter = NewFileImporter(nil, fakeImportClient, nil, false)
 	return rc.setSpeedLimit(ctx, rc.rateLimit)
 }
 
