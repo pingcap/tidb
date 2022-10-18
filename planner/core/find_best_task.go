@@ -1370,7 +1370,7 @@ func (ds *DataSource) indexCanHandleCol(col *expression.Column, constVal *expres
 	isClusteredNewCollationIdx := collate.NewCollationEnabled() &&
 		col.GetType().EvalType() == types.ETString &&
 		!mysql.HasBinaryFlag(col.GetType().GetFlag())
-	if !coveredByPlainIndex && coveredByClusteredIndex && isClusteredNewCollationIdx {
+	if !coveredByPlainIndex && coveredByClusteredIndex && isClusteredNewCollationIdx && ds.table.Meta().CommonHandleVersion == 0 {
 		return false
 	}
 	return true
