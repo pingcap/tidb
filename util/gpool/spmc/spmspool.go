@@ -211,7 +211,7 @@ func (p *Pool[T, U, C]) SetConsumerFunc(consumerFunc func(T, C) U) {
 
 // AddProduce is to add Produce.
 func (p *Pool[T, U, C]) AddProduce(task T, constArg C) (<-chan U, TaskController) {
-	result := make(chan U, 1)
+	result := make(chan U)
 	var wg sync.WaitGroup
 	tc := TaskController{
 		wg: &wg,
@@ -230,14 +230,14 @@ func (p *Pool[T, U, C]) AddProduce(task T, constArg C) (<-chan U, TaskController
 }
 
 // AddProduceBySlice is to add Produce by a slice.
-func (p *Pool[T, U, C]) AddProduceBySlice(producer func() ([]T, error), constArg C, size int) (<-chan U, TaskController) {
-	result := make(chan U, 10)
-
+func (p *Pool[T, U, C]) AddProduceBySlice(producer func() ([]T, error), constArg C, options ...TaskOption) (<-chan U, TaskController) {
+	opt := loadTaskOptions(options...)
 	var wg sync.WaitGroup
+	result := make(chan U, opt.ResultChanLen)
 	closeCh := make(chan struct{})
 	tc := NewTaskController(closeCh, &wg)
-	taskCh := make(chan T, size)
-	for i := 0; i < size; i++ {
+	taskCh := make(chan T, opt.TaskChanLen)
+	for i := 0; i < opt.Concurrency; i++ {
 		err := p.run()
 		if err == gpool.ErrPoolClosed {
 			break
@@ -270,14 +270,14 @@ func (p *Pool[T, U, C]) AddProduceBySlice(producer func() ([]T, error), constArg
 }
 
 // AddProducer is to add producer.
-func (p *Pool[T, U, C]) AddProducer(producer func() (T, error), constArg C, size int) (<-chan U, TaskController) {
-	result := make(chan U, 100)
-
+func (p *Pool[T, U, C]) AddProducer(producer func() (T, error), constArg C, options ...TaskOption) (<-chan U, TaskController) {
+	opt := loadTaskOptions(options...)
 	var wg sync.WaitGroup
+	result := make(chan U, opt.ResultChanLen)
 	closeCh := make(chan struct{})
 	tc := NewTaskController(closeCh, &wg)
-	taskCh := make(chan T, size)
-	for i := 0; i < size; i++ {
+	taskCh := make(chan T, opt.TaskChanLen)
+	for i := 0; i < opt.Concurrency; i++ {
 		err := p.run()
 		if err == gpool.ErrPoolClosed {
 			break

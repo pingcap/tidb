@@ -48,7 +48,7 @@ func TestPool(t *testing.T) {
 		}
 	}
 	// add new task
-	resultCh, control := pool.AddProducer(pfunc, myArgs, 4)
+	resultCh, control := pool.AddProducer(pfunc, myArgs, WithConcurrency(4))
 
 	var count atomic.Uint32
 	var wg sync.WaitGroup
@@ -109,7 +109,7 @@ func TestPoolWithEnoughCapa(t *testing.T) {
 					}
 				}
 			}
-			resultCh, ctl := p.AddProducer(producerFunc, RunTimes, 6)
+			resultCh, ctl := p.AddProducer(producerFunc, RunTimes, WithConcurrency(6))
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
@@ -163,7 +163,7 @@ func TestPoolWithoutEnoughCapa(t *testing.T) {
 					}
 				}
 			}
-			resultCh, ctl := p.AddProducer(producerFunc, RunTimes, 6)
+			resultCh, ctl := p.AddProducer(producerFunc, RunTimes, WithConcurrency(6))
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
@@ -215,7 +215,7 @@ func TestBenchPool(t *testing.T) {
 				}
 			}
 		}
-		resultCh, ctl := p.AddProducer(producerFunc, RunTimes, 6)
+		resultCh, ctl := p.AddProducer(producerFunc, RunTimes, WithConcurrency(6))
 		exitCh2 := make(chan struct{})
 		wg.Add(1)
 		go func() {
