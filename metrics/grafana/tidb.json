@@ -7216,7 +7216,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Test ! Queries Using Plan Cache OPS",
+          "title": "Queries Using Plan Cache OPS",
           "tooltip": {
             "msResolution": false,
             "shared": true,
