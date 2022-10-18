@@ -2807,25 +2807,22 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 	}
 
 	// handle MPP Agg hints
-	var preferModes []AggMppRunMode
+	var preferMode AggMppRunMode
+	var prefer bool
 	if la.aggHints.preferAggType&preferMPP1PhaseAgg > 0 {
-		preferModes = append(preferModes, Mpp1Phase)
+		preferMode, prefer = Mpp1Phase, true
 	} else if la.aggHints.preferAggType&preferMPP2PhaseAgg > 0 {
-		preferModes = append(preferModes, Mpp2Phase)
+		preferMode, prefer = Mpp2Phase, true
 	} else if la.aggHints.preferAggType&preferMPPTiDBAgg > 0 {
-		preferModes = append(preferModes, MppTiDB)
+		preferMode, prefer = MppTiDB, true
 	} else if la.aggHints.preferAggType&preferMPPScalarAgg > 0 {
-		preferModes = append(preferModes, MppScalar)
+		preferMode, prefer = MppScalar, true
 	}
-	if len(preferModes) > 0 {
+	if prefer {
 		var preferPlans []PhysicalPlan
 		for _, agg := range hashAggs {
-			hg := agg.(*PhysicalHashAgg)
-			for _, mode := range preferModes {
-				if hg.MppRunMode == mode {
-					preferPlans = append(preferPlans, hg)
-					break
-				}
+			if hg, ok := agg.(*PhysicalHashAgg); ok && hg.MppRunMode == preferMode {
+				preferPlans = append(preferPlans, hg)
 			}
 		}
 		hashAggs = preferPlans
