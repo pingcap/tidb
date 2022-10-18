@@ -72,7 +72,7 @@ func (ops ConsoleOperations) ShowTask(message string, extraFields ...ExtraField)
 			field := fieldFunc()
 			fields = append(fields, fmt.Sprintf("%s = %s", field[0], color.New(color.Bold).Sprint(field[1])))
 		}
-		ops.Printf("%s; %s\n", color.HiGreenString("DONE"), strings.Join(fields, ", "))
+		ops.Printf("%s { %s }\n", color.HiGreenString("DONE"), strings.Join(fields, ", "))
 	}
 }
 
