@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
@@ -57,18 +58,93 @@ type TiFlashPlacementManager interface {
 	GetPDRegionRecordStats(ctx context.Context, tableID int64, stats *helper.PDRegionStats) error
 	// GetStoresStat gets the TiKV store information by accessing PD's api.
 	GetStoresStat(ctx context.Context) (*helper.StoresStat, error)
+	// GetTiFlashProgress calculates TiFlash replica progress
+	GetTiFlashProgress(tableID int64, replicaCount uint64, TiFlashStores map[int64]helper.StoreStat) (string, error)
+	// UpdateTiFlashProgressCache updates tiflashProgressCache
+	UpdateTiFlashProgressCache(tableID int64, progress string)
+	// GetTiFlashProgressFromCache gets tiflash replica progress from tiflashProgressCache
+	GetTiFlashProgressFromCache(tableID int64) string
 	// Close is to close TiFlashPlacementManager
 	Close(ctx context.Context)
 }
 
 // TiFlashPDPlacementManager manages placement with pd for TiFlash.
 type TiFlashPDPlacementManager struct {
-	etcdCli *clientv3.Client
+	etcdCli              *clientv3.Client
+	sync.RWMutex         // protect tiflashProgressCache
+	tiflashProgressCache map[int64]string
 }
 
 // Close is called to close TiFlashPDPlacementManager.
 func (m *TiFlashPDPlacementManager) Close(ctx context.Context) {
 
+}
+
+func getTiFlashPeerWithoutLagCount(tiFlashStores map[int64]helper.StoreStat, tableID int64) (int, error) {
+	// storeIDs -> regionID, PD will not create two peer on the same store
+	var flashPeerCount int
+	for _, store := range tiFlashStores {
+		regionReplica := make(map[int64]int)
+		err := helper.CollectTiFlashStatus(store.Store.StatusAddress, tableID, &regionReplica)
+		if err != nil {
+			logutil.BgLogger().Error("Fail to get peer status from TiFlash.",
+				zap.Int64("tableID", tableID))
+			return 0, err
+		}
+		flashPeerCount += len(regionReplica)
+	}
+	return flashPeerCount, nil
+}
+
+// GetTiFlashProgress return truncated string to avoid float64 comparison.
+func getTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores map[int64]helper.StoreStat) (string, error) {
+	var stats helper.PDRegionStats
+	if err := GetTiFlashPDRegionRecordStats(context.Background(), tableID, &stats); err != nil {
+		logutil.BgLogger().Error("Fail to get region stats from PD.",
+			zap.Int64("tableID", tableID))
+		return "0", errors.Trace(err)
+	}
+	regionCount := stats.Count
+
+	tiflashPeerCount, err := getTiFlashPeerWithoutLagCount(tiFlashStores, tableID)
+	if err != nil {
+		logutil.BgLogger().Error("Fail to get peer count from TiFlash.",
+			zap.Int64("tableID", tableID))
+		return "0", errors.Trace(err)
+	}
+	progress := float64(tiflashPeerCount) / float64(regionCount*int(replicaCount))
+	if progress > 1 { // when pd do balance
+		logutil.BgLogger().Debug("TiFlash peer count > pd peer count, maybe doing balance.",
+			zap.Int64("tableID", tableID), zap.Int("tiflashPeerCount", tiflashPeerCount), zap.Int("regionCount", regionCount), zap.Uint64("replicaCount", replicaCount))
+		progress = 1
+	}
+	if progress < 1 {
+		logutil.BgLogger().Debug("TiFlash replica progress < 1.",
+			zap.Int64("tableID", tableID), zap.Int("tiflashPeerCount", tiflashPeerCount), zap.Int("regionCount", regionCount), zap.Uint64("replicaCount", replicaCount))
+	}
+	return types.TruncateFloatToString(progress, 2), nil
+}
+
+// GetTiFlashProgress return truncated string to avoid float64 comparison.
+func (m *TiFlashPDPlacementManager) GetTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores map[int64]helper.StoreStat) (string, error) {
+	return getTiFlashProgress(tableID, replicaCount, tiFlashStores)
+}
+
+// UpdateTiFlashProgressCache updates tiflashProgressCache
+func (m *TiFlashPDPlacementManager) UpdateTiFlashProgressCache(tableID int64, progress string) {
+	m.Lock()
+	defer m.Unlock()
+	m.tiflashProgressCache[tableID] = progress
+}
+
+// GetTiFlashProgressFromCache gets tiflash replica progress from tiflashProgressCache
+func (m *TiFlashPDPlacementManager) GetTiFlashProgressFromCache(tableID int64) string {
+	m.RLock()
+	defer m.RUnlock()
+	if progress, ok := m.tiflashProgressCache[tableID]; ok {
+		return progress
+	}
+	return ""
 }
 
 // SetTiFlashGroupConfig sets the tiflash's rule group config
@@ -244,10 +320,11 @@ func (m *TiFlashPDPlacementManager) GetStoresStat(ctx context.Context) (*helper.
 }
 
 type mockTiFlashPlacementManager struct {
-	sync.Mutex
+	sync.RWMutex
 	// Set to nil if there is no need to set up a mock TiFlash server.
 	// Otherwise use NewMockTiFlash to create one.
-	tiflash *MockTiFlash
+	tiflash              *MockTiFlash
+	tiflashProgressCache map[int64]string
 }
 
 func makeBaseRule() placement.TiFlashRule {
@@ -652,6 +729,28 @@ func (tiflash *MockTiFlash) PdSwitch(enabled bool) {
 	tiflash.Lock()
 	defer tiflash.Unlock()
 	tiflash.PdEnabled = enabled
+}
+
+// GetTiFlashProgress return truncated string to avoid float64 comparison.
+func (m *mockTiFlashPlacementManager) GetTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores map[int64]helper.StoreStat) (string, error) {
+	return getTiFlashProgress(tableID, replicaCount, tiFlashStores)
+}
+
+// UpdateTiFlashProgressCache updates tiflashProgressCache
+func (m *mockTiFlashPlacementManager) UpdateTiFlashProgressCache(tableID int64, progress string) {
+	m.Lock()
+	defer m.Unlock()
+	m.tiflashProgressCache[tableID] = progress
+}
+
+// GetTiFlashProgressFromCache gets tiflash replica progress from tiflashProgressCache
+func (m *mockTiFlashPlacementManager) GetTiFlashProgressFromCache(tableID int64) string {
+	m.RLock()
+	defer m.RUnlock()
+	if progress, ok := m.tiflashProgressCache[tableID]; ok {
+		return progress
+	}
+	return ""
 }
 
 // SetMockTiFlash is set a mock TiFlash server.

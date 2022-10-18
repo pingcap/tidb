@@ -239,11 +239,11 @@ func initPlacementManager(etcdCli *clientv3.Client) PlacementManager {
 
 func initTiFlashPlacementManager(etcdCli *clientv3.Client) TiFlashPlacementManager {
 	if etcdCli == nil {
-		m := mockTiFlashPlacementManager{}
+		m := mockTiFlashPlacementManager{tiflashProgressCache: make(map[int64]string)}
 		return &m
 	}
 	logutil.BgLogger().Warn("init TiFlashPlacementManager", zap.Strings("pd addrs", etcdCli.Endpoints()))
-	return &TiFlashPDPlacementManager{etcdCli: etcdCli}
+	return &TiFlashPDPlacementManager{etcdCli: etcdCli, tiflashProgressCache: make(map[int64]string)}
 }
 
 func initScheduleManager(etcdCli *clientv3.Client) ScheduleManager {
@@ -1054,6 +1054,30 @@ func GetLabelRules(ctx context.Context, ruleIDs []string) (map[string]*label.Rul
 		return nil, nil
 	}
 	return is.labelRuleManager.GetLabelRules(ctx, ruleIDs)
+}
+
+func GetTiFlashProgress(tableID int64, replicaCount uint64, TiFlashStores map[int64]helper.StoreStat) (string, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return "0", errors.Trace(err)
+	}
+	return is.tiflashPlacementManager.GetTiFlashProgress(tableID, replicaCount, TiFlashStores)
+}
+
+func UpdateTiFlashProgressCache(tableID int64, progress string) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return
+	}
+	is.tiflashPlacementManager.UpdateTiFlashProgressCache(tableID, progress)
+}
+
+func GetTiFlashProgressFromCache(tableID int64) (string, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return "", err
+	}
+	return is.tiflashPlacementManager.GetTiFlashProgressFromCache(tableID), nil
 }
 
 // SetTiFlashGroupConfig is a helper function to set tiflash rule group config

@@ -2239,10 +2239,6 @@ func (e *memtableRetriever) setDataFromSequences(ctx sessionctx.Context, schemas
 // dataForTableTiFlashReplica constructs data for table tiflash replica info.
 func (e *memtableRetriever) dataForTableTiFlashReplica(ctx sessionctx.Context, schemas []*model.DBInfo) {
 	var rows [][]types.Datum
-	progressMap, err := infosync.GetTiFlashTableSyncProgress(context.Background())
-	if err != nil {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(err)
-	}
 	for _, schema := range schemas {
 		for _, tbl := range schema.Tables {
 			if tbl.TiFlashReplica == nil {
@@ -2251,13 +2247,16 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(ctx sessionctx.Context, s
 			var progress float64
 			if pi := tbl.GetPartitionInfo(); pi != nil && len(pi.Definitions) > 0 {
 				for _, p := range pi.Definitions {
-					progress += progressMap[p.ID]
+					progressStr, _ := infosync.GetTiFlashProgressFromCache(p.ID)
+					progressFloat, _ := strconv.ParseFloat(progressStr, 64)
+					progress += progressFloat
 				}
 				progress = progress / float64(len(pi.Definitions))
 				progressString := types.TruncateFloatToString(progress, 2)
 				progress, _ = strconv.ParseFloat(progressString, 64)
 			} else {
-				progress = progressMap[tbl.ID]
+				progressStr, _ := infosync.GetTiFlashProgressFromCache(tbl.ID)
+				progress, _ = strconv.ParseFloat(progressStr, 64)
 			}
 			record := types.MakeDatums(
 				schema.Name.O,                   // TABLE_SCHEMA

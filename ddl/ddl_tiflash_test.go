@@ -42,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
@@ -956,13 +955,6 @@ func TestTiFlashProgress(t *testing.T) {
 	defer teardown()
 	tk := testkit.NewTestKit(t, s.store)
 
-	integration.BeforeTest(t, integration.WithoutGoLeakDetection())
-	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
-	defer cluster.Terminate(t)
-
-	save := infosync.GetEtcdClient()
-	defer infosync.SetEtcdClient(save)
-	infosync.SetEtcdClient(cluster.Client(0))
 	tk.MustExec("create database tiflash_d")
 	tk.MustExec("create table tiflash_d.t(z int)")
 	tk.MustExec("alter table tiflash_d.t set tiflash replica 1")
@@ -970,21 +962,19 @@ func TestTiFlashProgress(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, tb)
 	mustExist := func(tid int64) {
-		pm, err := infosync.GetTiFlashTableSyncProgress(context.TODO())
+		progressStr, err := infosync.GetTiFlashProgressFromCache(tb.Meta().ID)
 		require.NoError(t, err)
-		_, ok := pm[tb.Meta().ID]
-		require.True(t, ok)
+		require.NotEqual(t, progressStr, "")
 	}
 	mustAbsent := func(tid int64) {
-		pm, err := infosync.GetTiFlashTableSyncProgress(context.TODO())
+		progressStr, err := infosync.GetTiFlashProgressFromCache(tb.Meta().ID)
 		require.NoError(t, err)
-		_, ok := pm[tb.Meta().ID]
-		require.False(t, ok)
+		require.Equal(t, progressStr, "")
 	}
-	_ = infosync.UpdateTiFlashTableSyncProgress(context.TODO(), tb.Meta().ID, "5.0")
+	infosync.UpdateTiFlashProgressCache(tb.Meta().ID, "5.0")
 	mustExist(tb.Meta().ID)
-	_ = infosync.DeleteTiFlashTableSyncProgress(tb.Meta())
-	mustAbsent(tb.Meta().ID)
+	// _ = infosync.DeleteTiFlashTableSyncProgress(tb.Meta())
+	// mustAbsent(tb.Meta().ID)
 
 	_ = infosync.UpdateTiFlashTableSyncProgress(context.TODO(), tb.Meta().ID, "5.0")
 	tk.MustExec("truncate table tiflash_d.t")
@@ -1024,7 +1014,7 @@ func TestTiFlashProgressForPartitionTable(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, tb)
 	mustExist := func(tid int64) {
-		pm, err := infosync.GetTiFlashTableSyncProgress(context.TODO())
+		progressStr, err := infosync.GetTiFlashProgressFromCache(tb.Meta().ID)
 		require.NoError(t, err)
 		_, ok := pm[tid]
 		require.True(t, ok)
@@ -1082,14 +1072,6 @@ func TestTiFlashProgressAfterAvailable(t *testing.T) {
 	defer teardown()
 	tk := testkit.NewTestKit(t, s.store)
 
-	integration.BeforeTest(t, integration.WithoutGoLeakDetection())
-	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
-	defer cluster.Terminate(t)
-
-	save := infosync.GetEtcdClient()
-	defer infosync.SetEtcdClient(save)
-	infosync.SetEtcdClient(cluster.Client(0))
-
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists ddltiflash")
 	tk.MustExec("create table ddltiflash(z int)")
@@ -1103,33 +1085,21 @@ func TestTiFlashProgressAfterAvailable(t *testing.T) {
 	// after available, progress should can be updated.
 	s.tiflash.ResetSyncStatus(int(tb.Meta().ID), false)
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
-	pm, err := infosync.GetTiFlashTableSyncProgress(context.TODO())
+	progressStr, err := infosync.GetTiFlashProgressFromCache(tb.Meta().ID)
 	require.NoError(t, err)
-	progress, ok := pm[tb.Meta().ID]
-	require.True(t, ok)
-	require.Equal(t, types.TruncateFloatToString(progress, 2), "0")
+	require.Equal(t, progressStr, "0")
 
 	s.tiflash.ResetSyncStatus(int(tb.Meta().ID), true)
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
-	pm, err = infosync.GetTiFlashTableSyncProgress(context.TODO())
+	progressStr, err = infosync.GetTiFlashProgressFromCache(tb.Meta().ID)
 	require.NoError(t, err)
-	progress, ok = pm[tb.Meta().ID]
-	require.True(t, ok)
-	require.Equal(t, types.TruncateFloatToString(progress, 2), "1")
+	require.Equal(t, progressStr, "1")
 }
 
 func TestTiFlashProgressAfterAvailableForPartitionTable(t *testing.T) {
 	s, teardown := createTiFlashContext(t)
 	defer teardown()
 	tk := testkit.NewTestKit(t, s.store)
-
-	integration.BeforeTest(t, integration.WithoutGoLeakDetection())
-	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
-	defer cluster.Terminate(t)
-
-	save := infosync.GetEtcdClient()
-	defer infosync.SetEtcdClient(save)
-	infosync.SetEtcdClient(cluster.Client(0))
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists ddltiflash")
@@ -1144,33 +1114,21 @@ func TestTiFlashProgressAfterAvailableForPartitionTable(t *testing.T) {
 	// after available, progress should can be updated.
 	s.tiflash.ResetSyncStatus(int(tb.Meta().Partition.Definitions[0].ID), false)
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
-	pm, err := infosync.GetTiFlashTableSyncProgress(context.TODO())
+	progressStr, err := infosync.GetTiFlashProgressFromCache(tb.Meta().Partition.Definitions[0].ID)
 	require.NoError(t, err)
-	progress, ok := pm[tb.Meta().Partition.Definitions[0].ID]
-	require.True(t, ok)
-	require.Equal(t, types.TruncateFloatToString(progress, 2), "0")
+	require.Equal(t, progressStr, "0")
 
 	s.tiflash.ResetSyncStatus(int(tb.Meta().Partition.Definitions[0].ID), true)
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
-	pm, err = infosync.GetTiFlashTableSyncProgress(context.TODO())
+	progressStr, err = infosync.GetTiFlashProgressFromCache(tb.Meta().Partition.Definitions[0].ID)
 	require.NoError(t, err)
-	progress, ok = pm[tb.Meta().Partition.Definitions[0].ID]
-	require.True(t, ok)
-	require.Equal(t, types.TruncateFloatToString(progress, 2), "1")
+	require.Equal(t, progressStr, "1")
 }
 
 func TestTiFlashProgressCache(t *testing.T) {
 	s, teardown := createTiFlashContext(t)
 	defer teardown()
 	tk := testkit.NewTestKit(t, s.store)
-
-	integration.BeforeTest(t, integration.WithoutGoLeakDetection())
-	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
-	defer cluster.Terminate(t)
-
-	save := infosync.GetEtcdClient()
-	defer infosync.SetEtcdClient(save)
-	infosync.SetEtcdClient(cluster.Client(0))
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists ddltiflash")
@@ -1182,40 +1140,18 @@ func TestTiFlashProgressCache(t *testing.T) {
 	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
 	require.NoError(t, err)
 	require.NotNil(t, tb)
-	err = infosync.UpdateTiFlashTableSyncProgress(context.TODO(), tb.Meta().ID, "0")
-	require.NoError(t, err)
-	// after available, progress cache should be 1, so it will not update progress.
+	infosync.UpdateTiFlashProgressCache(tb.Meta().ID, "0")
+	// after available, it will still update progress cache.
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
-	pm, err := infosync.GetTiFlashTableSyncProgress(context.TODO())
+	progressStr, err := infosync.GetTiFlashProgressFromCache(tb.Meta().ID)
 	require.NoError(t, err)
-	progress, ok := pm[tb.Meta().ID]
-	require.True(t, ok)
-	require.Equal(t, types.TruncateFloatToString(progress, 2), "0")
-	// clean progress cache, and it will update progress
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/PollTiFlashReplicaStatusCleanProgressCache", `return`))
-	defer func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/ddl/PollTiFlashReplicaStatusCleanProgressCache")
-	}()
-	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
-	pm, err = infosync.GetTiFlashTableSyncProgress(context.TODO())
-	require.NoError(t, err)
-	progress, ok = pm[tb.Meta().ID]
-	require.True(t, ok)
-	require.Equal(t, types.TruncateFloatToString(progress, 2), "1")
+	require.Equal(t, progressStr, "1")
 }
 
 func TestTiFlashProgressAvailableList(t *testing.T) {
 	s, teardown := createTiFlashContext(t)
 	defer teardown()
 	tk := testkit.NewTestKit(t, s.store)
-
-	integration.BeforeTest(t, integration.WithoutGoLeakDetection())
-	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
-	defer cluster.Terminate(t)
-
-	save := infosync.GetEtcdClient()
-	defer infosync.SetEtcdClient(save)
-	infosync.SetEtcdClient(cluster.Client(0))
 
 	tableCount := 8
 	tableNames := make([]string, tableCount)
@@ -1250,11 +1186,9 @@ func TestTiFlashProgressAvailableList(t *testing.T) {
 	// Not all table have updated progress
 	UpdatedTableCount := 0
 	for i := 0; i < tableCount; i++ {
-		pm, err := infosync.GetTiFlashTableSyncProgress(context.TODO())
+		progressStr, err := infosync.GetTiFlashProgressFromCache(tbls[i].Meta().ID)
 		require.NoError(t, err)
-		progress, ok := pm[tbls[i].Meta().ID]
-		require.True(t, ok)
-		if progress == 0 {
+		if progressStr == "0" {
 			UpdatedTableCount++
 		}
 	}
@@ -1266,11 +1200,9 @@ func TestTiFlashProgressAvailableList(t *testing.T) {
 	// All table have updated progress
 	UpdatedTableCount = 0
 	for i := 0; i < tableCount; i++ {
-		pm, err := infosync.GetTiFlashTableSyncProgress(context.TODO())
+		progressStr, err := infosync.GetTiFlashProgressFromCache(tbls[i].Meta().ID)
 		require.NoError(t, err)
-		progress, ok := pm[tbls[i].Meta().ID]
-		require.True(t, ok)
-		if progress == 0 {
+		if progressStr == "0" {
 			UpdatedTableCount++
 		}
 	}
@@ -1302,4 +1234,47 @@ func TestTiFlashAvailableAfterResetReplica(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, tb)
 	require.Nil(t, tb.Meta().TiFlashReplica)
+}
+
+func TestTiFlashPartitionNotAvailable(t *testing.T) {
+	s, teardown := createTiFlashContext(t)
+	defer teardown()
+	tk := testkit.NewTestKit(t, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists ddltiflash")
+	tk.MustExec("create table ddltiflash(z int) PARTITION BY RANGE(z) (PARTITION p0 VALUES LESS THAN (10))")
+
+	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
+	require.NoError(t, err)
+	require.NotNil(t, tb)
+
+	tk.MustExec("alter table ddltiflash set tiflash replica 1")
+	s.tiflash.ResetSyncStatus(int(tb.Meta().Partition.Definitions[0].ID), false)
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
+
+	tb, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
+	require.NoError(t, err)
+	require.NotNil(t, tb)
+	replica := tb.Meta().TiFlashReplica
+	require.NotNil(t, replica)
+	require.False(t, replica.Available)
+
+	s.tiflash.ResetSyncStatus(int(tb.Meta().Partition.Definitions[0].ID), true)
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
+
+	tb, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
+	require.NoError(t, err)
+	require.NotNil(t, tb)
+	replica = tb.Meta().TiFlashReplica
+	require.NotNil(t, replica)
+	require.True(t, replica.Available)
+
+	s.tiflash.ResetSyncStatus(int(tb.Meta().Partition.Definitions[0].ID), false)
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
+	require.NoError(t, err)
+	require.NotNil(t, tb)
+	replica = tb.Meta().TiFlashReplica
+	require.NotNil(t, replica)
+	require.True(t, replica.Available)
 }

@@ -117,7 +117,6 @@ func NewPollTiFlashBackoffContext(MinThreshold, MaxThreshold TiFlashTick, Capaci
 type TiFlashManagementContext struct {
 	TiFlashStores map[int64]helper.StoreStat
 	PollCounter   uint64
-	ProgressCache map[int64]string
 	Backoff       *PollTiFlashBackoffContext
 	// tables waiting for updating progress after become available.
 	UpdatingProgressTables *list.List
@@ -212,7 +211,6 @@ func NewTiFlashManagementContext() (*TiFlashManagementContext, error) {
 	return &TiFlashManagementContext{
 		PollCounter:            0,
 		TiFlashStores:          make(map[int64]helper.StoreStat),
-		ProgressCache:          make(map[int64]string),
 		Backoff:                c,
 		UpdatingProgressTables: list.New(),
 	}, nil
@@ -446,7 +444,7 @@ func pollAvailableTableProgress(schemas infoschema.InfoSchema, ctx sessionctx.Co
 			element = element.Next()
 			continue
 		}
-		progress, err := getTiFlashTableSyncProgress(pollTiFlashContext, availableTableID.ID, tableInfo.TiFlashReplica.Count)
+		progress, err := infosync.GetTiFlashProgress(availableTableID.ID, tableInfo.TiFlashReplica.Count, pollTiFlashContext.TiFlashStores)
 		if err != nil {
 			logutil.BgLogger().Error("get tiflash sync progress failed",
 				zap.Error(err),
@@ -455,18 +453,17 @@ func pollAvailableTableProgress(schemas infoschema.InfoSchema, ctx sessionctx.Co
 			)
 			continue
 		}
-		if pollTiFlashContext.ProgressCache[availableTableID.ID] != progress {
-			err = infosync.UpdateTiFlashTableSyncProgress(context.Background(), availableTableID.ID, progress)
-			if err != nil {
-				logutil.BgLogger().Error("updating TiFlash replica process failed",
-					zap.Error(err),
-					zap.Int64("tableID or partitionID", availableTableID.ID),
-					zap.Bool("IsPartition", availableTableID.IsPartition),
-					zap.String("progress", progress),
-				)
-				continue
-			}
-			pollTiFlashContext.ProgressCache[availableTableID.ID] = progress
+		progressCache, err := infosync.GetTiFlashProgressFromCache(availableTableID.ID)
+		if err != nil {
+			logutil.BgLogger().Error("get tiflash sync progress from cache failed",
+				zap.Error(err),
+				zap.Int64("tableID", availableTableID.ID),
+				zap.Bool("IsPartition", availableTableID.IsPartition),
+			)
+			continue
+		}
+		if progressCache != progress {
+			infosync.UpdateTiFlashProgressCache(availableTableID.ID, progress)
 		}
 		pollTiFlashContext.UpdatingProgressTables.Remove(element)
 		element = element.Next()
@@ -487,7 +484,7 @@ func (d *ddl) refreshTiFlashTicker(ctx sessionctx.Context, pollTiFlashContext *T
 	})
 	// 10min clean progress cache to avoid data race
 	if pollTiFlashContext.PollCounter > 0 && pollTiFlashContext.PollCounter%PollCleanProgressCacheInterval == 0 {
-		pollTiFlashContext.ProgressCache = make(map[int64]string)
+
 	}
 	pollTiFlashContext.PollCounter++
 
@@ -530,7 +527,7 @@ func (d *ddl) refreshTiFlashTicker(ctx sessionctx.Context, pollTiFlashContext *T
 				continue
 			}
 
-			progress, err := getTiFlashTableSyncProgress(pollTiFlashContext, tb.ID, tb.Count)
+			progress, err := infosync.GetTiFlashProgress(tb.ID, tb.Count, pollTiFlashContext.TiFlashStores)
 			if err != nil {
 				logutil.BgLogger().Error("get tiflash sync progress failed",
 					zap.Error(err),
@@ -538,17 +535,18 @@ func (d *ddl) refreshTiFlashTicker(ctx sessionctx.Context, pollTiFlashContext *T
 				)
 				continue
 			}
-			if pollTiFlashContext.ProgressCache[tb.ID] != progress {
-				err = infosync.UpdateTiFlashTableSyncProgress(context.Background(), tb.ID, progress)
-				if err != nil {
-					logutil.BgLogger().Error("updating TiFlash replica process failed",
-						zap.Error(err),
-						zap.Int64("tableID", tb.ID),
-						zap.String("progress", progress),
-					)
-					continue
-				}
-				pollTiFlashContext.ProgressCache[tb.ID] = progress
+
+			progressCache, err := infosync.GetTiFlashProgressFromCache(tb.ID)
+			if err != nil {
+				logutil.BgLogger().Error("get tiflash sync progress from cache failed",
+					zap.Error(err),
+					zap.Int64("tableID", tb.ID),
+					zap.Bool("IsPartition", tb.IsPartition),
+				)
+				continue
+			}
+			if progressCache != progress {
+				infosync.UpdateTiFlashProgressCache(tb.ID, progress)
 			}
 
 			avail := progress[0] == '1'
