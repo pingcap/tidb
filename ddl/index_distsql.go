@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -49,20 +48,13 @@ type copContext struct {
 	fieldTps         []*types.FieldType
 	sessCtx          sessionctx.Context
 	pushDownEncoding bool
-
-	srcChunks       []*chunk.Chunk
-	indexRecordChan chan *indexRecord
-	doneChan        chan struct{}
-	bfTasks         map[string]struct{}
-	err             atomic.Value
-	readerCnt       atomic.Int32
-	mu              sync.Mutex
 }
 
 type copReqReaders struct {
-	tasksCh   chan *reorgBackfillTask
-	resultsCh chan *indexRecord
-	results   generic.SyncMap[string, error]
+	tasksCh     chan *reorgBackfillTask
+	resultsCh   chan *indexRecord
+	kvResultsCh chan idxKV
+	results     generic.SyncMap[string, error]
 }
 
 type copReqReader struct {
@@ -72,6 +64,7 @@ type copReqReader struct {
 	srcChunk *chunk.Chunk
 
 	idxRecordChan chan *indexRecord
+	idxKVChan     chan idxKV
 	results       *generic.SyncMap[string, error]
 }
 
@@ -86,7 +79,7 @@ func (c *copReqReader) run(ctx context.Context, wg *sync.WaitGroup, tasks chan *
 			finish := injectSpan(c.traceID, fmt.Sprintf("cop-read-%d", c.id))
 			err := kv.RunInNewTxn(ctx, c.copCtx.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
 				if c.copCtx.pushDownEncoding {
-					return c.copCtx.sendEncodedIdxRecords(ctx, c.idxRecordChan, txn.StartTS(), task.startKey, task.excludedEndKey())
+					return c.copCtx.sendEncodedIdxRecords(ctx, c.idxKVChan, txn.StartTS(), task.startKey, task.excludedEndKey())
 				} else {
 					return c.copCtx.sendIdxRecords(ctx, c.idxRecordChan, c.srcChunk, txn.StartTS(), task.startKey, task.excludedEndKey())
 				}
@@ -99,9 +92,13 @@ func (c *copReqReader) run(ctx context.Context, wg *sync.WaitGroup, tasks chan *
 
 func newCopReqReaders(ctx context.Context, copCtx *copContext, jobID int64, readerCnt int, tasks chan *reorgBackfillTask) *copReqReaders {
 	p := &copReqReaders{
-		tasksCh:   tasks,
-		resultsCh: make(chan *indexRecord, int(variable.MaxDDLReorgBatchSize)*readerCnt),
-		results:   generic.NewSyncMap[string, error](readerCnt),
+		tasksCh: tasks,
+		results: generic.NewSyncMap[string, error](readerCnt),
+	}
+	if copCtx.pushDownEncoding {
+		p.kvResultsCh = make(chan idxKV, int(variable.MaxDDLReorgBatchSize))
+	} else {
+		p.resultsCh = make(chan *indexRecord, int(variable.MaxDDLReorgBatchSize))
 	}
 	wg := &sync.WaitGroup{}
 	for i := 0; i < readerCnt; i++ {
@@ -111,6 +108,7 @@ func newCopReqReaders(ctx context.Context, copCtx *copContext, jobID int64, read
 			traceID:       jobID,
 			copCtx:        copCtx,
 			idxRecordChan: p.resultsCh,
+			idxKVChan:     p.kvResultsCh,
 			srcChunk:      chunk.NewChunkWithCapacity(copCtx.fieldTps, 1024),
 			results:       &p.results,
 		}
@@ -118,7 +116,11 @@ func newCopReqReaders(ctx context.Context, copCtx *copContext, jobID int64, read
 	}
 	go func() {
 		wg.Wait()
-		close(p.resultsCh)
+		if copCtx.pushDownEncoding {
+			close(p.kvResultsCh)
+		} else {
+			close(p.resultsCh)
+		}
 	}()
 	return p
 }
@@ -136,17 +138,15 @@ func newCopContext(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, sessCtx s
 	colInfos = append(colInfos, pkColInfos...)
 	fieldTps = append(fieldTps, pkFieldTps...)
 
-	return &copContext{
+	copCtx := &copContext{
 		tblInfo:          tblInfo,
 		idxInfo:          idxInfo,
 		colInfos:         colInfos,
 		fieldTps:         fieldTps,
 		sessCtx:          sessCtx,
 		pushDownEncoding: variable.EnableCoprRead.Load() == "2",
-		indexRecordChan:  make(chan *indexRecord, variable.MaxDDLReorgBatchSize),
-		doneChan:         make(chan struct{}, 1),
-		bfTasks:          make(map[string]struct{}, 16),
 	}
+	return copCtx
 }
 
 func (c *copContext) buildTableScan(ctx context.Context, startTS uint64, start, end kv.Key) (distsql.SelectResult, error) {
@@ -276,11 +276,17 @@ func (c *copContext) sendIdxRecords(ctx context.Context, ch chan *indexRecord, s
 	}
 }
 
-func (c *copContext) sendEncodedIdxRecords(ctx context.Context, ch chan *indexRecord, startTS uint64, start, end kv.Key) error {
+type idxKV struct {
+	key kv.Key
+	val []byte
+}
+
+func (c *copContext) sendEncodedIdxRecords(ctx context.Context, ch chan idxKV, startTS uint64, start, end kv.Key) error {
 	resp, err := c.buildScanIndexKV(ctx, startTS, start, end)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	colResp := &tipb.DDLResponse{}
 	for {
 		data, err := resp.Next(ctx)
 		if err != nil {
@@ -289,30 +295,31 @@ func (c *copContext) sendEncodedIdxRecords(ctx context.Context, ch chan *indexRe
 		if data == nil {
 			return nil
 		}
-		colResp := &tipb.DDLResponse{}
+		colResp.Reset()
+		colResp.Keys = make([][]byte, 0, 2*1024*1024)
+		colResp.Values = make([][]byte, 0, 2*1024*1024)
 		if err = colResp.Unmarshal(data.GetData()); err != nil {
 			return errors.Trace(err)
 		}
 		for i := 0; i < len(colResp.Keys); i++ {
-			ch <- &indexRecord{idxKV: &indexKV{key: colResp.Keys[i], value: colResp.Values[i]}}
+			ch <- idxKV{key: colResp.Keys[i], val: colResp.Values[i]}
 		}
 	}
 }
 
-func (w *addIndexWorker) fetchRowColValsFromCop(handleRange reorgBackfillTask) ([]*indexRecord, kv.Key, bool, error) {
-	w.idxRecords = w.idxRecords[:0]
+func fetchRowColValsFromCop[V *indexRecord | idxKV](w *addIndexWorker, ch chan V, buf []V, handleRange reorgBackfillTask) ([]V, kv.Key, bool, error) {
 	taskDone := false
 	var err error
 	curRangeKey := string(handleRange.endKey)
 	timer := time.NewTimer(200 * time.Millisecond)
 	for {
 		select {
-		case record, more := <-w.copReqReaders.resultsCh:
+		case record, more := <-ch:
 			if !more {
 				taskDone = true
 				break
 			}
-			w.idxRecords = append(w.idxRecords, record)
+			buf = append(buf, record)
 		case <-timer.C:
 			err, taskDone = w.copReqReaders.results.Load(curRangeKey)
 		}
@@ -320,13 +327,12 @@ func (w *addIndexWorker) fetchRowColValsFromCop(handleRange reorgBackfillTask) (
 			w.copReqReaders.results.Delete(curRangeKey)
 			break
 		}
-		if len(w.idxRecords) >= w.batchCnt {
+		if len(buf) >= w.batchCnt {
 			break
 		}
 	}
-
 	timer.Stop()
-	return w.idxRecords, handleRange.startKey, taskDone, err
+	return buf, handleRange.startKey, taskDone, err
 }
 
 func buildHandleColInfoAndFieldTypes(tbInfo *model.TableInfo) ([]*model.ColumnInfo, []*types.FieldType) {

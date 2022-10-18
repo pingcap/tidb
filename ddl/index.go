@@ -1163,12 +1163,6 @@ type indexRecord struct {
 	vals   []types.Datum // It's the index values.
 	rsData []types.Datum // It's the restored data for handle.
 	skip   bool          // skip indicates that the index key is already exists, we should not add it.
-	idxKV  *indexKV
-}
-
-type indexKV struct {
-	key   []byte
-	value []byte
 }
 
 type baseIndexWorker struct {
@@ -1178,10 +1172,11 @@ type baseIndexWorker struct {
 	metricCounter prometheus.Counter
 
 	// The following attributes are used to reduce memory allocation.
-	defaultVals []types.Datum
-	idxRecords  []*indexRecord
-	rowMap      map[int64]types.Datum
-	rowDecoder  *decoder.RowDecoder
+	defaultVals  []types.Datum
+	idxRecords   []*indexRecord
+	idxKVRecords []idxKV
+	rowMap       map[int64]types.Datum
+	rowDecoder   *decoder.RowDecoder
 
 	sqlMode    mysql.SQLMode
 	jobContext *JobContext
@@ -1503,12 +1498,24 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 
 		var (
 			idxRecords []*indexRecord
+			idxKVs     []idxKV
 			nextKey    kv.Key
 			taskDone   bool
 		)
 		finish := injectSpan(w.reorgInfo.Job.ID, fmt.Sprintf("%s-%d", "fetch-rows", w.id))
+		var pushDownKVEncoding bool
 		if w.copReqReaders != nil {
-			idxRecords, nextKey, taskDone, err = w.fetchRowColValsFromCop(handleRange)
+			pushDownKVEncoding = w.copReqReaders.kvResultsCh != nil
+			r := w.copReqReaders
+			if !pushDownKVEncoding {
+				w.idxRecords = w.idxRecords[:0]
+				w.idxRecords, nextKey, taskDone, err = fetchRowColValsFromCop(w, r.resultsCh, w.idxRecords, handleRange)
+				idxRecords = w.idxRecords
+			} else {
+				w.idxKVRecords = w.idxKVRecords[:0]
+				w.idxKVRecords, nextKey, taskDone, err = fetchRowColValsFromCop(w, r.kvResultsCh, w.idxKVRecords, handleRange)
+				idxKVs = w.idxKVRecords
+			}
 		} else {
 			idxRecords, nextKey, taskDone, err = w.fetchRowColVals(txn, handleRange)
 		}
@@ -1518,81 +1525,95 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 		}
 		taskCtx.nextKey = nextKey
 		taskCtx.done = taskDone
-
-		err = w.batchCheckUniqueKey(txn, idxRecords)
-		if err != nil {
-			return errors.Trace(err)
+		if !pushDownKVEncoding {
+			err = w.batchCheckUniqueKey(txn, idxRecords)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			return w.createIndexRecords(idxRecords, &taskCtx, needMergeTmpIdx, txn)
+		} else {
+			return w.createIndexKVs(idxKVs, &taskCtx, txn)
 		}
-
-		defer injectSpan(w.reorgInfo.Job.ID, fmt.Sprintf("%s-%d", "create-records", w.id))()
-		for _, idxRecord := range idxRecords {
-			taskCtx.scanCount++
-			// The index is already exists, we skip it, no needs to backfill it.
-			// The following update, delete, insert on these rows, TiDB can handle it correctly.
-			if idxRecord.skip {
-				continue
-			}
-
-			// When the backfill-merge process is used, the writes from DML are redirected to a temp index.
-			// The write-conflict will be handled by the merge worker. Thus, the locks are unnecessary.
-			if !needMergeTmpIdx && idxRecord.key != nil {
-				// We need to add this lock to make sure pessimistic transaction can realize this operation.
-				// For the normal pessimistic transaction, it's ok. But if async commit is used, it may lead to inconsistent data and index.
-				err := txn.LockKeys(context.Background(), new(kv.LockCtx), idxRecord.key)
-				if err != nil {
-					return errors.Trace(err)
-				}
-			}
-
-			// Create the index.
-			if w.writerCtx == nil {
-				if idxRecord.idxKV != nil {
-					err := txn.GetMemBuffer().Set(idxRecord.idxKV.key, idxRecord.idxKV.value)
-					if err != nil {
-						return errors.Trace(err)
-					}
-				} else {
-					handle, err := w.index.Create(w.sessCtx, txn, idxRecord.vals, idxRecord.handle, idxRecord.rsData, table.WithIgnoreAssertion, table.FromBackfill)
-					if err != nil {
-						if kv.ErrKeyExists.Equal(err) && idxRecord.handle.Equal(handle) {
-							// Index already exists, skip it.
-							continue
-						}
-						return errors.Trace(err)
-					}
-				}
-			} else { // The lightning environment is ready.
-				if idxRecord.idxKV != nil {
-					err = w.writerCtx.WriteRow(idxRecord.idxKV.key, idxRecord.idxKV.value)
-					if err != nil {
-						return errors.Trace(err)
-					}
-				} else {
-					vars := w.sessCtx.GetSessionVars()
-					sCtx, writeBufs := vars.StmtCtx, vars.GetWriteStmtBufs()
-					key, distinct, err := w.index.GenIndexKey(sCtx, idxRecord.vals, idxRecord.handle, writeBufs.IndexKeyBuf)
-					if err != nil {
-						return errors.Trace(err)
-					}
-					idxVal, err := w.index.GenIndexValue(sCtx, distinct, idxRecord.vals, idxRecord.handle, idxRecord.rsData)
-					if err != nil {
-						return errors.Trace(err)
-					}
-					err = w.writerCtx.WriteRow(key, idxVal)
-					if err != nil {
-						return errors.Trace(err)
-					}
-					writeBufs.IndexKeyBuf = key
-				}
-			}
-			taskCtx.addedCount++
-		}
-
-		return nil
 	})
 	logSlowOperations(time.Since(oprStartTime), "AddIndexBackfillDataInTxn", 3000)
 
 	return
+}
+
+func (w *addIndexWorker) createIndexRecords(idxRecords []*indexRecord, taskCtx *backfillTaskContext, needMergeTmpIdx bool, txn kv.Transaction) error {
+	defer injectSpan(w.reorgInfo.Job.ID, fmt.Sprintf("%s-%d", "create-records", w.id))()
+	for _, rec := range idxRecords {
+		taskCtx.scanCount++
+		// The index is already exists, we skip it, no needs to backfill it.
+		// The following update, delete, insert on these rows, TiDB can handle it correctly.
+		if rec.skip {
+			continue
+		}
+
+		// When the backfill-merge process is used, the writes from DML are redirected to a temp index.
+		// The write-conflict will be handled by the merge worker. Thus, the locks are unnecessary.
+		if !needMergeTmpIdx && rec.key != nil {
+			// We need to add this lock to make sure pessimistic transaction can realize this operation.
+			// For the normal pessimistic transaction, it's ok. But if async commit is used, it may lead to inconsistent data and index.
+			err := txn.LockKeys(context.Background(), new(kv.LockCtx), rec.key)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+
+		// Create the index.
+		if w.writerCtx == nil {
+			handle, err := w.index.Create(w.sessCtx, txn, rec.vals, rec.handle, rec.rsData, table.WithIgnoreAssertion, table.FromBackfill)
+			if err != nil {
+				if kv.ErrKeyExists.Equal(err) && rec.handle.Equal(handle) {
+					// Index already exists, skip it.
+					continue
+				}
+				return errors.Trace(err)
+			}
+		} else { // The lightning environment is ready.
+			vars := w.sessCtx.GetSessionVars()
+			sCtx, writeBufs := vars.StmtCtx, vars.GetWriteStmtBufs()
+			key, distinct, err := w.index.GenIndexKey(sCtx, rec.vals, rec.handle, writeBufs.IndexKeyBuf)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			idxVal, err := w.index.GenIndexValue(sCtx, distinct, rec.vals, rec.handle, rec.rsData)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			err = w.writerCtx.WriteRow(key, idxVal)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			writeBufs.IndexKeyBuf = key
+		}
+		taskCtx.addedCount++
+	}
+	return nil
+}
+
+func (w *addIndexWorker) createIndexKVs(idxKVs []idxKV, taskCtx *backfillTaskContext, txn kv.Transaction) error {
+	defer injectSpan(w.reorgInfo.Job.ID, fmt.Sprintf("%s-%d", "create-records", w.id))()
+	for _, idxKV := range idxKVs {
+		taskCtx.scanCount++
+		// Create the index.
+		if w.writerCtx == nil {
+			err := txn.GetMemBuffer().Set(idxKV.key, idxKV.val)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		} else { // The lightning environment is ready.
+			if len(idxKVs) != 0 {
+				err := w.writerCtx.WriteRow(idxKV.key, idxKV.val)
+				if err != nil {
+					return errors.Trace(err)
+				}
+			}
+		}
+		taskCtx.addedCount++
+	}
+	return nil
 }
 
 func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, reorgInfo *reorgInfo) error {

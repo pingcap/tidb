@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tidb/util/topsql"
@@ -649,6 +650,9 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 		}
 		var copReqReaders *copReqReaders
 		useCopRead := variable.EnableCoprRead.Load() != "0"
+		if useCopRead {
+			workerCnt = mathutil.Max(workerCnt/2, 1)
+		}
 		// Enlarge the worker size.
 		for i := len(backfillWorkers); i < int(workerCnt); i++ {
 			sessCtx := newContext(reorgInfo.d.store)
@@ -682,7 +686,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 					indexInfo := model.FindIndexInfoByID(t.Meta().Indices, reorgInfo.currElement.ID)
 					copCtx := newCopContext(t.Meta(), indexInfo, sessCtx)
 					rTaskCh = make(chan *reorgBackfillTask, backfillTaskBatchSize)
-					copReqReaders = newCopReqReaders(dc.ctx, copCtx, job.ID, int(workerCnt*2), rTaskCh)
+					copReqReaders = newCopReqReaders(dc.ctx, copCtx, job.ID, int(workerCnt), rTaskCh)
 					logutil.BgLogger().Info("[ddl] fetch index values with coprocessor",
 						zap.String("table", t.Meta().Name.O),
 						zap.String("index", indexInfo.Name.O))
