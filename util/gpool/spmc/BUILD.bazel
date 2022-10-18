@@ -8,7 +8,6 @@ go_library(
         "spmspool.go",
         "task.go",
         "worker.go",
-        "worker_func.go",
         "worker_loop_queue.go",
     ],
     importpath = "github.com/pingcap/tidb/util/gpool/spmc",

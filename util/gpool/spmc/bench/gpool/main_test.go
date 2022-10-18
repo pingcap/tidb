@@ -16,7 +16,6 @@ package gpool
 
 import (
 	"testing"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/util"
@@ -24,14 +23,13 @@ import (
 )
 
 const (
-	RunTimes           = 10000
-	DefaultExpiredTime = 10 * time.Second
+	RunTimes = 10000
 )
 
 func BenchmarkGPool(b *testing.B) {
-	p := spmc.NewSPMCPool[struct{}, struct{}, int](10)
+	p := spmc.NewSPMCPool[struct{}, struct{}, int, any, spmc.NilContext](10)
 	defer p.ReleaseAndWait()
-	p.SetConsumerFunc(func(a struct{}, b int) struct{} {
+	p.SetConsumerFunc(func(a struct{}, b int, c any) struct{} {
 		return struct{}{}
 	})
 	b.ResetTimer()
@@ -55,7 +53,7 @@ func BenchmarkGPool(b *testing.B) {
 				}
 			}
 		}
-		resultCh, ctl := p.AddProducer(producerFunc, RunTimes, 6)
+		resultCh, ctl := p.AddProducer(producerFunc, RunTimes, spmc.WithConcurrency(6))
 		exitCh := make(chan struct{})
 		wg.Run(func() {
 			for {

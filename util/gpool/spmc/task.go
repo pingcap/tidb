@@ -18,11 +18,22 @@ import (
 	"sync"
 )
 
-type taskBox[T any, U any, C any] struct {
-	constArgs C
-	wg        *sync.WaitGroup
-	task      chan T
-	resultCh  chan U
+type Context[T any] interface {
+	GetContext() T
+}
+
+type NilContext struct{}
+
+func (NilContext) GetContext() any {
+	return nil
+}
+
+type taskBox[T any, U any, C any, CT any, TF Context[CT]] struct {
+	constArgs   C
+	wg          *sync.WaitGroup
+	task        chan T
+	resultCh    chan U
+	contextFunc TF
 }
 
 // TaskController is a controller that can control or watch the pool.

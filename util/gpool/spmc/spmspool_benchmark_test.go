@@ -28,9 +28,9 @@ const (
 )
 
 func BenchmarkGPool(b *testing.B) {
-	p := NewSPMCPool[struct{}, struct{}, int](10)
+	p := NewSPMCPool[struct{}, struct{}, int, any, NilContext](10)
 	defer p.ReleaseAndWait()
-	p.SetConsumerFunc(func(a struct{}, b int) struct{} {
+	p.SetConsumerFunc(func(a struct{}, b int, c any) struct{} {
 		return struct{}{}
 	})
 	b.ResetTimer()

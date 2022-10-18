@@ -31,8 +31,8 @@ func TestPool(t *testing.T) {
 	myArgs := ConstArgs{a: 10}
 	// init the pool
 	// input type， output type, constArgs type
-	pool := NewSPMCPool[int, int, ConstArgs](10)
-	pool.SetConsumerFunc(func(task int, constArgs ConstArgs) int {
+	pool := NewSPMCPool[int, int, ConstArgs, any, NilContext](10)
+	pool.SetConsumerFunc(func(task int, constArgs ConstArgs, ctx any) int {
 		return task + constArgs.a
 	})
 	taskCh := make(chan int, 10)
@@ -78,9 +78,9 @@ func TestPool(t *testing.T) {
 
 func TestPoolWithEnoughCapa(t *testing.T) {
 	const RunTimes = 1000
-	p := NewSPMCPool[struct{}, struct{}, int](30, WithExpiryDuration(DefaultExpiredTime))
+	p := NewSPMCPool[struct{}, struct{}, int, any, NilContext](30, WithExpiryDuration(DefaultExpiredTime))
 	defer p.ReleaseAndWait()
-	p.SetConsumerFunc(func(a struct{}, b int) struct{} {
+	p.SetConsumerFunc(func(a struct{}, b int, c any) struct{} {
 		return struct{}{}
 	})
 	var twg util.WaitGroupWrapper
@@ -132,9 +132,9 @@ func TestPoolWithEnoughCapa(t *testing.T) {
 
 func TestPoolWithoutEnoughCapa(t *testing.T) {
 	const RunTimes = 1000
-	p := NewSPMCPool[struct{}, struct{}, int](30, WithExpiryDuration(DefaultExpiredTime))
+	p := NewSPMCPool[struct{}, struct{}, int, any, NilContext](30, WithExpiryDuration(DefaultExpiredTime))
 	defer p.ReleaseAndWait()
-	p.SetConsumerFunc(func(a struct{}, b int) struct{} {
+	p.SetConsumerFunc(func(a struct{}, b int, c any) struct{} {
 		return struct{}{}
 	})
 	var twg util.WaitGroupWrapper
@@ -185,9 +185,9 @@ func TestPoolWithoutEnoughCapa(t *testing.T) {
 }
 
 func TestBenchPool(t *testing.T) {
-	p := NewSPMCPool[struct{}, struct{}, int](10, WithExpiryDuration(DefaultExpiredTime))
+	p := NewSPMCPool[struct{}, struct{}, int, any, NilContext](10, WithExpiryDuration(DefaultExpiredTime))
 	defer p.ReleaseAndWait()
-	p.SetConsumerFunc(func(a struct{}, b int) struct{} {
+	p.SetConsumerFunc(func(a struct{}, b int, c any) struct{} {
 		return struct{}{}
 	})
 

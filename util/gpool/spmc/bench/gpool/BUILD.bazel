@@ -1,0 +1,11 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "gpool_test",
+    srcs = ["main_test.go"],
+    deps = [
+        "//util",
+        "//util/gpool/spmc",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)
