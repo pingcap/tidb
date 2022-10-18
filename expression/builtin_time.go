@@ -19,6 +19,7 @@
 package expression
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"regexp"
@@ -6643,7 +6644,7 @@ func (b *builtinTiDBCurrentTsoSig) Clone() builtinFunc {
 
 // evalInt evals currentTSO().
 func (b *builtinTiDBCurrentTsoSig) evalInt(row chunk.Row) (d int64, isNull bool, err error) {
-	tso, _ := b.ctx.GetSessionVars().GetSessionOrGlobalSystemVar("tidb_current_ts")
+	tso, _ := b.ctx.GetSessionVars().GetSessionOrGlobalSystemVar(context.Background(), "tidb_current_ts")
 	itso, _ := strconv.ParseInt(tso, 10, 64)
 	return itso, false, nil
 }

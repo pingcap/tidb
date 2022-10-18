@@ -3700,7 +3700,7 @@ func TestGlobalVarAccessor(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, varValue, v)
 	// Set global var to another value
-	err = se.SetGlobalSysVar(varName, varValue1)
+	err = se.SetGlobalSysVar(context.Background(), varName, varValue1)
 	require.NoError(t, err)
 	v, err = se.GetGlobalSysVar(varName)
 	require.NoError(t, err)
@@ -3713,7 +3713,7 @@ func TestGlobalVarAccessor(t *testing.T) {
 	v, err = se1.GetGlobalSysVar(varName)
 	require.NoError(t, err)
 	require.Equal(t, varValue0, v)
-	err = se1.SetGlobalSysVar(varName, varValue2)
+	err = se1.SetGlobalSysVar(context.Background(), varName, varValue2)
 	require.NoError(t, err)
 	v, err = se1.GetGlobalSysVar(varName)
 	require.NoError(t, err)
@@ -3835,7 +3835,7 @@ func TestSetInstanceSysvarBySetGlobalSysVar(t *testing.T) {
 	// but GetGlobalSysVar could not access TiDBGeneralLog's GetGlobal.
 
 	// set to "1"
-	err = se.SetGlobalSysVar(varName, "ON")
+	err = se.SetGlobalSysVar(context.Background(), varName, "ON")
 	require.NoError(t, err)
 	v, err = se.GetGlobalSysVar(varName)
 	tk.MustQuery("select @@global.tidb_general_log").Check(testkit.Rows("1"))
@@ -3843,7 +3843,7 @@ func TestSetInstanceSysvarBySetGlobalSysVar(t *testing.T) {
 	require.Equal(t, defaultValue, v)
 
 	// set back to "0"
-	err = se.SetGlobalSysVar(varName, defaultValue)
+	err = se.SetGlobalSysVar(context.Background(), varName, defaultValue)
 	require.NoError(t, err)
 	v, err = se.GetGlobalSysVar(varName)
 	tk.MustQuery("select @@global.tidb_general_log").Check(testkit.Rows("0"))
