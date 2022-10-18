@@ -1286,6 +1286,14 @@ type SessionVars struct {
 
 	// LastPlanReplayerToken indicates the last plan replayer token
 	LastPlanReplayerToken string
+<<<<<<< HEAD
+=======
+
+	// AnalyzePartitionMergeConcurrency indicates concurrency for merging partition stats
+	AnalyzePartitionMergeConcurrency int
+
+	HookContext
+>>>>>>> e8d265981a (statistics: support merge global topn in concurrency (#38358))
 }
 
 // GetPreparedStmtByName returns the prepared statement specified by stmtName.
