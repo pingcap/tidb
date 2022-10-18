@@ -365,7 +365,7 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 	case *Delete:
 		sum = x.MemoryUsage()
 	default:
-		logutil.BgLogger().Info("add this type memory usage ")
+		logutil.BgLogger().Info("this Plan did`t implement MemoryUsage method")
 	}
 
 	sum += size.SizeOfInterface + size.SizeOfSlice*2 + int64(cap(v.OutPutNames)+cap(v.ParamTypes))*size.SizeOfPointer +
