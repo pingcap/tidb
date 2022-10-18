@@ -123,11 +123,11 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 	}
 
 	if v.IsGlobal {
-		valStr, err := e.getVarValue(v, sysVar)
+		valStr, err := e.getVarValue(ctx, v, sysVar)
 		if err != nil {
 			return err
 		}
-		err = sessionVars.GlobalVarsAccessor.SetGlobalSysVar(name, valStr)
+		err = sessionVars.GlobalVarsAccessor.SetGlobalSysVar(ctx, name, valStr)
 		if err != nil {
 			return err
 		}
@@ -142,7 +142,7 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 		return err
 	}
 	// Set session variable
-	valStr, err := e.getVarValue(v, nil)
+	valStr, err := e.getVarValue(ctx, v, nil)
 	if err != nil {
 		return err
 	}
@@ -251,7 +251,7 @@ func (e *SetExecutor) setCharset(cs, co string, isSetName bool) error {
 	return errors.Trace(sessionVars.SetSystemVar(variable.CollationConnection, coDb))
 }
 
-func (e *SetExecutor) getVarValue(v *expression.VarAssignment, sysVar *variable.SysVar) (value string, err error) {
+func (e *SetExecutor) getVarValue(ctx context.Context, v *expression.VarAssignment, sysVar *variable.SysVar) (value string, err error) {
 	if v.IsDefault {
 		// To set a SESSION variable to the GLOBAL value or a GLOBAL value
 		// to the compiled-in MySQL default value, use the DEFAULT keyword.
@@ -259,7 +259,7 @@ func (e *SetExecutor) getVarValue(v *expression.VarAssignment, sysVar *variable.
 		if sysVar != nil {
 			return sysVar.Value, nil
 		}
-		return e.ctx.GetSessionVars().GetGlobalSystemVar(v.Name)
+		return e.ctx.GetSessionVars().GetGlobalSystemVar(ctx, v.Name)
 	}
 	nativeVal, err := v.Expr.Eval(chunk.Row{})
 	if err != nil || nativeVal.IsNull() {
