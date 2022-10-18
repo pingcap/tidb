@@ -140,7 +140,6 @@ func TestSingleRouteRule(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, r)
 	invalidMatchPaths := []string{
-		"my_schema.my_table.sql.gz",
 		"my_schema.my_table.sql.rar",
 		"my_schema.my_table.txt",
 	}
@@ -149,6 +148,11 @@ func TestSingleRouteRule(t *testing.T) {
 		assert.Nil(t, res)
 		assert.Error(t, err)
 	}
+
+	res, err := r.Route("my_schema.my_table.sql.gz")
+	assert.NoError(t, err)
+	exp := &RouteResult{filter.Table{Schema: "my_schema", Name: "my_table"}, "", CompressionGZ, SourceTypeSQL}
+	assert.Equal(t, exp, res)
 }
 
 func TestMultiRouteRule(t *testing.T) {
