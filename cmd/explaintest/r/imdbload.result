@@ -350,10 +350,9 @@ CE_trace
 
 explain select * from keyword where ((phonetic_code = 'R1652') and (keyword > 'ecg-monitor' and keyword < 'killers'));
 id	estRows	task	access object	operator info
-IndexLookUp_11	901.00	root		
+IndexLookUp_10	901.00	root		
 ├─IndexRangeScan_8(Build)	901.00	cop[tikv]	table:keyword, index:itest(phonetic_code, keyword)	range:("R1652" "ecg-monitor","R1652" "killers"), keep order:false
-└─Selection_10(Probe)	901.00	cop[tikv]		gt(imdbload.keyword.keyword, "ecg-monitor"), lt(imdbload.keyword.keyword, "killers")
-  └─TableRowIDScan_9	901.00	cop[tikv]	table:keyword	keep order:false
+└─TableRowIDScan_9(Probe)	901.00	cop[tikv]	table:keyword	keep order:false
 trace plan target = 'estimation' select * from keyword where ((phonetic_code = 'R1652') and (keyword > 'ecg-monitor' and keyword < 'killers'));
 CE_trace
 [{"table_name":"keyword","type":"Column Stats-Point","expr":"((phonetic_code = 'R1652'))","row_count":23480},{"table_name":"keyword","type":"Column Stats-Range","expr":"((id >= -9223372036854775808 and id <= 9223372036854775807))","row_count":236627},{"table_name":"keyword","type":"Column Stats-Range","expr":"((keyword > 'ecg-monitor' and keyword < 'killers'))","row_count":44075},{"table_name":"keyword","type":"Index Stats-Point","expr":"((phonetic_code = 'R1652'))","row_count":23480},{"table_name":"keyword","type":"Index Stats-Range","expr":"((keyword > 'ecg-monitor' and keyword < 'killers'))","row_count":44036},{"table_name":"keyword","type":"Index Stats-Range","expr":"((keyword >= 'ecg-m' and keyword <= 'kille'))","row_count":44036},{"table_name":"keyword","type":"Index Stats-Range","expr":"((phonetic_code = 'R1652') and (keyword > 'ecg-monitor' and keyword < 'killers'))","row_count":901},{"table_name":"keyword","type":"Table Stats-Expression-CNF","expr":"`and`(`eq`(imdbload.keyword.phonetic_code, 'R1652'), `and`(`gt`(imdbload.keyword.keyword, 'ecg-monitor'), `lt`(imdbload.keyword.keyword, 'killers')))","row_count":901}]
