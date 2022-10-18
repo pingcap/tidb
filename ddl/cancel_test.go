@@ -284,14 +284,14 @@ func TestCancel(t *testing.T) {
 
 	restHook := func(h *ddl.TestDDLCallback) {
 		h.OnJobRunBeforeExported = nil
-		h.OnJobUpdatedExported = nil
+		h.OnJobUpdatedExported.Store(nil)
 		dom.DDL().SetHook(h.Clone())
 	}
 	registHook := func(h *ddl.TestDDLCallback, onJobRunBefore bool) {
 		if onJobRunBefore {
 			h.OnJobRunBeforeExported = hookFunc
 		} else {
-			h.OnJobUpdatedExported = hookFunc
+			h.OnJobUpdatedExported.Store(&hookFunc)
 		}
 		dom.DDL().SetHook(h.Clone())
 	}

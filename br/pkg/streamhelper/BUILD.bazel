@@ -59,6 +59,8 @@ go_test(
         "tsheap_test.go",
     ],
     flaky = True,
+    race = "on",
+    shard_count = 20,
     deps = [
         ":streamhelper",
         "//br/pkg/errors",

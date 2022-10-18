@@ -126,7 +126,7 @@ WHERE
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths)
+		_, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, 0)
 		require.NoError(b, err)
 	}
 	b.StopTimer()

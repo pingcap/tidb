@@ -649,7 +649,7 @@ func (mrm *MockRegionManager) removeMPPTaskHandler(taskID int64, storeID uint64)
 
 // IsAlive implements the tikvpb.TikvServer interface.
 func (svr *Server) IsAlive(_ context.Context, _ *mpp.IsAliveRequest) (*mpp.IsAliveResponse, error) {
-	panic("todo")
+	return &mpp.IsAliveResponse{Available: true}, nil
 }
 
 // DispatchMPPTask implements the tikvpb.TikvServer interface.

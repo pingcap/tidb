@@ -403,7 +403,10 @@ type GlobalStats struct {
 }
 
 // MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableID.
-func (h *Handle) MergePartitionStats2GlobalStatsByTableID(sc sessionctx.Context, opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema, physicalID int64, isIndex int, histIDs []int64) (globalStats *GlobalStats, err error) {
+func (h *Handle) MergePartitionStats2GlobalStatsByTableID(sc sessionctx.Context,
+	opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema,
+	physicalID int64, isIndex int, histIDs []int64,
+	tablePartitionStats map[int64]*statistics.Table) (globalStats *GlobalStats, err error) {
 	// get the partition table IDs
 	h.mu.Lock()
 	globalTable, ok := h.getTableByPhysicalID(is, physicalID)
@@ -413,11 +416,34 @@ func (h *Handle) MergePartitionStats2GlobalStatsByTableID(sc sessionctx.Context,
 		return
 	}
 	globalTableInfo := globalTable.Meta()
-	return h.mergePartitionStats2GlobalStats(sc, opts, is, globalTableInfo, isIndex, histIDs)
+	return h.mergePartitionStats2GlobalStats(sc, opts, is, globalTableInfo, isIndex, histIDs, tablePartitionStats)
+}
+
+func (h *Handle) loadTablePartitionStats(tableInfo *model.TableInfo, partitionID int64, isIndex int, histIDs []int64) (*statistics.Table, error) {
+	var partitionStats *statistics.Table
+	partitionStats, err := h.TableStatsFromStorage(tableInfo, partitionID, true, 0)
+	if err != nil {
+		return nil, err
+	}
+	// if the err == nil && partitionStats == nil, it means we lack the partition-level stats which the physicalID is equal to partitionID.
+	if partitionStats == nil {
+		var errMsg string
+		if isIndex == 0 {
+			errMsg = fmt.Sprintf("`%s`", tableInfo.Name.L)
+		} else {
+			errMsg = fmt.Sprintf("`%s` index: `%s`", tableInfo.Name.L, tableInfo.FindIndexNameByID(histIDs[0]))
+		}
+		err = types.ErrPartitionStatsMissing.GenWithStackByArgs(errMsg)
+		return nil, err
+	}
+	return partitionStats, nil
 }
 
 // MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableInfo.
-func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context, opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema, globalTableInfo *model.TableInfo, isIndex int, histIDs []int64) (globalStats *GlobalStats, err error) {
+func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
+	opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema, globalTableInfo *model.TableInfo,
+	isIndex int, histIDs []int64,
+	allPartitionStats map[int64]*statistics.Table) (globalStats *GlobalStats, err error) {
 	partitionNum := len(globalTableInfo.Partition.Definitions)
 	partitionIDs := make([]int64, 0, partitionNum)
 	for i := 0; i < partitionNum; i++ {
@@ -467,20 +493,19 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context, opts map
 		}
 		tableInfo := partitionTable.Meta()
 		var partitionStats *statistics.Table
-		partitionStats, err = h.TableStatsFromStorage(tableInfo, partitionID, true, 0)
-		if err != nil {
-			return
+		if allPartitionStats != nil {
+			partitionStats, ok = allPartitionStats[partitionID]
 		}
-		// if the err == nil && partitionStats == nil, it means we lack the partition-level stats which the physicalID is equal to partitionID.
-		if partitionStats == nil {
-			var errMsg string
-			if isIndex == 0 {
-				errMsg = fmt.Sprintf("`%s`", tableInfo.Name.L)
-			} else {
-				errMsg = fmt.Sprintf("`%s` index: `%s`", tableInfo.Name.L, tableInfo.FindIndexNameByID(histIDs[0]))
+		// If pre-load partition stats isn't provided, then we load partition stats directly and set it into allPartitionStats
+		if allPartitionStats == nil || partitionStats == nil || !ok {
+			partitionStats, err = h.loadTablePartitionStats(tableInfo, partitionID, isIndex, histIDs)
+			if err != nil {
+				return
 			}
-			err = types.ErrPartitionStatsMissing.GenWithStackByArgs(errMsg)
-			return
+			if allPartitionStats == nil {
+				allPartitionStats = make(map[int64]*statistics.Table)
+			}
+			allPartitionStats[partitionID] = partitionStats
 		}
 		for i := 0; i < globalStats.Num; i++ {
 			count, hg, cms, topN, fms := partitionStats.GetStatsInfo(histIDs[i], isIndex == 1)

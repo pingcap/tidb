@@ -81,10 +81,10 @@ type BackupConfig struct {
 
 	// for ebs-based backup
 	FullBackupType      FullBackupType `json:"full-backup-type" toml:"full-backup-type"`
-	VolumeFile          string         `json:"volume-file"`
-	SkipAWS             bool           `json:"skip-aws"`
-	CloudAPIConcurrency uint           `json:"cloud-api-concurrency"`
-	ProgressFile        string         `json:"progress-file"`
+	VolumeFile          string         `json:"volume-file" toml:"volume-file"`
+	SkipAWS             bool           `json:"skip-aws" toml:"skip-aws"`
+	CloudAPIConcurrency uint           `json:"cloud-api-concurrency" toml:"cloud-api-concurrency"`
+	ProgressFile        string         `json:"progress-file" toml:"progress-file"`
 }
 
 // DefineBackupFlags defines common flags for the backup command.

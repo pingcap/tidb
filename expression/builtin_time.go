@@ -1661,6 +1661,21 @@ func (c *fromUnixTimeFunctionClass) getFunction(ctx sessionctx.Context, args []E
 		return nil, err
 	}
 
+	if fieldString(arg0Tp.GetType()) {
+		//Improve string cast Unix Time precision
+		x, ok := (bf.getArgs()[0]).(*ScalarFunction)
+		if ok {
+			//used to adjust FromUnixTime precision #Fixbug35184
+			if x.FuncName.L == ast.Cast {
+				if x.RetType.GetDecimal() == 0 && (x.RetType.GetType() == mysql.TypeNewDecimal) {
+					x.RetType.SetDecimal(6)
+					fieldLen := mathutil.Min(x.RetType.GetFlen()+6, mysql.MaxDecimalWidth)
+					x.RetType.SetFlen(fieldLen)
+				}
+			}
+		}
+	}
+
 	if len(args) > 1 {
 		sig = &builtinFromUnixTime2ArgSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_FromUnixTime2Arg)
@@ -1687,7 +1702,7 @@ func evalFromUnixTime(ctx sessionctx.Context, fsp int, unixTimeStamp *types.MyDe
 		return res, true, nil
 	}
 	integralPart, err := unixTimeStamp.ToInt()
-	if err != nil && !terror.ErrorEqual(err, types.ErrTruncated) {
+	if err != nil && !terror.ErrorEqual(err, types.ErrTruncated) && !terror.ErrorEqual(err, types.ErrOverflow) {
 		return res, true, err
 	}
 	// The max integralPart should not be larger than 32536771199.
@@ -1726,6 +1741,17 @@ func evalFromUnixTime(ctx sessionctx.Context, fsp int, unixTimeStamp *types.MyDe
 		return res, true, err
 	}
 	return t, false, nil
+}
+
+// fieldString returns true if precision cannot be determined
+func fieldString(fieldType byte) bool {
+	switch fieldType {
+	case mysql.TypeString, mysql.TypeVarchar, mysql.TypeTinyBlob,
+		mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
+		return true
+	default:
+		return false
+	}
 }
 
 type builtinFromUnixTime1ArgSig struct {
@@ -6414,7 +6440,7 @@ func (c *tidbParseTsoFunctionClass) getFunction(ctx sessionctx.Context, args []E
 		return nil, err
 	}
 
-	bf.tp.SetType(mysql.TypeDate)
+	bf.tp.SetType(mysql.TypeDatetime)
 	bf.tp.SetFlen(mysql.MaxDateWidth)
 	bf.tp.SetDecimal(types.DefaultFsp)
 	sig := &builtinTidbParseTsoSig{bf}
@@ -6587,4 +6613,37 @@ func getFspByIntArg(ctx sessionctx.Context, exps []Expression) (int, error) {
 	}
 	// Should no happen. But our tests may generate non-constant input.
 	return 0, nil
+}
+
+type tidbCurrentTsoFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *tidbCurrentTsoFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt)
+	if err != nil {
+		return nil, err
+	}
+	sig := &builtinTiDBCurrentTsoSig{bf}
+	return sig, nil
+}
+
+type builtinTiDBCurrentTsoSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinTiDBCurrentTsoSig) Clone() builtinFunc {
+	newSig := &builtinTiDBCurrentTsoSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalInt evals currentTSO().
+func (b *builtinTiDBCurrentTsoSig) evalInt(row chunk.Row) (d int64, isNull bool, err error) {
+	tso, _ := b.ctx.GetSessionVars().GetSessionOrGlobalSystemVar("tidb_current_ts")
+	itso, _ := strconv.ParseInt(tso, 10, 64)
+	return itso, false, nil
 }

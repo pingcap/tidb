@@ -153,7 +153,8 @@ func (tk *TestKit) MustPartition(sql string, partitions string, args ...interfac
 		if len(partitions) == 0 && strings.Contains(rs.rows[i][3], "partition:") {
 			ok = false
 		}
-		if len(partitions) != 0 && strings.Compare(rs.rows[i][3], "partition:"+partitions) == 0 {
+		// The data format is "table: t1, partition: p0,p1,p2"
+		if len(partitions) != 0 && strings.HasSuffix(rs.rows[i][3], "partition:"+partitions) {
 			ok = true
 		}
 	}

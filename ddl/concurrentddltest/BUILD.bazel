@@ -8,6 +8,7 @@ go_test(
         "switch_test.go",
     ],
     flaky = True,
+    race = "on",
     deps = [
         "//config",
         "//ddl",

@@ -383,39 +383,22 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 	switch job.SchemaState {
 	// Stage 1, check and set FlashbackClusterJobID, and save the PD schedule.
 	case model.StateNone:
-		flashbackJobID, err := t.GetFlashbackClusterJobID()
+		if err = savePDSchedule(job); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+		readOnlyValue, err = getTiDBSuperReadOnly(sess)
 		if err != nil {
 			job.State = model.JobStateCancelled
-			return ver, err
+			return ver, errors.Trace(err)
 		}
-		if flashbackJobID == 0 || flashbackJobID == job.ID {
-			err = kv.RunInNewTxn(w.ctx, w.store, true, func(ctx context.Context, txn kv.Transaction) error {
-				return meta.NewMeta(txn).SetFlashbackClusterJobID(job.ID)
-			})
-			if err != nil {
-				job.State = model.JobStateCancelled
-				return ver, errors.Trace(err)
-			}
-			if err = savePDSchedule(job); err != nil {
-				job.State = model.JobStateCancelled
-				return ver, errors.Trace(err)
-			}
-			readOnlyValue, err = getTiDBSuperReadOnly(sess)
-			if err != nil {
-				job.State = model.JobStateCancelled
-				return ver, errors.Trace(err)
-			}
-			job.Args[readOnlyArgsOffset] = &readOnlyValue
-			gcEnableValue, err := gcutil.CheckGCEnable(sess)
-			if err != nil {
-				job.State = model.JobStateCancelled
-				return ver, errors.Trace(err)
-			}
-			job.Args[gcEnabledArgsOffset] = &gcEnableValue
-		} else {
+		job.Args[readOnlyArgsOffset] = &readOnlyValue
+		gcEnableValue, err := gcutil.CheckGCEnable(sess)
+		if err != nil {
 			job.State = model.JobStateCancelled
-			return ver, errors.Errorf("Other flashback job(ID: %d) is running", job.ID)
+			return ver, errors.Trace(err)
 		}
+		job.Args[gcEnabledArgsOffset] = &gcEnableValue
 		job.SchemaState = model.StateWriteOnly
 		return ver, nil
 	// Stage 2, check flashbackTS, close GC and PD schedule.
@@ -461,11 +444,15 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 }
 
 func finishFlashbackCluster(w *worker, job *model.Job) error {
+	// Didn't do anything during flashback, return directly
+	if job.SchemaState == model.StateNone {
+		return nil
+	}
+
 	var flashbackTS uint64
 	var pdScheduleValue map[string]interface{}
 	var readOnlyValue string
 	var gcEnabled bool
-	var jobID int64
 
 	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue, &readOnlyValue, &gcEnabled); err != nil {
 		return errors.Trace(err)
@@ -478,32 +465,23 @@ func finishFlashbackCluster(w *worker, job *model.Job) error {
 
 	err = kv.RunInNewTxn(w.ctx, w.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		jobID, err = t.GetFlashbackClusterJobID()
-		if err != nil {
+		if err = recoverPDSchedule(pdScheduleValue); err != nil {
 			return err
 		}
-		if jobID == job.ID {
-			if err = recoverPDSchedule(pdScheduleValue); err != nil {
+		if err = setTiDBSuperReadOnly(sess, readOnlyValue); err != nil {
+			return err
+		}
+		if gcEnabled {
+			if err = gcutil.EnableGC(sess); err != nil {
 				return err
 			}
-			if err = setTiDBSuperReadOnly(sess, readOnlyValue); err != nil {
+		}
+		if job.IsDone() || job.IsSynced() {
+			gcSafePoint, err := gcutil.GetGCSafePoint(sess)
+			if err != nil {
 				return err
 			}
-			if gcEnabled {
-				if err = gcutil.EnableGC(sess); err != nil {
-					return err
-				}
-			}
-			if job.IsDone() || job.IsSynced() {
-				gcSafePoint, err := gcutil.GetGCSafePoint(sess)
-				if err != nil {
-					return err
-				}
-				if err = UpdateFlashbackHistoryTSRanges(t, flashbackTS, t.StartTS, gcSafePoint); err != nil {
-					return err
-				}
-			}
-			if err = t.SetFlashbackClusterJobID(0); err != nil {
+			if err = UpdateFlashbackHistoryTSRanges(t, flashbackTS, t.StartTS, gcSafePoint); err != nil {
 				return err
 			}
 		}

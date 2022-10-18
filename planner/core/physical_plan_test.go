@@ -363,36 +363,37 @@ func TestDAGPlanBuilderUnion(t *testing.T) {
 
 func TestDAGPlanBuilderUnionScan(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, c int)")
 
 	var input []string
 	var output []struct {
 		SQL  string
 		Best string
 	}
+	planSuiteData := core.GetPlanSuiteData()
+	planSuiteData.LoadTestCases(t, &input, &output)
+
 	p := parser.New()
-	is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
 	for i, tt := range input {
+		tk.MustExec("begin;")
+		tk.MustExec("insert into t values(2, 2, 2);")
+
 		comment := fmt.Sprintf("input: %s", tt)
 		stmt, err := p.ParseOneStmt(tt, "", "")
 		require.NoError(t, err, comment)
-		require.NoError(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
-
-		// Make txn not read only.
-		txn, err := tk.Session().Txn(true)
-		require.NoError(t, err)
-		err = txn.Set(kv.Key("AAA"), []byte("BBB"))
-		require.NoError(t, err)
-		tk.Session().StmtCommit()
-		p, _, err := planner.Optimize(context.TODO(), tk.Session(), stmt, is)
+		dom := domain.GetDomain(tk.Session())
+		require.NoError(t, dom.Reload())
+		plan, _, err := planner.Optimize(context.TODO(), tk.Session(), stmt, dom.InfoSchema())
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Best = core.ToString(p)
+			output[i].Best = core.ToString(plan)
 		})
-		require.Equal(t, output[i].Best, core.ToString(p), fmt.Sprintf("input: %s", tt))
+		require.Equal(t, output[i].Best, core.ToString(plan), fmt.Sprintf("input: %s", tt))
+		tk.MustExec("rollback;")
 	}
 }
 
@@ -1208,6 +1209,41 @@ func TestForceInlineCTE(t *testing.T) {
 				require.Equal(t, output[i].Warning[j], warning.Err.Error(), comment)
 			}
 		}
+	}
+}
+
+func TestSingleConsumerCTE(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE `t` (`a` int(11));")
+	tk.MustExec("insert into t values (1), (5), (10), (15), (20), (30), (50);")
+
+	var (
+		input  []string
+		output []struct {
+			SQL     string
+			Plan    []string
+			Warning []string
+		}
+	)
+	planSuiteData := core.GetPlanSuiteData()
+	planSuiteData.LoadTestCases(t, &input, &output)
+
+	for i, ts := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = ts
+		})
+		if strings.HasPrefix(ts, "set") {
+			tk.MustExec(ts)
+			continue
+		}
+		testdata.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format='brief' " + ts).Rows())
+		})
+		tk.MustQuery("explain format='brief' " + ts).Check(testkit.Rows(output[i].Plan...))
 	}
 }
 

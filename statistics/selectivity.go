@@ -506,7 +506,7 @@ func getMaskAndRanges(ctx sessionctx.Context, exprs []expression.Expression, ran
 			break
 		}
 		var res *ranger.DetachRangeResult
-		res, err = ranger.DetachCondAndBuildRangeForIndex(ctx, exprs, cols, lengths)
+		res, err = ranger.DetachCondAndBuildRangeForIndex(ctx, exprs, cols, lengths, ctx.GetSessionVars().RangeMaxSize)
 		if err != nil {
 			return 0, nil, false, err
 		}

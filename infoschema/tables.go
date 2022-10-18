@@ -1368,18 +1368,21 @@ var tableTableTiFlashTablesCols = []columnInfo{
 	{name: "STORAGE_STABLE_NUM_SNAPSHOTS", tp: mysql.TypeLonglong, size: 64},
 	{name: "STORAGE_STABLE_OLDEST_SNAPSHOT_LIFETIME", tp: mysql.TypeDouble, size: 64},
 	{name: "STORAGE_STABLE_OLDEST_SNAPSHOT_THREAD_ID", tp: mysql.TypeLonglong, size: 64},
+	{name: "STORAGE_STABLE_OLDEST_SNAPSHOT_TRACING_ID", tp: mysql.TypeVarchar, size: 128},
 	{name: "STORAGE_STABLE_NUM_PAGES", tp: mysql.TypeLonglong, size: 64},
 	{name: "STORAGE_STABLE_NUM_NORMAL_PAGES", tp: mysql.TypeLonglong, size: 64},
 	{name: "STORAGE_STABLE_MAX_PAGE_ID", tp: mysql.TypeLonglong, size: 64},
 	{name: "STORAGE_DELTA_NUM_SNAPSHOTS", tp: mysql.TypeLonglong, size: 64},
 	{name: "STORAGE_DELTA_OLDEST_SNAPSHOT_LIFETIME", tp: mysql.TypeDouble, size: 64},
 	{name: "STORAGE_DELTA_OLDEST_SNAPSHOT_THREAD_ID", tp: mysql.TypeLonglong, size: 64},
+	{name: "STORAGE_DELTA_OLDEST_SNAPSHOT_TRACING_ID", tp: mysql.TypeVarchar, size: 128},
 	{name: "STORAGE_DELTA_NUM_PAGES", tp: mysql.TypeLonglong, size: 64},
 	{name: "STORAGE_DELTA_NUM_NORMAL_PAGES", tp: mysql.TypeLonglong, size: 64},
 	{name: "STORAGE_DELTA_MAX_PAGE_ID", tp: mysql.TypeLonglong, size: 64},
 	{name: "STORAGE_META_NUM_SNAPSHOTS", tp: mysql.TypeLonglong, size: 64},
 	{name: "STORAGE_META_OLDEST_SNAPSHOT_LIFETIME", tp: mysql.TypeDouble, size: 64},
 	{name: "STORAGE_META_OLDEST_SNAPSHOT_THREAD_ID", tp: mysql.TypeLonglong, size: 64},
+	{name: "STORAGE_META_OLDEST_SNAPSHOT_TRACING_ID", tp: mysql.TypeVarchar, size: 128},
 	{name: "STORAGE_META_NUM_PAGES", tp: mysql.TypeLonglong, size: 64},
 	{name: "STORAGE_META_NUM_NORMAL_PAGES", tp: mysql.TypeLonglong, size: 64},
 	{name: "STORAGE_META_MAX_PAGE_ID", tp: mysql.TypeLonglong, size: 64},
@@ -1396,17 +1399,30 @@ var tableTableTiFlashSegmentsCols = []columnInfo{
 	{name: "IS_TOMBSTONE", tp: mysql.TypeLonglong, size: 64},
 	{name: "SEGMENT_ID", tp: mysql.TypeLonglong, size: 64},
 	{name: "RANGE", tp: mysql.TypeVarchar, size: 64},
+	{name: "EPOCH", tp: mysql.TypeLonglong, size: 64},
 	{name: "ROWS", tp: mysql.TypeLonglong, size: 64},
 	{name: "SIZE", tp: mysql.TypeLonglong, size: 64},
-	{name: "DELETE_RANGES", tp: mysql.TypeLonglong, size: 64},
-	{name: "STABLE_SIZE_ON_DISK", tp: mysql.TypeLonglong, size: 64},
-	{name: "DELTA_PACK_COUNT", tp: mysql.TypeLonglong, size: 64},
-	{name: "STABLE_PACK_COUNT", tp: mysql.TypeLonglong, size: 64},
-	{name: "AVG_DELTA_PACK_ROWS", tp: mysql.TypeDouble, size: 64},
-	{name: "AVG_STABLE_PACK_ROWS", tp: mysql.TypeDouble, size: 64},
 	{name: "DELTA_RATE", tp: mysql.TypeDouble, size: 64},
+	{name: "DELTA_MEMTABLE_ROWS", tp: mysql.TypeLonglong, size: 64},
+	{name: "DELTA_MEMTABLE_SIZE", tp: mysql.TypeLonglong, size: 64},
+	{name: "DELTA_MEMTABLE_COLUMN_FILES", tp: mysql.TypeLonglong, size: 64},
+	{name: "DELTA_MEMTABLE_DELETE_RANGES", tp: mysql.TypeLonglong, size: 64},
+	{name: "DELTA_PERSISTED_PAGE_ID", tp: mysql.TypeLonglong, size: 64},
+	{name: "DELTA_PERSISTED_ROWS", tp: mysql.TypeLonglong, size: 64},
+	{name: "DELTA_PERSISTED_SIZE", tp: mysql.TypeLonglong, size: 64},
+	{name: "DELTA_PERSISTED_COLUMN_FILES", tp: mysql.TypeLonglong, size: 64},
+	{name: "DELTA_PERSISTED_DELETE_RANGES", tp: mysql.TypeLonglong, size: 64},
 	{name: "DELTA_CACHE_SIZE", tp: mysql.TypeLonglong, size: 64},
 	{name: "DELTA_INDEX_SIZE", tp: mysql.TypeLonglong, size: 64},
+	{name: "STABLE_PAGE_ID", tp: mysql.TypeLonglong, size: 64},
+	{name: "STABLE_ROWS", tp: mysql.TypeLonglong, size: 64},
+	{name: "STABLE_SIZE", tp: mysql.TypeLonglong, size: 64},
+	{name: "STABLE_DMFILES", tp: mysql.TypeLonglong, size: 64},
+	{name: "STABLE_DMFILES_ID_0", tp: mysql.TypeLonglong, size: 64},
+	{name: "STABLE_DMFILES_ROWS", tp: mysql.TypeLonglong, size: 64},
+	{name: "STABLE_DMFILES_SIZE", tp: mysql.TypeLonglong, size: 64},
+	{name: "STABLE_DMFILES_SIZE_ON_DISK", tp: mysql.TypeLonglong, size: 64},
+	{name: "STABLE_DMFILES_PACKS", tp: mysql.TypeLonglong, size: 64},
 	{name: "TIFLASH_INSTANCE", tp: mysql.TypeVarchar, size: 64},
 }
 
@@ -1774,6 +1790,24 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 
 // GetStoreServerInfo returns all store nodes(TiKV or TiFlash) cluster information
 func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
+	failpoint.Inject("mockStoreServerInfo", func(val failpoint.Value) {
+		if s := val.(string); len(s) > 0 {
+			var servers []ServerInfo
+			for _, server := range strings.Split(s, ";") {
+				parts := strings.Split(server, ",")
+				servers = append(servers, ServerInfo{
+					ServerType:     parts[0],
+					Address:        parts[1],
+					StatusAddr:     parts[2],
+					Version:        parts[3],
+					GitHash:        parts[4],
+					StartTimestamp: 0,
+				})
+			}
+			failpoint.Return(servers, nil)
+		}
+	})
+
 	isTiFlashStore := func(store *metapb.Store) bool {
 		isTiFlash := false
 		for _, label := range store.Labels {

@@ -66,6 +66,8 @@ type UpdateExec struct {
 	tableUpdatable []bool
 	changed        []bool
 	matches        []bool
+	// fkChecks contains the foreign key checkers. the map is tableID -> []*FKCheckExec
+	fkChecks map[int64][]*FKCheckExec
 }
 
 // prepare `handles`, `tableUpdatable`, `changed` to avoid re-computations.
@@ -191,7 +193,8 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema, row, n
 		flags := bAssignFlag[content.Start:content.End]
 
 		// Update row
-		changed, err1 := updateRecord(ctx, e.ctx, handle, oldData, newTableData, flags, tbl, false, e.memTracker)
+		fkChecks := e.fkChecks[content.TblID]
+		changed, err1 := updateRecord(ctx, e.ctx, handle, oldData, newTableData, flags, tbl, false, e.memTracker, fkChecks)
 		if err1 == nil {
 			_, exist := e.updatedRowKeys[content.Start].Get(handle)
 			memDelta := e.updatedRowKeys[content.Start].Set(handle, changed)
@@ -242,13 +245,7 @@ func (e *UpdateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 	fields := retTypes(e.children[0])
-	colsInfo := make([]*table.Column, len(fields))
-	for _, content := range e.tblColPosInfos {
-		tbl := e.tblID2table[content.TblID]
-		for i, c := range tbl.WritableCols() {
-			colsInfo[content.Start+i] = c
-		}
-	}
+	colsInfo := plannercore.GetUpdateColumnsInfo(e.tblID2table, e.tblColPosInfos, len(fields))
 	globalRowIdx := 0
 	chk := newFirstChunk(e.children[0])
 	if !e.allAssignmentsAreConstant {
@@ -536,4 +533,13 @@ func (e *updateRuntimeStats) Merge(other execdetails.RuntimeStats) {
 // Tp implements the RuntimeStats interface.
 func (e *updateRuntimeStats) Tp() int {
 	return execdetails.TpUpdateRuntimeStats
+}
+
+// GetFKChecks implements WithForeignKeyTrigger interface.
+func (e *UpdateExec) GetFKChecks() []*FKCheckExec {
+	fkChecks := make([]*FKCheckExec, 0, len(e.fkChecks))
+	for _, fkc := range e.fkChecks {
+		fkChecks = append(fkChecks, fkc...)
+	}
+	return fkChecks
 }

@@ -319,16 +319,19 @@ func (d *ddl) addBatchDDLJobs2Queue(tasks []*limitJobTask) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	return kv.RunInNewTxn(ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		jobID, err := t.GetFlashbackClusterJobID()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if jobID != 0 {
-			return errors.Errorf("Can't add to ddl table, cluster is flashing back now")
-		}
 		ids, err := t.GenGlobalIDs(len(tasks))
 		if err != nil {
 			return errors.Trace(err)
+		}
+
+		jobs, err := t.GetAllDDLJobsInQueue(meta.DefaultJobListKey)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		for _, job := range jobs {
+			if job.Type == model.ActionFlashbackCluster {
+				return errors.Errorf("Can't add ddl job, have flashback cluster job")
+			}
 		}
 
 		for i, task := range tasks {
@@ -386,17 +389,24 @@ func setJobStateToQueueing(job *model.Job) {
 func (d *ddl) addBatchDDLJobs2Table(tasks []*limitJobTask) error {
 	var ids []int64
 	var err error
+
+	sess, err := d.sessPool.get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer d.sessPool.put(sess)
+	job, err := getJobsBySQL(newSession(sess), JobTable, fmt.Sprintf("type = %d", model.ActionFlashbackCluster))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(job) != 0 {
+		return errors.Errorf("Can't add ddl job, have flashback cluster job")
+	}
+
 	startTS := uint64(0)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err = kv.RunInNewTxn(ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		jobID, err := t.GetFlashbackClusterJobID()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if jobID != 0 {
-			return errors.Errorf("Can't add to ddl table, cluster is flashing back now")
-		}
 		ids, err = t.GenGlobalIDs(len(tasks))
 		if err != nil {
 			return errors.Trace(err)
@@ -415,13 +425,8 @@ func (d *ddl) addBatchDDLJobs2Table(tasks []*limitJobTask) error {
 			jobTasks[i] = job
 			injectModifyJobArgFailPoint(job)
 		}
-		sess, err1 := d.sessPool.get()
-		if err1 == nil {
-			sess.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
-			err1 = insertDDLJobs2Table(newSession(sess), true, jobTasks...)
-			d.sessPool.put(sess)
-		}
-		err = err1
+		sess.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
+		err = insertDDLJobs2Table(newSession(sess), true, jobTasks...)
 	}
 	return errors.Trace(err)
 }
@@ -1130,19 +1135,6 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	if job.Type != model.ActionMultiSchemaChange {
 		logutil.Logger(w.logCtx).Info("[ddl] run DDL job", zap.String("job", job.String()))
 	}
-
-	// Should check flashbackClusterJobID.
-	// Some ddl jobs maybe added between check and insert into ddl job table.
-	flashbackJobID, err := t.GetFlashbackClusterJobID()
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, err
-	}
-	if flashbackJobID != 0 && flashbackJobID != job.ID {
-		job.State = model.JobStateCancelled
-		return ver, errors.Errorf("Can't do ddl job, cluster is flashing back now")
-	}
-
 	timeStart := time.Now()
 	if job.RealStartTS == 0 {
 		job.RealStartTS = t.StartTS
@@ -1211,7 +1203,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionRenameIndex:
 		ver, err = onRenameIndex(d, t, job)
 	case model.ActionAddForeignKey:
-		ver, err = onCreateForeignKey(d, t, job)
+		ver, err = w.onCreateForeignKey(d, t, job)
 	case model.ActionDropForeignKey:
 		ver, err = onDropForeignKey(d, t, job)
 	case model.ActionTruncateTable:
@@ -1531,13 +1523,25 @@ func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job, multiInfos ...
 	default:
 		diff.TableID = job.TableID
 	}
-	for _, info := range multiInfos {
-		diff.AffectedOpts = append(diff.AffectedOpts, &model.AffectedOption{
-			SchemaID:    info.schemaID,
-			OldSchemaID: info.schemaID,
-			TableID:     info.tblInfo.ID,
-			OldTableID:  info.tblInfo.ID,
-		})
+	if len(multiInfos) > 0 {
+		existsMap := make(map[int64]struct{})
+		existsMap[diff.TableID] = struct{}{}
+		for _, affect := range diff.AffectedOpts {
+			existsMap[affect.TableID] = struct{}{}
+		}
+		for _, info := range multiInfos {
+			_, exist := existsMap[info.tblInfo.ID]
+			if exist {
+				continue
+			}
+			existsMap[info.tblInfo.ID] = struct{}{}
+			diff.AffectedOpts = append(diff.AffectedOpts, &model.AffectedOption{
+				SchemaID:    info.schemaID,
+				OldSchemaID: info.schemaID,
+				TableID:     info.tblInfo.ID,
+				OldTableID:  info.tblInfo.ID,
+			})
+		}
 	}
 	err = t.SetSchemaDiff(diff)
 	return schemaVersion, errors.Trace(err)

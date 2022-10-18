@@ -325,6 +325,10 @@ type StatementContext struct {
 
 	// RangeFallback indicates that building complete ranges exceeds the memory limit so it falls back to less accurate ranges such as full range.
 	RangeFallback bool
+
+	// IsExplainAnalyzeDML is true if the statement is "explain analyze DML executors", before responding the explain
+	// results to the client, the transaction should be committed first. See issue #37373 for more details.
+	IsExplainAnalyzeDML bool
 }
 
 // StmtHints are SessionVars related sql hints.

@@ -220,8 +220,10 @@ func (d SchemaTracker) CreateTableWithInfo(
 	ctx sessionctx.Context,
 	dbName model.CIStr,
 	info *model.TableInfo,
-	onExist ddl.OnExist,
+	cs ...ddl.CreateTableWithInfoConfigurier,
 ) error {
+	c := ddl.GetCreateTableWithInfoConfig(cs)
+
 	schema := d.SchemaByName(dbName)
 	if schema == nil {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName)
@@ -229,7 +231,7 @@ func (d SchemaTracker) CreateTableWithInfo(
 
 	oldTable, _ := d.TableByName(dbName, info.Name)
 	if oldTable != nil {
-		switch onExist {
+		switch c.OnExist {
 		case ddl.OnExistIgnore:
 			return nil
 		case ddl.OnExistReplace:
@@ -1111,9 +1113,9 @@ func (SchemaTracker) AlterPlacementPolicy(ctx sessionctx.Context, stmt *ast.Alte
 }
 
 // BatchCreateTableWithInfo implements the DDL interface, it will call CreateTableWithInfo for each table.
-func (d SchemaTracker) BatchCreateTableWithInfo(ctx sessionctx.Context, schema model.CIStr, info []*model.TableInfo, onExist ddl.OnExist) error {
+func (d SchemaTracker) BatchCreateTableWithInfo(ctx sessionctx.Context, schema model.CIStr, info []*model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
 	for _, tableInfo := range info {
-		if err := d.CreateTableWithInfo(ctx, schema, tableInfo, onExist); err != nil {
+		if err := d.CreateTableWithInfo(ctx, schema, tableInfo, cs...); err != nil {
 			return err
 		}
 	}
