@@ -48,7 +48,7 @@ Later we can implement the ingest (lightning way) optimization, since DDL module
 
 There are two parts of the design:
 - Schema change states throughout the operation
-- Reorganization implementation
+- Reorganization implementation, which will be handled in the StateWriteReorganization state.
 
 Where the schema change states will clarify which different steps that will be done in which schema state transitions.
 
@@ -56,8 +56,9 @@ Where the schema change states will clarify which different steps that will be d
 
 Since this operation will:
 - create new partitions
+- copy data from dropped partitions to new partitions and create their indexes
+- change the partition definitions
 - drop existing partitions
-- copy data from dropped partitions to new partitions
 
 It will use all these schema change stages:
 
