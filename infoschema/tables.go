@@ -1903,16 +1903,16 @@ func SysVarHiddenForSem(ctx sessionctx.Context, sysVarNameInLower string) bool {
 }
 
 // GetDataFromSessionVariables return the [name, value] of all session variables
-func GetDataFromSessionVariables(ctx sessionctx.Context) ([][]types.Datum, error) {
-	sessionVars := ctx.GetSessionVars()
+func GetDataFromSessionVariables(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+	sessionVars := sctx.GetSessionVars()
 	sysVars := variable.GetSysVars()
 	rows := make([][]types.Datum, 0, len(sysVars))
 	for _, v := range sysVars {
-		if SysVarHiddenForSem(ctx, v.Name) {
+		if SysVarHiddenForSem(sctx, v.Name) {
 			continue
 		}
 		var value string
-		value, err := sessionVars.GetSessionOrGlobalSystemVar(v.Name)
+		value, err := sessionVars.GetSessionOrGlobalSystemVar(ctx, v.Name)
 		if err != nil {
 			return nil, err
 		}
@@ -2016,8 +2016,7 @@ type infoschemaTable struct {
 }
 
 // IterRecords implements table.Table IterRecords interface.
-func (*infoschemaTable) IterRecords(_ sessionctx.Context, _ []*table.Column,
-	_ table.RecordIterFunc) error {
+func (*infoschemaTable) IterRecords(ctx context.Context, sctx sessionctx.Context, cols []*table.Column, fn table.RecordIterFunc) error {
 	return nil
 }
 
