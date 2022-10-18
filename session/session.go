@@ -1604,6 +1604,7 @@ func (s *session) getOomAlarmVariablesInfo() util.OOMAlarmVariablesInfo {
 	return util.OOMAlarmVariablesInfo{
 		SessionAnalyzeVersion:         s.sessionVars.AnalyzeVersion,
 		SessionEnabledRateLimitAction: s.sessionVars.EnabledRateLimitAction,
+		SessionMemQuotaQuery:          s.sessionVars.MemQuotaQuery,
 	}
 }
 
