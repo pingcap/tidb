@@ -76,7 +76,7 @@ const (
 	TiDBBroadCastJoin = "tidb_bcj"
 	// HintBCJ indicates applying broadcast join by force.
 	HintBCJ = "broadcast_join"
-	// HintShuffleJoin ...
+	// HintShuffleJoin indicates applying shuffle join by force.
 	HintShuffleJoin = "shuffle_join"
 
 	// HintStraightJoin causes TiDB to join tables in the order in which they appear in the FROM clause.
@@ -103,10 +103,14 @@ const (
 	// HintHashAgg is hint enforce hash aggregation.
 	HintHashAgg = "hash_agg"
 	// HintStreamAgg is hint enforce stream aggregation.
-	HintStreamAgg    = "stream_agg"
+	HintStreamAgg = "stream_agg"
+	// HintMPP1PhaseAgg enforces the optimizer to use the mpp-1phase aggregation.
 	HintMPP1PhaseAgg = "mpp_1phase_agg"
+	// HintMPP2PhaseAgg enforces the optimizer to use the mpp-2phase aggregation.
 	HintMPP2PhaseAgg = "mpp_2phase_agg"
-	HintMPPTiDBAgg   = "mpp_tidb_agg"
+	// HintMPPTiDBAgg enforces the optimizer to use the mpp-tidb aggregation.
+	HintMPPTiDBAgg = "mpp_tidb_agg"
+	// HintMPPScalarAgg enforces the optimizer to use the mpp-scalar aggregation.
 	HintMPPScalarAgg = "mpp_scalar_agg"
 	// HintUseIndex is hint enforce using some indexes.
 	HintUseIndex = "use_index"

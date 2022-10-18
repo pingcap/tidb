@@ -1940,13 +1940,15 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]P
 	joins := make([]PhysicalPlan, 0, 8)
 	canPushToTiFlash := p.canPushToCop(kv.TiFlash)
 	if p.ctx.GetSessionVars().IsMPPAllowed() && canPushToTiFlash {
-		bcastJoins := p.tryToGetMppHashJoin(prop, true)
-		if (p.preferJoinType&preferBCJoin) > 0 && len(bcastJoins) > 0 {
-			return bcastJoins, true, nil
-		}
 		shuffleJoins := p.tryToGetMppHashJoin(prop, false)
-		if (p.preferJoinType&preferShuffleJoin) > 0 && len(shuffleJoins) > 0 {
+		if (p.preferJoinType&preferShuffleJoin) > 0 && len(shuffleJoins) > 0 { // has shuffle_join hints
 			return shuffleJoins, true, nil
+		}
+		bcastJoins := p.tryToGetMppHashJoin(prop, true)
+		if len(bcastJoins) > 0 &&
+			((p.preferJoinType&preferBCJoin) > 0 || // specified by bcast_join hints
+				p.shouldUseMPPBCJ()) { // specified by heuristic rules
+			return bcastJoins, true, nil
 		}
 		joins = append(joins, bcastJoins...)
 		joins = append(joins, shuffleJoins...)
@@ -2742,35 +2744,6 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 		return nil
 	}
 
-	defer func() {
-		var mppMode AggMppRunMode
-		var preMode bool
-		if la.aggHints.preferAggType&preferMPP1PhaseAgg > 0 {
-			preMode = true
-			mppMode = Mpp1Phase
-		} else if la.aggHints.preferAggType&preferMPP2PhaseAgg > 0 {
-			preMode = true
-			mppMode = Mpp2Phase
-		} else if la.aggHints.preferAggType&preferMPPTiDBAgg > 0 {
-			preMode = true
-			mppMode = MppTiDB
-		} else if la.aggHints.preferAggType&preferMPPScalarAgg > 0 {
-			preMode = true
-			mppMode = MppScalar
-		}
-		fmt.Println(">>>>>>>> spec >> ", mppMode)
-		if preMode {
-			var tmp []PhysicalPlan
-			for _, agg := range hashAggs {
-				hg := agg.(*PhysicalHashAgg)
-				if hg.MppRunMode == mppMode {
-					tmp = append(tmp, agg)
-				}
-			}
-			hashAggs = tmp
-		}
-	}()
-
 	// Is this aggregate a final stage aggregate?
 	// Final agg can't be split into multi-stage aggregate
 	hasFinalAgg := len(la.AggFuncs) > 0 && la.AggFuncs[0].Mode == aggregation.FinalMode
@@ -2831,6 +2804,31 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 			agg.MppRunMode = MppTiDB
 		}
 		hashAggs = append(hashAggs, agg)
+	}
+
+	// handle MPP Agg hints
+	var preferModes []AggMppRunMode
+	if la.aggHints.preferAggType&preferMPP1PhaseAgg > 0 {
+		preferModes = append(preferModes, Mpp1Phase)
+	} else if la.aggHints.preferAggType&preferMPP2PhaseAgg > 0 {
+		preferModes = append(preferModes, Mpp2Phase)
+	} else if la.aggHints.preferAggType&preferMPPTiDBAgg > 0 {
+		preferModes = append(preferModes, MppTiDB)
+	} else if la.aggHints.preferAggType&preferMPPScalarAgg > 0 {
+		preferModes = append(preferModes, MppScalar)
+	}
+	if len(preferModes) > 0 {
+		var preferPlans []PhysicalPlan
+		for _, agg := range hashAggs {
+			hg := agg.(*PhysicalHashAgg)
+			for _, mode := range preferModes {
+				if hg.MppRunMode == mode {
+					preferPlans = append(preferPlans, hg)
+					break
+				}
+			}
+		}
+		hashAggs = preferPlans
 	}
 	return
 }
