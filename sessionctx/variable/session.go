@@ -1740,7 +1740,7 @@ func (s *SessionVars) GetCharsetInfo() (charset, collation string) {
 // GetParseParams gets the parse parameters from session variables.
 func (s *SessionVars) GetParseParams() []parser.ParseParam {
 	chs, coll := s.GetCharsetInfo()
-	cli, err := s.GetSessionOrGlobalSystemVar(CharacterSetClient)
+	cli, err := s.GetSessionOrGlobalSystemVar(context.Background(), CharacterSetClient)
 	if err != nil {
 		cli = ""
 	}
@@ -1988,7 +1988,7 @@ func (s *SessionVars) ClearStmtVars() {
 // GetSessionOrGlobalSystemVar gets a system variable.
 // If it is a session only variable, use the default value defined in code.
 // Returns error if there is no such variable.
-func (s *SessionVars) GetSessionOrGlobalSystemVar(name string) (string, error) {
+func (s *SessionVars) GetSessionOrGlobalSystemVar(ctx context.Context, name string) (string, error) {
 	sv := GetSysVar(name)
 	if sv == nil {
 		return "", ErrUnknownSystemVar.GenWithStackByArgs(name)
@@ -2014,7 +2014,7 @@ func (s *SessionVars) GetSessionOrGlobalSystemVar(name string) (string, error) {
 		}
 		return sv.GetSessionFromHook(s)
 	}
-	return sv.GetGlobalFromHook(s)
+	return sv.GetGlobalFromHook(ctx, s)
 }
 
 // GetSessionStatesSystemVar gets the session variable value for session states.
@@ -2041,12 +2041,12 @@ func (s *SessionVars) GetSessionStatesSystemVar(name string) (string, bool, erro
 }
 
 // GetGlobalSystemVar gets a global system variable.
-func (s *SessionVars) GetGlobalSystemVar(name string) (string, error) {
+func (s *SessionVars) GetGlobalSystemVar(ctx context.Context, name string) (string, error) {
 	sv := GetSysVar(name)
 	if sv == nil {
 		return "", ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
-	return sv.GetGlobalFromHook(s)
+	return sv.GetGlobalFromHook(ctx, s)
 }
 
 // SetStmtVar sets system variable and updates SessionVars states.
