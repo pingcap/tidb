@@ -11,6 +11,8 @@ go_library(
 go_test(
     name = "prealloc_table_id_test",
     srcs = ["alloc_test.go"],
+    flaky = True,
+    race = "on",
     deps = [
         ":prealloc_table_id",
         "//br/pkg/metautil",
