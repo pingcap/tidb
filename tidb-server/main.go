@@ -190,7 +190,7 @@ func main() {
 		checkTempStorageQuota()
 	}
 	setupLog()
-	setupExtension()
+	setupExtensions()
 
 	err := cpuprofile.StartCPUProfiler()
 	terror.MustNil(err)
@@ -728,7 +728,7 @@ func setupLog() {
 	util.InternalHTTPClient()
 }
 
-func setupExtension() *extension.Extensions {
+func setupExtensions() *extension.Extensions {
 	err := extension.Setup()
 	terror.MustNil(err)
 
