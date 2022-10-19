@@ -945,8 +945,23 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) (_ Exec
 			}
 			continue
 		}
+		keys, err := a.getKeysNeedToLock(txn)
+		if err != nil || len(keys) == 0 {
+			return e, err
+		}
+		seVars := a.Ctx.GetSessionVars()
+		lockCtx, err := newLockCtx(sctx, seVars.LockWaitTimeout, len(keys))
+		if err != nil {
+			return e, err
+		}
+		var lockKeyStats *util.LockKeysDetails
+		ctx = context.WithValue(ctx, util.LockKeysDetailCtxKey, &lockKeyStats)
 		startLocking := time.Now()
-		err = a.doPessimisticLock(ctx, txn)
+		err = txn.LockKeys(ctx, lockCtx, keys...)
+		a.phaseLockDurations[0] += time.Since(startLocking)
+		if lockKeyStats != nil {
+			seVars.StmtCtx.MergeLockKeysExecDetails(lockKeyStats)
+		}
 		if err == nil {
 			return e, nil
 		}
@@ -961,20 +976,28 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) (_ Exec
 	}
 }
 
-func (a *ExecStmt) doPessimisticLock(ctx context.Context, txn kv.Transaction) error {
-	sctx := a.Ctx
-	txnCtx := sctx.GetSessionVars().TxnCtx
+func (a *ExecStmt) getKeysNeedToLock(txn kv.Transaction) ([]kv.Key, error) {
 	keys, err1 := txn.(pessimisticTxn).KeysNeedToLock()
 	if err1 != nil {
-		return err1
+		return nil, err1
 	}
-	keys = txnCtx.CollectUnchangedRowKeys(keys)
+	keys = a.Ctx.GetSessionVars().TxnCtx.CollectUnchangedRowKeys(keys)
 	if len(keys) == 0 {
-		return nil
+		return nil, nil
 	}
-	keys = filterTemporaryTableKeys(sctx.GetSessionVars(), keys)
-	seVars := sctx.GetSessionVars()
+	seVars := a.Ctx.GetSessionVars()
+	keys = filterTemporaryTableKeys(seVars, keys)
 	keys = filterLockTableKeys(seVars.StmtCtx, keys)
+	return keys, nil
+}
+
+func (a *ExecStmt) doPessimisticLock(ctx context.Context, txn kv.Transaction) error {
+	sctx := a.Ctx
+	keys, err := a.getKeysNeedToLock(txn)
+	if err != nil || len(keys) == 0 {
+		return err
+	}
+	seVars := a.Ctx.GetSessionVars()
 	lockCtx, err := newLockCtx(sctx, seVars.LockWaitTimeout, len(keys))
 	if err != nil {
 		return err
