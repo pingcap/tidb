@@ -630,7 +630,7 @@ func (a *ExecStmt) handleForeignKeyCascade(ctx context.Context, fkc *FKCascadeEx
 		terror.Call(e.Close)
 		return err
 	}
-	_, _, e, err = a.handleNoDelay(ctx, e, isPessimistic)
+	err = a.handleFKCascadeNoDelay(ctx, e, isPessimistic)
 	if err != nil {
 		return err
 	}
@@ -726,6 +726,29 @@ func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic 
 	}
 
 	return false, nil, e, nil
+}
+
+func (a *ExecStmt) handleFKCascadeNoDelay(ctx context.Context, e Executor, isPessimistic bool) error {
+	_, err := a.handleNoDelayExecutor(ctx, e)
+	if err != nil {
+		// When handle foreign key failed, we need to do some work then we can retry, such as:
+		// - rollback the txn mem-buffer to the statement execution begin.
+		// - StmtCtx need to be careful handled.
+		// But currently for simplicity, just return error here.
+		return errors.Errorf("handle foreign key cascade failed, error: %v", err)
+	}
+	if !isPessimistic {
+		return nil
+	}
+	txn, err := a.Ctx.Txn(false)
+	if err != nil {
+		return err
+	}
+	err = a.doPessimisticLock(ctx, txn)
+	if err != nil {
+		return errors.Errorf("handle foreign key cascade lock failed, error: %v", err)
+	}
+	return nil
 }
 
 func isNoResultPlan(p plannercore.Plan) bool {
@@ -922,29 +945,8 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) (_ Exec
 			}
 			continue
 		}
-		keys, err1 := txn.(pessimisticTxn).KeysNeedToLock()
-		if err1 != nil {
-			return e, err1
-		}
-		keys = txnCtx.CollectUnchangedRowKeys(keys)
-		if len(keys) == 0 {
-			return e, nil
-		}
-		keys = filterTemporaryTableKeys(sctx.GetSessionVars(), keys)
-		seVars := sctx.GetSessionVars()
-		keys = filterLockTableKeys(seVars.StmtCtx, keys)
-		lockCtx, err := newLockCtx(sctx, seVars.LockWaitTimeout, len(keys))
-		if err != nil {
-			return e, err
-		}
-		var lockKeyStats *util.LockKeysDetails
-		ctx = context.WithValue(ctx, util.LockKeysDetailCtxKey, &lockKeyStats)
 		startLocking := time.Now()
-		err = txn.LockKeys(ctx, lockCtx, keys...)
-		a.phaseLockDurations[0] += time.Since(startLocking)
-		if lockKeyStats != nil {
-			seVars.StmtCtx.MergeLockKeysExecDetails(lockKeyStats)
-		}
+		err = a.doPessimisticLock(ctx, txn)
 		if err == nil {
 			return e, nil
 		}
@@ -959,6 +961,35 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) (_ Exec
 	}
 }
 
+func (a *ExecStmt) doPessimisticLock(ctx context.Context, txn kv.Transaction) error {
+	sctx := a.Ctx
+	txnCtx := sctx.GetSessionVars().TxnCtx
+	keys, err1 := txn.(pessimisticTxn).KeysNeedToLock()
+	if err1 != nil {
+		return err1
+	}
+	keys = txnCtx.CollectUnchangedRowKeys(keys)
+	if len(keys) == 0 {
+		return nil
+	}
+	keys = filterTemporaryTableKeys(sctx.GetSessionVars(), keys)
+	seVars := sctx.GetSessionVars()
+	keys = filterLockTableKeys(seVars.StmtCtx, keys)
+	lockCtx, err := newLockCtx(sctx, seVars.LockWaitTimeout, len(keys))
+	if err != nil {
+		return err
+	}
+	var lockKeyStats *util.LockKeysDetails
+	ctx = context.WithValue(ctx, util.LockKeysDetailCtxKey, &lockKeyStats)
+	startLocking := time.Now()
+	err = txn.LockKeys(ctx, lockCtx, keys...)
+	a.phaseLockDurations[0] += time.Since(startLocking)
+	if lockKeyStats != nil {
+		seVars.StmtCtx.MergeLockKeysExecDetails(lockKeyStats)
+	}
+	return err
+}
+
 // handlePessimisticLockError updates TS and rebuild executor if the err is write conflict.
 func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error) (_ Executor, err error) {
 	if lockErr == nil {
@@ -971,13 +1002,6 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 			sessiontxn.AddAssertEntranceForLockError(a.Ctx, "errDuplicateKey")
 		}
 	})
-	if a.Ctx.GetSessionVars().StmtCtx.InHandleForeignKeyTrigger {
-		// When handle foreign key meet lock error, we need to do more work then we can retry, such as:
-		// - rollback the txn mem-buffer to the statement execution begin.
-		// - StmtCtx need to be careful handled.
-		// But currently for simplicity, just return error here.
-		return nil, errors.Errorf("handle foreign key cascade meet lock error: %v", lockErr.Error())
-	}
 
 	defer func() {
 		if _, ok := errors.Cause(err).(*tikverr.ErrDeadlock); ok {

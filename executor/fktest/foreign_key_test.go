@@ -1226,7 +1226,7 @@ func TestForeignKeyOnDeleteCascade2(t *testing.T) {
 	// todo(crazycs520): make following statement execute successfully.
 	err := tk.ExecToErr("delete from t1 where id = 1")
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "handle foreign key cascade meet lock error: [kv:9007]Write conflict")
+	require.Contains(t, err.Error(), "handle foreign key cascade failed, error: [kv:9007]Write conflict")
 	tk.MustExec("commit")
 }
 
