@@ -60,7 +60,8 @@ Then a `Flashback To Timestamp` DDL job can be simply divided into the following
 * Save values of some global variables and PD schedule. Those values will be changed during `Flashback`.
 
 * Pre-checks. After all checks are passed, TiDB will disable GC and closed PD schedule for the cluster. The specific checks are as follows:
-    * The flashbackTS is before `tikv_gc_safe_point`.
+    * The FlashbackTS is after `tikv_gc_safe_point`.
+    * The FlashbackTS is before the minimal store resolved TS.
     * No related DDL history in flashback time range.
     * No running related DDL jobs.
 
