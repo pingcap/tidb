@@ -97,7 +97,8 @@ const (
 	ActionCreateTables                  ActionType = 60
 	ActionMultiSchemaChange             ActionType = 61
 	ActionFlashbackCluster              ActionType = 62
-	ActionReorganizePartition           ActionType = 63
+	// TODO: Add support for this in TiFlash!
+	ActionReorganizePartition ActionType = 63
 )
 
 var actionMap = map[ActionType]string{
