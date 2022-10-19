@@ -976,6 +976,10 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 		}
 	})
 	if a.inHandleFK {
+		// When handle foreign key meet lock error, we need to do more work then we can retry, such as:
+		// - rollback the txn mem-buffer to the statement execution begin.
+		// - StmtCtx need to be careful handled.
+		// But currently for simplicity, just return error here.
 		return nil, errors.Errorf("handle foreign key cascade meet lock error: %v", lockErr.Error())
 	}
 
