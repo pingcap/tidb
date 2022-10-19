@@ -105,6 +105,11 @@ type poolColumnAllocator struct {
 // poolColumnAllocator implements the ColumnAllocator interface.
 func (alloc *poolColumnAllocator) NewColumn(ft *types.FieldType, count int) *Column {
 	typeSize := getFixedLen(ft)
+	return alloc.NewSizeColumn(typeSize, count)
+}
+
+// poolColumnAllocator implements the ColumnAllocator interface.
+func (alloc *poolColumnAllocator) NewSizeColumn(typeSize int, count int) *Column {
 	l := alloc.pool[typeSize]
 	if l != nil && !l.empty() {
 		//col := l.pop()

@@ -118,7 +118,7 @@ func (e *ParallelNestedLoopApplyExec) Open(ctx context.Context) error {
 	e.outerRowCh = make(chan outerRow)
 	e.exit = make(chan struct{})
 	for i := 0; i < e.concurrency; i++ {
-		e.freeChkCh <- tryNewCacheChunk(e)
+		e.freeChkCh <- newFirstChunk(e)
 	}
 
 	if e.useCache {

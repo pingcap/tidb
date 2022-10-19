@@ -1277,6 +1277,7 @@ type SessionVars struct {
 		Lock  sync.Mutex
 		Alloc chunk.Allocator
 	}
+	EnableReuseCheck bool
 }
 
 // GetNewChunk Attempt to request memory from the chunk pool

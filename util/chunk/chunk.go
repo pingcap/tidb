@@ -121,6 +121,14 @@ func renewColumns(oldCol []*Column, capacity int) []*Column {
 	return columns
 }
 
+func renewColumnsWithCache(oldCol []*Column, capacity int, alloc allocator) []*Column {
+	columns := make([]*Column, 0, len(oldCol))
+	for _, col := range oldCol {
+		columns = append(columns, alloc.columnAlloc.NewSizeColumn(col.typeSize(), capacity))
+	}
+	return columns
+}
+
 // renewEmpty creates a new Chunk based on an existing Chunk
 // but keep columns empty.
 func renewEmpty(chk *Chunk) *Chunk {
@@ -316,6 +324,29 @@ func (c *Chunk) GrowAndReset(maxChunkSize int) {
 	}
 	c.capacity = newCap
 	c.columns = renewColumns(c.columns, newCap)
+	c.numVirtualRows = 0
+	c.requiredRows = maxChunkSize
+}
+
+// GrowAndReset resets the Chunk and doubles the capacity of the Chunk.
+// The doubled capacity should not be larger than maxChunkSize.
+func (c *Chunk) GrowAndResetWithCache(maxChunkSize int, alloc Allocator) {
+	c.sel = nil
+	if c.columns == nil {
+		return
+	}
+	newCap := reCalcCapacity(c, maxChunkSize)
+	if newCap <= c.capacity {
+		c.Reset()
+		return
+	}
+	c.capacity = newCap
+	if alloc == nil {
+		c.columns = renewColumns(c.columns, newCap)
+	} else {
+
+	}
+
 	c.numVirtualRows = 0
 	c.requiredRows = maxChunkSize
 }

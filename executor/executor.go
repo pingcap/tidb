@@ -1783,8 +1783,8 @@ func (e *UnionExec) initialize(ctx context.Context) {
 		e.concurrency = len(e.children)
 	}
 	for i := 0; i < e.concurrency; i++ {
-		//e.results = append(e.results, newFirstChunk(e.children[0]))
-		e.results = append(e.results, newCacheChunk(e.ctx.GetSessionVars(), e.children[0]))
+		e.results = append(e.results, newFirstChunk(e.children[0]))
+		//e.results = append(e.results, newCacheChunk(e.ctx.GetSessionVars(), e.children[0]))
 	}
 	e.resultPool = make(chan *unionWorkerResult, e.concurrency)
 	e.resourcePools = make([]chan *chunk.Chunk, e.concurrency)
