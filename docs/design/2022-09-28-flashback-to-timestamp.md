@@ -4,7 +4,7 @@
 
 ## Abstract
 
-This proposal aims to support `Flashback To Timestamp` and describe what `Flashback To Timestamp` should looks like and how to implement it.
+This proposal aims to support `Flashback To Timestamp` and describe what `Flashback To Timestamp` should look like and how to implement it.
 
 ## Background
 
