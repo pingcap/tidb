@@ -182,6 +182,7 @@
       "util/trxevents/": "util/trxevents/ code",
       "util/watcher/": "util/watcher/ code",
       "util/gctuner": "util/gctuner",
+      "util/bytespool": "util/bytespool",
       "store/mockstore/unistore/util": "store/mockstore/unistore/util code",
       "ddl/util/": "ddl/util code"
     }
@@ -199,6 +200,7 @@
     },
     "only_files": {
       "util/gctuner": "only for util/gctuner",
+      "util/bytespool": "only for util/bytespool",
       "br/pkg/lightning/mydump/": "only for br/pkg/lightning/mydump/",
       "br/pkg/lightning/restore/opts": "only for br/pkg/lightning/restore/opts",
       "executor/aggregate.go": "only for executor/aggregate.go",
@@ -329,6 +331,7 @@
     "only_files": {
       "br/pkg/lightning/mydump/": "br/pkg/lightning/mydump/",
       "br/pkg/lightning/restore/opts": "br/pkg/lightning/restore/opts",
+      "util/bytespool": "util/bytespool",
       "kv/": "kv code",
       "util/memory": "util/memory",
       "ddl/": "ddl",
@@ -748,6 +751,7 @@
     },
     "only_files": {
       "util/gctuner": "util/gctuner",
+      "util/bytespool": "util/bytespool",
       "br/pkg/lightning/mydump/": "br/pkg/lightning/mydump/",
       "br/pkg/lightning/restore/opts": "br/pkg/lightning/restore/opts",
       "executor/aggregate.go": "executor/aggregate.go",
