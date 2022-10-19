@@ -368,11 +368,11 @@ func DeleteTiFlashTableSyncProgress(tableInfo *model.TableInfo) error {
 				return err
 			}
 		}
-		return nil
 	} else {
 		key := fmt.Sprintf("%s/%v", TiFlashTableSyncProgressPath, tableInfo.ID)
 		return util.DeleteKeyFromEtcd(key, is.etcdCli, keyOpDefaultRetryCnt, keyOpDefaultTimeout)
 	}
+	return nil
 }
 
 // GetTiFlashTableSyncProgress uses to get all the tiflash table replica sync progress.
