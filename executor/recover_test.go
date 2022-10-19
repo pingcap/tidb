@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/auth"
-	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/gcutil"
@@ -237,6 +236,14 @@ func TestFlashbackTable(t *testing.T) {
 	tk.MustExec("flashback table t")
 	tk.MustExec("insert into t values (3)")
 	tk.MustQuery("select a from t order by a").Check(testkit.Rows("1", "2", "3"))
+
+	tk.MustExec("drop table if exists t, t1")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values (3)")
+	tk.MustExec("create table t1(a int)")
+	tk.MustExec("insert into t1 values (3)")
+	tk.MustExec("drop table t, t1")
+	tk.MustGetErrCode("flashback table t, t1", errno.ErrUnsupportedDDLOperation)
 }
 
 func TestRecoverTempTable(t *testing.T) {
@@ -327,7 +334,7 @@ func TestRecoverClusterMeetError(t *testing.T) {
 	tk.MustExec("CREATE USER 'testflashback'@'localhost';")
 	newTk := testkit.NewTestKit(t, store)
 	require.NoError(t, newTk.Session().Auth(&auth.UserIdentity{Username: "testflashback", Hostname: "localhost"}, nil, nil))
-	newTk.MustGetErrCode(fmt.Sprintf("flashback cluster to timestamp '%s'", time.Now().Add(0-30*time.Second)), int(core.ErrSpecificAccessDenied.Code()))
+	newTk.MustGetErrCode(fmt.Sprintf("flashback cluster to timestamp '%s'", time.Now().Add(0-30*time.Second)), errno.ErrPrivilegeCheckFail)
 	tk.MustExec("drop user 'testflashback'@'localhost';")
 
 	// Flashback failed because of ddl history.

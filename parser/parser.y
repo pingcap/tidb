@@ -900,7 +900,7 @@ import (
 	ExplainableStmt            "explainable statement"
 	FlushStmt                  "Flush statement"
 	FlashbackTableStmt         "Flashback table statement"
-	FlashbackClusterStmt       "Flashback cluster statement"
+	FlashbackToTimestampStmt   "Flashback cluster statement"
 	GrantStmt                  "Grant statement"
 	GrantProxyStmt             "Grant proxy statement"
 	GrantRoleStmt              "Grant role statement"
@@ -2584,16 +2584,34 @@ RecoverTableStmt:
 
 /*******************************************************************
  *
- *  Flush Back Cluster Statement
+ *  FLASHBACK [CLUSTER | DATABASE | TABLE] TO TIMESTAMP
  *
  *  Example:
  *
  *******************************************************************/
-FlashbackClusterStmt:
+FlashbackToTimestampStmt:
 	"FLASHBACK" "CLUSTER" "TO" "TIMESTAMP" stringLit
 	{
-		$$ = &ast.FlashBackClusterStmt{
+		$$ = &ast.FlashBackToTimestampStmt{
 			FlashbackTS: ast.NewValueExpr($5, "", ""),
+		}
+	}
+|	"FLASHBACK" "TABLE" TableNameList "TO" "TIMESTAMP" stringLit
+	{
+		$$ = &ast.FlashBackToTimestampStmt{
+			Tables:      $3.([]*ast.TableName),
+			FlashbackTS: ast.NewValueExpr($6, "", ""),
+		}
+	}
+|	"FLASHBACK" DatabaseSym DBNameList "TO" "TIMESTAMP" stringLit
+	{
+		dbName := make([]model.CIStr, 0, len($3.([]string)))
+		for _, val := range $3.([]string) {
+			dbName = append(dbName, model.NewCIStr(val))
+		}
+		$$ = &ast.FlashBackToTimestampStmt{
+			Schemas:     dbName,
+			FlashbackTS: ast.NewValueExpr($6, "", ""),
 		}
 	}
 
@@ -2605,10 +2623,10 @@ FlashbackClusterStmt:
  *
  *******************************************************************/
 FlashbackTableStmt:
-	"FLASHBACK" "TABLE" TableName FlashbackToNewName
+	"FLASHBACK" "TABLE" TableNameList FlashbackToNewName
 	{
 		$$ = &ast.FlashBackTableStmt{
-			Table:   $3.(*ast.TableName),
+			Tables:  $3.([]*ast.TableName),
 			NewName: $4,
 		}
 	}
@@ -11331,8 +11349,8 @@ Statement:
 |	DropStatsStmt
 |	DropBindingStmt
 |	FlushStmt
-|	FlashbackClusterStmt
 |	FlashbackTableStmt
+|	FlashbackToTimestampStmt
 |	GrantStmt
 |	GrantProxyStmt
 |	GrantRoleStmt

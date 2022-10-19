@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
@@ -171,8 +170,14 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		err = e.executeRecoverTable(x)
 	case *ast.FlashBackTableStmt:
 		err = e.executeFlashbackTable(x)
-	case *ast.FlashBackClusterStmt:
-		err = e.executeFlashBackCluster(ctx, x)
+	case *ast.FlashBackToTimestampStmt:
+		if len(x.Tables) != 0 {
+			err = dbterror.ErrGeneralUnsupportedDDL.GenWithStack("Unsupported FLASHBACK table TO TIMESTAMP")
+		} else if len(x.Schemas) != 0 {
+			err = dbterror.ErrGeneralUnsupportedDDL.GenWithStack("Unsupported FLASHBACK database TO TIMESTAMP")
+		} else {
+			err = e.executeFlashBackCluster(x)
+		}
 	case *ast.RenameTableStmt:
 		err = e.executeRenameTable(x)
 	case *ast.TruncateTableStmt:
@@ -523,12 +528,7 @@ func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName) (*model.J
 	return jobInfo, tableInfo, nil
 }
 
-func (e *DDLExec) executeFlashBackCluster(ctx context.Context, s *ast.FlashBackClusterStmt) error {
-	checker := privilege.GetPrivilegeManager(e.ctx)
-	if !checker.RequestVerification(e.ctx.GetSessionVars().ActiveRoles, "", "", "", mysql.SuperPriv) {
-		return core.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER")
-	}
-
+func (e *DDLExec) executeFlashBackCluster(s *ast.FlashBackToTimestampStmt) error {
 	tiFlashInfo, err := getTiFlashStores(e.ctx)
 	if err != nil {
 		return err
@@ -546,7 +546,10 @@ func (e *DDLExec) executeFlashBackCluster(ctx context.Context, s *ast.FlashBackC
 }
 
 func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
-	job, tblInfo, err := e.getRecoverTableByTableName(s.Table)
+	if len(s.Tables) != 1 {
+		return dbterror.ErrUnsupportedRecoverMultiTables
+	}
+	job, tblInfo, err := e.getRecoverTableByTableName(s.Tables[0])
 	if err != nil {
 		return err
 	}
@@ -557,7 +560,7 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 	is := domain.GetDomain(e.ctx).InfoSchema()
 	tbl, ok := is.TableByID(tblInfo.ID)
 	if ok {
-		return infoschema.ErrTableExists.GenWithStack("Table '%-.192s' already been flashback to '%-.192s', can't be flashback repeatedly", s.Table.Name.O, tbl.Meta().Name.O)
+		return infoschema.ErrTableExists.GenWithStack("Table '%-.192s' already been flashback to '%-.192s', can't be flashback repeatedly", s.Tables[0].Name.O, tbl.Meta().Name.O)
 	}
 
 	m, err := domain.GetDomain(e.ctx).GetSnapshotMeta(job.StartTS)
@@ -576,7 +579,7 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 		SnapshotTS:    job.StartTS,
 		AutoIDs:       autoIDs,
 		OldSchemaName: job.SchemaName,
-		OldTableName:  s.Table.Name.L,
+		OldTableName:  s.Tables[0].Name.L,
 	}
 	// Call DDL RecoverTable.
 	err = domain.GetDomain(e.ctx).DDL().RecoverTable(e.ctx, recoverInfo)
