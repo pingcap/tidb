@@ -961,14 +961,12 @@ func GenerateBindSQL(ctx context.Context, stmtNode ast.StmtNode, planHint string
 	}
 	switch n := stmtNode.(type) {
 	case *ast.DeleteStmt:
-		deleteIdx := strings.Index(bindSQL, "DELETE")
-		// Remove possible `explain` prefix.
-		bindSQL = bindSQL[deleteIdx:]
+		// Remove possible `explain` prefix
+		_, bindSQL, _ = strings.Cut(bindSQL, "DELETE")
 		return strings.Replace(bindSQL, "DELETE", fmt.Sprintf("DELETE /*+ %s*/", planHint), 1)
 	case *ast.UpdateStmt:
-		updateIdx := strings.Index(bindSQL, "UPDATE")
 		// Remove possible `explain` prefix.
-		bindSQL = bindSQL[updateIdx:]
+		_, bindSQL, _ = strings.Cut(bindSQL, "UPDATE")
 		return strings.Replace(bindSQL, "UPDATE", fmt.Sprintf("UPDATE /*+ %s*/", planHint), 1)
 	case *ast.SelectStmt:
 		var selectIdx int
