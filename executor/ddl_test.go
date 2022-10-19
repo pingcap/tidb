@@ -80,7 +80,7 @@ func TestInTxnExecDDLFail(t *testing.T) {
 	tk.MustExec("begin;")
 	tk.MustExec("insert into t values (1);")
 	_, err := tk.Exec("truncate table t;")
-	require.EqualError(t, err, "[kv:1062]Duplicate entry '1' for key 'PRIMARY'")
+	require.EqualError(t, err, "[kv:1062]Duplicate entry '1' for key 't.PRIMARY'")
 	result := tk.MustQuery("select count(*) from t")
 	result.Check(testkit.Rows("1"))
 }
