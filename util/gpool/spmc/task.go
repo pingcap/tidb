@@ -26,6 +26,7 @@ const (
 )
 
 type taskBox[T any, U any, C any, CT any, TF Context[CT]] struct {
+	taskID      uint64
 	constArgs   C
 	wg          *sync.WaitGroup
 	task        chan T

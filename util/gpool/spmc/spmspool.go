@@ -40,6 +40,7 @@ type Pool[T any, U any, C any, CT any, TF Context[CT]] struct {
 	state         atomic.Int32
 	waiting       atomic.Int32
 	heartbeatDone atomic.Int32
+	generator     atomic.Uint64 // it is to generate task id.
 }
 
 // NewSPMCPool create a single producer, multiple consumer goroutine pool.
@@ -272,6 +273,7 @@ func (p *Pool[T, U, C, CT, TF]) AddProduceBySlice(producer func() ([]T, error), 
 // AddProducer is to add producer.
 func (p *Pool[T, U, C, CT, TF]) AddProducer(producer func() (T, error), constArg C, options ...TaskOption) (<-chan U, TaskController) {
 	opt := loadTaskOptions(options...)
+	taskID := p.generator.Add(1)
 	var wg sync.WaitGroup
 	result := make(chan U, opt.ResultChanLen)
 	closeCh := make(chan struct{})
@@ -283,6 +285,7 @@ func (p *Pool[T, U, C, CT, TF]) AddProducer(producer func() (T, error), constArg
 			break
 		}
 		taskBox := taskBox[T, U, C, CT, TF]{
+			taskID:    taskID,
 			constArgs: constArg,
 			wg:        &wg,
 			task:      taskCh,
