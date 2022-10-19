@@ -65,6 +65,10 @@ const (
 	CompressionZStd
 	// CompressionXZ is the compression type that uses XZ algorithm.
 	CompressionXZ
+	// CompressionLZO is the compression type that uses LZO algorithm.
+	CompressionLZO
+	// CompressionSnappy is the compression type that uses Snappy algorithm.
+	CompressionSnappy
 )
 
 func parseSourceType(t string) (SourceType, error) {
@@ -109,7 +113,7 @@ func (s SourceType) String() string {
 
 func parseCompressionType(t string) (Compression, error) {
 	switch strings.ToLower(strings.TrimSpace(t)) {
-	case "gz":
+	case "gz", "gzip":
 		return CompressionGZ, nil
 	case "lz4":
 		return CompressionLZ4, nil
@@ -117,6 +121,10 @@ func parseCompressionType(t string) (Compression, error) {
 		return CompressionZStd, nil
 	case "xz":
 		return CompressionXZ, nil
+	case "lzo":
+		return CompressionLZO, nil
+	case "snappy":
+		return CompressionSnappy, nil
 	case "":
 		return CompressionNone, nil
 	default:
@@ -128,15 +136,15 @@ var expandVariablePattern = regexp.MustCompile(`\$(?:\$|[\pL\p{Nd}_]+|\{[\pL\p{N
 
 var defaultFileRouteRules = []*config.FileRouteRule{
 	// ignore *-schema-trigger.sql, *-schema-post.sql files
-	{Pattern: `(?i).*(-schema-trigger|-schema-post)\.sql$`, Type: "ignore"},
-	// db schema create file pattern, matches files like '{schema}-schema-create.sql'
-	{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)-schema-create\.sql$`, Schema: "$1", Table: "", Type: SchemaSchema, Unescape: true},
-	// table schema create file pattern, matches files like '{schema}.{table}-schema.sql'
-	{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)\.(.*?)-schema\.sql$`, Schema: "$1", Table: "$2", Type: TableSchema, Unescape: true},
-	// view schema create file pattern, matches files like '{schema}.{table}-schema-view.sql'
-	{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)\.(.*?)-schema-view\.sql$`, Schema: "$1", Table: "$2", Type: ViewSchema, Unescape: true},
-	// source file pattern, matches files like '{schema}.{table}.0001.{sql|csv}'
-	{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)\.(.*?)(?:\.([0-9]+))?\.(sql|csv|parquet)$`, Schema: "$1", Table: "$2", Type: "$4", Key: "$3", Unescape: true},
+	{Pattern: `(?i).*(-schema-trigger|-schema-post)\.sql(?:\.(\w*?))?$`, Type: "ignore"},
+	// db schema create file pattern, matches files like '{schema}-schema-create.sql[.{compress}]'
+	{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)-schema-create\.sql(?:\.(\w*?))?$`, Schema: "$1", Table: "", Type: SchemaSchema, Compression: "$2", Unescape: true},
+	// table schema create file pattern, matches files like '{schema}.{table}-schema.sql[.{compress}]'
+	{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)\.(.*?)-schema\.sql(?:\.(\w*?))?$`, Schema: "$1", Table: "$2", Type: TableSchema, Compression: "$3", Unescape: true},
+	// view schema create file pattern, matches files like '{schema}.{table}-schema-view.sql[.{compress}]'
+	{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)\.(.*?)-schema-view\.sql(?:\.(\w*?))?$`, Schema: "$1", Table: "$2", Type: ViewSchema, Compression: "$3", Unescape: true},
+	// source file pattern, matches files like '{schema}.{table}.0001.{sql|csv}[.{compress}]'
+	{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)\.(.*?)(?:\.([0-9]+))?\.(sql|csv|parquet)(?:\.(\w+))?$`, Schema: "$1", Table: "$2", Type: "$4", Key: "$3", Compression: "$5", Unescape: true},
 }
 
 // FileRouter provides some operations to apply a rule to route file path to target schema/table
@@ -291,9 +299,6 @@ func (p regexRouterParser) Parse(r *config.FileRouteRule, logger log.Logger) (*R
 			compression, err := parseCompressionType(value)
 			if err != nil {
 				return err
-			}
-			if compression != CompressionNone {
-				return errors.New("Currently we don't support restore compressed source file yet")
 			}
 			result.Compression = compression
 			return nil
