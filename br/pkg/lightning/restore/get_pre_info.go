@@ -680,7 +680,7 @@ outloop:
 						return 0.0, false, errors.Trace(err)
 					}
 				}
-				if len(ignoreColsMap) > 0 || len(sampleFile.ExtendData.Columns) > 0 {
+				if len(sampleFile.ExtendData.Columns) > 0 {
 					_, extendCols, extendVals = filterColumns(columnNames, sampleFile.ExtendData, ignoreColsMap, tableInfo)
 				}
 				initializedColumns = true

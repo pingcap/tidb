@@ -2528,11 +2528,9 @@ func filterColumns(columnNames []string, extendData mydump.ExtendColumnData, ign
 	filteredExtendCols := make([]string, 0)
 	extendValueDatums := make([]types.Datum, 0)
 	for i, c := range extendCols {
-		if extendColsSet.Exist(c) {
-			filteredColumns = append(filteredColumns, c)
-			filteredExtendCols = append(filteredExtendCols, c)
-			extendValueDatums = append(extendValueDatums, types.NewStringDatum(extendVals[i]))
-		}
+		filteredColumns = append(filteredColumns, c)
+		filteredExtendCols = append(filteredExtendCols, c)
+		extendValueDatums = append(extendValueDatums, types.NewStringDatum(extendVals[i]))
 	}
 	return filteredColumns, filteredExtendCols, extendValueDatums
 }
