@@ -19,6 +19,12 @@ import (
 	"sync/atomic"
 )
 
+const (
+	PendingTask int32 = iota
+	RuningTask
+	StopTask
+)
+
 type taskBox[T any, U any, C any, CT any, TF Context[CT]] struct {
 	constArgs   C
 	wg          *sync.WaitGroup

@@ -53,13 +53,20 @@ func (w *goWorker[T, U, C, CT, TF]) run() {
 			}
 			// Call Signal() here in case there are goroutines waiting for available workers.
 			w.pool.cond.Signal()
-			//log.Info("worker exiting")
 		}()
 
 		for f := range w.taskBoxCh {
 			if f == nil {
-				//log.Info("worker got task nil")
 				return
+			}
+			switch f.GetStatus() {
+			case PendingTask:
+				f.SetStatus(RuningTask)
+			case StopTask:
+				continue
+			case RuningTask:
+				log.Error("worker got task running")
+				continue
 			}
 			w.pool.subWaitingTask()
 			ctx := f.GetContextFunc().GetContext()
@@ -67,13 +74,17 @@ func (w *goWorker[T, U, C, CT, TF]) run() {
 				for t := range f.GetTaskCh() {
 					f.GetResultCh() <- w.pool.consumerFunc(t.Task, f.ConstArgs(), ctx)
 					f.Done()
+					if f.GetStatus() == PendingTask {
+						w.taskBoxCh <- f
+						break
+					}
 				}
+				f.SetStatus(pooltask.StopTask)
 			}
 			if ok := w.pool.revertWorker(w); !ok {
 				//log.Info("exit here")
 				return
 			}
 		}
-		//log.Info("exit here2")
 	}()
 }
