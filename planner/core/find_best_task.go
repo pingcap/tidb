@@ -1340,6 +1340,8 @@ func (ds *DataSource) indexCoveringCondition(condition expression.Expression, in
 				return false
 			}
 			return ds.indexCoveringColumn(col, indexColumns, idxColLens, true)
+		default:
+			return ds.indexCoveringColumns(expression.ExtractColumns(v), indexColumns, idxColLens)
 		}
 	}
 	return true
