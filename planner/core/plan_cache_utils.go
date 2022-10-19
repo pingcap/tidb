@@ -196,8 +196,8 @@ type planCacheKey struct {
 	restrictedReadOnly       bool
 	TiDBSuperReadOnly        bool
 
-	PlanCacheKeyMem int64 // Do not include in hash
-	hash            []byte
+	memoryUsage int64 // Do not include in hash
+	hash        []byte
 }
 
 // Hash implements Key interface.
@@ -243,12 +243,12 @@ func (key *planCacheKey) MemoryUsage() (sum int64) {
 		return
 	}
 
-	if key.PlanCacheKeyMem > 0 {
-		return key.PlanCacheKeyMem
+	if key.memoryUsage > 0 {
+		return key.memoryUsage
 	}
 	sum = emptyPlanCacheKeySize + int64(len(key.database)+len(key.stmtText)+len(key.bindSQL)) +
 		int64(len(key.isolationReadEngines))*size.SizeOfUint8 + int64(cap(key.hash))
-	key.PlanCacheKeyMem = sum
+	key.memoryUsage = sum
 	return
 }
 
@@ -345,7 +345,7 @@ type PlanCacheValue struct {
 	OutPutNames       []*types.FieldName
 	TblInfo2UnionScan map[*model.TableInfo]bool
 	ParamTypes        FieldSlice
-	PlanCacheValueMem int64
+	memoryUsage       int64
 }
 
 func (v *PlanCacheValue) varTypesUnchanged(txtVarTps []*types.FieldType) bool {
@@ -362,8 +362,8 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 		return
 	}
 
-	if v.PlanCacheValueMem > 0 {
-		return v.PlanCacheValueMem
+	if v.memoryUsage > 0 {
+		return v.memoryUsage
 	}
 	switch x := v.Plan.(type) {
 	case PhysicalPlan:
@@ -387,7 +387,7 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 	for _, ft := range v.ParamTypes {
 		sum += ft.MemoryUsage()
 	}
-	v.PlanCacheValueMem = sum
+	v.memoryUsage = sum
 	return
 }
 
