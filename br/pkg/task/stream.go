@@ -959,15 +959,14 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 		sync.Mutex
 	}
 	for _, f := range removed {
+		f := f
 		worker.ApplyOnErrorGroup(eg, func() error {
-			// NOTE: We cannot get the returned value from deleting, so polling the context here again.
-			//       Maybe we'd better use an `ErrGroup` and fail fast for some types of error (or if len(notDeleted) > N)?
-			//       (It would be a disaster if we have waiting for 6hrs and eventually found out nothing deleted :| )
 			if cx.Err() != nil {
 				p.Close()
 				return cx.Err()
 			}
 			defer p.Inc()
+			log.Debug("Deleting file", zap.String("path", f.Path))
 			if cfg.DryRun {
 				return nil
 			}
