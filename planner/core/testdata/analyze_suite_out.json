@@ -259,9 +259,9 @@
           "├─TableReader(Build) 9980.01 root  data:Selection",
           "│ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.c))",
           "│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "└─IndexReader(Probe) 1.25 root  index:Selection",
-          "  └─Selection 1.25 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.c))",
-          "    └─IndexRangeScan 1.25 cop[tikv] table:t2, index:idx(a, b, c) range: decided by [eq(test.t2.a, test.t1.a) gt(test.t2.b, minus(test.t1.b, 1)) lt(test.t2.b, plus(test.t1.b, 1))], keep order:false, stats:pseudo"
+          "└─IndexReader(Probe) 12475.01 root  index:Selection",
+          "  └─Selection 12475.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.c))",
+          "    └─IndexRangeScan 12500.00 cop[tikv] table:t2, index:idx(a, b, c) range: decided by [eq(test.t2.a, test.t1.a) gt(test.t2.b, minus(test.t1.b, 1)) lt(test.t2.b, plus(test.t1.b, 1))], keep order:false, stats:pseudo"
         ]
       },
       {
@@ -383,25 +383,25 @@
         "└─Apply 10.00 root  CARTESIAN left outer semi join, other cond:eq(test.t.c, Column#21)",
         "  ├─TableReader(Build) 10.00 root  data:TableFullScan",
         "  │ └─TableFullScan 10.00 cop[tikv] table:t keep order:false",
-        "  └─StreamAgg(Probe) 1.00 root  funcs:count(1)->Column#21",
-        "    └─HashJoin 1.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
-        "      ├─TableReader(Build) 1.00 root  data:Selection",
-        "      │ └─Selection 1.00 cop[tikv]  eq(test.t.a, test.t.a), not(isnull(test.t.a))",
-        "      │   └─TableFullScan 10.00 cop[tikv] table:t1 keep order:false",
-        "      └─TableReader(Probe) 1.00 root  data:Selection",
-        "        └─Selection 1.00 cop[tikv]  eq(test.t.a, test.t.a), not(isnull(test.t.a))",
-        "          └─TableFullScan 10.00 cop[tikv] table:s keep order:false"
+        "  └─StreamAgg(Probe) 10.00 root  funcs:count(1)->Column#21",
+        "    └─HashJoin 10.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
+        "      ├─TableReader(Build) 10.00 root  data:Selection",
+        "      │ └─Selection 10.00 cop[tikv]  eq(test.t.a, test.t.a), not(isnull(test.t.a))",
+        "      │   └─TableFullScan 100.00 cop[tikv] table:t1 keep order:false",
+        "      └─TableReader(Probe) 10.00 root  data:Selection",
+        "        └─Selection 10.00 cop[tikv]  eq(test.t.a, test.t.a), not(isnull(test.t.a))",
+        "          └─TableFullScan 100.00 cop[tikv] table:s keep order:false"
       ],
       [
         "Projection 10.00 root  Column#13",
         "└─Apply 10.00 root  CARTESIAN left outer join",
         "  ├─TableReader(Build) 10.00 root  data:TableFullScan",
         "  │ └─TableFullScan 10.00 cop[tikv] table:t keep order:false",
-        "  └─MaxOneRow(Probe) 1.00 root  ",
-        "    └─Projection 0.10 root  concat(cast(test.t.a, var_string(20)), ,, cast(test.t.b, var_string(20)))->Column#13",
-        "      └─IndexReader 0.10 root  index:Selection",
-        "        └─Selection 0.10 cop[tikv]  eq(test.t.a, test.t.a)",
-        "          └─IndexRangeScan 1.00 cop[tikv] table:t1, index:idx(c, b, a) range: decided by [eq(test.t.c, test.t.c)], keep order:false"
+        "  └─MaxOneRow(Probe) 10.00 root  ",
+        "    └─Projection 1.00 root  concat(cast(test.t.a, var_string(20)), ,, cast(test.t.b, var_string(20)))->Column#13",
+        "      └─IndexReader 1.00 root  index:Selection",
+        "        └─Selection 1.00 cop[tikv]  eq(test.t.a, test.t.a)",
+        "          └─IndexRangeScan 10.00 cop[tikv] table:t1, index:idx(c, b, a) range: decided by [eq(test.t.c, test.t.c)], keep order:false"
       ]
     ]
   },

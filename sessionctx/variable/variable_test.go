@@ -15,6 +15,7 @@
 package variable
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"runtime"
@@ -606,10 +607,10 @@ func TestInstanceScope(t *testing.T) {
 
 	count := len(GetSysVars())
 	sv := SysVar{Scope: ScopeInstance, Name: "newinstancesysvar", Value: On, Type: TypeBool,
-		SetGlobal: func(s *SessionVars, val string) error {
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 			return fmt.Errorf("set should fail")
 		},
-		GetGlobal: func(s *SessionVars) (string, error) {
+		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 			return "", fmt.Errorf("get should fail")
 		},
 	}
@@ -634,7 +635,7 @@ func TestInstanceScope(t *testing.T) {
 	require.Equal(t, "OFF", normalizedVal)
 	require.NoError(t, err)
 
-	err = sysVar.SetGlobalFromHook(vars, "OFF", true) // default is on
+	err = sysVar.SetGlobalFromHook(context.Background(), vars, "OFF", true) // default is on
 	require.Equal(t, "set should fail", err.Error())
 
 	// Test unregistration restores previous count
@@ -649,7 +650,7 @@ func TestSetSysVar(t *testing.T) {
 	SetSysVar(SystemTimeZone, "America/New_York")
 	require.Equal(t, "America/New_York", GetSysVar(SystemTimeZone).Value)
 	// Test alternative Get
-	val, err := GetSysVar(SystemTimeZone).GetGlobalFromHook(vars)
+	val, err := GetSysVar(SystemTimeZone).GetGlobalFromHook(context.Background(), vars)
 	require.Nil(t, err)
 	require.Equal(t, "America/New_York", val)
 	SetSysVar(SystemTimeZone, originalVal) // restore

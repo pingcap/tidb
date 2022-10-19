@@ -123,7 +123,7 @@ func TestAnalyzeBuildSucc(t *testing.T) {
 		} else if err != nil {
 			continue
 		}
-		err = core.Preprocess(tk.Session(), stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))
+		err = core.Preprocess(context.Background(), tk.Session(), stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err)
 		_, _, err = planner.Optimize(context.Background(), tk.Session(), stmt, is)
 		if tt.succ {
@@ -165,7 +165,7 @@ func TestAnalyzeSetRate(t *testing.T) {
 		stmt, err := p.ParseOneStmt(tt.sql, "", "")
 		require.NoError(t, err, comment)
 
-		err = core.Preprocess(tk.Session(), stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))
+		err = core.Preprocess(context.Background(), tk.Session(), stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err, comment)
 		p, _, err := planner.Optimize(context.Background(), tk.Session(), stmt, is)
 		require.NoError(t, err, comment)
@@ -310,7 +310,7 @@ func TestDAGPlanBuilderBasePhysicalPlan(t *testing.T) {
 		stmt, err := p.ParseOneStmt(tt, "", "")
 		require.NoError(t, err, comment)
 
-		err = core.Preprocess(se, stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))
+		err = core.Preprocess(context.Background(), se, stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err)
 		p, _, err := planner.Optimize(context.TODO(), se, stmt, is)
 		require.NoError(t, err)
@@ -363,36 +363,37 @@ func TestDAGPlanBuilderUnion(t *testing.T) {
 
 func TestDAGPlanBuilderUnionScan(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, c int)")
 
 	var input []string
 	var output []struct {
 		SQL  string
 		Best string
 	}
+	planSuiteData := core.GetPlanSuiteData()
+	planSuiteData.LoadTestCases(t, &input, &output)
+
 	p := parser.New()
-	is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
 	for i, tt := range input {
+		tk.MustExec("begin;")
+		tk.MustExec("insert into t values(2, 2, 2);")
+
 		comment := fmt.Sprintf("input: %s", tt)
 		stmt, err := p.ParseOneStmt(tt, "", "")
 		require.NoError(t, err, comment)
-		require.NoError(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
-
-		// Make txn not read only.
-		txn, err := tk.Session().Txn(true)
-		require.NoError(t, err)
-		err = txn.Set(kv.Key("AAA"), []byte("BBB"))
-		require.NoError(t, err)
-		tk.Session().StmtCommit()
-		p, _, err := planner.Optimize(context.TODO(), tk.Session(), stmt, is)
+		dom := domain.GetDomain(tk.Session())
+		require.NoError(t, dom.Reload())
+		plan, _, err := planner.Optimize(context.TODO(), tk.Session(), stmt, dom.InfoSchema())
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Best = core.ToString(p)
+			output[i].Best = core.ToString(plan)
 		})
-		require.Equal(t, output[i].Best, core.ToString(p), fmt.Sprintf("input: %s", tt))
+		require.Equal(t, output[i].Best, core.ToString(plan), fmt.Sprintf("input: %s", tt))
+		tk.MustExec("rollback;")
 	}
 }
 
@@ -1657,7 +1658,7 @@ func TestDAGPlanBuilderSplitAvg(t *testing.T) {
 		stmt, err := p.ParseOneStmt(tt.sql, "", "")
 		require.NoError(t, err, comment)
 
-		err = core.Preprocess(tk.Session(), stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))
+		err = core.Preprocess(context.Background(), tk.Session(), stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err)
 		p, _, err := planner.Optimize(context.TODO(), tk.Session(), stmt, is)
 		require.NoError(t, err, comment)
