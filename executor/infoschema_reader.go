@@ -453,6 +453,7 @@ func (e *memtableRetriever) setDataForUserAttributes(ctx context.Context, sctx s
 		}
 		user := chunkRow.GetString(0)
 		host := chunkRow.GetString(1)
+		// Compatible with results in MySQL
 		var attribute any
 		if attribute = chunkRow.GetString(2); attribute == "" {
 			attribute = nil
