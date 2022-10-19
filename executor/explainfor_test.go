@@ -23,6 +23,7 @@ import (
 	"strings"
 	"sync"
 
+	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
