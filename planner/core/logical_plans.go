@@ -1344,7 +1344,7 @@ func (ds *DataSource) Convert2Gathers() (gathers []LogicalPlan) {
 			path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, path.Index)
 			path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.schema.Columns, path.Index)
 			// If index columns can cover all of the needed columns, we can use a IndexGather + IndexScan.
-			if ds.indexCoveringColumns(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens) {
+			if ds.isSingleScan(path.FullIdxCols, path.FullIdxColLens) {
 				gathers = append(gathers, ds.buildIndexGather(path))
 			}
 			// TODO: If index columns can not cover the schema, use IndexLookUpGather.
