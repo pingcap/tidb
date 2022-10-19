@@ -233,7 +233,7 @@ var aa = 0
 
 // updateMonitor update the memory usage monitor to show in grafana
 func updateMonitorMetric() {
-	aa += 1024 * 1024
+	aa += 256 * 1024 * 1024
 	consume := float64(aa)
 	// todo: wait for the preorder pr, pass tracker's consumed memory to metric
 	metrics.PlanCacheMemoryUsage.WithLabelValues("memory_usage").Set(consume)
