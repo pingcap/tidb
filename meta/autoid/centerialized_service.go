@@ -137,6 +137,8 @@ func (sp *singlePointAlloc) Rebase(ctx context.Context, newBase int64, allocIDs 
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
+	fmt.Println("rebase auto id to ===============", newBase)
+
 	cli, err := sp.GetClient(ctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -174,7 +176,7 @@ func (sp *singlePointAlloc) End() int64 {
 }
 
 // NextGlobalAutoID returns the next global autoID.
-// Used by 'show create table'
+// Used by 'show create table', 'alter table auto_increment = xxx'
 func (sp *singlePointAlloc) NextGlobalAutoID() (int64, error) {
 	return sp.lastAllocated, nil
 }

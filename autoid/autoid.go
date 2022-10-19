@@ -255,8 +255,12 @@ func (s *Service) Rebase(ctx context.Context, req *autoid.RebaseRequest) (*autoi
 		return s.Rebase(ctx, req)
 	}
 
+	fmt.Println("!!!! rebase called      ........", req.Base, val.base, *val.max)
 	if req.Base < atomic.LoadInt64(val.max) {
-		val.base = req.Base
+		if req.Base > val.base {
+			val.base = req.Base
+			fmt.Println("now ... base === ...", val.base)
+		}
 	} else {
 		s.autoIDLock.Unlock()
 		val.token <- struct{}{}
@@ -264,6 +268,7 @@ func (s *Service) Rebase(ctx context.Context, req *autoid.RebaseRequest) (*autoi
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		fmt.Println("sync id to ...", uint64(req.Base) + batch)
 		return s.Rebase(ctx, req)
 	}
 	s.autoIDLock.Unlock()
