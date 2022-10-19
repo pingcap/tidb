@@ -15,6 +15,7 @@
 package spmc
 
 import (
+	"container/list"
 	"sync"
 
 	"golang.org/x/sys/cpu"
@@ -35,7 +36,7 @@ type TContainer[T any, U any, C any, CT any, TF Context[CT]] struct {
 type TaskStatusContainer[T any, U any, C any, CT any, TF Context[CT]] struct {
 	_      cpu.CacheLinePad
 	rw     sync.RWMutex
-	Status map[uint64][]TContainer[T, U, C, CT, TF]
+	Status map[uint64]*list.List
 	_      cpu.CacheLinePad
 }
 
@@ -55,7 +56,7 @@ func NewTaskManager[T any, U any, C any, CT any, TF Context[CT]](con int) TaskMa
 func (t *TaskManager[T, U, C, CT, TF]) CreatTask(task uint64) {
 	id := getShardID(task)
 	t.task[id].rw.Lock()
-	t.task[id].Status[task] = make([]TContainer[T, U, C, CT, TF], t.conncurrency)
+	t.task[id].Status[task] = list.New()
 	t.task[id].rw.Unlock()
 }
 
@@ -65,24 +66,8 @@ func (t *TaskManager[T, U, C, CT, TF]) AddTask(id uint64, task *taskBox[T, U, C,
 		task: task,
 	}
 	t.task[shardID].rw.Lock()
-	t.task[shardID].Status[id] = append(t.task[shardID].Status[id], tc)
+	t.task[shardID].Status[id].PushBack(tc)
 	t.task[shardID].rw.Unlock()
-}
-
-func (t *TaskManager[T, U, C, CT, TF]) GetTask(id uint64, taskID int) *taskBox[T, U, C, CT, TF] {
-	shardID := getShardID(id)
-	t.task[shardID].rw.RLock()
-	task := t.task[shardID].Status[id][taskID].task
-	t.task[shardID].rw.RUnlock()
-	return task
-}
-
-func (t *TaskManager[T, U, C, CT, TF]) GetTaskStatus(id uint64) []TContainer[T, U, C, CT, TF] {
-	shardID := getShardID(id)
-	t.task[shardID].rw.RLock()
-	task := t.task[shardID].Status[id]
-	t.task[shardID].rw.RUnlock()
-	return task
 }
 
 func (t *TaskManager[T, U, C, CT, TF]) DeleteTask(id uint64) {
@@ -90,20 +75,4 @@ func (t *TaskManager[T, U, C, CT, TF]) DeleteTask(id uint64) {
 	t.task[shardID].rw.Lock()
 	delete(t.task[shardID].Status, id)
 	t.task[shardID].rw.Unlock()
-}
-
-func (t *TaskManager[T, U, C, CT, TF]) GetTaskStatusLen(id uint64) int {
-	shardID := getShardID(id)
-	t.task[shardID].rw.RLock()
-	task := len(t.task[shardID].Status[id])
-	t.task[shardID].rw.RUnlock()
-	return task
-}
-
-func (t *TaskManager[T, U, C, CT, TF]) GetTaskStatusLenWithLock(id uint64) int {
-	shardID := getShardID(id)
-	t.task[shardID].rw.Lock()
-	task := len(t.task[shardID].Status[id])
-	t.task[shardID].rw.Unlock()
-	return task
 }
