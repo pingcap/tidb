@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/kvcache"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/size"
 	atomic2 "go.uber.org/atomic"
 	"golang.org/x/exp/slices"
@@ -197,7 +196,8 @@ type planCacheKey struct {
 	restrictedReadOnly       bool
 	TiDBSuperReadOnly        bool
 
-	hash []byte
+	PlanCacheKeyMem int64 // Do not include in hash
+	hash            []byte
 }
 
 // Hash implements Key interface.
@@ -243,8 +243,12 @@ func (key *planCacheKey) MemoryUsage() (sum int64) {
 		return
 	}
 
+	if key.PlanCacheKeyMem > 0 {
+		return key.PlanCacheKeyMem
+	}
 	sum = emptyPlanCacheKeySize + int64(len(key.database)+len(key.stmtText)+len(key.bindSQL)) +
 		int64(len(key.isolationReadEngines))*size.SizeOfUint8 + int64(cap(key.hash))
+	key.PlanCacheKeyMem = sum
 	return
 }
 
@@ -341,7 +345,6 @@ type PlanCacheValue struct {
 	OutPutNames       []*types.FieldName
 	TblInfo2UnionScan map[*model.TableInfo]bool
 	ParamTypes        FieldSlice
-	PlanCacheKeyMem   int64
 	PlanCacheValueMem int64
 }
 
@@ -349,12 +352,19 @@ func (v *PlanCacheValue) varTypesUnchanged(txtVarTps []*types.FieldType) bool {
 	return v.ParamTypes.CheckTypesCompatibility4PC(txtVarTps)
 }
 
+// unKnownMemoryUsage represent the memory usage of uncounted structure, maybe need implement later
+// 7 has no special meaning
+const unKnownMemoryUsage = 7
+
 // MemoryUsage return the memory usage of PlanCacheValue
 func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 	if v == nil {
 		return
 	}
 
+	if v.PlanCacheValueMem > 0 {
+		return v.PlanCacheValueMem
+	}
 	switch x := v.Plan.(type) {
 	case PhysicalPlan:
 		sum = x.MemoryUsage()
@@ -365,7 +375,7 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 	case *Delete:
 		sum = x.MemoryUsage()
 	default:
-		logutil.BgLogger().Info("this Plan did`t implement MemoryUsage method")
+		sum = unKnownMemoryUsage
 	}
 
 	sum += size.SizeOfInterface + size.SizeOfSlice*2 + int64(cap(v.OutPutNames)+cap(v.ParamTypes))*size.SizeOfPointer +
@@ -377,6 +387,7 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 	for _, ft := range v.ParamTypes {
 		sum += ft.MemoryUsage()
 	}
+	v.PlanCacheValueMem = sum
 	return
 }
 

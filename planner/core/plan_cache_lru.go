@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/size"
 )
 
 // planCacheEntry wraps Key and Value. It's the value of list.Element.
@@ -78,14 +77,12 @@ func NewLRUPlanCache(capacity uint, guard float64, quota uint64,
 }
 
 // strHashKey control deep or Shallow copy of string
-func strHashKey(key kvcache.Key, deepCopy bool) (string, int64) {
-	var res string
+func strHashKey(key kvcache.Key, deepCopy bool) string {
 	if deepCopy {
-		res = string(key.Hash())
+		return string(key.Hash())
 	} else {
-		res = string(hack.String(key.Hash()))
+		return string(hack.String(key.Hash()))
 	}
-	return res, int64(len(res))
 }
 
 // Get tries to find the corresponding value according to the given key.
@@ -93,7 +90,7 @@ func (l *LRUPlanCache) Get(key kvcache.Key, paramTypes []*types.FieldType) (valu
 	l.lock.Lock()
 	defer l.lock.Unlock()
 
-	hash, _ := strHashKey(key, false)
+	hash := strHashKey(key, false)
 	bucket, bucketExist := l.buckets[hash]
 	if bucketExist {
 		if element, exist := l.pickFromBucket(bucket, paramTypes); exist {
@@ -109,20 +106,19 @@ func (l *LRUPlanCache) Put(key kvcache.Key, value kvcache.Value, paramTypes []*t
 	l.lock.Lock()
 	defer l.lock.Unlock()
 
-	hash, hashMem := strHashKey(key, true)
-	setKVMemoryUsage(key, value)
+	hash := strHashKey(key, true)
 	bucket, bucketExist := l.buckets[hash]
 	if bucketExist {
 		if element, exist := l.pickFromBucket(bucket, paramTypes); exist {
+			l.memTracker.Consume(value.(*PlanCacheValue).MemoryUsage() -
+				element.Value.(*planCacheEntry).PlanValue.(*PlanCacheValue).MemoryUsage())
 			element.Value.(*planCacheEntry).PlanValue = value
 			l.lruList.MoveToFront(element)
-			l.memTracker.Consume(value.(*PlanCacheValue).PlanCacheValueMem -
-				element.Value.(*planCacheEntry).PlanValue.(*PlanCacheValue).PlanCacheValueMem)
 			return
 		}
 	} else {
 		l.buckets[hash] = make(map[*list.Element]struct{}, 1)
-		l.memTracker.Consume(hashMem + size.SizeOfMap)
+		l.memTracker.Consume(int64(len(hash)))
 	}
 
 	newCacheEntry := &planCacheEntry{
@@ -132,7 +128,7 @@ func (l *LRUPlanCache) Put(key kvcache.Key, value kvcache.Value, paramTypes []*t
 	element := l.lruList.PushFront(newCacheEntry)
 	l.buckets[hash][element] = struct{}{}
 	l.size++
-	l.memTracker.Consume(elementMemoryUsage(element) + size.SizeOfPointer)
+	l.memTracker.Consume(elementMemoryUsage(element))
 	if l.size > l.capacity {
 		l.removeOldest()
 	}
@@ -144,16 +140,16 @@ func (l *LRUPlanCache) Delete(key kvcache.Key) {
 	l.lock.Lock()
 	defer l.lock.Unlock()
 
-	hash, hashMem := strHashKey(key, false)
+	hash := strHashKey(key, false)
 	bucket, bucketExist := l.buckets[hash]
 	if bucketExist {
 		for element := range bucket {
 			l.lruList.Remove(element)
 			l.size--
-			l.memTracker.Consume(-(elementMemoryUsage(element) + size.SizeOfPointer))
+			l.memTracker.Consume(-elementMemoryUsage(element))
 		}
 		delete(l.buckets, hash)
-		l.memTracker.Consume(-(hashMem + size.SizeOfMap))
+		l.memTracker.Consume(-int64(len(hash)))
 	}
 }
 
@@ -203,7 +199,7 @@ func (l *LRUPlanCache) removeOldest() {
 		l.onEvict(lru.Value.(*planCacheEntry).PlanKey, lru.Value.(*planCacheEntry).PlanValue)
 	}
 
-	l.memTracker.Consume(-(elementMemoryUsage(lru) + size.SizeOfPointer))
+	l.memTracker.Consume(-elementMemoryUsage(lru))
 	l.lruList.Remove(lru)
 	l.removeFromBucket(lru)
 	l.size--
@@ -211,7 +207,7 @@ func (l *LRUPlanCache) removeOldest() {
 
 // removeFromBucket remove element from bucket
 func (l *LRUPlanCache) removeFromBucket(element *list.Element) {
-	hash, _ := strHashKey(element.Value.(*planCacheEntry).PlanKey, false)
+	hash := strHashKey(element.Value.(*planCacheEntry).PlanKey, false)
 	bucket := l.buckets[hash]
 	delete(bucket, element)
 	if len(bucket) == 0 {
@@ -243,19 +239,6 @@ func PickPlanFromBucket(bucket map[*list.Element]struct{}, paramTypes []*types.F
 	return nil, false
 }
 
-// setKVMemoryUsage get the planCacheKeyMem and planCacheValueMem and
-func setKVMemoryUsage(key kvcache.Key, val kvcache.Value) {
-	if val == nil || key == nil {
-		return
-	}
-	planVal, ok := val.(*PlanCacheValue)
-	if !ok {
-		return
-	}
-	planVal.PlanCacheKeyMem = key.(*planCacheKey).MemoryUsage()
-	planVal.PlanCacheValueMem = planVal.MemoryUsage()
-}
-
 const emptyLRUPlanCacheSize = int64(unsafe.Sizeof(LRUPlanCache{}))
 
 // newTrackerForLRUPC return a tracker which consumed emptyLRUPlanCacheSize
@@ -269,9 +252,10 @@ func newTrackerForLRUPC() *memory.Tracker {
 
 // elementMemoryUsage return the sum of planCacheKey and planCacheValue
 func elementMemoryUsage(e *list.Element) (sum int64) {
-	pVal, ok := e.Value.(*planCacheEntry).PlanValue.(*PlanCacheValue)
-	if !ok {
+	pVal, ok1 := e.Value.(*planCacheEntry).PlanValue.(*PlanCacheValue)
+	pKey, ok2 := e.Value.(*planCacheEntry).PlanValue.(*planCacheKey)
+	if !ok1 || !ok2 {
 		return
 	}
-	return pVal.PlanCacheKeyMem + pVal.PlanCacheValueMem
+	return pKey.MemoryUsage() + pVal.MemoryUsage()
 }
