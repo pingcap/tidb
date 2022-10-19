@@ -1852,7 +1852,7 @@ func getNewAttributes(ctx context.Context, o *ast.CommentOrAttributeOption, user
 	if *newAttributes, err = types.ParseBinaryJSONFromString(newAttributesStr); err != nil {
 		return "", err
 	}
-	mergedAttributes, err := types.MergeJSON(oldAttributes, newAttributes)
+	mergedAttributes, err := types.MergePatchBinaryJSON([]*types.BinaryJSON{oldAttributes, newAttributes})
 	if err != nil {
 		return "", err
 	}
