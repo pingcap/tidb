@@ -44,7 +44,9 @@ func NewDecoder(columns []ColInfo, handleColIDs []int64, loc *time.Location) *de
 		handleColIDs: handleColIDs,
 		loc:          loc,
 	}
-	runtime.SetFinalizer(result, result.destroy)
+	runtime.SetFinalizer(result, func(r *decoder) {
+		r.destroy()
+	})
 	return result
 }
 
