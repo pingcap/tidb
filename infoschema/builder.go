@@ -212,7 +212,7 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	case model.ActionTruncateTablePartition, model.ActionTruncateTable:
 		return b.applyTruncateTableOrPartition(m, diff)
 	case model.ActionDropTable, model.ActionDropTablePartition:
-		return b.applyDropTableOrParition(m, diff)
+		return b.applyDropTableOrPartition(m, diff)
 	case model.ActionRecoverTable:
 		return b.applyRecoverTable(m, diff)
 	case model.ActionCreateTables:
@@ -265,7 +265,7 @@ func (b *Builder) applyTruncateTableOrPartition(m *meta.Meta, diff *model.Schema
 	return tblIDs, nil
 }
 
-func (b *Builder) applyDropTableOrParition(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+func (b *Builder) applyDropTableOrPartition(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	tblIDs, err := b.applyTableUpdate(m, diff)
 	if err != nil {
 		return nil, errors.Trace(err)
