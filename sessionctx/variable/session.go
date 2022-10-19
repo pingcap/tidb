@@ -1272,8 +1272,6 @@ type SessionVars struct {
 	LastPlanReplayerToken string
 
 	HookContext
-
-	EnableReuseCheck bool
 	// ChunkPool Several chunks and columns are cached
 	ChunkPool struct {
 		Lock  sync.Mutex
