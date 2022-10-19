@@ -227,6 +227,17 @@ func (t *Tracker) GetFallbackForTest(ignoreFinishedAction bool) ActionOnExceed {
 	return t.actionMuForHardLimit.actionOnExceed
 }
 
+// UnbindActions unbinds actionForHardLimit and actionForSoftLimit.
+func (t *Tracker) UnbindActions() {
+	t.actionMuForSoftLimit.Lock()
+	defer t.actionMuForSoftLimit.Unlock()
+	t.actionMuForSoftLimit.actionOnExceed = nil
+
+	t.actionMuForHardLimit.Lock()
+	defer t.actionMuForHardLimit.Unlock()
+	t.actionMuForHardLimit.actionOnExceed = &LogOnExceed{}
+}
+
 // reArrangeFallback merge two action chains and rearrange them by priority in descending order.
 func reArrangeFallback(a ActionOnExceed, b ActionOnExceed) ActionOnExceed {
 	if a == nil {
@@ -367,6 +378,10 @@ func (t *Tracker) ReplaceChild(oldChild, newChild *Tracker) {
 func (t *Tracker) Consume(bs int64) {
 	if bs == 0 {
 		return
+	}
+	if t.SessionID != 0 {
+		//logutil.BgLogger().Error("tracker.Consume", zap.Int64("bytesConsumed", atomic.LoadInt64(&t.bytesConsumed)), zap.Int("label", t.label), zap.Int("parent label", t.getParent().label))
+		logutil.BgLogger().Error("tracker.Consume", zap.Int64("bytesConsumed", atomic.LoadInt64(&t.bytesConsumed)), zap.Int("label", t.label))
 	}
 	if t.IsRootTrackerOfSess && t.SessionID != 0 {
 		logutil.BgLogger().Error("root sess tracker", zap.Int64("bytesConsumed", atomic.LoadInt64(&t.bytesConsumed)))
@@ -535,7 +550,7 @@ func (t *Tracker) MaxConsumed() int64 {
 
 // SearchTrackerWithoutLock searches the specific tracker under this tracker without lock.
 func (t *Tracker) SearchTrackerWithoutLock(label int) *Tracker {
-	logutil.BgLogger().Error("t.label", zap.Int("t.label", t.label), zap.Int("label", label))
+	//logutil.BgLogger().Error("t.label", zap.Int("t.label", t.label), zap.Int("label", label))
 	if t.label == label {
 		return t
 	}

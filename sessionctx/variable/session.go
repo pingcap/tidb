@@ -20,8 +20,6 @@ import (
 	"crypto/tls"
 	"encoding/binary"
 	"fmt"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 	"math"
 	"math/rand"
 	"net"
@@ -1610,7 +1608,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	vars.MPPStoreFailTTL = DefTiDBMPPStoreFailTTL
 	vars.DiskTracker = disk.NewTracker(memory.LabelForSession, -1)
 	vars.DiskTracker.IsRootTrackerOfSess = true
-	logutil.BgLogger().Error("stack", zap.Stack("stack"))
+	//logutil.BgLogger().Error("stack", zap.Stack("stack"))
 	vars.MemTracker = memory.NewTracker(memory.LabelForSession, vars.MemQuotaQuery)
 	vars.MemTracker.IsRootTrackerOfSess = true
 
