@@ -785,6 +785,8 @@ const (
 	LabelForAnalyzeMemory int = -24
 	// LabelForGlobalAnalyzeMemory represents the label of the global memory of all analyze jobs
 	LabelForGlobalAnalyzeMemory int = -25
+	// LabelForInstancePlanCacheMemory represents the label of total plan cache memory usage of all session
+	LabelForInstancePlanCacheMemory int = -27
 )
 
 // MetricsTypes is used to get label for metrics

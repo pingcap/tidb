@@ -135,6 +135,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(PlanCacheCounter)
 	prometheus.MustRegister(PlanCacheMissCounter)
 	prometheus.MustRegister(PlanCacheMemoryUsage)
+	prometheus.MustRegister(InstancePlanCacheMemoryUsage)
 	prometheus.MustRegister(PseudoEstimation)
 	prometheus.MustRegister(PacketIOCounter)
 	prometheus.MustRegister(QueryDurationHistogram)

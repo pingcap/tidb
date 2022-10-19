@@ -152,6 +152,14 @@ var (
 			Help:      "Memory usage of prepared plan cache",
 		}, []string{LblType})
 
+	InstancePlanCacheMemoryUsage = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "instance_plan_cache_memory_usage",
+			Help:      "Instance memory usage of all session prepared plan cache",
+		}, []string{LblType})
+
 	ReadFromTableCacheCounter = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",

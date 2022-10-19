@@ -83,7 +83,7 @@ func strHashKey(key kvcache.Key, deepCopy bool) string {
 func (l *LRUPlanCache) Get(key kvcache.Key, paramTypes []*types.FieldType) (value kvcache.Value, ok bool) {
 	l.lock.Lock()
 	defer l.lock.Unlock()
-	defer updateMonitorMetric()
+	defer l.updateMonitorMetric()
 
 	bucket, bucketExist := l.buckets[strHashKey(key, false)]
 	if bucketExist {
@@ -99,7 +99,7 @@ func (l *LRUPlanCache) Get(key kvcache.Key, paramTypes []*types.FieldType) (valu
 func (l *LRUPlanCache) Put(key kvcache.Key, value kvcache.Value, paramTypes []*types.FieldType) {
 	l.lock.Lock()
 	defer l.lock.Unlock()
-	defer updateMonitorMetric()
+	defer l.updateMonitorMetric()
 
 	hash := strHashKey(key, true)
 	bucket, bucketExist := l.buckets[hash]
@@ -130,7 +130,7 @@ func (l *LRUPlanCache) Put(key kvcache.Key, value kvcache.Value, paramTypes []*t
 func (l *LRUPlanCache) Delete(key kvcache.Key) {
 	l.lock.Lock()
 	defer l.lock.Unlock()
-	defer updateMonitorMetric()
+	defer l.updateMonitorMetric()
 
 	hash := strHashKey(key, false)
 	bucket, bucketExist := l.buckets[hash]
@@ -147,7 +147,7 @@ func (l *LRUPlanCache) Delete(key kvcache.Key) {
 func (l *LRUPlanCache) DeleteAll() {
 	l.lock.Lock()
 	defer l.lock.Unlock()
-	defer updateMonitorMetric()
+	defer l.updateMonitorMetric()
 
 	for lru := l.lruList.Back(); lru != nil; lru = l.lruList.Back() {
 		l.lruList.Remove(lru)
@@ -168,7 +168,7 @@ func (l *LRUPlanCache) Size() int {
 func (l *LRUPlanCache) SetCapacity(capacity uint) error {
 	l.lock.Lock()
 	defer l.lock.Unlock()
-	defer updateMonitorMetric()
+	defer l.updateMonitorMetric()
 
 	if capacity < 1 {
 		return errors.New("capacity of LRU cache should be at least 1")
@@ -232,10 +232,8 @@ func PickPlanFromBucket(bucket map[*list.Element]struct{}, paramTypes []*types.F
 var aa = 0
 
 // updateMonitor update the memory usage monitor to show in grafana
-func updateMonitorMetric() {
-	aa += 256 * 1024 * 1024
-	consume := float64(aa)
-	// consume := float64(t.BytesConsumed())
+func (l *LRUPlanCache) updateMonitorMetric() {
+	aa += 16 * 1024 * 1024
 	// todo: wait for the preorder pr, pass tracker's consumed memory to metric
-	metrics.PlanCacheMemoryUsage.WithLabelValues("memory_usage").Set(consume)
+	metrics.PlanCacheMemoryUsage.WithLabelValues("memory_usage").Set(float64(aa))
 }
