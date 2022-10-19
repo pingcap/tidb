@@ -383,7 +383,10 @@ func (w *backfillWorker) runTask(task *reorgBackfillTask) {
 	result := w.handleBackfillTask(w.ddlCtx, task, w.backfiller)
 
 	if result.err == nil {
+		traceID := task.bfJob.JobID + 100
+		finish := injectSpan(traceID, fmt.Sprintf("handle-task-id-%d", task.bfJob.ID))
 		w.finishJob(task.bfJob)
+		finish()
 	}
 	w.resultCh <- result
 	logutil.BgLogger().Info("[ddl] run backfill worker finish", zap.Int("workerID", w.id))

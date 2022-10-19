@@ -332,12 +332,20 @@ func (d *ddl) runBackfillJobs(sess *session, bJob *model.BackfillJob, jobCtx *Jo
 	})
 
 	runningJobIDs := []int64{bJob.JobID}
+	num := 0
 	proFunc := func() ([]*reorgBackfillTask, error) {
+		defer injectSpan(traceID, fmt.Sprintf("get-backfill-jobs-no.%d", num))
+		num++
 		// TODO: if err is write conflict, we need retry
 		// TODO: workerCnt -> batch
 		bJobs, err := getAndMarkBackfillJobsForOneEle(sess, workerCnt, true, runningJobIDs, d.uuid, instanceLease*time.Second)
 		if err != nil {
-			return nil, err
+			// TODO: test: if all tidbs can't get the unmark backfill job(a tidb mark a backfill job, other tidbs returned, then the tidb can't handle this job.)
+			if dbterror.ErrDDLJobNotFound.Equal(err) {
+				logutil.BgLogger().Info("no backfill job, handle backfill task finished")
+				return nil, err
+			}
+			// TODO: retry get backfill jobs
 		}
 		tasks := make([]*reorgBackfillTask, 0, len(bJobs))
 		for _, bJ := range bJobs {
@@ -349,32 +357,23 @@ func (d *ddl) runBackfillJobs(sess *session, bJob *model.BackfillJob, jobCtx *Jo
 	// add new task
 	resultCh, control := pool.AddProducer(proFunc, bws, workerCnt)
 
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for {
-			select {
-			case result := <-resultCh:
-				if result.err != nil {
-					// TODO: test: if all tidbs can't get the unmark backfill job(a tidb mark a backfill job, other tidbs returned, then the tidb can't handle this job.)
-					if dbterror.ErrDDLJobNotFound.Equal(result.err) {
-						logutil.BgLogger().Info("handle backfill task finished")
-					} else {
-						logutil.BgLogger().Warn("handle backfill task failed", zap.Error(result.err))
-					}
-					return
-				}
-			default:
-				if control.IsProduceClose() {
-					return
-				}
+WaitResultLoop:
+	for {
+		select {
+		case result := <-resultCh:
+			if result.err != nil {
+				logutil.BgLogger().Warn("handle backfill task failed", zap.Error(result.err))
+				break WaitResultLoop
+			}
+		default:
+			if control.IsProduceClose() {
+				logutil.BgLogger().Info("handle backfill task finished normally")
+				break WaitResultLoop
 			}
 		}
-	}()
+	}
 	// Waiting task finishing
 	control.Wait()
-	wg.Wait()
 
 	// close pool
 	pool.ReleaseAndWait()
