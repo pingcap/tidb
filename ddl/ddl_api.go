@@ -94,11 +94,11 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt)
 	// If no charset and/or collation is specified use collation_server and character_set_server
 	charsetOpt := ast.CharsetOpt{}
 	if sessionVars.GlobalVarsAccessor != nil {
-		charsetOpt.Col, err = sessionVars.GetSessionOrGlobalSystemVar(variable.CollationServer)
+		charsetOpt.Col, err = sessionVars.GetSessionOrGlobalSystemVar(context.Background(), variable.CollationServer)
 		if err != nil {
 			return err
 		}
-		charsetOpt.Chs, err = sessionVars.GetSessionOrGlobalSystemVar(variable.CharacterSetServer)
+		charsetOpt.Chs, err = sessionVars.GetSessionOrGlobalSystemVar(context.Background(), variable.CharacterSetServer)
 		if err != nil {
 			return err
 		}
@@ -631,6 +631,18 @@ func (d *ddl) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt) (er
 	}
 	ctx.ReleaseTableLockByTableIDs(lockTableIDs)
 	return nil
+}
+
+func (d *ddl) RecoverSchema(ctx sessionctx.Context, recoverSchemaInfo *RecoverSchemaInfo) error {
+	recoverSchemaInfo.State = model.StateNone
+	job := &model.Job{
+		Type:       model.ActionRecoverSchema,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{recoverSchemaInfo, recoverCheckFlagNone},
+	}
+	err := d.DoDDLJob(ctx, job)
+	err = d.callHookOnChanged(job, err)
+	return errors.Trace(err)
 }
 
 func checkTooLongSchema(schema model.CIStr) error {
@@ -2636,7 +2648,7 @@ func (d *ddl) preSplitAndScatter(ctx sessionctx.Context, tbInfo *model.TableInfo
 		preSplit      func()
 		scatterRegion bool
 	)
-	val, err := ctx.GetSessionVars().GetGlobalSystemVar(variable.TiDBScatterRegion)
+	val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBScatterRegion)
 	if err != nil {
 		logutil.BgLogger().Warn("[ddl] won't scatter region", zap.Error(err))
 	} else {
@@ -2695,9 +2707,7 @@ func (d *ddl) RecoverTable(ctx sessionctx.Context, recoverInfo *RecoverInfo) (er
 
 		Type:       model.ActionRecoverTable,
 		BinlogInfo: &model.HistoryInfo{},
-		Args: []interface{}{tbInfo, recoverInfo.AutoIDs.RowID, recoverInfo.DropJobID,
-			recoverInfo.SnapshotTS, recoverTableCheckFlagNone, recoverInfo.AutoIDs.RandomID,
-			recoverInfo.OldSchemaName, recoverInfo.OldTableName},
+		Args:       []interface{}{recoverInfo, recoverCheckFlagNone},
 	}
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
