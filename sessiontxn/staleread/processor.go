@@ -50,6 +50,7 @@ type Processor interface {
 }
 
 type baseProcessor struct {
+	ctx        context.Context
 	sctx       sessionctx.Context
 	txnManager sessiontxn.TxnManager
 
@@ -59,7 +60,8 @@ type baseProcessor struct {
 	is          infoschema.InfoSchema
 }
 
-func (p *baseProcessor) init(sctx sessionctx.Context) {
+func (p *baseProcessor) init(ctx context.Context, sctx sessionctx.Context) {
+	p.ctx = ctx
 	p.sctx = sctx
 	p.txnManager = sessiontxn.GetTxnManager(sctx)
 }
@@ -135,9 +137,9 @@ type staleReadProcessor struct {
 }
 
 // NewStaleReadProcessor creates a new stale read processor
-func NewStaleReadProcessor(sctx sessionctx.Context) Processor {
+func NewStaleReadProcessor(ctx context.Context, sctx sessionctx.Context) Processor {
 	p := &staleReadProcessor{}
-	p.init(sctx)
+	p.init(ctx, sctx)
 	return p
 }
 
@@ -155,7 +157,7 @@ func (p *staleReadProcessor) OnSelectTable(tn *ast.TableName) error {
 	}
 
 	// If `stmtAsOfTS` is not 0, it means we use 'select ... from xxx as of timestamp ...'
-	stmtAsOfTS, err := parseAndValidateAsOf(p.sctx, tn.AsOf)
+	stmtAsOfTS, err := parseAndValidateAsOf(p.ctx, p.sctx, tn.AsOf)
 	if err != nil {
 		return err
 	}
@@ -238,7 +240,7 @@ func (p *staleReadProcessor) evaluateFromStmtTSOrSysVariable(stmtTS uint64) erro
 	return p.setAsNonStaleRead()
 }
 
-func parseAndValidateAsOf(sctx sessionctx.Context, asOf *ast.AsOfClause) (uint64, error) {
+func parseAndValidateAsOf(ctx context.Context, sctx sessionctx.Context, asOf *ast.AsOfClause) (uint64, error) {
 	if asOf == nil {
 		return 0, nil
 	}
@@ -248,7 +250,7 @@ func parseAndValidateAsOf(sctx sessionctx.Context, asOf *ast.AsOfClause) (uint64
 		return 0, err
 	}
 
-	if err = sessionctx.ValidateStaleReadTS(context.TODO(), sctx, ts); err != nil {
+	if err = sessionctx.ValidateStaleReadTS(ctx, sctx, ts); err != nil {
 		return 0, err
 	}
 
