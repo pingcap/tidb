@@ -263,7 +263,6 @@ type ExecStmt struct {
 	OutputNames []*types.FieldName
 	PsStmt      *plannercore.PlanCacheStmt
 	Ti          *TelemetryInfo
-	inHandleFK  bool
 }
 
 // GetStmtNode returns the stmtNode inside Statement
@@ -595,12 +594,9 @@ func (a *ExecStmt) handleForeignKeyTrigger(ctx context.Context, e Executor, isPe
 	if !ok {
 		return nil
 	}
-	a.inHandleFK = true
-	originStmtCtx := a.Ctx.GetSessionVars().StmtCtx
+	a.Ctx.GetSessionVars().StmtCtx.InHandleForeignKeyTrigger = true
 	defer func() {
-		// Reset to the original stmtCtx.
-		a.Ctx.GetSessionVars().StmtCtx = originStmtCtx
-		a.inHandleFK = false
+		a.Ctx.GetSessionVars().StmtCtx.InHandleForeignKeyTrigger = false
 	}()
 	fkChecks := exec.GetFKChecks()
 	for _, fkCheck := range fkChecks {
@@ -975,7 +971,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 			sessiontxn.AddAssertEntranceForLockError(a.Ctx, "errDuplicateKey")
 		}
 	})
-	if a.inHandleFK {
+	if a.Ctx.GetSessionVars().StmtCtx.InHandleForeignKeyTrigger {
 		// When handle foreign key meet lock error, we need to do more work then we can retry, such as:
 		// - rollback the txn mem-buffer to the statement execution begin.
 		// - StmtCtx need to be careful handled.
