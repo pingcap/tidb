@@ -453,7 +453,10 @@ func (e *memtableRetriever) setDataForUserAttributes(ctx context.Context, sctx s
 		}
 		user := chunkRow.GetString(0)
 		host := chunkRow.GetString(1)
-		attribute := chunkRow.GetString(2)
+		var attribute any
+		if attribute = chunkRow.GetString(2); attribute == "" {
+			attribute = nil
+		}
 		row := types.MakeDatums(user, host, attribute)
 		rows = append(rows, row)
 	}

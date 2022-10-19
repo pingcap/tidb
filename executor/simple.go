@@ -827,7 +827,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		lockAccount = "Y"
 	}
 
-	userAttributes := "null"
+	var userAttributes any = nil
 	if s.CommentOrAttributeOption != nil {
 		if s.CommentOrAttributeOption.Type == ast.UserCommentType {
 			userAttributes = fmt.Sprintf("{\"metadata\": {\"comment\": \"%s\"}}", s.CommentOrAttributeOption.Value)
@@ -1844,10 +1844,9 @@ func getNewAttributes(ctx context.Context, o *ast.CommentOrAttributeOption, user
 	}
 	if o.Type == ast.UserCommentType {
 		newAttributesStr = fmt.Sprintf(`{"comment": "%s"}`, o.Value)
-	} else if o.Type == ast.UserAttributeType {
-		newAttributesStr = o.Value
 	} else {
-		return "", nil
+		// o.Type == ast.UserAttributeType
+		newAttributesStr = o.Value
 	}
 	if *newAttributes, err = types.ParseBinaryJSONFromString(newAttributesStr); err != nil {
 		return "", err
