@@ -1940,18 +1940,22 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]P
 	joins := make([]PhysicalPlan, 0, 8)
 	canPushToTiFlash := p.canPushToCop(kv.TiFlash)
 	if p.ctx.GetSessionVars().IsMPPAllowed() && canPushToTiFlash {
-		shuffleJoins := p.tryToGetMppHashJoin(prop, false)
-		if len(shuffleJoins) > 0 && (p.preferJoinType&preferShuffleJoin) > 0 {
-			return shuffleJoins, true, nil
+		if (p.preferJoinType & preferShuffleJoin) > 0 {
+			if shuffleJoins := p.tryToGetMppHashJoin(prop, false); len(shuffleJoins) > 0 {
+				return shuffleJoins, true, nil
+			}
 		}
-		bcastJoins := p.tryToGetMppHashJoin(prop, true)
-		if len(bcastJoins) > 0 && (p.preferJoinType&preferBCJoin) > 0 {
-			return bcastJoins, true, nil
+		if (p.preferJoinType & preferBCJoin) > 0 {
+			if bcastJoins := p.tryToGetMppHashJoin(prop, true); len(bcastJoins) > 0 {
+				return bcastJoins, true, nil
+			}
 		}
 		if p.shouldUseMPPBCJ() {
-			joins = append(joins, bcastJoins...)
+			mppJoins := p.tryToGetMppHashJoin(prop, true)
+			joins = append(joins, mppJoins...)
 		} else {
-			joins = append(joins, shuffleJoins...)
+			mppJoins := p.tryToGetMppHashJoin(prop, false)
+			joins = append(joins, mppJoins...)
 		}
 	}
 	if prop.IsFlashProp() {
