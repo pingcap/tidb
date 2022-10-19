@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -5080,7 +5081,95 @@ func getNumRowsFromAddingPartitions(t *testing.T, tk *testkit.TestKit, schemaNam
 	return cnt
 }
 
-// TODO Test with/without PK, indexes, UK, virtual, virtual stored columns
+// TODO: Test with TiFlash
+func TestReorgPartitionTiFlash(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	schemaName := "ReorgPartTiFlash"
+	tk.MustExec("create database " + schemaName)
+	tk.MustExec("use " + schemaName)
+	tk.MustExec(`create table t (a int unsigned PRIMARY KEY, b varchar(255), c int, key (b), key (c,b))` +
+		` partition by list columns (a) ` +
+		`(partition p0 values in (10,11,45),` +
+		` partition p1 values in (20,1,23,56),` +
+		` partition p2 values in (12,34,9))`)
+	tk.MustExec(`insert into t values (1,"1",1), (12,"12",21),(23,"23",32),(34,"34",43),(45,"45",54),(56,"56",65)`)
+
+	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`))
+	defer func() {
+		err := failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+		require.NoError(t, err)
+	}()
+
+	tk.MustExec(`alter table t set tiflash replica 1`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(10) unsigned NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  `c` int(11) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+		"  KEY `b` (`b`),\n" +
+		"  KEY `c` (`c`,`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY LIST COLUMNS(`a`)\n" +
+		"(PARTITION `p0` VALUES IN (10,11,45),\n" +
+		" PARTITION `p1` VALUES IN (20,1,23,56),\n" +
+		" PARTITION `p2` VALUES IN (12,34,9))"))
+
+	tbl := external.GetTableByName(t, tk, schemaName, "t")
+	p := tbl.GetPartitionedTable()
+	for _, pid := range p.GetAllPartitionIDs() {
+		require.NoError(t, domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), pid, true))
+	}
+	// Reload
+	tbl = external.GetTableByName(t, tk, schemaName, "t")
+	p = tbl.GetPartitionedTable()
+	require.NotNil(t, tbl.Meta().TiFlashReplica)
+	require.True(t, tbl.Meta().TiFlashReplica.Available)
+	pids := p.GetAllPartitionIDs()
+	sort.Slice(pids, func(i, j int) bool { return pids[i] < pids[j] })
+	availablePids := tbl.Meta().TiFlashReplica.AvailablePartitionIDs
+	sort.Slice(availablePids, func(i, j int) bool { return availablePids[i] < availablePids[j] })
+	require.Equal(t, pids, availablePids)
+	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockWaitTiFlashReplicaOK", `return(true)`))
+	defer func() {
+		err := failpoint.Disable("github.com/pingcap/tidb/ddl/mockWaitTiFlashReplicaOK")
+		require.NoError(t, err)
+	}()
+	tk.MustExec(`alter table t reorganize partition p1, p2 into (partition p1 values in (34,2,23),
+    partition p2 values in (12,56,9),partition p3 values in (1,8,19))`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(10) unsigned NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  `c` int(11) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+		"  KEY `b` (`b`),\n" +
+		"  KEY `c` (`c`,`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY LIST COLUMNS(`a`)\n" +
+		"(PARTITION `p0` VALUES IN (10,11,45),\n" +
+		" PARTITION `p1` VALUES IN (34,2,23),\n" +
+		" PARTITION `p2` VALUES IN (12,56,9),\n" +
+		" PARTITION `p3` VALUES IN (1,8,19))"))
+
+	// TODO: Check how to properly test TiFlash, since this will just change the actual
+	// configuration currently
+	tbl = external.GetTableByName(t, tk, schemaName, "t")
+	p = tbl.GetPartitionedTable()
+	for _, pid := range p.GetAllPartitionIDs() {
+		require.NoError(t, domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), pid, true))
+	}
+	tbl = external.GetTableByName(t, tk, schemaName, "t")
+	p = tbl.GetPartitionedTable()
+	require.NotNil(t, tbl.Meta().TiFlashReplica)
+	require.True(t, tbl.Meta().TiFlashReplica.Available)
+	for _, pid := range p.GetAllPartitionIDs() {
+		require.True(t, tbl.Meta().TiFlashReplica.IsPartitionAvailable(pid))
+	}
+	// TODO: How to test that the dropped partitions are gone?
+}
+
 func TestReorgPartitionFailInject(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -5139,3 +5228,12 @@ func TestReorgPartitionFailInject(t *testing.T) {
 }
 
 // TODO Test with/without PK, indexes, UK, virtual, virtual stored columns
+
+// How to test rollback?
+// Create new table
+// insert some data
+// start reorganize partition
+// pause and get the AddingPartition IDs for later use
+// continue reorganize partition and fail or crash in points of interests
+// check if there are any data to be read from the AddingPartition IDs
+// check if the table structure is correct.

@@ -343,6 +343,11 @@ func checkPartitionReplica(replicaCount uint64, addingDefinitions []model.Partit
 			failpoint.Return(true, nil)
 		}
 	})
+	failpoint.Inject("mockWaitTiFlashReplicaOK", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(false, nil)
+		}
+	})
 
 	ctx := context.Background()
 	pdCli := d.store.(tikv.Storage).GetRegionCache().PDClient()
@@ -2246,6 +2251,8 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 				logutil.BgLogger().Error("ConfigureTiFlashPDForPartitions fails", zap.Error(err))
 				return ver, errors.Trace(err)
 			}
+			// In the next step, StateDeleteOnly, wait to verify the TiFlash replicas
+			// are OK
 		}
 
 		bundles, err := alterTablePartitionBundles(t, tblInfo, tblInfo.Partition.AddingDefinitions)
@@ -2271,8 +2278,36 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		metrics.GetBackfillProgressByLabel(metrics.LblAction, job.SchemaName, tblInfo.Name.String()).Set(0)
 		job.SchemaState = model.StateDeleteOnly
 	case model.StateDeleteOnly:
-		// Insert this state to confirm all servers can not see the new partitions when reorg is running,
+		// This state is to confirm all servers can not see the new partitions when reorg is running,
 		// so that all deletes will be done in both old and new partitions when in either DeleteOnly or WriteOnly state.
+		// Also using the state for checking that the optional TiFlash replica is available, making it
+		// in a state without (much) data and easy to retry without side effects.
+
+		// Reason for having it here, is to make it easy for retry, and better to make sure it is in-sync
+		// as early as possible, to avoid a long wait after the data copying.
+		if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Available {
+			// For available state, the new added partition should wait it's replica to
+			// be finished. Otherwise the query to this partition will be blocked.
+			needRetry, err := checkPartitionReplica(tblInfo.TiFlashReplica.Count, addingDefinitions, d)
+			if err != nil {
+				ver, err = convertAddTablePartitionJob2RollbackJob(d, t, job, err, tblInfo)
+				return ver, err
+			}
+			if needRetry {
+				// The new added partition hasn't been replicated.
+				// Do nothing to the job this time, wait next worker round.
+				time.Sleep(tiflashCheckTiDBHTTPAPIHalfInterval)
+				// Set the error here which will lead this job exit when it's retry times beyond the limitation.
+				return ver, errors.Errorf("[ddl] add partition wait for tiflash replica to complete")
+			}
+			// When TiFlash Replica is ready, we must move them into `AvailablePartitionIDs`.
+			for _, d := range partInfo.AddingDefinitions {
+				tblInfo.TiFlashReplica.AvailablePartitionIDs = append(tblInfo.TiFlashReplica.AvailablePartitionIDs, d.ID)
+			}
+		}
+
+		if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Available {
+		}
 		job.SchemaState = model.StateWriteOnly
 		metrics.GetBackfillProgressByLabel(metrics.LblAction, job.SchemaName, tblInfo.Name.String()).Set(0)
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != job.SchemaState)
@@ -2334,44 +2369,6 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		asyncNotifyEvent(d, &util.Event{Tp: model.ActionDropTablePartition, TableInfo: tblInfo, PartInfo: &model.PartitionInfo{Definitions: definitionsToDrop}})
 		// A background job will be created to delete old partition data.
 		job.Args = []interface{}{physicalTableIDs}
-	case model.StateReplicaOnly:
-		// replica only -> public
-		// Here need do some tiflash replica complement check.
-		// TODO: If a table is with no TiFlashReplica or it is not available, the replica-only state can be eliminated.
-		if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Available {
-			// For available state, the new added partition should wait it's replica to
-			// be finished. Otherwise the query to this partition will be blocked.
-			needRetry, err := checkPartitionReplica(tblInfo.TiFlashReplica.Count, addingDefinitions, d)
-			if err != nil {
-				ver, err = convertAddTablePartitionJob2RollbackJob(d, t, job, err, tblInfo)
-				return ver, err
-			}
-			if needRetry {
-				// The new added partition hasn't been replicated.
-				// Do nothing to the job this time, wait next worker round.
-				time.Sleep(tiflashCheckTiDBHTTPAPIHalfInterval)
-				// Set the error here which will lead this job exit when it's retry times beyond the limitation.
-				return ver, errors.Errorf("[ddl] add partition wait for tiflash replica to complete")
-			}
-		}
-
-		// When TiFlash Replica is ready, we must move them into `AvailablePartitionIDs`.
-		if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Available {
-			for _, d := range partInfo.Definitions {
-				tblInfo.TiFlashReplica.AvailablePartitionIDs = append(tblInfo.TiFlashReplica.AvailablePartitionIDs, d.ID)
-			}
-		}
-		// For normal and replica finished table, move the `addingDefinitions` into `Definitions`.
-		updatePartitionInfo(tblInfo)
-
-		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-
-		// Finish this job.
-		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-		asyncNotifyEvent(d, &util.Event{Tp: model.ActionAddTablePartition, TableInfo: tblInfo, PartInfo: partInfo})
 	case model.StatePublic:
 		/*
 			// If an error occurs, it returns that it cannot delete all partitions or that the partition doesn't exist.
