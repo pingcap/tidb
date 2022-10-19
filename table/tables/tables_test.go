@@ -656,7 +656,7 @@ func TestConstraintCheckForUniqueIndex(t *testing.T) {
 	tk.MustExec("insert into ttt(k,c) values(1, 'tidb')")
 	tk.MustExec("insert into ttt(k,c) values(2, 'tidb')")
 	_, err := tk.Exec("update ttt set k=1 where id=2")
-	require.Equal(t, "[kv:1062]Duplicate entry '1-tidb' for key 'k_1'", err.Error())
+	require.Equal(t, "[kv:1062]Duplicate entry '1-tidb' for key 'ttt.k_1'", err.Error())
 	tk.MustExec("rollback")
 
 	// no auto-commit
@@ -664,13 +664,13 @@ func TestConstraintCheckForUniqueIndex(t *testing.T) {
 	tk.MustExec("set @@tidb_constraint_check_in_place = 0")
 	tk.MustExec("begin")
 	_, err = tk.Exec("update ttt set k=1 where id=2")
-	require.Equal(t, "[kv:1062]Duplicate entry '1-tidb' for key 'k_1'", err.Error())
+	require.Equal(t, "[kv:1062]Duplicate entry '1-tidb' for key 'ttt.k_1'", err.Error())
 	tk.MustExec("rollback")
 
 	tk.MustExec("set @@tidb_constraint_check_in_place = 1")
 	tk.MustExec("begin")
 	_, err = tk.Exec("update ttt set k=1 where id=2")
-	require.Equal(t, "[kv:1062]Duplicate entry '1-tidb' for key 'k_1'", err.Error())
+	require.Equal(t, "[kv:1062]Duplicate entry '1-tidb' for key 'ttt.k_1'", err.Error())
 	tk.MustExec("rollback")
 
 	// This test check that with @@tidb_constraint_check_in_place = 0, although there is not KV request for the unique index, the pessimistic lock should still be written.

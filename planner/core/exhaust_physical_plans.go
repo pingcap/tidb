@@ -1940,11 +1940,18 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]P
 	joins := make([]PhysicalPlan, 0, 8)
 	canPushToTiFlash := p.canPushToCop(kv.TiFlash)
 	if p.ctx.GetSessionVars().IsMPPAllowed() && canPushToTiFlash {
+		if (p.preferJoinType & preferShuffleJoin) > 0 {
+			if shuffleJoins := p.tryToGetMppHashJoin(prop, false); len(shuffleJoins) > 0 {
+				return shuffleJoins, true, nil
+			}
+		}
+		if (p.preferJoinType & preferBCJoin) > 0 {
+			if bcastJoins := p.tryToGetMppHashJoin(prop, true); len(bcastJoins) > 0 {
+				return bcastJoins, true, nil
+			}
+		}
 		if p.shouldUseMPPBCJ() {
 			mppJoins := p.tryToGetMppHashJoin(prop, true)
-			if (p.preferJoinType & preferBCJoin) > 0 {
-				return mppJoins, true, nil
-			}
 			joins = append(joins, mppJoins...)
 		} else {
 			mppJoins := p.tryToGetMppHashJoin(prop, false)
@@ -2802,6 +2809,28 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 			agg.MppRunMode = MppTiDB
 		}
 		hashAggs = append(hashAggs, agg)
+	}
+
+	// handle MPP Agg hints
+	var preferMode AggMppRunMode
+	var prefer bool
+	if la.aggHints.preferAggType&preferMPP1PhaseAgg > 0 {
+		preferMode, prefer = Mpp1Phase, true
+	} else if la.aggHints.preferAggType&preferMPP2PhaseAgg > 0 {
+		preferMode, prefer = Mpp2Phase, true
+	} else if la.aggHints.preferAggType&preferMPPTiDBAgg > 0 {
+		preferMode, prefer = MppTiDB, true
+	} else if la.aggHints.preferAggType&preferMPPScalarAgg > 0 {
+		preferMode, prefer = MppScalar, true
+	}
+	if prefer {
+		var preferPlans []PhysicalPlan
+		for _, agg := range hashAggs {
+			if hg, ok := agg.(*PhysicalHashAgg); ok && hg.MppRunMode == preferMode {
+				preferPlans = append(preferPlans, hg)
+			}
+		}
+		hashAggs = preferPlans
 	}
 	return
 }
