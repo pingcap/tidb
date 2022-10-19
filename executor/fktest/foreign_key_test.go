@@ -1208,6 +1208,26 @@ func TestForeignKeyOnDeleteCascade2(t *testing.T) {
 	}
 	tk.MustExec("delete from t1 where c0 in (0, 1, 2, 3, 4)")
 	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("15"))
+
+	// Test foreign key cascade execution meet lock and do retry.
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk2.MustExec("set @@foreign_key_checks=1")
+	tk2.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (id int key, name varchar(10), pid int, index(pid), constraint fk foreign key (pid) references t1 (id) on delete cascade)")
+	tk.MustExec("insert into t1 values (1, 'boss', null), (2, 'a', 1), (3, 'b', 1), (4, 'c', '2')")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t1 values (5, 'd', 3)")
+	tk2.MustExec("begin pessimistic")
+	tk2.MustExec("insert into t1 values (6, 'e', 4)")
+	tk2.MustExec("delete from t1 where id=2")
+	tk2.MustExec("commit")
+	// todo(crazycs520): make following statement execute successfully.
+	err := tk.ExecToErr("delete from t1 where id = 1")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "handle foreign key cascade meet lock error: [kv:9007]Write conflict")
+	tk.MustExec("commit")
 }
 
 func TestForeignKeyOnDeleteCascadeSQL(t *testing.T) {
