@@ -876,12 +876,6 @@ func resetDBWithSessionParams(tctx *tcontext.Context, db *sql.DB, cfg *mysql.Con
 		cfg.Params[k] = s
 	}
 
-<<<<<<< HEAD
-	newDB, err := sql.Open("mysql", dsn)
-	if err == nil {
-		db.Close()
-=======
-	db.Close()
 	c, err := mysql.NewConnector(cfg)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -889,9 +883,8 @@ func resetDBWithSessionParams(tctx *tcontext.Context, db *sql.DB, cfg *mysql.Con
 	newDB := sql.OpenDB(c)
 	// ping to make sure all session parameters are set correctly
 	err = newDB.PingContext(tctx)
-	if err != nil {
-		newDB.Close()
->>>>>>> d0376379d6 (*: don't use DSN to avoid some security problems (#38342))
+	if err == nil {
+		db.Close()
 	}
 	return newDB, nil
 }
