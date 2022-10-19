@@ -582,7 +582,7 @@ func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic 
 		// If the stmt have no rs like `insert`, The session tracker detachment will be directly
 		// done in the `defer` function. If the rs is not nil, the detachment will be done in
 		// `rs.Close` in `handleStmt`
-		if sc != nil && rs == nil {
+		if handled && sc != nil && rs == nil {
 			if sc.MemTracker != nil {
 				sc.MemTracker.Detach()
 			}

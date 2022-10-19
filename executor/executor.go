@@ -1942,10 +1942,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.InitMemTracker(memory.LabelForAnalyzeMemory, -1)
 		vars.MemTracker.SetBytesLimit(-1)
 	} else {
-		if vars.ConnectionID != 0 {
-			logutil.BgLogger().Error("reset context of stmt", zap.Int64("mem_quota_query", vars.MemQuotaQuery))
-		}
-		sc.InitMemTracker(memory.LabelForSQLText, 128)
+		sc.InitMemTracker(memory.LabelForSQLText, -1)
 		logOnQueryExceedMemQuota := domain.GetDomain(ctx).ExpensiveQueryHandle().LogOnQueryExceedMemQuota
 		switch variable.OOMAction.Load() {
 		case variable.OOMActionCancel:
@@ -1962,10 +1959,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	}
 	sc.MemTracker.SessionID = vars.ConnectionID
 	sc.MemTracker.AttachTo(vars.MemTracker)
-	if vars.ConnectionID != 0 {
-		vars.MemTracker.SearchTrackerWithoutLock(-1)
-	}
-
 	sc.InitDiskTracker(memory.LabelForSQLText, -1)
 	globalConfig := config.GetGlobalConfig()
 	if variable.EnableTmpStorageOnOOM.Load() && vars.DiskTracker != nil {
