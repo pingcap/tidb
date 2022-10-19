@@ -983,7 +983,7 @@ func TestTiFlashProgress(t *testing.T) {
 	}
 	_ = infosync.UpdateTiFlashTableSyncProgress(context.TODO(), tb.Meta().ID, "5.0")
 	mustExist(tb.Meta().ID)
-	_ = infosync.DeleteTiFlashTableSyncProgress(tb.Meta().ID)
+	_ = infosync.DeleteTiFlashTableSyncProgress(tb.Meta())
 	mustAbsent(tb.Meta().ID)
 
 	_ = infosync.UpdateTiFlashTableSyncProgress(context.TODO(), tb.Meta().ID, "5.0")

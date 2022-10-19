@@ -372,7 +372,7 @@ func onDropTableOrView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ er
 			}
 		}
 		if tblInfo.TiFlashReplica != nil {
-			e := infosync.DeleteTiFlashTableSyncProgress(tblInfo.ID)
+			e := infosync.DeleteTiFlashTableSyncProgress(tblInfo)
 			if e != nil {
 				logutil.BgLogger().Error("DeleteTiFlashTableSyncProgress fails", zap.Error(e))
 			}
@@ -748,7 +748,7 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 
 	// Clear the TiFlash replica available status.
 	if tblInfo.TiFlashReplica != nil {
-		e := infosync.DeleteTiFlashTableSyncProgress(tblInfo.ID)
+		e := infosync.DeleteTiFlashTableSyncProgress(tblInfo)
 		if e != nil {
 			logutil.BgLogger().Error("DeleteTiFlashTableSyncProgress fails", zap.Error(e))
 		}
@@ -1271,6 +1271,12 @@ func (w *worker) onSetTableFlashReplica(d *ddlCtx, t *meta.Meta, job *model.Job)
 			Available:      available,
 		}
 	} else {
+		if tblInfo.TiFlashReplica != nil {
+			err = infosync.DeleteTiFlashTableSyncProgress(tblInfo)
+			if err != nil {
+				logutil.BgLogger().Error("DeleteTiFlashTableSyncProgress fails", zap.Error(err))
+			}
+		}
 		tblInfo.TiFlashReplica = nil
 	}
 
