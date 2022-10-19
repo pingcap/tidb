@@ -148,7 +148,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.TableConstraints:
 			e.setDataFromTableConstraints(sctx, dbs)
 		case infoschema.TableSessionVar:
-			e.rows, err = infoschema.GetDataFromSessionVariables(sctx)
+			e.rows, err = infoschema.GetDataFromSessionVariables(ctx, sctx)
 		case infoschema.TableTiDBServersInfo:
 			err = e.setDataForServersInfo(sctx)
 		case infoschema.TableTiFlashReplica:
@@ -402,7 +402,7 @@ func (e *memtableRetriever) setDataForVariablesInfo(ctx sessionctx.Context) erro
 		if infoschema.SysVarHiddenForSem(ctx, sv.Name) {
 			continue
 		}
-		currentVal, err := ctx.GetSessionVars().GetSessionOrGlobalSystemVar(sv.Name)
+		currentVal, err := ctx.GetSessionVars().GetSessionOrGlobalSystemVar(context.Background(), sv.Name)
 		if err != nil {
 			currentVal = ""
 		}

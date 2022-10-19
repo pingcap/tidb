@@ -3248,6 +3248,14 @@ func TestDDL(t *testing.T) {
 		{"flashback table t,t1,t2", true, "FLASHBACK TABLE `t`, `t1`, `t2`"},
 		{"flashback table t TO t1", true, "FLASHBACK TABLE `t` TO `t1`"},
 
+		// for flashback database.
+		{"flashback database db1", true, "FLASHBACK DATABASE `db1`"},
+		{"flashback database db1, db2", true, "FLASHBACK DATABASE `db1`, `db2`"},
+		{"flashback schema db1", true, "FLASHBACK DATABASE `db1`"},
+		{"flashback schema db1,db2", true, "FLASHBACK DATABASE `db1`, `db2`"},
+		{"flashback database db1 to db2", true, "FLASHBACK DATABASE `db1` TO `db2`"},
+		{"flashback schema db1 to db2", true, "FLASHBACK DATABASE `db1` TO `db2`"},
+
 		// for flashback to timestamp
 		{"flashback cluster to timestamp '2021-05-26 16:45:26'", true, "FLASHBACK CLUSTER TO TIMESTAMP '2021-05-26 16:45:26'"},
 		{"flashback table t to timestamp '2021-05-26 16:45:26'", true, "FLASHBACK TABLE `t` TO TIMESTAMP '2021-05-26 16:45:26'"},

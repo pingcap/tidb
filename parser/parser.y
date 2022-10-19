@@ -901,6 +901,7 @@ import (
 	FlushStmt                  "Flush statement"
 	FlashbackTableStmt         "Flashback table statement"
 	FlashbackToTimestampStmt   "Flashback cluster statement"
+	FlashbackDatabaseStmt      "Flashback Database statement"
 	GrantStmt                  "Grant statement"
 	GrantProxyStmt             "Grant proxy statement"
 	GrantRoleStmt              "Grant role statement"
@@ -2605,12 +2606,12 @@ FlashbackToTimestampStmt:
 	}
 |	"FLASHBACK" DatabaseSym DBNameList "TO" "TIMESTAMP" stringLit
 	{
-		dbName := make([]model.CIStr, 0, len($3.([]string)))
+		dbNames := make([]model.CIStr, 0, len($3.([]string)))
 		for _, val := range $3.([]string) {
-			dbName = append(dbName, model.NewCIStr(val))
+			dbNames = append(dbNames, model.NewCIStr(val))
 		}
 		$$ = &ast.FlashBackToTimestampStmt{
-			Schemas:     dbName,
+			Schemas:     dbNames,
 			FlashbackTS: ast.NewValueExpr($6, "", ""),
 		}
 	}
@@ -2638,6 +2639,27 @@ FlashbackToNewName:
 |	"TO" Identifier
 	{
 		$$ = $2
+	}
+
+/*******************************************************************
+ *
+ *  Flush Back Database Statement
+ *
+ *  Example:
+ *      FLASHBACK DATABASE/SCHEMA DBName TO newDBName
+ *
+ *******************************************************************/
+FlashbackDatabaseStmt:
+	"FLASHBACK" DatabaseSym DBNameList FlashbackToNewName
+	{
+		dbNames := make([]model.CIStr, 0, len($3.([]string)))
+		for _, val := range $3.([]string) {
+			dbNames = append(dbNames, model.NewCIStr(val))
+		}
+		$$ = &ast.FlashBackDatabaseStmt{
+			DBNames: dbNames,
+			NewName: $4,
+		}
 	}
 
 /*******************************************************************
@@ -11351,6 +11373,7 @@ Statement:
 |	FlushStmt
 |	FlashbackTableStmt
 |	FlashbackToTimestampStmt
+|	FlashbackDatabaseStmt
 |	GrantStmt
 |	GrantProxyStmt
 |	GrantRoleStmt

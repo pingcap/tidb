@@ -922,7 +922,7 @@ func TestSetCharset(t *testing.T) {
 
 	check := func(args ...string) {
 		for i, v := range characterSetVariables {
-			sVar, err := sessionVars.GetSessionOrGlobalSystemVar(v)
+			sVar, err := sessionVars.GetSessionOrGlobalSystemVar(context.Background(), v)
 			require.NoError(t, err)
 			require.Equal(t, args[i], sVar, fmt.Sprintf("%d: %s", i, characterSetVariables[i]))
 		}
