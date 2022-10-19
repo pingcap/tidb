@@ -16,7 +16,25 @@ package spmc
 
 import (
 	"sync"
+	"sync/atomic"
 )
+
+type taskBox[T any, U any, C any, CT any, TF Context[CT]] struct {
+	constArgs   C
+	wg          *sync.WaitGroup
+	task        chan T
+	resultCh    chan U
+	contextFunc TF
+	status      atomic.Int32 // task manager is able to make this task stop, wait or running
+}
+
+func (t *taskBox[T, U, C, CT, TF]) GetStatus() int32 {
+	return t.status.Load()
+}
+
+func (t *taskBox[T, U, C, CT, TF]) SetStatus(s int32) {
+	t.status.Store(s)
+}
 
 type Context[T any] interface {
 	GetContext() T
@@ -26,14 +44,6 @@ type NilContext struct{}
 
 func (NilContext) GetContext() any {
 	return nil
-}
-
-type taskBox[T any, U any, C any, CT any, TF Context[CT]] struct {
-	constArgs   C
-	wg          *sync.WaitGroup
-	task        chan T
-	resultCh    chan U
-	contextFunc TF
 }
 
 // TaskController is a controller that can control or watch the pool.
