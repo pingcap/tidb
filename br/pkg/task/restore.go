@@ -16,6 +16,7 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/httputil"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/restore"
@@ -23,7 +24,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -403,6 +406,14 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	}
 	defer mgr.Close()
 
+	// we must have domain here.
+	if cfg.CheckRequirements {
+		err = version.CheckDDLCompatibility(fetchTiDBConcurrencyDDLEnabled(mgr.GetDomain()))
+		if err != nil {
+			return err
+		}
+	}
+
 	mergeRegionSize := cfg.MergeSmallRegionSizeBytes
 	mergeRegionCount := cfg.MergeSmallRegionKeyCount
 	if mergeRegionSize == conn.DefaultMergeRegionSizeBytes &&
@@ -768,4 +779,14 @@ func restoreTableStream(
 			batcher.Add(t)
 		}
 	}
+}
+
+func fetchTiDBConcurrencyDDLEnabled(dom *domain.Domain) bool {
+	v, err := dom.GetGlobalVar(variable.TiDBEnableConcurrentDDL)
+	if err != nil {
+		log.Warn("Failed to fetch concurrency DDL, returning false to try forwarding progress", logutil.ShortError(err))
+		logutil.WarnTerm("Failed to check cluster info, BR may get stuck if version not match.")
+		return false
+	}
+	return variable.TiDBOptOn(v)
 }

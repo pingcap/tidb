@@ -28,6 +28,7 @@ var (
 	incompatibleTiKVMajor4  = semver.New("4.0.0-rc.1")
 	compatibleTiFlashMajor3 = semver.New("3.1.0")
 	compatibleTiFlashMajor4 = semver.New("4.0.0")
+	concurrencyDDLReleased  = semver.New("6.2.0")
 
 	versionHash = regexp.MustCompile("-[0-9]+-g[0-9a-f]{7,}")
 )
@@ -113,6 +114,19 @@ func CheckClusterVersion(ctx context.Context, client pd.Client, checker VerCheck
 		if checkerErr := checker(s, tikvVersion); checkerErr != nil {
 			return checkerErr
 		}
+	}
+	return nil
+}
+
+func CheckDDLCompatibility(concurrencyDDLEnabled bool) error {
+	brVersion, err := semver.NewVersion(removeVAndHash(build.ReleaseVersion))
+	if err != nil {
+		return errors.Annotatef(berrors.ErrVersionMismatch, "%s: invalid version, please recompile using `git fetch origin --tags && make build`", err)
+	}
+
+	brUsingConcurrencyDDL := brVersion.Compare(*concurrencyDDLReleased) > 0
+	if !brUsingConcurrencyDDL && concurrencyDDLEnabled {
+		return errors.Annotatef(berrors.ErrVersionMismatch, "br version %s doesn't support concurrency DDL, hence cannot execute DDL over concurrency DDL enabled clusters", brVersion)
 	}
 	return nil
 }
