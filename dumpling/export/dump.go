@@ -226,7 +226,12 @@ func (d *Dumper) Dump() (dumpErr error) {
 		return conn, nil
 	}
 
-	taskChan := make(chan Task, defaultDumpThreads)
+	chanSize := defaultDumpThreads
+	failpoint.Inject("SmallDumpChanSize", func() {
+		chanSize = 1
+		chanSize = 1
+	})
+	taskChan := make(chan Task, chanSize)
 	AddGauge(d.metrics.taskChannelCapacity, defaultDumpThreads)
 	wg, writingCtx := errgroup.WithContext(tctx)
 	writerCtx := tctx.WithContext(writingCtx)
