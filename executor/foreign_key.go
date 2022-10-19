@@ -611,7 +611,7 @@ func (fkc *FKCascadeExec) buildFKCascadePlan(ctx context.Context) (plannercore.P
 		return nil, err
 	}
 	ret := &plannercore.PreprocessorReturn{}
-	err = plannercore.Preprocess(sctx, stmtNode, plannercore.WithPreprocessorReturn(ret), plannercore.InitTxnContextProvider)
+	err = plannercore.Preprocess(ctx, sctx, stmtNode, plannercore.WithPreprocessorReturn(ret), plannercore.InitTxnContextProvider)
 	if err != nil {
 		return nil, err
 	}
