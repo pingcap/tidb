@@ -35,6 +35,7 @@ import (
 type OOMAlarmVariablesInfo struct {
 	SessionAnalyzeVersion         int
 	SessionEnabledRateLimitAction bool
+	SessionMemQuotaQuery          int64
 }
 
 // ProcessInfo is a struct used for show processlist statement.
