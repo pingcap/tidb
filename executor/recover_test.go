@@ -455,7 +455,7 @@ func TestFlashbackSchema(t *testing.T) {
 	// Test flashback database with db_not_exists name.
 	tk.MustGetErrMsg("flashback database db_not_exists", "Can't find dropped database: db_not_exists in DDL history jobs")
 	tk.MustExec("flashback database test_flashback")
-	tk.MustGetErrMsg("flashback database test_flashback to test_flashback2", "Schema 'test_flashback' already been recover to 'test_flashback', can't be recover repeatedly")
+	tk.MustGetErrMsg("flashback database test_flashback to test_flashback2", infoschema.ErrDatabaseExists.GenWithStack("Schema 'test_flashback' already been recover to 'test_flashback', can't be recover repeatedly").Error())
 
 	// Test flashback database failed by there is already a new database with the same name.
 	// If there is a new database with the same name, should return failed.
