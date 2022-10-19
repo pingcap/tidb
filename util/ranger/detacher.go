@@ -504,7 +504,9 @@ func extractValueInfo(expr expression.Expression) *valueInfo {
 // accesses: The condition will be used to build range.
 // filters: filters is the part that some access conditions need to be evaluate again since it's only the prefix part of char column.
 // newConditions: We'll simplify the given conditions if there're multiple in conditions or eq conditions on the same column.
-//   e.g. if there're a in (1, 2, 3) and a in (2, 3, 4). This two will be combined to a in (2, 3) and pushed to newConditions.
+//
+//	e.g. if there're a in (1, 2, 3) and a in (2, 3, 4). This two will be combined to a in (2, 3) and pushed to newConditions.
+//
 // columnValues: the constant column values for all index columns. columnValues[i] is nil if cols[i] is not constant.
 // bool: indicate whether there's nil range when merging eq and in conditions.
 func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Expression, cols []*expression.Column,
@@ -537,9 +539,7 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 		points[offset] = rb.intersection(points[offset], rb.build(cond, collator), collator)
 		if len(points[offset]) == 0 { // Early termination if false expression found
 			if expression.MaybeOverOptimized4PlanCache(sctx, conditions) {
-				// cannot return an empty-range for plan-cache since the range may become non-empty as parameters change
-				// for safety, return the whole conditions in this case
-				return nil, conditions, nil, nil, false
+				sctx.GetSessionVars().StmtCtx.SkipPlanCache = true
 			}
 			return nil, nil, nil, nil, true
 		}
@@ -562,9 +562,7 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 			accesses[i] = nil
 		} else if len(points[i]) == 0 { // Early termination if false expression found
 			if expression.MaybeOverOptimized4PlanCache(sctx, conditions) {
-				// cannot return an empty-range for plan-cache since the range may become non-empty as parameters change
-				// for safety, return the whole conditions in this case
-				return nil, conditions, nil, nil, false
+				sctx.GetSessionVars().StmtCtx.SkipPlanCache = true
 			}
 			return nil, nil, nil, nil, true
 		} else {
@@ -577,8 +575,7 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 				columnValues[i] = &valueInfo{mutable: true}
 			}
 			if expression.MaybeOverOptimized4PlanCache(sctx, conditions) {
-				// TODO: optimize it more elaborately, e.g. return [2 3, 2 3] as accesses for 'where a = 2 and b = 3 and c >= ? and c <= ?'
-				return nil, conditions, nil, nil, false
+				sctx.GetSessionVars().StmtCtx.SkipPlanCache = true
 			}
 		}
 	}

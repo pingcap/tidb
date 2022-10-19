@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
 	"sync"
 
 	. "github.com/pingcap/check"
@@ -1526,4 +1527,29 @@ func (s *testSuite) TestIssue28792(c *C) {
 	r1 := tk.MustQuery("EXPLAIN SELECT t12.a, t12.b FROM t12 LEFT JOIN t97 on t12.b = t97.b;").Rows()
 	r2 := tk.MustQuery("EXPLAIN SELECT t12.a, t12.b FROM t12 LEFT JOIN t97 use index () on t12.b = t97.b;").Rows()
 	c.Assert(r1, DeepEquals, r2)
+}
+
+func (s *testSuite) TestIssue38533(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, key (a))")
+	tk.MustExec(`prepare st from "select /*+ use_index(t, a) */ a from t where a=? and a=?"`)
+	tk.MustExec(`set @a=1`)
+	tk.MustExec(`execute st using @a, @a`)
+
+	tkProcess := tk.Se.ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	plan := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
+	c.Assert(strings.Contains(plan[1][0].(string), "RangeScan"), IsTrue) // range-scan instead of full-scan
+
+	tk.MustExec(`execute st using @a, @a`)
+	tk.MustExec(`execute st using @a, @a`)
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
