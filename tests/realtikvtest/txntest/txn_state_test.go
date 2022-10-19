@@ -128,11 +128,11 @@ func TestEntriesCountAndSize(t *testing.T) {
 	tk.MustExec("insert into t(a) values (1);")
 	info := tk.Session().TxnInfo()
 	require.Equal(t, uint64(1), info.EntriesCount)
-	require.Equal(t, uint64(29), info.EntriesSize)
+	require.Equal(t, uint64(30), info.EntriesSize)
 	tk.MustExec("insert into t(a) values (2);")
 	info = tk.Session().TxnInfo()
 	require.Equal(t, uint64(2), info.EntriesCount)
-	require.Equal(t, uint64(58), info.EntriesSize)
+	require.Equal(t, uint64(60), info.EntriesSize)
 	tk.MustExec("commit;")
 }
 
