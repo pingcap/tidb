@@ -17,9 +17,6 @@ package memory
 import (
 	"bytes"
 	"fmt"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
-	"runtime"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -379,13 +376,6 @@ func (t *Tracker) Consume(bs int64) {
 	if bs == 0 {
 		return
 	}
-	if t.SessionID != 0 {
-		//logutil.BgLogger().Error("tracker.Consume", zap.Int64("bytesConsumed", atomic.LoadInt64(&t.bytesConsumed)), zap.Int("label", t.label), zap.Int("parent label", t.getParent().label))
-		logutil.BgLogger().Error("tracker.Consume", zap.Int64("bytesConsumed", atomic.LoadInt64(&t.bytesConsumed)), zap.Int("label", t.label))
-	}
-	if t.IsRootTrackerOfSess && t.SessionID != 0 {
-		logutil.BgLogger().Error("root sess tracker", zap.Int64("bytesConsumed", atomic.LoadInt64(&t.bytesConsumed)))
-	}
 	var rootExceed, rootExceedForSoftLimit, sessionRootTracker *Tracker
 	for tracker := t; tracker != nil; tracker = tracker.getParent() {
 		if tracker.IsRootTrackerOfSess {
@@ -550,13 +540,11 @@ func (t *Tracker) MaxConsumed() int64 {
 
 // SearchTrackerWithoutLock searches the specific tracker under this tracker without lock.
 func (t *Tracker) SearchTrackerWithoutLock(label int) *Tracker {
-	//logutil.BgLogger().Error("t.label", zap.Int("t.label", t.label), zap.Int("label", label))
 	if t.label == label {
 		return t
 	}
 	children := t.mu.children[label]
 	if len(children) > 0 {
-		logutil.BgLogger().Error("label")
 		return children[0]
 	}
 	return nil
