@@ -80,9 +80,8 @@ func NewLRUPlanCache(capacity uint, guard float64, quota uint64,
 func strHashKey(key kvcache.Key, deepCopy bool) string {
 	if deepCopy {
 		return string(key.Hash())
-	} else {
-		return string(hack.String(key.Hash()))
 	}
+	return string(hack.String(key.Hash()))
 }
 
 // Get tries to find the corresponding value according to the given key.
@@ -90,8 +89,7 @@ func (l *LRUPlanCache) Get(key kvcache.Key, paramTypes []*types.FieldType) (valu
 	l.lock.Lock()
 	defer l.lock.Unlock()
 
-	hash := strHashKey(key, false)
-	bucket, bucketExist := l.buckets[hash]
+	bucket, bucketExist := l.buckets[strHashKey(key, false)]
 	if bucketExist {
 		if element, exist := l.pickFromBucket(bucket, paramTypes); exist {
 			l.lruList.MoveToFront(element)
