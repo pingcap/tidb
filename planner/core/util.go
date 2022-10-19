@@ -40,7 +40,7 @@ type AggregateFuncExtractor struct {
 }
 
 // Enter implements Visitor interface.
-func (a *AggregateFuncExtractor) Enter(n ast.Node) (ast.Node, bool) {
+func (*AggregateFuncExtractor) Enter(n ast.Node) (ast.Node, bool) {
 	switch n.(type) {
 	case *ast.SelectStmt, *ast.SetOprStmt:
 		return n, true
@@ -50,6 +50,7 @@ func (a *AggregateFuncExtractor) Enter(n ast.Node) (ast.Node, bool) {
 
 // Leave implements Visitor interface.
 func (a *AggregateFuncExtractor) Leave(n ast.Node) (ast.Node, bool) {
+	//nolint: revive
 	switch v := n.(type) {
 	case *ast.AggregateFuncExpr:
 		if _, ok := a.skipAggMap[v]; !ok {
@@ -67,7 +68,7 @@ type WindowFuncExtractor struct {
 }
 
 // Enter implements Visitor interface.
-func (a *WindowFuncExtractor) Enter(n ast.Node) (ast.Node, bool) {
+func (*WindowFuncExtractor) Enter(n ast.Node) (ast.Node, bool) {
 	switch n.(type) {
 	case *ast.SelectStmt, *ast.SetOprStmt:
 		return n, true
@@ -77,6 +78,7 @@ func (a *WindowFuncExtractor) Enter(n ast.Node) (ast.Node, bool) {
 
 // Leave implements Visitor interface.
 func (a *WindowFuncExtractor) Leave(n ast.Node) (ast.Node, bool) {
+	//nolint: revive
 	switch v := n.(type) {
 	case *ast.WindowFuncExpr:
 		a.windowFuncs = append(a.windowFuncs, v)
@@ -219,6 +221,19 @@ func (s *baseSchemaProducer) SetSchema(schema *expression.Schema) {
 func (s *baseSchemaProducer) setSchemaAndNames(schema *expression.Schema, names types.NameSlice) {
 	s.schema = schema
 	s.names = names
+}
+
+// MemoryUsage return the memory usage of baseSchemaProducer
+func (s *baseSchemaProducer) MemoryUsage() (sum int64) {
+	if s == nil {
+		return
+	}
+
+	sum = size.SizeOfPointer + size.SizeOfSlice + int64(cap(s.names))*size.SizeOfPointer + s.basePlan.MemoryUsage()
+	if s.schema != nil {
+		sum += s.schema.MemoryUsage()
+	}
+	return
 }
 
 // Schema implements the Plan.Schema interface.

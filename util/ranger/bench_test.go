@@ -109,7 +109,7 @@ WHERE
 	require.NoError(b, err)
 	require.Len(b, stmts, 1)
 	ret := &plannercore.PreprocessorReturn{}
-	err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
+	err = plannercore.Preprocess(context.Background(), sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
 	require.NoError(b, err)
 	ctx := context.Background()
 	p, _, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
@@ -126,7 +126,7 @@ WHERE
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths)
+		_, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, 0)
 		require.NoError(b, err)
 	}
 	b.StopTimer()

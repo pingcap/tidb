@@ -2418,7 +2418,6 @@ func Test1PCWithSchemaChange(t *testing.T) {
 }
 
 func TestAmendForUniqueIndex(t *testing.T) {
-	t.Skip("Skip this unstable test(#25986) and bring it back before 2021-07-29.")
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)

@@ -123,7 +123,7 @@ func TestAnalyzeBuildSucc(t *testing.T) {
 		} else if err != nil {
 			continue
 		}
-		err = core.Preprocess(tk.Session(), stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))
+		err = core.Preprocess(context.Background(), tk.Session(), stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err)
 		_, _, err = planner.Optimize(context.Background(), tk.Session(), stmt, is)
 		if tt.succ {
@@ -165,7 +165,7 @@ func TestAnalyzeSetRate(t *testing.T) {
 		stmt, err := p.ParseOneStmt(tt.sql, "", "")
 		require.NoError(t, err, comment)
 
-		err = core.Preprocess(tk.Session(), stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))
+		err = core.Preprocess(context.Background(), tk.Session(), stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err, comment)
 		p, _, err := planner.Optimize(context.Background(), tk.Session(), stmt, is)
 		require.NoError(t, err, comment)
@@ -310,7 +310,7 @@ func TestDAGPlanBuilderBasePhysicalPlan(t *testing.T) {
 		stmt, err := p.ParseOneStmt(tt, "", "")
 		require.NoError(t, err, comment)
 
-		err = core.Preprocess(se, stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))
+		err = core.Preprocess(context.Background(), se, stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err)
 		p, _, err := planner.Optimize(context.TODO(), se, stmt, is)
 		require.NoError(t, err)
@@ -363,36 +363,37 @@ func TestDAGPlanBuilderUnion(t *testing.T) {
 
 func TestDAGPlanBuilderUnionScan(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, c int)")
 
 	var input []string
 	var output []struct {
 		SQL  string
 		Best string
 	}
+	planSuiteData := core.GetPlanSuiteData()
+	planSuiteData.LoadTestCases(t, &input, &output)
+
 	p := parser.New()
-	is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
 	for i, tt := range input {
+		tk.MustExec("begin;")
+		tk.MustExec("insert into t values(2, 2, 2);")
+
 		comment := fmt.Sprintf("input: %s", tt)
 		stmt, err := p.ParseOneStmt(tt, "", "")
 		require.NoError(t, err, comment)
-		require.NoError(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
-
-		// Make txn not read only.
-		txn, err := tk.Session().Txn(true)
-		require.NoError(t, err)
-		err = txn.Set(kv.Key("AAA"), []byte("BBB"))
-		require.NoError(t, err)
-		tk.Session().StmtCommit()
-		p, _, err := planner.Optimize(context.TODO(), tk.Session(), stmt, is)
+		dom := domain.GetDomain(tk.Session())
+		require.NoError(t, dom.Reload())
+		plan, _, err := planner.Optimize(context.TODO(), tk.Session(), stmt, dom.InfoSchema())
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Best = core.ToString(p)
+			output[i].Best = core.ToString(plan)
 		})
-		require.Equal(t, output[i].Best, core.ToString(p), fmt.Sprintf("input: %s", tt))
+		require.Equal(t, output[i].Best, core.ToString(plan), fmt.Sprintf("input: %s", tt))
+		tk.MustExec("rollback;")
 	}
 }
 
@@ -1211,6 +1212,41 @@ func TestForceInlineCTE(t *testing.T) {
 	}
 }
 
+func TestSingleConsumerCTE(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE `t` (`a` int(11));")
+	tk.MustExec("insert into t values (1), (5), (10), (15), (20), (30), (50);")
+
+	var (
+		input  []string
+		output []struct {
+			SQL     string
+			Plan    []string
+			Warning []string
+		}
+	)
+	planSuiteData := core.GetPlanSuiteData()
+	planSuiteData.LoadTestCases(t, &input, &output)
+
+	for i, ts := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = ts
+		})
+		if strings.HasPrefix(ts, "set") {
+			tk.MustExec(ts)
+			continue
+		}
+		testdata.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format='brief' " + ts).Rows())
+		})
+		tk.MustQuery("explain format='brief' " + ts).Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
 func TestPushdownDistinctEnable(t *testing.T) {
 	var (
 		input  []string
@@ -1622,7 +1658,7 @@ func TestDAGPlanBuilderSplitAvg(t *testing.T) {
 		stmt, err := p.ParseOneStmt(tt.sql, "", "")
 		require.NoError(t, err, comment)
 
-		err = core.Preprocess(tk.Session(), stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))
+		err = core.Preprocess(context.Background(), tk.Session(), stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err)
 		p, _, err := planner.Optimize(context.TODO(), tk.Session(), stmt, is)
 		require.NoError(t, err, comment)
@@ -2086,6 +2122,7 @@ func TestHJBuildAndProbeHint(t *testing.T) {
 		})
 		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery(ts).Sort().Check(testkit.Rows(output[i].Result...))
+		tk.MustQuery("show warnings").Check(testkit.Rows(output[i].Warning...))
 	}
 }
 
@@ -2300,4 +2337,45 @@ func TestPhysicalPlanMemoryTrace(t *testing.T) {
 	size = pp.MemoryUsage()
 	pp.MPPPartitionCols = append(pp.MPPPartitionCols, &property.MPPPartitionColumn{})
 	require.Greater(t, pp.MemoryUsage(), size)
+}
+
+func TestNoDecorrelateHint(t *testing.T) {
+	var (
+		input  []string
+		output []struct {
+			SQL     string
+			Plan    []string
+			Result  []string
+			Warning []string
+		}
+	)
+	planSuiteData := core.GetPlanSuiteData()
+	planSuiteData.LoadTestCases(t, &input, &output)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, b int)")
+	tk.MustExec("create table t2(a int primary key, b int)")
+	tk.MustExec("create table t3(a int, b int)")
+	tk.MustExec("insert into t1 values(1,1),(2,2)")
+	tk.MustExec("insert into t2 values(1,1),(2,1)")
+	tk.MustExec("insert into t3 values(1,1),(2,1)")
+
+	tk.MustExec("create table ta(id int, code int, name varchar(20), index idx_ta_id(id),index idx_ta_name(name), index idx_ta_code(code))")
+	tk.MustExec("create table tb(id int, code int, name varchar(20), index idx_tb_id(id),index idx_tb_name(name))")
+	tk.MustExec("create table tc(id int, code int, name varchar(20), index idx_tc_id(id),index idx_tc_name(name))")
+	tk.MustExec("create table td(id int, code int, name varchar(20), index idx_tc_id(id),index idx_tc_name(name))")
+
+	for i, ts := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(ts).Sort().Rows())
+			output[i].Warning = testdata.ConvertRowsToStrings(tk.MustQuery("show warnings").Rows())
+		})
+		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery(ts).Sort().Check(testkit.Rows(output[i].Result...))
+		tk.MustQuery("show warnings").Check(testkit.Rows(output[i].Warning...))
+	}
 }

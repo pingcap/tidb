@@ -94,11 +94,11 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt)
 	// If no charset and/or collation is specified use collation_server and character_set_server
 	charsetOpt := ast.CharsetOpt{}
 	if sessionVars.GlobalVarsAccessor != nil {
-		charsetOpt.Col, err = sessionVars.GetSessionOrGlobalSystemVar(variable.CollationServer)
+		charsetOpt.Col, err = sessionVars.GetSessionOrGlobalSystemVar(context.Background(), variable.CollationServer)
 		if err != nil {
 			return err
 		}
-		charsetOpt.Chs, err = sessionVars.GetSessionOrGlobalSystemVar(variable.CharacterSetServer)
+		charsetOpt.Chs, err = sessionVars.GetSessionOrGlobalSystemVar(context.Background(), variable.CharacterSetServer)
 		if err != nil {
 			return err
 		}
@@ -593,12 +593,18 @@ func (d *ddl) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt) (er
 		}
 		return infoschema.ErrDatabaseDropExists.GenWithStackByArgs(stmt.Name)
 	}
+	fkCheck := ctx.GetSessionVars().ForeignKeyChecks
+	err = checkDatabaseHasForeignKeyReferred(is, old.Name, fkCheck)
+	if err != nil {
+		return err
+	}
 	job := &model.Job{
 		SchemaID:    old.ID,
 		SchemaName:  old.Name.L,
 		SchemaState: old.State,
 		Type:        model.ActionDropSchema,
 		BinlogInfo:  &model.HistoryInfo{},
+		Args:        []interface{}{fkCheck},
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -2442,9 +2448,11 @@ func (d *ddl) CreateTableWithInfo(
 	ctx sessionctx.Context,
 	dbName model.CIStr,
 	tbInfo *model.TableInfo,
-	onExist OnExist,
+	cs ...CreateTableWithInfoConfigurier,
 ) (err error) {
-	job, err := d.createTableWithInfoJob(ctx, dbName, tbInfo, onExist, false)
+	c := GetCreateTableWithInfoConfig(cs)
+
+	job, err := d.createTableWithInfoJob(ctx, dbName, tbInfo, c.OnExist, !c.ShouldAllocTableID(tbInfo))
 	if err != nil {
 		return err
 	}
@@ -2455,7 +2463,7 @@ func (d *ddl) CreateTableWithInfo(
 	err = d.DoDDLJob(ctx, job)
 	if err != nil {
 		// table exists, but if_not_exists flags is true, so we ignore this error.
-		if onExist == OnExistIgnore && infoschema.ErrTableExists.Equal(err) {
+		if c.OnExist == OnExistIgnore && infoschema.ErrTableExists.Equal(err) {
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
 			err = nil
 		}
@@ -2470,7 +2478,10 @@ func (d *ddl) CreateTableWithInfo(
 func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 	dbName model.CIStr,
 	infos []*model.TableInfo,
-	onExist OnExist) error {
+	cs ...CreateTableWithInfoConfigurier,
+) error {
+	c := GetCreateTableWithInfoConfig(cs)
+
 	jobs := &model.Job{
 		BinlogInfo: &model.HistoryInfo{},
 	}
@@ -2485,7 +2496,7 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 	for _, info := range infos {
 		if _, ok := duplication[info.Name.L]; ok {
 			err = infoschema.ErrTableExists.FastGenByArgs("can not batch create tables with same name")
-			if onExist == OnExistIgnore && infoschema.ErrTableExists.Equal(err) {
+			if c.OnExist == OnExistIgnore && infoschema.ErrTableExists.Equal(err) {
 				ctx.GetSessionVars().StmtCtx.AppendNote(err)
 				err = nil
 			}
@@ -2509,15 +2520,17 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 	}
 
 	for _, info := range infos {
-		info.ID, genIDs = genIDs[0], genIDs[1:]
+		if c.ShouldAllocTableID(info) {
+			info.ID, genIDs = genIDs[0], genIDs[1:]
 
-		if parts := info.GetPartitionInfo(); parts != nil {
-			for i := range parts.Definitions {
-				parts.Definitions[i].ID, genIDs = genIDs[0], genIDs[1:]
+			if parts := info.GetPartitionInfo(); parts != nil {
+				for i := range parts.Definitions {
+					parts.Definitions[i].ID, genIDs = genIDs[0], genIDs[1:]
+				}
 			}
 		}
 
-		job, err := d.createTableWithInfoJob(ctx, dbName, info, onExist, true)
+		job, err := d.createTableWithInfoJob(ctx, dbName, info, c.OnExist, true)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -2549,7 +2562,7 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 	err = d.DoDDLJob(ctx, jobs)
 	if err != nil {
 		// table exists, but if_not_exists flags is true, so we ignore this error.
-		if onExist == OnExistIgnore && infoschema.ErrTableExists.Equal(err) {
+		if c.OnExist == OnExistIgnore && infoschema.ErrTableExists.Equal(err) {
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
 			err = nil
 		}
@@ -2623,7 +2636,7 @@ func (d *ddl) preSplitAndScatter(ctx sessionctx.Context, tbInfo *model.TableInfo
 		preSplit      func()
 		scatterRegion bool
 	)
-	val, err := ctx.GetSessionVars().GetGlobalSystemVar(variable.TiDBScatterRegion)
+	val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBScatterRegion)
 	if err != nil {
 		logutil.BgLogger().Warn("[ddl] won't scatter region", zap.Error(err))
 	} else {
@@ -4537,9 +4550,6 @@ func GetModifiableColumnJob(
 		if err = isGeneratedRelatedColumn(t.Meta(), newCol.ColumnInfo, col.ColumnInfo); err != nil {
 			return nil, errors.Trace(err)
 		}
-		if t.Meta().Partition != nil {
-			return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("table is partition table")
-		}
 	}
 
 	// We don't support modifying column from not_auto_increment to auto_increment.
@@ -4807,10 +4817,6 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 	colWithNewNameAlreadyExist := table.FindCol(allCols, newColName.L) != nil
 	if colWithNewNameAlreadyExist {
 		return infoschema.ErrColumnExists.GenWithStackByArgs(newColName)
-	}
-
-	if fkInfo := GetColumnForeignKeyInfo(oldColName.L, tbl.Meta().ForeignKeys); fkInfo != nil {
-		return dbterror.ErrFKIncompatibleColumns.GenWithStackByArgs(oldColName, fkInfo.Name)
 	}
 
 	// Check generated expression.
@@ -6198,16 +6204,21 @@ func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName mode
 		return infoschema.ErrCannotAddForeign
 	}
 
-	// Check the uniqueness of the FK.
-	for _, fk := range t.Meta().ForeignKeys {
-		if fk.Name.L == fkName.L {
-			return dbterror.ErrFkDupName.GenWithStackByArgs(fkName.O)
-		}
+	if fkName.L == "" {
+		fkName = model.NewCIStr(fmt.Sprintf("fk_%d", t.Meta().MaxForeignKeyID+1))
 	}
-
+	err = checkFKDupName(t.Meta(), fkName)
+	if err != nil {
+		return err
+	}
 	fkInfo, err := buildFKInfo(ctx, fkName, keys, refer, t.Cols())
 	if err != nil {
 		return errors.Trace(err)
+	}
+	fkCheck := ctx.GetSessionVars().ForeignKeyChecks
+	err = checkAddForeignKeyValid(is, schema.Name.L, t.Meta(), fkInfo, fkCheck)
+	if err != nil {
+		return err
 	}
 
 	job := &model.Job{
@@ -6217,7 +6228,7 @@ func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName mode
 		TableName:  t.Meta().Name.L,
 		Type:       model.ActionAddForeignKey,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{fkInfo},
+		Args:       []interface{}{fkInfo, fkCheck},
 	}
 
 	err = d.DoDDLJob(ctx, job)

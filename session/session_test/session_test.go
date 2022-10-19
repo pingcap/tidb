@@ -2039,13 +2039,21 @@ func TestMemoryUsageAlarmVariable(t *testing.T) {
 	tk.MustExec("set @@global.tidb_memory_usage_alarm_ratio=1.1")
 	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_memory_usage_alarm_ratio value: '1.1'"))
 	tk.MustQuery("select @@global.tidb_memory_usage_alarm_ratio").Check(testkit.Rows("1"))
-
 	tk.MustExec("set @@global.tidb_memory_usage_alarm_ratio=-1")
 	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_memory_usage_alarm_ratio value: '-1'"))
 	tk.MustQuery("select @@global.tidb_memory_usage_alarm_ratio").Check(testkit.Rows("0"))
+	require.Error(t, tk.ExecToErr("set @@session.tidb_memory_usage_alarm_ratio=0.8"))
 
-	tk.MustExec("set @@session.tidb_memory_usage_alarm_ratio=0.8")
-	tk.MustQuery(`show warnings`).Check(testkit.Rows(fmt.Sprintf("Warning %d modifying tidb_memory_usage_alarm_ratio will require SET GLOBAL in a future version of TiDB", errno.ErrInstanceScope)))
+	tk.MustExec("set @@global.tidb_memory_usage_alarm_keep_record_num=1")
+	tk.MustQuery("select @@global.tidb_memory_usage_alarm_keep_record_num").Check(testkit.Rows("1"))
+	tk.MustExec("set @@global.tidb_memory_usage_alarm_keep_record_num=100")
+	tk.MustQuery("select @@global.tidb_memory_usage_alarm_keep_record_num").Check(testkit.Rows("100"))
+	tk.MustExec("set @@global.tidb_memory_usage_alarm_keep_record_num=0")
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_memory_usage_alarm_keep_record_num value: '0'"))
+	tk.MustQuery("select @@global.tidb_memory_usage_alarm_keep_record_num").Check(testkit.Rows("1"))
+	tk.MustExec("set @@global.tidb_memory_usage_alarm_keep_record_num=10001")
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_memory_usage_alarm_keep_record_num value: '10001'"))
+	tk.MustQuery("select @@global.tidb_memory_usage_alarm_keep_record_num").Check(testkit.Rows("10000"))
 }
 
 func TestSelectLockInShare(t *testing.T) {
@@ -3692,7 +3700,7 @@ func TestGlobalVarAccessor(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, varValue, v)
 	// Set global var to another value
-	err = se.SetGlobalSysVar(varName, varValue1)
+	err = se.SetGlobalSysVar(context.Background(), varName, varValue1)
 	require.NoError(t, err)
 	v, err = se.GetGlobalSysVar(varName)
 	require.NoError(t, err)
@@ -3705,7 +3713,7 @@ func TestGlobalVarAccessor(t *testing.T) {
 	v, err = se1.GetGlobalSysVar(varName)
 	require.NoError(t, err)
 	require.Equal(t, varValue0, v)
-	err = se1.SetGlobalSysVar(varName, varValue2)
+	err = se1.SetGlobalSysVar(context.Background(), varName, varValue2)
 	require.NoError(t, err)
 	v, err = se1.GetGlobalSysVar(varName)
 	require.NoError(t, err)
@@ -3827,7 +3835,7 @@ func TestSetInstanceSysvarBySetGlobalSysVar(t *testing.T) {
 	// but GetGlobalSysVar could not access TiDBGeneralLog's GetGlobal.
 
 	// set to "1"
-	err = se.SetGlobalSysVar(varName, "ON")
+	err = se.SetGlobalSysVar(context.Background(), varName, "ON")
 	require.NoError(t, err)
 	v, err = se.GetGlobalSysVar(varName)
 	tk.MustQuery("select @@global.tidb_general_log").Check(testkit.Rows("1"))
@@ -3835,7 +3843,7 @@ func TestSetInstanceSysvarBySetGlobalSysVar(t *testing.T) {
 	require.Equal(t, defaultValue, v)
 
 	// set back to "0"
-	err = se.SetGlobalSysVar(varName, defaultValue)
+	err = se.SetGlobalSysVar(context.Background(), varName, defaultValue)
 	require.NoError(t, err)
 	v, err = se.GetGlobalSysVar(varName)
 	tk.MustQuery("select @@global.tidb_general_log").Check(testkit.Rows("0"))

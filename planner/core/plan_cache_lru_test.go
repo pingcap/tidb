@@ -334,3 +334,30 @@ func TestIssue37914(t *testing.T) {
 		lru.Put(key, val, pTypes)
 	})
 }
+
+func TestIssue38244(t *testing.T) {
+	lru := NewLRUPlanCache(3, 0, 0, pickFromBucket)
+	require.Equal(t, uint(3), lru.capacity)
+
+	keys := make([]*mockCacheKey, 5)
+	vals := make([]*fakePlan, 5)
+	pTypes := [][]*types.FieldType{{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeDouble)},
+		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeEnum)},
+		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeDate)},
+		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeLong)},
+		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeInt24)},
+	}
+
+	// one key corresponding to multi values
+	for i := 0; i < 5; i++ {
+		keys[i] = newMockHashKey(int64(i))
+		vals[i] = &fakePlan{
+			plan: int64(i),
+			tps:  pTypes[i],
+		}
+		lru.Put(keys[i], vals[i], pTypes[i])
+	}
+	require.Equal(t, lru.size, lru.capacity)
+	require.Equal(t, uint(3), lru.size)
+	require.Equal(t, len(lru.buckets), 3)
+}

@@ -1566,7 +1566,7 @@ func (fk *FKInfo) String(db, tb string) string {
 	buf.WriteString(fk.Name.O + "` FOREIGN KEY (")
 	for i, col := range fk.Cols {
 		if i > 0 {
-			buf.WriteByte(byte(','))
+			buf.WriteString(", ")
 		}
 		buf.WriteString("`" + col.O + "`")
 	}
@@ -1579,7 +1579,7 @@ func (fk *FKInfo) String(db, tb string) string {
 	buf.WriteString("` (")
 	for i, col := range fk.RefCols {
 		if i > 0 {
-			buf.WriteByte(byte(','))
+			buf.WriteString(", ")
 		}
 		buf.WriteString("`" + col.O + "`")
 	}

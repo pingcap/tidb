@@ -688,3 +688,25 @@ func TestBinaryJSONOpaque(t *testing.T) {
 		require.Equal(t, string(buf), test.expectedOutput)
 	}
 }
+
+func TestHashValue(t *testing.T) {
+	// The following values should have different hash value
+	jsons := []BinaryJSON{
+		CreateBinaryJSON([]interface{}{}),
+		CreateBinaryJSON([]interface{}{CreateBinaryJSON([]interface{}{})}),
+		CreateBinaryJSON([]interface{}{CreateBinaryJSON([]interface{}{CreateBinaryJSON([]interface{}{})})}),
+		CreateBinaryJSON(map[string]interface{}{}),
+		CreateBinaryJSON([]interface{}{CreateBinaryJSON(false)}),
+		CreateBinaryJSON([]interface{}{CreateBinaryJSON(true)}),
+		CreateBinaryJSON([]interface{}{CreateBinaryJSON(nil)}),
+	}
+
+	// TODO: use a better way to count distinct json value
+	counter := make(map[string]struct{})
+	for _, j := range jsons {
+		hashKey := j.HashValue([]byte{})
+		counter[string(hashKey)] = struct{}{}
+	}
+
+	require.Equal(t, len(jsons), len(counter))
+}

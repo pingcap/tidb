@@ -19,6 +19,7 @@ import (
 	"context"
 	gjson "encoding/json"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -139,6 +140,24 @@ func (e *ShowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 func (e *ShowExec) fetchAll(ctx context.Context) error {
+	// Temporary disables select limit to avoid miss the result.
+	// Because some of below fetch show result stmt functions will generate
+	// a SQL stmt and then execute the new SQL stmt to do the fetch result task
+	// for the up-level show stmt.
+	// Here, the problem is the new SQL stmt will be influenced by SelectLimit value
+	// and return a limited result set back to up level show stmt. This, in fact, may
+	// cause a filter effect on result set that may exclude the qualified record outside of
+	// result set.
+	// Finally, when above result set, may not include qualified record, is returned to up
+	// level show stmt's selection, which really applies the filter operation on returned
+	// result set, it may return empty result to client.
+	oldSelectLimit := e.ctx.GetSessionVars().SelectLimit
+	e.ctx.GetSessionVars().SelectLimit = math.MaxUint64
+	defer func() {
+		// Restore session Var SelectLimit value.
+		e.ctx.GetSessionVars().SelectLimit = oldSelectLimit
+	}()
+
 	switch e.Tp {
 	case ast.ShowCharset:
 		return e.fetchShowCharset()
@@ -185,7 +204,7 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 	case ast.ShowTriggers:
 		return e.fetchShowTriggers()
 	case ast.ShowVariables:
-		return e.fetchShowVariables()
+		return e.fetchShowVariables(ctx)
 	case ast.ShowWarnings:
 		return e.fetchShowWarnings(false)
 	case ast.ShowErrors:
@@ -798,7 +817,7 @@ func (e *ShowExec) fetchShowMasterStatus() error {
 	return nil
 }
 
-func (e *ShowExec) fetchShowVariables() (err error) {
+func (e *ShowExec) fetchShowVariables(ctx context.Context) (err error) {
 	var (
 		value       string
 		sessionVars = e.ctx.GetSessionVars()
@@ -830,7 +849,7 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 				if infoschema.SysVarHiddenForSem(e.ctx, v.Name) {
 					continue
 				}
-				value, err = sessionVars.GetGlobalSystemVar(v.Name)
+				value, err = sessionVars.GetGlobalSystemVar(ctx, v.Name)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -855,7 +874,7 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 		if infoschema.SysVarHiddenForSem(e.ctx, v.Name) {
 			continue
 		}
-		value, err = sessionVars.GetSessionOrGlobalSystemVar(v.Name)
+		value, err = sessionVars.GetSessionOrGlobalSystemVar(context.Background(), v.Name)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1104,7 +1123,11 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 			colNames = append(colNames, stringutil.Escape(col.O, sqlMode))
 		}
 		buf.WriteString(fmt.Sprintf("(%s)", strings.Join(colNames, ",")))
-		buf.WriteString(fmt.Sprintf(" REFERENCES %s ", stringutil.Escape(fk.RefTable.O, sqlMode)))
+		if fk.RefSchema.L != "" {
+			buf.WriteString(fmt.Sprintf(" REFERENCES %s.%s ", stringutil.Escape(fk.RefSchema.O, sqlMode), stringutil.Escape(fk.RefTable.O, sqlMode)))
+		} else {
+			buf.WriteString(fmt.Sprintf(" REFERENCES %s ", stringutil.Escape(fk.RefTable.O, sqlMode)))
+		}
 		refColNames := make([]string, 0, len(fk.Cols))
 		for _, refCol := range fk.RefCols {
 			refColNames = append(refColNames, stringutil.Escape(refCol.O, sqlMode))

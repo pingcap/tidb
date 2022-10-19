@@ -62,6 +62,7 @@ func postReportTelemetryData() {
 	postReportCTEUsage()
 	postReportAccountLockUsage()
 	postReportMultiSchemaChangeUsage()
+	postReportExchangePartitionUsage()
 	postReportTablePartitionUsage()
 	postReportSlowQueryStats()
 	postReportNonTransactionalCounter()

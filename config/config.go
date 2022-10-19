@@ -447,8 +447,9 @@ type Log struct {
 	// File log config.
 	File logutil.FileLogConfig `toml:"file" json:"file"`
 
-	SlowQueryFile      string `toml:"slow-query-file" json:"slow-query-file"`
-	ExpensiveThreshold uint   `toml:"expensive-threshold" json:"expensive-threshold"`
+	SlowQueryFile string `toml:"slow-query-file" json:"slow-query-file"`
+	// ExpensiveThreshold is deprecated.
+	ExpensiveThreshold uint `toml:"expensive-threshold" json:"expensive-threshold"`
 
 	// The following items are deprecated. We need to keep them here temporarily
 	// to support the upgrade process. They can be removed in future.
@@ -484,9 +485,9 @@ type Instance struct {
 	ForcePriority         string     `toml:"tidb_force_priority" json:"tidb_force_priority"`
 	MemoryUsageAlarmRatio float64    `toml:"tidb_memory_usage_alarm_ratio" json:"tidb_memory_usage_alarm_ratio"`
 	// EnableCollectExecutionInfo enables the TiDB to collect execution info.
-	EnableCollectExecutionInfo bool   `toml:"tidb_enable_collect_execution_info" json:"tidb_enable_collect_execution_info"`
-	PluginDir                  string `toml:"plugin_dir" json:"plugin_dir"`
-	PluginLoad                 string `toml:"plugin_load" json:"plugin_load"`
+	EnableCollectExecutionInfo AtomicBool `toml:"tidb_enable_collect_execution_info" json:"tidb_enable_collect_execution_info"`
+	PluginDir                  string     `toml:"plugin_dir" json:"plugin_dir"`
+	PluginLoad                 string     `toml:"plugin_load" json:"plugin_load"`
 	// MaxConnections is the maximum permitted number of simultaneous client connections.
 	MaxConnections    uint32     `toml:"max_connections" json:"max_connections"`
 	TiDBEnableDDL     AtomicBool `toml:"tidb_enable_ddl" json:"tidb_enable_ddl"`
@@ -843,7 +844,7 @@ var defaultConf = Config{
 		File:                logutil.NewFileLogConfig(logutil.DefaultLogMaxSize),
 		SlowQueryFile:       "tidb-slow.log",
 		SlowThreshold:       logutil.DefaultSlowThreshold,
-		ExpensiveThreshold:  10000,
+		ExpensiveThreshold:  10000, // ExpensiveThreshold is deprecated.
 		DisableErrorStack:   nbUnset,
 		EnableErrorStack:    nbUnset, // If both options are nbUnset, getDisableErrorStack() returns true
 		EnableTimestamp:     nbUnset,
@@ -863,7 +864,7 @@ var defaultConf = Config{
 		CheckMb4ValueInUTF8:         *NewAtomicBool(true),
 		ForcePriority:               "NO_PRIORITY",
 		MemoryUsageAlarmRatio:       DefMemoryUsageAlarmRatio,
-		EnableCollectExecutionInfo:  true,
+		EnableCollectExecutionInfo:  *NewAtomicBool(true),
 		PluginDir:                   "/data/deploy/plugin",
 		PluginLoad:                  "",
 		MaxConnections:              0,
@@ -1030,6 +1031,7 @@ var removedConfig = map[string]struct{}{
 	"log.enable-slow-log":                    {}, // use tidb_enable_slow_log
 	"log.slow-threshold":                     {}, // use tidb_slow_log_threshold
 	"log.record-plan-in-slow-log":            {}, // use tidb_record_plan_in_slow_log
+	"log.expensive-threshold":                {},
 	"performance.force-priority":             {}, // use tidb_force_priority
 	"performance.memory-usage-alarm-ratio":   {}, // use tidb_memory_usage_alarm_ratio
 	"plugin.load":                            {}, // use plugin_load
@@ -1039,6 +1041,7 @@ var removedConfig = map[string]struct{}{
 	"oom-use-tmp-storage":                    {}, // use tidb_enable_tmp_storage_on_oom
 	"max-server-connections":                 {}, // use sysvar max_connections
 	"run-ddl":                                {}, // use sysvar tidb_enable_ddl
+	"instance.tidb_memory_usage_alarm_ratio": {}, // use sysvar tidb_memory_usage_alarm_ratio
 }
 
 // isAllRemovedConfigItems returns true if all the items that couldn't validate

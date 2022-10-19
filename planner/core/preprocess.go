@@ -92,6 +92,17 @@ func TryAddExtraLimit(ctx sessionctx.Context, node ast.StmtNode) ast.StmtNode {
 			Count: ast.NewValueExpr(ctx.GetSessionVars().SelectLimit, "", ""),
 		}
 		return &newSel
+	} else if show, ok := node.(*ast.ShowStmt); ok {
+		// Only when Limit is nil, for Show stmt Limit should always nil when be here,
+		// and the show STMT's behavior should consist with MySQL does.
+		if show.Limit != nil || !show.NeedLimitRSRow() {
+			return node
+		}
+		newShow := *show
+		newShow.Limit = &ast.Limit{
+			Count: ast.NewValueExpr(ctx.GetSessionVars().SelectLimit, "", ""),
+		}
+		return &newShow
 	} else if setOprStmt, ok := node.(*ast.SetOprStmt); ok {
 		if setOprStmt.Limit != nil {
 			return node
@@ -107,12 +118,12 @@ func TryAddExtraLimit(ctx sessionctx.Context, node ast.StmtNode) ast.StmtNode {
 
 // Preprocess resolves table names of the node, and checks some statements' validation.
 // preprocessReturn used to extract the infoschema for the tableName and the timestamp from the asof clause.
-func Preprocess(ctx sessionctx.Context, node ast.Node, preprocessOpt ...PreprocessOpt) error {
+func Preprocess(ctx context.Context, sctx sessionctx.Context, node ast.Node, preprocessOpt ...PreprocessOpt) error {
 	v := preprocessor{
-		ctx:                ctx,
+		sctx:               sctx,
 		tableAliasInJoin:   make([]map[string]interface{}, 0),
 		preprocessWith:     &preprocessWith{cteCanUsed: make([]string, 0), cteBeforeOffset: make([]int, 0)},
-		staleReadProcessor: staleread.NewStaleReadProcessor(ctx),
+		staleReadProcessor: staleread.NewStaleReadProcessor(ctx, sctx),
 	}
 	for _, optFn := range preprocessOpt {
 		optFn(&v)
@@ -165,12 +176,39 @@ type PreprocessorReturn struct {
 type preprocessWith struct {
 	cteCanUsed      []string
 	cteBeforeOffset []int
+	// A stack is implemented using a two-dimensional array.
+	// Each layer stores the cteList of the current query block.
+	// For example:
+	// Query: with cte1 as (with cte2 as (select * from t) select * from cte2) select * from cte1;
+	// Query Block1: select * from t
+	// cteStack: [[cte1],[cte2]] (when withClause is null, the cteStack will not be appended)
+	// Query Block2: with cte2 as (xxx) select * from cte2
+	// cteStack: [[cte1],[cte2]]
+	// Query Block3: with cte1 as (xxx) select * from cte1;
+	// cteStack: [[cte1]]
+	// ** Only the cteStack of SelectStmt and SetOprStmt will be set. **
+	cteStack [][]*ast.CommonTableExpression
+}
+
+func (pw *preprocessWith) UpdateCTEConsumerCount(tableName string) {
+	// must search from the back to the front (from the inner layer to the outer layer)
+	// For example:
+	// Query: with cte1 as (with cte1 as (select * from t) select * from cte1) select * from cte1;
+	// cteStack: [[cte1: outer, consumerCount=1], [cte1: inner, consumerCount=1]]
+	for i := len(pw.cteStack) - 1; i >= 0; i-- {
+		for _, cte := range pw.cteStack[i] {
+			if cte.Name.L == tableName {
+				cte.ConsumerCount++
+				return
+			}
+		}
+	}
 }
 
 // preprocessor is an ast.Visitor that preprocess
 // ast Nodes parsed from parser.
 type preprocessor struct {
-	ctx    sessionctx.Context
+	sctx   sessionctx.Context
 	flag   preprocessorFlag
 	stmtTp byte
 	showTp ast.ShowStmtType
@@ -195,6 +233,13 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.stmtTp = TypeDelete
 	case *ast.SelectStmt:
 		p.stmtTp = TypeSelect
+		if node.With != nil {
+			p.preprocessWith.cteStack = append(p.preprocessWith.cteStack, node.With.CTEs)
+		}
+	case *ast.SetOprStmt:
+		if node.With != nil {
+			p.preprocessWith.cteStack = append(p.preprocessWith.cteStack, node.With.CTEs)
+		}
 	case *ast.UpdateStmt:
 		p.stmtTp = TypeUpdate
 	case *ast.InsertStmt:
@@ -254,14 +299,14 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.stmtTp = TypeCreate
 		EraseLastSemicolon(node.OriginNode)
 		EraseLastSemicolon(node.HintedNode)
-		p.checkBindGrammar(node.OriginNode, node.HintedNode, p.ctx.GetSessionVars().CurrentDB)
+		p.checkBindGrammar(node.OriginNode, node.HintedNode, p.sctx.GetSessionVars().CurrentDB)
 		return in, true
 	case *ast.DropBindingStmt:
 		p.stmtTp = TypeDrop
 		EraseLastSemicolon(node.OriginNode)
 		if node.HintedNode != nil {
 			EraseLastSemicolon(node.HintedNode)
-			p.checkBindGrammar(node.OriginNode, node.HintedNode, p.ctx.GetSessionVars().CurrentDB)
+			p.checkBindGrammar(node.OriginNode, node.HintedNode, p.sctx.GetSessionVars().CurrentDB)
 		}
 		return in, true
 	case *ast.RecoverTableStmt, *ast.FlashBackTableStmt:
@@ -294,7 +339,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 			p.flag |= inCreateOrDropTable
 		}
 	case *ast.TableSource:
-		isModeOracle := p.ctx.GetSessionVars().SQLMode&mysql.ModeOracle != 0
+		isModeOracle := p.sctx.GetSessionVars().SQLMode&mysql.ModeOracle != 0
 		if _, ok := node.Source.(*ast.SelectStmt); ok && !isModeOracle && len(node.AsName.L) == 0 {
 			p.err = dbterror.ErrDerivedMustHaveAlias.GenWithStackByArgs()
 		}
@@ -319,14 +364,14 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		// start transaction read only as of timestamp ....
 		// then we need set StmtCtx.IsStaleness as true in order to avoid take tso in PrepareTSFuture.
 		if node.AsOf != nil {
-			p.ctx.GetSessionVars().StmtCtx.IsStaleness = true
+			p.sctx.GetSessionVars().StmtCtx.IsStaleness = true
 			p.IsStaleness = true
-		} else if p.ctx.GetSessionVars().TxnReadTS.PeakTxnReadTS() > 0 {
+		} else if p.sctx.GetSessionVars().TxnReadTS.PeakTxnReadTS() > 0 {
 			// If the begin statement was like following:
 			// set transaction read only as of timestamp ...
 			// begin
 			// then we need set StmtCtx.IsStaleness as true in order to avoid take tso in PrepareTSFuture.
-			p.ctx.GetSessionVars().StmtCtx.IsStaleness = true
+			p.sctx.GetSessionVars().StmtCtx.IsStaleness = true
 			p.IsStaleness = true
 		}
 	default:
@@ -397,7 +442,7 @@ func bindableStmtType(node ast.StmtNode) byte {
 }
 
 func (p *preprocessor) tableByName(tn *ast.TableName) (table.Table, error) {
-	currentDB := p.ctx.GetSessionVars().CurrentDB
+	currentDB := p.sctx.GetSessionVars().CurrentDB
 	if tn.Schema.String() != "" {
 		currentDB = tn.Schema.L
 	}
@@ -417,8 +462,8 @@ func (p *preprocessor) tableByName(tn *ast.TableName) (table.Table, error) {
 		// We should never leak that the table doesn't exist (i.e. attach ErrTableNotExists)
 		// unless we know that the user has permissions to it, should it exist.
 		// By checking here, this makes all SELECT/SHOW/INSERT/UPDATE/DELETE statements safe.
-		currentUser, activeRoles := p.ctx.GetSessionVars().User, p.ctx.GetSessionVars().ActiveRoles
-		if pm := privilege.GetPrivilegeManager(p.ctx); pm != nil {
+		currentUser, activeRoles := p.sctx.GetSessionVars().User, p.sctx.GetSessionVars().ActiveRoles
+		if pm := privilege.GetPrivilegeManager(p.sctx); pm != nil {
 			if !pm.RequestVerification(activeRoles, sName.L, tn.Name.O, "", mysql.AllPrivMask) {
 				u := currentUser.Username
 				h := currentUser.Hostname
@@ -569,6 +614,14 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		with.cteCanUsed = with.cteCanUsed[:beforeOffset]
 		if cteNode, exist := x.(*ast.CommonTableExpression); exist {
 			with.cteCanUsed = append(with.cteCanUsed, cteNode.Name.L)
+		}
+	case *ast.SelectStmt:
+		if x.With != nil {
+			p.preprocessWith.cteStack = p.preprocessWith.cteStack[0 : len(p.preprocessWith.cteStack)-1]
+		}
+	case *ast.SetOprStmt:
+		if x.With != nil {
+			p.preprocessWith.cteStack = p.preprocessWith.cteStack[0 : len(p.preprocessWith.cteStack)-1]
 		}
 	}
 
@@ -758,7 +811,7 @@ func (p *preprocessor) checkAdminCheckTableGrammar(stmt *ast.AdminStmt) {
 
 func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 	if stmt.ReferTable != nil {
-		schema := model.NewCIStr(p.ctx.GetSessionVars().CurrentDB)
+		schema := model.NewCIStr(p.sctx.GetSessionVars().CurrentDB)
 		if stmt.ReferTable.Schema.String() != "" {
 			schema = stmt.ReferTable.Schema
 		}
@@ -932,7 +985,7 @@ func (p *preprocessor) checkDropTableGrammar(stmt *ast.DropTableStmt) {
 }
 
 func (p *preprocessor) checkDropTemporaryTableGrammar(stmt *ast.DropTableStmt) {
-	currentDB := model.NewCIStr(p.ctx.GetSessionVars().CurrentDB)
+	currentDB := model.NewCIStr(p.sctx.GetSessionVars().CurrentDB)
 	for _, t := range stmt.Tables {
 		if isIncorrectName(t.Name.String()) {
 			p.err = dbterror.ErrWrongTableName.GenWithStackByArgs(t.Name.String())
@@ -977,7 +1030,7 @@ func (p *preprocessor) checkNonUniqTableAlias(stmt *ast.Join) {
 		p.tableAliasInJoin = append(p.tableAliasInJoin, make(map[string]interface{}))
 	}
 	tableAliases := p.tableAliasInJoin[len(p.tableAliasInJoin)-1]
-	isOracleMode := p.ctx.GetSessionVars().SQLMode&mysql.ModeOracle != 0
+	isOracleMode := p.sctx.GetSessionVars().SQLMode&mysql.ModeOracle != 0
 	if !isOracleMode {
 		if err := isTableAliasDuplicate(stmt.Left, tableAliases); err != nil {
 			p.err = err
@@ -1050,7 +1103,7 @@ func (p *preprocessor) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
 }
 
 func (p *preprocessor) checkGroupBy(stmt *ast.GroupByClause) {
-	noopFuncsMode := p.ctx.GetSessionVars().NoopFuncsMode
+	noopFuncsMode := p.sctx.GetSessionVars().NoopFuncsMode
 	for _, item := range stmt.Items {
 		if !item.NullOrder && noopFuncsMode != variable.OnInt {
 			err := expression.ErrFunctionsNoopImpl.GenWithStackByArgs("GROUP BY expr ASC|DESC")
@@ -1059,7 +1112,7 @@ func (p *preprocessor) checkGroupBy(stmt *ast.GroupByClause) {
 				return
 			}
 			// NoopFuncsMode is Warn, append an error
-			p.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			p.sctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		}
 	}
 }
@@ -1437,11 +1490,12 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	if tn.Schema.L == "" {
 		for _, cte := range p.preprocessWith.cteCanUsed {
 			if cte == tn.Name.L {
+				p.preprocessWith.UpdateCTEConsumerCount(tn.Name.L)
 				return
 			}
 		}
 
-		currentDB := p.ctx.GetSessionVars().CurrentDB
+		currentDB := p.sctx.GetSessionVars().CurrentDB
 		if currentDB == "" {
 			p.err = errors.Trace(ErrNoDB)
 			return
@@ -1483,11 +1537,11 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 		p.err = err
 		return
 	}
-	currentDB := p.ctx.GetSessionVars().CurrentDB
+	currentDB := p.sctx.GetSessionVars().CurrentDB
 	if tn.Schema.String() != "" {
 		currentDB = tn.Schema.L
 	}
-	table, err = tryLockMDLAndUpdateSchemaIfNecessary(p.ctx, model.NewCIStr(currentDB), table, p.ensureInfoSchema())
+	table, err = tryLockMDLAndUpdateSchemaIfNecessary(p.sctx, model.NewCIStr(currentDB), table, p.ensureInfoSchema())
 	if err != nil {
 		p.err = err
 		return
@@ -1532,8 +1586,8 @@ func (p *preprocessor) handleRepairName(tn *ast.TableName) {
 		p.err = dbterror.ErrRepairTableFail.GenWithStackByArgs("table " + tn.Name.L + " is not in repair")
 		return
 	}
-	p.ctx.SetValue(domainutil.RepairedTable, tableInfo)
-	p.ctx.SetValue(domainutil.RepairedDatabase, dbInfo)
+	p.sctx.SetValue(domainutil.RepairedTable, tableInfo)
+	p.sctx.SetValue(domainutil.RepairedDatabase, dbInfo)
 }
 
 func (p *preprocessor) resolveShowStmt(node *ast.ShowStmt) {
@@ -1541,14 +1595,14 @@ func (p *preprocessor) resolveShowStmt(node *ast.ShowStmt) {
 		if node.Table != nil && node.Table.Schema.L != "" {
 			node.DBName = node.Table.Schema.O
 		} else {
-			node.DBName = p.ctx.GetSessionVars().CurrentDB
+			node.DBName = p.sctx.GetSessionVars().CurrentDB
 		}
 	} else if node.Table != nil && node.Table.Schema.L == "" {
 		node.Table.Schema = model.NewCIStr(node.DBName)
 	}
 	if node.User != nil && node.User.CurrentUser {
 		// Fill the Username and Hostname with the current user.
-		currentUser := p.ctx.GetSessionVars().User
+		currentUser := p.sctx.GetSessionVars().User
 		if currentUser != nil {
 			node.User.Username = currentUser.Username
 			node.User.Hostname = currentUser.Hostname
@@ -1559,7 +1613,7 @@ func (p *preprocessor) resolveShowStmt(node *ast.ShowStmt) {
 }
 
 func (p *preprocessor) resolveExecuteStmt(node *ast.ExecuteStmt) {
-	prepared, err := GetPreparedStmt(node, p.ctx.GetSessionVars())
+	prepared, err := GetPreparedStmt(node, p.sctx.GetSessionVars())
 	if err != nil {
 		p.err = err
 		return
@@ -1590,6 +1644,10 @@ func (p *preprocessor) resolveAlterTableStmt(node *ast.AlterTableStmt) {
 			table := spec.Constraint.Refer.Table
 			if table.Schema.L == "" && node.Table.Schema.L != "" {
 				table.Schema = model.NewCIStr(node.Table.Schema.L)
+			}
+			if spec.Constraint.Tp == ast.ConstraintForeignKey {
+				// when foreign_key_checks is off, should ignore err when refer table is not exists.
+				p.flag |= inCreateOrDropTable
 			}
 		}
 	}
@@ -1650,12 +1708,12 @@ func (p *preprocessor) updateStateFromStaleReadProcessor() error {
 		// or is affected by the tidb_read_staleness session variable, then the statement will be makred as isStaleness
 		// in stmtCtx
 		if p.flag&initTxnContextProvider != 0 {
-			p.ctx.GetSessionVars().StmtCtx.IsStaleness = true
-			if !p.ctx.GetSessionVars().InTxn() {
-				txnManager := sessiontxn.GetTxnManager(p.ctx)
+			p.sctx.GetSessionVars().StmtCtx.IsStaleness = true
+			if !p.sctx.GetSessionVars().InTxn() {
+				txnManager := sessiontxn.GetTxnManager(p.sctx)
 				newTxnRequest := &sessiontxn.EnterNewTxnRequest{
 					Type:     sessiontxn.EnterNewTxnWithReplaceProvider,
-					Provider: staleread.NewStalenessTxnContextProvider(p.ctx, p.LastSnapshotTS, p.InfoSchema),
+					Provider: staleread.NewStalenessTxnContextProvider(p.sctx, p.LastSnapshotTS, p.InfoSchema),
 				}
 				if err := txnManager.EnterNewTxn(context.TODO(), newTxnRequest); err != nil {
 					return err
@@ -1680,12 +1738,12 @@ func (p *preprocessor) ensureInfoSchema() infoschema.InfoSchema {
 		return p.InfoSchema
 	}
 
-	p.InfoSchema = sessiontxn.GetTxnManager(p.ctx).GetTxnInfoSchema()
+	p.InfoSchema = sessiontxn.GetTxnManager(p.sctx).GetTxnInfoSchema()
 	return p.InfoSchema
 }
 
 func (p *preprocessor) hasAutoConvertWarning(colDef *ast.ColumnDef) bool {
-	sessVars := p.ctx.GetSessionVars()
+	sessVars := p.sctx.GetSessionVars()
 	if !sessVars.SQLMode.HasStrictMode() && colDef.Tp.GetType() == mysql.TypeVarchar {
 		colDef.Tp.SetType(mysql.TypeBlob)
 		if colDef.Tp.GetCharset() == charset.CharsetBin {

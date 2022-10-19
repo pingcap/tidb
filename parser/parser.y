@@ -246,6 +246,7 @@ import (
 	starting          "STARTING"
 	statsExtended     "STATS_EXTENDED"
 	straightJoin      "STRAIGHT_JOIN"
+	tidbCurrentTSO    "TiDB_CURRENT_TSO"
 	tableKwd          "TABLE"
 	tableSample       "TABLESAMPLE"
 	stored            "STORED"
@@ -1537,6 +1538,22 @@ AlterTableStmt:
 		$$ = &ast.CompactTableStmt{
 			Table:       $4.(*ast.TableName),
 			ReplicaKind: ast.CompactReplicaKindTiFlash,
+		}
+	}
+|	"ALTER" IgnoreOptional "TABLE" TableName "COMPACT" "PARTITION" PartitionNameList
+	{
+		$$ = &ast.CompactTableStmt{
+			Table:          $4.(*ast.TableName),
+			PartitionNames: $7.([]model.CIStr),
+			ReplicaKind:    ast.CompactReplicaKindAll,
+		}
+	}
+|	"ALTER" IgnoreOptional "TABLE" TableName "COMPACT" "PARTITION" PartitionNameList "TIFLASH" "REPLICA"
+	{
+		$$ = &ast.CompactTableStmt{
+			Table:          $4.(*ast.TableName),
+			PartitionNames: $7.([]model.CIStr),
+			ReplicaKind:    ast.CompactReplicaKindTiFlash,
 		}
 	}
 
@@ -3684,12 +3701,11 @@ IndexPartSpecificationList:
 IndexPartSpecification:
 	ColumnName OptFieldLen OptOrder
 	{
-		// Order is parsed but just ignored as MySQL did.
-		$$ = &ast.IndexPartSpecification{Column: $1.(*ast.ColumnName), Length: $2.(int)}
+		$$ = &ast.IndexPartSpecification{Column: $1.(*ast.ColumnName), Length: $2.(int), Desc: $3.(bool)}
 	}
 |	'(' Expression ')' OptOrder
 	{
-		$$ = &ast.IndexPartSpecification{Expr: $2}
+		$$ = &ast.IndexPartSpecification{Expr: $2, Desc: $4.(bool)}
 	}
 
 IndexLockAndAlgorithmOpt:
@@ -7257,6 +7273,7 @@ FunctionNameOptionalBraces:
 |	"CURRENT_DATE"
 |	"CURRENT_ROLE"
 |	"UTC_DATE"
+|	"TiDB_CURRENT_TSO"
 
 FunctionNameDatetimePrecision:
 	"CURRENT_TIME"

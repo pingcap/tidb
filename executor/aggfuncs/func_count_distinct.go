@@ -402,7 +402,7 @@ func evalAndEncode(
 		if err != nil || isNull {
 			break
 		}
-		encodedBytes = appendJSON(encodedBytes, buf, val)
+		encodedBytes = val.HashValue(encodedBytes)
 	case types.ETString:
 		var val string
 		val, isNull, err = arg.EvalString(sctx, row)

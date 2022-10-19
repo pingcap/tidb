@@ -49,6 +49,7 @@ type featureUsage struct {
 	NonTransactionalUsage *m.NonTransactionalStmtCounter   `json:"nonTransactional"`
 	GlobalKill            bool                             `json:"globalKill"`
 	MultiSchemaChange     *m.MultiSchemaChangeUsageCounter `json:"multiSchemaChange"`
+	ExchangePartition     *m.ExchangePartitionUsageCounter `json:"exchangePartition"`
 	TablePartition        *m.TablePartitionUsageCounter    `json:"tablePartition"`
 	LogBackup             bool                             `json:"logBackup"`
 	EnablePaging          bool                             `json:"enablePaging"`
@@ -81,6 +82,8 @@ func getFeatureUsage(ctx context.Context, sctx sessionctx.Context) (*featureUsag
 	usage.AccountLock = getAccountLockUsageInfo()
 
 	usage.MultiSchemaChange = getMultiSchemaChangeUsageInfo()
+
+	usage.ExchangePartition = getExchangePartitionUsageInfo()
 
 	usage.TablePartition = getTablePartitionUsageInfo()
 
@@ -228,6 +231,7 @@ var initialCTECounter m.CTEUsageCounter
 var initialAccountLockCounter m.AccountLockCounter
 var initialNonTransactionalCounter m.NonTransactionalStmtCounter
 var initialMultiSchemaChangeCounter m.MultiSchemaChangeUsageCounter
+var initialExchangePartitionCounter m.ExchangePartitionUsageCounter
 var initialTablePartitionCounter m.TablePartitionUsageCounter
 var initialSavepointStmtCounter int64
 var initialLazyPessimisticUniqueCheckSetCount int64
@@ -236,29 +240,29 @@ var initialDDLUsageCounter m.DDLUsageCounter
 // getTxnUsageInfo gets the usage info of transaction related features. It's exported for tests.
 func getTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
 	asyncCommitUsed := false
-	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(variable.TiDBEnableAsyncCommit); err == nil {
+	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBEnableAsyncCommit); err == nil {
 		asyncCommitUsed = val == variable.On
 	}
 	onePCUsed := false
-	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(variable.TiDBEnable1PC); err == nil {
+	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBEnable1PC); err == nil {
 		onePCUsed = val == variable.On
 	}
 	curr := metrics.GetTxnCommitCounter()
 	diff := curr.Sub(initialTxnCommitCounter)
 	mutationCheckerUsed := false
-	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(variable.TiDBEnableMutationChecker); err == nil {
+	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBEnableMutationChecker); err == nil {
 		mutationCheckerUsed = val == variable.On
 	}
 	assertionUsed := ""
-	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(variable.TiDBTxnAssertionLevel); err == nil {
+	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBTxnAssertionLevel); err == nil {
 		assertionUsed = val
 	}
 	rcCheckTSUsed := false
-	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(variable.TiDBRCReadCheckTS); err == nil {
+	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBRCReadCheckTS); err == nil {
 		rcCheckTSUsed = val == variable.On
 	}
 	rcWriteCheckTSUsed := false
-	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(variable.TiDBRCWriteCheckTs); err == nil {
+	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBRCWriteCheckTs); err == nil {
 		rcWriteCheckTSUsed = val == variable.On
 	}
 	currSavepointCount := m.GetSavepointStmtCounter()
@@ -316,6 +320,16 @@ func getMultiSchemaChangeUsageInfo() *m.MultiSchemaChangeUsageCounter {
 	return &diff
 }
 
+func postReportExchangePartitionUsage() {
+	initialExchangePartitionCounter = m.GetExchangePartitionCounter()
+}
+
+func getExchangePartitionUsageInfo() *m.ExchangePartitionUsageCounter {
+	curr := m.GetExchangePartitionCounter()
+	diff := curr.Sub(initialExchangePartitionCounter)
+	return &diff
+}
+
 func postReportTablePartitionUsage() {
 	initialTablePartitionCounter = m.ResetTablePartitionCounter(initialTablePartitionCounter)
 }
@@ -332,7 +346,7 @@ func getTablePartitionUsageInfo() *m.TablePartitionUsageCounter {
 
 // getAutoCaptureUsageInfo gets the 'Auto Capture' usage
 func getAutoCaptureUsageInfo(ctx sessionctx.Context) bool {
-	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(variable.TiDBCapturePlanBaseline); err == nil {
+	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBCapturePlanBaseline); err == nil {
 		return val == variable.On
 	}
 	return false
@@ -353,7 +367,7 @@ func getGlobalKillUsageInfo() bool {
 }
 
 func getLogBackupUsageInfo(ctx sessionctx.Context) bool {
-	return utils.CheckLogBackupEnabled(ctx) && utils.CheckLogBackupTaskExist()
+	return utils.IsLogBackupInUse(ctx)
 }
 
 func getCostModelVer2UsageInfo(ctx sessionctx.Context) bool {

@@ -342,6 +342,8 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 					// The interval time is so short that may happen in a same query, so we needn't to check again.
 					mu.Unlock()
 					return
+				} else if !ok {
+					lastAny = time.Time{}
 				}
 				mu.Unlock()
 
@@ -573,8 +575,9 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 
 		storeTaskMap := make(map[string]*batchCopTask)
 		needRetry := false
+		isMPP := mppStoreLastFailTime != nil
 		for _, task := range tasks {
-			rpcCtx, err := cache.GetTiFlashRPCContext(bo.TiKVBackoffer(), task.region, false)
+			rpcCtx, err := cache.GetTiFlashRPCContext(bo.TiKVBackoffer(), task.region, isMPP)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}

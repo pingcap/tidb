@@ -61,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/domainutil"
+	"github.com/pingcap/tidb/util/gctuner"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
@@ -204,7 +205,7 @@ func main() {
 	printInfo()
 	setupBinlogClient()
 	setupMetrics()
-
+	setupGCTuner()
 	storage, dom := createStoreAndDomain()
 	svr := createServer(storage, dom)
 
@@ -567,7 +568,7 @@ func setGlobalVars() {
 				case "check-mb4-value-in-utf8":
 					cfg.Instance.CheckMb4ValueInUTF8.Store(cfg.CheckMb4ValueInUTF8.Load())
 				case "enable-collect-execution-info":
-					cfg.Instance.EnableCollectExecutionInfo = cfg.EnableCollectExecutionInfo
+					cfg.Instance.EnableCollectExecutionInfo.Store(cfg.EnableCollectExecutionInfo)
 				case "max-server-connections":
 					cfg.Instance.MaxConnections = cfg.MaxServerConnections
 				case "run-ddl":
@@ -586,8 +587,6 @@ func setGlobalVars() {
 				switch oldName {
 				case "force-priority":
 					cfg.Instance.ForcePriority = cfg.Performance.ForcePriority
-				case "memory-usage-alarm-ratio":
-					cfg.Instance.MemoryUsageAlarmRatio = cfg.Performance.MemoryUsageAlarmRatio
 				}
 			case "plugin":
 				switch oldName {
@@ -746,6 +745,8 @@ func createServer(storage kv.Storage, dom *domain.Domain) *server.Server {
 	svr.SetDomain(dom)
 	svr.InitGlobalConnID(dom.ServerID)
 	go dom.ExpensiveQueryHandle().SetSessionManager(svr).Run()
+	go dom.MemoryUsageAlarmHandle().SetSessionManager(svr).Run()
+	go dom.ServerMemoryLimitHandle().SetSessionManager(svr).Run()
 	dom.InfoSyncer().SetSessionManager(svr)
 	return svr
 }
@@ -780,6 +781,15 @@ func setupTracing() {
 		log.Fatal("setup jaeger tracer failed", zap.String("error message", err.Error()))
 	}
 	opentracing.SetGlobalTracer(tracer)
+}
+
+func setupGCTuner() {
+	limit, err := memory.MemTotal()
+	if err != nil {
+		log.Fatal("setupGCTuner failed", zap.Error(err))
+	}
+	threshold := limit * 7 / 10
+	gctuner.Tuning(threshold)
 }
 
 func closeDomainAndStorage(storage kv.Storage, dom *domain.Domain) {
