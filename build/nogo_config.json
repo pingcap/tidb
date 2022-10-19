@@ -213,7 +213,8 @@
       "server/conn_stmt.go": "only for server/conn_stmt.go",
       "server/conn_test.go": "only for server/conn_test.go",
       "planner/core/plan.go": "only for planner/core/plan.go",
-      "errno/": "only for errno/"
+      "errno/": "only for errno/",
+      "extension/": "extension code"
     }
   },
   "gofmt": {
@@ -331,7 +332,8 @@
       "kv/": "kv code",
       "util/memory": "util/memory",
       "ddl/": "ddl",
-      "planner/": "planner"
+      "planner/": "planner",
+      "extension/": "extension code"
     }
   },
   "pkgfact": {
@@ -398,7 +400,8 @@
       "planner/core/util.go": "planner/core/util.go",
       "util/": "util code",
       "parser/": "parser code",
-      "meta/": "parser code"
+      "meta/": "parser code",
+      "extension/": "extension code"
     }
   },
   "shift": {
@@ -756,7 +759,8 @@
       "planner/core/plan.go": "planner/core/plan.go",
       "server/conn.go": "server/conn.go",
       "server/conn_stmt.go": "server/conn_stmt.go",
-      "server/conn_test.go": "server/conn_test.go"
+      "server/conn_test.go": "server/conn_test.go",
+      "extension/": "extension code"
     }
   },
   "SA2000": {

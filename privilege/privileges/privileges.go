@@ -22,6 +22,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/pingcap/tidb/extension"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -639,6 +640,10 @@ func (p *UserPrivileges) IsDynamicPrivilege(privName string) bool {
 
 // RegisterDynamicPrivilege is used by plugins to add new privileges to TiDB
 func RegisterDynamicPrivilege(privName string) error {
+	if len(privName) == 0 {
+		return errors.New("privilege name should not be empty")
+	}
+
 	privNameInUpper := strings.ToUpper(privName)
 	if len(privNameInUpper) > 32 {
 		return errors.New("privilege name is longer than 32 characters")
@@ -663,4 +668,23 @@ func GetDynamicPrivileges() []string {
 	privCopy := make([]string, len(dynamicPrivs))
 	copy(privCopy, dynamicPrivs)
 	return privCopy
+}
+
+// RemoveDynamicPrivilege is used for test only
+func RemoveDynamicPrivilege(privName string) bool {
+	privNameInUpper := strings.ToUpper(privName)
+	dynamicPrivLock.Lock()
+	defer dynamicPrivLock.Unlock()
+	for idx, priv := range dynamicPrivs {
+		if privNameInUpper == priv {
+			dynamicPrivs = append(dynamicPrivs[:idx], dynamicPrivs[idx+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
+func init() {
+	extension.RegisterDynamicPrivilege = RegisterDynamicPrivilege
+	extension.RemoveDynamicPrivilege = RemoveDynamicPrivilege
 }
