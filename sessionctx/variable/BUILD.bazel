@@ -30,6 +30,7 @@ go_library(
         "//parser/model",
         "//parser/mysql",
         "//parser/types",
+        "//sessionctx/sessionstates",
         "//sessionctx/stmtctx",
         "//sessionctx/variable/featuretag/concurrencyddl",
         "//tidb-binlog/pump_client",
