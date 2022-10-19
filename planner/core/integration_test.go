@@ -7693,3 +7693,28 @@ func TestOuterJoinEliminationForIssue18216(t *testing.T) {
 	tk.MustExec("select group_concat(c order by (select group_concat(c order by a) from t2 where a=t1.a)) from t1; ")
 	tk.MustQuery("select group_concat(c order by (select group_concat(c order by c) from t2 where a=t1.a), c desc) from t1;").Check(testkit.Rows("2,1,4,3"))
 }
+
+func TestAvoidDoubleScanForPrefixIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t1 (
+  id char(1) DEFAULT NULL,
+  c1 varchar(255) DEFAULT NULL,
+  c2 text DEFAULT NULL,
+  KEY idx1 (c1),
+  KEY idx2 (c1,c2(5))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
+	tk.MustExec("insert into t1 values ('a', '0xfff', '111111'), ('b', '0xfff', '222222'), ('c', '0xfff', null)")
+	tk.MustQuery("explain format='brief' select count(1) from t1 where c1 = '0xfff' and c2 is not null").Check(testkit.Rows(
+		"StreamAgg 1.00 root  funcs:count(Column#7)->Column#5",
+		"└─IndexReader 1.00 root  index:StreamAgg",
+		"  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#7",
+		"    └─IndexRangeScan 99.90 cop[tikv] table:t1, index:idx2(c1, c2) range:[\"0xfff\" -inf,\"0xfff\" +inf], keep order:false, stats:pseudo"))
+	tk.MustQuery("select count(1) from t1 where c1 = '0xfff' and c2 is not null").Check(testkit.Rows("2"))
+	tk.MustQuery("explain format='brief' select count(1) from t1 where c1 = '0xfff' and c2 is null").Check(testkit.Rows(
+		"StreamAgg 1.00 root  funcs:count(1)->Column#5",
+		"└─IndexReader 0.10 root  index:IndexRangeScan",
+		"  └─IndexRangeScan 0.10 cop[tikv] table:t1, index:idx2(c1, c2) range:[\"0xfff\" NULL,\"0xfff\" NULL], keep order:false, stats:pseudo"))
+	tk.MustQuery("select count(1) from t1 where c1 = '0xfff' and c2 is null").Check(testkit.Rows("1"))
+}
