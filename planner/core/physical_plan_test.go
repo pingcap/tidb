@@ -17,6 +17,8 @@ package core_test
 import (
 	"context"
 	"fmt"
+	"math"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
@@ -36,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
-	"math"
 )
 
 var _ = Suite(&testPlanSuite{})
