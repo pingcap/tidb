@@ -16,7 +16,6 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/httputil"
-	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/restore"
@@ -24,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/mathutil"
@@ -406,11 +404,11 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	}
 	defer mgr.Close()
 
-	// we must have domain here.
 	if cfg.CheckRequirements {
-		err = version.CheckDDLCompatibility(fetchTiDBConcurrencyDDLEnabled(mgr.GetDomain()))
+		// we must have domain here.
+		err = checkDDLCompatibility(g, mgr)
 		if err != nil {
-			return err
+			return errors.Annotate(err, "DDL compatibility check haven't passed")
 		}
 	}
 
@@ -781,12 +779,34 @@ func restoreTableStream(
 	}
 }
 
-func fetchTiDBConcurrencyDDLEnabled(dom *domain.Domain) bool {
-	v, err := dom.GetGlobalVar(variable.TiDBEnableConcurrentDDL)
+func fetchTiDBConcurrencyDDLEnabled(s glue.Session) (bool, error) {
+	// Copy from `sessionctx/variable/tidb_vars.go`
+	const tiDBEnableConcurrentDDL = "tidb_enable_concurrent_ddl"
+	v, err := s.GetGlobalVariable(tiDBEnableConcurrentDDL)
 	if err != nil {
-		log.Warn("Failed to fetch concurrency DDL, returning false to try forwarding progress", logutil.ShortError(err))
-		logutil.WarnTerm("Failed to check cluster info, BR may get stuck if version not match.")
-		return false
+		// The "Result is empty" case.
+		// package `executor` imports `task`, so we cannot directly reference
+		// `executor.ErrResultIsEmpty` here :(
+		if strings.Contains(err.Error(), "executor:8117") {
+			return false, nil
+		}
+		return false, err
 	}
-	return variable.TiDBOptOn(v)
+	return variable.TiDBOptOn(v), nil
+}
+
+func checkDDLCompatibility(g glue.Glue, mgr *conn.Mgr) error {
+	s, err := g.CreateSession(mgr.GetStorage())
+	if err != nil {
+		return errors.Annotate(err, "cannot create session")
+	}
+	concurrencyDDLEnabled, err := fetchTiDBConcurrencyDDLEnabled(s)
+	if err != nil {
+		return errors.Annotate(err, "failed to get whether concurrency DDL enabled")
+	}
+	err = version.CheckDDLCompatibility(concurrencyDDLEnabled)
+	if err != nil {
+		return err
+	}
+	return nil
 }
