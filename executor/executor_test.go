@@ -4931,7 +4931,7 @@ func TestIsPointGet(t *testing.T) {
 		stmtNode, err := s.ParseOneStmt(sqlStr, "", "")
 		require.NoError(t, err)
 		preprocessorReturn := &plannercore.PreprocessorReturn{}
-		err = plannercore.Preprocess(ctx, stmtNode, plannercore.WithPreprocessorReturn(preprocessorReturn))
+		err = plannercore.Preprocess(context.Background(), ctx, stmtNode, plannercore.WithPreprocessorReturn(preprocessorReturn))
 		require.NoError(t, err)
 		p, _, err := planner.Optimize(context.TODO(), ctx, stmtNode, preprocessorReturn.InfoSchema)
 		require.NoError(t, err)
@@ -4964,7 +4964,7 @@ func TestClusteredIndexIsPointGet(t *testing.T) {
 		stmtNode, err := s.ParseOneStmt(sqlStr, "", "")
 		require.NoError(t, err)
 		preprocessorReturn := &plannercore.PreprocessorReturn{}
-		err = plannercore.Preprocess(ctx, stmtNode, plannercore.WithPreprocessorReturn(preprocessorReturn))
+		err = plannercore.Preprocess(context.Background(), ctx, stmtNode, plannercore.WithPreprocessorReturn(preprocessorReturn))
 		require.NoError(t, err)
 		p, _, err := planner.Optimize(context.TODO(), ctx, stmtNode, preprocessorReturn.InfoSchema)
 		require.NoError(t, err)
