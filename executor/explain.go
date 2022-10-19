@@ -154,6 +154,33 @@ func (e *ExplainExec) getAnalyzeExecToExecutedNoDelay() Executor {
 	return nil
 }
 
+// GetFKChecks implements WithForeignKeyTrigger interface.
+func (e *ExplainExec) GetFKChecks() []*FKCheckExec {
+	analyzeExec, ok := e.analyzeExec.(WithForeignKeyTrigger)
+	if !ok {
+		return nil
+	}
+	return analyzeExec.GetFKChecks()
+}
+
+// GetFKCascades implements WithForeignKeyTrigger interface.
+func (e *ExplainExec) GetFKCascades() []*FKCascadeExec {
+	analyzeExec, ok := e.analyzeExec.(WithForeignKeyTrigger)
+	if !ok {
+		return nil
+	}
+	return analyzeExec.GetFKCascades()
+}
+
+// HasFKCascades implements WithForeignKeyTrigger interface.
+func (e *ExplainExec) HasFKCascades() bool {
+	analyzeExec, ok := e.analyzeExec.(WithForeignKeyTrigger)
+	if !ok {
+		return false
+	}
+	return analyzeExec.HasFKCascades()
+}
+
 type memoryDebugModeHandler struct {
 	ctx          context.Context
 	minHeapInUse int64

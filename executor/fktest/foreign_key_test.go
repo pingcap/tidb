@@ -1048,8 +1048,7 @@ func TestForeignKeyOnDeleteCascade2(t *testing.T) {
 
 	// Test cascade delete in self table.
 	tk.MustExec("create table t1 (id int key, name varchar(10), leader int,  index(leader), foreign key (leader) references t1(id) ON DELETE CASCADE);")
-	tk.MustExec("insert into t1 values (1, 'boss', null)")
-	tk.MustExec("insert into t1 values (10, 'l1_a', 1), (11, 'l1_b', 1), (12, 'l1_c', 1)")
+	tk.MustExec("insert into t1 values (1, 'boss', null), (10, 'l1_a', 1), (11, 'l1_b', 1), (12, 'l1_c', 1)")
 	tk.MustExec("insert into t1 values (100, 'l2_a1', 10), (101, 'l2_a2', 10), (102, 'l2_a3', 10)")
 	tk.MustExec("insert into t1 values (110, 'l2_b1', 11), (111, 'l2_b2', 11), (112, 'l2_b3', 11)")
 	tk.MustExec("insert into t1 values (120, 'l2_c1', 12), (121, 'l2_c2', 12), (122, 'l2_c3', 12)")
@@ -1060,6 +1059,11 @@ func TestForeignKeyOnDeleteCascade2(t *testing.T) {
 	// The affect rows doesn't contain the cascade deleted rows, the behavior is compatible with MySQL.
 	require.Equal(t, uint64(1), tk.Session().GetSessionVars().StmtCtx.AffectedRows())
 	tk.MustQuery("select id from t1 order by id").Check(testkit.Rows())
+
+	// Test explain analyze with foreign key cascade.
+	tk.MustExec("insert into t1 values (1, 'boss', null), (10, 'l1_a', 1), (11, 'l1_b', 1), (12, 'l1_c', 1)")
+	tk.MustExec("explain analyze delete from t1 where id=1")
+	tk.MustQuery("select * from t1").Check(testkit.Rows())
 
 	// Test string type foreign key.
 	tk.MustExec("drop table t1")
@@ -1223,11 +1227,9 @@ func TestForeignKeyOnDeleteCascade2(t *testing.T) {
 	tk2.MustExec("insert into t1 values (6, 'e', 4)")
 	tk2.MustExec("delete from t1 where id=2")
 	tk2.MustExec("commit")
-	// todo(crazycs520): make following statement execute successfully.
-	err := tk.ExecToErr("delete from t1 where id = 1")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "handle foreign key cascade failed, error: [kv:9007]Write conflict")
+	tk.MustExec("delete from t1 where id = 1")
 	tk.MustExec("commit")
+	tk.MustQuery("select * from t1").Check(testkit.Rows())
 }
 
 func TestForeignKeyOnDeleteCascadeSQL(t *testing.T) {

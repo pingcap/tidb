@@ -68,15 +68,17 @@ type FKCascadeExec struct {
 }
 
 func buildTblID2FKCheckExecs(sctx sessionctx.Context, tblID2Table map[int64]table.Table, tblID2FKChecks map[int64][]*plannercore.FKCheck) (map[int64][]*FKCheckExec, error) {
-	var err error
-	fkChecks := make(map[int64][]*FKCheckExec)
+	fkChecksMap := make(map[int64][]*FKCheckExec)
 	for tid, tbl := range tblID2Table {
-		fkChecks[tid], err = buildFKCheckExecs(sctx, tbl, tblID2FKChecks[tid])
+		fkChecks, err := buildFKCheckExecs(sctx, tbl, tblID2FKChecks[tid])
 		if err != nil {
 			return nil, err
 		}
+		if len(fkChecks) > 0 {
+			fkChecksMap[tid] = fkChecks
+		}
 	}
-	return fkChecks, nil
+	return fkChecksMap, nil
 }
 
 func buildFKCheckExecs(sctx sessionctx.Context, tbl table.Table, fkChecks []*plannercore.FKCheck) ([]*FKCheckExec, error) {
@@ -669,10 +671,4 @@ func genFKValueString(v types.Datum) (string, error) {
 	default:
 		return "'" + val + "'", nil
 	}
-}
-
-// FKCascadeContext is the contain information for foreign key cascade execution.
-type FKCascadeContext struct {
-	savepointName string
-	hasCascades   bool
 }

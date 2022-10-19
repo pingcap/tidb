@@ -535,17 +535,8 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		return a.handlePessimisticSelectForUpdate(ctx, e)
 	}
 
-	fkCtx, err := a.prepareFKCascadeContext(e)
-	if err != nil {
-		return nil, err
-	}
-	// In function handlePessimisticDML may rebuild a Executor when handlePessimisticLockError,
-	// so need to return the rebuild executor.
-	if handled, result, e, err := a.handleNoDelay(ctx, e, isPessimistic); handled || err != nil {
-		if err != nil {
-			return result, err
-		}
-		err = a.handleStmtForeignKeyTrigger(ctx, fkCtx, e, isPessimistic)
+	a.prepareFKCascadeContext(e)
+	if handled, result, err := a.handleNoDelay(ctx, e, isPessimistic); handled || err != nil {
 		return result, err
 	}
 
@@ -565,31 +556,32 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	}, nil
 }
 
-func (a *ExecStmt) handleStmtForeignKeyTrigger(ctx context.Context, fkCtx FKCascadeContext, e Executor, isPessimistic bool) error {
-	if fkCtx.hasCascades {
+func (a *ExecStmt) handleStmtForeignKeyTrigger(ctx context.Context, e Executor) error {
+	stmtCtx := a.Ctx.GetSessionVars().StmtCtx
+	if stmtCtx.ForeignKeyTriggerCtx.HasFKCascades {
 		// If the ExecStmt has foreign key cascade to be executed, we need call `StmtCommit` to commit the ExecStmt itself
 		// change first.
 		// Since `UnionScanExec` use `SnapshotIter` and `SnapshotGetter` to read txn mem-buffer, if we don't  do `StmtCommit`,
 		// then the fk cascade executor can't read the mem-buffer changed by the ExecStmt.
 		a.Ctx.StmtCommit()
 	}
-	err := a.handleForeignKeyTrigger(ctx, e, isPessimistic, 1)
+	err := a.handleForeignKeyTrigger(ctx, e, 1)
 	if err != nil {
-		err1 := a.handleFKTriggerError(fkCtx)
+		err1 := a.handleFKTriggerError(stmtCtx)
 		if err1 != nil {
 			return errors.Errorf("handle foreign key trigger error failed, err: %v, original_err: %v", err1, err)
 		}
 		return err
 	}
-	if fkCtx.savepointName != "" {
-		a.Ctx.GetSessionVars().TxnCtx.ReleaseSavepoint(fkCtx.savepointName)
+	if stmtCtx.ForeignKeyTriggerCtx.SavepointName != "" {
+		a.Ctx.GetSessionVars().TxnCtx.ReleaseSavepoint(stmtCtx.ForeignKeyTriggerCtx.SavepointName)
 	}
 	return nil
 }
 
 var maxForeignKeyCascadeDepth = 15
 
-func (a *ExecStmt) handleForeignKeyTrigger(ctx context.Context, e Executor, isPessimistic bool, depth int) error {
+func (a *ExecStmt) handleForeignKeyTrigger(ctx context.Context, e Executor, depth int) error {
 	exec, ok := e.(WithForeignKeyTrigger)
 	if !ok {
 		return nil
@@ -607,7 +599,7 @@ func (a *ExecStmt) handleForeignKeyTrigger(ctx context.Context, e Executor, isPe
 	}
 	fkCascades := exec.GetFKCascades()
 	for _, fkCascade := range fkCascades {
-		err := a.handleForeignKeyCascade(ctx, fkCascade, isPessimistic, depth)
+		err := a.handleForeignKeyCascade(ctx, fkCascade, depth)
 		if err != nil {
 			return err
 		}
@@ -615,7 +607,7 @@ func (a *ExecStmt) handleForeignKeyTrigger(ctx context.Context, e Executor, isPe
 	return nil
 }
 
-func (a *ExecStmt) handleForeignKeyCascade(ctx context.Context, fkc *FKCascadeExec, isPessimistic bool, depth int) error {
+func (a *ExecStmt) handleForeignKeyCascade(ctx context.Context, fkc *FKCascadeExec, depth int) error {
 	if len(fkc.fkValues) == 0 {
 		return nil
 	}
@@ -630,59 +622,58 @@ func (a *ExecStmt) handleForeignKeyCascade(ctx context.Context, fkc *FKCascadeEx
 		terror.Call(e.Close)
 		return err
 	}
-	err = a.handleFKCascadeNoDelay(ctx, e, isPessimistic)
+	err = Next(ctx, e, newFirstChunk(e))
 	if err != nil {
 		return err
 	}
 	// Call `StmtCommit` uses to flush the fk cascade executor change into txn mem-buffer,
 	// then the later fk cascade executors can see the mem-buffer changes.
 	a.Ctx.StmtCommit()
-	return a.handleForeignKeyTrigger(ctx, e, isPessimistic, depth+1)
+	return a.handleForeignKeyTrigger(ctx, e, depth+1)
 }
 
 // prepareFKCascadeContext records a transaction savepoint for foreign key cascade when this ExecStmt has foreign key
 // cascade behaviour and this ExecStmt is in transaction.
-func (a *ExecStmt) prepareFKCascadeContext(e Executor) (FKCascadeContext, error) {
-	fkCtx := FKCascadeContext{}
+func (a *ExecStmt) prepareFKCascadeContext(e Executor) {
 	exec, ok := e.(WithForeignKeyTrigger)
 	if !ok || !exec.HasFKCascades() {
-		return fkCtx, nil
+		return
 	}
-	fkCtx.hasCascades = true
 	sessVar := a.Ctx.GetSessionVars()
+	sessVar.StmtCtx.ForeignKeyTriggerCtx.HasFKCascades = true
 	if !sessVar.InTxn() {
-		return fkCtx, nil
+		return
 	}
 	txn, err := a.Ctx.Txn(false)
 	if err != nil || !txn.Valid() {
-		return fkCtx, nil
+		return
 	}
 	// Record a txn savepoint if ExecStmt in transaction, the savepoint is use to do rollback when handle foreign key
 	// cascade failed.
-	fkCtx.savepointName = "fk_sp_" + strconv.FormatUint(txn.StartTS(), 10)
+	savepointName := "fk_sp_" + strconv.FormatUint(txn.StartTS(), 10)
 	memDBCheckpoint := txn.GetMemDBCheckpoint()
-	sessVar.TxnCtx.AddSavepoint(fkCtx.savepointName, memDBCheckpoint)
-	return fkCtx, nil
+	sessVar.TxnCtx.AddSavepoint(savepointName, memDBCheckpoint)
+	sessVar.StmtCtx.ForeignKeyTriggerCtx.SavepointName = savepointName
 }
 
-func (a *ExecStmt) handleFKTriggerError(fkCtx FKCascadeContext) error {
-	if fkCtx.savepointName == "" {
+func (a *ExecStmt) handleFKTriggerError(sc *stmtctx.StatementContext) error {
+	if sc.ForeignKeyTriggerCtx.SavepointName == "" {
 		return nil
 	}
 	txn, err := a.Ctx.Txn(false)
 	if err != nil || !txn.Valid() {
 		return err
 	}
-	savepointRecord := a.Ctx.GetSessionVars().TxnCtx.RollbackToSavepoint(fkCtx.savepointName)
+	savepointRecord := a.Ctx.GetSessionVars().TxnCtx.RollbackToSavepoint(sc.ForeignKeyTriggerCtx.SavepointName)
 	if savepointRecord == nil {
-		return errors.Errorf("foreign key cascade savepoint '%s' not found, should never happen", fkCtx.savepointName)
+		return errors.Errorf("foreign key cascade savepoint '%s' not found, should never happen", sc.ForeignKeyTriggerCtx.SavepointName)
 	}
 	txn.RollbackMemDBToCheckpoint(savepointRecord.MemDBCheckpoint)
-	a.Ctx.GetSessionVars().TxnCtx.ReleaseSavepoint(fkCtx.savepointName)
+	a.Ctx.GetSessionVars().TxnCtx.ReleaseSavepoint(sc.ForeignKeyTriggerCtx.SavepointName)
 	return nil
 }
 
-func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic bool) (handled bool, rs sqlexec.RecordSet, _ Executor, err error) {
+func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic bool) (handled bool, rs sqlexec.RecordSet, err error) {
 	sc := a.Ctx.GetSessionVars().StmtCtx
 	defer func() {
 		// If the stmt have no rs like `insert`, The session tracker detachment will be directly
@@ -712,43 +703,20 @@ func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic 
 	if toCheck.Schema().Len() == 0 {
 		handled = !isExplainAnalyze
 		if isPessimistic {
-			e, err := a.handlePessimisticDML(ctx, toCheck)
-			return handled, nil, e, err
+			err := a.handlePessimisticDML(ctx, toCheck)
+			return handled, nil, err
 		}
 		r, err := a.handleNoDelayExecutor(ctx, toCheck)
-		return handled, r, e, err
+		return handled, r, err
 	} else if proj, ok := toCheck.(*ProjectionExec); ok && proj.calculateNoDelay {
 		// Currently this is only for the "DO" statement. Take "DO 1, @a=2;" as an example:
 		// the Projection has two expressions and two columns in the schema, but we should
 		// not return the result of the two expressions.
 		r, err := a.handleNoDelayExecutor(ctx, e)
-		return true, r, e, err
+		return true, r, err
 	}
 
-	return false, nil, e, nil
-}
-
-func (a *ExecStmt) handleFKCascadeNoDelay(ctx context.Context, e Executor, isPessimistic bool) error {
-	_, err := a.handleNoDelayExecutor(ctx, e)
-	if err != nil {
-		// When handle foreign key failed, we need to do some work then we can retry, such as:
-		// - rollback the txn mem-buffer to the statement execution begin.
-		// - StmtCtx need to be careful handled.
-		// But currently for simplicity, just return error here.
-		return errors.Errorf("handle foreign key cascade failed, error: %v", err)
-	}
-	if !isPessimistic {
-		return nil
-	}
-	txn, err := a.Ctx.Txn(false)
-	if err != nil {
-		return err
-	}
-	err = a.doPessimisticLock(ctx, txn)
-	if err != nil {
-		return errors.Errorf("handle foreign key cascade lock failed, error: %v", err)
-	}
-	return nil
+	return false, nil, nil
 }
 
 func isNoResultPlan(p plannercore.Plan) bool {
@@ -894,17 +862,18 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e Executor) (sqlex
 	if err != nil {
 		return nil, err
 	}
+	err = a.handleStmtForeignKeyTrigger(ctx, e)
 	return nil, err
 }
 
-func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) (_ Executor, err error) {
+func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) (err error) {
 	sctx := a.Ctx
 	// Do not activate the transaction here.
 	// When autocommit = 0 and transaction in pessimistic mode,
 	// statements like set xxx = xxx; should not active the transaction.
 	txn, err := sctx.Txn(false)
 	if err != nil {
-		return e, err
+		return err
 	}
 	txnCtx := sctx.GetSessionVars().TxnCtx
 	defer func() {
@@ -932,7 +901,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) (_ Exec
 		startPointGetLocking := time.Now()
 		_, err = a.handleNoDelayExecutor(ctx, e)
 		if !txn.Valid() {
-			return e, err
+			return err
 		}
 		if err != nil {
 			// It is possible the DML has point get plan that locks the key.
@@ -941,18 +910,24 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) (_ Exec
 				if ErrDeadlock.Equal(err) {
 					metrics.StatementDeadlockDetectDuration.Observe(time.Since(startPointGetLocking).Seconds())
 				}
-				return e, err
+				return err
 			}
 			continue
 		}
-		keys, err := a.getKeysNeedToLock(txn)
-		if err != nil || len(keys) == 0 {
-			return e, err
+		keys, err1 := txn.(pessimisticTxn).KeysNeedToLock()
+		if err1 != nil {
+			return err1
 		}
-		seVars := a.Ctx.GetSessionVars()
+		keys = txnCtx.CollectUnchangedRowKeys(keys)
+		if len(keys) == 0 {
+			return nil
+		}
+		keys = filterTemporaryTableKeys(sctx.GetSessionVars(), keys)
+		seVars := sctx.GetSessionVars()
+		keys = filterLockTableKeys(seVars.StmtCtx, keys)
 		lockCtx, err := newLockCtx(sctx, seVars.LockWaitTimeout, len(keys))
 		if err != nil {
-			return e, err
+			return err
 		}
 		var lockKeyStats *util.LockKeysDetails
 		ctx = context.WithValue(ctx, util.LockKeysDetailCtxKey, &lockKeyStats)
@@ -963,7 +938,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) (_ Exec
 			seVars.StmtCtx.MergeLockKeysExecDetails(lockKeyStats)
 		}
 		if err == nil {
-			return e, nil
+			return nil
 		}
 		e, err = a.handlePessimisticLockError(ctx, err)
 		if err != nil {
@@ -971,46 +946,9 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) (_ Exec
 			if ErrDeadlock.Equal(err) {
 				metrics.StatementDeadlockDetectDuration.Observe(time.Since(startLocking).Seconds())
 			}
-			return e, err
+			return err
 		}
 	}
-}
-
-func (a *ExecStmt) getKeysNeedToLock(txn kv.Transaction) ([]kv.Key, error) {
-	keys, err1 := txn.(pessimisticTxn).KeysNeedToLock()
-	if err1 != nil {
-		return nil, err1
-	}
-	keys = a.Ctx.GetSessionVars().TxnCtx.CollectUnchangedRowKeys(keys)
-	if len(keys) == 0 {
-		return nil, nil
-	}
-	seVars := a.Ctx.GetSessionVars()
-	keys = filterTemporaryTableKeys(seVars, keys)
-	keys = filterLockTableKeys(seVars.StmtCtx, keys)
-	return keys, nil
-}
-
-func (a *ExecStmt) doPessimisticLock(ctx context.Context, txn kv.Transaction) error {
-	sctx := a.Ctx
-	keys, err := a.getKeysNeedToLock(txn)
-	if err != nil || len(keys) == 0 {
-		return err
-	}
-	seVars := a.Ctx.GetSessionVars()
-	lockCtx, err := newLockCtx(sctx, seVars.LockWaitTimeout, len(keys))
-	if err != nil {
-		return err
-	}
-	var lockKeyStats *util.LockKeysDetails
-	ctx = context.WithValue(ctx, util.LockKeysDetailCtxKey, &lockKeyStats)
-	startLocking := time.Now()
-	err = txn.LockKeys(ctx, lockCtx, keys...)
-	a.phaseLockDurations[0] += time.Since(startLocking)
-	if lockKeyStats != nil {
-		seVars.StmtCtx.MergeLockKeysExecDetails(lockKeyStats)
-	}
-	return err
 }
 
 // handlePessimisticLockError updates TS and rebuild executor if the err is write conflict.
