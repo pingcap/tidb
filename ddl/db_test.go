@@ -237,7 +237,7 @@ func TestJsonUnmarshalErrWhenPanicInCancellingPath(t *testing.T) {
 	tk.MustExec("create table test_add_index_after_add_col(a int, b int not null default '0');")
 	tk.MustExec("insert into test_add_index_after_add_col values(1, 2),(2,2);")
 	tk.MustExec("alter table test_add_index_after_add_col add column c int not null default '0';")
-	tk.MustGetErrMsg("alter table test_add_index_after_add_col add unique index cc(c);", "[kv:1062]Duplicate entry '0' for key 'cc'")
+	tk.MustGetErrMsg("alter table test_add_index_after_add_col add unique index cc(c);", "[kv:1062]Duplicate entry '0' for key 'test_add_index_after_add_col.cc'")
 }
 
 func TestIssue22819(t *testing.T) {

@@ -1,5 +1,16 @@
 [
   {
+    "name": "TestMPPHints",
+    "cases": [
+      "select /*+ read_from_storage(tiflash[t]), MPP_1PHASE_AGG() */ a, sum(b) from t group by a, c",
+      "select /*+ read_from_storage(tiflash[t]), MPP_2PHASE_AGG() */ a, sum(b) from t group by a, c",
+      "select /*+ read_from_storage(tiflash[t]), MPP_TIDB_AGG() */ a, sum(b) from t group by a, c",
+      "select /*+ read_from_storage(tiflash[t]), MPP_SCALAR_AGG() */ a, sum(b) from t group by a, c",
+      "select /*+ read_from_storage(tiflash[t1, t2]), shuffle_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
+      "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a"
+    ]
+  },
+  {
     "name": "TestHintScope",
     "cases": [
       // join hints
@@ -359,7 +370,7 @@
     ]
   },
   {
-   "name": "TestRefine",
+    "name": "TestRefine",
     "cases": [
       "select a from t where c is not null",
       "select a from t where c >= 4",
@@ -808,7 +819,7 @@
   {
     "name": "TestIssue28316",
     "cases": [
-        "select * from t where t.a < 3 and t.a < 3"
+      "select * from t where t.a < 3 and t.a < 3"
     ]
   },
   {
