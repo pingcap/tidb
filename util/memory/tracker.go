@@ -17,6 +17,7 @@ package memory
 import (
 	"bytes"
 	"fmt"
+	"runtime"
 	"strconv"
 	"sync"
 	"sync/atomic"
