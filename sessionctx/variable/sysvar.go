@@ -474,7 +474,7 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return BoolToOnOff(EnableRCReadCheckTS.Load()), nil
 	}},
-	{Scope: ScopeInstance, Name: TmpDir, Value: config.GetGlobalConfig().Instance.TmpDir.Load(), Type: TypeStr, SetGlobal: func(s *SessionVars, val string) error {
+	{Scope: ScopeInstance, Name: TmpDir, Value: config.GetGlobalConfig().Instance.TmpDir.Load(), Type: TypeStr, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		oldVal := config.GetGlobalConfig().Instance.TmpDir.Load()
 		config.GetGlobalConfig().Instance.TmpDir.Store(val)
 		config.GetGlobalConfig().UpdateTmpDir()
@@ -485,7 +485,7 @@ var defaultSysVars = []*SysVar{
 		}
 		config.CheckTempStorageQuota()
 		return nil
-	}, GetGlobal: func(s *SessionVars) (string, error) {
+	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return config.GetGlobalConfig().Instance.TmpDir.Load(), nil
 	}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		var (
@@ -510,7 +510,7 @@ var defaultSysVars = []*SysVar{
 		}
 		return normalizedValue, nil
 	}},
-	{Scope: ScopeInstance, Name: TiDBTmpStorageQuota, Value: strconv.FormatInt(config.GetGlobalConfig().Instance.TmpStorageQuota, 10), Type: TypeInt, MinValue: -1, AllowAutoValue: true, SetGlobal: func(s *SessionVars, val string) error {
+	{Scope: ScopeInstance, Name: TiDBTmpStorageQuota, Value: strconv.FormatInt(config.GetGlobalConfig().Instance.TmpStorageQuota, 10), Type: TypeInt, MinValue: -1, AllowAutoValue: true, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		newVal, err := strconv.ParseInt(val, 10, 64)
 		if err != nil {
 			return err
@@ -524,7 +524,7 @@ var defaultSysVars = []*SysVar{
 			SetMemQuotaAnalyze(newVal)
 		}
 		return nil
-	}, GetGlobal: func(s *SessionVars) (string, error) {
+	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return strconv.FormatInt(config.GetGlobalConfig().Instance.TmpStorageQuota, 10), nil
 	}},
 
