@@ -462,8 +462,17 @@ var ExtraPartitionIdName = NewCIStr("_tidb_pid") //nolint:revive
 // ExtraPhysTblIdName is the name of ExtraPhysTblID Column.
 var ExtraPhysTblIdName = NewCIStr("_tidb_tid") //nolint:revive
 
-// ExtraMetaColName is the name of ExtraMeta Column.
-var ExtraMetaColName = NewCIStr("_tidb_row_meta") //nolint:revive
+// NewMetaColumn returns a new meta column.
+func NewMetaColumn() *ColumnInfo {
+	ft := types.NewFieldType(mysql.TypeBit)
+	ft.SetFlen(1)
+	return &ColumnInfo{
+		ID:                    ExtraMetaColID,
+		Name:                  NewCIStr("_V$tidb_row_meta"),
+		FieldType:             *ft,
+		OriginDefaultValueBit: nil,
+	}
+}
 
 // TableInfo provides meta data describing a DB table.
 type TableInfo struct {

@@ -45,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/session/txninfo"
@@ -1839,13 +1838,8 @@ func (h mvccTxnHandler) handleMvccGetByKey(params map[string]string, values url.
 	for i := range tb.Meta().Columns {
 		m = append(m, tb.Meta().Columns[i].Clone())
 	}
-	ft := types.NewFieldType(mysql.TypeBit)
-	ft.SetFlen(1)
-	m = append(m, &model.ColumnInfo{
-		ID:        model.ExtraMetaColID,
-		Name:      model.ExtraMetaColName,
-		FieldType: *ft,
-	})
+
+	m = append(m, model.NewMetaColumn())
 	for _, col := range m {
 		colMap[col.ID] = &(col.FieldType)
 	}
