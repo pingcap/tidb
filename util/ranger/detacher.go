@@ -579,9 +579,7 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 		points[offset] = rb.intersection(points[offset], rb.build(cond, collator), collator)
 		if len(points[offset]) == 0 { // Early termination if false expression found
 			if expression.MaybeOverOptimized4PlanCache(sctx, conditions) {
-				// cannot return an empty-range for plan-cache since the range may become non-empty as parameters change
-				// for safety, return the whole conditions in this case
-				return nil, conditions, nil, nil, false
+				sctx.GetSessionVars().StmtCtx.SkipPlanCache = true
 			}
 			return nil, nil, nil, nil, true
 		}
@@ -604,9 +602,7 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 			accesses[i] = nil
 		} else if len(points[i]) == 0 { // Early termination if false expression found
 			if expression.MaybeOverOptimized4PlanCache(sctx, conditions) {
-				// cannot return an empty-range for plan-cache since the range may become non-empty as parameters change
-				// for safety, return the whole conditions in this case
-				return nil, conditions, nil, nil, false
+				sctx.GetSessionVars().StmtCtx.SkipPlanCache = true
 			}
 			return nil, nil, nil, nil, true
 		} else {
@@ -619,8 +615,7 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 				columnValues[i] = &valueInfo{mutable: true}
 			}
 			if expression.MaybeOverOptimized4PlanCache(sctx, conditions) {
-				// TODO: optimize it more elaborately, e.g. return [2 3, 2 3] as accesses for 'where a = 2 and b = 3 and c >= ? and c <= ?'
-				return nil, conditions, nil, nil, false
+				sctx.GetSessionVars().StmtCtx.SkipPlanCache = true
 			}
 		}
 	}
