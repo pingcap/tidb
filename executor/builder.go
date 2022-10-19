@@ -1089,7 +1089,7 @@ func (b *executorBuilder) setTelemetryInfo(v *plannercore.DDL) {
 				}
 			}
 		case model.PartitionTypeHash:
-			if !p.Linear && p.Sub == nil {
+			if p.Sub == nil {
 				b.Ti.PartitionTelemetry.UseTablePartitionHash = true
 			}
 		case model.PartitionTypeList:
