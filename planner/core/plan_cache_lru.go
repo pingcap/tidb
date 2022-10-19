@@ -83,6 +83,7 @@ func strHashKey(key kvcache.Key, deepCopy bool) string {
 func (l *LRUPlanCache) Get(key kvcache.Key, paramTypes []*types.FieldType) (value kvcache.Value, ok bool) {
 	l.lock.Lock()
 	defer l.lock.Unlock()
+	defer updateMonitorMetric()
 
 	bucket, bucketExist := l.buckets[strHashKey(key, false)]
 	if bucketExist {
@@ -98,6 +99,7 @@ func (l *LRUPlanCache) Get(key kvcache.Key, paramTypes []*types.FieldType) (valu
 func (l *LRUPlanCache) Put(key kvcache.Key, value kvcache.Value, paramTypes []*types.FieldType) {
 	l.lock.Lock()
 	defer l.lock.Unlock()
+	defer updateMonitorMetric()
 
 	hash := strHashKey(key, true)
 	bucket, bucketExist := l.buckets[hash]
@@ -105,7 +107,6 @@ func (l *LRUPlanCache) Put(key kvcache.Key, value kvcache.Value, paramTypes []*t
 		if element, exist := l.pickFromBucket(bucket, paramTypes); exist {
 			element.Value.(*planCacheEntry).PlanValue = value
 			l.lruList.MoveToFront(element)
-			updateMonitorMetric()
 			return
 		}
 	} else {
@@ -123,13 +124,13 @@ func (l *LRUPlanCache) Put(key kvcache.Key, value kvcache.Value, paramTypes []*t
 		l.removeOldest()
 	}
 	l.memoryControl()
-	updateMonitorMetric()
 }
 
 // Delete deletes the multi-values from the LRU Cache.
 func (l *LRUPlanCache) Delete(key kvcache.Key) {
 	l.lock.Lock()
 	defer l.lock.Unlock()
+	defer updateMonitorMetric()
 
 	hash := strHashKey(key, false)
 	bucket, bucketExist := l.buckets[hash]
@@ -140,20 +141,19 @@ func (l *LRUPlanCache) Delete(key kvcache.Key) {
 		}
 		delete(l.buckets, hash)
 	}
-	updateMonitorMetric()
 }
 
 // DeleteAll deletes all elements from the LRU Cache.
 func (l *LRUPlanCache) DeleteAll() {
 	l.lock.Lock()
 	defer l.lock.Unlock()
+	defer updateMonitorMetric()
 
 	for lru := l.lruList.Back(); lru != nil; lru = l.lruList.Back() {
 		l.lruList.Remove(lru)
 		l.size--
 	}
 	l.buckets = make(map[string]map[*list.Element]struct{}, 1)
-	updateMonitorMetric()
 }
 
 // Size gets the current cache size.
@@ -168,6 +168,7 @@ func (l *LRUPlanCache) Size() int {
 func (l *LRUPlanCache) SetCapacity(capacity uint) error {
 	l.lock.Lock()
 	defer l.lock.Unlock()
+	defer updateMonitorMetric()
 
 	if capacity < 1 {
 		return errors.New("capacity of LRU cache should be at least 1")
@@ -176,7 +177,6 @@ func (l *LRUPlanCache) SetCapacity(capacity uint) error {
 	for l.size > l.capacity {
 		l.removeOldest()
 	}
-	updateMonitorMetric()
 	return nil
 }
 
@@ -235,6 +235,7 @@ var aa = 0
 func updateMonitorMetric() {
 	aa += 256 * 1024 * 1024
 	consume := float64(aa)
+	// consume := float64(t.BytesConsumed())
 	// todo: wait for the preorder pr, pass tracker's consumed memory to metric
 	metrics.PlanCacheMemoryUsage.WithLabelValues("memory_usage").Set(consume)
 }
