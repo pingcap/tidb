@@ -60,7 +60,7 @@ const (
 	FlagStreamFullBackupStorage = "full-backup-storage"
 
 	defaultRestoreConcurrency       = 128
-	defaultRestoreStreamConcurrency = 16
+	defaultRestoreStreamConcurrency = 256
 	maxRestoreBatchSizeLimit        = 10240
 	defaultPDConcurrency            = 1
 	defaultBatchFlushInterval       = 16 * time.Second
@@ -354,7 +354,7 @@ func (cfg *RestoreConfig) Adjust() {
 }
 
 func (cfg *RestoreConfig) adjustRestoreConfigForStreamRestore() {
-	if cfg.Config.Concurrency == 0 || cfg.Config.Concurrency > defaultRestoreStreamConcurrency {
+	if cfg.Config.Concurrency == 0 {
 		log.Info("set restore kv files concurrency", zap.Int("concurrency", defaultRestoreStreamConcurrency))
 		cfg.Config.Concurrency = defaultRestoreStreamConcurrency
 	}

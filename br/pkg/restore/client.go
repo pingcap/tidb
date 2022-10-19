@@ -455,7 +455,7 @@ func (rc *Client) GetFilesInRawRange(startKey []byte, endKey []byte, cf string) 
 
 // SetConcurrency sets the concurrency of dbs tables files.
 func (rc *Client) SetConcurrency(c uint) {
-	log.Debug("new worker pool", zap.Uint("currency-count", c))
+	log.Info("new worker pool", zap.Uint("currency-count", c))
 	rc.workerPool = utils.NewWorkerPool(c, "file")
 }
 
@@ -1765,6 +1765,18 @@ func (rc *Client) ReadStreamMetaByTS(ctx context.Context, shiftedStartTS uint64,
 	return streamBackupMetaFiles.metas, nil
 }
 
+type FilesInRegion struct {
+	defaultSize  uint64
+	writeSize    uint64
+	defaultFiles []*backuppb.DataFileInfo
+	writeFiles   []*backuppb.DataFileInfo
+	deleteFiles  []*backuppb.DataFileInfo
+}
+
+type FilesInTable struct {
+	regionMapFiles map[int64]*FilesInRegion
+}
+
 // ReadStreamDataFiles is used for streaming task. collect all meta file by TS.
 func (rc *Client) ReadStreamDataFiles(
 	ctx context.Context,
@@ -1788,13 +1800,11 @@ func (rc *Client) ReadStreamDataFiles(
 				} else if d.Cf == stream.DefaultCF && d.MaxTs < rc.shiftStartTS {
 					continue
 				}
-
 				// If ds.Path is empty, it is MetadataV1.
 				// Try to be compatible with newer metadata version
 				if m.MetaVersion > backuppb.MetaVersion_V1 {
 					d.Path = ds.Path
 				}
-
 				if d.IsMeta {
 					mFiles = append(mFiles, d)
 					metaRef += 1
@@ -1810,7 +1820,6 @@ func (rc *Client) ReadStreamDataFiles(
 			}
 		}
 	}
-
 	return dFiles, mFiles, nil
 }
 
@@ -1873,12 +1882,48 @@ func (rc *Client) FixIndicesOfTable(ctx context.Context, schema string, table *m
 	return nil
 }
 
+func tidyFiles(files []*backuppb.DataFileInfo) map[int64]*FilesInTable {
+	tableMapFiles := make(map[int64]*FilesInTable)
+
+	for _, f := range files {
+		fit, exist := tableMapFiles[f.TableId]
+		if !exist {
+			fit = &FilesInTable{
+				regionMapFiles: make(map[int64]*FilesInRegion),
+			}
+			tableMapFiles[f.TableId] = fit
+		}
+
+		fs, exist := fit.regionMapFiles[f.RegionId]
+		if !exist {
+			fs = &FilesInRegion{
+				defaultFiles: make([]*backuppb.DataFileInfo, 0),
+				writeFiles:   make([]*backuppb.DataFileInfo, 0),
+				deleteFiles:  make([]*backuppb.DataFileInfo, 0),
+			}
+			fit.regionMapFiles[f.RegionId] = fs
+		}
+
+		if f.GetType() == backuppb.FileType_Delete {
+			fs.deleteFiles = append(fs.deleteFiles, f)
+		} else {
+			if f.Cf == stream.DefaultCF {
+				fs.defaultFiles = append(fs.defaultFiles, f)
+			} else {
+				fs.writeFiles = append(fs.writeFiles, f)
+			}
+		}
+	}
+
+	return tableMapFiles
+}
+
 func (rc *Client) RestoreKVFiles(
 	ctx context.Context,
 	rules map[int64]*RewriteRules,
 	files []*backuppb.DataFileInfo,
 	updateStats func(kvCount uint64, size uint64),
-	onProgress func(),
+	onProgress func(cnt int64),
 ) error {
 	var err error
 	start := time.Now()
@@ -1900,53 +1945,98 @@ func (rc *Client) RestoreKVFiles(
 
 	eg, ectx := errgroup.WithContext(ctx)
 	skipFile := 0
-	deleteFiles := make([]*backuppb.DataFileInfo, 0)
 
-	applyFunc := func(file *backuppb.DataFileInfo) {
+	applyFunc := func(file []*backuppb.DataFileInfo, size uint64) {
+		if len(file) == 0 {
+			return
+		}
 		// get rewrite rule from table id
-		rule, ok := rules[file.TableId]
+		rule, ok := rules[file[0].TableId]
 		if !ok {
 			// TODO handle new created table
 			// For this version we do not handle new created table after full backup.
 			// in next version we will perform rewrite and restore meta key to restore new created tables.
 			// so we can simply skip the file that doesn't have the rule here.
-			onProgress()
-			summary.CollectInt("FileSkip", 1)
-			log.Debug("skip file due to table id not matched", zap.String("file", file.Path), zap.Int64("tableId", file.TableId))
-			skipFile++
+			onProgress(int64(len(file)))
+			summary.CollectInt("FileSkip", len(file))
+			log.Debug("skip file due to table id not matched", zap.Int64("tableId", file[0].TableId))
+			skipFile += len(file)
 		} else {
 			rc.workerPool.ApplyOnErrorGroup(eg, func() error {
 				fileStart := time.Now()
 				defer func() {
-					onProgress()
-					updateStats(uint64(file.NumberOfEntries), file.Length)
-					summary.CollectInt("File", 1)
-					log.Info("import files done", zap.String("name", file.Path), zap.Duration("take", time.Since(fileStart)))
+					onProgress(int64(len(file)))
+					updateStats(0, size)
+					summary.CollectInt("File", len(file))
+					log.Info("import files done", zap.Int("batch count", len(file)), zap.Uint64("batch bytes", size),
+						zap.Duration("take", time.Since(fileStart)))
 				}()
-				startTS := rc.startTS
-				if file.Cf == stream.DefaultCF {
-					startTS = rc.shiftStartTS
-				}
-				return rc.fileImporter.ImportKVFiles(ectx, file, rule, startTS, rc.restoreTS)
+
+				return rc.fileImporter.ImportKVFiles(ectx, file, rule, rc.shiftStartTS, rc.startTS, rc.restoreTS)
 			})
 		}
 	}
-	for _, file := range files {
-		if file.Type == backuppb.FileType_Delete {
-			// collect delete type file and apply it later.
-			deleteFiles = append(deleteFiles, file)
+
+	applyBatchFunc := func(tidyFiles map[int64]*FilesInTable) {
+		for tableID, fwt := range tidyFiles {
+			log.Info("restore kv files", zap.Int64("table-id", tableID), zap.Int("region-count", len(fwt.regionMapFiles)))
+			for _, fs := range fwt.regionMapFiles {
+				applyFunc(fs.defaultFiles, fs.defaultSize)
+				applyFunc(fs.writeFiles, fs.writeSize)
+			}
+		}
+	}
+
+	tableMapFiles := make(map[int64]*FilesInTable)
+	for i, f := range files {
+		if f.GetType() == backuppb.FileType_Put && f.GetLength() > 8*1024*1024 {
+			applyFunc(files[i:i+1], f.Length)
 			continue
 		}
-		fileReplica := file
-		applyFunc(fileReplica)
+
+		fit, exist := tableMapFiles[f.TableId]
+		if !exist {
+			fit = &FilesInTable{
+				regionMapFiles: make(map[int64]*FilesInRegion),
+			}
+			tableMapFiles[f.TableId] = fit
+		}
+
+		fs, exist := fit.regionMapFiles[f.RegionId]
+		if !exist {
+			fs = &FilesInRegion{
+				defaultFiles: make([]*backuppb.DataFileInfo, 0),
+				writeFiles:   make([]*backuppb.DataFileInfo, 0),
+				deleteFiles:  make([]*backuppb.DataFileInfo, 0),
+			}
+			fit.regionMapFiles[f.RegionId] = fs
+		}
+
+		if f.GetType() == backuppb.FileType_Delete {
+			fs.deleteFiles = append(fs.deleteFiles, f)
+		} else {
+			if f.GetCf() == stream.DefaultCF {
+				fs.defaultFiles = append(fs.defaultFiles, f)
+				fs.defaultSize += f.Length
+				if len(fs.defaultFiles) > 4 || fs.defaultSize > 8*1024*1024 {
+					applyFunc(fs.defaultFiles, fs.defaultSize)
+					fs.defaultFiles = make([]*backuppb.DataFileInfo, 0)
+					fs.defaultSize = 0
+				}
+			} else {
+				fs.writeFiles = append(fs.writeFiles, f)
+				fs.writeSize += f.Length
+				if len(fs.writeFiles) > 4 || fs.writeSize > 8*1024*1024 {
+					applyFunc(fs.writeFiles, fs.writeSize)
+					fs.writeFiles = make([]*backuppb.DataFileInfo, 0)
+					fs.writeSize = 0
+				}
+			}
+		}
 	}
-	if len(deleteFiles) > 0 {
-		log.Info("restore delete files", zap.Int("count", len(deleteFiles)))
-	}
-	for _, file := range deleteFiles {
-		fileReplica := file
-		applyFunc(fileReplica)
-	}
+
+	applyBatchFunc(tableMapFiles)
+
 	log.Info("total skip files due to table id not matched", zap.Int("count", skipFile))
 	if skipFile > 0 {
 		log.Debug("table id in full backup storage", zap.Any("tables", rules))
