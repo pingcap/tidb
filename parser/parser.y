@@ -138,6 +138,7 @@ import (
 	from              "FROM"
 	fulltext          "FULLTEXT"
 	generated         "GENERATED"
+	geometryType      "GEOMETRY"
 	grant             "GRANT"
 	group             "GROUP"
 	groups            "GROUPS"
@@ -8153,6 +8154,14 @@ CastType:
 		tp.SetCollate(charset.CollationBin)
 		$$ = tp
 	}
+|	"GEOMETRY"
+	{
+		tp := types.NewFieldType(mysql.TypeGeometry)
+		tp.AddFlag(mysql.BinaryFlag)
+		tp.SetCharset(mysql.DefaultCharset)
+		tp.SetCollate(mysql.DefaultCollationName)
+		$$ = tp
+	}
 
 Priority:
 	"LOW_PRIORITY"
@@ -12187,6 +12196,14 @@ StringType:
 		if $2.(*ast.OptBinary).IsBinary {
 			tp.AddFlag(mysql.BinaryFlag)
 		}
+		$$ = tp
+	}
+|	"GEOMETRY"
+	{
+		tp := types.NewFieldType(mysql.TypeGeometry)
+		tp.SetDecimal(0)
+		tp.SetCharset(charset.CharsetBin)
+		tp.SetCollate(charset.CollationBin)
 		$$ = tp
 	}
 

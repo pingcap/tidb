@@ -357,6 +357,12 @@ const (
 	NextVal = "nextval"
 	LastVal = "lastval"
 	SetVal  = "setval"
+
+	// Geospatial function.
+	StGeomFromText = "st_geomfromtext"
+	StAsText       = "st_astext"
+	StDistance     = "st_distance"
+	StIntersects   = "st_intersects"
 )
 
 type FuncCallExprType int8

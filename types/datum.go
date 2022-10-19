@@ -903,7 +903,7 @@ func (d *Datum) ConvertTo(sc *stmtctx.StatementContext, target *FieldType) (Datu
 	case mysql.TypeFloat, mysql.TypeDouble:
 		return d.convertToFloat(sc, target)
 	case mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob,
-		mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString:
+		mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeGeometry:
 		return d.convertToString(sc, target)
 	case mysql.TypeTimestamp:
 		return d.convertToMysqlTimestamp(sc, target)
