@@ -383,7 +383,81 @@ func postOptimize(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {
 	handleFineGrainedShuffle(sctx, plan)
 	checkPlanCacheable(sctx, plan)
 	propagateProbeParents(plan, nil)
+	prunePhysicalColumns(plan)
 	return plan
+}
+
+// Currently only for MPP(HashJoin<-ExchangeReceiver).
+func prunePhysicalColumns(plan PhysicalPlan) {
+	emptyColumns := make([]*expression.Column, 0)
+	if tableReader, ok := plan.(*PhysicalTableReader); ok {
+		if _, isExchangeSender := tableReader.tablePlan.(*PhysicalExchangeSender); isExchangeSender {
+			prunePhysicalColumnsInternal(tableReader.tablePlan, emptyColumns, false)
+		}
+	} else {
+		for _, child := range plan.Children() {
+			prunePhysicalColumns(child)
+		}
+	}
+}
+
+func (p *PhysicalHashJoin) extractUsedCols(parentUsedCols []*expression.Column) (leftCols []*expression.Column, rightCols []*expression.Column) {
+	for _, eqCond := range p.EqualConditions {
+		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(eqCond)...)
+	}
+	for _, neCond := range p.NAEqualConditions {
+		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(neCond)...)
+	}
+	for _, leftCond := range p.LeftConditions {
+		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(leftCond)...)
+	}
+	for _, rightCond := range p.RightConditions {
+		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(rightCond)...)
+	}
+	for _, otherCond := range p.OtherConditions {
+		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(otherCond)...)
+	}
+	lChild := p.children[0]
+	rChild := p.children[1]
+	for _, col := range parentUsedCols {
+		if lChild.Schema().Contains(col) {
+			leftCols = append(leftCols, col)
+		} else if rChild.Schema().Contains(col) {
+			rightCols = append(rightCols, col)
+		}
+	}
+	return leftCols, rightCols
+}
+
+func prunePhysicalColumnsInternal(plan PhysicalPlan, parentUsedCols []*expression.Column, meaningFulParentUsedCols bool) {
+	switch x := plan.(type) {
+	case *PhysicalHashJoin:
+		child0 := x.children[0]
+		child1 := x.children[1]
+		schemaColumns := make([]*expression.Column, 0, len(x.Schema().Columns))
+		schemaColumns = x.Schema().Columns
+		leftCols, rightCols := x.extractUsedCols(schemaColumns)
+		prunePhysicalColumnsInternal(child0, leftCols, true)
+		prunePhysicalColumnsInternal(child1, rightCols, true)
+	case *PhysicalExchangeReceiver:
+		// Currently, prune columns only when parent node is HashJoin
+		if meaningFulParentUsedCols {
+			used := expression.GetUsedList(parentUsedCols, x.Schema())
+			for i := len(used) - 1; i >= 0; i-- {
+				if !used[i] {
+					// PhysicalExchangeSender and PhysicalExchangeReceiver owns the same schema, so just prune Receiver's Schema here
+					x.Schema().Columns = append(x.Schema().Columns[:i], x.Schema().Columns[i+1:]...)
+				}
+			}
+		}
+		emptyColumns := make([]*expression.Column, 0)
+		prunePhysicalColumnsInternal(x.children[0], emptyColumns, false)
+	default:
+		emptyColumns := make([]*expression.Column, 0)
+		for _, child := range x.Children() {
+			prunePhysicalColumnsInternal(child, emptyColumns, false)
+		}
+	}
 }
 
 // Only for MPP(Window<-[Sort]<-ExchangeReceiver<-ExchangeSender).

@@ -15,6 +15,8 @@
 package core
 
 import (
+	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/parser/ast"
 	"reflect"
 	"testing"
 
@@ -287,4 +289,67 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 	tableScan1 = &PhysicalTableScan{}
 	hashSender1.children = []PhysicalPlan{tableScan1}
 	start(partWindow, expStreamCount, 3, 0)
+}
+
+// Test for core.prunePhysicalColumns()
+func TestPrunePhysicalColumns(t *testing.T) {
+	sctx := MockContext()
+	col0 := &expression.Column{
+		UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+	}
+	col1 := &expression.Column{
+		UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+	}
+	col2 := &expression.Column{
+		UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+	}
+	col3 := &expression.Column{
+		UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+	}
+
+	tableReader := &PhysicalTableReader{}
+	passSender := &PhysicalExchangeSender{
+		ExchangeType: tipb.ExchangeType_PassThrough,
+	}
+	hashJoin := &PhysicalHashJoin{}
+	recv := &PhysicalExchangeReceiver{}
+	recv1 := &PhysicalExchangeReceiver{}
+	hashSender := &PhysicalExchangeSender{
+		ExchangeType: tipb.ExchangeType_Hash,
+	}
+	hashSender1 := &PhysicalExchangeSender{
+		ExchangeType: tipb.ExchangeType_Hash,
+	}
+	tableScan := &PhysicalTableScan{}
+	tableScan1 := &PhysicalTableScan{}
+
+	tableReader.tablePlan = passSender
+	passSender.children = []PhysicalPlan{hashJoin}
+	hashJoin.children = []PhysicalPlan{recv, recv1}
+	recv.children = []PhysicalPlan{hashSender}
+	recv1.children = []PhysicalPlan{hashSender1}
+	hashSender.children = []PhysicalPlan{tableScan}
+	hashSender1.children = []PhysicalPlan{tableScan1}
+
+	cond := expression.NewFunctionInternal(sctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), col0, col3)
+	sf, isSF := cond.(*expression.ScalarFunction)
+	require.True(t, isSF)
+	hashJoin.EqualConditions = append(hashJoin.EqualConditions, sf)
+	hashJoinSchema := make([]*expression.Column, 0)
+	hashJoinSchema = append(hashJoinSchema, col3)
+	hashJoin.SetSchema(expression.NewSchema(hashJoinSchema...))
+
+	// recv schema has useless columns col1, col2
+	recv.Schema().Columns = append(recv.Schema().Columns, col0, col1, col2)
+	recv1.Schema().Columns = append(recv.Schema().Columns, col3)
+	prunePhysicalColumns(tableReader)
+
+	require.True(t, recv.Schema().Contains(col0))
+	require.False(t, recv.Schema().Contains(col1))
+	require.False(t, recv.Schema().Contains(col2))
+	require.True(t, recv1.Schema().Contains(col3))
 }
