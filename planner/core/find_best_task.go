@@ -1348,7 +1348,7 @@ func (ds *DataSource) indexCoveringCondition(condition expression.Expression, in
 }
 
 func (ds *DataSource) isSingleScan(indexColumns []*expression.Column, idxColLens []int) bool {
-	if !ds.ctx.GetSessionVars().PreferPrefixIndexSingleScan || ds.colsRequiringFullLen == nil {
+	if !ds.ctx.GetSessionVars().OptPrefixIndexSingleScan || ds.colsRequiringFullLen == nil {
 		// ds.colsRequiringFullLen is set at (*DataSource).PruneColumns. In some cases we don't reach (*DataSource).PruneColumns
 		// and ds.colsRequiringFullLen is nil, so we fall back to ds.indexCoveringColumns(ds.schema.Columns, indexColumns, idxColLens).
 		return ds.indexCoveringColumns(ds.schema.Columns, indexColumns, idxColLens)
@@ -1630,7 +1630,7 @@ func (ds *DataSource) splitIndexFilterConditions(conditions []expression.Express
 	var indexConditions, tableConditions []expression.Expression
 	for _, cond := range conditions {
 		var covered bool
-		if ds.ctx.GetSessionVars().PreferPrefixIndexSingleScan {
+		if ds.ctx.GetSessionVars().OptPrefixIndexSingleScan {
 			covered = ds.indexCoveringCondition(cond, indexColumns, idxColLens)
 		} else {
 			covered = ds.indexCoveringColumns(expression.ExtractColumns(cond), indexColumns, idxColLens)

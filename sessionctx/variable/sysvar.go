@@ -1958,8 +1958,8 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBPreferPrefixIndexSingleScan, Value: BoolToOnOff(DefTiDBPreferPrefixIndexSingleScan), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
-		s.PreferPrefixIndexSingleScan = TiDBOptOn(val)
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptPrefixIndexSingleScan, Value: BoolToOnOff(DefTiDBOptPrefixIndexSingleScan), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.OptPrefixIndexSingleScan = TiDBOptOn(val)
 		return nil
 	}},
 }

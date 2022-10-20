@@ -334,7 +334,7 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 	checker := &conditionChecker{
 		checkerCol:                  d.cols[eqOrInCount],
 		length:                      d.lengths[eqOrInCount],
-		preferPrefixIndexSingleScan: d.sctx.GetSessionVars().PreferPrefixIndexSingleScan,
+		preferPrefixIndexSingleScan: d.sctx.GetSessionVars().OptPrefixIndexSingleScan,
 	}
 	if considerDNF {
 		pointRes, offset, columnValues, err := extractIndexPointRangesForCNF(d.sctx, conditions, d.cols, d.lengths, d.rangeMaxSize)
@@ -660,7 +660,7 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 	firstColumnChecker := &conditionChecker{
 		checkerCol:                  d.cols[0],
 		length:                      d.lengths[0],
-		preferPrefixIndexSingleScan: d.sctx.GetSessionVars().PreferPrefixIndexSingleScan,
+		preferPrefixIndexSingleScan: d.sctx.GetSessionVars().OptPrefixIndexSingleScan,
 	}
 	rb := builder{sc: d.sctx.GetSessionVars().StmtCtx}
 	dnfItems := expression.FlattenDNFConditions(condition)
@@ -925,7 +925,7 @@ func ExtractAccessConditionsForColumn(ctx sessionctx.Context, conds []expression
 	checker := conditionChecker{
 		checkerCol:                  col,
 		length:                      types.UnspecifiedLength,
-		preferPrefixIndexSingleScan: ctx.GetSessionVars().PreferPrefixIndexSingleScan,
+		preferPrefixIndexSingleScan: ctx.GetSessionVars().OptPrefixIndexSingleScan,
 	}
 	accessConds := make([]expression.Expression, 0, 8)
 	filter := func(expr expression.Expression) bool {
@@ -940,7 +940,7 @@ func DetachCondsForColumn(sctx sessionctx.Context, conds []expression.Expression
 	checker := &conditionChecker{
 		checkerCol:                  col,
 		length:                      types.UnspecifiedLength,
-		preferPrefixIndexSingleScan: sctx.GetSessionVars().PreferPrefixIndexSingleScan,
+		preferPrefixIndexSingleScan: sctx.GetSessionVars().OptPrefixIndexSingleScan,
 	}
 	return detachColumnCNFConditions(sctx, conds, checker)
 }
@@ -963,7 +963,7 @@ func MergeDNFItems4Col(ctx sessionctx.Context, dnfItems []expression.Expression)
 		checker := &conditionChecker{
 			checkerCol:                  cols[0],
 			length:                      types.UnspecifiedLength,
-			preferPrefixIndexSingleScan: ctx.GetSessionVars().PreferPrefixIndexSingleScan,
+			preferPrefixIndexSingleScan: ctx.GetSessionVars().OptPrefixIndexSingleScan,
 		}
 		// If we can't use this condition to build range, we can't merge it.
 		// Currently, we assume if every condition in a DNF expression can pass this check, then `Selectivity` must be able to
