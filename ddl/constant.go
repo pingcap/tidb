@@ -44,19 +44,19 @@ const (
 	// JobTableSQL is the CREATE TABLE SQL of `tidb_ddl_job`.
 	JobTableSQL = "create table " + JobTable + "(job_id bigint not null, reorg int, schema_ids text(65535), table_ids text(65535), job_meta longblob, type int, processing int, primary key(job_id))"
 	// ReorgTableSQL is the CREATE TABLE SQL of `tidb_ddl_reorg`.
-	ReorgTableSQL = "create table " + ReorgTable + "(job_id bigint not null, ele_id bigint, ele_type blob, start_key blob, end_key blob, physical_id bigint, reorg_meta longblob, unique key(job_id, ele_id, ele_type(20)))"
+	ReorgTableSQL = "create table " + ReorgTable + "(job_id bigint not null, ele_id bigint, ele_type blob, start_key blob, end_key blob, store_id bigint, reorg_meta longblob, unique key(job_id, ele_id, ele_type(20)))"
 	// HistoryTableSQL is the CREATE TABLE SQL of `tidb_ddl_history`.
 	HistoryTableSQL = "create table " + HistoryTable + "(job_id bigint not null, job_meta longblob, db_name char(64), table_name char(64), schema_ids text(65535), table_ids text(65535), create_time datetime, primary key(job_id))"
 	// BackfillTableSQL is the CREATE TABLE SQL of `tidb_ddl_backfill`.
 	// TODO: section id, global or in a job
-	// TODO: do we need to remove physical_id?
 	// TODO: add service ID?
+	// TODO: how about store_id type?
 	BackfillTableSQL = "create table " + BackfillTable + `(
 		section_id bigint not null,
 		job_id bigint not null,
 		ele_id bigint not null,
 		ele_key blob,
-		physical_id bigint,
+		store_id blob,
 		type int,
 		exec_id blob default null,
 		exec_lease Time,
@@ -69,7 +69,7 @@ const (
 		job_id bigint not null,
 		ele_id bigint not null,
 		ele_key blob,
-		physical_id bigint,
+		store_id blob,
 		type int,
 		exec_id blob default null,
 		exec_lease Time,
