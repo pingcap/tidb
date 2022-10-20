@@ -15,6 +15,7 @@
 package expression
 
 import (
+	"strings"
 	"sync"
 
 	"github.com/pingcap/errors"
@@ -38,7 +39,8 @@ func registerExtensionFunc(def *extension.FunctionDef) error {
 		return errors.New("extension function name should not be empty")
 	}
 
-	if _, ok := funcs[def.Name]; ok {
+	lowerName := strings.ToLower(def.Name)
+	if _, ok := funcs[lowerName]; ok {
 		return errors.Errorf("extension function name '%s' conflict with builtin", def.Name)
 	}
 
@@ -47,7 +49,7 @@ func registerExtensionFunc(def *extension.FunctionDef) error {
 		return err
 	}
 
-	_, exist := extensionFuncs.LoadOrStore(def.Name, class)
+	_, exist := extensionFuncs.LoadOrStore(lowerName, class)
 	if exist {
 		return errors.Errorf("duplicated extension function name '%s'", def.Name)
 	}
