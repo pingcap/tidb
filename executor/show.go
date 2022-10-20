@@ -2023,10 +2023,8 @@ func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 	var token *sessionstates.SessionToken
 	// In testing, user may be nil.
 	if user := e.ctx.GetSessionVars().User; user != nil {
-		// The token may be leaked without secure transport, so we enforce secure transport (TLS or Unix Socket).
-		if !e.ctx.GetSessionVars().ConnectionInfo.IsSecureTransport() {
-			return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("the token must be queried with secure transport")
-		}
+		// The token may be leaked without secure transport, but the cloud can ensure security in some situations,
+		// so we don't enforce secure connections.
 		if token, err = sessionstates.CreateSessionToken(user.Username); err != nil {
 			return err
 		}
