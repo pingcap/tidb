@@ -294,7 +294,7 @@ TableOptimizerHintOpt:
 		$$ = &ast.TableOptimizerHint{
 			HintName: model.NewCIStr($1),
 			QBName:   model.NewCIStr($3),
-			Tables:   $5,
+			Tables:   $5.Tables,
 		}
 	}
 |	"MEMORY_QUOTA" '(' QueryBlockOpt hintIntLit UnitOfBytes ')'

@@ -1250,7 +1250,7 @@ yynewstate:
 			parser.yyVAL.hint = &ast.TableOptimizerHint{
 				HintName: model.NewCIStr(yyS[yypt-5].ident),
 				QBName:   model.NewCIStr(yyS[yypt-3].ident),
-				Tables:   yyS[yypt-1].hint,
+				Tables:   yyS[yypt-1].hint.Tables,
 			}
 		}
 	case 19:

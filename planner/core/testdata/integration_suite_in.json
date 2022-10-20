@@ -654,6 +654,16 @@
     ]
   },
   {
+    "name": "TestViewHint",
+    "cases": [
+      "explain format = 'brief' select /*+ qb_name(qb_v_2, v@sel_1 .@sel_2), merge_join(t1@qb_v_2) */ * from v;",
+      "explain format = 'brief' select /*+ qb_name(qb_v_2, v@sel_1 .@sel_2), merge_join(t1@qb_v_2), qb_name(qb_v_1, v@sel_1 .@sel1), merge_join(t@qb_v_1) */ * from v;",
+      "explain format = 'brief' select /*+ qb_name(qb_v_2, v@sel_1 .@sel_2), stream_agg(@qb_v_2) */ * from v;",
+      "explain format = 'brief' select /*+ qb_name(qb_v_1, v@sel_1 .@sel_1), merge_join(t1@qb_v_2) */ * from v;"
+
+    ]
+  },
+  {
     "name": "TestReadFromStorageHintAndIsolationRead",
     "cases": [
       "desc format = 'brief' select /*+ read_from_storage(tikv[t], tiflash[t]) */ avg(a) from t",
