@@ -19,17 +19,24 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 )
 
+// FunctionContext is a interface to provide context to the custom function
 type FunctionContext interface {
 	EvalArgs(row chunk.Row) ([]types.Datum, error)
 }
 
+// FunctionDef is the definition for the custom function
 type FunctionDef struct {
-	Name           string
-	EvalTp         types.EvalType
-	ArgTps         []types.EvalType
+	Name   string
+	EvalTp types.EvalType
+	ArgTps []types.EvalType
+	// EvalStringFunc is the eval function when `EvalTp` is `types.ETString`
 	EvalStringFunc func(ctx FunctionContext, row chunk.Row) (string, bool, error)
-	EvalIntFunc    func(ctx FunctionContext, row chunk.Row) (int64, bool, error)
+	// EvalIntFunc is the eval function when `EvalTp` is `types.ETInt`
+	EvalIntFunc func(ctx FunctionContext, row chunk.Row) (int64, bool, error)
 }
 
+// RegisterExtensionFunc is to avoid dependency cycle
 var RegisterExtensionFunc func(*FunctionDef) error
+
+// RemoveExtensionFunc is to avoid dependency cycle
 var RemoveExtensionFunc func(string)
