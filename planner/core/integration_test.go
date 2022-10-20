@@ -7528,6 +7528,10 @@ func TestCorColRangeWithRangeMaxSize(t *testing.T) {
 	tk.MustExec("insert into t3 values (2), (4)")
 	tk.MustExec("insert into mysql.opt_rule_blacklist value(\"decorrelate\")")
 	tk.MustExec("admin reload opt_rule_blacklist")
+	defer func() {
+		tk.MustExec("delete from mysql.opt_rule_blacklist where name = \"decorrelate\"")
+		tk.MustExec("admin reload opt_rule_blacklist")
+	}()
 
 	// Correlated column in index range.
 	tk.MustExec("set @@tidb_opt_range_max_size=1000")
