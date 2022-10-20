@@ -59,6 +59,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/plancodec"
@@ -4419,7 +4420,30 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		if tn.TableSample != nil {
 			return nil, expression.ErrInvalidTableSample.GenWithStackByArgs("Unsupported TABLESAMPLE in views")
 		}
-		return b.BuildDataSourceFromView(ctx, dbName, tableInfo)
+
+		// Get the hint belong to the view.
+		currentQBNameMap4View := make(map[string][]ast.HintTable)
+		currentViewHints := make(map[string][]*ast.TableOptimizerHint)
+		for qbName, viewQBNameHintTable := range b.hintProcessor.QbNameMap4View {
+			if len(viewQBNameHintTable) == 0 {
+				// TODO: need to check whether this will happen(maybe in the recursion)
+				continue
+			}
+			// TODO: can not handle the different DB.
+			if viewQBNameHintTable[0].QBName.L == "" {
+				// TODO: need to check if we do not explicit set the qbName. Is it empty or use the 'sel_1' as the default value.
+				continue
+			}
+			viewSelectOffset := b.getSelectOffset()
+			viewHintSelectOffset := b.hintProcessor.GetHintOffset(viewQBNameHintTable[0].QBName, viewSelectOffset)
+			if viewQBNameHintTable[0].TableName.L == tableInfo.Name.L && viewHintSelectOffset == viewSelectOffset {
+				currentQBNameMap4View[qbName] = viewQBNameHintTable
+				currentViewHints[qbName] = b.hintProcessor.QbHints4View[qbName]
+				delete(b.hintProcessor.QbNameMap4View, qbName)
+				delete(b.hintProcessor.QbHints4View, qbName)
+			}
+		}
+		return b.BuildDataSourceFromView(ctx, dbName, tableInfo, currentQBNameMap4View, currentViewHints)
 	}
 
 	if tableInfo.IsSequence() {
@@ -4949,7 +4973,7 @@ func (b *PlanBuilder) checkRecursiveView(dbName model.CIStr, tableName model.CIS
 }
 
 // BuildDataSourceFromView is used to build LogicalPlan from view
-func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.CIStr, tableInfo *model.TableInfo) (LogicalPlan, error) {
+func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.CIStr, tableInfo *model.TableInfo, QbNameMap4View map[string][]ast.HintTable, ViewHints map[string][]*ast.TableOptimizerHint) (LogicalPlan, error) {
 	viewDepth := b.ctx.GetSessionVars().StmtCtx.ViewDepth
 	b.ctx.GetSessionVars().StmtCtx.ViewDepth++
 	deferFunc, err := b.checkRecursiveView(dbName, tableInfo.Name)
@@ -4984,6 +5008,49 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 		b.buildingCTE = o
 	}()
 
+	hintProcessor := &hint.BlockHintProcessor{Ctx: b.ctx}
+	// TODO: need to check whether the selectOffset has already been set. Is necessary to use the 'Accept' function here.
+	selectNode.Accept(hintProcessor)
+	currentQbNameMap4View := make(map[string][]ast.HintTable)
+	currentQbHints4View := make(map[string][]*ast.TableOptimizerHint)
+	currentQbHints := make(map[int][]*ast.TableOptimizerHint)
+	currentQbNameMap := make(map[string]int)
+
+	for qbName, viewQbNameHint := range QbNameMap4View {
+		selectOffset := -1
+		viewQbNameHint = viewQbNameHint[1:]
+		QbNameMap4View[qbName] = viewQbNameHint
+		if len(viewQbNameHint) == 0 {
+			selectOffset = 1
+		} else if len(viewQbNameHint) == 1 && viewQbNameHint[0].TableName.L == "" {
+			selectOffset = hintProcessor.GetHintOffset(viewQbNameHint[0].QBName, -1)
+		} else {
+			currentQbNameMap4View[qbName] = viewQbNameHint
+			currentQbHints4View[qbName] = ViewHints[qbName]
+		}
+
+		if selectOffset != -1 {
+			currentQbHints[selectOffset] = ViewHints[qbName]
+			currentQbNameMap[qbName] = selectOffset
+
+			delete(QbNameMap4View, qbName)
+			delete(ViewHints, qbName)
+		}
+	}
+
+	hintProcessor.QbNameMap4View = QbNameMap4View
+	hintProcessor.QbHints4View = ViewHints
+	hintProcessor.QbHints = currentQbHints
+	hintProcessor.QbNameMap = currentQbNameMap
+
+	originHintProcessor := b.hintProcessor
+	originPlannerSelectBlockAsName := b.ctx.GetSessionVars().PlannerSelectBlockAsName
+	b.hintProcessor = hintProcessor
+	b.ctx.GetSessionVars().PlannerSelectBlockAsName = make([]ast.HintTable, hintProcessor.MaxSelectStmtOffset()+1)
+	defer func() {
+		b.hintProcessor = originHintProcessor
+		b.ctx.GetSessionVars().PlannerSelectBlockAsName = originPlannerSelectBlockAsName
+	}()
 	selectLogicalPlan, err := b.Build(ctx, selectNode)
 	if err != nil {
 		if terror.ErrorNotEqual(err, ErrViewRecursive) &&

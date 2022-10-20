@@ -314,8 +314,10 @@ func extractHintWarns(warns []error) []error {
 
 // BlockHintProcessor processes hints at different level of sql statement.
 type BlockHintProcessor struct {
-	QbNameMap        map[string]int                    // Map from query block name to select stmt offset.
+	QbNameMap        map[string]int // Map from query block name to select stmt offset.
+	QbNameMap4View   map[string][]ast.HintTable
 	QbHints          map[int][]*ast.TableOptimizerHint // Group all hints at same query block.
+	QbHints4View     map[string][]*ast.TableOptimizerHint
 	Ctx              sessionctx.Context
 	selectStmtOffset int
 }
@@ -334,8 +336,15 @@ func (p *BlockHintProcessor) Enter(in ast.Node) (ast.Node, bool) {
 		p.checkQueryBlockHints(node.TableHints, 0)
 	case *ast.SelectStmt:
 		p.selectStmtOffset++
+		// Only support view hints which appear in the outer select part
+		if p.selectStmtOffset == 1 {
+			// Handle the view hints and update the left hint.
+			node.TableHints = p.handleViewHints(node.TableHints)
+		}
 		node.QueryBlockOffset = p.selectStmtOffset
 		p.checkQueryBlockHints(node.TableHints, node.QueryBlockOffset)
+	case *ast.ExplainStmt:
+		return in, true
 	}
 	return in, false
 }
@@ -375,6 +384,68 @@ func (p *BlockHintProcessor) checkQueryBlockHints(hints []*ast.TableOptimizerHin
 	} else {
 		p.QbNameMap[qbName] = offset
 	}
+}
+
+func (p *BlockHintProcessor) handleViewHints(hints []*ast.TableOptimizerHint) (leftHints []*ast.TableOptimizerHint) {
+	if len(hints) == 0 {
+		return
+	}
+
+	usedHints := make([]bool, len(hints))
+	// handle the query block name hints for view
+	for i, hint := range hints {
+		if hint.HintName.L != hintQBName || len(hint.Tables) == 0 {
+			continue
+		}
+		usedHints[i] = true
+		// TODO: need to check whether the qbName can be empty
+		if p.QbNameMap4View == nil {
+			p.QbNameMap4View = make(map[string][]ast.HintTable)
+		}
+		qbName := hint.QBName.L
+		if _, ok := p.QbNameMap4View[qbName]; ok {
+			if p.Ctx != nil {
+				p.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("Duplicate query block name %s for view's query block hint, only the first one is effective", qbName))
+			}
+		} else {
+			p.QbNameMap4View[qbName] = hint.Tables
+		}
+	}
+
+	// handle the view hints
+	for i, hint := range hints {
+		if usedHints[i] || hint.HintName.L == hintQBName {
+			continue
+		}
+
+		ok := false
+		qbName := hint.QBName.L
+		if qbName != "" {
+			// xx_agg(@qb_name)
+			_, ok = p.QbNameMap4View[qbName]
+		} else {
+			if len(hint.Tables) == 1 {
+				// TODO: only support one table in view hints. Need to check what happened if there are more table name appear in one hint
+				qbName = hint.Tables[0].QBName.L
+				_, ok = p.QbNameMap4View[qbName]
+			}
+		}
+
+		if ok {
+			if p.QbHints4View == nil {
+				p.QbHints4View = make(map[string][]*ast.TableOptimizerHint)
+			}
+			usedHints[i] = true
+			p.QbHints4View[qbName] = append(p.QbHints4View[qbName], hint)
+		}
+	}
+
+	for i, hint := range hints {
+		if !usedHints[i] {
+			leftHints = append(leftHints, hint)
+		}
+	}
+	return
 }
 
 const (
