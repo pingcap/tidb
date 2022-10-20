@@ -156,6 +156,7 @@ var tokenMap = map[string]int{
 	"AS":                       as,
 	"ASC":                      asc,
 	"ASCII":                    ascii,
+	"ATTRIBUTE":                attribute,
 	"ATTRIBUTES":               attributes,
 	"BATCH":                    batch,
 	"STATS_OPTIONS":            statsOptions,
