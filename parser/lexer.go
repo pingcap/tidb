@@ -236,6 +236,14 @@ func (s *Scanner) Lex(v *yySymType) int {
 		v.offset = pos.Offset
 		return asof
 	}
+	if tok == to && s.getNextToken() == timestampType {
+		_, pos, lit = s.scan()
+		v.ident = fmt.Sprintf("%s %s", v.ident, lit)
+		s.lastKeyword = toTimestamp
+		s.lastScanOffset = pos.Offset
+		v.offset = pos.Offset
+		return toTimestamp
+	}
 
 	switch tok {
 	case intLit:

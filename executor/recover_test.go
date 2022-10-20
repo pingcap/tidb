@@ -114,7 +114,7 @@ func TestRecoverTable(t *testing.T) {
 
 	// Test for recover one table multiple time.
 	tk.MustExec("drop table t_recover")
-	tk.MustExec("flashback table t_recover rename to t_recover_tmp")
+	tk.MustExec("flashback table t_recover to t_recover_tmp")
 	err = tk.ExecToErr("recover table t_recover")
 	require.True(t, infoschema.ErrTableExists.Equal(err))
 
@@ -172,8 +172,8 @@ func TestFlashbackTable(t *testing.T) {
 	// Test for flashback to new table.
 	tk.MustExec("drop table t_flashback")
 	tk.MustExec("create table t_flashback (a int);")
-	tk.MustGetErrMsg("flashback table t_flashback rename to ` `", dbterror.ErrWrongTableName.GenWithStack("Incorrect table name ' '").Error())
-	tk.MustExec("flashback table t_flashback rename to t_flashback2")
+	tk.MustGetErrMsg("flashback table t_flashback to ` `", dbterror.ErrWrongTableName.GenWithStack("Incorrect table name ' '").Error())
+	tk.MustExec("flashback table t_flashback to t_flashback2")
 	// Check flashback table meta and data record.
 	tk.MustQuery("select * from t_flashback2;").Check(testkit.Rows("1", "2", "3", "4", "5", "6"))
 	// Check flashback table autoID.
@@ -183,12 +183,12 @@ func TestFlashbackTable(t *testing.T) {
 	tk.MustQuery("select a,_tidb_rowid from t_flashback2;").Check(testkit.Rows("1 1", "2 2", "3 3", "4 5001", "5 5002", "6 5003", "7 10001", "8 10002", "9 10003"))
 
 	// Test for flashback one table multiple time.
-	err := tk.ExecToErr("flashback table t_flashback rename to t_flashback4")
+	err := tk.ExecToErr("flashback table t_flashback to t_flashback4")
 	require.True(t, infoschema.ErrTableExists.Equal(err))
 
 	// Test for flashback truncated table to new table.
 	tk.MustExec("truncate table t_flashback2")
-	tk.MustExec("flashback table t_flashback2 rename to t_flashback3")
+	tk.MustExec("flashback table t_flashback2 to t_flashback3")
 	// Check flashback table meta and data record.
 	tk.MustQuery("select * from t_flashback3;").Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7", "8", "9"))
 	// Check flashback table autoID.
@@ -211,7 +211,7 @@ func TestFlashbackTable(t *testing.T) {
 
 	// Test for flashback truncate partition table.
 	tk.MustExec("truncate table t_p_flashback")
-	tk.MustExec("flashback table t_p_flashback rename to t_p_flashback1")
+	tk.MustExec("flashback table t_p_flashback to t_p_flashback1")
 	// Check flashback table meta and data record.
 	tk.MustQuery("select * from t_p_flashback1 order by a;").Check(testkit.Rows("1", "2", "3", "4", "5"))
 	// Check flashback table autoID.
