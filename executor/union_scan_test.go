@@ -544,7 +544,7 @@ func TestIssue36903(t *testing.T) {
 	tk.MustExec("insert into t_vwvgdc values (2, 15000, 61.75);")
 	tk.MustExec("BEGIN OPTIMISTIC;")
 	tk.MustExec("insert into t_vwvgdc (wkey, pkey, c_rdsfbc) values (155, 228000, 99.50);")
-	tk.MustQuery("select pkey from t_vwvgdc where 0 <> 0 union select pkey from t_vwvgdc;")
+	tk.MustQuery("select pkey from t_vwvgdc where 0 <> 0 union select pkey from t_vwvgdc;").Sort().Check(testkit.Rows("15000", "228000"))
 }
 
 func BenchmarkUnionScanRead(b *testing.B) {
