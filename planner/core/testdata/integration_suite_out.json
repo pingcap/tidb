@@ -7575,7 +7575,7 @@
           "    └─IndexRangeScan 99.90 cop[tikv] table:t1, index:idx2(c1, c2) range:[\"0xfff\" -inf,\"0xfff\" +inf], keep order:false, stats:pseudo"
         ],
         "Result": [
-          "2"
+          "3"
         ]
       },
       {
@@ -7599,7 +7599,7 @@
           "      └─IndexRangeScan 3333.33 cop[tikv] table:t1, index:idx2(c1, c2) range:[\"0xfff\",+inf], keep order:false, stats:pseudo"
         ],
         "Result": [
-          "2"
+          "3"
         ]
       },
       {
@@ -7613,6 +7613,60 @@
         ],
         "Result": [
           "1"
+        ]
+      },
+      {
+        "SQL": "select c2 from t1 use index(idx2) where c1 = '0xfff' and c2 is not null",
+        "Plan": [
+          "Projection 99.90 root  test.t1.c2",
+          "└─IndexLookUp 99.90 root  ",
+          "  ├─IndexRangeScan(Build) 99.90 cop[tikv] table:t1, index:idx2(c1, c2) range:[\"0xfff\" -inf,\"0xfff\" +inf], keep order:false, stats:pseudo",
+          "  └─TableRowIDScan(Probe) 99.90 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "111111",
+          "222222",
+          ""
+        ]
+      },
+      {
+        "SQL": "select c2 from t1 use index(idx2) where c1 = '0xfff' and c2 is null",
+        "Plan": [
+          "Projection 0.10 root  test.t1.c2",
+          "└─IndexLookUp 0.10 root  ",
+          "  ├─IndexRangeScan(Build) 0.10 cop[tikv] table:t1, index:idx2(c1, c2) range:[\"0xfff\" NULL,\"0xfff\" NULL], keep order:false, stats:pseudo",
+          "  └─TableRowIDScan(Probe) 0.10 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "<nil>"
+        ]
+      },
+      {
+        "SQL": "select c2 from t1 use index(idx2) where c1 >= '0xfff' and c2 is not null",
+        "Plan": [
+          "Projection 3330.00 root  test.t1.c2",
+          "└─IndexLookUp 3330.00 root  ",
+          "  ├─Selection(Build) 3330.00 cop[tikv]  not(isnull(test.t1.c2))",
+          "  │ └─IndexRangeScan 3333.33 cop[tikv] table:t1, index:idx2(c1, c2) range:[\"0xfff\",+inf], keep order:false, stats:pseudo",
+          "  └─TableRowIDScan(Probe) 3330.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "111111",
+          "222222",
+          ""
+        ]
+      },
+      {
+        "SQL": "select c2 from t1 use index(idx2) where c1 >= '0xfff' and c2 is null",
+        "Plan": [
+          "Projection 3.33 root  test.t1.c2",
+          "└─IndexLookUp 3.33 root  ",
+          "  ├─Selection(Build) 3.33 cop[tikv]  isnull(test.t1.c2)",
+          "  │ └─IndexRangeScan 3333.33 cop[tikv] table:t1, index:idx2(c1, c2) range:[\"0xfff\",+inf], keep order:false, stats:pseudo",
+          "  └─TableRowIDScan(Probe) 3.33 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "<nil>"
         ]
       }
     ]

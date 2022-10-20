@@ -7710,7 +7710,7 @@ func TestAvoidDoubleScanForPrefixIndex(t *testing.T) {
   KEY idx2 (c1,c2(5))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
 	tk.MustExec("set tidb_opt_prefix_index_single_scan = 1")
-	tk.MustExec("insert into t1 values ('a', '0xfff', '111111'), ('b', '0xfff', '222222'), ('c', '0xfff', null)")
+	tk.MustExec("insert into t1 values ('a', '0xfff', '111111'), ('b', '0xfff', '222222'), ('c', '0xfff', ''), ('d', '0xfff', null)")
 
 	var input []string
 	var output []struct {
