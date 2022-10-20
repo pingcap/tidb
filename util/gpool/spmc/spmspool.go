@@ -387,11 +387,8 @@ func (p *Pool[T, U, C, CT, TF]) revertWorker(worker *goWorker[T, U, C, CT, TF]) 
 	worker.recycleTime = time.Now()
 	p.lock.Lock()
 
-	// To avoid memory leaks, add a double check in the lock scope.
-	// Issue: https://github.com/panjf2000/ants/issues/113
 	if p.IsClosed() {
 		p.lock.Unlock()
-		log.Info("wwz close")
 		return false
 	}
 
