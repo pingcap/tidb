@@ -403,6 +403,7 @@ func TestSingleRuleTraceStep(t *testing.T) {
 		err = Preprocess(context.Background(), s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		require.NoError(t, err, comment)
 		sctx := MockContext()
+		sctx.GetSessionVars().PreferPrefixIndexSingleScan = false
 		sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true
 		sctx.GetSessionVars().AllowAggPushDown = true
 		builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.BlockHintProcessor{})
