@@ -87,6 +87,8 @@ import (
 	hintHashAgg               "HASH_AGG"
 	hintMpp1PhaseAgg          "MPP_1PHASE_AGG"
 	hintMpp2PhaseAgg          "MPP_2PHASE_AGG"
+	hintMppTiDBAgg            "MPP_TIDB_AGG"
+	hintMPPScalarAgg          "MPP_SCALAR_AGG"
 	hintIgnoreIndex           "IGNORE_INDEX"
 	hintInlHashJoin           "INL_HASH_JOIN"
 	hintInlJoin               "INL_JOIN"
@@ -292,7 +294,7 @@ TableOptimizerHintOpt:
 		$$ = &ast.TableOptimizerHint{
 			HintName: model.NewCIStr($1),
 			QBName:   model.NewCIStr($3),
-			Tables:   $5.Tables,
+			Tables:   $5,
 		}
 	}
 |	"MEMORY_QUOTA" '(' QueryBlockOpt hintIntLit UnitOfBytes ')'
@@ -627,6 +629,8 @@ NullaryHintName:
 |	"HASH_AGG"
 |	"MPP_1PHASE_AGG"
 |	"MPP_2PHASE_AGG"
+|	"MPP_TIDB_AGG"
+|	"MPP_SCALAR_AGG"
 |	"STREAM_AGG"
 |	"AGG_TO_COP"
 |	"LIMIT_TO_COP"
@@ -683,6 +687,8 @@ Identifier:
 |	"HASH_AGG"
 |	"MPP_1PHASE_AGG"
 |	"MPP_2PHASE_AGG"
+|	"MPP_TIDB_AGG"
+|	"MPP_SCALAR_AGG"
 |	"IGNORE_INDEX"
 |	"INL_HASH_JOIN"
 |	"INL_JOIN"

@@ -3647,6 +3647,7 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("@")
 		}
 		ctx.WriteName(n.QBName.String())
+		// TODO: add the restore part for view hint
 	}
 	// Hints without args except query block.
 	switch n.HintName.L {
