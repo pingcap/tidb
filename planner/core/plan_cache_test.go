@@ -149,6 +149,7 @@ func TestIssue38533(t *testing.T) {
 	tk.MustExec(`execute st using @a, @a`)
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
+<<<<<<< HEAD
 
 func TestIssue38710(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -176,3 +177,5 @@ func TestIssue38710(t *testing.T) {
 	require.Equal(t, 2, len(rows.Rows()))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0")) // can not use the cache because the types for @a and @b are not equal to the cached plan
 }
+=======
+>>>>>>> 7806b7c151 (planner: process over-optimization and skip plan-cache in some cases to avoid disaster plans (#38537))
