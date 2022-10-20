@@ -197,8 +197,22 @@ func onDropTableOrView(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 				break
 			}
 		} else {
+<<<<<<< HEAD
 			if err = t.DropTableOrView(job.SchemaID, job.TableID, true); err != nil {
 				break
+=======
+			if err = t.DropTableOrView(job.SchemaID, job.TableID); err != nil {
+				return ver, errors.Trace(err)
+			}
+			if err = t.GetAutoIDAccessors(job.SchemaID, job.TableID).Del(); err != nil {
+				return ver, errors.Trace(err)
+			}
+		}
+		if tblInfo.TiFlashReplica != nil {
+			e := infosync.DeleteTiFlashTableSyncProgress(tblInfo)
+			if e != nil {
+				logutil.BgLogger().Error("DeleteTiFlashTableSyncProgress fails", zap.Error(e))
+>>>>>>> c52b5a70d1 (DDL: delete partition table tiflash replica progress from ETCD when truncate table, drop table, set tiflash replica 0 (#38551))
 			}
 		}
 		// Finish this job.
@@ -469,6 +483,14 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		}
 	})
 
+	// Clear the TiFlash replica progress from ETCD.
+	if tblInfo.TiFlashReplica != nil {
+		e := infosync.DeleteTiFlashTableSyncProgress(tblInfo)
+		if e != nil {
+			logutil.BgLogger().Error("DeleteTiFlashTableSyncProgress fails", zap.Error(e))
+		}
+	}
+
 	var oldPartitionIDs []int64
 	if tblInfo.GetPartitionInfo() != nil {
 		oldPartitionIDs = getPartitionIDs(tblInfo)
@@ -481,6 +503,23 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 
 	// Clear the tiflash replica available status.
 	if tblInfo.TiFlashReplica != nil {
+<<<<<<< HEAD
+=======
+		// Set PD rules for TiFlash
+		if pi := tblInfo.GetPartitionInfo(); pi != nil {
+			if e := infosync.ConfigureTiFlashPDForPartitions(true, &pi.Definitions, tblInfo.TiFlashReplica.Count, &tblInfo.TiFlashReplica.LocationLabels, tblInfo.ID); e != nil {
+				logutil.BgLogger().Error("ConfigureTiFlashPDForPartitions fails", zap.Error(err))
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(e)
+			}
+		} else {
+			if e := infosync.ConfigureTiFlashPDForTable(newTableID, tblInfo.TiFlashReplica.Count, &tblInfo.TiFlashReplica.LocationLabels); e != nil {
+				logutil.BgLogger().Error("ConfigureTiFlashPDForTable fails", zap.Error(err))
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(e)
+			}
+		}
+>>>>>>> c52b5a70d1 (DDL: delete partition table tiflash replica progress from ETCD when truncate table, drop table, set tiflash replica 0 (#38551))
 		tblInfo.TiFlashReplica.AvailablePartitionIDs = nil
 		tblInfo.TiFlashReplica.Available = false
 	}
@@ -811,6 +850,12 @@ func (w *worker) onSetTableFlashReplica(t *meta.Meta, job *model.Job) (ver int64
 			LocationLabels: replicaInfo.Labels,
 		}
 	} else {
+		if tblInfo.TiFlashReplica != nil {
+			err = infosync.DeleteTiFlashTableSyncProgress(tblInfo)
+			if err != nil {
+				logutil.BgLogger().Error("DeleteTiFlashTableSyncProgress fails", zap.Error(err))
+			}
+		}
 		tblInfo.TiFlashReplica = nil
 	}
 
