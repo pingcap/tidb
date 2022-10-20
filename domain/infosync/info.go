@@ -1096,13 +1096,13 @@ func PostTiFlashAccelerateSchedule(ctx context.Context, tableID int64) error {
 	return is.tiflashPlacementManager.PostAccelerateSchedule(ctx, tableID)
 }
 
-// GetTiFlashPDRegionRecordStats is a helper function calling `/stats/region`.
-func GetTiFlashPDRegionRecordStats(ctx context.Context, tableID int64, stats *helper.PDRegionStats) error {
+// GetTiFlashPDGetPDRegionCount is a helper function calling `/stats/region`.
+func GetTiFlashPDGetPDRegionCount(ctx context.Context, tableID int64, regionCount *int) error {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return is.tiflashPlacementManager.GetPDRegionRecordStats(ctx, tableID, stats)
+	return is.tiflashPlacementManager.GetPDRegionCount(ctx, tableID, regionCount)
 }
 
 // GetTiFlashStoresStat gets the TiKV store information by accessing PD's api.
