@@ -123,9 +123,12 @@ const (
 	preferRightAsHJProbe
 	preferMergeJoin
 	preferBCJoin
+	preferShuffleJoin
 	preferRewriteSemiJoin
 	preferHashAgg
 	preferStreamAgg
+	preferMPP1PhaseAgg
+	preferMPP2PhaseAgg
 )
 
 const (
