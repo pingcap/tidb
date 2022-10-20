@@ -588,3 +588,16 @@ func TestIssue34610(t *testing.T) {
 	tk.MustExec("GRANT SELECT ON T1 to user_1@localhost;")
 	tk.MustExec("GRANT SELECT ON t1 to user_1@localhost;")
 }
+
+func TestIssue38293(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.Session().GetSessionVars().User = &auth.UserIdentity{Username: "root", Hostname: "localhost"}
+	tk.MustExec("DROP USER IF EXISTS test")
+	tk.MustExec("CREATE USER test")
+	defer func() {
+		tk.MustExec("DROP USER test")
+	}()
+	tk.MustExec("GRANT SELECT ON `mysql`.`db` TO test")
+	tk.MustQuery("SELECT `Grantor` FROM `mysql`.`tables_priv` WHERE User = 'test'").Check(testkit.Rows("root@localhost"))
+}
