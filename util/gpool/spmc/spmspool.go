@@ -33,8 +33,8 @@ type Pool[T any, U any, C any, CT any, TF Context[CT]] struct {
 	options       *Options
 	stopCh        chan struct{}
 	taskCh        chan *taskBox[T, U, C, CT, TF]
+	taskManager   *TaskManager[T, U, C, CT, TF]
 	cond          *sync.Cond
-	prodwg        sync.WaitGroup
 	capacity      atomic.Int32
 	running       atomic.Int32
 	state         atomic.Int32
@@ -211,14 +211,17 @@ func (p *Pool[T, U, C, CT, TF]) SetConsumerFunc(consumerFunc func(T, C, CT) U) {
 }
 
 // AddProduce is to add Produce.
-func (p *Pool[T, U, C, CT, TF]) AddProduce(task T, constArg C) (<-chan U, TaskController) {
+func (p *Pool[T, U, C, CT, TF]) AddProduce(task T, constArg C) (<-chan U, TaskController[T, U, C, CT, TF]) {
+	taskID := p.generator.Add(1)
 	result := make(chan U)
 	var wg sync.WaitGroup
-	tc := TaskController{
-		wg: &wg,
+	tc := TaskController[T, U, C, CT, TF]{
+		taskID: taskID,
+		wg:     &wg,
 	}
 	taskCh := make(chan T)
 	taskBox := taskBox[T, U, C, CT, TF]{
+		taskID:    taskID,
 		task:      taskCh,
 		constArgs: constArg,
 		wg:        &wg,
@@ -231,12 +234,13 @@ func (p *Pool[T, U, C, CT, TF]) AddProduce(task T, constArg C) (<-chan U, TaskCo
 }
 
 // AddProduceBySlice is to add Produce by a slice.
-func (p *Pool[T, U, C, CT, TF]) AddProduceBySlice(producer func() ([]T, error), constArg C, options ...TaskOption) (<-chan U, TaskController) {
+func (p *Pool[T, U, C, CT, TF]) AddProduceBySlice(producer func() ([]T, error), constArg C, options ...TaskOption) (<-chan U, TaskController[T, U, C, CT, TF]) {
 	opt := loadTaskOptions(options...)
+	taskID := p.generator.Add(1)
 	var wg sync.WaitGroup
 	result := make(chan U, opt.ResultChanLen)
 	closeCh := make(chan struct{})
-	tc := NewTaskController(closeCh, &wg)
+	tc := NewTaskController[T, U, C, CT, TF](p, taskID, closeCh, &wg)
 	taskCh := make(chan T, opt.TaskChanLen)
 	for i := 0; i < opt.Concurrency; i++ {
 		err := p.run()
@@ -244,6 +248,7 @@ func (p *Pool[T, U, C, CT, TF]) AddProduceBySlice(producer func() ([]T, error), 
 			break
 		}
 		taskBox := taskBox[T, U, C, CT, TF]{
+			taskID:    taskID,
 			constArgs: constArg,
 			wg:        &wg,
 			task:      taskCh,
@@ -271,13 +276,13 @@ func (p *Pool[T, U, C, CT, TF]) AddProduceBySlice(producer func() ([]T, error), 
 }
 
 // AddProducer is to add producer.
-func (p *Pool[T, U, C, CT, TF]) AddProducer(producer func() (T, error), constArg C, options ...TaskOption) (<-chan U, TaskController) {
+func (p *Pool[T, U, C, CT, TF]) AddProducer(producer func() (T, error), constArg C, options ...TaskOption) (<-chan U, TaskController[T, U, C, CT, TF]) {
 	opt := loadTaskOptions(options...)
 	taskID := p.generator.Add(1)
 	var wg sync.WaitGroup
 	result := make(chan U, opt.ResultChanLen)
 	closeCh := make(chan struct{})
-	tc := NewTaskController(closeCh, &wg)
+	tc := NewTaskController[T, U, C, CT, TF](p, taskID, closeCh, &wg)
 	taskCh := make(chan T, opt.TaskChanLen)
 	for i := 0; i < opt.Concurrency; i++ {
 		err := p.run()

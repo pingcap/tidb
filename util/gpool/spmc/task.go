@@ -54,26 +54,33 @@ func (NilContext) GetContext() any {
 }
 
 // TaskController is a controller that can control or watch the pool.
-type TaskController struct {
-	close chan struct{}
-	wg    *sync.WaitGroup
+type TaskController[T any, U any, C any, CT any, TF Context[CT]] struct {
+	pool   *Pool[T, U, C, CT, TF]
+	taskID uint64
+	close  chan struct{}
+	wg     *sync.WaitGroup
 }
 
 // NewTaskController create a controller to deal with task's statue.
-func NewTaskController(closeCh chan struct{}, wg *sync.WaitGroup) TaskController {
-	return TaskController{
-		close: closeCh, wg: wg,
+func NewTaskController[T any, U any, C any, CT any, TF Context[CT]](p *Pool[T, U, C, CT, TF], taskID uint64, closeCh chan struct{}, wg *sync.WaitGroup) TaskController[T, U, C, CT, TF] {
+	return TaskController[T, U, C, CT, TF]{
+		pool:   p,
+		taskID: taskID,
+		close:  closeCh,
+		wg:     wg,
 	}
 }
 
 // Wait is to wait the task to stop.
-func (c *TaskController) Wait() {
+func (c *TaskController[T, U, C, CT, TF]) Wait() {
 	<-c.close
 	c.wg.Wait()
+	c.pool.taskManager.DeleteTask(c.taskID)
+
 }
 
 // IsProduceClose is to judge whether the producer is completed.
-func (c *TaskController) IsProduceClose() bool {
+func (c *TaskController[T, U, C, CT, TF]) IsProduceClose() bool {
 	select {
 	case <-c.close:
 		return true
