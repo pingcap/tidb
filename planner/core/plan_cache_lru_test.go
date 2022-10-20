@@ -15,6 +15,8 @@ package core
 
 import (
 	"container/list"
+	"fmt"
+	"strconv"
 	"testing"
 
 	"github.com/pingcap/tidb/parser/mysql"
@@ -360,4 +362,42 @@ func TestIssue38244(t *testing.T) {
 	require.Equal(t, lru.size, lru.capacity)
 	require.Equal(t, uint(3), lru.size)
 	require.Equal(t, len(lru.buckets), 3)
+}
+
+func TestLRUPlanCacheMemoryUsage(t *testing.T) {
+	pTypes := []*types.FieldType{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeDouble)}
+	lru := NewLRUPlanCache(3, 0, 0, PickPlanFromBucket)
+	evict := make(map[kvcache.Key]kvcache.Value)
+	lru.onEvict = func(key kvcache.Key, value kvcache.Value) {
+		evict[key] = value
+	}
+	var res int64 = 0
+
+	// put
+	plans := []Plan{&Insert{}, &Update{}, &Delete{}}
+	for i, p := range plans {
+		k := &planCacheKey{database: strconv.FormatInt(int64(i), 10)}
+		v := &PlanCacheValue{Plan: p}
+		lru.Put(k, v, pTypes)
+		res += k.MemoryUsage() + v.MemoryUsage()
+		fmt.Println(lru.MemoryUsage(), res)
+		require.Equal(t, lru.MemoryUsage(), res)
+	}
+	// evict
+	p := &PhysicalTableScan{}
+	k := &planCacheKey{database: "3"}
+	v := &PlanCacheValue{Plan: p}
+	lru.Put(k, v, pTypes)
+	res += k.MemoryUsage() + v.MemoryUsage()
+	for kk, vv := range evict {
+		res -= kk.(*planCacheKey).MemoryUsage() + vv.(*PlanCacheValue).MemoryUsage()
+	}
+	require.Equal(t, lru.MemoryUsage(), res)
+	// delete
+	lru.Delete(k)
+	res -= k.MemoryUsage() + v.MemoryUsage()
+	require.Equal(t, lru.MemoryUsage(), res)
+	// delete all
+	lru.DeleteAll()
+	require.Equal(t, lru.MemoryUsage(), int64(0))
 }
