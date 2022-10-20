@@ -2465,6 +2465,7 @@ create table t(
 	index idx_c(c(2)),
 	index idx_d(d(2))
 )`)
+	tk.MustExec("set tidb_opt_prefix_index_single_scan = 1")
 
 	tests := []struct {
 		indexPos    int
