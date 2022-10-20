@@ -16,7 +16,6 @@ package core
 import (
 	"container/list"
 	"sync"
-	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/types"
@@ -30,6 +29,21 @@ import (
 type planCacheEntry struct {
 	PlanKey   kvcache.Key
 	PlanValue kvcache.Value
+}
+
+// MemoryUsage return the memory usage of planCacheEntry
+func (e *planCacheEntry) MemoryUsage() (sum int64) {
+	if e == nil {
+		return
+	}
+
+	if k, ok := e.PlanKey.(*planCacheKey); ok {
+		sum += k.MemoryUsage()
+	}
+	if v, ok := e.PlanValue.(*PlanCacheValue); ok {
+		sum += v.MemoryUsage()
+	}
+	return
 }
 
 // LRUPlanCache is a dedicated least recently used cache, Only used for plan cache.
@@ -116,7 +130,6 @@ func (l *LRUPlanCache) Put(key kvcache.Key, value kvcache.Value, paramTypes []*t
 		}
 	} else {
 		l.buckets[hash] = make(map[*list.Element]struct{}, 1)
-		l.memTracker.Consume(int64(len(hash)))
 	}
 
 	newCacheEntry := &planCacheEntry{
@@ -126,7 +139,7 @@ func (l *LRUPlanCache) Put(key kvcache.Key, value kvcache.Value, paramTypes []*t
 	element := l.lruList.PushFront(newCacheEntry)
 	l.buckets[hash][element] = struct{}{}
 	l.size++
-	l.memTracker.Consume(elementMemoryUsage(element))
+	l.memTracker.Consume(newCacheEntry.MemoryUsage())
 	if l.size > l.capacity {
 		l.removeOldest()
 	}
@@ -142,12 +155,13 @@ func (l *LRUPlanCache) Delete(key kvcache.Key) {
 	bucket, bucketExist := l.buckets[hash]
 	if bucketExist {
 		for element := range bucket {
+			if e, ok := element.Value.(*planCacheEntry); ok {
+				l.memTracker.Consume(-e.MemoryUsage())
+			}
 			l.lruList.Remove(element)
 			l.size--
-			l.memTracker.Consume(-elementMemoryUsage(element))
 		}
 		delete(l.buckets, hash)
-		l.memTracker.Consume(-int64(len(hash)))
 	}
 }
 
@@ -197,7 +211,9 @@ func (l *LRUPlanCache) removeOldest() {
 		l.onEvict(lru.Value.(*planCacheEntry).PlanKey, lru.Value.(*planCacheEntry).PlanValue)
 	}
 
-	l.memTracker.Consume(-elementMemoryUsage(lru))
+	if e, ok := lru.Value.(*planCacheEntry); ok {
+		l.memTracker.Consume(-e.MemoryUsage())
+	}
 	l.lruList.Remove(lru)
 	l.removeFromBucket(lru)
 	l.size--
@@ -237,23 +253,10 @@ func PickPlanFromBucket(bucket map[*list.Element]struct{}, paramTypes []*types.F
 	return nil, false
 }
 
-const emptyLRUPlanCacheSize = int64(unsafe.Sizeof(LRUPlanCache{}))
-
 // newTrackerForLRUPC return a tracker which consumed emptyLRUPlanCacheSize
 // todo: pass label when track general plan cache memory
 func newTrackerForLRUPC() *memory.Tracker {
 	m := memory.NewTracker(memory.LabelForPreparedPlanCache, -1)
-	m.Consume(emptyLRUPlanCacheSize)
 	//todo: maybe need attach here
 	return m
-}
-
-// elementMemoryUsage return the sum of planCacheKey and planCacheValue
-func elementMemoryUsage(e *list.Element) (sum int64) {
-	pVal, ok1 := e.Value.(*planCacheEntry).PlanValue.(*PlanCacheValue)
-	pKey, ok2 := e.Value.(*planCacheEntry).PlanValue.(*planCacheKey)
-	if !ok1 || !ok2 {
-		return
-	}
-	return pKey.MemoryUsage() + pVal.MemoryUsage()
 }

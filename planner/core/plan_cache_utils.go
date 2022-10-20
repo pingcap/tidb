@@ -353,8 +353,8 @@ func (v *PlanCacheValue) varTypesUnchanged(txtVarTps []*types.FieldType) bool {
 }
 
 // unKnownMemoryUsage represent the memory usage of uncounted structure, maybe need implement later
-// 7 has no special meaning
-const unKnownMemoryUsage = 7
+// 100 KiB is approximate consumption of a plan from our internal tests
+const unKnownMemoryUsage = 100 * 1024 * 1024
 
 // MemoryUsage return the memory usage of PlanCacheValue
 func (v *PlanCacheValue) MemoryUsage() (sum int64) {
