@@ -109,8 +109,8 @@ func (c *extensionFuncClass) getFunction(ctx sessionctx.Context, args []Expressi
 }
 
 func (c *extensionFuncClass) checkPrivileges(ctx sessionctx.Context) error {
-	privs := c.funcDef.DynamicPrivileges
-	if semPrivs := c.funcDef.SemDynamicPrivileges; len(semPrivs) > 0 && sem.IsEnabled() {
+	privs := c.funcDef.RequireDynamicPrivileges
+	if semPrivs := c.funcDef.SemRequireDynamicPrivileges; len(semPrivs) > 0 && sem.IsEnabled() {
 		privs = semPrivs
 	}
 

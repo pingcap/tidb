@@ -33,12 +33,12 @@ type FunctionDef struct {
 	EvalStringFunc func(ctx FunctionContext, row chunk.Row) (string, bool, error)
 	// EvalIntFunc is the eval function when `EvalTp` is `types.ETInt`
 	EvalIntFunc func(ctx FunctionContext, row chunk.Row) (int64, bool, error)
-	// CheckDynamicPrivileges is the dynamic privileges needed to invoke the function
-	// If `DynamicPrivileges` is empty, it means every one can invoke this function
-	DynamicPrivileges []string
-	// SemDynamicPrivileges is the dynamic privileges needed to invoke the function in sem mode
-	// If `SemDynamicPrivileges` is empty, `DynamicPrivileges` will be used in sem mode
-	SemDynamicPrivileges []string
+	// RequireDynamicPrivileges is the dynamic privileges needed to invoke the function
+	// If `RequireDynamicPrivileges` is empty, it means every one can invoke this function
+	RequireDynamicPrivileges []string
+	// SemRequireDynamicPrivileges is the dynamic privileges needed to invoke the function in sem mode
+	// If `SemRequireDynamicPrivileges` is empty, `DynamicPrivileges` will be used in sem mode
+	SemRequireDynamicPrivileges []string
 }
 
 // RegisterExtensionFunc is to avoid dependency cycle
