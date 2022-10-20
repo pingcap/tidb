@@ -108,10 +108,6 @@ const (
 	HintMPP1PhaseAgg = "mpp_1phase_agg"
 	// HintMPP2PhaseAgg enforces the optimizer to use the mpp-2phase aggregation.
 	HintMPP2PhaseAgg = "mpp_2phase_agg"
-	// HintMPPTiDBAgg enforces the optimizer to use the mpp-tidb aggregation.
-	HintMPPTiDBAgg = "mpp_tidb_agg"
-	// HintMPPScalarAgg enforces the optimizer to use the mpp-scalar aggregation.
-	HintMPPScalarAgg = "mpp_scalar_agg"
 	// HintUseIndex is hint enforce using some indexes.
 	HintUseIndex = "use_index"
 	// HintIgnoreIndex is hint enforce ignoring some indexes.
@@ -3618,10 +3614,6 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 			aggHints.preferAggType |= preferMPP1PhaseAgg
 		case HintMPP2PhaseAgg:
 			aggHints.preferAggType |= preferMPP2PhaseAgg
-		case HintMPPTiDBAgg:
-			aggHints.preferAggType |= preferMPPTiDBAgg
-		case HintMPPScalarAgg:
-			aggHints.preferAggType |= preferMPPScalarAgg
 		case HintHashJoinBuild:
 			hjBuildTables = append(hjBuildTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
 		case HintHashJoinProbe:

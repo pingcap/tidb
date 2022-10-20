@@ -208,8 +208,10 @@ type JSONModifyType byte
 
 const (
 	// JSONModifyInsert is for insert a new element into a JSON.
+	// If an old elemList exists, it would NOT replace it.
 	JSONModifyInsert JSONModifyType = 0x01
 	// JSONModifyReplace is for replace an old elemList from a JSON.
+	// If no elemList exists, it would NOT insert it.
 	JSONModifyReplace JSONModifyType = 0x02
 	// JSONModifySet = JSONModifyInsert | JSONModifyReplace
 	JSONModifySet JSONModifyType = 0x03
