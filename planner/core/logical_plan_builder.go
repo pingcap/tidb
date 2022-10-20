@@ -109,6 +109,10 @@ const (
 	HintMPP1PhaseAgg = "mpp_1phase_agg"
 	// HintMPP2PhaseAgg enforces the optimizer to use the mpp-2phase aggregation.
 	HintMPP2PhaseAgg = "mpp_2phase_agg"
+	// HintMPPTiDBAgg enforces the optimizer to use the mpp-tidb aggregation.
+	HintMPPTiDBAgg = "mpp_tidb_agg"
+	// HintMPPScalarAgg enforces the optimizer to use the mpp-scalar aggregation.
+	HintMPPScalarAgg = "mpp_scalar_agg"
 	// HintUseIndex is hint enforce using some indexes.
 	HintUseIndex = "use_index"
 	// HintIgnoreIndex is hint enforce ignoring some indexes.
@@ -3615,6 +3619,10 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 			aggHints.preferAggType |= preferMPP1PhaseAgg
 		case HintMPP2PhaseAgg:
 			aggHints.preferAggType |= preferMPP2PhaseAgg
+		case HintMPPTiDBAgg:
+			aggHints.preferAggType |= preferMPPTiDBAgg
+		case HintMPPScalarAgg:
+			aggHints.preferAggType |= preferMPPScalarAgg
 		case HintHashJoinBuild:
 			hjBuildTables = append(hjBuildTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
 		case HintHashJoinProbe:
@@ -4413,29 +4421,23 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			return nil, expression.ErrInvalidTableSample.GenWithStackByArgs("Unsupported TABLESAMPLE in views")
 		}
 
-		// Get the hints belong to the current view.
+		// Get the hint belong to the view.
 		currentQBNameMap4View := make(map[string][]ast.HintTable)
 		currentViewHints := make(map[string][]*ast.TableOptimizerHint)
 		for qbName, viewQBNameHintTable := range b.hintProcessor.QbNameMap4View {
 			if len(viewQBNameHintTable) == 0 {
+				// TODO: need to check whether this will happen(maybe in the recursion)
+				continue
+			}
+			// TODO: can not handle the different DB.
+			if viewQBNameHintTable[0].QBName.L == "" {
+				// TODO: need to check if we do not explicit set the qbName. Is it empty or use the 'sel_1' as the default value.
 				continue
 			}
 			viewSelectOffset := b.getSelectOffset()
-
-			var viewHintSelectOffset int
-			if viewQBNameHintTable[0].QBName.L == "" {
-				// If we do not explicit set the qbName, we will set the empty qb name to @sel_1.
-				viewHintSelectOffset = 1
-			} else {
-				viewHintSelectOffset = b.hintProcessor.GetHintOffset(viewQBNameHintTable[0].QBName, viewSelectOffset)
-			}
-
-			// Check whether the current view can match the view name in the hint.
-			if viewQBNameHintTable[0].TableName.L == tblName.L && viewHintSelectOffset == viewSelectOffset {
-				// If the view hint can match the current view, we pop the first view table in the query block hint's table list.
-				// It means the hint belong the current view, the first view name in hint is matched.
-				// Because of the nested views, so we should check the left table list in hint when build the data source from the view inside the current view.
-				currentQBNameMap4View[qbName] = viewQBNameHintTable[1:]
+			viewHintSelectOffset := b.hintProcessor.GetHintOffset(viewQBNameHintTable[0].QBName, viewSelectOffset)
+			if viewQBNameHintTable[0].TableName.L == tableInfo.Name.L && viewHintSelectOffset == viewSelectOffset {
+				currentQBNameMap4View[qbName] = viewQBNameHintTable
 				currentViewHints[qbName] = b.hintProcessor.QbHints4View[qbName]
 				delete(b.hintProcessor.QbNameMap4View, qbName)
 				delete(b.hintProcessor.QbHints4View, qbName)
@@ -4971,10 +4973,7 @@ func (b *PlanBuilder) checkRecursiveView(dbName model.CIStr, tableName model.CIS
 }
 
 // BuildDataSourceFromView is used to build LogicalPlan from view
-// qbNameMap4View and viewHints are used for the view's hint.
-// qbNameMap4View maps the query block name to the view table lists.
-// viewHints group the view hints based on the view's query block name.
-func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.CIStr, tableInfo *model.TableInfo, qbNameMap4View map[string][]ast.HintTable, viewHints map[string][]*ast.TableOptimizerHint) (LogicalPlan, error) {
+func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.CIStr, tableInfo *model.TableInfo, QbNameMap4View map[string][]ast.HintTable, ViewHints map[string][]*ast.TableOptimizerHint) (LogicalPlan, error) {
 	viewDepth := b.ctx.GetSessionVars().StmtCtx.ViewDepth
 	b.ctx.GetSessionVars().StmtCtx.ViewDepth++
 	deferFunc, err := b.checkRecursiveView(dbName, tableInfo.Name)
@@ -5010,38 +5009,37 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 	}()
 
 	hintProcessor := &hint.BlockHintProcessor{Ctx: b.ctx}
+	// TODO: need to check whether the selectOffset has already been set. Is necessary to use the 'Accept' function here.
 	selectNode.Accept(hintProcessor)
 	currentQbNameMap4View := make(map[string][]ast.HintTable)
 	currentQbHints4View := make(map[string][]*ast.TableOptimizerHint)
 	currentQbHints := make(map[int][]*ast.TableOptimizerHint)
 	currentQbNameMap := make(map[string]int)
 
-	for qbName, viewQbNameHint := range qbNameMap4View {
-		// Check whether the view hint belong the current view or its nested views.
+	for qbName, viewQbNameHint := range QbNameMap4View {
 		selectOffset := -1
-		qbNameMap4View[qbName] = viewQbNameHint
+		viewQbNameHint = viewQbNameHint[1:]
+		QbNameMap4View[qbName] = viewQbNameHint
 		if len(viewQbNameHint) == 0 {
 			selectOffset = 1
 		} else if len(viewQbNameHint) == 1 && viewQbNameHint[0].TableName.L == "" {
 			selectOffset = hintProcessor.GetHintOffset(viewQbNameHint[0].QBName, -1)
 		} else {
 			currentQbNameMap4View[qbName] = viewQbNameHint
-			currentQbHints4View[qbName] = viewHints[qbName]
+			currentQbHints4View[qbName] = ViewHints[qbName]
 		}
 
 		if selectOffset != -1 {
-			// If the hint belongs to the current view and not belongs to it's nested views, we should convert the view hint to the normal hint.
-			// After we convert the view hint to the normal hint, it can be reused the origin hint's infrastructure.
-			currentQbHints[selectOffset] = viewHints[qbName]
+			currentQbHints[selectOffset] = ViewHints[qbName]
 			currentQbNameMap[qbName] = selectOffset
 
-			delete(qbNameMap4View, qbName)
-			delete(viewHints, qbName)
+			delete(QbNameMap4View, qbName)
+			delete(ViewHints, qbName)
 		}
 	}
 
-	hintProcessor.QbNameMap4View = qbNameMap4View
-	hintProcessor.QbHints4View = viewHints
+	hintProcessor.QbNameMap4View = QbNameMap4View
+	hintProcessor.QbHints4View = ViewHints
 	hintProcessor.QbHints = currentQbHints
 	hintProcessor.QbNameMap = currentQbNameMap
 
@@ -5493,7 +5491,7 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	}
 	updt.PartitionedTable = b.partitionedTable
 	updt.tblID2Table = tblID2table
-	err = updt.buildOnUpdateFKTriggers(b.ctx, b.is, tblID2table)
+	err = updt.buildOnUpdateFKChecks(b.ctx, b.is, tblID2table)
 	return updt, err
 }
 
@@ -5969,7 +5967,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (Plan
 	if err != nil {
 		return nil, err
 	}
-	err = del.buildOnDeleteFKTriggers(b.ctx, b.is, tblID2table)
+	err = del.buildOnDeleteFKChecks(b.ctx, b.is, tblID2table)
 	return del, err
 }
 

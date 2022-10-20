@@ -314,13 +314,10 @@ func extractHintWarns(warns []error) []error {
 
 // BlockHintProcessor processes hints at different level of sql statement.
 type BlockHintProcessor struct {
-	QbNameMap map[string]int                    // Map from query block name to select stmt offset.
-	QbHints   map[int][]*ast.TableOptimizerHint // Group all hints at same query block.
-
-	// Used for the view's hint
-	QbNameMap4View map[string][]ast.HintTable           // Map from view's query block name to view's table list.
-	QbHints4View   map[string][]*ast.TableOptimizerHint // Group all hints at same query block for view hints.
-
+	QbNameMap        map[string]int // Map from query block name to select stmt offset.
+	QbNameMap4View   map[string][]ast.HintTable
+	QbHints          map[int][]*ast.TableOptimizerHint // Group all hints at same query block.
+	QbHints4View     map[string][]*ast.TableOptimizerHint
 	Ctx              sessionctx.Context
 	selectStmtOffset int
 }
@@ -366,15 +363,9 @@ func (p *BlockHintProcessor) checkQueryBlockHints(hints []*ast.TableOptimizerHin
 		if hint.HintName.L != hintQBName {
 			continue
 		}
-		if offset > 1 && len(hint.Tables) > 0 {
-			if p.Ctx != nil {
-				p.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("The qb_name hint for view only supports to be defined in the first query block"))
-			}
-			continue
-		}
 		if qbName != "" {
 			if p.Ctx != nil {
-				p.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("There are more than two query names in same query block, using the first one %s", qbName))
+				p.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("There are more than two query names in same query block,, using the first one %s", qbName))
 			}
 		} else {
 			qbName = hint.QBName.L
@@ -407,13 +398,11 @@ func (p *BlockHintProcessor) handleViewHints(hints []*ast.TableOptimizerHint) (l
 			continue
 		}
 		usedHints[i] = true
+		// TODO: need to check whether the qbName can be empty
 		if p.QbNameMap4View == nil {
 			p.QbNameMap4View = make(map[string][]ast.HintTable)
 		}
 		qbName := hint.QBName.L
-		if qbName == "" {
-			continue
-		}
 		if _, ok := p.QbNameMap4View[qbName]; ok {
 			if p.Ctx != nil {
 				p.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("Duplicate query block name %s for view's query block hint, only the first one is effective", qbName))
@@ -432,18 +421,13 @@ func (p *BlockHintProcessor) handleViewHints(hints []*ast.TableOptimizerHint) (l
 		ok := false
 		qbName := hint.QBName.L
 		if qbName != "" {
+			// xx_agg(@qb_name)
 			_, ok = p.QbNameMap4View[qbName]
-		} else if len(hint.Tables) > 0 {
-			// Only support to define the tables belong to the same query block in one view hint
-			qbName = hint.Tables[0].QBName.L
-			_, ok = p.QbNameMap4View[qbName]
-			if ok {
-				for _, table := range hint.Tables {
-					if table.QBName.L != qbName {
-						ok = false
-						break
-					}
-				}
+		} else {
+			if len(hint.Tables) == 1 {
+				// TODO: only support one table in view hints. Need to check what happened if there are more table name appear in one hint
+				qbName = hint.Tables[0].QBName.L
+				_, ok = p.QbNameMap4View[qbName]
 			}
 		}
 
