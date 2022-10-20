@@ -18,7 +18,7 @@ package bytespool
 var SmallPool Bpool
 
 func init() {
-	succ := SmallPool.Init(0, 16384, 16)
+	succ := SmallPool.Init(0, 32768, 16)
 	if !succ {
 		panic("small pool not initialized")
 	}
