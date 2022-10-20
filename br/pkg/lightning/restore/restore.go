@@ -2499,7 +2499,7 @@ func saveCheckpoint(rc *Controller, t *TableRestore, engineID int32, chunk *chec
 // The data we import will use filteredColumns as columns, use (parser.LastRow+extendValueDatums) as data
 // ColumnPermutation will be modified to make sure the correspondence relationship is correct.
 // if len(columnsNames) > 0, it means users has specified each field definition, we can just use users
-func filterColumns(columnNames []string, extendData mydump.ExtendColumnData, ignoreColsMap map[string]struct{}, tableInfo *model.TableInfo) ([]string, []string, []types.Datum) {
+func filterColumns(columnNames []string, extendData mydump.ExtendColumnData, ignoreColsMap map[string]struct{}, tableInfo *model.TableInfo) ([]string, []types.Datum) {
 	extendCols, extendVals := extendData.Columns, extendData.Values
 	extendColsSet := set.NewStringSet(extendCols...)
 	filteredColumns := make([]string, 0, len(columnNames))
@@ -2525,14 +2525,12 @@ func filterColumns(columnNames []string, extendData mydump.ExtendColumnData, ign
 			}
 		}
 	}
-	filteredExtendCols := make([]string, 0)
 	extendValueDatums := make([]types.Datum, 0)
-	for i, c := range extendCols {
-		filteredColumns = append(filteredColumns, c)
-		filteredExtendCols = append(filteredExtendCols, c)
-		extendValueDatums = append(extendValueDatums, types.NewStringDatum(extendVals[i]))
+	filteredColumns = append(filteredColumns, extendCols...)
+	for _, extendVal := range extendVals {
+		extendValueDatums = append(extendValueDatums, types.NewStringDatum(extendVal))
 	}
-	return filteredColumns, filteredExtendCols, extendValueDatums
+	return filteredColumns, extendValueDatums
 }
 
 //nolint:nakedret // TODO: refactor
@@ -2572,8 +2570,8 @@ func (cr *chunkRestore) encodeLoop(
 	// but since ColumnPermutation also depends on the hypothesis that the columns in one source file is the same
 	// so this should be ok.
 	var (
-		filteredColumns, extendCols []string
-		extendVals                  []types.Datum
+		filteredColumns []string
+		extendVals      []types.Datum
 	)
 	ignoreColumns, err1 := rc.cfg.Mydumper.IgnoreColumns.GetIgnoreColumns(t.dbInfo.Name, t.tableInfo.Core.Name.O, rc.cfg.Mydumper.CaseSensitive)
 	if err1 != nil {
@@ -2613,12 +2611,12 @@ func (cr *chunkRestore) encodeLoop(
 					filteredColumns = columnNames
 					ignoreColsMap := ignoreColumns.ColumnsMap()
 					if len(ignoreColsMap) > 0 || len(cr.chunk.FileMeta.ExtendData.Columns) > 0 {
-						filteredColumns, extendCols, extendVals = filterColumns(columnNames, cr.chunk.FileMeta.ExtendData, ignoreColsMap, t.tableInfo.Core)
+						filteredColumns, extendVals = filterColumns(columnNames, cr.chunk.FileMeta.ExtendData, ignoreColsMap, t.tableInfo.Core)
 					}
 					lastRow := cr.parser.LastRow()
 					lastRowLen := len(lastRow.Row)
 					extendColsMap := make(map[string]int)
-					for i, c := range extendCols {
+					for i, c := range cr.chunk.FileMeta.ExtendData.Columns {
 						extendColsMap[c] = lastRowLen + i
 					}
 					for i, col := range t.tableInfo.Core.Columns {

@@ -652,7 +652,6 @@ func (p *PreRestoreInfoGetterImpl) sampleDataFromTable(
 		columnPermutation []int
 		kvSize            uint64 = 0
 		rowSize           uint64 = 0
-		extendCols        []string
 		extendVals        []types.Datum
 	)
 	rowCount := 0
@@ -681,13 +680,13 @@ outloop:
 					}
 				}
 				if len(sampleFile.ExtendData.Columns) > 0 {
-					_, extendCols, extendVals = filterColumns(columnNames, sampleFile.ExtendData, ignoreColsMap, tableInfo)
+					_, extendVals = filterColumns(columnNames, sampleFile.ExtendData, ignoreColsMap, tableInfo)
 				}
 				initializedColumns = true
 				lastRow := parser.LastRow()
 				lastRowLen := len(lastRow.Row)
 				extendColsMap := make(map[string]int)
-				for i, c := range extendCols {
+				for i, c := range sampleFile.ExtendData.Columns {
 					extendColsMap[c] = lastRowLen + i
 				}
 				for i, col := range tableInfo.Columns {

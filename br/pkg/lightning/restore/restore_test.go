@@ -337,9 +337,8 @@ func TestFilterColumns(t *testing.T) {
 		ignoreColsMap  map[string]struct{}
 		createTableSql string
 
-		expectedFilteredColumns    []string
-		expectedFilteredExtendCols []string
-		expectedExtendValues       []string
+		expectedFilteredColumns []string
+		expectedExtendValues    []string
 	}{
 		{
 			[]string{"a", "b"},
@@ -348,7 +347,6 @@ func TestFilterColumns(t *testing.T) {
 			"CREATE TABLE t (a int primary key, b int)",
 			[]string{"a", "b"},
 			[]string{},
-			[]string{},
 		},
 		{
 			[]string{},
@@ -357,7 +355,6 @@ func TestFilterColumns(t *testing.T) {
 			"CREATE TABLE t (a int primary key, b int)",
 			[]string{},
 			[]string{},
-			[]string{},
 		},
 		{
 			columnNames: []string{"a", "b"},
@@ -365,10 +362,9 @@ func TestFilterColumns(t *testing.T) {
 				Columns: []string{"c_source", "c_schema", "c_table"},
 				Values:  []string{"01", "1", "1"},
 			},
-			createTableSql:             "CREATE TABLE t (a int primary key, b int, c_source varchar(11), c_schema varchar(11), c_table varchar(11))",
-			expectedFilteredColumns:    []string{"a", "b", "c_source", "c_schema", "c_table"},
-			expectedFilteredExtendCols: []string{"c_source", "c_schema", "c_table"},
-			expectedExtendValues:       []string{"01", "1", "1"},
+			createTableSql:          "CREATE TABLE t (a int primary key, b int, c_source varchar(11), c_schema varchar(11), c_table varchar(11))",
+			expectedFilteredColumns: []string{"a", "b", "c_source", "c_schema", "c_table"},
+			expectedExtendValues:    []string{"01", "1", "1"},
 		},
 		{
 			columnNames: []string{},
@@ -376,10 +372,9 @@ func TestFilterColumns(t *testing.T) {
 				Columns: []string{"c_source", "c_schema", "c_table"},
 				Values:  []string{"01", "1", "1"},
 			},
-			createTableSql:             "CREATE TABLE t (a int primary key, b int, c_source varchar(11), c_schema varchar(11), c_table varchar(11))",
-			expectedFilteredColumns:    []string{"a", "b", "c_source", "c_schema", "c_table"},
-			expectedFilteredExtendCols: []string{"c_source", "c_schema", "c_table"},
-			expectedExtendValues:       []string{"01", "1", "1"},
+			createTableSql:          "CREATE TABLE t (a int primary key, b int, c_source varchar(11), c_schema varchar(11), c_table varchar(11))",
+			expectedFilteredColumns: []string{"a", "b", "c_source", "c_schema", "c_table"},
+			expectedExtendValues:    []string{"01", "1", "1"},
 		},
 		{
 			[]string{"a", "b"},
@@ -388,7 +383,6 @@ func TestFilterColumns(t *testing.T) {
 			"CREATE TABLE t (a int primary key, b int)",
 			[]string{"b"},
 			[]string{},
-			[]string{},
 		},
 		{
 			[]string{},
@@ -397,7 +391,6 @@ func TestFilterColumns(t *testing.T) {
 			"CREATE TABLE t (a int primary key, b int)",
 			[]string{"b"},
 			[]string{},
-			[]string{},
 		},
 		{
 			columnNames: []string{"a", "b"},
@@ -405,11 +398,10 @@ func TestFilterColumns(t *testing.T) {
 				Columns: []string{"c_source", "c_schema", "c_table"},
 				Values:  []string{"01", "1", "1"},
 			},
-			ignoreColsMap:              map[string]struct{}{"a": {}},
-			createTableSql:             "CREATE TABLE t (a int primary key, b int, c_source varchar(11), c_schema varchar(11), c_table varchar(11))",
-			expectedFilteredColumns:    []string{"b", "c_source", "c_schema", "c_table"},
-			expectedFilteredExtendCols: []string{"c_source", "c_schema", "c_table"},
-			expectedExtendValues:       []string{"01", "1", "1"},
+			ignoreColsMap:           map[string]struct{}{"a": {}},
+			createTableSql:          "CREATE TABLE t (a int primary key, b int, c_source varchar(11), c_schema varchar(11), c_table varchar(11))",
+			expectedFilteredColumns: []string{"b", "c_source", "c_schema", "c_table"},
+			expectedExtendValues:    []string{"01", "1", "1"},
 		},
 	}
 	for i, tc := range testCases {
@@ -425,9 +417,8 @@ func TestFilterColumns(t *testing.T) {
 			expectedDatums = append(expectedDatums, types.NewStringDatum(expectedValue))
 		}
 
-		filteredColumns, filteredExtendCols, extendDatums := filterColumns(tc.columnNames, tc.extendData, tc.ignoreColsMap, tableInfo)
+		filteredColumns, extendDatums := filterColumns(tc.columnNames, tc.extendData, tc.ignoreColsMap, tableInfo)
 		require.Equal(t, tc.expectedFilteredColumns, filteredColumns)
-		require.Equal(t, tc.expectedFilteredExtendCols, filteredExtendCols)
 		require.Equal(t, expectedDatums, extendDatums)
 	}
 }
