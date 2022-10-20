@@ -17,6 +17,7 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/util"
@@ -202,22 +203,6 @@ func (conf *Config) String() string {
 	return string(cfg)
 }
 
-// GetDSN generates DSN from Config
-func (conf *Config) GetDSN(db string) string {
-	// maxAllowedPacket=0 can be used to automatically fetch the max_allowed_packet variable from server on every connection.
-	// https://github.com/go-sql-driver/mysql#maxallowedpacket
-	hostPort := net.JoinHostPort(conf.Host, strconv.Itoa(conf.Port))
-	dsn := fmt.Sprintf("%s:%s@tcp(%s)/%s?collation=utf8mb4_general_ci&readTimeout=%s&writeTimeout=30s&interpolateParams=true&maxAllowedPacket=0",
-		conf.User, conf.Password, hostPort, db, conf.ReadTimeout)
-	if conf.Security.DriveTLSName != "" {
-		dsn += "&tls=" + conf.Security.DriveTLSName
-	}
-	if conf.AllowCleartextPasswords {
-		dsn += "&allowCleartextPasswords=1"
-	}
-	return dsn
-}
-
 // GetDriverConfig returns the MySQL driver config from Config.
 func (conf *Config) GetDriverConfig(db string) *mysql.Config {
 	driverCfg := mysql.NewConfig()
@@ -240,6 +225,11 @@ func (conf *Config) GetDriverConfig(db string) *mysql.Config {
 	if conf.AllowCleartextPasswords {
 		driverCfg.AllowCleartextPasswords = true
 	}
+	failpoint.Inject("SetWaitTimeout", func(val failpoint.Value) {
+		driverCfg.Params = map[string]string{
+			"wait_timeout": strconv.Itoa(val.(int)),
+		}
+	})
 	return driverCfg
 }
 

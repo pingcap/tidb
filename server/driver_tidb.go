@@ -225,8 +225,8 @@ func (tc *TiDBContext) WarningCount() uint16 {
 func (tc *TiDBContext) ExecuteStmt(ctx context.Context, stmt ast.StmtNode) (ResultSet, error) {
 	var rs sqlexec.RecordSet
 	var err error
-	if s, ok := stmt.(*ast.NonTransactionalDeleteStmt); ok {
-		rs, err = session.HandleNonTransactionalDelete(ctx, s, tc.Session)
+	if s, ok := stmt.(*ast.NonTransactionalDMLStmt); ok {
+		rs, err = session.HandleNonTransactionalDML(ctx, s, tc.Session)
 	} else {
 		rs, err = tc.Session.ExecuteStmt(ctx, stmt)
 	}
