@@ -224,8 +224,6 @@ func (c *copContext) buildScanIndexKV(ctx context.Context, startTS uint64, start
 	}
 
 	ddlPB.Ranges = append(ddlPB.Ranges, tipb.KeyRange{Low: start, High: end})
-	needSort := variable.EnableCoprRead.Load() == "3"
-	ddlPB.Sort = &needSort
 
 	var builder distsql.RequestBuilder
 	kvReq, err := builder.
@@ -304,14 +302,15 @@ func (c *copContext) sendEncodedIdxRecords(ctx context.Context, ch chan idxKV, s
 			return nil
 		}
 		colResp.Reset()
-		colResp.Kv = make([]*tipb.KVPair, 0, 2*1024*1024)
+		colResp.Keys = make([][]byte, 0, 2*1024*1024)
+		colResp.Values = make([][]byte, 0, 2*1024*1024)
 		if err = colResp.Unmarshal(data.GetData()); err != nil {
 			finish()
 			return errors.Trace(err)
 		}
 		finish()
-		for i := 0; i < len(colResp.Kv); i++ {
-			ch <- idxKV{key: colResp.Kv[i].Key, val: colResp.Kv[i].Value}
+		for i := 0; i < len(colResp.Keys); i++ {
+			ch <- idxKV{key: colResp.Keys[i], val: colResp.Values[i]}
 		}
 	}
 }
