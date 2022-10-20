@@ -59,7 +59,8 @@ func removeExtensionFunc(name string) {
 
 type extensionFuncClass struct {
 	baseFunctionClass
-	getFunc func(c *extensionFuncClass, ctx sessionctx.Context, args []Expression) (builtinFunc, error)
+	funcDef *extension.FunctionDef
+	flen    int
 }
 
 func newExtensionFuncClass(def *extension.FunctionDef) (*extensionFuncClass, error) {
@@ -81,23 +82,22 @@ func newExtensionFuncClass(def *extension.FunctionDef) (*extensionFuncClass, err
 
 	return &extensionFuncClass{
 		baseFunctionClass: baseFunctionClass{def.Name, len(def.ArgTps), len(def.ArgTps)},
-		getFunc: func(c *extensionFuncClass, ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-			if err := c.verifyArgs(args); err != nil {
-				return nil, err
-			}
-			bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, def.EvalTp, def.ArgTps...)
-			if err != nil {
-				return nil, err
-			}
-			bf.tp.SetFlen(flen)
-			sig := &extensionFuncSig{bf, def}
-			return sig, nil
-		},
+		flen:              flen,
+		funcDef:           def,
 	}, nil
 }
 
 func (c *extensionFuncClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return c.getFunc(c, ctx, args)
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, c.funcDef.EvalTp, c.funcDef.ArgTps...)
+	if err != nil {
+		return nil, err
+	}
+	bf.tp.SetFlen(c.flen)
+	sig := &extensionFuncSig{bf, c.funcDef}
+	return sig, nil
 }
 
 var _ extension.FunctionContext = &extensionFuncSig{}
