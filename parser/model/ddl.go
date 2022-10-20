@@ -383,9 +383,9 @@ type BackfillJob struct {
 	JobID          int64
 	EleID          int64
 	EleKey         []byte
-	PhysicalID     int64
 	Tp             BackfillType
 	State          JobState
+	StoreID        string
 	Instance_ID    string
 	Instance_Lease time.Time
 	Mate           *BackfillMeta
@@ -400,8 +400,8 @@ func (bj *BackfillJob) IsRunning() bool {
 }
 
 func (bj *BackfillJob) AbbrStr() string {
-	return fmt.Sprintf("ID:%d, JobID:%d, EleID:%d, EleKey:%v, PhysicalID:%d, Type:%s, State:%s, Instance_ID:%s, Instance_Lease:%s",
-		bj.ID, bj.JobID, bj.EleID, bj.EleKey, bj.PhysicalID, bj.Tp, bj.State, bj.Instance_ID, bj.Instance_Lease)
+	return fmt.Sprintf("ID:%d, JobID:%d, EleID:%d, EleKey:%v, Type:%s, State:%s, Instance_ID:%s, Instance_Lease:%s",
+		bj.ID, bj.JobID, bj.EleID, bj.EleKey, bj.Tp, bj.State, bj.Instance_ID, bj.Instance_Lease)
 }
 
 type JobMeta struct {

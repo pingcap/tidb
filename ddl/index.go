@@ -1066,7 +1066,7 @@ func (w *baseIndexWorker) UpdateTask(bJob *model.BackfillJob) error {
 			return dbterror.ErrDDLJobNotFound.FastGen("get zero backfill bJob, lease is timeout")
 		}
 		if jobs[0].Instance_ID != bJob.Instance_ID {
-			return dbterror.ErrDDLJobNotFound.FastGenByArgs("get a backfill bJob %v, want instance ID %d", jobs[0], bJob.Instance_ID)
+			return dbterror.ErrDDLJobNotFound.FastGenByArgs(fmt.Sprintf("get a backfill bJob %v, want instance ID %d", jobs[0], bJob.Instance_ID))
 		}
 		err = updateBackfillJob(sess, bJob, "update_backfill_task")
 	}
@@ -1350,6 +1350,7 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 	oprStartTime := time.Now()
 	ctx := kv.WithInternalSourceType(context.Background(), w.jobContext.ddlJobSourceType())
 	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
+		taskCtx.finishTS = txn.StartTS()
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
 		txn.SetOption(kv.Priority, handleRange.priority)

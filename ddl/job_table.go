@@ -284,10 +284,8 @@ func (d *ddl) runBackfillJobs(sess *session, bJob *model.BackfillJob, jobCtx *Jo
 		return
 	}
 
-	// TODO:
-	// workerCnt := int(variable.GetDDLReorgWorkerCounter())
-	workerCnt := 6
-	batch := workerCnt
+	workerCnt := int(variable.GetDDLReorgWorkerCounter())
+	batch := int(variable.GetDDLReorgBatchSize())
 	pool := spmc.NewSPMCPool[*reorgBackfillTask, *backfillResult, []*backfillWorker](int32(workerCnt))
 	bws, err := d.backfillWorkerPool.batchGet(workerCnt)
 	if err != nil || len(bws) == 0 {
@@ -324,6 +322,10 @@ func (d *ddl) runBackfillJobs(sess *session, bJob *model.BackfillJob, jobCtx *Jo
 
 		bf.runTask(task)
 		ret := <-bf.resultCh
+		if dbterror.ErrDDLJobNotFound.Equal(ret.err) {
+			logutil.BgLogger().Info("the backfill job instance ID or lease is changed", zap.Error(ret.err))
+			ret.err = nil
+		}
 
 		workersL.Lock()
 		bf.state = 0
@@ -372,9 +374,11 @@ WaitResultLoop:
 			}
 		}
 	}
+	logutil.BgLogger().Info("close loop *****************************  00")
 	// Waiting task finishing
 	control.Wait()
 
+	logutil.BgLogger().Info("close loop *****************************  11")
 	// close pool
 	pool.ReleaseAndWait()
 	for _, s := range sessions {
@@ -650,11 +654,22 @@ func removeReorgElement(sess *session, job *model.Job) error {
 }
 
 func addBackfillJobs(sess *session, backfillJobs []*model.BackfillJob) error {
-	sqlPrefix := "insert into mysql.tidb_ddl_backfill(section_id, job_id, ele_id, ele_key, physical_id, type, exec_id, exec_lease, state, backfill_meta) values"
+	sqlPrefix := "insert into mysql.tidb_ddl_backfill(section_id, job_id, ele_id, ele_key, store_id, type, exec_id, exec_lease, state, backfill_meta) values"
 	var sql string
-	emptyInstance := "null"
+	// Add it for get StartTS.
+	_, err := sess.execute(context.Background(), "begin", "add_backfill_jobs")
+	if err != nil {
+		return err
+	}
+
+	txn, err := sess.session().Txn(true)
+	if err != nil {
+		return err
+	}
+	startTS := txn.StartTS()
 	// TODO: If this the length of backfillJobs is very big.
 	for i, bj := range backfillJobs {
+		bj.Mate.StartTS = startTS
 		mateByte, err := bj.Mate.Encode()
 		if err != nil {
 			return err
@@ -665,15 +680,23 @@ func addBackfillJobs(sess *session, backfillJobs []*model.BackfillJob) error {
 		}
 
 		if i == 0 {
-			sql = sqlPrefix + fmt.Sprintf("(%d, %d, %d, '%s', %d, %d, '%s', '%s', %d, '%s')",
-				bj.ID, bj.JobID, bj.EleID, bj.EleKey, bj.PhysicalID, bj.Tp, instanceID, bj.Instance_Lease, bj.State, mateByte)
+			sql = sqlPrefix + fmt.Sprintf("(%d, %d, %d, '%s', '%s', %d, '%s', '%s', %d, '%s')",
+				bj.ID, bj.JobID, bj.EleID, bj.EleKey, bj.StoreID, bj.Tp, instanceID, bj.Instance_Lease, bj.State, mateByte)
 			continue
 		}
-		sql += fmt.Sprintf(", (%d, %d, %d, '%s', %d, %d, '%s', '%s', %d, '%s')",
-			bj.ID, bj.JobID, bj.EleID, bj.EleKey, bj.PhysicalID, bj.Tp, instanceID, bj.Instance_Lease, bj.State, mateByte)
+		sql += fmt.Sprintf(", (%d, %d, %d, '%s', '%s', %d, '%s', '%s', %d, '%s')",
+			bj.ID, bj.JobID, bj.EleID, bj.EleKey, bj.StoreID, bj.Tp, instanceID, bj.Instance_Lease, bj.State, mateByte)
 	}
-	logutil.BgLogger().Warn("insert *****************************   ", zap.String("sql", sql))
-	_, err := sess.execute(context.Background(), sql, "add_backfill_jobs")
+	_, err = sess.execute(context.Background(), sql, "add_backfill_jobs")
+	logutil.BgLogger().Warn("insert *****************************   ", zap.String("sql", sql), zap.Error(err))
+	if err == nil {
+		_, err = sess.execute(context.Background(), "commit", "add_backfill_jobs")
+	} else {
+		_, err1 := sess.execute(context.Background(), "rollback", "add_backfill_jobs")
+		if err1 != nil {
+			logutil.BgLogger().Warn("[ddl] addBackfillJobs rollback failed", zap.Error(err1))
+		}
+	}
 	return err
 }
 
@@ -688,7 +711,7 @@ func getBackfillJobsForOneEle(sess *session, batch int, isInclude bool, jobIDs [
 		symbol = "!="
 	}
 	for _, id := range jobIDs {
-		jobInfo += fmt.Sprintf("and job_id %s %d", symbol, id)
+		jobInfo += fmt.Sprintf(" and job_id %s %d", symbol, id)
 	}
 
 	jobs, err := getBackfillJobs(sess, BackfillTable, fmt.Sprintf("exec_ID = '' or exec_lease < '%v' %s order by job_id limit %d", currTime.Add(-lease), jobInfo, batch), "get_backfill_job")
@@ -748,7 +771,10 @@ func getAndMarkBackfillJobsForOneEle(sess *session, batch int, isInclude bool, j
 		jobs[i].Instance_Lease = currTime.Add(lease)
 		// TODO: batch update
 		if err = updateBackfillJob(sess, jobs[i], "get_mark_backfill_job"); err != nil {
-			_, err = sess.execute(context.Background(), "rollback", "get_mark_backfill_job")
+			_, err1 := sess.execute(context.Background(), "rollback", "get_mark_backfill_job")
+			if err1 != nil {
+				logutil.BgLogger().Warn("[ddl] getAndMarkBackfillJobsForOneEle rollback failed", zap.Error(err1))
+			}
 			return nil, err
 		}
 	}
@@ -757,7 +783,7 @@ func getAndMarkBackfillJobsForOneEle(sess *session, batch int, isInclude bool, j
 	return jobs[:validLen], err
 }
 
-func getInterruptBackfillJobsForOneEle(sess *session, jobID, eleID int64, eleKey []byte) ([]*model.BackfillJob, error) {
+func getInterruptedBackfillJobsForOneEle(sess *session, jobID, eleID int64, eleKey []byte) ([]*model.BackfillJob, error) {
 	jobs, err := getBackfillJobs(sess, BackfillTable, fmt.Sprintf("job_id = %d and ele_id = %d and ele_key = '%s' and (state = %d or state = %d)",
 		jobID, eleID, eleKey, model.JobStateRollingback, model.JobStateCancelling), "get_interrupt_backfill_job")
 	if err != nil || len(jobs) == 0 {
@@ -775,6 +801,20 @@ func getInterruptBackfillJobsForOneEle(sess *session, jobID, eleID int64, eleKey
 	return jobs[:validLen], nil
 }
 
+func getBackfillJobCount(sess *session, tblName, condition string, label string) (int, error) {
+	rows, err := sess.execute(context.Background(), fmt.Sprintf("select count(1) from mysql.%s where %s", tblName, condition), label)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	if len(rows) != 0 {
+		return 0, dbterror.ErrDDLJobNotFound.FastGenByArgs(fmt.Sprintf("get wrong result cnt:%d", len(rows)))
+	}
+
+	logutil.BgLogger().Info(fmt.Sprintf("get *****************************  job cnt:%d, lable:%s, sql:%s", rows[0].GetInt64(0), label, condition))
+	return int(rows[0].GetInt64(0)), nil
+}
+
 func getBackfillJobs(sess *session, tblName, condition string, label string) ([]*model.BackfillJob, error) {
 	rows, err := sess.execute(context.Background(), fmt.Sprintf("select * from mysql.%s where %s", tblName, condition), label)
 	if err != nil {
@@ -787,7 +827,7 @@ func getBackfillJobs(sess *session, tblName, condition string, label string) ([]
 			JobID:       row.GetInt64(1),
 			EleID:       row.GetInt64(2),
 			EleKey:      row.GetBytes(3),
-			PhysicalID:  row.GetInt64(4),
+			StoreID:     row.GetString(4),
 			Tp:          model.BackfillType(row.GetInt64(5)),
 			Instance_ID: row.GetString(6),
 			// TODO:
@@ -830,9 +870,8 @@ func updateBackfillJob(sess *session, backfillJob *model.BackfillJob, label stri
 }
 
 func addBackfillHistoryJob(sess *session, backfillJobs []*model.BackfillJob) error {
-	sqlPrefix := "insert into mysql.tidb_ddl_backfill_history(section_id, job_id, ele_id, ele_key, physical_id, type, exec_id, exec_lease, state, backfill_meta) values"
+	sqlPrefix := "insert into mysql.tidb_ddl_backfill_history(section_id, job_id, ele_id, ele_key, store_id, type, exec_id, exec_lease, state, backfill_meta) values"
 	var sql string
-	emptyInstance := "null"
 	for i, bj := range backfillJobs {
 		mateByte, err := bj.Mate.Encode()
 		if err != nil {
@@ -844,12 +883,12 @@ func addBackfillHistoryJob(sess *session, backfillJobs []*model.BackfillJob) err
 		}
 
 		if i == 0 {
-			sql = sqlPrefix + fmt.Sprintf("(%d, %d, %d, '%s', %d, %d, '%s', '%s', %d, '%s')",
-				bj.ID, bj.JobID, bj.EleID, bj.EleKey, bj.PhysicalID, bj.Tp, instanceID, bj.Instance_Lease, bj.State, mateByte)
+			sql = sqlPrefix + fmt.Sprintf("(%d, %d, %d, '%s', '%s', %d, '%s', '%s', %d, '%s')",
+				bj.ID, bj.JobID, bj.EleID, bj.EleKey, bj.StoreID, bj.Tp, instanceID, bj.Instance_Lease, bj.State, mateByte)
 			continue
 		}
-		sql += fmt.Sprintf(", (%d, %d, %d, '%s', %d, %d, '%s', '%s', %d, '%s')",
-			bj.ID, bj.JobID, bj.EleID, bj.EleKey, bj.PhysicalID, bj.Tp, instanceID, bj.Instance_Lease, bj.State, mateByte)
+		sql += fmt.Sprintf(", (%d, %d, %d, '%s', '%s', %d, '%s', '%s', %d, '%s')",
+			bj.ID, bj.JobID, bj.EleID, bj.EleKey, bj.StoreID, bj.Tp, instanceID, bj.Instance_Lease, bj.State, mateByte)
 	}
 	logutil.BgLogger().Warn("add history *****************************   " + fmt.Sprintf("sql:%v", sql))
 	_, err := sess.execute(context.Background(), sql, "add_backfill_history_job")
