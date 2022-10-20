@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
@@ -38,10 +39,14 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/testutils"
 )
 
 func TestDAGPlanBuilderSimpleCase(t *testing.T) {
@@ -772,6 +777,55 @@ func TestUnmatchedTableInHint(t *testing.T) {
 			require.Equal(t, stmtctx.WarnLevelWarning, warnings[0].Level)
 			require.Equal(t, output[i].Warning, warnings[0].Err.Error())
 		}
+	}
+}
+
+// withMockTiFlash sets the mockStore to have N TiFlash stores (naming as tiflash0, tiflash1, ...).
+func withMockTiFlash(nodes int) mockstore.MockTiKVStoreOption {
+	return mockstore.WithMultipleOptions(
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
+			mockCluster := c.(*unistore.Cluster)
+			_, _, region1 := mockstore.BootstrapWithSingleStore(c)
+			tiflashIdx := 0
+			for tiflashIdx < nodes {
+				store2 := c.AllocID()
+				peer2 := c.AllocID()
+				addr2 := fmt.Sprintf("tiflash%d", tiflashIdx)
+				mockCluster.AddStore(store2, addr2, &metapb.StoreLabel{Key: "engine", Value: "tiflash"})
+				mockCluster.AddPeer(region1, store2, peer2)
+				tiflashIdx++
+			}
+		}),
+		mockstore.WithStoreType(mockstore.EmbedUnistore),
+	)
+}
+
+func TestMPPHints(t *testing.T) {
+	store := testkit.CreateMockStore(t, withMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int, c int)")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tk.MustExec("set @@session.tidb_allow_mpp=ON")
+	tb := external.GetTableByName(t, tk, "test", "t")
+	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+
+	planSuiteData := core.GetPlanSuiteData()
+	planSuiteData.LoadTestCases(t, &input, &output)
+
+	for i, ts := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
+		})
+		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
 	}
 }
 

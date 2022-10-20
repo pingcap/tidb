@@ -85,6 +85,16 @@ const (
 
 	reorgWorkerCnt   = 10
 	generalWorkerCnt = 1
+
+	// checkFlagIndexInJobArgs is the recoverCheckFlag index used in RecoverTable/RecoverSchema job arg list.
+	checkFlagIndexInJobArgs = 1
+)
+
+const (
+	// The recoverCheckFlag is used to judge the gc work status when RecoverTable/RecoverSchema.
+	recoverCheckFlagNone int64 = iota
+	recoverCheckFlagEnableGC
+	recoverCheckFlagDisableGC
 )
 
 // OnExist specifies what to do when a new object has a name collision.
@@ -160,6 +170,7 @@ type DDL interface {
 	CreateView(ctx sessionctx.Context, stmt *ast.CreateViewStmt) error
 	DropTable(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error)
 	RecoverTable(ctx sessionctx.Context, recoverInfo *RecoverInfo) (err error)
+	RecoverSchema(ctx sessionctx.Context, recoverSchemaInfo *RecoverSchemaInfo) error
 	DropView(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error)
 	CreateIndex(ctx sessionctx.Context, stmt *ast.CreateIndexStmt) error
 	DropIndex(ctx sessionctx.Context, stmt *ast.DropIndexStmt) error
@@ -1260,6 +1271,15 @@ type RecoverInfo struct {
 	AutoIDs       meta.AutoIDGroup
 	OldSchemaName string
 	OldTableName  string
+}
+
+// RecoverSchemaInfo contains information needed by DDL.RecoverSchema.
+type RecoverSchemaInfo struct {
+	*model.DBInfo
+	RecoverTabsInfo []*RecoverInfo
+	DropJobID       int64
+	SnapshotTS      uint64
+	OldSchemaName   model.CIStr
 }
 
 // delayForAsyncCommit sleeps `SafeWindow + AllowedClockDrift` before a DDL job finishes.
