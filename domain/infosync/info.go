@@ -349,15 +349,10 @@ func DeleteTiFlashTableSyncProgress(tableInfo *model.TableInfo) error {
 	}
 	if pi := tableInfo.GetPartitionInfo(); pi != nil {
 		for _, p := range pi.Definitions {
-			key := fmt.Sprintf("%s/%v", TiFlashTableSyncProgressPath, p.ID)
-			err = util.DeleteKeyFromEtcd(key, is.etcdCli, keyOpDefaultRetryCnt, keyOpDefaultTimeout)
-			if err != nil {
-				return err
-			}
+			is.tiflashPlacementManager.DeleteTiFlashProgressFromCache(p.ID)
 		}
 	} else {
-		key := fmt.Sprintf("%s/%v", TiFlashTableSyncProgressPath, tableInfo.ID)
-		return util.DeleteKeyFromEtcd(key, is.etcdCli, keyOpDefaultRetryCnt, keyOpDefaultTimeout)
+		is.tiflashPlacementManager.DeleteTiFlashProgressFromCache(tableInfo.ID)
 	}
 	return nil
 }

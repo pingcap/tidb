@@ -64,6 +64,8 @@ type TiFlashPlacementManager interface {
 	UpdateTiFlashProgressCache(tableID int64, progress string)
 	// GetTiFlashProgressFromCache gets tiflash replica progress from tiflashProgressCache
 	GetTiFlashProgressFromCache(tableID int64) string
+	// DeleteTiFlashProgressFromCache delete tiflash replica progress from tiflashProgressCache
+	DeleteTiFlashProgressFromCache(tableID int64)
 	// CleanTiFlashProgressCache clean progress cache
 	CleanTiFlashProgressCache()
 	// Close is to close TiFlashPlacementManager
@@ -147,6 +149,12 @@ func (m *TiFlashPDPlacementManager) GetTiFlashProgressFromCache(tableID int64) s
 		return progress
 	}
 	return ""
+}
+
+func (m *TiFlashPDPlacementManager) DeleteTiFlashProgressFromCache(tableID int64) {
+	m.Lock()
+	defer m.Unlock()
+	delete(m.tiflashProgressCache, tableID)
 }
 
 // CleanTiFlashProgressCache clean progress cache
@@ -758,6 +766,12 @@ func (m *mockTiFlashPlacementManager) GetTiFlashProgressFromCache(tableID int64)
 		return progress
 	}
 	return ""
+}
+
+func (m *mockTiFlashPlacementManager) DeleteTiFlashProgressFromCache(tableID int64) {
+	m.Lock()
+	defer m.Unlock()
+	delete(m.tiflashProgressCache, tableID)
 }
 
 // CleanTiFlashProgressCache clean progress cache
