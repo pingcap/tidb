@@ -35,6 +35,7 @@ var (
 	_ DDLNode = &CreateSequenceStmt{}
 	_ DDLNode = &CreatePlacementPolicyStmt{}
 	_ DDLNode = &DropDatabaseStmt{}
+	_ DDLNode = &FlashBackDatabaseStmt{}
 	_ DDLNode = &DropIndexStmt{}
 	_ DDLNode = &DropTableStmt{}
 	_ DDLNode = &DropSequenceStmt{}
@@ -250,6 +251,35 @@ func (n *DropDatabaseStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*DropDatabaseStmt)
+	return v.Leave(n)
+}
+
+// FlashBackDatabaseStmt is a statement to restore a database and all tables in the database.
+type FlashBackDatabaseStmt struct {
+	ddlNode
+
+	DBName  model.CIStr
+	NewName string
+}
+
+// Restore implements Node interface.
+func (n *FlashBackDatabaseStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("FLASHBACK DATABASE ")
+	ctx.WriteName(n.DBName.O)
+	if len(n.NewName) > 0 {
+		ctx.WriteKeyWord(" TO ")
+		ctx.WriteName(n.NewName)
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *FlashBackDatabaseStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*FlashBackDatabaseStmt)
 	return v.Leave(n)
 }
 
