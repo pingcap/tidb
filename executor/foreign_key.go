@@ -19,6 +19,7 @@ import (
 	"context"
 	"sync/atomic"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/planner"
@@ -597,8 +598,11 @@ func (fkc *FKCascadeExec) buildFKCascadePlan(ctx context.Context) (plannercore.P
 	case plannercore.FKCascadeOnDelete:
 		sqlStr, err = GenCascadeDeleteSQL(fkc.referredFK.ChildSchema, fkc.childTable.Name, fkc.fk, fkc.fkValues)
 	}
-	if err != nil || sqlStr == "" {
+	if err != nil {
 		return nil, err
+	}
+	if sqlStr == "" {
+		return nil, errors.Errorf("generate foreign key cascade sql failed, %v", fkc.tp)
 	}
 
 	sctx := fkc.b.ctx

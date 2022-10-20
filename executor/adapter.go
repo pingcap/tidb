@@ -666,7 +666,12 @@ func (a *ExecStmt) handleFKTriggerError(sc *stmtctx.StatementContext) error {
 	}
 	savepointRecord := a.Ctx.GetSessionVars().TxnCtx.RollbackToSavepoint(sc.ForeignKeyTriggerCtx.SavepointName)
 	if savepointRecord == nil {
-		return errors.Errorf("foreign key cascade savepoint '%s' not found, should never happen", sc.ForeignKeyTriggerCtx.SavepointName)
+		// Normally should never run into here, but just in case, rollback the transaction.
+		err = txn.Rollback()
+		if err != nil {
+			return err
+		}
+		return errors.Errorf("foreign key cascade savepoint '%s' not found, transaction is rollback, should never happen", sc.ForeignKeyTriggerCtx.SavepointName)
 	}
 	txn.RollbackMemDBToCheckpoint(savepointRecord.MemDBCheckpoint)
 	a.Ctx.GetSessionVars().TxnCtx.ReleaseSavepoint(sc.ForeignKeyTriggerCtx.SavepointName)
