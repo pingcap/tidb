@@ -344,9 +344,6 @@ func DeleteTiFlashTableSyncProgress(tableInfo *model.TableInfo) error {
 	if err != nil {
 		return err
 	}
-	if is.etcdCli == nil {
-		return nil
-	}
 	if pi := tableInfo.GetPartitionInfo(); pi != nil {
 		for _, p := range pi.Definitions {
 			is.tiflashPlacementManager.DeleteTiFlashProgressFromCache(p.ID)
