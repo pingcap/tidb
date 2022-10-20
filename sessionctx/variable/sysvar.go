@@ -735,7 +735,7 @@ var defaultSysVars = []*SysVar{
 		},
 	},
 	{Scope: ScopeGlobal, Name: TiDBGOGCTunerThreshold, Value: strconv.FormatFloat(DefTiDBGOGCTunerThreshold, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: math.MaxUint64,
-		GetGlobal: func(s *SessionVars) (string, error) {
+		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 			return strconv.FormatFloat(GOGCTunerThreshold.Load(), 'f', -1, 64), nil
 		},
 		Validation: func(s *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
@@ -744,12 +744,15 @@ var defaultSysVars = []*SysVar{
 				return "", err
 			}
 			globalMemoryLimitTuner := gctuner.GlobalMemoryLimitTuner.GetPercentage()
-			if floatValue < 0 && floatValue > 0.9 || globalMemoryLimitTuner < floatValue+0.05 {
-				return "", ErrTruncatedWrongValue.GenWithStackByArgs(TiDBGOGCTunerThreshold, originalValue)
+			if floatValue < 0 && floatValue > 0.9 {
+				return "", ErrWrongValueForVar.GenWithStackByArgs(TiDBGOGCTunerThreshold, normalizedValue)
+			}
+			if globalMemoryLimitTuner < floatValue+0.05 {
+				return "", errors.New("tidb_gogc_tuner_threshold should be more than 5% smaller than tidb_server_memory_limit_gc_trigger")
 			}
 			return strconv.FormatFloat(floatValue, 'f', -1, 64), nil
 		},
-		SetGlobal: func(s *SessionVars, val string) error {
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 			factor, err := strconv.ParseFloat(val, 64)
 			if err != nil {
 				return err
@@ -820,9 +823,13 @@ var defaultSysVars = []*SysVar{
 				return "", err
 			}
 			gogcTunerThreshold := GOGCTunerThreshold.Load()
-			if floatValue < 0.51 && floatValue > 1 || floatValue < gogcTunerThreshold+0.05 { // 51% ~ 100%
-				return "", ErrTruncatedWrongValue.GenWithStackByArgs(TiDBServerMemoryLimitGCTrigger, originalValue)
+			if floatValue < 0.51 && floatValue > 1 { // 51% ~ 100%
+				return "", ErrWrongValueForVar.GenWithStackByArgs(TiDBServerMemoryLimitGCTrigger, normalizedValue)
 			}
+			if floatValue < gogcTunerThreshold+0.05 {
+				return "", errors.New("tidb_server_memory_limit_gc_trigger should be more than 5% larger than tidb_gogc_tuner_threshold")
+			}
+
 			return strconv.FormatFloat(floatValue, 'f', -1, 64), nil
 		},
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
