@@ -267,7 +267,7 @@ func (n *FlashBackDatabaseStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("FLASHBACK DATABASE ")
 	ctx.WriteName(n.DBName.O)
 	if len(n.NewName) > 0 {
-		ctx.WriteKeyWord(" TO ")
+		ctx.WriteKeyWord(" RENAME TO ")
 		ctx.WriteName(n.NewName)
 	}
 	return nil
@@ -4114,7 +4114,7 @@ func (n *FlashBackTableStmt) Restore(ctx *format.RestoreCtx) error {
 		return errors.Annotate(err, "An error occurred while splicing RecoverTableStmt Table")
 	}
 	if len(n.NewName) > 0 {
-		ctx.WriteKeyWord(" TO ")
+		ctx.WriteKeyWord(" RENAME TO ")
 		ctx.WriteName(n.NewName)
 	}
 	return nil
@@ -4128,11 +4128,13 @@ func (n *FlashBackTableStmt) Accept(v Visitor) (Node, bool) {
 	}
 
 	n = newNode.(*FlashBackTableStmt)
-	node, ok := n.Accept(v)
-	if !ok {
-		return n, false
+	if n.Table != nil {
+		node, ok := n.Table.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Table = node.(*TableName)
 	}
-	n.Table = node.(*TableName)
 	return v.Leave(n)
 }
 

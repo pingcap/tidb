@@ -605,7 +605,6 @@ import (
 	tikvImporter          "TIKV_IMPORTER"
 	timestampType         "TIMESTAMP"
 	timeType              "TIME"
-	toTimestamp           "TO TIMESTAMP"
 	tp                    "TYPE"
 	trace                 "TRACE"
 	traditional           "TRADITIONAL"
@@ -2595,24 +2594,24 @@ RecoverTableStmt:
  *
  *******************************************************************/
 FlashbackToTimestampStmt:
-	"FLASHBACK" "CLUSTER" toTimestamp stringLit
+	"FLASHBACK" "CLUSTER" "TO" "TIMESTAMP" stringLit
 	{
 		$$ = &ast.FlashBackToTimestampStmt{
-			FlashbackTS: ast.NewValueExpr($4, "", ""),
+			FlashbackTS: ast.NewValueExpr($5, "", ""),
 		}
 	}
-|	"FLASHBACK" "TABLE" TableNameList toTimestamp stringLit
+|	"FLASHBACK" "TABLE" TableNameList "TO" "TIMESTAMP" stringLit
 	{
 		$$ = &ast.FlashBackToTimestampStmt{
 			Tables:      $3.([]*ast.TableName),
-			FlashbackTS: ast.NewValueExpr($5, "", ""),
+			FlashbackTS: ast.NewValueExpr($6, "", ""),
 		}
 	}
-|	"FLASHBACK" DatabaseSym DBName toTimestamp stringLit
+|	"FLASHBACK" DatabaseSym DBName "TO" "TIMESTAMP" stringLit
 	{
 		$$ = &ast.FlashBackToTimestampStmt{
 			DBName:      model.NewCIStr($3),
-			FlashbackTS: ast.NewValueExpr($5, "", ""),
+			FlashbackTS: ast.NewValueExpr($6, "", ""),
 		}
 	}
 
@@ -2636,9 +2635,9 @@ FlashbackToNewName:
 	{
 		$$ = ""
 	}
-|	"TO" Identifier
+|	"RENAME" "TO" Identifier
 	{
-		$$ = $2
+		$$ = $3
 	}
 
 /*******************************************************************
@@ -6146,7 +6145,6 @@ UnReservedKeyword:
 |	"THAN"
 |	"TIME" %prec lowerThanStringLitToken
 |	"TIMESTAMP" %prec lowerThanStringLitToken
-|	"TO TIMESTAMP"
 |	"TRACE"
 |	"TRANSACTION"
 |	"TRUNCATE"
