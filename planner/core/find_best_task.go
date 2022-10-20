@@ -1348,6 +1348,11 @@ func (ds *DataSource) indexCoveringCondition(condition expression.Expression, in
 }
 
 func (ds *DataSource) isSingleScan(indexColumns []*expression.Column, idxColLens []int) bool {
+	if ds.colsRequiringFullLen == nil {
+		// ds.colsRequiringFullLen is set at (*DataSource).PruneColumns. In some cases we don't reach (*DataSource).PruneColumns
+		// and ds.colsRequiringFullLen is nil, so we fall back to ds.indexCoveringColumns(ds.schema.Columns, indexColumns, idxColLens).
+		return ds.indexCoveringColumns(ds.schema.Columns, indexColumns, idxColLens)
+	}
 	if !ds.indexCoveringColumns(ds.colsRequiringFullLen, indexColumns, idxColLens) {
 		return false
 	}
