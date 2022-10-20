@@ -36,6 +36,13 @@ func WithCustomDynPrivs(privs []string) Option {
 	}
 }
 
+// WithCustomFunctions specifies custom functions
+func WithCustomFunctions(funcs []*FunctionDef) Option {
+	return func(m *Manifest) {
+		m.funcs = funcs
+	}
+}
+
 // WithClose specifies the close function of an extension.
 // It will be invoked when `extension.Reset` is called
 func WithClose(fn func()) Option {
@@ -49,6 +56,7 @@ type Manifest struct {
 	name         string
 	sysVariables []*variable.SysVar
 	dynPrivs     []string
+	funcs        []*FunctionDef
 	close        func()
 }
 
@@ -126,6 +134,25 @@ func newManifestWithSetup(name string, factory func() ([]Option, error)) (_ *Man
 			return nil, nil, err
 		}
 	}
+
+	// setup functions
+	for i := range m.funcs {
+		def := m.funcs[i]
+		err = clearBuilder.DoWithCollectClear(func() (func(), error) {
+			if err := RegisterExtensionFunc(def); err != nil {
+				return nil, err
+			}
+
+			return func() {
+				RemoveExtensionFunc(def.Name)
+			}, nil
+		})
+
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
 	return m, clearBuilder.Build(), nil
 }
 

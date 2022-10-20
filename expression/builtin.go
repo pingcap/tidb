@@ -943,6 +943,13 @@ func GetBuiltinList() []string {
 		}
 		res = append(res, funcName)
 	}
+
+	extensionFuncs.Range(func(key, _ any) bool {
+		funcName := key.(string)
+		res = append(res, funcName)
+		return true
+	})
+
 	slices.Sort(res)
 	return res
 }
