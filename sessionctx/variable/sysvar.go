@@ -748,7 +748,7 @@ var defaultSysVars = []*SysVar{
 				return "", ErrWrongValueForVar.GenWithStackByArgs(TiDBGOGCTunerThreshold, normalizedValue)
 			}
 			if globalMemoryLimitTuner < floatValue+0.05 {
-				return "", errors.New("tidb_gogc_tuner_threshold should be more than 5% smaller than tidb_server_memory_limit_gc_trigger")
+				return "", errors.New("tidb_gogc_tuner_threshold should be smaller than tidb_server_memory_limit_gc_trigger + 0.05")
 			}
 			return strconv.FormatFloat(floatValue, 'f', -1, 64), nil
 		},
@@ -827,7 +827,7 @@ var defaultSysVars = []*SysVar{
 				return "", ErrWrongValueForVar.GenWithStackByArgs(TiDBServerMemoryLimitGCTrigger, normalizedValue)
 			}
 			if floatValue < gogcTunerThreshold+0.05 {
-				return "", errors.New("tidb_server_memory_limit_gc_trigger should be more than 5% larger than tidb_gogc_tuner_threshold")
+				return "", errors.New("tidb_server_memory_limit_gc_trigger should be greater than tidb_gogc_tuner_threshold + 0.05")
 			}
 
 			return strconv.FormatFloat(floatValue, 'f', -1, 64), nil
