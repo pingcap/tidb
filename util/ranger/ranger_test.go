@@ -827,7 +827,7 @@ func TestColumnRange(t *testing.T) {
 			}
 			col := expression.ColInfo2Col(sel.Schema().Columns, ds.TableInfo().Columns[tt.colPos])
 			require.NotNil(t, col)
-			conds = ranger.ExtractAccessConditionsForColumn(conds, col)
+			conds = ranger.ExtractAccessConditionsForColumn(sctx, conds, col)
 			require.Equal(t, tt.accessConds, fmt.Sprintf("%s", conds))
 			result, _, _, err := ranger.BuildColumnRange(conds, sctx, col.RetType, tt.length, 0)
 			require.NoError(t, err)

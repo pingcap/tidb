@@ -1924,6 +1924,10 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBPreferPrefixIndexSingleScan, Value: BoolToOnOff(DefTiDBPreferPrefixIndexSingleScan), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.PreferPrefixIndexSingleScan = TiDBOptOn(val)
+		return nil
+	}},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.

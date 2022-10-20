@@ -24,8 +24,9 @@ import (
 
 // conditionChecker checks if this condition can be pushed to index planner.
 type conditionChecker struct {
-	checkerCol *expression.Column
-	length     int
+	checkerCol                  *expression.Column
+	length                      int
+	preferPrefixIndexSingleScan bool
 }
 
 func (c *conditionChecker) isFullLengthColumn() bool {
@@ -92,8 +93,11 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 		}
 	case ast.IsNull:
 		if c.checkColumn(scalar.GetArgs()[0]) {
-			// We can know whether the column is null from prefix column of any length.
-			return true, false
+			var isNullReserve bool // We can know whether the column is null from prefix column of any length.
+			if !c.preferPrefixIndexSingleScan {
+				isNullReserve = !c.isFullLengthColumn()
+			}
+			return true, isNullReserve
 		}
 		return false, true
 	case ast.IsTruthWithoutNull, ast.IsFalsity, ast.IsTruthWithNull:

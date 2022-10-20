@@ -752,6 +752,10 @@ const (
 
 	// TiDBMergePartitionStatsConcurrency indicates the concurrecny when merge partition stats into global stats
 	TiDBMergePartitionStatsConcurrency = "tidb_merge_partition_stats_concurrency"
+
+	// TiDBPreferPrefixIndexSingleScan indicates whether to do some optimizations to avoid double scan for prefix index.
+	// When set to true, `col is (not) null`(`col` is index prefix column) is regarded as index filter rather than table filter.
+	TiDBPreferPrefixIndexSingleScan = "tidb_prefer_prefix_index_single_scan"
 )
 
 // TiDB vars that have only global scope
@@ -1063,6 +1067,7 @@ const (
 	DefTiDBMergePartitionStatsConcurrency           = 1
 	DefTiDBServerMemoryLimitGCTrigger               = 0.7
 	DefTiDBEnableGOGCTuner                          = true
+	DefTiDBPreferPrefixIndexSingleScan              = true
 )
 
 // Process global variables.
