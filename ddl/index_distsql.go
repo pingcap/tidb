@@ -83,7 +83,7 @@ func (c *copReqReader) run(ctx context.Context, wg *sync.WaitGroup, tasks chan *
 						task.startKey, task.excludedEndKey(), c.traceID, c.id)
 				} else {
 					return c.copCtx.sendIdxRecords(ctx, c.idxRecordChan, c.srcChunk, txn.StartTS(),
-						task.startKey, task.excludedEndKey())
+						task.startKey, task.excludedEndKey(), c.traceID, c.id)
 				}
 			})
 			finish()
@@ -251,21 +251,25 @@ func (c *copContext) buildScanIndexKV(ctx context.Context, startTS uint64, start
 }
 
 func (c *copContext) sendIdxRecords(ctx context.Context, ch chan *indexRecord, srcChk *chunk.Chunk,
-	startTS uint64, start, end kv.Key) error {
+	startTS uint64, start, end kv.Key, traceID int64, wid int) error {
 	sctx := c.sessCtx.GetSessionVars().StmtCtx
 	srcResult, err := c.buildTableScan(ctx, startTS, start, end)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	for {
+		finish := injectSpan(traceID, fmt.Sprintf("cop-req-%d", wid))
 		err := srcResult.Next(ctx, srcChk)
 		if err != nil {
+			finish()
 			return errors.Trace(err)
 		}
 		if srcChk.NumRows() == 0 {
+			finish()
 			return nil
 		}
 		iter := chunk.NewIterator4Chunk(srcChk)
+		finish()
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			idxDt, hdDt := extractIdxValsAndHandle(row, c.idxInfo, c.fieldTps)
 			handle, err := buildHandle(hdDt, c.tblInfo, c.idxInfo, sctx)
