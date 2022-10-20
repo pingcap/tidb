@@ -1327,22 +1327,17 @@ func (ds *DataSource) indexCoveringCondition(condition expression.Expression, in
 	case *expression.Column:
 		return ds.indexCoveringColumn(v, indexColumns, idxColLens, false)
 	case *expression.ScalarFunction:
-		switch v.FuncName.L {
-		case ast.LogicOr, ast.LogicAnd:
-			lhsCovered := ds.indexCoveringCondition(v.GetArgs()[0], indexColumns, idxColLens)
-			rhsCovered := ds.indexCoveringCondition(v.GetArgs()[1], indexColumns, idxColLens)
-			return lhsCovered && rhsCovered
-		case ast.UnaryNot:
-			return ds.indexCoveringCondition(v.GetArgs()[0], indexColumns, idxColLens)
-		case ast.IsNull:
-			col, ok := v.GetArgs()[0].(*expression.Column)
-			if !ok {
+		if v.FuncName.L == ast.IsNull {
+			if col, ok := v.GetArgs()[0].(*expression.Column); ok {
+				return ds.indexCoveringColumn(col, indexColumns, idxColLens, true)
+			}
+		}
+		for _, arg := range v.GetArgs() {
+			if !ds.indexCoveringCondition(arg, indexColumns, idxColLens) {
 				return false
 			}
-			return ds.indexCoveringColumn(col, indexColumns, idxColLens, true)
-		default:
-			return ds.indexCoveringColumns(expression.ExtractColumns(v), indexColumns, idxColLens)
 		}
+		return true
 	}
 	return true
 }
