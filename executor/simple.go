@@ -1058,23 +1058,17 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		}
 
 		if s.CommentOrAttributeOption != nil {
-			rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT user_attributes FROM %n.%n WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, spec.User.Username, spec.User.Hostname)
+			newAttributesStr := ""
+			if s.CommentOrAttributeOption.Type == ast.UserCommentType {
+				newAttributesStr = fmt.Sprintf(`{"metadata": {"comment": "%s"}}`, s.CommentOrAttributeOption.Value)
+			} else {
+				newAttributesStr = fmt.Sprintf(`{"metadata": %s}`, s.CommentOrAttributeOption.Value)
+			}
+			_, _, err := exec.ExecRestrictedSQL(ctx, nil,
+				`UPDATE %n.%n SET user_attributes=json_merge_patch(user_attributes, %?) WHERE Host=%? and User=%?;`,
+				mysql.SystemDB, mysql.UserTable, newAttributesStr, spec.User.Hostname, spec.User.Username)
 			if err != nil {
 				failedUsers = append(failedUsers, spec.User.String())
-			} else {
-				oldAttributesStr := rows[0].GetJSON(0).String()
-				newAttributesStr := ""
-				if s.CommentOrAttributeOption.Type == ast.UserCommentType {
-					newAttributesStr = fmt.Sprintf(`{"metadata": {"comment": "%s"}}`, s.CommentOrAttributeOption.Value)
-				} else {
-					newAttributesStr = fmt.Sprintf(`{"metadata": %s}`, s.CommentOrAttributeOption.Value)
-				}
-				_, _, err := exec.ExecRestrictedSQL(ctx, nil,
-					`UPDATE %n.%n SET user_attributes=json_merge_patch(%?, %?) WHERE Host=%? and User=%?;`,
-					mysql.SystemDB, mysql.UserTable, oldAttributesStr, newAttributesStr, spec.User.Hostname, spec.User.Username)
-				if err != nil {
-					failedUsers = append(failedUsers, spec.User.String())
-				}
 			}
 		}
 
