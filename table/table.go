@@ -19,6 +19,7 @@
 package table
 
 import (
+	"fmt"
 	"context"
 	"time"
 
@@ -218,7 +219,9 @@ func AllocAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Conte
 func AllocBatchAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Context, N int) (firstID int64, increment int64, err error) {
 	increment = int64(sctx.GetSessionVars().AutoIncrementIncrement)
 	offset := int64(sctx.GetSessionVars().AutoIncrementOffset)
-	min, max, err := t.Allocators(sctx).Get(autoid.RowIDAllocType).Alloc(ctx, uint64(N), increment, offset)
+	alloc := t.Allocators(sctx).Get(autoid.RowIDAllocType)
+	fmt.Printf("auto alloc == %#v\n", alloc)
+	min, max, err := alloc.Alloc(ctx, uint64(N), increment, offset)
 	if err != nil {
 		return min, max, err
 	}

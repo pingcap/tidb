@@ -535,9 +535,53 @@ func NextStep(curStep int64, consumeDur time.Duration) int64 {
 	return res
 }
 
+func newSinglePointAlloc(store kv.Storage, dbID, tblID int64) Allocator {
+	ebd, ok := store.(kv.EtcdBackend)
+	if !ok {
+		return nil
+	}
+
+	addrs, err := ebd.EtcdAddrs()
+	if err != nil {
+		panic(err)
+	}
+	spa := &singlePointAlloc{
+		dbID:  dbID,
+		tblID: tblID,
+	}
+	if len(addrs) > 0 {
+		etcdCli, err := clientv3.New(clientv3.Config{
+			Endpoints: addrs,
+			TLS:       ebd.TLSConfig(),
+		})
+		if err != nil {
+			panic(err)
+		}
+		spa.clientDiscover = clientDiscover{etcdCli: etcdCli}
+	} else {
+		spa.clientDiscover = clientDiscover{
+			AutoIDAllocClient: autoidservice.MockForTest(store.UUID()),
+		}
+	}
+
+	failpoint.Inject("mockAutoIDChange", func(val failpoint.Value) {
+		if val.(bool) {
+			spa = nil
+		}
+	})
+	return spa
+}
+
 // NewAllocator returns a new auto increment id generator on the store.
 func NewAllocator(store kv.Storage, dbID, tbID int64, isUnsigned bool,
 	allocType AllocatorType, opts ...AllocOption) Allocator {
+	if allocType == RowIDAllocType {
+		alloc := newSinglePointAlloc(store, dbID, tbID)
+		if alloc != nil {
+			return alloc
+		}
+	}
+
 	alloc := &allocator{
 		store:         store,
 		dbID:          dbID,
@@ -577,38 +621,8 @@ func NewAllocatorsFromTblInfo(store kv.Storage, schemaID int64, tblInfo *model.T
 	hasRowID := !tblInfo.PKIsHandle && !tblInfo.IsCommonHandle
 	hasAutoIncID := tblInfo.GetAutoIncrementColInfo() != nil
 	if hasRowID || hasAutoIncID {
-		var alloc Allocator
-		if ebd, ok := store.(kv.EtcdBackend); ok {
-			addrs, err := ebd.EtcdAddrs()
-			if err != nil {
-				panic(err)
-			}
-			spa := &singlePointAlloc{
-				dbID:  dbID,
-				tblID: tblInfo.ID,
-			}
-			if len(addrs) > 0 {
-				etcdCli, err := clientv3.New(clientv3.Config{
-					Endpoints: addrs,
-					TLS:       ebd.TLSConfig(),
-				})
-				if err != nil {
-					panic(err)
-				}
-				spa.clientDiscover = clientDiscover{etcdCli: etcdCli}
-			} else {
-				spa.clientDiscover = clientDiscover{
-					AutoIDAllocClient: autoidservice.MockForTest(store.UUID()),
-				}
-			}
-			alloc = spa
-			failpoint.Inject("mockAutoIDChange", func(val failpoint.Value) {
-				if val.(bool) {
-					alloc = NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(), RowIDAllocType, idCacheOpt, tblVer)
-				}
-			})
-			allocs = append(allocs, alloc)
-		}
+		alloc := NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(), RowIDAllocType, idCacheOpt, tblVer)
+		allocs = append(allocs, alloc)
 	}
 	hasAutoRandID := tblInfo.ContainsAutoRandomBits()
 	if hasAutoRandID {
