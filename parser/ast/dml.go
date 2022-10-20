@@ -1642,7 +1642,7 @@ func (n *SetOprStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.With != nil {
 		defer ctx.RestoreCTEFunc()() //nolint: all_revive
 		if err := n.With.Restore(ctx); err != nil {
-			return errors.Annotate(err, "An error occurred while restore UnionStmt.With")
+			return errors.Annotate(err, "An error occurred while restore SetOprStmt.With")
 		}
 	}
 	if n.IsInBraces {
