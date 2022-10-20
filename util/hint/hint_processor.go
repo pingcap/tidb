@@ -16,6 +16,7 @@ package hint
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -314,8 +315,10 @@ func extractHintWarns(warns []error) []error {
 
 // BlockHintProcessor processes hints at different level of sql statement.
 type BlockHintProcessor struct {
-	QbNameMap        map[string]int                    // Map from query block name to select stmt offset.
-	QbHints          map[int][]*ast.TableOptimizerHint // Group all hints at same query block.
+	QbNameMap        map[string]int // Map from query block name to select stmt offset.
+	QbNameMap4View   map[string][]ast.HintTable
+	QbHints          map[int][]*ast.TableOptimizerHint    // Group all hints at same query block.
+	ViewQbHints      map[string][]*ast.TableOptimizerHint // Group all hints at the query block for view hint. // TODO: How to group the hints which belong to the same query block name
 	Ctx              sessionctx.Context
 	selectStmtOffset int
 }
@@ -329,13 +332,15 @@ func (p *BlockHintProcessor) MaxSelectStmtOffset() int {
 func (p *BlockHintProcessor) Enter(in ast.Node) (ast.Node, bool) {
 	switch node := in.(type) {
 	case *ast.UpdateStmt:
-		p.checkQueryBlockHints(node.TableHints, 0)
+		node.TableHints = p.checkQueryBlockHints(node.TableHints, 0)
 	case *ast.DeleteStmt:
-		p.checkQueryBlockHints(node.TableHints, 0)
+		node.TableHints = p.checkQueryBlockHints(node.TableHints, 0)
 	case *ast.SelectStmt:
 		p.selectStmtOffset++
 		node.QueryBlockOffset = p.selectStmtOffset
-		p.checkQueryBlockHints(node.TableHints, node.QueryBlockOffset)
+		node.TableHints = p.checkQueryBlockHints(node.TableHints, node.QueryBlockOffset)
+	case *ast.ExplainStmt:
+		return in, true
 	}
 	return in, false
 }
@@ -348,10 +353,17 @@ func (*BlockHintProcessor) Leave(in ast.Node) (ast.Node, bool) {
 const hintQBName = "qb_name"
 
 // checkQueryBlockHints checks the validity of query blocks and records the map of query block name to select offset.
-func (p *BlockHintProcessor) checkQueryBlockHints(hints []*ast.TableOptimizerHint, offset int) {
+func (p *BlockHintProcessor) checkQueryBlockHints(hints []*ast.TableOptimizerHint, offset int) (leftHints []*ast.TableOptimizerHint) {
+	if (offset == 0 || offset == 1) && len(hints) > 0 {
+		hints = p.checkViewQueryBlockHints(hints, offset)
+	}
+	leftHints = hints
 	var qbName string
 	for _, hint := range hints {
 		if hint.HintName.L != hintQBName {
+			continue
+		}
+		if len(hint.Tables) > 0 {
 			continue
 		}
 		if qbName != "" {
@@ -375,6 +387,110 @@ func (p *BlockHintProcessor) checkQueryBlockHints(hints []*ast.TableOptimizerHin
 	} else {
 		p.QbNameMap[qbName] = offset
 	}
+	return
+}
+
+// 记录 QbNameMap[qbName] -> ViewNameList
+// 每次 buildViewFromDS 的时候，ViewNameList pop 掉最开始掉，如果不匹配则直接针对该 qb 报错。递归下去直到匹配上 qb，并执行其他相关掉 hint
+// checkQueryBlockHints checks the validity of query blocks and records the map of query block name to select offset.
+// TODO: only support view hint by the separate function
+// 提前聚合所有属于同一个 query block name 的 view hint
+func (p *BlockHintProcessor) checkViewQueryBlockHints(hints []*ast.TableOptimizerHint, offset int) (leftHints []*ast.TableOptimizerHint) {
+	var queryBlockHints4View []*ast.TableOptimizerHint
+	// var queryBlockHint *ast.TableOptimizerHint
+	var usedIdx []int
+	for i, hint := range hints {
+		if hint.HintName.L != hintQBName || hint.QBName.L == "" {
+			continue
+		}
+
+		if len(hint.Tables) == 0 {
+			continue
+		}
+
+		if hint.Tables != nil {
+			queryBlockHints4View = append(queryBlockHints4View, hint)
+			usedIdx = append(usedIdx, i)
+		} else {
+			//if queryBlockHint != nil {
+			//	if p.Ctx != nil {
+			//		p.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("There are more than two query names in same query block, using the first one %s", queryBlockHint.QBName.L))
+			//	}
+			//} else {
+			//	queryBlockHint = hint
+			//}
+		}
+	}
+
+	// Handle the view query block hint
+	// TODO: need to check the same name for the normal query block name with here
+	if len(queryBlockHints4View) > 0 && p.QbNameMap4View == nil {
+		p.QbNameMap4View = make(map[string][]ast.HintTable)
+		p.ViewQbHints = make(map[string][]*ast.TableOptimizerHint)
+	}
+
+	for _, hint := range queryBlockHints4View {
+		qbName := hint.QBName.L
+		if _, ok := p.QbNameMap4View[qbName]; ok {
+			if p.Ctx != nil {
+				p.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("Duplicate query block name %s for view's query block hint, only the first one is effective", qbName))
+			}
+		} else {
+			// TODO: Need to adjust the first view's query block position. Only support the view query block hint in the situation that `offset = 0`.
+			p.QbNameMap4View[qbName] = hint.Tables
+		}
+	}
+
+	for i, hint := range hints {
+		if hint.HintName.L == hintQBName {
+			continue
+		}
+
+		ok := false
+		if hint.QBName.L != "" {
+			_, ok = p.QbNameMap4View[hint.QBName.L]
+		} else {
+			// TODO: can not support view qbName hint appear other view qbName
+			// Only support one hint.Tables
+			ok = p.checkTableQBNameInView(hint.Tables)
+		}
+
+		if ok {
+			qbName := hint.Tables[0].QBName.L
+			p.ViewQbHints[qbName] = append(p.ViewQbHints[qbName], hint)
+			usedIdx = append(usedIdx, i)
+		}
+	}
+
+	sort.Ints(usedIdx)
+
+	// Handle the non-view query block hint
+	//if queryBlockHint != nil {
+	//	qbName := queryBlockHint.QBName.L
+	//	if p.QbNameMap == nil {
+	//		p.QbNameMap = make(map[string]int)
+	//	}
+	//	if _, ok := p.QbNameMap[qbName]; ok {
+	//		if p.Ctx != nil {
+	//			p.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("Duplicate query block name %s, only the first one is effective", qbName))
+	//		}
+	//	} else {
+	//		p.QbNameMap[qbName] = offset
+	//	}
+	//}
+
+	idx := len(hints)
+	if len(usedIdx) > 0 {
+		idx = 0
+	}
+	for i := 0; i < len(hints); i++ {
+		if idx < len(hints) && i == usedIdx[idx] {
+			idx++
+		} else {
+			leftHints = append(leftHints, hints[i])
+		}
+	}
+	return
 }
 
 const (
@@ -452,6 +568,18 @@ func (p *BlockHintProcessor) checkTableQBName(tables []ast.HintTable) bool {
 	return true
 }
 
+func (p *BlockHintProcessor) checkTableQBNameInView(tables []ast.HintTable) bool {
+	for _, table := range tables {
+		if table.QBName.L != "" {
+			_, ok := p.QbNameMap4View[table.QBName.L]
+			if !ok {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // GetCurrentStmtHints extracts all hints that take effects at current stmt.
 func (p *BlockHintProcessor) GetCurrentStmtHints(hints []*ast.TableOptimizerHint, currentOffset int) []*ast.TableOptimizerHint {
 	if p.QbHints == nil {
@@ -461,6 +589,7 @@ func (p *BlockHintProcessor) GetCurrentStmtHints(hints []*ast.TableOptimizerHint
 		if hint.HintName.L == hintQBName {
 			continue
 		}
+		// TODO: ban the qb name like 'sel_x'
 		offset := p.GetHintOffset(hint.QBName, currentOffset)
 		if offset < 0 || !p.checkTableQBName(hint.Tables) {
 			hintStr := RestoreTableOptimizerHint(hint)

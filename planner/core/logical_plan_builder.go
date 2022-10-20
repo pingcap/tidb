@@ -17,6 +17,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/util/hint"
 	"math"
 	"math/bits"
 	"sort"
@@ -4393,7 +4394,35 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		if tn.TableSample != nil {
 			return nil, expression.ErrInvalidTableSample.GenWithStackByArgs("Unsupported TABLESAMPLE in views")
 		}
-		return b.BuildDataSourceFromView(ctx, dbName, tableInfo)
+		currentViewQBHints := make(map[string][]ast.HintTable)
+		currentViewHints := make(map[string][]*ast.TableOptimizerHint)
+		otherViewsQBHints := make(map[string][]ast.HintTable)
+		otherViewsHints := make(map[string][]*ast.TableOptimizerHint)
+		for qbName, viewQBNameHint := range b.hintProcessor.QbNameMap4View {
+			if len(viewQBNameHint) == 0 {
+				// TODO: check whether this will happen
+
+				continue
+			}
+			// TODO: support the DBName for hint. Use the current DB to replace.
+			// TODO: change the string QB to the number QB. sel_xxx
+			if viewQBNameHint[0].QBName.L == "" {
+				// TODO: finish this
+				continue
+			}
+			viewHintSelectOffset := b.hintProcessor.GetHintOffset(viewQBNameHint[0].QBName, b.getSelectOffset())
+			if viewQBNameHint[0].TableName.L == tableInfo.Name.L && viewHintSelectOffset == b.getSelectOffset() {
+				currentViewQBHints[qbName] = viewQBNameHint
+				currentViewHints[qbName] = b.hintProcessor.ViewQbHints[qbName]
+			} else {
+				otherViewsQBHints[qbName] = viewQBNameHint
+				otherViewsHints[qbName] = b.hintProcessor.ViewQbHints[qbName]
+			}
+			delete(b.hintProcessor.QbNameMap4View, qbName)
+			delete(b.hintProcessor.ViewQbHints, qbName)
+		}
+		// 将得到到 view 及其相关到 hint 传下去，在下面到函数中重新设置 blockHintProcessor，并将相关到值带入
+		return b.BuildDataSourceFromView(ctx, dbName, tableInfo, currentViewQBHints, currentViewHints)
 	}
 
 	if tableInfo.IsSequence() {
@@ -4923,7 +4952,15 @@ func (b *PlanBuilder) checkRecursiveView(dbName model.CIStr, tableName model.CIS
 }
 
 // BuildDataSourceFromView is used to build LogicalPlan from view
-func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.CIStr, tableInfo *model.TableInfo) (LogicalPlan, error) {
+// 模仿最外面那层处理 Hint 的方式，先得到属于本层的相关 Hint，在模拟外层处理 Hint 的方式
+// 需要解决的问题包括：
+// 1. 怎样得到属于该层的 Hint，包括 query block hint 和 其他 Hint。如何传递 query block 的信息最难，包括传递其递归部分的信息。
+// a. 先按照 query block name 将同一个 query block name 所涉及到的 Hint 保存在一起
+// b. 在处理到 DS 到时候，访问 queryBlockName4View，遍历一边，取第一个 viewName@queryBlockNum，寻找和当前 DS 匹配到部分，得到能匹配上到相关 ViewQueryBlock，将其列表中最前面到部分弹出（即满足了当前到要求，要去递归到处理下一个 view 了）
+// c. 从传入到 queryBlockHint 中得到刚好属于当前 ast 到 query block name。然后将相关到 hint 传递进来，在当前 build plan 阶段到时候用。
+// 2. query block hint 是如何处理的
+// "explain select * from (select /*+ QB_NAME(QB2) */  /*+ merge_join(t2@QB2) */  count(t1.b) as c from t1 join t2 on t1.a = t2.a) tt where tt.c > 1;" 为什么没生效
+func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.CIStr, tableInfo *model.TableInfo, QbNameMap4View map[string][]ast.HintTable, ViewQbHints map[string][]*ast.TableOptimizerHint) (LogicalPlan, error) {
 	viewDepth := b.ctx.GetSessionVars().StmtCtx.ViewDepth
 	b.ctx.GetSessionVars().StmtCtx.ViewDepth++
 	deferFunc, err := b.checkRecursiveView(dbName, tableInfo.Name)
@@ -4958,6 +4995,51 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 		b.buildingCTE = o
 	}()
 
+	hintProcessor := &hint.BlockHintProcessor{Ctx: b.ctx}
+	// TODO: If the selectOffset has already been set. It isn't need to use the 'Accept' function.
+	selectNode.Accept(hintProcessor)
+	currentQbNameMap4View := make(map[string][]ast.HintTable)
+	currentViewQbHints := make(map[string][]*ast.TableOptimizerHint)
+	currentQbHints := make(map[int][]*ast.TableOptimizerHint)
+	currentQbNameMap := make(map[string]int)
+
+	for qbName, viewQbNameHint := range QbNameMap4View {
+		selectOffset := -1
+		viewQbNameHint = viewQbNameHint[1:]
+		QbNameMap4View[qbName] = viewQbNameHint
+		if len(viewQbNameHint) == 0 {
+			selectOffset = 1
+		} else if len(viewQbNameHint) == 1 {
+			// TODO: support this
+			// table@qb, table, @qb
+			selectOffset = hintProcessor.GetHintOffset(viewQbNameHint[0].QBName, 1)
+		} else {
+			currentQbNameMap4View[qbName] = viewQbNameHint
+			currentViewQbHints[qbName] = ViewQbHints[qbName]
+		}
+
+		if selectOffset != -1 {
+			currentQbHints[selectOffset] = ViewQbHints[qbName]
+			currentQbNameMap[qbName] = selectOffset
+
+			delete(QbNameMap4View, qbName)
+			delete(ViewQbHints, qbName)
+		}
+	}
+
+	hintProcessor.QbNameMap4View = QbNameMap4View
+	hintProcessor.ViewQbHints = ViewQbHints
+	hintProcessor.QbHints = currentQbHints
+	hintProcessor.QbNameMap = currentQbNameMap
+
+	originHintProcessor := b.hintProcessor
+	b.hintProcessor = hintProcessor
+	originPlannerSelectBlockAsName := b.ctx.GetSessionVars().PlannerSelectBlockAsName
+	b.ctx.GetSessionVars().PlannerSelectBlockAsName = make([]ast.HintTable, hintProcessor.MaxSelectStmtOffset()+1)
+	defer func() {
+		b.hintProcessor = originHintProcessor
+		b.ctx.GetSessionVars().PlannerSelectBlockAsName = originPlannerSelectBlockAsName
+	}()
 	selectLogicalPlan, err := b.Build(ctx, selectNode)
 	if err != nil {
 		if terror.ErrorNotEqual(err, ErrViewRecursive) &&

@@ -3574,6 +3574,15 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("@")
 		}
 		ctx.WriteName(n.QBName.String())
+		if n.Tables != nil {
+			ctx.WriteKeyWord(",")
+			for i, view := range n.Tables {
+				if i != 0 {
+					ctx.WriteKeyWord(".")
+				}
+				view.Restore(ctx)
+			}
+		}
 	}
 	// Hints without args except query block.
 	switch n.HintName.L {
