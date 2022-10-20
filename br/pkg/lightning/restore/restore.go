@@ -2494,7 +2494,6 @@ func saveCheckpoint(rc *Controller, t *TableRestore, engineID int32, chunk *chec
 // - tableInfo, tableInfo of the target table;
 // It returns:
 // - filteredColumns, columns of the original data to import.
-// - filteredExtendCols, columns of the extended data to import.
 // - extendValueDatums, extended Data to import.
 // The data we import will use filteredColumns as columns, use (parser.LastRow+extendValueDatums) as data
 // ColumnPermutation will be modified to make sure the correspondence relationship is correct.
