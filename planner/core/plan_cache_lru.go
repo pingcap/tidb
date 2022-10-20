@@ -15,15 +15,16 @@ package core
 
 import (
 	"container/list"
-	"sync"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"strconv"
+	"sync"
 )
 
 // planCacheEntry wraps Key and Value. It's the value of list.Element.
@@ -48,18 +49,23 @@ type LRUPlanCache struct {
 	onEvict func(kvcache.Key, kvcache.Value)
 
 	// 0 indicates no quota
-	quota uint64
-	guard float64
+	quota       uint64
+	guard       float64
+	testTracker *memory.Tracker
+	ctx         sessionctx.Context
+	aa          int64
 }
 
 // NewLRUPlanCache creates a PCLRUCache object, whose capacity is "capacity".
 // NOTE: "capacity" should be a positive value.
-func NewLRUPlanCache(capacity uint, guard float64, quota uint64,
+func NewLRUPlanCache(ctx sessionctx.Context, capacity uint, guard float64, quota uint64,
 	pickFromBucket func(map[*list.Element]struct{}, []*types.FieldType) (*list.Element, bool)) *LRUPlanCache {
 	if capacity < 1 {
 		capacity = 100
 		logutil.BgLogger().Info("capacity of LRU cache is less than 1, will use default value(100) init cache")
 	}
+	t := memory.NewTracker(-26, -1)
+	t.AttachTo(InstancePlanCacheMemoryTracker)
 	return &LRUPlanCache{
 		capacity:       capacity,
 		size:           0,
@@ -68,6 +74,8 @@ func NewLRUPlanCache(capacity uint, guard float64, quota uint64,
 		pickFromBucket: pickFromBucket,
 		quota:          quota,
 		guard:          guard,
+		testTracker:    t,
+		ctx:            ctx,
 	}
 }
 
@@ -180,6 +188,21 @@ func (l *LRUPlanCache) SetCapacity(capacity uint) error {
 	return nil
 }
 
+// Close do some clean work for LRUPlanCache when close the session
+func (l *LRUPlanCache) Close() {
+	if l == nil {
+		return
+	}
+	connId := int64(l.ctx.GetSessionVars().ConnectionID)
+	if l.testTracker != nil {
+		l.testTracker.ReplaceBytesUsed(0)
+		metrics.PlanCacheMemoryUsage.WithLabelValues("SessionID_" + strconv.FormatInt(connId, 10)).Set(float64(l.testTracker.BytesConsumed()))
+		metrics.PlanCacheMemoryUsage.DeleteLabelValues("SessionID_" + strconv.FormatInt(connId, 10))
+		metrics.InstancePlanCacheMemoryUsage.WithLabelValues("instance").Set(float64(InstancePlanCacheMemoryTracker.BytesConsumed()))
+		l.testTracker.Detach()
+	}
+}
+
 // removeOldest removes the oldest element from the cache.
 func (l *LRUPlanCache) removeOldest() {
 	lru := l.lruList.Back()
@@ -229,11 +252,12 @@ func PickPlanFromBucket(bucket map[*list.Element]struct{}, paramTypes []*types.F
 	return nil, false
 }
 
-var aa = 0
-
 // updateMonitor update the memory usage monitor to show in grafana
 func (l *LRUPlanCache) updateMonitorMetric() {
-	aa += 16 * 1024 * 1024
+	l.aa += 1024
+	l.testTracker.Consume(int64(l.aa))
 	// todo: wait for the preorder pr, pass tracker's consumed memory to metric
-	metrics.PlanCacheMemoryUsage.WithLabelValues("memory_usage").Set(float64(aa))
+	connId := int64(l.ctx.GetSessionVars().ConnectionID)
+	metrics.PlanCacheMemoryUsage.WithLabelValues("SessionID_" + strconv.FormatInt(connId, 10)).Set(float64(l.testTracker.BytesConsumed()))
+	metrics.InstancePlanCacheMemoryUsage.WithLabelValues("instance").Set(float64(InstancePlanCacheMemoryTracker.BytesConsumed()))
 }

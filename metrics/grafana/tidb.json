@@ -7527,16 +7527,16 @@
               "exemplar": true,
               "expr": "tidb_server_plan_cache_memory_usage{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
               "interval": "",
-              "legendFormat": "{{instance}}",
+              "legendFormat": "{{type}}",
               "queryType": "randomWalk",
               "refId": "A"
             },
             {
               "exemplar": true,
-              "expr": "sum(tidb_server_plan_cache_memory_usage{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}) by (type)",
+              "expr": "tidb_server_instance_plan_cache_memory_usage{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
               "hide": false,
               "interval": "",
-              "legendFormat": "total",
+              "legendFormat": "{{instance}}",
               "refId": "B"
             }
           ],

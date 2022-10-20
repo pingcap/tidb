@@ -59,6 +59,7 @@ type PlanCache interface {
 	DeleteAll()
 	Size() int
 	SetCapacity(capacity uint) error
+	Close()
 }
 
 // Context is an interface for transaction and executive args environment.
