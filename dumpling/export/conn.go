@@ -62,6 +62,7 @@ func (conn *BaseConn) QuerySQLWithColumns(tctx *tcontext.Context, columns []stri
 		if retryTime > 1 && conn.rebuildConnFn != nil {
 			conn.DBConn, err = conn.rebuildConnFn(conn.DBConn, false)
 			if err != nil {
+				tctx.L().Warn("rebuild connection failed", zap.Error(err))
 				return
 			}
 		}

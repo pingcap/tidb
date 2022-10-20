@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"encoding/hex"
 	"fmt"
 	"math/big"
@@ -187,6 +188,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 
 	atomic.StoreInt64(&d.totalTables, int64(calculateTableCount(conf.Tables)))
 
+<<<<<<< HEAD
 	rebuildConn := func(conn *sql.Conn, updateMeta bool) (*sql.Conn, error) {
 		// make sure that the lock connection is still alive
 		err1 := conCtrl.PingContext(tctx)
@@ -195,6 +197,15 @@ func (d *Dumper) Dump() (dumpErr error) {
 		}
 		// give up the last broken connection
 		conn.Close()
+=======
+	rebuildMetaConn := func(conn *sql.Conn, updateMeta bool) (*sql.Conn, error) {
+		_ = conn.Raw(func(dc interface{}) error {
+			// return an `ErrBadConn` to ensure close the connection, but do not put it back to the pool.
+			// if we choose to use `Close`, it will always put the connection back to the pool.
+			return driver.ErrBadConn
+		})
+
+>>>>>>> 5b0ae1407b (dump: fix dump large tables will timeout (#38540))
 		newConn, err1 := createConnWithConsistency(tctx, pool, repeatableRead)
 		if err1 != nil {
 			return conn, errors.Trace(err1)
@@ -210,8 +221,26 @@ func (d *Dumper) Dump() (dumpErr error) {
 		return conn, nil
 	}
 
+<<<<<<< HEAD
 	taskChan := make(chan Task, defaultDumpThreads)
 	AddGauge(taskChannelCapacity, conf.Labels, defaultDumpThreads)
+=======
+	rebuildConn := func(conn *sql.Conn, updateMeta bool) (*sql.Conn, error) {
+		// make sure that the lock connection is still alive
+		err1 := conCtrl.PingContext(tctx)
+		if err1 != nil {
+			return conn, errors.Trace(err1)
+		}
+		return rebuildMetaConn(conn, updateMeta)
+	}
+
+	chanSize := defaultDumpThreads
+	failpoint.Inject("SmallDumpChanSize", func() {
+		chanSize = 1
+	})
+	taskChan := make(chan Task, chanSize)
+	AddGauge(d.metrics.taskChannelCapacity, defaultDumpThreads)
+>>>>>>> 5b0ae1407b (dump: fix dump large tables will timeout (#38540))
 	wg, writingCtx := errgroup.WithContext(tctx)
 	writerCtx := tctx.WithContext(writingCtx)
 	writers, tearDownWriters, err := d.startWriters(writerCtx, wg, taskChan, rebuildConn)
@@ -259,7 +288,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 			fmt.Printf("tidb_mem_quota_query == %s\n", s)
 		}
 	})
-	baseConn := newBaseConn(metaConn, canRebuildConn(conf.Consistency, conf.TransactionalConsistency), rebuildConn)
+	baseConn := newBaseConn(metaConn, true, rebuildMetaConn)
 
 	if conf.SQL == "" {
 		if err = d.dumpDatabases(writerCtx, baseConn, taskChan); err != nil && !errors.ErrorEqual(err, context.Canceled) {
