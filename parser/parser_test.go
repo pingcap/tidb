@@ -4209,24 +4209,6 @@ func TestOptimizerHints(t *testing.T) {
 	require.Equal(t, "hash_agg", hints[1].HintName.L)
 
 	// Test MPPAgg
-	stmt, _, err = p.Parse("select /*+ MPP_TIDB_AGG(), mpp_tidb_agg() */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
-	require.NoError(t, err)
-	selectStmt = stmt[0].(*ast.SelectStmt)
-
-	hints = selectStmt.TableHints
-	require.Len(t, hints, 2)
-	require.Equal(t, "mpp_tidb_agg", hints[0].HintName.L)
-	require.Equal(t, "mpp_tidb_agg", hints[1].HintName.L)
-
-	stmt, _, err = p.Parse("select /*+ MPP_SCALAR_AGG(), mpp_scalar_agg() */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
-	require.NoError(t, err)
-	selectStmt = stmt[0].(*ast.SelectStmt)
-
-	hints = selectStmt.TableHints
-	require.Len(t, hints, 2)
-	require.Equal(t, "mpp_scalar_agg", hints[0].HintName.L)
-	require.Equal(t, "mpp_scalar_agg", hints[1].HintName.L)
-
 	stmt, _, err = p.Parse("select /*+ MPP_1PHASE_AGG(), mpp_1phase_agg() */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
 	require.NoError(t, err)
 	selectStmt = stmt[0].(*ast.SelectStmt)

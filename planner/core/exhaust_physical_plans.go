@@ -2818,10 +2818,6 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 		preferMode, prefer = Mpp1Phase, true
 	} else if la.aggHints.preferAggType&preferMPP2PhaseAgg > 0 {
 		preferMode, prefer = Mpp2Phase, true
-	} else if la.aggHints.preferAggType&preferMPPTiDBAgg > 0 {
-		preferMode, prefer = MppTiDB, true
-	} else if la.aggHints.preferAggType&preferMPPScalarAgg > 0 {
-		preferMode, prefer = MppScalar, true
 	}
 	if prefer {
 		var preferPlans []PhysicalPlan
