@@ -258,19 +258,14 @@ func (n *DropDatabaseStmt) Accept(v Visitor) (Node, bool) {
 type FlashBackDatabaseStmt struct {
 	ddlNode
 
-	DBNames []model.CIStr
+	DBName  model.CIStr
 	NewName string
 }
 
 // Restore implements Node interface.
 func (n *FlashBackDatabaseStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("FLASHBACK DATABASE ")
-	for i, names := range n.DBNames {
-		if i != 0 {
-			ctx.WritePlain(", ")
-		}
-		ctx.WriteName(names.O)
-	}
+	ctx.WriteName(n.DBName.O)
 	if len(n.NewName) > 0 {
 		ctx.WriteKeyWord(" TO ")
 		ctx.WriteName(n.NewName)
@@ -4051,7 +4046,7 @@ type FlashBackToTimestampStmt struct {
 
 	FlashbackTS ExprNode
 	Tables      []*TableName
-	Schemas     []model.CIStr
+	DBName      model.CIStr
 }
 
 // Restore implements Node interface
@@ -4067,14 +4062,9 @@ func (n *FlashBackToTimestampStmt) Restore(ctx *format.RestoreCtx) error {
 				return errors.Annotatef(err, "An error occurred while restore DropTableStmt.Tables[%d]", index)
 			}
 		}
-	} else if len(n.Schemas) != 0 {
+	} else if n.DBName.O != "" {
 		ctx.WriteKeyWord("DATABASE ")
-		for index, schema := range n.Schemas {
-			if index != 0 {
-				ctx.WritePlain(", ")
-			}
-			ctx.WriteName(schema.O)
-		}
+		ctx.WriteName(n.DBName.O)
 	} else {
 		ctx.WriteKeyWord("CLUSTER")
 	}
@@ -4113,20 +4103,15 @@ func (n *FlashBackToTimestampStmt) Accept(v Visitor) (Node, bool) {
 type FlashBackTableStmt struct {
 	ddlNode
 
-	Tables  []*TableName
+	Table   *TableName
 	NewName string
 }
 
 // Restore implements Node interface.
 func (n *FlashBackTableStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("FLASHBACK TABLE ")
-	for index, table := range n.Tables {
-		if index != 0 {
-			ctx.WritePlain(", ")
-		}
-		if err := table.Restore(ctx); err != nil {
-			return errors.Annotate(err, "An error occurred while splicing RecoverTableStmt Table")
-		}
+	if err := n.Table.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while splicing RecoverTableStmt Table")
 	}
 	if len(n.NewName) > 0 {
 		ctx.WriteKeyWord(" TO ")
@@ -4143,15 +4128,11 @@ func (n *FlashBackTableStmt) Accept(v Visitor) (Node, bool) {
 	}
 
 	n = newNode.(*FlashBackTableStmt)
-	if n.Tables != nil {
-		for i, val := range n.Tables {
-			node, ok := val.Accept(v)
-			if !ok {
-				return n, false
-			}
-			n.Tables[i] = node.(*TableName)
-		}
+	node, ok := n.Accept(v)
+	if !ok {
+		return n, false
 	}
+	n.Table = node.(*TableName)
 	return v.Leave(n)
 }
 

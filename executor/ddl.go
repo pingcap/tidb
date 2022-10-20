@@ -175,7 +175,7 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	case *ast.FlashBackToTimestampStmt:
 		if len(x.Tables) != 0 {
 			err = dbterror.ErrGeneralUnsupportedDDL.GenWithStack("Unsupported FLASHBACK table TO TIMESTAMP")
-		} else if len(x.Schemas) != 0 {
+		} else if x.DBName.O != "" {
 			err = dbterror.ErrGeneralUnsupportedDDL.GenWithStack("Unsupported FLASHBACK database TO TIMESTAMP")
 		} else {
 			err = e.executeFlashBackCluster(x)
@@ -548,10 +548,7 @@ func (e *DDLExec) executeFlashBackCluster(s *ast.FlashBackToTimestampStmt) error
 }
 
 func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
-	if len(s.Tables) != 1 {
-		return dbterror.ErrUnsupportedRecoverMultiTables
-	}
-	job, tblInfo, err := e.getRecoverTableByTableName(s.Tables[0])
+	job, tblInfo, err := e.getRecoverTableByTableName(s.Table)
 	if err != nil {
 		return err
 	}
@@ -562,7 +559,7 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 	is := domain.GetDomain(e.ctx).InfoSchema()
 	tbl, ok := is.TableByID(tblInfo.ID)
 	if ok {
-		return infoschema.ErrTableExists.GenWithStack("Table '%-.192s' already been flashback to '%-.192s', can't be flashback repeatedly", s.Tables[0].Name.O, tbl.Meta().Name.O)
+		return infoschema.ErrTableExists.GenWithStack("Table '%-.192s' already been flashback to '%-.192s', can't be flashback repeatedly", s.Table.Name.O, tbl.Meta().Name.O)
 	}
 
 	m, err := domain.GetDomain(e.ctx).GetSnapshotMeta(job.StartTS)
@@ -581,7 +578,7 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 		SnapshotTS:    job.StartTS,
 		AutoIDs:       autoIDs,
 		OldSchemaName: job.SchemaName,
-		OldTableName:  s.Tables[0].Name.L,
+		OldTableName:  s.Table.Name.L,
 	}
 	// Call DDL RecoverTable.
 	err = domain.GetDomain(e.ctx).DDL().RecoverTable(e.ctx, recoverInfo)
@@ -592,10 +589,7 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 // It is built from "flashback schema" statement,
 // is used to recover the schema that deleted by mistake.
 func (e *DDLExec) executeFlashbackDatabase(s *ast.FlashBackDatabaseStmt) error {
-	if len(s.DBNames) != 1 {
-		return dbterror.ErrUnsupportedRecoverMultiDatabases
-	}
-	dbName := s.DBNames[0]
+	dbName := s.DBName
 	if len(s.NewName) > 0 {
 		dbName = model.NewCIStr(s.NewName)
 	}
@@ -604,13 +598,13 @@ func (e *DDLExec) executeFlashbackDatabase(s *ast.FlashBackDatabaseStmt) error {
 	if is.SchemaExists(dbName) {
 		return infoschema.ErrDatabaseExists.GenWithStackByArgs(dbName)
 	}
-	recoverSchemaInfo, err := e.getRecoverDBByName(s.DBNames[0])
+	recoverSchemaInfo, err := e.getRecoverDBByName(s.DBName)
 	if err != nil {
 		return err
 	}
 	// Check the Schema ID was not exists.
 	if schema, ok := is.SchemaByID(recoverSchemaInfo.ID); ok {
-		return infoschema.ErrDatabaseExists.GenWithStack("Schema '%-.192s' already been recover to '%-.192s', can't be recover repeatedly", s.DBNames[0], schema.Name.O)
+		return infoschema.ErrDatabaseExists.GenWithStack("Schema '%-.192s' already been recover to '%-.192s', can't be recover repeatedly", s.DBName, schema.Name.O)
 	}
 	recoverSchemaInfo.Name = dbName
 	// Call DDL RecoverSchema.

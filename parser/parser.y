@@ -604,6 +604,7 @@ import (
 	tikvImporter          "TIKV_IMPORTER"
 	timestampType         "TIMESTAMP"
 	timeType              "TIME"
+	toTimestamp           "TO TIMESTAMP"
 	tp                    "TYPE"
 	trace                 "TRACE"
 	traditional           "TRADITIONAL"
@@ -2591,28 +2592,24 @@ RecoverTableStmt:
  *
  *******************************************************************/
 FlashbackToTimestampStmt:
-	"FLASHBACK" "CLUSTER" "TO" "TIMESTAMP" stringLit
+	"FLASHBACK" "CLUSTER" toTimestamp stringLit
 	{
 		$$ = &ast.FlashBackToTimestampStmt{
-			FlashbackTS: ast.NewValueExpr($5, "", ""),
+			FlashbackTS: ast.NewValueExpr($4, "", ""),
 		}
 	}
-|	"FLASHBACK" "TABLE" TableNameList "TO" "TIMESTAMP" stringLit
+|	"FLASHBACK" "TABLE" TableNameList toTimestamp stringLit
 	{
 		$$ = &ast.FlashBackToTimestampStmt{
 			Tables:      $3.([]*ast.TableName),
-			FlashbackTS: ast.NewValueExpr($6, "", ""),
+			FlashbackTS: ast.NewValueExpr($5, "", ""),
 		}
 	}
-|	"FLASHBACK" DatabaseSym DBNameList "TO" "TIMESTAMP" stringLit
+|	"FLASHBACK" DatabaseSym DBName toTimestamp stringLit
 	{
-		dbNames := make([]model.CIStr, 0, len($3.([]string)))
-		for _, val := range $3.([]string) {
-			dbNames = append(dbNames, model.NewCIStr(val))
-		}
 		$$ = &ast.FlashBackToTimestampStmt{
-			Schemas:     dbNames,
-			FlashbackTS: ast.NewValueExpr($6, "", ""),
+			DBName:      model.NewCIStr($3),
+			FlashbackTS: ast.NewValueExpr($5, "", ""),
 		}
 	}
 
@@ -2624,10 +2621,10 @@ FlashbackToTimestampStmt:
  *
  *******************************************************************/
 FlashbackTableStmt:
-	"FLASHBACK" "TABLE" TableNameList FlashbackToNewName
+	"FLASHBACK" "TABLE" TableName FlashbackToNewName
 	{
 		$$ = &ast.FlashBackTableStmt{
-			Tables:  $3.([]*ast.TableName),
+			Table:   $3.(*ast.TableName),
 			NewName: $4,
 		}
 	}
@@ -2650,14 +2647,10 @@ FlashbackToNewName:
  *
  *******************************************************************/
 FlashbackDatabaseStmt:
-	"FLASHBACK" DatabaseSym DBNameList FlashbackToNewName
+	"FLASHBACK" DatabaseSym DBName FlashbackToNewName
 	{
-		dbNames := make([]model.CIStr, 0, len($3.([]string)))
-		for _, val := range $3.([]string) {
-			dbNames = append(dbNames, model.NewCIStr(val))
-		}
 		$$ = &ast.FlashBackDatabaseStmt{
-			DBNames: dbNames,
+			DBName:  model.NewCIStr($3),
 			NewName: $4,
 		}
 	}
@@ -6149,6 +6142,7 @@ UnReservedKeyword:
 |	"THAN"
 |	"TIME" %prec lowerThanStringLitToken
 |	"TIMESTAMP" %prec lowerThanStringLitToken
+|	"TO TIMESTAMP"
 |	"TRACE"
 |	"TRANSACTION"
 |	"TRUNCATE"
