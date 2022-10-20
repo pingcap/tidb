@@ -184,9 +184,9 @@ func (ei *engineInfo) newWriterContext(workerID int) (*WriterContext, error) {
 
 // WriteRow Write one row into local writer buffer.
 func (wCtx *WriterContext) WriteRow(key, idxVal []byte) error {
-	kvs := make([]common.KvPair, 1)
+	var kvs [1]common.KvPair
 	kvs[0].Key = key
 	kvs[0].Val = idxVal
-	row := kv.MakeRowsFromKvPairs(kvs)
+	row := kv.MakeRowsFromKvPairs(kvs[:])
 	return wCtx.lWrite.WriteRows(wCtx.ctx, nil, row)
 }
