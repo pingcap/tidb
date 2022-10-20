@@ -396,7 +396,6 @@ func TestSingleRuleTraceStep(t *testing.T) {
 	s := createPlannerSuite()
 	for i, tc := range tt {
 		sql := tc.sql
-		fmt.Printf("\nsql:%v\nflags:%v\nassertRuleName:%v\nassertRuleSteps:%v\n", tc.sql, tc.flags, tc.assertRuleName, tc.assertRuleSteps)
 		comment := fmt.Sprintf("case:%v sql:%s", i, sql)
 		stmt, err := s.p.ParseOneStmt(sql, "", "")
 		require.NoError(t, err, comment)
@@ -421,7 +420,6 @@ func TestSingleRuleTraceStep(t *testing.T) {
 		require.NotNil(t, trace, comment)
 		assert := false
 		for _, step := range trace.Steps {
-			fmt.Printf("trace step:%v\n", step.RuleName)
 			if step.RuleName == tc.assertRuleName {
 				assert = true
 				for i, ruleStep := range step.Steps {

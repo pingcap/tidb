@@ -7709,16 +7709,24 @@ func TestAvoidDoubleScanForPrefixIndex(t *testing.T) {
   KEY idx1 (c1),
   KEY idx2 (c1,c2(5))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
+	tk.MustExec("set tidb_prefer_prefix_index_single_scan = 1")
 	tk.MustExec("insert into t1 values ('a', '0xfff', '111111'), ('b', '0xfff', '222222'), ('c', '0xfff', null)")
-	tk.MustQuery("explain format='brief' select count(1) from t1 where c1 = '0xfff' and c2 is not null").Check(testkit.Rows(
-		"StreamAgg 1.00 root  funcs:count(Column#7)->Column#5",
-		"└─IndexReader 1.00 root  index:StreamAgg",
-		"  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#7",
-		"    └─IndexRangeScan 99.90 cop[tikv] table:t1, index:idx2(c1, c2) range:[\"0xfff\" -inf,\"0xfff\" +inf], keep order:false, stats:pseudo"))
-	tk.MustQuery("select count(1) from t1 where c1 = '0xfff' and c2 is not null").Check(testkit.Rows("2"))
-	tk.MustQuery("explain format='brief' select count(1) from t1 where c1 = '0xfff' and c2 is null").Check(testkit.Rows(
-		"StreamAgg 1.00 root  funcs:count(1)->Column#5",
-		"└─IndexReader 0.10 root  index:IndexRangeScan",
-		"  └─IndexRangeScan 0.10 cop[tikv] table:t1, index:idx2(c1, c2) range:[\"0xfff\" NULL,\"0xfff\" NULL], keep order:false, stats:pseudo"))
-	tk.MustQuery("select count(1) from t1 where c1 = '0xfff' and c2 is null").Check(testkit.Rows("1"))
+
+	var input []string
+	var output []struct {
+		SQL    string
+		Plan   []string
+		Result []string
+	}
+	integrationSuiteData := core.GetIntegrationSuiteData()
+	integrationSuiteData.LoadTestCases(t, &input, &output)
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format='brief' " + tt).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery("explain format='brief' " + tt).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
+	}
 }

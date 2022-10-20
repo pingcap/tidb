@@ -16,7 +16,6 @@ package core
 
 import (
 	"context"
-	"fmt"
 	"math"
 
 	"github.com/pingcap/errors"
@@ -651,7 +650,6 @@ func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (Logic
 
 func isLogicalRuleDisabled(r logicalOptRule) bool {
 	disabled := DefaultDisabledLogicalRulesList.Load().(set.StringSet).Exist(r.name())
-	logutil.BgLogger().Info(fmt.Sprintf("rule:%v, disabled:%v", r.name(), disabled))
 	return disabled
 }
 
