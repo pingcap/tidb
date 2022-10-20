@@ -1320,7 +1320,6 @@ func (w *baseIndexWorker) updateRowDecoder(handle kv.Handle, rawRecord []byte) e
 // 3. Boolean indicates whether the task is done.
 // 4. error occurs in fetchRowColVals. nil if no error occurs.
 func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBackfillTask) ([]*indexRecord, kv.Key, bool, error) {
-	defer injectSpan(w.reorgInfo.Job.ID, fmt.Sprintf("%s-%d", "fetch-rows", w.id))()
 	// TODO: use tableScan to prune columns.
 	w.idxRecords = w.idxRecords[:0]
 	startTime := time.Now()
