@@ -20,9 +20,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/extension"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/sem"
 )
 
 var extensionFuncs sync.Map
@@ -88,6 +90,10 @@ func newExtensionFuncClass(def *extension.FunctionDef) (*extensionFuncClass, err
 }
 
 func (c *extensionFuncClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.checkPrivileges(ctx); err != nil {
+		return nil, err
+	}
+
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -98,6 +104,32 @@ func (c *extensionFuncClass) getFunction(ctx sessionctx.Context, args []Expressi
 	bf.tp.SetFlen(c.flen)
 	sig := &extensionFuncSig{bf, c.funcDef}
 	return sig, nil
+}
+
+func (c *extensionFuncClass) checkPrivileges(ctx sessionctx.Context) error {
+	privs := c.funcDef.DynamicPrivileges
+	if semPrivs := c.funcDef.SemDynamicPrivileges; len(semPrivs) > 0 && sem.IsEnabled() {
+		privs = semPrivs
+	}
+
+	if len(privs) == 0 {
+		return nil
+	}
+
+	manager := privilege.GetPrivilegeManager(ctx)
+	activeRoles := ctx.GetSessionVars().ActiveRoles
+
+	for _, priv := range privs {
+		if !manager.RequestDynamicVerification(activeRoles, priv, false) {
+			msg := priv
+			if !sem.IsEnabled() {
+				msg = "SUPER or " + msg
+			}
+			return errSpecificAccessDenied.GenWithStackByArgs(msg)
+		}
+	}
+
+	return nil
 }
 
 var _ extension.FunctionContext = &extensionFuncSig{}

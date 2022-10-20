@@ -20,13 +20,14 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pingcap/tidb/expression"
-
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/extension"
+	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/sem"
 	"github.com/stretchr/testify/require"
 )
 
@@ -167,4 +168,143 @@ func checkFuncList(t *testing.T, orgList []string, customFuncs ...string) {
 	checkList = append(checkList, customFuncs...)
 	sort.Strings(checkList)
 	require.Equal(t, checkList, expression.GetBuiltinList())
+}
+
+func TestFuncPrivilege(t *testing.T) {
+	defer func() {
+		extension.Reset()
+		sem.Disable()
+	}()
+
+	extension.Reset()
+	require.NoError(t, extension.Register("test",
+		extension.WithCustomFunctions([]*extension.FunctionDef{
+			{
+				Name:   "custom_no_priv_func",
+				EvalTp: types.ETString,
+				EvalStringFunc: func(ctx extension.FunctionContext, row chunk.Row) (string, bool, error) {
+					return "zzz", false, nil
+				},
+			},
+			{
+				Name:              "custom_only_dyn_priv_func",
+				EvalTp:            types.ETString,
+				DynamicPrivileges: []string{"CUSTOM_DYN_PRIV_1"},
+				EvalStringFunc: func(ctx extension.FunctionContext, row chunk.Row) (string, bool, error) {
+					return "abc", false, nil
+				},
+			},
+			{
+				Name:                 "custom_only_sem_dyn_priv_func",
+				EvalTp:               types.ETString,
+				SemDynamicPrivileges: []string{"RESTRICTED_CUSTOM_DYN_PRIV_2"},
+				EvalStringFunc: func(ctx extension.FunctionContext, row chunk.Row) (string, bool, error) {
+					return "def", false, nil
+				},
+			},
+			{
+				Name:                 "custom_both_dyn_priv_func",
+				EvalTp:               types.ETString,
+				DynamicPrivileges:    []string{"CUSTOM_DYN_PRIV_1"},
+				SemDynamicPrivileges: []string{"RESTRICTED_CUSTOM_DYN_PRIV_2"},
+				EvalStringFunc: func(ctx extension.FunctionContext, row chunk.Row) (string, bool, error) {
+					return "ghi", false, nil
+				},
+			},
+		}),
+		extension.WithCustomDynPrivs([]string{
+			"CUSTOM_DYN_PRIV_1",
+			"RESTRICTED_CUSTOM_DYN_PRIV_2",
+		}),
+	))
+	require.NoError(t, extension.Setup())
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create user u1@localhost")
+
+	tk.MustExec("create user u2@localhost")
+	tk.MustExec("GRANT CUSTOM_DYN_PRIV_1 on *.* TO u2@localhost")
+
+	tk.MustExec("create user u3@localhost")
+	tk.MustExec("GRANT RESTRICTED_CUSTOM_DYN_PRIV_2 on *.* TO u3@localhost")
+
+	tk.MustExec("create user u4@localhost")
+	tk.MustExec("GRANT CUSTOM_DYN_PRIV_1, RESTRICTED_CUSTOM_DYN_PRIV_2 on *.* TO u4@localhost")
+
+	tk1 := testkit.NewTestKit(t, store)
+
+	// root has all privileges by default
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil))
+	tk1.MustQuery("select custom_no_priv_func()").Check(testkit.Rows("zzz"))
+	tk1.MustQuery("select custom_only_dyn_priv_func()").Check(testkit.Rows("abc"))
+	tk1.MustQuery("select custom_only_sem_dyn_priv_func()").Check(testkit.Rows("def"))
+	tk1.MustQuery("select custom_both_dyn_priv_func()").Check(testkit.Rows("ghi"))
+
+	// u1 in non-sem
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil))
+	tk1.MustQuery("select custom_no_priv_func()").Check(testkit.Rows("zzz"))
+	require.EqualError(t, tk1.ExecToErr("select custom_only_dyn_priv_func()"), "[expression:1227]Access denied; you need (at least one of) the SUPER or CUSTOM_DYN_PRIV_1 privilege(s) for this operation")
+	tk1.MustQuery("select custom_only_sem_dyn_priv_func()").Check(testkit.Rows("def"))
+	require.EqualError(t, tk1.ExecToErr("select custom_both_dyn_priv_func()"), "[expression:1227]Access denied; you need (at least one of) the SUPER or CUSTOM_DYN_PRIV_1 privilege(s) for this operation")
+
+	// u2 in non-sem
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "u2", Hostname: "localhost"}, nil, nil))
+	tk1.MustQuery("select custom_no_priv_func()").Check(testkit.Rows("zzz"))
+	tk1.MustQuery("select custom_only_dyn_priv_func()").Check(testkit.Rows("abc"))
+	tk1.MustQuery("select custom_only_sem_dyn_priv_func()").Check(testkit.Rows("def"))
+	tk1.MustQuery("select custom_both_dyn_priv_func()").Check(testkit.Rows("ghi"))
+
+	// u3 in non-sem
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "u3", Hostname: "localhost"}, nil, nil))
+	tk1.MustQuery("select custom_no_priv_func()").Check(testkit.Rows("zzz"))
+	require.EqualError(t, tk1.ExecToErr("select custom_only_dyn_priv_func()"), "[expression:1227]Access denied; you need (at least one of) the SUPER or CUSTOM_DYN_PRIV_1 privilege(s) for this operation")
+	tk1.MustQuery("select custom_only_sem_dyn_priv_func()").Check(testkit.Rows("def"))
+	require.EqualError(t, tk1.ExecToErr("select custom_both_dyn_priv_func()"), "[expression:1227]Access denied; you need (at least one of) the SUPER or CUSTOM_DYN_PRIV_1 privilege(s) for this operation")
+
+	// u4 in non-sem
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "u4", Hostname: "localhost"}, nil, nil))
+	tk1.MustQuery("select custom_no_priv_func()").Check(testkit.Rows("zzz"))
+	tk1.MustQuery("select custom_only_dyn_priv_func()").Check(testkit.Rows("abc"))
+	tk1.MustQuery("select custom_only_sem_dyn_priv_func()").Check(testkit.Rows("def"))
+	tk1.MustQuery("select custom_both_dyn_priv_func()").Check(testkit.Rows("ghi"))
+
+	sem.Enable()
+
+	// root in sem
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil))
+	tk1.MustQuery("select custom_no_priv_func()").Check(testkit.Rows("zzz"))
+	tk1.MustQuery("select custom_only_dyn_priv_func()").Check(testkit.Rows("abc"))
+	require.EqualError(t, tk1.ExecToErr("select custom_only_sem_dyn_priv_func()"), "[expression:1227]Access denied; you need (at least one of) the RESTRICTED_CUSTOM_DYN_PRIV_2 privilege(s) for this operation")
+	require.EqualError(t, tk1.ExecToErr("select custom_both_dyn_priv_func()"), "[expression:1227]Access denied; you need (at least one of) the RESTRICTED_CUSTOM_DYN_PRIV_2 privilege(s) for this operation")
+
+	// u1 in sem
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil))
+	tk1.MustQuery("select custom_no_priv_func()").Check(testkit.Rows("zzz"))
+	require.EqualError(t, tk1.ExecToErr("select custom_only_dyn_priv_func()"), "[expression:1227]Access denied; you need (at least one of) the CUSTOM_DYN_PRIV_1 privilege(s) for this operation")
+	require.EqualError(t, tk1.ExecToErr("select custom_only_sem_dyn_priv_func()"), "[expression:1227]Access denied; you need (at least one of) the RESTRICTED_CUSTOM_DYN_PRIV_2 privilege(s) for this operation")
+	require.EqualError(t, tk1.ExecToErr("select custom_both_dyn_priv_func()"), "[expression:1227]Access denied; you need (at least one of) the RESTRICTED_CUSTOM_DYN_PRIV_2 privilege(s) for this operation")
+
+	// u2 in sem
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "u2", Hostname: "localhost"}, nil, nil))
+	tk1.MustQuery("select custom_no_priv_func()").Check(testkit.Rows("zzz"))
+	tk1.MustQuery("select custom_only_dyn_priv_func()").Check(testkit.Rows("abc"))
+	require.EqualError(t, tk1.ExecToErr("select custom_only_sem_dyn_priv_func()"), "[expression:1227]Access denied; you need (at least one of) the RESTRICTED_CUSTOM_DYN_PRIV_2 privilege(s) for this operation")
+	require.EqualError(t, tk1.ExecToErr("select custom_both_dyn_priv_func()"), "[expression:1227]Access denied; you need (at least one of) the RESTRICTED_CUSTOM_DYN_PRIV_2 privilege(s) for this operation")
+
+	// u3 in sem
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "u3", Hostname: "localhost"}, nil, nil))
+	tk1.MustQuery("select custom_no_priv_func()").Check(testkit.Rows("zzz"))
+	require.EqualError(t, tk1.ExecToErr("select custom_only_dyn_priv_func()"), "[expression:1227]Access denied; you need (at least one of) the CUSTOM_DYN_PRIV_1 privilege(s) for this operation")
+	tk1.MustQuery("select custom_only_sem_dyn_priv_func()").Check(testkit.Rows("def"))
+	tk1.MustQuery("select custom_both_dyn_priv_func()").Check(testkit.Rows("ghi"))
+
+	// u4 in sem
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "u4", Hostname: "localhost"}, nil, nil))
+	tk1.MustQuery("select custom_no_priv_func()").Check(testkit.Rows("zzz"))
+	tk1.MustQuery("select custom_only_dyn_priv_func()").Check(testkit.Rows("abc"))
+	tk1.MustQuery("select custom_only_sem_dyn_priv_func()").Check(testkit.Rows("def"))
+	tk1.MustQuery("select custom_both_dyn_priv_func()").Check(testkit.Rows("ghi"))
 }
