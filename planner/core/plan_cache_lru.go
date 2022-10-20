@@ -201,6 +201,14 @@ func (l *LRUPlanCache) SetCapacity(capacity uint) error {
 	return nil
 }
 
+// MemoryUsage return the memory usage of LRUPlanCache
+func (l *LRUPlanCache) MemoryUsage() (sum int64) {
+	if l == nil {
+		return
+	}
+	return l.memTracker.BytesConsumed()
+}
+
 // removeOldest removes the oldest element from the cache.
 func (l *LRUPlanCache) removeOldest() {
 	lru := l.lruList.Back()
