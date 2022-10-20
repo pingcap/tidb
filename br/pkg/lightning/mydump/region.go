@@ -170,7 +170,7 @@ func MakeTableRegions(
 		go func() {
 			defer wg.Done()
 			for info := range fileChan {
-				regions, sizes, err := makeSourceFileRegion(execCtx, meta, info, columns, cfg, ioWorkers, store)
+				regions, sizes, err := MakeSourceFileRegion(execCtx, meta, info, columns, cfg, ioWorkers, store)
 				select {
 				case resultChan <- fileRegionRes{info: info, regions: regions, sizes: sizes, err: err}:
 				case <-ctx.Done():
@@ -255,7 +255,8 @@ func MakeTableRegions(
 	return filesRegions, nil
 }
 
-func makeSourceFileRegion(
+// MakeSourceFileRegion create a new source file region.
+func MakeSourceFileRegion(
 	ctx context.Context,
 	meta *MDTableMeta,
 	fi FileInfo,
@@ -283,7 +284,9 @@ func makeSourceFileRegion(
 	// We increase the check threshold by 1/10 of the `max-region-size` because the source file size dumped by tools
 	// like dumpling might be slight exceed the threshold when it is equal `max-region-size`, so we can
 	// avoid split a lot of small chunks.
-	if isCsvFile && cfg.Mydumper.StrictFormat && dataFileSize > int64(cfg.Mydumper.MaxRegionSize+cfg.Mydumper.MaxRegionSize/largeCSVLowerThresholdRation) {
+	// If a csv file is compressed, we can't split it now because we can't get the exact size of a row.
+	if isCsvFile && cfg.Mydumper.StrictFormat && fi.FileMeta.Compression == CompressionNone &&
+		dataFileSize > int64(cfg.Mydumper.MaxRegionSize+cfg.Mydumper.MaxRegionSize/largeCSVLowerThresholdRation) {
 		_, regions, subFileSizes, err := SplitLargeFile(ctx, meta, cfg, fi, divisor, 0, ioWorkers, store)
 		return regions, subFileSizes, err
 	}

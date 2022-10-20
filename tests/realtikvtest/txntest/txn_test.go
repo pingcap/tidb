@@ -203,3 +203,28 @@ func TestWriteConflictMessage(t *testing.T) {
 	require.Contains(t, err.Error(), "tableName=test.t2, handle={hello}")
 	require.Contains(t, err.Error(), "reason=Optimistic")
 }
+
+func TestDuplicateErrorMessage(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tx_isolation='read-committed'")
+	tk2.MustExec("use test")
+	tk.MustExec("set @@tidb_constraint_check_in_place_pessimistic=off")
+	tk.MustExec("create table t (c int primary key, v int)")
+	tk.MustExec("create table t2 (c int primary key, v int)")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t values (1, 1)")
+	tk2.MustExec("insert into t values (1, 1)")
+	tk2.MustExec("insert into t2 values (1, 2)")
+	tk.MustContainErrMsg("update t set v = v + 1 where c = 1", "Duplicate entry '1' for key 't.PRIMARY'")
+
+	tk.MustExec("create table t3 (c int, v int, unique key i1(v))")
+	tk.MustExec("create table t4 (c int, v int, unique key i1(v))")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t3 values (1, 1)")
+	tk2.MustExec("insert into t3 values (1, 1)")
+	tk2.MustExec("insert into t4 values (1, 2)")
+	tk.MustContainErrMsg("update t3 set c = c + 1 where v = 1", "Duplicate entry '1' for key 't3.i1'")
+}
