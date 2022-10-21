@@ -1560,9 +1560,7 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 			sm.Kill(e.ctx.GetSessionVars().ConnectionID, s.Query)
 			return nil
 		}
-		err := errors.New("Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] [connectionID | CONNECTION_ID()]' instead")
-		e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
-		return nil
+		return errors.New("Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] [connectionID | CONNECTION_ID()]' instead")
 	}
 	if !config.GetGlobalConfig().EnableGlobalKill {
 		conf := config.GetGlobalConfig()
