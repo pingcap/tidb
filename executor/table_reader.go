@@ -412,7 +412,7 @@ func (e *TableReaderExecutor) buildKVReq(ctx context.Context, ranges []*ranger.R
 	} else {
 		reqBuilder = builder.SetHandleRanges(e.ctx.GetSessionVars().StmtCtx, getPhysicalTableID(e.table), e.table.Meta() != nil && e.table.Meta().IsCommonHandle, ranges, e.feedback)
 	}
-	if e.table.Meta().Name.L == "tiflash_replica" {
+	if e.table.Meta() != nil && e.table.Meta().Name.L == "tiflash_replica" {
 		ownerManager := domain.GetDomain(e.ctx).DDL().OwnerManager()
 		ddlOwnerID, err := ownerManager.GetOwnerID(ctx)
 		if err != nil {

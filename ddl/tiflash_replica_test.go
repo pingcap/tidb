@@ -146,8 +146,9 @@ func TestSetTiFlashReplicaForTemporaryTable(t *testing.T) {
 	}()
 
 	store := testkit.CreateMockStoreWithSchemaLease(t, tiflashReplicaLease)
-
 	tk := testkit.NewTestKit(t, store)
+	rpcserver, _ := testkit.SetUpRPCService(t, "127.0.0.1:0", domain.GetDomain(tk.Session()), nil)
+	defer rpcserver.Stop()
 	tk.MustExec("use test")
 	tk.MustExec("create global temporary table temp(id int) on commit delete rows")
 	tk.MustExec("create temporary table temp2(id int)")

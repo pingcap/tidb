@@ -627,6 +627,8 @@ func TestForTableTiFlashReplica(t *testing.T) {
 
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	rpcserver, _ := testkit.SetUpRPCService(t, "127.0.0.1:0", domain.GetDomain(tk.Session()), nil)
+	defer rpcserver.Stop()
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int, index idx(a))")
