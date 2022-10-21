@@ -1295,7 +1295,7 @@ func TestForeignKeyOnUpdateCascade(t *testing.T) {
 		},
 	}
 
-	for _, ca := range cases {
+	for idx, ca := range cases {
 		tk.MustExec("drop table if exists t2;")
 		tk.MustExec("drop table if exists t1;")
 		for _, sql := range ca.prepareSQLs {
@@ -1317,6 +1317,67 @@ func TestForeignKeyOnUpdateCascade(t *testing.T) {
 		tk.MustExec("update t1 set a=0, b = 0 where id = 7")
 		tk.MustQuery("select id, a, b from t1 where a=0 and b=0 order by id").Check(testkit.Rows("7 0 0"))
 		tk.MustQuery("select id, a, b from t2 where a=0 and b=0 order by id").Check(testkit.Rows())
+
+		// Test in transaction.
+		tk.MustExec("delete from t2")
+		tk.MustExec("delete from t1")
+		tk.MustExec("begin")
+		tk.MustExec("insert into t1 values (1, 1, 1),(2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, null), (6, null, 6), (7, null, null);")
+		tk.MustExec("insert into t2 (id, a, b, name) values (1, 1, 1, 'a'),(2, 2, 2, 'b'), (3, 3, 3, 'c'), (4, 4, 4, 'd'), (5, 5, null, 'e'), (6, null, 6, 'f'), (7, null, null, 'g');")
+		tk.MustExec("update t1 set a=a+100, b = b+200 where id in (1, 2)")
+		tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 101 201 a", "2 102 202 b", "3 3 3 c", "4 4 4 d", "5 5 <nil> e", "6 <nil> 6 f", "7 <nil> <nil> g"))
+		tk.MustExec("rollback")
+		tk.MustQuery("select * from t1").Check(testkit.Rows())
+		tk.MustQuery("select * from t2").Check(testkit.Rows())
+
+		tk.MustExec("insert into t1 values (1, 1, 1),(2, 2, 2);")
+		tk.MustExec("begin")
+		tk.MustExec("insert into t2 (id, a, b, name) values (1, 1, 1, 'a'),(2, 2, 2, 'b')")
+		tk.MustExec("update t1 set a=101 where a = 1")
+		tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 101 1", "2 2 2"))
+		tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 101 1 a", "2 2 2 b"))
+		err := tk.ExecToErr("insert into t2 (id, a, b, name) values (3, 1, 1, 'c')")
+		require.Error(t, err)
+		require.True(t, plannercore.ErrNoReferencedRow2.Equal(err), err.Error())
+		tk.MustExec("insert into t1 values (3, 1, 1);")
+		tk.MustExec("insert into t2 (id, a, b, name) values (3, 1, 1, 'c')")
+		tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 101 1", "2 2 2", "3 1 1"))
+		tk.MustQuery("select id, a, b, name from t2 order by id, a").Check(testkit.Rows("1 101 1 a", "2 2 2 b", "3 1 1 c"))
+		tk.MustExec("update t1 set a=null, b=2000 where id in (1, 2)")
+		tk.MustExec("commit")
+		tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 <nil> 2000", "2 <nil> 2000", "3 1 1"))
+		tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 <nil> 2000 a", "2 <nil> 2000 b", "3 1 1 c"))
+
+		// only test in non-unique index
+		if idx >= 2 {
+			tk.MustExec("delete from t2")
+			tk.MustExec("delete from t1")
+			tk.MustExec("insert into t1 values (1, 1, 1),(2, 1, 1);")
+			tk.MustExec("begin")
+			tk.MustExec("update t1 set a=101 where id = 1")
+			tk.MustExec("insert into t2 (id, a, b, name) values (1, 1, 1, 'a')")
+			tk.MustExec("update t1 set b=102 where id = 2")
+			tk.MustQuery("select * from t1").Check(testkit.Rows("1 101 1", "2 1 102"))
+			tk.MustQuery("select id, a, b, name from t2").Check(testkit.Rows("1 1 102 a"))
+			err := tk.ExecToErr("insert into t2 (id, a, b, name) values (3, 1, 1, 'e')")
+			require.Error(t, err)
+			require.True(t, plannercore.ErrNoReferencedRow2.Equal(err), err.Error())
+			tk.MustExec("insert into t1 values (3, 1, 1);")
+			tk.MustExec("insert into t2 (id, a, b, name) values (3, 1, 1, 'e')")
+			tk.MustExec("commit")
+			tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 101 1", "2 1 102", "3 1 1"))
+			tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 1 102 a", "3 1 1 e"))
+
+			tk.MustExec("delete from t2")
+			tk.MustExec("delete from t1")
+			tk.MustExec("begin")
+			tk.MustExec("insert into t1 values (1, 1, 1),(2, 1, 1);")
+			tk.MustExec("insert into t2 (id, a, b, name) values (1, 1, 1, 'a'), (2, 1, 1, 'b')")
+			tk.MustExec("update t1 set a=101, b=102 where id = 1")
+			tk.MustExec("commit")
+			tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 101 102", "2 1 1"))
+			tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 101 102 a", "2 101 102 b"))
+		}
 	}
 
 	cases = []struct {
@@ -1363,20 +1424,50 @@ func TestForeignKeyOnUpdateCascade(t *testing.T) {
 		}
 		tk.MustExec("insert into t1 (id, a, b) values (1, 11, 21),(2, 12, 22), (3, 13, 23), (4, 14, 24)")
 		tk.MustExec("insert into t2 (id, a, b, name) values (1, 11, 21, 'a'),(2, 12, 22, 'b'), (3, 13, 23, 'c'), (4, 14, 24, 'd')")
-
 		tk.MustExec("update t1 set a=a+100, b = b+200 where id in (1, 2)")
 		tk.MustQuery("select id, a, b from t1 where id in (1,2) order by id").Check(testkit.Rows("1 111 221", "2 112 222"))
 		tk.MustQuery("select id, a, b, name from t2 where id in (1,2,3) order by id").Check(testkit.Rows("1 111 221 a", "2 112 222 b", "3 13 23 c"))
-
 		tk.MustExec("update t1 set a=101 where id = 1 or b = 222")
 		tk.MustQuery("select id, a, b from t1 where id in (1,2) order by id").Check(testkit.Rows("1 101 221", "2 101 222"))
 		tk.MustQuery("select id, a, b, name from t2 where id in (1,2,3) order by id").Check(testkit.Rows("1 101 221 a", "2 101 222 b", "3 13 23 c"))
 
 		if idx < 2 {
-			err := tk.ExecToErr("update t1 set b=200 where id in (1,2);")
-			require.Error(t, err)
-			require.True(t, kv.ErrKeyExists.Equal(err), err.Error())
+			tk.MustGetDBError("update t1 set b=200 where id in (1,2);", kv.ErrKeyExists)
 		}
+
+		// test in transaction.
+		tk.MustExec("delete from t2")
+		tk.MustExec("delete from t1")
+		tk.MustExec("begin")
+		tk.MustExec("insert into t1 values (1, 1, 1),(2, 2, 2), (3, 3, 3), (4, 4, 4);")
+		tk.MustExec("insert into t2 (id, a, b, name) values (1, 1, 1, 'a'),(2, 2, 2, 'b'), (3, 3, 3, 'c'), (4, 4, 4, 'd');")
+		tk.MustExec("update t1 set a=a+100, b=b+200 where id = 1 or a = 2")
+		tk.MustExec("update t1 set a=a+1000, b=b+2000 where a in (2,3,4) or b in (5,6,7) or id=2")
+		tk.MustQuery("select id, a, b from t2 order by id").Check(testkit.Rows("1 101 201", "2 1102 2202", "3 1003 2003", "4 1004 2004"))
+		tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 101 201 a", "2 1102 2202 b", "3 1003 2003 c", "4 1004 2004 d"))
+		tk.MustExec("commit")
+		tk.MustQuery("select id, a, b from t2 order by id").Check(testkit.Rows("1 101 201", "2 1102 2202", "3 1003 2003", "4 1004 2004"))
+		tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 101 201 a", "2 1102 2202 b", "3 1003 2003 c", "4 1004 2004 d"))
+
+		tk.MustExec("delete from t2")
+		tk.MustExec("delete from t1")
+		tk.MustExec("insert into t1 values (1, 1, 1),(2, 2, 2);")
+		tk.MustExec("begin")
+		tk.MustExec("insert into t2 (id, a, b, name) values (1, 1, 1, 'a'),(2, 2, 2, 'b')")
+		tk.MustExec("update t1 set a=a+100, b=b+200 where id = 1")
+		tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 101 201", "2 2 2"))
+		tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 101 201 a", "2 2 2 b"))
+		err := tk.ExecToErr("insert into t2 (id, a, b, name) values (3, 1, 1, 'e')")
+		require.Error(t, err)
+		require.True(t, plannercore.ErrNoReferencedRow2.Equal(err), err.Error())
+		tk.MustExec("insert into t1 values (3, 1, 1);")
+		tk.MustExec("insert into t2 (id, a, b, name) values (3, 1, 1, 'c')")
+		tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 101 201", "2 2 2", "3 1 1"))
+		tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 101 201 a", "2 2 2 b", "3 1 1 c"))
+		tk.MustExec("update t1 set a=a+1000, b=b+2000 where a>1")
+		tk.MustExec("commit")
+		tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 1101 2201", "2 1002 2002", "3 1 1"))
+		tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 1101 2201 a", "2 1002 2002 b", "3 1 1 c"))
 	}
 
 	// Case-9: test primary key is handle and contain foreign key column.
@@ -1399,6 +1490,7 @@ func TestForeignKeyOnUpdateCascade2(t *testing.T) {
 	tk.MustExec("set @@foreign_key_checks=1")
 	tk.MustExec("use test")
 
+	// Test update same old row in parent, but only the first old row do cascade update
 	tk.MustExec("create table t1 (id int key, a int,  index (a));")
 	tk.MustExec("create table t2 (id int key, pid int, constraint fk_pid foreign key (pid) references t1(a) ON UPDATE CASCADE);")
 	tk.MustExec("insert into t1 (id, a) values   (1,1), (2, 1)")
@@ -1406,4 +1498,48 @@ func TestForeignKeyOnUpdateCascade2(t *testing.T) {
 	tk.MustExec("update t1 set a=id+1")
 	tk.MustQuery("select id, a from t1 order by id").Check(testkit.Rows("1 2", "2 3"))
 	tk.MustQuery("select id, pid from t2 order by id").Check(testkit.Rows("1 2", "2 2"))
+
+	// Test cascade delete in self table.
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (id int key, name varchar(10), leader int,  index(leader), foreign key (leader) references t1(id) ON UPDATE CASCADE);")
+	tk.MustExec("insert into t1 values (1, 'boss', null), (10, 'l1_a', 1), (11, 'l1_b', 1), (12, 'l1_c', 1)")
+	tk.MustExec("insert into t1 values (100, 'l2_a1', 10)")
+	tk.MustExec("insert into t1 values (110, 'l2_b1', 11)")
+	tk.MustExec("insert into t1 values (1000,'l3_a1', 100)")
+	tk.MustExec("update t1 set id=id+10000 where id=11")
+	tk.MustQuery("select id, name, leader from t1 order by id").Check(testkit.Rows("1 boss <nil>", "10 l1_a 1", "12 l1_c 1", "100 l2_a1 10", "110 l2_b1 10011", "1000 l3_a1 100", "10011 l1_b 1"))
+	tk.MustExec("update t1 set id=0 where id=1")
+	tk.MustQuery("select id, name, leader from t1 order by id").Check(testkit.Rows("0 boss <nil>", "10 l1_a 0", "12 l1_c 0", "100 l2_a1 10", "110 l2_b1 10011", "1000 l3_a1 100", "10011 l1_b 0"))
+
+	// Test explain analyze with foreign key cascade.
+	tk.MustExec("explain analyze update t1 set id=1 where id=10")
+	tk.MustQuery("select id, name, leader from t1 order by id").Check(testkit.Rows("0 boss <nil>", "1 l1_a 0", "12 l1_c 0", "100 l2_a1 1", "110 l2_b1 10011", "1000 l3_a1 100", "10011 l1_b 0"))
+
+	// Test cascade delete in self table with string type foreign key.
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (id varchar(100) key, name varchar(10), leader varchar(100),  index(leader), foreign key (leader) references t1(id) ON UPDATE CASCADE);")
+	tk.MustExec("insert into t1 values (1, 'boss', null), (10, 'l1_a', 1), (11, 'l1_b', 1), (12, 'l1_c', 1)")
+	tk.MustExec("insert into t1 values (100, 'l2_a1', 10)")
+	tk.MustExec("insert into t1 values (110, 'l2_b1', 11)")
+	tk.MustExec("insert into t1 values (1000,'l3_a1', 100)")
+	tk.MustExec("update t1 set id=id+10000 where id=11")
+	tk.MustQuery("select id, name, leader from t1 order by name").Check(testkit.Rows("1 boss <nil>", "10 l1_a 1", "10011 l1_b 1", "12 l1_c 1", "100 l2_a1 10", "110 l2_b1 10011", "1000 l3_a1 100"))
+	tk.MustExec("update t1 set id=0 where id=1")
+	tk.MustQuery("select id, name, leader from t1 order by name").Check(testkit.Rows("0 boss <nil>", "10 l1_a 0", "10011 l1_b 0", "12 l1_c 0", "100 l2_a1 10", "110 l2_b1 10011", "1000 l3_a1 100"))
+
+	// Test cascade delete depth error.
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t0 (id int, unique index(id))")
+	tk.MustExec("insert into t0 values (1)")
+	for i := 1; i < 17; i++ {
+		tk.MustExec(fmt.Sprintf("create table t%v (id int, unique index(id), foreign key (id) references t%v(id) on update cascade)", i, i-1))
+		tk.MustExec(fmt.Sprintf("insert into t%v values (1)", i))
+	}
+	tk.MustGetDBError("update t0 set id=10 where id=1;", executor.ErrForeignKeyCascadeDepthExceeded)
+	tk.MustQuery("select id from t0").Check(testkit.Rows("1"))
+	tk.MustQuery("select id from t15").Check(testkit.Rows("1"))
+	tk.MustExec("drop table if exists t16")
+	tk.MustExec("update t0 set id=10 where id=1;")
+	tk.MustQuery("select id from t0").Check(testkit.Rows("10"))
+	tk.MustQuery("select id from t15").Check(testkit.Rows("10"))
 }

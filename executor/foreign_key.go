@@ -17,7 +17,6 @@ package executor
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
@@ -647,7 +646,6 @@ func (fkc *FKCascadeExec) buildFKCascadePlan(ctx context.Context) (plannercore.P
 			}
 		}
 	}
-	fmt.Printf("%v ---\n", sqlStr)
 	if err != nil {
 		return nil, err
 	}
