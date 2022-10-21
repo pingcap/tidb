@@ -372,7 +372,7 @@ func onDropTableOrView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ er
 			}
 		}
 		if tblInfo.TiFlashReplica != nil {
-			e := infosync.DeleteTiFlashTableSyncProgress(tblInfo.ID)
+			e := infosync.DeleteTiFlashTableSyncProgress(tblInfo)
 			if e != nil {
 				logutil.BgLogger().Error("DeleteTiFlashTableSyncProgress fails", zap.Error(e))
 			}
@@ -709,6 +709,14 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		}
 	})
 
+	// Clear the TiFlash replica progress from ETCD.
+	if tblInfo.TiFlashReplica != nil {
+		e := infosync.DeleteTiFlashTableSyncProgress(tblInfo)
+		if e != nil {
+			logutil.BgLogger().Error("DeleteTiFlashTableSyncProgress fails", zap.Error(e))
+		}
+	}
+
 	var oldPartitionIDs []int64
 	if tblInfo.GetPartitionInfo() != nil {
 		oldPartitionIDs = getPartitionIDs(tblInfo)
@@ -748,10 +756,6 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 
 	// Clear the TiFlash replica available status.
 	if tblInfo.TiFlashReplica != nil {
-		e := infosync.DeleteTiFlashTableSyncProgress(tblInfo.ID)
-		if e != nil {
-			logutil.BgLogger().Error("DeleteTiFlashTableSyncProgress fails", zap.Error(e))
-		}
 		// Set PD rules for TiFlash
 		if pi := tblInfo.GetPartitionInfo(); pi != nil {
 			if e := infosync.ConfigureTiFlashPDForPartitions(true, &pi.Definitions, tblInfo.TiFlashReplica.Count, &tblInfo.TiFlashReplica.LocationLabels, tblInfo.ID); e != nil {
@@ -1271,6 +1275,12 @@ func (w *worker) onSetTableFlashReplica(d *ddlCtx, t *meta.Meta, job *model.Job)
 			Available:      available,
 		}
 	} else {
+		if tblInfo.TiFlashReplica != nil {
+			err = infosync.DeleteTiFlashTableSyncProgress(tblInfo)
+			if err != nil {
+				logutil.BgLogger().Error("DeleteTiFlashTableSyncProgress fails", zap.Error(err))
+			}
+		}
 		tblInfo.TiFlashReplica = nil
 	}
 
