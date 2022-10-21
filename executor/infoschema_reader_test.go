@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/testkit"
@@ -627,7 +628,7 @@ func TestForTableTiFlashReplica(t *testing.T) {
 
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	rpcserver, _ := testkit.SetUpRPCService(t, "127.0.0.1:0", domain.GetDomain(tk.Session()), nil)
+	rpcserver, _ := server.SetUpRPCService(t, "127.0.0.1:0", domain.GetDomain(tk.Session()), nil)
 	defer rpcserver.Stop()
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")

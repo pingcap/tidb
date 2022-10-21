@@ -151,6 +151,7 @@ func (m *TiFlashPDPlacementManager) GetTiFlashProgressFromCache(tableID int64) s
 	return ""
 }
 
+// DeleteTiFlashProgressFromCache delete tiflash replica progress from tiflashProgressCache
 func (m *TiFlashPDPlacementManager) DeleteTiFlashProgressFromCache(tableID int64) {
 	m.Lock()
 	defer m.Unlock()
@@ -768,6 +769,7 @@ func (m *mockTiFlashPlacementManager) GetTiFlashProgressFromCache(tableID int64)
 	return ""
 }
 
+// DeleteTiFlashProgressFromCache delete tiflash replica progress from tiflashProgressCache
 func (m *mockTiFlashPlacementManager) DeleteTiFlashProgressFromCache(tableID int64) {
 	m.Lock()
 	defer m.Unlock()

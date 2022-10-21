@@ -1038,6 +1038,7 @@ func GetLabelRules(ctx context.Context, ruleIDs []string) (map[string]*label.Rul
 	return is.labelRuleManager.GetLabelRules(ctx, ruleIDs)
 }
 
+// GetTiFlashProgress calculates TiFlash replica progress
 func GetTiFlashProgress(tableID int64, replicaCount uint64, TiFlashStores map[int64]helper.StoreStat) (string, error) {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
@@ -1046,6 +1047,7 @@ func GetTiFlashProgress(tableID int64, replicaCount uint64, TiFlashStores map[in
 	return is.tiflashPlacementManager.GetTiFlashProgress(tableID, replicaCount, TiFlashStores)
 }
 
+// UpdateTiFlashProgressCache updates tiflashProgressCache
 func UpdateTiFlashProgressCache(tableID int64, progress string) {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
@@ -1054,6 +1056,7 @@ func UpdateTiFlashProgressCache(tableID int64, progress string) {
 	is.tiflashPlacementManager.UpdateTiFlashProgressCache(tableID, progress)
 }
 
+// GetTiFlashProgressFromCache gets tiflash replica progress from tiflashProgressCache
 func GetTiFlashProgressFromCache(tableID int64) (string, error) {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
@@ -1062,6 +1065,7 @@ func GetTiFlashProgressFromCache(tableID int64) (string, error) {
 	return is.tiflashPlacementManager.GetTiFlashProgressFromCache(tableID), nil
 }
 
+// CleanTiFlashProgressCache clean progress cache
 func CleanTiFlashProgressCache() {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {

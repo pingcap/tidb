@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
@@ -147,7 +148,7 @@ func TestSetTiFlashReplicaForTemporaryTable(t *testing.T) {
 
 	store := testkit.CreateMockStoreWithSchemaLease(t, tiflashReplicaLease)
 	tk := testkit.NewTestKit(t, store)
-	rpcserver, _ := testkit.SetUpRPCService(t, "127.0.0.1:0", domain.GetDomain(tk.Session()), nil)
+	rpcserver, _ := server.SetUpRPCService(t, "127.0.0.1:0", domain.GetDomain(tk.Session()), nil)
 	defer rpcserver.Stop()
 	tk.MustExec("use test")
 	tk.MustExec("create global temporary table temp(id int) on commit delete rows")
