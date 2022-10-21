@@ -18,7 +18,6 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
-
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/extension"
 	"github.com/pingcap/tidb/kv"
