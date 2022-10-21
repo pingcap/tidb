@@ -14,33 +14,18 @@
 
 package extension
 
-// Extensions contains all extensions that have already setup
-type Extensions struct {
-	manifests []*Manifest
-}
+import (
+	"testing"
 
-// Manifests returns a extension manifests
-func (es *Extensions) Manifests() []*Manifest {
-	if es == nil {
-		return nil
-	}
-	manifests := make([]*Manifest, len(es.manifests))
-	copy(manifests, es.manifests)
-	return manifests
-}
+	"github.com/pingcap/tidb/testkit/testsetup"
+	"go.uber.org/goleak"
+)
 
-// Bootstrap bootstrap all extensions
-func (es *Extensions) Bootstrap(ctx BootstrapContext) error {
-	if es == nil {
-		return nil
+func TestMain(m *testing.M) {
+	testsetup.SetupForCommonTest()
+	opts := []goleak.Option{
+		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
+		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 	}
-
-	for _, m := range es.manifests {
-		if m.bootstrap != nil {
-			if err := m.bootstrap(ctx); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
+	goleak.VerifyTestMain(m, opts...)
 }
