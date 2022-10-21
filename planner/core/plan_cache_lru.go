@@ -33,6 +33,15 @@ type planCacheEntry struct {
 	PlanValue kvcache.Value
 }
 
+// MemoryUsage return the memory usage of planCacheEntry
+func (e *planCacheEntry) MemoryUsage() (sum int64) {
+	if e == nil {
+		return
+	}
+
+	return e.PlanKey.(*planCacheKey).MemoryUsage() + e.PlanValue.(*PlanCacheValue).MemoryUsage()
+}
+
 // LRUPlanCache is a dedicated least recently used cache, Only used for plan cache.
 type LRUPlanCache struct {
 	capacity uint
@@ -49,8 +58,11 @@ type LRUPlanCache struct {
 	onEvict func(kvcache.Key, kvcache.Value)
 
 	// 0 indicates no quota
-	quota       uint64
-	guard       float64
+	quota uint64
+	guard float64
+
+	// MemTracker track the memory usage of prepared plan cache
+	memTracker  *memory.Tracker
 	testTracker *memory.Tracker
 	ctx         sessionctx.Context
 	aa          int64
@@ -74,6 +86,7 @@ func NewLRUPlanCache(ctx sessionctx.Context, capacity uint, guard float64, quota
 		pickFromBucket: pickFromBucket,
 		quota:          quota,
 		guard:          guard,
+		memTracker:     newTrackerForLRUPC(),
 		testTracker:    t,
 		ctx:            ctx,
 	}
@@ -113,6 +126,8 @@ func (l *LRUPlanCache) Put(key kvcache.Key, value kvcache.Value, paramTypes []*t
 	bucket, bucketExist := l.buckets[hash]
 	if bucketExist {
 		if element, exist := l.pickFromBucket(bucket, paramTypes); exist {
+			l.memTracker.Consume(value.(*PlanCacheValue).MemoryUsage() -
+				element.Value.(*planCacheEntry).PlanValue.(*PlanCacheValue).MemoryUsage())
 			element.Value.(*planCacheEntry).PlanValue = value
 			l.lruList.MoveToFront(element)
 			return
@@ -128,6 +143,7 @@ func (l *LRUPlanCache) Put(key kvcache.Key, value kvcache.Value, paramTypes []*t
 	element := l.lruList.PushFront(newCacheEntry)
 	l.buckets[hash][element] = struct{}{}
 	l.size++
+	l.memTracker.Consume(newCacheEntry.MemoryUsage())
 	if l.size > l.capacity {
 		l.removeOldest()
 	}
@@ -144,6 +160,7 @@ func (l *LRUPlanCache) Delete(key kvcache.Key) {
 	bucket, bucketExist := l.buckets[hash]
 	if bucketExist {
 		for element := range bucket {
+			l.memTracker.Consume(-element.Value.(*planCacheEntry).MemoryUsage())
 			l.lruList.Remove(element)
 			l.size--
 		}
@@ -162,6 +179,7 @@ func (l *LRUPlanCache) DeleteAll() {
 		l.size--
 	}
 	l.buckets = make(map[string]map[*list.Element]struct{}, 1)
+	l.memTracker = newTrackerForLRUPC()
 }
 
 // Size gets the current cache size.
@@ -186,6 +204,14 @@ func (l *LRUPlanCache) SetCapacity(capacity uint) error {
 		l.removeOldest()
 	}
 	return nil
+}
+
+// MemoryUsage return the memory usage of LRUPlanCache
+func (l *LRUPlanCache) MemoryUsage() (sum int64) {
+	if l == nil {
+		return
+	}
+	return l.memTracker.BytesConsumed()
 }
 
 // Close do some clean work for LRUPlanCache when close the session
@@ -213,6 +239,7 @@ func (l *LRUPlanCache) removeOldest() {
 		l.onEvict(lru.Value.(*planCacheEntry).PlanKey, lru.Value.(*planCacheEntry).PlanValue)
 	}
 
+	l.memTracker.Consume(-lru.Value.(*planCacheEntry).MemoryUsage())
 	l.lruList.Remove(lru)
 	l.removeFromBucket(lru)
 	l.size--
@@ -252,10 +279,18 @@ func PickPlanFromBucket(bucket map[*list.Element]struct{}, paramTypes []*types.F
 	return nil, false
 }
 
+// newTrackerForLRUPC return a tracker which consumed emptyLRUPlanCacheSize
+// todo: pass label when track general plan cache memory
+func newTrackerForLRUPC() *memory.Tracker {
+	m := memory.NewTracker(memory.LabelForPreparedPlanCache, -1)
+	//todo: maybe need attach here
+	return m
+}
+
 // updateMonitor update the memory usage monitor to show in grafana
 func (l *LRUPlanCache) updateMonitorMetric() {
 	l.aa += 1024
-	l.testTracker.Consume(int64(l.aa))
+	l.testTracker.Consume(l.aa)
 	// todo: wait for the preorder pr, pass tracker's consumed memory to metric
 	connId := int64(l.ctx.GetSessionVars().ConnectionID)
 	metrics.PlanCacheMemoryUsage.WithLabelValues("SessionID_" + strconv.FormatInt(connId, 10)).Set(float64(l.testTracker.BytesConsumed()))
