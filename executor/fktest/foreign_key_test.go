@@ -16,12 +16,17 @@ package fk_test
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/parser/model"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -831,4 +836,411 @@ func TestForeignKeyOnDeleteParentTableCheck(t *testing.T) {
 	tk.MustExec("delete from t1 where a = 3 or a = 4;")
 	tk.MustGetDBError("delete from t1 where id = 1", plannercore.ErrRowIsReferenced2)
 	tk.MustQuery("select id, a from t1 order by id").Check(testkit.Rows("1 1"))
+}
+
+func TestForeignKeyOnDeleteCascade(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+	cases := []struct {
+		prepareSQLs []string
+	}{
+		// Case-1: test unique index only contain foreign key columns.
+		{
+			prepareSQLs: []string{
+				"create table t1 (id int, a int, b int,  unique index(a, b));",
+				"create table t2 (b int, name varchar(10), a int, id int, unique index (a,b), foreign key fk(a, b) references t1(a, b) ON DELETE CASCADE);",
+			},
+		},
+		// Case-2: test unique index contain foreign key columns and other columns.
+		{
+			prepareSQLs: []string{
+				"create table t1 (id int key, a int, b int, unique index(a, b, id));",
+				"create table t2 (b int, a int, id int key, name varchar(10), unique index (a,b, id), foreign key fk(a, b) references t1(a, b) ON DELETE CASCADE);",
+			},
+		},
+		// Case-3: test non-unique index only contain foreign key columns.
+		{
+			prepareSQLs: []string{
+				"create table t1 (id int key,a int, b int, index(a, b));",
+				"create table t2 (b int, a int, name varchar(10), id int key, index (a, b), foreign key fk(a, b) references t1(a, b) ON DELETE CASCADE);",
+			},
+		},
+		// Case-4: test non-unique index contain foreign key columns and other columns.
+		{
+			prepareSQLs: []string{
+				"create table t1 (id int key,a int, b int,  index(a, b, id));",
+				"create table t2 (name varchar(10), b int, a int, id int key, index (a, b, id), foreign key fk(a, b) references t1(a, b) ON DELETE CASCADE);",
+			},
+		},
+	}
+
+	for idx, ca := range cases {
+		tk.MustExec("drop table if exists t1, t2;")
+		for _, sql := range ca.prepareSQLs {
+			tk.MustExec(sql)
+		}
+		tk.MustExec("insert into t1 values (1, 1, 1),(2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, null), (6, null, 6), (7, null, null);")
+		tk.MustExec("insert into t2 (id, a, b, name) values (1, 1, 1, 'a'),(2, 2, 2, 'b'), (3, 3, 3, 'c'), (4, 4, 4, 'd'), (5, 5, null, 'e'), (6, null, 6, 'f'), (7, null, null, 'g');")
+		tk.MustExec("delete from t1 where id = 1")
+		tk.MustExec("delete from t1 where id = 2 or a = 2")
+		tk.MustExec("delete from t1 where a in (2,3,4) or b in (5,6,7) or id=7")
+		tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("5 5 <nil>"))
+		tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("5 5 <nil> e", "6 <nil> 6 f", "7 <nil> <nil> g"))
+
+		// Test in transaction.
+		tk.MustExec("delete from t2")
+		tk.MustExec("delete from t1")
+		tk.MustExec("begin")
+		tk.MustExec("insert into t1 values (1, 1, 1),(2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, null), (6, null, 6), (7, null, null);")
+		tk.MustExec("insert into t2 (id, a, b, name) values (1, 1, 1, 'a'),(2, 2, 2, 'b'), (3, 3, 3, 'c'), (4, 4, 4, 'd'), (5, 5, null, 'e'), (6, null, 6, 'f'), (7, null, null, 'g');")
+		tk.MustExec("delete from t1 where id = 1 or a = 2")
+		tk.MustExec("delete from t1 where a in (2,3,4) or b in (5,6,7)")
+		tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("5 5 <nil> e", "6 <nil> 6 f", "7 <nil> <nil> g"))
+		tk.MustExec("rollback")
+		tk.MustQuery("select * from t1").Check(testkit.Rows())
+		tk.MustQuery("select * from t2").Check(testkit.Rows())
+
+		tk.MustExec("insert into t1 values (1, 1, 1),(2, 2, 2);")
+		tk.MustExec("begin")
+		tk.MustExec("insert into t2 (id, a, b, name) values (1, 1, 1, 'a'),(2, 2, 2, 'b')")
+		tk.MustExec("delete from t1 where id = 1")
+		tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("2 2 2"))
+		tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("2 2 2 b"))
+		err := tk.ExecToErr("insert into t2 (id, a, b, name) values (1, 1, 1, 'a')")
+		require.Error(t, err)
+		require.True(t, plannercore.ErrNoReferencedRow2.Equal(err), err.Error())
+		tk.MustExec("insert into t1 values (1, 1, 1);")
+		tk.MustExec("insert into t2 (id, a, b, name) values (1, 1, 1, 'c')")
+		tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 1 1", "2 2 2"))
+		tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 1 1 c", "2 2 2 b"))
+		tk.MustExec("delete from t1")
+		tk.MustExec("commit")
+		tk.MustQuery("select * from t1").Check(testkit.Rows())
+		tk.MustQuery("select * from t2").Check(testkit.Rows())
+
+		// only test in non-unique index
+		if idx >= 2 {
+			tk.MustExec("insert into t1 values (1, 1, 1),(2, 1, 1);")
+			tk.MustExec("begin")
+			tk.MustExec("delete from t1 where id = 1")
+			tk.MustExec("insert into t2 (id, a, b, name) values (1, 1, 1, 'a')")
+			tk.MustExec("delete from t1 where id = 2")
+			tk.MustQuery("select * from t1").Check(testkit.Rows())
+			tk.MustQuery("select * from t2").Check(testkit.Rows())
+			err := tk.ExecToErr("insert into t2 (id, a, b, name) values (1, 1, 1, 'a')")
+			require.Error(t, err)
+			require.True(t, plannercore.ErrNoReferencedRow2.Equal(err), err.Error())
+			tk.MustExec("insert into t1 values (3, 1, 1);")
+			tk.MustExec("insert into t2 (id, a, b, name) values (3, 1, 1, 'e')")
+			tk.MustExec("commit")
+			tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("3 1 1"))
+			tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("3 1 1 e"))
+
+			tk.MustExec("delete from t2")
+			tk.MustExec("delete from t1")
+			tk.MustExec("begin")
+			tk.MustExec("insert into t1 values (1, 1, 1),(2, 1, 1);")
+			tk.MustExec("insert into t2 (id, a, b, name) values (1, 1, 1, 'a'), (2, 1, 1, 'b')")
+			tk.MustExec("delete from t1 where id = 1")
+			tk.MustExec("commit")
+			tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("2 1 1"))
+			tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows())
+		}
+	}
+
+	cases = []struct {
+		prepareSQLs []string
+	}{
+		// Case-5: test primary key only contain foreign key columns, and disable tidb_enable_clustered_index.
+		{
+			prepareSQLs: []string{
+				"set @@tidb_enable_clustered_index=0;",
+				"create table t1 (id int, a int, b int,  primary key (a, b));",
+				"create table t2 (b int, name varchar(10),  a int, id int, primary key (a, b), foreign key fk(a, b) references t1(a, b) ON DELETE CASCADE);",
+			},
+		},
+		// Case-6: test primary key only contain foreign key columns, and enable tidb_enable_clustered_index.
+		{
+			prepareSQLs: []string{
+				"set @@tidb_enable_clustered_index=1;",
+				"create table t1 (id int, a int, b int,  primary key (a, b));",
+				"create table t2 (name varchar(10), b int,  a int, id int, primary key (a, b), foreign key fk(a, b) references t1(a, b) ON DELETE CASCADE);",
+			},
+		},
+		// Case-7: test primary key contain foreign key columns and other column, and disable tidb_enable_clustered_index.
+		{
+			prepareSQLs: []string{
+				"set @@tidb_enable_clustered_index=0;",
+				"create table t1 (id int, a int, b int,  primary key (a, b, id));",
+				"create table t2 (b int,  a int, name varchar(10), id int, primary key (a, b, id), foreign key fk(a, b) references t1(a, b) ON DELETE CASCADE);",
+			},
+		},
+		// Case-8: test primary key contain foreign key columns and other column, and enable tidb_enable_clustered_index.
+		{
+			prepareSQLs: []string{
+				"set @@tidb_enable_clustered_index=1;",
+				"create table t1 (id int, a int, b int,  primary key (a, b, id));",
+				"create table t2 (b int, name varchar(10),  a int, id int, primary key (a, b, id), foreign key fk(a, b) references t1(a, b) ON DELETE CASCADE);",
+			},
+		},
+		// Case-9: test primary key is handle and contain foreign key column.
+		{
+			prepareSQLs: []string{
+				"set @@tidb_enable_clustered_index=0;",
+				"create table t1 (id int, a int, b int,  primary key (id));",
+				"create table t2 (b int,  a int, id int, name varchar(10), primary key (a), foreign key fk(a) references t1(id) ON DELETE CASCADE);",
+			},
+		},
+	}
+	for _, ca := range cases {
+		tk.MustExec("drop table if exists t1, t2;")
+		for _, sql := range ca.prepareSQLs {
+			tk.MustExec(sql)
+		}
+		tk.MustExec("insert into t1 values (1, 1, 1),(2, 2, 2), (3, 3, 3), (4, 4, 4);")
+		tk.MustExec("insert into t2 (id, a, b, name) values (1, 1, 1, 'a'),(2, 2, 2, 'b'), (3, 3, 3, 'c'), (4, 4, 4, 'd');")
+		tk.MustExec("delete from t1 where id = 1 or a = 2")
+		tk.MustQuery("select id, a, b from t2 order by id").Check(testkit.Rows("3 3 3", "4 4 4"))
+		tk.MustExec("delete from t1 where a in (2,3) or b < 5")
+		tk.MustQuery("select * from t1").Check(testkit.Rows())
+		tk.MustQuery("select * from t2").Check(testkit.Rows())
+
+		// test in transaction.
+		tk.MustExec("begin")
+		tk.MustExec("insert into t1 values (1, 1, 1),(2, 2, 2), (3, 3, 3), (4, 4, 4);")
+		tk.MustExec("insert into t2 (id, a, b, name) values (1, 1, 1, 'a'),(2, 2, 2, 'b'), (3, 3, 3, 'c'), (4, 4, 4, 'd');")
+		tk.MustExec("delete from t1 where id = 1 or a = 2")
+		tk.MustExec("delete from t1 where a in (2,3,4) or b in (5,6,7)")
+		tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows())
+		tk.MustExec("rollback")
+		tk.MustQuery("select * from t1").Check(testkit.Rows())
+		tk.MustQuery("select * from t2").Check(testkit.Rows())
+
+		tk.MustExec("insert into t1 values (1, 1, 1),(2, 2, 2);")
+		tk.MustExec("begin")
+		tk.MustExec("insert into t2 (id, a, b, name) values (1, 1, 1, 'a'),(2, 2, 2, 'b')")
+		tk.MustExec("delete from t1 where id = 1")
+		tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("2 2 2"))
+		tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("2 2 2 b"))
+		err := tk.ExecToErr("insert into t2 (id, a, b, name) values (1, 1, 1, 'a')")
+		require.Error(t, err)
+		require.True(t, plannercore.ErrNoReferencedRow2.Equal(err), err.Error())
+		tk.MustExec("insert into t1 values (1, 1, 1);")
+		tk.MustExec("insert into t2 (id, a, b, name) values (1, 1, 1, 'c')")
+		tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 1 1", "2 2 2"))
+		tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 1 1 c", "2 2 2 b"))
+		tk.MustExec("delete from t1")
+		tk.MustExec("commit")
+		tk.MustQuery("select * from t1").Check(testkit.Rows())
+		tk.MustQuery("select * from t2").Check(testkit.Rows())
+	}
+}
+
+func TestForeignKeyOnDeleteCascade2(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+
+	// Test cascade delete in self table.
+	tk.MustExec("create table t1 (id int key, name varchar(10), leader int,  index(leader), foreign key (leader) references t1(id) ON DELETE CASCADE);")
+	tk.MustExec("insert into t1 values (1, 'boss', null), (10, 'l1_a', 1), (11, 'l1_b', 1), (12, 'l1_c', 1)")
+	tk.MustExec("insert into t1 values (100, 'l2_a1', 10), (101, 'l2_a2', 10), (102, 'l2_a3', 10)")
+	tk.MustExec("insert into t1 values (110, 'l2_b1', 11), (111, 'l2_b2', 11), (112, 'l2_b3', 11)")
+	tk.MustExec("insert into t1 values (120, 'l2_c1', 12), (121, 'l2_c2', 12), (122, 'l2_c3', 12)")
+	tk.MustExec("insert into t1 values (1000,'l3_a1', 100)")
+	tk.MustExec("delete from t1 where id=11")
+	tk.MustQuery("select id from t1 order by id").Check(testkit.Rows("1", "10", "12", "100", "101", "102", "120", "121", "122", "1000"))
+	tk.MustExec("delete from t1 where id=1")
+	// The affect rows doesn't contain the cascade deleted rows, the behavior is compatible with MySQL.
+	require.Equal(t, uint64(1), tk.Session().GetSessionVars().StmtCtx.AffectedRows())
+	tk.MustQuery("select id from t1 order by id").Check(testkit.Rows())
+
+	// Test explain analyze with foreign key cascade.
+	tk.MustExec("insert into t1 values (1, 'boss', null), (10, 'l1_a', 1), (11, 'l1_b', 1), (12, 'l1_c', 1)")
+	tk.MustExec("explain analyze delete from t1 where id=1")
+	tk.MustQuery("select * from t1").Check(testkit.Rows())
+
+	// Test string type foreign key.
+	tk.MustExec("drop table t1")
+	tk.MustExec("create table t1 (id varchar(10) key, name varchar(10), leader varchar(10),  index(leader), foreign key (leader) references t1(id) ON DELETE CASCADE);")
+	tk.MustExec("insert into t1 values (1, 'boss', null)")
+	tk.MustExec("insert into t1 values (10, 'l1_a', 1), (11, 'l1_b', 1), (12, 'l1_c', 1)")
+	tk.MustExec("insert into t1 values (100, 'l2_a1', 10), (101, 'l2_a2', 10), (102, 'l2_a3', 10)")
+	tk.MustExec("insert into t1 values (110, 'l2_b1', 11), (111, 'l2_b2', 11), (112, 'l2_b3', 11)")
+	tk.MustExec("insert into t1 values (120, 'l2_c1', 12), (121, 'l2_c2', 12), (122, 'l2_c3', 12)")
+	tk.MustExec("insert into t1 values (1000,'l3_a1', 100)")
+	tk.MustExec("delete from t1 where id=11")
+	tk.MustQuery("select id from t1 order by id").Check(testkit.Rows("1", "10", "100", "1000", "101", "102", "12", "120", "121", "122"))
+	tk.MustExec("delete from t1 where id=1")
+	require.Equal(t, uint64(1), tk.Session().GetSessionVars().StmtCtx.AffectedRows())
+	tk.MustQuery("select id from t1 order by id").Check(testkit.Rows())
+
+	// Test cascade delete depth.
+	tk.MustExec("drop table t1")
+	tk.MustExec("create table t1(id int primary key, pid int, index(pid), foreign key(pid) references t1(id) on delete cascade);")
+	tk.MustExec("insert into t1 values(0,0),(1,0),(2,1),(3,2),(4,3),(5,4),(6,5),(7,6),(8,7),(9,8),(10,9),(11,10),(12,11),(13,12),(14,13),(15,14);")
+	tk.MustGetDBError("delete from t1 where id=0;", executor.ErrForeignKeyCascadeDepthExceeded)
+	tk.MustExec("delete from t1 where id=15;")
+	tk.MustExec("delete from t1 where id=0;")
+	tk.MustQuery("select * from t1").Check(testkit.Rows())
+	tk.MustExec("insert into t1 values(0,0)")
+	tk.MustExec("delete from t1 where id=0;")
+	tk.MustQuery("select * from t1").Check(testkit.Rows())
+
+	// Test for cascade delete failed.
+	tk.MustExec("drop table t1")
+	tk.MustExec("create table t1 (id int key)")
+	tk.MustExec("create table t2 (id int key, foreign key (id) references t1 (id) on delete cascade)")
+	tk.MustExec("create table t3 (id int key, foreign key (id) references t2(id))")
+	tk.MustExec("insert into t1 values (1)")
+	tk.MustExec("insert into t2 values (1)")
+	tk.MustExec("insert into t3 values (1)")
+	// test in autocommit transaction
+	tk.MustGetDBError("delete from t1 where id = 1", plannercore.ErrRowIsReferenced2)
+	require.Equal(t, 0, len(tk.Session().GetSessionVars().TxnCtx.Savepoints))
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from t2").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from t3").Check(testkit.Rows("1"))
+	// Test in transaction and commit transaction.
+	tk.MustExec("begin")
+	tk.MustExec("insert into t1 values (2),(3),(4)")
+	tk.MustExec("insert into t2 values (2),(3)")
+	tk.MustExec("insert into t3 values (3)")
+	tk.MustGetDBError("delete from t1 where id = 1", plannercore.ErrRowIsReferenced2)
+	require.Equal(t, 0, len(tk.Session().GetSessionVars().TxnCtx.Savepoints))
+	tk.MustExec("delete from t1 where id = 2")
+	require.Equal(t, 0, len(tk.Session().GetSessionVars().TxnCtx.Savepoints))
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1", "3", "4"))
+	tk.MustQuery("select * from t2").Check(testkit.Rows("1", "3"))
+	tk.MustQuery("select * from t3").Check(testkit.Rows("1", "3"))
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1", "3", "4"))
+	tk.MustQuery("select * from t2").Check(testkit.Rows("1", "3"))
+	tk.MustQuery("select * from t3").Check(testkit.Rows("1", "3"))
+	// Test in transaction and rollback transaction.
+	tk.MustExec("begin")
+	tk.MustExec("insert into t1 values (5), (6)")
+	tk.MustExec("insert into t2 values (4), (5), (6)")
+	tk.MustExec("insert into t3 values (5)")
+	tk.MustGetDBError("delete from t1 where id = 1", plannercore.ErrRowIsReferenced2)
+	require.Equal(t, 0, len(tk.Session().GetSessionVars().TxnCtx.Savepoints))
+	tk.MustExec("delete from t1 where id = 4")
+	require.Equal(t, 0, len(tk.Session().GetSessionVars().TxnCtx.Savepoints))
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1", "3", "5", "6"))
+	tk.MustQuery("select * from t2").Check(testkit.Rows("1", "3", "5", "6"))
+	tk.MustQuery("select * from t3").Check(testkit.Rows("1", "3", "5"))
+	tk.MustExec("rollback")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1", "3", "4"))
+	tk.MustQuery("select * from t2").Check(testkit.Rows("1", "3"))
+	tk.MustQuery("select * from t3").Check(testkit.Rows("1", "3"))
+	tk.MustExec("delete from t3 where id = 1")
+	tk.MustExec("delete from t1 where id = 1")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("3", "4"))
+	tk.MustQuery("select * from t2").Check(testkit.Rows("3"))
+	tk.MustQuery("select * from t3").Check(testkit.Rows("3"))
+	// Test in autocommit=0 transaction
+	tk.MustExec("set autocommit=0")
+	tk.MustExec("insert into t1 values (1), (2)")
+	tk.MustExec("insert into t2 values (1), (2)")
+	tk.MustExec("insert into t3 values (1)")
+	tk.MustGetDBError("delete from t1 where id = 1", plannercore.ErrRowIsReferenced2)
+	require.Equal(t, 0, len(tk.Session().GetSessionVars().TxnCtx.Savepoints))
+	tk.MustExec("delete from t1 where id = 2")
+	require.Equal(t, 0, len(tk.Session().GetSessionVars().TxnCtx.Savepoints))
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1", "3", "4"))
+	tk.MustQuery("select * from t2").Check(testkit.Rows("1", "3"))
+	tk.MustQuery("select * from t3").Check(testkit.Rows("1", "3"))
+	tk.MustExec("set autocommit=1")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1", "3", "4"))
+	tk.MustQuery("select * from t2").Check(testkit.Rows("1", "3"))
+	tk.MustQuery("select * from t3").Check(testkit.Rows("1", "3"))
+
+	// Test StmtCommit after fk cascade executor execute finish.
+	tk.MustExec("drop table if exists t1,t2,t3")
+	tk.MustExec("create table t0(id int primary key);")
+	tk.MustExec("create table t1(id int primary key, pid int, index(pid), a int, foreign key(pid) references t1(id) on delete cascade, foreign key(a) references t0(id) on delete cascade);")
+	tk.MustExec("insert into t0 values (0)")
+	tk.MustExec("insert into t1 values (0, 0, 0)")
+	tk.MustExec("insert into t1 (id, pid) values(1,0),(2,1),(3,2),(4,3),(5,4),(6,5),(7,6),(8,7),(9,8),(10,9),(11,10),(12,11),(13,12),(14,13);")
+	tk.MustGetDBError("delete from t0 where id=0;", executor.ErrForeignKeyCascadeDepthExceeded)
+	require.Equal(t, 0, len(tk.Session().GetSessionVars().TxnCtx.Savepoints))
+	tk.MustExec("delete from t1 where id=14;")
+	tk.MustExec("delete from t0 where id=0;")
+	require.Equal(t, 0, len(tk.Session().GetSessionVars().TxnCtx.Savepoints))
+	tk.MustQuery("select * from t0").Check(testkit.Rows())
+	tk.MustQuery("select * from t1").Check(testkit.Rows())
+
+	// Test multi-foreign key cascade in one table.
+	tk.MustExec("drop table if exists t1,t2,t3")
+	tk.MustExec("create table t1 (id int key)")
+	tk.MustExec("create table t2 (id int key)")
+	tk.MustExec("create table t3 (id1 int, id2 int, constraint fk_id1 foreign key (id1) references t1 (id) on delete cascade, " +
+		"constraint fk_id2 foreign key (id2) references t2 (id) on delete cascade)")
+	tk.MustExec("insert into t1 values (1), (2), (3)")
+	tk.MustExec("insert into t2 values (1), (2), (3)")
+	tk.MustExec("insert into t3 values (1,1), (1, 2), (1, 3), (2, 1), (2, 2)")
+	tk.MustExec("delete from t1 where id=1")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("2", "3"))
+	tk.MustQuery("select * from t2").Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery("select * from t3 order by id1").Check(testkit.Rows("2 1", "2 2"))
+	tk.MustExec("create table t4 (id3 int key, constraint fk_id3 foreign key (id3) references t3 (id2))")
+	tk.MustExec("insert into t4 values (2)")
+	tk.MustGetDBError("delete from t1 where id = 2", plannercore.ErrRowIsReferenced2)
+	tk.MustGetDBError("delete from t2 where id = 2", plannercore.ErrRowIsReferenced2)
+	tk.MustExec("delete from t2 where id=1")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("2", "3"))
+	tk.MustQuery("select * from t2").Check(testkit.Rows("2", "3"))
+	tk.MustQuery("select * from t3 order by id1").Check(testkit.Rows("2 2"))
+
+	// Test multi-foreign key cascade in one table.
+	tk.MustExec("drop table if exists t1,t2,t3, t4")
+	tk.MustExec(`create table t1 (c0 int, index(c0))`)
+	cnt := 20
+	for i := 1; i < cnt; i++ {
+		tk.MustExec(fmt.Sprintf("alter table t1 add column c%v int", i))
+		tk.MustExec(fmt.Sprintf("alter table t1 add index idx_%v (c%v) ", i, i))
+		tk.MustExec(fmt.Sprintf("alter table t1 add foreign key (c%v) references t1 (c%v) on delete cascade", i, i-1))
+	}
+	for i := 0; i < cnt; i++ {
+		vals := strings.Repeat(strconv.Itoa(i)+",", 20)
+		tk.MustExec(fmt.Sprintf("insert into t1 values (%v)", vals[:len(vals)-1]))
+	}
+	tk.MustExec("delete from t1 where c0 in (0, 1, 2, 3, 4)")
+	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("15"))
+
+	// Test foreign key cascade execution meet lock and do retry.
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk2.MustExec("set @@foreign_key_checks=1")
+	tk2.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (id int key, name varchar(10), pid int, index(pid), constraint fk foreign key (pid) references t1 (id) on delete cascade)")
+	tk.MustExec("insert into t1 values (1, 'boss', null), (2, 'a', 1), (3, 'b', 1), (4, 'c', '2')")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t1 values (5, 'd', 3)")
+	tk2.MustExec("begin pessimistic")
+	tk2.MustExec("insert into t1 values (6, 'e', 4)")
+	tk2.MustExec("delete from t1 where id=2")
+	tk2.MustExec("commit")
+	tk.MustExec("delete from t1 where id = 1")
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t1").Check(testkit.Rows())
+}
+
+func TestForeignKeyOnDeleteCascadeSQL(t *testing.T) {
+	fk := &model.FKInfo{
+		Cols: []model.CIStr{model.NewCIStr("c0"), model.NewCIStr("c1")},
+	}
+	fkValues := [][]types.Datum{
+		{types.NewDatum(1), types.NewDatum("a")},
+		{types.NewDatum(2), types.NewDatum("b")},
+	}
+	sql, err := executor.GenCascadeDeleteSQL(model.NewCIStr("test"), model.NewCIStr("t"), fk, fkValues)
+	require.NoError(t, err)
+	require.Equal(t, "DELETE FROM `test`.`t` WHERE (`c0`, `c1`) IN ((1,'a'), (2,'b'))", sql)
 }

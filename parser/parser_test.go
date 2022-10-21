@@ -60,7 +60,7 @@ func TestSimple(t *testing.T) {
 		"delayed", "high_priority", "low_priority",
 		"cumeDist", "denseRank", "firstValue", "lag", "lastValue", "lead", "nthValue", "ntile",
 		"over", "percentRank", "rank", "row", "rows", "rowNumber", "window", "linear",
-		"match", "until", "placement", "tablesample", "attributes",
+		"match", "until", "placement", "tablesample",
 		// TODO: support the following keywords
 		// "with",
 	}
@@ -98,7 +98,7 @@ func TestSimple(t *testing.T) {
 		"max_connections_per_hour", "max_queries_per_hour", "max_updates_per_hour", "max_user_connections", "event", "reload", "routine", "temporary",
 		"following", "preceding", "unbounded", "respect", "nulls", "current", "last", "against", "expansion",
 		"chain", "error", "general", "nvarchar", "pack_keys", "p", "shard_row_id_bits", "pre_split_regions",
-		"constraints", "role", "replicas", "policy", "s3", "strict", "running", "stop", "preserve", "placement",
+		"constraints", "role", "replicas", "policy", "s3", "strict", "running", "stop", "preserve", "placement", "attributes", "attribute",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -364,10 +364,10 @@ func RunTest(t *testing.T, table []testCase, enableWindowFunc bool) {
 	for _, tbl := range table {
 		_, _, err := p.Parse(tbl.src, "", "")
 		if !tbl.ok {
-			require.Errorf(t, err, "source %v", tbl.src)
+			require.Errorf(t, err, "source %v", tbl.src, errors.Trace(err))
 			continue
 		}
-		require.NoErrorf(t, err, "source %v", tbl.src)
+		require.NoErrorf(t, err, "source %v", tbl.src, errors.Trace(err))
 		// restore correctness test
 		if tbl.ok {
 			RunRestoreTest(t, tbl.src, tbl.restore, enableWindowFunc)
@@ -4209,24 +4209,6 @@ func TestOptimizerHints(t *testing.T) {
 	require.Equal(t, "hash_agg", hints[1].HintName.L)
 
 	// Test MPPAgg
-	stmt, _, err = p.Parse("select /*+ MPP_TIDB_AGG(), mpp_tidb_agg() */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
-	require.NoError(t, err)
-	selectStmt = stmt[0].(*ast.SelectStmt)
-
-	hints = selectStmt.TableHints
-	require.Len(t, hints, 2)
-	require.Equal(t, "mpp_tidb_agg", hints[0].HintName.L)
-	require.Equal(t, "mpp_tidb_agg", hints[1].HintName.L)
-
-	stmt, _, err = p.Parse("select /*+ MPP_SCALAR_AGG(), mpp_scalar_agg() */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
-	require.NoError(t, err)
-	selectStmt = stmt[0].(*ast.SelectStmt)
-
-	hints = selectStmt.TableHints
-	require.Len(t, hints, 2)
-	require.Equal(t, "mpp_scalar_agg", hints[0].HintName.L)
-	require.Equal(t, "mpp_scalar_agg", hints[1].HintName.L)
-
 	stmt, _, err = p.Parse("select /*+ MPP_1PHASE_AGG(), mpp_1phase_agg() */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
 	require.NoError(t, err)
 	selectStmt = stmt[0].(*ast.SelectStmt)
@@ -4553,6 +4535,14 @@ func TestComment(t *testing.T) {
 		{"create table t (never int)", true, "CREATE TABLE `t` (`never` INT)"},
 		{"create table t (subject int)", true, "CREATE TABLE `t` (`subject` INT)"},
 		{"create table t (x509 int)", true, "CREATE TABLE `t` (`x509` INT)"},
+
+		// COMMENT/ATTRIBUTE in CREATE/ALTER USER
+		{"create user commentUser COMMENT '123456' '{\"name\": \"Tom\", \"age\", 19}", false, ""},
+		{"alter user commentUser COMMENT '123456' '{\"name\": \"Tom\", \"age\", 19}", false, ""},
+		{"create user commentUser COMMENT '123456'", true, "CREATE USER `commentUser`@`%` COMMENT '123456'"},
+		{"alter user commentUser COMMENT '123456'", true, "ALTER USER `commentUser`@`%` COMMENT '123456'"},
+		{"create user commentUser ATTRIBUTE '{\"name\": \"Tom\", \"age\", 19}'", true, "CREATE USER `commentUser`@`%` ATTRIBUTE '{\"name\": \"Tom\", \"age\", 19}'"},
+		{"alter user commentUser ATTRIBUTE '{\"name\": \"Tom\", \"age\", 19}'", true, "ALTER USER `commentUser`@`%` ATTRIBUTE '{\"name\": \"Tom\", \"age\", 19}'"},
 	}
 	RunTest(t, table, false)
 }
@@ -6918,7 +6908,7 @@ func TestCharsetIntroducer(t *testing.T) {
 	require.EqualError(t, err, "[ddl:1115]Unsupported character introducer: 'gbk'")
 }
 
-func TestNonTransactionalDelete(t *testing.T) {
+func TestNonTransactionalDML(t *testing.T) {
 	cases := []testCase{
 		{"batch on c limit 10 delete from t where c = 10", true,
 			"BATCH ON `c` LIMIT 10 DELETE FROM `t` WHERE `c`=10"},
@@ -6932,6 +6922,19 @@ func TestNonTransactionalDelete(t *testing.T) {
 			"BATCH LIMIT 10 DRY RUN DELETE FROM `t` WHERE `c`=10"},
 		{"batch limit 10 dry run query delete from t where c = 10", true,
 			"BATCH LIMIT 10 DRY RUN QUERY DELETE FROM `t` WHERE `c`=10"},
+		// updates
+		{"batch on c limit 10 update t set c = 10", true,
+			"BATCH ON `c` LIMIT 10 UPDATE `t` SET `c`=10"},
+		{"batch on c limit 10 dry run update t set c = 10", true,
+			"BATCH ON `c` LIMIT 10 DRY RUN UPDATE `t` SET `c`=10"},
+		{"batch on c limit 10 dry run query update t set c = 10", true,
+			"BATCH ON `c` LIMIT 10 DRY RUN QUERY UPDATE `t` SET `c`=10"},
+		{"batch limit 10 update t set c = 10", true,
+			"BATCH LIMIT 10 UPDATE `t` SET `c`=10"},
+		{"batch limit 10 dry run update t set c = 10", true,
+			"BATCH LIMIT 10 DRY RUN UPDATE `t` SET `c`=10"},
+		{"batch limit 10 dry run query update t set c = 10", true,
+			"BATCH LIMIT 10 DRY RUN QUERY UPDATE `t` SET `c`=10"},
 	}
 
 	RunTest(t, cases, false)

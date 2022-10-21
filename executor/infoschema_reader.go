@@ -172,6 +172,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataForClusterTrxSummary(sctx)
 		case infoschema.TableVariablesInfo:
 			err = e.setDataForVariablesInfo(sctx)
+		case infoschema.TableUserAttributes:
+			err = e.setDataForUserAttributes(ctx, sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -431,6 +433,35 @@ func (e *memtableRetriever) setDataForVariablesInfo(ctx sessionctx.Context) erro
 		}
 		rows = append(rows, row)
 	}
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataForUserAttributes(ctx context.Context, sctx sessionctx.Context) error {
+	exec, _ := sctx.(sqlexec.RestrictedSQLExecutor)
+	chunkRows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT user, host, JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.metadata')) FROM mysql.user`)
+	if err != nil {
+		return err
+	}
+	if len(chunkRows) == 0 {
+		return nil
+	}
+	rows := make([][]types.Datum, 0, len(chunkRows))
+	for _, chunkRow := range chunkRows {
+		if chunkRow.Len() != 3 {
+			continue
+		}
+		user := chunkRow.GetString(0)
+		host := chunkRow.GetString(1)
+		// Compatible with results in MySQL
+		var attribute any
+		if attribute = chunkRow.GetString(2); attribute == "" {
+			attribute = nil
+		}
+		row := types.MakeDatums(user, host, attribute)
+		rows = append(rows, row)
+	}
+
 	e.rows = rows
 	return nil
 }
