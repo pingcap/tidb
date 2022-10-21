@@ -17,6 +17,8 @@ package ddl
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
+	"fmt"
 	"strings"
 	"time"
 
@@ -124,18 +126,6 @@ func setTiDBEnableAutoAnalyze(sess sessionctx.Context, value string) error {
 	return sess.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnableAutoAnalyze, value)
 }
 
-func getTiDBMaxAutoAnalyzeTime(sess sessionctx.Context) (string, error) {
-	val, err := sess.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBMaxAutoAnalyzeTime)
-	if err != nil {
-		return "", errors.Trace(err)
-	}
-	return val, nil
-}
-
-func setTiDBMaxAutoAnalyzeTime(sess sessionctx.Context, value string) error {
-	return sess.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBMaxAutoAnalyzeTime, value)
-}
-
 func getTiDBEnableAutoAnalyze(sess sessionctx.Context) (string, error) {
 	val, err := sess.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBEnableAutoAnalyze)
 	if err != nil {
@@ -156,9 +146,6 @@ func checkAndSetFlashbackClusterInfo(sess sessionctx.Context, d *ddlCtx, t *meta
 		return err
 	}
 	if err = setTiDBEnableAutoAnalyze(sess, variable.Off); err != nil {
-		return err
-	}
-	if err = setTiDBMaxAutoAnalyzeTime(sess, "1"); err != nil {
 		return err
 	}
 
@@ -301,6 +288,9 @@ func sendPrepareFlashbackToVersionRPC(
 			endKey = rangeEndKey
 		}
 
+		logutil.BgLogger().Info("send prepare flashback request", zap.Uint64("region_id", loc.Region.GetID()),
+			zap.String("start_key", hex.EncodeToString(startKey)), zap.String("end_key", hex.EncodeToString(endKey)))
+
 		req := tikvrpc.NewRequest(tikvrpc.CmdPrepareFlashbackToVersion, &kvrpcpb.PrepareFlashbackToVersionRequest{
 			StartKey: startKey,
 			EndKey:   endKey,
@@ -309,24 +299,21 @@ func sendPrepareFlashbackToVersionRPC(
 		resp, err := s.SendReq(bo, req, loc.Region, flashbackTimeout)
 		if err != nil {
 			return taskStat, err
-		}
-		regionErr, err := resp.GetRegionError()
-		if err != nil {
-			return taskStat, err
-		}
-		if regionErr != nil {
-			err = bo.Backoff(tikv.BoRegionMiss(), errors.New(regionErr.String()))
+		} else {
+			regionErr, err := resp.GetRegionError()
 			if err != nil {
 				return taskStat, err
 			}
-			continue
-		}
-		if resp.Resp == nil {
-			return taskStat, errors.Errorf("prepare flashback missing resp body")
-		}
-		prepareFlashbackToVersionResp := resp.Resp.(*kvrpcpb.PrepareFlashbackToVersionResponse)
-		if err := prepareFlashbackToVersionResp.GetError(); err != "" {
-			return taskStat, errors.Errorf(err)
+			if regionErr != nil {
+				return taskStat, errors.Errorf(regionErr.String())
+			}
+			if resp.Resp == nil {
+				return taskStat, errors.Errorf("prepare flashback missing resp body")
+			}
+			prepareFlashbackToVersionResp := resp.Resp.(*kvrpcpb.PrepareFlashbackToVersionResponse)
+			if err := prepareFlashbackToVersionResp.GetError(); err != "" {
+				return taskStat, errors.Errorf(err)
+			}
 		}
 		taskStat.CompletedRegions++
 		if isLast {
@@ -385,6 +372,9 @@ func sendFlashbackToVersionRPC(
 			endKey = rangeEndKey
 		}
 
+		logutil.BgLogger().Info("send flashback request", zap.Uint64("region_id", loc.Region.GetID()),
+			zap.String("start_key", hex.EncodeToString(startKey)), zap.String("end_key", hex.EncodeToString(endKey)))
+
 		req := tikvrpc.NewRequest(tikvrpc.CmdFlashbackToVersion, &kvrpcpb.FlashbackToVersionRequest{
 			Version:  version,
 			StartKey: startKey,
@@ -395,27 +385,38 @@ func sendFlashbackToVersionRPC(
 
 		resp, err := s.SendReq(bo, req, loc.Region, flashbackTimeout)
 		if err != nil {
-			return taskStat, err
-		}
-		regionErr, err := resp.GetRegionError()
-		if err != nil {
-			return taskStat, err
-		}
-		if regionErr != nil {
-			err = bo.Backoff(tikv.BoRegionMiss(), errors.New(regionErr.String()))
+			logutil.BgLogger().Warn("send request meets error", zap.Uint64("region_id", loc.Region.GetID()), zap.Error(err))
+			if err.Error() != fmt.Sprintf("region %d is not prepared for the flashback", loc.Region.GetID()) {
+				return taskStat, err
+			}
+		} else {
+			regionErr, err := resp.GetRegionError()
 			if err != nil {
 				return taskStat, err
 			}
-			continue
-		}
-		if resp.Resp == nil {
-			logutil.BgLogger().Warn("flashback missing resp body")
-			continue
-		}
-		flashbackToVersionResp := resp.Resp.(*kvrpcpb.FlashbackToVersionResponse)
-		if err := flashbackToVersionResp.GetError(); err != "" {
-			logutil.BgLogger().Warn("flashback rpc meets error", zap.String("err", err))
-			continue
+			if regionErr != nil {
+				err = bo.Backoff(tikv.BoRegionMiss(), errors.New(regionErr.String()))
+				if err != nil {
+					return taskStat, err
+				}
+				continue
+			}
+			if resp.Resp == nil {
+				logutil.BgLogger().Warn("flashback miss resp body", zap.Uint64("region_id", loc.Region.GetID()))
+				err = bo.Backoff(tikv.BoTiKVRPC(), errors.New("flashback rpc miss resp body"))
+				if err != nil {
+					return taskStat, err
+				}
+				continue
+			}
+			flashbackToVersionResp := resp.Resp.(*kvrpcpb.FlashbackToVersionResponse)
+			if respErr := flashbackToVersionResp.GetError(); respErr != "" {
+				boErr := bo.Backoff(tikv.BoTiKVRPC(), errors.New(respErr))
+				if boErr != nil {
+					return taskStat, boErr
+				}
+				continue
+			}
 		}
 		taskStat.CompletedRegions++
 		if isLast {
@@ -443,9 +444,15 @@ func flashbackToVersion(
 
 func splitTablesRegions(d *ddlCtx, keyRanges []kv.KeyRange) {
 	if s, ok := d.store.(kv.SplittableStore); ok {
+		var tableID int64
 		for _, keys := range keyRanges {
-			splitRecordRegion(d.ctx, s, tablecodec.DecodeTableID(keys.StartKey), false)
-			splitRecordRegion(d.ctx, s, tablecodec.DecodeTableID(keys.EndKey), false)
+			for {
+				// tableID is useless when scatter == false
+				_, err := s.SplitRegions(d.ctx, [][]byte{keys.StartKey, keys.EndKey}, false, &tableID)
+				if err == nil {
+					break
+				}
+			}
 		}
 	}
 }
@@ -578,7 +585,7 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 					return stats, err
 				}, ranges.StartKey, ranges.EndKey); err != nil {
 				logutil.BgLogger().Warn("[ddl] Get error when do flashback", zap.Error(err))
-				return ver, err
+				return ver, errors.Trace(err)
 			}
 		}
 
