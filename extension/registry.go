@@ -33,10 +33,17 @@ type registry struct {
 // Extensions returns the extensions after setup
 func (r *registry) Extensions() (*Extensions, error) {
 	r.RLock()
-	defer r.RUnlock()
-	if !r.setup {
-		return nil, errors.New("The extensions has not been setup")
+	if r.setup {
+		return r.extensions, nil
 	}
+	r.RUnlock()
+
+	if err := r.Setup(); err != nil {
+		return nil, err
+	}
+
+	r.RUnlock()
+	defer r.RUnlock()
 	return r.extensions, nil
 }
 
