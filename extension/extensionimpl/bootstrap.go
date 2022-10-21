@@ -17,6 +17,8 @@ package extensionimpl
 import (
 	"context"
 
+	"github.com/pingcap/errors"
+
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/extension"
 	"github.com/pingcap/tidb/kv"
@@ -68,5 +70,10 @@ func Bootstrap(ctx context.Context, do *domain.Domain) error {
 	}
 	defer pool.Put(sctx)
 
-	return extensions.Bootstrap(&bootstrapContext{ctx, sctx.(sqlexec.SQLExecutor)})
+	executor, ok := sctx.(sqlexec.SQLExecutor)
+	if !ok {
+		return errors.Errorf("type '%T' cannot be casted to 'sqlexec.SQLExecutor'", sctx)
+	}
+
+	return extensions.Bootstrap(&bootstrapContext{ctx, executor})
 }
