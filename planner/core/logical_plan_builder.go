@@ -5892,7 +5892,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (Plan
 	if err != nil {
 		return nil, err
 	}
-	err = del.buildOnDeleteFKChecks(b.ctx, b.is, tblID2table)
+	err = del.buildOnDeleteFKTriggers(b.ctx, b.is, tblID2table)
 	return del, err
 }
 
