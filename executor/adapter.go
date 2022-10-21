@@ -608,28 +608,33 @@ func (a *ExecStmt) handleForeignKeyTrigger(ctx context.Context, e Executor, dept
 }
 
 func (a *ExecStmt) handleForeignKeyCascade(ctx context.Context, fkc *FKCascadeExec, depth int) error {
-	if len(fkc.fkValues) == 0 {
+	if len(fkc.fkValues) == 0 && len(fkc.fkUpdatedValuesMap) == 0 {
 		return nil
 	}
 	if depth > maxForeignKeyCascadeDepth {
 		return ErrForeignKeyCascadeDepthExceeded.GenWithStackByArgs(maxForeignKeyCascadeDepth)
 	}
-	e, err := fkc.buildExecutor(ctx)
-	if err != nil || e == nil {
-		return err
+	for {
+		e, err := fkc.buildExecutor(ctx)
+		if err != nil || e == nil {
+			return err
+		}
+		if err := e.Open(ctx); err != nil {
+			terror.Call(e.Close)
+			return err
+		}
+		err = Next(ctx, e, newFirstChunk(e))
+		if err != nil {
+			return err
+		}
+		// Call `StmtCommit` uses to flush the fk cascade executor change into txn mem-buffer,
+		// then the later fk cascade executors can see the mem-buffer changes.
+		a.Ctx.StmtCommit()
+		err = a.handleForeignKeyTrigger(ctx, e, depth+1)
+		if err != nil {
+			return err
+		}
 	}
-	if err := e.Open(ctx); err != nil {
-		terror.Call(e.Close)
-		return err
-	}
-	err = Next(ctx, e, newFirstChunk(e))
-	if err != nil {
-		return err
-	}
-	// Call `StmtCommit` uses to flush the fk cascade executor change into txn mem-buffer,
-	// then the later fk cascade executors can see the mem-buffer changes.
-	a.Ctx.StmtCommit()
-	return a.handleForeignKeyTrigger(ctx, e, depth+1)
 }
 
 // prepareFKCascadeContext records a transaction savepoint for foreign key cascade when this ExecStmt has foreign key
