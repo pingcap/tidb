@@ -14,9 +14,10 @@
 package core
 
 import (
-	"fmt"
+	"math/rand"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
@@ -24,6 +25,25 @@ import (
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/stretchr/testify/require"
 )
+
+func randomPlanCacheKey() *planCacheKey {
+	random := rand.New(rand.NewSource(time.Now().UnixNano()))
+	return &planCacheKey{
+		database:      strconv.FormatInt(int64(random.Int()), 10),
+		schemaVersion: time.Now().UnixNano(),
+	}
+}
+
+func randomPlanCacheValue(types []*types.FieldType) *PlanCacheValue {
+	plans := []Plan{&Insert{}, &Update{}, &Delete{}, &PhysicalTableScan{}, &PhysicalTableDual{}, &PhysicalTableReader{},
+		&PhysicalTableScan{}, &PhysicalIndexJoin{}, &PhysicalIndexHashJoin{}, &PhysicalIndexMergeJoin{}, &PhysicalIndexMergeReader{},
+		&PhysicalIndexLookUpReader{}, &PhysicalApply{}, &PhysicalApply{}, &PhysicalLimit{}}
+	random := rand.New(rand.NewSource(time.Now().UnixNano()))
+	return &PlanCacheValue{
+		Plan:       plans[random.Int()%len(plans)],
+		ParamTypes: types,
+	}
+}
 
 func TestLRUPCPut(t *testing.T) {
 	// test initialize
@@ -308,15 +328,12 @@ func TestLRUPlanCacheMemoryUsage(t *testing.T) {
 		evict[key] = value
 	}
 	var res int64 = 0
-
 	// put
-	plans := []Plan{&Insert{}, &Update{}, &Delete{}}
-	for i, p := range plans {
-		k := &planCacheKey{database: strconv.FormatInt(int64(i), 10)}
-		v := &PlanCacheValue{Plan: p}
+	for i := 0; i < 3; i++ {
+		k := randomPlanCacheKey()
+		v := randomPlanCacheValue(pTypes)
 		lru.Put(k, v, pTypes)
 		res += k.MemoryUsage() + v.MemoryUsage()
-		fmt.Println(lru.MemoryUsage(), res)
 		require.Equal(t, lru.MemoryUsage(), res)
 	}
 	// evict
