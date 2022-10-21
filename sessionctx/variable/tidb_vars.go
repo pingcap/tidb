@@ -749,6 +749,9 @@ const (
 	// ranges would exceed the limit, it chooses less accurate ranges such as full range. 0 indicates that there is no memory
 	// limit for ranges.
 	TiDBOptRangeMaxSize = "tidb_opt_range_max_size"
+
+	// TiDBMergePartitionStatsConcurrency indicates the concurrecny when merge partition stats into global stats
+	TiDBMergePartitionStatsConcurrency = "tidb_merge_partition_stats_concurrency"
 )
 
 // TiDB vars that have only global scope
@@ -829,6 +832,8 @@ const (
 	TiDBServerMemoryLimitGCTrigger = "tidb_server_memory_limit_gc_trigger"
 	// TiDBEnableGOGCTuner is to enable GOGC tuner. it can tuner GOGC
 	TiDBEnableGOGCTuner = "tidb_enable_gogc_tuner"
+	// TiDBGOGCTunerThreshold is to control the threshold of GOGC tuner.
+	TiDBGOGCTunerThreshold = "tidb_gogc_tuner_threshold"
 )
 
 // TiDB intentional limits
@@ -1057,8 +1062,11 @@ const (
 	DefTiDBOptRangeMaxSize                          = 0
 	DefTiDBCostModelVer                             = 1
 	DefTiDBServerMemoryLimitSessMinSize             = 128 << 20
+	DefTiDBMergePartitionStatsConcurrency           = 1
 	DefTiDBServerMemoryLimitGCTrigger               = 0.7
 	DefTiDBEnableGOGCTuner                          = true
+	// DefTiDBGOGCTunerThreshold is to limit TiDBGOGCTunerThreshold.
+	DefTiDBGOGCTunerThreshold float64 = 0.6
 )
 
 // Process global variables.
@@ -1116,6 +1124,7 @@ var (
 	// DefTiDBServerMemoryLimit indicates the default value of TiDBServerMemoryLimit(TotalMem * 80%).
 	// It should be a const and shouldn't be modified after tidb is started.
 	DefTiDBServerMemoryLimit = mathutil.Max(memory.GetMemTotalIgnoreErr()/10*8, 512<<20)
+	GOGCTunerThreshold       = atomic.NewFloat64(DefTiDBGOGCTunerThreshold)
 )
 
 var (

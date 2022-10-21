@@ -184,6 +184,8 @@ const (
 	TableTrxSummary = "TRX_SUMMARY"
 	// TableVariablesInfo is the string constant of variables_info table.
 	TableVariablesInfo = "VARIABLES_INFO"
+	// TableUserAttributes is the string constant of user_attributes view.
+	TableUserAttributes = "USER_ATTRIBUTES"
 )
 
 const (
@@ -285,6 +287,7 @@ var tableIDMap = map[string]int64{
 	TableTrxSummary:                      autoid.InformationSchemaDBID + 80,
 	ClusterTableTrxSummary:               autoid.InformationSchemaDBID + 81,
 	TableVariablesInfo:                   autoid.InformationSchemaDBID + 82,
+	TableUserAttributes:                  autoid.InformationSchemaDBID + 83,
 }
 
 // columnInfo represents the basic column information of all kinds of INFORMATION_SCHEMA tables
@@ -1536,6 +1539,12 @@ var tableVariablesInfoCols = []columnInfo{
 	{name: "IS_NOOP", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
 }
 
+var tableUserAttributesCols = []columnInfo{
+	{name: "USER", tp: mysql.TypeVarchar, size: 32, flag: mysql.NotNullFlag},
+	{name: "HOST", tp: mysql.TypeVarchar, size: 255, flag: mysql.NotNullFlag},
+	{name: "ATTRIBUTE", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
+}
+
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
 // The returned description string may be:
 //   - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
@@ -1903,16 +1912,16 @@ func SysVarHiddenForSem(ctx sessionctx.Context, sysVarNameInLower string) bool {
 }
 
 // GetDataFromSessionVariables return the [name, value] of all session variables
-func GetDataFromSessionVariables(ctx sessionctx.Context) ([][]types.Datum, error) {
-	sessionVars := ctx.GetSessionVars()
+func GetDataFromSessionVariables(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+	sessionVars := sctx.GetSessionVars()
 	sysVars := variable.GetSysVars()
 	rows := make([][]types.Datum, 0, len(sysVars))
 	for _, v := range sysVars {
-		if SysVarHiddenForSem(ctx, v.Name) {
+		if SysVarHiddenForSem(sctx, v.Name) {
 			continue
 		}
 		var value string
-		value, err := sessionVars.GetSessionOrGlobalSystemVar(v.Name)
+		value, err := sessionVars.GetSessionOrGlobalSystemVar(ctx, v.Name)
 		if err != nil {
 			return nil, err
 		}
@@ -1995,6 +2004,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TablePlacementPolicies:                  tablePlacementPoliciesCols,
 	TableTrxSummary:                         tableTrxSummaryCols,
 	TableVariablesInfo:                      tableVariablesInfoCols,
+	TableUserAttributes:                     tableUserAttributesCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
@@ -2016,8 +2026,7 @@ type infoschemaTable struct {
 }
 
 // IterRecords implements table.Table IterRecords interface.
-func (*infoschemaTable) IterRecords(_ sessionctx.Context, _ []*table.Column,
-	_ table.RecordIterFunc) error {
+func (*infoschemaTable) IterRecords(ctx context.Context, sctx sessionctx.Context, cols []*table.Column, fn table.RecordIterFunc) error {
 	return nil
 }
 
