@@ -1713,7 +1713,10 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx sessionctx.Context) (
 			for _, tableID := range extractorTableIDs {
 				regionsInfo, err := e.getRegionsInfoForTable(tikvHelper, is, tableID)
 				if err != nil {
-					continue
+					if errors.ErrorEqual(err, infoschema.ErrTableExists) {
+						continue
+					}
+					return err
 				}
 				allRegionsInfo = allRegionsInfo.Merge(regionsInfo)
 			}
@@ -1736,11 +1739,8 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx sessionctx.Context) (
 			if len(extractorTableIDs) == 0 {
 				e.setNewTiKVRegionStatusCol(&allRegionsInfo.Regions[i], &regionTableList[j])
 			}
-			for _, tableID := range extractorTableIDs {
-				if tableID == regionTableList[j].Table.ID {
-					e.setNewTiKVRegionStatusCol(&allRegionsInfo.Regions[i], &regionTableList[j])
-					break
-				}
+			if slices.Contains(extractorTableIDs, regionTableList[j].Table.ID) {
+				e.setNewTiKVRegionStatusCol(&allRegionsInfo.Regions[i], &regionTableList[j])
 			}
 		}
 	}
