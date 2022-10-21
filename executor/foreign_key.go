@@ -646,7 +646,7 @@ func GenCascadeDeleteSQL(schema, table model.CIStr, fk *model.FKInfo, fkValues [
 	return buf.String(), nil
 }
 
-// GenCascadeDeleteSQL uses to generate foreign key `SET NULL` SQL, export for test.
+// GenCascadeSetNullSQL uses to generate foreign key `SET NULL` SQL, export for test.
 func GenCascadeSetNullSQL(schema, table model.CIStr, fk *model.FKInfo, fkValues [][]types.Datum) (string, error) {
 	buf := bytes.NewBuffer(nil)
 	buf.WriteString("UPDATE `")

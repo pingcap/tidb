@@ -1495,4 +1495,56 @@ func TestForeignKeyOnDeleteSetNull2(t *testing.T) {
 	tk.MustQuery("select * from t0").Check(testkit.Rows("1"))
 	tk.MustQuery("select id, pid, a from t1 order by id").Check(testkit.Rows("0 0 <nil>", "1 0 1", "2 1 1", "3 2 1", "4 3 1", "5 4 1", "6 5 1", "7 6 1", "8 7 1", "9 8 1", "10 9 1", "11 10 1", "12 11 1", "13 12 1", "14 13 1"))
 
+	// Test multi-foreign key set null in one table.
+	tk.MustExec("drop table if exists t1,t2,t3")
+	tk.MustExec("create table t1 (id int key)")
+	tk.MustExec("create table t2 (id int key)")
+	tk.MustExec("create table t3 (id1 int, id2 int, constraint fk_id1 foreign key (id1) references t1 (id) on delete set null, " +
+		"constraint fk_id2 foreign key (id2) references t2 (id) on delete set null)")
+	tk.MustExec("insert into t1 values (1), (2), (3)")
+	tk.MustExec("insert into t2 values (1), (2), (3)")
+	tk.MustExec("insert into t3 values (1,1), (1, 2), (1, 3), (2, 1), (2, 2)")
+	tk.MustExec("delete from t1 where id=1")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("2", "3"))
+	tk.MustQuery("select * from t2").Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery("select * from t3 order by id1").Check(testkit.Rows("<nil> 1", "<nil> 2", "<nil> 3", "2 1", "2 2"))
+	tk.MustExec("create table t4 (id3 int key, constraint fk_id3 foreign key (id3) references t3 (id2))")
+	tk.MustExec("insert into t4 values (2)")
+	tk.MustExec("delete from t1 where id=2")
+	tk.MustGetDBError("delete from t2 where id = 2", plannercore.ErrRowIsReferenced2)
+	tk.MustQuery("select * from t1").Check(testkit.Rows("3"))
+	tk.MustQuery("select * from t2 order by id").Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery("select * from t3 order by id1, id2").Check(testkit.Rows("<nil> 1", "<nil> 1", "<nil> 2", "<nil> 2", "<nil> 3"))
+
+	// Test foreign key set null execution meet lock and do retry.
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk2.MustExec("set @@foreign_key_checks=1")
+	tk2.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2, t3, t4")
+	tk.MustExec("create table t1 (id int key, name varchar(10), pid int, index(pid), constraint fk foreign key (pid) references t1 (id) on delete set null)")
+	tk.MustExec("insert into t1 values (1, 'boss', null), (2, 'a', 1), (3, 'b', 1), (4, 'c', '2')")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t1 values (5, 'd', 3)")
+	tk2.MustExec("begin pessimistic")
+	tk2.MustExec("insert into t1 values (6, 'e', 4)")
+	tk2.MustExec("delete from t1 where id=2")
+	tk2.MustExec("commit")
+	tk.MustExec("delete from t1 where id = 1")
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t1 order by id").Check(testkit.Rows("3 b <nil>", "4 c <nil>", "5 d 3", "6 e 4"))
+
+	// Test foreign key cascade delete and set null in one row.
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (id int key, name varchar(10), pid int, ppid int, index(pid), index(ppid) , constraint fk_pid foreign key (pid) references t1 (id) on delete cascade, " +
+		"constraint fk_ppid foreign key (ppid) references t1 (id) on delete set null)")
+	tk.MustExec("insert into t1 values (1, 'boss', null, null), (2, 'a', 1, 1), (3, 'b', 1, 1), (4, 'c', '2', 1)")
+	tk.MustExec("delete from t1 where id = 1")
+	tk.MustQuery("select * from t1 order by id").Check(testkit.Rows())
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (id int key, name varchar(10), pid int, oid int, poid int, index(pid), index (oid), index(poid) , constraint fk_pid foreign key (pid) references t1 (id) on delete cascade, " +
+		"constraint fk_poid foreign key (poid) references t1 (oid) on delete set null)")
+	tk.MustExec("insert into t1 values (1, 'boss', null, 0, 0), (2, 'a', 1, 1, 0), (3, 'b', null, 2, 1), (4, 'c', 2, 3, 2)")
+	tk.MustExec("delete from t1 where id = 1")
+	tk.MustQuery("select * from t1 order by id").Check(testkit.Rows("3 b <nil> 2 <nil>"))
 }
