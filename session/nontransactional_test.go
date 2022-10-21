@@ -555,3 +555,16 @@ func TestNonTransactionalDeleteShardOnUnsupportedTypes(t *testing.T) {
 	require.Error(t, err)
 	tk.MustQuery("select count(*) from t2").Check(testkit.Rows("1"))
 }
+
+func TestNonTransactionalInsert(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(id int primary key , v int)")
+	tk.MustExec("create table t2(id int primary key , v int)")
+	err := tk.ExecToErr("batch limit 1 insert into t2 values (1, 1), (2, 2), (3, 3)")
+	require.Error(t, err)
+	tk.MustExec("insert into t2 values (1, 1), (2, 2), (3, 3)")
+	tk.MustExec("batch limit 1 insert into t1 select * from t2 where v > 1")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("2 2", "3 3"))
+}

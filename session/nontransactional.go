@@ -147,17 +147,11 @@ func checkConstraint(stmt *ast.NonTransactionalDMLStmt, se Session) error {
 
 	switch s := stmt.DMLStmt.(type) {
 	case *ast.DeleteStmt:
-		if s.TableRefs == nil || s.TableRefs.TableRefs == nil || s.TableRefs.TableRefs.Left == nil {
-			return errors.New("table reference is nil")
+		if err := checkTableRef(s.TableRefs); err != nil {
+			return err
 		}
-		if s.TableRefs.TableRefs.Right != nil {
-			return errors.New("Non-transactional delete doesn't support multiple tables")
-		}
-		if s.Limit != nil {
-			return errors.New("Non-transactional delete doesn't support limit")
-		}
-		if s.Order != nil {
-			return errors.New("Non-transactional delete doesn't support order by")
+		if err := checkReadClauses(s.Limit, s.Order); err != nil {
+			return err
 		}
 		metrics.NonTransactionalDeleteCount.Inc()
 	case *ast.UpdateStmt:
@@ -166,10 +160,44 @@ func checkConstraint(stmt *ast.NonTransactionalDMLStmt, se Session) error {
 			return errors.New("Non-transactional update doesn't support limit")
 		}
 		// TODO: metrics
+	case *ast.InsertStmt:
+		if s.Select == nil {
+			return errors.New("Non-transactional insert supports insert select stmt only")
+		}
+		selectStmt, ok := s.Select.(*ast.SelectStmt)
+		if !ok {
+			return errors.New("Non-transactional insert doesn't support non-select source")
+		}
+		if err := checkTableRef(selectStmt.From); err != nil {
+			return err
+		}
+		if err := checkReadClauses(selectStmt.Limit, selectStmt.OrderBy); err != nil {
+			return err
+		}
 	default:
 		return errors.New("Unsupported DML type for non-transactional DML")
 	}
 
+	return nil
+}
+
+func checkTableRef(t *ast.TableRefsClause) error {
+	if t == nil || t.TableRefs == nil || t.TableRefs.Left == nil {
+		return errors.New("table reference is nil")
+	}
+	if t.TableRefs.Right != nil {
+		return errors.New("Non-transactional statements don't support multiple tables")
+	}
+	return nil
+}
+
+func checkReadClauses(limit *ast.Limit, order *ast.OrderByClause) error {
+	if limit != nil {
+		return errors.New("Non-transactional statements don't support limit")
+	}
+	if order != nil {
+		return errors.New("Non-transactional statements don't support order by")
+	}
 	return nil
 }
 
