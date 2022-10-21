@@ -284,9 +284,6 @@ func newTrackerForLRUPC() *memory.Tracker {
 
 // updateMonitor update the memory usage monitor to show in grafana
 func (l *LRUPlanCache) updateMonitorMetric() {
-	l.aa += 1024
-	l.memTracker.Consume(l.aa)
-	// todo: wait for the preorder pr, pass tracker's consumed memory to metric
 	connId := int64(l.ctx.GetSessionVars().ConnectionID)
 	metrics.PlanCacheMemoryUsage.WithLabelValues("SessionID_" + strconv.FormatInt(connId, 10)).Set(float64(l.memTracker.BytesConsumed()))
 	metrics.InstancePlanCacheMemoryUsage.WithLabelValues("instance").Set(float64(InstancePlanCacheMemoryTracker.BytesConsumed()))
