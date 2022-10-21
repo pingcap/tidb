@@ -19,7 +19,8 @@ ADD . https://raw.githubusercontent.com/njhallett/apk-fastest-mirror/c4ca44caef3
 RUN sh ./proxy/apk-fastest-mirror.sh -t 50 && apk add --no-cache git build-base go
 
 COPY . /tidb
-RUN cd /tidb && make server
+ARG GOPROXY
+RUN export GOPROXY=${GOPROXY} && cd /tidb && make server
 
 FROM alpine:latest
 
