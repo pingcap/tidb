@@ -43,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/zap"
 	"sort"
-	_"golang.org/x/exp/slices"
 )
 
 var _ Executor = &IndexLookUpJoin{}
