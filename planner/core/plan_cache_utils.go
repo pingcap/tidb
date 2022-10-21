@@ -19,6 +19,7 @@ import (
 	"math"
 	"strconv"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
@@ -34,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/kvcache"
+	"github.com/pingcap/tidb/util/size"
 	atomic2 "go.uber.org/atomic"
 	"golang.org/x/exp/slices"
 )
@@ -194,7 +196,8 @@ type planCacheKey struct {
 	restrictedReadOnly       bool
 	TiDBSuperReadOnly        bool
 
-	hash []byte
+	memoryUsage int64 // Do not include in hash
+	hash        []byte
 }
 
 // Hash implements Key interface.
@@ -230,6 +233,23 @@ func (key *planCacheKey) Hash() []byte {
 		key.hash = append(key.hash, hack.Slice(strconv.FormatBool(key.TiDBSuperReadOnly))...)
 	}
 	return key.hash
+}
+
+const emptyPlanCacheKeySize = int64(unsafe.Sizeof(planCacheKey{}))
+
+// MemoryUsage return the memory usage of planCacheKey
+func (key *planCacheKey) MemoryUsage() (sum int64) {
+	if key == nil {
+		return
+	}
+
+	if key.memoryUsage > 0 {
+		return key.memoryUsage
+	}
+	sum = emptyPlanCacheKeySize + int64(len(key.database)+len(key.stmtText)+len(key.bindSQL)) +
+		int64(len(key.isolationReadEngines))*size.SizeOfUint8 + int64(cap(key.hash))
+	key.memoryUsage = sum
+	return
 }
 
 // SetPstmtIDSchemaVersion implements PstmtCacheKeyMutator interface to change pstmtID and schemaVersion of cacheKey.
@@ -325,10 +345,50 @@ type PlanCacheValue struct {
 	OutPutNames       []*types.FieldName
 	TblInfo2UnionScan map[*model.TableInfo]bool
 	ParamTypes        FieldSlice
+	memoryUsage       int64
 }
 
 func (v *PlanCacheValue) varTypesUnchanged(txtVarTps []*types.FieldType) bool {
 	return v.ParamTypes.CheckTypesCompatibility4PC(txtVarTps)
+}
+
+// unKnownMemoryUsage represent the memory usage of uncounted structure, maybe need implement later
+// 100 KiB is approximate consumption of a plan from our internal tests
+const unKnownMemoryUsage = int64(50 * size.KB)
+
+// MemoryUsage return the memory usage of PlanCacheValue
+func (v *PlanCacheValue) MemoryUsage() (sum int64) {
+	if v == nil {
+		return
+	}
+
+	if v.memoryUsage > 0 {
+		return v.memoryUsage
+	}
+	switch x := v.Plan.(type) {
+	case PhysicalPlan:
+		sum = x.MemoryUsage()
+	case *Insert:
+		sum = x.MemoryUsage()
+	case *Update:
+		sum = x.MemoryUsage()
+	case *Delete:
+		sum = x.MemoryUsage()
+	default:
+		sum = unKnownMemoryUsage
+	}
+
+	sum += size.SizeOfInterface + size.SizeOfSlice*2 + int64(cap(v.OutPutNames)+cap(v.ParamTypes))*size.SizeOfPointer +
+		size.SizeOfMap + int64(len(v.TblInfo2UnionScan))*(size.SizeOfPointer+size.SizeOfBool) + size.SizeOfInt64*2
+
+	for _, name := range v.OutPutNames {
+		sum += name.MemoryUsage()
+	}
+	for _, ft := range v.ParamTypes {
+		sum += ft.MemoryUsage()
+	}
+	v.memoryUsage = sum
+	return
 }
 
 // NewPlanCacheValue creates a SQLCacheValue.
