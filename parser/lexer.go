@@ -193,7 +193,7 @@ func (s *Scanner) getNextToken() int {
 	return tok
 }
 
-func (s *Scanner) getNextTwoTokens() (int, int) {
+func (s *Scanner) getNextTwoTokens() (tok1 int, tok2 int) {
 	r := s.r
 	tok1, pos, lit := s.scan()
 	if tok1 == identifier {
@@ -204,7 +204,7 @@ func (s *Scanner) getNextTwoTokens() (int, int) {
 			tok1 = tmpToken
 		}
 	}
-	tok2, pos, lit := s.scan()
+	tok2, pos, lit = s.scan()
 	if tok2 == identifier {
 		tok2 = s.handleIdent(&yySymType{})
 	}
