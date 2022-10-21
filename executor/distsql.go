@@ -866,7 +866,6 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 		}
 	}()
 	retTps := w.idxLookup.getRetTpsByHandle()
-	//	chk := chunk.NewChunkWithCapacity(retTps, w.idxLookup.maxChunkSize)
 	chk := w.idxLookup.ctx.GetSessionVars().GetNewChunk(retTps, w.idxLookup.maxChunkSize)
 	idxID := w.idxLookup.getIndexPlanRootID()
 	if w.idxLookup.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
@@ -961,7 +960,6 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 		}
 		if w.checkIndexValue != nil {
 			if retChk == nil {
-				//retChk = chunk.NewChunkWithCapacity(w.idxColTps, w.batchSize)
 				retChk = w.idxLookup.ctx.GetSessionVars().GetNewChunk(w.idxColTps, w.batchSize)
 			}
 			retChk.Append(chk, 0, chk.NumRows())
