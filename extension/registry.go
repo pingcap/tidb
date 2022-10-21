@@ -34,14 +34,10 @@ type registry struct {
 func (r *registry) Setup() error {
 	r.Lock()
 	defer r.Unlock()
-	if r.setup {
-		return nil
-	}
 
 	if _, err := r.doSetup(); err != nil {
 		return err
 	}
-
 	return nil
 }
 
@@ -55,7 +51,7 @@ func (r *registry) Extensions() (*Extensions, error) {
 	}
 	r.RUnlock()
 
-	r.RLock()
+	r.Lock()
 	defer r.Unlock()
 	return r.doSetup()
 }
@@ -89,6 +85,10 @@ func (r *registry) RegisterFactory(name string, factory func() ([]Option, error)
 
 // Setup setups all extensions
 func (r *registry) doSetup() (_ *Extensions, err error) {
+	if r.setup {
+		return r.extensions, nil
+	}
+
 	if len(r.factories) == 0 {
 		r.extensions = nil
 		r.setup = true
