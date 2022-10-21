@@ -63,7 +63,7 @@ func removeExtensionFunc(name string) {
 
 type extensionFuncClass struct {
 	baseFunctionClass
-	funcDef *extension.FunctionDef
+	funcDef extension.FunctionDef
 	flen    int
 }
 
@@ -87,7 +87,7 @@ func newExtensionFuncClass(def *extension.FunctionDef) (*extensionFuncClass, err
 	return &extensionFuncClass{
 		baseFunctionClass: baseFunctionClass{def.Name, len(def.ArgTps), len(def.ArgTps)},
 		flen:              flen,
-		funcDef:           def,
+		funcDef:           *def,
 	}, nil
 }
 
@@ -138,7 +138,7 @@ var _ extension.FunctionContext = &extensionFuncSig{}
 
 type extensionFuncSig struct {
 	baseBuiltinFunc
-	*extension.FunctionDef
+	extension.FunctionDef
 }
 
 func (b *extensionFuncSig) Clone() builtinFunc {
