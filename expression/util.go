@@ -139,9 +139,10 @@ func ExtractCorColumns(expr Expression) (cols []*CorrelatedColumn) {
 // It's often observed that the pattern of the caller like this:
 //
 // cols := ExtractColumns(...)
-// for _, col := range cols {
-//     if xxx(col) {...}
-// }
+//
+//	for _, col := range cols {
+//	    if xxx(col) {...}
+//	}
 //
 // Provide an additional filter argument, this can be done in one step.
 // To avoid allocation for cols that not need.
@@ -377,6 +378,17 @@ func setExprColumnInOperand(expr Expression) Expression {
 		}
 	}
 	return expr
+}
+
+// ColumnSubstitute4PPD substitutes the columns in filter to expressions in select fields.
+// Only used for predicate push down to projection. Some columns can not be substituted for some reasons.
+// So we should return the bool value to indicate some expressions can not be pushed down.
+// e.g. CREATE TABLE t3(c0 INT, primary key(c0));
+// SELECT v2.c0 FROM (select 1 as c0 from t3) v2 WHERE (v2.c0)like(True);
+// The cond `(v2.c0)like(True)` can not be substituted when the new collation enable. So we shouldn't push the cond down to the projection.
+func ColumnSubstitute4PPD(expr Expression, schema *Schema, newExprs []Expression) (bool, Expression) {
+	substituted, resExpr := ColumnSubstituteImpl(expr, schema, newExprs)
+	return substituted, resExpr
 }
 
 // ColumnSubstitute substitutes the columns in filter to expressions in select fields.
@@ -702,8 +714,9 @@ func ContainOuterNot(expr Expression) bool {
 // Input `not` means whether there is `not` outside `expr`
 //
 // eg.
-//    not(0+(t.a == 1 and t.b == 2)) returns true
-//    not(t.a) and not(t.b) returns false
+//
+//	not(0+(t.a == 1 and t.b == 2)) returns true
+//	not(t.a) and not(t.b) returns false
 func containOuterNot(expr Expression, not bool) bool {
 	if f, ok := expr.(*ScalarFunction); ok {
 		switch f.FuncName.L {
