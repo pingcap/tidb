@@ -17,7 +17,6 @@ package ranger_test
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/util/collate"
 	"testing"
 
 	"github.com/pingcap/tidb/config"
@@ -32,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/stretchr/testify/require"
 )
