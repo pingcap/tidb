@@ -62,10 +62,8 @@ type LRUPlanCache struct {
 	guard float64
 
 	// MemTracker track the memory usage of prepared plan cache
-	memTracker  *memory.Tracker
-	testTracker *memory.Tracker
-	ctx         sessionctx.Context
-	aa          int64
+	memTracker *memory.Tracker
+	ctx        sessionctx.Context
 }
 
 // NewLRUPlanCache creates a PCLRUCache object, whose capacity is "capacity".
@@ -76,8 +74,7 @@ func NewLRUPlanCache(ctx sessionctx.Context, capacity uint, guard float64, quota
 		capacity = 100
 		logutil.BgLogger().Info("capacity of LRU cache is less than 1, will use default value(100) init cache")
 	}
-	t := memory.NewTracker(-26, -1)
-	t.AttachTo(InstancePlanCacheMemoryTracker)
+
 	return &LRUPlanCache{
 		capacity:       capacity,
 		size:           0,
@@ -87,7 +84,6 @@ func NewLRUPlanCache(ctx sessionctx.Context, capacity uint, guard float64, quota
 		quota:          quota,
 		guard:          guard,
 		memTracker:     newTrackerForLRUPC(),
-		testTracker:    t,
 		ctx:            ctx,
 	}
 }
@@ -104,7 +100,6 @@ func strHashKey(key kvcache.Key, deepCopy bool) string {
 func (l *LRUPlanCache) Get(key kvcache.Key, paramTypes []*types.FieldType) (value kvcache.Value, ok bool) {
 	l.lock.Lock()
 	defer l.lock.Unlock()
-	defer l.updateMonitorMetric()
 
 	bucket, bucketExist := l.buckets[strHashKey(key, false)]
 	if bucketExist {
@@ -179,7 +174,7 @@ func (l *LRUPlanCache) DeleteAll() {
 		l.size--
 	}
 	l.buckets = make(map[string]map[*list.Element]struct{}, 1)
-	l.memTracker = newTrackerForLRUPC()
+	l.memTracker.ReplaceBytesUsed(0)
 }
 
 // Size gets the current cache size.
@@ -220,12 +215,12 @@ func (l *LRUPlanCache) Close() {
 		return
 	}
 	connId := int64(l.ctx.GetSessionVars().ConnectionID)
-	if l.testTracker != nil {
-		l.testTracker.ReplaceBytesUsed(0)
-		metrics.PlanCacheMemoryUsage.WithLabelValues("SessionID_" + strconv.FormatInt(connId, 10)).Set(float64(l.testTracker.BytesConsumed()))
+	if l.memTracker != nil {
+		l.memTracker.ReplaceBytesUsed(0)
+		metrics.PlanCacheMemoryUsage.WithLabelValues("SessionID_" + strconv.FormatInt(connId, 10)).Set(float64(l.memTracker.BytesConsumed()))
 		metrics.PlanCacheMemoryUsage.DeleteLabelValues("SessionID_" + strconv.FormatInt(connId, 10))
 		metrics.InstancePlanCacheMemoryUsage.WithLabelValues("instance").Set(float64(InstancePlanCacheMemoryTracker.BytesConsumed()))
-		l.testTracker.Detach()
+		l.memTracker.Detach()
 	}
 }
 
@@ -283,16 +278,16 @@ func PickPlanFromBucket(bucket map[*list.Element]struct{}, paramTypes []*types.F
 // todo: pass label when track general plan cache memory
 func newTrackerForLRUPC() *memory.Tracker {
 	m := memory.NewTracker(memory.LabelForPreparedPlanCache, -1)
-	//todo: maybe need attach here
+	m.AttachTo(InstancePlanCacheMemoryTracker)
 	return m
 }
 
 // updateMonitor update the memory usage monitor to show in grafana
 func (l *LRUPlanCache) updateMonitorMetric() {
 	l.aa += 1024
-	l.testTracker.Consume(l.aa)
+	l.memTracker.Consume(l.aa)
 	// todo: wait for the preorder pr, pass tracker's consumed memory to metric
 	connId := int64(l.ctx.GetSessionVars().ConnectionID)
-	metrics.PlanCacheMemoryUsage.WithLabelValues("SessionID_" + strconv.FormatInt(connId, 10)).Set(float64(l.testTracker.BytesConsumed()))
+	metrics.PlanCacheMemoryUsage.WithLabelValues("SessionID_" + strconv.FormatInt(connId, 10)).Set(float64(l.memTracker.BytesConsumed()))
 	metrics.InstancePlanCacheMemoryUsage.WithLabelValues("instance").Set(float64(InstancePlanCacheMemoryTracker.BytesConsumed()))
 }
