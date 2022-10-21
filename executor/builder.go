@@ -2301,6 +2301,10 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
 	if b.err != nil {
 		return nil
 	}
+	deleteExec.fkCascades, b.err = b.buildTblID2FKCascadeExecs(tblID2table, v.FKCascades)
+	if b.err != nil {
+		return nil
+	}
 	return deleteExec
 }
 
