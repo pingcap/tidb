@@ -251,11 +251,10 @@ func (b *builtinST_IntersectsSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if g1srid != 0 {
 		return 0, isNull, errors.New("ST_Intersects only supported for SRID 0")
 	}
-	g1p := geom.NewPoint(g1.Layout()).MustSetCoords(g1.FlatCoords()).SetSRID(g1srid)
-	g2p := geom.NewPoint(g2.Layout()).MustSetCoords(g2.FlatCoords()).SetSRID(g2srid)
 
-	if g1p.Bounds().Overlaps(g1p.Layout(), g2p.Bounds()) {
+	if g1.Bounds().Overlaps(g2.Layout(), g2.Bounds()) {
 		return 1, false, nil
 	}
+
 	return 0, false, nil
 }
