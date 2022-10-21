@@ -7755,3 +7755,15 @@ func TestFix38127(t *testing.T) {
 	tk.MustQuery("select from_unixtime(dou, '%Y-%m-%d') from t").Check(testkit.Rows("<nil>"))
 	tk.MustQuery("select from_unixtime(varc, '%Y-%m-%d') from t").Check(testkit.Rows("<nil>"))
 }
+
+func TestJSONStorageFree(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustQuery("select json_storage_free(NULL)").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select json_storage_free('{}')").Check(testkit.Rows("0"))
+	tk.MustQuery("select json_storage_free('1')").Check(testkit.Rows("0"))
+	tk.MustQuery(`select json_storage_free('{"a": "b"}')`).Check(testkit.Rows("0"))
+	err := tk.ExecToErr(`select json_storage_free('{"c":["a","b"]`)
+	require.Error(t, err, "[json:3140]Invalid JSON text: The document root must not be followed by other values.")
+}

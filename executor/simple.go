@@ -810,26 +810,34 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		return err
 	}
 
-	lockAccount := false
-	if len(s.PasswordOrLockOptions) > 0 {
+	lockAccount := "N"
+	if length := len(s.PasswordOrLockOptions); length > 0 {
 		// If "ACCOUNT LOCK" or "ACCOUNT UNLOCK" appears many times,
 		// the last declaration takes effect.
-		for i := len(s.PasswordOrLockOptions) - 1; i >= 0; i-- {
+		for i := length - 1; i >= 0; i-- {
 			if s.PasswordOrLockOptions[i].Type == ast.Lock {
-				lockAccount = true
+				lockAccount = "Y"
 				break
 			} else if s.PasswordOrLockOptions[i].Type == ast.Unlock {
 				break
 			}
 		}
 	}
+	if s.IsCreateRole {
+		lockAccount = "Y"
+	}
+
+	var userAttributes any = nil
+	if s.CommentOrAttributeOption != nil {
+		if s.CommentOrAttributeOption.Type == ast.UserCommentType {
+			userAttributes = fmt.Sprintf("{\"metadata\": {\"comment\": \"%s\"}}", s.CommentOrAttributeOption.Value)
+		} else if s.CommentOrAttributeOption.Type == ast.UserAttributeType {
+			userAttributes = fmt.Sprintf("{\"metadata\": %s}", s.CommentOrAttributeOption.Value)
+		}
+	}
 
 	sql := new(strings.Builder)
-	if s.IsCreateRole || lockAccount {
-		sqlexec.MustFormatSQL(sql, `INSERT INTO %n.%n (Host, User, authentication_string, plugin, Account_locked) VALUES `, mysql.SystemDB, mysql.UserTable)
-	} else {
-		sqlexec.MustFormatSQL(sql, `INSERT INTO %n.%n (Host, User, authentication_string, plugin) VALUES `, mysql.SystemDB, mysql.UserTable)
-	}
+	sqlexec.MustFormatSQL(sql, `INSERT INTO %n.%n (Host, User, authentication_string, plugin, user_attributes, Account_locked) VALUES `, mysql.SystemDB, mysql.UserTable)
 
 	users := make([]*auth.UserIdentity, 0, len(s.Specs))
 	for _, spec := range s.Specs {
@@ -875,11 +883,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		}
 
 		hostName := strings.ToLower(spec.User.Hostname)
-		if s.IsCreateRole || lockAccount {
-			sqlexec.MustFormatSQL(sql, `(%?, %?, %?, %?, %?)`, hostName, spec.User.Username, pwd, authPlugin, "Y")
-		} else {
-			sqlexec.MustFormatSQL(sql, `(%?, %?, %?, %?)`, hostName, spec.User.Username, pwd, authPlugin)
-		}
+		sqlexec.MustFormatSQL(sql, `(%?, %?, %?, %?, %?, %?)`, hostName, spec.User.Username, pwd, authPlugin, userAttributes, lockAccount)
 		users = append(users, spec.User)
 	}
 	if len(users) == 0 {
@@ -1018,6 +1022,11 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		}
 
 		exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
+		type alterField struct {
+			expr  string
+			value string
+		}
+		var fields []alterField
 		if spec.AuthOpt != nil {
 			if spec.AuthOpt.AuthPlugin == "" {
 				authplugin, err := e.userAuthPlugin(spec.User.Username, spec.User.Hostname)
@@ -1035,21 +1044,40 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			if !ok {
 				return errors.Trace(ErrPasswordFormat)
 			}
-			_, _, err := exec.ExecRestrictedSQL(ctx, nil,
-				`UPDATE %n.%n SET authentication_string=%?, plugin=%? WHERE Host=%? and User=%?;`,
-				mysql.SystemDB, mysql.UserTable, pwd, spec.AuthOpt.AuthPlugin, strings.ToLower(spec.User.Hostname), spec.User.Username,
+			fields = append(fields,
+				alterField{"authentication_string=%?", pwd},
+				alterField{"plugin=%?", spec.AuthOpt.AuthPlugin},
 			)
-			if err != nil {
-				failedUsers = append(failedUsers, spec.User.String())
-			}
 		}
 
 		if len(lockAccount) != 0 {
-			_, _, err := exec.ExecRestrictedSQL(ctx, nil,
-				`UPDATE %n.%n SET account_locked=%? WHERE Host=%? and User=%?;`,
-				mysql.SystemDB, mysql.UserTable, lockAccount, spec.User.Hostname, spec.User.Username)
+			fields = append(fields, alterField{"account_locked=%?", lockAccount})
+		}
+
+		if s.CommentOrAttributeOption != nil {
+			newAttributesStr := ""
+			if s.CommentOrAttributeOption.Type == ast.UserCommentType {
+				newAttributesStr = fmt.Sprintf(`{"metadata": {"comment": "%s"}}`, s.CommentOrAttributeOption.Value)
+			} else {
+				newAttributesStr = fmt.Sprintf(`{"metadata": %s}`, s.CommentOrAttributeOption.Value)
+			}
+			fields = append(fields, alterField{"user_attributes=json_merge_patch(user_attributes, %?)", newAttributesStr})
+		}
+
+		if len(fields) > 0 {
+			sql := new(strings.Builder)
+			sqlexec.MustFormatSQL(sql, "UPDATE %n.%n SET ", mysql.SystemDB, mysql.UserTable)
+			for i, f := range fields {
+				sqlexec.MustFormatSQL(sql, f.expr, f.value)
+				if i < len(fields)-1 {
+					sqlexec.MustFormatSQL(sql, ",")
+				}
+			}
+			sqlexec.MustFormatSQL(sql, " WHERE Host=%? and User=%?;", spec.User.Hostname, spec.User.Username)
+			_, _, err := exec.ExecRestrictedSQL(ctx, nil, sql.String())
 			if err != nil {
 				failedUsers = append(failedUsers, spec.User.String())
+				continue
 			}
 		}
 
