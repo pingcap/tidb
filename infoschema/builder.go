@@ -199,6 +199,8 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		return nil, b.applyCreateSchema(m, diff)
 	case model.ActionDropSchema:
 		return b.applyDropSchema(diff.SchemaID), nil
+	case model.ActionRecoverSchema:
+		return b.applyRecoverSchema(m, diff)
 	case model.ActionModifySchemaCharsetAndCollate:
 		return nil, b.applyModifySchemaCharsetAndCollate(m, diff)
 	case model.ActionModifySchemaDefaultPlacement:
@@ -620,6 +622,23 @@ func (b *Builder) applyDropSchema(schemaID int64) []int64 {
 		b.applyDropTable(di, id, nil)
 	}
 	return tableIDs
+}
+
+func (b *Builder) applyRecoverSchema(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	if di, ok := b.is.SchemaByID(diff.SchemaID); ok {
+		return nil, ErrDatabaseExists.GenWithStackByArgs(
+			fmt.Sprintf("(Schema ID %d)", di.ID),
+		)
+	}
+	di, err := m.GetDatabase(diff.SchemaID)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	b.is.schemaMap[di.Name.L] = &schemaTables{
+		dbInfo: di,
+		tables: make(map[string]table.Table, len(diff.AffectedOpts)),
+	}
+	return b.applyCreateTables(m, diff)
 }
 
 func (b *Builder) copySortedTablesBucket(bucketIdx int) {

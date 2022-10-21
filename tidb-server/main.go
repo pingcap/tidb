@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/extension"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -61,7 +62,6 @@ import (
 	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/domainutil"
-	"github.com/pingcap/tidb/util/gctuner"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
@@ -189,6 +189,8 @@ func main() {
 		checkTempStorageQuota()
 	}
 	setupLog()
+	setupExtensions()
+
 	err := cpuprofile.StartCPUProfiler()
 	terror.MustNil(err)
 
@@ -205,7 +207,6 @@ func main() {
 	printInfo()
 	setupBinlogClient()
 	setupMetrics()
-	setupGCTuner()
 	storage, dom := createStoreAndDomain()
 	svr := createServer(storage, dom)
 
@@ -725,6 +726,16 @@ func setupLog() {
 	util.InternalHTTPClient()
 }
 
+func setupExtensions() *extension.Extensions {
+	err := extension.Setup()
+	terror.MustNil(err)
+
+	extensions, err := extension.GetExtensions()
+	terror.MustNil(err)
+
+	return extensions
+}
+
 func printInfo() {
 	// Make sure the TiDB info is always printed.
 	level := log.GetLevel()
@@ -781,15 +792,6 @@ func setupTracing() {
 		log.Fatal("setup jaeger tracer failed", zap.String("error message", err.Error()))
 	}
 	opentracing.SetGlobalTracer(tracer)
-}
-
-func setupGCTuner() {
-	limit, err := memory.MemTotal()
-	if err != nil {
-		log.Fatal("setupGCTuner failed", zap.Error(err))
-	}
-	threshold := limit * 7 / 10
-	gctuner.Tuning(threshold)
 }
 
 func closeDomainAndStorage(storage kv.Storage, dom *domain.Domain) {
