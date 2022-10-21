@@ -124,7 +124,6 @@ func TestCompressReaderWriter(t *testing.T) {
 		_, err = bf.ReadFrom(r)
 		require.NoError(t, err)
 		require.Equal(t, strings.Join(test.content, ""), bf.String())
-		require.Nil(t, r.Close())
 
 		// test withCompression Open
 		r, err = storage.Open(ctx, fileName)
@@ -136,6 +135,48 @@ func TestCompressReaderWriter(t *testing.T) {
 		require.Nil(t, file.Close())
 	}
 	compressTypeArr := []CompressType{Gzip}
+
+	testFnSanppy := func(test *testcase, t *testing.T) {
+		t.Log(test.name)
+		backend, err := ParseBackend("local://"+filepath.ToSlash(dir), nil)
+		require.NoError(t, err)
+		ctx := context.Background()
+		storage, err := Create(ctx, backend, true)
+		require.NoError(t, err)
+		storage = WithCompression(storage, Snappy)
+		fileName := strings.ReplaceAll(test.name, " ", "-") + ".txt.snappy"
+		writer, err := storage.Create(ctx, fileName)
+		require.NoError(t, err)
+		for _, str := range test.content {
+			p := []byte(str)
+			written, err2 := writer.Write(ctx, p)
+			require.Nil(t, err2)
+			require.Len(t, p, written)
+		}
+		err = writer.Close(ctx)
+		require.NoError(t, err)
+
+		// make sure compressed file is written correctly
+		file, err := os.Open(filepath.Join(dir, fileName))
+		require.NoError(t, err)
+		r, err := newCompressReader(test.compressType, file)
+		require.NoError(t, err)
+		var bf bytes.Buffer
+		_, err = bf.ReadFrom(r)
+		require.NoError(t, err)
+		require.Equal(t, strings.Join(test.content, ""), bf.String())
+
+		// test withCompression Open
+		r, err = storage.Open(ctx, fileName)
+		require.NoError(t, err)
+		content, err := io.ReadAll(r)
+		require.NoError(t, err)
+		require.Equal(t, strings.Join(test.content, ""), string(content))
+
+		require.Nil(t, file.Close())
+	}
+	compressTypeSnappyArr := []CompressType{Snappy}
+
 	tests := []testcase{
 		{
 			name: "long text medium chunks",
@@ -164,6 +205,10 @@ func TestCompressReaderWriter(t *testing.T) {
 		for _, compressType := range compressTypeArr {
 			tests[i].compressType = compressType
 			testFn(&tests[i], t)
+		}
+		for _, compressType := range compressTypeSnappyArr {
+			tests[i].compressType = compressType
+			testFnSanppy(&tests[i], t)
 		}
 	}
 }

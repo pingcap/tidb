@@ -6,6 +6,7 @@ import (
 	"context"
 	"io"
 
+	"github.com/golang/snappy"
 	"github.com/pingcap/errors"
 )
 
@@ -17,6 +18,10 @@ const (
 	NoCompression CompressType = iota
 	// Gzip will compress given bytes in gzip format.
 	Gzip
+	// LZO will compress given bytes in lzo format.
+	LZO
+	// Snappy will compress given bytes in snappy format.
+	Snappy
 )
 
 type flusher interface {
@@ -50,15 +55,19 @@ func newCompressWriter(compressType CompressType, w io.Writer) simpleCompressWri
 	switch compressType {
 	case Gzip:
 		return gzip.NewWriter(w)
+	case Snappy:
+		return snappy.NewBufferedWriter(w)
 	default:
 		return nil
 	}
 }
 
-func newCompressReader(compressType CompressType, r io.Reader) (io.ReadCloser, error) {
+func newCompressReader(compressType CompressType, r io.Reader) (io.Reader, error) {
 	switch compressType {
 	case Gzip:
 		return gzip.NewReader(r)
+	case Snappy:
+		return snappy.NewReader(r), nil
 	default:
 		return nil, nil
 	}
