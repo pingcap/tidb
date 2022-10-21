@@ -193,6 +193,30 @@ func (s *Scanner) getNextToken() int {
 	return tok
 }
 
+func (s *Scanner) getNextTwoTokens() (int, int) {
+	r := s.r
+	tok1, pos, lit := s.scan()
+	if tok1 == identifier {
+		tok1 = s.handleIdent(&yySymType{})
+	}
+	if tok1 == identifier {
+		if tmpToken := s.isTokenIdentifier(lit, pos.Offset); tmpToken != 0 {
+			tok1 = tmpToken
+		}
+	}
+	tok2, pos, lit := s.scan()
+	if tok2 == identifier {
+		tok2 = s.handleIdent(&yySymType{})
+	}
+	if tok2 == identifier {
+		if tmpToken := s.isTokenIdentifier(lit, pos.Offset); tmpToken != 0 {
+			tok2 = tmpToken
+		}
+	}
+	s.r = r
+	return tok1, tok2
+}
+
 // Lex returns a token and store the token value in v.
 // Scanner satisfies yyLexer interface.
 // 0 and invalid are special token id this function would return:
@@ -236,13 +260,16 @@ func (s *Scanner) Lex(v *yySymType) int {
 		v.offset = pos.Offset
 		return asof
 	}
-	if tok == to && s.getNextToken() == timestampType {
-		_, pos, lit = s.scan()
-		v.ident = fmt.Sprintf("%s %s", v.ident, lit)
-		s.lastKeyword = toTimestamp
-		s.lastScanOffset = pos.Offset
-		v.offset = pos.Offset
-		return toTimestamp
+	if tok == to {
+		tok1, tok2 := s.getNextTwoTokens()
+		if tok1 == timestampType && tok2 == stringLit {
+			_, pos, lit = s.scan()
+			v.ident = fmt.Sprintf("%s %s", v.ident, lit)
+			s.lastKeyword = toTimestamp
+			s.lastScanOffset = pos.Offset
+			v.offset = pos.Offset
+			return toTimestamp
+		}
 	}
 
 	switch tok {
