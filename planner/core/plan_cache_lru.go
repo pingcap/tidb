@@ -37,13 +37,7 @@ func (e *planCacheEntry) MemoryUsage() (sum int64) {
 		return
 	}
 
-	if k, ok := e.PlanKey.(*planCacheKey); ok {
-		sum += k.MemoryUsage()
-	}
-	if v, ok := e.PlanValue.(*PlanCacheValue); ok {
-		sum += v.MemoryUsage()
-	}
-	return
+	return e.PlanKey.(*planCacheKey).MemoryUsage() + e.PlanValue.(*PlanCacheValue).MemoryUsage()
 }
 
 // LRUPlanCache is a dedicated least recently used cache, Only used for plan cache.
@@ -155,9 +149,7 @@ func (l *LRUPlanCache) Delete(key kvcache.Key) {
 	bucket, bucketExist := l.buckets[hash]
 	if bucketExist {
 		for element := range bucket {
-			if e, ok := element.Value.(*planCacheEntry); ok {
-				l.memTracker.Consume(-e.MemoryUsage())
-			}
+			l.memTracker.Consume(-element.Value.(*planCacheEntry).MemoryUsage())
 			l.lruList.Remove(element)
 			l.size--
 		}
@@ -219,9 +211,7 @@ func (l *LRUPlanCache) removeOldest() {
 		l.onEvict(lru.Value.(*planCacheEntry).PlanKey, lru.Value.(*planCacheEntry).PlanValue)
 	}
 
-	if e, ok := lru.Value.(*planCacheEntry); ok {
-		l.memTracker.Consume(-e.MemoryUsage())
-	}
+	l.memTracker.Consume(-lru.Value.(*planCacheEntry).MemoryUsage())
 	l.lruList.Remove(lru)
 	l.removeFromBucket(lru)
 	l.size--
