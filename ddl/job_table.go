@@ -580,7 +580,7 @@ func updateDDLJob2Table(sctx *session, job *model.Job, updateRawArgs bool) error
 
 // getDDLReorgHandle gets DDL reorg handle.
 func getDDLReorgHandle(sess *session, job *model.Job) (element *meta.Element, startKey, endKey kv.Key, physicalTableID int64, err error) {
-	sql := fmt.Sprintf("select ele_id, ele_type, start_key, end_key, store_id from mysql.tidb_ddl_reorg where job_id = %d", job.ID)
+	sql := fmt.Sprintf("select ele_id, ele_type, start_key, end_key, physical_id from mysql.tidb_ddl_reorg where job_id = %d", job.ID)
 	rows, err := sess.execute(context.Background(), sql, "get_handle")
 	if err != nil {
 		return nil, nil, nil, 0, err
@@ -624,7 +624,7 @@ func updateDDLReorgStartHandle(sess *session, job *model.Job, element *meta.Elem
 
 // updateDDLReorgHandle update startKey, endKey physicalTableID and element of the handle.
 func updateDDLReorgHandle(sess *session, jobID int64, startKey kv.Key, endKey kv.Key, physicalTableID int64, element *meta.Element) error {
-	sql := fmt.Sprintf("update mysql.tidb_ddl_reorg set ele_id = %d, ele_type = %s, start_key = %s, end_key = %s, store_id = %d where job_id = %d",
+	sql := fmt.Sprintf("update mysql.tidb_ddl_reorg set ele_id = %d, ele_type = %s, start_key = %s, end_key = %s, physical_id = %d where job_id = %d",
 		element.ID, wrapKey2String(element.TypeKey), wrapKey2String(startKey), wrapKey2String(endKey), physicalTableID, jobID)
 	_, err := sess.execute(context.Background(), sql, "update_handle")
 	return err
@@ -632,7 +632,7 @@ func updateDDLReorgHandle(sess *session, jobID int64, startKey kv.Key, endKey kv
 
 // initDDLReorgHandle initializes the handle for ddl reorg.
 func initDDLReorgHandle(sess *session, jobID int64, startKey kv.Key, endKey kv.Key, physicalTableID int64, element *meta.Element) error {
-	sql := fmt.Sprintf("insert into mysql.tidb_ddl_reorg(job_id, ele_id, ele_type, start_key, end_key, store_id) values (%d, %d, %s, %s, %s, %d)",
+	sql := fmt.Sprintf("insert into mysql.tidb_ddl_reorg(job_id, ele_id, ele_type, start_key, end_key, physical_id) values (%d, %d, %s, %s, %s, %d)",
 		jobID, element.ID, wrapKey2String(element.TypeKey), wrapKey2String(startKey), wrapKey2String(endKey), physicalTableID)
 	_, err := sess.execute(context.Background(), sql, "update_handle")
 	return err
@@ -1018,7 +1018,7 @@ func (d *ddl) MoveJobFromTable2Queue() error {
 			}
 		}
 
-		reorgHandle, err := se.execute(context.Background(), "select job_id, start_key, end_key, store_id, ele_id, ele_type from mysql.tidb_ddl_reorg", "get_handle")
+		reorgHandle, err := se.execute(context.Background(), "select job_id, start_key, end_key, physical_id, ele_id, ele_type from mysql.tidb_ddl_reorg", "get_handle")
 		if err != nil {
 			return errors.Trace(err)
 		}
