@@ -2093,7 +2093,7 @@ func invalidConv(d *Datum, tp byte) (Datum, error) {
 	return Datum{}, errors.Errorf("cannot convert datum from %s to type %s", KindStr(d.Kind()), TypeStr(tp))
 }
 
-// NewMetaDatum creates a new Datum from an interface{}.
+// NewMetaDatum creates a new meta Datum.
 func NewMetaDatum(rs bool) (d Datum) {
 	if !rs {
 		return NewDatum(nil)

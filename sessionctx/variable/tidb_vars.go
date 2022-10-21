@@ -552,7 +552,7 @@ const (
 	// TiDBMetricSchemaStep indicates the step when query metric schema.
 	TiDBMetricSchemaStep = "tidb_metric_query_step"
 
-	// TiDBWriteByTiCDC is used to test the meta storage.
+	// TiDBWriteByTiCDC indicates whether the data is written by TiCDC.
 	TiDBWriteByTiCDC = "tidb_write_by_ticdc"
 
 	// TiDBMetricSchemaRangeDuration indicates the range duration when query metric schema.
