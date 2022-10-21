@@ -158,6 +158,7 @@ func ReturnPartialResultOnError(supportPartialResult bool) MDLoaderSetupOption {
 	}
 }
 
+// WithFileIterator generates an option that specifies the file iteration policy.
 func WithFileIterator(fileIter FileIterator) MDLoaderSetupOption {
 	return func(cfg *MDLoaderSetupConfig) {
 		cfg.FileIter = fileIter
@@ -399,7 +400,12 @@ func (s *mdLoaderSetup) setup(ctx context.Context) error {
 	return gerr
 }
 
+// FileHandler is the interface to handle the file give the path and size.
+// It is mainly used in the `FileIterator` as parameters.
 type FileHandler func(ctx context.Context, path string, size int64) error
+
+// FileIterator is the interface to iterate files in a data source.
+// Use this interface to customize the file iteration policy.
 type FileIterator interface {
 	IterateFiles(ctx context.Context, hdl FileHandler) error
 }
