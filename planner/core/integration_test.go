@@ -7698,7 +7698,7 @@ func TestOuterJoinEliminationForIssue18216(t *testing.T) {
 	tk.MustQuery("select group_concat(c order by (select group_concat(c order by c) from t2 where a=t1.a), c desc) from t1;").Check(testkit.Rows("2,1,4,3"))
 }
 
-func TestAvoidDoubleScanForPrefixIndex(t *testing.T) {
+func TestNullConditionForPrefixIndex(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -7709,8 +7709,10 @@ func TestAvoidDoubleScanForPrefixIndex(t *testing.T) {
   KEY idx1 (c1),
   KEY idx2 (c1,c2(5))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
+	tk.MustExec("create table t2(a int, b varchar(10), index idx(b(5)))")
 	tk.MustExec("set tidb_opt_prefix_index_single_scan = 1")
 	tk.MustExec("insert into t1 values ('a', '0xfff', '111111'), ('b', '0xfff', '222222'), ('c', '0xfff', ''), ('d', '0xfff', null)")
+	tk.MustExec("insert into t2 values (1, 'aaaaaa'), (2, 'bbb'), (3, ''), (4, null)")
 
 	var input []string
 	var output []struct {
@@ -7724,9 +7726,9 @@ func TestAvoidDoubleScanForPrefixIndex(t *testing.T) {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
 			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format='brief' " + tt).Rows())
-			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
 		})
 		tk.MustQuery("explain format='brief' " + tt).Check(testkit.Rows(output[i].Plan...))
-		tk.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
+		tk.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Result...))
 	}
 }

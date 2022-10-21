@@ -7564,7 +7564,7 @@
     ]
   },
   {
-    "Name": "TestAvoidDoubleScanForPrefixIndex",
+    "Name": "TestNullConditionForPrefixIndex",
     "Cases": [
       {
         "SQL": "select count(1) from t1 where c1 = '0xfff' and c2 is not null",
@@ -7624,9 +7624,9 @@
           "  └─TableRowIDScan(Probe) 99.90 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Result": [
+          "",
           "111111",
-          "222222",
-          ""
+          "222222"
         ]
       },
       {
@@ -7651,9 +7651,9 @@
           "  └─TableRowIDScan(Probe) 3330.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Result": [
+          "",
           "111111",
-          "222222",
-          ""
+          "222222"
         ]
       },
       {
@@ -7664,6 +7664,30 @@
           "  ├─Selection(Build) 3.33 cop[tikv]  isnull(test.t1.c2)",
           "  │ └─IndexRangeScan 3333.33 cop[tikv] table:t1, index:idx2(c1, c2) range:[\"0xfff\",+inf], keep order:false, stats:pseudo",
           "  └─TableRowIDScan(Probe) 3.33 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "<nil>"
+        ]
+      },
+      {
+        "SQL": "select b from t2 where b is not null",
+        "Plan": [
+          "TableReader 9990.00 root  data:Selection",
+          "└─Selection 9990.00 cop[tikv]  not(isnull(test.t2.b))",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "",
+          "aaaaaa",
+          "bbb"
+        ]
+      },
+      {
+        "SQL": "select b from t2 where b is null",
+        "Plan": [
+          "IndexLookUp 10.00 root  ",
+          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:t2, index:idx(b) range:[NULL,NULL], keep order:false, stats:pseudo",
+          "└─TableRowIDScan(Probe) 10.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "Result": [
           "<nil>"
