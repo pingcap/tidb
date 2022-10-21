@@ -4391,7 +4391,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.L, tableInfo.Name.L, "", authErr)
 
-	if tbl.Type().IsVirtualTable() {
+	if tbl.Type().IsVirtualTable() && tbl.Meta().Name.L != "tiflash_replica" {
 		if tn.TableSample != nil {
 			return nil, expression.ErrInvalidTableSample.GenWithStackByArgs("Unsupported TABLESAMPLE in virtual tables")
 		}

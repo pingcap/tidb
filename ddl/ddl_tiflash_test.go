@@ -46,7 +46,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
-	"go.etcd.io/etcd/tests/v3/integration"
 	"go.uber.org/zap"
 )
 
@@ -1000,13 +999,6 @@ func TestTiFlashProgressForPartitionTable(t *testing.T) {
 	defer teardown()
 	tk := testkit.NewTestKit(t, s.store)
 
-	integration.BeforeTest(t, integration.WithoutGoLeakDetection())
-	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
-	defer cluster.Terminate(t)
-
-	save := infosync.GetEtcdClient()
-	defer infosync.SetEtcdClient(save)
-	infosync.SetEtcdClient(cluster.Client(0))
 	tk.MustExec("create database tiflash_d")
 	tk.MustExec("create table tiflash_d.t(z int) PARTITION BY RANGE(z) (PARTITION p0 VALUES LESS THAN (10))")
 	tk.MustExec("alter table tiflash_d.t set tiflash replica 1")
