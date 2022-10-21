@@ -129,6 +129,7 @@ type hashjoinWorkerResult struct {
 func (e *HashJoinExec) Close() error {
 	if e.closeCh != nil {
 		close(e.closeCh)
+		e.closeCh = nil
 	}
 	e.finished.Store(true)
 	if e.prepared {
