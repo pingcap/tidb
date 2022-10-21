@@ -116,6 +116,9 @@ func (l *LRUPlanCache) Put(key kvcache.Key, value kvcache.Value, paramTypes []*t
 	l.lock.Lock()
 	defer l.lock.Unlock()
 	defer l.updateMonitorMetric()
+	defer func() {
+		logutil.BgLogger().Info("---MemUse: " + memory.FormatBytes(l.memTracker.BytesConsumed()) + " ---plan num: " + strconv.FormatInt(int64(l.size), 10))
+	}()
 
 	hash := strHashKey(key, true)
 	bucket, bucketExist := l.buckets[hash]
@@ -150,6 +153,9 @@ func (l *LRUPlanCache) Delete(key kvcache.Key) {
 	l.lock.Lock()
 	defer l.lock.Unlock()
 	defer l.updateMonitorMetric()
+	defer func() {
+		logutil.BgLogger().Info("---MemUse: " + memory.FormatBytes(l.memTracker.BytesConsumed()) + " ---plan num: " + strconv.FormatInt(int64(l.size), 10))
+	}()
 
 	hash := strHashKey(key, false)
 	bucket, bucketExist := l.buckets[hash]
