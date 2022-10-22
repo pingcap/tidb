@@ -16,6 +16,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -65,10 +66,10 @@ func TestPostSettings(t *testing.T) {
 	require.Equal(t, zap.ErrorLevel, log.GetLevel())
 	require.Equal(t, "error", config.GetGlobalConfig().Log.Level)
 	require.True(t, variable.ProcessGeneralLog.Load())
-	val, err := se.GetSessionVars().GetGlobalSystemVar(variable.TiDBEnableAsyncCommit)
+	val, err := se.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBEnableAsyncCommit)
 	require.NoError(t, err)
 	require.Equal(t, variable.On, val)
-	val, err = se.GetSessionVars().GetGlobalSystemVar(variable.TiDBEnable1PC)
+	val, err = se.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBEnable1PC)
 	require.NoError(t, err)
 	require.Equal(t, variable.On, val)
 
@@ -84,10 +85,10 @@ func TestPostSettings(t *testing.T) {
 	require.False(t, variable.ProcessGeneralLog.Load())
 	require.Equal(t, zap.FatalLevel, log.GetLevel())
 	require.Equal(t, "fatal", config.GetGlobalConfig().Log.Level)
-	val, err = se.GetSessionVars().GetGlobalSystemVar(variable.TiDBEnableAsyncCommit)
+	val, err = se.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBEnableAsyncCommit)
 	require.NoError(t, err)
 	require.Equal(t, variable.Off, val)
-	val, err = se.GetSessionVars().GetGlobalSystemVar(variable.TiDBEnable1PC)
+	val, err = se.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBEnable1PC)
 	require.NoError(t, err)
 	require.Equal(t, variable.Off, val)
 	form.Set("log_level", os.Getenv("log_level"))
