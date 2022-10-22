@@ -204,7 +204,7 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 	case ast.ShowTriggers:
 		return e.fetchShowTriggers()
 	case ast.ShowVariables:
-		return e.fetchShowVariables()
+		return e.fetchShowVariables(ctx)
 	case ast.ShowWarnings:
 		return e.fetchShowWarnings(false)
 	case ast.ShowErrors:
@@ -817,7 +817,7 @@ func (e *ShowExec) fetchShowMasterStatus() error {
 	return nil
 }
 
-func (e *ShowExec) fetchShowVariables() (err error) {
+func (e *ShowExec) fetchShowVariables(ctx context.Context) (err error) {
 	var (
 		value       string
 		sessionVars = e.ctx.GetSessionVars()
@@ -849,7 +849,7 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 				if infoschema.SysVarHiddenForSem(e.ctx, v.Name) {
 					continue
 				}
-				value, err = sessionVars.GetGlobalSystemVar(v.Name)
+				value, err = sessionVars.GetGlobalSystemVar(ctx, v.Name)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -874,7 +874,7 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 		if infoschema.SysVarHiddenForSem(e.ctx, v.Name) {
 			continue
 		}
-		value, err = sessionVars.GetSessionOrGlobalSystemVar(v.Name)
+		value, err = sessionVars.GetSessionOrGlobalSystemVar(context.Background(), v.Name)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1528,7 +1528,9 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 
-	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT plugin, Account_locked FROM %n.%n WHERE User=%? AND Host=%?`, mysql.SystemDB, mysql.UserTable, userName, strings.ToLower(hostName))
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT plugin, Account_locked, JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.metadata'))
+		FROM %n.%n WHERE User=%? AND Host=%?`,
+		mysql.SystemDB, mysql.UserTable, userName, strings.ToLower(hostName))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1548,6 +1550,11 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 	accountLocked := "LOCK"
 	if accountLockedRaw[len(accountLockedRaw)-1:] == "N" {
 		accountLocked = "UNLOCK"
+	}
+
+	userAttributes := rows[0].GetString(2)
+	if len(userAttributes) > 0 {
+		userAttributes = " ATTRIBUTE " + userAttributes
 	}
 
 	rows, _, err = exec.ExecRestrictedSQL(ctx, nil, `SELECT Priv FROM %n.%n WHERE User=%? AND Host=%?`, mysql.SystemDB, mysql.GlobalPrivTable, userName, hostName)
@@ -1573,8 +1580,8 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 	}
 
 	// FIXME: the returned string is not escaped safely
-	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH '%s'%s REQUIRE %s PASSWORD EXPIRE DEFAULT ACCOUNT %s",
-		e.User.Username, e.User.Hostname, authplugin, authStr, require, accountLocked)
+	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH '%s'%s REQUIRE %s PASSWORD EXPIRE DEFAULT ACCOUNT %s%s",
+		e.User.Username, e.User.Hostname, authplugin, authStr, require, accountLocked, userAttributes)
 	e.appendRow([]interface{}{showStr})
 	return nil
 }
@@ -2016,10 +2023,8 @@ func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 	var token *sessionstates.SessionToken
 	// In testing, user may be nil.
 	if user := e.ctx.GetSessionVars().User; user != nil {
-		// The token may be leaked without secure transport, so we enforce secure transport (TLS or Unix Socket).
-		if !e.ctx.GetSessionVars().ConnectionInfo.IsSecureTransport() {
-			return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("the token must be queried with secure transport")
-		}
+		// The token may be leaked without secure transport, but the cloud can ensure security in some situations,
+		// so we don't enforce secure connections.
 		if token, err = sessionstates.CreateSessionToken(user.Username); err != nil {
 			return err
 		}

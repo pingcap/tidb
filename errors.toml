@@ -1456,6 +1456,11 @@ error = '''
 The password hash doesn't have the expected format. Check if the correct password algorithm is being used with the PASSWORD() function.
 '''
 
+["executor:3008"]
+error = '''
+Foreign key cascade delete/update exceeds max depth of %v.
+'''
+
 ["executor:3523"]
 error = '''
 Unknown authorization ID %.256s
@@ -1733,7 +1738,7 @@ not implemented
 
 ["kv:9007"]
 error = '''
-Write conflict, txnStartTS=%d, conflictStartTS=%d, conflictCommitTS=%d, key=%s, reason=%s [try again later]
+Write conflict, txnStartTS=%d, conflictStartTS=%d, conflictCommitTS=%d, key=%s%s%s%s, reason=%s [try again later]
 '''
 
 ["meta:1007"]

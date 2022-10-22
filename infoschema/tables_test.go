@@ -1533,7 +1533,7 @@ func TestVariablesInfo(t *testing.T) {
 
 	// stabalize timestamp val and EnableCollectExecutionInfo
 	tk.MustExec("SET TIMESTAMP=123456789")
-	config.GetGlobalConfig().Instance.EnableCollectExecutionInfo = false
+	config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Store(false)
 	// Test that in the current_value matches the default value in all
 	// but a few permitted special cases.
 	// See session/bootstrap.go:doDMLWorks() for where the exceptions are defined.
