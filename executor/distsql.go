@@ -960,7 +960,7 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 		}
 		if w.checkIndexValue != nil {
 			if retChk == nil {
-				retChk = w.idxLookup.ctx.GetSessionVars().GetNewChunk(w.idxColTps, w.batchSize)
+				retChk = chunk.NewChunkWithCapacity(w.idxColTps, w.batchSize)
 			}
 			retChk.Append(chk, 0, chk.NumRows())
 		}
