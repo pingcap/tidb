@@ -121,6 +121,7 @@ go_test(
     data = glob(["testdata/**"]),
     embed = [":session"],
     flaky = True,
+    race = "on",
     shard_count = 50,
     deps = [
         "//bindinfo",
@@ -137,6 +138,7 @@ go_test(
         "//parser/mysql",
         "//parser/terror",
         "//planner/core",
+        "//server",
         "//sessionctx",
         "//sessionctx/variable",
         "//sessiontxn",
@@ -144,6 +146,7 @@ go_test(
         "//store/mockstore",
         "//table",
         "//tablecodec",
+        "//telemetry",
         "//testkit",
         "//testkit/external",
         "//testkit/testdata",

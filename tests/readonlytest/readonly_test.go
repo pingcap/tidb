@@ -24,6 +24,7 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/require"
+	"go.opencensus.io/stats/view"
 )
 
 var (
@@ -101,6 +102,7 @@ func createReadOnlySuite(t *testing.T) *ReadOnlySuite {
 		require.NoError(t, s.db.Close())
 		require.NoError(t, s.rdb.Close())
 		require.NoError(t, s.udb.Close())
+		view.Stop()
 	})
 	return s
 }

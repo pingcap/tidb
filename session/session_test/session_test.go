@@ -60,6 +60,7 @@ func TestSchemaCheckerSQL(t *testing.T) {
 	store := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second)
 
 	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_enable_metadata_lock=0")
 	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk1 := testkit.NewTestKit(t, store)
@@ -138,6 +139,7 @@ func TestSchemaCheckerTempTable(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 
 	tk1.MustExec("use test")
+	tk1.MustExec("set global tidb_enable_metadata_lock=0")
 	tk2.MustExec("use test")
 
 	// create table
@@ -944,7 +946,7 @@ func TestLocalTemporaryTableInsertIgnore(t *testing.T) {
 
 	// test outside transaction
 	tk.MustExec("insert ignore into tmp1 values(1, 100, 1000)")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '1' for key 'PRIMARY'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '1' for key 'tmp1.PRIMARY'"))
 	tk.MustQuery("select * from tmp1 where id=1").Check(testkit.Rows("1 11 101"))
 	tk.MustExec("insert ignore into tmp1 values(5, 15, 105)")
 	tk.MustQuery("show warnings").Check(testkit.Rows())
@@ -953,13 +955,13 @@ func TestLocalTemporaryTableInsertIgnore(t *testing.T) {
 	// test in transaction and rollback
 	tk.MustExec("begin")
 	tk.MustExec("insert ignore into tmp1 values(1, 100, 1000)")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '1' for key 'PRIMARY'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '1' for key 'tmp1.PRIMARY'"))
 	tk.MustQuery("select * from tmp1 where id=1").Check(testkit.Rows("1 11 101"))
 	tk.MustExec("insert ignore into tmp1 values(3, 13, 103)")
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 	tk.MustQuery("select * from tmp1 where id=3").Check(testkit.Rows("3 13 103"))
 	tk.MustExec("insert ignore into tmp1 values(3, 100, 1000)")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '3' for key 'PRIMARY'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '3' for key 'tmp1.PRIMARY'"))
 	tk.MustQuery("select * from tmp1 where id=3").Check(testkit.Rows("3 13 103"))
 	tk.MustExec("rollback")
 	tk.MustQuery("select * from tmp1").Check(testkit.Rows("1 11 101", "2 12 102", "5 15 105"))
@@ -967,11 +969,11 @@ func TestLocalTemporaryTableInsertIgnore(t *testing.T) {
 	// test commit
 	tk.MustExec("begin")
 	tk.MustExec("insert ignore into tmp1 values(1, 100, 1000)")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '1' for key 'PRIMARY'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '1' for key 'tmp1.PRIMARY'"))
 	tk.MustExec("insert ignore into tmp1 values(3, 13, 103)")
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 	tk.MustExec("insert ignore into tmp1 values(3, 100, 1000)")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '3' for key 'PRIMARY'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '3' for key 'tmp1.PRIMARY'"))
 	tk.MustExec("commit")
 	tk.MustQuery("select * from tmp1").Check(testkit.Rows("1 11 101", "2 12 102", "3 13 103", "5 15 105"))
 }
@@ -987,7 +989,7 @@ func TestLocalTemporaryTableInsertOnDuplicateKeyUpdate(t *testing.T) {
 
 	// test outside transaction
 	tk.MustExec("insert ignore into tmp1 values(1, 100, 1000) on duplicate key update u=12")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '12' for key 'u'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '12' for key 'tmp1.u'"))
 	tk.MustQuery("select * from tmp1 where id=1").Check(testkit.Rows("1 11 101"))
 	tk.MustExec("insert into tmp1 values(2, 100, 1000) on duplicate key update v=202")
 	tk.MustQuery("show warnings").Check(testkit.Rows())
@@ -999,7 +1001,7 @@ func TestLocalTemporaryTableInsertOnDuplicateKeyUpdate(t *testing.T) {
 	// test in transaction and rollback
 	tk.MustExec("begin")
 	tk.MustExec("insert ignore into tmp1 values(1, 100, 1000) on duplicate key update u=12")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '12' for key 'u'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '12' for key 'tmp1.u'"))
 	tk.MustQuery("select * from tmp1 where id=1").Check(testkit.Rows("1 11 101"))
 	tk.MustExec("insert into tmp1 values(2, 100, 1000) on duplicate key update v=302")
 	tk.MustQuery("show warnings").Check(testkit.Rows())
@@ -1013,7 +1015,7 @@ func TestLocalTemporaryTableInsertOnDuplicateKeyUpdate(t *testing.T) {
 	// test commit
 	tk.MustExec("begin")
 	tk.MustExec("insert ignore into tmp1 values(1, 100, 1000) on duplicate key update u=12")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '12' for key 'u'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '12' for key 'tmp1.u'"))
 	tk.MustExec("insert into tmp1 values(2, 100, 1000) on duplicate key update v=302")
 	tk.MustExec("insert into tmp1 values(4, 14, 104) on duplicate key update v=204")
 	tk.MustExec("commit")
@@ -2037,13 +2039,21 @@ func TestMemoryUsageAlarmVariable(t *testing.T) {
 	tk.MustExec("set @@global.tidb_memory_usage_alarm_ratio=1.1")
 	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_memory_usage_alarm_ratio value: '1.1'"))
 	tk.MustQuery("select @@global.tidb_memory_usage_alarm_ratio").Check(testkit.Rows("1"))
-
 	tk.MustExec("set @@global.tidb_memory_usage_alarm_ratio=-1")
 	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_memory_usage_alarm_ratio value: '-1'"))
 	tk.MustQuery("select @@global.tidb_memory_usage_alarm_ratio").Check(testkit.Rows("0"))
+	require.Error(t, tk.ExecToErr("set @@session.tidb_memory_usage_alarm_ratio=0.8"))
 
-	tk.MustExec("set @@session.tidb_memory_usage_alarm_ratio=0.8")
-	tk.MustQuery(`show warnings`).Check(testkit.Rows(fmt.Sprintf("Warning %d modifying tidb_memory_usage_alarm_ratio will require SET GLOBAL in a future version of TiDB", errno.ErrInstanceScope)))
+	tk.MustExec("set @@global.tidb_memory_usage_alarm_keep_record_num=1")
+	tk.MustQuery("select @@global.tidb_memory_usage_alarm_keep_record_num").Check(testkit.Rows("1"))
+	tk.MustExec("set @@global.tidb_memory_usage_alarm_keep_record_num=100")
+	tk.MustQuery("select @@global.tidb_memory_usage_alarm_keep_record_num").Check(testkit.Rows("100"))
+	tk.MustExec("set @@global.tidb_memory_usage_alarm_keep_record_num=0")
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_memory_usage_alarm_keep_record_num value: '0'"))
+	tk.MustQuery("select @@global.tidb_memory_usage_alarm_keep_record_num").Check(testkit.Rows("1"))
+	tk.MustExec("set @@global.tidb_memory_usage_alarm_keep_record_num=10001")
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_memory_usage_alarm_keep_record_num value: '10001'"))
+	tk.MustQuery("select @@global.tidb_memory_usage_alarm_keep_record_num").Check(testkit.Rows("10000"))
 }
 
 func TestSelectLockInShare(t *testing.T) {
@@ -3160,12 +3170,12 @@ func TestUnique(t *testing.T) {
 	require.Error(t, err)
 	// Check error type and error message
 	require.True(t, terror.ErrorEqual(err, kv.ErrKeyExists), fmt.Sprintf("err %v", err))
-	require.Equal(t, "previous statement: insert into test(id, val) values(1, 1);: [kv:1062]Duplicate entry '1' for key 'PRIMARY'", err.Error())
+	require.Equal(t, "previous statement: insert into test(id, val) values(1, 1);: [kv:1062]Duplicate entry '1' for key 'test.PRIMARY'", err.Error())
 
 	_, err = tk1.Exec("commit")
 	require.Error(t, err)
 	require.True(t, terror.ErrorEqual(err, kv.ErrKeyExists), fmt.Sprintf("err %v", err))
-	require.Equal(t, "previous statement: insert into test(id, val) values(2, 2);: [kv:1062]Duplicate entry '2' for key 'val'", err.Error())
+	require.Equal(t, "previous statement: insert into test(id, val) values(2, 2);: [kv:1062]Duplicate entry '2' for key 'test.val'", err.Error())
 
 	// Test for https://github.com/pingcap/tidb/issues/463
 	tk.MustExec("drop table test;")
@@ -3690,7 +3700,7 @@ func TestGlobalVarAccessor(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, varValue, v)
 	// Set global var to another value
-	err = se.SetGlobalSysVar(varName, varValue1)
+	err = se.SetGlobalSysVar(context.Background(), varName, varValue1)
 	require.NoError(t, err)
 	v, err = se.GetGlobalSysVar(varName)
 	require.NoError(t, err)
@@ -3703,7 +3713,7 @@ func TestGlobalVarAccessor(t *testing.T) {
 	v, err = se1.GetGlobalSysVar(varName)
 	require.NoError(t, err)
 	require.Equal(t, varValue0, v)
-	err = se1.SetGlobalSysVar(varName, varValue2)
+	err = se1.SetGlobalSysVar(context.Background(), varName, varValue2)
 	require.NoError(t, err)
 	v, err = se1.GetGlobalSysVar(varName)
 	require.NoError(t, err)
@@ -3825,7 +3835,7 @@ func TestSetInstanceSysvarBySetGlobalSysVar(t *testing.T) {
 	// but GetGlobalSysVar could not access TiDBGeneralLog's GetGlobal.
 
 	// set to "1"
-	err = se.SetGlobalSysVar(varName, "ON")
+	err = se.SetGlobalSysVar(context.Background(), varName, "ON")
 	require.NoError(t, err)
 	v, err = se.GetGlobalSysVar(varName)
 	tk.MustQuery("select @@global.tidb_general_log").Check(testkit.Rows("1"))
@@ -3833,7 +3843,7 @@ func TestSetInstanceSysvarBySetGlobalSysVar(t *testing.T) {
 	require.Equal(t, defaultValue, v)
 
 	// set back to "0"
-	err = se.SetGlobalSysVar(varName, defaultValue)
+	err = se.SetGlobalSysVar(context.Background(), varName, defaultValue)
 	require.NoError(t, err)
 	v, err = se.GetGlobalSysVar(varName)
 	tk.MustQuery("select @@global.tidb_general_log").Check(testkit.Rows("0"))

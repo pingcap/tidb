@@ -81,7 +81,7 @@ func (ci *clusterResourceCheckItem) getReplicaCount(ctx context.Context) (uint64
 func (ci *clusterResourceCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 	theResult := &CheckResult{
 		Item:     ci.GetCheckItemID(),
-		Severity: Critical,
+		Severity: Warn,
 		Passed:   true,
 		Message:  "Cluster resources are rich for this import task",
 	}
@@ -208,7 +208,7 @@ func (ci *emptyRegionCheckItem) GetCheckItemID() CheckItemID {
 func (ci *emptyRegionCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 	theResult := &CheckResult{
 		Item:     ci.GetCheckItemID(),
-		Severity: Critical,
+		Severity: Warn,
 		Passed:   true,
 		Message:  "Cluster doesn't have too many empty regions",
 	}

@@ -676,3 +676,31 @@ func TestProduceDecWithSpecifiedTp(t *testing.T) {
 		}
 	}
 }
+
+func TestNULLNotEqualWithOthers(t *testing.T) {
+	datums := []Datum{
+		NewIntDatum(0),
+		NewUintDatum(0),
+		NewFloat32Datum(0),
+		NewFloat64Datum(0),
+		NewDatum(math.Inf(0)),
+		NewDecimalDatum(NewDecFromStringForTest("0")),
+		NewStringDatum(""),
+		NewCollationStringDatum("", charset.CollationBin),
+		NewDurationDatum(Duration{Duration: time.Duration(0)}),
+		NewTimeDatum(ZeroTime),
+		NewBytesDatum([]byte("")),
+		NewBinaryLiteralDatum([]byte{}),
+		NewMysqlBitDatum(NewBinaryLiteralFromUint(0, 4)),
+		NewJSONDatum(CreateBinaryJSON(nil)),
+		MinNotNullDatum(),
+		MaxValueDatum(),
+	}
+	nullDatum := NewDatum(nil)
+	sc := new(stmtctx.StatementContext)
+	for _, d := range datums {
+		result, err := d.Compare(sc, &nullDatum, collate.GetBinaryCollator())
+		require.NoError(t, err)
+		require.NotEqual(t, 0, result)
+	}
+}

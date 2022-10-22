@@ -61,6 +61,16 @@ error = '''
 version mismatch
 '''
 
+["BR:EBS:ErrRestoreInvalidPeer"]
+error = '''
+restore met a invalid peer
+'''
+
+["BR:EBS:ErrRestoreTotalKVMismatch"]
+error = '''
+restore total tikvs mismatch
+'''
+
 ["BR:ExternalStorage:ErrStorageInvalidConfig"]
 error = '''
 invalid external storage config
@@ -821,6 +831,11 @@ error = '''
 Key part '%-.192s' length cannot be 0
 '''
 
+["ddl:1452"]
+error = '''
+Cannot add or update a child row: a foreign key constraint fails (%.192s)
+'''
+
 ["ddl:1470"]
 error = '''
 String '%-.70s' is too long for %s (should be no longer than %d)
@@ -1009,6 +1024,11 @@ Duplicate foreign key constraint name '%s'
 ["ddl:1828"]
 error = '''
 Cannot drop column '%-.192s': needed in a foreign key constraint '%-.192s'
+'''
+
+["ddl:1829"]
+error = '''
+Cannot drop column '%-.192s': needed in a foreign key constraint '%-.192s' of table '%-.192s'
 '''
 
 ["ddl:1832"]
@@ -1436,6 +1456,11 @@ error = '''
 The password hash doesn't have the expected format. Check if the correct password algorithm is being used with the PASSWORD() function.
 '''
 
+["executor:3008"]
+error = '''
+Foreign key cascade delete/update exceeds max depth of %v.
+'''
+
 ["executor:3523"]
 error = '''
 Unknown authorization ID %.256s
@@ -1713,7 +1738,7 @@ not implemented
 
 ["kv:9007"]
 error = '''
-Write conflict, txnStartTS=%d, conflictStartTS=%d, conflictCommitTS=%d, key=%s, reason=%s [try again later]
+Write conflict, txnStartTS=%d, conflictStartTS=%d, conflictCommitTS=%d, key=%s%s%s%s, reason=%s [try again later]
 '''
 
 ["meta:1007"]
@@ -1919,6 +1944,16 @@ View '%-.192s.%-.192s' references invalid table(s) or column(s) or function(s) o
 ["planner:1391"]
 error = '''
 Key part '%-.192s' length cannot be 0
+'''
+
+["planner:1451"]
+error = '''
+Cannot delete or update a parent row: a foreign key constraint fails (%.192s)
+'''
+
+["planner:1452"]
+error = '''
+Cannot add or update a child row: a foreign key constraint fails (%.192s)
 '''
 
 ["planner:1462"]

@@ -54,6 +54,7 @@ func MockGC(tk *testkit.TestKit) (string, string, string, func()) {
 }
 
 func TestFlashback(t *testing.T) {
+	t.Skip("skip this test because TestFlashback isn't ready.")
 	if *realtikvtest.WithRealTiKV {
 		store := realtikvtest.CreateMockStoreAndSetup(t)
 

@@ -13,6 +13,7 @@ go_library(
         "//errno",
         "//metrics",
         "//parser/terror",
+        "//util/cgroup",
         "//util/dbterror",
         "//util/logutil",
         "@com_github_shirou_gopsutil_v3//mem",

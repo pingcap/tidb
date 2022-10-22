@@ -46,6 +46,7 @@ func (m *engineManager) Register(bc *BackendContext, job *model.Job, indexID int
 		return nil, genEngineAllocMemFailedErr(m.MemRoot, bc.jobID, indexID)
 	}
 
+	var info string
 	en, exist := m.Load(indexID)
 	if !exist {
 		engineCacheSize := int64(bc.cfg.TikvImporter.EngineMemCacheSize)
@@ -64,6 +65,7 @@ func (m *engineManager) Register(bc *BackendContext, job *model.Job, indexID int
 		m.Store(indexID, en)
 		m.MemRoot.Consume(StructSizeEngineInfo)
 		m.MemRoot.ConsumeWithTag(encodeEngineTag(job.ID, indexID), engineCacheSize)
+		info = LitInfoOpenEngine
 	} else {
 		if en.writerCount+1 > bc.cfg.TikvImporter.RangeConcurrency {
 			logutil.BgLogger().Warn(LitErrExceedConcurrency, zap.Int64("job ID", job.ID),
@@ -72,9 +74,10 @@ func (m *engineManager) Register(bc *BackendContext, job *model.Job, indexID int
 			return nil, errors.New(LitErrExceedConcurrency)
 		}
 		en.writerCount++
+		info = LitInfoAddWriter
 	}
 	m.MemRoot.ConsumeWithTag(encodeEngineTag(job.ID, indexID), int64(bc.cfg.TikvImporter.LocalWriterMemCacheSize))
-	logutil.BgLogger().Info(LitInfoOpenEngine, zap.Int64("job ID", job.ID),
+	logutil.BgLogger().Info(info, zap.Int64("job ID", job.ID),
 		zap.Int64("index ID", indexID),
 		zap.Int64("current memory usage", m.MemRoot.CurrentUsage()),
 		zap.Int64("memory limitation", m.MemRoot.MaxMemoryQuota()),

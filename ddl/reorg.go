@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -198,12 +199,6 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 
 	rc := w.getReorgCtx(job)
 	if rc == nil {
-		// Since reorg job will be interrupted for polling the cancel action outside. we don't need to wait for 2.5s
-		// for the later entrances.
-		// lease = 0 means it's in an integration test. In this case we don't delay so the test won't run too slowly.
-		if lease > 0 {
-			delayForAsyncCommit()
-		}
 		// This job is cancelling, we should return ErrCancelledDDLJob directly.
 		// Q: Is there any possibility that the job is cancelling and has no reorgCtx?
 		// A: Yes, consider the case that we cancel the job when backfilling the last batch of data, the cancel txn is commit first,
@@ -391,12 +386,14 @@ type reorgInfo struct {
 }
 
 func (r *reorgInfo) String() string {
+	_, isEnabled := ingest.LitBackCtxMgr.Load(r.Job.ID)
 	return "CurrElementType:" + string(r.currElement.TypeKey) + "," +
 		"CurrElementID:" + strconv.FormatInt(r.currElement.ID, 10) + "," +
 		"StartKey:" + hex.EncodeToString(r.StartKey) + "," +
 		"EndKey:" + hex.EncodeToString(r.EndKey) + "," +
 		"First:" + strconv.FormatBool(r.first) + "," +
-		"PhysicalTableID:" + strconv.FormatInt(r.PhysicalTableID, 10)
+		"PhysicalTableID:" + strconv.FormatInt(r.PhysicalTableID, 10) + "," +
+		"Ingest mode:" + strconv.FormatBool(isEnabled)
 }
 
 func constructDescTableScanPB(physicalTableID int64, tblInfo *model.TableInfo, handleCols []*model.ColumnInfo) *tipb.Executor {
@@ -605,7 +602,9 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job,
 		})
 
 		info.first = true
-		// get the current version for reorganization if we don't have
+		if d.lease > 0 { // Only delay when it's not in test.
+			delayForAsyncCommit()
+		}
 		ver, err := getValidCurrentVersion(d.store)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -693,7 +692,9 @@ func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, rh *reorgHandler, jo
 	)
 	if job.SnapshotVer == 0 {
 		info.first = true
-		// get the current version for reorganization if we don't have
+		if d.lease > 0 { // Only delay when it's not in test.
+			delayForAsyncCommit()
+		}
 		ver, err := getValidCurrentVersion(d.store)
 		if err != nil {
 			return nil, errors.Trace(err)

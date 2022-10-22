@@ -367,3 +367,42 @@ func GetTailSpaceCount(str string) int64 {
 	}
 	return int64(len(str) - length)
 }
+
+// Utf8Len calculates how many bytes the utf8 character takes.
+// This b parameter should be the first byte of utf8 character
+func Utf8Len(b byte) int {
+	flag := uint8(128)
+	if (flag & b) == 0 {
+		return 1
+	}
+
+	length := 0
+
+	for ; (flag & b) != 0; flag >>= 1 {
+		length++
+	}
+
+	return length
+}
+
+// TrimUtf8String needs the string input should always be valid which means
+// that it should always return true in utf8.ValidString(str)
+func TrimUtf8String(str *string, trimmedNum int64) int64 {
+	totalLenTrimmed := int64(0)
+	for ; trimmedNum > 0; trimmedNum-- {
+		length := Utf8Len((*str)[0]) // character length
+		(*str) = (*str)[length:]
+		totalLenTrimmed += int64(length)
+	}
+	return totalLenTrimmed
+}
+
+// ConvertPosInUtf8 converts a binary index to the position which shows the occurrence location in the utf8 string
+// Take "你好" as example:
+//
+//	binary index for "好" is 3, ConvertPosInUtf8("你好", 3) should return 2
+func ConvertPosInUtf8(str *string, pos int64) int64 {
+	preStr := (*str)[:pos]
+	preStrNum := utf8.RuneCountInString(preStr)
+	return int64(preStrNum + 1)
+}

@@ -20,6 +20,8 @@ TiDB ("Ti" stands for Titanium) is an open-source NewSQL database that supports 
 
 For more details and latest updates, see [TiDB docs](https://docs.pingcap.com/tidb/stable) and [release notes](https://docs.pingcap.com/tidb/dev/release-notes).
 
+For future plans, see [TiDB Roadmap](roadmap.md).
+
 ## Quick start
 
 ### Start with TiDB Cloud

@@ -385,26 +385,32 @@ const (
 type CompactTableStmt struct {
 	stmtNode
 
-	Table       *TableName
-	ReplicaKind CompactReplicaKind
+	Table          *TableName
+	PartitionNames []model.CIStr
+	ReplicaKind    CompactReplicaKind
 }
 
 // Restore implements Node interface.
 func (n *CompactTableStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("ALTER TABLE ")
-	if err := n.Table.Restore(ctx); err != nil {
-		return errors.Annotate(err, "An error occurred while add table")
-	}
+	n.Table.restoreName(ctx)
 
-	if n.ReplicaKind == CompactReplicaKindAll {
-		ctx.WriteKeyWord(" COMPACT")
-	} else {
+	ctx.WriteKeyWord(" COMPACT")
+	if len(n.PartitionNames) != 0 {
+		ctx.WriteKeyWord(" PARTITION ")
+		for i, partition := range n.PartitionNames {
+			if i != 0 {
+				ctx.WritePlain(",")
+			}
+			ctx.WriteName(partition.O)
+		}
+	}
+	if n.ReplicaKind != CompactReplicaKindAll {
+		ctx.WriteKeyWord(" ")
 		// Note: There is only TiFlash replica available now. TiKV will be added later.
-		ctx.WriteKeyWord(" COMPACT ")
 		ctx.WriteKeyWord(string(n.ReplicaKind))
 		ctx.WriteKeyWord(" REPLICA")
 	}
-
 	return nil
 }
 
@@ -931,6 +937,8 @@ type KillStmt struct {
 	// So, "KILL TIDB" grammar is introduced, and it REQUIRES DIRECT client -> TiDB TOPOLOGY.
 	// TODO: The standard KILL grammar will be supported once we have global connectionID.
 	TiDBExtension bool
+
+	Expr ExprNode
 }
 
 // Restore implements Node interface.
@@ -942,7 +950,14 @@ func (n *KillStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.Query {
 		ctx.WriteKeyWord(" QUERY")
 	}
-	ctx.WritePlainf(" %d", n.ConnectionID)
+	if n.Expr != nil {
+		ctx.WriteKeyWord(" ")
+		if err := n.Expr.Restore(ctx); err != nil {
+			return errors.Trace(err)
+		}
+	} else {
+		ctx.WritePlainf(" %d", n.ConnectionID)
+	}
 	return nil
 }
 
@@ -1451,6 +1466,9 @@ const (
 	PasswordExpireInterval
 	Lock
 	Unlock
+
+	UserCommentType
+	UserAttributeType
 )
 
 type PasswordOrLockOption struct {
@@ -1480,17 +1498,34 @@ func (p *PasswordOrLockOption) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
+type CommentOrAttributeOption struct {
+	Type  int
+	Value string
+}
+
+func (c *CommentOrAttributeOption) Restore(ctx *format.RestoreCtx) error {
+	if c.Type == UserCommentType {
+		ctx.WriteKeyWord(" COMMENT ")
+		ctx.WriteString(c.Value)
+	} else if c.Type == UserAttributeType {
+		ctx.WriteKeyWord(" ATTRIBUTE ")
+		ctx.WriteString(c.Value)
+	}
+	return nil
+}
+
 // CreateUserStmt creates user account.
-// See https://dev.mysql.com/doc/refman/5.7/en/create-user.html
+// See https://dev.mysql.com/doc/refman/8.0/en/create-user.html
 type CreateUserStmt struct {
 	stmtNode
 
-	IsCreateRole          bool
-	IfNotExists           bool
-	Specs                 []*UserSpec
-	TLSOptions            []*TLSOption
-	ResourceOptions       []*ResourceOption
-	PasswordOrLockOptions []*PasswordOrLockOption
+	IsCreateRole             bool
+	IfNotExists              bool
+	Specs                    []*UserSpec
+	TLSOptions               []*TLSOption
+	ResourceOptions          []*ResourceOption
+	PasswordOrLockOptions    []*PasswordOrLockOption
+	CommentOrAttributeOption *CommentOrAttributeOption
 }
 
 // Restore implements Node interface.
@@ -1542,6 +1577,13 @@ func (n *CreateUserStmt) Restore(ctx *format.RestoreCtx) error {
 			return errors.Annotatef(err, "An error occurred while restore CreateUserStmt.PasswordOrLockOptions[%d]", i)
 		}
 	}
+
+	if n.CommentOrAttributeOption != nil {
+		if err := n.CommentOrAttributeOption.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore CreateUserStmt.CommentOrAttributeOption")
+		}
+	}
+
 	return nil
 }
 
@@ -1567,16 +1609,17 @@ func (n *CreateUserStmt) SecureText() string {
 }
 
 // AlterUserStmt modifies user account.
-// See https://dev.mysql.com/doc/refman/5.7/en/alter-user.html
+// See https://dev.mysql.com/doc/refman/8.0/en/alter-user.html
 type AlterUserStmt struct {
 	stmtNode
 
-	IfExists              bool
-	CurrentAuth           *AuthOption
-	Specs                 []*UserSpec
-	TLSOptions            []*TLSOption
-	ResourceOptions       []*ResourceOption
-	PasswordOrLockOptions []*PasswordOrLockOption
+	IfExists                 bool
+	CurrentAuth              *AuthOption
+	Specs                    []*UserSpec
+	TLSOptions               []*TLSOption
+	ResourceOptions          []*ResourceOption
+	PasswordOrLockOptions    []*PasswordOrLockOption
+	CommentOrAttributeOption *CommentOrAttributeOption
 }
 
 // Restore implements Node interface.
@@ -1631,6 +1674,13 @@ func (n *AlterUserStmt) Restore(ctx *format.RestoreCtx) error {
 			return errors.Annotatef(err, "An error occurred while restore AlterUserStmt.PasswordOrLockOptions[%d]", i)
 		}
 	}
+
+	if n.CommentOrAttributeOption != nil {
+		if err := n.CommentOrAttributeOption.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore AlterUserStmt.CommentOrAttributeOption")
+		}
+	}
+
 	return nil
 }
 
@@ -3571,7 +3621,7 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 	}
 	// Hints without args except query block.
 	switch n.HintName.L {
-	case "hash_agg", "stream_agg", "agg_to_cop", "read_consistent_replica", "no_index_merge", "qb_name", "ignore_plan_cache", "limit_to_cop", "straight_join", "merge":
+	case "mpp_1phase_agg", "mpp_2phase_agg", "hash_agg", "stream_agg", "agg_to_cop", "read_consistent_replica", "no_index_merge", "qb_name", "ignore_plan_cache", "limit_to_cop", "straight_join", "merge", "no_decorrelate":
 		ctx.WritePlain(")")
 		return nil
 	}
@@ -3584,7 +3634,7 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlainf("%d", n.HintData.(uint64))
 	case "nth_plan":
 		ctx.WritePlainf("%d", n.HintData.(int64))
-	case "tidb_hj", "tidb_smj", "tidb_inlj", "hash_join", "hash_join_build", "hash_join_probe", "merge_join", "inl_join", "broadcast_join", "inl_hash_join", "inl_merge_join", "leading":
+	case "tidb_hj", "tidb_smj", "tidb_inlj", "hash_join", "hash_join_build", "hash_join_probe", "merge_join", "inl_join", "broadcast_join", "shuffle_join", "inl_hash_join", "inl_merge_join", "leading":
 		for i, table := range n.Tables {
 			if i != 0 {
 				ctx.WritePlain(", ")

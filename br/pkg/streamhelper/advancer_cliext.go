@@ -12,6 +12,7 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/kv"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
@@ -36,10 +37,11 @@ func (t EventType) String() string {
 }
 
 type TaskEvent struct {
-	Type EventType
-	Name string
-	Info *backuppb.StreamBackupTaskInfo
-	Err  error
+	Type   EventType
+	Name   string
+	Info   *backuppb.StreamBackupTaskInfo
+	Ranges []kv.KeyRange
+	Err    error
 }
 
 func (t *TaskEvent) String() string {
@@ -60,7 +62,7 @@ func errorEvent(err error) TaskEvent {
 	}
 }
 
-func toTaskEvent(event *clientv3.Event) (TaskEvent, error) {
+func (t AdvancerExt) toTaskEvent(ctx context.Context, event *clientv3.Event) (TaskEvent, error) {
 	if !bytes.HasPrefix(event.Kv.Key, []byte(PrefixOfTask())) {
 		return TaskEvent{}, errors.Annotatef(berrors.ErrInvalidArgument, "the path isn't a task path (%s)", string(event.Kv.Key))
 	}
@@ -78,13 +80,18 @@ func toTaskEvent(event *clientv3.Event) (TaskEvent, error) {
 	if err := proto.Unmarshal(event.Kv.Value, te.Info); err != nil {
 		return TaskEvent{}, err
 	}
+	var err error
+	te.Ranges, err = t.MetaDataClient.TaskByInfo(*te.Info).Ranges(ctx)
+	if err != nil {
+		return TaskEvent{}, err
+	}
 	return te, nil
 }
 
-func eventFromWatch(resp clientv3.WatchResponse) ([]TaskEvent, error) {
+func (t AdvancerExt) eventFromWatch(ctx context.Context, resp clientv3.WatchResponse) ([]TaskEvent, error) {
 	result := make([]TaskEvent, 0, len(resp.Events))
 	for _, event := range resp.Events {
-		te, err := toTaskEvent(event)
+		te, err := t.toTaskEvent(ctx, event)
 		if err != nil {
 			te.Type = EventErr
 			te.Err = err
@@ -97,7 +104,7 @@ func eventFromWatch(resp clientv3.WatchResponse) ([]TaskEvent, error) {
 func (t AdvancerExt) startListen(ctx context.Context, rev int64, ch chan<- TaskEvent) {
 	c := t.Client.Watcher.Watch(ctx, PrefixOfTask(), clientv3.WithPrefix(), clientv3.WithRev(rev))
 	handleResponse := func(resp clientv3.WatchResponse) bool {
-		events, err := eventFromWatch(resp)
+		events, err := t.eventFromWatch(ctx, resp)
 		if err != nil {
 			ch <- errorEvent(err)
 			return false
@@ -146,10 +153,15 @@ func (t AdvancerExt) getFullTasksAsEvent(ctx context.Context) ([]TaskEvent, int6
 	}
 	events := make([]TaskEvent, 0, len(tasks))
 	for _, task := range tasks {
+		ranges, err := task.Ranges(ctx)
+		if err != nil {
+			return nil, 0, err
+		}
 		te := TaskEvent{
-			Type: EventAdd,
-			Name: task.Info.Name,
-			Info: &(task.Info),
+			Type:   EventAdd,
+			Name:   task.Info.Name,
+			Info:   &(task.Info),
+			Ranges: ranges,
 		}
 		events = append(events, te)
 	}

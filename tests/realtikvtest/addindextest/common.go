@@ -19,7 +19,9 @@ import (
 	"strconv"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/logutil"
@@ -33,19 +35,21 @@ const (
 )
 
 type suiteContext struct {
-	ctx      context.Context
-	cancel   func()
-	store    kv.Storage
-	t        *testing.T
-	tk       *testkit.TestKit
-	isUnique bool
-	isPK     bool
-	tableNum int
-	colNum   int
-	rowNum   int
-	workload *workload
-	tkPool   *sync.Pool
-	CompCtx  *CompatibilityContext
+	ctx              context.Context
+	cancel           func()
+	store            kv.Storage
+	t                *testing.T
+	tk               *testkit.TestKit
+	isUnique         bool
+	isPK             bool
+	tableNum         int
+	colNum           int
+	rowNum           int
+	workload         *workload
+	tkPool           *sync.Pool
+	isFailpointsTest bool
+	failSync         sync.WaitGroup
+	CompCtx          *CompatibilityContext
 }
 
 func (s *suiteContext) getTestKit() *testkit.TestKit {
@@ -67,12 +71,13 @@ func (s *suiteContext) done() bool {
 
 func newSuiteContext(t *testing.T, tk *testkit.TestKit, store kv.Storage) *suiteContext {
 	return &suiteContext{
-		store:    store,
-		t:        t,
-		tk:       tk,
-		tableNum: 3,
-		colNum:   28,
-		rowNum:   64,
+		store:            store,
+		t:                t,
+		tk:               tk,
+		tableNum:         3,
+		colNum:           28,
+		rowNum:           64,
+		isFailpointsTest: false,
 	}
 }
 
@@ -346,6 +351,10 @@ func testOneColFrame(ctx *suiteContext, colIDs [][]int, f func(*suiteContext, in
 			if ctx.workload != nil {
 				ctx.workload.start(ctx, tableID, i)
 			}
+			if ctx.isFailpointsTest {
+				ctx.failSync.Add(1)
+				go useFailpoints(ctx, i)
+			}
 			err := f(ctx, tableID, tableName, i)
 			if err != nil {
 				if ctx.isUnique || ctx.isPK {
@@ -357,6 +366,9 @@ func testOneColFrame(ctx *suiteContext, colIDs [][]int, f func(*suiteContext, in
 			}
 			if ctx.workload != nil {
 				_ = ctx.workload.stop(ctx, -1)
+			}
+			if ctx.isFailpointsTest {
+				ctx.failSync.Wait()
 			}
 			if err == nil {
 				checkResult(ctx, tableName, i, tableID)
@@ -374,6 +386,10 @@ func testTwoColsFrame(ctx *suiteContext, iIDs [][]int, jIDs [][]int, f func(*sui
 				if ctx.workload != nil {
 					ctx.workload.start(ctx, tableID, i, j)
 				}
+				if ctx.isFailpointsTest {
+					ctx.failSync.Add(1)
+					go useFailpoints(ctx, i)
+				}
 				err := f(ctx, tableID, tableName, indexID, i, j)
 				if err != nil {
 					logutil.BgLogger().Error("[add index test] add index failed", zap.Error(err))
@@ -382,6 +398,9 @@ func testTwoColsFrame(ctx *suiteContext, iIDs [][]int, jIDs [][]int, f func(*sui
 				if ctx.workload != nil {
 					// Stop workload
 					_ = ctx.workload.stop(ctx, -1)
+				}
+				if ctx.isFailpointsTest {
+					ctx.failSync.Wait()
 				}
 				if err == nil && i != j {
 					checkResult(ctx, tableName, indexID, tableID)
@@ -398,6 +417,10 @@ func testOneIndexFrame(ctx *suiteContext, colID int, f func(*suiteContext, int, 
 		if ctx.workload != nil {
 			ctx.workload.start(ctx, tableID, colID)
 		}
+		if ctx.isFailpointsTest {
+			ctx.failSync.Add(1)
+			go useFailpoints(ctx, tableID)
+		}
 		err := f(ctx, tableID, tableName, colID)
 		if err != nil {
 			logutil.BgLogger().Error("[add index test] add index failed", zap.Error(err))
@@ -405,6 +428,9 @@ func testOneIndexFrame(ctx *suiteContext, colID int, f func(*suiteContext, int, 
 		require.NoError(ctx.t, err)
 		if ctx.workload != nil {
 			_ = ctx.workload.stop(ctx, -1)
+		}
+		if ctx.isFailpointsTest {
+			ctx.failSync.Wait()
 		}
 		if err == nil {
 			if ctx.isPK {
@@ -471,4 +497,31 @@ func addIndexMultiCols(ctx *suiteContext, tableID int, tableName string, indexID
 		require.NoError(ctx.t, err)
 	}
 	return err
+}
+
+type failpointsPath struct {
+	failpath string
+	inTerm   string
+}
+
+var failpoints = []failpointsPath{
+	{"github.com/pingcap/tidb/ddl/EnablePiTR", "return"},
+	{"github.com/pingcap/tidb/ddl/mockHighLoadForAddIndex", "return"},
+	{"github.com/pingcap/tidb/ddl/mockBackfillRunErr", "1*return"},
+	{"github.com/pingcap/tidb/ddl/mockBackfillSlow", "return"},
+	{"github.com/pingcap/tidb/ddl/MockCaseWhenParseFailure", "return(true)"},
+	{"github.com/pingcap/tidb/ddl/mockHighLoadForMergeIndex", "return"},
+	{"github.com/pingcap/tidb/ddl/mockMergeRunErr", "1*return"},
+	{"github.com/pingcap/tidb/ddl/mockMergeSlow", "return"},
+}
+
+func useFailpoints(ctx *suiteContext, failpos int) {
+	defer ctx.failSync.Done()
+	logutil.BgLogger().Info("stack", zap.Stack("cur stack"), zap.Int("id:", failpos))
+	failpos %= 8
+	require.NoError(ctx.t, failpoint.Enable(failpoints[failpos].failpath, failpoints[failpos].inTerm))
+	logutil.BgLogger().Info("stack", zap.Stack("cur stack"), zap.Int("id:", failpos), zap.Bool("enable failpoints:", true))
+	time.Sleep(10 * time.Second)
+	require.NoError(ctx.t, failpoint.Disable(failpoints[failpos].failpath))
+	logutil.BgLogger().Info("stack", zap.Stack("cur stack"), zap.Int("id:", failpos), zap.Bool("disable failpoints:", true))
 }

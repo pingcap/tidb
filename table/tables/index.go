@@ -79,6 +79,11 @@ func (c *index) Meta() *model.IndexInfo {
 	return c.idxInfo
 }
 
+// TableMeta returns table info.
+func (c *index) TableMeta() *model.TableInfo {
+	return c.tblInfo
+}
+
 // GenIndexKey generates storage key for index values. Returned distinct indicates whether the
 // indexed values should be distinct in storage (i.e. whether handle is encoded in the key).
 func (c *index) GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.Datum, h kv.Handle, buf []byte) (key []byte, distinct bool, err error) {
@@ -87,6 +92,14 @@ func (c *index) GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.
 		idxTblID = c.tblInfo.ID
 	}
 	return tablecodec.GenIndexKey(sc, c.tblInfo, c.idxInfo, idxTblID, indexedValues, h, buf)
+}
+
+// GenIndexValue generates the index value.
+func (c *index) GenIndexValue(sc *stmtctx.StatementContext, distinct bool, indexedValues []types.Datum, h kv.Handle, restoredData []types.Datum) ([]byte, error) {
+	c.initNeedRestoreData.Do(func() {
+		c.needRestoredData = NeedRestoredData(c.idxInfo.Columns, c.tblInfo.Columns)
+	})
+	return tablecodec.GenIndexValuePortal(sc, c.tblInfo, c.idxInfo, c.needRestoredData, distinct, false, indexedValues, h, c.phyTblID, restoredData)
 }
 
 // Create creates a new entry in the kvIndex data.

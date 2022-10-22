@@ -1288,7 +1288,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 	}
 	err = cc.handleAuthPlugin(ctx, &resp)
 	require.NoError(t, err)
-	require.Equal(t, []byte(mysql.AuthCachingSha2Password), resp.Auth)
+	require.Equal(t, []byte(mysql.AuthTiDBSM3Password), resp.Auth)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeAuthSwitch"))
 
 	// 8.0 or newer client trying to authenticate with caching_sha2_password
@@ -1311,7 +1311,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 	}
 	err = cc.handleAuthPlugin(ctx, &resp)
 	require.NoError(t, err)
-	require.Equal(t, []byte(mysql.AuthCachingSha2Password), resp.Auth)
+	require.Equal(t, []byte(mysql.AuthTiDBSM3Password), resp.Auth)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeAuthSwitch"))
 
 	// client trying to authenticate with tidb_sm3_password
@@ -1334,7 +1334,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 	}
 	err = cc.handleAuthPlugin(ctx, &resp)
 	require.NoError(t, err)
-	require.Equal(t, []byte(mysql.AuthCachingSha2Password), resp.Auth)
+	require.Equal(t, []byte(mysql.AuthTiDBSM3Password), resp.Auth)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeAuthSwitch"))
 
 	// MySQL 5.1 or older client, without authplugin support
@@ -1442,8 +1442,7 @@ func TestAuthTokenPlugin(t *testing.T) {
 	tk1 := testkit.NewTestKitWithSession(t, store, tc.Session)
 	tc.Session.GetSessionVars().ConnectionInfo = cc.connectInfo()
 	tk1.Session().Auth(&auth.UserIdentity{Username: "auth_session_token", Hostname: "localhost"}, nil, nil)
-	err = tk1.QueryToErr("show session_states")
-	require.ErrorContains(t, err, "secure transport")
+	tk1.MustQuery("show session_states")
 
 	// create a token with TLS
 	cc.tlsConn = &tls.Conn{}

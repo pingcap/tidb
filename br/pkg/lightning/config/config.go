@@ -98,7 +98,7 @@ const (
 var (
 	supportedStorageTypes = []string{"file", "local", "s3", "noop", "gcs", "gs"}
 
-	DefaultFilter = []string{
+	defaultFilter = []string{
 		"*.*",
 		"!mysql.*",
 		"!sys.*",
@@ -108,6 +108,13 @@ var (
 		"!INSPECTION_SCHEMA.*",
 	}
 )
+
+// GetDefaultFilter gets the default table filter used in Lightning.
+// It clones the original default filter,
+// so that the original value won't be changed when the returned slice's element is changed.
+func GetDefaultFilter() []string {
+	return append([]string{}, defaultFilter...)
+}
 
 type DBStore struct {
 	Host       string    `toml:"host" json:"host"`
@@ -546,11 +553,12 @@ type TikvImporter struct {
 }
 
 type Checkpoint struct {
-	Schema           string                 `toml:"schema" json:"schema"`
-	DSN              string                 `toml:"dsn" json:"-"` // DSN may contain password, don't expose this to JSON.
-	Driver           string                 `toml:"driver" json:"driver"`
-	Enable           bool                   `toml:"enable" json:"enable"`
-	KeepAfterSuccess CheckpointKeepStrategy `toml:"keep-after-success" json:"keep-after-success"`
+	Schema           string                    `toml:"schema" json:"schema"`
+	DSN              string                    `toml:"dsn" json:"-"` // DSN may contain password, don't expose this to JSON.
+	MySQLParam       *common.MySQLConnectParam `toml:"-" json:"-"`   // For some security reason, we use MySQLParam instead of DSN.
+	Driver           string                    `toml:"driver" json:"driver"`
+	Enable           bool                      `toml:"enable" json:"enable"`
+	KeepAfterSuccess CheckpointKeepStrategy    `toml:"keep-after-success" json:"keep-after-success"`
 }
 
 type Cron struct {
@@ -715,7 +723,7 @@ func NewConfig() *Config {
 			},
 			StrictFormat:           false,
 			MaxRegionSize:          MaxRegionSize,
-			Filter:                 DefaultFilter,
+			Filter:                 GetDefaultFilter(),
 			DataCharacterSet:       defaultCSVDataCharacterSet,
 			DataInvalidCharReplace: string(defaultCSVDataInvalidCharReplace),
 		},
@@ -890,7 +898,7 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 	// mydumper.filter and black-white-list cannot co-exist.
 	if cfg.HasLegacyBlackWhiteList() {
 		log.L().Warn("the config `black-white-list` has been deprecated, please replace with `mydumper.filter`")
-		if !common.StringSliceEqual(cfg.Mydumper.Filter, DefaultFilter) {
+		if !common.StringSliceEqual(cfg.Mydumper.Filter, defaultFilter) {
 			return common.ErrInvalidConfig.GenWithStack("`mydumper.filter` and `black-white-list` cannot be simultaneously defined")
 		}
 	}
@@ -1135,7 +1143,7 @@ func (cfg *Config) AdjustCheckPoint() {
 				MaxAllowedPacket: defaultMaxAllowedPacket,
 				TLS:              cfg.TiDB.TLS,
 			}
-			cfg.Checkpoint.DSN = param.ToDSN()
+			cfg.Checkpoint.MySQLParam = &param
 		case CheckpointDriverFile:
 			cfg.Checkpoint.DSN = "/tmp/" + cfg.Checkpoint.Schema + ".pb"
 		}

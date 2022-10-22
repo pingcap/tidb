@@ -107,3 +107,11 @@ func TestIsLogBackupEnabled(t *testing.T) {
 	require.Error(t, err)
 	require.False(t, enabled)
 }
+
+func TestCheckLogBackupTaskExist(t *testing.T) {
+	require.False(t, utils.CheckLogBackupTaskExist())
+	utils.LogBackupTaskCountInc()
+	require.True(t, utils.CheckLogBackupTaskExist())
+	utils.LogBackupTaskCountDec()
+	require.False(t, utils.CheckLogBackupTaskExist())
+}

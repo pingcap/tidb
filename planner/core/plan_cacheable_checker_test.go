@@ -270,6 +270,9 @@ func TestGeneralPlanCacheable(t *testing.T) {
 		"select * from t where d>8",
 		"select * from t where c=8 and d>10",
 		"select * from t where a<12 and b<13 and c<12 and d>2",
+		"select * from t where a in (1, 2, 3)",
+		"select * from t where a<13 or b<15",
+		"select * from t where a<13 or b<15 and c=13",
 	}
 
 	unsupported := []string{
@@ -285,6 +288,10 @@ func TestGeneralPlanCacheable(t *testing.T) {
 		"insert into t1(a, b) select a, b from t1",                                         // insert into select
 		"update t1 set a = 1 where b = 2",                                                  // update
 		"delete from t1 where b = 1",                                                       // delete
+
+		"select * from t where a+b=13",      // '+'
+		"select * from t where mod(a, 3)=1", // mod
+		"select * from t where d>now()",     // now
 	}
 
 	for _, q := range unsupported {

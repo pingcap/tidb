@@ -1,4 +1,4 @@
-// Copyright 2021 PingCAP, Inc.
+// Copyright 2022 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -3770,6 +3770,7 @@ func TestSetVariables(t *testing.T) {
 	tk.MustQuery("select @@global.tidb_enable_concurrent_ddl").Check(testkit.Rows("0"))
 	require.False(t, variable.EnableConcurrentDDL.Load())
 	testkit.NewTestKit(t, store).MustQuery("select @@global.tidb_enable_concurrent_ddl").Check(testkit.Rows("0"))
+	tk.MustExec("set @@global.tidb_enable_concurrent_ddl=1")
 }
 
 func TestPreparePlanCache(t *testing.T) {

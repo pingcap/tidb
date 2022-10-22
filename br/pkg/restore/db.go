@@ -11,7 +11,9 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	prealloctableid "github.com/pingcap/tidb/br/pkg/restore/prealloc_table_id"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -24,7 +26,8 @@ import (
 
 // DB is a TiDB instance, not thread-safe.
 type DB struct {
-	se glue.Session
+	se            glue.Session
+	preallocedIDs *prealloctableid.PreallocIDs
 }
 
 type UniqueTableName struct {
@@ -76,6 +79,10 @@ func NewDB(g glue.Glue, store kv.Storage, policyMode string) (*DB, bool, error) 
 	return &DB{
 		se: se,
 	}, supportPolicy, nil
+}
+
+func (db *DB) registerPreallocatedIDs(ids *prealloctableid.PreallocIDs) {
+	db.preallocedIDs = ids
 }
 
 // ExecDDL executes the query of a ddl job.
@@ -272,6 +279,19 @@ func (db *DB) CreateTablePostRestore(ctx context.Context, table *metautil.Table,
 	return nil
 }
 
+func (db *DB) tableIDAllocFilter() ddl.AllocTableIDIf {
+	return func(ti *model.TableInfo) bool {
+		if db.preallocedIDs == nil {
+			return true
+		}
+		prealloced := db.preallocedIDs.Prealloced(ti.ID)
+		if prealloced {
+			log.Info("reusing table ID", zap.Stringer("table", ti.Name))
+		}
+		return !prealloced
+	}
+}
+
 // CreateTables execute a internal CREATE TABLES.
 func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table,
 	ddlTables map[UniqueTableName]bool, supportPolicy bool, policyMap *sync.Map) error {
@@ -289,7 +309,7 @@ func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table,
 				}
 			}
 		}
-		if err := batchSession.CreateTables(ctx, m); err != nil {
+		if err := batchSession.CreateTables(ctx, m, db.tableIDAllocFilter()); err != nil {
 			return err
 		}
 
@@ -316,7 +336,7 @@ func (db *DB) CreateTable(ctx context.Context, table *metautil.Table,
 		}
 	}
 
-	err := db.se.CreateTable(ctx, table.DB.Name, table.Info)
+	err := db.se.CreateTable(ctx, table.DB.Name, table.Info, db.tableIDAllocFilter())
 	if err != nil {
 		log.Error("create table failed",
 			zap.Stringer("db", table.DB.Name),
