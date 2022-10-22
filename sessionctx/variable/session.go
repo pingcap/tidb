@@ -1312,6 +1312,7 @@ func (s *SessionVars) GetNewChunkWithCapacity(fields []*types.FieldType, capacit
 	return chk
 }
 
+// SetAlloc Attempt to set the buffer pool address
 func (s *SessionVars) SetAlloc(alloc chunk.Allocator) {
 	if mysql.HasCursorExistsFlag(s.Status) || !s.EnableReuseCheck {
 		alloc = nil
@@ -1323,10 +1324,6 @@ func (s *SessionVars) SetAlloc(alloc chunk.Allocator) {
 		Lock  sync.Mutex
 		Alloc chunk.Allocator
 	}{Alloc: alloc}
-}
-
-func (s *SessionVars) GetAlloc() chunk.Allocator {
-	return s.ChunkPool.Alloc
 }
 
 // GetPreparedStmtByName returns the prepared statement specified by stmtName.

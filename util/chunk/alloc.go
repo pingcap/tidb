@@ -36,6 +36,8 @@ func NewAllocator() *allocator {
 }
 
 var _ Allocator = &allocator{}
+
+// Maximum cacheable length
 var MaxCachedLen = 16 * 1024
 
 // allocator try to reuse objects.

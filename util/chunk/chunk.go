@@ -328,8 +328,8 @@ func (c *Chunk) GrowAndReset(maxChunkSize int) {
 	c.requiredRows = maxChunkSize
 }
 
-// GrowAndReset resets the Chunk and doubles the capacity of the Chunk.
-// The doubled capacity should not be larger than maxChunkSize.
+// GrowAndResetWithCache resets the Chunk and doubles the capacity of the Chunk,
+// Try apply from cache.The doubled capacity should not be larger than maxChunkSize.
 func (c *Chunk) GrowAndResetWithCache(maxChunkSize int, alloc Allocator) {
 	c.sel = nil
 	if c.columns == nil {
