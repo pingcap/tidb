@@ -1442,8 +1442,7 @@ func TestAuthTokenPlugin(t *testing.T) {
 	tk1 := testkit.NewTestKitWithSession(t, store, tc.Session)
 	tc.Session.GetSessionVars().ConnectionInfo = cc.connectInfo()
 	tk1.Session().Auth(&auth.UserIdentity{Username: "auth_session_token", Hostname: "localhost"}, nil, nil)
-	err = tk1.QueryToErr("show session_states")
-	require.ErrorContains(t, err, "secure transport")
+	tk1.MustQuery("show session_states")
 
 	// create a token with TLS
 	cc.tlsConn = &tls.Conn{}

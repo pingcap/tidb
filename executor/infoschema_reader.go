@@ -148,7 +148,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.TableConstraints:
 			e.setDataFromTableConstraints(sctx, dbs)
 		case infoschema.TableSessionVar:
-			e.rows, err = infoschema.GetDataFromSessionVariables(sctx)
+			e.rows, err = infoschema.GetDataFromSessionVariables(ctx, sctx)
 		case infoschema.TableTiDBServersInfo:
 			err = e.setDataForServersInfo(sctx)
 		case infoschema.TableTiFlashReplica:
@@ -172,6 +172,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataForClusterTrxSummary(sctx)
 		case infoschema.TableVariablesInfo:
 			err = e.setDataForVariablesInfo(sctx)
+		case infoschema.TableUserAttributes:
+			err = e.setDataForUserAttributes(ctx, sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -395,23 +397,6 @@ func hasPriv(ctx sessionctx.Context, priv mysql.PrivilegeType) bool {
 	return pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, "", "", "", priv)
 }
 
-func scopeStr(sv *variable.SysVar) string {
-	var scopes []string
-	if sv.HasNoneScope() {
-		return "NONE"
-	}
-	if sv.HasSessionScope() {
-		scopes = append(scopes, "SESSION")
-	}
-	if sv.HasGlobalScope() {
-		scopes = append(scopes, "GLOBAL")
-	}
-	if sv.HasInstanceScope() {
-		scopes = append(scopes, "INSTANCE")
-	}
-	return strings.Join(scopes, ",")
-}
-
 func (e *memtableRetriever) setDataForVariablesInfo(ctx sessionctx.Context) error {
 	sysVars := variable.GetSysVars()
 	rows := make([][]types.Datum, 0, len(sysVars))
@@ -419,7 +404,7 @@ func (e *memtableRetriever) setDataForVariablesInfo(ctx sessionctx.Context) erro
 		if infoschema.SysVarHiddenForSem(ctx, sv.Name) {
 			continue
 		}
-		currentVal, err := ctx.GetSessionVars().GetSessionOrGlobalSystemVar(sv.Name)
+		currentVal, err := ctx.GetSessionVars().GetSessionOrGlobalSystemVar(context.Background(), sv.Name)
 		if err != nil {
 			currentVal = ""
 		}
@@ -428,14 +413,14 @@ func (e *memtableRetriever) setDataForVariablesInfo(ctx sessionctx.Context) erro
 			isNoop = "YES"
 		}
 		row := types.MakeDatums(
-			sv.Name,      // VARIABLE_NAME
-			scopeStr(sv), // VARIABLE_SCOPE
-			sv.Value,     // DEFAULT_VALUE
-			currentVal,   // CURRENT_VALUE
-			sv.MinValue,  // MIN_VALUE
-			sv.MaxValue,  // MAX_VALUE
-			nil,          // POSSIBLE_VALUES
-			isNoop,       // IS_NOOP
+			sv.Name,           // VARIABLE_NAME
+			sv.Scope.String(), // VARIABLE_SCOPE
+			sv.Value,          // DEFAULT_VALUE
+			currentVal,        // CURRENT_VALUE
+			sv.MinValue,       // MIN_VALUE
+			sv.MaxValue,       // MAX_VALUE
+			nil,               // POSSIBLE_VALUES
+			isNoop,            // IS_NOOP
 		)
 		// min and max value is only supported for numeric types
 		if !(sv.Type == variable.TypeUnsigned || sv.Type == variable.TypeInt || sv.Type == variable.TypeFloat) {
@@ -448,6 +433,35 @@ func (e *memtableRetriever) setDataForVariablesInfo(ctx sessionctx.Context) erro
 		}
 		rows = append(rows, row)
 	}
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataForUserAttributes(ctx context.Context, sctx sessionctx.Context) error {
+	exec, _ := sctx.(sqlexec.RestrictedSQLExecutor)
+	chunkRows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT user, host, JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.metadata')) FROM mysql.user`)
+	if err != nil {
+		return err
+	}
+	if len(chunkRows) == 0 {
+		return nil
+	}
+	rows := make([][]types.Datum, 0, len(chunkRows))
+	for _, chunkRow := range chunkRows {
+		if chunkRow.Len() != 3 {
+			continue
+		}
+		user := chunkRow.GetString(0)
+		host := chunkRow.GetString(1)
+		// Compatible with results in MySQL
+		var attribute any
+		if attribute = chunkRow.GetString(2); attribute == "" {
+			attribute = nil
+		}
+		row := types.MakeDatums(user, host, attribute)
+		rows = append(rows, row)
+	}
+
 	e.rows = rows
 	return nil
 }
@@ -946,6 +960,8 @@ ForColumnsTag:
 			} else if decimal != -1 {
 				numericScale = decimal
 			}
+		} else if ft.GetType() == mysql.TypeNull {
+			charMaxLen, charOctLen = 0, 0
 		}
 		columnType := ft.InfoSchemaStr()
 		columnDesc := table.NewColDesc(table.ToColumn(col))
@@ -2232,21 +2248,16 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(ctx sessionctx.Context, s
 			if tbl.TiFlashReplica == nil {
 				continue
 			}
-			progress := 1.0
-			if !tbl.TiFlashReplica.Available {
-				if pi := tbl.GetPartitionInfo(); pi != nil && len(pi.Definitions) > 0 {
-					progress = 0
-					for _, p := range pi.Definitions {
-						if tbl.TiFlashReplica.IsPartitionAvailable(p.ID) {
-							progress += 1
-						} else {
-							progress += progressMap[p.ID]
-						}
-					}
-					progress = progress / float64(len(pi.Definitions))
-				} else {
-					progress = progressMap[tbl.ID]
+			var progress float64
+			if pi := tbl.GetPartitionInfo(); pi != nil && len(pi.Definitions) > 0 {
+				for _, p := range pi.Definitions {
+					progress += progressMap[p.ID]
 				}
+				progress = progress / float64(len(pi.Definitions))
+				progressString := types.TruncateFloatToString(progress, 2)
+				progress, _ = strconv.ParseFloat(progressString, 64)
+			} else {
+				progress = progressMap[tbl.ID]
 			}
 			record := types.MakeDatums(
 				schema.Name.O,                   // TABLE_SCHEMA
@@ -3037,14 +3048,17 @@ func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflas
 	return nil
 }
 
+type tiFlashSQLExecuteResponseMetaColumn struct {
+	Name string `json:"name"`
+	Type string `json:"type"`
+}
+
+type tiFlashSQLExecuteResponse struct {
+	Meta []tiFlashSQLExecuteResponseMetaColumn `json:"meta"`
+	Data [][]interface{}                       `json:"data"`
+}
+
 func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.Context, tidbDatabases string, tidbTables string) ([][]types.Datum, error) {
-	var columnNames []string //nolint: prealloc
-	for _, c := range e.outputCols {
-		if c.Name.O == "TIFLASH_INSTANCE" {
-			continue
-		}
-		columnNames = append(columnNames, c.Name.L)
-	}
 	maxCount := 1024
 	targetTable := strings.ToLower(strings.Replace(e.table.Name.O, "TIFLASH", "DT", 1))
 	var filters []string
@@ -3054,12 +3068,11 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.
 	if len(tidbTables) > 0 {
 		filters = append(filters, fmt.Sprintf("tidb_table IN (%s)", strings.ReplaceAll(tidbTables, "\"", "'")))
 	}
-	sql := fmt.Sprintf("SELECT %s FROM system.%s", strings.Join(columnNames, ","), targetTable)
+	sql := fmt.Sprintf("SELECT * FROM system.%s", targetTable)
 	if len(filters) > 0 {
 		sql = fmt.Sprintf("%s WHERE %s", sql, strings.Join(filters, " AND "))
 	}
 	sql = fmt.Sprintf("%s LIMIT %d, %d", sql, e.rowIdx, maxCount)
-	notNumber := "nan"
 	instanceInfo := e.instanceInfos[e.instanceIdx]
 	url := instanceInfo.url
 	req, err := http.NewRequest(http.MethodGet, url, nil)
@@ -3068,6 +3081,7 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.
 	}
 	q := req.URL.Query()
 	q.Add("query", sql)
+	q.Add("default_format", "JSONCompact")
 	req.URL.RawQuery = q.Encode()
 	resp, err := util.InternalHTTPClient().Do(req)
 	if err != nil {
@@ -3078,54 +3092,68 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	records := strings.Split(string(body), "\n")
-	rows := make([][]types.Datum, 0, len(records))
-	for _, record := range records {
-		if len(record) == 0 {
+	var result tiFlashSQLExecuteResponse
+	err = json.Unmarshal(body, &result)
+	if err != nil {
+		return nil, errors.Wrapf(err, "Failed to decode JSON from TiFlash")
+	}
+
+	// Map result columns back to our columns. It is possible that some columns cannot be
+	// recognized and some other columns are missing. This may happen during upgrading.
+	outputColIndexMap := map[string]int{} // Map from TiDB Column name to Output Column Index
+	for idx, c := range e.outputCols {
+		outputColIndexMap[c.Name.L] = idx
+	}
+	tiflashColIndexMap := map[int]int{} // Map from TiFlash Column index to Output Column Index
+	for tiFlashColIdx, col := range result.Meta {
+		if outputIdx, ok := outputColIndexMap[strings.ToLower(col.Name)]; ok {
+			tiflashColIndexMap[tiFlashColIdx] = outputIdx
+		}
+	}
+	outputRows := make([][]types.Datum, 0, len(result.Data))
+	for _, rowFields := range result.Data {
+		if len(rowFields) == 0 {
 			continue
 		}
-		fields := strings.Split(record, "\t")
-		if len(fields) < len(e.outputCols)-1 {
-			return nil, errors.Errorf("Record from tiflash doesn't match schema %v", fields)
-		}
-		row := make([]types.Datum, len(e.outputCols))
-		for index, column := range e.outputCols {
-			if column.Name.O == "TIFLASH_INSTANCE" {
+		outputRow := make([]types.Datum, len(e.outputCols))
+		for tiFlashColIdx, fieldValue := range rowFields {
+			outputIdx, ok := tiflashColIndexMap[tiFlashColIdx]
+			if !ok {
+				// Discard this field, we don't know which output column is the destination
 				continue
 			}
+			if fieldValue == nil {
+				continue
+			}
+			valStr := fmt.Sprint(fieldValue)
+			column := e.outputCols[outputIdx]
 			if column.GetType() == mysql.TypeVarchar {
-				row[index].SetString(fields[index], mysql.DefaultCollationName)
+				outputRow[outputIdx].SetString(valStr, mysql.DefaultCollationName)
 			} else if column.GetType() == mysql.TypeLonglong {
-				if fields[index] == notNumber {
-					continue
-				}
-				value, err := strconv.ParseInt(fields[index], 10, 64)
+				value, err := strconv.ParseInt(valStr, 10, 64)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
-				row[index].SetInt64(value)
+				outputRow[outputIdx].SetInt64(value)
 			} else if column.GetType() == mysql.TypeDouble {
-				if fields[index] == notNumber {
-					continue
-				}
-				value, err := strconv.ParseFloat(fields[index], 64)
+				value, err := strconv.ParseFloat(valStr, 64)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
-				row[index].SetFloat64(value)
+				outputRow[outputIdx].SetFloat64(value)
 			} else {
 				return nil, errors.Errorf("Meet column of unknown type %v", column)
 			}
 		}
-		row[len(e.outputCols)-1].SetString(instanceInfo.id, mysql.DefaultCollationName)
-		rows = append(rows, row)
+		outputRow[len(e.outputCols)-1].SetString(instanceInfo.id, mysql.DefaultCollationName)
+		outputRows = append(outputRows, outputRow)
 	}
-	e.rowIdx += len(rows)
-	if len(rows) < maxCount {
+	e.rowIdx += len(outputRows)
+	if len(outputRows) < maxCount {
 		e.instanceIdx += 1
 		e.rowIdx = 0
 	}
-	return rows, nil
+	return outputRows, nil
 }
 
 func (e *memtableRetriever) setDataForAttributes(ctx sessionctx.Context, is infoschema.InfoSchema) error {

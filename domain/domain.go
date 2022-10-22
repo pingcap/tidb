@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
+	"github.com/pingcap/tidb/br/pkg/streamhelper/daemon"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/placement"
@@ -63,6 +64,8 @@ import (
 	"github.com/pingcap/tidb/util/engine"
 	"github.com/pingcap/tidb/util/expensivequery"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/memoryusagealarm"
+	"github.com/pingcap/tidb/util/servermemorylimit"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	pd "github.com/tikv/pd/client"
@@ -86,30 +89,32 @@ func NewMockDomain() *Domain {
 // Domain represents a storage space. Different domains can use the same database name.
 // Multiple domains can be used in parallel without synchronization.
 type Domain struct {
-	store                kv.Storage
-	infoCache            *infoschema.InfoCache
-	privHandle           *privileges.Handle
-	bindHandle           *bindinfo.BindHandle
-	statsHandle          unsafe.Pointer
-	statsLease           time.Duration
-	ddl                  ddl.DDL
-	info                 *infosync.InfoSyncer
-	globalCfgSyncer      *globalconfigsync.GlobalConfigSyncer
-	m                    sync.Mutex
-	SchemaValidator      SchemaValidator
-	sysSessionPool       *sessionPool
-	exit                 chan struct{}
-	etcdClient           *clientv3.Client
-	sysVarCache          sysVarCache // replaces GlobalVariableCache
-	slowQuery            *topNSlowQueries
-	expensiveQueryHandle *expensivequery.Handle
-	wg                   util.WaitGroupWrapper
-	statsUpdating        atomicutil.Int32
-	cancel               context.CancelFunc
-	indexUsageSyncLease  time.Duration
-	dumpFileGcChecker    *dumpFileGcChecker
-	expiredTimeStamp4PC  types.Time
-	logBackupAdvancer    *streamhelper.AdvancerDaemon
+	store                   kv.Storage
+	infoCache               *infoschema.InfoCache
+	privHandle              *privileges.Handle
+	bindHandle              atomic.Pointer[bindinfo.BindHandle]
+	statsHandle             unsafe.Pointer
+	statsLease              time.Duration
+	ddl                     ddl.DDL
+	info                    *infosync.InfoSyncer
+	globalCfgSyncer         *globalconfigsync.GlobalConfigSyncer
+	m                       sync.Mutex
+	SchemaValidator         SchemaValidator
+	sysSessionPool          *sessionPool
+	exit                    chan struct{}
+	etcdClient              *clientv3.Client
+	sysVarCache             sysVarCache // replaces GlobalVariableCache
+	slowQuery               *topNSlowQueries
+	expensiveQueryHandle    *expensivequery.Handle
+	memoryUsageAlarmHandle  *memoryusagealarm.Handle
+	serverMemoryLimitHandle *servermemorylimit.Handle
+	wg                      util.WaitGroupWrapper
+	statsUpdating           atomicutil.Int32
+	cancel                  context.CancelFunc
+	indexUsageSyncLease     time.Duration
+	dumpFileGcChecker       *dumpFileGcChecker
+	expiredTimeStamp4PC     types.Time
+	logBackupAdvancer       *daemon.OwnerDaemon
 
 	serverID             uint64
 	serverIDSession      *concurrency.Session
@@ -852,7 +857,7 @@ func (do *Domain) Close() {
 	}
 	do.wg.Wait()
 	do.sysSessionPool.Close()
-	variable.UnregisterStatistics(do.bindHandle)
+	variable.UnregisterStatistics(do.bindHandle.Load())
 	if do.onClose != nil {
 		do.onClose()
 	}
@@ -884,8 +889,10 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)
 	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do.exit)
+	do.memoryUsageAlarmHandle = memoryusagealarm.NewMemoryUsageAlarmHandle(do.exit)
+	do.serverMemoryLimitHandle = servermemorylimit.NewServerMemoryLimitHandle(do.exit)
 	do.sysProcesses = SysProcesses{mu: &sync.RWMutex{}, procMap: make(map[uint64]sessionctx.Context)}
-	variable.SetStatsCacheCapacity.Store(do.SetStatsCacheCapacity)
+	do.initDomainSysVars()
 	return do
 }
 
@@ -1055,7 +1062,7 @@ func (do *Domain) initLogBackup(ctx context.Context, pdClient pd.Client) error {
 		return err
 	}
 	adv := streamhelper.NewCheckpointAdvancer(env)
-	do.logBackupAdvancer = streamhelper.NewAdvancerDaemon(adv, streamhelper.OwnerManagerForLogBackup(ctx, do.etcdClient))
+	do.logBackupAdvancer = daemon.New(adv, streamhelper.OwnerManagerForLogBackup(ctx, do.etcdClient), adv.Config().TickDuration)
 	loop, err := do.logBackupAdvancer.Begin(ctx)
 	if err != nil {
 		return err
@@ -1368,7 +1375,7 @@ func (do *Domain) PrivilegeHandle() *privileges.Handle {
 
 // BindHandle returns domain's bindHandle.
 func (do *Domain) BindHandle() *bindinfo.BindHandle {
-	return do.bindHandle
+	return do.bindHandle.Load()
 }
 
 // LoadBindInfoLoop create a goroutine loads BindInfo in a loop, it should
@@ -1376,8 +1383,11 @@ func (do *Domain) BindHandle() *bindinfo.BindHandle {
 func (do *Domain) LoadBindInfoLoop(ctxForHandle sessionctx.Context, ctxForEvolve sessionctx.Context) error {
 	ctxForHandle.GetSessionVars().InRestrictedSQL = true
 	ctxForEvolve.GetSessionVars().InRestrictedSQL = true
-	do.bindHandle = bindinfo.NewBindHandle(ctxForHandle)
-	err := do.bindHandle.Update(true)
+	if !do.bindHandle.CompareAndSwap(nil, bindinfo.NewBindHandle(ctxForHandle)) {
+		do.bindHandle.Load().Reset(ctxForHandle)
+	}
+
+	err := do.bindHandle.Load().Update(true)
 	if err != nil || bindinfo.Lease == 0 {
 		return err
 	}
@@ -1407,22 +1417,23 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 			case <-do.exit:
 				return
 			case <-bindWorkerTicker.C:
-				err := do.bindHandle.Update(false)
+				bindHandle := do.bindHandle.Load()
+				err := bindHandle.Update(false)
 				if err != nil {
 					logutil.BgLogger().Error("update bindinfo failed", zap.Error(err))
 				}
-				do.bindHandle.DropInvalidBindRecord()
+				bindHandle.DropInvalidBindRecord()
 				// Get Global
 				optVal, err := do.GetGlobalVar(variable.TiDBCapturePlanBaseline)
 				if err == nil && variable.TiDBOptOn(optVal) {
-					do.bindHandle.CaptureBaselines()
+					bindHandle.CaptureBaselines()
 				}
-				do.bindHandle.SaveEvolveTasksToStore()
+				bindHandle.SaveEvolveTasksToStore()
 			case <-gcBindTicker.C:
 				if !owner.IsOwner() {
 					continue
 				}
-				err := do.bindHandle.GCBindRecord()
+				err := do.bindHandle.Load().GCBindRecord()
 				if err != nil {
 					logutil.BgLogger().Error("GC bind record failed", zap.Error(err))
 				}
@@ -1447,7 +1458,7 @@ func (do *Domain) handleEvolvePlanTasksLoop(ctx sessionctx.Context, owner owner.
 			case <-time.After(bindinfo.Lease):
 			}
 			if owner.IsOwner() {
-				err := do.bindHandle.HandleEvolvePlanTask(ctx, false)
+				err := do.bindHandle.Load().HandleEvolvePlanTask(ctx, false)
 				if err != nil {
 					logutil.BgLogger().Info("evolve plan failed", zap.Error(err))
 				}
@@ -1815,6 +1826,16 @@ func (do *Domain) gcAnalyzeHistory(owner owner.Manager) {
 // ExpensiveQueryHandle returns the expensive query handle.
 func (do *Domain) ExpensiveQueryHandle() *expensivequery.Handle {
 	return do.expensiveQueryHandle
+}
+
+// MemoryUsageAlarmHandle returns the memory usage alarm handle.
+func (do *Domain) MemoryUsageAlarmHandle() *memoryusagealarm.Handle {
+	return do.memoryUsageAlarmHandle
+}
+
+// ServerMemoryLimitHandle returns the expensive query handle.
+func (do *Domain) ServerMemoryLimitHandle() *servermemorylimit.Handle {
+	return do.serverMemoryLimitHandle
 }
 
 const (

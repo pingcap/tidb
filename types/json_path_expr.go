@@ -92,6 +92,12 @@ type JSONPathExpression struct {
 	flags jsonPathExpressionFlag
 }
 
+func (pe JSONPathExpression) clone() JSONPathExpression {
+	legs := make([]jsonPathLeg, len(pe.legs))
+	copy(legs, pe.legs)
+	return JSONPathExpression{legs: legs, flags: pe.flags}
+}
+
 var peCache JSONPathExpressionCache
 
 type jsonPathExpressionKey string
@@ -362,7 +368,7 @@ func ParseJSONPathExpr(pathExpr string) (JSONPathExpression, error) {
 	val, ok := peCache.cache.Get(jsonPathExpressionKey(pathExpr))
 	if ok {
 		peCache.mu.Unlock()
-		return val.(JSONPathExpression), nil
+		return val.(JSONPathExpression).clone(), nil
 	}
 	peCache.mu.Unlock()
 

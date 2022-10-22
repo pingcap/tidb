@@ -134,6 +134,13 @@ var (
 			Name:      "table_partition_drop_interval_partition_usage",
 			Help:      "Counter of partitions added by ALTER TABLE FIRST PARTITION statements",
 		})
+	TelemetryExchangePartitionCnt = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "telemetry",
+			Name:      "exchange_partition_usage",
+			Help:      "Counter of usage of exchange partition statements",
+		})
 	TelemetryAddIndexIngestCnt = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
@@ -240,6 +247,25 @@ type TablePartitionUsageCounter struct {
 	TablePartitionCreateIntervalPartitionsCnt int64 `json:"table_partition_create_interval_partitions_cnt"`
 	TablePartitionAddIntervalPartitionsCnt    int64 `json:"table_partition_add_interval_partitions_cnt"`
 	TablePartitionDropIntervalPartitionsCnt   int64 `json:"table_partition_drop_interval_partitions_cnt"`
+}
+
+// ExchangePartitionUsageCounter records the usages of exchange partition.
+type ExchangePartitionUsageCounter struct {
+	ExchangePartitionCnt int64 `json:"exchange_partition_cnt"`
+}
+
+// Sub returns the difference of two counters.
+func (c ExchangePartitionUsageCounter) Sub(rhs ExchangePartitionUsageCounter) ExchangePartitionUsageCounter {
+	return ExchangePartitionUsageCounter{
+		ExchangePartitionCnt: c.ExchangePartitionCnt - rhs.ExchangePartitionCnt,
+	}
+}
+
+// GetExchangePartitionCounter gets the TxnCommitCounter.
+func GetExchangePartitionCounter() ExchangePartitionUsageCounter {
+	return ExchangePartitionUsageCounter{
+		ExchangePartitionCnt: readCounter(TelemetryExchangePartitionCnt),
+	}
 }
 
 // Cal returns the difference of two counters.

@@ -85,10 +85,61 @@ const (
 
 	reorgWorkerCnt   = 10
 	generalWorkerCnt = 1
+
+	// checkFlagIndexInJobArgs is the recoverCheckFlag index used in RecoverTable/RecoverSchema job arg list.
+	checkFlagIndexInJobArgs = 1
+)
+
+const (
+	// The recoverCheckFlag is used to judge the gc work status when RecoverTable/RecoverSchema.
+	recoverCheckFlagNone int64 = iota
+	recoverCheckFlagEnableGC
+	recoverCheckFlagDisableGC
 )
 
 // OnExist specifies what to do when a new object has a name collision.
 type OnExist uint8
+
+// AllocTableIDIf specifies whether to retain the old table ID.
+// If this returns "false", then we would assume the table ID has been
+// allocated before calling `CreateTableWithInfo` family.
+type AllocTableIDIf func(*model.TableInfo) bool
+
+// CreateTableWithInfoConfig is the configuration of `CreateTableWithInfo`.
+type CreateTableWithInfoConfig struct {
+	OnExist            OnExist
+	ShouldAllocTableID AllocTableIDIf
+}
+
+// CreateTableWithInfoConfigurier is the "diff" which can be applied to the
+// CreateTableWithInfoConfig, currently implementations are "OnExist" and "AllocTableIDIf".
+type CreateTableWithInfoConfigurier interface {
+	// Apply the change over the config.
+	Apply(*CreateTableWithInfoConfig)
+}
+
+// GetCreateTableWithInfoConfig applies the series of configurier from default config
+// and returns the final config.
+func GetCreateTableWithInfoConfig(cs []CreateTableWithInfoConfigurier) CreateTableWithInfoConfig {
+	config := CreateTableWithInfoConfig{}
+	for _, c := range cs {
+		c.Apply(&config)
+	}
+	if config.ShouldAllocTableID == nil {
+		config.ShouldAllocTableID = func(*model.TableInfo) bool { return true }
+	}
+	return config
+}
+
+// Apply implements Configurier.
+func (o OnExist) Apply(c *CreateTableWithInfoConfig) {
+	c.OnExist = o
+}
+
+// Apply implements Configurier.
+func (a AllocTableIDIf) Apply(c *CreateTableWithInfoConfig) {
+	c.ShouldAllocTableID = a
+}
 
 const (
 	// OnExistError throws an error on name collision.
@@ -119,6 +170,7 @@ type DDL interface {
 	CreateView(ctx sessionctx.Context, stmt *ast.CreateViewStmt) error
 	DropTable(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error)
 	RecoverTable(ctx sessionctx.Context, recoverInfo *RecoverInfo) (err error)
+	RecoverSchema(ctx sessionctx.Context, recoverSchemaInfo *RecoverSchemaInfo) error
 	DropView(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error)
 	CreateIndex(ctx sessionctx.Context, stmt *ast.CreateIndexStmt) error
 	DropIndex(ctx sessionctx.Context, stmt *ast.DropIndexStmt) error
@@ -155,13 +207,13 @@ type DDL interface {
 		ctx sessionctx.Context,
 		schema model.CIStr,
 		info *model.TableInfo,
-		onExist OnExist) error
+		cs ...CreateTableWithInfoConfigurier) error
 
 	// BatchCreateTableWithInfo is like CreateTableWithInfo, but can handle multiple tables.
 	BatchCreateTableWithInfo(ctx sessionctx.Context,
 		schema model.CIStr,
 		info []*model.TableInfo,
-		onExist OnExist) error
+		cs ...CreateTableWithInfoConfigurier) error
 
 	// CreatePlacementPolicyWithInfo creates a placement policy
 	//
@@ -1219,6 +1271,15 @@ type RecoverInfo struct {
 	AutoIDs       meta.AutoIDGroup
 	OldSchemaName string
 	OldTableName  string
+}
+
+// RecoverSchemaInfo contains information needed by DDL.RecoverSchema.
+type RecoverSchemaInfo struct {
+	*model.DBInfo
+	RecoverTabsInfo []*RecoverInfo
+	DropJobID       int64
+	SnapshotTS      uint64
+	OldSchemaName   model.CIStr
 }
 
 // delayForAsyncCommit sleeps `SafeWindow + AllowedClockDrift` before a DDL job finishes.

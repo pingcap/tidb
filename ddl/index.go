@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -718,7 +719,33 @@ func canUseIngest(w *worker) bool {
 		failpoint.Return(true)
 	})
 	// Ingest way is not compatible with PiTR.
-	return !utils.CheckLogBackupEnabled(ctx)
+	return !utils.IsLogBackupInUse(ctx)
+}
+
+// IngestJobsNotExisted checks the ddl about `add index` with ingest method not existed.
+func IngestJobsNotExisted(ctx sessionctx.Context) bool {
+	sess := session{ctx}
+	template := "select job_meta from mysql.tidb_ddl_job where reorg and (type = %d or type = %d) and processing;"
+	sql := fmt.Sprintf(template, model.ActionAddIndex, model.ActionAddPrimaryKey)
+	rows, err := sess.execute(context.Background(), sql, "check-pitr")
+	if err != nil {
+		logutil.BgLogger().Warn("cannot check ingest job", zap.Error(err))
+		return false
+	}
+	for _, row := range rows {
+		jobBinary := row.GetBytes(0)
+		runJob := model.Job{}
+		err := runJob.Decode(jobBinary)
+		if err != nil {
+			logutil.BgLogger().Warn("cannot check ingest job", zap.Error(err))
+			return false
+		}
+		// Check whether this add index job is using lightning to do the backfill work.
+		if runJob.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
+			return false
+		}
+	}
+	return true
 }
 
 // tryFallbackToTxnMerge changes the reorg type to txn-merge if the lightning backfill meets something wrong.
@@ -1362,7 +1389,7 @@ func (w *addIndexWorker) checkHandleExists(key kv.Key, value []byte, handle kv.H
 	if err != nil {
 		return err
 	}
-	indexName := w.index.Meta().Name.String()
+	indexName := fmt.Sprintf("%s.%s", w.index.TableMeta().Name.String(), w.index.Meta().Name.String())
 	valueStr := make([]string, 0, idxColLen)
 	for i, val := range values[:idxColLen] {
 		d, err := tablecodec.DecodeColumnValue(val, colInfos[i].Ft, time.Local)

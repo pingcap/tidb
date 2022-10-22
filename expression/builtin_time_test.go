@@ -15,8 +15,10 @@
 package expression
 
 import (
+	"context"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -3111,4 +3113,18 @@ func TestGetIntervalFromDecimal(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, test.expect, interval)
 	}
+}
+
+func TestCurrentTso(t *testing.T) {
+	ctx := createContext(t)
+	fc := funcs[ast.TiDBCurrentTso]
+	f, err := fc.getFunction(mock.NewContext(), datumsToConstants(nil))
+	require.NoError(t, err)
+	resetStmtContext(ctx)
+	v, err := evalBuiltinFunc(f, chunk.Row{})
+	require.NoError(t, err)
+	n := v.GetInt64()
+	tso, _ := ctx.GetSessionVars().GetSessionOrGlobalSystemVar(context.Background(), "tidb_current_ts")
+	itso, _ := strconv.ParseInt(tso, 10, 64)
+	require.Equal(t, itso, n, v.Kind())
 }
