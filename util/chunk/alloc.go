@@ -37,7 +37,7 @@ func NewAllocator() *allocator {
 
 var _ Allocator = &allocator{}
 
-// Maximum cacheable length
+// MaxCachedLen Maximum cacheable length
 var MaxCachedLen = 16 * 1024
 
 // allocator try to reuse objects.
@@ -52,10 +52,10 @@ type allocator struct {
 	freeChunk   int
 }
 
+// SetLimit limit reuse num
 func (a *allocator) SetLimit(chunknum, columnnum int) {
 	a.freeChunk = chunknum
 	a.columnAlloc.freeColumnsPerType = columnnum
-
 }
 
 // Alloc implements the Allocator interface.
@@ -168,22 +168,6 @@ func (l freeList) empty() bool {
 	return len(l) == 0
 }
 
-// func (l freeList) pop() *Column {
-// 	for k := range l {
-// 		delete(l, k)
-// 		return k
-// 	}
-// 	return nil
-// }
-
-// func (l freeList) push(c *Column) {
-// 	if len(l) >= maxFreeColumnsPerType {
-// 		// Don't cache too much to save memory.
-// 		return
-// 	}
-// 	l[c] = struct{}{}
-// }
-
 func (alloc *poolColumnAllocator) push(col *Column, typeSize int) {
 	if len(alloc.pool[typeSize]) >= alloc.freeColumnsPerType {
 		return
@@ -192,5 +176,4 @@ func (alloc *poolColumnAllocator) push(col *Column, typeSize int) {
 		return
 	}
 	alloc.pool[typeSize] = append(alloc.pool[typeSize], col)
-
 }

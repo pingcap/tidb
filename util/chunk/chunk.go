@@ -121,6 +121,7 @@ func renewColumns(oldCol []*Column, capacity int) []*Column {
 	return columns
 }
 
+// renewColumnsWithCache try renew Column from cache
 func renewColumnsWithCache(oldCol []*Column, capacity int, alloc allocator) []*Column {
 	columns := make([]*Column, 0, len(oldCol))
 	for _, col := range oldCol {
@@ -330,7 +331,7 @@ func (c *Chunk) GrowAndReset(maxChunkSize int) {
 
 // GrowAndResetWithCache resets the Chunk and doubles the capacity of the Chunk,
 // Try apply from cache.The doubled capacity should not be larger than maxChunkSize.
-func (c *Chunk) GrowAndResetWithCache(maxChunkSize int, alloc Allocator) {
+func (c *Chunk) GrowAndResetWithCache(maxChunkSize int, allocat Allocator) {
 	c.sel = nil
 	if c.columns == nil {
 		return
@@ -341,10 +342,11 @@ func (c *Chunk) GrowAndResetWithCache(maxChunkSize int, alloc Allocator) {
 		return
 	}
 	c.capacity = newCap
-	if alloc == nil {
+	alloc, ok := allocat.(*allocator)
+	if (alloc == nil) || (ok) {
 		c.columns = renewColumns(c.columns, newCap)
 	} else {
-
+		c.columns = renewColumnsWithCache(c.columns, newCap, *alloc)
 	}
 
 	c.numVirtualRows = 0
