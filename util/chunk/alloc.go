@@ -128,7 +128,7 @@ func (alloc *poolColumnAllocator) NewSizeColumn(typeSize int, count int) *Column
 		if cap(col.data) < count {
 			col = newColumn(typeSize, count)
 		}
-		alloc.pool[typeSize] = alloc.pool[typeSize][:len(alloc.pool[typeSize])-1]
+		alloc.pool[typeSize] = l[:len(l)-1]
 		return col
 	}
 	return newColumn(typeSize, count)
