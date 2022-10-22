@@ -937,6 +937,8 @@ type KillStmt struct {
 	// So, "KILL TIDB" grammar is introduced, and it REQUIRES DIRECT client -> TiDB TOPOLOGY.
 	// TODO: The standard KILL grammar will be supported once we have global connectionID.
 	TiDBExtension bool
+
+	Expr ExprNode
 }
 
 // Restore implements Node interface.
@@ -948,7 +950,14 @@ func (n *KillStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.Query {
 		ctx.WriteKeyWord(" QUERY")
 	}
-	ctx.WritePlainf(" %d", n.ConnectionID)
+	if n.Expr != nil {
+		ctx.WriteKeyWord(" ")
+		if err := n.Expr.Restore(ctx); err != nil {
+			return errors.Trace(err)
+		}
+	} else {
+		ctx.WritePlainf(" %d", n.ConnectionID)
+	}
 	return nil
 }
 
