@@ -124,7 +124,7 @@ func (alloc *poolColumnAllocator) NewSizeColumn(typeSize int, count int) *Column
 	l := alloc.pool[typeSize]
 	if l != nil && !l.empty() {
 		//col := l.pop()
-		col := alloc.pool[typeSize][len(l)-1]
+		col := l[len(l)-1]
 		if cap(col.data) < count {
 			col = newColumn(typeSize, count)
 		}
