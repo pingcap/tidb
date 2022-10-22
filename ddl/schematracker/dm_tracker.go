@@ -313,6 +313,11 @@ func (d SchemaTracker) FlashbackCluster(ctx sessionctx.Context, flashbackTS uint
 	return nil
 }
 
+// RecoverSchema implements the DDL interface, which is no-op in DM's case.
+func (d SchemaTracker) RecoverSchema(ctx sessionctx.Context, recoverSchemaInfo *ddl.RecoverSchemaInfo) (err error) {
+	return nil
+}
+
 // DropView implements the DDL interface.
 func (d SchemaTracker) DropView(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error) {
 	notExistTables := make([]string, 0, len(stmt.Tables))
