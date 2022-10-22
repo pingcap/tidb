@@ -24,12 +24,13 @@ import (
 // and Alloc() allocates from the pool.
 type Allocator interface {
 	Alloc(fields []*types.FieldType, capacity, maxChunkSize int) *Chunk
+	SetLimit(chunknum, columnnum int)
 	Reset()
 }
 
 // NewAllocator creates an Allocator.
 func NewAllocator() *allocator {
-	ret := &allocator{}
+	ret := &allocator{freeChunk: maxFreeChunks}
 	ret.columnAlloc.init()
 	return ret
 }
@@ -46,6 +47,13 @@ type allocator struct {
 	allocated   []*Chunk
 	free        []*Chunk
 	columnAlloc poolColumnAllocator
+	freeChunk   int
+}
+
+func (a *allocator) SetLimit(chunknum, columnnum int) {
+	a.freeChunk = chunknum
+	a.columnAlloc.freeColumnsPerType = columnnum
+
 }
 
 // Alloc implements the Allocator interface.
@@ -89,7 +97,7 @@ func (a *allocator) Reset() {
 		// Reset the chunk and put it to the free list for reuse.
 		chk.resetForReuse()
 
-		if len(a.free) < maxFreeChunks { // Don't cache too much data.
+		if len(a.free) < a.freeChunk { // Don't cache too much data.
 			a.free = append(a.free, chk)
 		}
 	}
@@ -99,7 +107,8 @@ func (a *allocator) Reset() {
 var _ ColumnAllocator = &poolColumnAllocator{}
 
 type poolColumnAllocator struct {
-	pool map[int]freeList
+	pool               map[int]freeList
+	freeColumnsPerType int
 }
 
 // poolColumnAllocator implements the ColumnAllocator interface.
@@ -125,6 +134,7 @@ func (alloc *poolColumnAllocator) NewSizeColumn(typeSize int, count int) *Column
 
 func (alloc *poolColumnAllocator) init() {
 	alloc.pool = make(map[int]freeList)
+	alloc.freeColumnsPerType = maxFreeColumnsPerType
 }
 
 func (alloc *poolColumnAllocator) put(col *Column) {
@@ -139,7 +149,7 @@ func (alloc *poolColumnAllocator) put(col *Column) {
 	l := alloc.pool[typeSize]
 	if l == nil {
 		//l = make(map[*Column]struct{}, 8)
-		l = make([]*Column, 0, maxFreeColumnsPerType)
+		l = make([]*Column, 0, alloc.freeColumnsPerType)
 		alloc.pool[typeSize] = l
 	}
 	//l.push(col)
@@ -173,7 +183,7 @@ func (l freeList) empty() bool {
 // }
 
 func (alloc *poolColumnAllocator) push(col *Column, typeSize int) {
-	if len(alloc.pool[typeSize]) >= maxFreeColumnsPerType {
+	if len(alloc.pool[typeSize]) >= alloc.freeColumnsPerType {
 		return
 	}
 	if (typeSize == varElemLen) && cap(col.data) > MaxCachedLen {

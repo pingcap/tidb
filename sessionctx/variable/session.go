@@ -1272,6 +1272,9 @@ type SessionVars struct {
 	LastPlanReplayerToken string
 
 	HookContext
+
+	MaxReuseChunk  int
+	MaxReuseColumn int
 	// ChunkPool Several chunks and columns are cached
 	ChunkPool struct {
 		Lock  sync.Mutex
@@ -1309,6 +1312,9 @@ func (s *SessionVars) GetNewChunkWithCapacity(fields []*types.FieldType, capacit
 func (s *SessionVars) SetAlloc(alloc chunk.Allocator) {
 	if mysql.HasCursorExistsFlag(s.Status) || !s.EnableReuseCheck {
 		alloc = nil
+	}
+	if alloc != nil {
+		alloc.SetLimit(s.MaxReuseChunk, s.MaxReuseColumn)
 	}
 	s.ChunkPool = struct {
 		Lock  sync.Mutex

@@ -751,6 +751,10 @@ const (
 	TiDBOptRangeMaxSize = "tidb_opt_range_max_size"
 
 	TiDBEnableReusechunk = "tidb_enable_reuse_chunk"
+
+	TiDBMaxReuseChunk = "tidb_max_reuse_chunk"
+
+	TiDBMaxReuseColumn = "tidb_max_reuse_column"
 )
 
 // TiDB vars that have only global scope
@@ -1062,6 +1066,8 @@ const (
 	DefTiDBServerMemoryLimitGCTrigger               = 0.7
 	DefTiDBEnableGOGCTuner                          = true
 	DefTiDBEnableReusechunk                         = true
+	DefTiDBMaxReuseChunk                            = 128
+	DefTiDBMaxReuseColumn                           = 1024
 )
 
 // Process global variables.
