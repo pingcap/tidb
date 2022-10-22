@@ -144,8 +144,7 @@ func TestNoDuplicateColumnReuse(t *testing.T) {
 	for _, p := range a.pool {
 		dup := make(map[*Column]struct{})
 		for !p.empty() {
-			c := p[len(p)-1]
-			p = p[:len(p)-1]
+			c := p.pop()
 			_, exist := dup[c]
 			require.False(t, exist)
 			dup[c] = struct{}{}
