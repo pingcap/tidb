@@ -751,16 +751,14 @@ const (
 	// limit for ranges.
 	TiDBOptRangeMaxSize = "tidb_opt_range_max_size"
 
-  // TiDBMergePartitionStatsConcurrency indicates the concurrecny when merge partition stats into global stats
+	// TiDBMergePartitionStatsConcurrency indicates the concurrecny when merge partition stats into global stats
 	TiDBMergePartitionStatsConcurrency = "tidb_merge_partition_stats_concurrency"
-  
+
 	TiDBEnableReusechunk = "tidb_enable_reuse_chunk"
 
 	TiDBMaxReuseChunk = "tidb_max_reuse_chunk"
 
 	TiDBMaxReuseColumn = "tidb_max_reuse_column"
-
-
 )
 
 // TiDB vars that have only global scope
@@ -1076,9 +1074,9 @@ const (
 	DefTiDBEnableGOGCTuner                          = true
 	// DefTiDBGOGCTunerThreshold is to limit TiDBGOGCTunerThreshold.
 	DefTiDBGOGCTunerThreshold float64 = 0.6
-  DefTiDBEnableReusechunk                         = true
-	DefTiDBMaxReuseChunk                            = 128
-	DefTiDBMaxReuseColumn                           = 1024
+	DefTiDBEnableReusechunk           = true
+	DefTiDBMaxReuseChunk              = 128
+	DefTiDBMaxReuseColumn             = 1024
 )
 
 // Process global variables.
