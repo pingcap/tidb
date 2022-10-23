@@ -29,13 +29,17 @@ import (
 )
 
 var (
-	_ functionClass = &stGeomFromTextFunctionClass{}
 	_ functionClass = &stAsTextFunctionClass{}
+	_ functionClass = &stDistanceFunctionClass{}
+	_ functionClass = &stGeomFromTextFunctionClass{}
+	_ functionClass = &stIntersectsFunctionClass{}
 )
 
 var (
-	_ builtinFunc = &builtinStGeomFromTextSig{}
 	_ builtinFunc = &builtinStAsTextSig{}
+	_ builtinFunc = &builtinStDistanceSig{}
+	_ builtinFunc = &builtinStGeomFromTextSig{}
+	_ builtinFunc = &builtinStIntersectsSig{}
 )
 
 type stGeomFromTextFunctionClass struct {
@@ -128,11 +132,7 @@ func (b *builtinStAsTextSig) evalString(row chunk.Row) (string, bool, error) {
 	if isNull || err != nil {
 		return "", isNull, err
 	}
-	srid := wkbValRaw[:4]
 	wkbVal := wkbValRaw[4:]
-	if srid != "\x00\x00\x00\x00" {
-		return "", isNull, errors.New("Non zero SRID is not supported")
-	}
 
 	g, err := wkb.Unmarshal([]byte(wkbVal))
 	if err != nil {
@@ -213,20 +213,20 @@ func (c *stIntersectsFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	if err != nil {
 		return nil, err
 	}
-	sig := &builtinST_IntersectsSig{bf}
+	sig := &builtinStIntersectsSig{bf}
 	return sig, nil
 }
 
-type builtinST_IntersectsSig struct {
+type builtinStIntersectsSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinST_IntersectsSig) Clone() builtinFunc {
-	newSig := &builtinST_IntersectsSig{}
+func (b *builtinStIntersectsSig) Clone() builtinFunc {
+	newSig := &builtinStIntersectsSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }
-func (b *builtinST_IntersectsSig) evalInt(row chunk.Row) (int64, bool, error) {
+func (b *builtinStIntersectsSig) evalInt(row chunk.Row) (int64, bool, error) {
 	g1r, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
