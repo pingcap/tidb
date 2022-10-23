@@ -1,4 +1,4 @@
-# Copyright 2019 PingCAP, Inc.
+# Copyright 2022 PingCAP, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,45 +13,19 @@
 # limitations under the License.
 
 # Builder image
-FROM golang:1.19.1-alpine as builder
+FROM alpine:edge as builder
 
-RUN apk add --no-cache \
-    wget \
-    make \
-    git \
-    gcc \
-    binutils-gold \
-    musl-dev
+ADD . https://raw.githubusercontent.com/njhallett/apk-fastest-mirror/c4ca44caef3385d830fea34df2dbc2ba4a17e021/apk-fastest-mirror.sh ./proxy
+RUN sh ./proxy/apk-fastest-mirror.sh -t 50 && apk add --no-cache git build-base go
 
-RUN wget -O /usr/local/bin/dumb-init https://github.com/Yelp/dumb-init/releases/download/v1.2.2/dumb-init_1.2.2_amd64 \
- && chmod +x /usr/local/bin/dumb-init
+COPY . /tidb
+ARG GOPROXY
+RUN export GOPROXY=${GOPROXY} && cd /tidb && make server
 
-RUN mkdir -p /go/src/github.com/pingcap/tidb
-WORKDIR /go/src/github.com/pingcap/tidb
+FROM alpine:latest
 
-# Cache dependencies
-COPY go.mod .
-COPY go.sum .
-COPY parser/go.mod parser/go.mod
-COPY parser/go.sum parser/go.sum
-
-RUN GO111MODULE=on go mod download
-
-# Build real binaries
-COPY . .
-RUN make
-
-# Executable image
-FROM alpine
-
-RUN apk add --no-cache \
-    curl
-
-COPY --from=builder /go/src/github.com/pingcap/tidb/bin/tidb-server /tidb-server
-COPY --from=builder /usr/local/bin/dumb-init /usr/local/bin/dumb-init
+COPY --from=builder /tidb/bin/tidb-server /tidb-server
 
 WORKDIR /
-
 EXPOSE 4000
-
-ENTRYPOINT ["/usr/local/bin/dumb-init", "/tidb-server"]
+ENTRYPOINT ["/tidb-server"]
