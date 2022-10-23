@@ -16,16 +16,12 @@ package common_test
 
 import (
 	"context"
-	"database/sql"
-	"database/sql/driver"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
-	"math/rand"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"testing"
 	"time"
 
@@ -35,7 +31,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
-	tmysql "github.com/pingcap/tidb/errno"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -85,66 +80,14 @@ func TestGetJSON(t *testing.T) {
 	require.Regexp(t, ".*http status code != 200.*", err.Error())
 }
 
-func TestToDSN(t *testing.T) {
-	param := common.MySQLConnectParam{
-		Host:             "127.0.0.1",
-		Port:             4000,
-		User:             "root",
-		Password:         "123456",
-		SQLMode:          "strict",
-		MaxAllowedPacket: 1234,
-		TLS:              "cluster",
-		Vars: map[string]string{
-			"tidb_distsql_scan_concurrency": "1",
-		},
-	}
-	require.Equal(t, "root:123456@tcp(127.0.0.1:4000)/?charset=utf8mb4&sql_mode='strict'&maxAllowedPacket=1234&tls=cluster&tidb_distsql_scan_concurrency='1'", param.ToDSN())
-
-	param.Host = "::1"
-	require.Equal(t, "root:123456@tcp([::1]:4000)/?charset=utf8mb4&sql_mode='strict'&maxAllowedPacket=1234&tls=cluster&tidb_distsql_scan_concurrency='1'", param.ToDSN())
-}
-
-type mockDriver struct {
-	driver.Driver
-	plainPsw string
-}
-
-func (m *mockDriver) Open(dsn string) (driver.Conn, error) {
-	cfg, err := mysql.ParseDSN(dsn)
-	if err != nil {
-		return nil, err
-	}
-	accessDenied := cfg.Passwd != m.plainPsw
-	return &mockConn{accessDenied: accessDenied}, nil
-}
-
-type mockConn struct {
-	driver.Conn
-	driver.Pinger
-	accessDenied bool
-}
-
-func (c *mockConn) Ping(ctx context.Context) error {
-	if c.accessDenied {
-		return &mysql.MySQLError{Number: tmysql.ErrAccessDenied, Message: "access denied"}
-	}
-	return nil
-}
-
-func (c *mockConn) Close() error {
-	return nil
-}
-
 func TestConnect(t *testing.T) {
 	plainPsw := "dQAUoDiyb1ucWZk7"
-	driverName := "mysql-mock-" + strconv.Itoa(rand.Int())
-	sql.Register(driverName, &mockDriver{plainPsw: plainPsw})
 
 	require.NoError(t, failpoint.Enable(
-		"github.com/pingcap/tidb/br/pkg/lightning/common/MockMySQLDriver",
-		fmt.Sprintf("return(\"%s\")", driverName)))
+		"github.com/pingcap/tidb/br/pkg/lightning/common/MustMySQLPassword",
+		fmt.Sprintf("return(\"%s\")", plainPsw)))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/common/MockMySQLDriver"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/common/MustMySQLPassword"))
 	}()
 
 	param := common.MySQLConnectParam{
@@ -155,13 +98,11 @@ func TestConnect(t *testing.T) {
 		SQLMode:          "strict",
 		MaxAllowedPacket: 1234,
 	}
-	db, err := param.Connect()
+	_, err := param.Connect()
 	require.NoError(t, err)
-	require.NoError(t, db.Close())
 	param.Password = base64.StdEncoding.EncodeToString([]byte(plainPsw))
-	db, err = param.Connect()
+	_, err = param.Connect()
 	require.NoError(t, err)
-	require.NoError(t, db.Close())
 }
 
 func TestIsContextCanceledError(t *testing.T) {

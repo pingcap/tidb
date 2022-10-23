@@ -45,25 +45,27 @@ func TestAddIndexMergeProcess(t *testing.T) {
 	var checkErr error
 	var runDML, backfillDone bool
 	originHook := dom.DDL().GetHook()
-	dom.DDL().SetHook(&ddl.TestDDLCallback{
+	callback := &ddl.TestDDLCallback{
 		Do: dom,
-		OnJobUpdatedExported: func(job *model.Job) {
-			if !runDML && job.Type == model.ActionAddIndex && job.SchemaState == model.StateWriteReorganization {
-				idx := findIdxInfo(dom, "test", "t", "idx")
-				if idx == nil || idx.BackfillState != model.BackfillStateRunning {
-					return
-				}
-				if !backfillDone {
-					// Wait another round so that the backfill range is determined(1-4).
-					backfillDone = true
-					return
-				}
-				runDML = true
-				// Write record 7 to the temporary index.
-				_, checkErr = tk2.Exec("insert into t values (7, 8, 9);")
+	}
+	onJobUpdatedExportedFunc := func(job *model.Job) {
+		if !runDML && job.Type == model.ActionAddIndex && job.SchemaState == model.StateWriteReorganization {
+			idx := findIdxInfo(dom, "test", "t", "idx")
+			if idx == nil || idx.BackfillState != model.BackfillStateRunning {
+				return
 			}
-		},
-	})
+			if !backfillDone {
+				// Wait another round so that the backfill range is determined(1-4).
+				backfillDone = true
+				return
+			}
+			runDML = true
+			// Write record 7 to the temporary index.
+			_, checkErr = tk2.Exec("insert into t values (7, 8, 9);")
+		}
+	}
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
+	dom.DDL().SetHook(callback)
 	tk.MustExec("alter table t add index idx(c1);")
 	dom.DDL().SetHook(originHook)
 	require.True(t, backfillDone)
@@ -90,27 +92,30 @@ func TestAddPrimaryKeyMergeProcess(t *testing.T) {
 	var checkErr error
 	var runDML, backfillDone bool
 	originHook := dom.DDL().GetHook()
-	dom.DDL().SetHook(&ddl.TestDDLCallback{
+	callback := &ddl.TestDDLCallback{
 		Do: nil, // We'll reload the schema manually.
-		OnJobUpdatedExported: func(job *model.Job) {
-			if !runDML && job.Type == model.ActionAddPrimaryKey && job.SchemaState == model.StateWriteReorganization {
-				idx := findIdxInfo(dom, "test", "t", "primary")
-				if idx == nil || idx.BackfillState != model.BackfillStateRunning || job.SnapshotVer == 0 {
-					return
-				}
-				if !backfillDone {
-					// Wait another round so that the backfill process is finished, but
-					// the info schema is not updated.
-					backfillDone = true
-					return
-				}
-				runDML = true
-				// Add delete record 4 to the temporary index.
-				_, checkErr = tk2.Exec("delete from t where c1 = 4;")
+
+	}
+	onJobUpdatedExportedFunc := func(job *model.Job) {
+		if !runDML && job.Type == model.ActionAddPrimaryKey && job.SchemaState == model.StateWriteReorganization {
+			idx := findIdxInfo(dom, "test", "t", "primary")
+			if idx == nil || idx.BackfillState != model.BackfillStateRunning || job.SnapshotVer == 0 {
+				return
 			}
-			assert.NoError(t, dom.Reload())
-		},
-	})
+			if !backfillDone {
+				// Wait another round so that the backfill process is finished, but
+				// the info schema is not updated.
+				backfillDone = true
+				return
+			}
+			runDML = true
+			// Add delete record 4 to the temporary index.
+			_, checkErr = tk2.Exec("delete from t where c1 = 4;")
+		}
+		assert.NoError(t, dom.Reload())
+	}
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
+	dom.DDL().SetHook(callback)
 	tk.MustExec("alter table t add primary key idx(c1);")
 	dom.DDL().SetHook(originHook)
 	require.True(t, backfillDone)
@@ -136,21 +141,23 @@ func TestAddIndexMergeVersionIndexValue(t *testing.T) {
 	var runDML bool
 	var tblID, idxID int64
 	originHook := dom.DDL().GetHook()
-	dom.DDL().SetHook(&ddl.TestDDLCallback{
+	callback := &ddl.TestDDLCallback{
 		Do: dom,
-		OnJobUpdatedExported: func(job *model.Job) {
-			if !runDML && job.Type == model.ActionAddIndex && job.SchemaState == model.StateWriteReorganization {
-				idx := findIdxInfo(dom, "test", "t", "idx")
-				if idx == nil || idx.BackfillState != model.BackfillStateReadyToMerge {
-					return
-				}
-				runDML = true
-				tblID = job.TableID
-				idxID = idx.ID
-				_, checkErr = tk2.Exec("insert into t values (1);")
+	}
+	onJobUpdatedExportedFunc := func(job *model.Job) {
+		if !runDML && job.Type == model.ActionAddIndex && job.SchemaState == model.StateWriteReorganization {
+			idx := findIdxInfo(dom, "test", "t", "idx")
+			if idx == nil || idx.BackfillState != model.BackfillStateReadyToMerge {
+				return
 			}
-		},
-	})
+			runDML = true
+			tblID = job.TableID
+			idxID = idx.ID
+			_, checkErr = tk2.Exec("insert into t values (1);")
+		}
+	}
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
+	dom.DDL().SetHook(callback)
 	tk.MustExec("alter table t add unique index idx(c1);")
 	dom.DDL().SetHook(originHook)
 	require.True(t, runDML)

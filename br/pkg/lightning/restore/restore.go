@@ -517,9 +517,15 @@ type restoreSchemaWorker struct {
 func (worker *restoreSchemaWorker) addJob(sqlStr string, job *schemaJob) error {
 	stmts, err := createIfNotExistsStmt(worker.glue.GetParser(), sqlStr, job.dbName, job.tblName)
 	if err != nil {
-		return err
+		worker.logger.Warn("failed to rewrite statement, will use raw input instead",
+			zap.String("db", job.dbName),
+			zap.String("table", job.tblName),
+			zap.String("statement", sqlStr),
+			zap.Error(err))
+		job.stmts = []string{sqlStr}
+	} else {
+		job.stmts = stmts
 	}
-	job.stmts = stmts
 	return worker.appendJob(job)
 }
 
@@ -656,7 +662,25 @@ loop:
 			for _, stmt := range job.stmts {
 				task := logger.Begin(zap.DebugLevel, fmt.Sprintf("execute SQL: %s", stmt))
 				err = sqlWithRetry.Exec(worker.ctx, "run create schema job", stmt)
+				if err != nil {
+					// try to imitate IF NOT EXISTS behavior for parsing errors
+					exists := false
+					switch job.stmtType {
+					case schemaCreateDatabase:
+						var err2 error
+						exists, err2 = common.SchemaExists(worker.ctx, session, job.dbName)
+						if err2 != nil {
+							task.Error("failed to check database existence", zap.Error(err2))
+						}
+					case schemaCreateTable:
+						exists, _ = common.TableExists(worker.ctx, session, job.dbName, job.tblName)
+					}
+					if exists {
+						err = nil
+					}
+				}
 				task.End(zap.ErrorLevel, err)
+
 				if err != nil {
 					err = common.ErrCreateSchema.Wrap(err).GenWithStackByArgs(common.UniqueTable(job.dbName, job.tblName), job.stmtType.String())
 					worker.wg.Done()
