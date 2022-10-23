@@ -217,6 +217,9 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		return b.applyRecoverTable(m, diff)
 	case model.ActionCreateTables:
 		return b.applyCreateTables(m, diff)
+	case model.ActionReorganizePartition:
+		// TODO: How to test?
+		return b.applyReorganizePartition(m, diff)
 	default:
 		return b.applyDefaultAction(m, diff)
 	}
@@ -273,6 +276,25 @@ func (b *Builder) applyDropTableOrPartition(m *meta.Meta, diff *model.SchemaDiff
 
 	for _, opt := range diff.AffectedOpts {
 		b.deleteBundle(b.is, opt.OldTableID)
+	}
+	return tblIDs, nil
+}
+
+// TODO: How to test this?
+func (b *Builder) applyReorganizePartition(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	// Is this needed? Since there should be no difference more than partition changes?
+	tblIDs, err := b.applyTableUpdate(m, diff)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	for _, opt := range diff.AffectedOpts {
+		if opt.OldTableID != 0 {
+			b.deleteBundle(b.is, opt.OldTableID)
+		}
+		if opt.TableID != 0 {
+			b.markTableBundleShouldUpdate(opt.TableID)
+		}
 	}
 	return tblIDs, nil
 }

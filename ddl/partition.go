@@ -2199,19 +2199,14 @@ func checkReorgPartition(t *meta.Meta, job *model.Job) (*model.TableInfo, []mode
 }
 
 func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	// TODO: How to rollback Reorganize?
-	// Just to drop the new non-public partitions?
-	// And reset the DroppedDefinitions?
 	// Handle the rolling back job
-	/*
-		if job.IsRollingback() {
-			ver, err := w.onDropTablePartition(d, t, job)
-			if err != nil {
-				return ver, errors.Trace(err)
-			}
-			return ver, nil
+	if job.IsRollingback() {
+		ver, err := w.onDropTablePartition(d, t, job)
+		if err != nil {
+			return ver, errors.Trace(err)
 		}
-	*/
+		return ver, nil
+	}
 
 	// notice: addingDefinitions is empty when job is in state model.StateNone
 	// TODO: add droppingDefinitions and use it later...
@@ -2341,6 +2336,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != job.SchemaState)
 	case model.StateWriteReorganization:
 		physicalTableIDs := getPartitionIDsFromDefinitions(tblInfo.Partition.DroppingDefinitions)
+		newIDs := getPartitionIDsFromDefinitions(tblInfo.Partition.AddingDefinitions)
 		tbl, err := getTable(d.store, job.SchemaID, tblInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -2380,7 +2376,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 			return ver, err
 		}
 
-		job.CtxVars = []interface{}{physicalTableIDs}
+		job.CtxVars = []interface{}{physicalTableIDs, newIDs}
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
