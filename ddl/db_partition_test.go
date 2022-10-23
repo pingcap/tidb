@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/util/mathutil"
 	"math/rand"
 	"sort"
 	"strings"
@@ -51,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -5283,6 +5283,7 @@ func TestReorgPartitionRollback(t *testing.T) {
 	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
 	require.NoError(t, err)
+	noNewTablesAfter(t, ctx, tbl)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/reorgPartitionAfterDataCopy", `return(true)`))
 	defer func() {
 		err := failpoint.Disable("github.com/pingcap/tidb/ddl/reorgPartitionAfterDataCopy")
