@@ -3491,6 +3491,21 @@ def go_deps():
         version = "v1.1.3",
     )
     go_repository(
+        name = "com_github_twpayne_go_geom",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/twpayne/go-geom",
+        sum = "h1:lVzRztQgP4GvJ+VuVDv9tICZIfGFtB9uQQQa7w72Wdk=",
+        version = "v1.4.3",
+    )
+    go_repository(
+        name = "com_github_twpayne_go_kml",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/twpayne/go-kml",
+        sum = "h1:rFMw2/EwgkVssGS2MT6YfWSPZz6BgcJkLxQ53jnE8rQ=",
+        version = "v1.5.2",
+    )
+
+    go_repository(
         name = "com_github_uber_jaeger_client_go",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/uber/jaeger-client-go",

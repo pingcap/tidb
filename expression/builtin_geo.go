@@ -145,7 +145,7 @@ func (b *builtinStAsTextSig) evalString(row chunk.Row) (string, bool, error) {
 	if err != nil {
 		return "", isNull, err
 	}
-	return string(wktVal), false, nil
+	return wktVal, false, nil
 }
 
 type stDistanceFunctionClass struct {
