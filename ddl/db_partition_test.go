@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/util/mathutil"
 	"math/rand"
 	"sort"
 	"strings"
@@ -58,6 +59,39 @@ type allTableData struct {
 	keys [][]byte
 	vals [][]byte
 	tp   []string
+}
+
+// TODO: Create a more generic function that gets all accessible table ids
+// from all schemas, and checks the full key space so that there are no
+// keys for non-existing table IDs. Also figure out how to wait for deleteRange
+// Checks that there are no accessible data after an existing table
+// assumes that tableIDs are only increasing.
+// To be used during failure testing of ALTER, to make sure cleanup is done.
+func noNewTablesAfter(t *testing.T, ctx sessionctx.Context, tbl table.Table) {
+	require.NoError(t, sessiontxn.NewTxn(context.Background(), ctx))
+	txn, err := ctx.Txn(true)
+	require.NoError(t, err)
+	defer func() {
+		err := txn.Rollback()
+		require.NoError(t, err)
+	}()
+	// Get max tableID (if partitioned)
+	tblID := tbl.Meta().ID
+	if pt := tbl.GetPartitionedTable(); pt != nil {
+		defs := pt.Meta().Partition.Definitions
+		{
+			for i := range defs {
+				tblID = mathutil.Max[int64](tblID, defs[i].ID)
+			}
+		}
+	}
+	prefix := tablecodec.EncodeTablePrefix(tblID + 1)
+	it, err := txn.Iter(prefix, nil)
+	require.NoError(t, err)
+	require.True(t, it.Valid())
+	foundTblID := tablecodec.DecodeTableID(it.Key())
+	// Why are there table IDs >= 0xFFFFFFFFFFFC (281474976710652)
+	require.False(t, it.Key()[0] == 't' && foundTblID < 0xFFFFFFFFFFFC, "Found table data after highest physical Table ID %d < %d", tblID, foundTblID)
 }
 
 func getAllDataForPhysicalTable(t *testing.T, ctx sessionctx.Context, physTable table.PhysicalTable) allTableData {
@@ -5239,9 +5273,19 @@ func TestReorgPartitionRollback(t *testing.T) {
 		` partition p1 values less than (20),` +
 		` partition pMax values less than (MAXVALUE))`)
 	tk.MustExec(`insert into t values (1,"1",1), (12,"12",21),(23,"23",32),(34,"34",43),(45,"45",54),(56,"56",65)`)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockUpdateVersionAndTableInfoErr", `return(2)`))
+	// TODO: Check that there are no additional placement rules,
+	// bundles, or ranges with non-completed tableIDs
+	// (partitions used during reorg, but was dropped)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockUpdateVersionAndTableInfoErr", `return(true)`))
+	tk.MustExecToErr("alter table t reorganize partition p1 into (partition p1a values less than (15), partition p1b values less than (20))")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockUpdateVersionAndTableInfoErr"))
+	ctx := tk.Session()
+	is := domain.GetDomain(ctx).InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
+	require.NoError(t, err)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/reorgPartitionAfterDataCopy", `return(true)`))
 	defer func() {
-		err := failpoint.Disable("github.com/pingcap/tidb/ddl/mockUpdateVersionAndTableInfoErr")
+		err := failpoint.Disable("github.com/pingcap/tidb/ddl/reorgPartitionAfterDataCopy")
 		require.NoError(t, err)
 	}()
 	tk.MustExecToErr("alter table t reorganize partition p1 into (partition p1a values less than (15), partition p1b values less than (20))")
@@ -5259,6 +5303,13 @@ func TestReorgPartitionRollback(t *testing.T) {
 		" PARTITION `p1` VALUES LESS THAN (20),\n" +
 		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
 
+	//tk.MustQuery(`select * from mysql.gc_delete_range_done`).Sort().Check(testkit.Rows())
+	//time.Sleep(1 * time.Second)
+	tk.MustQuery(`select * from mysql.gc_delete_range`).Sort().Check(testkit.Rows())
+
+	tbl, err = is.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
+	require.NoError(t, err)
+	noNewTablesAfter(t, ctx, tbl)
 }
 
 // TODO Test with/without PK, indexes, UK, virtual, virtual stored columns

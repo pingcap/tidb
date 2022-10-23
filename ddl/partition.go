@@ -166,7 +166,7 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 		for _, p := range tblInfo.Partition.AddingDefinitions {
 			ids = append(ids, p.ID)
 		}
-		if err := alterTableLabelRule(job.SchemaName, tblInfo, ids); err != nil {
+		if _, err := alterTableLabelRule(job.SchemaName, tblInfo, ids); err != nil {
 			job.State = model.JobStateCancelled
 			return ver, err
 		}
@@ -182,8 +182,7 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 			// be finished. Otherwise the query to this partition will be blocked.
 			needRetry, err := checkPartitionReplica(tblInfo.TiFlashReplica.Count, 1, addingDefinitions, d)
 			if err != nil {
-				ver, err = convertAddTablePartitionJob2RollbackJob(d, t, job, err, tblInfo)
-				return ver, err
+				return convertAddTablePartitionJob2RollbackJob(d, t, job, err, tblInfo)
 			}
 			if needRetry {
 				// The new added partition hasn't been replicated.
@@ -218,14 +217,14 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 	return ver, errors.Trace(err)
 }
 
-func alterTableLabelRule(schemaName string, meta *model.TableInfo, ids []int64) error {
+func alterTableLabelRule(schemaName string, meta *model.TableInfo, ids []int64) (bool, error) {
 	tableRuleID := fmt.Sprintf(label.TableIDFormat, label.IDPrefix, schemaName, meta.Name.L)
 	oldRule, err := infosync.GetLabelRules(context.TODO(), []string{tableRuleID})
 	if err != nil {
-		return errors.Trace(err)
+		return false, errors.Trace(err)
 	}
 	if len(oldRule) == 0 {
-		return nil
+		return false, nil
 	}
 
 	r, ok := oldRule[tableRuleID]
@@ -233,10 +232,11 @@ func alterTableLabelRule(schemaName string, meta *model.TableInfo, ids []int64) 
 		rule := r.Reset(schemaName, meta.Name.L, "", ids...)
 		err = infosync.PutLabelRule(context.TODO(), rule)
 		if err != nil {
-			return errors.Wrapf(err, "failed to notify PD label rule")
+			return true, errors.Wrapf(err, "failed to notify PD label rule")
 		}
+		return true, nil
 	}
-	return nil
+	return false, nil
 }
 
 func alterTablePartitionBundles(t *meta.Meta, tblInfo *model.TableInfo, addingDefinitions []model.PartitionDefinition) ([]*placement.Bundle, error) {
@@ -1683,11 +1683,12 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	if job.Type == model.ActionAddTablePartition {
+	if job.Type == model.ActionAddTablePartition || job.Type == model.ActionReorganizePartition {
 		// It is rollbacked from adding table partition, just remove addingDefinitions from tableInfo.
 		physicalTableIDs, pNames, rollbackBundles := rollbackAddingPartitionInfo(tblInfo)
 		err = infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), rollbackBundles)
 		if err != nil {
+			// Why cancel here and not try to clean up as much as possible?
 			job.State = model.JobStateCancelled
 			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
 		}
@@ -1697,7 +1698,7 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 			return ver, errors.Wrapf(err, "failed to notify PD the label rules")
 		}
 
-		if err := alterTableLabelRule(job.SchemaName, tblInfo, getIDs([]*model.TableInfo{tblInfo})); err != nil {
+		if _, err := alterTableLabelRule(job.SchemaName, tblInfo, getIDs([]*model.TableInfo{tblInfo})); err != nil {
 			job.State = model.JobStateCancelled
 			return ver, err
 		}
@@ -1731,7 +1732,7 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 			return ver, errors.Wrapf(err, "failed to notify PD the label rules")
 		}
 
-		if err := alterTableLabelRule(job.SchemaName, tblInfo, getIDs([]*model.TableInfo{tblInfo})); err != nil {
+		if _, err := alterTableLabelRule(job.SchemaName, tblInfo, getIDs([]*model.TableInfo{tblInfo})); err != nil {
 			job.State = model.JobStateCancelled
 			return ver, err
 		}
@@ -2225,6 +2226,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 	originalState := job.SchemaState
 	switch job.SchemaState {
 	case model.StateNone:
+		changesMade := false
 		// job.SchemaState == model.StateNone means the job is in the initial state of reorg partition.
 		// Here should use partInfo from job directly and do some check action.
 		err = checkAddPartitionTooManyPartitions(uint64(len(tblInfo.Partition.Definitions) +
@@ -2265,33 +2267,46 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 			// Must set placement rule, and make sure it succeeds.
 			if err := infosync.ConfigureTiFlashPDForPartitions(true, &tblInfo.Partition.AddingDefinitions, tblInfo.TiFlashReplica.Count, &tblInfo.TiFlashReplica.LocationLabels, tblInfo.ID); err != nil {
 				logutil.BgLogger().Error("ConfigureTiFlashPDForPartitions fails", zap.Error(err))
+				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
 			}
+			changesMade = true
 			// In the next step, StateDeleteOnly, wait to verify the TiFlash replicas
 			// are OK
 		}
 
+		// We rom now on we cannot just cancel the DDL, we must Rollback!
 		bundles, err := alterTablePartitionBundles(t, tblInfo, tblInfo.Partition.AddingDefinitions)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
 
-		if err = infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), bundles); err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
+		if len(bundles) > 0 {
+			if err = infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), bundles); err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
+			}
+			changesMade = true
 		}
 
 		ids := getIDs([]*model.TableInfo{tblInfo})
 		for _, p := range tblInfo.Partition.AddingDefinitions {
 			ids = append(ids, p.ID)
 		}
-		if err := alterTableLabelRule(job.SchemaName, tblInfo, ids); err != nil {
-			job.State = model.JobStateCancelled
-			return ver, err
+		changed, err := alterTableLabelRule(job.SchemaName, tblInfo, ids)
+		changesMade = changesMade || changed
+		if err != nil {
+			if !changesMade {
+				job.State = model.JobStateCancelled
+				return ver, err
+			}
+			return convertAddTablePartitionJob2RollbackJob(d, t, job, err, tblInfo)
 		}
 		// TODO: test...
-		metrics.GetBackfillProgressByLabel(metrics.LblAction, job.SchemaName, tblInfo.Name.String()).Set(0)
+		// Assume we cannot have more than MaxUint64 rows, set the progress
+		// to 1/10 of that.
+		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, job.SchemaName, tblInfo.Name.String()).Set(0.1 / float64(math.MaxUint64))
 		job.SchemaState = model.StateDeleteOnly
 	case model.StateDeleteOnly:
 		// This state is to confirm all servers can not see the new partitions when reorg is running,
@@ -2307,8 +2322,9 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 			count := tblInfo.TiFlashReplica.Count
 			needRetry, err := checkPartitionReplica(count, count, addingDefinitions, d)
 			if err != nil {
-				ver, err = convertAddTablePartitionJob2RollbackJob(d, t, job, err, tblInfo)
-				return ver, err
+				// need to rollback, since we tried to register the new
+				// partitions before!
+				return convertAddTablePartitionJob2RollbackJob(d, t, job, err, tblInfo)
 			}
 			if needRetry {
 				// The new added partition hasn't been replicated.
@@ -2326,7 +2342,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		}
 
 		job.SchemaState = model.StateWriteOnly
-		metrics.GetBackfillProgressByLabel(metrics.LblAction, job.SchemaName, tblInfo.Name.String()).Set(0)
+		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, job.SchemaName, tblInfo.Name.String()).Set(0.2 / float64(math.MaxUint64))
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != job.SchemaState)
 	case model.StateWriteOnly:
 		// Insert this state to confirm all servers can not see the old partitions when reorg is running,
@@ -2344,7 +2360,8 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		// TODO: If table has global indexes, we need reorg to clean up them.
 		// and then add the new partition ids back...
 		if _, ok := tbl.(table.PartitionedTable); ok && hasGlobalIndex(tblInfo) {
-			return ver, errors.Trace(dbterror.ErrCancelledDDLJob.GenWithStack("global indexes is not supported yet for reorganize partition"))
+			err = errors.Trace(dbterror.ErrCancelledDDLJob.GenWithStack("global indexes is not supported yet for reorganize partition"))
+			return convertAddTablePartitionJob2RollbackJob(d, t, job, err, tblInfo)
 		}
 		var done bool
 		done, ver, err = doPartitionReorgWork(w, d, t, job, tbl, physicalTableIDs)
@@ -2364,18 +2381,10 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		definitionsToDrop := tblInfo.Partition.DroppingDefinitions
 		tblInfo.Partition.DroppingDefinitions = nil
 
-		// I assume these must be here still?
-		err = dropLabelRules(d, job.SchemaName, tblInfo.Name.L, partNames)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Wrapf(err, "failed to notify PD the label rules")
-		}
+		// TODO: Make sure the dropLabelRules are done both if successful (droppingDefinitions) or if rollback (addingDefinitions)
 
-		if err := alterTableLabelRule(job.SchemaName, tblInfo, getIDs([]*model.TableInfo{tblInfo})); err != nil {
-			job.State = model.JobStateCancelled
-			return ver, err
-		}
-
+		// Register the droppingDefinitions ids for rangeDelete
+		// and the addingDefinitions for handling in the updateSchemaVersion
 		job.CtxVars = []interface{}{physicalTableIDs, newIDs}
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
 		if err != nil {
@@ -2387,29 +2396,6 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		asyncNotifyEvent(d, &util.Event{Tp: model.ActionDropTablePartition, TableInfo: tblInfo, PartInfo: &model.PartitionInfo{Definitions: definitionsToDrop}})
 		// A background job will be created to delete old partition data.
 		job.Args = []interface{}{physicalTableIDs}
-	case model.StatePublic:
-		/*
-			// If an error occurs, it returns that it cannot delete all partitions or that the partition doesn't exist.
-			err = CheckDropTablePartition(tblInfo, partNames)
-			if err != nil {
-				job.State = model.JobStateCancelled
-				return ver, errors.Trace(err)
-			}
-		*/
-		_ = updateDroppingPartitionInfo(tblInfo, partNames)
-		err = dropLabelRules(d, job.SchemaName, tblInfo.Name.L, partNames)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Wrapf(err, "failed to notify PD the label rules")
-		}
-
-		if err := alterTableLabelRule(job.SchemaName, tblInfo, getIDs([]*model.TableInfo{tblInfo})); err != nil {
-			job.State = model.JobStateCancelled
-			return ver, err
-		}
-
-		job.SchemaState = model.StateDeleteOnly
-		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != job.SchemaState)
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("partition", job.SchemaState)
 	}
@@ -2420,7 +2406,6 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 func doPartitionReorgWork(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, physTblIDs []int64) (done bool, ver int64, err error) {
 	job.ReorgMeta.ReorgTp = model.ReorgTypeTxn
 	rh := newReorgHandler(t, w.sess, w.concurrentDDL)
-	// TODO: create fail point for internal testing
 	elements := BuildElements(tbl.Meta().Columns[0], tbl.Meta().Indices)
 	partTbl, ok := tbl.(table.PartitionedTable)
 	if !ok {
@@ -2432,7 +2417,7 @@ func doPartitionReorgWork(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tb
 			func() {
 				reorgErr = dbterror.ErrCancelledDDLJob.GenWithStack("reorganize partition for table `%v` panic", tbl.Meta().Name)
 			}, false)
-		return w.reorgPartitionData(tbl, reorgInfo)
+		return w.reorgPartitionDataAndIndex(tbl, reorgInfo)
 	})
 	if err != nil {
 		if dbterror.ErrWaitReorgTimeout.Equal(err) {
@@ -2448,7 +2433,7 @@ func doPartitionReorgWork(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tb
 				zap.String("job", job.String()), zap.Error(err1))
 		}
 		logutil.BgLogger().Warn("[ddl] reorg partition job failed, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
-		job.State = model.JobStateRollingback
+		ver, err = convertAddTablePartitionJob2RollbackJob(d, t, job, err, tbl.Meta())
 		return false, ver, errors.Trace(err)
 	}
 	return true, ver, err
@@ -2639,29 +2624,11 @@ func (w *reorgPartitionWorker) AddMetricInfo(cnt float64) {
 	w.metricCounter.Add(cnt)
 }
 
-// updateCurrentElement update the current element for reorgInfo.
-func (w *worker) reorgPartitionData(t table.Table, reorgInfo *reorgInfo) error {
-	// TableIDs should already been assigned (todo: remove this note)
+func (w *worker) reorgPartitionDataAndIndex(t table.Table, reorgInfo *reorgInfo) error {
 	// First copy all table data to the new partitions
-	// from each of the DroppingDefinitions partitions
-	// Create all indexes on the AddingDefinitions partitions
-
-	/*
-			failpoint.Inject("mockInfiniteReorgLogic", func(val failpoint.Value) {
-			//nolint:forcetypeassert
-			if val.(bool) {
-				a := new(interface{})
-				TestReorgGoroutineRunning <- a
-				for {
-					time.Sleep(30 * time.Millisecond)
-					if w.getReorgCtx(reorgInfo.Job).isReorgCanceled() {
-						// Job is cancelled. So it can't be done.
-						failpoint.Return(dbterror.ErrCancelledDDLJob)
-					}
-				}
-			}
-		})
-	*/
+	// from each of the DroppingDefinitions partitions.
+	// Then create all indexes on the AddingDefinitions partitions
+	// for each new index, one partition at a time.
 
 	// Copy the data from the DroppingDefinitions to the AddingDefinitions
 	if bytes.Equal(reorgInfo.currElement.TypeKey, meta.ColumnElementKey) {
