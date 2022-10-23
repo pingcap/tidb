@@ -50,6 +50,9 @@ func (c *stGeomFromTextFunctionClass) getFunction(ctx sessionctx.Context, args [
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
+	if len(args) > 2 {
+		return nil, ErrIncorrectParameterCount.GenWithStackByArgs(c.funcName)
+	}
 	argTps := make([]types.EvalType, 0, len(args))
 	for i := 0; i < len(args); i++ {
 		argTps = append(argTps, types.ETString)
