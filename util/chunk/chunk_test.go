@@ -1187,20 +1187,6 @@ func TestNewChunkWithAllocCapacity(t *testing.T) {
 
 	alloc.Reset()
 
-	chk2 := NewChunkWithAllocCapacity(fieldTypes, initCap, alloc)
-
-	for i := 0; i < initCap; i++ {
-		chk2.AppendFloat64(0, 123.123)
-		chk2.AppendString(1, "123")
-		chk2.AppendTime(2, timeObj)
-		chk2.AppendDuration(3, durationObj)
-	}
-	require.Equal(t, chk, chk2)
-	for i := range chk.columns {
-		require.Equal(t, chk.columns[i], chk2.columns[i])
-	}
-	alloc.Reset()
-
 	chunkReuseMap := make(map[*Chunk]struct{}, 14)
 	columnReuseMap := make(map[*Column]struct{}, 14)
 	alloc.SetLimit(10, 12*4)
