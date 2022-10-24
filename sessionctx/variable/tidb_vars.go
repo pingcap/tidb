@@ -1062,7 +1062,7 @@ const (
 	DefTiDBRcWriteCheckTs                           = false
 	DefTiDBConstraintCheckInPlacePessimistic        = true
 	DefTiDBForeignKeyChecks                         = false
-	DefTiDBAnalyzePartitionConcurrency              = 4
+	DefTiDBAnalyzePartitionConcurrency              = 1
 	DefTiDBOptRangeMaxSize                          = 64 * int64(size.MB) // 64 MB
 	DefTiDBCostModelVer                             = 1
 	DefTiDBServerMemoryLimitSessMinSize             = 128 << 20

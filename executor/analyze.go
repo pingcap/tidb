@@ -226,13 +226,12 @@ func (e *AnalyzeExec) handleResultsError(ctx context.Context, concurrency int, n
 		if len(subSctxs) > 0 {
 			internalCtx := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
 			err := e.handleResultsErrorWithConcurrency(internalCtx, concurrency, needGlobalStats, subSctxs, globalStatsMap, resultsCh)
-			dom.ReturnAnalyzeExtraExec(subSctxs)
+			dom.AvailableAnalyzeExec(subSctxs)
 			return err
 		}
 	}
 
 	// save analyze results in single-thread.
-	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
 	panicCnt := 0
 	var err error
 	for panicCnt < concurrency {
@@ -251,19 +250,10 @@ func (e *AnalyzeExec) handleResultsError(ctx context.Context, concurrency int, n
 			continue
 		}
 		handleGlobalStats(needGlobalStats, globalStatsMap, results)
-
-		if err1 := statsHandle.SaveTableStatsToStorage(results, e.ctx.GetSessionVars().EnableAnalyzeSnapshot); err1 != nil {
-			err = err1
-			logutil.Logger(ctx).Error("save table stats to storage failed", zap.Error(err))
-			finishJobWithLog(e.ctx, results.Job, err)
-		} else {
-			finishJobWithLog(e.ctx, results.Job, nil)
-			// Dump stats to historical storage.
-			if err := recordHistoricalStats(e.ctx, results.TableID.TableID); err != nil {
-				logutil.BgLogger().Error("record historical stats failed", zap.Error(err))
-			}
+		err = saveTableStatsToStorage(ctx, e.ctx, results, e.ctx.GetSessionVars().EnableAnalyzeSnapshot)
+		if err != nil {
+			return err
 		}
-		invalidInfoSchemaStatCache(results.TableID.GetStatisticsID())
 	}
 	return err
 }
