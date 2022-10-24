@@ -44,33 +44,22 @@ func newAnalyzeSaveStatsWorker(
 }
 
 func (worker *analyzeSaveStatsWorker) run(ctx context.Context, analyzeSnapshot bool) {
-	defer func() {
-		if r := recover(); r != nil {
-			logutil.BgLogger().Error("analyze save stats worker panicked", zap.Any("recover", r), zap.Stack("stack"))
-			worker.errCh <- getAnalyzePanicErr(r)
-		}
-	}()
 	for results := range worker.resultsCh {
-		err := saveTableStatsToStorage(ctx, worker.sctx, results, analyzeSnapshot)
+		err := handle.SaveTableStatsToStorage(worker.sctx, results, analyzeSnapshot)
 		if err != nil {
+			logutil.Logger(ctx).Error("save table stats to storage failed", zap.Error(err))
+			finishJobWithLog(worker.sctx, results.Job, err)
 			worker.errCh <- err
+		} else {
+			finishJobWithLog(worker.sctx, results.Job, nil)
+			// Dump stats to historical storage.
+			if err := recordHistoricalStats(worker.sctx, results.TableID.TableID); err != nil {
+				logutil.BgLogger().Error("record historical stats failed", zap.Error(err))
+			}
+		}
+		invalidInfoSchemaStatCache(results.TableID.GetStatisticsID())
+		if err != nil {
 			return
 		}
 	}
-}
-
-func saveTableStatsToStorage(ctx context.Context, sctx sessionctx.Context, results *statistics.AnalyzeResults, analyzeSnapshot bool) error {
-	err := handle.SaveTableStatsToStorage(sctx, results, analyzeSnapshot)
-	if err != nil {
-		logutil.Logger(ctx).Error("save table stats to storage failed", zap.Error(err))
-		finishJobWithLog(sctx, results.Job, err)
-	} else {
-		finishJobWithLog(sctx, results.Job, nil)
-		// Dump stats to historical storage.
-		if err := recordHistoricalStats(sctx, results.TableID.TableID); err != nil {
-			logutil.BgLogger().Error("record historical stats failed", zap.Error(err))
-		}
-	}
-	invalidInfoSchemaStatCache(results.TableID.GetStatisticsID())
-	return err
 }
