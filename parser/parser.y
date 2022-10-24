@@ -13891,6 +13891,13 @@ KillStmt:
 			TiDBExtension: $1.(bool),
 		}
 	}
+|	KillOrKillTiDB BuiltinFunction
+	{
+		$$ = &ast.KillStmt{
+			TiDBExtension: $1.(bool),
+			Expr:          $2,
+		}
+	}
 
 KillOrKillTiDB:
 	"KILL"

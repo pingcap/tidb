@@ -1,0 +1,10 @@
+.git/
+bazel-bin/
+bazel-out/
+bazel-tidb/
+bazel-testlogs/
+bin/
+tidb-server/tidb-server
+*.test.bin
+cmd/
+Dockerfile
