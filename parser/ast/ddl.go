@@ -4040,29 +4040,57 @@ func (n *RecoverTableStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// FlashBackClusterStmt is a statement to restore the cluster to the specified timestamp
-type FlashBackClusterStmt struct {
+// FlashBackToTimestampStmt is a statement to restore the cluster to the specified timestamp
+type FlashBackToTimestampStmt struct {
 	ddlNode
 
 	FlashbackTS ExprNode
+	Tables      []*TableName
+	DBName      model.CIStr
 }
 
 // Restore implements Node interface
-func (n *FlashBackClusterStmt) Restore(ctx *format.RestoreCtx) error {
-	ctx.WriteKeyWord("FLASHBACK CLUSTER TO TIMESTAMP ")
+func (n *FlashBackToTimestampStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("FLASHBACK ")
+	if len(n.Tables) != 0 {
+		ctx.WriteKeyWord("TABLE ")
+		for index, table := range n.Tables {
+			if index != 0 {
+				ctx.WritePlain(", ")
+			}
+			if err := table.Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while restore DropTableStmt.Tables[%d]", index)
+			}
+		}
+	} else if n.DBName.O != "" {
+		ctx.WriteKeyWord("DATABASE ")
+		ctx.WriteName(n.DBName.O)
+	} else {
+		ctx.WriteKeyWord("CLUSTER")
+	}
+	ctx.WriteKeyWord(" TO TIMESTAMP ")
 	if err := n.FlashbackTS.Restore(ctx); err != nil {
-		return errors.Annotate(err, "An error occurred while splicing FlashBackClusterStmt.FlashbackTS")
+		return errors.Annotate(err, "An error occurred while splicing FlashBackToTimestampStmt.FlashbackTS")
 	}
 	return nil
 }
 
 // Accept implements Node Accept interface.
-func (n *FlashBackClusterStmt) Accept(v Visitor) (Node, bool) {
+func (n *FlashBackToTimestampStmt) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
 		return v.Leave(newNode)
 	}
-	n = newNode.(*FlashBackClusterStmt)
+	n = newNode.(*FlashBackToTimestampStmt)
+	if len(n.Tables) != 0 {
+		for i, val := range n.Tables {
+			node, ok := val.Accept(v)
+			if !ok {
+				return n, false
+			}
+			n.Tables[i] = node.(*TableName)
+		}
+	}
 	node, ok := n.FlashbackTS.Accept(v)
 	if !ok {
 		return n, false

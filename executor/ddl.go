@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
@@ -173,8 +172,14 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		err = e.executeRecoverTable(x)
 	case *ast.FlashBackTableStmt:
 		err = e.executeFlashbackTable(x)
-	case *ast.FlashBackClusterStmt:
-		err = e.executeFlashBackCluster(ctx, x)
+	case *ast.FlashBackToTimestampStmt:
+		if len(x.Tables) != 0 {
+			err = dbterror.ErrGeneralUnsupportedDDL.GenWithStack("Unsupported FLASHBACK table TO TIMESTAMP")
+		} else if x.DBName.O != "" {
+			err = dbterror.ErrGeneralUnsupportedDDL.GenWithStack("Unsupported FLASHBACK database TO TIMESTAMP")
+		} else {
+			err = e.executeFlashBackCluster(x)
+		}
 	case *ast.RenameTableStmt:
 		err = e.executeRenameTable(x)
 	case *ast.TruncateTableStmt:
@@ -525,12 +530,7 @@ func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName) (*model.J
 	return jobInfo, tableInfo, nil
 }
 
-func (e *DDLExec) executeFlashBackCluster(ctx context.Context, s *ast.FlashBackClusterStmt) error {
-	checker := privilege.GetPrivilegeManager(e.ctx)
-	if !checker.RequestVerification(e.ctx.GetSessionVars().ActiveRoles, "", "", "", mysql.SuperPriv) {
-		return core.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER")
-	}
-
+func (e *DDLExec) executeFlashBackCluster(s *ast.FlashBackToTimestampStmt) error {
 	tiFlashInfo, err := getTiFlashStores(e.ctx)
 	if err != nil {
 		return err
