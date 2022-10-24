@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/extension/extensionimpl"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -2888,6 +2889,10 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, err
 	}
 
+	if err = extensionimpl.Bootstrap(context.Background(), dom); err != nil {
+		return nil, err
+	}
+
 	if len(cfg.Instance.PluginLoad) > 0 {
 		err := plugin.Init(context.Background(), plugin.Config{EtcdClient: dom.GetEtcdClient()})
 		if err != nil {
@@ -2924,7 +2929,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	}
 
 	dom.DumpFileGcCheckerLoop()
-	dom.LoadSigningCertLoop()
+	dom.LoadSigningCertLoop(cfg.Security.SessionTokenSigningCert, cfg.Security.SessionTokenSigningKey)
 
 	if raw, ok := store.(kv.EtcdBackend); ok {
 		err = raw.StartGCWorker()
