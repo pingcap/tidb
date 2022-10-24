@@ -1409,8 +1409,8 @@ func TestAuthTokenPlugin(t *testing.T) {
 	require.NoError(t, err)
 
 	cfg := config.GetGlobalConfig()
-	cfg.Security.AuthSigningCert = certPath
-	cfg.Security.AuthSigningKey = keyPath
+	cfg.Security.SessionTokenSigningCert = certPath
+	cfg.Security.SessionTokenSigningKey = keyPath
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0
 
