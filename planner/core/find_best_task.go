@@ -1283,10 +1283,11 @@ func extractFiltersForIndexMerge(sc *stmtctx.StatementContext, client kv.Client,
 
 func indexColsCoveringCol(col *expression.Column, indexCols []*expression.Column, idxColLens []int, ignoreLen bool) bool {
 	for i, indexCol := range indexCols {
-		if indexCol != nil && col.EqualByExprAndID(nil, indexCol) {
-			if ignoreLen || idxColLens[i] == types.UnspecifiedLength || idxColLens[i] == col.RetType.GetFlen() {
-				return true
-			}
+		if indexCol == nil || !col.EqualByExprAndID(nil, indexCol) {
+			continue
+		}
+		if ignoreLen || idxColLens[i] == types.UnspecifiedLength || idxColLens[i] == col.RetType.GetFlen() {
+			return true
 		}
 	}
 	return false
@@ -1327,6 +1328,7 @@ func (ds *DataSource) indexCoveringCondition(condition expression.Expression, in
 	case *expression.Column:
 		return ds.indexCoveringColumn(v, indexColumns, idxColLens, false)
 	case *expression.ScalarFunction:
+		// Even if the index only contains prefix `col`, the index can cover `col is null`.
 		if v.FuncName.L == ast.IsNull {
 			if col, ok := v.GetArgs()[0].(*expression.Column); ok {
 				return ds.indexCoveringColumn(col, indexColumns, idxColLens, true)

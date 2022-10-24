@@ -44,10 +44,7 @@ func (c *conditionChecker) check(condition expression.Expression) (isAccessCond,
 		if x.RetType.EvalType() == types.ETString {
 			return false, true
 		}
-		if c.checkColumn(x) {
-			return true, !c.isFullLengthColumn()
-		}
-		return false, true
+		return c.checkColumn(x)
 	case *expression.Constant:
 		return true, false
 	}
@@ -66,7 +63,7 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 		return false, true
 	case ast.EQ, ast.NE, ast.GE, ast.GT, ast.LE, ast.LT, ast.NullEQ:
 		if _, ok := scalar.GetArgs()[0].(*expression.Constant); ok {
-			if c.checkColumn(scalar.GetArgs()[1]) {
+			if c.matchColumn(scalar.GetArgs()[1]) {
 				// Checks whether the scalar function is calculated use the collation compatible with the column.
 				if scalar.GetArgs()[1].GetType().EvalType() == types.ETString && !collate.CompatibleCollate(scalar.GetArgs()[1].GetType().GetCollate(), collation) {
 					return false, true
@@ -79,7 +76,7 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 			}
 		}
 		if _, ok := scalar.GetArgs()[1].(*expression.Constant); ok {
-			if c.checkColumn(scalar.GetArgs()[0]) {
+			if c.matchColumn(scalar.GetArgs()[0]) {
 				// Checks whether the scalar function is calculated use the collation compatible with the column.
 				if scalar.GetArgs()[0].GetType().EvalType() == types.ETString && !collate.CompatibleCollate(scalar.GetArgs()[0].GetType().GetCollate(), collation) {
 					return false, true
@@ -92,7 +89,7 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 			}
 		}
 	case ast.IsNull:
-		if c.checkColumn(scalar.GetArgs()[0]) {
+		if c.matchColumn(scalar.GetArgs()[0]) {
 			var isNullReserve bool // We can know whether the column is null from prefix column of any length.
 			if !c.optPrefixIndexSingleScan {
 				isNullReserve = !c.isFullLengthColumn()
@@ -106,10 +103,7 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 				return false, true
 			}
 		}
-		if c.checkColumn(scalar.GetArgs()[0]) {
-			return true, !c.isFullLengthColumn()
-		}
-		return false, true
+		return c.checkColumn(scalar.GetArgs()[0])
 	case ast.UnaryNot:
 		// TODO: support "not like" convert to access conditions.
 		s, ok := scalar.GetArgs()[0].(*expression.ScalarFunction)
@@ -122,7 +116,7 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 		}
 		return c.check(scalar.GetArgs()[0])
 	case ast.In:
-		if !c.checkColumn(scalar.GetArgs()[0]) {
+		if !c.matchColumn(scalar.GetArgs()[0]) {
 			return false, true
 		}
 		if scalar.GetArgs()[0].GetType().EvalType() == types.ETString && !collate.CompatibleCollate(scalar.GetArgs()[0].GetType().GetCollate(), collation) {
@@ -158,7 +152,7 @@ func (c *conditionChecker) checkLikeFunc(scalar *expression.ScalarFunction) (isA
 	if !collate.CompatibleCollate(scalar.GetArgs()[0].GetType().GetCollate(), collation) {
 		return false, true
 	}
-	if !c.checkColumn(scalar.GetArgs()[0]) {
+	if !c.matchColumn(scalar.GetArgs()[0]) {
 		return false, true
 	}
 	pattern, ok := scalar.GetArgs()[1].(*expression.Constant)
@@ -212,10 +206,17 @@ func (c *conditionChecker) checkLikeFunc(scalar *expression.ScalarFunction) (isA
 	return true, likeFuncReserve
 }
 
-func (c *conditionChecker) checkColumn(expr expression.Expression) bool {
+func (c *conditionChecker) matchColumn(expr expression.Expression) bool {
 	// Check if virtual expression column matched
 	if c.checkerCol != nil {
 		return c.checkerCol.EqualByExprAndID(nil, expr)
 	}
 	return false
+}
+
+func (c *conditionChecker) checkColumn(expr expression.Expression) (isAccessCond, shouldReserve bool) {
+	if c.matchColumn(expr) {
+		return true, !c.isFullLengthColumn()
+	}
+	return false, true
 }
