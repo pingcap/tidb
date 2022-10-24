@@ -11,5 +11,6 @@ go_library(
         "//kv",
         "//util/chunk",
         "//util/sqlexec",
+        "@com_github_pingcap_errors//:errors",
     ],
 )
