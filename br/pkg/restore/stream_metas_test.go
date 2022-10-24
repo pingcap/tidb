@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
@@ -230,6 +231,46 @@ func TestTruncateLogV2(t *testing.T) {
 func TestTruncateSafepoint(t *testing.T) {
 	ctx := context.Background()
 	l, err := storage.NewLocalStorage(t.TempDir())
+	require.NoError(t, err)
+
+	ts, err := restore.GetTSFromFile(ctx, l, restore.TruncateSafePointFileName)
+	require.NoError(t, err)
+	require.Equal(t, int(ts), 0)
+
+	for i := 0; i < 100; i++ {
+		n := rand.Uint64()
+		require.NoError(t, restore.SetTSToFile(ctx, l, n, restore.TruncateSafePointFileName))
+
+		ts, err = restore.GetTSFromFile(ctx, l, restore.TruncateSafePointFileName)
+		require.NoError(t, err)
+		require.Equal(t, ts, n, "failed at %d round: truncate safepoint mismatch", i)
+	}
+}
+
+func TestTruncateSafepointForGCS(t *testing.T) {
+	ctx := context.Background()
+	opts := fakestorage.Options{
+		NoListener: true,
+	}
+	server, err := fakestorage.NewServerWithOptions(opts)
+	require.NoError(t, err)
+	bucketName := "testbucket"
+	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: bucketName})
+
+	gcs := &backuppb.GCS{
+		Bucket:          bucketName,
+		Prefix:          "a/b/",
+		StorageClass:    "NEARLINE",
+		PredefinedAcl:   "private",
+		CredentialsBlob: "Fake Credentials",
+	}
+
+	l, err := storage.NewGCSStorageForTest(ctx, gcs, &storage.ExternalStorageOptions{
+		SendCredentials:  false,
+		CheckPermissions: []storage.Permission{storage.AccessBuckets},
+		HTTPClient:       server.HTTPClient(),
+	})
+	require.NoError(t, err)
 	require.NoError(t, err)
 
 	ts, err := restore.GetTSFromFile(ctx, l, restore.TruncateSafePointFileName)

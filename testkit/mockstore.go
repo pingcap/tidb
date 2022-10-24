@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/util/gctuner"
 	"github.com/stretchr/testify/require"
 	"go.opencensus.io/stats/view"
 )
@@ -56,6 +57,7 @@ func CreateMockStore(t testing.TB, opts ...mockstore.MockTiKVStoreOption) kv.Sto
 	t.Cleanup(func() {
 		view.Stop()
 	})
+	gctuner.GlobalMemoryLimitTuner.Stop()
 	store, _ := CreateMockStoreAndDomain(t, opts...)
 	return store
 }
