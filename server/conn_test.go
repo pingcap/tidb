@@ -1423,7 +1423,7 @@ func TestAuthTokenPlugin(t *testing.T) {
 	tk.MustExec(fmt.Sprintf("set global %s='%s'", variable.TiDBAuthSigningCert, certPath))
 	tk.MustExec(fmt.Sprintf("set global %s='%s'", variable.TiDBAuthSigningKey, keyPath))
 
-	tc, err := drv.OpenCtx(uint64(0), 0, uint8(mysql.DefaultCollationID), "", nil)
+	tc, err := drv.OpenCtx(uint64(0), 0, uint8(mysql.DefaultCollationID), "", nil, nil)
 	require.NoError(t, err)
 	cc := &clientConn{
 		connectionID: 1,
