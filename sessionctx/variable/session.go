@@ -1276,7 +1276,7 @@ type SessionVars struct {
 
 	HookContext
 
-  // OptPrefixIndexSingleScan indicates whether to do some optimizations to avoid double scan for prefix index.
+	// OptPrefixIndexSingleScan indicates whether to do some optimizations to avoid double scan for prefix index.
 	// When set to true, `col is (not) null`(`col` is index prefix column) is regarded as index filter rather than table filter.
 	OptPrefixIndexSingleScan bool
 
