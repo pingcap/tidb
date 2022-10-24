@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/tidb/metrics"
 	atomicutil "go.uber.org/atomic"
@@ -37,6 +38,8 @@ var (
 
 	QueryForceDisk       = atomicutil.NewInt64(0)
 	TriggerMemoryLimitGC = atomicutil.NewBool(false)
+	MemoryLimitGCLast    = atomicutil.NewTime(time.Time{})
+	MemoryLimitGCToTal   = atomicutil.NewInt64(0)
 )
 
 // Tracker is used to track the memory usage during query execution.

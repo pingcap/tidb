@@ -2416,7 +2416,7 @@ func (e *memtableRetriever) setDataForMemoryUsage(ctx sessionctx.Context) error 
 	if !sessionKillLast.IsZero() {
 		sessionKillLastDatum.SetMysqlTime(types.NewTime(types.FromGoTime(sessionKillLast), mysql.TypeDatetime, 0))
 	}
-	gcLast := types.NewTime(types.FromGoTime(time.Unix(0, int64(r.LastGC))), mysql.TypeDatetime, 0)
+	gcLast := types.NewTime(types.FromGoTime(memory.MemoryLimitGCLast.Load()), mysql.TypeDatetime, 0)
 
 	row := []types.Datum{
 		types.NewIntDatum(int64(memory.GetMemTotalIgnoreErr())),          // MEMORY_TOTAL
@@ -2427,7 +2427,7 @@ func (e *memtableRetriever) setDataForMemoryUsage(ctx sessionctx.Context) error 
 		sessionKillLastDatum, // SESSION_KILL_LAST
 		types.NewIntDatum(servermemorylimit.SessionKillTotal.Load()), // SESSION_KILL_TOTAL
 		types.NewTimeDatum(gcLast),                                   // GC_LAST
-		types.NewIntDatum(int64(r.NumGC)),                            // GC_TOTAL
+		types.NewIntDatum(memory.MemoryLimitGCToTal.Load()),          // GC_TOTAL
 		types.NewDatum(GlobalDiskUsageTracker.BytesConsumed()),       // DISK_USAGE
 		types.NewDatum(memory.QueryForceDisk.Load()),                 // QUERY_FORCE_DISK
 	}
