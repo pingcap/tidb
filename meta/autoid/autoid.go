@@ -40,7 +40,7 @@ import (
 	tikvutil "github.com/tikv/client-go/v2/util"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
-	autoidservice "github.com/pingcap/tidb/autoid"
+	// autoidservice "github.com/pingcap/tidb/autoid"
 )
 
 // Attention:
@@ -560,7 +560,7 @@ func newSinglePointAlloc(store kv.Storage, dbID, tblID int64) Allocator {
 		spa.clientDiscover = clientDiscover{etcdCli: etcdCli}
 	} else {
 		spa.clientDiscover = clientDiscover{
-			AutoIDAllocClient: autoidservice.MockForTest(store.UUID()),
+			// AutoIDAllocClient: autoidservice.MockForTest(store.UUID()),
 		}
 	}
 

@@ -9,9 +9,13 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/store"
 	"github.com/pingcap/kvproto/pkg/autoid"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"google.golang.org/grpc"
+	"github.com/pingcap/tidb/store/driver"
+
+	"github.com/jamiealquiza/tachymeter"
 )
 
 var (
@@ -37,6 +41,9 @@ type Service struct {
 	persist
 }
 
+var t *tachymeter.Tachymeter
+var count int64
+
 func New(selfAddr string) *Service {
 	cli, err := clientv3.New(clientv3.Config{
 		Endpoints:   []string{"0.0.0.0:2379"},
@@ -46,12 +53,39 @@ func New(selfAddr string) *Service {
 		panic(err)
 	}
 
-	fmt.Println("run here in service new!!")
+	fmt.Println("=============== run here in service new!!")
 
 	l := &leaderShip{cli: cli}
 	go l.campaignLoop(context.Background(), selfAddr)
 
-	p := &etcdPersist{cli: cli}
+	fmt.Println("================ autoid service leader started...")
+
+	// p := &etcdPersist{cli: cli}
+	err = store.Register("tikv", driver.TiKVDriver{})
+	if err != nil {
+		panic(err)
+	}
+
+	store, err := store.New("tikv://0.0.0.0:2379")
+	if err != nil {
+		panic(err)
+	}
+	p := tikvPersist{Storage: store}
+
+
+	t = tachymeter.New(&tachymeter.Config{Size: 300})
+	go func() {
+		tick := time.NewTicker(5*time.Second)
+		for range tick.C {
+			total := atomic.LoadInt64(&count)
+			fmt.Println("qps ==", total / 5)
+			atomic.StoreInt64(&count, 0)
+
+			fmt.Println(t.Calc())
+			fmt.Println()
+		}
+	}()
+
 	return &Service{
 		autoIDMap:  make(map[autoIDKey]*autoIDValue),
 		leaderShip: l,
@@ -122,11 +156,11 @@ func calcNeededBatchSize(base, n, increment, offset int64, isUnsigned bool) int6
 	return nr - base
 }
 
-const batch = 10000
+const batch = 400
 
 // AllocID implements gRPC PDServer.
 func (s *Service) AllocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*autoid.AutoIDResponse, error) {
-	fmt.Println("recieve request ==", *req)
+	// fmt.Println("recieve request ==", *req)
 	var res *autoid.AutoIDResponse
 	for  {
 		var err error
@@ -137,9 +171,9 @@ func (s *Service) AllocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*
 		if res != nil {
 			break
 		}
-		fmt.Println("fuck, another loop??")
+		// fmt.Println("fuck, another loop??")
 	}
-	fmt.Println("handle auto id service success")
+	// fmt.Println("handle auto id service success")
 	return res, nil
 }
 
@@ -175,33 +209,39 @@ func (s *Service) allocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*
 	if base < max {
 		// Safe to alloc directly
 		val.base = base
-		fmt.Println("normal ... base == ", base, " and max ==", max)
+		// fmt.Println("normal ... base == ", base, " and max ==", max)
 	} else {
-		// Need to sync the ID first, in case the server panic and lost the ID.
+		// // Need to sync the ID first, in case the server panic and lost the ID.
 		s.autoIDLock.Unlock()
-		val.token <- struct{}{}
-		fmt.Println("base ==", base, "max ==", max)
-		err := s.syncID(ctx, req.DbID, req.TblID, uint64(base)+batch, val.max, val.token)
-		if err != nil {
-			fmt.Println("sync id error", err)
-			return nil, errors.Trace(err)
-		}
+
+		// val.token <- struct{}{}
+		// // fmt.Println("base ==", base, "max ==", max)
+
+		// start := time.Now()
+		// err := s.syncID(ctx, req.DbID, req.TblID, uint64(base)+batch, val.max, val.token)
+		// if err != nil {
+		// 	fmt.Println("sync id error", err)
+		// 	return nil, errors.Trace(err)
+		// }
+		// atomic.AddInt64(&count, 1)
+		// t.AddTime(time.Since(start))
+
 		// And then retry
 		return nil, nil
 	}
 	s.autoIDLock.Unlock()
 
-	if max-(batch/2) < base {
-		fmt.Println("async pre-alloc id... max ==", max, "base ==", base)
-		// Trigger sync in the background gorotuine, pre-alloc the ID.
-		select {
-		case val.token <- struct{}{}:
-			go s.syncID(ctx, req.DbID, req.TblID, uint64(base)+batch, val.max, val.token)
-		default:
-		}
-	}
+	// if max-(batch/2) < base {
+	// 	// fmt.Println("async pre-alloc id... max ==", max, "base ==", base)
+	// 	// Trigger sync in the background gorotuine, pre-alloc the ID.
+	// 	select {
+	// 	case val.token <- struct{}{}:
+	// 		go s.syncID(ctx, req.DbID, req.TblID, uint64(base)+batch, val.max, val.token)
+	// 	default:
+	// 	}
+	// }
 
-	fmt.Println("return ..", min, base)
+	// fmt.Println("return ..", min, base)
 	return &autoid.AutoIDResponse{
 		Min: min,
 		Max: base,
