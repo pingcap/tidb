@@ -7525,19 +7525,11 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "tidb_server_plan_cache_memory_usage{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
-              "interval": "",
-              "legendFormat": "{{type}}",
-              "queryType": "randomWalk",
-              "refId": "A"
-            },
-            {
-              "exemplar": true,
               "expr": "tidb_server_instance_plan_cache_memory_usage{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
               "hide": false,
               "interval": "",
               "legendFormat": "{{instance}}",
-              "refId": "B"
+              "refId": "A"
             }
           ],
           "thresholds": [],
