@@ -218,7 +218,7 @@ func TestFDSet_ExtractFD(t *testing.T) {
 		require.NoError(t, err, comment)
 		tk.Session().GetSessionVars().PlanID = 0
 		tk.Session().GetSessionVars().PlanColumnID = 0
-		err = plannercore.Preprocess(tk.Session(), stmt, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
+		err = plannercore.Preprocess(context.Background(), tk.Session(), stmt, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err)
 		require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).AdviseWarmup())
 		builder, _ := plannercore.NewPlanBuilder().Init(tk.Session(), is, &hint.BlockHintProcessor{})
@@ -316,7 +316,7 @@ func TestFDSet_ExtractFDForApply(t *testing.T) {
 		require.NoError(t, err, comment)
 		tk.Session().GetSessionVars().PlanID = 0
 		tk.Session().GetSessionVars().PlanColumnID = 0
-		err = plannercore.Preprocess(tk.Session(), stmt, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
+		err = plannercore.Preprocess(context.Background(), tk.Session(), stmt, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err, comment)
 		require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).AdviseWarmup())
 		builder, _ := plannercore.NewPlanBuilder().Init(tk.Session(), is, &hint.BlockHintProcessor{})
@@ -364,7 +364,7 @@ func TestFDSet_MakeOuterJoin(t *testing.T) {
 		require.NoError(t, err, comment)
 		tk.Session().GetSessionVars().PlanID = 0
 		tk.Session().GetSessionVars().PlanColumnID = 0
-		err = plannercore.Preprocess(tk.Session(), stmt, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
+		err = plannercore.Preprocess(context.Background(), tk.Session(), stmt, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err, comment)
 		require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).AdviseWarmup())
 		builder, _ := plannercore.NewPlanBuilder().Init(tk.Session(), is, &hint.BlockHintProcessor{})

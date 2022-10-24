@@ -144,7 +144,7 @@ func (do *Domain) rebuildSysVarCache(ctx sessionctx.Context) error {
 			// This does not apply to INSTANCE scoped vars (HasGlobalScope() is false)
 			if sv.SetGlobal != nil && !sv.SkipSysvarCache() {
 				sVal = sv.ValidateWithRelaxedValidation(ctx.GetSessionVars(), sVal, variable.ScopeGlobal)
-				err = sv.SetGlobal(ctx.GetSessionVars(), sVal)
+				err = sv.SetGlobal(context.Background(), ctx.GetSessionVars(), sVal)
 				if err != nil {
 					logutil.BgLogger().Error(fmt.Sprintf("load global variable %s error", sv.Name), zap.Error(err))
 				}
