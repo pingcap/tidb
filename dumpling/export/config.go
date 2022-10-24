@@ -621,9 +621,10 @@ const (
 	// DefaultTableFilter is the default exclude table filter. It will exclude all system databases
 	DefaultTableFilter = "!/^(mysql|sys|INFORMATION_SCHEMA|PERFORMANCE_SCHEMA|METRICS_SCHEMA|INSPECTION_SCHEMA)$/.*"
 
-	defaultDumpThreads        = 128
-	defaultDumpGCSafePointTTL = 5 * 60
-	defaultEtcdDialTimeOut    = 3 * time.Second
+	// set a large number to avoid to block task dispatch
+	defaultTaskChannelCapacity = 10000
+	defaultDumpGCSafePointTTL  = 5 * 60
+	defaultEtcdDialTimeOut     = 3 * time.Second
 
 	// LooseCollationCompatible is used in DM, represents a collation setting for best compatibility.
 	LooseCollationCompatible = "loose"

@@ -49,7 +49,8 @@ type DumpStatus struct {
 	FinishedRows      float64
 	EstimateTotalRows float64
 	TotalTables       int64
-	CurrentSpeedBPS   int64
+	CurrentSpeedBPS   string
+	progress          string
 }
 
 // GetStatus returns the status of dumping by reading metrics.
@@ -60,7 +61,16 @@ func (d *Dumper) GetStatus() *DumpStatus {
 	ret.FinishedBytes = ReadGauge(d.metrics.finishedSizeGauge)
 	ret.FinishedRows = ReadGauge(d.metrics.finishedRowsGauge)
 	ret.EstimateTotalRows = ReadCounter(d.metrics.estimateTotalRowsCounter)
-	ret.CurrentSpeedBPS = d.speedRecorder.GetSpeed(int64(ret.FinishedBytes))
+	ret.CurrentSpeedBPS = fmt.Sprintf("%d MiB/s", d.speedRecorder.GetSpeed(int64(ret.FinishedBytes))/1024)
+	if d.progressReady {
+		progress := float64(d.completedChunks.Load()) / float64(d.totalChunks.Load())
+		if progress > 1 {
+			ret.progress = "100%"
+			d.L().Warn("completedChunks is greater than totalChunks", zap.Int64("completedChunks", d.completedChunks.Load()), zap.Int64("totalChunks", d.totalChunks.Load()))
+		} else {
+			ret.progress = fmt.Sprintf("%5.2f%%", progress)
+		}
+	}
 	return ret
 }
 

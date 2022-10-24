@@ -57,7 +57,10 @@ type Dumper struct {
 	totalTables                   int64
 	charsetAndDefaultCollationMap map[string]string
 
-	speedRecorder *SpeedRecorder
+	speedRecorder   *SpeedRecorder
+	totalChunks     atomic.Int64
+	completedChunks atomic.Int64
+	progressReady   bool
 }
 
 // NewDumper returns a new Dumper
@@ -235,12 +238,12 @@ func (d *Dumper) Dump() (dumpErr error) {
 		return rebuildMetaConn(conn, updateMeta)
 	}
 
-	chanSize := defaultDumpThreads
+	chanSize := defaultTaskChannelCapacity
 	failpoint.Inject("SmallDumpChanSize", func() {
 		chanSize = 1
 	})
 	taskChan := make(chan Task, chanSize)
-	AddGauge(d.metrics.taskChannelCapacity, defaultDumpThreads)
+	AddGauge(d.metrics.taskChannelCapacity, float64(chanSize))
 	wg, writingCtx := errgroup.WithContext(tctx)
 	writerCtx := tctx.WithContext(writingCtx)
 	writers, tearDownWriters, err := d.startWriters(writerCtx, wg, taskChan, rebuildConn)
@@ -335,6 +338,7 @@ func (d *Dumper) startWriters(tctx *tcontext.Context, wg *errgroup.Group, taskCh
 		writer.setFinishTaskCallBack(func(task Task) {
 			IncGauge(d.metrics.taskChannelCapacity)
 			if td, ok := task.(*TaskTableData); ok {
+				d.completedChunks.Add(1)
 				tctx.L().Debug("finish dumping table data task",
 					zap.String("database", td.Meta.DatabaseName()),
 					zap.String("table", td.Meta.TableName()),
@@ -451,6 +455,7 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *BaseConn, taskC
 			}
 		}
 	}
+	d.progressReady = true
 
 	return nil
 }
