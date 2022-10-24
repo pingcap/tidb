@@ -6,6 +6,7 @@ header:
     - "docs/"
     - "br/"
     - ".gitignore"
+    - ".dockerignore"
     - ".gitattributes"
     - ".cilinter.yaml"
     - ".golangci.yml"

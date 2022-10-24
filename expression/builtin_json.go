@@ -1392,6 +1392,43 @@ func (b *builtinJSONSearchSig) evalJSON(row chunk.Row) (res types.BinaryJSON, is
 	return obj.Search(containType, searchStr, escape, nil)
 }
 
+type jsonStorageFreeFunctionClass struct {
+	baseFunctionClass
+}
+
+type builtinJSONStorageFreeSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinJSONStorageFreeSig) Clone() builtinFunc {
+	newSig := &builtinJSONStorageFreeSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (c *jsonStorageFreeFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETJson)
+	if err != nil {
+		return nil, err
+	}
+	sig := &builtinJSONStorageFreeSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_JsonStorageFreeSig)
+	return sig, nil
+}
+
+func (b *builtinJSONStorageFreeSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
+	_, isNull, err = b.args[0].EvalJSON(b.ctx, row)
+	if isNull || err != nil {
+		return res, isNull, err
+	}
+
+	return 0, false, nil
+}
+
 type jsonStorageSizeFunctionClass struct {
 	baseFunctionClass
 }
@@ -1459,6 +1496,10 @@ func (c *jsonDepthFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 }
 
 func (b *builtinJSONDepthSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
+	// as TiDB doesn't support partial update json value, so only check the
+	// json format and whether it's NULL. For NULL return NULL, for invalid json, return
+	// an error, otherwise return 0
+
 	obj, isNull, err := b.args[0].EvalJSON(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, err
