@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	_ "github.com/pingcap/tidb/types/parser_driver" // for parser driver
@@ -1007,14 +1006,6 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return BoolToOnOff(EnableNoopVariables.Load()), nil
-	}},
-	{Scope: ScopeGlobal, Name: TiDBAuthSigningCert, Value: "", Type: TypeStr, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-		sessionstates.SetCertPath(val)
-		return nil
-	}},
-	{Scope: ScopeGlobal, Name: TiDBAuthSigningKey, Value: "", Type: TypeStr, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-		sessionstates.SetKeyPath(val)
-		return nil
 	}},
 	{Scope: ScopeGlobal, Name: TiDBEnableGCAwareMemoryTrack, Value: BoolToOnOff(DefEnableTiDBGCAwareMemoryTrack), Type: TypeBool, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		memory.EnableGCAwareMemoryTrack.Store(TiDBOptOn(val))
