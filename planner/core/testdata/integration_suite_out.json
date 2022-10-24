@@ -7616,6 +7616,32 @@
         ]
       },
       {
+        "SQL": "select count(1) from t1 where c1 = '0xfff' and (c2 + 1) is not null",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:count(1)->Column#5",
+          "└─IndexLookUp 8.00 root  ",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t1, index:idx1(c1) range:[\"0xfff\",\"0xfff\"], keep order:false, stats:pseudo",
+          "  └─Selection(Probe) 8.00 cop[tikv]  not(isnull(plus(cast(test.t1.c2, double BINARY), 1)))",
+          "    └─TableRowIDScan 10.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "3"
+        ]
+      },
+      {
+        "SQL": "select count(1) from t1 where c1 = '0xfff' and (c2 + 1) is null",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:count(1)->Column#5",
+          "└─IndexLookUp 8.00 root  ",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t1, index:idx1(c1) range:[\"0xfff\",\"0xfff\"], keep order:false, stats:pseudo",
+          "  └─Selection(Probe) 8.00 cop[tikv]  isnull(plus(cast(test.t1.c2, double BINARY), 1))",
+          "    └─TableRowIDScan 10.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1"
+        ]
+      },
+      {
         "SQL": "select c2 from t1 use index(idx2) where c1 = '0xfff' and c2 is not null",
         "Plan": [
           "Projection 99.90 root  test.t1.c2",
