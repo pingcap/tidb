@@ -17,7 +17,6 @@ import (
 	"container/list"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -63,12 +62,11 @@ type LRUPlanCache struct {
 
 	// MemTracker track the memory usage of prepared plan cache
 	memTracker *memory.Tracker
-	ctx        sessionctx.Context
 }
 
 // NewLRUPlanCache creates a PCLRUCache object, whose capacity is "capacity".
 // NOTE: "capacity" should be a positive value.
-func NewLRUPlanCache(ctx sessionctx.Context, capacity uint, guard float64, quota uint64,
+func NewLRUPlanCache(capacity uint, guard float64, quota uint64,
 	pickFromBucket func(map[*list.Element]struct{}, []*types.FieldType) (*list.Element, bool)) *LRUPlanCache {
 	if capacity < 1 {
 		capacity = 100
@@ -84,7 +82,6 @@ func NewLRUPlanCache(ctx sessionctx.Context, capacity uint, guard float64, quota
 		quota:          quota,
 		guard:          guard,
 		memTracker:     newTrackerForLRUPC(),
-		ctx:            ctx,
 	}
 }
 
@@ -220,11 +217,8 @@ func (l *LRUPlanCache) Close() {
 	if l == nil {
 		return
 	}
-	connId := int64(l.ctx.GetSessionVars().ConnectionID)
 	if l.memTracker != nil {
 		l.memTracker.ReplaceBytesUsed(0)
-		metrics.PlanCacheMemoryUsage.WithLabelValues("SessionID_" + strconv.FormatInt(connId, 10)).Set(float64(l.memTracker.BytesConsumed()))
-		metrics.PlanCacheMemoryUsage.DeleteLabelValues("SessionID_" + strconv.FormatInt(connId, 10))
 		metrics.InstancePlanCacheMemoryUsage.WithLabelValues("instance").Set(float64(InstancePlanCacheMemoryTracker.BytesConsumed()))
 		l.memTracker.Detach()
 	}
@@ -290,7 +284,5 @@ func newTrackerForLRUPC() *memory.Tracker {
 
 // updateMonitor update the memory usage monitor to show in grafana
 func (l *LRUPlanCache) updateMonitorMetric() {
-	connId := int64(l.ctx.GetSessionVars().ConnectionID)
-	metrics.PlanCacheMemoryUsage.WithLabelValues("SessionID_" + strconv.FormatInt(connId, 10)).Set(float64(l.memTracker.BytesConsumed()))
 	metrics.InstancePlanCacheMemoryUsage.WithLabelValues("instance").Set(float64(InstancePlanCacheMemoryTracker.BytesConsumed()))
 }
