@@ -754,14 +754,13 @@ const (
 	// TiDBMergePartitionStatsConcurrency indicates the concurrecny when merge partition stats into global stats
 	TiDBMergePartitionStatsConcurrency = "tidb_merge_partition_stats_concurrency"
 
-
 	// TiDBOptPrefixIndexSingleScan indicates whether to do some optimizations to avoid double scan for prefix index.
 	// When set to true, `col is (not) null`(`col` is index prefix column) is regarded as index filter rather than table filter.
 	TiDBOptPrefixIndexSingleScan = "tidb_opt_prefix_index_single_scan"
 
-  TiDBEnableReusechunk = "tidb_enable_reuse_chunk"
-	TiDBMaxReuseChunk = "tidb_max_reuse_chunk"
-	TiDBMaxReuseColumn = "tidb_max_reuse_column"
+	TiDBEnableReusechunk = "tidb_enable_reuse_chunk"
+	TiDBMaxReuseChunk    = "tidb_max_reuse_chunk"
+	TiDBMaxReuseColumn   = "tidb_max_reuse_column"
 )
 
 // TiDB vars that have only global scope
@@ -1074,11 +1073,10 @@ const (
 	// DefTiDBGOGCTunerThreshold is to limit TiDBGOGCTunerThreshold.
 	DefTiDBGOGCTunerThreshold       float64 = 0.6
 	DefTiDBOptPrefixIndexSingleScan         = true
-  DefTiDBGOGCTunerThreshold float64 = 0.6
-  
-	DefTiDBEnableReusechunk           = true
-	DefTiDBMaxReuseChunk              = 128
-	DefTiDBMaxReuseColumn             = 1024
+
+	DefTiDBEnableReusechunk = true
+	DefTiDBMaxReuseChunk    = 128
+	DefTiDBMaxReuseColumn   = 1024
 )
 
 // Process global variables.
