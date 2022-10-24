@@ -30,14 +30,30 @@ type registry struct {
 	close          func()
 }
 
+// Setup sets up the extensions
+func (r *registry) Setup() error {
+	r.Lock()
+	defer r.Unlock()
+
+	if _, err := r.doSetup(); err != nil {
+		return err
+	}
+	return nil
+}
+
 // Extensions returns the extensions after setup
 func (r *registry) Extensions() (*Extensions, error) {
 	r.RLock()
-	defer r.RUnlock()
-	if !r.setup {
-		return nil, errors.New("The extensions has not been setup")
+	if r.setup {
+		extensions := r.extensions
+		r.RUnlock()
+		return extensions, nil
 	}
-	return r.extensions, nil
+	r.RUnlock()
+
+	r.Lock()
+	defer r.Unlock()
+	return r.doSetup()
 }
 
 // RegisterFactory registers a new extension with a factory
@@ -68,17 +84,15 @@ func (r *registry) RegisterFactory(name string, factory func() ([]Option, error)
 }
 
 // Setup setups all extensions
-func (r *registry) Setup() (err error) {
-	r.Lock()
-	defer r.Unlock()
+func (r *registry) doSetup() (_ *Extensions, err error) {
 	if r.setup {
-		return nil
+		return r.extensions, nil
 	}
 
 	if len(r.factories) == 0 {
 		r.extensions = nil
 		r.setup = true
-		return nil
+		return nil, nil
 	}
 
 	clearBuilder := &clearFuncBuilder{}
@@ -102,13 +116,13 @@ func (r *registry) Setup() (err error) {
 		})
 
 		if err != nil {
-			return err
+			return nil, err
 		}
 	}
 	r.extensions = &Extensions{manifests: manifests}
 	r.setup = true
 	r.close = clearBuilder.Build()
-	return nil
+	return r.extensions, nil
 }
 
 // Reset resets the registry. It is only used by test

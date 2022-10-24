@@ -50,8 +50,9 @@ import (
 %token	<ident>
 
 	/*yy:token "%c"     */
-	identifier "identifier"
-	asof       "AS OF"
+	identifier  "identifier"
+	asof        "AS OF"
+	toTimestamp "TO TIMESTAMP"
 
 	/*yy:token "_%c"    */
 	underscoreCS "UNDERSCORE_CHARSET"
@@ -901,7 +902,7 @@ import (
 	ExplainableStmt            "explainable statement"
 	FlushStmt                  "Flush statement"
 	FlashbackTableStmt         "Flashback table statement"
-	FlashbackClusterStmt       "Flashback cluster statement"
+	FlashbackToTimestampStmt   "Flashback cluster statement"
 	FlashbackDatabaseStmt      "Flashback Database statement"
 	GrantStmt                  "Grant statement"
 	GrantProxyStmt             "Grant proxy statement"
@@ -2588,15 +2589,29 @@ RecoverTableStmt:
 
 /*******************************************************************
  *
- *  Flush Back Cluster Statement
+ *  FLASHBACK [CLUSTER | DATABASE | TABLE] TO TIMESTAMP
  *
  *  Example:
  *
  *******************************************************************/
-FlashbackClusterStmt:
-	"FLASHBACK" "CLUSTER" "TO" "TIMESTAMP" stringLit
+FlashbackToTimestampStmt:
+	"FLASHBACK" "CLUSTER" toTimestamp stringLit
 	{
-		$$ = &ast.FlashBackClusterStmt{
+		$$ = &ast.FlashBackToTimestampStmt{
+			FlashbackTS: ast.NewValueExpr($4, "", ""),
+		}
+	}
+|	"FLASHBACK" "TABLE" TableNameList toTimestamp stringLit
+	{
+		$$ = &ast.FlashBackToTimestampStmt{
+			Tables:      $3.([]*ast.TableName),
+			FlashbackTS: ast.NewValueExpr($5, "", ""),
+		}
+	}
+|	"FLASHBACK" DatabaseSym DBName toTimestamp stringLit
+	{
+		$$ = &ast.FlashBackToTimestampStmt{
+			DBName:      model.NewCIStr($3),
 			FlashbackTS: ast.NewValueExpr($5, "", ""),
 		}
 	}
@@ -11353,8 +11368,8 @@ Statement:
 |	DropStatsStmt
 |	DropBindingStmt
 |	FlushStmt
-|	FlashbackClusterStmt
 |	FlashbackTableStmt
+|	FlashbackToTimestampStmt
 |	FlashbackDatabaseStmt
 |	GrantStmt
 |	GrantProxyStmt
