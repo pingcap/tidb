@@ -897,7 +897,7 @@ func (s *Server) KillNonFlashbackClusterConn() {
 				s.Kill(client.connectionID, false)
 				continue
 			}
-			_, ok = ddl.Statement.(*ast.FlashBackClusterStmt)
+			_, ok = ddl.Statement.(*ast.FlashBackToTimestampStmt)
 			if !ok {
 				s.Kill(client.connectionID, false)
 				continue

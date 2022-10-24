@@ -530,7 +530,7 @@ func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName) (*model.J
 	return jobInfo, tableInfo, nil
 }
 
-func (e *DDLExec) executeFlashBackCluster(s *ast.FlashBackClusterStmt) error {
+func (e *DDLExec) executeFlashBackCluster(s *ast.FlashBackToTimestampStmt) error {
 	flashbackTS, err := staleread.CalculateAsOfTsExpr(e.ctx, s.FlashbackTS)
 	if err != nil {
 		return err

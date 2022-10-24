@@ -123,7 +123,7 @@ func ValidateFlashbackTS(ctx context.Context, sctx sessionctx.Context, flashBack
 }
 
 func setTiDBEnableAutoAnalyze(sess sessionctx.Context, value string) error {
-	return sess.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnableAutoAnalyze, value)
+	return sess.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBEnableAutoAnalyze, value)
 }
 
 func getTiDBEnableAutoAnalyze(sess sessionctx.Context) (string, error) {
@@ -628,11 +628,6 @@ func finishFlashbackCluster(w *worker, job *model.Job) error {
 		}
 		if err = setTiDBEnableAutoAnalyze(sess, autoAnalyzeValue); err != nil {
 			return err
-		}
-		if gcEnabled {
-			if err = gcutil.EnableGC(sess); err != nil {
-				return err
-			}
 		}
 		return nil
 	})
