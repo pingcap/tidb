@@ -1023,8 +1023,8 @@
       "select c2 from t1 use index(idx2) where c1 = '0xfff' and c2 is null",
       "select c2 from t1 use index(idx2) where c1 >= '0xfff' and c2 is not null",
       "select c2 from t1 use index(idx2) where c1 >= '0xfff' and c2 is null",
-      "select b from t2 where b is not null",
-      "select b from t2 where b is null"
+      "select b from t2 use index(idx) where b is not null",
+      "select b from t2 use index(idx) where b is null"
     ]
   }
 ]
