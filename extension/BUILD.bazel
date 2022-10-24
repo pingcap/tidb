@@ -4,6 +4,7 @@ go_library(
     name = "extension",
     srcs = [
         "extensions.go",
+        "function.go",
         "manifest.go",
         "registry.go",
         "util.go",
@@ -12,18 +13,30 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//sessionctx/variable",
+        "//types",
+        "//util/chunk",
         "@com_github_pingcap_errors//:errors",
     ],
 )
 
 go_test(
     name = "extension_test",
-    srcs = ["registry_test.go"],
+    srcs = [
+        "function_test.go",
+        "main_test.go",
+        "registry_test.go",
+    ],
+    embed = [":extension"],
     deps = [
-        ":extension",
+        "//expression",
         "//privilege/privileges",
         "//sessionctx/variable",
+        "//testkit",
+        "//testkit/testsetup",
+        "//types",
+        "//util/chunk",
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
     ],
 )

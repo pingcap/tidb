@@ -194,6 +194,13 @@ func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType 
 	}
 	fc, ok := funcs[funcName]
 	if !ok {
+		if extFunc, exist := extensionFuncs.Load(funcName); exist {
+			fc = extFunc.(functionClass)
+			ok = true
+		}
+	}
+
+	if !ok {
 		db := ctx.GetSessionVars().CurrentDB
 		if db == "" {
 			return nil, errors.Trace(ErrNoDB)
