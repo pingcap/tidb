@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
