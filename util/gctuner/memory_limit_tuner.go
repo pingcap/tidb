@@ -36,7 +36,7 @@ type memoryLimitTuner struct {
 	isTuning                     atomicutil.Bool
 	percentage                   atomicutil.Float64
 	waitingReset                 atomicutil.Bool
-	nextGCTriggeredByMemoryLimit bool
+	nextGCTriggeredByMemoryLimit atomicutil.Bool
 }
 
 // tuning check the memory nextGC and judge whether this GC is trigger by memory limit.
@@ -59,7 +59,7 @@ func (t *memoryLimitTuner) tuning() {
 	// - Only if NextGC >= MemoryLimit , the **next** GC will be triggered by MemoryLimit. Thus, we need to reset
 	//   MemoryLimit after the **next** GC happens if needed.
 	if float64(r.HeapInuse)*ratio > float64(debug.SetMemoryLimit(-1)) {
-		if t.nextGCTriggeredByMemoryLimit && t.waitingReset.CompareAndSwap(false, true) {
+		if t.nextGCTriggeredByMemoryLimit.Load() && t.waitingReset.CompareAndSwap(false, true) {
 			go func() {
 				debug.SetMemoryLimit(math.MaxInt64)
 				resetInterval := 1 * time.Minute // Wait 1 minute and set back, to avoid frequent GC
@@ -75,17 +75,19 @@ func (t *memoryLimitTuner) tuning() {
 				}
 			}()
 		}
-		t.nextGCTriggeredByMemoryLimit = true
+		t.nextGCTriggeredByMemoryLimit.Store(true)
 	} else {
-		t.nextGCTriggeredByMemoryLimit = false
+		t.nextGCTriggeredByMemoryLimit.Store(false)
 	}
 }
 
-func (t *memoryLimitTuner) start() {
-	t.finalizer = newFinalizer(t.tuning) // start tuning
+// Start starts the memory limit tuner.
+func (t *memoryLimitTuner) Start() {
+	t.finalizer = newFinalizer(t.tuning) // Start tuning
 }
 
-func (t *memoryLimitTuner) stop() {
+// Stop stops the memory limit tuner.
+func (t *memoryLimitTuner) Stop() {
 	t.finalizer.stop()
 }
 
@@ -123,5 +125,5 @@ func (t *memoryLimitTuner) calcMemoryLimit() int64 {
 }
 
 func init() {
-	GlobalMemoryLimitTuner.start()
+	GlobalMemoryLimitTuner.Start()
 }

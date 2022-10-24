@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/extension/extensionimpl"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -82,6 +83,7 @@ import (
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/telemetry"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
@@ -1464,7 +1466,7 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 
 // SetGlobalSysVar implements GlobalVarAccessor.SetGlobalSysVar interface.
 // it is called (but skipped) when setting instance scope
-func (s *session) SetGlobalSysVar(name, value string) (err error) {
+func (s *session) SetGlobalSysVar(ctx context.Context, name string, value string) (err error) {
 	sv := variable.GetSysVar(name)
 	if sv == nil {
 		return variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
@@ -1472,7 +1474,7 @@ func (s *session) SetGlobalSysVar(name, value string) (err error) {
 	if value, err = sv.Validate(s.sessionVars, value, variable.ScopeGlobal); err != nil {
 		return err
 	}
-	if err = sv.SetGlobalFromHook(s.sessionVars, value, false); err != nil {
+	if err = sv.SetGlobalFromHook(ctx, s.sessionVars, value, false); err != nil {
 		return err
 	}
 	if sv.HasInstanceScope() { // skip for INSTANCE scope
@@ -1486,18 +1488,18 @@ func (s *session) SetGlobalSysVar(name, value string) (err error) {
 
 // SetGlobalSysVarOnly updates the sysvar, but does not call the validation function or update aliases.
 // This is helpful to prevent duplicate warnings being appended from aliases, or recursion.
-func (s *session) SetGlobalSysVarOnly(name, value string) (err error) {
+func (s *session) SetGlobalSysVarOnly(ctx context.Context, name string, value string) (err error) {
 	sv := variable.GetSysVar(name)
 	if sv == nil {
 		return variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
-	if err = sv.SetGlobalFromHook(s.sessionVars, value, true); err != nil {
+	if err = sv.SetGlobalFromHook(ctx, s.sessionVars, value, true); err != nil {
 		return err
 	}
 	if sv.HasInstanceScope() { // skip for INSTANCE scope
 		return nil
 	}
-	return s.replaceGlobalVariablesTableValue(context.TODO(), sv.Name, value)
+	return s.replaceGlobalVariablesTableValue(ctx, sv.Name, value)
 }
 
 // SetTiDBTableValue implements GlobalVarAccessor.SetTiDBTableValue interface.
@@ -1553,21 +1555,23 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		p = explain.TargetPlan
 	}
 	pi := util.ProcessInfo{
-		ID:               s.sessionVars.ConnectionID,
-		Port:             s.sessionVars.Port,
-		DB:               s.sessionVars.CurrentDB,
-		Command:          command,
-		Plan:             p,
-		PlanExplainRows:  plannercore.GetExplainRowsForPlan(p),
-		RuntimeStatsColl: s.sessionVars.StmtCtx.RuntimeStatsColl,
-		Time:             t,
-		State:            s.Status(),
-		Info:             sql,
-		CurTxnStartTS:    curTxnStartTS,
-		StmtCtx:          s.sessionVars.StmtCtx,
-		StatsInfo:        plannercore.GetStatsInfo,
-		MaxExecutionTime: maxExecutionTime,
-		RedactSQL:        s.sessionVars.EnableRedactLog,
+		ID:                    s.sessionVars.ConnectionID,
+		Port:                  s.sessionVars.Port,
+		DB:                    s.sessionVars.CurrentDB,
+		Command:               command,
+		Plan:                  p,
+		PlanExplainRows:       plannercore.GetExplainRowsForPlan(p),
+		CurrentAnalyzeRows:    s.getCurrentAnalyzePlan,
+		RuntimeStatsColl:      s.sessionVars.StmtCtx.RuntimeStatsColl,
+		Time:                  t,
+		State:                 s.Status(),
+		Info:                  sql,
+		CurTxnStartTS:         curTxnStartTS,
+		StmtCtx:               s.sessionVars.StmtCtx,
+		OOMAlarmVariablesInfo: s.getOomAlarmVariablesInfo(),
+		StatsInfo:             plannercore.GetStatsInfo,
+		MaxExecutionTime:      maxExecutionTime,
+		RedactSQL:             s.sessionVars.EnableRedactLog,
 	}
 	oldPi := s.ShowProcess()
 	if p == nil {
@@ -1595,6 +1599,25 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		pi.Host = s.sessionVars.User.Hostname
 	}
 	s.processInfo.Store(&pi)
+}
+
+func (s *session) getOomAlarmVariablesInfo() util.OOMAlarmVariablesInfo {
+	return util.OOMAlarmVariablesInfo{
+		SessionAnalyzeVersion:         s.sessionVars.AnalyzeVersion,
+		SessionEnabledRateLimitAction: s.sessionVars.EnabledRateLimitAction,
+		SessionMemQuotaQuery:          s.sessionVars.MemQuotaQuery,
+	}
+}
+
+func (s *session) getCurrentAnalyzePlan(p interface{}, runtimeStatsColl *execdetails.RuntimeStatsColl) [][]string {
+	explain := &plannercore.Explain{
+		TargetPlan:       p.(plannercore.Plan),
+		Format:           types.ExplainFormatROW,
+		Analyze:          false,
+		RuntimeStatsColl: runtimeStatsColl,
+	}
+	explain.SetSCtx(s)
+	return plannercore.GetExplainAnalyzeRowsForPlan(explain)
 }
 
 func (s *session) SetDiskFullOpt(level kvrpcpb.DiskFullOpt) {
@@ -2869,6 +2892,10 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	//  Rebuild sysvar cache in a loop
 	err = dom.LoadSysVarCacheLoop(ses[4])
 	if err != nil {
+		return nil, err
+	}
+
+	if err = extensionimpl.Bootstrap(context.Background(), dom); err != nil {
 		return nil, err
 	}
 

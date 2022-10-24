@@ -833,3 +833,13 @@ func TestShowColumnsWithSubQueryView(t *testing.T) {
 		"some_date timestamp YES  <nil> "))
 	require.NoError(t, failpoint.Disable("tikvclient/tikvStoreSendReqResult"))
 }
+
+func TestNullColumns(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t ( id int DEFAULT NULL);")
+	tk.MustExec("CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`1.1.1.1` SQL SECURITY DEFINER VIEW `v_test` (`type`) AS SELECT NULL AS `type` FROM `t` AS `f`;")
+	tk.MustQuery("select * from  information_schema.columns where TABLE_SCHEMA = 'test' and TABLE_NAME = 'v_test';").
+		Check(testkit.Rows("def test v_test type 1 <nil> YES binary 0 0 <nil> <nil> <nil> <nil> <nil> binary(0)   select,insert,update,references  "))
+}
