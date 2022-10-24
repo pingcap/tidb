@@ -1196,7 +1196,7 @@ func TestNewChunkWithAllocCapacity(t *testing.T) {
 		chk2.AppendDuration(3, durationObj)
 	}
 	require.Equal(t, chk, chk2)
-	for i, _ := range chk.columns {
+	for i := range chk.columns {
 		require.Equal(t, chk.columns[i], chk2.columns[i])
 	}
 	alloc.Reset()
@@ -1224,5 +1224,4 @@ func TestNewChunkWithAllocCapacity(t *testing.T) {
 		_, exist := columnReuseMap[p]
 		require.True(t, exist)
 	}
-
 }
