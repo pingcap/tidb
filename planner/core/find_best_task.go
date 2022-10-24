@@ -1118,7 +1118,7 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 
 func (ds *DataSource) convertToPartialIndexScan(prop *property.PhysicalProperty, path *util.AccessPath) (indexPlan PhysicalPlan) {
 	is := ds.getOriginalPhysicalIndexScan(prop, path, false, false)
-	// TODO: Consider using indexCoveringColumns() to avoid another TableRead
+	// TODO: Consider using isIndexCoveringColumns() to avoid another TableRead
 	indexConds := path.IndexFilters
 	if indexConds != nil {
 		var selectivity float64
@@ -1281,7 +1281,7 @@ func extractFiltersForIndexMerge(sc *stmtctx.StatementContext, client kv.Client,
 	return
 }
 
-func indexColsCoveringCol(col *expression.Column, indexCols []*expression.Column, idxColLens []int, ignoreLen bool) bool {
+func isIndexColsCoveringCol(col *expression.Column, indexCols []*expression.Column, idxColLens []int, ignoreLen bool) bool {
 	for i, indexCol := range indexCols {
 		if indexCol == nil || !col.EqualByExprAndID(nil, indexCol) {
 			continue
@@ -1300,8 +1300,8 @@ func (ds *DataSource) indexCoveringColumn(column *expression.Column, indexColumn
 	if column.ID == model.ExtraHandleID {
 		return true
 	}
-	coveredByPlainIndex := indexColsCoveringCol(column, indexColumns, idxColLens, ignoreLen)
-	coveredByClusteredIndex := indexColsCoveringCol(column, ds.commonHandleCols, ds.commonHandleLens, ignoreLen)
+	coveredByPlainIndex := isIndexColsCoveringCol(column, indexColumns, idxColLens, ignoreLen)
+	coveredByClusteredIndex := isIndexColsCoveringCol(column, ds.commonHandleCols, ds.commonHandleLens, ignoreLen)
 	if !coveredByPlainIndex && !coveredByClusteredIndex {
 		return false
 	}
@@ -1314,7 +1314,7 @@ func (ds *DataSource) indexCoveringColumn(column *expression.Column, indexColumn
 	return true
 }
 
-func (ds *DataSource) indexCoveringColumns(columns, indexColumns []*expression.Column, idxColLens []int) bool {
+func (ds *DataSource) isIndexCoveringColumns(columns, indexColumns []*expression.Column, idxColLens []int) bool {
 	for _, col := range columns {
 		if !ds.indexCoveringColumn(col, indexColumns, idxColLens, false) {
 			return false
@@ -1323,7 +1323,7 @@ func (ds *DataSource) indexCoveringColumns(columns, indexColumns []*expression.C
 	return true
 }
 
-func (ds *DataSource) indexCoveringCondition(condition expression.Expression, indexColumns []*expression.Column, idxColLens []int) bool {
+func (ds *DataSource) isIndexCoveringCondition(condition expression.Expression, indexColumns []*expression.Column, idxColLens []int) bool {
 	switch v := condition.(type) {
 	case *expression.Column:
 		return ds.indexCoveringColumn(v, indexColumns, idxColLens, false)
@@ -1335,7 +1335,7 @@ func (ds *DataSource) indexCoveringCondition(condition expression.Expression, in
 			}
 		}
 		for _, arg := range v.GetArgs() {
-			if !ds.indexCoveringCondition(arg, indexColumns, idxColLens) {
+			if !ds.isIndexCoveringCondition(arg, indexColumns, idxColLens) {
 				return false
 			}
 		}
@@ -1347,14 +1347,14 @@ func (ds *DataSource) indexCoveringCondition(condition expression.Expression, in
 func (ds *DataSource) isSingleScan(indexColumns []*expression.Column, idxColLens []int) bool {
 	if !ds.ctx.GetSessionVars().OptPrefixIndexSingleScan || ds.colsRequiringFullLen == nil {
 		// ds.colsRequiringFullLen is set at (*DataSource).PruneColumns. In some cases we don't reach (*DataSource).PruneColumns
-		// and ds.colsRequiringFullLen is nil, so we fall back to ds.indexCoveringColumns(ds.schema.Columns, indexColumns, idxColLens).
-		return ds.indexCoveringColumns(ds.schema.Columns, indexColumns, idxColLens)
+		// and ds.colsRequiringFullLen is nil, so we fall back to ds.isIndexCoveringColumns(ds.schema.Columns, indexColumns, idxColLens).
+		return ds.isIndexCoveringColumns(ds.schema.Columns, indexColumns, idxColLens)
 	}
-	if !ds.indexCoveringColumns(ds.colsRequiringFullLen, indexColumns, idxColLens) {
+	if !ds.isIndexCoveringColumns(ds.colsRequiringFullLen, indexColumns, idxColLens) {
 		return false
 	}
 	for _, cond := range ds.allConds {
-		if !ds.indexCoveringCondition(cond, indexColumns, idxColLens) {
+		if !ds.isIndexCoveringCondition(cond, indexColumns, idxColLens) {
 			return false
 		}
 	}
@@ -1628,9 +1628,9 @@ func (ds *DataSource) splitIndexFilterConditions(conditions []expression.Express
 	for _, cond := range conditions {
 		var covered bool
 		if ds.ctx.GetSessionVars().OptPrefixIndexSingleScan {
-			covered = ds.indexCoveringCondition(cond, indexColumns, idxColLens)
+			covered = ds.isIndexCoveringCondition(cond, indexColumns, idxColLens)
 		} else {
-			covered = ds.indexCoveringColumns(expression.ExtractColumns(cond), indexColumns, idxColLens)
+			covered = ds.isIndexCoveringColumns(expression.ExtractColumns(cond), indexColumns, idxColLens)
 		}
 		if covered {
 			indexConditions = append(indexConditions, cond)
