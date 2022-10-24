@@ -22,6 +22,7 @@ go_library(
 go_test(
     name = "extension_test",
     srcs = [
+        "bootstrap_test.go",
         "function_test.go",
         "main_test.go",
         "registry_test.go",
@@ -29,12 +30,14 @@ go_test(
     embed = [":extension"],
     deps = [
         "//expression",
+        "//parser/auth",
         "//privilege/privileges",
         "//sessionctx/variable",
         "//testkit",
         "//testkit/testsetup",
         "//types",
         "//util/chunk",
+        "//util/sem",
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",

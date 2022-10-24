@@ -99,6 +99,7 @@ go_library(
         "//util/parser",
         "//util/plancodec",
         "//util/printer",
+        "//util/sem",
         "//util/set",
         "//util/size",
         "//util/sqlexec",
