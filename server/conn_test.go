@@ -31,6 +31,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/parser/auth"
@@ -1400,28 +1401,29 @@ func TestAuthPlugin2(t *testing.T) {
 }
 
 func TestAuthTokenPlugin(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	// create the cert
+	tempDir := t.TempDir()
+	certPath := filepath.Join(tempDir, "test1_cert.pem")
+	keyPath := filepath.Join(tempDir, "test1_key.pem")
+	err := util.CreateCertificates(certPath, keyPath, 1024, x509.RSA, x509.UnknownSignatureAlgorithm)
+	require.NoError(t, err)
 
-	cfg := newTestConfig()
+	cfg := config.GetGlobalConfig()
+	cfg.Security.SessionTokenSigningCert = certPath
+	cfg.Security.SessionTokenSigningKey = keyPath
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0
+
+	// The global config is read during creating the store.
+	store := testkit.CreateMockStore(t)
 	drv := NewTiDBDriver(store)
 	srv, err := NewServer(cfg, drv)
 	require.NoError(t, err)
 	ctx := context.Background()
 
-	// create the cert
-	tempDir := t.TempDir()
-	certPath := filepath.Join(tempDir, "test1_cert.pem")
-	keyPath := filepath.Join(tempDir, "test1_key.pem")
-	err = util.CreateCertificates(certPath, keyPath, 4096, x509.RSA, x509.UnknownSignatureAlgorithm)
-	require.NoError(t, err)
-
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE USER auth_session_token")
 	tk.MustExec("CREATE USER another_user")
-	tk.MustExec(fmt.Sprintf("set global %s='%s'", variable.TiDBAuthSigningCert, certPath))
-	tk.MustExec(fmt.Sprintf("set global %s='%s'", variable.TiDBAuthSigningKey, keyPath))
 
 	tc, err := drv.OpenCtx(uint64(0), 0, uint8(mysql.DefaultCollationID), "", nil)
 	require.NoError(t, err)
