@@ -90,6 +90,7 @@ type tableHintInfo struct {
 	indexNestedLoopJoinTables
 	sortMergeJoinTables []hintTableInfo
 	broadcastJoinTables []hintTableInfo
+	shuffleJoinTables   []hintTableInfo
 	hashJoinTables      []hintTableInfo
 	indexHintList       []indexHintInfo
 	tiflashTables       []hintTableInfo
@@ -225,6 +226,10 @@ func (info *tableHintInfo) ifPreferMergeJoin(tableNames ...*hintTableInfo) bool 
 
 func (info *tableHintInfo) ifPreferBroadcastJoin(tableNames ...*hintTableInfo) bool {
 	return info.matchTableName(tableNames, info.broadcastJoinTables)
+}
+
+func (info *tableHintInfo) ifPreferShuffleJoin(tableNames ...*hintTableInfo) bool {
+	return info.matchTableName(tableNames, info.shuffleJoinTables)
 }
 
 func (info *tableHintInfo) ifPreferHashJoin(tableNames ...*hintTableInfo) bool {
@@ -804,7 +809,7 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 		*ast.BeginStmt, *ast.CommitStmt, *ast.SavepointStmt, *ast.ReleaseSavepointStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt, *ast.AlterInstanceStmt,
 		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.RevokeStmt, *ast.KillStmt, *ast.DropStatsStmt,
 		*ast.GrantRoleStmt, *ast.RevokeRoleStmt, *ast.SetRoleStmt, *ast.SetDefaultRoleStmt, *ast.ShutdownStmt,
-		*ast.RenameUserStmt, *ast.NonTransactionalDeleteStmt, *ast.SetSessionStatesStmt:
+		*ast.RenameUserStmt, *ast.NonTransactionalDMLStmt, *ast.SetSessionStatesStmt:
 		return b.buildSimple(ctx, node.(ast.StmtNode))
 	case ast.DDLNode:
 		return b.buildDDL(ctx, x)
@@ -4457,9 +4462,9 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 		if len(v.Cols) != schema.Len() {
 			return nil, dbterror.ErrViewWrongList
 		}
-		if b.ctx.GetSessionVars().User != nil {
-			authErr = ErrTableaccessDenied.GenWithStackByArgs("CREATE VIEW", b.ctx.GetSessionVars().User.AuthUsername,
-				b.ctx.GetSessionVars().User.AuthHostname, v.ViewName.Name.L)
+		if user := b.ctx.GetSessionVars().User; user != nil {
+			authErr = ErrTableaccessDenied.GenWithStackByArgs("CREATE VIEW", user.AuthUsername,
+				user.AuthHostname, v.ViewName.Name.L)
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateViewPriv, v.ViewName.Schema.L,
 			v.ViewName.Name.L, "", authErr)
@@ -4545,7 +4550,7 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, v.TableToTables[0].NewTable.Schema.L,
 			v.TableToTables[0].NewTable.Name.L, "", authErr)
-	case *ast.RecoverTableStmt, *ast.FlashBackTableStmt:
+	case *ast.RecoverTableStmt, *ast.FlashBackTableStmt, *ast.FlashBackDatabaseStmt:
 		// Recover table command can only be executed by administrator.
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	case *ast.LockTablesStmt:

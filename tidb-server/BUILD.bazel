@@ -12,6 +12,7 @@ go_library(
         "//domain",
         "//domain/infosync",
         "//executor",
+        "//extension",
         "//kv",
         "//metrics",
         "//parser/mysql",
@@ -36,7 +37,6 @@ go_library(
         "//util/deadlockhistory",
         "//util/disk",
         "//util/domainutil",
-        "//util/gctuner",
         "//util/kvcache",
         "//util/logutil",
         "//util/memory",
@@ -83,12 +83,6 @@ go_binary(
         "-X",
         "github.com/pingcap/tidb/config.checkBeforeDropLDFlag=1",
     ],
-    visibility = ["//visibility:public"],
-)
-
-go_binary(
-    name = "tidb-server-raw",
-    embed = [":tidb-server_lib"],
     visibility = ["//visibility:public"],
 )
 
