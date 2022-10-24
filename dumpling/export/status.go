@@ -34,6 +34,8 @@ func (d *Dumper) runLogProgress(tctx *tcontext.Context) {
 				zap.String("estimate total rows", fmt.Sprintf("%.0f", s.EstimateTotalRows)),
 				zap.String("finished size", units.HumanSize(s.FinishedBytes)),
 				zap.Float64("average speed(MiB/s)", (s.FinishedBytes-lastBytes)/(1048576e-9*nanoseconds)),
+				zap.String("recent speed(MiB/s)", s.CurrentSpeedBPS),
+				zap.String("chunks progress", s.progress),
 			)
 
 			lastCheckpoint = time.Now()
