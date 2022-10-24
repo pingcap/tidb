@@ -374,7 +374,7 @@ func TestAddIndexForGeneratedColumn(t *testing.T) {
 func TestAddPrimaryKeyRollback1(t *testing.T) {
 	idxName := "PRIMARY"
 	addIdxSQL := "alter table t1 add primary key c3_index (c3);"
-	errMsg := "[kv:1062]Duplicate entry '" + strconv.Itoa(defaultBatchSize*2-10) + "' for key 'PRIMARY'"
+	errMsg := "[kv:1062]Duplicate entry '" + strconv.Itoa(defaultBatchSize*2-10) + "' for key 't1.PRIMARY'"
 	testAddIndexRollback(t, idxName, addIdxSQL, errMsg, false)
 }
 
@@ -389,7 +389,7 @@ func TestAddPrimaryKeyRollback2(t *testing.T) {
 func TestAddUniqueIndexRollback(t *testing.T) {
 	idxName := "c3_index"
 	addIdxSQL := "create unique index c3_index on t1 (c3)"
-	errMsg := "[kv:1062]Duplicate entry '" + strconv.Itoa(defaultBatchSize*2-10) + "' for key 'c3_index'"
+	errMsg := "[kv:1062]Duplicate entry '" + strconv.Itoa(defaultBatchSize*2-10) + "' for key 't1.c3_index'"
 	testAddIndexRollback(t, idxName, addIdxSQL, errMsg, false)
 }
 

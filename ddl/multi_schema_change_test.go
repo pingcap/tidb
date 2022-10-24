@@ -933,17 +933,19 @@ func TestMultiSchemaChangeAlterIndex(t *testing.T) {
 	tk.MustExec("insert into t values (1, 2);")
 	originHook := dom.DDL().GetHook()
 	var checked bool
-	dom.DDL().SetHook(&ddl.TestDDLCallback{Do: dom,
-		OnJobUpdatedExported: func(job *model.Job) {
-			assert.NotNil(t, job.MultiSchemaInfo)
-			// "modify column a tinyint" in write-reorg.
-			if job.MultiSchemaInfo.SubJobs[1].SchemaState == model.StateWriteReorganization {
-				checked = true
-				rs, err := tk.Exec("select * from t use index(i1);")
-				assert.NoError(t, err)
-				assert.NoError(t, rs.Close())
-			}
-		}})
+	callback := &ddl.TestDDLCallback{Do: dom}
+	onJobUpdatedExportedFunc := func(job *model.Job) {
+		assert.NotNil(t, job.MultiSchemaInfo)
+		// "modify column a tinyint" in write-reorg.
+		if job.MultiSchemaInfo.SubJobs[1].SchemaState == model.StateWriteReorganization {
+			checked = true
+			rs, err := tk.Exec("select * from t use index(i1);")
+			assert.NoError(t, err)
+			assert.NoError(t, rs.Close())
+		}
+	}
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
+	dom.DDL().SetHook(callback)
 	tk.MustExec("alter table t alter index i1 invisible, modify column a tinyint, alter index i2 invisible;")
 	dom.DDL().SetHook(originHook)
 	require.True(t, checked)

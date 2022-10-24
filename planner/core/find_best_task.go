@@ -327,7 +327,7 @@ func getTaskPlanCost(t task, op *physicalOptimizeOp) (float64, bool, error) {
 	default:
 		return 0, false, errors.New("unknown task type")
 	}
-	cost, err := t.plan().GetPlanCost(taskType, NewDefaultPlanCostOption().WithOptimizeTracer(op))
+	cost, err := getPlanCost(t.plan(), taskType, NewDefaultPlanCostOption().WithOptimizeTracer(op))
 	return cost, false, err
 }
 
@@ -1711,9 +1711,10 @@ func (ds *DataSource) crossEstimateRowCount(path *util.AccessPath, conds []expre
 	if len(ranges) == 0 || len(accessConds) == 0 || err != nil {
 		return 0, err == nil, corr
 	}
-	idxID, idxExists := ds.stats.HistColl.ColID2IdxID[colID]
-	if !idxExists {
-		idxID = -1
+	idxID := int64(-1)
+	idxIDs, idxExists := ds.stats.HistColl.ColID2IdxIDs[colID]
+	if idxExists && len(idxIDs) > 0 {
+		idxID = idxIDs[0]
 	}
 	rangeCounts, ok := getColumnRangeCounts(ds.ctx, colID, ranges, ds.tableStats.HistColl, idxID)
 	if !ok {

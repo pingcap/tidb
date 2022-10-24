@@ -29,7 +29,7 @@ func (smj *semiJoinRewriter) optimize(_ context.Context, p LogicalPlan, _ *logic
 	return smj.recursivePlan(p)
 }
 
-func (smj *semiJoinRewriter) name() string {
+func (*semiJoinRewriter) name() string {
 	return "semi_join_rewrite"
 }
 
