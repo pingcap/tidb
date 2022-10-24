@@ -214,7 +214,7 @@ func (l *LRUPlanCache) Close() {
 	}
 	if l.memTracker != nil {
 		l.memTracker.ReplaceBytesUsed(0)
-		metrics.PlanCacheInstanceMemoryUsage.WithLabelValues("instance").Set(float64(InstancePlanCacheMemoryTracker.BytesConsumed()))
+		l.updateMonitorMetric()
 		l.memTracker.Detach()
 	}
 }
