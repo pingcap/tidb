@@ -16,7 +16,6 @@ package executor
 
 import (
 	"context"
-	"sync"
 
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
@@ -26,19 +25,17 @@ import (
 )
 
 type analyzeSaveStatsWorker struct {
-	wg                         *sync.WaitGroup
 	resultsCh                  <-chan *statistics.AnalyzeResults
 	sctx                       sessionctx.Context
 	errCh                      chan<- error
 	checkHistoricalStatsEnable bool
 }
 
-func newAnalyzeSaveStatsWorker(wg *sync.WaitGroup,
+func newAnalyzeSaveStatsWorker(
 	resultsCh <-chan *statistics.AnalyzeResults,
 	sctx sessionctx.Context,
 	errCh chan<- error) *analyzeSaveStatsWorker {
 	worker := &analyzeSaveStatsWorker{
-		wg:        wg,
 		resultsCh: resultsCh,
 		sctx:      sctx,
 		errCh:     errCh,
@@ -47,9 +44,6 @@ func newAnalyzeSaveStatsWorker(wg *sync.WaitGroup,
 }
 
 func (worker *analyzeSaveStatsWorker) run(ctx context.Context, analyzeSnapshot bool) {
-	defer func() {
-		worker.wg.Done()
-	}()
 	for results := range worker.resultsCh {
 		err := handle.SaveTableStatsToStorage(worker.sctx, results, analyzeSnapshot)
 		if err != nil {

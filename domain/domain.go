@@ -1582,8 +1582,11 @@ func (do *Domain) ReturnAnalyzeExtraExec(sctxs []sessionctx.Context) {
 	}
 }
 
-// GetAnalyzeExtraExec get needed extra exec for analyze
-func (do *Domain) GetAnalyzeExtraExec(need int) []sessionctx.Context {
+// DemandAnalyzeExec get needed exec for analyze
+func (do *Domain) DemandAnalyzeExec(need int) []sessionctx.Context {
+	if need < 1 {
+		return nil
+	}
 	count := 0
 	r := make([]sessionctx.Context, 0)
 	do.analyzeMu.Lock()
@@ -1602,8 +1605,8 @@ func (do *Domain) GetAnalyzeExtraExec(need int) []sessionctx.Context {
 	return r
 }
 
-// SetupAnalyzeExtraExec setups extra exec for Analyze
-func (do *Domain) SetupAnalyzeExtraExec(ctxs []sessionctx.Context) {
+// SetupAnalyzeExec setups exec for Analyze Executor
+func (do *Domain) SetupAnalyzeExec(ctxs []sessionctx.Context) {
 	do.analyzeMu.sctxs = make(map[sessionctx.Context]bool)
 	for _, ctx := range ctxs {
 		do.analyzeMu.sctxs[ctx] = false

@@ -20,7 +20,6 @@ import (
 	"math"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -219,9 +218,11 @@ func recordHistoricalStats(sctx sessionctx.Context, tableID int64) error {
 func (e *AnalyzeExec) handleResultsError(ctx context.Context, concurrency int, needGlobalStats bool,
 	globalStatsMap globalStatsMap, resultsCh <-chan *statistics.AnalyzeResults) error {
 	partitionStatsConcurrency := e.ctx.GetSessionVars().AnalyzePartitionConcurrency
+	// If 'partitionStatsConcurrency' > 1, we will try to demand extra session from Domain to save Analyze results in concurrency.
+	// If there is no extra session we can use, we will save analyze results in single-thread.
 	if partitionStatsConcurrency > 1 {
 		dom := domain.GetDomain(e.ctx)
-		subSctxs := dom.GetAnalyzeExtraExec(partitionStatsConcurrency)
+		subSctxs := dom.DemandAnalyzeExec(partitionStatsConcurrency)
 		if len(subSctxs) > 0 {
 			internalCtx := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
 			err := e.handleResultsErrorWithConcurrency(internalCtx, concurrency, needGlobalStats, subSctxs, globalStatsMap, resultsCh)
@@ -230,6 +231,7 @@ func (e *AnalyzeExec) handleResultsError(ctx context.Context, concurrency int, n
 		}
 	}
 
+	// save analyze results in single-thread.
 	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
 	panicCnt := 0
 	var err error
@@ -270,14 +272,16 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(ctx context.Context, sta
 	subSctxs []sessionctx.Context,
 	globalStatsMap globalStatsMap, resultsCh <-chan *statistics.AnalyzeResults) error {
 	partitionStatsConcurrency := len(subSctxs)
-	wg := &sync.WaitGroup{}
+
+	var wg util.WaitGroupWrapper
 	saveResultsCh := make(chan *statistics.AnalyzeResults, partitionStatsConcurrency)
 	errCh := make(chan error, partitionStatsConcurrency)
-	wg.Add(partitionStatsConcurrency)
 	for i := 0; i < partitionStatsConcurrency; i++ {
-		worker := newAnalyzeSaveStatsWorker(wg, saveResultsCh, subSctxs[i], errCh)
+		worker := newAnalyzeSaveStatsWorker(saveResultsCh, subSctxs[i], errCh)
 		ctx1 := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-		go worker.run(ctx1, e.ctx.GetSessionVars().EnableAnalyzeSnapshot)
+		wg.Run(func() {
+			worker.run(ctx1, e.ctx.GetSessionVars().EnableAnalyzeSnapshot)
+		})
 	}
 	panicCnt := 0
 	var err error

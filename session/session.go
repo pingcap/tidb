@@ -2837,7 +2837,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	for i := 0; i < analyzeConcurrencyQuota; i++ {
 		subCtxs2[i] = ses[7+concurrency+i]
 	}
-	dom.SetupAnalyzeExtraExec(subCtxs2)
+	dom.SetupAnalyzeExec(subCtxs2)
 	dom.DumpFileGcCheckerLoop()
 	dom.LoadSigningCertLoop()
 
