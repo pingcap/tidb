@@ -1635,8 +1635,11 @@ func TestExtensionChangeUser(t *testing.T) {
 	ctx := &TiDBContext{Session: tk.Session()}
 	cc.setCtx(ctx)
 	tk.MustExec("create user user1")
+	tk.MustExec("create user user2")
 	tk.MustExec("create database db1")
+	tk.MustExec("create database db2")
 	tk.MustExec("grant select on db1.* to user1@'%'")
+	tk.MustExec("grant select on db2.* to user2@'%'")
 
 	// change user.
 	doDispatch := func(req dispatchInput) {
@@ -1675,11 +1678,29 @@ func TestExtensionChangeUser(t *testing.T) {
 	logged = false
 	logTp = 0
 	logInfo = nil
+	expectedConnInfo.User = "user2"
+	expectedConnInfo.DB = "db2"
+	userData = append([]byte("user2"), 0x0, 0x0)
+	userData = append(userData, []byte("db2")...)
+	userData = append(userData, 0x0)
+	doDispatch(dispatchInput{
+		com: mysql.ComChangeUser,
+		in:  userData,
+		err: nil,
+		out: []byte{0x7, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0},
+	})
+	require.True(t, logged)
+	require.Equal(t, extension.ConnReset, logTp)
+	require.Equal(t, expectedConnInfo, *logInfo)
+
+	logged = false
+	logTp = 0
+	logInfo = nil
 	doDispatch(dispatchInput{
 		com: mysql.ComResetConnection,
 		in:  nil,
 		err: nil,
-		out: []byte{0x7, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0},
+		out: []byte{0x7, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0},
 	})
 	require.True(t, logged)
 	require.Equal(t, extension.ConnReset, logTp)
