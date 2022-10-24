@@ -1658,8 +1658,7 @@ func TestExtensionChangeUser(t *testing.T) {
 		outBuffer.Reset()
 	}
 
-	var expectedConnInfo extension.ConnEventInfo
-	expectedConnInfo = extension.ConnEventInfo(*cc.connectInfo())
+	expectedConnInfo := extension.ConnEventInfo(*cc.connectInfo())
 	expectedConnInfo.User = "user1"
 	expectedConnInfo.DB = "db1"
 
