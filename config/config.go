@@ -534,6 +534,9 @@ type Security struct {
 	ClusterSSLCert  string   `toml:"cluster-ssl-cert" json:"cluster-ssl-cert"`
 	ClusterSSLKey   string   `toml:"cluster-ssl-key" json:"cluster-ssl-key"`
 	ClusterVerifyCN []string `toml:"cluster-verify-cn" json:"cluster-verify-cn"`
+	// Used for auth plugin `tidb_session_token`.
+	SessionTokenSigningCert string `toml:"session-token-signing-cert" json:"session-token-signing-cert"`
+	SessionTokenSigningKey  string `toml:"session-token-signing-key" json:"session-token-signing-key"`
 	// If set to "plaintext", the spilled files will not be encrypted.
 	SpilledFileEncryptionMethod string `toml:"spilled-file-encryption-method" json:"spilled-file-encryption-method"`
 	// EnableSEM prevents SUPER users from having full access.

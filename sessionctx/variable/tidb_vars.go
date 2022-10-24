@@ -754,10 +754,13 @@ const (
 	// TiDBMergePartitionStatsConcurrency indicates the concurrecny when merge partition stats into global stats
 	TiDBMergePartitionStatsConcurrency = "tidb_merge_partition_stats_concurrency"
 
-	TiDBEnableReusechunk = "tidb_enable_reuse_chunk"
 
+	// TiDBOptPrefixIndexSingleScan indicates whether to do some optimizations to avoid double scan for prefix index.
+	// When set to true, `col is (not) null`(`col` is index prefix column) is regarded as index filter rather than table filter.
+	TiDBOptPrefixIndexSingleScan = "tidb_opt_prefix_index_single_scan"
+
+  TiDBEnableReusechunk = "tidb_enable_reuse_chunk"
 	TiDBMaxReuseChunk = "tidb_max_reuse_chunk"
-
 	TiDBMaxReuseColumn = "tidb_max_reuse_column"
 )
 
@@ -816,10 +819,6 @@ const (
 	TiDBMaxAutoAnalyzeTime = "tidb_max_auto_analyze_time"
 	// TiDBEnableConcurrentDDL indicates whether to enable the new DDL framework.
 	TiDBEnableConcurrentDDL = "tidb_enable_concurrent_ddl"
-	// TiDBAuthSigningCert indicates the path of the signing certificate to do token-based authentication.
-	TiDBAuthSigningCert = "tidb_auth_signing_cert"
-	// TiDBAuthSigningKey indicates the path of the signing key to do token-based authentication.
-	TiDBAuthSigningKey = "tidb_auth_signing_key"
 	// TiDBGenerateBinaryPlan indicates whether binary plan should be generated in slow log and statements summary.
 	TiDBGenerateBinaryPlan = "tidb_generate_binary_plan"
 	// TiDBEnableGCAwareMemoryTrack indicates whether to turn-on GC-aware memory track.
@@ -1073,7 +1072,10 @@ const (
 	DefTiDBServerMemoryLimitGCTrigger               = 0.7
 	DefTiDBEnableGOGCTuner                          = true
 	// DefTiDBGOGCTunerThreshold is to limit TiDBGOGCTunerThreshold.
-	DefTiDBGOGCTunerThreshold float64 = 0.6
+	DefTiDBGOGCTunerThreshold       float64 = 0.6
+	DefTiDBOptPrefixIndexSingleScan         = true
+  DefTiDBGOGCTunerThreshold float64 = 0.6
+  
 	DefTiDBEnableReusechunk           = true
 	DefTiDBMaxReuseChunk              = 128
 	DefTiDBMaxReuseColumn             = 1024

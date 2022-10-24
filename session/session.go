@@ -2929,7 +2929,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	}
 
 	dom.DumpFileGcCheckerLoop()
-	dom.LoadSigningCertLoop()
+	dom.LoadSigningCertLoop(cfg.Security.SessionTokenSigningCert, cfg.Security.SessionTokenSigningKey)
 
 	if raw, ok := store.(kv.EtcdBackend); ok {
 		err = raw.StartGCWorker()
