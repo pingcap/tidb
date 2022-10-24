@@ -7731,4 +7731,22 @@ func TestNullConditionForPrefixIndex(t *testing.T) {
 		tk.MustQuery("explain format='brief' " + tt).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Result...))
 	}
+
+	// test plan cache
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0")
+	tk.MustExec("prepare stmt from 'select count(1) from t1 where c1 = ? and c2 is not null'")
+	tk.MustExec("set @a = '0xfff'")
+	tk.MustQuery("execute stmt using @a").Check(testkit.Rows("3"))
+	tk.MustQuery("execute stmt using @a").Check(testkit.Rows("3"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt using @a").Check(testkit.Rows("3"))
+	tkProcess := tk.Session().ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows(
+		"StreamAgg_18 1.00 root  funcs:count(Column#7)->Column#5",
+		"└─IndexReader_19 1.00 root  index:StreamAgg_9",
+		"  └─StreamAgg_9 1.00 cop[tikv]  funcs:count(1)->Column#7",
+		"    └─IndexRangeScan_17 99.90 cop[tikv] table:t1, index:idx2(c1, c2) range:[\"0xfff\" -inf,\"0xfff\" +inf], keep order:false, stats:pseudo"))
 }
