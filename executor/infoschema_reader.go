@@ -172,6 +172,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataForClusterTrxSummary(sctx)
 		case infoschema.TableVariablesInfo:
 			err = e.setDataForVariablesInfo(sctx)
+		case infoschema.TableUserAttributes:
+			err = e.setDataForUserAttributes(ctx, sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -431,6 +433,35 @@ func (e *memtableRetriever) setDataForVariablesInfo(ctx sessionctx.Context) erro
 		}
 		rows = append(rows, row)
 	}
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataForUserAttributes(ctx context.Context, sctx sessionctx.Context) error {
+	exec, _ := sctx.(sqlexec.RestrictedSQLExecutor)
+	chunkRows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT user, host, JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.metadata')) FROM mysql.user`)
+	if err != nil {
+		return err
+	}
+	if len(chunkRows) == 0 {
+		return nil
+	}
+	rows := make([][]types.Datum, 0, len(chunkRows))
+	for _, chunkRow := range chunkRows {
+		if chunkRow.Len() != 3 {
+			continue
+		}
+		user := chunkRow.GetString(0)
+		host := chunkRow.GetString(1)
+		// Compatible with results in MySQL
+		var attribute any
+		if attribute = chunkRow.GetString(2); attribute == "" {
+			attribute = nil
+		}
+		row := types.MakeDatums(user, host, attribute)
+		rows = append(rows, row)
+	}
+
 	e.rows = rows
 	return nil
 }
@@ -1663,6 +1694,7 @@ func keyColumnUsageInTable(schema *model.DBInfo, table *model.TableInfo) [][]typ
 }
 
 func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx sessionctx.Context) (err error) {
+	var extractorTableIDs []int64
 	tikvStore, ok := ctx.GetStore().(helper.Storage)
 	if !ok {
 		return errors.New("Information about TiKV region status can be gotten only when the storage is TiKV")
@@ -1677,9 +1709,13 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx sessionctx.Context) (
 	if e.extractor != nil {
 		extractor, ok := e.extractor.(*plannercore.TiKVRegionStatusExtractor)
 		if ok && len(extractor.GetTablesID()) > 0 {
-			for _, tableID := range extractor.GetTablesID() {
+			extractorTableIDs = extractor.GetTablesID()
+			for _, tableID := range extractorTableIDs {
 				regionsInfo, err := e.getRegionsInfoForTable(tikvHelper, is, tableID)
 				if err != nil {
+					if errors.ErrorEqual(err, infoschema.ErrTableExists) {
+						continue
+					}
 					return err
 				}
 				allRegionsInfo = allRegionsInfo.Merge(regionsInfo)
@@ -1695,12 +1731,17 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx sessionctx.Context) (
 	}
 	tableInfos := tikvHelper.GetRegionsTableInfo(allRegionsInfo, is.AllSchemas())
 	for i := range allRegionsInfo.Regions {
-		tableList := tableInfos[allRegionsInfo.Regions[i].ID]
-		if len(tableList) == 0 {
+		regionTableList := tableInfos[allRegionsInfo.Regions[i].ID]
+		if len(regionTableList) == 0 {
 			e.setNewTiKVRegionStatusCol(&allRegionsInfo.Regions[i], nil)
 		}
-		for j := range tableList {
-			e.setNewTiKVRegionStatusCol(&allRegionsInfo.Regions[i], &tableList[j])
+		for j := range regionTableList {
+			if len(extractorTableIDs) == 0 {
+				e.setNewTiKVRegionStatusCol(&allRegionsInfo.Regions[i], &regionTableList[j])
+			}
+			if slices.Contains(extractorTableIDs, regionTableList[j].Table.ID) {
+				e.setNewTiKVRegionStatusCol(&allRegionsInfo.Regions[i], &regionTableList[j])
+			}
 		}
 	}
 	return nil
