@@ -5273,6 +5273,7 @@ func TestSessionManage(t *testing.T) {
 		// Kill statement.
 		// See https://dev.mysql.com/doc/refman/5.7/en/kill.html
 		{"kill 23123", true, "KILL 23123"},
+		{"kill CONNECTION_ID()", true, "KILL CONNECTION_ID()"},
 		{"kill connection 23123", true, "KILL 23123"},
 		{"kill query 23123", true, "KILL QUERY 23123"},
 		{"kill tidb 23123", true, "KILL TIDB 23123"},
