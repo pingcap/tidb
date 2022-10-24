@@ -15,8 +15,11 @@
 package extension
 
 import (
+	"context"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/chunk"
 )
 
 // Option represents an option to initialize an extension
@@ -36,6 +39,13 @@ func WithCustomDynPrivs(privs []string) Option {
 	}
 }
 
+// WithCustomFunctions specifies custom functions
+func WithCustomFunctions(funcs []*FunctionDef) Option {
+	return func(m *Manifest) {
+		m.funcs = funcs
+	}
+}
+
 // WithClose specifies the close function of an extension.
 // It will be invoked when `extension.Reset` is called
 func WithClose(fn func()) Option {
@@ -44,11 +54,39 @@ func WithClose(fn func()) Option {
 	}
 }
 
+// BootstrapContext is the context used by extension in bootstrap
+type BootstrapContext interface {
+	context.Context
+	// ExecuteSQL is used to execute a sql
+	ExecuteSQL(ctx context.Context, sql string) ([]chunk.Row, error)
+}
+
+// WithBootstrap specifies the bootstrap func of an extension
+func WithBootstrap(fn func(BootstrapContext) error) Option {
+	return func(m *Manifest) {
+		m.bootstrap = fn
+	}
+}
+
+// WithBootstrapSQL the bootstrap SQL list
+func WithBootstrapSQL(sqlList ...string) Option {
+	return WithBootstrap(func(ctx BootstrapContext) error {
+		for _, sql := range sqlList {
+			if _, err := ctx.ExecuteSQL(ctx, sql); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 // Manifest is an extension's manifest
 type Manifest struct {
 	name         string
 	sysVariables []*variable.SysVar
 	dynPrivs     []string
+	bootstrap    func(BootstrapContext) error
+	funcs        []*FunctionDef
 	close        func()
 }
 
@@ -126,6 +164,25 @@ func newManifestWithSetup(name string, factory func() ([]Option, error)) (_ *Man
 			return nil, nil, err
 		}
 	}
+
+	// setup functions
+	for i := range m.funcs {
+		def := m.funcs[i]
+		err = clearBuilder.DoWithCollectClear(func() (func(), error) {
+			if err := RegisterExtensionFunc(def); err != nil {
+				return nil, err
+			}
+
+			return func() {
+				RemoveExtensionFunc(def.Name)
+			}, nil
+		})
+
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
 	return m, clearBuilder.Build(), nil
 }
 

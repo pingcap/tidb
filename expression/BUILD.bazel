@@ -53,6 +53,7 @@ go_library(
         "explain.go",
         "expr_to_pb.go",
         "expression.go",
+        "extension.go",
         "function_traits.go",
         "helper.go",
         "partition_pruner.go",
@@ -67,6 +68,7 @@ go_library(
     deps = [
         "//config",
         "//errno",
+        "//extension",
         "//kv",
         "//parser",
         "//parser/ast",
@@ -98,6 +100,7 @@ go_library(
         "//util/parser",
         "//util/plancodec",
         "//util/printer",
+        "//util/sem",
         "//util/set",
         "//util/size",
         "//util/sqlexec",
