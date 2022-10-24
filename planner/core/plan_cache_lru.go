@@ -214,7 +214,7 @@ func (l *LRUPlanCache) Close() {
 	}
 	if l.memTracker != nil {
 		l.memTracker.ReplaceBytesUsed(0)
-		metrics.InstancePlanCacheMemoryUsage.WithLabelValues("instance").Set(float64(InstancePlanCacheMemoryTracker.BytesConsumed()))
+		metrics.PlanCacheInstanceMemoryUsage.WithLabelValues("instance").Set(float64(InstancePlanCacheMemoryTracker.BytesConsumed()))
 		l.memTracker.Detach()
 	}
 }
@@ -271,5 +271,5 @@ func PickPlanFromBucket(bucket map[*list.Element]struct{}, paramTypes []*types.F
 
 // updateMonitor update the memory usage monitor to show in grafana
 func (l *LRUPlanCache) updateMonitorMetric() {
-	metrics.InstancePlanCacheMemoryUsage.WithLabelValues("instance").Set(float64(InstancePlanCacheMemoryTracker.BytesConsumed()))
+	metrics.PlanCacheInstanceMemoryUsage.WithLabelValues("instance").Set(float64(InstancePlanCacheMemoryTracker.BytesConsumed()))
 }

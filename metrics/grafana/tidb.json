@@ -7480,7 +7480,7 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
-          "description": "Memory usage of cached plans",
+          "description": "Total memory usage of all prepared plan cache in a instance",
           "fieldConfig": {
             "defaults": {},
             "overrides": []
@@ -7525,7 +7525,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "tidb_server_instance_plan_cache_memory_usage{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
+              "expr": "tidb_server_plan_cache_instance_memory_usage{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
               "hide": false,
               "interval": "",
               "legendFormat": "{{instance}}",
