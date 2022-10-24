@@ -196,7 +196,7 @@ func (p *PhysicalTableReader) MemoryUsage() (sum int64) {
 	if p.tablePlan != nil {
 		sum += p.tablePlan.MemoryUsage()
 	}
-	
+	// since TablePlans is the flats the tablePlan, so we don't count it
 	for _, pInfos := range p.PartitionInfos {
 		sum += pInfos.tableScan.MemoryUsage() + pInfos.partitionInfo.MemoryUsage()
 	}
