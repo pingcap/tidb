@@ -57,3 +57,35 @@ func TestStGeomFromTextFunc(t *testing.T) {
 		}
 	}
 }
+
+func TestStAsTextFunc(t *testing.T) {
+	ctx := createContext(t)
+	cases := []struct {
+		arg    interface{}
+		isNil  bool
+		getErr bool
+		res    string
+	}{
+		{"\x00\x00\x00\x00\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00", false, false, "POINT (0 0)"},
+		{"\x00\x00\x00\x00\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xf0\x3f", false, false, "POINT (0 1)"},
+		{"\x00\x00\x00\x00\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\xf0\x3f\x00\x00\x00\x00\x00\x00\x00\x00", false, false, "POINT (1 0)"},
+		{"\x00\x00\x00\x00\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\xf0\x3f\x00\x00\x00\x00\x00\x00\xf0\x3f", false, false, "POINT (1 1)"},
+		{"\xe6\x10\x00\x00\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00", false, false, "POINT (0 0)"},
+		{errors.New("must error"), false, true, ""},
+	}
+	for _, c := range cases {
+		f, err := newFunctionForTest(ctx, ast.StAsText, primitiveValsToConstants(ctx, []interface{}{c.arg})...)
+		require.NoError(t, err)
+		d, err := f.Eval(chunk.Row{})
+		if c.getErr {
+			require.Error(t, err)
+		} else {
+			require.NoError(t, err)
+			if c.isNil {
+				require.Equal(t, types.KindNull, d.Kind())
+			} else {
+				require.Equal(t, c.res, d.GetString())
+			}
+		}
+	}
+}
