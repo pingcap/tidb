@@ -226,7 +226,7 @@ func (e *AnalyzeExec) handleResultsError(ctx context.Context, concurrency int, n
 		if len(subSctxs) > 0 {
 			internalCtx := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
 			err := e.handleResultsErrorWithConcurrency(internalCtx, concurrency, needGlobalStats, subSctxs, globalStatsMap, resultsCh)
-			dom.ReturnAnalyzeExtraExec(subSctxs)
+			dom.AvailableAnalyzeExec(subSctxs)
 			return err
 		}
 	}

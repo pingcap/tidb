@@ -1580,8 +1580,8 @@ func (do *Domain) SetStatsUpdating(val bool) {
 	}
 }
 
-// ReturnAnalyzeExtraExec returned extra exec for Analyze
-func (do *Domain) ReturnAnalyzeExtraExec(sctxs []sessionctx.Context) {
+// AvailableAnalyzeExec returned extra exec for Analyze
+func (do *Domain) AvailableAnalyzeExec(sctxs []sessionctx.Context) {
 	do.analyzeMu.Lock()
 	defer do.analyzeMu.Unlock()
 	for _, ctx := range sctxs {
