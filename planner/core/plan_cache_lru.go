@@ -15,6 +15,8 @@ package core
 
 import (
 	"container/list"
+	"sync"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/types"
@@ -22,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
-	"sync"
 )
 
 // planCacheEntry wraps Key and Value. It's the value of list.Element.
@@ -71,7 +72,8 @@ func NewLRUPlanCache(capacity uint, guard float64, quota uint64,
 		capacity = 100
 		logutil.BgLogger().Info("capacity of LRU cache is less than 1, will use default value(100) init cache")
 	}
-
+	m := memory.NewTracker(memory.LabelForPreparedPlanCache, -1)
+	m.AttachTo(InstancePlanCacheMemoryTracker)
 	return &LRUPlanCache{
 		capacity:       capacity,
 		size:           0,
@@ -80,7 +82,7 @@ func NewLRUPlanCache(capacity uint, guard float64, quota uint64,
 		pickFromBucket: pickFromBucket,
 		quota:          quota,
 		guard:          guard,
-		memTracker:     newTrackerForLRUPC(),
+		memTracker:     m,
 	}
 }
 
@@ -265,14 +267,6 @@ func PickPlanFromBucket(bucket map[*list.Element]struct{}, paramTypes []*types.F
 		}
 	}
 	return nil, false
-}
-
-// newTrackerForLRUPC return a tracker which consumed emptyLRUPlanCacheSize
-// todo: pass label when track general plan cache memory
-func newTrackerForLRUPC() *memory.Tracker {
-	m := memory.NewTracker(memory.LabelForPreparedPlanCache, -1)
-	m.AttachTo(InstancePlanCacheMemoryTracker)
-	return m
 }
 
 // updateMonitor update the memory usage monitor to show in grafana
