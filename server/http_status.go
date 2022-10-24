@@ -38,6 +38,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/fn"
+	pb "github.com/pingcap/kvproto/pkg/autoid"
+	autoid "github.com/pingcap/tidb/autoid_service"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -457,6 +459,9 @@ func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
 	statusServer := &http.Server{Addr: s.statusAddr, Handler: CorsHandler{handler: serverMux, cfg: s.cfg}}
 	grpcServer := NewRPCServer(s.cfg, s.dom, s)
 	service.RegisterChannelzServiceToServer(grpcServer)
+	if s.cfg.Store == "tikv" {
+		pb.RegisterAutoIDAllocServer(grpcServer, autoid.New(s.statusListener.Addr().String(), s.cfg.Path))
+	}
 
 	s.statusServer = statusServer
 	s.grpcServer = grpcServer

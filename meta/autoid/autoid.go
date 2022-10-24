@@ -575,13 +575,6 @@ func newSinglePointAlloc(store kv.Storage, dbID, tblID int64) Allocator {
 // NewAllocator returns a new auto increment id generator on the store.
 func NewAllocator(store kv.Storage, dbID, tbID int64, isUnsigned bool,
 	allocType AllocatorType, opts ...AllocOption) Allocator {
-	if allocType == RowIDAllocType {
-		alloc := newSinglePointAlloc(store, dbID, tbID)
-		if alloc != nil {
-			return alloc
-		}
-	}
-
 	alloc := &allocator{
 		store:         store,
 		dbID:          dbID,
@@ -594,6 +587,15 @@ func NewAllocator(store kv.Storage, dbID, tbID int64, isUnsigned bool,
 	for _, fn := range opts {
 		fn.ApplyOn(alloc)
 	}
+
+	fmt.Println("auto id cache default value ===", alloc.step, alloc.customStep)
+	if allocType == RowIDAllocType && alloc.customStep && alloc.step == 1 {
+		alloc1 := newSinglePointAlloc(store, dbID, tbID)
+		if alloc1 != nil {
+			return alloc1
+		}
+	}
+
 	return alloc
 }
 

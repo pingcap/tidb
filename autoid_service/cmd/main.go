@@ -7,7 +7,7 @@ import (
 	"net"
 
 	pb "github.com/pingcap/kvproto/pkg/autoid"
-	autoid "github.com/pingcap/tidb/autoid"
+	autoid "github.com/pingcap/tidb/autoid_service"
 	"google.golang.org/grpc"
 )
 

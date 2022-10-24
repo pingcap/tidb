@@ -50,6 +50,7 @@ require (
 	github.com/gostaticanalysis/forcetypeassert v0.1.0
 	github.com/grpc-ecosystem/go-grpc-middleware v1.3.0
 	github.com/iancoleman/strcase v0.2.0
+	github.com/jamiealquiza/tachymeter v2.0.0+incompatible
 	github.com/jarcoal/httpmock v1.2.0
 	github.com/jedib0t/go-pretty/v6 v6.2.2
 	github.com/jingyugao/rowserrcheck v1.1.1
@@ -169,7 +170,6 @@ require (
 	github.com/hashicorp/go-uuid v1.0.2 // indirect
 	github.com/hexops/gotextdiff v1.0.3 // indirect
 	github.com/inconshreveable/mousetrap v1.0.0 // indirect
-	github.com/jamiealquiza/tachymeter v2.0.0+incompatible // indirect
 	github.com/jcmturner/aescts/v2 v2.0.0 // indirect
 	github.com/jcmturner/dnsutils/v2 v2.0.0 // indirect
 	github.com/jcmturner/gofork v1.0.0 // indirect

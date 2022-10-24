@@ -463,5 +463,5 @@ bazel_lint: bazel_prepare
 	bazel build //... --//build:with_nogo_flag=true
 
 autoid_server:
-	@cd autoid; \
+	@cd autoid_service; \
 	go build -o ../bin/autoid-server ./cmd/main.go
