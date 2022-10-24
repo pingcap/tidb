@@ -103,14 +103,14 @@ type InfoSyncer struct {
 		mu sync.RWMutex
 		util2.SessionManager
 	}
-	session                 *concurrency.Session
-	topologySession         *concurrency.Session
-	prometheusAddr          string
-	modifyTime              time.Time
-	labelRuleManager        LabelRuleManager
-	placementManager        PlacementManager
-	scheduleManager         ScheduleManager
-	tiflashPlacementManager TiFlashPlacementManager
+	session               *concurrency.Session
+	topologySession       *concurrency.Session
+	prometheusAddr        string
+	modifyTime            time.Time
+	labelRuleManager      LabelRuleManager
+	placementManager      PlacementManager
+	scheduleManager       ScheduleManager
+	tiflashReplicaManager TiFlashReplicaManager
 }
 
 // ServerInfo is server static information.
@@ -192,7 +192,7 @@ func GlobalInfoSyncerInit(ctx context.Context, id string, serverIDGetter func() 
 	is.labelRuleManager = initLabelRuleManager(etcdCli)
 	is.placementManager = initPlacementManager(etcdCli)
 	is.scheduleManager = initScheduleManager(etcdCli)
-	is.tiflashPlacementManager = initTiFlashPlacementManager(etcdCli)
+	is.tiflashReplicaManager = initTiFlashReplicaManager(etcdCli)
 	setGlobalInfoSyncer(is)
 	return is, nil
 }
@@ -237,13 +237,13 @@ func initPlacementManager(etcdCli *clientv3.Client) PlacementManager {
 	return &PDPlacementManager{etcdCli: etcdCli}
 }
 
-func initTiFlashPlacementManager(etcdCli *clientv3.Client) TiFlashPlacementManager {
+func initTiFlashReplicaManager(etcdCli *clientv3.Client) TiFlashReplicaManager {
 	if etcdCli == nil {
-		m := mockTiFlashPlacementManager{tiflashProgressCache: make(map[int64]string)}
+		m := mockTiFlashReplicaManagerCtx{tiflashProgressCache: make(map[int64]string)}
 		return &m
 	}
-	logutil.BgLogger().Warn("init TiFlashPlacementManager", zap.Strings("pd addrs", etcdCli.Endpoints()))
-	return &TiFlashPDPlacementManager{etcdCli: etcdCli, tiflashProgressCache: make(map[int64]string)}
+	logutil.BgLogger().Warn("init TiFlashReplicaManager", zap.Strings("pd addrs", etcdCli.Endpoints()))
+	return &TiFlashReplicaManagerCtx{etcdCli: etcdCli, tiflashProgressCache: make(map[int64]string)}
 }
 
 func initScheduleManager(etcdCli *clientv3.Client) ScheduleManager {
@@ -260,7 +260,7 @@ func GetMockTiFlash() *MockTiFlash {
 		return nil
 	}
 
-	m, ok := is.tiflashPlacementManager.(*mockTiFlashPlacementManager)
+	m, ok := is.tiflashReplicaManager.(*mockTiFlashReplicaManagerCtx)
 	if ok {
 		return m.tiflash
 	}
@@ -274,7 +274,7 @@ func SetMockTiFlash(tiflash *MockTiFlash) {
 		return
 	}
 
-	m, ok := is.tiflashPlacementManager.(*mockTiFlashPlacementManager)
+	m, ok := is.tiflashReplicaManager.(*mockTiFlashReplicaManagerCtx)
 	if ok {
 		m.SetMockTiFlash(tiflash)
 	}
@@ -346,10 +346,10 @@ func DeleteTiFlashTableSyncProgress(tableInfo *model.TableInfo) error {
 	}
 	if pi := tableInfo.GetPartitionInfo(); pi != nil {
 		for _, p := range pi.Definitions {
-			is.tiflashPlacementManager.DeleteTiFlashProgressFromCache(p.ID)
+			is.tiflashReplicaManager.DeleteTiFlashProgressFromCache(p.ID)
 		}
 	} else {
-		is.tiflashPlacementManager.DeleteTiFlashProgressFromCache(tableInfo.ID)
+		is.tiflashReplicaManager.DeleteTiFlashProgressFromCache(tableInfo.ID)
 	}
 	return nil
 }
@@ -360,14 +360,14 @@ func MustGetTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores *m
 	if err != nil {
 		return "0"
 	}
-	progressCache := is.tiflashPlacementManager.GetTiFlashProgressFromCache(tableID)
+	progressCache := is.tiflashReplicaManager.GetTiFlashProgressFromCache(tableID)
 	if progressCache != "" {
 		return progressCache
 	}
 	if tiFlashStores == nil {
 		// We need the up-to-date information about TiFlash stores.
 		// Since TiFlash Replica synchronize may happen immediately after new TiFlash stores are added.
-		tikvStats, err := is.tiflashPlacementManager.GetStoresStat(context.Background())
+		tikvStats, err := is.tiflashReplicaManager.GetStoresStat(context.Background())
 		// If MockTiFlash is not set, will issue a MockTiFlashError here.
 		if err != nil {
 			return "0"
@@ -384,11 +384,11 @@ func MustGetTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores *m
 		tiFlashStores = &stores
 		logutil.BgLogger().Debug("updateTiFlashStores finished", zap.Int("TiFlash store count", len(*tiFlashStores)))
 	}
-	progress, err := is.tiflashPlacementManager.GetTiFlashProgress(tableID, replicaCount, *tiFlashStores)
+	progress, err := is.tiflashReplicaManager.GetTiFlashProgress(tableID, replicaCount, *tiFlashStores)
 	if err != nil {
 		return "0"
 	}
-	is.tiflashPlacementManager.UpdateTiFlashProgressCache(tableID, progress)
+	is.tiflashReplicaManager.UpdateTiFlashProgressCache(tableID, progress)
 	return progress
 }
 
@@ -1044,25 +1044,26 @@ func GetTiFlashProgress(tableID int64, replicaCount uint64, TiFlashStores map[in
 	if err != nil {
 		return "0", errors.Trace(err)
 	}
-	return is.tiflashPlacementManager.GetTiFlashProgress(tableID, replicaCount, TiFlashStores)
+	return is.tiflashReplicaManager.GetTiFlashProgress(tableID, replicaCount, TiFlashStores)
 }
 
 // UpdateTiFlashProgressCache updates tiflashProgressCache
-func UpdateTiFlashProgressCache(tableID int64, progress string) {
+func UpdateTiFlashProgressCache(tableID int64, progress string) error {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
-		return
+		return errors.Trace(err)
 	}
-	is.tiflashPlacementManager.UpdateTiFlashProgressCache(tableID, progress)
+	is.tiflashReplicaManager.UpdateTiFlashProgressCache(tableID, progress)
+	return nil
 }
 
 // GetTiFlashProgressFromCache gets tiflash replica progress from tiflashProgressCache
 func GetTiFlashProgressFromCache(tableID int64) (string, error) {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
-		return "", err
+		return "", errors.Trace(err)
 	}
-	return is.tiflashPlacementManager.GetTiFlashProgressFromCache(tableID), nil
+	return is.tiflashReplicaManager.GetTiFlashProgressFromCache(tableID), nil
 }
 
 // CleanTiFlashProgressCache clean progress cache
@@ -1071,7 +1072,7 @@ func CleanTiFlashProgressCache() {
 	if err != nil {
 		return
 	}
-	is.tiflashPlacementManager.CleanTiFlashProgressCache()
+	is.tiflashReplicaManager.CleanTiFlashProgressCache()
 }
 
 // SetTiFlashGroupConfig is a helper function to set tiflash rule group config
@@ -1081,7 +1082,7 @@ func SetTiFlashGroupConfig(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	logutil.BgLogger().Info("SetTiFlashGroupConfig")
-	return is.tiflashPlacementManager.SetTiFlashGroupConfig(ctx)
+	return is.tiflashReplicaManager.SetTiFlashGroupConfig(ctx)
 }
 
 // SetTiFlashPlacementRule is a helper function to set placement rule.
@@ -1093,7 +1094,7 @@ func SetTiFlashPlacementRule(ctx context.Context, rule placement.TiFlashRule) er
 		return errors.Trace(err)
 	}
 	logutil.BgLogger().Info("SetTiFlashPlacementRule", zap.String("ruleID", rule.ID))
-	return is.tiflashPlacementManager.SetPlacementRule(ctx, rule)
+	return is.tiflashReplicaManager.SetPlacementRule(ctx, rule)
 }
 
 // DeleteTiFlashPlacementRule is to delete placement rule for certain group.
@@ -1103,7 +1104,7 @@ func DeleteTiFlashPlacementRule(ctx context.Context, group string, ruleID string
 		return errors.Trace(err)
 	}
 	logutil.BgLogger().Info("DeleteTiFlashPlacementRule", zap.String("ruleID", ruleID))
-	return is.tiflashPlacementManager.DeletePlacementRule(ctx, group, ruleID)
+	return is.tiflashReplicaManager.DeletePlacementRule(ctx, group, ruleID)
 }
 
 // GetTiFlashGroupRules to get all placement rule in a certain group.
@@ -1112,7 +1113,7 @@ func GetTiFlashGroupRules(ctx context.Context, group string) ([]placement.TiFlas
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return is.tiflashPlacementManager.GetGroupRules(ctx, group)
+	return is.tiflashReplicaManager.GetGroupRules(ctx, group)
 }
 
 // PostTiFlashAccelerateSchedule sends `regions/accelerate-schedule` request.
@@ -1122,7 +1123,7 @@ func PostTiFlashAccelerateSchedule(ctx context.Context, tableID int64) error {
 		return errors.Trace(err)
 	}
 	logutil.BgLogger().Info("PostTiFlashAccelerateSchedule", zap.Int64("tableID", tableID))
-	return is.tiflashPlacementManager.PostAccelerateSchedule(ctx, tableID)
+	return is.tiflashReplicaManager.PostAccelerateSchedule(ctx, tableID)
 }
 
 // GetTiFlashPDRegionRecordStats is a helper function calling `/stats/region`.
@@ -1131,7 +1132,7 @@ func GetTiFlashPDRegionRecordStats(ctx context.Context, tableID int64, stats *he
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return is.tiflashPlacementManager.GetPDRegionRecordStats(ctx, tableID, stats)
+	return is.tiflashReplicaManager.GetPDRegionRecordStats(ctx, tableID, stats)
 }
 
 // GetTiFlashStoresStat gets the TiKV store information by accessing PD's api.
@@ -1140,7 +1141,7 @@ func GetTiFlashStoresStat(ctx context.Context) (*helper.StoresStat, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return is.tiflashPlacementManager.GetStoresStat(ctx)
+	return is.tiflashReplicaManager.GetStoresStat(ctx)
 }
 
 // CloseTiFlashManager closes TiFlash manager.
@@ -1149,7 +1150,7 @@ func CloseTiFlashManager(ctx context.Context) {
 	if err != nil {
 		return
 	}
-	is.tiflashPlacementManager.Close(ctx)
+	is.tiflashReplicaManager.Close(ctx)
 }
 
 // ConfigureTiFlashPDForTable configures pd rule for unpartitioned tables.
@@ -1161,7 +1162,7 @@ func ConfigureTiFlashPDForTable(id int64, count uint64, locationLabels *[]string
 	ctx := context.Background()
 	logutil.BgLogger().Info("ConfigureTiFlashPDForTable", zap.Int64("tableID", id), zap.Uint64("count", count))
 	ruleNew := MakeNewRule(id, count, *locationLabels)
-	if e := is.tiflashPlacementManager.SetPlacementRule(ctx, *ruleNew); e != nil {
+	if e := is.tiflashReplicaManager.SetPlacementRule(ctx, *ruleNew); e != nil {
 		return errors.Trace(e)
 	}
 	return nil
@@ -1177,11 +1178,11 @@ func ConfigureTiFlashPDForPartitions(accel bool, definitions *[]model.PartitionD
 	for _, p := range *definitions {
 		logutil.BgLogger().Info("ConfigureTiFlashPDForPartitions", zap.Int64("tableID", tableID), zap.Int64("partID", p.ID), zap.Bool("accel", accel), zap.Uint64("count", count))
 		ruleNew := MakeNewRule(p.ID, count, *locationLabels)
-		if e := is.tiflashPlacementManager.SetPlacementRule(ctx, *ruleNew); e != nil {
+		if e := is.tiflashReplicaManager.SetPlacementRule(ctx, *ruleNew); e != nil {
 			return errors.Trace(e)
 		}
 		if accel {
-			e := is.tiflashPlacementManager.PostAccelerateSchedule(ctx, p.ID)
+			e := is.tiflashReplicaManager.PostAccelerateSchedule(ctx, p.ID)
 			if e != nil {
 				return errors.Trace(e)
 			}

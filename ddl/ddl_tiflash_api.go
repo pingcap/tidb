@@ -451,17 +451,15 @@ func pollAvailableTableProgress(schemas infoschema.InfoSchema, ctx sessionctx.Co
 			)
 			continue
 		}
-		progressCache, err := infosync.GetTiFlashProgressFromCache(availableTableID.ID)
+		err = infosync.UpdateTiFlashProgressCache(availableTableID.ID, progress)
 		if err != nil {
-			logutil.BgLogger().Error("get tiflash sync progress from cache failed",
+			logutil.BgLogger().Error("update tiflash sync progress cache failed",
 				zap.Error(err),
 				zap.Int64("tableID", availableTableID.ID),
 				zap.Bool("IsPartition", availableTableID.IsPartition),
+				zap.String("progress", progress),
 			)
 			continue
-		}
-		if progressCache != progress {
-			infosync.UpdateTiFlashProgressCache(availableTableID.ID, progress)
 		}
 		pollTiFlashContext.UpdatingProgressTables.Remove(element)
 		element = element.Next()
@@ -526,17 +524,15 @@ func (d *ddl) refreshTiFlashTicker(ctx sessionctx.Context, pollTiFlashContext *T
 				continue
 			}
 
-			progressCache, err := infosync.GetTiFlashProgressFromCache(tb.ID)
+			err = infosync.UpdateTiFlashProgressCache(tb.ID, progress)
 			if err != nil {
 				logutil.BgLogger().Error("get tiflash sync progress from cache failed",
 					zap.Error(err),
 					zap.Int64("tableID", tb.ID),
 					zap.Bool("IsPartition", tb.IsPartition),
+					zap.String("progress", progress),
 				)
 				continue
-			}
-			if progressCache != progress {
-				infosync.UpdateTiFlashProgressCache(tb.ID, progress)
 			}
 
 			avail := progress[0] == '1'
