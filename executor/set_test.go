@@ -2009,3 +2009,27 @@ func TestSetTiFlashFastScanVariable(t *testing.T) {
 	tk.MustExec("set GLOBAL tiflash_fastscan=OFF;")
 	tk.MustQuery("select @@global.tiflash_fastscan").Check(testkit.Rows("0"))
 }
+
+func TestSetChunkReuseVariable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_enable_reuse_chunk=ON;")
+	tk.MustQuery("select @@session.tidb_enable_reuse_chunk").Check(testkit.Rows("1"))
+	tk.MustExec("set GLOBAL tidb_enable_reuse_chunk=ON;")
+	tk.MustQuery("select @@global.tidb_enable_reuse_chunk").Check(testkit.Rows("1"))
+
+	tk.MustExec("set @@tidb_enable_reuse_chunk=OFF;")
+	tk.MustQuery("select @@session.tidb_enable_reuse_chunk").Check(testkit.Rows("0"))
+	tk.MustExec("set GLOBAL tidb_enable_reuse_chunk=OFF;")
+	tk.MustQuery("select @@global.tidb_enable_reuse_chunk").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@tidb_max_reuse_chunk=256;")
+	tk.MustQuery("select @@session.tidb_max_reuse_chunk").Check(testkit.Rows("256"))
+	tk.MustExec("set GLOBAL tidb_max_reuse_chunk=256;")
+	tk.MustQuery("select @@global.tidb_max_reuse_chunk").Check(testkit.Rows("256"))
+
+	tk.MustExec("set @@tidb_max_reuse_chunk=256;")
+	tk.MustQuery("select @@session.tidb_max_reuse_chunk").Check(testkit.Rows("256"))
+	tk.MustExec("set GLOBAL tidb_max_reuse_chunk=256;")
+	tk.MustQuery("select @@global.tidb_max_reuse_chunk").Check(testkit.Rows("256"))
+}

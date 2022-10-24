@@ -1164,3 +1164,65 @@ func BenchmarkAppend(b *testing.B) {
 		})
 	}
 }
+
+func TestNewChunkWithAllocCapacity(t *testing.T) {
+	alloc := NewAllocator()
+	fieldTypes := make([]*types.FieldType, 0, 4)
+	fieldTypes = append(fieldTypes, types.NewFieldType(mysql.TypeFloat))
+	fieldTypes = append(fieldTypes, types.NewFieldType(mysql.TypeVarchar))
+	fieldTypes = append(fieldTypes, types.NewFieldType(mysql.TypeDatetime))
+	fieldTypes = append(fieldTypes, types.NewFieldType(mysql.TypeDuration))
+
+	initCap := 10
+	chk := NewChunkWithAllocCapacity(fieldTypes, initCap, alloc)
+	timeObj := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 0)
+	durationObj := types.Duration{Duration: math.MaxInt64, Fsp: 0}
+
+	for i := 0; i < initCap; i++ {
+		chk.AppendFloat64(0, 123.123)
+		chk.AppendString(1, "123")
+		chk.AppendTime(2, timeObj)
+		chk.AppendDuration(3, durationObj)
+	}
+
+	alloc.Reset()
+
+	chk2 := NewChunkWithAllocCapacity(fieldTypes, initCap, alloc)
+
+	for i := 0; i < initCap; i++ {
+		chk2.AppendFloat64(0, 123.123)
+		chk2.AppendString(1, "123")
+		chk2.AppendTime(2, timeObj)
+		chk2.AppendDuration(3, durationObj)
+	}
+	require.Equal(t, chk, chk2)
+	for i, _ := range chk.columns {
+		require.Equal(t, chk.columns[i], chk2.columns[i])
+	}
+	alloc.Reset()
+
+	chunkReuseMap := make(map[*Chunk]struct{}, 14)
+	columnReuseMap := make(map[*Column]struct{}, 14)
+	alloc.SetLimit(10, 12*4)
+	for i := 0; i < 14; i++ {
+		chk3 := NewChunkWithAllocCapacity(fieldTypes, initCap, alloc)
+		chunkReuseMap[chk3] = struct{}{}
+		for _, p := range chk3.columns {
+			columnReuseMap[p] = struct{}{}
+		}
+	}
+
+	alloc.Reset()
+	for i := 0; i < 10; i++ {
+		NewChunkWithAllocCapacity(fieldTypes, initCap, alloc)
+	}
+
+	chk = NewChunkWithAllocCapacity(fieldTypes, initCap, alloc)
+	_, exist := chunkReuseMap[chk]
+	require.False(t, exist)
+	for _, p := range chk.columns {
+		_, exist := columnReuseMap[p]
+		require.True(t, exist)
+	}
+
+}

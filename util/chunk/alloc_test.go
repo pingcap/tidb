@@ -202,3 +202,57 @@ func TestAvoidColumnReuse(t *testing.T) {
 		require.True(t, col.avoidReusing)
 	}
 }
+
+func TestColumnAllocatorLimit(t *testing.T) {
+	fieldTypes := []*types.FieldType{
+		types.NewFieldTypeBuilder().SetType(mysql.TypeVarchar).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeJSON).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeFloat).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeNewDecimal).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeDouble).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeDatetime).BuildP(),
+	}
+
+	alloc := NewAllocator()
+	//set capacity
+	alloc.SetLimit(10, 20)
+	for i := 0; i < maxFreeChunks+10; i++ {
+		alloc.Alloc(fieldTypes, 5, 10)
+	}
+	alloc.Reset()
+	require.Equal(t, len(alloc.free), 10)
+	for _, p := range alloc.columnAlloc.pool {
+		require.True(t, (len(p) <= 20))
+	}
+
+	//Reduce capacity
+	alloc.SetLimit(5, 10)
+	for i := 0; i < maxFreeChunks+10; i++ {
+		alloc.Alloc(fieldTypes, 5, 10)
+	}
+	alloc.Reset()
+	require.Equal(t, len(alloc.free), 5)
+	for _, p := range alloc.columnAlloc.pool {
+		require.True(t, (len(p) <= 10))
+	}
+
+	//increase capacity
+	alloc.SetLimit(50, 100)
+	for i := 0; i < maxFreeChunks+10; i++ {
+		alloc.Alloc(fieldTypes, 5, 10)
+	}
+	alloc.Reset()
+	require.Equal(t, len(alloc.free), 50)
+	for _, p := range alloc.columnAlloc.pool {
+		require.True(t, (len(p) <= 100))
+	}
+
+	//long characters are not cached
+	alloc = NewAllocator()
+	alloc.Alloc([]*types.FieldType{types.NewFieldTypeBuilder().SetType(mysql.TypeVarchar).BuildP()}, 10240, 10240)
+	alloc.Reset()
+	for _, p := range alloc.columnAlloc.pool {
+		require.True(t, (len(p) == 0))
+	}
+}

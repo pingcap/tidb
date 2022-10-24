@@ -88,7 +88,6 @@ const (
 
 // Reset implements the Allocator interface.
 func (a *allocator) Reset() {
-	//a.free = a.free[:0]
 	for i, chk := range a.allocated {
 		a.allocated[i] = nil
 		// Decouple chunk into chunk column objects and put them back to the column allocator for reuse.
@@ -124,11 +123,11 @@ func (alloc *poolColumnAllocator) NewSizeColumn(typeSize int, count int) *Column
 	l := alloc.pool[typeSize]
 	if l != nil && !l.empty() {
 		col := l.pop()
-		//col := l[len(l)-1]
+
 		if cap(col.data) < count {
 			col = newColumn(typeSize, count)
 		}
-		//alloc.pool[typeSize] = l[:len(l)-1]
+
 		return col
 	}
 	return newColumn(typeSize, count)
@@ -158,11 +157,9 @@ func (alloc *poolColumnAllocator) put(col *Column) {
 
 	l := alloc.pool[typeSize]
 	if l == nil {
-		l = make(map[*Column]struct{}, 8)
-		//l = make([]*Column, 0, alloc.freeColumnsPerType)
+		l = make(map[*Column]struct{}, alloc.freeColumnsPerType)
 		alloc.pool[typeSize] = l
 	}
-	//l.push(col)
 	alloc.push(col, typeSize)
 }
 
@@ -170,8 +167,6 @@ func (alloc *poolColumnAllocator) put(col *Column) {
 // columns, there could be duplicated one: some of the chunk columns are just the
 // reference to the others.
 type freeList map[*Column]struct{}
-
-//type freeList []*Column
 
 func (l freeList) empty() bool {
 	return len(l) == 0
@@ -184,6 +179,6 @@ func (alloc *poolColumnAllocator) push(col *Column, typeSize int) {
 	if (typeSize == varElemLen) && cap(col.data) > MaxCachedLen {
 		return
 	}
-	//alloc.pool[typeSize] = append(alloc.pool[typeSize], col)
+
 	alloc.pool[typeSize][col] = struct{}{}
 }
