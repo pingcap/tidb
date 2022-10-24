@@ -80,10 +80,6 @@ func enforceProperty(p *property.PhysicalProperty, tsk task, ctx sessionctx.Cont
 		if !ok || mpp.invalid() {
 			return invalidTask
 		}
-		if !p.IsSortItemAllForPartition() {
-			ctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because operator `Sort` is not supported now.")
-			return invalidTask
-		}
 		tsk = mpp.enforceExchanger(p)
 	}
 	if p.IsSortItemEmpty() || tsk.plan() == nil {
@@ -95,7 +91,7 @@ func enforceProperty(p *property.PhysicalProperty, tsk task, ctx sessionctx.Cont
 	sortReqProp := &property.PhysicalProperty{TaskTp: property.RootTaskType, SortItems: p.SortItems, ExpectedCnt: math.MaxFloat64}
 	sort := PhysicalSort{
 		ByItems:       make([]*util.ByItems, 0, len(p.SortItems)),
-		IsPartialSort: p.IsSortItemAllForPartition(),
+		IsPartialSort: true, // TODO: remove IsPartialSort, which is not used in executor
 	}.Init(ctx, tsk.plan().statsInfo(), tsk.plan().SelectBlockOffset(), sortReqProp)
 	for _, col := range p.SortItems {
 		sort.ByItems = append(sort.ByItems, &util.ByItems{Expr: col.Col, Desc: col.Desc})

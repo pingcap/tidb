@@ -2391,9 +2391,6 @@ func (lw *LogicalWindow) GetPartitionKeys() []*property.MPPPartitionColumn {
 }
 
 func (lw *LogicalWindow) tryToGetMppWindows(prop *property.PhysicalProperty) []PhysicalPlan {
-	if !prop.IsSortItemAllForPartition() {
-		return nil
-	}
 	if prop.TaskTp != property.RootTaskType && prop.TaskTp != property.MppTaskType {
 		return nil
 	}
@@ -2434,11 +2431,10 @@ func (lw *LogicalWindow) tryToGetMppWindows(prop *property.PhysicalProperty) []P
 	byItems = append(byItems, lw.PartitionBy...)
 	byItems = append(byItems, lw.OrderBy...)
 	childProperty := &property.PhysicalProperty{
-		ExpectedCnt:           math.MaxFloat64,
-		CanAddEnforcer:        true,
-		SortItems:             byItems,
-		TaskTp:                property.MppTaskType,
-		SortItemsForPartition: byItems,
+		ExpectedCnt:    math.MaxFloat64,
+		CanAddEnforcer: true,
+		SortItems:      byItems,
+		TaskTp:         property.MppTaskType,
 	}
 	if !prop.IsPrefix(childProperty) {
 		return nil

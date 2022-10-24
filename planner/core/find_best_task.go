@@ -411,7 +411,6 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCoun
 		// Then, we use the empty property to get physicalPlans and
 		// try to get the task with an enforced sort.
 		newProp.SortItems = []property.SortItem{}
-		newProp.SortItemsForPartition = []property.SortItem{}
 		newProp.ExpectedCnt = math.MaxFloat64
 		newProp.MPPPartitionCols = nil
 		newProp.MPPPartitionTp = property.AnyType
