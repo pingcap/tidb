@@ -829,6 +829,16 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("select @@global.tidb_auto_analyze_partition_batch_size").Check(testkit.Rows("1")) // min value is 1
 	tk.MustExec("set global tidb_auto_analyze_partition_batch_size = 9999")
 	tk.MustQuery("select @@global.tidb_auto_analyze_partition_batch_size").Check(testkit.Rows("1024")) // max value is 1024
+
+	// test tidb_opt_range_max_size
+	tk.MustQuery("select @@tidb_opt_range_max_size").Check(testkit.Rows("67108864"))
+	tk.MustExec("set global tidb_opt_range_max_size = -1")
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_opt_range_max_size value: '-1'"))
+	tk.MustQuery("select @@global.tidb_opt_range_max_size").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_opt_range_max_size = 1048576")
+	tk.MustQuery("select @@global.tidb_opt_range_max_size").Check(testkit.Rows("1048576"))
+	tk.MustExec("set session tidb_opt_range_max_size = 2097152")
+	tk.MustQuery("select @@session.tidb_opt_range_max_size").Check(testkit.Rows("2097152"))
 }
 
 func TestGetSetNoopVars(t *testing.T) {
@@ -862,15 +872,6 @@ func TestGetSetNoopVars(t *testing.T) {
 	err = tk.ExecToErr("SET GLOBAL tidb_enable_noop_variables = 'warn'")
 	require.Error(t, err)
 	require.Equal(t, "[variable:1231]Variable 'tidb_enable_noop_variables' can't be set to the value of 'warn'", err.Error())
-
-	tk.MustQuery("select @@tidb_opt_range_max_size").Check(testkit.Rows("0"))
-	tk.MustExec("set global tidb_opt_range_max_size = 1048576")
-	tk.MustQuery("select @@global.tidb_opt_range_max_size").Check(testkit.Rows("1048576"))
-	tk.MustExec("set global tidb_opt_range_max_size = -1")
-	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_opt_range_max_size value: '-1'"))
-	tk.MustQuery("select @@global.tidb_opt_range_max_size").Check(testkit.Rows("0"))
-	tk.MustExec("set session tidb_opt_range_max_size = 2097152")
-	tk.MustQuery("select @@session.tidb_opt_range_max_size").Check(testkit.Rows("2097152"))
 }
 
 func TestTruncateIncorrectIntSessionVar(t *testing.T) {
