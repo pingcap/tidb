@@ -743,7 +743,7 @@ func TestStmtHints(t *testing.T) {
 	tk.MustExec("create table t(a int, b int, index idx(a))")
 	tk.MustExec("create global binding for select * from t using select /*+ MAX_EXECUTION_TIME(100), MEMORY_QUOTA(1 GB) */ * from t use index(idx)")
 	tk.MustQuery("select * from t")
-	require.Equal(t, int64(1073741824), tk.Session().GetSessionVars().StmtCtx.MemQuotaQuery)
+	require.Equal(t, int64(1073741824), tk.Session().GetSessionVars().MemQuotaQuery)
 	require.Equal(t, uint64(100), tk.Session().GetSessionVars().StmtCtx.MaxExecutionTime)
 	tk.MustQuery("select a, b from t")
 	require.Equal(t, int64(0), tk.Session().GetSessionVars().StmtCtx.MemQuotaQuery)
