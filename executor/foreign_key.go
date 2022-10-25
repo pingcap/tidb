@@ -15,11 +15,14 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"sync/atomic"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -28,12 +31,15 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/set"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 )
 
 // WithForeignKeyTrigger indicates the executor has foreign key check or cascade.
 type WithForeignKeyTrigger interface {
 	GetFKChecks() []*FKCheckExec
+	GetFKCascades() []*FKCascadeExec
+	HasFKCascades() bool
 }
 
 // FKCheckExec uses to check foreign key constraint.
@@ -51,16 +57,29 @@ type FKCheckExec struct {
 	checkRowsCache map[string]bool
 }
 
+// FKCascadeExec uses to execute foreign key cascade behaviour.
+type FKCascadeExec struct {
+	*fkValueHelper
+	b          *executorBuilder
+	tp         plannercore.FKCascadeType
+	referredFK *model.ReferredFKInfo
+	childTable *model.TableInfo
+	fk         *model.FKInfo
+	fkValues   [][]types.Datum
+}
+
 func buildTblID2FKCheckExecs(sctx sessionctx.Context, tblID2Table map[int64]table.Table, tblID2FKChecks map[int64][]*plannercore.FKCheck) (map[int64][]*FKCheckExec, error) {
-	var err error
-	fkChecks := make(map[int64][]*FKCheckExec)
+	fkChecksMap := make(map[int64][]*FKCheckExec)
 	for tid, tbl := range tblID2Table {
-		fkChecks[tid], err = buildFKCheckExecs(sctx, tbl, tblID2FKChecks[tid])
+		fkChecks, err := buildFKCheckExecs(sctx, tbl, tblID2FKChecks[tid])
 		if err != nil {
 			return nil, err
 		}
+		if len(fkChecks) > 0 {
+			fkChecksMap[tid] = fkChecks
+		}
 	}
-	return fkChecks, nil
+	return fkChecksMap, nil
 }
 
 func buildFKCheckExecs(sctx sessionctx.Context, tbl table.Table, fkChecks []*plannercore.FKCheck) ([]*FKCheckExec, error) {
@@ -502,4 +521,158 @@ func (fkc FKCheckExec) checkRows(ctx context.Context, sc *stmtctx.StatementConte
 		fkc.checkRowsCache[string(k)] = false
 	}
 	return nil
+}
+
+func (b *executorBuilder) buildTblID2FKCascadeExecs(tblID2Table map[int64]table.Table, tblID2FKCascades map[int64][]*plannercore.FKCascade) (map[int64][]*FKCascadeExec, error) {
+	fkCascadesMap := make(map[int64][]*FKCascadeExec)
+	for tid, tbl := range tblID2Table {
+		fkCascades, err := b.buildFKCascadeExecs(tbl, tblID2FKCascades[tid])
+		if err != nil {
+			return nil, err
+		}
+		if len(fkCascades) > 0 {
+			fkCascadesMap[tid] = fkCascades
+		}
+	}
+	return fkCascadesMap, nil
+}
+
+func (b *executorBuilder) buildFKCascadeExecs(tbl table.Table, fkCascades []*plannercore.FKCascade) ([]*FKCascadeExec, error) {
+	fkCascadeExecs := make([]*FKCascadeExec, 0, len(fkCascades))
+	for _, fkCascade := range fkCascades {
+		fkCascadeExec, err := b.buildFKCascadeExec(tbl, fkCascade)
+		if err != nil {
+			return nil, err
+		}
+		if fkCascadeExec != nil {
+			fkCascadeExecs = append(fkCascadeExecs, fkCascadeExec)
+		}
+	}
+	return fkCascadeExecs, nil
+}
+
+func (b *executorBuilder) buildFKCascadeExec(tbl table.Table, fkCascade *plannercore.FKCascade) (*FKCascadeExec, error) {
+	colsOffsets, err := getFKColumnsOffsets(tbl.Meta(), fkCascade.ReferredFK.Cols)
+	if err != nil {
+		return nil, err
+	}
+	helper := &fkValueHelper{
+		colsOffsets: colsOffsets,
+		fkValuesSet: set.NewStringSet(),
+	}
+	return &FKCascadeExec{
+		b:             b,
+		fkValueHelper: helper,
+		tp:            fkCascade.Tp,
+		referredFK:    fkCascade.ReferredFK,
+		childTable:    fkCascade.ChildTable.Meta(),
+		fk:            fkCascade.FK,
+	}, nil
+}
+
+func (fkc *FKCascadeExec) onDeleteRow(sc *stmtctx.StatementContext, row []types.Datum) error {
+	vals, err := fkc.fetchFKValuesWithCheck(sc, row)
+	if err != nil || len(vals) == 0 {
+		return err
+	}
+	fkc.fkValues = append(fkc.fkValues, vals)
+	return nil
+}
+
+func (fkc *FKCascadeExec) buildExecutor(ctx context.Context) (Executor, error) {
+	p, err := fkc.buildFKCascadePlan(ctx)
+	if err != nil || p == nil {
+		return nil, err
+	}
+	e := fkc.b.build(p)
+	return e, fkc.b.err
+}
+
+func (fkc *FKCascadeExec) buildFKCascadePlan(ctx context.Context) (plannercore.Plan, error) {
+	if len(fkc.fkValues) == 0 {
+		return nil, nil
+	}
+	var sqlStr string
+	var err error
+	switch fkc.tp {
+	case plannercore.FKCascadeOnDelete:
+		sqlStr, err = GenCascadeDeleteSQL(fkc.referredFK.ChildSchema, fkc.childTable.Name, fkc.fk, fkc.fkValues)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if sqlStr == "" {
+		return nil, errors.Errorf("generate foreign key cascade sql failed, %v", fkc.tp)
+	}
+
+	sctx := fkc.b.ctx
+	exec, ok := sctx.(sqlexec.RestrictedSQLExecutor)
+	if !ok {
+		return nil, nil
+	}
+	stmtNode, err := exec.ParseWithParams(ctx, sqlStr)
+	if err != nil {
+		return nil, err
+	}
+	ret := &plannercore.PreprocessorReturn{}
+	err = plannercore.Preprocess(ctx, sctx, stmtNode, plannercore.WithPreprocessorReturn(ret), plannercore.InitTxnContextProvider)
+	if err != nil {
+		return nil, err
+	}
+	finalPlan, _, err := planner.Optimize(ctx, sctx, stmtNode, fkc.b.is)
+	if err != nil {
+		return nil, err
+	}
+	return finalPlan, err
+}
+
+// GenCascadeDeleteSQL uses to generate cascade delete SQL, export for test.
+func GenCascadeDeleteSQL(schema, table model.CIStr, fk *model.FKInfo, fkValues [][]types.Datum) (string, error) {
+	buf := bytes.NewBuffer(nil)
+	buf.WriteString("DELETE FROM `")
+	buf.WriteString(schema.L)
+	buf.WriteString("`.`")
+	buf.WriteString(table.L)
+	buf.WriteString("` WHERE (")
+	for i, col := range fk.Cols {
+		if i > 0 {
+			buf.WriteString(", ")
+		}
+		buf.WriteString("`" + col.L + "`")
+	}
+	// TODO(crazycs520): control the size of IN expression.
+	buf.WriteString(") IN (")
+	for i, vs := range fkValues {
+		if i > 0 {
+			buf.WriteString(", (")
+		} else {
+			buf.WriteString("(")
+		}
+		for i := range vs {
+			val, err := genFKValueString(vs[i])
+			if err != nil {
+				return "", err
+			}
+			if i > 0 {
+				buf.WriteString(",")
+			}
+			buf.WriteString(val)
+		}
+		buf.WriteString(")")
+	}
+	buf.WriteString(")")
+	return buf.String(), nil
+}
+
+func genFKValueString(v types.Datum) (string, error) {
+	val, err := v.ToString()
+	if err != nil {
+		return "", err
+	}
+	switch v.Kind() {
+	case types.KindInt64, types.KindUint64, types.KindFloat32, types.KindFloat64, types.KindMysqlDecimal:
+		return val, nil
+	default:
+		return "'" + val + "'", nil
+	}
 }

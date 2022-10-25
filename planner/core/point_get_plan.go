@@ -1688,7 +1688,7 @@ func buildPointDeletePlan(ctx sessionctx.Context, pointPlan PhysicalPlan, dbName
 	is := sessiontxn.GetTxnManager(ctx).GetTxnInfoSchema()
 	t, _ := is.TableByID(tbl.ID)
 	tblID2Table := map[int64]table.Table{tbl.ID: t}
-	err = delPlan.buildOnDeleteFKChecks(ctx, is, tblID2Table)
+	err = delPlan.buildOnDeleteFKTriggers(ctx, is, tblID2Table)
 	if err != nil {
 		return nil
 	}

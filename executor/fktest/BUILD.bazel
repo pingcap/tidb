@@ -10,9 +10,12 @@ go_test(
     flaky = True,
     deps = [
         "//config",
+        "//executor",
         "//meta/autoid",
+        "//parser/model",
         "//planner/core",
         "//testkit",
+        "//types",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//tikv",
         "@org_uber_go_goleak//:goleak",
