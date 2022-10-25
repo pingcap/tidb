@@ -57,10 +57,7 @@ type Dumper struct {
 	totalTables                   int64
 	charsetAndDefaultCollationMap map[string]string
 
-	speedRecorder   *SpeedRecorder
-	totalChunks     atomic.Int64
-	completedChunks atomic.Int64
-	progressReady   bool
+	speedRecorder *SpeedRecorder
 }
 
 // NewDumper returns a new Dumper
@@ -338,7 +335,7 @@ func (d *Dumper) startWriters(tctx *tcontext.Context, wg *errgroup.Group, taskCh
 		writer.setFinishTaskCallBack(func(task Task) {
 			IncGauge(d.metrics.taskChannelCapacity)
 			if td, ok := task.(*TaskTableData); ok {
-				d.completedChunks.Add(1)
+				d.metrics.completedChunks.Add(1)
 				tctx.L().Debug("finish dumping table data task",
 					zap.String("database", td.Meta.DatabaseName()),
 					zap.String("table", td.Meta.TableName()),
@@ -455,7 +452,7 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *BaseConn, taskC
 			}
 		}
 	}
-	d.progressReady = true
+	d.metrics.progressReady.Store(true)
 
 	return nil
 }
@@ -1644,6 +1641,6 @@ func (d *Dumper) renewSelectTableRegionFuncForLowerTiDB(tctx *tcontext.Context) 
 }
 
 func (d *Dumper) newTaskTableData(meta TableMeta, data TableDataIR, currentChunk, totalChunks int) *TaskTableData {
-	d.totalChunks.Add(1)
+	d.metrics.totalChunks.Add(1)
 	return NewTaskTableData(meta, data, currentChunk, totalChunks)
 }

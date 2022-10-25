@@ -64,11 +64,11 @@ func (d *Dumper) GetStatus() *DumpStatus {
 	ret.FinishedRows = ReadGauge(d.metrics.finishedRowsGauge)
 	ret.EstimateTotalRows = ReadCounter(d.metrics.estimateTotalRowsCounter)
 	ret.CurrentSpeedBPS = fmt.Sprintf("%d MiB/s", d.speedRecorder.GetSpeed(int64(ret.FinishedBytes))/1024)
-	if d.progressReady {
-		progress := float64(d.completedChunks.Load()) / float64(d.totalChunks.Load())
+	if d.metrics.progressReady.Load() {
+		progress := float64(d.metrics.completedChunks.Load()) / float64(d.metrics.totalChunks.Load())
 		if progress > 1 {
 			ret.progress = "100%"
-			d.L().Warn("completedChunks is greater than totalChunks", zap.Int64("completedChunks", d.completedChunks.Load()), zap.Int64("totalChunks", d.totalChunks.Load()))
+			d.L().Warn("completedChunks is greater than totalChunks", zap.Int64("completedChunks", d.metrics.completedChunks.Load()), zap.Int64("totalChunks", d.metrics.totalChunks.Load()))
 		} else {
 			ret.progress = fmt.Sprintf("%5.2f%%", progress)
 		}
