@@ -2734,6 +2734,20 @@ var (
 	mdlTable = "create table mysql.tidb_mdl_info(job_id BIGINT NOT NULL PRIMARY KEY, version BIGINT NOT NULL, table_ids text(65535));"
 )
 
+func splitAndScatterTable(store kv.Storage, tableIDs []int64) {
+	if s, ok := store.(kv.SplittableStore); ok && atomic.LoadUint32(&ddl.EnableSplitTableRegion) == 1 {
+		ctxWithTimeout, cancel := context.WithTimeout(context.Background(), variable.DefWaitSplitRegionTimeout*time.Second)
+		var regionIDs []uint64
+		for _, id := range tableIDs {
+			regionIDs = append(regionIDs, ddl.SplitRecordRegion(ctxWithTimeout, s, id, variable.DefTiDBScatterRegion))
+		}
+		if variable.DefTiDBScatterRegion {
+			ddl.WaitScatterRegionFinish(ctxWithTimeout, s, regionIDs...)
+		}
+		cancel()
+	}
+}
+
 // InitDDLJobTables is to create tidb_ddl_job, tidb_ddl_reorg and tidb_ddl_history.
 func InitDDLJobTables(store kv.Storage) error {
 	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
@@ -2746,15 +2760,13 @@ func InitDDLJobTables(store kv.Storage) error {
 		if err != nil {
 			return err
 		}
+		tableIDs := make([]int64, 0, len(DDLJobTables))
+		for _, tbl := range DDLJobTables {
+			tableIDs = append(tableIDs, tbl.id)
+		}
+		splitAndScatterTable(store, tableIDs)
 		p := parser.New()
 		for _, tbl := range DDLJobTables {
-			id, err := t.GetGlobalID()
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if id >= meta.MaxGlobalID {
-				return errors.Errorf("It is unreasonable that the global ID grows such a big value: %d, please contact TiDB team", id)
-			}
 			stmt, err := p.ParseOneStmt(tbl.SQL, "", "")
 			if err != nil {
 				return errors.Trace(err)
@@ -2787,14 +2799,8 @@ func InitMDLTable(store kv.Storage) error {
 		if err != nil {
 			return err
 		}
+		splitAndScatterTable(store, []int64{ddl.MDLTableID})
 		p := parser.New()
-		id, err := t.GetGlobalID()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if id >= meta.MaxGlobalID {
-			return errors.Errorf("It is unreasonable that the global ID grows such a big value: %d, please contact TiDB team", id)
-		}
 		stmt, err := p.ParseOneStmt(mdlTable, "", "")
 		if err != nil {
 			return errors.Trace(err)
