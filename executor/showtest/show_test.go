@@ -1120,8 +1120,8 @@ func TestShowCreateUser(t *testing.T) {
 	tk.MustQuery("SHOW CREATE USER attributeUser").Check(testkit.Rows(`CREATE USER 'attributeUser'@'%' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK ATTRIBUTE {"age": 19, "name": "Tom"}`))
 
 	// Creating users with 'IDENTIFIED WITH 'tidb_auth_token''
-	tk.MustExec(`CREATE USER 'token_test'@'%' IDENTIFIED WITH 'tidb_auth_token' ATTRIBUTE '{"email": "user@pingcap.com"}'`)
-	tk.MustQuery("SHOW CREATE USER token_user").Check(testkit.Rows(`CREATE USER 'token_user'@'%' IDENTIFIED WITH 'tidb_auth_token' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK ATTRIBUTE {"email": "user@pingcap.com"`))
+	tk.MustExec(`CREATE USER 'token_user'@'%' IDENTIFIED WITH 'tidb_auth_token' ATTRIBUTE '{"email": "user@pingcap.com"}'`)
+	tk.MustQuery("SHOW CREATE USER token_user").Check(testkit.Rows(`CREATE USER 'token_user'@'%' IDENTIFIED WITH 'tidb_auth_token' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK ATTRIBUTE {"email": "user@pingcap.com"}`))
 }
 
 func TestUnprivilegedShow(t *testing.T) {
