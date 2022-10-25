@@ -95,7 +95,7 @@ func TestCompressReaderWriter(t *testing.T) {
 		content      []string
 		compressType CompressType
 	}
-	testFn := func(test *testcase, t *testing.T) {
+	testFnGzip := func(test *testcase, t *testing.T) {
 		t.Log(test.name)
 		backend, err := ParseBackend("local://"+filepath.ToSlash(dir), nil)
 		require.NoError(t, err)
@@ -134,9 +134,9 @@ func TestCompressReaderWriter(t *testing.T) {
 
 		require.Nil(t, file.Close())
 	}
-	compressTypeArr := []CompressType{Gzip}
+	compressTypeGzipArr := []CompressType{Gzip}
 
-	testFnSanppy := func(test *testcase, t *testing.T) {
+	testFnSnappy := func(test *testcase, t *testing.T) {
 		t.Log(test.name)
 		backend, err := ParseBackend("local://"+filepath.ToSlash(dir), nil)
 		require.NoError(t, err)
@@ -202,13 +202,13 @@ func TestCompressReaderWriter(t *testing.T) {
 		},
 	}
 	for i := range tests {
-		for _, compressType := range compressTypeArr {
+		for _, compressType := range compressTypeGzipArr {
 			tests[i].compressType = compressType
-			testFn(&tests[i], t)
+			testFnGzip(&tests[i], t)
 		}
 		for _, compressType := range compressTypeSnappyArr {
 			tests[i].compressType = compressType
-			testFnSanppy(&tests[i], t)
+			testFnSnappy(&tests[i], t)
 		}
 	}
 }
