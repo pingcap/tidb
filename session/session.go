@@ -2849,8 +2849,9 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		runInBootstrapSession(store, upgrade)
 	}
 
+	analyzeConcurrencyQuota := int(config.GetGlobalConfig().Performance.AnalyzePartitionConcurrencyQuota)
 	concurrency := int(config.GetGlobalConfig().Performance.StatsLoadConcurrency)
-	ses, err := createSessions(store, 7+concurrency)
+	ses, err := createSessions(store, 7+concurrency+analyzeConcurrencyQuota)
 	if err != nil {
 		return nil, err
 	}
@@ -2933,7 +2934,11 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err = dom.LoadAndUpdateStatsLoop(subCtxs); err != nil {
 		return nil, err
 	}
-
+	subCtxs2 := make([]sessionctx.Context, analyzeConcurrencyQuota)
+	for i := 0; i < analyzeConcurrencyQuota; i++ {
+		subCtxs2[i] = ses[7+concurrency+i]
+	}
+	dom.SetupAnalyzeExec(subCtxs2)
 	dom.DumpFileGcCheckerLoop()
 	dom.LoadSigningCertLoop(cfg.Security.SessionTokenSigningCert, cfg.Security.SessionTokenSigningKey)
 
