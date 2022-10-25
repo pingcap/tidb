@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/stretchr/testify/require"
 )
 
@@ -493,4 +494,58 @@ func TestIssue23553(t *testing.T) {
 	tk.MustExec(`create table tt (m0 varchar(64), status tinyint not null)`)
 	tk.MustExec(`insert into tt values('1',0),('1',0),('1',0)`)
 	tk.MustExec(`update tt a inner join (select m0 from tt where status!=1 group by m0 having count(*)>1) b on a.m0=b.m0 set a.status=1`)
+}
+
+func TestUpdateReuseChunk(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	alloc := chunk.NewAllocator()
+	tk.Session().GetSessionVars().SetAlloc(alloc)
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists tt`)
+	tk.MustExec(`create table tt (m0 varchar(64), status tinyint not null)`)
+	tk.MustExec(`insert into tt values('1',0),('1',0),('1',0)`)
+	tk.MustExec(`update tt a inner join (select m0 from tt where status!=1 group by m0 having count(*)>1) b on a.m0=b.m0 set a.status=1`)
+	tk.Session().GetSessionVars().EndAlloc()
+	alloc.Reset()
+	tk.Session().GetSessionVars().SetAlloc(alloc)
+	tk.MustExec(`update tt a inner join (select m0 from tt where status!=1 group by m0 having count(*)>1) b on a.m0=b.m0 set a.status=1`)
+	result := tk.MustQuery("select @@last_sql_use_alloc")
+	result.Check(testkit.Rows("1"))
+	tk.Session().GetSessionVars().EndAlloc()
+
+	alloc.Reset()
+	tk.Session().GetSessionVars().SetAlloc(alloc)
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t(ts int(10) unsigned NULL DEFAULT NULL)`)
+	tk.MustExec(`insert into t values(1)`)
+	tk.MustGetErrMsg(
+		"update t set ts = IF(ts < (0 - ts), 1,1) where ts>0",
+		"[types:1690]BIGINT UNSIGNED value is out of range in '(0 - test.t.ts)'")
+	tk.Session().GetSessionVars().EndAlloc()
+	alloc.Reset()
+	tk.Session().GetSessionVars().SetAlloc(alloc)
+	tk.MustGetErrMsg(
+		"update t set ts = IF(ts < (0 - ts), 1,1) where ts>0",
+		"[types:1690]BIGINT UNSIGNED value is out of range in '(0 - test.t.ts)'")
+	result = tk.MustQuery("select @@last_sql_use_alloc")
+	result.Check(testkit.Rows("1"))
+	tk.Session().GetSessionVars().EndAlloc()
+
+	alloc.Reset()
+	tk.Session().GetSessionVars().SetAlloc(alloc)
+	testUpdatePKLazyCheck(t, tk, variable.ClusteredIndexDefModeOn)
+	testUpdatePKLazyCheck(t, tk, variable.ClusteredIndexDefModeOff)
+	testUpdatePKLazyCheck(t, tk, variable.ClusteredIndexDefModeIntOnly)
+	tk.Session().GetSessionVars().EndAlloc()
+
+	alloc.Reset()
+	tk.Session().GetSessionVars().SetAlloc(alloc)
+	testUpdatePKLazyCheck(t, tk, variable.ClusteredIndexDefModeOn)
+	testUpdatePKLazyCheck(t, tk, variable.ClusteredIndexDefModeOff)
+	testUpdatePKLazyCheck(t, tk, variable.ClusteredIndexDefModeIntOnly)
+	result = tk.MustQuery("select @@last_sql_use_alloc")
+	result.Check(testkit.Rows("1"))
+	tk.Session().GetSessionVars().EndAlloc()
+
 }

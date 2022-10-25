@@ -1340,8 +1340,8 @@ func (s *SessionVars) SetAlloc(alloc chunk.Allocator) {
 	s.ChunkPool.Alloc = alloc
 }
 
+// EndAlloc indicates reuse chunk end
 func (s *SessionVars) EndAlloc() {
-	fmt.Printf("end")
 	s.ChunkPool.Alloc = nil
 }
 

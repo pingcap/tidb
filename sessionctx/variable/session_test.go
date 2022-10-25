@@ -459,7 +459,7 @@ func TestGetReuseChunk(t *testing.T) {
 	sessVars.SetAlloc(alloc)
 	require.NotNil(t, sessVars.ChunkPool.Alloc)
 	require.Equal(t, alloc, sessVars.ChunkPool.Alloc)
-	require.True(t, sessVars.UseChunkAlloc)
+	require.False(t, sessVars.UseChunkAlloc)
 
 	//tries to apply from the cache
 	initCap := 10

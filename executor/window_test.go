@@ -545,5 +545,4 @@ func TestReuseChunk(t *testing.T) {
 	result.Check(testkit.Rows("1"))
 	tk.Session().GetSessionVars().EndAlloc()
 	alloc.Reset()
-
 }
