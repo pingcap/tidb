@@ -27,12 +27,12 @@ var (
 	errQueueIsReleased = errors.New("the queue length is zero")
 )
 
-type workerArray[T any, U any, C any] interface {
+type workerArray[T any, U any, C any, CT any, TF Context[CT]] interface {
 	len() int
 	isEmpty() bool
-	insert(worker *goWorker[T, U, C]) error
-	detach() *goWorker[T, U, C]
-	retrieveExpiry(duration time.Duration) []*goWorker[T, U, C]
+	insert(worker *goWorker[T, U, C, CT, TF]) error
+	detach() *goWorker[T, U, C, CT, TF]
+	retrieveExpiry(duration time.Duration) []*goWorker[T, U, C, CT, TF]
 	reset()
 }
 
@@ -43,13 +43,13 @@ const (
 	loopQueueType
 )
 
-func newWorkerArray[T any, U any, C any](aType arrayType, size int) workerArray[T, U, C] {
+func newWorkerArray[T any, U any, C any, CT any, TF Context[CT]](aType arrayType, size int) workerArray[T, U, C, CT, TF] {
 	switch aType {
 	case stackType:
-		return newWorkerStack[T, U, C](size)
+		return newWorkerStack[T, U, C, CT, TF](size)
 	case loopQueueType:
-		return newWorkerLoopQueue[T, U, C](size)
+		return newWorkerLoopQueue[T, U, C, CT, TF](size)
 	default:
-		return newWorkerStack[T, U, C](size)
+		return newWorkerStack[T, U, C, CT, TF](size)
 	}
 }

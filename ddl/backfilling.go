@@ -275,7 +275,6 @@ func (w *backfillWorker) releaseJob(bJob *model.BackfillJob) error {
 // handleBackfillTask backfills range [task.startHandle, task.endHandle) handle's index to table.
 func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, bf backfiller) *backfillResult {
 	traceID := task.bfJob.JobID + 100
-	defer injectSpan(traceID, fmt.Sprintf("handle-task-id-%d", task.bfJob.ID))()
 	handleRange := *task
 	result := &backfillResult{
 		err:        nil,
@@ -287,8 +286,8 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 	startTime := lastLogTime
 	// rc := d.getReorgCtx(task.bfJob.JobID)
 
-	batchStartTime := time.Now()
 	cnt := 0
+	batchStartTime := time.Now()
 	for {
 		// Give job chance to be canceled, if we not check it here,
 		// if there is panic in bf.BackfillDataInTxn we will never cancel the job.
@@ -300,9 +299,10 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 			return result
 		}
 
-		finish := injectSpan(traceID, fmt.Sprintf("handle-task-id-%d-batch-%d", task.bfJob.ID, cnt))
+		finish := injectSpan(traceID, fmt.Sprintf("handle-task-id-%d-no.%d", task.bfJob.ID, cnt))
 		taskCtx, err := bf.BackfillDataInTxn(handleRange)
 		finish()
+		cnt++
 		if err != nil {
 			result.err = err
 			return result
@@ -993,7 +993,7 @@ func (dc *ddlCtx) controlWritePhysicalTableRecord(sess *session, t table.Physica
 		startKey = remains[0].StartKey
 	}
 
-	ticker := time.NewTicker(500 * time.Millisecond)
+	ticker := time.NewTicker(300 * time.Millisecond)
 	defer ticker.Stop()
 	defer injectSpan(reorgInfo.Job.ID, "control-write-records-check-state")()
 	for {

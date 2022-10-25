@@ -16,23 +16,23 @@ package spmc
 
 import "time"
 
-type loopQueue[T any, U any, C any] struct {
-	items  []*goWorker[T, U, C]
-	expiry []*goWorker[T, U, C]
+type loopQueue[T any, U any, C any, CT any, TF Context[CT]] struct {
+	items  []*goWorker[T, U, C, CT, TF]
+	expiry []*goWorker[T, U, C, CT, TF]
 	head   int
 	tail   int
 	size   int
 	isFull bool
 }
 
-func newWorkerLoopQueue[T any, U any, C any](size int) *loopQueue[T, U, C] {
-	return &loopQueue[T, U, C]{
-		items: make([]*goWorker[T, U, C], size),
+func newWorkerLoopQueue[T any, U any, C any, CT any, TF Context[CT]](size int) *loopQueue[T, U, C, CT, TF] {
+	return &loopQueue[T, U, C, CT, TF]{
+		items: make([]*goWorker[T, U, C, CT, TF], size),
 		size:  size,
 	}
 }
 
-func (wq *loopQueue[T, U, C]) len() int {
+func (wq *loopQueue[T, U, C, CT, TF]) len() int {
 	if wq.size == 0 {
 		return 0
 	}
@@ -51,11 +51,11 @@ func (wq *loopQueue[T, U, C]) len() int {
 	return wq.size - wq.head + wq.tail
 }
 
-func (wq *loopQueue[T, U, C]) isEmpty() bool {
+func (wq *loopQueue[T, U, C, CT, TF]) isEmpty() bool {
 	return wq.head == wq.tail && !wq.isFull
 }
 
-func (wq *loopQueue[T, U, C]) insert(worker *goWorker[T, U, C]) error {
+func (wq *loopQueue[T, U, C, CT, TF]) insert(worker *goWorker[T, U, C, CT, TF]) error {
 	if wq.size == 0 {
 		return errQueueIsReleased
 	}
@@ -76,7 +76,7 @@ func (wq *loopQueue[T, U, C]) insert(worker *goWorker[T, U, C]) error {
 	return nil
 }
 
-func (wq *loopQueue[T, U, C]) detach() *goWorker[T, U, C] {
+func (wq *loopQueue[T, U, C, CT, TF]) detach() *goWorker[T, U, C, CT, TF] {
 	if wq.isEmpty() {
 		return nil
 	}
@@ -92,7 +92,7 @@ func (wq *loopQueue[T, U, C]) detach() *goWorker[T, U, C] {
 	return w
 }
 
-func (wq *loopQueue[T, U, C]) retrieveExpiry(duration time.Duration) []*goWorker[T, U, C] {
+func (wq *loopQueue[T, U, C, CT, TF]) retrieveExpiry(duration time.Duration) []*goWorker[T, U, C, CT, TF] {
 	expiryTime := time.Now().Add(-duration)
 	index := wq.binarySearch(expiryTime)
 	if index == -1 {
@@ -124,7 +124,7 @@ func (wq *loopQueue[T, U, C]) retrieveExpiry(duration time.Duration) []*goWorker
 	return wq.expiry
 }
 
-func (wq *loopQueue[T, U, C]) binarySearch(expiryTime time.Time) int {
+func (wq *loopQueue[T, U, C, CT, TF]) binarySearch(expiryTime time.Time) int {
 	var mid, nlen, basel, tmid int
 	nlen = len(wq.items)
 
@@ -161,7 +161,7 @@ func (wq *loopQueue[T, U, C]) binarySearch(expiryTime time.Time) int {
 	return (r + basel + nlen) % nlen
 }
 
-func (wq *loopQueue[T, U, C]) reset() {
+func (wq *loopQueue[T, U, C, CT, TF]) reset() {
 	if wq.isEmpty() {
 		return
 	}

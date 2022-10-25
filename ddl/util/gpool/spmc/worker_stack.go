@@ -16,31 +16,31 @@ package spmc
 
 import "time"
 
-type workerStack[T any, U any, C any] struct {
-	items  []*goWorker[T, U, C]
-	expiry []*goWorker[T, U, C]
+type workerStack[T any, U any, C any, CT any, TF Context[CT]] struct {
+	items  []*goWorker[T, U, C, CT, TF]
+	expiry []*goWorker[T, U, C, CT, TF]
 }
 
-func newWorkerStack[T any, U any, C any](size int) *workerStack[T, U, C] {
-	return &workerStack[T, U, C]{
-		items: make([]*goWorker[T, U, C], 0, size),
+func newWorkerStack[T any, U any, C any, CT any, TF Context[CT]](size int) *workerStack[T, U, C, CT, TF] {
+	return &workerStack[T, U, C, CT, TF]{
+		items: make([]*goWorker[T, U, C, CT, TF], 0, size),
 	}
 }
 
-func (wq *workerStack[T, U, C]) len() int {
+func (wq *workerStack[T, U, C, CT, TF]) len() int {
 	return len(wq.items)
 }
 
-func (wq *workerStack[T, U, C]) isEmpty() bool {
+func (wq *workerStack[T, U, C, CT, TF]) isEmpty() bool {
 	return len(wq.items) == 0
 }
 
-func (wq *workerStack[T, U, C]) insert(worker *goWorker[T, U, C]) error {
+func (wq *workerStack[T, U, C, CT, TF]) insert(worker *goWorker[T, U, C, CT, TF]) error {
 	wq.items = append(wq.items, worker)
 	return nil
 }
 
-func (wq *workerStack[T, U, C]) detach() *goWorker[T, U, C] {
+func (wq *workerStack[T, U, C, CT, TF]) detach() *goWorker[T, U, C, CT, TF] {
 	l := wq.len()
 	if l == 0 {
 		return nil
@@ -53,7 +53,7 @@ func (wq *workerStack[T, U, C]) detach() *goWorker[T, U, C] {
 	return w
 }
 
-func (wq *workerStack[T, U, C]) retrieveExpiry(duration time.Duration) []*goWorker[T, U, C] {
+func (wq *workerStack[T, U, C, CT, TF]) retrieveExpiry(duration time.Duration) []*goWorker[T, U, C, CT, TF] {
 	n := wq.len()
 	if n == 0 {
 		return nil
@@ -74,7 +74,7 @@ func (wq *workerStack[T, U, C]) retrieveExpiry(duration time.Duration) []*goWork
 	return wq.expiry
 }
 
-func (wq *workerStack[T, U, C]) binarySearch(l, r int, expiryTime time.Time) int {
+func (wq *workerStack[T, U, C, CT, TF]) binarySearch(l, r int, expiryTime time.Time) int {
 	var mid int
 	for l <= r {
 		mid = (l + r) / 2
@@ -87,7 +87,7 @@ func (wq *workerStack[T, U, C]) binarySearch(l, r int, expiryTime time.Time) int
 	return r
 }
 
-func (wq *workerStack[T, U, C]) reset() {
+func (wq *workerStack[T, U, C, CT, TF]) reset() {
 	for i := 0; i < wq.len(); i++ {
 		wq.items[i].task <- nil
 		wq.items[i] = nil

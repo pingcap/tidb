@@ -1340,6 +1340,7 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 // Note that index columns values may change, and an index is not allowed to be added, so the txn will rollback and retry.
 // BackfillDataInTxn will add w.batchCnt indices once, default value of w.batchCnt is 128.
 func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
+	traceID := handleRange.bfJob.JobID + 100
 	failpoint.Inject("errorMockPanic", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		if val.(bool) {
@@ -1358,7 +1359,9 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 			txn.SetOption(kv.ResourceGroupTagger, tagger)
 		}
 
+		finish := injectSpan(traceID, fmt.Sprintf("handle-task-id-%d-fetch", handleRange.bfJob.ID))
 		idxRecords, nextKey, taskDone, err := w.fetchRowColVals(txn, handleRange)
+		finish()
 		if err != nil {
 			return errors.Trace(err)
 		}
