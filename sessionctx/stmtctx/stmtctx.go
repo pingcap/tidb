@@ -740,11 +740,9 @@ func (sc *StatementContext) HandleTruncate(err error) error {
 	if sc.IgnoreTruncate {
 		return nil
 	}
-	if sc.TruncateAsWarning {
-		sc.AppendWarning(err)
-		return nil
-	}
-	return err
+	//Consistent with mysql, whether it is select or update, append WarnDataTruncated instead of the error itself
+	sc.AppendWarning(err)
+	return nil
 }
 
 // HandleOverflow treats ErrOverflow as warnings or returns the error based on the StmtCtx.OverflowAsWarning state.
