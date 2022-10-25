@@ -1580,8 +1580,8 @@ func (do *Domain) SetStatsUpdating(val bool) {
 	}
 }
 
-// AvailableAnalyzeExec returned extra exec for Analyze
-func (do *Domain) AvailableAnalyzeExec(sctxs []sessionctx.Context) {
+// ReleaseAnalyzeExec returned extra exec for Analyze
+func (do *Domain) ReleaseAnalyzeExec(sctxs []sessionctx.Context) {
 	do.analyzeMu.Lock()
 	defer do.analyzeMu.Unlock()
 	for _, ctx := range sctxs {
@@ -1589,8 +1589,8 @@ func (do *Domain) AvailableAnalyzeExec(sctxs []sessionctx.Context) {
 	}
 }
 
-// DemandAnalyzeExec get needed exec for analyze
-func (do *Domain) DemandAnalyzeExec(need int) []sessionctx.Context {
+// FetchAnalyzeExec get needed exec for analyze
+func (do *Domain) FetchAnalyzeExec(need int) []sessionctx.Context {
 	if need < 1 {
 		return nil
 	}

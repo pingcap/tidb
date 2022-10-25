@@ -44,6 +44,12 @@ func newAnalyzeSaveStatsWorker(
 }
 
 func (worker *analyzeSaveStatsWorker) run(ctx context.Context, analyzeSnapshot bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			logutil.BgLogger().Error("analyze save stats worker panicked", zap.Any("recover", r), zap.Stack("stack"))
+			worker.errCh <- getAnalyzePanicErr(r)
+		}
+	}()
 	for results := range worker.resultsCh {
 		err := handle.SaveTableStatsToStorage(worker.sctx, results, analyzeSnapshot)
 		if err != nil {

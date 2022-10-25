@@ -222,11 +222,13 @@ func (e *AnalyzeExec) handleResultsError(ctx context.Context, concurrency int, n
 	// If there is no extra session we can use, we will save analyze results in single-thread.
 	if partitionStatsConcurrency > 1 {
 		dom := domain.GetDomain(e.ctx)
-		subSctxs := dom.DemandAnalyzeExec(partitionStatsConcurrency)
+		subSctxs := dom.FetchAnalyzeExec(partitionStatsConcurrency)
 		if len(subSctxs) > 0 {
+			defer func() {
+				dom.ReleaseAnalyzeExec(subSctxs)
+			}()
 			internalCtx := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
 			err := e.handleResultsErrorWithConcurrency(internalCtx, concurrency, needGlobalStats, subSctxs, globalStatsMap, resultsCh)
-			dom.AvailableAnalyzeExec(subSctxs)
 			return err
 		}
 	}
