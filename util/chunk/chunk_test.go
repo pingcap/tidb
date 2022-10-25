@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"fmt"
 	"math"
-	"runtime"
 	"strconv"
 	"testing"
 	"time"
@@ -1173,17 +1172,14 @@ func TestNewChunkWithAllocCapacity(t *testing.T) {
 	fieldTypes = append(fieldTypes, types.NewFieldType(mysql.TypeVarchar))
 	fieldTypes = append(fieldTypes, types.NewFieldType(mysql.TypeDatetime))
 	fieldTypes = append(fieldTypes, types.NewFieldType(mysql.TypeDuration))
-	fmt.Println(runtime.Version())
 	initCap := 10
 	chk := NewChunkWithAllocCapacity(fieldTypes, initCap, alloc)
 	timeObj := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 0)
 	durationObj := types.Duration{Duration: math.MaxInt64, Fsp: 0}
-	flo := 123.123
-	var1 := "123"
 
 	for i := 0; i < initCap; i++ {
-		chk.AppendFloat64(0, flo)
-		chk.AppendString(1, var1)
+		chk.AppendFloat64(0, 123.123)
+		chk.AppendString(1, "123")
 		chk.AppendTime(2, timeObj)
 		chk.AppendDuration(3, durationObj)
 	}

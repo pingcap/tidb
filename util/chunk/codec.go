@@ -174,10 +174,10 @@ const varElemLen = -1
 
 func getFixedLen(colType *types.FieldType) int {
 	switch colType.GetType() {
-	case mysql.TypeFloat:
-		return 4
+	// case mysql.TypeFloat:
+	// 	return 4
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong,
-		mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeYear, mysql.TypeDuration:
+		mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeYear, mysql.TypeDuration, mysql.TypeFloat:
 		return 8
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		return sizeTime
