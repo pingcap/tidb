@@ -471,6 +471,10 @@ func (ds *DataSource) generateAndPruneIndexMergePath(indexMergeConds []expressio
 	if err != nil {
 		return err
 	}
+	indexMergeAndPath := ds.generateIndexMergeAndPaths(regularPathCount)
+	if indexMergeAndPath != nil {
+		ds.possibleAccessPaths = append(ds.possibleAccessPaths, indexMergeAndPath)
+	}
 	// If without hints, it means that `enableIndexMerge` is true
 	if len(ds.indexMergeHints) == 0 {
 		return nil
@@ -633,6 +637,26 @@ func (ds *DataSource) isInIndexMergeHints(name string) bool {
 	return false
 }
 
+func (ds *DataSource) indexMergeHintsHasSpecifiedIdx() bool {
+	for _, hint := range ds.indexMergeHints {
+		if len(hint.indexHint.IndexNames) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func (ds *DataSource) isSpecifiedInIndexMergeHints(name string) bool {
+	for _, hint := range ds.indexMergeHints {
+		for _, hintName := range hint.indexHint.IndexNames {
+			if strings.EqualFold(strings.ToLower(name), strings.ToLower(hintName.String())) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // accessPathsForConds generates all possible index paths for conditions.
 func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, usedIndexCount int) []*util.AccessPath {
 	var results = make([]*util.AccessPath, 0, usedIndexCount)
@@ -750,6 +774,114 @@ func (ds *DataSource) buildIndexMergeOrPath(filters []expression.Expression, par
 	}
 	if addCurrentFilter {
 		indexMergePath.TableFilters = append(indexMergePath.TableFilters, filters[current])
+	}
+	return indexMergePath
+}
+
+func (ds *DataSource) generateIndexMergeAndPaths(normalPathCnd int) *util.AccessPath {
+	if !ds.indexMergeHintsHasSpecifiedIdx() {
+		return nil
+	}
+	var partialPaths []*util.AccessPath
+	for i := 0; i < normalPathCnd; i++ {
+		originalPath := ds.possibleAccessPaths[i]
+		if ds.possibleAccessPaths[i].IsTablePath() {
+			if !ds.isSpecifiedInIndexMergeHints("primary") {
+				continue
+			}
+			var unsignedIntHandle bool
+			if originalPath.IsIntHandlePath && ds.tableInfo.PKIsHandle {
+				if pkColInfo := ds.tableInfo.GetPkColInfo(); pkColInfo != nil {
+					unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
+				}
+			}
+			// If the path contains a full range, ignore it.
+			if ranger.HasFullRange(originalPath.Ranges, unsignedIntHandle) {
+				continue
+			}
+		} else {
+			if !ds.isSpecifiedInIndexMergeHints(originalPath.Index.Name.L) {
+				continue
+			}
+			// If the path contains a full range, ignore it.
+			if ranger.HasFullRange(originalPath.Ranges, false) {
+				continue
+			}
+		}
+		newPath := originalPath.Clone()
+		partialPaths = append(partialPaths, newPath)
+	}
+	if len(partialPaths) < 2 {
+		return nil
+	}
+
+	// Iterate all access conditions and filter conditions in all partial paths,
+	// if it can't be in the partial paths, remove it from the partial path and place it in the finalFilters,
+	// otherwise, record it in the partialConds and record its hash code in the hashCodeSet.
+	finalFilters := make([]expression.Expression, 0)
+	hashCodeSet := make(map[string]struct{})
+	partialConds := make([]expression.Expression, 0, len(partialPaths))
+	for _, path := range partialPaths {
+		// handle AccessConds
+		partialConds = append(partialConds, path.AccessConds...)
+		for _, cond := range path.AccessConds {
+			// For access condition, just record it.
+			hashCode := string(cond.HashCode(ds.ctx.GetSessionVars().StmtCtx))
+			hashCodeSet[hashCode] = struct{}{}
+		}
+		// handle IndexFilters
+		for i, cond := range path.IndexFilters {
+			// For index filter, record it if it can be pushed down to TiKV, otherwise, move it into finalFilters.
+			if !expression.CanExprsPushDown(ds.ctx.GetSessionVars().StmtCtx, []expression.Expression{cond}, ds.ctx.GetClient(), kv.TiKV) {
+				path.IndexFilters = append(path.IndexFilters[:i], path.IndexFilters[i+1:]...)
+				finalFilters = append(finalFilters, cond)
+			} else {
+				partialConds = append(partialConds, cond)
+				hashCode := string(cond.HashCode(ds.ctx.GetSessionVars().StmtCtx))
+				hashCodeSet[hashCode] = struct{}{}
+			}
+		}
+		// handle TableFilters
+		if !path.IsTablePath() {
+			// For table filter in an index path, just move it into finalFilters.
+			finalFilters = append(finalFilters, path.TableFilters...)
+		} else {
+			for i, cond := range path.TableFilters {
+				// For table filter in a table path, record it if it can be pushed down to TiKV, otherwise, move it into finalFilters.
+				if !expression.CanExprsPushDown(ds.ctx.GetSessionVars().StmtCtx, []expression.Expression{cond}, ds.ctx.GetClient(), kv.TiKV) {
+					path.TableFilters = append(path.TableFilters[:i], path.TableFilters[i+1:]...)
+					finalFilters = append(finalFilters, cond)
+				} else {
+					partialConds = append(partialConds, cond)
+					hashCode := string(cond.HashCode(ds.ctx.GetSessionVars().StmtCtx))
+					hashCodeSet[hashCode] = struct{}{}
+				}
+			}
+		}
+	}
+
+	// deduplicate the finalFilters
+	// expressions already appeared in the partialConds are also removed
+	dedupedFinalFilters := make([]expression.Expression, 0, len(finalFilters))
+	for _, cond := range finalFilters {
+		hashCode := string(cond.HashCode(ds.ctx.GetSessionVars().StmtCtx))
+		if _, ok := hashCodeSet[hashCode]; !ok {
+			dedupedFinalFilters = append(dedupedFinalFilters, cond)
+			hashCodeSet[hashCode] = struct{}{}
+		}
+	}
+
+	sel, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, partialConds, nil)
+	if err != nil {
+		logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
+		sel = SelectionFactor
+	}
+
+	indexMergePath := &util.AccessPath{
+		PartialIndexPaths:        partialPaths,
+		IndexMergeIsIntersection: true,
+		TableFilters:             dedupedFinalFilters,
+		CountAfterAccess:         sel * ds.tableStats.RowCount,
 	}
 	return indexMergePath
 }
