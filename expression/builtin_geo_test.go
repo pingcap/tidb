@@ -16,6 +16,7 @@ package expression
 
 import (
 	"encoding/hex"
+	"fmt"
 	"testing"
 
 	"github.com/pingcap/errors"
@@ -85,6 +86,45 @@ func TestStAsTextFunc(t *testing.T) {
 				require.Equal(t, types.KindNull, d.Kind())
 			} else {
 				require.Equal(t, c.res, d.GetString())
+			}
+		}
+	}
+}
+
+func TestStDistanceFunc(t *testing.T) {
+	ctx := createContext(t)
+	cases := []struct {
+		arg    []interface{}
+		isNil  bool
+		getErr bool
+		res    float64
+	}{
+		{[]interface{}{
+			"\x00\x00\x00\x00\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+			"\x00\x00\x00\x00\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"}, false, false, 0},
+		{[]interface{}{
+			"\x00\x00\x00\x00\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+			"\x00\x00\x00\x00\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\xf0\x3f\x00\x00\x00\x00\x00\x00\x00\x00"}, false, false, 1},
+		{[]interface{}{
+			"\x00\x00\x00\x00\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+			"\x00\x00\x00\x00\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xf0\x3f"}, false, false, 1},
+		{[]interface{}{
+			"\x00\x00\x00\x00\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+			"\x00\x00\x00\x00\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\xf0\x3f\x00\x00\x00\x00\x00\x00\xf0\x3f"}, false, false, 1.4142135623730951},
+		{[]interface{}{errors.New("must error"), 0}, false, true, 0},
+	}
+	for _, c := range cases {
+		f, err := newFunctionForTest(ctx, ast.StDistance, primitiveValsToConstants(ctx, c.arg)...)
+		require.NoError(t, err)
+		d, err := f.Eval(chunk.Row{})
+		if c.getErr {
+			require.Error(t, err)
+		} else {
+			require.NoError(t, err)
+			if c.isNil {
+				require.Equal(t, types.KindNull, d.Kind())
+			} else {
+				require.Equal(t, c.res, d.GetFloat64(), fmt.Sprintf("ST_Distance(0x%x, 0x%x)", c.arg[0], c.arg[1]))
 			}
 		}
 	}
