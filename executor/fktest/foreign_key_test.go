@@ -1230,6 +1230,20 @@ func TestForeignKeyOnDeleteCascade2(t *testing.T) {
 	tk.MustExec("delete from t1 where id = 1")
 	tk.MustExec("commit")
 	tk.MustQuery("select * from t1").Check(testkit.Rows())
+
+	// Test handle many foreign key value in one cascade.
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (id int auto_increment key, b int);")
+	tk.MustExec("create table t2 (id int, b int, foreign key fk(id) references t1(id) on delete cascade)")
+	tk.MustExec("insert into t1 (b) values (1),(1),(1),(1),(1),(1),(1),(1);")
+	for i := 0; i < 12; i++ {
+		tk.MustExec("insert into t1 (b) select b from t1")
+	}
+	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("32768"))
+	tk.MustExec("insert into t2 select * from t1")
+	tk.MustExec("delete from t1")
+	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("0"))
+	tk.MustQuery("select count(*) from t2").Check(testkit.Rows("0"))
 }
 
 func TestForeignKeyOnDeleteCascadeSQL(t *testing.T) {
@@ -1240,7 +1254,10 @@ func TestForeignKeyOnDeleteCascadeSQL(t *testing.T) {
 		{types.NewDatum(1), types.NewDatum("a")},
 		{types.NewDatum(2), types.NewDatum("b")},
 	}
-	sql, err := executor.GenCascadeDeleteSQL(model.NewCIStr("test"), model.NewCIStr("t"), fk, fkValues)
+	sql, err := executor.GenCascadeDeleteSQL(model.NewCIStr("test"), model.NewCIStr("t"), model.NewCIStr(""), fk, fkValues)
 	require.NoError(t, err)
 	require.Equal(t, "DELETE FROM `test`.`t` WHERE (`c0`, `c1`) IN ((1,'a'), (2,'b'))", sql)
+	sql, err = executor.GenCascadeDeleteSQL(model.NewCIStr("test"), model.NewCIStr("t"), model.NewCIStr("idx"), fk, fkValues)
+	require.NoError(t, err)
+	require.Equal(t, "DELETE FROM `test`.`t` USE INDEX(`idx`) WHERE (`c0`, `c1`) IN ((1,'a'), (2,'b'))", sql)
 }
