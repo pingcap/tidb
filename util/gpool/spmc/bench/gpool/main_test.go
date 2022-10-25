@@ -43,15 +43,11 @@ func BenchmarkGPool(b *testing.B) {
 			close(sema)
 		})
 		producerFunc := func() (struct{}, error) {
-			for {
-				select {
-				case _, ok := <-sema:
-					if ok {
-						return struct{}{}, nil
-					}
-					return struct{}{}, errors.New("not job")
-				}
+			_, ok := <-sema
+			if ok {
+				return struct{}{}, nil
 			}
+			return struct{}{}, errors.New("not job")
 		}
 		resultCh, ctl := p.AddProducer(producerFunc, RunTimes, spmc.NilContext{}, spmc.WithConcurrency(6))
 		exitCh := make(chan struct{})
