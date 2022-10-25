@@ -284,10 +284,8 @@ func (d *ddl) runBackfillJobs(sess *session, bJob *model.BackfillJob, jobCtx *Jo
 		return
 	}
 
-	// TODO:
-	// workerCnt := int(variable.GetDDLReorgWorkerCounter())
-	workerCnt := 6
-	batch := workerCnt
+	workerCnt := int(variable.GetDDLReorgWorkerCounter())
+	batch := int(variable.GetDDLReorgBatchSize())
 	pool := spmc.NewSPMCPool[*reorgBackfillTask, *backfillResult, []*backfillWorker](int32(workerCnt))
 	bws, err := d.backfillWorkerPool.batchGet(workerCnt)
 	if err != nil || len(bws) == 0 {
@@ -713,7 +711,7 @@ func getBackfillJobsForOneEle(sess *session, batch int, isInclude bool, jobIDs [
 		symbol = "!="
 	}
 	for _, id := range jobIDs {
-		jobInfo += fmt.Sprintf("and job_id %s %d", symbol, id)
+		jobInfo += fmt.Sprintf(" and job_id %s %d", symbol, id)
 	}
 
 	jobs, err := getBackfillJobs(sess, BackfillTable, fmt.Sprintf("exec_ID = '' or exec_lease < '%v' %s order by job_id limit %d", currTime.Add(-lease), jobInfo, batch), "get_backfill_job")

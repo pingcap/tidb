@@ -49,7 +49,8 @@ import (
 )
 
 const (
-	instanceLease = 60 // s
+	instanceLease       = 60 // s
+	updateInstanceLease = 40 // s
 	// TODO: control the behavior
 	enableDistReorg  = true
 	emptyInstance    = "null"
@@ -342,7 +343,7 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 		}
 
 		// TODO: Adjust the updating lease frequency by batch processing time carefully.
-		if time.Since(batchStartTime) < instanceLease*time.Second/2 {
+		if time.Since(batchStartTime) < updateInstanceLease*time.Second {
 			continue
 		}
 		batchStartTime = time.Now()
