@@ -1918,6 +1918,111 @@ func tidyFiles(files []*backuppb.DataFileInfo) map[int64]*FilesInTable {
 	return tableMapFiles
 }
 
+func applyKVFilesWithBatchMethod(
+	files []*backuppb.DataFileInfo,
+	batchCount int,
+	batchSize uint64,
+	applyFunc func(file []*backuppb.DataFileInfo, size uint64),
+) {
+	var (
+		tableMapFiles        = make(map[int64]*FilesInTable)
+		tmpFiles             = make([]*backuppb.DataFileInfo, 0, batchCount)
+		tmpFilesSize  uint64 = 0
+	)
+
+	for i, f := range files {
+		if f.GetType() == backuppb.FileType_Put && f.GetLength() >= batchSize {
+			applyFunc(files[i:i+1], f.Length)
+			continue
+		}
+
+		fit, exist := tableMapFiles[f.TableId]
+		if !exist {
+			fit = &FilesInTable{
+				regionMapFiles: make(map[int64]*FilesInRegion),
+			}
+			tableMapFiles[f.TableId] = fit
+		}
+
+		fs, exist := fit.regionMapFiles[f.RegionId]
+		if !exist {
+			fs = &FilesInRegion{}
+			fit.regionMapFiles[f.RegionId] = fs
+		}
+
+		if f.GetType() == backuppb.FileType_Delete {
+			if fs.defaultFiles == nil {
+				fs.deleteFiles = make([]*backuppb.DataFileInfo, 0)
+			}
+			fs.deleteFiles = append(fs.deleteFiles, f)
+		} else {
+			if f.GetCf() == stream.DefaultCF {
+				if fs.defaultFiles == nil {
+					fs.defaultFiles = make([]*backuppb.DataFileInfo, 0, batchCount)
+				}
+				fs.defaultFiles = append(fs.defaultFiles, f)
+				fs.defaultSize += f.Length
+				if len(fs.defaultFiles) >= batchCount || fs.defaultSize >= batchSize {
+					applyFunc(fs.defaultFiles, fs.defaultSize)
+					fs.defaultFiles = nil
+					fs.defaultSize = 0
+				}
+			} else {
+				if fs.writeFiles == nil {
+					fs.writeFiles = make([]*backuppb.DataFileInfo, 0, batchCount)
+				}
+				fs.writeFiles = append(fs.writeFiles, f)
+				fs.writeSize += f.Length
+				if len(fs.writeFiles) >= batchCount || fs.writeSize > batchSize {
+					applyFunc(fs.writeFiles, fs.writeSize)
+					fs.writeFiles = make([]*backuppb.DataFileInfo, 0, batchCount)
+					fs.writeSize = 0
+				}
+			}
+		}
+	}
+
+	for _, fwt := range tableMapFiles {
+		for _, fs := range fwt.regionMapFiles {
+			applyFunc(fs.defaultFiles, fs.defaultSize)
+			applyFunc(fs.writeFiles, fs.writeSize)
+
+			for _, d := range fs.defaultFiles {
+				tmpFiles = append(tmpFiles, d)
+				tmpFilesSize += d.GetLength()
+				if len(tmpFiles) >= batchCount || tmpFilesSize >= batchSize {
+					applyFunc(tmpFiles, tmpFilesSize)
+					tmpFiles = make([]*backuppb.DataFileInfo, 0, batchCount)
+					tmpFilesSize = 0
+				}
+			}
+		}
+	}
+}
+
+func applyKVFilesWithSingelMethod(
+	files []*backuppb.DataFileInfo,
+	applyFunc func(file []*backuppb.DataFileInfo, size uint64),
+) {
+	deleteKVFiles := make([]*backuppb.DataFileInfo, 0)
+
+	for _, file := range files {
+		f := file
+		if f.GetType() == backuppb.FileType_Delete {
+			deleteKVFiles = append(deleteKVFiles, f)
+			continue
+		}
+		applyFunc([]*backuppb.DataFileInfo{f}, f.GetLength())
+	}
+
+	log.Info("restore delete files", zap.Int("count", len(deleteKVFiles)))
+
+	for _, file := range deleteKVFiles {
+		f := file
+		applyFunc([]*backuppb.DataFileInfo{f}, f.GetLength())
+	}
+}
+
 func (rc *Client) RestoreKVFiles(
 	ctx context.Context,
 	rules map[int64]*RewriteRules,
@@ -1977,65 +2082,7 @@ func (rc *Client) RestoreKVFiles(
 		}
 	}
 
-	applyBatchFunc := func(tidyFiles map[int64]*FilesInTable) {
-		for tableID, fwt := range tidyFiles {
-			log.Info("restore kv files", zap.Int64("table-id", tableID), zap.Int("region-count", len(fwt.regionMapFiles)))
-			for _, fs := range fwt.regionMapFiles {
-				applyFunc(fs.defaultFiles, fs.defaultSize)
-				applyFunc(fs.writeFiles, fs.writeSize)
-			}
-		}
-	}
-
-	tableMapFiles := make(map[int64]*FilesInTable)
-	for i, f := range files {
-		if f.GetType() == backuppb.FileType_Put && f.GetLength() > 8*1024*1024 {
-			applyFunc(files[i:i+1], f.Length)
-			continue
-		}
-
-		fit, exist := tableMapFiles[f.TableId]
-		if !exist {
-			fit = &FilesInTable{
-				regionMapFiles: make(map[int64]*FilesInRegion),
-			}
-			tableMapFiles[f.TableId] = fit
-		}
-
-		fs, exist := fit.regionMapFiles[f.RegionId]
-		if !exist {
-			fs = &FilesInRegion{
-				defaultFiles: make([]*backuppb.DataFileInfo, 0),
-				writeFiles:   make([]*backuppb.DataFileInfo, 0),
-				deleteFiles:  make([]*backuppb.DataFileInfo, 0),
-			}
-			fit.regionMapFiles[f.RegionId] = fs
-		}
-
-		if f.GetType() == backuppb.FileType_Delete {
-			fs.deleteFiles = append(fs.deleteFiles, f)
-		} else {
-			if f.GetCf() == stream.DefaultCF {
-				fs.defaultFiles = append(fs.defaultFiles, f)
-				fs.defaultSize += f.Length
-				if len(fs.defaultFiles) > 4 || fs.defaultSize > 8*1024*1024 {
-					applyFunc(fs.defaultFiles, fs.defaultSize)
-					fs.defaultFiles = make([]*backuppb.DataFileInfo, 0)
-					fs.defaultSize = 0
-				}
-			} else {
-				fs.writeFiles = append(fs.writeFiles, f)
-				fs.writeSize += f.Length
-				if len(fs.writeFiles) > 4 || fs.writeSize > 8*1024*1024 {
-					applyFunc(fs.writeFiles, fs.writeSize)
-					fs.writeFiles = make([]*backuppb.DataFileInfo, 0)
-					fs.writeSize = 0
-				}
-			}
-		}
-	}
-
-	applyBatchFunc(tableMapFiles)
+	applyKVFilesWithBatchMethod(files, 8, 7*1024*1024, applyFunc)
 
 	log.Info("total skip files due to table id not matched", zap.Int("count", skipFile))
 	if skipFile > 0 {
