@@ -53,7 +53,7 @@ func BenchmarkGPool(b *testing.B) {
 				}
 			}
 		}
-		resultCh, ctl := p.AddProducer(producerFunc, RunTimes, spmc.WithConcurrency(6))
+		resultCh, ctl := p.AddProducer(producerFunc, RunTimes, spmc.NilContext{}, spmc.WithConcurrency(6))
 		exitCh := make(chan struct{})
 		wg.Run(func() {
 			for {

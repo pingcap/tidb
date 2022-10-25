@@ -45,6 +45,7 @@ type Pool[T any, U any, C any, CT any, TF pooltask.Context[CT]] struct {
 	options       *Options
 	stopCh        chan struct{}
 	consumerFunc  func(T, C, CT) U
+	taskManager   TaskManager[T, U, C, CT, TF]
 	capacity      atomic.Int32
 	running       atomic.Int32
 	state         atomic.Int32
@@ -61,11 +62,12 @@ func NewSPMCPool[T any, U any, C any, CT any, TF pooltask.Context[CT]](name stri
 		opts.ExpiryDuration = gpool.DefaultCleanIntervalTime
 	}
 	result := &Pool[T, U, C, CT, TF]{
-		BasePool: gpool.NewBasePool(),
-		taskCh:   make(chan *pooltask.TaskBox[T, U, C, CT, TF], 128),
-		stopCh:   make(chan struct{}),
-		lock:     gpool.NewSpinLock(),
-		options:  opts,
+		BasePool:    gpool.NewBasePool(),
+		taskCh:      make(chan *pooltask.TaskBox[T, U, C, CT, TF], 128),
+		stopCh:      make(chan struct{}),
+		lock:        gpool.NewSpinLock(),
+		taskManager: NewTaskManager[T, U, C, CT, TF](int(size)),
+		options:     opts,
 	}
 	result.SetName(name)
 	result.state.Store(int32(gpool.OPENED))

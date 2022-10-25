@@ -28,15 +28,13 @@ func getShardID(id uint64) uint64 {
 }
 
 type TContainer[T any, U any, C any, CT any, TF Context[CT]] struct {
-	_    cpu.CacheLinePad
 	task *taskBox[T, U, C, CT, TF]
 	_    cpu.CacheLinePad
 }
 
 type TaskStatusContainer[T any, U any, C any, CT any, TF Context[CT]] struct {
-	_      cpu.CacheLinePad
-	rw     sync.RWMutex
 	Status map[uint64]*list.List
+	rw     sync.RWMutex
 	_      cpu.CacheLinePad
 }
 

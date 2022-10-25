@@ -26,12 +26,12 @@ const (
 )
 
 type taskBox[T any, U any, C any, CT any, TF Context[CT]] struct {
-	taskID      uint64
 	constArgs   C
+	contextFunc TF
 	wg          *sync.WaitGroup
 	task        chan T
 	resultCh    chan U
-	contextFunc TF
+	taskID      uint64
 	status      atomic.Int32 // task manager is able to make this task stop, wait or running
 }
 
@@ -56,9 +56,9 @@ func (NilContext) GetContext() any {
 // TaskController is a controller that can control or watch the pool.
 type TaskController[T any, U any, C any, CT any, TF Context[CT]] struct {
 	pool   *Pool[T, U, C, CT, TF]
-	taskID uint64
 	close  chan struct{}
 	wg     *sync.WaitGroup
+	taskID uint64
 }
 
 // NewTaskController create a controller to deal with task's statue.

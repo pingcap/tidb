@@ -67,7 +67,7 @@ func NewTaskBox[T any, U any, C any, CT any, TF Context[CT]](constArgs C, contex
 }
 
 // TaskID is to get the task id.
-func (t TaskBox[T, U, C, CT, TF]) TaskID() uint64 {
+func (t *TaskBox[T, U, C, CT, TF]) TaskID() uint64 {
 	return t.taskID
 }
 
