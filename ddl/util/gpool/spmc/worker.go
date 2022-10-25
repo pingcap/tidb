@@ -24,12 +24,12 @@ import (
 // goWorker is the actual executor who runs the tasks,
 // it starts a goroutine that accepts tasks and
 // performs function calls.
-type goWorker[T any, U any, C any] struct {
+type goWorker[T any, U any, C any, CT any, TF Context[CT]] struct {
 	// pool who owns this worker.
-	pool *Pool[T, U, C]
+	pool *Pool[T, U, C, CT, TF]
 
 	// task is a job should be done.
-	task chan *taskBox[T, U, C]
+	task chan *taskBox[T, U, C, CT, TF]
 
 	exit chan struct{}
 
@@ -39,9 +39,10 @@ type goWorker[T any, U any, C any] struct {
 
 // run starts a goroutine to repeat the process
 // that performs the function calls.
-func (w *goWorker[T, U, C]) run() {
+func (w *goWorker[T, U, C, CT, TF]) run() {
 	w.pool.addRunning(1)
 	go func() {
+		//log.Info("worker start")
 		defer func() {
 			w.pool.addRunning(-1)
 			w.pool.workerCache.Put(w)
@@ -60,13 +61,29 @@ func (w *goWorker[T, U, C]) run() {
 			if f == nil {
 				return
 			}
+			switch f.status.Load() {
+			case PendingTask:
+				f.status.Store(RuningTask)
+			case StopTask:
+				continue
+			case RuningTask:
+				log.Error("worker got task running")
+				continue
+			}
+			ctx := f.contextFunc.GetContext()
 			if f.resultCh != nil {
 				for t := range f.task {
-					f.resultCh <- w.pool.consumerFunc(t, *f.constArgs)
+					f.resultCh <- w.pool.consumerFunc(t, f.constArgs, ctx)
 					f.wg.Done()
+					if f.status.Load() == PendingTask {
+						w.task <- f
+						break
+					}
 				}
+				f.status.Store(StopTask)
 			}
 			if ok := w.pool.revertWorker(w); !ok {
+				//log.Info("exit here")
 				return
 			}
 		}

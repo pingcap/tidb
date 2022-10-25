@@ -304,7 +304,7 @@ func (d *ddl) runBackfillJobs(sess *session, bJob *model.BackfillJob, jobCtx *Jo
 		bws[i].backfiller = bf
 	}
 	var workersL sync.RWMutex
-	pool.SetConsumerFunc(func(task *reorgBackfillTask, bfWorkers []*backfillWorker) *backfillResult {
+	pool.SetConsumerFunc(func(task *reorgBackfillTask, bfWorkers []*backfillWorker, nil) *backfillResult {
 		// To prevent different workers from using the same session.
 		// TODO: backfillWorkerPool is global, and bfWorkers is used in this function, we'd better do something make worker and job's ID can be matched.
 		defer injectSpan(traceID, fmt.Sprintf("run-task-id-%d", task.bfJob.ID))()
@@ -340,7 +340,7 @@ func (d *ddl) runBackfillJobs(sess *session, bJob *model.BackfillJob, jobCtx *Jo
 		num++
 		// TODO: if err is write conflict, we need retry
 		// TODO: workerCnt -> batch
-		bJobs, err := getAndMarkBackfillJobsForOneEle(sess, workerCnt, true, runningJobIDs, d.uuid, instanceLease*time.Second)
+		bJobs, err := getAndMarkBackfillJobsForOneEle(sess, workerCnt*2, true, runningJobIDs, d.uuid, instanceLease*time.Second)
 		if err != nil {
 			// TODO: test: if all tidbs can't get the unmark backfill job(a tidb mark a backfill job, other tidbs returned, then the tidb can't handle this job.)
 			if dbterror.ErrDDLJobNotFound.Equal(err) {
@@ -357,7 +357,7 @@ func (d *ddl) runBackfillJobs(sess *session, bJob *model.BackfillJob, jobCtx *Jo
 		return tasks, nil
 	}
 	// add new task
-	resultCh, control := pool.AddProducer(proFunc, bws, workerCnt)
+	resultCh, control := pool.AddProduceBySlice(proFunc, bws, spmc.WithConcurrency(workerCnt))
 
 WaitResultLoop:
 	for {
@@ -374,11 +374,14 @@ WaitResultLoop:
 			}
 		}
 	}
-	logutil.BgLogger().Info("close loop *****************************  00")
+	details := collectTrace(traceID)
+	logutil.BgLogger().Info("[ddl] &&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&--------------------------  finish backfill jobs",
+		zap.Int64("job ID", bJob.JobID), zap.String("time details", details))
+
 	// Waiting task finishing
 	control.Wait()
 
-	logutil.BgLogger().Info("close loop *****************************  11")
+	logutil.BgLogger().Info("handle backfill task, close loop *****************************  11")
 	// close pool
 	pool.ReleaseAndWait()
 	for _, s := range sessions {
@@ -387,8 +390,6 @@ WaitResultLoop:
 	for _, w := range bws {
 		d.backfillWorkerPool.put(w)
 	}
-	details := collectTrace(traceID)
-	logutil.BgLogger().Info("[ddl] &&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&--------------------------  finish backfill jobs", zap.String("time details", details))
 }
 
 func (d *ddl) startDispatchLoop() {
