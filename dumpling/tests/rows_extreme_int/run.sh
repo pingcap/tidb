@@ -33,6 +33,8 @@ run_sql "analyze table $DB_NAME.$TABLE_NAME;"
 run_sql "analyze table $DB_NAME.$TABLE_NAME2;"
 
 # dumping
+# test print status
+export GO_FAILPOINTS="github.com/pingcap/tidb/dumpling/export/EnableLogProgress=return()"
 export DUMPLING_TEST_DATABASE=$DB_NAME
 run_dumpling --rows 10 --loglevel debug
 

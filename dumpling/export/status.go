@@ -18,11 +18,10 @@ const logProgressTick = 2 * time.Minute
 
 func (d *Dumper) runLogProgress(tctx *tcontext.Context) {
 	logProgressTicker := time.NewTicker(logProgressTick)
-	failpoint.Inject("EnableLogProgress", func(v failpoint.Value) {
-		if tick, ok := v.(int); ok {
-			logProgressTicker.Stop()
-			logProgressTicker = time.NewTicker(time.Duration(tick) * time.Second)
-		}
+	failpoint.Inject("EnableLogProgress", func() {
+		logProgressTicker.Stop()
+		logProgressTicker = time.NewTicker(time.Duration(1) * time.Second)
+		tctx.L().Debug("EnableLogProgress")
 	})
 	lastCheckpoint := time.Now()
 	lastBytes := float64(0)
@@ -70,14 +69,14 @@ func (d *Dumper) GetStatus() *DumpStatus {
 	ret.FinishedBytes = ReadGauge(d.metrics.finishedSizeGauge)
 	ret.FinishedRows = ReadGauge(d.metrics.finishedRowsGauge)
 	ret.EstimateTotalRows = ReadCounter(d.metrics.estimateTotalRowsCounter)
-	ret.CurrentSpeedBPS = fmt.Sprintf("%d MiB/s", d.speedRecorder.GetSpeed(int64(ret.FinishedBytes))/1024)
+	ret.CurrentSpeedBPS = fmt.Sprintf("%5.2f MiB/s", d.speedRecorder.GetSpeed(ret.FinishedBytes/1024/1024))
 	if d.metrics.progressReady.Load() {
 		progress := float64(d.metrics.completedChunks.Load()) / float64(d.metrics.totalChunks.Load())
 		if progress > 1 {
-			ret.progress = "100%"
+			ret.progress = "100 %"
 			d.L().Warn("completedChunks is greater than totalChunks", zap.Int64("completedChunks", d.metrics.completedChunks.Load()), zap.Int64("totalChunks", d.metrics.totalChunks.Load()))
 		} else {
-			ret.progress = fmt.Sprintf("%5.2f%%", progress)
+			ret.progress = fmt.Sprintf("%5.2f %%", progress*100)
 		}
 	}
 	return ret
@@ -98,9 +97,9 @@ func calculateTableCount(m DatabaseTables) int {
 // SpeedRecorder record the finished bytes and calculate its speed.
 type SpeedRecorder struct {
 	mu             sync.Mutex
-	lastFinished   int64
+	lastFinished   float64
 	lastUpdateTime time.Time
-	speedBPS       int64
+	speedBPS       float64
 }
 
 // NewSpeedRecorder new a SpeedRecorder.
@@ -111,7 +110,7 @@ func NewSpeedRecorder() *SpeedRecorder {
 }
 
 // GetSpeed calculate status speed.
-func (s *SpeedRecorder) GetSpeed(finished int64) int64 {
+func (s *SpeedRecorder) GetSpeed(finished float64) float64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -122,9 +121,10 @@ func (s *SpeedRecorder) GetSpeed(finished int64) int64 {
 	}
 
 	now := time.Now()
-	elapsed := int64(now.Sub(s.lastUpdateTime).Seconds())
+	elapsed := now.Sub(s.lastUpdateTime).Seconds()
 	if elapsed == 0 {
-		elapsed = 1
+		// if time is short, return last speed
+		return s.speedBPS
 	}
 	currentSpeed := (finished - s.lastFinished) / elapsed
 	if currentSpeed == 0 {

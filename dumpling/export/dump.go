@@ -330,6 +330,10 @@ func (d *Dumper) startWriters(tctx *tcontext.Context, wg *errgroup.Group, taskCh
 				// tctx.L().Debug("finished dumping table data",
 				//	zap.String("database", td.Meta.DatabaseName()),
 				//	zap.String("table", td.Meta.TableName()))
+				failpoint.Inject("EnableLogProgress", func() {
+					time.Sleep(1 * time.Second)
+					tctx.L().Debug("EnableLogProgress, sleep 1s")
+				})
 			}
 		})
 		writer.setFinishTaskCallBack(func(task Task) {
@@ -453,7 +457,10 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *BaseConn, taskC
 		}
 	}
 	d.metrics.progressReady.Store(true)
-
+	failpoint.Inject("EnableLogProgress", func() {
+		time.Sleep(1 * time.Second)
+		tctx.L().Debug("EnableLogProgress, sleep 1s")
+	})
 	return nil
 }
 

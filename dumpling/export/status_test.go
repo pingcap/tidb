@@ -35,8 +35,8 @@ func TestGetParameters(t *testing.T) {
 func TestSpeedRecorder(t *testing.T) {
 	testCases := []struct {
 		spentTime int64
-		finished  int64
-		expected  int64
+		finished  float64
+		expected  float64
 	}{
 		{spentTime: 1, finished: 100, expected: 100},
 		{spentTime: 2, finished: 200, expected: 50},
@@ -47,6 +47,8 @@ func TestSpeedRecorder(t *testing.T) {
 	for _, tc := range testCases {
 		time.Sleep(time.Duration(tc.spentTime) * time.Second)
 		recentSpeed := speedRecorder.GetSpeed(tc.finished)
-		require.Equal(t, tc.expected, recentSpeed)
+		if tc.expected-recentSpeed > 0.1 {
+			require.FailNow(t, "speed unexpected")
+		}
 	}
 }
