@@ -588,15 +588,25 @@ func (fkc *FKCascadeExec) buildExecutor(ctx context.Context) (Executor, error) {
 	return e, fkc.b.err
 }
 
+var maxHandleFKValueInOneCascade = 128
+
 func (fkc *FKCascadeExec) buildFKCascadePlan(ctx context.Context) (plannercore.Plan, error) {
 	if len(fkc.fkValues) == 0 {
 		return nil, nil
+	}
+	var fkValues [][]types.Datum
+	if len(fkc.fkValues) <= maxHandleFKValueInOneCascade {
+		fkValues = fkc.fkValues
+		fkc.fkValues = nil
+	} else {
+		fkValues = fkc.fkValues[:maxHandleFKValueInOneCascade]
+		fkc.fkValues = fkc.fkValues[maxHandleFKValueInOneCascade:]
 	}
 	var sqlStr string
 	var err error
 	switch fkc.tp {
 	case plannercore.FKCascadeOnDelete:
-		sqlStr, err = GenCascadeDeleteSQL(fkc.referredFK.ChildSchema, fkc.childTable.Name, fkc.fk, fkc.fkValues)
+		sqlStr, err = GenCascadeDeleteSQL(fkc.referredFK.ChildSchema, fkc.childTable.Name, fkc.fk, fkValues)
 	}
 	if err != nil {
 		return nil, err
@@ -628,7 +638,7 @@ func (fkc *FKCascadeExec) buildFKCascadePlan(ctx context.Context) (plannercore.P
 
 // GenCascadeDeleteSQL uses to generate cascade delete SQL, export for test.
 func GenCascadeDeleteSQL(schema, table model.CIStr, fk *model.FKInfo, fkValues [][]types.Datum) (string, error) {
-	buf := bytes.NewBuffer(nil)
+	buf := bytes.NewBuffer(make([]byte, 0, 32+4*len(fkValues)))
 	buf.WriteString("DELETE FROM `")
 	buf.WriteString(schema.L)
 	buf.WriteString("`.`")
@@ -640,7 +650,6 @@ func GenCascadeDeleteSQL(schema, table model.CIStr, fk *model.FKInfo, fkValues [
 		}
 		buf.WriteString("`" + col.L + "`")
 	}
-	// TODO(crazycs520): control the size of IN expression.
 	buf.WriteString(") IN (")
 	for i, vs := range fkValues {
 		if i > 0 {
