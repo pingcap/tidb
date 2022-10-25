@@ -1569,4 +1569,18 @@ func TestForeignKeyOnDeleteSetNull2(t *testing.T) {
 	tk.MustExec("insert into t1 values (1, 'boss', null, 0, 0), (2, 'a', 1, 1, 0), (3, 'b', null, 2, 1), (4, 'c', 2, 3, 2)")
 	tk.MustExec("delete from t1 where id = 1")
 	tk.MustQuery("select * from t1 order by id").Check(testkit.Rows("3 b <nil> 2 <nil>"))
+
+	// Test handle many foreign key value in one cascade.
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (id int auto_increment key, b int);")
+	tk.MustExec("create table t2 (id int, b int, foreign key fk(id) references t1(id) on delete set null)")
+	tk.MustExec("insert into t1 (b) values (1),(1),(1),(1),(1),(1),(1),(1);")
+	for i := 0; i < 12; i++ {
+		tk.MustExec("insert into t1 (b) select b from t1")
+	}
+	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("32768"))
+	tk.MustExec("insert into t2 select * from t1")
+	tk.MustExec("delete from t1")
+	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("0"))
+	tk.MustQuery("select count(*) from t2 where id is null").Check(testkit.Rows("32768"))
 }
