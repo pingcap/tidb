@@ -23,7 +23,7 @@ import (
 var stats atomic.Pointer[globalMstats]
 
 // ReadMemStats read the mem stats from runtime.ReadMemStats
-func ReadMemStats() runtime.MemStats {
+func ReadMemStats() *runtime.MemStats {
 	s := stats.Load()
 	if time.Since(s.ts) < 300*time.Millisecond {
 		return s.m
@@ -32,16 +32,16 @@ func ReadMemStats() runtime.MemStats {
 	g.ts = time.Now()
 	runtime.ReadMemStats(&g.m)
 	stats.Store(&g)
-	return g.m
+	return &g.m
 }
 
 // ForceReadMemStats is to force read memory stats.
-func ForceReadMemStats() runtime.MemStats {
+func ForceReadMemStats() *runtime.MemStats {
 	var g globalMstats
 	g.ts = time.Now()
 	runtime.ReadMemStats(&g.m)
 	stats.Store(&g)
-	return g.m
+	return &g.m
 }
 
 type globalMstats struct {
