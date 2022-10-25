@@ -1614,8 +1614,6 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	vars.TiFlashMaxThreads = DefTiFlashMaxThreads
 	vars.MPPStoreFailTTL = DefTiDBMPPStoreFailTTL
 	vars.DiskTracker = disk.NewTracker(memory.LabelForSession, -1)
-	vars.DiskTracker.IsRootTrackerOfSess = true
-	//logutil.BgLogger().Error("stack", zap.Stack("stack"))
 	vars.MemTracker = memory.NewTracker(memory.LabelForSession, vars.MemQuotaQuery)
 	vars.MemTracker.IsRootTrackerOfSess = true
 

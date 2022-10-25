@@ -1937,6 +1937,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.MemTracker.UnbindActions()
 	vars.MemTracker.SetBytesLimit(vars.MemQuotaQuery)
 	vars.MemTracker.ResetMaxConsumed()
+	vars.DiskTracker.ResetMaxConsumed()
 	vars.MemTracker.SessionID = vars.ConnectionID
 
 	if _, ok := s.(*ast.AnalyzeTableStmt); ok {
