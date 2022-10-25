@@ -157,6 +157,9 @@ func (sp *singlePointAlloc) Rebase(ctx context.Context, newBase int64, allocIDs 
 
 // ForceRebase set the next global auto ID to newBase.
 func (sp *singlePointAlloc) ForceRebase(newBase int64) error {
+	if newBase == -1 {
+		return ErrAutoincReadFailed.GenWithStack("Cannot force rebase the next global ID to '0'")
+	}
 	return sp.Rebase(context.Background(), newBase, false)
 }
 
@@ -178,7 +181,9 @@ func (sp *singlePointAlloc) End() int64 {
 // NextGlobalAutoID returns the next global autoID.
 // Used by 'show create table', 'alter table auto_increment = xxx'
 func (sp *singlePointAlloc) NextGlobalAutoID() (int64, error) {
-	return sp.lastAllocated, nil
+	return sp.lastAllocated + 1, nil
+	// _, max, err := sp.Alloc(context.Background(), 0, 1, 1)
+	// return max + 1, err
 }
 
 func (sp *singlePointAlloc) GetType() AllocatorType {

@@ -8,15 +8,12 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/jamiealquiza/tachymeter"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/autoid"
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"google.golang.org/grpc"
-
-	"github.com/jamiealquiza/tachymeter"
+	// "github.com/jamiealquiza/tachymeter"
 )
 
 var (
@@ -39,28 +36,13 @@ type Service struct {
 	autoIDMap  map[autoIDKey]*autoIDValue
 
 	*leaderShip
-	persist
+	Persist
 }
 
 var t *tachymeter.Tachymeter
 var count int64
 
-func New(selfAddr string, tikvPath string) *Service {
-	cfg := config.GetGlobalConfig()
-	fullPath := fmt.Sprintf("tikv://%s", cfg.Path)
-	store, err := store.New(fullPath)
-	if err != nil {
-		panic(err)
-	}
-	ebd, ok := store.(kv.EtcdBackend)
-	if !ok {
-		return nil
-	}
-	etcdAddr, err := ebd.EtcdAddrs()
-	if err != nil {
-		panic(err)
-	}
-
+func New(selfAddr string, etcdAddr []string, p Persist) *Service {
 	cli, err := clientv3.New(clientv3.Config{
 		Endpoints:   etcdAddr,
 		DialTimeout: time.Second,
@@ -76,25 +58,24 @@ func New(selfAddr string, tikvPath string) *Service {
 
 	fmt.Println("================ autoid service leader started...")
 
-	p := tikvPersist{Storage: store}
-
-	t = tachymeter.New(&tachymeter.Config{Size: 300})
-	go func() {
-		tick := time.NewTicker(5 * time.Second)
-		for range tick.C {
-			total := atomic.LoadInt64(&count)
-			fmt.Println("qps ==", total/5)
-			atomic.StoreInt64(&count, 0)
-
-			fmt.Println(t.Calc())
-			fmt.Println()
-		}
-	}()
+	// p := tikvPersist{Storage: store}
+	// t = tachymeter.New(&tachymeter.Config{Size: 300})
+	//	go func() {
+	//		tick := time.NewTicker(5 * time.Second)
+	//		for range tick.C {
+	//			total := atomic.LoadInt64(&count)
+	//			fmt.Println("qps ==", total/5)
+	//			atomic.StoreInt64(&count, 0)
+	//
+	//			fmt.Println(t.Calc())
+	//			fmt.Println()
+	//		}
+	//	}()
 
 	return &Service{
 		autoIDMap:  make(map[autoIDKey]*autoIDValue),
 		leaderShip: l,
-		persist:    p,
+		Persist:    p,
 	}
 }
 
@@ -119,7 +100,7 @@ func MockForTest(uuid string) *mockClient {
 			Service{
 				autoIDMap:  make(map[autoIDKey]*autoIDValue),
 				leaderShip: &leaderShip{mock: true},
-				persist:    &mockPersist{data: make(map[autoIDKey]uint64)},
+				Persist:    &mockPersist{data: make(map[autoIDKey]uint64)},
 			},
 		}
 		global[uuid] = ret
@@ -219,16 +200,16 @@ func (s *Service) allocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*
 		// // Need to sync the ID first, in case the server panic and lost the ID.
 		s.autoIDLock.Unlock()
 
-		// val.token <- struct{}{}
-		// // fmt.Println("base ==", base, "max ==", max)
+		val.token <- struct{}{}
+		// fmt.Println("base ==", base, "max ==", max)
 
 		// start := time.Now()
-		// err := s.syncID(ctx, req.DbID, req.TblID, uint64(base)+batch, val.max, val.token)
-		// if err != nil {
-		// 	fmt.Println("sync id error", err)
-		// 	return nil, errors.Trace(err)
-		// }
-		// atomic.AddInt64(&count, 1)
+		err := s.SyncID(ctx, req.DbID, req.TblID, uint64(base)+batch, val.max, val.token)
+		if err != nil {
+			fmt.Println("sync id error", err)
+			return nil, errors.Trace(err)
+		}
+		atomic.AddInt64(&count, 1)
 		// t.AddTime(time.Since(start))
 
 		// And then retry
@@ -236,15 +217,15 @@ func (s *Service) allocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*
 	}
 	s.autoIDLock.Unlock()
 
-	// if max-(batch/2) < base {
-	// 	// fmt.Println("async pre-alloc id... max ==", max, "base ==", base)
-	// 	// Trigger sync in the background gorotuine, pre-alloc the ID.
-	// 	select {
-	// 	case val.token <- struct{}{}:
-	// 		go s.syncID(ctx, req.DbID, req.TblID, uint64(base)+batch, val.max, val.token)
-	// 	default:
-	// 	}
-	// }
+	if max-(batch/2) < base {
+		// fmt.Println("async pre-alloc id... max ==", max, "base ==", base)
+		// Trigger sync in the background gorotuine, pre-alloc the ID.
+		select {
+		case val.token <- struct{}{}:
+			go s.SyncID(ctx, req.DbID, req.TblID, uint64(base)+batch, val.max, val.token)
+		default:
+		}
+	}
 
 	// fmt.Println("return ..", min, base)
 	return &autoid.AutoIDResponse{
@@ -261,14 +242,14 @@ func (s *Service) initKV(ctx context.Context, key autoIDKey) error {
 	}
 
 	val.token <- struct{}{}
-	min, err := s.loadID(ctx, key.dbID, key.tblID)
+	min, err := s.LoadID(ctx, key.dbID, key.tblID)
 	if err != nil {
 		fmt.Println("init kv err ===", err)
 		return errors.Trace(err)
 	}
 	val.base = int64(min)
 	max := min + batch
-	err = s.syncID(ctx, key.dbID, key.tblID, max, val.max, val.token)
+	err = s.SyncID(ctx, key.dbID, key.tblID, max, val.max, val.token)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -302,14 +283,14 @@ func (s *Service) Rebase(ctx context.Context, req *autoid.RebaseRequest) (*autoi
 
 	fmt.Println("!!!! rebase called      ........", req.Base, val.base, *val.max)
 	if req.Base < atomic.LoadInt64(val.max) {
-		if req.Base > val.base {
-			val.base = req.Base
-			fmt.Println("now ... base === ...", val.base)
-		}
+		// if req.Base > val.base {
+		val.base = req.Base
+		fmt.Println("now ... base === ...", val.base)
+		// }
 	} else {
 		s.autoIDLock.Unlock()
 		val.token <- struct{}{}
-		err := s.syncID(ctx, req.DbID, req.TblID, uint64(req.Base)+batch, val.max, val.token)
+		err := s.SyncID(ctx, req.DbID, req.TblID, uint64(req.Base)+batch, val.max, val.token)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

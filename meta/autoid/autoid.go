@@ -26,6 +26,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	autoid "github.com/pingcap/tidb/autoid_service"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
@@ -535,9 +536,10 @@ func NextStep(curStep int64, consumeDur time.Duration) int64 {
 	return res
 }
 
-func newSinglePointAlloc(store kv.Storage, dbID, tblID int64) Allocator {
+func newSinglePointAlloc(store kv.Storage, dbID, tblID int64) *singlePointAlloc {
 	ebd, ok := store.(kv.EtcdBackend)
 	if !ok {
+		fmt.Println("newSinglePointAlloc fail because not etcd background!!!")
 		return nil
 	}
 
@@ -550,6 +552,7 @@ func newSinglePointAlloc(store kv.Storage, dbID, tblID int64) Allocator {
 		tblID: tblID,
 	}
 	if len(addrs) > 0 {
+		fmt.Println("addrs ===", addrs)
 		etcdCli, err := clientv3.New(clientv3.Config{
 			Endpoints: addrs,
 			TLS:       ebd.TLSConfig(),
@@ -560,13 +563,16 @@ func newSinglePointAlloc(store kv.Storage, dbID, tblID int64) Allocator {
 		spa.clientDiscover = clientDiscover{etcdCli: etcdCli}
 	} else {
 		spa.clientDiscover = clientDiscover{
-			// AutoIDAllocClient: autoidservice.MockForTest(store.UUID()),
+			AutoIDAllocClient: autoid.MockForTest(store.UUID()),
 		}
 	}
 
 	failpoint.Inject("mockAutoIDChange", func(val failpoint.Value) {
 		if val.(bool) {
+			fmt.Println("mockAutoIDChange!!!")
 			spa = nil
+		} else {
+			fmt.Println("not mock autoid change, val ==", val)
 		}
 	})
 	return spa
@@ -588,8 +594,9 @@ func NewAllocator(store kv.Storage, dbID, tbID int64, isUnsigned bool,
 		fn.ApplyOn(alloc)
 	}
 
-	fmt.Println("auto id cache default value ===", alloc.step, alloc.customStep)
-	if allocType == RowIDAllocType && alloc.customStep && alloc.step == 1 {
+	// fmt.Println("auto id cache default value ===", alloc.step, alloc.customStep)
+	// if allocType == RowIDAllocType && alloc.customStep && alloc.step == 1 {
+	if allocType == RowIDAllocType {
 		alloc1 := newSinglePointAlloc(store, dbID, tbID)
 		if alloc1 != nil {
 			return alloc1
