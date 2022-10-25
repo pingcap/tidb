@@ -816,7 +816,7 @@ func TestDropIndexes(t *testing.T) {
 	store := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease, mockstore.WithDDLChecker())
 
 	// drop multiple indexes
-	createSQL := "create table test_drop_indexes (id int, c1 int, c2 int, primary key(id), key i1(c1), key i2(c2));"
+	createSQL := "create table test_drop_indexes (id int, c1 int, c2 int, primary key(id) nonclustered, key i1(c1), key i2(c2));"
 	dropIdxSQL := "alter table test_drop_indexes drop index i1, drop index i2;"
 	idxNames := []string{"i1", "i2"}
 	testDropIndexes(t, store, createSQL, dropIdxSQL, idxNames)
@@ -826,7 +826,7 @@ func TestDropIndexes(t *testing.T) {
 	idxNames = []string{"primary", "i1"}
 	testDropIndexes(t, store, createSQL, dropIdxSQL, idxNames)
 
-	createSQL = "create table test_drop_indexes (uuid varchar(32), c1 int, c2 int, primary key(uuid), unique key i1(c1), key i2(c2));"
+	createSQL = "create table test_drop_indexes (uuid varchar(32), c1 int, c2 int, primary key(uuid) nonclustered, unique key i1(c1), key i2(c2));"
 	dropIdxSQL = "alter table test_drop_indexes drop primary key, drop index i1, drop index i2;"
 	idxNames = []string{"primary", "i1", "i2"}
 	testDropIndexes(t, store, createSQL, dropIdxSQL, idxNames)
