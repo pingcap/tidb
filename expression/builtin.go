@@ -907,7 +907,6 @@ var funcs = map[string]functionClass{
 	ast.StGeomFromText: &stGeomFromTextFunctionClass{baseFunctionClass{ast.StGeomFromText, 1, -1}},
 	ast.StAsText:       &stAsTextFunctionClass{baseFunctionClass{ast.StAsText, 1, 1}},
 	ast.StDistance:     &stDistanceFunctionClass{baseFunctionClass{ast.StDistance, 1, 2}},
-	ast.StIntersects:   &stIntersectsFunctionClass{baseFunctionClass{ast.StIntersects, 1, 2}},
 }
 
 // IsFunctionSupported check if given function name is a builtin sql function.

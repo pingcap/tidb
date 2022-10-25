@@ -32,14 +32,12 @@ var (
 	_ functionClass = &stAsTextFunctionClass{}
 	_ functionClass = &stDistanceFunctionClass{}
 	_ functionClass = &stGeomFromTextFunctionClass{}
-	_ functionClass = &stIntersectsFunctionClass{}
 )
 
 var (
 	_ builtinFunc = &builtinStAsTextSig{}
 	_ builtinFunc = &builtinStDistanceSig{}
 	_ builtinFunc = &builtinStGeomFromTextSig{}
-	_ builtinFunc = &builtinStIntersectsSig{}
 )
 
 type stGeomFromTextFunctionClass struct {
@@ -202,62 +200,4 @@ func (b *builtinStDistanceSig) evalReal(row chunk.Row) (float64, bool, error) {
 	g1p := geom.NewPoint(g1.Layout()).MustSetCoords(g1.FlatCoords()).SetSRID(g1srid)
 	g2p := geom.NewPoint(g2.Layout()).MustSetCoords(g2.FlatCoords()).SetSRID(g2srid)
 	return xy.Distance(g1p.Coords(), g2p.Coords()), false, nil
-}
-
-type stIntersectsFunctionClass struct {
-	baseFunctionClass
-}
-
-func (c *stIntersectsFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
-		return nil, err
-	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString, types.ETString)
-	if err != nil {
-		return nil, err
-	}
-	sig := &builtinStIntersectsSig{bf}
-	return sig, nil
-}
-
-type builtinStIntersectsSig struct {
-	baseBuiltinFunc
-}
-
-func (b *builtinStIntersectsSig) Clone() builtinFunc {
-	newSig := &builtinStIntersectsSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
-	return newSig
-}
-func (b *builtinStIntersectsSig) evalInt(row chunk.Row) (int64, bool, error) {
-	g1r, isNull, err := b.args[0].EvalString(b.ctx, row)
-	if isNull || err != nil {
-		return 0, isNull, err
-	}
-	g2r, _, err := b.args[1].EvalString(b.ctx, row)
-	if isNull || err != nil {
-		return 0, isNull, err
-	}
-	g1, err := wkb.Unmarshal([]byte(g1r[4:]))
-	if err != nil {
-		return 0, isNull, err
-	}
-	g2, err := wkb.Unmarshal([]byte(g2r[4:]))
-	if err != nil {
-		return 0, isNull, err
-	}
-	g1srid := int(binary.LittleEndian.Uint32([]byte(g1r[:4])))
-	g2srid := int(binary.LittleEndian.Uint32([]byte(g2r[:4])))
-	if g1srid != g2srid {
-		return 0, isNull, errors.New("SRID mismatch")
-	}
-	if g1srid != 0 {
-		return 0, isNull, errors.New("ST_Intersects only supported for SRID 0")
-	}
-
-	if g1.Bounds().Overlaps(g2.Layout(), g2.Bounds()) {
-		return 1, false, nil
-	}
-
-	return 0, false, nil
 }
