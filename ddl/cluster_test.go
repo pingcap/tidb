@@ -202,9 +202,6 @@ func TestGlobalVariablesOnFlashback(t *testing.T) {
 			rs, err = tk.Exec("show variables like 'tidb_enable_auto_analyze'")
 			assert.NoError(t, err)
 			assert.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.Off)
-			rs, err = tk.Exec("show variables like 'tidb_max_auto_analyze_time'")
-			assert.NoError(t, err)
-			assert.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], "1")
 		}
 	}
 	dom.DDL().SetHook(hook)
