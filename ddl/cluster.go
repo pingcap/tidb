@@ -299,21 +299,20 @@ func sendPrepareFlashbackToVersionRPC(
 		resp, err := s.SendReq(bo, req, loc.Region, flashbackTimeout)
 		if err != nil {
 			return taskStat, err
-		} else {
-			regionErr, err := resp.GetRegionError()
-			if err != nil {
-				return taskStat, err
-			}
-			if regionErr != nil {
-				return taskStat, errors.Errorf(regionErr.String())
-			}
-			if resp.Resp == nil {
-				return taskStat, errors.Errorf("prepare flashback missing resp body")
-			}
-			prepareFlashbackToVersionResp := resp.Resp.(*kvrpcpb.PrepareFlashbackToVersionResponse)
-			if err := prepareFlashbackToVersionResp.GetError(); err != "" {
-				return taskStat, errors.Errorf(err)
-			}
+		}
+		regionErr, err := resp.GetRegionError()
+		if err != nil {
+			return taskStat, err
+		}
+		if regionErr != nil {
+			return taskStat, errors.Errorf(regionErr.String())
+		}
+		if resp.Resp == nil {
+			return taskStat, errors.Errorf("prepare flashback missing resp body")
+		}
+		prepareFlashbackToVersionResp := resp.Resp.(*kvrpcpb.PrepareFlashbackToVersionResponse)
+		if err := prepareFlashbackToVersionResp.GetError(); err != "" {
+			return taskStat, errors.Errorf(err)
 		}
 		taskStat.CompletedRegions++
 		if isLast {
@@ -372,7 +371,7 @@ func sendFlashbackToVersionRPC(
 			endKey = rangeEndKey
 		}
 
-		logutil.BgLogger().Info("send flashback request", zap.Uint64("region_id", loc.Region.GetID()),
+		logutil.BgLogger().Debug("send flashback request", zap.Uint64("region_id", loc.Region.GetID()),
 			zap.String("start_key", hex.EncodeToString(startKey)), zap.String("end_key", hex.EncodeToString(endKey)))
 
 		req := tikvrpc.NewRequest(tikvrpc.CmdFlashbackToVersion, &kvrpcpb.FlashbackToVersionRequest{
@@ -626,10 +625,7 @@ func finishFlashbackCluster(w *worker, job *model.Job) error {
 				return err
 			}
 		}
-		if err = setTiDBEnableAutoAnalyze(sess, autoAnalyzeValue); err != nil {
-			return err
-		}
-		return nil
+		return setTiDBEnableAutoAnalyze(sess, autoAnalyzeValue)
 	})
 	if err != nil {
 		return err
