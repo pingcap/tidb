@@ -501,7 +501,6 @@ func TestIssue29947(t *testing.T) {
 }
 
 func TestReuseChunk(t *testing.T) {
-
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	alloc := chunk.NewAllocator()

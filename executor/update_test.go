@@ -547,5 +547,4 @@ func TestUpdateReuseChunk(t *testing.T) {
 	result = tk.MustQuery("select @@last_sql_use_alloc")
 	result.Check(testkit.Rows("1"))
 	tk.Session().GetSessionVars().EndAlloc()
-
 }
