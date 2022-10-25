@@ -539,6 +539,11 @@ func (t *Tracker) MaxConsumed() int64 {
 	return t.maxConsumed.Load()
 }
 
+// ResetMaxConsumed should be invoked before executing a new statement in a session.
+func (t *Tracker) ResetMaxConsumed() {
+	t.maxConsumed.Store(t.BytesConsumed())
+}
+
 // SearchTrackerWithoutLock searches the specific tracker under this tracker without lock.
 func (t *Tracker) SearchTrackerWithoutLock(label int) *Tracker {
 	if t.label == label {
