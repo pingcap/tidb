@@ -178,7 +178,7 @@ func (m *memoryOpsHistoryManager) GetRows() [][]types.Datum {
 	}
 	var zeroTime = time.Time{}
 	for i := m.offsets; i < len(m.infos); i++ {
-		if m.infos[i].killTime == zeroTime {
+		if m.infos[i].killTime.Equal(zeroTime) {
 			continue
 		}
 		getRowFromInfo(m.infos[i])
