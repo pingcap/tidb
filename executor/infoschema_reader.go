@@ -2248,17 +2248,14 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(ctx sessionctx.Context, s
 			var progress float64
 			if pi := tbl.GetPartitionInfo(); pi != nil && len(pi.Definitions) > 0 {
 				for _, p := range pi.Definitions {
-					progressStr := infosync.MustGetTiFlashProgress(p.ID, tbl.TiFlashReplica.Count, tiFlashStores)
-					progressFloat, _ := strconv.ParseFloat(progressStr, 64)
-					progress += progressFloat
+					progress += infosync.MustGetTiFlashProgress(p.ID, tbl.TiFlashReplica.Count, tiFlashStores)
 				}
 				progress = progress / float64(len(pi.Definitions))
-				progressString := types.TruncateFloatToString(progress, 2)
-				progress, _ = strconv.ParseFloat(progressString, 64)
 			} else {
-				progressStr := infosync.MustGetTiFlashProgress(tbl.ID, tbl.TiFlashReplica.Count, tiFlashStores)
-				progress, _ = strconv.ParseFloat(progressStr, 64)
+				progress = infosync.MustGetTiFlashProgress(tbl.ID, tbl.TiFlashReplica.Count, tiFlashStores)
 			}
+			progressString := types.TruncateFloatToString(progress, 2)
+			progress, _ = strconv.ParseFloat(progressString, 64)
 			record := types.MakeDatums(
 				schema.Name.O,                   // TABLE_SCHEMA
 				tbl.Name.O,                      // TABLE_NAME

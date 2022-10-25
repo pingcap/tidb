@@ -239,11 +239,11 @@ func initPlacementManager(etcdCli *clientv3.Client) PlacementManager {
 
 func initTiFlashReplicaManager(etcdCli *clientv3.Client) TiFlashReplicaManager {
 	if etcdCli == nil {
-		m := mockTiFlashReplicaManagerCtx{tiflashProgressCache: make(map[int64]string)}
+		m := mockTiFlashReplicaManagerCtx{tiflashProgressCache: make(map[int64]float64)}
 		return &m
 	}
 	logutil.BgLogger().Warn("init TiFlashReplicaManager", zap.Strings("pd addrs", etcdCli.Endpoints()))
-	return &TiFlashReplicaManagerCtx{etcdCli: etcdCli, tiflashProgressCache: make(map[int64]string)}
+	return &TiFlashReplicaManagerCtx{etcdCli: etcdCli, tiflashProgressCache: make(map[int64]float64)}
 }
 
 func initScheduleManager(etcdCli *clientv3.Client) ScheduleManager {
@@ -355,13 +355,13 @@ func DeleteTiFlashTableSyncProgress(tableInfo *model.TableInfo) error {
 }
 
 // MustGetTiFlashProgress gets tiflash replica progress from tiflashProgressCache, if cache noe exist, get and insert progress into cache.
-func MustGetTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores *map[int64]helper.StoreStat) string {
+func MustGetTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores *map[int64]helper.StoreStat) float64 {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
-		return "0"
+		return 0
 	}
-	progressCache := is.tiflashReplicaManager.GetTiFlashProgressFromCache(tableID)
-	if progressCache != "" {
+	progressCache, isExist := is.tiflashReplicaManager.GetTiFlashProgressFromCache(tableID)
+	if isExist {
 		return progressCache
 	}
 	if tiFlashStores == nil {
@@ -370,7 +370,7 @@ func MustGetTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores *m
 		tikvStats, err := is.tiflashReplicaManager.GetStoresStat(context.Background())
 		// If MockTiFlash is not set, will issue a MockTiFlashError here.
 		if err != nil {
-			return "0"
+			return 0
 		}
 		stores := make(map[int64]helper.StoreStat)
 		for _, store := range tikvStats.Stores {
@@ -386,7 +386,7 @@ func MustGetTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores *m
 	}
 	progress, err := is.tiflashReplicaManager.GetTiFlashProgress(tableID, replicaCount, *tiFlashStores)
 	if err != nil {
-		return "0"
+		return 0
 	}
 	is.tiflashReplicaManager.UpdateTiFlashProgressCache(tableID, progress)
 	return progress
@@ -1039,16 +1039,16 @@ func GetLabelRules(ctx context.Context, ruleIDs []string) (map[string]*label.Rul
 }
 
 // GetTiFlashProgress calculates TiFlash replica progress
-func GetTiFlashProgress(tableID int64, replicaCount uint64, TiFlashStores map[int64]helper.StoreStat) (string, error) {
+func GetTiFlashProgress(tableID int64, replicaCount uint64, TiFlashStores map[int64]helper.StoreStat) (float64, error) {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
-		return "0", errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
 	return is.tiflashReplicaManager.GetTiFlashProgress(tableID, replicaCount, TiFlashStores)
 }
 
 // UpdateTiFlashProgressCache updates tiflashProgressCache
-func UpdateTiFlashProgressCache(tableID int64, progress string) error {
+func UpdateTiFlashProgressCache(tableID int64, progress float64) error {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return errors.Trace(err)
@@ -1058,12 +1058,13 @@ func UpdateTiFlashProgressCache(tableID int64, progress string) error {
 }
 
 // GetTiFlashProgressFromCache gets tiflash replica progress from tiflashProgressCache
-func GetTiFlashProgressFromCache(tableID int64) (string, error) {
+func GetTiFlashProgressFromCache(tableID int64) (float64, bool) {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
-		return "", errors.Trace(err)
+		logutil.BgLogger().Error("GetTiFlashProgressFromCache get info sync failed", zap.Int64("tableID", tableID), zap.Error(err))
+		return 0, false
 	}
-	return is.tiflashReplicaManager.GetTiFlashProgressFromCache(tableID), nil
+	return is.tiflashReplicaManager.GetTiFlashProgressFromCache(tableID)
 }
 
 // CleanTiFlashProgressCache clean progress cache

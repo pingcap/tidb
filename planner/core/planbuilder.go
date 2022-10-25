@@ -1181,7 +1181,7 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 	tblInfo := tbl.Meta()
 	publicPaths := make([]*util.AccessPath, 0, len(tblInfo.Indices)+2)
 	tp := kv.TiKV
-	if tbl.Type().IsClusterTable() || tbl.Meta().Name.L == "tiflash_replica" {
+	if tbl.Type().IsClusterTable() {
 		tp = kv.TiDB
 	}
 	tablePath := &util.AccessPath{StoreType: tp}

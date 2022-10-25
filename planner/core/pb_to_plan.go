@@ -95,7 +95,7 @@ func (b *PBPlanBuilder) pbToTableScan(e *tipb.Executor) (PhysicalPlan, error) {
 		return nil, infoschema.ErrDatabaseNotExists.GenWithStack("Database of table ID = %d does not exist.", tblScan.TableId)
 	}
 	// Currently only support cluster table.
-	if !tbl.Type().IsClusterTable() && tbl.Meta().Name.L != "tiflash_replica" {
+	if !tbl.Type().IsClusterTable() {
 		return nil, errors.Errorf("table %s is not a cluster table", tbl.Meta().Name.L)
 	}
 	columns, err := b.convertColumnInfo(tbl.Meta(), tblScan.Columns)

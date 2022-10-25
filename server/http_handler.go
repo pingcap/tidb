@@ -975,7 +975,7 @@ func (h flashReplicaHandler) handleStatusReport(w http.ResponseWriter, req *http
 		tableInfo.ID = status.ID
 		err = infosync.DeleteTiFlashTableSyncProgress(&tableInfo)
 	} else {
-		progress := types.TruncateFloatToString(float64(status.FlashRegionCount)/float64(status.RegionCount), 2)
+		progress := float64(status.FlashRegionCount) / float64(status.RegionCount)
 		err = infosync.UpdateTiFlashProgressCache(status.ID, progress)
 	}
 	if err != nil {

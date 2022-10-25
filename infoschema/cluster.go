@@ -58,13 +58,29 @@ var memTableToClusterTables = map[string]string{
 	TableTiDBTrx:                  ClusterTableTiDBTrx,
 	TableDeadlocks:                ClusterTableDeadlocks,
 	TableTrxSummary:               ClusterTableTrxSummary,
+	TableTiFlashReplica:           TableTiFlashReplica,
+}
+
+const (
+	// AllTiDB is uese by CLUSTER_* table, means that these tables will send cop request to all TiDB nodes.
+	AllTiDB int16 = iota
+	// DDLOwner is uese by tiflash_replica, means that this table will send cop request to DDL owner node.
+	DDLOwner
+)
+
+// GetClusterTableCopDestination gets cluster table cop request destination.
+func GetClusterTableCopDestination(tableName string) int16 {
+	if strings.ToLower(tableName) == "tiflash_replica" {
+		return DDLOwner
+	}
+	return AllTiDB
 }
 
 func init() {
 	var addrCol = columnInfo{name: util.ClusterTableInstanceColumnName, tp: mysql.TypeVarchar, size: 64}
 	for memTableName, clusterMemTableName := range memTableToClusterTables {
 		memTableCols := tableNameToColumns[memTableName]
-		if len(memTableCols) == 0 {
+		if len(memTableCols) == 0 || GetClusterTableCopDestination(memTableName) != AllTiDB {
 			continue
 		}
 		cols := make([]columnInfo, 0, len(memTableCols)+1)

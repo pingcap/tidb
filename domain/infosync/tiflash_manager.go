@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
@@ -59,11 +58,11 @@ type TiFlashReplicaManager interface {
 	// GetStoresStat gets the TiKV store information by accessing PD's api.
 	GetStoresStat(ctx context.Context) (*helper.StoresStat, error)
 	// GetTiFlashProgress calculates TiFlash replica progress
-	GetTiFlashProgress(tableID int64, replicaCount uint64, TiFlashStores map[int64]helper.StoreStat) (string, error)
+	GetTiFlashProgress(tableID int64, replicaCount uint64, TiFlashStores map[int64]helper.StoreStat) (float64, error)
 	// UpdateTiFlashProgressCache updates tiflashProgressCache
-	UpdateTiFlashProgressCache(tableID int64, progress string)
+	UpdateTiFlashProgressCache(tableID int64, progress float64)
 	// GetTiFlashProgressFromCache gets tiflash replica progress from tiflashProgressCache
-	GetTiFlashProgressFromCache(tableID int64) string
+	GetTiFlashProgressFromCache(tableID int64) (float64, bool)
 	// DeleteTiFlashProgressFromCache delete tiflash replica progress from tiflashProgressCache
 	DeleteTiFlashProgressFromCache(tableID int64)
 	// CleanTiFlashProgressCache clean progress cache
@@ -76,7 +75,7 @@ type TiFlashReplicaManager interface {
 type TiFlashReplicaManagerCtx struct {
 	etcdCli              *clientv3.Client
 	sync.RWMutex         // protect tiflashProgressCache
-	tiflashProgressCache map[int64]string
+	tiflashProgressCache map[int64]float64
 }
 
 // Close is called to close TiFlashReplicaManagerCtx.
@@ -100,13 +99,13 @@ func getTiFlashPeerWithoutLagCount(tiFlashStores map[int64]helper.StoreStat, tab
 	return flashPeerCount, nil
 }
 
-// GetTiFlashProgress return truncated string to avoid float64 comparison.
-func getTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores map[int64]helper.StoreStat) (string, error) {
+// GetTiFlashProgress calculates progress based on the region status from PD and TiFlash.
+func getTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores map[int64]helper.StoreStat) (float64, error) {
 	var stats helper.PDRegionStats
 	if err := GetTiFlashPDRegionRecordStats(context.Background(), tableID, &stats); err != nil {
 		logutil.BgLogger().Error("Fail to get region stats from PD.",
 			zap.Int64("tableID", tableID))
-		return "0", errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
 	regionCount := stats.Count
 
@@ -114,7 +113,7 @@ func getTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores map[in
 	if err != nil {
 		logutil.BgLogger().Error("Fail to get peer count from TiFlash.",
 			zap.Int64("tableID", tableID))
-		return "0", errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
 	progress := float64(tiflashPeerCount) / float64(regionCount*int(replicaCount))
 	if progress > 1 { // when pd do balance
@@ -126,29 +125,27 @@ func getTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores map[in
 		logutil.BgLogger().Debug("TiFlash replica progress < 1.",
 			zap.Int64("tableID", tableID), zap.Int("tiflashPeerCount", tiflashPeerCount), zap.Int("regionCount", regionCount), zap.Uint64("replicaCount", replicaCount))
 	}
-	return types.TruncateFloatToString(progress, 2), nil
+	return progress, nil
 }
 
-// GetTiFlashProgress return truncated string to avoid float64 comparison.
-func (m *TiFlashReplicaManagerCtx) GetTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores map[int64]helper.StoreStat) (string, error) {
+// GetTiFlashProgress calculates TiFlash replica progress.
+func (m *TiFlashReplicaManagerCtx) GetTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores map[int64]helper.StoreStat) (float64, error) {
 	return getTiFlashProgress(tableID, replicaCount, tiFlashStores)
 }
 
 // UpdateTiFlashProgressCache updates tiflashProgressCache
-func (m *TiFlashReplicaManagerCtx) UpdateTiFlashProgressCache(tableID int64, progress string) {
+func (m *TiFlashReplicaManagerCtx) UpdateTiFlashProgressCache(tableID int64, progress float64) {
 	m.Lock()
 	defer m.Unlock()
 	m.tiflashProgressCache[tableID] = progress
 }
 
 // GetTiFlashProgressFromCache gets tiflash replica progress from tiflashProgressCache
-func (m *TiFlashReplicaManagerCtx) GetTiFlashProgressFromCache(tableID int64) string {
+func (m *TiFlashReplicaManagerCtx) GetTiFlashProgressFromCache(tableID int64) (float64, bool) {
 	m.RLock()
 	defer m.RUnlock()
-	if progress, ok := m.tiflashProgressCache[tableID]; ok {
-		return progress
-	}
-	return ""
+	progress, ok := m.tiflashProgressCache[tableID]
+	return progress, ok
 }
 
 // DeleteTiFlashProgressFromCache delete tiflash replica progress from tiflashProgressCache
@@ -160,7 +157,9 @@ func (m *TiFlashReplicaManagerCtx) DeleteTiFlashProgressFromCache(tableID int64)
 
 // CleanTiFlashProgressCache clean progress cache
 func (m *TiFlashReplicaManagerCtx) CleanTiFlashProgressCache() {
-	m.tiflashProgressCache = make(map[int64]string)
+	m.Lock()
+	defer m.Unlock()
+	m.tiflashProgressCache = make(map[int64]float64)
 }
 
 // SetTiFlashGroupConfig sets the tiflash's rule group config
@@ -340,7 +339,7 @@ type mockTiFlashReplicaManagerCtx struct {
 	// Set to nil if there is no need to set up a mock TiFlash server.
 	// Otherwise use NewMockTiFlash to create one.
 	tiflash              *MockTiFlash
-	tiflashProgressCache map[int64]string
+	tiflashProgressCache map[int64]float64
 }
 
 func makeBaseRule() placement.TiFlashRule {
@@ -748,25 +747,23 @@ func (tiflash *MockTiFlash) PdSwitch(enabled bool) {
 }
 
 // GetTiFlashProgress return truncated string to avoid float64 comparison.
-func (m *mockTiFlashReplicaManagerCtx) GetTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores map[int64]helper.StoreStat) (string, error) {
+func (m *mockTiFlashReplicaManagerCtx) GetTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores map[int64]helper.StoreStat) (float64, error) {
 	return getTiFlashProgress(tableID, replicaCount, tiFlashStores)
 }
 
 // UpdateTiFlashProgressCache updates tiflashProgressCache
-func (m *mockTiFlashReplicaManagerCtx) UpdateTiFlashProgressCache(tableID int64, progress string) {
+func (m *mockTiFlashReplicaManagerCtx) UpdateTiFlashProgressCache(tableID int64, progress float64) {
 	m.Lock()
 	defer m.Unlock()
 	m.tiflashProgressCache[tableID] = progress
 }
 
 // GetTiFlashProgressFromCache gets tiflash replica progress from tiflashProgressCache
-func (m *mockTiFlashReplicaManagerCtx) GetTiFlashProgressFromCache(tableID int64) string {
+func (m *mockTiFlashReplicaManagerCtx) GetTiFlashProgressFromCache(tableID int64) (float64, bool) {
 	m.RLock()
 	defer m.RUnlock()
-	if progress, ok := m.tiflashProgressCache[tableID]; ok {
-		return progress
-	}
-	return ""
+	progress, ok := m.tiflashProgressCache[tableID]
+	return progress, ok
 }
 
 // DeleteTiFlashProgressFromCache delete tiflash replica progress from tiflashProgressCache
@@ -778,7 +775,7 @@ func (m *mockTiFlashReplicaManagerCtx) DeleteTiFlashProgressFromCache(tableID in
 
 // CleanTiFlashProgressCache clean progress cache
 func (m *mockTiFlashReplicaManagerCtx) CleanTiFlashProgressCache() {
-	m.tiflashProgressCache = make(map[int64]string)
+	m.tiflashProgressCache = make(map[int64]float64)
 }
 
 // SetMockTiFlash is set a mock TiFlash server.

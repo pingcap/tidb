@@ -961,32 +961,30 @@ func TestTiFlashProgress(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, tb)
 	mustExist := func(tid int64) {
-		progressStr, err := infosync.GetTiFlashProgressFromCache(tid)
-		require.NoError(t, err)
-		require.NotEqual(t, progressStr, "")
+		_, isExist := infosync.GetTiFlashProgressFromCache(tid)
+		require.Equal(t, isExist, true)
 	}
 	mustAbsent := func(tid int64) {
-		progressStr, err := infosync.GetTiFlashProgressFromCache(tid)
-		require.NoError(t, err)
-		require.Equal(t, progressStr, "")
+		_, isExist := infosync.GetTiFlashProgressFromCache(tid)
+		require.Equal(t, isExist, false)
 	}
-	infosync.UpdateTiFlashProgressCache(tb.Meta().ID, "5.0")
+	infosync.UpdateTiFlashProgressCache(tb.Meta().ID, 5.0)
 	mustExist(tb.Meta().ID)
 	_ = infosync.DeleteTiFlashTableSyncProgress(tb.Meta())
 	mustAbsent(tb.Meta().ID)
 
-	infosync.UpdateTiFlashProgressCache(tb.Meta().ID, "5.0")
+	infosync.UpdateTiFlashProgressCache(tb.Meta().ID, 5.0)
 	tk.MustExec("truncate table tiflash_d.t")
 	mustAbsent(tb.Meta().ID)
 
 	tb, _ = s.dom.InfoSchema().TableByName(model.NewCIStr("tiflash_d"), model.NewCIStr("t"))
-	infosync.UpdateTiFlashProgressCache(tb.Meta().ID, "5.0")
+	infosync.UpdateTiFlashProgressCache(tb.Meta().ID, 5.0)
 	tk.MustExec("alter table tiflash_d.t set tiflash replica 0")
 	mustAbsent(tb.Meta().ID)
 	tk.MustExec("alter table tiflash_d.t set tiflash replica 1")
 
 	tb, _ = s.dom.InfoSchema().TableByName(model.NewCIStr("tiflash_d"), model.NewCIStr("t"))
-	infosync.UpdateTiFlashProgressCache(tb.Meta().ID, "5.0")
+	infosync.UpdateTiFlashProgressCache(tb.Meta().ID, 5.0)
 	tk.MustExec("drop table tiflash_d.t")
 	mustAbsent(tb.Meta().ID)
 
@@ -1006,32 +1004,30 @@ func TestTiFlashProgressForPartitionTable(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, tb)
 	mustExist := func(tid int64) {
-		progressStr, err := infosync.GetTiFlashProgressFromCache(tid)
-		require.NoError(t, err)
-		require.NotEqual(t, progressStr, "")
+		_, isExist := infosync.GetTiFlashProgressFromCache(tid)
+		require.Equal(t, isExist, true)
 	}
 	mustAbsent := func(tid int64) {
-		progressStr, err := infosync.GetTiFlashProgressFromCache(tid)
-		require.NoError(t, err)
-		require.Equal(t, progressStr, "")
+		_, isExist := infosync.GetTiFlashProgressFromCache(tid)
+		require.Equal(t, isExist, false)
 	}
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable)
 	mustExist(tb.Meta().Partition.Definitions[0].ID)
 	_ = infosync.DeleteTiFlashTableSyncProgress(tb.Meta())
 	mustAbsent(tb.Meta().Partition.Definitions[0].ID)
 
-	infosync.UpdateTiFlashProgressCache(tb.Meta().Partition.Definitions[0].ID, "5.0")
+	infosync.UpdateTiFlashProgressCache(tb.Meta().Partition.Definitions[0].ID, 5.0)
 	tk.MustExec("truncate table tiflash_d.t")
 	mustAbsent(tb.Meta().Partition.Definitions[0].ID)
 
 	tb, _ = s.dom.InfoSchema().TableByName(model.NewCIStr("tiflash_d"), model.NewCIStr("t"))
-	infosync.UpdateTiFlashProgressCache(tb.Meta().Partition.Definitions[0].ID, "5.0")
+	infosync.UpdateTiFlashProgressCache(tb.Meta().Partition.Definitions[0].ID, 5.0)
 	tk.MustExec("alter table tiflash_d.t set tiflash replica 0")
 	mustAbsent(tb.Meta().Partition.Definitions[0].ID)
 	tk.MustExec("alter table tiflash_d.t set tiflash replica 1")
 
 	tb, _ = s.dom.InfoSchema().TableByName(model.NewCIStr("tiflash_d"), model.NewCIStr("t"))
-	infosync.UpdateTiFlashProgressCache(tb.Meta().Partition.Definitions[0].ID, "5.0")
+	infosync.UpdateTiFlashProgressCache(tb.Meta().Partition.Definitions[0].ID, 5.0)
 	tk.MustExec("drop table tiflash_d.t")
 	mustAbsent(tb.Meta().Partition.Definitions[0].ID)
 
@@ -1075,15 +1071,15 @@ func TestTiFlashProgressAfterAvailable(t *testing.T) {
 	// after available, progress should can be updated.
 	s.tiflash.ResetSyncStatus(int(tb.Meta().ID), false)
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
-	progressStr, err := infosync.GetTiFlashProgressFromCache(tb.Meta().ID)
-	require.NoError(t, err)
-	require.Equal(t, progressStr, "0")
+	progress, isExist := infosync.GetTiFlashProgressFromCache(tb.Meta().ID)
+	require.Equal(t, isExist, true)
+	require.Equal(t, progress, 0)
 
 	s.tiflash.ResetSyncStatus(int(tb.Meta().ID), true)
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
-	progressStr, err = infosync.GetTiFlashProgressFromCache(tb.Meta().ID)
-	require.NoError(t, err)
-	require.Equal(t, progressStr, "1")
+	progress, isExist = infosync.GetTiFlashProgressFromCache(tb.Meta().ID)
+	require.Equal(t, isExist, true)
+	require.Equal(t, progress, 1)
 }
 
 func TestTiFlashProgressAfterAvailableForPartitionTable(t *testing.T) {
@@ -1104,15 +1100,15 @@ func TestTiFlashProgressAfterAvailableForPartitionTable(t *testing.T) {
 	// after available, progress should can be updated.
 	s.tiflash.ResetSyncStatus(int(tb.Meta().Partition.Definitions[0].ID), false)
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
-	progressStr, err := infosync.GetTiFlashProgressFromCache(tb.Meta().Partition.Definitions[0].ID)
-	require.NoError(t, err)
-	require.Equal(t, progressStr, "0")
+	progress, isExist := infosync.GetTiFlashProgressFromCache(tb.Meta().Partition.Definitions[0].ID)
+	require.Equal(t, isExist, true)
+	require.Equal(t, progress, 0)
 
 	s.tiflash.ResetSyncStatus(int(tb.Meta().Partition.Definitions[0].ID), true)
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
-	progressStr, err = infosync.GetTiFlashProgressFromCache(tb.Meta().Partition.Definitions[0].ID)
-	require.NoError(t, err)
-	require.Equal(t, progressStr, "1")
+	progress, isExist = infosync.GetTiFlashProgressFromCache(tb.Meta().Partition.Definitions[0].ID)
+	require.Equal(t, isExist, true)
+	require.Equal(t, progress, "1")
 }
 
 func TestTiFlashProgressCache(t *testing.T) {
@@ -1130,12 +1126,12 @@ func TestTiFlashProgressCache(t *testing.T) {
 	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
 	require.NoError(t, err)
 	require.NotNil(t, tb)
-	infosync.UpdateTiFlashProgressCache(tb.Meta().ID, "0")
+	infosync.UpdateTiFlashProgressCache(tb.Meta().ID, 0)
 	// after available, it will still update progress cache.
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
-	progressStr, err := infosync.GetTiFlashProgressFromCache(tb.Meta().ID)
-	require.NoError(t, err)
-	require.Equal(t, progressStr, "1")
+	progress, isExist := infosync.GetTiFlashProgressFromCache(tb.Meta().ID)
+	require.Equal(t, isExist, true)
+	require.Equal(t, progress, 1)
 }
 
 func TestTiFlashProgressAvailableList(t *testing.T) {
@@ -1176,9 +1172,9 @@ func TestTiFlashProgressAvailableList(t *testing.T) {
 	// Not all table have updated progress
 	UpdatedTableCount := 0
 	for i := 0; i < tableCount; i++ {
-		progressStr, err := infosync.GetTiFlashProgressFromCache(tbls[i].Meta().ID)
-		require.NoError(t, err)
-		if progressStr == "0" {
+		progress, isExist := infosync.GetTiFlashProgressFromCache(tbls[i].Meta().ID)
+		require.Equal(t, isExist, true)
+		if progress == 0 {
 			UpdatedTableCount++
 		}
 	}
@@ -1190,9 +1186,9 @@ func TestTiFlashProgressAvailableList(t *testing.T) {
 	// All table have updated progress
 	UpdatedTableCount = 0
 	for i := 0; i < tableCount; i++ {
-		progressStr, err := infosync.GetTiFlashProgressFromCache(tbls[i].Meta().ID)
-		require.NoError(t, err)
-		if progressStr == "0" {
+		progress, isExist := infosync.GetTiFlashProgressFromCache(tbls[i].Meta().ID)
+		require.Equal(t, isExist, true)
+		if progress == 0 {
 			UpdatedTableCount++
 		}
 	}
