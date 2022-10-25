@@ -601,12 +601,12 @@ func finishFlashbackCluster(w *worker, job *model.Job) error {
 		return nil
 	}
 
-	var flashbackTS uint64
+	var flashbackTS, lockedRegions, commitTS uint64
 	var pdScheduleValue map[string]interface{}
 	var autoAnalyzeValue string
 	var gcEnabled bool
 
-	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue, &gcEnabled, &autoAnalyzeValue); err != nil {
+	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue, &gcEnabled, &autoAnalyzeValue, &lockedRegions, &commitTS); err != nil {
 		return errors.Trace(err)
 	}
 	sess, err := w.sessPool.get()
