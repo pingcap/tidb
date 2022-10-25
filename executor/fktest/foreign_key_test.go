@@ -1254,7 +1254,10 @@ func TestForeignKeyOnDeleteCascadeSQL(t *testing.T) {
 		{types.NewDatum(1), types.NewDatum("a")},
 		{types.NewDatum(2), types.NewDatum("b")},
 	}
-	sql, err := executor.GenCascadeDeleteSQL(model.NewCIStr("test"), model.NewCIStr("t"), fk, fkValues)
+	sql, err := executor.GenCascadeDeleteSQL(model.NewCIStr("test"), model.NewCIStr("t"), model.NewCIStr(""), fk, fkValues)
 	require.NoError(t, err)
 	require.Equal(t, "DELETE FROM `test`.`t` WHERE (`c0`, `c1`) IN ((1,'a'), (2,'b'))", sql)
+	sql, err = executor.GenCascadeDeleteSQL(model.NewCIStr("test"), model.NewCIStr("t"), model.NewCIStr("idx"), fk, fkValues)
+	require.NoError(t, err)
+	require.Equal(t, "DELETE FROM `test`.`t` USE INDEX(`idx`) WHERE (`c0`, `c1`) IN ((1,'a'), (2,'b'))", sql)
 }
