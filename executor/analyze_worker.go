@@ -25,10 +25,9 @@ import (
 )
 
 type analyzeSaveStatsWorker struct {
-	resultsCh                  <-chan *statistics.AnalyzeResults
-	sctx                       sessionctx.Context
-	errCh                      chan<- error
-	checkHistoricalStatsEnable bool
+	resultsCh <-chan *statistics.AnalyzeResults
+	sctx      sessionctx.Context
+	errCh     chan<- error
 }
 
 func newAnalyzeSaveStatsWorker(
