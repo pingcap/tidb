@@ -329,6 +329,16 @@ type StatementContext struct {
 	// IsExplainAnalyzeDML is true if the statement is "explain analyze DML executors", before responding the explain
 	// results to the client, the transaction should be committed first. See issue #37373 for more details.
 	IsExplainAnalyzeDML bool
+
+	// InHandleForeignKeyTrigger indicates currently are handling foreign key trigger.
+	InHandleForeignKeyTrigger bool
+
+	// ForeignKeyTriggerCtx is the contain information for foreign key cascade execution.
+	ForeignKeyTriggerCtx struct {
+		// The SavepointName is use to do rollback when handle foreign key cascade failed.
+		SavepointName string
+		HasFKCascades bool
+	}
 }
 
 // StmtHints are SessionVars related sql hints.
@@ -521,6 +531,10 @@ type TableEntry struct {
 
 // AddAffectedRows adds affected rows.
 func (sc *StatementContext) AddAffectedRows(rows uint64) {
+	if sc.InHandleForeignKeyTrigger {
+		// For compatibility with MySQL, not add the affected row cause by the foreign key trigger.
+		return
+	}
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 	sc.mu.affectedRows += rows
