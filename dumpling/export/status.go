@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/docker/go-units"
+	"github.com/pingcap/failpoint"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"go.uber.org/zap"
 )
@@ -17,6 +18,12 @@ const logProgressTick = 2 * time.Minute
 
 func (d *Dumper) runLogProgress(tctx *tcontext.Context) {
 	logProgressTicker := time.NewTicker(logProgressTick)
+	failpoint.Inject("EnableLogProgress", func(v failpoint.Value) {
+		if tick, ok := v.(int); ok {
+			logProgressTicker.Stop()
+			logProgressTicker = time.NewTicker(time.Duration(tick) * time.Second)
+		}
+	})
 	lastCheckpoint := time.Now()
 	lastBytes := float64(0)
 	defer logProgressTicker.Stop()
