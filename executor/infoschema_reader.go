@@ -1693,8 +1693,10 @@ func keyColumnUsageInTable(schema *model.DBInfo, table *model.TableInfo) [][]typ
 	return rows
 }
 
-func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx sessionctx.Context) (err error) {
-	tikvStore, ok := ctx.GetStore().(helper.Storage)
+func (e *memtableRetriever) setDataForTiKVRegionStatus(sctx sessionctx.Context) (err error) {
+	checker := privilege.GetPrivilegeManager(sctx)
+	var extractorTableIDs []int64
+	tikvStore, ok := sctx.GetStore().(helper.Storage)
 	if !ok {
 		return errors.New("Information about TiKV region status can be gotten only when the storage is TiKV")
 	}
@@ -1704,13 +1706,17 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx sessionctx.Context) (
 	}
 	requestByTableRange := false
 	allRegionsInfo := helper.NewRegionsInfo()
-	is := ctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 	if e.extractor != nil {
 		extractor, ok := e.extractor.(*plannercore.TiKVRegionStatusExtractor)
 		if ok && len(extractor.GetTablesID()) > 0 {
-			for _, tableID := range extractor.GetTablesID() {
+			extractorTableIDs = extractor.GetTablesID()
+			for _, tableID := range extractorTableIDs {
 				regionsInfo, err := e.getRegionsInfoForTable(tikvHelper, is, tableID)
 				if err != nil {
+					if errors.ErrorEqual(err, infoschema.ErrTableExists) {
+						continue
+					}
 					return err
 				}
 				allRegionsInfo = allRegionsInfo.Merge(regionsInfo)
@@ -1726,12 +1732,20 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx sessionctx.Context) (
 	}
 	tableInfos := tikvHelper.GetRegionsTableInfo(allRegionsInfo, is.AllSchemas())
 	for i := range allRegionsInfo.Regions {
-		tableList := tableInfos[allRegionsInfo.Regions[i].ID]
-		if len(tableList) == 0 {
+		regionTableList := tableInfos[allRegionsInfo.Regions[i].ID]
+		if len(regionTableList) == 0 {
 			e.setNewTiKVRegionStatusCol(&allRegionsInfo.Regions[i], nil)
 		}
-		for j := range tableList {
-			e.setNewTiKVRegionStatusCol(&allRegionsInfo.Regions[i], &tableList[j])
+		for j, regionTable := range regionTableList {
+			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, regionTable.DB.Name.L, regionTable.Table.Name.L, "", mysql.AllPrivMask) {
+				continue
+			}
+			if len(extractorTableIDs) == 0 {
+				e.setNewTiKVRegionStatusCol(&allRegionsInfo.Regions[i], &regionTable)
+			}
+			if slices.Contains(extractorTableIDs, regionTableList[j].Table.ID) {
+				e.setNewTiKVRegionStatusCol(&allRegionsInfo.Regions[i], &regionTable)
+			}
 		}
 	}
 	return nil
