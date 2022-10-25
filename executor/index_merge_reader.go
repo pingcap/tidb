@@ -810,7 +810,7 @@ func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fet
 		handles := task.handles
 
 		if _, ok := workerHandleMap[task.workerID]; !ok {
-			err := errors.New(fmt.Sprintf("unexpected workerID, got %d, total: %d", task.workerID, len(w.indexMerge.partialPlans)))
+			err := errors.Errorf("unexpected workerID, got %d, total: %d", task.workerID, len(w.indexMerge.partialPlans))
 			syncErr(resultCh, err)
 			return
 		}
@@ -823,7 +823,7 @@ func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fet
 			if w.indexMerge.partitionTableMode {
 				if parTblIdx, ok := partHandleMap.Get(h); ok {
 					if parTblIdx.(int) != task.parTblIdx {
-						err := errors.New(fmt.Sprintf("expected parTblIdx: %v, got: %d", parTblIdx, task.parTblIdx))
+						err := errors.Errorf("expected parTblIdx: %v, got: %d", parTblIdx, task.parTblIdx)
 						syncErr(resultCh, err)
 						return
 					}
@@ -858,14 +858,13 @@ func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fet
 		// key: partIdx, value: intersected handles of this partIdx.
 		intersectedPartHandleMap := make(map[int][]kv.Handle)
 		for _, h := range intersected {
-			var parTblIdx int
-			if parTblIdxI, ok := partHandleMap.Get(h); !ok {
-				err := errors.New("parTblIdx not found")
+			parTblIdxI, ok := partHandleMap.Get(h)
+			if !ok {
+				err := errors.New("handle not found")
 				syncErr(resultCh, err)
 				return
-			} else {
-				parTblIdx = parTblIdxI.(int)
 			}
+			parTblIdx := parTblIdxI.(int)
 
 			if _, ok := intersectedPartHandleMap[parTblIdx]; !ok {
 				intersectedPartHandleMap[parTblIdx] = make([]kv.Handle, 0, 8)
@@ -900,7 +899,7 @@ func intersectMaps(distinctHandles map[int]*kv.HandleMap) (res []kv.Handle) {
 	if len(distinctHandles) == 0 {
 		return nil
 	}
-	var handleMaps []*kv.HandleMap
+	handleMaps := make([]*kv.HandleMap, 0, len(distinctHandles))
 	var gotEmptyHandleMap bool
 	for _, m := range distinctHandles {
 		if m.Len() == 0 {
