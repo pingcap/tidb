@@ -588,15 +588,30 @@ func (fkc *FKCascadeExec) buildExecutor(ctx context.Context) (Executor, error) {
 	return e, fkc.b.err
 }
 
+var maxHandleFKValueInOneCascade = 1024
+
 func (fkc *FKCascadeExec) buildFKCascadePlan(ctx context.Context) (plannercore.Plan, error) {
 	if len(fkc.fkValues) == 0 {
 		return nil, nil
+	}
+	var fkValues [][]types.Datum
+	if len(fkc.fkValues) <= maxHandleFKValueInOneCascade {
+		fkValues = fkc.fkValues
+		fkc.fkValues = nil
+	} else {
+		fkValues = fkc.fkValues[:maxHandleFKValueInOneCascade]
+		fkc.fkValues = fkc.fkValues[maxHandleFKValueInOneCascade:]
+	}
+	var indexName model.CIStr
+	indexForFK := model.FindIndexByColumns(fkc.childTable, fkc.fk.Cols...)
+	if indexForFK != nil {
+		indexName = indexForFK.Name
 	}
 	var sqlStr string
 	var err error
 	switch fkc.tp {
 	case plannercore.FKCascadeOnDelete:
-		sqlStr, err = GenCascadeDeleteSQL(fkc.referredFK.ChildSchema, fkc.childTable.Name, fkc.fk, fkc.fkValues)
+		sqlStr, err = GenCascadeDeleteSQL(fkc.referredFK.ChildSchema, fkc.childTable.Name, indexName, fkc.fk, fkValues)
 	}
 	if err != nil {
 		return nil, err
@@ -627,20 +642,26 @@ func (fkc *FKCascadeExec) buildFKCascadePlan(ctx context.Context) (plannercore.P
 }
 
 // GenCascadeDeleteSQL uses to generate cascade delete SQL, export for test.
-func GenCascadeDeleteSQL(schema, table model.CIStr, fk *model.FKInfo, fkValues [][]types.Datum) (string, error) {
-	buf := bytes.NewBuffer(nil)
+func GenCascadeDeleteSQL(schema, table, idx model.CIStr, fk *model.FKInfo, fkValues [][]types.Datum) (string, error) {
+	buf := bytes.NewBuffer(make([]byte, 0, 48+8*len(fkValues)))
 	buf.WriteString("DELETE FROM `")
 	buf.WriteString(schema.L)
 	buf.WriteString("`.`")
 	buf.WriteString(table.L)
-	buf.WriteString("` WHERE (")
+	buf.WriteString("`")
+	if idx.L != "" {
+		// Add use index to make sure the optimizer will use index instead of full table scan.
+		buf.WriteString(" USE INDEX(`")
+		buf.WriteString(idx.L)
+		buf.WriteString("`)")
+	}
+	buf.WriteString(" WHERE (")
 	for i, col := range fk.Cols {
 		if i > 0 {
 			buf.WriteString(", ")
 		}
 		buf.WriteString("`" + col.L + "`")
 	}
-	// TODO(crazycs520): control the size of IN expression.
 	buf.WriteString(") IN (")
 	for i, vs := range fkValues {
 		if i > 0 {
