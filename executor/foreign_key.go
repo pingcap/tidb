@@ -588,7 +588,7 @@ func (fkc *FKCascadeExec) buildExecutor(ctx context.Context) (Executor, error) {
 	return e, fkc.b.err
 }
 
-var maxHandleFKValueInOneCascade = 128
+var maxHandleFKValueInOneCascade = 1024
 
 func (fkc *FKCascadeExec) buildFKCascadePlan(ctx context.Context) (plannercore.Plan, error) {
 	if len(fkc.fkValues) == 0 {
@@ -643,7 +643,7 @@ func (fkc *FKCascadeExec) buildFKCascadePlan(ctx context.Context) (plannercore.P
 
 // GenCascadeDeleteSQL uses to generate cascade delete SQL, export for test.
 func GenCascadeDeleteSQL(schema, table, idx model.CIStr, fk *model.FKInfo, fkValues [][]types.Datum) (string, error) {
-	buf := bytes.NewBuffer(make([]byte, 0, 32+4*len(fkValues)))
+	buf := bytes.NewBuffer(make([]byte, 0, 48+8*len(fkValues)))
 	buf.WriteString("DELETE FROM `")
 	buf.WriteString(schema.L)
 	buf.WriteString("`.`")
