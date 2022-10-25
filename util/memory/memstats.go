@@ -16,50 +16,35 @@ package memory
 
 import (
 	"runtime"
-	"sync"
+	"sync/atomic"
 	"time"
 )
 
-var stats globalMstats
+var stats atomic.Pointer[globalMstats]
 
 // ReadMemStats read the mem stats from runtime.ReadMemStats
 func ReadMemStats() runtime.MemStats {
-	return stats.readMemStats()
+	s := stats.Load()
+	if time.Since(s.ts) < 300*time.Millisecond {
+		return s.m
+	}
+	var g globalMstats
+	g.ts = time.Now()
+	runtime.ReadMemStats(&g.m)
+	stats.Store(&g)
+	return g.m
 }
 
 // ForceReadMemStats is to force read memory stats.
 func ForceReadMemStats() runtime.MemStats {
-	return stats.forceReadMemStats()
+	var g globalMstats
+	g.ts = time.Now()
+	runtime.ReadMemStats(&g.m)
+	stats.Store(&g)
+	return g.m
 }
 
 type globalMstats struct {
 	ts time.Time
 	m  runtime.MemStats
-	mu sync.RWMutex
-}
-
-func (g *globalMstats) readMemStats() (result runtime.MemStats) {
-	g.mu.RLock()
-	if time.Since(g.ts) < 200*time.Millisecond {
-		result = g.m
-		g.mu.RUnlock()
-		return result
-	}
-	g.mu.RUnlock()
-
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	g.ts = time.Now()
-	runtime.ReadMemStats(&g.m)
-	result = g.m
-	return result
-}
-
-func (g *globalMstats) forceReadMemStats() (result runtime.MemStats) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	g.ts = time.Now()
-	runtime.ReadMemStats(&g.m)
-	result = g.m
-	return result
 }
