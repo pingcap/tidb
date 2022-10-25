@@ -137,6 +137,8 @@ var expandVariablePattern = regexp.MustCompile(`\$(?:\$|[\pL\p{Nd}_]+|\{[\pL\p{N
 var defaultFileRouteRules = []*config.FileRouteRule{
 	// ignore *-schema-trigger.sql, *-schema-post.sql files
 	{Pattern: `(?i).*(-schema-trigger|-schema-post)\.sql(?:\.(\w*?))?$`, Type: "ignore"},
+	// ignore backup files
+	{Pattern: `(?i).*\.(sql|csv|parquet)(\.(\w+))?\.(bak|BAK)$`, Type: "ignore"},
 	// db schema create file pattern, matches files like '{schema}-schema-create.sql[.{compress}]'
 	{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)-schema-create\.sql(?:\.(\w*?))?$`, Schema: "$1", Table: "", Type: SchemaSchema, Compression: "$2", Unescape: true},
 	// table schema create file pattern, matches files like '{schema}.{table}-schema.sql[.{compress}]'
