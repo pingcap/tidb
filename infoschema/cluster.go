@@ -27,9 +27,10 @@ import (
 	"github.com/pingcap/tidb/util/sem"
 )
 
+// Cluster table indicates that these tables need to get data from other tidb nodes, which may get from all other nodes, or may get from the ddl owner.
 // Cluster table list, attention:
 // 1. the table name should be upper case.
-// 2. clusterTableName should equal to "CLUSTER_" + memTableTableName.
+// 2. For tables that need to get data from all other TiDB nodes, clusterTableName should equal to "CLUSTER_" + memTableTableName.
 const (
 	// ClusterTableSlowLog is the string constant of cluster slow query memory table.
 	ClusterTableSlowLog     = "CLUSTER_SLOW_QUERY"
@@ -64,7 +65,7 @@ var memTableToClusterTables = map[string]string{
 const (
 	// AllTiDB is uese by CLUSTER_* table, means that these tables will send cop request to all TiDB nodes.
 	AllTiDB int16 = iota
-	// DDLOwner is uese by tiflash_replica, means that this table will send cop request to DDL owner node.
+	// DDLOwner is uese by tiflash_replica currently, means that this table will send cop request to DDL owner node.
 	DDLOwner
 )
 
