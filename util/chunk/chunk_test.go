@@ -1178,12 +1178,21 @@ func TestNewChunkWithAllocCapacity(t *testing.T) {
 	durationObj := types.Duration{Duration: math.MaxInt64, Fsp: 0}
 
 	for i := 0; i < initCap; i++ {
-		chk.AppendFloat64(0, 123.123)
+		chk.AppendFloat32(0, 123.123)
 		chk.AppendString(1, "123")
 		chk.AppendTime(2, timeObj)
 		chk.AppendDuration(3, durationObj)
 	}
+	alloc.Reset()
 
+	chk2 := NewChunkWithAllocCapacity(fieldTypes, initCap, alloc)
+
+	for i := 0; i < initCap; i++ {
+		chk2.AppendFloat32(0, 123.123)
+		chk2.AppendString(1, "123")
+		chk2.AppendTime(2, timeObj)
+		chk2.AppendDuration(3, durationObj)
+	}
 	alloc.Reset()
 
 	chunkReuseMap := make(map[*Chunk]struct{}, 14)
