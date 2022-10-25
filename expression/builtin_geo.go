@@ -74,6 +74,8 @@ func (b *builtinStGeomFromTextSig) Clone() builtinFunc {
 	return newSig
 }
 
+// ST_GeomFromText(wkt) -> geom.
+// geom = <encoded_srid><wkb>, Compatible with MySQL 8.0
 func (b *builtinStGeomFromTextSig) evalString(row chunk.Row) (string, bool, error) {
 	wktVal, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
@@ -128,6 +130,7 @@ func (b *builtinStAsTextSig) Clone() builtinFunc {
 	return newSig
 }
 
+// ST_AsText(geom) -> wkt
 func (b *builtinStAsTextSig) evalString(row chunk.Row) (string, bool, error) {
 	wkbValRaw, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
@@ -172,6 +175,8 @@ func (b *builtinStDistanceSig) Clone() builtinFunc {
 	return newSig
 }
 
+// ST_Distance(geom, geom) -> distance
+// Only supports SRID 0 for now, result is in degrees
 func (b *builtinStDistanceSig) evalReal(row chunk.Row) (float64, bool, error) {
 	g1r, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
