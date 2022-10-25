@@ -332,8 +332,8 @@ def go_deps():
         name = "com_github_burntsushi_toml",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/BurntSushi/toml",
-        sum = "h1:Rt8g24XnyGTyglgET/PRUNlrUeu9F5L+7FilkXfZgs0=",
-        version = "v1.2.0",
+        sum = "h1:9F2/+DoOYIOksmaJFPw1tGFy1eDnIJXg+UHjuD8lTak=",
+        version = "v1.2.1",
     )
     go_repository(
         name = "com_github_burntsushi_xgb",
@@ -1396,8 +1396,8 @@ def go_deps():
         name = "com_github_golangci_golangci_lint",
         build_file_proto_mode = "disable",
         importpath = "github.com/golangci/golangci-lint",
-        sum = "h1:+Xmyt8rKLauNLp2gzcxKMN8VNGqGc5Avc2ZLTwIOpEA=",
-        version = "v1.50.0",
+        sum = "h1:C829clMcZXEORakZlwpk7M4iDw2XiwxxKaG504SZ9zY=",
+        version = "v1.50.1",
     )
     go_repository(
         name = "com_github_golangci_gosec",
@@ -2166,8 +2166,8 @@ def go_deps():
         name = "com_github_kkhaike_contextcheck",
         build_file_proto_mode = "disable",
         importpath = "github.com/kkHAIKE/contextcheck",
-        sum = "h1:BYUSG/GhMhqVz//yjl8IkBDlMEws+9DtCmkz18QO1gg=",
-        version = "v1.1.2",
+        sum = "h1:l4pNvrb8JSwRd51ojtcOxOeHJzHek+MtOyXbaR0uvmw=",
+        version = "v1.1.3",
     )
 
     go_repository(
@@ -3417,8 +3417,8 @@ def go_deps():
         name = "com_github_spf13_viper",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/spf13/viper",
-        sum = "h1:BWSJ/M+f+3nmdz9bxB+bWX28kkALN2ok11D0rSo8EJU=",
-        version = "v1.13.0",
+        sum = "h1:CZ7eSOd3kZoaYDLbXnmzgQI5RlciuXBMA+18HwHRfZQ=",
+        version = "v1.12.0",
     )
     go_repository(
         name = "com_github_ssgreg_nlreturn_v2",
@@ -3577,15 +3577,15 @@ def go_deps():
         name = "com_github_tomarrell_wrapcheck_v2",
         build_file_proto_mode = "disable",
         importpath = "github.com/tomarrell/wrapcheck/v2",
-        sum = "h1:3dI6YNcrJTQ/CJQ6M/DUkc0gnqYSIk6o0rChn9E/D0M=",
-        version = "v2.6.2",
+        sum = "h1:J/F8DbSKJC83bAvC6FoZaRjZiZ/iKoueSdrEkmGeacA=",
+        version = "v2.7.0",
     )
     go_repository(
         name = "com_github_tommy_muehle_go_mnd_v2",
         build_file_proto_mode = "disable",
         importpath = "github.com/tommy-muehle/go-mnd/v2",
-        sum = "h1:iAj0a8e6+dXSL7Liq0aXPox36FiN1dBbjA6lt9fl65s=",
-        version = "v2.5.0",
+        sum = "h1:NowYhSdyE/1zwK9QCLeRb6USWdoif80Ie+v+yU8u1Zw=",
+        version = "v2.5.1",
     )
 
     go_repository(
