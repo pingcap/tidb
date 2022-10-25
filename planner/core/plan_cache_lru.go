@@ -15,6 +15,8 @@ package core
 
 import (
 	"container/list"
+	"runtime"
+	"strconv"
 	"sync"
 
 	"github.com/pingcap/errors"
@@ -103,6 +105,9 @@ func (l *LRUPlanCache) Get(key kvcache.Key, paramTypes []*types.FieldType) (valu
 	if bucketExist {
 		if element, exist := l.pickFromBucket(bucket, paramTypes); exist {
 			l.lruList.MoveToFront(element)
+			logutil.BgLogger().Info("---memory consume: " + memory.FormatBytes(l.memTracker.BytesConsumed()) +
+				" ---plan num: " + strconv.FormatInt(int64(l.size), 10))
+			runtime.GC()
 			return element.Value.(*planCacheEntry).PlanValue, true
 		}
 	}
@@ -166,6 +171,7 @@ func (l *LRUPlanCache) DeleteAll() {
 	l.lock.Lock()
 	defer l.lock.Unlock()
 	defer l.updateMonitorMetric()
+	defer runtime.GC()
 
 	for lru := l.lruList.Back(); lru != nil; lru = l.lruList.Back() {
 		l.lruList.Remove(lru)
