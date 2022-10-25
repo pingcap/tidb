@@ -1892,7 +1892,10 @@ func (do *Domain) NotifyUpdateSysVarCache() {
 }
 
 // LoadSigningCertLoop loads the signing cert periodically to make sure it's fresh new.
-func (do *Domain) LoadSigningCertLoop() {
+func (do *Domain) LoadSigningCertLoop(signingCert, signingKey string) {
+	sessionstates.SetCertPath(signingCert)
+	sessionstates.SetKeyPath(signingKey)
+
 	do.wg.Add(1)
 	go func() {
 		defer func() {
