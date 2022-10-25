@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util/chunk"
 )
 
 func TestWindowFunctions(t *testing.T) {
@@ -497,4 +498,52 @@ func TestIssue29947(t *testing.T) {
 	result := tk.MustQuery("select * from (select count(*) over (partition by ref_0.c_0b6nxb order by ref_0.c_3pcik) as c0 from t_tir89b as ref_0) as subq_0 where subq_0.c0 <> 1;")
 	result.Check(testkit.Rows("2", "3"))
 	tk.MustExec("commit")
+}
+
+func TestReuseChunk(t *testing.T) {
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	alloc := chunk.NewAllocator()
+	tk.Session().GetSessionVars().SetAlloc(alloc)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_window_concurrency = 1")
+	tk.Session().GetSessionVars().SetAlloc(alloc)
+	doTestWindowFunctions(tk)
+	tk.Session().GetSessionVars().EndAlloc()
+	alloc.Reset()
+
+	tk.MustExec("drop database test")
+	tk.MustExec("create database test")
+	tk.Session().GetSessionVars().SetAlloc(alloc)
+	doTestWindowFunctions(tk)
+	result := tk.MustQuery("select @@last_sql_use_alloc")
+	result.Check(testkit.Rows("1"))
+	tk.Session().GetSessionVars().EndAlloc()
+	alloc.Reset()
+
+	tk.MustExec("drop database test")
+	tk.MustExec("create database test")
+	tk.MustExec("set @@tidb_window_concurrency = 4")
+	tk.Session().GetSessionVars().SetAlloc(alloc)
+	doTestWindowFunctions(tk)
+	result = tk.MustQuery("select @@last_sql_use_alloc")
+	result.Check(testkit.Rows("1"))
+	tk.Session().GetSessionVars().EndAlloc()
+	alloc.Reset()
+
+	tk.MustExec("set @@tidb_window_concurrency = 4")
+	tk.MustExec("set @@tidb_enable_pipelined_window_function = 0")
+	defer func() {
+		tk.MustExec("set @@tidb_enable_pipelined_window_function=1;")
+	}()
+	tk.MustExec("drop database test")
+	tk.MustExec("create database test")
+	tk.Session().GetSessionVars().SetAlloc(alloc)
+	doTestWindowFunctions(tk)
+	result = tk.MustQuery("select @@last_sql_use_alloc")
+	result.Check(testkit.Rows("1"))
+	tk.Session().GetSessionVars().EndAlloc()
+	alloc.Reset()
+
 }

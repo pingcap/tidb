@@ -1290,6 +1290,10 @@ type SessionVars struct {
 		Alloc chunk.Allocator
 	}
 	EnableReuseCheck bool
+
+	// UseChunkAlloc indicates whether statement use chunk alloc
+	UseChunkAlloc    bool
+	PreUseChunkAlloc bool
 }
 
 // GetNewChunk Attempt to request memory from the chunk pool
@@ -1299,10 +1303,12 @@ func (s *SessionVars) GetNewChunk(fields []*types.FieldType, capacity int) *chun
 	if s.ChunkPool.Alloc == nil {
 		return chunk.NewChunkWithCapacity(fields, capacity)
 	}
-
+	if s.MaxReuseChunk > 0 || s.MaxReuseColumn > 0 {
+		s.UseChunkAlloc = true
+	}
 	s.ChunkPool.Lock.Lock()
 	defer s.ChunkPool.Lock.Unlock()
-	chk := chunk.NewChunkWithAllocCapacity(fields, capacity, s.ChunkPool.Alloc)
+	chk := s.ChunkPool.Alloc.Alloc(fields, capacity, capacity)
 	return chk
 }
 
@@ -1311,6 +1317,9 @@ func (s *SessionVars) GetNewChunk(fields []*types.FieldType, capacity int) *chun
 func (s *SessionVars) GetNewChunkWithCapacity(fields []*types.FieldType, capacity int, maxCachesize int) *chunk.Chunk {
 	if s.ChunkPool.Alloc == nil {
 		return chunk.New(fields, capacity, maxCachesize)
+	}
+	if s.MaxReuseChunk > 0 || s.MaxReuseColumn > 0 {
+		s.UseChunkAlloc = true
 	}
 	s.ChunkPool.Lock.Lock()
 	defer s.ChunkPool.Lock.Unlock()
@@ -1325,11 +1334,15 @@ func (s *SessionVars) SetAlloc(alloc chunk.Allocator) {
 	}
 	if alloc != nil {
 		alloc.SetLimit(s.MaxReuseChunk, s.MaxReuseColumn)
+	} else {
+		s.UseChunkAlloc = false
 	}
-	s.ChunkPool = struct {
-		Lock  sync.Mutex
-		Alloc chunk.Allocator
-	}{Alloc: alloc}
+	s.ChunkPool.Alloc = alloc
+}
+
+func (s *SessionVars) EndAlloc() {
+	fmt.Printf("end")
+	s.ChunkPool.Alloc = nil
 }
 
 // GetPreparedStmtByName returns the prepared statement specified by stmtName.
@@ -1623,6 +1636,13 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableTiFlashReadForWriteStmt: DefTiDBEnableTiFlashReadForWriteStmt,
 		ForeignKeyChecks:              DefTiDBForeignKeyChecks,
 		HookContext:                   hctx,
+		EnableReuseCheck:              DefTiDBEnableReusechunk,
+		UseChunkAlloc:                 DefTiDBUseAlloc,
+		PreUseChunkAlloc:              DefTiDBUseAlloc,
+		ChunkPool: struct {
+			Lock  sync.Mutex
+			Alloc chunk.Allocator
+		}{Alloc: nil},
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{

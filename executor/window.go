@@ -162,7 +162,6 @@ func (e *WindowExec) fetchChild(ctx context.Context) (EOF bool, err error) {
 		return true, nil
 	}
 
-	//resultChk := chunk.New(e.retFieldTypes, 0, numRows)
 	resultChk := e.ctx.GetSessionVars().GetNewChunkWithCapacity(e.retFieldTypes, 0, numRows)
 	err = e.copyChk(childResult, resultChk)
 	if err != nil {

@@ -438,8 +438,12 @@ func TestGetReuseChunk(t *testing.T) {
 	}
 
 	sessVars := variable.NewSessionVars(nil)
+
+	// SetAlloc efficient
 	sessVars.SetAlloc(nil)
 	require.Nil(t, sessVars.ChunkPool.Alloc)
+	require.False(t, sessVars.UseChunkAlloc)
+	// alloc is nil ，Allocate memory from the system
 	chk1 := sessVars.GetNewChunk(fieldTypes, 10)
 	require.NotNil(t, chk1)
 	chk2 := sessVars.GetNewChunkWithCapacity(fieldTypes, 10, 10)
@@ -454,7 +458,10 @@ func TestGetReuseChunk(t *testing.T) {
 	sessVars.EnableReuseCheck = true
 	sessVars.SetAlloc(alloc)
 	require.NotNil(t, sessVars.ChunkPool.Alloc)
+	require.Equal(t, alloc, sessVars.ChunkPool.Alloc)
+	require.True(t, sessVars.UseChunkAlloc)
 
+	//tries to apply from the cache
 	initCap := 10
 	chk1 = sessVars.GetNewChunk(fieldTypes, initCap)
 	require.NotNil(t, chk1)
@@ -462,7 +469,7 @@ func TestGetReuseChunk(t *testing.T) {
 	for i := 0; i < chk1.NumCols(); i++ {
 		columnReuseMap[chk1.Column(i)] = struct{}{}
 	}
-	chk2 = sessVars.GetNewChunkWithCapacity(fieldTypes, 10, 10)
+	chk2 = sessVars.GetNewChunkWithCapacity(fieldTypes, initCap, initCap)
 	require.NotNil(t, chk2)
 	chunkReuseMap[chk2] = struct{}{}
 	for i := 0; i < chk2.NumCols(); i++ {
@@ -470,7 +477,6 @@ func TestGetReuseChunk(t *testing.T) {
 	}
 
 	alloc.Reset()
-
 	chkres1 := sessVars.GetNewChunk(fieldTypes, 10)
 	_, exist := chunkReuseMap[chkres1]
 	require.True(t, exist)
@@ -486,4 +492,28 @@ func TestGetReuseChunk(t *testing.T) {
 		_, exist := columnReuseMap[chkres2.Column(i)]
 		require.True(t, exist)
 	}
+
+	//Test cache resizing works
+	sessVars.MaxReuseChunk = 0
+	sessVars.MaxReuseColumn = 0
+	sessVars.SetAlloc(alloc)
+	alloc.Reset()
+	chkres3 := sessVars.GetNewChunk(fieldTypes, 10)
+	_, exist = chunkReuseMap[chkres3]
+	require.False(t, exist)
+	for i := 0; i < chkres3.NumCols(); i++ {
+		_, exist := columnReuseMap[chkres3.Column(i)]
+		require.False(t, exist)
+	}
+	chkres4 := sessVars.GetNewChunkWithCapacity(fieldTypes, 10, 10)
+	require.NotNil(t, chkres4)
+	_, exist = chunkReuseMap[chkres4]
+	require.False(t, exist)
+	for i := 0; i < chkres4.NumCols(); i++ {
+		_, exist := columnReuseMap[chkres4.Column(i)]
+		require.False(t, exist)
+	}
+
+	sessVars.EndAlloc()
+	require.Nil(t, sessVars.ChunkPool.Alloc)
 }

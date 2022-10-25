@@ -60,11 +60,6 @@ func NewChunkWithCapacity(fields []*types.FieldType, capacity int) *Chunk {
 	return New(fields, capacity, capacity)
 }
 
-// NewChunkWithAllocCapacity creates a new chunk with field types and capacity from Allocator
-func NewChunkWithAllocCapacity(fields []*types.FieldType, capacity int, alloc Allocator) *Chunk {
-	return alloc.Alloc(fields, capacity, capacity)
-}
-
 // New creates a new chunk.
 //
 //	cap: the limit for the max number of rows.
@@ -325,30 +320,6 @@ func (c *Chunk) GrowAndReset(maxChunkSize int) {
 	}
 	c.capacity = newCap
 	c.columns = renewColumns(c.columns, newCap)
-	c.numVirtualRows = 0
-	c.requiredRows = maxChunkSize
-}
-
-// GrowAndResetWithCache resets the Chunk and doubles the capacity of the Chunk,
-// Try apply from cache.The doubled capacity should not be larger than maxChunkSize.
-func (c *Chunk) GrowAndResetWithCache(maxChunkSize int, allocat Allocator) {
-	c.sel = nil
-	if c.columns == nil {
-		return
-	}
-	newCap := reCalcCapacity(c, maxChunkSize)
-	if newCap <= c.capacity {
-		c.Reset()
-		return
-	}
-	c.capacity = newCap
-	alloc, ok := allocat.(*allocator)
-	if (alloc == nil) || (ok) {
-		c.columns = renewColumns(c.columns, newCap)
-	} else {
-		c.columns = renewColumnsWithCache(c.columns, newCap, *alloc)
-	}
-
 	c.numVirtualRows = 0
 	c.requiredRows = maxChunkSize
 }

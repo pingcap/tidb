@@ -252,6 +252,9 @@ const (
 
 	// TiDBEnableTiFlashReadForWriteStmt indicates whether to enable TiFlash to read for write statements.
 	TiDBEnableTiFlashReadForWriteStmt = "tidb_enable_tiflash_read_for_write_stmt"
+
+	// TiDBUseAlloc indicates whether the last statement used chunk alloc
+	TiDBUseAlloc = "last_sql_use_alloc"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -1080,6 +1083,7 @@ const (
 	DefTiDBEnableReusechunk = true
 	DefTiDBMaxReuseChunk    = 128
 	DefTiDBMaxReuseColumn   = 1024
+	DefTiDBUseAlloc         = false
 )
 
 // Process global variables.
