@@ -499,7 +499,6 @@ func TestIssue38577(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
-	tk.MustExec(`drop table if exists tbl_1`)
 	tk.MustExec(`create table tbl_1 ( col_1 set ('Alice', 'Bob', 'Charlie', 'David') not null default 'Alice', col_2 tinyint unsigned, col_3 decimal (34, 3) not null default 79, col_4 bigint unsigned not null, col_5 bit (12) not null, unique key idx_1 (col_2), unique key idx_2 (col_2) ) charset utf8mb4 collate utf8mb4_bin`)
 	tk.MustExec(`create table tbl_3 ( col_11 set ('Alice', 'Bob', 'Charlie', 'David') not null, col_12 bigint unsigned not null default 1678891638492596595, col_13 text (18), col_14 set ('Alice', 'Bob', 'Charlie', 'David') not null default 'Alice', col_15 mediumint, key idx_5 (col_12), unique key idx_6 (col_12) ) charset utf8mb4 collate utf8mb4_general_ci`)
 	tk.MustExec(`create table tbl_4 ( col_16 set ('Alice', 'Bob', 'Charlie', 'David') not null, col_17 tinyint unsigned, col_18 int unsigned not null default 4279145838, col_19 varbinary (210) not null, col_20 timestamp, primary key (col_18) /*T![clustered_index] nonclustered */, key idx_8 (col_19) ) charset utf8mb4 collate utf8mb4_unicode_ci`)
