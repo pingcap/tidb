@@ -62,7 +62,7 @@ func (t *memoryLimitTuner) tuning() {
 		if t.nextGCTriggeredByMemoryLimit.Load() && t.waitingReset.CompareAndSwap(false, true) {
 			go func() {
 				memory.MemoryLimitGCLast.Store(time.Now())
-				memory.MemoryLimitGCToTal.Add(1)
+				memory.MemoryLimitGCTotal.Add(1)
 				debug.SetMemoryLimit(math.MaxInt64)
 				resetInterval := 1 * time.Minute // Wait 1 minute and set back, to avoid frequent GC
 				failpoint.Inject("testMemoryLimitTuner", func(val failpoint.Value) {

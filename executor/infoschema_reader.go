@@ -2427,7 +2427,7 @@ func (e *memtableRetriever) setDataForMemoryUsage(ctx sessionctx.Context) error 
 		sessionKillLastDatum, // SESSION_KILL_LAST
 		types.NewIntDatum(servermemorylimit.SessionKillTotal.Load()), // SESSION_KILL_TOTAL
 		types.NewTimeDatum(gcLast),                                   // GC_LAST
-		types.NewIntDatum(memory.MemoryLimitGCToTal.Load()),          // GC_TOTAL
+		types.NewIntDatum(memory.MemoryLimitGCTotal.Load()),          // GC_TOTAL
 		types.NewDatum(GlobalDiskUsageTracker.BytesConsumed()),       // DISK_USAGE
 		types.NewDatum(memory.QueryForceDisk.Load()),                 // QUERY_FORCE_DISK
 	}
