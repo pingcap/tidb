@@ -27,22 +27,25 @@ func getShardID(id uint64) uint64 {
 	return id % uint64(shard)
 }
 
-type TContainer[T any, U any, C any, CT any, TF Context[CT]] struct {
+type tContainer[T any, U any, C any, CT any, TF Context[CT]] struct {
 	task *taskBox[T, U, C, CT, TF]
 	_    cpu.CacheLinePad
 }
 
+// TaskStatusContainer is a container that can control or watch the pool.
 type TaskStatusContainer[T any, U any, C any, CT any, TF Context[CT]] struct {
 	Status map[uint64]*list.List
 	rw     sync.RWMutex
 	_      cpu.CacheLinePad
 }
 
+// TaskManager is a manager that can control or watch the pool.
 type TaskManager[T any, U any, C any, CT any, TF Context[CT]] struct {
 	task         []TaskStatusContainer[T, U, C, CT, TF]
 	conncurrency int
 }
 
+// NewTaskManager create a new task manager.
 func NewTaskManager[T any, U any, C any, CT any, TF Context[CT]](con int) TaskManager[T, U, C, CT, TF] {
 	task := make([]TaskStatusContainer[T, U, C, CT, TF], 0, shard)
 	return TaskManager[T, U, C, CT, TF]{
@@ -51,6 +54,7 @@ func NewTaskManager[T any, U any, C any, CT any, TF Context[CT]](con int) TaskMa
 	}
 }
 
+// CreatTask create a new task.
 func (t *TaskManager[T, U, C, CT, TF]) CreatTask(task uint64) {
 	id := getShardID(task)
 	t.task[id].rw.Lock()
@@ -58,9 +62,10 @@ func (t *TaskManager[T, U, C, CT, TF]) CreatTask(task uint64) {
 	t.task[id].rw.Unlock()
 }
 
+// AddTask add a task to the manager.
 func (t *TaskManager[T, U, C, CT, TF]) AddTask(id uint64, task *taskBox[T, U, C, CT, TF]) {
 	shardID := getShardID(id)
-	tc := TContainer[T, U, C, CT, TF]{
+	tc := tContainer[T, U, C, CT, TF]{
 		task: task,
 	}
 	t.task[shardID].rw.Lock()
@@ -68,6 +73,7 @@ func (t *TaskManager[T, U, C, CT, TF]) AddTask(id uint64, task *taskBox[T, U, C,
 	t.task[shardID].rw.Unlock()
 }
 
+// DeleteTask delete a task.
 func (t *TaskManager[T, U, C, CT, TF]) DeleteTask(id uint64) {
 	shardID := getShardID(id)
 	t.task[shardID].rw.Lock()

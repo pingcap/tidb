@@ -61,10 +61,10 @@ func (w *goWorker[T, U, C, CT, TF]) run() {
 			}
 			switch f.GetStatus() {
 			case PendingTask:
-				f.SetStatus(RuningTask)
+				f.SetStatus(pooltask.RunningTask)
 			case StopTask:
 				continue
-			case RuningTask:
+			case RunningTask:
 				log.Error("worker got task running")
 				continue
 			}
@@ -74,7 +74,7 @@ func (w *goWorker[T, U, C, CT, TF]) run() {
 				for t := range f.GetTaskCh() {
 					f.GetResultCh() <- w.pool.consumerFunc(t.Task, f.ConstArgs(), ctx)
 					f.Done()
-					if f.GetStatus() == PendingTask {
+					if f.GetStatus() == pooltask.PendingTask {
 						w.taskBoxCh <- f
 						break
 					}

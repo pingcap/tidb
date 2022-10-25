@@ -20,8 +20,11 @@ import (
 )
 
 const (
+	// PendingTask is a task waiting to start
 	PendingTask int32 = iota
-	RuningTask
+	// RunningTask is a task running
+	RunningTask
+	// StopTask is a stop task
 	StopTask
 )
 
@@ -43,12 +46,15 @@ func (t *taskBox[T, U, C, CT, TF]) SetStatus(s int32) {
 	t.status.Store(s)
 }
 
+// Context is a interface that can be used to create a context.
 type Context[T any] interface {
 	GetContext() T
 }
 
+// NilContext is to create a nil as context
 type NilContext struct{}
 
+// GetContext is to get a nil as context
 func (NilContext) GetContext() any {
 	return nil
 }
@@ -76,7 +82,6 @@ func (c *TaskController[T, U, C, CT, TF]) Wait() {
 	<-c.close
 	c.wg.Wait()
 	c.pool.taskManager.DeleteTask(c.taskID)
-
 }
 
 // IsProduceClose is to judge whether the producer is completed.
