@@ -26,7 +26,7 @@ var stats atomic.Pointer[globalMstats]
 func ReadMemStats() *runtime.MemStats {
 	s := stats.Load()
 	if time.Since(s.ts) < 300*time.Millisecond {
-		return s.m
+		return &s.m
 	}
 	var g globalMstats
 	g.ts = time.Now()
