@@ -2734,6 +2734,20 @@ var (
 	mdlTable = "create table mysql.tidb_mdl_info(job_id BIGINT NOT NULL PRIMARY KEY, version BIGINT NOT NULL, table_ids text(65535));"
 )
 
+func splitAndScatterTable(store kv.Storage, tableIDs []int64) {
+	if s, ok := store.(kv.SplittableStore); ok && atomic.LoadUint32(&ddl.EnableSplitTableRegion) == 1 {
+		ctxWithTimeout, cancel := context.WithTimeout(context.Background(), variable.DefWaitSplitRegionTimeout*time.Second)
+		var regionIDs []uint64
+		for _, id := range tableIDs {
+			regionIDs = append(regionIDs, ddl.SplitRecordRegion(ctxWithTimeout, s, id, variable.DefTiDBScatterRegion))
+		}
+		if variable.DefTiDBScatterRegion {
+			ddl.WaitScatterRegionFinish(ctxWithTimeout, s, regionIDs...)
+		}
+		cancel()
+	}
+}
+
 // InitDDLJobTables is to create tidb_ddl_job, tidb_ddl_reorg and tidb_ddl_history.
 func InitDDLJobTables(store kv.Storage) error {
 	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
@@ -2746,17 +2760,11 @@ func InitDDLJobTables(store kv.Storage) error {
 		if err != nil {
 			return err
 		}
-		if s, ok := store.(kv.SplittableStore); ok && atomic.LoadUint32(&ddl.EnableSplitTableRegion) == 1 {
-			ctxWithTimeout, cancel := context.WithTimeout(context.Background(), variable.DefWaitSplitRegionTimeout*time.Second)
-			var regionIDs []uint64
-			for _, tbl := range DDLJobTables {
-				regionIDs = append(regionIDs, ddl.SplitRecordRegion(ctxWithTimeout, s, tbl.id, variable.DefTiDBScatterRegion))
-			}
-			if variable.DefTiDBScatterRegion {
-				ddl.WaitScatterRegionFinish(ctxWithTimeout, s, regionIDs...)
-			}
-			cancel()
+		tableIDs := make([]int64, 0, len(DDLJobTables))
+		for _, tbl := range DDLJobTables {
+			tableIDs = append(tableIDs, tbl.id)
 		}
+		splitAndScatterTable(store, tableIDs)
 		p := parser.New()
 		for _, tbl := range DDLJobTables {
 			stmt, err := p.ParseOneStmt(tbl.SQL, "", "")
@@ -2791,15 +2799,7 @@ func InitMDLTable(store kv.Storage) error {
 		if err != nil {
 			return err
 		}
-		if s, ok := store.(kv.SplittableStore); ok && atomic.LoadUint32(&ddl.EnableSplitTableRegion) == 1 {
-			ctxWithTimeout, cancel := context.WithTimeout(context.Background(), variable.DefWaitSplitRegionTimeout*time.Second)
-			var regionIDs []uint64
-			regionIDs = append(regionIDs, ddl.SplitRecordRegion(ctxWithTimeout, s, ddl.MDLTableID, variable.DefTiDBScatterRegion))
-			if variable.DefTiDBScatterRegion {
-				ddl.WaitScatterRegionFinish(ctxWithTimeout, s, regionIDs...)
-			}
-			cancel()
-		}
+		splitAndScatterTable(store, []int64{ddl.MDLTableID})
 		p := parser.New()
 		stmt, err := p.ParseOneStmt(mdlTable, "", "")
 		if err != nil {
