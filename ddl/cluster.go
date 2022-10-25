@@ -441,13 +441,12 @@ func flashbackToVersion(
 	).RunOnRange(ctx, startKey, endKey)
 }
 
-func splitTablesRegions(d *ddlCtx, keyRanges []kv.KeyRange) {
+func splitRegionsByKeyRanges(d *ddlCtx, keyRanges []kv.KeyRange) {
 	if s, ok := d.store.(kv.SplittableStore); ok {
-		var tableID int64
 		for _, keys := range keyRanges {
 			for {
 				// tableID is useless when scatter == false
-				_, err := s.SplitRegions(d.ctx, [][]byte{keys.StartKey, keys.EndKey}, false, &tableID)
+				_, err := s.SplitRegions(d.ctx, [][]byte{keys.StartKey, keys.EndKey}, false, nil)
 				if err == nil {
 					break
 				}
@@ -534,7 +533,7 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			return ver, errors.Trace(err)
 		}
 		// Split region by keyRanges, make sure no unrelated key ranges be locked.
-		splitTablesRegions(d, keyRanges)
+		splitRegionsByKeyRanges(d, keyRanges)
 		totalRegions.Store(0)
 		for _, ranges := range keyRanges {
 			if err = prepareFlashbackToVersion(d.ctx, d,

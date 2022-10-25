@@ -120,7 +120,7 @@ func (msm *MockSessionManager) KillNonFlashbackClusterConn() {
 			msm.Kill(se.GetSessionVars().ConnectionID, false)
 			continue
 		}
-		_, ok = ddl.Statement.(*ast.FlashBackClusterStmt)
+		_, ok = ddl.Statement.(*ast.FlashBackToTimestampStmt)
 		if !ok {
 			msm.Kill(se.GetSessionVars().ConnectionID, false)
 			continue
