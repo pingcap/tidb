@@ -31,7 +31,7 @@ We need to implement the following three functions to control the memory usage o
 2. Take the initiative to trigger `runtime.GC()`, when `HeapInuse` is large than `tidb_server_memory_limit`*`tidb_server_memory_limit_gc_trigger`.
 3. Introduce some memory tables to observe the memory status of the current system.
 
-### Kill the SQL with the most memory usage
+### Kill the SQL with the max memory usage
 
 New variables:
 
