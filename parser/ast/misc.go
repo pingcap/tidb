@@ -1431,6 +1431,37 @@ func (t *TLSOption) Restore(ctx *format.RestoreCtx) error {
 }
 
 const (
+	TokenIssuer AuthTokenOptionType = iota
+)
+
+type AuthTokenOptionType int
+
+type AuthTokenOption struct {
+	Type  AuthTokenOptionType
+	Value string
+}
+
+func (t *AuthTokenOption) Restore(ctx *format.RestoreCtx) error {
+	switch t.Type {
+	case TokenIssuer:
+		ctx.WriteKeyWord("TOKEN_ISSUER ")
+		ctx.WriteString(t.Value)
+	default:
+		return errors.Errorf("Unsupported AuthTokenOption.Type %d", t.Type)
+	}
+	return nil
+}
+
+func (t AuthTokenOptionType) String() string {
+	switch t {
+	case TokenIssuer:
+		return "TOKEN_ISSUER"
+	default:
+		return "UNKNOWN"
+	}
+}
+
+const (
 	MaxQueriesPerHour = iota + 1
 	MaxUpdatesPerHour
 	MaxConnectionsPerHour
@@ -1523,6 +1554,7 @@ type CreateUserStmt struct {
 	IfNotExists              bool
 	Specs                    []*UserSpec
 	TLSOptions               []*TLSOption
+	AuthTokenOptions         []*AuthTokenOption
 	ResourceOptions          []*ResourceOption
 	PasswordOrLockOptions    []*PasswordOrLockOption
 	CommentOrAttributeOption *CommentOrAttributeOption
@@ -1557,6 +1589,18 @@ func (n *CreateUserStmt) Restore(ctx *format.RestoreCtx) error {
 		}
 		if err := option.Restore(ctx); err != nil {
 			return errors.Annotatef(err, "An error occurred while restore CreateUserStmt.TLSOptions[%d]", i)
+		}
+	}
+
+	if len(n.AuthTokenOptions) != 0 {
+		ctx.WriteKeyWord(" TOKEN_REQUIRE ")
+	}
+	for i, option := range n.AuthTokenOptions {
+		if i != 0 {
+			ctx.WriteKeyWord(" AND ")
+		}
+		if err := option.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore CreateUserStmt.AuthTokenOptions[%d]", i)
 		}
 	}
 
@@ -1617,6 +1661,7 @@ type AlterUserStmt struct {
 	CurrentAuth              *AuthOption
 	Specs                    []*UserSpec
 	TLSOptions               []*TLSOption
+	AuthTokenOptions         []*AuthTokenOption
 	ResourceOptions          []*ResourceOption
 	PasswordOrLockOptions    []*PasswordOrLockOption
 	CommentOrAttributeOption *CommentOrAttributeOption
@@ -1654,6 +1699,19 @@ func (n *AlterUserStmt) Restore(ctx *format.RestoreCtx) error {
 		}
 		if err := option.Restore(ctx); err != nil {
 			return errors.Annotatef(err, "An error occurred while restore AlterUserStmt.TLSOptions[%d]", i)
+		}
+	}
+
+	if len(n.AuthTokenOptions) != 0 {
+		ctx.WriteKeyWord(" TOKEN_REQUIRE ")
+	}
+
+	for i, option := range n.AuthTokenOptions {
+		if i != 0 {
+			ctx.WriteKeyWord(" AND ")
+		}
+		if err := option.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore AlterUserStmt.AuthTokenOptions[%d]", i)
 		}
 	}
 

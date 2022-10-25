@@ -836,8 +836,16 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		}
 	}
 
+	tokenIssuer := ""
+	for _, authTokenOption := range s.AuthTokenOptions {
+		switch authTokenOption.Type {
+		case ast.TokenIssuer:
+			tokenIssuer = authTokenOption.Value
+		}
+	}
+
 	sql := new(strings.Builder)
-	sqlexec.MustFormatSQL(sql, `INSERT INTO %n.%n (Host, User, authentication_string, plugin, user_attributes, Account_locked) VALUES `, mysql.SystemDB, mysql.UserTable)
+	sqlexec.MustFormatSQL(sql, `INSERT INTO %n.%n (Host, User, authentication_string, plugin, user_attributes, Account_locked, Token_issuer) VALUES `, mysql.SystemDB, mysql.UserTable)
 
 	users := make([]*auth.UserIdentity, 0, len(s.Specs))
 	for _, spec := range s.Specs {
@@ -883,7 +891,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		}
 
 		hostName := strings.ToLower(spec.User.Hostname)
-		sqlexec.MustFormatSQL(sql, `(%?, %?, %?, %?, %?, %?)`, hostName, spec.User.Username, pwd, authPlugin, userAttributes, lockAccount)
+		sqlexec.MustFormatSQL(sql, `(%?, %?, %?, %?, %?, %?, %?)`, hostName, spec.User.Username, pwd, authPlugin, userAttributes, lockAccount, tokenIssuer)
 		users = append(users, spec.User)
 	}
 	if len(users) == 0 {
@@ -1062,6 +1070,12 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 				newAttributesStr = fmt.Sprintf(`{"metadata": %s}`, s.CommentOrAttributeOption.Value)
 			}
 			fields = append(fields, alterField{"user_attributes=json_merge_patch(user_attributes, %?)", newAttributesStr})
+		}
+
+		if len(s.AuthTokenOptions) > 0 {
+			for _, authTokenOption := range s.AuthTokenOptions {
+				fields = append(fields, alterField{authTokenOption.Type.String() + "=%?", authTokenOption.Value})
+			}
 		}
 
 		if len(fields) > 0 {

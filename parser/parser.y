@@ -257,6 +257,7 @@ import (
 	tinyIntType       "TINYINT"
 	tinytextType      "TINYTEXT"
 	to                "TO"
+	tokenRequire      "TOKEN_REQUIRE"
 	trailing          "TRAILING"
 	trigger           "TRIGGER"
 	trueKwd           "TRUE"
@@ -606,6 +607,7 @@ import (
 	tikvImporter          "TIKV_IMPORTER"
 	timestampType         "TIMESTAMP"
 	timeType              "TIME"
+	tokenIssuer           "TOKEN_ISSUER"
 	tp                    "TYPE"
 	trace                 "TRACE"
 	traditional           "TRADITIONAL"
@@ -1092,6 +1094,7 @@ import (
 	LoadDataSetItem                        "Single load data specification"
 	LocalOpt                               "Local opt"
 	LockClause                             "Alter table lock clause"
+	LockType                               "Table locks type"
 	LogTypeOpt                             "Optional log type used in FLUSH statements"
 	MaxValPartOpt                          "MAXVALUE partition option"
 	NullPartOpt                            "NULL Partition option"
@@ -1148,8 +1151,8 @@ import (
 	OptGConcatSeparator                    "optional GROUP_CONCAT SEPARATOR"
 	ReferOpt                               "reference option"
 	ReorganizePartitionRuleOpt             "optional reorganize partition partition list and definitions"
-	RequireList                            "require list"
-	RequireListElement                     "require list element"
+	RequireList                            "require list for tls options"
+	RequireListElement                     "require list element for tls option"
 	Rolename                               "Rolename"
 	RolenameComposed                       "Rolename that composed with more than 1 symbol"
 	RolenameList                           "RolenameList"
@@ -1229,7 +1232,9 @@ import (
 	TextStringList                         "text string list"
 	TimeUnit                               "Time unit for 'DATE_ADD', 'DATE_SUB', 'ADDDATE', 'SUBDATE', 'EXTRACT'"
 	TimestampUnit                          "Time unit for 'TIMESTAMPADD' and 'TIMESTAMPDIFF'"
-	LockType                               "Table locks type"
+	TokenRequireOpt                        "optional token-based authentication options"
+	TokenRequireList                       "require list for auth token options"
+	TokenRequireListElement                "require list element for auth token option"
 	TransactionChar                        "Transaction characteristic"
 	TransactionChars                       "Transaction characteristic list"
 	TrimDirection                          "Trim string direction"
@@ -6427,6 +6432,7 @@ TiDBKeyword:
 |	"RESET"
 |	"DRY"
 |	"RUN"
+|	"TOKEN_ISSUER"
 
 NotKeywordToken:
 	"ADDDATE"
@@ -12618,7 +12624,7 @@ CommaOpt:
  *  https://dev.mysql.com/doc/refman/5.7/en/account-management-sql.html
  ************************************************************************************/
 CreateUserStmt:
-	"CREATE" "USER" IfNotExists UserSpecList RequireClauseOpt ConnectionOptions PasswordOrLockOptions CommentOrAttributeOption
+	"CREATE" "USER" IfNotExists UserSpecList RequireClauseOpt TokenRequireOpt ConnectionOptions PasswordOrLockOptions CommentOrAttributeOption
 	{
 		// See https://dev.mysql.com/doc/refman/8.0/en/create-user.html
 		ret := &ast.CreateUserStmt{
@@ -12626,11 +12632,12 @@ CreateUserStmt:
 			IfNotExists:           $3.(bool),
 			Specs:                 $4.([]*ast.UserSpec),
 			TLSOptions:            $5.([]*ast.TLSOption),
-			ResourceOptions:       $6.([]*ast.ResourceOption),
-			PasswordOrLockOptions: $7.([]*ast.PasswordOrLockOption),
+			AuthTokenOptions:      $6.([]*ast.AuthTokenOption),
+			ResourceOptions:       $7.([]*ast.ResourceOption),
+			PasswordOrLockOptions: $8.([]*ast.PasswordOrLockOption),
 		}
-		if $8 != nil {
-			ret.CommentOrAttributeOption = $8.(*ast.CommentOrAttributeOption)
+		if $9 != nil {
+			ret.CommentOrAttributeOption = $9.(*ast.CommentOrAttributeOption)
 		}
 		$$ = ret
 	}
@@ -12648,17 +12655,18 @@ CreateRoleStmt:
 
 /* See http://dev.mysql.com/doc/refman/8.0/en/alter-user.html */
 AlterUserStmt:
-	"ALTER" "USER" IfExists UserSpecList RequireClauseOpt ConnectionOptions PasswordOrLockOptions CommentOrAttributeOption
+	"ALTER" "USER" IfExists UserSpecList RequireClauseOpt TokenRequireOpt ConnectionOptions PasswordOrLockOptions CommentOrAttributeOption
 	{
 		ret := &ast.AlterUserStmt{
 			IfExists:              $3.(bool),
 			Specs:                 $4.([]*ast.UserSpec),
 			TLSOptions:            $5.([]*ast.TLSOption),
-			ResourceOptions:       $6.([]*ast.ResourceOption),
-			PasswordOrLockOptions: $7.([]*ast.PasswordOrLockOption),
+			AuthTokenOptions:      $6.([]*ast.AuthTokenOption),
+			ResourceOptions:       $7.([]*ast.ResourceOption),
+			PasswordOrLockOptions: $8.([]*ast.PasswordOrLockOption),
 		}
-		if $8 != nil {
-			ret.CommentOrAttributeOption = $8.(*ast.CommentOrAttributeOption)
+		if $9 != nil {
+			ret.CommentOrAttributeOption = $9.(*ast.CommentOrAttributeOption)
 		}
 		$$ = ret
 	}
@@ -12849,6 +12857,42 @@ RequireListElement:
 	{
 		$$ = &ast.TLSOption{
 			Type:  ast.SAN,
+			Value: $2,
+		}
+	}
+
+TokenRequireOpt:
+	{
+		$$ = []*ast.AuthTokenOption{}
+	}
+|	"TOKEN_REQUIRE" TokenRequireList
+	{
+		$$ = $2
+	}
+
+TokenRequireList:
+	TokenRequireListElement
+	{
+		$$ = []*ast.AuthTokenOption{$1.(*ast.AuthTokenOption)}
+	}
+|	TokenRequireList "AND" TokenRequireListElement
+	{
+		l := $1.([]*ast.AuthTokenOption)
+		l = append(l, $3.(*ast.AuthTokenOption))
+		$$ = l
+	}
+|	TokenRequireList TokenRequireListElement
+	{
+		l := $1.([]*ast.AuthTokenOption)
+		l = append(l, $2.(*ast.AuthTokenOption))
+		$$ = l
+	}
+
+TokenRequireListElement:
+	"TOKEN_ISSUER" stringLit
+	{
+		$$ = &ast.AuthTokenOption{
+			Type:  ast.TokenIssuer,
 			Value: $2,
 		}
 	}
