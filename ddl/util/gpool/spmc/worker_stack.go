@@ -89,7 +89,7 @@ func (wq *workerStack[T, U, C, CT, TF]) binarySearch(l, r int, expiryTime time.T
 
 func (wq *workerStack[T, U, C, CT, TF]) reset() {
 	for i := 0; i < wq.len(); i++ {
-		wq.items[i].task <- nil
+		wq.items[i].taskBoxCh <- nil
 		wq.items[i] = nil
 	}
 	wq.items = wq.items[:0]

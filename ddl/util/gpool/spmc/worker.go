@@ -28,8 +28,8 @@ type goWorker[T any, U any, C any, CT any, TF Context[CT]] struct {
 	// pool who owns this worker.
 	pool *Pool[T, U, C, CT, TF]
 
-	// task is a job should be done.
-	task chan *taskBox[T, U, C, CT, TF]
+	// taskBoxCh is a job should be done.
+	taskBoxCh chan *taskBox[T, U, C, CT, TF]
 
 	exit chan struct{}
 
@@ -57,7 +57,7 @@ func (w *goWorker[T, U, C, CT, TF]) run() {
 			w.pool.cond.Signal()
 		}()
 
-		for f := range w.task {
+		for f := range w.taskBoxCh {
 			if f == nil {
 				return
 			}
@@ -76,7 +76,7 @@ func (w *goWorker[T, U, C, CT, TF]) run() {
 					f.resultCh <- w.pool.consumerFunc(t, f.constArgs, ctx)
 					f.wg.Done()
 					if f.status.Load() == PendingTask {
-						w.task <- f
+						w.taskBoxCh <- f
 						break
 					}
 				}

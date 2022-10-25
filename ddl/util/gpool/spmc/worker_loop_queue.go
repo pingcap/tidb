@@ -168,7 +168,7 @@ func (wq *loopQueue[T, U, C, CT, TF]) reset() {
 
 Releasing:
 	if w := wq.detach(); w != nil {
-		w.task <- nil
+		w.taskBoxCh <- nil
 		goto Releasing
 	}
 	wq.items = wq.items[:0]

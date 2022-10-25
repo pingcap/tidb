@@ -100,7 +100,7 @@ func (p *Pool[T, U, C, CT, TF]) purgePeriodically() {
 		// may be blocking and may consume a lot of time if many workers
 		// are located on non-local CPUs.
 		for i := range expiredWorkers {
-			expiredWorkers[i].task <- nil
+			expiredWorkers[i].taskBoxCh <- nil
 			expiredWorkers[i] = nil
 		}
 
@@ -211,7 +211,7 @@ func (p *Pool[T, U, C, CT, TF]) SetConsumerFunc(consumerFunc func(T, C, CT) U) {
 }
 
 // AddProduce is to add Produce.
-func (p *Pool[T, U, C, CT, TF]) AddProduce(task T, constArg C) (<-chan U, TaskController[T, U, C, CT, TF]) {
+func (p *Pool[T, U, C, CT, TF]) AddProduce(task T, constArg C, contextFn TF) (<-chan U, TaskController[T, U, C, CT, TF]) {
 	taskID := p.generator.Add(1)
 	result := make(chan U)
 	var wg sync.WaitGroup
@@ -221,11 +221,12 @@ func (p *Pool[T, U, C, CT, TF]) AddProduce(task T, constArg C) (<-chan U, TaskCo
 	}
 	taskCh := make(chan T)
 	taskBox := taskBox[T, U, C, CT, TF]{
-		taskID:    taskID,
-		task:      taskCh,
-		constArgs: constArg,
-		wg:        &wg,
-		resultCh:  result,
+		taskID:      taskID,
+		task:        taskCh,
+		constArgs:   constArg,
+		contextFunc: contextFn,
+		wg:          &wg,
+		resultCh:    result,
 	}
 	p.taskCh <- &taskBox
 	taskCh <- task
@@ -234,7 +235,7 @@ func (p *Pool[T, U, C, CT, TF]) AddProduce(task T, constArg C) (<-chan U, TaskCo
 }
 
 // AddProduceBySlice is to add Produce by a slice.
-func (p *Pool[T, U, C, CT, TF]) AddProduceBySlice(producer func() ([]T, error), constArg C, options ...TaskOption) (<-chan U, TaskController[T, U, C, CT, TF]) {
+func (p *Pool[T, U, C, CT, TF]) AddProduceBySlice(producer func() ([]T, error), constArg C, contextFn TF, options ...TaskOption) (<-chan U, TaskController[T, U, C, CT, TF]) {
 	opt := loadTaskOptions(options...)
 	taskID := p.generator.Add(1)
 	var wg sync.WaitGroup
@@ -248,11 +249,12 @@ func (p *Pool[T, U, C, CT, TF]) AddProduceBySlice(producer func() ([]T, error), 
 			break
 		}
 		taskBox := taskBox[T, U, C, CT, TF]{
-			taskID:    taskID,
-			constArgs: constArg,
-			wg:        &wg,
-			task:      taskCh,
-			resultCh:  result,
+			taskID:      taskID,
+			constArgs:   constArg,
+			contextFunc: contextFn,
+			wg:          &wg,
+			task:        taskCh,
+			resultCh:    result,
 		}
 		p.taskCh <- &taskBox
 	}
@@ -276,7 +278,7 @@ func (p *Pool[T, U, C, CT, TF]) AddProduceBySlice(producer func() ([]T, error), 
 }
 
 // AddProducer is to add producer.
-func (p *Pool[T, U, C, CT, TF]) AddProducer(producer func() (T, error), constArg C, options ...TaskOption) (<-chan U, TaskController[T, U, C, CT, TF]) {
+func (p *Pool[T, U, C, CT, TF]) AddProducer(producer func() (T, error), constArg C, contextFn TF, options ...TaskOption) (<-chan U, TaskController[T, U, C, CT, TF]) {
 	opt := loadTaskOptions(options...)
 	taskID := p.generator.Add(1)
 	var wg sync.WaitGroup
@@ -290,11 +292,12 @@ func (p *Pool[T, U, C, CT, TF]) AddProducer(producer func() (T, error), constArg
 			break
 		}
 		taskBox := taskBox[T, U, C, CT, TF]{
-			taskID:    taskID,
-			constArgs: constArg,
-			wg:        &wg,
-			task:      taskCh,
-			resultCh:  result,
+			taskID:      taskID,
+			constArgs:   constArg,
+			contextFunc: contextFn,
+			wg:          &wg,
+			task:        taskCh,
+			resultCh:    result,
 		}
 		p.taskCh <- &taskBox
 	}
@@ -330,7 +333,7 @@ func (p *Pool[T, U, C, CT, TF]) run() error {
 func (p *Pool[T, U, C, CT, TF]) retrieveWorker() (w *goWorker[T, U, C, CT, TF]) {
 	spawnWorker := func() {
 		w = p.workerCache.Get().(*goWorker[T, U, C, CT, TF])
-		w.task = p.taskCh
+		w.taskBoxCh = p.taskCh
 		w.run()
 	}
 

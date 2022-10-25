@@ -145,6 +145,53 @@ type backfillTaskContext struct {
 	finishTS      uint64
 }
 
+type backfillWorkerContext struct {
+	currID          int
+	sessCtxs        []sessionctx.Context
+	backfillWorkers []*backfillWorker
+}
+
+func newBackfillWorkerContext(d *ddl, tbl table.Table, jobCtx *JobContext, eleID int64, eleKey []byte, workerCnt int, batch int) *backfillWorkerContext {
+	if workerCnt <= 0 {
+		return nil
+	}
+
+	sess, err := d.sessPool.get()
+	if err != nil {
+		logutil.BgLogger().Fatal("dispatch backfill jobs loop get session failed, it should not happen, please try restart TiDB", zap.Error(err))
+	}
+	defer d.sessPool.put(sess)
+	decodeColMap, err := makeupDecodeColMap(sess, tbl.(table.PhysicalTable))
+	if err != nil {
+		logutil.BgLogger().Debug(fmt.Sprintf("[ddl] make up decode col map failed"), zap.Error(err))
+		return nil
+	}
+
+	bws, err := d.backfillWorkerPool.batchGet(workerCnt)
+	if err != nil || len(bws) == 0 {
+		logutil.BgLogger().Debug(fmt.Sprintf("[ddl] no backfill worker available now"), zap.Error(err))
+		return nil
+	}
+	seCtxs := make([]sessionctx.Context, 0, len(bws))
+	for i := 0; i < len(bws); i++ {
+		se, err := d.sessPool.get()
+		if err != nil {
+			logutil.BgLogger().Fatal("dispatch backfill jobs loop get session failed, it should not happen, please try restart TiDB", zap.Error(err))
+		}
+		sess := newSession(se)
+		bf := newAddIndexWorker(decodeColMap, newBackfillCtx(d.ddlCtx, sess, tbl, batch), jobCtx, eleID, eleKey)
+		seCtxs = append(seCtxs, se)
+		bws[i].backfiller = bf
+	}
+	return &backfillWorkerContext{backfillWorkers: bws, sessCtxs: seCtxs}
+}
+
+func (bwCtx *backfillWorkerContext) GetContext() *backfillWorker {
+	bw := bwCtx.backfillWorkers[bwCtx.currID%len(bwCtx.backfillWorkers)]
+	bwCtx.currID++
+	return bw
+}
+
 type reorgBackfillTask struct {
 	bfJob           *model.BackfillJob
 	sqlQuery        string
@@ -192,7 +239,6 @@ func newBackfillCtx(ctx *ddlCtx, sessCtx sessionctx.Context, tbl table.Table, ba
 type backfillWorker struct {
 	backfiller
 	*ddlCtx
-	state    int
 	id       int
 	batchCnt int32
 	taskCh   chan *reorgBackfillTask
@@ -1101,7 +1147,7 @@ func getMaxBackfillJob(sess *session, jobID, currEleID int64, currEleKey []byte)
 	if bJob == nil {
 		return hJob, nil
 	}
-	if bJob == nil {
+	if hJob == nil {
 		return bJob, nil
 	}
 	if bJob.ID > hJob.ID {

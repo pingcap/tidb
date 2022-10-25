@@ -1066,7 +1066,7 @@ func (w *baseIndexWorker) UpdateTask(bJob *model.BackfillJob) error {
 			return dbterror.ErrDDLJobNotFound.FastGen("get zero backfill bJob, lease is timeout")
 		}
 		if jobs[0].Instance_ID != bJob.Instance_ID {
-			return dbterror.ErrDDLJobNotFound.FastGenByArgs(fmt.Sprintf("get a backfill bJob %v, want instance ID %d", jobs[0], bJob.Instance_ID))
+			return dbterror.ErrDDLJobNotFound.FastGenByArgs(fmt.Sprintf("get a backfill bJob %v, want instance ID %s", jobs[0], bJob.Instance_ID))
 		}
 		err = updateBackfillJob(sess, bJob, "update_backfill_task")
 	}
