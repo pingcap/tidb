@@ -22,11 +22,7 @@ import (
 
 var stats globalMstats
 
-// ReadMemStats
-// The returned memory allocator statistics are up to date as of the
-// call to ReadMemStats. This is in contrast with a heap profile,
-// which is a snapshot as of the most recently completed garbage
-// collection cycle.
+// ReadMemStats read the mem stats from runtime.ReadMemStats
 func ReadMemStats() runtime.MemStats {
 	return stats.readMemStats()
 }
