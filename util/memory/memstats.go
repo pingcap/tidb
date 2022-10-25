@@ -37,8 +37,8 @@ func ForceReadMemStats() runtime.MemStats {
 }
 
 type globalMstats struct {
-	m  runtime.MemStats
 	ts time.Time
+	m  runtime.MemStats
 	mu sync.RWMutex
 }
 
