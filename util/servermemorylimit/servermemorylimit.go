@@ -123,8 +123,9 @@ func killSessIfNeeded(s *sessionToBeKilled, bt uint64, sm util.SessionManager) {
 }
 
 type memoryOpsHistoryManager struct {
-	mu    sync.Mutex
-	infos []memoryOpsHistory
+	mu      sync.Mutex
+	infos   []memoryOpsHistory
+	offsets int
 }
 
 type memoryOpsHistory struct {
@@ -134,16 +135,22 @@ type memoryOpsHistory struct {
 	processInfoDatum []types.Datum // id,user,host,db,command,time,state,info,digest,mem,disk,txnStart
 }
 
+func (m *memoryOpsHistoryManager) init() {
+	m.infos = make([]memoryOpsHistory, 50)
+	m.offsets = 0
+}
+
 func (m *memoryOpsHistoryManager) recordOne(info *util.ProcessInfo, killTime time.Time, memoryLimit uint64, memoryCurrent uint64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	op := memoryOpsHistory{killTime: killTime, memoryLimit: memoryLimit, memoryCurrent: memoryCurrent, processInfoDatum: types.MakeDatums(info.ToRow(time.UTC)...)}
 	sqlInfo := op.processInfoDatum[7]
 	sqlInfo.SetString(fmt.Sprintf("%.256v", sqlInfo.GetString()), mysql.DefaultCollationName) // Truncated
-
-	m.infos = append(m.infos, op)
-	if len(m.infos) > 50 {
-		m.infos = m.infos[1:]
+	// Only record the last 50 history ops
+	m.infos[m.offsets] = op
+	m.offsets++
+	if m.offsets >= 50 {
+		m.offsets = 0
 	}
 }
 
@@ -151,7 +158,7 @@ func (m *memoryOpsHistoryManager) GetRows() [][]types.Datum {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	rows := make([][]types.Datum, 0, len(m.infos))
-	for _, info := range m.infos {
+	getRowFromInfo := func(info memoryOpsHistory) {
 		killTime := types.NewTime(types.FromGoTime(info.killTime), mysql.TypeDatetime, 0)
 		op := "SessionKill"
 		rows = append(rows, []types.Datum{
@@ -169,5 +176,19 @@ func (m *memoryOpsHistoryManager) GetRows() [][]types.Datum {
 			info.processInfoDatum[7],           // SQL_TEXT
 		})
 	}
+	var zeroTime = time.Time{}
+	for i := m.offsets; i < len(m.infos); i++ {
+		if m.infos[i].killTime == zeroTime {
+			continue
+		}
+		getRowFromInfo(m.infos[i])
+	}
+	for i := 0; i < m.offsets; i++ {
+		getRowFromInfo(m.infos[i])
+	}
 	return rows
+}
+
+func init() {
+	GlobalMemoryOpsHistoryManager.init()
 }
