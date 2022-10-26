@@ -603,7 +603,6 @@ func (fkc *FKCascadeExec) onUpdateRow(sc *stmtctx.StatementContext, oldRow, newR
 	if err != nil {
 		return err
 	}
-
 	newValsKey, err := codec.EncodeKey(sc, nil, newVals...)
 	if err != nil {
 		return err
@@ -739,7 +738,7 @@ func GenCascadeDeleteSQL(schema, table, idx model.CIStr, fk *model.FKInfo, fkVal
 	return buf.String(), nil
 }
 
-// GenCascadeSetNullSQL uses to generate update set null SQL, export for test.
+// GenCascadeSetNullSQL uses to generate foreign key `SET NULL` SQL, export for test.
 func GenCascadeSetNullSQL(schema, table, idx model.CIStr, fk *model.FKInfo, fkValues [][]types.Datum) (string, error) {
 	newValues := make([]types.Datum, len(fk.Cols))
 	for i := range fk.Cols {
@@ -794,7 +793,6 @@ func genCascadeSQLWhereCondition(buf *bytes.Buffer, fk *model.FKInfo, fkValues [
 		}
 		buf.WriteString("`" + col.L + "`")
 	}
-	// TODO(crazycs520): control the size of IN expression.
 	buf.WriteString(") IN (")
 	for i, vs := range fkValues {
 		if i > 0 {
