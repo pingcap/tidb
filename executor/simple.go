@@ -890,8 +890,15 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 			return ErrPluginIsNotLoaded.GenWithStackByArgs(spec.AuthOpt.AuthPlugin)
 		}
 
+		recordTokenIssuer := tokenIssuer
+		if len(recordTokenIssuer) > 0 && authPlugin != mysql.AuthTiDBAuthToken {
+			err := errors.New(fmt.Sprintf("TOKEN_REQUIRE is no need for '%s' user", authPlugin))
+			e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			recordTokenIssuer = ""
+		}
+
 		hostName := strings.ToLower(spec.User.Hostname)
-		sqlexec.MustFormatSQL(sql, `(%?, %?, %?, %?, %?, %?, %?)`, hostName, spec.User.Username, pwd, authPlugin, userAttributes, lockAccount, tokenIssuer)
+		sqlexec.MustFormatSQL(sql, `(%?, %?, %?, %?, %?, %?, %?)`, hostName, spec.User.Username, pwd, authPlugin, userAttributes, lockAccount, recordTokenIssuer)
 		users = append(users, spec.User)
 	}
 	if len(users) == 0 {
@@ -1028,6 +1035,12 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			failedUsers = append(failedUsers, user)
 			continue
 		}
+		needAuthTokenOptions := false
+		if currentAuthPlugin, err := getUserAuthenticationPlugin(ctx, e.ctx, spec.User.Username, spec.User.Hostname); err != nil {
+			return err
+		} else if currentAuthPlugin == mysql.AuthTiDBAuthToken {
+			needAuthTokenOptions = true
+		}
 
 		exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 		type alterField struct {
@@ -1044,7 +1057,10 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 				spec.AuthOpt.AuthPlugin = authplugin
 			}
 			switch spec.AuthOpt.AuthPlugin {
-			case mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password, mysql.AuthSocket, mysql.AuthTiDBAuthToken, "":
+			case mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password, mysql.AuthSocket, "":
+				needAuthTokenOptions = false
+			case mysql.AuthTiDBAuthToken:
+				needAuthTokenOptions = true
 			default:
 				return ErrPluginIsNotLoaded.GenWithStackByArgs(spec.AuthOpt.AuthPlugin)
 			}
@@ -1073,8 +1089,13 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		}
 
 		if len(s.AuthTokenOptions) > 0 {
-			for _, authTokenOption := range s.AuthTokenOptions {
-				fields = append(fields, alterField{authTokenOption.Type.String() + "=%?", authTokenOption.Value})
+			if !needAuthTokenOptions {
+				err := errors.New(fmt.Sprintf("TOKEN_REQUIRE is no need for the auth plugin."))
+				e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			} else {
+				for _, authTokenOption := range s.AuthTokenOptions {
+					fields = append(fields, alterField{authTokenOption.Type.String() + "=%?", authTokenOption.Value})
+				}
 			}
 		}
 
@@ -1485,6 +1506,16 @@ func userExists(ctx context.Context, sctx sessionctx.Context, name string, host 
 		return false, err
 	}
 	return len(rows) > 0, nil
+}
+
+func getUserAuthenticationPlugin(ctx context.Context, sctx sessionctx.Context, name string, host string) (string, error) {
+	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnPrivilege)
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT plugin FROM %n.%n WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, name, strings.ToLower(host))
+	if err != nil {
+		return "", err
+	}
+	return rows[0].GetString(0), nil
 }
 
 // use the same internal executor to read within the same transaction, otherwise same as userExists

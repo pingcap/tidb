@@ -66,7 +66,7 @@ const (
 	References_priv,Alter_priv,Execute_priv,Index_priv,Create_view_priv,Show_view_priv,
 	Create_role_priv,Drop_role_priv,Create_tmp_table_priv,Lock_tables_priv,Create_routine_priv,
 	Alter_routine_priv,Event_priv,Shutdown_priv,Reload_priv,File_priv,Config_priv,Repl_client_priv,Repl_slave_priv,
-	account_locked,plugin FROM mysql.user`
+	account_locked,plugin,token_issuer FROM mysql.user`
 	sqlLoadGlobalGrantsTable = `SELECT HIGH_PRIORITY Host,User,Priv,With_Grant_Option FROM mysql.global_grants`
 )
 
