@@ -349,7 +349,8 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 				return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 			}
 		case mysql.AuthTiDBAuthToken:
-			logutil.BgLogger().Fatal("TODO: implement tidb_auth_token ConnectionVerification")
+			logutil.BgLogger().Error("unimplemented tidb_auth_token ConnectionVerification")
+			return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 		default:
 			logutil.BgLogger().Error("unknown authentication plugin", zap.String("authUser", authUser), zap.String("plugin", record.AuthPlugin))
 			return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)

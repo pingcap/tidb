@@ -711,6 +711,10 @@ func TestUser(t *testing.T) {
 	result.Check(testkit.Rows(auth.EncodePassword("")))
 	dropUserSQL = `DROP USER IF EXISTS 'test1'@'localhost' ;`
 	tk.MustExec(dropUserSQL)
+	tk.MustExec(`CREATE USER token_user IDENTIFIED WITH 'tidb_auth_token' TOKEN_REQUIRE token_issuer 'issuer-abc'`)
+	tk.MustQuery(`SELECT plugin, token_issuer FROM mysql.user WHERE user = 'token_user'`).Check(testkit.Rows("tidb_auth_token issuer-abc"))
+	tk.MustExec(`ALTER USER token_user TOKEN_REQUIRE token_issuer 'issuer-123'`)
+	tk.MustQuery(`SELECT plugin, token_issuer FROM mysql.user WHERE user = 'token_user'`).Check(testkit.Rows("tidb_auth_token issuer-123"))
 
 	// Test alter user.
 	createUserSQL = `CREATE USER 'test1'@'localhost' IDENTIFIED BY '123', 'test2'@'localhost' IDENTIFIED BY '123', 'test3'@'localhost' IDENTIFIED BY '123', 'test4'@'localhost' IDENTIFIED BY '123';`
