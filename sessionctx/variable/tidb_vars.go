@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable/featuretag/concurrencyddl"
-	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/paging"
 	"github.com/pingcap/tidb/util/size"
@@ -1128,7 +1127,7 @@ var (
 
 	// DefTiDBServerMemoryLimit indicates the default value of TiDBServerMemoryLimit(TotalMem * 80%).
 	// It should be a const and shouldn't be modified after tidb is started.
-	DefTiDBServerMemoryLimit = mathutil.Max(memory.GetMemTotalIgnoreErr()/10*8, 512<<20)
+	DefTiDBServerMemoryLimit = serverMemoryLimitDefaultValue()
 	GOGCTunerThreshold       = atomic.NewFloat64(DefTiDBGOGCTunerThreshold)
 )
 
@@ -1150,3 +1149,11 @@ var (
 	// DisableDDL is the func registered by ddl to disable running ddl in this instance.
 	DisableDDL func() error = nil
 )
+
+func serverMemoryLimitDefaultValue() string {
+	total, err := memory.MemTotal()
+	if err == nil && total != 0 {
+		return "80%"
+	}
+	return "0"
+}
