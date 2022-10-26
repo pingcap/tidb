@@ -2140,7 +2140,6 @@ func newChunkRestore(
 	if chunk.FileMeta.Type == mydump.SourceTypeParquet {
 		reader, err = mydump.OpenParquetReader(ctx, store, chunk.FileMeta.Path, chunk.FileMeta.FileSize)
 	} else {
-		storage.WithCompression(store, storage.LZO).Open(ctx, chunk.FileMeta.Path)
 		reader, err = store.Open(ctx, chunk.FileMeta.Path)
 	}
 	if err != nil {
