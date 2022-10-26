@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/paging"
 	"github.com/pingcap/tidb/util/plancodec"
+	"github.com/pingcap/tidb/util/size"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -54,6 +55,7 @@ type task interface {
 	plan() PhysicalPlan
 	invalid() bool
 	convertToRootTask(ctx sessionctx.Context) *rootTask
+	MemoryUsage() int64
 }
 
 // copTask is a task that runs in a distributed kv store.
@@ -171,6 +173,43 @@ func (t *copTask) getStoreType() kv.StoreType {
 		return ts.StoreType
 	}
 	return kv.TiKV
+}
+
+// MemoryUsage return the memory usage of copTask
+func (t *copTask) MemoryUsage() (sum int64) {
+	if t == nil {
+		return
+	}
+
+	sum = size.SizeOfInterface*(2+int64(cap(t.idxMergePartPlans))) + size.SizeOfBool*4 +
+		size.SizeOfPointer*(3+int64(cap(t.commonHandleCols)+cap(t.tblCols))) +
+		size.SizeOfSlice*4 + t.partitionInfo.MemoryUsage() + size.SizeOfUint64
+	if t.indexPlan != nil {
+		sum += t.indexPlan.MemoryUsage()
+	}
+	if t.tablePlan != nil {
+		sum += t.tablePlan.MemoryUsage()
+	}
+	if t.originSchema != nil {
+		sum += t.originSchema.MemoryUsage()
+	}
+	if t.extraHandleCol != nil {
+		sum += t.extraHandleCol.MemoryUsage()
+	}
+
+	for _, col := range t.commonHandleCols {
+		sum += col.MemoryUsage()
+	}
+	for _, col := range t.tblCols {
+		sum += col.MemoryUsage()
+	}
+	for _, p := range t.idxMergePartPlans {
+		sum += p.MemoryUsage()
+	}
+	for _, expr := range t.rootTaskConds {
+		sum += expr.MemoryUsage()
+	}
+	return
 }
 
 func (p *basePhysicalPlan) attach2Task(tasks ...task) task {
@@ -755,6 +794,19 @@ func (t *rootTask) count() float64 {
 
 func (t *rootTask) plan() PhysicalPlan {
 	return t.p
+}
+
+// MemoryUsage return the memory usage of rootTask
+func (t *rootTask) MemoryUsage() (sum int64) {
+	if t == nil {
+		return
+	}
+
+	sum = size.SizeOfBool
+	if t.p != nil {
+		sum += t.p.MemoryUsage()
+	}
+	return sum
 }
 
 func (p *PhysicalLimit) attach2Task(tasks ...task) task {
@@ -1885,6 +1937,19 @@ func (t *mppTask) invalid() bool {
 
 func (t *mppTask) convertToRootTask(ctx sessionctx.Context) *rootTask {
 	return t.copy().(*mppTask).convertToRootTaskImpl(ctx)
+}
+
+// MemoryUsage return the memory usage of mppTask
+func (t *mppTask) MemoryUsage() (sum int64) {
+	if t == nil {
+		return
+	}
+
+	sum = size.SizeOfInt + int64(cap(t.hashCols))*size.SizeOfPointer
+	if t.p != nil {
+		sum += t.p.MemoryUsage()
+	}
+	return
 }
 
 func collectPartitionInfosFromMPPPlan(p *PhysicalTableReader, mppPlan PhysicalPlan) {
