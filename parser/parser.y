@@ -607,7 +607,6 @@ import (
 	timestampType         "TIMESTAMP"
 	timeType              "TIME"
 	tokenIssuer           "TOKEN_ISSUER"
-	tokenRequire          "TOKEN_REQUIRE"
 	tp                    "TYPE"
 	trace                 "TRACE"
 	traditional           "TRADITIONAL"
@@ -1232,9 +1231,6 @@ import (
 	TimeUnit                               "Time unit for 'DATE_ADD', 'DATE_SUB', 'ADDDATE', 'SUBDATE', 'EXTRACT'"
 	TimestampUnit                          "Time unit for 'TIMESTAMPADD' and 'TIMESTAMPDIFF'"
 	LockType                               "Table locks type"
-	TokenRequireOpt                        "optional token-based authentication options"
-	TokenRequireList                       "require list for auth token options"
-	TokenRequireListElement                "require list element for auth token option"
 	TransactionChar                        "Transaction characteristic"
 	TransactionChars                       "Transaction characteristic list"
 	TrimDirection                          "Trim string direction"
@@ -6387,7 +6383,6 @@ UnReservedKeyword:
 |	"CLUSTERED"
 |	"NONCLUSTERED"
 |	"PRESERVE"
-|	"TOKEN_REQUIRE"
 |	"TOKEN_ISSUER"
 
 TiDBKeyword:
@@ -12625,20 +12620,19 @@ CommaOpt:
  *  https://dev.mysql.com/doc/refman/5.7/en/account-management-sql.html
  ************************************************************************************/
 CreateUserStmt:
-	"CREATE" "USER" IfNotExists UserSpecList RequireClauseOpt TokenRequireOpt ConnectionOptions PasswordOrLockOptions CommentOrAttributeOption
+	"CREATE" "USER" IfNotExists UserSpecList RequireClauseOpt ConnectionOptions PasswordOrLockOptions CommentOrAttributeOption
 	{
 		// See https://dev.mysql.com/doc/refman/8.0/en/create-user.html
 		ret := &ast.CreateUserStmt{
 			IsCreateRole:          false,
 			IfNotExists:           $3.(bool),
 			Specs:                 $4.([]*ast.UserSpec),
-			TLSOptions:            $5.([]*ast.TLSOption),
-			AuthTokenOptions:      $6.([]*ast.AuthTokenOption),
-			ResourceOptions:       $7.([]*ast.ResourceOption),
-			PasswordOrLockOptions: $8.([]*ast.PasswordOrLockOption),
+			AuthTokenOrTLSOptions: $5.([]*ast.AuthTokenOrTLSOption),
+			ResourceOptions:       $6.([]*ast.ResourceOption),
+			PasswordOrLockOptions: $7.([]*ast.PasswordOrLockOption),
 		}
-		if $9 != nil {
-			ret.CommentOrAttributeOption = $9.(*ast.CommentOrAttributeOption)
+		if $8 != nil {
+			ret.CommentOrAttributeOption = $8.(*ast.CommentOrAttributeOption)
 		}
 		$$ = ret
 	}
@@ -12656,18 +12650,17 @@ CreateRoleStmt:
 
 /* See http://dev.mysql.com/doc/refman/8.0/en/alter-user.html */
 AlterUserStmt:
-	"ALTER" "USER" IfExists UserSpecList RequireClauseOpt TokenRequireOpt ConnectionOptions PasswordOrLockOptions CommentOrAttributeOption
+	"ALTER" "USER" IfExists UserSpecList RequireClauseOpt ConnectionOptions PasswordOrLockOptions CommentOrAttributeOption
 	{
 		ret := &ast.AlterUserStmt{
 			IfExists:              $3.(bool),
 			Specs:                 $4.([]*ast.UserSpec),
-			TLSOptions:            $5.([]*ast.TLSOption),
-			AuthTokenOptions:      $6.([]*ast.AuthTokenOption),
-			ResourceOptions:       $7.([]*ast.ResourceOption),
-			PasswordOrLockOptions: $8.([]*ast.PasswordOrLockOption),
+			AuthTokenOrTLSOptions: $5.([]*ast.AuthTokenOrTLSOption),
+			ResourceOptions:       $6.([]*ast.ResourceOption),
+			PasswordOrLockOptions: $7.([]*ast.PasswordOrLockOption),
 		}
-		if $9 != nil {
-			ret.CommentOrAttributeOption = $9.(*ast.CommentOrAttributeOption)
+		if $8 != nil {
+			ret.CommentOrAttributeOption = $8.(*ast.CommentOrAttributeOption)
 		}
 		$$ = ret
 	}
@@ -12783,31 +12776,31 @@ ConnectionOption:
 
 RequireClauseOpt:
 	{
-		$$ = []*ast.TLSOption{}
+		$$ = []*ast.AuthTokenOrTLSOption{}
 	}
 |	RequireClause
 
 RequireClause:
 	"REQUIRE" "NONE"
 	{
-		t := &ast.TLSOption{
+		t := &ast.AuthTokenOrTLSOption{
 			Type: ast.TlsNone,
 		}
-		$$ = []*ast.TLSOption{t}
+		$$ = []*ast.AuthTokenOrTLSOption{t}
 	}
 |	"REQUIRE" "SSL"
 	{
-		t := &ast.TLSOption{
+		t := &ast.AuthTokenOrTLSOption{
 			Type: ast.Ssl,
 		}
-		$$ = []*ast.TLSOption{t}
+		$$ = []*ast.AuthTokenOrTLSOption{t}
 	}
 |	"REQUIRE" "X509"
 	{
-		t := &ast.TLSOption{
+		t := &ast.AuthTokenOrTLSOption{
 			Type: ast.X509,
 		}
-		$$ = []*ast.TLSOption{t}
+		$$ = []*ast.AuthTokenOrTLSOption{t}
 	}
 |	"REQUIRE" RequireList
 	{
@@ -12817,82 +12810,53 @@ RequireClause:
 RequireList:
 	RequireListElement
 	{
-		$$ = []*ast.TLSOption{$1.(*ast.TLSOption)}
+		$$ = []*ast.AuthTokenOrTLSOption{$1.(*ast.AuthTokenOrTLSOption)}
 	}
 |	RequireList "AND" RequireListElement
 	{
-		l := $1.([]*ast.TLSOption)
-		l = append(l, $3.(*ast.TLSOption))
+		l := $1.([]*ast.AuthTokenOrTLSOption)
+		l = append(l, $3.(*ast.AuthTokenOrTLSOption))
 		$$ = l
 	}
 |	RequireList RequireListElement
 	{
-		l := $1.([]*ast.TLSOption)
-		l = append(l, $2.(*ast.TLSOption))
+		l := $1.([]*ast.AuthTokenOrTLSOption)
+		l = append(l, $2.(*ast.AuthTokenOrTLSOption))
 		$$ = l
 	}
 
 RequireListElement:
 	"ISSUER" stringLit
 	{
-		$$ = &ast.TLSOption{
+		$$ = &ast.AuthTokenOrTLSOption{
 			Type:  ast.Issuer,
 			Value: $2,
 		}
 	}
 |	"SUBJECT" stringLit
 	{
-		$$ = &ast.TLSOption{
+		$$ = &ast.AuthTokenOrTLSOption{
 			Type:  ast.Subject,
 			Value: $2,
 		}
 	}
 |	"CIPHER" stringLit
 	{
-		$$ = &ast.TLSOption{
+		$$ = &ast.AuthTokenOrTLSOption{
 			Type:  ast.Cipher,
 			Value: $2,
 		}
 	}
 |	"SAN" stringLit
 	{
-		$$ = &ast.TLSOption{
+		$$ = &ast.AuthTokenOrTLSOption{
 			Type:  ast.SAN,
 			Value: $2,
 		}
 	}
-
-TokenRequireOpt:
+|	"TOKEN_ISSUER" stringLit
 	{
-		$$ = []*ast.AuthTokenOption{}
-	}
-|	"TOKEN_REQUIRE" TokenRequireList
-	{
-		$$ = $2
-	}
-
-TokenRequireList:
-	TokenRequireListElement
-	{
-		$$ = []*ast.AuthTokenOption{$1.(*ast.AuthTokenOption)}
-	}
-|	TokenRequireList "AND" TokenRequireListElement
-	{
-		l := $1.([]*ast.AuthTokenOption)
-		l = append(l, $3.(*ast.AuthTokenOption))
-		$$ = l
-	}
-|	TokenRequireList TokenRequireListElement
-	{
-		l := $1.([]*ast.AuthTokenOption)
-		l = append(l, $2.(*ast.AuthTokenOption))
-		$$ = l
-	}
-
-TokenRequireListElement:
-	"TOKEN_ISSUER" stringLit
-	{
-		$$ = &ast.AuthTokenOption{
+		$$ = &ast.AuthTokenOrTLSOption{
 			Type:  ast.TokenIssuer,
 			Value: $2,
 		}
@@ -13202,12 +13166,12 @@ GrantStmt:
 			return 1
 		}
 		$$ = &ast.GrantStmt{
-			Privs:      p,
-			ObjectType: $4.(ast.ObjectTypeType),
-			Level:      $5.(*ast.GrantLevel),
-			Users:      $7.([]*ast.UserSpec),
-			TLSOptions: $8.([]*ast.TLSOption),
-			WithGrant:  $9.(bool),
+			Privs:                 p,
+			ObjectType:            $4.(ast.ObjectTypeType),
+			Level:                 $5.(*ast.GrantLevel),
+			Users:                 $7.([]*ast.UserSpec),
+			AuthTokenOrTLSOptions: $8.([]*ast.AuthTokenOrTLSOption),
+			WithGrant:             $9.(bool),
 		}
 	}
 

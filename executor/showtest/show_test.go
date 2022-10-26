@@ -1122,8 +1122,8 @@ func TestShowCreateUser(t *testing.T) {
 	// Creating users with 'IDENTIFIED WITH 'tidb_auth_token''
 	tk.MustExec(`CREATE USER 'token_user'@'%' IDENTIFIED WITH 'tidb_auth_token' ATTRIBUTE '{"email": "user@pingcap.com"}'`)
 	tk.MustQuery("SHOW CREATE USER token_user").Check(testkit.Rows(`CREATE USER 'token_user'@'%' IDENTIFIED WITH 'tidb_auth_token' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK ATTRIBUTE {"email": "user@pingcap.com"}`))
-	tk.MustExec(`ALTER USER 'token_user'@'%' TOKEN_REQUIRE token_issuer 'issuer-ABC'`)
-	tk.MustQuery("SHOW CREATE USER token_user").Check(testkit.Rows(`CREATE USER 'token_user'@'%' IDENTIFIED WITH 'tidb_auth_token' AS '' REQUIRE NONE TOKEN_REQUIRE token_issuer issuer-ABC PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK ATTRIBUTE {"email": "user@pingcap.com"}`))
+	tk.MustExec(`ALTER USER 'token_user'@'%' REQUIRE token_issuer 'issuer-ABC'`)
+	tk.MustQuery("SHOW CREATE USER token_user").Check(testkit.Rows(`CREATE USER 'token_user'@'%' IDENTIFIED WITH 'tidb_auth_token' AS '' REQUIRE NONE token_issuer issuer-ABC PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK ATTRIBUTE {"email": "user@pingcap.com"}`))
 }
 
 func TestUnprivilegedShow(t *testing.T) {

@@ -1559,7 +1559,7 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 
 	tokenIssuer := rows[0].GetString(3)
 	if len(tokenIssuer) > 0 {
-		tokenIssuer = " TOKEN_REQUIRE token_issuer " + tokenIssuer
+		tokenIssuer = " token_issuer " + tokenIssuer
 	}
 
 	rows, _, err = exec.ExecRestrictedSQL(ctx, nil, `SELECT Priv FROM %n.%n WHERE User=%? AND Host=%?`, mysql.SystemDB, mysql.GlobalPrivTable, userName, hostName)

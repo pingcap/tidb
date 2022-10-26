@@ -1389,22 +1389,12 @@ func (n *UserSpec) EncodedPassword() (string, bool) {
 	return opt.HashString, true
 }
 
-const (
-	TlsNone = iota
-	Ssl
-	X509
-	Cipher
-	Issuer
-	Subject
-	SAN
-)
-
-type TLSOption struct {
-	Type  int
+type AuthTokenOrTLSOption struct {
+	Type  AuthTokenOrTLSOptionType
 	Value string
 }
 
-func (t *TLSOption) Restore(ctx *format.RestoreCtx) error {
+func (t *AuthTokenOrTLSOption) Restore(ctx *format.RestoreCtx) error {
 	switch t.Type {
 	case TlsNone:
 		ctx.WriteKeyWord("NONE")
@@ -1424,36 +1414,45 @@ func (t *TLSOption) Restore(ctx *format.RestoreCtx) error {
 	case SAN:
 		ctx.WriteKeyWord("SAN ")
 		ctx.WriteString(t.Value)
-	default:
-		return errors.Errorf("Unsupported TLSOption.Type %d", t.Type)
-	}
-	return nil
-}
-
-const (
-	TokenIssuer AuthTokenOptionType = iota
-)
-
-type AuthTokenOptionType int
-
-type AuthTokenOption struct {
-	Type  AuthTokenOptionType
-	Value string
-}
-
-func (t *AuthTokenOption) Restore(ctx *format.RestoreCtx) error {
-	switch t.Type {
 	case TokenIssuer:
 		ctx.WriteKeyWord("TOKEN_ISSUER ")
 		ctx.WriteString(t.Value)
 	default:
-		return errors.Errorf("Unsupported AuthTokenOption.Type %d", t.Type)
+		return errors.Errorf("Unsupported AuthTokenOrTLSOption.Type %d", t.Type)
 	}
 	return nil
+
 }
 
-func (t AuthTokenOptionType) String() string {
+type AuthTokenOrTLSOptionType int
+
+const (
+	TlsNone AuthTokenOrTLSOptionType = iota
+	Ssl
+	X509
+	Cipher
+	Issuer
+	Subject
+	SAN
+	TokenIssuer
+)
+
+func (t AuthTokenOrTLSOptionType) String() string {
 	switch t {
+	case TlsNone:
+		return "NONE"
+	case Ssl:
+		return "SSL"
+	case X509:
+		return "X509"
+	case Cipher:
+		return "CIPHER"
+	case Issuer:
+		return "ISSUER"
+	case Subject:
+		return "SUBJECT"
+	case SAN:
+		return "SAN"
 	case TokenIssuer:
 		return "TOKEN_ISSUER"
 	default:
@@ -1553,8 +1552,7 @@ type CreateUserStmt struct {
 	IsCreateRole             bool
 	IfNotExists              bool
 	Specs                    []*UserSpec
-	TLSOptions               []*TLSOption
-	AuthTokenOptions         []*AuthTokenOption
+	AuthTokenOrTLSOptions    []*AuthTokenOrTLSOption
 	ResourceOptions          []*ResourceOption
 	PasswordOrLockOptions    []*PasswordOrLockOption
 	CommentOrAttributeOption *CommentOrAttributeOption
@@ -1579,28 +1577,16 @@ func (n *CreateUserStmt) Restore(ctx *format.RestoreCtx) error {
 		}
 	}
 
-	if len(n.TLSOptions) != 0 {
+	if len(n.AuthTokenOrTLSOptions) != 0 {
 		ctx.WriteKeyWord(" REQUIRE ")
 	}
 
-	for i, option := range n.TLSOptions {
+	for i, option := range n.AuthTokenOrTLSOptions {
 		if i != 0 {
 			ctx.WriteKeyWord(" AND ")
 		}
 		if err := option.Restore(ctx); err != nil {
-			return errors.Annotatef(err, "An error occurred while restore CreateUserStmt.TLSOptions[%d]", i)
-		}
-	}
-
-	if len(n.AuthTokenOptions) != 0 {
-		ctx.WriteKeyWord(" TOKEN_REQUIRE ")
-	}
-	for i, option := range n.AuthTokenOptions {
-		if i != 0 {
-			ctx.WriteKeyWord(" AND ")
-		}
-		if err := option.Restore(ctx); err != nil {
-			return errors.Annotatef(err, "An error occurred while restore CreateUserStmt.AuthTokenOptions[%d]", i)
+			return errors.Annotatef(err, "An error occurred while restore CreateUserStmt.AuthTokenOrTLSOptions[%d]", i)
 		}
 	}
 
@@ -1660,8 +1646,7 @@ type AlterUserStmt struct {
 	IfExists                 bool
 	CurrentAuth              *AuthOption
 	Specs                    []*UserSpec
-	TLSOptions               []*TLSOption
-	AuthTokenOptions         []*AuthTokenOption
+	AuthTokenOrTLSOptions    []*AuthTokenOrTLSOption
 	ResourceOptions          []*ResourceOption
 	PasswordOrLockOptions    []*PasswordOrLockOption
 	CommentOrAttributeOption *CommentOrAttributeOption
@@ -1689,29 +1674,16 @@ func (n *AlterUserStmt) Restore(ctx *format.RestoreCtx) error {
 		}
 	}
 
-	if len(n.TLSOptions) != 0 {
+	if len(n.AuthTokenOrTLSOptions) != 0 {
 		ctx.WriteKeyWord(" REQUIRE ")
 	}
 
-	for i, option := range n.TLSOptions {
+	for i, option := range n.AuthTokenOrTLSOptions {
 		if i != 0 {
 			ctx.WriteKeyWord(" AND ")
 		}
 		if err := option.Restore(ctx); err != nil {
-			return errors.Annotatef(err, "An error occurred while restore AlterUserStmt.TLSOptions[%d]", i)
-		}
-	}
-
-	if len(n.AuthTokenOptions) != 0 {
-		ctx.WriteKeyWord(" TOKEN_REQUIRE ")
-	}
-
-	for i, option := range n.AuthTokenOptions {
-		if i != 0 {
-			ctx.WriteKeyWord(" AND ")
-		}
-		if err := option.Restore(ctx); err != nil {
-			return errors.Annotatef(err, "An error occurred while restore AlterUserStmt.AuthTokenOptions[%d]", i)
+			return errors.Annotatef(err, "An error occurred while restore AlterUserStmt.AuthTokenOrTLSOptions[%d]", i)
 		}
 	}
 
@@ -2710,12 +2682,12 @@ func (n *RevokeRoleStmt) Accept(v Visitor) (Node, bool) {
 type GrantStmt struct {
 	stmtNode
 
-	Privs      []*PrivElem
-	ObjectType ObjectTypeType
-	Level      *GrantLevel
-	Users      []*UserSpec
-	TLSOptions []*TLSOption
-	WithGrant  bool
+	Privs                 []*PrivElem
+	ObjectType            ObjectTypeType
+	Level                 *GrantLevel
+	Users                 []*UserSpec
+	AuthTokenOrTLSOptions []*AuthTokenOrTLSOption
+	WithGrant             bool
 }
 
 // Restore implements Node interface.
@@ -2750,16 +2722,16 @@ func (n *GrantStmt) Restore(ctx *format.RestoreCtx) error {
 			return errors.Annotatef(err, "An error occurred while restore GrantStmt.Users[%d]", i)
 		}
 	}
-	if n.TLSOptions != nil {
-		if len(n.TLSOptions) != 0 {
+	if n.AuthTokenOrTLSOptions != nil {
+		if len(n.AuthTokenOrTLSOptions) != 0 {
 			ctx.WriteKeyWord(" REQUIRE ")
 		}
-		for i, option := range n.TLSOptions {
+		for i, option := range n.AuthTokenOrTLSOptions {
 			if i != 0 {
 				ctx.WriteKeyWord(" AND ")
 			}
 			if err := option.Restore(ctx); err != nil {
-				return errors.Annotatef(err, "An error occurred while restore GrantStmt.TLSOptions[%d]", i)
+				return errors.Annotatef(err, "An error occurred while restore GrantStmt.AuthTokenOrTLSOptions[%d]", i)
 			}
 		}
 	}

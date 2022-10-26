@@ -736,7 +736,6 @@ var tokenMap = map[string]int{
 	"TINYTEXT":                 tinytextType,
 	"TLS":                      tls,
 	"TO":                       to,
-	"TOKEN_REQUIRE":            tokenRequire,
 	"TOKEN_ISSUER":             tokenIssuer,
 	"TOKUDB_DEFAULT":           tokudbDefault,
 	"TOKUDB_FAST":              tokudbFast,

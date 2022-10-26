@@ -805,7 +805,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		}
 	}
 
-	privData, err := tlsOption2GlobalPriv(s.TLSOptions)
+	privData, err := tlsOption2GlobalPriv(s.AuthTokenOrTLSOptions)
 	if err != nil {
 		return err
 	}
@@ -837,7 +837,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	}
 
 	tokenIssuer := ""
-	for _, authTokenOption := range s.AuthTokenOptions {
+	for _, authTokenOption := range s.AuthTokenOrTLSOptions {
 		switch authTokenOption.Type {
 		case ast.TokenIssuer:
 			tokenIssuer = authTokenOption.Value
@@ -980,7 +980,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		}
 	}
 
-	privData, err := tlsOption2GlobalPriv(s.TLSOptions)
+	privData, err := tlsOption2GlobalPriv(s.AuthTokenOrTLSOptions)
 	if err != nil {
 		return err
 	}
@@ -1103,12 +1103,12 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			fields = append(fields, alterField{"user_attributes=json_merge_patch(user_attributes, %?)", newAttributesStr})
 		}
 
-		if len(s.AuthTokenOptions) > 0 {
+		if len(s.AuthTokenOrTLSOptions) > 0 {
 			if authTokenOptionHandler == NotAuthToken {
 				err := errors.New("TOKEN_ISSUER is no need for the auth plugin")
 				e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 			} else {
-				for _, authTokenOption := range s.AuthTokenOptions {
+				for _, authTokenOption := range s.AuthTokenOrTLSOptions {
 					fields = append(fields, alterField{authTokenOption.Type.String() + "=%?", authTokenOption.Value})
 				}
 			}
