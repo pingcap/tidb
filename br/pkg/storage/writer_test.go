@@ -14,6 +14,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func createSuffixString(compressType CompressType) string {
+	if compressType == Gzip {
+		return ".txt.gz"
+	}
+	if compressType == Snappy {
+		return ".txt.snappy"
+	}
+	return ""
+}
+
 func TestExternalFileWriter(t *testing.T) {
 	dir := t.TempDir()
 
@@ -103,13 +113,7 @@ func TestCompressReaderWriter(t *testing.T) {
 		storage, err := Create(ctx, backend, true)
 		require.NoError(t, err)
 		storage = WithCompression(storage, test.compressType)
-		var suffix string
-		if test.compressType == Gzip {
-			suffix = ".txt.gz"
-		}
-		if test.compressType == Snappy {
-			suffix = ".txt.snappy"
-		}
+		suffix := createSuffixString(test.compressType)
 		fileName := strings.ReplaceAll(test.name, " ", "-") + suffix
 		writer, err := storage.Create(ctx, fileName)
 		require.NoError(t, err)
