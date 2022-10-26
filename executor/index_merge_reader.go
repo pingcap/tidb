@@ -119,6 +119,7 @@ type IndexMergeReaderExecutor struct {
 	isCorColInTableFilter    bool
 	isCorColInPartialAccess  []bool
 
+	// Whether it's intersection or union.
 	isIntersection bool
 }
 
@@ -263,8 +264,9 @@ func (e *IndexMergeReaderExecutor) startIndexMergeProcessWorker(ctx context.Cont
 			func() {
 				if e.isIntersection {
 					idxMergeProcessWorker.fetchLoopIntersection(ctx, fetch, workCh, e.resultCh, e.finished)
+				} else {
+					idxMergeProcessWorker.fetchLoopUnion(ctx, fetch, workCh, e.resultCh, e.finished)
 				}
-				idxMergeProcessWorker.fetchLoopUnion(ctx, fetch, workCh, e.resultCh, e.finished)
 			},
 			idxMergeProcessWorker.handleLoopFetcherPanic(ctx, e.resultCh),
 		)
