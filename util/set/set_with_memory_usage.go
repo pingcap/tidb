@@ -16,12 +16,17 @@ package set
 
 import (
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/memory"
 )
 
 // StringSetWithMemoryUsage is a string set with memory usage.
 type StringSetWithMemoryUsage struct {
 	StringSet
 	bInMap int64
+
+	// For tracking large memory usage in time.
+	// If tracker is non-nil, memDelta will track immediately and reset to 0. Otherwise, memDelta will return and lazy track.
+	tracker *memory.Tracker
 }
 
 // NewStringSetWithMemoryUsage builds a string set.
@@ -44,8 +49,17 @@ func (s *StringSetWithMemoryUsage) Insert(val string) (memDelta int64) {
 	if s.Count() > (1<<s.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
 		memDelta = hack.DefBucketMemoryUsageForSetString * (1 << s.bInMap)
 		s.bInMap++
+		if s.tracker != nil {
+			s.tracker.Consume(memDelta)
+			memDelta = 0
+		}
 	}
 	return memDelta
+}
+
+// SetTracker sets memory tracker for StringSetWithMemoryUsage
+func (s *StringSetWithMemoryUsage) SetTracker(t *memory.Tracker) {
+	s.tracker = t
 }
 
 // Float64SetWithMemoryUsage is a float64 set with memory usage.

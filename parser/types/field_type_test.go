@@ -270,7 +270,6 @@ func TestEnumSetFlen(t *testing.T) {
 		require.NoError(t, err)
 		col := stmt.(*ast.CreateTableStmt).Cols[0]
 		require.Equal(t, ca.ex, col.Tp.GetFlen())
-
 	}
 }
 

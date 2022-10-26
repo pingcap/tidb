@@ -118,6 +118,29 @@ func (i *InfoStore) DeleteTable(schema, table model.CIStr) error {
 	return nil
 }
 
+// AllSchemaNames returns all the schemas' names.
+func (i *InfoStore) AllSchemaNames() []string {
+	names := make([]string, 0, len(i.dbs))
+	for name := range i.dbs {
+		names = append(names, name)
+	}
+	return names
+}
+
+// AllTableNamesOfSchema return all table names of a schema.
+func (i *InfoStore) AllTableNamesOfSchema(schema model.CIStr) ([]string, error) {
+	schemaKey := i.ciStr2Key(schema)
+	tables, ok := i.tables[schemaKey]
+	if !ok {
+		return nil, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schema)
+	}
+	names := make([]string, 0, len(tables))
+	for name := range tables {
+		names = append(names, name)
+	}
+	return names, nil
+}
+
 // InfoStoreAdaptor convert InfoStore to InfoSchema, it only implements a part of InfoSchema interface to be
 // used by DDL interface.
 // nolint:unused

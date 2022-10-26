@@ -12,6 +12,7 @@ go_library(
     deps = [
         "//br/pkg/lightning/metric",
         "//br/pkg/redact",
+        "//kv",
         "@com_github_google_uuid//:uuid",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/brpb",
@@ -26,7 +27,9 @@ go_library(
 
 go_test(
     name = "logutil_test",
+    timeout = "short",
     srcs = ["logging_test.go"],
+    flaky = True,
     deps = [
         ":logutil",
         "//br/pkg/errors",

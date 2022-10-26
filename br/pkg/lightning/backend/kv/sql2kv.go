@@ -33,8 +33,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql" //nolint: goimports
-	// Import tidb/planner/core to initialize expression.RewriteAstExpr
-	_ "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -65,6 +64,10 @@ type tableKVEncoder struct {
 	metrics  *metric.Metrics
 }
 
+func GetSession4test(encoder Encoder) sessionctx.Context {
+	return encoder.(*tableKVEncoder).se
+}
+
 func NewTableKVEncoder(
 	tbl table.Table,
 	options *SessionOptions,
@@ -85,10 +88,10 @@ func NewTableKVEncoder(
 	if meta.PKIsHandle && meta.ContainsAutoRandomBits() {
 		for _, col := range cols {
 			if mysql.HasPriKeyFlag(col.GetFlag()) {
-				incrementalBits := autoRandomIncrementBits(col, int(meta.AutoRandomBits))
-				autoRandomBits := rand.New(rand.NewSource(options.AutoRandomSeed)).Int63n(1<<meta.AutoRandomBits) << incrementalBits // nolint:gosec
+				shardFmt := autoid.NewShardIDFormat(&col.FieldType, meta.AutoRandomBits, meta.AutoRandomRangeBits)
+				shard := rand.New(rand.NewSource(options.AutoRandomSeed)).Int63()
 				autoIDFn = func(id int64) int64 {
-					return autoRandomBits | id
+					return shardFmt.Compose(shard, id)
 				}
 				break
 			}
@@ -117,16 +120,6 @@ func NewTableKVEncoder(
 		autoIDFn: autoIDFn,
 		metrics:  metrics,
 	}, nil
-}
-
-func autoRandomIncrementBits(col *table.Column, randomBits int) int {
-	typeBitsLength := mysql.DefaultLengthOfMysqlTypes[col.GetType()] * 8
-	incrementalBits := typeBitsLength - randomBits
-	hasSignBit := !mysql.HasUnsignedFlag(col.GetFlag())
-	if hasSignBit {
-		incrementalBits--
-	}
-	return incrementalBits
 }
 
 // collectGeneratedColumns collects all expressions required to evaluate the
@@ -322,17 +315,25 @@ func KvPairsFromRows(rows Rows) []common.KvPair {
 	return rows.(*KvPairs).pairs
 }
 
-func evaluateGeneratedColumns(se *session, record []types.Datum, cols []*table.Column, genCols []genCol) (err error, errCol *model.ColumnInfo) {
+// KvPairsFromRow converts a Row instance constructed from MakeRowFromKvPairs
+// back into a slice of KvPair. This method panics if the Row is not
+// constructed in such way.
+// nolint:golint // kv.KvPairsFromRow sounds good.
+func KvPairsFromRow(row Row) []common.KvPair {
+	return row.(*KvPairs).pairs
+}
+
+func evaluateGeneratedColumns(se *session, record []types.Datum, cols []*table.Column, genCols []genCol) (errCol *model.ColumnInfo, err error) {
 	mutRow := chunk.MutRowFromDatums(record)
 	for _, gc := range genCols {
 		col := cols[gc.index].ToInfo()
 		evaluated, err := gc.expr.Eval(mutRow.ToRow())
 		if err != nil {
-			return err, col
+			return col, err
 		}
 		value, err := table.CastValue(se, evaluated, col, false, false)
 		if err != nil {
-			return err, col
+			return col, err
 		}
 		mutRow.SetDatum(gc.index, value)
 		record[gc.index] = value
@@ -380,9 +381,9 @@ func (kvcodec *tableKVEncoder) Encode(
 		record = append(record, value)
 
 		if isTableAutoRandom(meta) && isPKCol(col.ToInfo()) {
-			incrementalBits := autoRandomIncrementBits(col, int(meta.AutoRandomBits))
+			shardFmt := autoid.NewShardIDFormat(&col.FieldType, meta.AutoRandomBits, meta.AutoRandomRangeBits)
 			alloc := kvcodec.tbl.Allocators(kvcodec.se).Get(autoid.AutoRandomType)
-			if err := alloc.Rebase(context.Background(), value.GetInt64()&((1<<incrementalBits)-1), false); err != nil {
+			if err := alloc.Rebase(context.Background(), value.GetInt64()&shardFmt.IncrementalMask(), false); err != nil {
 				return nil, errors.Trace(err)
 			}
 		}
@@ -415,7 +416,7 @@ func (kvcodec *tableKVEncoder) Encode(
 	}
 
 	if len(kvcodec.genCols) > 0 {
-		if err, errCol := evaluateGeneratedColumns(kvcodec.se, record, cols, kvcodec.genCols); err != nil {
+		if errCol, err := evaluateGeneratedColumns(kvcodec.se, record, cols, kvcodec.genCols); err != nil {
 			return nil, logEvalGenExprFailed(logger, row, errCol, err)
 		}
 	}
@@ -447,6 +448,21 @@ func isAutoIncCol(colInfo *model.ColumnInfo) bool {
 
 func isPKCol(colInfo *model.ColumnInfo) bool {
 	return mysql.HasPriKeyFlag(colInfo.GetFlag())
+}
+
+// GetEncoderIncrementalID return Auto increment id.
+func GetEncoderIncrementalID(encoder Encoder, id int64) int64 {
+	return encoder.(*tableKVEncoder).autoIDFn(id)
+}
+
+// GetEncoderSe return session.
+func GetEncoderSe(encoder Encoder) *session {
+	return encoder.(*tableKVEncoder).se
+}
+
+// GetActualDatum export getActualDatum function.
+func GetActualDatum(encoder Encoder, rowID int64, colIndex int, inputDatum *types.Datum) (types.Datum, error) {
+	return encoder.(*tableKVEncoder).getActualDatum(70, 0, inputDatum)
 }
 
 func (kvcodec *tableKVEncoder) getActualDatum(rowID int64, colIndex int, inputDatum *types.Datum) (types.Datum, error) {

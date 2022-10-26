@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 	"sourcegraph.com/sourcegraph/appdash"
@@ -91,6 +92,7 @@ func (e *TraceExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return e.nextOptimizerPlanTrace(ctx, e.ctx, req)
 	}
 
+	ctx = util.ContextWithTraceExecDetails(ctx)
 	switch e.format {
 	case core.TraceFormatLog:
 		return e.nextTraceLog(ctx, se, req)

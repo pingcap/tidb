@@ -469,3 +469,23 @@ func TestMergeBucketNDV(t *testing.T) {
 		require.Equal(t, res.disjointNDV, tt.result.disjointNDV)
 	}
 }
+
+func TestIndexQueryBytes(t *testing.T) {
+	ctx := mock.NewContext()
+	sc := ctx.GetSessionVars().StmtCtx
+	idx := &Index{Info: &model.IndexInfo{Columns: []*model.IndexColumn{{Name: model.NewCIStr("a"), Offset: 0}}}}
+	idx.Histogram = *NewHistogram(0, 15, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0)
+	low, err1 := codec.EncodeKey(sc, nil, types.NewBytesDatum([]byte("0")))
+	require.NoError(t, err1)
+	high, err2 := codec.EncodeKey(sc, nil, types.NewBytesDatum([]byte("3")))
+	require.NoError(t, err2)
+	idx.Bounds.AppendBytes(0, low)
+	idx.Bounds.AppendBytes(0, high)
+	idx.Buckets = append(idx.Buckets, Bucket{Repeat: 10, Count: 20, NDV: 20})
+	idx.PreCalculateScalar()
+	idx.CMSketch = nil
+	// Count / NDV
+	require.Equal(t, idx.QueryBytes(low), uint64(1))
+	// Repeat
+	require.Equal(t, idx.QueryBytes(high), uint64(10))
+}

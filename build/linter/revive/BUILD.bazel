@@ -1,0 +1,17 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "revive",
+    srcs = ["analyzer.go"],
+    importpath = "github.com/pingcap/tidb/build/linter/revive",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//build/linter/util",
+        "@com_github_mgechev_revive//config",
+        "@com_github_mgechev_revive//lint",
+        "@com_github_mgechev_revive//rule",
+        "@com_github_pingcap_log//:log",
+        "@org_golang_x_tools//go/analysis",
+        "@org_uber_go_zap//:zap",
+    ],
+)

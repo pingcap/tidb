@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/stretchr/testify/require"
@@ -116,7 +115,7 @@ type mockSnapshotInterceptor struct {
 func (m *mockSnapshotInterceptor) OnGet(ctx context.Context, snap kv.Snapshot, k kv.Key) ([]byte, error) {
 	m.spy = []interface{}{"OnGet", ctx, k}
 	if len(k) == 0 {
-		return nil, errors.New(fmt.Sprintf("MockErr%s", m.spy[0]))
+		return nil, fmt.Errorf("MockErr%s", m.spy[0])
 	}
 	return snap.Get(ctx, k)
 }
@@ -124,7 +123,7 @@ func (m *mockSnapshotInterceptor) OnGet(ctx context.Context, snap kv.Snapshot, k
 func (m *mockSnapshotInterceptor) OnBatchGet(ctx context.Context, snap kv.Snapshot, keys []kv.Key) (map[string][]byte, error) {
 	m.spy = []interface{}{"OnBatchGet", ctx, keys}
 	if len(keys) == 0 {
-		return nil, errors.New(fmt.Sprintf("MockErr%s", m.spy[0]))
+		return nil, fmt.Errorf("MockErr%s", m.spy[0])
 	}
 	return snap.BatchGet(ctx, keys)
 }
@@ -132,7 +131,7 @@ func (m *mockSnapshotInterceptor) OnBatchGet(ctx context.Context, snap kv.Snapsh
 func (m *mockSnapshotInterceptor) OnIter(snap kv.Snapshot, k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
 	m.spy = []interface{}{"OnIter", k, upperBound}
 	if len(k) == 0 {
-		return nil, errors.New(fmt.Sprintf("MockErr%s", m.spy[0]))
+		return nil, fmt.Errorf("MockErr%s", m.spy[0])
 	}
 	return snap.Iter(k, upperBound)
 }
@@ -140,7 +139,7 @@ func (m *mockSnapshotInterceptor) OnIter(snap kv.Snapshot, k kv.Key, upperBound 
 func (m *mockSnapshotInterceptor) OnIterReverse(snap kv.Snapshot, k kv.Key) (kv.Iterator, error) {
 	m.spy = []interface{}{"OnIterReverse", k}
 	if len(k) == 0 {
-		return nil, errors.New(fmt.Sprintf("MockErr%s", m.spy[0]))
+		return nil, fmt.Errorf("MockErr%s", m.spy[0])
 	}
 	return snap.IterReverse(k)
 }

@@ -54,8 +54,9 @@ type FlatPlanTree []*FlatOperator
 
 // GetSelectPlan skips Insert, Delete and Update at the beginning of the FlatPlanTree.
 // Note:
-//     It returns a reference to the original FlatPlanTree, please avoid modifying the returned value.
-//     Since you get a part of the original slice, you need to adjust the FlatOperator.Depth and FlatOperator.ChildrenIdx when using them.
+//
+//	It returns a reference to the original FlatPlanTree, please avoid modifying the returned value.
+//	Since you get a part of the original slice, you need to adjust the FlatOperator.Depth and FlatOperator.ChildrenIdx when using them.
 func (e FlatPlanTree) GetSelectPlan() FlatPlanTree {
 	if len(e) == 0 {
 		return nil
@@ -76,7 +77,15 @@ type FlatOperator struct {
 	// A reference to the original operator.
 	Origin Plan
 
+	// With ChildrenIdx and ChildrenEndIdx, we can locate every children subtrees of this operator in the FlatPlanTree.
+	// For example, the first children subtree is flatTree[ChildrenIdx[0] : ChildrenIdx[1]], the last children subtree
+	// is flatTree[ChildrenIdx[n-1] : ChildrenEndIdx].
+
+	// ChildrenIdx is the indexes of the children of this operator in the FlatPlanTree.
+	// It's ordered from small to large.
 	ChildrenIdx []int
+	// ChildrenEndIdx is the index of the last operator of children subtrees of this operator in the FlatPlanTree.
+	ChildrenEndIdx int
 
 	// NeedReverseDriverSide means if we need to reverse the order of children to keep build side before probe side.
 	//
@@ -213,8 +222,11 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 	childIdxs := make([]int, 0)
 	var childIdx int
 	childCtx := &operatorCtx{
-		depth:  info.depth + 1,
-		indent: texttree.Indent4Child(info.indent, info.isLastChild),
+		depth:     info.depth + 1,
+		isRoot:    info.isRoot,
+		storeType: info.storeType,
+		reqType:   info.reqType,
+		indent:    texttree.Indent4Child(info.indent, info.isLastChild),
 	}
 	// For physical operators, we just enumerate their children and collect their information.
 	// Note that some physical operators are special, and they are handled below this part.
@@ -268,9 +280,6 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 		}
 
 		for i := range children {
-			childCtx.isRoot = info.isRoot
-			childCtx.storeType = info.storeType
-			childCtx.reqType = info.reqType
 			childCtx.label = label[i]
 			childCtx.isLastChild = i == len(children)-1
 			target, childIdx = f.flattenRecursively(children[i], childCtx, target)
@@ -330,7 +339,11 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 		target, childIdx = f.flattenRecursively(plan.DataSource, childCtx, target)
 		childIdxs = append(childIdxs, childIdx)
 	case *PhysicalCTE:
-		f.ctesToFlatten = append(f.ctesToFlatten, plan)
+		// We shallow copy the PhysicalCTE here because we don't want the probeParents (see comments in PhysicalPlan
+		// for details) to affect the row count display of the independent CTE plan tree.
+		copiedCTE := *plan
+		copiedCTE.probeParents = nil
+		f.ctesToFlatten = append(f.ctesToFlatten, &copiedCTE)
 	case *Insert:
 		if plan.SelectPlan != nil {
 			childCtx.isRoot = true
@@ -383,6 +396,7 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 	}
 	if flat != nil {
 		flat.ChildrenIdx = childIdxs
+		flat.ChildrenEndIdx = len(target) - 1
 	}
 	return target, idx
 }

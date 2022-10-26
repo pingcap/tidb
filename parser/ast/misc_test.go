@@ -241,7 +241,8 @@ func TestTableOptimizerHintRestore(t *testing.T) {
 		{"INL_MERGE_JOIN(t1,t2)", "INL_MERGE_JOIN(`t1`, `t2`)"},
 		{"INL_JOIN(t1,t2)", "INL_JOIN(`t1`, `t2`)"},
 		{"HASH_JOIN(t1,t2)", "HASH_JOIN(`t1`, `t2`)"},
-		{"ORDERED_HASH_JOIN(t1,t2)", "ORDERED_HASH_JOIN(`t1`, `t2`)"},
+		{"HASH_JOIN_BUILD(t1)", "HASH_JOIN_BUILD(`t1`)"},
+		{"HASH_JOIN_PROBE(t1)", "HASH_JOIN_PROBE(`t1`)"},
 		{"LEADING(t1)", "LEADING(`t1`)"},
 		{"LEADING(t1, c1)", "LEADING(`t1`, `c1`)"},
 		{"LEADING(t1, c1, t2)", "LEADING(`t1`, `c1`, `t2`)"},
@@ -276,6 +277,7 @@ func TestTableOptimizerHintRestore(t *testing.T) {
 		{"AGG_TO_COP()", "AGG_TO_COP()"},
 		{"AGG_TO_COP(@sel_1)", "AGG_TO_COP(@`sel_1`)"},
 		{"LIMIT_TO_COP()", "LIMIT_TO_COP()"},
+		{"MERGE()", "MERGE()"},
 		{"STRAIGHT_JOIN()", "STRAIGHT_JOIN()"},
 		{"NO_INDEX_MERGE()", "NO_INDEX_MERGE()"},
 		{"NO_INDEX_MERGE(@sel1)", "NO_INDEX_MERGE(@`sel1`)"},
@@ -337,13 +339,14 @@ func TestBRIESecureText(t *testing.T) {
 		n, ok := node.(ast.SensitiveStmtNode)
 		require.True(t, ok, comment)
 		require.Regexp(t, tc.secured, n.SecureText(), comment)
-
 	}
 }
 
 func TestCompactTableStmtRestore(t *testing.T) {
 	testCases := []NodeRestoreTestCase{
 		{"alter table abc compact tiflash replica", "ALTER TABLE `abc` COMPACT TIFLASH REPLICA"},
+		{"alter table abc compact", "ALTER TABLE `abc` COMPACT"},
+		{"alter table test.abc compact", "ALTER TABLE `test`.`abc` COMPACT"},
 	}
 	extractNodeFunc := func(node ast.Node) ast.Node {
 		return node.(*ast.CompactTableStmt)

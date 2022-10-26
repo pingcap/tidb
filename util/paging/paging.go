@@ -17,25 +17,31 @@ package paging
 import "math"
 
 // A paging request may be separated into multi requests if there are more data than a page.
-// The paging size grows from min to max, it's not well tuned yet.
-// e.g. a paging request scans over range (r1, r200), it requires 64 rows in the first batch,
+// The paging size grows from min to max. See https://github.com/pingcap/tidb/issues/36328
+// e.g. a paging request scans over range (r1, r200), it requires 128 rows in the first batch,
 // if it's not drained, then the paging size grows, the new range is calculated like (r100, r200), then send a request again.
 // Compare with the common unary request, paging request allows early access of data, it offers a streaming-like way processing data.
-// TODO: may make the paging parameters configurable.
 const (
-	MinPagingSize      uint64 = 64
+	MinPagingSize      uint64 = 128
 	maxPagingSizeShift        = 7
 	pagingSizeGrow            = 2
-	MaxPagingSize             = MinPagingSize << maxPagingSizeShift
+	MaxPagingSize             = 50000
 	pagingGrowingSum          = ((2 << maxPagingSizeShift) - 1) * MinPagingSize
 	Threshold          uint64 = 960
 )
 
 // GrowPagingSize grows the paging size and ensures it does not exceed MaxPagingSize
-func GrowPagingSize(size uint64) uint64 {
+func GrowPagingSize(size uint64, max uint64) uint64 {
+	if max < MaxPagingSize {
+		// Defensive programing, for example, call with max = 0.
+		// max should never less than MaxPagingSize.
+		// Otherwise the session variable maybe wrong, or the distsql request does not obey the session variable setting.
+		max = MaxPagingSize
+	}
+
 	size <<= 1
-	if size > MaxPagingSize {
-		return MaxPagingSize
+	if size > max {
+		return max
 	}
 	return size
 }

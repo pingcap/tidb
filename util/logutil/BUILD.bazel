@@ -24,12 +24,14 @@ go_library(
 
 go_test(
     name = "logutil_test",
+    timeout = "short",
     srcs = [
         "hex_test.go",
         "log_test.go",
         "main_test.go",
     ],
     embed = [":logutil"],
+    flaky = True,
     deps = [
         "//kv",
         "//testkit/testsetup",

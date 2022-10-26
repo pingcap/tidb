@@ -35,15 +35,15 @@ type encodingBase struct {
 	self Encoding
 }
 
-func (b encodingBase) MbLen(_ string) int {
+func (encodingBase) MbLen(_ string) int {
 	return 0
 }
 
-func (b encodingBase) ToUpper(src string) string {
+func (encodingBase) ToUpper(src string) string {
 	return strings.ToUpper(src)
 }
 
-func (b encodingBase) ToLower(src string) string {
+func (encodingBase) ToLower(src string) string {
 	return strings.ToLower(src)
 }
 

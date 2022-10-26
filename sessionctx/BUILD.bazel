@@ -11,6 +11,7 @@ go_library(
         "//parser/model",
         "//sessionctx/sessionstates",
         "//sessionctx/variable",
+        "//types",
         "//util",
         "//util/kvcache",
         "//util/sli",
@@ -30,6 +31,7 @@ go_test(
         "main_test.go",
     ],
     embed = [":sessionctx"],
+    flaky = True,
     deps = [
         "//testkit/testsetup",
         "@com_github_stretchr_testify//require",

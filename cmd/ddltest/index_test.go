@@ -87,6 +87,7 @@ func TestIndex(t *testing.T) {
 		done := s.runDDL(col.Query)
 
 		ticker := time.NewTicker(time.Duration(*lease) * time.Second / 2)
+		//nolint:all_revive,revive
 		defer ticker.Stop()
 	LOOP:
 		for {

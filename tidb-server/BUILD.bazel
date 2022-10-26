@@ -10,7 +10,9 @@ go_library(
         "//config",
         "//ddl",
         "//domain",
+        "//domain/infosync",
         "//executor",
+        "//extension",
         "//kv",
         "//metrics",
         "//parser/mysql",
@@ -46,6 +48,7 @@ go_library(
         "//util/systimemon",
         "//util/topsql",
         "//util/versioninfo",
+        "@com_github_coreos_go_semver//semver",
         "@com_github_opentracing_opentracing_go//:opentracing-go",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
@@ -85,14 +88,17 @@ go_binary(
 
 go_test(
     name = "tidb-server_test",
+    timeout = "short",
     srcs = ["main_test.go"],
     embed = [":tidb-server_lib"],
+    flaky = True,
     deps = [
         "//config",
         "//parser/mysql",
         "//sessionctx/variable",
         "//testkit/testsetup",
         "@com_github_stretchr_testify//require",
+        "@io_opencensus_go//stats/view",
         "@org_uber_go_goleak//:goleak",
     ],
 )

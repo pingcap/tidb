@@ -99,7 +99,7 @@ func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices
 			return 0, i, errors.Trace(err)
 		}
 		logutil.Logger(context.Background()).Info("check indices count",
-			zap.String("table", tableName), zap.Int64("cnt", tblCnt), zap.Reflect("index", idx), zap.Int64("cnt", idxCnt))
+			zap.String("table", tableName), zap.Int64("tblCnt", tblCnt), zap.Reflect("index", idx), zap.Int64("idxCnt", idxCnt))
 		if tblCnt == idxCnt {
 			continue
 		}

@@ -19,6 +19,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
@@ -42,9 +44,11 @@ import (
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/plancodec"
+	"github.com/pingcap/tidb/util/size"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
@@ -84,8 +88,31 @@ type PointGetPlan struct {
 	// required by cost model
 	planCostInit bool
 	planCost     float64
+	planCostVer2 costVer2
 	// accessCols represents actual columns the PointGet will access, which are used to calculate row-size
 	accessCols []*expression.Column
+
+	// probeParents records the IndexJoins and Applys with this operator in their inner children.
+	// Please see comments in PhysicalPlan for details.
+	probeParents []PhysicalPlan
+}
+
+func (p *PointGetPlan) getEstRowCountForDisplay() float64 {
+	if p == nil {
+		return 0
+	}
+	return p.statsInfo().RowCount * getEstimatedProbeCntFromProbeParents(p.probeParents)
+}
+
+func (p *PointGetPlan) getActualProbeCnt(statsColl *execdetails.RuntimeStatsColl) int64 {
+	if p == nil {
+		return 1
+	}
+	return getActualProbeCntFromProbeParents(p.probeParents, statsColl)
+}
+
+func (p *PointGetPlan) setProbeParents(probeParents []PhysicalPlan) {
+	p.probeParents = probeParents
 }
 
 type nameValuePair struct {
@@ -112,12 +139,12 @@ func (p *PointGetPlan) SetCost(cost float64) {
 
 // attach2Task makes the current physical plan as the father of task's physicalPlan and updates the cost of
 // current task. If the child's task is cop task, some operator may close this task and return a new rootTask.
-func (p *PointGetPlan) attach2Task(...task) task {
+func (*PointGetPlan) attach2Task(...task) task {
 	return nil
 }
 
 // ToPB converts physical plan to tipb executor.
-func (p *PointGetPlan) ToPB(ctx sessionctx.Context, _ kv.StoreType) (*tipb.Executor, error) {
+func (*PointGetPlan) ToPB(_ sessionctx.Context, _ kv.StoreType) (*tipb.Executor, error) {
 	return nil, nil
 }
 
@@ -173,17 +200,17 @@ func (p *PointGetPlan) OperatorInfo(normalized bool) string {
 }
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.
-func (p *PointGetPlan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+func (*PointGetPlan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	return nil
 }
 
 // GetChildReqProps gets the required property by child index.
-func (p *PointGetPlan) GetChildReqProps(idx int) *property.PhysicalProperty {
+func (*PointGetPlan) GetChildReqProps(_ int) *property.PhysicalProperty {
 	return nil
 }
 
 // StatsCount will return the the RowCount of property.StatsInfo for this plan.
-func (p *PointGetPlan) StatsCount() float64 {
+func (*PointGetPlan) StatsCount() float64 {
 	return 1
 }
 
@@ -197,15 +224,15 @@ func (p *PointGetPlan) statsInfo() *property.StatsInfo {
 }
 
 // Children gets all the children.
-func (p *PointGetPlan) Children() []PhysicalPlan {
+func (*PointGetPlan) Children() []PhysicalPlan {
 	return nil
 }
 
 // SetChildren sets the children for the plan.
-func (p *PointGetPlan) SetChildren(...PhysicalPlan) {}
+func (*PointGetPlan) SetChildren(...PhysicalPlan) {}
 
 // SetChild sets a specific child for the plan.
-func (p *PointGetPlan) SetChild(i int, child PhysicalPlan) {}
+func (*PointGetPlan) SetChild(_ int, _ PhysicalPlan) {}
 
 // ResolveIndices resolves the indices for columns. After doing this, the columns can evaluate the rows by their indices.
 func (p *PointGetPlan) ResolveIndices() error {
@@ -220,6 +247,55 @@ func (p *PointGetPlan) OutputNames() types.NameSlice {
 // SetOutputNames sets the outputting name by the given slice.
 func (p *PointGetPlan) SetOutputNames(names types.NameSlice) {
 	p.outputNames = names
+}
+
+func (*PointGetPlan) appendChildCandidate(_ *physicalOptimizeOp) {}
+
+const emptyPointGetPlanSize = int64(unsafe.Sizeof(PointGetPlan{}))
+
+// MemoryUsage return the memory usage of PointGetPlan
+func (p *PointGetPlan) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = emptyPointGetPlanSize + p.basePlan.MemoryUsage() + int64(len(p.dbName)) + int64(cap(p.IdxColLens))*size.SizeOfInt +
+		int64(cap(p.IndexConstants)+cap(p.ColsFieldType)+cap(p.IdxCols)+cap(p.outputNames)+cap(p.Columns)+cap(p.accessCols))*size.SizeOfPointer
+	if p.schema != nil {
+		sum += p.schema.MemoryUsage()
+	}
+	if p.PartitionInfo != nil {
+		sum += p.PartitionInfo.MemoryUsage()
+	}
+	if p.HandleConstant != nil {
+		sum += p.HandleConstant.MemoryUsage()
+	}
+	if p.handleFieldType != nil {
+		sum += p.handleFieldType.MemoryUsage()
+	}
+
+	for _, datum := range p.IndexValues {
+		sum += datum.MemUsage()
+	}
+	for _, idxConst := range p.IndexConstants {
+		sum += idxConst.MemoryUsage()
+	}
+	for _, ft := range p.ColsFieldType {
+		sum += ft.MemoryUsage()
+	}
+	for _, col := range p.IdxCols {
+		sum += col.MemoryUsage()
+	}
+	for _, cond := range p.AccessConditions {
+		sum += cond.MemoryUsage()
+	}
+	for _, name := range p.outputNames {
+		sum += name.MemoryUsage()
+	}
+	for _, col := range p.accessCols {
+		sum += col.MemoryUsage()
+	}
+	return
 }
 
 // BatchPointGetPlan represents a physical plan which contains a bunch of
@@ -261,8 +337,30 @@ type BatchPointGetPlan struct {
 	// required by cost model
 	planCostInit bool
 	planCost     float64
+	planCostVer2 costVer2
 	// accessCols represents actual columns the PointGet will access, which are used to calculate row-size
 	accessCols []*expression.Column
+
+	// probeParents records the IndexJoins and Applys with this operator in their inner children.
+	// Please see comments in PhysicalPlan for details.
+	probeParents []PhysicalPlan
+}
+
+func (p *BatchPointGetPlan) getEstRowCountForDisplay() float64 {
+	if p == nil {
+		return 0
+	}
+	return p.statsInfo().RowCount * getEstimatedProbeCntFromProbeParents(p.probeParents)
+}
+
+func (p *BatchPointGetPlan) getActualProbeCnt(statsColl *execdetails.RuntimeStatsColl) int64 {
+	if p == nil {
+		return 1
+	}
+	return getActualProbeCntFromProbeParents(p.probeParents, statsColl)
+}
+func (p *BatchPointGetPlan) setProbeParents(probeParents []PhysicalPlan) {
+	p.probeParents = probeParents
 }
 
 // Cost implements PhysicalPlan interface
@@ -281,18 +379,18 @@ func (p *BatchPointGetPlan) Clone() (PhysicalPlan, error) {
 }
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.
-func (p *BatchPointGetPlan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+func (*BatchPointGetPlan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	return nil
 }
 
 // attach2Task makes the current physical plan as the father of task's physicalPlan and updates the cost of
 // current task. If the child's task is cop task, some operator may close this task and return a new rootTask.
-func (p *BatchPointGetPlan) attach2Task(...task) task {
+func (*BatchPointGetPlan) attach2Task(...task) task {
 	return nil
 }
 
 // ToPB converts physical plan to tipb executor.
-func (p *BatchPointGetPlan) ToPB(ctx sessionctx.Context, _ kv.StoreType) (*tipb.Executor, error) {
+func (*BatchPointGetPlan) ToPB(_ sessionctx.Context, _ kv.StoreType) (*tipb.Executor, error) {
 	return nil, nil
 }
 
@@ -334,7 +432,7 @@ func (p *BatchPointGetPlan) OperatorInfo(normalized bool) string {
 }
 
 // GetChildReqProps gets the required property by child index.
-func (p *BatchPointGetPlan) GetChildReqProps(idx int) *property.PhysicalProperty {
+func (*BatchPointGetPlan) GetChildReqProps(_ int) *property.PhysicalProperty {
 	return nil
 }
 
@@ -349,15 +447,15 @@ func (p *BatchPointGetPlan) statsInfo() *property.StatsInfo {
 }
 
 // Children gets all the children.
-func (p *BatchPointGetPlan) Children() []PhysicalPlan {
+func (*BatchPointGetPlan) Children() []PhysicalPlan {
 	return nil
 }
 
 // SetChildren sets the children for the plan.
-func (p *BatchPointGetPlan) SetChildren(...PhysicalPlan) {}
+func (*BatchPointGetPlan) SetChildren(...PhysicalPlan) {}
 
 // SetChild sets a specific child for the plan.
-func (p *BatchPointGetPlan) SetChild(i int, child PhysicalPlan) {}
+func (*BatchPointGetPlan) SetChild(_ int, _ PhysicalPlan) {}
 
 // ResolveIndices resolves the indices for columns. After doing this, the columns can evaluate the rows by their indices.
 func (p *BatchPointGetPlan) ResolveIndices() error {
@@ -372,6 +470,51 @@ func (p *BatchPointGetPlan) OutputNames() types.NameSlice {
 // SetOutputNames sets the outputting name by the given slice.
 func (p *BatchPointGetPlan) SetOutputNames(names types.NameSlice) {
 	p.names = names
+}
+
+func (*BatchPointGetPlan) appendChildCandidate(_ *physicalOptimizeOp) {}
+
+const emptyBatchPointGetPlanSize = int64(unsafe.Sizeof(BatchPointGetPlan{}))
+
+// MemoryUsage return the memory usage of BatchPointGetPlan
+func (p *BatchPointGetPlan) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = emptyBatchPointGetPlanSize + p.baseSchemaProducer.MemoryUsage() + int64(len(p.dbName)) +
+		int64(cap(p.IdxColLens))*size.SizeOfInt + int64(cap(p.Handles))*size.SizeOfInterface +
+		int64(cap(p.PartitionInfos)+cap(p.HandleParams)+cap(p.IndexColTypes)+cap(p.IdxCols)+cap(p.Columns)+cap(p.accessCols))*size.SizeOfPointer
+	if p.HandleType != nil {
+		sum += p.HandleType.MemoryUsage()
+	}
+
+	for _, constant := range p.HandleParams {
+		sum += constant.MemoryUsage()
+	}
+	for _, values := range p.IndexValues {
+		for _, value := range values {
+			sum += value.MemUsage()
+		}
+	}
+	for _, params := range p.IndexValueParams {
+		for _, param := range params {
+			sum += param.MemoryUsage()
+		}
+	}
+	for _, idxType := range p.IndexColTypes {
+		sum += idxType.MemoryUsage()
+	}
+	for _, cond := range p.AccessConditions {
+		sum += cond.MemoryUsage()
+	}
+	for _, col := range p.IdxCols {
+		sum += col.MemoryUsage()
+	}
+	for _, col := range p.accessCols {
+		sum += col.MemoryUsage()
+	}
+	return
 }
 
 // PointPlanKey is used to get point plan that is pre-built for multi-statement query.
@@ -736,7 +879,6 @@ func newBatchPointGetPlan(
 				pos2PartitionDefinition[pos] = tmpPartitionDefinition
 			}
 		}
-
 	}
 
 	posArr := make([]int, len(pos2PartitionDefinition))
@@ -1295,8 +1437,7 @@ func getPointGetValue(stmtCtx *stmtctx.StatementContext, col *model.ColumnInfo, 
 
 func checkCanConvertInPointGet(col *model.ColumnInfo, d types.Datum) bool {
 	kind := d.Kind()
-	switch col.FieldType.EvalType() {
-	case ptypes.ETString:
+	if col.FieldType.EvalType() == ptypes.ETString {
 		switch kind {
 		case types.KindInt64, types.KindUint64,
 			types.KindFloat32, types.KindFloat64, types.KindMysqlDecimal:
@@ -1304,10 +1445,8 @@ func checkCanConvertInPointGet(col *model.ColumnInfo, d types.Datum) bool {
 			return false
 		}
 	}
-	switch col.FieldType.GetType() {
-	case mysql.TypeBit:
-		switch kind {
-		case types.KindString:
+	if col.FieldType.GetType() == mysql.TypeBit {
+		if kind == types.KindString {
 			// column type is Bit and constant type is string
 			return false
 		}
@@ -1454,6 +1593,10 @@ func buildPointUpdatePlan(ctx sessionctx.Context, pointPlan PhysicalPlan, dbName
 			updatePlan.PartitionedTable = append(updatePlan.PartitionedTable, pt)
 		}
 	}
+	err := updatePlan.buildOnUpdateFKChecks(ctx, is, updatePlan.tblID2Table)
+	if err != nil {
+		return nil
+	}
 	return updatePlan
 }
 
@@ -1541,6 +1684,14 @@ func buildPointDeletePlan(ctx sessionctx.Context, pointPlan PhysicalPlan, dbName
 			},
 		},
 	}.Init(ctx)
+	var err error
+	is := sessiontxn.GetTxnManager(ctx).GetTxnInfoSchema()
+	t, _ := is.TableByID(tbl.ID)
+	tblID2Table := map[int64]table.Table{tbl.ID: t}
+	err = delPlan.buildOnDeleteFKTriggers(ctx, is, tblID2Table)
+	if err != nil {
+		return nil
+	}
 	return delPlan
 }
 

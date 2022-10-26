@@ -235,6 +235,20 @@ func (e *Engine) unlock() {
 	e.mutex.Unlock()
 }
 
+func (e *Engine) TotalMemorySize() int64 {
+	var memSize int64 = 0
+	e.localWriters.Range(func(k, v interface{}) bool {
+		w := k.(*Writer)
+		if w.kvBuffer != nil {
+			w.Lock()
+			memSize += w.kvBuffer.TotalSize()
+			w.Unlock()
+		}
+		return true
+	})
+	return memSize
+}
+
 type rangeOffsets struct {
 	Size uint64
 	Keys uint64
@@ -1416,7 +1430,7 @@ func (i dbSSTIngester) mergeSSTs(metas []*sstMeta, dir string) (*sstMeta, error)
 		return nil, err
 	}
 	if key == nil {
-		return nil, errors.New("all ssts are empty!")
+		return nil, errors.New("all ssts are empty")
 	}
 	newMeta.minKey = append(newMeta.minKey[:0], key...)
 	lastKey := make([]byte, 0)

@@ -20,10 +20,11 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/memo"
 	"github.com/stretchr/testify/require"
+	"go.opencensus.io/stats/view"
 )
 
 func TestBaseImplementation(t *testing.T) {
-
+	defer view.Stop()
 	sctx := plannercore.MockContext()
 	p := plannercore.PhysicalLimit{}.Init(sctx, nil, 0, nil)
 	impl := &baseImpl{plan: p}

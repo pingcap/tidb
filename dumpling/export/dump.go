@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"encoding/hex"
 	"fmt"
 	"math/big"
@@ -37,9 +38,9 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-var openDBFunc = sql.Open
+var openDBFunc = openDB
 
-var emptyHandleValsErr = errors.New("empty handleVals for TiDB table")
+var errEmptyHandleVals = errors.New("empty handleVals for TiDB table")
 
 // Dumper is the dump progress structure
 type Dumper struct {
@@ -55,6 +56,8 @@ type Dumper struct {
 	selectTiDBTableRegionFunc     func(tctx *tcontext.Context, conn *BaseConn, meta TableMeta) (pkFields []string, pkVals [][]string, err error)
 	totalTables                   int64
 	charsetAndDefaultCollationMap map[string]string
+
+	speedRecorder *SpeedRecorder
 }
 
 // NewDumper returns a new Dumper
@@ -78,6 +81,7 @@ func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 		conf:                      conf,
 		cancelCtx:                 cancelFn,
 		selectTiDBTableRegionFunc: selectTiDBTableRegion,
+		speedRecorder:             NewSpeedRecorder(),
 	}
 
 	var err error
@@ -200,14 +204,13 @@ func (d *Dumper) Dump() (dumpErr error) {
 
 	atomic.StoreInt64(&d.totalTables, int64(calculateTableCount(conf.Tables)))
 
-	rebuildConn := func(conn *sql.Conn, updateMeta bool) (*sql.Conn, error) {
-		// make sure that the lock connection is still alive
-		err1 := conCtrl.PingContext(tctx)
-		if err1 != nil {
-			return conn, errors.Trace(err1)
-		}
-		// give up the last broken connection
-		_ = conn.Close()
+	rebuildMetaConn := func(conn *sql.Conn, updateMeta bool) (*sql.Conn, error) {
+		_ = conn.Raw(func(dc interface{}) error {
+			// return an `ErrBadConn` to ensure close the connection, but do not put it back to the pool.
+			// if we choose to use `Close`, it will always put the connection back to the pool.
+			return driver.ErrBadConn
+		})
+
 		newConn, err1 := createConnWithConsistency(tctx, pool, repeatableRead)
 		if err1 != nil {
 			return conn, errors.Trace(err1)
@@ -223,7 +226,20 @@ func (d *Dumper) Dump() (dumpErr error) {
 		return conn, nil
 	}
 
-	taskChan := make(chan Task, defaultDumpThreads)
+	rebuildConn := func(conn *sql.Conn, updateMeta bool) (*sql.Conn, error) {
+		// make sure that the lock connection is still alive
+		err1 := conCtrl.PingContext(tctx)
+		if err1 != nil {
+			return conn, errors.Trace(err1)
+		}
+		return rebuildMetaConn(conn, updateMeta)
+	}
+
+	chanSize := defaultDumpThreads
+	failpoint.Inject("SmallDumpChanSize", func() {
+		chanSize = 1
+	})
+	taskChan := make(chan Task, chanSize)
 	AddGauge(d.metrics.taskChannelCapacity, defaultDumpThreads)
 	wg, writingCtx := errgroup.WithContext(tctx)
 	writerCtx := tctx.WithContext(writingCtx)
@@ -272,7 +288,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 			fmt.Printf("tidb_mem_quota_query == %s\n", s)
 		}
 	})
-	baseConn := newBaseConn(metaConn, canRebuildConn(conf.Consistency, conf.TransactionalConsistency), rebuildConn)
+	baseConn := newBaseConn(metaConn, true, rebuildMetaConn)
 
 	if conf.SQL == "" {
 		if err = d.dumpDatabases(writerCtx, baseConn, taskChan); err != nil && !errors.ErrorEqual(err, context.Canceled) {
@@ -512,7 +528,6 @@ func adjustTableCollation(tctx *tcontext.Context, collationCompatible string, pa
 	}
 
 	if collation == "" && charset != "" {
-		// get db collation
 		collation, ok := charsetAndDefaultCollationMap[strings.ToLower(charset)]
 		if !ok {
 			tctx.L().Warn("not found table charset default collation.", zap.String("originSQL", originSQL), zap.String("charset", strings.ToLower(charset)))
@@ -541,11 +556,12 @@ func adjustTableCollation(tctx *tcontext.Context, collationCompatible string, pa
 
 // adjustColumnsCollation adds column's collation.
 func adjustColumnsCollation(tctx *tcontext.Context, createStmt *ast.CreateTableStmt, charsetAndDefaultCollationMap map[string]string) {
+ColumnLoop:
 	for _, col := range createStmt.Cols {
 		for _, options := range col.Options {
 			// already have 'Collation'
 			if options.Tp == ast.ColumnOptionCollate {
-				continue
+				continue ColumnLoop
 			}
 		}
 		fieldType := col.Tp
@@ -691,7 +707,7 @@ func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *BaseConn, met
 		// don't retry on context error and successful tasks
 		if err2 := errors.Cause(err); err2 == nil || err2 == context.DeadlineExceeded || err2 == context.Canceled {
 			return err
-		} else if err2 != emptyHandleValsErr {
+		} else if err2 != errEmptyHandleVals {
 			tctx.L().Info("fallback to concurrent dump tables using rows due to some problem. This won't influence the whole dump process",
 				zap.String("database", db), zap.String("table", tbl), log.ShortError(err))
 		}
@@ -892,7 +908,7 @@ func (d *Dumper) sendConcurrentDumpTiDBTasks(tctx *tcontext.Context,
 	if len(handleVals) == 0 {
 		if partition == "" {
 			// return error to make outside function try using rows method to dump data
-			return errors.Annotatef(emptyHandleValsErr, "table: `%s`.`%s`", escapeString(db), escapeString(tbl))
+			return errors.Annotatef(errEmptyHandleVals, "table: `%s`.`%s`", escapeString(db), escapeString(tbl))
 		}
 		return d.dumpWholeTableDirectly(tctx, meta, taskChan, partition, buildOrderByClauseString(handleColNames), startChunkIdx, totalChunk)
 	}
@@ -1236,6 +1252,9 @@ func (d *Dumper) Close() error {
 	if d.dbHandle != nil {
 		return d.dbHandle.Close()
 	}
+	if d.conf.Security.DriveTLSName != "" {
+		mysql.DeregisterTLSConfig(d.conf.Security.DriveTLSName)
+	}
 	return nil
 }
 
@@ -1303,11 +1322,11 @@ func startHTTPService(d *Dumper) error {
 // openSQLDB is an initialization step of Dumper.
 func openSQLDB(d *Dumper) error {
 	conf := d.conf
-	pool, err := sql.Open("mysql", conf.GetDSN(""))
+	c, err := mysql.NewConnector(conf.GetDriverConfig(""))
 	if err != nil {
 		return errors.Trace(err)
 	}
-	d.dbHandle = pool
+	d.dbHandle = sql.OpenDB(c)
 	return nil
 }
 
@@ -1336,6 +1355,30 @@ func resolveAutoConsistency(d *Dumper) error {
 		conf.Consistency = ConsistencyTypeFlush
 	default:
 		conf.Consistency = ConsistencyTypeNone
+	}
+
+	if conf.Consistency == ConsistencyTypeFlush {
+		timeout := time.Second * 5
+		ctx, cancel := context.WithTimeout(d.tctx.Context, timeout)
+		defer cancel()
+
+		// probe if upstream has enough privilege to FLUSH TABLE WITH READ LOCK
+		conn, err := d.dbHandle.Conn(ctx)
+		if err != nil {
+			return errors.New("failed to get connection from db pool after 5 seconds")
+		}
+		//nolint: errcheck
+		defer conn.Close()
+
+		err = FlushTableWithReadLock(d.tctx, conn)
+		//nolint: errcheck
+		defer UnlockTables(d.tctx, conn)
+		if err != nil {
+			// fallback to ConsistencyTypeLock
+			d.tctx.L().Warn("error when use FLUSH TABLE WITH READ LOCK, fallback to LOCK TABLES",
+				zap.Error(err))
+			conf.Consistency = ConsistencyTypeLock
+		}
 	}
 	return nil
 }
@@ -1480,10 +1523,18 @@ func setSessionParam(d *Dumper) error {
 			}
 		}
 	}
-	if d.dbHandle, err = resetDBWithSessionParams(d.tctx, pool, conf.GetDSN(""), conf.SessionParams); err != nil {
+	if d.dbHandle, err = resetDBWithSessionParams(d.tctx, pool, conf.GetDriverConfig(""), conf.SessionParams); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
+}
+
+func openDB(cfg *mysql.Config) (*sql.DB, error) {
+	c, err := mysql.NewConnector(cfg)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return sql.OpenDB(c), nil
 }
 
 func (d *Dumper) renewSelectTableRegionFuncForLowerTiDB(tctx *tcontext.Context) error {
@@ -1500,9 +1551,9 @@ func (d *Dumper) renewSelectTableRegionFuncForLowerTiDB(tctx *tcontext.Context) 
 	// To avoid this function continuously returning errors and confusing users because we fail to init this function at first,
 	// selectTiDBTableRegionFunc is set to always return an ignorable error at first.
 	d.selectTiDBTableRegionFunc = func(_ *tcontext.Context, _ *BaseConn, meta TableMeta) (pkFields []string, pkVals [][]string, err error) {
-		return nil, nil, errors.Annotatef(emptyHandleValsErr, "table: `%s`.`%s`", escapeString(meta.DatabaseName()), escapeString(meta.TableName()))
+		return nil, nil, errors.Annotatef(errEmptyHandleVals, "table: `%s`.`%s`", escapeString(meta.DatabaseName()), escapeString(meta.TableName()))
 	}
-	dbHandle, err := openDBFunc("mysql", conf.GetDSN(""))
+	dbHandle, err := openDBFunc(conf.GetDriverConfig(""))
 	if err != nil {
 		return errors.Trace(err)
 	}

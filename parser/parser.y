@@ -50,8 +50,9 @@ import (
 %token	<ident>
 
 	/*yy:token "%c"     */
-	identifier "identifier"
-	asof       "AS OF"
+	identifier  "identifier"
+	asof        "AS OF"
+	toTimestamp "TO TIMESTAMP"
 
 	/*yy:token "_%c"    */
 	underscoreCS "UNDERSCORE_CHARSET"
@@ -246,6 +247,7 @@ import (
 	starting          "STARTING"
 	statsExtended     "STATS_EXTENDED"
 	straightJoin      "STRAIGHT_JOIN"
+	tidbCurrentTSO    "TiDB_CURRENT_TSO"
 	tableKwd          "TABLE"
 	tableSample       "TABLESAMPLE"
 	stored            "STORED"
@@ -297,6 +299,7 @@ import (
 	always                "ALWAYS"
 	any                   "ANY"
 	ascii                 "ASCII"
+	attribute             "ATTRIBUTE"
 	attributes            "ATTRIBUTES"
 	statsOptions          "STATS_OPTIONS"
 	statsSampleRate       "STATS_SAMPLE_RATE"
@@ -360,6 +363,7 @@ import (
 	csvSeparator          "CSV_SEPARATOR"
 	csvTrimLastSeparators "CSV_TRIM_LAST_SEPARATORS"
 	current               "CURRENT"
+	cluster               "CLUSTER"
 	clustered             "CLUSTERED"
 	cycle                 "CYCLE"
 	data                  "DATA"
@@ -702,6 +706,7 @@ import (
 	tokudbSmall           "TOKUDB_SMALL"
 	tokudbUncompressed    "TOKUDB_UNCOMPRESSED"
 	tokudbZlib            "TOKUDB_ZLIB"
+	tokudbZstd            "TOKUDB_ZSTD"
 	top                   "TOP"
 	trim                  "TRIM"
 	variance              "VARIANCE"
@@ -712,8 +717,6 @@ import (
 	voter                 "VOTER"
 	voterConstraints      "VOTER_CONSTRAINTS"
 	voters                "VOTERS"
-	normal                "NORMAL"
-	fast                  "FAST"
 
 	/* The following tokens belong to TiDBKeyword. Notice: make sure these tokens are contained in TiDBKeyword. */
 	admin                      "ADMIN"
@@ -899,6 +902,8 @@ import (
 	ExplainableStmt            "explainable statement"
 	FlushStmt                  "Flush statement"
 	FlashbackTableStmt         "Flashback table statement"
+	FlashbackToTimestampStmt   "Flashback cluster statement"
+	FlashbackDatabaseStmt      "Flashback Database statement"
 	GrantStmt                  "Grant statement"
 	GrantProxyStmt             "Grant proxy statement"
 	GrantRoleStmt              "Grant role statement"
@@ -909,7 +914,7 @@ import (
 	LoadDataStmt               "Load data statement"
 	LoadStatsStmt              "Load statistic statement"
 	LockTablesStmt             "Lock tables statement"
-	NonTransactionalDeleteStmt "Non-transactional delete statement"
+	NonTransactionalDMLStmt    "Non-transactional DML statement"
 	PlanReplayerStmt           "Plan replayer statement"
 	PreparedStmt               "PreparedStmt"
 	PurgeImportStmt            "PURGE IMPORT statement that removes a IMPORT task record"
@@ -950,9 +955,11 @@ import (
 	BindableStmt               "Statement that can be created binding on"
 	UpdateStmtNoWith           "Update statement without CTE clause"
 	HelpStmt                   "HELP statement"
+	ShardableStmt              "Shardable statement that can be used in non-transactional DMLs"
 
 %type	<item>
 	AdminShowSlow                          "Admin Show Slow statement"
+	AdminStmtLimitOpt                      "Admin show ddl jobs limit option"
 	AllOrPartitionNameList                 "All or partition name list"
 	AlgorithmClause                        "Alter table algorithm"
 	AlterTablePartitionOpt                 "Alter table partition option"
@@ -969,6 +976,7 @@ import (
 	AssignmentList                         "assignment list"
 	AssignmentListOpt                      "assignment list opt"
 	AuthOption                             "User auth option"
+	AutoRandomOpt                          "Auto random option"
 	Boolean                                "Boolean (0, 1, false, true)"
 	OptionalBraces                         "optional braces"
 	CastType                               "Cast function target type"
@@ -1033,6 +1041,7 @@ import (
 	TableRefsClause                        "Table references clause"
 	FieldItem                              "Field item for load data clause"
 	FieldItemList                          "Field items for load data clause"
+	FirstAndLastPartOpt                    "First and Last partition option"
 	FuncDatetimePrec                       "Function datetime precision"
 	GetFormatSelector                      "{DATE|DATETIME|TIME|TIMESTAMP}"
 	GlobalScope                            "The scope of variable"
@@ -1069,6 +1078,7 @@ import (
 	IndexPartSpecificationList             "List of index column name or expression"
 	IndexPartSpecificationListOpt          "Optional list of index column name or expression"
 	InsertValues                           "Rest part of INSERT/REPLACE INTO statement"
+	IntervalExpr                           "Interval expression"
 	JoinTable                              "join table"
 	JoinType                               "join type"
 	KillOrKillTiDB                         "Kill or Kill TiDB"
@@ -1083,6 +1093,8 @@ import (
 	LocalOpt                               "Local opt"
 	LockClause                             "Alter table lock clause"
 	LogTypeOpt                             "Optional log type used in FLUSH statements"
+	MaxValPartOpt                          "MAXVALUE partition option"
+	NullPartOpt                            "NULL Partition option"
 	NumLiteral                             "Num/Int/Float/Decimal Literal"
 	NoWriteToBinLogAliasOpt                "NO_WRITE_TO_BINLOG alias LOCAL or empty"
 	ObjectType                             "Grant statement object type"
@@ -1107,6 +1119,7 @@ import (
 	PartitionDefinition                    "Partition definition"
 	PartitionDefinitionList                "Partition definition list"
 	PartitionDefinitionListOpt             "Partition definition list option"
+	PartitionIntervalOpt                   "Partition interval option"
 	PartitionKeyAlgorithmOpt               "ALGORITHM = n option for KEY partition"
 	PartitionMethod                        "Partition method"
 	PartitionOpt                           "Partition option"
@@ -1120,6 +1133,7 @@ import (
 	PasswordOrLockOption                   "Single password or lock option for create user statement"
 	PasswordOrLockOptionList               "Password or lock options for create user statement"
 	PasswordOrLockOptions                  "Optional password or lock options for create user statement"
+	CommentOrAttributeOption               "Optional comment or attribute option for CREATE/ALTER USER statements"
 	ColumnPosition                         "Column position [First|After ColumnName]"
 	PrepareSQL                             "Prepare statement sql string"
 	Priority                               "Statement priority"
@@ -1517,11 +1531,34 @@ AlterTableStmt:
 			AnalyzeOpts:    $10.([]ast.AnalyzeOpt),
 		}
 	}
+|	"ALTER" IgnoreOptional "TABLE" TableName "COMPACT"
+	{
+		$$ = &ast.CompactTableStmt{
+			Table:       $4.(*ast.TableName),
+			ReplicaKind: ast.CompactReplicaKindAll,
+		}
+	}
 |	"ALTER" IgnoreOptional "TABLE" TableName "COMPACT" "TIFLASH" "REPLICA"
 	{
 		$$ = &ast.CompactTableStmt{
 			Table:       $4.(*ast.TableName),
 			ReplicaKind: ast.CompactReplicaKindTiFlash,
+		}
+	}
+|	"ALTER" IgnoreOptional "TABLE" TableName "COMPACT" "PARTITION" PartitionNameList
+	{
+		$$ = &ast.CompactTableStmt{
+			Table:          $4.(*ast.TableName),
+			PartitionNames: $7.([]model.CIStr),
+			ReplicaKind:    ast.CompactReplicaKindAll,
+		}
+	}
+|	"ALTER" IgnoreOptional "TABLE" TableName "COMPACT" "PARTITION" PartitionNameList "TIFLASH" "REPLICA"
+	{
+		$$ = &ast.CompactTableStmt{
+			Table:          $4.(*ast.TableName),
+			PartitionNames: $7.([]model.CIStr),
+			ReplicaKind:    ast.CompactReplicaKindTiFlash,
 		}
 	}
 
@@ -1652,6 +1689,31 @@ AlterTablePartitionOpt:
 		ret.NoWriteToBinlog = $3.(bool)
 		$$ = ret
 	}
+|	"SPLIT" "MAXVALUE" "PARTITION" "LESS" "THAN" '(' BitExpr ')'
+	{
+		partitionMethod := ast.PartitionMethod{Expr: $7}
+		startOffset := parser.yyVAL.offset
+		endOffset := parser.yylval.offset
+		partitionMethod.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
+		partitionMethod.SetOriginTextPosition(startOffset)
+		$$ = &ast.AlterTableSpec{
+			Tp:        ast.AlterTableReorganizeLastPartition,
+			Partition: &ast.PartitionOptions{PartitionMethod: partitionMethod},
+		}
+	}
+|	"MERGE" "FIRST" "PARTITION" "LESS" "THAN" '(' BitExpr ')'
+	{
+		partitionMethod := ast.PartitionMethod{Expr: $7}
+		startOffset := parser.yyVAL.offset
+		endOffset := parser.yylval.offset
+		partitionMethod.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
+		// Needed for replacing syntactic sugar with generated partitioning definition string
+		partitionMethod.SetOriginTextPosition(startOffset)
+		$$ = &ast.AlterTableSpec{
+			Tp:        ast.AlterTableReorganizeFirstPartition,
+			Partition: &ast.PartitionOptions{PartitionMethod: partitionMethod},
+		}
+	}
 |	"PARTITION" Identifier AttributesOpt
 	{
 		$$ = &ast.AlterTableSpec{
@@ -1695,20 +1757,6 @@ AlterTableSpec:
 		$$ = &ast.AlterTableSpec{
 			Tp:             ast.AlterTableSetTiFlashReplica,
 			TiFlashReplica: tiflashReplicaSpec,
-		}
-	}
-|	"SET" "TIFLASH" "MODE" "NORMAL"
-	{
-		$$ = &ast.AlterTableSpec{
-			Tp:          ast.AlterTableSetTiFlashMode,
-			TiFlashMode: model.TiFlashModeNormal,
-		}
-	}
-|	"SET" "TIFLASH" "MODE" "FAST"
-	{
-		$$ = &ast.AlterTableSpec{
-			Tp:          ast.AlterTableSetTiFlashMode,
-			TiFlashMode: model.TiFlashModeFast,
 		}
 	}
 |	"CONVERT" "TO" CharsetKw CharsetName OptCollate
@@ -1804,6 +1852,25 @@ AlterTableSpec:
 			Num:             getUint64FromNUM($6),
 		}
 	}
+|	"LAST" "PARTITION" "LESS" "THAN" '(' BitExpr ')' NoWriteToBinLogAliasOpt
+	{
+		noWriteToBinlog := $8.(bool)
+		if noWriteToBinlog {
+			yylex.AppendError(yylex.Errorf("The NO_WRITE_TO_BINLOG option is parsed but ignored for now."))
+			parser.lastErrorAsWarn()
+		}
+		partitionMethod := ast.PartitionMethod{Expr: $6}
+		startOffset := parser.yyVAL.offset
+		endOffset := parser.yylval.offset
+		partitionMethod.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
+		// Needed for replacing syntactic sugar with generated partitioning definition string
+		partitionMethod.SetOriginTextPosition(startOffset)
+		$$ = &ast.AlterTableSpec{
+			NoWriteToBinlog: noWriteToBinlog,
+			Tp:              ast.AlterTableAddLastPartition,
+			Partition:       &ast.PartitionOptions{PartitionMethod: partitionMethod},
+		}
+	}
 |	"ADD" "STATS_EXTENDED" IfNotExists Identifier StatsType '(' ColumnNameList ')'
 	{
 		statsSpec := &ast.StatisticsSpec{
@@ -1876,6 +1943,20 @@ AlterTableSpec:
 			IfExists:       $3.(bool),
 			Tp:             ast.AlterTableDropPartition,
 			PartitionNames: $4.([]model.CIStr),
+		}
+	}
+|	"FIRST" "PARTITION" "LESS" "THAN" '(' BitExpr ')' IfExists
+	{
+		partitionMethod := ast.PartitionMethod{Expr: $6}
+		startOffset := parser.yyVAL.offset
+		endOffset := parser.yylval.offset
+		partitionMethod.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
+		// Needed for replacing syntactic sugar with generated partitioning definition string
+		partitionMethod.SetOriginTextPosition(startOffset)
+		$$ = &ast.AlterTableSpec{
+			IfExists:  $8.(bool),
+			Tp:        ast.AlterTableDropFirstPartition,
+			Partition: &ast.PartitionOptions{PartitionMethod: partitionMethod},
 		}
 	}
 |	"DROP" "STATS_EXTENDED" IfExists Identifier
@@ -2508,6 +2589,35 @@ RecoverTableStmt:
 
 /*******************************************************************
  *
+ *  FLASHBACK [CLUSTER | DATABASE | TABLE] TO TIMESTAMP
+ *
+ *  Example:
+ *
+ *******************************************************************/
+FlashbackToTimestampStmt:
+	"FLASHBACK" "CLUSTER" toTimestamp stringLit
+	{
+		$$ = &ast.FlashBackToTimestampStmt{
+			FlashbackTS: ast.NewValueExpr($4, "", ""),
+		}
+	}
+|	"FLASHBACK" "TABLE" TableNameList toTimestamp stringLit
+	{
+		$$ = &ast.FlashBackToTimestampStmt{
+			Tables:      $3.([]*ast.TableName),
+			FlashbackTS: ast.NewValueExpr($5, "", ""),
+		}
+	}
+|	"FLASHBACK" DatabaseSym DBName toTimestamp stringLit
+	{
+		$$ = &ast.FlashBackToTimestampStmt{
+			DBName:      model.NewCIStr($3),
+			FlashbackTS: ast.NewValueExpr($5, "", ""),
+		}
+	}
+
+/*******************************************************************
+ *
  *  Flush Back Table Statement
  *
  *  Example:
@@ -2529,6 +2639,23 @@ FlashbackToNewName:
 |	"TO" Identifier
 	{
 		$$ = $2
+	}
+
+/*******************************************************************
+ *
+ *  Flush Back Database Statement
+ *
+ *  Example:
+ *      FLASHBACK DATABASE/SCHEMA DBName TO newDBName
+ *
+ *******************************************************************/
+FlashbackDatabaseStmt:
+	"FLASHBACK" DatabaseSym DBName FlashbackToNewName
+	{
+		$$ = &ast.FlashBackDatabaseStmt{
+			DBName:  model.NewCIStr($3),
+			NewName: $4,
+		}
 	}
 
 /*******************************************************************
@@ -3102,9 +3229,22 @@ ColumnOption:
 		yylex.AppendError(yylex.Errorf("The STORAGE clause is parsed but ignored by all storage engines."))
 		parser.lastErrorAsWarn()
 	}
-|	"AUTO_RANDOM" OptFieldLen
+|	"AUTO_RANDOM" AutoRandomOpt
 	{
-		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionAutoRandom, AutoRandomBitLength: $2.(int)}
+		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionAutoRandom, AutoRandOpt: $2.(ast.AutoRandomOption)}
+	}
+
+AutoRandomOpt:
+	{
+		$$ = ast.AutoRandomOption{ShardBits: types.UnspecifiedLength, RangeBits: types.UnspecifiedLength}
+	}
+|	'(' LengthNum ')'
+	{
+		$$ = ast.AutoRandomOption{ShardBits: int($2.(uint64)), RangeBits: types.UnspecifiedLength}
+	}
+|	'(' LengthNum ',' LengthNum ')'
+	{
+		$$ = ast.AutoRandomOption{ShardBits: int($2.(uint64)), RangeBits: int($4.(uint64))}
 	}
 
 StorageMedia:
@@ -3301,13 +3441,13 @@ ReferDef:
 OnDelete:
 	"ON" "DELETE" ReferOpt
 	{
-		$$ = &ast.OnDeleteOpt{ReferOpt: $3.(ast.ReferOptionType)}
+		$$ = &ast.OnDeleteOpt{ReferOpt: $3.(model.ReferOptionType)}
 	}
 
 OnUpdate:
 	"ON" "UPDATE" ReferOpt
 	{
-		$$ = &ast.OnUpdateOpt{ReferOpt: $3.(ast.ReferOptionType)}
+		$$ = &ast.OnUpdateOpt{ReferOpt: $3.(model.ReferOptionType)}
 	}
 
 OnDeleteUpdateOpt:
@@ -3335,23 +3475,23 @@ OnDeleteUpdateOpt:
 ReferOpt:
 	"RESTRICT"
 	{
-		$$ = ast.ReferOptionRestrict
+		$$ = model.ReferOptionRestrict
 	}
 |	"CASCADE"
 	{
-		$$ = ast.ReferOptionCascade
+		$$ = model.ReferOptionCascade
 	}
 |	"SET" "NULL"
 	{
-		$$ = ast.ReferOptionSetNull
+		$$ = model.ReferOptionSetNull
 	}
 |	"NO" "ACTION"
 	{
-		$$ = ast.ReferOptionNoAction
+		$$ = model.ReferOptionNoAction
 	}
 |	"SET" "DEFAULT"
 	{
-		$$ = ast.ReferOptionSetDefault
+		$$ = model.ReferOptionSetDefault
 		yylex.AppendError(yylex.Errorf("The SET DEFAULT clause is parsed but ignored by all storage engines."))
 		parser.lastErrorAsWarn()
 	}
@@ -3597,12 +3737,11 @@ IndexPartSpecificationList:
 IndexPartSpecification:
 	ColumnName OptFieldLen OptOrder
 	{
-		// Order is parsed but just ignored as MySQL did.
-		$$ = &ast.IndexPartSpecification{Column: $1.(*ast.ColumnName), Length: $2.(int)}
+		$$ = &ast.IndexPartSpecification{Column: $1.(*ast.ColumnName), Length: $2.(int), Desc: $3.(bool)}
 	}
 |	'(' Expression ')' OptOrder
 	{
-		$$ = &ast.IndexPartSpecification{Expr: $2}
+		$$ = &ast.IndexPartSpecification{Expr: $2, Desc: $4.(bool)}
 	}
 
 IndexLockAndAlgorithmOpt:
@@ -3907,18 +4046,22 @@ PartitionKeyAlgorithmOpt:
 
 PartitionMethod:
 	SubPartitionMethod
-|	"RANGE" '(' BitExpr ')'
+|	"RANGE" '(' BitExpr ')' PartitionIntervalOpt
 	{
+		partitionInterval, _ := $5.(*ast.PartitionInterval)
 		$$ = &ast.PartitionMethod{
-			Tp:   model.PartitionTypeRange,
-			Expr: $3.(ast.ExprNode),
+			Tp:       model.PartitionTypeRange,
+			Expr:     $3.(ast.ExprNode),
+			Interval: partitionInterval,
 		}
 	}
-|	"RANGE" FieldsOrColumns '(' ColumnNameList ')'
+|	"RANGE" FieldsOrColumns '(' ColumnNameList ')' PartitionIntervalOpt
 	{
+		partitionInterval, _ := $6.(*ast.PartitionInterval)
 		$$ = &ast.PartitionMethod{
 			Tp:          model.PartitionTypeRange,
 			ColumnNames: $4.([]*ast.ColumnName),
+			Interval:    partitionInterval,
 		}
 	}
 |	"LIST" '(' BitExpr ')'
@@ -3954,6 +4097,69 @@ PartitionMethod:
 	{
 		$$ = &ast.PartitionMethod{
 			Tp: model.PartitionTypeSystemTime,
+		}
+	}
+
+PartitionIntervalOpt:
+	{
+		$$ = nil
+	}
+|	"INTERVAL" '(' IntervalExpr ')' FirstAndLastPartOpt NullPartOpt MaxValPartOpt
+	{
+		partitionInterval := &ast.PartitionInterval{
+			IntervalExpr:  $3.(ast.PartitionIntervalExpr),
+			FirstRangeEnd: $5.(ast.PartitionInterval).FirstRangeEnd,
+			LastRangeEnd:  $5.(ast.PartitionInterval).LastRangeEnd,
+			NullPart:      $6.(bool),
+			MaxValPart:    $7.(bool),
+		}
+		startOffset := parser.yyVAL.offset
+		endOffset := parser.yylval.offset
+		partitionInterval.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
+		// Needed for replacing syntactic sugar with generated partitioning definition string
+		partitionInterval.SetOriginTextPosition(startOffset)
+		$$ = partitionInterval
+	}
+
+IntervalExpr:
+	BitExpr
+	{
+		$$ = ast.PartitionIntervalExpr{Expr: $1, TimeUnit: ast.TimeUnitInvalid}
+	}
+|	BitExpr TimeUnit
+	{
+		$$ = ast.PartitionIntervalExpr{Expr: $1, TimeUnit: $2.(ast.TimeUnitType)}
+	}
+
+NullPartOpt:
+	{
+		$$ = false
+	}
+|	"NULL" "PARTITION"
+	{
+		$$ = true
+	}
+
+MaxValPartOpt:
+	{
+		$$ = false
+	}
+|	"MAXVALUE" "PARTITION"
+	{
+		$$ = true
+	}
+
+FirstAndLastPartOpt:
+	{
+		$$ = ast.PartitionInterval{} // First/LastRangeEnd defaults to nil
+	}
+|	"FIRST" "PARTITION" "LESS" "THAN" '(' BitExpr ')' "LAST" "PARTITION" "LESS" "THAN" '(' BitExpr ')'
+	{
+		first := $6.(ast.ExprNode)
+		last := $13.(ast.ExprNode)
+		$$ = ast.PartitionInterval{
+			FirstRangeEnd: &first,
+			LastRangeEnd:  &last,
 		}
 	}
 
@@ -5839,6 +6045,7 @@ UnReservedKeyword:
 	"ACTION"
 |	"ADVISE"
 |	"ASCII"
+|	"ATTRIBUTE"
 |	"ATTRIBUTES"
 |	"BINDING_CACHE"
 |	"STATS_OPTIONS"
@@ -6171,6 +6378,7 @@ UnReservedKeyword:
 |	"PURGE"
 |	"SKIP"
 |	"LOCKED"
+|	"CLUSTER"
 |	"CLUSTERED"
 |	"NONCLUSTERED"
 |	"PRESERVE"
@@ -6276,6 +6484,7 @@ NotKeywordToken:
 |	"TOKUDB_SMALL"
 |	"TOKUDB_UNCOMPRESSED"
 |	"TOKUDB_ZLIB"
+|	"TOKUDB_ZSTD"
 |	"TOP"
 |	"TRIM"
 |	"NEXT_ROW_ID"
@@ -6305,8 +6514,6 @@ NotKeywordToken:
 |	"FOLLOWER_CONSTRAINTS"
 |	"LEARNER_CONSTRAINTS"
 |	"VOTER_CONSTRAINTS"
-|	"NORMAL"
-|	"FAST"
 
 /************************************************************************************
  *
@@ -7103,6 +7310,7 @@ FunctionNameOptionalBraces:
 |	"CURRENT_DATE"
 |	"CURRENT_ROLE"
 |	"UTC_DATE"
+|	"TiDB_CURRENT_TSO"
 
 FunctionNameDatetimePrecision:
 	"CURRENT_TIME"
@@ -10127,6 +10335,20 @@ RolenameList:
 	}
 
 /****************************Admin Statement*******************************/
+AdminStmtLimitOpt:
+	"LIMIT" LengthNum
+	{
+		$$ = &ast.LimitSimple{Offset: 0, Count: $2.(uint64)}
+	}
+|	"LIMIT" LengthNum ',' LengthNum
+	{
+		$$ = &ast.LimitSimple{Offset: $2.(uint64), Count: $4.(uint64)}
+	}
+|	"LIMIT" LengthNum "OFFSET" LengthNum
+	{
+		$$ = &ast.LimitSimple{Offset: $4.(uint64), Count: $2.(uint64)}
+	}
+
 AdminStmt:
 	"ADMIN" "SHOW" "DDL"
 	{
@@ -10218,6 +10440,15 @@ AdminStmt:
 			Tp:     ast.AdminShowDDLJobQueries,
 			JobIDs: $6.([]int64),
 		}
+	}
+|	"ADMIN" "SHOW" "DDL" "JOB" "QUERIES" AdminStmtLimitOpt
+	{
+		ret := &ast.AdminStmt{
+			Tp: ast.AdminShowDDLJobQueriesWithRange,
+		}
+		ret.LimitSimple.Count = $6.(*ast.LimitSimple).Count
+		ret.LimitSimple.Offset = $6.(*ast.LimitSimple).Offset
+		$$ = ret
 	}
 |	"ADMIN" "SHOW" "SLOW" AdminShowSlow
 	{
@@ -11138,6 +11369,8 @@ Statement:
 |	DropBindingStmt
 |	FlushStmt
 |	FlashbackTableStmt
+|	FlashbackToTimestampStmt
+|	FlashbackDatabaseStmt
 |	GrantStmt
 |	GrantProxyStmt
 |	GrantRoleStmt
@@ -11193,7 +11426,7 @@ Statement:
 |	ShutdownStmt
 |	RestartStmt
 |	HelpStmt
-|	NonTransactionalDeleteStmt
+|	NonTransactionalDMLStmt
 
 TraceableStmt:
 	DeleteFromStmt
@@ -11223,6 +11456,7 @@ TraceableStmt:
 |	ReleaseSavepointStmt
 |	RollbackStmt
 |	SetStmt
+|	AnalyzeTableStmt
 
 ExplainableStmt:
 	DeleteFromStmt
@@ -11275,6 +11509,7 @@ Constraint:
 		cst := $2.(*ast.Constraint)
 		if $1 != nil {
 			cst.Name = $1.(string)
+			cst.IsEmptyIndex = len(cst.Name) == 0
 		}
 		$$ = cst
 	}
@@ -11599,6 +11834,10 @@ RowFormat:
 	{
 		$$ = ast.TokuDBRowFormatZlib
 	}
+|	"ROW_FORMAT" EqOpt "TOKUDB_ZSTD"
+	{
+		$$ = ast.TokuDBRowFormatZstd
+	}
 |	"ROW_FORMAT" EqOpt "TOKUDB_QUICKLZ"
 	{
 		$$ = ast.TokuDBRowFormatQuickLZ
@@ -11904,6 +12143,10 @@ StringType:
 	{
 		tp := $1.(*types.FieldType)
 		tp.SetCharset($2.(*ast.OptBinary).Charset)
+		if $2.(*ast.OptBinary).Charset == charset.CharsetBin {
+			tp.AddFlag(mysql.BinaryFlag)
+			tp.SetCollate(charset.CollationBin)
+		}
 		if $2.(*ast.OptBinary).IsBinary {
 			tp.AddFlag(mysql.BinaryFlag)
 		}
@@ -11961,6 +12204,10 @@ StringType:
 	{
 		tp := types.NewFieldType(mysql.TypeMediumBlob)
 		tp.SetCharset($3.(*ast.OptBinary).Charset)
+		if $3.(*ast.OptBinary).Charset == charset.CharsetBin {
+			tp.AddFlag(mysql.BinaryFlag)
+			tp.SetCollate(charset.CollationBin)
+		}
 		if $3.(*ast.OptBinary).IsBinary {
 			tp.AddFlag(mysql.BinaryFlag)
 		}
@@ -11970,6 +12217,10 @@ StringType:
 	{
 		tp := types.NewFieldType(mysql.TypeMediumBlob)
 		tp.SetCharset($2.(*ast.OptBinary).Charset)
+		if $2.(*ast.OptBinary).Charset == charset.CharsetBin {
+			tp.AddFlag(mysql.BinaryFlag)
+			tp.SetCollate(charset.CollationBin)
+		}
 		if $2.(*ast.OptBinary).IsBinary {
 			tp.AddFlag(mysql.BinaryFlag)
 		}
@@ -12081,7 +12332,7 @@ OptCharsetWithOptBinary:
 	{
 		$$ = &ast.OptBinary{
 			IsBinary: false,
-			Charset:  "",
+			Charset:  charset.CharsetBin,
 		}
 	}
 
@@ -12367,10 +12618,10 @@ CommaOpt:
  *  https://dev.mysql.com/doc/refman/5.7/en/account-management-sql.html
  ************************************************************************************/
 CreateUserStmt:
-	"CREATE" "USER" IfNotExists UserSpecList RequireClauseOpt ConnectionOptions PasswordOrLockOptions
+	"CREATE" "USER" IfNotExists UserSpecList RequireClauseOpt ConnectionOptions PasswordOrLockOptions CommentOrAttributeOption
 	{
-		// See https://dev.mysql.com/doc/refman/5.7/en/create-user.html
-		$$ = &ast.CreateUserStmt{
+		// See https://dev.mysql.com/doc/refman/8.0/en/create-user.html
+		ret := &ast.CreateUserStmt{
 			IsCreateRole:          false,
 			IfNotExists:           $3.(bool),
 			Specs:                 $4.([]*ast.UserSpec),
@@ -12378,6 +12629,10 @@ CreateUserStmt:
 			ResourceOptions:       $6.([]*ast.ResourceOption),
 			PasswordOrLockOptions: $7.([]*ast.PasswordOrLockOption),
 		}
+		if $8 != nil {
+			ret.CommentOrAttributeOption = $8.(*ast.CommentOrAttributeOption)
+		}
+		$$ = ret
 	}
 
 CreateRoleStmt:
@@ -12391,17 +12646,21 @@ CreateRoleStmt:
 		}
 	}
 
-/* See http://dev.mysql.com/doc/refman/5.7/en/alter-user.html */
+/* See http://dev.mysql.com/doc/refman/8.0/en/alter-user.html */
 AlterUserStmt:
-	"ALTER" "USER" IfExists UserSpecList RequireClauseOpt ConnectionOptions PasswordOrLockOptions
+	"ALTER" "USER" IfExists UserSpecList RequireClauseOpt ConnectionOptions PasswordOrLockOptions CommentOrAttributeOption
 	{
-		$$ = &ast.AlterUserStmt{
+		ret := &ast.AlterUserStmt{
 			IfExists:              $3.(bool),
 			Specs:                 $4.([]*ast.UserSpec),
 			TLSOptions:            $5.([]*ast.TLSOption),
 			ResourceOptions:       $6.([]*ast.ResourceOption),
 			PasswordOrLockOptions: $7.([]*ast.PasswordOrLockOption),
 		}
+		if $8 != nil {
+			ret.CommentOrAttributeOption = $8.(*ast.CommentOrAttributeOption)
+		}
+		$$ = ret
 	}
 |	"ALTER" "USER" IfExists "USER" '(' ')' "IDENTIFIED" "BY" AuthString
 	{
@@ -12594,16 +12853,26 @@ RequireListElement:
 		}
 	}
 
+CommentOrAttributeOption:
+	{
+		$$ = nil
+	}
+|	"COMMENT" stringLit
+	{
+		$$ = &ast.CommentOrAttributeOption{Type: ast.UserCommentType, Value: $2}
+	}
+|	"ATTRIBUTE" stringLit
+	{
+		$$ = &ast.CommentOrAttributeOption{Type: ast.UserAttributeType, Value: $2}
+	}
+
 PasswordOrLockOptions:
 	{
-		l := []*ast.PasswordOrLockOption{}
-		$$ = l
+		$$ = []*ast.PasswordOrLockOption{}
 	}
 |	PasswordOrLockOptionList
 	{
 		$$ = $1
-		yylex.AppendError(yylex.Errorf("TiDB does not support PASSWORD EXPIRE and ACCOUNT LOCK now, they would be parsed but ignored."))
-		parser.lastErrorAsWarn()
 	}
 
 PasswordOrLockOptionList:
@@ -12636,6 +12905,8 @@ PasswordOrLockOption:
 		$$ = &ast.PasswordOrLockOption{
 			Type: ast.PasswordExpire,
 		}
+		yylex.AppendError(yylex.Errorf("TiDB does not support PASSWORD EXPIRE, they would be parsed but ignored."))
+		parser.lastErrorAsWarn()
 	}
 |	PasswordExpire "INTERVAL" Int64Num "DAY"
 	{
@@ -12643,18 +12914,24 @@ PasswordOrLockOption:
 			Type:  ast.PasswordExpireInterval,
 			Count: $3.(int64),
 		}
+		yylex.AppendError(yylex.Errorf("TiDB does not support PASSWORD EXPIRE, they would be parsed but ignored."))
+		parser.lastErrorAsWarn()
 	}
 |	PasswordExpire "NEVER"
 	{
 		$$ = &ast.PasswordOrLockOption{
 			Type: ast.PasswordExpireNever,
 		}
+		yylex.AppendError(yylex.Errorf("TiDB does not support PASSWORD EXPIRE, they would be parsed but ignored."))
+		parser.lastErrorAsWarn()
 	}
 |	PasswordExpire "DEFAULT"
 	{
 		$$ = &ast.PasswordOrLockOption{
 			Type: ast.PasswordExpireDefault,
 		}
+		yylex.AppendError(yylex.Errorf("TiDB does not support PASSWORD EXPIRE, they would be parsed but ignored."))
+		parser.lastErrorAsWarn()
 	}
 
 PasswordExpire:
@@ -13550,16 +13827,20 @@ TableLockList:
  * Non-transactional Delete Statement
  * Split a SQL on a column. Used for bulk delete that doesn't need ACID.
  *******************************************************************/
-NonTransactionalDeleteStmt:
-	"BATCH" OptionalShardColumn "LIMIT" NUM DryRunOptions DeleteFromStmt
+NonTransactionalDMLStmt:
+	"BATCH" OptionalShardColumn "LIMIT" NUM DryRunOptions ShardableStmt
 	{
-		$$ = &ast.NonTransactionalDeleteStmt{
+		$$ = &ast.NonTransactionalDMLStmt{
 			DryRun:      $5.(int),
 			ShardColumn: $2.(*ast.ColumnName),
 			Limit:       getUint64FromNUM($4),
-			DeleteStmt:  $6.(*ast.DeleteStmt),
+			DMLStmt:     $6.(ast.ShardableDMLStmt),
 		}
 	}
+
+ShardableStmt:
+	DeleteFromStmt
+|	UpdateStmt
 
 DryRunOptions:
 	{
@@ -13608,6 +13889,13 @@ KillStmt:
 			ConnectionID:  getUint64FromNUM($3),
 			Query:         true,
 			TiDBExtension: $1.(bool),
+		}
+	}
+|	KillOrKillTiDB BuiltinFunction
+	{
+		$$ = &ast.KillStmt{
+			TiDBExtension: $1.(bool),
+			Expr:          $2,
 		}
 	}
 
@@ -13965,6 +14253,7 @@ RowStmt:
  *			  [ORDER BY {col_name | expr | position}
  *    			[ASC | DESC], ... [WITH ROLLUP]]
  *  		  [LIMIT {[offset,] row_count | row_count OFFSET offset}]}
+ *			| 'file_name'
  *		| LOAD 'file_name']
  *******************************************************************/
 PlanReplayerStmt:
@@ -14038,6 +14327,26 @@ PlanReplayerStmt:
 			x.Limit = $10.(*ast.Limit)
 		}
 
+		$$ = x
+	}
+|	"PLAN" "REPLAYER" "DUMP" "EXPLAIN" stringLit
+	{
+		x := &ast.PlanReplayerStmt{
+			Stmt:    nil,
+			Analyze: false,
+			Load:    false,
+			File:    $5,
+		}
+		$$ = x
+	}
+|	"PLAN" "REPLAYER" "DUMP" "EXPLAIN" "ANALYZE" stringLit
+	{
+		x := &ast.PlanReplayerStmt{
+			Stmt:    nil,
+			Analyze: true,
+			Load:    false,
+			File:    $6,
+		}
 		$$ = x
 	}
 |	"PLAN" "REPLAYER" "LOAD" stringLit

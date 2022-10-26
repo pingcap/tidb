@@ -60,7 +60,7 @@ func TestSimple(t *testing.T) {
 		"delayed", "high_priority", "low_priority",
 		"cumeDist", "denseRank", "firstValue", "lag", "lastValue", "lead", "nthValue", "ntile",
 		"over", "percentRank", "rank", "row", "rows", "rowNumber", "window", "linear",
-		"match", "until", "placement", "tablesample", "attributes",
+		"match", "until", "placement", "tablesample",
 		// TODO: support the following keywords
 		// "with",
 	}
@@ -98,7 +98,7 @@ func TestSimple(t *testing.T) {
 		"max_connections_per_hour", "max_queries_per_hour", "max_updates_per_hour", "max_user_connections", "event", "reload", "routine", "temporary",
 		"following", "preceding", "unbounded", "respect", "nulls", "current", "last", "against", "expansion",
 		"chain", "error", "general", "nvarchar", "pack_keys", "p", "shard_row_id_bits", "pre_split_regions",
-		"constraints", "role", "replicas", "policy", "s3", "strict", "running", "stop", "preserve", "placement",
+		"constraints", "role", "replicas", "policy", "s3", "strict", "running", "stop", "preserve", "placement", "attributes", "attribute",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -364,10 +364,10 @@ func RunTest(t *testing.T, table []testCase, enableWindowFunc bool) {
 	for _, tbl := range table {
 		_, _, err := p.Parse(tbl.src, "", "")
 		if !tbl.ok {
-			require.Errorf(t, err, "source %v", tbl.src)
+			require.Errorf(t, err, "source %v", tbl.src, errors.Trace(err))
 			continue
 		}
-		require.NoErrorf(t, err, "source %v", tbl.src)
+		require.NoErrorf(t, err, "source %v", tbl.src, errors.Trace(err))
 		// restore correctness test
 		if tbl.ok {
 			RunRestoreTest(t, tbl.src, tbl.restore, enableWindowFunc)
@@ -398,7 +398,6 @@ func RunRestoreTest(t *testing.T, sourceSQLs, expectSQLs string, enableWindowFun
 			restoreSQLs += "; "
 		}
 		restoreSQLs += restoreSQL
-
 	}
 	require.Equalf(t, expectSQLs, restoreSQLs, "restore %v; expect %v", restoreSQLs, expectSQLs)
 }
@@ -795,6 +794,10 @@ func TestDMLStmt(t *testing.T) {
 		{"admin show ddl jobs -1;", false, ""},
 		{"admin show ddl job queries 1", true, "ADMIN SHOW DDL JOB QUERIES 1"},
 		{"admin show ddl job queries 1, 2, 3, 4", true, "ADMIN SHOW DDL JOB QUERIES 1, 2, 3, 4"},
+		{"admin show ddl job queries limit 5", true, "ADMIN SHOW DDL JOB QUERIES LIMIT 0, 5"},
+		{"admin show ddl job queries limit 5, 10", true, "ADMIN SHOW DDL JOB QUERIES LIMIT 5, 10"},
+		{"admin show ddl job queries limit 3 offset 2", true, "ADMIN SHOW DDL JOB QUERIES LIMIT 2, 3"},
+		{"admin show ddl job queries limit 22 offset 0", true, "ADMIN SHOW DDL JOB QUERIES LIMIT 0, 22"},
 		{"admin show t1 next_row_id", true, "ADMIN SHOW `t1` NEXT_ROW_ID"},
 		{"admin check table t1, t2;", true, "ADMIN CHECK TABLE `t1`, `t2`"},
 		{"admin check index tableName idxName;", true, "ADMIN CHECK INDEX `tableName` idxName"},
@@ -2113,6 +2116,7 @@ func TestBuiltin(t *testing.T) {
 		{`SELECT SHA1('abc');`, true, "SELECT SHA1(_UTF8MB4'abc')"},
 		{`SELECT SHA('abc');`, true, "SELECT SHA(_UTF8MB4'abc')"},
 		{`SELECT SHA2('abc', 224);`, true, "SELECT SHA2(_UTF8MB4'abc', 224)"},
+		{`SELECT SM3('abc');`, true, "SELECT SM3(_UTF8MB4'abc')"},
 		{`SELECT UNCOMPRESS('any string');`, true, "SELECT UNCOMPRESS(_UTF8MB4'any string')"},
 		{`SELECT UNCOMPRESSED_LENGTH(@compressed_string);`, true, "SELECT UNCOMPRESSED_LENGTH(@`compressed_string`)"},
 		{`SELECT VALIDATE_PASSWORD_STRENGTH(@str);`, true, "SELECT VALIDATE_PASSWORD_STRENGTH(@`str`)"},
@@ -2141,6 +2145,12 @@ func TestBuiltin(t *testing.T) {
 		{"select next value for seq", true, "SELECT NEXTVAL(`seq`)"},
 		{"select next value for sequence", true, "SELECT NEXTVAL(`sequence`)"},
 		{"select NeXt vAluE for seQuEncE2", true, "SELECT NEXTVAL(`seQuEncE2`)"},
+
+		// Test regexp functions
+		{"select regexp_like('aBc', 'abc', 'im');", true, "SELECT REGEXP_LIKE(_UTF8MB4'aBc', _UTF8MB4'abc', _UTF8MB4'im')"},
+		{"select regexp_substr('aBc', 'abc', 1, 1, 'im');", true, "SELECT REGEXP_SUBSTR(_UTF8MB4'aBc', _UTF8MB4'abc', 1, 1, _UTF8MB4'im')"},
+		{"select regexp_instr('aBc', 'abc', 1, 1, 0, 'im');", true, "SELECT REGEXP_INSTR(_UTF8MB4'aBc', _UTF8MB4'abc', 1, 1, 0, _UTF8MB4'im')"},
+		{"select regexp_replace('aBc', 'abc', 'def', 1, 1, 'i');", true, "SELECT REGEXP_REPLACE(_UTF8MB4'aBc', _UTF8MB4'abc', _UTF8MB4'def', 1, 1, _UTF8MB4'i')"},
 	}
 	RunTest(t, table, false)
 
@@ -2354,6 +2364,8 @@ func TestDDL(t *testing.T) {
 		{"CREATE TABLE foo (a.b, b);", false, ""},
 		{"CREATE TABLE foo (a, b.c);", false, ""},
 		{"CREATE TABLE (name CHAR(50) BINARY)", false, ""},
+		{"CREATE TABLE foo (name CHAR(50) COLLATE ascii_bin PRIMARY KEY COLLATE latin1_bin, INDEX (name ASC))", true, "CREATE TABLE `foo` (`name` CHAR(50) COLLATE ascii_bin PRIMARY KEY COLLATE latin1_bin,INDEX(`name`))"},
+		{"CREATE TABLE foo (name CHAR(50) COLLATE ascii_bin PRIMARY KEY COLLATE latin1_bin, INDEX (name DESC))", true, "CREATE TABLE `foo` (`name` CHAR(50) COLLATE ascii_bin PRIMARY KEY COLLATE latin1_bin,INDEX(`name` DESC))"},
 		// test enable or disable cached table
 		{"ALTER TABLE tmp CACHE", true, "ALTER TABLE `tmp` CACHE"},
 		{"ALTER TABLE tmp NOCACHE", true, "ALTER TABLE `tmp` NOCACHE"},
@@ -2502,6 +2514,10 @@ func TestDDL(t *testing.T) {
 		{`alter table t /*T![placement] primary_region="us" */;`, false, ""},
 		{`alter table t placement policy="ww";`, true, "ALTER TABLE `t` PLACEMENT POLICY = `ww`"},
 		{`alter table t /*T![placement] placement policy="ww" */;`, true, "ALTER TABLE `t` PLACEMENT POLICY = `ww`"},
+		{`alter table t compact;`, true, "ALTER TABLE `t` COMPACT"},
+		{`alter table t compact tiflash replica;`, true, "ALTER TABLE `t` COMPACT TIFLASH REPLICA"},
+		{`alter table t compact partition p1,p2;`, true, "ALTER TABLE `t` COMPACT PARTITION `p1`,`p2`"},
+		{`alter table t compact partition p1,p2 tiflash replica;`, true, "ALTER TABLE `t` COMPACT PARTITION `p1`,`p2` TIFLASH REPLICA"},
 		// 3. create db
 		{`create database t primary_region="us";`, false, ""},
 		{`create database t regions="us,3";`, false, ""},
@@ -2952,7 +2968,7 @@ func TestDDL(t *testing.T) {
 		{"ALTER TABLE t ADD INDEX (a) USING RTREE COMMENT 'a'", true, "ALTER TABLE `t` ADD INDEX(`a`) USING RTREE COMMENT 'a'"},
 		{"ALTER TABLE t ADD KEY (a) USING HASH COMMENT 'a'", true, "ALTER TABLE `t` ADD INDEX(`a`) USING HASH COMMENT 'a'"},
 		{"ALTER TABLE t ADD KEY IF NOT EXISTS (a) USING HASH COMMENT 'a'", true, "ALTER TABLE `t` ADD INDEX IF NOT EXISTS(`a`) USING HASH COMMENT 'a'"},
-		{"ALTER TABLE t ADD PRIMARY KEY ident USING RTREE ( a DESC , b   )", true, "ALTER TABLE `t` ADD PRIMARY KEY `ident`(`a`, `b`) USING RTREE"},
+		{"ALTER TABLE t ADD PRIMARY KEY ident USING RTREE ( a DESC , b   )", true, "ALTER TABLE `t` ADD PRIMARY KEY `ident`(`a` DESC, `b`) USING RTREE"},
 		{"ALTER TABLE t ADD KEY USING RTREE   ( a ) ", true, "ALTER TABLE `t` ADD INDEX(`a`) USING RTREE"},
 		{"ALTER TABLE t ADD KEY USING RTREE ( ident ASC , ident ( 123 ) )", true, "ALTER TABLE `t` ADD INDEX(`ident`, `ident`(123)) USING RTREE"},
 		{"ALTER TABLE t ADD PRIMARY KEY (a) COMMENT 'a'", true, "ALTER TABLE `t` ADD PRIMARY KEY(`a`) COMMENT 'a'"},
@@ -2969,8 +2985,8 @@ func TestDDL(t *testing.T) {
 		{"ALTER TABLE t ENGINE = 'innodb'", true, "ALTER TABLE `t` ENGINE = innodb"},
 		{"ALTER TABLE t ENGINE = innodb", true, "ALTER TABLE `t` ENGINE = innodb"},
 		{"ALTER TABLE `db`.`t` ENGINE = ``", true, "ALTER TABLE `db`.`t` ENGINE = ''"},
-		{"ALTER TABLE t INSERT_METHOD = FIRST", true, "ALTER TABLE `t` INSERT_METHOD = 'FIRST'"},
-		{"ALTER TABLE t INSERT_METHOD LAST", true, "ALTER TABLE `t` INSERT_METHOD = 'LAST'"},
+		{"ALTER TABLE t INSERT_METHOD = FIRST", true, "ALTER TABLE `t` INSERT_METHOD = FIRST"},
+		{"ALTER TABLE t INSERT_METHOD LAST", true, "ALTER TABLE `t` INSERT_METHOD = LAST"},
 		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED, ADD COLUMN a SMALLINT", true, "ALTER TABLE `t` ADD COLUMN `a` SMALLINT UNSIGNED, ADD COLUMN `a` SMALLINT"},
 		{"ALTER TABLE t ADD COLUMN a SMALLINT, ENGINE = '', default COLLATE = UTF8_GENERAL_CI", true, "ALTER TABLE `t` ADD COLUMN `a` SMALLINT, ENGINE = '', DEFAULT COLLATE = UTF8_GENERAL_CI"},
 		{"ALTER TABLE t ENGINE = '', COMMENT='', default COLLATE = UTF8_GENERAL_CI", true, "ALTER TABLE `t` ENGINE = '', COMMENT = '', DEFAULT COLLATE = UTF8_GENERAL_CI"},
@@ -3230,6 +3246,24 @@ func TestDDL(t *testing.T) {
 		// for flashback table.
 		{"flashback table t", true, "FLASHBACK TABLE `t`"},
 		{"flashback table t TO t1", true, "FLASHBACK TABLE `t` TO `t1`"},
+		{"flashback table t TO timestamp", true, "FLASHBACK TABLE `t` TO `timestamp`"},
+
+		// for flashback database.
+		{"flashback database db1", true, "FLASHBACK DATABASE `db1`"},
+		{"flashback schema db1", true, "FLASHBACK DATABASE `db1`"},
+		{"flashback database db1 to db2", true, "FLASHBACK DATABASE `db1` TO `db2`"},
+		{"flashback schema db1 to db2", true, "FLASHBACK DATABASE `db1` TO `db2`"},
+
+		// for flashback to timestamp
+		{"flashback cluster to timestamp '2021-05-26 16:45:26'", true, "FLASHBACK CLUSTER TO TIMESTAMP '2021-05-26 16:45:26'"},
+		{"flashback table t to timestamp '2021-05-26 16:45:26'", true, "FLASHBACK TABLE `t` TO TIMESTAMP '2021-05-26 16:45:26'"},
+		{"flashback table t,t1 to timestamp '2021-05-26 16:45:26'", true, "FLASHBACK TABLE `t`, `t1` TO TIMESTAMP '2021-05-26 16:45:26'"},
+		{"flashback database test to timestamp '2021-05-26 16:45:26'", true, "FLASHBACK DATABASE `test` TO TIMESTAMP '2021-05-26 16:45:26'"},
+		{"flashback schema test to timestamp '2021-05-26 16:45:26'", true, "FLASHBACK DATABASE `test` TO TIMESTAMP '2021-05-26 16:45:26'"},
+		{"flashback cluster to timestamp TIDB_BOUNDED_STALENESS(DATE_SUB(NOW(), INTERVAL 3 SECOND), NOW())", false, ""},
+		{"flashback cluster to timestamp DATE_SUB(NOW(), INTERVAL 3 SECOND)", false, ""},
+		{"flashback table to timestamp '2021-05-26 16:45:26'", false, ""},
+		{"flashback database to timestamp '2021-05-26 16:45:26'", false, ""},
 
 		// for remove partitioning
 		{"alter table t remove partitioning", true, "ALTER TABLE `t` REMOVE PARTITIONING"},
@@ -3397,8 +3431,8 @@ func TestDDL(t *testing.T) {
 		{"create table t (a longtext ascii)", true, "CREATE TABLE `t` (`a` LONGTEXT CHARACTER SET LATIN1)"},
 		{"create table t (a mediumtext ascii)", true, "CREATE TABLE `t` (`a` MEDIUMTEXT CHARACTER SET LATIN1)"},
 		{"create table t (a tinytext ascii)", true, "CREATE TABLE `t` (`a` TINYTEXT CHARACTER SET LATIN1)"},
-		{"create table t (a text byte)", true, "CREATE TABLE `t` (`a` TEXT)"},
-		{"create table t (a long byte, b text ascii)", true, "CREATE TABLE `t` (`a` MEDIUMTEXT,`b` TEXT CHARACTER SET LATIN1)"},
+		{"create table t (a text byte)", true, "CREATE TABLE `t` (`a` BLOB)"},
+		{"create table t (a long byte, b text ascii)", true, "CREATE TABLE `t` (`a` MEDIUMBLOB,`b` TEXT CHARACTER SET LATIN1)"},
 		{"create table t (a text ascii, b mediumtext ascii, c int)", true, "CREATE TABLE `t` (`a` TEXT CHARACTER SET LATIN1,`b` MEDIUMTEXT CHARACTER SET LATIN1,`c` INT)"},
 		{"create table t (a int, b text ascii, c mediumtext ascii)", true, "CREATE TABLE `t` (`a` INT,`b` TEXT CHARACTER SET LATIN1,`c` MEDIUMTEXT CHARACTER SET LATIN1)"},
 		{"create table t (a long ascii, b long ascii)", true, "CREATE TABLE `t` (`a` MEDIUMTEXT CHARACTER SET LATIN1,`b` MEDIUMTEXT CHARACTER SET LATIN1)"},
@@ -3420,7 +3454,7 @@ func TestDDL(t *testing.T) {
 		{"create table a(a int, b int, key((a+1), (b+1)));", true, "CREATE TABLE `a` (`a` INT,`b` INT,INDEX((`a`+1), (`b`+1)))"},
 		{"create table a(a int, b int, key(a, (b+1)));", true, "CREATE TABLE `a` (`a` INT,`b` INT,INDEX(`a`, (`b`+1)))"},
 		{"create table a(a int, b int, key((a+1), b));", true, "CREATE TABLE `a` (`a` INT,`b` INT,INDEX((`a`+1), `b`))"},
-		{"create table a(a int, b int, key((a + 1) desc));", true, "CREATE TABLE `a` (`a` INT,`b` INT,INDEX((`a`+1)))"},
+		{"create table a(a int, b int, key((a + 1) desc));", true, "CREATE TABLE `a` (`a` INT,`b` INT,INDEX((`a`+1) DESC))"},
 
 		// for create sequence
 		{"create sequence sequence", true, "CREATE SEQUENCE `sequence`"},
@@ -3489,6 +3523,8 @@ func TestDDL(t *testing.T) {
 		{"create table t (a bigint auto_random primary key, b varchar(255))", true, "CREATE TABLE `t` (`a` BIGINT AUTO_RANDOM PRIMARY KEY,`b` VARCHAR(255))"},
 		{"create table t (a bigint primary key auto_random(4), b varchar(255))", true, "CREATE TABLE `t` (`a` BIGINT PRIMARY KEY AUTO_RANDOM(4),`b` VARCHAR(255))"},
 		{"create table t (a bigint primary key auto_random(3) primary key unique, b varchar(255))", true, "CREATE TABLE `t` (`a` BIGINT PRIMARY KEY AUTO_RANDOM(3) PRIMARY KEY UNIQUE KEY,`b` VARCHAR(255))"},
+		{"create table t (a bigint auto_random(5, 53) primary key, b varchar(255))", true, "CREATE TABLE `t` (`a` BIGINT AUTO_RANDOM(5, 53) PRIMARY KEY,`b` VARCHAR(255))"},
+		{"create table t (a bigint auto_random(15, 32) primary key, b varchar(255))", true, "CREATE TABLE `t` (`a` BIGINT AUTO_RANDOM(15, 32) PRIMARY KEY,`b` VARCHAR(255))"},
 
 		// for auto_id_cache
 		{"create table t (a int) auto_id_cache=1", true, "CREATE TABLE `t` (`a` INT) AUTO_ID_CACHE = 1"},
@@ -3608,6 +3644,9 @@ func TestDDL(t *testing.T) {
 		{"ALTER TABLE t STATS_OPTIONS=default", true, "ALTER TABLE `t` STATS_OPTIONS=DEFAULT"},
 		{"ALTER TABLE t STATS_OPTIONS=DeFaUlT", true, "ALTER TABLE `t` STATS_OPTIONS=DEFAULT"},
 		{"ALTER TABLE t STATS_OPTIONS", false, ""},
+
+		// Restore INSERT_METHOD table option
+		{"CREATE TABLE t (a int) INSERT_METHOD=FIRST", true, "CREATE TABLE `t` (`a` INT) INSERT_METHOD = FIRST"},
 	}
 	RunTest(t, table, false)
 }
@@ -3960,22 +3999,20 @@ func TestOptimizerHints(t *testing.T) {
 	require.Equal(t, "t3", hints[1].Tables[0].TableName.L)
 	require.Equal(t, "t4", hints[1].Tables[1].TableName.L)
 
-	// Test ORDERED_HASH_JOIN
-	stmt, _, err = p.Parse("select /*+ ORDERED_HASH_JOIN(t1, T2), ordered_hash_join(t3, t4) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
+	// Test HASH_JOIN_BUILD and HASH_JOIN_PROBE
+	stmt, _, err = p.Parse("select /*+ hash_join_build(t1), hash_join_probe(t4) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
 	require.NoError(t, err)
 	selectStmt = stmt[0].(*ast.SelectStmt)
 
 	hints = selectStmt.TableHints
 	require.Len(t, hints, 2)
-	require.Equal(t, "ordered_hash_join", hints[0].HintName.L)
-	require.Len(t, hints[0].Tables, 2)
+	require.Equal(t, "hash_join_build", hints[0].HintName.L)
+	require.Len(t, hints[0].Tables, 1)
 	require.Equal(t, "t1", hints[0].Tables[0].TableName.L)
-	require.Equal(t, "t2", hints[0].Tables[1].TableName.L)
 
-	require.Equal(t, "ordered_hash_join", hints[1].HintName.L)
-	require.Len(t, hints[1].Tables, 2)
-	require.Equal(t, "t3", hints[1].Tables[0].TableName.L)
-	require.Equal(t, "t4", hints[1].Tables[1].TableName.L)
+	require.Equal(t, "hash_join_probe", hints[1].HintName.L)
+	require.Len(t, hints[1].Tables, 1)
+	require.Equal(t, "t4", hints[1].Tables[0].TableName.L)
 
 	// Test HASH_JOIN with SWAP_JOIN_INPUTS/NO_SWAP_JOIN_INPUTS
 	// t1 for build, t4 for probe
@@ -4179,6 +4216,35 @@ func TestOptimizerHints(t *testing.T) {
 	require.Equal(t, "hash_agg", hints[0].HintName.L)
 	require.Equal(t, "hash_agg", hints[1].HintName.L)
 
+	// Test MPPAgg
+	stmt, _, err = p.Parse("select /*+ MPP_1PHASE_AGG(), mpp_1phase_agg() */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
+	require.NoError(t, err)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+
+	hints = selectStmt.TableHints
+	require.Len(t, hints, 2)
+	require.Equal(t, "mpp_1phase_agg", hints[0].HintName.L)
+	require.Equal(t, "mpp_1phase_agg", hints[1].HintName.L)
+
+	stmt, _, err = p.Parse("select /*+ MPP_2PHASE_AGG(), mpp_2phase_agg() */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
+	require.NoError(t, err)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+
+	hints = selectStmt.TableHints
+	require.Len(t, hints, 2)
+	require.Equal(t, "mpp_2phase_agg", hints[0].HintName.L)
+	require.Equal(t, "mpp_2phase_agg", hints[1].HintName.L)
+
+	// Test ShuffleJoin
+	stmt, _, err = p.Parse("select /*+ SHUFFLE_JOIN(t1, t2), shuffle_join(t1, t2) */ * from t1, t2 where t1.c1 = t2.c1", "", "")
+	require.NoError(t, err)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+
+	hints = selectStmt.TableHints
+	require.Len(t, hints, 2)
+	require.Equal(t, "shuffle_join", hints[0].HintName.L)
+	require.Equal(t, "shuffle_join", hints[1].HintName.L)
+
 	// Test STREAM_AGG
 	stmt, _, err = p.Parse("select /*+ STREAM_AGG(), stream_agg() */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
 	require.NoError(t, err)
@@ -4228,6 +4294,16 @@ func TestOptimizerHints(t *testing.T) {
 	require.Len(t, hints, 2)
 	require.Equal(t, "limit_to_cop", hints[0].HintName.L)
 	require.Equal(t, "limit_to_cop", hints[1].HintName.L)
+
+	// Test CTE MERGE
+	stmt, _, err = p.Parse("with cte(x) as (select * from t1) select /*+ MERGE(), merge() */ * from cte;", "", "")
+	require.NoError(t, err)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+
+	hints = selectStmt.TableHints
+	require.Len(t, hints, 2)
+	require.Equal(t, "merge", hints[0].HintName.L)
+	require.Equal(t, "merge", hints[1].HintName.L)
 
 	// Test STRAIGHT_JOIN
 	stmt, _, err = p.Parse("select /*+ STRAIGHT_JOIN(), straight_join() */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
@@ -4467,6 +4543,14 @@ func TestComment(t *testing.T) {
 		{"create table t (never int)", true, "CREATE TABLE `t` (`never` INT)"},
 		{"create table t (subject int)", true, "CREATE TABLE `t` (`subject` INT)"},
 		{"create table t (x509 int)", true, "CREATE TABLE `t` (`x509` INT)"},
+
+		// COMMENT/ATTRIBUTE in CREATE/ALTER USER
+		{"create user commentUser COMMENT '123456' '{\"name\": \"Tom\", \"age\", 19}", false, ""},
+		{"alter user commentUser COMMENT '123456' '{\"name\": \"Tom\", \"age\", 19}", false, ""},
+		{"create user commentUser COMMENT '123456'", true, "CREATE USER `commentUser`@`%` COMMENT '123456'"},
+		{"alter user commentUser COMMENT '123456'", true, "ALTER USER `commentUser`@`%` COMMENT '123456'"},
+		{"create user commentUser ATTRIBUTE '{\"name\": \"Tom\", \"age\", 19}'", true, "CREATE USER `commentUser`@`%` ATTRIBUTE '{\"name\": \"Tom\", \"age\", 19}'"},
+		{"alter user commentUser ATTRIBUTE '{\"name\": \"Tom\", \"age\", 19}'", true, "ALTER USER `commentUser`@`%` ATTRIBUTE '{\"name\": \"Tom\", \"age\", 19}'"},
 	}
 	RunTest(t, table, false)
 }
@@ -4892,6 +4976,8 @@ func TestExplain(t *testing.T) {
 		{"EXPLAIN FORMAT = JSON FOR CONNECTION 1", true, "EXPLAIN FORMAT = 'JSON' FOR CONNECTION 1"},
 		{"EXPLAIN FORMAT = JSON SELECT 1", true, "EXPLAIN FORMAT = 'JSON' SELECT 1"},
 		{"EXPLAIN FORMAT = 'hint' SELECT 1", true, "EXPLAIN FORMAT = 'hint' SELECT 1"},
+		{"EXPLAIN ANALYZE FORMAT = 'verbose' SELECT 1", true, "EXPLAIN ANALYZE FORMAT = 'verbose' SELECT 1"},
+		{"EXPLAIN ANALYZE FORMAT = 'binary' SELECT 1", true, "EXPLAIN ANALYZE FORMAT = 'binary' SELECT 1"},
 		{"EXPLAIN ALTER TABLE t1 ADD INDEX (a)", true, "EXPLAIN FORMAT = 'row' ALTER TABLE `t1` ADD INDEX(`a`)"},
 		{"EXPLAIN ALTER TABLE t1 ADD a varchar(255)", true, "EXPLAIN FORMAT = 'row' ALTER TABLE `t1` ADD COLUMN `a` VARCHAR(255)"},
 	}
@@ -5195,6 +5281,7 @@ func TestSessionManage(t *testing.T) {
 		// Kill statement.
 		// See https://dev.mysql.com/doc/refman/5.7/en/kill.html
 		{"kill 23123", true, "KILL 23123"},
+		{"kill CONNECTION_ID()", true, "KILL CONNECTION_ID()"},
 		{"kill connection 23123", true, "KILL 23123"},
 		{"kill query 23123", true, "KILL QUERY 23123"},
 		{"kill tidb 23123", true, "KILL TIDB 23123"},
@@ -5875,7 +5962,6 @@ func TestVisitFrameBound(t *testing.T) {
 		require.Equal(t, tbl.exprRc, checker.exprRc)
 		require.Equal(t, tbl.unit, checker.unit)
 	}
-
 }
 
 func TestFieldText(t *testing.T) {
@@ -6121,6 +6207,23 @@ func CleanNodeText(node ast.Node) {
 type nodeTextCleaner struct {
 }
 
+func cleanPartition(n ast.Node) {
+	if p, ok := n.(*ast.PartitionOptions); ok && p != nil {
+		var tmpCleaner nodeTextCleaner
+		if p.Interval != nil {
+			p.Interval.SetText(nil, "")
+			p.Interval.SetOriginTextPosition(0)
+			p.Interval.IntervalExpr.Expr.Accept(&tmpCleaner)
+			if p.Interval.FirstRangeEnd != nil {
+				(*p.Interval.FirstRangeEnd).Accept(&tmpCleaner)
+			}
+			if p.Interval.LastRangeEnd != nil {
+				(*p.Interval.LastRangeEnd).Accept(&tmpCleaner)
+			}
+		}
+	}
+}
+
 // Enter implements Visitor interface.
 func (checker *nodeTextCleaner) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	in.SetText(nil, "")
@@ -6140,14 +6243,10 @@ func (checker *nodeTextCleaner) Enter(in ast.Node) (out ast.Node, skipChildren b
 			col.Tp.SetCollate(strings.ToUpper(col.Tp.GetCollate()))
 
 			for i, option := range col.Options {
-				if option.Tp == 0 && option.Expr == nil && option.Stored == false && option.Refer == nil {
+				if option.Tp == 0 && option.Expr == nil && !option.Stored && option.Refer == nil {
 					col.Options = append(col.Options[:i], col.Options[i+1:]...)
 				}
 			}
-		}
-		if node.Partition != nil && node.Partition.Expr != nil {
-			var tmpCleaner nodeTextCleaner
-			node.Partition.Expr.Accept(&tmpCleaner)
 		}
 	case *ast.DeleteStmt:
 		for _, tableHint := range node.TableHints {
@@ -6194,6 +6293,8 @@ func (checker *nodeTextCleaner) Enter(in ast.Node) (out ast.Node, skipChildren b
 		node.ExplicitParens = false
 	case *ast.ColumnDef:
 		node.Tp.CleanElemIsBinaryLit()
+	case *ast.PartitionOptions:
+		cleanPartition(node)
 	}
 	return in, false
 }
@@ -6473,6 +6574,30 @@ func TestCTE(t *testing.T) {
 	RunTest(t, table, false)
 }
 
+// For CTE Merge
+func TestCTEMerge(t *testing.T) {
+	table := []testCase{
+		{"WITH `cte` AS (SELECT 1,2) SELECT `col1`,`col2` FROM `cte`", true, "WITH `cte` AS (SELECT 1,2) SELECT `col1`,`col2` FROM `cte`"},
+		{"WITH `cte` (col1, col2) AS (SELECT 1,2 UNION ALL SELECT 3,4) SELECT col1, col2 FROM cte;", true, "WITH `cte` (`col1`, `col2`) AS (SELECT 1,2 UNION ALL SELECT 3,4) SELECT `col1`,`col2` FROM `cte`"},
+		{"WITH `cte` AS (SELECT 1,2), cte2 as (select 3) SELECT `col1`,`col2` FROM `cte`", true, "WITH `cte` AS (SELECT 1,2), `cte2` AS (SELECT 3) SELECT `col1`,`col2` FROM `cte`"},
+		{"with cte(a) as (select 1) update t, cte set t.a=1  where t.a=cte.a;", true, "WITH `cte` (`a`) AS (SELECT 1) UPDATE (`t`) JOIN `cte` SET `t`.`a`=1 WHERE `t`.`a`=`cte`.`a`"},
+		{"with cte(a) as (select 1) delete t from t, cte where t.a=cte.a;", true, "WITH `cte` (`a`) AS (SELECT 1) DELETE `t` FROM (`t`) JOIN `cte` WHERE `t`.`a`=`cte`.`a`"},
+		{"WITH cte1 AS (SELECT 1) SELECT * FROM (WITH cte2 AS (SELECT 2) SELECT * FROM cte2 JOIN cte1) AS dt;", true, "WITH `cte1` AS (SELECT 1) SELECT * FROM (WITH `cte2` AS (SELECT 2) SELECT * FROM `cte2` JOIN `cte1`) AS `dt`"},
+		{"WITH cte AS (SELECT 1) SELECT /*+ MAX_EXECUTION_TIME(1000) */ * FROM cte;", true, "WITH `cte` AS (SELECT 1) SELECT /*+ MAX_EXECUTION_TIME(1000)*/ * FROM `cte`"},
+		{"with cte as (table t) table cte;", true, "WITH `cte` AS (TABLE `t`) TABLE `cte`"},
+		{"with cte as (select 1) select 1 union with cte as (select 1) select * from cte;", false, ""},
+		{"with cte as (select 1) (select 1);", true, "WITH `cte` AS (SELECT 1) (SELECT 1)"},
+		{"with cte as (select 1) (select 1 union select 1)", true, "WITH `cte` AS (SELECT 1) (SELECT 1 UNION SELECT 1)"},
+		{"select * from (with cte as (select 1) select 1 union select 2) qn", true, "SELECT * FROM (WITH `cte` AS (SELECT 1) SELECT 1 UNION SELECT 2) AS `qn`"},
+		{"select * from t where 1 > (with cte as (select 2) select * from cte)", true, "SELECT * FROM `t` WHERE 1>(WITH `cte` AS (SELECT 2) SELECT * FROM `cte`)"},
+		{"( with cte(n) as ( select 1 )  select n+1 from cte  union select n+2 from cte) union select 1", true, "(WITH `cte` (`n`) AS (SELECT 1) SELECT `n`+1 FROM `cte` UNION SELECT `n`+2 FROM `cte`) UNION SELECT 1"},
+		{"( with cte(n) as ( select 1 )  select n+1 from cte) union select 1", true, "(WITH `cte` (`n`) AS (SELECT 1) SELECT `n`+1 FROM `cte`) UNION SELECT 1"},
+		{"( with cte(n) as ( select 1 )  (select n+1 from cte)) union select 1", true, "(WITH `cte` (`n`) AS (SELECT 1) (SELECT `n`+1 FROM `cte`)) UNION SELECT 1"},
+	}
+
+	RunTest(t, table, false)
+}
+
 func TestAsOfClause(t *testing.T) {
 	table := []testCase{
 		{"SELECT * FROM `t` AS /* comment */ a;", true, "SELECT * FROM `t` AS `a`"},
@@ -6508,6 +6633,55 @@ func TestHelp(t *testing.T) {
 	}
 
 	RunTest(t, table, false)
+}
+
+func TestWithoutCharsetFlags(t *testing.T) {
+	type testCaseWithFlag struct {
+		src     string
+		ok      bool
+		restore string
+		flag    RestoreFlags
+	}
+
+	flag := RestoreStringSingleQuotes | RestoreSpacesAroundBinaryOperation | RestoreBracketAroundBinaryOperation | RestoreNameBackQuotes
+	cases := []testCaseWithFlag{
+		{"select 'a'", true, "SELECT 'a'", flag | RestoreStringWithoutCharset},
+		{"select _utf8'a'", true, "SELECT 'a'", flag | RestoreStringWithoutCharset},
+		{"select _utf8mb4'a'", true, "SELECT 'a'", flag | RestoreStringWithoutCharset},
+		{"select _utf8 X'D0B1'", true, "SELECT x'd0b1'", flag | RestoreStringWithoutCharset},
+
+		{"select _utf8mb4'a'", true, "SELECT 'a'", flag | RestoreStringWithoutDefaultCharset},
+		{"select _utf8'a'", true, "SELECT _utf8'a'", flag | RestoreStringWithoutDefaultCharset},
+		{"select _utf8'a'", true, "SELECT _utf8'a'", flag | RestoreStringWithoutDefaultCharset},
+		{"select _utf8 X'D0B1'", true, "SELECT _utf8 x'd0b1'", flag | RestoreStringWithoutDefaultCharset},
+	}
+
+	p := parser.New()
+	p.EnableWindowFunc(false)
+	for _, tbl := range cases {
+		stmts, _, err := p.Parse(tbl.src, "", "")
+		if !tbl.ok {
+			require.Error(t, err)
+			continue
+		}
+		require.NoError(t, err)
+		// restore correctness test
+		var sb strings.Builder
+		restoreSQLs := ""
+		for _, stmt := range stmts {
+			sb.Reset()
+			ctx := NewRestoreCtx(tbl.flag, &sb)
+			ctx.DefaultDB = "test"
+			err = stmt.Restore(ctx)
+			require.NoError(t, err)
+			restoreSQL := sb.String()
+			if restoreSQLs != "" {
+				restoreSQLs += "; "
+			}
+			restoreSQLs += restoreSQL
+		}
+		require.Equal(t, tbl.restore, restoreSQLs)
+	}
 }
 
 func TestRestoreBinOpWithBrackets(t *testing.T) {
@@ -6624,6 +6798,8 @@ func TestPlanReplayer(t *testing.T) {
 		{"PLAN REPLAYER DUMP EXPLAIN SLOW QUERY", true, "PLAN REPLAYER DUMP EXPLAIN SLOW QUERY"},
 		{"PLAN REPLAYER DUMP EXPLAIN ANALYZE SLOW QUERY", true, "PLAN REPLAYER DUMP EXPLAIN ANALYZE SLOW QUERY"},
 		{"PLAN REPLAYER LOAD '/tmp/sdfaalskdjf.zip'", true, "PLAN REPLAYER LOAD '/tmp/sdfaalskdjf.zip'"},
+		{"PLAN REPLAYER DUMP EXPLAIN 'sql.txt'", true, "PLAN REPLAYER DUMP EXPLAIN 'sql.txt'"},
+		{"PLAN REPLAYER DUMP EXPLAIN ANALYZE 'sql.txt'", true, "PLAN REPLAYER DUMP EXPLAIN ANALYZE 'sql.txt'"},
 	}
 	RunTest(t, table, false)
 
@@ -6741,7 +6917,7 @@ func TestCharsetIntroducer(t *testing.T) {
 	require.EqualError(t, err, "[ddl:1115]Unsupported character introducer: 'gbk'")
 }
 
-func TestNonTransactionalDelete(t *testing.T) {
+func TestNonTransactionalDML(t *testing.T) {
 	cases := []testCase{
 		{"batch on c limit 10 delete from t where c = 10", true,
 			"BATCH ON `c` LIMIT 10 DELETE FROM `t` WHERE `c`=10"},
@@ -6755,7 +6931,40 @@ func TestNonTransactionalDelete(t *testing.T) {
 			"BATCH LIMIT 10 DRY RUN DELETE FROM `t` WHERE `c`=10"},
 		{"batch limit 10 dry run query delete from t where c = 10", true,
 			"BATCH LIMIT 10 DRY RUN QUERY DELETE FROM `t` WHERE `c`=10"},
+		// updates
+		{"batch on c limit 10 update t set c = 10", true,
+			"BATCH ON `c` LIMIT 10 UPDATE `t` SET `c`=10"},
+		{"batch on c limit 10 dry run update t set c = 10", true,
+			"BATCH ON `c` LIMIT 10 DRY RUN UPDATE `t` SET `c`=10"},
+		{"batch on c limit 10 dry run query update t set c = 10", true,
+			"BATCH ON `c` LIMIT 10 DRY RUN QUERY UPDATE `t` SET `c`=10"},
+		{"batch limit 10 update t set c = 10", true,
+			"BATCH LIMIT 10 UPDATE `t` SET `c`=10"},
+		{"batch limit 10 dry run update t set c = 10", true,
+			"BATCH LIMIT 10 DRY RUN UPDATE `t` SET `c`=10"},
+		{"batch limit 10 dry run query update t set c = 10", true,
+			"BATCH LIMIT 10 DRY RUN QUERY UPDATE `t` SET `c`=10"},
 	}
 
 	RunTest(t, cases, false)
+}
+
+func TestIntervalPartition(t *testing.T) {
+	table := []testCase{
+		{"CREATE TABLE t (c1 integer,c2 integer) PARTITION BY RANGE (c1) INTERVAL (1000)", true, "CREATE TABLE `t` (`c1` INT,`c2` INT) PARTITION BY RANGE (`c1`) INTERVAL (1000)"},
+		{"CREATE TABLE t (c1 int, c2 date) PARTITION BY RANGE (c2) INTERVAL (1 Month)", true, "CREATE TABLE `t` (`c1` INT,`c2` DATE) PARTITION BY RANGE (`c2`) INTERVAL (1 MONTH)"},
+		{"CREATE TABLE t (c1 int, c2 date) PARTITION BY RANGE (c1) (partition p1 values less than (22))", true, "CREATE TABLE `t` (`c1` INT,`c2` DATE) PARTITION BY RANGE (`c1`) (PARTITION `p1` VALUES LESS THAN (22))"},
+		{`CREATE TABLE t (c1 int, c2 date) PARTITION BY RANGE COLUMNS (c2) INTERVAL (1 year) first partition less than ("2022-02-01")`, false, ""},
+		{`CREATE TABLE t (c1 int, c2 datetime) PARTITION BY RANGE COLUMNS (c2) INTERVAL (1 day) first partition less than ("2022-01-02") last partition less than ("2022-06-01") NULL PARTITION MAXVALUE PARTITION`, true, "CREATE TABLE `t` (`c1` INT,`c2` DATETIME) PARTITION BY RANGE COLUMNS (`c2`) INTERVAL (1 DAY) FIRST PARTITION LESS THAN (_UTF8MB4'2022-01-02') LAST PARTITION LESS THAN (_UTF8MB4'2022-06-01') NULL PARTITION MAXVALUE PARTITION"},
+		{`ALTER TABLE t LAST PARTITION LESS THAN (1000)`, true, "ALTER TABLE `t` LAST PARTITION LESS THAN (1000)"},
+		{`ALTER TABLE t REORGANIZE MAX PARTITION INTO NEW LAST PARTITION LESS THAN (1000)`, false, ""},
+		{`ALTER TABLE t REORGANIZE MAX PARTITION INTO LAST PARTITION LESS THAN (1000)`, false, ""},
+		{`ALTER TABLE t REORGANIZE MAXVALUE PARTITION INTO NEW LAST PARTITION LESS THAN (1000)`, false, ""},
+		{`ALTER TABLE t REORGANIZE MAXVALUE PARTITION INTO LAST PARTITION LESS THAN (1000)`, false, ""},
+		{`ALTER TABLE t split MAXVALUE PARTITION LESS THAN (1000)`, true, "ALTER TABLE `t` SPLIT MAXVALUE PARTITION LESS THAN (1000)"},
+		{`ALTER TABLE t merge first PARTITION LESS THAN (1000)`, true, "ALTER TABLE `t` MERGE FIRST PARTITION LESS THAN (1000)"},
+		{`ALTER TABLE t first PARTITION LESS THAN (1000)`, true, "ALTER TABLE `t` FIRST PARTITION LESS THAN (1000)"},
+	}
+
+	RunTest(t, table, false)
 }

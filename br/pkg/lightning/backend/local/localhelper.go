@@ -34,7 +34,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	split "github.com/pingcap/tidb/br/pkg/restore"
+	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/multierr"
@@ -177,7 +177,7 @@ func (local *local) SplitAndScatterRegionByRanges(
 			if err != nil {
 				log.FromContext(ctx).Warn("fetch table region size statistics failed",
 					zap.String("table", tableInfo.Name), zap.Error(err))
-				tableRegionStats = make(map[uint64]int64)
+				tableRegionStats, err = make(map[uint64]int64), nil
 			}
 		}
 
@@ -261,21 +261,21 @@ func (local *local) SplitAndScatterRegionByRanges(
 								err = multierr.Append(err, err1)
 								syncLock.Unlock()
 								break
-							} else {
-								log.FromContext(ctx).Info("batch split region", zap.Uint64("region_id", splitRegion.Region.Id),
-									zap.Int("keys", endIdx-startIdx), zap.Binary("firstKey", keys[startIdx]),
-									zap.Binary("end", keys[endIdx-1]))
-								slices.SortFunc(newRegions, func(i, j *split.RegionInfo) bool {
-									return bytes.Compare(i.Region.StartKey, j.Region.StartKey) < 0
-								})
-								syncLock.Lock()
-								scatterRegions = append(scatterRegions, newRegions...)
-								syncLock.Unlock()
-								// the region with the max start key is the region need to be further split.
-								if bytes.Compare(splitRegion.Region.StartKey, newRegions[len(newRegions)-1].Region.StartKey) < 0 {
-									splitRegion = newRegions[len(newRegions)-1]
-								}
 							}
+							log.FromContext(ctx).Info("batch split region", zap.Uint64("region_id", splitRegion.Region.Id),
+								zap.Int("keys", endIdx-startIdx), zap.Binary("firstKey", keys[startIdx]),
+								zap.Binary("end", keys[endIdx-1]))
+							slices.SortFunc(newRegions, func(i, j *split.RegionInfo) bool {
+								return bytes.Compare(i.Region.StartKey, j.Region.StartKey) < 0
+							})
+							syncLock.Lock()
+							scatterRegions = append(scatterRegions, newRegions...)
+							syncLock.Unlock()
+							// the region with the max start key is the region need to be further split.
+							if bytes.Compare(splitRegion.Region.StartKey, newRegions[len(newRegions)-1].Region.StartKey) < 0 {
+								splitRegion = newRegions[len(newRegions)-1]
+							}
+
 							batchKeySize = 0
 							startIdx = endIdx
 						}
@@ -319,13 +319,12 @@ func (local *local) SplitAndScatterRegionByRanges(
 
 		if len(retryKeys) == 0 {
 			break
-		} else {
-			slices.SortFunc(retryKeys, func(i, j []byte) bool {
-				return bytes.Compare(i, j) < 0
-			})
-			minKey = codec.EncodeBytes([]byte{}, retryKeys[0])
-			maxKey = codec.EncodeBytes([]byte{}, nextKey(retryKeys[len(retryKeys)-1]))
 		}
+		slices.SortFunc(retryKeys, func(i, j []byte) bool {
+			return bytes.Compare(i, j) < 0
+		})
+		minKey = codec.EncodeBytes([]byte{}, retryKeys[0])
+		maxKey = codec.EncodeBytes([]byte{}, nextKey(retryKeys[len(retryKeys)-1]))
 	}
 	if err != nil {
 		return errors.Trace(err)
@@ -349,6 +348,9 @@ func (local *local) SplitAndScatterRegionByRanges(
 }
 
 func fetchTableRegionSizeStats(ctx context.Context, db *sql.DB, tableID int64) (map[uint64]int64, error) {
+	if db == nil {
+		return nil, errors.Errorf("db is nil")
+	}
 	exec := &common.SQLWithRetry{
 		DB:     db,
 		Logger: log.FromContext(ctx),
@@ -497,7 +499,7 @@ func (local *local) checkRegionScatteredOrReScatter(ctx context.Context, regionI
 	case pdpb.OperatorStatus_SUCCESS:
 		return true, nil
 	default:
-		log.FromContext(ctx).Warn("scatter-region operator status is abnormal, will scatter region again",
+		log.FromContext(ctx).Debug("scatter-region operator status is abnormal, will scatter region again",
 			logutil.Region(regionInfo.Region), zap.Stringer("status", resp.GetStatus()))
 		return false, local.splitCli.ScatterRegion(ctx, regionInfo)
 	}

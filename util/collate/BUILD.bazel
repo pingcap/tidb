@@ -40,6 +40,7 @@ go_test(
         "main_test.go",
     ],
     embed = [":collate"],
+    flaky = True,
     deps = [
         "//testkit/testsetup",
         "@com_github_stretchr_testify//require",

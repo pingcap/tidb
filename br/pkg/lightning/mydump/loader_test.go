@@ -16,10 +16,12 @@ package mydump_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	md "github.com/pingcap/tidb/br/pkg/lightning/mydump"
@@ -211,6 +213,27 @@ func TestTableUnexpectedError(t *testing.T) {
 			sql, err := tblMeta.GetSchema(ctx, store)
 			require.Equal(t, "", sql)
 			require.Contains(t, err.Error(), "failed to decode db.tbl-schema.sql as : Unsupported encoding ")
+		}
+	}
+}
+
+func TestMissingTableSchema(t *testing.T) {
+	s := newTestMydumpLoaderSuite(t)
+
+	s.cfg.Mydumper.CharacterSet = "auto"
+
+	s.touch(t, "db.tbl.csv")
+
+	ctx := context.Background()
+	store, err := storage.NewLocalStorage(s.sourceDir)
+	require.NoError(t, err)
+
+	loader, err := md.NewMyDumpLoader(ctx, s.cfg)
+	require.NoError(t, err)
+	for _, dbMeta := range loader.GetDatabases() {
+		for _, tblMeta := range dbMeta.Tables {
+			_, err := tblMeta.GetSchema(ctx, store)
+			require.ErrorContains(t, err, "schema file is missing for the table")
 		}
 	}
 }
@@ -911,4 +934,59 @@ func TestInputWithSpecialChars(t *testing.T) {
 			},
 		},
 	}, mdl.GetDatabases())
+}
+
+func TestMaxScanFilesOption(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	memStore := storage.NewMemStorage()
+	require.NoError(t, memStore.WriteFile(ctx, "/test-src/db1.tbl1-schema.sql",
+		[]byte("CREATE TABLE db1.tbl1 ( id INTEGER, val VARCHAR(255) );"),
+	))
+	require.NoError(t, memStore.WriteFile(ctx, "/test-src/db1-schema-create.sql",
+		[]byte("CREATE DATABASE db1;"),
+	))
+	const dataFilesCount = 200
+	maxScanFilesCount := 500
+	for i := 0; i < dataFilesCount; i++ {
+		require.NoError(t, memStore.WriteFile(ctx, fmt.Sprintf("/test-src/db1.tbl1.%d.sql", i),
+			[]byte(fmt.Sprintf("INSERT INTO db1.tbl1 (id, val) VALUES (%d, 'aaa%d');", i, i)),
+		))
+	}
+	cfg := newConfigWithSourceDir("/test-src")
+
+	mdl, err := md.NewMyDumpLoaderWithStore(ctx, cfg, memStore)
+	require.NoError(t, err)
+	require.NotNil(t, mdl)
+	dbMetas := mdl.GetDatabases()
+	require.Equal(t, 1, len(dbMetas))
+	dbMeta := dbMetas[0]
+	require.Equal(t, 1, len(dbMeta.Tables))
+	tbl := dbMeta.Tables[0]
+	require.Equal(t, dataFilesCount, len(tbl.DataFiles))
+
+	mdl, err = md.NewMyDumpLoaderWithStore(ctx, cfg, memStore,
+		md.WithMaxScanFiles(maxScanFilesCount),
+	)
+	require.NoError(t, err)
+	require.NotNil(t, mdl)
+	dbMetas = mdl.GetDatabases()
+	require.Equal(t, 1, len(dbMetas))
+	dbMeta = dbMetas[0]
+	require.Equal(t, 1, len(dbMeta.Tables))
+	tbl = dbMeta.Tables[0]
+	require.Equal(t, dataFilesCount, len(tbl.DataFiles))
+
+	maxScanFilesCount = 100
+	mdl, err = md.NewMyDumpLoaderWithStore(ctx, cfg, memStore,
+		md.WithMaxScanFiles(maxScanFilesCount),
+	)
+	require.EqualError(t, err, common.ErrTooManySourceFiles.Error())
+	require.NotNil(t, mdl)
+	dbMetas = mdl.GetDatabases()
+	require.Equal(t, 1, len(dbMetas))
+	dbMeta = dbMetas[0]
+	require.Equal(t, 1, len(dbMeta.Tables))
+	tbl = dbMeta.Tables[0]
+	require.Equal(t, maxScanFilesCount-2, len(tbl.DataFiles))
 }

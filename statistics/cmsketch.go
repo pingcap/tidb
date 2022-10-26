@@ -21,6 +21,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -169,6 +170,9 @@ func calculateDefaultVal(helper *topNHelper, estimateNDV, scaleRatio, rowCount u
 // data are not tracked because size of CMSketch.topN take little influence
 // We ignore the size of other metadata in CMSketch.
 func (c *CMSketch) MemoryUsage() (sum int64) {
+	if c == nil {
+		return
+	}
 	sum = int64(c.depth * c.width * 4)
 	return
 }
@@ -326,10 +330,12 @@ func (c *CMSketch) MergeCMSketch(rc *CMSketch) error {
 // MergeCMSketch4IncrementalAnalyze merges two CM Sketch for incremental analyze. Since there is no value
 // that appears partially in `c` and `rc` for incremental analyze, it uses `max` to merge them.
 // Here is a simple proof: when we query from the CM sketch, we use the `min` to get the answer:
-//   (1): For values that only appears in `c, using `max` to merge them affects the `min` query result less than using `sum`;
-//   (2): For values that only appears in `rc`, it is the same as condition (1);
-//   (3): For values that appears both in `c` and `rc`, if they do not appear partially in `c` and `rc`, for example,
-//        if `v` appears 5 times in the table, it can appears 5 times in `c` and 3 times in `rc`, then `max` also gives the correct answer.
+//
+//	(1): For values that only appears in `c, using `max` to merge them affects the `min` query result less than using `sum`;
+//	(2): For values that only appears in `rc`, it is the same as condition (1);
+//	(3): For values that appears both in `c` and `rc`, if they do not appear partially in `c` and `rc`, for example,
+//	     if `v` appears 5 times in the table, it can appears 5 times in `c` and 3 times in `rc`, then `max` also gives the correct answer.
+//
 // So in fact, if we can know the number of appearances of each value in the first place, it is better to use `max` to construct the CM sketch rather than `sum`.
 func (c *CMSketch) MergeCMSketch4IncrementalAnalyze(rc *CMSketch, numTopN uint32) error {
 	if c.depth != rc.depth || c.width != rc.width {
@@ -508,7 +514,8 @@ func (c *TopN) String() string {
 }
 
 // Num returns the ndv of the TopN.
-//   TopN is declared directly in Histogram. So the Len is occupied by the Histogram. We use Num instead.
+//
+//	TopN is declared directly in Histogram. So the Len is occupied by the Histogram. We use Num instead.
 func (c *TopN) Num() int {
 	if c == nil {
 		return 0
@@ -715,14 +722,15 @@ func NewTopN(n int) *TopN {
 
 // MergePartTopN2GlobalTopN is used to merge the partition-level topN to global-level topN.
 // The input parameters:
-//     1. `topNs` are the partition-level topNs to be merged.
-//     2. `n` is the size of the global-level topN. Notice: This value can be 0 and has no default value, we must explicitly specify this value.
-//     3. `hists` are the partition-level histograms. Some values not in topN may be placed in the histogram. We need it here to make the value in the global-level TopN more accurate.
+//  1. `topNs` are the partition-level topNs to be merged.
+//  2. `n` is the size of the global-level topN. Notice: This value can be 0 and has no default value, we must explicitly specify this value.
+//  3. `hists` are the partition-level histograms. Some values not in topN may be placed in the histogram. We need it here to make the value in the global-level TopN more accurate.
+//
 // The output parameters:
-//     1. `*TopN` is the final global-level topN.
-//     2. `[]TopNMeta` is the left topN value from the partition-level TopNs, but is not placed to global-level TopN. We should put them back to histogram latter.
-//     3. `[]*Histogram` are the partition-level histograms which just delete some values when we merge the global-level topN.
-func MergePartTopN2GlobalTopN(sc *stmtctx.StatementContext, version int, topNs []*TopN, n uint32, hists []*Histogram, isIndex bool) (*TopN, []TopNMeta, []*Histogram, error) {
+//  1. `*TopN` is the final global-level topN.
+//  2. `[]TopNMeta` is the left topN value from the partition-level TopNs, but is not placed to global-level TopN. We should put them back to histogram latter.
+//  3. `[]*Histogram` are the partition-level histograms which just delete some values when we merge the global-level topN.
+func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n uint32, hists []*Histogram, isIndex bool) (*TopN, []TopNMeta, []*Histogram, error) {
 	if checkEmptyTopNs(topNs) {
 		return nil, nil, hists, nil
 	}
@@ -774,7 +782,7 @@ func MergePartTopN2GlobalTopN(sc *stmtctx.StatementContext, version int, topNs [
 						var err error
 						if types.IsTypeTime(hists[0].Tp.GetType()) {
 							// handle datetime values specially since they are encoded to int and we'll get int values if using DecodeOne.
-							_, d, err = codec.DecodeAsDateTime(val.Encoded, hists[0].Tp.GetType(), sc.TimeZone)
+							_, d, err = codec.DecodeAsDateTime(val.Encoded, hists[0].Tp.GetType(), loc)
 						} else if types.IsTypeFloat(hists[0].Tp.GetType()) {
 							_, d, err = codec.DecodeAsFloat32(val.Encoded, hists[0].Tp.GetType())
 						} else {
@@ -857,6 +865,22 @@ func checkEmptyTopNs(topNs []*TopN) bool {
 		count += topN.TotalCount()
 	}
 	return count == 0
+}
+
+// SortTopnMeta sort topnMeta
+func SortTopnMeta(topnMetas []TopNMeta) []TopNMeta {
+	slices.SortFunc(topnMetas, func(i, j TopNMeta) bool {
+		if i.Count != j.Count {
+			return i.Count > j.Count
+		}
+		return bytes.Compare(i.Encoded, j.Encoded) < 0
+	})
+	return topnMetas
+}
+
+// GetMergedTopNFromSortedSlice returns merged topn
+func GetMergedTopNFromSortedSlice(sorted []TopNMeta, n uint32) (*TopN, []TopNMeta) {
+	return getMergedTopNFromSortedSlice(sorted, n)
 }
 
 func getMergedTopNFromSortedSlice(sorted []TopNMeta, n uint32) (*TopN, []TopNMeta) {

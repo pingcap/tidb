@@ -17,6 +17,7 @@ package server
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -26,7 +27,7 @@ import (
 
 func TestParseExecArgs(t *testing.T) {
 	type args struct {
-		args        []types.Datum
+		args        []expression.Expression
 		boundParams [][]byte
 		nullBitmap  []byte
 		paramTypes  []byte
@@ -40,7 +41,7 @@ func TestParseExecArgs(t *testing.T) {
 		// Tests for int overflow
 		{
 			args{
-				make([]types.Datum, 1),
+				expression.Args2Expressions4Test(1),
 				[][]byte{nil},
 				[]byte{0x0},
 				[]byte{1, 0},
@@ -51,7 +52,7 @@ func TestParseExecArgs(t *testing.T) {
 		},
 		{
 			args{
-				make([]types.Datum, 1),
+				expression.Args2Expressions4Test(1),
 				[][]byte{nil},
 				[]byte{0x0},
 				[]byte{2, 0},
@@ -62,7 +63,7 @@ func TestParseExecArgs(t *testing.T) {
 		},
 		{
 			args{
-				make([]types.Datum, 1),
+				expression.Args2Expressions4Test(1),
 				[][]byte{nil},
 				[]byte{0x0},
 				[]byte{3, 0},
@@ -74,7 +75,7 @@ func TestParseExecArgs(t *testing.T) {
 		// Tests for date/datetime/timestamp
 		{
 			args{
-				make([]types.Datum, 1),
+				expression.Args2Expressions4Test(1),
 				[][]byte{nil},
 				[]byte{0x0},
 				[]byte{12, 0},
@@ -85,7 +86,7 @@ func TestParseExecArgs(t *testing.T) {
 		},
 		{
 			args{
-				make([]types.Datum, 1),
+				expression.Args2Expressions4Test(1),
 				[][]byte{nil},
 				[]byte{0x0},
 				[]byte{10, 0},
@@ -96,7 +97,7 @@ func TestParseExecArgs(t *testing.T) {
 		},
 		{
 			args{
-				make([]types.Datum, 1),
+				expression.Args2Expressions4Test(1),
 				[][]byte{nil},
 				[]byte{0x0},
 				[]byte{7, 0},
@@ -107,7 +108,7 @@ func TestParseExecArgs(t *testing.T) {
 		},
 		{
 			args{
-				make([]types.Datum, 1),
+				expression.Args2Expressions4Test(1),
 				[][]byte{nil},
 				[]byte{0x0},
 				[]byte{7, 0},
@@ -118,7 +119,7 @@ func TestParseExecArgs(t *testing.T) {
 		},
 		{
 			args{
-				make([]types.Datum, 1),
+				expression.Args2Expressions4Test(1),
 				[][]byte{nil},
 				[]byte{0x0},
 				[]byte{7, 0},
@@ -130,7 +131,7 @@ func TestParseExecArgs(t *testing.T) {
 		// Tests for time
 		{
 			args{
-				make([]types.Datum, 1),
+				expression.Args2Expressions4Test(1),
 				[][]byte{nil},
 				[]byte{0x0},
 				[]byte{11, 0},
@@ -141,7 +142,7 @@ func TestParseExecArgs(t *testing.T) {
 		},
 		{
 			args{
-				make([]types.Datum, 1),
+				expression.Args2Expressions4Test(1),
 				[][]byte{nil},
 				[]byte{0x0},
 				[]byte{11, 0},
@@ -152,7 +153,7 @@ func TestParseExecArgs(t *testing.T) {
 		},
 		{
 			args{
-				make([]types.Datum, 1),
+				expression.Args2Expressions4Test(1),
 				[][]byte{nil},
 				[]byte{0x0},
 				[]byte{11, 0},
@@ -164,7 +165,7 @@ func TestParseExecArgs(t *testing.T) {
 		// For error test
 		{
 			args{
-				make([]types.Datum, 1),
+				expression.Args2Expressions4Test(1),
 				[][]byte{nil},
 				[]byte{0x0},
 				[]byte{7, 0},
@@ -175,7 +176,7 @@ func TestParseExecArgs(t *testing.T) {
 		},
 		{
 			args{
-				make([]types.Datum, 1),
+				expression.Args2Expressions4Test(1),
 				[][]byte{nil},
 				[]byte{0x0},
 				[]byte{11, 0},
@@ -186,7 +187,7 @@ func TestParseExecArgs(t *testing.T) {
 		},
 		{
 			args{
-				make([]types.Datum, 1),
+				expression.Args2Expressions4Test(1),
 				[][]byte{nil},
 				[]byte{0x0},
 				[]byte{11, 0},
@@ -199,12 +200,14 @@ func TestParseExecArgs(t *testing.T) {
 	for _, tt := range tests {
 		err := parseExecArgs(&stmtctx.StatementContext{}, tt.args.args, tt.args.boundParams, tt.args.nullBitmap, tt.args.paramTypes, tt.args.paramValues, nil)
 		require.Truef(t, terror.ErrorEqual(err, tt.err), "err %v", err)
-		require.Equal(t, tt.expect, tt.args.args[0].GetValue())
+		if err == nil {
+			require.Equal(t, tt.expect, tt.args.args[0].(*expression.Constant).Value.GetValue())
+		}
 	}
 }
 
 func TestParseExecArgsAndEncode(t *testing.T) {
-	dt := make([]types.Datum, 1)
+	dt := expression.Args2Expressions4Test(1)
 	err := parseExecArgs(&stmtctx.StatementContext{},
 		dt,
 		[][]byte{nil},
@@ -213,7 +216,7 @@ func TestParseExecArgsAndEncode(t *testing.T) {
 		[]byte{4, 178, 226, 202, 212},
 		newInputDecoder("gbk"))
 	require.NoError(t, err)
-	require.Equal(t, "测试", dt[0].GetValue())
+	require.Equal(t, "测试", dt[0].(*expression.Constant).Value.GetValue())
 
 	err = parseExecArgs(&stmtctx.StatementContext{},
 		dt,
@@ -223,7 +226,7 @@ func TestParseExecArgsAndEncode(t *testing.T) {
 		[]byte{},
 		newInputDecoder("gbk"))
 	require.NoError(t, err)
-	require.Equal(t, "测试", dt[0].GetString())
+	require.Equal(t, "测试", dt[0].(*expression.Constant).Value.GetString())
 }
 
 func TestParseStmtFetchCmd(t *testing.T) {

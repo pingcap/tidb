@@ -19,11 +19,13 @@ go_library(
 
 go_test(
     name = "storage_test",
+    timeout = "short",
     srcs = [
         "main_test.go",
         "sys_test.go",
     ],
     embed = [":storage"],
+    flaky = True,
     deps = [
         "//testkit/testsetup",
         "@com_github_stretchr_testify//require",

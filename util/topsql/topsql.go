@@ -168,6 +168,7 @@ func MockHighCPULoad(sql string, sqlPrefixs []string, load int64) bool {
 			break
 		}
 		for i := 0; i < 10e5; i++ {
+			continue
 		}
 	}
 	return true

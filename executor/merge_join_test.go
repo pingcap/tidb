@@ -239,17 +239,11 @@ func checkPlanAndRun(tk *testkit.TestKit, t *testing.T, plan string, sql string)
 }
 
 func TestShuffleMergeJoinInDisk(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.OOMUseTmpStorage = true
-	})
-
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testMergeJoinRowContainerSpill", "return(true)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testMergeJoinRowContainerSpill"))
 	}()
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -281,7 +275,6 @@ func TestMergeJoinInDisk(t *testing.T) {
 	restore := config.RestoreFunc()
 	defer restore()
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.OOMUseTmpStorage = true
 		conf.TempStoragePath = t.TempDir()
 	})
 
@@ -289,8 +282,7 @@ func TestMergeJoinInDisk(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testMergeJoinRowContainerSpill"))
 	}()
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	defer tk.MustExec("SET GLOBAL tidb_mem_oom_action = DEFAULT")
 	tk.MustExec("SET GLOBAL tidb_mem_oom_action='LOG'")
@@ -319,8 +311,7 @@ func TestMergeJoinInDisk(t *testing.T) {
 }
 
 func TestMergeJoin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -481,8 +472,7 @@ func TestMergeJoin(t *testing.T) {
 }
 
 func TestShuffleMergeJoin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_merge_join_concurrency = 4;")
@@ -644,8 +634,7 @@ func TestShuffleMergeJoin(t *testing.T) {
 }
 
 func Test3WaysMergeJoin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -671,8 +660,7 @@ func Test3WaysMergeJoin(t *testing.T) {
 }
 
 func Test3WaysShuffleMergeJoin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_merge_join_concurrency = 4;")
@@ -699,8 +687,7 @@ func Test3WaysShuffleMergeJoin(t *testing.T) {
 }
 
 func TestMergeJoinDifferentTypes(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@session.tidb_executor_concurrency = 4;")
 	tk.MustExec("set @@session.tidb_hash_join_concurrency = 5;")
@@ -741,8 +728,7 @@ func TestMergeJoinDifferentTypes(t *testing.T) {
 //
 //nolint:gosimple // generates false positive fmt.Sprintf warnings which keep aligned
 func TestVectorizedMergeJoin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	existTableMap := make(map[string]struct{})
@@ -860,8 +846,7 @@ func TestVectorizedMergeJoin(t *testing.T) {
 //
 //nolint:gosimple // generates false positive fmt.Sprintf warnings which keep aligned
 func TestVectorizedShuffleMergeJoin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@session.tidb_merge_join_concurrency = 4;")
 	tk.MustExec("use test")
@@ -975,8 +960,7 @@ func TestVectorizedShuffleMergeJoin(t *testing.T) {
 
 func TestMergeJoinWithOtherConditions(t *testing.T) {
 	// more than one inner tuple should be filtered on other conditions
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists R;`)
@@ -994,8 +978,7 @@ func TestMergeJoinWithOtherConditions(t *testing.T) {
 
 func TestShuffleMergeJoinWithOtherConditions(t *testing.T) {
 	// more than one inner tuple should be filtered on other conditions
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec("set @@session.tidb_merge_join_concurrency = 4;")

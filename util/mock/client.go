@@ -28,6 +28,6 @@ type Client struct {
 }
 
 // Send implement kv.Client interface.
-func (c *Client) Send(ctx context.Context, req *kv.Request, kv interface{}, option *kv.ClientSendOption) kv.Response {
+func (c *Client) Send(_ context.Context, _ *kv.Request, _ interface{}, _ *kv.ClientSendOption) kv.Response {
 	return c.MockResponse
 }

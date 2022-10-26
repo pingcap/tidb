@@ -40,6 +40,7 @@ go_library(
         "//util/domainutil",
         "//util/execdetails",
         "//util/logutil",
+        "//util/mathutil",
         "//util/mock",
         "//util/pdapi",
         "//util/sem",
@@ -58,6 +59,7 @@ go_library(
 
 go_test(
     name = "infoschema_test",
+    timeout = "short",
     srcs = [
         "cache_test.go",
         "cluster_tables_test.go",
@@ -83,6 +85,7 @@ go_test(
         "//parser/model",
         "//parser/mysql",
         "//parser/terror",
+        "//planner/core",
         "//server",
         "//session",
         "//session/txninfo",
@@ -96,7 +99,6 @@ go_test(
         "//testkit/testutil",
         "//types",
         "//util",
-        "//util/kvcache",
         "//util/pdapi",
         "//util/resourcegrouptag",
         "//util/set",
@@ -106,6 +108,7 @@ go_test(
         "@com_github_pingcap_fn//:fn",
         "@com_github_pingcap_kvproto//pkg/deadlock",
         "@com_github_pingcap_tipb//go-tipb",
+        "@com_github_prometheus_prometheus//promql",
         "@com_github_stretchr_testify//require",
         "@org_golang_google_grpc//:grpc",
         "@org_uber_go_goleak//:goleak",

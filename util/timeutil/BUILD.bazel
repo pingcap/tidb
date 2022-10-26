@@ -14,11 +14,13 @@ go_library(
 
 go_test(
     name = "timeutil_test",
+    timeout = "short",
     srcs = [
         "main_test.go",
         "time_test.go",
     ],
     embed = [":timeutil"],
+    flaky = True,
     deps = [
         "//testkit/testsetup",
         "@com_github_stretchr_testify//require",

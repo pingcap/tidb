@@ -34,8 +34,7 @@ func initRow(ctx context.Context, exec session.Session, tid int) error {
 }
 
 func TestStateRemote(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	se := tk.Session()

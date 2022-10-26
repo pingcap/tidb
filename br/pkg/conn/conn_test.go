@@ -14,6 +14,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/br/pkg/conn/util"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/stretchr/testify/require"
@@ -56,7 +57,7 @@ func TestGetAllTiKVStoresWithRetryCancel(t *testing.T) {
 		Stores: stores,
 	}
 
-	_, err := GetAllTiKVStoresWithRetry(ctx, fpdc, SkipTiFlash)
+	_, err := GetAllTiKVStoresWithRetry(ctx, fpdc, util.SkipTiFlash)
 	require.Error(t, err)
 	require.Equal(t, codes.Canceled, status.Code(errors.Cause(err)))
 }
@@ -96,7 +97,7 @@ func TestGetAllTiKVStoresWithUnknown(t *testing.T) {
 		Stores: stores,
 	}
 
-	_, err := GetAllTiKVStoresWithRetry(ctx, fpdc, SkipTiFlash)
+	_, err := GetAllTiKVStoresWithRetry(ctx, fpdc, util.SkipTiFlash)
 	require.Error(t, err)
 	require.Equal(t, codes.Unknown, status.Code(errors.Cause(err)))
 }
@@ -151,19 +152,19 @@ func TestCheckStoresAlive(t *testing.T) {
 		Stores: stores,
 	}
 
-	kvStores, err := GetAllTiKVStoresWithRetry(ctx, fpdc, SkipTiFlash)
+	kvStores, err := GetAllTiKVStoresWithRetry(ctx, fpdc, util.SkipTiFlash)
 	require.NoError(t, err)
 	require.Len(t, kvStores, 2)
 	require.Equal(t, stores[2:], kvStores)
 
-	err = checkStoresAlive(ctx, fpdc, SkipTiFlash)
+	err = checkStoresAlive(ctx, fpdc, util.SkipTiFlash)
 	require.NoError(t, err)
 }
 
 func TestGetAllTiKVStores(t *testing.T) {
 	testCases := []struct {
 		stores         []*metapb.Store
-		storeBehavior  StoreBehavior
+		storeBehavior  util.StoreBehavior
 		expectedStores map[uint64]int
 		expectedError  string
 	}{
@@ -171,22 +172,14 @@ func TestGetAllTiKVStores(t *testing.T) {
 			stores: []*metapb.Store{
 				{Id: 1},
 			},
-			storeBehavior:  SkipTiFlash,
+			storeBehavior:  util.SkipTiFlash,
 			expectedStores: map[uint64]int{1: 1},
 		},
 		{
 			stores: []*metapb.Store{
 				{Id: 1},
 			},
-			storeBehavior:  ErrorOnTiFlash,
-			expectedStores: map[uint64]int{1: 1},
-		},
-		{
-			stores: []*metapb.Store{
-				{Id: 1},
-				{Id: 2, Labels: []*metapb.StoreLabel{{Key: "engine", Value: "tiflash"}}},
-			},
-			storeBehavior:  SkipTiFlash,
+			storeBehavior:  util.ErrorOnTiFlash,
 			expectedStores: map[uint64]int{1: 1},
 		},
 		{
@@ -194,7 +187,15 @@ func TestGetAllTiKVStores(t *testing.T) {
 				{Id: 1},
 				{Id: 2, Labels: []*metapb.StoreLabel{{Key: "engine", Value: "tiflash"}}},
 			},
-			storeBehavior: ErrorOnTiFlash,
+			storeBehavior:  util.SkipTiFlash,
+			expectedStores: map[uint64]int{1: 1},
+		},
+		{
+			stores: []*metapb.Store{
+				{Id: 1},
+				{Id: 2, Labels: []*metapb.StoreLabel{{Key: "engine", Value: "tiflash"}}},
+			},
+			storeBehavior: util.ErrorOnTiFlash,
 			expectedError: "^cannot restore to a cluster with active TiFlash stores",
 		},
 		{
@@ -206,7 +207,7 @@ func TestGetAllTiKVStores(t *testing.T) {
 				{Id: 5, Labels: []*metapb.StoreLabel{{Key: "else", Value: "tikv"}, {Key: "engine", Value: "tiflash"}}},
 				{Id: 6, Labels: []*metapb.StoreLabel{{Key: "else", Value: "tiflash"}, {Key: "engine", Value: "tikv"}}},
 			},
-			storeBehavior:  SkipTiFlash,
+			storeBehavior:  util.SkipTiFlash,
 			expectedStores: map[uint64]int{1: 1, 3: 1, 4: 1, 6: 1},
 		},
 		{
@@ -218,7 +219,7 @@ func TestGetAllTiKVStores(t *testing.T) {
 				{Id: 5, Labels: []*metapb.StoreLabel{{Key: "else", Value: "tikv"}, {Key: "engine", Value: "tiflash"}}},
 				{Id: 6, Labels: []*metapb.StoreLabel{{Key: "else", Value: "tiflash"}, {Key: "engine", Value: "tikv"}}},
 			},
-			storeBehavior: ErrorOnTiFlash,
+			storeBehavior: util.ErrorOnTiFlash,
 			expectedError: "^cannot restore to a cluster with active TiFlash stores",
 		},
 		{
@@ -230,14 +231,14 @@ func TestGetAllTiKVStores(t *testing.T) {
 				{Id: 5, Labels: []*metapb.StoreLabel{{Key: "else", Value: "tikv"}, {Key: "engine", Value: "tiflash"}}},
 				{Id: 6, Labels: []*metapb.StoreLabel{{Key: "else", Value: "tiflash"}, {Key: "engine", Value: "tikv"}}},
 			},
-			storeBehavior:  TiFlashOnly,
+			storeBehavior:  util.TiFlashOnly,
 			expectedStores: map[uint64]int{2: 1, 5: 1},
 		},
 	}
 
 	for _, testCase := range testCases {
 		pdClient := utils.FakePDClient{Stores: testCase.stores}
-		stores, err := GetAllTiKVStores(context.Background(), pdClient, testCase.storeBehavior)
+		stores, err := util.GetAllTiKVStores(context.Background(), pdClient, testCase.storeBehavior)
 		if len(testCase.expectedError) != 0 {
 			require.Error(t, err)
 			require.Regexp(t, testCase.expectedError, err.Error())

@@ -27,8 +27,7 @@ import (
 )
 
 func TestRevokeGlobal(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	_, err := tk.Exec(`REVOKE ALL PRIVILEGES ON *.* FROM 'nonexistuser'@'host'`)
@@ -57,8 +56,7 @@ func TestRevokeGlobal(t *testing.T) {
 }
 
 func TestRevokeDBScope(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	// Create a new user.
 	tk.MustExec(`CREATE USER 'testDBRevoke'@'localhost' IDENTIFIED BY '123';`)
@@ -74,13 +72,18 @@ func TestRevokeDBScope(t *testing.T) {
 
 		tk.MustQuery(check).Check(testkit.Rows("Y"))
 		tk.MustExec(sql)
-		tk.MustQuery(check).Check(testkit.Rows("N"))
+		if v == mysql.AllDBPrivs[len(mysql.AllDBPrivs)-1] {
+			// When all privileges are set to 'N', then the record should be removed as well.
+			// https://github.com/pingcap/tidb/issues/38363
+			tk.MustQuery(check).Check(testkit.Rows())
+		} else {
+			tk.MustQuery(check).Check(testkit.Rows("N"))
+		}
 	}
 }
 
 func TestRevokeTableScope(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	// Create a new user.
 	tk.MustExec(`CREATE USER 'testTblRevoke'@'localhost' IDENTIFIED BY '123';`)
@@ -120,8 +123,7 @@ func TestRevokeTableScope(t *testing.T) {
 }
 
 func TestRevokeColumnScope(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	// Create a new user.
 	tk.MustExec(`CREATE USER 'testColRevoke'@'localhost' IDENTIFIED BY '123';`)
@@ -165,8 +167,7 @@ func TestRevokeColumnScope(t *testing.T) {
 }
 
 func TestRevokeDynamicPrivs(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("DROP USER if exists dyn")
@@ -208,8 +209,7 @@ func TestRevokeDynamicPrivs(t *testing.T) {
 
 func TestRevokeOnNonExistTable(t *testing.T) {
 	// issue #28533
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("CREATE DATABASE d1;")

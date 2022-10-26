@@ -58,7 +58,9 @@ const (
 	flagStabilizeResults
 	flagBuildKeyInfo
 	flagDecorrelate
+	flagSemiJoinRewrite
 	flagEliminateAgg
+	flagSkewDistinctAgg
 	flagEliminateProjection
 	flagMaxMinEliminate
 	flagPredicatePushDown
@@ -78,7 +80,9 @@ var optRuleList = []logicalOptRule{
 	&resultReorder{},
 	&buildKeySolver{},
 	&decorrelateSolver{},
+	&semiJoinRewriter{},
 	&aggregationEliminator{},
+	&skewDistinctAggRewriter{},
 	&projectionEliminator{},
 	&maxMinEliminator{},
 	&ppdSolver{},
@@ -369,6 +373,8 @@ func mergeContinuousSelections(p PhysicalPlan) {
 }
 
 func postOptimize(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {
+	// some cases from update optimize will require avoiding projection elimination.
+	// see comments ahead of call of DoOptimize in function of buildUpdate().
 	plan = eliminatePhysicalProjection(plan)
 	plan = InjectExtraProjection(plan)
 	mergeContinuousSelections(plan)
@@ -376,20 +382,21 @@ func postOptimize(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {
 	plan = enableParallelApply(sctx, plan)
 	handleFineGrainedShuffle(sctx, plan)
 	checkPlanCacheable(sctx, plan)
+	propagateProbeParents(plan, nil)
 	return plan
 }
 
 // Only for MPP(Window<-[Sort]<-ExchangeReceiver<-ExchangeSender).
 // TiFlashFineGrainedShuffleStreamCount:
-// == 0: fine grained shuffle is disabled.
+// < 0: fine grained shuffle is disabled.
 // > 0: use TiFlashFineGrainedShuffleStreamCount as stream count.
-// < 0: use TiFlashMaxThreads as stream count when it's greater than 0. Otherwise use DefStreamCountWhenMaxThreadsNotSet.
+// == 0: use TiFlashMaxThreads as stream count when it's greater than 0. Otherwise use DefStreamCountWhenMaxThreadsNotSet.
 func handleFineGrainedShuffle(sctx sessionctx.Context, plan PhysicalPlan) {
 	streamCount := sctx.GetSessionVars().TiFlashFineGrainedShuffleStreamCount
-	if streamCount == 0 {
+	if streamCount < 0 {
 		return
 	}
-	if streamCount < 0 {
+	if streamCount == 0 {
 		if sctx.GetSessionVars().TiFlashMaxThreads > 0 {
 			streamCount = sctx.GetSessionVars().TiFlashMaxThreads
 		} else {
@@ -517,6 +524,42 @@ func checkPlanCacheable(sctx sessionctx.Context, plan PhysicalPlan) {
 	}
 }
 
+// propagateProbeParents doesn't affect the execution plan, it only sets the probeParents field of a PhysicalPlan.
+// It's for handling the inconsistency between row count in the statsInfo and the recorded actual row count. Please
+// see comments in PhysicalPlan for details.
+func propagateProbeParents(plan PhysicalPlan, probeParents []PhysicalPlan) {
+	plan.setProbeParents(probeParents)
+	switch x := plan.(type) {
+	case *PhysicalApply, *PhysicalIndexJoin, *PhysicalIndexHashJoin, *PhysicalIndexMergeJoin:
+		if join, ok := plan.(interface{ getInnerChildIdx() int }); ok {
+			propagateProbeParents(plan.Children()[1-join.getInnerChildIdx()], probeParents)
+
+			// The core logic of this method:
+			// Record every Apply and Index Join we met, record it in a slice, and set it in their inner children.
+			newParents := make([]PhysicalPlan, len(probeParents), len(probeParents)+1)
+			copy(newParents, probeParents)
+			newParents = append(newParents, plan)
+			propagateProbeParents(plan.Children()[join.getInnerChildIdx()], newParents)
+		}
+	case *PhysicalTableReader:
+		propagateProbeParents(x.tablePlan, probeParents)
+	case *PhysicalIndexReader:
+		propagateProbeParents(x.indexPlan, probeParents)
+	case *PhysicalIndexLookUpReader:
+		propagateProbeParents(x.indexPlan, probeParents)
+		propagateProbeParents(x.tablePlan, probeParents)
+	case *PhysicalIndexMergeReader:
+		for _, pchild := range x.partialPlans {
+			propagateProbeParents(pchild, probeParents)
+		}
+		propagateProbeParents(x.tablePlan, probeParents)
+	default:
+		for _, child := range plan.Children() {
+			propagateProbeParents(child, probeParents)
+		}
+	}
+}
+
 // useTiFlash used to check whether the plan use the TiFlash engine.
 func useTiFlash(p PhysicalPlan) bool {
 	switch x := p.(type) {
@@ -625,7 +668,10 @@ func physicalOptimize(logic LogicalPlan, planCounter *PlanCounterTp) (plan Physi
 	opt := defaultPhysicalOptimizeOption()
 	stmtCtx := logic.SCtx().GetSessionVars().StmtCtx
 	if stmtCtx.EnableOptimizeTrace {
-		tracer := &tracing.PhysicalOptimizeTracer{State: make(map[string]map[string]*tracing.PlanTrace)}
+		tracer := &tracing.PhysicalOptimizeTracer{
+			PhysicalPlanCostDetails: make(map[int]*tracing.PhysicalPlanCostDetail),
+			Candidates:              make(map[int]*tracing.CandidatePlanTrace),
+		}
 		opt = opt.withEnableOptimizeTracer(tracer)
 		defer func() {
 			if err == nil {
@@ -647,8 +693,11 @@ func physicalOptimize(logic LogicalPlan, planCounter *PlanCounterTp) (plan Physi
 		return nil, 0, ErrInternal.GenWithStackByArgs("Can't find a proper physical plan for this query")
 	}
 
-	err = t.plan().ResolveIndices()
-	return t.plan(), t.cost(), err
+	if err = t.plan().ResolveIndices(); err != nil {
+		return nil, 0, err
+	}
+	cost, err = getPlanCost(t.plan(), property.RootTaskType, NewDefaultPlanCostOption())
+	return t.plan(), cost, err
 }
 
 // eliminateUnionScanAndLock set lock property for PointGet and BatchPointGet and eliminates UnionScan and Lock.

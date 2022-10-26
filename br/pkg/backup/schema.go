@@ -202,7 +202,6 @@ func (s *schemaInfo) encodeToSchema() (*backuppb.Schema, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-
 	}
 	var statsBytes []byte
 	if s.stats != nil {

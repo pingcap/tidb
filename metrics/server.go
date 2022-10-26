@@ -52,6 +52,14 @@ var (
 			Help:      "Counter of queries.",
 		}, []string{LblType, LblResult})
 
+	AffectedRowsCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "affected_rows",
+			Help:      "Counters of server affected rows.",
+		}, []string{LblSQLType})
+
 	ConnGauge = prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
@@ -279,6 +287,14 @@ var (
 			Help:      "Duration (us) for loading table cache.",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 30), // 1us ~ 528s
 		})
+
+	RCCheckTSWriteConfilictCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "rc_check_ts_conflict_total",
+			Help:      "Counter of WriteConflict caused by RCCheckTS.",
+		}, []string{LblType})
 )
 
 // ExecuteErrorToLabel converts an execute error to label.

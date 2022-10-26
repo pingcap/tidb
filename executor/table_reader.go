@@ -15,6 +15,7 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"time"
 
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -82,6 +84,9 @@ type TableReaderExecutor struct {
 	txnScope         string
 	readReplicaScope string
 	isStaleness      bool
+	// FIXME: in some cases the data size can be more accurate after get the handles count,
+	// but we keep things simple as it needn't to be that accurate for now.
+	netDataSize float64
 	// columns are only required by union scan and virtual column.
 	columns []*model.ColumnInfo
 
@@ -306,6 +311,9 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 	if err != nil {
 		return nil, err
 	}
+	slices.SortFunc(kvReq.KeyRanges, func(i, j kv.KeyRange) bool {
+		return bytes.Compare(i.StartKey, j.StartKey) < 0
+	})
 	e.kvRanges = append(e.kvRanges, kvReq.KeyRanges...)
 
 	result, err := e.SelectResult(ctx, e.ctx, kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans), e.id)
@@ -340,7 +348,9 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 			SetMemTracker(e.memTracker).
 			SetStoreType(e.storeType).
 			SetPaging(e.paging).
-			SetAllowBatchCop(e.batchCop).Build()
+			SetAllowBatchCop(e.batchCop).
+			SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.ctx, &reqBuilder.Request, e.netDataSize)).
+			Build()
 		if err != nil {
 			return nil, err
 		}
@@ -379,7 +389,9 @@ func (e *TableReaderExecutor) buildKVReqForPartitionTableScan(ctx context.Contex
 		SetMemTracker(e.memTracker).
 		SetStoreType(e.storeType).
 		SetPaging(e.paging).
-		SetAllowBatchCop(e.batchCop).Build()
+		SetAllowBatchCop(e.batchCop).
+		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.ctx, &reqBuilder.Request, e.netDataSize)).
+		Build()
 	if err != nil {
 		return nil, err
 	}
@@ -407,10 +419,11 @@ func (e *TableReaderExecutor) buildKVReq(ctx context.Context, ranges []*ranger.R
 		SetReadReplicaScope(e.readReplicaScope).
 		SetIsStaleness(e.isStaleness).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
-		SetFromInfoSchema(e.ctx.GetInfoSchema()).
+		SetFromInfoSchema(sessiontxn.GetTxnManager(e.ctx).GetTxnInfoSchema()).
 		SetMemTracker(e.memTracker).
 		SetStoreType(e.storeType).
 		SetAllowBatchCop(e.batchCop).
+		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.ctx, &reqBuilder.Request, e.netDataSize)).
 		SetPaging(e.paging)
 	return reqBuilder.Build()
 }

@@ -223,7 +223,7 @@ func (adder *exprPrefixAdder) addExprPrefix4DNFCond(condition *expression.Scalar
 
 - Function Process
   - Extract evrey binary expression from `condition` to a expression.Expression slice `dnfItems`.
-  - Make a new expression.Expression slice `newAccessItems` to store new condtions  after processing tidb_shard prefix.
+  - Make a new expression.Expression slice `newAccessItems` to store new conditions after processing tidb_shard prefix.
   - Traverse every `item` in slice `dnfItems`, if it's a `LogicAnd` expression, extracts every binary expression from it to a slice `cnfItems` and calls function `addExprPrefix4CNFCond(cnfItems)`  to add tidb_shard prefix if need; if it's a `ast.EQ` or a `ast.In` expression, calls function `addExprPrefix4CNFCond([]Expression{item})` to add tidb_shard prefix if need.
   - Make a new `LogicOR` condition by `newAccessItems`, return it.
 
@@ -284,7 +284,7 @@ Check whether to add `tidb_shard(x) = xxx` to the access condition.
 ```go
 // NeedAddGcColumn4ShardIndex check whether to add `tidb_shard(x) = xxx`
 // @param[in] cols          the columns of shard index, such as [tidb_shard(a), a, ...]
-// @param[in] accessCond    the condtions relative to the index and arranged by the index column order.
+// @param[in] accessCond    the conditions relative to the index and arranged by the index column order.
 //                          e.g. the index is uk(tidb_shard(a), a, b) and the where clause is
 //                          `WHERE b = 1 AND a = 2 AND c = 3`, the param accessCond is {a = 2, b = 1} that is
 //                          only relative to uk's columns.
@@ -312,14 +312,14 @@ func NeedAddGcColumn4ShardIndex(
 ```go
 // AddGcColumnCond add the `tidb_shard(x) = xxx` to the condition
 // @param[in] cols          the columns of shard index, such as [tidb_shard(a), a, ...]
-// @param[in] accessCond    the condtions relative to the index and arranged by the index column order.
+// @param[in] accessCond    the conditions relative to the index and arranged by the index column order.
 //                          e.g. the index is uk(tidb_shard(a), a, b) and the where clause is
 //                          `WHERE b = 1 AND a = 2 AND c = 3`, the param accessCond is {a = 2, b = 1} that is
 //                          only relative to uk's columns.
 // @param[in] columnValues  the values of index columns in param accessCond. if accessCond is {a = 2, b = 1},
 //                          columnValues is {2, 1}. if accessCond the "IN" function like `a IN (1, 2)`, columnValues
 //                          is empty.
-// @retval -  []expression.Expression   the new condtions after adding `tidb_shard() = xxx` prefix
+// @retval -  []expression.Expression   the new conditions after adding `tidb_shard() = xxx` prefix
 //            error                     if error gernerated, return error
 func AddGcColumnCond(sctx sessionctx.Context,
 	cols []*expression.Column,
@@ -352,8 +352,8 @@ Add the `tidb_shard(x) = xxx` prefix for equal access condition.
 ```go
 // AddGcColumn4EqCond add the `tidb_shard(x) = xxx` prefix for equal condition
 // For param explanation, please refer to the function `AddGcColumnCond`.
-// @retval -  []expression.Expression   the new condtions after adding `tidb_shard() = xxx` prefix
-//            []*valueInfo              the values of every columns in the returned new condtions
+// @retval -  []expression.Expression   the new conditions after adding `tidb_shard() = xxx` prefix
+//            []*valueInfo              the values of every columns in the returned new conditions
 //            error                     if error gernerated, return error
 func AddGcColumn4EqCond(sctx sessionctx.Context,
 	cols []*expression.Column,
@@ -376,7 +376,7 @@ func AddGcColumn4EqCond(sctx sessionctx.Context,
 ```go
 // AddGcColumn4InCond add the `tidb_shard(x) = xxx` for `IN` condition
 // For param explanation, please refer to the function `AddGcColumnCond`.
-// @retval -  []expression.Expression   the new condtions after adding `tidb_shard() = xxx` prefix
+// @retval -  []expression.Expression   the new conditions after adding `tidb_shard() = xxx` prefix
 //            error                     if error gernerated, return error
 func AddGcColumn4InCond(sctx sessionctx.Context,
 	cols []*expression.Column,

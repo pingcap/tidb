@@ -34,7 +34,7 @@ func hashString(text string) (string, error) {
 }
 
 // parseAddressAndHash parses an address in HOST:PORT format, returns the hashed host and the port.
-func parseAddressAndHash(address string) (string, string, error) {
+func parseAddressAndHash(address string) (result string, portName string, err error) {
 	var host, port string
 	if !strings.Contains(address, ":") {
 		host = address

@@ -176,6 +176,8 @@ type Table interface {
 
 	// RecordPrefix returns the record key prefix.
 	RecordPrefix() kv.Key
+	// IndexPrefix returns the index key prefix.
+	IndexPrefix() kv.Key
 
 	// AddRecord inserts a row which should contain only public columns
 	AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...AddRecordOption) (recordID kv.Handle, err error)
@@ -242,6 +244,7 @@ type PartitionedTable interface {
 	GetPartitionByRow(sessionctx.Context, []types.Datum) (PhysicalTable, error)
 	GetAllPartitionIDs() []int64
 	GetPartitionColumnNames() []model.CIStr
+	CheckForExchangePartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum, pid int64) error
 }
 
 // TableFromMeta builds a table.Table from *model.TableInfo.

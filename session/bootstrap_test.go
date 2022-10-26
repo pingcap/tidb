@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/telemetry"
 	"github.com/stretchr/testify/require"
 )
 
@@ -42,7 +43,7 @@ func TestBootstrap(t *testing.T) {
 	defer func() { require.NoError(t, store.Close()) }()
 	defer dom.Close()
 	se := createSessionAndSetID(t, store)
-
+	mustExec(t, se, "set global tidb_txn_mode=''")
 	mustExec(t, se, "use mysql")
 	r := mustExec(t, se, "select * from user")
 	require.NotNil(t, r)
@@ -54,11 +55,10 @@ func TestBootstrap(t *testing.T) {
 	require.NotEqual(t, 0, req.NumRows())
 
 	rows := statistics.RowToDatums(req.GetRow(0), r.Fields())
-	match(t, rows, `%`, "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y")
+	match(t, rows, `%`, "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", nil)
 	r.Close()
 
-	ok := se.Auth(&auth.UserIdentity{Username: "root", Hostname: "anyhost"}, []byte(""), []byte(""))
-	require.True(t, ok)
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "anyhost"}, []byte(""), []byte("")))
 
 	mustExec(t, se, "use test")
 
@@ -141,19 +141,22 @@ func TestBootstrapWithError(t *testing.T) {
 	{
 		se := &session{
 			store:       store,
-			sessionVars: variable.NewSessionVars(),
+			sessionVars: variable.NewSessionVars(nil),
 		}
+		se.functionUsageMu.builtinFunctionUsage = make(telemetry.BuiltinFunctionsUsage)
 		se.txn.init()
 		se.mu.values = make(map[fmt.Stringer]interface{})
 		se.SetValue(sessionctx.Initing, true)
-
+		err := InitDDLJobTables(store)
+		require.NoError(t, err)
+		err = InitMDLTable(store)
+		require.NoError(t, err)
 		dom, err := domap.Get(store)
 		require.NoError(t, err)
 		domain.BindDomain(se, dom)
 		b, err := checkBootstrapped(se)
 		require.False(t, b)
 		require.NoError(t, err)
-
 		doDDLWorks(se)
 	}
 
@@ -176,7 +179,7 @@ func TestBootstrapWithError(t *testing.T) {
 
 	row := req.GetRow(0)
 	rows := statistics.RowToDatums(row, r.Fields())
-	match(t, rows, `%`, "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y")
+	match(t, rows, `%`, "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", nil)
 	require.NoError(t, r.Close())
 
 	mustExec(t, se, "USE test")
@@ -443,8 +446,7 @@ func TestOldPasswordUpgrade(t *testing.T) {
 }
 
 func TestBootstrapInitExpensiveQueryHandle(t *testing.T) {
-	store, err := mockstore.NewMockStore()
-	require.NoError(t, err)
+	store, _ := createStoreAndBootstrap(t)
 	defer func() {
 		require.NoError(t, store.Close())
 	}()

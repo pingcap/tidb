@@ -32,11 +32,13 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/docker/go-units"
 	gomysql "github.com/go-sql-driver/mysql"
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	tidbcfg "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/util"
 	filter "github.com/pingcap/tidb/util/table-filter"
 	router "github.com/pingcap/tidb/util/table-router"
 	"go.uber.org/atomic"
@@ -96,7 +98,7 @@ const (
 var (
 	supportedStorageTypes = []string{"file", "local", "s3", "noop", "gcs", "gs"}
 
-	DefaultFilter = []string{
+	defaultFilter = []string{
 		"*.*",
 		"!mysql.*",
 		"!sys.*",
@@ -106,6 +108,13 @@ var (
 		"!INSPECTION_SCHEMA.*",
 	}
 )
+
+// GetDefaultFilter gets the default table filter used in Lightning.
+// It clones the original default filter,
+// so that the original value won't be changed when the returned slice's element is changed.
+func GetDefaultFilter() []string {
+	return append([]string{}, defaultFilter...)
+}
 
 type DBStore struct {
 	Host       string    `toml:"host" json:"host"`
@@ -155,7 +164,15 @@ func (cfg *Config) String() string {
 
 func (cfg *Config) ToTLS() (*common.TLS, error) {
 	hostPort := net.JoinHostPort(cfg.TiDB.Host, strconv.Itoa(cfg.TiDB.StatusPort))
-	return common.NewTLS(cfg.Security.CAPath, cfg.Security.CertPath, cfg.Security.KeyPath, hostPort)
+	return common.NewTLS(
+		cfg.Security.CAPath,
+		cfg.Security.CertPath,
+		cfg.Security.KeyPath,
+		hostPort,
+		cfg.Security.CABytes,
+		cfg.Security.CertBytes,
+		cfg.Security.KeyBytes,
+	)
 }
 
 type Lightning struct {
@@ -536,11 +553,12 @@ type TikvImporter struct {
 }
 
 type Checkpoint struct {
-	Schema           string                 `toml:"schema" json:"schema"`
-	DSN              string                 `toml:"dsn" json:"-"` // DSN may contain password, don't expose this to JSON.
-	Driver           string                 `toml:"driver" json:"driver"`
-	Enable           bool                   `toml:"enable" json:"enable"`
-	KeepAfterSuccess CheckpointKeepStrategy `toml:"keep-after-success" json:"keep-after-success"`
+	Schema           string                    `toml:"schema" json:"schema"`
+	DSN              string                    `toml:"dsn" json:"-"` // DSN may contain password, don't expose this to JSON.
+	MySQLParam       *common.MySQLConnectParam `toml:"-" json:"-"`   // For some security reason, we use MySQLParam instead of DSN.
+	Driver           string                    `toml:"driver" json:"driver"`
+	Enable           bool                      `toml:"enable" json:"enable"`
+	KeepAfterSuccess CheckpointKeepStrategy    `toml:"keep-after-success" json:"keep-after-success"`
 }
 
 type Cron struct {
@@ -559,6 +577,11 @@ type Security struct {
 	// TLSConfigName is used to set tls config for lightning in DM, so we don't expose this field to user
 	// DM may running many lightning instances at same time, so we need to set different tls config name for each lightning
 	TLSConfigName string `toml:"-" json:"-"`
+
+	// When DM/engine uses lightning as a library, it can directly pass in the content
+	CABytes   []byte `toml:"-" json:"-"`
+	CertBytes []byte `toml:"-" json:"-"`
+	KeyBytes  []byte `toml:"-" json:"-"`
 }
 
 // RegisterMySQL registers the TLS config with name "cluster" or security.TLSConfigName
@@ -567,7 +590,13 @@ func (sec *Security) RegisterMySQL() error {
 	if sec == nil {
 		return nil
 	}
-	tlsConfig, err := common.ToTLSConfig(sec.CAPath, sec.CertPath, sec.KeyPath)
+
+	tlsConfig, err := util.NewTLSConfig(
+		util.WithCAPath(sec.CAPath),
+		util.WithCertAndKeyPath(sec.CertPath, sec.KeyPath),
+		util.WithCAContent(sec.CABytes),
+		util.WithCertAndKeyContent(sec.CertBytes, sec.KeyBytes),
+	)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -694,7 +723,7 @@ func NewConfig() *Config {
 			},
 			StrictFormat:           false,
 			MaxRegionSize:          MaxRegionSize,
-			Filter:                 DefaultFilter,
+			Filter:                 GetDefaultFilter(),
 			DataCharacterSet:       defaultCSVDataCharacterSet,
 			DataInvalidCharReplace: string(defaultCSVDataInvalidCharReplace),
 		},
@@ -861,69 +890,15 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 			zap.ByteString("invalid-char-replacement", []byte(cfg.Mydumper.DataInvalidCharReplace)))
 	}
 
-	if cfg.TikvImporter.Backend == "" {
-		return common.ErrInvalidConfig.GenWithStack("tikv-importer.backend must not be empty!")
-	}
-	cfg.TikvImporter.Backend = strings.ToLower(cfg.TikvImporter.Backend)
-	mustHaveInternalConnections := true
-	switch cfg.TikvImporter.Backend {
-	case BackendTiDB:
-		cfg.DefaultVarsForTiDBBackend()
-		mustHaveInternalConnections = false
-		cfg.PostRestore.Checksum = OpLevelOff
-		cfg.PostRestore.Analyze = OpLevelOff
-		cfg.PostRestore.Compact = false
-	case BackendLocal:
-		// RegionConcurrency > NumCPU is meaningless.
-		cpuCount := runtime.NumCPU()
-		if cfg.App.RegionConcurrency > cpuCount {
-			cfg.App.RegionConcurrency = cpuCount
-		}
-		cfg.DefaultVarsForImporterAndLocalBackend()
-	default:
-		return common.ErrInvalidConfig.GenWithStack("unsupported `tikv-importer.backend` (%s)", cfg.TikvImporter.Backend)
-	}
-
-	// TODO calculate these from the machine's free memory.
-	if cfg.TikvImporter.EngineMemCacheSize == 0 {
-		cfg.TikvImporter.EngineMemCacheSize = defaultEngineMemCacheSize
-	}
-	if cfg.TikvImporter.LocalWriterMemCacheSize == 0 {
-		cfg.TikvImporter.LocalWriterMemCacheSize = defaultLocalWriterMemCacheSize
-	}
-
-	if cfg.TikvImporter.Backend == BackendLocal {
-		if err := cfg.CheckAndAdjustForLocalBackend(); err != nil {
-			return err
-		}
-	} else {
-		cfg.TikvImporter.DuplicateResolution = DupeResAlgNone
-	}
-
-	if cfg.TikvImporter.Backend == BackendTiDB {
-		cfg.TikvImporter.OnDuplicate = strings.ToLower(cfg.TikvImporter.OnDuplicate)
-		switch cfg.TikvImporter.OnDuplicate {
-		case ReplaceOnDup, IgnoreOnDup, ErrorOnDup:
-		default:
-			return common.ErrInvalidConfig.GenWithStack(
-				"unsupported `tikv-importer.on-duplicate` (%s)", cfg.TikvImporter.OnDuplicate)
-		}
-	}
-
-	var err error
-	cfg.TiDB.SQLMode, err = mysql.GetSQLMode(cfg.TiDB.StrSQLMode)
+	mustHaveInternalConnections, err := cfg.AdjustCommon()
 	if err != nil {
-		return common.ErrInvalidConfig.Wrap(err).GenWithStack("`mydumper.tidb.sql_mode` must be a valid SQL_MODE")
-	}
-
-	if err := cfg.CheckAndAdjustSecurity(); err != nil {
 		return err
 	}
 
 	// mydumper.filter and black-white-list cannot co-exist.
 	if cfg.HasLegacyBlackWhiteList() {
 		log.L().Warn("the config `black-white-list` has been deprecated, please replace with `mydumper.filter`")
-		if !common.StringSliceEqual(cfg.Mydumper.Filter, DefaultFilter) {
+		if !common.StringSliceEqual(cfg.Mydumper.Filter, defaultFilter) {
 			return common.ErrInvalidConfig.GenWithStack("`mydumper.filter` and `black-white-list` cannot be simultaneously defined")
 		}
 	}
@@ -943,6 +918,68 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 	cfg.AdjustMydumper()
 	cfg.AdjustCheckPoint()
 	return cfg.CheckAndAdjustFilePath()
+}
+
+func (cfg *Config) AdjustCommon() (bool, error) {
+	if cfg.TikvImporter.Backend == "" {
+		return false, common.ErrInvalidConfig.GenWithStack("tikv-importer.backend must not be empty!")
+	}
+	cfg.TikvImporter.Backend = strings.ToLower(cfg.TikvImporter.Backend)
+	mustHaveInternalConnections := true
+	switch cfg.TikvImporter.Backend {
+	case BackendTiDB:
+		cfg.DefaultVarsForTiDBBackend()
+		mustHaveInternalConnections = false
+		cfg.PostRestore.Checksum = OpLevelOff
+		cfg.PostRestore.Analyze = OpLevelOff
+		cfg.PostRestore.Compact = false
+	case BackendLocal:
+		// RegionConcurrency > NumCPU is meaningless.
+		cpuCount := runtime.NumCPU()
+		if cfg.App.RegionConcurrency > cpuCount {
+			cfg.App.RegionConcurrency = cpuCount
+		}
+		cfg.DefaultVarsForImporterAndLocalBackend()
+	default:
+		return mustHaveInternalConnections, common.ErrInvalidConfig.GenWithStack("unsupported `tikv-importer.backend` (%s)", cfg.TikvImporter.Backend)
+	}
+
+	// TODO calculate these from the machine's free memory.
+	if cfg.TikvImporter.EngineMemCacheSize == 0 {
+		cfg.TikvImporter.EngineMemCacheSize = defaultEngineMemCacheSize
+	}
+	if cfg.TikvImporter.LocalWriterMemCacheSize == 0 {
+		cfg.TikvImporter.LocalWriterMemCacheSize = defaultLocalWriterMemCacheSize
+	}
+
+	if cfg.TikvImporter.Backend == BackendLocal {
+		if err := cfg.CheckAndAdjustForLocalBackend(); err != nil {
+			return mustHaveInternalConnections, err
+		}
+	} else {
+		cfg.TikvImporter.DuplicateResolution = DupeResAlgNone
+	}
+
+	if cfg.TikvImporter.Backend == BackendTiDB {
+		cfg.TikvImporter.OnDuplicate = strings.ToLower(cfg.TikvImporter.OnDuplicate)
+		switch cfg.TikvImporter.OnDuplicate {
+		case ReplaceOnDup, IgnoreOnDup, ErrorOnDup:
+		default:
+			return mustHaveInternalConnections, common.ErrInvalidConfig.GenWithStack(
+				"unsupported `tikv-importer.on-duplicate` (%s)", cfg.TikvImporter.OnDuplicate)
+		}
+	}
+
+	var err error
+	cfg.TiDB.SQLMode, err = mysql.GetSQLMode(cfg.TiDB.StrSQLMode)
+	if err != nil {
+		return mustHaveInternalConnections, common.ErrInvalidConfig.Wrap(err).GenWithStack("`mydumper.tidb.sql_mode` must be a valid SQL_MODE")
+	}
+
+	if err := cfg.CheckAndAdjustSecurity(); err != nil {
+		return mustHaveInternalConnections, err
+	}
+	return mustHaveInternalConnections, err
 }
 
 func (cfg *Config) CheckAndAdjustForLocalBackend() error {
@@ -1106,7 +1143,7 @@ func (cfg *Config) AdjustCheckPoint() {
 				MaxAllowedPacket: defaultMaxAllowedPacket,
 				TLS:              cfg.TiDB.TLS,
 			}
-			cfg.Checkpoint.DSN = param.ToDSN()
+			cfg.Checkpoint.MySQLParam = &param
 		case CheckpointDriverFile:
 			cfg.Checkpoint.DSN = "/tmp/" + cfg.Checkpoint.Schema + ".pb"
 		}
@@ -1143,9 +1180,11 @@ func (cfg *Config) CheckAndAdjustSecurity() error {
 
 	switch cfg.TiDB.TLS {
 	case "":
-		if len(cfg.TiDB.Security.CAPath) > 0 {
+		if len(cfg.TiDB.Security.CAPath) > 0 || len(cfg.TiDB.Security.CABytes) > 0 ||
+			len(cfg.TiDB.Security.CertPath) > 0 || len(cfg.TiDB.Security.CertBytes) > 0 ||
+			len(cfg.TiDB.Security.KeyPath) > 0 || len(cfg.TiDB.Security.KeyBytes) > 0 {
 			if cfg.TiDB.Security.TLSConfigName == "" {
-				cfg.TiDB.Security.TLSConfigName = "cluster" // adjust this the default value
+				cfg.TiDB.Security.TLSConfigName = uuid.NewString() // adjust this the default value
 			}
 			cfg.TiDB.TLS = cfg.TiDB.Security.TLSConfigName
 		} else {
