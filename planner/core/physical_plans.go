@@ -524,12 +524,6 @@ func (p *PhysicalIndexLookUpReader) MemoryUsage() (sum int64) {
 		sum += p.PushedLimit.MemoryUsage()
 	}
 
-	//for _, plan := range p.IndexPlans {
-	//	sum += plan.MemoryUsage()
-	//}
-	//for _, plan := range p.TablePlans {
-	//	sum += plan.MemoryUsage()
-	//}
 	// since IndexPlans and TablePlans are the flats of the indexPlan and tablePlan, so we don't count it
 	for _, col := range p.CommonHandleCols {
 		sum += col.MemoryUsage()
