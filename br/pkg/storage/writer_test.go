@@ -14,16 +14,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func createSuffixString(compressType CompressType) string {
-	if compressType == Gzip {
-		return ".txt.gz"
-	}
-	if compressType == Snappy {
-		return ".txt.snappy"
-	}
-	return ""
-}
-
 func TestExternalFileWriter(t *testing.T) {
 	dir := t.TempDir()
 

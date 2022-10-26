@@ -44,6 +44,16 @@ type interceptBuffer interface {
 	Compressed() bool
 }
 
+func createSuffixString(compressType CompressType) string {
+	if compressType == Gzip {
+		return ".txt.gz"
+	}
+	if compressType == Snappy {
+		return ".txt.snappy"
+	}
+	return ""
+}
+
 func newInterceptBuffer(chunkSize int, compressType CompressType) interceptBuffer {
 	if compressType == NoCompression {
 		return newNoCompressionBuffer(chunkSize)
