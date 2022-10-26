@@ -166,7 +166,7 @@ func checkAndSetFlashbackClusterInfo(sess sessionctx.Context, d *ddlCtx, t *meta
 			return errors.Trace(err)
 		}
 		if diff != nil && diff.Type != model.ActionFlashbackCluster {
-			return errors.Errorf("Had ddl history during [%s, now), can't do flashback", oracle.GetTimeFromTS(flashbackTS))
+			return errors.Errorf("Detected schema change due to another DDL job during [%s, now), can't do flashback", oracle.GetTimeFromTS(flashbackTS))
 		}
 	}
 
