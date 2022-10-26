@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
@@ -330,10 +331,31 @@ func TestPreCheckTableClusterIndex(t *testing.T) {
 type fakePDClient struct {
 	pd.Client
 	stores []*metapb.Store
+
+	notLeader bool
 }
 
 func (fpdc fakePDClient) GetAllStores(context.Context, ...pd.GetStoreOption) ([]*metapb.Store, error) {
 	return append([]*metapb.Store{}, fpdc.stores...), nil
+}
+
+func (fpdc fakePDClient) GetTS(ctx context.Context) (int64, int64, error) {
+	if fpdc.notLeader {
+		return 0, 0, errors.Errorf("rpc error: code = Unknown desc = [PD:tso:ErrGenerateTimestamp]generate timestamp failed, requested pd is not leader of cluster")
+	}
+	return 1, 1, nil
+}
+
+func TestGetTSWithRetry(t *testing.T) {
+	pDClient := fakePDClient{notLeader: false}
+	client := restore.NewRestoreClient(pDClient, nil, defaultKeepaliveCfg, false)
+	_, err := client.GetTSWithRetry(context.Background())
+	require.NoError(t, err)
+
+	pDClient = fakePDClient{notLeader: true}
+	client = restore.NewRestoreClient(pDClient, nil, defaultKeepaliveCfg, false)
+	_, err = client.GetTSWithRetry(context.Background())
+	require.Error(t, err)
 }
 
 func TestPreCheckTableTiFlashReplicas(t *testing.T) {
