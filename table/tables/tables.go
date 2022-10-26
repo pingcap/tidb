@@ -545,13 +545,13 @@ func (t *TableCommon) rebuildIndices(ctx sessionctx.Context, txn kv.Transaction,
 func appendMetaCol(sctx sessionctx.Context, colIDs []int64, row []types.Datum) ([]int64, []types.Datum) {
 	if shouldWriteMetaCol(sctx) {
 		colIDs = append(colIDs, model.ExtraMetaColID)
-		row = append(row, types.NewMetaDatum(sctx.GetSessionVars().TiDBWriteByTiCDC))
+		row = append(row, types.NewMetaDatum())
 	}
 	return colIDs, row
 }
 
 func shouldWriteMetaCol(sctx sessionctx.Context) bool {
-	return sctx.GetSessionVars().TiDBWriteByTiCDC
+	return sctx.GetSessionVars().WriteByTiCDC
 }
 
 // adjustRowValuesBuf adjust writeBufs.AddRowValues length, AddRowValues stores the inserting values that is used

@@ -2094,10 +2094,7 @@ func invalidConv(d *Datum, tp byte) (Datum, error) {
 }
 
 // NewMetaDatum creates a new meta Datum.
-func NewMetaDatum(rs bool) (d Datum) {
-	if !rs {
-		return NewDatum(nil)
-	}
+func NewMetaDatum() (d Datum) {
 	return NewDatum(NewBinaryLiteralFromUint(1, 1))
 }
 

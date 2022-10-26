@@ -1034,8 +1034,8 @@ type SessionVars struct {
 	// MetricSchemaStep indicates the step when query metric schema.
 	MetricSchemaStep int64
 
-	// TiDBWriteByTiCDC indicates whether the following data is written by TiCDC.
-	TiDBWriteByTiCDC bool
+	// WriteByTiCDC indicates whether the following data is written by TiCDC.
+	WriteByTiCDC bool
 
 	// MetricSchemaRangeDuration indicates the step when query metric schema.
 	MetricSchemaRangeDuration int64

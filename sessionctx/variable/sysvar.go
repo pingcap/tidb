@@ -301,7 +301,7 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}},
 	{Scope: ScopeSession, Name: TiDBWriteByTiCDC, Value: BoolToOnOff(false), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
-		s.TiDBWriteByTiCDC = TiDBOptOn(val)
+		s.WriteByTiCDC = TiDBOptOn(val)
 		return nil
 	}},
 	{Scope: ScopeSession, Name: TiDBMetricSchemaRangeDuration, Value: strconv.Itoa(DefTiDBMetricSchemaRangeDuration), skipInit: true, Type: TypeUnsigned, MinValue: 10, MaxValue: 60 * 60 * 60, SetSession: func(s *SessionVars, val string) error {
