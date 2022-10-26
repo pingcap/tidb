@@ -37,9 +37,10 @@ import (
 // if we don't need to use CT/TF, we can define CT as any and TF as NilContext.
 type Pool[T any, U any, C any, CT any, TF pooltask.Context[CT]] struct {
 	gpool.BasePool
-	workerCache   sync.Pool
-	workers       *loopQueue[T, U, C, CT, TF]
-	lock          sync.Locker
+	workerCache sync.Pool
+	workers     *loopQueue[T, U, C, CT, TF]
+	lock        sync.Locker
+
 	cond          *sync.Cond
 	taskCh        chan *pooltask.TaskBox[T, U, C, CT, TF]
 	options       *Options
@@ -66,7 +67,7 @@ func NewSPMCPool[T any, U any, C any, CT any, TF pooltask.Context[CT]](name stri
 		taskCh:      make(chan *pooltask.TaskBox[T, U, C, CT, TF], 128),
 		stopCh:      make(chan struct{}),
 		lock:        gpool.NewSpinLock(),
-		taskManager: NewTaskManager[T, U, C, CT, TF](int(size)),
+		taskManager: NewTaskManager[T, U, C, CT, TF](size),
 		options:     opts,
 	}
 	result.SetName(name)

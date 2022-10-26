@@ -78,16 +78,16 @@ func NewTaskController[T any, U any, C any, CT any, TF Context[CT]](p *Pool[T, U
 }
 
 // Wait is to wait the task to stop.
-func (c *TaskController[T, U, C, CT, TF]) Wait() {
-	<-c.close
-	c.wg.Wait()
-	c.pool.taskManager.DeleteTask(c.taskID)
+func (t *TaskController[T, U, C, CT, TF]) Wait() {
+	<-t.close
+	t.wg.Wait()
+	t.pool.taskManager.DeleteTask(t.taskID)
 }
 
 // IsProduceClose is to judge whether the producer is completed.
-func (c *TaskController[T, U, C, CT, TF]) IsProduceClose() bool {
+func (t *TaskController[T, U, C, CT, TF]) IsProduceClose() bool {
 	select {
-	case <-c.close:
+	case <-t.close:
 		return true
 	default:
 	}
