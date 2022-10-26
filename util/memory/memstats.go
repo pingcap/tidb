@@ -28,11 +28,7 @@ func ReadMemStats() *runtime.MemStats {
 	if s != nil && time.Since(s.ts) < 300*time.Millisecond {
 		return &s.m
 	}
-	var g globalMstats
-	g.ts = time.Now()
-	runtime.ReadMemStats(&g.m)
-	stats.Store(&g)
-	return &g.m
+	return ForceReadMemStats()
 }
 
 // ForceReadMemStats is to force read memory stats.
