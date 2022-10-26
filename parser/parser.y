@@ -607,7 +607,7 @@ import (
 	timestampType         "TIMESTAMP"
 	timeType              "TIME"
 	tokenIssuer           "TOKEN_ISSUER"
-	tokenRequire      "TOKEN_REQUIRE"
+	tokenRequire          "TOKEN_REQUIRE"
 	tp                    "TYPE"
 	trace                 "TRACE"
 	traditional           "TRADITIONAL"
@@ -6387,6 +6387,7 @@ UnReservedKeyword:
 |	"CLUSTERED"
 |	"NONCLUSTERED"
 |	"PRESERVE"
+|	"TOKEN_REQUIRE"
 |	"TOKEN_ISSUER"
 
 TiDBKeyword:
