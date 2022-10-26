@@ -28,6 +28,11 @@ type StreamMetadataSet struct {
 	BeforeDoWriteBack func(path string, last, current *backuppb.Metadata) (skip bool)
 }
 
+// MetaLen returns the length of read metadata.
+func (ms *StreamMetadataSet) MetaLen() int {
+	return len(ms.metadata)
+}
+
 // LoadUntil loads the metadata until the specified timestamp.
 // This would load all metadata files that *may* contain data from transaction committed before that TS.
 // Note: maybe record the timestamp and reject reading data files after this TS?
@@ -154,10 +159,15 @@ func (ms *StreamMetadataSet) doWriteBackForFile(ctx context.Context, s storage.E
 	return truncateAndWrite(ctx, s, path, bs)
 }
 
+// PendingMeta returns the length of metadata waiting for be written back.
+func (ms *StreamMetadataSet) PendingMeta() int {
+	return len(ms.writeback)
+}
+
 func (ms *StreamMetadataSet) DoWriteBack(ctx context.Context, s storage.ExternalStorage) error {
 	for path := range ms.writeback {
 		if ms.BeforeDoWriteBack != nil && ms.BeforeDoWriteBack(path, ms.metadata[path], ms.writeback[path]) {
-			return nil
+			continue
 		}
 		err := ms.doWriteBackForFile(ctx, s, path)
 		// NOTE: Maybe we'd better roll back all writebacks? (What will happen if roll back fails too?)
