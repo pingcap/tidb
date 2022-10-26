@@ -1148,7 +1148,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		cop.commonHandleCols = ds.commonHandleCols
 	}
 	is.initSchema(append(path.FullIdxCols, ds.commonHandleCols...), cop.tablePlan != nil)
-	indexConds, tblConds := ds.splitIndexFilterConditions(filterConds, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo)
+	indexConds, tblConds := ds.splitIndexFilterConditions(filterConds, path.FullIdxCols, path.FullIdxColLens)
 	if maxOneRow {
 		// Theoretically, this line is unnecessary because row count estimation of join should guarantee rowCount is not larger
 		// than 1.0; however, there may be rowCount larger than 1.0 in reality, e.g, pseudo statistics cases, which does not reflect
@@ -2818,10 +2818,6 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 		preferMode, prefer = Mpp1Phase, true
 	} else if la.aggHints.preferAggType&preferMPP2PhaseAgg > 0 {
 		preferMode, prefer = Mpp2Phase, true
-	} else if la.aggHints.preferAggType&preferMPPTiDBAgg > 0 {
-		preferMode, prefer = MppTiDB, true
-	} else if la.aggHints.preferAggType&preferMPPScalarAgg > 0 {
-		preferMode, prefer = MppScalar, true
 	}
 	if prefer {
 		var preferPlans []PhysicalPlan

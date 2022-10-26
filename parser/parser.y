@@ -50,8 +50,9 @@ import (
 %token	<ident>
 
 	/*yy:token "%c"     */
-	identifier "identifier"
-	asof       "AS OF"
+	identifier  "identifier"
+	asof        "AS OF"
+	toTimestamp "TO TIMESTAMP"
 
 	/*yy:token "_%c"    */
 	underscoreCS "UNDERSCORE_CHARSET"
@@ -298,6 +299,7 @@ import (
 	always                "ALWAYS"
 	any                   "ANY"
 	ascii                 "ASCII"
+	attribute             "ATTRIBUTE"
 	attributes            "ATTRIBUTES"
 	statsOptions          "STATS_OPTIONS"
 	statsSampleRate       "STATS_SAMPLE_RATE"
@@ -900,7 +902,7 @@ import (
 	ExplainableStmt            "explainable statement"
 	FlushStmt                  "Flush statement"
 	FlashbackTableStmt         "Flashback table statement"
-	FlashbackClusterStmt       "Flashback cluster statement"
+	FlashbackToTimestampStmt   "Flashback cluster statement"
 	FlashbackDatabaseStmt      "Flashback Database statement"
 	GrantStmt                  "Grant statement"
 	GrantProxyStmt             "Grant proxy statement"
@@ -1131,6 +1133,7 @@ import (
 	PasswordOrLockOption                   "Single password or lock option for create user statement"
 	PasswordOrLockOptionList               "Password or lock options for create user statement"
 	PasswordOrLockOptions                  "Optional password or lock options for create user statement"
+	CommentOrAttributeOption               "Optional comment or attribute option for CREATE/ALTER USER statements"
 	ColumnPosition                         "Column position [First|After ColumnName]"
 	PrepareSQL                             "Prepare statement sql string"
 	Priority                               "Statement priority"
@@ -2586,15 +2589,29 @@ RecoverTableStmt:
 
 /*******************************************************************
  *
- *  Flush Back Cluster Statement
+ *  FLASHBACK [CLUSTER | DATABASE | TABLE] TO TIMESTAMP
  *
  *  Example:
  *
  *******************************************************************/
-FlashbackClusterStmt:
-	"FLASHBACK" "CLUSTER" "TO" "TIMESTAMP" stringLit
+FlashbackToTimestampStmt:
+	"FLASHBACK" "CLUSTER" toTimestamp stringLit
 	{
-		$$ = &ast.FlashBackClusterStmt{
+		$$ = &ast.FlashBackToTimestampStmt{
+			FlashbackTS: ast.NewValueExpr($4, "", ""),
+		}
+	}
+|	"FLASHBACK" "TABLE" TableNameList toTimestamp stringLit
+	{
+		$$ = &ast.FlashBackToTimestampStmt{
+			Tables:      $3.([]*ast.TableName),
+			FlashbackTS: ast.NewValueExpr($5, "", ""),
+		}
+	}
+|	"FLASHBACK" DatabaseSym DBName toTimestamp stringLit
+	{
+		$$ = &ast.FlashBackToTimestampStmt{
+			DBName:      model.NewCIStr($3),
 			FlashbackTS: ast.NewValueExpr($5, "", ""),
 		}
 	}
@@ -6028,6 +6045,7 @@ UnReservedKeyword:
 	"ACTION"
 |	"ADVISE"
 |	"ASCII"
+|	"ATTRIBUTE"
 |	"ATTRIBUTES"
 |	"BINDING_CACHE"
 |	"STATS_OPTIONS"
@@ -11350,8 +11368,8 @@ Statement:
 |	DropStatsStmt
 |	DropBindingStmt
 |	FlushStmt
-|	FlashbackClusterStmt
 |	FlashbackTableStmt
+|	FlashbackToTimestampStmt
 |	FlashbackDatabaseStmt
 |	GrantStmt
 |	GrantProxyStmt
@@ -12600,10 +12618,10 @@ CommaOpt:
  *  https://dev.mysql.com/doc/refman/5.7/en/account-management-sql.html
  ************************************************************************************/
 CreateUserStmt:
-	"CREATE" "USER" IfNotExists UserSpecList RequireClauseOpt ConnectionOptions PasswordOrLockOptions
+	"CREATE" "USER" IfNotExists UserSpecList RequireClauseOpt ConnectionOptions PasswordOrLockOptions CommentOrAttributeOption
 	{
-		// See https://dev.mysql.com/doc/refman/5.7/en/create-user.html
-		$$ = &ast.CreateUserStmt{
+		// See https://dev.mysql.com/doc/refman/8.0/en/create-user.html
+		ret := &ast.CreateUserStmt{
 			IsCreateRole:          false,
 			IfNotExists:           $3.(bool),
 			Specs:                 $4.([]*ast.UserSpec),
@@ -12611,6 +12629,10 @@ CreateUserStmt:
 			ResourceOptions:       $6.([]*ast.ResourceOption),
 			PasswordOrLockOptions: $7.([]*ast.PasswordOrLockOption),
 		}
+		if $8 != nil {
+			ret.CommentOrAttributeOption = $8.(*ast.CommentOrAttributeOption)
+		}
+		$$ = ret
 	}
 
 CreateRoleStmt:
@@ -12624,17 +12646,21 @@ CreateRoleStmt:
 		}
 	}
 
-/* See http://dev.mysql.com/doc/refman/5.7/en/alter-user.html */
+/* See http://dev.mysql.com/doc/refman/8.0/en/alter-user.html */
 AlterUserStmt:
-	"ALTER" "USER" IfExists UserSpecList RequireClauseOpt ConnectionOptions PasswordOrLockOptions
+	"ALTER" "USER" IfExists UserSpecList RequireClauseOpt ConnectionOptions PasswordOrLockOptions CommentOrAttributeOption
 	{
-		$$ = &ast.AlterUserStmt{
+		ret := &ast.AlterUserStmt{
 			IfExists:              $3.(bool),
 			Specs:                 $4.([]*ast.UserSpec),
 			TLSOptions:            $5.([]*ast.TLSOption),
 			ResourceOptions:       $6.([]*ast.ResourceOption),
 			PasswordOrLockOptions: $7.([]*ast.PasswordOrLockOption),
 		}
+		if $8 != nil {
+			ret.CommentOrAttributeOption = $8.(*ast.CommentOrAttributeOption)
+		}
+		$$ = ret
 	}
 |	"ALTER" "USER" IfExists "USER" '(' ')' "IDENTIFIED" "BY" AuthString
 	{
@@ -12825,6 +12851,19 @@ RequireListElement:
 			Type:  ast.SAN,
 			Value: $2,
 		}
+	}
+
+CommentOrAttributeOption:
+	{
+		$$ = nil
+	}
+|	"COMMENT" stringLit
+	{
+		$$ = &ast.CommentOrAttributeOption{Type: ast.UserCommentType, Value: $2}
+	}
+|	"ATTRIBUTE" stringLit
+	{
+		$$ = &ast.CommentOrAttributeOption{Type: ast.UserAttributeType, Value: $2}
 	}
 
 PasswordOrLockOptions:
@@ -13850,6 +13889,13 @@ KillStmt:
 			ConnectionID:  getUint64FromNUM($3),
 			Query:         true,
 			TiDBExtension: $1.(bool),
+		}
+	}
+|	KillOrKillTiDB BuiltinFunction
+	{
+		$$ = &ast.KillStmt{
+			TiDBExtension: $1.(bool),
+			Expr:          $2,
 		}
 	}
 
