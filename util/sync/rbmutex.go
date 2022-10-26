@@ -19,7 +19,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"unsafe"
+
+	"github.com/pingcap/tidb/util/fastrand"
 )
 
 const (
@@ -28,14 +29,6 @@ const (
 	// slow-down guard
 	nslowdown = 9
 )
-
-// pool for reader tokens
-var rtokenPool sync.Pool
-
-// RToken is a reader lock token.
-type RToken struct {
-	slot uint32
-}
 
 // A RBMutex is a reader biased reader/writer mutual exclusion lock.
 // The lock can be held by an many readers or a single writer.
@@ -67,21 +60,17 @@ type RBMutex struct {
 //
 // Should not be used for recursive read locking; a blocked Lock
 // call excludes new readers from acquiring the lock.
-func (m *RBMutex) RLock() *RToken {
+func (m *RBMutex) RLock() *uint32 {
 	if atomic.LoadInt32(&m.rbias) == 1 {
-		t, ok := rtokenPool.Get().(*RToken)
-		if !ok {
-			t = new(RToken)
-			// Since rslots is a power of two, we can use & instead of %.
-			t.slot = uint32(mixhash64ptr(uintptr(unsafe.Pointer(t))) & (rslots - 1))
-		}
-		if atomic.CompareAndSwapInt32(&m.readers[t.slot], 0, 1) {
+		// Since rslots is a power of two, we can use & instead of %.
+		t := fastrand.Uint32() & (rslots - 1)
+
+		if atomic.CompareAndSwapInt32(&m.readers[t], 0, 1) {
 			if atomic.LoadInt32(&m.rbias) == 1 {
-				return t
+				return &t
 			}
-			atomic.StoreInt32(&m.readers[t.slot], 0)
+			atomic.StoreInt32(&m.readers[t], 0)
 		}
-		rtokenPool.Put(t)
 	}
 	m.rw.RLock()
 	if atomic.LoadInt32(&m.rbias) == 0 && time.Now().After(m.inhibitUntil) {
@@ -94,15 +83,14 @@ func (m *RBMutex) RLock() *RToken {
 // the RLock call must be provided. RUnlock does not affect other
 // simultaneous readers. A panic is raised if m is not locked for
 // reading on entry to RUnlock.
-func (m *RBMutex) RUnlock(t *RToken) {
+func (m *RBMutex) RUnlock(t *uint32) {
 	if t == nil {
 		m.rw.RUnlock()
 		return
 	}
-	if !atomic.CompareAndSwapInt32(&m.readers[t.slot], 1, 0) {
+	if !atomic.CompareAndSwapInt32(&m.readers[*t], 1, 0) {
 		panic("invalid reader state detected")
 	}
-	rtokenPool.Put(t)
 }
 
 // Lock locks m for writing. If the lock is already locked for

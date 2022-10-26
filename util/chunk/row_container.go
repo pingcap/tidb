@@ -69,12 +69,12 @@ func (m *mutexForRowContainer) Unlock() {
 }
 
 // RLock locks rw for reading.
-func (m *mutexForRowContainer) RLock() *xsync.RToken {
+func (m *mutexForRowContainer) RLock() *uint32 {
 	return m.rLock.RLock()
 }
 
 // RUnlock undoes a single RLock call.
-func (m *mutexForRowContainer) RUnlock(t *xsync.RToken) {
+func (m *mutexForRowContainer) RUnlock(t *uint32) {
 	m.rLock.RUnlock(t)
 }
 
