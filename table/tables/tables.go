@@ -929,6 +929,8 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 
 	if shouldWriteBinlog(sctx, t.meta) {
 		// For insert, TiDB and Binlog can use same row and schema.
+		binlogRow = row
+		binlogColIDs = colIDs
 		// ignore the last colID and row for meta col
 		if shouldWriteMetaCol(sctx) {
 			binlogRow = row[:len(row)-1]
