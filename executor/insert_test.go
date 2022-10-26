@@ -349,7 +349,7 @@ func TestUpdateDuplicateKey(t *testing.T) {
 	tk.MustExec(`insert into c values(1,2,3);`)
 	tk.MustExec(`insert into c values(1,2,4);`)
 	tk.MustGetErrMsg(`update c set i=1,j=2,k=4 where i=1 and j=2 and k=3;`,
-		"[kv:1062]Duplicate entry '1-2-4' for key 'PRIMARY'")
+		"[kv:1062]Duplicate entry '1-2-4' for key 'c.PRIMARY'")
 }
 
 func TestIssue37187(t *testing.T) {
@@ -1394,7 +1394,7 @@ func TestIssue16366(t *testing.T) {
 	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec(`create table t(c numeric primary key);`)
 	tk.MustExec("insert ignore into t values(null);")
-	tk.MustContainErrMsg(`insert into t values(0);`, "Duplicate entry '0' for key 'PRIMARY'")
+	tk.MustContainErrMsg(`insert into t values(0);`, "Duplicate entry '0' for key 't.PRIMARY'")
 }
 
 func TestClusterPrimaryTablePlainInsert(t *testing.T) {
@@ -1556,52 +1556,52 @@ func TestDuplicateEntryMessage(t *testing.T) {
 		tk.MustExec("drop table if exists t;")
 		tk.MustExec("create table t(a int, b char(10), unique key(b)) collate utf8mb4_general_ci;")
 		tk.MustExec("insert into t value (34, '12Ak');")
-		tk.MustGetErrMsg("insert into t value (34, '12Ak');", "[kv:1062]Duplicate entry '12Ak' for key 'b'")
+		tk.MustGetErrMsg("insert into t value (34, '12Ak');", "[kv:1062]Duplicate entry '12Ak' for key 't.b'")
 
 		tk.MustExec("begin optimistic;")
 		tk.MustExec("insert into t value (34, '12ak');")
 		tk.MustExec("delete from t where b = '12ak';")
-		tk.MustGetErrMsg("commit;", "previous statement: delete from t where b = '12ak';: [kv:1062]Duplicate entry '12ak' for key 'b'")
+		tk.MustGetErrMsg("commit;", "previous statement: delete from t where b = '12ak';: [kv:1062]Duplicate entry '12ak' for key 't.b'")
 
 		tk.MustExec("drop table if exists t;")
 		tk.MustExec("create table t (a datetime primary key);")
 		tk.MustExec("insert into t values ('2020-01-01');")
-		tk.MustGetErrMsg("insert into t values ('2020-01-01');", "[kv:1062]Duplicate entry '2020-01-01 00:00:00' for key 'PRIMARY'")
+		tk.MustGetErrMsg("insert into t values ('2020-01-01');", "[kv:1062]Duplicate entry '2020-01-01 00:00:00' for key 't.PRIMARY'")
 
 		tk.MustExec("begin optimistic;")
 		tk.MustExec("insert into t values ('2020-01-01');")
 		tk.MustExec("delete from t where a = '2020-01-01';")
-		tk.MustGetErrMsg("commit;", "previous statement: delete from t where a = '2020-01-01';: [kv:1062]Duplicate entry '2020-01-01 00:00:00' for key 'PRIMARY'")
+		tk.MustGetErrMsg("commit;", "previous statement: delete from t where a = '2020-01-01';: [kv:1062]Duplicate entry '2020-01-01 00:00:00' for key 't.PRIMARY'")
 
 		tk.MustExec("drop table if exists t;")
 		tk.MustExec("create table t (a int primary key );")
 		tk.MustExec("insert into t value (1);")
-		tk.MustGetErrMsg("insert into t value (1);", "[kv:1062]Duplicate entry '1' for key 'PRIMARY'")
+		tk.MustGetErrMsg("insert into t value (1);", "[kv:1062]Duplicate entry '1' for key 't.PRIMARY'")
 
 		tk.MustExec("drop table if exists t;")
 		tk.MustExec("create table t (a datetime unique);")
 		tk.MustExec("insert into t values ('2020-01-01');")
-		tk.MustGetErrMsg("insert into t values ('2020-01-01');", "[kv:1062]Duplicate entry '2020-01-01 00:00:00' for key 'a'")
+		tk.MustGetErrMsg("insert into t values ('2020-01-01');", "[kv:1062]Duplicate entry '2020-01-01 00:00:00' for key 't.a'")
 
 		tk.MustExec("drop table if exists t;")
 		tk.MustExec("create table t (a datetime, b int, c varchar(10), primary key (a, b, c)) collate utf8mb4_general_ci;")
 		tk.MustExec("insert into t values ('2020-01-01', 1, 'aSDd');")
-		tk.MustGetErrMsg("insert into t values ('2020-01-01', 1, 'ASDD');", "[kv:1062]Duplicate entry '2020-01-01 00:00:00-1-ASDD' for key 'PRIMARY'")
+		tk.MustGetErrMsg("insert into t values ('2020-01-01', 1, 'ASDD');", "[kv:1062]Duplicate entry '2020-01-01 00:00:00-1-ASDD' for key 't.PRIMARY'")
 
 		tk.MustExec("drop table if exists t;")
 		tk.MustExec("create table t (a datetime, b int, c varchar(10), unique key (a, b, c)) collate utf8mb4_general_ci;")
 		tk.MustExec("insert into t values ('2020-01-01', 1, 'aSDd');")
-		tk.MustGetErrMsg("insert into t values ('2020-01-01', 1, 'ASDD');", "[kv:1062]Duplicate entry '2020-01-01 00:00:00-1-ASDD' for key 'a'")
+		tk.MustGetErrMsg("insert into t values ('2020-01-01', 1, 'ASDD');", "[kv:1062]Duplicate entry '2020-01-01 00:00:00-1-ASDD' for key 't.a'")
 
 		tk.MustExec("drop table if exists t;")
 		tk.MustExec("create table t (a char(10) collate utf8mb4_unicode_ci, b char(20) collate utf8mb4_general_ci, c int(11), primary key (a, b, c), unique key (a));")
 		tk.MustExec("insert ignore into t values ('$', 'C', 10);")
 		tk.MustExec("insert ignore into t values ('$', 'C', 10);")
-		tk.MustQuery("show warnings;").Check(testkit.RowsWithSep("|", "Warning|1062|Duplicate entry '$-C-10' for key 'PRIMARY'"))
+		tk.MustQuery("show warnings;").Check(testkit.RowsWithSep("|", "Warning|1062|Duplicate entry '$-C-10' for key 't.PRIMARY'"))
 
 		tk.MustExec("begin pessimistic;")
 		tk.MustExec("insert into t values ('a7', 'a', 10);")
-		tk.MustGetErrMsg("insert into t values ('a7', 'a', 10);", "[kv:1062]Duplicate entry 'a7-a-10' for key 'PRIMARY'")
+		tk.MustGetErrMsg("insert into t values ('a7', 'a', 10);", "[kv:1062]Duplicate entry 'a7-a-10' for key 't.PRIMARY'")
 		tk.MustExec("rollback;")
 
 		// Test for large unsigned integer handle.
@@ -1609,7 +1609,7 @@ func TestDuplicateEntryMessage(t *testing.T) {
 		tk.MustExec("drop table if exists t;")
 		tk.MustExec("create table t(a bigint unsigned primary key);")
 		tk.MustExec("insert into t values(18446744073709551615);")
-		tk.MustGetErrMsg("insert into t values(18446744073709551615);", "[kv:1062]Duplicate entry '18446744073709551615' for key 'PRIMARY'")
+		tk.MustGetErrMsg("insert into t values(18446744073709551615);", "[kv:1062]Duplicate entry '18446744073709551615' for key 't.PRIMARY'")
 	}
 }
 
@@ -1675,12 +1675,12 @@ func TestDuplicatedEntryErr(t *testing.T) {
 	tk.MustExec("create table t1(a int, b varchar(20), primary key(a,b(3)) clustered);")
 	tk.MustExec("insert into t1 values(1,'aaaaa');")
 	err := tk.ExecToErr("insert into t1 values(1,'aaaaa');")
-	require.EqualError(t, err, "[kv:1062]Duplicate entry '1-aaa' for key 'PRIMARY'")
+	require.EqualError(t, err, "[kv:1062]Duplicate entry '1-aaa' for key 't1.PRIMARY'")
 	err = tk.ExecToErr("insert into t1 select 1, 'aaa'")
-	require.EqualError(t, err, "[kv:1062]Duplicate entry '1-aaa' for key 'PRIMARY'")
+	require.EqualError(t, err, "[kv:1062]Duplicate entry '1-aaa' for key 't1.PRIMARY'")
 	tk.MustExec("insert into t1 select 1, 'bb'")
 	err = tk.ExecToErr("insert into t1 select 1, 'bb'")
-	require.EqualError(t, err, "[kv:1062]Duplicate entry '1-bb' for key 'PRIMARY'")
+	require.EqualError(t, err, "[kv:1062]Duplicate entry '1-bb' for key 't1.PRIMARY'")
 }
 
 func TestBinaryLiteralInsertToEnum(t *testing.T) {

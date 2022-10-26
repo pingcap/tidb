@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/extension/extensionimpl"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -82,6 +83,7 @@ import (
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/telemetry"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
@@ -950,6 +952,12 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 	}
 	err = s.doCommit(ctx)
 	if err != nil {
+		// polish the Write Conflict error message
+		newErr := s.tryReplaceWriteConflictError(err)
+		if newErr != nil {
+			err = newErr
+		}
+
 		commitRetryLimit := s.sessionVars.RetryLimit
 		if !s.sessionVars.TxnCtx.CouldRetry {
 			commitRetryLimit = 0
@@ -992,6 +1000,64 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 	}
 	s.updateStatsDeltaToCollector()
 	return nil
+}
+
+// adds more information about the table in the error message
+// precondition: oldErr is a 9007:WriteConflict Error
+func (s *session) tryReplaceWriteConflictError(oldErr error) (newErr error) {
+	if !kv.ErrWriteConflict.Equal(oldErr) {
+		return nil
+	}
+	if errors.RedactLogEnabled.Load() {
+		return nil
+	}
+	originErr := errors.Cause(oldErr)
+	inErr, _ := originErr.(*errors.Error)
+	args := inErr.Args()
+	is := sessiontxn.GetTxnManager(s).GetTxnInfoSchema()
+	if is == nil {
+		return nil
+	}
+	newKeyTableField, ok := addTableNameInTableIDField(args[3], is)
+	if ok {
+		args[3] = newKeyTableField
+	}
+	newPrimaryKeyTableField, ok := addTableNameInTableIDField(args[5], is)
+	if ok {
+		args[5] = newPrimaryKeyTableField
+	}
+	return kv.ErrWriteConflict.FastGenByArgs(args...)
+}
+
+// precondition: is != nil
+func addTableNameInTableIDField(tableIDField interface{}, is infoschema.InfoSchema) (enhancedMsg string, done bool) {
+	keyTableID, ok := tableIDField.(string)
+	if !ok {
+		return "", false
+	}
+	stringsInTableIDField := strings.Split(keyTableID, "=")
+	if len(stringsInTableIDField) == 0 {
+		return "", false
+	}
+	tableIDStr := stringsInTableIDField[len(stringsInTableIDField)-1]
+	tableID, err := strconv.ParseInt(tableIDStr, 10, 64)
+	if err != nil {
+		return "", false
+	}
+	var tableName string
+	tbl, ok := is.TableByID(tableID)
+	if !ok {
+		tableName = "unknown"
+	} else {
+		dbInfo, ok := is.SchemaByTable(tbl.Meta())
+		if !ok {
+			tableName = "unknown." + tbl.Meta().Name.String()
+		} else {
+			tableName = dbInfo.Name.String() + "." + tbl.Meta().Name.String()
+		}
+	}
+	enhancedMsg = keyTableID + ", tableName=" + tableName
+	return enhancedMsg, true
 }
 
 func (s *session) updateStatsDeltaToCollector() {
@@ -1400,7 +1466,7 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 
 // SetGlobalSysVar implements GlobalVarAccessor.SetGlobalSysVar interface.
 // it is called (but skipped) when setting instance scope
-func (s *session) SetGlobalSysVar(name, value string) (err error) {
+func (s *session) SetGlobalSysVar(ctx context.Context, name string, value string) (err error) {
 	sv := variable.GetSysVar(name)
 	if sv == nil {
 		return variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
@@ -1408,7 +1474,7 @@ func (s *session) SetGlobalSysVar(name, value string) (err error) {
 	if value, err = sv.Validate(s.sessionVars, value, variable.ScopeGlobal); err != nil {
 		return err
 	}
-	if err = sv.SetGlobalFromHook(s.sessionVars, value, false); err != nil {
+	if err = sv.SetGlobalFromHook(ctx, s.sessionVars, value, false); err != nil {
 		return err
 	}
 	if sv.HasInstanceScope() { // skip for INSTANCE scope
@@ -1422,18 +1488,18 @@ func (s *session) SetGlobalSysVar(name, value string) (err error) {
 
 // SetGlobalSysVarOnly updates the sysvar, but does not call the validation function or update aliases.
 // This is helpful to prevent duplicate warnings being appended from aliases, or recursion.
-func (s *session) SetGlobalSysVarOnly(name, value string) (err error) {
+func (s *session) SetGlobalSysVarOnly(ctx context.Context, name string, value string) (err error) {
 	sv := variable.GetSysVar(name)
 	if sv == nil {
 		return variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
-	if err = sv.SetGlobalFromHook(s.sessionVars, value, true); err != nil {
+	if err = sv.SetGlobalFromHook(ctx, s.sessionVars, value, true); err != nil {
 		return err
 	}
 	if sv.HasInstanceScope() { // skip for INSTANCE scope
 		return nil
 	}
-	return s.replaceGlobalVariablesTableValue(context.TODO(), sv.Name, value)
+	return s.replaceGlobalVariablesTableValue(ctx, sv.Name, value)
 }
 
 // SetTiDBTableValue implements GlobalVarAccessor.SetTiDBTableValue interface.
@@ -1489,21 +1555,23 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		p = explain.TargetPlan
 	}
 	pi := util.ProcessInfo{
-		ID:               s.sessionVars.ConnectionID,
-		Port:             s.sessionVars.Port,
-		DB:               s.sessionVars.CurrentDB,
-		Command:          command,
-		Plan:             p,
-		PlanExplainRows:  plannercore.GetExplainRowsForPlan(p),
-		RuntimeStatsColl: s.sessionVars.StmtCtx.RuntimeStatsColl,
-		Time:             t,
-		State:            s.Status(),
-		Info:             sql,
-		CurTxnStartTS:    curTxnStartTS,
-		StmtCtx:          s.sessionVars.StmtCtx,
-		StatsInfo:        plannercore.GetStatsInfo,
-		MaxExecutionTime: maxExecutionTime,
-		RedactSQL:        s.sessionVars.EnableRedactLog,
+		ID:                    s.sessionVars.ConnectionID,
+		Port:                  s.sessionVars.Port,
+		DB:                    s.sessionVars.CurrentDB,
+		Command:               command,
+		Plan:                  p,
+		PlanExplainRows:       plannercore.GetExplainRowsForPlan(p),
+		CurrentAnalyzeRows:    s.getCurrentAnalyzePlan,
+		RuntimeStatsColl:      s.sessionVars.StmtCtx.RuntimeStatsColl,
+		Time:                  t,
+		State:                 s.Status(),
+		Info:                  sql,
+		CurTxnStartTS:         curTxnStartTS,
+		StmtCtx:               s.sessionVars.StmtCtx,
+		OOMAlarmVariablesInfo: s.getOomAlarmVariablesInfo(),
+		StatsInfo:             plannercore.GetStatsInfo,
+		MaxExecutionTime:      maxExecutionTime,
+		RedactSQL:             s.sessionVars.EnableRedactLog,
 	}
 	oldPi := s.ShowProcess()
 	if p == nil {
@@ -1531,6 +1599,25 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		pi.Host = s.sessionVars.User.Hostname
 	}
 	s.processInfo.Store(&pi)
+}
+
+func (s *session) getOomAlarmVariablesInfo() util.OOMAlarmVariablesInfo {
+	return util.OOMAlarmVariablesInfo{
+		SessionAnalyzeVersion:         s.sessionVars.AnalyzeVersion,
+		SessionEnabledRateLimitAction: s.sessionVars.EnabledRateLimitAction,
+		SessionMemQuotaQuery:          s.sessionVars.MemQuotaQuery,
+	}
+}
+
+func (s *session) getCurrentAnalyzePlan(p interface{}, runtimeStatsColl *execdetails.RuntimeStatsColl) [][]string {
+	explain := &plannercore.Explain{
+		TargetPlan:       p.(plannercore.Plan),
+		Format:           types.ExplainFormatROW,
+		Analyze:          false,
+		RuntimeStatsColl: runtimeStatsColl,
+	}
+	explain.SetSCtx(s)
+	return plannercore.GetExplainAnalyzeRowsForPlan(explain)
 }
 
 func (s *session) SetDiskFullOpt(level kvrpcpb.DiskFullOpt) {
@@ -2647,6 +2734,20 @@ var (
 	mdlTable = "create table mysql.tidb_mdl_info(job_id BIGINT NOT NULL PRIMARY KEY, version BIGINT NOT NULL, table_ids text(65535));"
 )
 
+func splitAndScatterTable(store kv.Storage, tableIDs []int64) {
+	if s, ok := store.(kv.SplittableStore); ok && atomic.LoadUint32(&ddl.EnableSplitTableRegion) == 1 {
+		ctxWithTimeout, cancel := context.WithTimeout(context.Background(), variable.DefWaitSplitRegionTimeout*time.Second)
+		var regionIDs []uint64
+		for _, id := range tableIDs {
+			regionIDs = append(regionIDs, ddl.SplitRecordRegion(ctxWithTimeout, s, id, variable.DefTiDBScatterRegion))
+		}
+		if variable.DefTiDBScatterRegion {
+			ddl.WaitScatterRegionFinish(ctxWithTimeout, s, regionIDs...)
+		}
+		cancel()
+	}
+}
+
 // InitDDLJobTables is to create tidb_ddl_job, tidb_ddl_reorg and tidb_ddl_history.
 func InitDDLJobTables(store kv.Storage) error {
 	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
@@ -2659,15 +2760,13 @@ func InitDDLJobTables(store kv.Storage) error {
 		if err != nil {
 			return err
 		}
+		tableIDs := make([]int64, 0, len(DDLJobTables))
+		for _, tbl := range DDLJobTables {
+			tableIDs = append(tableIDs, tbl.id)
+		}
+		splitAndScatterTable(store, tableIDs)
 		p := parser.New()
 		for _, tbl := range DDLJobTables {
-			id, err := t.GetGlobalID()
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if id >= meta.MaxGlobalID {
-				return errors.Errorf("It is unreasonable that the global ID grows such a big value: %d, please contact TiDB team", id)
-			}
 			stmt, err := p.ParseOneStmt(tbl.SQL, "", "")
 			if err != nil {
 				return errors.Trace(err)
@@ -2700,14 +2799,8 @@ func InitMDLTable(store kv.Storage) error {
 		if err != nil {
 			return err
 		}
+		splitAndScatterTable(store, []int64{ddl.MDLTableID})
 		p := parser.New()
-		id, err := t.GetGlobalID()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if id >= meta.MaxGlobalID {
-			return errors.Errorf("It is unreasonable that the global ID grows such a big value: %d, please contact TiDB team", id)
-		}
 		stmt, err := p.ParseOneStmt(mdlTable, "", "")
 		if err != nil {
 			return errors.Trace(err)
@@ -2756,8 +2849,9 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		runInBootstrapSession(store, upgrade)
 	}
 
+	analyzeConcurrencyQuota := int(config.GetGlobalConfig().Performance.AnalyzePartitionConcurrencyQuota)
 	concurrency := int(config.GetGlobalConfig().Performance.StatsLoadConcurrency)
-	ses, err := createSessions(store, 7+concurrency)
+	ses, err := createSessions(store, 7+concurrency+analyzeConcurrencyQuota)
 	if err != nil {
 		return nil, err
 	}
@@ -2802,6 +2896,10 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, err
 	}
 
+	if err = extensionimpl.Bootstrap(context.Background(), dom); err != nil {
+		return nil, err
+	}
+
 	if len(cfg.Instance.PluginLoad) > 0 {
 		err := plugin.Init(context.Background(), plugin.Config{EtcdClient: dom.GetEtcdClient()})
 		if err != nil {
@@ -2836,9 +2934,13 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err = dom.LoadAndUpdateStatsLoop(subCtxs); err != nil {
 		return nil, err
 	}
-
+	subCtxs2 := make([]sessionctx.Context, analyzeConcurrencyQuota)
+	for i := 0; i < analyzeConcurrencyQuota; i++ {
+		subCtxs2[i] = ses[7+concurrency+i]
+	}
+	dom.SetupAnalyzeExec(subCtxs2)
 	dom.DumpFileGcCheckerLoop()
-	dom.LoadSigningCertLoop()
+	dom.LoadSigningCertLoop(cfg.Security.SessionTokenSigningCert, cfg.Security.SessionTokenSigningKey)
 
 	if raw, ok := store.(kv.EtcdBackend); ok {
 		err = raw.StartGCWorker()
@@ -2902,13 +3004,14 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 	}
 	s := &session{
 		store:                 store,
-		sessionVars:           variable.NewSessionVars(),
 		ddlOwnerManager:       dom.DDL().OwnerManager(),
 		client:                store.GetClient(),
 		mppClient:             store.GetMPPClient(),
 		stmtStats:             stmtstats.CreateStatementStats(),
 		sessionStatesHandlers: make(map[sessionstates.SessionStateType]sessionctx.SessionStatesHandler),
 	}
+	s.sessionVars = variable.NewSessionVars(s)
+
 	s.functionUsageMu.builtinFunctionUsage = make(telemetry.BuiltinFunctionsUsage)
 	if opt != nil && opt.PreparedPlanCache != nil {
 		s.preparedPlanCache = opt.PreparedPlanCache
@@ -2936,7 +3039,7 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, error) {
 	s := &session{
 		store:                 store,
-		sessionVars:           variable.NewSessionVars(),
+		sessionVars:           variable.NewSessionVars(nil),
 		client:                store.GetClient(),
 		mppClient:             store.GetMPPClient(),
 		stmtStats:             stmtstats.CreateStatementStats(),
@@ -3053,11 +3156,14 @@ func (s *session) PrepareTxnCtx(ctx context.Context) error {
 	}
 
 	txnMode := ast.Optimistic
-	if !s.sessionVars.IsAutocommit() || s.sessionVars.RetryInfo.Retrying ||
-		config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load() {
+	if !s.sessionVars.IsAutocommit() || config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load() {
 		if s.sessionVars.TxnMode == ast.Pessimistic {
 			txnMode = ast.Pessimistic
 		}
+	}
+
+	if s.sessionVars.RetryInfo.Retrying {
+		txnMode = ast.Pessimistic
 	}
 
 	return sessiontxn.GetTxnManager(s).EnterNewTxn(ctx, &sessiontxn.EnterNewTxnRequest{

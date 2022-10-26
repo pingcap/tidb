@@ -15,6 +15,7 @@
 package expression
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"strconv"
@@ -3112,7 +3113,7 @@ func TestCurrentTso(t *testing.T) {
 	v, err := evalBuiltinFunc(f, chunk.Row{})
 	require.NoError(t, err)
 	n := v.GetInt64()
-	tso, _ := ctx.GetSessionVars().GetSessionOrGlobalSystemVar("tidb_current_ts")
+	tso, _ := ctx.GetSessionVars().GetSessionOrGlobalSystemVar(context.Background(), "tidb_current_ts")
 	itso, _ := strconv.ParseInt(tso, 10, 64)
 	require.Equal(t, itso, n, v.Kind())
 }

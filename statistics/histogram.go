@@ -997,7 +997,7 @@ func (coll *HistColl) NewHistCollBySelectivity(sctx sessionctx.Context, statsNod
 		Columns:       make(map[int64]*Column),
 		Indices:       make(map[int64]*Index),
 		Idx2ColumnIDs: coll.Idx2ColumnIDs,
-		ColID2IdxID:   coll.ColID2IdxID,
+		ColID2IdxIDs:  coll.ColID2IdxIDs,
 		Count:         coll.Count,
 	}
 	for _, node := range statsNodes {
