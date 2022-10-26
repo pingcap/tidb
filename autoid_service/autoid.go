@@ -142,7 +142,7 @@ func calcNeededBatchSize(base, n, increment, offset int64, isUnsigned bool) int6
 	return nr - base
 }
 
-const batch = 400
+const batch = 2000
 
 // AllocID implements gRPC PDServer.
 func (s *Service) AllocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*autoid.AutoIDResponse, error) {
@@ -181,6 +181,15 @@ func (s *Service) allocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*
 		}
 		fmt.Println("retry, because first init kv")
 		return nil, nil // retry
+	}
+
+	if req.N == 0 {
+		base := val.base
+		s.autoIDLock.Unlock()
+		return &autoid.AutoIDResponse{
+			Min: base,
+			Max: base,
+		}, nil
 	}
 
 	// calcNeededBatchSize calculates the total batch size needed.
@@ -281,12 +290,27 @@ func (s *Service) Rebase(ctx context.Context, req *autoid.RebaseRequest) (*autoi
 		return s.Rebase(ctx, req)
 	}
 
+	if req.Force {
+		val.base = req.Base
+		s.autoIDLock.Unlock()
+		val.token <- struct{}{}
+		newVal := uint64(req.Base) + batch
+		if newVal <= uint64(req.Base) {
+			newVal = math.MaxUint64
+		}
+		err := s.SyncID(ctx, req.DbID, req.TblID, newVal, val.max, val.token)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &autoid.RebaseResponse{}, nil
+	}
+
 	fmt.Println("!!!! rebase called      ........", req.Base, val.base, *val.max)
 	if req.Base < atomic.LoadInt64(val.max) {
-		// if req.Base > val.base {
-		val.base = req.Base
-		fmt.Println("now ... base === ...", val.base)
-		// }
+		if req.Base > val.base {
+			val.base = req.Base
+			fmt.Println("now ... base === ...", val.base)
+		}
 	} else {
 		s.autoIDLock.Unlock()
 		val.token <- struct{}{}

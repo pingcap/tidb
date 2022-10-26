@@ -1163,7 +1163,7 @@ func TestFilterDifferentAllocators(t *testing.T) {
 	res := tk.MustQuery("select b from t1")
 	strInt64, err := strconv.ParseInt(res.Rows()[0][0].(string), 10, 64)
 	require.NoError(t, err)
-	require.Greater(t, strInt64, int64(3000002))
+	require.GreaterOrEqual(t, strInt64, int64(3000002))
 	allHandles, err = ddltestutil.ExtractAllTableHandles(tk.Session(), "test", "t1")
 	require.NoError(t, err)
 	require.Equal(t, 1, len(allHandles))

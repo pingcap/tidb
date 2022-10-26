@@ -137,6 +137,11 @@ func (sp *singlePointAlloc) Rebase(ctx context.Context, newBase int64, allocIDs 
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
+	return sp.rebase(ctx, newBase, allocIDs, false)
+}
+
+func (sp *singlePointAlloc) rebase(ctx context.Context, newBase int64, allocIDs bool, force bool) error {
+
 	fmt.Println("rebase auto id to ===============", newBase)
 
 	cli, err := sp.GetClient(ctx)
@@ -148,6 +153,7 @@ func (sp *singlePointAlloc) Rebase(ctx context.Context, newBase int64, allocIDs 
 		DbID:  sp.dbID,
 		TblID: sp.tblID,
 		Base:  newBase,
+		Force: force,
 	})
 	if err == nil {
 		sp.lastAllocated = newBase
@@ -160,7 +166,7 @@ func (sp *singlePointAlloc) ForceRebase(newBase int64) error {
 	if newBase == -1 {
 		return ErrAutoincReadFailed.GenWithStack("Cannot force rebase the next global ID to '0'")
 	}
-	return sp.Rebase(context.Background(), newBase, false)
+	return sp.rebase(context.Background(), newBase, false, true)
 }
 
 // RebaseSeq rebases the sequence value in number axis with tableID and the new base value.
@@ -170,20 +176,23 @@ func (sp *singlePointAlloc) RebaseSeq(newBase int64) (int64, bool, error) {
 
 // Base return the current base of Allocator.
 func (sp *singlePointAlloc) Base() int64 {
+	fmt.Println("base called!!")
 	return sp.lastAllocated
 }
 
 // End is only used for test.
 func (sp *singlePointAlloc) End() int64 {
+	fmt.Println("end called!!")
 	return sp.lastAllocated
 }
 
 // NextGlobalAutoID returns the next global autoID.
 // Used by 'show create table', 'alter table auto_increment = xxx'
 func (sp *singlePointAlloc) NextGlobalAutoID() (int64, error) {
-	return sp.lastAllocated + 1, nil
-	// _, max, err := sp.Alloc(context.Background(), 0, 1, 1)
-	// return max + 1, err
+	// return sp.lastAllocated + 1, nil
+	_, max, err := sp.Alloc(context.Background(), 0, 1, 1)
+	fmt.Println("next global id called!", max)
+	return max + 1, err
 }
 
 func (sp *singlePointAlloc) GetType() AllocatorType {

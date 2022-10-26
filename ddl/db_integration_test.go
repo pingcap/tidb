@@ -2969,6 +2969,7 @@ func TestAutoIncrementForce(t *testing.T) {
 	bases := []uint64{1, 65535, 10, math.MaxUint64, math.MaxInt64 + 1, 1, math.MaxUint64, math.MaxInt64, 2}
 	lastBase := fmt.Sprintf("%d", bases[len(bases)-1])
 	for _, b := range bases {
+		fmt.Println("execute alter table force increment to ==", b)
 		tk.MustExec(fmt.Sprintf("alter table t force auto_increment = %d;", b))
 		require.Equal(t, b, getNextGlobalID())
 	}
@@ -2980,6 +2981,7 @@ func TestAutoIncrementForce(t *testing.T) {
 	for _, b := range bases {
 		tk.MustExec(fmt.Sprintf("alter table t force auto_increment = %d;", b))
 		require.Equal(t, b, getNextGlobalID())
+		fmt.Println("bbbbbbbbbbbbbbbbbbbbbbbb==", b)
 		tk.MustExec("insert into t values ();")
 		tk.MustQuery("select a from t;").Check(testkit.Rows(fmt.Sprintf("%d", b)))
 		tk.MustExec("delete from t;")
