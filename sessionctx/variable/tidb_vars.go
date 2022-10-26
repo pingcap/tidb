@@ -751,7 +751,9 @@ const (
 	// limit for ranges.
 	TiDBOptRangeMaxSize = "tidb_opt_range_max_size"
 
-	// TiDBMergePartitionStatsConcurrency indicates the concurrecny when merge partition stats into global stats
+	// TiDBAnalyzePartitionConcurrency indicates concurrency for save/read partitions stats in Analyze
+	TiDBAnalyzePartitionConcurrency = "tidb_analyze_partition_concurrency"
+	// TiDBMergePartitionStatsConcurrency indicates the concurrency when merge partition stats into global stats
 	TiDBMergePartitionStatsConcurrency = "tidb_merge_partition_stats_concurrency"
 
 	// TiDBOptPrefixIndexSingleScan indicates whether to do some optimizations to avoid double scan for prefix index.
@@ -1060,6 +1062,7 @@ const (
 	DefTiDBRcWriteCheckTs                           = false
 	DefTiDBConstraintCheckInPlacePessimistic        = true
 	DefTiDBForeignKeyChecks                         = false
+	DefTiDBAnalyzePartitionConcurrency              = 1
 	DefTiDBOptRangeMaxSize                          = 64 * int64(size.MB) // 64 MB
 	DefTiDBCostModelVer                             = 1
 	DefTiDBServerMemoryLimitSessMinSize             = 128 << 20

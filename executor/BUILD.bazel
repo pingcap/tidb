@@ -16,6 +16,7 @@ go_library(
         "analyze_idx.go",
         "analyze_incremental.go",
         "analyze_utils.go",
+        "analyze_worker.go",
         "apply_cache.go",
         "batch_checker.go",
         "batch_point_get.go",
