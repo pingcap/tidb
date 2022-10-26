@@ -720,7 +720,7 @@ func TestUser(t *testing.T) {
 	tk.MustExec(`ALTER USER temp_user IDENTIFIED WITH 'tidb_auth_token' TOKEN_REQUIRE token_issuer 'issuer-abc'`)
 	tk.MustQuery(`show warnings`).Check(testkit.Rows())
 	tk.MustExec(`ALTER USER temp_user IDENTIFIED WITH 'mysql_native_password' TOKEN_REQUIRE token_issuer 'issuer-abc'`)
-	tk.MustQuery(`show warnings`).Check(testkit.RowsWithSep("|", "Warning|1105|TOKEN_REQUIRE is no need for the auth plugin."))
+	tk.MustQuery(`show warnings`).Check(testkit.RowsWithSep("|", "Warning|1105|TOKEN_REQUIRE is no need for the auth plugin"))
 
 	// Test alter user.
 	createUserSQL = `CREATE USER 'test1'@'localhost' IDENTIFIED BY '123', 'test2'@'localhost' IDENTIFIED BY '123', 'test3'@'localhost' IDENTIFIED BY '123', 'test4'@'localhost' IDENTIFIED BY '123';`

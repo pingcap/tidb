@@ -1090,7 +1090,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 
 		if len(s.AuthTokenOptions) > 0 {
 			if !needAuthTokenOptions {
-				err := errors.New("TOKEN_REQUIRE is no need for the auth plugin.")
+				err := errors.New("TOKEN_REQUIRE is no need for the auth plugin")
 				e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 			} else {
 				for _, authTokenOption := range s.AuthTokenOptions {
