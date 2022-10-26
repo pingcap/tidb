@@ -4,6 +4,8 @@ package task
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strconv"
@@ -45,6 +47,7 @@ const (
 	flagRemoveSchedulers = "remove-schedulers"
 	flagIgnoreStats      = "ignore-stats"
 	flagUseBackupMetaV2  = "use-backupmeta-v2"
+	flagUseCheckpoint    = "use-checkpoint"
 
 	flagGCTTL = "gcttl"
 
@@ -77,6 +80,7 @@ type BackupConfig struct {
 	RemoveSchedulers bool          `json:"remove-schedulers" toml:"remove-schedulers"`
 	IgnoreStats      bool          `json:"ignore-stats" toml:"ignore-stats"`
 	UseBackupMetaV2  bool          `json:"use-backupmeta-v2"`
+	UseCheckpoint    bool          `json:"use-checkpoint"`
 	CompressionConfig
 
 	// for ebs-based backup
@@ -126,6 +130,9 @@ func DefineBackupFlags(flags *pflag.FlagSet) {
 	// but will generate v1 meta due to this flag is false. the behaviour is as same as v4.0.15, v4.0.16.
 	// finally v4.0.17 will set this flag to true, and generate v2 meta.
 	_ = flags.MarkHidden(flagUseBackupMetaV2)
+
+	flags.Bool(flagUseCheckpoint, false, "use checkpoint")
+	_ = flags.MarkHidden(flagUseCheckpoint)
 }
 
 // ParseFromFlags parses the backup-related flags from the flag set.
@@ -174,6 +181,11 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 	cfg.UseBackupMetaV2, err = flags.GetBool(flagUseBackupMetaV2)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	cfg.UseCheckpoint, err = flags.GetBool(flagUseCheckpoint)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -269,6 +281,22 @@ func (cfg *BackupConfig) Adjust() {
 	}
 }
 
+func (cfg *BackupConfig) Hash() ([]byte, error) {
+	config := &BackupConfig{
+		LastBackupTS:  cfg.LastBackupTS,
+		IgnoreStats:   cfg.IgnoreStats,
+		UseCheckpoint: cfg.UseCheckpoint,
+		Config:        cfg.Config,
+	}
+	data, err := json.Marshal(config)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	hash := sha256.Sum256(data)
+
+	return hash[:], nil
+}
+
 func isFullBackup(cmdName string) bool {
 	return cmdName == FullBackupCmd
 }
@@ -331,6 +359,13 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	}
 	if err = client.SetStorage(ctx, u, &opts); err != nil {
 		return errors.Trace(err)
+	}
+	cfgHash, err := cfg.Hash()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if !client.CheckCheckpoint(cfgHash) {
+		return errors.Errorf("failed to use checkpoint, the hashs of the configs are not the same")
 	}
 	err = client.SetLockFile(ctx)
 	if err != nil {
@@ -400,6 +435,16 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		return errors.Trace(err)
 	}
 
+	if cfg.UseCheckpoint {
+		if err = client.SaveCheckpointMeta(ctx, cfgHash, backupTS); err != nil {
+			return errors.Trace(err)
+		}
+		ranges, err = client.CheckpointRangesInit(ctx, ranges, &cfg.CipherInfo)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
 	// Metafile size should be less than 64MB.
 	metawriter := metautil.NewMetaWriter(client.GetStorage(),
 		metautil.MetaFileSize, cfg.UseBackupMetaV2, "", &cfg.CipherInfo)
@@ -465,7 +510,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		approximateRegions := 0
 		for _, r := range ranges {
 			var regionCount int
-			regionCount, err = mgr.GetRegionCount(ctx, r.StartKey, r.EndKey)
+			regionCount, err = mgr.GetRegionCount(ctx, r.Origin.StartKey, r.Origin.EndKey)
 			if err != nil {
 				return errors.Trace(err)
 			}

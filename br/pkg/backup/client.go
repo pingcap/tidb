@@ -3,7 +3,9 @@
 package backup
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -21,6 +23,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	connutil "github.com/pingcap/tidb/br/pkg/conn/util"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -90,6 +93,9 @@ type Client struct {
 	backend    *backuppb.StorageBackend
 	apiVersion kvrpcpb.APIVersion
 
+	CheckpointMeta   *checkpoint.CheckpointMetadata
+	checkpointRunner *checkpoint.CheckpointRunner
+
 	gcTTL int64
 }
 
@@ -101,6 +107,9 @@ func NewBackupClient(ctx context.Context, mgr ClientMgr) (*Client, error) {
 	return &Client{
 		clusterID: clusterID,
 		mgr:       mgr,
+
+		CheckpointMeta:   nil,
+		checkpointRunner: nil,
 	}, nil
 }
 
@@ -120,6 +129,9 @@ func (bc *Client) GetTS(ctx context.Context, duration time.Duration, ts uint64) 
 		backupTS uint64
 		err      error
 	)
+	if bc.CheckpointMeta != nil {
+		return bc.CheckpointMeta.BackupTS, nil
+	}
 	if ts > 0 {
 		backupTS = ts
 	} else {
@@ -173,6 +185,16 @@ func (bc *Client) GetGCTTL() int64 {
 	return bc.gcTTL
 }
 
+// GetCheckpointInfo return the checkpoint meta information after initialized.
+// return nil if it isn't checkpoint mode.
+func (bc *Client) GetCheckpointMetadata() *checkpoint.CheckpointMetadata {
+	return bc.CheckpointMeta
+}
+
+func (bc *Client) GetCheckpointRunner() *checkpoint.CheckpointRunner {
+	return bc.checkpointRunner
+}
+
 // GetStorageBackend gets storage backupend field in client.
 func (bc *Client) GetStorageBackend() *backuppb.StorageBackend {
 	return bc.backend
@@ -200,11 +222,119 @@ func (bc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBacke
 			"there may be some backup files in the path already, "+
 			"please specify a correct backup directory!", bc.storage.URI()+"/"+metautil.MetaFile)
 	}
-	err = CheckBackupStorageIsLocked(ctx, bc.storage)
+	exist, err = bc.storage.FileExists(ctx, checkpoint.CheckpointMetaPath)
 	if err != nil {
-		return err
+		return errors.Annotatef(err, "error occurred when checking %s file", checkpoint.CheckpointMetaPath)
 	}
+
+	if exist {
+		bc.CheckpointMeta, err = checkpoint.LoadCheckpointMetadata(ctx, bc.storage)
+		if err != nil {
+			return errors.Annotatef(err, "error occurred when loading %s file", checkpoint.CheckpointMetaPath)
+		}
+	} else {
+		err = CheckBackupStorageIsLocked(ctx, bc.storage)
+		if err != nil {
+			return err
+		}
+	}
+
 	bc.backend = backend
+	return nil
+}
+
+// CheckCheckpoint check whether the configs are the same
+func (bc *Client) CheckCheckpoint(hash []byte) bool {
+	if bc.CheckpointMeta == nil {
+		return true
+	}
+
+	return bytes.Equal(bc.CheckpointMeta.ConfigHash, hash)
+}
+
+func (bc *Client) SaveCheckpointMeta(ctx context.Context, cfgHash []byte, backupTS uint64) error {
+	if bc.CheckpointMeta != nil {
+		// no need to save Checkpoint Meta again
+		return nil
+	}
+	bc.CheckpointMeta = &checkpoint.CheckpointMetadata{
+		ConfigHash: cfgHash,
+		BackupTS:   backupTS,
+	}
+	data, err := json.Marshal(bc.CheckpointMeta)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	err = bc.storage.WriteFile(ctx, checkpoint.CheckpointMetaPath, data)
+	return errors.Trace(err)
+}
+
+func (bc *Client) CheckpointRangesInit(ctx context.Context, ranges []rtree.ProgressRange, cipher *backuppb.CipherInfo) ([]rtree.ProgressRange, error) {
+	// there has been none checkpoint yet
+	if bc.CheckpointMeta == nil {
+		bc.checkpointRunner = checkpoint.NewCheckpointRunner(bc.storage, cipher, 0)
+		return ranges, nil
+	}
+
+	rangeTree := rtree.NewRangeTree()
+	fileSeqNum := 0
+	err := bc.storage.WalkDir(ctx, &storage.WalkOption{SubDir: checkpoint.CheckpointIndexDir}, func(path string, size int64) error {
+		if strings.HasSuffix(path, ".cpt") {
+			content, err := bc.storage.ReadFile(ctx, path)
+			if err != nil {
+				return err
+			}
+
+			metaIndex := &backuppb.File{}
+			if err = metaIndex.Unmarshal(content); err != nil {
+				return errors.Trace(err)
+			}
+
+			content, err = bc.storage.ReadFile(ctx, metaIndex.Name)
+			if err != nil {
+				return err
+			}
+
+			decryptContent, err := metautil.Decrypt(content, cipher, metaIndex.CipherIv)
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			checksum := sha256.Sum256(decryptContent)
+			if !bytes.Equal(metaIndex.Sha256, checksum[:]) {
+				return errors.Annotatef(berrors.ErrInvalidMetaFile,
+					"checksum mismatch expect %x, got %x", metaIndex.Sha256, checksum[:])
+			}
+
+			meta := &checkpoint.RangeGroups{}
+			if err = json.Unmarshal(decryptContent, meta); err != nil {
+				return errors.Trace(err)
+			}
+
+			for _, g := range meta.Groups {
+				rangeTree.Put(g.StartKey, g.EndKey, g.Files)
+			}
+			fileSeqNum += 1
+		}
+		return nil
+	})
+
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	bc.checkpointRunner = checkpoint.NewCheckpointRunner(bc.storage, cipher, fileSeqNum)
+
+	for i := range ranges {
+		rangeTree.SplitIncompleteRange(&ranges[i])
+	}
+
+	return ranges, nil
+}
+
+func (bc *Client) CheckpointRanges(ctx context.Context, metawriter *metautil.MetaWriter) error {
+	//bc.CheckpointMeta.
 	return nil
 }
 
@@ -301,7 +431,7 @@ func BuildBackupRangeAndSchema(
 	tableFilter filter.Filter,
 	backupTS uint64,
 	isFullBackup bool,
-) ([]rtree.Range, *Schemas, []*backuppb.PlacementPolicy, error) {
+) ([]rtree.ProgressRange, *Schemas, []*backuppb.PlacementPolicy, error) {
 	snapshot := storage.GetSnapshot(kv.NewVersion(backupTS))
 	m := meta.NewSnapshotMeta(snapshot)
 
@@ -323,7 +453,7 @@ func BuildBackupRangeAndSchema(
 		}
 	}
 
-	ranges := make([]rtree.Range, 0)
+	ranges := make([]rtree.ProgressRange, 0)
 	backupSchemas := NewBackupSchemas()
 	dbs, err := m.ListDatabases()
 	if err != nil {
@@ -422,9 +552,14 @@ func BuildBackupRangeAndSchema(
 				return nil, nil, nil, errors.Trace(err)
 			}
 			for _, r := range tableRanges {
-				ranges = append(ranges, rtree.Range{
+				rg := rtree.Range{
 					StartKey: r.StartKey,
 					EndKey:   r.EndKey,
+				}
+				ranges = append(ranges, rtree.ProgressRange{
+					Res:        rtree.NewRangeTree(),
+					Incomplete: []rtree.Range{rg},
+					Origin:     rg,
 				})
 			}
 		}
@@ -560,13 +695,13 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, g glue.Glue, store kv.S
 // BackupRanges make a backup of the given key ranges.
 func (bc *Client) BackupRanges(
 	ctx context.Context,
-	ranges []rtree.Range,
+	ranges []rtree.ProgressRange,
 	request backuppb.BackupRequest,
 	concurrency uint,
 	metaWriter *metautil.MetaWriter,
 	progressCallBack func(ProgressUnit),
 ) error {
-	log.Info("Backup Ranges Started", rtree.ZapRanges(ranges))
+	log.Info("Backup Ranges Started", rtree.ZapProgressRanges(ranges))
 	init := time.Now()
 
 	defer func() {
@@ -585,11 +720,11 @@ func (bc *Client) BackupRanges(
 	for id, r := range ranges {
 		id := id
 		req := request
-		req.StartKey, req.EndKey = r.StartKey, r.EndKey
+		r := r
 
 		workerPool.ApplyOnErrorGroup(eg, func() error {
 			elctx := logutil.ContextWithField(ectx, logutil.RedactAny("range-sn", id))
-			err := bc.BackupRange(elctx, req, metaWriter, progressCallBack)
+			err := bc.BackupRange(elctx, req, r, metaWriter, progressCallBack)
 			if err != nil {
 				// The error due to context cancel, stack trace is meaningless, the stack shall be suspended (also clear)
 				if errors.Cause(err) == context.Canceled {
@@ -607,7 +742,8 @@ func (bc *Client) BackupRanges(
 // Returns an array of files backed up.
 func (bc *Client) BackupRange(
 	ctx context.Context,
-	req backuppb.BackupRequest,
+	request backuppb.BackupRequest,
+	progressRange rtree.ProgressRange,
 	metaWriter *metautil.MetaWriter,
 	progressCallBack func(ProgressUnit),
 ) (err error) {
@@ -615,17 +751,17 @@ func (bc *Client) BackupRange(
 	defer func() {
 		elapsed := time.Since(start)
 		logutil.CL(ctx).Info("backup range completed",
-			logutil.Key("startKey", req.StartKey), logutil.Key("endKey", req.EndKey),
+			logutil.Key("startKey", progressRange.Origin.StartKey), logutil.Key("endKey", progressRange.Origin.EndKey),
 			zap.Duration("take", elapsed))
-		key := "range start:" + hex.EncodeToString(req.StartKey) + " end:" + hex.EncodeToString(req.EndKey)
+		key := "range start:" + hex.EncodeToString(progressRange.Origin.StartKey) + " end:" + hex.EncodeToString(progressRange.Origin.EndKey)
 		if err != nil {
 			summary.CollectFailureUnit(key, err)
 		}
 	}()
 	logutil.CL(ctx).Info("backup range started",
-		logutil.Key("startKey", req.StartKey), logutil.Key("endKey", req.EndKey),
-		zap.Uint64("rateLimit", req.RateLimit),
-		zap.Uint32("concurrency", req.Concurrency))
+		logutil.Key("startKey", progressRange.Origin.StartKey), logutil.Key("endKey", progressRange.Origin.EndKey),
+		zap.Uint64("rateLimit", request.RateLimit),
+		zap.Uint32("concurrency", request.Concurrency))
 
 	var allStores []*metapb.Store
 	allStores, err = conn.GetAllTiKVStoresWithRetry(ctx, bc.mgr.GetPDClient(), connutil.SkipTiFlash)
@@ -634,35 +770,41 @@ func (bc *Client) BackupRange(
 	}
 
 	logutil.CL(ctx).Info("backup push down started")
-	push := newPushDown(bc.mgr, len(allStores))
-	results, err := push.pushBackup(ctx, req, allStores, progressCallBack)
-	if err != nil {
-		return errors.Trace(err)
+	for _, r := range progressRange.Incomplete {
+		req := request
+		req.StartKey, req.EndKey = r.StartKey, r.EndKey
+
+		push := newPushDown(bc.mgr, len(allStores))
+		err = push.pushBackup(ctx, req, progressRange.Res, allStores, bc.checkpointRunner, progressCallBack)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
-	logutil.CL(ctx).Info("backup push down completed", zap.Int("small-range-count", results.Len()))
+	logutil.CL(ctx).Info("backup push down completed", zap.Int("small-range-count", progressRange.Res.Len()))
 
 	// Find and backup remaining ranges.
 	// TODO: test fine grained backup.
-	if err := bc.fineGrainedBackup(ctx, req, results, progressCallBack); err != nil {
+	request.StartKey, request.EndKey = progressRange.Origin.StartKey, progressRange.Origin.EndKey
+	if err := bc.fineGrainedBackup(ctx, request, progressRange.Res, progressCallBack); err != nil {
 		return errors.Trace(err)
 	}
 
 	// update progress of range unit
 	progressCallBack(RangeUnit)
 
-	if req.IsRawKv {
+	if request.IsRawKv {
 		logutil.CL(ctx).Info("raw ranges backed up",
-			logutil.Key("startKey", req.StartKey),
-			logutil.Key("endKey", req.EndKey),
-			zap.String("cf", req.Cf))
+			logutil.Key("startKey", progressRange.Origin.StartKey),
+			logutil.Key("endKey", progressRange.Origin.EndKey),
+			zap.String("cf", request.Cf))
 	} else {
 		logutil.CL(ctx).Info("transactional range backup completed",
-			zap.Reflect("StartTS", req.StartVersion),
-			zap.Reflect("EndTS", req.EndVersion))
+			zap.Reflect("StartTS", request.StartVersion),
+			zap.Reflect("EndTS", request.EndVersion))
 	}
 
 	var ascendErr error
-	results.Ascend(func(i btree.Item) bool {
+	progressRange.Res.Ascend(func(i btree.Item) bool {
 		r := i.(*rtree.Range)
 		for _, f := range r.Files {
 			summary.CollectSuccessUnit(summary.TotalKV, 1, f.TotalKvs)
@@ -681,7 +823,7 @@ func (bc *Client) BackupRange(
 	}
 
 	// Check if there are duplicated files.
-	checkDupFiles(&results)
+	checkDupFiles(&progressRange.Res)
 
 	return nil
 }
@@ -809,6 +951,11 @@ func (bc *Client) fineGrainedBackup(
 					logutil.Key("fine-grained-range-start", resp.StartKey),
 					logutil.Key("fine-grained-range-end", resp.EndKey),
 				)
+				if bc.checkpointRunner != nil {
+					if err := bc.checkpointRunner.Append(ctx, resp); err != nil {
+						return errors.Annotate(err, "failed to flush checkpoint when fineGrainedBackup")
+					}
+				}
 				rangeTree.Put(resp.StartKey, resp.EndKey, resp.Files)
 				apiVersion := resp.ApiVersion
 				bc.SetApiVersion(apiVersion)
