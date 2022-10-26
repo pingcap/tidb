@@ -196,7 +196,7 @@ func (p *PhysicalTableReader) MemoryUsage() (sum int64) {
 	if p.tablePlan != nil {
 		sum += p.tablePlan.MemoryUsage()
 	}
-	// since TablePlans is the flats of the tablePlan, so we don't count it
+	// since TablePlans is the flats of tablePlan, so we don't count it
 	for _, pInfos := range p.PartitionInfos {
 		sum += pInfos.tableScan.MemoryUsage() + pInfos.partitionInfo.MemoryUsage()
 	}
@@ -524,7 +524,7 @@ func (p *PhysicalIndexLookUpReader) MemoryUsage() (sum int64) {
 		sum += p.PushedLimit.MemoryUsage()
 	}
 
-	// since IndexPlans and TablePlans are the flats of the indexPlan and tablePlan, so we don't count it
+	// since IndexPlans and TablePlans are the flats of indexPlan and tablePlan, so we don't count it
 	for _, col := range p.CommonHandleCols {
 		sum += col.MemoryUsage()
 	}

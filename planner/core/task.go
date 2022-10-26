@@ -181,9 +181,8 @@ func (t *copTask) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = size.SizeOfInterface*(2+int64(cap(t.idxMergePartPlans))) + size.SizeOfBool*4 +
-		size.SizeOfPointer*(3+int64(cap(t.commonHandleCols)+cap(t.tblCols))) +
-		size.SizeOfSlice*4 + t.partitionInfo.MemoryUsage() + size.SizeOfUint64
+	sum = size.SizeOfInterface*(2+int64(cap(t.idxMergePartPlans)+cap(t.rootTaskConds))) + size.SizeOfBool*3 + size.SizeOfUint64 +
+		size.SizeOfPointer*(3+int64(cap(t.commonHandleCols)+cap(t.tblCols))) + size.SizeOfSlice*4 + t.partitionInfo.MemoryUsage()
 	if t.indexPlan != nil {
 		sum += t.indexPlan.MemoryUsage()
 	}
@@ -802,7 +801,7 @@ func (t *rootTask) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = size.SizeOfBool
+	sum = size.SizeOfInterface + size.SizeOfBool
 	if t.p != nil {
 		sum += t.p.MemoryUsage()
 	}
@@ -1945,7 +1944,7 @@ func (t *mppTask) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = size.SizeOfInt + int64(cap(t.hashCols))*size.SizeOfPointer
+	sum = size.SizeOfInterface + size.SizeOfInt + size.SizeOfSlice + int64(cap(t.hashCols))*size.SizeOfPointer
 	if t.p != nil {
 		sum += t.p.MemoryUsage()
 	}
