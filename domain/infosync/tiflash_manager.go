@@ -99,7 +99,7 @@ func getTiFlashPeerWithoutLagCount(tiFlashStores map[int64]helper.StoreStat, tab
 	return flashPeerCount, nil
 }
 
-// GetTiFlashProgress calculates progress based on the region status from PD and TiFlash.
+// getTiFlashProgress calculates progress based on the region status from PD and TiFlash.
 func getTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores map[int64]helper.StoreStat) (float64, error) {
 	var stats helper.PDRegionStats
 	if err := GetTiFlashPDRegionRecordStats(context.Background(), tableID, &stats); err != nil {
@@ -775,6 +775,8 @@ func (m *mockTiFlashReplicaManagerCtx) DeleteTiFlashProgressFromCache(tableID in
 
 // CleanTiFlashProgressCache clean progress cache
 func (m *mockTiFlashReplicaManagerCtx) CleanTiFlashProgressCache() {
+	m.Lock()
+	defer m.Unlock()
 	m.tiflashProgressCache = make(map[int64]float64)
 }
 
