@@ -270,7 +270,7 @@ func buildOnDeleteFKTrigger(is infoschema.InfoSchema, referredFK *model.Referred
 		return nil, nil, nil
 	}
 	switch model.ReferOptionType(fk.OnDelete) {
-	case model.ReferOptionCascade:
+	case model.ReferOptionCascade, model.ReferOptionSetNull:
 		fkCascade := &FKCascade{
 			Tp:         FKCascadeOnDelete,
 			ReferredFK: referredFK,

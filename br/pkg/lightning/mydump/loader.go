@@ -82,6 +82,7 @@ type SourceFileMeta struct {
 	Compression Compression
 	SortKey     string
 	FileSize    int64
+	ExtendData  ExtendColumnData
 }
 
 // NewMDTableMeta creates an Mydumper table meta with specified character set.
@@ -177,6 +178,7 @@ type MDLoader struct {
 }
 
 type mdLoaderSetup struct {
+	sourceID      string
 	loader        *MDLoader
 	dbSchemas     []FileInfo
 	tableSchemas  []FileInfo
@@ -261,6 +263,7 @@ func NewMyDumpLoaderWithStore(ctx context.Context, cfg *config.Config, store sto
 	}
 
 	setup := mdLoaderSetup{
+		sourceID:      cfg.Mydumper.SourceID,
 		loader:        mdl,
 		dbIndexMap:    make(map[string]int),
 		tableIndexMap: make(map[filter.Table]int),
@@ -303,6 +306,12 @@ func (ftype fileType) String() string {
 type FileInfo struct {
 	TableName filter.Table
 	FileMeta  SourceFileMeta
+}
+
+// ExtendColumnData contains the extended column names and values information for a table.
+type ExtendColumnData struct {
+	Columns []string
+	Values  []string
 }
 
 // setup the `s.loader.dbs` slice by scanning all *.sql files inside `dir`.
@@ -527,6 +536,13 @@ func (s *mdLoaderSetup) route() error {
 				knownDBNames[targetDB] = newInfo
 			}
 			arr[i].TableName = filter.Table{Schema: targetDB, Name: targetTable}
+			extendCols, extendVals := r.FetchExtendColumn(rawDB, rawTable, s.sourceID)
+			if len(extendCols) > 0 {
+				arr[i].FileMeta.ExtendData = ExtendColumnData{
+					Columns: extendCols,
+					Values:  extendVals,
+				}
+			}
 		}
 		return nil
 	}
