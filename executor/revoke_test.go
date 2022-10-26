@@ -116,7 +116,7 @@ func TestRevokeTableScope(t *testing.T) {
 			}
 			require.False(t, found, "%s", mysql.Priv2SetStr[v])
 		} else {
-			//delete row when last prv
+			//delete row when last prv , updated by issue #38421
 			require.Len(t, rows, 0)
 		}
 	}
@@ -124,6 +124,7 @@ func TestRevokeTableScope(t *testing.T) {
 	// Revoke all table scope privs.
 	tk.MustExec(`GRANT ALL PRIVILEGES ON test.test1 TO 'testTblRevoke'@'localhost';`)
 	tk.MustExec("REVOKE ALL ON test.test1 FROM 'testTblRevoke'@'localhost';")
+	//delete row when last prv , updated by issue #38421
 	rows := tk.MustQuery(`SELECT Table_priv FROM mysql.Tables_priv WHERE User="testTblRevoke" and host="localhost" and db="test" and Table_name="test1"`).Rows()
 	require.Len(t, rows, 0)
 }
@@ -151,7 +152,9 @@ func TestRevokeColumnScope(t *testing.T) {
 		require.Greater(t, strings.Index(p, mysql.Priv2SetStr[v]), -1)
 
 		tk.MustExec(revokeSQL)
-		tk.MustQuery(checkSQL).Check(testkit.Rows(""))
+		//delete row when last prv , updated by issue #38421
+		rows = tk.MustQuery(checkSQL).Rows()
+		require.Len(t, rows, 0)
 	}
 
 	// Create a new user.
@@ -169,7 +172,9 @@ func TestRevokeColumnScope(t *testing.T) {
 		require.Greater(t, strings.Index(p, mysql.Priv2SetStr[v]), -1)
 	}
 	tk.MustExec("REVOKE ALL(c2) ON test3 FROM 'testCol1Revoke'@'localhost'")
-	tk.MustQuery(`SELECT Column_priv FROM mysql.Columns_priv WHERE User="testCol1Revoke" and host="localhost" and db="test" and Table_name="test3"`).Check(testkit.Rows(""))
+	//delete row when last prv , updated by issue #38421
+	rows := tk.MustQuery(`SELECT Column_priv FROM mysql.Columns_priv WHERE User="testCol1Revoke" and host="localhost" and db="test" and Table_name="test3"`).Rows()
+	require.Len(t, rows, 0)
 }
 
 // ref issue #38421
@@ -184,6 +189,19 @@ func TestRevokeTableSingle(t *testing.T) {
 	tk.MustExec(`REVOKE SELECT  ON test.test1 from test;`)
 
 	rows := tk.MustQuery(`SELECT Column_priv FROM mysql.tables_priv WHERE User="test" `).Rows()
+	require.Len(t, rows, 0)
+}
+
+// ref issue #38421(column fix)
+func TestRevokeTableSingleColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	// Create a new user.
+	tk.MustExec(`CREATE USER test;`)
+	tk.MustExec(`GRANT SELECT(Host) ON mysql.db TO test`)
+	tk.MustExec(`REVOKE SELECT(Host) ON mysql.db FROM test`)
+
+	rows := tk.MustQuery(`SELECT Column_priv FROM mysql.columns_priv WHERE User="test" `).Rows()
 	require.Len(t, rows, 0)
 }
 
