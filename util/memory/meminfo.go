@@ -35,7 +35,9 @@ var MemUsed func() (uint64, error)
 func GetMemTotalIgnoreErr() uint64 {
 	if memTotal, err := MemTotal(); err == nil {
 		failpoint.Inject("GetMemTotalError", func(val failpoint.Value) {
-			memTotal = 0
+			if val, ok := val.(bool); val && ok {
+				memTotal = 0
+			}
 		})
 		return memTotal
 	}
