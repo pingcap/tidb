@@ -694,8 +694,8 @@ def go_deps():
         name = "com_github_daixiang0_gci",
         build_file_proto_mode = "disable",
         importpath = "github.com/daixiang0/gci",
-        sum = "h1:T4xpSC+hmsi4CSyuYfIJdMZAr9o7xZmHpQVygMghGZ4=",
-        version = "v0.8.1",
+        sum = "h1:4VLVDNdJ+wkXxz/nr5QRrbeK+JCvkMVqYjUWB5EnPF4=",
+        version = "v0.8.2",
     )
 
     go_repository(
@@ -3396,8 +3396,8 @@ def go_deps():
         name = "com_github_spf13_cobra",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/spf13/cobra",
-        sum = "h1:42a0n6jwCot1pUmomAp4T7DeMD+20LFv4Q54pxLf2LI=",
-        version = "v1.6.0",
+        sum = "h1:o94oiPyS4KD1mPy2fmcYYHHfCxLqYjJOhGsCHFZtEzA=",
+        version = "v1.6.1",
     )
     go_repository(
         name = "com_github_spf13_jwalterweatherman",
