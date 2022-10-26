@@ -892,9 +892,12 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 
 		recordTokenIssuer := tokenIssuer
 		if len(recordTokenIssuer) > 0 && authPlugin != mysql.AuthTiDBAuthToken {
-			err := fmt.Errorf("TOKEN_REQUIRE is no need for '%s' user", authPlugin)
+			err := fmt.Errorf("TOKEN_ISSUER is no need for '%s' user", authPlugin)
 			e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 			recordTokenIssuer = ""
+		} else if len(recordTokenIssuer) == 0 && authPlugin == mysql.AuthTiDBAuthToken {
+			err := fmt.Errorf("TOKEN_ISSUER is need for 'tidb_auth_token' user, please use 'alter user' to declare it")
+			e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		}
 
 		hostName := strings.ToLower(spec.User.Hostname)
@@ -1035,11 +1038,21 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			failedUsers = append(failedUsers, user)
 			continue
 		}
-		needAuthTokenOptions := false
+
+		type AuthTokenOptionHandler int
+		const (
+			// NotAuthToken means the final auth plugin is NOT tidb_auth_plugin
+			NotAuthToken AuthTokenOptionHandler = iota
+			// NoNeedAuthTokenOptions means the final auth_plugin is tidb_auth_plugin but need no AuthTokenOptions here
+			NoNeedAuthTokenOptions
+			// NeedAuthTokenOptions means the final auth_plugin is tidb_auth_plugin and need AuthTokenOptions here
+			NeedAuthTokenOptions
+		)
+		authTokenOptionHandler := NotAuthToken
 		if currentAuthPlugin, err := getUserAuthenticationPlugin(ctx, e.ctx, spec.User.Username, spec.User.Hostname); err != nil {
 			return err
 		} else if currentAuthPlugin == mysql.AuthTiDBAuthToken {
-			needAuthTokenOptions = true
+			authTokenOptionHandler = NoNeedAuthTokenOptions
 		}
 
 		exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
@@ -1058,9 +1071,11 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			}
 			switch spec.AuthOpt.AuthPlugin {
 			case mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password, mysql.AuthSocket, "":
-				needAuthTokenOptions = false
+				authTokenOptionHandler = NotAuthToken
 			case mysql.AuthTiDBAuthToken:
-				needAuthTokenOptions = true
+				if authTokenOptionHandler != NoNeedAuthTokenOptions {
+					authTokenOptionHandler = NeedAuthTokenOptions
+				}
 			default:
 				return ErrPluginIsNotLoaded.GenWithStackByArgs(spec.AuthOpt.AuthPlugin)
 			}
@@ -1089,14 +1104,17 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		}
 
 		if len(s.AuthTokenOptions) > 0 {
-			if !needAuthTokenOptions {
-				err := errors.New("TOKEN_REQUIRE is no need for the auth plugin")
+			if authTokenOptionHandler == NotAuthToken {
+				err := errors.New("TOKEN_ISSUER is no need for the auth plugin")
 				e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 			} else {
 				for _, authTokenOption := range s.AuthTokenOptions {
 					fields = append(fields, alterField{authTokenOption.Type.String() + "=%?", authTokenOption.Value})
 				}
 			}
+		} else if authTokenOptionHandler == NeedAuthTokenOptions {
+			err := errors.New("Auth plugin 'tidb_auth_plugin' needs TOKEN_ISSUER")
+			e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		}
 
 		if len(fields) > 0 {
