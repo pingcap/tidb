@@ -350,12 +350,6 @@ func TestDispatch(t *testing.T) {
 
 	inputs := []dispatchInput{
 		{
-			com: mysql.ComSleep,
-			in:  nil,
-			err: nil,
-			out: nil,
-		},
-		{
 			com: mysql.ComQuit,
 			in:  nil,
 			err: io.EOF,
@@ -468,12 +462,6 @@ func TestDispatchClientProtocol41(t *testing.T) {
 	userData = append(userData, 0x0)
 
 	inputs := []dispatchInput{
-		{
-			com: mysql.ComSleep,
-			in:  nil,
-			err: nil,
-			out: nil,
-		},
 		{
 			com: mysql.ComQuit,
 			in:  nil,
