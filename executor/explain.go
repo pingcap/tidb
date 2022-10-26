@@ -166,10 +166,15 @@ type memoryDebugModeHandler struct {
 }
 
 func (h *memoryDebugModeHandler) fetchCurrentMemoryUsage(gc bool) (heapInUse, trackedMem uint64) {
+	var instanceStats *runtime.MemStats
 	if gc {
+		// read memory info and cache it when to force GC.
 		runtime.GC()
+		instanceStats = memory.ReadMemStats()
+	} else {
+		instanceStats = memory.ForceReadMemStats()
 	}
-	instanceStats := memory.ReadMemStats()
+
 	heapInUse = instanceStats.HeapInuse
 	trackedMem = uint64(h.memTracker.BytesConsumed())
 	return
