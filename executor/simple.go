@@ -996,6 +996,13 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 	hasRestrictedUserPriv := checker.RequestDynamicVerification(activeRoles, "RESTRICTED_USER_ADMIN", false)
 	hasSystemSchemaPriv := checker.RequestVerification(activeRoles, mysql.SystemDB, mysql.UserTable, "", mysql.UpdatePriv)
 
+	var authTokenOptions []*ast.AuthTokenOrTLSOption
+	for _, authTokenOrTLSOption := range s.AuthTokenOrTLSOptions {
+		if authTokenOrTLSOption.Type == ast.TokenIssuer {
+			authTokenOptions = append(authTokenOptions, authTokenOrTLSOption)
+		}
+	}
+
 	for _, spec := range s.Specs {
 		user := e.ctx.GetSessionVars().User
 		if spec.User.CurrentUser || ((user != nil) && (user.Username == spec.User.Username) && (user.AuthHostname == spec.User.Hostname)) {
@@ -1103,12 +1110,12 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			fields = append(fields, alterField{"user_attributes=json_merge_patch(user_attributes, %?)", newAttributesStr})
 		}
 
-		if len(s.AuthTokenOrTLSOptions) > 0 {
+		if len(authTokenOptions) > 0 {
 			if authTokenOptionHandler == NotAuthToken {
 				err := errors.New("TOKEN_ISSUER is no need for the auth plugin")
 				e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 			} else {
-				for _, authTokenOption := range s.AuthTokenOrTLSOptions {
+				for _, authTokenOption := range authTokenOptions {
 					fields = append(fields, alterField{authTokenOption.Type.String() + "=%?", authTokenOption.Value})
 				}
 			}
