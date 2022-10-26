@@ -427,8 +427,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 		}
 	}
 
-	colIDs = append(colIDs, model.ExtraMetaColID)
-	row = append(row, types.NewMetaDatum(sctx.GetSessionVars().TiDBWriteByTiCDC))
+	colIDs, row = appendMetaCol(sctx, colIDs, row)
 
 	key := t.RecordKey(h)
 	sc, rd := sessVars.StmtCtx, &sessVars.RowEncoder
@@ -541,6 +540,18 @@ func (t *TableCommon) rebuildIndices(ctx sessionctx.Context, txn kv.Transaction,
 		}
 	}
 	return nil
+}
+
+func appendMetaCol(sctx sessionctx.Context, colIDs []int64, row []types.Datum) ([]int64, []types.Datum) {
+	if shouldWriteMetaCol(sctx) {
+		colIDs = append(colIDs, model.ExtraMetaColID)
+		row = append(row, types.NewMetaDatum(sctx.GetSessionVars().TiDBWriteByTiCDC))
+	}
+	return colIDs, row
+}
+
+func shouldWriteMetaCol(sctx sessionctx.Context) bool {
+	return sctx.GetSessionVars().TiDBWriteByTiCDC
 }
 
 // adjustRowValuesBuf adjust writeBufs.AddRowValues length, AddRowValues stores the inserting values that is used
@@ -818,8 +829,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 		}
 	}
 
-	colIDs = append(colIDs, model.ExtraMetaColID)
-	row = append(row, types.NewMetaDatum(sctx.GetSessionVars().TiDBWriteByTiCDC))
+	colIDs, row = appendMetaCol(sctx, colIDs, row)
 
 	writeBufs := sessVars.GetWriteStmtBufs()
 	adjustRowValuesBuf(writeBufs, len(row))
@@ -919,8 +929,11 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 
 	if shouldWriteBinlog(sctx, t.meta) {
 		// For insert, TiDB and Binlog can use same row and schema.
-		binlogRow = row[:len(row)-1]
-		binlogColIDs = colIDs[:len(colIDs)-1]
+		// ignore the last colID and row for meta col
+		if shouldWriteMetaCol(sctx) {
+			binlogRow = row[:len(row)-1]
+			binlogColIDs = colIDs[:len(colIDs)-1]
+		}
 		err = t.addInsertBinlog(sctx, recordID, binlogRow, binlogColIDs)
 		if err != nil {
 			return nil, err
