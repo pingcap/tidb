@@ -22,10 +22,12 @@ import (
 
 var stats atomic.Pointer[globalMstats]
 
+const ReadMemInterval = 300 * time.Millisecond
+
 // ReadMemStats read the mem stats from runtime.ReadMemStats
 func ReadMemStats() *runtime.MemStats {
 	s := stats.Load()
-	if s != nil && time.Since(s.ts) < 300*time.Millisecond {
+	if s != nil {
 		return &s.m
 	}
 	return ForceReadMemStats()
