@@ -347,11 +347,13 @@ func (fpdc fakePDClient) GetTS(ctx context.Context) (int64, int64, error) {
 }
 
 func TestGetTSWithRetry(t *testing.T) {
+	t.Log("case 1:")
 	pDClient := fakePDClient{notLeader: false}
 	client := restore.NewRestoreClient(pDClient, nil, defaultKeepaliveCfg, false)
 	_, err := client.GetTSWithRetry(context.Background())
 	require.NoError(t, err)
 
+	t.Log("case 2:")
 	pDClient = fakePDClient{notLeader: true}
 	client = restore.NewRestoreClient(pDClient, nil, defaultKeepaliveCfg, false)
 	_, err = client.GetTSWithRetry(context.Background())
