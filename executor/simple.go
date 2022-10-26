@@ -892,7 +892,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 
 		recordTokenIssuer := tokenIssuer
 		if len(recordTokenIssuer) > 0 && authPlugin != mysql.AuthTiDBAuthToken {
-			err := errors.New(fmt.Sprintf("TOKEN_REQUIRE is no need for '%s' user", authPlugin))
+			err := fmt.Errorf("TOKEN_REQUIRE is no need for '%s' user", authPlugin)
 			e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 			recordTokenIssuer = ""
 		}
@@ -1090,7 +1090,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 
 		if len(s.AuthTokenOptions) > 0 {
 			if !needAuthTokenOptions {
-				err := errors.New(fmt.Sprintf("TOKEN_REQUIRE is no need for the auth plugin."))
+				err := errors.New("TOKEN_REQUIRE is no need for the auth plugin.")
 				e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 			} else {
 				for _, authTokenOption := range s.AuthTokenOptions {
