@@ -1281,7 +1281,11 @@ func createRestoreClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, m
 }
 
 func checkLogRange(restoreFrom, restoreTo, logMinTS, logMaxTS uint64) error {
-	// serveral ts constraint：
+	if logMinTS == logMaxTS {
+		return errors.Annotatef(berrors.ErrBackupInvalidRange,
+			"cannot find available log data, please make sure the backup checkpoint moving forward.")
+	}
+	// several ts constraint：
 	// logMinTS <= restoreFrom <= restoreTo <= logMaxTS
 	if logMinTS > restoreFrom || restoreFrom > restoreTo || restoreTo > logMaxTS {
 		return errors.Annotatef(berrors.ErrInvalidArgument,
