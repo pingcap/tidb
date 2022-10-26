@@ -283,12 +283,12 @@ func sendPrepareFlashbackToVersionRPC(
 
 		endKey := loc.EndKey
 		isLast := len(endKey) == 0 || (len(rangeEndKey) > 0 && bytes.Compare(endKey, rangeEndKey) >= 0)
-		// If it is the last region
+		// If it is the last region.
 		if isLast {
 			endKey = rangeEndKey
 		}
 
-		logutil.BgLogger().Info("send prepare flashback request", zap.Uint64("region_id", loc.Region.GetID()),
+		logutil.BgLogger().Info("[ddl] send prepare flashback request", zap.Uint64("region_id", loc.Region.GetID()),
 			zap.String("start_key", hex.EncodeToString(startKey)), zap.String("end_key", hex.EncodeToString(endKey)))
 
 		req := tikvrpc.NewRequest(tikvrpc.CmdPrepareFlashbackToVersion, &kvrpcpb.PrepareFlashbackToVersionRequest{
@@ -324,20 +324,6 @@ func sendPrepareFlashbackToVersionRPC(
 	return taskStat, nil
 }
 
-func prepareFlashbackToVersion(
-	ctx context.Context,
-	d *ddlCtx,
-	handler rangetask.TaskHandler,
-	startKey []byte, endKey []byte,
-) (err error) {
-	return rangetask.NewRangeTaskRunner(
-		"flashback-to-version-runner",
-		d.store.(tikv.Storage),
-		int(variable.GetDDLFlashbackConcurrency()),
-		handler,
-	).RunOnRange(ctx, startKey, endKey)
-}
-
 func sendFlashbackToVersionRPC(
 	ctx context.Context,
 	s tikv.Storage,
@@ -366,12 +352,12 @@ func sendFlashbackToVersionRPC(
 
 		endKey := loc.EndKey
 		isLast := len(endKey) == 0 || (len(rangeEndKey) > 0 && bytes.Compare(endKey, rangeEndKey) >= 0)
-		// If it is the last region
+		// If it is the last region.
 		if isLast {
 			endKey = rangeEndKey
 		}
 
-		logutil.BgLogger().Debug("send flashback request", zap.Uint64("region_id", loc.Region.GetID()),
+		logutil.BgLogger().Info("[ddl] send flashback request", zap.Uint64("region_id", loc.Region.GetID()),
 			zap.String("start_key", hex.EncodeToString(startKey)), zap.String("end_key", hex.EncodeToString(endKey)))
 
 		req := tikvrpc.NewRequest(tikvrpc.CmdFlashbackToVersion, &kvrpcpb.FlashbackToVersionRequest{
@@ -535,13 +521,13 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		// Split region by keyRanges, make sure no unrelated key ranges be locked.
 		splitRegionsByKeyRanges(d, keyRanges)
 		totalRegions.Store(0)
-		for _, ranges := range keyRanges {
-			if err = prepareFlashbackToVersion(d.ctx, d,
+		for _, r := range keyRanges {
+			if err = flashbackToVersion(d.ctx, d,
 				func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
 					stats, err := sendPrepareFlashbackToVersionRPC(ctx, d.store.(tikv.Storage), r)
 					totalRegions.Add(uint64(stats.CompletedRegions))
 					return stats, err
-				}, ranges.StartKey, ranges.EndKey); err != nil {
+				}, r.StartKey, r.EndKey); err != nil {
 				logutil.BgLogger().Warn("[ddl] Get error when do flashback", zap.Error(err))
 				return ver, err
 			}
@@ -570,18 +556,18 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			return ver, errors.Trace(err)
 		}
 
-		for _, ranges := range keyRanges {
+		for _, r := range keyRanges {
 			if err = flashbackToVersion(d.ctx, d,
 				func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
-					// use commitTS - 1 as startTS, make sure it less than commitTS.
+					// Use commitTS - 1 as startTS, make sure it less than commitTS.
 					stats, err := sendFlashbackToVersionRPC(ctx, d.store.(tikv.Storage), flashbackTS, commitTS-1, commitTS, r)
 					completedRegions.Add(uint64(stats.CompletedRegions))
-					logutil.BgLogger().Info("flashback cluster stats",
+					logutil.BgLogger().Info("[ddl] flashback cluster stats",
 						zap.Uint64("complete regions", completedRegions.Load()),
 						zap.Uint64("total regions", totalRegions.Load()),
 						zap.Error(err))
 					return stats, err
-				}, ranges.StartKey, ranges.EndKey); err != nil {
+				}, r.StartKey, r.EndKey); err != nil {
 				logutil.BgLogger().Warn("[ddl] Get error when do flashback", zap.Error(err))
 				return ver, errors.Trace(err)
 			}
