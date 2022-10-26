@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/stretchr/testify/require"
 )
 
@@ -41,17 +42,45 @@ func TestShowHistogramsInFlight(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	result := tk.MustQuery("show histograms_in_flight")
-	rows := result.Rows()
-	require.Len(t, rows, 1)
-	require.Equal(t, rows[0][0], "0")
+	alloc := chunk.NewAllocator()
+	//First time does not go to the cache, second time alloc requests memory from the system,
+	//Third time gets the chunk from alloc
+	idAlloc := []chunk.Allocator{nil, alloc, alloc}
+	idresult := []string{"0", "1", "1"}
+	for i, alloc := range idAlloc {
+		tk.Session().GetSessionVars().SetAlloc(alloc)
+		result := tk.MustQuery("show histograms_in_flight")
+		rows := result.Rows()
+		require.Len(t, rows, 1)
+		require.Equal(t, rows[0][0], "0")
+		result = tk.MustQuery("select @@last_sql_use_alloc")
+		result.Check(testkit.Rows(idresult[i]))
+		tk.Session().GetSessionVars().EndAlloc()
+		if alloc != nil {
+			alloc.Reset()
+		}
+	}
 }
 
 func TestShowOpenTables(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustQuery("show open tables")
-	tk.MustQuery("show open tables in test")
+	alloc := chunk.NewAllocator()
+	//First time does not go to the cache, second time alloc requests memory from the system,
+	//Third time gets the chunk from alloc
+	idAlloc := []chunk.Allocator{nil, alloc, alloc}
+	idresult := []string{"0", "1", "1"}
+	for i, alloc := range idAlloc {
+		tk.Session().GetSessionVars().SetAlloc(alloc)
+		tk.MustQuery("show open tables")
+		tk.MustQuery("show open tables in test")
+		result := tk.MustQuery("select @@last_sql_use_alloc")
+		result.Check(testkit.Rows(idresult[i]))
+		tk.Session().GetSessionVars().EndAlloc()
+		if alloc != nil {
+			alloc.Reset()
+		}
+	}
 }
 
 func TestShowCreateViewDefiner(t *testing.T) {
@@ -60,9 +89,23 @@ func TestShowCreateViewDefiner(t *testing.T) {
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%", AuthUsername: "root", AuthHostname: "%"}, nil, nil))
 
 	tk.MustExec("use test")
-	tk.MustExec("create or replace view v1 as select 1")
-	tk.MustQuery("show create view v1").Check(testkit.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`%` SQL SECURITY DEFINER VIEW `v1` (`1`) AS SELECT 1 AS `1`|utf8mb4|utf8mb4_bin"))
-	tk.MustExec("drop view v1")
+	alloc := chunk.NewAllocator()
+	//First time does not go to the cache, second time alloc requests memory from the system,
+	//Third time gets the chunk from alloc
+	idAlloc := []chunk.Allocator{nil, alloc, alloc}
+	idresult := []string{"0", "1", "1"}
+	for i, alloc := range idAlloc {
+		tk.Session().GetSessionVars().SetAlloc(alloc)
+		tk.MustExec("create or replace view v1 as select 1")
+		tk.MustQuery("show create view v1").Check(testkit.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`%` SQL SECURITY DEFINER VIEW `v1` (`1`) AS SELECT 1 AS `1`|utf8mb4|utf8mb4_bin"))
+		tk.MustExec("drop view v1")
+		result := tk.MustQuery("select @@last_sql_use_alloc")
+		result.Check(testkit.Rows(idresult[i]))
+		tk.Session().GetSessionVars().EndAlloc()
+		if alloc != nil {
+			alloc.Reset()
+		}
+	}
 }
 
 func TestShowCreateTable(t *testing.T) {
@@ -70,431 +113,446 @@ func TestShowCreateTable(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t1(a int,b int)")
-	tk.MustExec("drop view if exists v1")
-	tk.MustExec("create or replace definer=`root`@`127.0.0.1` view v1 as select * from t1")
-	tk.MustQuery("show create table v1").Check(testkit.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v1` (`a`, `b`) AS SELECT `test`.`t1`.`a` AS `a`,`test`.`t1`.`b` AS `b` FROM `test`.`t1`|utf8mb4|utf8mb4_bin"))
-	tk.MustQuery("show create view v1").Check(testkit.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v1` (`a`, `b`) AS SELECT `test`.`t1`.`a` AS `a`,`test`.`t1`.`b` AS `b` FROM `test`.`t1`|utf8mb4|utf8mb4_bin"))
-	tk.MustExec("drop view v1")
-	tk.MustExec("drop table t1")
+	alloc := chunk.NewAllocator()
+	//First time does not go to the cache, second time alloc requests memory from the system,
+	//Third time gets the chunk from alloc
+	idAlloc := []chunk.Allocator{nil, alloc, alloc}
+	idresult := []string{"0", "1", "1"}
+	for i, alloc := range idAlloc {
+		tk.Session().GetSessionVars().SetAlloc(alloc)
+		tk.MustExec("drop table if exists t1")
+		tk.MustExec("create table t1(a int,b int)")
+		tk.MustExec("drop view if exists v1")
+		tk.MustExec("create or replace definer=`root`@`127.0.0.1` view v1 as select * from t1")
+		tk.MustQuery("show create table v1").Check(testkit.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v1` (`a`, `b`) AS SELECT `test`.`t1`.`a` AS `a`,`test`.`t1`.`b` AS `b` FROM `test`.`t1`|utf8mb4|utf8mb4_bin"))
+		tk.MustQuery("show create view v1").Check(testkit.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v1` (`a`, `b`) AS SELECT `test`.`t1`.`a` AS `a`,`test`.`t1`.`b` AS `b` FROM `test`.`t1`|utf8mb4|utf8mb4_bin"))
+		tk.MustExec("drop view v1")
+		tk.MustExec("drop table t1")
 
-	tk.MustExec("drop view if exists v")
-	tk.MustExec("create or replace definer=`root`@`127.0.0.1` view v as select JSON_MERGE('{}', '{}') as col;")
-	tk.MustQuery("show create view v").Check(testkit.RowsWithSep("|", "v|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v` (`col`) AS SELECT JSON_MERGE(_UTF8MB4'{}', _UTF8MB4'{}') AS `col`|utf8mb4|utf8mb4_bin"))
-	tk.MustExec("drop view if exists v")
+		tk.MustExec("drop view if exists v")
+		tk.MustExec("create or replace definer=`root`@`127.0.0.1` view v as select JSON_MERGE('{}', '{}') as col;")
+		tk.MustQuery("show create view v").Check(testkit.RowsWithSep("|", "v|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v` (`col`) AS SELECT JSON_MERGE(_UTF8MB4'{}', _UTF8MB4'{}') AS `col`|utf8mb4|utf8mb4_bin"))
+		tk.MustExec("drop view if exists v")
 
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t1(a int,b int)")
-	tk.MustExec("create or replace definer=`root`@`127.0.0.1` view v1 as select avg(a),t1.* from t1 group by a")
-	tk.MustQuery("show create view v1").Check(testkit.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v1` (`avg(a)`, `a`, `b`) AS SELECT AVG(`a`) AS `avg(a)`,`test`.`t1`.`a` AS `a`,`test`.`t1`.`b` AS `b` FROM `test`.`t1` GROUP BY `a`|utf8mb4|utf8mb4_bin"))
-	tk.MustExec("drop view v1")
-	tk.MustExec("create or replace definer=`root`@`127.0.0.1` view v1 as select a+b, t1.* , a as c from t1")
-	tk.MustQuery("show create view v1").Check(testkit.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v1` (`a+b`, `a`, `b`, `c`) AS SELECT `a`+`b` AS `a+b`,`test`.`t1`.`a` AS `a`,`test`.`t1`.`b` AS `b`,`a` AS `c` FROM `test`.`t1`|utf8mb4|utf8mb4_bin"))
-	tk.MustExec("drop table t1")
-	tk.MustExec("drop view v1")
+		tk.MustExec("drop table if exists t1")
+		tk.MustExec("create table t1(a int,b int)")
+		tk.MustExec("create or replace definer=`root`@`127.0.0.1` view v1 as select avg(a),t1.* from t1 group by a")
+		tk.MustQuery("show create view v1").Check(testkit.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v1` (`avg(a)`, `a`, `b`) AS SELECT AVG(`a`) AS `avg(a)`,`test`.`t1`.`a` AS `a`,`test`.`t1`.`b` AS `b` FROM `test`.`t1` GROUP BY `a`|utf8mb4|utf8mb4_bin"))
+		tk.MustExec("drop view v1")
+		tk.MustExec("create or replace definer=`root`@`127.0.0.1` view v1 as select a+b, t1.* , a as c from t1")
+		tk.MustQuery("show create view v1").Check(testkit.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v1` (`a+b`, `a`, `b`, `c`) AS SELECT `a`+`b` AS `a+b`,`test`.`t1`.`a` AS `a`,`test`.`t1`.`b` AS `b`,`a` AS `c` FROM `test`.`t1`|utf8mb4|utf8mb4_bin"))
+		tk.MustExec("drop table t1")
+		tk.MustExec("drop view v1")
 
-	// For issue #9211
-	tk.MustExec("create table t(c int, b int as (c + 1))ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
-	tk.MustQuery("show create table `t`").Check(testkit.RowsWithSep("|",
-		""+
-			"t CREATE TABLE `t` (\n"+
-			"  `c` int(11) DEFAULT NULL,\n"+
-			"  `b` int(11) GENERATED ALWAYS AS (`c` + 1) VIRTUAL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
-	))
+		// For issue #9211
+		tk.MustExec("create table t(c int, b int as (c + 1))ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+		tk.MustQuery("show create table `t`").Check(testkit.RowsWithSep("|",
+			""+
+				"t CREATE TABLE `t` (\n"+
+				"  `c` int(11) DEFAULT NULL,\n"+
+				"  `b` int(11) GENERATED ALWAYS AS (`c` + 1) VIRTUAL\n"+
+				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+		))
 
-	tk.MustExec("drop table t")
-	tk.MustExec("create table t(c int, b int as (c + 1) not null)ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
-	tk.MustQuery("show create table `t`").Check(testkit.RowsWithSep("|",
-		""+
-			"t CREATE TABLE `t` (\n"+
-			"  `c` int(11) DEFAULT NULL,\n"+
-			"  `b` int(11) GENERATED ALWAYS AS (`c` + 1) VIRTUAL NOT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
-	))
-	tk.MustExec("drop table t")
-	tk.MustExec("create table t ( a char(10) charset utf8 collate utf8_bin, b char(10) as (rtrim(a)));")
-	tk.MustQuery("show create table `t`").Check(testkit.RowsWithSep("|",
-		""+
-			"t CREATE TABLE `t` (\n"+
-			"  `a` char(10) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL,\n"+
-			"  `b` char(10) GENERATED ALWAYS AS (rtrim(`a`)) VIRTUAL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
-	))
-	tk.MustExec("drop table t")
+		tk.MustExec("drop table t")
+		tk.MustExec("create table t(c int, b int as (c + 1) not null)ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+		tk.MustQuery("show create table `t`").Check(testkit.RowsWithSep("|",
+			""+
+				"t CREATE TABLE `t` (\n"+
+				"  `c` int(11) DEFAULT NULL,\n"+
+				"  `b` int(11) GENERATED ALWAYS AS (`c` + 1) VIRTUAL NOT NULL\n"+
+				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+		))
+		tk.MustExec("drop table t")
+		tk.MustExec("create table t ( a char(10) charset utf8 collate utf8_bin, b char(10) as (rtrim(a)));")
+		tk.MustQuery("show create table `t`").Check(testkit.RowsWithSep("|",
+			""+
+				"t CREATE TABLE `t` (\n"+
+				"  `a` char(10) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL,\n"+
+				"  `b` char(10) GENERATED ALWAYS AS (rtrim(`a`)) VIRTUAL\n"+
+				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+		))
+		tk.MustExec("drop table t")
 
-	tk.MustExec(`drop table if exists different_charset`)
-	tk.MustExec(`create table different_charset(ch1 varchar(10) charset utf8, ch2 varchar(10) charset binary);`)
-	tk.MustQuery(`show create table different_charset`).Check(testkit.RowsWithSep("|",
-		""+
-			"different_charset CREATE TABLE `different_charset` (\n"+
-			"  `ch1` varchar(10) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL,\n"+
-			"  `ch2` varbinary(10) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
-	))
+		tk.MustExec(`drop table if exists different_charset`)
+		tk.MustExec(`create table different_charset(ch1 varchar(10) charset utf8, ch2 varchar(10) charset binary);`)
+		tk.MustQuery(`show create table different_charset`).Check(testkit.RowsWithSep("|",
+			""+
+				"different_charset CREATE TABLE `different_charset` (\n"+
+				"  `ch1` varchar(10) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL,\n"+
+				"  `ch2` varbinary(10) DEFAULT NULL\n"+
+				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+		))
 
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table `t` (\n" +
-		"`a` timestamp not null default current_timestamp,\n" +
-		"`b` timestamp(3) default current_timestamp(3),\n" +
-		"`c` datetime default current_timestamp,\n" +
-		"`d` datetime(4) default current_timestamp(4),\n" +
-		"`e` varchar(20) default 'cUrrent_tImestamp',\n" +
-		"`f` datetime(2) default current_timestamp(2) on update current_timestamp(2),\n" +
-		"`g` timestamp(2) default current_timestamp(2) on update current_timestamp(2))")
-	tk.MustQuery("show create table `t`").Check(testkit.RowsWithSep("|",
-		""+
-			"t CREATE TABLE `t` (\n"+
-			"  `a` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,\n"+
-			"  `b` timestamp(3) DEFAULT CURRENT_TIMESTAMP(3),\n"+
-			"  `c` datetime DEFAULT CURRENT_TIMESTAMP,\n"+
-			"  `d` datetime(4) DEFAULT CURRENT_TIMESTAMP(4),\n"+
-			"  `e` varchar(20) DEFAULT 'cUrrent_tImestamp',\n"+
-			"  `f` datetime(2) DEFAULT CURRENT_TIMESTAMP(2) ON UPDATE CURRENT_TIMESTAMP(2),\n"+
-			"  `g` timestamp(2) DEFAULT CURRENT_TIMESTAMP(2) ON UPDATE CURRENT_TIMESTAMP(2)\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
-	))
-	tk.MustExec("drop table t")
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table `t` (\n" +
+			"`a` timestamp not null default current_timestamp,\n" +
+			"`b` timestamp(3) default current_timestamp(3),\n" +
+			"`c` datetime default current_timestamp,\n" +
+			"`d` datetime(4) default current_timestamp(4),\n" +
+			"`e` varchar(20) default 'cUrrent_tImestamp',\n" +
+			"`f` datetime(2) default current_timestamp(2) on update current_timestamp(2),\n" +
+			"`g` timestamp(2) default current_timestamp(2) on update current_timestamp(2))")
+		tk.MustQuery("show create table `t`").Check(testkit.RowsWithSep("|",
+			""+
+				"t CREATE TABLE `t` (\n"+
+				"  `a` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,\n"+
+				"  `b` timestamp(3) DEFAULT CURRENT_TIMESTAMP(3),\n"+
+				"  `c` datetime DEFAULT CURRENT_TIMESTAMP,\n"+
+				"  `d` datetime(4) DEFAULT CURRENT_TIMESTAMP(4),\n"+
+				"  `e` varchar(20) DEFAULT 'cUrrent_tImestamp',\n"+
+				"  `f` datetime(2) DEFAULT CURRENT_TIMESTAMP(2) ON UPDATE CURRENT_TIMESTAMP(2),\n"+
+				"  `g` timestamp(2) DEFAULT CURRENT_TIMESTAMP(2) ON UPDATE CURRENT_TIMESTAMP(2)\n"+
+				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+		))
+		tk.MustExec("drop table t")
 
-	tk.MustExec("create table t (a int, b int) shard_row_id_bits = 4 pre_split_regions=3;")
-	tk.MustQuery("show create table `t`").Check(testkit.RowsWithSep("|",
-		""+
-			"t CREATE TABLE `t` (\n"+
-			"  `a` int(11) DEFAULT NULL,\n"+
-			"  `b` int(11) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T! SHARD_ROW_ID_BITS=4 PRE_SPLIT_REGIONS=3 */",
-	))
-	tk.MustExec("drop table t")
+		tk.MustExec("create table t (a int, b int) shard_row_id_bits = 4 pre_split_regions=3;")
+		tk.MustQuery("show create table `t`").Check(testkit.RowsWithSep("|",
+			""+
+				"t CREATE TABLE `t` (\n"+
+				"  `a` int(11) DEFAULT NULL,\n"+
+				"  `b` int(11) DEFAULT NULL\n"+
+				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T! SHARD_ROW_ID_BITS=4 PRE_SPLIT_REGIONS=3 */",
+		))
+		tk.MustExec("drop table t")
 
-	// for issue #20446
-	tk.MustExec("drop table if exists t1;")
-	tk.MustExec("create table t1(c int unsigned default 0);")
-	tk.MustQuery("show create table `t1`").Check(testkit.RowsWithSep("|",
-		""+
-			"t1 CREATE TABLE `t1` (\n"+
-			"  `c` int(10) unsigned DEFAULT '0'\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
-	))
-	tk.MustExec("drop table t1")
+		// for issue #20446
+		tk.MustExec("drop table if exists t1;")
+		tk.MustExec("create table t1(c int unsigned default 0);")
+		tk.MustQuery("show create table `t1`").Check(testkit.RowsWithSep("|",
+			""+
+				"t1 CREATE TABLE `t1` (\n"+
+				"  `c` int(10) unsigned DEFAULT '0'\n"+
+				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+		))
+		tk.MustExec("drop table t1")
 
-	tk.MustExec("CREATE TABLE `log` (" +
-		"`LOG_ID` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT," +
-		"`ROUND_ID` bigint(20) UNSIGNED NOT NULL," +
-		"`USER_ID` int(10) UNSIGNED NOT NULL," +
-		"`USER_IP` int(10) UNSIGNED DEFAULT NULL," +
-		"`END_TIME` datetime NOT NULL," +
-		"`USER_TYPE` int(11) DEFAULT NULL," +
-		"`APP_ID` int(11) DEFAULT NULL," +
-		"PRIMARY KEY (`LOG_ID`,`END_TIME`)," +
-		"KEY `IDX_EndTime` (`END_TIME`)," +
-		"KEY `IDX_RoundId` (`ROUND_ID`)," +
-		"KEY `IDX_UserId_EndTime` (`USER_ID`,`END_TIME`)" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=505488 " +
-		"PARTITION BY RANGE ( month(`end_time`) ) (" +
-		"PARTITION `p1` VALUES LESS THAN (2)," +
-		"PARTITION `p2` VALUES LESS THAN (3)," +
-		"PARTITION `p3` VALUES LESS THAN (4)," +
-		"PARTITION `p4` VALUES LESS THAN (5)," +
-		"PARTITION `p5` VALUES LESS THAN (6)," +
-		"PARTITION `p6` VALUES LESS THAN (7)," +
-		"PARTITION `p7` VALUES LESS THAN (8)," +
-		"PARTITION `p8` VALUES LESS THAN (9)," +
-		"PARTITION `p9` VALUES LESS THAN (10)," +
-		"PARTITION `p10` VALUES LESS THAN (11)," +
-		"PARTITION `p11` VALUES LESS THAN (12)," +
-		"PARTITION `p12` VALUES LESS THAN (MAXVALUE))")
-	tk.MustQuery("show create table log").Check(testkit.RowsWithSep("|",
-		"log CREATE TABLE `log` (\n"+
-			"  `LOG_ID` bigint(20) unsigned NOT NULL AUTO_INCREMENT,\n"+
-			"  `ROUND_ID` bigint(20) unsigned NOT NULL,\n"+
-			"  `USER_ID` int(10) unsigned NOT NULL,\n"+
-			"  `USER_IP` int(10) unsigned DEFAULT NULL,\n"+
-			"  `END_TIME` datetime NOT NULL,\n"+
-			"  `USER_TYPE` int(11) DEFAULT NULL,\n"+
-			"  `APP_ID` int(11) DEFAULT NULL,\n"+
-			"  PRIMARY KEY (`LOG_ID`,`END_TIME`) /*T![clustered_index] NONCLUSTERED */,\n"+
-			"  KEY `IDX_EndTime` (`END_TIME`),\n"+
-			"  KEY `IDX_RoundId` (`ROUND_ID`),\n"+
-			"  KEY `IDX_UserId_EndTime` (`USER_ID`,`END_TIME`)\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=505488\n"+
-			"PARTITION BY RANGE (MONTH(`end_time`))\n"+
-			"(PARTITION `p1` VALUES LESS THAN (2),\n"+
-			" PARTITION `p2` VALUES LESS THAN (3),\n"+
-			" PARTITION `p3` VALUES LESS THAN (4),\n"+
-			" PARTITION `p4` VALUES LESS THAN (5),\n"+
-			" PARTITION `p5` VALUES LESS THAN (6),\n"+
-			" PARTITION `p6` VALUES LESS THAN (7),\n"+
-			" PARTITION `p7` VALUES LESS THAN (8),\n"+
-			" PARTITION `p8` VALUES LESS THAN (9),\n"+
-			" PARTITION `p9` VALUES LESS THAN (10),\n"+
-			" PARTITION `p10` VALUES LESS THAN (11),\n"+
-			" PARTITION `p11` VALUES LESS THAN (12),\n"+
-			" PARTITION `p12` VALUES LESS THAN (MAXVALUE))"))
+		tk.MustExec("CREATE TABLE `log` (" +
+			"`LOG_ID` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT," +
+			"`ROUND_ID` bigint(20) UNSIGNED NOT NULL," +
+			"`USER_ID` int(10) UNSIGNED NOT NULL," +
+			"`USER_IP` int(10) UNSIGNED DEFAULT NULL," +
+			"`END_TIME` datetime NOT NULL," +
+			"`USER_TYPE` int(11) DEFAULT NULL," +
+			"`APP_ID` int(11) DEFAULT NULL," +
+			"PRIMARY KEY (`LOG_ID`,`END_TIME`)," +
+			"KEY `IDX_EndTime` (`END_TIME`)," +
+			"KEY `IDX_RoundId` (`ROUND_ID`)," +
+			"KEY `IDX_UserId_EndTime` (`USER_ID`,`END_TIME`)" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=505488 " +
+			"PARTITION BY RANGE ( month(`end_time`) ) (" +
+			"PARTITION `p1` VALUES LESS THAN (2)," +
+			"PARTITION `p2` VALUES LESS THAN (3)," +
+			"PARTITION `p3` VALUES LESS THAN (4)," +
+			"PARTITION `p4` VALUES LESS THAN (5)," +
+			"PARTITION `p5` VALUES LESS THAN (6)," +
+			"PARTITION `p6` VALUES LESS THAN (7)," +
+			"PARTITION `p7` VALUES LESS THAN (8)," +
+			"PARTITION `p8` VALUES LESS THAN (9)," +
+			"PARTITION `p9` VALUES LESS THAN (10)," +
+			"PARTITION `p10` VALUES LESS THAN (11)," +
+			"PARTITION `p11` VALUES LESS THAN (12)," +
+			"PARTITION `p12` VALUES LESS THAN (MAXVALUE))")
+		tk.MustQuery("show create table log").Check(testkit.RowsWithSep("|",
+			"log CREATE TABLE `log` (\n"+
+				"  `LOG_ID` bigint(20) unsigned NOT NULL AUTO_INCREMENT,\n"+
+				"  `ROUND_ID` bigint(20) unsigned NOT NULL,\n"+
+				"  `USER_ID` int(10) unsigned NOT NULL,\n"+
+				"  `USER_IP` int(10) unsigned DEFAULT NULL,\n"+
+				"  `END_TIME` datetime NOT NULL,\n"+
+				"  `USER_TYPE` int(11) DEFAULT NULL,\n"+
+				"  `APP_ID` int(11) DEFAULT NULL,\n"+
+				"  PRIMARY KEY (`LOG_ID`,`END_TIME`) /*T![clustered_index] NONCLUSTERED */,\n"+
+				"  KEY `IDX_EndTime` (`END_TIME`),\n"+
+				"  KEY `IDX_RoundId` (`ROUND_ID`),\n"+
+				"  KEY `IDX_UserId_EndTime` (`USER_ID`,`END_TIME`)\n"+
+				") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=505488\n"+
+				"PARTITION BY RANGE (MONTH(`end_time`))\n"+
+				"(PARTITION `p1` VALUES LESS THAN (2),\n"+
+				" PARTITION `p2` VALUES LESS THAN (3),\n"+
+				" PARTITION `p3` VALUES LESS THAN (4),\n"+
+				" PARTITION `p4` VALUES LESS THAN (5),\n"+
+				" PARTITION `p5` VALUES LESS THAN (6),\n"+
+				" PARTITION `p6` VALUES LESS THAN (7),\n"+
+				" PARTITION `p7` VALUES LESS THAN (8),\n"+
+				" PARTITION `p8` VALUES LESS THAN (9),\n"+
+				" PARTITION `p9` VALUES LESS THAN (10),\n"+
+				" PARTITION `p10` VALUES LESS THAN (11),\n"+
+				" PARTITION `p11` VALUES LESS THAN (12),\n"+
+				" PARTITION `p12` VALUES LESS THAN (MAXVALUE))"))
 
-	// for issue #11831
-	tk.MustExec("create table ttt4(a varchar(123) default null collate utf8mb4_unicode_ci)engine=innodb default charset=utf8mb4 collate=utf8mb4_unicode_ci;")
-	tk.MustQuery("show create table `ttt4`").Check(testkit.RowsWithSep("|",
-		""+
-			"ttt4 CREATE TABLE `ttt4` (\n"+
-			"  `a` varchar(123) COLLATE utf8mb4_unicode_ci DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
-	))
-	tk.MustExec("create table ttt5(a varchar(123) default null)engine=innodb default charset=utf8mb4 collate=utf8mb4_bin;")
-	tk.MustQuery("show create table `ttt5`").Check(testkit.RowsWithSep("|",
-		""+
-			"ttt5 CREATE TABLE `ttt5` (\n"+
-			"  `a` varchar(123) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
-	))
+		// for issue #11831
+		tk.MustExec("create table ttt4(a varchar(123) default null collate utf8mb4_unicode_ci)engine=innodb default charset=utf8mb4 collate=utf8mb4_unicode_ci;")
+		tk.MustQuery("show create table `ttt4`").Check(testkit.RowsWithSep("|",
+			""+
+				"ttt4 CREATE TABLE `ttt4` (\n"+
+				"  `a` varchar(123) COLLATE utf8mb4_unicode_ci DEFAULT NULL\n"+
+				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+		))
+		tk.MustExec("create table ttt5(a varchar(123) default null)engine=innodb default charset=utf8mb4 collate=utf8mb4_bin;")
+		tk.MustQuery("show create table `ttt5`").Check(testkit.RowsWithSep("|",
+			""+
+				"ttt5 CREATE TABLE `ttt5` (\n"+
+				"  `a` varchar(123) DEFAULT NULL\n"+
+				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+		))
 
-	// for expression index
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t(a int, b real);")
-	tk.MustExec("alter table t add index expr_idx((a*b+1));")
-	tk.MustQuery("show create table t;").Check(testkit.RowsWithSep("|",
-		""+
-			"t CREATE TABLE `t` (\n"+
-			"  `a` int(11) DEFAULT NULL,\n"+
-			"  `b` double DEFAULT NULL,\n"+
-			"  KEY `expr_idx` ((`a` * `b` + 1))\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
-	))
+		// for expression index
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t(a int, b real);")
+		tk.MustExec("alter table t add index expr_idx((a*b+1));")
+		tk.MustQuery("show create table t;").Check(testkit.RowsWithSep("|",
+			""+
+				"t CREATE TABLE `t` (\n"+
+				"  `a` int(11) DEFAULT NULL,\n"+
+				"  `b` double DEFAULT NULL,\n"+
+				"  KEY `expr_idx` ((`a` * `b` + 1))\n"+
+				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+		))
 
-	// Fix issue #15175, show create table sequence_name.
-	tk.MustExec("drop sequence if exists seq")
-	tk.MustExec("create sequence seq")
-	tk.MustQuery("show create table seq;").Check(testkit.Rows("seq CREATE SEQUENCE `seq` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle ENGINE=InnoDB"))
+		// Fix issue #15175, show create table sequence_name.
+		tk.MustExec("drop sequence if exists seq")
+		tk.MustExec("create sequence seq")
+		tk.MustQuery("show create table seq;").Check(testkit.Rows("seq CREATE SEQUENCE `seq` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle ENGINE=InnoDB"))
 
-	// Test for issue #15633, 'binary' collation should be ignored in the result of 'show create table'.
-	tk.MustExec(`drop table if exists binary_collate`)
-	tk.MustExec(`create table binary_collate(a varchar(10)) default collate=binary;`)
-	tk.MustQuery(`show create table binary_collate`).Check(testkit.RowsWithSep("|",
-		""+
-			"binary_collate CREATE TABLE `binary_collate` (\n"+
-			"  `a` varbinary(10) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=binary", // binary collate is ignored
-	))
-	tk.MustExec(`drop table if exists binary_collate`)
-	tk.MustExec(`create table binary_collate(a varchar(10)) default charset=binary collate=binary;`)
-	tk.MustQuery(`show create table binary_collate`).Check(testkit.RowsWithSep("|",
-		""+
-			"binary_collate CREATE TABLE `binary_collate` (\n"+
-			"  `a` varbinary(10) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=binary", // binary collate is ignored
-	))
-	tk.MustExec(`drop table if exists binary_collate`)
-	tk.MustExec(`create table binary_collate(a varchar(10)) default charset=utf8mb4 collate=utf8mb4_bin;`)
-	tk.MustQuery(`show create table binary_collate`).Check(testkit.RowsWithSep("|",
-		""+
-			"binary_collate CREATE TABLE `binary_collate` (\n"+
-			"  `a` varchar(10) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin", // non-binary collate is kept.
-	))
-	// Test for issue #17 in bug competition, default num and sequence should be shown without quote.
-	tk.MustExec(`drop table if exists default_num`)
-	tk.MustExec("create table default_num(a int default 11)")
-	tk.MustQuery("show create table default_num").Check(testkit.RowsWithSep("|",
-		""+
-			"default_num CREATE TABLE `default_num` (\n"+
-			"  `a` int(11) DEFAULT '11'\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
-	))
-	tk.MustExec(`drop table if exists default_varchar`)
-	tk.MustExec("create table default_varchar(a varchar(10) default \"haha\")")
-	tk.MustQuery("show create table default_varchar").Check(testkit.RowsWithSep("|",
-		""+
-			"default_varchar CREATE TABLE `default_varchar` (\n"+
-			"  `a` varchar(10) DEFAULT 'haha'\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
-	))
-	tk.MustExec(`drop table if exists default_sequence`)
-	tk.MustExec("create table default_sequence(a int default nextval(seq))")
-	tk.MustQuery("show create table default_sequence").Check(testkit.RowsWithSep("|",
-		""+
-			"default_sequence CREATE TABLE `default_sequence` (\n"+
-			"  `a` int(11) DEFAULT nextval(`test`.`seq`)\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
-	))
+		// Test for issue #15633, 'binary' collation should be ignored in the result of 'show create table'.
+		tk.MustExec(`drop table if exists binary_collate`)
+		tk.MustExec(`create table binary_collate(a varchar(10)) default collate=binary;`)
+		tk.MustQuery(`show create table binary_collate`).Check(testkit.RowsWithSep("|",
+			""+
+				"binary_collate CREATE TABLE `binary_collate` (\n"+
+				"  `a` varbinary(10) DEFAULT NULL\n"+
+				") ENGINE=InnoDB DEFAULT CHARSET=binary", // binary collate is ignored
+		))
+		tk.MustExec(`drop table if exists binary_collate`)
+		tk.MustExec(`create table binary_collate(a varchar(10)) default charset=binary collate=binary;`)
+		tk.MustQuery(`show create table binary_collate`).Check(testkit.RowsWithSep("|",
+			""+
+				"binary_collate CREATE TABLE `binary_collate` (\n"+
+				"  `a` varbinary(10) DEFAULT NULL\n"+
+				") ENGINE=InnoDB DEFAULT CHARSET=binary", // binary collate is ignored
+		))
+		tk.MustExec(`drop table if exists binary_collate`)
+		tk.MustExec(`create table binary_collate(a varchar(10)) default charset=utf8mb4 collate=utf8mb4_bin;`)
+		tk.MustQuery(`show create table binary_collate`).Check(testkit.RowsWithSep("|",
+			""+
+				"binary_collate CREATE TABLE `binary_collate` (\n"+
+				"  `a` varchar(10) DEFAULT NULL\n"+
+				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin", // non-binary collate is kept.
+		))
+		// Test for issue #17 in bug competition, default num and sequence should be shown without quote.
+		tk.MustExec(`drop table if exists default_num`)
+		tk.MustExec("create table default_num(a int default 11)")
+		tk.MustQuery("show create table default_num").Check(testkit.RowsWithSep("|",
+			""+
+				"default_num CREATE TABLE `default_num` (\n"+
+				"  `a` int(11) DEFAULT '11'\n"+
+				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+		))
+		tk.MustExec(`drop table if exists default_varchar`)
+		tk.MustExec("create table default_varchar(a varchar(10) default \"haha\")")
+		tk.MustQuery("show create table default_varchar").Check(testkit.RowsWithSep("|",
+			""+
+				"default_varchar CREATE TABLE `default_varchar` (\n"+
+				"  `a` varchar(10) DEFAULT 'haha'\n"+
+				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+		))
+		tk.MustExec(`drop table if exists default_sequence`)
+		tk.MustExec("create table default_sequence(a int default nextval(seq))")
+		tk.MustQuery("show create table default_sequence").Check(testkit.RowsWithSep("|",
+			""+
+				"default_sequence CREATE TABLE `default_sequence` (\n"+
+				"  `a` int(11) DEFAULT nextval(`test`.`seq`)\n"+
+				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+		))
 
-	// TiDB defaults (and only supports) foreign_key_checks=0
-	// This means that the child table can be created before the parent table.
-	// This behavior is required for mysqldump restores.
-	tk.MustExec(`DROP TABLE IF EXISTS parent, child`)
-	tk.MustExec(`CREATE TABLE child (id INT NOT NULL PRIMARY KEY auto_increment, parent_id INT NOT NULL, INDEX par_ind (parent_id), CONSTRAINT child_ibfk_1 FOREIGN KEY (parent_id) REFERENCES parent(id))`)
-	tk.MustExec(`CREATE TABLE parent ( id INT NOT NULL PRIMARY KEY auto_increment )`)
-	tk.MustQuery(`show create table child`).Check(testkit.RowsWithSep("|",
-		""+
-			"child CREATE TABLE `child` (\n"+
-			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n"+
-			"  `parent_id` int(11) NOT NULL,\n"+
-			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n"+
-			"  KEY `par_ind` (`parent_id`),\n"+
-			"  CONSTRAINT `child_ibfk_1` FOREIGN KEY (`parent_id`) REFERENCES `test`.`parent` (`id`)\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
-	))
+		// TiDB defaults (and only supports) foreign_key_checks=0
+		// This means that the child table can be created before the parent table.
+		// This behavior is required for mysqldump restores.
+		tk.MustExec(`DROP TABLE IF EXISTS parent, child`)
+		tk.MustExec(`CREATE TABLE child (id INT NOT NULL PRIMARY KEY auto_increment, parent_id INT NOT NULL, INDEX par_ind (parent_id), CONSTRAINT child_ibfk_1 FOREIGN KEY (parent_id) REFERENCES parent(id))`)
+		tk.MustExec(`CREATE TABLE parent ( id INT NOT NULL PRIMARY KEY auto_increment )`)
+		tk.MustQuery(`show create table child`).Check(testkit.RowsWithSep("|",
+			""+
+				"child CREATE TABLE `child` (\n"+
+				"  `id` int(11) NOT NULL AUTO_INCREMENT,\n"+
+				"  `parent_id` int(11) NOT NULL,\n"+
+				"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n"+
+				"  KEY `par_ind` (`parent_id`),\n"+
+				"  CONSTRAINT `child_ibfk_1` FOREIGN KEY (`parent_id`) REFERENCES `test`.`parent` (`id`)\n"+
+				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+		))
 
-	// Test Foreign keys + ON DELETE / ON UPDATE
-	tk.MustExec(`DROP TABLE child`)
-	tk.MustExec(`CREATE TABLE child (id INT NOT NULL PRIMARY KEY auto_increment, parent_id INT NOT NULL, INDEX par_ind (parent_id), CONSTRAINT child_ibfk_1 FOREIGN KEY (parent_id) REFERENCES parent(id) ON DELETE RESTRICT ON UPDATE CASCADE)`)
-	tk.MustQuery(`show create table child`).Check(testkit.RowsWithSep("|",
-		""+
-			"child CREATE TABLE `child` (\n"+
-			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n"+
-			"  `parent_id` int(11) NOT NULL,\n"+
-			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n"+
-			"  KEY `par_ind` (`parent_id`),\n"+
-			"  CONSTRAINT `child_ibfk_1` FOREIGN KEY (`parent_id`) REFERENCES `test`.`parent` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
-	))
+		// Test Foreign keys + ON DELETE / ON UPDATE
+		tk.MustExec(`DROP TABLE child`)
+		tk.MustExec(`CREATE TABLE child (id INT NOT NULL PRIMARY KEY auto_increment, parent_id INT NOT NULL, INDEX par_ind (parent_id), CONSTRAINT child_ibfk_1 FOREIGN KEY (parent_id) REFERENCES parent(id) ON DELETE RESTRICT ON UPDATE CASCADE)`)
+		tk.MustQuery(`show create table child`).Check(testkit.RowsWithSep("|",
+			""+
+				"child CREATE TABLE `child` (\n"+
+				"  `id` int(11) NOT NULL AUTO_INCREMENT,\n"+
+				"  `parent_id` int(11) NOT NULL,\n"+
+				"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n"+
+				"  KEY `par_ind` (`parent_id`),\n"+
+				"  CONSTRAINT `child_ibfk_1` FOREIGN KEY (`parent_id`) REFERENCES `test`.`parent` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE\n"+
+				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+		))
 
-	// Test Foreign key refer other database table.
-	tk.MustExec("create database test1")
-	tk.MustExec("create database test2")
-	tk.MustExec("create table test1.t1 (id int key, b int, index(b));")
-	tk.MustExec("create table test2.t2 (id int key, b int, foreign key fk(b) references test1.t1(id));")
-	tk.MustQuery("show create table test2.t2").Check(testkit.Rows("t2 CREATE TABLE `t2` (\n" +
-		"  `id` int(11) NOT NULL,\n" +
-		"  `b` int(11) DEFAULT NULL,\n" +
-		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n" +
-		"  CONSTRAINT `fk` FOREIGN KEY (`b`) REFERENCES `test1`.`t1` (`id`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		// Test Foreign key refer other database table.
+		tk.MustExec("create database test1")
+		tk.MustExec("create database test2")
+		tk.MustExec("create table test1.t1 (id int key, b int, index(b));")
+		tk.MustExec("create table test2.t2 (id int key, b int, foreign key fk(b) references test1.t1(id));")
+		tk.MustQuery("show create table test2.t2").Check(testkit.Rows("t2 CREATE TABLE `t2` (\n" +
+			"  `id` int(11) NOT NULL,\n" +
+			"  `b` int(11) DEFAULT NULL,\n" +
+			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n" +
+			"  CONSTRAINT `fk` FOREIGN KEY (`b`) REFERENCES `test1`.`t1` (`id`)\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
-	// Test issue #20327
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t(a int, b char(10) as ('a'));")
-	result := tk.MustQuery("show create table t;").Rows()[0][1]
-	require.Regexp(t, `(?s).*GENERATED ALWAYS AS \(_utf8mb4'a'\).*`, result)
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t(a int, b char(10) as (_utf8'a'));")
-	result = tk.MustQuery("show create table t;").Rows()[0][1]
-	require.Regexp(t, `(?s).*GENERATED ALWAYS AS \(_utf8'a'\).*`, result)
-	// Test show list partition table
-	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
-	tk.MustExec(`DROP TABLE IF EXISTS t`)
-	tk.MustExec(`create table t (id int, name varchar(10), unique index idx (id)) partition by list  (id) (
+		// Test issue #20327
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t(a int, b char(10) as ('a'));")
+		result := tk.MustQuery("show create table t;").Rows()[0][1]
+		require.Regexp(t, `(?s).*GENERATED ALWAYS AS \(_utf8mb4'a'\).*`, result)
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t(a int, b char(10) as (_utf8'a'));")
+		result = tk.MustQuery("show create table t;").Rows()[0][1]
+		require.Regexp(t, `(?s).*GENERATED ALWAYS AS \(_utf8'a'\).*`, result)
+		// Test show list partition table
+		tk.MustExec("set @@session.tidb_enable_list_partition = ON")
+		tk.MustExec(`DROP TABLE IF EXISTS t`)
+		tk.MustExec(`create table t (id int, name varchar(10), unique index idx (id)) partition by list  (id) (
     	partition p0 values in (3,5,6,9,17),
     	partition p1 values in (1,2,10,11,19,20),
     	partition p2 values in (4,12,13,14,18),
     	partition p3 values in (7,8,15,16,null)
 	);`)
-	tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|",
-		"t CREATE TABLE `t` (\n"+
-			"  `id` int(11) DEFAULT NULL,\n"+
-			"  `name` varchar(10) DEFAULT NULL,\n"+
-			"  UNIQUE KEY `idx` (`id`)\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
-			"PARTITION BY LIST (`id`)\n"+
-			"(PARTITION `p0` VALUES IN (3,5,6,9,17),\n"+
-			" PARTITION `p1` VALUES IN (1,2,10,11,19,20),\n"+
-			" PARTITION `p2` VALUES IN (4,12,13,14,18),\n"+
-			" PARTITION `p3` VALUES IN (7,8,15,16,NULL))"))
-	// Test show list column partition table
-	tk.MustExec(`DROP TABLE IF EXISTS t`)
-	tk.MustExec(`create table t (id int, name varchar(10), unique index idx (id)) partition by list columns (id) (
+		tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|",
+			"t CREATE TABLE `t` (\n"+
+				"  `id` int(11) DEFAULT NULL,\n"+
+				"  `name` varchar(10) DEFAULT NULL,\n"+
+				"  UNIQUE KEY `idx` (`id`)\n"+
+				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
+				"PARTITION BY LIST (`id`)\n"+
+				"(PARTITION `p0` VALUES IN (3,5,6,9,17),\n"+
+				" PARTITION `p1` VALUES IN (1,2,10,11,19,20),\n"+
+				" PARTITION `p2` VALUES IN (4,12,13,14,18),\n"+
+				" PARTITION `p3` VALUES IN (7,8,15,16,NULL))"))
+		// Test show list column partition table
+		tk.MustExec(`DROP TABLE IF EXISTS t`)
+		tk.MustExec(`create table t (id int, name varchar(10), unique index idx (id)) partition by list columns (id) (
     	partition p0 values in (3,5,6,9,17),
     	partition p1 values in (1,2,10,11,19,20),
     	partition p2 values in (4,12,13,14,18),
     	partition p3 values in (7,8,15,16,null)
 	);`)
-	tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|",
-		"t CREATE TABLE `t` (\n"+
-			"  `id` int(11) DEFAULT NULL,\n"+
-			"  `name` varchar(10) DEFAULT NULL,\n"+
-			"  UNIQUE KEY `idx` (`id`)\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
-			"PARTITION BY LIST COLUMNS(`id`)\n"+
-			"(PARTITION `p0` VALUES IN (3,5,6,9,17),\n"+
-			" PARTITION `p1` VALUES IN (1,2,10,11,19,20),\n"+
-			" PARTITION `p2` VALUES IN (4,12,13,14,18),\n"+
-			" PARTITION `p3` VALUES IN (7,8,15,16,NULL))"))
-	tk.MustExec(`DROP TABLE IF EXISTS t`)
-	tk.MustExec(`create table t (id int, name varchar(10), unique index idx (id, name)) partition by list columns (id, name) (
+		tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|",
+			"t CREATE TABLE `t` (\n"+
+				"  `id` int(11) DEFAULT NULL,\n"+
+				"  `name` varchar(10) DEFAULT NULL,\n"+
+				"  UNIQUE KEY `idx` (`id`)\n"+
+				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
+				"PARTITION BY LIST COLUMNS(`id`)\n"+
+				"(PARTITION `p0` VALUES IN (3,5,6,9,17),\n"+
+				" PARTITION `p1` VALUES IN (1,2,10,11,19,20),\n"+
+				" PARTITION `p2` VALUES IN (4,12,13,14,18),\n"+
+				" PARTITION `p3` VALUES IN (7,8,15,16,NULL))"))
+		tk.MustExec(`DROP TABLE IF EXISTS t`)
+		tk.MustExec(`create table t (id int, name varchar(10), unique index idx (id, name)) partition by list columns (id, name) (
     	partition p0 values in ((3, '1'), (5, '5')),
     	partition p1 values in ((1, '1')));`)
-	// The strings are single quoted in MySQL even if sql_mode doesn't contain ANSI_QUOTES.
-	tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|",
-		"t CREATE TABLE `t` (\n"+
-			"  `id` int(11) DEFAULT NULL,\n"+
-			"  `name` varchar(10) DEFAULT NULL,\n"+
-			"  UNIQUE KEY `idx` (`id`,`name`)\n"+
+		// The strings are single quoted in MySQL even if sql_mode doesn't contain ANSI_QUOTES.
+		tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|",
+			"t CREATE TABLE `t` (\n"+
+				"  `id` int(11) DEFAULT NULL,\n"+
+				"  `name` varchar(10) DEFAULT NULL,\n"+
+				"  UNIQUE KEY `idx` (`id`,`name`)\n"+
+				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
+				"PARTITION BY LIST COLUMNS(`id`,`name`)\n"+
+				"(PARTITION `p0` VALUES IN ((3,'1'),(5,'5')),\n"+
+				" PARTITION `p1` VALUES IN ((1,'1')))"))
+		tk.MustExec(`DROP TABLE IF EXISTS t`)
+		tk.MustExec(`create table t (id int primary key, v varchar(255) not null, key idx_v (v) comment 'foo\'bar')`)
+		tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|",
+			"t CREATE TABLE `t` (\n"+
+				"  `id` int(11) NOT NULL,\n"+
+				"  `v` varchar(255) NOT NULL,\n"+
+				"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n"+
+				"  KEY `idx_v` (`v`) COMMENT 'foo''bar'\n"+
+				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+		// For issue #29922
+		tk.MustExec("CREATE TABLE `thash` (\n  `id` bigint unsigned NOT NULL,\n  `data` varchar(255) DEFAULT NULL,\n  PRIMARY KEY (`id`)\n)\nPARTITION BY HASH (`id`)\n(PARTITION pEven COMMENT = \"Even ids\",\n PARTITION pOdd COMMENT = \"Odd ids\");")
+		tk.MustQuery("show create table `thash`").Check(testkit.RowsWithSep("|", ""+
+			"thash CREATE TABLE `thash` (\n"+
+			"  `id` bigint(20) unsigned NOT NULL,\n"+
+			"  `data` varchar(255) DEFAULT NULL,\n"+
+			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
-			"PARTITION BY LIST COLUMNS(`id`,`name`)\n"+
-			"(PARTITION `p0` VALUES IN ((3,'1'),(5,'5')),\n"+
-			" PARTITION `p1` VALUES IN ((1,'1')))"))
-	tk.MustExec(`DROP TABLE IF EXISTS t`)
-	tk.MustExec(`create table t (id int primary key, v varchar(255) not null, key idx_v (v) comment 'foo\'bar')`)
-	tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|",
-		"t CREATE TABLE `t` (\n"+
-			"  `id` int(11) NOT NULL,\n"+
-			"  `v` varchar(255) NOT NULL,\n"+
-			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n"+
-			"  KEY `idx_v` (`v`) COMMENT 'foo''bar'\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+			"PARTITION BY HASH (`id`)\n"+
+			"(PARTITION `pEven` COMMENT 'Even ids',\n"+
+			" PARTITION `pOdd` COMMENT 'Odd ids')",
+		))
+		// empty edge case
+		tk.MustExec("drop table if exists `thash`")
+		tk.MustExec("CREATE TABLE `thash` (\n  `id` bigint unsigned NOT NULL,\n  `data` varchar(255) DEFAULT NULL,\n  PRIMARY KEY (`id`)\n)\nPARTITION BY HASH (`id`);")
+		tk.MustQuery("show create table `thash`").Check(testkit.RowsWithSep("|", ""+
+			"thash CREATE TABLE `thash` (\n"+
+			"  `id` bigint(20) unsigned NOT NULL,\n"+
+			"  `data` varchar(255) DEFAULT NULL,\n"+
+			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
+			"PARTITION BY HASH (`id`) PARTITIONS 1",
+		))
 
-	// For issue #29922
-	tk.MustExec("CREATE TABLE `thash` (\n  `id` bigint unsigned NOT NULL,\n  `data` varchar(255) DEFAULT NULL,\n  PRIMARY KEY (`id`)\n)\nPARTITION BY HASH (`id`)\n(PARTITION pEven COMMENT = \"Even ids\",\n PARTITION pOdd COMMENT = \"Odd ids\");")
-	tk.MustQuery("show create table `thash`").Check(testkit.RowsWithSep("|", ""+
-		"thash CREATE TABLE `thash` (\n"+
-		"  `id` bigint(20) unsigned NOT NULL,\n"+
-		"  `data` varchar(255) DEFAULT NULL,\n"+
-		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n"+
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
-		"PARTITION BY HASH (`id`)\n"+
-		"(PARTITION `pEven` COMMENT 'Even ids',\n"+
-		" PARTITION `pOdd` COMMENT 'Odd ids')",
-	))
-	// empty edge case
-	tk.MustExec("drop table if exists `thash`")
-	tk.MustExec("CREATE TABLE `thash` (\n  `id` bigint unsigned NOT NULL,\n  `data` varchar(255) DEFAULT NULL,\n  PRIMARY KEY (`id`)\n)\nPARTITION BY HASH (`id`);")
-	tk.MustQuery("show create table `thash`").Check(testkit.RowsWithSep("|", ""+
-		"thash CREATE TABLE `thash` (\n"+
-		"  `id` bigint(20) unsigned NOT NULL,\n"+
-		"  `data` varchar(255) DEFAULT NULL,\n"+
-		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n"+
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
-		"PARTITION BY HASH (`id`) PARTITIONS 1",
-	))
+		// default value escape character '\\' display case
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t(a int primary key, b varchar(20) default '\\\\');")
+		tk.MustQuery("show create table t;").Check(testkit.RowsWithSep("|",
+			""+
+				"t CREATE TABLE `t` (\n"+
+				"  `a` int(11) NOT NULL,\n"+
+				"  `b` varchar(20) DEFAULT '\\\\',\n"+
+				"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n"+
+				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
-	// default value escape character '\\' display case
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t(a int primary key, b varchar(20) default '\\\\');")
-	tk.MustQuery("show create table t;").Check(testkit.RowsWithSep("|",
-		""+
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t(" +
+			"a set('a', 'b') charset binary," +
+			"b enum('a', 'b') charset ascii);")
+		tk.MustQuery("show create table t;").Check(testkit.RowsWithSep("|",
+			""+
+				"t CREATE TABLE `t` (\n"+
+				"  `a` set('a','b') CHARACTER SET binary COLLATE binary DEFAULT NULL,\n"+
+				"  `b` enum('a','b') CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL\n"+
+				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+		tk.MustExec(`drop table if exists t`)
+		tk.MustExec(`create table t(a bit default (rand()))`)
+		tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|", ""+
 			"t CREATE TABLE `t` (\n"+
-			"  `a` int(11) NOT NULL,\n"+
-			"  `b` varchar(20) DEFAULT '\\\\',\n"+
-			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n"+
+			"  `a` bit(1) DEFAULT rand()\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t(" +
-		"a set('a', 'b') charset binary," +
-		"b enum('a', 'b') charset ascii);")
-	tk.MustQuery("show create table t;").Check(testkit.RowsWithSep("|",
-		""+
-			"t CREATE TABLE `t` (\n"+
-			"  `a` set('a','b') CHARACTER SET binary COLLATE binary DEFAULT NULL,\n"+
-			"  `b` enum('a','b') CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-
-	tk.MustExec(`drop table if exists t`)
-	tk.MustExec(`create table t(a bit default (rand()))`)
-	tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|", ""+
-		"t CREATE TABLE `t` (\n"+
-		"  `a` bit(1) DEFAULT rand()\n"+
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-
-	tk.MustExec(`drop table if exists t`)
-	err := tk.ExecToErr(`create table t (a varchar(255) character set ascii) partition by range columns (a) (partition p values less than (0xff))`)
-	require.ErrorContains(t, err, "[ddl:1654]Partition column values of incorrect type")
-	tk.MustExec(`create table t (a varchar(255) character set ascii) partition by range columns (a) (partition p values less than (0x7f))`)
-	tk.MustQuery(`show create table t`).Check(testkit.Rows(
-		"t CREATE TABLE `t` (\n" +
-			"  `a` varchar(255) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-			"PARTITION BY RANGE COLUMNS(`a`)\n" +
-			"(PARTITION `p` VALUES LESS THAN (x'7f'))"))
+		tk.MustExec(`drop table if exists t`)
+		err := tk.ExecToErr(`create table t (a varchar(255) character set ascii) partition by range columns (a) (partition p values less than (0xff))`)
+		require.ErrorContains(t, err, "[ddl:1654]Partition column values of incorrect type")
+		tk.MustExec(`create table t (a varchar(255) character set ascii) partition by range columns (a) (partition p values less than (0x7f))`)
+		tk.MustQuery(`show create table t`).Check(testkit.Rows(
+			"t CREATE TABLE `t` (\n" +
+				"  `a` varchar(255) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL\n" +
+				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+				"PARTITION BY RANGE COLUMNS(`a`)\n" +
+				"(PARTITION `p` VALUES LESS THAN (x'7f'))"))
+		resultQuery := tk.MustQuery("select @@last_sql_use_alloc")
+		resultQuery.Check(testkit.Rows(idresult[i]))
+		tk.MustExec("drop table t")
+		tk.Session().GetSessionVars().EndAlloc()
+		if alloc != nil {
+			alloc.Reset()
+		}
+	}
 }
 
 func TestShowCreateTablePlacement(t *testing.T) {
@@ -502,273 +560,343 @@ func TestShowCreateTablePlacement(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	defer tk.MustExec(`DROP TABLE IF EXISTS t`)
+	alloc := chunk.NewAllocator()
+	//First time does not go to the cache, second time alloc requests memory from the system,
+	//Third time gets the chunk from alloc
+	idAlloc := []chunk.Allocator{nil, alloc, alloc}
+	idresult := []string{"0", "1", "1"}
+	for i, alloc := range idAlloc {
+		tk.Session().GetSessionVars().SetAlloc(alloc)
+		// case for policy
+		tk.MustExec(`DROP TABLE IF EXISTS t`)
+		tk.MustExec("create placement policy x " +
+			"FOLLOWERS=2 " +
+			"CONSTRAINTS=\"[+disk=ssd]\" ")
 
-	// case for policy
-	tk.MustExec(`DROP TABLE IF EXISTS t`)
-	tk.MustExec("create placement policy x " +
-		"FOLLOWERS=2 " +
-		"CONSTRAINTS=\"[+disk=ssd]\" ")
-	defer tk.MustExec(`DROP PLACEMENT POLICY IF EXISTS x`)
-	tk.MustExec("create table t(a int)" +
-		"PLACEMENT POLICY=\"x\"")
-	tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|",
-		"t CREATE TABLE `t` (\n"+
-			"  `a` int(11) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin "+
-			"/*T![placement] PLACEMENT POLICY=`x` */",
-	))
+		tk.MustExec("create table t(a int)" +
+			"PLACEMENT POLICY=\"x\"")
+		tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|",
+			"t CREATE TABLE `t` (\n"+
+				"  `a` int(11) DEFAULT NULL\n"+
+				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin "+
+				"/*T![placement] PLACEMENT POLICY=`x` */",
+		))
 
-	// case for policy with quotes
-	tk.MustExec(`DROP TABLE IF EXISTS t`)
-	tk.MustExec("create table t(a int)" +
-		"/*T![placement] PLACEMENT POLICY=\"x\" */")
-	tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|",
-		"t CREATE TABLE `t` (\n"+
-			"  `a` int(11) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin "+
-			"/*T![placement] PLACEMENT POLICY=`x` */",
-	))
+		// case for policy with quotes
+		tk.MustExec(`DROP TABLE IF EXISTS t`)
+		tk.MustExec("create table t(a int)" +
+			"/*T![placement] PLACEMENT POLICY=\"x\" */")
+		tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|",
+			"t CREATE TABLE `t` (\n"+
+				"  `a` int(11) DEFAULT NULL\n"+
+				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin "+
+				"/*T![placement] PLACEMENT POLICY=`x` */",
+		))
 
-	// Partitioned tables
-	tk.MustExec(`DROP TABLE IF EXISTS t`)
-	tk.MustExec("set @old_list_part = @@tidb_enable_list_partition")
-	defer tk.MustExec("set @@tidb_enable_list_partition = @old_list_part")
-	tk.MustExec("set tidb_enable_list_partition = 1")
-	tk.MustExec("create table t(a int, b varchar(255))" +
-		"/*T![placement] PLACEMENT POLICY=\"x\" */" +
-		"PARTITION BY LIST (a)\n" +
-		"(PARTITION pLow VALUES in (1,2,3,5,8) COMMENT 'a comment' placement policy 'x'," +
-		" PARTITION pMid VALUES in (9) COMMENT 'another comment'," +
-		"partition pMax values IN (10,11,12))")
-	tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|", ""+
-		"t CREATE TABLE `t` (\n"+
-		"  `a` int(11) DEFAULT NULL,\n"+
-		"  `b` varchar(255) DEFAULT NULL\n"+
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`x` */\n"+
-		"PARTITION BY LIST (`a`)\n"+
-		"(PARTITION `pLow` VALUES IN (1,2,3,5,8) COMMENT 'a comment' /*T![placement] PLACEMENT POLICY=`x` */,\n"+
-		" PARTITION `pMid` VALUES IN (9) COMMENT 'another comment',\n"+
-		" PARTITION `pMax` VALUES IN (10,11,12))",
-	))
+		// Partitioned tables
+		tk.MustExec(`DROP TABLE IF EXISTS t`)
+		tk.MustExec("set @old_list_part = @@tidb_enable_list_partition")
+		tk.MustExec("set tidb_enable_list_partition = 1")
+		tk.MustExec("create table t(a int, b varchar(255))" +
+			"/*T![placement] PLACEMENT POLICY=\"x\" */" +
+			"PARTITION BY LIST (a)\n" +
+			"(PARTITION pLow VALUES in (1,2,3,5,8) COMMENT 'a comment' placement policy 'x'," +
+			" PARTITION pMid VALUES in (9) COMMENT 'another comment'," +
+			"partition pMax values IN (10,11,12))")
+		tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|", ""+
+			"t CREATE TABLE `t` (\n"+
+			"  `a` int(11) DEFAULT NULL,\n"+
+			"  `b` varchar(255) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`x` */\n"+
+			"PARTITION BY LIST (`a`)\n"+
+			"(PARTITION `pLow` VALUES IN (1,2,3,5,8) COMMENT 'a comment' /*T![placement] PLACEMENT POLICY=`x` */,\n"+
+			" PARTITION `pMid` VALUES IN (9) COMMENT 'another comment',\n"+
+			" PARTITION `pMax` VALUES IN (10,11,12))",
+		))
 
-	tk.MustExec(`DROP TABLE IF EXISTS t`)
-	tk.MustExec("create table t(a int, b varchar(255))" +
-		"PARTITION BY LIST COLUMNS (b)\n" +
-		"(PARTITION pLow VALUES in ('1','2','3','5','8') COMMENT 'a comment' placement policy 'x'," +
-		"partition pMax values IN ('10','11','12'))")
-	tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|", ""+
-		"t CREATE TABLE `t` (\n"+
-		"  `a` int(11) DEFAULT NULL,\n"+
-		"  `b` varchar(255) DEFAULT NULL\n"+
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
-		"PARTITION BY LIST COLUMNS(`b`)\n"+
-		"(PARTITION `pLow` VALUES IN ('1','2','3','5','8') COMMENT 'a comment' /*T![placement] PLACEMENT POLICY=`x` */,\n"+
-		" PARTITION `pMax` VALUES IN ('10','11','12'))",
-	))
+		tk.MustExec(`DROP TABLE IF EXISTS t`)
+		tk.MustExec("create table t(a int, b varchar(255))" +
+			"PARTITION BY LIST COLUMNS (b)\n" +
+			"(PARTITION pLow VALUES in ('1','2','3','5','8') COMMENT 'a comment' placement policy 'x'," +
+			"partition pMax values IN ('10','11','12'))")
+		tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|", ""+
+			"t CREATE TABLE `t` (\n"+
+			"  `a` int(11) DEFAULT NULL,\n"+
+			"  `b` varchar(255) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
+			"PARTITION BY LIST COLUMNS(`b`)\n"+
+			"(PARTITION `pLow` VALUES IN ('1','2','3','5','8') COMMENT 'a comment' /*T![placement] PLACEMENT POLICY=`x` */,\n"+
+			" PARTITION `pMax` VALUES IN ('10','11','12'))",
+		))
 
-	tk.MustExec(`DROP TABLE IF EXISTS t`)
-	tk.MustExec("create table t(a int, b varchar(255))" +
-		"PARTITION BY LIST COLUMNS (a,b)\n" +
-		"(PARTITION pLow VALUES in ((1,'1'),(2,'2'),(3,'3'),(5,'5'),(8,'8')) COMMENT 'a comment' placement policy 'x'," +
-		"partition pMax values IN ((10,'10'),(11,'11'),(12,'12')))")
-	tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|", ""+
-		"t CREATE TABLE `t` (\n"+
-		"  `a` int(11) DEFAULT NULL,\n"+
-		"  `b` varchar(255) DEFAULT NULL\n"+
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
-		"PARTITION BY LIST COLUMNS(`a`,`b`)\n"+
-		"(PARTITION `pLow` VALUES IN ((1,'1'),(2,'2'),(3,'3'),(5,'5'),(8,'8')) COMMENT 'a comment' /*T![placement] PLACEMENT POLICY=`x` */,\n"+
-		" PARTITION `pMax` VALUES IN ((10,'10'),(11,'11'),(12,'12')))",
-	))
+		tk.MustExec(`DROP TABLE IF EXISTS t`)
+		tk.MustExec("create table t(a int, b varchar(255))" +
+			"PARTITION BY LIST COLUMNS (a,b)\n" +
+			"(PARTITION pLow VALUES in ((1,'1'),(2,'2'),(3,'3'),(5,'5'),(8,'8')) COMMENT 'a comment' placement policy 'x'," +
+			"partition pMax values IN ((10,'10'),(11,'11'),(12,'12')))")
+		tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|", ""+
+			"t CREATE TABLE `t` (\n"+
+			"  `a` int(11) DEFAULT NULL,\n"+
+			"  `b` varchar(255) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
+			"PARTITION BY LIST COLUMNS(`a`,`b`)\n"+
+			"(PARTITION `pLow` VALUES IN ((1,'1'),(2,'2'),(3,'3'),(5,'5'),(8,'8')) COMMENT 'a comment' /*T![placement] PLACEMENT POLICY=`x` */,\n"+
+			" PARTITION `pMax` VALUES IN ((10,'10'),(11,'11'),(12,'12')))",
+		))
 
-	tk.MustExec(`DROP TABLE IF EXISTS t`)
-	tk.MustExec("create table t(a int, b varchar(255))" +
-		"PARTITION BY RANGE (a)\n" +
-		"(PARTITION pLow VALUES less than (1000000) COMMENT 'a comment' placement policy 'x'," +
-		"partition pMax values LESS THAN (MAXVALUE))")
-	tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|", ""+
-		"t CREATE TABLE `t` (\n"+
-		"  `a` int(11) DEFAULT NULL,\n"+
-		"  `b` varchar(255) DEFAULT NULL\n"+
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
-		"PARTITION BY RANGE (`a`)\n"+
-		"(PARTITION `pLow` VALUES LESS THAN (1000000) COMMENT 'a comment' /*T![placement] PLACEMENT POLICY=`x` */,\n"+
-		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))",
-	))
+		tk.MustExec(`DROP TABLE IF EXISTS t`)
+		tk.MustExec("create table t(a int, b varchar(255))" +
+			"PARTITION BY RANGE (a)\n" +
+			"(PARTITION pLow VALUES less than (1000000) COMMENT 'a comment' placement policy 'x'," +
+			"partition pMax values LESS THAN (MAXVALUE))")
+		tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|", ""+
+			"t CREATE TABLE `t` (\n"+
+			"  `a` int(11) DEFAULT NULL,\n"+
+			"  `b` varchar(255) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
+			"PARTITION BY RANGE (`a`)\n"+
+			"(PARTITION `pLow` VALUES LESS THAN (1000000) COMMENT 'a comment' /*T![placement] PLACEMENT POLICY=`x` */,\n"+
+			" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))",
+		))
 
-	tk.MustExec(`DROP TABLE IF EXISTS t`)
-	tk.MustExec("create table t(a int, b varchar(255))" +
-		"PARTITION BY RANGE COLUMNS (b)\n" +
-		"(PARTITION pLow VALUES less than ('1000000') COMMENT 'a comment' placement policy 'x'," +
-		"partition pMax values LESS THAN (MAXVALUE))")
-	tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|", ""+
-		"t CREATE TABLE `t` (\n"+
-		"  `a` int(11) DEFAULT NULL,\n"+
-		"  `b` varchar(255) DEFAULT NULL\n"+
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
-		"PARTITION BY RANGE COLUMNS(`b`)\n"+
-		"(PARTITION `pLow` VALUES LESS THAN ('1000000') COMMENT 'a comment' /*T![placement] PLACEMENT POLICY=`x` */,\n"+
-		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))",
-	))
+		tk.MustExec(`DROP TABLE IF EXISTS t`)
+		tk.MustExec("create table t(a int, b varchar(255))" +
+			"PARTITION BY RANGE COLUMNS (b)\n" +
+			"(PARTITION pLow VALUES less than ('1000000') COMMENT 'a comment' placement policy 'x'," +
+			"partition pMax values LESS THAN (MAXVALUE))")
+		tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|", ""+
+			"t CREATE TABLE `t` (\n"+
+			"  `a` int(11) DEFAULT NULL,\n"+
+			"  `b` varchar(255) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
+			"PARTITION BY RANGE COLUMNS(`b`)\n"+
+			"(PARTITION `pLow` VALUES LESS THAN ('1000000') COMMENT 'a comment' /*T![placement] PLACEMENT POLICY=`x` */,\n"+
+			" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))",
+		))
 
-	tk.MustExec(`DROP TABLE IF EXISTS t`)
+		tk.MustExec(`DROP TABLE IF EXISTS t`)
 
-	tk.MustExec("create table t(a int, b varchar(255))" +
-		"/*T![placement] PLACEMENT POLICY=\"x\" */" +
-		"PARTITION BY RANGE COLUMNS (a,b)\n" +
-		"(PARTITION pLow VALUES less than (1000000,'1000000') COMMENT 'a comment' placement policy 'x'," +
-		" PARTITION pMidLow VALUES less than (1000000,MAXVALUE) COMMENT 'another comment' placement policy 'x'," +
-		" PARTITION pMadMax VALUES less than (9000000,'1000000') COMMENT ='Not a comment' placement policy 'x'," +
-		"partition pMax values LESS THAN (MAXVALUE, 'Does not matter...'))")
-	tk.MustQuery("show warnings").Check(testkit.Rows())
-	tk.MustExec(`insert into t values (1,'1')`)
-	tk.MustQuery("select * from t").Check(testkit.Rows("1 1"))
-	tk.MustQuery(`show create table t`).Check(testkit.Rows(
-		"t CREATE TABLE `t` (\n" +
-			"  `a` int(11) DEFAULT NULL,\n" +
-			"  `b` varchar(255) DEFAULT NULL\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`x` */\n" +
-			"PARTITION BY RANGE COLUMNS(`a`,`b`)\n" +
-			"(PARTITION `pLow` VALUES LESS THAN (1000000,'1000000') COMMENT 'a comment' /*T![placement] PLACEMENT POLICY=`x` */,\n" +
-			" PARTITION `pMidLow` VALUES LESS THAN (1000000,MAXVALUE) COMMENT 'another comment' /*T![placement] PLACEMENT POLICY=`x` */,\n" +
-			" PARTITION `pMadMax` VALUES LESS THAN (9000000,'1000000') COMMENT 'Not a comment' /*T![placement] PLACEMENT POLICY=`x` */,\n" +
-			" PARTITION `pMax` VALUES LESS THAN (MAXVALUE,'Does not matter...'))"))
+		tk.MustExec("create table t(a int, b varchar(255))" +
+			"/*T![placement] PLACEMENT POLICY=\"x\" */" +
+			"PARTITION BY RANGE COLUMNS (a,b)\n" +
+			"(PARTITION pLow VALUES less than (1000000,'1000000') COMMENT 'a comment' placement policy 'x'," +
+			" PARTITION pMidLow VALUES less than (1000000,MAXVALUE) COMMENT 'another comment' placement policy 'x'," +
+			" PARTITION pMadMax VALUES less than (9000000,'1000000') COMMENT ='Not a comment' placement policy 'x'," +
+			"partition pMax values LESS THAN (MAXVALUE, 'Does not matter...'))")
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+		tk.MustExec(`insert into t values (1,'1')`)
+		tk.MustQuery("select * from t").Check(testkit.Rows("1 1"))
+		tk.MustQuery(`show create table t`).Check(testkit.Rows(
+			"t CREATE TABLE `t` (\n" +
+				"  `a` int(11) DEFAULT NULL,\n" +
+				"  `b` varchar(255) DEFAULT NULL\n" +
+				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`x` */\n" +
+				"PARTITION BY RANGE COLUMNS(`a`,`b`)\n" +
+				"(PARTITION `pLow` VALUES LESS THAN (1000000,'1000000') COMMENT 'a comment' /*T![placement] PLACEMENT POLICY=`x` */,\n" +
+				" PARTITION `pMidLow` VALUES LESS THAN (1000000,MAXVALUE) COMMENT 'another comment' /*T![placement] PLACEMENT POLICY=`x` */,\n" +
+				" PARTITION `pMadMax` VALUES LESS THAN (9000000,'1000000') COMMENT 'Not a comment' /*T![placement] PLACEMENT POLICY=`x` */,\n" +
+				" PARTITION `pMax` VALUES LESS THAN (MAXVALUE,'Does not matter...'))"))
 
-	tk.MustExec(`DROP TABLE IF EXISTS t`)
-	tk.MustExec("create table t(a int, b varchar(255))" +
-		"/*T![placement] PLACEMENT POLICY=\"x\" */" +
-		"PARTITION BY HASH (a) PARTITIONS 2")
-	tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|", ""+
-		"t CREATE TABLE `t` (\n"+
-		"  `a` int(11) DEFAULT NULL,\n"+
-		"  `b` varchar(255) DEFAULT NULL\n"+
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`x` */\n"+
-		"PARTITION BY HASH (`a`) PARTITIONS 2",
-	))
+		tk.MustExec(`DROP TABLE IF EXISTS t`)
+		tk.MustExec("create table t(a int, b varchar(255))" +
+			"/*T![placement] PLACEMENT POLICY=\"x\" */" +
+			"PARTITION BY HASH (a) PARTITIONS 2")
+		tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|", ""+
+			"t CREATE TABLE `t` (\n"+
+			"  `a` int(11) DEFAULT NULL,\n"+
+			"  `b` varchar(255) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`x` */\n"+
+			"PARTITION BY HASH (`a`) PARTITIONS 2",
+		))
 
-	tk.MustExec(`DROP TABLE IF EXISTS t`)
-	tk.MustExec("create table t(a int, b varchar(255))" +
-		"PARTITION BY HASH (a)\n" +
-		"(PARTITION pLow COMMENT 'a comment' placement policy 'x'," +
-		"partition pMax)")
-	tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|", ""+
-		"t CREATE TABLE `t` (\n"+
-		"  `a` int(11) DEFAULT NULL,\n"+
-		"  `b` varchar(255) DEFAULT NULL\n"+
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
-		"PARTITION BY HASH (`a`)\n"+
-		"(PARTITION `pLow` COMMENT 'a comment' /*T![placement] PLACEMENT POLICY=`x` */,\n"+
-		" PARTITION `pMax`)",
-	))
-	tk.MustExec(`DROP TABLE t`)
+		tk.MustExec(`DROP TABLE IF EXISTS t`)
+		tk.MustExec("create table t(a int, b varchar(255))" +
+			"PARTITION BY HASH (a)\n" +
+			"(PARTITION pLow COMMENT 'a comment' placement policy 'x'," +
+			"partition pMax)")
+		tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|", ""+
+			"t CREATE TABLE `t` (\n"+
+			"  `a` int(11) DEFAULT NULL,\n"+
+			"  `b` varchar(255) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
+			"PARTITION BY HASH (`a`)\n"+
+			"(PARTITION `pLow` COMMENT 'a comment' /*T![placement] PLACEMENT POLICY=`x` */,\n"+
+			" PARTITION `pMax`)",
+		))
+		tk.MustExec(`DROP TABLE t`)
+		tk.MustExec(`DROP PLACEMENT POLICY IF EXISTS x`)
+		tk.MustExec("set @@tidb_enable_list_partition = @old_list_part")
+		resultQuery := tk.MustQuery("select @@last_sql_use_alloc")
+		resultQuery.Check(testkit.Rows(idresult[i]))
+		tk.Session().GetSessionVars().EndAlloc()
+		if alloc != nil {
+			alloc.Reset()
+		}
+	}
 }
 
 func TestShowVisibility(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("create database showdatabase")
-	tk.MustExec("use showdatabase")
-	tk.MustExec("create table t1 (id int)")
-	tk.MustExec("create table t2 (id int)")
-	tk.MustExec(`create user 'show'@'%'`)
+	alloc := chunk.NewAllocator()
+	//First time does not go to the cache, second time alloc requests memory from the system,
+	//Third time gets the chunk from alloc
+	idAlloc := []chunk.Allocator{nil, alloc, alloc}
+	idresult := []string{"0", "1", "1"}
+	for i, alloc := range idAlloc {
+		tk.Session().GetSessionVars().SetAlloc(alloc)
+		tk.MustExec("create database showdatabase")
+		tk.MustExec("use showdatabase")
+		tk.MustExec("create table t1 (id int)")
+		tk.MustExec("create table t2 (id int)")
+		tk.MustExec(`create user 'show'@'%'`)
 
-	tk1 := testkit.NewTestKit(t, store)
-	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "show", Hostname: "%"}, nil, nil))
+		tk1 := testkit.NewTestKit(t, store)
+		require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "show", Hostname: "%"}, nil, nil))
 
-	// No ShowDatabases privilege, this user would see nothing except INFORMATION_SCHEMA.
-	tk.MustQuery("show databases").Check(testkit.Rows("INFORMATION_SCHEMA"))
+		// No ShowDatabases privilege, this user would see nothing except INFORMATION_SCHEMA.
+		tk.MustQuery("show databases").Check(testkit.Rows("INFORMATION_SCHEMA"))
 
-	// After grant, the user can see the database.
-	tk.MustExec(`grant select on showdatabase.t1 to 'show'@'%'`)
-	tk1.MustQuery("show databases").Check(testkit.Rows("INFORMATION_SCHEMA", "showdatabase"))
+		// After grant, the user can see the database.
+		tk.MustExec(`grant select on showdatabase.t1 to 'show'@'%'`)
+		tk1.MustQuery("show databases").Check(testkit.Rows("INFORMATION_SCHEMA", "showdatabase"))
 
-	// The user can see t1 but not t2.
-	tk1.MustExec("use showdatabase")
-	tk1.MustQuery("show tables").Check(testkit.Rows("t1"))
+		// The user can see t1 but not t2.
+		tk1.MustExec("use showdatabase")
+		tk1.MustQuery("show tables").Check(testkit.Rows("t1"))
 
-	// After revoke, show database result should be just except INFORMATION_SCHEMA.
-	tk.MustExec(`revoke select on showdatabase.t1 from 'show'@'%'`)
-	tk1.MustQuery("show databases").Check(testkit.Rows("INFORMATION_SCHEMA"))
+		// After revoke, show database result should be just except INFORMATION_SCHEMA.
+		tk.MustExec(`revoke select on showdatabase.t1 from 'show'@'%'`)
+		tk1.MustQuery("show databases").Check(testkit.Rows("INFORMATION_SCHEMA"))
 
-	// Grant any global privilege would make show databases available.
-	tk.MustExec(`grant CREATE on *.* to 'show'@'%'`)
-	rows := tk1.MustQuery("show databases").Rows()
-	require.GreaterOrEqual(t, len(rows), 2)
+		// Grant any global privilege would make show databases available.
+		tk.MustExec(`grant CREATE on *.* to 'show'@'%'`)
+		rows := tk1.MustQuery("show databases").Rows()
+		require.GreaterOrEqual(t, len(rows), 2)
 
-	tk.MustExec(`drop user 'show'@'%'`)
-	tk.MustExec("drop database showdatabase")
+		tk.MustExec(`drop user 'show'@'%'`)
+		tk.MustExec("drop database showdatabase")
+		resultQuery := tk.MustQuery("select @@last_sql_use_alloc")
+		resultQuery.Check(testkit.Rows(idresult[i]))
+		tk.Session().GetSessionVars().EndAlloc()
+		if alloc != nil {
+			alloc.Reset()
+		}
+	}
 }
 
 func TestShowDatabasesInfoSchemaFirst(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustQuery("show databases").Check(testkit.Rows("INFORMATION_SCHEMA"))
-	tk.MustExec(`create user 'show'@'%'`)
+	alloc := chunk.NewAllocator()
+	//First time does not go to the cache, second time alloc requests memory from the system,
+	//Third time gets the chunk from alloc
+	idAlloc := []chunk.Allocator{nil, alloc, alloc}
+	idresult := []string{"0", "1", "1"}
+	for i, alloc := range idAlloc {
+		tk.Session().GetSessionVars().SetAlloc(alloc)
+		tk.MustQuery("show databases").Check(testkit.Rows("INFORMATION_SCHEMA"))
+		tk.MustExec(`create user 'show'@'%'`)
 
-	tk.MustExec(`create database AAAA`)
-	tk.MustExec(`create database BBBB`)
-	tk.MustExec(`grant select on AAAA.* to 'show'@'%'`)
-	tk.MustExec(`grant select on BBBB.* to 'show'@'%'`)
+		tk.MustExec(`create database AAAA`)
+		tk.MustExec(`create database BBBB`)
+		tk.MustExec(`grant select on AAAA.* to 'show'@'%'`)
+		tk.MustExec(`grant select on BBBB.* to 'show'@'%'`)
 
-	tk1 := testkit.NewTestKit(t, store)
-	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "show", Hostname: "%"}, nil, nil))
-	tk1.MustQuery("show databases").Check(testkit.Rows("INFORMATION_SCHEMA", "AAAA", "BBBB"))
+		tk1 := testkit.NewTestKit(t, store)
+		require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "show", Hostname: "%"}, nil, nil))
+		tk1.MustQuery("show databases").Check(testkit.Rows("INFORMATION_SCHEMA", "AAAA", "BBBB"))
 
-	tk.MustExec(`drop user 'show'@'%'`)
-	tk.MustExec(`drop database AAAA`)
-	tk.MustExec(`drop database BBBB`)
+		tk.MustExec(`drop user 'show'@'%'`)
+		tk.MustExec(`drop database AAAA`)
+		tk.MustExec(`drop database BBBB`)
+		resultQuery := tk.MustQuery("select @@last_sql_use_alloc")
+		resultQuery.Check(testkit.Rows(idresult[i]))
+		tk.Session().GetSessionVars().EndAlloc()
+		if alloc != nil {
+			alloc.Reset()
+		}
+	}
 }
 
 func TestShowWarnings(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	testSQL := `create table if not exists show_warnings (a int)`
-	tk.MustExec(testSQL)
-	tk.MustExec("set @@sql_mode=''")
-	tk.MustExec("insert show_warnings values ('a')")
-	require.Equal(t, uint16(1), tk.Session().GetSessionVars().StmtCtx.WarningCount())
-	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1366|Incorrect int value: 'a' for column 'a' at row 1"))
-	require.Equal(t, uint16(0), tk.Session().GetSessionVars().StmtCtx.WarningCount())
-	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1366|Incorrect int value: 'a' for column 'a' at row 1"))
-	require.Equal(t, uint16(0), tk.Session().GetSessionVars().StmtCtx.WarningCount())
+	alloc := chunk.NewAllocator()
+	//First time does not go to the cache, second time alloc requests memory from the system,
+	//Third time gets the chunk from alloc
+	idAlloc := []chunk.Allocator{nil, alloc, alloc}
+	idresult := []string{"0", "1", "1"}
+	for i, alloc := range idAlloc {
+		tk.Session().GetSessionVars().SetAlloc(alloc)
+		testSQL := `create table if not exists show_warnings (a int)`
+		tk.MustExec(testSQL)
+		tk.MustExec("set @@sql_mode=''")
+		tk.MustExec("insert show_warnings values ('a')")
+		require.Equal(t, uint16(1), tk.Session().GetSessionVars().StmtCtx.WarningCount())
+		tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1366|Incorrect int value: 'a' for column 'a' at row 1"))
+		require.Equal(t, uint16(0), tk.Session().GetSessionVars().StmtCtx.WarningCount())
+		tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1366|Incorrect int value: 'a' for column 'a' at row 1"))
+		require.Equal(t, uint16(0), tk.Session().GetSessionVars().StmtCtx.WarningCount())
 
-	// Test Warning level 'Error'
-	testSQL = `create table show_warnings (a int)`
-	_, _ = tk.Exec(testSQL)
-	// FIXME: Table 'test.show_warnings' already exists
-	require.Equal(t, uint16(1), tk.Session().GetSessionVars().StmtCtx.WarningCount())
-	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Error|1050|Table 'test.show_warnings' already exists"))
-	tk.MustQuery("select @@error_count").Check(testkit.RowsWithSep("|", "1"))
+		// Test Warning level 'Error'
+		testSQL = `create table show_warnings (a int)`
+		_, _ = tk.Exec(testSQL)
+		// FIXME: Table 'test.show_warnings' already exists
+		require.Equal(t, uint16(1), tk.Session().GetSessionVars().StmtCtx.WarningCount())
+		tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Error|1050|Table 'test.show_warnings' already exists"))
+		tk.MustQuery("select @@error_count").Check(testkit.RowsWithSep("|", "1"))
 
-	// Test Warning level 'Note'
-	testSQL = `create table show_warnings_2 (a int)`
-	tk.MustExec(testSQL)
-	testSQL = `create table if not exists show_warnings_2 like show_warnings`
-	_, err := tk.Exec(testSQL)
-	require.NoError(t, err)
-	require.Equal(t, uint16(1), tk.Session().GetSessionVars().StmtCtx.WarningCount())
-	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Note|1050|Table 'test.show_warnings_2' already exists"))
-	tk.MustQuery("select @@warning_count").Check(testkit.RowsWithSep("|", "1"))
-	tk.MustQuery("select @@warning_count").Check(testkit.RowsWithSep("|", "0"))
+		// Test Warning level 'Note'
+		testSQL = `create table if not exists show_warnings_2 (a int)`
+		tk.MustExec(testSQL)
+		testSQL = `create table if not exists show_warnings_2 like show_warnings`
+		_, err := tk.Exec(testSQL)
+		require.NoError(t, err)
+		require.Equal(t, uint16(1), tk.Session().GetSessionVars().StmtCtx.WarningCount())
+		tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Note|1050|Table 'test.show_warnings_2' already exists"))
+		tk.MustQuery("select @@warning_count").Check(testkit.RowsWithSep("|", "1"))
+		tk.MustQuery("select @@warning_count").Check(testkit.RowsWithSep("|", "0"))
+		resultQuery := tk.MustQuery("select @@last_sql_use_alloc")
+		resultQuery.Check(testkit.Rows(idresult[i]))
+		tk.Session().GetSessionVars().EndAlloc()
+		if alloc != nil {
+			alloc.Reset()
+		}
+	}
 }
 
 func TestShowErrors(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	testSQL := `create table if not exists show_errors (a int)`
-	tk.MustExec(testSQL)
-	testSQL = `create table show_errors (a int)`
-	// FIXME: 'test.show_errors' already exists
-	_, _ = tk.Exec(testSQL)
+	alloc := chunk.NewAllocator()
+	//First time does not go to the cache, second time alloc requests memory from the system,
+	//Third time gets the chunk from alloc
+	idAlloc := []chunk.Allocator{nil, alloc, alloc}
+	idresult := []string{"0", "1", "1"}
+	for i, alloc := range idAlloc {
+		tk.Session().GetSessionVars().SetAlloc(alloc)
+		testSQL := `create table if not exists show_errors (a int)`
+		tk.MustExec(testSQL)
+		testSQL = `create table show_errors (a int)`
+		// FIXME: 'test.show_errors' already exists
+		_, _ = tk.Exec(testSQL)
 
-	tk.MustQuery("show errors").Check(testkit.RowsWithSep("|", "Error|1050|Table 'test.show_errors' already exists"))
+		tk.MustQuery("show errors").Check(testkit.RowsWithSep("|", "Error|1050|Table 'test.show_errors' already exists"))
 
-	// eliminate previous errors
-	tk.MustExec("select 1")
-	_, _ = tk.Exec("create invalid")
-	tk.MustQuery("show errors").Check(testkit.RowsWithSep("|", "Error|1064|You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 14 near \"invalid\" "))
+		// eliminate previous errors
+		tk.MustExec("select 1")
+		_, _ = tk.Exec("create invalid")
+		tk.MustQuery("show errors").Check(testkit.RowsWithSep("|", "Error|1064|You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 14 near \"invalid\" "))
+		resultQuery := tk.MustQuery("select @@last_sql_use_alloc")
+		resultQuery.Check(testkit.Rows(idresult[i]))
+		tk.Session().GetSessionVars().EndAlloc()
+		if alloc != nil {
+			alloc.Reset()
+		}
+	}
 }
 
 func TestShowWarningsForExprPushdown(t *testing.T) {

@@ -1329,8 +1329,8 @@ func (s *SessionVars) GetNewChunkWithCapacity(fields []*types.FieldType, capacit
 
 // SetAlloc Attempt to set the buffer pool address
 func (s *SessionVars) SetAlloc(alloc chunk.Allocator) {
-	if mysql.HasCursorExistsFlag(s.Status) || !s.EnableReuseCheck {
-		alloc = nil
+	if !s.EnableReuseCheck {
+		return
 	}
 	if alloc != nil {
 		alloc.SetLimit(s.MaxReuseChunk, s.MaxReuseColumn)

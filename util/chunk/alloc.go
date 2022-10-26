@@ -77,7 +77,11 @@ func (a *allocator) Alloc(fields []*types.FieldType, capacity, maxChunkSize int)
 		chk.columns = append(chk.columns, a.columnAlloc.NewColumn(f, chk.capacity))
 	}
 
-	a.allocated = append(a.allocated, chk)
+	//avoid OOM
+	if a.freeChunk > len(a.allocated) {
+		a.allocated = append(a.allocated, chk)
+	}
+
 	return chk
 }
 

@@ -1100,7 +1100,6 @@ func (cc *clientConn) Run(ctx context.Context) {
 			return
 		}
 
-		cc.ctx.GetSessionVars().SetAlloc(cc.chunkAlloc)
 		startTime := time.Now()
 		err = cc.dispatch(ctx, data)
 		cc.chunkAlloc.Reset()
@@ -1854,6 +1853,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	sc := cc.ctx.GetSessionVars().StmtCtx
 	prevWarns := sc.GetWarnings()
 	var stmts []ast.StmtNode
+	cc.ctx.GetSessionVars().SetAlloc(cc.chunkAlloc)
 	if stmts, err = cc.ctx.Parse(ctx, sql); err != nil {
 		return err
 	}

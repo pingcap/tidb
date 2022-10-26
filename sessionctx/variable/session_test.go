@@ -453,7 +453,7 @@ func TestGetReuseChunk(t *testing.T) {
 	columnReuseMap := make(map[*chunk.Column]struct{}, 14)
 
 	alloc := chunk.NewAllocator()
-	sessVars.MaxReuseChunk = 10
+	sessVars.MaxReuseChunk = 100
 	sessVars.MaxReuseColumn = 100
 	sessVars.EnableReuseCheck = true
 	sessVars.SetAlloc(alloc)
