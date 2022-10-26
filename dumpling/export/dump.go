@@ -307,6 +307,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 	} else {
 		d.dumpSQL(writerCtx, baseConn, taskChan)
 	}
+	d.metrics.progressReady.Store(true)
 	close(needDispatchCh)
 	close(taskChan)
 	_ = baseConn.DBConn.Close()
@@ -457,7 +458,6 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *BaseConn, taskC
 			}
 		}
 	}
-	d.metrics.progressReady.Store(true)
 	failpoint.Inject("EnableLogProgress", func() {
 		time.Sleep(1 * time.Second)
 		tctx.L().Debug("EnableLogProgress, sleep 1s")

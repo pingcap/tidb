@@ -3,6 +3,7 @@
 package export
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -47,7 +48,7 @@ func TestSpeedRecorder(t *testing.T) {
 	for _, tc := range testCases {
 		time.Sleep(time.Duration(tc.spentTime) * time.Second)
 		recentSpeed := speedRecorder.GetSpeed(tc.finished)
-		if tc.expected-recentSpeed > 0.1 {
+		if math.Abs(tc.expected-recentSpeed) > 0.1 {
 			require.FailNow(t, "speed unexpected")
 		}
 	}

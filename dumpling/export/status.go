@@ -40,7 +40,7 @@ func (d *Dumper) runLogProgress(tctx *tcontext.Context) {
 				zap.String("estimate total rows", fmt.Sprintf("%.0f", s.EstimateTotalRows)),
 				zap.String("finished size", units.HumanSize(s.FinishedBytes)),
 				zap.Float64("average speed(MiB/s)", (s.FinishedBytes-lastBytes)/(1048576e-9*nanoseconds)),
-				zap.String("recent speed(MiB/s)", s.CurrentSpeedBPS),
+				zap.Float64("recent speed bps", s.CurrentSpeedBPS),
 				zap.String("chunks progress", s.progress),
 			)
 
@@ -57,7 +57,7 @@ type DumpStatus struct {
 	FinishedRows      float64
 	EstimateTotalRows float64
 	TotalTables       int64
-	CurrentSpeedBPS   string
+	CurrentSpeedBPS   float64
 	progress          string
 }
 
@@ -69,7 +69,7 @@ func (d *Dumper) GetStatus() *DumpStatus {
 	ret.FinishedBytes = ReadGauge(d.metrics.finishedSizeGauge)
 	ret.FinishedRows = ReadGauge(d.metrics.finishedRowsGauge)
 	ret.EstimateTotalRows = ReadCounter(d.metrics.estimateTotalRowsCounter)
-	ret.CurrentSpeedBPS = fmt.Sprintf("%5.2f MiB/s", d.speedRecorder.GetSpeed(ret.FinishedBytes/1024/1024))
+	ret.CurrentSpeedBPS = d.speedRecorder.GetSpeed(ret.FinishedBytes)
 	if d.metrics.progressReady.Load() {
 		progress := float64(d.metrics.completedChunks.Load()) / float64(d.metrics.totalChunks.Load())
 		if progress > 1 {
