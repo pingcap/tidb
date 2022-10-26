@@ -334,11 +334,34 @@ func estimateMemUsageForAppendRanges2PointRanges(pointRanges Ranges, ranges Rang
 	return (EmptyRangeSize+collatorSize)*len1*len2 + getRangesTotalDatumSize(pointRanges)*len2 + getRangesTotalDatumSize(ranges)*len1
 }
 
-// appendRanges2PointRanges appends additional ranges to point ranges.
+// appendRange2PointRange appends suffixRange to pointRange.
+func appendRange2PointRange(pointRange, suffixRange *Range) *Range {
+	lowVal := make([]types.Datum, 0, len(pointRange.LowVal)+len(suffixRange.LowVal))
+	lowVal = append(lowVal, pointRange.LowVal...)
+	lowVal = append(lowVal, suffixRange.LowVal...)
+
+	highVal := make([]types.Datum, 0, len(pointRange.HighVal)+len(suffixRange.HighVal))
+	highVal = append(highVal, pointRange.HighVal...)
+	highVal = append(highVal, suffixRange.HighVal...)
+
+	collators := make([]collate.Collator, 0, len(pointRange.Collators)+len(suffixRange.Collators))
+	collators = append(collators, pointRange.Collators...)
+	collators = append(collators, suffixRange.Collators...)
+
+	return &Range{
+		LowVal:      lowVal,
+		LowExclude:  suffixRange.LowExclude,
+		HighVal:     highVal,
+		HighExclude: suffixRange.HighExclude,
+		Collators:   collators,
+	}
+}
+
+// AppendRanges2PointRanges appends additional ranges to point ranges.
 // rangeMaxSize is the max memory limit for ranges. O indicates no memory limit.
 // If the second return value is true, it means that the estimated memory after appending additional ranges to point ranges
 // exceeds rangeMaxSize and the function rejects appending additional ranges to point ranges.
-func appendRanges2PointRanges(pointRanges Ranges, ranges Ranges, rangeMaxSize int64) (Ranges, bool) {
+func AppendRanges2PointRanges(pointRanges Ranges, ranges Ranges, rangeMaxSize int64) (Ranges, bool) {
 	if len(ranges) == 0 {
 		return pointRanges, false
 	}
@@ -349,26 +372,7 @@ func appendRanges2PointRanges(pointRanges Ranges, ranges Ranges, rangeMaxSize in
 	newRanges := make(Ranges, 0, len(pointRanges)*len(ranges))
 	for _, pointRange := range pointRanges {
 		for _, r := range ranges {
-			lowVal := make([]types.Datum, 0, len(pointRange.LowVal)+len(r.LowVal))
-			lowVal = append(lowVal, pointRange.LowVal...)
-			lowVal = append(lowVal, r.LowVal...)
-
-			highVal := make([]types.Datum, 0, len(pointRange.HighVal)+len(r.HighVal))
-			highVal = append(highVal, pointRange.HighVal...)
-			highVal = append(highVal, r.HighVal...)
-
-			collators := make([]collate.Collator, 0, len(pointRange.Collators)+len(r.Collators))
-			collators = append(collators, pointRange.Collators...)
-			collators = append(collators, r.Collators...)
-
-			newRange := &Range{
-				LowVal:      lowVal,
-				LowExclude:  r.LowExclude,
-				HighVal:     highVal,
-				HighExclude: r.HighExclude,
-				Collators:   collators,
-			}
-			newRanges = append(newRanges, newRange)
+			newRanges = append(newRanges, appendRange2PointRange(pointRange, r))
 		}
 	}
 	return newRanges, false
