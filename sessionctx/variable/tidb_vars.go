@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/paging"
+	"github.com/pingcap/tidb/util/size"
 	"go.uber.org/atomic"
 )
 
@@ -586,6 +587,9 @@ const (
 	// TiDBMemoryUsageAlarmRatio indicates the alarm threshold when memory usage of the tidb-server exceeds.
 	TiDBMemoryUsageAlarmRatio = "tidb_memory_usage_alarm_ratio"
 
+	// TiDBMemoryUsageAlarmKeepRecordNum indicates the number of saved alarm files.
+	TiDBMemoryUsageAlarmKeepRecordNum = "tidb_memory_usage_alarm_keep_record_num"
+
 	// TiDBEnableRateLimitAction indicates whether enabled ratelimit action
 	TiDBEnableRateLimitAction = "tidb_enable_rate_limit_action"
 
@@ -746,6 +750,15 @@ const (
 	// ranges would exceed the limit, it chooses less accurate ranges such as full range. 0 indicates that there is no memory
 	// limit for ranges.
 	TiDBOptRangeMaxSize = "tidb_opt_range_max_size"
+
+	// TiDBAnalyzePartitionConcurrency indicates concurrency for save/read partitions stats in Analyze
+	TiDBAnalyzePartitionConcurrency = "tidb_analyze_partition_concurrency"
+	// TiDBMergePartitionStatsConcurrency indicates the concurrency when merge partition stats into global stats
+	TiDBMergePartitionStatsConcurrency = "tidb_merge_partition_stats_concurrency"
+
+	// TiDBOptPrefixIndexSingleScan indicates whether to do some optimizations to avoid double scan for prefix index.
+	// When set to true, `col is (not) null`(`col` is index prefix column) is regarded as index filter rather than table filter.
+	TiDBOptPrefixIndexSingleScan = "tidb_opt_prefix_index_single_scan"
 )
 
 // TiDB vars that have only global scope
@@ -803,10 +816,6 @@ const (
 	TiDBMaxAutoAnalyzeTime = "tidb_max_auto_analyze_time"
 	// TiDBEnableConcurrentDDL indicates whether to enable the new DDL framework.
 	TiDBEnableConcurrentDDL = "tidb_enable_concurrent_ddl"
-	// TiDBAuthSigningCert indicates the path of the signing certificate to do token-based authentication.
-	TiDBAuthSigningCert = "tidb_auth_signing_cert"
-	// TiDBAuthSigningKey indicates the path of the signing key to do token-based authentication.
-	TiDBAuthSigningKey = "tidb_auth_signing_key"
 	// TiDBGenerateBinaryPlan indicates whether binary plan should be generated in slow log and statements summary.
 	TiDBGenerateBinaryPlan = "tidb_generate_binary_plan"
 	// TiDBEnableGCAwareMemoryTrack indicates whether to turn-on GC-aware memory track.
@@ -822,8 +831,12 @@ const (
 	TiDBServerMemoryLimit = "tidb_server_memory_limit"
 	// TiDBServerMemoryLimitSessMinSize indicates the minimal memory used of a session, that becomes a candidate for session kill.
 	TiDBServerMemoryLimitSessMinSize = "tidb_server_memory_limit_sess_min_size"
+	// TiDBServerMemoryLimitGCTrigger indicates the gc percentage of the TiDBServerMemoryLimit.
+	TiDBServerMemoryLimitGCTrigger = "tidb_server_memory_limit_gc_trigger"
 	// TiDBEnableGOGCTuner is to enable GOGC tuner. it can tuner GOGC
 	TiDBEnableGOGCTuner = "tidb_enable_gogc_tuner"
+	// TiDBGOGCTunerThreshold is to control the threshold of GOGC tuner.
+	TiDBGOGCTunerThreshold = "tidb_gogc_tuner_threshold"
 )
 
 // TiDB intentional limits
@@ -1034,6 +1047,8 @@ const (
 	DefTiDBEnableTmpStorageOnOOM                   = true
 	DefTiDBEnableMDL                               = false
 	DefTiFlashFastScan                             = false
+	DefMemoryUsageAlarmRatio                       = 0.7
+	DefMemoryUsageAlarmKeepRecordNum               = 5
 	DefTiDBEnableFastReorg                         = false
 	DefTiDBDDLDiskQuota                            = 100 * 1024 * 1024 * 1024 // 100GB
 	DefExecutorConcurrency                         = 5
@@ -1047,10 +1062,16 @@ const (
 	DefTiDBRcWriteCheckTs                           = false
 	DefTiDBConstraintCheckInPlacePessimistic        = true
 	DefTiDBForeignKeyChecks                         = false
-	DefTiDBOptRangeMaxSize                          = 0
+	DefTiDBAnalyzePartitionConcurrency              = 1
+	DefTiDBOptRangeMaxSize                          = 64 * int64(size.MB) // 64 MB
 	DefTiDBCostModelVer                             = 1
 	DefTiDBServerMemoryLimitSessMinSize             = 128 << 20
+	DefTiDBMergePartitionStatsConcurrency           = 1
+	DefTiDBServerMemoryLimitGCTrigger               = 0.7
 	DefTiDBEnableGOGCTuner                          = true
+	// DefTiDBGOGCTunerThreshold is to limit TiDBGOGCTunerThreshold.
+	DefTiDBGOGCTunerThreshold       float64 = 0.6
+	DefTiDBOptPrefixIndexSingleScan         = true
 )
 
 // Process global variables.
@@ -1069,26 +1090,27 @@ var (
 	ddlReorgRowFormat       int64 = DefTiDBRowFormatV2
 	maxDeltaSchemaCount     int64 = DefTiDBMaxDeltaSchemaCount
 	// DDLSlowOprThreshold is the threshold for ddl slow operations, uint is millisecond.
-	DDLSlowOprThreshold                = config.GetGlobalConfig().Instance.DDLSlowOprThreshold
-	ForcePriority                      = int32(DefTiDBForcePriority)
-	MaxOfMaxAllowedPacket       uint64 = 1073741824
-	ExpensiveQueryTimeThreshold uint64 = DefTiDBExpensiveQueryTimeThreshold
-	MemoryUsageAlarmRatio              = atomic.NewFloat64(config.GetGlobalConfig().Instance.MemoryUsageAlarmRatio)
-	EnableLocalTxn                     = atomic.NewBool(DefTiDBEnableLocalTxn)
-	MaxTSOBatchWaitInterval            = atomic.NewFloat64(DefTiDBTSOClientBatchMaxWaitTime)
-	EnableTSOFollowerProxy             = atomic.NewBool(DefTiDBEnableTSOFollowerProxy)
-	RestrictedReadOnly                 = atomic.NewBool(DefTiDBRestrictedReadOnly)
-	VarTiDBSuperReadOnly               = atomic.NewBool(DefTiDBSuperReadOnly)
-	PersistAnalyzeOptions              = atomic.NewBool(DefTiDBPersistAnalyzeOptions)
-	TableCacheLease                    = atomic.NewInt64(DefTiDBTableCacheLease)
-	EnableColumnTracking               = atomic.NewBool(DefTiDBEnableColumnTracking)
-	StatsLoadSyncWait                  = atomic.NewInt64(DefTiDBStatsLoadSyncWait)
-	StatsLoadPseudoTimeout             = atomic.NewBool(DefTiDBStatsLoadPseudoTimeout)
-	MemQuotaBindingCache               = atomic.NewInt64(DefTiDBMemQuotaBindingCache)
-	GCMaxWaitTime                      = atomic.NewInt64(DefTiDBGCMaxWaitTime)
-	StatsCacheMemQuota                 = atomic.NewInt64(DefTiDBStatsCacheMemQuota)
-	OOMAction                          = atomic.NewString(DefTiDBMemOOMAction)
-	MaxAutoAnalyzeTime                 = atomic.NewInt64(DefTiDBMaxAutoAnalyzeTime)
+	DDLSlowOprThreshold                  = config.GetGlobalConfig().Instance.DDLSlowOprThreshold
+	ForcePriority                        = int32(DefTiDBForcePriority)
+	MaxOfMaxAllowedPacket         uint64 = 1073741824
+	ExpensiveQueryTimeThreshold   uint64 = DefTiDBExpensiveQueryTimeThreshold
+	MemoryUsageAlarmRatio                = atomic.NewFloat64(DefMemoryUsageAlarmRatio)
+	MemoryUsageAlarmKeepRecordNum        = atomic.NewInt64(DefMemoryUsageAlarmKeepRecordNum)
+	EnableLocalTxn                       = atomic.NewBool(DefTiDBEnableLocalTxn)
+	MaxTSOBatchWaitInterval              = atomic.NewFloat64(DefTiDBTSOClientBatchMaxWaitTime)
+	EnableTSOFollowerProxy               = atomic.NewBool(DefTiDBEnableTSOFollowerProxy)
+	RestrictedReadOnly                   = atomic.NewBool(DefTiDBRestrictedReadOnly)
+	VarTiDBSuperReadOnly                 = atomic.NewBool(DefTiDBSuperReadOnly)
+	PersistAnalyzeOptions                = atomic.NewBool(DefTiDBPersistAnalyzeOptions)
+	TableCacheLease                      = atomic.NewInt64(DefTiDBTableCacheLease)
+	EnableColumnTracking                 = atomic.NewBool(DefTiDBEnableColumnTracking)
+	StatsLoadSyncWait                    = atomic.NewInt64(DefTiDBStatsLoadSyncWait)
+	StatsLoadPseudoTimeout               = atomic.NewBool(DefTiDBStatsLoadPseudoTimeout)
+	MemQuotaBindingCache                 = atomic.NewInt64(DefTiDBMemQuotaBindingCache)
+	GCMaxWaitTime                        = atomic.NewInt64(DefTiDBGCMaxWaitTime)
+	StatsCacheMemQuota                   = atomic.NewInt64(DefTiDBStatsCacheMemQuota)
+	OOMAction                            = atomic.NewString(DefTiDBMemOOMAction)
+	MaxAutoAnalyzeTime                   = atomic.NewInt64(DefTiDBMaxAutoAnalyzeTime)
 	// variables for plan cache
 	PreparedPlanCacheMemoryGuardRatio = atomic.NewFloat64(DefTiDBPrepPlanCacheMemoryGuardRatio)
 	EnableConcurrentDDL               = atomic.NewBool(DefTiDBEnableConcurrentDDL)
@@ -1107,6 +1129,7 @@ var (
 	// DefTiDBServerMemoryLimit indicates the default value of TiDBServerMemoryLimit(TotalMem * 80%).
 	// It should be a const and shouldn't be modified after tidb is started.
 	DefTiDBServerMemoryLimit = mathutil.Max(memory.GetMemTotalIgnoreErr()/10*8, 512<<20)
+	GOGCTunerThreshold       = atomic.NewFloat64(DefTiDBGOGCTunerThreshold)
 )
 
 var (
