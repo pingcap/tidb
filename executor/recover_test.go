@@ -334,7 +334,7 @@ func TestRecoverClusterMeetError(t *testing.T) {
 	// Flashback failed because of ddl history.
 	tk.MustExec("use test;")
 	tk.MustExec("create table t(a int);")
-	tk.MustMatchErrMsg(fmt.Sprintf("flashback cluster to timestamp '%s'", flashbackTs), "Had ddl history during \\[.*, now\\), can't do flashback")
+	tk.MustMatchErrMsg(fmt.Sprintf("flashback cluster to timestamp '%s'", flashbackTs), "Detected schema change due to another DDL job during \\[.*, now\\), can't do flashback")
 
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS"))
 	require.NoError(t, failpoint.Disable("tikvclient/injectSafeTS"))
