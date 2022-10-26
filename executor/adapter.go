@@ -627,6 +627,10 @@ func (a *ExecStmt) handleForeignKeyCascade(ctx context.Context, fkc *FKCascadeEx
 		if err != nil {
 			return err
 		}
+		err = e.Close()
+		if err != nil {
+			return err
+		}
 		// Call `StmtCommit` uses to flush the fk cascade executor change into txn mem-buffer,
 		// then the later fk cascade executors can see the mem-buffer changes.
 		a.Ctx.StmtCommit()
