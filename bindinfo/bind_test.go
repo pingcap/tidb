@@ -746,7 +746,7 @@ func TestStmtHints(t *testing.T) {
 	require.Equal(t, int64(2147483648), tk.Session().GetSessionVars().MemTracker.GetBytesLimit())
 	require.Equal(t, uint64(100), tk.Session().GetSessionVars().StmtCtx.MaxExecutionTime)
 	tk.MustQuery("select a, b from t")
-	require.Equal(t, int64(0), tk.Session().GetSessionVars().MemTracker.GetBytesLimit())
+	require.Equal(t, int64(1073741824), tk.Session().GetSessionVars().MemTracker.GetBytesLimit())
 	require.Equal(t, uint64(0), tk.Session().GetSessionVars().StmtCtx.MaxExecutionTime)
 }
 

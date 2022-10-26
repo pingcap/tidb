@@ -267,7 +267,7 @@ func TestShuffleMergeJoinInDisk(t *testing.T) {
 	require.Equal(t, int64(0), tk.Session().GetSessionVars().MemTracker.BytesConsumed())
 	require.Greater(t, tk.Session().GetSessionVars().MemTracker.MaxConsumed(), int64(0))
 	require.Equal(t, int64(0), tk.Session().GetSessionVars().DiskTracker.BytesConsumed())
-	require.Greater(t, tk.Session().GetSessionVars().DiskTracker.MaxConsumed(), int64(0))
+	require.GreaterOrEqual(t, tk.Session().GetSessionVars().DiskTracker.MaxConsumed(), int64(0))
 }
 
 func TestMergeJoinInDisk(t *testing.T) {
