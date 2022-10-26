@@ -44,7 +44,7 @@ func (t *memoryLimitTuner) tuning() {
 	if !t.isTuning.Load() {
 		return
 	}
-	heapInuse := memory.ForceReadHeapInuse()
+	r := memory.ForceReadMemStats()
 	gogc := util.GetGOGC()
 	ratio := float64(100+gogc) / 100
 	// This `if` checks whether the **last** GC was triggered by MemoryLimit as far as possible.
@@ -56,7 +56,7 @@ func (t *memoryLimitTuner) tuning() {
 	//   why the **last** GC is triggered. And MemoryLimit will not be reset this time.
 	// - Only if NextGC >= MemoryLimit , the **next** GC will be triggered by MemoryLimit. Thus, we need to reset
 	//   MemoryLimit after the **next** GC happens if needed.
-	if float64(heapInuse)*ratio > float64(debug.SetMemoryLimit(-1)) {
+	if float64(r.HeapInuse)*ratio > float64(debug.SetMemoryLimit(-1)) {
 		if t.nextGCTriggeredByMemoryLimit.Load() && t.waitingReset.CompareAndSwap(false, true) {
 			go func() {
 				debug.SetMemoryLimit(math.MaxInt64)

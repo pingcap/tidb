@@ -43,15 +43,6 @@ func ForceReadMemStats() *runtime.MemStats {
 	return &g.m
 }
 
-// ForceReadHeapInuse is to force read memory stats and return heap in use.
-func ForceReadHeapInuse() uint64 {
-	var g globalMstats
-	g.ts = time.Now()
-	runtime.ReadMemStats(&g.m)
-	stats.Store(&g)
-	return g.m.HeapInuse
-}
-
 type globalMstats struct {
 	ts time.Time
 	m  runtime.MemStats
