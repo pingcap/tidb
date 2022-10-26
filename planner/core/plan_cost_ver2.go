@@ -185,11 +185,15 @@ func (p *PhysicalTableReader) getPlanCostVer2(taskType property.TaskType, option
 	netFactor := getTaskNetFactorVer2(p, taskType)
 	seekFactor := getTaskSeekFactorVer2(p, taskType)
 	concurrency := float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
+	childType := property.CopSingleReadTaskType
+	if p.StoreType == kv.TiFlash { // mpp protocol
+		childType = property.MppTaskType
+	}
 
 	netCost := netCostVer2(option, rows, rowSize, netFactor)
 	seekCost := seekCostVer2(option, estimateNumTasks(p.tablePlan), seekFactor)
 
-	childCost, err := p.tablePlan.getPlanCostVer2(property.CopSingleReadTaskType, option)
+	childCost, err := p.tablePlan.getPlanCostVer2(childType, option)
 	if err != nil {
 		return zeroCostVer2, err
 	}
@@ -432,7 +436,7 @@ func (p *PhysicalHashAgg) getPlanCostVer2(taskType property.TaskType, option *Pl
 	outputRowSize := getAvgRowSize(p.Stats(), p.Schema())
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 	memFactor := getTaskMemFactorVer2(p, taskType)
-	concurrency := p.ctx.GetSessionVars().GetConcurrencyFactor()
+	concurrency := float64(p.ctx.GetSessionVars().HashAggFinalConcurrency())
 
 	aggCost := aggCostVer2(option, inputRows, p.AggFuncs, cpuFactor)
 	groupCost := groupCostVer2(option, inputRows, p.GroupByItems, cpuFactor)
@@ -611,7 +615,7 @@ func (p *PhysicalUnionAll) getPlanCostVer2(taskType property.TaskType, option *P
 		return p.planCostVer2, nil
 	}
 
-	concurrency := p.ctx.GetSessionVars().GetConcurrencyFactor()
+	concurrency := float64(p.ctx.GetSessionVars().UnionConcurrency())
 	childCosts := make([]costVer2, 0, len(p.children))
 	for _, child := range p.children {
 		childCost, err := child.getPlanCostVer2(taskType, option)
@@ -737,8 +741,8 @@ func hashBuildCostVer2(option *PlanCostOption, buildRows, buildRowSize float64, 
 		buildRows*buildRowSize*memFactor.Value,
 		"hashmem(%v*%v*%v)", buildRows, buildRowSize, memFactor)
 	hashBuildCost := newCostVer2(option, cpuFactor,
-		buildRows*float64(len(keys))*cpuFactor.Value,
-		"hashbuild(%v*%v*%v)", buildRows, len(keys), cpuFactor)
+		buildRows*cpuFactor.Value,
+		"hashbuild(%v*%v)", buildRows, cpuFactor)
 	return sumCostVer2(hashKeyCost, hashMemCost, hashBuildCost)
 }
 
@@ -748,8 +752,8 @@ func hashProbeCostVer2(option *PlanCostOption, probeRows float64, keys []express
 		probeRows*float64(len(keys))*cpuFactor.Value,
 		"hashkey(%v*%v*%v)", probeRows, len(keys), cpuFactor)
 	hashProbeCost := newCostVer2(option, cpuFactor,
-		probeRows*float64(len(keys))*cpuFactor.Value,
-		"hashmem(%v*%v*%v)", probeRows, len(keys), cpuFactor)
+		probeRows*cpuFactor.Value,
+		"hashprobe(%v*%v)", probeRows, cpuFactor)
 	return sumCostVer2(hashKeyCost, hashProbeCost)
 }
 
