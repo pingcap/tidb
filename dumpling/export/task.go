@@ -4,6 +4,7 @@ package export
 
 import (
 	"fmt"
+	"sync"
 
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 )
@@ -148,7 +149,8 @@ func (t *TaskTableData) Brief() string {
 	return fmt.Sprintf("data of table '%s'.'%s'(%d/%d)", db, tbl, idx, total)
 }
 
-func (d *Dumper) dispatchTask(tctx *tcontext.Context, taskChan chan<- Task, needDispatch chan any) {
+func (d *Dumper) dispatchTask(tctx *tcontext.Context, taskChan chan<- Task, needDispatch chan any, taskWg *sync.WaitGroup) {
+	defer taskWg.Done()
 	for {
 		select {
 		case <-tctx.Done():

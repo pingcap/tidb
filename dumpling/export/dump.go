@@ -283,7 +283,9 @@ func (d *Dumper) Dump() (dumpErr error) {
 
 	needDispatchCh := make(chan any)
 	dispatchTaskCtx, dispatchTaskCancel := tctx.WithCancel()
-	go d.dispatchTask(dispatchTaskCtx, taskChan, needDispatchCh)
+	taskWg := new(sync.WaitGroup)
+	taskWg.Add(1)
+	go d.dispatchTask(dispatchTaskCtx, taskChan, needDispatchCh, taskWg)
 	defer dispatchTaskCancel()
 
 	tableDataStartTime := time.Now()
@@ -309,6 +311,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 	}
 	d.metrics.progressReady.Store(true)
 	close(needDispatchCh)
+	taskWg.Wait()
 	close(taskChan)
 	_ = baseConn.DBConn.Close()
 	if err := wg.Wait(); err != nil {
@@ -451,11 +454,15 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *BaseConn, taskC
 					return errors.Trace(err)
 				}
 			}
+			tctx.L().Info("begin dispactch")
 			select {
 			case dispatchCh <- struct{}{}:
-			// if dispatchCh is full, skip it
+				tctx.L().Info("dispatchCh not full")
 			default:
+				// if dispatchCh is full, skip it
+				tctx.L().Info("dispatchCh full")
 			}
+
 		}
 	}
 	failpoint.Inject("EnableLogProgress", func() {
