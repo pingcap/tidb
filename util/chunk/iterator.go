@@ -24,7 +24,7 @@ var (
 )
 
 // FreeIterator try to free and reuse the iterator.
-func FreeIterator(it any) {
+func FreeIterator(_ any) {
 }
 
 // Iterator is used to iterate a number of rows.
