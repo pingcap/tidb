@@ -1112,6 +1112,12 @@ func TestShowCreateUser(t *testing.T) {
 	tk.MustExec("CREATE USER 'lockness'@'%' IDENTIFIED BY 'monster' ACCOUNT LOCK")
 	rows = tk.MustQuery("SHOW CREATE USER 'lockness'@'%'")
 	require.Equal(t, "CREATE USER 'lockness'@'%' IDENTIFIED WITH 'mysql_native_password' AS '*BC05309E7FE12AFD4EBB9FFE7E488A6320F12FF3' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT LOCK", rows.Rows()[0][0].(string))
+
+	// Test COMMENT and ATTRIBUTE
+	tk.MustExec("CREATE USER commentUser COMMENT '1234'")
+	tk.MustQuery("SHOW CREATE USER commentUser").Check(testkit.Rows(`CREATE USER 'commentUser'@'%' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK ATTRIBUTE {"comment": "1234"}`))
+	tk.MustExec(`CREATE USER attributeUser attribute '{"name": "Tom", "age": 19}'`)
+	tk.MustQuery("SHOW CREATE USER attributeUser").Check(testkit.Rows(`CREATE USER 'attributeUser'@'%' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK ATTRIBUTE {"age": 19, "name": "Tom"}`))
 }
 
 func TestUnprivilegedShow(t *testing.T) {
@@ -1472,7 +1478,7 @@ func TestShowBuiltin(t *testing.T) {
 	res := tk.MustQuery("show builtins;")
 	require.NotNil(t, res)
 	rows := res.Rows()
-	const builtinFuncNum = 282
+	const builtinFuncNum = 283
 	require.Equal(t, builtinFuncNum, len(rows))
 	require.Equal(t, rows[0][0].(string), "abs")
 	require.Equal(t, rows[builtinFuncNum-1][0].(string), "yearweek")

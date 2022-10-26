@@ -1345,7 +1345,7 @@ func TestBuildVersion3RegionQueries(t *testing.T) {
 	defer func() {
 		openDBFunc = oldOpenFunc
 	}()
-	openDBFunc = func(_, _ string) (*sql.DB, error) {
+	openDBFunc = func(*mysql.Config) (*sql.DB, error) {
 		return db, nil
 	}
 

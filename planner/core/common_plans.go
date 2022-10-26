@@ -470,7 +470,8 @@ type Delete struct {
 
 	TblColPosInfos TblColPosInfoSlice
 
-	FKChecks map[int64][]*FKCheck
+	FKChecks   map[int64][]*FKCheck
+	FKCascades map[int64][]*FKCascade
 }
 
 // MemoryUsage return the memory usage of Delete
