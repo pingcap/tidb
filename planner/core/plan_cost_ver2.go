@@ -742,7 +742,7 @@ func hashBuildCostVer2(option *PlanCostOption, buildRows, buildRowSize float64, 
 		"hashmem(%v*%v*%v)", buildRows, buildRowSize, memFactor)
 	hashBuildCost := newCostVer2(option, cpuFactor,
 		buildRows*cpuFactor.Value,
-		"hashbuild(%v*%v*%v)", buildRows, cpuFactor)
+		"hashbuild(%v*%v)", buildRows, cpuFactor)
 	return sumCostVer2(hashKeyCost, hashMemCost, hashBuildCost)
 }
 
