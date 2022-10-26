@@ -65,7 +65,9 @@ type FKCascadeExec struct {
 	referredFK *model.ReferredFKInfo
 	childTable *model.TableInfo
 	fk         *model.FKInfo
-	fkValues   [][]types.Datum
+	// On delete statement, fkValues stores the delete foreign key values.
+	// On update statement and the foreign key cascade is `SET NULL`, fkValues stores the old foreign key values.
+	fkValues [][]types.Datum
 	// new-value-key => UpdatedValuesCouple
 	fkUpdatedValuesMap map[string]*UpdatedValuesCouple
 }
@@ -641,36 +643,23 @@ func (fkc *FKCascadeExec) buildFKCascadePlan(ctx context.Context) (plannercore.P
 	var err error
 	switch fkc.tp {
 	case plannercore.FKCascadeOnDelete:
-		var fkValues [][]types.Datum
-		if len(fkc.fkValues) <= maxHandleFKValueInOneCascade {
-			fkValues = fkc.fkValues
-			fkc.fkValues = nil
-		} else {
-			fkValues = fkc.fkValues[:maxHandleFKValueInOneCascade]
-			fkc.fkValues = fkc.fkValues[maxHandleFKValueInOneCascade:]
-		}
+		fkValues := fkc.fetchOnDeleteOrUpdateFKValues()
 		switch model.ReferOptionType(fkc.fk.OnDelete) {
 		case model.ReferOptionCascade:
 			sqlStr, err = GenCascadeDeleteSQL(fkc.referredFK.ChildSchema, fkc.childTable.Name, indexName, fkc.fk, fkValues)
 		case model.ReferOptionSetNull:
-			newValues := make([]types.Datum, len(fkc.fk.Cols))
-			for i := range fkc.fk.Cols {
-				newValues[i] = types.NewDatum(nil)
-			}
-			couple := &UpdatedValuesCouple{
-				NewValues:     newValues,
-				OldValuesList: fkValues,
-			}
-			sqlStr, err = GenCascadeUpdateSQL(fkc.referredFK.ChildSchema, fkc.childTable.Name, indexName, fkc.fk, couple)
+			sqlStr, err = GenCascadeSetNullSQL(fkc.referredFK.ChildSchema, fkc.childTable.Name, indexName, fkc.fk, fkValues)
 		}
 	case plannercore.FKCascadeOnUpdate:
 		switch model.ReferOptionType(fkc.fk.OnUpdate) {
 		case model.ReferOptionCascade:
-			for k, couple := range fkc.fkUpdatedValuesMap {
+			couple := fkc.fetchUpdatedValuesCouple()
+			if couple != nil && len(couple.NewValues) != 0 {
 				sqlStr, err = GenCascadeUpdateSQL(fkc.referredFK.ChildSchema, fkc.childTable.Name, indexName, fkc.fk, couple)
-				delete(fkc.fkUpdatedValuesMap, k)
-				break
 			}
+		case model.ReferOptionSetNull:
+			fkValues := fkc.fetchOnDeleteOrUpdateFKValues()
+			sqlStr, err = GenCascadeSetNullSQL(fkc.referredFK.ChildSchema, fkc.childTable.Name, indexName, fkc.fk, fkValues)
 		}
 	}
 	if err != nil {
@@ -701,6 +690,34 @@ func (fkc *FKCascadeExec) buildFKCascadePlan(ctx context.Context) (plannercore.P
 	return finalPlan, err
 }
 
+func (fkc *FKCascadeExec) fetchOnDeleteOrUpdateFKValues() [][]types.Datum {
+	var fkValues [][]types.Datum
+	if len(fkc.fkValues) <= maxHandleFKValueInOneCascade {
+		fkValues = fkc.fkValues
+		fkc.fkValues = nil
+	} else {
+		fkValues = fkc.fkValues[:maxHandleFKValueInOneCascade]
+		fkc.fkValues = fkc.fkValues[maxHandleFKValueInOneCascade:]
+	}
+	return fkValues
+}
+
+func (fkc *FKCascadeExec) fetchUpdatedValuesCouple() *UpdatedValuesCouple {
+	for k, couple := range fkc.fkUpdatedValuesMap {
+		if len(couple.OldValuesList) <= maxHandleFKValueInOneCascade {
+			delete(fkc.fkUpdatedValuesMap, k)
+			return couple
+		}
+		result := &UpdatedValuesCouple{
+			NewValues:     couple.NewValues,
+			OldValuesList: couple.OldValuesList[:maxHandleFKValueInOneCascade],
+		}
+		couple.OldValuesList = couple.OldValuesList[maxHandleFKValueInOneCascade:]
+		return result
+	}
+	return nil
+}
+
 // GenCascadeDeleteSQL uses to generate cascade delete SQL, export for test.
 func GenCascadeDeleteSQL(schema, table, idx model.CIStr, fk *model.FKInfo, fkValues [][]types.Datum) (string, error) {
 	buf := bytes.NewBuffer(make([]byte, 0, 48+8*len(fkValues)))
@@ -720,6 +737,19 @@ func GenCascadeDeleteSQL(schema, table, idx model.CIStr, fk *model.FKInfo, fkVal
 		return "", err
 	}
 	return buf.String(), nil
+}
+
+// GenCascadeSetNullSQL uses to generate update set null SQL, export for test.
+func GenCascadeSetNullSQL(schema, table, idx model.CIStr, fk *model.FKInfo, fkValues [][]types.Datum) (string, error) {
+	newValues := make([]types.Datum, len(fk.Cols))
+	for i := range fk.Cols {
+		newValues[i] = types.NewDatum(nil)
+	}
+	couple := &UpdatedValuesCouple{
+		NewValues:     newValues,
+		OldValuesList: fkValues,
+	}
+	return GenCascadeUpdateSQL(schema, table, idx, fk, couple)
 }
 
 // GenCascadeUpdateSQL uses to generate cascade update SQL, export for test.

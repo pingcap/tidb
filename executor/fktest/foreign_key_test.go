@@ -16,7 +16,6 @@ package fk_test
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/kv"
 	"strconv"
 	"strings"
 	"sync"
@@ -24,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/testkit"
@@ -1263,6 +1263,14 @@ func TestForeignKeyGenerateCascadeSQL(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "DELETE FROM `test`.`t` USE INDEX(`idx`) WHERE (`c0`, `c1`) IN ((1,'a'), (2,'b'))", sql)
 
+	sql, err = executor.GenCascadeSetNullSQL(model.NewCIStr("test"), model.NewCIStr("t"), model.NewCIStr(""), fk, fkValues)
+	require.NoError(t, err)
+	require.Equal(t, "UPDATE `test`.`t` SET `c0` = NULL, `c1` = NULL WHERE (`c0`, `c1`) IN ((1,'a'), (2,'b'))", sql)
+
+	sql, err = executor.GenCascadeSetNullSQL(model.NewCIStr("test"), model.NewCIStr("t"), model.NewCIStr("idx"), fk, fkValues)
+	require.NoError(t, err)
+	require.Equal(t, "UPDATE `test`.`t` USE INDEX(`idx`) SET `c0` = NULL, `c1` = NULL WHERE (`c0`, `c1`) IN ((1,'a'), (2,'b'))", sql)
+
 	newValue1 := []types.Datum{types.NewDatum(10), types.NewDatum("aa")}
 	couple := &executor.UpdatedValuesCouple{
 		NewValues:     newValue1,
@@ -1880,4 +1888,39 @@ func TestForeignKeyOnUpdateCascade2(t *testing.T) {
 	tk.MustExec("update t0 set id=10 where id=1;")
 	tk.MustQuery("select id from t0").Check(testkit.Rows("10"))
 	tk.MustQuery("select id from t15").Check(testkit.Rows("10"))
+	for i := 16; i > -1; i-- {
+		tk.MustExec("drop table if exists t" + strconv.Itoa(i))
+	}
+
+	// Test handle many foreign key value in one cascade.
+	tk.MustExec("create table t1 (id int auto_increment key, b int, index(b));")
+	tk.MustExec("create table t2 (id int, b int, foreign key fk(b) references t1(b) on update cascade)")
+	tk.MustExec("insert into t1 (b) values (1),(2),(3),(4),(5),(6),(7),(8);")
+	for i := 0; i < 12; i++ {
+		tk.MustExec("insert into t1 (b) select id from t1")
+	}
+	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("32768"))
+	tk.MustExec("insert into t2 select * from t1")
+	tk.MustExec("update t1 set b=2")
+	tk.MustQuery("select count(*) from t1 join t2 where t1.id=t2.id and t1.b=t2.b").Check(testkit.Rows("32768"))
+}
+
+func TestForeignKeyOnUpdateSetNull(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+
+	// Test handle many foreign key value in one cascade.
+	tk.MustExec("create table t1 (id int auto_increment key, b int, index(b));")
+	tk.MustExec("create table t2 (id int, b int, foreign key fk(b) references t1(b) on update set null)")
+	tk.MustExec("insert into t1 (b) values (1),(2),(3),(4),(5),(6),(7),(8);")
+	for i := 0; i < 12; i++ {
+		tk.MustExec("insert into t1 (b) select id from t1")
+	}
+	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("32768"))
+	tk.MustExec("insert into t2 select * from t1")
+	tk.MustExec("update t1 set b=b+100000000")
+	tk.MustQuery("select count(*) from t2 where b is null").Check(testkit.Rows("32768"))
 }
