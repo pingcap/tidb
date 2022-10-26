@@ -64,9 +64,7 @@ func InContainer() bool {
 		strings.Contains(string(v), "kubepods") ||
 		strings.Contains(string(v), "containerd") ||
 		strings.TrimSuffix(string(v), "\n") == "0::/" {
-		log.Info("Running in container")
 		return true
 	}
-	log.Info("Running in Host")
 	return false
 }
