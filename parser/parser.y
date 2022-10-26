@@ -6387,6 +6387,7 @@ UnReservedKeyword:
 |	"CLUSTERED"
 |	"NONCLUSTERED"
 |	"PRESERVE"
+|	"TOKEN_ISSUER"
 
 TiDBKeyword:
 	"ADMIN"
@@ -6432,7 +6433,6 @@ TiDBKeyword:
 |	"RESET"
 |	"DRY"
 |	"RUN"
-|	"TOKEN_ISSUER"
 
 NotKeywordToken:
 	"ADDDATE"
