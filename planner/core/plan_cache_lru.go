@@ -15,6 +15,8 @@ package core
 
 import (
 	"container/list"
+	"runtime"
+	"strconv"
 	"sync"
 
 	"github.com/pingcap/errors"
@@ -103,6 +105,9 @@ func (l *LRUPlanCache) Get(key kvcache.Key, paramTypes []*types.FieldType) (valu
 	if bucketExist {
 		if element, exist := l.pickFromBucket(bucket, paramTypes); exist {
 			l.lruList.MoveToFront(element)
+			logutil.BgLogger().Info("---memory consume: " + memory.FormatBytes(l.memTracker.BytesConsumed()) +
+				" ---plan num: " + strconv.FormatInt(int64(l.size), 10))
+			runtime.GC()
 			return element.Value.(*planCacheEntry).PlanValue, true
 		}
 	}
@@ -136,6 +141,7 @@ func (l *LRUPlanCache) Put(key kvcache.Key, value kvcache.Value, paramTypes []*t
 	element := l.lruList.PushFront(newCacheEntry)
 	l.buckets[hash][element] = struct{}{}
 	l.size++
+	planCacheInstancePlanNumCounter.Add(1)
 	l.memTracker.Consume(newCacheEntry.MemoryUsage())
 	if l.size > l.capacity {
 		l.removeOldest()
@@ -156,6 +162,7 @@ func (l *LRUPlanCache) Delete(key kvcache.Key) {
 			l.memTracker.Consume(-element.Value.(*planCacheEntry).MemoryUsage())
 			l.lruList.Remove(element)
 			l.size--
+			planCacheInstancePlanNumCounter.Sub(1)
 		}
 		delete(l.buckets, hash)
 	}
@@ -166,10 +173,12 @@ func (l *LRUPlanCache) DeleteAll() {
 	l.lock.Lock()
 	defer l.lock.Unlock()
 	defer l.updateMonitorMetric()
+	defer runtime.GC()
 
 	for lru := l.lruList.Back(); lru != nil; lru = l.lruList.Back() {
 		l.lruList.Remove(lru)
 		l.size--
+		planCacheInstancePlanNumCounter.Sub(1)
 	}
 	l.buckets = make(map[string]map[*list.Element]struct{}, 1)
 	l.memTracker.ReplaceBytesUsed(0)
@@ -217,6 +226,7 @@ func (l *LRUPlanCache) Close() {
 		l.updateMonitorMetric()
 		l.memTracker.Detach()
 	}
+	planCacheInstancePlanNumCounter.Sub(float64(l.size))
 }
 
 // removeOldest removes the oldest element from the cache.
@@ -233,6 +243,7 @@ func (l *LRUPlanCache) removeOldest() {
 	l.lruList.Remove(lru)
 	l.removeFromBucket(lru)
 	l.size--
+	planCacheInstancePlanNumCounter.Sub(1)
 }
 
 // removeFromBucket remove element from bucket
@@ -270,6 +281,7 @@ func PickPlanFromBucket(bucket map[*list.Element]struct{}, paramTypes []*types.F
 }
 
 // updateMonitor update the memory usage monitor to show in grafana
+// todo: func updateMonitorMetric()
 func (l *LRUPlanCache) updateMonitorMetric() {
 	metrics.PlanCacheInstanceMemoryUsage.WithLabelValues("instance").Set(float64(InstancePlanCacheMemoryTracker.BytesConsumed()))
 }

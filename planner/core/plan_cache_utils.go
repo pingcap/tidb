@@ -16,6 +16,7 @@ package core
 
 import (
 	"context"
+	"github.com/pingcap/tidb/metrics"
 	"math"
 	"strconv"
 	"time"
@@ -50,6 +51,8 @@ var (
 
 	// InstancePlanCacheMemoryTracker is the ancestor of all prepared plan cache`s memory tracker
 	InstancePlanCacheMemoryTracker *memory.Tracker
+
+	planCacheInstancePlanNumCounter = metrics.PlanCacheInstancePlanNumCounter.WithLabelValues("plan_num")
 )
 
 func init() {
