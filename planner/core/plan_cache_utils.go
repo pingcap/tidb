@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/kvcache"
-	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/size"
 	atomic2 "go.uber.org/atomic"
 	"golang.org/x/exp/slices"
@@ -47,14 +46,7 @@ var (
 
 	// ExtractSelectAndNormalizeDigest extract the select statement and normalize it.
 	ExtractSelectAndNormalizeDigest func(stmtNode ast.StmtNode, specifiledDB string) (ast.StmtNode, string, string, error)
-
-	// InstancePlanCacheMemoryTracker is the ancestor of all prepared plan cache`s memory tracker
-	InstancePlanCacheMemoryTracker *memory.Tracker
 )
-
-func init() {
-	InstancePlanCacheMemoryTracker = memory.NewTracker(memory.LabelForInstancePlanCacheMemory, -1)
-}
 
 type paramMarkerExtractor struct {
 	markers []ast.ParamMarkerExpr

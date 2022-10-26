@@ -15,12 +15,9 @@ package core
 
 import (
 	"container/list"
-	"runtime"
-	"strconv"
 	"sync"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -74,8 +71,7 @@ func NewLRUPlanCache(capacity uint, guard float64, quota uint64,
 		capacity = 100
 		logutil.BgLogger().Info("capacity of LRU cache is less than 1, will use default value(100) init cache")
 	}
-	m := memory.NewTracker(memory.LabelForPreparedPlanCache, -1)
-	m.AttachTo(InstancePlanCacheMemoryTracker)
+
 	return &LRUPlanCache{
 		capacity:       capacity,
 		size:           0,
@@ -84,7 +80,7 @@ func NewLRUPlanCache(capacity uint, guard float64, quota uint64,
 		pickFromBucket: pickFromBucket,
 		quota:          quota,
 		guard:          guard,
-		memTracker:     m,
+		memTracker:     newTrackerForLRUPC(),
 	}
 }
 
@@ -105,9 +101,6 @@ func (l *LRUPlanCache) Get(key kvcache.Key, paramTypes []*types.FieldType) (valu
 	if bucketExist {
 		if element, exist := l.pickFromBucket(bucket, paramTypes); exist {
 			l.lruList.MoveToFront(element)
-			logutil.BgLogger().Info("---memory consume: " + memory.FormatBytes(l.memTracker.BytesConsumed()) +
-				" ---plan num: " + strconv.FormatInt(int64(l.size), 10))
-			runtime.GC()
 			return element.Value.(*planCacheEntry).PlanValue, true
 		}
 	}
@@ -118,7 +111,6 @@ func (l *LRUPlanCache) Get(key kvcache.Key, paramTypes []*types.FieldType) (valu
 func (l *LRUPlanCache) Put(key kvcache.Key, value kvcache.Value, paramTypes []*types.FieldType) {
 	l.lock.Lock()
 	defer l.lock.Unlock()
-	defer l.updateMonitorMetric()
 
 	hash := strHashKey(key, true)
 	bucket, bucketExist := l.buckets[hash]
@@ -152,7 +144,6 @@ func (l *LRUPlanCache) Put(key kvcache.Key, value kvcache.Value, paramTypes []*t
 func (l *LRUPlanCache) Delete(key kvcache.Key) {
 	l.lock.Lock()
 	defer l.lock.Unlock()
-	defer l.updateMonitorMetric()
 
 	hash := strHashKey(key, false)
 	bucket, bucketExist := l.buckets[hash]
@@ -170,15 +161,13 @@ func (l *LRUPlanCache) Delete(key kvcache.Key) {
 func (l *LRUPlanCache) DeleteAll() {
 	l.lock.Lock()
 	defer l.lock.Unlock()
-	defer l.updateMonitorMetric()
-	defer runtime.GC()
 
 	for lru := l.lruList.Back(); lru != nil; lru = l.lruList.Back() {
 		l.lruList.Remove(lru)
 		l.size--
 	}
 	l.buckets = make(map[string]map[*list.Element]struct{}, 1)
-	l.memTracker.ReplaceBytesUsed(0)
+	l.memTracker = newTrackerForLRUPC()
 }
 
 // Size gets the current cache size.
@@ -193,7 +182,6 @@ func (l *LRUPlanCache) Size() int {
 func (l *LRUPlanCache) SetCapacity(capacity uint) error {
 	l.lock.Lock()
 	defer l.lock.Unlock()
-	defer l.updateMonitorMetric()
 
 	if capacity < 1 {
 		return errors.New("capacity of LRU cache should be at least 1")
@@ -211,18 +199,6 @@ func (l *LRUPlanCache) MemoryUsage() (sum int64) {
 		return
 	}
 	return l.memTracker.BytesConsumed()
-}
-
-// Close do some clean work for LRUPlanCache when close the session
-func (l *LRUPlanCache) Close() {
-	if l == nil {
-		return
-	}
-	if l.memTracker != nil {
-		l.memTracker.ReplaceBytesUsed(0)
-		l.updateMonitorMetric()
-		l.memTracker.Detach()
-	}
 }
 
 // removeOldest removes the oldest element from the cache.
@@ -275,7 +251,10 @@ func PickPlanFromBucket(bucket map[*list.Element]struct{}, paramTypes []*types.F
 	return nil, false
 }
 
-// updateMonitor update the memory usage monitor to show in grafana
-func (l *LRUPlanCache) updateMonitorMetric() {
-	metrics.PlanCacheInstanceMemoryUsage.WithLabelValues("instance").Set(float64(InstancePlanCacheMemoryTracker.BytesConsumed()))
+// newTrackerForLRUPC return a tracker which consumed emptyLRUPlanCacheSize
+// todo: pass label when track general plan cache memory
+func newTrackerForLRUPC() *memory.Tracker {
+	m := memory.NewTracker(memory.LabelForPreparedPlanCache, -1)
+	//todo: maybe need attach here
+	return m
 }
