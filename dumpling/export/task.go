@@ -2,7 +2,11 @@
 
 package export
 
-import "fmt"
+import (
+	"fmt"
+
+	tcontext "github.com/pingcap/tidb/dumpling/context"
+)
 
 // Task is a file dump task for dumpling, it could either be dumping database/table/view/policy metadata, table data
 type Task interface {
@@ -142,4 +146,35 @@ func (t *TaskTableData) Brief() string {
 	db, tbl := t.Meta.DatabaseName(), t.Meta.TableName()
 	idx, total := t.ChunkIndex, t.TotalChunks
 	return fmt.Sprintf("data of table '%s'.'%s'(%d/%d)", db, tbl, idx, total)
+}
+
+func (d *Dumper) dispatchTask(tctx *tcontext.Context, taskChan chan<- Task, needDispatch chan any) {
+	for {
+		select {
+		case <-tctx.Done():
+			tctx.L().Warn("stop dispatch task")
+			return
+		case _, ok := <-needDispatch:
+			d.taskMu.RLock()
+			tasks := d.taskQueue.PopAll()
+			d.taskMu.RUnlock()
+			for _, task := range tasks {
+				ctxDone := d.sendTaskToChan(tctx, task, taskChan)
+				if ctxDone {
+					// todo: return ctx done
+					return
+				}
+			}
+			if !ok {
+				return
+			}
+		}
+	}
+}
+
+func (d *Dumper) appendTask(task Task) {
+	d.taskMu.Lock()
+	defer d.taskMu.Unlock()
+
+	d.taskQueue.Push(task)
 }
