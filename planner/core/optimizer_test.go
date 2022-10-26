@@ -117,10 +117,7 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 		// Meaningless sort item, just for test.
 		PartitionBy: []property.SortItem{sortItem},
 	}
-	partialSort := &PhysicalSort{
-		IsPartialSort: true,
-	}
-	sort := &PhysicalSort{}
+	partialSort := &PhysicalSort{}
 	recv := &PhysicalExchangeReceiver{}
 	passSender := &PhysicalExchangeSender{
 		ExchangeType: tipb.ExchangeType_PassThrough,
@@ -131,7 +128,6 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 	tableScan := &PhysicalTableScan{}
 	plans = append(plans, &partWindow.basePhysicalPlan)
 	plans = append(plans, &partialSort.basePhysicalPlan)
-	plans = append(plans, &sort.basePhysicalPlan)
 	plans = append(plans, &recv.basePhysicalPlan)
 	plans = append(plans, &hashSender.basePhysicalPlan)
 	clear := func(plans []*basePhysicalPlan) {
@@ -183,24 +179,12 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 	hashSender.children = []PhysicalPlan{tableScan}
 	start(partWindow, expStreamCount, 3, 0)
 
-	// Window <- Sort(x) <- ExchangeReceiver <- ExchangeSender
-	// Fine-grained shuffle is disabled because sort is not partial.
-	tableReader.tablePlan = passSender
-	passSender.children = []PhysicalPlan{partWindow}
-	partWindow.children = []PhysicalPlan{sort}
-	sort.children = []PhysicalPlan{recv}
-	recv.children = []PhysicalPlan{hashSender}
-	hashSender.children = []PhysicalPlan{tableScan}
-	start(partWindow, 0, 4, 0)
-
 	// Window <- Sort <- Window <- Sort <- ExchangeReceiver <- ExchangeSender
 	partWindow1 := &PhysicalWindow{
 		// Meaningless sort item, just for test.
 		PartitionBy: []property.SortItem{sortItem},
 	}
-	partialSort1 := &PhysicalSort{
-		IsPartialSort: true,
-	}
+	partialSort1 := &PhysicalSort{}
 	tableReader.tablePlan = passSender
 	passSender.children = []PhysicalPlan{partWindow}
 	partWindow.children = []PhysicalPlan{partialSort}
@@ -214,9 +198,7 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 	// Window <- Sort <- Window(x) <- Sort <- ExchangeReceiver <- ExchangeSender(x)
 	// Fine-grained shuffle is disabled because Window is not hash partition.
 	nonPartWindow := &PhysicalWindow{}
-	partialSort1 = &PhysicalSort{
-		IsPartialSort: true,
-	}
+	partialSort1 = &PhysicalSort{}
 	tableReader.tablePlan = passSender
 	passSender.children = []PhysicalPlan{partWindow}
 	partWindow.children = []PhysicalPlan{partialSort}

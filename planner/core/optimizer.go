@@ -451,13 +451,7 @@ func setupFineGrainedShuffleInternal(plan PhysicalPlan, helper *fineGrainedShuff
 		helper.updateTarget(window, &x.basePhysicalPlan)
 		setupFineGrainedShuffleInternal(x.children[0], helper, streamCount)
 	case *PhysicalSort:
-		if x.IsPartialSort {
-			// Partial sort will keep the data partition.
-			helper.plans = append(helper.plans, &x.basePhysicalPlan)
-		} else {
-			// Global sort will break the data partition.
-			helper.clear()
-		}
+		helper.plans = append(helper.plans, &x.basePhysicalPlan)
 		setupFineGrainedShuffleInternal(x.children[0], helper, streamCount)
 	case *PhysicalSelection:
 		helper.plans = append(helper.plans, &x.basePhysicalPlan)
