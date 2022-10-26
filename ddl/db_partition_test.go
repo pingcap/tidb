@@ -4685,7 +4685,7 @@ func TestAlterModifyColumnOnPartitionedTableFail(t *testing.T) {
 	tk.MustGetErrCode(`alter table t modify a varchar(5)`, errno.WarnDataTruncated)
 	tk.MustExec(`SET SQL_MODE = ''`)
 	tk.MustExec(`alter table t modify a varchar(5)`)
-	// TODO: Investigate why there are no warnings here?!?
+	// fix https://github.com/pingcap/tidb/issues/38669 and update this
 	tk.MustQuery(`show warnings`).Check(testkit.Rows())
 	tk.MustExec(`SET SQL_MODE = DEFAULT`)
 	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows(""+
@@ -4731,4 +4731,13 @@ func TestAlterModifyColumnOnPartitionedTableFail(t *testing.T) {
 	// OK to decrease, since with RANGE COLUMNS, it will check the partition definition values against the new type
 	tk.MustExec(`alter table t modify a smallint`)
 	tk.MustExec(`alter table t modify a bigint`)
+
+	tk.MustExec(`drop table t`)
+
+	tk.MustExec(`create table t (a int, b varchar(255), key (b)) partition by list columns (b) (partition p1 values in ("1", "ab", "12345"), partition p2 values in ("2", "abc", "999999"))`)
+	tk.MustExec(`insert into t values (1, "1"), (2, "2"), (999999, "999999")`)
+	tk.MustContainErrMsg(`alter table t modify column b varchar(5)`, "[ddl:8200]New column does not match partition definitions: [ddl:1654]Partition column values of incorrect type")
+	tk.MustExec(`set sql_mode = ''`)
+	tk.MustContainErrMsg(`alter table t modify column b varchar(5)`, "[ddl:8200]New column does not match partition definitions: [ddl:1654]Partition column values of incorrect type")
+	tk.MustExec(`set sql_mode = default`)
 }
