@@ -249,9 +249,6 @@ const (
 
 	// TiDBEnableUnsafeSubstitute indicates whether to enable generate column takes unsafe substitute.
 	TiDBEnableUnsafeSubstitute = "tidb_enable_unsafe_substitute"
-
-	// TiDBEnableTiFlashReadForWriteStmt indicates whether to enable TiFlash to read for write statements.
-	TiDBEnableTiFlashReadForWriteStmt = "tidb_enable_tiflash_read_for_write_stmt"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -1054,7 +1051,6 @@ const (
 	DefExecutorConcurrency                         = 5
 	DefTiDBEnableGeneralPlanCache                  = false
 	DefTiDBGeneralPlanCacheSize                    = 100
-	DefTiDBEnableTiFlashReadForWriteStmt           = false
 	// MaxDDLReorgBatchSize is exported for testing.
 	MaxDDLReorgBatchSize                     int32  = 10240
 	MinDDLReorgBatchSize                     int32  = 32

@@ -1930,10 +1930,6 @@ var defaultSysVars = []*SysVar{
 			}
 			return nil
 		}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableTiFlashReadForWriteStmt, Value: BoolToOnOff(DefTiDBEnableTiFlashReadForWriteStmt), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
-		s.EnableTiFlashReadForWriteStmt = TiDBOptOn(val)
-		return nil
-	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableUnsafeSubstitute, Value: BoolToOnOff(false), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableUnsafeSubstitute = TiDBOptOn(val)
 		return nil
