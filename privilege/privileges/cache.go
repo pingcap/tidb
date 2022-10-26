@@ -100,6 +100,7 @@ type UserRecord struct {
 	Privileges           mysql.PrivilegeType
 	AccountLocked        bool // A role record when this field is true
 	AuthPlugin           string
+	AuthTokenIssuer      string
 }
 
 // NewUserRecord return a UserRecord, only use for unit test.
@@ -663,6 +664,8 @@ func (p *MySQLPrivilege) decodeUserTableRow(row chunk.Row, fs []*ast.ResultField
 				return errInvalidPrivilegeType.GenWithStack(f.ColumnAsName.O)
 			}
 			value.Privileges |= priv
+		case f.ColumnAsName.L == "token_issuer":
+			value.AuthTokenIssuer = row.GetString(i)
 		default:
 			value.assignUserOrHost(row, i, f)
 		}
