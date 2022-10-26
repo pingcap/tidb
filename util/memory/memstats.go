@@ -22,6 +22,7 @@ import (
 
 var stats atomic.Pointer[globalMstats]
 
+// ReadMemInterval controls the interval to read memory stats.
 const ReadMemInterval = 300 * time.Millisecond
 
 // ReadMemStats read the mem stats from runtime.ReadMemStats
