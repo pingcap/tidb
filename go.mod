@@ -28,6 +28,7 @@ require (
 	github.com/dgraph-io/ristretto v0.1.1-0.20220403145359-8e850b710d6d
 	github.com/dgryski/go-farm v0.0.0-20200201041132-a6ae2369ad13
 	github.com/docker/go-units v0.4.0
+	github.com/edwingeng/deque v0.0.0-20191220032131-8596380dee17
 	github.com/emirpasic/gods v1.18.1
 	github.com/fatanugraha/noloopclosure v0.1.1
 	github.com/fatih/color v1.13.0
@@ -57,6 +58,7 @@ require (
 	github.com/kisielk/errcheck v1.6.2
 	github.com/klauspost/compress v1.15.9
 	github.com/kyoh86/exportloopref v0.1.8
+	github.com/labstack/gommon v0.3.0
 	github.com/mgechev/revive v1.2.4
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
 	github.com/nishanths/predeclared v0.2.2
@@ -71,7 +73,6 @@ require (
 	github.com/pingcap/log v1.1.0
 	github.com/pingcap/sysutil v0.0.0-20220114020952-ea68d2dbf5b4
 	github.com/pingcap/tidb/parser v0.0.0-20221013075951-a5c7c039c6c3
-	github.com/pingcap/tiflow v0.0.0-20221025040555-19365b0790e6
 	github.com/pingcap/tipb v0.0.0-20221020071514-cd933387bcb5
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.13.0
@@ -197,6 +198,7 @@ require (
 	github.com/oklog/ulid v1.3.1 // indirect
 	github.com/olekukonko/tablewriter v0.0.5 // indirect
 	github.com/pierrec/lz4/v4 v4.1.15 // indirect
+	github.com/pingcap/check v0.0.0-20211026125417-57bd13f7b5f0 // indirect
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989 // indirect
 	github.com/pkg/browser v0.0.0-20180916011732-0a3d74bf9ce4 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
