@@ -639,7 +639,7 @@ func RunStreamStop(
 	if err := streamMgr.setGCSafePoint(ctx,
 		utils.BRServiceSafePoint{
 			ID:       buildPauseSafePointName(ti.Info.Name),
-			TTL:      0,
+			TTL:      utils.DefaultStreamStartSafePointTTL,
 			BackupTS: 0,
 		},
 	); err != nil {
@@ -693,7 +693,7 @@ func RunStreamPause(
 		utils.BRServiceSafePoint{
 			ID:       buildPauseSafePointName(ti.Info.Name),
 			TTL:      cfg.SafePointTTL,
-			BackupTS: globalCheckPointTS - 1,
+			BackupTS: globalCheckPointTS,
 		},
 	); err != nil {
 		return errors.Trace(err)
@@ -766,7 +766,7 @@ func RunStreamResume(
 	if err := streamMgr.setGCSafePoint(ctx,
 		utils.BRServiceSafePoint{
 			ID:       buildPauseSafePointName(ti.Info.Name),
-			TTL:      0,
+			TTL:      utils.DefaultStreamStartSafePointTTL,
 			BackupTS: globalCheckPointTS,
 		},
 	); err != nil {
