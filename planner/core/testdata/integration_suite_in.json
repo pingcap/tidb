@@ -1011,5 +1011,22 @@
       "set @@tidb_opt_range_max_size = 300",
       "explain format='brief' select /*+ inl_join(t1) */ * from t1 join t2 on t1.a = t2.e where t1.b > t2.f and t1.b < t2.f + 10"
     ]
+  },
+  {
+    "name": "TestNullConditionForPrefixIndex",
+    "cases": [
+      "select count(1) from t1 where c1 = '0xfff' and c2 is not null",
+      "select count(1) from t1 where c1 = '0xfff' and c2 is null",
+      "select count(1) from t1 where c1 >= '0xfff' and c2 is not null",
+      "select count(1) from t1 where c1 >= '0xfff' and c2 is null",
+      "select count(1) from t1 where c1 = '0xfff' and (c2 + 1) is not null",
+      "select count(1) from t1 where c1 = '0xfff' and (c2 + 1) is null",
+      "select c2 from t1 use index(idx2) where c1 = '0xfff' and c2 is not null",
+      "select c2 from t1 use index(idx2) where c1 = '0xfff' and c2 is null",
+      "select c2 from t1 use index(idx2) where c1 >= '0xfff' and c2 is not null",
+      "select c2 from t1 use index(idx2) where c1 >= '0xfff' and c2 is null",
+      "select b from t2 use index(idx) where b is not null",
+      "select b from t2 use index(idx) where b is null"
+    ]
   }
 ]
