@@ -28,8 +28,6 @@ import (
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
 	"go.etcd.io/etcd/tests/v3/integration"
-
-	// "go.opencensus.io/stats/view"
 	"go.uber.org/goleak"
 )
 
@@ -50,7 +48,6 @@ func TestGlobalConfigSyncer(t *testing.T) {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
-		// view.Stop()
 		err := store.Close()
 		require.NoError(t, err)
 	}()
@@ -75,7 +72,6 @@ func TestStoreGlobalConfig(t *testing.T) {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
-		// view.Stop()
 		err := store.Close()
 		require.NoError(t, err)
 	}()

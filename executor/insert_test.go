@@ -999,7 +999,6 @@ func TestInsertWithAutoidSchema(t *testing.T) {
 			tk.MustExec(tt.insert[8:])
 			tk.Session().GetSessionVars().RetryInfo = &variable.RetryInfo{}
 		} else {
-			fmt.Println("====", tt.insert)
 			tk.MustExec(tt.insert)
 		}
 		if tt.query == "set session sql_mode = `ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION,NO_AUTO_VALUE_ON_ZERO`" ||
@@ -1198,13 +1197,13 @@ func TestAutoIDIncrementAndOffset(t *testing.T) {
 		tk.Session().GetSessionVars().AutoIncrementIncrement = -1
 		tk.Session().GetSessionVars().AutoIncrementOffset = -2
 		tk.MustGetErrMsg(`insert into io(b) values (null),(null),(null)`,
-		"[autoid:8060]Invalid auto_increment settings: auto_increment_increment: -1, auto_increment_offset: -2, both of them must be in range [1..65535]")
+			"[autoid:8060]Invalid auto_increment settings: auto_increment_increment: -1, auto_increment_offset: -2, both of them must be in range [1..65535]")
 		tk.MustExec(`delete from io`)
 
 		tk.Session().GetSessionVars().AutoIncrementIncrement = 65536
 		tk.Session().GetSessionVars().AutoIncrementOffset = 65536
 		tk.MustGetErrMsg(`insert into io(b) values (null),(null),(null)`,
-		"[autoid:8060]Invalid auto_increment settings: auto_increment_increment: 65536, auto_increment_offset: 65536, both of them must be in range [1..65535]")
+			"[autoid:8060]Invalid auto_increment settings: auto_increment_increment: 65536, auto_increment_offset: 65536, both of them must be in range [1..65535]")
 
 		tk.MustExec(`drop table io`)
 	}

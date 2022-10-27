@@ -16,7 +16,6 @@ package autoid
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
 
@@ -35,7 +34,7 @@ type singlePointAlloc struct {
 	dbID          int64
 	tblID         int64
 	lastAllocated int64
-	isUnsigned bool
+	isUnsigned    bool
 	clientDiscover
 }
 
@@ -65,7 +64,6 @@ func (d *clientDiscover) GetClient(ctx context.Context) (autoid.AutoIDAllocClien
 	}
 
 	addr := string(resp.Kvs[0].Value)
-	fmt.Println("get autoid service addr ==", addr)
 	grpcConn, err := grpc.Dial(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -88,7 +86,6 @@ func (sp *singlePointAlloc) Alloc(ctx context.Context, n uint64, increment, offs
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-
 	if !validIncrementAndOffset(increment, offset) {
 		return 0, 0, errInvalidIncrementAndOffset.GenWithStackByArgs(increment, offset)
 	}
@@ -99,19 +96,16 @@ retry:
 		return 0, 0, errors.Trace(err)
 	}
 
-	fmt.Println("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAlloc  ", sp.dbID, sp.tblID)
-
 	start := time.Now()
 	resp, err := cli.AllocAutoID(ctx, &autoid.AutoIDRequest{
-		DbID:      sp.dbID,
-		TblID:     sp.tblID,
-		N:         n,
-		Increment: increment,
-		Offset:    offset,
+		DbID:       sp.dbID,
+		TblID:      sp.tblID,
+		N:          n,
+		Increment:  increment,
+		Offset:     offset,
 		IsUnsigned: sp.isUnsigned,
 	})
 	if err != nil {
-		fmt.Println("request auto id error ===", err)
 		if strings.Contains(err.Error(), "rpc error") {
 			sp.AutoIDAllocClient = nil
 			goto retry
@@ -148,21 +142,15 @@ func (sp *singlePointAlloc) Rebase(ctx context.Context, newBase int64, allocIDs 
 }
 
 func (sp *singlePointAlloc) rebase(ctx context.Context, newBase int64, allocIDs bool, force bool) error {
-
-	fmt.Println("rebase auto id to ===============", newBase)
-
 	cli, err := sp.GetClient(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
-
-	fmt.Println("single point alloc rebace ==", sp.isUnsigned)
-
 	_, err = cli.Rebase(ctx, &autoid.RebaseRequest{
-		DbID:  sp.dbID,
-		TblID: sp.tblID,
-		Base:  newBase,
-		Force: force,
+		DbID:       sp.dbID,
+		TblID:      sp.tblID,
+		Base:       newBase,
+		Force:      force,
 		IsUnsigned: sp.isUnsigned,
 	})
 	if err == nil {
@@ -186,13 +174,11 @@ func (sp *singlePointAlloc) RebaseSeq(newBase int64) (int64, bool, error) {
 
 // Base return the current base of Allocator.
 func (sp *singlePointAlloc) Base() int64 {
-	fmt.Println("base called!!")
 	return sp.lastAllocated
 }
 
 // End is only used for test.
 func (sp *singlePointAlloc) End() int64 {
-	fmt.Println("end called!!")
 	return sp.lastAllocated
 }
 
@@ -201,7 +187,6 @@ func (sp *singlePointAlloc) End() int64 {
 func (sp *singlePointAlloc) NextGlobalAutoID() (int64, error) {
 	// return sp.lastAllocated + 1, nil
 	_, max, err := sp.Alloc(context.Background(), 0, 1, 1)
-	fmt.Println("next global id called!", max)
 	return max + 1, err
 }
 

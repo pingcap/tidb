@@ -50,7 +50,6 @@ require (
 	github.com/gostaticanalysis/forcetypeassert v0.1.0
 	github.com/grpc-ecosystem/go-grpc-middleware v1.3.0
 	github.com/iancoleman/strcase v0.2.0
-	github.com/jamiealquiza/tachymeter v2.0.0+incompatible
 	github.com/jarcoal/httpmock v1.2.0
 	github.com/jedib0t/go-pretty/v6 v6.2.2
 	github.com/jingyugao/rowserrcheck v1.1.1
@@ -248,7 +247,5 @@ replace (
 	github.com/pingcap/tidb/parser => ./parser
 	go.opencensus.io => go.opencensus.io v0.23.1-0.20220331163232-052120675fac
 )
-
-replace github.com/tikv/pd/client => ../../tikv/pd/client
 
 replace github.com/pingcap/kvproto => ../kvproto

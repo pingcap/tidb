@@ -41,7 +41,6 @@ import (
 	tikvutil "github.com/tikv/client-go/v2/util"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
-	// autoidservice "github.com/pingcap/tidb/autoid"
 )
 
 // Attention:
@@ -470,8 +469,6 @@ func (alloc *allocator) ForceRebase(requiredBase int64) error {
 		return ErrAutoincReadFailed.GenWithStack("Cannot force rebase the next global ID to '0'")
 	}
 
-	fmt.Println("force rebase to ======", requiredBase)
-
 	alloc.mu.Lock()
 	defer alloc.mu.Unlock()
 	startTime := time.Now()
@@ -542,7 +539,8 @@ func NextStep(curStep int64, consumeDur time.Duration) int64 {
 func newSinglePointAlloc(store kv.Storage, dbID, tblID int64, isUnsigned bool) *singlePointAlloc {
 	ebd, ok := store.(kv.EtcdBackend)
 	if !ok {
-		fmt.Println("newSinglePointAlloc fail because not etcd background!!!")
+		// newSinglePointAlloc fail because not etcd background
+		// This could happen in the server package unit test
 		return nil
 	}
 
@@ -551,12 +549,11 @@ func newSinglePointAlloc(store kv.Storage, dbID, tblID int64, isUnsigned bool) *
 		panic(err)
 	}
 	spa := &singlePointAlloc{
-		dbID:  dbID,
-		tblID: tblID,
+		dbID:       dbID,
+		tblID:      tblID,
 		isUnsigned: isUnsigned,
 	}
 	if len(addrs) > 0 {
-		fmt.Println("addrs ===", addrs)
 		etcdCli, err := clientv3.New(clientv3.Config{
 			Endpoints: addrs,
 			TLS:       ebd.TLSConfig(),
@@ -573,10 +570,7 @@ func newSinglePointAlloc(store kv.Storage, dbID, tblID int64, isUnsigned bool) *
 
 	failpoint.Inject("mockAutoIDChange", func(val failpoint.Value) {
 		if val.(bool) {
-			fmt.Println("mockAutoIDChange!!!")
 			spa = nil
-		} else {
-			fmt.Println("not mock autoid change, val ==", val)
 		}
 	})
 	return spa
@@ -598,9 +592,8 @@ func NewAllocator(store kv.Storage, dbID, tbID int64, isUnsigned bool,
 		fn.ApplyOn(alloc)
 	}
 
-	fmt.Println("auto id cache default value ===", alloc.step, alloc.customStep)
+	// Use the MySQL compatible AUTO_INCREMENT mode.
 	if allocType == RowIDAllocType && alloc.customStep && alloc.step == 1 {
-	// if allocType == RowIDAllocType {
 		alloc1 := newSinglePointAlloc(store, dbID, tbID, isUnsigned)
 		if alloc1 != nil {
 			return alloc1

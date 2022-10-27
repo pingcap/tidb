@@ -19,7 +19,6 @@
 package table
 
 import (
-	"fmt"
 	"context"
 	"time"
 
@@ -220,7 +219,6 @@ func AllocBatchAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.
 	increment = int64(sctx.GetSessionVars().AutoIncrementIncrement)
 	offset := int64(sctx.GetSessionVars().AutoIncrementOffset)
 	alloc := t.Allocators(sctx).Get(autoid.RowIDAllocType)
-	fmt.Printf("auto alloc == %#v\n", alloc)
 	min, max, err := alloc.Alloc(ctx, uint64(N), increment, offset)
 	if err != nil {
 		return min, max, err

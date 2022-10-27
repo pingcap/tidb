@@ -3143,7 +3143,6 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	}
 	for varName, varVal := range sessionCache {
 		if _, ok := vars.GetSystemVar(varName); !ok {
-			fmt.Println("load common global variable ....", varName, varVal)
 			err = vars.SetSystemVarWithRelaxedValidation(varName, varVal)
 			if err != nil {
 				if variable.ErrUnknownSystemVar.Equal(err) {

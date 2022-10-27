@@ -2,7 +2,6 @@ package autoid
 
 import (
 	"context"
-	"fmt"
 	"sync/atomic"
 	"time"
 
@@ -32,21 +31,16 @@ func (ls *leaderShip) IsLeader() bool {
 }
 
 func (ls *leaderShip) campaignLoop(ctx context.Context, addr string) {
-	fmt.Println("before new session!!!")
 	s, err := newSession(ctx, ls.cli, 50, 15)
 	if err != nil {
-		// TODO
-		fmt.Println("error not printed???")
 		log.Error("new session error?")
 	}
-	fmt.Println("enter campaign loop!!!")
 
 	for {
 		select {
 		case <-s.Done():
 			s, err = newSession(ctx, ls.cli, 50, 15)
 			if err != nil {
-				// TODO
 				log.Error("new session error?")
 			}
 		default:
@@ -55,13 +49,11 @@ func (ls *leaderShip) campaignLoop(ctx context.Context, addr string) {
 		e := concurrency.NewElection(s, autoIDLeaderPath)
 		// follower blocks here.
 
-		fmt.Println("before campaign leader!!!")
 		err := e.Campaign(ctx, addr)
 		if err != nil {
 			log.Warn("fail to campaign?")
 			continue
 		}
-		fmt.Println("campaign leader success!")
 
 		ls.isLeader.Store(true)
 		ch := e.Observe(ctx)
@@ -74,7 +66,6 @@ func (ls *leaderShip) campaignLoop(ctx context.Context, addr string) {
 		if s != addr {
 			log.Fatal("wrong election result. got %s, wanted id")
 		}
-		fmt.Println(resp)
 		<-ch
 		ls.isLeader.Store(false)
 	}
@@ -86,20 +77,11 @@ func newSession(ctx context.Context, etcdCli *clientv3.Client, retryCnt, ttl int
 	var etcdSession *concurrency.Session
 	failedCnt := 0
 	for i := 0; i < retryCnt; i++ {
-		fmt.Println("once ..........")
-		//		if err = contextDone(ctx, err); err != nil {
-		//			return etcdSession, errors.Trace(err)
-		//		}
-
-		// startTime := time.Now()
 		etcdSession, err = concurrency.NewSession(etcdCli, concurrency.WithTTL(ttl), concurrency.WithContext(ctx))
-		// metrics.NewSessionHistogram.WithLabelValues(logPrefix, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 		if err == nil {
-			fmt.Println("create session success?")
 			break
 		}
 
-		fmt.Println("retry session success?")
 		if failedCnt%5 == 0 {
 			log.Warn("failed to new session to etcd", zap.Error(err))
 		}

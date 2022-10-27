@@ -462,10 +462,6 @@ bazel_addindextest: failpoint-enable bazel_ci_prepare
 bazel_lint: bazel_prepare
 	bazel build //... --//build:with_nogo_flag=true
 
-autoid_server:
-	@cd autoid_service; \
-	go build -o ../bin/autoid-server ./cmd/main.go
-
 docker:
 	docker build -t "$(DOCKERPREFIX)tidb:latest" --build-arg 'GOPROXY=$(shell go env GOPROXY),' -f Dockerfile .
 
