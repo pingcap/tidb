@@ -26,7 +26,6 @@ const (
 )
 
 func TestChunkQueueIteratorPrevNext(t *testing.T) {
-	t.Parallel()
 	q := NewChunkQueue[int]()
 	for i := 0; i < iterTestSize; i++ {
 		q.Push(i)
@@ -155,8 +154,6 @@ func BenchmarkIterate(b *testing.B) {
 }
 
 func TestChunkQueueGetIterator(t *testing.T) {
-	t.Parallel()
-
 	q := NewChunkQueue[int]()
 	q.PushMany(0, 1)
 	var it *ChunkQueueIterator[int]

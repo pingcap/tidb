@@ -28,8 +28,6 @@ const (
 )
 
 func TestChunkQueueCommon(t *testing.T) {
-	t.Parallel()
-
 	type ZeroSizeType struct{}
 	require.NotNil(t, NewChunkQueue[ZeroSizeType]())
 
@@ -110,8 +108,6 @@ func TestChunkQueueCommon(t *testing.T) {
 }
 
 func TestChunkQueueRandom(t *testing.T) {
-	t.Parallel()
-
 	getInt := func() int {
 		return rand.Int()
 	}
@@ -228,7 +224,6 @@ func doRandomTest[T comparable](t *testing.T, getVal func() T) {
 }
 
 func TestExpand(t *testing.T) {
-	t.Parallel()
 	q := NewChunkQueue[int]()
 
 	for i := 0; i < testCaseSize; i++ {
@@ -244,8 +239,6 @@ func TestExpand(t *testing.T) {
 }
 
 func TestDequeueMany(t *testing.T) {
-	t.Parallel()
-
 	q := NewChunkQueue[int]()
 	x := testCaseSize
 	for v := 0; v < x; v++ {
@@ -277,8 +270,6 @@ func TestDequeueMany(t *testing.T) {
 }
 
 func TestRange(t *testing.T) {
-	t.Parallel()
-
 	q := NewChunkQueue[int]()
 	for i := 0; i < testCaseSize; i++ {
 		q.Push(i)
@@ -326,8 +317,6 @@ func TestRange(t *testing.T) {
 }
 
 func TestRangeAndPop(t *testing.T) {
-	t.Parallel()
-
 	q := NewChunkQueue[int]()
 	for i := 0; i < testCaseSize; i++ {
 		q.Push(i)
