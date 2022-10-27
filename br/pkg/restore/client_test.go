@@ -335,11 +335,18 @@ type fakePDClient struct {
 	notLeader bool
 }
 
+var retryTimes int
+
 func (fpdc fakePDClient) GetAllStores(context.Context, ...pd.GetStoreOption) ([]*metapb.Store, error) {
 	return append([]*metapb.Store{}, fpdc.stores...), nil
 }
 
 func (fpdc fakePDClient) GetTS(ctx context.Context) (int64, int64, error) {
+	retryTimes++
+	if retryTimes >= 3 { // the mock PD leader switched successfully
+		fpdc.notLeader = false
+	}
+
 	if fpdc.notLeader {
 		return 0, 0, errors.Errorf("rpc error: code = Unknown desc = [PD:tso:ErrGenerateTimestamp]generate timestamp failed, requested pd is not leader of cluster")
 	}
@@ -347,17 +354,29 @@ func (fpdc fakePDClient) GetTS(ctx context.Context) (int64, int64, error) {
 }
 
 func TestGetTSWithRetry(t *testing.T) {
-	t.Log("case 1:")
-	pDClient := fakePDClient{notLeader: false}
-	client := restore.NewRestoreClient(pDClient, nil, defaultKeepaliveCfg, false)
-	_, err := client.GetTSWithRetry(context.Background())
-	require.NoError(t, err)
+	t.Run("PD leader is healthy:", func(t *testing.T) {
+		retryTimes = -1000
+		pDClient := fakePDClient{notLeader: false}
+		client := restore.NewRestoreClient(pDClient, nil, defaultKeepaliveCfg, false)
+		_, err := client.GetTSWithRetry(context.Background())
+		require.NoError(t, err)
+	})
 
-	t.Log("case 2:")
-	pDClient = fakePDClient{notLeader: true}
-	client = restore.NewRestoreClient(pDClient, nil, defaultKeepaliveCfg, false)
-	_, err = client.GetTSWithRetry(context.Background())
-	require.Error(t, err)
+	t.Run("PD leader failure:", func(t *testing.T) {
+		retryTimes = -1000
+		pDClient := fakePDClient{notLeader: true}
+		client := restore.NewRestoreClient(pDClient, nil, defaultKeepaliveCfg, false)
+		_, err := client.GetTSWithRetry(context.Background())
+		require.Error(t, err)
+	})
+
+	t.Run("PD leader switch successfully", func(t *testing.T) {
+		retryTimes = 0
+		pDClient := fakePDClient{notLeader: true}
+		client := restore.NewRestoreClient(pDClient, nil, defaultKeepaliveCfg, false)
+		_, err := client.GetTSWithRetry(context.Background())
+		require.NoError(t, err)
+	})
 }
 
 func TestPreCheckTableTiFlashReplicas(t *testing.T) {

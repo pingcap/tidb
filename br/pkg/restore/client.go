@@ -496,9 +496,12 @@ func (rc *Client) GetTS(ctx context.Context) (uint64, error) {
 
 // GetTSWithRetry gets a new timestamp with retry from PD.
 func (rc *Client) GetTSWithRetry(ctx context.Context) (uint64, error) {
-	var startTS uint64
-	var getTSErr error = nil
-	var retry uint = 0
+	var (
+		startTS uint64
+		getTSErr error
+		retry uint
+	)
+
 	err := utils.WithRetry(ctx, func() error {
 		startTS, getTSErr = rc.GetTS(ctx)
 		failpoint.Inject("get-ts-error", func(val failpoint.Value) {
