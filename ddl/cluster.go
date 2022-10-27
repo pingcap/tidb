@@ -257,7 +257,8 @@ func GetFlashbackKeyRanges(sess sessionctx.Context) ([]kv.KeyRange, error) {
 	return keyRanges, nil
 }
 
-func sendPrepareFlashbackToVersionRPC(
+// function be called by BR for aws ebs snapshot backup and restore
+func SendPrepareFlashbackToVersionRPC(
 	ctx context.Context,
 	s tikv.Storage,
 	r tikvstore.KeyRange,
@@ -324,7 +325,8 @@ func sendPrepareFlashbackToVersionRPC(
 	return taskStat, nil
 }
 
-func sendFlashbackToVersionRPC(
+// function be called also by BR for aws ebs snapshot backup and restore
+func SendFlashbackToVersionRPC(
 	ctx context.Context,
 	s tikv.Storage,
 	version uint64,
@@ -413,6 +415,7 @@ func sendFlashbackToVersionRPC(
 	return taskStat, nil
 }
 
+// function be called also by BR for aws ebs snapshot backup and restore
 func flashbackToVersion(
 	ctx context.Context,
 	d *ddlCtx,
@@ -524,7 +527,7 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		for _, r := range keyRanges {
 			if err = flashbackToVersion(d.ctx, d,
 				func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
-					stats, err := sendPrepareFlashbackToVersionRPC(ctx, d.store.(tikv.Storage), r)
+					stats, err := SendPrepareFlashbackToVersionRPC(ctx, d.store.(tikv.Storage), r)
 					totalRegions.Add(uint64(stats.CompletedRegions))
 					return stats, err
 				}, r.StartKey, r.EndKey); err != nil {
@@ -560,7 +563,7 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			if err = flashbackToVersion(d.ctx, d,
 				func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
 					// Use commitTS - 1 as startTS, make sure it less than commitTS.
-					stats, err := sendFlashbackToVersionRPC(ctx, d.store.(tikv.Storage), flashbackTS, commitTS-1, commitTS, r)
+					stats, err := SendFlashbackToVersionRPC(ctx, d.store.(tikv.Storage), flashbackTS, commitTS-1, commitTS, r)
 					completedRegions.Add(uint64(stats.CompletedRegions))
 					logutil.BgLogger().Info("[ddl] flashback cluster stats",
 						zap.Uint64("complete regions", completedRegions.Load()),

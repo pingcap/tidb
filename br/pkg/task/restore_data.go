@@ -138,7 +138,7 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 	// restore tikv data from a snapshot volume
 	var totalRegions int
 
-	totalRegions, err = restore.RecoverData(ctx, resolveTs, allStores, mgr, progress)
+	totalRegions, err = restore.RecoverData(ctx, resolveTs, allStores, mgr, progress, restoreTS)
 	if err != nil {
 		return errors.Trace(err)
 	}

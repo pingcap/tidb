@@ -13,7 +13,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/util/mathutil"
+	tikvstore "github.com/tikv/client-go/v2/kv"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
@@ -26,7 +29,7 @@ import (
 // 3. send the recover plan and the wait tikv to apply, in waitapply, all assigned region leader will check apply log to the last log
 // 4. ensure all region apply to last log
 // 5. send the resolvedTs to tikv for deleting data.
-func RecoverData(ctx context.Context, resolvedTs uint64, allStores []*metapb.Store, mgr *conn.Mgr, progress glue.Progress) (int, error) {
+func RecoverData(ctx context.Context, resolvedTs uint64, allStores []*metapb.Store, mgr *conn.Mgr, progress glue.Progress, restoreTs uint64) (int, error) {
 	var recovery = NewRecovery(allStores, mgr, progress)
 	if err := recovery.ReadRegionMeta(ctx); err != nil {
 		return 0, errors.Trace(err)
@@ -51,7 +54,13 @@ func RecoverData(ctx context.Context, resolvedTs uint64, allStores []*metapb.Sto
 		return totalRegions, errors.Trace(err)
 	}
 
-	if err := recovery.ResolveData(ctx, resolvedTs); err != nil {
+	keyRanges := recovery.getRegionKeyRanges()
+
+	if err := recovery.PrepareFlashbackToVersion(ctx, keyRanges); err != nil {
+		return totalRegions, errors.Trace(err)
+	}
+
+	if err := recovery.FlashbackToVersion(ctx, keyRanges, resolvedTs, restoreTs); err != nil {
 		return totalRegions, errors.Trace(err)
 	}
 
@@ -289,6 +298,79 @@ func (recovery *Recovery) WaitApply(ctx context.Context) (err error) {
 		})
 	}
 	// Wait for all TiKV instances force leader and wait apply to last log.
+	return eg.Wait()
+}
+
+// get the region key range
+func (recovery *Recovery) getRegionKeyRanges() []tikvstore.KeyRange {
+
+	var keyRanges []tikvstore.KeyRange
+	// Group region peer info by region id. find the max allocateId
+	// region [id] [peer[0-n]]
+	var regions = make(map[uint64][]*RecoverRegion, 0)
+	for _, v := range recovery.StoreMetas {
+		storeId := v.StoreId
+		for _, m := range v.RegionMetas {
+			// insert the keyRanges
+			if regions[m.RegionId] == nil {
+				regions[m.RegionId] = make([]*RecoverRegion, 0, len(recovery.allStores))
+				keyRanges = append(keyRanges, tikvstore.KeyRange{
+					StartKey: m.StartKey,
+					EndKey:   m.EndKey,
+				})
+			}
+			regions[m.RegionId] = append(regions[m.RegionId], &RecoverRegion{m, storeId})
+		}
+	}
+
+	return keyRanges
+}
+
+// Prepare the region for flashback the data, the purpose is to stop region service, put region in flashback state
+func (recovery *Recovery) PrepareFlashbackToVersion(ctx context.Context, keyRanges []tikvstore.KeyRange) (err error) {
+	eg, ectx := errgroup.WithContext(ctx)
+	totalStores := len(recovery.allStores)
+	workers := utils.NewWorkerPool(uint(mathutil.Min(totalStores, common.MaxStoreConcurrency)), "resolve data from tikv")
+
+	for _, r := range keyRanges {
+		if err := ectx.Err(); err != nil {
+			break
+		}
+		workers.ApplyOnErrorGroup(eg, func() error {
+			_, err := ddl.SendPrepareFlashbackToVersionRPC(ctx, recovery.mgr.GetStorage().(tikv.Storage), r)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			log.Debug("prepare region done", zap.ByteString("region_start_key", r.StartKey), zap.ByteString("region_end_key", r.EndKey))
+			return nil
+		})
+	}
+	log.Info("prepare region flashback done")
+	// Wait for all region to prepare flashback
+	return eg.Wait()
+}
+
+// flashback the region data to resolvedTs
+func (recovery *Recovery) FlashbackToVersion(ctx context.Context, keyRanges []tikvstore.KeyRange, resolvedTs uint64, commitTs uint64) (err error) {
+	eg, ectx := errgroup.WithContext(ctx)
+	totalStores := len(recovery.allStores)
+	workers := utils.NewWorkerPool(uint(mathutil.Min(totalStores, common.MaxStoreConcurrency)), "resolve data from tikv")
+
+	for _, r := range keyRanges {
+		if err := ectx.Err(); err != nil {
+			break
+		}
+		workers.ApplyOnErrorGroup(eg, func() error {
+			_, err := ddl.SendFlashbackToVersionRPC(ctx, recovery.mgr.GetStorage().(tikv.Storage), resolvedTs, commitTs-1, commitTs, r)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			log.Debug("region flashback done", zap.ByteString("region_start_key", r.StartKey), zap.ByteString("region_end_key", r.EndKey))
+			return nil
+		})
+	}
+	log.Info("region flashback done")
+	// Wait for all region to flashback
 	return eg.Wait()
 }
 
