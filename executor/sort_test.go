@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/chunk"
 	"github.com/stretchr/testify/require"
 )
 
@@ -69,43 +68,29 @@ func testSortInDisk(t *testing.T, removeDir bool) {
 
 	tk.MustExec("set @@tidb_mem_quota_query=1;")
 	tk.MustExec("set @@tidb_max_chunk_size=32;")
-	alloc := chunk.NewAllocator()
-	//First time does not go to the cache, second time alloc requests memory from the system,
-	//Third time gets the chunk from alloc
-	idAlloc := []chunk.Allocator{nil, alloc, alloc}
-	idresult := []string{"0", "1", "1"}
-	for i, alloc := range idAlloc {
-		tk.Session().GetSessionVars().SetAlloc(alloc)
-		tk.MustExec("drop table if exists t")
-		tk.MustExec("create table t(c1 int, c2 int, c3 int)")
-		var buf bytes.Buffer
-		buf.WriteString("insert into t values ")
-		for i := 0; i < 5; i++ {
-			for j := i; j < 1024; j += 5 {
-				if j > 0 {
-					buf.WriteString(", ")
-				}
-				buf.WriteString(fmt.Sprintf("(%v, %v, %v)", j, j, j))
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(c1 int, c2 int, c3 int)")
+	var buf bytes.Buffer
+	buf.WriteString("insert into t values ")
+	for i := 0; i < 5; i++ {
+		for j := i; j < 1024; j += 5 {
+			if j > 0 {
+				buf.WriteString(", ")
 			}
-		}
-		tk.MustExec(buf.String())
-		result := tk.MustQuery("select * from t order by c1")
-		for i := 0; i < 1024; i++ {
-			require.Equal(t, fmt.Sprint(i), result.Rows()[i][0].(string))
-			require.Equal(t, fmt.Sprint(i), result.Rows()[i][1].(string))
-			require.Equal(t, fmt.Sprint(i), result.Rows()[i][2].(string))
-		}
-		require.Equal(t, int64(0), tk.Session().GetSessionVars().StmtCtx.MemTracker.BytesConsumed())
-		require.Greater(t, tk.Session().GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), int64(0))
-		require.Equal(t, int64(0), tk.Session().GetSessionVars().StmtCtx.DiskTracker.BytesConsumed())
-		require.Greater(t, tk.Session().GetSessionVars().StmtCtx.DiskTracker.MaxConsumed(), int64(0))
-		result = tk.MustQuery("select @@last_sql_use_alloc")
-		result.Check(testkit.Rows(idresult[i]))
-		tk.Session().GetSessionVars().EndAlloc()
-		if alloc != nil {
-			alloc.Reset()
+			buf.WriteString(fmt.Sprintf("(%v, %v, %v)", j, j, j))
 		}
 	}
+	tk.MustExec(buf.String())
+	result := tk.MustQuery("select * from t order by c1")
+	for i := 0; i < 1024; i++ {
+		require.Equal(t, fmt.Sprint(i), result.Rows()[i][0].(string))
+		require.Equal(t, fmt.Sprint(i), result.Rows()[i][1].(string))
+		require.Equal(t, fmt.Sprint(i), result.Rows()[i][2].(string))
+	}
+	require.Equal(t, int64(0), tk.Session().GetSessionVars().StmtCtx.MemTracker.BytesConsumed())
+	require.Greater(t, tk.Session().GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), int64(0))
+	require.Equal(t, int64(0), tk.Session().GetSessionVars().StmtCtx.DiskTracker.BytesConsumed())
+	require.Greater(t, tk.Session().GetSessionVars().StmtCtx.DiskTracker.MaxConsumed(), int64(0))
 }
 
 func TestIssue16696(t *testing.T) {
@@ -126,37 +111,23 @@ func TestIssue16696(t *testing.T) {
 	defer tk.MustExec("SET GLOBAL tidb_mem_oom_action = DEFAULT")
 	tk.MustExec("SET GLOBAL tidb_mem_oom_action='LOG'")
 	tk.MustExec("use test")
-	alloc := chunk.NewAllocator()
-	//First time does not go to the cache, second time alloc requests memory from the system,
-	//Third time gets the chunk from alloc
-	idAlloc := []chunk.Allocator{nil, alloc, alloc}
-	idresult := []string{"0", "1", "1"}
-	for i, alloc := range idAlloc {
-		tk.Session().GetSessionVars().SetAlloc(alloc)
-		tk.MustExec("drop table if exists t")
-		tk.MustExec("CREATE TABLE `t` (`a` int(11) DEFAULT NULL,`b` int(11) DEFAULT NULL)")
-		tk.MustExec("insert into t values (1, 1)")
-		for i := 0; i < 6; i++ {
-			tk.MustExec("insert into t select * from t")
-		}
-		tk.MustExec("set tidb_mem_quota_query = 1;")
-		rows := tk.MustQuery("explain analyze  select t1.a, t1.a +1 from t t1 join t t2 join t t3 order by t1.a").Rows()
-		for _, row := range rows {
-			length := len(row)
-			line := fmt.Sprintf("%v", row)
-			disk := fmt.Sprintf("%v", row[length-1])
-			if strings.Contains(line, "Sort") || strings.Contains(line, "HashJoin") {
-				require.NotContains(t, disk, "0 Bytes")
-				require.True(t, strings.Contains(disk, "MB") ||
-					strings.Contains(disk, "KB") ||
-					strings.Contains(disk, "Bytes"))
-			}
-		}
-		result := tk.MustQuery("select @@last_sql_use_alloc")
-		result.Check(testkit.Rows(idresult[i]))
-		tk.Session().GetSessionVars().EndAlloc()
-		if alloc != nil {
-			alloc.Reset()
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` (`a` int(11) DEFAULT NULL,`b` int(11) DEFAULT NULL)")
+	tk.MustExec("insert into t values (1, 1)")
+	for i := 0; i < 6; i++ {
+		tk.MustExec("insert into t select * from t")
+	}
+	tk.MustExec("set tidb_mem_quota_query = 1;")
+	rows := tk.MustQuery("explain analyze  select t1.a, t1.a +1 from t t1 join t t2 join t t3 order by t1.a").Rows()
+	for _, row := range rows {
+		length := len(row)
+		line := fmt.Sprintf("%v", row)
+		disk := fmt.Sprintf("%v", row[length-1])
+		if strings.Contains(line, "Sort") || strings.Contains(line, "HashJoin") {
+			require.NotContains(t, disk, "0 Bytes")
+			require.True(t, strings.Contains(disk, "MB") ||
+				strings.Contains(disk, "KB") ||
+				strings.Contains(disk, "Bytes"))
 		}
 	}
 }
