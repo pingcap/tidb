@@ -333,7 +333,6 @@ func (c *ColumnInfo) GetTypeDesc() string {
 	return desc
 }
 
-// EmptyColumnInfoSize todo: replace with memory usage
 const EmptyColumnInfoSize = int64(unsafe.Sizeof(ColumnInfo{}))
 
 // FindColumnInfo finds ColumnInfo in cols by name.
