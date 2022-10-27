@@ -81,11 +81,13 @@ func (t *memoryLimitTuner) tuning() {
 	}
 }
 
-func (t *memoryLimitTuner) start() {
-	t.finalizer = newFinalizer(t.tuning) // start tuning
+// Start starts the memory limit tuner.
+func (t *memoryLimitTuner) Start() {
+	t.finalizer = newFinalizer(t.tuning) // Start tuning
 }
 
-func (t *memoryLimitTuner) stop() {
+// Stop stops the memory limit tuner.
+func (t *memoryLimitTuner) Stop() {
 	t.finalizer.stop()
 }
 
@@ -102,10 +104,7 @@ func (t *memoryLimitTuner) GetPercentage() float64 {
 // UpdateMemoryLimit updates the memory limit.
 // This function should be called when `tidb_server_memory_limit` or `tidb_server_memory_limit_gc_trigger` is modified.
 func (t *memoryLimitTuner) UpdateMemoryLimit() {
-	var memoryLimit int64 = math.MaxInt64
-	if !EnableGOGCTuner.Load() {
-		memoryLimit = t.calcMemoryLimit()
-	}
+	var memoryLimit = t.calcMemoryLimit()
 	if memoryLimit == math.MaxInt64 {
 		t.isTuning.Store(false)
 	} else {
@@ -123,5 +122,5 @@ func (t *memoryLimitTuner) calcMemoryLimit() int64 {
 }
 
 func init() {
-	GlobalMemoryLimitTuner.start()
+	GlobalMemoryLimitTuner.Start()
 }
