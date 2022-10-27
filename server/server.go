@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/extension"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
@@ -501,10 +502,38 @@ func (s *Server) Close() {
 
 // onConn runs in its own goroutine, handles queries from this connection.
 func (s *Server) onConn(conn *clientConn) {
+	// init the connInfo
+	_, _, err := conn.PeerHost("")
+	if err != nil {
+		logutil.BgLogger().With(zap.Uint64("conn", conn.connectionID)).
+			Error("get peer host failed", zap.Error(err))
+		terror.Log(conn.Close())
+		return
+	}
+	connectionInfo := conn.connectInfo()
+
+	extensions, err := extension.GetExtensions()
+	if err != nil {
+		logutil.BgLogger().With(zap.Uint64("conn", conn.connectionID)).
+			Error("error in get extensions", zap.Error(err))
+		terror.Log(conn.Close())
+		return
+	}
+
+	if sessExtensions := extensions.NewSessionExtensions(); sessExtensions != nil {
+		conn.extensions = sessExtensions
+		sessExtensions.OnConnectionEvent(extension.ConnConnected, connectionInfo)
+		defer func() {
+			sessExtensions.OnConnectionEvent(extension.ConnDisconnected, connectionInfo)
+		}()
+	}
+
 	ctx := logutil.WithConnID(context.Background(), conn.connectionID)
 	if err := conn.handshake(ctx); err != nil {
+		connectionInfo = conn.connectInfo()
+		conn.extensions.OnConnectionEvent(extension.ConnHandshakeRejected, connectionInfo)
 		if plugin.IsEnable(plugin.Audit) && conn.getCtx() != nil {
-			conn.getCtx().GetSessionVars().ConnectionInfo = conn.connectInfo()
+			conn.getCtx().GetSessionVars().ConnectionInfo = connectionInfo
 			err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 				authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 				if authPlugin.OnConnectionEvent != nil {
@@ -549,8 +578,10 @@ func (s *Server) onConn(conn *clientConn) {
 	metrics.ConnGauge.Set(float64(connections))
 
 	sessionVars := conn.ctx.GetSessionVars()
-	sessionVars.ConnectionInfo = conn.connectInfo()
-	err := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
+	connectionInfo = conn.connectInfo()
+	sessionVars.ConnectionInfo = connectionInfo
+	conn.extensions.OnConnectionEvent(extension.ConnHandshakeAccepted, connectionInfo)
+	err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 		if authPlugin.OnConnectionEvent != nil {
 			return authPlugin.OnConnectionEvent(context.Background(), plugin.Connected, sessionVars.ConnectionInfo)
