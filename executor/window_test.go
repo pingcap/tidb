@@ -70,9 +70,6 @@ func doTestWindowFunctions(tk *testkit.TestKit) {
 		tk.MustExec("drop table if exists t")
 		tk.MustExec("create table t (a int, b int, c int)")
 		tk.MustExec("set @@tidb_enable_window_function = 1")
-		defer func() {
-			tk.MustExec("set @@tidb_enable_window_function = 0")
-		}()
 		tk.MustExec("insert into t values (1,2,3),(4,3,2),(2,3,4)")
 		tk.MustQuery("select count(a) over () from t").
 			Check(testkit.Rows("3", "3", "3"))
@@ -232,6 +229,7 @@ func doTestWindowFunctions(tk *testkit.TestKit) {
 			Check(testkit.Rows("1 1", "1 2", "2 1", "2 2"))
 		result := tk.MustQuery("select @@last_sql_use_alloc")
 		result.Check(testkit.Rows(idresult[i]))
+		tk.MustExec("set @@tidb_enable_window_function = 0")
 		tk.Session().GetSessionVars().EndAlloc()
 		if alloc != nil {
 			alloc.Reset()
