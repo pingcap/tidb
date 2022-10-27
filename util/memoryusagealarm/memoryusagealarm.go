@@ -191,7 +191,7 @@ func (record *memoryUsageAlarm) needRecord(memoryUsage uint64) (bool, AlarmReaso
 
 	interval := time.Since(record.lastCheckTime)
 	memDiff := int64(memoryUsage) - int64(record.lastRecordMemUsed)
-	if interval > 60*time.Second {
+	if interval > 5*time.Second {
 		return true, ExceedAlarmRatio
 	}
 	if float64(memDiff) > 0.1*float64(record.serverMemoryLimit) {
