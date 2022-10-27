@@ -13,6 +13,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -20,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/version"
 	dbconfig "github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/dumpling/container/queue"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/util/promutil"
 	"github.com/stretchr/testify/require"
@@ -541,6 +543,7 @@ func TestBuildTableSampleQueries(t *testing.T) {
 		cancelCtx:                 cancel,
 		metrics:                   metrics,
 		selectTiDBTableRegionFunc: selectTiDBTableRegion,
+		taskQueue:                 queue.NewChunkQueue[Task](),
 	}
 	d.conf.ServerInfo = version.ServerInfo{
 		HasTiKV:       true,
@@ -764,6 +767,14 @@ func TestBuildTableSampleQueries(t *testing.T) {
 		// Test build tasks through table sample
 		if len(handleColNames) > 0 {
 			taskChan := make(chan Task, 128)
+
+			needDispatchCh := make(chan any)
+			dispatchTaskCtx, dispatchTaskCancel := tctx.WithCancel()
+			taskWg := new(sync.WaitGroup)
+			taskWg.Add(1)
+			go d.dispatchTask(dispatchTaskCtx, taskChan, needDispatchCh, taskWg)
+			defer dispatchTaskCancel()
+
 			quotaCols := make([]string, 0, len(handleColNames))
 			for _, col := range handleColNames {
 				quotaCols = append(quotaCols, wrapBackTicks(col))
@@ -815,6 +826,8 @@ func TestBuildTableSampleQueries(t *testing.T) {
 			require.NoError(t, mock.ExpectationsWereMet())
 			orderByClause := buildOrderByClauseString(handleColNames)
 
+			close(needDispatchCh)
+			taskWg.Wait()
 			checkQuery := func(i int, query string) {
 				task := <-taskChan
 				taskTableData, ok := task.(*TaskTableData)
@@ -953,6 +966,7 @@ func TestBuildRegionQueriesWithoutPartition(t *testing.T) {
 		cancelCtx:                 cancel,
 		metrics:                   metrics,
 		selectTiDBTableRegionFunc: selectTiDBTableRegion,
+		taskQueue:                 queue.NewChunkQueue[Task](),
 	}
 	d.conf.ServerInfo = version.ServerInfo{
 		HasTiKV:       true,
@@ -1038,6 +1052,14 @@ func TestBuildRegionQueriesWithoutPartition(t *testing.T) {
 
 		// Test build tasks through table region
 		taskChan := make(chan Task, 128)
+
+		needDispatchCh := make(chan any)
+		dispatchTaskCtx, dispatchTaskCancel := tctx.WithCancel()
+		taskWg := new(sync.WaitGroup)
+		taskWg.Add(1)
+		go d.dispatchTask(dispatchTaskCtx, taskChan, needDispatchCh, taskWg)
+		defer dispatchTaskCancel()
+
 		meta := &mockTableIR{
 			dbName:           database,
 			tblName:          table,
@@ -1082,6 +1104,7 @@ func TestBuildRegionQueriesWithoutPartition(t *testing.T) {
 		require.NoError(t, d.concurrentDumpTable(tctx, baseConn, meta, taskChan))
 		require.NoError(t, mock.ExpectationsWereMet())
 
+		close(needDispatchCh)
 		for i, w := range testCase.expectedWhereClauses {
 			query := buildSelectQuery(database, table, "*", "", buildWhereCondition(d.conf, w), orderByClause)
 			task := <-taskChan
@@ -1114,6 +1137,7 @@ func TestBuildRegionQueriesWithPartitions(t *testing.T) {
 		cancelCtx:                 cancel,
 		metrics:                   metrics,
 		selectTiDBTableRegionFunc: selectTiDBTableRegion,
+		taskQueue:                 queue.NewChunkQueue[Task](),
 	}
 	d.conf.ServerInfo = version.ServerInfo{
 		HasTiKV:       true,
@@ -1241,6 +1265,13 @@ func TestBuildRegionQueriesWithPartitions(t *testing.T) {
 
 		// Test build tasks through table region
 		taskChan := make(chan Task, 128)
+		needDispatchCh := make(chan any)
+		dispatchTaskCtx, dispatchTaskCancel := tctx.WithCancel()
+		taskWg := new(sync.WaitGroup)
+		taskWg.Add(1)
+		go d.dispatchTask(dispatchTaskCtx, taskChan, needDispatchCh, taskWg)
+		defer dispatchTaskCancel()
+
 		meta := &mockTableIR{
 			dbName:           database,
 			tblName:          table,
@@ -1282,6 +1313,7 @@ func TestBuildRegionQueriesWithPartitions(t *testing.T) {
 		require.NoError(t, d.concurrentDumpTable(tctx, baseConn, meta, taskChan))
 		require.NoError(t, mock.ExpectationsWereMet())
 
+		close(needDispatchCh)
 		chunkIdx := 0
 		for i, partition := range partitions {
 			for _, w := range testCase.expectedWhereClauses[i] {
@@ -1372,6 +1404,7 @@ func TestBuildVersion3RegionQueries(t *testing.T) {
 		cancelCtx:                 cancel,
 		metrics:                   metrics,
 		selectTiDBTableRegionFunc: selectTiDBTableRegion,
+		taskQueue:                 queue.NewChunkQueue[Task](),
 	}
 	showStatsHistograms := buildMockNewRows(mock, []string{"Db_name", "Table_name", "Partition_name", "Column_name", "Is_index", "Update_time", "Distinct_count", "Null_count", "Avg_col_size", "Correlation"},
 		[][]driver.Value{
@@ -1567,6 +1600,13 @@ func TestBuildVersion3RegionQueries(t *testing.T) {
 
 		// Test build tasks through table region
 		taskChan := make(chan Task, 128)
+		needDispatchCh := make(chan any)
+		dispatchTaskCtx, dispatchTaskCancel := tctx.WithCancel()
+		taskWg := new(sync.WaitGroup)
+		taskWg.Add(1)
+		go d.dispatchTask(dispatchTaskCtx, taskChan, needDispatchCh, taskWg)
+		defer dispatchTaskCancel()
+
 		meta := &mockTableIR{
 			dbName:           database,
 			tblName:          table,
@@ -1591,6 +1631,7 @@ func TestBuildVersion3RegionQueries(t *testing.T) {
 		require.NoError(t, d.concurrentDumpTable(tctx, baseConn, meta, taskChan))
 		require.NoError(t, mock.ExpectationsWereMet())
 
+		close(needDispatchCh)
 		chunkIdx := 0
 		for _, w := range testCase.expectedWhereClauses {
 			query := buildSelectQuery(database, table, "*", "", buildWhereCondition(d.conf, w), orderByClause)
