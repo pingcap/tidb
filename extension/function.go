@@ -15,12 +15,15 @@
 package extension
 
 import (
+	"context"
+
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
 // FunctionContext is a interface to provide context to the custom function
 type FunctionContext interface {
+	context.Context
 	EvalArgs(row chunk.Row) ([]types.Datum, error)
 }
 

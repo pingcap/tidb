@@ -353,7 +353,7 @@ func TestDispatch(t *testing.T) {
 		{
 			com: mysql.ComSleep,
 			in:  nil,
-			err: nil,
+			err: mysql.NewErrf(mysql.ErrUnknown, "command %d not supported now", nil, mysql.ComSleep),
 			out: nil,
 		},
 		{
@@ -472,7 +472,7 @@ func TestDispatchClientProtocol41(t *testing.T) {
 		{
 			com: mysql.ComSleep,
 			in:  nil,
-			err: nil,
+			err: mysql.NewErrf(mysql.ErrUnknown, "command %d not supported now", nil, mysql.ComSleep),
 			out: nil,
 		},
 		{
@@ -728,6 +728,11 @@ func TestConnExecutionTimeout(t *testing.T) {
 	require.NoError(t, err)
 
 	err = cc.handleQuery(context.Background(), "select /*+ MAX_EXECUTION_TIME(100)*/  * FROM testTable2 WHERE  SLEEP(1);")
+	require.NoError(t, err)
+
+	tk.MustExec("set @@max_execution_time = 500;")
+
+	err = cc.handleQuery(context.Background(), "alter table testTable2 add index idx(age);")
 	require.NoError(t, err)
 }
 
