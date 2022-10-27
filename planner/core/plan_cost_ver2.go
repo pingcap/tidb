@@ -511,7 +511,7 @@ func (p *PhysicalHashJoin) getPlanCostVer2(taskType property.TaskType, option *P
 
 	if taskType == property.MppTaskType { // BCast or Shuffle Join, use mppConcurrency
 		p.planCostVer2 = sumCostVer2(buildChildCost, probeChildCost,
-			divCostVer2(sumCostVer2(buildHashCost, buildFilterCost, probeHashCost, probeHashCost), mppConcurrency))
+			divCostVer2(sumCostVer2(buildHashCost, buildFilterCost, probeHashCost, probeFilterCost), mppConcurrency))
 	} else { // TiDB HashJoin
 		p.planCostVer2 = sumCostVer2(buildChildCost, probeChildCost, buildHashCost, buildFilterCost,
 			divCostVer2(sumCostVer2(probeFilterCost, probeHashCost), tidbConcurrency))
