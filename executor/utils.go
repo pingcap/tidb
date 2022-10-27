@@ -15,8 +15,9 @@
 package executor
 
 import (
-	"github.com/pingcap/tidb/kv"
 	"strings"
+
+	"github.com/pingcap/tidb/kv"
 )
 
 // SetFromString constructs a slice of strings from a comma separated string.

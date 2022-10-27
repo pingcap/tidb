@@ -128,5 +128,4 @@ func TestIntersectionMaps(t *testing.T) {
 	res = IntersectHandleMaps(workerHandleMaps)
 	require.Equal(t, 1, len(res))
 	res[0].Equal(kv.IntHandle(hitHandleOff))
-	handleOff++
 }
