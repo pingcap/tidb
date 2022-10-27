@@ -252,8 +252,8 @@ func (p *PhysicalIndexLookUpReader) getPlanCostVer2(taskType property.TaskType, 
 	batchSize := float64(p.ctx.GetSessionVars().IndexLookupSize)
 	taskPerBatch := 32.0 // TODO: remove this magic number
 	doubleReadTasks := indexRows / batchSize * taskPerBatch
-	doubleReadSeekCost := doubleReadCostVer2(option, doubleReadTasks, requestFactor)
-	doubleReadCost := sumCostVer2(doubleReadCPUCost, doubleReadSeekCost)
+	doubleReadRequestCost := doubleReadCostVer2(option, doubleReadTasks, requestFactor)
+	doubleReadCost := sumCostVer2(doubleReadCPUCost, doubleReadRequestCost)
 
 	p.planCostVer2 = sumCostVer2(indexSideCost, divCostVer2(sumCostVer2(tableSideCost, doubleReadCost), doubleReadConcurrency))
 	p.planCostInit = true
@@ -745,20 +745,6 @@ func doubleReadCostVer2(option *PlanCostOption, numTasks float64, requestFactor 
 	return newCostVer2(option, requestFactor,
 		numTasks*requestFactor.Value,
 		"doubleRead(tasks(%v)*%v)", numTasks, requestFactor)
-}
-
-func estimateNumTasks(copTaskPlan PhysicalPlan) float64 {
-	switch x := copTaskPlan.(type) {
-	case *PhysicalTableScan:
-		if x.StoreType == kv.TiFlash { // the old TiFlash interface uses cop-task protocol
-			return float64(len(x.Ranges)) * float64(len(x.Columns))
-		}
-		return float64(len(x.Ranges)) // TiKV
-	case *PhysicalIndexScan:
-		return float64(len(x.Ranges)) // TiKV
-	default:
-		return estimateNetSeekCost(copTaskPlan.Children()[0])
-	}
 }
 
 type costVer2Factor struct {
