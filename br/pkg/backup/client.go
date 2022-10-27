@@ -5,7 +5,6 @@ package backup
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -261,70 +260,28 @@ func (bc *Client) SaveCheckpointMeta(ctx context.Context, cfgHash []byte, backup
 		ConfigHash: cfgHash,
 		BackupTS:   backupTS,
 	}
-	data, err := json.Marshal(bc.CheckpointMeta)
-	if err != nil {
-		return errors.Trace(err)
-	}
 
-	err = bc.storage.WriteFile(ctx, checkpoint.CheckpointMetaPath, data)
+	err := checkpoint.SaveCheckpointMetadata(ctx, bc.storage, bc.CheckpointMeta)
 	return errors.Trace(err)
 }
 
 func (bc *Client) CheckpointRangesInit(ctx context.Context, ranges []rtree.ProgressRange, cipher *backuppb.CipherInfo) ([]rtree.ProgressRange, error) {
 	// there has been none checkpoint yet
 	if bc.CheckpointMeta == nil {
-		bc.checkpointRunner = checkpoint.NewCheckpointRunner(bc.storage, cipher, 0)
+		bc.checkpointRunner = checkpoint.StartCheckpointRunner(ctx, bc.storage, cipher, 0)
 		return ranges, nil
 	}
 
 	rangeTree := rtree.NewRangeTree()
-	fileSeqNum := 0
-	err := bc.storage.WalkDir(ctx, &storage.WalkOption{SubDir: checkpoint.CheckpointIndexDir}, func(path string, size int64) error {
-		if strings.HasSuffix(path, ".cpt") {
-			content, err := bc.storage.ReadFile(ctx, path)
-			if err != nil {
-				return err
-			}
-
-			metaIndex := &backuppb.File{}
-			if err = metaIndex.Unmarshal(content); err != nil {
-				return errors.Trace(err)
-			}
-
-			content, err = bc.storage.ReadFile(ctx, metaIndex.Name)
-			if err != nil {
-				return err
-			}
-
-			decryptContent, err := metautil.Decrypt(content, cipher, metaIndex.CipherIv)
-			if err != nil {
-				return errors.Trace(err)
-			}
-
-			checksum := sha256.Sum256(decryptContent)
-			if !bytes.Equal(metaIndex.Sha256, checksum[:]) {
-				return errors.Annotatef(berrors.ErrInvalidMetaFile,
-					"checksum mismatch expect %x, got %x", metaIndex.Sha256, checksum[:])
-			}
-
-			meta := &checkpoint.RangeGroups{}
-			if err = json.Unmarshal(decryptContent, meta); err != nil {
-				return errors.Trace(err)
-			}
-
-			for _, g := range meta.Groups {
-				rangeTree.Put(g.StartKey, g.EndKey, g.Files)
-			}
-			fileSeqNum += 1
-		}
-		return nil
+	fileSeqNum, err := checkpoint.WalkCheckpointFile(ctx, bc.storage, cipher, func(resp *backuppb.BackupResponse) {
+		rangeTree.Put(resp.StartKey, resp.EndKey, resp.Files)
 	})
 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	bc.checkpointRunner = checkpoint.NewCheckpointRunner(bc.storage, cipher, fileSeqNum)
+	bc.checkpointRunner = checkpoint.StartCheckpointRunner(ctx, bc.storage, cipher, fileSeqNum)
 
 	for i := range ranges {
 		rangeTree.SplitIncompleteRange(&ranges[i])
@@ -706,6 +663,9 @@ func (bc *Client) BackupRanges(
 
 	defer func() {
 		log.Info("Backup Ranges Completed", zap.Duration("take", time.Since(init)))
+		if bc.checkpointRunner != nil {
+			bc.checkpointRunner.Finish(ctx)
+		}
 	}()
 
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {

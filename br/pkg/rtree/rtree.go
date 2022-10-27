@@ -228,9 +228,6 @@ type ProgressRange struct {
 func (rangeTree *RangeTree) SplitIncompleteRange(
 	progressRange *ProgressRange,
 ) {
-	if len(progressRange.Incomplete) != 1 {
-		log.Panic("multiple initial ranges")
-	}
 	startKey, endKey := progressRange.Origin.StartKey, progressRange.Origin.EndKey
 	progressRange.Incomplete = make([]Range, 0, 64)
 	if len(startKey) != 0 && bytes.Equal(startKey, endKey) {
