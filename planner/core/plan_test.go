@@ -1104,5 +1104,8 @@ func TestIssue38430(t *testing.T) {
 
 	tk.MustQuery("SELECT * FROM t0 RIGHT JOIN t1 ON t0.c0;").Check(testkit.Rows("<nil> 1"))
 	tk.MustQuery("SELECT ((NOT ('i'))AND(t0.c0)) IS NULL FROM  t0 RIGHT JOIN t1 ON t0.c0;").Check(testkit.Rows("1"))
+	// outer join can't be an inner join case.
 	tk.MustQuery("SELECT * FROM t0 RIGHT JOIN t1 ON t0.c0 WHERE ((NOT ('i'))AND(t0.c0)) IS NULL;").Check(testkit.Rows("<nil> 1"))
+	// outer join to inner join case.
+	tk.MustQuery("SELECT * FROM t0 RIGHT JOIN t1 ON t0.c0 WHERE ((NOT NOT ('i'))AND(t0.c0)) IS NULL;").Check(testkit.Rows())
 }
