@@ -15,14 +15,14 @@
 package servermemorylimit
 
 import (
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 	"runtime"
 	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"go.uber.org/zap"
 )
 
 // Handle is the handler for server memory limit.
