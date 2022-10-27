@@ -318,7 +318,7 @@ func (e *RevokeExec) revokeColumnPriv(internalSession sessionctx.Context, priv *
 
 		if isDelRow {
 			sql.Reset()
-			sqlexec.MustFormatSQL(sql, "DELETE FROM %n.%n WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%?", mysql.SystemDB, mysql.ColumnPrivTable, user, host, dbName, tbl.Meta().Name.O)
+			sqlexec.MustFormatSQL(sql, "DELETE FROM %n.%n WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%? AND Column_name=%?", mysql.SystemDB, mysql.ColumnPrivTable, user, host, dbName, tbl.Meta().Name.O, col.Name.O)
 			_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql.String())
 			if err != nil {
 				return err

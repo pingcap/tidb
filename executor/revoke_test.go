@@ -199,10 +199,13 @@ func TestRevokeTableSingleColumn(t *testing.T) {
 	// Create a new user.
 	tk.MustExec(`CREATE USER test;`)
 	tk.MustExec(`GRANT SELECT(Host) ON mysql.db TO test`)
+	tk.MustExec(`GRANT SELECT(DB) ON mysql.db TO test`)
 	tk.MustExec(`REVOKE SELECT(Host) ON mysql.db FROM test`)
 
-	rows := tk.MustQuery(`SELECT Column_priv FROM mysql.columns_priv WHERE User="test" `).Rows()
+	rows := tk.MustQuery(`SELECT Column_priv FROM mysql.columns_priv WHERE User="test" and Column_name ='Host' `).Rows()
 	require.Len(t, rows, 0)
+	rows = tk.MustQuery(`SELECT Column_priv FROM mysql.columns_priv WHERE User="test" and Column_name ='DB' `).Rows()
+	require.Len(t, rows, 1)
 }
 
 func TestRevokeDynamicPrivs(t *testing.T) {
