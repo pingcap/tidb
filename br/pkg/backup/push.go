@@ -55,7 +55,7 @@ func newPushDown(mgr ClientMgr, capacity int) *pushDown {
 func (push *pushDown) pushBackup(
 	ctx context.Context,
 	req backuppb.BackupRequest,
-	res rtree.RangeTree,
+	pr *rtree.ProgressRange,
 	stores []*metapb.Store,
 	checkpointRunner *checkpoint.CheckpointRunner,
 	progressCallBack func(ProgressUnit),
@@ -168,11 +168,17 @@ func (push *pushDown) pushBackup(
 			if resp.GetError() == nil {
 				// None error means range has been backuped successfully.
 				if checkpointRunner != nil {
-					if err := checkpointRunner.Append(ctx, resp); err != nil {
+					if err := checkpointRunner.Append(
+						ctx,
+						pr.GroupKey,
+						resp.StartKey,
+						resp.EndKey,
+						resp.Files,
+					); err != nil {
 						return errors.Annotate(err, "failed to flush checkpoint")
 					}
 				}
-				res.Put(
+				pr.Res.Put(
 					resp.GetStartKey(), resp.GetEndKey(), resp.GetFiles())
 
 				// Update progress

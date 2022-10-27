@@ -33,29 +33,19 @@ func TestCheckpointMeta(t *testing.T) {
 	require.Equal(t, checkpointMeta.BackupTS, checkpointMeta2.BackupTS)
 }
 
-func newBackupResponse(s, e, n, m string) *backuppb.BackupResponse {
-	return &backuppb.BackupResponse{
-		StartKey: []byte(s),
-		EndKey:   []byte(e),
-		Files: []*backuppb.File{
-			{Name: n},
-			{Name: m},
-		},
-	}
-}
-
 func TestCheckpointRunner(t *testing.T) {
 	ctx := context.Background()
 	base := t.TempDir()
 	s, err := storage.NewLocalStorage(base)
 	require.NoError(t, err)
-	os.MkdirAll(base+"/checkpoints/index", 0o755)
+	os.MkdirAll(base+"/checkpoints/index/+", 0o755)
+	os.MkdirAll(base+"/checkpoints/index/a", 0o755)
 
 	cipher := &backuppb.CipherInfo{
 		CipherType: encryptionpb.EncryptionMethod_AES256_CTR,
 		CipherKey:  []byte("01234567890123456789012345678901"),
 	}
-	checkpointRunner := checkpoint.StartCheckpointRunnerForTest(ctx, s, cipher, 0, 5*time.Second)
+	checkpointRunner := checkpoint.StartCheckpointRunnerForTest(ctx, s, cipher, 5*time.Second)
 
 	data := map[string]struct {
 		StartKey string
@@ -98,23 +88,27 @@ func TestCheckpointRunner(t *testing.T) {
 	}
 
 	for _, d := range data {
-		resp := newBackupResponse(d.StartKey, d.EndKey, d.Name, d.Name2)
-		err = checkpointRunner.Append(ctx, resp)
+		err = checkpointRunner.Append(ctx, "a", []byte(d.StartKey), []byte(d.EndKey), []*backuppb.File{
+			{Name: d.Name},
+			{Name: d.Name2},
+		})
 		require.NoError(t, err)
 	}
 
 	time.Sleep(6 * time.Second)
 
 	for _, d := range data2 {
-		resp := newBackupResponse(d.StartKey, d.EndKey, d.Name, d.Name2)
-		err = checkpointRunner.Append(ctx, resp)
+		err = checkpointRunner.Append(ctx, "+", []byte(d.StartKey), []byte(d.EndKey), []*backuppb.File{
+			{Name: d.Name},
+			{Name: d.Name2},
+		})
 		require.NoError(t, err)
 	}
 
 	err = checkpointRunner.Finish(ctx)
 	require.NoError(t, err)
 
-	_, err = checkpoint.WalkCheckpointFile(ctx, s, cipher, func(resp *backuppb.BackupResponse) {
+	checker := func(resp *checkpoint.RangeGroup) {
 		require.NotNil(t, resp)
 		d, ok := data[string(resp.StartKey)]
 		if !ok {
@@ -125,6 +119,10 @@ func TestCheckpointRunner(t *testing.T) {
 		require.Equal(t, d.EndKey, string(resp.EndKey))
 		require.Equal(t, d.Name, resp.Files[0].Name)
 		require.Equal(t, d.Name2, resp.Files[1].Name)
-	})
+	}
+
+	err = checkpoint.WalkCheckpointFileWithSpecificKey(ctx, s, "a", cipher, checker)
+	require.NoError(t, err)
+	err = checkpoint.WalkCheckpointFileWithSpecificKey(ctx, s, "+", cipher, checker)
 	require.NoError(t, err)
 }

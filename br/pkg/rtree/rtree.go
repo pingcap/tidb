@@ -222,54 +222,5 @@ type ProgressRange struct {
 	Res        RangeTree
 	Incomplete []Range
 	Origin     Range
-}
-
-// SplitIncompleteRange returns missing range and exist range covered by startKey and endKey.
-func (rangeTree *RangeTree) SplitIncompleteRange(
-	progressRange *ProgressRange,
-) {
-	startKey, endKey := progressRange.Origin.StartKey, progressRange.Origin.EndKey
-	progressRange.Incomplete = make([]Range, 0, 64)
-	if len(startKey) != 0 && bytes.Equal(startKey, endKey) {
-		return
-	}
-
-	requestRange := Range{StartKey: startKey, EndKey: endKey}
-	lastEndKey := startKey
-	pviot := &Range{StartKey: startKey}
-	if first := rangeTree.Find(pviot); first != nil {
-		pviot.StartKey = first.StartKey
-	}
-	rangeTree.AscendGreaterOrEqual(pviot, func(i btree.Item) bool {
-		rg := i.(*Range)
-		if bytes.Compare(lastEndKey, rg.StartKey) < 0 {
-			start, end, isIntersect :=
-				requestRange.Intersect(lastEndKey, rg.StartKey)
-			if isIntersect {
-				// There is a gap between the last item and the current item.
-				progressRange.Incomplete =
-					append(progressRange.Incomplete, Range{StartKey: start, EndKey: end})
-			}
-		}
-		lastEndKey = rg.EndKey
-		comp := bytes.Compare(rg.EndKey, endKey)
-
-		if comp <= 0 || len(endKey) == 0 {
-			progressRange.Res.Put(rg.StartKey, rg.EndKey, rg.Files)
-		} else if bytes.Compare(rg.StartKey, endKey) < 0 {
-			log.Panic("requestRange does not congtain all of this.")
-		}
-		return len(endKey) == 0 || comp < 0
-	})
-
-	// Check whether we need append the last range
-	if !bytes.Equal(lastEndKey, endKey) && len(lastEndKey) != 0 &&
-		(len(endKey) == 0 || bytes.Compare(lastEndKey, endKey) < 0) {
-		start, end, isIntersect := requestRange.Intersect(lastEndKey, endKey)
-		if isIntersect {
-			progressRange.Incomplete =
-				append(progressRange.Incomplete, Range{StartKey: start, EndKey: end})
-		}
-	}
-	return
+	GroupKey   string
 }

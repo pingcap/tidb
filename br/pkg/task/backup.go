@@ -352,6 +352,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	if err != nil {
 		return errors.Trace(err)
 	}
+	client.SetCipher(&cfg.CipherInfo)
 	opts := storage.ExternalStorageOptions{
 		NoCredentials:            cfg.NoCreds,
 		SendCredentials:          cfg.SendCreds,
@@ -430,17 +431,13 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		return errors.Trace(err)
 	}
 
-	ranges, schemas, policies, err := backup.BuildBackupRangeAndSchema(mgr.GetStorage(), cfg.TableFilter, backupTS, isFullBackup(cmdName))
+	ranges, schemas, policies, err := client.BuildBackupRangeAndSchema(mgr.GetStorage(), cfg.TableFilter, backupTS, isFullBackup(cmdName))
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	if cfg.UseCheckpoint {
-		if err = client.SaveCheckpointMeta(ctx, cfgHash, backupTS); err != nil {
-			return errors.Trace(err)
-		}
-		ranges, err = client.CheckpointRangesInit(ctx, ranges, &cfg.CipherInfo)
-		if err != nil {
+		if err = client.SaveCheckpointMeta(ctx, cfgHash, backupTS, ranges); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -510,7 +507,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		approximateRegions := 0
 		for _, r := range ranges {
 			var regionCount int
-			regionCount, err = mgr.GetRegionCount(ctx, r.Origin.StartKey, r.Origin.EndKey)
+			regionCount, err = mgr.GetRegionCount(ctx, r.StartKey, r.EndKey)
 			if err != nil {
 				return errors.Trace(err)
 			}

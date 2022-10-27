@@ -15,6 +15,7 @@ import (
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/storage"
 )
 
@@ -23,42 +24,50 @@ const (
 	CheckpointDir      = "/checkpoints"
 	CheckpointIndexDir = CheckpointDir + "/index"
 
-	CheckpointFilesPathFormat = CheckpointDir + "/filegroups.%09d.cpt"
-	CheckpointIndexPathFormat = CheckpointIndexDir + "/file.%09d.cpt"
+	CheckpointFilesPathFormat = CheckpointDir + "/filegroups.%s.cpt"
+	CheckpointIndexPathFormat = CheckpointIndexDir + "/%s/file.%s.cpt"
 )
 
 const tickDuration = 30 * time.Second
 
+type CheckpointMessage struct {
+	GroupKey string
+
+	Group *RangeGroup
+}
+
+type RangeGroup struct {
+	StartKey []byte           `json:"start_key"`
+	EndKey   []byte           `json:"end_key"`
+	Files    []*backuppb.File `json:"files"`
+}
+
 type RangeGroups struct {
-	Groups []*backuppb.BackupResponse `json:"groups"`
+	Groups []*RangeGroup `json:"groups"`
 }
 
 type CheckpointRunner struct {
-	meta       *RangeGroups
-	fileSeqNum int
+	meta map[string]*RangeGroups
 
 	storage storage.ExternalStorage
 	cipher  *backuppb.CipherInfo
 
-	appendCh chan *backuppb.BackupResponse
-	metaCh   chan *RangeGroups
+	appendCh chan *CheckpointMessage
+	metaCh   chan map[string]*RangeGroups
 	errCh    chan error
 
 	wg sync.WaitGroup
 }
 
-func StartCheckpointRunnerForTest(ctx context.Context, storage storage.ExternalStorage, cipher *backuppb.CipherInfo, seqNum int, tick time.Duration) *CheckpointRunner {
+func StartCheckpointRunnerForTest(ctx context.Context, storage storage.ExternalStorage, cipher *backuppb.CipherInfo, tick time.Duration) *CheckpointRunner {
 	runner := &CheckpointRunner{
-		meta: &RangeGroups{
-			Groups: make([]*backuppb.BackupResponse, 0),
-		},
-		fileSeqNum: seqNum,
+		meta: make(map[string]*RangeGroups),
 
 		storage: storage,
 		cipher:  cipher,
 
-		appendCh: make(chan *backuppb.BackupResponse),
-		metaCh:   make(chan *RangeGroups),
+		appendCh: make(chan *CheckpointMessage),
+		metaCh:   make(chan map[string]*RangeGroups),
 		errCh:    make(chan error),
 	}
 
@@ -66,18 +75,15 @@ func StartCheckpointRunnerForTest(ctx context.Context, storage storage.ExternalS
 	return runner
 }
 
-func StartCheckpointRunner(ctx context.Context, storage storage.ExternalStorage, cipher *backuppb.CipherInfo, seqNum int) *CheckpointRunner {
+func StartCheckpointRunner(ctx context.Context, storage storage.ExternalStorage, cipher *backuppb.CipherInfo) *CheckpointRunner {
 	runner := &CheckpointRunner{
-		meta: &RangeGroups{
-			Groups: make([]*backuppb.BackupResponse, 0),
-		},
-		fileSeqNum: seqNum,
+		meta: make(map[string]*RangeGroups),
 
 		storage: storage,
 		cipher:  cipher,
 
-		appendCh: make(chan *backuppb.BackupResponse),
-		metaCh:   make(chan *RangeGroups),
+		appendCh: make(chan *CheckpointMessage),
+		metaCh:   make(chan map[string]*RangeGroups),
 		errCh:    make(chan error),
 	}
 
@@ -85,16 +91,26 @@ func StartCheckpointRunner(ctx context.Context, storage storage.ExternalStorage,
 	return runner
 }
 
-func (r *CheckpointRunner) Append(ctx context.Context, resp *backuppb.BackupResponse) error {
-	if resp == nil {
-		return errors.Errorf("123")
-	}
+func (r *CheckpointRunner) Append(
+	ctx context.Context,
+	groupKey string,
+	startKey []byte,
+	endKey []byte,
+	files []*backuppb.File,
+) error {
 	select {
 	case <-ctx.Done():
 		return nil
 	case err := <-r.errCh:
 		return err
-	case r.appendCh <- resp:
+	case r.appendCh <- &CheckpointMessage{
+		GroupKey: groupKey,
+		Group: &RangeGroup{
+			StartKey: startKey,
+			EndKey:   endKey,
+			Files:    files,
+		},
+	}:
 		return nil
 	}
 }
@@ -109,9 +125,7 @@ func (r *CheckpointRunner) Finish(ctx context.Context) (err error) {
 
 func (r *CheckpointRunner) flushMeta(ctx context.Context, errCh chan error) error {
 	meta := r.meta
-	r.meta = &RangeGroups{
-		Groups: make([]*backuppb.BackupResponse, 0),
-	}
+	r.meta = make(map[string]*RangeGroups)
 	// do flush
 	select {
 	case <-ctx.Done():
@@ -166,7 +180,7 @@ func (r *CheckpointRunner) startCheckpointLoop(ctx context.Context, tickDuration
 					r.errCh <- err
 					return
 				}
-			case resp, ok := <-r.appendCh:
+			case msg, ok := <-r.appendCh:
 				if !ok {
 					log.Info("stop checkpoint runner")
 					if err := r.flushMeta(ctx, errCh); err != nil {
@@ -178,7 +192,14 @@ func (r *CheckpointRunner) startCheckpointLoop(ctx context.Context, tickDuration
 					wg.Wait()
 					return
 				}
-				r.meta.Groups = append(r.meta.Groups, resp)
+				groups, exist := r.meta[msg.GroupKey]
+				if !exist {
+					groups = &RangeGroups{
+						Groups: make([]*RangeGroup, 0),
+					}
+					r.meta[msg.GroupKey] = groups
+				}
+				groups.Groups = append(groups.Groups, msg.Group)
 			case err := <-errCh:
 				// pass flush worker's error back
 				r.errCh <- err
@@ -190,55 +211,63 @@ func (r *CheckpointRunner) startCheckpointLoop(ctx context.Context, tickDuration
 	go checkpointLoop(ctx)
 }
 
-func (r *CheckpointRunner) doFlush(ctx context.Context, meta *RangeGroups) error {
-	if len(meta.Groups) == 0 {
+func (r *CheckpointRunner) doFlush(ctx context.Context, meta map[string]*RangeGroups) error {
+	if len(meta) == 0 {
 		return nil
 	}
-	r.fileSeqNum++
-	fname := fmt.Sprintf(CheckpointFilesPathFormat, r.fileSeqNum)
 
-	// Flush the metaFile to storage
-	content, err := json.Marshal(meta)
-	if err != nil {
-		return errors.Trace(err)
+	for groupKey, group := range meta {
+		if len(group.Groups) == 0 {
+			continue
+		}
+		idenKey := string(group.Groups[0].StartKey)
+		fname := fmt.Sprintf(CheckpointFilesPathFormat, idenKey)
+
+		// Flush the metaFile to storage
+		content, err := json.Marshal(group)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		encryptBuff, iv, err := metautil.Encrypt(content, r.cipher)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		err = r.storage.WriteFile(ctx, fname, encryptBuff)
+
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		checksum := sha256.Sum256(content)
+
+		// Flush the indexFile (to metaFile) to storage
+		file := &backuppb.File{
+			Name:     fname,
+			Sha256:   checksum[:],
+			Size_:    uint64(len(content)),
+			CipherIv: iv,
+		}
+
+		fname = fmt.Sprintf(CheckpointIndexPathFormat, groupKey, idenKey)
+
+		content, err = file.Marshal()
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		err = r.storage.WriteFile(ctx, fname, content)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
-
-	encryptBuff, iv, err := metautil.Encrypt(content, r.cipher)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	err = r.storage.WriteFile(ctx, fname, encryptBuff)
-
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	checksum := sha256.Sum256(content)
-
-	// Flush the indexFile (to metaFile) to storage
-	file := &backuppb.File{
-		Name:     fname,
-		Sha256:   checksum[:],
-		Size_:    uint64(len(content)),
-		CipherIv: iv,
-	}
-
-	fname = fmt.Sprintf(CheckpointIndexPathFormat, r.fileSeqNum)
-
-	content, err = file.Marshal()
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	err = r.storage.WriteFile(ctx, fname, content)
-
-	return errors.Trace(err)
+	return nil
 }
 
-func WalkCheckpointFile(ctx context.Context, s storage.ExternalStorage, cipher *backuppb.CipherInfo, fn func(*backuppb.BackupResponse)) (int, error) {
-	fileSeqNum := 0
-	err := s.WalkDir(ctx, &storage.WalkOption{SubDir: CheckpointIndexDir}, func(path string, _ int64) error {
+func WalkCheckpointFileWithSpecificKey(ctx context.Context, s storage.ExternalStorage, groupKey string, cipher *backuppb.CipherInfo, fn func(*RangeGroup)) error {
+	subDir := fmt.Sprintf("%s/%s", CheckpointIndexDir, groupKey)
+	err := s.WalkDir(ctx, &storage.WalkOption{SubDir: subDir}, func(path string, _ int64) error {
 		if strings.HasSuffix(path, ".cpt") {
 			content, err := s.ReadFile(ctx, path)
 			if err != nil {
@@ -274,17 +303,18 @@ func WalkCheckpointFile(ctx context.Context, s storage.ExternalStorage, cipher *
 			for _, g := range meta.Groups {
 				fn(g)
 			}
-			fileSeqNum += 1
 		}
 		return nil
 	})
 
-	return fileSeqNum, errors.Trace(err)
+	return errors.Trace(err)
 }
 
 type CheckpointMetadata struct {
 	ConfigHash []byte `json:"config-hash"`
 	BackupTS   uint64 `json:"backup-ts"`
+
+	Ranges []rtree.Range `json:"ranges"`
 }
 
 func LoadCheckpointMetadata(ctx context.Context, s storage.ExternalStorage) (*CheckpointMetadata, error) {
