@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	rpprof "runtime/pprof"
 	"strings"
 	"sync/atomic"
@@ -144,8 +143,7 @@ func (record *memoryUsageAlarm) alarm4ExcessiveMemUsage(sm util.SessionManager) 
 		return
 	}
 	var memoryUsage uint64
-	instanceStats := &runtime.MemStats{}
-	runtime.ReadMemStats(instanceStats)
+	instanceStats := memory.ReadMemStats()
 	if record.isServerMemoryLimitSet {
 		memoryUsage = instanceStats.HeapAlloc
 	} else {

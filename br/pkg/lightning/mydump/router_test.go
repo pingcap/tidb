@@ -43,20 +43,28 @@ func TestDefaultRouter(t *testing.T) {
 	assert.NoError(t, err)
 
 	inputOutputMap := map[string][]string{
-		"a/test-schema-create.sql":            {"test", "", "", "", SchemaSchema},
-		"test-schema-create.sql.gz":           {"test", "", "", "gz", SchemaSchema},
-		"c/d/test.t-schema.sql":               {"test", "t", "", "", TableSchema},
-		"test.t-schema.sql.lzo":               {"test", "t", "", "lzo", TableSchema},
-		"/bc/dc/test.v1-schema-view.sql":      {"test", "v1", "", "", ViewSchema},
-		"test.v1-schema-view.sql.snappy":      {"test", "v1", "", "snappy", ViewSchema},
-		"my_schema.my_table.sql":              {"my_schema", "my_table", "", "", "sql"},
-		"/test/123/my_schema.my_table.sql.gz": {"my_schema", "my_table", "", "gz", "sql"},
-		"my_dir/my_schema.my_table.csv.lzo":   {"my_schema", "my_table", "", "lzo", "csv"},
-		"my_schema.my_table.0001.sql.snappy":  {"my_schema", "my_table", "0001", "snappy", "sql"},
+		"a/test-schema-create.sql.bak":           nil,
+		"my_schema.my_table.0001.sql.snappy.BAK": nil,
+		"a/test-schema-create.sql":               {"test", "", "", "", SchemaSchema},
+		"test-schema-create.sql.gz":              {"test", "", "", "gz", SchemaSchema},
+		"c/d/test.t-schema.sql":                  {"test", "t", "", "", TableSchema},
+		"test.t-schema.sql.lzo":                  {"test", "t", "", "lzo", TableSchema},
+		"/bc/dc/test.v1-schema-view.sql":         {"test", "v1", "", "", ViewSchema},
+		"test.v1-schema-view.sql.snappy":         {"test", "v1", "", "snappy", ViewSchema},
+		"my_schema.my_table.sql":                 {"my_schema", "my_table", "", "", "sql"},
+		"/test/123/my_schema.my_table.sql.gz":    {"my_schema", "my_table", "", "gz", "sql"},
+		"my_dir/my_schema.my_table.csv.lzo":      {"my_schema", "my_table", "", "lzo", "csv"},
+		"my_schema.my_table.0001.sql.snappy":     {"my_schema", "my_table", "0001", "snappy", "sql"},
 	}
 	for path, fields := range inputOutputMap {
 		res, err := r.Route(path)
 		assert.NoError(t, err)
+		if len(fields) == 0 {
+			assert.Equal(t, res.Type, SourceTypeIgnore)
+			assert.Len(t, res.Schema, 0)
+			assert.Len(t, res.Name, 0)
+			continue
+		}
 		compress, e := parseCompressionType(fields[3])
 		assert.NoError(t, e)
 		ty, e := parseSourceType(fields[4])

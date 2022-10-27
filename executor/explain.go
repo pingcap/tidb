@@ -169,8 +169,7 @@ func (h *memoryDebugModeHandler) fetchCurrentMemoryUsage(gc bool) (heapInUse, tr
 	if gc {
 		runtime.GC()
 	}
-	instanceStats := &runtime.MemStats{}
-	runtime.ReadMemStats(instanceStats)
+	instanceStats := memory.ForceReadMemStats()
 	heapInUse = instanceStats.HeapInuse
 	trackedMem = uint64(h.memTracker.BytesConsumed())
 	return
