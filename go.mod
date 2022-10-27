@@ -67,8 +67,8 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20220729040631-518f63d66278
 	github.com/pingcap/failpoint v0.0.0-20220423142525-ae43b7f4e5c3
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
-	github.com/pingcap/kvproto v0.0.0-20220929075948-06e08d5ed64c
-	github.com/pingcap/log v1.1.0
+	github.com/pingcap/kvproto v0.0.0-20221026112947-f8d61344b172
+	github.com/pingcap/log v1.1.1-0.20221015072633-39906604fb81
 	github.com/pingcap/sysutil v0.0.0-20220114020952-ea68d2dbf5b4
 	github.com/pingcap/tidb/parser v0.0.0-20211011031125-9b13dc409c5e
 	github.com/pingcap/tipb v0.0.0-20221020071514-cd933387bcb5
@@ -85,8 +85,8 @@ require (
 	github.com/stretchr/testify v1.8.0
 	github.com/tdakkota/asciicheck v0.1.1
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.1-0.20221012074856-6def8d7b90c4
-	github.com/tikv/pd/client v0.0.0-20221010134149-d50e5fe43f14
+	github.com/tikv/client-go/v2 v2.0.1-0.20221031062453-4760b32350da
+	github.com/tikv/pd/client v0.0.0-20221031025758-80f0d8ca4d07
 	github.com/timakin/bodyclose v0.0.0-20210704033933-f49887972144
 	github.com/twmb/murmur3 v1.1.3
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
