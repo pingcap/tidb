@@ -15,6 +15,8 @@
 package servermemorylimit
 
 import (
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 	"runtime"
 	"sync/atomic"
 	"time"
@@ -76,6 +78,7 @@ func killSessIfNeeded(s *sessionToBeKilled, bt uint64, sm util.SessionManager) {
 			}
 		}
 		s.isKilling = false
+		logutil.BgLogger().Warn("ServerMemoryLimit kill success")
 		//nolint: all_revive,revive
 		runtime.GC()
 	}
@@ -93,7 +96,14 @@ func killSessIfNeeded(s *sessionToBeKilled, bt uint64, sm util.SessionManager) {
 				s.sqlStartTime = info.Time
 				s.isKilling = true
 				t.NeedKill.Store(true)
+				logutil.BgLogger().Warn("ServerMemoryLimit try to kill sql",
+					zap.String("sql_text", info.Info),
+					zap.Int64("sql_memory_usage", info.StmtCtx.MemTracker.BytesConsumed()))
+			} else {
+				logutil.BgLogger().Warn("ServerMemoryLimit can't find a sql to kill, can't find session by sessionID")
 			}
+		} else {
+			logutil.BgLogger().Warn("ServerMemoryLimit can't find a sql to kill, can't find Top1 Tracker")
 		}
 	}
 }
