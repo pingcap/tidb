@@ -35,6 +35,7 @@ type singlePointAlloc struct {
 	dbID          int64
 	tblID         int64
 	lastAllocated int64
+	isUnsigned bool
 	clientDiscover
 }
 
@@ -87,6 +88,11 @@ func (sp *singlePointAlloc) Alloc(ctx context.Context, n uint64, increment, offs
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
+
+	if !validIncrementAndOffset(increment, offset) {
+		return 0, 0, errInvalidIncrementAndOffset.GenWithStackByArgs(increment, offset)
+	}
+
 retry:
 	cli, err := sp.GetClient(ctx)
 	if err != nil {
@@ -102,6 +108,7 @@ retry:
 		N:         n,
 		Increment: increment,
 		Offset:    offset,
+		IsUnsigned: sp.isUnsigned,
 	})
 	if err != nil {
 		fmt.Println("request auto id error ===", err)
@@ -149,11 +156,14 @@ func (sp *singlePointAlloc) rebase(ctx context.Context, newBase int64, allocIDs 
 		return errors.Trace(err)
 	}
 
+	fmt.Println("single point alloc rebace ==", sp.isUnsigned)
+
 	_, err = cli.Rebase(ctx, &autoid.RebaseRequest{
 		DbID:  sp.dbID,
 		TblID: sp.tblID,
 		Base:  newBase,
 		Force: force,
+		IsUnsigned: sp.isUnsigned,
 	})
 	if err == nil {
 		sp.lastAllocated = newBase

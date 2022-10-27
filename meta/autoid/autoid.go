@@ -469,6 +469,9 @@ func (alloc *allocator) ForceRebase(requiredBase int64) error {
 	if requiredBase == -1 {
 		return ErrAutoincReadFailed.GenWithStack("Cannot force rebase the next global ID to '0'")
 	}
+
+	fmt.Println("force rebase to ======", requiredBase)
+
 	alloc.mu.Lock()
 	defer alloc.mu.Unlock()
 	startTime := time.Now()
@@ -536,7 +539,7 @@ func NextStep(curStep int64, consumeDur time.Duration) int64 {
 	return res
 }
 
-func newSinglePointAlloc(store kv.Storage, dbID, tblID int64) *singlePointAlloc {
+func newSinglePointAlloc(store kv.Storage, dbID, tblID int64, isUnsigned bool) *singlePointAlloc {
 	ebd, ok := store.(kv.EtcdBackend)
 	if !ok {
 		fmt.Println("newSinglePointAlloc fail because not etcd background!!!")
@@ -550,6 +553,7 @@ func newSinglePointAlloc(store kv.Storage, dbID, tblID int64) *singlePointAlloc 
 	spa := &singlePointAlloc{
 		dbID:  dbID,
 		tblID: tblID,
+		isUnsigned: isUnsigned,
 	}
 	if len(addrs) > 0 {
 		fmt.Println("addrs ===", addrs)
@@ -563,7 +567,7 @@ func newSinglePointAlloc(store kv.Storage, dbID, tblID int64) *singlePointAlloc 
 		spa.clientDiscover = clientDiscover{etcdCli: etcdCli}
 	} else {
 		spa.clientDiscover = clientDiscover{
-			AutoIDAllocClient: autoid.MockForTest(store.UUID()),
+			AutoIDAllocClient: autoid.MockForTest(store),
 		}
 	}
 
@@ -597,7 +601,7 @@ func NewAllocator(store kv.Storage, dbID, tbID int64, isUnsigned bool,
 	// fmt.Println("auto id cache default value ===", alloc.step, alloc.customStep)
 	// if allocType == RowIDAllocType && alloc.customStep && alloc.step == 1 {
 	if allocType == RowIDAllocType {
-		alloc1 := newSinglePointAlloc(store, dbID, tbID)
+		alloc1 := newSinglePointAlloc(store, dbID, tbID, isUnsigned)
 		if alloc1 != nil {
 			return alloc1
 		}
