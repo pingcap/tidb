@@ -89,6 +89,7 @@ func NewTestKitWithSession(t testing.TB, store kv.Storage, se session.Session) *
 		t:       t,
 		store:   store,
 		session: se,
+		alloc:   chunk.NewAllocator(),
 	}
 }
 
@@ -115,7 +116,9 @@ func (tk *TestKit) Session() session.Session {
 func (tk *TestKit) MustExec(sql string, args ...interface{}) {
 	defer func() {
 		tk.Session().GetSessionVars().EndAlloc()
-		tk.alloc.Reset()
+		if tk.alloc != nil {
+			tk.alloc.Reset()
+		}
 	}()
 	tk.MustExecWithContext(context.Background(), sql, args...)
 }
@@ -136,7 +139,10 @@ func (tk *TestKit) MustExecWithContext(ctx context.Context, sql string, args ...
 func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
 	defer func() {
 		tk.Session().GetSessionVars().EndAlloc()
-		tk.alloc.Reset()
+		if tk.alloc != nil {
+			tk.alloc.Reset()
+		}
+
 	}()
 	return tk.MustQueryWithContext(context.Background(), sql, args...)
 }
