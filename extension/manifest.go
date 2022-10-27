@@ -46,6 +46,13 @@ func WithCustomFunctions(funcs []*FunctionDef) Option {
 	}
 }
 
+// WithSessionHandlerFactory specifies a factory function to handle session
+func WithSessionHandlerFactory(factory func() *SessionHandler) Option {
+	return func(m *Manifest) {
+		m.sessionHandlerFactory = factory
+	}
+}
+
 // WithClose specifies the close function of an extension.
 // It will be invoked when `extension.Reset` is called
 func WithClose(fn func()) Option {
@@ -82,12 +89,13 @@ func WithBootstrapSQL(sqlList ...string) Option {
 
 // Manifest is an extension's manifest
 type Manifest struct {
-	name         string
-	sysVariables []*variable.SysVar
-	dynPrivs     []string
-	bootstrap    func(BootstrapContext) error
-	funcs        []*FunctionDef
-	close        func()
+	name                  string
+	sysVariables          []*variable.SysVar
+	dynPrivs              []string
+	bootstrap             func(BootstrapContext) error
+	funcs                 []*FunctionDef
+	sessionHandlerFactory func() *SessionHandler
+	close                 func()
 }
 
 // Name returns the extension's name

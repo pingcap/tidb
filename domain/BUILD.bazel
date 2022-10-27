@@ -52,6 +52,7 @@ go_library(
         "//util/execdetails",
         "//util/expensivequery",
         "//util/logutil",
+        "//util/memory",
         "//util/memoryusagealarm",
         "//util/servermemorylimit",
         "//util/sqlexec",
