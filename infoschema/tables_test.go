@@ -1617,16 +1617,16 @@ func TestMemoryUsageAndOpsHistory(t *testing.T) {
 	}
 	require.GreaterOrEqual(t, row[5], beginTime) // SESSION_KILL_LAST
 	require.LessOrEqual(t, row[5], endTime)
-	require.Equal(t, row[6], "1")                // SESSION_KILL_TOTAL
+	require.Greater(t, row[6], "0")              // SESSION_KILL_TOTAL
 	require.GreaterOrEqual(t, row[7], beginTime) // GC_LAST
 	require.LessOrEqual(t, row[7], endTime)
-	require.Equal(t, row[8], "1")  // GC_TOTAL
-	require.Equal(t, row[9], "0")  // DISK_USAGE
-	require.Equal(t, row[10], "0") // QUERY_FORCE_DISK
+	require.Greater(t, row[8], "0") // GC_TOTAL
+	require.Equal(t, row[9], "0")   // DISK_USAGE
+	require.Equal(t, row[10], "0")  // QUERY_FORCE_DISK
 
 	rows = tk.MustQuery("select * from INFORMATION_SCHEMA.MEMORY_USAGE_OPS_HISTORY").Rows()
-	require.Len(t, rows, 1)
-	row = rows[0]
+	require.Greater(t, len(rows), 0)
+	row = rows[len(rows)-1]
 	require.Len(t, row, 12)
 	require.GreaterOrEqual(t, row[0], beginTime) // TIME
 	require.LessOrEqual(t, row[0], endTime)
@@ -1638,7 +1638,7 @@ func TestMemoryUsageAndOpsHistory(t *testing.T) {
 	require.Nil(t, err)
 	require.Greater(t, val, uint64(536870912))
 
-	require.Equal(t, row[4], "1")                                                                                                // PROCESSID
+	require.Greater(t, row[4], "0")                                                                                              // PROCESSID
 	require.Greater(t, row[5], "0")                                                                                              // MEM
 	require.Equal(t, row[6], "0")                                                                                                // DISK
 	require.Equal(t, row[7], "")                                                                                                 // CLIENT
