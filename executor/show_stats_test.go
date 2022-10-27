@@ -397,4 +397,19 @@ func TestShowAnalyzeStatus(t *testing.T) {
 	require.Equal(t, "<nil>", rows[1][8])
 	require.Equal(t, addr, rows[1][9])
 	require.Equal(t, "<nil>", rows[1][10])
+
+	tk.MustExec("delete from mysql.analyze_jobs")
+	tk.MustExec("create table t2 (a int, b int, primary key(a)) PARTITION BY RANGE ( a )(PARTITION p0 VALUES LESS THAN (6))")
+	tk.MustExec(`insert into t2 values (1, 1), (2, 2)`)
+	tk.MustExec("analyze table t2")
+	rows = tk.MustQuery("show analyze status").Rows()
+	require.Len(t, rows, 2)
+	require.Equal(t, "merge global stats for test.t2 columns", rows[0][3])
+
+	tk.MustExec("delete from mysql.analyze_jobs")
+	tk.MustExec("alter table t2 add index idx(b)")
+	tk.MustExec("analyze table t2 index idx")
+	rows = tk.MustQuery("show analyze status").Rows()
+	require.Len(t, rows, 2)
+	require.Equal(t, "merge global stats for test.t2's index idx", rows[0][3])
 }
