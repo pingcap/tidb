@@ -175,6 +175,7 @@ func (push *pushDown) pushBackup(
 						resp.EndKey,
 						resp.Files,
 					); err != nil {
+						// the error is only from flush operator
 						return errors.Annotate(err, "failed to flush checkpoint")
 					}
 				}

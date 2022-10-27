@@ -281,6 +281,7 @@ func (cfg *BackupConfig) Adjust() {
 	}
 }
 
+// a rough hash for checkpoint checker
 func (cfg *BackupConfig) Hash() ([]byte, error) {
 	config := &BackupConfig{
 		LastBackupTS:  cfg.LastBackupTS,
@@ -352,7 +353,10 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	// set cipher only for checkpoint
 	client.SetCipher(&cfg.CipherInfo)
+
 	opts := storage.ExternalStorageOptions{
 		NoCredentials:            cfg.NoCreds,
 		SendCredentials:          cfg.SendCreds,
@@ -365,6 +369,8 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// if checkpoint mode is unused at this time but there is checkpoint meta,
+	// CheckCheckpoint will stop backing up
 	if !client.CheckCheckpoint(cfgHash) {
 		return errors.Errorf("failed to use checkpoint, the hashs of the configs are not the same")
 	}

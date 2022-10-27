@@ -108,11 +108,13 @@ func NewBackupClient(ctx context.Context, mgr ClientMgr) (*Client, error) {
 		clusterID: clusterID,
 		mgr:       mgr,
 
+		cipher:           nil,
 		checkpointMeta:   nil,
 		checkpointRunner: nil,
 	}, nil
 }
 
+// SetCipher for checkpoint to encrypt sst file's metadata
 func (bc *Client) SetCipher(cipher *backuppb.CipherInfo) {
 	bc.cipher = cipher
 }
@@ -133,7 +135,9 @@ func (bc *Client) GetTS(ctx context.Context, duration time.Duration, ts uint64) 
 		backupTS uint64
 		err      error
 	)
+
 	if bc.checkpointMeta != nil {
+		log.Info("reuse checkpoint BackupTS", zap.Uint64("backup-ts", bc.checkpointMeta.BackupTS))
 		return bc.checkpointMeta.BackupTS, nil
 	}
 	if ts > 0 {
@@ -189,16 +193,6 @@ func (bc *Client) GetGCTTL() int64 {
 	return bc.gcTTL
 }
 
-// GetCheckpointInfo return the checkpoint meta information after initialized.
-// return nil if it isn't checkpoint mode.
-func (bc *Client) GetCheckpointMetadata() *checkpoint.CheckpointMetadata {
-	return bc.checkpointMeta
-}
-
-func (bc *Client) GetCheckpointRunner() *checkpoint.CheckpointRunner {
-	return bc.checkpointRunner
-}
-
 // GetStorageBackend gets storage backupend field in client.
 func (bc *Client) GetStorageBackend() *backuppb.StorageBackend {
 	return bc.backend
@@ -226,12 +220,17 @@ func (bc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBacke
 			"there may be some backup files in the path already, "+
 			"please specify a correct backup directory!", bc.storage.URI()+"/"+metautil.MetaFile)
 	}
+	// use checkpoint mode if checkpoint meta exists
 	exist, err = bc.storage.FileExists(ctx, checkpoint.CheckpointMetaPath)
 	if err != nil {
 		return errors.Annotatef(err, "error occurred when checking %s file", checkpoint.CheckpointMetaPath)
 	}
 
+	// if there is no checkpoint meta, then checkpoint mode is not used
+	// or it is the first execution
 	if exist {
+		// load the config's hash to keep the config unchanged.
+		log.Info("load the checkpoint meta, so the existence of lockfile is allowed.")
 		bc.checkpointMeta, err = checkpoint.LoadCheckpointMetadata(ctx, bc.storage)
 		if err != nil {
 			return errors.Annotatef(err, "error occurred when loading %s file", checkpoint.CheckpointMetaPath)
@@ -249,6 +248,7 @@ func (bc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBacke
 
 // CheckCheckpoint check whether the configs are the same
 func (bc *Client) CheckCheckpoint(hash []byte) bool {
+	// first execution or not use checkpoint mode yet
 	if bc.checkpointMeta == nil {
 		return true
 	}
@@ -256,6 +256,7 @@ func (bc *Client) CheckCheckpoint(hash []byte) bool {
 	return bytes.Equal(bc.checkpointMeta.ConfigHash, hash)
 }
 
+// SaveCheckpointMeta saves the initial status into the external storage, and start checkpoint runner
 func (bc *Client) SaveCheckpointMeta(ctx context.Context, cfgHash []byte, backupTS uint64, ranges []rtree.Range) error {
 	if bc.checkpointMeta != nil {
 		// no need to save Checkpoint Meta again
@@ -273,9 +274,10 @@ func (bc *Client) SaveCheckpointMeta(ctx context.Context, cfgHash []byte, backup
 	return errors.Trace(err)
 }
 
+// LoadCheckpointRange loads the checkpoint(finished) sub-ranges of the current range, and calculate its incompleted sub-ranges.
 func (bc *Client) LoadCheckpointRange(ctx context.Context, r rtree.Range) (*rtree.ProgressRange, error) {
 	rangeTree := rtree.NewRangeTree()
-	// there has been none checkpoint yet
+	// not in the checkpoint mode
 	if bc.checkpointMeta == nil {
 		return &rtree.ProgressRange{
 			Res:        rangeTree,
@@ -284,6 +286,7 @@ func (bc *Client) LoadCheckpointRange(ctx context.Context, r rtree.Range) (*rtre
 		}, nil
 	}
 
+	// use groupKey to distinguish different ranges
 	groupKey := string(r.StartKey)
 	err := checkpoint.WalkCheckpointFileWithSpecificKey(ctx, bc.storage, groupKey, bc.cipher, func(resp *checkpoint.RangeGroup) {
 		rangeTree.Put(resp.StartKey, resp.EndKey, resp.Files)
@@ -302,11 +305,6 @@ func (bc *Client) LoadCheckpointRange(ctx context.Context, r rtree.Range) (*rtre
 	}, nil
 }
 
-func (bc *Client) CheckpointRanges(ctx context.Context, metawriter *metautil.MetaWriter) error {
-	//bc.checkpointMeta.
-	return nil
-}
-
 // GetClusterID returns the cluster ID of the tidb cluster to backup.
 func (bc *Client) GetClusterID() uint64 {
 	return bc.clusterID
@@ -322,6 +320,8 @@ func (bc *Client) SetApiVersion(v kvrpcpb.APIVersion) {
 	bc.apiVersion = v
 }
 
+// Client.BuildBackupRangeAndSchema calls BuildBackupRangeAndSchema,
+// if the checkpoint mode is used, return the ranges from checkpoint meta
 func (bc *Client) BuildBackupRangeAndSchema(
 	storage kv.Storage,
 	tableFilter filter.Filter,
@@ -757,6 +757,8 @@ func (bc *Client) BackupRange(
 	}
 
 	logutil.CL(ctx).Info("backup push down started")
+	// either the `incomplete` is origin range itself,
+	// or the `incomplete` is sub-ranges split by checkpoint of origin range
 	for _, r := range progressRange.Incomplete {
 		req := request
 		req.StartKey, req.EndKey = r.StartKey, r.EndKey

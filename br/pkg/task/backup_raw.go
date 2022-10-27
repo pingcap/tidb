@@ -220,7 +220,7 @@ func RunBackupRaw(c context.Context, g glue.Glue, cmdName string, cfg *RawKvConf
 		StartKey: backupRange.StartKey,
 		EndKey:   backupRange.EndKey,
 	}
-	progressRange := rtree.ProgressRange{
+	progressRange := &rtree.ProgressRange{
 		Res:        rtree.NewRangeTree(),
 		Incomplete: []rtree.Range{rg},
 		Origin:     rg,
