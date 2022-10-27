@@ -23,7 +23,6 @@ go_test(
     embed = [":queue"],
     flaky = True,
     deps = [
-        "@com_github_edwingeng_deque//:deque",
         "@com_github_labstack_gommon//random",
         "@com_github_stretchr_testify//require",
     ],

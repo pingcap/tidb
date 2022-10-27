@@ -14,11 +14,9 @@
 package queue
 
 import (
-	"fmt"
 	"math/rand"
 	"testing"
 
-	"github.com/edwingeng/deque"
 	"github.com/labstack/gommon/random"
 	"github.com/stretchr/testify/require"
 )
@@ -356,14 +354,6 @@ func BenchmarkPush(b *testing.B) {
 			q = append(q, i)
 		}
 	})
-
-	b.Run("Push-3rdPartyDeque", func(b *testing.B) {
-		q := deque.NewDeque()
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			q.PushBack(i)
-		}
-	})
 }
 
 func TestChunkQueuePushMany(t *testing.T) {
@@ -431,19 +421,6 @@ func BenchmarkPushMany(b *testing.B) {
 			q = append(q, data[:n]...)
 		}
 	})
-
-	b.Run("PushMany-3rdPartyDeque", func(b *testing.B) {
-		q := deque.NewDeque()
-		n := b.N
-		data := prepareSlice(n)
-
-		b.ResetTimer()
-		for i := 1; i < 10; i++ {
-			for _, v := range data {
-				q.PushBack(v)
-			}
-		}
-	})
 }
 
 func BenchmarkPopMany(b *testing.B) {
@@ -471,25 +448,6 @@ func BenchmarkPopMany(b *testing.B) {
 				panic("error")
 			}
 			q = append(make([]int, 0, len(q[l:])), q[l:]...)
-		}
-	})
-
-	b.Run("PopMany-3rdPartyDeque", func(b *testing.B) {
-		x := b.N
-		q := deque.NewDeque()
-		for i := 0; i < x; i++ {
-			q.Enqueue(i)
-		}
-		ls := []int{x / 5, x / 5, x / 5, x / 5, x - x/5*4}
-		b.ResetTimer()
-		for _, l := range ls {
-			if l > 0 {
-				vals := q.DequeueMany(l)
-				if len(vals) != l {
-					fmt.Println(l, len(vals), vals[0])
-					panic("error")
-				}
-			}
 		}
 	})
 }

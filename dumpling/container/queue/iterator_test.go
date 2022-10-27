@@ -17,7 +17,6 @@ import (
 	"math/rand"
 	"testing"
 
-	"github.com/edwingeng/deque"
 	"github.com/stretchr/testify/require"
 )
 
@@ -118,39 +117,6 @@ func BenchmarkIterate(b *testing.B) {
 		}
 	})
 
-	b.Run("Iterate-3rdPartyDeque-byRange", func(b *testing.B) {
-		q := deque.NewDeque()
-		n := b.N
-
-		for i := 0; i < n; i++ {
-			q.Enqueue(i)
-		}
-		b.ResetTimer()
-
-		q.Range(func(idx int, val deque.Elem) bool {
-			if val.(int) != idx {
-				panic("not equal")
-			}
-			return true
-		})
-	})
-
-	b.Run("Iterate-3rdPartyDeque-byPeek", func(b *testing.B) {
-		q := deque.NewDeque()
-		n := b.N
-
-		for i := 0; i < n; i++ {
-			q.Enqueue(i)
-		}
-		b.ResetTimer()
-
-		for i := 0; i < n; i++ {
-			val := q.Peek(i)
-			if val != i {
-				panic("not equal")
-			}
-		}
-	})
 }
 
 func TestChunkQueueGetIterator(t *testing.T) {
