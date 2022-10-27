@@ -1118,7 +1118,7 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 
 func (ds *DataSource) convertToPartialIndexScan(prop *property.PhysicalProperty, path *util.AccessPath) (indexPlan PhysicalPlan) {
 	is := ds.getOriginalPhysicalIndexScan(prop, path, false, false)
-	// TODO: Consider using isCoveringIndex() to avoid another TableRead
+	// TODO: Consider using isIndexCoveringColumns() to avoid another TableRead
 	indexConds := path.IndexFilters
 	if indexConds != nil {
 		var selectivity float64
@@ -1281,33 +1281,80 @@ func extractFiltersForIndexMerge(sc *stmtctx.StatementContext, client kv.Client,
 	return
 }
 
-func indexCoveringCol(col *expression.Column, indexCols []*expression.Column, idxColLens []int) bool {
+func isIndexColsCoveringCol(col *expression.Column, indexCols []*expression.Column, idxColLens []int, ignoreLen bool) bool {
 	for i, indexCol := range indexCols {
-		isFullLen := idxColLens[i] == types.UnspecifiedLength || idxColLens[i] == col.RetType.GetFlen()
-		if indexCol != nil && col.EqualByExprAndID(nil, indexCol) && isFullLen {
+		if indexCol == nil || !col.EqualByExprAndID(nil, indexCol) {
+			continue
+		}
+		if ignoreLen || idxColLens[i] == types.UnspecifiedLength || idxColLens[i] == col.RetType.GetFlen() {
 			return true
 		}
 	}
 	return false
 }
 
-func (ds *DataSource) isCoveringIndex(columns, indexColumns []*expression.Column, idxColLens []int, tblInfo *model.TableInfo) bool {
+func (ds *DataSource) indexCoveringColumn(column *expression.Column, indexColumns []*expression.Column, idxColLens []int, ignoreLen bool) bool {
+	if ds.tableInfo.PKIsHandle && mysql.HasPriKeyFlag(column.RetType.GetFlag()) {
+		return true
+	}
+	if column.ID == model.ExtraHandleID {
+		return true
+	}
+	coveredByPlainIndex := isIndexColsCoveringCol(column, indexColumns, idxColLens, ignoreLen)
+	coveredByClusteredIndex := isIndexColsCoveringCol(column, ds.commonHandleCols, ds.commonHandleLens, ignoreLen)
+	if !coveredByPlainIndex && !coveredByClusteredIndex {
+		return false
+	}
+	isClusteredNewCollationIdx := collate.NewCollationEnabled() &&
+		column.GetType().EvalType() == types.ETString &&
+		!mysql.HasBinaryFlag(column.GetType().GetFlag())
+	if !coveredByPlainIndex && coveredByClusteredIndex && isClusteredNewCollationIdx && ds.table.Meta().CommonHandleVersion == 0 {
+		return false
+	}
+	return true
+}
+
+func (ds *DataSource) isIndexCoveringColumns(columns, indexColumns []*expression.Column, idxColLens []int) bool {
 	for _, col := range columns {
-		if tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.RetType.GetFlag()) {
-			continue
-		}
-		if col.ID == model.ExtraHandleID {
-			continue
-		}
-		coveredByPlainIndex := indexCoveringCol(col, indexColumns, idxColLens)
-		coveredByClusteredIndex := indexCoveringCol(col, ds.commonHandleCols, ds.commonHandleLens)
-		if !coveredByPlainIndex && !coveredByClusteredIndex {
+		if !ds.indexCoveringColumn(col, indexColumns, idxColLens, false) {
 			return false
 		}
-		isClusteredNewCollationIdx := collate.NewCollationEnabled() &&
-			col.GetType().EvalType() == types.ETString &&
-			!mysql.HasBinaryFlag(col.GetType().GetFlag())
-		if !coveredByPlainIndex && coveredByClusteredIndex && isClusteredNewCollationIdx && ds.table.Meta().CommonHandleVersion == 0 {
+	}
+	return true
+}
+
+func (ds *DataSource) isIndexCoveringCondition(condition expression.Expression, indexColumns []*expression.Column, idxColLens []int) bool {
+	switch v := condition.(type) {
+	case *expression.Column:
+		return ds.indexCoveringColumn(v, indexColumns, idxColLens, false)
+	case *expression.ScalarFunction:
+		// Even if the index only contains prefix `col`, the index can cover `col is null`.
+		if v.FuncName.L == ast.IsNull {
+			if col, ok := v.GetArgs()[0].(*expression.Column); ok {
+				return ds.indexCoveringColumn(col, indexColumns, idxColLens, true)
+			}
+		}
+		for _, arg := range v.GetArgs() {
+			if !ds.isIndexCoveringCondition(arg, indexColumns, idxColLens) {
+				return false
+			}
+		}
+		return true
+	}
+	return true
+}
+
+func (ds *DataSource) isSingleScan(indexColumns []*expression.Column, idxColLens []int) bool {
+	if !ds.ctx.GetSessionVars().OptPrefixIndexSingleScan || ds.colsRequiringFullLen == nil {
+		// ds.colsRequiringFullLen is set at (*DataSource).PruneColumns. In some cases we don't reach (*DataSource).PruneColumns
+		// and ds.colsRequiringFullLen is nil, so we fall back to ds.isIndexCoveringColumns(ds.schema.Columns, indexColumns, idxColLens).
+		return ds.isIndexCoveringColumns(ds.schema.Columns, indexColumns, idxColLens)
+	}
+	if !ds.isIndexCoveringColumns(ds.colsRequiringFullLen, indexColumns, idxColLens) {
+		return false
+	}
+	for _, cond := range ds.allConds {
+		if !ds.isIndexCoveringCondition(cond, indexColumns, idxColLens) {
 			return false
 		}
 	}
@@ -1575,11 +1622,17 @@ func matchIndicesProp(idxCols []*expression.Column, colLens []int, propItems []p
 	return true
 }
 
-func (ds *DataSource) splitIndexFilterConditions(conditions []expression.Expression, indexColumns []*expression.Column, idxColLens []int,
-	table *model.TableInfo) (indexConds, tableConds []expression.Expression) {
+func (ds *DataSource) splitIndexFilterConditions(conditions []expression.Expression, indexColumns []*expression.Column,
+	idxColLens []int) (indexConds, tableConds []expression.Expression) {
 	var indexConditions, tableConditions []expression.Expression
 	for _, cond := range conditions {
-		if ds.isCoveringIndex(expression.ExtractColumns(cond), indexColumns, idxColLens, table) {
+		var covered bool
+		if ds.ctx.GetSessionVars().OptPrefixIndexSingleScan {
+			covered = ds.isIndexCoveringCondition(cond, indexColumns, idxColLens)
+		} else {
+			covered = ds.isIndexCoveringColumns(expression.ExtractColumns(cond), indexColumns, idxColLens)
+		}
+		if covered {
 			indexConditions = append(indexConditions, cond)
 		} else {
 			tableConditions = append(tableConditions, cond)

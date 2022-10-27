@@ -16,7 +16,6 @@ package gctuner
 
 import (
 	"math"
-	"runtime"
 	"runtime/debug"
 	"time"
 
@@ -45,8 +44,7 @@ func (t *memoryLimitTuner) tuning() {
 	if !t.isTuning.Load() {
 		return
 	}
-	r := &runtime.MemStats{}
-	runtime.ReadMemStats(r)
+	r := memory.ForceReadMemStats()
 	gogc := util.GetGOGC()
 	ratio := float64(100+gogc) / 100
 	// This `if` checks whether the **last** GC was triggered by MemoryLimit as far as possible.
@@ -104,10 +102,7 @@ func (t *memoryLimitTuner) GetPercentage() float64 {
 // UpdateMemoryLimit updates the memory limit.
 // This function should be called when `tidb_server_memory_limit` or `tidb_server_memory_limit_gc_trigger` is modified.
 func (t *memoryLimitTuner) UpdateMemoryLimit() {
-	var memoryLimit int64 = math.MaxInt64
-	if !EnableGOGCTuner.Load() {
-		memoryLimit = t.calcMemoryLimit()
-	}
+	var memoryLimit = t.calcMemoryLimit()
 	if memoryLimit == math.MaxInt64 {
 		t.isTuning.Store(false)
 	} else {
