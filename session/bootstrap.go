@@ -635,6 +635,8 @@ const (
 	version94 = 94
 	// version95 add a column `User_attributes` to `mysql.user`
 	version95 = 95
+	// version96 converts server-memory-quota to a sysvar
+	version96 = 96
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
@@ -740,6 +742,7 @@ var (
 		upgradeToVer93,
 		upgradeToVer94,
 		upgradeToVer95,
+		upgradeToVer96,
 	}
 )
 
@@ -1940,6 +1943,14 @@ func upgradeToVer95(s Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `User_attributes` JSON")
+}
+
+func upgradeToVer96(s Session, ver int64) {
+	if ver >= version96 {
+		return
+	}
+	valStr := strconv.Itoa(int(config.GetGlobalConfig().Performance.ServerMemoryQuota))
+	importConfigOption(s, "performance.server-memory-quota", variable.TiDBServerMemoryLimit, valStr)
 }
 
 func writeOOMAction(s Session) {
