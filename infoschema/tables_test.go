@@ -1605,6 +1605,7 @@ func TestMemoryUsageAndOpsHistory(t *testing.T) {
 	require.Equal(t, row[1], "536870912")                                           // MEMORY_LIMIT
 	require.Greater(t, row[2], "0")                                                 // MEMORY_CURRENT
 	tmp, ok = row[3].(string)                                                       // MEMORY_MAX_USED
+	require.Equal(t, ok, true)
 	val, err := strconv.ParseUint(tmp, 10, 64)
 	require.Nil(t, err)
 	require.Greater(t, val, uint64(536870912))
@@ -1632,6 +1633,7 @@ func TestMemoryUsageAndOpsHistory(t *testing.T) {
 	require.Equal(t, row[1], "SessionKill") // OPS
 	require.Equal(t, row[2], "536870912")   // MEMORY_LIMIT
 	tmp, ok = row[3].(string)               // MEMORY_CURRENT
+	require.Equal(t, ok, true)
 	val, err = strconv.ParseUint(tmp, 10, 64)
 	require.Nil(t, err)
 	require.Greater(t, val, uint64(536870912))
