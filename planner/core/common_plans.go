@@ -739,7 +739,7 @@ func (e *Explain) RenderResult() error {
 				factors := defaultVer2Factors.tolist()
 				weights := make(map[string]float64)
 				for _, factor := range factors {
-					if factorCost, ok := trace.factorCosts[factor.Name]; ok {
+					if factorCost, ok := trace.factorCosts[factor.Name]; ok && factor.Value > 0 {
 						weights[factor.Name] = factorCost / factor.Value // cost = [factors] * [weights]
 					}
 				}
