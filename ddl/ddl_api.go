@@ -4599,9 +4599,6 @@ func GetModifiableColumnJob(
 					return nil, dbterror.ErrUnsupportedModifyCollation.GenWithStack("Unsupported modify column, decreasing length of int may result in truncation and change of partition")
 				}
 			}
-			// TODO: Test with LIST partitioning and decreasing the length so it is shorter
-			// than existing partition definitions. (RANGE is OK, since LESS THAN)
-
 			// Basically only allow changes of the length/decimals for the column
 			// Note that enum is not allowed, so elems are not checked
 			// TODO: support partition by ENUM
@@ -4614,10 +4611,6 @@ func GetModifiableColumnJob(
 			// Generate a new PartitionInfo and validate it together with the new column definition
 			// Checks if all partition definition values are compatible.
 			// Similar to what buildRangePartitionDefinitions would do in terms of checks.
-			// Try 1: Test generating the string, then parse it with the new column?
-			//func buildPartitionDefinitionsInfo(ctx sessionctx.Context, defs []*ast.PartitionDefinition, tbInfo *model.TableInfo) (partitions []model.PartitionDefinition, err error) {
-
-			// TODO: do not allow truncations, not even if not Strict SQLMode!!!
 
 			tblInfo := pt.Meta()
 			newTblInfo := *tblInfo
@@ -4633,7 +4626,6 @@ func GetModifiableColumnJob(
 				newCols = append(newCols, c)
 			}
 			newTblInfo.Columns = newCols
-			// TODO: Test and handle SQLMode?
 
 			var buf bytes.Buffer
 			AppendPartitionInfo(tblInfo.GetPartitionInfo(), &buf, mysql.ModeNone)
