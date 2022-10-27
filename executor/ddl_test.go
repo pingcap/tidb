@@ -1125,7 +1125,8 @@ func TestFilterDifferentAllocators(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("drop table if exists t1")
 
-	tk.MustExec("create table t(a bigint auto_random(5) key, b int auto_increment unique)")
+	for _, str := range []string{"", " AUTO_ID_CACHE 1"} {
+	tk.MustExec("create table t(a bigint auto_random(5) key, b int auto_increment unique)" + str)
 	tk.MustExec("insert into t values()")
 	tk.MustQuery("select b from t").Check(testkit.Rows("1"))
 	allHandles, err := ddltestutil.ExtractAllTableHandles(tk.Session(), "test", "t")
@@ -1169,6 +1170,9 @@ func TestFilterDifferentAllocators(t *testing.T) {
 	require.Equal(t, 1, len(allHandles))
 	orderedHandles = testutil.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
 	require.Greater(t, orderedHandles[0], int64(3000001))
+
+	tk.MustExec("drop table t1")
+	}
 }
 
 func TestMaxHandleAddIndex(t *testing.T) {

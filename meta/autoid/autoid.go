@@ -598,9 +598,9 @@ func NewAllocator(store kv.Storage, dbID, tbID int64, isUnsigned bool,
 		fn.ApplyOn(alloc)
 	}
 
-	// fmt.Println("auto id cache default value ===", alloc.step, alloc.customStep)
-	// if allocType == RowIDAllocType && alloc.customStep && alloc.step == 1 {
-	if allocType == RowIDAllocType {
+	fmt.Println("auto id cache default value ===", alloc.step, alloc.customStep)
+	if allocType == RowIDAllocType && alloc.customStep && alloc.step == 1 {
+	// if allocType == RowIDAllocType {
 		alloc1 := newSinglePointAlloc(store, dbID, tbID, isUnsigned)
 		if alloc1 != nil {
 			return alloc1

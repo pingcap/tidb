@@ -40,7 +40,8 @@ import (
 	"github.com/pingcap/fn"
 	pb "github.com/pingcap/kvproto/pkg/autoid"
 	autoid "github.com/pingcap/tidb/autoid_service"
-	"github.com/pingcap/tidb/autoid_service/persist"
+	// "github.com/pingcap/tidb/autoid_service/persist"
+	"github.com/pingcap/tidb/store"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -461,9 +462,25 @@ func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
 	grpcServer := NewRPCServer(s.cfg, s.dom, s)
 	service.RegisterChannelzServiceToServer(grpcServer)
 	if s.cfg.Store == "tikv" {
-		p, etcdAddr, err := persist.NewPersist(s.cfg.Path)
-		if err == nil {
-			pb.RegisterAutoIDAllocServer(grpcServer, autoid.New(s.statusListener.Addr().String(), etcdAddr, p))
+		for {
+			fullPath := fmt.Sprintf("tikv://%s", s.cfg.Path)
+			store, err := store.New(fullPath)
+			if err != nil {
+				logutil.BgLogger().Error("new tikv store fail", zap.Error(err))
+				break
+			}
+			ebd, ok := store.(kv.EtcdBackend)
+			if !ok {
+				break
+			}
+			etcdAddr, err := ebd.EtcdAddrs()
+			if err != nil {
+				logutil.BgLogger().Error("tikv store not etcd background", zap.Error(err))
+				break
+			}
+			service := autoid.New(s.statusListener.Addr().String(), etcdAddr, store)
+			pb.RegisterAutoIDAllocServer(grpcServer, service)
+			break
 		}
 	}
 

@@ -1143,62 +1143,71 @@ func TestAutoIDIncrementAndOffset(t *testing.T) {
 	// Test for offset is larger than increment.
 	tk.Session().GetSessionVars().AutoIncrementIncrement = 5
 	tk.Session().GetSessionVars().AutoIncrementOffset = 10
-	tk.MustExec(`create table io (a int key auto_increment)`)
-	tk.MustExec(`insert into io values (null),(null),(null)`)
-	tk.MustQuery(`select * from io`).Check(testkit.Rows("10", "15", "20"))
-	tk.MustExec(`drop table io`)
+
+	for _, str := range []string{"", " AUTO_ID_CACHE 1"} {
+		tk.MustExec(`create table io (a int key auto_increment)` + str)
+		tk.MustExec(`insert into io values (null),(null),(null)`)
+		tk.MustQuery(`select * from io`).Check(testkit.Rows("10", "15", "20"))
+		tk.MustExec(`drop table io`)
+	}
 
 	// Test handle is PK.
-	tk.MustExec(`create table io (a int key auto_increment)`)
-	tk.Session().GetSessionVars().AutoIncrementOffset = 10
-	tk.Session().GetSessionVars().AutoIncrementIncrement = 2
-	tk.MustExec(`insert into io values (),(),()`)
-	tk.MustQuery(`select * from io`).Check(testkit.Rows("10", "12", "14"))
-	tk.MustExec(`delete from io`)
+	for _, str := range []string{"", " AUTO_ID_CACHE 1"} {
+		tk.MustExec(`create table io (a int key auto_increment)` + str)
+		tk.Session().GetSessionVars().AutoIncrementOffset = 10
+		tk.Session().GetSessionVars().AutoIncrementIncrement = 2
+		tk.MustExec(`insert into io values (),(),()`)
+		tk.MustQuery(`select * from io`).Check(testkit.Rows("10", "12", "14"))
+		tk.MustExec(`delete from io`)
 
-	// Test reset the increment.
-	tk.Session().GetSessionVars().AutoIncrementIncrement = 5
-	tk.MustExec(`insert into io values (),(),()`)
-	tk.MustQuery(`select * from io`).Check(testkit.Rows("15", "20", "25"))
-	tk.MustExec(`delete from io`)
+		// Test reset the increment.
+		tk.Session().GetSessionVars().AutoIncrementIncrement = 5
+		tk.MustExec(`insert into io values (),(),()`)
+		tk.MustQuery(`select * from io`).Check(testkit.Rows("15", "20", "25"))
+		tk.MustExec(`delete from io`)
 
-	tk.Session().GetSessionVars().AutoIncrementIncrement = 10
-	tk.MustExec(`insert into io values (),(),()`)
-	tk.MustQuery(`select * from io`).Check(testkit.Rows("30", "40", "50"))
-	tk.MustExec(`delete from io`)
+		tk.Session().GetSessionVars().AutoIncrementIncrement = 10
+		tk.MustExec(`insert into io values (),(),()`)
+		tk.MustQuery(`select * from io`).Check(testkit.Rows("30", "40", "50"))
+		tk.MustExec(`delete from io`)
 
-	tk.Session().GetSessionVars().AutoIncrementIncrement = 5
-	tk.MustExec(`insert into io values (),(),()`)
-	tk.MustQuery(`select * from io`).Check(testkit.Rows("55", "60", "65"))
-	tk.MustExec(`drop table io`)
+		tk.Session().GetSessionVars().AutoIncrementIncrement = 5
+		tk.MustExec(`insert into io values (),(),()`)
+		tk.MustQuery(`select * from io`).Check(testkit.Rows("55", "60", "65"))
+		tk.MustExec(`drop table io`)
+	}
 
 	// Test handle is not PK.
-	tk.Session().GetSessionVars().AutoIncrementIncrement = 2
-	tk.Session().GetSessionVars().AutoIncrementOffset = 10
-	tk.MustExec(`create table io (a int, b int auto_increment, key(b))`)
-	tk.MustExec(`insert into io(b) values (null),(null),(null)`)
-	// AutoID allocation will take increment and offset into consideration.
-	tk.MustQuery(`select b from io`).Check(testkit.Rows("10", "12", "14"))
-	// HandleID allocation will ignore the increment and offset.
-	tk.MustQuery(`select _tidb_rowid from io`).Check(testkit.Rows("15", "16", "17"))
-	tk.MustExec(`delete from io`)
+	for _, str := range []string{"", " AUTO_ID_CACHE 1"} {
+		tk.Session().GetSessionVars().AutoIncrementIncrement = 2
+		tk.Session().GetSessionVars().AutoIncrementOffset = 10
+		tk.MustExec(`create table io (a int, b int auto_increment, key(b))` + str)
+		tk.MustExec(`insert into io(b) values (null),(null),(null)`)
+		// AutoID allocation will take increment and offset into consideration.
+		tk.MustQuery(`select b from io`).Check(testkit.Rows("10", "12", "14"))
+		// HandleID allocation will ignore the increment and offset.
+		tk.MustQuery(`select _tidb_rowid from io`).Check(testkit.Rows("15", "16", "17"))
+		tk.MustExec(`delete from io`)
 
-	tk.Session().GetSessionVars().AutoIncrementIncrement = 10
-	tk.MustExec(`insert into io(b) values (null),(null),(null)`)
-	tk.MustQuery(`select b from io`).Check(testkit.Rows("20", "30", "40"))
-	tk.MustQuery(`select _tidb_rowid from io`).Check(testkit.Rows("41", "42", "43"))
+		tk.Session().GetSessionVars().AutoIncrementIncrement = 10
+		tk.MustExec(`insert into io(b) values (null),(null),(null)`)
+		tk.MustQuery(`select b from io`).Check(testkit.Rows("20", "30", "40"))
+		tk.MustQuery(`select _tidb_rowid from io`).Check(testkit.Rows("41", "42", "43"))
 
-	// Test invalid value.
-	tk.Session().GetSessionVars().AutoIncrementIncrement = -1
-	tk.Session().GetSessionVars().AutoIncrementOffset = -2
-	tk.MustGetErrMsg(`insert into io(b) values (null),(null),(null)`,
+		// Test invalid value.
+		tk.Session().GetSessionVars().AutoIncrementIncrement = -1
+		tk.Session().GetSessionVars().AutoIncrementOffset = -2
+		tk.MustGetErrMsg(`insert into io(b) values (null),(null),(null)`,
 		"[autoid:8060]Invalid auto_increment settings: auto_increment_increment: -1, auto_increment_offset: -2, both of them must be in range [1..65535]")
-	tk.MustExec(`delete from io`)
+		tk.MustExec(`delete from io`)
 
-	tk.Session().GetSessionVars().AutoIncrementIncrement = 65536
-	tk.Session().GetSessionVars().AutoIncrementOffset = 65536
-	tk.MustGetErrMsg(`insert into io(b) values (null),(null),(null)`,
+		tk.Session().GetSessionVars().AutoIncrementIncrement = 65536
+		tk.Session().GetSessionVars().AutoIncrementOffset = 65536
+		tk.MustGetErrMsg(`insert into io(b) values (null),(null),(null)`,
 		"[autoid:8060]Invalid auto_increment settings: auto_increment_increment: 65536, auto_increment_offset: 65536, both of them must be in range [1..65535]")
+
+		tk.MustExec(`drop table io`)
+	}
 }
 
 // Fix https://github.com/pingcap/tidb/issues/32601.
