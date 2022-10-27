@@ -46,8 +46,9 @@ func (w *worker) onCreateForeignKey(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 	}
 	switch job.SchemaState {
 	case model.StateNone:
-		err = checkAddForeignKeyValidInOwner(d, t, job, job.SchemaName, tblInfo, &fkInfo, fkCheck)
+		err = checkAddForeignKeyValidInOwner(d, t, job.SchemaName, tblInfo, &fkInfo, fkCheck)
 		if err != nil {
+			job.State = model.JobStateCancelled
 			return ver, err
 		}
 		fkInfo.State = model.StateWriteOnly
@@ -649,10 +650,9 @@ func checkAddForeignKeyValid(is infoschema.InfoSchema, schema string, tbInfo *mo
 	return nil
 }
 
-func checkAddForeignKeyValidInOwner(d *ddlCtx, t *meta.Meta, job *model.Job, schema string, tbInfo *model.TableInfo, fk *model.FKInfo, fkCheck bool) error {
+func checkAddForeignKeyValidInOwner(d *ddlCtx, t *meta.Meta, schema string, tbInfo *model.TableInfo, fk *model.FKInfo, fkCheck bool) error {
 	err := checkFKDupName(tbInfo, fk.Name)
 	if err != nil {
-		job.State = model.JobStateCancelled
 		return err
 	}
 	if !variable.EnableForeignKey.Load() {
@@ -664,7 +664,6 @@ func checkAddForeignKeyValidInOwner(d *ddlCtx, t *meta.Meta, job *model.Job, sch
 	}
 	err = checkAddForeignKeyValid(is, schema, tbInfo, fk, fkCheck)
 	if err != nil {
-		job.State = model.JobStateCancelled
 		return errors.Trace(err)
 	}
 	return nil
