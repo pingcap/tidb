@@ -152,6 +152,19 @@ else
 	CGO_ENABLED=1 $(GOBUILD) -gcflags="all=-N -l" $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o '$(TARGET)' ./tidb-server
 endif
 
+enterprise-prepare:
+	git submodule init && git submodule update && cd extension/enterprise/generate && $(GO) generate -run genfile main.go
+
+enterprise-clear:
+	cd extension/enterprise/generate && $(GO) generate -run clear main.go
+
+enterprise-server: enterprise-prepare
+ifeq ($(TARGET), "")
+	CGO_ENABLED=1 $(GOBUILD) -tags enterprise $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o bin/tidb-server tidb-server/main.go
+else
+	CGO_ENABLED=1 $(GOBUILD) -tags enterprise $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o '$(TARGET)' tidb-server/main.go
+endif
+
 server_check:
 ifeq ($(TARGET), "")
 	$(GOBUILD) $(RACE_FLAG) -ldflags '$(CHECK_LDFLAGS)' -o bin/tidb-server ./tidb-server
