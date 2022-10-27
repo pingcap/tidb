@@ -15,6 +15,7 @@
 package expression
 
 import (
+	"context"
 	"strings"
 	"sync"
 
@@ -104,7 +105,7 @@ func (c *extensionFuncClass) getFunction(ctx sessionctx.Context, args []Expressi
 		return nil, err
 	}
 	bf.tp.SetFlen(c.flen)
-	sig := &extensionFuncSig{bf, c.funcDef}
+	sig := &extensionFuncSig{context.TODO(), bf, c.funcDef}
 	return sig, nil
 }
 
@@ -137,6 +138,7 @@ func (c *extensionFuncClass) checkPrivileges(ctx sessionctx.Context) error {
 var _ extension.FunctionContext = &extensionFuncSig{}
 
 type extensionFuncSig struct {
+	context.Context
 	baseBuiltinFunc
 	extension.FunctionDef
 }
