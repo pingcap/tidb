@@ -127,6 +127,7 @@ go_test(
     deps = [
         "//bindinfo",
         "//config",
+        "//ddl",
         "//domain",
         "//errno",
         "//executor",
