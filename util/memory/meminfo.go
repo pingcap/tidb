@@ -15,7 +15,6 @@
 package memory
 
 import (
-	"runtime"
 	"sync"
 	"time"
 
@@ -153,8 +152,7 @@ func InstanceMemUsed() (uint64, error) {
 		return used, nil
 	}
 	var memoryUsage uint64
-	instanceStats := &runtime.MemStats{}
-	runtime.ReadMemStats(instanceStats)
+	instanceStats := ReadMemStats()
 	memoryUsage = instanceStats.HeapAlloc
 	serverMemUsage.set(memoryUsage, time.Now())
 	return memoryUsage, nil

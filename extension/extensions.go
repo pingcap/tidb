@@ -44,3 +44,11 @@ func (es *Extensions) Bootstrap(ctx BootstrapContext) error {
 	}
 	return nil
 }
+
+// NewSessionExtensions creates a new ConnExtensions object
+func (es *Extensions) NewSessionExtensions() *SessionExtensions {
+	if es == nil {
+		return nil
+	}
+	return newSessionExtensions(es)
+}
