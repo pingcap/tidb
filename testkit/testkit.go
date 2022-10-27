@@ -142,7 +142,6 @@ func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
 		if tk.alloc != nil {
 			tk.alloc.Reset()
 		}
-
 	}()
 	return tk.MustQueryWithContext(context.Background(), sql, args...)
 }
