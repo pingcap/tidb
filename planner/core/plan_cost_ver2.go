@@ -805,6 +805,11 @@ type costVer2Factors struct {
 	TiDBRequest   costVer2Factor // per net request
 }
 
+func (c costVer2Factors) tolist() (l []costVer2Factor) {
+	return append(l, c.TiDBTemp, c.TiKVScan, c.TiKVDescScan, c.TiFlashScan, c.TiDBCPU, c.TiKVCPU, c.TiFlashCPU,
+		c.TiDB2KVNet, c.TiDB2FlashNet, c.TiFlashMPPNet, c.TiDBMem, c.TiKVMem, c.TiFlashMem, c.TiDBDisk, c.TiDBRequest)
+}
+
 var defaultVer2Factors = costVer2Factors{
 	TiDBTemp:      costVer2Factor{"tidb_temp_table_factor", 0},
 	TiKVScan:      costVer2Factor{"tikv_scan_factor", 100},
