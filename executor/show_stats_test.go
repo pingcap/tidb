@@ -411,5 +411,5 @@ func TestShowAnalyzeStatus(t *testing.T) {
 	tk.MustExec("analyze table t2 index idx")
 	rows = tk.MustQuery("show analyze status").Rows()
 	require.Len(t, rows, 2)
-	require.Equal(t, " merge global stats for test.t's index idx", rows[0][3])
+	require.Equal(t, "merge global stats for test.t2's index idx", rows[0][3])
 }
