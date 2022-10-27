@@ -353,7 +353,7 @@ func TestDispatch(t *testing.T) {
 		{
 			com: mysql.ComSleep,
 			in:  nil,
-			err: nil,
+			err: mysql.NewErrf(mysql.ErrUnknown, "command %d not supported now", nil, mysql.ComSleep),
 			out: nil,
 		},
 		{
@@ -472,7 +472,7 @@ func TestDispatchClientProtocol41(t *testing.T) {
 		{
 			com: mysql.ComSleep,
 			in:  nil,
-			err: nil,
+			err: mysql.NewErrf(mysql.ErrUnknown, "command %d not supported now", nil, mysql.ComSleep),
 			out: nil,
 		},
 		{
