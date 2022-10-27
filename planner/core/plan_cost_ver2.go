@@ -208,6 +208,12 @@ func (p *PhysicalTableReader) getPlanCostVer2(taskType property.TaskType, option
 // plan-cost = index-side-cost + (table-side-cost + double-read-cost) / double-read-concurrency
 // index-side-cost = (index-child-cost + index-net-cost) / dist-concurrency # same with IndexReader
 // table-side-cost = (table-child-cost + table-net-cost) / dist-concurrency # same with TableReader
+// double-read-cost = double-read-request-cost + double-read-cpu-cost
+// double-read-request-cost = double-read-tasks * request-factor
+// double-read-cpu-cost = index-rows * cpu-factor
+// double-read-tasks = index-rows / batch-size * task-per-batch # task-per-batch is a magic number now
+// index-side-cost = (index-child-cost + index-net-cost) / dist-concurrency # same with IndexReader
+// table-side-cost = (table-child-cost + table-net-cost) / dist-concurrency # same with TableReader
 func (p *PhysicalIndexLookUpReader) getPlanCostVer2(taskType property.TaskType, option *PlanCostOption) (costVer2, error) {
 	if p.planCostInit && !hasCostFlag(option.CostFlag, CostFlagRecalculate) {
 		return p.planCostVer2, nil
@@ -256,6 +262,8 @@ func (p *PhysicalIndexLookUpReader) getPlanCostVer2(taskType property.TaskType, 
 
 // getPlanCostVer2 returns the plan-cost of this sub-plan, which is:
 // plan-cost = table-side-cost + sum(index-side-cost)
+// index-side-cost = (index-child-cost + index-net-cost) / dist-concurrency # same with IndexReader
+// table-side-cost = (table-child-cost + table-net-cost) / dist-concurrency # same with TableReader
 func (p *PhysicalIndexMergeReader) getPlanCostVer2(taskType property.TaskType, option *PlanCostOption) (costVer2, error) {
 	if p.planCostInit && !hasCostFlag(option.CostFlag, CostFlagRecalculate) {
 		return p.planCostVer2, nil
