@@ -16,8 +16,6 @@ package core
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/planner/util"
-	"github.com/pingcap/tipb/go-tipb"
 	"math"
 	"strings"
 
@@ -26,7 +24,9 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 func getPlanCost(p PhysicalPlan, taskType property.TaskType, option *PlanCostOption) (float64, error) {
