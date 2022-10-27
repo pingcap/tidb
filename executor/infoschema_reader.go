@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -2410,8 +2409,7 @@ func (e *memtableRetriever) setDataForClusterTrxSummary(ctx sessionctx.Context) 
 }
 
 func (e *memtableRetriever) setDataForMemoryUsage(ctx sessionctx.Context) error {
-	r := &runtime.MemStats{}
-	runtime.ReadMemStats(r)
+	r := memory.ReadMemStats()
 	currentOps, sessionKillLastDatum := types.NewDatum(nil), types.NewDatum(nil)
 	if memory.TriggerMemoryLimitGC.Load() || servermemorylimit.IsKilling.Load() {
 		currentOps.SetString("shrink", mysql.DefaultCollationName)

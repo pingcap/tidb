@@ -176,14 +176,13 @@ func (m *memoryOpsHistoryManager) GetRows() [][]types.Datum {
 		})
 	}
 	var zeroTime = time.Time{}
-	for i := m.offsets; i < len(m.infos); i++ {
-		if m.infos[i].killTime.Equal(zeroTime) {
+	for i := 0; i < len(m.infos); i++ {
+		pos := (m.offsets + i) % len(m.infos)
+		info := m.infos[pos]
+		if info.killTime.Equal(zeroTime) {
 			continue
 		}
-		getRowFromInfo(m.infos[i])
-	}
-	for i := 0; i < m.offsets; i++ {
-		getRowFromInfo(m.infos[i])
+		getRowFromInfo(info)
 	}
 	return rows
 }
