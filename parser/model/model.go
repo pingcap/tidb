@@ -333,6 +333,7 @@ func (c *ColumnInfo) GetTypeDesc() string {
 	return desc
 }
 
+// EmptyColumnInfoSize is the memory usage of ColumnInfoSize
 const EmptyColumnInfoSize = int64(unsafe.Sizeof(ColumnInfo{}))
 
 // FindColumnInfo finds ColumnInfo in cols by name.
