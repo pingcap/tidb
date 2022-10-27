@@ -463,7 +463,7 @@ func (is *infoSchema) addReferredForeignKeys(schema model.CIStr, tbInfo *model.T
 			if newReferredFKList[i].ChildTable.L != newReferredFKList[j].ChildTable.L {
 				return newReferredFKList[i].ChildTable.L < newReferredFKList[j].ChildTable.L
 			}
-			return newReferredFKList[i].ChildFKName.L != newReferredFKList[j].ChildFKName.L
+			return newReferredFKList[i].ChildFKName.L < newReferredFKList[j].ChildFKName.L
 		})
 		is.referredForeignKeyMap[refer] = newReferredFKList
 	}

@@ -3012,23 +3012,25 @@ func TestAutoIncrementForce(t *testing.T) {
 		tk.MustExec("drop table if exists t;")
 	}
 
-	// Check for warning in case we can't set the auto_increment to the desired value
-	tk.MustExec("create table t(a int primary key auto_increment)")
-	tk.MustExec("insert into t values (200)")
-	tk.MustQuery("show create table t").Check(testkit.Rows(
-		"t CREATE TABLE `t` (\n" +
-		"  `a` int(11) NOT NULL AUTO_INCREMENT,\n" +
-		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=5201"))
+	for _, str := range []string{"", " AUTO_ID_CACHE 1"} {
+		// Check for warning in case we can't set the auto_increment to the desired value
+		tk.MustExec("create table t(a int primary key auto_increment)" + str)
+		tk.MustExec("insert into t values (200)")
+		tk.MustQuery("show create table t").Check(testkit.Rows(
+			"t CREATE TABLE `t` (\n" +
+				"  `a` int(11) NOT NULL AUTO_INCREMENT,\n" +
+				"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
+				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=5201"))
 		tk.MustExec("alter table t auto_increment=100;")
 		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Can't reset AUTO_INCREMENT to 100 without FORCE option, using 5201 instead"))
 		tk.MustQuery("show create table t").Check(testkit.Rows(
 			"t CREATE TABLE `t` (\n" +
-			"  `a` int(11) NOT NULL AUTO_INCREMENT,\n" +
-			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=5201"))
-			tk.MustExec("drop table t")
-		}
+				"  `a` int(11) NOT NULL AUTO_INCREMENT,\n" +
+				"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
+				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=5201"))
+		tk.MustExec("drop table t")
+	}
+}
 
 func TestIssue20490(t *testing.T) {
 	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
@@ -3159,7 +3161,7 @@ func TestDuplicateErrorMessage(t *testing.T) {
 						fields[i] = strings.Replace(val, "'", "", -1)
 					}
 					tk.MustGetErrMsg("alter table t add unique index t_idx(id1,"+index+")",
-						fmt.Sprintf("[kv:1062]Duplicate entry '1-%s' for key 't_idx'", strings.Join(fields, "-")))
+						fmt.Sprintf("[kv:1062]Duplicate entry '1-%s' for key 't.t_idx'", strings.Join(fields, "-")))
 				}
 			}
 			restoreConfig()
