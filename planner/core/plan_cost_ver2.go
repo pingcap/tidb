@@ -24,7 +24,9 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 func getPlanCost(p PhysicalPlan, taskType property.TaskType, option *PlanCostOption) (float64, error) {
@@ -329,9 +331,7 @@ func (p *PhysicalSort) getPlanCostVer2(taskType property.TaskType, option *PlanC
 		memQuota > 0 && // mem-quota is set
 		rowSize*rows > float64(memQuota) // exceed the mem-quota
 
-	sortCPUCost := newCostVer2(option, cpuFactor,
-		rows*math.Log2(rows)*float64(len(p.ByItems))*cpuFactor.Value,
-		"sortCPU(%v*log2(%v)*%v*%v)", rows, rows, len(p.ByItems), cpuFactor)
+	sortCPUCost := orderCostVer2(option, rows, rows, p.ByItems, cpuFactor)
 
 	var sortMemCost, sortDiskCost costVer2
 	if !spill {
@@ -373,9 +373,7 @@ func (p *PhysicalTopN) getPlanCostVer2(taskType property.TaskType, option *PlanC
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 	memFactor := getTaskMemFactorVer2(p, taskType)
 
-	topNCPUCost := newCostVer2(option, cpuFactor,
-		rows*math.Log2(N)*float64(len(p.ByItems))*cpuFactor.Value,
-		"topCPU(%v*%v*%v*%v)", rows, math.Log2(N), len(p.ByItems), cpuFactor)
+	topNCPUCost := orderCostVer2(option, rows, N, p.ByItems, cpuFactor)
 	topNMemCost := newCostVer2(option, memFactor,
 		N*rowSize*memFactor.Value,
 		"topMem(%v*%v*%v)", N, rowSize, memFactor)
@@ -491,7 +489,8 @@ func (p *PhysicalHashJoin) getPlanCostVer2(taskType property.TaskType, option *P
 	buildRows := getCardinality(build, option.CostFlag)
 	probeRows := getCardinality(probe, option.CostFlag)
 	buildRowSize := getAvgRowSize(build.Stats(), build.Schema())
-	concurrency := float64(p.Concurrency)
+	tidbConcurrency := float64(p.Concurrency)
+	mppConcurrency := float64(3) // TODO: remove this empirical value
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 	memFactor := getTaskMemFactorVer2(p, taskType)
 
@@ -510,8 +509,13 @@ func (p *PhysicalHashJoin) getPlanCostVer2(taskType property.TaskType, option *P
 		return zeroCostVer2, err
 	}
 
-	p.planCostVer2 = sumCostVer2(buildChildCost, probeChildCost, buildHashCost, buildFilterCost,
-		divCostVer2(sumCostVer2(probeFilterCost, probeHashCost), concurrency))
+	if taskType == property.MppTaskType { // BCast or Shuffle Join, use mppConcurrency
+		p.planCostVer2 = sumCostVer2(buildChildCost, probeChildCost,
+			divCostVer2(sumCostVer2(buildHashCost, buildFilterCost, probeHashCost, probeFilterCost), mppConcurrency))
+	} else { // TiDB HashJoin
+		p.planCostVer2 = sumCostVer2(buildChildCost, probeChildCost, buildHashCost, buildFilterCost,
+			divCostVer2(sumCostVer2(probeFilterCost, probeHashCost), tidbConcurrency))
+	}
 	p.planCostInit = true
 	return p.planCostVer2.label(p), nil
 }
@@ -630,8 +634,16 @@ func (p *PhysicalExchangeReceiver) getPlanCostVer2(taskType property.TaskType, o
 	rows := getCardinality(p, option.CostFlag)
 	rowSize := getAvgRowSize(p.stats, p.Schema())
 	netFactor := getTaskNetFactorVer2(p, taskType)
+	isBCast := false
+	if sender, ok := p.children[0].(*PhysicalExchangeSender); ok {
+		isBCast = sender.ExchangeType == tipb.ExchangeType_Broadcast
+	}
+	numNode := float64(3) // TODO: remove this empirical value
 
 	netCost := netCostVer2(option, rows, rowSize, netFactor)
+	if isBCast {
+		netCost = mulCostVer2(netCost, numNode)
+	}
 	childCost, err := p.children[0].getPlanCostVer2(taskType, option)
 	if err != nil {
 		return zeroCostVer2, err
@@ -695,9 +707,10 @@ func netCostVer2(option *PlanCostOption, rows, rowSize float64, netFactor costVe
 }
 
 func filterCostVer2(option *PlanCostOption, rows float64, filters []expression.Expression, cpuFactor costVer2Factor) costVer2 {
+	numFuncs := numFunctions(filters)
 	return newCostVer2(option, cpuFactor,
-		rows*float64(len(filters))*cpuFactor.Value,
-		"cpu(%v*filters(%v)*%v)", rows, len(filters), cpuFactor)
+		rows*float64(numFuncs)*cpuFactor.Value,
+		"cpu(%v*filters(%v)*%v)", rows, numFuncs, cpuFactor)
 }
 
 func aggCostVer2(option *PlanCostOption, rows float64, aggFuncs []*aggregation.AggFuncDesc, cpuFactor costVer2Factor) costVer2 {
@@ -708,9 +721,36 @@ func aggCostVer2(option *PlanCostOption, rows float64, aggFuncs []*aggregation.A
 }
 
 func groupCostVer2(option *PlanCostOption, rows float64, groupItems []expression.Expression, cpuFactor costVer2Factor) costVer2 {
+	numFuncs := numFunctions(groupItems)
 	return newCostVer2(option, cpuFactor,
-		rows*float64(len(groupItems))*cpuFactor.Value,
-		"group(%v*cols(%v)*%v)", rows, len(groupItems), cpuFactor)
+		rows*float64(numFuncs)*cpuFactor.Value,
+		"group(%v*cols(%v)*%v)", rows, numFuncs, cpuFactor)
+}
+
+func numFunctions(exprs []expression.Expression) int {
+	num := 0
+	for _, e := range exprs {
+		if _, ok := e.(*expression.ScalarFunction); ok {
+			num++
+		}
+	}
+	return num
+}
+
+func orderCostVer2(option *PlanCostOption, rows, N float64, byItems []*util.ByItems, cpuFactor costVer2Factor) costVer2 {
+	numFuncs := 0
+	for _, byItem := range byItems {
+		if _, ok := byItem.Expr.(*expression.ScalarFunction); ok {
+			numFuncs++
+		}
+	}
+	exprCost := newCostVer2(option, cpuFactor,
+		rows*float64(numFuncs)*cpuFactor.Value,
+		"exprCPU(%v*%v*%v)", rows, numFuncs, cpuFactor)
+	orderCost := newCostVer2(option, cpuFactor,
+		rows*math.Log2(N)*cpuFactor.Value,
+		"orderCPU(%v*log(%v)*%v)", rows, N, cpuFactor)
+	return sumCostVer2(exprCost, orderCost)
 }
 
 func hashBuildCostVer2(option *PlanCostOption, buildRows, buildRowSize float64, keys []expression.Expression, cpuFactor, memFactor costVer2Factor) costVer2 {
