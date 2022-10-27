@@ -212,8 +212,6 @@ func (p *PhysicalTableReader) getPlanCostVer2(taskType property.TaskType, option
 // double-read-request-cost = double-read-tasks * request-factor
 // double-read-cpu-cost = index-rows * cpu-factor
 // double-read-tasks = index-rows / batch-size * task-per-batch # task-per-batch is a magic number now
-// index-side-cost = (index-child-cost + index-net-cost) / dist-concurrency # same with IndexReader
-// table-side-cost = (table-child-cost + table-net-cost) / dist-concurrency # same with TableReader
 func (p *PhysicalIndexLookUpReader) getPlanCostVer2(taskType property.TaskType, option *PlanCostOption) (costVer2, error) {
 	if p.planCostInit && !hasCostFlag(option.CostFlag, CostFlagRecalculate) {
 		return p.planCostVer2, nil
