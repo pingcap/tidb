@@ -1337,11 +1337,6 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	}
 
 	switch cmd {
-	case mysql.ComSleep:
-		// TODO: According to mysql document, this command is supposed to be used only internally.
-		// So it's just a temp fix, not sure if it's done right.
-		// Investigate this command and write test case later.
-		return nil
 	case mysql.ComQuit:
 		return io.EOF
 	case mysql.ComInitDB:
