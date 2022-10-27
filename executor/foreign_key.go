@@ -611,7 +611,12 @@ func (fkc *FKCascadeExec) buildFKCascadePlan(ctx context.Context) (plannercore.P
 	var err error
 	switch fkc.tp {
 	case plannercore.FKCascadeOnDelete:
-		sqlStr, err = GenCascadeDeleteSQL(fkc.referredFK.ChildSchema, fkc.childTable.Name, indexName, fkc.fk, fkValues)
+		switch model.ReferOptionType(fkc.fk.OnDelete) {
+		case model.ReferOptionCascade:
+			sqlStr, err = GenCascadeDeleteSQL(fkc.referredFK.ChildSchema, fkc.childTable.Name, indexName, fkc.fk, fkValues)
+		case model.ReferOptionSetNull:
+			sqlStr, err = GenCascadeSetNullSQL(fkc.referredFK.ChildSchema, fkc.childTable.Name, indexName, fkc.fk, fkValues)
+		}
 	}
 	if err != nil {
 		return nil, err
@@ -655,6 +660,43 @@ func GenCascadeDeleteSQL(schema, table, idx model.CIStr, fk *model.FKInfo, fkVal
 		buf.WriteString(idx.L)
 		buf.WriteString("`)")
 	}
+	err := genCascadeSQLWhereCondition(buf, fk, fkValues)
+	if err != nil {
+		return "", err
+	}
+	return buf.String(), nil
+}
+
+// GenCascadeSetNullSQL uses to generate foreign key `SET NULL` SQL, export for test.
+func GenCascadeSetNullSQL(schema, table, idx model.CIStr, fk *model.FKInfo, fkValues [][]types.Datum) (string, error) {
+	buf := bytes.NewBuffer(nil)
+	buf.WriteString("UPDATE `")
+	buf.WriteString(schema.L)
+	buf.WriteString("`.`")
+	buf.WriteString(table.L)
+	buf.WriteString("`")
+	if idx.L != "" {
+		// Add use index to make sure the optimizer will use index instead of full table scan.
+		buf.WriteString(" USE INDEX(`")
+		buf.WriteString(idx.L)
+		buf.WriteString("`)")
+	}
+	buf.WriteString(" SET ")
+	for i, col := range fk.Cols {
+		if i > 0 {
+			buf.WriteString(", ")
+		}
+		buf.WriteString("`" + col.L + "`")
+		buf.WriteString("=NULL")
+	}
+	err := genCascadeSQLWhereCondition(buf, fk, fkValues)
+	if err != nil {
+		return "", err
+	}
+	return buf.String(), nil
+}
+
+func genCascadeSQLWhereCondition(buf *bytes.Buffer, fk *model.FKInfo, fkValues [][]types.Datum) error {
 	buf.WriteString(" WHERE (")
 	for i, col := range fk.Cols {
 		if i > 0 {
@@ -672,7 +714,7 @@ func GenCascadeDeleteSQL(schema, table, idx model.CIStr, fk *model.FKInfo, fkVal
 		for i := range vs {
 			val, err := genFKValueString(vs[i])
 			if err != nil {
-				return "", err
+				return err
 			}
 			if i > 0 {
 				buf.WriteString(",")
@@ -682,7 +724,7 @@ func GenCascadeDeleteSQL(schema, table, idx model.CIStr, fk *model.FKInfo, fkVal
 		buf.WriteString(")")
 	}
 	buf.WriteString(")")
-	return buf.String(), nil
+	return nil
 }
 
 func genFKValueString(v types.Datum) (string, error) {
