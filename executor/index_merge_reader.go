@@ -119,6 +119,7 @@ type IndexMergeReaderExecutor struct {
 	isCorColInTableFilter    bool
 	isCorColInPartialAccess  []bool
 
+	// Whether it's intersection or union.
 	isIntersection bool
 }
 
@@ -263,8 +264,9 @@ func (e *IndexMergeReaderExecutor) startIndexMergeProcessWorker(ctx context.Cont
 			func() {
 				if e.isIntersection {
 					idxMergeProcessWorker.fetchLoopIntersection(ctx, fetch, workCh, e.resultCh, e.finished)
+				} else {
+					idxMergeProcessWorker.fetchLoopUnion(ctx, fetch, workCh, e.resultCh, e.finished)
 				}
-				idxMergeProcessWorker.fetchLoopUnion(ctx, fetch, workCh, e.resultCh, e.finished)
 			},
 			idxMergeProcessWorker.handleLoopFetcherPanic(ctx, e.resultCh),
 		)
@@ -838,10 +840,13 @@ func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fet
 	}
 
 	start := time.Now()
+	defer func() {
+		if w.stats != nil {
+			w.stats.IndexMergeProcess += time.Since(start)
+		}
+	}()
+	// Intersect handles among all partialWorkers.
 	intersected := intersectMaps(workerHandleMap)
-	if w.stats != nil {
-		w.stats.IndexMergeProcess += time.Since(start)
-	}
 	if len(intersected) == 0 {
 		// No data to send, just return, resultCh and workCh will be closed in defer func.
 		return
@@ -855,6 +860,7 @@ func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fet
 			},
 		})
 	} else {
+		// Need to distinguish which parition table this handle belongs to.
 		// key: partIdx, value: intersected handles of this partIdx.
 		intersectedPartHandleMap := make(map[int][]kv.Handle)
 		for _, h := range intersected {
