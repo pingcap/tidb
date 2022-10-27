@@ -486,9 +486,9 @@ func tryDecodeToHandleString(key kv.Key) string {
 }
 
 // handleRangeTasks sends tasks to workers, and returns remaining kvRanges that is not handled.
-func (dc *ddlCtx) handleRangeTasks(scheduler *backfillScheduler, t table.Table, batchSize int,
+func (dc *ddlCtx) handleRangeTasks(scheduler *backfillScheduler, t table.Table,
 	totalAddedCount *int64, kvRanges []kv.KeyRange) ([]kv.KeyRange, error) {
-	batchTasks := make([]*reorgBackfillTask, 0, batchSize)
+	batchTasks := make([]*reorgBackfillTask, 0, backfillTaskChanSize)
 	reorgInfo := scheduler.reorgInfo
 	physicalTableID := reorgInfo.PhysicalTableID
 	var prefix kv.Key
@@ -522,7 +522,7 @@ func (dc *ddlCtx) handleRangeTasks(scheduler *backfillScheduler, t table.Table, 
 			endInclude: endK.Cmp(keyRange.EndKey) != 0 || i == len(kvRanges)-1}
 		batchTasks = append(batchTasks, task)
 
-		if len(batchTasks) >= batchSize {
+		if len(batchTasks) >= backfillTaskChanSize {
 			break
 		}
 	}
@@ -624,7 +624,7 @@ func newBackfillScheduler(ctx context.Context, info *reorgInfo, sessPool *sessio
 		tbl:          tbl,
 		decodeColMap: decColMap,
 		jobCtx:       jobCtx,
-		workers:      make([]*backfillWorker, 0, 4),
+		workers:      make([]*backfillWorker, 0, variable.GetDDLReorgWorkerCounter()),
 		taskCh:       make(chan *reorgBackfillTask, backfillTaskChanSize),
 		resultCh:     make(chan *backfillResult, backfillTaskChanSize),
 	}
@@ -792,8 +792,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 				return errors.New(ingest.LitErrGetBackendFail)
 			}
 		}
-		remains, err := dc.handleRangeTasks(scheduler, t, backfillTaskChanSize,
-			&totalAddedCount, kvRanges)
+		remains, err := dc.handleRangeTasks(scheduler, t, &totalAddedCount, kvRanges)
 		if err != nil {
 			return errors.Trace(err)
 		}
