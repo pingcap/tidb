@@ -846,7 +846,7 @@ func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fet
 		}
 	}()
 	// Intersect handles among all partialWorkers.
-	intersected := intersectMaps(workerHandleMap)
+	intersected := IntersectHandleMaps(workerHandleMap)
 	if len(intersected) == 0 {
 		// No data to send, just return, resultCh and workCh will be closed in defer func.
 		return
@@ -899,49 +899,6 @@ func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fet
 			resultCh <- task
 		}
 	}
-}
-
-func intersectMaps(distinctHandles map[int]*kv.HandleMap) (res []kv.Handle) {
-	if len(distinctHandles) == 0 {
-		return nil
-	}
-	handleMaps := make([]*kv.HandleMap, 0, len(distinctHandles))
-	var gotEmptyHandleMap bool
-	for _, m := range distinctHandles {
-		if m.Len() == 0 {
-			gotEmptyHandleMap = true
-		}
-		handleMaps = append(handleMaps, m)
-	}
-	if gotEmptyHandleMap {
-		return nil
-	}
-
-	intersected := handleMaps[0]
-	if len(handleMaps) > 1 {
-		for i := 1; i < len(handleMaps); i++ {
-			if intersected.Len() == 0 {
-				break
-			}
-			intersected = intersectTwoMaps(intersected, handleMaps[i])
-		}
-	}
-	intersected.Range(func(h kv.Handle, val interface{}) bool {
-		res = append(res, h)
-		return true
-	})
-	return
-}
-
-func intersectTwoMaps(m1, m2 *kv.HandleMap) *kv.HandleMap {
-	intersected := kv.NewHandleMap()
-	m1.Range(func(h kv.Handle, val interface{}) bool {
-		if _, ok := m2.Get(h); ok {
-			intersected.Set(h, true)
-		}
-		return true
-	})
-	return intersected
 }
 
 func (w *indexMergeProcessWorker) handleLoopFetcherPanic(ctx context.Context, resultCh chan<- *indexMergeTableTask) func(r interface{}) {
