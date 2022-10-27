@@ -2825,8 +2825,8 @@ def go_deps():
         name = "com_github_pingcap_kvproto",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/kvproto",
-        sum = "h1:ceg4xjEEXNgPsScTQ5dtidiltLF4h17Y/jUqfyLAy9E=",
-        version = "v0.0.0-20220929075948-06e08d5ed64c",
+        sum = "h1:McYxPhA8SHqfUtLfQHHN0fQl4dy93IkhlX4Pp2MKIFA=",
+        version = "v0.0.0-20221014081430-26e28e6a281a",
     )
     go_repository(
         name = "com_github_pingcap_log",
@@ -3212,8 +3212,8 @@ def go_deps():
         name = "com_github_shurcool_vfsgen",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/shurcooL/vfsgen",
-        sum = "h1:y0cMJ0qjii33BnD6tMGcF/+gHYsoKQ6tbwQpy233OII=",
-        version = "v0.0.0-20180711163814-62bca832be04",
+        sum = "h1:ug7PpSOB5RBPK1Kg6qskGBoP3Vnj/aNYFTznWvlkGo0=",
+        version = "v0.0.0-20181202132449-6a9ea43bcacd",
     )
     go_repository(
         name = "com_github_sirupsen_logrus",
@@ -3429,8 +3429,8 @@ def go_deps():
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        sum = "h1:/13jzD/AR7v3dCLweFQ2JG8bihh3HLVIci2tbOHHGW0=",
-        version = "v2.0.1-0.20221012074856-6def8d7b90c4",
+        sum = "h1:5KLqhDGLc/mtemdS/odfOP717rn8ttsTj3jzZ8TZn9A=",
+        version = "v2.0.1-0.20221017092635-91be9c6ce6c0",
     )
     go_repository(
         name = "com_github_tikv_pd_client",
