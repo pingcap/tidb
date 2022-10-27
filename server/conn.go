@@ -61,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/extension"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
@@ -212,6 +213,7 @@ type clientConn struct {
 		sync.RWMutex
 		cancelFunc context.CancelFunc
 	}
+	extensions *extension.SessionExtensions
 }
 
 func (cc *clientConn) getCtx() *TiDBContext {
@@ -402,7 +404,7 @@ func (cc *clientConn) writeInitialHandshake(ctx context.Context) error {
 			return err
 		}
 	}
-	defAuthPlugin, err := cc.ctx.GetSessionVars().GetGlobalSystemVar(variable.DefaultAuthPlugin)
+	defAuthPlugin, err := cc.ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.DefaultAuthPlugin)
 	if err != nil {
 		return err
 	}
@@ -792,7 +794,7 @@ func (cc *clientConn) openSession() error {
 		tlsState := cc.tlsConn.ConnectionState()
 		tlsStatePtr = &tlsState
 	}
-	ctx, err := cc.server.driver.OpenCtx(cc.connectionID, cc.capability, cc.collation, cc.dbname, tlsStatePtr)
+	ctx, err := cc.server.driver.OpenCtx(cc.connectionID, cc.capability, cc.collation, cc.dbname, tlsStatePtr, cc.extensions)
 	if err != nil {
 		return err
 	}
@@ -971,7 +973,7 @@ func (cc *clientConn) skipInitConnect() bool {
 
 // initResultEncoder initialize the result encoder for current connection.
 func (cc *clientConn) initResultEncoder(ctx context.Context) {
-	chs, err := cc.ctx.GetSessionVars().GetSessionOrGlobalSystemVar(variable.CharacterSetResults)
+	chs, err := cc.ctx.GetSessionVars().GetSessionOrGlobalSystemVar(context.Background(), variable.CharacterSetResults)
 	if err != nil {
 		chs = ""
 		logutil.Logger(ctx).Warn("get character_set_results system variable failed", zap.Error(err))
@@ -980,7 +982,7 @@ func (cc *clientConn) initResultEncoder(ctx context.Context) {
 }
 
 func (cc *clientConn) initInputEncoder(ctx context.Context) {
-	chs, err := cc.ctx.GetSessionVars().GetSessionOrGlobalSystemVar(variable.CharacterSetClient)
+	chs, err := cc.ctx.GetSessionVars().GetSessionOrGlobalSystemVar(context.Background(), variable.CharacterSetClient)
 	if err != nil {
 		chs = ""
 		logutil.Logger(ctx).Warn("get character_set_client system variable failed", zap.Error(err))
@@ -1335,11 +1337,6 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	}
 
 	switch cmd {
-	case mysql.ComSleep:
-		// TODO: According to mysql document, this command is supposed to be used only internally.
-		// So it's just a temp fix, not sure if it's done right.
-		// Investigate this command and write test case later.
-		return nil
 	case mysql.ComQuit:
 		return io.EOF
 	case mysql.ComInitDB:
@@ -1976,7 +1973,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 		}
 		// TODO: the preprocess is run twice, we should find some way to avoid do it again.
 		// TODO: handle the PreprocessorReturn.
-		if err = plannercore.Preprocess(cc.getCtx(), stmt); err != nil {
+		if err = plannercore.Preprocess(ctx, cc.getCtx(), stmt); err != nil {
 			return nil, err
 		}
 		p := plannercore.TryFastPlan(cc.ctx.Session, stmt)
@@ -2477,7 +2474,7 @@ func (cc *clientConn) handleResetConnection(ctx context.Context) error {
 		tlsState := cc.tlsConn.ConnectionState()
 		tlsStatePtr = &tlsState
 	}
-	tidbCtx, err := cc.server.driver.OpenCtx(cc.connectionID, cc.capability, cc.collation, cc.dbname, tlsStatePtr)
+	tidbCtx, err := cc.server.driver.OpenCtx(cc.connectionID, cc.capability, cc.collation, cc.dbname, tlsStatePtr, cc.extensions)
 	if err != nil {
 		return err
 	}
@@ -2497,7 +2494,10 @@ func (cc *clientConn) handleResetConnection(ctx context.Context) error {
 }
 
 func (cc *clientConn) handleCommonConnectionReset(ctx context.Context) error {
-	cc.ctx.GetSessionVars().ConnectionInfo = cc.connectInfo()
+	connectionInfo := cc.connectInfo()
+	cc.ctx.GetSessionVars().ConnectionInfo = connectionInfo
+
+	cc.extensions.OnConnectionEvent(extension.ConnReset, connectionInfo)
 
 	err := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)

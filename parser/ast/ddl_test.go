@@ -827,3 +827,16 @@ func TestRemovePlacementRestore(t *testing.T) {
 		runNodeRestoreTestWithFlagsStmtChange(t, testCases, "%s", extractNodeFunc, f)
 	}
 }
+
+func TestFlashBackDatabaseRestore(t *testing.T) {
+	testCases := []NodeRestoreTestCase{
+		{"flashback database M", "FLASHBACK DATABASE `M`"},
+		{"flashback schema M", "FLASHBACK DATABASE `M`"},
+		{"flashback database M to n", "FLASHBACK DATABASE `M` TO `n`"},
+		{"flashback schema M to N", "FLASHBACK DATABASE `M` TO `N`"},
+	}
+	extractNodeFunc := func(node Node) Node {
+		return node
+	}
+	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
+}
