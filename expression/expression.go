@@ -880,19 +880,42 @@ func evaluateExprWithNullInNullRejectCheck(ctx sessionctx.Context, schema *Schem
 		// If all the args are Null Constant and affected by the column schema, then we should keep it.
 		// Otherwise, we shouldn't let Null Constant which affected by the column schema participate in computing in `And` and `OR`
 		// due to the result of `AND` and `OR are uncertain if one of the arguments is NULL.
+		//
+		// case: null AND 1 we should keep the null value's continuity, the final result can be determinant as null.
+		// case: null OR 0 we should keep the null value's continuity, the final result can be determinant as null.
+		continueNullConstant := false
 		if !allArgsNullFromSet {
 			for i := range args {
 				if cons, ok := args[i].(*Constant); ok && cons.Value.IsNull() && nullFromSets[i] {
 					if x.FuncName.L == ast.LogicAnd {
-						args[i] = NewOne()
+						if consOther, ok := args[1-i].(*Constant); ok {
+							// if the other side is true, then the null can be continued as null value up.
+							b, err := consOther.Value.ToBool(ctx.GetSessionVars().StmtCtx)
+							if err == nil && b == 1 {
+								continueNullConstant = true
+							}
+						} else {
+							args[i] = NewOne()
+						}
 					}
 					if x.FuncName.L == ast.LogicOr {
+						// if the other side is false, then the null can be continued as null value up.
+						if consOther, ok := args[1-i].(*Constant); ok {
+							b, err := consOther.Value.ToBool(ctx.GetSessionVars().StmtCtx)
+							if err == nil && b == 0 {
+								continueNullConstant = true
+							}
+						}
 						args[i] = NewZero()
 					}
 				}
 			}
 		}
 		c := NewFunctionInternal(ctx, x.FuncName.L, x.RetType.Clone(), args...)
+		if continueNullConstant {
+			c = &Constant{Value: types.Datum{}, RetType: types.NewFieldType(mysql.TypeNull)}
+		}
+
 		cons, ok := c.(*Constant)
 		// If the return expr is Null Constant, and all the Null Constant arguments are affected by column schema,
 		// then we think the result Null Constant is also affected by the column schema

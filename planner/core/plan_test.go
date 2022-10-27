@@ -1092,3 +1092,17 @@ func TestOuterJoinOnNull(t *testing.T) {
 	tk.MustQuery("SELECT * FROM t0 LEFT JOIN t1 ON NULL WHERE t1.c0 or true; ").Check(testkit.Rows("> 1 <nil>"))
 	tk.MustQuery("SELECT * FROM t0 LEFT JOIN t1 ON NULL WHERE not(t1.c0 and false); ").Check(testkit.Rows("> 1 <nil>"))
 }
+
+// https://github.com/pingcap/tidb/issues/38654
+func TestIssue38430(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t0(c0 INT);")
+	tk.MustExec("CREATE TABLE t1(c0 INT);")
+	tk.MustExec("INSERT INTO t1 VALUES (1);")
+
+	tk.MustQuery("SELECT * FROM t0 RIGHT JOIN t1 ON t0.c0;").Check(testkit.Rows("<nil> 1"))
+	tk.MustQuery("SELECT ((NOT ('i'))AND(t0.c0)) IS NULL FROM  t0 RIGHT JOIN t1 ON t0.c0;").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT * FROM t0 RIGHT JOIN t1 ON t0.c0 WHERE ((NOT ('i'))AND(t0.c0)) IS NULL;").Check(testkit.Rows("<nil> 1"))
+}
