@@ -1610,10 +1610,13 @@ func (s *session) getOomAlarmVariablesInfo() util.OOMAlarmVariablesInfo {
 
 func (s *session) getCurrentAnalyzePlan(p interface{}, runtimeStatsColl *execdetails.RuntimeStatsColl) [][]string {
 	explain := &plannercore.Explain{
-		TargetPlan:       p.(plannercore.Plan),
+		TargetPlan:       nil,
 		Format:           types.ExplainFormatROW,
 		Analyze:          false,
 		RuntimeStatsColl: runtimeStatsColl,
+	}
+	if p != nil {
+		explain.TargetPlan = p.(plannercore.Plan)
 	}
 	explain.SetSCtx(s)
 	return plannercore.GetExplainAnalyzeRowsForPlan(explain)
