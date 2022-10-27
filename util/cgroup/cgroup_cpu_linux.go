@@ -62,8 +62,7 @@ func InContainer() bool {
 	}
 	if strings.Contains(string(v), "docker") ||
 		strings.Contains(string(v), "kubepods") ||
-		strings.Contains(string(v), "containerd") ||
-		strings.TrimSuffix(string(v), "\n") == "0::/" {
+		strings.Contains(string(v), "containerd") {
 		return true
 	}
 	return false
