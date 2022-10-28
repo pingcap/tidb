@@ -2286,6 +2286,8 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(ctx sessionctx.Context, s
 					logutil.BgLogger().Error("dataForTableTiFlashReplica error", zap.Int64("tableID", tbl.ID))
 				}
 			}
+			progressString := types.TruncateFloatToString(progress, 2)
+			progress, _ = strconv.ParseFloat(progressString, 64)
 			record := types.MakeDatums(
 				schema.Name.O,                   // TABLE_SCHEMA
 				tbl.Name.O,                      // TABLE_NAME
