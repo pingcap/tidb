@@ -1487,11 +1487,13 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	if tn.Schema.String() != "" {
 		currentDB = tn.Schema.L
 	}
-	table, _, err = tryLockMDLAndUpdateSchemaIfNecessary(p.ctx, model.NewCIStr(currentDB), table, p.ensureInfoSchema())
+	var newIS infoschema.InfoSchema
+	table, newIS, err = tryLockMDLAndUpdateSchemaIfNecessary(p.ctx, model.NewCIStr(currentDB), table, p.ensureInfoSchema())
 	if err != nil {
 		p.err = err
 		return
 	}
+	p.InfoSchema = newIS
 
 	tableInfo := table.Meta()
 	dbInfo, _ := p.ensureInfoSchema().SchemaByTable(tableInfo)

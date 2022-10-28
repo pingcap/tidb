@@ -4354,10 +4354,6 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		return nil, err
 	}
 	b.is = newIs
-	tbbl, _ := b.is.TableByID(tbl.Meta().ID)
-	for _, col := range tbbl.Meta().Columns {
-		logutil.BgLogger().Error("col for reget after out", zap.Any("name", col.Name), zap.Any("state", col.State.String()))
-	}
 
 	tableInfo := tbl.Meta()
 

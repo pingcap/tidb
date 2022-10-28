@@ -18,6 +18,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 	"runtime/trace"
 
 	"github.com/pingcap/tidb/expression"
@@ -246,6 +248,11 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 	for _, content := range e.tblColPosInfos {
 		tbl := e.tblID2table[content.TblID]
 		for i, c := range tbl.WritableCols() {
+			if content.Start+i >= len(colsInfo) {
+				for _, col := range tbl.Meta().Columns {
+					logutil.BgLogger().Error("col", zap.Any("name", col.Name), zap.Any("state", col.State.String()))
+				}
+			}
 			colsInfo[content.Start+i] = c
 		}
 	}
