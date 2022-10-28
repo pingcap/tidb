@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/auth"
-	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/dbterror"
@@ -329,40 +328,17 @@ func TestRecoverClusterMeetError(t *testing.T) {
 	tk.MustExec("CREATE USER 'testflashback'@'localhost';")
 	newTk := testkit.NewTestKit(t, store)
 	require.NoError(t, newTk.Session().Auth(&auth.UserIdentity{Username: "testflashback", Hostname: "localhost"}, nil, nil))
-	newTk.MustGetErrCode(fmt.Sprintf("flashback cluster to timestamp '%s'", time.Now().Add(0-30*time.Second)), int(core.ErrSpecificAccessDenied.Code()))
+	newTk.MustGetErrCode(fmt.Sprintf("flashback cluster to timestamp '%s'", time.Now().Add(0-30*time.Second)), errno.ErrPrivilegeCheckFail)
 	tk.MustExec("drop user 'testflashback'@'localhost';")
 
 	// Flashback failed because of ddl history.
 	tk.MustExec("use test;")
 	tk.MustExec("create table t(a int);")
-	tk.MustContainErrMsg(fmt.Sprintf("flashback cluster to timestamp '%s'", flashbackTs), "schema version not same, have done ddl during [flashbackTS, now)")
+	tk.MustMatchErrMsg(fmt.Sprintf("flashback cluster to timestamp '%s'", flashbackTs), "Detected schema change due to another DDL job during \\[.*, now\\), can't do flashback")
 
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS"))
 	require.NoError(t, failpoint.Disable("tikvclient/injectSafeTS"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockFlashbackTest"))
-}
-
-func TestRecoverClusterWithTiFlash(t *testing.T) {
-	store := testkit.CreateMockStore(t, withMockTiFlash(1))
-	tk := testkit.NewTestKit(t, store)
-
-	injectSafeTS := oracle.GoTimeToTS(time.Now().Add(-10 * time.Second))
-	require.NoError(t, failpoint.Enable("tikvclient/injectSafeTS",
-		fmt.Sprintf("return(%v)", injectSafeTS)))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/expression/injectSafeTS",
-		fmt.Sprintf("return(%v)", injectSafeTS)))
-
-	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
-	defer resetGC()
-
-	// Set GC safe point
-	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
-
-	tk.MustContainErrMsg(fmt.Sprintf("flashback cluster to timestamp '%s'", time.Now().Add(0-30*time.Second)),
-		"not support flash back cluster with TiFlash stores")
-
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS"))
-	require.NoError(t, failpoint.Disable("tikvclient/injectSafeTS"))
 }
 
 func TestFlashbackWithSafeTs(t *testing.T) {

@@ -32,29 +32,6 @@
         ]
       },
       {
-        "SQL": "select /*+ read_from_storage(tiflash[t]), MPP_TIDB_AGG() */ a, sum(b) from t group by a, c",
-        "Plan": [
-          "Projection 8000.00 root  test.t.a, Column#5",
-          "└─HashAgg 8000.00 root  group by:test.t.a, test.t.c, funcs:sum(Column#8)->Column#5, funcs:firstrow(test.t.a)->test.t.a",
-          "  └─TableReader 8000.00 root  data:ExchangeSender",
-          "    └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "      └─HashAgg 8000.00 mpp[tiflash]  group by:Column#11, Column#12, funcs:sum(Column#10)->Column#8",
-          "        └─Projection 10000.00 mpp[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column#10, test.t.a, test.t.c",
-          "          └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "SQL": "select /*+ read_from_storage(tiflash[t]), MPP_SCALAR_AGG() */ a, sum(b) from t group by a, c",
-        "Plan": [
-          "Projection 8000.00 root  test.t.a, Column#5",
-          "└─HashAgg 8000.00 root  group by:test.t.a, test.t.c, funcs:sum(Column#6)->Column#5, funcs:firstrow(test.t.a)->test.t.a",
-          "  └─TableReader 8000.00 root  data:HashAgg",
-          "    └─HashAgg 8000.00 batchCop[tiflash]  group by:Column#10, Column#9, funcs:sum(Column#8)->Column#6",
-          "      └─Projection 10000.00 batchCop[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column#8, test.t.a, test.t.c",
-          "        └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
-        ]
-      },
-      {
         "SQL": "select /*+ read_from_storage(tiflash[t1, t2]), shuffle_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
         "Plan": [
           "TableReader 12487.50 root  data:ExchangeSender",

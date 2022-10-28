@@ -1078,6 +1078,7 @@ func TestNullEQConditionPlan(t *testing.T) {
 }
 
 // https://github.com/pingcap/tidb/issues/38304
+// https://github.com/pingcap/tidb/issues/38654
 func TestOuterJoinOnNull(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1091,4 +1092,10 @@ func TestOuterJoinOnNull(t *testing.T) {
 	tk.MustQuery("SELECT * FROM t0 LEFT JOIN t1 ON NULL WHERE NOT '2' =(t1.c0 AND t0.c1 IS NULL); ").Check(testkit.Rows("> 1 <nil>"))
 	tk.MustQuery("SELECT * FROM t0 LEFT JOIN t1 ON NULL WHERE t1.c0 or true; ").Check(testkit.Rows("> 1 <nil>"))
 	tk.MustQuery("SELECT * FROM t0 LEFT JOIN t1 ON NULL WHERE not(t1.c0 and false); ").Check(testkit.Rows("> 1 <nil>"))
+
+	tk.MustExec("CREATE TABLE t2(c0 INT);")
+	tk.MustExec("CREATE TABLE t3(c0 INT);")
+	tk.MustExec("INSERT INTO t3 VALUES (1);")
+	tk.MustQuery("SELECT ((NOT ('i'))AND(t2.c0)) IS NULL FROM  t2 RIGHT JOIN t3 ON t3.c0;").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT * FROM t2 RIGHT JOIN t3 ON t2.c0 WHERE ((NOT ('i'))AND(t2.c0)) IS NULL;").Check(testkit.Rows("<nil> 1"))
 }
