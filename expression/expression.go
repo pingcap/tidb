@@ -865,6 +865,10 @@ func evaluateExprWithNullInNullRejectCheck(ctx sessionctx.Context, schema *Schem
 				break
 			}
 		}
+
+		// If one of the args of `AND` and `OR` are Null Constant from the column schema, and the another argument is Constant, then we should keep it.
+		// Otherwise, we shouldn't let Null Constant which affected by the column schema participate in computing in `And` and `OR`
+		// due to the result of `AND` and `OR` are uncertain if one of the arguments is NULL.
 		if x.FuncName.L == ast.LogicAnd || x.FuncName.L == ast.LogicOr {
 			hasNonConstantArg := false
 			for _, arg := range args {
@@ -889,10 +893,6 @@ func evaluateExprWithNullInNullRejectCheck(ctx sessionctx.Context, schema *Schem
 			}
 		}
 
-		// If all the args are Null Constant and affected by the column schema, then we should keep it.
-		// Otherwise, we shouldn't let Null Constant which affected by the column schema participate in computing in `And` and `OR`
-		// due to the result of `AND` and `OR are uncertain if one of the arguments is NULL.
-
 		c := NewFunctionInternal(ctx, x.FuncName.L, x.RetType.Clone(), args...)
 		cons, ok := c.(*Constant)
 		// If the return expr is Null Constant, and all the Null Constant arguments are affected by column schema,
@@ -901,9 +901,6 @@ func evaluateExprWithNullInNullRejectCheck(ctx sessionctx.Context, schema *Schem
 	case *Column:
 		if !schema.Contains(x) {
 			return x, false
-		}
-		if ctx.GetSessionVars().StmtCtx.OptimizeTracer != nil {
-			fmt.Println()
 		}
 		return &Constant{Value: types.Datum{}, RetType: types.NewFieldType(mysql.TypeNull)}, true
 	case *Constant:
