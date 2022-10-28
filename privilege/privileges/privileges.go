@@ -238,6 +238,9 @@ func (p *UserPrivileges) GetAuthPlugin(user, host string) (string, error) {
 	if record == nil {
 		return "", errors.New("Failed to get user record")
 	}
+	if record.AuthPlugin == mysql.AuthTiDBAuthToken {
+		return record.AuthPlugin, nil
+	}
 	// zero-length auth string means no password for native and caching_sha2 auth.
 	// but for auth_socket it means there should be a 1-to-1 mapping between the TiDB user
 	// and the OS user.
