@@ -1114,7 +1114,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		switch authTokenOptionHandler {
 		case NoNeedAuthTokenOptions:
 			if len(authTokenOptions) > 0 {
-				err := errors.New("TOKEN_ISSUER is no need for the auth plugin")
+				err := errors.New("TOKEN_ISSUER is not needed for the auth plugin")
 				e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 			}
 		case OptionalAuthTokenOptions:
