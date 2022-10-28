@@ -1129,7 +1129,7 @@ var tableTableTiFlashReplicaCols = []columnInfo{
 	{name: "REPLICA_COUNT", tp: mysql.TypeLonglong, size: 64},
 	{name: "LOCATION_LABELS", tp: mysql.TypeVarchar, size: 64},
 	{name: "AVAILABLE", tp: mysql.TypeTiny, size: 1},
-	{name: "PROGRESS", tp: mysql.TypeDouble, size: 22},
+	{name: "PROGRESS", tp: mysql.TypeDouble, size: 22, decimal: 2},
 }
 
 var tableInspectionResultCols = []columnInfo{

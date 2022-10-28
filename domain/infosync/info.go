@@ -354,15 +354,15 @@ func DeleteTiFlashTableSyncProgress(tableInfo *model.TableInfo) error {
 	return nil
 }
 
-// MustGetTiFlashProgress gets tiflash replica progress from tiflashProgressCache, if cache noe exist, get and insert progress into cache.
-func MustGetTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores *map[int64]helper.StoreStat) float64 {
+// MustGetTiFlashProgress gets tiflash replica progress from tiflashProgressCache, if cache not exist, it gets progress from TiFlash and inserts progress into cache.
+func MustGetTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores *map[int64]helper.StoreStat) (float64, error) {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
-		return 0
+		return 0, err
 	}
 	progressCache, isExist := is.tiflashReplicaManager.GetTiFlashProgressFromCache(tableID)
 	if isExist {
-		return progressCache
+		return progressCache, nil
 	}
 	if tiFlashStores == nil {
 		// We need the up-to-date information about TiFlash stores.
@@ -370,7 +370,7 @@ func MustGetTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores *m
 		tikvStats, err := is.tiflashReplicaManager.GetStoresStat(context.Background())
 		// If MockTiFlash is not set, will issue a MockTiFlashError here.
 		if err != nil {
-			return 0
+			return 0, err
 		}
 		stores := make(map[int64]helper.StoreStat)
 		for _, store := range tikvStats.Stores {
@@ -384,12 +384,12 @@ func MustGetTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores *m
 		tiFlashStores = &stores
 		logutil.BgLogger().Debug("updateTiFlashStores finished", zap.Int("TiFlash store count", len(*tiFlashStores)))
 	}
-	progress, err := is.tiflashReplicaManager.GetTiFlashProgress(tableID, replicaCount, *tiFlashStores)
+	progress, err := is.tiflashReplicaManager.CalculateTiFlashProgress(tableID, replicaCount, *tiFlashStores)
 	if err != nil {
-		return 0
+		return 0, err
 	}
 	is.tiflashReplicaManager.UpdateTiFlashProgressCache(tableID, progress)
-	return progress
+	return progress, nil
 }
 
 func doRequest(ctx context.Context, apiName string, addrs []string, route, method string, body io.Reader) ([]byte, error) {
@@ -1038,13 +1038,13 @@ func GetLabelRules(ctx context.Context, ruleIDs []string) (map[string]*label.Rul
 	return is.labelRuleManager.GetLabelRules(ctx, ruleIDs)
 }
 
-// GetTiFlashProgress calculates TiFlash replica progress
-func GetTiFlashProgress(tableID int64, replicaCount uint64, TiFlashStores map[int64]helper.StoreStat) (float64, error) {
+// CaculateTiFlashProgress calculates TiFlash replica progress
+func CaculateTiFlashProgress(tableID int64, replicaCount uint64, TiFlashStores map[int64]helper.StoreStat) (float64, error) {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	return is.tiflashReplicaManager.GetTiFlashProgress(tableID, replicaCount, TiFlashStores)
+	return is.tiflashReplicaManager.CalculateTiFlashProgress(tableID, replicaCount, TiFlashStores)
 }
 
 // UpdateTiFlashProgressCache updates tiflashProgressCache

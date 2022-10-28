@@ -57,8 +57,8 @@ type TiFlashReplicaManager interface {
 	GetPDRegionRecordStats(ctx context.Context, tableID int64, stats *helper.PDRegionStats) error
 	// GetStoresStat gets the TiKV store information by accessing PD's api.
 	GetStoresStat(ctx context.Context) (*helper.StoresStat, error)
-	// GetTiFlashProgress calculates TiFlash replica progress
-	GetTiFlashProgress(tableID int64, replicaCount uint64, TiFlashStores map[int64]helper.StoreStat) (float64, error)
+	// CalculateTiFlashProgress calculates TiFlash replica progress
+	CalculateTiFlashProgress(tableID int64, replicaCount uint64, TiFlashStores map[int64]helper.StoreStat) (float64, error)
 	// UpdateTiFlashProgressCache updates tiflashProgressCache
 	UpdateTiFlashProgressCache(tableID int64, progress float64)
 	// GetTiFlashProgressFromCache gets tiflash replica progress from tiflashProgressCache
@@ -99,8 +99,8 @@ func getTiFlashPeerWithoutLagCount(tiFlashStores map[int64]helper.StoreStat, tab
 	return flashPeerCount, nil
 }
 
-// getTiFlashProgress calculates progress based on the region status from PD and TiFlash.
-func getTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores map[int64]helper.StoreStat) (float64, error) {
+// calculateTiFlashProgress calculates progress based on the region status from PD and TiFlash.
+func calculateTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores map[int64]helper.StoreStat) (float64, error) {
 	var stats helper.PDRegionStats
 	if err := GetTiFlashPDRegionRecordStats(context.Background(), tableID, &stats); err != nil {
 		logutil.BgLogger().Error("Fail to get region stats from PD.",
@@ -108,6 +108,12 @@ func getTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores map[in
 		return 0, errors.Trace(err)
 	}
 	regionCount := stats.Count
+
+	if regionCount == 0 {
+		logutil.BgLogger().Warn("region count getting from PD is 0.",
+			zap.Int64("tableID", tableID))
+		return 0, fmt.Errorf("region count getting from PD is 0")
+	}
 
 	tiflashPeerCount, err := getTiFlashPeerWithoutLagCount(tiFlashStores, tableID)
 	if err != nil {
@@ -128,9 +134,9 @@ func getTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores map[in
 	return progress, nil
 }
 
-// GetTiFlashProgress calculates TiFlash replica progress.
-func (m *TiFlashReplicaManagerCtx) GetTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores map[int64]helper.StoreStat) (float64, error) {
-	return getTiFlashProgress(tableID, replicaCount, tiFlashStores)
+// CalculateTiFlashProgress calculates TiFlash replica progress.
+func (m *TiFlashReplicaManagerCtx) CalculateTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores map[int64]helper.StoreStat) (float64, error) {
+	return calculateTiFlashProgress(tableID, replicaCount, tiFlashStores)
 }
 
 // UpdateTiFlashProgressCache updates tiflashProgressCache
@@ -746,9 +752,9 @@ func (tiflash *MockTiFlash) PdSwitch(enabled bool) {
 	tiflash.PdEnabled = enabled
 }
 
-// GetTiFlashProgress return truncated string to avoid float64 comparison.
-func (m *mockTiFlashReplicaManagerCtx) GetTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores map[int64]helper.StoreStat) (float64, error) {
-	return getTiFlashProgress(tableID, replicaCount, tiFlashStores)
+// CalculateTiFlashProgress return truncated string to avoid float64 comparison.
+func (m *mockTiFlashReplicaManagerCtx) CalculateTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores map[int64]helper.StoreStat) (float64, error) {
+	return calculateTiFlashProgress(tableID, replicaCount, tiFlashStores)
 }
 
 // UpdateTiFlashProgressCache updates tiflashProgressCache

@@ -49,8 +49,8 @@ const (
 	ClusterTableTrxSummary = "CLUSTER_TRX_SUMMARY"
 )
 
-// memTableToClusterTables means add memory table to cluster table.
-var memTableToClusterTables = map[string]string{
+// memTableToAllTiDBClusterTables means add memory table to cluster table that will send cop request to all TiDB nodes.
+var memTableToAllTiDBClusterTables = map[string]string{
 	TableSlowQuery:                ClusterTableSlowLog,
 	TableProcesslist:              ClusterTableProcesslist,
 	TableStatementsSummary:        ClusterTableStatementsSummary,
@@ -59,19 +59,26 @@ var memTableToClusterTables = map[string]string{
 	TableTiDBTrx:                  ClusterTableTiDBTrx,
 	TableDeadlocks:                ClusterTableDeadlocks,
 	TableTrxSummary:               ClusterTableTrxSummary,
-	TableTiFlashReplica:           TableTiFlashReplica,
 }
+
+// memTableToDDLOwnerClusterTables means add memory table to cluster table that will send cop request to DDL owner node.
+var memTableToDDLOwnerClusterTables = map[string]string{
+	TableTiFlashReplica: TableTiFlashReplica,
+}
+
+// ClusterTableCopDestination means the destination that cluster tables will send cop requests to.
+type ClusterTableCopDestination int
 
 const (
 	// AllTiDB is uese by CLUSTER_* table, means that these tables will send cop request to all TiDB nodes.
-	AllTiDB int16 = iota
+	AllTiDB ClusterTableCopDestination = iota
 	// DDLOwner is uese by tiflash_replica currently, means that this table will send cop request to DDL owner node.
 	DDLOwner
 )
 
 // GetClusterTableCopDestination gets cluster table cop request destination.
-func GetClusterTableCopDestination(tableName string) int16 {
-	if strings.ToLower(tableName) == "tiflash_replica" {
+func GetClusterTableCopDestination(tableName string) ClusterTableCopDestination {
+	if _, exist := memTableToDDLOwnerClusterTables[strings.ToUpper(tableName)]; exist {
 		return DDLOwner
 	}
 	return AllTiDB
@@ -79,9 +86,9 @@ func GetClusterTableCopDestination(tableName string) int16 {
 
 func init() {
 	var addrCol = columnInfo{name: util.ClusterTableInstanceColumnName, tp: mysql.TypeVarchar, size: 64}
-	for memTableName, clusterMemTableName := range memTableToClusterTables {
+	for memTableName, clusterMemTableName := range memTableToAllTiDBClusterTables {
 		memTableCols := tableNameToColumns[memTableName]
-		if len(memTableCols) == 0 || GetClusterTableCopDestination(memTableName) != AllTiDB {
+		if len(memTableCols) == 0 {
 			continue
 		}
 		cols := make([]columnInfo, 0, len(memTableCols)+1)
@@ -97,7 +104,13 @@ func isClusterTableByName(dbName, tableName string) bool {
 	switch dbName {
 	case util.InformationSchemaName.O, util.PerformanceSchemaName.O:
 		tableName = strings.ToUpper(tableName)
-		for _, name := range memTableToClusterTables {
+		for _, name := range memTableToAllTiDBClusterTables {
+			name = strings.ToUpper(name)
+			if name == tableName {
+				return true
+			}
+		}
+		for _, name := range memTableToDDLOwnerClusterTables {
 			name = strings.ToUpper(name)
 			if name == tableName {
 				return true

@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
@@ -372,35 +371,6 @@ func getTiFlashPeerWithoutLagCount(pollTiFlashContext *TiFlashManagementContext,
 	return flashPeerCount, nil
 }
 
-// getTiFlashTableSyncProgress return truncated string to avoid float64 comparison.
-func getTiFlashTableSyncProgress(pollTiFlashContext *TiFlashManagementContext, tableID int64, replicaCount uint64) (string, error) {
-	var stats helper.PDRegionStats
-	if err := infosync.GetTiFlashPDRegionRecordStats(context.Background(), tableID, &stats); err != nil {
-		logutil.BgLogger().Error("Fail to get region stats from PD.",
-			zap.Int64("tableID", tableID))
-		return "0", errors.Trace(err)
-	}
-	regionCount := stats.Count
-
-	tiflashPeerCount, err := getTiFlashPeerWithoutLagCount(pollTiFlashContext, tableID)
-	if err != nil {
-		logutil.BgLogger().Error("Fail to get peer count from TiFlash.",
-			zap.Int64("tableID", tableID))
-		return "0", errors.Trace(err)
-	}
-	progress := float64(tiflashPeerCount) / float64(regionCount*int(replicaCount))
-	if progress > 1 { // when pd do balance
-		logutil.BgLogger().Debug("TiFlash peer count > pd peer count, maybe doing balance.",
-			zap.Int64("tableID", tableID), zap.Int("tiflashPeerCount", tiflashPeerCount), zap.Int("regionCount", regionCount), zap.Uint64("replicaCount", replicaCount))
-		progress = 1
-	}
-	if progress < 1 {
-		logutil.BgLogger().Debug("TiFlash replica progress < 1.",
-			zap.Int64("tableID", tableID), zap.Int("tiflashPeerCount", tiflashPeerCount), zap.Int("regionCount", regionCount), zap.Uint64("replicaCount", replicaCount))
-	}
-	return types.TruncateFloatToString(progress, 2), nil
-}
-
 func pollAvailableTableProgress(schemas infoschema.InfoSchema, ctx sessionctx.Context, pollTiFlashContext *TiFlashManagementContext) {
 	pollMaxCount := RefreshProgressMaxTableCount
 	failpoint.Inject("PollAvailableTableProgressMaxCount", func(val failpoint.Value) {
@@ -442,7 +412,7 @@ func pollAvailableTableProgress(schemas infoschema.InfoSchema, ctx sessionctx.Co
 			element = element.Next()
 			continue
 		}
-		progress, err := infosync.GetTiFlashProgress(availableTableID.ID, tableInfo.TiFlashReplica.Count, pollTiFlashContext.TiFlashStores)
+		progress, err := infosync.CaculateTiFlashProgress(availableTableID.ID, tableInfo.TiFlashReplica.Count, pollTiFlashContext.TiFlashStores)
 		if err != nil {
 			logutil.BgLogger().Error("get tiflash sync progress failed",
 				zap.Error(err),
@@ -515,7 +485,7 @@ func (d *ddl) refreshTiFlashTicker(ctx sessionctx.Context, pollTiFlashContext *T
 				continue
 			}
 
-			progress, err := infosync.GetTiFlashProgress(tb.ID, tb.Count, pollTiFlashContext.TiFlashStores)
+			progress, err := infosync.CaculateTiFlashProgress(tb.ID, tb.Count, pollTiFlashContext.TiFlashStores)
 			if err != nil {
 				logutil.BgLogger().Error("get tiflash sync progress failed",
 					zap.Error(err),
