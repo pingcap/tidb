@@ -2935,7 +2935,7 @@ func TestAutoIncrementForce(t *testing.T) {
 		require.Equal(t, uint64(1), getNextGlobalID())
 		// inserting new rows can overwrite the existing data.
 		tk.MustExec("insert into t values (3);")
-		require.Equal(t, "[kv:1062]Duplicate entry '2' for key 'PRIMARY'", tk.ExecToErr("insert into t values (3);").Error())
+		require.Equal(t, "[kv:1062]Duplicate entry '2' for key 't.PRIMARY'", tk.ExecToErr("insert into t values (3);").Error())
 		tk.MustQuery("select a, _tidb_rowid from t;").Check(testkit.Rows("3 1", "1 2", "2 3"))
 		tk.MustExec("drop table if exists t;")
 	}
@@ -3012,24 +3012,22 @@ func TestAutoIncrementForce(t *testing.T) {
 		tk.MustExec("drop table if exists t;")
 	}
 
-	for _, str := range []string{"", " AUTO_ID_CACHE 1"} {
-		// Check for warning in case we can't set the auto_increment to the desired value
-		tk.MustExec("create table t(a int primary key auto_increment)" + str)
-		tk.MustExec("insert into t values (200)")
-		tk.MustQuery("show create table t").Check(testkit.Rows(
-			"t CREATE TABLE `t` (\n" +
-				"  `a` int(11) NOT NULL AUTO_INCREMENT,\n" +
-				"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
-				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=5201"))
-		tk.MustExec("alter table t auto_increment=100;")
-		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Can't reset AUTO_INCREMENT to 100 without FORCE option, using 5201 instead"))
-		tk.MustQuery("show create table t").Check(testkit.Rows(
-			"t CREATE TABLE `t` (\n" +
-				"  `a` int(11) NOT NULL AUTO_INCREMENT,\n" +
-				"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
-				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=5201"))
-		tk.MustExec("drop table t")
-	}
+	// Check for warning in case we can't set the auto_increment to the desired value
+	tk.MustExec("create table t(a int primary key auto_increment)")
+	tk.MustExec("insert into t values (200)")
+	tk.MustQuery("show create table t").Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `a` int(11) NOT NULL AUTO_INCREMENT,\n" +
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=5201"))
+	tk.MustExec("alter table t auto_increment=100;")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Can't reset AUTO_INCREMENT to 100 without FORCE option, using 5201 instead"))
+	tk.MustQuery("show create table t").Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `a` int(11) NOT NULL AUTO_INCREMENT,\n" +
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=5201"))
+	tk.MustExec("drop table t")
 }
 
 func TestIssue20490(t *testing.T) {
