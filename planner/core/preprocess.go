@@ -1803,7 +1803,6 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.
 			se = infoschema.AttachMDLTableInfoSchema(is).(*infoschema.SessionExtendedInfoSchema)
 			sessiontxn.GetTxnManager(sctx).SetTxnInfoSchema(se)
 			sctx.GetSessionVars().TxnCtx.InfoSchema = se
-			is = se
 		}
 		db, _ := domainSchema.SchemaByTable(tbl.Meta())
 		err = se.UpdateTableInfo(db, tbl)

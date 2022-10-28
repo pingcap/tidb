@@ -4352,6 +4352,11 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if err != nil {
 		return nil, err
 	}
+	tbbl, _ := b.is.TableByID(tbl.Meta().ID)
+	for _, col := range tbbl.Meta().Columns {
+		logutil.BgLogger().Error("col for reget after out", zap.Any("name", col.Name), zap.Any("state", col.State.String()))
+	}
+
 	tableInfo := tbl.Meta()
 
 	if b.isCreateView && tableInfo.TempTableType == model.TempTableLocal {
