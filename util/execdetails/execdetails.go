@@ -359,10 +359,17 @@ func (*basicCopRuntimeStats) Tp() int {
 
 // CopRuntimeStats collects cop tasks' execution info.
 type CopRuntimeStats struct {
+	// stats stores the runtime statistics of coprocessor tasks.
+	// The key of the map is the tikv-server address. Because a tikv-server can
+	// have many region leaders, several coprocessor tasks can be sent to the
+	// same tikv-server instance. We have to use a list to maintain all tasks
+	// executed on each instance.
 	stats      map[string][]*basicCopRuntimeStats
 	scanDetail *util.ScanDetail
-	storeType  string
-	totalRows  int64
+	// do not use kv.StoreType because it will meet cycle import error
+	storeType string
+	// count CopRuntimeStats total rows
+	totalRows int64
 	sync.Mutex
 }
 
