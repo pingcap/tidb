@@ -16,6 +16,8 @@ package infoschema
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 	"sort"
 	"sync"
 
@@ -263,6 +265,9 @@ func (is *infoSchema) TableByID(id int64) (val table.Table, ok bool) {
 	idx := slice.searchTable(id)
 	if idx == -1 {
 		return nil, false
+	}
+	if slice[idx].Meta().Name.L == "sbtest1" {
+		logutil.BgLogger().Error("tableByID", zap.Stack("stack"))
 	}
 	return slice[idx], true
 }
