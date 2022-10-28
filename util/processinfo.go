@@ -34,6 +34,7 @@ import (
 type OOMAlarmVariablesInfo struct {
 	SessionAnalyzeVersion         int
 	SessionEnabledRateLimitAction bool
+	SessionMemQuotaQuery          int64
 }
 
 // ProcessInfo is a struct used for show processlist statement.
@@ -190,6 +191,8 @@ type SessionManager interface {
 	GetInternalSessionStartTSList() []uint64
 	// CheckOldRunningTxn checks if there is an old transaction running in the current sessions
 	CheckOldRunningTxn(job2ver map[int64]int64, job2ids map[int64]string)
+	// KillNonFlashbackClusterConn kill all non flashback cluster connections.
+	KillNonFlashbackClusterConn()
 }
 
 // GlobalConnID is the global connection ID, providing UNIQUE connection IDs across the whole TiDB cluster.

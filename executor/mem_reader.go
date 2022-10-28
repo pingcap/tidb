@@ -555,7 +555,8 @@ func (m *memIndexLookUpReader) getMemRows(ctx context.Context) ([][]types.Datum,
 			continue
 		}
 		numHandles += len(handles)
-		tblKVRanges = append(tblKVRanges, distsql.TableHandlesToKVRanges(getPhysicalTableID(tbl), handles)...)
+		ranges, _ := distsql.TableHandlesToKVRanges(getPhysicalTableID(tbl), handles)
+		tblKVRanges = append(tblKVRanges, ranges...)
 	}
 	if numHandles == 0 {
 		return nil, nil
@@ -687,7 +688,8 @@ func (m *memIndexMergeReader) getMemRows(ctx context.Context) ([][]types.Datum, 
 			continue
 		}
 		numHandles += len(handles)
-		tblKVRanges = append(tblKVRanges, distsql.TableHandlesToKVRanges(getPhysicalTableID(tbl), handles)...)
+		ranges, _ := distsql.TableHandlesToKVRanges(getPhysicalTableID(tbl), handles)
+		tblKVRanges = append(tblKVRanges, ranges...)
 	}
 
 	if numHandles == 0 {

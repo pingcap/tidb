@@ -127,7 +127,7 @@ func (builder *RequestBuilder) SetHandleRangesForTables(sc *stmtctx.StatementCon
 // SetTableHandles sets "KeyRanges" for "kv.Request" by converting table handles
 // "handles" to "KeyRanges" firstly.
 func (builder *RequestBuilder) SetTableHandles(tid int64, handles []kv.Handle) *RequestBuilder {
-	builder.Request.KeyRanges = TableHandlesToKVRanges(tid, handles)
+	builder.Request.KeyRanges, builder.FixedRowCountHint = TableHandlesToKVRanges(tid, handles)
 	return builder
 }
 
@@ -515,8 +515,9 @@ func SplitRangesAcrossInt64Boundary(ranges []*ranger.Range, keepOrder bool, desc
 
 // TableHandlesToKVRanges converts sorted handle to kv ranges.
 // For continuous handles, we should merge them to a single key range.
-func TableHandlesToKVRanges(tid int64, handles []kv.Handle) []kv.KeyRange {
+func TableHandlesToKVRanges(tid int64, handles []kv.Handle) ([]kv.KeyRange, []int) {
 	krs := make([]kv.KeyRange, 0, len(handles))
+	hint := make([]int, 0, len(handles))
 	i := 0
 	for i < len(handles) {
 		if commonHandle, ok := handles[i].(*kv.CommonHandle); ok {
@@ -525,6 +526,7 @@ func TableHandlesToKVRanges(tid int64, handles []kv.Handle) []kv.KeyRange {
 				EndKey:   tablecodec.EncodeRowKey(tid, kv.Key(commonHandle.Encoded()).Next()),
 			}
 			krs = append(krs, ran)
+			hint = append(hint, 1)
 			i++
 			continue
 		}
@@ -540,9 +542,10 @@ func TableHandlesToKVRanges(tid int64, handles []kv.Handle) []kv.KeyRange {
 		startKey := tablecodec.EncodeRowKey(tid, low)
 		endKey := tablecodec.EncodeRowKey(tid, high)
 		krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
+		hint = append(hint, j-i)
 		i = j
 	}
-	return krs
+	return krs, hint
 }
 
 // PartitionHandlesToKVRanges convert ParitionHandles to kv ranges.

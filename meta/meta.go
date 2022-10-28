@@ -59,26 +59,25 @@ var (
 //
 
 var (
-	mMetaPrefix              = []byte("m")
-	mNextGlobalIDKey         = []byte("NextGlobalID")
-	mSchemaVersionKey        = []byte("SchemaVersionKey")
-	mDBs                     = []byte("DBs")
-	mDBPrefix                = "DB"
-	mTablePrefix             = "Table"
-	mSequencePrefix          = "SID"
-	mSeqCyclePrefix          = "SequenceCycle"
-	mTableIDPrefix           = "TID"
-	mIncIDPrefix             = "IID"
-	mRandomIDPrefix          = "TARID"
-	mBootstrapKey            = []byte("BootstrapKey")
-	mSchemaDiffPrefix        = "Diff"
-	mPolicies                = []byte("Policies")
-	mPolicyPrefix            = "Policy"
-	mPolicyGlobalID          = []byte("PolicyGlobalID")
-	mPolicyMagicByte         = CurrentMagicByteVer
-	mDDLTableVersion         = []byte("DDLTableVersion")
-	mConcurrentDDL           = []byte("concurrentDDL")
-	mFlashbackHistoryTSRange = []byte("FlashbackHistoryTSRange")
+	mMetaPrefix       = []byte("m")
+	mNextGlobalIDKey  = []byte("NextGlobalID")
+	mSchemaVersionKey = []byte("SchemaVersionKey")
+	mDBs              = []byte("DBs")
+	mDBPrefix         = "DB"
+	mTablePrefix      = "Table"
+	mSequencePrefix   = "SID"
+	mSeqCyclePrefix   = "SequenceCycle"
+	mTableIDPrefix    = "TID"
+	mIncIDPrefix      = "IID"
+	mRandomIDPrefix   = "TARID"
+	mBootstrapKey     = []byte("BootstrapKey")
+	mSchemaDiffPrefix = "Diff"
+	mPolicies         = []byte("Policies")
+	mPolicyPrefix     = "Policy"
+	mPolicyGlobalID   = []byte("PolicyGlobalID")
+	mPolicyMagicByte  = CurrentMagicByteVer
+	mDDLTableVersion  = []byte("DDLTableVersion")
+	mConcurrentDDL    = []byte("concurrentDDL")
 )
 
 const (
@@ -164,6 +163,23 @@ func (m *Meta) GenGlobalID() (int64, error) {
 		return 0, errors.Errorf("global id:%d exceeds the limit:%d", newID, MaxGlobalID)
 	}
 	return newID, err
+}
+
+// AdvanceGlobalIDs advances the global ID by n.
+// return the old global ID.
+func (m *Meta) AdvanceGlobalIDs(n int) (int64, error) {
+	globalIDMutex.Lock()
+	defer globalIDMutex.Unlock()
+
+	newID, err := m.txn.Inc(mNextGlobalIDKey, int64(n))
+	if err != nil {
+		return 0, err
+	}
+	if newID > MaxGlobalID {
+		return 0, errors.Errorf("global id:%d exceeds the limit:%d", newID, MaxGlobalID)
+	}
+	origID := newID - int64(n)
+	return origID, nil
 }
 
 // GenGlobalIDs generates the next n global IDs.
@@ -603,37 +619,6 @@ func (m *Meta) CheckMDLTableExists() (bool, error) {
 		return false, errors.Trace(err)
 	}
 	return bytes.Equal(v, []byte("2")), nil
-}
-
-// TSRange store a range time
-type TSRange struct {
-	StartTS uint64
-	EndTS   uint64
-}
-
-// SetFlashbackHistoryTSRange store flashback time range to TiKV
-func (m *Meta) SetFlashbackHistoryTSRange(timeRange []TSRange) error {
-	timeRangeByte, err := json.Marshal(timeRange)
-	if err != nil {
-		return err
-	}
-	return errors.Trace(m.txn.Set(mFlashbackHistoryTSRange, timeRangeByte))
-}
-
-// GetFlashbackHistoryTSRange get flashback time range from TiKV
-func (m *Meta) GetFlashbackHistoryTSRange() (timeRange []TSRange, err error) {
-	timeRangeByte, err := m.txn.Get(mFlashbackHistoryTSRange)
-	if err != nil {
-		return nil, err
-	}
-	if len(timeRangeByte) == 0 {
-		return []TSRange{}, nil
-	}
-	err = json.Unmarshal(timeRangeByte, &timeRange)
-	if err != nil {
-		return nil, err
-	}
-	return timeRange, nil
 }
 
 // SetConcurrentDDL set the concurrent DDL flag.
