@@ -402,7 +402,14 @@ func (s *session) GetSessionManager() util.SessionManager {
 }
 
 func (s *session) StoreQueryFeedback(feedback interface{}) {
+<<<<<<< HEAD
 	if fb, ok := feedback.(*statistics.QueryFeedback); !ok || fb == nil || !fb.Valid {
+=======
+	if variable.FeedbackProbability.Load() <= 0 {
+		return
+	}
+	if fb, ok := feedback.(*statistics.QueryFeedback); !ok || fb == nil || !fb.Valid.Load() {
+>>>>>>> 37349e1be8 (planner: disable query-feedback thoroughly)
 		return
 	}
 	if s.statsCollector != nil {
