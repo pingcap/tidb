@@ -1303,11 +1303,11 @@ func (s *SessionVars) GetNewChunk(fields []*types.FieldType, capacity int) *chun
 	if s.ChunkPool.Alloc == nil {
 		return chunk.NewChunkWithCapacity(fields, capacity)
 	}
-	if s.MaxReuseChunk > 0 || s.MaxReuseColumn > 0 {
-		s.UseChunkAlloc = true
-	}
 	s.ChunkPool.Lock.Lock()
 	defer s.ChunkPool.Lock.Unlock()
+	if (s.MaxReuseChunk > 0 || s.MaxReuseColumn > 0) && (!s.UseChunkAlloc) {
+		s.UseChunkAlloc = true
+	}
 	chk := s.ChunkPool.Alloc.Alloc(fields, capacity, capacity)
 	return chk
 }
@@ -1318,11 +1318,11 @@ func (s *SessionVars) GetNewChunkWithCapacity(fields []*types.FieldType, capacit
 	if s.ChunkPool.Alloc == nil {
 		return chunk.New(fields, capacity, maxCachesize)
 	}
-	if s.MaxReuseChunk > 0 || s.MaxReuseColumn > 0 {
-		s.UseChunkAlloc = true
-	}
 	s.ChunkPool.Lock.Lock()
 	defer s.ChunkPool.Lock.Unlock()
+	if s.MaxReuseChunk > 0 || s.MaxReuseColumn > 0 && (!s.UseChunkAlloc) {
+		s.UseChunkAlloc = true
+	}
 	chk := s.ChunkPool.Alloc.Alloc(fields, capacity, maxCachesize)
 	return chk
 }
