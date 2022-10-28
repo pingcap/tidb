@@ -53,8 +53,8 @@ type TiFlashReplicaManager interface {
 	GetGroupRules(ctx context.Context, group string) ([]placement.TiFlashRule, error)
 	// PostAccelerateSchedule sends `regions/accelerate-schedule` request.
 	PostAccelerateSchedule(ctx context.Context, tableID int64) error
-	// GetPDRegionRecordStats is a helper function calling `/stats/region`.
-	GetPDRegionRecordStats(ctx context.Context, tableID int64, stats *helper.PDRegionStats) error
+	// GetRegionCountFromPD is a helper function calling `/stats/region`.
+	GetRegionCountFromPD(ctx context.Context, tableID int64, regionCount *int) error
 	// GetStoresStat gets the TiKV store information by accessing PD's api.
 	GetStoresStat(ctx context.Context) (*helper.StoresStat, error)
 	// CalculateTiFlashProgress calculates TiFlash replica progress
@@ -101,13 +101,12 @@ func getTiFlashPeerWithoutLagCount(tiFlashStores map[int64]helper.StoreStat, tab
 
 // calculateTiFlashProgress calculates progress based on the region status from PD and TiFlash.
 func calculateTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores map[int64]helper.StoreStat) (float64, error) {
-	var stats helper.PDRegionStats
-	if err := GetTiFlashPDRegionRecordStats(context.Background(), tableID, &stats); err != nil {
-		logutil.BgLogger().Error("Fail to get region stats from PD.",
+	var regionCount int
+	if err := infosync.GetTiFlashRegionCountFromPD(context.Background(), tableID, &regionCount); err != nil {
+		logutil.BgLogger().Error("Fail to get regionCount from PD.",
 			zap.Int64("tableID", tableID))
 		return 0, errors.Trace(err)
 	}
-	regionCount := stats.Count
 
 	if regionCount == 0 {
 		logutil.BgLogger().Warn("region count getting from PD is 0.",
@@ -297,14 +296,15 @@ func (m *TiFlashReplicaManagerCtx) PostAccelerateSchedule(ctx context.Context, t
 	return nil
 }
 
-// GetPDRegionRecordStats is a helper function calling `/stats/region`.
-func (m *TiFlashReplicaManagerCtx) GetPDRegionRecordStats(ctx context.Context, tableID int64, stats *helper.PDRegionStats) error {
+
+// GetRegionCountFromPD is a helper function calling `/stats/region`.
+func (m *TiFlashPDPlacementManager) GetRegionCountFromPD(ctx context.Context, tableID int64, regionCount *int) error {
 	startKey := tablecodec.GenTableRecordPrefix(tableID)
 	endKey := tablecodec.EncodeTablePrefix(tableID + 1)
 	startKey = codec.EncodeBytes([]byte{}, startKey)
 	endKey = codec.EncodeBytes([]byte{}, endKey)
 
-	p := fmt.Sprintf("/pd/api/v1/stats/region?start_key=%s&end_key=%s",
+	p := fmt.Sprintf("/pd/api/v1/stats/region?start_key=%s&end_key=%s&count",
 		url.QueryEscape(string(startKey)),
 		url.QueryEscape(string(endKey)))
 	res, err := doRequest(ctx, "GetPDRegionStats", m.etcdCli.Endpoints(), p, "GET", nil)
@@ -312,13 +312,14 @@ func (m *TiFlashReplicaManagerCtx) GetPDRegionRecordStats(ctx context.Context, t
 		return errors.Trace(err)
 	}
 	if res == nil {
-		return fmt.Errorf("TiFlashReplicaManagerCtx returns error in GetPDRegionRecordStats")
+		return fmt.Errorf("TiFlashPDPlacementManager returns error in GetRegionCountFromPD")
 	}
-
-	err = json.Unmarshal(res, stats)
+	var stats helper.PDRegionStats
+	err = json.Unmarshal(res, &stats)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	*regionCount = stats.Count
 	return nil
 }
 
@@ -576,16 +577,11 @@ func (tiflash *MockTiFlash) HandlePostAccelerateSchedule(endKey string) error {
 	return nil
 }
 
-// HandleGetPDRegionRecordStats is mock function for GetPDRegionRecordStats.
+// HandleGetPDRegionRecordStats is mock function for GetRegionCountFromPD.
 // It currently always returns 1 Region for convenience.
 func (tiflash *MockTiFlash) HandleGetPDRegionRecordStats(_ int64) helper.PDRegionStats {
 	return helper.PDRegionStats{
-		Count:            1,
-		EmptyCount:       1,
-		StorageSize:      1,
-		StorageKeys:      1,
-		StoreLeaderCount: map[uint64]int{1: 1},
-		StorePeerCount:   map[uint64]int{1: 1},
+		Count: 1,
 	}
 }
 
@@ -848,14 +844,15 @@ func (m *mockTiFlashReplicaManagerCtx) PostAccelerateSchedule(ctx context.Contex
 	return m.tiflash.HandlePostAccelerateSchedule(hex.EncodeToString(endKey))
 }
 
-// GetPDRegionRecordStats is a helper function calling `/stats/region`.
-func (m *mockTiFlashReplicaManagerCtx) GetPDRegionRecordStats(ctx context.Context, tableID int64, stats *helper.PDRegionStats) error {
+// GetRegionCountFromPD is a helper function calling `/stats/region`.
+func (m *mockTiFlashPlacementManager) GetRegionCountFromPD(ctx context.Context, tableID int64, regionCount *int) error {
 	m.Lock()
 	defer m.Unlock()
 	if m.tiflash == nil {
 		return nil
 	}
-	*stats = m.tiflash.HandleGetPDRegionRecordStats(tableID)
+	stats := m.tiflash.HandleGetPDRegionRecordStats(tableID)
+	*regionCount = stats.Count
 	return nil
 }
 
