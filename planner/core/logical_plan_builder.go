@@ -5384,8 +5384,8 @@ func CheckUpdateList(assignFlags []int, updt *Update, newTblID2Table map[int64]t
 	updateFromOtherAlias := make(map[int64]tblUpdateInfo)
 	for _, content := range updt.TblColPosInfos {
 		tbl := newTblID2Table[content.TblID]
-		if content.End >= len(assignFlags) {
-			for i, col := range tbl.Meta().Cols() {
+		if content.End > len(assignFlags) {
+			for i, col := range tbl.Meta().Columns {
 				logutil.BgLogger().Error("col", zap.Any("col", col.Name.String()), zap.Any("state", col.State.String()), zap.Int("i", i))
 			}
 			logutil.BgLogger().Error("meet error")
