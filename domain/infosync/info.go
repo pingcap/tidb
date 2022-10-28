@@ -354,7 +354,7 @@ func DeleteTiFlashTableSyncProgress(tableInfo *model.TableInfo) error {
 	return nil
 }
 
-// MustGetTiFlashProgress gets tiflash replica progress from tiflashProgressCache, if cache not exist, it gets progress from TiFlash and inserts progress into cache.
+// MustGetTiFlashProgress gets tiflash replica progress from tiflashProgressCache, if cache not exist, it calculates progress from PD and TiFlash and inserts progress into cache.
 func MustGetTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores *map[int64]helper.StoreStat) (float64, error) {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
