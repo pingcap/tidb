@@ -245,6 +245,7 @@ func checkIndexKeys(
 		}
 
 		for i, v := range decodedIndexValues {
+			logutil.BgLogger().Error("indexInfo", zap.String("indexInfo name", indexInfo.Columns[i].Name.O), zap.Any("i", i), zap.Any("offset", indexInfo.Columns[i].Offset))
 			fieldType := &t.Columns[indexInfo.Columns[i].Offset].FieldType
 			datum, err := tablecodec.DecodeColumnValue(v, fieldType, sessVars.Location())
 			if err != nil {
