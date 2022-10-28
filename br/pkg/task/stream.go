@@ -1200,31 +1200,9 @@ func restoreStream(
 	// mode or emptied schedulers
 	defer restorePostWork(ctx, client, restoreSchedulers)
 
-	shiftStartTS, err := client.GetShiftTS(ctx, cfg.StartTS, cfg.RestoreTS)
+	err = client.InstallLogFileManager(ctx, cfg.StartTS, cfg.RestoreTS)
 	if err != nil {
-		return errors.Annotate(err, "failed to get shift TS")
-	}
-
-	// read meta by given ts.
-	metas, err := client.ReadStreamMetaByTS(ctx, shiftStartTS, cfg.RestoreTS)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if len(metas) == 0 {
-		log.Info("nothing to restore.")
-		return nil
-	}
-
-	client.SetRestoreRangeTS(cfg.StartTS, cfg.RestoreTS, shiftStartTS)
-
-	// read data file by given ts.
-	dmlFiles, ddlFiles, err := client.ReadStreamDataFiles(ctx, metas)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if len(dmlFiles) == 0 && len(ddlFiles) == 0 {
-		log.Info("nothing to restore.")
-		return nil
+		return err
 	}
 
 	// get full backup meta to generate rewrite rules.
@@ -1256,6 +1234,11 @@ func restoreStream(
 		totalKVCount += kvCount
 		totalSize += size
 	}
+	dataFileCount := 0
+	ddlFiles, err := client.LoadDDLFilesAndCountDMLFiles(ctx, &dataFileCount)
+	if err != nil {
+		return err
+	}
 	pm := g.StartProgress(ctx, "Restore Meta Files", int64(len(ddlFiles)), !cfg.LogProgress)
 	if err = withProgress(pm, func(p glue.Progress) error {
 		client.RunGCRowsLoader(ctx)
@@ -1271,7 +1254,8 @@ func restoreStream(
 	}
 	updateRewriteRules(rewriteRules, schemasReplace)
 
-	pd := g.StartProgress(ctx, "Restore KV Files", int64(len(dmlFiles)), !cfg.LogProgress)
+	dmlFiles, err := client.LoadDMLFiles(ctx)
+	pd := g.StartProgress(ctx, "Restore KV Files", int64(dataFileCount), !cfg.LogProgress)
 	err = withProgress(pd, func(p glue.Progress) error {
 		return client.RestoreKVFiles(ctx, rewriteRules, dmlFiles, updateStats, p.Inc)
 	})
@@ -1357,8 +1341,6 @@ func createRestoreClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, m
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
-	client.InitMetadataHelper()
 
 	return client, nil
 }

@@ -23,11 +23,15 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
+	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
 type bootstrapContext struct {
 	context.Context
+
 	sqlExecutor sqlexec.SQLExecutor
+	etcdCli     *clientv3.Client
+	sessionPool extension.SessionPool
 }
 
 func (c *bootstrapContext) ExecuteSQL(ctx context.Context, sql string) (rows []chunk.Row, err error) {
@@ -49,6 +53,14 @@ func (c *bootstrapContext) ExecuteSQL(ctx context.Context, sql string) (rows []c
 	}()
 
 	return sqlexec.DrainRecordSet(ctx, rs, 8)
+}
+
+func (c *bootstrapContext) EtcdClient() *clientv3.Client {
+	return c.etcdCli
+}
+
+func (c *bootstrapContext) SessionPool() extension.SessionPool {
+	return c.sessionPool
 }
 
 // Bootstrap bootstrap all extensions
@@ -74,5 +86,10 @@ func Bootstrap(ctx context.Context, do *domain.Domain) error {
 		return errors.Errorf("type '%T' cannot be casted to 'sqlexec.SQLExecutor'", sctx)
 	}
 
-	return extensions.Bootstrap(&bootstrapContext{ctx, executor})
+	return extensions.Bootstrap(&bootstrapContext{
+		Context:     ctx,
+		sessionPool: pool,
+		sqlExecutor: executor,
+		etcdCli:     do.GetEtcdClient(),
+	})
 }

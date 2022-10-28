@@ -637,11 +637,14 @@ const (
 	version95 = 95
 	// version96 converts server-memory-quota to a sysvar
 	version96 = 96
+	// version97 sets tidb_opt_range_max_size to 0 when a cluster upgrades from some version lower than v6.4.0 to v6.4.0+.
+	// It promises the compatibility of building ranges behavior.
+	version97 = 97
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version95
+var currentBootstrapVersion int64 = version97
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -743,6 +746,7 @@ var (
 		upgradeToVer94,
 		upgradeToVer95,
 		upgradeToVer96,
+		upgradeToVer97,
 	}
 )
 
@@ -1951,6 +1955,27 @@ func upgradeToVer96(s Session, ver int64) {
 	}
 	valStr := strconv.Itoa(int(config.GetGlobalConfig().Performance.ServerMemoryQuota))
 	importConfigOption(s, "performance.server-memory-quota", variable.TiDBServerMemoryLimit, valStr)
+}
+
+func upgradeToVer97(s Session, ver int64) {
+	if ver >= version97 {
+		return
+	}
+	// Check if tidb_opt_range_max_size exists in mysql.GLOBAL_VARIABLES.
+	// If not, insert "tidb_opt_range_max_size | 0" since this is the old behavior before we introduce this variable.
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rs, err := s.ExecuteInternal(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBOptRangeMaxSize)
+	terror.MustNil(err)
+	req := rs.NewChunk(nil)
+	err = rs.Next(ctx, req)
+	terror.MustNil(err)
+	if req.NumRows() != 0 {
+		return
+	}
+
+	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBOptRangeMaxSize, 0)
 }
 
 func writeOOMAction(s Session) {
