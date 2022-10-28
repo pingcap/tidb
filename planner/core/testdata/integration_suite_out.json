@@ -7652,7 +7652,7 @@
         "Result": [
           "",
           "111111",
-          "222222"
+          "22    "
         ]
       },
       {
@@ -7679,7 +7679,7 @@
         "Result": [
           "",
           "111111",
-          "222222"
+          "22    "
         ]
       },
       {
@@ -7696,6 +7696,30 @@
         ]
       },
       {
+        "SQL": "select count(1) from t2 use index(idx) where b is not null",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:count(Column#6)->Column#4",
+          "└─IndexReader 1.00 root  index:StreamAgg",
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#6",
+          "    └─IndexFullScan 9990.00 cop[tikv] table:t2, index:idx(b) keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "3"
+        ]
+      },
+      {
+        "SQL": "select count(1) from t2 use index(idx) where b is null",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:count(Column#6)->Column#4",
+          "└─IndexReader 1.00 root  index:StreamAgg",
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#6",
+          "    └─IndexRangeScan 10.00 cop[tikv] table:t2, index:idx(b) range:[NULL,NULL], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1"
+        ]
+      },
+      {
         "SQL": "select b from t2 use index(idx) where b is not null",
         "Plan": [
           "IndexLookUp 9990.00 root  ",
@@ -7705,7 +7729,7 @@
         "Result": [
           "",
           "aaaaaa",
-          "bbb"
+          "bb    "
         ]
       },
       {
@@ -7718,6 +7742,26 @@
         "Result": [
           "<nil>"
         ]
+      },
+      {
+        "SQL": "select b from t3 where a = 1 and b is not null",
+        "Plan": [
+          "Projection 10.00 root  test.t3.b",
+          "└─TableReader 10.00 root  data:TableRangeScan",
+          "  └─TableRangeScan 10.00 cop[tikv] table:t3 range:[1,1], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "",
+          "aaaaaa",
+          "bb    "
+        ]
+      },
+      {
+        "SQL": "select b from t3 where a = 1 and b is null",
+        "Plan": [
+          "TableDual 0.00 root  rows:0"
+        ],
+        "Result": null
       }
     ]
   }
