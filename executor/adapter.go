@@ -363,7 +363,7 @@ func (a *ExecStmt) IsReadOnly(vars *variable.SessionVars) bool {
 // It returns the current information schema version that 'a' is using.
 func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 	ret := &plannercore.PreprocessorReturn{}
-	if err := plannercore.Preprocess(a.Ctx, a.StmtNode, plannercore.InTxnRetry, plannercore.InitTxnContextProvider, plannercore.WithPreprocessorReturn(ret)); err != nil {
+	if err := plannercore.Preprocess(ctx, a.Ctx, a.StmtNode, plannercore.InTxnRetry, plannercore.InitTxnContextProvider, plannercore.WithPreprocessorReturn(ret)); err != nil {
 		return 0, err
 	}
 
@@ -509,10 +509,14 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		}
 		maxExecutionTime := getMaxExecutionTime(sctx)
 		// Update processinfo, ShowProcess() will use it.
-		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
 		if a.Ctx.GetSessionVars().StmtCtx.StmtType == "" {
 			a.Ctx.GetSessionVars().StmtCtx.StmtType = ast.GetStmtLabel(a.StmtNode)
 		}
+		// Since maxExecutionTime is used only for query statement, here we limit it affect scope.
+		if !a.IsReadOnly(a.Ctx.GetSessionVars()) {
+			maxExecutionTime = 0
+		}
+		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
 	}
 
 	failpoint.Inject("mockDelayInnerSessionExecute", func() {
@@ -535,11 +539,8 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		return a.handlePessimisticSelectForUpdate(ctx, e)
 	}
 
+	a.prepareFKCascadeContext(e)
 	if handled, result, err := a.handleNoDelay(ctx, e, isPessimistic); handled || err != nil {
-		if err != nil {
-			return result, err
-		}
-		err = a.handleForeignKeyTrigger(ctx, e)
 		return result, err
 	}
 
@@ -559,11 +560,40 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	}, nil
 }
 
-func (a *ExecStmt) handleForeignKeyTrigger(ctx context.Context, e Executor) error {
+func (a *ExecStmt) handleStmtForeignKeyTrigger(ctx context.Context, e Executor) error {
+	stmtCtx := a.Ctx.GetSessionVars().StmtCtx
+	if stmtCtx.ForeignKeyTriggerCtx.HasFKCascades {
+		// If the ExecStmt has foreign key cascade to be executed, we need call `StmtCommit` to commit the ExecStmt itself
+		// change first.
+		// Since `UnionScanExec` use `SnapshotIter` and `SnapshotGetter` to read txn mem-buffer, if we don't  do `StmtCommit`,
+		// then the fk cascade executor can't read the mem-buffer changed by the ExecStmt.
+		a.Ctx.StmtCommit()
+	}
+	err := a.handleForeignKeyTrigger(ctx, e, 1)
+	if err != nil {
+		err1 := a.handleFKTriggerError(stmtCtx)
+		if err1 != nil {
+			return errors.Errorf("handle foreign key trigger error failed, err: %v, original_err: %v", err1, err)
+		}
+		return err
+	}
+	if stmtCtx.ForeignKeyTriggerCtx.SavepointName != "" {
+		a.Ctx.GetSessionVars().TxnCtx.ReleaseSavepoint(stmtCtx.ForeignKeyTriggerCtx.SavepointName)
+	}
+	return nil
+}
+
+var maxForeignKeyCascadeDepth = 15
+
+func (a *ExecStmt) handleForeignKeyTrigger(ctx context.Context, e Executor, depth int) error {
 	exec, ok := e.(WithForeignKeyTrigger)
 	if !ok {
 		return nil
 	}
+	a.Ctx.GetSessionVars().StmtCtx.InHandleForeignKeyTrigger = true
+	defer func() {
+		a.Ctx.GetSessionVars().StmtCtx.InHandleForeignKeyTrigger = false
+	}()
 	fkChecks := exec.GetFKChecks()
 	for _, fkCheck := range fkChecks {
 		err := fkCheck.doCheck(ctx)
@@ -571,6 +601,93 @@ func (a *ExecStmt) handleForeignKeyTrigger(ctx context.Context, e Executor) erro
 			return err
 		}
 	}
+	fkCascades := exec.GetFKCascades()
+	for _, fkCascade := range fkCascades {
+		err := a.handleForeignKeyCascade(ctx, fkCascade, depth)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (a *ExecStmt) handleForeignKeyCascade(ctx context.Context, fkc *FKCascadeExec, depth int) error {
+	if len(fkc.fkValues) == 0 {
+		return nil
+	}
+	if depth > maxForeignKeyCascadeDepth {
+		return ErrForeignKeyCascadeDepthExceeded.GenWithStackByArgs(maxForeignKeyCascadeDepth)
+	}
+	for {
+		e, err := fkc.buildExecutor(ctx)
+		if err != nil || e == nil {
+			return err
+		}
+		if err := e.Open(ctx); err != nil {
+			terror.Call(e.Close)
+			return err
+		}
+		err = Next(ctx, e, newFirstChunk(e))
+		if err != nil {
+			return err
+		}
+		err = e.Close()
+		if err != nil {
+			return err
+		}
+		// Call `StmtCommit` uses to flush the fk cascade executor change into txn mem-buffer,
+		// then the later fk cascade executors can see the mem-buffer changes.
+		a.Ctx.StmtCommit()
+		err = a.handleForeignKeyTrigger(ctx, e, depth+1)
+		if err != nil {
+			return err
+		}
+	}
+}
+
+// prepareFKCascadeContext records a transaction savepoint for foreign key cascade when this ExecStmt has foreign key
+// cascade behaviour and this ExecStmt is in transaction.
+func (a *ExecStmt) prepareFKCascadeContext(e Executor) {
+	exec, ok := e.(WithForeignKeyTrigger)
+	if !ok || !exec.HasFKCascades() {
+		return
+	}
+	sessVar := a.Ctx.GetSessionVars()
+	sessVar.StmtCtx.ForeignKeyTriggerCtx.HasFKCascades = true
+	if !sessVar.InTxn() {
+		return
+	}
+	txn, err := a.Ctx.Txn(false)
+	if err != nil || !txn.Valid() {
+		return
+	}
+	// Record a txn savepoint if ExecStmt in transaction, the savepoint is use to do rollback when handle foreign key
+	// cascade failed.
+	savepointName := "fk_sp_" + strconv.FormatUint(txn.StartTS(), 10)
+	memDBCheckpoint := txn.GetMemDBCheckpoint()
+	sessVar.TxnCtx.AddSavepoint(savepointName, memDBCheckpoint)
+	sessVar.StmtCtx.ForeignKeyTriggerCtx.SavepointName = savepointName
+}
+
+func (a *ExecStmt) handleFKTriggerError(sc *stmtctx.StatementContext) error {
+	if sc.ForeignKeyTriggerCtx.SavepointName == "" {
+		return nil
+	}
+	txn, err := a.Ctx.Txn(false)
+	if err != nil || !txn.Valid() {
+		return err
+	}
+	savepointRecord := a.Ctx.GetSessionVars().TxnCtx.RollbackToSavepoint(sc.ForeignKeyTriggerCtx.SavepointName)
+	if savepointRecord == nil {
+		// Normally should never run into here, but just in case, rollback the transaction.
+		err = txn.Rollback()
+		if err != nil {
+			return err
+		}
+		return errors.Errorf("foreign key cascade savepoint '%s' not found, transaction is rollback, should never happen", sc.ForeignKeyTriggerCtx.SavepointName)
+	}
+	txn.RollbackMemDBToCheckpoint(savepointRecord.MemDBCheckpoint)
+	a.Ctx.GetSessionVars().TxnCtx.ReleaseSavepoint(sc.ForeignKeyTriggerCtx.SavepointName)
 	return nil
 }
 
@@ -604,7 +721,8 @@ func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic 
 	if toCheck.Schema().Len() == 0 {
 		handled = !isExplainAnalyze
 		if isPessimistic {
-			return handled, nil, a.handlePessimisticDML(ctx, toCheck)
+			err := a.handlePessimisticDML(ctx, toCheck)
+			return handled, nil, err
 		}
 		r, err := a.handleNoDelayExecutor(ctx, toCheck)
 		return handled, r, err
@@ -762,6 +880,7 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e Executor) (sqlex
 	if err != nil {
 		return nil, err
 	}
+	err = a.handleStmtForeignKeyTrigger(ctx, e)
 	return nil, err
 }
 
@@ -1215,9 +1334,12 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	if execDetail.CommitDetail != nil && execDetail.CommitDetail.WriteSize > 0 {
 		a.Ctx.GetTxnWriteThroughputSLI().AddTxnWriteSize(execDetail.CommitDetail.WriteSize, execDetail.CommitDetail.WriteKeys)
 	}
-	if execDetail.ScanDetail != nil && execDetail.ScanDetail.ProcessedKeys > 0 && sessVars.StmtCtx.AffectedRows() > 0 {
-		// Only record the read keys in write statement which affect row more than 0.
-		a.Ctx.GetTxnWriteThroughputSLI().AddReadKeys(execDetail.ScanDetail.ProcessedKeys)
+	if execDetail.ScanDetail != nil && sessVars.StmtCtx.AffectedRows() > 0 {
+		processedKeys := atomic.LoadInt64(&execDetail.ScanDetail.ProcessedKeys)
+		if processedKeys > 0 {
+			// Only record the read keys in write statement which affect row more than 0.
+			a.Ctx.GetTxnWriteThroughputSLI().AddReadKeys(processedKeys)
+		}
 	}
 	succ := err == nil
 	if a.Plan != nil {

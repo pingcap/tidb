@@ -97,6 +97,7 @@ const (
 	ActionCreateTables                  ActionType = 60
 	ActionMultiSchemaChange             ActionType = 61
 	ActionFlashbackCluster              ActionType = 62
+	ActionRecoverSchema                 ActionType = 63
 )
 
 var actionMap = map[ActionType]string{
@@ -158,6 +159,7 @@ var actionMap = map[ActionType]string{
 	ActionAlterTableStatsOptions:        "alter table statistics options",
 	ActionMultiSchemaChange:             "alter table multi-schema change",
 	ActionFlashbackCluster:              "flashback cluster",
+	ActionRecoverSchema:                 "flashback schema",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
@@ -678,7 +680,12 @@ func (job *Job) hasDependentTableForExchangePartition(other *Job) (bool, error) 
 // How to check the job depends on "other"?
 // 1. The two jobs handle the same database when one of the two jobs is an ActionDropSchema or ActionCreateSchema type.
 // 2. Or the two jobs handle the same table.
+// 3. Or other job is flashback cluster.
 func (job *Job) IsDependentOn(other *Job) (bool, error) {
+	if other.Type == ActionFlashbackCluster {
+		return true, nil
+	}
+
 	isDependent, err := job.hasDependentSchema(other)
 	if err != nil || isDependent {
 		return isDependent, errors.Trace(err)
@@ -806,7 +813,8 @@ func (job *Job) IsRollbackable() bool {
 	case ActionMultiSchemaChange:
 		return job.MultiSchemaInfo.Revertible
 	case ActionFlashbackCluster:
-		if job.SchemaState == StateWriteReorganization {
+		if job.SchemaState == StateWriteReorganization ||
+			job.SchemaState == StateWriteOnly {
 			return false
 		}
 	}

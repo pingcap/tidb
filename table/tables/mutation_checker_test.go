@@ -87,7 +87,7 @@ func TestCompareIndexData(t *testing.T) {
 }
 
 func TestCheckRowInsertionConsistency(t *testing.T) {
-	sessVars := variable.NewSessionVars()
+	sessVars := variable.NewSessionVars(nil)
 	rd := rowcodec.Encoder{Enable: true}
 
 	// mocked data
@@ -230,7 +230,7 @@ func TestCheckIndexKeysAndCheckHandleConsistency(t *testing.T) {
 			{ID: 2, Offset: 1, FieldType: *types.NewFieldType(mysql.TypeDatetime)},
 		},
 	}
-	sessVars := variable.NewSessionVars()
+	sessVars := variable.NewSessionVars(nil)
 	rd := rowcodec.Encoder{Enable: true}
 
 	now := types.CurrentTime(mysql.TypeDatetime)

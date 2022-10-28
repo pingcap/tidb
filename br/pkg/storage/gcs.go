@@ -304,6 +304,11 @@ func newGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorage
 	return &gcsStorage{gcs: gcs, bucket: bucket}, nil
 }
 
+// only for unit test
+func NewGCSStorageForTest(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorageOptions) (*gcsStorage, error) {
+	return newGCSStorage(ctx, gcs, opts)
+}
+
 func hasSSTFiles(ctx context.Context, bucket *storage.BucketHandle, prefix string) bool {
 	query := storage.Query{Prefix: prefix}
 	_ = query.SetAttrSelection([]string{"Name"})

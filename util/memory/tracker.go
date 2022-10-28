@@ -405,10 +405,22 @@ func (t *Tracker) Consume(bs int64) {
 		}
 	}
 
+	tryActionLastOne := func(mu *actionMu, tracker *Tracker) {
+		mu.Lock()
+		defer mu.Unlock()
+		if currentAction := mu.actionOnExceed; currentAction != nil {
+			for nextAction := currentAction.GetFallback(); nextAction != nil; {
+				currentAction = nextAction
+				nextAction = currentAction.GetFallback()
+			}
+			currentAction.Action(tracker)
+		}
+	}
+
 	if bs > 0 && sessionRootTracker != nil {
 		// Kill the Top1 session
 		if sessionRootTracker.NeedKill.Load() {
-			tryAction(&sessionRootTracker.actionMuForHardLimit, sessionRootTracker)
+			tryActionLastOne(&sessionRootTracker.actionMuForHardLimit, sessionRootTracker)
 		}
 		// Update the Top1 session
 		memUsage := sessionRootTracker.BytesConsumed()
@@ -700,6 +712,28 @@ func (t *Tracker) setParent(parent *Tracker) {
 	t.parMu.parent = parent
 }
 
+// CountAllChildrenMemUse return memory used tree for the tracker
+func (t *Tracker) CountAllChildrenMemUse() map[string]int64 {
+	trackerMemUseMap := make(map[string]int64, 1024)
+	countChildMem(t, "", trackerMemUseMap)
+	return trackerMemUseMap
+}
+
+func countChildMem(t *Tracker, familyTreeName string, trackerMemUseMap map[string]int64) {
+	if len(familyTreeName) > 0 {
+		familyTreeName += " <- "
+	}
+	familyTreeName += "[" + strconv.Itoa(t.Label()) + "]"
+	trackerMemUseMap[familyTreeName] += t.BytesConsumed()
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, sli := range t.mu.children {
+		for _, tracker := range sli {
+			countChildMem(tracker, familyTreeName, trackerMemUseMap)
+		}
+	}
+}
+
 const (
 	// LabelForSQLText represents the label of the SQL Text
 	LabelForSQLText int = -1
@@ -751,6 +785,8 @@ const (
 	LabelForAnalyzeMemory int = -24
 	// LabelForGlobalAnalyzeMemory represents the label of the global memory of all analyze jobs
 	LabelForGlobalAnalyzeMemory int = -25
+	// LabelForPreparedPlanCache represents the label of the prepared plan cache memory usage
+	LabelForPreparedPlanCache int = -26
 )
 
 // MetricsTypes is used to get label for metrics

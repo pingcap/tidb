@@ -50,8 +50,9 @@ import (
 %token	<ident>
 
 	/*yy:token "%c"     */
-	identifier "identifier"
-	asof       "AS OF"
+	identifier  "identifier"
+	asof        "AS OF"
+	toTimestamp "TO TIMESTAMP"
 
 	/*yy:token "_%c"    */
 	underscoreCS "UNDERSCORE_CHARSET"
@@ -298,6 +299,7 @@ import (
 	always                "ALWAYS"
 	any                   "ANY"
 	ascii                 "ASCII"
+	attribute             "ATTRIBUTE"
 	attributes            "ATTRIBUTES"
 	statsOptions          "STATS_OPTIONS"
 	statsSampleRate       "STATS_SAMPLE_RATE"
@@ -900,7 +902,8 @@ import (
 	ExplainableStmt            "explainable statement"
 	FlushStmt                  "Flush statement"
 	FlashbackTableStmt         "Flashback table statement"
-	FlashbackClusterStmt       "Flashback cluster statement"
+	FlashbackToTimestampStmt   "Flashback cluster statement"
+	FlashbackDatabaseStmt      "Flashback Database statement"
 	GrantStmt                  "Grant statement"
 	GrantProxyStmt             "Grant proxy statement"
 	GrantRoleStmt              "Grant role statement"
@@ -911,7 +914,7 @@ import (
 	LoadDataStmt               "Load data statement"
 	LoadStatsStmt              "Load statistic statement"
 	LockTablesStmt             "Lock tables statement"
-	NonTransactionalDeleteStmt "Non-transactional delete statement"
+	NonTransactionalDMLStmt    "Non-transactional DML statement"
 	PlanReplayerStmt           "Plan replayer statement"
 	PreparedStmt               "PreparedStmt"
 	PurgeImportStmt            "PURGE IMPORT statement that removes a IMPORT task record"
@@ -952,6 +955,7 @@ import (
 	BindableStmt               "Statement that can be created binding on"
 	UpdateStmtNoWith           "Update statement without CTE clause"
 	HelpStmt                   "HELP statement"
+	ShardableStmt              "Shardable statement that can be used in non-transactional DMLs"
 
 %type	<item>
 	AdminShowSlow                          "Admin Show Slow statement"
@@ -1129,6 +1133,7 @@ import (
 	PasswordOrLockOption                   "Single password or lock option for create user statement"
 	PasswordOrLockOptionList               "Password or lock options for create user statement"
 	PasswordOrLockOptions                  "Optional password or lock options for create user statement"
+	CommentOrAttributeOption               "Optional comment or attribute option for CREATE/ALTER USER statements"
 	ColumnPosition                         "Column position [First|After ColumnName]"
 	PrepareSQL                             "Prepare statement sql string"
 	Priority                               "Statement priority"
@@ -1538,6 +1543,22 @@ AlterTableStmt:
 		$$ = &ast.CompactTableStmt{
 			Table:       $4.(*ast.TableName),
 			ReplicaKind: ast.CompactReplicaKindTiFlash,
+		}
+	}
+|	"ALTER" IgnoreOptional "TABLE" TableName "COMPACT" "PARTITION" PartitionNameList
+	{
+		$$ = &ast.CompactTableStmt{
+			Table:          $4.(*ast.TableName),
+			PartitionNames: $7.([]model.CIStr),
+			ReplicaKind:    ast.CompactReplicaKindAll,
+		}
+	}
+|	"ALTER" IgnoreOptional "TABLE" TableName "COMPACT" "PARTITION" PartitionNameList "TIFLASH" "REPLICA"
+	{
+		$$ = &ast.CompactTableStmt{
+			Table:          $4.(*ast.TableName),
+			PartitionNames: $7.([]model.CIStr),
+			ReplicaKind:    ast.CompactReplicaKindTiFlash,
 		}
 	}
 
@@ -2568,15 +2589,29 @@ RecoverTableStmt:
 
 /*******************************************************************
  *
- *  Flush Back Cluster Statement
+ *  FLASHBACK [CLUSTER | DATABASE | TABLE] TO TIMESTAMP
  *
  *  Example:
  *
  *******************************************************************/
-FlashbackClusterStmt:
-	"FLASHBACK" "CLUSTER" "TO" "TIMESTAMP" stringLit
+FlashbackToTimestampStmt:
+	"FLASHBACK" "CLUSTER" toTimestamp stringLit
 	{
-		$$ = &ast.FlashBackClusterStmt{
+		$$ = &ast.FlashBackToTimestampStmt{
+			FlashbackTS: ast.NewValueExpr($4, "", ""),
+		}
+	}
+|	"FLASHBACK" "TABLE" TableNameList toTimestamp stringLit
+	{
+		$$ = &ast.FlashBackToTimestampStmt{
+			Tables:      $3.([]*ast.TableName),
+			FlashbackTS: ast.NewValueExpr($5, "", ""),
+		}
+	}
+|	"FLASHBACK" DatabaseSym DBName toTimestamp stringLit
+	{
+		$$ = &ast.FlashBackToTimestampStmt{
+			DBName:      model.NewCIStr($3),
 			FlashbackTS: ast.NewValueExpr($5, "", ""),
 		}
 	}
@@ -2604,6 +2639,23 @@ FlashbackToNewName:
 |	"TO" Identifier
 	{
 		$$ = $2
+	}
+
+/*******************************************************************
+ *
+ *  Flush Back Database Statement
+ *
+ *  Example:
+ *      FLASHBACK DATABASE/SCHEMA DBName TO newDBName
+ *
+ *******************************************************************/
+FlashbackDatabaseStmt:
+	"FLASHBACK" DatabaseSym DBName FlashbackToNewName
+	{
+		$$ = &ast.FlashBackDatabaseStmt{
+			DBName:  model.NewCIStr($3),
+			NewName: $4,
+		}
 	}
 
 /*******************************************************************
@@ -3685,12 +3737,11 @@ IndexPartSpecificationList:
 IndexPartSpecification:
 	ColumnName OptFieldLen OptOrder
 	{
-		// Order is parsed but just ignored as MySQL did.
-		$$ = &ast.IndexPartSpecification{Column: $1.(*ast.ColumnName), Length: $2.(int)}
+		$$ = &ast.IndexPartSpecification{Column: $1.(*ast.ColumnName), Length: $2.(int), Desc: $3.(bool)}
 	}
 |	'(' Expression ')' OptOrder
 	{
-		$$ = &ast.IndexPartSpecification{Expr: $2}
+		$$ = &ast.IndexPartSpecification{Expr: $2, Desc: $4.(bool)}
 	}
 
 IndexLockAndAlgorithmOpt:
@@ -5994,6 +6045,7 @@ UnReservedKeyword:
 	"ACTION"
 |	"ADVISE"
 |	"ASCII"
+|	"ATTRIBUTE"
 |	"ATTRIBUTES"
 |	"BINDING_CACHE"
 |	"STATS_OPTIONS"
@@ -11316,8 +11368,9 @@ Statement:
 |	DropStatsStmt
 |	DropBindingStmt
 |	FlushStmt
-|	FlashbackClusterStmt
 |	FlashbackTableStmt
+|	FlashbackToTimestampStmt
+|	FlashbackDatabaseStmt
 |	GrantStmt
 |	GrantProxyStmt
 |	GrantRoleStmt
@@ -11373,7 +11426,7 @@ Statement:
 |	ShutdownStmt
 |	RestartStmt
 |	HelpStmt
-|	NonTransactionalDeleteStmt
+|	NonTransactionalDMLStmt
 
 TraceableStmt:
 	DeleteFromStmt
@@ -12565,10 +12618,10 @@ CommaOpt:
  *  https://dev.mysql.com/doc/refman/5.7/en/account-management-sql.html
  ************************************************************************************/
 CreateUserStmt:
-	"CREATE" "USER" IfNotExists UserSpecList RequireClauseOpt ConnectionOptions PasswordOrLockOptions
+	"CREATE" "USER" IfNotExists UserSpecList RequireClauseOpt ConnectionOptions PasswordOrLockOptions CommentOrAttributeOption
 	{
-		// See https://dev.mysql.com/doc/refman/5.7/en/create-user.html
-		$$ = &ast.CreateUserStmt{
+		// See https://dev.mysql.com/doc/refman/8.0/en/create-user.html
+		ret := &ast.CreateUserStmt{
 			IsCreateRole:          false,
 			IfNotExists:           $3.(bool),
 			Specs:                 $4.([]*ast.UserSpec),
@@ -12576,6 +12629,10 @@ CreateUserStmt:
 			ResourceOptions:       $6.([]*ast.ResourceOption),
 			PasswordOrLockOptions: $7.([]*ast.PasswordOrLockOption),
 		}
+		if $8 != nil {
+			ret.CommentOrAttributeOption = $8.(*ast.CommentOrAttributeOption)
+		}
+		$$ = ret
 	}
 
 CreateRoleStmt:
@@ -12589,17 +12646,21 @@ CreateRoleStmt:
 		}
 	}
 
-/* See http://dev.mysql.com/doc/refman/5.7/en/alter-user.html */
+/* See http://dev.mysql.com/doc/refman/8.0/en/alter-user.html */
 AlterUserStmt:
-	"ALTER" "USER" IfExists UserSpecList RequireClauseOpt ConnectionOptions PasswordOrLockOptions
+	"ALTER" "USER" IfExists UserSpecList RequireClauseOpt ConnectionOptions PasswordOrLockOptions CommentOrAttributeOption
 	{
-		$$ = &ast.AlterUserStmt{
+		ret := &ast.AlterUserStmt{
 			IfExists:              $3.(bool),
 			Specs:                 $4.([]*ast.UserSpec),
 			TLSOptions:            $5.([]*ast.TLSOption),
 			ResourceOptions:       $6.([]*ast.ResourceOption),
 			PasswordOrLockOptions: $7.([]*ast.PasswordOrLockOption),
 		}
+		if $8 != nil {
+			ret.CommentOrAttributeOption = $8.(*ast.CommentOrAttributeOption)
+		}
+		$$ = ret
 	}
 |	"ALTER" "USER" IfExists "USER" '(' ')' "IDENTIFIED" "BY" AuthString
 	{
@@ -12790,6 +12851,19 @@ RequireListElement:
 			Type:  ast.SAN,
 			Value: $2,
 		}
+	}
+
+CommentOrAttributeOption:
+	{
+		$$ = nil
+	}
+|	"COMMENT" stringLit
+	{
+		$$ = &ast.CommentOrAttributeOption{Type: ast.UserCommentType, Value: $2}
+	}
+|	"ATTRIBUTE" stringLit
+	{
+		$$ = &ast.CommentOrAttributeOption{Type: ast.UserAttributeType, Value: $2}
 	}
 
 PasswordOrLockOptions:
@@ -13753,16 +13827,20 @@ TableLockList:
  * Non-transactional Delete Statement
  * Split a SQL on a column. Used for bulk delete that doesn't need ACID.
  *******************************************************************/
-NonTransactionalDeleteStmt:
-	"BATCH" OptionalShardColumn "LIMIT" NUM DryRunOptions DeleteFromStmt
+NonTransactionalDMLStmt:
+	"BATCH" OptionalShardColumn "LIMIT" NUM DryRunOptions ShardableStmt
 	{
-		$$ = &ast.NonTransactionalDeleteStmt{
+		$$ = &ast.NonTransactionalDMLStmt{
 			DryRun:      $5.(int),
 			ShardColumn: $2.(*ast.ColumnName),
 			Limit:       getUint64FromNUM($4),
-			DeleteStmt:  $6.(*ast.DeleteStmt),
+			DMLStmt:     $6.(ast.ShardableDMLStmt),
 		}
 	}
+
+ShardableStmt:
+	DeleteFromStmt
+|	UpdateStmt
 
 DryRunOptions:
 	{
@@ -13811,6 +13889,13 @@ KillStmt:
 			ConnectionID:  getUint64FromNUM($3),
 			Query:         true,
 			TiDBExtension: $1.(bool),
+		}
+	}
+|	KillOrKillTiDB BuiltinFunction
+	{
+		$$ = &ast.KillStmt{
+			TiDBExtension: $1.(bool),
+			Expr:          $2,
 		}
 	}
 

@@ -121,7 +121,7 @@ func (cb *CommonHandleCols) ResolveIndices(schema *expression.Schema) (HandleCol
 }
 
 // IsInt implements the kv.HandleCols interface.
-func (cb *CommonHandleCols) IsInt() bool {
+func (*CommonHandleCols) IsInt() bool {
 	return false
 }
 
@@ -215,7 +215,7 @@ func (ib *IntHandleCols) BuildHandle(row chunk.Row) (kv.Handle, error) {
 }
 
 // BuildHandleFromIndexRow implements the kv.HandleCols interface.
-func (ib *IntHandleCols) BuildHandleFromIndexRow(row chunk.Row) (kv.Handle, error) {
+func (*IntHandleCols) BuildHandleFromIndexRow(row chunk.Row) (kv.Handle, error) {
 	return kv.IntHandle(row.GetInt64(row.Len() - 1)), nil
 }
 
@@ -234,7 +234,7 @@ func (ib *IntHandleCols) ResolveIndices(schema *expression.Schema) (HandleCols, 
 }
 
 // IsInt implements the kv.HandleCols interface.
-func (ib *IntHandleCols) IsInt() bool {
+func (*IntHandleCols) IsInt() bool {
 	return true
 }
 
@@ -252,7 +252,7 @@ func (ib *IntHandleCols) GetCol(idx int) *expression.Column {
 }
 
 // NumCols implements the kv.HandleCols interface.
-func (ib *IntHandleCols) NumCols() int {
+func (*IntHandleCols) NumCols() int {
 	return 1
 }
 
@@ -264,7 +264,7 @@ func (ib *IntHandleCols) Compare(a, b []types.Datum, ctors []collate.Collator) (
 }
 
 // GetFieldsTypes implements the kv.HandleCols interface.
-func (ib *IntHandleCols) GetFieldsTypes() []*types.FieldType {
+func (*IntHandleCols) GetFieldsTypes() []*types.FieldType {
 	return []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 }
 

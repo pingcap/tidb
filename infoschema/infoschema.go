@@ -463,7 +463,7 @@ func (is *infoSchema) addReferredForeignKeys(schema model.CIStr, tbInfo *model.T
 			if newReferredFKList[i].ChildTable.L != newReferredFKList[j].ChildTable.L {
 				return newReferredFKList[i].ChildTable.L < newReferredFKList[j].ChildTable.L
 			}
-			return newReferredFKList[i].ChildFKName.L != newReferredFKList[j].ChildFKName.L
+			return newReferredFKList[i].ChildFKName.L < newReferredFKList[j].ChildFKName.L
 		})
 		is.referredForeignKeyMap[refer] = newReferredFKList
 	}
@@ -623,8 +623,9 @@ func (is *SessionTables) schemaTables(schema model.CIStr) *schemaTables {
 // So when a database is dropped, its temporary tables still exist and can be returned by TableByName/TableByID.
 type SessionExtendedInfoSchema struct {
 	InfoSchema
-	LocalTemporaryTables *SessionTables
-	MdlTables            *SessionTables
+	LocalTemporaryTablesOnce sync.Once
+	LocalTemporaryTables     *SessionTables
+	MdlTables                *SessionTables
 }
 
 // TableByName implements InfoSchema.TableByName

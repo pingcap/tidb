@@ -43,7 +43,6 @@ go_test(
     deps = [
         ":config",
         "//br/pkg/lightning/common",
-        "//parser/mysql",
         "@com_github_burntsushi_toml//:toml",
         "@com_github_stretchr_testify//require",
     ],
