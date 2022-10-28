@@ -1487,7 +1487,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	if tn.Schema.String() != "" {
 		currentDB = tn.Schema.L
 	}
-	table, err = tryLockMDLAndUpdateSchemaIfNecessary(p.ctx, model.NewCIStr(currentDB), table, p.ensureInfoSchema())
+	table, _, err = tryLockMDLAndUpdateSchemaIfNecessary(p.ctx, model.NewCIStr(currentDB), table, p.ensureInfoSchema())
 	if err != nil {
 		p.err = err
 		return
@@ -1698,38 +1698,38 @@ func (p *preprocessor) hasAutoConvertWarning(colDef *ast.ColumnDef) bool {
 	return false
 }
 
-func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.CIStr, tbl table.Table, is infoschema.InfoSchema) (table.Table, error) {
+func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.CIStr, tbl table.Table, is infoschema.InfoSchema) (table.Table, infoschema.InfoSchema, error) {
 	if !sctx.GetSessionVars().TxnCtx.EnableMDL {
-		return tbl, nil
+		return tbl, is, nil
 	}
 	if is.SchemaMetaVersion() == 0 {
-		return tbl, nil
+		return tbl, is, nil
 	}
 	skipLock := false
 	if sctx.GetSessionVars().SnapshotInfoschema != nil {
-		return tbl, nil
+		return tbl, is, nil
 	}
 	if sctx.GetSessionVars().TxnCtx.IsStaleness {
-		return tbl, nil
+		return tbl, is, nil
 	}
 	if tbl.Meta().TempTableType == model.TempTableLocal {
 		// Don't attach, don't lock.
-		return tbl, nil
+		return tbl, is, nil
 	} else if tbl.Meta().TempTableType == model.TempTableGlobal {
 		skipLock = true
 	}
 	if IsAutoCommitTxn(sctx) && sctx.GetSessionVars().StmtCtx.IsReadOnly {
-		return tbl, nil
+		return tbl, is, nil
 	}
 	tableInfo := tbl.Meta()
 	if _, ok := sctx.GetSessionVars().GetRelatedTableForMDL().Load(tableInfo.ID); !ok {
 		if se, ok := is.(*infoschema.SessionExtendedInfoSchema); ok && skipLock {
 			if se.MdlTables == nil {
-				return tbl, nil
+				return tbl, is, nil
 			}
 			if _, ok := se.MdlTables.TableByID(tableInfo.ID); ok {
 				// Already attach.
-				return tbl, nil
+				return tbl, is, nil
 			}
 		}
 
@@ -1749,7 +1749,7 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.
 		var err error
 		tbl, err = domainSchema.TableByName(dbName, tableInfo.Name)
 		if err != nil {
-			return nil, err
+			return nil, is, err
 		}
 		// Check the table change, if adding new public index or modify a column, we need to handle them.
 		if !sctx.GetSessionVars().IsPessimisticReadConsistency() {
@@ -1775,7 +1775,7 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.
 					allocs := autoid.NewAllocatorsFromTblInfo(sctx.GetStore(), dbInfo.ID, copyTableInfo)
 					tbl, err = table.TableFromMeta(allocs, copyTableInfo)
 					if err != nil {
-						return nil, err
+						return nil, is, err
 					}
 				}
 			}
@@ -1793,7 +1793,7 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.
 					}
 				}
 				if found {
-					return nil, ErrSchemaChanged.GenWithStack("public column %s has changed", col.Name)
+					return nil, is, ErrSchemaChanged.GenWithStack("public column %s has changed", col.Name)
 				}
 			}
 		}
@@ -1803,6 +1803,7 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.
 			se = infoschema.AttachMDLTableInfoSchema(is).(*infoschema.SessionExtendedInfoSchema)
 			sessiontxn.GetTxnManager(sctx).SetTxnInfoSchema(se)
 			sctx.GetSessionVars().TxnCtx.InfoSchema = se
+			is = se
 		}
 		db, _ := domainSchema.SchemaByTable(tbl.Meta())
 		err = se.UpdateTableInfo(db, tbl)
@@ -1810,14 +1811,10 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.
 		for _, col := range tbl.Meta().Columns {
 			logutil.BgLogger().Error("col", zap.Any("name", col.Name), zap.Any("state", col.State.String()))
 		}
-		tbbl, _ := se.TableByID(tbl.Meta().ID)
-		for _, col := range tbbl.Meta().Columns {
-			logutil.BgLogger().Error("col for reget", zap.Any("name", col.Name), zap.Any("state", col.State.String()))
-		}
 		if err != nil {
-			return nil, err
+			return nil, is, err
 		}
-		return tbl, nil
+		return tbl, is, nil
 	}
-	return tbl, nil
+	return tbl, is, nil
 }
