@@ -7,6 +7,7 @@ go_library(
         "function.go",
         "manifest.go",
         "registry.go",
+        "session.go",
         "util.go",
     ],
     importpath = "github.com/pingcap/tidb/extension",
@@ -15,7 +16,9 @@ go_library(
         "//sessionctx/variable",
         "//types",
         "//util/chunk",
+        "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
+        "@io_etcd_go_etcd_client_v3//:client",
     ],
 )
 
