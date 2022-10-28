@@ -935,11 +935,7 @@ func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 // Before that is done, we use this logic to provide a way to keep the order property when reading from TiKV, so that we can use the orderliness of index to speed up the query.
 // Here we can change the execution plan to TopN(TiDB)->Reader(TiDB)->Limit(TiKV)->Scan(TiKV).(TiFlash is not supported).
 func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bool) {
-	var err error
 	copTsk = copTsk.copy().(*copTask)
-	if err != nil {
-		return nil, false
-	}
 	if len(copTsk.rootTaskConds) > 0 {
 		return nil, false
 	}
@@ -980,6 +976,7 @@ func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bo
 		idxScan *PhysicalIndexScan
 		tblScan *PhysicalTableScan
 		tblInfo *model.TableInfo
+		err     error
 	)
 	if copTsk.indexPlan != nil {
 		copTsk.indexPlan, err = copTsk.indexPlan.Clone()
