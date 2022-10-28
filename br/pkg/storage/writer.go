@@ -78,7 +78,7 @@ func newCompressWriter(compressType CompressType, w io.Writer) simpleCompressWri
 	case Zstd:
 		newWriter, err := zstd.NewWriter(w)
 		if err != nil {
-			log.Warn("Met error when creating new writer for Zstd file", zap.Error(err))
+			log.Warn("Met error when creating new writer for Zstd type file", zap.Error(err))
 		}
 		return newWriter
 	default:
