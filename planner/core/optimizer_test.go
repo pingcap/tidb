@@ -311,6 +311,8 @@ func TestPrunePhysicalColumns(t *testing.T) {
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 	}
 
+	// Join[col0, col3; col0==col3] <- ExchangeReceiver[col0, col1, col2] <- ExchangeSender[col0, col1, col2] <- Selection[col0, col1, col2; col1 < col2] <- TableScan[col0, col1, col2]
+	//      <- ExchangeReceiver1[col3] <- ExchangeSender1[col3] <- TableScan1[col3]
 	tableReader := &PhysicalTableReader{}
 	passSender := &PhysicalExchangeSender{
 		ExchangeType: tipb.ExchangeType_PassThrough,
@@ -330,10 +332,7 @@ func TestPrunePhysicalColumns(t *testing.T) {
 	tableReader.tablePlan = passSender
 	passSender.children = []PhysicalPlan{hashJoin}
 	hashJoin.children = []PhysicalPlan{recv, recv1}
-	recv.children = []PhysicalPlan{hashSender}
-	recv1.children = []PhysicalPlan{hashSender1}
-	hashSender.children = []PhysicalPlan{tableScan}
-	hashSender1.children = []PhysicalPlan{tableScan1}
+	selection := &PhysicalSelection{}
 
 	cond := expression.NewFunctionInternal(sctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), col0, col3)
 	sf, isSF := cond.(*expression.ScalarFunction)
@@ -343,13 +342,34 @@ func TestPrunePhysicalColumns(t *testing.T) {
 	hashJoinSchema = append(hashJoinSchema, col3)
 	hashJoin.SetSchema(expression.NewSchema(hashJoinSchema...))
 
-	// recv schema has useless columns col1, col2
-	recv.Schema().Columns = append(recv.Schema().Columns, col0, col1, col2)
-	recv1.Schema().Columns = append(recv.Schema().Columns, col3)
-	prunePhysicalColumns(tableReader)
+	selection.SetChildren(tableScan)
+	hashSender.SetChildren(selection)
+	recv.SetChildren(hashSender)
+	tableScan.Schema().Columns = append(tableScan.Schema().Columns, col0, col1, col2)
 
+	hashSender1.SetChildren(tableScan1)
+	recv1.SetChildren(hashSender1)
+	tableScan1.Schema().Columns = append(tableScan1.Schema().Columns, col3)
+
+	prunePhysicalColumns(sctx, tableReader)
+
+	// Optimized Plan：
+	// Join[col0, col3; col0==col3] <- ExchangeReceiver[col0] <- ExchangeSender[col0] <- Projection[col0] <- Selection[col0, col1, col2; col1 < col2] <- TableScan[col0, col1, col2]
+	//      <- ExchangeReceiver1[col3] <- ExchangeSender1[col3] <- TableScan1[col3]
+	require.True(t, len(recv.Schema().Columns) == 1)
 	require.True(t, recv.Schema().Contains(col0))
 	require.False(t, recv.Schema().Contains(col1))
 	require.False(t, recv.Schema().Contains(col2))
+	require.True(t, len(recv.children[0].Children()) == 1)
+	physicalProj := recv.children[0].Children()[0]
+	switch x := physicalProj.(type) {
+	case *PhysicalProjection:
+		require.True(t, x.Schema().Contains(col0))
+		require.False(t, recv.Schema().Contains(col1))
+		require.False(t, recv.Schema().Contains(col2))
+	default:
+		require.True(t, false)
+	}
+	require.True(t, len(recv1.Schema().Columns) == 1)
 	require.True(t, recv1.Schema().Contains(col3))
 }

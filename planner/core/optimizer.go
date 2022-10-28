@@ -375,6 +375,7 @@ func mergeContinuousSelections(p PhysicalPlan) {
 func postOptimize(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {
 	// some cases from update optimize will require avoiding projection elimination.
 	// see comments ahead of call of DoOptimize in function of buildUpdate().
+	prunePhysicalColumns(sctx, plan)
 	plan = eliminatePhysicalProjection(plan)
 	plan = InjectExtraProjection(plan)
 	mergeContinuousSelections(plan)
@@ -383,20 +384,19 @@ func postOptimize(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {
 	handleFineGrainedShuffle(sctx, plan)
 	checkPlanCacheable(sctx, plan)
 	propagateProbeParents(plan, nil)
-	prunePhysicalColumns(plan)
 	return plan
 }
 
-// Currently only for MPP(HashJoin<-ExchangeReceiver).
-func prunePhysicalColumns(plan PhysicalPlan) {
+// Currently only for MPP(HashJoin<-Exchange).
+func prunePhysicalColumns(sctx sessionctx.Context, plan PhysicalPlan) {
 	emptyColumns := make([]*expression.Column, 0)
 	if tableReader, ok := plan.(*PhysicalTableReader); ok {
 		if _, isExchangeSender := tableReader.tablePlan.(*PhysicalExchangeSender); isExchangeSender {
-			prunePhysicalColumnsInternal(tableReader.tablePlan, emptyColumns, false)
+			prunePhysicalColumnsInternal(sctx, tableReader.tablePlan, emptyColumns, false)
 		}
 	} else {
 		for _, child := range plan.Children() {
-			prunePhysicalColumns(child)
+			prunePhysicalColumns(sctx, child)
 		}
 	}
 }
@@ -429,7 +429,7 @@ func (p *PhysicalHashJoin) extractUsedCols(parentUsedCols []*expression.Column) 
 	return leftCols, rightCols
 }
 
-func prunePhysicalColumnsInternal(plan PhysicalPlan, parentUsedCols []*expression.Column, meaningFulParentUsedCols bool) {
+func prunePhysicalColumnsInternal(sctx sessionctx.Context, plan PhysicalPlan, parentUsedCols []*expression.Column, meaningFulParentUsedCols bool) {
 	switch x := plan.(type) {
 	case *PhysicalHashJoin:
 		child0 := x.children[0]
@@ -437,25 +437,44 @@ func prunePhysicalColumnsInternal(plan PhysicalPlan, parentUsedCols []*expressio
 		schemaColumns := make([]*expression.Column, 0, len(x.Schema().Columns))
 		schemaColumns = x.Schema().Columns
 		leftCols, rightCols := x.extractUsedCols(schemaColumns)
-		prunePhysicalColumnsInternal(child0, leftCols, true)
-		prunePhysicalColumnsInternal(child1, rightCols, true)
+		prunePhysicalColumnsInternal(sctx, child0, leftCols, true)
+		prunePhysicalColumnsInternal(sctx, child1, rightCols, true)
 	case *PhysicalExchangeReceiver:
 		// Currently, prune columns only when parent node is HashJoin
 		if meaningFulParentUsedCols {
 			used := expression.GetUsedList(parentUsedCols, x.Schema())
+			needPrune := false
+			usedExprs := make([]expression.Expression, len(x.Schema().Columns))
+			prunedSchema := x.Schema().Clone()
 			for i := len(used) - 1; i >= 0; i-- {
+				usedExprs[i] = x.Schema().Columns[i]
 				if !used[i] {
-					// PhysicalExchangeSender and PhysicalExchangeReceiver owns the same schema, so just prune Receiver's Schema here
-					x.Schema().Columns = append(x.Schema().Columns[:i], x.Schema().Columns[i+1:]...)
+					needPrune = true
+					usedExprs = append(usedExprs[:i], usedExprs[i+1:]...)
+					prunedSchema.Columns = append(prunedSchema.Columns[:i], prunedSchema.Columns[i+1:]...)
+				}
+			}
+
+			if needPrune {
+				switch y := x.children[0].(type) {
+				case *PhysicalExchangeSender:
+					ch := y.children[0]
+					proj := PhysicalProjection{
+						Exprs: usedExprs,
+					}.Init(sctx, ch.statsInfo(), 0)
+
+					proj.SetSchema(prunedSchema)
+					proj.SetChildren(ch)
+					y.children[0] = proj
 				}
 			}
 		}
 		emptyColumns := make([]*expression.Column, 0)
-		prunePhysicalColumnsInternal(x.children[0], emptyColumns, false)
+		prunePhysicalColumnsInternal(sctx, x.children[0], emptyColumns, false)
 	default:
 		emptyColumns := make([]*expression.Column, 0)
 		for _, child := range x.Children() {
-			prunePhysicalColumnsInternal(child, emptyColumns, false)
+			prunePhysicalColumnsInternal(sctx, child, emptyColumns, false)
 		}
 	}
 }
