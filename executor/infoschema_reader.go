@@ -2263,7 +2263,7 @@ func (e *memtableRetriever) setDataFromSequences(ctx sessionctx.Context, schemas
 // dataForTableTiFlashReplica constructs data for table tiflash replica info.
 func (e *memtableRetriever) dataForTableTiFlashReplica(ctx sessionctx.Context, schemas []*model.DBInfo) {
 	var rows [][]types.Datum
-	var tiFlashStores *map[int64]helper.StoreStat
+	var tiFlashStores map[int64]helper.StoreStat
 	for _, schema := range schemas {
 		for _, tbl := range schema.Tables {
 			if tbl.TiFlashReplica == nil {
@@ -2272,7 +2272,7 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(ctx sessionctx.Context, s
 			var progress float64
 			if pi := tbl.GetPartitionInfo(); pi != nil && len(pi.Definitions) > 0 {
 				for _, p := range pi.Definitions {
-					progressOfPartition, err := infosync.MustGetTiFlashProgress(p.ID, tbl.TiFlashReplica.Count, tiFlashStores)
+					progressOfPartition, err := infosync.MustGetTiFlashProgress(p.ID, tbl.TiFlashReplica.Count, &tiFlashStores)
 					if err != nil {
 						logutil.BgLogger().Error("dataForTableTiFlashReplica error", zap.Int64("tableID", tbl.ID), zap.Int64("partitionID", p.ID))
 					}
@@ -2281,7 +2281,7 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(ctx sessionctx.Context, s
 				progress = progress / float64(len(pi.Definitions))
 			} else {
 				var err error
-				progress, err = infosync.MustGetTiFlashProgress(tbl.ID, tbl.TiFlashReplica.Count, tiFlashStores)
+				progress, err = infosync.MustGetTiFlashProgress(tbl.ID, tbl.TiFlashReplica.Count, &tiFlashStores)
 				if err != nil {
 					logutil.BgLogger().Error("dataForTableTiFlashReplica error", zap.Int64("tableID", tbl.ID))
 				}

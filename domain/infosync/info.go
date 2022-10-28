@@ -364,7 +364,7 @@ func MustGetTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores *m
 	if isExist {
 		return progressCache, nil
 	}
-	if tiFlashStores == nil {
+	if *tiFlashStores == nil {
 		// We need the up-to-date information about TiFlash stores.
 		// Since TiFlash Replica synchronize may happen immediately after new TiFlash stores are added.
 		tikvStats, err := is.tiflashReplicaManager.GetStoresStat(context.Background())
@@ -381,7 +381,7 @@ func MustGetTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores *m
 				}
 			}
 		}
-		tiFlashStores = &stores
+		*tiFlashStores = stores
 		logutil.BgLogger().Debug("updateTiFlashStores finished", zap.Int("TiFlash store count", len(*tiFlashStores)))
 	}
 	progress, err := is.tiflashReplicaManager.CalculateTiFlashProgress(tableID, replicaCount, *tiFlashStores)
