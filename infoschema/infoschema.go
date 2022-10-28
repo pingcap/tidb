@@ -663,6 +663,11 @@ func (ts *SessionExtendedInfoSchema) TableByID(id int64) (table.Table, bool) {
 			for i, col := range tbl.Meta().Columns {
 				logutil.BgLogger().Error("col", zap.Any("col", col.Name.String()), zap.Any("state", col.State.String()), zap.Int("i", i), zap.Any("state", tbl.Meta().State.String()))
 			}
+			for i, idx := range tbl.Meta().Indices {
+				for _, idxCol := range idx.Columns {
+					logutil.BgLogger().Error("idx", zap.Any("i", i), zap.Any("idx", idx.Name.String()), zap.Any("idx col", idxCol.Name.String()), zap.Any("offset", idxCol.Offset))
+				}
+			}
 			return tbl, true
 		}
 	}

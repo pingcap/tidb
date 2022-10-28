@@ -87,6 +87,11 @@ func CheckDataConsistency(
 	for _, col := range t.Columns {
 		logutil.BgLogger().Error("CheckDataConsistency col", zap.Any("name", col.Name), zap.Any("state", col.State.String()))
 	}
+	for i, idx := range t.indices {
+		for _, idxCol := range idx.Meta().Columns {
+			logutil.BgLogger().Error("CheckDataConsistency idx", zap.Any("i", i), zap.Any("idx", idx.Meta().Name.String()), zap.Any("idx col", idxCol.Name.String()), zap.Any("offset", idxCol.Offset))
+		}
+	}
 	if sh == 0 {
 		// some implementations of MemBuffer doesn't support staging, e.g. that in br/pkg/lightning/backend/kv
 		return nil
@@ -239,9 +244,7 @@ func checkIndexKeys(
 			indexData = indexData[:0]
 		}
 
-		logutil.BgLogger().Error("decodedIndexValues len", zap.Int("len", len(decodedIndexValues)), zap.Any("column len", len(indexInfo.Columns)))
 		for i, v := range decodedIndexValues {
-			logutil.BgLogger().Error("column ", zap.Int("i", i), zap.Any("offset", indexInfo.Columns[i].Offset))
 			fieldType := &t.Columns[indexInfo.Columns[i].Offset].FieldType
 			datum, err := tablecodec.DecodeColumnValue(v, fieldType, sessVars.Location())
 			if err != nil {
