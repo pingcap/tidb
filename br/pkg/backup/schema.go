@@ -181,7 +181,7 @@ func (s *schemaInfo) calculateChecksum(
 
 func (s *schemaInfo) dumpStatsToJSON(statsHandle *handle.Handle) error {
 	jsonTable, err := statsHandle.DumpStatsToJSON(
-		s.dbInfo.Name.String(), s.tableInfo, nil)
+		s.dbInfo.Name.String(), s.tableInfo, nil, true)
 	if err != nil {
 		return errors.Trace(err)
 	}
