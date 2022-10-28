@@ -17,6 +17,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"go.uber.org/zap"
 	"math"
 	"math/bits"
 	"sort"
@@ -5383,6 +5384,12 @@ func CheckUpdateList(assignFlags []int, updt *Update, newTblID2Table map[int64]t
 	updateFromOtherAlias := make(map[int64]tblUpdateInfo)
 	for _, content := range updt.TblColPosInfos {
 		tbl := newTblID2Table[content.TblID]
+		if content.End >= len(assignFlags) {
+			for i, col := range tbl.Meta().Cols() {
+				logutil.BgLogger().Warn("col", zap.Any("col", col.Name.String()), zap.Any("state", col.State.String()), zap.Int("i", i))
+			}
+			logutil.BgLogger().Warn("meet error")
+		}
 		flags := assignFlags[content.Start:content.End]
 		var update, updatePK, updatePartitionCol bool
 		var partitionColumnNames []model.CIStr
