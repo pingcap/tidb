@@ -86,7 +86,7 @@ func newExtensionFuncClass(def *extension.FunctionDef) (*extensionFuncClass, err
 	}
 
 	maxArgs := len(def.ArgTps)
-	minArgs := maxArgs - def.DynamicArgsLen
+	minArgs := maxArgs - def.OptionalArgsLen
 	return &extensionFuncClass{
 		baseFunctionClass: baseFunctionClass{def.Name, minArgs, maxArgs},
 		flen:              flen,

@@ -36,8 +36,8 @@ type FunctionDef struct {
 	EvalTp types.EvalType
 	// ArgTps is the argument types
 	ArgTps []types.EvalType
-	// DynamicArgsLen is the length of the dynamic args
-	DynamicArgsLen int
+	// OptionalArgsLen is the length of the optional args
+	OptionalArgsLen int
 	// EvalStringFunc is the eval function when `EvalTp` is `types.ETString`
 	EvalStringFunc func(ctx FunctionContext, row chunk.Row) (string, bool, error)
 	// EvalIntFunc is the eval function when `EvalTp` is `types.ETInt`
@@ -56,8 +56,8 @@ func (def *FunctionDef) Validate() error {
 		return errors.New("extension function name should not be empty")
 	}
 
-	for def.DynamicArgsLen < 0 || def.DynamicArgsLen > len(def.ArgTps) {
-		return errors.Errorf("invalid DynamicArgsLen: %d", def.DynamicArgsLen)
+	for def.OptionalArgsLen < 0 || def.OptionalArgsLen > len(def.ArgTps) {
+		return errors.Errorf("invalid OptionalArgsLen: %d", def.OptionalArgsLen)
 	}
 
 	return nil

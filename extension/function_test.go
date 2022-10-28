@@ -104,9 +104,9 @@ func TestFuncDynamicArgLen(t *testing.T) {
 	extension.Reset()
 
 	fnDef := &extension.FunctionDef{
-		Name:           "dynamic_arg_func",
-		EvalTp:         types.ETInt,
-		DynamicArgsLen: 1,
+		Name:            "dynamic_arg_func",
+		EvalTp:          types.ETInt,
+		OptionalArgsLen: 1,
 		ArgTps: []types.EvalType{
 			types.ETInt,
 			types.ETInt,
