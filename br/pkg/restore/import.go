@@ -6,6 +6,10 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"fmt"
+	"math/rand"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -95,15 +99,21 @@ type importClient struct {
 	tlsConf    *tls.Config
 
 	keepaliveConf keepalive.ClientParameters
+	cacheId       string
 }
 
 // NewImportClient returns a new ImporterClient.
 func NewImportClient(metaClient split.SplitClient, tlsConf *tls.Config, keepaliveConf keepalive.ClientParameters) ImporterClient {
+	hn, err := os.Hostname()
+	if err != nil {
+		hn = strconv.Itoa(int(rand.Int63()))
+	}
 	return &importClient{
 		metaClient:    metaClient,
 		clients:       make(map[uint64]import_sstpb.ImportSSTClient),
 		tlsConf:       tlsConf,
 		keepaliveConf: keepaliveConf,
+		cacheId:       fmt.Sprintf("DEBUG-%s-%d-%s", time.Now().Format("20060102150405"), rand.Int63(), hn),
 	}
 }
 
@@ -140,6 +150,7 @@ func (ic *importClient) DownloadSST(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	req.StorageCacheId = ic.cacheId
 	return client.Download(ctx, req)
 }
 
