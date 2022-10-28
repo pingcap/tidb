@@ -346,12 +346,127 @@ func updateTiFlashStores(pollTiFlashContext *TiFlashManagementContext) error {
 	return nil
 }
 
+<<<<<<< HEAD
 func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContext *TiFlashManagementContext) (bool, error) {
 	allReplicaReady := true
 	defer func() {
 		pollTiFlashContext.HandlePdCounter += 1
 		pollTiFlashContext.HandlePdCounter %= PullTiFlashPdTick.Load()
 	}()
+=======
+func getTiFlashPeerWithoutLagCount(pollTiFlashContext *TiFlashManagementContext, tableID int64) (int, error) {
+	// storeIDs -> regionID, PD will not create two peer on the same store
+	var flashPeerCount int
+	for _, store := range pollTiFlashContext.TiFlashStores {
+		regionReplica := make(map[int64]int)
+		err := helper.CollectTiFlashStatus(store.Store.StatusAddress, tableID, &regionReplica)
+		if err != nil {
+			logutil.BgLogger().Error("Fail to get peer status from TiFlash.",
+				zap.Int64("tableID", tableID))
+			return 0, err
+		}
+		flashPeerCount += len(regionReplica)
+	}
+	return flashPeerCount, nil
+}
+
+// getTiFlashTableSyncProgress return truncated string to avoid float64 comparison.
+func getTiFlashTableSyncProgress(pollTiFlashContext *TiFlashManagementContext, tableID int64, replicaCount uint64) (string, error) {
+	var regionCount int
+	if err := infosync.GetTiFlashRegionCountFromPD(context.Background(), tableID, &regionCount); err != nil {
+		logutil.BgLogger().Error("Fail to get regionCount from PD.",
+			zap.Int64("tableID", tableID))
+		return "0", errors.Trace(err)
+	}
+
+	tiflashPeerCount, err := getTiFlashPeerWithoutLagCount(pollTiFlashContext, tableID)
+	if err != nil {
+		logutil.BgLogger().Error("Fail to get peer count from TiFlash.",
+			zap.Int64("tableID", tableID))
+		return "0", errors.Trace(err)
+	}
+	progress := float64(tiflashPeerCount) / float64(regionCount*int(replicaCount))
+	if progress > 1 { // when pd do balance
+		logutil.BgLogger().Debug("TiFlash peer count > pd peer count, maybe doing balance.",
+			zap.Int64("tableID", tableID), zap.Int("tiflashPeerCount", tiflashPeerCount), zap.Int("regionCount", regionCount), zap.Uint64("replicaCount", replicaCount))
+		progress = 1
+	}
+	if progress < 1 {
+		logutil.BgLogger().Debug("TiFlash replica progress < 1.",
+			zap.Int64("tableID", tableID), zap.Int("tiflashPeerCount", tiflashPeerCount), zap.Int("regionCount", regionCount), zap.Uint64("replicaCount", replicaCount))
+	}
+	return types.TruncateFloatToString(progress, 2), nil
+}
+
+func pollAvailableTableProgress(schemas infoschema.InfoSchema, ctx sessionctx.Context, pollTiFlashContext *TiFlashManagementContext) {
+	pollMaxCount := RefreshProgressMaxTableCount
+	failpoint.Inject("PollAvailableTableProgressMaxCount", func(val failpoint.Value) {
+		pollMaxCount = uint64(val.(int))
+	})
+	for element := pollTiFlashContext.UpdatingProgressTables.Front(); element != nil && pollMaxCount > 0; pollMaxCount-- {
+		availableTableID := element.Value.(AvailableTableID)
+		var table table.Table
+		if availableTableID.IsPartition {
+			table, _, _ = schemas.FindTableByPartitionID(availableTableID.ID)
+			if table == nil {
+				logutil.BgLogger().Info("get table by partition failed, may be dropped or truncated",
+					zap.Int64("partitionID", availableTableID.ID),
+				)
+				pollTiFlashContext.UpdatingProgressTables.Remove(element)
+				element = element.Next()
+				continue
+			}
+		} else {
+			var ok bool
+			table, ok = schemas.TableByID(availableTableID.ID)
+			if !ok {
+				logutil.BgLogger().Info("get table id failed, may be dropped or truncated",
+					zap.Int64("tableID", availableTableID.ID),
+				)
+				pollTiFlashContext.UpdatingProgressTables.Remove(element)
+				element = element.Next()
+				continue
+			}
+		}
+
+		tableInfo := table.Meta()
+		if tableInfo.TiFlashReplica == nil {
+			logutil.BgLogger().Info("table has no TiFlash replica",
+				zap.Int64("tableID or partitionID", availableTableID.ID),
+				zap.Bool("IsPartition", availableTableID.IsPartition),
+			)
+			pollTiFlashContext.UpdatingProgressTables.Remove(element)
+			element = element.Next()
+			continue
+		}
+		progress, err := getTiFlashTableSyncProgress(pollTiFlashContext, availableTableID.ID, tableInfo.TiFlashReplica.Count)
+		if err != nil {
+			logutil.BgLogger().Error("get tiflash sync progress failed",
+				zap.Error(err),
+				zap.Int64("tableID", availableTableID.ID),
+				zap.Bool("IsPartition", availableTableID.IsPartition),
+			)
+			continue
+		}
+		if pollTiFlashContext.ProgressCache[availableTableID.ID] != progress {
+			err = infosync.UpdateTiFlashTableSyncProgress(context.Background(), availableTableID.ID, progress)
+			if err != nil {
+				logutil.BgLogger().Error("updating TiFlash replica process failed",
+					zap.Error(err),
+					zap.Int64("tableID or partitionID", availableTableID.ID),
+					zap.Bool("IsPartition", availableTableID.IsPartition),
+					zap.String("progress", progress),
+				)
+				continue
+			}
+			pollTiFlashContext.ProgressCache[availableTableID.ID] = progress
+		}
+		next := element.Next()
+		pollTiFlashContext.UpdatingProgressTables.Remove(element)
+		element = next
+	}
+}
+>>>>>>> e415cfa5f4 (DDL: use new PD API to get TiFlash replica table regionCount (#38571))
 
 	updateTiFlash := pollTiFlashContext.UpdateTiFlashStoreCounter%UpdateTiFlashStoreTick.Load() == 0
 	if updateTiFlash {
