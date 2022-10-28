@@ -431,8 +431,9 @@ func pollAvailableTableProgress(schemas infoschema.InfoSchema, ctx sessionctx.Co
 			)
 			continue
 		}
+		next := element.Next()
 		pollTiFlashContext.UpdatingProgressTables.Remove(element)
-		element = element.Next()
+		element = next
 	}
 }
 
