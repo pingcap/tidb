@@ -15,6 +15,7 @@ import (
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/storage"
 )
@@ -22,10 +23,12 @@ import (
 const (
 	CheckpointMetaPath = "checkpoint.meta"
 	CheckpointDir      = "/checkpoints"
-	CheckpointIndexDir = CheckpointDir + "/index"
 
-	CheckpointFilesPathFormat = CheckpointDir + "/filegroups.%s.cpt"
-	CheckpointIndexPathFormat = CheckpointIndexDir + "/%s/file.%s.cpt"
+	CheckpointDirFormat      = CheckpointDir + "/%s"
+	CheckpointIndexDirFormat = CheckpointDirFormat + "/index"
+
+	CheckpointFilesPathFormat = CheckpointDirFormat + "/filegroups.%s.cpt"
+	CheckpointIndexPathFormat = CheckpointIndexDirFormat + "/file.%s.cpt"
 )
 
 const tickDuration = 30 * time.Second
@@ -220,8 +223,8 @@ func (r *CheckpointRunner) doFlush(ctx context.Context, meta map[string]*RangeGr
 		if len(group.Groups) == 0 {
 			continue
 		}
-		idenKey := string(group.Groups[0].StartKey)
-		fname := fmt.Sprintf(CheckpointFilesPathFormat, idenKey)
+		idenKey := redact.Key(group.Groups[0].StartKey)
+		fname := fmt.Sprintf(CheckpointFilesPathFormat, groupKey, idenKey)
 
 		// Flush the metaFile to storage
 		content, err := json.Marshal(group)
@@ -266,7 +269,7 @@ func (r *CheckpointRunner) doFlush(ctx context.Context, meta map[string]*RangeGr
 }
 
 func WalkCheckpointFileWithSpecificKey(ctx context.Context, s storage.ExternalStorage, groupKey string, cipher *backuppb.CipherInfo, fn func(*RangeGroup)) error {
-	subDir := fmt.Sprintf("%s/%s", CheckpointIndexDir, groupKey)
+	subDir := fmt.Sprintf(CheckpointIndexDirFormat, groupKey)
 	err := s.WalkDir(ctx, &storage.WalkOption{SubDir: subDir}, func(path string, _ int64) error {
 		if strings.HasSuffix(path, ".cpt") {
 			content, err := s.ReadFile(ctx, path)

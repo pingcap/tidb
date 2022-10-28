@@ -258,6 +258,9 @@ func (bc *Client) CheckCheckpoint(hash []byte) bool {
 
 // SaveCheckpointMeta saves the initial status into the external storage, and start checkpoint runner
 func (bc *Client) SaveCheckpointMeta(ctx context.Context, cfgHash []byte, backupTS uint64, ranges []rtree.Range) error {
+	defer func() {
+		bc.checkpointRunner = checkpoint.StartCheckpointRunner(ctx, bc.storage, bc.cipher)
+	}()
 	if bc.checkpointMeta != nil {
 		// no need to save Checkpoint Meta again
 		return nil
@@ -269,13 +272,11 @@ func (bc *Client) SaveCheckpointMeta(ctx context.Context, cfgHash []byte, backup
 	}
 
 	err := checkpoint.SaveCheckpointMetadata(ctx, bc.storage, bc.checkpointMeta)
-
-	bc.checkpointRunner = checkpoint.StartCheckpointRunner(ctx, bc.storage, bc.cipher)
 	return errors.Trace(err)
 }
 
 // LoadCheckpointRange loads the checkpoint(finished) sub-ranges of the current range, and calculate its incompleted sub-ranges.
-func (bc *Client) LoadCheckpointRange(ctx context.Context, r rtree.Range) (*rtree.ProgressRange, error) {
+func (bc *Client) LoadCheckpointRange(ctx context.Context, r rtree.Range, progressCallBack func(ProgressUnit)) (*rtree.ProgressRange, error) {
 	rangeTree := rtree.NewRangeTree()
 	// not in the checkpoint mode
 	if bc.checkpointMeta == nil {
@@ -287,9 +288,10 @@ func (bc *Client) LoadCheckpointRange(ctx context.Context, r rtree.Range) (*rtre
 	}
 
 	// use groupKey to distinguish different ranges
-	groupKey := string(r.StartKey)
-	err := checkpoint.WalkCheckpointFileWithSpecificKey(ctx, bc.storage, groupKey, bc.cipher, func(resp *checkpoint.RangeGroup) {
-		rangeTree.Put(resp.StartKey, resp.EndKey, resp.Files)
+	groupKey := redact.Key(r.StartKey)
+	err := checkpoint.WalkCheckpointFileWithSpecificKey(ctx, bc.storage, groupKey, bc.cipher, func(region *checkpoint.RangeGroup) {
+		rangeTree.Put(region.StartKey, region.EndKey, region.Files)
+		progressCallBack(RegionUnit)
 	})
 
 	if err != nil {
@@ -686,9 +688,6 @@ func (bc *Client) BackupRanges(
 
 	defer func() {
 		log.Info("Backup Ranges Completed", zap.Duration("take", time.Since(init)))
-		if bc.checkpointRunner != nil {
-			bc.checkpointRunner.Finish(ctx)
-		}
 	}()
 
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
@@ -707,7 +706,7 @@ func (bc *Client) BackupRanges(
 
 		workerPool.ApplyOnErrorGroup(eg, func() error {
 			elctx := logutil.ContextWithField(ectx, logutil.RedactAny("range-sn", id))
-			pr, err := bc.LoadCheckpointRange(elctx, r)
+			pr, err := bc.LoadCheckpointRange(elctx, r, progressCallBack)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -722,7 +721,18 @@ func (bc *Client) BackupRanges(
 			return nil
 		})
 	}
-	return eg.Wait()
+
+	err := eg.Wait()
+	if bc.checkpointRunner != nil {
+		if errFlush := bc.checkpointRunner.Finish(ctx); errFlush != nil {
+			if err != nil {
+				err = errors.Annotatef(errFlush, fmt.Sprintf("flush checkpoint error after backup ranges error: %v", err))
+			} else {
+				err = errFlush
+			}
+		}
+	}
+	return err
 }
 
 // BackupRange make a backup of the given key range.
