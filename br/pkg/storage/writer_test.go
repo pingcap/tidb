@@ -135,7 +135,7 @@ func TestCompressReaderWriter(t *testing.T) {
 
 		require.Nil(t, file.Close())
 	}
-	compressTypeArr := []CompressType{Gzip, Snappy}
+	compressTypeArr := []CompressType{Gzip, Snappy, Zstd}
 
 	tests := []testcase{
 		{

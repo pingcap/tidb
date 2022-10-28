@@ -7,7 +7,10 @@ import (
 	"io"
 
 	"github.com/golang/snappy"
+	"github.com/klauspost/compress/zstd"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
+	"go.uber.org/zap"
 )
 
 // CompressType represents the type of compression.
@@ -22,6 +25,8 @@ const (
 	LZO
 	// Snappy will compress given bytes in snappy format.
 	Snappy
+	// Zstd will compress given bytes in zstd format.
+	Zstd
 )
 
 type flusher interface {
@@ -51,6 +56,9 @@ func createSuffixString(compressType CompressType) string {
 	if compressType == Snappy {
 		return ".txt.snappy"
 	}
+	if compressType == Zstd {
+		return ".txt.zst"
+	}
 	return ""
 }
 
@@ -67,6 +75,12 @@ func newCompressWriter(compressType CompressType, w io.Writer) simpleCompressWri
 		return gzip.NewWriter(w)
 	case Snappy:
 		return snappy.NewBufferedWriter(w)
+	case Zstd:
+		newWriter, err := zstd.NewWriter(w)
+		if err != nil {
+			log.Warn("Met error when creating new writer for Zstd file", zap.Error(err))
+		}
+		return newWriter
 	default:
 		return nil
 	}
@@ -78,6 +92,8 @@ func newCompressReader(compressType CompressType, r io.Reader) (io.Reader, error
 		return gzip.NewReader(r)
 	case Snappy:
 		return snappy.NewReader(r), nil
+	case Zstd:
+		return zstd.NewReader(r)
 	default:
 		return nil, nil
 	}
