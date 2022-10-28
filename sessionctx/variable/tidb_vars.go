@@ -770,6 +770,11 @@ const (
 
 	// TiDBEnableReusechunk indicates whether to enable chunk alloc
 	TiDBEnableReusechunk = "tidb_enable_reuse_chunk"
+
+	// TiDBAutoBuildStatsConcurrency is used to set the build concurrency of auto-analyze.
+	TiDBAutoBuildStatsConcurrency = "tidb_auto_build_stats_concurrency"
+	// TiDBSysProcScanConcurrency is used to set the scan concurrency of for backend system processes, like auto-analyze.
+	TiDBSysProcScanConcurrency = "tidb_sysproc_scan_concurrency"
 )
 
 // TiDB vars that have only global scope
@@ -1083,12 +1088,14 @@ const (
 	DefTiDBServerMemoryLimitGCTrigger            = 0.7
 	DefTiDBEnableGOGCTuner                       = true
 	// DefTiDBGOGCTunerThreshold is to limit TiDBGOGCTunerThreshold.
-	DefTiDBGOGCTunerThreshold       float64 = 0.6
-	DefTiDBOptPrefixIndexSingleScan         = true
-	DefTiDBExternalTS                       = 0
-	DefTiDBEnableExternalTSRead             = false
-	DefTiDBEnableReusechunk                 = true
-	DefTiDBUseAlloc                         = false
+	DefTiDBGOGCTunerThreshold        float64 = 0.6
+	DefTiDBOptPrefixIndexSingleScan          = true
+	DefTiDBExternalTS                        = 0
+	DefTiDBEnableExternalTSRead              = false
+	DefTiDBEnableReusechunk                  = true
+	DefTiDBUseAlloc                          = false
+	DefTiDBAutoBuildStatsConcurrency         = 1
+	DefTiDBSysProcScanConcurrency            = 1
 )
 
 // Process global variables.

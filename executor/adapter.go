@@ -462,13 +462,23 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 			oriStats = strconv.Itoa(variable.DefBuildStatsConcurrency)
 		}
 		oriScan := sctx.GetSessionVars().DistSQLScanConcurrency()
+		autoConcurrency, err1 := sctx.GetSessionVars().GetSessionOrGlobalSystemVar(variable.TiDBAutoBuildStatsConcurrency)
+		terror.Log(err1)
+		if err1 == nil {
+			terror.Log(sctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, autoConcurrency))
+		}
+		sVal, err2 := sctx.GetSessionVars().GetSessionOrGlobalSystemVar(variable.TiDBSysProcScanConcurrency)
+		terror.Log(err2)
+		if err2 == nil {
+			concurrency, err3 := strconv.ParseInt(sVal, 10, 64)
+			terror.Log(err3)
+			sctx.GetSessionVars().SetDistSQLScanConcurrency(int(concurrency))
+		}
 		oriIndex := sctx.GetSessionVars().IndexSerialScanConcurrency()
 		oriIso, ok := sctx.GetSessionVars().GetSystemVar(variable.TxnIsolation)
 		if !ok {
 			oriIso = "REPEATABLE-READ"
 		}
-		terror.Log(sctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, "1"))
-		sctx.GetSessionVars().SetDistSQLScanConcurrency(1)
 		sctx.GetSessionVars().SetIndexSerialScanConcurrency(1)
 		terror.Log(sctx.GetSessionVars().SetSystemVar(variable.TxnIsolation, ast.ReadCommitted))
 		defer func() {
