@@ -186,6 +186,9 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema, row, n
 			e.matched++
 		}
 		tbl := e.tblID2table[content.TblID]
+		for _, col := range tbl.Meta().Columns {
+			logutil.BgLogger().Error("col", zap.Any("name", col.Name), zap.Any("state", col.State.String()))
+		}
 		handle := e.handles[i]
 
 		oldData := row[content.Start:content.End]
