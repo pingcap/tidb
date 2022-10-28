@@ -281,14 +281,18 @@ func buildOnDeleteOrUpdateFKTrigger(is infoschema.InfoSchema, referredFK *model.
 	if fk == nil || fk.Version < 1 {
 		return nil, nil, nil
 	}
-	var fkTp int
-	switch tp {
-	case FKCascadeOnDelete:
-		fkTp = fk.OnDelete
-	case FKCascadeOnUpdate:
-		fkTp = fk.OnUpdate
+	var fkReferOption model.ReferOptionType
+	if fk.State != model.StatePublic {
+		fkReferOption = model.ReferOptionRestrict
+	} else {
+		switch tp {
+		case FKCascadeOnDelete:
+			fkReferOption = model.ReferOptionType(fk.OnDelete)
+		case FKCascadeOnUpdate:
+			fkReferOption = model.ReferOptionType(fk.OnUpdate)
+		}
 	}
-	switch model.ReferOptionType(fkTp) {
+	switch fkReferOption {
 	case model.ReferOptionCascade, model.ReferOptionSetNull:
 		fkCascade := &FKCascade{
 			Tp:         tp,

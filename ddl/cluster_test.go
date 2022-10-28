@@ -24,11 +24,9 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/stretchr/testify/assert"
@@ -42,7 +40,7 @@ func TestGetFlashbackKeyRanges(t *testing.T) {
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 
-	kvRanges, err := ddl.GetFlashbackKeyRanges(se, tablecodec.EncodeTablePrefix(0))
+	kvRanges, err := ddl.GetFlashbackKeyRanges(se)
 	require.NoError(t, err)
 	// The results are 6 key ranges
 	// 0: (stats_meta,stats_histograms,stats_buckets)
@@ -52,26 +50,6 @@ func TestGetFlashbackKeyRanges(t *testing.T) {
 	// 4: (stats_fm_sketch)
 	// 5: (stats_history, stats_meta_history)
 	require.Len(t, kvRanges, 6)
-	// tableID for mysql.stats_meta is 20
-	require.Equal(t, kvRanges[0].StartKey, tablecodec.EncodeTablePrefix(20))
-	// tableID for mysql.stats_feedback is 30
-	require.Equal(t, kvRanges[1].StartKey, tablecodec.EncodeTablePrefix(30))
-	// tableID for mysql.stats_meta_history is 62
-	require.Equal(t, kvRanges[5].EndKey, tablecodec.EncodeTablePrefix(62+1))
-
-	// The original table ID for range is [60, 63)
-	// startKey is 61, so return [61, 63)
-	kvRanges, err = ddl.GetFlashbackKeyRanges(se, tablecodec.EncodeTablePrefix(61))
-	require.NoError(t, err)
-	require.Len(t, kvRanges, 1)
-	require.Equal(t, kvRanges[0].StartKey, tablecodec.EncodeTablePrefix(61))
-
-	// The original ranges are [48, 49), [60, 63)
-	// startKey is 59, so return [60, 63)
-	kvRanges, err = ddl.GetFlashbackKeyRanges(se, tablecodec.EncodeTablePrefix(59))
-	require.NoError(t, err)
-	require.Len(t, kvRanges, 1)
-	require.Equal(t, kvRanges[0].StartKey, tablecodec.EncodeTablePrefix(60))
 
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE employees (" +
@@ -83,13 +61,6 @@ func TestGetFlashbackKeyRanges(t *testing.T) {
 		"    PARTITION p2 VALUES LESS THAN (16)," +
 		"    PARTITION p3 VALUES LESS THAN (21)" +
 		");")
-	kvRanges, err = ddl.GetFlashbackKeyRanges(se, tablecodec.EncodeTablePrefix(63))
-	require.NoError(t, err)
-	// start from table ID is 63, so only 1 kv range.
-	require.Len(t, kvRanges, 1)
-	// 1 tableID and 4 partitions.
-	require.Equal(t, tablecodec.DecodeTableID(kvRanges[0].EndKey)-tablecodec.DecodeTableID(kvRanges[0].StartKey), int64(5))
-
 	tk.MustExec("truncate table mysql.analyze_jobs")
 
 	// truncate all `stats_` tables, make table ID consecutive.
@@ -102,12 +73,12 @@ func TestGetFlashbackKeyRanges(t *testing.T) {
 	tk.MustExec("truncate table mysql.stats_fm_sketch")
 	tk.MustExec("truncate table mysql.stats_history")
 	tk.MustExec("truncate table mysql.stats_meta_history")
-	kvRanges, err = ddl.GetFlashbackKeyRanges(se, tablecodec.EncodeTablePrefix(0))
+	kvRanges, err = ddl.GetFlashbackKeyRanges(se)
 	require.NoError(t, err)
 	require.Len(t, kvRanges, 2)
 
 	tk.MustExec("truncate table test.employees")
-	kvRanges, err = ddl.GetFlashbackKeyRanges(se, tablecodec.EncodeTablePrefix(0))
+	kvRanges, err = ddl.GetFlashbackKeyRanges(se)
 	require.NoError(t, err)
 	require.Len(t, kvRanges, 1)
 }
@@ -186,7 +157,7 @@ func TestAddDDLDuringFlashback(t *testing.T) {
 	hook := &ddl.TestDDLCallback{Do: dom}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		assert.Equal(t, model.ActionFlashbackCluster, job.Type)
-		if job.SchemaState == model.StateWriteReorganization {
+		if job.SchemaState == model.StateWriteOnly {
 			_, err := tk.Exec("alter table t add column b int")
 			assert.ErrorContains(t, err, "Can't add ddl job, have flashback cluster job")
 		}
@@ -225,37 +196,29 @@ func TestGlobalVariablesOnFlashback(t *testing.T) {
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		assert.Equal(t, model.ActionFlashbackCluster, job.Type)
 		if job.SchemaState == model.StateWriteReorganization {
-			rs, err := tk.Exec("show variables like 'tidb_super_read_only'")
+			rs, err := tk.Exec("show variables like 'tidb_gc_enable'")
 			assert.NoError(t, err)
-			assert.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.On)
-			rs, err = tk.Exec("show variables like 'tidb_gc_enable'")
+			assert.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.Off)
+			rs, err = tk.Exec("show variables like 'tidb_enable_auto_analyze'")
 			assert.NoError(t, err)
 			assert.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.Off)
 		}
 	}
 	dom.DDL().SetHook(hook)
-	// first try with `tidb_gc_enable` = on and `tidb_super_read_only` = off
+	// first try with `tidb_gc_enable` = on
 	tk.MustExec("set global tidb_gc_enable = on")
-	tk.MustExec("set global tidb_super_read_only = off")
 
 	tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts)))
-	rs, err := tk.Exec("show variables like 'tidb_super_read_only'")
-	require.NoError(t, err)
-	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.Off)
-	rs, err = tk.Exec("show variables like 'tidb_gc_enable'")
+	rs, err := tk.Exec("show variables like 'tidb_gc_enable'")
 	require.NoError(t, err)
 	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.On)
 
-	// second try with `tidb_gc_enable` = off and `tidb_super_read_only` = on
+	// second try with `tidb_gc_enable` = off
 	tk.MustExec("set global tidb_gc_enable = off")
-	tk.MustExec("set global tidb_super_read_only = on")
 
 	ts, err = tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
 	require.NoError(t, err)
 	tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts)))
-	rs, err = tk.Exec("show variables like 'tidb_super_read_only'")
-	require.NoError(t, err)
-	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.On)
 	rs, err = tk.Exec("show variables like 'tidb_gc_enable'")
 	require.NoError(t, err)
 	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.Off)
@@ -284,17 +247,13 @@ func TestCancelFlashbackCluster(t *testing.T) {
 	defer resetGC()
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 
-	// Try canceled on StateWriteOnly, cancel success
-	tk.MustExec("set global tidb_super_read_only = off")
+	// Try canceled on StateDeleteOnly, cancel success
 	hook := newCancelJobHook(t, store, dom, func(job *model.Job) bool {
-		return job.SchemaState == model.StateWriteOnly
+		return job.SchemaState == model.StateDeleteOnly
 	})
 	dom.DDL().SetHook(hook)
 	tk.MustGetErrCode(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts)), errno.ErrCancelledDDLJob)
 	hook.MustCancelDone(t)
-	rs, err := tk.Exec("show variables like 'tidb_super_read_only'")
-	require.NoError(t, err)
-	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.Off)
 
 	// Try canceled on StateWriteReorganization, cancel failed
 	hook = newCancelJobHook(t, store, dom, func(job *model.Job) bool {
@@ -309,61 +268,4 @@ func TestCancelFlashbackCluster(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockFlashbackTest"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS"))
 	require.NoError(t, failpoint.Disable("tikvclient/injectSafeTS"))
-}
-
-func TestFlashbackTimeRange(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	se, err := session.CreateSession4Test(store)
-	require.NoError(t, err)
-	txn, err := se.GetStore().Begin()
-	require.NoError(t, err)
-
-	m := meta.NewMeta(txn)
-	flashbackTime := oracle.GetTimeFromTS(m.StartTS).Add(-10 * time.Minute)
-
-	// No flashback history, shouldn't return err.
-	require.NoError(t, ddl.CheckFlashbackHistoryTSRange(m, oracle.GoTimeToTS(flashbackTime)))
-
-	// Insert a time range to flashback history ts ranges.
-	require.NoError(t, ddl.UpdateFlashbackHistoryTSRanges(m, oracle.GoTimeToTS(flashbackTime), m.StartTS, 0))
-
-	historyTS, err := m.GetFlashbackHistoryTSRange()
-	require.NoError(t, err)
-	require.Len(t, historyTS, 1)
-	require.NoError(t, txn.Commit(context.Background()))
-
-	se, err = session.CreateSession4Test(store)
-	require.NoError(t, err)
-	txn, err = se.GetStore().Begin()
-	require.NoError(t, err)
-
-	m = meta.NewMeta(txn)
-	require.NoError(t, err)
-	// Flashback history time range is [m.StartTS - 10min, m.StartTS]
-	require.Error(t, ddl.CheckFlashbackHistoryTSRange(m, oracle.GoTimeToTS(flashbackTime.Add(5*time.Minute))))
-
-	// Check add insert a new time range
-	require.NoError(t, ddl.CheckFlashbackHistoryTSRange(m, oracle.GoTimeToTS(flashbackTime.Add(-5*time.Minute))))
-	require.NoError(t, ddl.UpdateFlashbackHistoryTSRanges(m, oracle.GoTimeToTS(flashbackTime.Add(-5*time.Minute)), m.StartTS, 0))
-
-	historyTS, err = m.GetFlashbackHistoryTSRange()
-	require.NoError(t, err)
-	// history time range still equals to 1, because overlapped
-	require.Len(t, historyTS, 1)
-
-	require.NoError(t, ddl.UpdateFlashbackHistoryTSRanges(m, oracle.GoTimeToTS(flashbackTime.Add(15*time.Minute)), oracle.GoTimeToTS(flashbackTime.Add(20*time.Minute)), 0))
-	historyTS, err = m.GetFlashbackHistoryTSRange()
-	require.NoError(t, err)
-	require.Len(t, historyTS, 2)
-
-	// GCSafePoint updated will clean some history TS ranges
-	require.NoError(t, ddl.UpdateFlashbackHistoryTSRanges(m,
-		oracle.GoTimeToTS(flashbackTime.Add(25*time.Minute)),
-		oracle.GoTimeToTS(flashbackTime.Add(30*time.Minute)),
-		oracle.GoTimeToTS(flashbackTime.Add(22*time.Minute))))
-	historyTS, err = m.GetFlashbackHistoryTSRange()
-	require.NoError(t, err)
-	require.Len(t, historyTS, 1)
-	require.NoError(t, txn.Commit(context.Background()))
 }
