@@ -947,3 +947,21 @@ func TestTiFlashBatchUnsupported(t *testing.T) {
 	require.Equal(t, "In total 2 tables: 1 succeed, 0 failed, 1 skipped", tk.Session().GetSessionVars().StmtCtx.GetMessage())
 	tk.MustGetErrCode("alter database information_schema set tiflash replica 1", 8200)
 }
+
+func TestTiFlashGroupIndexWhenStartup(t *testing.T) {
+	s, teardown := createTiFlashContext(t)
+	defer teardown()
+	_ = testkit.NewTestKit(t, s.store)
+	timeout := time.Now().Add(10 * time.Second)
+	errMsg := "time out"
+	for time.Now().Before(timeout) {
+		time.Sleep(100 * time.Millisecond)
+		if s.tiflash.GroupIndex != 0 {
+			errMsg = "invalid group index"
+			break
+		}
+	}
+	require.Equal(t, placement.RuleIndexTiFlash, s.tiflash.GroupIndex, errMsg)
+	require.Greater(t, s.tiflash.GroupIndex, placement.RuleIndexTable)
+	require.Greater(t, s.tiflash.GroupIndex, placement.RuleIndexPartition)
+}

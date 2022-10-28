@@ -224,6 +224,7 @@ func (e *RevokeExec) revokeGlobalPriv(internalSession sessionctx.Context, priv *
 }
 
 func (e *RevokeExec) revokeDBPriv(internalSession sessionctx.Context, priv *ast.PrivElem, userName, host string) error {
+	ctx := context.Background()
 	dbName := e.Level.DBName
 	if len(dbName) == 0 {
 		dbName = e.ctx.GetSessionVars().CurrentDB
@@ -237,7 +238,18 @@ func (e *RevokeExec) revokeDBPriv(internalSession sessionctx.Context, priv *ast.
 	}
 	sqlexec.MustFormatSQL(sql, " WHERE User=%? AND Host=%? AND DB=%?", userName, host, dbName)
 
-	_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql.String())
+	_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql.String())
+	if err != nil {
+		return err
+	}
+
+	sql = new(strings.Builder)
+	sqlexec.MustFormatSQL(sql, "DELETE FROM %n.%n WHERE User=%? AND Host=%? AND DB=%?", mysql.SystemDB, mysql.DBTable, userName, host, dbName)
+
+	for _, v := range append(mysql.AllDBPrivs, mysql.GrantPriv) {
+		sqlexec.MustFormatSQL(sql, " AND %n='N'", v.ColumnString())
+	}
+	_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql.String())
 	return err
 }
 
