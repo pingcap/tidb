@@ -827,29 +827,6 @@ type SessionVars struct {
 	// concurrencyFactor is the CPU cost of additional one goroutine.
 	concurrencyFactor float64
 
-	// factors for cost model v2
-	// cpuFactorV2 is the CPU factor for the Cost Model Ver2.
-	cpuFactorV2 float64
-	// copCPUFactorV2 is the cop-cpu factor for the Cost Model Ver2.
-	copCPUFactorV2 float64
-	// tiflashCPUFactorV2 is the cop-cpu factor for the Cost Model Ver2.
-	tiflashCPUFactorV2 float64
-	// networkFactorV2 is the network factor for the Cost Model Ver2.
-	networkFactorV2 float64
-	// scanFactorV2 is the scan factor for the Cost Model Ver2.
-	scanFactorV2 float64
-	// descScanFactorV2 is the desc-scan factor for the Cost Model Ver2.
-	descScanFactorV2 float64
-	// tiflashScanFactorV2 is the tiflash-scan factor for the Cost Model Ver2.
-	tiflashScanFactorV2 float64
-	// seekFactorV2 is the seek factor for the Cost Model Ver2.
-	seekFactorV2 float64
-	// memoryFactorV2 is the memory factor for the Cost Model Ver2.
-	memoryFactorV2 float64
-	// diskFactorV2 is the disk factor for the Cost Model Ver2.
-	diskFactorV2 float64
-	// concurrencyFactorV2 is the concurrency factor for the Cost Model Ver2.
-	concurrencyFactorV2 float64
 	// enableForceInlineCTE is used to enable/disable force inline CTE.
 	enableForceInlineCTE bool
 
@@ -1294,7 +1271,16 @@ type SessionVars struct {
 	// LastPlanReplayerToken indicates the last plan replayer token
 	LastPlanReplayerToken string
 
+	// AnalyzePartitionConcurrency indicates concurrency for partitions in Analyze
+	AnalyzePartitionConcurrency int
+	// AnalyzePartitionMergeConcurrency indicates concurrency for merging partition stats
+	AnalyzePartitionMergeConcurrency int
+
 	HookContext
+
+	// OptPrefixIndexSingleScan indicates whether to do some optimizations to avoid double scan for prefix index.
+	// When set to true, `col is (not) null`(`col` is index prefix column) is regarded as index filter rather than table filter.
+	OptPrefixIndexSingleScan bool
 }
 
 // GetPreparedStmtByName returns the prepared statement specified by stmtName.
@@ -1763,7 +1749,7 @@ func (s *SessionVars) GetCharsetInfo() (charset, collation string) {
 // GetParseParams gets the parse parameters from session variables.
 func (s *SessionVars) GetParseParams() []parser.ParseParam {
 	chs, coll := s.GetCharsetInfo()
-	cli, err := s.GetSessionOrGlobalSystemVar(CharacterSetClient)
+	cli, err := s.GetSessionOrGlobalSystemVar(context.Background(), CharacterSetClient)
 	if err != nil {
 		cli = ""
 	}
@@ -2011,7 +1997,7 @@ func (s *SessionVars) ClearStmtVars() {
 // GetSessionOrGlobalSystemVar gets a system variable.
 // If it is a session only variable, use the default value defined in code.
 // Returns error if there is no such variable.
-func (s *SessionVars) GetSessionOrGlobalSystemVar(name string) (string, error) {
+func (s *SessionVars) GetSessionOrGlobalSystemVar(ctx context.Context, name string) (string, error) {
 	sv := GetSysVar(name)
 	if sv == nil {
 		return "", ErrUnknownSystemVar.GenWithStackByArgs(name)
@@ -2037,7 +2023,7 @@ func (s *SessionVars) GetSessionOrGlobalSystemVar(name string) (string, error) {
 		}
 		return sv.GetSessionFromHook(s)
 	}
-	return sv.GetGlobalFromHook(s)
+	return sv.GetGlobalFromHook(ctx, s)
 }
 
 // GetSessionStatesSystemVar gets the session variable value for session states.
@@ -2064,12 +2050,12 @@ func (s *SessionVars) GetSessionStatesSystemVar(name string) (string, bool, erro
 }
 
 // GetGlobalSystemVar gets a global system variable.
-func (s *SessionVars) GetGlobalSystemVar(name string) (string, error) {
+func (s *SessionVars) GetGlobalSystemVar(ctx context.Context, name string) (string, error) {
 	sv := GetSysVar(name)
 	if sv == nil {
 		return "", ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
-	return sv.GetGlobalFromHook(s)
+	return sv.GetGlobalFromHook(ctx, s)
 }
 
 // SetStmtVar sets system variable and updates SessionVars states.
@@ -2285,7 +2271,6 @@ type Concurrency struct {
 	indexLookupJoinConcurrency int
 
 	// distSQLScanConcurrency is the number of concurrent dist SQL scan worker.
-	// distSQLScanConcurrency is deprecated, use ExecutorConcurrency instead.
 	distSQLScanConcurrency int
 
 	// hashJoinConcurrency is the number of concurrent hash join outer worker.
@@ -2934,46 +2919,26 @@ func (s *SessionVars) CleanupTxnReadTSIfUsed() {
 
 // GetCPUFactor returns the session variable cpuFactor
 func (s *SessionVars) GetCPUFactor() float64 {
-	if s.CostModelVersion == 2 {
-		return s.cpuFactorV2
-	}
 	return s.cpuFactor
 }
 
 // GetCopCPUFactor returns the session variable copCPUFactor
 func (s *SessionVars) GetCopCPUFactor() float64 {
-	if s.CostModelVersion == 2 {
-		return s.copCPUFactorV2
-	}
 	return s.copCPUFactor
-}
-
-// GetTiFlashCPUFactor returns the session
-func (s *SessionVars) GetTiFlashCPUFactor() float64 {
-	return s.tiflashCPUFactorV2
 }
 
 // GetMemoryFactor returns the session variable memoryFactor
 func (s *SessionVars) GetMemoryFactor() float64 {
-	if s.CostModelVersion == 2 {
-		return s.memoryFactorV2
-	}
 	return s.memoryFactor
 }
 
 // GetDiskFactor returns the session variable diskFactor
 func (s *SessionVars) GetDiskFactor() float64 {
-	if s.CostModelVersion == 2 {
-		return s.diskFactorV2
-	}
 	return s.diskFactor
 }
 
 // GetConcurrencyFactor returns the session variable concurrencyFactor
 func (s *SessionVars) GetConcurrencyFactor() float64 {
-	if s.CostModelVersion == 2 {
-		return s.concurrencyFactorV2
-	}
 	return s.concurrencyFactor
 }
 
@@ -2984,9 +2949,6 @@ func (s *SessionVars) GetNetworkFactor(tbl *model.TableInfo) float64 {
 		if tbl.TempTableType != model.TempTableNone {
 			return 0
 		}
-	}
-	if s.CostModelVersion == 2 {
-		return s.networkFactorV2
 	}
 	return s.networkFactor
 }
@@ -2999,9 +2961,6 @@ func (s *SessionVars) GetScanFactor(tbl *model.TableInfo) float64 {
 			return 0
 		}
 	}
-	if s.CostModelVersion == 2 {
-		return s.scanFactorV2
-	}
 	return s.scanFactor
 }
 
@@ -3013,15 +2972,7 @@ func (s *SessionVars) GetDescScanFactor(tbl *model.TableInfo) float64 {
 			return 0
 		}
 	}
-	if s.CostModelVersion == 2 {
-		return s.descScanFactorV2
-	}
 	return s.descScanFactor
-}
-
-// GetTiFlashScanFactor returns the session variable tiflashScanFactorV2
-func (s *SessionVars) GetTiFlashScanFactor() float64 {
-	return s.tiflashScanFactorV2
 }
 
 // GetSeekFactor returns the session variable seekFactor
@@ -3031,9 +2982,6 @@ func (s *SessionVars) GetSeekFactor(tbl *model.TableInfo) float64 {
 		if tbl.TempTableType != model.TempTableNone {
 			return 0
 		}
-	}
-	if s.CostModelVersion == 2 {
-		return s.seekFactorV2
 	}
 	return s.seekFactor
 }

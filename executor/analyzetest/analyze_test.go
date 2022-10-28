@@ -2195,7 +2195,7 @@ func TestRecordHistoryStatsAfterAnalyze(t *testing.T) {
 	require.GreaterOrEqual(t, num, 1)
 
 	// 3. dump current stats json
-	dumpJSONTable, err := h.DumpStatsToJSON("test", tableInfo.Meta(), nil)
+	dumpJSONTable, err := h.DumpStatsToJSON("test", tableInfo.Meta(), nil, true)
 	require.NoError(t, err)
 	jsOrigin, _ := json.Marshal(dumpJSONTable)
 

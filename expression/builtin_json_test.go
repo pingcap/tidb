@@ -985,6 +985,49 @@ func TestJSONValid(t *testing.T) {
 	}
 }
 
+func TestJSONStorageFree(t *testing.T) {
+	ctx := createContext(t)
+	fc := funcs[ast.JSONStorageFree]
+	tbl := []struct {
+		input    []interface{}
+		expected interface{}
+		success  bool
+	}{
+		// Tests scalar arguments
+		{[]interface{}{`null`}, 0, true},
+		{[]interface{}{`true`}, 0, true},
+		{[]interface{}{`1`}, 0, true},
+		{[]interface{}{`"1"`}, 0, true},
+		// Tests nil arguments
+		{[]interface{}{nil}, nil, true},
+		// Tests valid json documents
+		{[]interface{}{`{}`}, 0, true},
+		{[]interface{}{`{"a":1}`}, 0, true},
+		{[]interface{}{`[{"a":{"a":1},"b":2}]`}, 0, true},
+		{[]interface{}{`{"a": 1000, "b": "wxyz", "c": "[1, 3, 5, 7]"}`}, 0, true},
+		// Tests invalid json documents
+		{[]interface{}{`[{"a":1]`}, 0, false},
+		{[]interface{}{`[{a":1]`}, 0, false},
+	}
+	for _, tt := range tbl {
+		args := types.MakeDatums(tt.input...)
+		f, err := fc.getFunction(ctx, datumsToConstants(args))
+		require.NoError(t, err)
+		d, err := evalBuiltinFunc(f, chunk.Row{})
+		if tt.success {
+			require.NoError(t, err)
+
+			if tt.expected == nil {
+				require.True(t, d.IsNull())
+			} else {
+				require.Equal(t, int64(tt.expected.(int)), d.GetInt64())
+			}
+		} else {
+			require.Error(t, err)
+		}
+	}
+}
+
 func TestJSONStorageSize(t *testing.T) {
 	ctx := createContext(t)
 	fc := funcs[ast.JSONStorageSize]

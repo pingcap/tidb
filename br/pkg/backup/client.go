@@ -203,13 +203,17 @@ func (bc *Client) GetStorage() storage.ExternalStorage {
 	return bc.storage
 }
 
-// SetStorage set ExternalStorage for client.
-func (bc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBackend, opts *storage.ExternalStorageOptions) error {
-	var err error
-	bc.storage, err = storage.New(ctx, backend, opts)
+// SetStorageAndCheckNotInUse sets ExternalStorage for client and check storage not in used by others.
+func (bc *Client) SetStorageAndCheckNotInUse(
+	ctx context.Context,
+	backend *backuppb.StorageBackend,
+	opts *storage.ExternalStorageOptions,
+) error {
+	err := bc.SetStorage(ctx, backend, opts)
 	if err != nil {
 		return errors.Trace(err)
 	}
+
 	// backupmeta already exists
 	exist, err := bc.storage.FileExists(ctx, metautil.MetaFile)
 	if err != nil {
@@ -242,7 +246,6 @@ func (bc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBacke
 		}
 	}
 
-	bc.backend = backend
 	return nil
 }
 
@@ -305,6 +308,19 @@ func (bc *Client) LoadCheckpointRange(ctx context.Context, r rtree.Range, progre
 		Origin:     r,
 		GroupKey:   groupKey,
 	}, nil
+}
+
+// SetStorage sets ExternalStorage for client.
+func (bc *Client) SetStorage(
+	ctx context.Context,
+	backend *backuppb.StorageBackend,
+	opts *storage.ExternalStorageOptions,
+) error {
+	var err error
+
+	bc.backend = backend
+	bc.storage, err = storage.New(ctx, backend, opts)
+	return errors.Trace(err)
 }
 
 // GetClusterID returns the cluster ID of the tidb cluster to backup.

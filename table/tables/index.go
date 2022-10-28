@@ -79,6 +79,11 @@ func (c *index) Meta() *model.IndexInfo {
 	return c.idxInfo
 }
 
+// TableMeta returns table info.
+func (c *index) TableMeta() *model.TableInfo {
+	return c.tblInfo
+}
+
 // GenIndexKey generates storage key for index values. Returned distinct indicates whether the
 // indexed values should be distinct in storage (i.e. whether handle is encoded in the key).
 func (c *index) GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.Datum, h kv.Handle, buf []byte) (key []byte, distinct bool, err error) {

@@ -466,7 +466,7 @@ func TestPointGetUserVarPlanCache(t *testing.T) {
 		`  │ └─Point_Get_43 1.00 root table:t2, index:idx_a(a) `,
 		`  └─TableReader_13(Probe) 0.00 root  data:Selection_12`,
 		`    └─Selection_12 0.00 cop[tikv]  eq(test.t1.a, 1)`,
-		`      └─TableRangeScan_11 1.00 cop[tikv] table:t1 range: decided by [eq(test.t1.a, test.t2.a)], keep order:false, stats:pseudo`))
+		`      └─TableRangeScan_11 0.80 cop[tikv] table:t1 range: decided by [eq(test.t1.a, test.t2.a)], keep order:false, stats:pseudo`))
 
 	tk.MustExec("set @a=2")
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows(
@@ -482,7 +482,7 @@ func TestPointGetUserVarPlanCache(t *testing.T) {
 		`  │ └─Point_Get_43 1.00 root table:t2, index:idx_a(a) `,
 		`  └─TableReader_13(Probe) 0.00 root  data:Selection_12`,
 		`    └─Selection_12 0.00 cop[tikv]  eq(test.t1.a, 2)`,
-		`      └─TableRangeScan_11 1.00 cop[tikv] table:t1 range: decided by [eq(test.t1.a, test.t2.a)], keep order:false, stats:pseudo`))
+		`      └─TableRangeScan_11 0.80 cop[tikv] table:t1 range: decided by [eq(test.t1.a, test.t2.a)], keep order:false, stats:pseudo`))
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows(
 		"2 4 2 2",
 	))
@@ -864,7 +864,7 @@ func TestIndexMerge4PlanCache(t *testing.T) {
 	tk.MustExec("set @a=9, @b=10, @c=11;")
 	tk.MustQuery("execute stmt using @a, @a;").Check(testkit.Rows("10 10 10"))
 	tk.MustQuery("execute stmt using @a, @c;").Check(testkit.Rows("10 10 10", "11 11 11"))
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0")) // a>=9 and a<=9 --> a=9
 	tk.MustQuery("execute stmt using @c, @a;").Check(testkit.Rows("10 10 10"))
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 
