@@ -1769,6 +1769,7 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.
 					if copyTableInfo == nil {
 						copyTableInfo = tbl.Meta().Clone()
 					}
+					logutil.BgLogger().Error("update index to StateWriteReorganization", zap.Stack("stack"))
 					copyTableInfo.Indices[i].State = model.StateWriteReorganization
 					dbInfo, _ := domainSchema.SchemaByName(dbName)
 					allocs := autoid.NewAllocatorsFromTblInfo(sctx.GetStore(), dbInfo.ID, copyTableInfo)
