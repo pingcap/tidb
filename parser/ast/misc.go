@@ -1421,7 +1421,6 @@ func (t *AuthTokenOrTLSOption) Restore(ctx *format.RestoreCtx) error {
 		return errors.Errorf("Unsupported AuthTokenOrTLSOption.Type %d", t.Type)
 	}
 	return nil
-
 }
 
 type AuthTokenOrTLSOptionType int
