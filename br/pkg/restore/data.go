@@ -29,8 +29,8 @@ import (
 // 3. send the recover plan and the wait tikv to apply, in waitapply, all assigned region leader will check apply log to the last log
 // 4. ensure all region apply to last log
 // 5. send the resolvedTs to tikv for deleting data.
-func RecoverData(ctx context.Context, resolvedTs uint64, allStores []*metapb.Store, mgr *conn.Mgr, progress glue.Progress, restoreTs uint64) (int, error) {
-	var recovery = NewRecovery(allStores, mgr, progress)
+func RecoverData(ctx context.Context, resolvedTs uint64, allStores []*metapb.Store, mgr *conn.Mgr, progress glue.Progress, restoreTs uint64, concurrency uint32) (int, error) {
+	var recovery = NewRecovery(allStores, mgr, progress, concurrency)
 	if err := recovery.ReadRegionMeta(ctx); err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -85,9 +85,10 @@ type Recovery struct {
 	MaxAllocID   uint64
 	mgr          *conn.Mgr
 	progress     glue.Progress
+	concurrency  uint32
 }
 
-func NewRecovery(allStores []*metapb.Store, mgr *conn.Mgr, progress glue.Progress) Recovery {
+func NewRecovery(allStores []*metapb.Store, mgr *conn.Mgr, progress glue.Progress, concurrency uint32) Recovery {
 	totalStores := len(allStores)
 	var StoreMetas = make([]StoreMeta, totalStores)
 	var regionRecovers = make(map[uint64][]*recovpb.RecoverRegionRequest, totalStores)
@@ -97,15 +98,15 @@ func NewRecovery(allStores []*metapb.Store, mgr *conn.Mgr, progress glue.Progres
 		RecoveryPlan: regionRecovers,
 		MaxAllocID:   0,
 		mgr:          mgr,
-		progress:     progress}
+		progress:     progress,
+		concurrency:  concurrency}
 }
 
 func (recovery *Recovery) newRecoveryClient(ctx context.Context, storeAddr string) (recovpb.RecoverDataClient, *grpc.ClientConn, error) {
 	// Connect to the Recovery service on the given TiKV node.
 	bfConf := backoff.DefaultConfig
 	bfConf.MaxDelay = gRPCBackOffMaxDelay
-	//TODO: connection may need some adjust
-	//keepaliveConf keepalive.ClientParameters
+
 	conn, err := utils.GRPCConn(ctx, storeAddr, recovery.mgr.GetTLSConfig(),
 		grpc.WithConnectParams(grpc.ConnectParams{Backoff: bfConf}),
 		grpc.WithKeepaliveParams(recovery.mgr.GetKeepalive()),
@@ -198,8 +199,6 @@ func (recovery *Recovery) ReadRegionMeta(ctx context.Context) error {
 
 	return eg.Wait()
 }
-
-// TODO: map may be more suitable for this function
 
 func (recovery *Recovery) GetTotalRegions() int {
 	// Group region peer info by region id.
@@ -305,34 +304,32 @@ func (recovery *Recovery) WaitApply(ctx context.Context) (err error) {
 func (recovery *Recovery) getRegionKeyRanges() []tikvstore.KeyRange {
 
 	var keyRanges []tikvstore.KeyRange
-	// Group region peer info by region id. find the max allocateId
-	// region [id] [peer[0-n]]
-	var regions = make(map[uint64][]*RecoverRegion, 0)
+
+	var regions = make(map[uint64]struct{}, 0)
 	for _, v := range recovery.StoreMetas {
-		storeId := v.StoreId
 		for _, m := range v.RegionMetas {
 			// insert the keyRanges
-			if regions[m.RegionId] == nil {
-				regions[m.RegionId] = make([]*RecoverRegion, 0, len(recovery.allStores))
+			if _, ok := regions[m.RegionId]; !ok {
+				regions[m.RegionId] = struct{}{}
 				keyRanges = append(keyRanges, tikvstore.KeyRange{
 					StartKey: m.StartKey,
 					EndKey:   m.EndKey,
 				})
 			}
-			regions[m.RegionId] = append(regions[m.RegionId], &RecoverRegion{m, storeId})
 		}
 	}
 
 	return keyRanges
 }
 
-// Prepare the region for flashback the data, the purpose is to stop region service, put region in flashback state
+// prepare the region for flashback the data, the purpose is to stop region service, put region in flashback state
 func (recovery *Recovery) PrepareFlashbackToVersion(ctx context.Context, keyRanges []tikvstore.KeyRange) (err error) {
 	eg, ectx := errgroup.WithContext(ctx)
-	totalStores := len(recovery.allStores)
-	workers := utils.NewWorkerPool(uint(mathutil.Min(totalStores, common.MaxStoreConcurrency)), "resolve data from tikv")
+	// since we do not know the how many region we will recover, use a ratio regions/per tikv as progress
+	incRatio := len(keyRanges) / len(recovery.allStores)
+	workers := utils.NewWorkerPool(uint(recovery.concurrency), "prepare the region")
 
-	for _, r := range keyRanges {
+	for i, r := range keyRanges {
 		if err := ectx.Err(); err != nil {
 			break
 		}
@@ -344,8 +341,12 @@ func (recovery *Recovery) PrepareFlashbackToVersion(ctx context.Context, keyRang
 			log.Debug("prepare region done", zap.ByteString("region_start_key", r.StartKey), zap.ByteString("region_end_key", r.EndKey))
 			return nil
 		})
+
+		if i%incRatio == 0 {
+			recovery.progress.Inc()
+		}
 	}
-	log.Info("prepare region flashback done")
+	log.Info("prepare region flashback complete")
 	// Wait for all region to prepare flashback
 	return eg.Wait()
 }
@@ -353,10 +354,10 @@ func (recovery *Recovery) PrepareFlashbackToVersion(ctx context.Context, keyRang
 // flashback the region data to resolvedTs
 func (recovery *Recovery) FlashbackToVersion(ctx context.Context, keyRanges []tikvstore.KeyRange, resolvedTs uint64, commitTs uint64) (err error) {
 	eg, ectx := errgroup.WithContext(ctx)
-	totalStores := len(recovery.allStores)
-	workers := utils.NewWorkerPool(uint(mathutil.Min(totalStores, common.MaxStoreConcurrency)), "resolve data from tikv")
+	incRatio := len(keyRanges) / len(recovery.allStores)
+	workers := utils.NewWorkerPool(uint(recovery.concurrency), "flashback the region")
 
-	for _, r := range keyRanges {
+	for i, r := range keyRanges {
 		if err := ectx.Err(); err != nil {
 			break
 		}
@@ -368,56 +369,13 @@ func (recovery *Recovery) FlashbackToVersion(ctx context.Context, keyRanges []ti
 			log.Debug("region flashback done", zap.ByteString("region_start_key", r.StartKey), zap.ByteString("region_end_key", r.EndKey))
 			return nil
 		})
-	}
-	log.Info("region flashback done")
-	// Wait for all region to flashback
-	return eg.Wait()
-}
 
-// ResolveData a worker pool to all tikv for execute delete all data whose has ts > resolvedTs
-func (recovery *Recovery) ResolveData(ctx context.Context, resolvedTs uint64) (err error) {
-	eg, ectx := errgroup.WithContext(ctx)
-	totalStores := len(recovery.allStores)
-	workers := utils.NewWorkerPool(uint(mathutil.Min(totalStores, common.MaxStoreConcurrency)), "resolve data from tikv")
-
-	// TODO: what if the resolved data take long time take long time?, it look we need some handling here, at least some retry may necessary
-	// TODO: what if the network disturbing, a retry machanism may need here
-	for _, store := range recovery.allStores {
-		if err := ectx.Err(); err != nil {
-			break
-		}
-		storeAddr := getStoreAddress(recovery.allStores, store.Id)
-		storeId := store.Id
-		workers.ApplyOnErrorGroup(eg, func() error {
-			recoveryClient, conn, err := recovery.newRecoveryClient(ectx, storeAddr)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			defer conn.Close()
-			log.Info("resolve data to tikv", zap.String("tikv address", storeAddr), zap.Uint64("store id", storeId))
-			req := &recovpb.ResolveKvDataRequest{ResolvedTs: resolvedTs}
-			stream, err := recoveryClient.ResolveKvData(ectx, req)
-			if err != nil {
-				log.Error("send the resolve kv data failed", zap.Uint64("store id", storeId))
-				return errors.Trace(err)
-			}
-			// for a TiKV, received the stream
-			for {
-				var resp *recovpb.ResolveKvDataResponse
-				if resp, err = stream.Recv(); err == nil {
-					log.Info("current delete key", zap.Uint64("resolved key num", resp.ResolvedKeyCount), zap.Uint64("store id", resp.StoreId))
-				} else if err == io.EOF {
-					break
-				} else {
-					return errors.Trace(err)
-				}
-			}
+		if i%incRatio == 0 {
 			recovery.progress.Inc()
-			log.Info("resolve kv data done", zap.String("tikv address", storeAddr), zap.Uint64("store id", storeId))
-			return nil
-		})
+		}
 	}
-	// Wait for all TiKV instances force leader and wait apply to last log.
+	log.Info("region flashback complete")
+	// Wait for all region to flashback
 	return eg.Wait()
 }
 

@@ -415,7 +415,6 @@ func SendFlashbackToVersionRPC(
 	return taskStat, nil
 }
 
-// function be called also by BR for aws ebs snapshot backup and restore
 func flashbackToVersion(
 	ctx context.Context,
 	d *ddlCtx,
