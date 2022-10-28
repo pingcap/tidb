@@ -28,18 +28,20 @@ import (
 type analyzeSaveStatsWorker struct {
 	resultsCh <-chan *statistics.AnalyzeResults
 	sctx      sessionctx.Context
-	finishCh  chan<- struct{}
 	errCh     chan<- error
+	killed    *uint32
 }
 
 func newAnalyzeSaveStatsWorker(
 	resultsCh <-chan *statistics.AnalyzeResults,
 	sctx sessionctx.Context,
-	errCh chan<- error) *analyzeSaveStatsWorker {
+	errCh chan<- error,
+	killed *uint32) *analyzeSaveStatsWorker {
 	worker := &analyzeSaveStatsWorker{
 		resultsCh: resultsCh,
 		sctx:      sctx,
 		errCh:     errCh,
+		killed:    killed,
 	}
 	return worker
 }
@@ -68,7 +70,7 @@ func (worker *analyzeSaveStatsWorker) run(ctx context.Context, analyzeSnapshot b
 		if err != nil {
 			return
 		}
-		if atomic.LoadUint32(&worker.sctx.GetSessionVars().Killed) == 1 {
+		if atomic.LoadUint32(worker.killed) == 1 {
 			return
 		}
 	}
