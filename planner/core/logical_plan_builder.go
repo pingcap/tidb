@@ -5238,6 +5238,9 @@ func buildColumns2Handle(
 		var tblLen int
 		if onlyWritableCol {
 			logutil.BgLogger().Error("ver", zap.Any("state", tbl.Meta().State))
+			for _, col := range tbl.Meta().Columns {
+				logutil.BgLogger().Error("col", zap.Any("name", col.Name), zap.Any("state", col.State.String()))
+			}
 			tblLen = len(tbl.WritableCols())
 		} else {
 			tblLen = len(tbl.Cols())
