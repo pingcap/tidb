@@ -659,6 +659,10 @@ func (ts *SessionExtendedInfoSchema) TableByID(id int64) (table.Table, bool) {
 
 	if ts.MdlTables != nil {
 		if tbl, ok := ts.MdlTables.TableByID(id); ok {
+			logutil.BgLogger().Error("use mdl table")
+			for i, col := range tbl.Meta().Columns {
+				logutil.BgLogger().Error("col", zap.Any("col", col.Name.String()), zap.Any("state", col.State.String()), zap.Int("i", i), zap.Any("state", tbl.Meta().State.String()))
+			}
 			return tbl, true
 		}
 	}
