@@ -498,16 +498,17 @@ timezone.*
 1. Get statistics data of specified table.
 
     ```shell
-    curl http://{TiDBIP}:10080/stats/dump/{db}/{table}
+    curl http://{TiDBIP}:10080/stats/dump/{db}/{table} --output stats.{db}.{table}.zip
     ```
 
 1. Get statistics data of specific table and timestamp.
 
     ```shell
-    curl http://{TiDBIP}:10080/stats/dump/{db}/{table}/{yyyyMMddHHmmss}
+    curl http://{TiDBIP}:10080/stats/dump/{db}/{table}/{yyyyMMddHHmmss} --output stats.{db}.{table}.{yyyyMMddHHmmss}.zip
     ```
+
     ```shell
-    curl http://{TiDBIP}:10080/stats/dump/{db}/{table}/{yyyy-MM-dd HH:mm:ss}
+    curl http://{TiDBIP}:10080/stats/dump/{db}/{table}/{yyyy-MM-dd HH:mm:ss} --output stats.{db}.{table}.{yyyyMMddHHmmss}.zip
     ```
 
 1. Resume the binlog writing when Pump is recovered.

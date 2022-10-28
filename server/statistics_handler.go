@@ -15,6 +15,8 @@
 package server
 
 import (
+	"archive/zip"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -29,6 +31,18 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/tikv/client-go/v2/oracle"
 )
+
+func compressJSON(w http.ResponseWriter, statsFileName string, js []byte) error {
+	zw := zip.NewWriter(w)
+	defer zw.Close()
+
+	fw, err := zw.Create(statsFileName)
+	if err != nil {
+		return err
+	}
+	_, err = fw.Write(js)
+	return err
+}
 
 // StatsHandler is the handler for dumping statistics.
 type StatsHandler struct {
@@ -49,8 +63,6 @@ func (s *Server) newStatsHandler() *StatsHandler {
 }
 
 func (sh StatsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-
 	params := mux.Vars(req)
 
 	is := sh.do.InfoSchema()
@@ -68,13 +80,24 @@ func (sh StatsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	tbl, err := is.TableByName(model.NewCIStr(params[pDBName]), model.NewCIStr(params[pTableName]))
 	if err != nil {
 		writeError(w, err)
-	} else {
-		js, err := h.DumpStatsToJSON(params[pDBName], tbl.Meta(), nil, dumpPartitionStats)
-		if err != nil {
-			writeError(w, err)
-		} else {
-			writeData(w, js)
-		}
+	}
+	jst, err := h.DumpStatsToJSON(params[pDBName], tbl.Meta(), nil, dumpPartitionStats)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	js, err := json.MarshalIndent(jst, "", " ")
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"tidb_stats_\"%s.zip", time.Now().Format("20060102150405")))
+	statsFilename := fmt.Sprintf("%s.%s.json", params[pDBName], params[pTableName])
+	err = compressJSON(w, statsFilename, js)
+	if err != nil {
+		writeError(w, err)
+		return
 	}
 }
 
@@ -97,8 +120,6 @@ func (s *Server) newStatsHistoryHandler() *StatsHistoryHandler {
 }
 
 func (sh StatsHistoryHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-
 	params := mux.Vars(req)
 	se, err := session.CreateSession(sh.do.Store())
 	if err != nil {
@@ -139,10 +160,23 @@ func (sh StatsHistoryHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		writeError(w, err)
 		return
 	}
-	js, err := h.DumpHistoricalStatsBySnapshot(params[pDBName], tbl.Meta(), snapshot)
+	jst, err := h.DumpHistoricalStatsBySnapshot(params[pDBName], tbl.Meta(), snapshot)
 	if err != nil {
 		writeError(w, err)
-	} else {
-		writeData(w, js)
+		return
+	}
+
+	js, err := json.MarshalIndent(jst, "", " ")
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"tidb_stats_timestamp\"%s.zip", time.Now().Format("20060102150405")))
+	statsFilename := fmt.Sprintf("%s.%s.%s.json", params[pDBName], params[pTableName], t1.Format("20060102150405"))
+	err = compressJSON(w, statsFilename, js)
+	if err != nil {
+		writeError(w, err)
+		return
 	}
 }
