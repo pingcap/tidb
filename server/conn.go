@@ -61,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/extension"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
@@ -212,6 +213,7 @@ type clientConn struct {
 		sync.RWMutex
 		cancelFunc context.CancelFunc
 	}
+	extensions *extension.SessionExtensions
 }
 
 func (cc *clientConn) getCtx() *TiDBContext {
@@ -402,7 +404,7 @@ func (cc *clientConn) writeInitialHandshake(ctx context.Context) error {
 			return err
 		}
 	}
-	defAuthPlugin, err := cc.ctx.GetSessionVars().GetGlobalSystemVar(variable.DefaultAuthPlugin)
+	defAuthPlugin, err := cc.ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.DefaultAuthPlugin)
 	if err != nil {
 		return err
 	}
@@ -670,6 +672,11 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 		if err != nil {
 			return err
 		}
+	case mysql.AuthTiDBSM3Password:
+		resp.Auth, err = cc.authSM3(ctx)
+		if err != nil {
+			return err
+		}
 	case mysql.AuthNativePassword:
 	case mysql.AuthSocket:
 	case mysql.AuthTiDBSessionToken:
@@ -697,6 +704,7 @@ func (cc *clientConn) handleAuthPlugin(ctx context.Context, resp *handshakeRespo
 
 		switch resp.AuthPlugin {
 		case mysql.AuthCachingSha2Password:
+		case mysql.AuthTiDBSM3Password:
 		case mysql.AuthNativePassword:
 		case mysql.AuthSocket:
 		case mysql.AuthTiDBSessionToken:
@@ -745,6 +753,27 @@ func (cc *clientConn) authSha(ctx context.Context) ([]byte, error) {
 	return bytes.Trim(data, "\x00"), nil
 }
 
+// authSM3 implements the tidb_sm3_password specific part of the protocol.
+func (cc *clientConn) authSM3(ctx context.Context) ([]byte, error) {
+	err := cc.writePacket([]byte{0, 0, 0, 0, 1, 4})
+	if err != nil {
+		logutil.Logger(ctx).Error("authSM3 packet write failed", zap.Error(err))
+		return nil, err
+	}
+	err = cc.flush(ctx)
+	if err != nil {
+		logutil.Logger(ctx).Error("authSM3 packet flush failed", zap.Error(err))
+		return nil, err
+	}
+
+	data, err := cc.readPacket()
+	if err != nil {
+		logutil.Logger(ctx).Error("authSM3 packet read failed", zap.Error(err))
+		return nil, err
+	}
+	return bytes.Trim(data, "\x00"), nil
+}
+
 func (cc *clientConn) SessionStatusToString() string {
 	status := cc.ctx.Status()
 	inTxn, autoCommit := 0, 0
@@ -765,7 +794,7 @@ func (cc *clientConn) openSession() error {
 		tlsState := cc.tlsConn.ConnectionState()
 		tlsStatePtr = &tlsState
 	}
-	ctx, err := cc.server.driver.OpenCtx(cc.connectionID, cc.capability, cc.collation, cc.dbname, tlsStatePtr)
+	ctx, err := cc.server.driver.OpenCtx(cc.connectionID, cc.capability, cc.collation, cc.dbname, tlsStatePtr, cc.extensions)
 	if err != nil {
 		return err
 	}
@@ -944,7 +973,7 @@ func (cc *clientConn) skipInitConnect() bool {
 
 // initResultEncoder initialize the result encoder for current connection.
 func (cc *clientConn) initResultEncoder(ctx context.Context) {
-	chs, err := cc.ctx.GetSessionVars().GetSessionOrGlobalSystemVar(variable.CharacterSetResults)
+	chs, err := cc.ctx.GetSessionVars().GetSessionOrGlobalSystemVar(context.Background(), variable.CharacterSetResults)
 	if err != nil {
 		chs = ""
 		logutil.Logger(ctx).Warn("get character_set_results system variable failed", zap.Error(err))
@@ -953,7 +982,7 @@ func (cc *clientConn) initResultEncoder(ctx context.Context) {
 }
 
 func (cc *clientConn) initInputEncoder(ctx context.Context) {
-	chs, err := cc.ctx.GetSessionVars().GetSessionOrGlobalSystemVar(variable.CharacterSetClient)
+	chs, err := cc.ctx.GetSessionVars().GetSessionOrGlobalSystemVar(context.Background(), variable.CharacterSetClient)
 	if err != nil {
 		chs = ""
 		logutil.Logger(ctx).Warn("get character_set_client system variable failed", zap.Error(err))
@@ -1308,11 +1337,6 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	}
 
 	switch cmd {
-	case mysql.ComSleep:
-		// TODO: According to mysql document, this command is supposed to be used only internally.
-		// So it's just a temp fix, not sure if it's done right.
-		// Investigate this command and write test case later.
-		return nil
 	case mysql.ComQuit:
 		return io.EOF
 	case mysql.ComInitDB:
@@ -1373,7 +1397,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 
 func (cc *clientConn) writeStats(ctx context.Context) error {
 	var err error
-	var uptime int64 = 0
+	var uptime int64
 	info := serverInfo{}
 	info.ServerInfo, err = infosync.GetServerInfo()
 	if err != nil {
@@ -1783,6 +1807,24 @@ func (cc *clientConn) handlePlanReplayerLoad(ctx context.Context, planReplayerLo
 	return planReplayerLoadInfo.Update(data)
 }
 
+func (cc *clientConn) handlePlanReplayerDump(ctx context.Context, e *executor.PlanReplayerDumpInfo) error {
+	if cc.capability&mysql.ClientLocalFiles == 0 {
+		return errNotAllowedCommand
+	}
+	if e == nil {
+		return errors.New("plan replayer dump: executor is empty")
+	}
+	data, err := cc.getDataFromPath(ctx, e.Path)
+	if err != nil {
+		logutil.BgLogger().Error(err.Error())
+		return err
+	}
+	if len(data) == 0 {
+		return nil
+	}
+	return e.DumpSQLsFromFile(ctx, data)
+}
+
 func (cc *clientConn) audit(eventType plugin.GeneralEvent) {
 	err := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		audit := plugin.DeclareAuditManifest(p.Manifest)
@@ -1807,9 +1849,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	sc := cc.ctx.GetSessionVars().StmtCtx
 	prevWarns := sc.GetWarnings()
 	var stmts []ast.StmtNode
-	if execStmt, ok := cc.ctx.Parameterize(ctx, sql); ok {
-		stmts = append(stmts, execStmt)
-	} else if stmts, err = cc.ctx.Parse(ctx, sql); err != nil {
+	if stmts, err = cc.ctx.Parse(ctx, sql); err != nil {
 		return err
 	}
 
@@ -1933,7 +1973,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 		}
 		// TODO: the preprocess is run twice, we should find some way to avoid do it again.
 		// TODO: handle the PreprocessorReturn.
-		if err = plannercore.Preprocess(cc.getCtx(), stmt); err != nil {
+		if err = plannercore.Preprocess(ctx, cc.getCtx(), stmt); err != nil {
 			return nil, err
 		}
 		p := plannercore.TryFastPlan(cc.ctx.Session, stmt)
@@ -2087,6 +2127,15 @@ func (cc *clientConn) handleQuerySpecial(ctx context.Context, status uint16) (bo
 		}
 	}
 
+	planReplayerDump := cc.ctx.Value(executor.PlanReplayerDumpVarKey)
+	if planReplayerDump != nil {
+		handled = true
+		defer cc.ctx.SetValue(executor.PlanReplayerDumpVarKey, nil)
+		//nolint:forcetypeassert
+		if err := cc.handlePlanReplayerDump(ctx, planReplayerDump.(*executor.PlanReplayerDumpInfo)); err != nil {
+			return handled, err
+		}
+	}
 	return handled, cc.writeOkWith(ctx, mysql.OKHeader, true, status)
 }
 
@@ -2181,6 +2230,7 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 	req := rs.NewChunk(cc.chunkAlloc)
 	gotColumnInfo := false
 	firstNext := true
+	validNextCount := 0
 	var start time.Time
 	var stmtDetail *execdetails.StmtExecDetails
 	stmtDetailRaw := ctx.Value(execdetails.StmtExecDetailKey)
@@ -2198,6 +2248,10 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 				if !firstNext {
 					failpoint.Return(firstNext, storeerr.ErrTiFlashServerTimeout)
 				}
+			case "secondNextAndRetConflict":
+				if !firstNext && validNextCount > 1 {
+					failpoint.Return(firstNext, kv.ErrWriteConflict)
+				}
 			}
 		})
 		// Here server.tidbResultSet implements Next method.
@@ -2205,7 +2259,6 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 		if err != nil {
 			return firstNext, err
 		}
-		firstNext = false
 		if !gotColumnInfo {
 			// We need to call Next before we get columns.
 			// Otherwise, we will get incorrect columns info.
@@ -2231,6 +2284,8 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 		if rowCount == 0 {
 			break
 		}
+		validNextCount++
+		firstNext = false
 		reg := trace.StartRegion(ctx, "WriteClientConn")
 		if stmtDetail != nil {
 			start = time.Now()
@@ -2419,7 +2474,7 @@ func (cc *clientConn) handleResetConnection(ctx context.Context) error {
 		tlsState := cc.tlsConn.ConnectionState()
 		tlsStatePtr = &tlsState
 	}
-	tidbCtx, err := cc.server.driver.OpenCtx(cc.connectionID, cc.capability, cc.collation, cc.dbname, tlsStatePtr)
+	tidbCtx, err := cc.server.driver.OpenCtx(cc.connectionID, cc.capability, cc.collation, cc.dbname, tlsStatePtr, cc.extensions)
 	if err != nil {
 		return err
 	}
@@ -2439,7 +2494,10 @@ func (cc *clientConn) handleResetConnection(ctx context.Context) error {
 }
 
 func (cc *clientConn) handleCommonConnectionReset(ctx context.Context) error {
-	cc.ctx.GetSessionVars().ConnectionInfo = cc.connectInfo()
+	connectionInfo := cc.connectInfo()
+	cc.ctx.GetSessionVars().ConnectionInfo = connectionInfo
+
+	cc.extensions.OnConnectionEvent(extension.ConnReset, connectionInfo)
 
 	err := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)

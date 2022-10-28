@@ -35,6 +35,7 @@ var (
 	_ DDLNode = &CreateSequenceStmt{}
 	_ DDLNode = &CreatePlacementPolicyStmt{}
 	_ DDLNode = &DropDatabaseStmt{}
+	_ DDLNode = &FlashBackDatabaseStmt{}
 	_ DDLNode = &DropIndexStmt{}
 	_ DDLNode = &DropTableStmt{}
 	_ DDLNode = &DropSequenceStmt{}
@@ -253,13 +254,44 @@ func (n *DropDatabaseStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// FlashBackDatabaseStmt is a statement to restore a database and all tables in the database.
+type FlashBackDatabaseStmt struct {
+	ddlNode
+
+	DBName  model.CIStr
+	NewName string
+}
+
+// Restore implements Node interface.
+func (n *FlashBackDatabaseStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("FLASHBACK DATABASE ")
+	ctx.WriteName(n.DBName.O)
+	if len(n.NewName) > 0 {
+		ctx.WriteKeyWord(" TO ")
+		ctx.WriteName(n.NewName)
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *FlashBackDatabaseStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*FlashBackDatabaseStmt)
+	return v.Leave(n)
+}
+
 // IndexPartSpecifications is used for parsing index column name or index expression from SQL.
 type IndexPartSpecification struct {
 	node
 
 	Column *ColumnName
 	Length int
-	Expr   ExprNode
+	// Order is parsed but should be ignored because MySQL v5.7 doesn't support it.
+	Desc bool
+	Expr ExprNode
 }
 
 // Restore implements Node interface.
@@ -270,6 +302,9 @@ func (n *IndexPartSpecification) Restore(ctx *format.RestoreCtx) error {
 			return errors.Annotate(err, "An error occurred while splicing IndexPartSpecifications")
 		}
 		ctx.WritePlain(")")
+		if n.Desc {
+			ctx.WritePlain(" DESC")
+		}
 		return nil
 	}
 	if err := n.Column.Restore(ctx); err != nil {
@@ -277,6 +312,9 @@ func (n *IndexPartSpecification) Restore(ctx *format.RestoreCtx) error {
 	}
 	if n.Length > 0 {
 		ctx.WritePlainf("(%d)", n.Length)
+	}
+	if n.Desc {
+		ctx.WritePlain(" DESC")
 	}
 	return nil
 }
@@ -360,13 +398,13 @@ func (n *ReferenceDef) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("SIMPLE")
 		}
 	}
-	if n.OnDelete.ReferOpt != ReferOptionNoOption {
+	if n.OnDelete.ReferOpt != model.ReferOptionNoOption {
 		ctx.WritePlain(" ")
 		if err := n.OnDelete.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while splicing OnDelete")
 		}
 	}
-	if n.OnUpdate.ReferOpt != ReferOptionNoOption {
+	if n.OnUpdate.ReferOpt != model.ReferOptionNoOption {
 		ctx.WritePlain(" ")
 		if err := n.OnUpdate.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while splicing OnUpdate")
@@ -409,45 +447,15 @@ func (n *ReferenceDef) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// ReferOptionType is the type for refer options.
-type ReferOptionType int
-
-// Refer option types.
-const (
-	ReferOptionNoOption ReferOptionType = iota
-	ReferOptionRestrict
-	ReferOptionCascade
-	ReferOptionSetNull
-	ReferOptionNoAction
-	ReferOptionSetDefault
-)
-
-// String implements fmt.Stringer interface.
-func (r ReferOptionType) String() string {
-	switch r {
-	case ReferOptionRestrict:
-		return "RESTRICT"
-	case ReferOptionCascade:
-		return "CASCADE"
-	case ReferOptionSetNull:
-		return "SET NULL"
-	case ReferOptionNoAction:
-		return "NO ACTION"
-	case ReferOptionSetDefault:
-		return "SET DEFAULT"
-	}
-	return ""
-}
-
 // OnDeleteOpt is used for optional on delete clause.
 type OnDeleteOpt struct {
 	node
-	ReferOpt ReferOptionType
+	ReferOpt model.ReferOptionType
 }
 
 // Restore implements Node interface.
 func (n *OnDeleteOpt) Restore(ctx *format.RestoreCtx) error {
-	if n.ReferOpt != ReferOptionNoOption {
+	if n.ReferOpt != model.ReferOptionNoOption {
 		ctx.WriteKeyWord("ON DELETE ")
 		ctx.WriteKeyWord(n.ReferOpt.String())
 	}
@@ -467,12 +475,12 @@ func (n *OnDeleteOpt) Accept(v Visitor) (Node, bool) {
 // OnUpdateOpt is used for optional on update clause.
 type OnUpdateOpt struct {
 	node
-	ReferOpt ReferOptionType
+	ReferOpt model.ReferOptionType
 }
 
 // Restore implements Node interface.
 func (n *OnUpdateOpt) Restore(ctx *format.RestoreCtx) error {
-	if n.ReferOpt != ReferOptionNoOption {
+	if n.ReferOpt != model.ReferOptionNoOption {
 		ctx.WriteKeyWord("ON UPDATE ")
 		ctx.WriteKeyWord(n.ReferOpt.String())
 	}
@@ -2328,7 +2336,7 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 	case TableOptionInsertMethod:
 		ctx.WriteKeyWord("INSERT_METHOD ")
 		ctx.WritePlain("= ")
-		ctx.WriteString(n.StrValue)
+		ctx.WriteKeyWord(n.StrValue)
 	case TableOptionTableCheckSum:
 		ctx.WriteKeyWord("TABLE_CHECKSUM ")
 		ctx.WritePlain("= ")
@@ -2587,8 +2595,6 @@ const (
 	AlterTableCache
 	AlterTableNoCache
 	AlterTableStatsOptions
-	// AlterTableSetTiFlashMode uses to alter the table mode of TiFlash.
-	AlterTableSetTiFlashMode
 	AlterTableDropFirstPartition
 	AlterTableAddLastPartition
 	AlterTableReorganizeLastPartition
@@ -2689,7 +2695,6 @@ type AlterTableSpec struct {
 	Num              uint64
 	Visibility       IndexVisibility
 	TiFlashReplica   *TiFlashReplicaSpec
-	TiFlashMode      model.TiFlashMode
 	Writeable        bool
 	Statistics       *StatisticsSpec
 	AttributesSpec   *AttributesSpec
@@ -2752,9 +2757,6 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 			}
 			ctx.WriteString(v)
 		}
-	case AlterTableSetTiFlashMode:
-		ctx.WriteKeyWord("SET TIFLASH MODE ")
-		ctx.WriteKeyWord(n.TiFlashMode.String())
 	case AlterTableAddStatistics:
 		ctx.WriteKeyWord("ADD STATS_EXTENDED ")
 		if n.IfNotExists {
@@ -4035,6 +4037,65 @@ func (n *RecoverTableStmt) Accept(v Visitor) (Node, bool) {
 		}
 		n.Table = node.(*TableName)
 	}
+	return v.Leave(n)
+}
+
+// FlashBackToTimestampStmt is a statement to restore the cluster to the specified timestamp
+type FlashBackToTimestampStmt struct {
+	ddlNode
+
+	FlashbackTS ExprNode
+	Tables      []*TableName
+	DBName      model.CIStr
+}
+
+// Restore implements Node interface
+func (n *FlashBackToTimestampStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("FLASHBACK ")
+	if len(n.Tables) != 0 {
+		ctx.WriteKeyWord("TABLE ")
+		for index, table := range n.Tables {
+			if index != 0 {
+				ctx.WritePlain(", ")
+			}
+			if err := table.Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while restore DropTableStmt.Tables[%d]", index)
+			}
+		}
+	} else if n.DBName.O != "" {
+		ctx.WriteKeyWord("DATABASE ")
+		ctx.WriteName(n.DBName.O)
+	} else {
+		ctx.WriteKeyWord("CLUSTER")
+	}
+	ctx.WriteKeyWord(" TO TIMESTAMP ")
+	if err := n.FlashbackTS.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while splicing FlashBackToTimestampStmt.FlashbackTS")
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *FlashBackToTimestampStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*FlashBackToTimestampStmt)
+	if len(n.Tables) != 0 {
+		for i, val := range n.Tables {
+			node, ok := val.Accept(v)
+			if !ok {
+				return n, false
+			}
+			n.Tables[i] = node.(*TableName)
+		}
+	}
+	node, ok := n.FlashbackTS.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.FlashbackTS = node.(ExprNode)
 	return v.Leave(n)
 }
 

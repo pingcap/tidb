@@ -60,11 +60,11 @@ func ShowIndex(ctx context.Context, db QueryExecutor, schemaName string, table s
 			return nil, errors.Trace(err1)
 		}
 		seqInIndex, err1 := strconv.Atoi(string(fields["Seq_in_index"].Data))
-		if err != nil {
+		if err1 != nil {
 			return nil, errors.Trace(err1)
 		}
 		cardinality, err1 := strconv.Atoi(string(fields["Cardinality"].Data))
-		if err != nil {
+		if err1 != nil {
 			return nil, errors.Trace(err1)
 		}
 		index := &IndexInfo{

@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/channel"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/disk"
@@ -1629,9 +1630,9 @@ func (e *TableScanExec) nextChunk4InfoSchema(ctx context.Context, chk *chunk.Chu
 		}
 		mutableRow := chunk.MutRowFromTypes(retTypes(e))
 		type tableIter interface {
-			IterRecords(sessionctx.Context, []*table.Column, table.RecordIterFunc) error
+			IterRecords(ctx context.Context, sctx sessionctx.Context, cols []*table.Column, fn table.RecordIterFunc) error
 		}
-		err := (e.t.(tableIter)).IterRecords(e.ctx, columns, func(_ kv.Handle, rec []types.Datum, cols []*table.Column) (bool, error) {
+		err := (e.t.(tableIter)).IterRecords(ctx, e.ctx, columns, func(_ kv.Handle, rec []types.Datum, cols []*table.Column) (bool, error) {
 			mutableRow.SetDatums(rec...)
 			e.virtualTableChunkList.AppendRow(mutableRow.ToRow())
 			return true, nil
@@ -1886,13 +1887,11 @@ func (e *UnionExec) Close() error {
 	}
 	e.results = nil
 	if e.resultPool != nil {
-		for range e.resultPool {
-		}
+		channel.Clear(e.resultPool)
 	}
 	e.resourcePools = nil
 	if e.childIDChan != nil {
-		for range e.childIDChan {
-		}
+		channel.Clear(e.childIDChan)
 	}
 	// We do not need to acquire the e.mu.Lock since all the resultPuller can be
 	// promised to exit when reaching here (e.childIDChan been closed).
@@ -1927,6 +1926,14 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc.OptimizerCETrace = nil
 	sc.StatsLoadStatus = make(map[model.TableItemID]string)
 	sc.IsSyncStatsFailed = false
+	sc.IsExplainAnalyzeDML = false
+	// Firstly we assume that UseDynamicPruneMode can be enabled according session variable, then we will check other conditions
+	// in PlanBuilder.buildDataSource
+	if ctx.GetSessionVars().IsDynamicPartitionPruneEnabled() {
+		sc.UseDynamicPruneMode = true
+	} else {
+		sc.UseDynamicPruneMode = false
+	}
 
 	sc.SysdateIsNow = ctx.GetSessionVars().SysdateIsNow
 
@@ -1936,6 +1943,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	} else {
 		sc.InitMemTracker(memory.LabelForSQLText, vars.MemQuotaQuery)
 		sc.MemTracker.AttachToGlobalTracker(GlobalMemoryUsageTracker)
+		sc.MemTracker.IsRootTrackerOfSess, sc.MemTracker.SessionID = true, vars.ConnectionID
 	}
 
 	sc.InitDiskTracker(memory.LabelForSQLText, -1)
@@ -2101,7 +2109,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	} else if vars.StmtCtx.InSelectStmt {
 		sc.PrevAffectedRows = -1
 	}
-	if globalConfig.Instance.EnableCollectExecutionInfo {
+	if globalConfig.Instance.EnableCollectExecutionInfo.Load() {
 		// In ExplainFor case, RuntimeStatsColl should not be reset for reuse,
 		// because ExplainFor need to display the last statement information.
 		reuseObj := vars.StmtCtx.RuntimeStatsColl

@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/extension"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
@@ -31,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/disk"
-	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sli"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -56,7 +56,7 @@ type Context struct {
 	values      map[fmt.Stringer]interface{}
 	sessionVars *variable.SessionVars
 	cancel      context.CancelFunc
-	pcache      *kvcache.SimpleLRUCache
+	pcache      sessionctx.PlanCache
 	level       kvrpcpb.DiskFullOpt
 }
 
@@ -248,7 +248,7 @@ func (*Context) SetGlobalSysVar(_ sessionctx.Context, name string, value string)
 }
 
 // GetPlanCache implements the sessionctx.Context interface.
-func (c *Context) GetPlanCache(_ bool) *kvcache.SimpleLRUCache {
+func (c *Context) GetPlanCache(_ bool) sessionctx.PlanCache {
 	return c.pcache
 }
 
@@ -433,6 +433,11 @@ func (*Context) DecodeSessionStates(context.Context, sessionctx.Context, *sessio
 	return errors.Errorf("Not Supported")
 }
 
+// GetExtensions returns the `*extension.SessionExtensions` object
+func (*Context) GetExtensions() *extension.SessionExtensions {
+	return nil
+}
+
 // Close implements the sessionctx.Context interface.
 func (*Context) Close() {}
 
@@ -440,11 +445,11 @@ func (*Context) Close() {}
 func NewContext() *Context {
 	ctx, cancel := context.WithCancel(context.Background())
 	sctx := &Context{
-		values:      make(map[fmt.Stringer]interface{}),
-		sessionVars: variable.NewSessionVars(),
-		ctx:         ctx,
-		cancel:      cancel,
+		values: make(map[fmt.Stringer]interface{}),
+		ctx:    ctx,
+		cancel: cancel,
 	}
+	sctx.sessionVars = variable.NewSessionVars(sctx)
 	sctx.sessionVars.InitChunkSize = 2
 	sctx.sessionVars.MaxChunkSize = 32
 	sctx.sessionVars.StmtCtx.TimeZone = time.UTC
@@ -453,6 +458,7 @@ func NewContext() *Context {
 	sctx.sessionVars.GlobalVarsAccessor = variable.NewMockGlobalAccessor()
 	sctx.sessionVars.EnablePaging = variable.DefTiDBEnablePaging
 	sctx.sessionVars.MinPagingSize = variable.DefMinPagingSize
+	sctx.sessionVars.CostModelVersion = variable.DefTiDBCostModelVer
 	sctx.sessionVars.EnableChunkRPC = true
 	if err := sctx.GetSessionVars().SetSystemVar(variable.MaxAllowedPacket, "67108864"); err != nil {
 		panic(err)

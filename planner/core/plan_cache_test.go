@@ -16,6 +16,8 @@ package core_test
 
 import (
 	"errors"
+	"fmt"
+	"math/rand"
 	"strconv"
 	"strings"
 	"testing"
@@ -25,6 +27,8 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
+	"github.com/stretchr/testify/require"
 )
 
 type mockParameterizer struct {
@@ -66,32 +70,82 @@ func (mp *mockParameterizer) Parameterize(originSQL string) (paramSQL string, pa
 	return string(buf), params, true, nil
 }
 
-func TestGeneralPlanCacheParameterizer(t *testing.T) {
+func TestInitLRUWithSystemVar(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKitWithGeneralPlanCache(t, store)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@session.tidb_prepared_plan_cache_size = 0") // MinValue: 1
+	tk.MustQuery("select @@session.tidb_prepared_plan_cache_size").Check(testkit.Rows("1"))
+	sessionVar := tk.Session().GetSessionVars()
 
-	mp := new(mockParameterizer)
-	tk.Session().SetValue(plannercore.ParameterizerKey, mp)
+	lru := plannercore.NewLRUPlanCache(uint(sessionVar.PreparedPlanCacheSize), 0, 0, plannercore.PickPlanFromBucket)
+	require.NotNil(t, lru)
+}
 
-	tk.MustExec("set tidb_enable_general_plan_cache=1")
+func TestGeneralPlanCacheBasically(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int, b int, c int, d int, primary key(a), key(b), key(c, d))`)
+	for i := 0; i < 20; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%v, %v, %v, %v)", i, rand.Intn(20), rand.Intn(20), rand.Intn(20)))
+	}
+
+	queries := []string{
+		"select * from t where a<10",
+		"select * from t where a<13 and b<15",
+		"select * from t where b=13",
+		"select * from t where c<8",
+		"select * from t where d>8",
+		"select * from t where c=8 and d>10",
+		"select * from t where a<12 and b<13 and c<12 and d>2",
+	}
+
+	for _, query := range queries {
+		tk.MustExec(`set tidb_enable_general_plan_cache=0`)
+		resultNormal := tk.MustQuery(query).Sort()
+		tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+
+		tk.MustExec(`set tidb_enable_general_plan_cache=1`)
+		tk.MustQuery(query)                                                    // first process
+		tk.MustQuery(query).Sort().Check(resultNormal.Rows())                  // equal to the result without plan-cache
+		tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1")) // this plan is from plan-cache
+	}
+}
+
+func TestIssue38269(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set @@tidb_enable_prepared_plan_cache=1`)
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0")
 	tk.MustExec("use test")
-	tk.MustExec("create table t (a int)")
-	tk.MustExec("insert into t values (0), (1), (2), (3), (4), (5)")
-	tk.MustQuery("select * from t where a > 1").Sort().Check(testkit.Rows("2", "3", "4", "5"))
-	tk.MustQuery("select * from t where a > 3").Sort().Check(testkit.Rows("4", "5"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
-	tk.MustQuery("select * from t where a > 1 and a < 5").Sort().Check(testkit.Rows("2", "3", "4"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-	tk.MustQuery("select * from t where a > 2 and a < 5").Sort().Check(testkit.Rows("3", "4"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustExec("create table t1(a int)")
+	tk.MustExec("create table t2(a int, b int, c int, index idx(a, b))")
+	tk.MustExec("prepare stmt1 from 'select /*+ inl_join(t2) */ * from t1 join t2 on t1.a = t2.a where t2.b in (?, ?, ?)'")
+	tk.MustExec("set @a = 10, @b = 20, @c = 30, @d = 40, @e = 50, @f = 60")
+	tk.MustExec("execute stmt1 using @a, @b, @c")
+	tk.MustExec("execute stmt1 using @d, @e, @f")
+	tkProcess := tk.Session().ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	rows := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
+	require.Contains(t, rows[6][4], "range: decided by [eq(test.t2.a, test.t1.a) in(test.t2.b, 40, 50, 60)]")
+}
 
-	mp.action = "error"
-	tk.MustQuery("select * from t where a > 2 and a < 5").Sort().Check(testkit.Rows("3", "4"))
+func TestIssue38533(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, key (a))")
+	tk.MustExec(`prepare st from "select /*+ use_index(t, a) */ a from t where a=? and a=?"`)
+	tk.MustExec(`set @a=1`)
+	tk.MustExec(`execute st using @a, @a`)
+	tkProcess := tk.Session().ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	plan := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
+	require.True(t, strings.Contains(plan[1][0].(string), "RangeScan")) // range-scan instead of full-scan
+
+	tk.MustExec(`execute st using @a, @a`)
+	tk.MustExec(`execute st using @a, @a`)
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-	mp.action = "not_support"
-	tk.MustQuery("select * from t where a > 2 and a < 5").Sort().Check(testkit.Rows("3", "4"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-	mp.action = ""
-	tk.MustQuery("select * from t where a > 2 and a < 5").Sort().Check(testkit.Rows("3", "4"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }

@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
+	ropts "github.com/pingcap/tidb/br/pkg/lightning/restore/opts"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
@@ -112,6 +113,8 @@ func NewMockImportSource(dbSrcDataMap map[string]*MockDBSourceData) (*MockImport
 					fileInfo.FileMeta.Type = mydump.SourceTypeCSV
 				case strings.HasSuffix(tblDataFile.FileName, ".sql"):
 					fileInfo.FileMeta.Type = mydump.SourceTypeSQL
+				case strings.HasSuffix(tblDataFile.FileName, ".parquet"):
+					fileInfo.FileMeta.Type = mydump.SourceTypeParquet
 				default:
 					return nil, errors.Errorf("unsupported file type: %s", tblDataFile.FileName)
 				}
@@ -215,7 +218,7 @@ func (t *MockTargetInfo) FetchRemoteTableModels(ctx context.Context, schemaName 
 
 // GetTargetSysVariablesForImport gets some important systam variables for importing on the target.
 // It implements the TargetInfoGetter interface.
-func (t *MockTargetInfo) GetTargetSysVariablesForImport(ctx context.Context) map[string]string {
+func (t *MockTargetInfo) GetTargetSysVariablesForImport(ctx context.Context, _ ...ropts.GetPreInfoOption) map[string]string {
 	result := make(map[string]string)
 	for k, v := range t.sysVarMap {
 		result[k] = v

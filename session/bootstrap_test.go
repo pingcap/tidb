@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/telemetry"
 	"github.com/stretchr/testify/require"
 )
 
@@ -54,7 +55,7 @@ func TestBootstrap(t *testing.T) {
 	require.NotEqual(t, 0, req.NumRows())
 
 	rows := statistics.RowToDatums(req.GetRow(0), r.Fields())
-	match(t, rows, `%`, "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y")
+	match(t, rows, `%`, "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", nil)
 	r.Close()
 
 	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "anyhost"}, []byte(""), []byte("")))
@@ -140,12 +141,15 @@ func TestBootstrapWithError(t *testing.T) {
 	{
 		se := &session{
 			store:       store,
-			sessionVars: variable.NewSessionVars(),
+			sessionVars: variable.NewSessionVars(nil),
 		}
+		se.functionUsageMu.builtinFunctionUsage = make(telemetry.BuiltinFunctionsUsage)
 		se.txn.init()
 		se.mu.values = make(map[fmt.Stringer]interface{})
 		se.SetValue(sessionctx.Initing, true)
 		err := InitDDLJobTables(store)
+		require.NoError(t, err)
+		err = InitMDLTable(store)
 		require.NoError(t, err)
 		dom, err := domap.Get(store)
 		require.NoError(t, err)
@@ -175,7 +179,7 @@ func TestBootstrapWithError(t *testing.T) {
 
 	row := req.GetRow(0)
 	rows := statistics.RowToDatums(row, r.Fields())
-	match(t, rows, `%`, "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y")
+	match(t, rows, `%`, "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", nil)
 	require.NoError(t, r.Close())
 
 	mustExec(t, se, "USE test")

@@ -22,6 +22,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/pingcap/tidb/extension"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -186,7 +187,7 @@ func (p *UserPrivileges) isValidHash(record *UserRecord) bool {
 		if len(pwd) == mysql.PWDHashLen+1 {
 			return true
 		}
-		logutil.BgLogger().Error("user password from system DB not like a mysql_native_password format", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
+		logutil.BgLogger().Error("the password from the mysql.user table does not match the definition of a mysql_native_password", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
 		return false
 	}
 
@@ -194,7 +195,15 @@ func (p *UserPrivileges) isValidHash(record *UserRecord) bool {
 		if len(pwd) == mysql.SHAPWDHashLen {
 			return true
 		}
-		logutil.BgLogger().Error("user password from system DB not like a caching_sha2_password format", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
+		logutil.BgLogger().Error("the password from the mysql.user table does not match the definition of a caching_sha2_password", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
+		return false
+	}
+
+	if record.AuthPlugin == mysql.AuthTiDBSM3Password {
+		if len(pwd) == mysql.SM3PWDHashLen {
+			return true
+		}
+		logutil.BgLogger().Error("the password from the mysql.user table does not match the definition of a tidb_sm3_password", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
 		return false
 	}
 
@@ -202,7 +211,7 @@ func (p *UserPrivileges) isValidHash(record *UserRecord) bool {
 		return true
 	}
 
-	logutil.BgLogger().Error("user password from system DB not like a known hash format", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
+	logutil.BgLogger().Error("user password from the mysql.user table not like a known hash format", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
 	return false
 }
 
@@ -297,7 +306,7 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 	if record == nil {
 		logutil.BgLogger().Error("get authUser privilege record fail",
 			zap.String("authUser", authUser), zap.String("authHost", authHost))
-		return errAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+		return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 	}
 
 	globalPriv := mysqlPriv.matchGlobalPriv(authUser, authHost)
@@ -305,49 +314,50 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 		if !p.checkSSL(globalPriv, tlsState) {
 			logutil.BgLogger().Error("global priv check ssl fail",
 				zap.String("authUser", authUser), zap.String("authHost", authHost))
-			return errAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+			return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 		}
 	}
 
 	pwd := record.AuthenticationString
 	if !p.isValidHash(record) {
-		return errAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+		return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 	}
 
 	if len(pwd) > 0 && len(authentication) > 0 {
-		if record.AuthPlugin == mysql.AuthNativePassword {
+		switch record.AuthPlugin {
+		case mysql.AuthNativePassword:
 			hpwd, err := auth.DecodePassword(pwd)
 			if err != nil {
 				logutil.BgLogger().Error("decode password string failed", zap.Error(err))
-				return errAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+				return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 			}
 
 			if !auth.CheckScrambledPassword(salt, hpwd, authentication) {
-				return errAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+				return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 			}
-		} else if record.AuthPlugin == mysql.AuthCachingSha2Password {
-			authok, err := auth.CheckShaPassword([]byte(pwd), string(authentication))
+		case mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:
+			authok, err := auth.CheckHashingPassword([]byte(pwd), string(authentication), record.AuthPlugin)
 			if err != nil {
 				logutil.BgLogger().Error("Failed to check caching_sha2_password", zap.Error(err))
 			}
 
 			if !authok {
-				return errAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+				return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 			}
-		} else if record.AuthPlugin == mysql.AuthSocket {
+		case mysql.AuthSocket:
 			if string(authentication) != authUser && string(authentication) != pwd {
 				logutil.BgLogger().Error("Failed socket auth", zap.String("authUser", authUser),
 					zap.String("socket_user", string(authentication)),
 					zap.String("authentication_string", pwd))
-				return errAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+				return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 			}
-		} else {
+		default:
 			logutil.BgLogger().Error("unknown authentication plugin", zap.String("authUser", authUser), zap.String("plugin", record.AuthPlugin))
-			return errAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+			return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 		}
 	} else if len(pwd) > 0 || len(authentication) > 0 {
 		if record.AuthPlugin != mysql.AuthSocket {
-			return errAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+			return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 		}
 	}
 
@@ -630,6 +640,10 @@ func (p *UserPrivileges) IsDynamicPrivilege(privName string) bool {
 
 // RegisterDynamicPrivilege is used by plugins to add new privileges to TiDB
 func RegisterDynamicPrivilege(privName string) error {
+	if len(privName) == 0 {
+		return errors.New("privilege name should not be empty")
+	}
+
 	privNameInUpper := strings.ToUpper(privName)
 	if len(privNameInUpper) > 32 {
 		return errors.New("privilege name is longer than 32 characters")
@@ -654,4 +668,23 @@ func GetDynamicPrivileges() []string {
 	privCopy := make([]string, len(dynamicPrivs))
 	copy(privCopy, dynamicPrivs)
 	return privCopy
+}
+
+// RemoveDynamicPrivilege is used for test only
+func RemoveDynamicPrivilege(privName string) bool {
+	privNameInUpper := strings.ToUpper(privName)
+	dynamicPrivLock.Lock()
+	defer dynamicPrivLock.Unlock()
+	for idx, priv := range dynamicPrivs {
+		if privNameInUpper == priv {
+			dynamicPrivs = append(dynamicPrivs[:idx], dynamicPrivs[idx+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
+func init() {
+	extension.RegisterDynamicPrivilege = RegisterDynamicPrivilege
+	extension.RemoveDynamicPrivilege = RemoveDynamicPrivilege
 }

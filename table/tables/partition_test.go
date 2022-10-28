@@ -18,6 +18,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -51,11 +52,9 @@ PARTITION BY RANGE COLUMNS ( id ) (
 
 	tk.MustQuery("select * from partition_basic where id = 7").Check(testkit.Rows("7"))
 	tk.MustQuery("select * from partition_basic partition (p1)").Check(testkit.Rows("7"))
-	_, err := tk.Exec("select * from partition_basic partition (p5)")
-	require.Error(t, err)
+	tk.MustExecToErr("select * from partition_basic partition (p5)")
 
-	_, err = tk.Exec("update partition_basic set id = 666 where id = 7")
-	require.Error(t, err)
+	tk.MustExecToErr("update partition_basic set id = 666 where id = 7")
 	tk.MustExec("update partition_basic set id = 9 where id = 7")
 	tk.MustExec("delete from partition_basic where id = 7")
 	tk.MustExec("delete from partition_basic where id = 9")
@@ -393,6 +392,8 @@ func TestLocatePartitionSingleColumn(t *testing.T) {
 }
 
 func TestLocatePartition(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

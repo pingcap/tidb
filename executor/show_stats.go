@@ -108,7 +108,7 @@ func (e *ShowExec) fetchShowStatsMeta() error {
 	for _, db := range dbs {
 		for _, tbl := range db.Tables {
 			pi := tbl.GetPartitionInfo()
-			if pi == nil || e.ctx.GetSessionVars().UseDynamicPartitionPrune() {
+			if pi == nil || e.ctx.GetSessionVars().IsDynamicPartitionPruneEnabled() {
 				partitionName := ""
 				if pi != nil {
 					partitionName = "global"
@@ -150,7 +150,7 @@ func (e *ShowExec) fetchShowStatsHistogram() error {
 	for _, db := range dbs {
 		for _, tbl := range db.Tables {
 			pi := tbl.GetPartitionInfo()
-			if pi == nil || e.ctx.GetSessionVars().UseDynamicPartitionPrune() {
+			if pi == nil || e.ctx.GetSessionVars().IsDynamicPartitionPruneEnabled() {
 				partitionName := ""
 				if pi != nil {
 					partitionName = "global"
@@ -183,6 +183,9 @@ func (e *ShowExec) appendTableForStatsHistograms(dbName, tblName, partitionName 
 			col.StatsLoadedStatus.StatusToString(), col.MemoryUsage())
 	}
 	for _, idx := range stableIdxsStats(statsTbl.Indices) {
+		if !idx.IsStatsInitialized() {
+			continue
+		}
 		e.histogramToRow(dbName, tblName, partitionName, idx.Info.Name.O, 1, idx.Histogram, 0,
 			idx.StatsLoadedStatus.StatusToString(), idx.MemoryUsage())
 	}
@@ -221,7 +224,7 @@ func (e *ShowExec) fetchShowStatsBuckets() error {
 	for _, db := range dbs {
 		for _, tbl := range db.Tables {
 			pi := tbl.GetPartitionInfo()
-			if pi == nil || e.ctx.GetSessionVars().UseDynamicPartitionPrune() {
+			if pi == nil || e.ctx.GetSessionVars().IsDynamicPartitionPruneEnabled() {
 				partitionName := ""
 				if pi != nil {
 					partitionName = "global"
@@ -280,7 +283,7 @@ func (e *ShowExec) fetchShowStatsTopN() error {
 	for _, db := range dbs {
 		for _, tbl := range db.Tables {
 			pi := tbl.GetPartitionInfo()
-			if pi == nil || e.ctx.GetSessionVars().UseDynamicPartitionPrune() {
+			if pi == nil || e.ctx.GetSessionVars().IsDynamicPartitionPruneEnabled() {
 				partitionName := ""
 				if pi != nil {
 					partitionName = "global"
@@ -412,7 +415,7 @@ func (e *ShowExec) fetchShowStatsHealthy() {
 	for _, db := range dbs {
 		for _, tbl := range db.Tables {
 			pi := tbl.GetPartitionInfo()
-			if pi == nil || e.ctx.GetSessionVars().UseDynamicPartitionPrune() {
+			if pi == nil || e.ctx.GetSessionVars().IsDynamicPartitionPruneEnabled() {
 				partitionName := ""
 				if pi != nil {
 					partitionName = "global"

@@ -19,7 +19,9 @@ import (
 	"strconv"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/logutil"
@@ -33,18 +35,21 @@ const (
 )
 
 type suiteContext struct {
-	ctx      context.Context
-	cancel   func()
-	store    kv.Storage
-	t        *testing.T
-	tk       *testkit.TestKit
-	isUnique bool
-	isPK     bool
-	tableNum int
-	colNum   int
-	rowNum   int
-	workload *workload
-	tkPool   *sync.Pool
+	ctx              context.Context
+	cancel           func()
+	store            kv.Storage
+	t                *testing.T
+	tk               *testkit.TestKit
+	isUnique         bool
+	isPK             bool
+	tableNum         int
+	colNum           int
+	rowNum           int
+	workload         *workload
+	tkPool           *sync.Pool
+	isFailpointsTest bool
+	failSync         sync.WaitGroup
+	CompCtx          *CompatibilityContext
 }
 
 func (s *suiteContext) getTestKit() *testkit.TestKit {
@@ -66,12 +71,13 @@ func (s *suiteContext) done() bool {
 
 func newSuiteContext(t *testing.T, tk *testkit.TestKit, store kv.Storage) *suiteContext {
 	return &suiteContext{
-		store:    store,
-		t:        t,
-		tk:       tk,
-		tableNum: 3,
-		colNum:   28,
-		rowNum:   64,
+		store:            store,
+		t:                t,
+		tk:               tk,
+		tableNum:         3,
+		colNum:           28,
+		rowNum:           64,
+		isFailpointsTest: false,
 	}
 }
 
@@ -131,7 +137,7 @@ func createTable(tk *testkit.TestKit) {
 func insertRows(tk *testkit.TestKit) {
 	var (
 		insStr string
-		values []string = []string{
+		values = []string{
 			" (1, 1, 1, 1, 1, 1, 1, 1, 1.0, 1.0, 1111.1111, '2001-01-01', '11:11:11', '2001-01-01 11:11:11', '2001-01-01 11:11:11.123456', 1999, 'aaaa', 'aaaa', 'aaaa', 'aaaa', 'aaaa','aaaa', 'aaaa', 'aaaa', 'aaaa', 'aaaa', 'aaaa', 'aaaa', '{\"name\": \"Beijing\", \"population\": 100}')",
 			" (2, 2, 2, 2, 2, 2, 2, 2, 2.0, 2.0, 1112.1111, '2001-01-02', '11:11:12', '2001-01-02 11:11:12', '2001-01-02 11:11:12.123456', 2000, 'bbbb', 'bbbb', 'bbbb', 'bbbb', 'bbbb', 'bbbb', 'bbbb', 'bbbb', 'bbbb', 'bbbb', 'bbbb', 'bbbb', '{\"name\": \"Beijing\", \"population\": 101}')",
 			" (3, 3, 3, 3, 3, 3, 3, 3, 3.0, 3.0, 1113.1111, '2001-01-03', '11:11:13', '2001-01-03 11:11:13', '2001-01-03 11:11:11.123456', 2001, 'cccc', 'cccc', 'cccc', 'cccc', 'cccc', 'cccc', 'cccc', 'cccc', 'cccc', 'cccc', 'cccc', 'cccc', '{\"name\": \"Beijing\", \"population\": 102}')",
@@ -207,7 +213,7 @@ func insertRows(tk *testkit.TestKit) {
 	}
 }
 
-func createIndexOneCol(ctx *suiteContext, tableID int, colID int) error {
+func createIndexOneCol(ctx *suiteContext, tableID int, colID int) (err error) {
 	addIndexStr := " add index idx"
 	var ddlStr string
 	if ctx.isPK {
@@ -232,8 +238,16 @@ func createIndexOneCol(ctx *suiteContext, tableID int, colID int) error {
 			ddlStr = "alter table addindex.t" + strconv.Itoa(tableID) + addIndexStr + strconv.Itoa(colID) + "(c0, c" + strconv.Itoa(colID) + ")"
 		}
 	}
+	if ctx.CompCtx != nil && ctx.CompCtx.isMultiSchemaChange {
+		colID += 60
+		ddlStr += " , add column c" + strconv.Itoa(colID) + " int;"
+	}
 	logutil.BgLogger().Info("[add index test] createIndexOneCol", zap.String("sql", ddlStr))
-	_, err := ctx.tk.Exec(ddlStr)
+	if ctx.CompCtx != nil && ctx.CompCtx.isConcurrentDDL {
+		_, err = ctx.CompCtx.executor[tableID].tk.Exec(ddlStr)
+	} else {
+		_, err = ctx.tk.Exec(ddlStr)
+	}
 	if err != nil {
 		if ctx.isUnique || ctx.isPK {
 			require.Contains(ctx.t, err.Error(), "Duplicate entry")
@@ -244,7 +258,7 @@ func createIndexOneCol(ctx *suiteContext, tableID int, colID int) error {
 	return err
 }
 
-func createIndexTwoCols(ctx *suiteContext, tableID int, indexID int, colID1 int, colID2 int) error {
+func createIndexTwoCols(ctx *suiteContext, tableID int, indexID int, colID1 int, colID2 int) (err error) {
 	var colID1Str, colID2Str string
 	addIndexStr := " add index idx"
 	if ctx.isPK {
@@ -263,8 +277,16 @@ func createIndexTwoCols(ctx *suiteContext, tableID int, indexID int, colID1 int,
 		colID2Str = strconv.Itoa(colID2)
 	}
 	ddlStr := "alter table addindex.t" + strconv.Itoa(tableID) + addIndexStr + strconv.Itoa(indexID) + "(c" + colID1Str + ", c" + colID2Str + ")"
+	if ctx.CompCtx != nil && ctx.CompCtx.isMultiSchemaChange {
+		colID1 += 60
+		ddlStr += " , add column c" + strconv.Itoa(colID1) + " varchar(10);"
+	}
 	logutil.BgLogger().Info("[add index test] createIndexTwoCols", zap.String("sql", ddlStr))
-	_, err := ctx.tk.Exec(ddlStr)
+	if ctx.CompCtx != nil && ctx.CompCtx.isConcurrentDDL {
+		_, err = ctx.CompCtx.executor[tableID].tk.Exec(ddlStr)
+	} else {
+		_, err = ctx.tk.Exec(ddlStr)
+	}
 	if err != nil {
 		logutil.BgLogger().Error("[add index test] add index failed",
 			zap.String("sql", ddlStr), zap.Error(err))
@@ -273,13 +295,28 @@ func createIndexTwoCols(ctx *suiteContext, tableID int, indexID int, colID1 int,
 	return err
 }
 
-func checkResult(ctx *suiteContext, tableName string, indexID int) {
+func checkResult(ctx *suiteContext, tableName string, indexID int, tkID int) {
+	var err error
 	adminCheckSQL := "admin check index " + tableName + " idx" + strconv.Itoa(indexID)
-	_, err := ctx.tk.Exec(adminCheckSQL)
-	logutil.BgLogger().Error("[add index test] checkResult", zap.String("sql", adminCheckSQL))
+	if ctx.CompCtx != nil && ctx.CompCtx.isConcurrentDDL {
+		_, err = ctx.CompCtx.executor[tkID].tk.Exec(adminCheckSQL)
+	} else {
+		_, err = ctx.tk.Exec(adminCheckSQL)
+	}
+	if err != nil {
+		logutil.BgLogger().Error("[add index test] checkResult",
+			zap.String("sql", adminCheckSQL), zap.Error(err))
+	}
 	require.NoError(ctx.t, err)
-	require.Equal(ctx.t, ctx.tk.Session().AffectedRows(), uint64(0))
-	_, err = ctx.tk.Exec("alter table " + tableName + " drop index idx" + strconv.Itoa(indexID))
+
+	if ctx.CompCtx != nil && ctx.CompCtx.isConcurrentDDL {
+		require.Equal(ctx.t, uint64(0), ctx.CompCtx.executor[tkID].tk.Session().AffectedRows())
+		_, err = ctx.CompCtx.executor[tkID].tk.Exec("alter table " + tableName + " drop index idx" + strconv.Itoa(indexID))
+	} else {
+		require.Equal(ctx.t, uint64(0), ctx.tk.Session().AffectedRows())
+		_, err = ctx.tk.Exec("alter table " + tableName + " drop index idx" + strconv.Itoa(indexID))
+	}
+
 	if err != nil {
 		logutil.BgLogger().Error("[add index test] drop index failed",
 			zap.String("sql", adminCheckSQL), zap.Error(err))
@@ -287,12 +324,24 @@ func checkResult(ctx *suiteContext, tableName string, indexID int) {
 	require.NoError(ctx.t, err)
 }
 
-func checkTableResult(ctx *suiteContext, tableName string) {
+func checkTableResult(ctx *suiteContext, tableName string, tkID int) {
+	var err error
 	adminCheckSQL := "admin check table " + tableName
-	_, err := ctx.tk.Exec(adminCheckSQL)
-	logutil.BgLogger().Error("[add index test] checkTableResult", zap.String("sql", adminCheckSQL))
+	if ctx.CompCtx != nil && ctx.CompCtx.isConcurrentDDL {
+		_, err = ctx.CompCtx.executor[tkID].tk.Exec(adminCheckSQL)
+	} else {
+		_, err = ctx.tk.Exec(adminCheckSQL)
+	}
+	if err != nil {
+		logutil.BgLogger().Error("[add index test] checkTableResult",
+			zap.String("sql", adminCheckSQL), zap.Error(err))
+	}
 	require.NoError(ctx.t, err)
-	require.Equal(ctx.t, ctx.tk.Session().AffectedRows(), uint64(0))
+	if ctx.CompCtx != nil && ctx.CompCtx.isConcurrentDDL {
+		require.Equal(ctx.t, uint64(0), ctx.CompCtx.executor[tkID].tk.Session().AffectedRows())
+	} else {
+		require.Equal(ctx.t, uint64(0), ctx.tk.Session().AffectedRows())
+	}
 }
 
 func testOneColFrame(ctx *suiteContext, colIDs [][]int, f func(*suiteContext, int, string, int) error) {
@@ -301,6 +350,10 @@ func testOneColFrame(ctx *suiteContext, colIDs [][]int, f func(*suiteContext, in
 		for _, i := range colIDs[tableID] {
 			if ctx.workload != nil {
 				ctx.workload.start(ctx, tableID, i)
+			}
+			if ctx.isFailpointsTest {
+				ctx.failSync.Add(1)
+				go useFailpoints(ctx, i)
 			}
 			err := f(ctx, tableID, tableName, i)
 			if err != nil {
@@ -312,10 +365,13 @@ func testOneColFrame(ctx *suiteContext, colIDs [][]int, f func(*suiteContext, in
 				}
 			}
 			if ctx.workload != nil {
-				_ = ctx.workload.stop(ctx)
+				_ = ctx.workload.stop(ctx, -1)
+			}
+			if ctx.isFailpointsTest {
+				ctx.failSync.Wait()
 			}
 			if err == nil {
-				checkResult(ctx, tableName, i)
+				checkResult(ctx, tableName, i, tableID)
 			}
 		}
 	}
@@ -330,6 +386,10 @@ func testTwoColsFrame(ctx *suiteContext, iIDs [][]int, jIDs [][]int, f func(*sui
 				if ctx.workload != nil {
 					ctx.workload.start(ctx, tableID, i, j)
 				}
+				if ctx.isFailpointsTest {
+					ctx.failSync.Add(1)
+					go useFailpoints(ctx, i)
+				}
 				err := f(ctx, tableID, tableName, indexID, i, j)
 				if err != nil {
 					logutil.BgLogger().Error("[add index test] add index failed", zap.Error(err))
@@ -337,10 +397,13 @@ func testTwoColsFrame(ctx *suiteContext, iIDs [][]int, jIDs [][]int, f func(*sui
 				require.NoError(ctx.t, err)
 				if ctx.workload != nil {
 					// Stop workload
-					_ = ctx.workload.stop(ctx)
+					_ = ctx.workload.stop(ctx, -1)
+				}
+				if ctx.isFailpointsTest {
+					ctx.failSync.Wait()
 				}
 				if err == nil && i != j {
-					checkResult(ctx, tableName, indexID)
+					checkResult(ctx, tableName, indexID, tableID)
 				}
 				indexID++
 			}
@@ -354,19 +417,26 @@ func testOneIndexFrame(ctx *suiteContext, colID int, f func(*suiteContext, int, 
 		if ctx.workload != nil {
 			ctx.workload.start(ctx, tableID, colID)
 		}
+		if ctx.isFailpointsTest {
+			ctx.failSync.Add(1)
+			go useFailpoints(ctx, tableID)
+		}
 		err := f(ctx, tableID, tableName, colID)
 		if err != nil {
 			logutil.BgLogger().Error("[add index test] add index failed", zap.Error(err))
 		}
 		require.NoError(ctx.t, err)
 		if ctx.workload != nil {
-			_ = ctx.workload.stop(ctx)
+			_ = ctx.workload.stop(ctx, -1)
+		}
+		if ctx.isFailpointsTest {
+			ctx.failSync.Wait()
 		}
 		if err == nil {
 			if ctx.isPK {
-				checkTableResult(ctx, tableName)
+				checkTableResult(ctx, tableName, tableID)
 			} else {
-				checkResult(ctx, tableName, colID)
+				checkResult(ctx, tableName, colID, tableID)
 			}
 		}
 	}
@@ -427,4 +497,31 @@ func addIndexMultiCols(ctx *suiteContext, tableID int, tableName string, indexID
 		require.NoError(ctx.t, err)
 	}
 	return err
+}
+
+type failpointsPath struct {
+	failpath string
+	inTerm   string
+}
+
+var failpoints = []failpointsPath{
+	{"github.com/pingcap/tidb/ddl/EnablePiTR", "return"},
+	{"github.com/pingcap/tidb/ddl/mockHighLoadForAddIndex", "return"},
+	{"github.com/pingcap/tidb/ddl/mockBackfillRunErr", "1*return"},
+	{"github.com/pingcap/tidb/ddl/mockBackfillSlow", "return"},
+	{"github.com/pingcap/tidb/ddl/MockCaseWhenParseFailure", "return(true)"},
+	{"github.com/pingcap/tidb/ddl/mockHighLoadForMergeIndex", "return"},
+	{"github.com/pingcap/tidb/ddl/mockMergeRunErr", "1*return"},
+	{"github.com/pingcap/tidb/ddl/mockMergeSlow", "return"},
+}
+
+func useFailpoints(ctx *suiteContext, failpos int) {
+	defer ctx.failSync.Done()
+	logutil.BgLogger().Info("stack", zap.Stack("cur stack"), zap.Int("id:", failpos))
+	failpos %= 8
+	require.NoError(ctx.t, failpoint.Enable(failpoints[failpos].failpath, failpoints[failpos].inTerm))
+	logutil.BgLogger().Info("stack", zap.Stack("cur stack"), zap.Int("id:", failpos), zap.Bool("enable failpoints:", true))
+	time.Sleep(10 * time.Second)
+	require.NoError(ctx.t, failpoint.Disable(failpoints[failpos].failpath))
+	logutil.BgLogger().Info("stack", zap.Stack("cur stack"), zap.Int("id:", failpos), zap.Bool("disable failpoints:", true))
 }

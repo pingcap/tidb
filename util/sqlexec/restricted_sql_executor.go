@@ -70,17 +70,17 @@ type ExecOption struct {
 type OptionFuncAlias = func(option *ExecOption)
 
 // ExecOptionIgnoreWarning tells ExecRestrictedStmt/SQL to ignore the warnings.
-var ExecOptionIgnoreWarning OptionFuncAlias = func(option *ExecOption) {
+var ExecOptionIgnoreWarning = func(option *ExecOption) {
 	option.IgnoreWarning = true
 }
 
 // ExecOptionAnalyzeVer1 tells ExecRestrictedStmt/SQL to collect statistics with version1.
-var ExecOptionAnalyzeVer1 OptionFuncAlias = func(option *ExecOption) {
+var ExecOptionAnalyzeVer1 = func(option *ExecOption) {
 	option.AnalyzeVer = 1
 }
 
 // ExecOptionAnalyzeVer2 tells ExecRestrictedStmt/SQL to collect statistics with version2.
-var ExecOptionAnalyzeVer2 OptionFuncAlias = func(option *ExecOption) {
+var ExecOptionAnalyzeVer2 = func(option *ExecOption) {
 	option.AnalyzeVer = 2
 }
 
@@ -100,13 +100,13 @@ func GetAnalyzeSnapshotOption(analyzeSnapshot bool) OptionFuncAlias {
 }
 
 // ExecOptionUseCurSession tells ExecRestrictedStmt/SQL to use current session.
-var ExecOptionUseCurSession OptionFuncAlias = func(option *ExecOption) {
+var ExecOptionUseCurSession = func(option *ExecOption) {
 	option.UseCurSession = true
 }
 
 // ExecOptionUseSessionPool tells ExecRestrictedStmt/SQL to use session pool.
 // UseCurSession is false by default, sometimes we set it explicitly for readability
-var ExecOptionUseSessionPool OptionFuncAlias = func(option *ExecOption) {
+var ExecOptionUseSessionPool = func(option *ExecOption) {
 	option.UseCurSession = false
 }
 

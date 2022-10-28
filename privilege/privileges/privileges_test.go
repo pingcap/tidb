@@ -1971,7 +1971,9 @@ func TestSecurityEnhancedModeSysVars(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE USER svroot1, svroot2")
 	tk.MustExec("GRANT SUPER ON *.* to svroot1 WITH GRANT OPTION")
+	tk.MustExec("GRANT SELECT ON performance_schema.* to svroot1")
 	tk.MustExec("GRANT SUPER, RESTRICTED_VARIABLES_ADMIN ON *.* to svroot2")
+	tk.MustExec("GRANT SELECT ON performance_schema.* to svroot2")
 
 	sem.Enable()
 	defer sem.Disable()
@@ -1985,9 +1987,17 @@ func TestSecurityEnhancedModeSysVars(t *testing.T) {
 	}, nil, nil)
 
 	tk.MustQuery(`SHOW VARIABLES LIKE 'tidb_force_priority'`).Check(testkit.Rows())
+	tk.MustQuery(`SELECT * FROM information_schema.variables_info WHERE variable_name = 'tidb_force_priority'`).Check(testkit.Rows())
+	tk.MustQuery(`SELECT * FROM performance_schema.session_variables WHERE variable_name = 'tidb_force_priority'`).Check(testkit.Rows())
 	tk.MustQuery(`SHOW GLOBAL VARIABLES LIKE 'tidb_enable_telemetry'`).Check(testkit.Rows())
+	tk.MustQuery(`SELECT * FROM information_schema.variables_info WHERE variable_name = 'tidb_enable_telemetry'`).Check(testkit.Rows())
+	tk.MustQuery(`SELECT * FROM performance_schema.session_variables WHERE variable_name = 'tidb_enable_telemetry'`).Check(testkit.Rows())
 	tk.MustQuery(`SHOW GLOBAL VARIABLES LIKE 'tidb_top_sql_max_time_series_count'`).Check(testkit.Rows())
+	tk.MustQuery(`SELECT * FROM information_schema.variables_info WHERE variable_name = 'tidb_top_sql_max_time_series_count'`).Check(testkit.Rows())
+	tk.MustQuery(`SELECT * FROM performance_schema.session_variables WHERE variable_name = 'tidb_top_sql_max_time_series_count'`).Check(testkit.Rows())
 	tk.MustQuery(`SHOW GLOBAL VARIABLES LIKE 'tidb_top_sql_max_meta_count'`).Check(testkit.Rows())
+	tk.MustQuery(`SELECT * FROM information_schema.variables_info WHERE variable_name = 'tidb_top_sql_max_meta_count'`).Check(testkit.Rows())
+	tk.MustQuery(`SELECT * FROM performance_schema.session_variables WHERE variable_name = 'tidb_top_sql_max_meta_count'`).Check(testkit.Rows())
 
 	_, err := tk.Exec("SET @@global.tidb_force_priority = 'NO_PRIORITY'")
 	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_VARIABLES_ADMIN privilege(s) for this operation")
@@ -2011,7 +2021,11 @@ func TestSecurityEnhancedModeSysVars(t *testing.T) {
 	}, nil, nil)
 
 	tk.MustQuery(`SHOW VARIABLES LIKE 'tidb_force_priority'`).Check(testkit.Rows("tidb_force_priority NO_PRIORITY"))
+	tk.MustQuery(`SELECT COUNT(*) FROM information_schema.variables_info WHERE variable_name = 'tidb_top_sql_max_meta_count'`).Check(testkit.Rows("1"))
+	tk.MustQuery(`SELECT COUNT(*) FROM performance_schema.session_variables WHERE variable_name = 'tidb_top_sql_max_meta_count'`).Check(testkit.Rows("1"))
 	tk.MustQuery(`SHOW GLOBAL VARIABLES LIKE 'tidb_enable_telemetry'`).Check(testkit.Rows("tidb_enable_telemetry ON"))
+	tk.MustQuery(`SELECT COUNT(*) FROM information_schema.variables_info WHERE variable_name = 'tidb_enable_telemetry'`).Check(testkit.Rows("1"))
+	tk.MustQuery(`SELECT COUNT(*) FROM performance_schema.session_variables WHERE variable_name = 'tidb_enable_telemetry'`).Check(testkit.Rows("1"))
 
 	// should not actually make any change.
 	tk.MustExec("SET @@global.tidb_force_priority = 'NO_PRIORITY'")
@@ -2934,4 +2948,18 @@ func TestCheckPreparePrivileges(t *testing.T) {
 		require.NoError(t, rs.Close())
 	}()
 	tk2.ResultSetToResult(rs, "").Check(testkit.Rows("1"))
+}
+
+func TestIssue37488(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE USER dba_test@'%';")
+	tk.MustExec("GRANT SELECT,INSERT,UPDATE,DELETE ON test.* TO 'dba_test'@'%';")
+	tk.MustExec("CREATE USER dba_test@'192.168.%';")
+	tk.MustExec("GRANT SELECT,INSERT,UPDATE,DELETE,CREATE,DROP,ALTER ON test.* TO 'dba_test'@'192.168.%';")
+
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "dba_test", Hostname: "192.168.13.15"}, nil, nil))
+	tk.MustQuery("select current_user()").Check(testkit.Rows("dba_test@192.168.%"))
+	tk.MustExec("DROP TABLE IF EXISTS a;") // succ
 }

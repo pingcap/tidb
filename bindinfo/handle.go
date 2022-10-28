@@ -108,20 +108,27 @@ type bindRecordUpdate struct {
 // NewBindHandle creates a new BindHandle.
 func NewBindHandle(ctx sessionctx.Context) *BindHandle {
 	handle := &BindHandle{}
-	handle.sctx.Context = ctx
-	handle.bindInfo.Value.Store(newBindCache())
-	handle.bindInfo.parser = parser.New()
-	handle.invalidBindRecordMap.Value.Store(make(map[string]*bindRecordUpdate))
-	handle.invalidBindRecordMap.flushFunc = func(record *BindRecord) error {
-		return handle.DropBindRecord(record.OriginalSQL, record.Db, &record.Bindings[0])
-	}
-	handle.pendingVerifyBindRecordMap.Value.Store(make(map[string]*bindRecordUpdate))
-	handle.pendingVerifyBindRecordMap.flushFunc = func(record *BindRecord) error {
-		// BindSQL has already been validated when coming here, so we use nil sctx parameter.
-		return handle.AddBindRecord(nil, record)
-	}
-	variable.RegisterStatistics(handle)
+	handle.Reset(ctx)
 	return handle
+}
+
+// Reset is to reset the BindHandle and clean old info.
+func (h *BindHandle) Reset(ctx sessionctx.Context) {
+	h.bindInfo.Lock()
+	defer h.bindInfo.Unlock()
+	h.sctx.Context = ctx
+	h.bindInfo.Value.Store(newBindCache())
+	h.bindInfo.parser = parser.New()
+	h.invalidBindRecordMap.Value.Store(make(map[string]*bindRecordUpdate))
+	h.invalidBindRecordMap.flushFunc = func(record *BindRecord) error {
+		return h.DropBindRecord(record.OriginalSQL, record.Db, &record.Bindings[0])
+	}
+	h.pendingVerifyBindRecordMap.Value.Store(make(map[string]*bindRecordUpdate))
+	h.pendingVerifyBindRecordMap.flushFunc = func(record *BindRecord) error {
+		// BindSQL has already been validated when coming here, so we use nil sctx parameter.
+		return h.AddBindRecord(nil, record)
+	}
+	variable.RegisterStatistics(h)
 }
 
 // Update updates the global sql bind cache.

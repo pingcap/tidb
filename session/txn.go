@@ -67,6 +67,9 @@ type LazyTxn struct {
 		sync.RWMutex
 		txninfo.TxnInfo
 	}
+
+	// mark the txn enables lazy uniqueness check in pessimistic transactions.
+	lazyUniquenessCheckEnabled bool
 }
 
 // GetTableInfo returns the cached index name.
@@ -123,6 +126,16 @@ func (txn *LazyTxn) flushStmtBuf() {
 		return
 	}
 	buf := txn.Transaction.GetMemBuffer()
+
+	if txn.lazyUniquenessCheckEnabled {
+		keysNeedSetPersistentPNE := kv.FindKeysInStage(buf, txn.stagingHandle, func(k kv.Key, flags kv.KeyFlags, v []byte) bool {
+			return flags.HasPresumeKeyNotExists()
+		})
+		for _, key := range keysNeedSetPersistentPNE {
+			buf.UpdateFlags(key, kv.SetPreviousPresumeKeyNotExists)
+		}
+	}
+
 	buf.Release(txn.stagingHandle)
 	txn.initCnt = buf.Len()
 }
@@ -450,6 +463,7 @@ func (txn *LazyTxn) KeysNeedToLock() ([]kv.Key, error) {
 		}
 		keys = append(keys, k)
 	})
+
 	return keys, nil
 }
 
@@ -473,6 +487,7 @@ func (txn *LazyTxn) Wait(ctx context.Context, sctx sessionctx.Context) (kv.Trans
 			sctx.GetSessionVars().TxnCtx.StartTS = 0
 			return txn, err
 		}
+		txn.lazyUniquenessCheckEnabled = !sctx.GetSessionVars().ConstraintCheckInPlacePessimistic
 	}
 	return txn, nil
 }
@@ -483,6 +498,13 @@ func keyNeedToLock(k, v []byte, flags kv.KeyFlags) bool {
 		// meta key always need to lock.
 		return true
 	}
+
+	// a pessimistic locking is skipped, perform the conflict check and
+	// constraint check (more accurately, PresumeKeyNotExist) in prewrite (or later pessimistic locking)
+	if flags.HasNeedConstraintCheckInPrewrite() {
+		return false
+	}
+
 	if flags.HasPresumeKeyNotExists() {
 		return true
 	}

@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/planner"
@@ -327,7 +328,7 @@ func TestPointGetId(t *testing.T) {
 		require.Len(t, stmts, 1)
 		stmt := stmts[0]
 		ret := &core.PreprocessorReturn{}
-		err = core.Preprocess(ctx, stmt, core.WithPreprocessorReturn(ret))
+		err = core.Preprocess(context.Background(), ctx, stmt, core.WithPreprocessorReturn(ret))
 		require.NoError(t, err)
 		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, ret.InfoSchema)
 		require.NoError(t, err)
@@ -653,6 +654,8 @@ func TestBatchPointGetPartition(t *testing.T) {
 }
 
 func TestBatchPointGetPartitionForAccessObject(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)

@@ -157,6 +157,10 @@ func (t *mockTxn) ClearDiskFullOpt() {
 	// TODO nothing
 }
 
+func (t *mockTxn) UpdateMemBufferFlags(_ []byte, _ ...FlagsOp) {
+
+}
+
 // newMockTxn new a mockTxn.
 func newMockTxn() Transaction {
 	return &mockTxn{

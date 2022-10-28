@@ -28,6 +28,7 @@ import (
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
 	"go.etcd.io/etcd/tests/v3/integration"
+	"go.opencensus.io/stats/view"
 	"go.uber.org/goleak"
 )
 
@@ -36,7 +37,6 @@ func TestMain(m *testing.M) {
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
-		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	}
 	goleak.VerifyTestMain(m, opts...)
 }
@@ -48,6 +48,7 @@ func TestGlobalConfigSyncer(t *testing.T) {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
+		view.Stop()
 		err := store.Close()
 		require.NoError(t, err)
 	}()
@@ -72,6 +73,7 @@ func TestStoreGlobalConfig(t *testing.T) {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
+		view.Stop()
 		err := store.Close()
 		require.NoError(t, err)
 	}()

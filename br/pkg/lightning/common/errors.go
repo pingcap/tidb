@@ -39,8 +39,9 @@ var (
 	ErrInvalidStorageConfig = errors.Normalize("invalid data-source-dir", errors.RFCCodeText("Lightning:Storage:ErrInvalidStorageConfig"))
 	ErrEmptySourceDir       = errors.Normalize("data-source-dir '%s' doesn't exist or contains no files", errors.RFCCodeText("Lightning:Storage:ErrEmptySourceDir"))
 
-	ErrTableRoute        = errors.Normalize("table route error", errors.RFCCodeText("Lightning:Loader:ErrTableRoute"))
-	ErrInvalidSchemaFile = errors.Normalize("invalid schema file", errors.RFCCodeText("Lightning:Loader:ErrInvalidSchemaFile"))
+	ErrTableRoute         = errors.Normalize("table route error", errors.RFCCodeText("Lightning:Loader:ErrTableRoute"))
+	ErrInvalidSchemaFile  = errors.Normalize("invalid schema file", errors.RFCCodeText("Lightning:Loader:ErrInvalidSchemaFile"))
+	ErrTooManySourceFiles = errors.Normalize("too many source files", errors.RFCCodeText("Lightning:Loader:ErrTooManySourceFiles"))
 
 	ErrSystemRequirementNotMet  = errors.Normalize("system requirement not met", errors.RFCCodeText("Lightning:PreCheck:ErrSystemRequirementNotMet"))
 	ErrCheckpointSchemaConflict = errors.Normalize("checkpoint schema conflict", errors.RFCCodeText("Lightning:PreCheck:ErrCheckpointSchemaConflict"))

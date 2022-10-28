@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"runtime/trace"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -193,18 +194,36 @@ type TelemetryInfo struct {
 	UseNonRecursive      bool
 	UseRecursive         bool
 	UseMultiSchemaChange bool
+	UesExchangePartition bool
 	PartitionTelemetry   *PartitionTelemetryInfo
+	AccountLockTelemetry *AccountLockTelemetryInfo
 }
 
 // PartitionTelemetryInfo records table partition telemetry information during execution.
 type PartitionTelemetryInfo struct {
-	UseTablePartition              bool
-	UseTablePartitionList          bool
-	UseTablePartitionRange         bool
-	UseTablePartitionHash          bool
-	UseTablePartitionRangeColumns  bool
-	UseTablePartitionListColumns   bool
-	TablePartitionMaxPartitionsNum uint64
+	UseTablePartition                bool
+	UseTablePartitionList            bool
+	UseTablePartitionRange           bool
+	UseTablePartitionHash            bool
+	UseTablePartitionRangeColumns    bool
+	UseTablePartitionRangeColumnsGt1 bool
+	UseTablePartitionRangeColumnsGt2 bool
+	UseTablePartitionRangeColumnsGt3 bool
+	UseTablePartitionListColumns     bool
+	TablePartitionMaxPartitionsNum   uint64
+	UseCreateIntervalPartition       bool
+	UseAddIntervalPartition          bool
+	UseDropIntervalPartition         bool
+}
+
+// AccountLockTelemetryInfo records account lock/unlock information during execution
+type AccountLockTelemetryInfo struct {
+	// The number of CREATE/ALTER USER statements that lock the user
+	LockUser int64
+	// The number of CREATE/ALTER USER statements that unlock the user
+	UnlockUser int64
+	// The number of CREATE/ALTER USER statements
+	CreateOrAlterUser int64
 }
 
 // ExecStmt implements the sqlexec.Statement interface, it builds a planner.Plan to an sqlexec.Statement.
@@ -247,7 +266,7 @@ type ExecStmt struct {
 }
 
 // GetStmtNode returns the stmtNode inside Statement
-func (a ExecStmt) GetStmtNode() ast.StmtNode {
+func (a *ExecStmt) GetStmtNode() ast.StmtNode {
 	return a.StmtNode
 }
 
@@ -312,7 +331,7 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 		// Update processinfo, ShowProcess() will use it.
 		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
 		if sctx.GetSessionVars().StmtCtx.StmtType == "" {
-			sctx.GetSessionVars().StmtCtx.StmtType = GetStmtLabel(a.StmtNode)
+			sctx.GetSessionVars().StmtCtx.StmtType = ast.GetStmtLabel(a.StmtNode)
 		}
 	}
 
@@ -344,7 +363,7 @@ func (a *ExecStmt) IsReadOnly(vars *variable.SessionVars) bool {
 // It returns the current information schema version that 'a' is using.
 func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 	ret := &plannercore.PreprocessorReturn{}
-	if err := plannercore.Preprocess(a.Ctx, a.StmtNode, plannercore.InTxnRetry, plannercore.InitTxnContextProvider, plannercore.WithPreprocessorReturn(ret)); err != nil {
+	if err := plannercore.Preprocess(ctx, a.Ctx, a.StmtNode, plannercore.InTxnRetry, plannercore.InitTxnContextProvider, plannercore.WithPreprocessorReturn(ret)); err != nil {
 		return 0, err
 	}
 
@@ -437,10 +456,16 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	sctx := a.Ctx
 	ctx = util.SetSessionID(ctx, sctx.GetSessionVars().ConnectionID)
 	if _, ok := a.Plan.(*plannercore.Analyze); ok && sctx.GetSessionVars().InRestrictedSQL {
-		oriStats, _ := sctx.GetSessionVars().GetSystemVar(variable.TiDBBuildStatsConcurrency)
+		oriStats, ok := sctx.GetSessionVars().GetSystemVar(variable.TiDBBuildStatsConcurrency)
+		if !ok {
+			oriStats = strconv.Itoa(variable.DefBuildStatsConcurrency)
+		}
 		oriScan := sctx.GetSessionVars().DistSQLScanConcurrency()
 		oriIndex := sctx.GetSessionVars().IndexSerialScanConcurrency()
-		oriIso, _ := sctx.GetSessionVars().GetSystemVar(variable.TxnIsolation)
+		oriIso, ok := sctx.GetSessionVars().GetSystemVar(variable.TxnIsolation)
+		if !ok {
+			oriIso = "REPEATABLE-READ"
+		}
 		terror.Log(sctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, "1"))
 		sctx.GetSessionVars().SetDistSQLScanConcurrency(1)
 		sctx.GetSessionVars().SetIndexSerialScanConcurrency(1)
@@ -486,7 +511,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		// Update processinfo, ShowProcess() will use it.
 		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
 		if a.Ctx.GetSessionVars().StmtCtx.StmtType == "" {
-			a.Ctx.GetSessionVars().StmtCtx.StmtType = GetStmtLabel(a.StmtNode)
+			a.Ctx.GetSessionVars().StmtCtx.StmtType = ast.GetStmtLabel(a.StmtNode)
 		}
 	}
 
@@ -510,6 +535,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		return a.handlePessimisticSelectForUpdate(ctx, e)
 	}
 
+	a.prepareFKCascadeContext(e)
 	if handled, result, err := a.handleNoDelay(ctx, e, isPessimistic); handled || err != nil {
 		return result, err
 	}
@@ -528,6 +554,137 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		stmt:       a,
 		txnStartTS: txnStartTS,
 	}, nil
+}
+
+func (a *ExecStmt) handleStmtForeignKeyTrigger(ctx context.Context, e Executor) error {
+	stmtCtx := a.Ctx.GetSessionVars().StmtCtx
+	if stmtCtx.ForeignKeyTriggerCtx.HasFKCascades {
+		// If the ExecStmt has foreign key cascade to be executed, we need call `StmtCommit` to commit the ExecStmt itself
+		// change first.
+		// Since `UnionScanExec` use `SnapshotIter` and `SnapshotGetter` to read txn mem-buffer, if we don't  do `StmtCommit`,
+		// then the fk cascade executor can't read the mem-buffer changed by the ExecStmt.
+		a.Ctx.StmtCommit()
+	}
+	err := a.handleForeignKeyTrigger(ctx, e, 1)
+	if err != nil {
+		err1 := a.handleFKTriggerError(stmtCtx)
+		if err1 != nil {
+			return errors.Errorf("handle foreign key trigger error failed, err: %v, original_err: %v", err1, err)
+		}
+		return err
+	}
+	if stmtCtx.ForeignKeyTriggerCtx.SavepointName != "" {
+		a.Ctx.GetSessionVars().TxnCtx.ReleaseSavepoint(stmtCtx.ForeignKeyTriggerCtx.SavepointName)
+	}
+	return nil
+}
+
+var maxForeignKeyCascadeDepth = 15
+
+func (a *ExecStmt) handleForeignKeyTrigger(ctx context.Context, e Executor, depth int) error {
+	exec, ok := e.(WithForeignKeyTrigger)
+	if !ok {
+		return nil
+	}
+	a.Ctx.GetSessionVars().StmtCtx.InHandleForeignKeyTrigger = true
+	defer func() {
+		a.Ctx.GetSessionVars().StmtCtx.InHandleForeignKeyTrigger = false
+	}()
+	fkChecks := exec.GetFKChecks()
+	for _, fkCheck := range fkChecks {
+		err := fkCheck.doCheck(ctx)
+		if err != nil {
+			return err
+		}
+	}
+	fkCascades := exec.GetFKCascades()
+	for _, fkCascade := range fkCascades {
+		err := a.handleForeignKeyCascade(ctx, fkCascade, depth)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (a *ExecStmt) handleForeignKeyCascade(ctx context.Context, fkc *FKCascadeExec, depth int) error {
+	if len(fkc.fkValues) == 0 {
+		return nil
+	}
+	if depth > maxForeignKeyCascadeDepth {
+		return ErrForeignKeyCascadeDepthExceeded.GenWithStackByArgs(maxForeignKeyCascadeDepth)
+	}
+	for {
+		e, err := fkc.buildExecutor(ctx)
+		if err != nil || e == nil {
+			return err
+		}
+		if err := e.Open(ctx); err != nil {
+			terror.Call(e.Close)
+			return err
+		}
+		err = Next(ctx, e, newFirstChunk(e))
+		if err != nil {
+			return err
+		}
+		err = e.Close()
+		if err != nil {
+			return err
+		}
+		// Call `StmtCommit` uses to flush the fk cascade executor change into txn mem-buffer,
+		// then the later fk cascade executors can see the mem-buffer changes.
+		a.Ctx.StmtCommit()
+		err = a.handleForeignKeyTrigger(ctx, e, depth+1)
+		if err != nil {
+			return err
+		}
+	}
+}
+
+// prepareFKCascadeContext records a transaction savepoint for foreign key cascade when this ExecStmt has foreign key
+// cascade behaviour and this ExecStmt is in transaction.
+func (a *ExecStmt) prepareFKCascadeContext(e Executor) {
+	exec, ok := e.(WithForeignKeyTrigger)
+	if !ok || !exec.HasFKCascades() {
+		return
+	}
+	sessVar := a.Ctx.GetSessionVars()
+	sessVar.StmtCtx.ForeignKeyTriggerCtx.HasFKCascades = true
+	if !sessVar.InTxn() {
+		return
+	}
+	txn, err := a.Ctx.Txn(false)
+	if err != nil || !txn.Valid() {
+		return
+	}
+	// Record a txn savepoint if ExecStmt in transaction, the savepoint is use to do rollback when handle foreign key
+	// cascade failed.
+	savepointName := "fk_sp_" + strconv.FormatUint(txn.StartTS(), 10)
+	memDBCheckpoint := txn.GetMemDBCheckpoint()
+	sessVar.TxnCtx.AddSavepoint(savepointName, memDBCheckpoint)
+	sessVar.StmtCtx.ForeignKeyTriggerCtx.SavepointName = savepointName
+}
+
+func (a *ExecStmt) handleFKTriggerError(sc *stmtctx.StatementContext) error {
+	if sc.ForeignKeyTriggerCtx.SavepointName == "" {
+		return nil
+	}
+	txn, err := a.Ctx.Txn(false)
+	if err != nil || !txn.Valid() {
+		return err
+	}
+	savepointRecord := a.Ctx.GetSessionVars().TxnCtx.RollbackToSavepoint(sc.ForeignKeyTriggerCtx.SavepointName)
+	if savepointRecord == nil {
+		// Normally should never run into here, but just in case, rollback the transaction.
+		err = txn.Rollback()
+		if err != nil {
+			return err
+		}
+		return errors.Errorf("foreign key cascade savepoint '%s' not found, transaction is rollback, should never happen", sc.ForeignKeyTriggerCtx.SavepointName)
+	}
+	txn.RollbackMemDBToCheckpoint(savepointRecord.MemDBCheckpoint)
+	a.Ctx.GetSessionVars().TxnCtx.ReleaseSavepoint(sc.ForeignKeyTriggerCtx.SavepointName)
+	return nil
 }
 
 func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic bool) (handled bool, rs sqlexec.RecordSet, err error) {
@@ -552,6 +709,7 @@ func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic 
 		if analyze := explain.getAnalyzeExecToExecutedNoDelay(); analyze != nil {
 			toCheck = analyze
 			isExplainAnalyze = true
+			a.Ctx.GetSessionVars().StmtCtx.IsExplainAnalyzeDML = isExplainAnalyze
 		}
 	}
 
@@ -559,7 +717,8 @@ func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic 
 	if toCheck.Schema().Len() == 0 {
 		handled = !isExplainAnalyze
 		if isPessimistic {
-			return handled, nil, a.handlePessimisticDML(ctx, toCheck)
+			err := a.handlePessimisticDML(ctx, toCheck)
+			return handled, nil, err
 		}
 		r, err := a.handleNoDelayExecutor(ctx, toCheck)
 		return handled, r, err
@@ -717,12 +876,13 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e Executor) (sqlex
 	if err != nil {
 		return nil, err
 	}
+	err = a.handleStmtForeignKeyTrigger(ctx, e)
 	return nil, err
 }
 
-func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
+func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) (err error) {
 	sctx := a.Ctx
-	// Do not active the transaction here.
+	// Do not activate the transaction here.
 	// When autocommit = 0 and transaction in pessimistic mode,
 	// statements like set xxx = xxx; should not active the transaction.
 	txn, err := sctx.Txn(false)
@@ -730,6 +890,27 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 		return err
 	}
 	txnCtx := sctx.GetSessionVars().TxnCtx
+	defer func() {
+		if err != nil && !sctx.GetSessionVars().ConstraintCheckInPlacePessimistic && sctx.GetSessionVars().InTxn() {
+			// If it's not a retryable error, rollback current transaction instead of rolling back current statement like
+			// in normal transactions, because we cannot locate and rollback the statement that leads to the lock error.
+			// This is too strict, but since the feature is not for everyone, it's the easiest way to guarantee safety.
+			stmtText := a.OriginText()
+			if sctx.GetSessionVars().EnableRedactLog {
+				stmtText = parser.Normalize(stmtText)
+			}
+			logutil.Logger(ctx).Info("Transaction abort for the safety of lazy uniqueness check. "+
+				"Note this may not be a uniqueness violation.",
+				zap.Error(err),
+				zap.String("statement", stmtText),
+				zap.Uint64("conn", sctx.GetSessionVars().ConnectionID),
+				zap.Uint64("txnStartTS", txnCtx.StartTS),
+				zap.Uint64("forUpdateTS", txnCtx.GetForUpdateTS()),
+			)
+			sctx.GetSessionVars().SetInTxn(false)
+			err = ErrLazyUniquenessCheckFailure.GenWithStackByArgs(err.Error())
+		}
+	}()
 	for {
 		startPointGetLocking := time.Now()
 		_, err = a.handleNoDelayExecutor(ctx, e)
@@ -904,9 +1085,14 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 	return e, nil
 }
 
-func (a *ExecStmt) openExecutor(ctx context.Context, e Executor) error {
+func (a *ExecStmt) openExecutor(ctx context.Context, e Executor) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = errors.New(fmt.Sprint(r))
+		}
+	}()
 	start := time.Now()
-	err := e.Open(ctx)
+	err = e.Open(ctx)
 	a.phaseOpenDurations[0] += time.Since(start)
 	return err
 }
@@ -1144,9 +1330,12 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	if execDetail.CommitDetail != nil && execDetail.CommitDetail.WriteSize > 0 {
 		a.Ctx.GetTxnWriteThroughputSLI().AddTxnWriteSize(execDetail.CommitDetail.WriteSize, execDetail.CommitDetail.WriteKeys)
 	}
-	if execDetail.ScanDetail != nil && execDetail.ScanDetail.ProcessedKeys > 0 && sessVars.StmtCtx.AffectedRows() > 0 {
-		// Only record the read keys in write statement which affect row more than 0.
-		a.Ctx.GetTxnWriteThroughputSLI().AddReadKeys(execDetail.ScanDetail.ProcessedKeys)
+	if execDetail.ScanDetail != nil && sessVars.StmtCtx.AffectedRows() > 0 {
+		processedKeys := atomic.LoadInt64(&execDetail.ScanDetail.ProcessedKeys)
+		if processedKeys > 0 {
+			// Only record the read keys in write statement which affect row more than 0.
+			a.Ctx.GetTxnWriteThroughputSLI().AddReadKeys(processedKeys)
+		}
 	}
 	succ := err == nil
 	if a.Plan != nil {
@@ -1476,7 +1665,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	stmtCtx := sessVars.StmtCtx
 	// Make sure StmtType is filled even if succ is false.
 	if stmtCtx.StmtType == "" {
-		stmtCtx.StmtType = GetStmtLabel(a.StmtNode)
+		stmtCtx.StmtType = ast.GetStmtLabel(a.StmtNode)
 	}
 	normalizedSQL, digest := stmtCtx.SQLDigest()
 	costTime := time.Since(sessVars.StartTime) + sessVars.DurationParse

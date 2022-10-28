@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/stretchr/testify/require"
 )
 
@@ -276,20 +275,20 @@ func TestConvertType(t *testing.T) {
 	v, err = Convert(ZeroDuration, ft)
 	require.NoError(t, err)
 	require.Equal(t, int64(0), v)
-	bj1, err := json.ParseBinaryFromString("99")
+	bj1, err := ParseBinaryJSONFromString("99")
 	require.NoError(t, err)
 	v, err = Convert(bj1, ft)
 	require.NoError(t, err)
 	require.Equal(t, int64(1999), v)
-	bj2, err := json.ParseBinaryFromString("-1")
+	bj2, err := ParseBinaryJSONFromString("-1")
 	require.NoError(t, err)
 	_, err = Convert(bj2, ft)
 	require.Error(t, err)
-	bj3, err := json.ParseBinaryFromString("{\"key\": 99}")
+	bj3, err := ParseBinaryJSONFromString("{\"key\": 99}")
 	require.NoError(t, err)
 	_, err = Convert(bj3, ft)
 	require.Error(t, err)
-	bj4, err := json.ParseBinaryFromString("[99, 0, 1]")
+	bj4, err := ParseBinaryJSONFromString("[99, 0, 1]")
 	require.NoError(t, err)
 	_, err = Convert(bj4, ft)
 	require.Error(t, err)
@@ -1077,7 +1076,7 @@ func TestConvertJSONToInt(t *testing.T) {
 		{in: `"1234"`, out: 1234},
 	}
 	for _, tt := range tests {
-		j, err := json.ParseBinaryFromString(tt.in)
+		j, err := ParseBinaryJSONFromString(tt.in)
 		require.NoError(t, err)
 
 		casted, err := ConvertJSONToInt64(new(stmtctx.StatementContext), j, false)
@@ -1094,24 +1093,24 @@ func TestConvertJSONToFloat(t *testing.T) {
 	var tests = []struct {
 		in  interface{}
 		out float64
-		ty  json.TypeCode
+		ty  JSONTypeCode
 		err bool
 	}{
-		{in: make(map[string]interface{}), ty: json.TypeCodeObject, err: true},
-		{in: make([]interface{}, 0), ty: json.TypeCodeArray, err: true},
-		{in: int64(3), out: 3, ty: json.TypeCodeInt64},
-		{in: int64(-3), out: -3, ty: json.TypeCodeInt64},
-		{in: uint64(1 << 63), out: 1 << 63, ty: json.TypeCodeUint64},
-		{in: float64(4.5), out: 4.5, ty: json.TypeCodeFloat64},
-		{in: true, out: 1, ty: json.TypeCodeLiteral},
-		{in: false, out: 0, ty: json.TypeCodeLiteral},
-		{in: nil, ty: json.TypeCodeLiteral, err: true},
-		{in: "hello", ty: json.TypeCodeString, err: true},
-		{in: "123.456hello", out: 123.456, ty: json.TypeCodeString, err: true},
-		{in: "1234", out: 1234, ty: json.TypeCodeString},
+		{in: make(map[string]interface{}), ty: JSONTypeCodeObject, err: true},
+		{in: make([]interface{}, 0), ty: JSONTypeCodeArray, err: true},
+		{in: int64(3), out: 3, ty: JSONTypeCodeInt64},
+		{in: int64(-3), out: -3, ty: JSONTypeCodeInt64},
+		{in: uint64(1 << 63), out: 1 << 63, ty: JSONTypeCodeUint64},
+		{in: float64(4.5), out: 4.5, ty: JSONTypeCodeFloat64},
+		{in: true, out: 1, ty: JSONTypeCodeLiteral},
+		{in: false, out: 0, ty: JSONTypeCodeLiteral},
+		{in: nil, ty: JSONTypeCodeLiteral, err: true},
+		{in: "hello", ty: JSONTypeCodeString, err: true},
+		{in: "123.456hello", out: 123.456, ty: JSONTypeCodeString, err: true},
+		{in: "1234", out: 1234, ty: JSONTypeCodeString},
 	}
 	for _, tt := range tests {
-		j := json.CreateBinary(tt.in)
+		j := CreateBinaryJSON(tt.in)
 		require.Equal(t, tt.ty, j.TypeCode)
 		casted, err := ConvertJSONToFloat(new(stmtctx.StatementContext), j)
 		if tt.err {
@@ -1139,7 +1138,7 @@ func TestConvertJSONToDecimal(t *testing.T) {
 		{in: `null`, out: NewDecFromStringForTest("0"), err: true},
 	}
 	for _, tt := range tests {
-		j, err := json.ParseBinaryFromString(tt.in)
+		j, err := ParseBinaryJSONFromString(tt.in)
 		require.NoError(t, err)
 		casted, err := ConvertJSONToDecimal(new(stmtctx.StatementContext), j)
 		errMsg := fmt.Sprintf("input: %v, casted: %v, out: %v, json: %#v", tt.in, casted, tt.out, j)

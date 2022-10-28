@@ -20,6 +20,7 @@ go_library(
 go_test(
     name = "tiflashrec_test",
     srcs = ["tiflash_recorder_test.go"],
+    flaky = True,
     deps = [
         ":tiflashrec",
         "//infoschema",

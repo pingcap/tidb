@@ -53,6 +53,11 @@ func (p *StalenessTxnContextProvider) GetTxnInfoSchema() infoschema.InfoSchema {
 	return p.is
 }
 
+// SetTxnInfoSchema sets the information schema used by txn.
+func (p *StalenessTxnContextProvider) SetTxnInfoSchema(is infoschema.InfoSchema) {
+	p.is = is
+}
+
 // GetTxnScope returns the current txn scope
 func (p *StalenessTxnContextProvider) GetTxnScope() string {
 	return p.sctx.GetSessionVars().TxnCtx.TxnScope
@@ -114,6 +119,7 @@ func (p *StalenessTxnContextProvider) activateStaleTxn() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	sessVars.TxnCtxMu.Lock()
 	sessVars.TxnCtx = &variable.TransactionContext{
 		TxnCtxNoNeedToRestore: variable.TxnCtxNoNeedToRestore{
 			InfoSchema:  is,
@@ -124,6 +130,7 @@ func (p *StalenessTxnContextProvider) activateStaleTxn() error {
 			TxnScope:    txnScope,
 		},
 	}
+	sessVars.TxnCtxMu.Unlock()
 
 	if interceptor := temptable.SessionSnapshotInterceptor(p.sctx, is); interceptor != nil {
 		txn.SetOption(kv.SnapInterceptor, interceptor)

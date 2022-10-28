@@ -18,7 +18,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tipb/go-tipb"
@@ -509,7 +508,7 @@ func (b *builtinCaseWhenJSONSig) Clone() builtinFunc {
 
 // evalJSON evals a builtinCaseWhenJSONSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#operator_case
-func (b *builtinCaseWhenJSONSig) evalJSON(row chunk.Row) (ret json.BinaryJSON, isNull bool, err error) {
+func (b *builtinCaseWhenJSONSig) evalJSON(row chunk.Row) (ret types.BinaryJSON, isNull bool, err error) {
 	var condition int64
 	args, l := b.getArgs(), len(b.getArgs())
 	for i := 0; i < l-1; i += 2 {
@@ -718,7 +717,7 @@ func (b *builtinIfJSONSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinIfJSONSig) evalJSON(row chunk.Row) (ret json.BinaryJSON, isNull bool, err error) {
+func (b *builtinIfJSONSig) evalJSON(row chunk.Row) (ret types.BinaryJSON, isNull bool, err error) {
 	arg0, isNull0, err := b.args[0].EvalInt(b.ctx, row)
 	if err != nil {
 		return ret, true, err
@@ -906,7 +905,7 @@ func (b *builtinIfNullJSONSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinIfNullJSONSig) evalJSON(row chunk.Row) (json.BinaryJSON, bool, error) {
+func (b *builtinIfNullJSONSig) evalJSON(row chunk.Row) (types.BinaryJSON, bool, error) {
 	arg0, isNull, err := b.args[0].EvalJSON(b.ctx, row)
 	if !isNull {
 		return arg0, err != nil, err
