@@ -1056,7 +1056,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			NeedAuthTokenOptions
 		)
 		authTokenOptionHandler := NotAuthToken
-		if currentAuthPlugin, err := getUserAuthenticationPlugin(ctx, e.ctx, spec.User.Username, spec.User.Hostname); err != nil {
+		if currentAuthPlugin, err := e.userAuthPlugin(spec.User.Username, spec.User.Hostname); err != nil {
 			return err
 		} else if currentAuthPlugin == mysql.AuthTiDBAuthToken {
 			authTokenOptionHandler = NoNeedAuthTokenOptions
@@ -1110,18 +1110,27 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			fields = append(fields, alterField{"user_attributes=json_merge_patch(user_attributes, %?)", newAttributesStr})
 		}
 
-		if len(authTokenOptions) > 0 {
-			if authTokenOptionHandler == NotAuthToken {
+		switch authTokenOptionHandler {
+		case NotAuthToken:
+			if len(authTokenOptions) > 0 {
 				err := errors.New("TOKEN_ISSUER is no need for the auth plugin")
 				e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
-			} else {
+			}
+		case NoNeedAuthTokenOptions:
+			if len(authTokenOptions) > 0 {
 				for _, authTokenOption := range authTokenOptions {
 					fields = append(fields, alterField{authTokenOption.Type.String() + "=%?", authTokenOption.Value})
 				}
 			}
-		} else if authTokenOptionHandler == NeedAuthTokenOptions {
-			err := errors.New("Auth plugin 'tidb_auth_plugin' needs TOKEN_ISSUER")
-			e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		case NeedAuthTokenOptions:
+			if len(authTokenOptions) > 0 {
+				for _, authTokenOption := range authTokenOptions {
+					fields = append(fields, alterField{authTokenOption.Type.String() + "=%?", authTokenOption.Value})
+				}
+			} else {
+				err := errors.New("Auth plugin 'tidb_auth_plugin' needs TOKEN_ISSUER")
+				e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			}
 		}
 
 		if len(fields) > 0 {
@@ -1531,16 +1540,6 @@ func userExists(ctx context.Context, sctx sessionctx.Context, name string, host 
 		return false, err
 	}
 	return len(rows) > 0, nil
-}
-
-func getUserAuthenticationPlugin(ctx context.Context, sctx sessionctx.Context, name string, host string) (string, error) {
-	exec := sctx.(sqlexec.RestrictedSQLExecutor)
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnPrivilege)
-	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT plugin FROM %n.%n WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, name, strings.ToLower(host))
-	if err != nil {
-		return "", err
-	}
-	return rows[0].GetString(0), nil
 }
 
 // use the same internal executor to read within the same transaction, otherwise same as userExists
