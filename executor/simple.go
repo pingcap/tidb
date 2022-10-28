@@ -892,11 +892,11 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 
 		recordTokenIssuer := tokenIssuer
 		if len(recordTokenIssuer) > 0 && authPlugin != mysql.AuthTiDBAuthToken {
-			err := fmt.Errorf("TOKEN_ISSUER is no need for '%s' user", authPlugin)
+			err := fmt.Errorf("TOKEN_ISSUER is not needed for '%s' user", authPlugin)
 			e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 			recordTokenIssuer = ""
 		} else if len(recordTokenIssuer) == 0 && authPlugin == mysql.AuthTiDBAuthToken {
-			err := fmt.Errorf("TOKEN_ISSUER is need for 'tidb_auth_token' user, please use 'alter user' to declare it")
+			err := fmt.Errorf("TOKEN_ISSUER is needed for 'tidb_auth_token' user, please use 'alter user' to declare it")
 			e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		}
 
