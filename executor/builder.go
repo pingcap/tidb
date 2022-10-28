@@ -17,6 +17,8 @@ package executor
 import (
 	"bytes"
 	"context"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 	"math"
 	"strconv"
 	"strings"
@@ -2223,6 +2225,7 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 	base.initCap = chunk.ZeroCapacity
 	var assignFlag []int
 	assignFlag, b.err = getAssignFlag(b.ctx, v, selExec.Schema().Len())
+	logutil.BgLogger().Error("build update", zap.Any("len", len(assignFlag)))
 	if b.err != nil {
 		return nil
 	}
