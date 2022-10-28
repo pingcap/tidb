@@ -1807,6 +1807,9 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.
 		db, _ := domainSchema.SchemaByTable(tbl.Meta())
 		err = se.UpdateTableInfo(db, tbl)
 		logutil.BgLogger().Error("update table info", zap.Stack("stack"))
+		for _, col := range tbl.Meta().Columns {
+			logutil.BgLogger().Error("col", zap.Any("name", col.Name), zap.Any("state", col.State.String()))
+		}
 		if err != nil {
 			return nil, err
 		}
