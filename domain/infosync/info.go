@@ -973,6 +973,16 @@ func GetLabelRules(ctx context.Context, ruleIDs []string) (map[string]*label.Rul
 	return is.labelRuleManager.GetLabelRules(ctx, ruleIDs)
 }
 
+// SetTiFlashGroupConfig is a helper function to set tiflash rule group config
+func SetTiFlashGroupConfig(ctx context.Context) error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	logutil.BgLogger().Info("SetTiFlashGroupConfig")
+	return is.tiflashPlacementManager.SetTiFlashGroupConfig(ctx)
+}
+
 // SetTiFlashPlacementRule is a helper function to set placement rule.
 // It is discouraged to use SetTiFlashPlacementRule directly,
 // use `ConfigureTiFlashPDForTable`/`ConfigureTiFlashPDForPartitions` instead.

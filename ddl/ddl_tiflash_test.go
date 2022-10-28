@@ -996,3 +996,21 @@ func TestTiFlashProgress(t *testing.T) {
 
 	time.Sleep(100 * time.Millisecond)
 }
+
+func TestTiFlashGroupIndexWhenStartup(t *testing.T) {
+	s, teardown := createTiFlashContext(t)
+	defer teardown()
+	_ = testkit.NewTestKit(t, s.store)
+	timeout := time.Now().Add(10 * time.Second)
+	errMsg := "time out"
+	for time.Now().Before(timeout) {
+		time.Sleep(100 * time.Millisecond)
+		if s.tiflash.GroupIndex != 0 {
+			errMsg = "invalid group index"
+			break
+		}
+	}
+	require.Equal(t, placement.RuleIndexTiFlash, s.tiflash.GroupIndex, errMsg)
+	require.Greater(t, s.tiflash.GroupIndex, placement.RuleIndexTable)
+	require.Greater(t, s.tiflash.GroupIndex, placement.RuleIndexPartition)
+}
