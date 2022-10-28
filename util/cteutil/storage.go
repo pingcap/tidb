@@ -93,16 +93,14 @@ type Storage interface {
 
 // StorageRC implements Storage interface using RowContainer.
 type StorageRC struct {
-	mu      sync.Mutex
-	refCnt  int
+	err     error
+	rc      *chunk.RowContainer
 	tp      []*types.FieldType
+	refCnt  int
 	chkSize int
-
-	done bool
-	iter int
-	err  error
-
-	rc *chunk.RowContainer
+	iter    int
+	mu      sync.Mutex
+	done    bool
 }
 
 // NewStorageRowContainer create a new StorageRC.

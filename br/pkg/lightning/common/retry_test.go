@@ -24,6 +24,7 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	tmysql "github.com/pingcap/tidb/errno"
+	drivererr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/multierr"
 	"google.golang.org/grpc/codes"
@@ -53,6 +54,13 @@ func TestIsRetryableError(t *testing.T) {
 	require.True(t, IsRetryableError(ErrKVReadIndexNotReady.GenWithStack("test")))
 	require.True(t, IsRetryableError(ErrKVIngestFailed.GenWithStack("test")))
 	require.True(t, IsRetryableError(ErrKVRaftProposalDropped.GenWithStack("test")))
+
+	// tidb error
+	require.True(t, IsRetryableError(drivererr.ErrRegionUnavailable))
+	require.True(t, IsRetryableError(drivererr.ErrTiKVStaleCommand))
+	require.True(t, IsRetryableError(drivererr.ErrTiKVServerTimeout))
+	require.True(t, IsRetryableError(drivererr.ErrTiKVServerBusy))
+	require.True(t, IsRetryableError(drivererr.ErrUnknown))
 
 	// net: connection refused
 	_, err := net.Dial("tcp", "localhost:65533")

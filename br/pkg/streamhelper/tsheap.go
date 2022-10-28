@@ -14,6 +14,7 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/redact"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/kv"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap/zapcore"
@@ -56,7 +57,7 @@ type CheckpointsCache interface {
 	// PopRangesWithGapGT pops the ranges which's checkpoint is
 	PopRangesWithGapGT(d time.Duration) []*RangesSharesTS
 	// Check whether the ranges in the cache is integrate.
-	ConsistencyCheck() error
+	ConsistencyCheck(ranges []kv.KeyRange) error
 	// Clear the cache.
 	Clear()
 }
@@ -82,7 +83,7 @@ func (NoOPCheckpointCache) PopRangesWithGapGT(d time.Duration) []*RangesSharesTS
 	panic("invalid state: NoOPCheckpointCache should never be used in advancing!")
 }
 
-func (NoOPCheckpointCache) ConsistencyCheck() error {
+func (NoOPCheckpointCache) ConsistencyCheck([]kv.KeyRange) error {
 	return errors.Annotatef(berrors.ErrUnsupportedOperation, "invalid state: NoOPCheckpointCache should never be used in advancing!")
 }
 
@@ -221,20 +222,105 @@ func (h *Checkpoints) CheckpointTS() uint64 {
 }
 
 // ConsistencyCheck checks whether the tree contains the full range of key space.
-// TODO: add argument to it and check a sub range.
-func (h *Checkpoints) ConsistencyCheck() error {
+func (h *Checkpoints) ConsistencyCheck(rangesIn []kv.KeyRange) error {
 	h.mu.Lock()
-	ranges := make([]kv.KeyRange, 0, 1024)
+	rangesReal := make([]kv.KeyRange, 0, 1024)
 	h.tree.Ascend(func(i btree.Item) bool {
-		ranges = append(ranges, i.(*RangesSharesTS).Ranges...)
+		rangesReal = append(rangesReal, i.(*RangesSharesTS).Ranges...)
 		return true
 	})
 	h.mu.Unlock()
 
-	r := CollapseRanges(len(ranges), func(i int) kv.KeyRange { return ranges[i] })
-	if len(r) != 1 || len(r[0].StartKey) != 0 || len(r[0].EndKey) != 0 {
-		return errors.Annotatef(berrors.ErrPiTRMalformedMetadata,
-			"the region tree cannot cover the key space, collapsed: %s", logutil.StringifyKeys(r))
+	r := CollapseRanges(len(rangesReal), func(i int) kv.KeyRange { return rangesReal[i] })
+	ri := CollapseRanges(len(rangesIn), func(i int) kv.KeyRange { return rangesIn[i] })
+
+	return errors.Annotatef(checkIntervalIsSubset(r, ri), "ranges: (current) %s (not in) %s", logutil.StringifyKeys(r),
+		logutil.StringifyKeys(ri))
+}
+
+// A simple algorithm to detect non-overlapped ranges.
+// It maintains the "current" probe, and let the ranges to check "consume" it.
+// For example:
+// toCheck:  |_____________________| |_____________|
+// .         ^checking
+// subsetOf: |_________| |_______|    |__________|
+// .         ^probing
+// probing is the subrange of checking, consume it and move forward the probe.
+// toCheck:  |_____________________| |_____________|
+// .         ^checking
+// subsetOf: |_________| |_______|    |__________|
+// .                     ^probing
+// consume it, too.
+// toCheck:  |_____________________| |_____________|
+// .         ^checking
+// subsetOf: |_________| |_______|    |__________|
+// .                                  ^probing
+// checking is at the left of probing and no overlaps, moving it forward.
+// toCheck:  |_____________________| |_____________|
+// .                                 ^checking
+// subsetOf: |_________| |_______|    |__________|
+// .                                  ^probing
+// consume it. all subset ranges are consumed, check passed.
+func checkIntervalIsSubset(toCheck []kv.KeyRange, subsetOf []kv.KeyRange) error {
+	i := 0
+	si := 0
+
+	for {
+		// We have checked all ranges.
+		if si >= len(subsetOf) {
+			return nil
+		}
+		// There are some ranges doesn't reach the end.
+		if i >= len(toCheck) {
+			return errors.Annotatef(berrors.ErrPiTRMalformedMetadata,
+				"there remains a range doesn't be fully consumed: %s",
+				logutil.StringifyRange(subsetOf[si]))
+		}
+
+		checking := toCheck[i]
+		probing := subsetOf[si]
+		// checking:         |___________|
+		// probing:  |_________|
+		// A rare case: the "first" range is out of bound or not fully covers the probing range.
+		if utils.CompareBytesExt(checking.StartKey, false, probing.StartKey, false) > 0 {
+			holeEnd := checking.StartKey
+			if utils.CompareBytesExt(holeEnd, false, probing.EndKey, true) > 0 {
+				holeEnd = probing.EndKey
+			}
+			return errors.Annotatef(berrors.ErrPiTRMalformedMetadata, "probably a hole in key ranges: %s", logutil.StringifyRange{
+				StartKey: probing.StartKey,
+				EndKey:   holeEnd,
+			})
+		}
+
+		// checking: |_____|
+		// probing:           |_______|
+		// Just move forward checking.
+		if utils.CompareBytesExt(checking.EndKey, true, probing.StartKey, false) < 0 {
+			i += 1
+			continue
+		}
+
+		// checking: |_________|
+		// probing:  |__________________|
+		// Given all of the ranges are "collapsed", the next checking range must
+		// not be adjacent with the current checking range.
+		// And hence there must be a "hole" in the probing key space.
+		if utils.CompareBytesExt(checking.EndKey, true, probing.EndKey, true) < 0 {
+			next := probing.EndKey
+			if i+1 < len(toCheck) {
+				next = toCheck[i+1].EndKey
+			}
+			return errors.Annotatef(berrors.ErrPiTRMalformedMetadata, "probably a hole in key ranges: %s", logutil.StringifyRange{
+				StartKey: checking.EndKey,
+				EndKey:   next,
+			})
+		}
+		// checking: |________________|
+		// probing:  |_____________|
+		// The current checking range fills the current probing range,
+		// or the current checking range is out of the current range.
+		// let's move the probing forward.
+		si += 1
 	}
-	return nil
 }

@@ -73,6 +73,35 @@ func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (bindRecord
 	return bindRecord, scope, true
 }
 
+// getPlanFromGeneralPlanCache tries to get an available cached plan from the General Plan Cache for this stmt.
+func getPlanFromGeneralPlanCache(ctx context.Context, sctx sessionctx.Context, stmt ast.StmtNode, is infoschema.InfoSchema) (core.Plan, types.NameSlice, bool, error) {
+	if sctx.GetSessionVars().StmtCtx.InPreparedPlanBuilding || // already in cached plan rebuilding phase
+		!core.GeneralPlanCacheableWithCtx(sctx, stmt, is) {
+		return nil, nil, false, nil
+	}
+	paramSQL, params, err := core.ParameterizeAST(sctx, stmt)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	val := sctx.GetSessionVars().GetGeneralPlanCacheStmt(paramSQL)
+	if val == nil {
+		cachedStmt, _, _, err := core.GeneratePlanCacheStmtWithAST(ctx, sctx, stmt)
+		if err != nil {
+			return nil, nil, false, err
+		}
+		sctx.GetSessionVars().AddGeneralPlanCacheStmt(paramSQL, cachedStmt)
+		val = cachedStmt
+	}
+	cachedStmt := val.(*core.PlanCacheStmt)
+
+	paramExprs := core.Params2Expressions(params)
+	cachedPlan, names, err := core.GetPlanFromSessionPlanCache(ctx, sctx, true, is, cachedStmt, paramExprs)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	return cachedPlan, names, true, nil
+}
+
 // Optimize does optimization and creates a Plan.
 // The node must be prepared first.
 func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (core.Plan, types.NameSlice, error) {
@@ -88,9 +117,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		}
 	}
 
-	// Because for write stmt, TiFlash has a different results when lock the data in point get plan. We ban the TiFlash
-	// engine in not read only stmt.
-	if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(node, sessVars) {
+	if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !sessVars.EnableTiFlashReadForWriteStmt && !IsReadOnly(node, sessVars) {
 		delete(sessVars.IsolationReadEngines, kv.TiFlash)
 		defer func() {
 			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
@@ -135,18 +162,31 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}
 
 	useBinding := sessVars.UsePlanBaselines
-	stmtNode, ok := node.(ast.StmtNode)
-	if !ok {
+	stmtNode, isStmtNode := node.(ast.StmtNode)
+	if !isStmtNode {
 		useBinding = false
 	}
 	bindRecord, scope, match := matchSQLBinding(sctx, stmtNode)
 	if !match {
 		useBinding = false
 	}
-	if ok {
+	if isStmtNode {
 		// add the extra Limit after matching the bind record
 		stmtNode = core.TryAddExtraLimit(sctx, stmtNode)
 		node = stmtNode
+	}
+
+	// try to get Plan from the General Plan Cache
+	if sctx.GetSessionVars().EnableGeneralPlanCache &&
+		isStmtNode &&
+		!useBinding { // TODO: support binding
+		cachedPlan, names, ok, err := getPlanFromGeneralPlanCache(ctx, sctx, stmtNode, is)
+		if err != nil {
+			return nil, nil, err
+		}
+		if ok {
+			return cachedPlan, names, nil
+		}
 	}
 
 	var (
@@ -299,10 +339,13 @@ var planBuilderPool = sync.Pool{
 var optimizeCnt int
 
 func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (core.Plan, types.NameSlice, float64, error) {
-	failpoint.Inject("checkOptimizeCountOne", func() {
-		optimizeCnt++
-		if optimizeCnt > 1 {
-			failpoint.Return(nil, nil, 0, errors.New("gofail wrong optimizerCnt error"))
+	failpoint.Inject("checkOptimizeCountOne", func(val failpoint.Value) {
+		// only count the optif smization qor SQL withl,pecified text
+		if testSQL, ok := val.(string); ok && testSQL == node.OriginalText() {
+			optimizeCnt++
+			if optimizeCnt > 1 {
+				failpoint.Return(nil, nil, 0, errors.New("gofail wrong optimizerCnt error"))
+			}
 		}
 	})
 	failpoint.Inject("mockHighLoadForOptimize", func() {
@@ -367,12 +410,18 @@ func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
 	if err != nil {
 		return nil, nil, err
 	}
-	if execPlan, ok := p.(*core.Execute); ok {
-		err = execPlan.OptimizePreparedPlan(ctx, sctx, is)
-		return execPlan, execPlan.OutputNames(), err
+	exec, ok := p.(*core.Execute)
+	if !ok {
+		return nil, nil, errors.Errorf("invalid result plan type, should be Execute")
 	}
-	err = errors.Errorf("invalid result plan type, should be Execute")
-	return nil, nil, err
+	plan, names, err := core.GetPlanFromSessionPlanCache(ctx, sctx, execAst.FromGeneralStmt, is, exec.PrepStmt, exec.Params)
+	if err != nil {
+		return nil, nil, err
+	}
+	exec.Plan = plan
+	exec.SetOutputNames(names)
+	exec.Stmt = exec.PrepStmt.PreparedAst.Stmt
+	return exec, names, nil
 }
 
 func buildLogicalPlan(ctx context.Context, sctx sessionctx.Context, node ast.Node, builder *core.PlanBuilder) (core.Plan, error) {
@@ -665,4 +714,5 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 func init() {
 	core.OptimizeAstNode = Optimize
 	core.IsReadOnly = IsReadOnly
+	core.ExtractSelectAndNormalizeDigest = ExtractSelectAndNormalizeDigest
 }

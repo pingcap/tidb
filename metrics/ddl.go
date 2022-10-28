@@ -71,7 +71,6 @@ var (
 		}, []string{LblResult})
 
 	OwnerUpdateGlobalVersion   = "update_global_version"
-	OwnerGetGlobalVersion      = "get_global_version"
 	OwnerCheckAllVersions      = "check_all_versions"
 	OwnerHandleSyncerHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
@@ -145,8 +144,9 @@ var (
 const (
 	LblAction = "action"
 
-	LblAddIndex     = "add_index"
-	LblModifyColumn = "modify_column"
+	LblAddIndex      = "add_index"
+	LblAddIndexMerge = "add_index_merge_tmp"
+	LblModifyColumn  = "modify_column"
 )
 
 // GenerateReorgLabel returns the label with schema name and table name.

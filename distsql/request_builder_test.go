@@ -61,7 +61,7 @@ func TestTableHandlesToKVRanges(t *testing.T) {
 
 	// Build key ranges.
 	expect := getExpectedRanges(1, hrs)
-	actual := TableHandlesToKVRanges(1, handles)
+	actual, _ := TableHandlesToKVRanges(1, handles)
 
 	// Compare key ranges and expected key ranges.
 	require.Equal(t, len(expect), len(actual))
@@ -235,7 +235,7 @@ func TestRequestBuilder1(t *testing.T) {
 		SetDAGRequest(&tipb.DAGRequest{}).
 		SetDesc(false).
 		SetKeepOrder(false).
-		SetFromSessionVars(variable.NewSessionVars()).
+		SetFromSessionVars(variable.NewSessionVars(nil)).
 		Build()
 	require.NoError(t, err)
 	expect := &kv.Request{
@@ -318,7 +318,7 @@ func TestRequestBuilder2(t *testing.T) {
 		SetDAGRequest(&tipb.DAGRequest{}).
 		SetDesc(false).
 		SetKeepOrder(false).
-		SetFromSessionVars(variable.NewSessionVars()).
+		SetFromSessionVars(variable.NewSessionVars(nil)).
 		Build()
 	require.NoError(t, err)
 	expect := &kv.Request{
@@ -371,7 +371,7 @@ func TestRequestBuilder3(t *testing.T) {
 		SetDAGRequest(&tipb.DAGRequest{}).
 		SetDesc(false).
 		SetKeepOrder(false).
-		SetFromSessionVars(variable.NewSessionVars()).
+		SetFromSessionVars(variable.NewSessionVars(nil)).
 		Build()
 	require.NoError(t, err)
 	expect := &kv.Request{
@@ -396,15 +396,16 @@ func TestRequestBuilder3(t *testing.T) {
 				EndKey:   kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xf, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x65},
 			},
 		},
-		Cacheable:        true,
-		KeepOrder:        false,
-		Desc:             false,
-		Concurrency:      variable.DefDistSQLScanConcurrency,
-		IsolationLevel:   0,
-		Priority:         0,
-		NotFillCache:     false,
-		ReplicaRead:      kv.ReplicaReadLeader,
-		ReadReplicaScope: kv.GlobalReplicaScope,
+		Cacheable:         true,
+		KeepOrder:         false,
+		Desc:              false,
+		Concurrency:       variable.DefDistSQLScanConcurrency,
+		IsolationLevel:    0,
+		Priority:          0,
+		NotFillCache:      false,
+		ReplicaRead:       kv.ReplicaReadLeader,
+		ReadReplicaScope:  kv.GlobalReplicaScope,
+		FixedRowCountHint: []int{1, 4, 2, 1},
 	}
 	expect.Paging.MinPagingSize = paging.MinPagingSize
 	expect.Paging.MaxPagingSize = paging.MaxPagingSize
@@ -436,7 +437,7 @@ func TestRequestBuilder4(t *testing.T) {
 		SetDAGRequest(&tipb.DAGRequest{}).
 		SetDesc(false).
 		SetKeepOrder(false).
-		SetFromSessionVars(variable.NewSessionVars()).
+		SetFromSessionVars(variable.NewSessionVars(nil)).
 		Build()
 	require.NoError(t, err)
 	expect := &kv.Request{
@@ -481,7 +482,7 @@ func TestRequestBuilder5(t *testing.T) {
 	}
 
 	actual, err := (&RequestBuilder{}).SetKeyRanges(keyRanges).
-		SetAnalyzeRequest(&tipb.AnalyzeReq{}).
+		SetAnalyzeRequest(&tipb.AnalyzeReq{}, kv.RC).
 		SetKeepOrder(true).
 		SetConcurrency(15).
 		Build()
@@ -494,7 +495,7 @@ func TestRequestBuilder5(t *testing.T) {
 		KeepOrder:        true,
 		Desc:             false,
 		Concurrency:      15,
-		IsolationLevel:   kv.SI,
+		IsolationLevel:   kv.RC,
 		Priority:         1,
 		NotFillCache:     true,
 		ReadReplicaScope: kv.GlobalReplicaScope,
@@ -543,7 +544,7 @@ func TestRequestBuilder7(t *testing.T) {
 		// copy iterator variable into a new variable, see issue #27779
 		replicaRead := replicaRead
 		t.Run(replicaRead.src, func(t *testing.T) {
-			vars := variable.NewSessionVars()
+			vars := variable.NewSessionVars(nil)
 			vars.SetReplicaRead(replicaRead.replicaReadType)
 
 			concurrency := 10
@@ -573,7 +574,7 @@ func TestRequestBuilder7(t *testing.T) {
 }
 
 func TestRequestBuilder8(t *testing.T) {
-	sv := variable.NewSessionVars()
+	sv := variable.NewSessionVars(nil)
 	actual, err := (&RequestBuilder{}).
 		SetFromSessionVars(sv).
 		Build()
@@ -640,7 +641,7 @@ func TestIndexRangesToKVRangesWithFbs(t *testing.T) {
 }
 
 func TestScanLimitConcurrency(t *testing.T) {
-	vars := variable.NewSessionVars()
+	vars := variable.NewSessionVars(nil)
 	for _, tt := range []struct {
 		tp          tipb.ExecType
 		limit       uint64

@@ -402,7 +402,7 @@ func MockContext() sessionctx.Context {
 		Client: &mock.Client{},
 	}
 	ctx.GetSessionVars().CurrentDB = "test"
-	do := &domain.Domain{}
+	do := domain.NewMockDomain()
 	if err := do.CreateStatsHandle(ctx); err != nil {
 		panic(fmt.Sprintf("create mock context panic: %+v", err))
 	}

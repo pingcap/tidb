@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
+	"go.opencensus.io/stats/view"
 )
 
 func TestPredefinedTables(t *testing.T) {
@@ -196,6 +197,7 @@ func newMockStore(t *testing.T) kv.Storage {
 		dom.Close()
 		err := store.Close()
 		require.NoError(t, err)
+		view.Stop()
 	})
 
 	return store

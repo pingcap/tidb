@@ -862,6 +862,24 @@ func requestPDForOneHost(host, apiName, method, uri string, body io.Reader, res 
 				zap.String("url", urlVar), zap.Error(err))
 		}
 	}()
+
+	if resp.StatusCode != http.StatusOK {
+		logFields := []zap.Field{
+			zap.String("url", urlVar),
+			zap.String("status", resp.Status),
+		}
+
+		bs, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			logFields = append(logFields, zap.NamedError("readBodyError", err))
+		} else {
+			logFields = append(logFields, zap.ByteString("body", bs))
+		}
+
+		logutil.BgLogger().Warn("requestPDForOneHost failed with non 200 status", logFields...)
+		return errors.Errorf("PD request failed with status: '%s'", resp.Status)
+	}
+
 	err = json.NewDecoder(resp.Body).Decode(res)
 	if err != nil {
 		return errors.Trace(err)
@@ -983,7 +1001,13 @@ func (h *Helper) GetPDRegionStats(tableID int64, stats *PDRegionStats, noIndexSt
 			logutil.BgLogger().Error("err", zap.Error(err))
 		}
 	}()
-
+	if resp.StatusCode != http.StatusOK {
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return errors.Errorf("GetPDRegionStats %d: %s", resp.StatusCode, err)
+		}
+		return errors.Errorf("GetPDRegionStats %d: %s", resp.StatusCode, string(body))
+	}
 	dec := json.NewDecoder(resp.Body)
 
 	return dec.Decode(stats)
@@ -1196,7 +1220,7 @@ func ComputeTiFlashStatus(reader *bufio.Reader, regionReplica *map[int64]int) er
 			continue
 		}
 		realN++
-		r, err := strconv.ParseInt(s, 10, 32)
+		r, err := strconv.ParseInt(s, 10, 64)
 		if err != nil {
 			return errors.Trace(err)
 		}

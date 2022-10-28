@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	ast "github.com/pingcap/tidb/parser/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/mathutil"
@@ -318,7 +317,7 @@ func DefaultTypeForValue(value interface{}, tp *FieldType, char string, collate 
 		tp.SetFlen(len(x.Name))
 		tp.SetDecimal(UnspecifiedLength)
 		SetBinChsClnFlag(tp)
-	case json.BinaryJSON:
+	case BinaryJSON:
 		tp.SetType(mysql.TypeJSON)
 		tp.SetFlen(UnspecifiedLength)
 		tp.SetDecimal(0)

@@ -5,6 +5,7 @@ go_test(
     timeout = "short",
     srcs = ["cte_test.go"],
     flaky = True,
+    race = "on",
     deps = [
         "//config",
         "//domain",
@@ -17,6 +18,7 @@ go_test(
         "@com_github_jeffail_gabs_v2//:gabs",
         "@com_github_stretchr_testify//require",
         "@io_etcd_go_etcd_tests_v3//integration",
+        "@io_opencensus_go//stats/view",
         "@org_uber_go_goleak//:goleak",
     ],
 )

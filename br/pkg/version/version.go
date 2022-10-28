@@ -293,7 +293,7 @@ func FetchVersion(ctx context.Context, db utils.QueryExecutor) (string, error) {
 	const queryTiDB = "SELECT tidb_version();"
 	tidbRow := db.QueryRowContext(ctx, queryTiDB)
 	err := tidbRow.Scan(&versionInfo)
-	if err == nil {
+	if err == nil && tidbReleaseVersionFullRegex.FindString(versionInfo) != "" {
 		return versionInfo, nil
 	}
 	log.L().Warn("select tidb_version() failed, will fallback to 'select version();'", logutil.ShortError(err))
@@ -350,6 +350,8 @@ var (
 	tidbVersionRegex = regexp.MustCompile(`-[v]?\d+\.\d+\.\d+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?`)
 	// `select tidb_version()` result
 	tidbReleaseVersionRegex = regexp.MustCompile(`v\d+\.\d+\.\d+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?`)
+	// `select tidb_version()` result with full release version
+	tidbReleaseVersionFullRegex = regexp.MustCompile(`Release Version:\s*v\d+\.\d+\.\d+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?`)
 )
 
 // ParseServerInfo parses exported server type and version info from version string
@@ -377,7 +379,8 @@ func ParseServerInfo(src string) ServerInfo {
 		if isReleaseVersion {
 			versionStr = tidbReleaseVersionRegex.FindString(src)
 		} else {
-			versionStr = tidbVersionRegex.FindString(src)[1:]
+			versionStr = tidbVersionRegex.FindString(src)
+			versionStr = strings.TrimPrefix(versionStr, "-")
 		}
 		versionStr = strings.TrimPrefix(versionStr, "v")
 	} else {
@@ -387,16 +390,14 @@ func ParseServerInfo(src string) ServerInfo {
 	var err error
 	serverInfo.ServerVersion, err = semver.NewVersion(versionStr)
 	if err != nil {
-		log.L().Warn("fail to parse version",
+		log.L().Warn("fail to parse version, fallback to 0.0.0",
 			zap.String("version", versionStr))
+		serverInfo.ServerVersion = semver.New("0.0.0")
 	}
-	var version string
-	if serverInfo.ServerVersion != nil {
-		version = serverInfo.ServerVersion.String()
-	}
+
 	log.L().Info("detect server version",
 		zap.String("type", serverInfo.ServerType.String()),
-		zap.String("version", version))
+		zap.String("version", serverInfo.ServerVersion.String()))
 
 	return serverInfo
 }
