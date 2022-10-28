@@ -633,6 +633,18 @@ func (d *ddl) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt) (er
 	return nil
 }
 
+func (d *ddl) RecoverSchema(ctx sessionctx.Context, recoverSchemaInfo *RecoverSchemaInfo) error {
+	recoverSchemaInfo.State = model.StateNone
+	job := &model.Job{
+		Type:       model.ActionRecoverSchema,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{recoverSchemaInfo, recoverCheckFlagNone},
+	}
+	err := d.DoDDLJob(ctx, job)
+	err = d.callHookOnChanged(job, err)
+	return errors.Trace(err)
+}
+
 func checkTooLongSchema(schema model.CIStr) error {
 	if utf8.RuneCountInString(schema.L) > mysql.MaxDatabaseNameLength {
 		return dbterror.ErrTooLongIdent.GenWithStackByArgs(schema)
@@ -1518,7 +1530,20 @@ func containsColumnOption(colDef *ast.ColumnDef, opTp ast.ColumnOptionType) bool
 
 // IsAutoRandomColumnID returns true if the given column ID belongs to an auto_random column.
 func IsAutoRandomColumnID(tblInfo *model.TableInfo, colID int64) bool {
-	return tblInfo.PKIsHandle && tblInfo.ContainsAutoRandomBits() && tblInfo.GetPkColInfo().ID == colID
+	if !tblInfo.ContainsAutoRandomBits() {
+		return false
+	}
+	if tblInfo.PKIsHandle {
+		return tblInfo.GetPkColInfo().ID == colID
+	} else if tblInfo.IsCommonHandle {
+		pk := tables.FindPrimaryIndex(tblInfo)
+		if pk == nil {
+			return false
+		}
+		offset := pk.Columns[0].Offset
+		return tblInfo.Columns[offset].ID == colID
+	}
+	return false
 }
 
 func checkGeneratedColumn(ctx sessionctx.Context, colDefs []*ast.ColumnDef) error {
@@ -1717,17 +1742,31 @@ func checkInvisibleIndexOnPK(tblInfo *model.TableInfo) error {
 }
 
 func setTableAutoRandomBits(ctx sessionctx.Context, tbInfo *model.TableInfo, colDefs []*ast.ColumnDef) error {
-	pkColName := tbInfo.GetPkName()
 	for _, col := range colDefs {
 		if containsColumnOption(col, ast.ColumnOptionAutoRandom) {
 			if col.Tp.GetType() != mysql.TypeLonglong {
 				return dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(
 					fmt.Sprintf(autoid.AutoRandomOnNonBigIntColumn, types.TypeStr(col.Tp.GetType())))
 			}
-			if !tbInfo.PKIsHandle || col.Name.Name.L != pkColName.L {
-				errMsg := fmt.Sprintf(autoid.AutoRandomPKisNotHandleErrMsg, col.Name.Name.O)
-				return dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
+			switch {
+			case tbInfo.PKIsHandle:
+				if tbInfo.GetPkName().L != col.Name.Name.L {
+					errMsg := fmt.Sprintf(autoid.AutoRandomMustFirstColumnInPK, col.Name.Name.O)
+					return dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
+				}
+			case tbInfo.IsCommonHandle:
+				pk := tables.FindPrimaryIndex(tbInfo)
+				if pk == nil {
+					return dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomNoClusteredPKErrMsg)
+				}
+				if col.Name.Name.L != pk.Columns[0].Name.L {
+					errMsg := fmt.Sprintf(autoid.AutoRandomMustFirstColumnInPK, col.Name.Name.O)
+					return dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
+				}
+			default:
+				return dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomNoClusteredPKErrMsg)
 			}
+
 			if containsColumnOption(col, ast.ColumnOptionAutoIncrement) {
 				return dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomIncompatibleWithAutoIncErrMsg)
 			}
@@ -2663,8 +2702,10 @@ func (d *ddl) FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) error
 		Args: []interface{}{
 			flashbackTS,
 			map[string]interface{}{},
-			variable.On, /* tidb_super_read_only */
-			true /* tidb_gc_enable */},
+			true,        /* tidb_gc_enable */
+			variable.On, /* tidb_enable_auto_analyze */
+			0,           /* totalRegions */
+			0 /* newCommitTS */},
 	}
 	err := d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
@@ -2695,9 +2736,7 @@ func (d *ddl) RecoverTable(ctx sessionctx.Context, recoverInfo *RecoverInfo) (er
 
 		Type:       model.ActionRecoverTable,
 		BinlogInfo: &model.HistoryInfo{},
-		Args: []interface{}{tbInfo, recoverInfo.AutoIDs.RowID, recoverInfo.DropJobID,
-			recoverInfo.SnapshotTS, recoverTableCheckFlagNone, recoverInfo.AutoIDs.RandomID,
-			recoverInfo.OldSchemaName, recoverInfo.OldTableName},
+		Args:       []interface{}{recoverInfo, recoverCheckFlagNone},
 	}
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
@@ -4687,9 +4726,26 @@ func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxColumns []*mo
 	return nil
 }
 
+func isClusteredPKColumn(col *table.Column, tblInfo *model.TableInfo) bool {
+	switch {
+	case tblInfo.PKIsHandle:
+		return mysql.HasPriKeyFlag(col.GetFlag())
+	case tblInfo.IsCommonHandle:
+		pk := tables.FindPrimaryIndex(tblInfo)
+		for _, c := range pk.Columns {
+			if c.Name.L == col.Name.L {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
+	}
+}
+
 func checkAutoRandom(tableInfo *model.TableInfo, originCol *table.Column, specNewColumn *ast.ColumnDef) (uint64, error) {
 	var oldShardBits, oldRangeBits uint64
-	if originCol.IsPKHandleColumn(tableInfo) {
+	if isClusteredPKColumn(originCol, tableInfo) {
 		oldShardBits = tableInfo.AutoRandomBits
 		oldRangeBits = tableInfo.AutoRandomRangeBits
 	}
