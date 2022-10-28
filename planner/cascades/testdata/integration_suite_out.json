@@ -1197,17 +1197,18 @@
     "Name": "TestCascadePlannerHashedPartTable",
     "Cases": [
       {
-        "SQL": "select * from pt1",
+        "SQL": "select * from pt1 order by a",
         "Plan": [
-          "TableReader_5 10000.00 root partition:all data:TableFullScan_6",
-          "└─TableFullScan_6 10000.00 cop[tikv] table:pt1 keep order:false, stats:pseudo"
+          "Sort_11 10000.00 root  test.pt1.a",
+          "└─TableReader_9 10000.00 root partition:all data:TableFullScan_10",
+          "  └─TableFullScan_10 10000.00 cop[tikv] table:pt1 keep order:false, stats:pseudo"
         ],
         "Result": [
-          "4 40",
           "1 10",
-          "5 50",
           "2 20",
-          "3 30"
+          "3 30",
+          "4 40",
+          "5 50"
         ]
       }
     ]
