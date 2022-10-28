@@ -21,8 +21,6 @@ const (
 	NoCompression CompressType = iota
 	// Gzip will compress given bytes in gzip format.
 	Gzip
-	// LZO will compress given bytes in lzo format.
-	LZO
 	// Snappy will compress given bytes in snappy format.
 	Snappy
 	// Zstd will compress given bytes in zstd format.
