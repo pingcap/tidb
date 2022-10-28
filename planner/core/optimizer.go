@@ -388,6 +388,8 @@ func postOptimize(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {
 }
 
 // prunePhysicalColumns currently only work for MPP(HashJoin<-Exchange).
+// Here add projection instead of pruning columns directly for safety considerations.
+// And projection is cheap here for it saves the network cost and work in memory. 
 func prunePhysicalColumns(sctx sessionctx.Context, plan PhysicalPlan) {
 	emptyColumns := make([]*expression.Column, 0)
 	if tableReader, ok := plan.(*PhysicalTableReader); ok {
