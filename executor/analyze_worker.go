@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	"sync/atomic"
 
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
@@ -27,6 +28,7 @@ import (
 type analyzeSaveStatsWorker struct {
 	resultsCh <-chan *statistics.AnalyzeResults
 	sctx      sessionctx.Context
+	finishCh  chan<- struct{}
 	errCh     chan<- error
 }
 
@@ -64,6 +66,9 @@ func (worker *analyzeSaveStatsWorker) run(ctx context.Context, analyzeSnapshot b
 		}
 		invalidInfoSchemaStatCache(results.TableID.GetStatisticsID())
 		if err != nil {
+			return
+		}
+		if atomic.LoadUint32(&worker.sctx.GetSessionVars().Killed) == 1 {
 			return
 		}
 	}

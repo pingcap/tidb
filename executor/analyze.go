@@ -20,6 +20,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -238,6 +239,9 @@ func (e *AnalyzeExec) handleResultsError(ctx context.Context, concurrency int, n
 	panicCnt := 0
 	var err error
 	for panicCnt < concurrency {
+		if atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1 {
+			return errors.Trace(ErrQueryInterrupted)
+		}
 		results, ok := <-resultsCh
 		if !ok {
 			break
