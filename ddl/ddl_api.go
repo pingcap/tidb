@@ -6276,6 +6276,24 @@ func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName mode
 	if err != nil {
 		return err
 	}
+	if model.FindIndexByColumns(t.Meta(), fkInfo.Cols...) == nil {
+		// should add index for fk cols
+		if ctx.GetSessionVars().StmtCtx.MultiSchemaInfo == nil {
+			ctx.GetSessionVars().StmtCtx.MultiSchemaInfo = model.NewMultiSchemaInfo()
+		}
+		indexPartSpecifications := make([]*ast.IndexPartSpecification, 0, len(fkInfo.Cols))
+		for _, col := range fkInfo.Cols {
+			indexPartSpecifications = append(indexPartSpecifications, &ast.IndexPartSpecification{
+				Column: &ast.ColumnName{Name: col},
+				Length: -1,
+			})
+		}
+		indexOption := &ast.IndexOption{}
+		err = d.createIndex(ctx, ti, ast.IndexKeyTypeNone, fkInfo.Name, indexPartSpecifications, indexOption, false)
+		if err != nil {
+			return err
+		}
+	}
 
 	job := &model.Job{
 		SchemaID:   schema.ID,

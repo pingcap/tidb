@@ -17,6 +17,7 @@ package ddl_test
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/infoschema"
 	"strings"
 	"sync"
 	"testing"
@@ -25,7 +26,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
@@ -1415,9 +1415,6 @@ func TestAddForeignKey(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (id int key, b int);")
 	tk.MustExec("create table t2 (id int key, b int);")
-	err := tk.ExecToErr("alter table t2 add foreign key (b) references t1(id);")
-	require.Error(t, err)
-	require.Equal(t, "Failed to add the foreign key constraint. Missing index for 'fk_1' foreign key columns in the table 't2'", err.Error())
 	tk.MustExec("alter table t2 add index(b)")
 	tk.MustExec("alter table t2 add foreign key (b) references t1(id);")
 	tbl2Info := getTableInfo(t, dom, "test", "t2")
@@ -1426,6 +1423,18 @@ func TestAddForeignKey(t *testing.T) {
 	tk.MustExec("alter table t1 add index(b)")
 	tk.MustExec("alter table t2 add foreign key (b) references t1(b);")
 	tk.MustGetDBError("alter table t2 add foreign key (b) references t2(b);", infoschema.ErrCannotAddForeign)
+	// Test auto-create index when create foreign key constraint.
+	tk.MustExec("drop table if exists t1,t2")
+	tk.MustExec("create table t1 (id int key, b int, index(b));")
+	tk.MustExec("create table t2 (id int key, b int);")
+	tk.MustExec("alter table t2 add constraint fk foreign key (b) references t1(b);")
+	tbl2Info = getTableInfo(t, dom, "test", "t2")
+	require.Equal(t, 1, len(tbl2Info.Indices))
+	require.Equal(t, "fk", tbl2Info.Indices[0].Name.L)
+	require.Equal(t, model.StatePublic, tbl2Info.Indices[0].State)
+	tk.MustQuery("select b from t2 use index(fk)").Check(testkit.Rows())
+	res := tk.MustQuery("explain select b from t2 use index(fk)")
+	require.Regexp(t, ".*IndexReader.*", res.Rows()[0][0])
 }
 
 func TestAddForeignKey2(t *testing.T) {
