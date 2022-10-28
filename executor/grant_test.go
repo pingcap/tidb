@@ -615,42 +615,10 @@ func TestGrantDynamicPrivs(t *testing.T) {
 	tk.MustQuery("SELECT Grant_Priv FROM mysql.user WHERE `Host` = '%' AND `User` = 'dyn'").Check(testkit.Rows("Y"))
 	tk.MustQuery("SELECT WITH_GRANT_OPTION FROM mysql.global_grants WHERE `Host` = '%' AND `User` = 'dyn' AND Priv='CONNECTION_ADMIN'").Check(testkit.Rows("Y"))
 }
-<<<<<<< HEAD
-=======
-
-func TestNonExistTableIllegalGrant(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("create user u29302")
-	defer tk.MustExec("drop user u29302")
-	// Table level, not existing table, illegal privilege
-	tk.MustGetErrCode("grant create temporary tables on NotExistsD29302.NotExistsT29302 to u29302", mysql.ErrIllegalGrantForTable)
-	tk.MustGetErrCode("grant lock tables on test.NotExistsT29302 to u29302", mysql.ErrIllegalGrantForTable)
-	// Column level, not existing table, illegal privilege
-	tk.MustGetErrCode("grant create temporary tables (NotExistsCol) on NotExistsD29302.NotExistsT29302 to u29302;", mysql.ErrWrongUsage)
-}
-
-func TestIssue34610(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("DROP DATABASE IF EXISTS d1;")
-	tk.MustExec("CREATE DATABASE d1;")
-	tk.MustExec("USE d1;")
-	tk.MustExec("CREATE USER user_1@localhost;")
-	defer func() {
-		tk.MustExec("DROP DATABASE d1;")
-		tk.MustExec("DROP USER user_1@localhost;")
-	}()
-
-	tk.MustExec("CREATE TABLE T1(f1 INT);")
-	tk.MustGetErrCode("CREATE TABLE t1(f1 INT);", mysql.ErrTableExists)
-	tk.MustExec("GRANT SELECT ON T1 to user_1@localhost;")
-	tk.MustExec("GRANT SELECT ON t1 to user_1@localhost;")
-}
 
 func TestIssue38293(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.Session().GetSessionVars().User = &auth.UserIdentity{Username: "root", Hostname: "localhost"}
 	tk.MustExec("DROP USER IF EXISTS test")
@@ -661,4 +629,3 @@ func TestIssue38293(t *testing.T) {
 	tk.MustExec("GRANT SELECT ON `mysql`.`db` TO test")
 	tk.MustQuery("SELECT `Grantor` FROM `mysql`.`tables_priv` WHERE User = 'test'").Check(testkit.Rows("root@localhost"))
 }
->>>>>>> 17c7bcc85e (executor: fix the missing `Grantor` when querying `mysql`.`tables_priv` (#38461))
