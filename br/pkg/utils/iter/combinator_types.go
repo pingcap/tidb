@@ -67,16 +67,12 @@ type filter[T any] struct {
 }
 
 func (f filter[T]) TryNext(ctx context.Context) IterResult[T] {
-	r := f.inner.TryNext(ctx)
-	if r.Err != nil || r.Finished {
-		return r
+	for {
+		r := f.inner.TryNext(ctx)
+		if r.Err != nil || r.Finished || !f.filterOutIf(r.Item) {
+			return r
+		}
 	}
-
-	if f.filterOutIf(r.Item) {
-		return f.TryNext(ctx)
-	}
-
-	return r
 }
 
 type take[T any] struct {
