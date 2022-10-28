@@ -99,6 +99,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 	if err != nil {
 		return nil, err
 	}
+	is = sessiontxn.GetTxnManager(c.Ctx).GetTxnInfoSchema()
 
 	failpoint.Inject("assertStmtCtxIsStaleness", func(val failpoint.Value) {
 		staleread.AssertStmtStaleness(c.Ctx, val.(bool))
