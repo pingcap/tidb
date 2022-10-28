@@ -84,6 +84,9 @@ func CheckDataConsistency(
 	if t.Meta().GetPartitionInfo() != nil {
 		return nil
 	}
+	for _, col := range t.Columns {
+		logutil.BgLogger().Error("CheckDataConsistency col", zap.Any("name", col.Name), zap.Any("state", col.State.String()))
+	}
 	if sh == 0 {
 		// some implementations of MemBuffer doesn't support staging, e.g. that in br/pkg/lightning/backend/kv
 		return nil
