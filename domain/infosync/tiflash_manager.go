@@ -102,7 +102,7 @@ func getTiFlashPeerWithoutLagCount(tiFlashStores map[int64]helper.StoreStat, tab
 // calculateTiFlashProgress calculates progress based on the region status from PD and TiFlash.
 func calculateTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores map[int64]helper.StoreStat) (float64, error) {
 	var regionCount int
-	if err := infosync.GetTiFlashRegionCountFromPD(context.Background(), tableID, &regionCount); err != nil {
+	if err := GetTiFlashRegionCountFromPD(context.Background(), tableID, &regionCount); err != nil {
 		logutil.BgLogger().Error("Fail to get regionCount from PD.",
 			zap.Int64("tableID", tableID))
 		return 0, errors.Trace(err)
@@ -296,9 +296,8 @@ func (m *TiFlashReplicaManagerCtx) PostAccelerateSchedule(ctx context.Context, t
 	return nil
 }
 
-
 // GetRegionCountFromPD is a helper function calling `/stats/region`.
-func (m *TiFlashPDPlacementManager) GetRegionCountFromPD(ctx context.Context, tableID int64, regionCount *int) error {
+func (m *TiFlashReplicaManagerCtx) GetRegionCountFromPD(ctx context.Context, tableID int64, regionCount *int) error {
 	startKey := tablecodec.GenTableRecordPrefix(tableID)
 	endKey := tablecodec.EncodeTablePrefix(tableID + 1)
 	startKey = codec.EncodeBytes([]byte{}, startKey)
@@ -312,7 +311,7 @@ func (m *TiFlashPDPlacementManager) GetRegionCountFromPD(ctx context.Context, ta
 		return errors.Trace(err)
 	}
 	if res == nil {
-		return fmt.Errorf("TiFlashPDPlacementManager returns error in GetRegionCountFromPD")
+		return fmt.Errorf("TiFlashReplicaManagerCtx returns error in GetRegionCountFromPD")
 	}
 	var stats helper.PDRegionStats
 	err = json.Unmarshal(res, &stats)
@@ -845,7 +844,7 @@ func (m *mockTiFlashReplicaManagerCtx) PostAccelerateSchedule(ctx context.Contex
 }
 
 // GetRegionCountFromPD is a helper function calling `/stats/region`.
-func (m *mockTiFlashPlacementManager) GetRegionCountFromPD(ctx context.Context, tableID int64, regionCount *int) error {
+func (m *mockTiFlashReplicaManagerCtx) GetRegionCountFromPD(ctx context.Context, tableID int64, regionCount *int) error {
 	m.Lock()
 	defer m.Unlock()
 	if m.tiflash == nil {

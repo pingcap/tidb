@@ -1133,7 +1133,7 @@ func GetTiFlashRegionCountFromPD(ctx context.Context, tableID int64, regionCount
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return is.tiflashPlacementManager.GetRegionCountFromPD(ctx, tableID, regionCount)
+	return is.tiflashReplicaManager.GetRegionCountFromPD(ctx, tableID, regionCount)
 }
 
 // GetTiFlashStoresStat gets the TiKV store information by accessing PD's api.
