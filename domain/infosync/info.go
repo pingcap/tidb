@@ -1038,8 +1038,8 @@ func GetLabelRules(ctx context.Context, ruleIDs []string) (map[string]*label.Rul
 	return is.labelRuleManager.GetLabelRules(ctx, ruleIDs)
 }
 
-// CaculateTiFlashProgress calculates TiFlash replica progress
-func CaculateTiFlashProgress(tableID int64, replicaCount uint64, TiFlashStores map[int64]helper.StoreStat) (float64, error) {
+// CalculateTiFlashProgress calculates TiFlash replica progress
+func CalculateTiFlashProgress(tableID int64, replicaCount uint64, TiFlashStores map[int64]helper.StoreStat) (float64, error) {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return 0, errors.Trace(err)
