@@ -765,6 +765,11 @@ const (
 	// ranges would exceed the limit, it chooses less accurate ranges such as full range. 0 indicates that there is no memory
 	// limit for ranges.
 	TiDBOptRangeMaxSize = "tidb_opt_range_max_size"
+
+	// TiDBAutoBuildStatsConcurrency is used to set the build concurrency of auto-analyze.
+	TiDBAutoBuildStatsConcurrency = "tidb_auto_build_stats_concurrency"
+	// TiDBSysProcScanConcurrency is used to set the scan concurrency of for backend system processes, like auto-analyze.
+	TiDBSysProcScanConcurrency = "tidb_sysproc_scan_concurrency"
 )
 
 // TiDB vars that have only global scope
@@ -1072,6 +1077,8 @@ const (
 	DefTiDBForeignKeyChecks                         = false
 	DefTiDBOptRangeMaxSize                          = 0
 	DefTiDBCostModelVer                             = 1
+	DefTiDBAutoBuildStatsConcurrency                = 1
+	DefTiDBSysProcScanConcurrency                   = 1
 )
 
 // Process global variables.
