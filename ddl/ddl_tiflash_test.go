@@ -983,7 +983,7 @@ func TestTiFlashProgress(t *testing.T) {
 	}
 	_ = infosync.UpdateTiFlashTableSyncProgress(context.TODO(), tb.Meta().ID, "5.0")
 	mustExist(tb.Meta().ID)
-	_ = infosync.DeleteTiFlashTableSyncProgress(tb.Meta().ID)
+	_ = infosync.DeleteTiFlashTableSyncProgress(tb.Meta())
 	mustAbsent(tb.Meta().ID)
 
 	_ = infosync.UpdateTiFlashTableSyncProgress(context.TODO(), tb.Meta().ID, "5.0")
@@ -992,8 +992,68 @@ func TestTiFlashProgress(t *testing.T) {
 
 	tb, _ = s.dom.InfoSchema().TableByName(model.NewCIStr("tiflash_d"), model.NewCIStr("t"))
 	_ = infosync.UpdateTiFlashTableSyncProgress(context.TODO(), tb.Meta().ID, "5.0")
+	tk.MustExec("alter table tiflash_d.t set tiflash replica 0")
+	mustAbsent(tb.Meta().ID)
+	tk.MustExec("alter table tiflash_d.t set tiflash replica 1")
+
+	tb, _ = s.dom.InfoSchema().TableByName(model.NewCIStr("tiflash_d"), model.NewCIStr("t"))
+	_ = infosync.UpdateTiFlashTableSyncProgress(context.TODO(), tb.Meta().ID, "5.0")
 	tk.MustExec("drop table tiflash_d.t")
 	mustAbsent(tb.Meta().ID)
+
+	time.Sleep(100 * time.Millisecond)
+}
+
+func TestTiFlashProgressForPartitionTable(t *testing.T) {
+	s, teardown := createTiFlashContext(t)
+	s.tiflash.NotAvailable = true
+	defer teardown()
+	tk := testkit.NewTestKit(t, s.store)
+
+	integration.BeforeTest(t, integration.WithoutGoLeakDetection())
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	defer cluster.Terminate(t)
+
+	save := infosync.GetEtcdClient()
+	defer infosync.SetEtcdClient(save)
+	infosync.SetEtcdClient(cluster.Client(0))
+	tk.MustExec("create database tiflash_d")
+	tk.MustExec("create table tiflash_d.t(z int) PARTITION BY RANGE(z) (PARTITION p0 VALUES LESS THAN (10))")
+	tk.MustExec("alter table tiflash_d.t set tiflash replica 1")
+	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("tiflash_d"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	require.NotNil(t, tb)
+	mustExist := func(tid int64) {
+		pm, err := infosync.GetTiFlashTableSyncProgress(context.TODO())
+		require.NoError(t, err)
+		_, ok := pm[tid]
+		require.True(t, ok)
+	}
+	mustAbsent := func(tid int64) {
+		pm, err := infosync.GetTiFlashTableSyncProgress(context.TODO())
+		require.NoError(t, err)
+		_, ok := pm[tid]
+		require.False(t, ok)
+	}
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable)
+	mustExist(tb.Meta().Partition.Definitions[0].ID)
+	_ = infosync.DeleteTiFlashTableSyncProgress(tb.Meta())
+	mustAbsent(tb.Meta().Partition.Definitions[0].ID)
+
+	_ = infosync.UpdateTiFlashTableSyncProgress(context.TODO(), tb.Meta().Partition.Definitions[0].ID, "5.0")
+	tk.MustExec("truncate table tiflash_d.t")
+	mustAbsent(tb.Meta().Partition.Definitions[0].ID)
+
+	tb, _ = s.dom.InfoSchema().TableByName(model.NewCIStr("tiflash_d"), model.NewCIStr("t"))
+	_ = infosync.UpdateTiFlashTableSyncProgress(context.TODO(), tb.Meta().Partition.Definitions[0].ID, "5.0")
+	tk.MustExec("alter table tiflash_d.t set tiflash replica 0")
+	mustAbsent(tb.Meta().Partition.Definitions[0].ID)
+	tk.MustExec("alter table tiflash_d.t set tiflash replica 1")
+
+	tb, _ = s.dom.InfoSchema().TableByName(model.NewCIStr("tiflash_d"), model.NewCIStr("t"))
+	_ = infosync.UpdateTiFlashTableSyncProgress(context.TODO(), tb.Meta().Partition.Definitions[0].ID, "5.0")
+	tk.MustExec("drop table tiflash_d.t")
+	mustAbsent(tb.Meta().Partition.Definitions[0].ID)
 
 	time.Sleep(100 * time.Millisecond)
 }
