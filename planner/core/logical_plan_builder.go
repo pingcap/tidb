@@ -5237,6 +5237,7 @@ func buildColumns2Handle(
 		tbl := tblID2Table[tblID]
 		var tblLen int
 		if onlyWritableCol {
+			logutil.BgLogger().Error("ver", zap.Any("state", tbl.Meta().State))
 			tblLen = len(tbl.WritableCols())
 		} else {
 			tblLen = len(tbl.Cols())
@@ -5386,7 +5387,7 @@ func CheckUpdateList(assignFlags []int, updt *Update, newTblID2Table map[int64]t
 		tbl := newTblID2Table[content.TblID]
 		if content.End > len(assignFlags) {
 			for i, col := range tbl.Meta().Columns {
-				logutil.BgLogger().Error("col", zap.Any("col", col.Name.String()), zap.Any("state", col.State.String()), zap.Int("i", i))
+				logutil.BgLogger().Error("col", zap.Any("col", col.Name.String()), zap.Any("state", col.State.String()), zap.Int("i", i), zap.Any("state", tbl.Meta().State.String()))
 			}
 			logutil.BgLogger().Error("meet error", zap.Any("start", content.Start), zap.Any("end", content.End), zap.Any("len", len(assignFlags)))
 		}
