@@ -1048,18 +1048,19 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 
 		type AuthTokenOptionHandler int
 		const (
-			// NotAuthToken means the final auth plugin is NOT tidb_auth_plugin
-			NotAuthToken AuthTokenOptionHandler = iota
-			// NoNeedAuthTokenOptions means the final auth_plugin is tidb_auth_plugin but need no AuthTokenOptions here
-			NoNeedAuthTokenOptions
-			// NeedAuthTokenOptions means the final auth_plugin is tidb_auth_plugin and need AuthTokenOptions here
-			NeedAuthTokenOptions
+			// NoNeedAuthTokenOptions means the final auth plugin is NOT tidb_auth_plugin
+			NoNeedAuthTokenOptions AuthTokenOptionHandler = iota
+			// OptionalAuthTokenOptions means the final auth_plugin is tidb_auth_plugin,
+			// and whether to declare AuthTokenOptions or not is ok.
+			OptionalAuthTokenOptions
+			// RequireAuthTokenOptions means the final auth_plugin is tidb_auth_plugin and need AuthTokenOptions here
+			RequireAuthTokenOptions
 		)
-		authTokenOptionHandler := NotAuthToken
+		authTokenOptionHandler := NoNeedAuthTokenOptions
 		if currentAuthPlugin, err := e.userAuthPlugin(spec.User.Username, spec.User.Hostname); err != nil {
 			return err
 		} else if currentAuthPlugin == mysql.AuthTiDBAuthToken {
-			authTokenOptionHandler = NoNeedAuthTokenOptions
+			authTokenOptionHandler = OptionalAuthTokenOptions
 		}
 
 		exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
@@ -1078,10 +1079,10 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			}
 			switch spec.AuthOpt.AuthPlugin {
 			case mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password, mysql.AuthSocket, "":
-				authTokenOptionHandler = NotAuthToken
+				authTokenOptionHandler = NoNeedAuthTokenOptions
 			case mysql.AuthTiDBAuthToken:
-				if authTokenOptionHandler != NoNeedAuthTokenOptions {
-					authTokenOptionHandler = NeedAuthTokenOptions
+				if authTokenOptionHandler != OptionalAuthTokenOptions {
+					authTokenOptionHandler = RequireAuthTokenOptions
 				}
 			default:
 				return ErrPluginIsNotLoaded.GenWithStackByArgs(spec.AuthOpt.AuthPlugin)
@@ -1111,18 +1112,18 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		}
 
 		switch authTokenOptionHandler {
-		case NotAuthToken:
+		case NoNeedAuthTokenOptions:
 			if len(authTokenOptions) > 0 {
 				err := errors.New("TOKEN_ISSUER is no need for the auth plugin")
 				e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 			}
-		case NoNeedAuthTokenOptions:
+		case OptionalAuthTokenOptions:
 			if len(authTokenOptions) > 0 {
 				for _, authTokenOption := range authTokenOptions {
 					fields = append(fields, alterField{authTokenOption.Type.String() + "=%?", authTokenOption.Value})
 				}
 			}
-		case NeedAuthTokenOptions:
+		case RequireAuthTokenOptions:
 			if len(authTokenOptions) > 0 {
 				for _, authTokenOption := range authTokenOptions {
 					fields = append(fields, alterField{authTokenOption.Type.String() + "=%?", authTokenOption.Value})
