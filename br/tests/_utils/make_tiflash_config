@@ -12,7 +12,7 @@ key-path = "$TEST_DIR/certs/tiflash.key"
 [server]
 addr = "0.0.0.0:20170"
 advertise-addr = "127.0.0.1:20170"
-status-addr = "127.0.0.1:20170"
+status-addr = "127.0.0.1:20292"
 engine-addr = "127.0.0.1:3930"
 
 [storage]
