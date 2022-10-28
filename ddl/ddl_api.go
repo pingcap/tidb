@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/format"
@@ -4614,6 +4615,11 @@ func GetModifiableColumnJob(
 		return nil, err
 	}
 
+	err = checkColumnWithPartitionConstraint(sctx, t.Meta().Clone(), newCol.ColumnInfo, col.ColumnInfo, spec.Position)
+	if err != nil {
+		return nil, err
+	}
+
 	// As same with MySQL, we don't support modifying the stored status for generated columns.
 	if err = checkModifyGeneratedColumn(sctx, t, col, newCol, specNewColumn, spec.Position); err != nil {
 		return nil, errors.Trace(err)
@@ -4642,6 +4648,48 @@ func GetModifiableColumnJob(
 		Args:    []interface{}{&newCol.ColumnInfo, originalColName, spec.Position, modifyColumnTp, newAutoRandBits},
 	}
 	return job, nil
+}
+
+// checkColumnWithPartitionConstraint is used to check the partition constraint of the modified column.
+func checkColumnWithPartitionConstraint(sctx sessionctx.Context, tbInfo *model.TableInfo, newCol, oldCol *model.ColumnInfo, pos *ast.ColumnPosition) error {
+	pi := tbInfo.GetPartitionInfo()
+	if pi == nil || pi.Expr == "" {
+		return nil
+	}
+
+	err := adjustTableInfoAfterModifyColumn(tbInfo, newCol, oldCol, pos)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	exprStr := "select " + pi.Expr
+	var stmts []ast.StmtNode
+	if p, ok := sctx.(interface {
+		ParseSQL(context.Context, string, ...parser.ParseParam) ([]ast.StmtNode, []error, error)
+	}); ok {
+		stmts, _, err = p.ParseSQL(context.Background(), exprStr)
+	} else {
+		stmts, _, err = parser.New().ParseSQL(exprStr)
+	}
+
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	expr := stmts[0].(*ast.SelectStmt).Fields.Fields[0].Expr
+	e, err := expression.RewriteSimpleExprWithTableInfo(sctx, tbInfo, expr)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if e.GetType().EvalType() == types.ETInt {
+		return nil
+	}
+	if col, ok := expr.(*ast.ColumnNameExpr); ok {
+		return errors.Trace(dbterror.ErrNotAllowedTypeInPartition.GenWithStackByArgs(col.Name.Name.L))
+	}
+
+	return errors.Trace(dbterror.ErrPartitionFuncNotAllowed.GenWithStackByArgs("PARTITION"))
 }
 
 // checkColumnWithIndexConstraint is used to check the related index constraint of the modified column.

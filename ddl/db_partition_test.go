@@ -4539,6 +4539,7 @@ func TestAlterModifyColumnOnPartitionedTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database AlterPartTable")
+	defer tk.MustExec("drop database AlterPartTable")
 	tk.MustExec("use AlterPartTable")
 	tk.MustExec(`create table t (a int unsigned PRIMARY KEY, b varchar(255), key (b))`)
 	tk.MustExec(`insert into t values (7, "07"), (8, "08"),(23,"23"),(34,"34💥"),(46,"46"),(57,"57")`)
@@ -4662,4 +4663,23 @@ func TestAlterModifyColumnOnPartitionedTable(t *testing.T) {
 		"34 34💥",
 		"46 46",
 		"57 57"))
+	tk.MustExec("create table t1 (a tinyint, b char) partition by range (a) ( partition p0 values less than (10) )")
+	err := tk.ExecToErr("alter table t1 modify a char")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:1659]Field 'a' is of a not allowed type for this type of partitioning", err.Error())
+
+	tk.MustExec("create table t2 (a tinyint, b char) partition by range (a-1) ( partition p0 values less than (10) )")
+	err = tk.ExecToErr("alter table t2 modify a char")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:1491]The PARTITION function returns the wrong type", err.Error())
+
+	tk.MustExec("create table t3 (a tinyint, b char) partition by hash(a) partitions 4;")
+	err = tk.ExecToErr("alter table t3 modify a char")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:1659]Field 'a' is of a not allowed type for this type of partitioning", err.Error())
+
+	tk.MustExec("create table t4 (a tinyint, b char) partition by hash(a-1) partitions 4;")
+	err = tk.ExecToErr("alter table t4 modify a char")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:1491]The PARTITION function returns the wrong type", err.Error())
 }
