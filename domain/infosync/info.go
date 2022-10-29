@@ -352,7 +352,7 @@ func UpdateTiFlashTableSyncProgress(ctx context.Context, tid int64, progressStri
 }
 
 // DeleteTiFlashTableSyncProgress is used to delete the tiflash table replica sync progress.
-func DeleteTiFlashTableSyncProgress(tid int64) error {
+func DeleteTiFlashTableSyncProgress(tableInfo *model.TableInfo) error {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return err
@@ -360,8 +360,19 @@ func DeleteTiFlashTableSyncProgress(tid int64) error {
 	if is.etcdCli == nil {
 		return nil
 	}
-	key := fmt.Sprintf("%s/%v", TiFlashTableSyncProgressPath, tid)
-	return util.DeleteKeyFromEtcd(key, is.etcdCli, keyOpDefaultRetryCnt, keyOpDefaultTimeout)
+	if pi := tableInfo.GetPartitionInfo(); pi != nil {
+		for _, p := range pi.Definitions {
+			key := fmt.Sprintf("%s/%v", TiFlashTableSyncProgressPath, p.ID)
+			err = util.DeleteKeyFromEtcd(key, is.etcdCli, keyOpDefaultRetryCnt, keyOpDefaultTimeout)
+			if err != nil {
+				return err
+			}
+		}
+	} else {
+		key := fmt.Sprintf("%s/%v", TiFlashTableSyncProgressPath, tableInfo.ID)
+		return util.DeleteKeyFromEtcd(key, is.etcdCli, keyOpDefaultRetryCnt, keyOpDefaultTimeout)
+	}
+	return nil
 }
 
 // GetTiFlashTableSyncProgress uses to get all the tiflash table replica sync progress.
@@ -1096,13 +1107,13 @@ func PostTiFlashAccelerateSchedule(ctx context.Context, tableID int64) error {
 	return is.tiflashPlacementManager.PostAccelerateSchedule(ctx, tableID)
 }
 
-// GetTiFlashPDRegionRecordStats is a helper function calling `/stats/region`.
-func GetTiFlashPDRegionRecordStats(ctx context.Context, tableID int64, stats *helper.PDRegionStats) error {
+// GetTiFlashRegionCountFromPD is a helper function calling `/stats/region`.
+func GetTiFlashRegionCountFromPD(ctx context.Context, tableID int64, regionCount *int) error {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return is.tiflashPlacementManager.GetPDRegionRecordStats(ctx, tableID, stats)
+	return is.tiflashPlacementManager.GetRegionCountFromPD(ctx, tableID, regionCount)
 }
 
 // GetTiFlashStoresStat gets the TiKV store information by accessing PD's api.

@@ -498,7 +498,7 @@ func getMaskAndRanges(ctx sessionctx.Context, exprs []expression.Expression, ran
 	var accessConds, remainedConds []expression.Expression
 	switch rangeType {
 	case ranger.ColumnRangeType:
-		accessConds = ranger.ExtractAccessConditionsForColumn(exprs, cols[0])
+		accessConds = ranger.ExtractAccessConditionsForColumn(ctx, exprs, cols[0])
 		ranges, accessConds, _, err = ranger.BuildColumnRange(accessConds, ctx, cols[0].RetType, types.UnspecifiedLength, ctx.GetSessionVars().RangeMaxSize)
 	case ranger.IndexRangeType:
 		if cachedPath != nil {

@@ -26,7 +26,7 @@ import (
 	tikvutil "github.com/tikv/client-go/v2/util"
 )
 
-func TestNonTransactionalDeleteShardingOnInt(t *testing.T) {
+func TestNonTransactionalDMLShardingOnInt(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_max_chunk_size=35")
@@ -45,7 +45,7 @@ func TestNonTransactionalDeleteShardingOnInt(t *testing.T) {
 	testSharding(tables, tk)
 }
 
-func TestNonTransactionalDeleteShardingOnVarchar(t *testing.T) {
+func TestNonTransactionalDMLShardingOnVarchar(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_max_chunk_size=35")
@@ -65,24 +65,50 @@ func TestNonTransactionalDeleteShardingOnVarchar(t *testing.T) {
 }
 
 func testSharding(tables []string, tk *testkit.TestKit) {
-	tableSizes := []int{0, 1, 30, 35, 40, 100}
-	batchSizes := []int{25, 35, 50, 80, 120}
+	compositions := []struct{ tableSize, batchSize int }{
+		{0, 10},
+		{1, 1},
+		{1, 2},
+		{30, 25},
+		{30, 35},
+		{35, 25},
+		{35, 35},
+		{35, 40},
+		{40, 25},
+		{40, 35},
+		{100, 25},
+		{100, 40},
+	}
 	for _, table := range tables {
 		tk.MustExec("drop table if exists t")
 		tk.MustExec(table)
-		for _, tableSize := range tableSizes {
-			for _, batchSize := range batchSizes {
-				for i := 0; i < tableSize; i++ {
-					tk.MustExec(fmt.Sprintf("insert into t values ('%d', %d)", i, i*2))
-				}
-				tk.MustQuery(fmt.Sprintf("batch on a limit %d delete from t", batchSize)).Check(testkit.Rows(fmt.Sprintf("%d all succeeded", (tableSize+batchSize-1)/batchSize)))
-				tk.MustQuery("select count(*) from t").Check(testkit.Rows("0"))
+		for _, c := range compositions {
+			for i := 0; i < c.tableSize; i++ {
+				tk.MustExec(fmt.Sprintf("insert into t values ('%d', %d)", i, i*2))
 			}
+			tk.MustQuery(
+				fmt.Sprintf(
+					"batch on a limit %d update t set b = b * 2", c.batchSize,
+				),
+			).Check(testkit.Rows(fmt.Sprintf("%d all succeeded", (c.tableSize+c.batchSize-1)/c.batchSize)))
+			tk.MustQuery("select coalesce(sum(b), 0) from t").Check(
+				testkit.Rows(
+					fmt.Sprintf(
+						"%d", (c.tableSize-1)*c.tableSize*2,
+					),
+				),
+			)
+			tk.MustQuery(
+				fmt.Sprintf(
+					"batch on a limit %d delete from t", c.batchSize,
+				),
+			).Check(testkit.Rows(fmt.Sprintf("%d all succeeded", (c.tableSize+c.batchSize-1)/c.batchSize)))
+			tk.MustQuery("select count(*) from t").Check(testkit.Rows("0"))
 		}
 	}
 }
 
-func TestNonTransactionalDeleteDryRun(t *testing.T) {
+func TestNonTransactionalDMLDryRun(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_max_chunk_size=35")
@@ -95,12 +121,21 @@ func TestNonTransactionalDeleteDryRun(t *testing.T) {
 	for _, row := range rows {
 		require.True(t, strings.HasPrefix(row[0].(string), "DELETE FROM `test`.`t` WHERE `a` BETWEEN"))
 	}
-	tk.MustQuery("batch on a limit 3 dry run query delete from t").Check(testkit.Rows(
-		"SELECT `a` FROM `test`.`t` WHERE TRUE ORDER BY IF(ISNULL(`a`),0,1),`a`"))
+	rows = tk.MustQuery("batch on a limit 3 dry run update t set b = b + 42").Rows()
+	for _, row := range rows {
+		require.True(t, strings.HasPrefix(row[0].(string), "UPDATE `test`.`t` SET `b`=(`b` + 42) WHERE `a` BETWEEN"))
+	}
+	tk.MustQuery("batch on a limit 3 dry run query delete from t").Check(
+		testkit.Rows(
+			"SELECT `a` FROM `test`.`t` WHERE TRUE ORDER BY IF(ISNULL(`a`),0,1),`a`",
+		),
+	)
+	tk.MustQuery("batch on a limit 3 dry run query update t set b = b + 42").Check(testkit.Rows("SELECT `a` FROM `test`.`t` WHERE TRUE ORDER BY IF(ISNULL(`a`),0,1),`a`"))
 	tk.MustQuery("select count(*) from t").Check(testkit.Rows("100"))
+	tk.MustQuery("select sum(b) from t").Check(testkit.Rows("9900"))
 }
 
-func TestNonTransactionalDeleteErrorMessage(t *testing.T) {
+func TestNonTransactionalDMLErrorMessage(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_max_chunk_size=35")
@@ -110,31 +145,69 @@ func TestNonTransactionalDeleteErrorMessage(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("insert into t values ('%d', %d)", i, i*2))
 	}
 	tk.MustExec("set @@tidb_nontransactional_ignore_error=1")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/batchDeleteError", `return(true)`))
-	defer failpoint.Disable("github.com/pingcap/tidb/session/batchDeleteError")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/batchDMLError", `return(true)`))
+	defer failpoint.Disable("github.com/pingcap/tidb/session/batchDMLError")
 	err := tk.ExecToErr("batch on a limit 3 delete from t")
-	require.EqualError(t, err, "Early return: error occurred in the first job. All jobs are canceled: injected batch delete error")
+	require.EqualError(
+		t, err,
+		"Early return: error occurred in the first job. All jobs are canceled: injected batch(non-transactional) DML error",
+	)
+	err = tk.ExecToErr("batch on a limit 3 update t set b = 42")
+	require.EqualError(
+		t, err,
+		"Early return: error occurred in the first job. All jobs are canceled: injected batch(non-transactional) DML error",
+	)
 
 	tk.MustExec("truncate t")
 	for i := 0; i < 100; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values ('%d', %d)", i, i*2))
 	}
 	tk.MustExec("set @@tidb_nontransactional_ignore_error=1")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/batchDeleteError", `1*return(false)->return(true)`))
+
+	require.NoError(
+		t, failpoint.Enable("github.com/pingcap/tidb/session/batchDMLError", `1*return(false)->return(true)`),
+	)
+	err = tk.ExecToErr("batch on a limit 3 update t set b = 42")
+	require.ErrorContains(
+		t, err,
+		"33/34 jobs failed in the non-transactional DML: job id: 2, estimated size: 3, sql: UPDATE `test`.`t` SET `b`=42 WHERE `a` BETWEEN 3 AND 5, injected batch(non-transactional) DML error;\n",
+	)
+
+	require.NoError(
+		t, failpoint.Enable("github.com/pingcap/tidb/session/batchDMLError", `1*return(false)->return(true)`),
+	)
 	err = tk.ExecToErr("batch on a limit 3 delete from t")
-	require.ErrorContains(t, err, "33/34 jobs failed in the non-transactional DML: job id: 2, estimated size: 3, sql: DELETE FROM `test`.`t` WHERE `a` BETWEEN 3 AND 5, injected batch delete error;\n")
+	require.ErrorContains(
+		t, err,
+		"33/34 jobs failed in the non-transactional DML: job id: 2, estimated size: 3, sql: DELETE FROM `test`.`t` WHERE `a` BETWEEN 3 AND 5, injected batch(non-transactional) DML error;\n",
+	)
 
 	tk.MustExec("truncate t")
 	for i := 0; i < 100; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values ('%d', %d)", i, i*2))
 	}
 	tk.MustExec("set @@tidb_nontransactional_ignore_error=0")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/batchDeleteError", `1*return(false)->return(true)`))
+
+	require.NoError(
+		t, failpoint.Enable("github.com/pingcap/tidb/session/batchDMLError", `1*return(false)->return(true)`),
+	)
+	err = tk.ExecToErr("batch on a limit 3 update t set b = b + 42")
+	require.EqualError(
+		t, err,
+		"[session:8143]non-transactional job failed, job id: 2, total jobs: 34. job range: [KindInt64 3, KindInt64 5], job sql: job id: 2, estimated size: 3, sql: UPDATE `test`.`t` SET `b`=(`b` + 42) WHERE `a` BETWEEN 3 AND 5, err: injected batch(non-transactional) DML error",
+	)
+
+	require.NoError(
+		t, failpoint.Enable("github.com/pingcap/tidb/session/batchDMLError", `1*return(false)->return(true)`),
+	)
 	err = tk.ExecToErr("batch on a limit 3 delete from t")
-	require.EqualError(t, err, "[session:8143]non-transactional job failed, job id: 2, total jobs: 34. job range: [KindInt64 3, KindInt64 5], job sql: job id: 2, estimated size: 3, sql: DELETE FROM `test`.`t` WHERE `a` BETWEEN 3 AND 5, err: injected batch delete error")
+	require.EqualError(
+		t, err,
+		"[session:8143]non-transactional job failed, job id: 2, total jobs: 34. job range: [KindInt64 3, KindInt64 5], job sql: job id: 2, estimated size: 3, sql: DELETE FROM `test`.`t` WHERE `a` BETWEEN 3 AND 5, err: injected batch(non-transactional) DML error",
+	)
 }
 
-func TestNonTransactionalDeleteSplitOnTiDBRowID(t *testing.T) {
+func TestNonTransactionalDMLShardingOnTiDBRowID(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_max_chunk_size=35")
@@ -144,19 +217,47 @@ func TestNonTransactionalDeleteSplitOnTiDBRowID(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("insert into t values ('%d', %d)", i, i*2))
 	}
 	// auto select results in full col name
-	tk.MustQuery("batch limit 3 dry run delete from t").Check(testkit.Rows(
-		"DELETE FROM `test`.`t` WHERE `test`.`t`.`_tidb_rowid` BETWEEN 1 AND 3",
-		"DELETE FROM `test`.`t` WHERE `test`.`t`.`_tidb_rowid` BETWEEN 100 AND 100",
-	))
+	tk.MustQuery("batch limit 3 dry run delete from t").Check(
+		testkit.Rows(
+			"DELETE FROM `test`.`t` WHERE `test`.`t`.`_tidb_rowid` BETWEEN 1 AND 3",
+			"DELETE FROM `test`.`t` WHERE `test`.`t`.`_tidb_rowid` BETWEEN 100 AND 100",
+		),
+	)
+	tk.MustQuery("batch limit 3 dry run update t set b = 42").Check(
+		testkit.Rows(
+			"UPDATE `test`.`t` SET `b`=42 WHERE `test`.`t`.`_tidb_rowid` BETWEEN 1 AND 3",
+			"UPDATE `test`.`t` SET `b`=42 WHERE `test`.`t`.`_tidb_rowid` BETWEEN 100 AND 100",
+		),
+	)
+
 	// otherwise the name is the same as what is given
-	tk.MustQuery("batch on _tidb_rowid limit 3 dry run delete from t").Check(testkit.Rows(
-		"DELETE FROM `test`.`t` WHERE `_tidb_rowid` BETWEEN 1 AND 3",
-		"DELETE FROM `test`.`t` WHERE `_tidb_rowid` BETWEEN 100 AND 100",
-	))
-	tk.MustQuery("batch on t._tidb_rowid limit 3 dry run delete from t").Check(testkit.Rows(
-		"DELETE FROM `test`.`t` WHERE `t`.`_tidb_rowid` BETWEEN 1 AND 3",
-		"DELETE FROM `test`.`t` WHERE `t`.`_tidb_rowid` BETWEEN 100 AND 100",
-	))
+	tk.MustQuery("batch on _tidb_rowid limit 3 dry run delete from t").Check(
+		testkit.Rows(
+			"DELETE FROM `test`.`t` WHERE `_tidb_rowid` BETWEEN 1 AND 3",
+			"DELETE FROM `test`.`t` WHERE `_tidb_rowid` BETWEEN 100 AND 100",
+		),
+	)
+	tk.MustQuery("batch on t._tidb_rowid limit 3 dry run delete from t").Check(
+		testkit.Rows(
+			"DELETE FROM `test`.`t` WHERE `t`.`_tidb_rowid` BETWEEN 1 AND 3",
+			"DELETE FROM `test`.`t` WHERE `t`.`_tidb_rowid` BETWEEN 100 AND 100",
+		),
+	)
+	tk.MustQuery("batch on _tidb_rowid limit 3 dry run update t set b = 42").Check(
+		testkit.Rows(
+			"UPDATE `test`.`t` SET `b`=42 WHERE `_tidb_rowid` BETWEEN 1 AND 3",
+			"UPDATE `test`.`t` SET `b`=42 WHERE `_tidb_rowid` BETWEEN 100 AND 100",
+		),
+	)
+	tk.MustQuery("batch on t._tidb_rowid limit 3 dry run update t set b = 42").Check(
+		testkit.Rows(
+			"UPDATE `test`.`t` SET `b`=42 WHERE `t`.`_tidb_rowid` BETWEEN 1 AND 3",
+			"UPDATE `test`.`t` SET `b`=42 WHERE `t`.`_tidb_rowid` BETWEEN 100 AND 100",
+		),
+	)
+
+	tk.MustExec("batch on _tidb_rowid limit 3 update t set b = 42")
+	tk.MustQuery("select sum(b) from t").Check(testkit.Rows("4200"))
 	tk.MustExec("batch on _tidb_rowid limit 3 delete from t")
 	tk.MustQuery("select count(*) from t").Check(testkit.Rows("0"))
 }
@@ -308,7 +409,10 @@ func TestNonTransactionalDeleteCheckConstraint(t *testing.T) {
 	now := time.Now()
 	safePointValue := now.Format(tikvutil.GCTimeFormat)
 	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
-	updateSafePoint := fmt.Sprintf("INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s') ON DUPLICATE KEY UPDATE variable_value = '%[2]s', comment = '%[3]s'", safePointName, safePointValue, safePointComment)
+	updateSafePoint := fmt.Sprintf(
+		"INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s') ON DUPLICATE KEY UPDATE variable_value = '%[2]s', comment = '%[3]s'",
+		safePointName, safePointValue, safePointComment,
+	)
 	tk.MustExec(updateSafePoint)
 
 	tk.MustExec("set @@tidb_max_chunk_size=35")

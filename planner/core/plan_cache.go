@@ -42,8 +42,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func planCachePreprocess(sctx sessionctx.Context, isGeneralPlanCache bool, is infoschema.InfoSchema,
-	stmt *PlanCacheStmt, params []expression.Expression) error {
+func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isGeneralPlanCache bool, is infoschema.InfoSchema, stmt *PlanCacheStmt, params []expression.Expression) error {
 	vars := sctx.GetSessionVars()
 	stmtAst := stmt.PreparedAst
 	vars.StmtCtx.StmtType = stmtAst.StmtType
@@ -88,7 +87,7 @@ func planCachePreprocess(sctx sessionctx.Context, isGeneralPlanCache bool, is in
 		// We should reset the tableRefs in the prepared update statements, otherwise, the ast nodes still hold the old
 		// tableRefs columnInfo which will cause chaos in logic of trying point get plan. (should ban non-public column)
 		ret := &PreprocessorReturn{InfoSchema: is}
-		err := Preprocess(sctx, stmtAst.Stmt, InPrepare, WithPreprocessorReturn(ret))
+		err := Preprocess(ctx, sctx, stmtAst.Stmt, InPrepare, WithPreprocessorReturn(ret))
 		if err != nil {
 			return ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
 		}
@@ -116,7 +115,7 @@ func planCachePreprocess(sctx sessionctx.Context, isGeneralPlanCache bool, is in
 func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 	isGeneralPlanCache bool, is infoschema.InfoSchema, stmt *PlanCacheStmt,
 	params []expression.Expression) (plan Plan, names []*types.FieldName, err error) {
-	if err := planCachePreprocess(sctx, isGeneralPlanCache, is, stmt, params); err != nil {
+	if err := planCachePreprocess(ctx, sctx, isGeneralPlanCache, is, stmt, params); err != nil {
 		return nil, nil, err
 	}
 

@@ -470,7 +470,8 @@ type Delete struct {
 
 	TblColPosInfos TblColPosInfoSlice
 
-	FKChecks map[int64][]*FKCheck
+	FKChecks   map[int64][]*FKCheck
+	FKCascades map[int64][]*FKCascade
 }
 
 // MemoryUsage return the memory usage of Delete
@@ -717,6 +718,7 @@ func (e *Explain) RenderResult() error {
 	}
 
 	if e.Analyze && strings.ToLower(e.Format) == types.ExplainFormatTrueCardCost {
+		// true_card_cost mode is used to calibrate the cost model.
 		pp, ok := e.TargetPlan.(PhysicalPlan)
 		if ok {
 			if _, err := getPlanCost(pp, property.RootTaskType,
@@ -732,6 +734,20 @@ func (e *Explain) RenderResult() error {
 					pp.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("marshal factor costs error %v", err))
 				}
 				pp.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("factor costs: %v", string(data)))
+
+				// output cost factor weights for cost calibration
+				factors := defaultVer2Factors.tolist()
+				weights := make(map[string]float64)
+				for _, factor := range factors {
+					if factorCost, ok := trace.factorCosts[factor.Name]; ok && factor.Value > 0 {
+						weights[factor.Name] = factorCost / factor.Value // cost = [factors] * [weights]
+					}
+				}
+				if wstr, err := json.Marshal(weights); err != nil {
+					pp.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("marshal weights error %v", err))
+				} else {
+					pp.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("factor weights: %v", string(wstr)))
+				}
 			}
 		} else {
 			e.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("'explain format=true_card_cost' cannot support this plan"))
@@ -896,13 +912,13 @@ func (e *Explain) getOperatorInfo(p Plan, id string) (string, string, string, st
 			return row[1], "N/A", "N/A", row[3], row[4]
 		}
 	}
+
+	pp, isPhysicalPlan := p.(PhysicalPlan)
 	estRows := "N/A"
-	if si := p.statsInfo(); si != nil {
-		estRows = strconv.FormatFloat(si.RowCount, 'f', 2, 64)
-	}
 	estCost := "N/A"
 	costFormula := "N/A"
-	if pp, ok := p.(PhysicalPlan); ok {
+	if isPhysicalPlan {
+		estRows = strconv.FormatFloat(pp.getEstRowCountForDisplay(), 'f', 2, 64)
 		if e.ctx != nil && e.ctx.GetSessionVars().CostModelVersion == modelVer2 {
 			costVer2, _ := pp.getPlanCostVer2(property.RootTaskType, NewDefaultPlanCostOption())
 			estCost = strconv.FormatFloat(costVer2.cost, 'f', 2, 64)
@@ -911,7 +927,10 @@ func (e *Explain) getOperatorInfo(p Plan, id string) (string, string, string, st
 			planCost, _ := getPlanCost(pp, property.RootTaskType, NewDefaultPlanCostOption())
 			estCost = strconv.FormatFloat(planCost, 'f', 2, 64)
 		}
+	} else if si := p.statsInfo(); si != nil {
+		estRows = strconv.FormatFloat(si.RowCount, 'f', 2, 64)
 	}
+
 	var accessObject, operatorInfo string
 	if plan, ok := p.(dataAccesser); ok {
 		accessObject = plan.AccessObject().String()
@@ -1008,15 +1027,16 @@ func binaryOpFromFlatOp(explainCtx sessionctx.Context, op *FlatOperator, out *ti
 		}
 	}
 
-	// Runtime info
-	rootStats, copStats, memTracker, diskTracker := getRuntimeInfo(explainCtx, op.Origin, nil)
-	if statsInfo := op.Origin.statsInfo(); statsInfo != nil {
-		out.EstRows = statsInfo.RowCount
-	}
 	if op.IsPhysicalPlan {
 		p := op.Origin.(PhysicalPlan)
 		out.Cost, _ = getPlanCost(p, property.RootTaskType, NewDefaultPlanCostOption())
+		out.EstRows = p.getEstRowCountForDisplay()
+	} else if statsInfo := op.Origin.statsInfo(); statsInfo != nil {
+		out.EstRows = statsInfo.RowCount
 	}
+
+	// Runtime info
+	rootStats, copStats, memTracker, diskTracker := getRuntimeInfo(explainCtx, op.Origin, nil)
 	if rootStats != nil {
 		basic, groups := rootStats.MergeStats()
 		out.RootBasicExecInfo = basic.String()

@@ -15,12 +15,10 @@
 package gctuner
 
 import (
-	"runtime"
+	"github.com/pingcap/tidb/util/memory"
 )
 
-var memStats runtime.MemStats
-
 func readMemoryInuse() uint64 {
-	runtime.ReadMemStats(&memStats)
+	memStats := memory.ForceReadMemStats()
 	return memStats.HeapInuse
 }
