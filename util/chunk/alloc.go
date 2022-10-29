@@ -135,6 +135,7 @@ var _ ColumnAllocator = &poolColumnAllocator{}
 type poolColumnAllocator struct {
 	pool               map[int]*cloumnList
 	freeColumnsPerType int
+	keepalive          []*cloumnList
 }
 
 // poolColumnAllocator implements the ColumnAllocator interface.
@@ -171,6 +172,7 @@ func (cList *cloumnList) pop() *Column {
 func (alloc *poolColumnAllocator) init() {
 	alloc.pool = make(map[int]*cloumnList)
 	alloc.freeColumnsPerType = maxFreeColumnsPerType
+	alloc.keepalive = make([]*cloumnList, 5)
 }
 
 func (alloc *poolColumnAllocator) put(col *Column) {
@@ -188,6 +190,7 @@ func (alloc *poolColumnAllocator) put(col *Column) {
 		//l = make(map[*Column]struct{}, alloc.freeColumnsPerType)
 		l.Cloumns = make([]*Column, 0, alloc.freeColumnsPerType)
 		alloc.pool[typeSize] = l
+		alloc.keepalive = append(alloc.keepalive, l)
 	}
 	alloc.push(col, typeSize)
 }
