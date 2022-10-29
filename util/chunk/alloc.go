@@ -52,6 +52,25 @@ type allocator struct {
 	freeChunk   int
 }
 
+type cloumnList struct {
+	Cloumns []*Column
+	End     int
+}
+
+func (cList *cloumnList) add(col *Column) {
+	if len(cList.Cloumns) <= cList.End {
+		cList.Cloumns = append(cList.Cloumns, col)
+		cList.End++
+		return
+	}
+	cList.Cloumns[cList.End] = col
+	cList.End++
+}
+
+func (cList *cloumnList) Len() int {
+	return cList.End
+}
+
 // SetLimit limit reuse num
 func (a *allocator) SetLimit(chunknum, columnnum int) {
 	a.freeChunk = chunknum
@@ -112,7 +131,7 @@ func (a *allocator) Reset() {
 var _ ColumnAllocator = &poolColumnAllocator{}
 
 type poolColumnAllocator struct {
-	pool               map[int]freeList
+	pool               map[int]*cloumnList
 	freeColumnsPerType int
 }
 
@@ -137,16 +156,18 @@ func (alloc *poolColumnAllocator) NewSizeColumn(typeSize int, count int) *Column
 	return newColumn(typeSize, count)
 }
 
-func (l freeList) pop() *Column {
-	for k := range l {
-		delete(l, k)
-		return k
+func (l *cloumnList) pop() *Column {
+	if l.End <= 0 {
+		return nil
 	}
-	return nil
+	l.End--
+	col := l.Cloumns[l.End]
+	l.Cloumns[l.End] = nil
+	return col
 }
 
 func (alloc *poolColumnAllocator) init() {
-	alloc.pool = make(map[int]freeList)
+	alloc.pool = make(map[int]*cloumnList)
 	alloc.freeColumnsPerType = maxFreeColumnsPerType
 }
 
@@ -161,7 +182,9 @@ func (alloc *poolColumnAllocator) put(col *Column) {
 
 	l := alloc.pool[typeSize]
 	if l == nil {
-		l = make(map[*Column]struct{}, alloc.freeColumnsPerType)
+		l = &cloumnList{Cloumns: nil, End: 0}
+		//l = make(map[*Column]struct{}, alloc.freeColumnsPerType)
+		l.Cloumns = make([]*Column, alloc.freeColumnsPerType, alloc.freeColumnsPerType)
 		alloc.pool[typeSize] = l
 	}
 	alloc.push(col, typeSize)
@@ -172,17 +195,16 @@ func (alloc *poolColumnAllocator) put(col *Column) {
 // reference to the others.
 type freeList map[*Column]struct{}
 
-func (l freeList) empty() bool {
-	return len(l) == 0
+func (l *cloumnList) empty() bool {
+	return l.End == 0
 }
 
 func (alloc *poolColumnAllocator) push(col *Column, typeSize int) {
-	if len(alloc.pool[typeSize]) >= alloc.freeColumnsPerType {
+	if alloc.pool[typeSize].End >= alloc.freeColumnsPerType {
 		return
 	}
 	if (typeSize == varElemLen) && cap(col.data) > MaxCachedLen {
 		return
 	}
-
-	alloc.pool[typeSize][col] = struct{}{}
+	alloc.pool[typeSize].add(col)
 }

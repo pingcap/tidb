@@ -223,7 +223,7 @@ func TestColumnAllocatorLimit(t *testing.T) {
 	alloc.Reset()
 	require.Equal(t, len(alloc.free), 10)
 	for _, p := range alloc.columnAlloc.pool {
-		require.True(t, (len(p) <= 20))
+		require.True(t, (p.Len() <= 20))
 	}
 
 	//Reduce capacity
@@ -234,7 +234,7 @@ func TestColumnAllocatorLimit(t *testing.T) {
 	alloc.Reset()
 	require.Equal(t, len(alloc.free), 5)
 	for _, p := range alloc.columnAlloc.pool {
-		require.True(t, (len(p) <= 10))
+		require.True(t, (p.Len() <= 10))
 	}
 
 	//increase capacity
@@ -245,7 +245,7 @@ func TestColumnAllocatorLimit(t *testing.T) {
 	alloc.Reset()
 	require.Equal(t, len(alloc.free), 50)
 	for _, p := range alloc.columnAlloc.pool {
-		require.True(t, (len(p) <= 100))
+		require.True(t, (p.Len() <= 100))
 	}
 
 	//long characters are not cached
@@ -253,6 +253,6 @@ func TestColumnAllocatorLimit(t *testing.T) {
 	alloc.Alloc([]*types.FieldType{types.NewFieldTypeBuilder().SetType(mysql.TypeVarchar).BuildP()}, 10240, 10240)
 	alloc.Reset()
 	for _, p := range alloc.columnAlloc.pool {
-		require.True(t, (len(p) == 0))
+		require.True(t, (p.Len() == 0))
 	}
 }
