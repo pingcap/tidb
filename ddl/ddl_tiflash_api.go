@@ -378,13 +378,12 @@ func getTiFlashPeerWithoutLagCount(pollTiFlashContext *TiFlashManagementContext,
 
 // getTiFlashTableSyncProgress return truncated string to avoid float64 comparison.
 func getTiFlashTableSyncProgress(pollTiFlashContext *TiFlashManagementContext, tableID int64, replicaCount uint64) (string, error) {
-	var stats helper.PDRegionStats
-	if err := infosync.GetTiFlashPDRegionRecordStats(context.Background(), tableID, &stats); err != nil {
-		logutil.BgLogger().Error("Fail to get region stats from PD.",
+	var regionCount int
+	if err := infosync.GetTiFlashRegionCountFromPD(context.Background(), tableID, &regionCount); err != nil {
+		logutil.BgLogger().Error("Fail to get regionCount from PD.",
 			zap.Int64("tableID", tableID))
 		return "0", errors.Trace(err)
 	}
-	regionCount := stats.Count
 
 	tiflashPeerCount, err := getTiFlashPeerWithoutLagCount(pollTiFlashContext, tableID)
 	if err != nil {

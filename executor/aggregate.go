@@ -1940,6 +1940,7 @@ func (a *AggSpillDiskAction) Action(t *memory.Tracker) {
 			zap.Int64("consumed", t.BytesConsumed()),
 			zap.Int64("quota", t.GetBytesLimit()))
 		atomic.StoreUint32(&a.e.inSpillMode, 1)
+		memory.QueryForceDisk.Add(1)
 		return
 	}
 	if fallback := a.GetFallback(); fallback != nil {
