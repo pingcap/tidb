@@ -4615,7 +4615,7 @@ func GetModifiableColumnJob(
 		return nil, err
 	}
 
-	err = checkColumnWithPartitionConstraint(sctx, t.Meta().Clone(), newCol.ColumnInfo, col.ColumnInfo, spec.Position)
+	err = checkColumnWithPartitionConstraint(sctx, t.Meta().Clone(), newCol.ColumnInfo.Clone(), col.ColumnInfo.Clone(), spec.Position)
 	if err != nil {
 		return nil, err
 	}
