@@ -527,8 +527,6 @@ func (e *HashJoinExec) joinMatchedProbeSideRow2ChunkForOuterHashJoin(workerID ui
 		return true, joinResult
 	}
 
-	// iter := chunk.NewIterator4Slice(buildSideRows)
-	// defer chunk.FreeIterator(iter)
 	iter := e.rowIters[workerID]
 	iter.Reset(buildSideRows)
 	var outerMatchStatus []outerRowStatusFlag
@@ -575,8 +573,6 @@ func (e *HashJoinExec) joinNAALOSJMatchProbeSideRow2Chunk(workerID uint, probeKe
 			return false, joinResult
 		}
 		if len(buildSideRows) != 0 {
-			// iter1 := chunk.NewIterator4Slice(buildSideRows)
-			// defer chunk.FreeIterator(iter1)
 			iter1 := e.rowIters[workerID]
 			iter1.Reset(buildSideRows)
 			for iter1.Begin(); iter1.Current() != iter1.End(); {
@@ -612,8 +608,6 @@ func (e *HashJoinExec) joinNAALOSJMatchProbeSideRow2Chunk(workerID uint, probeKe
 			e.joiners[workerID].onMissMatch(false, probeSideRow, joinResult.chk)
 			return true, joinResult
 		}
-		// iter2 := chunk.NewIterator4Slice(buildSideRows)
-		// defer chunk.FreeIterator(iter2)
 		iter2 := e.rowIters[workerID]
 		iter2.Reset(buildSideRows)
 		for iter2.Begin(); iter2.Current() != iter2.End(); {
@@ -654,8 +648,6 @@ func (e *HashJoinExec) joinNAALOSJMatchProbeSideRow2Chunk(workerID uint, probeKe
 		return false, joinResult
 	}
 	if len(buildSideRows) != 0 {
-		// iter1 := chunk.NewIterator4Slice(buildSideRows)
-		// defer chunk.FreeIterator(iter1)
 		iter1 := e.rowIters[workerID]
 		iter1.Reset(buildSideRows)
 		for iter1.Begin(); iter1.Current() != iter1.End(); {
@@ -691,8 +683,6 @@ func (e *HashJoinExec) joinNAALOSJMatchProbeSideRow2Chunk(workerID uint, probeKe
 		e.joiners[workerID].onMissMatch(false, probeSideRow, joinResult.chk)
 		return true, joinResult
 	}
-	// iter2 := chunk.NewIterator4Slice(buildSideRows)
-	// defer chunk.FreeIterator(iter2)
 	iter2 := e.rowIters[workerID]
 	iter2.Reset(buildSideRows)
 	for iter2.Begin(); iter2.Current() != iter2.End(); {
@@ -738,8 +728,6 @@ func (e *HashJoinExec) joinNAASJMatchProbeSideRow2Chunk(workerID uint, probeKey 
 			return false, joinResult
 		}
 		if len(buildSideRows) != 0 {
-			// iter1 := chunk.NewIterator4Slice(buildSideRows)
-			// defer chunk.FreeIterator(iter1)
 			iter1 := e.rowIters[workerID]
 			iter1.Reset(buildSideRows)
 			for iter1.Begin(); iter1.Current() != iter1.End(); {
@@ -775,8 +763,6 @@ func (e *HashJoinExec) joinNAASJMatchProbeSideRow2Chunk(workerID uint, probeKey 
 			e.joiners[workerID].onMissMatch(false, probeSideRow, joinResult.chk)
 			return true, joinResult
 		}
-		// iter2 := chunk.NewIterator4Slice(buildSideRows)
-		// defer chunk.FreeIterator(iter2)
 		iter2 := e.rowIters[workerID]
 		iter2.Reset(buildSideRows)
 		for iter2.Begin(); iter2.Current() != iter2.End(); {
@@ -817,8 +803,6 @@ func (e *HashJoinExec) joinNAASJMatchProbeSideRow2Chunk(workerID uint, probeKey 
 		return false, joinResult
 	}
 	if len(buildSideRows) != 0 {
-		// iter1 := chunk.NewIterator4Slice(buildSideRows)
-		// defer chunk.FreeIterator(iter1)
 		iter1 := e.rowIters[workerID]
 		iter1.Reset(buildSideRows)
 		for iter1.Begin(); iter1.Current() != iter1.End(); {
@@ -854,8 +838,6 @@ func (e *HashJoinExec) joinNAASJMatchProbeSideRow2Chunk(workerID uint, probeKey 
 		e.joiners[workerID].onMissMatch(false, probeSideRow, joinResult.chk)
 		return true, joinResult
 	}
-	// iter2 := chunk.NewIterator4Slice(buildSideRows)
-	// defer chunk.FreeIterator(iter2)
 	iter2 := e.rowIters[workerID]
 	iter2.Reset(buildSideRows)
 	for iter2.Begin(); iter2.Current() != iter2.End(); {
@@ -930,8 +912,6 @@ func (e *HashJoinExec) joinMatchedProbeSideRow2Chunk(workerID uint, probeKey uin
 		e.joiners[workerID].onMissMatch(false, probeSideRow, joinResult.chk)
 		return true, joinResult
 	}
-	// iter := chunk.NewIterator4Slice(buildSideRows)
-	// defer chunk.FreeIterator(iter)
 	iter := e.rowIters[workerID]
 	iter.Reset(buildSideRows)
 	hasMatch, hasNull, ok := false, false, false

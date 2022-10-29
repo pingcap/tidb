@@ -279,9 +279,8 @@ func (e *IndexLookUpJoin) Next(ctx context.Context, req *chunk.Chunk) error {
 			e.lookUpMatchedInners(task, task.cursor)
 			if e.innerIter == nil {
 				e.innerIter = chunk.NewIterator4Slice(task.matchedInners).(*chunk.Iterator4Slice)
-			} else {
-				e.innerIter.Reset(task.matchedInners)
 			}
+			e.innerIter.Reset(task.matchedInners)
 			e.innerIter.Begin()
 		}
 
