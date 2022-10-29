@@ -7710,9 +7710,11 @@ func TestNullConditionForPrefixIndex(t *testing.T) {
   KEY idx2 (c1,c2(5))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
 	tk.MustExec("create table t2(a int, b varchar(10), index idx(b(5)))")
+	tk.MustExec("create table t3(a int, b varchar(10), c int, primary key (a, b(5)) clustered)")
 	tk.MustExec("set tidb_opt_prefix_index_single_scan = 1")
-	tk.MustExec("insert into t1 values ('a', '0xfff', '111111'), ('b', '0xfff', '222222'), ('c', '0xfff', ''), ('d', '0xfff', null)")
-	tk.MustExec("insert into t2 values (1, 'aaaaaa'), (2, 'bbb'), (3, ''), (4, null)")
+	tk.MustExec("insert into t1 values ('a', '0xfff', '111111'), ('b', '0xfff', '22    '), ('c', '0xfff', ''), ('d', '0xfff', null)")
+	tk.MustExec("insert into t2 values (1, 'aaaaaa'), (2, 'bb    '), (3, ''), (4, null)")
+	tk.MustExec("insert into t3 values (1, 'aaaaaa', 2), (1, 'bb    ', 3), (1, '', 4)")
 
 	var input []string
 	var output []struct {
