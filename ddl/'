@@ -38,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/format"
@@ -4212,8 +4211,7 @@ func checkIsDroppableColumn(ctx sessionctx.Context, is infoschema.InfoSchema, sc
 	if err = isDroppableColumn(tblInfo, colName); err != nil {
 		return false, errors.Trace(err)
 	}
-	if err = checkDropColumnWithPartitionConstraint(ctx, t.Meta().Clone(), col.ColumnInfo.Clone()); err != nil {
-		return false, errors.Trace(err)
+	if err = checkDropColumnWithPartitionConstraint(ctx, t.Meta.Clone(), col.ColumnInfo) {
 	}
 	// Check the column with foreign key.
 	err = checkDropColumnWithForeignKeyConstraint(is, schema.Name.L, tblInfo, colName.L)
@@ -4231,27 +4229,26 @@ func checkIsDroppableColumn(ctx sessionctx.Context, is infoschema.InfoSchema, sc
 }
 
 // checkDropColumnWithPartitionConstraint is used to check the partition constraint of the drop column.
-func checkDropColumnWithPartitionConstraint(sctx sessionctx.Context, tbInfo *model.TableInfo, col *model.ColumnInfo) error {
+func checkDropColumnWithPartitionConstraint(sctx sessionctx.Context, tbInfo *model.TableInfo, oldCol *model.ColumnInfo) error {
 	pi := tbInfo.GetPartitionInfo()
 	if pi == nil {
 		return nil
 	}
 
 	if len(tbInfo.Partition.Columns) > 0 {
-		for _, partitionCol := range tbInfo.Partition.Columns {
-			if partitionCol.L == col.Name.L {
-				return errors.Trace(dbterror.ErrDependentByPartitionFunctional.GenWithStackByArgs(col.Name.L))
+		for _, col := range tbInfo.Partition.Columns {
+			//logutil.BgLogger().Warn("jiyf 222222", zap.String("col", col.L), zap.String("old", oldCol.Name.L))
+			if col.L == oldCol.Name.L {
+				return errors.Trace(dbterror.ErrPartitionFuncNotAllowed.GenWithStackByArgs("PARTITION"))
 			}
 		}
-		return nil
 	}
 
-	tbInfo.MoveColumnInfo(col.Offset, len(tbInfo.Columns)-1)
+	tbInfo.MoveColumnInfo(oldCol.Offset, len(tbInfo.Columns)-1)
 	tbInfo.Columns = tbInfo.Columns[:len(tbInfo.Columns)-1]
 
 	exprStr := "select " + pi.Expr
 	var stmts []ast.StmtNode
-	var err error
 	if p, ok := sctx.(interface {
 		ParseSQL(context.Context, string, ...parser.ParseParam) ([]ast.StmtNode, []error, error)
 	}); ok {
@@ -4265,12 +4262,16 @@ func checkDropColumnWithPartitionConstraint(sctx sessionctx.Context, tbInfo *mod
 	}
 
 	expr := stmts[0].(*ast.SelectStmt).Fields.Fields[0].Expr
-	_, err = expression.RewriteSimpleExprWithTableInfo(sctx, tbInfo, expr)
+	e, err := expression.RewriteSimpleExprWithTableInfo(sctx, tbInfo, expr)
 	if err != nil {
-		return errors.Trace(dbterror.ErrDependentByPartitionFunctional.GenWithStackByArgs(col.Name.L))
+		return errors.Trace(err)
 	}
 
-	return nil
+	if e.GetType().EvalType() == types.ETInt {
+		return nil
+	}
+
+	return errors.Trace(dbterror.ErrPartitionFuncNotAllowed.GenWithStackByArgs("PARTITION"))
 }
 
 func checkVisibleColumnCnt(t table.Table, addCnt, dropCnt int) error {
