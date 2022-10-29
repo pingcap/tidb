@@ -17,6 +17,8 @@ package spmc
 import (
 	"sync"
 	"sync/atomic"
+
+	"github.com/pingcap/tidb/util/gpool"
 )
 
 const (
@@ -28,7 +30,7 @@ const (
 	StopTask
 )
 
-type taskBox[T any, U any, C any, CT any, TF Context[CT]] struct {
+type taskBox[T any, U any, C any, CT any, TF gpool.Context[CT]] struct {
 	constArgs   C
 	contextFunc TF
 	wg          *sync.WaitGroup
@@ -46,21 +48,8 @@ func (t *taskBox[T, U, C, CT, TF]) SetStatus(s int32) {
 	t.status.Store(s)
 }
 
-// Context is a interface that can be used to create a context.
-type Context[T any] interface {
-	GetContext() T
-}
-
-// NilContext is to create a nil as context
-type NilContext struct{}
-
-// GetContext is to get a nil as context
-func (NilContext) GetContext() any {
-	return nil
-}
-
 // TaskController is a controller that can control or watch the pool.
-type TaskController[T any, U any, C any, CT any, TF Context[CT]] struct {
+type TaskController[T any, U any, C any, CT any, TF gpool.Context[CT]] struct {
 	pool   *Pool[T, U, C, CT, TF]
 	close  chan struct{}
 	wg     *sync.WaitGroup
@@ -68,7 +57,7 @@ type TaskController[T any, U any, C any, CT any, TF Context[CT]] struct {
 }
 
 // NewTaskController create a controller to deal with task's statue.
-func NewTaskController[T any, U any, C any, CT any, TF Context[CT]](p *Pool[T, U, C, CT, TF], taskID uint64, closeCh chan struct{}, wg *sync.WaitGroup) TaskController[T, U, C, CT, TF] {
+func NewTaskController[T any, U any, C any, CT any, TF gpool.Context[CT]](p *Pool[T, U, C, CT, TF], taskID uint64, closeCh chan struct{}, wg *sync.WaitGroup) TaskController[T, U, C, CT, TF] {
 	return TaskController[T, U, C, CT, TF]{
 		pool:   p,
 		taskID: taskID,

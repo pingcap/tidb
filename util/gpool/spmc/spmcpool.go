@@ -37,10 +37,9 @@ import (
 // if we don't need to use CT/TF, we can define CT as any and TF as NilContext.
 type Pool[T any, U any, C any, CT any, TF pooltask.Context[CT]] struct {
 	gpool.BasePool
-	workerCache sync.Pool
-	workers     *loopQueue[T, U, C, CT, TF]
-	lock        sync.Locker
-
+	workerCache   sync.Pool
+	workers       *loopQueue[T, U, C, CT, TF]
+	lock          sync.Locker
 	cond          *sync.Cond
 	taskCh        chan *pooltask.TaskBox[T, U, C, CT, TF]
 	options       *Options
