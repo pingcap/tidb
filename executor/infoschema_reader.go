@@ -62,9 +62,11 @@ import (
 	"github.com/pingcap/tidb/util/keydecoder"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
 	"github.com/pingcap/tidb/util/sem"
+	"github.com/pingcap/tidb/util/servermemorylimit"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stmtsummary"
@@ -174,6 +176,14 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataForVariablesInfo(sctx)
 		case infoschema.TableUserAttributes:
 			err = e.setDataForUserAttributes(ctx, sctx)
+		case infoschema.TableMemoryUsage:
+			err = e.setDataForMemoryUsage(sctx)
+		case infoschema.ClusterTableMemoryUsage:
+			err = e.setDataForClusterMemoryUsage(sctx)
+		case infoschema.TableMemoryUsageOpsHistory:
+			err = e.setDataForMemoryUsageOpsHistory(sctx)
+		case infoschema.ClusterTableMemoryUsageOpsHistory:
+			err = e.setDataForClusterMemoryUsageOpsHistory(sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -1693,8 +1703,10 @@ func keyColumnUsageInTable(schema *model.DBInfo, table *model.TableInfo) [][]typ
 	return rows
 }
 
-func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx sessionctx.Context) (err error) {
-	tikvStore, ok := ctx.GetStore().(helper.Storage)
+func (e *memtableRetriever) setDataForTiKVRegionStatus(sctx sessionctx.Context) (err error) {
+	checker := privilege.GetPrivilegeManager(sctx)
+	var extractorTableIDs []int64
+	tikvStore, ok := sctx.GetStore().(helper.Storage)
 	if !ok {
 		return errors.New("Information about TiKV region status can be gotten only when the storage is TiKV")
 	}
@@ -1704,13 +1716,17 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx sessionctx.Context) (
 	}
 	requestByTableRange := false
 	allRegionsInfo := helper.NewRegionsInfo()
-	is := ctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 	if e.extractor != nil {
 		extractor, ok := e.extractor.(*plannercore.TiKVRegionStatusExtractor)
 		if ok && len(extractor.GetTablesID()) > 0 {
-			for _, tableID := range extractor.GetTablesID() {
+			extractorTableIDs = extractor.GetTablesID()
+			for _, tableID := range extractorTableIDs {
 				regionsInfo, err := e.getRegionsInfoForTable(tikvHelper, is, tableID)
 				if err != nil {
+					if errors.ErrorEqual(err, infoschema.ErrTableExists) {
+						continue
+					}
 					return err
 				}
 				allRegionsInfo = allRegionsInfo.Merge(regionsInfo)
@@ -1726,12 +1742,20 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx sessionctx.Context) (
 	}
 	tableInfos := tikvHelper.GetRegionsTableInfo(allRegionsInfo, is.AllSchemas())
 	for i := range allRegionsInfo.Regions {
-		tableList := tableInfos[allRegionsInfo.Regions[i].ID]
-		if len(tableList) == 0 {
+		regionTableList := tableInfos[allRegionsInfo.Regions[i].ID]
+		if len(regionTableList) == 0 {
 			e.setNewTiKVRegionStatusCol(&allRegionsInfo.Regions[i], nil)
 		}
-		for j := range tableList {
-			e.setNewTiKVRegionStatusCol(&allRegionsInfo.Regions[i], &tableList[j])
+		for j, regionTable := range regionTableList {
+			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, regionTable.DB.Name.L, regionTable.Table.Name.L, "", mysql.AllPrivMask) {
+				continue
+			}
+			if len(extractorTableIDs) == 0 {
+				e.setNewTiKVRegionStatusCol(&allRegionsInfo.Regions[i], &regionTable)
+			}
+			if slices.Contains(extractorTableIDs, regionTableList[j].Table.ID) {
+				e.setNewTiKVRegionStatusCol(&allRegionsInfo.Regions[i], &regionTable)
+			}
 		}
 	}
 	return nil
@@ -2373,6 +2397,66 @@ func (e *memtableRetriever) setDataForTrxSummary(ctx sessionctx.Context) error {
 
 func (e *memtableRetriever) setDataForClusterTrxSummary(ctx sessionctx.Context) error {
 	err := e.setDataForTrxSummary(ctx)
+	if err != nil {
+		return err
+	}
+	rows, err := infoschema.AppendHostInfoToRows(ctx, e.rows)
+	if err != nil {
+		return err
+	}
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataForMemoryUsage(ctx sessionctx.Context) error {
+	r := memory.ReadMemStats()
+	currentOps, sessionKillLastDatum := types.NewDatum(nil), types.NewDatum(nil)
+	if memory.TriggerMemoryLimitGC.Load() || servermemorylimit.IsKilling.Load() {
+		currentOps.SetString("shrink", mysql.DefaultCollationName)
+	}
+	sessionKillLast := servermemorylimit.SessionKillLast.Load()
+	if !sessionKillLast.IsZero() {
+		sessionKillLastDatum.SetMysqlTime(types.NewTime(types.FromGoTime(sessionKillLast), mysql.TypeDatetime, 0))
+	}
+	gcLast := types.NewTime(types.FromGoTime(memory.MemoryLimitGCLast.Load()), mysql.TypeDatetime, 0)
+
+	row := []types.Datum{
+		types.NewIntDatum(int64(memory.GetMemTotalIgnoreErr())),          // MEMORY_TOTAL
+		types.NewIntDatum(int64(memory.ServerMemoryLimit.Load())),        // MEMORY_LIMIT
+		types.NewIntDatum(int64(r.HeapInuse)),                            // MEMORY_CURRENT
+		types.NewIntDatum(int64(servermemorylimit.MemoryMaxUsed.Load())), // MEMORY_MAX_USED
+		currentOps,           // CURRENT_OPS
+		sessionKillLastDatum, // SESSION_KILL_LAST
+		types.NewIntDatum(servermemorylimit.SessionKillTotal.Load()), // SESSION_KILL_TOTAL
+		types.NewTimeDatum(gcLast),                                   // GC_LAST
+		types.NewIntDatum(memory.MemoryLimitGCTotal.Load()),          // GC_TOTAL
+		types.NewDatum(GlobalDiskUsageTracker.BytesConsumed()),       // DISK_USAGE
+		types.NewDatum(memory.QueryForceDisk.Load()),                 // QUERY_FORCE_DISK
+	}
+	e.rows = append(e.rows, row)
+	return nil
+}
+
+func (e *memtableRetriever) setDataForClusterMemoryUsage(ctx sessionctx.Context) error {
+	err := e.setDataForMemoryUsage(ctx)
+	if err != nil {
+		return err
+	}
+	rows, err := infoschema.AppendHostInfoToRows(ctx, e.rows)
+	if err != nil {
+		return err
+	}
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataForMemoryUsageOpsHistory(ctx sessionctx.Context) error {
+	e.rows = servermemorylimit.GlobalMemoryOpsHistoryManager.GetRows()
+	return nil
+}
+
+func (e *memtableRetriever) setDataForClusterMemoryUsageOpsHistory(ctx sessionctx.Context) error {
+	err := e.setDataForMemoryUsageOpsHistory(ctx)
 	if err != nil {
 		return err
 	}

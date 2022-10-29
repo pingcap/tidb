@@ -31,8 +31,10 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/extension"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/session"
@@ -351,7 +353,7 @@ func TestDispatch(t *testing.T) {
 		{
 			com: mysql.ComSleep,
 			in:  nil,
-			err: nil,
+			err: mysql.NewErrf(mysql.ErrUnknown, "command %d not supported now", nil, mysql.ComSleep),
 			out: nil,
 		},
 		{
@@ -470,7 +472,7 @@ func TestDispatchClientProtocol41(t *testing.T) {
 		{
 			com: mysql.ComSleep,
 			in:  nil,
-			err: nil,
+			err: mysql.NewErrf(mysql.ErrUnknown, "command %d not supported now", nil, mysql.ComSleep),
 			out: nil,
 		},
 		{
@@ -726,6 +728,11 @@ func TestConnExecutionTimeout(t *testing.T) {
 	require.NoError(t, err)
 
 	err = cc.handleQuery(context.Background(), "select /*+ MAX_EXECUTION_TIME(100)*/  * FROM testTable2 WHERE  SLEEP(1);")
+	require.NoError(t, err)
+
+	tk.MustExec("set @@max_execution_time = 500;")
+
+	err = cc.handleQuery(context.Background(), "alter table testTable2 add index idx(age);")
 	require.NoError(t, err)
 }
 
@@ -1400,30 +1407,31 @@ func TestAuthPlugin2(t *testing.T) {
 }
 
 func TestAuthTokenPlugin(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	// create the cert
+	tempDir := t.TempDir()
+	certPath := filepath.Join(tempDir, "test1_cert.pem")
+	keyPath := filepath.Join(tempDir, "test1_key.pem")
+	err := util.CreateCertificates(certPath, keyPath, 1024, x509.RSA, x509.UnknownSignatureAlgorithm)
+	require.NoError(t, err)
 
-	cfg := newTestConfig()
+	cfg := config.GetGlobalConfig()
+	cfg.Security.SessionTokenSigningCert = certPath
+	cfg.Security.SessionTokenSigningKey = keyPath
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0
+
+	// The global config is read during creating the store.
+	store := testkit.CreateMockStore(t)
 	drv := NewTiDBDriver(store)
 	srv, err := NewServer(cfg, drv)
 	require.NoError(t, err)
 	ctx := context.Background()
 
-	// create the cert
-	tempDir := t.TempDir()
-	certPath := filepath.Join(tempDir, "test1_cert.pem")
-	keyPath := filepath.Join(tempDir, "test1_key.pem")
-	err = util.CreateCertificates(certPath, keyPath, 4096, x509.RSA, x509.UnknownSignatureAlgorithm)
-	require.NoError(t, err)
-
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE USER auth_session_token")
 	tk.MustExec("CREATE USER another_user")
-	tk.MustExec(fmt.Sprintf("set global %s='%s'", variable.TiDBAuthSigningCert, certPath))
-	tk.MustExec(fmt.Sprintf("set global %s='%s'", variable.TiDBAuthSigningKey, keyPath))
 
-	tc, err := drv.OpenCtx(uint64(0), 0, uint8(mysql.DefaultCollationID), "", nil)
+	tc, err := drv.OpenCtx(uint64(0), 0, uint8(mysql.DefaultCollationID), "", nil, nil)
 	require.NoError(t, err)
 	cc := &clientConn{
 		connectionID: 1,
@@ -1581,4 +1589,126 @@ func TestOkEof(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, mysql.EOFHeader, outBuffer.Bytes()[4])
 	require.Equal(t, []byte{0x7, 0x0, 0x0, 0x1, 0xfe, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0}, outBuffer.Bytes())
+}
+
+func TestExtensionChangeUser(t *testing.T) {
+	defer extension.Reset()
+	extension.Reset()
+
+	logged := false
+	var logTp extension.ConnEventTp
+	var logInfo *extension.ConnEventInfo
+	require.NoError(t, extension.Register("test", extension.WithSessionHandlerFactory(func() *extension.SessionHandler {
+		return &extension.SessionHandler{
+			OnConnectionEvent: func(tp extension.ConnEventTp, info *extension.ConnEventInfo) {
+				require.False(t, logged)
+				logTp = tp
+				logInfo = info
+				logged = true
+			},
+		}
+	})))
+
+	extensions, err := extension.GetExtensions()
+	require.NoError(t, err)
+
+	store := testkit.CreateMockStore(t)
+
+	var outBuffer bytes.Buffer
+	tidbdrv := NewTiDBDriver(store)
+	cfg := newTestConfig()
+	cfg.Port, cfg.Status.StatusPort = 0, 0
+	cfg.Status.ReportStatus = false
+	server, err := NewServer(cfg, tidbdrv)
+	require.NoError(t, err)
+	defer server.Close()
+
+	cc := &clientConn{
+		connectionID: 1,
+		salt:         []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14},
+		server:       server,
+		pkt: &packetIO{
+			bufWriter: bufio.NewWriter(&outBuffer),
+		},
+		collation:  mysql.DefaultCollationID,
+		peerHost:   "localhost",
+		alloc:      arena.NewAllocator(512),
+		chunkAlloc: chunk.NewAllocator(),
+		capability: mysql.ClientProtocol41,
+		extensions: extensions.NewSessionExtensions(),
+	}
+
+	tk := testkit.NewTestKit(t, store)
+	ctx := &TiDBContext{Session: tk.Session()}
+	cc.setCtx(ctx)
+	tk.MustExec("create user user1")
+	tk.MustExec("create user user2")
+	tk.MustExec("create database db1")
+	tk.MustExec("create database db2")
+	tk.MustExec("grant select on db1.* to user1@'%'")
+	tk.MustExec("grant select on db2.* to user2@'%'")
+
+	// change user.
+	doDispatch := func(req dispatchInput) {
+		inBytes := append([]byte{req.com}, req.in...)
+		err = cc.dispatch(context.Background(), inBytes)
+		require.Equal(t, req.err, err)
+		if err == nil {
+			err = cc.flush(context.TODO())
+			require.NoError(t, err)
+			require.Equal(t, req.out, outBuffer.Bytes())
+		} else {
+			_ = cc.flush(context.TODO())
+		}
+		outBuffer.Reset()
+	}
+
+	expectedConnInfo := extension.ConnEventInfo(*cc.connectInfo())
+	expectedConnInfo.User = "user1"
+	expectedConnInfo.DB = "db1"
+
+	require.False(t, logged)
+	userData := append([]byte("user1"), 0x0, 0x0)
+	userData = append(userData, []byte("db1")...)
+	userData = append(userData, 0x0)
+	doDispatch(dispatchInput{
+		com: mysql.ComChangeUser,
+		in:  userData,
+		err: nil,
+		out: []byte{0x7, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0},
+	})
+	require.True(t, logged)
+	require.Equal(t, extension.ConnReset, logTp)
+	require.Equal(t, expectedConnInfo, *logInfo)
+
+	logged = false
+	logTp = 0
+	logInfo = nil
+	expectedConnInfo.User = "user2"
+	expectedConnInfo.DB = "db2"
+	userData = append([]byte("user2"), 0x0, 0x0)
+	userData = append(userData, []byte("db2")...)
+	userData = append(userData, 0x0)
+	doDispatch(dispatchInput{
+		com: mysql.ComChangeUser,
+		in:  userData,
+		err: nil,
+		out: []byte{0x7, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0},
+	})
+	require.True(t, logged)
+	require.Equal(t, extension.ConnReset, logTp)
+	require.Equal(t, expectedConnInfo, *logInfo)
+
+	logged = false
+	logTp = 0
+	logInfo = nil
+	doDispatch(dispatchInput{
+		com: mysql.ComResetConnection,
+		in:  nil,
+		err: nil,
+		out: []byte{0x7, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0},
+	})
+	require.True(t, logged)
+	require.Equal(t, extension.ConnReset, logTp)
+	require.Equal(t, expectedConnInfo, *logInfo)
 }

@@ -254,6 +254,19 @@ func (tp ReorgType) NeedMergeProcess() bool {
 	return tp == ReorgTypeLitMerge || tp == ReorgTypeTxnMerge
 }
 
+// String implements fmt.Stringer interface.
+func (tp ReorgType) String() string {
+	switch tp {
+	case ReorgTypeTxn:
+		return "txn"
+	case ReorgTypeLitMerge:
+		return "ingest"
+	case ReorgTypeTxnMerge:
+		return "txn-merge"
+	}
+	return ""
+}
+
 // TimeZoneLocation represents a single time zone.
 type TimeZoneLocation struct {
 	Name     string `json:"name"`
@@ -813,7 +826,8 @@ func (job *Job) IsRollbackable() bool {
 	case ActionMultiSchemaChange:
 		return job.MultiSchemaInfo.Revertible
 	case ActionFlashbackCluster:
-		if job.SchemaState == StateWriteReorganization {
+		if job.SchemaState == StateWriteReorganization ||
+			job.SchemaState == StateWriteOnly {
 			return false
 		}
 	}
