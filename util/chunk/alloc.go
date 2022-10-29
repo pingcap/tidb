@@ -186,7 +186,7 @@ func (alloc *poolColumnAllocator) put(col *Column) {
 	if l == nil {
 		l = &cloumnList{Cloumns: nil, End: 0}
 		//l = make(map[*Column]struct{}, alloc.freeColumnsPerType)
-		l.Cloumns = make([]*Column, alloc.freeColumnsPerType, alloc.freeColumnsPerType)
+		l.Cloumns = make([]*Column, 0, alloc.freeColumnsPerType)
 		alloc.pool[typeSize] = l
 	}
 	alloc.push(col, typeSize)
