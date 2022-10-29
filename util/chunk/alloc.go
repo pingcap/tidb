@@ -52,6 +52,7 @@ type allocator struct {
 	freeChunk   int
 }
 
+// cloumnList keep column
 type cloumnList struct {
 	Cloumns []*Column
 	End     int
@@ -67,6 +68,7 @@ func (cList *cloumnList) add(col *Column) {
 	cList.End++
 }
 
+// cloumnList Len Get the number of elements in the list
 func (cList *cloumnList) Len() int {
 	return cList.End
 }
@@ -156,13 +158,13 @@ func (alloc *poolColumnAllocator) NewSizeColumn(typeSize int, count int) *Column
 	return newColumn(typeSize, count)
 }
 
-func (l *cloumnList) pop() *Column {
-	if l.End <= 0 {
+func (cList *cloumnList) pop() *Column {
+	if cList.End <= 0 {
 		return nil
 	}
-	l.End--
-	col := l.Cloumns[l.End]
-	l.Cloumns[l.End] = nil
+	cList.End--
+	col := cList.Cloumns[cList.End]
+	cList.Cloumns[cList.End] = nil
 	return col
 }
 
@@ -195,8 +197,8 @@ func (alloc *poolColumnAllocator) put(col *Column) {
 // reference to the others.
 type freeList map[*Column]struct{}
 
-func (l *cloumnList) empty() bool {
-	return l.End == 0
+func (cList *cloumnList) empty() bool {
+	return cList.End == 0
 }
 
 func (alloc *poolColumnAllocator) push(col *Column, typeSize int) {
