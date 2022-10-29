@@ -1089,7 +1089,7 @@ func (b *executorBuilder) setTelemetryInfo(v *plannercore.DDL) {
 				}
 			}
 		case model.PartitionTypeHash:
-			if !p.Linear && p.Sub == nil {
+			if p.Sub == nil {
 				b.Ti.PartitionTelemetry.UseTablePartitionHash = true
 			}
 		case model.PartitionTypeList:
@@ -1869,7 +1869,12 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			strings.ToLower(infoschema.TablePlacementPolicies),
 			strings.ToLower(infoschema.TableTrxSummary),
 			strings.ToLower(infoschema.TableVariablesInfo),
-			strings.ToLower(infoschema.ClusterTableTrxSummary):
+			strings.ToLower(infoschema.TableUserAttributes),
+			strings.ToLower(infoschema.ClusterTableTrxSummary),
+			strings.ToLower(infoschema.TableMemoryUsage),
+			strings.ToLower(infoschema.TableMemoryUsageOpsHistory),
+			strings.ToLower(infoschema.ClusterTableMemoryUsage),
+			strings.ToLower(infoschema.ClusterTableMemoryUsageOpsHistory):
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
@@ -2297,6 +2302,10 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
 		tblColPosInfos: v.TblColPosInfos,
 	}
 	deleteExec.fkChecks, b.err = buildTblID2FKCheckExecs(b.ctx, tblID2table, v.FKChecks)
+	if b.err != nil {
+		return nil
+	}
+	deleteExec.fkCascades, b.err = b.buildTblID2FKCascadeExecs(tblID2table, v.FKCascades)
 	if b.err != nil {
 		return nil
 	}
