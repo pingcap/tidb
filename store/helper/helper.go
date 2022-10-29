@@ -672,6 +672,22 @@ func newIndexWithKeyRange(db *model.DBInfo, table *model.TableInfo, index *model
 	}
 }
 
+func newPartitionLocalIndexWithKeyRange(db *model.DBInfo, table *model.TableInfo, index *model.IndexInfo, partitionID int64) TableInfoWithKeyRange {
+	sk, ek := tablecodec.GetTableIndexKeyRange(partitionID, index.ID)
+	startKey := bytesKeyToHex(codec.EncodeBytes(nil, sk))
+	endKey := bytesKeyToHex(codec.EncodeBytes(nil, ek))
+	return TableInfoWithKeyRange{
+		&TableInfo{
+			DB:      db,
+			Table:   table,
+			IsIndex: true,
+			Index:   index,
+		},
+		startKey,
+		endKey,
+	}
+}
+
 func newPartitionTableWithKeyRange(db *model.DBInfo, table *model.TableInfo, partitionID int64) TableInfoWithKeyRange {
 	sk, ek := tablecodec.GetTableHandleKeyRange(partitionID)
 	startKey := bytesKeyToHex(codec.EncodeBytes(nil, sk))
@@ -727,7 +743,17 @@ func (*Helper) GetTablesInfoWithKeyRange(schemas []*model.DBInfo) []TableInfoWit
 				tables = append(tables, newTableWithKeyRange(db, table))
 			}
 			for _, index := range table.Indices {
-				tables = append(tables, newIndexWithKeyRange(db, table, index))
+				if table.Partition == nil {
+					tables = append(tables, newIndexWithKeyRange(db, table, index))
+					continue
+				}
+				if index.Global {
+					tables = append(tables, newIndexWithKeyRange(db, table, index))
+					continue
+				}
+				for _, partition := range table.Partition.Definitions {
+					tables = append(tables, newPartitionLocalIndexWithKeyRange(db, table, index, partition.ID))
+				}
 			}
 		}
 	}
