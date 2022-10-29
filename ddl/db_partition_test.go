@@ -4544,11 +4544,14 @@ func TestAlterModifyPartitionColTruncateWarning(t *testing.T) {
 	tk.MustExec("use " + schemaName)
 	tk.MustExec(`set sql_mode = default`)
 	tk.MustExec(`create table t (a varchar(255)) partition by range columns (a) (partition p1 values less than ("0"), partition p2 values less than ("zzzz"))`)
-	tk.MustExec(`insert into t values ("123456")`)
-	tk.MustContainErrMsg(`alter table t modify a varchar(5)`, "[types:1265]Data truncated for column 'a', value is '123456'")
+	tk.MustExec(`insert into t values ("123456"),(" 654321")`)
+	tk.MustContainErrMsg(`alter table t modify a varchar(5)`, "[types:1265]Data truncated for column 'a', value is '")
 	tk.MustExec(`set sql_mode = ''`)
 	tk.MustExec(`alter table t modify a varchar(5)`)
-	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+	// Fix the duplicate warning, see https://github.com/pingcap/tidb/issues/38699
+	tk.MustQuery(`show warnings`).Check(testkit.Rows(""+
+		"Warning 1265 Data truncated for column 'a', value is ' 654321'",
+		"Warning 1265 Data truncated for column 'a', value is ' 654321'"))
 }
 
 func TestAlterModifyColumnOnPartitionedTable(t *testing.T) {

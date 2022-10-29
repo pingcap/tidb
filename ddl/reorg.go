@@ -248,7 +248,10 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 		}
 
 		updateBackfillProgress(w, reorgInfo, tblInfo, 0)
-		if err1 := rh.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
+		// Do this is a separate transaction, since mysql.tidb_ddl_reorg may have been updated
+		// by the inner function and could result in commit conflicts.:122
+
+		if err1 := reorgInfo.deleteReorgMeta(w.sessPool); err1 != nil {
 			logutil.BgLogger().Warn("[ddl] run reorg job done, removeDDLReorgHandle failed", zap.Error(err1))
 			return errors.Trace(err1)
 		}
@@ -740,6 +743,35 @@ func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, rh *reorgHandler, jo
 	info.elements = elements
 
 	return &info, nil
+}
+
+func (r *reorgInfo) deleteReorgMeta(pool *sessionPool) error {
+	if len(r.elements) == 0 {
+		return nil
+	}
+	se, err := pool.get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer pool.put(se)
+
+	sess := newSession(se)
+	err = sess.begin()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	txn, err := sess.txn()
+	if err != nil {
+		sess.rollback()
+		return errors.Trace(err)
+	}
+	rh := newReorgHandler(meta.NewMeta(txn), sess, variable.EnableConcurrentDDL.Load())
+	err = rh.RemoveDDLReorgHandle(r.Job, r.elements)
+	err1 := sess.commit()
+	if err == nil {
+		err = err1
+	}
+	return errors.Trace(err)
 }
 
 func (r *reorgInfo) UpdateReorgMeta(startKey kv.Key, pool *sessionPool) (err error) {

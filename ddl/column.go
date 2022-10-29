@@ -1274,8 +1274,8 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 	if err != nil {
 		return w.reformatErrors(err)
 	}
-	if w.sessCtx.GetSessionVars().StmtCtx.GetWarnings() != nil && len(w.sessCtx.GetSessionVars().StmtCtx.GetWarnings()) != 0 {
-		warn := w.sessCtx.GetSessionVars().StmtCtx.GetWarnings()
+	warn := w.sessCtx.GetSessionVars().StmtCtx.GetWarnings()
+	if len(warn) != 0 {
 		//nolint:forcetypeassert
 		recordWarning = errors.Cause(w.reformatErrors(warn[0].Err)).(*terror.Error)
 	}
@@ -1359,8 +1359,9 @@ func (w *updateColumnWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (t
 		taskCtx.nextKey = nextKey
 		taskCtx.done = taskDone
 
-		warningsMap := make(map[errors.ErrorID]*terror.Error, len(rowRecords))
-		warningsCountMap := make(map[errors.ErrorID]int64, len(rowRecords))
+		// Optimize for few warnings!
+		warningsMap := make(map[errors.ErrorID]*terror.Error, 2)
+		warningsCountMap := make(map[errors.ErrorID]int64, 2)
 		for _, rowRecord := range rowRecords {
 			taskCtx.scanCount++
 
