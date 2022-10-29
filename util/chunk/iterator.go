@@ -25,22 +25,6 @@ var (
 	_ Iterator = (*multiIterator)(nil)
 )
 
-var (
-	iterator4SlicePool = &sync.Pool{New: func() any { return new(Iterator4Slice) }}
-)
-
-// FreeIterator try to free and reuse the iterator.
-func FreeIterator(it any) {
-	switch it := it.(type) {
-	case *Iterator4Slice:
-		it.rows = nil
-		it.cursor = 0
-		iterator4SlicePool.Put(it)
-	default:
-		// Do Nothing.
-	}
-}
-
 // Iterator is used to iterate a number of rows.
 //
 //	for row := it.Begin(); row != it.End(); row = it.Next() {
@@ -71,10 +55,7 @@ type Iterator interface {
 
 // NewIterator4Slice returns a Iterator for Row slice.
 func NewIterator4Slice(rows []Row) Iterator {
-	it := iterator4SlicePool.Get().(*Iterator4Slice)
-	it.rows = rows
-	it.cursor = 0
-	return it
+	return &Iterator4Slice{rows: rows}
 }
 
 // Iterator4Slice is used to iterate rows inside a slice.
