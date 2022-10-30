@@ -121,7 +121,7 @@ func (a *allocator) Reset() {
 		}
 	}
 	a.allocated = a.allocated[:0]
-	a.columnAlloc.removeDuplicates()
+	//a.columnAlloc.removeDuplicates()
 }
 
 var _ ColumnAllocator = &poolColumnAllocator{}
@@ -202,17 +202,4 @@ func (alloc *poolColumnAllocator) push(col *Column, typeSize int) {
 		return
 	}
 	alloc.pool[typeSize].add(col)
-}
-
-func (alloc *poolColumnAllocator) removeDuplicates() {
-	for _, p := range alloc.pool {
-		tmpMap := make(freeList, p.Len())
-		for _, col := range p.Columns {
-			tmpMap[col] = struct{}{}
-		}
-		p.Columns = p.Columns[:0]
-		for col := range tmpMap {
-			p.add(col)
-		}
-	}
 }
