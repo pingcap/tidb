@@ -54,23 +54,18 @@ type allocator struct {
 
 // cloumnList keep column
 type cloumnList struct {
-	Cloumns []*Column
-	End     int
+	Columns []*Column
 }
 
 func (cList *cloumnList) add(col *Column) {
-	if len(cList.Cloumns) <= cList.End {
-		cList.Cloumns = append(cList.Cloumns, col)
-		cList.End++
-		return
-	}
-	cList.Cloumns[cList.End] = col
-	cList.End++
+	cList.Columns = append(cList.Columns, col)
+	return
+
 }
 
 // cloumnList Len Get the number of elements in the list
 func (cList *cloumnList) Len() int {
-	return cList.End
+	return len(cList.Columns)
 }
 
 // SetLimit limit reuse num
@@ -128,6 +123,7 @@ func (a *allocator) Reset() {
 		}
 	}
 	a.allocated = a.allocated[:0]
+	a.columnAlloc.remove_duplicates()
 }
 
 var _ ColumnAllocator = &poolColumnAllocator{}
@@ -135,7 +131,6 @@ var _ ColumnAllocator = &poolColumnAllocator{}
 type poolColumnAllocator struct {
 	pool               map[int]*cloumnList
 	freeColumnsPerType int
-	keepalive          []*cloumnList
 }
 
 // poolColumnAllocator implements the ColumnAllocator interface.
@@ -160,19 +155,17 @@ func (alloc *poolColumnAllocator) NewSizeColumn(typeSize int, count int) *Column
 }
 
 func (cList *cloumnList) pop() *Column {
-	if cList.End <= 0 {
+	if len(cList.Columns) == 0 {
 		return nil
 	}
-	cList.End--
-	col := cList.Cloumns[cList.End]
-	cList.Cloumns[cList.End] = nil
+	col := cList.Columns[len(cList.Columns)-1]
+	cList.Columns = cList.Columns[:len(cList.Columns)-1]
 	return col
 }
 
 func (alloc *poolColumnAllocator) init() {
 	alloc.pool = make(map[int]*cloumnList)
 	alloc.freeColumnsPerType = maxFreeColumnsPerType
-	alloc.keepalive = make([]*cloumnList, 5)
 }
 
 func (alloc *poolColumnAllocator) put(col *Column) {
@@ -186,11 +179,10 @@ func (alloc *poolColumnAllocator) put(col *Column) {
 
 	l := alloc.pool[typeSize]
 	if l == nil {
-		l = &cloumnList{Cloumns: nil, End: 0}
+		l = &cloumnList{Columns: nil}
 		//l = make(map[*Column]struct{}, alloc.freeColumnsPerType)
-		l.Cloumns = make([]*Column, 0, alloc.freeColumnsPerType)
+		l.Columns = make([]*Column, 0, alloc.freeColumnsPerType)
 		alloc.pool[typeSize] = l
-		alloc.keepalive = append(alloc.keepalive, l)
 	}
 	alloc.push(col, typeSize)
 }
@@ -201,15 +193,28 @@ func (alloc *poolColumnAllocator) put(col *Column) {
 type freeList map[*Column]struct{}
 
 func (cList *cloumnList) empty() bool {
-	return cList.End == 0
+	return len(cList.Columns) == 0
 }
 
 func (alloc *poolColumnAllocator) push(col *Column, typeSize int) {
-	if alloc.pool[typeSize].End >= alloc.freeColumnsPerType {
+	if len(alloc.pool[typeSize].Columns) >= alloc.freeColumnsPerType {
 		return
 	}
 	if (typeSize == varElemLen) && cap(col.data) > MaxCachedLen {
 		return
 	}
 	alloc.pool[typeSize].add(col)
+}
+
+func (alloc *poolColumnAllocator) remove_duplicates() {
+	for _, p := range alloc.pool {
+		tmpMap := make(freeList, p.Len())
+		for _, col := range p.Columns {
+			tmpMap[col] = struct{}{}
+		}
+		p.Columns = p.Columns[:0]
+		for col := range tmpMap {
+			p.add(col)
+		}
+	}
 }
