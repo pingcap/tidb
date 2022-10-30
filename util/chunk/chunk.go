@@ -190,8 +190,6 @@ func (c *Chunk) Prune(usedColIdxs []int) *Chunk {
 	chk.columns = make([]*Column, len(usedColIdxs))
 	for i, idx := range usedColIdxs {
 		chk.columns[i] = c.columns[idx]
-		//Avoid repeating elements into the pool
-		chk.columns[i].avoidReusing = true
 	}
 	return chk
 }
@@ -199,8 +197,6 @@ func (c *Chunk) Prune(usedColIdxs []int) *Chunk {
 // MakeRef makes Column in "dstColIdx" reference to Column in "srcColIdx".
 func (c *Chunk) MakeRef(srcColIdx, dstColIdx int) {
 	c.columns[dstColIdx] = c.columns[srcColIdx]
-	//Avoid repeating elements into the pool
-	c.columns[dstColIdx].avoidReusing = true
 }
 
 // MakeRefTo copies columns `src.columns[srcColIdx]` to `c.columns[dstColIdx]`.
@@ -209,8 +205,6 @@ func (c *Chunk) MakeRefTo(dstColIdx int, src *Chunk, srcColIdx int) error {
 		return errors.New(msgErrSelNotNil)
 	}
 	c.columns[dstColIdx] = src.columns[srcColIdx]
-	//Avoid repeating elements into the pool
-	c.columns[dstColIdx].avoidReusing = true
 	return nil
 }
 
