@@ -248,9 +248,9 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 		}
 
 		updateBackfillProgress(w, reorgInfo, tblInfo, 0)
-		// Do this is a separate transaction, since mysql.tidb_ddl_reorg may have been updated
-		// by the inner function and could result in commit conflicts.:122
 
+		// Do this is a separate transaction, since mysql.tidb_ddl_reorg may have been updated
+		// by the inner function and could result in commit conflicts.
 		if err1 := reorgInfo.deleteReorgMeta(w.sessPool); err1 != nil {
 			logutil.BgLogger().Warn("[ddl] run reorg job done, removeDDLReorgHandle failed", zap.Error(err1))
 			return errors.Trace(err1)
