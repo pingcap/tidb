@@ -14,8 +14,6 @@
 
 package chunk
 
-import "sync"
-
 var (
 	_ Iterator = (*Iterator4Chunk)(nil)
 	_ Iterator = (*iterator4RowPtr)(nil)
