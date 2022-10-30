@@ -59,8 +59,6 @@ type cloumnList struct {
 
 func (cList *cloumnList) add(col *Column) {
 	cList.Columns = append(cList.Columns, col)
-	return
-
 }
 
 // cloumnList Len Get the number of elements in the list
@@ -123,7 +121,7 @@ func (a *allocator) Reset() {
 		}
 	}
 	a.allocated = a.allocated[:0]
-	a.columnAlloc.remove_duplicates()
+	a.columnAlloc.removeDuplicates()
 }
 
 var _ ColumnAllocator = &poolColumnAllocator{}
@@ -206,7 +204,7 @@ func (alloc *poolColumnAllocator) push(col *Column, typeSize int) {
 	alloc.pool[typeSize].add(col)
 }
 
-func (alloc *poolColumnAllocator) remove_duplicates() {
+func (alloc *poolColumnAllocator) removeDuplicates() {
 	for _, p := range alloc.pool {
 		tmpMap := make(freeList, p.Len())
 		for _, col := range p.Columns {
