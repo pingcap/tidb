@@ -126,7 +126,6 @@ func (a *allocator) Reset() {
 		}
 		pool.allocColumns = pool.allocColumns[:0]
 	}
-
 }
 
 var _ ColumnAllocator = &poolColumnAllocator{}
@@ -193,7 +192,6 @@ func (alloc *poolColumnAllocator) put(col *Column) {
 	if len(l.allocColumns) < alloc.freeColumnsPerType {
 		l.push(col)
 	}
-
 }
 
 // freeList is defined as a map, rather than a list, because when recycling chunk
