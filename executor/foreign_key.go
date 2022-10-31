@@ -55,6 +55,12 @@ type FKCheckExec struct {
 	toBeLockedKeys        []kv.Key
 
 	checkRowsCache map[string]bool
+	stats          *FKCheckRuntimeStats
+}
+
+// FKCheckRuntimeStats contains the FKCheckExec runtime stats.
+type FKCheckRuntimeStats struct {
+	keys int
 }
 
 // FKCascadeExec uses to execute foreign key cascade behaviour.
@@ -519,6 +525,9 @@ func (fkc FKCheckExec) checkRows(ctx context.Context, sc *stmtctx.StatementConte
 			fkc.checkRowsCache[string(k)] = true
 		}
 		fkc.checkRowsCache[string(k)] = false
+		if fkc.stats != nil {
+			fkc.stats.keys++
+		}
 	}
 	return nil
 }
