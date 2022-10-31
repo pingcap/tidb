@@ -2,7 +2,6 @@ package autoid
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"sync"
 	"time"
@@ -44,7 +43,7 @@ func (alloc *autoIDValue) alloc4Unsigned(ctx context.Context, store kv.Storage, 
 	n1 := calcNeededBatchSize(alloc.base, int64(n), increment, offset, isUnsigned)
 
 	// The local rest is not enough for alloc, skip it.
-	if uint64(alloc.base)+uint64(n1) > uint64(alloc.end) {
+	if uint64(alloc.base)+uint64(n1) > uint64(alloc.end) || alloc.base == 0 {
 		var newBase, newEnd int64
 		nextStep := int64(batch)
 		// Although it may skip a segment here, we still treat it as consumed.
@@ -103,8 +102,10 @@ func (alloc *autoIDValue) alloc4Signed(ctx context.Context,
 	if math.MaxInt64-alloc.base <= n1 {
 		return 0, 0, ErrAutoincReadFailed
 	}
+
 	// The local rest is not enough for allocN, skip it.
-	if alloc.base+n1 > alloc.end {
+	// If alloc.base is 0, the alloc may not be initialized, force fetch from remote.
+	if alloc.base+n1 > alloc.end || alloc.base == 0 {
 		var newBase, newEnd int64
 		nextStep := int64(batch)
 
@@ -343,7 +344,7 @@ func (s *Service) allocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*
 
 	val := s.getAlloc(req.DbID, req.TblID)
 
-	if req.N == 0 {
+	if req.N == 0 && val.base != 0 {
 		base := val.base
 		return &autoid.AutoIDResponse{
 			Min: base,
@@ -366,9 +367,6 @@ func (s *Service) allocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*
 }
 
 func (alloc *autoIDValue) forceRebase(ctx context.Context, store kv.Storage, dbID, tblID, requiredBase int64, isUnsigned bool) error {
-
-	fmt.Println("force rebase callsed ...", isUnsigned)
-
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
 	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
 		idAcc := meta.NewMeta(txn).GetAutoIDAccessors(dbID, tblID).RowID()

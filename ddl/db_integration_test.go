@@ -2750,6 +2750,37 @@ func TestCreateTableWithAutoIdCache(t *testing.T) {
 	tk.MustGetErrMsg("alter table t auto_id_cache = 9223372036854775808", "table option auto_id_cache overflows int64")
 }
 
+func TestAlterTableAutoIDCache(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("USE test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (id int key auto_increment)")
+	tk.MustExec("insert into t values ()")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
+	tk.MustQuery("show table t next_row_id").Check(testkit.Rows("test t id 2000001 AUTO_INCREMENT"))
+
+	tk.MustExec("alter table t auto_id_cache = 100")
+	tk.MustQuery("show table t next_row_id").Check(testkit.Rows("test t id 2000001 AUTO_INCREMENT"))
+	tk.MustExec("insert into t values ()")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1", "2000001"))
+	tk.MustQuery("show table t next_row_id").Check(testkit.Rows("test t id 2000101 AUTO_INCREMENT"))
+
+	// Note that auto_id_cache=1 use a different implementation.
+	tk.MustExec("alter table t auto_id_cache = 1")
+	tk.MustQuery("show table t next_row_id").Check(testkit.Rows("test t id 2000101 AUTO_INCREMENT"))
+	tk.MustExec("insert into t values ()")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1", "2000001", "2000101"))
+	tk.MustQuery("show table t next_row_id").Check(testkit.Rows("test t id 2000102 AUTO_INCREMENT"))
+
+	tk.MustExec("alter table t auto_id_cache = 20000")
+	tk.MustQuery("show table t next_row_id").Check(testkit.Rows("test t id 2002101 AUTO_INCREMENT"))
+
+	tk.MustExec("insert into t values ()")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1", "2000001", "2000101", "2002101"))
+	tk.MustQuery("show table t next_row_id").Check(testkit.Rows("test t id 2022101 AUTO_INCREMENT"))
+}
+
 func TestAlterIndexVisibility(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
