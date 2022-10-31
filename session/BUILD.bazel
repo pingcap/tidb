@@ -25,6 +25,8 @@ go_library(
         "//errno",
         "//executor",
         "//expression",
+        "//extension",
+        "//extension/extensionimpl",
         "//infoschema",
         "//kv",
         "//meta",
@@ -126,6 +128,7 @@ go_test(
     deps = [
         "//bindinfo",
         "//config",
+        "//ddl",
         "//domain",
         "//errno",
         "//executor",
