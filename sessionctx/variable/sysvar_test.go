@@ -882,8 +882,7 @@ func TestTiDBServerMemoryLimit2(t *testing.T) {
 	}
 	// Test can't obtain physical memory
 	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/util/memory/GetMemTotalError", `return(true)`))
-	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimit, "75%")
-	require.NoError(t, err)
+	require.Error(t, mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimit, "75%"))
 	require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/util/memory/GetMemTotalError"))
 
 	// Test byteSize format
