@@ -15,6 +15,7 @@
 package handle
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -28,7 +29,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/ddl/util"
+	ddlUtil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
@@ -41,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
@@ -56,6 +58,9 @@ import (
 const (
 	// TiDBGlobalStats represents the global-stats for a partitioned table.
 	TiDBGlobalStats = "global"
+
+	// maxPartitionMergeBatchSize indicates the max batch size for a worker to merge partition stats
+	maxPartitionMergeBatchSize = 256
 )
 
 // Handle can update stats info periodically.
@@ -83,7 +88,7 @@ type Handle struct {
 
 	// ddlEventCh is a channel to notify a ddl operation has happened.
 	// It is sent only by owner or the drop stats executor, and read by stats handle.
-	ddlEventCh chan *util.Event
+	ddlEventCh chan *ddlUtil.Event
 	// listHead contains all the stats collector required by session.
 	listHead *SessionStatsCollector
 	// globalMap contains all the delta map from collectors when we dump them to KV.
@@ -197,7 +202,7 @@ type sessionPool interface {
 func NewHandle(ctx sessionctx.Context, lease time.Duration, pool sessionPool, tracker sessionctx.SysProcTracker, serverIDGetter func() uint64) (*Handle, error) {
 	cfg := config.GetGlobalConfig()
 	handle := &Handle{
-		ddlEventCh:       make(chan *util.Event, 100),
+		ddlEventCh:       make(chan *ddlUtil.Event, 100),
 		listHead:         &SessionStatsCollector{mapper: make(tableDeltaMap), rateMap: make(errorRateDeltaMap)},
 		idxUsageListHead: &SessionIndexUsageCollector{mapper: make(indexUsageMap)},
 		pool:             pool,
@@ -547,7 +552,8 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 		// Because after merging TopN, some numbers will be left.
 		// These remaining topN numbers will be used as a separate bucket for later histogram merging.
 		var popedTopN []statistics.TopNMeta
-		globalStats.TopN[i], popedTopN, allHg[i], err = statistics.MergePartTopN2GlobalTopN(sc.GetSessionVars().StmtCtx, sc.GetSessionVars().AnalyzeVersion, allTopN[i], uint32(opts[ast.AnalyzeOptNumTopN]), allHg[i], isIndex == 1)
+		wrapper := statistics.NewStatsWrapper(allHg[i], allTopN[i])
+		globalStats.TopN[i], popedTopN, allHg[i], err = h.mergeGlobalStatsTopN(sc, wrapper, sc.GetSessionVars().StmtCtx.TimeZone, sc.GetSessionVars().AnalyzeVersion, uint32(opts[ast.AnalyzeOptNumTopN]), isIndex == 1)
 		if err != nil {
 			return
 		}
@@ -577,6 +583,104 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 		globalStats.Hg[i].NDV = globalStatsNDV
 	}
 	return
+}
+
+func (h *Handle) mergeGlobalStatsTopN(sc sessionctx.Context, wrapper *statistics.StatsWrapper,
+	timeZone *time.Location, version int, n uint32, isIndex bool) (*statistics.TopN,
+	[]statistics.TopNMeta, []*statistics.Histogram, error) {
+	mergeConcurrency := sc.GetSessionVars().AnalyzePartitionMergeConcurrency
+	// use original method if concurrency equals 1 or for version1
+	if mergeConcurrency < 2 {
+		return statistics.MergePartTopN2GlobalTopN(timeZone, version, wrapper.AllTopN, n, wrapper.AllHg, isIndex)
+	}
+	batchSize := len(wrapper.AllTopN) / mergeConcurrency
+	if batchSize < 1 {
+		batchSize = 1
+	} else if batchSize > maxPartitionMergeBatchSize {
+		batchSize = maxPartitionMergeBatchSize
+	}
+	return h.mergeGlobalStatsTopNByConcurrency(mergeConcurrency, batchSize, wrapper, timeZone, version, n, isIndex)
+}
+
+// mergeGlobalStatsTopNByConcurrency merge partition topN by concurrency
+// To merge global stats topn by concurrency, we will separate the partition topn in concurrency part and deal it with different worker.
+// mergeConcurrency is used to control the total concurrency of the running worker, and mergeBatchSize is sued to control
+// the partition size for each worker to solve it
+func (h *Handle) mergeGlobalStatsTopNByConcurrency(mergeConcurrency, mergeBatchSize int, wrapper *statistics.StatsWrapper,
+	timeZone *time.Location, version int, n uint32, isIndex bool) (*statistics.TopN,
+	[]statistics.TopNMeta, []*statistics.Histogram, error) {
+	if len(wrapper.AllTopN) < mergeConcurrency {
+		mergeConcurrency = len(wrapper.AllTopN)
+	}
+	tasks := make([]*statistics.TopnStatsMergeTask, 0)
+	for start := 0; start < len(wrapper.AllTopN); {
+		end := start + mergeBatchSize
+		if end > len(wrapper.AllTopN) {
+			end = len(wrapper.AllTopN)
+		}
+		task := statistics.NewTopnStatsMergeTask(start, end)
+		tasks = append(tasks, task)
+		start = end
+	}
+	var wg util.WaitGroupWrapper
+	taskNum := len(tasks)
+	taskCh := make(chan *statistics.TopnStatsMergeTask, taskNum)
+	respCh := make(chan *statistics.TopnStatsMergeResponse, taskNum)
+	for i := 0; i < mergeConcurrency; i++ {
+		worker := statistics.NewTopnStatsMergeWorker(taskCh, respCh, wrapper)
+		wg.Run(func() {
+			worker.Run(timeZone, isIndex, n, version)
+		})
+	}
+	for _, task := range tasks {
+		taskCh <- task
+	}
+	close(taskCh)
+	wg.Wait()
+	close(respCh)
+	resps := make([]*statistics.TopnStatsMergeResponse, 0)
+
+	// handle Error
+	hasErr := false
+	for resp := range respCh {
+		if resp.Err != nil {
+			hasErr = true
+		}
+		resps = append(resps, resp)
+	}
+	if hasErr {
+		errMsg := make([]string, 0)
+		for _, resp := range resps {
+			if resp.Err != nil {
+				errMsg = append(errMsg, resp.Err.Error())
+			}
+		}
+		return nil, nil, nil, errors.New(strings.Join(errMsg, ","))
+	}
+
+	// fetch the response from each worker and merge them into global topn stats
+	sorted := make([]statistics.TopNMeta, 0, mergeConcurrency)
+	leftTopn := make([]statistics.TopNMeta, 0)
+	for _, resp := range resps {
+		if resp.TopN != nil {
+			sorted = append(sorted, resp.TopN.TopN...)
+		}
+		leftTopn = append(leftTopn, resp.PopedTopn...)
+		for i, removeTopn := range resp.RemoveVals {
+			// Remove the value from the Hists.
+			if len(removeTopn) > 0 {
+				tmp := removeTopn
+				slices.SortFunc(tmp, func(i, j statistics.TopNMeta) bool {
+					cmpResult := bytes.Compare(i.Encoded, j.Encoded)
+					return cmpResult < 0
+				})
+				wrapper.AllHg[i].RemoveVals(tmp)
+			}
+		}
+	}
+
+	globalTopN, popedTopn := statistics.GetMergedTopNFromSortedSlice(sorted, n)
+	return globalTopN, statistics.SortTopnMeta(append(leftTopn, popedTopn...)), wrapper.AllHg, nil
 }
 
 func (h *Handle) getTableByPhysicalID(is infoschema.InfoSchema, physicalID int64) (table.Table, bool) {
@@ -1240,7 +1344,7 @@ func saveBucketsToStorage(ctx context.Context, exec sqlexec.SQLExecutor, sc *stm
 }
 
 // SaveTableStatsToStorage saves the stats of a table to storage.
-func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, needDumpFMS, analyzeSnapshot bool) (err error) {
+func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, analyzeSnapshot bool) (err error) {
 	tableID := results.TableID.GetStatisticsID()
 	statsVer := uint64(0)
 	defer func() {
@@ -1250,8 +1354,21 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, nee
 	}()
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	return SaveTableStatsToStorage(h.mu.ctx, results, analyzeSnapshot)
+}
+
+// SaveTableStatsToStorage saves the stats of a table to storage.
+func SaveTableStatsToStorage(sctx sessionctx.Context, results *statistics.AnalyzeResults, analyzeSnapshot bool) (err error) {
+	needDumpFMS := results.TableID.IsPartitionTable()
+	tableID := results.TableID.GetStatisticsID()
+	statsVer := uint64(0)
+	defer func() {
+		if err == nil && statsVer != 0 {
+			err = recordHistoricalStatsMeta(sctx, tableID, statsVer)
+		}
+	}()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+	exec := sctx.(sqlexec.SQLExecutor)
 	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
 	if err != nil {
 		return err
@@ -1259,7 +1376,7 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, nee
 	defer func() {
 		err = finishTransaction(ctx, exec, err)
 	}()
-	txn, err := h.mu.ctx.Txn(true)
+	txn, err := sctx.Txn(true)
 	if err != nil {
 		return err
 	}
@@ -1272,7 +1389,7 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, nee
 		return err
 	}
 	var rows []chunk.Row
-	rows, err = sqlexec.DrainRecordSet(ctx, rs, h.mu.ctx.GetSessionVars().MaxChunkSize)
+	rows, err = sqlexec.DrainRecordSet(ctx, rs, sctx.GetSessionVars().MaxChunkSize)
 	if err != nil {
 		return err
 	}
@@ -1369,7 +1486,7 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, nee
 			if _, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_buckets where table_id = %? and is_index = %? and hist_id = %?", tableID, result.IsIndex, hg.ID); err != nil {
 				return err
 			}
-			sc := h.mu.ctx.GetSessionVars().StmtCtx
+			sc := sctx.GetSessionVars().StmtCtx
 			var lastAnalyzePos []byte
 			lastAnalyzePos, err = saveBucketsToStorage(ctx, exec, sc, tableID, result.IsIndex, hg)
 			if err != nil {
@@ -2198,7 +2315,7 @@ const maxColumnSize = 6 << 20
 // RecordHistoricalStatsToStorage records the given table's stats data to mysql.stats_history
 func (h *Handle) RecordHistoricalStatsToStorage(dbName string, tableInfo *model.TableInfo) (uint64, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	js, err := h.DumpStatsToJSON(dbName, tableInfo, nil)
+	js, err := h.DumpStatsToJSON(dbName, tableInfo, nil, true)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -2234,33 +2351,36 @@ func (h *Handle) RecordHistoricalStatsToStorage(dbName string, tableInfo *model.
 	return version, nil
 }
 
-// CheckHistoricalStatsEnable is used to check whether TiDBEnableHistoricalStats is enabled.
-func (h *Handle) CheckHistoricalStatsEnable() (enable bool, err error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	val, err := h.mu.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBEnableHistoricalStats)
+func checkHistoricalStatsEnable(sctx sessionctx.Context) (enable bool, err error) {
+	val, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBEnableHistoricalStats)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
 	return variable.TiDBOptOn(val), nil
 }
 
-func (h *Handle) recordHistoricalStatsMeta(tableID int64, version uint64) error {
+// CheckHistoricalStatsEnable is used to check whether TiDBEnableHistoricalStats is enabled.
+func (h *Handle) CheckHistoricalStatsEnable() (enable bool, err error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return checkHistoricalStatsEnable(h.mu.ctx)
+}
+
+func recordHistoricalStatsMeta(sctx sessionctx.Context, tableID int64, version uint64) error {
 	if tableID == 0 || version == 0 {
 		return errors.Errorf("tableID %d, version %d are invalid", tableID, version)
 	}
-	historicalStatsEnabled, err := h.CheckHistoricalStatsEnable()
+	historicalStatsEnabled, err := checkHistoricalStatsEnable(sctx)
 	if err != nil {
 		return errors.Errorf("check tidb_enable_historical_stats failed: %v", err)
 	}
 	if !historicalStatsEnabled {
 		return nil
 	}
-
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	rows, _, err := h.execRestrictedSQL(ctx, "select modify_count, count from mysql.stats_meta where table_id = %? and version = %?", tableID, version)
+	exec := sctx.(sqlexec.SQLExecutor)
+	rexec := sctx.(sqlexec.RestrictedSQLExecutor)
+	rows, _, err := rexec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, "select modify_count, count from mysql.stats_meta where table_id = %? and version = %?", tableID, version)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2269,7 +2389,6 @@ func (h *Handle) recordHistoricalStatsMeta(tableID int64, version uint64) error 
 	}
 	modifyCount, count := rows[0].GetInt64(0), rows[0].GetInt64(1)
 
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
 	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
 	if err != nil {
 		return errors.Trace(err)
@@ -2283,6 +2402,12 @@ func (h *Handle) recordHistoricalStatsMeta(tableID int64, version uint64) error 
 		return errors.Trace(err)
 	}
 	return nil
+}
+
+func (h *Handle) recordHistoricalStatsMeta(tableID int64, version uint64) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return recordHistoricalStatsMeta(h.mu.ctx, tableID, version)
 }
 
 // InsertAnalyzeJob inserts analyze job into mysql.analyze_jobs and gets job ID for further updating job.

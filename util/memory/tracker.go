@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/tidb/metrics"
 	atomicutil "go.uber.org/atomic"
@@ -34,6 +35,11 @@ const TrackMemWhenExceeds = 104857600 // 100MB
 var (
 	ServerMemoryLimit            = atomicutil.NewUint64(0)
 	ServerMemoryLimitSessMinSize = atomicutil.NewUint64(128 << 20)
+
+	QueryForceDisk       = atomicutil.NewInt64(0)
+	TriggerMemoryLimitGC = atomicutil.NewBool(false)
+	MemoryLimitGCLast    = atomicutil.NewTime(time.Time{})
+	MemoryLimitGCTotal   = atomicutil.NewInt64(0)
 )
 
 // Tracker is used to track the memory usage during query execution.
@@ -712,6 +718,28 @@ func (t *Tracker) setParent(parent *Tracker) {
 	t.parMu.parent = parent
 }
 
+// CountAllChildrenMemUse return memory used tree for the tracker
+func (t *Tracker) CountAllChildrenMemUse() map[string]int64 {
+	trackerMemUseMap := make(map[string]int64, 1024)
+	countChildMem(t, "", trackerMemUseMap)
+	return trackerMemUseMap
+}
+
+func countChildMem(t *Tracker, familyTreeName string, trackerMemUseMap map[string]int64) {
+	if len(familyTreeName) > 0 {
+		familyTreeName += " <- "
+	}
+	familyTreeName += "[" + strconv.Itoa(t.Label()) + "]"
+	trackerMemUseMap[familyTreeName] += t.BytesConsumed()
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, sli := range t.mu.children {
+		for _, tracker := range sli {
+			countChildMem(tracker, familyTreeName, trackerMemUseMap)
+		}
+	}
+}
+
 const (
 	// LabelForSQLText represents the label of the SQL Text
 	LabelForSQLText int = -1
@@ -763,6 +791,8 @@ const (
 	LabelForAnalyzeMemory int = -24
 	// LabelForGlobalAnalyzeMemory represents the label of the global memory of all analyze jobs
 	LabelForGlobalAnalyzeMemory int = -25
+	// LabelForPreparedPlanCache represents the label of the prepared plan cache memory usage
+	LabelForPreparedPlanCache int = -26
 )
 
 // MetricsTypes is used to get label for metrics
