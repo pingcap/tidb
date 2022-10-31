@@ -80,6 +80,11 @@ func (msm *MockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, boo
 			return item, true
 		}
 	}
+	msm.mu.Lock()
+	defer msm.mu.Unlock()
+	if sess := msm.conn[id]; sess != nil {
+		return sess.ShowProcess(), true
+	}
 	return &util.ProcessInfo{}, false
 }
 
