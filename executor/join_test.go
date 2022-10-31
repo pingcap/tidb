@@ -16,7 +16,6 @@ package executor_test
 import (
 	"context"
 	"fmt"
-	"github.com/stretchr/testify/require"
 	"math/rand"
 	"strings"
 	"time"
@@ -2804,9 +2803,8 @@ func (s *testSuiteJoinSerial) TestIssue37932(c *C) {
 	if err != nil {
 		print(err.Error())
 		if strings.Contains(err.Error(), "Truncated incorrect DOUBLE value") {
-			t.Log("Bug of truncated incorrect DOUBLE value has not been fixed, skipping")
 			return
 		}
 	}
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 }
