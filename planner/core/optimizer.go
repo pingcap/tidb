@@ -295,10 +295,7 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 	if err != nil {
 		return nil, 0, err
 	}
-	finalPlan, err := postOptimize(sctx, physical)
-	if err != nil {
-		return nil, 0, err
-	}
+	finalPlan := postOptimize(sctx, physical)
 
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerCETrace {
 		refineCETrace(sctx)
@@ -375,7 +372,7 @@ func mergeContinuousSelections(p PhysicalPlan) {
 	}
 }
 
-func postOptimize(sctx sessionctx.Context, plan PhysicalPlan) (PhysicalPlan, error) {
+func postOptimize(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {
 	// some cases from update optimize will require avoiding projection elimination.
 	// see comments ahead of call of DoOptimize in function of buildUpdate().
 	prunePhysicalColumns(sctx, plan)
@@ -387,10 +384,7 @@ func postOptimize(sctx sessionctx.Context, plan PhysicalPlan) (PhysicalPlan, err
 	handleFineGrainedShuffle(sctx, plan)
 	checkPlanCacheable(sctx, plan)
 	propagateProbeParents(plan, nil)
-	if err := plan.ResolveIndices(); err != nil {
-		return nil, err
-	}
-	return plan, nil
+	return plan
 }
 
 // prunePhysicalColumns currently only work for MPP(HashJoin<-Exchange).
