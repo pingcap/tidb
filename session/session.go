@@ -1564,7 +1564,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		p = explain.TargetPlan
 	}
 	canExplainAnalyze := false
-	if _, ok := p.(plannercore.PhysicalPlan); ok && p != nil {
+	if _, ok := p.(plannercore.PhysicalPlan); ok {
 		canExplainAnalyze = true
 	}
 	pi := util.ProcessInfo{
