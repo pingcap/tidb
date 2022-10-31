@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
@@ -1444,6 +1445,29 @@ func TestAddForeignKey(t *testing.T) {
 		}
 	}
 	require.Regexp(t, ".*IndexReader.*index:fk.*", plan.String())
+
+	// Test add multiple foreign key constraint in one statement.
+	tk.MustExec("alter table t2 add column c int, add column d int, add column e int;")
+	tk.MustExec("alter table t2 add index idx_c(c, d, e)")
+	tk.MustExec("alter table t2 add constraint fk_c foreign key (c) references t1(b), " +
+		"add constraint fk_d foreign key (d) references t1(b)," +
+		"add constraint fk_e foreign key (e) references t1(b)")
+	tbl2Info = getTableInfo(t, dom, "test", "t2")
+	require.Equal(t, 4, len(tbl2Info.Indices))
+	names := []string{"fk", "idx_c", "fk_d", "fk_e"}
+	for i, idx := range tbl2Info.Indices {
+		require.Equal(t, names[i], idx.Name.L)
+		require.Equal(t, model.StatePublic, idx.State)
+	}
+	names = []string{"fk", "fk_c", "fk_d", "fk_e"}
+	for i, fkInfo := range tbl2Info.ForeignKeys {
+		require.Equal(t, names[i], fkInfo.Name.L)
+		require.Equal(t, model.StatePublic, fkInfo.State)
+	}
+	tk.MustGetDBError("insert into t2 (id, b) values (1,1)", plannercore.ErrNoReferencedRow2)
+	tk.MustGetDBError("insert into t2 (id, c) values (1,1)", plannercore.ErrNoReferencedRow2)
+	tk.MustGetDBError("insert into t2 (id, d) values (1,1)", plannercore.ErrNoReferencedRow2)
+	tk.MustGetDBError("insert into t2 (id, e) values (1,1)", plannercore.ErrNoReferencedRow2)
 }
 
 func TestAddForeignKey2(t *testing.T) {
