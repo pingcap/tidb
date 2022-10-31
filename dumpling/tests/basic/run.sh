@@ -15,7 +15,6 @@ run_sql "create database \`$DB_NAME\` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bi
 run_sql "create table \`$DB_NAME\`.\`$TABLE_NAME\` (a int);"
 run_sql "insert into \`$DB_NAME\`.\`$TABLE_NAME\` values (1), (2);"
 
-export GO_FAILPOINTS="github.com/pingcap/tidb/dumpling/export/EnableLogProgress=return(1)"
 run_dumpling -f "$DB_NAME.$TABLE_NAME" -L ${DUMPLING_OUTPUT_DIR}/dumpling.log
 
 cnt=$(grep -w "(.*)" ${DUMPLING_OUTPUT_DIR}/${DB_NAME}.${TABLE_NAME}.000000000.sql|wc -l)
