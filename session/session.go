@@ -186,7 +186,7 @@ type Session interface {
 	SetCollation(coID int) error
 	SetSessionManager(util.SessionManager)
 	Close()
-	Auth(user *auth.UserIdentity, auth []byte, salt []byte) error
+	Auth(user *auth.UserIdentity, auth, salt []byte) error
 	AuthWithoutVerification(user *auth.UserIdentity) bool
 	AuthPluginForUser(user *auth.UserIdentity) (string, error)
 	MatchIdentity(username, remoteHost string) (*auth.UserIdentity, error)
@@ -2582,7 +2582,7 @@ func (s *session) AuthPluginForUser(user *auth.UserIdentity) (string, error) {
 // Auth validates a user using an authentication string and salt.
 // If the password fails, it will keep trying other users until exhausted.
 // This means it can not be refactored to use MatchIdentity yet.
-func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []byte) error {
+func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) error {
 	hasPassword := "YES"
 	if len(authentication) == 0 {
 		hasPassword = "NO"
