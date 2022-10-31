@@ -20,13 +20,8 @@ import (
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/util/disjointset"
 )
-
-// ResolveIndices implements Plan interface.
-func (p *PhysicalProjection) ResolveIndices() (err error) {
-	err = p.physicalSchemaProducer.ResolveIndices()
-	if err != nil {
-		return err
-	}
+// ResolveIndicesItself resolve indices for PhysicalPlan itself
+func (p *PhysicalProjection) ResolveIndicesItself() (err error) {
 	for i, expr := range p.Exprs {
 		p.Exprs[i], err = expr.ResolveIndices(p.children[0].Schema())
 		if err != nil {
@@ -39,6 +34,15 @@ func (p *PhysicalProjection) ResolveIndices() (err error) {
 	}
 	refine4NeighbourProj(p, childProj)
 	return
+}
+
+// ResolveIndices implements Plan interface.
+func (p *PhysicalProjection) ResolveIndices() (err error) {
+	err = p.physicalSchemaProducer.ResolveIndices()
+	if err != nil {
+		return err
+	}
+	return p.ResolveIndicesItself()
 }
 
 // refine4NeighbourProj refines the index for p.Exprs whose type is *Column when
@@ -74,7 +78,7 @@ func refine4NeighbourProj(p, childProj *PhysicalProjection) {
 	}
 }
 
-// ResolveIndicesItself resolve indices for PhyicalHashJoin itself
+// ResolveIndicesItself resolve indices for PhyicalPlan itself
 func (p *PhysicalHashJoin) ResolveIndicesItself() (err error) {
 	lSchema := p.children[0].Schema()
 	rSchema := p.children[1].Schema()
@@ -385,12 +389,8 @@ func (p *PhysicalSelection) ResolveIndices() (err error) {
 	return nil
 }
 
-// ResolveIndices implements Plan interface.
-func (p *PhysicalExchangeSender) ResolveIndices() (err error) {
-	err = p.basePhysicalPlan.ResolveIndices()
-	if err != nil {
-		return err
-	}
+// ResolveIndicesItself resolve indices for PhyicalPlan itself
+func (p *PhysicalExchangeSender) ResolveIndicesItself() (err error) {
 	for i, col := range p.HashCols {
 		colExpr, err1 := col.Col.ResolveIndices(p.children[0].Schema())
 		if err1 != nil {
@@ -398,7 +398,16 @@ func (p *PhysicalExchangeSender) ResolveIndices() (err error) {
 		}
 		p.HashCols[i].Col, _ = colExpr.(*expression.Column)
 	}
-	return err
+	return
+}
+
+// ResolveIndices implements Plan interface.
+func (p *PhysicalExchangeSender) ResolveIndices() (err error) {
+	err = p.basePhysicalPlan.ResolveIndices()
+	if err != nil {
+		return err
+	}
+	return p.ResolveIndicesItself()
 }
 
 // ResolveIndices implements Plan interface.

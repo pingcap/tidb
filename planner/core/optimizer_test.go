@@ -334,10 +334,13 @@ func TestPrunePhysicalColumns(t *testing.T) {
 	hashJoin.children = []PhysicalPlan{recv, recv1}
 	selection := &PhysicalSelection{}
 
-	cond := expression.NewFunctionInternal(sctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), col0, col3)
+	cond, err := expression.NewFunction(sctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), col0, col3)
+	require.True(t, err == nil)
 	sf, isSF := cond.(*expression.ScalarFunction)
 	require.True(t, isSF)
 	hashJoin.EqualConditions = append(hashJoin.EqualConditions, sf)
+	hashJoin.LeftJoinKeys = append(hashJoin.LeftJoinKeys, col0)
+	hashJoin.RightJoinKeys = append(hashJoin.RightJoinKeys, col3)
 	hashJoinSchema := make([]*expression.Column, 0)
 	hashJoinSchema = append(hashJoinSchema, col3)
 	hashJoin.SetSchema(expression.NewSchema(hashJoinSchema...))
