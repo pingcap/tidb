@@ -38,10 +38,8 @@ func TestInfiniteChan(t *testing.T) {
 		}
 	}()
 	for i := 0; i < 10000; i++ {
-		select {
-		case j := <-out:
-			require.Equal(t, i, j)
-		}
+		j := <-out
+		require.Equal(t, i, j)
 	}
 	close(in)
 }
