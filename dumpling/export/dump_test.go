@@ -56,14 +56,11 @@ func TestDumpBlock(t *testing.T) {
 	})
 
 	writerCtx := tctx.WithContext(writingCtx)
-	// simulate taskChan is full
-	taskChan := make(chan Task, 1)
-	taskChan <- &TaskDatabaseMeta{}
 	d.conf.Tables = DatabaseTables{}.AppendTable(database, nil)
 	d.conf.ServerInfo.ServerType = version.ServerTypeMySQL
 	require.ErrorIs(t, wg.Wait(), writerErr)
 	// if writerCtx is canceled , QuerySQL in `dumpDatabases` will return sqlmock.ErrCancelled
-	require.ErrorIs(t, d.dumpDatabases(writerCtx, baseConn, taskChan, nil), sqlmock.ErrCancelled)
+	require.ErrorIs(t, d.dumpDatabases(writerCtx, baseConn, nil), sqlmock.ErrCancelled)
 }
 
 func TestDumpTableMeta(t *testing.T) {

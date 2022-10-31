@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/pingcap/tidb/dumpling/container/queue"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 )
 
@@ -149,17 +150,15 @@ func (t *TaskTableData) Brief() string {
 	return fmt.Sprintf("data of table '%s'.'%s'(%d/%d)", db, tbl, idx, total)
 }
 
-func (d *Dumper) dispatchTask(tctx *tcontext.Context, taskChan chan<- Task, needDispatch chan any, taskWg *sync.WaitGroup) {
+func (d *Dumper) dispatchTask(tctx *tcontext.Context, taskChan chan<- Task, taskQueue *TaskQueue, taskWg *sync.WaitGroup) {
 	defer taskWg.Done()
 	for {
 		select {
 		case <-tctx.Done():
 			tctx.L().Warn("stop dispatch task")
 			return
-		case _, ok := <-needDispatch:
-			d.taskMu.RLock()
-			tasks := d.taskQueue.PopAll()
-			d.taskMu.RUnlock()
+		case _, ok := <-d.needDispatchCh:
+			tasks := taskQueue.popAll()
 			for _, task := range tasks {
 				ctxDone := d.sendTaskToChan(tctx, task, taskChan)
 				if ctxDone {
@@ -174,9 +173,31 @@ func (d *Dumper) dispatchTask(tctx *tcontext.Context, taskChan chan<- Task, need
 	}
 }
 
-func (d *Dumper) appendTask(task Task) {
-	d.taskMu.Lock()
-	defer d.taskMu.Unlock()
+func (d *Dumper) closeDispatch() {
+	close(d.needDispatchCh)
+}
 
-	d.taskQueue.Push(task)
+type TaskQueue struct {
+	sync.RWMutex
+	queue *queue.ChunkQueue[Task]
+}
+
+func NewTaskQueue() *TaskQueue {
+	return &TaskQueue{
+		queue: queue.NewChunkQueue[Task](),
+	}
+}
+
+func (q *TaskQueue) push(task Task) {
+	q.Lock()
+	defer q.Unlock()
+
+	q.queue.Push(task)
+}
+
+func (q *TaskQueue) popAll() []Task {
+	q.Lock()
+	defer q.Unlock()
+
+	return q.queue.PopAll()
 }
