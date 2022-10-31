@@ -19,7 +19,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"math/rand"
 	"strings"
-	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -2730,10 +2729,9 @@ func (s *testSuiteJoinSerial) TestIssue31129(c *C) {
 	c.Assert(failpoint.Disable(fpName2), IsNil)
 }
 
-func TestIssue37932(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk1 := testkit.NewTestKit(t, store)
-	tk2 := testkit.NewTestKit(t, store)
+func (s *testSuiteJoinSerial) TestIssue37932(c *C) {
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk2 := testkit.NewTestKit(c, s.store)
 	tk1.MustExec("use test")
 	tk2.MustExec("use test")
 	tk1.MustExec("create table tbl_1 ( col_1 set ( 'Alice','Bob','Charlie','David' )   not null default 'Alice' ,col_2 tinyint  unsigned ,col_3 decimal ( 34 , 3 )   not null default 79 ,col_4 bigint  unsigned not null ,col_5 bit ( 12 )   not null , unique key idx_1 ( col_2 ) ,unique key idx_2 ( col_2 ) ) charset utf8mb4 collate utf8mb4_bin ;")
