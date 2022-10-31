@@ -389,6 +389,8 @@ func (crs *CopRuntimeStats) RecordOneCopTask(address string, summary *tipb.Execu
 
 // GetActRows return total rows of CopRuntimeStats.
 func (crs *CopRuntimeStats) GetActRows() (totalRows int64) {
+	crs.Lock()
+	defer crs.Unlock()
 	return crs.totalRows
 }
 
