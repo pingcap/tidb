@@ -198,6 +198,7 @@ func TestTLSBasic(t *testing.T) {
 }
 
 func TestTLSVerify(t *testing.T) {
+	var keyFile, certFile *os.File
 	ts := createTidbTestSuite(t)
 
 	dir := t.TempDir()
@@ -257,11 +258,13 @@ func TestTLSVerify(t *testing.T) {
 
 	_, _, _, err = util.CheckCertificates("wrong key", "wrong cert", true, 528)
 	require.NoError(t, err)
-	_, err = util.LoadTLSCertificates("", "wrong key", "wrong cert")
-	require.Error(t, err)
 	_, _, _, err = util.CheckCertificates(fileName("server-key.pem"), fileName("server-cert.pem"), true, 528)
 	require.NoError(t, err)
-	_, err = util.LoadTLSCertificates("wrong ca", fileName("server-key.pem"), fileName("server-cert.pem"))
+	keyFile, err = os.Open(fileName("server-key.pem"))
+	require.NoError(t, err)
+	certFile, err = os.Open(fileName("server-cert.pem"))
+	require.NoError(t, err)
+	_, err = util.LoadTLSCertificates("wrong ca", keyFile, certFile)
 	require.Error(t, err)
 
 	// Test connecting with a client that does not have TLS configured.

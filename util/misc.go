@@ -27,6 +27,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"math/big"
 	"net"
 	"net/http"
@@ -56,6 +57,10 @@ const (
 	DefaultMaxRetries = 30
 	// RetryInterval indicates retry interval.
 	RetryInterval uint64 = 500
+)
+
+var (
+	CertFile, KeyFile *os.File
 )
 
 // RunWithRetry will run the f with backoff and retry.
@@ -471,12 +476,12 @@ func CheckCertificates(rawKey, rawCert string, autoTLS bool, rsaKeySize int) (ke
 }
 
 // LoadTLSCertificates loads CA/KEY/CERT for special paths.
-func LoadTLSCertificates(ca, key, cert string) (tlsConfig *tls.Config, err error) {
-	if len(key) == 0 || len(cert) == 0 {
+func LoadTLSCertificates(ca string, keyFile, certFile *os.File) (tlsConfig *tls.Config, err error) {
+	if keyFile == nil || certFile == nil {
 		return
 	}
 	var tlsCert tls.Certificate
-	tlsCert, err = tls.LoadX509KeyPair(cert, key)
+	tlsCert, err = LoadX509KeyPair(certFile, keyFile)
 	if err != nil {
 		logutil.BgLogger().Warn("load x509 failed", zap.Error(err))
 		err = errors.Trace(err)
@@ -555,6 +560,23 @@ func LoadTLSCertificates(ca, key, cert string) (tlsConfig *tls.Config, err error
 		CipherSuites: cipherSuites,
 	}
 	return
+}
+
+// LoadX509KeyPair reads and parses a public/private key pair from a pair
+// of files. The files must contain PEM encoded data. The certificate file
+// may contain intermediate certificates following the leaf certificate to
+// form a certificate chain. On successful return, Certificate.Leaf will
+// be nil because the parsed form of the certificate is not retained.
+func LoadX509KeyPair(certFile, keyFile *os.File) (tls.Certificate, error) {
+	certPEMBlock, err := io.ReadAll(certFile)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	keyPEMBlock, err := io.ReadAll(keyFile)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	return tls.X509KeyPair(certPEMBlock, keyPEMBlock)
 }
 
 // IsTLSExpiredError checks error is caused by TLS expired.

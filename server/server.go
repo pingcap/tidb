@@ -202,42 +202,45 @@ func setTLSCertificates(s *Server) error {
 		return err
 	}
 
-	tlsConfig, err := util.LoadTLSCertificates(s.cfg.Security.SSLCA, key, cert)
+	if len(cert) > 0 && len(key) > 0 {
+		if util.CertFile, err = os.Open(cert); err != nil {
+			return err
+		}
+		if util.KeyFile, err = os.Open(key); err != nil {
+			return err
+		}
+		tlsConfig, err := util.LoadTLSCertificates(s.cfg.Security.SSLCA, util.KeyFile, util.CertFile)
+		// LoadTLSCertificates returns an error if certificates are invalid.
+		// In which case, we should halt server startup as a misconfiguration could
+		// lead to a connection downgrade.
+		if err != nil {
+			return err
+		}
 
-	// LoadTLSCertificates returns an error if certificates are invalid.
-	// In which case, we should halt server startup as a misconfiguration could
-	// lead to a connection downgrade.
-	if err != nil {
-		return err
-	}
-
-	// Automatically reload auto-generated certificates.
-	// The certificates are re-created every 30 days and are valid for 90 days.
-	if autoReload {
-		go func() {
-			for range time.Tick(time.Hour * 24 * 30) { // 30 days
-				logutil.BgLogger().Info("Rotating automatically created TLS Certificates")
-				tlsConfig, err = util.LoadTLSCertificates(
-					variable.GetSysVar("ssl_ca").Value,
-					variable.GetSysVar("ssl_key").Value,
-					variable.GetSysVar("ssl_cert").Value,
-				)
-				if err != nil {
-					logutil.BgLogger().Warn("TLS Certificate rotation failed", zap.Error(err))
+		// Automatically reload auto-generated certificates.
+		// The certificates are re-created every 30 days and are valid for 90 days.
+		if autoReload {
+			go func() {
+				for range time.Tick(time.Hour * 24 * 30) { // 30 days
+					logutil.BgLogger().Info("Rotating automatically created TLS Certificates")
+					tlsConfig, err = util.LoadTLSCertificates(s.cfg.Security.SSLCA, util.KeyFile, util.CertFile)
+					if err != nil {
+						logutil.BgLogger().Warn("TLS Certificate rotation failed", zap.Error(err))
+					}
+					atomic.StorePointer(&s.tlsConfig, unsafe.Pointer(tlsConfig))
 				}
-				atomic.StorePointer(&s.tlsConfig, unsafe.Pointer(tlsConfig))
-			}
-		}()
-	}
+			}()
+		}
 
-	if tlsConfig != nil {
-		setSSLVariable(s.cfg.Security.SSLCA, key, cert)
-		atomic.StorePointer(&s.tlsConfig, unsafe.Pointer(tlsConfig))
-		logutil.BgLogger().Info("mysql protocol server secure connection is enabled",
-			zap.Bool("client verification enabled", len(variable.GetSysVar("ssl_ca").Value) > 0))
-	}
-	if s.tlsConfig != nil {
-		s.capability |= mysql.ClientSSL
+		if tlsConfig != nil {
+			setSSLVariable(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert)
+			atomic.StorePointer(&s.tlsConfig, unsafe.Pointer(tlsConfig))
+			logutil.BgLogger().Info("mysql protocol server secure connection is enabled",
+				zap.Bool("client verification enabled", len(variable.GetSysVar("ssl_ca").Value) > 0))
+		}
+		if s.tlsConfig != nil {
+			s.capability |= mysql.ClientSSL
+		}
 	}
 	return nil
 }
