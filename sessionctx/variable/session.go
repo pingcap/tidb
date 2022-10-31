@@ -1291,9 +1291,9 @@ type SessionVars struct {
 	}
 	EnableReuseCheck bool
 
-	// UseChunkAlloc indicates whether statement use chunk alloc
-	UseChunkAlloc    bool
-	PreUseChunkAlloc bool
+	// useChunkAlloc indicates whether statement use chunk alloc
+	useChunkAlloc    bool
+	preUseChunkAlloc bool
 }
 
 // GetNewChunk Attempt to request memory from the chunk pool
@@ -1305,8 +1305,8 @@ func (s *SessionVars) GetNewChunk(fields []*types.FieldType, capacity int) *chun
 	}
 	s.ChunkPool.Lock.Lock()
 	defer s.ChunkPool.Lock.Unlock()
-	if (s.MaxReuseChunk > 0 || s.MaxReuseColumn > 0) && (!s.UseChunkAlloc) {
-		s.UseChunkAlloc = true
+	if s.noLimitChunkAlloc() && (!s.useChunkAlloc) {
+		s.useChunkAlloc = true
 	}
 	chk := s.ChunkPool.Alloc.Alloc(fields, capacity, capacity)
 	return chk
@@ -1320,11 +1320,27 @@ func (s *SessionVars) GetNewChunkWithCapacity(fields []*types.FieldType, capacit
 	}
 	s.ChunkPool.Lock.Lock()
 	defer s.ChunkPool.Lock.Unlock()
-	if s.MaxReuseChunk > 0 || s.MaxReuseColumn > 0 && (!s.UseChunkAlloc) {
-		s.UseChunkAlloc = true
+	if s.noLimitChunkAlloc() && (!s.useChunkAlloc) {
+		s.useChunkAlloc = true
 	}
 	chk := s.ChunkPool.Alloc.Alloc(fields, capacity, maxCachesize)
 	return chk
+}
+
+// noLimitChunkAlloc indicates whether chunk alloc can be used
+func (s *SessionVars) noLimitChunkAlloc() bool {
+	return s.MaxReuseChunk > 0 || s.MaxReuseColumn > 0
+}
+
+// ExchangeChunkStatus give the status to preUseChunkAlloc
+func (s *SessionVars) ExchangeChunkStatus() {
+	s.preUseChunkAlloc = s.useChunkAlloc
+	s.useChunkAlloc = false
+}
+
+// GetUseChunkAlloc return useChunkAlloc status
+func (s *SessionVars) GetUseChunkAlloc() bool {
+	return s.useChunkAlloc
 }
 
 // SetAlloc Attempt to set the buffer pool address
@@ -1335,7 +1351,7 @@ func (s *SessionVars) SetAlloc(alloc chunk.Allocator) {
 	if alloc != nil {
 		alloc.SetLimit(s.MaxReuseChunk, s.MaxReuseColumn)
 	} else {
-		s.UseChunkAlloc = false
+		s.useChunkAlloc = false
 	}
 	s.ChunkPool.Alloc = alloc
 }
@@ -1637,8 +1653,8 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		ForeignKeyChecks:              DefTiDBForeignKeyChecks,
 		HookContext:                   hctx,
 		EnableReuseCheck:              DefTiDBEnableReusechunk,
-		UseChunkAlloc:                 DefTiDBUseAlloc,
-		PreUseChunkAlloc:              DefTiDBUseAlloc,
+		useChunkAlloc:                 DefTiDBUseAlloc,
+		preUseChunkAlloc:              DefTiDBUseAlloc,
 		ChunkPool: struct {
 			Lock  sync.Mutex
 			Alloc chunk.Allocator
