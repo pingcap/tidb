@@ -2750,6 +2750,33 @@ func TestCreateTableWithAutoIdCache(t *testing.T) {
 	tk.MustGetErrMsg("alter table t auto_id_cache = 9223372036854775808", "table option auto_id_cache overflows int64")
 }
 
+func TestRenameTableForAutoIncrement(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("USE test;")
+	tk.MustExec("drop table if exists t1, t2, t3;")
+	tk.MustExec("create table t1 (id int key auto_increment);")
+	tk.MustExec("insert into t1 values ()")
+	tk.MustExec("rename table t1 to t11")
+	tk.MustExec("insert into t11 values ()")
+	// TODO(tiancaiamao): fix bug and uncomment here, rename table should not discard the cached AUTO_ID.
+	// tk.MustQuery("select * from t11").Check(testkit.Rows("1", "2"))
+
+	// auto_id_cache 1 use another implementation and do not have such bug.
+	tk.MustExec("create table t2 (id int key auto_increment) auto_id_cache 1;")
+	tk.MustExec("insert into t2 values ()")
+	tk.MustExec("rename table t2 to t22")
+	tk.MustExec("insert into t22 values ()")
+	tk.MustQuery("select * from t22").Check(testkit.Rows("1", "2"))
+
+	tk.MustExec("create table t3 (id int key auto_increment) auto_id_cache 100;")
+	tk.MustExec("insert into t3 values ()")
+	tk.MustExec("rename table t3 to t33")
+	tk.MustExec("insert into t33 values ()")
+	// TODO(tiancaiamao): fix bug and uncomment here, rename table should not discard the cached AUTO_ID.
+	// tk.MustQuery("select * from t33").Check(testkit.Rows("1", "2"))
+}
+
 func TestAlterTableAutoIDCache(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
