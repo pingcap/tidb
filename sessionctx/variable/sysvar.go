@@ -37,13 +37,11 @@ import (
 	"github.com/pingcap/tidb/types"
 	_ "github.com/pingcap/tidb/types/parser_driver" // for parser driver
 	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/gctuner"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/stmtsummary"
-	"github.com/pingcap/tidb/util/sys/storage"
 	"github.com/pingcap/tidb/util/tikvutil"
 	"github.com/pingcap/tidb/util/tls"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
@@ -477,9 +475,9 @@ var defaultSysVars = []*SysVar{
 		oldVal := config.GetGlobalConfig().Instance.TmpDir.Load()
 		config.GetGlobalConfig().Instance.TmpDir.Store(val)
 		config.GetGlobalConfig().UpdateTmpDir()
-		if err := disk.InitializeTempDir(); err != nil {
+		val = config.GetGlobalConfig().Instance.TmpDir.Load()
+		if err := os.Rename(oldVal, val); err != nil {
 			config.GetGlobalConfig().Instance.TmpDir.Store(oldVal)
-			config.GetGlobalConfig().UpdateTmpDir()
 			return err
 		}
 		config.CheckTempStorageQuota()
@@ -487,27 +485,8 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return config.GetGlobalConfig().Instance.TmpDir.Load(), nil
 	}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-		var (
-			fileInfo os.FileInfo
-			err      error
-		)
-		if fileInfo, err = os.Stat(normalizedValue); err != nil {
-			if !os.IsNotExist(err) {
-				return normalizedValue, err
-			}
-			if err = os.MkdirAll(normalizedValue, 0750); err != nil {
-				return normalizedValue, err
-			}
-			fileInfo, err = os.Stat(normalizedValue)
-			return normalizedValue, err
-		}
-		if !fileInfo.IsDir() {
-			return "", ErrCantReadDir.FastGenByArgs(normalizedValue, ErrCantReadDir.Code(), "TmpDir should be a directory.")
-		}
-		if !storage.Writable(normalizedValue) {
-			return "", ErrCantReadDir.FastGenByArgs(normalizedValue, ErrCantReadDir.Code(), "Write permission denied.")
-		}
-		return normalizedValue, nil
+		_, err := os.Stat(normalizedValue)
+		return normalizedValue, err
 	}},
 	{Scope: ScopeInstance, Name: TiDBTmpStorageQuota, Value: strconv.FormatInt(config.GetGlobalConfig().Instance.TmpStorageQuota, 10), Type: TypeInt, MinValue: -1, AllowAutoValue: true, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		newVal, err := strconv.ParseInt(val, 10, 64)
