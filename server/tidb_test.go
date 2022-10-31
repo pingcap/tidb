@@ -2834,6 +2834,8 @@ func TestExtensionConnEvent(t *testing.T) {
 			extension.ConnHandshakeAccepted,
 		}, logs.types)
 		conn1 := logs.infos[0]
+		require.Equal(t, "127.0.0.1", conn1.ClientIP)
+		require.Equal(t, "127.0.0.1", conn1.ServerIP)
 		require.Empty(t, conn1.User)
 		require.Empty(t, conn1.DB)
 		require.Equal(t, int(ts.port), conn1.ServerPort)
@@ -2894,6 +2896,8 @@ func TestExtensionConnEvent(t *testing.T) {
 			extension.ConnDisconnected,
 		}, logs.types)
 		conn1 := logs.infos[0]
+		require.Equal(t, "127.0.0.1", conn1.ClientIP)
+		require.Equal(t, "127.0.0.1", conn1.ServerIP)
 		require.Empty(t, conn1.User)
 		require.Empty(t, conn1.DB)
 		require.Equal(t, int(ts.port), conn1.ServerPort)
