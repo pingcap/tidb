@@ -1885,7 +1885,10 @@ func (p *PhysicalUnionScan) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.basePhysicalPlan.MemoryUsage() + size.SizeOfSlice + p.HandleCols.MemoryUsage()
+	sum = p.basePhysicalPlan.MemoryUsage() + size.SizeOfSlice
+	if p.HandleCols != nil {
+		sum += p.HandleCols.MemoryUsage()
+	}
 	for _, cond := range p.Conditions {
 		sum += cond.MemoryUsage()
 	}
@@ -2168,7 +2171,10 @@ func (p *PhysicalShuffleReceiverStub) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.physicalSchemaProducer.MemoryUsage() + size.SizeOfPointer + size.SizeOfInterface + p.DataSource.MemoryUsage()
+	sum = p.physicalSchemaProducer.MemoryUsage() + size.SizeOfPointer + size.SizeOfInterface
+	if p.DataSource != nil {
+		sum += p.DataSource.MemoryUsage()
+	}
 	return
 }
 
