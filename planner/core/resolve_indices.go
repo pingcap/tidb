@@ -74,12 +74,8 @@ func refine4NeighbourProj(p, childProj *PhysicalProjection) {
 	}
 }
 
-// ResolveIndices implements Plan interface.
-func (p *PhysicalHashJoin) ResolveIndices() (err error) {
-	err = p.physicalSchemaProducer.ResolveIndices()
-	if err != nil {
-		return err
-	}
+// ResolveIndicesItself resolve indices for PhyicalHashJoin itself
+func (p *PhysicalHashJoin) ResolveIndicesItself() (err error) {
 	lSchema := p.children[0].Schema()
 	rSchema := p.children[1].Schema()
 	for i, fun := range p.EqualConditions {
@@ -127,6 +123,15 @@ func (p *PhysicalHashJoin) ResolveIndices() (err error) {
 		}
 	}
 	return
+}
+
+// ResolveIndices implements Plan interface.
+func (p *PhysicalHashJoin) ResolveIndices() (err error) {
+	err = p.physicalSchemaProducer.ResolveIndices()
+	if err != nil {
+		return err
+	}
+	return p.ResolveIndicesItself()
 }
 
 // ResolveIndices implements Plan interface.

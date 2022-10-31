@@ -295,7 +295,10 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 	if err != nil {
 		return nil, 0, err
 	}
-	finalPlan := postOptimize(sctx, physical)
+	finalPlan, err := postOptimize(sctx, physical)
+	if err != nil {
+		return nil, 0, err
+	}
 
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerCETrace {
 		refineCETrace(sctx)
@@ -372,10 +375,13 @@ func mergeContinuousSelections(p PhysicalPlan) {
 	}
 }
 
-func postOptimize(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {
+func postOptimize(sctx sessionctx.Context, plan PhysicalPlan) (PhysicalPlan, error) {
 	// some cases from update optimize will require avoiding projection elimination.
 	// see comments ahead of call of DoOptimize in function of buildUpdate().
-	prunePhysicalColumns(sctx, plan)
+	err := prunePhysicalColumns(sctx, plan)
+	if err != nil {
+		return nil, err
+	}
 	plan = eliminatePhysicalProjection(plan)
 	plan = InjectExtraProjection(plan)
 	mergeContinuousSelections(plan)
@@ -384,23 +390,27 @@ func postOptimize(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {
 	handleFineGrainedShuffle(sctx, plan)
 	checkPlanCacheable(sctx, plan)
 	propagateProbeParents(plan, nil)
-	return plan
+	return plan, nil
 }
 
 // prunePhysicalColumns currently only work for MPP(HashJoin<-Exchange).
 // Here add projection instead of pruning columns directly for safety considerations.
 // And projection is cheap here for it saves the network cost and work in memory.
-func prunePhysicalColumns(sctx sessionctx.Context, plan PhysicalPlan) {
+func prunePhysicalColumns(sctx sessionctx.Context, plan PhysicalPlan) error {
 	emptyColumns := make([]*expression.Column, 0)
 	if tableReader, ok := plan.(*PhysicalTableReader); ok {
 		if _, isExchangeSender := tableReader.tablePlan.(*PhysicalExchangeSender); isExchangeSender {
-			prunePhysicalColumnsInternal(sctx, tableReader.tablePlan, emptyColumns, false)
+			err := prunePhysicalColumnsInternal(sctx, tableReader.tablePlan, emptyColumns, nil, false)
+			if err != nil {
+				return err
+			}
 		}
 	} else {
 		for _, child := range plan.Children() {
-			prunePhysicalColumns(sctx, child)
+			return prunePhysicalColumns(sctx, child)
 		}
 	}
+	return nil
 }
 
 func (p *PhysicalHashJoin) extractUsedCols(parentUsedCols []*expression.Column) (leftCols []*expression.Column, rightCols []*expression.Column) {
@@ -431,18 +441,25 @@ func (p *PhysicalHashJoin) extractUsedCols(parentUsedCols []*expression.Column) 
 	return leftCols, rightCols
 }
 
-func prunePhysicalColumnsInternal(sctx sessionctx.Context, plan PhysicalPlan, parentUsedCols []*expression.Column, meaningFulParentUsedCols bool) {
+func prunePhysicalColumnsInternal(sctx sessionctx.Context, plan PhysicalPlan, parentUsedCols []*expression.Column, parentPlan PhysicalPlan, meaningFulParentInfos bool) error {
+	var err error
 	switch x := plan.(type) {
 	case *PhysicalHashJoin:
 		child0 := x.children[0]
 		child1 := x.children[1]
 		schemaColumns := x.Schema().Clone().Columns
 		leftCols, rightCols := x.extractUsedCols(schemaColumns)
-		prunePhysicalColumnsInternal(sctx, child0, leftCols, true)
-		prunePhysicalColumnsInternal(sctx, child1, rightCols, true)
+		err = prunePhysicalColumnsInternal(sctx, child0, leftCols, plan,true)
+		if err != nil {
+			return err
+		}
+		err = prunePhysicalColumnsInternal(sctx, child1, rightCols, plan, true)
+		if err != nil {
+			return err
+		}
 	case *PhysicalExchangeReceiver:
 		// Currently, prune columns only when parent node is HashJoin
-		if meaningFulParentUsedCols {
+		if meaningFulParentInfos {
 			switch y := x.children[0].(type) {
 			case *PhysicalExchangeSender:
 				used := expression.GetUsedList(parentUsedCols, y.Schema())
@@ -474,17 +491,26 @@ func prunePhysicalColumnsInternal(sctx sessionctx.Context, plan PhysicalPlan, pa
 					proj.SetSchema(prunedSchema)
 					proj.SetChildren(ch)
 					y.children[0] = proj
+
+					err = parentPlan.ResolveIndices()
+					if err != nil {
+						return err
+					}
 				}
 			}
 		}
 		emptyColumns := make([]*expression.Column, 0)
-		prunePhysicalColumnsInternal(sctx, x.children[0], emptyColumns, false)
+		return prunePhysicalColumnsInternal(sctx, x.children[0], emptyColumns, nil,false)
 	default:
 		emptyColumns := make([]*expression.Column, 0)
 		for _, child := range x.Children() {
-			prunePhysicalColumnsInternal(sctx, child, emptyColumns, false)
+			err = prunePhysicalColumnsInternal(sctx, child, emptyColumns, nil, false)
+			if err != nil {
+				return err
+			}
 		}
 	}
+	return nil
 }
 
 // Only for MPP(Window<-[Sort]<-ExchangeReceiver<-ExchangeSender).
