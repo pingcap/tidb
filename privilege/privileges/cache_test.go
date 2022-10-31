@@ -410,9 +410,10 @@ func TestAbnormalMySQLTable(t *testing.T) {
   plugin char(64) COLLATE utf8_bin DEFAULT 'mysql_native_password',
   authentication_string text COLLATE utf8_bin,
   password_expired enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N',
+  token_issuer varchar(255),
   PRIMARY KEY (Host,User)
 ) ENGINE=MyISAM DEFAULT CHARSET=utf8 COLLATE=utf8_bin COMMENT='Users and global privileges';`)
-	tk.MustExec(`INSERT INTO user VALUES ('localhost','root','','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','','','','',0,0,0,0,'mysql_native_password','','N');
+	tk.MustExec(`INSERT INTO user VALUES ('localhost','root','','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','','','','',0,0,0,0,'mysql_native_password','','N', '');
 `)
 	var p privileges.MySQLPrivilege
 	require.NoError(t, p.LoadUserTable(tk.Session()))
