@@ -1820,7 +1820,9 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.
 		if err != nil {
 			return nil, is, err
 		}
-		curTxn.SetOption(kv.TableToColumnMaps, nil)
+		if curTxn.Valid() {
+			curTxn.SetOption(kv.TableToColumnMaps, nil)
+		}
 		if err != nil {
 			return nil, is, err
 		}
