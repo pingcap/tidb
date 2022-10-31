@@ -472,14 +472,10 @@ var defaultSysVars = []*SysVar{
 		return BoolToOnOff(EnableRCReadCheckTS.Load()), nil
 	}},
 	{Scope: ScopeInstance, Name: TmpDir, Value: config.GetGlobalConfig().Instance.TmpDir.Load(), Type: TypeStr, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-		oldVal := config.GetGlobalConfig().Instance.TmpDir.Load()
-		config.GetGlobalConfig().Instance.TmpDir.Store(val)
-		config.GetGlobalConfig().UpdateTmpDir()
-		val = config.GetGlobalConfig().Instance.TmpDir.Load()
-		if err := os.Rename(oldVal, val); err != nil {
-			config.GetGlobalConfig().Instance.TmpDir.Store(oldVal)
+		if err := config.GetGlobalConfig().RenameTmpDir(val); err != nil {
 			return err
 		}
+		val = config.GetGlobalConfig().Instance.TmpDir.Load()
 		config.CheckTempStorageQuota()
 		return nil
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {

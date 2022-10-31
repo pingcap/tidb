@@ -288,6 +288,11 @@ func (c *Config) UpdateTmpDir() {
 	}
 }
 
+// RenameTmpDir is to rename the `TmpDir` thread-safely.
+func (c *Config) RenameTmpDir(prefix string) error {
+	return c.Instance.TmpDir.Rename(encodeDefTempStorageDir(prefix, c.Host, c.Status.StatusHost, c.Port, c.Status.StatusPort))
+}
+
 // GetTiKVConfig returns configuration options from tikvcfg
 func (c *Config) GetTiKVConfig() *tikvcfg.Config {
 	return &tikvcfg.Config{
@@ -386,9 +391,39 @@ func (b *nullableBool) UnmarshalJSON(data []byte) error {
 	return err
 }
 
-// AtomicString is a helper type for atomic operations on a string value.
-type AtomicString struct {
-	atomicutil.String
+func NewAtomicFilepath(fp string) *AtomicFilepath {
+	return &AtomicFilepath{filepath: fp}
+}
+
+// AtomicFilepath is a helper type for atomic operations on a filepath.
+type AtomicFilepath struct {
+	filepath string
+	m        sync.RWMutex
+}
+
+// Load reads the filepath thread-safely.
+func (s *AtomicFilepath) Load() string {
+	s.m.RLock()
+	defer s.m.RUnlock()
+	return s.filepath
+}
+
+// Store writes the filepath thread-safely.
+func (s *AtomicFilepath) Store(str string) {
+	s.m.Lock()
+	defer s.m.Unlock()
+	s.filepath = str
+}
+
+// Rename renames and writes the filepath thread-safely.
+func (s *AtomicFilepath) Rename(newPath string) error {
+	s.m.Lock()
+	defer s.m.Unlock()
+	if err := os.Rename(s.filepath, newPath); err != nil {
+		return err
+	}
+	s.filepath = newPath
+	return nil
 }
 
 // AtomicBool is a helper type for atomic operations on a boolean value.
@@ -499,7 +534,7 @@ type Instance struct {
 	TiDBRCReadCheckTS bool       `toml:"tidb_rc_read_check_ts" json:"tidb_rc_read_check_ts"`
 
 	// TmpDir describes the path of temporary storage.
-	TmpDir AtomicString `toml:"tmpdir" json:"tmpdir"`
+	TmpDir AtomicFilepath `toml:"tmpdir" json:"tmpdir"`
 	// TmpStorageQuota describe the temporary storage Quota during query executor when TiDBEnableTmpStorageOnOOM is enabled.
 	// If the quota exceed the capacity of the TempStoragePath, the tidb-server would exit with fatal error.
 	TmpStorageQuota int64 `toml:"tidb_tmp_storage_quota" json:"tidb_tmp_storage_quota"` // Bytes
@@ -886,7 +921,7 @@ var defaultConf = Config{
 		TiDBEnableDDL:               *NewAtomicBool(true),
 		TiDBRCReadCheckTS:           false,
 		TmpStorageQuota:             -1,
-		TmpDir:                      AtomicString{*atomicutil.NewString(DefTempStorageDirName)},
+		TmpDir:                      *NewAtomicFilepath(DefTempStorageDirName),
 	},
 	Status: Status{
 		ReportStatus:          true,
