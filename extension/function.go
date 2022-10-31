@@ -50,7 +50,7 @@ type FunctionDef struct {
 	SemRequireDynamicPrivileges []string
 }
 
-// Validate validates the function defination
+// Validate validates the function definition
 func (def *FunctionDef) Validate() error {
 	if def.Name == "" {
 		return errors.New("extension function name should not be empty")
