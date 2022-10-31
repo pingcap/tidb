@@ -460,7 +460,6 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *BaseConn, taskQ
 				// if dispatchCh is full, skip it
 				tctx.L().Debug("dispatchCh full")
 			}
-
 		}
 	}
 	failpoint.Inject("EnableLogProgress", func() {
@@ -866,7 +865,7 @@ func (d *Dumper) concurrentDumpTiDBTables(tctx *tcontext.Context, conn *BaseConn
 	if err != nil {
 		return err
 	}
-	return d.sendConcurrentDumpTiDBTasks(tctx, meta, taskQueue, handleColNames, handleVals, "", 0, len(handleVals)+1)
+	return d.sendConcurrentDumpTiDBTasks(meta, taskQueue, handleColNames, handleVals, "", 0, len(handleVals)+1)
 }
 
 func (d *Dumper) concurrentDumpTiDBPartitionTables(tctx *tcontext.Context, conn *BaseConn, meta TableMeta, taskQueue *taskQueue, partitions []string) error {
@@ -892,7 +891,7 @@ func (d *Dumper) concurrentDumpTiDBPartitionTables(tctx *tcontext.Context, conn 
 		cachedHandleVals[i] = handleVals
 	}
 	for i, partition := range partitions {
-		err := d.sendConcurrentDumpTiDBTasks(tctx, meta, taskQueue, handleColNames, cachedHandleVals[i], partition, startChunkIdx, totalChunk)
+		err := d.sendConcurrentDumpTiDBTasks(meta, taskQueue, handleColNames, cachedHandleVals[i], partition, startChunkIdx, totalChunk)
 		if err != nil {
 			return err
 		}
@@ -901,9 +900,10 @@ func (d *Dumper) concurrentDumpTiDBPartitionTables(tctx *tcontext.Context, conn 
 	return nil
 }
 
-func (d *Dumper) sendConcurrentDumpTiDBTasks(tctx *tcontext.Context,
+func (d *Dumper) sendConcurrentDumpTiDBTasks(
 	meta TableMeta, taskQueue *taskQueue,
-	handleColNames []string, handleVals [][]string, partition string, startChunkIdx, totalChunk int) error {
+	handleColNames []string, handleVals [][]string, partition string,
+	startChunkIdx, totalChunk int) error {
 	db, tbl := meta.DatabaseName(), meta.TableName()
 	if len(handleVals) == 0 {
 		if partition == "" {
