@@ -528,7 +528,7 @@ func formatL(l []*backuppb.DataFileInfo) string {
 	return "[" + strings.Join(r.Item, ", ") + "]"
 }
 
-func TestFileManager(t *testing.T) {
+func testFileManagerWithMeta(t *testing.T, m func(files ...*backuppb.DataFileInfo) *backuppb.Metadata) {
 	type Case struct {
 		Metadata  []*backuppb.Metadata
 		StartTS   int
@@ -544,9 +544,9 @@ func TestFileManager(t *testing.T) {
 	cases := []Case{
 		{
 			Metadata: []*backuppb.Metadata{
-				m2(wm(5, 10, 1), dm(1, 8), dr(2, 6), wr(4, 5, 2)),
-				m2(wr(50, 54, 42), dr(42, 50), wr(70, 78, 0)),
-				m2(dr(100, 101), wr(102, 104, 100)),
+				m(wm(5, 10, 1), dm(1, 8), dr(2, 6), wr(4, 5, 2)),
+				m(wr(50, 54, 42), dr(42, 50), wr(70, 78, 0)),
+				m(dr(100, 101), wr(102, 104, 100)),
 			},
 			StartTS:   2,
 			RestoreTS: 60,
@@ -556,9 +556,9 @@ func TestFileManager(t *testing.T) {
 		},
 		{
 			Metadata: []*backuppb.Metadata{
-				m2(wm(4, 10, 1), dm(1, 8), dr(2, 6), wr(4, 5, 2)),
-				m2(wr(50, 54, 42), dr(42, 50), wr(70, 78, 0), wm(80, 81, 0), wm(90, 92, 0)),
-				m2(dr(100, 101), wr(102, 104, 100)),
+				m(wm(4, 10, 1), dm(1, 8), dr(2, 6), wr(4, 5, 2)),
+				m(wr(50, 54, 42), dr(42, 50), wr(70, 78, 0), wm(80, 81, 0), wm(90, 92, 0)),
+				m(dr(100, 101), wr(102, 104, 100)),
 			},
 			StartTS:   5,
 			RestoreTS: 80,
@@ -570,9 +570,9 @@ func TestFileManager(t *testing.T) {
 		},
 		{
 			Metadata: []*backuppb.Metadata{
-				m2(wm(5, 10, 1), dm(1, 8), dr(2, 6), wr(4, 5, 2)),
-				m2(wr(50, 54, 42), dr(42, 50), wr(70, 78, 0), wm(80, 81, 0), wm(90, 92, 0)),
-				m2(dr(100, 101), wr(102, 104, 100)),
+				m(wm(5, 10, 1), dm(1, 8), dr(2, 6), wr(4, 5, 2)),
+				m(wr(50, 54, 42), dr(42, 50), wr(70, 78, 0), wm(80, 81, 0), wm(90, 92, 0)),
+				m(dr(100, 101), wr(102, 104, 100)),
 			},
 			StartTS:   6,
 			RestoreTS: 80,
@@ -628,4 +628,9 @@ func TestFileManager(t *testing.T) {
 	for i, c := range cases {
 		t.Run(fmt.Sprintf("#%d", i), func(t *testing.T) { run(t, c) })
 	}
+}
+
+func TestFileManger(t *testing.T) {
+	t.Run("MetaV1", func(t *testing.T) { testFileManagerWithMeta(t, m) })
+	t.Run("MetaV2", func(t *testing.T) { testFileManagerWithMeta(t, m2) })
 }
