@@ -532,6 +532,32 @@ func TestModifyColumn(t *testing.T) {
 	tk.MustExec("drop table t, t2, t3, t4, t5")
 }
 
+func TestIssue38699(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	//Test multi records
+	tk.MustExec("USE test")
+	tk.MustExec("set sql_mode=''")
+	tk.MustExec("DROP TABLE IF EXISTS t;")
+	tk.MustExec("CREATE TABLE t (a int)")
+	tk.MustExec("insert into t values (1000000000), (2000000)")
+	tk.MustExec("alter table t modify a tinyint")
+	result := tk.MustQuery("show warnings")
+	require.Len(t, result.Rows(), 1)
+	result.Check(testkit.Rows("Warning 1690 2 warning(s), first warning:constant 1000000000 overflows tinyint"))
+
+	//single record
+	tk.MustExec("DROP TABLE IF EXISTS t;")
+	tk.MustExec("CREATE TABLE t (a int)")
+	tk.MustExec("insert into t values (1000000000)")
+	tk.MustExec("alter table t modify a tinyint")
+	result = tk.MustQuery("show warnings")
+	require.Len(t, result.Rows(), 1)
+	result.Check(testkit.Rows("Warning 1690 constant 1000000000 overflows tinyint"))
+
+}
+
 func TestPartitionAddPanic(t *testing.T) {
 	s := createFailDBSuite(t)
 	tk := testkit.NewTestKit(t, s.store)
