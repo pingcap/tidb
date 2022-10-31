@@ -1468,6 +1468,14 @@ func TestAddForeignKey(t *testing.T) {
 	tk.MustGetDBError("insert into t2 (id, c) values (1,1)", plannercore.ErrNoReferencedRow2)
 	tk.MustGetDBError("insert into t2 (id, d) values (1,1)", plannercore.ErrNoReferencedRow2)
 	tk.MustGetDBError("insert into t2 (id, e) values (1,1)", plannercore.ErrNoReferencedRow2)
+
+	// Test add multiple foreign key constraint in one statement but failed.
+	tk.MustExec("alter table t2 drop foreign key fk_c")
+	tk.MustExec("alter table t2 drop foreign key fk_d")
+	tk.MustExec("alter table t2 drop foreign key fk_e")
+	tk.MustGetDBError("alter table t2 add constraint fk_c foreign key (c) references t1(b), "+
+		"add constraint fk_d foreign key (d) references t1(b),"+
+		"add constraint fk_e foreign key (e) references t1(unknown_col)", infoschema.ErrForeignKeyNoColumnInParent)
 }
 
 func TestAddForeignKey2(t *testing.T) {
