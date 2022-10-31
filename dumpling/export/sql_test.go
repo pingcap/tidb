@@ -766,7 +766,7 @@ func TestBuildTableSampleQueries(t *testing.T) {
 		if len(handleColNames) > 0 {
 			taskChan := make(chan Task, 128)
 
-			taskQueue := NewTaskQueue()
+			taskQueue := newTaskQueue()
 
 			d.needDispatchCh = make(chan any)
 
@@ -774,7 +774,6 @@ func TestBuildTableSampleQueries(t *testing.T) {
 			taskWg := new(sync.WaitGroup)
 			taskWg.Add(1)
 			go d.dispatchTask(dispatchTaskCtx, taskChan, taskQueue, taskWg)
-			defer dispatchTaskCancel()
 
 			quotaCols := make([]string, 0, len(handleColNames))
 			for _, col := range handleColNames {
@@ -851,6 +850,7 @@ func TestBuildTableSampleQueries(t *testing.T) {
 				query := buildSelectQuery(database, table, selectFields, "", buildWhereCondition(d.conf, w), orderByClause)
 				checkQuery(i, query)
 			}
+			dispatchTaskCancel()
 		}
 	}
 }
@@ -1054,12 +1054,11 @@ func TestBuildRegionQueriesWithoutPartition(t *testing.T) {
 		taskChan := make(chan Task, 128)
 		d.needDispatchCh = make(chan any)
 
-		taskQueue := NewTaskQueue()
+		taskQueue := newTaskQueue()
 		dispatchTaskCtx, dispatchTaskCancel := tctx.WithCancel()
 		taskWg := new(sync.WaitGroup)
 		taskWg.Add(1)
 		go d.dispatchTask(dispatchTaskCtx, taskChan, taskQueue, taskWg)
-		defer dispatchTaskCancel()
 
 		meta := &mockTableIR{
 			dbName:           database,
@@ -1116,6 +1115,7 @@ func TestBuildRegionQueriesWithoutPartition(t *testing.T) {
 			require.True(t, ok)
 			require.Equal(t, query, data.query)
 		}
+		dispatchTaskCancel()
 	}
 }
 
@@ -1266,12 +1266,11 @@ func TestBuildRegionQueriesWithPartitions(t *testing.T) {
 		// Test build tasks through table region
 		taskChan := make(chan Task, 128)
 		d.needDispatchCh = make(chan any)
-		taskQueue := NewTaskQueue()
+		taskQueue := newTaskQueue()
 		dispatchTaskCtx, dispatchTaskCancel := tctx.WithCancel()
 		taskWg := new(sync.WaitGroup)
 		taskWg.Add(1)
 		go d.dispatchTask(dispatchTaskCtx, taskChan, taskQueue, taskWg)
-		defer dispatchTaskCancel()
 
 		meta := &mockTableIR{
 			dbName:           database,
@@ -1329,6 +1328,7 @@ func TestBuildRegionQueriesWithPartitions(t *testing.T) {
 				chunkIdx++
 			}
 		}
+		dispatchTaskCancel()
 	}
 }
 
@@ -1601,12 +1601,11 @@ func TestBuildVersion3RegionQueries(t *testing.T) {
 		// Test build tasks through table region
 		taskChan := make(chan Task, 128)
 		d.needDispatchCh = make(chan any)
-		taskQueue := NewTaskQueue()
+		taskQueue := newTaskQueue()
 		dispatchTaskCtx, dispatchTaskCancel := tctx.WithCancel()
 		taskWg := new(sync.WaitGroup)
 		taskWg.Add(1)
 		go d.dispatchTask(dispatchTaskCtx, taskChan, taskQueue, taskWg)
-		defer dispatchTaskCancel()
 
 		meta := &mockTableIR{
 			dbName:           database,
@@ -1647,6 +1646,7 @@ func TestBuildVersion3RegionQueries(t *testing.T) {
 
 			chunkIdx++
 		}
+		dispatchTaskCancel()
 	}
 }
 

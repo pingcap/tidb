@@ -150,7 +150,7 @@ func (t *TaskTableData) Brief() string {
 	return fmt.Sprintf("data of table '%s'.'%s'(%d/%d)", db, tbl, idx, total)
 }
 
-func (d *Dumper) dispatchTask(tctx *tcontext.Context, taskChan chan<- Task, taskQueue *TaskQueue, taskWg *sync.WaitGroup) {
+func (d *Dumper) dispatchTask(tctx *tcontext.Context, taskChan chan<- Task, taskQueue *taskQueue, taskWg *sync.WaitGroup) {
 	defer taskWg.Done()
 	for {
 		select {
@@ -177,25 +177,25 @@ func (d *Dumper) closeDispatch() {
 	close(d.needDispatchCh)
 }
 
-type TaskQueue struct {
+type taskQueue struct {
 	sync.RWMutex
 	queue *queue.ChunkQueue[Task]
 }
 
-func NewTaskQueue() *TaskQueue {
-	return &TaskQueue{
+func newTaskQueue() *taskQueue {
+	return &taskQueue{
 		queue: queue.NewChunkQueue[Task](),
 	}
 }
 
-func (q *TaskQueue) push(task Task) {
+func (q *taskQueue) push(task Task) {
 	q.Lock()
 	defer q.Unlock()
 
 	q.queue.Push(task)
 }
 
-func (q *TaskQueue) popAll() []Task {
+func (q *taskQueue) popAll() []Task {
 	q.Lock()
 	defer q.Unlock()
 
