@@ -323,7 +323,9 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 		return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 	}
 
-	if len(pwd) > 0 && len(authentication) > 0 {
+	if record.AuthPlugin == mysql.AuthTiDBAuthToken {
+		logutil.BgLogger().Info("TODO: unimplemented tidb_auth_token ConnectionVerification", zap.String("check", string(authentication)))
+	} else if len(pwd) > 0 && len(authentication) > 0 {
 		switch record.AuthPlugin {
 		case mysql.AuthNativePassword:
 			hpwd, err := auth.DecodePassword(pwd)
@@ -351,9 +353,6 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 					zap.String("authentication_string", pwd))
 				return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 			}
-		case mysql.AuthTiDBAuthToken:
-			logutil.BgLogger().Error("unimplemented tidb_auth_token ConnectionVerification")
-			return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 		default:
 			logutil.BgLogger().Error("unknown authentication plugin", zap.String("authUser", authUser), zap.String("plugin", record.AuthPlugin))
 			return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)

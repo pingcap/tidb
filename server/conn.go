@@ -842,12 +842,6 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string) e
 			logutil.BgLogger().Warn("verify session token failed", zap.String("username", cc.user), zap.Error(err))
 			return errAccessDenied.FastGenByArgs(cc.user, host, hasPassword)
 		}
-	} else if authPlugin == mysql.AuthMySQLClearPassword {
-		realUserPlugin, err := cc.ctx.AuthPluginForUser(userIdentity)
-		if err != nil {
-			return err
-		}
-		logutil.BgLogger().Fatal("TODO", zap.String("realUserPlugin", realUserPlugin))
 	} else if err = cc.ctx.Auth(userIdentity, authData, cc.salt); err != nil {
 		return err
 	}
