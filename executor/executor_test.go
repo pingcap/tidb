@@ -6179,7 +6179,7 @@ func TestCompileOutOfMemoryQuota(t *testing.T) {
 	require.Contains(t, err.Error(), "Out Of Memory Quota!")
 }
 
-func TestAutoIncrementMinMax(t *testing.T) {
+func TestAutoIncrementInsertMinMax(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

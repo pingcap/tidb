@@ -2903,6 +2903,9 @@ func TestAutoIncrementTableOption(t *testing.T) {
 
 		// Rebase the auto_inc allocator to a large integer should work.
 		tk.MustExec("create table t (a bigint unsigned auto_increment, unique key idx(a))" + str)
+		// Set auto_inc to negative is not supported
+		err := tk.ExecToErr("alter table t auto_increment = -1;")
+		require.Error(t, err)
 		tk.MustExec("alter table t auto_increment = 12345678901234567890;")
 		tk.MustExec("insert into t values ();")
 		tk.MustQuery("select * from t;").Check(testkit.Rows("12345678901234567890"))
