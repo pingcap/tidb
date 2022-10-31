@@ -36,17 +36,11 @@ const tickDuration = 30 * time.Second
 type CheckpointMessage struct {
 	GroupKey string
 
-	Group *RangeGroup
-}
-
-type RangeGroup struct {
-	StartKey []byte           `json:"start_key"`
-	EndKey   []byte           `json:"end_key"`
-	Files    []*backuppb.File `json:"files"`
+	Group *rtree.Range
 }
 
 type RangeGroups struct {
-	Groups []*RangeGroup `json:"groups"`
+	Groups []*rtree.Range `json:"groups"`
 }
 
 type CheckpointRunner struct {
@@ -108,7 +102,7 @@ func (r *CheckpointRunner) Append(
 		return err
 	case r.appendCh <- &CheckpointMessage{
 		GroupKey: groupKey,
-		Group: &RangeGroup{
+		Group: &rtree.Range{
 			StartKey: startKey,
 			EndKey:   endKey,
 			Files:    files,
@@ -198,7 +192,7 @@ func (r *CheckpointRunner) startCheckpointLoop(ctx context.Context, tickDuration
 				groups, exist := r.meta[msg.GroupKey]
 				if !exist {
 					groups = &RangeGroups{
-						Groups: make([]*RangeGroup, 0),
+						Groups: make([]*rtree.Range, 0),
 					}
 					r.meta[msg.GroupKey] = groups
 				}
@@ -268,7 +262,7 @@ func (r *CheckpointRunner) doFlush(ctx context.Context, meta map[string]*RangeGr
 	return nil
 }
 
-func WalkCheckpointFileWithSpecificKey(ctx context.Context, s storage.ExternalStorage, groupKey string, cipher *backuppb.CipherInfo, fn func(*RangeGroup)) error {
+func WalkCheckpointFileWithSpecificKey(ctx context.Context, s storage.ExternalStorage, groupKey string, cipher *backuppb.CipherInfo, fn func(*rtree.Range)) error {
 	subDir := fmt.Sprintf(CheckpointIndexDirFormat, groupKey)
 	err := s.WalkDir(ctx, &storage.WalkOption{SubDir: subDir}, func(path string, _ int64) error {
 		if strings.HasSuffix(path, ".cpt") {

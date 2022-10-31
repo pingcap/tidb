@@ -259,13 +259,15 @@ func (bc *Client) CheckCheckpoint(hash []byte) bool {
 	return bytes.Equal(bc.checkpointMeta.ConfigHash, hash)
 }
 
-// SaveCheckpointMeta saves the initial status into the external storage, and start checkpoint runner
-func (bc *Client) SaveCheckpointMeta(ctx context.Context, cfgHash []byte, backupTS uint64, ranges []rtree.Range) error {
+// StartCheckpointMeta saves the initial status into the external storage, and start checkpoint runner
+func (bc *Client) StartCheckpointRunner(ctx context.Context, cfgHash []byte, backupTS uint64, ranges []rtree.Range) error {
 	defer func() {
 		bc.checkpointRunner = checkpoint.StartCheckpointRunner(ctx, bc.storage, bc.cipher)
 	}()
+	// sync the checkpoint meta to the external storage at first
 	if bc.checkpointMeta != nil {
-		// no need to save Checkpoint Meta again
+		// the checkpoint meta is loaded from the external storage,
+		// no need to save it again
 		return nil
 	}
 	bc.checkpointMeta = &checkpoint.CheckpointMetadata{
@@ -284,15 +286,14 @@ func (bc *Client) LoadCheckpointRange(ctx context.Context, r rtree.Range, progre
 	// not in the checkpoint mode
 	if bc.checkpointMeta == nil {
 		return &rtree.ProgressRange{
-			Res:        rangeTree,
-			Incomplete: []rtree.Range{r},
-			Origin:     r,
+			Res:    rangeTree,
+			Origin: r,
 		}, nil
 	}
 
 	// use groupKey to distinguish different ranges
 	groupKey := redact.Key(r.StartKey)
-	err := checkpoint.WalkCheckpointFileWithSpecificKey(ctx, bc.storage, groupKey, bc.cipher, func(region *checkpoint.RangeGroup) {
+	err := checkpoint.WalkCheckpointFileWithSpecificKey(ctx, bc.storage, groupKey, bc.cipher, func(region *rtree.Range) {
 		rangeTree.Put(region.StartKey, region.EndKey, region.Files)
 		progressCallBack(RegionUnit)
 	})
@@ -719,6 +720,7 @@ func (bc *Client) BackupRanges(
 		id := id
 		req := request
 		r := r
+		req.StartKey, req.EndKey = r.StartKey, r.EndKey
 
 		workerPool.ApplyOnErrorGroup(eg, func() error {
 			elctx := logutil.ContextWithField(ectx, logutil.RedactAny("range-sn", id))
@@ -785,21 +787,26 @@ func (bc *Client) BackupRange(
 	logutil.CL(ctx).Info("backup push down started")
 	// either the `incomplete` is origin range itself,
 	// or the `incomplete` is sub-ranges split by checkpoint of origin range
-	for _, r := range progressRange.Incomplete {
-		req := request
-		req.StartKey, req.EndKey = r.StartKey, r.EndKey
-
-		push := newPushDown(bc.mgr, len(allStores))
-		err = push.pushBackup(ctx, req, progressRange, allStores, bc.checkpointRunner, progressCallBack)
-		if err != nil {
-			return errors.Trace(err)
+	if len(progressRange.Incomplete) > 0 {
+		subRanges := make([]*kvrpcpb.KeyRange, 0, len(progressRange.Incomplete))
+		for _, r := range progressRange.Incomplete {
+			subRanges = append(subRanges, &kvrpcpb.KeyRange{
+				StartKey: r.StartKey,
+				EndKey:   r.EndKey,
+			})
 		}
+		request.SubRanges = subRanges
+	}
+
+	push := newPushDown(bc.mgr, len(allStores))
+	err = push.pushBackup(ctx, request, progressRange, allStores, bc.checkpointRunner, progressCallBack)
+	if err != nil {
+		return errors.Trace(err)
 	}
 	logutil.CL(ctx).Info("backup push down completed", zap.Int("small-range-count", progressRange.Res.Len()))
 
 	// Find and backup remaining ranges.
 	// TODO: test fine grained backup.
-	request.StartKey, request.EndKey = progressRange.Origin.StartKey, progressRange.Origin.EndKey
 	if err := bc.fineGrainedBackup(ctx, request, progressRange, progressCallBack); err != nil {
 		return errors.Trace(err)
 	}

@@ -365,12 +365,12 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	if err = client.SetStorageAndCheckNotInUse(ctx, u, &opts); err != nil {
 		return errors.Trace(err)
 	}
+	// if checkpoint mode is unused at this time but there is checkpoint meta,
+	// CheckCheckpoint will stop backing up
 	cfgHash, err := cfg.Hash()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// if checkpoint mode is unused at this time but there is checkpoint meta,
-	// CheckCheckpoint will stop backing up
 	if !client.CheckCheckpoint(cfgHash) {
 		return errors.Errorf("failed to use checkpoint, the hashs of the configs are not the same")
 	}
@@ -443,7 +443,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	}
 
 	if cfg.UseCheckpoint {
-		if err = client.SaveCheckpointMeta(ctx, cfgHash, backupTS, ranges); err != nil {
+		if err = client.StartCheckpointRunner(ctx, cfgHash, backupTS, ranges); err != nil {
 			return errors.Trace(err)
 		}
 	}
