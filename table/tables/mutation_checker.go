@@ -399,6 +399,7 @@ func getOrBuildColumnMaps(
 	}
 	maps, ok := tableMaps[t.tableID]
 	if !ok {
+		logutil.BgLogger().Error("column map not found in transaction", zap.Int64("tableID", t.tableID))
 		maps = columnMaps{
 			make(map[int64]*model.ColumnInfo, len(t.Meta().Columns)),
 			make(map[int64]*types.FieldType, len(t.Meta().Columns)),
