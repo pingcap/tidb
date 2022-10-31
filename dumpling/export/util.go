@@ -78,3 +78,36 @@ func string2Map(a, b []string) map[string]string {
 func needRepeatableRead(serverType version.ServerType, consistency string) bool {
 	return consistency != ConsistencyTypeSnapshot || serverType != version.ServerTypeTiDB
 }
+
+func infiniteChan[T any]() (chan<- T, <-chan T) {
+	in, out := make(chan T), make(chan T)
+
+	go func() {
+		var q []T
+		for {
+			e, ok := <-in
+			if !ok {
+				close(out)
+				return
+			}
+			q = append(q, e)
+			for len(q) > 0 {
+				select {
+				case out <- q[0]:
+					q = q[1:]
+				case e, ok := <-in:
+					if ok {
+						q = append(q, e)
+						break
+					}
+					for _, e := range q {
+						out <- e
+					}
+					close(out)
+					return
+				}
+			}
+		}
+	}()
+	return in, out
+}

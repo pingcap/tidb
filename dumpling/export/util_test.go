@@ -29,3 +29,19 @@ func TestRepeatableRead(t *testing.T) {
 		require.True(t, rr == expectRepeatableRead, comment)
 	}
 }
+
+func TestInfiniteChan(t *testing.T) {
+	in, out := infiniteChan[int]()
+	go func() {
+		for i := 0; i < 10000; i++ {
+			in <- i
+		}
+	}()
+	for i := 0; i < 10000; i++ {
+		select {
+		case j := <-out:
+			require.Equal(t, i, j)
+		}
+	}
+	close(in)
+}
