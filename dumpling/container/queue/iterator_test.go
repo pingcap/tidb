@@ -116,7 +116,6 @@ func BenchmarkIterate(b *testing.B) {
 			}
 		}
 	})
-
 }
 
 func TestChunkQueueGetIterator(t *testing.T) {
