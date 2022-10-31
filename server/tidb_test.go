@@ -2836,6 +2836,8 @@ func TestExtensionConnEvent(t *testing.T) {
 		conn2.User = "root"
 		conn2.DB = "test"
 
+		require.Equal(t, "127.0.0.1", conn1.ClientIP)
+		require.Equal(t, "127.0.0.1", conn1.ServerIP)
 		require.Empty(t, conn1.User)
 		require.Empty(t, conn1.DB)
 		require.Equal(t, conn2, logs.infos[1])
@@ -2874,6 +2876,8 @@ func TestExtensionConnEvent(t *testing.T) {
 		conn2.User = "noexist"
 		conn2.DB = "test"
 
+		require.Equal(t, "127.0.0.1", conn1.ClientIP)
+		require.Equal(t, "127.0.0.1", conn1.ServerIP)
 		require.Empty(t, conn1.User)
 		require.Empty(t, conn1.DB)
 		require.Equal(t, conn2, logs.infos[1])
