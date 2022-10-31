@@ -15,8 +15,6 @@ package core
 
 import (
 	"container/list"
-	"runtime"
-	"strconv"
 	"sync"
 
 	"github.com/pingcap/errors"
@@ -105,9 +103,6 @@ func (l *LRUPlanCache) Get(key kvcache.Key, paramTypes []*types.FieldType) (valu
 	if bucketExist {
 		if element, exist := l.pickFromBucket(bucket, paramTypes); exist {
 			l.lruList.MoveToFront(element)
-			logutil.BgLogger().Info("---memory consume: " + memory.FormatBytes(l.memTracker.BytesConsumed()) +
-				" ---plan num: " + strconv.FormatInt(int64(l.size), 10))
-			runtime.GC()
 			return element.Value.(*planCacheEntry).PlanValue, true
 		}
 	}
@@ -118,7 +113,7 @@ func (l *LRUPlanCache) Get(key kvcache.Key, paramTypes []*types.FieldType) (valu
 func (l *LRUPlanCache) Put(key kvcache.Key, value kvcache.Value, paramTypes []*types.FieldType) {
 	l.lock.Lock()
 	defer l.lock.Unlock()
-	defer l.updateMonitorMetric()
+	defer updateMonitorMetric()
 
 	hash := strHashKey(key, true)
 	bucket, bucketExist := l.buckets[hash]
@@ -153,7 +148,7 @@ func (l *LRUPlanCache) Put(key kvcache.Key, value kvcache.Value, paramTypes []*t
 func (l *LRUPlanCache) Delete(key kvcache.Key) {
 	l.lock.Lock()
 	defer l.lock.Unlock()
-	defer l.updateMonitorMetric()
+	defer updateMonitorMetric()
 
 	hash := strHashKey(key, false)
 	bucket, bucketExist := l.buckets[hash]
@@ -172,8 +167,7 @@ func (l *LRUPlanCache) Delete(key kvcache.Key) {
 func (l *LRUPlanCache) DeleteAll() {
 	l.lock.Lock()
 	defer l.lock.Unlock()
-	defer l.updateMonitorMetric()
-	defer runtime.GC()
+	defer updateMonitorMetric()
 
 	for lru := l.lruList.Back(); lru != nil; lru = l.lruList.Back() {
 		l.lruList.Remove(lru)
@@ -196,7 +190,7 @@ func (l *LRUPlanCache) Size() int {
 func (l *LRUPlanCache) SetCapacity(capacity uint) error {
 	l.lock.Lock()
 	defer l.lock.Unlock()
-	defer l.updateMonitorMetric()
+	defer updateMonitorMetric()
 
 	if capacity < 1 {
 		return errors.New("capacity of LRU cache should be at least 1")
@@ -223,7 +217,7 @@ func (l *LRUPlanCache) Close() {
 	}
 	if l.memTracker != nil {
 		l.memTracker.ReplaceBytesUsed(0)
-		l.updateMonitorMetric()
+		updateMonitorMetric()
 		l.memTracker.Detach()
 	}
 	planCacheInstancePlanNumCounter.Sub(float64(l.size))
@@ -280,8 +274,7 @@ func PickPlanFromBucket(bucket map[*list.Element]struct{}, paramTypes []*types.F
 	return nil, false
 }
 
-// updateMonitor update the memory usage monitor to show in grafana
-// todo: func updateMonitorMetric()
-func (l *LRUPlanCache) updateMonitorMetric() {
+// updateMonitor update the memory usage for show in grafana
+func updateMonitorMetric() {
 	metrics.PlanCacheInstanceMemoryUsage.WithLabelValues("instance").Set(float64(InstancePlanCacheMemoryTracker.BytesConsumed()))
 }
