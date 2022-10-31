@@ -4,10 +4,6 @@ package export
 
 import (
 	"fmt"
-	"sync"
-
-	"github.com/pingcap/tidb/dumpling/container/queue"
-	tcontext "github.com/pingcap/tidb/dumpling/context"
 )
 
 // Task is a file dump task for dumpling, it could either be dumping database/table/view/policy metadata, table data
@@ -148,56 +144,4 @@ func (t *TaskTableData) Brief() string {
 	db, tbl := t.Meta.DatabaseName(), t.Meta.TableName()
 	idx, total := t.ChunkIndex, t.TotalChunks
 	return fmt.Sprintf("data of table '%s'.'%s'(%d/%d)", db, tbl, idx, total)
-}
-
-func (d *Dumper) dispatchTask(tctx *tcontext.Context, taskChan chan<- Task, taskQueue *taskQueue, taskWg *sync.WaitGroup) {
-	defer taskWg.Done()
-	for {
-		select {
-		case <-tctx.Done():
-			tctx.L().Warn("stop dispatch task")
-			return
-		case _, ok := <-d.needDispatchCh:
-			tasks := taskQueue.popAll()
-			for _, task := range tasks {
-				ctxDone := d.sendTaskToChan(tctx, task, taskChan)
-				if ctxDone {
-					// todo: return ctx done
-					return
-				}
-			}
-			if !ok {
-				return
-			}
-		}
-	}
-}
-
-func (d *Dumper) closeDispatch() {
-	close(d.needDispatchCh)
-}
-
-type taskQueue struct {
-	sync.RWMutex
-	queue *queue.ChunkQueue[Task]
-}
-
-func newTaskQueue() *taskQueue {
-	return &taskQueue{
-		queue: queue.NewChunkQueue[Task](),
-	}
-}
-
-func (q *taskQueue) push(task Task) {
-	q.Lock()
-	defer q.Unlock()
-
-	q.queue.Push(task)
-}
-
-func (q *taskQueue) popAll() []Task {
-	q.Lock()
-	defer q.Unlock()
-
-	return q.queue.PopAll()
 }
