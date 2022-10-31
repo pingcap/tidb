@@ -197,6 +197,7 @@ type clientConn struct {
 		*TiDBContext // an interface to execute sql statements.
 	}
 	attrs         map[string]string // attributes parsed from client handshake response, not used for now.
+	serverHost    string            // server host
 	peerHost      string            // peer host
 	peerPort      string            // peer port
 	status        int32             // dispatching/reading/shutdown/waitshutdown
@@ -949,6 +950,7 @@ func (cc *clientConn) PeerHost(hasPassword string) (host, port string, err error
 	host = variable.DefHostname
 	if cc.isUnixSocket {
 		cc.peerHost = host
+		cc.serverHost = host
 		return
 	}
 	addr := cc.bufReadConn.RemoteAddr().String()
@@ -959,6 +961,15 @@ func (cc *clientConn) PeerHost(hasPassword string) (host, port string, err error
 	}
 	cc.peerHost = host
 	cc.peerPort = port
+
+	serverAddr := cc.bufReadConn.LocalAddr().String()
+	serverHost, _, err := net.SplitHostPort(serverAddr)
+	if err != nil {
+		err = errAccessDenied.GenWithStackByArgs(cc.user, addr, hasPassword)
+		return
+	}
+	cc.serverHost = serverHost
+
 	return
 }
 
