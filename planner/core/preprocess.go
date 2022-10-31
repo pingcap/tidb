@@ -17,6 +17,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/kv"
 	"math"
 	"strings"
 
@@ -1815,6 +1816,11 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.
 				logutil.BgLogger().Error("col", zap.Any("name", col.Name), zap.Any("state", col.State.String()))
 			}
 		}
+		curTxn, err := sctx.Txn(false)
+		if err != nil {
+			return nil, is, err
+		}
+		curTxn.SetOption(kv.TableToColumnMaps, nil)
 		if err != nil {
 			return nil, is, err
 		}
