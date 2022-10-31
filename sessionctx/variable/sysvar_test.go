@@ -860,8 +860,13 @@ func TestTiDBServerMemoryLimit2(t *testing.T) {
 		require.NoError(t, err)
 		val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimit)
 		require.NoError(t, err)
-		require.Equal(t, memory.ServerMemoryLimit.Load(), uint64(512<<20))
-		require.Equal(t, "512MB", val)
+		if total/100 > uint64(512<<20) {
+			require.Equal(t, memory.ServerMemoryLimit.Load(), total/100)
+			require.Equal(t, "1%", val)
+		} else {
+			require.Equal(t, memory.ServerMemoryLimit.Load(), uint64(512<<20))
+			require.Equal(t, "512MB", val)
+		}
 
 		err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimit, "0%")
 		require.Error(t, err)
