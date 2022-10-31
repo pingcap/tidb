@@ -32,6 +32,8 @@ var (
 	compatibleTiFlashMajor4 = semver.New("4.0.0")
 
 	versionHash = regexp.MustCompile("-[0-9]+-g[0-9a-f]{7,}")
+
+	pitrSupportBatchKVFiles bool
 )
 
 // NextMajorVersion returns the next major version.
@@ -131,7 +133,7 @@ func CheckVersionForBRPiTR(s *metapb.Store, tikvVersion *semver.Version) error {
 
 	// tikvVersion should at least 6.1.0
 	if tikvVersion.Major < 6 || (tikvVersion.Major == 6 && tikvVersion.Minor == 0) {
-		return errors.Annotatef(berrors.ErrVersionMismatch, "TiKV node %s version %s is too low when use PiTR, please update tikv's version to at least v6.1.0(v6.2.0+ recommanded)",
+		return errors.Annotatef(berrors.ErrVersionMismatch, "TiKV node %s version %s is too old when use PiTR, please update tikv's version to at least v6.1.0(v6.2.0+ recommanded)",
 			s.Address, tikvVersion)
 	}
 
@@ -146,6 +148,10 @@ func CheckVersionForBRPiTR(s *metapb.Store, tikvVersion *semver.Version) error {
 		if tikvVersion.Major == 6 && tikvVersion.Minor <= 1 {
 			return errors.Annotatef(berrors.ErrVersionMismatch, "TiKV node %s version %s and BR %s version mismatch when use PiTR v6.2.0+, please use the tikv with version v6.2.0+",
 				s.Address, tikvVersion, build.ReleaseVersion)
+		}
+		// If tikv version >= 6.5, PITR supports restoring batch kv files.
+		if (tikvVersion.Major == 6 && tikvVersion.Minor >= 5) || tikvVersion.Major > 6 {
+			pitrSupportBatchKVFiles = true
 		}
 	}
 
@@ -304,6 +310,10 @@ func FetchVersion(ctx context.Context, db utils.QueryExecutor) (string, error) {
 		return "", errors.Annotatef(err, "sql: %s", query)
 	}
 	return versionInfo, nil
+}
+
+func CheckPITRSupportBatchKVFiles() bool {
+	return pitrSupportBatchKVFiles
 }
 
 type ServerType int

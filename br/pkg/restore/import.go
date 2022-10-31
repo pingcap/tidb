@@ -340,9 +340,10 @@ func (importer *FileImporter) ImportKVFileForRegion(
 	startTS uint64,
 	restoreTS uint64,
 	info *split.RegionInfo,
+	supportBatch bool,
 ) RPCResult {
 	// Try to download file.
-	result := importer.downloadAndApplyKVFile(ctx, files, rule, info, shiftStartTS, startTS, restoreTS)
+	result := importer.downloadAndApplyKVFile(ctx, files, rule, info, shiftStartTS, startTS, restoreTS, supportBatch)
 	if !result.OK() {
 		errDownload := result.Err
 		for _, e := range multierr.Errors(errDownload) {
@@ -391,6 +392,7 @@ func (importer *FileImporter) ImportKVFiles(
 	shiftStartTS uint64,
 	startTS uint64,
 	restoreTS uint64,
+	supportBatch bool,
 ) error {
 	var (
 		startTime = time.Now()
@@ -400,6 +402,10 @@ func (importer *FileImporter) ImportKVFiles(
 		err       error
 	)
 
+	if !supportBatch && len(files) > 1 {
+		return errors.Annotatef(berrors.ErrInvalidArgument,
+			"do not support batch apply but files count:%v > 1", len(files))
+	}
 	log.Debug("import kv files", zap.Int("batch file count", len(files)))
 
 	for i, f := range files {
@@ -417,16 +423,14 @@ func (importer *FileImporter) ImportKVFiles(
 	}
 
 	log.Debug("rewrite file keys",
-		// zap.String("name", file.Path),
-		logutil.Key("startKey", startKey),
-		logutil.Key("endKey", endKey))
+		logutil.Key("startKey", startKey), logutil.Key("endKey", endKey))
 
 	// This RetryState will retry 48 time, for 5 min - 6 min.
 	rs := utils.InitialRetryState(48, 100*time.Millisecond, 8*time.Second)
 	ctl := OverRegionsInRange(startKey, endKey, importer.metaClient, &rs)
 	err = ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) RPCResult {
 		subfiles := make([]*backuppb.DataFileInfo, 0, len(files))
-		if r != nil && r.Region != nil {
+		if supportBatch && len(files) > 1 && r != nil && r.Region != nil {
 			for i, f := range files {
 				if bytes.Compare(r.Region.StartKey, ranges[i].EndKey) <= 0 &&
 					(len(r.Region.EndKey) == 0 || bytes.Compare(r.Region.EndKey, ranges[i].StartKey) >= 0) {
@@ -437,15 +441,14 @@ func (importer *FileImporter) ImportKVFiles(
 			subfiles = files
 		}
 
-		return importer.ImportKVFileForRegion(ctx, subfiles, rule, shiftStartTS, startTS, restoreTS, r)
+		return importer.ImportKVFileForRegion(ctx, subfiles, rule, shiftStartTS, startTS, restoreTS, r, supportBatch)
 	})
 
-	log.Debug("download and apply file done",
-		// zap.String("file", file.Path),
-		zap.Stringer("take", time.Since(startTime)),
-		// logutil.Key("fileStart", file.StartKey),
-		// logutil.Key("fileEnd", file.EndKey),
-	)
+	for _, file := range files {
+		log.Debug("download and apply file done",
+			zap.String("file", file.Path), zap.Stringer("take", time.Since(startTime)),
+			logutil.Key("fileStart", file.StartKey), logutil.Key("fileEnd", file.EndKey))
+	}
 	return errors.Trace(err)
 }
 
@@ -840,6 +843,7 @@ func (importer *FileImporter) downloadAndApplyKVFile(
 	shiftStartTS uint64,
 	startTS uint64,
 	restoreTS uint64,
+	supportBatch bool,
 ) RPCResult {
 	leader := regionInfo.Leader
 	if leader == nil {
@@ -894,12 +898,23 @@ func (importer *FileImporter) downloadAndApplyKVFile(
 		Peer:        leader,
 	}
 
-	req := &import_sstpb.ApplyRequest{
-		Metas:          metas,
-		StorageBackend: importer.backend,
-		RewriteRules:   rewriteRules,
-		Context:        reqCtx,
+	var req *import_sstpb.ApplyRequest
+	if supportBatch {
+		req = &import_sstpb.ApplyRequest{
+			Metas:          metas,
+			StorageBackend: importer.backend,
+			RewriteRules:   rewriteRules,
+			Context:        reqCtx,
+		}
+	} else {
+		req = &import_sstpb.ApplyRequest{
+			Meta:           metas[0],
+			StorageBackend: importer.backend,
+			RewriteRule:    *rewriteRules[0],
+			Context:        reqCtx,
+		}
 	}
+
 	log.Debug("apply kv file", logutil.Leader(leader))
 	resp, err := importer.importClient.ApplyKVFile(ctx, leader.GetStoreId(), req)
 	if err != nil {

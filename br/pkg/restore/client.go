@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/config"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
@@ -75,6 +76,8 @@ const (
 	ignorePlacementPolicyMode = "IGNORE"
 
 	MetaKVBatchSize = 64 * 1024 * 1024
+	pitrBatchCount  = 8
+	pitrBatchSize   = 7 * 1024 * 1024
 )
 
 // Client sends requests to restore files.
@@ -1719,18 +1722,6 @@ func (rc *Client) InstallLogFileManager(ctx context.Context, startTS, restoreTS 
 	return nil
 }
 
-type FilesInRegion struct {
-	defaultSize  uint64
-	writeSize    uint64
-	defaultFiles []*backuppb.DataFileInfo
-	writeFiles   []*backuppb.DataFileInfo
-	deleteFiles  []*backuppb.DataFileInfo
-}
-
-type FilesInTable struct {
-	regionMapFiles map[int64]*FilesInRegion
-}
-
 // ReadStreamDataFiles is used for streaming task. collect all meta file by TS.
 func (rc *Client) ReadStreamDataFiles(
 	ctx context.Context,
@@ -1836,59 +1827,38 @@ func (rc *Client) FixIndicesOfTable(ctx context.Context, schema string, table *m
 	return nil
 }
 
-func tidyFiles(files []*backuppb.DataFileInfo) map[int64]*FilesInTable {
-	tableMapFiles := make(map[int64]*FilesInTable)
+type FilesInRegion struct {
+	defaultSize    uint64
+	defaultKVCount int64
+	writeSize      uint64
+	writeKVCount   int64
 
-	for _, f := range files {
-		fit, exist := tableMapFiles[f.TableId]
-		if !exist {
-			fit = &FilesInTable{
-				regionMapFiles: make(map[int64]*FilesInRegion),
-			}
-			tableMapFiles[f.TableId] = fit
-		}
+	defaultFiles []*backuppb.DataFileInfo
+	writeFiles   []*backuppb.DataFileInfo
+	deleteFiles  []*backuppb.DataFileInfo
+}
 
-		fs, exist := fit.regionMapFiles[f.RegionId]
-		if !exist {
-			fs = &FilesInRegion{
-				defaultFiles: make([]*backuppb.DataFileInfo, 0),
-				writeFiles:   make([]*backuppb.DataFileInfo, 0),
-				deleteFiles:  make([]*backuppb.DataFileInfo, 0),
-			}
-			fit.regionMapFiles[f.RegionId] = fs
-		}
-
-		if f.GetType() == backuppb.FileType_Delete {
-			fs.deleteFiles = append(fs.deleteFiles, f)
-		} else {
-			if f.Cf == stream.DefaultCF {
-				fs.defaultFiles = append(fs.defaultFiles, f)
-			} else {
-				fs.writeFiles = append(fs.writeFiles, f)
-			}
-		}
-	}
-
-	return tableMapFiles
+type FilesInTable struct {
+	regionMapFiles map[int64]*FilesInRegion
 }
 
 func applyKVFilesWithBatchMethod(
 	ctx context.Context,
-	files LogIter,
+	iter LogIter,
 	batchCount int,
 	batchSize uint64,
-	applyFunc func(file []*backuppb.DataFileInfo, size uint64),
+	applyFunc func(file []*backuppb.DataFileInfo, kvCount int64, size uint64),
 ) {
 	var (
 		tableMapFiles        = make(map[int64]*FilesInTable)
 		tmpFiles             = make([]*backuppb.DataFileInfo, 0, batchCount)
-		tmpFilesSize  uint64 = 0
+		tmpSize       uint64 = 0
+		tmpKVCount    int64  = 0
 	)
-
-	for r := files.TryNext(ctx); !r.Finished; r = files.TryNext(ctx) {
+	for r := iter.TryNext(ctx); !r.Finished; r = iter.TryNext(ctx) {
 		f := r.Item
 		if f.GetType() == backuppb.FileType_Put && f.GetLength() >= batchSize {
-			applyFunc([]*backuppb.DataFileInfo{f}, f.Length)
+			applyFunc([]*backuppb.DataFileInfo{f}, f.GetNumberOfEntries(), f.GetLength())
 			continue
 		}
 
@@ -1899,7 +1869,6 @@ func applyKVFilesWithBatchMethod(
 			}
 			tableMapFiles[f.TableId] = fit
 		}
-
 		fs, exist := fit.regionMapFiles[f.RegionId]
 		if !exist {
 			fs = &FilesInRegion{}
@@ -1918,8 +1887,9 @@ func applyKVFilesWithBatchMethod(
 				}
 				fs.defaultFiles = append(fs.defaultFiles, f)
 				fs.defaultSize += f.Length
+				fs.defaultKVCount += f.GetNumberOfEntries()
 				if len(fs.defaultFiles) >= batchCount || fs.defaultSize >= batchSize {
-					applyFunc(fs.defaultFiles, fs.defaultSize)
+					applyFunc(fs.defaultFiles, int64(fs.defaultKVCount), fs.defaultSize)
 					fs.defaultFiles = nil
 					fs.defaultSize = 0
 				}
@@ -1928,9 +1898,10 @@ func applyKVFilesWithBatchMethod(
 					fs.writeFiles = make([]*backuppb.DataFileInfo, 0, batchCount)
 				}
 				fs.writeFiles = append(fs.writeFiles, f)
-				fs.writeSize += f.Length
+				fs.writeSize += f.GetLength()
+				fs.writeKVCount += f.GetNumberOfEntries()
 				if len(fs.writeFiles) >= batchCount || fs.writeSize > batchSize {
-					applyFunc(fs.writeFiles, fs.writeSize)
+					applyFunc(fs.writeFiles, fs.writeKVCount, fs.writeSize)
 					fs.writeFiles = make([]*backuppb.DataFileInfo, 0, batchCount)
 					fs.writeSize = 0
 				}
@@ -1940,42 +1911,49 @@ func applyKVFilesWithBatchMethod(
 
 	for _, fwt := range tableMapFiles {
 		for _, fs := range fwt.regionMapFiles {
-			applyFunc(fs.defaultFiles, fs.defaultSize)
-			applyFunc(fs.writeFiles, fs.writeSize)
+			applyFunc(fs.defaultFiles, fs.defaultKVCount, fs.defaultSize)
+			applyFunc(fs.writeFiles, fs.writeKVCount, fs.writeSize)
 
-			for _, d := range fs.defaultFiles {
+			for _, d := range fs.deleteFiles {
 				tmpFiles = append(tmpFiles, d)
-				tmpFilesSize += d.GetLength()
-				if len(tmpFiles) >= batchCount || tmpFilesSize >= batchSize {
-					applyFunc(tmpFiles, tmpFilesSize)
+				tmpSize += d.GetLength()
+				tmpKVCount += d.GetNumberOfEntries()
+				if len(tmpFiles) >= batchCount || tmpSize >= batchSize {
+					applyFunc(tmpFiles, tmpKVCount, tmpSize)
 					tmpFiles = make([]*backuppb.DataFileInfo, 0, batchCount)
-					tmpFilesSize = 0
+					tmpSize = 0
 				}
+			}
+			if len(tmpFiles) > 0 {
+				applyFunc(tmpFiles, tmpKVCount, tmpSize)
+				tmpFiles = make([]*backuppb.DataFileInfo, 0, batchCount)
+				tmpSize = 0
+				tmpKVCount = 0
 			}
 		}
 	}
 }
 
 func applyKVFilesWithSingelMethod(
-	files []*backuppb.DataFileInfo,
-	applyFunc func(file []*backuppb.DataFileInfo, size uint64),
+	ctx context.Context,
+	files LogIter,
+	applyFunc func(file []*backuppb.DataFileInfo, kvCount int64, size uint64),
 ) {
 	deleteKVFiles := make([]*backuppb.DataFileInfo, 0)
 
-	for _, file := range files {
-		f := file
+	for r := files.TryNext(ctx); !r.Finished; r = files.TryNext(ctx) {
+		f := r.Item
 		if f.GetType() == backuppb.FileType_Delete {
 			deleteKVFiles = append(deleteKVFiles, f)
 			continue
 		}
-		applyFunc([]*backuppb.DataFileInfo{f}, f.GetLength())
+		applyFunc([]*backuppb.DataFileInfo{f}, f.GetNumberOfEntries(), f.GetLength())
 	}
 
 	log.Info("restore delete files", zap.Int("count", len(deleteKVFiles)))
-
 	for _, file := range deleteKVFiles {
 		f := file
-		applyFunc([]*backuppb.DataFileInfo{f}, f.GetLength())
+		applyFunc([]*backuppb.DataFileInfo{f}, f.GetNumberOfEntries(), f.GetLength())
 	}
 }
 
@@ -1986,12 +1964,16 @@ func (rc *Client) RestoreKVFiles(
 	updateStats func(kvCount uint64, size uint64),
 	onProgress func(cnt int64),
 ) error {
-	var err error
-	fileCount := 0
-	start := time.Now()
+	var (
+		err          error
+		fileCount    = 0
+		start        = time.Now()
+		supportBatch = version.CheckPITRSupportBatchKVFiles()
+		skipFile     = 0
+	)
 	defer func() {
-		elapsed := time.Since(start)
 		if err == nil {
+			elapsed := time.Since(start)
 			log.Info("Restore KV files", zap.Duration("take", elapsed))
 			summary.CollectSuccessUnit("files", fileCount, elapsed)
 		}
@@ -2004,9 +1986,7 @@ func (rc *Client) RestoreKVFiles(
 	}
 
 	eg, ectx := errgroup.WithContext(ctx)
-	skipFile := 0
-
-	applyFunc := func(file []*backuppb.DataFileInfo, size uint64) {
+	applyFunc := func(file []*backuppb.DataFileInfo, kvCount int64, size uint64) {
 		if len(file) == 0 {
 			return
 		}
@@ -2026,18 +2006,22 @@ func (rc *Client) RestoreKVFiles(
 				fileStart := time.Now()
 				defer func() {
 					onProgress(int64(len(file)))
-					updateStats(0, size)
+					updateStats(uint64(kvCount), size)
 					summary.CollectInt("File", len(file))
 					log.Info("import files done", zap.Int("batch count", len(file)), zap.Uint64("batch bytes", size),
 						zap.Duration("take", time.Since(fileStart)))
 				}()
 
-				return rc.fileImporter.ImportKVFiles(ectx, file, rule, rc.shiftStartTS, rc.startTS, rc.restoreTS)
+				return rc.fileImporter.ImportKVFiles(ectx, file, rule, rc.shiftStartTS, rc.startTS, rc.restoreTS, supportBatch)
 			})
 		}
 	}
 
-	applyKVFilesWithBatchMethod(ctx, files, 8, 7*1024*1024, applyFunc)
+	if supportBatch {
+		applyKVFilesWithBatchMethod(ctx, files, pitrBatchCount, pitrBatchSize, applyFunc)
+	} else {
+		applyKVFilesWithSingelMethod(ctx, files, applyFunc)
+	}
 
 	log.Info("total skip files due to table id not matched", zap.Int("count", skipFile))
 	if skipFile > 0 {
@@ -2046,13 +2030,9 @@ func (rc *Client) RestoreKVFiles(
 
 	if err = eg.Wait(); err != nil {
 		summary.CollectFailureUnit("file", err)
-		log.Error(
-			"restore files failed",
-			zap.Error(err),
-		)
-		return errors.Trace(err)
+		log.Error("restore files failed", zap.Error(err))
 	}
-	return nil
+	return errors.Trace(err)
 }
 
 func (rc *Client) CleanUpKVFiles(
