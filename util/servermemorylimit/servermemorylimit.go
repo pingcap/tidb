@@ -15,12 +15,26 @@
 package servermemorylimit
 
 import (
+	"fmt"
 	"runtime"
+	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/memory"
+	atomicutil "go.uber.org/atomic"
+)
+
+// Process global Observation indicators for memory limit.
+var (
+	MemoryMaxUsed                 = atomicutil.NewUint64(0)
+	SessionKillLast               = atomicutil.NewTime(time.Time{})
+	SessionKillTotal              = atomicutil.NewInt64(0)
+	IsKilling                     = atomicutil.NewBool(false)
+	GlobalMemoryOpsHistoryManager = &memoryOpsHistoryManager{}
 )
 
 // Handle is the handler for server memory limit.
@@ -76,6 +90,7 @@ func killSessIfNeeded(s *sessionToBeKilled, bt uint64, sm util.SessionManager) {
 			}
 		}
 		s.isKilling = false
+		IsKilling.Store(false)
 		//nolint: all_revive,revive
 		runtime.GC()
 	}
@@ -84,6 +99,9 @@ func killSessIfNeeded(s *sessionToBeKilled, bt uint64, sm util.SessionManager) {
 		return
 	}
 	instanceStats := memory.ReadMemStats()
+	if instanceStats.HeapInuse > MemoryMaxUsed.Load() {
+		MemoryMaxUsed.Store(instanceStats.HeapInuse)
+	}
 	if instanceStats.HeapInuse > bt {
 		t := memory.MemUsageTop1Tracker.Load()
 		if t != nil {
@@ -92,7 +110,83 @@ func killSessIfNeeded(s *sessionToBeKilled, bt uint64, sm util.SessionManager) {
 				s.sqlStartTime = info.Time
 				s.isKilling = true
 				t.NeedKill.Store(true)
+
+				killTime := time.Now()
+				SessionKillTotal.Add(1)
+				SessionKillLast.Store(killTime)
+				IsKilling.Store(true)
+				GlobalMemoryOpsHistoryManager.recordOne(info, killTime, bt, instanceStats.HeapInuse)
 			}
 		}
 	}
+}
+
+type memoryOpsHistoryManager struct {
+	mu      sync.Mutex
+	infos   []memoryOpsHistory
+	offsets int
+}
+
+type memoryOpsHistory struct {
+	killTime         time.Time
+	memoryLimit      uint64
+	memoryCurrent    uint64
+	processInfoDatum []types.Datum // id,user,host,db,command,time,state,info,digest,mem,disk,txnStart
+}
+
+func (m *memoryOpsHistoryManager) init() {
+	m.infos = make([]memoryOpsHistory, 50)
+	m.offsets = 0
+}
+
+func (m *memoryOpsHistoryManager) recordOne(info *util.ProcessInfo, killTime time.Time, memoryLimit uint64, memoryCurrent uint64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	op := memoryOpsHistory{killTime: killTime, memoryLimit: memoryLimit, memoryCurrent: memoryCurrent, processInfoDatum: types.MakeDatums(info.ToRow(time.UTC)...)}
+	sqlInfo := op.processInfoDatum[7]
+	sqlInfo.SetString(fmt.Sprintf("%.256v", sqlInfo.GetString()), mysql.DefaultCollationName) // Truncated
+	// Only record the last 50 history ops
+	m.infos[m.offsets] = op
+	m.offsets++
+	if m.offsets >= 50 {
+		m.offsets = 0
+	}
+}
+
+func (m *memoryOpsHistoryManager) GetRows() [][]types.Datum {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rows := make([][]types.Datum, 0, len(m.infos))
+	getRowFromInfo := func(info memoryOpsHistory) {
+		killTime := types.NewTime(types.FromGoTime(info.killTime), mysql.TypeDatetime, 0)
+		op := "SessionKill"
+		rows = append(rows, []types.Datum{
+			types.NewDatum(killTime),           // TIME
+			types.NewDatum(op),                 // OPS
+			types.NewDatum(info.memoryLimit),   // MEMORY_LIMIT
+			types.NewDatum(info.memoryCurrent), // MEMORY_CURRENT
+			info.processInfoDatum[0],           // PROCESSID
+			info.processInfoDatum[9],           // MEM
+			info.processInfoDatum[10],          // DISK
+			info.processInfoDatum[2],           // CLIENT
+			info.processInfoDatum[3],           // DB
+			info.processInfoDatum[1],           // USER
+			info.processInfoDatum[8],           // SQL_DIGEST
+			info.processInfoDatum[7],           // SQL_TEXT
+		})
+	}
+	var zeroTime = time.Time{}
+	for i := 0; i < len(m.infos); i++ {
+		pos := (m.offsets + i) % len(m.infos)
+		info := m.infos[pos]
+		if info.killTime.Equal(zeroTime) {
+			continue
+		}
+		getRowFromInfo(info)
+	}
+	return rows
+}
+
+func init() {
+	GlobalMemoryOpsHistoryManager.init()
 }
