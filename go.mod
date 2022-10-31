@@ -57,7 +57,6 @@ require (
 	github.com/kisielk/errcheck v1.6.2
 	github.com/klauspost/compress v1.15.9
 	github.com/kyoh86/exportloopref v0.1.8
-	github.com/labstack/gommon v0.3.0
 	github.com/mgechev/revive v1.2.4
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
 	github.com/nishanths/predeclared v0.2.2
