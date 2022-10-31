@@ -387,13 +387,13 @@ func (b *nullableBool) UnmarshalJSON(data []byte) error {
 }
 
 func NewAtomicFilepath(fp string) *AtomicFilepath {
-	return &AtomicFilepath{filepath: fp}
+	return &AtomicFilepath{filepath: fp, m: &sync.RWMutex{}}
 }
 
 // AtomicFilepath is a helper type for atomic operations on a filepath.
 type AtomicFilepath struct {
 	filepath string
-	m        sync.RWMutex
+	m        *sync.RWMutex
 }
 
 // Load reads the filepath thread-safely.
