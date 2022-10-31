@@ -615,3 +615,17 @@ func TestGrantDynamicPrivs(t *testing.T) {
 	tk.MustQuery("SELECT Grant_Priv FROM mysql.user WHERE `Host` = '%' AND `User` = 'dyn'").Check(testkit.Rows("Y"))
 	tk.MustQuery("SELECT WITH_GRANT_OPTION FROM mysql.global_grants WHERE `Host` = '%' AND `User` = 'dyn' AND Priv='CONNECTION_ADMIN'").Check(testkit.Rows("Y"))
 }
+
+func TestIssue38293(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.Session().GetSessionVars().User = &auth.UserIdentity{Username: "root", Hostname: "localhost"}
+	tk.MustExec("DROP USER IF EXISTS test")
+	tk.MustExec("CREATE USER test")
+	defer func() {
+		tk.MustExec("DROP USER test")
+	}()
+	tk.MustExec("GRANT SELECT ON `mysql`.`db` TO test")
+	tk.MustQuery("SELECT `Grantor` FROM `mysql`.`tables_priv` WHERE User = 'test'").Check(testkit.Rows("root@localhost"))
+}
