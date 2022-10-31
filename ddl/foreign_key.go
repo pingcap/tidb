@@ -655,6 +655,16 @@ func checkAddForeignKeyValidInOwner(d *ddlCtx, t *meta.Meta, schema string, tbIn
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// check foreign key columns should have index.
+	if len(fk.Cols) == 1 && tbInfo.PKIsHandle {
+		pkCol := tbInfo.GetPkColInfo()
+		if pkCol != nil && pkCol.Name.L == fk.Cols[0].L {
+			return nil
+		}
+	}
+	if model.FindIndexByColumns(tbInfo, fk.Cols...) == nil {
+		return errors.Errorf("Failed to add the foreign key constraint. Missing index for '%s' foreign key columns in the table '%s'", fk.Name, tbInfo.Name)
+	}
 	return nil
 }
 

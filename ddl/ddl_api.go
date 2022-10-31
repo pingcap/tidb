@@ -6277,7 +6277,7 @@ func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName mode
 		return err
 	}
 	if model.FindIndexByColumns(t.Meta(), fkInfo.Cols...) == nil {
-		// should add index for fk cols
+		// Need to auto create index for fk cols
 		if ctx.GetSessionVars().StmtCtx.MultiSchemaInfo == nil {
 			ctx.GetSessionVars().StmtCtx.MultiSchemaInfo = model.NewMultiSchemaInfo()
 		}

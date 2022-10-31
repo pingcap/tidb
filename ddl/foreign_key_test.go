@@ -15,9 +15,9 @@
 package ddl_test
 
 import (
+	"bytes"
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/infoschema"
 	"strings"
 	"sync"
 	"testing"
@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
@@ -1434,7 +1435,15 @@ func TestAddForeignKey(t *testing.T) {
 	require.Equal(t, model.StatePublic, tbl2Info.Indices[0].State)
 	tk.MustQuery("select b from t2 use index(fk)").Check(testkit.Rows())
 	res := tk.MustQuery("explain select b from t2 use index(fk)")
-	require.Regexp(t, ".*IndexReader.*", res.Rows()[0][0])
+	plan := bytes.NewBuffer(nil)
+	rows := res.Rows()
+	for _, row := range rows {
+		for _, c := range row {
+			plan.WriteString(c.(string))
+			plan.WriteString(" ")
+		}
+	}
+	require.Regexp(t, ".*IndexReader.*index:fk.*", plan.String())
 }
 
 func TestAddForeignKey2(t *testing.T) {
