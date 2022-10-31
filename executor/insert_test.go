@@ -595,6 +595,27 @@ func TestInsertWithAutoidSchema(t *testing.T) {
 	// test for inserting multiple values
 	tk.MustExec(`create table t8(id int primary key auto_increment, n int);`)
 
+	testInsertWithAutoidSchema(t, tk)
+}
+
+func TestInsertWithAutoidSchemaCache(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t1(id int primary key auto_increment, n int) AUTO_ID_CACHE 1;`)
+	tk.MustExec(`create table t2(id int unsigned primary key auto_increment, n int) AUTO_ID_CACHE 1;`)
+	tk.MustExec(`create table t3(id tinyint primary key auto_increment, n int) AUTO_ID_CACHE 1;`)
+	tk.MustExec(`create table t4(id int primary key, n float auto_increment, key I_n(n)) AUTO_ID_CACHE 1;`)
+	tk.MustExec(`create table t5(id int primary key, n float unsigned auto_increment, key I_n(n)) AUTO_ID_CACHE 1;`)
+	tk.MustExec(`create table t6(id int primary key, n double auto_increment, key I_n(n)) AUTO_ID_CACHE 1;`)
+	tk.MustExec(`create table t7(id int primary key, n double unsigned auto_increment, key I_n(n)) AUTO_ID_CACHE 1;`)
+	// test for inserting multiple values
+	tk.MustExec(`create table t8(id int primary key auto_increment, n int);`)
+
+	testInsertWithAutoidSchema(t, tk)
+}
+
+func testInsertWithAutoidSchema(t *testing.T, tk *testkit.TestKit) {
 	tests := []struct {
 		insert string
 		query  string

@@ -6178,3 +6178,49 @@ func TestCompileOutOfMemoryQuota(t *testing.T) {
 	err := tk.ExecToErr("select t.a, t1.a from t use index(idx), t1 use index(idx) where t.a = t1.a")
 	require.Contains(t, err.Error(), "Out Of Memory Quota!")
 }
+
+func TestAutoIncrementMinMax(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	cases := []struct {
+		t      string
+		s      string
+		vals   []int64
+		expect [][]interface{}
+	}{
+		{"tinyint", "signed", []int64{-128, 0, 127}, testkit.Rows("-128", "1", "2", "3", "127")},
+		{"tinyint", "unsigned", []int64{0, 127, 255}, testkit.Rows("1", "2", "127", "128", "255")},
+		{"smallint", "signed", []int64{-32768, 0, 32767}, testkit.Rows("-32768", "1", "2", "3", "32767")},
+		{"smallint", "unsigned", []int64{0, 32767, 65535}, testkit.Rows("1", "2", "32767", "32768", "65535")},
+		{"mediumint", "signed", []int64{-8388608, 0, 8388607}, testkit.Rows("-8388608", "1", "2", "3", "8388607")},
+		{"mediumint", "unsigned", []int64{0, 8388607, 16777215}, testkit.Rows("1", "2", "8388607", "8388608", "16777215")},
+		{"integer", "signed", []int64{-2147483648, 0, 2147483647}, testkit.Rows("-2147483648", "1", "2", "3", "2147483647")},
+		{"integer", "unsigned", []int64{0, 2147483647, 4294967295}, testkit.Rows("1", "2", "2147483647", "2147483648", "4294967295")},
+		{"bigint", "signed", []int64{-9223372036854775808, 0, 9223372036854775807}, testkit.Rows("-9223372036854775808", "1", "2", "3", "9223372036854775807")},
+		{"bigint", "unsigned", []int64{0, 9223372036854775807}, testkit.Rows("1", "2", "9223372036854775807", "9223372036854775808")},
+	}
+
+	for _, option := range []string{"", "auto_id_cache 1", "auto_id_cache 100"} {
+		for idx, c := range cases {
+			sql := fmt.Sprintf("create table t%d (a %s %s key auto_increment) %s", idx, c.t, c.s, option)
+			tk.MustExec(sql)
+
+			for _, val := range c.vals {
+				tk.MustExec(fmt.Sprintf("insert into t%d values (%d)", idx, val))
+				tk.Exec(fmt.Sprintf("insert into t%d values ()", idx)) // ignore error
+			}
+
+			tk.MustQuery(fmt.Sprintf("select * from t%d order by a", idx)).Check(c.expect)
+
+			tk.MustExec(fmt.Sprintf("drop table t%d", idx))
+		}
+	}
+
+	tk.MustExec("create table t10 (a integer key auto_increment) auto_id_cache 1")
+	err := tk.ExecToErr("insert into t10 values (2147483648)")
+	require.Error(t, err)
+	err = tk.ExecToErr("insert into t10 values (-2147483649)")
+	require.Error(t, err)
+}
