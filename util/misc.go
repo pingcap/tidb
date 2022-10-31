@@ -60,7 +60,8 @@ const (
 )
 
 var (
-	CertFile, KeyFile *os.File
+	KeyFile  *os.File
+	CertFile *os.File
 )
 
 // RunWithRetry will run the f with backoff and retry.
