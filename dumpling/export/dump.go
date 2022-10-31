@@ -298,7 +298,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 	} else {
 		d.dumpSQL(writerCtx, baseConn, taskIn)
 	}
-
+	d.metrics.progressReady.Store(true)
 	close(taskIn)
 	_ = baseConn.DBConn.Close()
 	if err := wg.Wait(); err != nil {

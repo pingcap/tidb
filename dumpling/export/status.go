@@ -41,7 +41,7 @@ func (d *Dumper) runLogProgress(tctx *tcontext.Context) {
 				zap.String("finished size", units.HumanSize(s.FinishedBytes)),
 				zap.Float64("average speed(MiB/s)", (s.FinishedBytes-lastBytes)/(1048576e-9*nanoseconds)),
 				zap.Float64("recent speed bps", s.CurrentSpeedBPS),
-				zap.String("chunks progress", s.progress),
+				zap.String("chunks progress", s.Progress),
 			)
 
 			lastCheckpoint = time.Now()
@@ -58,7 +58,7 @@ type DumpStatus struct {
 	EstimateTotalRows float64
 	TotalTables       int64
 	CurrentSpeedBPS   float64
-	progress          string
+	Progress          string
 }
 
 // GetStatus returns the status of dumping by reading metrics.
@@ -73,10 +73,10 @@ func (d *Dumper) GetStatus() *DumpStatus {
 	if d.metrics.progressReady.Load() {
 		progress := float64(d.metrics.completedChunks.Load()) / float64(d.metrics.totalChunks.Load())
 		if progress > 1 {
-			ret.progress = "100 %"
+			ret.Progress = "100 %"
 			d.L().Warn("completedChunks is greater than totalChunks", zap.Int64("completedChunks", d.metrics.completedChunks.Load()), zap.Int64("totalChunks", d.metrics.totalChunks.Load()))
 		} else {
-			ret.progress = fmt.Sprintf("%5.2f %%", progress*100)
+			ret.Progress = fmt.Sprintf("%5.2f %%", progress*100)
 		}
 	}
 	return ret
