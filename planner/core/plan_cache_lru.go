@@ -73,7 +73,7 @@ func NewLRUPlanCache(capacity uint, guard float64, quota uint64,
 		logutil.BgLogger().Info("capacity of LRU cache is less than 1, will use default value(100) init cache")
 	}
 	m := memory.NewTracker(memory.LabelForPreparedPlanCache, -1)
-	m.AttachTo(InstancePlanCacheMemoryTracker)
+	m.AttachTo(planCacheInstanceMemoryTracker)
 	return &LRUPlanCache{
 		capacity:       capacity,
 		size:           0,
@@ -276,5 +276,5 @@ func PickPlanFromBucket(bucket map[*list.Element]struct{}, paramTypes []*types.F
 
 // updateMonitor update the memory usage for show in grafana
 func updateMonitorMetric() {
-	metrics.PlanCacheInstanceMemoryUsage.WithLabelValues("instance").Set(float64(InstancePlanCacheMemoryTracker.BytesConsumed()))
+	metrics.PlanCacheInstanceMemoryUsage.WithLabelValues("instance").Set(float64(planCacheInstanceMemoryTracker.BytesConsumed()))
 }

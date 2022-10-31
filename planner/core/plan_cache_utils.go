@@ -49,14 +49,15 @@ var (
 	// ExtractSelectAndNormalizeDigest extract the select statement and normalize it.
 	ExtractSelectAndNormalizeDigest func(stmtNode ast.StmtNode, specifiledDB string) (ast.StmtNode, string, string, error)
 
-	// InstancePlanCacheMemoryTracker is the ancestor of all prepared plan cache`s memory tracker
-	InstancePlanCacheMemoryTracker *memory.Tracker
+	// planCacheInstanceMemoryTracker is the ancestor of all prepared plan cache`s memory tracker
+	planCacheInstanceMemoryTracker *memory.Tracker
 
+	// planCacheInstancePlanNumCounter record the plan number of plan cache in an instance
 	planCacheInstancePlanNumCounter = metrics.PlanCacheInstancePlanNumCounter.WithLabelValues("plan_num")
 )
 
 func init() {
-	InstancePlanCacheMemoryTracker = memory.NewTracker(memory.LabelForInstancePlanCacheMemory, -1)
+	planCacheInstanceMemoryTracker = memory.NewTracker(memory.LabelForPlanCacheInstanceMemory, -1)
 }
 
 type paramMarkerExtractor struct {
