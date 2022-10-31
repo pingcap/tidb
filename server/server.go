@@ -300,6 +300,20 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		}
 	}
 
+	// Automatically reload JWKS for tidb_auth_token.
+	if len(s.cfg.Security.AuthTokenJWKS) > 0 {
+
+		timeInterval, err := time.ParseDuration(s.cfg.Security.AuthTokenRefreshInterval)
+		if err != nil {
+			return nil, err
+		}
+		go func() {
+			for range time.Tick(timeInterval) {
+
+			}
+		}()
+	}
+
 	// Init rand seed for randomBuf()
 	rand.Seed(time.Now().UTC().UnixNano())
 

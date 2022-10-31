@@ -546,6 +546,10 @@ type Security struct {
 	MinTLSVersion   string `toml:"tls-version" json:"tls-version"`
 	RSAKeySize      int    `toml:"rsa-key-size" json:"rsa-key-size"`
 	SecureBootstrap bool   `toml:"secure-bootstrap" json:"secure-bootstrap"`
+	// The path of thw JWKS for tidb_auth_token authentication
+	AuthTokenJWKS string `toml:"auth-token-jwks" json:"auth-token-jwks"`
+	// The refresh time interval of JWKS
+	AuthTokenRefreshInterval string `toml:"auth-token-refresh-interval" json:"auth-token-refresh-interval"`
 }
 
 // The ErrConfigValidationFailed error is used so that external callers can do a type assertion
@@ -959,6 +963,8 @@ var defaultConf = Config{
 		EnableSEM:                   false,
 		AutoTLS:                     false,
 		RSAKeySize:                  4096,
+		AuthTokenJWKS:               "",
+		AuthTokenRefreshInterval:    "1h",
 	},
 	DeprecateIntegerDisplayWidth:         false,
 	EnableEnumLengthLimit:                true,
