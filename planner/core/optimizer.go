@@ -295,7 +295,10 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 	if err != nil {
 		return nil, 0, err
 	}
-	finalPlan := postOptimize(sctx, physical)
+	finalPlan, err := postOptimize(sctx, physical)
+	if err != nil {
+		return nil, 0, err
+	}
 
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerCETrace {
 		refineCETrace(sctx)
@@ -372,7 +375,7 @@ func mergeContinuousSelections(p PhysicalPlan) {
 	}
 }
 
-func postOptimize(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {
+func postOptimize(sctx sessionctx.Context, plan PhysicalPlan) (PhysicalPlan, error) {
 	// some cases from update optimize will require avoiding projection elimination.
 	// see comments ahead of call of DoOptimize in function of buildUpdate().
 	prunePhysicalColumns(sctx, plan)
@@ -384,7 +387,10 @@ func postOptimize(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {
 	handleFineGrainedShuffle(sctx, plan)
 	checkPlanCacheable(sctx, plan)
 	propagateProbeParents(plan, nil)
-	return plan
+	if err := plan.ResolveIndices(); err != nil {
+		return nil, err
+	}
+	return plan, nil
 }
 
 // prunePhysicalColumns currently only work for MPP(HashJoin<-Exchange).
@@ -443,22 +449,29 @@ func prunePhysicalColumnsInternal(sctx sessionctx.Context, plan PhysicalPlan, pa
 	case *PhysicalExchangeReceiver:
 		// Currently, prune columns only when parent node is HashJoin
 		if meaningFulParentUsedCols {
-			used := expression.GetUsedList(parentUsedCols, x.Schema())
-			needPrune := false
-			usedExprs := make([]expression.Expression, len(x.Schema().Columns))
-			prunedSchema := x.Schema().Clone()
-			for i := len(used) - 1; i >= 0; i-- {
-				usedExprs[i] = x.Schema().Columns[i]
-				if !used[i] {
-					needPrune = true
-					usedExprs = append(usedExprs[:i], usedExprs[i+1:]...)
-					prunedSchema.Columns = append(prunedSchema.Columns[:i], prunedSchema.Columns[i+1:]...)
-				}
-			}
+			switch y := x.children[0].(type) {
+			case *PhysicalExchangeSender:
+				used := expression.GetUsedList(parentUsedCols, y.Schema())
 
-			if needPrune {
-				switch y := x.children[0].(type) {
-				case *PhysicalExchangeSender:
+				var exprCols []*expression.Column
+				for _, mppCol := range y.HashCols {
+					exprCols = append(exprCols, mppCol.Col)
+				}
+				exprUsed := expression.GetUsedList(exprCols, y.Schema())
+
+				needPrune := false
+				usedExprs := make([]expression.Expression, len(y.Schema().Columns))
+				prunedSchema := y.Schema().Clone()
+				for i := len(used) - 1; i >= 0; i-- {
+					usedExprs[i] = x.Schema().Columns[i]
+					if !used[i] && !exprUsed[i] {
+						needPrune = true
+						usedExprs = append(usedExprs[:i], usedExprs[i+1:]...)
+						prunedSchema.Columns = append(prunedSchema.Columns[:i], prunedSchema.Columns[i+1:]...)
+					}
+				}
+
+				if needPrune {
 					ch := y.children[0]
 					proj := PhysicalProjection{
 						Exprs: usedExprs,
