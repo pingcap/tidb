@@ -359,10 +359,6 @@ func TestInstanceScopedVars(t *testing.T) {
 	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), TiDBRCReadCheckTS)
 	require.NoError(t, err)
 	require.Equal(t, BoolToOnOff(EnableRCReadCheckTS.Load()), val)
-
-	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), TiDBConstraintCheckInPlacePessimistic)
-	require.NoError(t, err)
-	require.Equal(t, BoolToOnOff(ConstraintCheckInPlacePessimistic.Load()), val)
 }
 
 func TestSecureAuth(t *testing.T) {

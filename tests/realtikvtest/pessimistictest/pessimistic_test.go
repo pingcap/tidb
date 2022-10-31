@@ -3308,27 +3308,6 @@ func TestLazyUniquenessCheck(t *testing.T) {
 	tk.MustExec("admin check table t5")
 }
 
-func TestLazyUniquenessCheckInInternalSessions(t *testing.T) {
-	store := realtikvtest.CreateMockStoreAndSetup(t)
-	tk := testkit.NewTestKit(t, store)
-	tk2 := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk2.MustExec("use test")
-	tk.MustExec("create table t(id int primary key, v int)")
-	tk.MustExec("set @@tidb_constraint_check_in_place_pessimistic=0")
-
-	// TiKV will perform a constraint check before reporting assertion failure.
-	// And constraint violation precedes assertion failure.
-	if !*realtikvtest.WithRealTiKV {
-		tk.MustExec("set @@tidb_txn_assertion_level=off")
-	}
-
-	// get_lock is implemented by an internal session, we assert it should not be affected by the setting of the variable
-	tk.MustQuery("select get_lock('a', 0)").Check(testkit.Rows("1"))
-	tk2.MustQuery("select get_lock('a', 0)").Check(testkit.Rows("0"))
-	tk.MustQuery("select release_lock('a')").Check(testkit.Rows("1"))
-}
-
 func TestLazyUniquenessCheckForInsertIgnore(t *testing.T) {
 	// lazy uniqueness check doesn't affect INSERT IGNORE
 	store := realtikvtest.CreateMockStoreAndSetup(t)

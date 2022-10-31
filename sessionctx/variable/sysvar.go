@@ -470,14 +470,6 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return BoolToOnOff(EnableRCReadCheckTS.Load()), nil
 	}},
-	{Scope: ScopeInstance, Name: TiDBConstraintCheckInPlacePessimistic, Value: BoolToOnOff(DefTiDBConstraintCheckInPlacePessimistic), Type: TypeBool,
-		SetGlobal: func(_ context.Context, _ *SessionVars, val string) error {
-			ConstraintCheckInPlacePessimistic.Store(TiDBOptOn(val))
-			return nil
-		}, GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
-			return BoolToOnOff(ConstraintCheckInPlacePessimistic.Load()), nil
-		},
-	},
 
 	/* The system variables below have GLOBAL scope  */
 	{Scope: ScopeGlobal, Name: MaxPreparedStmtCount, Value: strconv.FormatInt(DefMaxPreparedStmtCount, 10), Type: TypeInt, MinValue: -1, MaxValue: 1048576},
@@ -1930,6 +1922,14 @@ var defaultSysVars = []*SysVar{
 		DDLDiskQuota.Store(TidbOptUint64(val, DefTiDBDDLDiskQuota))
 		return nil
 	}},
+	{Scope: ScopeSession, Name: TiDBConstraintCheckInPlacePessimistic, Value: BoolToOnOff(DefTiDBConstraintCheckInPlacePessimistic), Type: TypeBool,
+		SetSession: func(s *SessionVars, val string) error {
+			s.ConstraintCheckInPlacePessimistic = TiDBOptOn(val)
+			if !s.ConstraintCheckInPlacePessimistic {
+				metrics.LazyPessimisticUniqueCheckSetCount.Inc()
+			}
+			return nil
+		}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableTiFlashReadForWriteStmt, Value: BoolToOnOff(DefTiDBEnableTiFlashReadForWriteStmt), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableTiFlashReadForWriteStmt = TiDBOptOn(val)
 		return nil
