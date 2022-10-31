@@ -599,6 +599,7 @@ func TestNonExistTableIllegalGrant(t *testing.T) {
 func TestIssue38293(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.Session().GetSessionVars().User = &auth.UserIdentity{Username: "root", Hostname: "localhost"}
 	tk.MustExec("DROP USER IF EXISTS test")
