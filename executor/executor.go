@@ -560,7 +560,7 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 	req.AppendInt64(0, job.ID)
 	req.AppendString(1, schemaName)
 	req.AppendString(2, tableName)
-	req.AppendString(3, job.Type.String())
+	req.AppendString(3, job.Type.String()+showAddIdxReorgTp(job))
 	req.AppendString(4, job.SchemaState.String())
 	req.AppendInt64(5, job.SchemaID)
 	req.AppendInt64(6, job.TableID)
@@ -593,6 +593,16 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 			req.AppendString(11, subJob.State.String())
 		}
 	}
+}
+
+func showAddIdxReorgTp(job *model.Job) string {
+	if job.Type == model.ActionAddIndex || job.Type == model.ActionAddPrimaryKey {
+		tp := job.ReorgMeta.ReorgTp.String()
+		if len(tp) > 0 {
+			return " /* " + tp + " */"
+		}
+	}
+	return ""
 }
 
 func ts2Time(timestamp uint64, loc *time.Location) types.Time {

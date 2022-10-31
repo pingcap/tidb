@@ -1440,6 +1440,7 @@ type ConnectionInfo struct {
 	ClientIP          string
 	ClientPort        string
 	ServerID          int
+	ServerIP          string
 	ServerPort        int
 	Duration          float64
 	User              string

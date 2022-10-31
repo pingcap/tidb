@@ -1139,6 +1139,9 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		if model.ReferOptionType(fk.OnUpdate) != 0 {
 			buf.WriteString(fmt.Sprintf(" ON UPDATE %s", model.ReferOptionType(fk.OnUpdate).String()))
 		}
+		if fk.Version < model.FKVersion1 {
+			buf.WriteString(" /*T![FOREIGN KEY] INVALID */")
+		}
 	}
 
 	buf.WriteString("\n")
@@ -1504,7 +1507,7 @@ func (e *ShowExec) fetchShowCollation() error {
 	return nil
 }
 
-// fetchShowCreateUser composes show create create user result.
+// fetchShowCreateUser composes 'show create user' result.
 func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 	checker := privilege.GetPrivilegeManager(e.ctx)
 	if checker == nil {
@@ -1528,7 +1531,7 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 
-	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT plugin, Account_locked, JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.metadata'))
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT plugin, Account_locked, JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.metadata')), Token_issuer
 		FROM %n.%n WHERE User=%? AND Host=%?`,
 		mysql.SystemDB, mysql.UserTable, userName, strings.ToLower(hostName))
 	if err != nil {
@@ -1557,6 +1560,11 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 		userAttributes = " ATTRIBUTE " + userAttributes
 	}
 
+	tokenIssuer := rows[0].GetString(3)
+	if len(tokenIssuer) > 0 {
+		tokenIssuer = " token_issuer " + tokenIssuer
+	}
+
 	rows, _, err = exec.ExecRestrictedSQL(ctx, nil, `SELECT Priv FROM %n.%n WHERE User=%? AND Host=%?`, mysql.SystemDB, mysql.GlobalPrivTable, userName, hostName)
 	if err != nil {
 		return errors.Trace(err)
@@ -1580,8 +1588,8 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 	}
 
 	// FIXME: the returned string is not escaped safely
-	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH '%s'%s REQUIRE %s PASSWORD EXPIRE DEFAULT ACCOUNT %s%s",
-		e.User.Username, e.User.Hostname, authplugin, authStr, require, accountLocked, userAttributes)
+	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH '%s'%s REQUIRE %s%s PASSWORD EXPIRE DEFAULT ACCOUNT %s%s",
+		e.User.Username, e.User.Hostname, authplugin, authStr, require, tokenIssuer, accountLocked, userAttributes)
 	e.appendRow([]interface{}{showStr})
 	return nil
 }
