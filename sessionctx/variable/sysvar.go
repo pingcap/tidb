@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -472,17 +473,28 @@ var defaultSysVars = []*SysVar{
 		return BoolToOnOff(EnableRCReadCheckTS.Load()), nil
 	}},
 	{Scope: ScopeInstance, Name: TmpDir, Value: config.GetGlobalConfig().Instance.TmpDir.Load(), Type: TypeStr, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-		if err := config.GetGlobalConfig().RenameTmpDir(val); err != nil {
+		val = config.EncodeTmpDir(val,
+			config.GetGlobalConfig().Host,
+			config.GetGlobalConfig().Status.StatusHost,
+			config.GetGlobalConfig().Port,
+			config.GetGlobalConfig().Status.StatusPort,
+		)
+		if _, err := os.Stat(val); err != nil && !os.IsNotExist(err) {
 			return err
 		}
-		val = config.GetGlobalConfig().Instance.TmpDir.Load()
+		parent := filepath.Dir(val)
+		if _, err := os.Stat(parent); os.IsNotExist(err) {
+			if err = os.MkdirAll(parent, 0750); err != nil {
+				return err
+			}
+		}
+		if err := config.GetGlobalConfig().Instance.TmpDir.Rename(val); err != nil {
+			return err
+		}
 		config.CheckTempStorageQuota()
 		return nil
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return config.GetGlobalConfig().Instance.TmpDir.Load(), nil
-	}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-		_, err := os.Stat(normalizedValue)
-		return normalizedValue, err
 	}},
 	{Scope: ScopeInstance, Name: TiDBTmpStorageQuota, Value: strconv.FormatInt(config.GetGlobalConfig().Instance.TmpStorageQuota, 10), Type: TypeInt, MinValue: -1, AllowAutoValue: true, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		newVal, err := strconv.ParseInt(val, 10, 64)

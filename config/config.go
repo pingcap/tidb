@@ -101,7 +101,7 @@ var (
 	// checkBeforeDropLDFlag is a go build flag.
 	checkBeforeDropLDFlag = "None"
 	// DefTempStorageDirName is the default temporary storage dir name by base64 encoding a string `port/statusPort`
-	DefTempStorageDirName = encodeDefTempStorageDir(os.TempDir(), DefHost, DefStatusHost, DefPort, DefStatusPort)
+	DefTempStorageDirName = EncodeTmpDir(os.TempDir(), DefHost, DefStatusHost, DefPort, DefStatusPort)
 )
 
 // InstanceConfigSection indicates a config session that has options moved to [instance] session.
@@ -282,15 +282,10 @@ type Config struct {
 // and the `tmpdir` was not specified in the conf.toml or was specified the same as the default value.
 func (c *Config) UpdateTmpDir() {
 	if c.Instance.TmpDir.Load() == DefTempStorageDirName {
-		c.Instance.TmpDir.Store(encodeDefTempStorageDir(os.TempDir(), c.Host, c.Status.StatusHost, c.Port, c.Status.StatusPort))
+		c.Instance.TmpDir.Store(EncodeTmpDir(os.TempDir(), c.Host, c.Status.StatusHost, c.Port, c.Status.StatusPort))
 	} else {
-		c.Instance.TmpDir.Store(encodeDefTempStorageDir(c.Instance.TmpDir.Load(), c.Host, c.Status.StatusHost, c.Port, c.Status.StatusPort))
+		c.Instance.TmpDir.Store(EncodeTmpDir(c.Instance.TmpDir.Load(), c.Host, c.Status.StatusHost, c.Port, c.Status.StatusPort))
 	}
-}
-
-// RenameTmpDir is to rename the `TmpDir` thread-safely.
-func (c *Config) RenameTmpDir(prefix string) error {
-	return c.Instance.TmpDir.Rename(encodeDefTempStorageDir(prefix, c.Host, c.Status.StatusHost, c.Port, c.Status.StatusPort))
 }
 
 // GetTiKVConfig returns configuration options from tikvcfg
@@ -311,7 +306,7 @@ func (c *Config) GetTiKVConfig() *tikvcfg.Config {
 	}
 }
 
-func encodeDefTempStorageDir(tempDir string, host, statusHost string, port, statusPort uint) string {
+func EncodeTmpDir(tempDir string, host, statusHost string, port, statusPort uint) string {
 	dirName := base64.URLEncoding.EncodeToString([]byte(fmt.Sprintf("%v:%v/%v:%v", host, port, statusHost, statusPort)))
 	osUID := ""
 	currentUser, err := user.Current()
