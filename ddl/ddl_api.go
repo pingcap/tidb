@@ -6285,7 +6285,7 @@ func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName mode
 		for _, col := range fkInfo.Cols {
 			indexPartSpecifications = append(indexPartSpecifications, &ast.IndexPartSpecification{
 				Column: &ast.ColumnName{Name: col},
-				Length: -1,
+				Length: types.UnspecifiedLength, // Index prefixes on foreign key columns are not supported.
 			})
 		}
 		indexOption := &ast.IndexOption{}
