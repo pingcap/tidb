@@ -60,7 +60,9 @@ const (
 )
 
 var (
-	KeyFile  *os.File
+	// KeyFile is the key file for TLS.
+	KeyFile *os.File
+	// CertFile is the cert file for TLS.
 	CertFile *os.File
 )
 
