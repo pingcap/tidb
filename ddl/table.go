@@ -372,7 +372,7 @@ func onDropTableOrView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ er
 			}
 		}
 		if tblInfo.TiFlashReplica != nil {
-			e := infosync.DeleteTiFlashTableSyncProgress(tblInfo.ID)
+			e := infosync.DeleteTiFlashTableSyncProgress(tblInfo)
 			if e != nil {
 				logutil.BgLogger().Error("DeleteTiFlashTableSyncProgress fails", zap.Error(e))
 			}
@@ -391,25 +391,19 @@ func onDropTableOrView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ er
 	return ver, errors.Trace(err)
 }
 
-const (
-	recoverTableCheckFlagNone int64 = iota
-	recoverTableCheckFlagEnableGC
-	recoverTableCheckFlagDisableGC
-)
-
 func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
-	schemaID := job.SchemaID
-	tblInfo := &model.TableInfo{}
-	var autoIncID, autoRandID, dropJobID, recoverTableCheckFlag int64
-	var snapshotTS uint64
-	var oldTableName, oldSchemaName string
-	const checkFlagIndexInJobArgs = 4 // The index of `recoverTableCheckFlag` in job arg list.
-	if err = job.DecodeArgs(tblInfo, &autoIncID, &dropJobID, &snapshotTS, &recoverTableCheckFlag, &autoRandID, &oldSchemaName, &oldTableName); err != nil {
+	var (
+		recoverInfo           *RecoverInfo
+		recoverTableCheckFlag int64
+	)
+	if err = job.DecodeArgs(&recoverInfo, &recoverTableCheckFlag); err != nil {
 		// Invalid arguments, cancel this job.
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
+	schemaID := recoverInfo.SchemaID
+	tblInfo := recoverInfo.TableInfo
 	// check GC and safe point
 	gcEnable, err := checkGCEnable(w)
 	if err != nil {
@@ -454,9 +448,9 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		// none -> write only
 		// check GC enable and update flag.
 		if gcEnable {
-			job.Args[checkFlagIndexInJobArgs] = recoverTableCheckFlagEnableGC
+			job.Args[checkFlagIndexInJobArgs] = recoverCheckFlagEnableGC
 		} else {
-			job.Args[checkFlagIndexInJobArgs] = recoverTableCheckFlagDisableGC
+			job.Args[checkFlagIndexInJobArgs] = recoverCheckFlagDisableGC
 		}
 
 		// Clear all placement when recover
@@ -479,56 +473,22 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 			}
 		}
 		// check GC safe point
-		err = checkSafePoint(w, snapshotTS)
+		err = checkSafePoint(w, recoverInfo.SnapshotTS)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-		// Remove dropped table DDL job from gc_delete_range table.
-		var tids []int64
-		if tblInfo.GetPartitionInfo() != nil {
-			tids = getPartitionIDs(tblInfo)
-		} else {
-			tids = []int64{tblInfo.ID}
-		}
-
-		tableRuleID, partRuleIDs, oldRuleIDs, oldRules, err := getOldLabelRules(tblInfo, oldSchemaName, oldTableName)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Wrapf(err, "failed to get old label rules from PD")
-		}
-
-		err = w.delRangeManager.removeFromGCDeleteRange(w.ctx, dropJobID)
+		ver, err = w.recoverTable(t, job, recoverInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-
 		tableInfo := tblInfo.Clone()
 		tableInfo.State = model.StatePublic
 		tableInfo.UpdateTS = t.StartTS
-		err = t.CreateTableAndSetAutoID(schemaID, tableInfo, autoIncID, autoRandID)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-
-		failpoint.Inject("mockRecoverTableCommitErr", func(val failpoint.Value) {
-			if val.(bool) && atomic.CompareAndSwapUint32(&mockRecoverTableCommitErrOnce, 0, 1) {
-				_ = failpoint.Enable(`tikvclient/mockCommitErrorOpt`, "return(true)")
-			}
-		})
-
-		err = updateLabelRules(job, tblInfo, oldRules, tableRuleID, partRuleIDs, oldRuleIDs, tblInfo.ID)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Wrapf(err, "failed to update the label rule to PD")
-		}
-
-		job.CtxVars = []interface{}{tids}
 		ver, err = updateVersionAndTableInfo(d, t, job, tableInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-
 		tblInfo.State = model.StatePublic
 		tblInfo.UpdateTS = t.StartTS
 		// Finish this job.
@@ -536,6 +496,47 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 	default:
 		return ver, dbterror.ErrInvalidDDLState.GenWithStackByArgs("table", tblInfo.State)
 	}
+	return ver, nil
+}
+
+func (w *worker) recoverTable(t *meta.Meta, job *model.Job, recoverInfo *RecoverInfo) (ver int64, err error) {
+	var tids []int64
+	if recoverInfo.TableInfo.GetPartitionInfo() != nil {
+		tids = getPartitionIDs(recoverInfo.TableInfo)
+		tids = append(tids, recoverInfo.TableInfo.ID)
+	} else {
+		tids = []int64{recoverInfo.TableInfo.ID}
+	}
+	tableRuleID, partRuleIDs, oldRuleIDs, oldRules, err := getOldLabelRules(recoverInfo.TableInfo, recoverInfo.OldSchemaName, recoverInfo.OldTableName)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Wrapf(err, "failed to get old label rules from PD")
+	}
+	// Remove dropped table DDL job from gc_delete_range table.
+	err = w.delRangeManager.removeFromGCDeleteRange(w.ctx, recoverInfo.DropJobID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	tableInfo := recoverInfo.TableInfo.Clone()
+	tableInfo.State = model.StatePublic
+	tableInfo.UpdateTS = t.StartTS
+	err = t.CreateTableAndSetAutoID(recoverInfo.SchemaID, tableInfo, recoverInfo.AutoIDs.RowID, recoverInfo.AutoIDs.RandomID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	failpoint.Inject("mockRecoverTableCommitErr", func(val failpoint.Value) {
+		if val.(bool) && atomic.CompareAndSwapUint32(&mockRecoverTableCommitErrOnce, 0, 1) {
+			err = failpoint.Enable(`tikvclient/mockCommitErrorOpt`, "return(true)")
+		}
+	})
+
+	err = updateLabelRules(job, recoverInfo.TableInfo, oldRules, tableRuleID, partRuleIDs, oldRuleIDs, recoverInfo.TableInfo.ID)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Wrapf(err, "failed to update the label rule to PD")
+	}
+	job.CtxVars = []interface{}{tids}
 	return ver, nil
 }
 
@@ -708,6 +709,14 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		}
 	})
 
+	// Clear the TiFlash replica progress from ETCD.
+	if tblInfo.TiFlashReplica != nil {
+		e := infosync.DeleteTiFlashTableSyncProgress(tblInfo)
+		if e != nil {
+			logutil.BgLogger().Error("DeleteTiFlashTableSyncProgress fails", zap.Error(e))
+		}
+	}
+
 	var oldPartitionIDs []int64
 	if tblInfo.GetPartitionInfo() != nil {
 		oldPartitionIDs = getPartitionIDs(tblInfo)
@@ -747,10 +756,6 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 
 	// Clear the TiFlash replica available status.
 	if tblInfo.TiFlashReplica != nil {
-		e := infosync.DeleteTiFlashTableSyncProgress(tblInfo.ID)
-		if e != nil {
-			logutil.BgLogger().Error("DeleteTiFlashTableSyncProgress fails", zap.Error(e))
-		}
 		// Set PD rules for TiFlash
 		if pi := tblInfo.GetPartitionInfo(); pi != nil {
 			if e := infosync.ConfigureTiFlashPDForPartitions(true, &pi.Definitions, tblInfo.TiFlashReplica.Count, &tblInfo.TiFlashReplica.LocationLabels, tblInfo.ID); e != nil {
@@ -990,11 +995,12 @@ func onRenameTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	childTableInfos, err := adjustForeignKeyChildTableInfoAfterRenameTable(d, t, job, tblInfo, oldSchemaName, oldTableName, tableName, newSchemaID)
+	fkh := newForeignKeyHelper()
+	err = adjustForeignKeyChildTableInfoAfterRenameTable(d, t, job, &fkh, tblInfo, oldSchemaName, oldTableName, tableName, newSchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, true, childTableInfos...)
+	ver, err = updateSchemaVersion(d, t, job, fkh.getLoadedTables()...)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -1016,6 +1022,7 @@ func onRenameTables(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 
 	var tblInfos = make([]*model.TableInfo, 0, len(tableNames))
 	var err error
+	fkh := newForeignKeyHelper()
 	for i, oldSchemaID := range oldSchemaIDs {
 		job.TableID = tableIDs[i]
 		job.TableName = oldTableNames[i].L
@@ -1027,10 +1034,14 @@ func onRenameTables(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+		err = adjustForeignKeyChildTableInfoAfterRenameTable(d, t, job, &fkh, tblInfo, *oldSchemaNames[i], *oldTableNames[i], *tableNames[i], newSchemaIDs[i])
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
 		tblInfos = append(tblInfos, tblInfo)
 	}
 
-	ver, err = updateSchemaVersion(d, t, job)
+	ver, err = updateSchemaVersion(d, t, job, fkh.getLoadedTables()...)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -1089,34 +1100,31 @@ func checkAndRenameTables(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo
 	return ver, nil
 }
 
-func adjustForeignKeyChildTableInfoAfterRenameTable(d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, oldSchemaName, oldTableName, newTableName model.CIStr, newSchemaID int64) ([]schemaIDAndTableInfo, error) {
+func adjustForeignKeyChildTableInfoAfterRenameTable(d *ddlCtx, t *meta.Meta, job *model.Job, fkh *foreignKeyHelper, tblInfo *model.TableInfo, oldSchemaName, oldTableName, newTableName model.CIStr, newSchemaID int64) error {
 	if !variable.EnableForeignKey.Load() || newTableName.L == oldTableName.L {
-		return nil, nil
+		return nil
 	}
 	is, err := getAndCheckLatestInfoSchema(d, t)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	newDB, ok := is.SchemaByID(newSchemaID)
 	if !ok {
 		job.State = model.JobStateCancelled
-		return nil, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(fmt.Sprintf("schema-ID: %v", newSchemaID))
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(fmt.Sprintf("schema-ID: %v", newSchemaID))
 	}
-	infos := make(map[int64]schemaIDAndTableInfo)
-	fkh := newForeignKeyHelper(newDB.Name.L, newDB.ID, tblInfo)
 	referredFKs := is.GetTableReferredForeignKeys(oldSchemaName.L, oldTableName.L)
+	if len(referredFKs) == 0 {
+		return nil
+	}
+	fkh.addLoadedTable(oldSchemaName.L, oldTableName.L, newDB.ID, tblInfo)
 	for _, referredFK := range referredFKs {
-		var childTableInfo schemaIDAndTableInfo
-		if referredFK.ChildSchema.L == oldSchemaName.L && referredFK.ChildTable.L == oldTableName.L {
-			childTableInfo = schemaIDAndTableInfo{newDB.ID, tblInfo}
-		} else {
-			childTableInfo, err = fkh.getTableFromStorage(is, t, referredFK.ChildSchema, referredFK.ChildTable)
-			if err != nil {
-				if infoschema.ErrTableNotExists.Equal(err) || infoschema.ErrDatabaseNotExists.Equal(err) {
-					continue
-				}
-				return nil, err
+		childTableInfo, err := fkh.getTableFromStorage(is, t, referredFK.ChildSchema, referredFK.ChildTable)
+		if err != nil {
+			if infoschema.ErrTableNotExists.Equal(err) || infoschema.ErrDatabaseNotExists.Equal(err) {
+				continue
 			}
+			return err
 		}
 		childFKInfo := model.FindFKInfoByName(childTableInfo.tblInfo.ForeignKeys, referredFK.ChildFKName.L)
 		if childFKInfo == nil {
@@ -1124,16 +1132,14 @@ func adjustForeignKeyChildTableInfoAfterRenameTable(d *ddlCtx, t *meta.Meta, job
 		}
 		childFKInfo.RefSchema = newDB.Name
 		childFKInfo.RefTable = newTableName
-		infos[childTableInfo.tblInfo.ID] = childTableInfo
 	}
-	infoList := make([]schemaIDAndTableInfo, 0, len(fkh.loaded))
 	for _, info := range fkh.loaded {
-		if info.tblInfo.ID == tblInfo.ID {
-			continue
+		err = updateTable(t, info.schemaID, info.tblInfo)
+		if err != nil {
+			return err
 		}
-		infoList = append(infoList, info)
 	}
-	return infoList, nil
+	return nil
 }
 
 func onModifyTableComment(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -1269,6 +1275,12 @@ func (w *worker) onSetTableFlashReplica(d *ddlCtx, t *meta.Meta, job *model.Job)
 			Available:      available,
 		}
 	} else {
+		if tblInfo.TiFlashReplica != nil {
+			err = infosync.DeleteTiFlashTableSyncProgress(tblInfo)
+			if err != nil {
+				logutil.BgLogger().Error("DeleteTiFlashTableSyncProgress fails", zap.Error(err))
+			}
+		}
 		tblInfo.TiFlashReplica = nil
 	}
 
@@ -1446,23 +1458,24 @@ func updateVersionAndTableInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo 
 		}
 	}
 
-	if tblInfo.State == model.StatePublic {
-		tblInfo.UpdateTS = t.StartTS
-	}
-	err = t.UpdateTable(job.SchemaID, tblInfo)
+	err = updateTable(t, job.SchemaID, tblInfo)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
 	for _, info := range multiInfos {
-		if info.tblInfo.State == model.StatePublic {
-			info.tblInfo.UpdateTS = t.StartTS
-		}
-		err = t.UpdateTable(info.schemaID, info.tblInfo)
+		err = updateTable(t, info.schemaID, info.tblInfo)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
 	}
 	return ver, nil
+}
+
+func updateTable(t *meta.Meta, schemaID int64, tblInfo *model.TableInfo) error {
+	if tblInfo.State == model.StatePublic {
+		tblInfo.UpdateTS = t.StartTS
+	}
+	return t.UpdateTable(schemaID, tblInfo)
 }
 
 type schemaIDAndTableInfo struct {

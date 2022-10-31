@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "action.go",
         "meminfo.go",
+        "memstats.go",
         "tracker.go",
     ],
     importpath = "github.com/pingcap/tidb/util/memory",

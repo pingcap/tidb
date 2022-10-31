@@ -16,6 +16,7 @@ package core
 
 import (
 	"math"
+	"unsafe"
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -33,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/size"
 	"go.uber.org/zap"
 )
 
@@ -121,9 +123,12 @@ const (
 	preferRightAsHJProbe
 	preferMergeJoin
 	preferBCJoin
+	preferShuffleJoin
 	preferRewriteSemiJoin
 	preferHashAgg
 	preferStreamAgg
+	preferMPP1PhaseAgg
+	preferMPP2PhaseAgg
 )
 
 const (
@@ -1215,6 +1220,10 @@ type DataSource struct {
 	// contain unique index and the first field is tidb_shard(),
 	// such as (tidb_shard(a), a ...), the fields are more than 2
 	containExprPrefixUk bool
+
+	// colsRequiringFullLen is the columns that must be fetched with full length.
+	// It is used to decide whether single scan is enough when reading from an index.
+	colsRequiringFullLen []*expression.Column
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
@@ -1338,7 +1347,7 @@ func (ds *DataSource) Convert2Gathers() (gathers []LogicalPlan) {
 			path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, path.Index)
 			path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.schema.Columns, path.Index)
 			// If index columns can cover all of the needed columns, we can use a IndexGather + IndexScan.
-			if ds.isCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo) {
+			if ds.isSingleScan(path.FullIdxCols, path.FullIdxColLens) {
 				gathers = append(gathers, ds.buildIndexGather(path))
 			}
 			// TODO: If index columns can not cover the schema, use IndexLookUpGather.
@@ -1543,7 +1552,7 @@ func (ds *DataSource) deriveIndexPathStats(path *util.AccessPath, _ []expression
 		}
 	}
 	var indexFilters []expression.Expression
-	indexFilters, path.TableFilters = ds.splitIndexFilterConditions(path.TableFilters, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo)
+	indexFilters, path.TableFilters = ds.splitIndexFilterConditions(path.TableFilters, path.FullIdxCols, path.FullIdxColLens)
 	path.IndexFilters = append(path.IndexFilters, indexFilters...)
 	// If the `CountAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
 	// We prefer the `stats.RowCount` because it could use more stats info to calculate the selectivity.
@@ -1882,9 +1891,23 @@ type ShowContents struct {
 	CountWarningsOrErrors bool // Used for showing count(*) warnings | errors
 
 	Full        bool
-	IfNotExists bool // Used for `show create database if not exists`.
-	GlobalScope bool // Used by show variables.
-	Extended    bool // Used for `show extended columns from ...`
+	IfNotExists bool       // Used for `show create database if not exists`.
+	GlobalScope bool       // Used by show variables.
+	Extended    bool       // Used for `show extended columns from ...`
+	Limit       *ast.Limit // Used for limit Result Set row number.
+}
+
+const emptyShowContentsSize = int64(unsafe.Sizeof(ShowContents{}))
+
+// MemoryUsage return the memory usage of ShowContents
+func (s *ShowContents) MemoryUsage() (sum int64) {
+	if s == nil {
+		return
+	}
+
+	sum = emptyShowContentsSize + int64(len(s.DBName)) + s.Partition.MemoryUsage() + s.IndexName.MemoryUsage() +
+		int64(cap(s.Roles))*size.SizeOfPointer
+	return
 }
 
 // LogicalShow represents a show plan.
@@ -1926,12 +1949,38 @@ type CTEClass struct {
 	ColumnMap          map[string]*expression.Column
 }
 
+const emptyCTEClassSize = int64(unsafe.Sizeof(CTEClass{}))
+
+// MemoryUsage return the memory usage of CTEClass
+func (cc *CTEClass) MemoryUsage() (sum int64) {
+	if cc == nil {
+		return
+	}
+
+	sum = emptyCTEClassSize
+	if cc.seedPartPhysicalPlan != nil {
+		sum += cc.seedPartPhysicalPlan.MemoryUsage()
+	}
+	if cc.recursivePartPhysicalPlan != nil {
+		sum += cc.recursivePartPhysicalPlan.MemoryUsage()
+	}
+
+	for _, expr := range cc.pushDownPredicates {
+		sum += expr.MemoryUsage()
+	}
+	for key, val := range cc.ColumnMap {
+		sum += size.SizeOfString + int64(len(key)) + size.SizeOfPointer + val.MemoryUsage()
+	}
+	return
+}
+
 // LogicalCTE is for CTE.
 type LogicalCTE struct {
 	logicalSchemaProducer
 
 	cte            *CTEClass
 	cteAsName      model.CIStr
+	cteName        model.CIStr
 	seedStat       *property.StatsInfo
 	isOuterMostCTE bool
 }

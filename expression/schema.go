@@ -17,6 +17,8 @@ package expression
 import (
 	"strings"
 	"unsafe"
+
+	"github.com/pingcap/tidb/util/size"
 )
 
 // KeyInfo stores the columns of one unique key or primary key.
@@ -216,17 +218,19 @@ func (s *Schema) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = emptySchemaSize
+	sum = emptySchemaSize + int64(cap(s.Columns))*size.SizeOfPointer + int64(cap(s.Keys)+cap(s.UniqueKeys))*size.SizeOfSlice
 
 	for _, col := range s.Columns {
 		sum += col.MemoryUsage()
 	}
 	for _, cols := range s.Keys {
+		sum += int64(cap(cols)) * size.SizeOfPointer
 		for _, col := range cols {
 			sum += col.MemoryUsage()
 		}
 	}
 	for _, cols := range s.UniqueKeys {
+		sum += int64(cap(cols)) * size.SizeOfPointer
 		for _, col := range cols {
 			sum += col.MemoryUsage()
 		}

@@ -560,7 +560,7 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 	req.AppendInt64(0, job.ID)
 	req.AppendString(1, schemaName)
 	req.AppendString(2, tableName)
-	req.AppendString(3, job.Type.String())
+	req.AppendString(3, job.Type.String()+showAddIdxReorgTp(job))
 	req.AppendString(4, job.SchemaState.String())
 	req.AppendInt64(5, job.SchemaID)
 	req.AppendInt64(6, job.TableID)
@@ -593,6 +593,16 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 			req.AppendString(11, subJob.State.String())
 		}
 	}
+}
+
+func showAddIdxReorgTp(job *model.Job) string {
+	if job.Type == model.ActionAddIndex || job.Type == model.ActionAddPrimaryKey {
+		tp := job.ReorgMeta.ReorgTp.String()
+		if len(tp) > 0 {
+			return " /* " + tp + " */"
+		}
+	}
+	return ""
 }
 
 func ts2Time(timestamp uint64, loc *time.Location) types.Time {
@@ -1630,9 +1640,9 @@ func (e *TableScanExec) nextChunk4InfoSchema(ctx context.Context, chk *chunk.Chu
 		}
 		mutableRow := chunk.MutRowFromTypes(retTypes(e))
 		type tableIter interface {
-			IterRecords(sessionctx.Context, []*table.Column, table.RecordIterFunc) error
+			IterRecords(ctx context.Context, sctx sessionctx.Context, cols []*table.Column, fn table.RecordIterFunc) error
 		}
-		err := (e.t.(tableIter)).IterRecords(e.ctx, columns, func(_ kv.Handle, rec []types.Datum, cols []*table.Column) (bool, error) {
+		err := (e.t.(tableIter)).IterRecords(ctx, e.ctx, columns, func(_ kv.Handle, rec []types.Datum, cols []*table.Column) (bool, error) {
 			mutableRow.SetDatums(rec...)
 			e.virtualTableChunkList.AppendRow(mutableRow.ToRow())
 			return true, nil
@@ -1943,6 +1953,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	} else {
 		sc.InitMemTracker(memory.LabelForSQLText, vars.MemQuotaQuery)
 		sc.MemTracker.AttachToGlobalTracker(GlobalMemoryUsageTracker)
+		sc.MemTracker.IsRootTrackerOfSess, sc.MemTracker.SessionID = true, vars.ConnectionID
 	}
 
 	sc.InitDiskTracker(memory.LabelForSQLText, -1)
@@ -2108,7 +2119,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	} else if vars.StmtCtx.InSelectStmt {
 		sc.PrevAffectedRows = -1
 	}
-	if globalConfig.Instance.EnableCollectExecutionInfo {
+	if globalConfig.Instance.EnableCollectExecutionInfo.Load() {
 		// In ExplainFor case, RuntimeStatsColl should not be reset for reuse,
 		// because ExplainFor need to display the last statement information.
 		reuseObj := vars.StmtCtx.RuntimeStatsColl
