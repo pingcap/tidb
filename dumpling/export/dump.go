@@ -57,8 +57,7 @@ type Dumper struct {
 	totalTables                   int64
 	charsetAndDefaultCollationMap map[string]string
 
-	speedRecorder  *SpeedRecorder
-	needDispatchCh chan any
+	speedRecorder *SpeedRecorder
 }
 
 // NewDumper returns a new Dumper
@@ -457,14 +456,6 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *BaseConn, taskC
 					return errors.Trace(err)
 				}
 			}
-			tctx.L().Debug("begin dispactch")
-			select {
-			case d.needDispatchCh <- struct{}{}:
-				tctx.L().Debug("dispatchCh not full")
-			default:
-				// if dispatchCh is full, skip it
-				tctx.L().Debug("dispatchCh full")
-			}
 		}
 	}
 	failpoint.Inject("EnableLogProgress", func() {
@@ -619,7 +610,6 @@ func (d *Dumper) dumpTableData(tctx *tcontext.Context, conn *BaseConn, meta Tabl
 func (d *Dumper) buildConcatTask(tctx *tcontext.Context, conn *BaseConn, meta TableMeta) (*TaskTableData, error) {
 	tableChan := make(chan Task, 128)
 	errCh := make(chan error, 1)
-
 	go func() {
 		// adjust rows to suitable rows for this table
 		d.conf.Rows = GetSuitableRows(meta.AvgRowLength())
