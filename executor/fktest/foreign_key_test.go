@@ -1584,3 +1584,30 @@ func TestForeignKeyOnDeleteSetNull2(t *testing.T) {
 	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("0"))
 	tk.MustQuery("select count(*) from t2 where id is null").Check(testkit.Rows("32768"))
 }
+
+func TestShowCreateTableWithForeignKey(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t1 (id int key, leader int, leader2 int, index(leader), index(leader2), constraint fk foreign key (leader) references t1(id) ON DELETE CASCADE ON UPDATE SET NULL);")
+	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" +
+		"  `id` int(11) NOT NULL,\n" +
+		"  `leader` int(11) DEFAULT NULL,\n" +
+		"  `leader2` int(11) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n" +
+		"  KEY `leader` (`leader`),\n  KEY `leader2` (`leader2`),\n" +
+		"  CONSTRAINT `fk` FOREIGN KEY (`leader`) REFERENCES `test`.`t1` (`id`) ON DELETE CASCADE ON UPDATE SET NULL /*T![FOREIGN KEY] INVALID */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("alter table t1 add constraint fk2 foreign key (leader2) references t1 (id)")
+	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" +
+		"  `id` int(11) NOT NULL,\n" +
+		"  `leader` int(11) DEFAULT NULL,\n" +
+		"  `leader2` int(11) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n" +
+		"  KEY `leader` (`leader`),\n  KEY `leader2` (`leader2`),\n" +
+		"  CONSTRAINT `fk` FOREIGN KEY (`leader`) REFERENCES `test`.`t1` (`id`) ON DELETE CASCADE ON UPDATE SET NULL /*T![FOREIGN KEY] INVALID */,\n" +
+		"  CONSTRAINT `fk2` FOREIGN KEY (`leader2`) REFERENCES `test`.`t1` (`id`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+}

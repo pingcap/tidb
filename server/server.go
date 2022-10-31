@@ -625,6 +625,7 @@ func (cc *clientConn) connectInfo() *variable.ConnectionInfo {
 		ClientIP:          cc.peerHost,
 		ClientPort:        cc.peerPort,
 		ServerID:          1,
+		ServerIP:          cc.serverHost,
 		ServerPort:        int(cc.server.cfg.Port),
 		User:              cc.user,
 		ServerOSLoginUser: osUser,
