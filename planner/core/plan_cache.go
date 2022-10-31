@@ -16,7 +16,6 @@ package core
 
 import (
 	"context"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/domain"
@@ -118,6 +117,9 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 	params []expression.Expression) (plan Plan, names []*types.FieldName, err error) {
 	if err := planCachePreprocess(sctx, isGeneralPlanCache, is, stmt, params); err != nil {
 		return nil, nil, err
+	}
+	if sctx.GetSessionVars().TxnCtx.InfoSchema != nil {
+		is = sctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
 	}
 
 	var cacheKey kvcache.Key
