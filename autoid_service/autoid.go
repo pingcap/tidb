@@ -26,6 +26,7 @@ type autoIDKey struct {
 }
 
 type autoIDValue struct {
+	sync.Mutex
 	base  int64
 	end   int64
 	token chan struct{}
@@ -303,7 +304,7 @@ func calcNeededBatchSize(base, n, increment, offset int64, isUnsigned bool) int6
 	return nr - base
 }
 
-const batch = 2000
+const batch = 4000
 
 // AllocID implements gRPC PDServer.
 func (s *Service) AllocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*autoid.AutoIDResponse, error) {
@@ -351,6 +352,9 @@ func (s *Service) allocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*
 			Max: base,
 		}, nil
 	}
+
+	val.Lock()
+	defer val.Unlock()
 
 	var min, max int64
 	var err error
