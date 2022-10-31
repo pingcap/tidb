@@ -489,9 +489,10 @@ type Instance struct {
 	PluginDir                  string     `toml:"plugin_dir" json:"plugin_dir"`
 	PluginLoad                 string     `toml:"plugin_load" json:"plugin_load"`
 	// MaxConnections is the maximum permitted number of simultaneous client connections.
-	MaxConnections    uint32     `toml:"max_connections" json:"max_connections"`
-	TiDBEnableDDL     AtomicBool `toml:"tidb_enable_ddl" json:"tidb_enable_ddl"`
-	TiDBRCReadCheckTS bool       `toml:"tidb_rc_read_check_ts" json:"tidb_rc_read_check_ts"`
+	MaxConnections                        uint32     `toml:"max_connections" json:"max_connections"`
+	TiDBEnableDDL                         AtomicBool `toml:"tidb_enable_ddl" json:"tidb_enable_ddl"`
+	TiDBRCReadCheckTS                     bool       `toml:"tidb_rc_read_check_ts" json:"tidb_rc_read_check_ts"`
+	TiDBConstraintCheckInPlacePessimistic bool       `toml:"tidb_constraint_check_in_place_pessimistic" json:"tidb_constraint_check_in_place_pessimistic"`
 }
 
 func (l *Log) getDisableTimestamp() bool {
@@ -859,22 +860,23 @@ var defaultConf = Config{
 		EnableSlowLog:       *NewAtomicBool(logutil.DefaultTiDBEnableSlowLog),
 	},
 	Instance: Instance{
-		TiDBGeneralLog:              false,
-		EnablePProfSQLCPU:           false,
-		DDLSlowOprThreshold:         DefDDLSlowOprThreshold,
-		ExpensiveQueryTimeThreshold: DefExpensiveQueryTimeThreshold,
-		EnableSlowLog:               *NewAtomicBool(logutil.DefaultTiDBEnableSlowLog),
-		SlowThreshold:               logutil.DefaultSlowThreshold,
-		RecordPlanInSlowLog:         logutil.DefaultRecordPlanInSlowLog,
-		CheckMb4ValueInUTF8:         *NewAtomicBool(true),
-		ForcePriority:               "NO_PRIORITY",
-		MemoryUsageAlarmRatio:       DefMemoryUsageAlarmRatio,
-		EnableCollectExecutionInfo:  *NewAtomicBool(true),
-		PluginDir:                   "/data/deploy/plugin",
-		PluginLoad:                  "",
-		MaxConnections:              0,
-		TiDBEnableDDL:               *NewAtomicBool(true),
-		TiDBRCReadCheckTS:           false,
+		TiDBGeneralLog:                        false,
+		EnablePProfSQLCPU:                     false,
+		DDLSlowOprThreshold:                   DefDDLSlowOprThreshold,
+		ExpensiveQueryTimeThreshold:           DefExpensiveQueryTimeThreshold,
+		EnableSlowLog:                         *NewAtomicBool(logutil.DefaultTiDBEnableSlowLog),
+		SlowThreshold:                         logutil.DefaultSlowThreshold,
+		RecordPlanInSlowLog:                   logutil.DefaultRecordPlanInSlowLog,
+		CheckMb4ValueInUTF8:                   *NewAtomicBool(true),
+		ForcePriority:                         "NO_PRIORITY",
+		MemoryUsageAlarmRatio:                 DefMemoryUsageAlarmRatio,
+		EnableCollectExecutionInfo:            *NewAtomicBool(true),
+		PluginDir:                             "/data/deploy/plugin",
+		PluginLoad:                            "",
+		MaxConnections:                        0,
+		TiDBEnableDDL:                         *NewAtomicBool(true),
+		TiDBRCReadCheckTS:                     false,
+		TiDBConstraintCheckInPlacePessimistic: true,
 	},
 	Status: Status{
 		ReportStatus:          true,
@@ -1026,7 +1028,7 @@ var removedConfig = map[string]struct{}{
 	"log.query-log-max-len":              {},
 	"performance.committer-concurrency":  {},
 	"experimental.enable-global-kill":    {},
-	"performance.run-auto-analyze":       {}, //use tidb_enable_auto_analyze
+	"performance.run-auto-analyze":       {}, // use tidb_enable_auto_analyze
 	// use tidb_enable_prepared_plan_cache, tidb_prepared_plan_cache_size and tidb_prepared_plan_cache_memory_guard_ratio
 	"prepared-plan-cache.enabled":            {},
 	"prepared-plan-cache.capacity":           {},

@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/sessiontxn/isolation"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
@@ -150,8 +151,15 @@ func (m *txnManager) EnterNewTxn(ctx context.Context, r *sessiontxn.EnterNewTxnR
 	}
 
 	m.ctxProvider = ctxProvider
+	sessVars := m.sctx.GetSessionVars()
 	if r.Type == sessiontxn.EnterNewTxnWithBeginStmt {
-		m.sctx.GetSessionVars().SetInTxn(true)
+		sessVars.SetInTxn(true)
+	}
+	// we don't want this variable to change during a txn, and we don't want internal sessions affected by it.
+	if sessVars.InRestrictedSQL {
+		sessVars.TxnCtx.ConstraintCheckInPlacePessimistic = variable.DefTiDBConstraintCheckInPlacePessimistic
+	} else {
+		sessVars.TxnCtx.ConstraintCheckInPlacePessimistic = variable.ConstraintCheckInPlacePessimistic.Load()
 	}
 	return nil
 }

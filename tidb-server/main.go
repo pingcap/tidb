@@ -639,6 +639,7 @@ func setGlobalVars() {
 	variable.ProcessGeneralLog.Store(cfg.Instance.TiDBGeneralLog)
 	variable.EnablePProfSQLCPU.Store(cfg.Instance.EnablePProfSQLCPU)
 	variable.EnableRCReadCheckTS.Store(cfg.Instance.TiDBRCReadCheckTS)
+	variable.ConstraintCheckInPlacePessimistic.Store(cfg.Instance.TiDBConstraintCheckInPlacePessimistic)
 	atomic.StoreUint32(&variable.DDLSlowOprThreshold, cfg.Instance.DDLSlowOprThreshold)
 	atomic.StoreUint64(&variable.ExpensiveQueryTimeThreshold, cfg.Instance.ExpensiveQueryTimeThreshold)
 

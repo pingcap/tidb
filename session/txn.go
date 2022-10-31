@@ -487,7 +487,7 @@ func (txn *LazyTxn) Wait(ctx context.Context, sctx sessionctx.Context) (kv.Trans
 			sctx.GetSessionVars().TxnCtx.StartTS = 0
 			return txn, err
 		}
-		txn.lazyUniquenessCheckEnabled = !sctx.GetSessionVars().ConstraintCheckInPlacePessimistic
+		txn.lazyUniquenessCheckEnabled = !sctx.GetSessionVars().TxnCtx.ConstraintCheckInPlacePessimistic
 	}
 	return txn, nil
 }

@@ -624,7 +624,7 @@ func (e *SimpleExec) executeSavepoint(s *ast.SavepointStmt) error {
 	if sessVars.BinlogClient != nil {
 		return ErrSavepointNotSupportedWithBinlog
 	}
-	if !sessVars.ConstraintCheckInPlacePessimistic && sessVars.TxnCtx.IsPessimistic {
+	if !sessVars.TxnCtx.ConstraintCheckInPlacePessimistic && sessVars.TxnCtx.IsPessimistic {
 		return errors.New("savepoint is not supported in pessimistic transactions when in-place constraint check is disabled")
 	}
 	txn, err := e.ctx.Txn(true)
@@ -657,7 +657,7 @@ func (e *SimpleExec) setCurrentUser(users []*auth.UserIdentity) {
 func (e *SimpleExec) executeRevokeRole(ctx context.Context, s *ast.RevokeRoleStmt) error {
 	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 
-	//Fix revoke role from current_user results error.
+	// Fix revoke role from current_user results error.
 	e.setCurrentUser(s.Users)
 
 	for _, role := range s.Roles {

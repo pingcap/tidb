@@ -225,6 +225,11 @@ type TxnCtxNoNeedToRestore struct {
 	EnableMDL bool
 	// relatedTableForMDL records the `lock` table for metadata lock. It maps from int64 to int64(version).
 	relatedTableForMDL *sync.Map
+
+	// ConstraintCheckInPlacePessimistic controls whether to skip the locking of some keys in pessimistic transactions.
+	// Postpone the conflict check and constraint check to prewrite or later pessimistic locking requests.
+	// It is itself a instance-level variable, we put it here to make sure it does not change inside a transaction.
+	ConstraintCheckInPlacePessimistic bool
 }
 
 // SavepointRecord indicates a transaction's savepoint record.
@@ -1249,10 +1254,6 @@ type SessionVars struct {
 
 	// GeneralPlanCacheSize controls the size of general plan cache.
 	GeneralPlanCacheSize uint64
-
-	// ConstraintCheckInPlacePessimistic controls whether to skip the locking of some keys in pessimistic transactions.
-	// Postpone the conflict check and constraint check to prewrite or later pessimistic locking requests.
-	ConstraintCheckInPlacePessimistic bool
 
 	// EnableTiFlashReadForWriteStmt indicates whether to enable TiFlash to read for write statements.
 	EnableTiFlashReadForWriteStmt bool
