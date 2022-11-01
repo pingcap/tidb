@@ -15,6 +15,7 @@
 package fk_test
 
 import (
+	"bytes"
 	"fmt"
 	"strconv"
 	"strings"
@@ -1952,12 +1953,43 @@ func TestShowCreateTableWithForeignKey(t *testing.T) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
 
+func TestDMLExplainAnalyzeFKInfo(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+
+	// Test for Insert ignore foreign check runtime stats.
+	tk.MustExec("drop table if exists t1,t2,t3")
+	tk.MustExec("create table t1 (id int key)")
+	tk.MustExec("create table t2 (id int key)")
+	tk.MustExec("create table t3 (id int key, id1 int, id2 int, constraint fk_id1 foreign key (id1) references t1 (id) on delete cascade, " +
+		"constraint fk_id2 foreign key (id2) references t2 (id) on delete cascade)")
+	tk.MustExec("insert into t1 values (1), (2)")
+	tk.MustExec("insert into t2 values (1)")
+	res := tk.MustQuery("explain analyze insert ignore into t3 values (1, 1, 1), (2, 1, 1), (3, 2, 1), (4, 1, 1), (5, 2, 1), (6, 2, 1)")
+	getExplainResultFn := func(res *testkit.Result) string {
+		resBuff := bytes.NewBufferString("")
+		for _, row := range res.Rows() {
+			_, _ = fmt.Fprintf(resBuff, "%s\t", row)
+		}
+		return resBuff.String()
+	}
+	explain := getExplainResultFn(res)
+	require.Regexpf(t, "time:.* loops:.* prepare:.* check_insert: {total_time:.* mem_insert_time:.* prefetch:.* fk_check:.* fk_num: 3.*", explain, "")
+	res = tk.MustQuery("explain analyze insert ignore into t3 values (7, null, null), (8, null, null)")
+	explain = getExplainResultFn(res)
+	require.NotContains(t, explain, "fk_check", explain, "")
+}
+
 func TestForeignKeyCascadeOnDiffColumnType(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk.MustExec("set @@foreign_key_checks=1")
 	tk.MustExec("use test")
+
 	tk.MustExec("create table t1 (id bit(10), index(id));")
 	tk.MustExec("create table t2 (id int key, b bit(10), constraint fk foreign key (b) references t1(id) ON DELETE CASCADE ON UPDATE CASCADE);")
 	tk.MustExec("insert into t1 values (b'01'), (b'10');")

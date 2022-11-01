@@ -3283,6 +3283,16 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 			p.StaleTxnStartTS = readTS
 			// consume read ts here
 			b.ctx.GetSessionVars().TxnReadTS.UseTxnReadTS()
+		} else if b.ctx.GetSessionVars().EnableExternalTSRead && !b.ctx.GetSessionVars().InRestrictedSQL {
+			// try to get the stale ts from external timestamp
+			startTS, err := staleread.GetExternalTimestamp(ctx, b.ctx)
+			if err != nil {
+				return nil, err
+			}
+			if err := sessionctx.ValidateStaleReadTS(ctx, b.ctx, startTS); err != nil {
+				return nil, err
+			}
+			p.StaleTxnStartTS = startTS
 		}
 	}
 	return p, nil
