@@ -254,6 +254,19 @@ func (tp ReorgType) NeedMergeProcess() bool {
 	return tp == ReorgTypeLitMerge || tp == ReorgTypeTxnMerge
 }
 
+// String implements fmt.Stringer interface.
+func (tp ReorgType) String() string {
+	switch tp {
+	case ReorgTypeTxn:
+		return "txn"
+	case ReorgTypeLitMerge:
+		return "ingest"
+	case ReorgTypeTxnMerge:
+		return "txn-merge"
+	}
+	return ""
+}
+
 // TimeZoneLocation represents a single time zone.
 type TimeZoneLocation struct {
 	Name     string `json:"name"`

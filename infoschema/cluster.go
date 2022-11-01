@@ -27,9 +27,10 @@ import (
 	"github.com/pingcap/tidb/util/sem"
 )
 
+// Cluster table indicates that these tables need to get data from other tidb nodes, which may get from all other nodes, or may get from the ddl owner.
 // Cluster table list, attention:
 // 1. the table name should be upper case.
-// 2. clusterTableName should equal to "CLUSTER_" + memTableTableName.
+// 2. For tables that need to get data from all other TiDB nodes, clusterTableName should equal to "CLUSTER_" + memTableTableName.
 const (
 	// ClusterTableSlowLog is the string constant of cluster slow query memory table.
 	ClusterTableSlowLog     = "CLUSTER_SLOW_QUERY"
@@ -52,8 +53,8 @@ const (
 	ClusterTableMemoryUsageOpsHistory = "CLUSTER_MEMORY_USAGE_OPS_HISTORY"
 )
 
-// memTableToClusterTables means add memory table to cluster table.
-var memTableToClusterTables = map[string]string{
+// memTableToAllTiDBClusterTables means add memory table to cluster table that will send cop request to all TiDB nodes.
+var memTableToAllTiDBClusterTables = map[string]string{
 	TableSlowQuery:                ClusterTableSlowLog,
 	TableProcesslist:              ClusterTableProcesslist,
 	TableStatementsSummary:        ClusterTableStatementsSummary,
@@ -66,9 +67,32 @@ var memTableToClusterTables = map[string]string{
 	TableMemoryUsageOpsHistory:    ClusterTableMemoryUsageOpsHistory,
 }
 
+// memTableToDDLOwnerClusterTables means add memory table to cluster table that will send cop request to DDL owner node.
+var memTableToDDLOwnerClusterTables = map[string]string{
+	TableTiFlashReplica: TableTiFlashReplica,
+}
+
+// ClusterTableCopDestination means the destination that cluster tables will send cop requests to.
+type ClusterTableCopDestination int
+
+const (
+	// AllTiDB is uese by CLUSTER_* table, means that these tables will send cop request to all TiDB nodes.
+	AllTiDB ClusterTableCopDestination = iota
+	// DDLOwner is uese by tiflash_replica currently, means that this table will send cop request to DDL owner node.
+	DDLOwner
+)
+
+// GetClusterTableCopDestination gets cluster table cop request destination.
+func GetClusterTableCopDestination(tableName string) ClusterTableCopDestination {
+	if _, exist := memTableToDDLOwnerClusterTables[strings.ToUpper(tableName)]; exist {
+		return DDLOwner
+	}
+	return AllTiDB
+}
+
 func init() {
 	var addrCol = columnInfo{name: util.ClusterTableInstanceColumnName, tp: mysql.TypeVarchar, size: 64}
-	for memTableName, clusterMemTableName := range memTableToClusterTables {
+	for memTableName, clusterMemTableName := range memTableToAllTiDBClusterTables {
 		memTableCols := tableNameToColumns[memTableName]
 		if len(memTableCols) == 0 {
 			continue
@@ -86,7 +110,13 @@ func isClusterTableByName(dbName, tableName string) bool {
 	switch dbName {
 	case util.InformationSchemaName.O, util.PerformanceSchemaName.O:
 		tableName = strings.ToUpper(tableName)
-		for _, name := range memTableToClusterTables {
+		for _, name := range memTableToAllTiDBClusterTables {
+			name = strings.ToUpper(name)
+			if name == tableName {
+				return true
+			}
+		}
+		for _, name := range memTableToDDLOwnerClusterTables {
 			name = strings.ToUpper(name)
 			if name == tableName {
 				return true
