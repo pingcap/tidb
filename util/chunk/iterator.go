@@ -14,6 +14,8 @@
 
 package chunk
 
+import "sync"
+
 var (
 	_ Iterator = (*Iterator4Chunk)(nil)
 	_ Iterator = (*iterator4RowPtr)(nil)
@@ -22,6 +24,22 @@ var (
 	_ Iterator = (*iterator4RowContainer)(nil)
 	_ Iterator = (*multiIterator)(nil)
 )
+
+var (
+	iterator4SlicePool = &sync.Pool{New: func() any { return new(Iterator4Slice) }}
+)
+
+// FreeIterator try to free and reuse the iterator.
+func FreeIterator(it any) {
+	switch it := it.(type) {
+	case *Iterator4Slice:
+		it.rows = nil
+		it.cursor = 0
+		iterator4SlicePool.Put(it)
+	default:
+		// Do Nothing.
+	}
+}
 
 // Iterator is used to iterate a number of rows.
 //
@@ -49,6 +67,14 @@ type Iterator interface {
 
 	// Error returns none-nil error if anything wrong happens during the iteration.
 	Error() error
+}
+
+// NewIterator4SliceWithPool returns a Iterator for Row slice.
+func NewIterator4SliceWithPool(rows []Row) Iterator {
+	it := iterator4SlicePool.Get().(*Iterator4Slice)
+	it.rows = rows
+	it.cursor = 0
+	return it
 }
 
 // NewIterator4Slice returns a Iterator for Row slice.
