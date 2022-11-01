@@ -17,6 +17,7 @@ package autoid
 import (
 	"context"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/opentracing/opentracing-go"
@@ -42,7 +43,10 @@ type clientDiscover struct {
 	// This the etcd client for service discover
 	etcdCli *clientv3.Client
 	// This is the real client for the AutoIDAlloc service
-	autoid.AutoIDAllocClient
+	mu struct {
+		sync.RWMutex
+		autoid.AutoIDAllocClient
+	}
 }
 
 const (
@@ -50,9 +54,13 @@ const (
 )
 
 func (d *clientDiscover) GetClient(ctx context.Context) (autoid.AutoIDAllocClient, error) {
-	if d.AutoIDAllocClient != nil {
-		return d.AutoIDAllocClient, nil
+	d.mu.RLock()
+	cli := d.mu.AutoIDAllocClient
+	if cli != nil {
+		d.mu.RUnlock()
+		return cli, nil
 	}
+	d.mu.RUnlock()
 
 	resp, err := d.etcdCli.Get(ctx, autoIDLeaderPath, clientv3.WithFirstCreate()...)
 	if err != nil {
@@ -68,8 +76,10 @@ func (d *clientDiscover) GetClient(ctx context.Context) (autoid.AutoIDAllocClien
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	cli := autoid.NewAutoIDAllocClient(grpcConn)
-	d.AutoIDAllocClient = cli
+	cli = autoid.NewAutoIDAllocClient(grpcConn)
+	d.mu.Lock()
+	d.mu.AutoIDAllocClient = cli
+	d.mu.Unlock()
 	return cli, nil
 }
 
@@ -107,7 +117,9 @@ retry:
 	})
 	if err != nil {
 		if strings.Contains(err.Error(), "rpc error") {
-			sp.AutoIDAllocClient = nil
+			sp.mu.Lock()
+			sp.mu.AutoIDAllocClient = nil
+			sp.mu.Unlock()
 			goto retry
 		}
 		return 0, 0, errors.Trace(err)

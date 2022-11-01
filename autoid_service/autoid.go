@@ -12,8 +12,10 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
 
@@ -32,9 +34,10 @@ type autoIDKey struct {
 
 type autoIDValue struct {
 	sync.Mutex
-	base  int64
-	end   int64
-	token chan struct{}
+	base       int64
+	end        int64
+	isUnsigned bool
+	token      chan struct{}
 }
 
 func (alloc *autoIDValue) alloc4Unsigned(ctx context.Context, store kv.Storage, dbID, tblID int64, isUnsigned bool,
@@ -280,6 +283,18 @@ func MockForTest(store kv.Storage) *mockClient {
 
 func (s *Service) Close() {
 	if s.leaderShip != nil {
+		for k, v := range s.autoIDMap {
+			if v.base > 0 {
+				err := v.forceRebase(context.Background(), s.store, k.dbID, k.tblID, v.base, v.isUnsigned)
+				if err != nil {
+					logutil.BgLogger().Warn("[autoid service] save cached ID fail when service exit",
+						zap.Int64("db id", k.dbID),
+						zap.Int64("table id", k.tblID),
+						zap.Int64("value", v.base),
+						zap.Error(err))
+				}
+			}
+		}
 		s.leaderShip.Cancel()
 	}
 }
@@ -333,7 +348,7 @@ func (s *Service) AllocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*
 	return res, nil
 }
 
-func (s *Service) getAlloc(dbID, tblID int64) *autoIDValue {
+func (s *Service) getAlloc(dbID, tblID int64, isUnsigned bool) *autoIDValue {
 	key := autoIDKey{dbID: dbID, tblID: tblID}
 	s.autoIDLock.Lock()
 	defer s.autoIDLock.Unlock()
@@ -341,7 +356,8 @@ func (s *Service) getAlloc(dbID, tblID int64) *autoIDValue {
 	val, ok := s.autoIDMap[key]
 	if !ok {
 		val = &autoIDValue{
-			token: make(chan struct{}, 1),
+			isUnsigned: isUnsigned,
+			token:      make(chan struct{}, 1),
 		}
 		s.autoIDMap[key] = val
 	}
@@ -354,7 +370,7 @@ func (s *Service) allocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*
 		return nil, errors.New("not leader")
 	}
 
-	val := s.getAlloc(req.DbID, req.TblID)
+	val := s.getAlloc(req.DbID, req.TblID, req.IsUnsigned)
 
 	if req.N == 0 && val.base != 0 {
 		base := val.base
@@ -411,7 +427,7 @@ func (s *Service) Rebase(ctx context.Context, req *autoid.RebaseRequest) (*autoi
 		return nil, errors.New("not leader")
 	}
 
-	val := s.getAlloc(req.DbID, req.TblID)
+	val := s.getAlloc(req.DbID, req.TblID, req.IsUnsigned)
 	if req.Force {
 		val.forceRebase(ctx, s.store, req.DbID, req.TblID, req.Base, req.IsUnsigned)
 	}

@@ -563,9 +563,8 @@ func newSinglePointAlloc(store kv.Storage, dbID, tblID int64, isUnsigned bool) *
 		}
 		spa.clientDiscover = clientDiscover{etcdCli: etcdCli}
 	} else {
-		spa.clientDiscover = clientDiscover{
-			AutoIDAllocClient: autoid.MockForTest(store),
-		}
+		spa.clientDiscover = clientDiscover{}
+		spa.mu.AutoIDAllocClient = autoid.MockForTest(store)
 	}
 
 	failpoint.Inject("mockAutoIDChange", func(val failpoint.Value) {
