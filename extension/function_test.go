@@ -99,6 +99,49 @@ func TestInvokeFunc(t *testing.T) {
 	require.EqualError(t, tk2.ExecToErr("select custom_func2(1, 2)"), "[expression:1305]FUNCTION test.custom_func2 does not exist")
 }
 
+func TestFuncDynamicArgLen(t *testing.T) {
+	defer extension.Reset()
+	extension.Reset()
+
+	fnDef := &extension.FunctionDef{
+		Name:            "dynamic_arg_func",
+		EvalTp:          types.ETInt,
+		OptionalArgsLen: 1,
+		ArgTps: []types.EvalType{
+			types.ETInt,
+			types.ETInt,
+			types.ETInt,
+			types.ETInt,
+		},
+		EvalIntFunc: func(ctx extension.FunctionContext, row chunk.Row) (int64, bool, error) {
+			args, err := ctx.EvalArgs(row)
+			if err != nil {
+				return 0, false, err
+			}
+
+			result := int64(0)
+			for _, arg := range args {
+				result = result*10 + arg.GetInt64()
+			}
+
+			return result, false, nil
+		},
+	}
+
+	require.NoError(t, extension.Register("test", extension.WithCustomFunctions([]*extension.FunctionDef{fnDef})))
+	require.NoError(t, extension.Setup())
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustQuery("select dynamic_arg_func(1, 2, 3)").Check(testkit.Rows("123"))
+	tk.MustQuery("select dynamic_arg_func(1, 2, 3, 4)").Check(testkit.Rows("1234"))
+
+	expectedErrMsg := "[expression:1582]Incorrect parameter count in the call to native function 'dynamic_arg_func'"
+	require.EqualError(t, tk.ExecToErr("select dynamic_arg_func()"), expectedErrMsg)
+	require.EqualError(t, tk.ExecToErr("select dynamic_arg_func(1)"), expectedErrMsg)
+	require.EqualError(t, tk.ExecToErr("select dynamic_arg_func(1, 2)"), expectedErrMsg)
+}
+
 func TestRegisterFunc(t *testing.T) {
 	defer func() {
 		extension.Reset()
