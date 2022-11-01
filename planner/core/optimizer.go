@@ -443,9 +443,9 @@ func (p *PhysicalHashJoin) extractUsedCols(parentUsedCols []*expression.Column) 
 func prunePhysicalColumnForHashJoinChild(sctx sessionctx.Context, hashJoin *PhysicalHashJoin, joinUsedCols []*expression.Column, sender *PhysicalExchangeSender) error {
 	var err error
 	used := expression.GetUsedList(joinUsedCols, sender.Schema())
-	var exprCols []*expression.Column
-	for _, mppCol := range sender.HashCols {
-		exprCols = append(exprCols, mppCol.Col)
+	exprCols := make([]*expression.Column, len(sender.HashCols))
+	for i, mppCol := range sender.HashCols {
+		exprCols[i] = mppCol.Col
 	}
 	exprUsed := expression.GetUsedList(exprCols, sender.Schema())
 
