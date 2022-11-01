@@ -1563,6 +1563,10 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 	if explain, ok := p.(*plannercore.Explain); ok && explain.Analyze && explain.TargetPlan != nil {
 		p = explain.TargetPlan
 	}
+	canExplainAnalyze := false
+	if _, ok := p.(plannercore.PhysicalPlan); ok {
+		canExplainAnalyze = true
+	}
 	pi := util.ProcessInfo{
 		ID:                    s.sessionVars.ConnectionID,
 		Port:                  s.sessionVars.Port,
@@ -1581,6 +1585,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		StatsInfo:             plannercore.GetStatsInfo,
 		MaxExecutionTime:      maxExecutionTime,
 		RedactSQL:             s.sessionVars.EnableRedactLog,
+		CanExplainAnalyze:     canExplainAnalyze,
 	}
 	oldPi := s.ShowProcess()
 	if p == nil {
@@ -1590,6 +1595,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 			pi.Plan = oldPi.Plan
 			pi.PlanExplainRows = oldPi.PlanExplainRows
 			pi.RuntimeStatsColl = oldPi.RuntimeStatsColl
+			_, pi.CanExplainAnalyze = pi.Plan.(plannercore.PhysicalPlan)
 		}
 	}
 	// We set process info before building plan, so we extended execution time.
