@@ -295,7 +295,7 @@ func (p *UserPrivileges) GetAuthWithoutVerification(user, host string) (success 
 func (p *UserPrivileges) checkAuthTokenClaims(claims map[string]interface{}, record *UserRecord, tokenLife time.Duration) error {
 	if sub, ok := claims[jwtRepo.SubjectKey]; ok {
 		if sub != record.User {
-			return errors.New(fmt.Sprintf("Wrong 'sub': %s", sub))
+			return fmt.Errorf("Wrong 'sub': %s", sub)
 		}
 	} else {
 		return errors.New("lack 'sub'")
@@ -303,7 +303,7 @@ func (p *UserPrivileges) checkAuthTokenClaims(claims map[string]interface{}, rec
 
 	if email, ok := claims[openid.EmailKey]; ok {
 		if email != record.Email {
-			return errors.New(fmt.Sprintf("Wrong 'email': %s", email))
+			return fmt.Errorf("Wrong 'email': %s", email)
 		}
 	} else {
 		return errors.New("lack 'email'")
@@ -316,7 +316,7 @@ func (p *UserPrivileges) checkAuthTokenClaims(claims map[string]interface{}, rec
 				return errors.New("the token has been out of its life time")
 			}
 		} else {
-			return errors.New(fmt.Sprintf("iat: %v is not a value of time.Time", val))
+			return fmt.Errorf("iat: %v is not a value of time.Time", val)
 		}
 	} else {
 		return errors.New("lack 'iat'")
@@ -328,7 +328,7 @@ func (p *UserPrivileges) checkAuthTokenClaims(claims map[string]interface{}, rec
 				return errors.New("the token has been expired")
 			}
 		} else {
-			return errors.New(fmt.Sprintf("exp: %v is not a value of time.Time", val))
+			return fmt.Errorf("exp: %v is not a value of time.Time", val)
 		}
 	} else {
 		return errors.New("lack 'exp'")
@@ -337,7 +337,7 @@ func (p *UserPrivileges) checkAuthTokenClaims(claims map[string]interface{}, rec
 	// `iss` is not required if `token_issuer` is not set in `mysql.user`
 	if iss, ok := claims[jwtRepo.IssuerKey]; ok {
 		if iss != record.AuthTokenIssuer {
-			return errors.New(fmt.Sprintf("Wrong 'iss': %s", iss))
+			return fmt.Errorf("Wrong 'iss': %s", iss)
 		}
 	} else if len(record.AuthTokenIssuer) > 0 {
 		return errors.New("lack 'iss'")
