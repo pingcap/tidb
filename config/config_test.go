@@ -1173,7 +1173,7 @@ func TestEncodeDefTempStorageDir(t *testing.T) {
 
 	dirPrefix := filepath.Join(os.TempDir(), osUID+"_tidb")
 	for _, test := range tests {
-		tempStorageDir := EncodeTmpDir(os.TempDir(), test.host, test.statusHost, test.port, test.statusPort)
+		tempStorageDir := encodeTmpDir(os.TempDir(), test.host, test.statusHost, test.port, test.statusPort)
 		require.Equal(t, filepath.Join(dirPrefix, test.expect, "tmp-storage"), tempStorageDir)
 	}
 }

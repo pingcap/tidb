@@ -101,7 +101,7 @@ var (
 	// checkBeforeDropLDFlag is a go build flag.
 	checkBeforeDropLDFlag = "None"
 	// DefTempStorageDirName is the default temporary storage dir name by base64 encoding a string `port/statusPort`
-	DefTempStorageDirName = EncodeTmpDir(os.TempDir(), DefHost, DefStatusHost, DefPort, DefStatusPort)
+	DefTempStorageDirName = encodeTmpDir(os.TempDir(), DefHost, DefStatusHost, DefPort, DefStatusPort)
 )
 
 // InstanceConfigSection indicates a config session that has options moved to [instance] session.
@@ -296,7 +296,7 @@ func (c *Config) GetTiKVConfig() *tikvcfg.Config {
 	}
 }
 
-func EncodeTmpDir(tempDir string, host, statusHost string, port, statusPort uint) string {
+func encodeTmpDir(tempDir string, host, statusHost string, port, statusPort uint) string {
 	dirName := base64.URLEncoding.EncodeToString([]byte(fmt.Sprintf("%v:%v/%v:%v", host, port, statusHost, statusPort)))
 	osUID := ""
 	currentUser, err := user.Current()
@@ -405,7 +405,7 @@ func (s *AtomicFilepath) Rename(newPath string) (e error) {
 	s.m.Lock()
 	defer s.m.Unlock()
 	if newPath == os.TempDir() {
-		newPath = EncodeTmpDir(os.TempDir(),
+		newPath = encodeTmpDir(os.TempDir(),
 			GetGlobalConfig().Host,
 			GetGlobalConfig().Status.StatusHost,
 			GetGlobalConfig().Port,
@@ -1302,7 +1302,7 @@ func (c *Config) Valid() error {
 	}
 
 	if c.Instance.TmpDir.Load() == DefTempStorageDirName {
-		c.Instance.TmpDir.Store(EncodeTmpDir(os.TempDir(), c.Host, c.Status.StatusHost, c.Port, c.Status.StatusPort))
+		c.Instance.TmpDir.Store(encodeTmpDir(os.TempDir(), c.Host, c.Status.StatusHost, c.Port, c.Status.StatusPort))
 	}
 
 	if len(c.IsolationRead.Engines) < 1 {
