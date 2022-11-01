@@ -503,13 +503,11 @@ func prunePhysicalColumnsInternal(sctx sessionctx.Context, plan PhysicalPlan) er
 			}
 
 			if matchPattern {
-				var joinUsedCols []*expression.Column
 				if i == 0 {
-					joinUsedCols = leftCols
+					err = prunePhysicalColumnForHashJoinChild(sctx, x, leftCols, exchangeSender)
 				} else {
-					joinUsedCols = rightCols
+					err = prunePhysicalColumnForHashJoinChild(sctx, x, rightCols, exchangeSender)
 				}
-				err = prunePhysicalColumnForHashJoinChild(sctx, x, joinUsedCols, exchangeSender)
 				if err != nil {
 					return nil
 				}
