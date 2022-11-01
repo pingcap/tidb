@@ -656,8 +656,8 @@ func NewIndexWithKeyRange(db *model.DBInfo, table *model.TableInfo, index *model
 	return newIndexWithKeyRange(db, table, index, table.ID)
 }
 
-func newIndexWithKeyRange(db *model.DBInfo, table *model.TableInfo, index *model.IndexInfo, physicalId int64) TableInfoWithKeyRange {
-	sk, ek := tablecodec.GetTableIndexKeyRange(physicalId, index.ID)
+func newIndexWithKeyRange(db *model.DBInfo, table *model.TableInfo, index *model.IndexInfo, physicalID int64) TableInfoWithKeyRange {
+	sk, ek := tablecodec.GetTableIndexKeyRange(physicalID, index.ID)
 	startKey := bytesKeyToHex(codec.EncodeBytes(nil, sk))
 	endKey := bytesKeyToHex(codec.EncodeBytes(nil, ek))
 	return TableInfoWithKeyRange{
