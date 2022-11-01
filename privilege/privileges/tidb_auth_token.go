@@ -11,12 +11,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package auth
+package privileges
 
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +24,8 @@ import (
 	jwsRepo "github.com/lestrrat-go/jwx/v2/jws"
 	jwtRepo "github.com/lestrrat-go/jwx/v2/jwt"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 type jwksImpl struct {
@@ -54,46 +55,46 @@ func LoadJWKS4AuthToken(jwksPath string, interval time.Duration) error {
 	go func() {
 		for range time.Tick(interval) {
 			if err := load(); err != nil {
-				fmt.Println("TODO: warn this error")
+				logutil.BgLogger().Error("Fail to load JWKS", zap.String("path", jwksPath), zap.Duration("interval", interval))
 			}
 		}
 	}()
 	return load()
 }
 
-// VerifyJWT verifies the signature in the jwt, and returns the claims.
-func VerifyJWT(tokenString string, retryTime int) (map[string]interface{}, error) {
-	var Err error
+// verifyJWT verifies the signature in the jwt, and returns the claims.
+func verifyJWT(tokenString string, retryTime int) (map[string]interface{}, error) {
+	var (
+		verifiedPayload []byte
+		err             error
+	)
 	for retryTime >= 0 {
 		retryTime--
 		parts := strings.Split(tokenString, ".")
 		if len(parts) != 3 {
-			Err = errors.AddStack(errors.New("Invalid JWT"))
+			err = errors.New("Invalid JWT")
 			continue
 		}
 
 		// verify signature
-		verifiedPayload, err := verify(([]byte)(tokenString))
+		verifiedPayload, err = verify(([]byte)(tokenString))
 		if err != nil {
-			Err = errors.AddStack(err)
-			if err = load(); err != nil {
-				Err = errors.AddStack(err)
+			if e := load(); e != nil {
+				err = e
 			}
 			continue
 		}
 
 		jwt := jwtRepo.New()
 		if err = jwt.(json.Unmarshaler).UnmarshalJSON(verifiedPayload); err != nil {
-			Err = errors.AddStack(err)
 			continue
 		}
 		claims, err := jwt.AsMap(context.Background())
 		if err != nil {
-			Err = errors.AddStack(err)
 			continue
 		}
 		return claims, nil
 	}
-	Err = errors.AddStack(errors.New("Retry time has been spent out"))
-	return nil, Err
+	err = errors.Annotate(err, "Retry time has been spent out")
+	return nil, err
 }

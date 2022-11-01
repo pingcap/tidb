@@ -6,7 +6,6 @@ go_library(
         "auth.go",
         "caching_sha2.go",
         "mysql_native_password.go",
-        "tidb_auth_token.go",
         "tidb_sm3.go",
     ],
     importpath = "github.com/pingcap/tidb/parser/auth",
@@ -15,9 +14,6 @@ go_library(
         "//parser/format",
         "//parser/mysql",
         "//parser/terror",
-        "@com_github_lestrrat_go_jwx_v2//jwk:go_default_library",
-        "@com_github_lestrrat_go_jwx_v2//jws:go_default_library",
-        "@com_github_lestrrat_go_jwx_v2//jwt:go_default_library",
         "@com_github_pingcap_errors//:errors",
     ],
 )
