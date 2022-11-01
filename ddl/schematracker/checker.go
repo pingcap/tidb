@@ -15,9 +15,9 @@
 package schematracker
 
 import (
-	"crypto/tls"
 	"bytes"
 	"context"
+	"crypto/tls"
 	"fmt"
 	"strings"
 	"time"

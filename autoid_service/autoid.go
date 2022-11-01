@@ -11,6 +11,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/util/mathutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"google.golang.org/grpc"
@@ -18,6 +19,10 @@ import (
 
 var (
 	ErrAutoincReadFailed = errors.New("auto increment action failed")
+)
+
+const (
+	autoIDLeaderPath = "tidb/autoid/leader"
 )
 
 type autoIDKey struct {
@@ -217,8 +222,8 @@ type Service struct {
 	autoIDLock sync.Mutex
 	autoIDMap  map[autoIDKey]*autoIDValue
 
-	*leaderShip
-	store kv.Storage
+	leaderShip owner.Manager
+	store      kv.Storage
 }
 
 func New(selfAddr string, etcdAddr []string, store kv.Storage) *Service {
@@ -230,8 +235,11 @@ func New(selfAddr string, etcdAddr []string, store kv.Storage) *Service {
 		panic(err)
 	}
 
-	l := &leaderShip{cli: cli}
-	go l.campaignLoop(context.Background(), selfAddr)
+	l := owner.NewOwnerManager(context.Background(), cli, "autoid", selfAddr, autoIDLeaderPath)
+	err = l.CampaignOwner()
+	if err != nil {
+		panic(err)
+	}
 
 	return &Service{
 		autoIDMap:  make(map[autoIDKey]*autoIDValue),
@@ -261,7 +269,7 @@ func MockForTest(store kv.Storage) *mockClient {
 		ret = &mockClient{
 			Service{
 				autoIDMap:  make(map[autoIDKey]*autoIDValue),
-				leaderShip: &leaderShip{mock: true},
+				leaderShip: nil,
 				store:      store,
 			},
 		}
@@ -271,6 +279,9 @@ func MockForTest(store kv.Storage) *mockClient {
 }
 
 func (s *Service) Close() {
+	if s.leaderShip != nil {
+		s.leaderShip.Cancel()
+	}
 }
 
 // seekToFirstAutoIDSigned seeks to the next valid signed position.
@@ -339,7 +350,7 @@ func (s *Service) getAlloc(dbID, tblID int64) *autoIDValue {
 }
 
 func (s *Service) allocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*autoid.AutoIDResponse, error) {
-	if !s.IsLeader() {
+	if s.leaderShip != nil && !s.leaderShip.IsOwner() {
 		return nil, errors.New("not leader")
 	}
 
@@ -396,7 +407,7 @@ func (alloc *autoIDValue) forceRebase(ctx context.Context, store kv.Storage, dbI
 }
 
 func (s *Service) Rebase(ctx context.Context, req *autoid.RebaseRequest) (*autoid.RebaseResponse, error) {
-	if !s.IsLeader() {
+	if s.leaderShip != nil && !s.leaderShip.IsOwner() {
 		return nil, errors.New("not leader")
 	}
 

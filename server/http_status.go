@@ -479,6 +479,7 @@ func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
 			}
 			service := autoid.New(s.statusListener.Addr().String(), etcdAddr, store)
 			pb.RegisterAutoIDAllocServer(grpcServer, service)
+			s.autoIDService = service
 			break
 		}
 	}

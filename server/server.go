@@ -37,6 +37,7 @@ import (
 	"math/rand"
 	"net"
 	"net/http" //nolint:goimports
+
 	// For pprof
 	_ "net/http/pprof" // #nosec G108
 	"os"
@@ -48,6 +49,7 @@ import (
 
 	"github.com/blacktear23/go-proxyprotocol"
 	"github.com/pingcap/errors"
+	autoid "github.com/pingcap/tidb/autoid_service"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
@@ -139,6 +141,7 @@ type Server struct {
 
 	sessionMapMutex  sync.Mutex
 	internalSessions map[interface{}]struct{}
+	autoIDService    *autoid.Service
 }
 
 // ConnectionCount gets current connection count.
@@ -496,6 +499,9 @@ func (s *Server) Close() {
 	if s.grpcServer != nil {
 		s.grpcServer.Stop()
 		s.grpcServer = nil
+	}
+	if s.autoIDService != nil {
+		s.autoIDService.Close()
 	}
 	metrics.ServerEventCounter.WithLabelValues(metrics.EventClose).Inc()
 }
