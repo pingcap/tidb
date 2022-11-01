@@ -387,7 +387,7 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 			claims map[string]interface{}
 			err    error
 		)
-		if claims, err = verifyJWT(tokenString, 1); err != nil {
+		if claims, err = GlobalJWKS.verifyJWT(tokenString, 1); err != nil {
 			logutil.BgLogger().Error("verify JWT failed", zap.Error(err))
 			return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 		}

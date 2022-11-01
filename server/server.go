@@ -313,7 +313,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 				zap.String("security.auth-token-refresh-interval", s.cfg.Security.AuthTokenRefreshInterval))
 			timeInterval = config.DefAuthTokenRefreshInterval
 		}
-		if err = privileges.LoadJWKS4AuthToken(s.cfg.Security.AuthTokenJWKS, timeInterval); err != nil {
+		if err = privileges.GlobalJWKS.LoadJWKS4AuthToken(s.cfg.Security.AuthTokenJWKS, timeInterval); err != nil {
 			logutil.BgLogger().Error("Fail to load JWKS from the path", zap.String("jwks", s.cfg.Security.AuthTokenJWKS))
 		}
 	}

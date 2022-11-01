@@ -29,42 +29,42 @@ import (
 	"go.uber.org/zap"
 )
 
-type jwksImpl struct {
+type JWKSImpl struct {
 	s        jwkRepo.Set
 	m        sync.RWMutex
 	filepath string
 }
 
-var jwks jwksImpl
+var GlobalJWKS JWKSImpl
 
-func load() (err error) {
+func (jwks *JWKSImpl) load() (err error) {
 	jwks.m.Lock()
 	defer jwks.m.Unlock()
 	jwks.s, err = jwkRepo.ReadFile(jwks.filepath)
 	return err
 }
 
-func verify(tokenBytes []byte) (payload []byte, err error) {
+func (jwks *JWKSImpl) verify(tokenBytes []byte) (payload []byte, err error) {
 	jwks.m.RLock()
 	defer jwks.m.RUnlock()
 	return jwsRepo.Verify(tokenBytes, jwsRepo.WithKeySet(jwks.s))
 }
 
 // LoadJWKS4AuthToken reload the jwks every auth-token-refresh-interval.
-func LoadJWKS4AuthToken(jwksPath string, interval time.Duration) error {
+func (jwks *JWKSImpl) LoadJWKS4AuthToken(jwksPath string, interval time.Duration) error {
 	jwks.filepath = jwksPath
 	go func() {
 		for range time.Tick(interval) {
-			if err := load(); err != nil {
+			if err := jwks.load(); err != nil {
 				logutil.BgLogger().Error("Fail to load JWKS", zap.String("path", jwksPath), zap.Duration("interval", interval))
 			}
 		}
 	}()
-	return load()
+	return jwks.load()
 }
 
 // verifyJWT verifies the signature in the jwt, and returns the claims.
-func verifyJWT(tokenString string, retryTime int) (map[string]interface{}, error) {
+func (jwks *JWKSImpl) verifyJWT(tokenString string, retryTime int) (map[string]interface{}, error) {
 	var (
 		verifiedPayload []byte
 		err             error
@@ -78,9 +78,9 @@ func verifyJWT(tokenString string, retryTime int) (map[string]interface{}, error
 		}
 
 		// verify signature
-		verifiedPayload, err = verify(([]byte)(tokenString))
+		verifiedPayload, err = jwks.verify(([]byte)(tokenString))
 		if err != nil {
-			if e := load(); e != nil {
+			if e := jwks.load(); e != nil {
 				err = e
 			}
 			continue
