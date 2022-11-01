@@ -133,16 +133,18 @@ func (a *PanicOnExceed) SetLogHook(hook func(uint64)) {
 // Action panics when memory usage exceeds memory quota.
 func (a *PanicOnExceed) Action(t *Tracker) {
 	a.mutex.Lock()
+	defer func() {
+		a.mutex.Unlock()
+	}()
 	if !a.acted {
 		if a.logHook == nil {
 			logutil.BgLogger().Warn("memory exceeds quota",
-				zap.Error(errMemExceedThreshold.GenWithStackByArgs(t.label, t.BytesConsumed(), t.GetBytesLimit(), t.String())))
-			return
+				zap.Uint64("connID", t.SessionID), zap.Error(errMemExceedThreshold.GenWithStackByArgs(t.label, t.BytesConsumed(), t.GetBytesLimit(), t.String())))
+		} else {
+			a.logHook(a.ConnID)
 		}
-		a.logHook(a.ConnID)
 	}
 	a.acted = true
-	a.mutex.Unlock()
 	panic(PanicMemoryExceed + fmt.Sprintf("[conn_id=%d]", a.ConnID))
 }
 
