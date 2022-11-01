@@ -105,6 +105,16 @@ func (p *baseProcessor) setEvaluatedTS(ts uint64) (err error) {
 	})
 }
 
+// setEvaluatedTSWithoutEvaluator sets the ts, but not set the evaluator, so it doesn't affect prepare statement
+func (p *baseProcessor) setEvaluatedTSWithoutEvaluator(ts uint64) (err error) {
+	is, err := GetSessionSnapshotInfoSchema(p.sctx, ts)
+	if err != nil {
+		return err
+	}
+
+	return p.setEvaluatedValues(ts, is, nil)
+}
+
 func (p *baseProcessor) setEvaluatedEvaluator(evaluator StalenessTSEvaluator) error {
 	ts, err := evaluator(p.sctx)
 	if err != nil {
@@ -206,6 +216,10 @@ func (p *staleReadProcessor) evaluateFromTxn() error {
 			nil,
 		)
 	}
+
+	// Don't consider external ts, but just set non-stale read directly,because stepping here means
+	// when the transaction begins, the external ts read hasn't been turned on, but it was turned
+	// on during the transaction. Ignore it to avoid unexpected stepping back.
 	return p.setAsNonStaleRead()
 }
 
@@ -234,6 +248,14 @@ func (p *staleReadProcessor) evaluateFromStmtTSOrSysVariable(stmtTS uint64) erro
 		// select from table
 		// Then the following select statement should be affected by the tidb_read_staleness in session.
 		return p.setEvaluatedEvaluator(evaluator)
+	}
+
+	ts, err := getTSFromExternalTS(p.ctx, p.sctx)
+	if err != nil {
+		return errAsOf.FastGenWithCause(err.Error())
+	}
+	if ts > 0 {
+		return p.setEvaluatedTSWithoutEvaluator(ts)
 	}
 
 	// Otherwise, it means we should not use stale read.
@@ -266,6 +288,18 @@ func getTsEvaluatorFromReadStaleness(sctx sessionctx.Context) StalenessTSEvaluat
 	return func(sctx sessionctx.Context) (uint64, error) {
 		return CalculateTsWithReadStaleness(sctx, readStaleness)
 	}
+}
+
+func getTSFromExternalTS(ctx context.Context, sctx sessionctx.Context) (uint64, error) {
+	if sctx.GetSessionVars().EnableExternalTSRead && !sctx.GetSessionVars().InRestrictedSQL {
+		externalTimestamp, err := GetExternalTimestamp(ctx, sctx)
+		if err != nil {
+			return 0, err
+		}
+		return externalTimestamp, nil
+	}
+
+	return 0, nil
 }
 
 // GetSessionSnapshotInfoSchema returns the session's information schema with specified ts
