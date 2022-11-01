@@ -1341,10 +1341,10 @@ func (e *InsertRuntimeStat) String() string {
 			execdetails.FormatDuration(e.CheckInsertTime),
 			execdetails.FormatDuration(e.CheckInsertTime-e.Prefetch),
 			execdetails.FormatDuration(e.Prefetch)))
-		if e.FKCheckStats.keys > 0 {
+		if e.FKCheckStats != nil && e.FKCheckStats.Keys > 0 {
 			buf.WriteString(fmt.Sprintf(", fk_check: %v, fk_num: %v",
 				execdetails.FormatDuration(e.FKCheckTime),
-				e.FKCheckStats.keys))
+				e.FKCheckStats.Keys))
 		}
 		if e.SnapshotRuntimeStats != nil {
 			if rpc := e.SnapshotRuntimeStats.String(); len(rpc) > 0 {
@@ -1375,6 +1375,10 @@ func (e *InsertRuntimeStat) Clone() execdetails.RuntimeStats {
 	}
 	if e.AllocatorRuntimeStats != nil {
 		newRs.AllocatorRuntimeStats = e.AllocatorRuntimeStats.Clone()
+	}
+	if e.FKCheckStats != nil {
+		fkCheckStats := *e.FKCheckStats
+		newRs.FKCheckStats = &fkCheckStats
 	}
 	return newRs
 }
