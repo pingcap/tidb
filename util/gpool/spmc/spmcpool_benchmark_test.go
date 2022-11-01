@@ -54,6 +54,7 @@ func BenchmarkGPool(b *testing.B) {
 			}
 			return struct{}{}, gpool.ErrProducerClosed
 		}
+
 		resultCh, ctl := p.AddProducer(producerFunc, RunTimes, pooltask.NilContext{}, WithConcurrency(6), WithResultChanLen(10))
 		exitCh := make(chan struct{})
 		wg.Run(func() {

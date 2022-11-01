@@ -164,7 +164,6 @@ func TestPoolWithoutEnoughCapacity(t *testing.T) {
 				}
 			}
 			resultCh, ctl := p.AddProducer(producerFunc, RunTimes, pooltask.NilContext{}, WithConcurrency(concurrency))
-
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
