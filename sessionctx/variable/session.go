@@ -1356,7 +1356,7 @@ func (s *SessionVars) SetAlloc(alloc chunk.Allocator) {
 	s.ChunkPool.Alloc = alloc
 }
 
-// EndAlloc indicates reuse chunk end
+// ClearAlloc indicates stop reuse chunk
 func (s *SessionVars) ClearAlloc() {
 	s.ChunkPool.Alloc = nil
 }
