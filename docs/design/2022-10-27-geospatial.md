@@ -36,7 +36,7 @@ A [proof of concept](https://github.com/Hackathon-2022-GIS) was done as part of 
 
 ### Data types
 
-Data types are defined in [Simple Feature Access - Part 2: SQL Option] from the OGC. 
+Data types are defined in [Simple Feature Access - Part 2: SQL Option](https://www.ogc.org/standards/sfs) from the OGC. 
 
 Data types that should be implemented are:
 
@@ -76,29 +76,42 @@ Besides the data type there is also a column attribute that is used in MySQL to 
 
 Example:
 
-```
+```sql
 CREATE TABLE t1 (
     id BIGINT UNSIGNED AUTO_RANDOM PRIMARY KEY,
     g GEOMETRY NOT NULL SRID 4326
 );
 ```
 
+#### Phase 1
+
+Support for the `GEOMETRY` data type
+
+#### Phase 2
+
+Support for SRID attribute
+
+#### Phase 3
+
+Support for `POINT` and other data types
+
 ### Functions
 
-There are multiple categories of functions to implement
+The list of functions that MySQL supports are [here](https://dev.mysql.com/doc/refman/8.0/en/spatial-function-reference.html).
 
-The list of functioons that MySQL supports are [here](https://dev.mysql.com/doc/refman/8.0/en/spatial-function-reference.html).
+The focus is to implement the most used functions that are part of the OpenGIS standards and MySQL first and later on the MySQL specific functions where needed for compatibility.
 
-The focus is to implement the most used functions that are OpenGIS and MySQL first and later on the MySQL specific functions where needed for compatibility.
-
-Phase 1:
+#### Phase 1
 
 | Function | Description |
 |----------|-------------|
-| `ST_GeomFromText()` | WKT to Geometry |
+| `ST_GeomFromText()` | WKT to Geometry, including the SRID argument |
 | `ST_AsText()` | Geometry to WKT |
+| `ST_Distance()` | Distance, only for SRID 0 as a start |
 
-Phase 2:
+This together with the `GEOMETRY` data type would allow migration of data from MySQL and allow one to store and retrieve features. Lookup is expected to be done by other columns (e.g. `SELECT bike_id, bike_location FROM bikes WHERE bike_id=1234`)
+
+#### Phase 2
 
 | Function | Description |
 |----------|-------------|
@@ -107,29 +120,150 @@ Phase 2:
 | `ST_AsGeoJSON()` | Geometry to GeoJSON |
 | `ST_GeomFromGeoJSON()` | GeoJSON to Geometry |
 
-Phase 3:
+This adds more format convertion options.
+
+#### Phase 3
 
 | Function | Description |
 |----------|-------------|
 | `Point()`, `LineString()`, etc | MySQL Specific, Create a geometry based on arguments | |
 
+This is to add compatibility features that are MySQL Specific and not in the offical standards, but are often used.
+
+#### Phase 4
+
+| Function | Description |
+|----------|-------------|
+| ST_SRID() | Get SRID from feature |
+
+Add functions that get properties from features
+#### Phase 5
+
+| Function | Description |
+|----------|-------------|
+| ST_Distance() | Distance, for SRID 0 *and* SRID 4326 (WGS 84)|
+
+Add more functions that test relations between features
+
 ### Indexes
 
-GeoHash?
+#### Geohash
+
+Support for GeoHash functions makes it possible to use regular indexes with generated columns.
+
+Example of `ST_Geohash()` with MySQL 8.0:
+
+```
+mysql> SELECT ST_Geohash(ST_GeomFromText('POINT(1 0)'),15);
++----------------------------------------------+
+| ST_Geohash(ST_GeomFromText('POINT(1 0)'),15) |
++----------------------------------------------+
+| s008nb00j8n012j                              |
++----------------------------------------------+
+1 row in set (0.00 sec)
+
+mysql> SELECT ST_Geohash(ST_GeomFromText('POINT(1 0)'),5);
++---------------------------------------------+
+| ST_Geohash(ST_GeomFromText('POINT(1 0)'),5) |
++---------------------------------------------+
+| s008n                                       |
++---------------------------------------------+
+1 row in set (0.00 sec)
+
+mysql> SELECT ST_Geohash(ST_GeomFromText('POINT(1.01 0)'),15);
++-------------------------------------------------+
+| ST_Geohash(ST_GeomFromText('POINT(1.01 0)'),15) |
++-------------------------------------------------+
+| s008nbp2n8n848n                                 |
++-------------------------------------------------+
+1 row in set (0.00 sec)
+
+mysql> SELECT ST_Geohash(ST_GeomFromText('POINT(1.01 0)'),5);
++------------------------------------------------+
+| ST_Geohash(ST_GeomFromText('POINT(1.01 0)'),5) |
++------------------------------------------------+
+| s008n                                          |
++------------------------------------------------+
+1 row in set (0.00 sec)
+```
+
+As you can see in the example `POINT(1 0)` and `POINT(1.01 0)` have the same prefix. More information about what prefix length gives what precision can be found [on wikipedia](https://en.wikipedia.org/wiki/Geohash#Digits_and_precision_in_km).
+
+Geohash support is useful both for indexing and compatibility. Implementing this should be relatively easy. However this doesn't fully replace geospatial indexes.
+
+#### Geospatial indexes
+
+For MySQL this is based on [R-tree](https://en.wikipedia.org/wiki/R-tree). There has been some geospatial support in RocksDB in the past but that has been removed again.
+
+There was a paper published in the beginning of 2022 that is titled [An LSM-Tree Index for Spatial Data](https://www.mdpi.com/1999-4893/15/4/113).
+
+What's needed to fully support geospatial indexes in TiDB/TiKV needs more research.
 
 ### Information Schema Tables
 
+MySQL 8.0 has 3 information_schema tables that are related to geospatial support.
 
-Explain the design in enough detail that: it is reasonably clear how the feature would be implemented, corner cases are dissected by example, how the feature is used, etc.
+```
+mysql-8.0.31> SHOW TABLES FROM information_schema LIKE 'ST\_%';
++--------------------------------------+
+| Tables_in_information_schema (ST\_%) |
++--------------------------------------+
+| ST_GEOMETRY_COLUMNS                  |
+| ST_SPATIAL_REFERENCE_SYSTEMS         |
+| ST_UNITS_OF_MEASURE                  |
++--------------------------------------+
+3 rows in set (0.00 sec)
+```
 
-It's better to describe the pseudo-code of the key algorithm, API interfaces, the UML graph, what components are needed to be changed in this section.
+[Simple Feature Access - Part 2: SQL Option](https://www.ogc.org/standards/sfs) names the first two tables `GEOMETRY_COLUMNS` and `SPATIAL_REF_SYS` and doesn't mention the last table.
 
-Compatibility is important, please also take into consideration, a checklist:
-- Compatibility with other features, like partition table, security&privilege, collation&charset, clustered index, async commit, etc.
-- Compatibility with other internal components, like parser, DDL, planner, statistics, executor, etc.
-- Compatibility with other external components, like PD, TiKV, TiFlash, BR, TiCDC, Dumpling, TiUP, K8s, etc.
-- Upgrade compatibility
-- Downgrade compatibility
+These tables can help with SRID validation:
+
+```
+mysql-8.0.31> SELECT SRS_ID FROM information_schema.ST_SPATIAL_REFERENCE_SYSTEMS LIMIT 5;
++--------+
+| SRS_ID |
++--------+
+|      0 |
+|   4143 |
+|   2165 |
+|   2043 |
+|   2041 |
++--------+
+5 rows in set (0.00 sec)
+
+mysql-8.0.31> CREATE TABLE tbl1(id int primary key, g geometry srid 0);
+Query OK, 0 rows affected (0.05 sec)
+
+mysql-8.0.31> CREATE TABLE tbl2(id int primary key, g geometry srid 1);
+ERROR 3548 (SR001): There's no spatial reference system with SRID 1.
+mysql-8.0.31> CREATE TABLE tbl3(id int primary key, g geometry srid 4143);
+Query OK, 0 rows affected (0.06 sec)
+```
+
+#### Phase 1
+
+Implement `ST_SPATIAL_REFERENCE_SYSTEMS`, keeping this compatible with MySQL 8.0.
+
+#### Phase 2
+
+Implement `ST_GEOMETRY_COLUMNS`, keeping this compatible with MySQL 8.0.
+
+#### Phase 3
+
+Implement `ST_UNITS_OF_MEASURE`, keeping this compatible with MySQL 8.0.
+
+### Compatibility
+
+As the parser is updated external tools like Dumpling need to be built with the new parser to be able to validate the schema.
+
+The `sync_diff_inspector` tool might need to be updated to compare and/or ignore geospatial columns.
+
+Downgrading to a release without geospatial datatypes will require dropping all geospatial columns from all tables.
+
+Support for TiFlash is out of scope for now and needs more research.
+
+Geospatial support is not expected to impact security. The `ST_GEOMETRY_COLUMNS` table, when implemented, should limit the visible tables based on the privileges of the user, just like `information_schema.TABLES`.
 
 ## Test Design
 
