@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -545,9 +546,12 @@ func TestIssue38699(t *testing.T) {
 	tk.MustExec("alter table t modify a tinyint")
 	result := tk.MustQuery("show warnings")
 	require.Len(t, result.Rows(), 1)
-	result.Check(testkit.Rows("Warning 1690 2 warning(s), first warning:constant 1000000000 overflows tinyint"))
+	result.CheckWithFunc(testkit.Rows("Warning 1690 2 warnings with this error code"), func(actual []string, expected []interface{}) bool {
+		//Check if it starts with x warning(s)
+		return strings.EqualFold(actual[0], expected[0].(string)) && strings.EqualFold(actual[1], expected[1].(string)) && strings.HasPrefix(actual[2], expected[2].(string))
+	})
 
-	//single record
+	//Test single record
 	tk.MustExec("DROP TABLE IF EXISTS t;")
 	tk.MustExec("CREATE TABLE t (a int)")
 	tk.MustExec("insert into t values (1000000000)")

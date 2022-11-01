@@ -1098,7 +1098,7 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 						if keyCount == 1 {
 							ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 						} else {
-							newMsg := fmt.Sprintf("%d warning(s), first warning:"+warning.GetMsg(), keyCount)
+							newMsg := fmt.Sprintf("%d warnings with this error code, first warning: "+warning.GetMsg(), keyCount)
 							newWarning := dbterror.ClassTypes.Synthesize(terror.ErrCode(warning.Code()), newMsg)
 							ctx.GetSessionVars().StmtCtx.AppendWarning(newWarning)
 						}
