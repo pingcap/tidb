@@ -19,8 +19,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"os"
-	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -473,21 +471,6 @@ var defaultSysVars = []*SysVar{
 		return BoolToOnOff(EnableRCReadCheckTS.Load()), nil
 	}},
 	{Scope: ScopeInstance, Name: TmpDir, Value: config.GetGlobalConfig().Instance.TmpDir.Load(), Type: TypeStr, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-		val = config.EncodeTmpDir(val,
-			config.GetGlobalConfig().Host,
-			config.GetGlobalConfig().Status.StatusHost,
-			config.GetGlobalConfig().Port,
-			config.GetGlobalConfig().Status.StatusPort,
-		)
-		if _, err := os.Stat(val); err != nil && !os.IsNotExist(err) {
-			return err
-		}
-		parent := filepath.Dir(val)
-		if _, err := os.Stat(parent); os.IsNotExist(err) {
-			if err = os.MkdirAll(parent, 0750); err != nil {
-				return err
-			}
-		}
 		if err := config.GetGlobalConfig().Instance.TmpDir.Rename(val); err != nil {
 			return err
 		}

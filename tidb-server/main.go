@@ -181,10 +181,8 @@ func main() {
 	}
 	registerStores()
 	registerMetrics()
+	terror.MustNil(disk.InitializeTempDir(config.GetGlobalConfig().Instance.TmpDir.Load()))
 	if variable.EnableTmpStorageOnOOM.Load() {
-		config.GetGlobalConfig().UpdateTmpDir()
-		err := disk.InitializeTempDir()
-		terror.MustNil(err)
 		config.CheckTempStorageQuota()
 	}
 	setupLog()

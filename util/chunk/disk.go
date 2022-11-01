@@ -56,6 +56,9 @@ type diskFileReaderWriter struct {
 }
 
 func (l *diskFileReaderWriter) initWithFileName(dirName, fileName string) (err error) {
+	if err := disk.CheckAndCreateDir(dirName); err != nil {
+		return errors2.Trace(err)
+	}
 	l.disk, err = os.CreateTemp(dirName, fileName)
 	if err != nil {
 		return errors2.Trace(err)
@@ -111,9 +114,6 @@ func NewListInDisk(fieldTypes []*types.FieldType) *ListInDisk {
 
 func (l *ListInDisk) initDiskFile() (err error) {
 	tmpdir := config.GetGlobalConfig().Instance.TmpDir.Load()
-	if err = disk.CheckAndInitTempDir(tmpdir); err != nil {
-		return
-	}
 	if err = l.dataFile.initWithFileName(tmpdir, defaultChunkListInDiskPath+strconv.Itoa(l.diskTracker.Label())); err != nil {
 		return
 	}

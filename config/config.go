@@ -278,16 +278,6 @@ type Config struct {
 	TempStorageQuota           int64      `toml:"tmp-storage-quota" json:"tmp-storage-quota"` // Bytes
 }
 
-// UpdateTmpDir is to update the `TempStoragePath` if port/statusPort was changed
-// and the `tmpdir` was not specified in the conf.toml or was specified the same as the default value.
-func (c *Config) UpdateTmpDir() {
-	if c.Instance.TmpDir.Load() == DefTempStorageDirName {
-		c.Instance.TmpDir.Store(EncodeTmpDir(os.TempDir(), c.Host, c.Status.StatusHost, c.Port, c.Status.StatusPort))
-	} else {
-		c.Instance.TmpDir.Store(EncodeTmpDir(c.Instance.TmpDir.Load(), c.Host, c.Status.StatusHost, c.Port, c.Status.StatusPort))
-	}
-}
-
 // GetTiKVConfig returns configuration options from tikvcfg
 func (c *Config) GetTiKVConfig() *tikvcfg.Config {
 	return &tikvcfg.Config{
@@ -411,9 +401,23 @@ func (s *AtomicFilepath) Store(str string) {
 }
 
 // Rename renames and writes the filepath thread-safely.
-func (s *AtomicFilepath) Rename(newPath string) error {
+func (s *AtomicFilepath) Rename(newPath string) (e error) {
 	s.m.Lock()
 	defer s.m.Unlock()
+	if newPath == os.TempDir() {
+		newPath = EncodeTmpDir(os.TempDir(),
+			GetGlobalConfig().Host,
+			GetGlobalConfig().Status.StatusHost,
+			GetGlobalConfig().Port,
+			GetGlobalConfig().Status.StatusPort,
+		)
+	}
+	parent := filepath.Dir(newPath)
+	if _, err := os.Stat(parent); os.IsNotExist(err) {
+		if err = os.MkdirAll(parent, 0750); err != nil {
+			return err
+		}
+	}
 	if err := os.Rename(s.filepath, newPath); err != nil {
 		return err
 	}
@@ -1295,6 +1299,10 @@ func (c *Config) Valid() error {
 
 	if c.Instance.MemoryUsageAlarmRatio > 1 || c.Instance.MemoryUsageAlarmRatio < 0 {
 		return fmt.Errorf("tidb_memory_usage_alarm_ratio in [Instance] must be greater than or equal to 0 and less than or equal to 1")
+	}
+
+	if c.Instance.TmpDir.Load() == DefTempStorageDirName {
+		c.Instance.TmpDir.Store(EncodeTmpDir(os.TempDir(), c.Host, c.Status.StatusHost, c.Port, c.Status.StatusPort))
 	}
 
 	if len(c.IsolationRead.Engines) < 1 {
