@@ -382,6 +382,8 @@ const (
 	StmtNowTsCacheKey StmtCacheKey = iota
 	// StmtSafeTSCacheKey is a variable for safeTS calculation/cache of one stmt.
 	StmtSafeTSCacheKey
+	// StmtExternalTSCacheKey is a variable for externalTS calculation/cache of one stmt.
+	StmtExternalTSCacheKey
 )
 
 // GetOrStoreStmtCache gets the cached value of the given key if it exists, otherwise stores the value.
@@ -395,6 +397,23 @@ func (sc *StatementContext) GetOrStoreStmtCache(key StmtCacheKey, value interfac
 		sc.stmtCache.data[key] = value
 	}
 	return sc.stmtCache.data[key]
+}
+
+// GetOrEvaluateStmtCache gets the cached value of the given key if it exists, otherwise calculate the value.
+func (sc *StatementContext) GetOrEvaluateStmtCache(key StmtCacheKey, valueEvaluator func() (interface{}, error)) (interface{}, error) {
+	sc.stmtCache.mu.Lock()
+	defer sc.stmtCache.mu.Unlock()
+	if sc.stmtCache.data == nil {
+		sc.stmtCache.data = make(map[StmtCacheKey]interface{})
+	}
+	if _, ok := sc.stmtCache.data[key]; !ok {
+		value, err := valueEvaluator()
+		if err != nil {
+			return nil, err
+		}
+		sc.stmtCache.data[key] = value
+	}
+	return sc.stmtCache.data[key], nil
 }
 
 // ResetInStmtCache resets the cache of given key.
