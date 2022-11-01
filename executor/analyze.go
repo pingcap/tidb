@@ -292,6 +292,10 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(ctx context.Context, sta
 	panicCnt := 0
 	var err error
 	for panicCnt < statsConcurrency {
+		if atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1 {
+			close(saveResultsCh)
+			return errors.Trace(ErrQueryInterrupted)
+		}
 		results, ok := <-resultsCh
 		if !ok {
 			break

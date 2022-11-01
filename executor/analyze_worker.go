@@ -18,6 +18,7 @@ import (
 	"context"
 	"sync/atomic"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
@@ -54,6 +55,10 @@ func (worker *analyzeSaveStatsWorker) run(ctx context.Context, analyzeSnapshot b
 		}
 	}()
 	for results := range worker.resultsCh {
+		if atomic.LoadUint32(worker.killed) == 1 {
+			worker.errCh <- errors.Trace(ErrQueryInterrupted)
+			return
+		}
 		err := handle.SaveTableStatsToStorage(worker.sctx, results, analyzeSnapshot)
 		if err != nil {
 			logutil.Logger(ctx).Error("save table stats to storage failed", zap.Error(err))
@@ -68,9 +73,6 @@ func (worker *analyzeSaveStatsWorker) run(ctx context.Context, analyzeSnapshot b
 		}
 		invalidInfoSchemaStatCache(results.TableID.GetStatisticsID())
 		if err != nil {
-			return
-		}
-		if atomic.LoadUint32(worker.killed) == 1 {
 			return
 		}
 	}
