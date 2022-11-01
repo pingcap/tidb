@@ -1724,10 +1724,7 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.
 	}
 	tableInfo := tbl.Meta()
 	if _, ok := sctx.GetSessionVars().GetRelatedTableForMDL().Load(tableInfo.ID); !ok {
-		if se, ok := is.(*infoschema.SessionExtendedInfoSchema); ok && skipLock {
-			if se.MdlTables == nil {
-				return tbl, nil
-			}
+		if se, ok := is.(*infoschema.SessionExtendedInfoSchema); ok && skipLock && se.MdlTables != nil {
 			if _, ok := se.MdlTables.TableByID(tableInfo.ID); ok {
 				// Already attach.
 				return tbl, nil
