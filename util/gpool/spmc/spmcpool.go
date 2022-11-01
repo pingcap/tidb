@@ -46,6 +46,8 @@ type Pool[T any, U any, C any, CT any, TF pooltask.Context[CT]] struct {
 	stopCh        chan struct{}
 	consumerFunc  func(T, C, CT) U
 	taskManager   TaskManager[T, U, C, CT, TF]
+	name          string
+	generator     atomic.Uint64 // it is to generate task id.
 	capacity      atomic.Int32
 	running       atomic.Int32
 	state         atomic.Int32
@@ -66,6 +68,7 @@ func NewSPMCPool[T any, U any, C any, CT any, TF pooltask.Context[CT]](name stri
 		taskCh:      make(chan *pooltask.TaskBox[T, U, C, CT, TF], 128),
 		stopCh:      make(chan struct{}),
 		lock:        gpool.NewSpinLock(),
+		name:        name,
 		taskManager: NewTaskManager[T, U, C, CT, TF](size),
 		options:     opts,
 	}
