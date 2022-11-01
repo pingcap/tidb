@@ -76,12 +76,12 @@ func (j job) String(redacted bool) string {
 
 // HandleNonTransactionalDML is the entry point for a non-transactional DML statement
 func HandleNonTransactionalDML(ctx context.Context, stmt *ast.NonTransactionalDMLStmt, se Session) (sqlexec.RecordSet, error) {
-	// disable staleread for NT transactions because they always write.
 	sessVars := se.GetSessionVars()
-	stale := sessVars.ReadStaleness
+	originalReadStaleness := se.GetSessionVars().ReadStaleness
+	// NT-DML is a write operation, and should not be affected by read_staleness that is supposed to affect only SELECT.
 	sessVars.ReadStaleness = 0
 	defer func() {
-		sessVars.ReadStaleness = stale
+		sessVars.ReadStaleness = originalReadStaleness
 	}()
 	err := core.Preprocess(ctx, se, stmt)
 	if err != nil {
@@ -410,11 +410,8 @@ func buildShardJobs(ctx context.Context, stmt *ast.NonTransactionalDMLStmt, se S
 	originalSelectLimit := se.GetSessionVars().SelectLimit
 	se.GetSessionVars().SelectLimit = math.MaxUint64
 	// NT-DML is a write operation, and should not be affected by read_staleness that is supposed to affect only SELECT.
-	originalReadStaleness := se.GetSessionVars().ReadStaleness
-	se.GetSessionVars().ReadStaleness = 0
 	rss, err := se.Execute(ctx, selectSQL)
 	se.GetSessionVars().SelectLimit = originalSelectLimit
-	se.GetSessionVars().ReadStaleness = originalReadStaleness
 
 	if err != nil {
 		return nil, err
