@@ -154,7 +154,7 @@ func (e *PlanReplayerExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.endFlag {
 		return nil
 	}
-	err := e.createFile(domain.GetPlanReplayerDirName())
+	err := e.createFile()
 	if err != nil {
 		return err
 	}
@@ -180,33 +180,76 @@ func (e *PlanReplayerExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
-func (e *PlanReplayerExec) createFile(path string) error {
-	// Create path
+func (e *PlanReplayerExec) createFile() error {
+	var err error
+	e.DumpInfo.File, e.DumpInfo.FileName, err = GeneratePlanReplayerFile()
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// GeneratePlanReplayerFile generates plan replayer file
+func GeneratePlanReplayerFile() (*os.File, string, error) {
+	path := domain.GetPlanReplayerDirName()
 	err := os.MkdirAll(path, os.ModePerm)
 	if err != nil {
-		return errors.AddStack(err)
+		return nil, "", errors.AddStack(err)
 	}
+	fileName, err := generatePlanReplayerFileName()
+	if err != nil {
+		return nil, "", errors.AddStack(err)
+	}
+	zf, err := os.Create(filepath.Join(path, fileName))
+	if err != nil {
+		return nil, "", errors.AddStack(err)
+	}
+	return zf, fileName, err
+}
 
+func generatePlanReplayerFileName() (string, error) {
 	// Generate key and create zip file
 	time := time.Now().UnixNano()
 	b := make([]byte, 16)
 	//nolint: gosec
-	_, err = rand.Read(b)
+	_, err := rand.Read(b)
+	if err != nil {
+		return "", err
+	}
+	key := base64.URLEncoding.EncodeToString(b)
+	return fmt.Sprintf("replayer_%v_%v.zip", key, time), nil
+}
+
+func (e *PlanReplayerDumpInfo) dump(ctx context.Context) (err error) {
+	fileName := e.FileName
+	zf := e.File
+	task := &PlanReplayerDumpTask{
+		FileName:    fileName,
+		Zf:          zf,
+		SessionVars: e.ctx.GetSessionVars(),
+		TblStats:    nil,
+		ExecStmts:   e.ExecStmts,
+		Analyze:     e.Analyze,
+	}
+	err = DumpPlanReplayerInfo(ctx, e.ctx, task)
 	if err != nil {
 		return err
 	}
-	key := base64.URLEncoding.EncodeToString(b)
-	fileName := fmt.Sprintf("replayer_%v_%v.zip", key, time)
-	zf, err := os.Create(filepath.Join(path, fileName))
-	if err != nil {
-		return errors.AddStack(err)
-	}
-	e.DumpInfo.File = zf
-	e.DumpInfo.FileName = fileName
+	e.ctx.GetSessionVars().LastPlanReplayerToken = e.FileName
 	return nil
 }
 
-// dumpSingle will dump the information about sqls.
+// PlanReplayerDumpTask wrap the params for plan replayer dump
+type PlanReplayerDumpTask struct {
+	FileName    string
+	Zf          *os.File
+	SessionVars *variable.SessionVars
+	TblStats    map[int64]*handle.JSONTable
+	ExecStmts   []ast.StmtNode
+	Analyze     bool
+}
+
+// DumpPlanReplayerInfo will dump the information about sqls.
 // The files will be organized into the following format:
 /*
  |-meta.txt
@@ -235,10 +278,12 @@ func (e *PlanReplayerExec) createFile(path string) error {
      |-explain2.txt
      |-....
 */
-func (e *PlanReplayerDumpInfo) dump(ctx context.Context) (err error) {
-	fileName := e.FileName
-	zf := e.File
-	// Create zip writer
+func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
+	task *PlanReplayerDumpTask) (err error) {
+	zf := task.Zf
+	fileName := task.FileName
+	sessionVars := task.SessionVars
+	execStmts := task.ExecStmts
 	zw := zip.NewWriter(zf)
 	defer func() {
 		err = zw.Close()
@@ -250,7 +295,6 @@ func (e *PlanReplayerDumpInfo) dump(ctx context.Context) (err error) {
 			logutil.BgLogger().Error("Closing zip file failed", zap.Error(err), zap.String("filename", fileName))
 		}
 	}()
-
 	// Dump config
 	if err = dumpConfig(zw); err != nil {
 		return err
@@ -260,59 +304,55 @@ func (e *PlanReplayerDumpInfo) dump(ctx context.Context) (err error) {
 	if err = dumpMeta(zw); err != nil {
 		return err
 	}
-
 	// Retrieve current DB
-	sessionVars := e.ctx.GetSessionVars()
 	dbName := model.NewCIStr(sessionVars.CurrentDB)
-	do := domain.GetDomain(e.ctx)
+	do := domain.GetDomain(sctx)
 
 	// Retrieve all tables
-	pairs, err := e.extractTableNames(ctx, e.ExecStmts, dbName)
+	pairs, err := extractTableNames(ctx, sctx, execStmts, dbName)
 	if err != nil {
 		return errors.AddStack(fmt.Errorf("plan replayer: invalid SQL text, err: %v", err))
 	}
 
 	// Dump Schema and View
-	if err = dumpSchemas(e.ctx, zw, pairs); err != nil {
+	if err = dumpSchemas(sctx, zw, pairs); err != nil {
 		return err
 	}
 
 	// Dump tables tiflash replicas
-	if err = dumpTiFlashReplica(e.ctx, zw, pairs); err != nil {
+	if err = dumpTiFlashReplica(sctx, zw, pairs); err != nil {
 		return err
 	}
 
 	// Dump stats
-	if err = dumpStats(zw, pairs, do); err != nil {
+	if err = dumpStats(zw, pairs, task.TblStats, do); err != nil {
 		return err
 	}
 
 	// Dump variables
-	if err = dumpVariables(e.ctx, zw); err != nil {
+	if err = dumpVariables(sctx, zw); err != nil {
 		return err
 	}
 
 	// Dump sql
-	if err = dumpSQLs(e.ExecStmts, zw); err != nil {
+	if err = dumpSQLs(execStmts, zw); err != nil {
 		return err
 	}
 
 	// Dump session bindings
-	if err = dumpSessionBindings(e.ctx, zw); err != nil {
+	if err = dumpSessionBindings(sctx, zw); err != nil {
 		return err
 	}
 
 	// Dump global bindings
-	if err = dumpGlobalBindings(e.ctx, zw); err != nil {
+	if err = dumpGlobalBindings(sctx, zw); err != nil {
 		return err
 	}
 
 	// Dump explain
-	if err = dumpExplain(e.ctx, zw, e.ExecStmts, e.Analyze); err != nil {
+	if err = dumpExplain(sctx, zw, execStmts, task.Analyze); err != nil {
 		return err
 	}
-
-	e.ctx.GetSessionVars().LastPlanReplayerToken = e.FileName
 	return nil
 }
 
@@ -374,12 +414,12 @@ func dumpSchemas(ctx sessionctx.Context, zw *zip.Writer, pairs map[tableNamePair
 	return nil
 }
 
-func dumpStats(zw *zip.Writer, pairs map[tableNamePair]struct{}, do *domain.Domain) error {
+func dumpStats(zw *zip.Writer, pairs map[tableNamePair]struct{}, tblJsonStats map[int64]*handle.JSONTable, do *domain.Domain) error {
 	for pair := range pairs {
 		if pair.IsView {
 			continue
 		}
-		jsonTbl, err := getStatsForTable(do, pair)
+		jsonTbl, err := getStatsForTable(do, tblJsonStats, pair)
 		if err != nil {
 			return err
 		}
@@ -527,12 +567,12 @@ func dumpExplain(ctx sessionctx.Context, zw *zip.Writer, execStmts []ast.StmtNod
 	return nil
 }
 
-func (e *PlanReplayerDumpInfo) extractTableNames(ctx context.Context,
+func extractTableNames(ctx context.Context, sctx sessionctx.Context,
 	ExecStmts []ast.StmtNode, curDB model.CIStr) (map[tableNamePair]struct{}, error) {
 	tableExtractor := &tableNameExtractor{
 		ctx:      ctx,
-		executor: e.ctx.(sqlexec.RestrictedSQLExecutor),
-		is:       domain.GetDomain(e.ctx).InfoSchema(),
+		executor: sctx.(sqlexec.RestrictedSQLExecutor),
+		is:       domain.GetDomain(sctx).InfoSchema(),
 		curDB:    curDB,
 		names:    make(map[tableNamePair]struct{}),
 		cteNames: make(map[string]struct{}),
@@ -586,14 +626,18 @@ func (e *PlanReplayerDumpInfo) DumpSQLsFromFile(ctx context.Context, b []byte) e
 	return e.dump(ctx)
 }
 
-func getStatsForTable(do *domain.Domain, pair tableNamePair) (*handle.JSONTable, error) {
+func getStatsForTable(do *domain.Domain, tblJsonStats map[int64]*handle.JSONTable, pair tableNamePair) (*handle.JSONTable, error) {
 	is := do.InfoSchema()
 	h := do.StatsHandle()
 	tbl, err := is.TableByName(model.NewCIStr(pair.DBName), model.NewCIStr(pair.TableName))
 	if err != nil {
 		return nil, err
 	}
-	js, err := h.DumpStatsToJSON(pair.DBName, tbl.Meta(), nil, true)
+	js, ok := tblJsonStats[tbl.Meta().ID]
+	if ok && js != nil {
+		return js, nil
+	}
+	js, err = h.DumpStatsToJSON(pair.DBName, tbl.Meta(), nil, true)
 	return js, err
 }
 
