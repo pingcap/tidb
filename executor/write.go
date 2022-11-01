@@ -51,7 +51,7 @@ var (
 //  1. changed (bool) : does the update really change the row values. e.g. update set i = 1 where i = 1;
 //  2. err (error) : error in the update.
 func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, oldData, newData []types.Datum, modified []bool, t table.Table,
-	onDup bool, memTracker *memory.Tracker, fkChecks []*FKCheckExec) (bool, error) {
+	onDup bool, memTracker *memory.Tracker, fkChecks []*FKCheckExec, fkCascades []*FKCascadeExec) (bool, error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("executor.updateRecord", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -216,6 +216,12 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 	}
 	for _, fkt := range fkChecks {
 		err := fkt.updateRowNeedToCheck(sc, oldData, newData)
+		if err != nil {
+			return false, err
+		}
+	}
+	for _, fkc := range fkCascades {
+		err := fkc.onUpdateRow(sc, oldData, newData)
 		if err != nil {
 			return false, err
 		}
