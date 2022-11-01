@@ -709,6 +709,10 @@ func pickBackfillType(w *worker, job *model.Job) model.ReorgType {
 
 // canUseIngest indicates whether it can use ingest way to backfill index.
 func canUseIngest(w *worker) bool {
+	// We only allow one task to use ingest at the same time, in order to limit the CPU usage.
+	if len(ingest.LitBackCtxMgr.Keys()) > 0 {
+		return false
+	}
 	ctx, err := w.sessPool.get()
 	if err != nil {
 		return false

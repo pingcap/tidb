@@ -681,6 +681,7 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	case mysql.AuthNativePassword:
 	case mysql.AuthSocket:
 	case mysql.AuthTiDBSessionToken:
+	case mysql.AuthTiDBAuthToken:
 	default:
 		return errors.New("Unknown auth plugin")
 	}
@@ -709,6 +710,7 @@ func (cc *clientConn) handleAuthPlugin(ctx context.Context, resp *handshakeRespo
 		case mysql.AuthNativePassword:
 		case mysql.AuthSocket:
 		case mysql.AuthTiDBSessionToken:
+		case mysql.AuthTiDBAuthToken:
 		default:
 			logutil.Logger(ctx).Warn("Unknown Auth Plugin", zap.String("plugin", resp.AuthPlugin))
 		}
@@ -1857,10 +1859,13 @@ func (cc *clientConn) audit(eventType plugin.GeneralEvent) {
 // Query `load stats` does not return result either.
 func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	defer trace.StartRegion(ctx, "handleQuery").End()
-	sc := cc.ctx.GetSessionVars().StmtCtx
+	sessVars := cc.ctx.GetSessionVars()
+	sc := sessVars.StmtCtx
 	prevWarns := sc.GetWarnings()
+	sc.Expired = true
 	var stmts []ast.StmtNode
 	if stmts, err = cc.ctx.Parse(ctx, sql); err != nil {
+		cc.onExtensionSQLParseFailed(sql, err)
 		return err
 	}
 
@@ -1897,6 +1902,9 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		// Only pre-build point plans for multi-statement query
 		pointPlans, err = cc.prefetchPointPlanKeys(ctx, stmts)
 		if err != nil {
+			for _, stmt := range stmts {
+				cc.onExtensionStmtEnd(stmt, err)
+			}
 			return err
 		}
 	}
@@ -1904,7 +1912,14 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		defer cc.ctx.ClearValue(plannercore.PointPlanKey)
 	}
 	var retryable bool
+	var lastStmt ast.StmtNode
 	for i, stmt := range stmts {
+		if lastStmt != nil {
+			cc.onExtensionStmtEnd(stmt, nil)
+		}
+
+		lastStmt = stmt
+		sessVars.StmtCtx.Expired = true
 		if len(pointPlans) > 0 {
 			// Save the point plan in Session, so we don't need to build the point plan again.
 			cc.ctx.SetValue(plannercore.PointPlanKey, plannercore.PointPlanVal{Plan: pointPlans[i]})
@@ -1944,6 +1959,11 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 			}
 		}
 	}
+
+	if lastStmt != nil {
+		cc.onExtensionStmtEnd(lastStmt, err)
+	}
+
 	return err
 }
 

@@ -1303,9 +1303,12 @@ func (s *SessionVars) GetPreparedStmtByID(stmtID uint32) (interface{}, error) {
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
 func (s *SessionVars) InitStatementContext() *stmtctx.StatementContext {
-	s.cached.curr = (s.cached.curr + 1) % 2
-	s.cached.data[s.cached.curr] = stmtctx.StatementContext{}
-	return &s.cached.data[s.cached.curr]
+	sc := &s.cached.data[0]
+	if sc == s.StmtCtx {
+		sc = &s.cached.data[1]
+	}
+	*sc = stmtctx.StatementContext{}
+	return sc
 }
 
 // AllocMPPTaskID allocates task id for mpp tasks. It will reset the task id if the query's

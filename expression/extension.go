@@ -36,8 +36,8 @@ func registerExtensionFunc(def *extension.FunctionDef) error {
 		return errors.New("extension function def is nil")
 	}
 
-	if def.Name == "" {
-		return errors.New("extension function name should not be empty")
+	if err := def.Validate(); err != nil {
+		return err
 	}
 
 	lowerName := strings.ToLower(def.Name)
@@ -85,8 +85,10 @@ func newExtensionFuncClass(def *extension.FunctionDef) (*extensionFuncClass, err
 		return nil, errors.Errorf("unsupported extension function ret type: '%v'", def.EvalTp)
 	}
 
+	maxArgs := len(def.ArgTps)
+	minArgs := maxArgs - def.OptionalArgsLen
 	return &extensionFuncClass{
-		baseFunctionClass: baseFunctionClass{def.Name, len(def.ArgTps), len(def.ArgTps)},
+		baseFunctionClass: baseFunctionClass{def.Name, minArgs, maxArgs},
 		flen:              flen,
 		funcDef:           *def,
 	}, nil
@@ -100,7 +102,7 @@ func (c *extensionFuncClass) getFunction(ctx sessionctx.Context, args []Expressi
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, c.funcDef.EvalTp, c.funcDef.ArgTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, c.funcDef.EvalTp, c.funcDef.ArgTps[:len(args)]...)
 	if err != nil {
 		return nil, err
 	}
