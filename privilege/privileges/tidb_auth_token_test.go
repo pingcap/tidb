@@ -276,4 +276,13 @@ func TestBasic(t *testing.T) {
 			require.Equal(t, pair.value, claims[pair.name].(time.Time).Unix())
 		}
 	}
+	record := &UserRecord{
+		baseRecord: baseRecord{
+			User: email1,
+		},
+		AuthTokenIssuer: issuer1,
+		Email:           email1,
+	}
+	err = checkAuthTokenClaims(claims, record, defaultTokenLife)
+	require.NoError(t, err)
 }

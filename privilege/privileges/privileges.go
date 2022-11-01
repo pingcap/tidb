@@ -59,6 +59,7 @@ var dynamicPrivs = []string{
 	"RESTRICTED_REPLICA_WRITER_ADMIN", // Can write to the sever even when tidb_restriced_read_only is turned on.
 }
 var dynamicPrivLock sync.Mutex
+var defaultTokenLife = 15 * time.Minute
 
 // UserPrivileges implements privilege.Manager interface.
 // This is used to check privilege for the current user.
@@ -382,7 +383,6 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 
 	if record.AuthPlugin == mysql.AuthTiDBAuthToken {
 		tokenString := string(authentication[:len(authentication)-1])
-		defaultTokenLife := 15 * time.Minute
 		var (
 			claims map[string]interface{}
 			err    error
