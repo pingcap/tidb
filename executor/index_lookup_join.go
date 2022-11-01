@@ -67,7 +67,7 @@ type IndexLookUpJoin struct {
 
 	task       *lookUpJoinTask
 	joinResult *chunk.Chunk
-	innerIter  chunk.Iterator
+	innerIter  *chunk.Iterator4Slice
 
 	joiner      joiner
 	isOuterJoin bool
@@ -277,7 +277,10 @@ func (e *IndexLookUpJoin) Next(ctx context.Context, req *chunk.Chunk) error {
 		startTime := time.Now()
 		if e.innerIter == nil || e.innerIter.Current() == e.innerIter.End() {
 			e.lookUpMatchedInners(task, task.cursor)
-			e.innerIter = chunk.NewIterator4Slice(task.matchedInners)
+			if e.innerIter == nil {
+				e.innerIter = chunk.NewIterator4Slice(task.matchedInners).(*chunk.Iterator4Slice)
+			}
+			e.innerIter.Reset(task.matchedInners)
 			e.innerIter.Begin()
 		}
 

@@ -15,6 +15,7 @@
 package variable
 
 import (
+	"context"
 	"math"
 
 	"github.com/pingcap/tidb/config"
@@ -763,9 +764,13 @@ const (
 	// When set to true, `col is (not) null`(`col` is index prefix column) is regarded as index filter rather than table filter.
 	TiDBOptPrefixIndexSingleScan = "tidb_opt_prefix_index_single_scan"
 
-	TiDBEnableReusechunk = "tidb_enable_reuse_chunk"
+	// TiDBEnableExternalTSRead indicates whether to enable read through an external ts
+	TiDBEnableExternalTSRead = "tidb_enable_external_ts_read"
+  
+  TiDBEnableReusechunk = "tidb_enable_reuse_chunk"
 	TiDBMaxReuseChunk    = "tidb_max_reuse_chunk"
 	TiDBMaxReuseColumn   = "tidb_max_reuse_column"
+
 )
 
 // TiDB vars that have only global scope
@@ -844,6 +849,8 @@ const (
 	TiDBEnableGOGCTuner = "tidb_enable_gogc_tuner"
 	// TiDBGOGCTunerThreshold is to control the threshold of GOGC tuner.
 	TiDBGOGCTunerThreshold = "tidb_gogc_tuner_threshold"
+	// TiDBExternalTS is the ts to read through when the `TiDBEnableExternalTsRead` is on
+	TiDBExternalTS = "tidb_external_ts"
 )
 
 // TiDB intentional limits
@@ -1079,8 +1086,9 @@ const (
 	// DefTiDBGOGCTunerThreshold is to limit TiDBGOGCTunerThreshold.
 	DefTiDBGOGCTunerThreshold       float64 = 0.6
 	DefTiDBOptPrefixIndexSingleScan         = true
-
-	DefTiDBEnableReusechunk = true
+	DefTiDBExternalTS                       = 0
+	DefTiDBEnableExternalTSRead             = false
+  DefTiDBEnableReusechunk = true
 	DefTiDBMaxReuseChunk    = 128
 	DefTiDBMaxReuseColumn   = 1024
 	DefTiDBUseAlloc         = false
@@ -1161,4 +1169,8 @@ var (
 	EnableDDL func() error = nil
 	// DisableDDL is the func registered by ddl to disable running ddl in this instance.
 	DisableDDL func() error = nil
+	// SetExternalTimestamp is the func registered by staleread to set externaltimestamp in pd
+	SetExternalTimestamp func(ctx context.Context, ts uint64) error
+	// GetExternalTimestamp is the func registered by staleread to get externaltimestamp from pd
+	GetExternalTimestamp func(ctx context.Context) (uint64, error)
 )

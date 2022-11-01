@@ -98,7 +98,8 @@ type InsertValues struct {
 	isLoadData bool
 	txnInUse   sync.Mutex
 	// fkChecks contains the foreign key checkers.
-	fkChecks []*FKCheckExec
+	fkChecks   []*FKCheckExec
+	fkCascades []*FKCascadeExec
 }
 
 type defaultVal struct {

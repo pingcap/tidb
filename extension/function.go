@@ -17,6 +17,7 @@ package extension
 import (
 	"context"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -29,9 +30,14 @@ type FunctionContext interface {
 
 // FunctionDef is the definition for the custom function
 type FunctionDef struct {
-	Name   string
+	// Name is the function's name
+	Name string
+	// EvalTp is the type of the return value
 	EvalTp types.EvalType
+	// ArgTps is the argument types
 	ArgTps []types.EvalType
+	// OptionalArgsLen is the length of the optional args
+	OptionalArgsLen int
 	// EvalStringFunc is the eval function when `EvalTp` is `types.ETString`
 	EvalStringFunc func(ctx FunctionContext, row chunk.Row) (string, bool, error)
 	// EvalIntFunc is the eval function when `EvalTp` is `types.ETInt`
@@ -42,6 +48,19 @@ type FunctionDef struct {
 	// SemRequireDynamicPrivileges is the dynamic privileges needed to invoke the function in sem mode
 	// If `SemRequireDynamicPrivileges` is empty, `DynamicPrivileges` will be used in sem mode
 	SemRequireDynamicPrivileges []string
+}
+
+// Validate validates the function definition
+func (def *FunctionDef) Validate() error {
+	if def.Name == "" {
+		return errors.New("extension function name should not be empty")
+	}
+
+	for def.OptionalArgsLen < 0 || def.OptionalArgsLen > len(def.ArgTps) {
+		return errors.Errorf("invalid OptionalArgsLen: %d", def.OptionalArgsLen)
+	}
+
+	return nil
 }
 
 // RegisterExtensionFunc is to avoid dependency cycle
