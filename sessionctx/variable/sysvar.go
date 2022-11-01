@@ -1973,7 +1973,7 @@ var defaultSysVars = []*SysVar{
 		s.EnableExternalTSRead = TiDBOptOn(val)
 		return nil
 	}},
-  {Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableReusechunk, Value: BoolToOnOff(DefTiDBEnableReusechunk), Type: TypeBool,
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableReusechunk, Value: BoolToOnOff(DefTiDBEnableReusechunk), Type: TypeBool,
 		SetSession: func(s *SessionVars, val string) error {
 			s.EnableReuseCheck = TiDBOptOn(val)
 			return nil
@@ -1984,7 +1984,7 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMaxReuseColumn, Value: strconv.Itoa(DefTiDBMaxReuseColumn), Type: TypeUnsigned, MinValue: 1, MaxValue: math.MaxInt32, SetSession: func(s *SessionVars, val string) error {
 		s.MaxReuseColumn = tidbOptPositiveInt32(val, DefTiDBMaxReuseColumn)
-    return nil
+		return nil
 	}},
 }
 

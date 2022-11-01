@@ -766,11 +766,15 @@ const (
 
 	// TiDBEnableExternalTSRead indicates whether to enable read through an external ts
 	TiDBEnableExternalTSRead = "tidb_enable_external_ts_read"
-  
-  TiDBEnableReusechunk = "tidb_enable_reuse_chunk"
-	TiDBMaxReuseChunk    = "tidb_max_reuse_chunk"
-	TiDBMaxReuseColumn   = "tidb_max_reuse_column"
 
+	// TiDBEnableReusechunk indicates whether to enable chunk alloc
+	TiDBEnableReusechunk = "tidb_enable_reuse_chunk"
+
+	// TiDBMaxReuseChunk indicates max cached chunk num
+	TiDBMaxReuseChunk = "tidb_max_reuse_chunk"
+
+	// TiDBMaxReuseColumn indicates max cached column num
+	TiDBMaxReuseColumn = "tidb_max_reuse_column"
 )
 
 // TiDB vars that have only global scope
@@ -1088,10 +1092,10 @@ const (
 	DefTiDBOptPrefixIndexSingleScan         = true
 	DefTiDBExternalTS                       = 0
 	DefTiDBEnableExternalTSRead             = false
-  DefTiDBEnableReusechunk = true
-	DefTiDBMaxReuseChunk    = 128
-	DefTiDBMaxReuseColumn   = 1024
-	DefTiDBUseAlloc         = false
+	DefTiDBEnableReusechunk                 = true
+	DefTiDBMaxReuseChunk                    = 128
+	DefTiDBMaxReuseColumn                   = 1024
+	DefTiDBUseAlloc                         = false
 )
 
 // Process global variables.
