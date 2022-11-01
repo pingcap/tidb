@@ -17,6 +17,7 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/txnkv/rangetask"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
@@ -54,13 +55,11 @@ func RecoverData(ctx context.Context, resolvedTs uint64, allStores []*metapb.Sto
 		return totalRegions, errors.Trace(err)
 	}
 
-	keyRanges := recovery.getRegionKeyRanges()
-
-	if err := recovery.PrepareFlashbackToVersion(ctx, keyRanges); err != nil {
+	if err := recovery.PrepareFlashbackToVersion(ctx); err != nil {
 		return totalRegions, errors.Trace(err)
 	}
 
-	if err := recovery.FlashbackToVersion(ctx, keyRanges, resolvedTs, restoreTs); err != nil {
+	if err := recovery.FlashbackToVersion(ctx, resolvedTs, restoreTs); err != nil {
 		return totalRegions, errors.Trace(err)
 	}
 
@@ -300,83 +299,39 @@ func (recovery *Recovery) WaitApply(ctx context.Context) (err error) {
 	return eg.Wait()
 }
 
-// get the region key range
-func (recovery *Recovery) getRegionKeyRanges() []tikvstore.KeyRange {
-
-	var keyRanges []tikvstore.KeyRange
-
-	var regions = make(map[uint64]struct{}, 0)
-	for _, v := range recovery.StoreMetas {
-		for _, m := range v.RegionMetas {
-			// insert the keyRanges
-			if _, ok := regions[m.RegionId]; !ok {
-				regions[m.RegionId] = struct{}{}
-				keyRanges = append(keyRanges, tikvstore.KeyRange{
-					StartKey: m.StartKey,
-					EndKey:   m.EndKey,
-				})
-			}
-		}
-	}
-
-	return keyRanges
-}
-
 // prepare the region for flashback the data, the purpose is to stop region service, put region in flashback state
-func (recovery *Recovery) PrepareFlashbackToVersion(ctx context.Context, keyRanges []tikvstore.KeyRange) (err error) {
-	eg, ectx := errgroup.WithContext(ctx)
-	// since we do not know the how many region we will recover, use a ratio regions/per tikv as progress
-	incRatio := len(keyRanges) / len(recovery.allStores)
-	workers := utils.NewWorkerPool(uint(recovery.concurrency), "prepare the region")
-
-	for i, r := range keyRanges {
-		if err := ectx.Err(); err != nil {
-			break
-		}
-		workers.ApplyOnErrorGroup(eg, func() error {
-			_, err := ddl.SendPrepareFlashbackToVersionRPC(ctx, recovery.mgr.GetStorage().(tikv.Storage), r)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			log.Debug("prepare region done", zap.ByteString("region_start_key", r.StartKey), zap.ByteString("region_end_key", r.EndKey))
-			return nil
-		})
-
-		if i%incRatio == 0 {
-			recovery.progress.Inc()
-		}
+func (recovery *Recovery) PrepareFlashbackToVersion(ctx context.Context) (err error) {
+	r := tikvstore.KeyRange{[]byte(""), []byte("")}
+	if err = ddl.FlashbackToVersion(ctx, recovery.mgr.GetStorage().(tikv.Storage),
+		func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
+			stats, err := ddl.SendPrepareFlashbackToVersionRPC(ctx, recovery.mgr.GetStorage().(tikv.Storage), r)
+			return stats, err
+		}, r.StartKey, r.EndKey); err != nil {
+		log.Warn("region flashback prepare get error")
+		return errors.Trace(err)
 	}
-	log.Info("prepare region flashback complete")
-	// Wait for all region to prepare flashback
-	return eg.Wait()
+
+	log.Info("region flashback prepare complete")
+
+	return nil
 }
 
 // flashback the region data to resolvedTs
-func (recovery *Recovery) FlashbackToVersion(ctx context.Context, keyRanges []tikvstore.KeyRange, resolvedTs uint64, commitTs uint64) (err error) {
-	eg, ectx := errgroup.WithContext(ctx)
-	incRatio := len(keyRanges) / len(recovery.allStores)
-	workers := utils.NewWorkerPool(uint(recovery.concurrency), "flashback the region")
-
-	for i, r := range keyRanges {
-		if err := ectx.Err(); err != nil {
-			break
-		}
-		workers.ApplyOnErrorGroup(eg, func() error {
-			_, err := ddl.SendFlashbackToVersionRPC(ctx, recovery.mgr.GetStorage().(tikv.Storage), resolvedTs, commitTs-1, commitTs, r)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			log.Debug("region flashback done", zap.ByteString("region_start_key", r.StartKey), zap.ByteString("region_end_key", r.EndKey))
-			return nil
-		})
-
-		if i%incRatio == 0 {
-			recovery.progress.Inc()
-		}
+func (recovery *Recovery) FlashbackToVersion(ctx context.Context, resolvedTs uint64, commitTs uint64) (err error) {
+	// cover the entire key space to do the prepare region
+	r := tikvstore.KeyRange{[]byte(""), []byte("")}
+	if err = ddl.FlashbackToVersion(ctx, recovery.mgr.GetStorage().(tikv.Storage),
+		func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
+			stats, err := ddl.SendFlashbackToVersionRPC(ctx, recovery.mgr.GetStorage().(tikv.Storage), resolvedTs, commitTs-1, commitTs, r)
+			return stats, err
+		}, r.StartKey, r.EndKey); err != nil {
+		log.Warn("region flashback get error")
+		return errors.Trace(err)
 	}
+
 	log.Info("region flashback complete")
-	// Wait for all region to flashback
-	return eg.Wait()
+
+	return nil
 }
 
 type RecoverRegion struct {

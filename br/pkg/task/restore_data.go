@@ -131,9 +131,9 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 	}
 
 	log.Debug("total tikv", zap.Int("total", numBackupStore), zap.String("progress file", cfg.ProgressFile))
-	// progress = read meta + send recovery + iterate tikv + resolve kv data.
-	progress := g.StartProgress(ctx, cmdName, int64(numBackupStore*4), !cfg.LogProgress)
-	go progressFileWriterRoutine(ctx, progress, int64(numBackupStore*4), cfg.ProgressFile)
+	// progress = read meta + send recovery + iterate tikv + prepare region + flashback.
+	progress := g.StartProgress(ctx, cmdName, int64(numBackupStore*3+2), !cfg.LogProgress)
+	go progressFileWriterRoutine(ctx, progress, int64(numBackupStore*3+2), cfg.ProgressFile)
 
 	// restore tikv data from a snapshot volume
 	var totalRegions int
