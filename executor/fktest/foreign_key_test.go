@@ -1963,9 +1963,7 @@ func TestForeignKeyCascadeOnDiffColumnType(t *testing.T) {
 	tk.MustExec("insert into t1 values (b'01'), (b'10');")
 	tk.MustExec("insert into t2 values (1, b'01'), (2, b'10');")
 	tk.MustExec("delete from t1 where id = b'01';")
-	tk.MustExec("select id, cast(id as unsigned) from t1;")
-	tk.MustExec("select id, b, cast(b as unsigned) from t2;")
 	tk.MustExec("update t1 set id = b'110' where id = b'10';")
-	tk.MustExec("select id, cast(id as unsigned) from t1;")
-	tk.MustExec("select id, b, cast(b as unsigned) from t2;")
+	tk.MustQuery("select cast(id as unsigned) from t1;").Check(testkit.Rows("6"))
+	tk.MustQuery("select id, cast(b as unsigned) from t2;").Check(testkit.Rows("2 6"))
 }
