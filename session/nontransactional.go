@@ -76,6 +76,13 @@ func (j job) String(redacted bool) string {
 
 // HandleNonTransactionalDML is the entry point for a non-transactional DML statement
 func HandleNonTransactionalDML(ctx context.Context, stmt *ast.NonTransactionalDMLStmt, se Session) (sqlexec.RecordSet, error) {
+	// disable staleread for NT transactions because they always write.
+	sessVars := se.GetSessionVars()
+	stale := sessVars.ReadStaleness
+	sessVars.ReadStaleness = 0
+	defer func() {
+		sessVars.ReadStaleness = stale
+	}()
 	err := core.Preprocess(ctx, se, stmt)
 	if err != nil {
 		return nil, err

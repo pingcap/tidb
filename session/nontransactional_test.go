@@ -80,12 +80,21 @@ func testSharding(tables []string, tk *testkit.TestKit) {
 		{100, 40},
 	}
 	for _, table := range tables {
-		tk.MustExec("drop table if exists t")
+		tk.MustExec("drop table if exists t, t1")
 		tk.MustExec(table)
+		tk.MustExec(strings.Replace(table, "create table t", "create table t1", 1))
 		for _, c := range compositions {
+			rows := make([]string, 0, c.tableSize)
 			for i := 0; i < c.tableSize; i++ {
 				tk.MustExec(fmt.Sprintf("insert into t values ('%d', %d)", i, i*2))
+				rows = append(rows, fmt.Sprintf("%d %d", i, i*2))
 			}
+			tk.MustExec("truncate t1")
+			tk.MustQuery(
+				fmt.Sprintf("batch on a limit %d insert into t1 select * from t", c.batchSize),
+			).Check(testkit.Rows(fmt.Sprintf("%d all succeeded", (c.tableSize+c.batchSize-1)/c.batchSize)))
+			tk.MustQuery("select a, b from t1 order by b").
+				Check(testkit.Rows(rows...))
 			tk.MustQuery(
 				fmt.Sprintf(
 					"batch on a limit %d update t set b = b * 2", c.batchSize,
@@ -141,6 +150,7 @@ func TestNonTransactionalDMLErrorMessage(t *testing.T) {
 	tk.MustExec("set @@tidb_max_chunk_size=35")
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, primary key(a, b) clustered)")
+	tk.MustExec("create table t1(a int, b int, primary key(a, b) clustered)")
 	for i := 0; i < 100; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values ('%d', %d)", i, i*2))
 	}
@@ -157,12 +167,26 @@ func TestNonTransactionalDMLErrorMessage(t *testing.T) {
 		t, err,
 		"Early return: error occurred in the first job. All jobs are canceled: injected batch(non-transactional) DML error",
 	)
+	err = tk.ExecToErr("batch on a limit 3 insert into t1 select * from t")
+	require.EqualError(
+		t, err,
+		"Early return: error occurred in the first job. All jobs are canceled: injected batch(non-transactional) DML error",
+	)
 
 	tk.MustExec("truncate t")
 	for i := 0; i < 100; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values ('%d', %d)", i, i*2))
 	}
 	tk.MustExec("set @@tidb_nontransactional_ignore_error=1")
+
+	require.NoError(
+		t, failpoint.Enable("github.com/pingcap/tidb/session/batchDMLError", `1*return(false)->return(true)`),
+	)
+	err = tk.ExecToErr("batch on a limit 3 insert into t1 select * from t")
+	require.ErrorContains(
+		t, err,
+		"33/34 jobs failed in the non-transactional DML: job id: 2, estimated size: 3, sql: INSERT INTO `test`.`t1` SELECT * FROM `test`.`t` WHERE `a` BETWEEN 3 AND 5, injected batch(non-transactional) DML error;\n",
+	)
 
 	require.NoError(
 		t, failpoint.Enable("github.com/pingcap/tidb/session/batchDMLError", `1*return(false)->return(true)`),
@@ -183,10 +207,20 @@ func TestNonTransactionalDMLErrorMessage(t *testing.T) {
 	)
 
 	tk.MustExec("truncate t")
+	tk.MustExec("truncate t1")
 	for i := 0; i < 100; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values ('%d', %d)", i, i*2))
 	}
 	tk.MustExec("set @@tidb_nontransactional_ignore_error=0")
+
+	require.NoError(
+		t, failpoint.Enable("github.com/pingcap/tidb/session/batchDMLError", `1*return(false)->return(true)`),
+	)
+	err = tk.ExecToErr("batch on a limit 3 insert into t1 select * from t")
+	require.EqualError(
+		t, err,
+		"[session:8143]non-transactional job failed, job id: 2, total jobs: 34. job range: [KindInt64 3, KindInt64 5], job sql: job id: 2, estimated size: 3, sql: INSERT INTO `test`.`t1` SELECT * FROM `test`.`t` WHERE `a` BETWEEN 3 AND 5, err: injected batch(non-transactional) DML error",
+	)
 
 	require.NoError(
 		t, failpoint.Enable("github.com/pingcap/tidb/session/batchDMLError", `1*return(false)->return(true)`),
@@ -213,6 +247,7 @@ func TestNonTransactionalDMLShardingOnTiDBRowID(t *testing.T) {
 	tk.MustExec("set @@tidb_max_chunk_size=35")
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("create table t1(a int, b int)")
 	for i := 0; i < 100; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values ('%d', %d)", i, i*2))
 	}
@@ -227,6 +262,12 @@ func TestNonTransactionalDMLShardingOnTiDBRowID(t *testing.T) {
 		testkit.Rows(
 			"UPDATE `test`.`t` SET `b`=42 WHERE `test`.`t`.`_tidb_rowid` BETWEEN 1 AND 3",
 			"UPDATE `test`.`t` SET `b`=42 WHERE `test`.`t`.`_tidb_rowid` BETWEEN 100 AND 100",
+		),
+	)
+	tk.MustQuery("batch limit 3 dry run insert into t1 select * from t").Check(
+		testkit.Rows(
+			"INSERT INTO `test`.`t1` SELECT * FROM `test`.`t` WHERE `test`.`t`.`_tidb_rowid` BETWEEN 1 AND 3",
+			"INSERT INTO `test`.`t1` SELECT * FROM `test`.`t` WHERE `test`.`t`.`_tidb_rowid` BETWEEN 100 AND 100",
 		),
 	)
 
@@ -255,19 +296,36 @@ func TestNonTransactionalDMLShardingOnTiDBRowID(t *testing.T) {
 			"UPDATE `test`.`t` SET `b`=42 WHERE `t`.`_tidb_rowid` BETWEEN 100 AND 100",
 		),
 	)
+	tk.MustQuery("batch on _tidb_rowid limit 3 dry run insert into t1 select * from t").Check(
+		testkit.Rows(
+			"INSERT INTO `test`.`t1` SELECT * FROM `test`.`t` WHERE `_tidb_rowid` BETWEEN 1 AND 3",
+			"INSERT INTO `test`.`t1` SELECT * FROM `test`.`t` WHERE `_tidb_rowid` BETWEEN 100 AND 100",
+		),
+	)
+	tk.MustQuery("batch on t._tidb_rowid limit 3 dry run insert into t1 select * from t").Check(
+		testkit.Rows(
+			"INSERT INTO `test`.`t1` SELECT * FROM `test`.`t` WHERE `t`.`_tidb_rowid` BETWEEN 1 AND 3",
+			"INSERT INTO `test`.`t1` SELECT * FROM `test`.`t` WHERE `t`.`_tidb_rowid` BETWEEN 100 AND 100",
+		),
+	)
 
+	tk.MustExec("batch on _tidb_rowid limit 3 insert into t1 select * from t")
+	tk.MustQuery("select * from t1 order by a").
+		Check(tk.MustQuery("select * from t order by a").Rows())
 	tk.MustExec("batch on _tidb_rowid limit 3 update t set b = 42")
 	tk.MustQuery("select sum(b) from t").Check(testkit.Rows("4200"))
 	tk.MustExec("batch on _tidb_rowid limit 3 delete from t")
 	tk.MustQuery("select count(*) from t").Check(testkit.Rows("0"))
 }
 
-func TestNonTransactionalDeleteNull(t *testing.T) {
+func TestNonTransactionalWithNull(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_max_chunk_size=35")
 	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1")
 	tk.MustExec("create table t(a int, b int, key(a))")
+	tk.MustExec("create table t1(a int, b int, key(a))")
 	for i := 0; i < 100; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values ('%d', %d)", i, i*2))
 		tk.MustExec("insert into t values (null, null)")
@@ -280,39 +338,53 @@ func TestNonTransactionalDeleteNull(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		tk.MustExec("insert into t values (null, null)")
 	}
+	tk.MustExec("batch on a limit 3 insert into t1 select * from t")
+	tk.MustQuery("select * from t1 order by a").
+		Check(tk.MustQuery("select * from t order by a").Rows())
 	tk.MustExec("batch on a limit 3 delete from t")
 	tk.MustQuery("select count(*) from t").Check(testkit.Rows("0"))
 }
 
-func TestNonTransactionalDeleteSmallBatch(t *testing.T) {
+func TestNonTransactionalWithSmallBatch(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_max_chunk_size=1024")
 	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1")
 	tk.MustExec("create table t(a int, b int, key(a))")
+	tk.MustExec("create table t1(a int, b int, key(a))")
 	for i := 0; i < 10; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values ('%d', %d)", i, i*2))
 		tk.MustExec("insert into t values (null, null)")
 	}
 	require.Equal(t, 1, len(tk.MustQuery("batch on a limit 1000 dry run delete from t").Rows()))
+	require.Equal(t, 1, len(tk.MustQuery("batch on a limit 1000 dry run insert into t1 select * from t").Rows()))
+	tk.MustExec("batch on a limit 1000 insert into t1 select * from t")
+	tk.MustQuery("select * from t1 order by a").
+		Check(tk.MustQuery("select * from t order by a").Rows())
 	tk.MustExec("batch on a limit 1000 delete from t")
 	tk.MustQuery("select count(*) from t").Check(testkit.Rows("0"))
 }
 
-func TestNonTransactionalDeleteShardOnGeneratedColumn(t *testing.T) {
+func TestNonTransactionalWithShardOnGeneratedColumn(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_max_chunk_size=35")
 	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1")
 	tk.MustExec("create table t(a int, b int, c double as (sqrt(a * a + b * b)), key(c))")
+	tk.MustExec("create table t1(a int, b int, c double as (sqrt(a * a + b * b)), key(c))")
 	for i := 0; i < 1000; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d, default)", i, i*2))
 	}
+	tk.MustExec("batch on c limit 10 insert into t1(a, b) select a, b from t")
+	tk.MustQuery("select * from t1 order by a").
+		Check(tk.MustQuery("select * from t order by a").Rows())
 	tk.MustExec("batch on c limit 10 delete from t")
 	tk.MustQuery("select count(*) from t").Check(testkit.Rows("0"))
 }
 
-func TestNonTransactionalDeleteAutoDetectShardColumn(t *testing.T) {
+func TestNonTransactionalWithAutoDetectShardColumn(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_max_chunk_size=35")
@@ -332,12 +404,15 @@ func TestNonTransactionalDeleteAutoDetectShardColumn(t *testing.T) {
 	}
 
 	testFunc := func(table string, expectSuccess bool) {
-		tk.MustExec("drop table if exists t")
+		tk.MustExec("drop table if exists t, t1")
 		tk.MustExec(table)
+		tk.MustExec(strings.Replace(table, "create table t", "create table t1", 1))
 		for i := 0; i < 100; i++ {
 			tk.MustExec(fmt.Sprintf("insert into t values ('%d', %d)", i, i*2))
 		}
-		_, err := tk.Exec("batch limit 3 delete from t")
+		_, err := tk.Exec("batch limit 3 insert into t1 select * from t")
+		require.Equal(t, expectSuccess, err == nil)
+		_, err = tk.Exec("batch limit 3 delete from t")
 		require.Equal(t, expectSuccess, err == nil)
 	}
 
@@ -349,60 +424,89 @@ func TestNonTransactionalDeleteAutoDetectShardColumn(t *testing.T) {
 	}
 }
 
-func TestNonTransactionalDeleteInvisibleIndex(t *testing.T) {
+func TestNonTransactionalWithInvisibleIndex(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_max_chunk_size=35")
 	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1")
 	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("create table t1(a int, b int)")
 	for i := 0; i < 100; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i*2))
 	}
-	err := tk.ExecToErr("batch on a limit 10 delete from t")
+	err := tk.ExecToErr("batch on a limit 10 insert into t1 select * from t")
+	require.Error(t, err)
+	err = tk.ExecToErr("batch on a limit 10 delete from t")
 	require.Error(t, err)
 	tk.MustExec("CREATE UNIQUE INDEX c1 ON t (a) INVISIBLE")
+	err = tk.ExecToErr("batch on a limit 10 insert into t1 select * from t")
+	require.Error(t, err)
 	err = tk.ExecToErr("batch on a limit 10 delete from t")
 	require.Error(t, err)
 	tk.MustExec("CREATE UNIQUE INDEX c2 ON t (a)")
+	tk.MustExec("batch on a limit 10 insert into t1 select * from t")
+	tk.MustQuery("select * from t1 order by a").
+		Check(tk.MustQuery("select * from t order by a").Rows())
 	tk.MustExec("batch on a limit 10 delete from t")
 	tk.MustQuery("select count(*) from t").Check(testkit.Rows("0"))
 }
 
-func TestNonTransactionalDeleteIgnoreSelectLimit(t *testing.T) {
+func TestNonTransactionalWithIgnoreSelectLimit(t *testing.T) {
 	store := testkit.CreateMockStore(t)
+	checkTk := testkit.NewTestKit(t, store)
+	checkTk.MustExec("use test")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_max_chunk_size=35")
 	tk.MustExec("set @@sql_select_limit=3")
 	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1")
 	tk.MustExec("create table t(a int, b int, key(a))")
+	tk.MustExec("create table t1(a int, b int, key(a))")
 	for i := 0; i < 100; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i*2))
 	}
+	tk.MustExec("batch on a limit 10 insert into t1 select * from t")
+	checkTk.MustQuery("select * from t1 order by a").
+		Check(checkTk.MustQuery("select * from t order by a").Rows())
 	tk.MustExec("batch on a limit 10 delete from t")
-	tk.MustQuery("select count(*) from t").Check(testkit.Rows("0"))
+	checkTk.MustQuery("select * from t").Check(testkit.Rows())
 }
 
-func TestNonTransactionalDeleteReadStaleness(t *testing.T) {
+func TestNonTransactionalWithReadStaleness(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_max_chunk_size=35")
 	tk.MustExec("set @@tidb_read_staleness=-100")
 	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1")
 	tk.MustExec("create table t(a int, b int, key(a))")
+	tk.MustExec("create table t1(a int, b int, key(a))")
+	rows := make([]string, 0, 100)
 	for i := 0; i < 100; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i*2))
+		rows = append(rows, fmt.Sprintf("%d %d", i, i*2))
 	}
+	tk.MustExec("batch on a limit 10 insert into t1 select * from t")
 	tk.MustExec("batch on a limit 10 delete from t")
 	tk.MustExec("set @@tidb_read_staleness=0")
-	tk.MustQuery("select count(*) from t").Check(testkit.Rows("0"))
+	tk.MustQuery("select * from t").Check(testkit.Rows())
+	tk.MustQuery("select * from t1 order by a").Check(testkit.Rows(rows...))
 }
 
-func TestNonTransactionalDeleteCheckConstraint(t *testing.T) {
+func TestNonTransactionalWithCheckConstraint(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1")
 	tk.MustExec("create table t(a int, b int, key(a))")
+	tk.MustExec("create table t1(a int, b int, key(a))")
+
+	checkFn := func() {
+		tk.MustQuery("select count(*) from t").Check(testkit.Rows("100"))
+		tk.MustQuery("select count(*) from t1").Check(testkit.Rows("0"))
+	}
 
 	// For mocked tikv, safe point is not initialized, we manually insert it for snapshot to use.
 	safePointName := "tikv_gc_safe_point"
@@ -422,86 +526,112 @@ func TestNonTransactionalDeleteCheckConstraint(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i*2))
 	}
 	tk.MustExec("set @@tidb_snapshot=@a")
-	err := tk.ExecToErr("batch on a limit 10 delete from t")
+	err := tk.ExecToErr("batch on a limit 10 insert into t1 select * from t")
+	require.Error(t, err)
+	err = tk.ExecToErr("batch on a limit 10 delete from t")
 	require.Error(t, err)
 	tk.MustExec("set @@tidb_snapshot=''")
-	tk.MustQuery("select count(*) from t").Check(testkit.Rows("100"))
+	checkFn()
 
 	tk.MustExec("set @@tidb_read_consistency=weak")
+	err = tk.ExecToErr("batch on a limit 10 insert into t1 select * from t")
+	require.Error(t, err)
 	err = tk.ExecToErr("batch on a limit 10 delete from t")
 	require.Error(t, err)
-	tk.MustQuery("select count(*) from t").Check(testkit.Rows("100"))
 	tk.MustExec("set @@tidb_read_consistency=strict")
+	checkFn()
 
 	tk.MustExec("set autocommit=0")
+	err = tk.ExecToErr("batch on a limit 10 insert into t1 select * from t")
+	require.Error(t, err)
 	err = tk.ExecToErr("batch on a limit 10 delete from t")
 	require.Error(t, err)
-	tk.MustQuery("select count(*) from t").Check(testkit.Rows("100"))
+	tk.MustExec("commit")
 	tk.MustExec("set autocommit=1")
+	checkFn()
 
 	tk.MustExec("begin")
+	err = tk.ExecToErr("batch on a limit 10 insert into t1 select * from t")
+	require.Error(t, err)
 	err = tk.ExecToErr("batch on a limit 10 delete from t")
 	require.Error(t, err)
-	tk.MustQuery("select count(*) from t").Check(testkit.Rows("100"))
 	tk.MustExec("commit")
+	checkFn()
 
 	tk.MustExec("SET GLOBAL tidb_enable_batch_dml = 1")
 	tk.MustExec("SET tidb_batch_insert = 1")
 	tk.MustExec("SET tidb_dml_batch_size = 1")
+	err = tk.ExecToErr("batch on a limit 10 insert into t1 select * from t")
+	require.Error(t, err)
 	err = tk.ExecToErr("batch on a limit 10 delete from t")
 	require.Error(t, err)
-	tk.MustQuery("select count(*) from t").Check(testkit.Rows("100"))
 	tk.MustExec("SET GLOBAL tidb_enable_batch_dml = 0")
 	tk.MustExec("SET tidb_batch_insert = 0")
 	tk.MustExec("SET tidb_dml_batch_size = 0")
+	checkFn()
 
+	err = tk.ExecToErr("batch on a limit 10 insert into t1 select * from t limit 10")
+	require.EqualError(t, err, "Non-transactional statements don't support limit")
 	err = tk.ExecToErr("batch on a limit 10 delete from t limit 10")
-	require.EqualError(t, err, "Non-transactional delete doesn't support limit")
-	tk.MustQuery("select count(*) from t").Check(testkit.Rows("100"))
+	require.EqualError(t, err, "Non-transactional statements don't support limit")
+	checkFn()
 
+	err = tk.ExecToErr("batch on a limit 10 insert into t1 select * from t order by a")
+	require.EqualError(t, err, "Non-transactional statements don't support order by")
 	err = tk.ExecToErr("batch on a limit 10 delete from t order by a")
-	require.EqualError(t, err, "Non-transactional delete doesn't support order by")
-	tk.MustQuery("select count(*) from t").Check(testkit.Rows("100"))
+	require.EqualError(t, err, "Non-transactional statements don't support order by")
+	checkFn()
 
+	err = tk.ExecToErr("prepare nt FROM 'batch limit 1 insert into t1 select * from t'")
+	require.EqualError(t, err, "[executor:1295]This command is not supported in the prepared statement protocol yet")
 	err = tk.ExecToErr("prepare nt FROM 'batch limit 1 delete from t'")
 	require.EqualError(t, err, "[executor:1295]This command is not supported in the prepared statement protocol yet")
 }
 
-func TestNonTransactionalDeleteOptimizerHints(t *testing.T) {
+func TestNonTransactionalWithOptimizerHints(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1")
 	tk.MustExec("create table t(a int, b int, key(a))")
+	tk.MustExec("create table t1(a int, b int, key(a))")
 	for i := 0; i < 10; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values ('%d', %d)", i, i*2))
 	}
-	result := tk.MustQuery("batch on a limit 10 dry run delete /*+ USE_INDEX(t) */ from t").Rows()[0][0].(string)
+	result := tk.MustQuery("batch on a limit 10 dry run insert into t1 select /*+ USE_INDEX(t) */ * from t").Rows()[0][0].(string)
+	require.Equal(t, result, "INSERT INTO `test`.`t1` SELECT /*+ USE_INDEX(`t` )*/ * FROM `test`.`t` WHERE `a` BETWEEN 0 AND 9")
+	result = tk.MustQuery("batch on a limit 10 dry run delete /*+ USE_INDEX(t) */ from t").Rows()[0][0].(string)
 	require.Equal(t, result, "DELETE /*+ USE_INDEX(`t` )*/ FROM `test`.`t` WHERE `a` BETWEEN 0 AND 9")
 }
 
-func TestNonTransactionalDeleteMultiTables(t *testing.T) {
+func TestNonTransactionalWithMultiTables(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1, t2")
 	tk.MustExec("create table t(a int, b int, key(a))")
+	tk.MustExec("create table t1(a int, b int, key(a))")
+	tk.MustExec("create table t2(a int, b int, key(a))")
 	for i := 0; i < 100; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i*2))
 	}
-
-	tk.MustExec("create table t1(a int, b int, key(a))")
 	tk.MustExec("insert into t1 values (1, 1)")
-	err := tk.ExecToErr("batch limit 1 delete t, t1 from t, t1 where t.a = t1.a")
+
+	err := tk.ExecToErr("batch limit 1 insert into t2 select t.a, t1.b from t, t1 where t.a = t1.a")
+	require.Error(t, err)
+	err = tk.ExecToErr("batch limit 1 delete t, t1 from t, t1 where t.a = t1.a")
 	require.Error(t, err)
 	tk.MustQuery("select count(*) from t").Check(testkit.Rows("100"))
 	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("1"))
+	tk.MustQuery("select count(*) from t2").Check(testkit.Rows("0"))
 }
 
-func TestNonTransactionalDeleteAlias(t *testing.T) {
+func TestNonTransactionalWithAlias(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
-	goodBatchStmts := []string{
+	goodBatchDeletes := []string{
 		"batch on test.t1.a limit 5 delete t1.* from test.t as t1",
 		"batch on a limit 5 delete t1.* from test.t as t1",
 		"batch on _tidb_rowid limit 5 delete from test.t as t1",
@@ -510,17 +640,35 @@ func TestNonTransactionalDeleteAlias(t *testing.T) {
 		"batch limit 5 delete from test.t as t1", // auto assigns table name to be the alias
 	}
 
-	badBatchStmts := []string{
+	badBatchDeletes := []string{
 		"batch on test.t.a limit 5 delete t1.* from test.t as t1",
 		"batch on t.a limit 5 delete t1.* from test.t as t1",
 		"batch on t._tidb_rowid limit 5 delete from test.t as t1",
 		"batch on test.t._tidb_rowid limit 5 delete from test.t as t1",
 	}
 
+	goodBatchInserts := []string{
+		"batch on test.t1.a limit 5 insert into test.s select t1.* from test.t as t1",
+		"batch on a limit 5 insert into test.s select t1.* from test.t as t1",
+		"batch on _tidb_rowid limit 5 insert into test.s select t1.* from test.t as t1",
+		"batch on t1._tidb_rowid limit 5 insert into test.s select t1.* from test.t as t1",
+		"batch on test.t1._tidb_rowid limit 5 insert into test.s select t1.* from test.t as t1",
+		"batch limit 5 insert into test.s select t1.* from test.t as t1", // auto assigns table name to be the alias
+	}
+
+	badBatchInserts := []string{
+		"batch on test.t.a limit 5 insert into test.s select t1.* from test.t as t1",
+		"batch on t.a limit 5 insert into test.s select t1.* from test.t as t1",
+		"batch on t._tidb_rowid limit 5 insert into test.s select t1.* from test.t as t1",
+		"batch on test.t._tidb_rowid limit 5 insert into test.s select t1.* from test.t as t1",
+	}
+
+	tk.MustExec("drop table if exists test.t, test.s, test.t2")
 	tk.MustExec("create table test.t(a int, b int, key(a))")
+	tk.MustExec("create table test.s(a int, b int, key(a))")
 	tk.MustExec("create table test.t2(a int, b int, key(a))")
 
-	for _, sql := range goodBatchStmts {
+	for _, sql := range goodBatchDeletes {
 		for i := 0; i < 5; i++ {
 			tk.MustExec(fmt.Sprintf("insert into test.t values (%d, %d)", i, i*2))
 		}
@@ -528,43 +676,53 @@ func TestNonTransactionalDeleteAlias(t *testing.T) {
 		tk.MustQuery("select count(*) from test.t").Check(testkit.Rows("0"))
 	}
 
+	rows := make([]string, 0, 5)
 	for i := 0; i < 5; i++ {
 		tk.MustExec(fmt.Sprintf("insert into test.t values (%d, %d)", i, i*2))
+		rows = append(rows, fmt.Sprintf("%d %d", i, i*2))
 	}
-	for _, sql := range badBatchStmts {
+
+	for _, sql := range goodBatchInserts {
+		tk.MustExec(sql)
+		tk.MustQuery("select * from test.s order by a").Check(testkit.Rows(rows...))
+		tk.MustExec("truncate test.s")
+	}
+
+	for _, sql := range badBatchDeletes {
 		err := tk.ExecToErr(sql)
 		require.Error(t, err)
 		tk.MustQuery("select count(*) from test.t").Check(testkit.Rows("5"))
 	}
+
+	for _, sql := range badBatchInserts {
+		err := tk.ExecToErr(sql)
+		require.Error(t, err)
+		tk.MustQuery("select count(*) from test.s").Check(testkit.Rows("0"))
+	}
 }
 
-func TestNonTransactionalDeleteShardOnUnsupportedTypes(t *testing.T) {
+func TestNonTransactionalWithShardOnUnsupportedTypes(t *testing.T) {
 	// When some day the test fail because such types are supported, we can update related docs and consider remove the test.
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1, t2")
 	tk.MustExec("create table t(a set('e0', 'e1', 'e2'), b int, primary key(a) clustered, key(b))")
+	tk.MustExec("create table t1(a set('e0', 'e1', 'e2'), b int, primary key(a) clustered, key(b))")
 	tk.MustExec("insert into t values ('e2,e0', 3)")
-	err := tk.ExecToErr("batch limit 1 delete from t where a = 'e0,e2'")
+	err := tk.ExecToErr("batch limit 1 insert into t1 select * from t where a = 'e0,e2'")
+	require.Error(t, err)
+	err = tk.ExecToErr("batch limit 1 delete from t where a = 'e0,e2'")
 	require.Error(t, err)
 	tk.MustQuery("select count(*) from t").Check(testkit.Rows("1"))
+	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("0"))
 
 	tk.MustExec("create table t2(a enum('e0', 'e1', 'e2'), b int, key(a))")
 	tk.MustExec("insert into t2 values ('e0', 1)")
+	err = tk.ExecToErr("batch on a limit 1 insert into t1 select * from t2")
+	require.Error(t, err)
 	err = tk.ExecToErr("batch on a limit 1 delete from t2")
 	require.Error(t, err)
 	tk.MustQuery("select count(*) from t2").Check(testkit.Rows("1"))
-}
-
-func TestNonTransactionalInsert(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t1(id int primary key , v int)")
-	tk.MustExec("create table t2(id int primary key , v int)")
-	err := tk.ExecToErr("batch limit 1 insert into t2 values (1, 1), (2, 2), (3, 3)")
-	require.Error(t, err)
-	tk.MustExec("insert into t2 values (1, 1), (2, 2), (3, 3)")
-	tk.MustExec("batch limit 1 insert into t1 select * from t2 where v > 1")
-	tk.MustQuery("select * from t1").Check(testkit.Rows("2 2", "3 3"))
+	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("0"))
 }
