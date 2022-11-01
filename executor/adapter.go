@@ -1388,6 +1388,7 @@ func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) {
 		}
 		if stmtCtx.MemTracker != nil {
 			stmtCtx.MemTracker.Detach()
+			memory.InitTracker(stmtCtx.MemTracker, -1, -1, nil)
 		}
 	}
 }
