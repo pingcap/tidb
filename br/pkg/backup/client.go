@@ -286,7 +286,10 @@ func (bc *Client) LoadCheckpointRange(ctx context.Context, r rtree.Range, progre
 	// not in the checkpoint mode
 	if bc.checkpointMeta == nil {
 		return &rtree.ProgressRange{
-			Res:    rangeTree,
+			Res: rangeTree,
+			Incomplete: []rtree.Range{
+				r,
+			},
 			Origin: r,
 		}, nil
 	}
@@ -796,12 +799,12 @@ func (bc *Client) BackupRange(
 			})
 		}
 		request.SubRanges = subRanges
-	}
 
-	push := newPushDown(bc.mgr, len(allStores))
-	err = push.pushBackup(ctx, request, progressRange, allStores, bc.checkpointRunner, progressCallBack)
-	if err != nil {
-		return errors.Trace(err)
+		push := newPushDown(bc.mgr, len(allStores))
+		err = push.pushBackup(ctx, request, progressRange, allStores, bc.checkpointRunner, progressCallBack)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 	logutil.CL(ctx).Info("backup push down completed", zap.Int("small-range-count", progressRange.Res.Len()))
 
