@@ -116,15 +116,6 @@ func renewColumns(oldCol []*Column, capacity int) []*Column {
 	return columns
 }
 
-// renewColumnsWithCache try renew Column from cache
-func renewColumnsWithCache(oldCol []*Column, capacity int, alloc allocator) []*Column {
-	columns := make([]*Column, 0, len(oldCol))
-	for _, col := range oldCol {
-		columns = append(columns, alloc.columnAlloc.NewSizeColumn(col.typeSize(), capacity))
-	}
-	return columns
-}
-
 // renewEmpty creates a new Chunk based on an existing Chunk
 // but keep columns empty.
 func renewEmpty(chk *Chunk) *Chunk {

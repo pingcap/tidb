@@ -1282,17 +1282,20 @@ type SessionVars struct {
 	// When set to true, `col is (not) null`(`col` is index prefix column) is regarded as index filter rather than table filter.
 	OptPrefixIndexSingleScan bool
 
-	MaxReuseChunk  int
+	// chunk alloc max cache chunk num
+	MaxReuseChunk int
+	// chunk alloc max cache column num
 	MaxReuseColumn int
 	// ChunkPool Several chunks and columns are cached
 	ChunkPool struct {
 		Lock  sync.Mutex
 		Alloc chunk.Allocator
 	}
+	// EnableReuseCheck indicates  request chunk whether use chunk alloc
 	EnableReuseCheck bool
 
-	// useChunkAlloc indicates whether statement use chunk alloc
-	useChunkAlloc    bool
+	// preuseChunkAlloc indicates whether pre statement use chunk alloc
+	// like select @@last_sql_use_alloc
 	preUseChunkAlloc bool
 }
 
@@ -1305,8 +1308,8 @@ func (s *SessionVars) GetNewChunk(fields []*types.FieldType, capacity int) *chun
 	}
 	s.ChunkPool.Lock.Lock()
 	defer s.ChunkPool.Lock.Unlock()
-	if s.checkReuseAllocSize() && (!s.useChunkAlloc) {
-		s.useChunkAlloc = true
+	if s.checkReuseAllocSize() && (!s.GetUseChunkAlloc()) {
+		s.StmtCtx.SetUseChunkAlloc()
 	}
 	chk := s.ChunkPool.Alloc.Alloc(fields, capacity, capacity)
 	return chk
@@ -1320,8 +1323,8 @@ func (s *SessionVars) GetNewChunkWithCapacity(fields []*types.FieldType, capacit
 	}
 	s.ChunkPool.Lock.Lock()
 	defer s.ChunkPool.Lock.Unlock()
-	if s.checkReuseAllocSize() && (!s.useChunkAlloc) {
-		s.useChunkAlloc = true
+	if s.checkReuseAllocSize() && (!s.GetUseChunkAlloc()) {
+		s.StmtCtx.SetUseChunkAlloc()
 	}
 	chk := s.ChunkPool.Alloc.Alloc(fields, capacity, maxCachesize)
 	return chk
@@ -1334,13 +1337,12 @@ func (s *SessionVars) checkReuseAllocSize() bool {
 
 // ExchangeChunkStatus give the status to preUseChunkAlloc
 func (s *SessionVars) ExchangeChunkStatus() {
-	s.preUseChunkAlloc = s.useChunkAlloc
-	s.useChunkAlloc = false
+	s.preUseChunkAlloc = s.GetUseChunkAlloc()
 }
 
 // GetUseChunkAlloc return useChunkAlloc status
 func (s *SessionVars) GetUseChunkAlloc() bool {
-	return s.useChunkAlloc
+	return s.StmtCtx.GetUseChunkAllocStatus()
 }
 
 // SetAlloc Attempt to set the buffer pool address
@@ -1350,8 +1352,6 @@ func (s *SessionVars) SetAlloc(alloc chunk.Allocator) {
 	}
 	if alloc != nil {
 		alloc.SetLimit(s.MaxReuseChunk, s.MaxReuseColumn)
-	} else {
-		s.useChunkAlloc = false
 	}
 	s.ChunkPool.Alloc = alloc
 }
@@ -1653,8 +1653,8 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		ForeignKeyChecks:              DefTiDBForeignKeyChecks,
 		HookContext:                   hctx,
 		EnableReuseCheck:              DefTiDBEnableReusechunk,
-		useChunkAlloc:                 DefTiDBUseAlloc,
-		preUseChunkAlloc:              DefTiDBUseAlloc,
+		//useChunkAlloc:                 DefTiDBUseAlloc,
+		preUseChunkAlloc: DefTiDBUseAlloc,
 		ChunkPool: struct {
 			Lock  sync.Mutex
 			Alloc chunk.Allocator
