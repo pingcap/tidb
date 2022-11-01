@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -222,7 +223,7 @@ func init() {
 	}
 }
 
-func getSignedTokenString(priKey *rsa.PrivateKey, pairs ...pair) (string, error) {
+func getSignedTokenString(priKey *rsa.PrivateKey, pairs map[string]interface{}) (string, error) {
 	jwt := jwtRepo.New()
 	header := jwsRepo.NewHeaders()
 	headerPairs := []pair{
@@ -234,14 +235,14 @@ func getSignedTokenString(priKey *rsa.PrivateKey, pairs ...pair) (string, error)
 			log.Fatal("Error when set header")
 		}
 	}
-	for _, pair := range pairs {
-		switch pair.name {
+	for k, v := range pairs {
+		switch k {
 		case jwsRepo.KeyIDKey:
-			if err := header.Set(pair.name, pair.value); err != nil {
+			if err := header.Set(k, v); err != nil {
 				log.Fatal("Error when set header")
 			}
 		case jwtRepo.SubjectKey, jwtRepo.IssuedAtKey, jwtRepo.ExpirationKey, jwtRepo.IssuerKey, openid.EmailKey:
-			if err := jwt.Set(pair.name, pair.value); err != nil {
+			if err := jwt.Set(k, v); err != nil {
 				log.Fatal("Error when set payload")
 			}
 		}
@@ -253,27 +254,28 @@ func getSignedTokenString(priKey *rsa.PrivateKey, pairs ...pair) (string, error)
 	}
 }
 
-func TestBasic(t *testing.T) {
+func TestAuthTokenClaims(t *testing.T) {
 	var jwksImpl JWKSImpl
+	now := time.Now()
 	require.NoError(t, jwksImpl.LoadJWKS4AuthToken(path[0], time.Hour), path[0])
-	pairs := []pair{
-		{jwsRepo.KeyIDKey, "the-key-id-0"},
-		{jwtRepo.SubjectKey, email1},
-		{openid.EmailKey, email1},
-		{jwtRepo.IssuedAtKey, time.Now().Unix()},
-		{jwtRepo.ExpirationKey, time.Now().Add(100 * time.Hour).Unix()},
-		{jwtRepo.IssuerKey, issuer1},
+	claims := map[string]interface{}{
+		jwsRepo.KeyIDKey:      "the-key-id-0",
+		jwtRepo.SubjectKey:    email1,
+		openid.EmailKey:       email1,
+		jwtRepo.IssuedAtKey:   now.Unix(),
+		jwtRepo.ExpirationKey: now.Add(100 * time.Hour).Unix(),
+		jwtRepo.IssuerKey:     issuer1,
 	}
-	signedTokenString, err := getSignedTokenString(priKeys[0], pairs...)
+	signedTokenString, err := getSignedTokenString(priKeys[0], claims)
 	require.NoError(t, err)
-	claims, err := jwksImpl.checkSigWithRetry(signedTokenString, 0)
+	verifiedClaims, err := jwksImpl.checkSigWithRetry(signedTokenString, 0)
 	require.NoError(t, err)
-	for _, pair := range pairs {
-		switch pair.name {
+	for k, v := range claims {
+		switch k {
 		case jwtRepo.SubjectKey, openid.EmailKey, jwtRepo.IssuerKey:
-			require.Equal(t, pair.value, claims[pair.name])
+			require.Equal(t, v, verifiedClaims[k])
 		case jwtRepo.IssuedAtKey, jwtRepo.ExpirationKey:
-			require.Equal(t, pair.value, claims[pair.name].(time.Time).Unix())
+			require.Equal(t, v, verifiedClaims[k].(time.Time).Unix())
 		}
 	}
 	record := &UserRecord{
@@ -283,6 +285,118 @@ func TestBasic(t *testing.T) {
 		AuthTokenIssuer: issuer1,
 		Email:           email1,
 	}
-	err = checkAuthTokenClaims(claims, record, defaultTokenLife)
+
+	// Success
+	err = checkAuthTokenClaims(verifiedClaims, record, defaultTokenLife)
 	require.NoError(t, err)
+
+	// test 'sub'
+	verifiedClaims[jwtRepo.SubjectKey] = email2
+	err = checkAuthTokenClaims(verifiedClaims, record, defaultTokenLife)
+	require.ErrorContains(t, err, "Wrong 'sub'")
+	delete(verifiedClaims, jwtRepo.SubjectKey)
+	err = checkAuthTokenClaims(verifiedClaims, record, defaultTokenLife)
+	require.ErrorContains(t, err, "lack 'sub'")
+	verifiedClaims[jwtRepo.SubjectKey] = email1
+
+	// test 'email'
+	verifiedClaims[openid.EmailKey] = email2
+	err = checkAuthTokenClaims(verifiedClaims, record, defaultTokenLife)
+	require.ErrorContains(t, err, "Wrong 'email'")
+	delete(verifiedClaims, openid.EmailKey)
+	err = checkAuthTokenClaims(verifiedClaims, record, defaultTokenLife)
+	require.ErrorContains(t, err, "lack 'email'")
+	verifiedClaims[openid.EmailKey] = email1
+
+	// test 'iat'
+	delete(verifiedClaims, jwtRepo.IssuedAtKey)
+	err = checkAuthTokenClaims(verifiedClaims, record, defaultTokenLife)
+	require.ErrorContains(t, err, "lack 'iat'")
+	verifiedClaims[jwtRepo.IssuedAtKey] = "abc"
+	err = checkAuthTokenClaims(verifiedClaims, record, defaultTokenLife)
+	require.ErrorContains(t, err, "iat: abc is not a value of time.Time")
+	time.Sleep(2 * time.Second)
+	verifiedClaims[jwtRepo.IssuedAtKey] = now
+	err = checkAuthTokenClaims(verifiedClaims, record, time.Second)
+	require.ErrorContains(t, err, "the token has been out of its life time")
+
+	// test 'exp'
+	delete(verifiedClaims, jwtRepo.ExpirationKey)
+	err = checkAuthTokenClaims(verifiedClaims, record, defaultTokenLife)
+	require.ErrorContains(t, err, "lack 'exp'")
+	verifiedClaims[jwtRepo.ExpirationKey] = "abc"
+	err = checkAuthTokenClaims(verifiedClaims, record, defaultTokenLife)
+	require.ErrorContains(t, err, "exp: abc is not a value of time.Time")
+	verifiedClaims[jwtRepo.ExpirationKey] = now
+	err = checkAuthTokenClaims(verifiedClaims, record, defaultTokenLife)
+	require.ErrorContains(t, err, "the token has been expired")
+	verifiedClaims[jwtRepo.ExpirationKey] = now.Add(100 * time.Hour)
+
+	// test token_issuer
+	delete(verifiedClaims, jwtRepo.IssuerKey)
+	err = checkAuthTokenClaims(verifiedClaims, record, defaultTokenLife)
+	require.ErrorContains(t, err, "lack 'iss'")
+	verifiedClaims[jwtRepo.IssuerKey] = issuer1
+	record.AuthTokenIssuer = issuer2
+	err = checkAuthTokenClaims(verifiedClaims, record, defaultTokenLife)
+	require.ErrorContains(t, err, "Wrong 'iss")
+}
+
+func TestJWKSImpl(t *testing.T) {
+	var jwksImpl JWKSImpl
+
+	// Set wrong path of JWKS
+	require.Error(t, jwksImpl.LoadJWKS4AuthToken("wrong-jwks-path", time.Hour))
+	require.Error(t, jwksImpl.load())
+	_, err := jwksImpl.checkSigWithRetry("invalid tokenString", 4)
+	require.Error(t, err)
+	_, err = jwksImpl.verify(([]byte)("invalid tokenString"))
+	require.Error(t, err)
+
+	require.NoError(t, jwksImpl.LoadJWKS4AuthToken(path[0], time.Hour), path[0])
+	now := time.Now()
+	claims := map[string]interface{}{
+		jwsRepo.KeyIDKey:      "the-key-id-0",
+		jwtRepo.SubjectKey:    email1,
+		openid.EmailKey:       email1,
+		jwtRepo.IssuedAtKey:   now.Unix(),
+		jwtRepo.ExpirationKey: now.Add(100 * time.Hour).Unix(),
+		jwtRepo.IssuerKey:     issuer1,
+	}
+	signedTokenString, err := getSignedTokenString(priKeys[0], claims)
+	require.NoError(t, err)
+	parts := strings.Split(signedTokenString, ".")
+
+	// Wrong encoded JWT format
+	_, err = jwksImpl.checkSigWithRetry(parts[0]+"."+parts[1], 0)
+	require.ErrorContains(t, err, "Invalid JWT")
+	_, err = jwksImpl.checkSigWithRetry(signedTokenString+"."+parts[1], 0)
+	require.ErrorContains(t, err, "Invalid JWT")
+
+	// Wrong signature
+	_, err = jwksImpl.checkSigWithRetry(signedTokenString+"A", 0)
+	require.ErrorContains(t, err, "could not verify message using any of the signatures or keys")
+
+	// Wrong signature, and fail to reload JWKS
+	jwksImpl.filepath = "wrong-path"
+	_, err = jwksImpl.checkSigWithRetry(signedTokenString+"A", 0)
+	require.ErrorContains(t, err, "Fail to verify the signature and reload the JWKS")
+	jwksImpl.filepath = path[0]
+
+	require.NoError(t, jwksImpl.LoadJWKS4AuthToken(path[0], time.Hour), path[0])
+	_, err = jwksImpl.checkSigWithRetry(signedTokenString, 0)
+	require.NoError(t, err)
+
+	// Wrong kid
+	claims[jwsRepo.KeyIDKey] = "the-key-id-1"
+	signedTokenString, err = getSignedTokenString(priKeys[0], claims)
+	require.NoError(t, err)
+	_, err = jwksImpl.checkSigWithRetry(signedTokenString, 0)
+	require.Error(t, err)
+	claims[jwsRepo.KeyIDKey] = "the-key-id-0"
+	signedTokenString, err = getSignedTokenString(priKeys[0], claims)
+	require.NoError(t, err)
+	require.NoError(t, jwksImpl.LoadJWKS4AuthToken(path[1], time.Hour), path[1])
+	_, err = jwksImpl.checkSigWithRetry(signedTokenString, 0)
+	require.Error(t, err)
 }

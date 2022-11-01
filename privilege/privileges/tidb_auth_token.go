@@ -81,7 +81,7 @@ func (jwks *JWKSImpl) checkSigWithRetry(tokenString string, retryTime int) (map[
 		verifiedPayload, err = jwks.verify(([]byte)(tokenString))
 		if err != nil {
 			if e := jwks.load(); e != nil {
-				err = e
+				err = errors.New("Fail to verify the signature and reload the JWKS")
 			}
 			continue
 		}
