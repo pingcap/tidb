@@ -48,8 +48,8 @@ func TestSpeedRecorder(t *testing.T) {
 	for _, tc := range testCases {
 		time.Sleep(time.Duration(tc.spentTime) * time.Second)
 		recentSpeed := speedRecorder.GetSpeed(tc.finished)
-		if math.Abs(tc.expected-recentSpeed) > 0.1 {
-			require.FailNow(t, "speed unexpected")
+		if math.Abs(tc.expected-recentSpeed) > 1 {
+			require.FailNow(t, "speed is unexpected", "expected: %5.2f, recent: %5.2f", tc.expected, recentSpeed)
 		}
 	}
 }

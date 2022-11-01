@@ -88,31 +88,32 @@ func infiniteChan[T any]() (chan<- T, <-chan T) {
 			e  T
 			ok bool
 		)
+		handleRead := func() bool {
+			if !ok {
+				for _, e = range q {
+					out <- e
+				}
+				close(out)
+				return true
+			}
+			q = append(q, e)
+			return false
+		}
 		for {
 			if len(q) > 0 {
 				select {
 				case e, ok = <-in:
-					if !ok {
-						for _, e = range q {
-							out <- e
-						}
-						close(out)
+					if handleRead() {
 						return
 					}
-					q = append(q, e)
 				case out <- q[0]:
 					q = q[1:]
 				}
 			} else {
 				e, ok = <-in
-				if !ok {
-					for _, e = range q {
-						out <- e
-					}
-					close(out)
+				if handleRead() {
 					return
 				}
-				q = append(q, e)
 			}
 		}
 	}()
