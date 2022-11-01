@@ -203,13 +203,15 @@ func setTLSCertificates(s *Server) error {
 	}
 
 	if len(cert) > 0 && len(key) > 0 {
-		if util.CertFile, err = os.Open(cert); err != nil {
+		certFile, err := os.Open(cert)
+		if err != nil {
 			return err
 		}
-		if util.KeyFile, err = os.Open(key); err != nil {
+		keyFile, err := os.Open(key)
+		if err != nil {
 			return err
 		}
-		tlsConfig, err := util.LoadTLSCertificates(s.cfg.Security.SSLCA, util.KeyFile, util.CertFile)
+		tlsConfig, err := util.LoadTLSCertificates(s.cfg.Security.SSLCA, keyFile, certFile)
 		// LoadTLSCertificates returns an error if certificates are invalid.
 		// In which case, we should halt server startup as a misconfiguration could
 		// lead to a connection downgrade.
@@ -223,7 +225,7 @@ func setTLSCertificates(s *Server) error {
 			go func() {
 				for range time.Tick(time.Hour * 24 * 30) { // 30 days
 					logutil.BgLogger().Info("Rotating automatically created TLS Certificates")
-					tlsConfig, err = util.LoadTLSCertificates(s.cfg.Security.SSLCA, util.KeyFile, util.CertFile)
+					tlsConfig, err = util.LoadTLSCertificates(s.cfg.Security.SSLCA, keyFile, certFile)
 					if err != nil {
 						logutil.BgLogger().Warn("TLS Certificate rotation failed", zap.Error(err))
 					}

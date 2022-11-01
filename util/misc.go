@@ -59,13 +59,6 @@ const (
 	RetryInterval uint64 = 500
 )
 
-var (
-	// KeyFile is the key file for TLS.
-	KeyFile *os.File
-	// CertFile is the cert file for TLS.
-	CertFile *os.File
-)
-
 // RunWithRetry will run the f with backoff and retry.
 // retryCnt: Max retry count
 // backoff: When run f failed, it will sleep backoff * triedCount time.Millisecond.
@@ -571,8 +564,14 @@ func LoadTLSCertificates(ca string, keyFile, certFile *os.File) (tlsConfig *tls.
 // form a certificate chain. On successful return, Certificate.Leaf will
 // be nil because the parsed form of the certificate is not retained.
 func LoadX509KeyPair(certFile, keyFile *os.File) (tls.Certificate, error) {
+	if _, err := certFile.Seek(0, 0); err != nil {
+		return tls.Certificate{}, err
+	}
 	certPEMBlock, err := io.ReadAll(certFile)
 	if err != nil {
+		return tls.Certificate{}, err
+	}
+	if _, err := keyFile.Seek(0, 0); err != nil {
 		return tls.Certificate{}, err
 	}
 	keyPEMBlock, err := io.ReadAll(keyFile)
