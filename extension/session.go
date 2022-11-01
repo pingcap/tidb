@@ -50,10 +50,13 @@ const (
 type StmtEventTp uint8
 
 const (
+	// StmtSuccess means the stmt is successfully executed
 	StmtSuccess StmtEventTp = iota
+	// StmtError means the stmt is failed
 	StmtError
 )
 
+// StmtEventInfo is the information of stmt event
 type StmtEventInfo interface {
 	// User returns the user of the session
 	User() *auth.UserIdentity
@@ -127,7 +130,8 @@ func (es *SessionExtensions) OnConnectionEvent(tp ConnEventTp, event *ConnEventI
 	}
 }
 
-func (es *SessionExtensions) ShouldListenStmtEvent() bool {
+// HasStmtEventListeners returns a bool that indicates if any stmt event listener exists
+func (es *SessionExtensions) HasStmtEventListeners() bool {
 	return es != nil && len(es.stmtEventFuncs) > 0
 }
 

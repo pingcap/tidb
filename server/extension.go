@@ -55,7 +55,7 @@ func (cc *clientConn) onExtensionConnEvent(tp extension.ConnEventTp, err error) 
 }
 
 func (cc *clientConn) onExtensionStmtEnd(node interface{}, err error, args ...expression.Expression) {
-	if !cc.extensions.ShouldListenStmtEvent() {
+	if !cc.extensions.HasStmtEventListeners() {
 		return
 	}
 
@@ -102,7 +102,7 @@ func (cc *clientConn) onExtensionStmtEnd(node interface{}, err error, args ...ex
 
 // onSQLParseFailed will be called when sql parse failed
 func (cc *clientConn) onExtensionSQLParseFailed(sql string, err error) {
-	if !cc.extensions.ShouldListenStmtEvent() {
+	if !cc.extensions.HasStmtEventListeners() {
 		return
 	}
 
