@@ -18,6 +18,7 @@ import (
 	"container/list"
 	"sync"
 
+	"github.com/pingcap/tidb/util/gpool"
 	"golang.org/x/sys/cpu"
 )
 
@@ -27,26 +28,26 @@ func getShardID(id uint64) uint64 {
 	return id % uint64(shard)
 }
 
-type tContainer[T any, U any, C any, CT any, TF Context[CT]] struct {
+type tContainer[T any, U any, C any, CT any, TF gpool.Context[CT]] struct {
 	task *taskBox[T, U, C, CT, TF]
 	_    cpu.CacheLinePad
 }
 
 // TaskStatusContainer is a container that can control or watch the pool.
-type TaskStatusContainer[T any, U any, C any, CT any, TF Context[CT]] struct {
+type TaskStatusContainer[T any, U any, C any, CT any, TF gpool.Context[CT]] struct {
 	Status map[uint64]*list.List
 	rw     sync.RWMutex
 	_      cpu.CacheLinePad
 }
 
 // TaskManager is a manager that can control or watch the pool.
-type TaskManager[T any, U any, C any, CT any, TF Context[CT]] struct {
+type TaskManager[T any, U any, C any, CT any, TF gpool.Context[CT]] struct {
 	task         []TaskStatusContainer[T, U, C, CT, TF]
 	conncurrency int32
 }
 
 // NewTaskManager create a new task manager.
-func NewTaskManager[T any, U any, C any, CT any, TF Context[CT]](con int32) TaskManager[T, U, C, CT, TF] {
+func NewTaskManager[T any, U any, C any, CT any, TF gpool.Context[CT]](con int32) TaskManager[T, U, C, CT, TF] {
 	task := make([]TaskStatusContainer[T, U, C, CT, TF], shard)
 	for i := 0; i < shard; i++ {
 		task[i] = TaskStatusContainer[T, U, C, CT, TF]{

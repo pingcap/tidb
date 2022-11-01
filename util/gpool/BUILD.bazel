@@ -6,6 +6,7 @@ go_library(
         "command.go",
         "gpool.go",
         "spinlock.go",
+        "task.go",
     ],
     importpath = "github.com/pingcap/tidb/util/gpool",
     visibility = ["//visibility:public"],

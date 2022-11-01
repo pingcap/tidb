@@ -47,7 +47,7 @@ type Pool[T any, U any, C any, CT any, TF pooltask.Context[CT]] struct {
 	consumerFunc  func(T, C, CT) U
 	taskManager   TaskManager[T, U, C, CT, TF]
 	name          string
-	generator     atomic.Uint64 // it is to generate task id.
+	generator     atomic.Uint64
 	capacity      atomic.Int32
 	running       atomic.Int32
 	state         atomic.Int32
