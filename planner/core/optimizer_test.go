@@ -311,7 +311,7 @@ func TestPrunePhysicalColumns(t *testing.T) {
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 	}
 
-	// Join[col0, col3; col0==col3] <- ExchangeReceiver[col0, col1, col2] <- ExchangeSender[col0, col1, col2] <- Selection[col0, col1, col2; col1 < col2] <- TableScan[col0, col1, col2]
+	// Join[col2, col3; col2==col3] <- ExchangeReceiver[col0, col1, col2] <- ExchangeSender[col0, col1, col2] <- Selection[col0, col1, col2; col0 < col1] <- TableScan[col0, col1, col2]
 	//      <- ExchangeReceiver1[col3] <- ExchangeSender1[col3] <- TableScan1[col3]
 	tableReader := &PhysicalTableReader{}
 	passSender := &PhysicalExchangeSender{
@@ -334,12 +334,12 @@ func TestPrunePhysicalColumns(t *testing.T) {
 	hashJoin.children = []PhysicalPlan{recv, recv1}
 	selection := &PhysicalSelection{}
 
-	cond, err := expression.NewFunction(sctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), col0, col3)
+	cond, err := expression.NewFunction(sctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), col2, col3)
 	require.True(t, err == nil)
 	sf, isSF := cond.(*expression.ScalarFunction)
 	require.True(t, isSF)
 	hashJoin.EqualConditions = append(hashJoin.EqualConditions, sf)
-	hashJoin.LeftJoinKeys = append(hashJoin.LeftJoinKeys, col0)
+	hashJoin.LeftJoinKeys = append(hashJoin.LeftJoinKeys, col2)
 	hashJoin.RightJoinKeys = append(hashJoin.RightJoinKeys, col3)
 	hashJoinSchema := make([]*expression.Column, 0)
 	hashJoinSchema = append(hashJoinSchema, col3)
@@ -347,6 +347,12 @@ func TestPrunePhysicalColumns(t *testing.T) {
 
 	selection.SetChildren(tableScan)
 	hashSender.SetChildren(selection)
+	var partitionCols = make([]*property.MPPPartitionColumn, 0, 1)
+	partitionCols = append(partitionCols, &property.MPPPartitionColumn{
+		Col:       col2,
+		CollateID: property.GetCollateIDByNameForPartition(col2.GetType().GetCollate()),
+	})
+	hashSender.HashCols = partitionCols
 	recv.SetChildren(hashSender)
 	tableScan.Schema().Columns = append(tableScan.Schema().Columns, col0, col1, col2)
 
@@ -357,22 +363,31 @@ func TestPrunePhysicalColumns(t *testing.T) {
 	prunePhysicalColumns(sctx, tableReader)
 
 	// Optimized Plan：
-	// Join[col0, col3; col0==col3] <- ExchangeReceiver[col0] <- ExchangeSender[col0] <- Projection[col0] <- Selection[col0, col1, col2; col1 < col2] <- TableScan[col0, col1, col2]
+	// Join[col2, col3; col2==col3] <- ExchangeReceiver[col2] <- ExchangeSender[col2;col2] <- Projection[col2] <- Selection[col0, col1, col2; col0 < col1] <- TableScan[col0, col1, col2]
 	//      <- ExchangeReceiver1[col3] <- ExchangeSender1[col3] <- TableScan1[col3]
 	require.True(t, len(recv.Schema().Columns) == 1)
-	require.True(t, recv.Schema().Contains(col0))
+	require.True(t, recv.Schema().Contains(col2))
+	require.False(t, recv.Schema().Contains(col0))
 	require.False(t, recv.Schema().Contains(col1))
-	require.False(t, recv.Schema().Contains(col2))
 	require.True(t, len(recv.children[0].Children()) == 1)
 	physicalProj := recv.children[0].Children()[0]
 	switch x := physicalProj.(type) {
 	case *PhysicalProjection:
-		require.True(t, x.Schema().Contains(col0))
+		require.True(t, x.Schema().Contains(col2))
+		require.False(t, recv.Schema().Contains(col0))
 		require.False(t, recv.Schema().Contains(col1))
-		require.False(t, recv.Schema().Contains(col2))
+		// Check PhysicalProj resolved index
+		require.True(t, len(x.Exprs) == 1)
+		require.True(t, x.Exprs[0].(*expression.Column).Index == 2)
 	default:
 		require.True(t, false)
 	}
+
+	// Check resolved indices
+	require.True(t, hashJoin.LeftJoinKeys[0].Index == 0)
+	require.True(t, hashSender.HashCols[0].Col.Index == 0)
+
+	// Check recv1，no changes
 	require.True(t, len(recv1.Schema().Columns) == 1)
 	require.True(t, recv1.Schema().Contains(col3))
 }
