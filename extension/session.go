@@ -50,10 +50,10 @@ const (
 type StmtEventTp uint8
 
 const (
-	// StmtSuccess means the stmt is successfully executed
-	StmtSuccess StmtEventTp = iota
 	// StmtError means the stmt is failed
-	StmtError
+	StmtError StmtEventTp = iota
+	// StmtSuccess means the stmt is successfully executed
+	StmtSuccess
 )
 
 // StmtEventInfo is the information of stmt event
