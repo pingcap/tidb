@@ -743,11 +743,7 @@ func (*Helper) GetTablesInfoWithKeyRange(schemas []*model.DBInfo) []TableInfoWit
 				tables = append(tables, newTableWithKeyRange(db, table))
 			}
 			for _, index := range table.Indices {
-				if table.Partition == nil {
-					tables = append(tables, newIndexWithKeyRange(db, table, index))
-					continue
-				}
-				if index.Global {
+				if table.Partition == nil || index.Global {
 					tables = append(tables, newIndexWithKeyRange(db, table, index))
 					continue
 				}
