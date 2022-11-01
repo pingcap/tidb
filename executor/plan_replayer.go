@@ -350,10 +350,7 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 	}
 
 	// Dump explain
-	if err = dumpExplain(sctx, zw, execStmts, task.Analyze); err != nil {
-		return err
-	}
-	return nil
+	return dumpExplain(sctx, zw, execStmts, task.Analyze)
 }
 
 func dumpConfig(zw *zip.Writer) error {
@@ -414,12 +411,12 @@ func dumpSchemas(ctx sessionctx.Context, zw *zip.Writer, pairs map[tableNamePair
 	return nil
 }
 
-func dumpStats(zw *zip.Writer, pairs map[tableNamePair]struct{}, tblJsonStats map[int64]*handle.JSONTable, do *domain.Domain) error {
+func dumpStats(zw *zip.Writer, pairs map[tableNamePair]struct{}, tblJSONStats map[int64]*handle.JSONTable, do *domain.Domain) error {
 	for pair := range pairs {
 		if pair.IsView {
 			continue
 		}
-		jsonTbl, err := getStatsForTable(do, tblJsonStats, pair)
+		jsonTbl, err := getStatsForTable(do, tblJSONStats, pair)
 		if err != nil {
 			return err
 		}
@@ -626,14 +623,14 @@ func (e *PlanReplayerDumpInfo) DumpSQLsFromFile(ctx context.Context, b []byte) e
 	return e.dump(ctx)
 }
 
-func getStatsForTable(do *domain.Domain, tblJsonStats map[int64]*handle.JSONTable, pair tableNamePair) (*handle.JSONTable, error) {
+func getStatsForTable(do *domain.Domain, tblJSONStats map[int64]*handle.JSONTable, pair tableNamePair) (*handle.JSONTable, error) {
 	is := do.InfoSchema()
 	h := do.StatsHandle()
 	tbl, err := is.TableByName(model.NewCIStr(pair.DBName), model.NewCIStr(pair.TableName))
 	if err != nil {
 		return nil, err
 	}
-	js, ok := tblJsonStats[tbl.Meta().ID]
+	js, ok := tblJSONStats[tbl.Meta().ID]
 	if ok && js != nil {
 		return js, nil
 	}
