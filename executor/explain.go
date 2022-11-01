@@ -287,7 +287,7 @@ func (h *memoryDebugModeHandler) run() {
 }
 
 func getHeapProfile() (fileName string, err error) {
-	tempDir := filepath.Join(config.GetGlobalConfig().TempStoragePath, "record")
+	tempDir := filepath.Join(config.GetGlobalConfig().Instance.TmpDir.Load(), "record")
 	timeString := time.Now().Format(time.RFC3339)
 	fileName = filepath.Join(tempDir, "heapGC"+timeString)
 	f, err := os.Create(fileName)

@@ -22,6 +22,7 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
+	"os"
 	"strconv"
 	"testing"
 
@@ -41,6 +42,25 @@ import (
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/stretchr/testify/require"
 )
+
+func TestSwitchMultipleTmpDir(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("SET GLOBAL tmpdir = 'temp1'")
+	tk.MustExec("SET GLOBAL tmpdir = 'temp2'")
+	tk.MustExec("SET GLOBAL tmpdir = 'temp1'")
+	tk.MustExec("SET GLOBAL tmpdir = 'temp2'")
+	defer func() {
+		err := os.RemoveAll("temp1")
+		require.NoError(t, err)
+		err = os.RemoveAll("temp2")
+		require.NoError(t, err)
+	}()
+	rs := tk.MustQuery(`SELECT @@GLOBAL.tmpdir`)
+	tmpdir := rs.Rows()[0][0].(string)
+	_, err := os.Stat(tmpdir)
+	require.NoError(t, err)
+}
 
 func TestSetVar(t *testing.T) {
 	store := testkit.CreateMockStore(t)

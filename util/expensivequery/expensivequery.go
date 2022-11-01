@@ -44,7 +44,7 @@ func (eqh *Handle) SetSessionManager(sm util.SessionManager) *Handle {
 	return eqh
 }
 
-// Run starts a expensive query checker goroutine at the start time of the server.
+// Run starts an expensive query checker goroutine at the start time of the server.
 func (eqh *Handle) Run() {
 	threshold := atomic.LoadUint64(&variable.ExpensiveQueryTimeThreshold)
 	// use 100ms as tickInterval temply, may use given interval or use defined variable later

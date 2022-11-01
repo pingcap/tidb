@@ -77,7 +77,7 @@ func InitGlobalLightningEnv() {
 func genLightningDataDir() (string, error) {
 	tidbCfg := config.GetGlobalConfig()
 	sortPathSuffix := "/tmp_ddl-" + strconv.Itoa(int(tidbCfg.Port))
-	sortPath := filepath.Join(tidbCfg.TempDir, sortPathSuffix)
+	sortPath := filepath.Join(tidbCfg.Instance.TmpDir.Load(), sortPathSuffix)
 
 	if info, err := os.Stat(sortPath); err != nil {
 		if !os.IsNotExist(err) {

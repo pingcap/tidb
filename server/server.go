@@ -191,6 +191,63 @@ func (s *Server) newConn(conn net.Conn) *clientConn {
 	return cc
 }
 
+func setTLSCertificates(s *Server) error {
+	// CheckCertificates will auto generate certificates if autoTLS is enabled.
+	key, cert, autoReload, err := util.CheckCertificates(
+		s.cfg.Security.SSLKey,
+		s.cfg.Security.SSLCert,
+		s.cfg.Security.AutoTLS,
+		s.cfg.Security.RSAKeySize)
+
+	if err != nil {
+		return err
+	}
+
+	if len(cert) > 0 && len(key) > 0 {
+		certFile, err := os.Open(cert)
+		if err != nil {
+			return err
+		}
+		keyFile, err := os.Open(key)
+		if err != nil {
+			return err
+		}
+		tlsConfig, err := util.LoadTLSCertificates(s.cfg.Security.SSLCA, keyFile, certFile)
+		// LoadTLSCertificates returns an error if certificates are invalid.
+		// In which case, we should halt server startup as a misconfiguration could
+		// lead to a connection downgrade.
+		if err != nil {
+			return err
+		}
+
+		// Automatically reload auto-generated certificates.
+		// The certificates are re-created every 30 days and are valid for 90 days.
+		if autoReload {
+			go func() {
+				for range time.Tick(time.Hour * 24 * 30) { // 30 days
+					logutil.BgLogger().Info("Rotating automatically created TLS Certificates")
+					tlsConfig, err = util.LoadTLSCertificates(s.cfg.Security.SSLCA, keyFile, certFile)
+					if err != nil {
+						logutil.BgLogger().Warn("TLS Certificate rotation failed", zap.Error(err))
+					}
+					atomic.StorePointer(&s.tlsConfig, unsafe.Pointer(tlsConfig))
+				}
+			}()
+		}
+
+		if tlsConfig != nil {
+			setSSLVariable(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert)
+			atomic.StorePointer(&s.tlsConfig, unsafe.Pointer(tlsConfig))
+			logutil.BgLogger().Info("mysql protocol server secure connection is enabled",
+				zap.Bool("client verification enabled", len(variable.GetSysVar("ssl_ca").Value) > 0))
+		}
+		if s.tlsConfig != nil {
+			s.capability |= mysql.ClientSSL
+		}
+	}
+	return nil
+}
+
 // NewServer creates a new Server.
 func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	s := &Server{
@@ -205,43 +262,9 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	setTxnScope()
 	setSystemTimeZoneVariable()
 
-	tlsConfig, autoReload, err := util.LoadTLSCertificates(
-		s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert,
-		s.cfg.Security.AutoTLS, s.cfg.Security.RSAKeySize)
-
-	// LoadTLSCertificates will auto generate certificates if autoTLS is enabled.
-	// It only returns an error if certificates are specified and invalid.
-	// In which case, we should halt server startup as a misconfiguration could
-	// lead to a connection downgrade.
+	err := setTLSCertificates(s)
 	if err != nil {
 		return nil, errors.Trace(err)
-	}
-
-	// Automatically reload auto-generated certificates.
-	// The certificates are re-created every 30 days and are valid for 90 days.
-	if autoReload {
-		go func() {
-			for range time.Tick(time.Hour * 24 * 30) { // 30 days
-				logutil.BgLogger().Info("Rotating automatically created TLS Certificates")
-				tlsConfig, _, err = util.LoadTLSCertificates(
-					s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert,
-					s.cfg.Security.AutoTLS, s.cfg.Security.RSAKeySize)
-				if err != nil {
-					logutil.BgLogger().Warn("TLS Certificate rotation failed", zap.Error(err))
-				}
-				atomic.StorePointer(&s.tlsConfig, unsafe.Pointer(tlsConfig))
-			}
-		}()
-	}
-
-	if tlsConfig != nil {
-		setSSLVariable(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert)
-		atomic.StorePointer(&s.tlsConfig, unsafe.Pointer(tlsConfig))
-		logutil.BgLogger().Info("mysql protocol server secure connection is enabled",
-			zap.Bool("client verification enabled", len(variable.GetSysVar("ssl_ca").Value) > 0))
-	}
-	if s.tlsConfig != nil {
-		s.capability |= mysql.ClientSSL
 	}
 
 	if s.cfg.Host != "" && (s.cfg.Port != 0 || RunInGoTest) {

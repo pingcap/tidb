@@ -208,15 +208,6 @@ token-limit = 1000
 # The maximum memory available for a single SQL statement. Default: 1GB
 mem-quota-query = 1073741824
 
-# Specifies the temporary storage path for some operators when a single SQL statement exceeds the memory quota specified by mem-quota-query.
-# <snip>
-# tmp-storage-path = "/tmp/<os/user.Current().Uid>_tidb/MC4wLjAuMDo0MDAwLzAuMC4wLjA6MTAwODA=/tmp-storage"
-
-# Specifies the maximum use of temporary storage (bytes) for all active queries when tidb_enable_tmp_storage_on_oom is enabled.
-# If the tmp-storage-quota exceeds the capacity of the temporary storage directory, tidb-server would return an error and exit.
-# The default value of tmp-storage-quota is under 0 which means tidb-server wouldn't check the capacity.
-tmp-storage-quota = -1
-
 # Specifies what operation TiDB performs when a single SQL statement exceeds the memory quota specified by mem-quota-query and cannot be spilled over to disk.
 # Valid options: ["log", "cancel"]
 oom-action = "cancel"
@@ -307,6 +298,15 @@ max_connections = 0
 
 # Run ddl worker on this tidb-server.
 tidb_enable_ddl = true
+
+# Specifies the temporary storage path for some operators when a single SQL statement exceeds the memory quota specified by mem-quota-query.
+# <snip>
+# tmpdir = "/tmp/<os/user.Current().Uid>_tidb/MC4wLjAuMDo0MDAwLzAuMC4wLjA6MTAwODA=/tmp-storage"
+
+# Specifies the maximum use of temporary storage (bytes) for all active queries when oom-use-tmp-storage is enabled.
+# If the tidb_tmp_storage_quota exceeds the capacity of the temporary storage directory, tidb-server would return an error and exit.
+# The default value of tidb_tmp_storage_quota is under 0 which means tidb-server wouldn't check the capacity.
+tidb_tmp_storage_quota = -1
 
 [log]
 # Log level: debug, info, warn, error, fatal.
@@ -679,7 +679,7 @@ engines = ["tikv", "tiflash", "tidb"]
 
 func TestConfig(t *testing.T) {
 	conf := new(Config)
-	conf.TempStoragePath = tempStorageDirName
+	conf.Instance.TmpDir.Store(DefTempStorageDirName)
 	conf.Binlog.Enable = true
 	conf.Binlog.IgnoreError = true
 	conf.Binlog.Strategy = "hash"
@@ -1173,7 +1173,7 @@ func TestEncodeDefTempStorageDir(t *testing.T) {
 
 	dirPrefix := filepath.Join(os.TempDir(), osUID+"_tidb")
 	for _, test := range tests {
-		tempStorageDir := encodeDefTempStorageDir(os.TempDir(), test.host, test.statusHost, test.port, test.statusPort)
+		tempStorageDir := encodeTmpDir(os.TempDir(), test.host, test.statusHost, test.port, test.statusPort)
 		require.Equal(t, filepath.Join(dirPrefix, test.expect, "tmp-storage"), tempStorageDir)
 	}
 }

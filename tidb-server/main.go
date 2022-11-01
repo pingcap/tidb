@@ -69,7 +69,6 @@ import (
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/signal"
 	"github.com/pingcap/tidb/util/sys/linux"
-	storageSys "github.com/pingcap/tidb/util/sys/storage"
 	"github.com/pingcap/tidb/util/systimemon"
 	"github.com/pingcap/tidb/util/topsql"
 	"github.com/pingcap/tidb/util/versioninfo"
@@ -111,7 +110,7 @@ const (
 	nmPluginLoad       = "plugin-load"
 	nmRepairMode       = "repair-mode"
 	nmRepairList       = "repair-list"
-	nmTempDir          = "temp-dir"
+	nmTmpDir           = "tmpdir"
 
 	nmProxyProtocolNetworks      = "proxy-protocol-networks"
 	nmProxyProtocolHeaderTimeout = "proxy-protocol-header-timeout"
@@ -144,7 +143,7 @@ var (
 	affinityCPU      = flag.String(nmAffinityCPU, "", "affinity cpu (cpu-no. separated by comma, e.g. 1,2,3)")
 	repairMode       = flagBoolean(nmRepairMode, false, "enable admin repair mode")
 	repairList       = flag.String(nmRepairList, "", "admin repair table list")
-	tempDir          = flag.String(nmTempDir, config.DefTempDir, "tidb temporary directory")
+	tmpDir           = flag.String(nmTmpDir, config.DefTmpDir, "tidb temporary directory")
 
 	// Log
 	logLevel     = flag.String(nmLogLevel, "info", "log level: info, debug, warn, error, fatal")
@@ -182,11 +181,9 @@ func main() {
 	}
 	registerStores()
 	registerMetrics()
+	terror.MustNil(disk.InitializeTempDir(config.GetGlobalConfig().Instance.TmpDir.Load()))
 	if variable.EnableTmpStorageOnOOM.Load() {
-		config.GetGlobalConfig().UpdateTempStoragePath()
-		err := disk.InitializeTempDir()
-		terror.MustNil(err)
-		checkTempStorageQuota()
+		config.CheckTempStorageQuota()
 	}
 	setupLog()
 	setupExtensions()
@@ -238,21 +235,6 @@ func syncLog() {
 		}
 		fmt.Fprintln(os.Stderr, "sync log err:", err)
 		os.Exit(1)
-	}
-}
-
-func checkTempStorageQuota() {
-	// check capacity and the quota when EnableTmpStorageOnOOM is enabled
-	c := config.GetGlobalConfig()
-	if c.TempStorageQuota < 0 {
-		// means unlimited, do nothing
-	} else {
-		capacityByte, err := storageSys.GetTargetDirectoryCapacity(c.TempStoragePath)
-		if err != nil {
-			log.Fatal(err.Error())
-		} else if capacityByte < uint64(c.TempStorageQuota) {
-			log.Fatal(fmt.Sprintf("value of [tmp-storage-quota](%d byte) exceeds the capacity(%d byte) of the [%s] directory", c.TempStorageQuota, capacityByte, c.TempStoragePath))
-		}
 	}
 }
 
@@ -478,8 +460,8 @@ func overrideConfig(cfg *config.Config) {
 			cfg.RepairTableList = stringToList(*repairList)
 		}
 	}
-	if actualFlags[nmTempDir] {
-		cfg.TempDir = *tempDir
+	if actualFlags[nmTmpDir] {
+		cfg.Instance.TmpDir.Store(*tmpDir)
 	}
 
 	// Log
@@ -574,6 +556,10 @@ func setGlobalVars() {
 					cfg.Instance.MaxConnections = cfg.MaxServerConnections
 				case "run-ddl":
 					cfg.Instance.TiDBEnableDDL.Store(cfg.RunDDL)
+				case "tmp-storage-path":
+					cfg.Instance.TmpDir.Store(cfg.TempStoragePath)
+				case "tmp-storage-quota":
+					cfg.Instance.TmpStorageQuota = cfg.TempStorageQuota
 				}
 			case "log":
 				switch oldName {
@@ -696,7 +682,7 @@ func setGlobalVars() {
 	tikv.SetRegionCacheTTLSec(int64(cfg.TiKVClient.RegionCacheTTL))
 	domainutil.RepairInfo.SetRepairMode(cfg.RepairMode)
 	domainutil.RepairInfo.SetRepairTableList(cfg.RepairTableList)
-	executor.GlobalDiskUsageTracker.SetBytesLimit(cfg.TempStorageQuota)
+	executor.GlobalDiskUsageTracker.SetBytesLimit(cfg.Instance.TmpStorageQuota)
 	if cfg.Performance.ServerMemoryQuota < 1 {
 		// If MaxMemory equals 0, it means unlimited
 		executor.GlobalMemoryUsageTracker.SetBytesLimit(-1)

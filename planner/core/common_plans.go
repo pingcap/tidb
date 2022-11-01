@@ -630,7 +630,7 @@ type SelectInto struct {
 	IntoOpt    *ast.SelectIntoOption
 }
 
-// Explain represents a explain plan.
+// Explain represents an explain plan.
 type Explain struct {
 	baseSchemaProducer
 

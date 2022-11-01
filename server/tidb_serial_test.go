@@ -117,7 +117,7 @@ func TestTLSAuto(t *testing.T) {
 	cfg.Status.ReportStatus = false
 	cfg.Security.AutoTLS = true
 	cfg.Security.RSAKeySize = 528 // Reduces unittest runtime
-	err := os.MkdirAll(cfg.TempStoragePath, 0700)
+	err := os.MkdirAll(cfg.Instance.TmpDir.Load(), 0700)
 	require.NoError(t, err)
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
@@ -198,6 +198,7 @@ func TestTLSBasic(t *testing.T) {
 }
 
 func TestTLSVerify(t *testing.T) {
+	var keyFile, certFile *os.File
 	ts := createTidbTestSuite(t)
 
 	dir := t.TempDir()
@@ -255,9 +256,15 @@ func TestTLSVerify(t *testing.T) {
 	require.False(t, util.IsTLSExpiredError(x509.CertificateInvalidError{Reason: x509.CANotAuthorizedForThisName}))
 	require.True(t, util.IsTLSExpiredError(x509.CertificateInvalidError{Reason: x509.Expired}))
 
-	_, _, err = util.LoadTLSCertificates("", "wrong key", "wrong cert", true, 528)
-	require.Error(t, err)
-	_, _, err = util.LoadTLSCertificates("wrong ca", fileName("server-key.pem"), fileName("server-cert.pem"), true, 528)
+	_, _, _, err = util.CheckCertificates("wrong key", "wrong cert", true, 528)
+	require.NoError(t, err)
+	_, _, _, err = util.CheckCertificates(fileName("server-key.pem"), fileName("server-cert.pem"), true, 528)
+	require.NoError(t, err)
+	keyFile, err = os.Open(fileName("server-key.pem"))
+	require.NoError(t, err)
+	certFile, err = os.Open(fileName("server-cert.pem"))
+	require.NoError(t, err)
+	_, err = util.LoadTLSCertificates("wrong ca", keyFile, certFile)
 	require.Error(t, err)
 
 	// Test connecting with a client that does not have TLS configured.

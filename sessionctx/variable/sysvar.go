@@ -470,6 +470,32 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return BoolToOnOff(EnableRCReadCheckTS.Load()), nil
 	}},
+	{Scope: ScopeInstance, Name: TmpDir, Value: config.GetGlobalConfig().Instance.TmpDir.Load(), Type: TypeStr, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		if err := config.GetGlobalConfig().Instance.TmpDir.Rename(val); err != nil {
+			return err
+		}
+		config.CheckTempStorageQuota()
+		return nil
+	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+		return config.GetGlobalConfig().Instance.TmpDir.Load(), nil
+	}},
+	{Scope: ScopeInstance, Name: TiDBTmpStorageQuota, Value: strconv.FormatInt(config.GetGlobalConfig().Instance.TmpStorageQuota, 10), Type: TypeInt, MinValue: -1, AllowAutoValue: true, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		newVal, err := strconv.ParseInt(val, 10, 64)
+		if err != nil {
+			return err
+		}
+		if newVal < 0 {
+			newVal = -1
+		}
+		if oldVal := config.GetGlobalConfig().Instance.TmpStorageQuota; oldVal != newVal {
+			config.GetGlobalConfig().Instance.TmpStorageQuota = newVal
+			config.CheckTempStorageQuota()
+			SetMemQuotaAnalyze(newVal)
+		}
+		return nil
+	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+		return strconv.FormatInt(config.GetGlobalConfig().Instance.TmpStorageQuota, 10), nil
+	}},
 
 	/* The system variables below have GLOBAL scope  */
 	{Scope: ScopeGlobal, Name: MaxPreparedStmtCount, Value: strconv.FormatInt(DefMaxPreparedStmtCount, 10), Type: TypeInt, MinValue: -1, MaxValue: 1048576},

@@ -35,6 +35,7 @@ import (
 	logbackupconf "github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
+	storageSys "github.com/pingcap/tidb/util/sys/storage"
 	"github.com/pingcap/tidb/util/tikvutil"
 	"github.com/pingcap/tidb/util/versioninfo"
 	tikvcfg "github.com/tikv/client-go/v2/config"
@@ -84,8 +85,8 @@ const (
 	DefExpensiveQueryTimeThreshold = 60
 	// DefMemoryUsageAlarmRatio is the threshold triggering an alarm which the memory usage of tidb-server instance exceeds.
 	DefMemoryUsageAlarmRatio = 0.8
-	// DefTempDir is the default temporary directory path for TiDB.
-	DefTempDir = "/tmp/tidb"
+	// DefTmpDir is the default temporary directory path for TiDB.
+	DefTmpDir = "/tmp/tidb"
 )
 
 // Valid config maps
@@ -99,8 +100,8 @@ var (
 	CheckTableBeforeDrop = false
 	// checkBeforeDropLDFlag is a go build flag.
 	checkBeforeDropLDFlag = "None"
-	// tempStorageDirName is the default temporary storage dir name by base64 encoding a string `port/statusPort`
-	tempStorageDirName = encodeDefTempStorageDir(os.TempDir(), DefHost, DefStatusHost, DefPort, DefStatusPort)
+	// DefTempStorageDirName is the default temporary storage dir name by base64 encoding a string `port/statusPort`
+	DefTempStorageDirName = encodeTmpDir(os.TempDir(), DefHost, DefStatusHost, DefPort, DefStatusPort)
 )
 
 // InstanceConfigSection indicates a config session that has options moved to [instance] session.
@@ -121,6 +122,8 @@ var (
 				"enable-collect-execution-info": "tidb_enable_collect_execution_info",
 				"max-server-connections":        "max_connections",
 				"run-ddl":                       "tidb_enable_ddl",
+				"tmp-storage-path":              "tmpdir",
+				"tmp-storage-quota":             "tidb_tmp_storage_quota",
 			},
 		},
 		{
@@ -160,21 +163,16 @@ var (
 
 // Config contains configuration options.
 type Config struct {
-	Host             string `toml:"host" json:"host"`
-	AdvertiseAddress string `toml:"advertise-address" json:"advertise-address"`
-	Port             uint   `toml:"port" json:"port"`
-	Cors             string `toml:"cors" json:"cors"`
-	Store            string `toml:"store" json:"store"`
-	Path             string `toml:"path" json:"path"`
-	Socket           string `toml:"socket" json:"socket"`
-	Lease            string `toml:"lease" json:"lease"`
-	SplitTable       bool   `toml:"split-table" json:"split-table"`
-	TokenLimit       uint   `toml:"token-limit" json:"token-limit"`
-	TempDir          string `toml:"temp-dir" json:"temp-dir"`
-	TempStoragePath  string `toml:"tmp-storage-path" json:"tmp-storage-path"`
-	// TempStorageQuota describe the temporary storage Quota during query exector when TiDBEnableTmpStorageOnOOM is enabled
-	// If the quota exceed the capacity of the TempStoragePath, the tidb-server would exit with fatal error
-	TempStorageQuota           int64                   `toml:"tmp-storage-quota" json:"tmp-storage-quota"` // Bytes
+	Host                       string                  `toml:"host" json:"host"`
+	AdvertiseAddress           string                  `toml:"advertise-address" json:"advertise-address"`
+	Port                       uint                    `toml:"port" json:"port"`
+	Cors                       string                  `toml:"cors" json:"cors"`
+	Store                      string                  `toml:"store" json:"store"`
+	Path                       string                  `toml:"path" json:"path"`
+	Socket                     string                  `toml:"socket" json:"socket"`
+	Lease                      string                  `toml:"lease" json:"lease"`
+	SplitTable                 bool                    `toml:"split-table" json:"split-table"`
+	TokenLimit                 uint                    `toml:"token-limit" json:"token-limit"`
 	TxnLocalLatches            tikvcfg.TxnLocalLatches `toml:"-" json:"-"`
 	ServerVersion              string                  `toml:"server-version" json:"server-version"`
 	VersionComment             string                  `toml:"version-comment" json:"version-comment"`
@@ -276,16 +274,8 @@ type Config struct {
 	Plugin                     Plugin     `toml:"plugin" json:"plugin"`
 	MaxServerConnections       uint32     `toml:"max-server-connections" json:"max-server-connections"`
 	RunDDL                     bool       `toml:"run-ddl" json:"run-ddl"`
-}
-
-// UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
-// and the `tmp-storage-path` was not specified in the conf.toml or was specified the same as the default value.
-func (c *Config) UpdateTempStoragePath() {
-	if c.TempStoragePath == tempStorageDirName {
-		c.TempStoragePath = encodeDefTempStorageDir(os.TempDir(), c.Host, c.Status.StatusHost, c.Port, c.Status.StatusPort)
-	} else {
-		c.TempStoragePath = encodeDefTempStorageDir(c.TempStoragePath, c.Host, c.Status.StatusHost, c.Port, c.Status.StatusPort)
-	}
+	TempStoragePath            string     `toml:"tmp-storage-path" json:"tmp-storage-path"`
+	TempStorageQuota           int64      `toml:"tmp-storage-quota" json:"tmp-storage-quota"` // Bytes
 }
 
 // GetTiKVConfig returns configuration options from tikvcfg
@@ -306,7 +296,7 @@ func (c *Config) GetTiKVConfig() *tikvcfg.Config {
 	}
 }
 
-func encodeDefTempStorageDir(tempDir string, host, statusHost string, port, statusPort uint) string {
+func encodeTmpDir(tempDir string, host, statusHost string, port, statusPort uint) string {
 	dirName := base64.URLEncoding.EncodeToString([]byte(fmt.Sprintf("%v:%v/%v:%v", host, port, statusHost, statusPort)))
 	osUID := ""
 	currentUser, err := user.Current()
@@ -384,6 +374,55 @@ func (b *nullableBool) UnmarshalJSON(data []byte) error {
 		*b = nbUnset
 	}
 	return err
+}
+
+func NewAtomicFilepath(fp string) *AtomicFilepath {
+	return &AtomicFilepath{filepath: fp, m: &sync.RWMutex{}}
+}
+
+// AtomicFilepath is a helper type for atomic operations on a filepath.
+type AtomicFilepath struct {
+	filepath string
+	m        *sync.RWMutex
+}
+
+// Load reads the filepath thread-safely.
+func (s *AtomicFilepath) Load() string {
+	s.m.RLock()
+	defer s.m.RUnlock()
+	return s.filepath
+}
+
+// Store writes the filepath thread-safely.
+func (s *AtomicFilepath) Store(str string) {
+	s.m.Lock()
+	defer s.m.Unlock()
+	s.filepath = str
+}
+
+// Rename renames and writes the filepath thread-safely.
+func (s *AtomicFilepath) Rename(newPath string) (e error) {
+	s.m.Lock()
+	defer s.m.Unlock()
+	if newPath == os.TempDir() {
+		newPath = encodeTmpDir(os.TempDir(),
+			GetGlobalConfig().Host,
+			GetGlobalConfig().Status.StatusHost,
+			GetGlobalConfig().Port,
+			GetGlobalConfig().Status.StatusPort,
+		)
+	}
+	parent := filepath.Dir(newPath)
+	if _, err := os.Stat(parent); os.IsNotExist(err) {
+		if err = os.MkdirAll(parent, 0750); err != nil {
+			return err
+		}
+	}
+	if err := os.Rename(s.filepath, newPath); err != nil {
+		return err
+	}
+	s.filepath = newPath
+	return nil
 }
 
 // AtomicBool is a helper type for atomic operations on a boolean value.
@@ -492,6 +531,12 @@ type Instance struct {
 	MaxConnections    uint32     `toml:"max_connections" json:"max_connections"`
 	TiDBEnableDDL     AtomicBool `toml:"tidb_enable_ddl" json:"tidb_enable_ddl"`
 	TiDBRCReadCheckTS bool       `toml:"tidb_rc_read_check_ts" json:"tidb_rc_read_check_ts"`
+
+	// TmpDir describes the path of temporary storage.
+	TmpDir AtomicFilepath `toml:"tmpdir" json:"tmpdir"`
+	// TmpStorageQuota describe the temporary storage Quota during query executor when TiDBEnableTmpStorageOnOOM is enabled.
+	// If the quota exceed the capacity of the TempStoragePath, the tidb-server would exit with fatal error.
+	TmpStorageQuota int64 `toml:"tidb_tmp_storage_quota" json:"tidb_tmp_storage_quota"` // Bytes
 }
 
 func (l *Log) getDisableTimestamp() bool {
@@ -819,9 +864,8 @@ var defaultConf = Config{
 	Lease:                        "45s",
 	TokenLimit:                   1000,
 	OOMUseTmpStorage:             true,
-	TempDir:                      DefTempDir,
 	TempStorageQuota:             -1,
-	TempStoragePath:              tempStorageDirName,
+	TempStoragePath:              DefTempStorageDirName,
 	MemQuotaQuery:                1 << 30,
 	OOMAction:                    "cancel",
 	EnableBatchDML:               false,
@@ -875,6 +919,8 @@ var defaultConf = Config{
 		MaxConnections:              0,
 		TiDBEnableDDL:               *NewAtomicBool(true),
 		TiDBRCReadCheckTS:           false,
+		TmpStorageQuota:             -1,
+		TmpDir:                      *NewAtomicFilepath(DefTempStorageDirName),
 	},
 	Status: Status{
 		ReportStatus:          true,
@@ -1048,6 +1094,8 @@ var removedConfig = map[string]struct{}{
 	"max-server-connections":                 {}, // use sysvar max_connections
 	"run-ddl":                                {}, // use sysvar tidb_enable_ddl
 	"instance.tidb_memory_usage_alarm_ratio": {}, // use sysvar tidb_memory_usage_alarm_ratio
+	"tmp-storage-path":                       {}, // use sysvar tmpdir
+	"tmp-storage-quota":                      {}, // use sysvar tidb_tmp_storage_quota
 }
 
 // isAllRemovedConfigItems returns true if all the items that couldn't validate
@@ -1253,6 +1301,10 @@ func (c *Config) Valid() error {
 		return fmt.Errorf("tidb_memory_usage_alarm_ratio in [Instance] must be greater than or equal to 0 and less than or equal to 1")
 	}
 
+	if c.Instance.TmpDir.Load() == DefTempStorageDirName {
+		c.Instance.TmpDir.Store(encodeTmpDir(os.TempDir(), c.Host, c.Status.StatusHost, c.Port, c.Status.StatusPort))
+	}
+
 	if len(c.IsolationRead.Engines) < 1 {
 		return fmt.Errorf("the number of [isolation-read]engines for isolation read should be at least 1")
 	}
@@ -1428,4 +1480,19 @@ func ContainHiddenConfig(s string) bool {
 		}
 	}
 	return false
+}
+
+// CheckTempStorageQuota checks if instance.tidb_tmp_storage_quota meets the remaining bytes.
+func CheckTempStorageQuota() {
+	// check capacity and the quota when OOMUseTmpStorage is enabled
+	c := GetGlobalConfig()
+	// "TmpStorageQuota < 0" means unlimited, and we need do nothing.
+	if c.Instance.TmpStorageQuota >= 0 {
+		capacityByte, err := storageSys.GetTargetDirectoryCapacity(c.Instance.TmpDir.Load())
+		if err != nil {
+			zaplog.Fatal(err.Error())
+		} else if capacityByte < uint64(c.Instance.TmpStorageQuota) {
+			zaplog.Fatal(fmt.Sprintf("value of [tidb_tmp_storage_quota](%d byte) exceeds the capacity(%d byte) of the [%s] directory", c.Instance.TmpStorageQuota, capacityByte, c.Instance.TmpDir.Load()))
+		}
+	}
 }

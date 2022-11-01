@@ -27,6 +27,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"math/big"
 	"net"
 	"net/http"
@@ -445,27 +446,38 @@ type SequenceTable interface {
 	SetSequenceVal(ctx interface{}, newVal int64, dbName, seqName string) (int64, bool, error)
 }
 
-// LoadTLSCertificates loads CA/KEY/CERT for special paths.
-func LoadTLSCertificates(ca, key, cert string, autoTLS bool, rsaKeySize int) (tlsConfig *tls.Config, autoReload bool, err error) {
-	autoReload = false
-	if len(cert) == 0 || len(key) == 0 {
+// CheckCertificates checks and update the paths of key file and cert.
+func CheckCertificates(rawKey, rawCert string, autoTLS bool, rsaKeySize int) (key, cert string, autoReload bool, err error) {
+	key, cert = rawKey, rawCert
+	if len(key) == 0 || len(cert) == 0 {
 		if !autoTLS {
 			logutil.BgLogger().Warn("Automatic TLS Certificate creation is disabled", zap.Error(err))
 			return
 		}
+		if len(key) != 0 || len(cert) != 0 {
+			logutil.BgLogger().Warn("Mis-match key and cert in config file. Use generated key and cert instead.")
+		}
+		// Automatically generate the TLS certificates on startup.
 		autoReload = true
-		tempStoragePath := config.GetGlobalConfig().TempStoragePath
+		tempStoragePath := config.GetGlobalConfig().Instance.TmpDir.Load()
 		cert = filepath.Join(tempStoragePath, "/cert.pem")
 		key = filepath.Join(tempStoragePath, "/key.pem")
-		err = createTLSCertificates(cert, key, rsaKeySize)
+		err = CreateCertificates(cert, key, rsaKeySize, x509.RSA, x509.UnknownSignatureAlgorithm)
 		if err != nil {
 			logutil.BgLogger().Warn("TLS Certificate creation failed", zap.Error(err))
 			return
 		}
 	}
+	return
+}
 
+// LoadTLSCertificates loads CA/KEY/CERT for special paths.
+func LoadTLSCertificates(ca string, keyFile, certFile *os.File) (tlsConfig *tls.Config, err error) {
+	if keyFile == nil || certFile == nil {
+		return
+	}
 	var tlsCert tls.Certificate
-	tlsCert, err = tls.LoadX509KeyPair(cert, key)
+	tlsCert, err = LoadX509KeyPair(certFile, keyFile)
 	if err != nil {
 		logutil.BgLogger().Warn("load x509 failed", zap.Error(err))
 		err = errors.Trace(err)
@@ -544,6 +556,29 @@ func LoadTLSCertificates(ca, key, cert string, autoTLS bool, rsaKeySize int) (tl
 		CipherSuites: cipherSuites,
 	}
 	return
+}
+
+// LoadX509KeyPair reads and parses a public/private key pair from a pair
+// of files. The files must contain PEM encoded data. The certificate file
+// may contain intermediate certificates following the leaf certificate to
+// form a certificate chain. On successful return, Certificate.Leaf will
+// be nil because the parsed form of the certificate is not retained.
+func LoadX509KeyPair(certFile, keyFile *os.File) (tls.Certificate, error) {
+	if _, err := certFile.Seek(0, 0); err != nil {
+		return tls.Certificate{}, err
+	}
+	certPEMBlock, err := io.ReadAll(certFile)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	if _, err := keyFile.Seek(0, 0); err != nil {
+		return tls.Certificate{}, err
+	}
+	keyPEMBlock, err := io.ReadAll(keyFile)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	return tls.X509KeyPair(certPEMBlock, keyPEMBlock)
 }
 
 // IsTLSExpiredError checks error is caused by TLS expired.
@@ -695,9 +730,4 @@ func CreateCertificates(certpath string, keypath string, rsaKeySize int, pubKeyA
 	logutil.BgLogger().Info("TLS Certificates created", zap.String("cert", certpath), zap.String("key", keypath),
 		zap.Duration("validity", certValidity), zap.Int("rsaKeySize", rsaKeySize))
 	return nil
-}
-
-func createTLSCertificates(certpath string, keypath string, rsaKeySize int) error {
-	// use RSA and unspecified signature algorithm
-	return CreateCertificates(certpath, keypath, rsaKeySize, x509.RSA, x509.UnknownSignatureAlgorithm)
 }

@@ -44,7 +44,6 @@ go_library(
         "//util/sem",
         "//util/signal",
         "//util/sys/linux",
-        "//util/sys/storage",
         "//util/systimemon",
         "//util/topsql",
         "//util/versioninfo",

@@ -9,7 +9,9 @@ go_library(
     ],
     importpath = "github.com/pingcap/tidb/util/sys/storage",
     visibility = ["//visibility:public"],
-    deps = select({
+    deps = [
+        "@org_golang_x_sys//unix",
+    ] + select({
         "@io_bazel_rules_go//go/platform:windows": [
             "@org_golang_x_sys//windows",
         ],

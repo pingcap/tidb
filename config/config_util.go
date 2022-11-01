@@ -62,6 +62,16 @@ func MergeConfigItems(dstConf, newConf *Config) (acceptedItems, rejectedItems []
 
 func mergeConfigItems(dstConf, newConf reflect.Value, fieldPath string) (acceptedItems, rejectedItems []string) {
 	t := dstConf.Type()
+	if t.Name() == "AtomicFilepath" {
+		if reflect.DeepEqual(dstConf.Interface().(AtomicFilepath), newConf.Interface().(AtomicFilepath)) {
+			return
+		}
+		if _, ok := dynamicConfigItems[fieldPath]; ok {
+			dstConf.Set(newConf)
+			return []string{fieldPath}, nil
+		}
+		return nil, []string{fieldPath}
+	}
 	if t.Name() == "AtomicBool" {
 		if reflect.DeepEqual(dstConf.Interface().(AtomicBool), newConf.Interface().(AtomicBool)) {
 			return
