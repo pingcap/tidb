@@ -362,7 +362,8 @@ type Insert struct {
 
 	RowLen int
 
-	FKChecks []*FKCheck
+	FKChecks   []*FKCheck
+	FKCascades []*FKCascade
 }
 
 // MemoryUsage return the memory usage of Insert
