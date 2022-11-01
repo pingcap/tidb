@@ -4,6 +4,8 @@ go_library(
     name = "spmc",
     srcs = [
         "option.go",
+        "schedule.go",
+        "schedule_rule.go",
         "spmcpool.go",
         "task.go",
         "task_manage.go",
@@ -13,6 +15,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/util/gpool/spmc",
     visibility = ["//visibility:public"],
     deps = [
+        "//resourcemanage",
         "//resourcemanager/pooltask",
         "//util/gpool",
         "//util/logutil",
@@ -35,11 +38,11 @@ go_test(
     embed = [":spmc"],
     race = "on",
     deps = [
+        "//resourcemanage",
         "//resourcemanager/pooltask",
         "//testkit/testsetup",
         "//util",
         "//util/gpool",
-        "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_goleak//:goleak",
