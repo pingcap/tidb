@@ -1276,6 +1276,9 @@ type SessionVars struct {
 	// AnalyzePartitionMergeConcurrency indicates concurrency for merging partition stats
 	AnalyzePartitionMergeConcurrency int
 
+	// EnableExternalTSRead indicates whether to enable read through external ts
+	EnableExternalTSRead bool
+
 	HookContext
 
 	// OptPrefixIndexSingleScan indicates whether to do some optimizations to avoid double scan for prefix index.
@@ -1440,6 +1443,7 @@ type ConnectionInfo struct {
 	ClientIP          string
 	ClientPort        string
 	ServerID          int
+	ServerIP          string
 	ServerPort        int
 	Duration          float64
 	User              string

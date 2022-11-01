@@ -548,7 +548,7 @@ func (sv *SysVar) SkipInit() bool {
 func (sv *SysVar) SkipSysvarCache() bool {
 	switch sv.Name {
 	case TiDBGCEnable, TiDBGCRunInterval, TiDBGCLifetime,
-		TiDBGCConcurrency, TiDBGCScanLockMode:
+		TiDBGCConcurrency, TiDBGCScanLockMode, TiDBExternalTS:
 		return true
 	}
 	return false
