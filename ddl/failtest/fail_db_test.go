@@ -559,7 +559,6 @@ func TestIssue38699(t *testing.T) {
 	result = tk.MustQuery("show warnings")
 	require.Len(t, result.Rows(), 1)
 	result.Check(testkit.Rows("Warning 1690 constant 1000000000 overflows tinyint"))
-
 }
 
 func TestPartitionAddPanic(t *testing.T) {
