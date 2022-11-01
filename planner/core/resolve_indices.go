@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/util/disjointset"
 )
+
 // ResolveIndicesItself resolve indices for PhysicalPlan itself
 func (p *PhysicalProjection) ResolveIndicesItself() (err error) {
 	for i, expr := range p.Exprs {
