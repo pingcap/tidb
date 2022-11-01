@@ -14,20 +14,90 @@
 
 package resourcemanage
 
-import (
-	"github.com/pingcap/tidb/util/gpool"
-)
+import "github.com/pingcap/errors"
+
+var GlobalReourceManage ResourceManage = NewResourceMange()
 
 type ResourceManage struct {
+	highPriorityPoolMap   map[string]*PoolContainer
+	normalPriorityPoolMap map[string]*PoolContainer
+	lowPriorityPoolMap    map[string]*PoolContainer
 }
 
-// TaskController is a controller that can control or watch the pool.
-type TaskController[T any, U any, C any, CT any, TF gpool.Context[CT]] interface {
-	Wait()
+func NewResourceMange() ResourceManage {
+	return ResourceManage{
+		highPriorityPoolMap:   make(map[string]*PoolContainer),
+		normalPriorityPoolMap: make(map[string]*PoolContainer),
+		lowPriorityPoolMap:    make(map[string]*PoolContainer),
+	}
 }
 
-type GorotinuePool[T any, U any, C any, CT any, TF gpool.Context[CT]] interface {
+// Register is to register pool into resource manage
+func (r *ResourceManage) Register(pool *GorotinuePool, name string, priority TaskPriority, component Component) error {
+	p := PoolContainer{pool: pool, component: component}
+	switch priority {
+	case HighPriority:
+		return r.registerHighPriorityPool(name, &p)
+	case NormalPriority:
+		return r.registerNormalPriorityPool(name, &p)
+	case LowPriority:
+		return r.registerLowPriorityPool(name, &p)
+	default:
+		return errors.New("priority is not valid")
+	}
+}
+
+func (r *ResourceManage) registerHighPriorityPool(name string, pool *PoolContainer) error {
+	if _, contain := r.highPriorityPoolMap[name]; contain {
+		return errors.New("pool name is already exist")
+	}
+	r.highPriorityPoolMap[name] = pool
+	return nil
+}
+
+func (r *ResourceManage) registerNormalPriorityPool(name string, pool *PoolContainer) error {
+	if _, contain := r.normalPriorityPoolMap[name]; contain {
+		return errors.New("pool name is already exist")
+	}
+	r.normalPriorityPoolMap[name] = pool
+	return nil
+}
+
+func (r *ResourceManage) registerLowPriorityPool(name string, pool *PoolContainer) error {
+	if _, contain := r.lowPriorityPoolMap[name]; contain {
+		return errors.New("pool name is already exist")
+	}
+	r.lowPriorityPoolMap[name] = pool
+	return nil
+}
+
+// GorotinuePool is a pool interface
+type GorotinuePool interface {
 	Release()
 
-	AddProduce(task T, constArg C, contextFn TF) (<-chan U, TaskController[T, U, C, CT, TF])
+	Tune(size int)
 }
+
+type PoolContainer struct {
+	pool      *GorotinuePool
+	component Component
+}
+
+// TaskPriority is the priority of the task.
+type TaskPriority int
+
+const (
+	HighPriority TaskPriority = iota
+	NormalPriority
+	LowPriority
+)
+
+// Component is ID for difference component
+type Component int
+
+const (
+	UNKNOWN Component = iota // it is only for test
+	DDL
+	PLANNER
+	EXECUTOR
+)
