@@ -21,6 +21,8 @@ go_library(
 go_test(
     name = "iter_test",
     srcs = ["combinator_test.go"],
+    flaky = True,
+    race = "on",
     deps = [
         ":iter",
         "@com_github_stretchr_testify//require",
