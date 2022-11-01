@@ -239,9 +239,6 @@ func (e *AnalyzeExec) handleResultsError(ctx context.Context, concurrency int, n
 	panicCnt := 0
 	var err error
 	for panicCnt < concurrency {
-		if atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1 {
-			return errors.Trace(ErrQueryInterrupted)
-		}
 		results, ok := <-resultsCh
 		if !ok {
 			break
@@ -270,6 +267,10 @@ func (e *AnalyzeExec) handleResultsError(ctx context.Context, concurrency int, n
 			}
 		}
 		invalidInfoSchemaStatCache(results.TableID.GetStatisticsID())
+		if atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1 {
+			finishJobWithLog(e.ctx, results.Job, ErrQueryInterrupted)
+			return errors.Trace(ErrQueryInterrupted)
+		}
 	}
 	return err
 }
