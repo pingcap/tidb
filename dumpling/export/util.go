@@ -83,20 +83,36 @@ func infiniteChan[T any]() (chan<- T, <-chan T) {
 	in, out := make(chan T), make(chan T)
 
 	go func() {
-		var q []T
+		var (
+			q  []T
+			e  T
+			ok bool
+		)
 		for {
-			e, ok := <-in
-			if !ok {
-				for _, e := range q {
-					out <- e
+			if len(q) > 0 {
+				select {
+				case e, ok = <-in:
+					if !ok {
+						for _, e = range q {
+							out <- e
+						}
+						close(out)
+						return
+					}
+					q = append(q, e)
+				case out <- q[0]:
+					q = q[1:]
 				}
-				close(out)
-				return
-			}
-			q = append(q, e)
-			if len(out) == 0 && len(q) > 0 {
-				out <- q[0]
-				q = q[1:]
+			} else {
+				e, ok = <-in
+				if !ok {
+					for _, e = range q {
+						out <- e
+					}
+					close(out)
+					return
+				}
+				q = append(q, e)
 			}
 		}
 	}()
