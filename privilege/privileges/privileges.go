@@ -21,7 +21,10 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
+	jwtRepo "github.com/lestrrat-go/jwx/v2/jwt"
+	"github.com/lestrrat-go/jwx/v2/jwt/openid"
 	"github.com/pingcap/tidb/extension"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/auth"
@@ -289,6 +292,60 @@ func (p *UserPrivileges) GetAuthWithoutVerification(user, host string) (success 
 	return
 }
 
+func (p *UserPrivileges) checkAuthTokenClaims(claims map[string]interface{}, record *UserRecord, tokenLife time.Duration) error {
+	if sub, ok := claims[jwtRepo.SubjectKey]; ok {
+		if sub != record.User {
+			return errors.New(fmt.Sprintf("Wrong 'sub': %s", sub))
+		}
+	} else {
+		return errors.New("lack 'sub'")
+	}
+
+	if email, ok := claims[openid.EmailKey]; ok {
+		if email != record.Email {
+			return errors.New(fmt.Sprintf("Wrong 'email': %s", email))
+		}
+	} else {
+		return errors.New("lack 'email'")
+	}
+
+	now := time.Now()
+	if val, ok := claims[jwtRepo.IssuedAtKey]; ok {
+		if iat, ok := val.(time.Time); ok {
+			if now.After(iat.Add(tokenLife)) {
+				return errors.New("the token has been out of its life time")
+			}
+		} else {
+			return errors.New(fmt.Sprintf("iat: %v is not a value of time.Time", val))
+		}
+	} else {
+		return errors.New("lack 'iat'")
+	}
+
+	if val, ok := claims[jwtRepo.ExpirationKey]; ok {
+		if exp, ok := val.(time.Time); ok {
+			if now.After(exp) {
+				return errors.New("the token has been expired")
+			}
+		} else {
+			return errors.New(fmt.Sprintf("exp: %v is not a value of time.Time", val))
+		}
+	} else {
+		return errors.New("lack 'exp'")
+	}
+
+	// `iss` is not required if `token_issuer` is not set in `mysql.user`
+	if iss, ok := claims[jwtRepo.IssuerKey]; ok {
+		if iss != record.AuthTokenIssuer {
+			return errors.New(fmt.Sprintf("Wrong 'iss': %s", iss))
+		}
+	} else if len(record.AuthTokenIssuer) > 0 {
+		return errors.New("lack 'iss'")
+	}
+
+	return nil
+}
+
 // ConnectionVerification implements the Manager interface.
 func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUser, authHost string, authentication, salt []byte, tlsState *tls.ConnectionState) error {
 	hasPassword := "YES"
@@ -324,7 +381,20 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 	}
 
 	if record.AuthPlugin == mysql.AuthTiDBAuthToken {
-		logutil.BgLogger().Info("TODO: unimplemented tidb_auth_token ConnectionVerification", zap.String("check", string(authentication)))
+		tokenString := string(authentication[:len(authentication)-1])
+		defaultTokenLife := 15 * time.Minute
+		var (
+			claims map[string]interface{}
+			err    error
+		)
+		if claims, err = auth.VerifyJWT(tokenString, 1); err != nil {
+			logutil.BgLogger().Error("verify JWT failed", zap.Error(err))
+			return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+		}
+		if err = p.checkAuthTokenClaims(claims, record, defaultTokenLife); err != nil {
+			logutil.BgLogger().Error("check claims failed", zap.Error(err))
+			return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+		}
 	} else if len(pwd) > 0 && len(authentication) > 0 {
 		switch record.AuthPlugin {
 		case mysql.AuthNativePassword:

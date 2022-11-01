@@ -86,6 +86,8 @@ const (
 	DefMemoryUsageAlarmRatio = 0.8
 	// DefTempDir is the default temporary directory path for TiDB.
 	DefTempDir = "/tmp/tidb"
+	// DefAuthTokenRefreshInterval is the default time interval to refresh tidb auth token.
+	DefAuthTokenRefreshInterval = time.Hour
 )
 
 // Valid config maps
@@ -964,7 +966,7 @@ var defaultConf = Config{
 		AutoTLS:                     false,
 		RSAKeySize:                  4096,
 		AuthTokenJWKS:               "",
-		AuthTokenRefreshInterval:    "1h",
+		AuthTokenRefreshInterval:    DefAuthTokenRefreshInterval.String(),
 	},
 	DeprecateIntegerDisplayWidth:         false,
 	EnableEnumLengthLimit:                true,

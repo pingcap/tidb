@@ -30,6 +30,8 @@ go_library(
         "//util/sem",
         "//util/sqlexec",
         "//util/stringutil",
+        "@com_github_lestrrat_go_jwx_v2//jwt:go_default_library",
+        "@com_github_lestrrat_go_jwx_v2//jwt/openid:go_default_library",
         "@com_github_pingcap_errors//:errors",
         "@org_golang_x_exp//slices",
         "@org_uber_go_zap//:zap",

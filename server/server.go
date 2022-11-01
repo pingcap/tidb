@@ -33,6 +33,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"github.com/pingcap/tidb/parser/auth"
 	"io"
 	"math/rand"
 	"net"
@@ -302,16 +303,18 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 
 	// Automatically reload JWKS for tidb_auth_token.
 	if len(s.cfg.Security.AuthTokenJWKS) > 0 {
-
-		timeInterval, err := time.ParseDuration(s.cfg.Security.AuthTokenRefreshInterval)
-		if err != nil {
-			return nil, err
+		var (
+			timeInterval time.Duration
+			err          error
+		)
+		if timeInterval, err = time.ParseDuration(s.cfg.Security.AuthTokenRefreshInterval); err != nil {
+			logutil.BgLogger().Error("Fail to parse security.auth-token-refresh-interval. Use default value",
+				zap.String("security.auth-token-refresh-interval", s.cfg.Security.AuthTokenRefreshInterval))
+			timeInterval = config.DefAuthTokenRefreshInterval
 		}
-		go func() {
-			for range time.Tick(timeInterval) {
-
-			}
-		}()
+		if err = auth.LoadJWKS4AuthToken(s.cfg.Security.AuthTokenJWKS, timeInterval); err != nil {
+			logutil.BgLogger().Error("Fail to load JWKS from the path", zap.String("jwks", s.cfg.Security.AuthTokenJWKS))
+		}
 	}
 
 	// Init rand seed for randomBuf()
