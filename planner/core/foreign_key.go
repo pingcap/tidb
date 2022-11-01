@@ -53,6 +53,8 @@ type FKCascadeType int8
 const (
 	// FKCascadeOnDelete indicates in delete statement.
 	FKCascadeOnDelete FKCascadeType = 1
+	// FKCascadeOnUpdate indicates in update statement.
+	FKCascadeOnUpdate FKCascadeType = 2
 
 	emptyFkCheckSize   = int64(unsafe.Sizeof(FKCheck{}))
 	emptyFkCascadeSize = int64(unsafe.Sizeof(FKCascade{}))
@@ -80,17 +82,17 @@ func (f *FKCascade) MemoryUsage() (sum int64) {
 	return
 }
 
-func (p *Insert) buildOnInsertFKChecks(ctx sessionctx.Context, is infoschema.InfoSchema, dbName string) ([]*FKCheck, error) {
+func (p *Insert) buildOnInsertFKChecks(ctx sessionctx.Context, is infoschema.InfoSchema, dbName string) error {
 	if !ctx.GetSessionVars().ForeignKeyChecks {
-		return nil, nil
+		return nil
 	}
 	tblInfo := p.Table.Meta()
 	fkChecks := make([]*FKCheck, 0, len(tblInfo.ForeignKeys))
 	updateCols := p.buildOnDuplicateUpdateColumns()
 	if len(updateCols) > 0 {
-		referredFKChecks, err := buildOnUpdateReferredFKChecks(is, dbName, tblInfo, updateCols)
+		referredFKChecks, _, err := buildOnUpdateReferredFKTriggers(is, dbName, tblInfo, updateCols)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if len(referredFKChecks) > 0 {
 			fkChecks = append(fkChecks, referredFKChecks...)
@@ -103,13 +105,14 @@ func (p *Insert) buildOnInsertFKChecks(ctx sessionctx.Context, is infoschema.Inf
 		failedErr := ErrNoReferencedRow2.FastGenByArgs(fk.String(dbName, tblInfo.Name.L))
 		fkCheck, err := buildFKCheckOnModifyChildTable(is, fk, failedErr)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if fkCheck != nil {
 			fkChecks = append(fkChecks, fkCheck)
 		}
 	}
-	return fkChecks, nil
+	p.FKChecks = fkChecks
+	return nil
 }
 
 func (p *Insert) buildOnDuplicateUpdateColumns() map[string]struct{} {
@@ -120,12 +123,13 @@ func (p *Insert) buildOnDuplicateUpdateColumns() map[string]struct{} {
 	return m
 }
 
-func (updt *Update) buildOnUpdateFKChecks(ctx sessionctx.Context, is infoschema.InfoSchema, tblID2table map[int64]table.Table) error {
+func (updt *Update) buildOnUpdateFKTriggers(ctx sessionctx.Context, is infoschema.InfoSchema, tblID2table map[int64]table.Table) error {
 	if !ctx.GetSessionVars().ForeignKeyChecks {
 		return nil
 	}
 	tblID2UpdateColumns := updt.buildTbl2UpdateColumns()
 	fkChecks := make(map[int64][]*FKCheck)
+	fkCascades := make(map[int64][]*FKCascade)
 	for tid, tbl := range tblID2table {
 		tblInfo := tbl.Meta()
 		dbInfo, exist := is.SchemaByTable(tblInfo)
@@ -137,12 +141,15 @@ func (updt *Update) buildOnUpdateFKChecks(ctx sessionctx.Context, is infoschema.
 		if len(updateCols) == 0 {
 			continue
 		}
-		referredFKChecks, err := buildOnUpdateReferredFKChecks(is, dbInfo.Name.L, tblInfo, updateCols)
+		referredFKChecks, referredFKCascades, err := buildOnUpdateReferredFKTriggers(is, dbInfo.Name.L, tblInfo, updateCols)
 		if err != nil {
 			return err
 		}
 		if len(referredFKChecks) > 0 {
 			fkChecks[tid] = append(fkChecks[tid], referredFKChecks...)
+		}
+		if len(referredFKCascades) > 0 {
+			fkCascades[tid] = append(fkCascades[tid], referredFKCascades...)
 		}
 		childFKChecks, err := buildOnUpdateChildFKChecks(is, dbInfo.Name.L, tblInfo, updateCols)
 		if err != nil {
@@ -153,6 +160,7 @@ func (updt *Update) buildOnUpdateFKChecks(ctx sessionctx.Context, is infoschema.
 		}
 	}
 	updt.FKChecks = fkChecks
+	updt.FKCascades = fkCascades
 	return nil
 }
 
@@ -170,7 +178,7 @@ func (del *Delete) buildOnDeleteFKTriggers(ctx sessionctx.Context, is infoschema
 		}
 		referredFKs := is.GetTableReferredForeignKeys(dbInfo.Name.L, tblInfo.Name.L)
 		for _, referredFK := range referredFKs {
-			fkCheck, fkCascade, err := buildOnDeleteFKTrigger(is, referredFK)
+			fkCheck, fkCascade, err := buildOnDeleteOrUpdateFKTrigger(is, referredFK, FKCascadeOnDelete)
 			if err != nil {
 				return err
 			}
@@ -187,22 +195,26 @@ func (del *Delete) buildOnDeleteFKTriggers(ctx sessionctx.Context, is infoschema
 	return nil
 }
 
-func buildOnUpdateReferredFKChecks(is infoschema.InfoSchema, dbName string, tblInfo *model.TableInfo, updateCols map[string]struct{}) ([]*FKCheck, error) {
+func buildOnUpdateReferredFKTriggers(is infoschema.InfoSchema, dbName string, tblInfo *model.TableInfo, updateCols map[string]struct{}) ([]*FKCheck, []*FKCascade, error) {
 	referredFKs := is.GetTableReferredForeignKeys(dbName, tblInfo.Name.L)
 	fkChecks := make([]*FKCheck, 0, len(referredFKs))
+	fkCascades := make([]*FKCascade, 0, len(referredFKs))
 	for _, referredFK := range referredFKs {
 		if !isMapContainAnyCols(updateCols, referredFK.Cols...) {
 			continue
 		}
-		fkCheck, err := buildFKCheckOnModifyReferTable(is, referredFK)
+		fkCheck, fkCascade, err := buildOnDeleteOrUpdateFKTrigger(is, referredFK, FKCascadeOnUpdate)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if fkCheck != nil {
 			fkChecks = append(fkChecks, fkCheck)
 		}
+		if fkCascade != nil {
+			fkCascades = append(fkCascades, fkCascade)
+		}
 	}
-	return fkChecks, nil
+	return fkChecks, fkCascades, nil
 }
 
 func buildOnUpdateChildFKChecks(is infoschema.InfoSchema, dbName string, tblInfo *model.TableInfo, updateCols map[string]struct{}) ([]*FKCheck, error) {
@@ -260,7 +272,7 @@ func (updt *Update) buildTbl2UpdateColumns() map[int64]map[string]struct{} {
 	return tblID2UpdateColumns
 }
 
-func buildOnDeleteFKTrigger(is infoschema.InfoSchema, referredFK *model.ReferredFKInfo) (*FKCheck, *FKCascade, error) {
+func buildOnDeleteOrUpdateFKTrigger(is infoschema.InfoSchema, referredFK *model.ReferredFKInfo, tp FKCascadeType) (*FKCheck, *FKCascade, error) {
 	childTable, err := is.TableByName(referredFK.ChildSchema, referredFK.ChildTable)
 	if err != nil {
 		return nil, nil, nil
@@ -273,12 +285,17 @@ func buildOnDeleteFKTrigger(is infoschema.InfoSchema, referredFK *model.Referred
 	if fk.State != model.StatePublic {
 		fkReferOption = model.ReferOptionRestrict
 	} else {
-		fkReferOption = model.ReferOptionType(fk.OnDelete)
+		switch tp {
+		case FKCascadeOnDelete:
+			fkReferOption = model.ReferOptionType(fk.OnDelete)
+		case FKCascadeOnUpdate:
+			fkReferOption = model.ReferOptionType(fk.OnUpdate)
+		}
 	}
 	switch fkReferOption {
 	case model.ReferOptionCascade, model.ReferOptionSetNull:
 		fkCascade := &FKCascade{
-			Tp:         FKCascadeOnDelete,
+			Tp:         tp,
 			ReferredFK: referredFK,
 			ChildTable: childTable,
 			FK:         fk,
