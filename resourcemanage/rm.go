@@ -33,7 +33,7 @@ func NewResourceMange() ResourceManage {
 }
 
 // Register is to register pool into resource manage
-func (r *ResourceManage) Register(pool *GorotinuePool, name string, priority TaskPriority, component Component) error {
+func (r *ResourceManage) Register(pool GorotinuePool, name string, priority TaskPriority, component Component) error {
 	p := PoolContainer{pool: pool, component: component}
 	switch priority {
 	case HighPriority:
@@ -79,7 +79,7 @@ type GorotinuePool interface {
 }
 
 type PoolContainer struct {
-	pool      *GorotinuePool
+	pool      GorotinuePool
 	component Component
 }
 
