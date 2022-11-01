@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/mathutil"
-	"github.com/pingcap/tipb/go-tipb"
 	"github.com/twmb/murmur3"
 	"golang.org/x/exp/slices"
 )
@@ -45,6 +44,7 @@ import (
 const topNThreshold = uint64(10)
 
 var (
+	// ErrQueryInterrupted indicates interrupted
 	ErrQueryInterrupted = dbterror.ClassExecutor.NewStd(mysql.ErrQueryInterrupted)
 )
 
