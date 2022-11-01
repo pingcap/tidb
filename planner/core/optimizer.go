@@ -496,7 +496,7 @@ func prunePhysicalColumnsInternal(sctx sessionctx.Context, plan PhysicalPlan) er
 		leftCols, rightCols := x.extractUsedCols(schemaColumns)
 		matchPattern := false
 		for i := 0; i <= 1; i++ {
-			matchPattern = false  // HashJoin <- ExchangeReceiver <- ExchangeSender
+			matchPattern = false // HashJoin <- ExchangeReceiver <- ExchangeSender
 			var exchangeSender *PhysicalExchangeSender
 			if receiver, ok := x.children[i].(*PhysicalExchangeReceiver); ok {
 				exchangeSender, matchPattern = receiver.children[0].(*PhysicalExchangeSender)
