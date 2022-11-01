@@ -183,6 +183,7 @@ go_library(
         "//util/rowDecoder",
         "//util/rowcodec",
         "//util/sem",
+        "//util/servermemorylimit",
         "//util/set",
         "//util/size",
         "//util/sqlexec",
