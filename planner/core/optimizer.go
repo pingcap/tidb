@@ -471,6 +471,7 @@ func prunePhysicalColumnForHashJoinChild(sctx sessionctx.Context, hashJoin *Phys
 		proj.SetChildren(ch)
 		sender.children[0] = proj
 
+		// Resolve Indices from bottom to up
 		err = proj.ResolveIndicesItself()
 		if err != nil {
 			return err
