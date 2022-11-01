@@ -514,6 +514,6 @@ func TestGetReuseChunk(t *testing.T) {
 		require.False(t, exist)
 	}
 
-	sessVars.EndAlloc()
+	sessVars.ClearAlloc()
 	require.Nil(t, sessVars.ChunkPool.Alloc)
 }

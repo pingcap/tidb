@@ -1305,7 +1305,7 @@ func (s *SessionVars) GetNewChunk(fields []*types.FieldType, capacity int) *chun
 	}
 	s.ChunkPool.Lock.Lock()
 	defer s.ChunkPool.Lock.Unlock()
-	if s.noLimitChunkAlloc() && (!s.useChunkAlloc) {
+	if s.checkReuseAllocSize() && (!s.useChunkAlloc) {
 		s.useChunkAlloc = true
 	}
 	chk := s.ChunkPool.Alloc.Alloc(fields, capacity, capacity)
@@ -1320,15 +1320,15 @@ func (s *SessionVars) GetNewChunkWithCapacity(fields []*types.FieldType, capacit
 	}
 	s.ChunkPool.Lock.Lock()
 	defer s.ChunkPool.Lock.Unlock()
-	if s.noLimitChunkAlloc() && (!s.useChunkAlloc) {
+	if s.checkReuseAllocSize() && (!s.useChunkAlloc) {
 		s.useChunkAlloc = true
 	}
 	chk := s.ChunkPool.Alloc.Alloc(fields, capacity, maxCachesize)
 	return chk
 }
 
-// noLimitChunkAlloc indicates whether chunk alloc can be used
-func (s *SessionVars) noLimitChunkAlloc() bool {
+// checkReuseAllocSize indicates whether chunk alloc can be used
+func (s *SessionVars) checkReuseAllocSize() bool {
 	return s.MaxReuseChunk > 0 || s.MaxReuseColumn > 0
 }
 
@@ -1357,7 +1357,7 @@ func (s *SessionVars) SetAlloc(alloc chunk.Allocator) {
 }
 
 // EndAlloc indicates reuse chunk end
-func (s *SessionVars) EndAlloc() {
+func (s *SessionVars) ClearAlloc() {
 	s.ChunkPool.Alloc = nil
 }
 

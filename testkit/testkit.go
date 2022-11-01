@@ -115,7 +115,7 @@ func (tk *TestKit) Session() session.Session {
 // MustExec executes a sql statement and asserts nil error.
 func (tk *TestKit) MustExec(sql string, args ...interface{}) {
 	defer func() {
-		tk.Session().GetSessionVars().EndAlloc()
+		tk.Session().GetSessionVars().ClearAlloc()
 		if tk.alloc != nil {
 			tk.alloc.Reset()
 		}
@@ -138,7 +138,7 @@ func (tk *TestKit) MustExecWithContext(ctx context.Context, sql string, args ...
 // If expected result is set it asserts the query result equals expected result.
 func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
 	defer func() {
-		tk.Session().GetSessionVars().EndAlloc()
+		tk.Session().GetSessionVars().ClearAlloc()
 		if tk.alloc != nil {
 			tk.alloc.Reset()
 		}
