@@ -410,7 +410,12 @@ func (t *Task) GetGlobalCheckPointTS(ctx context.Context) (uint64, error) {
 		}
 	}
 
-	return checkpoint, nil
+	ts, err := t.GetStorageCheckpoint(ctx)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	return mathutil.Max(checkpoint, ts), nil
 }
 
 // Step forwards the progress (next_backup_ts) of some region.
