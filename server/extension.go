@@ -89,7 +89,6 @@ func (cc *clientConn) onExtensionStmtEnd(node interface{}, err error, args ...ex
 		info.stmtNode = info.executeStmt
 	case ast.StmtNode:
 		info.stmtNode = stmt
-
 	}
 
 	if sc := sessVars.StmtCtx; sc != nil && !sc.Expired {
@@ -106,14 +105,8 @@ func (cc *clientConn) onExtensionSQLParseFailed(sql string, err error) {
 		return
 	}
 
-	sessVars := cc.getCtx().GetSessionVars()
-	connInfo := sessVars.ConnectionInfo
-	if connInfo == nil {
-		connInfo = cc.connectInfo()
-	}
-
 	cc.extensions.OnStmtEvent(extension.StmtError, &stmtEventInfo{
-		sessVars:        sessVars,
+		sessVars:        cc.getCtx().GetSessionVars(),
 		err:             err,
 		failedParseText: sql,
 	})
