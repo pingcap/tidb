@@ -47,8 +47,10 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/auth"
 	tmysql "github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
@@ -2825,28 +2827,50 @@ func TestExtensionConnEvent(t *testing.T) {
 		_ = conn.Close()
 	}()
 
-	var conn1, conn2 extension.ConnEventInfo
+	var expectedConn2 variable.ConnectionInfo
 	logs.check(func() {
 		require.Equal(t, []extension.ConnEventTp{
 			extension.ConnConnected,
 			extension.ConnHandshakeAccepted,
 		}, logs.types)
-		conn1 = logs.infos[0]
-		conn2 = conn1
-		conn2.User = "root"
-		conn2.DB = "test"
-
+		conn1 := logs.infos[0]
 		require.Equal(t, "127.0.0.1", conn1.ClientIP)
 		require.Equal(t, "127.0.0.1", conn1.ServerIP)
 		require.Empty(t, conn1.User)
 		require.Empty(t, conn1.DB)
-		require.Equal(t, conn2, logs.infos[1])
+		require.Equal(t, int(ts.port), conn1.ServerPort)
+		require.NotEqual(t, conn1.ServerPort, conn1.ClientPort)
+		require.NotEmpty(t, conn1.ConnectionID)
+		require.Nil(t, conn1.ActiveRoles)
+		require.NoError(t, conn1.Error)
+
+		expectedConn2 = *(conn1.ConnectionInfo)
+		expectedConn2.User = "root"
+		expectedConn2.DB = "test"
+		require.Equal(t, []*auth.RoleIdentity{}, logs.infos[1].ActiveRoles)
+		require.Nil(t, logs.infos[1].Error)
+		require.Equal(t, expectedConn2, *(logs.infos[1].ConnectionInfo))
 	})
+
+	_, err = conn.ExecContext(context.TODO(), "create role r1@'%'")
+	require.NoError(t, err)
+	_, err = conn.ExecContext(context.TODO(), "grant r1 TO root")
+	require.NoError(t, err)
+	_, err = conn.ExecContext(context.TODO(), "set role all")
+	require.NoError(t, err)
+
 	require.NoError(t, conn.Close())
 	require.NoError(t, db.Close())
 	require.NoError(t, logs.waitConnDisconnected())
 	logs.check(func() {
-		require.Equal(t, conn2, logs.infos[2])
+		require.Equal(t, 3, len(logs.infos))
+		require.Equal(t, 1, len(logs.infos[2].ActiveRoles))
+		require.Equal(t, auth.RoleIdentity{
+			Username: "r1",
+			Hostname: "%",
+		}, *logs.infos[2].ActiveRoles[0])
+		require.Nil(t, logs.infos[2].Error)
+		require.Equal(t, expectedConn2, *(logs.infos[2].ConnectionInfo))
 	})
 
 	// test for login failed
@@ -2871,16 +2895,22 @@ func TestExtensionConnEvent(t *testing.T) {
 			extension.ConnHandshakeRejected,
 			extension.ConnDisconnected,
 		}, logs.types)
-		conn1 = logs.infos[0]
-		conn2 = conn1
-		conn2.User = "noexist"
-		conn2.DB = "test"
-
+		conn1 := logs.infos[0]
 		require.Equal(t, "127.0.0.1", conn1.ClientIP)
 		require.Equal(t, "127.0.0.1", conn1.ServerIP)
 		require.Empty(t, conn1.User)
 		require.Empty(t, conn1.DB)
-		require.Equal(t, conn2, logs.infos[1])
-		require.Equal(t, conn2, logs.infos[2])
+		require.Equal(t, int(ts.port), conn1.ServerPort)
+		require.NotEqual(t, conn1.ServerPort, conn1.ClientPort)
+		require.NotEmpty(t, conn1.ConnectionID)
+		require.Nil(t, conn1.ActiveRoles)
+		require.NoError(t, conn1.Error)
+
+		expectedConn2 = *(conn1.ConnectionInfo)
+		expectedConn2.User = "noexist"
+		expectedConn2.DB = "test"
+		require.Equal(t, []*auth.RoleIdentity{}, logs.infos[1].ActiveRoles)
+		require.EqualError(t, logs.infos[1].Error, "[server:1045]Access denied for user 'noexist'@'127.0.0.1' (using password: NO)")
+		require.Equal(t, expectedConn2, *(logs.infos[1].ConnectionInfo))
 	})
 }
