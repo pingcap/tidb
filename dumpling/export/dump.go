@@ -300,6 +300,10 @@ func (d *Dumper) Dump() (dumpErr error) {
 	}
 	d.metrics.progressReady.Store(true)
 	close(taskIn)
+	failpoint.Inject("EnableLogProgress", func() {
+		time.Sleep(1 * time.Second)
+		tctx.L().Debug("progress ready, sleep 1s")
+	})
 	_ = baseConn.DBConn.Close()
 	if err := wg.Wait(); err != nil {
 		summary.CollectFailureUnit("dump table data", err)
@@ -458,10 +462,6 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *BaseConn, taskC
 			}
 		}
 	}
-	failpoint.Inject("EnableLogProgress", func() {
-		time.Sleep(1 * time.Second)
-		tctx.L().Debug("EnableLogProgress, sleep 1s")
-	})
 	return nil
 }
 
