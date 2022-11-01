@@ -58,7 +58,7 @@ func (c *cowExprRef) Set(i int, changed bool, val Expression) {
 		return
 	}
 	c.new = make([]Expression, len(c.ref))
-	copy(c.new, c.ref[:i])
+	copy(c.new, c.ref)
 	c.new[i] = val
 }
 
