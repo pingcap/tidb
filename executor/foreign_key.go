@@ -817,6 +817,12 @@ func genCascadeSQLWhereCondition(buf *bytes.Buffer, fk *model.FKInfo, fkValues [
 }
 
 func genFKValueString(v types.Datum) (string, error) {
+	switch v.Kind() {
+	case types.KindNull:
+		return "NULL", nil
+	case types.KindMysqlBit:
+		return v.GetBinaryLiteral().ToBitLiteralString(true), nil
+	}
 	val, err := v.ToString()
 	if err != nil {
 		return "", err
@@ -824,8 +830,6 @@ func genFKValueString(v types.Datum) (string, error) {
 	switch v.Kind() {
 	case types.KindInt64, types.KindUint64, types.KindFloat32, types.KindFloat64, types.KindMysqlDecimal:
 		return val, nil
-	case types.KindNull:
-		return "NULL", err
 	default:
 		return "'" + val + "'", nil
 	}

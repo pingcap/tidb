@@ -1951,3 +1951,21 @@ func TestShowCreateTableWithForeignKey(t *testing.T) {
 		"  CONSTRAINT `fk2` FOREIGN KEY (`leader2`) REFERENCES `test`.`t1` (`id`)\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
+
+func TestForeignKeyCascadeOnDiffColumnType(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id bit(10), index(id));")
+	tk.MustExec("create table t2 (id int key, b bit(10), constraint fk foreign key (b) references t1(id) ON DELETE CASCADE ON UPDATE CASCADE);")
+	tk.MustExec("insert into t1 values (b'01'), (b'10');")
+	tk.MustExec("insert into t2 values (1, b'01'), (2, b'10');")
+	tk.MustExec("delete from t1 where id = b'01';")
+	tk.MustExec("select id, cast(id as unsigned) from t1;")
+	tk.MustExec("select id, b, cast(b as unsigned) from t2;")
+	tk.MustExec("update t1 set id = b'110' where id = b'10';")
+	tk.MustExec("select id, cast(id as unsigned) from t1;")
+	tk.MustExec("select id, b, cast(b as unsigned) from t2;")
+}
