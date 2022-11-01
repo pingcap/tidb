@@ -104,6 +104,8 @@ func (warn *SQLWarn) UnmarshalJSON(data []byte) error {
 // StatementContext contains variables for a statement.
 // It should be reset before executing a statement.
 type StatementContext struct {
+	// Expired will be true when a new query comes but the current StmtCtx is not reset yet
+	Expired bool
 	// Set the following variables before execution
 	StmtHints
 
