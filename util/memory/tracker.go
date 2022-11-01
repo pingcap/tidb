@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/tidb/metrics"
 	atomicutil "go.uber.org/atomic"
@@ -34,6 +35,11 @@ const TrackMemWhenExceeds = 104857600 // 100MB
 var (
 	ServerMemoryLimit            = atomicutil.NewUint64(0)
 	ServerMemoryLimitSessMinSize = atomicutil.NewUint64(128 << 20)
+
+	QueryForceDisk       = atomicutil.NewInt64(0)
+	TriggerMemoryLimitGC = atomicutil.NewBool(false)
+	MemoryLimitGCLast    = atomicutil.NewTime(time.Time{})
+	MemoryLimitGCTotal   = atomicutil.NewInt64(0)
 )
 
 // Tracker is used to track the memory usage during query execution.

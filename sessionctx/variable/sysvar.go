@@ -738,10 +738,7 @@ var defaultSysVars = []*SysVar{
 			return strconv.FormatFloat(GOGCTunerThreshold.Load(), 'f', -1, 64), nil
 		},
 		Validation: func(s *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-			floatValue, err := strconv.ParseFloat(normalizedValue, 64)
-			if err != nil {
-				return "", err
-			}
+			floatValue := tidbOptFloat64(normalizedValue, DefTiDBGOGCTunerThreshold)
 			globalMemoryLimitTuner := gctuner.GlobalMemoryLimitTuner.GetPercentage()
 			if floatValue < 0 && floatValue > 0.9 {
 				return "", ErrWrongValueForVar.GenWithStackByArgs(TiDBGOGCTunerThreshold, normalizedValue)
@@ -752,10 +749,7 @@ var defaultSysVars = []*SysVar{
 			return strconv.FormatFloat(floatValue, 'f', -1, 64), nil
 		},
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-			factor, err := strconv.ParseFloat(val, 64)
-			if err != nil {
-				return err
-			}
+			factor := tidbOptFloat64(val, DefTiDBGOGCTunerThreshold)
 			GOGCTunerThreshold.Store(factor)
 			memTotal := memory.ServerMemoryLimit.Load()
 			threshold := float64(memTotal) * factor

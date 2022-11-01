@@ -44,29 +44,47 @@ func (w *worker) onCreateForeignKey(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	err = checkAddForeignKeyValidInOwner(w, d, t, job, job.SchemaName, tblInfo, &fkInfo, fkCheck)
-	if err != nil {
-		return ver, err
-	}
-	fkInfo.ID = allocateFKIndexID(tblInfo)
-	tblInfo.ForeignKeys = append(tblInfo.ForeignKeys, &fkInfo)
-
-	originalState := fkInfo.State
-	switch fkInfo.State {
+	switch job.SchemaState {
 	case model.StateNone:
-		// We just support record the foreign key, so we just make it public.
-		// none -> public
-		fkInfo.State = model.StatePublic
-		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != fkInfo.State)
+		err = checkAddForeignKeyValidInOwner(d, t, job.SchemaName, tblInfo, &fkInfo, fkCheck)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, err
+		}
+		fkInfo.State = model.StateWriteOnly
+		fkInfo.ID = allocateFKIndexID(tblInfo)
+		tblInfo.ForeignKeys = append(tblInfo.ForeignKeys, &fkInfo)
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.SchemaState = model.StateWriteOnly
+		return ver, nil
+	case model.StateWriteOnly:
+		err = checkForeignKeyConstrain(w, job.SchemaName, tblInfo.Name.L, &fkInfo, fkCheck)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, err
+		}
+		tblInfo.ForeignKeys[len(tblInfo.ForeignKeys)-1].State = model.StateWriteReorganization
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.SchemaState = model.StateWriteReorganization
+	case model.StateWriteReorganization:
+		tblInfo.ForeignKeys[len(tblInfo.ForeignKeys)-1].State = model.StatePublic
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 		// Finish this job.
+		job.SchemaState = model.StatePublic
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-		return ver, nil
 	default:
 		return ver, dbterror.ErrInvalidDDLState.GenWithStack("foreign key", fkInfo.State)
 	}
+	return ver, nil
 }
 
 func onDropForeignKey(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -632,7 +650,7 @@ func checkAddForeignKeyValid(is infoschema.InfoSchema, schema string, tbInfo *mo
 	return nil
 }
 
-func checkAddForeignKeyValidInOwner(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, schema string, tbInfo *model.TableInfo, fk *model.FKInfo, fkCheck bool) error {
+func checkAddForeignKeyValidInOwner(d *ddlCtx, t *meta.Meta, schema string, tbInfo *model.TableInfo, fk *model.FKInfo, fkCheck bool) error {
 	err := checkFKDupName(tbInfo, fk.Name)
 	if err != nil {
 		return err
@@ -646,14 +664,6 @@ func checkAddForeignKeyValidInOwner(w *worker, d *ddlCtx, t *meta.Meta, job *mod
 	}
 	err = checkAddForeignKeyValid(is, schema, tbInfo, fk, fkCheck)
 	if err != nil {
-		job.State = model.JobStateCancelled
-		return errors.Trace(err)
-	}
-	// TODO(crazycs520): fix me. we need to do multi-schema change when add foreign key constraint.
-	// Since after this check, DML can write data which break the foreign key constraint.
-	err = checkForeignKeyConstrain(w, schema, tbInfo.Name.L, fk, fkCheck)
-	if err != nil {
-		job.State = model.JobStateCancelled
 		return errors.Trace(err)
 	}
 	return nil

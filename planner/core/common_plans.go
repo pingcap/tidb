@@ -429,7 +429,8 @@ type Update struct {
 
 	tblID2Table map[int64]table.Table
 
-	FKChecks map[int64][]*FKCheck
+	FKChecks   map[int64][]*FKCheck
+	FKCascades map[int64][]*FKCascade
 }
 
 // MemoryUsage return the memory usage of Update
