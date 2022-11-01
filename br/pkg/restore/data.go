@@ -14,6 +14,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/mathutil"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/tikv"
@@ -35,6 +36,8 @@ func RecoverData(ctx context.Context, resolvedTs uint64, allStores []*metapb.Sto
 	if err := recovery.ReadRegionMeta(ctx); err != nil {
 		return 0, errors.Trace(err)
 	}
+
+	variable.SetDDLFlashbackConcurrency(int32(concurrency))
 
 	totalRegions := recovery.GetTotalRegions()
 
@@ -302,6 +305,8 @@ func (recovery *Recovery) WaitApply(ctx context.Context) (err error) {
 // prepare the region for flashback the data, the purpose is to stop region service, put region in flashback state
 func (recovery *Recovery) PrepareFlashbackToVersion(ctx context.Context) (err error) {
 	r := tikvstore.KeyRange{[]byte(""), []byte("")}
+
+	// range task will split the range into individual task per region
 	if err = ddl.FlashbackToVersion(ctx, recovery.mgr.GetStorage().(tikv.Storage),
 		func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
 			stats, err := ddl.SendPrepareFlashbackToVersionRPC(ctx, recovery.mgr.GetStorage().(tikv.Storage), r)
@@ -311,6 +316,8 @@ func (recovery *Recovery) PrepareFlashbackToVersion(ctx context.Context) (err er
 		return errors.Trace(err)
 	}
 
+	// TODO: currently, we do not know how many regions before start progress, EBS snapshot restore very fast at this stage (< 5mins), so we just simple add 1.
+	recovery.progress.Inc()
 	log.Info("region flashback prepare complete")
 
 	return nil
@@ -322,12 +329,15 @@ func (recovery *Recovery) FlashbackToVersion(ctx context.Context, resolvedTs uin
 	r := tikvstore.KeyRange{[]byte(""), []byte("")}
 	if err = ddl.FlashbackToVersion(ctx, recovery.mgr.GetStorage().(tikv.Storage),
 		func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
+			// current we use startTs = commitTs-1 and commitTs to rewrite the MVCC data
 			stats, err := ddl.SendFlashbackToVersionRPC(ctx, recovery.mgr.GetStorage().(tikv.Storage), resolvedTs, commitTs-1, commitTs, r)
 			return stats, err
 		}, r.StartKey, r.EndKey); err != nil {
 		log.Warn("region flashback get error")
 		return errors.Trace(err)
 	}
+
+	recovery.progress.Inc()
 
 	log.Info("region flashback complete")
 
