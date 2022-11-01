@@ -24,15 +24,28 @@ This proposes that we introduce a centralized auto ID allocating service, the `A
 ## Compatibility
 
 The old implementation can still be kept, its performance is better and might meet some user's needs.
-We can rename the syntax for it, such as `AUTO_INCREMENT_FAST` or `AUTO_INCREMENT_OLD` or `DEFICIT_AUTO_INCREMENT`.
 
-The new `AUTO_INCREMENT` behaviour is still a compatibility-breaker between old and new versioned TiDB, but it's worthy on behalf of MySQL compatibility.
+There are several ways to handle the compatibility.
+
+The first one is, we can rename the syntax for the old implementation, such as `AUTO_INCREMENT_FAST` or `AUTO_INCREMENT_OLD` or `DEFICIT_AUTO_INCREMENT`. The upside of this approach is that we can make the default syntax MySQL-compatible. The downside is that the new `AUTO_INCREMENT` behaviour is still a compatibility-breaker between old and new versioned TiDB.
+
+The second one is, we can keep the old things unchanged, and introduce a new syntax. The benefit of this approach is that our users will never get into trouble when they upgrade TiDB.
+
+And another way, we can reuse the `AUTO_ID_CACHE 1` table option for it:
+
+```
+CREATE TABLE t (id int key AUTO_INCREMENT) AUTO_ID_CACHE 1;
+```
+
+TiDB extends the syntax to control the AUTO ID CACHE size use the `AUTO_ID_CACHE` table option. `AUTO_ID_CACHE 1` is equivalent to no caching. Now it's of the same semantic, just that the implementation is changed. I think the this approach is the best.
 
 ## Implementation
 
 ### Centralized auto ID allocating service
 
 This is the core part of the implementation. There will be a single-point process, responsible for allocating auto IDs.
+
+(To be exact, the allocating service will be embeded into the TiDB process currently for simplicity, maybe in the future it can be moved to a standalone process. But wherever it is, the idea is the same)
 
 For every `AUTO_INCREMENT` ID allocation, TiDB send a request to this process. The process will `+1` internally, so the ID is **unique**, **monotone increasing**, and **consecutive**.
 
