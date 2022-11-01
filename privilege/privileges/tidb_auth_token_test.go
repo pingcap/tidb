@@ -16,11 +16,19 @@ package privileges
 
 import (
 	"crypto/rsa"
+	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"testing"
+	"time"
 
+	jwaRepo "github.com/lestrrat-go/jwx/v2/jwa"
 	jwkRepo "github.com/lestrrat-go/jwx/v2/jwk"
+	jwsRepo "github.com/lestrrat-go/jwx/v2/jws"
+	jwtRepo "github.com/lestrrat-go/jwx/v2/jwt"
+	"github.com/lestrrat-go/jwx/v2/jwt/openid"
+	"github.com/stretchr/testify/require"
 )
 
 var (
@@ -135,7 +143,18 @@ yeZMN4+EMse5+0hAhg5UiPHE6pG8RI3zYnp0EYKvN+M9/cdNntyuKCCCvOCi4b4d
 	priKeys  []*rsa.PrivateKey
 	pubKeys  []*rsa.PublicKey
 	jwkArray []jwkRepo.Key
+	path     [3]string // path[0] contains jwkArray[0], path[1] contains jwkArray[0:2], path[2] contains jwkArray[2]
+
+	email1  = "user1@pingcap.com"
+	email2  = "user2@pingcap.com"
+	issuer1 = "issuer1"
+	issuer2 = "issuer2"
 )
+
+type pair struct {
+	name  string
+	value interface{}
+}
 
 func init() {
 	for i := range publicKeyStrings {
@@ -161,17 +180,100 @@ func init() {
 			if jwk, err := jwkRepo.FromRaw(pubKey); err != nil {
 				log.Fatal("Error when generate jwk")
 			} else {
+				keyAttributes := []pair{
+					{jwkRepo.AlgorithmKey, jwaRepo.RS256},
+					{jwkRepo.KeyIDKey, fmt.Sprintf("the-key-id-%d", i)},
+					{jwkRepo.KeyUsageKey, "sig"},
+				}
+				for _, keyAttribute := range keyAttributes {
+					if err = jwk.Set(keyAttribute.name, keyAttribute.value); err != nil {
+						log.Println(err.Error())
+						log.Fatalf("Error when set %s for key %d", keyAttribute.name, i)
+					}
+				}
 				jwkArray = append(jwkArray, jwk)
 			}
 		}
 	}
+
+	for i := range path {
+		file, err := os.CreateTemp("", fmt.Sprintf("jwks%d-*.json", i))
+		if err != nil {
+			log.Fatal("Fail to create temp file")
+		}
+		jwks := jwkRepo.NewSet()
+		var rawJSON []byte
+		if i == 2 {
+			jwks.AddKey(jwkArray[i])
+		} else {
+			for j := 0; j <= i; j++ {
+				jwks.AddKey(jwkArray[i])
+			}
+		}
+		if rawJSON, err = json.MarshalIndent(jwks, "", "  "); err != nil {
+			log.Fatal("Error when marshaler json")
+		}
+		if n, err := file.Write(rawJSON); err != nil {
+			log.Fatal("Error when writing json")
+		} else if n != len(rawJSON) {
+			log.Fatal("Lack byte when writing json")
+		}
+		path[i] = file.Name()
+	}
 }
 
-type pair struct {
-	name  string
-	value interface{}
+func getSignedTokenString(priKey *rsa.PrivateKey, pairs ...pair) (string, error) {
+	jwt := jwtRepo.New()
+	header := jwsRepo.NewHeaders()
+	headerPairs := []pair{
+		{jwsRepo.AlgorithmKey, jwaRepo.RS256},
+		{jwsRepo.TypeKey, "JWT"},
+	}
+	for _, pair := range headerPairs {
+		if err := header.Set(pair.name, pair.value); err != nil {
+			log.Fatal("Error when set header")
+		}
+	}
+	for _, pair := range pairs {
+		switch pair.name {
+		case jwsRepo.KeyIDKey:
+			if err := header.Set(pair.name, pair.value); err != nil {
+				log.Fatal("Error when set header")
+			}
+		case jwtRepo.SubjectKey, jwtRepo.IssuedAtKey, jwtRepo.ExpirationKey, jwtRepo.IssuerKey, openid.EmailKey:
+			if err := jwt.Set(pair.name, pair.value); err != nil {
+				log.Fatal("Error when set payload")
+			}
+		}
+	}
+	if bytes, err := jwtRepo.Sign(jwt, jwtRepo.WithKey(jwaRepo.RS256, priKey, jwsRepo.WithProtectedHeaders(header))); err != nil {
+		return "", err
+	} else {
+		return string(bytes), nil
+	}
 }
 
 func TestBasic(t *testing.T) {
-	fmt.Println(len(jwkArray))
+	var jwksImpl JWKSImpl
+	require.NoError(t, jwksImpl.LoadJWKS4AuthToken(path[0], time.Hour), path[0])
+	pairs := []pair{
+		{jwsRepo.KeyIDKey, "the-key-id-0"},
+		{jwtRepo.SubjectKey, email1},
+		{openid.EmailKey, email1},
+		{jwtRepo.IssuedAtKey, time.Now().Unix()},
+		{jwtRepo.ExpirationKey, time.Date(2032, 12, 30, 6, 6, 6, 6, time.UTC).Unix()},
+		{jwtRepo.IssuerKey, issuer1},
+	}
+	signedTokenString, err := getSignedTokenString(priKeys[0], pairs...)
+	require.NoError(t, err)
+	claims, err := jwksImpl.checkSigWithRetry(signedTokenString, 0)
+	require.NoError(t, err)
+	for _, pair := range pairs {
+		switch pair.name {
+		case jwtRepo.SubjectKey, openid.EmailKey, jwtRepo.IssuerKey:
+			require.Equal(t, pair.value, claims[pair.name])
+		case jwtRepo.IssuedAtKey, jwtRepo.ExpirationKey:
+			require.Equal(t, pair.value, claims[pair.name].(time.Time).Unix())
+		}
+	}
 }

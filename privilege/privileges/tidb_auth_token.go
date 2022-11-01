@@ -63,8 +63,8 @@ func (jwks *JWKSImpl) LoadJWKS4AuthToken(jwksPath string, interval time.Duration
 	return jwks.load()
 }
 
-// verifyJWT verifies the signature in the jwt, and returns the claims.
-func (jwks *JWKSImpl) verifyJWT(tokenString string, retryTime int) (map[string]interface{}, error) {
+// checkSigWithRetry verifies the signature in the jwt, and returns the claims.
+func (jwks *JWKSImpl) checkSigWithRetry(tokenString string, retryTime int) (map[string]interface{}, error) {
 	var (
 		verifiedPayload []byte
 		err             error

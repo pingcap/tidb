@@ -30,6 +30,7 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("net/http.(*persistConn).writeLoop"),
 		goleak.IgnoreTopFunction("internal/poll.runtime_pollWait"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
+		goleak.IgnoreTopFunction("github.com/pingcap/tidb/privilege/privileges.(*JWKSImpl).LoadJWKS4AuthToken.func1"),
 	}
 	testsetup.SetupForCommonTest()
 
