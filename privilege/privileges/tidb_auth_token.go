@@ -29,12 +29,14 @@ import (
 	"go.uber.org/zap"
 )
 
+// JWKSImpl contains a JSON Web Key Set (JWKS), and a filepath that stores the JWKS
 type JWKSImpl struct {
 	s        jwkRepo.Set
 	m        sync.RWMutex
 	filepath string
 }
 
+// GlobalJWKS is the global JWKS for tidb-server
 var GlobalJWKS JWKSImpl
 
 func (jwks *JWKSImpl) load() (err error) {

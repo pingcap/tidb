@@ -178,22 +178,22 @@ func init() {
 			log.Fatal("Wrong type of public key")
 		} else {
 			pubKeys = append(pubKeys, pubKey)
-			if jwk, err := jwkRepo.FromRaw(pubKey); err != nil {
+			jwk, err := jwkRepo.FromRaw(pubKey)
+			if err != nil {
 				log.Fatal("Error when generate jwk")
-			} else {
-				keyAttributes := []pair{
-					{jwkRepo.AlgorithmKey, jwaRepo.RS256},
-					{jwkRepo.KeyIDKey, fmt.Sprintf("the-key-id-%d", i)},
-					{jwkRepo.KeyUsageKey, "sig"},
-				}
-				for _, keyAttribute := range keyAttributes {
-					if err = jwk.Set(keyAttribute.name, keyAttribute.value); err != nil {
-						log.Println(err.Error())
-						log.Fatalf("Error when set %s for key %d", keyAttribute.name, i)
-					}
-				}
-				jwkArray = append(jwkArray, jwk)
 			}
+			keyAttributes := []pair{
+				{jwkRepo.AlgorithmKey, jwaRepo.RS256},
+				{jwkRepo.KeyIDKey, fmt.Sprintf("the-key-id-%d", i)},
+				{jwkRepo.KeyUsageKey, "sig"},
+			}
+			for _, keyAttribute := range keyAttributes {
+				if err = jwk.Set(keyAttribute.name, keyAttribute.value); err != nil {
+					log.Println(err.Error())
+					log.Fatalf("Error when set %s for key %d", keyAttribute.name, i)
+				}
+			}
+			jwkArray = append(jwkArray, jwk)
 		}
 	}
 
@@ -247,11 +247,11 @@ func getSignedTokenString(priKey *rsa.PrivateKey, pairs map[string]interface{}) 
 			}
 		}
 	}
-	if bytes, err := jwtRepo.Sign(jwt, jwtRepo.WithKey(jwaRepo.RS256, priKey, jwsRepo.WithProtectedHeaders(header))); err != nil {
+	bytes, err := jwtRepo.Sign(jwt, jwtRepo.WithKey(jwaRepo.RS256, priKey, jwsRepo.WithProtectedHeaders(header)))
+	if err != nil {
 		return "", err
-	} else {
-		return string(bytes), nil
 	}
+	return string(bytes), nil
 }
 
 func TestAuthTokenClaims(t *testing.T) {
