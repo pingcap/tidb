@@ -292,7 +292,7 @@ func (p *UserPrivileges) GetAuthWithoutVerification(user, host string) (success 
 	return
 }
 
-func (p *UserPrivileges) checkAuthTokenClaims(claims map[string]interface{}, record *UserRecord, tokenLife time.Duration) error {
+func checkAuthTokenClaims(claims map[string]interface{}, record *UserRecord, tokenLife time.Duration) error {
 	if sub, ok := claims[jwtRepo.SubjectKey]; ok {
 		if sub != record.User {
 			return fmt.Errorf("Wrong 'sub': %s", sub)
@@ -391,7 +391,7 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 			logutil.BgLogger().Error("verify JWT failed", zap.Error(err))
 			return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 		}
-		if err = p.checkAuthTokenClaims(claims, record, defaultTokenLife); err != nil {
+		if err = checkAuthTokenClaims(claims, record, defaultTokenLife); err != nil {
 			logutil.BgLogger().Error("check claims failed", zap.Error(err))
 			return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 		}

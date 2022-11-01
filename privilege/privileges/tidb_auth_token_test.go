@@ -261,7 +261,7 @@ func TestBasic(t *testing.T) {
 		{jwtRepo.SubjectKey, email1},
 		{openid.EmailKey, email1},
 		{jwtRepo.IssuedAtKey, time.Now().Unix()},
-		{jwtRepo.ExpirationKey, time.Date(2032, 12, 30, 6, 6, 6, 6, time.UTC).Unix()},
+		{jwtRepo.ExpirationKey, time.Now().Add(100 * time.Hour).Unix()},
 		{jwtRepo.IssuerKey, issuer1},
 	}
 	signedTokenString, err := getSignedTokenString(priKeys[0], pairs...)
