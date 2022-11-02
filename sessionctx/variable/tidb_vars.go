@@ -734,6 +734,8 @@ const (
 	TiDBEnablePrepPlanCache = "tidb_enable_prepared_plan_cache"
 	// TiDBPrepPlanCacheSize indicates the number of cached statements.
 	TiDBPrepPlanCacheSize = "tidb_prepared_plan_cache_size"
+	// TiDBPrepPlanCacheMemoryMonitor indicates whether to enable prepared plan cache monitor
+	TiDBPrepPlanCacheMemoryMonitor = "tidb_prepared_plan_cache_memory_monitor"
 
 	// TiDBEnableGeneralPlanCache indicates whether to enable general plan cache.
 	TiDBEnableGeneralPlanCache = "tidb_enable_general_plan_cache"
@@ -1038,6 +1040,7 @@ const (
 	DefTiDBMaxAutoAnalyzeTime                      = 12 * 60 * 60
 	DefTiDBEnablePrepPlanCache                     = true
 	DefTiDBPrepPlanCacheSize                       = 100
+	DefTiDBPrepPlanCacheMemoryMonitor              = true
 	DefTiDBPrepPlanCacheMemoryGuardRatio           = 0.1
 	DefTiDBEnableConcurrentDDL                     = concurrencyddl.TiDBEnableConcurrentDDL
 	DefTiDBSimplifiedMetrics                       = false
