@@ -160,6 +160,7 @@ func InferType4ControlFuncs(ctx sessionctx.Context, funcName string, lexp, rexp 
 	} else if resultEvalType == types.ETString {
 		if lhs.GetType() != mysql.TypeNull || rhs.GetType() != mysql.TypeNull {
 			resultFieldType.SetDecimal(types.UnspecifiedLength)
+			resultFieldType.SetFlen(types.UnspecifiedLength)
 		}
 		if resultFieldType.GetType() == mysql.TypeEnum || resultFieldType.GetType() == mysql.TypeSet {
 			resultFieldType.SetType(mysql.TypeVarchar)
