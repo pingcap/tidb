@@ -209,10 +209,7 @@ func (p *PhysicalTableReader) MemoryUsage() (sum int64) {
 	if p.tablePlan != nil {
 		sum += p.tablePlan.MemoryUsage()
 	}
-
-	for _, plan := range p.TablePlans {
-		sum += plan.MemoryUsage()
-	}
+	// since TablePlans is the flats of tablePlan, so we don't count it
 	for _, pInfo := range p.PartitionInfos {
 		sum += pInfo.MemoryUsage()
 	}
@@ -540,12 +537,7 @@ func (p *PhysicalIndexLookUpReader) MemoryUsage() (sum int64) {
 		sum += p.PushedLimit.MemoryUsage()
 	}
 
-	for _, plan := range p.IndexPlans {
-		sum += plan.MemoryUsage()
-	}
-	for _, plan := range p.TablePlans {
-		sum += plan.MemoryUsage()
-	}
+	// since IndexPlans and TablePlans are the flats of indexPlan and tablePlan, so we don't count it
 	for _, col := range p.CommonHandleCols {
 		sum += col.MemoryUsage()
 	}
@@ -732,7 +724,7 @@ func (p *PhysicalIndexScan) MemoryUsage() (sum int64) {
 	}
 
 	sum = emptyPhysicalIndexScanSize + p.physicalSchemaProducer.MemoryUsage() + int64(cap(p.IdxColLens))*size.SizeOfInt +
-		p.DBName.MemoryUsage() + int64(len(p.rangeInfo))
+		p.DBName.MemoryUsage() + int64(len(p.rangeInfo)) + int64(len(p.Columns))*model.EmptyColumnInfoSize
 	if p.TableAsName != nil {
 		sum += p.TableAsName.MemoryUsage()
 	}
@@ -741,6 +733,9 @@ func (p *PhysicalIndexScan) MemoryUsage() (sum int64) {
 	}
 	if p.prop != nil {
 		sum += p.prop.MemoryUsage()
+	}
+	if p.dataSourceSchema != nil {
+		sum += p.dataSourceSchema.MemoryUsage()
 	}
 	// slice memory usage
 	for _, cond := range p.AccessCondition {
@@ -1198,7 +1193,10 @@ func (p *basePhysicalJoin) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = emptyBasePhysicalJoinSize + p.physicalSchemaProducer.MemoryUsage() + int64(cap(p.IsNullEQ))*size.SizeOfBool
+	sum = emptyBasePhysicalJoinSize + p.physicalSchemaProducer.MemoryUsage() + int64(cap(p.IsNullEQ))*size.SizeOfBool +
+		int64(cap(p.LeftConditions)+cap(p.RightConditions)+cap(p.OtherConditions))*size.SizeOfInterface +
+		int64(cap(p.OuterJoinKeys)+cap(p.InnerJoinKeys)+cap(p.LeftJoinKeys)+cap(p.RightNAJoinKeys)+cap(p.LeftNAJoinKeys)+
+			cap(p.RightNAJoinKeys))*size.SizeOfPointer + int64(cap(p.DefaultValues))*types.EmptyDatumSize
 
 	for _, cond := range p.LeftConditions {
 		sum += cond.MemoryUsage()
@@ -1369,6 +1367,9 @@ func (p *PhysicalIndexJoin) MemoryUsage() (sum int64) {
 
 	sum = p.basePhysicalJoin.MemoryUsage() + size.SizeOfInterface*2 + size.SizeOfSlice*4 +
 		int64(cap(p.KeyOff2IdxOff)+cap(p.IdxColLens))*size.SizeOfInt + size.SizeOfPointer
+	if p.innerTask != nil {
+		sum += p.innerTask.MemoryUsage()
+	}
 	if p.CompareFilters != nil {
 		sum += p.CompareFilters.MemoryUsage()
 	}
