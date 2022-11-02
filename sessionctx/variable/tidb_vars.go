@@ -1092,8 +1092,8 @@ const (
 	DefTiDBExternalTS                       = 0
 	DefTiDBEnableExternalTSRead             = false
 	DefTiDBEnableReusechunk                 = true
-	DefTiDBMaxReuseChunk                    = 128
-	DefTiDBMaxReuseColumn                   = 1024
+	DefTiDBMaxReuseChunk                    = 64
+	DefTiDBMaxReuseColumn                   = 256
 	DefTiDBUseAlloc                         = false
 )
 

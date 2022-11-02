@@ -101,8 +101,8 @@ func (a *allocator) Alloc(fields []*types.FieldType, capacity, maxChunkSize int)
 }
 
 const (
-	maxFreeChunks         = 128
-	maxFreeColumnsPerType = 1024
+	maxFreeChunks         = 64
+	maxFreeColumnsPerType = 256
 )
 
 // Reset implements the Allocator interface.

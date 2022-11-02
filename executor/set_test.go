@@ -2047,11 +2047,6 @@ func TestSetChunkReuseVariable(t *testing.T) {
 	tk.MustExec("set GLOBAL tidb_max_reuse_column=256;")
 	tk.MustQuery("select @@global.tidb_max_reuse_column").Check(testkit.Rows("256"))
 
-	tk.MustExec("set @@tidb_max_reuse_column=256;")
-	tk.MustQuery("select @@session.tidb_max_reuse_column").Check(testkit.Rows("256"))
-	tk.MustExec("set GLOBAL tidb_max_reuse_column=256;")
-	tk.MustQuery("select @@global.tidb_max_reuse_column").Check(testkit.Rows("256"))
-
 	// out of range
 	tk.MustExec("set @@tidb_max_reuse_chunk=100000000000;")
 	tk.MustQuery("select @@session.tidb_max_reuse_chunk").Check(testkit.Rows("2147483647"))
