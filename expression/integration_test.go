@@ -7767,3 +7767,24 @@ func TestJSONStorageFree(t *testing.T) {
 	err := tk.ExecToErr(`select json_storage_free('{"c":["a","b"]`)
 	require.Error(t, err, "[json:3140]Invalid JSON text: The document root must not be followed by other values.")
 }
+
+func TestJSONExtractFromLast(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustQuery(`select json_extract('[{"a": [1,2,3,4]}]', '$[0] . a[last]')`).Check(testkit.Rows("4"))
+	tk.MustQuery(`select json_extract('[{"a": [1,2,3,4]}]', '$[0] . a [last - 1]')`).Check(testkit.Rows("3"))
+	tk.MustQuery(`select json_extract('[{"a": [1,2,3,4]}]', '$[0].a [last - 100]')`).Check(testkit.Rows("<nil>"))
+}
+
+func TestJSONExtractRange(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustQuery(`select json_extract('[{"a": [1,2,3,4]}]', '$[0].a[1 to last]')`).Check(testkit.Rows("[2, 3, 4]"))
+	tk.MustQuery(`select json_extract('[{"a": [1,2,3,4]}]', '$[0].a[1 to last - 1]')`).Check(testkit.Rows("[2, 3]"))
+	tk.MustQuery(`select json_extract('[{"a": [1,2,3,4]}]', '$[0].a[1 to last - 100]')`).Check(testkit.Rows("<nil>"))
+	tk.MustQuery(`select json_extract('[{"a": [1,2,3,4]}]', '$[0].a[1 to 100]')`).Check(testkit.Rows("[2, 3, 4]"))
+	tk.MustQuery(`select json_extract('[{"a": [1,2,3,4]}]', '$[0].a[0 to last]')`).Check(testkit.Rows("[1, 2, 3, 4]"))
+	tk.MustQuery(`select json_extract('[{"a": [1,2,3,4]}]', '$[0].a[0 to 2]')`).Check(testkit.Rows("[1, 2, 3]"))
+}
