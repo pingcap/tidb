@@ -114,7 +114,7 @@ func (l *LRUPlanCache) Put(key kvcache.Key, value kvcache.Value, paramTypes []*t
 	bucket, bucketExist := l.buckets[hash]
 	if bucketExist {
 		if element, exist := l.pickFromBucket(bucket, paramTypes); exist {
-			l.updateInstanceMetric(&planCacheEntry{PlanKey: key, PlanValue: value}, element.Value.(*planCacheEntry), 0)
+			l.updateInstanceMetric(&planCacheEntry{PlanKey: key, PlanValue: value}, element.Value.(*planCacheEntry))
 			element.Value.(*planCacheEntry).PlanValue = value
 			l.lruList.MoveToFront(element)
 			return
@@ -130,7 +130,7 @@ func (l *LRUPlanCache) Put(key kvcache.Key, value kvcache.Value, paramTypes []*t
 	element := l.lruList.PushFront(newCacheEntry)
 	l.buckets[hash][element] = struct{}{}
 	l.size++
-	l.updateInstanceMetric(newCacheEntry, nil, 1)
+	l.updateInstanceMetric(newCacheEntry, nil)
 	if l.size > l.capacity {
 		l.removeOldest()
 	}
@@ -146,7 +146,7 @@ func (l *LRUPlanCache) Delete(key kvcache.Key) {
 	bucket, bucketExist := l.buckets[hash]
 	if bucketExist {
 		for element := range bucket {
-			l.updateInstanceMetric(nil, element.Value.(*planCacheEntry), -1)
+			l.updateInstanceMetric(nil, element.Value.(*planCacheEntry))
 			l.lruList.Remove(element)
 			l.size--
 		}
@@ -160,7 +160,7 @@ func (l *LRUPlanCache) DeleteAll() {
 	defer l.lock.Unlock()
 
 	for lru := l.lruList.Back(); lru != nil; lru = l.lruList.Back() {
-		l.updateInstanceMetric(nil, lru.Value.(*planCacheEntry), -1)
+		l.updateInstanceMetric(nil, lru.Value.(*planCacheEntry))
 		l.lruList.Remove(lru)
 		l.size--
 	}
@@ -217,7 +217,7 @@ func (l *LRUPlanCache) removeOldest() {
 		l.onEvict(lru.Value.(*planCacheEntry).PlanKey, lru.Value.(*planCacheEntry).PlanValue)
 	}
 
-	l.updateInstanceMetric(nil, lru.Value.(*planCacheEntry), -1)
+	l.updateInstanceMetric(nil, lru.Value.(*planCacheEntry))
 	l.lruList.Remove(lru)
 	l.removeFromBucket(lru)
 	l.size--
@@ -258,22 +258,22 @@ func PickPlanFromBucket(bucket map[*list.Element]struct{}, paramTypes []*types.F
 }
 
 // updateInstanceMetric update the memory usage and plan num for show in grafana
-func (l *LRUPlanCache) updateInstanceMetric(in, out *planCacheEntry, planNumInc int64) {
+func (l *LRUPlanCache) updateInstanceMetric(in, out *planCacheEntry) {
 	if l == nil {
 		return
 	}
 
-	if planNumInc == 0 { // evict plan
+	if in != nil && out != nil { // replace plan
 		metrics.PlanCacheInstanceMemoryUsage.WithLabelValues("instance").Sub(float64(out.MemoryUsage()))
 		metrics.PlanCacheInstanceMemoryUsage.WithLabelValues("instance").Add(float64(in.MemoryUsage()))
 		l.memoryUsageTotal += in.MemoryUsage() - out.MemoryUsage()
-	} else if planNumInc > 0 { // put plan
+	} else if in != nil { // put plan
 		metrics.PlanCacheInstanceMemoryUsage.WithLabelValues("instance").Add(float64(in.MemoryUsage()))
 		l.memoryUsageTotal += in.MemoryUsage()
-		metrics.PlanCacheInstancePlanNumCounter.WithLabelValues("plan_num").Add(float64(planNumInc))
+		metrics.PlanCacheInstancePlanNumCounter.WithLabelValues("plan_num").Add(1)
 	} else { // delete plan
 		metrics.PlanCacheInstanceMemoryUsage.WithLabelValues("instance").Sub(float64(out.MemoryUsage()))
 		l.memoryUsageTotal -= out.MemoryUsage()
-		metrics.PlanCacheInstancePlanNumCounter.WithLabelValues("plan_num").Sub(float64(-planNumInc))
+		metrics.PlanCacheInstancePlanNumCounter.WithLabelValues("plan_num").Sub(1)
 	}
 }
