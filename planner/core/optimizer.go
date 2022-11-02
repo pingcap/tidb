@@ -295,7 +295,10 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 	if err != nil {
 		return nil, 0, err
 	}
-	finalPlan := postOptimize(sctx, physical)
+	finalPlan, err := postOptimize(sctx, physical)
+	if err != nil {
+		return nil, 0, err
+	}
 
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerCETrace {
 		refineCETrace(sctx)
@@ -372,9 +375,13 @@ func mergeContinuousSelections(p PhysicalPlan) {
 	}
 }
 
-func postOptimize(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {
+func postOptimize(sctx sessionctx.Context, plan PhysicalPlan) (PhysicalPlan, error) {
 	// some cases from update optimize will require avoiding projection elimination.
 	// see comments ahead of call of DoOptimize in function of buildUpdate().
+	err := prunePhysicalColumns(sctx, plan)
+	if err != nil {
+		return nil, err
+	}
 	plan = eliminatePhysicalProjection(plan)
 	plan = InjectExtraProjection(plan)
 	mergeContinuousSelections(plan)
@@ -383,7 +390,145 @@ func postOptimize(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {
 	handleFineGrainedShuffle(sctx, plan)
 	checkPlanCacheable(sctx, plan)
 	propagateProbeParents(plan, nil)
-	return plan
+	return plan, nil
+}
+
+// prunePhysicalColumns currently only work for MPP(HashJoin<-Exchange).
+// Here add projection instead of pruning columns directly for safety considerations.
+// And projection is cheap here for it saves the network cost and work in memory.
+func prunePhysicalColumns(sctx sessionctx.Context, plan PhysicalPlan) error {
+	if tableReader, ok := plan.(*PhysicalTableReader); ok {
+		if _, isExchangeSender := tableReader.tablePlan.(*PhysicalExchangeSender); isExchangeSender {
+			err := prunePhysicalColumnsInternal(sctx, tableReader.tablePlan)
+			if err != nil {
+				return err
+			}
+		}
+	} else {
+		for _, child := range plan.Children() {
+			return prunePhysicalColumns(sctx, child)
+		}
+	}
+	return nil
+}
+
+func (p *PhysicalHashJoin) extractUsedCols(parentUsedCols []*expression.Column) (leftCols []*expression.Column, rightCols []*expression.Column) {
+	for _, eqCond := range p.EqualConditions {
+		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(eqCond)...)
+	}
+	for _, neCond := range p.NAEqualConditions {
+		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(neCond)...)
+	}
+	for _, leftCond := range p.LeftConditions {
+		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(leftCond)...)
+	}
+	for _, rightCond := range p.RightConditions {
+		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(rightCond)...)
+	}
+	for _, otherCond := range p.OtherConditions {
+		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(otherCond)...)
+	}
+	lChild := p.children[0]
+	rChild := p.children[1]
+	for _, col := range parentUsedCols {
+		if lChild.Schema().Contains(col) {
+			leftCols = append(leftCols, col)
+		} else if rChild.Schema().Contains(col) {
+			rightCols = append(rightCols, col)
+		}
+	}
+	return leftCols, rightCols
+}
+
+func prunePhysicalColumnForHashJoinChild(sctx sessionctx.Context, hashJoin *PhysicalHashJoin, joinUsedCols []*expression.Column, sender *PhysicalExchangeSender) error {
+	var err error
+	joinUsed := expression.GetUsedList(joinUsedCols, sender.Schema())
+	hashCols := make([]*expression.Column, len(sender.HashCols))
+	for i, mppCol := range sender.HashCols {
+		hashCols[i] = mppCol.Col
+	}
+	hashUsed := expression.GetUsedList(hashCols, sender.Schema())
+
+	needPrune := false
+	usedExprs := make([]expression.Expression, len(sender.Schema().Columns))
+	prunedSchema := sender.Schema().Clone()
+	for i := len(joinUsed) - 1; i >= 0; i-- {
+		usedExprs[i] = sender.Schema().Columns[i]
+		if !joinUsed[i] && !hashUsed[i] {
+			needPrune = true
+			usedExprs = append(usedExprs[:i], usedExprs[i+1:]...)
+			prunedSchema.Columns = append(prunedSchema.Columns[:i], prunedSchema.Columns[i+1:]...)
+		}
+	}
+
+	if needPrune && len(sender.children) > 0 {
+		ch := sender.children[0]
+		proj := PhysicalProjection{
+			Exprs: usedExprs,
+		}.Init(sctx, ch.statsInfo(), ch.SelectBlockOffset())
+
+		proj.SetSchema(prunedSchema)
+		proj.SetChildren(ch)
+		sender.children[0] = proj
+
+		// Resolve Indices from bottom to up
+		err = proj.ResolveIndicesItself()
+		if err != nil {
+			return err
+		}
+		err = sender.ResolveIndicesItself()
+		if err != nil {
+			return err
+		}
+		err = hashJoin.ResolveIndicesItself()
+		if err != nil {
+			return err
+		}
+	}
+	return err
+}
+
+func prunePhysicalColumnsInternal(sctx sessionctx.Context, plan PhysicalPlan) error {
+	var err error
+	switch x := plan.(type) {
+	case *PhysicalHashJoin:
+		schemaColumns := x.Schema().Clone().Columns
+		leftCols, rightCols := x.extractUsedCols(schemaColumns)
+		matchPattern := false
+		for i := 0; i <= 1; i++ {
+			// Pattern: HashJoin <- ExchangeReceiver <- ExchangeSender
+			matchPattern = false
+			var exchangeSender *PhysicalExchangeSender
+			if receiver, ok := x.children[i].(*PhysicalExchangeReceiver); ok {
+				exchangeSender, matchPattern = receiver.children[0].(*PhysicalExchangeSender)
+			}
+
+			if matchPattern {
+				if i == 0 {
+					err = prunePhysicalColumnForHashJoinChild(sctx, x, leftCols, exchangeSender)
+				} else {
+					err = prunePhysicalColumnForHashJoinChild(sctx, x, rightCols, exchangeSender)
+				}
+				if err != nil {
+					return nil
+				}
+			}
+
+			/// recursively travel the physical plan
+			err = prunePhysicalColumnsInternal(sctx, x.children[i])
+			if err != nil {
+				return nil
+			}
+		}
+	default:
+		for _, child := range x.Children() {
+			err = prunePhysicalColumnsInternal(sctx, child)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // Only for MPP(Window<-[Sort]<-ExchangeReceiver<-ExchangeSender).

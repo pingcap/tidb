@@ -38,10 +38,9 @@ func TestLogFormat(t *testing.T) {
 		StatsInfo: func(interface{}) map[string]uint64 {
 			return nil
 		},
-		StmtCtx: &stmtctx.StatementContext{
-			MemTracker: mem,
-		},
-		RedactSQL: false,
+		StmtCtx:    &stmtctx.StatementContext{},
+		MemTracker: mem,
+		RedactSQL:  false,
 	}
 	costTime := time.Second * 233
 	logSQLTruncateLen := 1024 * 8
