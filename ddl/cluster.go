@@ -20,6 +20,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -58,14 +59,17 @@ var pdScheduleKey = []string{
 }
 
 const (
-	flashbackMaxBackoff = 1800000         // 1800s
-	flashbackTimeout    = 3 * time.Minute // 3min
+	flashbackTimeout        = 30 * time.Minute // 30min
+	flashbackPrepareTimeout = 3 * time.Minute  // 3min
+	flashbackMaxBackoff     = 1800000          // 30min
 
 	pdScheduleArgsOffset     = 1
 	gcEnabledArgsOffset      = 2
 	autoAnalyzeOffset        = 3
 	totalLockedRegionsOffset = 4
-	commitTSOffset           = 5
+	finishRegionsOffset      = 5
+	commitTSOffset           = 6
+	nextKeyOffset            = 7
 )
 
 func closePDSchedule() error {
@@ -207,7 +211,7 @@ func addToSlice(schema string, tableName string, tableID int64, flashbackIDs []f
 
 // GetFlashbackKeyRanges make keyRanges efficiently for flashback cluster when many tables in cluster,
 // The time complexity is O(nlogn).
-func GetFlashbackKeyRanges(sess sessionctx.Context) ([]kv.KeyRange, error) {
+func GetFlashbackKeyRanges(sess sessionctx.Context, startKey kv.Key) ([]kv.KeyRange, error) {
 	schemas := sess.GetDomainInfoSchema().(infoschema.InfoSchema).AllSchemas()
 
 	// The semantic of keyRanges(output).
@@ -254,6 +258,24 @@ func GetFlashbackKeyRanges(sess sessionctx.Context) ([]kv.KeyRange, error) {
 		})
 	}
 
+	if len(keyRanges) == 0 || bytes.Compare(keyRanges[len(keyRanges)-1].EndKey, startKey) <= 0 {
+		return nil, nil
+	}
+
+	for i, ranges := range keyRanges {
+		// startKey smaller than ranges.StartKey, ranges begin with [ranges.StartKey, ranges.EndKey)
+		if ranges.StartKey.Cmp(startKey) > 0 {
+			keyRanges = keyRanges[i:]
+			break
+		}
+		// startKey in [ranges.StartKey, ranges.EndKey), ranges begin with [startKey, ranges.EndKey)
+		if ranges.StartKey.Cmp(startKey) <= 0 && ranges.EndKey.Cmp(startKey) > 0 {
+			keyRanges = keyRanges[i:]
+			keyRanges[0].StartKey = startKey
+			break
+		}
+	}
+
 	return keyRanges, nil
 }
 
@@ -296,7 +318,7 @@ func sendPrepareFlashbackToVersionRPC(
 			EndKey:   endKey,
 		})
 
-		resp, err := s.SendReq(bo, req, loc.Region, flashbackTimeout)
+		resp, err := s.SendReq(bo, req, loc.Region, flashbackPrepareTimeout)
 		if err != nil {
 			return taskStat, err
 		}
@@ -441,6 +463,94 @@ func splitRegionsByKeyRanges(d *ddlCtx, keyRanges []kv.KeyRange) {
 	}
 }
 
+type rangeTaskItem struct {
+	regionCnt uint64
+	r         tikvstore.KeyRange
+}
+
+type doneTaskKeeper struct {
+	doneRangeItems []rangeTaskItem
+	nextKey        kv.Key
+}
+
+func NewDoneTaskKeeper(start kv.Key) *doneTaskKeeper {
+	return &doneTaskKeeper{
+		doneRangeItems: make([]rangeTaskItem, 0),
+		nextKey:        start,
+	}
+}
+
+func (n *doneTaskKeeper) UpdateNextKey(r tikvstore.KeyRange, regionCnt uint64) (doneRegionCnt uint64, nextKey kv.Key) {
+	if bytes.Compare(r.StartKey, n.nextKey) == 0 {
+		n.nextKey = r.EndKey
+		doneRegionCnt += regionCnt
+		for {
+			if len(n.doneRangeItems) == 0 {
+				break
+			}
+			if bytes.Compare(n.doneRangeItems[0].r.StartKey, n.nextKey) == 0 {
+				n.nextKey = n.doneRangeItems[0].r.EndKey
+				doneRegionCnt += n.doneRangeItems[0].regionCnt
+				n.doneRangeItems = n.doneRangeItems[1:]
+				continue
+			} else {
+				break
+			}
+		}
+		return doneRegionCnt, n.nextKey
+	}
+
+	index := -1
+	for i, doneRange := range n.doneRangeItems {
+		if bytes.Compare(r.EndKey, doneRange.r.StartKey) <= 0 {
+			index = i
+			break
+		}
+	}
+
+	if index == 0 {
+		n.doneRangeItems = append([]rangeTaskItem{{regionCnt, r}}, n.doneRangeItems...)
+	} else if index != -1 {
+		n.doneRangeItems = append(append(n.doneRangeItems[:index-1], rangeTaskItem{regionCnt, r}), n.doneRangeItems[index:]...)
+	} else {
+		n.doneRangeItems = append(n.doneRangeItems, rangeTaskItem{regionCnt, r})
+	}
+
+	return doneRegionCnt, n.nextKey
+}
+
+func updateFlashbackNextKey(w *worker, job *model.Job, lock *sync.Mutex, taskKeeper *doneTaskKeeper, r tikvstore.KeyRange, regionCnt int, totalRegionCnt uint64) (err error) {
+	lock.Lock()
+	defer lock.Unlock()
+	sess, err := w.sessPool.get()
+	if err != nil {
+		return err
+	}
+	defer w.sessPool.put(sess)
+
+	doneCnt, nextKey := taskKeeper.UpdateNextKey(r, uint64(regionCnt))
+	finishedRegions := *job.Args[finishRegionsOffset].(*uint64) + doneCnt
+	if doneCnt != 0 {
+		job.Args[finishRegionsOffset] = &finishedRegions
+		job.Args[nextKeyOffset] = nextKey
+		if w.concurrentDDL {
+			err = updateDDLJob2Table(w.sess, job, true)
+		} else {
+			var txn kv.Transaction
+			txn, err = sess.Txn(true)
+			if err != nil {
+				return err
+			}
+			t := meta.NewMeta(txn)
+			err = t.UpdateDDLJob(0, job, true)
+		}
+	}
+	logutil.BgLogger().Info("[ddl] flashback cluster stats",
+		zap.Uint64("complete regions", finishedRegions),
+		zap.Uint64("total regions", totalRegionCnt))
+	return err
+}
+
 // A Flashback has 4 different stages.
 // 1. before lock flashbackClusterJobID, check clusterJobID and lock it.
 // 2. before flashback start, check timestamp, disable GC and close PD schedule.
@@ -459,17 +569,17 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		return ver, errors.Errorf("Not support flashback cluster in non-TiKV env")
 	}
 
-	var flashbackTS, lockedRegions, commitTS uint64
+	var flashbackTS, lockedRegions, finishedRegions, commitTS uint64
 	var pdScheduleValue map[string]interface{}
 	var autoAnalyzeValue string
 	var gcEnabledValue bool
-	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue, &gcEnabledValue, &autoAnalyzeValue, &lockedRegions, &commitTS); err != nil {
+	var nextKey kv.Key
+	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue, &gcEnabledValue, &autoAnalyzeValue, &lockedRegions, &finishedRegions, &commitTS, &nextKey); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
-	var totalRegions, completedRegions atomic.Uint64
-	totalRegions.Store(lockedRegions)
+	var totalRegions atomic.Uint64
 
 	sess, err := w.sessPool.get()
 	if err != nil {
@@ -514,7 +624,7 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			job.SchemaState = model.StateWriteReorganization
 			return updateSchemaVersion(d, t, job)
 		}
-		keyRanges, err := GetFlashbackKeyRanges(sess)
+		keyRanges, err := GetFlashbackKeyRanges(sess, nextKey)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -532,14 +642,15 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 				return ver, err
 			}
 		}
-		job.Args[totalLockedRegionsOffset] = totalRegions.Load()
+		lockedRegions = totalRegions.Load()
+		job.Args[totalLockedRegionsOffset] = &lockedRegions
 
 		// We should get commitTS here to avoid lost commitTS when TiDB crashed during send flashback RPC.
 		commitTS, err = d.store.GetOracle().GetTimestamp(d.ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		job.Args[commitTSOffset] = commitTS
+		job.Args[commitTSOffset] = &commitTS
 		job.SchemaState = model.StateWriteReorganization
 		return updateSchemaVersion(d, t, job)
 	// Stage 4, get key ranges and send flashback RPC.
@@ -551,21 +662,21 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			job.SchemaState = model.StatePublic
 			return ver, nil
 		}
-		keyRanges, err := GetFlashbackKeyRanges(sess)
+		keyRanges, err := GetFlashbackKeyRanges(sess, nextKey)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 
 		for _, r := range keyRanges {
+			taskKeeper := NewDoneTaskKeeper(r.StartKey)
+			lock := sync.Mutex{}
 			if err = flashbackToVersion(d.ctx, d,
 				func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
 					// Use commitTS - 1 as startTS, make sure it less than commitTS.
 					stats, err := sendFlashbackToVersionRPC(ctx, d.store.(tikv.Storage), flashbackTS, commitTS-1, commitTS, r)
-					completedRegions.Add(uint64(stats.CompletedRegions))
-					logutil.BgLogger().Info("[ddl] flashback cluster stats",
-						zap.Uint64("complete regions", completedRegions.Load()),
-						zap.Uint64("total regions", totalRegions.Load()),
-						zap.Error(err))
+					if err == nil {
+						err = updateFlashbackNextKey(w, job, &lock, taskKeeper, r, stats.CompletedRegions, lockedRegions)
+					}
 					return stats, err
 				}, r.StartKey, r.EndKey); err != nil {
 				logutil.BgLogger().Warn("[ddl] Get error when do flashback", zap.Error(err))
@@ -587,12 +698,13 @@ func finishFlashbackCluster(w *worker, job *model.Job) error {
 		return nil
 	}
 
-	var flashbackTS, lockedRegions, commitTS uint64
+	var flashbackTS, lockedRegions, finishedRegions, commitTS uint64
 	var pdScheduleValue map[string]interface{}
 	var autoAnalyzeValue string
 	var gcEnabled bool
+	var nextKey kv.Key
 
-	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue, &gcEnabled, &autoAnalyzeValue, &lockedRegions, &commitTS); err != nil {
+	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue, &gcEnabled, &autoAnalyzeValue, &lockedRegions, &finishedRegions, &commitTS, &nextKey); err != nil {
 		return errors.Trace(err)
 	}
 	sess, err := w.sessPool.get()
