@@ -888,9 +888,12 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
 		b.err = err
 		return nil
 	}
-	ivs.fkChecks, err = buildFKCheckExecs(b.ctx, ivs.Table, v.FKChecks)
-	if err != nil {
-		b.err = err
+	ivs.fkChecks, b.err = buildFKCheckExecs(b.ctx, ivs.Table, v.FKChecks)
+	if b.err != nil {
+		return nil
+	}
+	ivs.fkCascades, b.err = b.buildFKCascadeExecs(ivs.Table, v.FKCascades)
+	if b.err != nil {
 		return nil
 	}
 
