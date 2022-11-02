@@ -17,9 +17,18 @@ package brietest
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/testkit/testsetup"
 	"github.com/pingcap/tidb/tests/realtikvtest"
+	"go.uber.org/goleak"
 )
 
 func TestMain(m *testing.M) {
+	opts := []goleak.Option{
+		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
+		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
+		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
+	}
+	testsetup.SetupForCommonTest()
+	goleak.VerifyTestMain(m, opts...)
 	realtikvtest.RunTestMain(m)
 }
