@@ -390,6 +390,8 @@ func sendFlashbackToVersionRPC(
 			CommitTs: commitTS,
 		})
 
+		req.Context.MaxExecutionDurationMs = uint64(flashbackTimeout.Milliseconds())
+
 		resp, err := s.SendReq(bo, req, loc.Region, flashbackTimeout)
 		if err != nil {
 			logutil.BgLogger().Warn("send request meets error", zap.Uint64("region_id", loc.Region.GetID()), zap.Error(err))
@@ -481,14 +483,14 @@ func NewDoneTaskKeeper(start kv.Key) *doneTaskKeeper {
 }
 
 func (n *doneTaskKeeper) UpdateNextKey(r tikvstore.KeyRange, regionCnt uint64) (doneRegionCnt uint64, nextKey kv.Key) {
-	if bytes.Compare(r.StartKey, n.nextKey) == 0 {
+	if bytes.Equal(r.StartKey, n.nextKey) {
 		n.nextKey = r.EndKey
 		doneRegionCnt += regionCnt
 		for {
 			if len(n.doneRangeItems) == 0 {
 				break
 			}
-			if bytes.Compare(n.doneRangeItems[0].r.StartKey, n.nextKey) == 0 {
+			if bytes.Equal(n.doneRangeItems[0].r.StartKey, n.nextKey) {
 				n.nextKey = n.doneRangeItems[0].r.EndKey
 				doneRegionCnt += n.doneRangeItems[0].regionCnt
 				n.doneRangeItems = n.doneRangeItems[1:]
@@ -531,10 +533,12 @@ func updateFlashbackNextKey(w *worker, job *model.Job, lock *sync.Mutex, taskKee
 	doneCnt, nextKey := taskKeeper.UpdateNextKey(r, uint64(regionCnt))
 	finishedRegions := *job.Args[finishRegionsOffset].(*uint64) + doneCnt
 	if doneCnt != 0 {
+
 		job.Args[finishRegionsOffset] = &finishedRegions
 		job.Args[nextKeyOffset] = nextKey
 		if w.concurrentDDL {
-			err = updateDDLJob2Table(w.sess, job, true)
+			s := newSession(sess)
+			err = updateDDLJob2Table(s, job, true)
 		} else {
 			var txn kv.Transaction
 			txn, err = sess.Txn(true)
@@ -544,6 +548,7 @@ func updateFlashbackNextKey(w *worker, job *model.Job, lock *sync.Mutex, taskKee
 			t := meta.NewMeta(txn)
 			err = t.UpdateDDLJob(0, job, true)
 		}
+		sess.CommitTxn(context.Background())
 	}
 	logutil.BgLogger().Info("[ddl] flashback cluster stats",
 		zap.Uint64("complete regions", finishedRegions),
