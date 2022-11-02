@@ -22,6 +22,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/privilege"
 	"io"
 	"os"
 	"path/filepath"
@@ -31,6 +33,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
@@ -241,12 +244,14 @@ func (e *PlanReplayerDumpInfo) dump(ctx context.Context) (err error) {
 
 // PlanReplayerDumpTask wrap the params for plan replayer dump
 type PlanReplayerDumpTask struct {
-	FileName    string
-	Zf          *os.File
-	SessionVars *variable.SessionVars
-	TblStats    map[int64]*handle.JSONTable
-	ExecStmts   []ast.StmtNode
-	Analyze     bool
+	SessionBindings []*bindinfo.BindRecord
+	EncodedPlan     string
+	FileName        string
+	Zf              *os.File
+	SessionVars     *variable.SessionVars
+	TblStats        map[int64]*handle.JSONTable
+	ExecStmts       []ast.StmtNode
+	Analyze         bool
 }
 
 // DumpPlanReplayerInfo will dump the information about sqls.
@@ -330,7 +335,7 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 	}
 
 	// Dump variables
-	if err = dumpVariables(sctx, zw); err != nil {
+	if err = dumpVariables(sctx, sessionVars, zw); err != nil {
 		return err
 	}
 
@@ -340,8 +345,14 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 	}
 
 	// Dump session bindings
-	if err = dumpSessionBindings(sctx, zw); err != nil {
-		return err
+	if len(task.SessionBindings) > 0 {
+		if err = dumpSessionBindRecords(sctx, task.SessionBindings, zw); err != nil {
+			return err
+		}
+	} else {
+		if err = dumpSessionBindings(sctx, zw); err != nil {
+			return err
+		}
 	}
 
 	// Dump global bindings
@@ -349,6 +360,9 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 		return err
 	}
 
+	if len(task.EncodedPlan) > 0 {
+		return dumpEncodedPlan(sctx, zw, task.EncodedPlan)
+	}
 	// Dump explain
 	return dumpExplain(sctx, zw, execStmts, task.Analyze)
 }
@@ -450,30 +464,71 @@ func dumpSQLs(execStmts []ast.StmtNode, zw *zip.Writer) error {
 	return nil
 }
 
-func dumpVariables(ctx sessionctx.Context, zw *zip.Writer) error {
+func dumpVariables(sctx sessionctx.Context, sessionVars *variable.SessionVars, zw *zip.Writer) error {
 	varMap := make(map[string]string)
-	recordSets, err := ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "show variables")
-	if err != nil {
-		return err
-	}
-	sRows, err := resultSetToStringSlice(context.Background(), recordSets[0], false)
-	if err != nil {
-		return err
+	for _, v := range variable.GetSysVars() {
+		if v.IsNoop && !variable.EnableNoopVariables.Load() {
+			continue
+		}
+		if infoschema.SysVarHiddenForSem(sctx, v.Name) {
+			continue
+		}
+		value, err := sessionVars.GetSessionOrGlobalSystemVar(context.Background(), v.Name)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		varMap[v.Name] = value
 	}
 	vf, err := zw.Create(variablesFile)
 	if err != nil {
 		return errors.AddStack(err)
 	}
-	for _, row := range sRows {
-		varMap[row[0]] = row[1]
-	}
 	if err := toml.NewEncoder(vf).Encode(varMap); err != nil {
 		return errors.AddStack(err)
 	}
-	if len(recordSets) > 0 {
-		if err := recordSets[0].Close(); err != nil {
-			return err
+	return nil
+}
+
+func dumpSessionBindRecords(ctx sessionctx.Context, records []*bindinfo.BindRecord, zw *zip.Writer) error {
+	sRows := make([][]string, 0)
+	is := domain.GetDomain(ctx).InfoSchema()
+	parser := parser.New()
+	for _, bindData := range records {
+		for _, hint := range bindData.Bindings {
+			stmt, err := parser.ParseOneStmt(hint.BindSQL, hint.Charset, hint.Collation)
+			if err != nil {
+				return err
+			}
+			checker := visibleChecker{
+				defaultDB: bindData.Db,
+				ctx:       ctx,
+				is:        is,
+				manager:   privilege.GetPrivilegeManager(ctx),
+				ok:        true,
+			}
+			stmt.Accept(&checker)
+			if !checker.ok {
+				continue
+			}
+			sRows = append(sRows, []string{
+				bindData.OriginalSQL,
+				hint.BindSQL,
+				bindData.Db,
+				hint.Status,
+				hint.CreateTime.String(),
+				hint.UpdateTime.String(),
+				hint.Charset,
+				hint.Collation,
+				hint.Source,
+			})
 		}
+	}
+	bf, err := zw.Create(sessionBindingFile)
+	if err != nil {
+		return errors.AddStack(err)
+	}
+	for _, row := range sRows {
+		fmt.Fprintf(bf, "%s\n", strings.Join(row, "\t"))
 	}
 	return nil
 }
@@ -517,6 +572,32 @@ func dumpGlobalBindings(ctx sessionctx.Context, zw *zip.Writer) error {
 	}
 	for _, row := range sRows {
 		fmt.Fprintf(bf, "%s\n", strings.Join(row, "\t"))
+	}
+	if len(recordSets) > 0 {
+		if err := recordSets[0].Close(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func dumpEncodedPlan(ctx sessionctx.Context, zw *zip.Writer, encodedPlan string) error {
+	var recordSets []sqlexec.RecordSet
+	var err error
+	recordSets, err = ctx.(sqlexec.SQLExecutor).Execute(context.Background(), fmt.Sprintf("select tidb_decode_plan('%s')", encodedPlan))
+	if err != nil {
+		return err
+	}
+	sRows, err := resultSetToStringSlice(context.Background(), recordSets[0], false)
+	if err != nil {
+		return err
+	}
+	fw, err := zw.Create("explain/sql.txt")
+	if err != nil {
+		return errors.AddStack(err)
+	}
+	for _, row := range sRows {
+		fmt.Fprintf(fw, "%s\n", strings.Join(row, "\t"))
 	}
 	if len(recordSets) > 0 {
 		if err := recordSets[0].Close(); err != nil {
