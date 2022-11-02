@@ -305,7 +305,6 @@ func (recovery *Recovery) WaitApply(ctx context.Context) (err error) {
 
 // prepare the region for flashback the data, the purpose is to stop region service, put region in flashback state
 func (recovery *Recovery) PrepareFlashbackToVersion(ctx context.Context) (err error) {
-
 	var totalRegions atomic.Uint64
 	totalRegions.Store(0)
 
@@ -331,7 +330,6 @@ func (recovery *Recovery) PrepareFlashbackToVersion(ctx context.Context) (err er
 
 // flashback the region data to version resolveTS
 func (recovery *Recovery) FlashbackToVersion(ctx context.Context, resolveTS uint64, commitTS uint64) (err error) {
-
 	var completedRegions atomic.Uint64
 
 	// only know the total progress of tikv, progress is total state of the whole restore flow.
