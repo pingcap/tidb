@@ -229,8 +229,7 @@ func (p *PhysicalIndexLookUpReader) getPlanCostVer2(taskType property.TaskType, 
 	distConcurrency := float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
 	doubleReadConcurrency := float64(p.ctx.GetSessionVars().IndexLookupConcurrency())
 
-	if indexRows < 100 {
-		// prefer to use Scan plan instead of Lookup for robustness.
+	if indexRows < 100 { // prefer to use Scan plan instead of Lookup for robustness.
 		indexRows = 100
 	}
 
