@@ -119,7 +119,11 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	us.memBuf.RLock()
 	defer us.memBuf.RUnlock()
+
+	// Assume req.Capacity() > 0 after GrowAndReset(), if this assumption fail,
+	// the for-loop may exit without read one single row!
 	req.GrowAndReset(us.maxChunkSize)
+
 	mutableRow := chunk.MutRowFromTypes(retTypes(us))
 	for i, batchSize := 0, req.Capacity(); i < batchSize; i++ {
 		row, err := us.getOneRow(ctx)

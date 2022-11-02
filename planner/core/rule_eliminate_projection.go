@@ -48,14 +48,14 @@ func canProjectionBeEliminatedStrict(p *PhysicalProjection) bool {
 	// passing down the aggregation mode to TiFlash.
 	if physicalAgg, ok := p.Children()[0].(*PhysicalHashAgg); ok {
 		if physicalAgg.MppRunMode == Mpp1Phase || physicalAgg.MppRunMode == Mpp2Phase || physicalAgg.MppRunMode == MppScalar {
-			if physicalAgg.isFinalAgg() {
+			if physicalAgg.IsFinalAgg() {
 				return false
 			}
 		}
 	}
 	if physicalAgg, ok := p.Children()[0].(*PhysicalStreamAgg); ok {
 		if physicalAgg.MppRunMode == Mpp1Phase || physicalAgg.MppRunMode == Mpp2Phase || physicalAgg.MppRunMode == MppScalar {
-			if physicalAgg.isFinalAgg() {
+			if physicalAgg.IsFinalAgg() {
 				return false
 			}
 		}
@@ -70,6 +70,13 @@ func canProjectionBeEliminatedStrict(p *PhysicalProjection) bool {
 	child := p.Children()[0]
 	if p.Schema().Len() != child.Schema().Len() {
 		return false
+	}
+	for _, ref := range p.ctx.GetSessionVars().StmtCtx.ColRefFromUpdatePlan {
+		for _, one := range p.Schema().Columns {
+			if ref == one.UniqueID {
+				return false
+			}
+		}
 	}
 	for i, expr := range p.Exprs {
 		col, ok := expr.(*expression.Column)

@@ -126,6 +126,7 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	// Create internal session to start internal transaction.
 	isCommit := false
 	internalSession, err := e.getSysSession()
+	internalSession.GetSessionVars().User = e.ctx.GetSessionVars().User
 	if err != nil {
 		return err
 	}

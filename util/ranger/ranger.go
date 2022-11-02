@@ -101,6 +101,10 @@ func convertPoint(sctx sessionctx.Context, point *point, tp *types.FieldType) (*
 	}
 	casted, err := point.value.ConvertTo(sc, tp)
 	if err != nil {
+		if sctx.GetSessionVars().StmtCtx.InPreparedPlanBuilding {
+			// do not ignore these errors if in prepared plan building for safety
+			return nil, errors.Trace(err)
+		}
 		if tp.Tp == mysql.TypeYear && terror.ErrorEqual(err, types.ErrWarnDataOutOfRange) {
 			// see issue #20101: overflow when converting integer to year
 		} else if tp.Tp == mysql.TypeBit && terror.ErrorEqual(err, types.ErrDataTooLong) {

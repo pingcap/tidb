@@ -1027,7 +1027,7 @@ type basePhysicalAgg struct {
 	MppPartitionCols []*property.MPPPartitionColumn
 }
 
-func (p *basePhysicalAgg) isFinalAgg() bool {
+func (p *basePhysicalAgg) IsFinalAgg() bool {
 	if len(p.AggFuncs) > 0 {
 		if p.AggFuncs[0].Mode == aggregation.FinalMode || p.AggFuncs[0].Mode == aggregation.CompleteMode {
 			return true
@@ -1243,6 +1243,17 @@ func (p *PhysicalSelection) ExtractCorrelatedCols() []*expression.CorrelatedColu
 // PhysicalMaxOneRow is the physical operator of maxOneRow.
 type PhysicalMaxOneRow struct {
 	basePhysicalPlan
+}
+
+// Clone implements PhysicalPlan interface.
+func (p *PhysicalMaxOneRow) Clone() (PhysicalPlan, error) {
+	cloned := new(PhysicalMaxOneRow)
+	base, err := p.basePhysicalPlan.cloneWithSelf(cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.basePhysicalPlan = *base
+	return cloned, nil
 }
 
 // PhysicalTableDual is the physical operator of dual.

@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	tikverror "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/oracle"
@@ -87,6 +88,8 @@ const (
 	// lower the max-key-count to avoid tikv trigger region auto split
 	regionMaxKeyCount      = 1_280_000
 	defaultRegionSplitSize = 96 * units.MiB
+	// The max ranges count in a batch to split and scatter.
+	maxBatchSplitRanges = 4096
 
 	propRangeIndex = "tikv.range_index"
 
@@ -258,7 +261,7 @@ func NewLocalBackend(
 	if err != nil {
 		return backend.MakeBackend(nil), errors.Annotate(err, "construct pd client failed")
 	}
-	splitCli := split.NewSplitClient(pdCtl.GetPDClient(), tls.TLSConfig())
+	splitCli := split.NewSplitClient(pdCtl.GetPDClient(), tls.TLSConfig(), false)
 
 	shouldCreate := true
 	if cfg.Checkpoint.Enable {
@@ -1347,7 +1350,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 		needSplit := len(unfinishedRanges) > 1 || lfTotalSize > regionSplitSize || lfLength > regionSplitKeys
 		// split region by given ranges
 		for i := 0; i < maxRetryTimes; i++ {
-			err = local.SplitAndScatterRegionByRanges(ctx, unfinishedRanges, lf.tableInfo, needSplit, regionSplitSize)
+			err = local.SplitAndScatterRegionInBatches(ctx, unfinishedRanges, lf.tableInfo, needSplit, regionSplitSize, maxBatchSplitRanges)
 			if err == nil || common.IsContextCanceledError(err) {
 				break
 			}
@@ -1443,6 +1446,10 @@ func (local *local) ResolveDuplicateRows(ctx context.Context, tbl table.Table, t
 				err := local.deleteDuplicateRows(ctx, logger, handleRows, decoder)
 				if err == nil {
 					return nil
+				}
+				if types.ErrBadNumber.Equal(err) {
+					logger.Warn("delete duplicate rows encounter error", log.ShortError(err))
+					return errors.Errorf("resolve duplicate rows error on table '%s'", tableName)
 				}
 				if log.IsContextCanceledError(err) {
 					return err

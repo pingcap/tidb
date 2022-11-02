@@ -89,14 +89,17 @@ type pdClient struct {
 	// 	this may mislead the scatter.
 	needScatterVal  bool
 	needScatterInit sync.Once
+
+	isRawKv bool
 }
 
 // NewSplitClient returns a client used by RegionSplitter.
-func NewSplitClient(client pd.Client, tlsConf *tls.Config) SplitClient {
+func NewSplitClient(client pd.Client, tlsConf *tls.Config, isRawKv bool) SplitClient {
 	cli := &pdClient{
 		client:     client,
 		tlsConf:    tlsConf,
 		storeCache: make(map[uint64]*metapb.Store),
+		isRawKv:    isRawKv,
 	}
 	return cli
 }
@@ -123,6 +126,9 @@ func (c *pdClient) ScatterRegions(ctx context.Context, regionInfo []*RegionInfo)
 	regionsID := make([]uint64, 0, len(regionInfo))
 	for _, v := range regionInfo {
 		regionsID = append(regionsID, v.Region.Id)
+		log.Debug("scattering regions", logutil.Key("start", v.Region.StartKey),
+			logutil.Key("end", v.Region.EndKey),
+			zap.Uint64("id", v.Region.Id))
 	}
 	resp, err := c.client.ScatterRegions(ctx, regionsID)
 	if err != nil {
@@ -172,8 +178,10 @@ func (c *pdClient) GetRegionByID(ctx context.Context, regionID uint64) (*RegionI
 		return nil, nil
 	}
 	return &RegionInfo{
-		Region: region.Meta,
-		Leader: region.Leader,
+		Region:       region.Meta,
+		Leader:       region.Leader,
+		PendingPeers: region.PendingPeers,
+		DownPeers:    region.DownPeers,
 	}, nil
 }
 
@@ -255,6 +263,7 @@ func splitRegionWithFailpoint(
 	peer *metapb.Peer,
 	client tikvpb.TikvClient,
 	keys [][]byte,
+	isRawKv bool,
 ) (*kvrpcpb.SplitRegionResponse, error) {
 	failpoint.Inject("not-leader-error", func(injectNewLeader failpoint.Value) {
 		log.Debug("failpoint not-leader-error injected.")
@@ -285,6 +294,7 @@ func splitRegionWithFailpoint(
 			Peer:        peer,
 		},
 		SplitKeys: keys,
+		IsRawKv:   isRawKv,
 	})
 }
 
@@ -320,7 +330,7 @@ func (c *pdClient) sendSplitRegionRequest(
 		}
 		defer conn.Close()
 		client := tikvpb.NewTikvClient(conn)
-		resp, err := splitRegionWithFailpoint(ctx, regionInfo, peer, client, keys)
+		resp, err := splitRegionWithFailpoint(ctx, regionInfo, peer, client, keys, c.isRawKv)
 		if err != nil {
 			return nil, multierr.Append(splitErrors, err)
 		}

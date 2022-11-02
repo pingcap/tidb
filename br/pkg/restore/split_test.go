@@ -11,9 +11,14 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
+	"github.com/pingcap/log"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/glue"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -36,6 +41,7 @@ type TestClient struct {
 	supportBatchScatter bool
 
 	scattered map[uint64]bool
+	InjectErr bool
 }
 
 func NewTestClient(
@@ -212,6 +218,10 @@ func (c *TestClient) GetOperator(ctx context.Context, regionID uint64) (*pdpb.Ge
 }
 
 func (c *TestClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int) ([]*restore.RegionInfo, error) {
+	if c.InjectErr {
+		return nil, errors.New("mock scan error")
+	}
+
 	infos := c.regionsInfo.ScanRange(key, endKey, limit)
 	regions := make([]*restore.RegionInfo, 0, len(infos))
 	for _, info := range infos {
@@ -275,7 +285,7 @@ func TestScatterFinishInTime(t *testing.T) {
 	regionSplitter := restore.NewRegionSplitter(client)
 
 	ctx := context.Background()
-	err := regionSplitter.Split(ctx, ranges, rewriteRules, func(key [][]byte) {})
+	err := regionSplitter.Split(ctx, ranges, rewriteRules, false, func(key [][]byte) {})
 	require.NoError(t, err)
 	regions := client.GetAllRegions()
 	if !validateRegions(regions) {
@@ -331,7 +341,7 @@ func runTestSplitAndScatterWith(t *testing.T, client *TestClient) {
 	regionSplitter := restore.NewRegionSplitter(client)
 
 	ctx := context.Background()
-	err := regionSplitter.Split(ctx, ranges, rewriteRules, func(key [][]byte) {})
+	err := regionSplitter.Split(ctx, ranges, rewriteRules, false, func(key [][]byte) {})
 	require.NoError(t, err)
 	regions := client.GetAllRegions()
 	if !validateRegions(regions) {
@@ -466,26 +476,39 @@ FindRegion:
 }
 
 func (s *testRangeSuite) TestNeedSplit(c *C) {
+	for _, isRawKv := range []bool{false, true} {
+		s.testNeedSplit(c, isRawKv)
+	}
+}
+
+func (s *testRangeSuite) testNeedSplit(c *C, isRawKv bool) {
+	encode := func(in []byte) []byte {
+		if isRawKv {
+			return in
+		}
+		return codec.EncodeBytes([]byte{}, in)
+	}
+
 	regions := []*restore.RegionInfo{
 		{
 			Region: &metapb.Region{
-				StartKey: codec.EncodeBytes([]byte{}, []byte("b")),
-				EndKey:   codec.EncodeBytes([]byte{}, []byte("d")),
+				StartKey: encode([]byte("b")),
+				EndKey:   encode([]byte("d")),
 			},
 		},
 	}
 	// Out of region
-	c.Assert(restore.NeedSplit([]byte("a"), regions), IsNil)
+	c.Assert(restore.NeedSplit([]byte("a"), regions, isRawKv), IsNil)
 	// Region start key
-	c.Assert(restore.NeedSplit([]byte("b"), regions), IsNil)
+	c.Assert(restore.NeedSplit([]byte("b"), regions, isRawKv), IsNil)
 	// In region
-	region := restore.NeedSplit([]byte("c"), regions)
-	c.Assert(bytes.Compare(region.Region.GetStartKey(), codec.EncodeBytes([]byte{}, []byte("b"))), Equals, 0)
-	c.Assert(bytes.Compare(region.Region.GetEndKey(), codec.EncodeBytes([]byte{}, []byte("d"))), Equals, 0)
+	region := restore.NeedSplit([]byte("c"), regions, isRawKv)
+	c.Assert(bytes.Compare(region.Region.GetStartKey(), encode([]byte("b"))), Equals, 0)
+	c.Assert(bytes.Compare(region.Region.GetEndKey(), encode([]byte("d"))), Equals, 0)
 	// Region end key
-	c.Assert(restore.NeedSplit([]byte("d"), regions), IsNil)
+	c.Assert(restore.NeedSplit([]byte("d"), regions, isRawKv), IsNil)
 	// Out of region
-	c.Assert(restore.NeedSplit([]byte("e"), regions), IsNil)
+	c.Assert(restore.NeedSplit([]byte("e"), regions, isRawKv), IsNil)
 }
 
 func (s *testRangeSuite) TestRegionConsistency(c *C) {
@@ -553,4 +576,124 @@ func (s *testRangeSuite) TestRegionConsistency(c *C) {
 			ErrorMatches,
 			ca.err)
 	}
+}
+
+type fakeRestorer struct {
+	errorInSplit  bool
+	splitRanges   []rtree.Range
+	restoredFiles []*backuppb.File
+}
+
+func (f *fakeRestorer) SplitRanges(ctx context.Context, ranges []rtree.Range, rewriteRules *restore.RewriteRules, updateCh glue.Progress, isRawKv bool) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	f.splitRanges = append(f.splitRanges, ranges...)
+	if f.errorInSplit {
+		err := errors.Annotatef(berrors.ErrRestoreSplitFailed,
+			"the key space takes many efforts and finally get together, how dare you split them again... :<")
+		log.Error("error happens :3", logutil.ShortError(err))
+		return err
+	}
+	return nil
+}
+
+func (f *fakeRestorer) RestoreFiles(ctx context.Context, files []*backuppb.File, rewriteRules *restore.RewriteRules, updateCh glue.Progress) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	f.restoredFiles = append(f.restoredFiles, files...)
+	err := errors.Annotatef(berrors.ErrRestoreWriteAndIngest, "the files to restore are taken by a hijacker, meow :3")
+	log.Error("error happens :3", logutil.ShortError(err))
+	return err
+}
+
+func fakeRanges(keys ...string) (r restore.DrainResult) {
+	for i := range keys {
+		if i+1 == len(keys) {
+			return
+		}
+		r.Ranges = append(r.Ranges, rtree.Range{
+			StartKey: []byte(keys[i]),
+			EndKey:   []byte(keys[i+1]),
+			Files:    []*backuppb.File{{Name: "fake.sst"}},
+		})
+	}
+	return
+}
+
+type errorInTimeSink struct {
+	ctx   context.Context
+	errCh chan error
+	t     *testing.T
+}
+
+func (e errorInTimeSink) EmitTables(tables ...restore.CreatedTable) {}
+
+func (e errorInTimeSink) EmitError(err error) {
+	e.errCh <- err
+}
+
+func (e errorInTimeSink) Close() {}
+
+func (e errorInTimeSink) Wait() {
+	select {
+	case <-e.ctx.Done():
+		e.t.Logf("The context is canceled but no error happen")
+		e.t.FailNow()
+	case <-e.errCh:
+	}
+}
+
+func assertErrorEmitInTime(ctx context.Context, t *testing.T) errorInTimeSink {
+	errCh := make(chan error, 1)
+	return errorInTimeSink{
+		ctx:   ctx,
+		errCh: errCh,
+		t:     t,
+	}
+}
+
+func TestRestoreFailed(t *testing.T) {
+	ranges := []restore.DrainResult{
+		fakeRanges("aax", "abx", "abz"),
+		fakeRanges("abz", "bbz", "bcy"),
+		fakeRanges("bcy", "cad", "xxy"),
+	}
+	r := &fakeRestorer{}
+	sender, err := restore.NewTiKVSender(context.TODO(), r, nil, 1)
+	require.NoError(t, err)
+	dctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	sink := assertErrorEmitInTime(dctx, t)
+	sender.PutSink(sink)
+	for _, r := range ranges {
+		sender.RestoreBatch(r)
+	}
+	sink.Wait()
+	sink.Close()
+	sender.Close()
+	require.GreaterOrEqual(t, len(r.restoredFiles), 1)
+}
+
+func TestSplitFailed(t *testing.T) {
+	ranges := []restore.DrainResult{
+		fakeRanges("aax", "abx", "abz"),
+		fakeRanges("abz", "bbz", "bcy"),
+		fakeRanges("bcy", "cad", "xxy"),
+	}
+	r := &fakeRestorer{errorInSplit: true}
+	sender, err := restore.NewTiKVSender(context.TODO(), r, nil, 1)
+	require.NoError(t, err)
+	dctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	sink := assertErrorEmitInTime(dctx, t)
+	sender.PutSink(sink)
+	for _, r := range ranges {
+		sender.RestoreBatch(r)
+	}
+	sink.Wait()
+	sender.Close()
+	require.GreaterOrEqual(t, len(r.splitRanges), 2)
+	require.Len(t, r.restoredFiles, 0)
 }

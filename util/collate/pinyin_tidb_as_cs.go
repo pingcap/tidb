@@ -29,6 +29,11 @@ func (py *zhPinyinTiDBASCSCollator) Key(str string) []byte {
 }
 
 // Collator interface, no implements now.
+func (py *zhPinyinTiDBASCSCollator) KeyWithoutTrimRightSpace(str string) []byte {
+	panic("implement me")
+}
+
+// Collator interface, no implements now.
 func (py *zhPinyinTiDBASCSCollator) Pattern() WildcardPattern {
 	panic("implement me")
 }

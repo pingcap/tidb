@@ -198,14 +198,14 @@ type IndexReaderExecutor struct {
 
 // Close clears all resources hold by current object.
 func (e *IndexReaderExecutor) Close() (err error) {
-	if e.table != nil && e.table.Meta().TempTableType != model.TempTableNone {
-		return nil
-	}
-
 	if e.result != nil {
 		err = e.result.Close()
 	}
 	e.result = nil
+	e.kvRanges = e.kvRanges[:0]
+	if e.table != nil && e.table.Meta().TempTableType != model.TempTableNone {
+		return nil
+	}
 	e.ctx.StoreQueryFeedback(e.feedback)
 	return err
 }
@@ -677,6 +677,7 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, task *lookup
 
 // Close implements Exec Close interface.
 func (e *IndexLookUpExecutor) Close() error {
+	e.kvRanges = e.kvRanges[:0]
 	if e.table.Meta().TempTableType != model.TempTableNone {
 		return nil
 	}

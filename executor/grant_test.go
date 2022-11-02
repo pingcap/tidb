@@ -595,3 +595,18 @@ func TestNonExistTableIllegalGrant(t *testing.T) {
 	// Column level, not existing table, illegal privilege
 	tk.MustGetErrCode("grant create temporary tables (NotExistsCol) on NotExistsD29302.NotExistsT29302 to u29302;", mysql.ErrWrongUsage)
 }
+
+func TestIssue38293(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.Session().GetSessionVars().User = &auth.UserIdentity{Username: "root", Hostname: "localhost"}
+	tk.MustExec("DROP USER IF EXISTS test")
+	tk.MustExec("CREATE USER test")
+	defer func() {
+		tk.MustExec("DROP USER test")
+	}()
+	tk.MustExec("GRANT SELECT ON `mysql`.`db` TO test")
+	tk.MustQuery("SELECT `Grantor` FROM `mysql`.`tables_priv` WHERE User = 'test'").Check(testkit.Rows("root@localhost"))
+}

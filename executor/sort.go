@@ -77,6 +77,9 @@ func (e *SortExec) Close() error {
 	e.memTracker = nil
 	e.diskTracker = nil
 	e.multiWayMerge = nil
+	if e.spillAction != nil {
+		e.spillAction.SetFinished()
+	}
 	e.spillAction = nil
 	return e.children[0].Close()
 }

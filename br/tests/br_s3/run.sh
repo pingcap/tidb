@@ -101,6 +101,12 @@ for p in $(seq 2); do
       exit 1
   fi
 
+  target_log="get newCollationEnable for check during restore"
+  if ! grep -i "$target_log" $BACKUP_LOG; then
+      echo "${target_log} not found in log"
+      exit 1
+  fi
+
   for i in $(seq $DB_COUNT); do
       run_sql "DROP DATABASE $DB${i};"
   done

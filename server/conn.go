@@ -318,8 +318,14 @@ func closeConn(cc *clientConn, connections int) error {
 	metrics.ConnGauge.Set(float64(connections))
 	if cc.bufReadConn != nil {
 		err := cc.bufReadConn.Close()
-		terror.Log(err)
+		if err != nil {
+			// We need to expect connection might have already disconnected.
+			// This is because closeConn() might be called after a connection read-timeout.
+			logutil.Logger(context.Background()).Debug("could not close connection", zap.Error(err))
+		}
 	}
+	// Close statements and session
+	// This will release advisory locks, row locks, etc.
 	if cc.ctx != nil {
 		return cc.ctx.Close()
 	}
@@ -1037,10 +1043,6 @@ func (cc *clientConn) Run(ctx context.Context) {
 			terror.Log(err)
 			metrics.PanicCounter.WithLabelValues(metrics.LabelSession).Inc()
 		}
-		if atomic.LoadInt32(&cc.status) != connStatusShutdown {
-			err := cc.Close()
-			terror.Log(err)
-		}
 	}()
 
 	// Usually, client connection status changes between [dispatching] <=> [reading].
@@ -1065,12 +1067,16 @@ func (cc *clientConn) Run(ctx context.Context) {
 		if err != nil {
 			if terror.ErrorNotEqual(err, io.EOF) {
 				if netErr, isNetErr := errors.Cause(err).(net.Error); isNetErr && netErr.Timeout() {
-					idleTime := time.Since(start)
-					logutil.Logger(ctx).Info("read packet timeout, close this connection",
-						zap.Duration("idle", idleTime),
-						zap.Uint64("waitTimeout", waitTimeout),
-						zap.Error(err),
-					)
+					if atomic.LoadInt32(&cc.status) == connStatusWaitShutdown {
+						logutil.Logger(ctx).Info("read packet timeout because of killed connection")
+					} else {
+						idleTime := time.Since(start)
+						logutil.Logger(ctx).Info("read packet timeout, close this connection",
+							zap.Duration("idle", idleTime),
+							zap.Uint64("waitTimeout", waitTimeout),
+							zap.Error(err),
+						)
+					}
 				} else {
 					errStack := errors.ErrorStack(err)
 					if !strings.Contains(errStack, "use of closed network connection") {
@@ -2320,6 +2326,12 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 
 	if err := cc.ctx.Close(); err != nil {
 		logutil.Logger(ctx).Debug("close old context failed", zap.Error(err))
+	}
+	// session was closed by `ctx.Close` and should `openSession` explicitly to renew session.
+	// `openSession` won't run again in `openSessionAndDoAuth` because ctx is not nil.
+	err := cc.openSession()
+	if err != nil {
+		return err
 	}
 	if err := cc.openSessionAndDoAuth(pass, ""); err != nil {
 		return err
