@@ -15,6 +15,7 @@
 package variable
 
 import (
+	"context"
 	"math"
 
 	"github.com/pingcap/tidb/config"
@@ -759,6 +760,9 @@ const (
 	// TiDBOptPrefixIndexSingleScan indicates whether to do some optimizations to avoid double scan for prefix index.
 	// When set to true, `col is (not) null`(`col` is index prefix column) is regarded as index filter rather than table filter.
 	TiDBOptPrefixIndexSingleScan = "tidb_opt_prefix_index_single_scan"
+
+	// TiDBEnableExternalTSRead indicates whether to enable read through an external ts
+	TiDBEnableExternalTSRead = "tidb_enable_external_ts_read"
 )
 
 // TiDB vars that have only global scope
@@ -837,6 +841,8 @@ const (
 	TiDBEnableGOGCTuner = "tidb_enable_gogc_tuner"
 	// TiDBGOGCTunerThreshold is to control the threshold of GOGC tuner.
 	TiDBGOGCTunerThreshold = "tidb_gogc_tuner_threshold"
+	// TiDBExternalTS is the ts to read through when the `TiDBEnableExternalTsRead` is on
+	TiDBExternalTS = "tidb_external_ts"
 )
 
 // TiDB intentional limits
@@ -1072,6 +1078,8 @@ const (
 	// DefTiDBGOGCTunerThreshold is to limit TiDBGOGCTunerThreshold.
 	DefTiDBGOGCTunerThreshold       float64 = 0.6
 	DefTiDBOptPrefixIndexSingleScan         = true
+	DefTiDBExternalTS                       = 0
+	DefTiDBEnableExternalTSRead             = false
 )
 
 // Process global variables.
@@ -1149,4 +1157,8 @@ var (
 	EnableDDL func() error = nil
 	// DisableDDL is the func registered by ddl to disable running ddl in this instance.
 	DisableDDL func() error = nil
+	// SetExternalTimestamp is the func registered by staleread to set externaltimestamp in pd
+	SetExternalTimestamp func(ctx context.Context, ts uint64) error
+	// GetExternalTimestamp is the func registered by staleread to get externaltimestamp from pd
+	GetExternalTimestamp func(ctx context.Context) (uint64, error)
 )

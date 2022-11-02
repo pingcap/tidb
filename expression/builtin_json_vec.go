@@ -326,8 +326,8 @@ func (b *builtinJSONContainsSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 			if err != nil {
 				return err
 			}
-			if pathExpr.ContainsAnyAsterisk() {
-				return types.ErrInvalidJSONPathWildcard
+			if pathExpr.CouldMatchMultipleValues() {
+				return types.ErrInvalidJSONPathMultipleSelection
 			}
 
 			obj, exists := objCol.GetJSON(i).Extract([]types.JSONPathExpression{pathExpr})
@@ -634,8 +634,8 @@ func (b *builtinJSONArrayInsertSig) vecEvalJSON(input *chunk.Chunk, result *chun
 			if err != nil {
 				return types.ErrInvalidJSONPath.GenWithStackByArgs(pathBufs[j].GetString(i))
 			}
-			if pathExpr.ContainsAnyAsterisk() {
-				return types.ErrInvalidJSONPathWildcard.GenWithStackByArgs(pathBufs[j].GetString(i))
+			if pathExpr.CouldMatchMultipleValues() {
+				return types.ErrInvalidJSONPathMultipleSelection
 			}
 			if valueBufs[j].IsNull(i) {
 				value = types.CreateBinaryJSON(nil)
@@ -690,8 +690,8 @@ func (b *builtinJSONKeys2ArgsSig) vecEvalJSON(input *chunk.Chunk, result *chunk.
 		if err != nil {
 			return err
 		}
-		if pathExpr.ContainsAnyAsterisk() {
-			return types.ErrInvalidJSONPathWildcard
+		if pathExpr.CouldMatchMultipleValues() {
+			return types.ErrInvalidJSONPathMultipleSelection
 		}
 
 		jsonItem := jsonBuf.GetJSON(i)
@@ -759,8 +759,8 @@ func (b *builtinJSONLengthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 			if err != nil {
 				return err
 			}
-			if pathExpr.ContainsAnyAsterisk() {
-				return types.ErrInvalidJSONPathWildcard
+			if pathExpr.CouldMatchMultipleValues() {
+				return types.ErrInvalidJSONPathMultipleSelection
 			}
 
 			obj, exists := jsonItem.Extract([]types.JSONPathExpression{pathExpr})

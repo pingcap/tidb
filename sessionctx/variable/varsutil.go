@@ -392,21 +392,25 @@ func setSnapshotTS(s *SessionVars, sVal string) error {
 		return fmt.Errorf("tidb_read_staleness should be clear before setting tidb_snapshot")
 	}
 
+	tso, err := parseTSFromNumberOrTime(s, sVal)
+	s.SnapshotTS = tso
+	// tx_read_ts should be mutual exclusive with tidb_snapshot
+	s.TxnReadTS = NewTxnReadTS(0)
+	return err
+}
+
+func parseTSFromNumberOrTime(s *SessionVars, sVal string) (uint64, error) {
 	if tso, err := strconv.ParseUint(sVal, 10, 64); err == nil {
-		s.SnapshotTS = tso
-		return nil
+		return tso, nil
 	}
 
 	t, err := types.ParseTime(s.StmtCtx, sVal, mysql.TypeTimestamp, types.MaxFsp)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	t1, err := t.GoTime(s.Location())
-	s.SnapshotTS = oracle.GoTimeToTS(t1)
-	// tx_read_ts should be mutual exclusive with tidb_snapshot
-	s.TxnReadTS = NewTxnReadTS(0)
-	return err
+	return oracle.GoTimeToTS(t1), err
 }
 
 func setTxnReadTS(s *SessionVars, sVal string) error {
