@@ -244,7 +244,7 @@ func TestCancel(t *testing.T) {
 		partition p4 values less than (7096)
    	);`)
 	tk.MustExec(`create table t (
-		c1 int, c2 int, c3 int, c11 tinyint
+		c1 int, c2 int, c3 int, c11 tinyint, index fk_c1(c1)
 	);`)
 
 	// Prepare data.
