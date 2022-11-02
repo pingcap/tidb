@@ -20,8 +20,6 @@ import (
 	"math"
 	"strings"
 
-	"github.com/prometheus/client_golang/prometheus"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain"
@@ -45,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
 
