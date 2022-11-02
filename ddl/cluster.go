@@ -257,7 +257,8 @@ func GetFlashbackKeyRanges(sess sessionctx.Context) ([]kv.KeyRange, error) {
 	return keyRanges, nil
 }
 
-// function be called by BR for aws ebs snapshot backup and restore
+// SendPrepareFlashbackToVersionRPC prepares regions for flashback, the purpose is to put region into flashback state which region stop write
+// Function also be called by BR for volume snapshot backup and restore
 func SendPrepareFlashbackToVersionRPC(
 	ctx context.Context,
 	s tikv.Storage,
@@ -325,7 +326,8 @@ func SendPrepareFlashbackToVersionRPC(
 	return taskStat, nil
 }
 
-// function be called also by BR for aws ebs snapshot backup and restore
+// SendFlashbackToVersionRPC flashback the MVCC key to the version
+// Function also be called by BR for volume snapshot backup and restore
 func SendFlashbackToVersionRPC(
 	ctx context.Context,
 	s tikv.Storage,
