@@ -1797,7 +1797,8 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.
 
 		se, ok := is.(*infoschema.SessionExtendedInfoSchema)
 		if !ok {
-			panic("should not happen")
+			logutil.BgLogger().Error("InfoSchema is not SessionExtendedInfoSchema", zap.Stack("stack"))
+			return nil, errors.New("InfoSchema is not SessionExtendedInfoSchema")
 		}
 		db, _ := domainSchema.SchemaByTable(tbl.Meta())
 		err = se.UpdateTableInfo(db, tbl)
