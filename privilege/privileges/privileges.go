@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sem"
 	"go.uber.org/zap"
@@ -388,7 +389,7 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 			logutil.BgLogger().Error("empty authentication")
 			return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 		}
-		tokenString := string(authentication[:len(authentication)-1])
+		tokenString := hack.String(authentication[:len(authentication)-1])
 		var (
 			claims map[string]interface{}
 			err    error

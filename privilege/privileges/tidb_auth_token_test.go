@@ -18,6 +18,7 @@ import (
 	"crypto/rsa"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/util/hack"
 	"log"
 	"os"
 	"strings"
@@ -251,7 +252,7 @@ func getSignedTokenString(priKey *rsa.PrivateKey, pairs map[string]interface{}) 
 	if err != nil {
 		return "", err
 	}
-	return string(bytes), nil
+	return string(hack.String(bytes)), nil
 }
 
 func TestAuthTokenClaims(t *testing.T) {
