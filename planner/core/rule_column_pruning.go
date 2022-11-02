@@ -312,6 +312,14 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *log
 
 	originSchemaColumns := ds.schema.Columns
 	originColumns := ds.Columns
+
+	ds.colsRequiringFullLen = make([]*expression.Column, 0, len(used))
+	for i, col := range ds.schema.Columns {
+		if used[i] || (ds.containExprPrefixUk && expression.GcColumnExprIsTidbShard(col.VirtualExpr)) {
+			ds.colsRequiringFullLen = append(ds.colsRequiringFullLen, col)
+		}
+	}
+
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] && !exprUsed[i] {
 			// If ds has a shard index, and the column is generated column by `tidb_shard()`

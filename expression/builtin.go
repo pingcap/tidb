@@ -988,8 +988,13 @@ func (b *baseBuiltinFunc) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = emptyBaseBuiltinFunc + b.bufAllocator.MemoryUsage() +
-		b.tp.MemoryUsage() + int64(len(b.charset)+len(b.collation))
+	sum = emptyBaseBuiltinFunc + int64(len(b.charset)+len(b.collation))
+	if b.bufAllocator != nil {
+		sum += b.bufAllocator.MemoryUsage()
+	}
+	if b.tp != nil {
+		sum += b.tp.MemoryUsage()
+	}
 	if b.childrenVectorizedOnce != nil {
 		sum += onceSize
 	}

@@ -68,6 +68,8 @@ type UpdateExec struct {
 	matches        []bool
 	// fkChecks contains the foreign key checkers. the map is tableID -> []*FKCheckExec
 	fkChecks map[int64][]*FKCheckExec
+	// fkCascades contains the foreign key cascade. the map is tableID -> []*FKCascadeExec
+	fkCascades map[int64][]*FKCascadeExec
 }
 
 // prepare `handles`, `tableUpdatable`, `changed` to avoid re-computations.
@@ -194,7 +196,8 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema, row, n
 
 		// Update row
 		fkChecks := e.fkChecks[content.TblID]
-		changed, err1 := updateRecord(ctx, e.ctx, handle, oldData, newTableData, flags, tbl, false, e.memTracker, fkChecks)
+		fkCascades := e.fkCascades[content.TblID]
+		changed, err1 := updateRecord(ctx, e.ctx, handle, oldData, newTableData, flags, tbl, false, e.memTracker, fkChecks, fkCascades)
 		if err1 == nil {
 			_, exist := e.updatedRowKeys[content.Start].Get(handle)
 			memDelta := e.updatedRowKeys[content.Start].Set(handle, changed)
@@ -546,10 +549,14 @@ func (e *UpdateExec) GetFKChecks() []*FKCheckExec {
 
 // GetFKCascades implements WithForeignKeyTrigger interface.
 func (e *UpdateExec) GetFKCascades() []*FKCascadeExec {
-	return nil
+	fkCascades := make([]*FKCascadeExec, 0, len(e.fkChecks))
+	for _, fkc := range e.fkCascades {
+		fkCascades = append(fkCascades, fkc...)
+	}
+	return fkCascades
 }
 
 // HasFKCascades implements WithForeignKeyTrigger interface.
 func (e *UpdateExec) HasFKCascades() bool {
-	return false
+	return len(e.fkCascades) > 0
 }
