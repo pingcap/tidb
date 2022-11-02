@@ -206,7 +206,7 @@ func (l *LRUPlanCache) Close() {
 	if l == nil {
 		return
 	}
-	if l.sctx.GetSessionVars().PreparedPlanCacheMemoryMonitor {
+	if l.sctx.GetSessionVars().EnablePreparedPlanCacheMemoryMonitor {
 		metrics.PlanCacheInstanceMemoryUsage.WithLabelValues("instance").Sub(float64(l.memoryUsageTotal))
 	}
 	metrics.PlanCacheInstancePlanNumCounter.WithLabelValues("plan_num").Sub(float64(l.size))
@@ -269,7 +269,7 @@ func (l *LRUPlanCache) updateInstanceMetric(in, out *planCacheEntry) {
 		return
 	}
 
-	if !l.sctx.GetSessionVars().PreparedPlanCacheMemoryMonitor {
+	if !l.sctx.GetSessionVars().EnablePreparedPlanCacheMemoryMonitor {
 		metrics.PlanCacheInstanceMemoryUsage.WithLabelValues("instance").Set(0)
 		return
 	}

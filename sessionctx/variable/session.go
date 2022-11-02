@@ -1247,7 +1247,7 @@ type SessionVars struct {
 	PreparedPlanCacheSize uint64
 
 	// PreparedPlanCacheMonitor indicates whether to enable prepared plan cache monitor.
-	PreparedPlanCacheMemoryMonitor bool
+	EnablePreparedPlanCacheMemoryMonitor bool
 
 	// EnableGeneralPlanCache indicates whether to enable general plan cache.
 	EnableGeneralPlanCache bool
