@@ -257,7 +257,7 @@ func getSignedTokenString(priKey *rsa.PrivateKey, pairs map[string]interface{}) 
 func TestAuthTokenClaims(t *testing.T) {
 	var jwksImpl JWKSImpl
 	now := time.Now()
-	require.NoError(t, jwksImpl.LoadJWKS4AuthToken(path[0], time.Hour), path[0])
+	require.NoError(t, jwksImpl.LoadJWKS4AuthToken(path[0], time.Hour, false), path[0])
 	claims := map[string]interface{}{
 		jwsRepo.KeyIDKey:      "the-key-id-0",
 		jwtRepo.SubjectKey:    email1,
@@ -346,14 +346,14 @@ func TestJWKSImpl(t *testing.T) {
 	var jwksImpl JWKSImpl
 
 	// Set wrong path of JWKS
-	require.Error(t, jwksImpl.LoadJWKS4AuthToken("wrong-jwks-path", time.Hour))
+	require.Error(t, jwksImpl.LoadJWKS4AuthToken("wrong-jwks-path", time.Hour, false))
 	require.Error(t, jwksImpl.load())
 	_, err := jwksImpl.checkSigWithRetry("invalid tokenString", 4)
 	require.Error(t, err)
 	_, err = jwksImpl.verify(([]byte)("invalid tokenString"))
 	require.Error(t, err)
 
-	require.NoError(t, jwksImpl.LoadJWKS4AuthToken(path[0], time.Hour), path[0])
+	require.NoError(t, jwksImpl.LoadJWKS4AuthToken(path[0], time.Hour, false), path[0])
 	now := time.Now()
 	claims := map[string]interface{}{
 		jwsRepo.KeyIDKey:      "the-key-id-0",
@@ -383,7 +383,7 @@ func TestJWKSImpl(t *testing.T) {
 	require.ErrorContains(t, err, "Fail to verify the signature and reload the JWKS")
 	jwksImpl.filepath = path[0]
 
-	require.NoError(t, jwksImpl.LoadJWKS4AuthToken(path[0], time.Hour), path[0])
+	require.NoError(t, jwksImpl.LoadJWKS4AuthToken(path[0], time.Hour, false), path[0])
 	_, err = jwksImpl.checkSigWithRetry(signedTokenString, 0)
 	require.NoError(t, err)
 
@@ -396,10 +396,10 @@ func TestJWKSImpl(t *testing.T) {
 	claims[jwsRepo.KeyIDKey] = "the-key-id-0"
 	signedTokenString, err = getSignedTokenString(priKeys[0], claims)
 	require.NoError(t, err)
-	require.NoError(t, jwksImpl.LoadJWKS4AuthToken(path[1], time.Hour), path[1])
+	require.NoError(t, jwksImpl.LoadJWKS4AuthToken(path[1], time.Hour, false), path[1])
 	_, err = jwksImpl.checkSigWithRetry(signedTokenString, 0)
 	require.NoError(t, err)
-	require.NoError(t, jwksImpl.LoadJWKS4AuthToken(path[2], time.Hour), path[2])
+	require.NoError(t, jwksImpl.LoadJWKS4AuthToken(path[2], time.Hour, false), path[2])
 	_, err = jwksImpl.checkSigWithRetry(signedTokenString, 0)
 	require.Error(t, err)
 }
