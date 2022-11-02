@@ -74,7 +74,6 @@ function help_message()
 
 function build_importer()
 {
-    return
     importer="./importer"
     echo "building importer binary: $importer"
     rm -rf $importer
@@ -238,7 +237,7 @@ for port in $($portgenerator -count 2); do
     ports+=("$port")
 done
 
-port=4000
+port=${ports[0]}
 status=${ports[1]}
 
 function start_tidb_server()
@@ -255,8 +254,6 @@ function start_tidb_server()
         $tidb_server -P "$port" -status "$status" -config $config_file -store unistore -path "" > $explain_test_log 2>&1 &
         SERVER_PID=$!
     fi
-    echo "$tidb_server"
-    echo "$port"
     echo "tidb-server(PID: $SERVER_PID) started"
 }
 
