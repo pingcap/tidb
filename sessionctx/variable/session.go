@@ -1278,6 +1278,9 @@ type SessionVars struct {
 	// AnalyzePartitionMergeConcurrency indicates concurrency for merging partition stats
 	AnalyzePartitionMergeConcurrency int
 
+	// EnableExternalTSRead indicates whether to enable read through external ts
+	EnableExternalTSRead bool
+
 	HookContext
 
 	// MemTracker indicates the memory tracker of current session.

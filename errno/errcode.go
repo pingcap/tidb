@@ -848,7 +848,7 @@ const (
 	ErrInvalidJSONPath                                       = 3143
 	ErrInvalidJSONCharset                                    = 3144
 	ErrInvalidTypeForJSON                                    = 3146
-	ErrInvalidJSONPathWildcard                               = 3149
+	ErrInvalidJSONPathMultipleSelection                      = 3149
 	ErrInvalidJSONContainsPathType                           = 3150
 	ErrJSONUsedAsKey                                         = 3152
 	ErrJSONDocumentTooDeep                                   = 3157
