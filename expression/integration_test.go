@@ -7780,6 +7780,9 @@ func TestIssue38736(t *testing.T) {
 
 	// The filter is evaled as false.
 	tk.MustQuery("SELECT v0.c0 FROM v0 WHERE (v0.c0)NOT LIKE(BINARY v0.c0);").Check(testkit.Rows())
+
+	// Also the filter is evaled as false.
+	tk.MustQuery("SELECT v0.c0 FROM v0 WHERE (v0.c0)NOT LIKE(BINARY v0.c0) or v0.c0 > 0").Check(testkit.Rows())
 }
 
 func TestJSONExtractFromLast(t *testing.T) {
