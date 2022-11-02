@@ -549,8 +549,14 @@ func (r *PushSelDownProjection) OnTransform(old *memo.ExprIter) (newExprs []*mem
 	canBePushed := make([]expression.Expression, 0, len(sel.Conditions))
 	canNotBePushed := make([]expression.Expression, 0, len(sel.Conditions))
 	for _, cond := range sel.Conditions {
+<<<<<<< HEAD
 		if !expression.HasGetSetVarFunc(cond) {
 			canBePushed = append(canBePushed, expression.ColumnSubstitute(cond, projSchema, proj.Exprs))
+=======
+		substituted, hasFailed, newFilter := expression.ColumnSubstituteImpl(cond, projSchema, proj.Exprs, true)
+		if substituted && !hasFailed && !expression.HasGetSetVarFunc(newFilter) {
+			canBePushed = append(canBePushed, newFilter)
+>>>>>>> 0f62d1f42e (planner: projection should not push the expr that is not fully substituted (#38802))
 		} else {
 			canNotBePushed = append(canNotBePushed, cond)
 		}
