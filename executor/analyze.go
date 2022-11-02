@@ -20,6 +20,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -266,6 +267,10 @@ func (e *AnalyzeExec) handleResultsError(ctx context.Context, concurrency int, n
 			}
 		}
 		invalidInfoSchemaStatCache(results.TableID.GetStatisticsID())
+		if atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1 {
+			finishJobWithLog(e.ctx, results.Job, ErrQueryInterrupted)
+			return errors.Trace(ErrQueryInterrupted)
+		}
 	}
 	return err
 }
@@ -279,7 +284,7 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(ctx context.Context, sta
 	saveResultsCh := make(chan *statistics.AnalyzeResults, partitionStatsConcurrency)
 	errCh := make(chan error, partitionStatsConcurrency)
 	for i := 0; i < partitionStatsConcurrency; i++ {
-		worker := newAnalyzeSaveStatsWorker(saveResultsCh, subSctxs[i], errCh)
+		worker := newAnalyzeSaveStatsWorker(saveResultsCh, subSctxs[i], errCh, &e.ctx.GetSessionVars().Killed)
 		ctx1 := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 		wg.Run(func() {
 			worker.run(ctx1, e.ctx.GetSessionVars().EnableAnalyzeSnapshot)
@@ -288,6 +293,10 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(ctx context.Context, sta
 	panicCnt := 0
 	var err error
 	for panicCnt < statsConcurrency {
+		if atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1 {
+			close(saveResultsCh)
+			return errors.Trace(ErrQueryInterrupted)
+		}
 		results, ok := <-resultsCh
 		if !ok {
 			break

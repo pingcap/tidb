@@ -2310,7 +2310,11 @@ func testKillAutoAnalyze(t *testing.T, ver int) {
 		jobInfo += "table all columns with 256 buckets, 500 topn, 1 samplerate"
 	}
 	// kill auto analyze when it is pending/running/finished
-	for _, status := range []string{"pending", "running", "finished"} {
+	for _, status := range []string{
+		"pending",
+		"running",
+		"finished",
+	} {
 		func() {
 			comment := fmt.Sprintf("kill %v analyze job", status)
 			tk.MustExec("delete from mysql.analyze_jobs")
