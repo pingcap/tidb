@@ -75,6 +75,19 @@ type tableScanAndPartitionInfo struct {
 	partitionInfo PartitionInfo
 }
 
+// MemoryUsage return the memory usage of tableScanAndPartitionInfo
+func (t *tableScanAndPartitionInfo) MemoryUsage() (sum int64) {
+	if t == nil {
+		return
+	}
+
+	sum += t.partitionInfo.MemoryUsage()
+	if t.tableScan != nil {
+		sum += t.tableScan.MemoryUsage()
+	}
+	return
+}
+
 // ReadReqType is the read request type of the operator. Currently, only PhysicalTableReader uses this.
 type ReadReqType uint8
 
@@ -196,12 +209,9 @@ func (p *PhysicalTableReader) MemoryUsage() (sum int64) {
 	if p.tablePlan != nil {
 		sum += p.tablePlan.MemoryUsage()
 	}
-
-	for _, plan := range p.TablePlans {
-		sum += plan.MemoryUsage()
-	}
-	for _, pInfos := range p.PartitionInfos {
-		sum += pInfos.tableScan.MemoryUsage() + pInfos.partitionInfo.MemoryUsage()
+	// since TablePlans is the flats of tablePlan, so we don't count it
+	for _, pInfo := range p.PartitionInfos {
+		sum += pInfo.MemoryUsage()
 	}
 	return
 }
@@ -527,12 +537,7 @@ func (p *PhysicalIndexLookUpReader) MemoryUsage() (sum int64) {
 		sum += p.PushedLimit.MemoryUsage()
 	}
 
-	for _, plan := range p.IndexPlans {
-		sum += plan.MemoryUsage()
-	}
-	for _, plan := range p.TablePlans {
-		sum += plan.MemoryUsage()
-	}
+	// since IndexPlans and TablePlans are the flats of indexPlan and tablePlan, so we don't count it
 	for _, col := range p.CommonHandleCols {
 		sum += col.MemoryUsage()
 	}
@@ -719,7 +724,7 @@ func (p *PhysicalIndexScan) MemoryUsage() (sum int64) {
 	}
 
 	sum = emptyPhysicalIndexScanSize + p.physicalSchemaProducer.MemoryUsage() + int64(cap(p.IdxColLens))*size.SizeOfInt +
-		p.DBName.MemoryUsage() + int64(len(p.rangeInfo))
+		p.DBName.MemoryUsage() + int64(len(p.rangeInfo)) + int64(len(p.Columns))*model.EmptyColumnInfoSize
 	if p.TableAsName != nil {
 		sum += p.TableAsName.MemoryUsage()
 	}
@@ -728,6 +733,9 @@ func (p *PhysicalIndexScan) MemoryUsage() (sum int64) {
 	}
 	if p.prop != nil {
 		sum += p.prop.MemoryUsage()
+	}
+	if p.dataSourceSchema != nil {
+		sum += p.dataSourceSchema.MemoryUsage()
 	}
 	// slice memory usage
 	for _, cond := range p.AccessCondition {
@@ -941,7 +949,7 @@ func (ts *PhysicalTableScan) MemoryUsage() (sum int64) {
 	}
 
 	sum = emptyPhysicalTableScanSize + ts.physicalSchemaProducer.MemoryUsage() + ts.DBName.MemoryUsage() +
-		int64(cap(ts.HandleIdx))*size.SizeOfInt + ts.PartitionInfo.MemoryUsage()
+		int64(cap(ts.HandleIdx))*size.SizeOfInt + ts.PartitionInfo.MemoryUsage() + int64(len(ts.rangeInfo))
 	if ts.TableAsName != nil {
 		sum += ts.TableAsName.MemoryUsage()
 	}
@@ -961,7 +969,6 @@ func (ts *PhysicalTableScan) MemoryUsage() (sum int64) {
 	for _, rang := range ts.Ranges {
 		sum += rang.MemUsage()
 	}
-	sum += int64(len(ts.rangeInfo))
 	for _, col := range ts.tblCols {
 		sum += col.MemoryUsage()
 	}
@@ -1186,7 +1193,10 @@ func (p *basePhysicalJoin) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = emptyBasePhysicalJoinSize + p.physicalSchemaProducer.MemoryUsage() + int64(cap(p.IsNullEQ))*size.SizeOfBool
+	sum = emptyBasePhysicalJoinSize + p.physicalSchemaProducer.MemoryUsage() + int64(cap(p.IsNullEQ))*size.SizeOfBool +
+		int64(cap(p.LeftConditions)+cap(p.RightConditions)+cap(p.OtherConditions))*size.SizeOfInterface +
+		int64(cap(p.OuterJoinKeys)+cap(p.InnerJoinKeys)+cap(p.LeftJoinKeys)+cap(p.RightNAJoinKeys)+cap(p.LeftNAJoinKeys)+
+			cap(p.RightNAJoinKeys))*size.SizeOfPointer + int64(cap(p.DefaultValues))*types.EmptyDatumSize
 
 	for _, cond := range p.LeftConditions {
 		sum += cond.MemoryUsage()
@@ -1357,6 +1367,9 @@ func (p *PhysicalIndexJoin) MemoryUsage() (sum int64) {
 
 	sum = p.basePhysicalJoin.MemoryUsage() + size.SizeOfInterface*2 + size.SizeOfSlice*4 +
 		int64(cap(p.KeyOff2IdxOff)+cap(p.IdxColLens))*size.SizeOfInt + size.SizeOfPointer
+	if p.innerTask != nil {
+		sum += p.innerTask.MemoryUsage()
+	}
 	if p.CompareFilters != nil {
 		sum += p.CompareFilters.MemoryUsage()
 	}
@@ -1457,8 +1470,6 @@ func (p *PhysicalExchangeReceiver) Clone() (PhysicalPlan, error) {
 func (p *PhysicalExchangeReceiver) GetExchangeSender() *PhysicalExchangeSender {
 	return p.children[0].(*PhysicalExchangeSender)
 }
-
-const emptyMPPTaskSize = int64(unsafe.Sizeof(mppTask{}))
 
 // MemoryUsage return the memory usage of PhysicalExchangeReceiver
 func (p *PhysicalExchangeReceiver) MemoryUsage() (sum int64) {
@@ -1885,7 +1896,10 @@ func (p *PhysicalUnionScan) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.basePhysicalPlan.MemoryUsage() + size.SizeOfSlice + p.HandleCols.MemoryUsage()
+	sum = p.basePhysicalPlan.MemoryUsage() + size.SizeOfSlice
+	if p.HandleCols != nil {
+		sum += p.HandleCols.MemoryUsage()
+	}
 	for _, cond := range p.Conditions {
 		sum += cond.MemoryUsage()
 	}
@@ -2168,7 +2182,10 @@ func (p *PhysicalShuffleReceiverStub) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.physicalSchemaProducer.MemoryUsage() + size.SizeOfPointer + size.SizeOfInterface + p.DataSource.MemoryUsage()
+	sum = p.physicalSchemaProducer.MemoryUsage() + size.SizeOfPointer + size.SizeOfInterface
+	if p.DataSource != nil {
+		sum += p.DataSource.MemoryUsage()
+	}
 	return
 }
 

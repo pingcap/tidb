@@ -3429,15 +3429,15 @@ def go_deps():
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        sum = "h1:5KLqhDGLc/mtemdS/odfOP717rn8ttsTj3jzZ8TZn9A=",
-        version = "v2.0.1-0.20221017092635-91be9c6ce6c0",
+        sum = "h1:NvQHWk0GeXSLEBbmGMPnDMc0to0a3ogzgIRbTKw8MHI=",
+        version = "v2.0.1-0.20221031063202-30e803b7082c",
     )
     go_repository(
         name = "com_github_tikv_pd_client",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/pd/client",
-        sum = "h1:REQOR1XraH1fT9BCoNBPZs1CAe+w7VPLU+d+si7DLYo=",
-        version = "v0.0.0-20221010134149-d50e5fe43f14",
+        sum = "h1:ckPpxKcl75mO2N6a4cJXiZH43hvcHPpqc9dh1TmH1nc=",
+        version = "v0.0.0-20221031025758-80f0d8ca4d07",
     )
     go_repository(
         name = "com_github_timakin_bodyclose",
