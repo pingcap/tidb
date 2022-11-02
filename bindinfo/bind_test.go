@@ -874,6 +874,7 @@ func TestNotEvolvePlanForReadStorageHint(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=1")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, index idx_a(a), index idx_b(b))")
 	tk.MustExec("insert into t values (1,1), (2,2), (3,3), (4,4), (5,5), (6,6), (7,7), (8,8), (9,9), (10,10)")
@@ -942,7 +943,7 @@ func TestBindingWithIsolationRead(t *testing.T) {
 	// Even if we build a binding use index for SQL, but after we set the isolation read for TiFlash, it choose TiFlash instead of index of TiKV.
 	tk.MustExec("set @@tidb_isolation_read_engines = \"tiflash\"")
 	rows = tk.MustQuery("explain select * from t where a >= 11 and b >= 11").Rows()
-	require.Equal(t, "mpp[tiflash]", rows[len(rows)-1][2])
+	require.Equal(t, "tiflash", rows[len(rows)-1][2])
 }
 
 func TestReCreateBindAfterEvolvePlan(t *testing.T) {
