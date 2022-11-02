@@ -404,7 +404,11 @@ func (t *Task) GetGlobalCheckPointTS(ctx context.Context) (uint64, error) {
 	initialized := false
 	checkpoint := t.Info.StartTs
 	for _, cp := range checkPointMap {
-		if !initialized || cp.TS < checkpoint {
+		if cp.Type() == CheckpointTypeGlobal {
+			return cp.TS, nil
+		}
+
+		if cp.Type() == CheckpointTypeStore && (!initialized || cp.TS < checkpoint) {
 			initialized = true
 			checkpoint = cp.TS
 		}
