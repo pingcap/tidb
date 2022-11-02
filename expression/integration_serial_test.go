@@ -3798,7 +3798,7 @@ func TestPreparePlanCacheOnCachedTable(t *testing.T) {
 
 	var err error
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: plannercore.NewLRUPlanCache(100, 0.1, math.MaxUint64, plannercore.PickPlanFromBucket),
+		PreparedPlanCache: plannercore.NewLRUPlanCache(100, 0.1, math.MaxUint64, plannercore.PickPlanFromBucket, true),
 	})
 	require.NoError(t, err)
 	tk.SetSession(se)
