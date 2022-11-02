@@ -1537,6 +1537,9 @@ def go_deps():
     )
     go_repository(
         name = "com_github_googleapis_go_type_adapters",
+        build_directives = [
+            "gazelle:resolve go google.golang.org/genproto/googleapis/type/date  @org_golang_google_genproto//googleapis/type/date:date",
+        ],
         build_file_proto_mode = "disable",
         importpath = "github.com/googleapis/go-type-adapters",
         sum = "h1:9XdMn+d/G57qq1s8dNc5IesGCXHf6V2HZ2JwRxfA2tA=",
@@ -3928,6 +3931,9 @@ def go_deps():
     )
     go_repository(
         name = "com_google_cloud_go_storage",
+        build_directives = [
+            "gazelle:resolve go google.golang.org/genproto/googleapis/type/date  @org_golang_google_genproto//googleapis/type/date:date",
+        ],
         build_file_proto_mode = "disable_global",
         importpath = "cloud.google.com/go/storage",
         sum = "h1:F6IlQJZrZM++apn9V5/VfS3gbTUYg98PS3EMQAzqtfg=",
