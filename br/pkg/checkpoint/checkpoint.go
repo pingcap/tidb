@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -15,7 +16,6 @@ import (
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/metautil"
-	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/storage"
 )
@@ -100,7 +100,7 @@ func (r *CheckpointRunner) FlushChecksum(ctx context.Context, tableID int64, crc
 	if err != nil {
 		return errors.Trace(err)
 	}
-	fname := fmt.Sprintf("%s/%d", CheckpointDir, tableID)
+	fname := fmt.Sprintf("%s/%d", CheckpointChecksumDir, tableID)
 	return r.storage.WriteFile(ctx, fname, data)
 }
 
@@ -233,7 +233,7 @@ func (r *CheckpointRunner) doFlush(ctx context.Context, meta map[string]*RangeGr
 		if len(group.Groups) == 0 {
 			continue
 		}
-		idenKey := redact.Key(group.Groups[0].StartKey)
+		idenKey := base64.URLEncoding.EncodeToString(group.Groups[0].StartKey)
 		fname := fmt.Sprintf(CheckpointFilesPathFormat, groupKey, idenKey)
 
 		// Flush the metaFile to storage
@@ -356,7 +356,7 @@ func loadCheckpointChecksum(ctx context.Context, s storage.ExternalStorage) (map
 	checkpointChecksum := make(map[int64]*ChecksumItem)
 
 	err := s.WalkDir(ctx, &storage.WalkOption{SubDir: CheckpointChecksumDir}, func(path string, size int64) error {
-		data, err := s.ReadFile(ctx, CheckpointMetaPath)
+		data, err := s.ReadFile(ctx, path)
 		if err != nil {
 			return errors.Trace(err)
 		}

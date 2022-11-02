@@ -5,6 +5,7 @@ package backup
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -299,7 +300,7 @@ func (bc *Client) LoadCheckpointRange(ctx context.Context, r rtree.Range, progre
 	}
 
 	// use groupKey to distinguish different ranges
-	groupKey := redact.Key(r.StartKey)
+	groupKey := base64.URLEncoding.EncodeToString(r.StartKey)
 	err := checkpoint.WalkCheckpointFileWithSpecificKey(ctx, bc.storage, groupKey, bc.cipher, func(region *rtree.Range) {
 		rangeTree.Put(region.StartKey, region.EndKey, region.Files)
 		progressCallBack(RegionUnit)
@@ -803,10 +804,14 @@ func (bc *Client) BackupRange(
 				EndKey:   r.EndKey,
 			})
 		}
-		request.SubRanges = subRanges
+
+		// don't make the origin request dirty,
+		// since fineGrainedBackup need to use it.
+		req := request
+		req.SubRanges = subRanges
 
 		push := newPushDown(bc.mgr, len(allStores))
-		err = push.pushBackup(ctx, request, progressRange, allStores, bc.checkpointRunner, progressCallBack)
+		err = push.pushBackup(ctx, req, progressRange, allStores, bc.checkpointRunner, progressCallBack)
 		if err != nil {
 			return errors.Trace(err)
 		}
