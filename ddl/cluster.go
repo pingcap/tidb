@@ -415,15 +415,15 @@ func SendFlashbackToVersionRPC(
 	return taskStat, nil
 }
 
-func FlashbackToVersion(
+func flashbackToVersion(
 	ctx context.Context,
-	s tikv.Storage,
+	d *ddlCtx,
 	handler rangetask.TaskHandler,
 	startKey []byte, endKey []byte,
 ) (err error) {
 	return rangetask.NewRangeTaskRunner(
 		"flashback-to-version-runner",
-		s,
+		d.store.(tikv.Storage),
 		int(variable.GetDDLFlashbackConcurrency()),
 		handler,
 	).RunOnRange(ctx, startKey, endKey)
@@ -524,7 +524,7 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		splitRegionsByKeyRanges(d, keyRanges)
 		totalRegions.Store(0)
 		for _, r := range keyRanges {
-			if err = FlashbackToVersion(d.ctx, d.store.(tikv.Storage),
+			if err = flashbackToVersion(d.ctx, d,
 				func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
 					stats, err := SendPrepareFlashbackToVersionRPC(ctx, d.store.(tikv.Storage), r)
 					totalRegions.Add(uint64(stats.CompletedRegions))
@@ -559,7 +559,7 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		}
 
 		for _, r := range keyRanges {
-			if err = FlashbackToVersion(d.ctx, d.store.(tikv.Storage),
+			if err = flashbackToVersion(d.ctx, d,
 				func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
 					// Use commitTS - 1 as startTS, make sure it less than commitTS.
 					stats, err := SendFlashbackToVersionRPC(ctx, d.store.(tikv.Storage), flashbackTS, commitTS-1, commitTS, r)
