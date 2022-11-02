@@ -727,6 +727,7 @@ func main() {
 		"set @@global.tidb_enable_clustered_index=0;",
 		"set @@global.tidb_mem_quota_query=34359738368",
 		"set @@tidb_mem_quota_query=34359738368",
+		"set @@global.tidb_enable_clustered_index = 'int_only'",
 	}
 	for _, sql := range resets {
 		if _, err = mdb.Exec(sql); err != nil {
