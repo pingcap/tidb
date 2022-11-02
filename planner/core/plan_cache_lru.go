@@ -60,8 +60,7 @@ type LRUPlanCache struct {
 	quota uint64
 	guard float64
 
-	// MemTracker track the memory usage of prepared plan cache
-	memTracker *memory.Tracker
+	memoryUsageTotal int64
 }
 
 // NewLRUPlanCache creates a PCLRUCache object, whose capacity is "capacity".
@@ -72,8 +71,6 @@ func NewLRUPlanCache(capacity uint, guard float64, quota uint64,
 		capacity = 100
 		logutil.BgLogger().Info("capacity of LRU cache is less than 1, will use default value(100) init cache")
 	}
-	m := memory.NewTracker(memory.LabelForPreparedPlanCache, -1)
-	m.AttachTo(planCacheInstanceMemoryTracker)
 	return &LRUPlanCache{
 		capacity:       capacity,
 		size:           0,
@@ -82,7 +79,6 @@ func NewLRUPlanCache(capacity uint, guard float64, quota uint64,
 		pickFromBucket: pickFromBucket,
 		quota:          quota,
 		guard:          guard,
-		memTracker:     m,
 	}
 }
 
@@ -113,14 +109,12 @@ func (l *LRUPlanCache) Get(key kvcache.Key, paramTypes []*types.FieldType) (valu
 func (l *LRUPlanCache) Put(key kvcache.Key, value kvcache.Value, paramTypes []*types.FieldType) {
 	l.lock.Lock()
 	defer l.lock.Unlock()
-	defer updateMonitorMetric()
 
 	hash := strHashKey(key, true)
 	bucket, bucketExist := l.buckets[hash]
 	if bucketExist {
 		if element, exist := l.pickFromBucket(bucket, paramTypes); exist {
-			l.memTracker.Consume(value.(*PlanCacheValue).MemoryUsage() -
-				element.Value.(*planCacheEntry).PlanValue.(*PlanCacheValue).MemoryUsage())
+			l.updateInstanceMetric(&planCacheEntry{PlanKey: key, PlanValue: value}, element.Value.(*planCacheEntry), 0)
 			element.Value.(*planCacheEntry).PlanValue = value
 			l.lruList.MoveToFront(element)
 			return
@@ -136,8 +130,7 @@ func (l *LRUPlanCache) Put(key kvcache.Key, value kvcache.Value, paramTypes []*t
 	element := l.lruList.PushFront(newCacheEntry)
 	l.buckets[hash][element] = struct{}{}
 	l.size++
-	planCacheInstancePlanNumCounter.Add(1)
-	l.memTracker.Consume(newCacheEntry.MemoryUsage())
+	l.updateInstanceMetric(newCacheEntry, nil, 1)
 	if l.size > l.capacity {
 		l.removeOldest()
 	}
@@ -148,16 +141,14 @@ func (l *LRUPlanCache) Put(key kvcache.Key, value kvcache.Value, paramTypes []*t
 func (l *LRUPlanCache) Delete(key kvcache.Key) {
 	l.lock.Lock()
 	defer l.lock.Unlock()
-	defer updateMonitorMetric()
 
 	hash := strHashKey(key, false)
 	bucket, bucketExist := l.buckets[hash]
 	if bucketExist {
 		for element := range bucket {
-			l.memTracker.Consume(-element.Value.(*planCacheEntry).MemoryUsage())
+			l.updateInstanceMetric(nil, element.Value.(*planCacheEntry), -1)
 			l.lruList.Remove(element)
 			l.size--
-			planCacheInstancePlanNumCounter.Sub(1)
 		}
 		delete(l.buckets, hash)
 	}
@@ -167,15 +158,13 @@ func (l *LRUPlanCache) Delete(key kvcache.Key) {
 func (l *LRUPlanCache) DeleteAll() {
 	l.lock.Lock()
 	defer l.lock.Unlock()
-	defer updateMonitorMetric()
 
 	for lru := l.lruList.Back(); lru != nil; lru = l.lruList.Back() {
+		l.updateInstanceMetric(nil, lru.Value.(*planCacheEntry), -1)
 		l.lruList.Remove(lru)
 		l.size--
-		planCacheInstancePlanNumCounter.Sub(1)
 	}
 	l.buckets = make(map[string]map[*list.Element]struct{}, 1)
-	l.memTracker.ReplaceBytesUsed(0)
 }
 
 // Size gets the current cache size.
@@ -190,7 +179,6 @@ func (l *LRUPlanCache) Size() int {
 func (l *LRUPlanCache) SetCapacity(capacity uint) error {
 	l.lock.Lock()
 	defer l.lock.Unlock()
-	defer updateMonitorMetric()
 
 	if capacity < 1 {
 		return errors.New("capacity of LRU cache should be at least 1")
@@ -207,7 +195,7 @@ func (l *LRUPlanCache) MemoryUsage() (sum int64) {
 	if l == nil {
 		return
 	}
-	return l.memTracker.BytesConsumed()
+	return l.memoryUsageTotal
 }
 
 // Close do some clean work for LRUPlanCache when close the session
@@ -215,12 +203,8 @@ func (l *LRUPlanCache) Close() {
 	if l == nil {
 		return
 	}
-	if l.memTracker != nil {
-		l.memTracker.ReplaceBytesUsed(0)
-		updateMonitorMetric()
-		l.memTracker.Detach()
-	}
-	planCacheInstancePlanNumCounter.Sub(float64(l.size))
+	metrics.PlanCacheInstanceMemoryUsage.WithLabelValues("instance").Sub(float64(l.memoryUsageTotal))
+	metrics.PlanCacheInstancePlanNumCounter.WithLabelValues("plan_num").Sub(float64(l.size))
 }
 
 // removeOldest removes the oldest element from the cache.
@@ -233,11 +217,10 @@ func (l *LRUPlanCache) removeOldest() {
 		l.onEvict(lru.Value.(*planCacheEntry).PlanKey, lru.Value.(*planCacheEntry).PlanValue)
 	}
 
-	l.memTracker.Consume(-lru.Value.(*planCacheEntry).MemoryUsage())
+	l.updateInstanceMetric(nil, lru.Value.(*planCacheEntry), -1)
 	l.lruList.Remove(lru)
 	l.removeFromBucket(lru)
 	l.size--
-	planCacheInstancePlanNumCounter.Sub(1)
 }
 
 // removeFromBucket remove element from bucket
@@ -274,7 +257,23 @@ func PickPlanFromBucket(bucket map[*list.Element]struct{}, paramTypes []*types.F
 	return nil, false
 }
 
-// updateMonitor update the memory usage for show in grafana
-func updateMonitorMetric() {
-	metrics.PlanCacheInstanceMemoryUsage.WithLabelValues("instance").Set(float64(planCacheInstanceMemoryTracker.BytesConsumed()))
+// updateInstanceMetric update the memory usage and plan num for show in grafana
+func (l *LRUPlanCache) updateInstanceMetric(in, out *planCacheEntry, planNumInc int64) {
+	if l == nil {
+		return
+	}
+
+	if planNumInc == 0 { // evict plan
+		metrics.PlanCacheInstanceMemoryUsage.WithLabelValues("instance").Sub(float64(out.MemoryUsage()))
+		metrics.PlanCacheInstanceMemoryUsage.WithLabelValues("instance").Add(float64(in.MemoryUsage()))
+		l.memoryUsageTotal += in.MemoryUsage() - out.MemoryUsage()
+	} else if planNumInc > 0 { // put plan
+		metrics.PlanCacheInstanceMemoryUsage.WithLabelValues("instance").Add(float64(in.MemoryUsage()))
+		l.memoryUsageTotal += in.MemoryUsage()
+		metrics.PlanCacheInstancePlanNumCounter.WithLabelValues("plan_num").Add(float64(planNumInc))
+	} else { // delete plan
+		metrics.PlanCacheInstanceMemoryUsage.WithLabelValues("instance").Sub(float64(out.MemoryUsage()))
+		l.memoryUsageTotal -= out.MemoryUsage()
+		metrics.PlanCacheInstancePlanNumCounter.WithLabelValues("plan_num").Sub(float64(-planNumInc))
+	}
 }
