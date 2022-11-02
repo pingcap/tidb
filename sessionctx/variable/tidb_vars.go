@@ -1060,7 +1060,6 @@ const (
 	MinDDLReorgBatchSize                     int32  = 32
 	MinExpensiveQueryTimeThreshold           uint64 = 10 // 10s
 	DefTiDBRcWriteCheckTs                           = false
-	DefTiDBConstraintCheckInPlacePessimistic        = true
 	DefTiDBForeignKeyChecks                         = false
 	DefTiDBAnalyzePartitionConcurrency              = 1
 	DefTiDBOptRangeMaxSize                          = 64 * int64(size.MB) // 64 MB
