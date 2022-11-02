@@ -332,7 +332,6 @@ func (e *HashAggExec) initForUnparallelExec() {
 
 	e.tmpChkForSpill = tryNewCacheChunk(e.children[0])
 	if vars := e.ctx.GetSessionVars(); vars.TrackAggregateMemoryUsage && variable.EnableTmpStorageOnOOM.Load() {
-
 		e.diskTracker = disk.NewTracker(e.id, -1)
 		e.diskTracker.AttachTo(vars.StmtCtx.DiskTracker)
 		e.listInDisk.GetDiskTracker().AttachTo(e.diskTracker)
