@@ -9,6 +9,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
+	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -108,7 +109,7 @@ func TestCheckpointRunner(t *testing.T) {
 	err = checkpointRunner.Finish(ctx)
 	require.NoError(t, err)
 
-	checker := func(resp *checkpoint.RangeGroup) {
+	checker := func(resp *rtree.Range) {
 		require.NotNil(t, resp)
 		d, ok := data[string(resp.StartKey)]
 		if !ok {

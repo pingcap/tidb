@@ -8,6 +8,7 @@ go_library(
     deps = [
         "//br/pkg/errors",
         "//br/pkg/metautil",
+        "//br/pkg/redact",
         "//br/pkg/rtree",
         "//br/pkg/storage",
         "@com_github_pingcap_errors//:errors",
@@ -21,6 +22,7 @@ go_test(
     srcs = ["checkpoint_test.go"],
     deps = [
         ":checkpoint",
+        "//br/pkg/rtree",
         "//br/pkg/storage",
         "@com_github_pingcap_kvproto//pkg/brpb",
         "@com_github_pingcap_kvproto//pkg/encryptionpb",

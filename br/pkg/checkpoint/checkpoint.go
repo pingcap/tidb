@@ -29,6 +29,8 @@ const (
 
 	CheckpointFilesPathFormat = CheckpointDirFormat + "/filegroups.%s.cpt"
 	CheckpointIndexPathFormat = CheckpointIndexDirFormat + "/file.%s.cpt"
+
+	CheckpointChecksumDir = CheckpointDir + "/checksum"
 )
 
 const tickDuration = 30 * time.Second
@@ -86,6 +88,20 @@ func StartCheckpointRunner(ctx context.Context, storage storage.ExternalStorage,
 
 	runner.startCheckpointLoop(ctx, tickDuration)
 	return runner
+}
+
+func (r *CheckpointRunner) FlushChecksum(ctx context.Context, tableID int64, crc64xor uint64, totalKvs uint64, totalBytes uint64) error {
+	data, err := json.Marshal(&ChecksumItem{
+		TableID:    tableID,
+		Crc64xor:   crc64xor,
+		TotalKvs:   totalKvs,
+		TotalBytes: totalBytes,
+	})
+	if err != nil {
+		return errors.Trace(err)
+	}
+	fname := fmt.Sprintf("%s/%d", CheckpointDir, tableID)
+	return r.storage.WriteFile(ctx, fname, data)
 }
 
 func (r *CheckpointRunner) Append(
@@ -307,11 +323,19 @@ func WalkCheckpointFileWithSpecificKey(ctx context.Context, s storage.ExternalSt
 	return errors.Trace(err)
 }
 
-type CheckpointMetadata struct {
-	ConfigHash []byte `json:"config-hash"`
-	BackupTS   uint64 `json:"backup-ts"`
+type ChecksumItem struct {
+	TableID    int64  `json:"table-id"`
+	Crc64xor   uint64 `json:"crc64-xor"`
+	TotalKvs   uint64 `json:"total-kvs"`
+	TotalBytes uint64 `json:"total-bytes"`
+}
 
-	Ranges []rtree.Range `json:"ranges"`
+type CheckpointMetadata struct {
+	ConfigHash []byte        `json:"config-hash"`
+	BackupTS   uint64        `json:"backup-ts"`
+	Ranges     []rtree.Range `json:"ranges"`
+
+	CheckpointChecksum map[int64]*ChecksumItem `json:"-"`
 }
 
 func LoadCheckpointMetadata(ctx context.Context, s storage.ExternalStorage) (*CheckpointMetadata, error) {
@@ -321,7 +345,30 @@ func LoadCheckpointMetadata(ctx context.Context, s storage.ExternalStorage) (*Ch
 	}
 	m := &CheckpointMetadata{}
 	err = json.Unmarshal(data, m)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	m.CheckpointChecksum, err = loadCheckpointChecksum(ctx, s)
 	return m, errors.Trace(err)
+}
+
+func loadCheckpointChecksum(ctx context.Context, s storage.ExternalStorage) (map[int64]*ChecksumItem, error) {
+	checkpointChecksum := make(map[int64]*ChecksumItem)
+
+	err := s.WalkDir(ctx, &storage.WalkOption{SubDir: CheckpointChecksumDir}, func(path string, size int64) error {
+		data, err := s.ReadFile(ctx, CheckpointMetaPath)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		c := &ChecksumItem{}
+		err = json.Unmarshal(data, c)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		checkpointChecksum[c.TableID] = c
+		return nil
+	})
+	return checkpointChecksum, errors.Trace(err)
 }
 
 func SaveCheckpointMetadata(ctx context.Context, s storage.ExternalStorage, meta *CheckpointMetadata) error {

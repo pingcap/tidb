@@ -259,6 +259,10 @@ func (bc *Client) CheckCheckpoint(hash []byte) bool {
 	return bytes.Equal(bc.checkpointMeta.ConfigHash, hash)
 }
 
+func (bc *Client) GetCheckpointRunner() *checkpoint.CheckpointRunner {
+	return bc.checkpointRunner
+}
+
 // StartCheckpointMeta saves the initial status into the external storage, and start checkpoint runner
 func (bc *Client) StartCheckpointRunner(ctx context.Context, cfgHash []byte, backupTS uint64, ranges []rtree.Range) error {
 	defer func() {
@@ -354,6 +358,7 @@ func (bc *Client) BuildBackupRangeAndSchema(
 		return BuildBackupRangeAndSchema(storage, tableFilter, backupTS, isFullBackup, true)
 	}
 	_, schemas, policies, err := BuildBackupRangeAndSchema(storage, tableFilter, backupTS, isFullBackup, false)
+	schemas.SetCheckpointChecksum(bc.checkpointMeta.CheckpointChecksum)
 	return bc.checkpointMeta.Ranges, schemas, policies, errors.Trace(err)
 }
 
