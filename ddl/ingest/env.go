@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/size"
 	"go.uber.org/zap"
@@ -62,7 +63,7 @@ func InitGlobalLightningEnv() {
 		return
 	}
 	LitBackCtxMgr.init(LitMemRoot, LitDiskRoot)
-	LitRLimit = genRLimit()
+	LitRLimit = util.GenRLimit()
 	LitInitialized = true
 	logutil.BgLogger().Info(LitInfoEnvInitSucc,
 		zap.Uint64("memory limitation", maxMemoryQuota),
@@ -102,7 +103,7 @@ func genLightningDataDir() (string, error) {
 }
 
 // GenRLimitForTest is only used for test.
-var GenRLimitForTest = genRLimit
+var GenRLimitForTest = util.GenRLimit()
 
 // GenLightningDataDirForTest is only used for test.
 var GenLightningDataDirForTest = genLightningDataDir

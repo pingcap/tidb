@@ -136,6 +136,7 @@ func (c *RowContainer) SpillToDisk() {
 		defer c.actionSpill.setStatus(spilledYet)
 	}
 	var err error
+	memory.QueryForceDisk.Add(1)
 	n := c.m.records.inMemory.NumChunks()
 	c.m.records.inDisk = NewListInDisk(c.m.records.inMemory.FieldTypes())
 	c.m.records.inDisk.diskTracker.AttachTo(c.diskTracker)
@@ -411,9 +412,6 @@ func (a *SpillDiskAction) Reset() {
 	a.once = sync.Once{}
 }
 
-// SetLogHook sets the hook, it does nothing just to form the memory.ActionOnExceed interface.
-func (*SpillDiskAction) SetLogHook(_ func(uint64)) {}
-
 // GetPriority get the priority of the Action.
 func (*SpillDiskAction) GetPriority() int64 {
 	return memory.DefSpillPriority
@@ -606,9 +604,6 @@ func (a *SortAndSpillDiskAction) Action(t *memory.Tracker) {
 		fallback.Action(t)
 	}
 }
-
-// SetLogHook sets the hook, it does nothing just to form the memory.ActionOnExceed interface.
-func (*SortAndSpillDiskAction) SetLogHook(_ func(uint64)) {}
 
 // WaitForTest waits all goroutine have gone.
 func (a *SortAndSpillDiskAction) WaitForTest() {

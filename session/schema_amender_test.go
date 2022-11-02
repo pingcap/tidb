@@ -255,7 +255,7 @@ func TestAmendCollectAndGenMutations(t *testing.T) {
 	defer func() { require.NoError(t, store.Close()) }()
 	se := &session{
 		store:       store,
-		sessionVars: variable.NewSessionVars(),
+		sessionVars: variable.NewSessionVars(nil),
 	}
 	se.mu.values = make(map[fmt.Stringer]interface{})
 	domain.BindDomain(se, domain.NewMockDomain())

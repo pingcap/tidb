@@ -382,6 +382,8 @@ func (ft *FieldType) CompactStr() string {
 		}
 	case mysql.TypeYear:
 		suffix = fmt.Sprintf("(%d)", ft.flen)
+	case mysql.TypeNull:
+		suffix = "(0)"
 	}
 	return ts + suffix
 }
@@ -630,12 +632,11 @@ func (ft *FieldType) MemoryUsage() (sum int64) {
 	if ft == nil {
 		return
 	}
-	sum = emptyFieldTypeSize + int64(len(ft.charset)+len(ft.collate))
+	sum = emptyFieldTypeSize + int64(len(ft.charset)+len(ft.collate)) + int64(cap(ft.elems))*int64(unsafe.Sizeof(*new(string))) +
+		int64(cap(ft.elemsIsBinaryLit))*int64(unsafe.Sizeof(*new(bool)))
 
 	for _, s := range ft.elems {
 		sum += int64(len(s))
 	}
-	sum += int64(cap(ft.elems)) * int64(unsafe.Sizeof(*new(string)))
-	sum += int64(cap(ft.elemsIsBinaryLit)) * int64(unsafe.Sizeof(*new(bool)))
 	return
 }

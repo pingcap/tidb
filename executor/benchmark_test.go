@@ -102,6 +102,11 @@ func (mp *mockDataPhysicalPlan) SelectBlockOffset() int {
 	return 0
 }
 
+// MemoryUsage of mockDataPhysicalPlan is only for testing
+func (mp *mockDataPhysicalPlan) MemoryUsage() (sum int64) {
+	return
+}
+
 func buildMockDataPhysicalPlan(ctx sessionctx.Context, srcExec Executor) *mockDataPhysicalPlan {
 	return &mockDataPhysicalPlan{
 		schema: srcExec.Schema(),
@@ -937,8 +942,10 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec Executor)
 	t := memory.NewTracker(-1, memLimit)
 	t.SetActionOnExceed(nil)
 	t2 := disk.NewTracker(-1, -1)
-	e.ctx.GetSessionVars().StmtCtx.MemTracker = t
-	e.ctx.GetSessionVars().StmtCtx.DiskTracker = t2
+	e.ctx.GetSessionVars().MemTracker = t
+	e.ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(t)
+	e.ctx.GetSessionVars().DiskTracker = t2
+	e.ctx.GetSessionVars().StmtCtx.DiskTracker.AttachTo(t2)
 	return e
 }
 

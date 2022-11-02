@@ -153,7 +153,8 @@ func (tk *TestKit) MustPartition(sql string, partitions string, args ...interfac
 		if len(partitions) == 0 && strings.Contains(rs.rows[i][3], "partition:") {
 			ok = false
 		}
-		if len(partitions) != 0 && strings.Compare(rs.rows[i][3], "partition:"+partitions) == 0 {
+		// The data format is "table: t1, partition: p0,p1,p2"
+		if len(partitions) != 0 && strings.HasSuffix(rs.rows[i][3], "partition:"+partitions) {
 			ok = true
 		}
 	}
@@ -272,8 +273,8 @@ func (tk *TestKit) ExecWithContext(ctx context.Context, sql string, args ...inte
 		for i, stmt := range stmts {
 			var rs sqlexec.RecordSet
 			var err error
-			if s, ok := stmt.(*ast.NonTransactionalDeleteStmt); ok {
-				rs, err = session.HandleNonTransactionalDelete(ctx, s, tk.Session())
+			if s, ok := stmt.(*ast.NonTransactionalDMLStmt); ok {
+				rs, err = session.HandleNonTransactionalDML(ctx, s, tk.Session())
 			} else {
 				rs, err = tk.Session().ExecuteStmt(ctx, stmt)
 			}

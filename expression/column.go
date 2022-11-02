@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/size"
 	"golang.org/x/exp/slices"
 )
 
@@ -198,7 +199,10 @@ func (col *CorrelatedColumn) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = col.Column.MemoryUsage() + col.Data.MemUsage()
+	sum = col.Column.MemoryUsage() + size.SizeOfPointer
+	if col.Data != nil {
+		sum += col.Data.MemUsage()
+	}
 	return sum
 }
 
@@ -763,9 +767,11 @@ func (col *Column) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = emptyColumnSize + col.RetType.MemoryUsage() + int64(cap(col.hashcode)) +
-		int64(len(col.OrigName)+len(col.charset)+len(col.collation))
+	sum = emptyColumnSize + int64(cap(col.hashcode)) + int64(len(col.OrigName)+len(col.charset)+len(col.collation))
 
+	if col.RetType != nil {
+		sum += col.RetType.MemoryUsage()
+	}
 	if col.VirtualExpr != nil {
 		sum += col.VirtualExpr.MemoryUsage()
 	}

@@ -23,7 +23,6 @@ go_test(
         "//parser/ast",
         "//parser/model",
         "//parser/mysql",
-        "//parser/terror",
         "//planner/core",
         "//server",
         "//session",
