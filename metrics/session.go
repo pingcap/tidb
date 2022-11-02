@@ -128,13 +128,14 @@ var (
 			Help:      "Counter of validating read ts by getting a timestamp from PD",
 		})
 
-	NonTransactionalDeleteCount = prometheus.NewCounter(
+	NonTransactionalDMLCount = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "session",
-			Name:      "non_transactional_delete_count",
+			Name:      "non_transactional_dml_count",
 			Help:      "Counter of non-transactional delete",
-		})
+		}, []string{LblType},
+	)
 	TxnStatusEnteringCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",

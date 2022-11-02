@@ -20,6 +20,8 @@ import (
 	"math"
 	"strings"
 
+	"github.com/prometheus/client_golang/prometheus"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain"
@@ -48,6 +50,11 @@ import (
 
 // ErrNonTransactionalJobFailure is the error when a non-transactional job fails. The error is returned and following jobs are canceled.
 var ErrNonTransactionalJobFailure = dbterror.ClassSession.NewStd(errno.ErrNonTransactionalJobFailure)
+
+var (
+	NonTransactionalDeleteCount = metrics.NonTransactionalDMLCount.With(prometheus.Labels{metrics.LblType: "delete"})
+	NonTransactionalInsertCount = metrics.NonTransactionalDMLCount.With(prometheus.Labels{metrics.LblType: "insert"})
+)
 
 // job: handle keys in [start, end]
 type job struct {
@@ -160,7 +167,7 @@ func checkConstraint(stmt *ast.NonTransactionalDMLStmt, se Session) error {
 		if err := checkReadClauses(s.Limit, s.Order); err != nil {
 			return err
 		}
-		metrics.NonTransactionalDeleteCount.Inc()
+		NonTransactionalDeleteCount.Inc()
 	case *ast.UpdateStmt:
 		// TODO: check: (1) single target table (2) more...
 		if s.Limit != nil {
@@ -181,6 +188,26 @@ func checkConstraint(stmt *ast.NonTransactionalDMLStmt, se Session) error {
 		if err := checkReadClauses(selectStmt.Limit, selectStmt.OrderBy); err != nil {
 			return err
 		}
+		sourceTable, ok := selectStmt.From.TableRefs.Left.(*ast.TableSource)
+		if !ok {
+			return errors.New("Non-transactional insert must have a source table")
+		}
+		sourceName, ok := sourceTable.Source.(*ast.TableName)
+		if !ok {
+			return errors.New("Non-transaction insert must have s source table")
+		}
+		targetTable, ok := s.Table.TableRefs.Left.(*ast.TableSource)
+		if !ok {
+			return errors.New("Non-transactional insert must have a target table")
+		}
+		targetName, ok := targetTable.Source.(*ast.TableName)
+		if !ok {
+			return errors.New("Non-transactional insert must have a target table")
+		}
+		if sourceName.Name.L == targetName.Name.L {
+			return errors.New("Non-transactional insert doesn't support self-insert")
+		}
+		NonTransactionalInsertCount.Inc()
 	default:
 		return errors.New("Unsupported DML type for non-transactional DML")
 	}
