@@ -389,7 +389,7 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 			logutil.BgLogger().Error("empty authentication")
 			return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 		}
-		tokenString := hack.String(authentication[:len(authentication)-1])
+		tokenString := string(hack.String(authentication[:len(authentication)-1]))
 		var (
 			claims map[string]interface{}
 			err    error
