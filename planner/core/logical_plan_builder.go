@@ -5416,7 +5416,7 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	}
 	updt.PartitionedTable = b.partitionedTable
 	updt.tblID2Table = tblID2table
-	err = updt.buildOnUpdateFKChecks(b.ctx, b.is, tblID2table)
+	err = updt.buildOnUpdateFKTriggers(b.ctx, b.is, tblID2table)
 	return updt, err
 }
 
