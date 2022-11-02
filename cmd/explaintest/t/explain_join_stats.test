@@ -1,3 +1,4 @@
+set tidb_cost_model_version=1;
 use test;
 drop table if exists e, lo;
 create table e(a int, b int, key idx_a(a), key idx_b(b)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
