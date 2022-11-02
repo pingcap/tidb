@@ -812,8 +812,6 @@ const (
 	LabelForPreparedPlanCache int = -26
 	// LabelForSession represents the label of a session.
 	LabelForSession int = -27
-	// LabelForPlanCacheInstanceMemory represents the label of total plan cache memory usage of all session
-	LabelForPlanCacheInstanceMemory int = -28
 )
 
 // MetricsTypes is used to get label for metrics
