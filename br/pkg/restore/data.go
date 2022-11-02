@@ -4,6 +4,7 @@ package restore
 import (
 	"context"
 	"io"
+	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -30,8 +31,8 @@ import (
 // 3. send the recover plan and the wait tikv to apply, in waitapply, all assigned region leader will check apply log to the last log
 // 4. ensure all region apply to last log
 // 5. prepare the flashback
-// 6. flashback to resolvedTs
-func RecoverData(ctx context.Context, resolvedTs uint64, allStores []*metapb.Store, mgr *conn.Mgr, progress glue.Progress, restoreTs uint64, concurrency uint32) (int, error) {
+// 6. flashback to resolveTS
+func RecoverData(ctx context.Context, resolveTS uint64, allStores []*metapb.Store, mgr *conn.Mgr, progress glue.Progress, restoreTS uint64, concurrency uint32) (int, error) {
 	var recovery = NewRecovery(allStores, mgr, progress, concurrency)
 	if err := recovery.ReadRegionMeta(ctx); err != nil {
 		return 0, errors.Trace(err)
@@ -60,7 +61,7 @@ func RecoverData(ctx context.Context, resolvedTs uint64, allStores []*metapb.Sto
 		return totalRegions, errors.Trace(err)
 	}
 
-	if err := recovery.FlashbackToVersion(ctx, resolvedTs, restoreTs); err != nil {
+	if err := recovery.FlashbackToVersion(ctx, resolveTS, restoreTS); err != nil {
 		return totalRegions, errors.Trace(err)
 	}
 
@@ -79,13 +80,14 @@ func NewStoreMeta(storeId uint64) StoreMeta {
 
 // for test
 type Recovery struct {
-	allStores    []*metapb.Store
-	StoreMetas   []StoreMeta
-	RecoveryPlan map[uint64][]*recovpb.RecoverRegionRequest
-	MaxAllocID   uint64
-	mgr          *conn.Mgr
-	progress     glue.Progress
-	concurrency  uint32
+	allStores             []*metapb.Store
+	StoreMetas            []StoreMeta
+	RecoveryPlan          map[uint64][]*recovpb.RecoverRegionRequest
+	MaxAllocID            uint64
+	mgr                   *conn.Mgr
+	progress              glue.Progress
+	concurrency           uint32
+	totalFlashbackRegions uint64
 }
 
 func NewRecovery(allStores []*metapb.Store, mgr *conn.Mgr, progress glue.Progress, concurrency uint32) Recovery {
@@ -93,13 +95,14 @@ func NewRecovery(allStores []*metapb.Store, mgr *conn.Mgr, progress glue.Progres
 	var StoreMetas = make([]StoreMeta, totalStores)
 	var regionRecovers = make(map[uint64][]*recovpb.RecoverRegionRequest, totalStores)
 	return Recovery{
-		allStores:    allStores,
-		StoreMetas:   StoreMetas,
-		RecoveryPlan: regionRecovers,
-		MaxAllocID:   0,
-		mgr:          mgr,
-		progress:     progress,
-		concurrency:  concurrency}
+		allStores:             allStores,
+		StoreMetas:            StoreMetas,
+		RecoveryPlan:          regionRecovers,
+		MaxAllocID:            0,
+		mgr:                   mgr,
+		progress:              progress,
+		concurrency:           concurrency,
+		totalFlashbackRegions: 0}
 }
 
 func (recovery *Recovery) newRecoveryClient(ctx context.Context, storeAddr string) (recovpb.RecoverDataClient, *grpc.ClientConn, error) {
@@ -302,8 +305,14 @@ func (recovery *Recovery) WaitApply(ctx context.Context) (err error) {
 
 // prepare the region for flashback the data, the purpose is to stop region service, put region in flashback state
 func (recovery *Recovery) PrepareFlashbackToVersion(ctx context.Context) (err error) {
+
+	var totalRegions atomic.Uint64
+	totalRegions.Store(0)
+
 	handler := func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
-		return ddl.SendPrepareFlashbackToVersionRPC(ctx, recovery.mgr.GetStorage().(tikv.Storage), r)
+		stats, err := ddl.SendPrepareFlashbackToVersionRPC(ctx, recovery.mgr.GetStorage().(tikv.Storage), r)
+		totalRegions.Add(uint64(stats.CompletedRegions))
+		return stats, err
 	}
 
 	runner := rangetask.NewRangeTaskRunner("br-flashback-prepare-runner", recovery.mgr.GetStorage().(tikv.Storage), int(recovery.concurrency), handler)
@@ -314,17 +323,24 @@ func (recovery *Recovery) PrepareFlashbackToVersion(ctx context.Context) (err er
 		return errors.Trace(err)
 	}
 
-	// TODO: currently, we do not know how many regions before start progress, EBS snapshot restore very fast at this stage (< 5mins), so we just simple add 1.
-	recovery.progress.Inc()
+	recovery.totalFlashbackRegions = totalRegions.Load()
 	log.Info("region flashback prepare complete", zap.Int("regions", runner.CompletedRegions()))
 
 	return nil
 }
 
-// flashback the region data to version resolvedTs
-func (recovery *Recovery) FlashbackToVersion(ctx context.Context, resolvedTs uint64, commitTs uint64) (err error) {
+// flashback the region data to version resolveTS
+func (recovery *Recovery) FlashbackToVersion(ctx context.Context, resolveTS uint64, commitTS uint64) (err error) {
+
+	var completedRegions atomic.Uint64
+
+	// only know the total progress of tikv, progress is total state of the whole restore flow.
+	ratio := int(recovery.totalFlashbackRegions) / len(recovery.allStores)
+
 	handler := func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
-		return ddl.SendFlashbackToVersionRPC(ctx, recovery.mgr.GetStorage().(tikv.Storage), resolvedTs, commitTs-1, commitTs, r)
+		stats, err := ddl.SendFlashbackToVersionRPC(ctx, recovery.mgr.GetStorage().(tikv.Storage), resolveTS, commitTS-1, commitTS, r)
+		completedRegions.Add(uint64(stats.CompletedRegions))
+		return stats, err
 	}
 
 	runner := rangetask.NewRangeTaskRunner("br-flashback-runner", recovery.mgr.GetStorage().(tikv.Storage), int(recovery.concurrency), handler)
@@ -332,17 +348,17 @@ func (recovery *Recovery) FlashbackToVersion(ctx context.Context, resolvedTs uin
 	err = runner.RunOnRange(ctx, []byte(""), []byte(""))
 	if err != nil {
 		log.Error("region flashback get error",
-			zap.Uint64("resolvedTs", resolvedTs),
-			zap.Uint64("commitTs", commitTs),
+			zap.Uint64("resolveTS", resolveTS),
+			zap.Uint64("commitTS", commitTS),
 			zap.Int("regions", runner.CompletedRegions()))
 		return errors.Trace(err)
 	}
 
-	recovery.progress.Inc()
+	recovery.progress.IncBy(int64(completedRegions.Load()) / int64(ratio))
 
 	log.Info("region flashback complete",
-		zap.Uint64("resolvedTs", resolvedTs),
-		zap.Uint64("commitTs", commitTs),
+		zap.Uint64("resolveTS", resolveTS),
+		zap.Uint64("commitTS", commitTS),
 		zap.Int("regions", runner.CompletedRegions()))
 
 	return nil
