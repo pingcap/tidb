@@ -479,7 +479,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	}
 
 	if sctx.GetSessionVars().StmtCtx.HasMemQuotaHint {
-		sctx.GetSessionVars().StmtCtx.MemTracker.SetBytesLimit(sctx.GetSessionVars().StmtCtx.MemQuotaQuery)
+		sctx.GetSessionVars().MemTracker.SetBytesLimit(sctx.GetSessionVars().StmtCtx.MemQuotaQuery)
 	}
 
 	e, err := a.buildExecutor()
@@ -509,10 +509,14 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		}
 		maxExecutionTime := getMaxExecutionTime(sctx)
 		// Update processinfo, ShowProcess() will use it.
-		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
 		if a.Ctx.GetSessionVars().StmtCtx.StmtType == "" {
 			a.Ctx.GetSessionVars().StmtCtx.StmtType = ast.GetStmtLabel(a.StmtNode)
 		}
+		// Since maxExecutionTime is used only for query statement, here we limit it affect scope.
+		if !a.IsReadOnly(a.Ctx.GetSessionVars()) {
+			maxExecutionTime = 0
+		}
+		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
 	}
 
 	failpoint.Inject("mockDelayInnerSessionExecute", func() {
@@ -608,7 +612,7 @@ func (a *ExecStmt) handleForeignKeyTrigger(ctx context.Context, e Executor, dept
 }
 
 func (a *ExecStmt) handleForeignKeyCascade(ctx context.Context, fkc *FKCascadeExec, depth int) error {
-	if len(fkc.fkValues) == 0 {
+	if len(fkc.fkValues) == 0 && len(fkc.fkUpdatedValuesMap) == 0 {
 		return nil
 	}
 	if depth > maxForeignKeyCascadeDepth {
@@ -693,7 +697,7 @@ func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic 
 		// If the stmt have no rs like `insert`, The session tracker detachment will be directly
 		// done in the `defer` function. If the rs is not nil, the detachment will be done in
 		// `rs.Close` in `handleStmt`
-		if sc != nil && rs == nil {
+		if handled && sc != nil && rs == nil {
 			if sc.MemTracker != nil {
 				sc.MemTracker.Detach()
 			}
@@ -1439,8 +1443,8 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	execDetail := stmtCtx.GetExecDetails()
 	copTaskInfo := stmtCtx.CopTasksDetails()
 	statsInfos := plannercore.GetStatsInfoFromFlatPlan(flat)
-	memMax := stmtCtx.MemTracker.MaxConsumed()
-	diskMax := stmtCtx.DiskTracker.MaxConsumed()
+	memMax := sessVars.MemTracker.MaxConsumed()
+	diskMax := sessVars.DiskTracker.MaxConsumed()
 	_, planDigest := getPlanDigest(stmtCtx)
 
 	binaryPlan := ""
@@ -1710,8 +1714,8 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 
 	execDetail := stmtCtx.GetExecDetails()
 	copTaskInfo := stmtCtx.CopTasksDetails()
-	memMax := stmtCtx.MemTracker.MaxConsumed()
-	diskMax := stmtCtx.DiskTracker.MaxConsumed()
+	memMax := sessVars.MemTracker.MaxConsumed()
+	diskMax := sessVars.DiskTracker.MaxConsumed()
 	sql := a.GetTextToLog()
 	var stmtDetail execdetails.StmtExecDetails
 	stmtDetailRaw := a.GoCtx.Value(execdetails.StmtExecDetailKey)

@@ -77,6 +77,15 @@ func TestBinaryJSONExtract(t *testing.T) {
 		{bj5, []string{`$.properties.$type.$a.$b`}, mustParseBinaryFromString(t, `"TiDB"`), true, nil},
 		{bj5, []string{`$.properties.$type.$a.*[0]`}, mustParseBinaryFromString(t, `["TiDB"]`), true, nil},
 		{bj11, []string{"$.metadata.comment"}, mustParseBinaryFromString(t, `"1234"`), true, nil},
+		{bj9, []string{"$[0]"}, mustParseBinaryFromString(t, `[0, 1] `), true, nil},
+		{bj9, []string{"$[last][last]"}, mustParseBinaryFromString(t, `[5,6]`), true, nil},
+		{bj9, []string{"$[last-1][last]"}, mustParseBinaryFromString(t, `3`), true, nil},
+		{bj9, []string{"$[last-1][last-1]"}, mustParseBinaryFromString(t, `2`), true, nil},
+		{bj9, []string{"$[1 to 2]"}, mustParseBinaryFromString(t, `[[2,3],[4,[5,6]]]`), true, nil},
+		{bj9, []string{"$[1 to 2][1 to 2]"}, mustParseBinaryFromString(t, `[3,[5,6]]`), true, nil},
+		{bj9, []string{"$[1 to last][1 to last]"}, mustParseBinaryFromString(t, `[3,[5,6]]`), true, nil},
+		{bj9, []string{"$[1 to last][1 to last - 1]"}, bj9, false, nil},
+		{bj9, []string{"$[1 to last][0 to last - 1]"}, mustParseBinaryFromString(t, `[2,4]`), true, nil},
 
 		// test extract with multi path expressions.
 		{bj1, []string{"$.a", "$[5]"}, mustParseBinaryFromString(t, `[[1, "2", {"aa": "bb"}, 4.0, {"aa": "cc"}]]`), true, nil},

@@ -426,6 +426,40 @@ func UpdateAnalyzeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob, rowCo
 	}
 }
 
+// FinishAnalyzeMergeJob finishes analyze merge job
+func FinishAnalyzeMergeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob, analyzeErr error) {
+	if job == nil || job.ID == nil {
+		return
+	}
+	job.EndTime = time.Now()
+	var sql string
+	var args []interface{}
+	if analyzeErr != nil {
+		failReason := analyzeErr.Error()
+		const textMaxLength = 65535
+		if len(failReason) > textMaxLength {
+			failReason = failReason[:textMaxLength]
+		}
+		sql = "UPDATE mysql.analyze_jobs SET end_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %?, fail_reason = %?, process_id = NULL WHERE id = %?"
+		args = []interface{}{job.EndTime.UTC().Format(types.TimeFormat), statistics.AnalyzeFailed, failReason, *job.ID}
+	} else {
+		sql = "UPDATE mysql.analyze_jobs SET end_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %?, process_id = NULL WHERE id = %?"
+		args = []interface{}{job.EndTime.UTC().Format(types.TimeFormat), statistics.AnalyzeFinished, *job.ID}
+	}
+	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	_, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool}, sql, args...)
+	if err != nil {
+		var state string
+		if analyzeErr != nil {
+			state = statistics.AnalyzeFailed
+		} else {
+			state = statistics.AnalyzeFinished
+		}
+		logutil.BgLogger().Warn("failed to update analyze job", zap.String("update", fmt.Sprintf("%s->%s", statistics.AnalyzeRunning, state)), zap.Error(err))
+	}
+}
+
 // FinishAnalyzeJob updates the state of the analyze job to finished/failed according to `meetError` and sets the end time.
 func FinishAnalyzeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob, analyzeErr error) {
 	if job == nil || job.ID == nil {

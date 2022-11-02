@@ -12,5 +12,6 @@ go_library(
         "//util/chunk",
         "//util/sqlexec",
         "@com_github_pingcap_errors//:errors",
+        "@io_etcd_go_etcd_client_v3//:client",
     ],
 )

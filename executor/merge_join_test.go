@@ -264,10 +264,10 @@ func TestShuffleMergeJoinInDisk(t *testing.T) {
 
 	result := checkMergeAndRun(tk, t, "select /*+ TIDB_SMJ(t) */ * from t1 left outer join t on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
 	result.Check(testkit.Rows("1 3 1 1"))
-	require.Equal(t, int64(0), tk.Session().GetSessionVars().StmtCtx.MemTracker.BytesConsumed())
-	require.Greater(t, tk.Session().GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), int64(0))
-	require.Equal(t, int64(0), tk.Session().GetSessionVars().StmtCtx.DiskTracker.BytesConsumed())
-	require.Greater(t, tk.Session().GetSessionVars().StmtCtx.DiskTracker.MaxConsumed(), int64(0))
+	require.Equal(t, int64(0), tk.Session().GetSessionVars().MemTracker.BytesConsumed())
+	require.Greater(t, tk.Session().GetSessionVars().MemTracker.MaxConsumed(), int64(0))
+	require.Equal(t, int64(0), tk.Session().GetSessionVars().DiskTracker.BytesConsumed())
+	require.GreaterOrEqual(t, tk.Session().GetSessionVars().DiskTracker.MaxConsumed(), int64(0))
 }
 
 func TestMergeJoinInDisk(t *testing.T) {
