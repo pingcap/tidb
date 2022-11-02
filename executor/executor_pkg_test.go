@@ -306,7 +306,9 @@ func TestSortSpillDisk(t *testing.T) {
 	ctx.GetSessionVars().MemQuota.MemQuotaQuery = 1
 	ctx.GetSessionVars().InitChunkSize = variable.DefMaxChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, -1)
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSession, -1)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
+	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
 	cas := &sortCase{rows: 2048, orderByIdx: []int{0, 1}, ndvs: []int{0, 0}, ctx: ctx}
 	opt := mockDataSourceParameters{
 		schema: expression.NewSchema(cas.columns()...),
@@ -342,7 +344,9 @@ func TestSortSpillDisk(t *testing.T) {
 	err = exec.Close()
 	require.NoError(t, err)
 
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, 1)
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSession, 1)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
+	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
 	dataSource.prepareChunks()
 	err = exec.Open(tmpCtx)
 	require.NoError(t, err)
@@ -372,7 +376,9 @@ func TestSortSpillDisk(t *testing.T) {
 	err = exec.Close()
 	require.NoError(t, err)
 
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, 28000)
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSession, 28000)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
+	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
 	dataSource.prepareChunks()
 	err = exec.Open(tmpCtx)
 	require.NoError(t, err)
@@ -394,8 +400,10 @@ func TestSortSpillDisk(t *testing.T) {
 	ctx = mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = variable.DefMaxChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, 16864*50)
-	ctx.GetSessionVars().StmtCtx.MemTracker.Consume(16864 * 45)
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSession, 16864*50)
+	ctx.GetSessionVars().MemTracker.Consume(16864 * 45)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
+	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
 	cas = &sortCase{rows: 20480, orderByIdx: []int{0, 1}, ndvs: []int{0, 0}, ctx: ctx}
 	opt = mockDataSourceParameters{
 		schema: expression.NewSchema(cas.columns()...),

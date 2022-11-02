@@ -31,9 +31,6 @@ type ActionOnExceed interface {
 	// Action will be called when memory usage exceeds memory quota by the
 	// corresponding Tracker.
 	Action(t *Tracker)
-	// SetLogHook binds a log hook which will be triggered and log an detailed
-	// message for the out-of-memory sql.
-	SetLogHook(hook func(uint64))
 	// SetFallback sets a fallback action which will be triggered if itself has
 	// already been triggered.
 	SetFallback(a ActionOnExceed)
@@ -134,15 +131,20 @@ func (a *PanicOnExceed) SetLogHook(hook func(uint64)) {
 }
 
 // Action panics when memory usage exceeds memory quota.
-func (a *PanicOnExceed) Action(_ *Tracker) {
+func (a *PanicOnExceed) Action(t *Tracker) {
 	a.mutex.Lock()
+	defer func() {
+		a.mutex.Unlock()
+	}()
 	if !a.acted {
-		if a.logHook != nil {
+		if a.logHook == nil {
+			logutil.BgLogger().Warn("memory exceeds quota",
+				zap.Uint64("connID", t.SessionID), zap.Error(errMemExceedThreshold.GenWithStackByArgs(t.label, t.BytesConsumed(), t.GetBytesLimit(), t.String())))
+		} else {
 			a.logHook(a.ConnID)
 		}
 	}
 	a.acted = true
-	a.mutex.Unlock()
 	panic(PanicMemoryExceed + fmt.Sprintf("[conn_id=%d]", a.ConnID))
 }
 
