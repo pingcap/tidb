@@ -29,7 +29,7 @@ func getShardID(id uint64) uint64 {
 }
 
 type tContainer[T any, U any, C any, CT any, TF gpool.Context[CT]] struct {
-	task *taskBox[T, U, C, CT, TF]
+	task *gpool.TaskBox[T, U, C, CT, TF]
 	_    cpu.CacheLinePad
 }
 
@@ -69,7 +69,7 @@ func (t *TaskManager[T, U, C, CT, TF]) CreatTask(task uint64) {
 }
 
 // AddTask add a task to the manager.
-func (t *TaskManager[T, U, C, CT, TF]) AddTask(id uint64, task *taskBox[T, U, C, CT, TF]) {
+func (t *TaskManager[T, U, C, CT, TF]) AddTask(id uint64, task *gpool.TaskBox[T, U, C, CT, TF]) {
 	shardID := getShardID(id)
 	tc := tContainer[T, U, C, CT, TF]{
 		task: task,

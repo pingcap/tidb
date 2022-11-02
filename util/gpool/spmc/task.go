@@ -16,37 +16,9 @@ package spmc
 
 import (
 	"sync"
-	"sync/atomic"
 
 	"github.com/pingcap/tidb/util/gpool"
 )
-
-const (
-	// PendingTask is a task waiting to start
-	PendingTask int32 = iota
-	// RunningTask is a task running
-	RunningTask
-	// StopTask is a stop task
-	StopTask
-)
-
-type taskBox[T any, U any, C any, CT any, TF gpool.Context[CT]] struct {
-	constArgs   C
-	contextFunc TF
-	wg          *sync.WaitGroup
-	task        chan T
-	resultCh    chan U
-	taskID      uint64
-	status      atomic.Int32 // task manager is able to make this task stop, wait or running
-}
-
-func (t *taskBox[T, U, C, CT, TF]) GetStatus() int32 {
-	return t.status.Load()
-}
-
-func (t *taskBox[T, U, C, CT, TF]) SetStatus(s int32) {
-	t.status.Store(s)
-}
 
 // TaskController is a controller that can control or watch the pool.
 type TaskController[T any, U any, C any, CT any, TF gpool.Context[CT]] struct {

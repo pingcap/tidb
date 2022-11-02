@@ -14,6 +14,11 @@
 
 package gpool
 
+import (
+	"sync"
+	"sync/atomic"
+)
+
 // Context is a interface that can be used to create a context.
 type Context[T any] interface {
 	GetContext() T
@@ -25,4 +30,71 @@ type NilContext struct{}
 // GetContext is to get a nil as context
 func (NilContext) GetContext() any {
 	return nil
+}
+
+const (
+	// PendingTask is a task waiting to start
+	PendingTask int32 = iota
+	// RunningTask is a task running
+	RunningTask
+	// StopTask is a stop task
+	StopTask
+)
+
+// TaskBox is a box which contains all info about task.
+type TaskBox[T any, U any, C any, CT any, TF Context[CT]] struct {
+	constArgs   C
+	contextFunc TF
+	wg          *sync.WaitGroup
+	task        chan T
+	resultCh    chan U
+	taskID      uint64
+	status      atomic.Int32 // task manager is able to make this task stop, wait or running
+}
+
+// NewTaskBox is to create a task box.
+func NewTaskBox[T any, U any, C any, CT any, TF Context[CT]](constArgs C, contextFunc TF, wg *sync.WaitGroup, taskCh chan T, resultCh chan U, taskID uint64) TaskBox[T, U, C, CT, TF] {
+	return TaskBox[T, U, C, CT, TF]{
+		constArgs:   constArgs,
+		contextFunc: contextFunc,
+		wg:          wg,
+		task:        taskCh,
+		resultCh:    resultCh,
+		taskID:      taskID,
+	}
+}
+
+// ConstArgs is to get the const args.
+func (t *TaskBox[T, U, C, CT, TF]) ConstArgs() C {
+	return t.constArgs
+}
+
+// GeTaskCh is to get the task channel.
+func (t *TaskBox[T, U, C, CT, TF]) GeTaskCh() chan T {
+	return t.task
+}
+
+// GetResultCh is to get result channel
+func (t *TaskBox[T, U, C, CT, TF]) GetResultCh() chan U {
+	return t.resultCh
+}
+
+// GetContextFunc is to get context func.
+func (t *TaskBox[T, U, C, CT, TF]) GetContextFunc() TF {
+	return t.contextFunc
+}
+
+// GetStatus is to get the status of task.
+func (t *TaskBox[T, U, C, CT, TF]) GetStatus() int32 {
+	return t.status.Load()
+}
+
+// SetStatus is to set the status of task.
+func (t *TaskBox[T, U, C, CT, TF]) SetStatus(s int32) {
+	t.status.Store(s)
+}
+
+// Done is to set the task status to complete.
+func (t *TaskBox[T, U, C, CT, TF]) Done() {
+	t.wg.Done()
 }

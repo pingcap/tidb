@@ -65,7 +65,7 @@ func (w *goWorker[T, U, C, CT, TF]) run() {
 				f.SetStatus(pooltask.RunningTask)
 			case StopTask:
 				continue
-			case RunningTask:
+			case gpool.RunningTask:
 				log.Error("worker got task running")
 				continue
 			}
