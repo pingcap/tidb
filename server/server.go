@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
@@ -510,7 +511,6 @@ func (s *Server) onConn(conn *clientConn) {
 		terror.Log(conn.Close())
 		return
 	}
-	connectionInfo := conn.connectInfo()
 
 	extensions, err := extension.GetExtensions()
 	if err != nil {
@@ -522,18 +522,17 @@ func (s *Server) onConn(conn *clientConn) {
 
 	if sessExtensions := extensions.NewSessionExtensions(); sessExtensions != nil {
 		conn.extensions = sessExtensions
-		sessExtensions.OnConnectionEvent(extension.ConnConnected, connectionInfo)
+		conn.onExtensionConnEvent(extension.ConnConnected, nil)
 		defer func() {
-			sessExtensions.OnConnectionEvent(extension.ConnDisconnected, connectionInfo)
+			conn.onExtensionConnEvent(extension.ConnDisconnected, nil)
 		}()
 	}
 
 	ctx := logutil.WithConnID(context.Background(), conn.connectionID)
 	if err := conn.handshake(ctx); err != nil {
-		connectionInfo = conn.connectInfo()
-		conn.extensions.OnConnectionEvent(extension.ConnHandshakeRejected, connectionInfo)
+		conn.onExtensionConnEvent(extension.ConnHandshakeRejected, err)
 		if plugin.IsEnable(plugin.Audit) && conn.getCtx() != nil {
-			conn.getCtx().GetSessionVars().ConnectionInfo = connectionInfo
+			conn.getCtx().GetSessionVars().ConnectionInfo = conn.connectInfo()
 			err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 				authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 				if authPlugin.OnConnectionEvent != nil {
@@ -578,9 +577,8 @@ func (s *Server) onConn(conn *clientConn) {
 	metrics.ConnGauge.Set(float64(connections))
 
 	sessionVars := conn.ctx.GetSessionVars()
-	connectionInfo = conn.connectInfo()
-	sessionVars.ConnectionInfo = connectionInfo
-	conn.extensions.OnConnectionEvent(extension.ConnHandshakeAccepted, connectionInfo)
+	sessionVars.ConnectionInfo = conn.connectInfo()
+	conn.onExtensionConnEvent(extension.ConnHandshakeAccepted, nil)
 	err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 		if authPlugin.OnConnectionEvent != nil {
@@ -636,6 +634,32 @@ func (cc *clientConn) connectInfo() *variable.ConnectionInfo {
 		DB:                cc.dbname,
 	}
 	return connInfo
+}
+
+func (cc *clientConn) onExtensionConnEvent(tp extension.ConnEventTp, err error) {
+	if cc.extensions == nil {
+		return
+	}
+
+	var connInfo *variable.ConnectionInfo
+	var activeRoles []*auth.RoleIdentity
+	if ctx := cc.getCtx(); ctx != nil {
+		sessVars := ctx.GetSessionVars()
+		connInfo = sessVars.ConnectionInfo
+		activeRoles = sessVars.ActiveRoles
+	}
+
+	if connInfo == nil {
+		connInfo = cc.connectInfo()
+	}
+
+	info := &extension.ConnEventInfo{
+		ConnectionInfo: connInfo,
+		ActiveRoles:    activeRoles,
+		Error:          err,
+	}
+
+	cc.extensions.OnConnectionEvent(tp, info)
 }
 
 func (s *Server) checkConnectionCount() error {
