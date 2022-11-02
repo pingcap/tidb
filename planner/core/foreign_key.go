@@ -82,20 +82,24 @@ func (f *FKCascade) MemoryUsage() (sum int64) {
 	return
 }
 
-func (p *Insert) buildOnInsertFKChecks(ctx sessionctx.Context, is infoschema.InfoSchema, dbName string) error {
+func (p *Insert) buildOnInsertFKTriggers(ctx sessionctx.Context, is infoschema.InfoSchema, dbName string) error {
 	if !ctx.GetSessionVars().ForeignKeyChecks {
 		return nil
 	}
 	tblInfo := p.Table.Meta()
 	fkChecks := make([]*FKCheck, 0, len(tblInfo.ForeignKeys))
+	fkCascades := make([]*FKCascade, 0, len(tblInfo.ForeignKeys))
 	updateCols := p.buildOnDuplicateUpdateColumns()
 	if len(updateCols) > 0 {
-		referredFKChecks, _, err := buildOnUpdateReferredFKTriggers(is, dbName, tblInfo, updateCols)
+		referredFKChecks, referredFKCascades, err := buildOnUpdateReferredFKTriggers(is, dbName, tblInfo, updateCols)
 		if err != nil {
 			return err
 		}
 		if len(referredFKChecks) > 0 {
 			fkChecks = append(fkChecks, referredFKChecks...)
+		}
+		if len(referredFKCascades) > 0 {
+			fkCascades = append(fkCascades, referredFKCascades...)
 		}
 	}
 	for _, fk := range tblInfo.ForeignKeys {
@@ -112,6 +116,7 @@ func (p *Insert) buildOnInsertFKChecks(ctx sessionctx.Context, is infoschema.Inf
 		}
 	}
 	p.FKChecks = fkChecks
+	p.FKCascades = fkCascades
 	return nil
 }
 
