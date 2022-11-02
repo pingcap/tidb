@@ -789,10 +789,10 @@ func genWhereConditionAst(cols []*model.ColumnInfo, fkValues [][]types.Datum) as
 }
 
 func genWhereConditionAstForMultiColumn(cols []*model.ColumnInfo, fkValues [][]types.Datum) ast.ExprNode {
-	var colValues []ast.ExprNode
+	colValues := make([]ast.ExprNode, len(cols))
 	for i := range cols {
 		col := &ast.ColumnNameExpr{Name: &ast.ColumnName{Name: cols[i].Name}}
-		colValues = append(colValues, col)
+		colValues[i] = col
 	}
 	valueList := make([]ast.ExprNode, 0, len(fkValues))
 	for _, fkVals := range fkValues {
