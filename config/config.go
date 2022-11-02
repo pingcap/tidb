@@ -548,7 +548,7 @@ type Security struct {
 	MinTLSVersion   string `toml:"tls-version" json:"tls-version"`
 	RSAKeySize      int    `toml:"rsa-key-size" json:"rsa-key-size"`
 	SecureBootstrap bool   `toml:"secure-bootstrap" json:"secure-bootstrap"`
-	// The path of thw JWKS for tidb_auth_token authentication
+	// The path of the JWKS for tidb_auth_token authentication
 	AuthTokenJWKS string `toml:"auth-token-jwks" json:"auth-token-jwks"`
 	// The refresh time interval of JWKS
 	AuthTokenRefreshInterval string `toml:"auth-token-refresh-interval" json:"auth-token-refresh-interval"`
