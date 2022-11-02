@@ -426,7 +426,6 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 		if v.InOperand {
 			newExpr = SetExprColumnInOperand(newExpr)
 		}
-		newExpr.SetCoercibility(v.Coercibility())
 		return true, false, newExpr
 	case *ScalarFunction:
 		substituted := false
@@ -463,7 +462,12 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 					_ = append(append(append(tmpArgs, refExprArr.Result()[0:idx]...), refExprArr.Result()[idx+1:]...), newFuncExpr)
 					_, newColl := DeriveCollationFromExprs(v.GetCtx(), append(v.GetArgs(), newFuncExpr)...)
 					if coll == newColl {
-						changed = checkCollationStrictness(coll, newFuncExpr.GetType().GetCollate())
+						if newFuncExpr.GetType().GetCollate() == arg.GetType().GetCollate() && newFuncExpr.Coercibility() == arg.Coercibility() {
+							// It's safe to use the new expression, otherwise some cases in projection push-down will be wrong.
+							changed = true
+						} else {
+							changed = checkCollationStrictness(coll, newFuncExpr.GetType().GetCollate())
+						}
 					}
 				}
 			}
