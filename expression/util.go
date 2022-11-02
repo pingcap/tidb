@@ -456,7 +456,6 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 				if coll == newColl {
 					changed = checkCollationStrictness(coll, newFuncExpr.GetType().GetCollate())
 				}
-
 			}
 			hasFail = hasFail || failed || oldChanged != changed
 			if fail1Return && oldChanged != changed {
