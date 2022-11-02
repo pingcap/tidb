@@ -2572,6 +2572,9 @@ func (s *session) Close() {
 		s.stmtStats.SetFinished()
 	}
 	s.ClearDiskFullOpt()
+	if s.preparedPlanCache != nil {
+		s.preparedPlanCache.Close()
+	}
 }
 
 // GetSessionVars implements the context.Context interface.
