@@ -16,6 +16,7 @@ package domain
 
 import (
 	"errors"
+	"github.com/pingcap/tidb/config"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -39,7 +40,8 @@ type dumpFileGcChecker struct {
 // GetPlanReplayerDirName returns plan replayer directory path.
 // The path is related to the process id.
 func GetPlanReplayerDirName() string {
-	return filepath.Join(os.TempDir(), "replayer", strconv.Itoa(os.Getpid()))
+	tidbLogDir, _ := filepath.Split(config.GetGlobalConfig().Log.File.Filename)
+	return filepath.Join(tidbLogDir, "replayer")
 }
 
 func parseTime(s string) (time.Time, error) {
