@@ -827,7 +827,7 @@ func TestBatchPointGetTablePartition(t *testing.T) {
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t1,t2,t3,t4,t5,t6")
 
-	testKit.MustExec("create table t1(a int, b int, primary key(a,b)) partition by hash(b) partitions 2")
+	testKit.MustExec("create table t1(a int, b int, primary key(a,b) nonclustered) partition by hash(b) partitions 2")
 	testKit.MustExec("insert into t1 values(1,1),(1,2),(2,1),(2,2)")
 	testKit.MustExec("set @@tidb_partition_prune_mode = 'static'")
 	testKit.MustQuery("explain format = 'brief' select * from t1 where a in (1,2) and b = 1").Check(testkit.Rows(
@@ -864,7 +864,7 @@ func TestBatchPointGetTablePartition(t *testing.T) {
 		"1 2",
 	))
 
-	testKit.MustExec("create table t2(a int, b int, primary key(a,b)) partition by range(b) (partition p0 values less than (2), partition p1 values less than maxvalue)")
+	testKit.MustExec("create table t2(a int, b int, primary key(a,b) nonclustered) partition by range(b) (partition p0 values less than (2), partition p1 values less than maxvalue)")
 	testKit.MustExec("insert into t2 values(1,1),(1,2),(2,1),(2,2)")
 	testKit.MustExec("set @@tidb_partition_prune_mode = 'static'")
 	testKit.MustQuery("explain format = 'brief' select * from t2 where a in (1,2) and b = 1").Check(testkit.Rows(
@@ -906,7 +906,7 @@ func TestBatchPointGetTablePartition(t *testing.T) {
 
 	testKit.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 
-	testKit.MustExec("create table t3(a int, b int, primary key(a,b)) partition by hash(b) partitions 2")
+	testKit.MustExec("create table t3(a int, b int, primary key(a,b) nonclustered) partition by hash(b) partitions 2")
 	testKit.MustExec("insert into t3 values(1,1),(1,2),(2,1),(2,2)")
 	testKit.MustExec("set @@tidb_partition_prune_mode = 'static'")
 	testKit.MustQuery("explain format = 'brief' select * from t3 where a in (1,2) and b = 1").Check(testkit.Rows(
@@ -943,7 +943,7 @@ func TestBatchPointGetTablePartition(t *testing.T) {
 		"1 2",
 	))
 
-	testKit.MustExec("create table t4(a int, b int, primary key(a,b)) partition by range(b) (partition p0 values less than (2), partition p1 values less than maxvalue)")
+	testKit.MustExec("create table t4(a int, b int, primary key(a,b) nonclustered) partition by range(b) (partition p0 values less than (2), partition p1 values less than maxvalue)")
 	testKit.MustExec("insert into t4 values(1,1),(1,2),(2,1),(2,2)")
 	testKit.MustExec("set @@tidb_partition_prune_mode = 'static'")
 	testKit.MustQuery("explain format = 'brief' select * from t4 where a in (1,2) and b = 1").Check(testkit.Rows(
@@ -983,7 +983,7 @@ func TestBatchPointGetTablePartition(t *testing.T) {
 		"1 2",
 	))
 
-	testKit.MustExec("create table t5(a int, b int, primary key(a)) partition by hash(a) partitions 2")
+	testKit.MustExec("create table t5(a int, b int, primary key(a) nonclustered) partition by hash(a) partitions 2")
 	testKit.MustExec("insert into t5 values(1,0),(2,0),(3,0),(4,0)")
 	testKit.MustExec("set @@tidb_partition_prune_mode = 'static'")
 	testKit.MustQuery("explain format = 'brief' select * from t5 where a in (1,2) and 1 = 1").Check(testkit.Rows(
@@ -1020,7 +1020,7 @@ func TestBatchPointGetTablePartition(t *testing.T) {
 		"3 0",
 	))
 
-	testKit.MustExec("create table t6(a int, b int, primary key(a)) partition by range(a) (partition p0 values less than (3), partition p1 values less than maxvalue)")
+	testKit.MustExec("create table t6(a int, b int, primary key(a) nonclustered) partition by range(a) (partition p0 values less than (3), partition p1 values less than maxvalue)")
 	testKit.MustExec("insert into t6 values(1,0),(2,0),(3,0),(4,0)")
 	testKit.MustExec("set @@tidb_partition_prune_mode = 'static'")
 	testKit.MustQuery("explain format = 'brief' select * from t6 where a in (1,2) and 1 = 1").Check(testkit.Rows(
