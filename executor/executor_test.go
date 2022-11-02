@@ -6176,3 +6176,23 @@ func TestCompileOutOfMemoryQuota(t *testing.T) {
 	err := tk.ExecToErr("select t.a, t1.a from t use index(idx), t1 use index(idx) where t.a = t1.a")
 	require.Contains(t, err.Error(), "Out Of Memory Quota!")
 }
+
+func TestSessionRootTrackerDetach(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("set global tidb_mem_oom_action = DEFAULT")
+	tk.MustExec("set global tidb_mem_oom_action='CANCEL'")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, index idx(a))")
+	tk.MustExec("create table t1(a int, c int, index idx(a))")
+	tk.MustExec("set tidb_mem_quota_query=10")
+	err := tk.ExecToErr("select /*+hash_join(t1)*/ t.a, t1.a from t use index(idx), t1 use index(idx) where t.a = t1.a")
+	require.Contains(t, err.Error(), "Out Of Memory Quota!")
+	tk.MustExec("set tidb_mem_quota_query=1000")
+	rs, err := tk.Exec("select /*+hash_join(t1)*/ t.a, t1.a from t use index(idx), t1 use index(idx) where t.a = t1.a")
+	require.NoError(t, err)
+	require.NotNil(t, tk.Session().GetSessionVars().MemTracker.GetFallbackForTest(false))
+	err = rs.Close()
+	require.NoError(t, err)
+	require.Nil(t, tk.Session().GetSessionVars().MemTracker.GetFallbackForTest(false))
+}
