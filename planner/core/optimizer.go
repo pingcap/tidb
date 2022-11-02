@@ -442,19 +442,19 @@ func (p *PhysicalHashJoin) extractUsedCols(parentUsedCols []*expression.Column) 
 
 func prunePhysicalColumnForHashJoinChild(sctx sessionctx.Context, hashJoin *PhysicalHashJoin, joinUsedCols []*expression.Column, sender *PhysicalExchangeSender) error {
 	var err error
-	used := expression.GetUsedList(joinUsedCols, sender.Schema())
-	exprCols := make([]*expression.Column, len(sender.HashCols))
+	joinUsed := expression.GetUsedList(joinUsedCols, sender.Schema())
+	hashCols := make([]*expression.Column, len(sender.HashCols))
 	for i, mppCol := range sender.HashCols {
-		exprCols[i] = mppCol.Col
+		hashCols[i] = mppCol.Col
 	}
-	exprUsed := expression.GetUsedList(exprCols, sender.Schema())
+	hashUsed := expression.GetUsedList(hashCols, sender.Schema())
 
 	needPrune := false
 	usedExprs := make([]expression.Expression, len(sender.Schema().Columns))
 	prunedSchema := sender.Schema().Clone()
-	for i := len(used) - 1; i >= 0; i-- {
+	for i := len(joinUsed) - 1; i >= 0; i-- {
 		usedExprs[i] = sender.Schema().Columns[i]
-		if !used[i] && !exprUsed[i] {
+		if !joinUsed[i] && !hashUsed[i] {
 			needPrune = true
 			usedExprs = append(usedExprs[:i], usedExprs[i+1:]...)
 			prunedSchema.Columns = append(prunedSchema.Columns[:i], prunedSchema.Columns[i+1:]...)
@@ -465,7 +465,7 @@ func prunePhysicalColumnForHashJoinChild(sctx sessionctx.Context, hashJoin *Phys
 		ch := sender.children[0]
 		proj := PhysicalProjection{
 			Exprs: usedExprs,
-		}.Init(sctx, ch.statsInfo(), 0)
+		}.Init(sctx, ch.statsInfo(), ch.SelectBlockOffset())
 
 		proj.SetSchema(prunedSchema)
 		proj.SetChildren(ch)
