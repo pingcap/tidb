@@ -50,8 +50,8 @@ import (
 var ErrNonTransactionalJobFailure = dbterror.ClassSession.NewStd(errno.ErrNonTransactionalJobFailure)
 
 var (
-	NonTransactionalDeleteCount = metrics.NonTransactionalDMLCount.With(prometheus.Labels{metrics.LblType: "delete"})
-	NonTransactionalInsertCount = metrics.NonTransactionalDMLCount.With(prometheus.Labels{metrics.LblType: "insert"})
+	nonTransactionalDeleteCount = metrics.NonTransactionalDMLCount.With(prometheus.Labels{metrics.LblType: "delete"})
+	nonTransactionalInsertCount = metrics.NonTransactionalDMLCount.With(prometheus.Labels{metrics.LblType: "insert"})
 )
 
 // job: handle keys in [start, end]
@@ -149,7 +149,7 @@ func checkConstraint(stmt *ast.NonTransactionalDMLStmt, se Session) error {
 		if err := checkReadClauses(s.Limit, s.Order); err != nil {
 			return err
 		}
-		NonTransactionalDeleteCount.Inc()
+		nonTransactionalDeleteCount.Inc()
 	case *ast.UpdateStmt:
 		// TODO: check: (1) single target table (2) more...
 		if s.Limit != nil {
@@ -189,7 +189,7 @@ func checkConstraint(stmt *ast.NonTransactionalDMLStmt, se Session) error {
 		if sourceName.Name.L == targetName.Name.L {
 			return errors.New("Non-transactional insert doesn't support self-insert")
 		}
-		NonTransactionalInsertCount.Inc()
+		nonTransactionalInsertCount.Inc()
 	default:
 		return errors.New("Unsupported DML type for non-transactional DML")
 	}
