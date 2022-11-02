@@ -18,7 +18,7 @@ http_archive(
     ],
 )
 
-load("@io_bazel_rules_go//go:deps.bzl", "go_register_toolchains", "go_rules_dependencies")
+load("@io_bazel_rules_go//go:deps.bzl", "go_download_sdk", "go_register_toolchains", "go_rules_dependencies")
 load("@bazel_gazelle//:deps.bzl", "gazelle_dependencies")
 load("//:DEPS.bzl", "go_deps")
 
@@ -27,9 +27,16 @@ go_deps()
 
 go_rules_dependencies()
 
+go_download_sdk(
+    name = "tidb_sdk",
+    urls = [
+        "https://mirrors.aliyun.com/golang/{}",
+    ],
+    version = "1.19.3",
+)
+
 go_register_toolchains(
     nogo = "@//build:tidb_nogo",
-    version = "1.19.2",
 )
 
 gazelle_dependencies()
