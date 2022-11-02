@@ -198,7 +198,8 @@ func init() {
 	}
 
 	for i := range path {
-		file, err := os.CreateTemp("", fmt.Sprintf("jwks%d-*.json", i))
+		path[i] = fmt.Sprintf("%s%cjwks%d.json", os.TempDir(), os.PathSeparator, i)
+		file, err := os.Create(path[i])
 		if err != nil {
 			log.Fatal("Fail to create temp file")
 		}
@@ -208,7 +209,7 @@ func init() {
 			jwks.AddKey(jwkArray[i])
 		} else {
 			for j := 0; j <= i; j++ {
-				jwks.AddKey(jwkArray[i])
+				jwks.AddKey(jwkArray[j])
 			}
 		}
 		if rawJSON, err = json.MarshalIndent(jwks, "", "  "); err != nil {
@@ -219,7 +220,6 @@ func init() {
 		} else if n != len(rawJSON) {
 			log.Fatal("Lack byte when writing json")
 		}
-		path[i] = file.Name()
 	}
 }
 
@@ -397,6 +397,9 @@ func TestJWKSImpl(t *testing.T) {
 	signedTokenString, err = getSignedTokenString(priKeys[0], claims)
 	require.NoError(t, err)
 	require.NoError(t, jwksImpl.LoadJWKS4AuthToken(path[1], time.Hour), path[1])
+	_, err = jwksImpl.checkSigWithRetry(signedTokenString, 0)
+	require.NoError(t, err)
+	require.NoError(t, jwksImpl.LoadJWKS4AuthToken(path[2], time.Hour), path[2])
 	_, err = jwksImpl.checkSigWithRetry(signedTokenString, 0)
 	require.Error(t, err)
 }
