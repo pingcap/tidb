@@ -1663,7 +1663,7 @@ Cannot create a JSON value from a string with CHARACTER SET '%s'.
 
 ["json:3149"]
 error = '''
-In this situation, path expressions may not contain the * and ** tokens.
+In this situation, path expressions may not contain the * and ** tokens or range selection.
 '''
 
 ["json:3150"]

@@ -61,6 +61,7 @@ type ProcessInfo struct {
 	Command                   byte
 	ExceedExpensiveTimeThresh bool
 	RedactSQL                 bool
+	CanExplainAnalyze         bool
 }
 
 // ToRowForShow returns []interface{} for the row data of "SHOW [FULL] PROCESSLIST".
@@ -191,6 +192,8 @@ type SessionManager interface {
 	GetInternalSessionStartTSList() []uint64
 	// CheckOldRunningTxn checks if there is an old transaction running in the current sessions
 	CheckOldRunningTxn(job2ver map[int64]int64, job2ids map[int64]string)
+	// KillNonFlashbackClusterConn kill all non flashback cluster connections.
+	KillNonFlashbackClusterConn()
 }
 
 // GlobalConnID is the global connection ID, providing UNIQUE connection IDs across the whole TiDB cluster.
