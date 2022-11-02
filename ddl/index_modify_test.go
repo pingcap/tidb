@@ -1067,3 +1067,17 @@ func TestAddIndexWithDupIndex(t *testing.T) {
 	err = tk.ExecToErr("alter table test_add_index_with_dup add index idx (a)")
 	require.ErrorIs(t, err, errors.Cause(err2))
 }
+
+func TestAddIndexUniqueFailOnDuplicate(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a bigint primary key clustered, b int);")
+	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 2;")
+	for i := 1; i <= 12; i++ {
+		tk.MustExec("insert into t values (?, ?)", i, i)
+	}
+	tk.MustExec("insert into t values (0, 1);") // Insert a duplicate key.
+	tk.MustQuery("split table t by (0), (1), (2), (3), (4), (5), (6), (7), (8), (9), (10), (11), (12);").Check(testkit.Rows("13 1"))
+	tk.MustGetErrCode("alter table t add unique index idx (b);", errno.ErrDupEntry)
+}
