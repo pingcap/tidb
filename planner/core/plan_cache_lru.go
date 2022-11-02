@@ -262,7 +262,7 @@ func PickPlanFromBucket(bucket map[*list.Element]struct{}, paramTypes []*types.F
 // updateInstanceMetric update the memory usage and plan num for show in grafana
 func (l *LRUPlanCache) updateInstanceMetric(in, out *planCacheEntry) {
 	updateInstancePlanNum(in, out)
-	if l == nil || l.enableUpdateMetric == false {
+	if l == nil || !l.enableUpdateMetric {
 		return
 	}
 
