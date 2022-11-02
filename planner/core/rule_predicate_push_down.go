@@ -406,8 +406,13 @@ func (p *LogicalProjection) PredicatePushDown(predicates []expression.Expression
 		}
 	}
 	for _, cond := range predicates {
+<<<<<<< HEAD
 		newFilter := expression.ColumnSubstitute(cond, p.Schema(), p.Exprs)
 		if !expression.HasGetSetVarFunc(newFilter) {
+=======
+		substituted, hasFailed, newFilter := expression.ColumnSubstituteImpl(cond, p.Schema(), p.Exprs, true)
+		if substituted && !hasFailed && !expression.HasGetSetVarFunc(newFilter) {
+>>>>>>> 0f62d1f42e (planner: projection should not push the expr that is not fully substituted (#38802))
 			canBePushed = append(canBePushed, newFilter)
 		} else {
 			canNotBePushed = append(canNotBePushed, cond)
