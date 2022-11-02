@@ -31,9 +31,10 @@ import (
 
 // JWKSImpl contains a JSON Web Key Set (JWKS), and a filepath that stores the JWKS
 type JWKSImpl struct {
-	s        jwkRepo.Set
-	m        sync.RWMutex
-	filepath string
+	// contain one more JWKS for recover when failing to load the JWKS from the filepath.
+	cur, last jwkRepo.Set
+	m         sync.RWMutex
+	filepath  string
 }
 
 // GlobalJWKS is the global JWKS for tidb-server
@@ -42,14 +43,18 @@ var GlobalJWKS JWKSImpl
 func (jwks *JWKSImpl) load() (err error) {
 	jwks.m.Lock()
 	defer jwks.m.Unlock()
-	jwks.s, err = jwkRepo.ReadFile(jwks.filepath)
+	jwks.last = jwks.cur
+	jwks.cur, err = jwkRepo.ReadFile(jwks.filepath)
+	if err != nil {
+		jwks.cur = jwks.last
+	}
 	return err
 }
 
 func (jwks *JWKSImpl) verify(tokenBytes []byte) (payload []byte, err error) {
 	jwks.m.RLock()
 	defer jwks.m.RUnlock()
-	return jwsRepo.Verify(tokenBytes, jwsRepo.WithKeySet(jwks.s))
+	return jwsRepo.Verify(tokenBytes, jwsRepo.WithKeySet(jwks.cur))
 }
 
 // LoadJWKS4AuthToken reload the jwks every auth-token-refresh-interval.
