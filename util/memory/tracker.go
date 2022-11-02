@@ -231,6 +231,17 @@ func (t *Tracker) GetFallbackForTest(ignoreFinishedAction bool) ActionOnExceed {
 	return t.actionMuForHardLimit.actionOnExceed
 }
 
+// UnbindActions unbinds actionForHardLimit and actionForSoftLimit.
+func (t *Tracker) UnbindActions() {
+	t.actionMuForSoftLimit.Lock()
+	defer t.actionMuForSoftLimit.Unlock()
+	t.actionMuForSoftLimit.actionOnExceed = nil
+
+	t.actionMuForHardLimit.Lock()
+	defer t.actionMuForHardLimit.Unlock()
+	t.actionMuForHardLimit.actionOnExceed = &LogOnExceed{}
+}
+
 // reArrangeFallback merge two action chains and rearrange them by priority in descending order.
 func reArrangeFallback(a ActionOnExceed, b ActionOnExceed) ActionOnExceed {
 	if a == nil {
@@ -534,6 +545,11 @@ func (t *Tracker) MaxConsumed() int64 {
 	return t.maxConsumed.Load()
 }
 
+// ResetMaxConsumed should be invoked before executing a new statement in a session.
+func (t *Tracker) ResetMaxConsumed() {
+	t.maxConsumed.Store(t.BytesConsumed())
+}
+
 // SearchTrackerWithoutLock searches the specific tracker under this tracker without lock.
 func (t *Tracker) SearchTrackerWithoutLock(label int) *Tracker {
 	if t.label == label {
@@ -793,6 +809,8 @@ const (
 	LabelForGlobalAnalyzeMemory int = -25
 	// LabelForPreparedPlanCache represents the label of the prepared plan cache memory usage
 	LabelForPreparedPlanCache int = -26
+	// LabelForSession represents the label of a session.
+	LabelForSession int = -27
 )
 
 // MetricsTypes is used to get label for metrics
