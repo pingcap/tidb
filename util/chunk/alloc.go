@@ -121,7 +121,9 @@ func (a *allocator) Reset() {
 		for _, col := range pool.allocColumns {
 			if (len(pool.freeColumns) < a.columnAlloc.freeColumnsPerType) && (!col.avoidReusing) {
 				col.reset()
-				pool.freeColumns = append(pool.freeColumns, col)
+				if cap(col.data) < MaxCachedLen {
+					pool.freeColumns = append(pool.freeColumns, col)
+				}
 			}
 		}
 		pool.allocColumns = pool.allocColumns[:0]
