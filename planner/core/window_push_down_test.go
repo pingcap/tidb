@@ -76,6 +76,7 @@ func TestWindowFunctionDescCanPushDown(t *testing.T) {
 	dom := domain.GetDomain(tk.Session())
 
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=1")
 	tk.MustExec("drop table if exists employee")
 	tk.MustExec("create table employee (empid int, deptid int, salary decimal(10,2))")
 	SetTiFlashReplica(t, dom, "test", "employee")
@@ -93,6 +94,7 @@ func TestWindowPushDownPlans(t *testing.T) {
 	dom := domain.GetDomain(tk.Session())
 
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=1")
 	tk.MustExec("drop table if exists employee")
 	tk.MustExec("create table employee (empid int, deptid int, salary decimal(10,2))")
 	SetTiFlashReplica(t, dom, "test", "employee")
@@ -110,6 +112,7 @@ func TestWindowPlanWithOtherOperators(t *testing.T) {
 	dom := domain.GetDomain(tk.Session())
 
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=1")
 	tk.MustExec("drop table if exists employee")
 	tk.MustExec("create table employee (empid int, deptid int, salary decimal(10,2))")
 	SetTiFlashReplica(t, dom, "test", "employee")

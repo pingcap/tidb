@@ -300,6 +300,7 @@ func TestStatsVer2(t *testing.T) {
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("set tidb_analyze_version=2")
+	testKit.MustExec("set tidb_cost_model_version=1")
 
 	testKit.MustExec("drop table if exists tint")
 	testKit.MustExec("create table tint(a int, b int, c int, index singular(a), index multi(b, c))")

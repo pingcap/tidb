@@ -133,6 +133,7 @@ func TestCostModelShowFormula(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=1")
 	tk.MustExec(`create table t (a int)`)
 	tk.MustExec("insert into t values (1), (2), (3)")
 	tk.MustExec("set @@tidb_cost_model_version=2")

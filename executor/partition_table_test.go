@@ -907,6 +907,7 @@ func TestGlobalStatsAndSQLBinding(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=1")
 	tk.MustExec("create database test_global_stats")
 	tk.MustExec("use test_global_stats")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
@@ -2115,6 +2116,7 @@ func TestParallelApply(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set tidb_cost_model_version=1")
 	tk.MustExec("use test")
 	tk.MustExec("create database test_parallel_apply")
 	tk.MustExec("use test_parallel_apply")
@@ -3434,6 +3436,7 @@ func TestPartitionTableExplain(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set tidb_cost_model_version=1")
 	tk.MustExec("create database TestPartitionTableExplain")
 	tk.MustExec("use TestPartitionTableExplain")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")

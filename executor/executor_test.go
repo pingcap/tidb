@@ -1445,6 +1445,7 @@ func TestSetOperation(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
+	tk.MustExec(`set tidb_cost_model_version=1`)
 	tk.MustExec(`drop table if exists t1, t2, t3`)
 	tk.MustExec(`create table t1(a int)`)
 	tk.MustExec(`create table t2 like t1`)
@@ -3325,6 +3326,7 @@ func TestUnreasonablyClose(t *testing.T) {
 	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable(), plannercore.MockUnsignedTable()})
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=1")
 	// To enable the shuffleExec operator.
 	tk.MustExec("set @@tidb_merge_join_concurrency=4")
 
