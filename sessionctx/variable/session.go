@@ -46,9 +46,11 @@ import (
 	pumpcli "github.com/pingcap/tidb/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tableutil"
@@ -1271,10 +1273,23 @@ type SessionVars struct {
 	// LastPlanReplayerToken indicates the last plan replayer token
 	LastPlanReplayerToken string
 
+	// AnalyzePartitionConcurrency indicates concurrency for partitions in Analyze
+	AnalyzePartitionConcurrency int
 	// AnalyzePartitionMergeConcurrency indicates concurrency for merging partition stats
 	AnalyzePartitionMergeConcurrency int
 
+	// EnableExternalTSRead indicates whether to enable read through external ts
+	EnableExternalTSRead bool
+
 	HookContext
+
+	// MemTracker indicates the memory tracker of current session.
+	MemTracker  *memory.Tracker
+	DiskTracker *memory.Tracker
+
+	// OptPrefixIndexSingleScan indicates whether to do some optimizations to avoid double scan for prefix index.
+	// When set to true, `col is (not) null`(`col` is index prefix column) is regarded as index filter rather than table filter.
+	OptPrefixIndexSingleScan bool
 }
 
 // GetPreparedStmtByName returns the prepared statement specified by stmtName.
@@ -1434,6 +1449,7 @@ type ConnectionInfo struct {
 	ClientIP          string
 	ClientPort        string
 	ServerID          int
+	ServerIP          string
 	ServerPort        int
 	Duration          float64
 	User              string
@@ -1603,6 +1619,9 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	vars.enforceMPPExecution = DefTiDBEnforceMPPExecution
 	vars.TiFlashMaxThreads = DefTiFlashMaxThreads
 	vars.MPPStoreFailTTL = DefTiDBMPPStoreFailTTL
+	vars.DiskTracker = disk.NewTracker(memory.LabelForSession, -1)
+	vars.MemTracker = memory.NewTracker(memory.LabelForSession, vars.MemQuotaQuery)
+	vars.MemTracker.IsRootTrackerOfSess = true
 
 	for _, engine := range config.GetGlobalConfig().IsolationRead.Engines {
 		switch engine {

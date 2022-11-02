@@ -3246,16 +3246,24 @@ func TestDDL(t *testing.T) {
 		// for flashback table.
 		{"flashback table t", true, "FLASHBACK TABLE `t`"},
 		{"flashback table t TO t1", true, "FLASHBACK TABLE `t` TO `t1`"},
+		{"flashback table t TO timestamp", true, "FLASHBACK TABLE `t` TO `timestamp`"},
+
 		// for flashback database.
 		{"flashback database db1", true, "FLASHBACK DATABASE `db1`"},
 		{"flashback schema db1", true, "FLASHBACK DATABASE `db1`"},
 		{"flashback database db1 to db2", true, "FLASHBACK DATABASE `db1` TO `db2`"},
 		{"flashback schema db1 to db2", true, "FLASHBACK DATABASE `db1` TO `db2`"},
 
-		// for flashback cluster
+		// for flashback to timestamp
 		{"flashback cluster to timestamp '2021-05-26 16:45:26'", true, "FLASHBACK CLUSTER TO TIMESTAMP '2021-05-26 16:45:26'"},
+		{"flashback table t to timestamp '2021-05-26 16:45:26'", true, "FLASHBACK TABLE `t` TO TIMESTAMP '2021-05-26 16:45:26'"},
+		{"flashback table t,t1 to timestamp '2021-05-26 16:45:26'", true, "FLASHBACK TABLE `t`, `t1` TO TIMESTAMP '2021-05-26 16:45:26'"},
+		{"flashback database test to timestamp '2021-05-26 16:45:26'", true, "FLASHBACK DATABASE `test` TO TIMESTAMP '2021-05-26 16:45:26'"},
+		{"flashback schema test to timestamp '2021-05-26 16:45:26'", true, "FLASHBACK DATABASE `test` TO TIMESTAMP '2021-05-26 16:45:26'"},
 		{"flashback cluster to timestamp TIDB_BOUNDED_STALENESS(DATE_SUB(NOW(), INTERVAL 3 SECOND), NOW())", false, ""},
 		{"flashback cluster to timestamp DATE_SUB(NOW(), INTERVAL 3 SECOND)", false, ""},
+		{"flashback table to timestamp '2021-05-26 16:45:26'", false, ""},
+		{"flashback database to timestamp '2021-05-26 16:45:26'", false, ""},
 
 		// for remove partitioning
 		{"alter table t remove partitioning", true, "ALTER TABLE `t` REMOVE PARTITIONING"},
@@ -4411,6 +4419,7 @@ func TestPrivilege(t *testing.T) {
 		{"CREATE USER 'sha_test'@'localhost' IDENTIFIED WITH 'caching_sha2_password' BY 'sha_test'", true, "CREATE USER `sha_test`@`localhost` IDENTIFIED WITH 'caching_sha2_password' BY 'sha_test'"},
 		{"CREATE USER 'sha_test3'@'localhost' IDENTIFIED WITH 'caching_sha2_password' AS 0x24412430303524255B03496C662C1055127B3B654A2F04207D01485276703644704B76303247474564416A516662346C5868646D32764C6B514F43585A473779565947514F34", true, "CREATE USER `sha_test3`@`localhost` IDENTIFIED WITH 'caching_sha2_password' AS '$A$005$%[\x03Ilf,\x10U\x12{;eJ/\x04 }\x01HRvp6DpKv02GGEdAjQfb4lXhdm2vLkQOCXZG7yVYGQO4'"},
 		{"CREATE USER 'sha_test4'@'localhost' IDENTIFIED WITH 'caching_sha2_password' AS '$A$005$%[\x03Ilf,\x10U\x12{;eJ/\x04 }\x01HRvp6DpKv02GGEdAjQfb4lXhdm2vLkQOCXZG7yVYGQO4'", true, "CREATE USER `sha_test4`@`localhost` IDENTIFIED WITH 'caching_sha2_password' AS '$A$005$%[\x03Ilf,\x10U\x12{;eJ/\x04 }\x01HRvp6DpKv02GGEdAjQfb4lXhdm2vLkQOCXZG7yVYGQO4'"},
+		{"CREATE USER `user@pingcap.com`@'localhost' IDENTIFIED WITH 'tidb_auth_token' REQUIRE token_issuer 'issuer-abc' ATTRIBUTE '{\"email\": \"user@pingcap.com\"}'", true, "CREATE USER `user@pingcap.com`@`localhost` IDENTIFIED WITH 'tidb_auth_token' REQUIRE TOKEN_ISSUER 'issuer-abc' ATTRIBUTE '{\"email\": \"user@pingcap.com\"}'"},
 		{"CREATE USER 'nopwd_native'@'localhost' IDENTIFIED WITH 'mysql_native_password'", true, "CREATE USER `nopwd_native`@`localhost` IDENTIFIED WITH 'mysql_native_password'"},
 		{"CREATE USER 'nopwd_sha'@'localhost' IDENTIFIED WITH 'caching_sha2_password'", true, "CREATE USER `nopwd_sha`@`localhost` IDENTIFIED WITH 'caching_sha2_password'"},
 		{"CREATE ROLE `test-role`, `role1`@'localhost'", true, "CREATE ROLE `test-role`@`%`, `role1`@`localhost`"},
@@ -5273,6 +5282,7 @@ func TestSessionManage(t *testing.T) {
 		// Kill statement.
 		// See https://dev.mysql.com/doc/refman/5.7/en/kill.html
 		{"kill 23123", true, "KILL 23123"},
+		{"kill CONNECTION_ID()", true, "KILL CONNECTION_ID()"},
 		{"kill connection 23123", true, "KILL 23123"},
 		{"kill query 23123", true, "KILL QUERY 23123"},
 		{"kill tidb 23123", true, "KILL TIDB 23123"},

@@ -183,31 +183,28 @@ func (p *UserPrivileges) isValidHash(record *UserRecord) bool {
 	if pwd == "" {
 		return true
 	}
-	if record.AuthPlugin == mysql.AuthNativePassword {
+	switch record.AuthPlugin {
+	case mysql.AuthNativePassword:
 		if len(pwd) == mysql.PWDHashLen+1 {
 			return true
 		}
 		logutil.BgLogger().Error("the password from the mysql.user table does not match the definition of a mysql_native_password", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
 		return false
-	}
-
-	if record.AuthPlugin == mysql.AuthCachingSha2Password {
+	case mysql.AuthCachingSha2Password:
 		if len(pwd) == mysql.SHAPWDHashLen {
 			return true
 		}
 		logutil.BgLogger().Error("the password from the mysql.user table does not match the definition of a caching_sha2_password", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
 		return false
-	}
-
-	if record.AuthPlugin == mysql.AuthTiDBSM3Password {
+	case mysql.AuthTiDBSM3Password:
 		if len(pwd) == mysql.SM3PWDHashLen {
 			return true
 		}
 		logutil.BgLogger().Error("the password from the mysql.user table does not match the definition of a tidb_sm3_password", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
 		return false
-	}
-
-	if record.AuthPlugin == mysql.AuthSocket {
+	case mysql.AuthSocket:
+		return true
+	case mysql.AuthTiDBAuthToken:
 		return true
 	}
 
@@ -240,6 +237,9 @@ func (p *UserPrivileges) GetAuthPlugin(user, host string) (string, error) {
 	record := mysqlPriv.connectionVerification(user, host)
 	if record == nil {
 		return "", errors.New("Failed to get user record")
+	}
+	if record.AuthPlugin == mysql.AuthTiDBAuthToken {
+		return record.AuthPlugin, nil
 	}
 	// zero-length auth string means no password for native and caching_sha2 auth.
 	// but for auth_socket it means there should be a 1-to-1 mapping between the TiDB user
@@ -351,6 +351,9 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 					zap.String("authentication_string", pwd))
 				return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 			}
+		case mysql.AuthTiDBAuthToken:
+			logutil.BgLogger().Error("unimplemented tidb_auth_token ConnectionVerification")
+			return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 		default:
 			logutil.BgLogger().Error("unknown authentication plugin", zap.String("authUser", authUser), zap.String("plugin", record.AuthPlugin))
 			return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)

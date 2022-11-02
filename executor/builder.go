@@ -888,9 +888,12 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
 		b.err = err
 		return nil
 	}
-	ivs.fkChecks, err = buildFKCheckExecs(b.ctx, ivs.Table, v.FKChecks)
-	if err != nil {
-		b.err = err
+	ivs.fkChecks, b.err = buildFKCheckExecs(b.ctx, ivs.Table, v.FKChecks)
+	if b.err != nil {
+		return nil
+	}
+	ivs.fkCascades, b.err = b.buildFKCascadeExecs(ivs.Table, v.FKCascades)
+	if b.err != nil {
 		return nil
 	}
 
@@ -1005,14 +1008,14 @@ func (b *executorBuilder) buildReplace(vals *InsertValues) Executor {
 
 func (b *executorBuilder) buildGrant(grant *ast.GrantStmt) Executor {
 	e := &GrantExec{
-		baseExecutor: newBaseExecutor(b.ctx, nil, 0),
-		Privs:        grant.Privs,
-		ObjectType:   grant.ObjectType,
-		Level:        grant.Level,
-		Users:        grant.Users,
-		WithGrant:    grant.WithGrant,
-		TLSOptions:   grant.TLSOptions,
-		is:           b.is,
+		baseExecutor:          newBaseExecutor(b.ctx, nil, 0),
+		Privs:                 grant.Privs,
+		ObjectType:            grant.ObjectType,
+		Level:                 grant.Level,
+		Users:                 grant.Users,
+		WithGrant:             grant.WithGrant,
+		AuthTokenOrTLSOptions: grant.AuthTokenOrTLSOptions,
+		is:                    b.is,
 	}
 	return e
 }
@@ -1870,7 +1873,11 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			strings.ToLower(infoschema.TableTrxSummary),
 			strings.ToLower(infoschema.TableVariablesInfo),
 			strings.ToLower(infoschema.TableUserAttributes),
-			strings.ToLower(infoschema.ClusterTableTrxSummary):
+			strings.ToLower(infoschema.ClusterTableTrxSummary),
+			strings.ToLower(infoschema.TableMemoryUsage),
+			strings.ToLower(infoschema.TableMemoryUsageOpsHistory),
+			strings.ToLower(infoschema.ClusterTableMemoryUsage),
+			strings.ToLower(infoschema.ClusterTableMemoryUsageOpsHistory):
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
@@ -2250,6 +2257,10 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 		assignFlag:                assignFlag,
 	}
 	updateExec.fkChecks, b.err = buildTblID2FKCheckExecs(b.ctx, tblID2table, v.FKChecks)
+	if b.err != nil {
+		return nil
+	}
+	updateExec.fkCascades, b.err = b.buildTblID2FKCascadeExecs(tblID2table, v.FKCascades)
 	if b.err != nil {
 		return nil
 	}

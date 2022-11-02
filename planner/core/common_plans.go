@@ -362,7 +362,8 @@ type Insert struct {
 
 	RowLen int
 
-	FKChecks []*FKCheck
+	FKChecks   []*FKCheck
+	FKCascades []*FKCascade
 }
 
 // MemoryUsage return the memory usage of Insert
@@ -429,7 +430,8 @@ type Update struct {
 
 	tblID2Table map[int64]table.Table
 
-	FKChecks map[int64][]*FKCheck
+	FKChecks   map[int64][]*FKCheck
+	FKCascades map[int64][]*FKCascade
 }
 
 // MemoryUsage return the memory usage of Update
@@ -718,6 +720,7 @@ func (e *Explain) RenderResult() error {
 	}
 
 	if e.Analyze && strings.ToLower(e.Format) == types.ExplainFormatTrueCardCost {
+		// true_card_cost mode is used to calibrate the cost model.
 		pp, ok := e.TargetPlan.(PhysicalPlan)
 		if ok {
 			if _, err := getPlanCost(pp, property.RootTaskType,
@@ -733,6 +736,20 @@ func (e *Explain) RenderResult() error {
 					pp.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("marshal factor costs error %v", err))
 				}
 				pp.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("factor costs: %v", string(data)))
+
+				// output cost factor weights for cost calibration
+				factors := defaultVer2Factors.tolist()
+				weights := make(map[string]float64)
+				for _, factor := range factors {
+					if factorCost, ok := trace.factorCosts[factor.Name]; ok && factor.Value > 0 {
+						weights[factor.Name] = factorCost / factor.Value // cost = [factors] * [weights]
+					}
+				}
+				if wstr, err := json.Marshal(weights); err != nil {
+					pp.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("marshal weights error %v", err))
+				} else {
+					pp.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("factor weights: %v", string(wstr)))
+				}
 			}
 		} else {
 			e.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("'explain format=true_card_cost' cannot support this plan"))
@@ -748,7 +765,7 @@ func (e *Explain) RenderResult() error {
 				e.SCtx().GetSessionVars().MemoryDebugModeMinHeapInUse != 0 &&
 				e.SCtx().GetSessionVars().MemoryDebugModeAlarmRatio > 0 {
 				row := e.Rows[0]
-				tracker := e.SCtx().GetSessionVars().StmtCtx.MemTracker
+				tracker := e.SCtx().GetSessionVars().MemTracker
 				row[7] = row[7] + "(Total: " + tracker.FormatBytes(tracker.MaxConsumed()) + ")"
 			}
 		}

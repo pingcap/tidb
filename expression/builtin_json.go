@@ -804,8 +804,8 @@ func (b *builtinJSONContainsSig) evalInt(row chunk.Row) (res int64, isNull bool,
 		if err != nil {
 			return res, true, err
 		}
-		if pathExpr.ContainsAnyAsterisk() {
-			return res, true, types.ErrInvalidJSONPathWildcard
+		if pathExpr.CouldMatchMultipleValues() {
+			return res, true, types.ErrInvalidJSONPathMultipleSelection
 		}
 		var exists bool
 		obj, exists = obj.Extract([]types.JSONPathExpression{pathExpr})
@@ -990,8 +990,8 @@ func (b *builtinJSONArrayAppendSig) appendJSONArray(res types.BinaryJSON, p stri
 	if err != nil {
 		return res, true, types.ErrInvalidJSONPath.GenWithStackByArgs(p)
 	}
-	if pathExpr.ContainsAnyAsterisk() {
-		return res, true, types.ErrInvalidJSONPathWildcard.GenWithStackByArgs(p)
+	if pathExpr.CouldMatchMultipleValues() {
+		return res, true, types.ErrInvalidJSONPathMultipleSelection
 	}
 
 	obj, exists := res.Extract([]types.JSONPathExpression{pathExpr})
@@ -1071,8 +1071,8 @@ func (b *builtinJSONArrayInsertSig) evalJSON(row chunk.Row) (res types.BinaryJSO
 		if err != nil {
 			return res, true, types.ErrInvalidJSONPath.GenWithStackByArgs(s)
 		}
-		if pathExpr.ContainsAnyAsterisk() {
-			return res, true, types.ErrInvalidJSONPathWildcard.GenWithStackByArgs(s)
+		if pathExpr.CouldMatchMultipleValues() {
+			return res, true, types.ErrInvalidJSONPathMultipleSelection
 		}
 
 		value, isnull, err := b.args[i+1].EvalJSON(b.ctx, row)
@@ -1592,8 +1592,8 @@ func (b *builtinJSONKeys2ArgsSig) evalJSON(row chunk.Row) (res types.BinaryJSON,
 	if err != nil {
 		return res, true, err
 	}
-	if pathExpr.ContainsAnyAsterisk() {
-		return res, true, types.ErrInvalidJSONPathWildcard
+	if pathExpr.CouldMatchMultipleValues() {
+		return res, true, types.ErrInvalidJSONPathMultipleSelection
 	}
 
 	res, exists := res.Extract([]types.JSONPathExpression{pathExpr})
@@ -1661,8 +1661,8 @@ func (b *builtinJSONLengthSig) evalInt(row chunk.Row) (res int64, isNull bool, e
 		if err != nil {
 			return res, true, err
 		}
-		if pathExpr.ContainsAnyAsterisk() {
-			return res, true, types.ErrInvalidJSONPathWildcard
+		if pathExpr.CouldMatchMultipleValues() {
+			return res, true, types.ErrInvalidJSONPathMultipleSelection
 		}
 
 		var exists bool

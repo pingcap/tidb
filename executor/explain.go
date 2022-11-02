@@ -115,7 +115,7 @@ func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
 				minHeapInUse: mathutil.Abs(minHeapInUse),
 				alarmRatio:   alarmRatio,
 				autoGC:       minHeapInUse > 0,
-				memTracker:   e.ctx.GetSessionVars().StmtCtx.MemTracker,
+				memTracker:   e.ctx.GetSessionVars().MemTracker,
 				wg:           &waitGroup,
 			}).run()
 		}
@@ -169,8 +169,7 @@ func (h *memoryDebugModeHandler) fetchCurrentMemoryUsage(gc bool) (heapInUse, tr
 	if gc {
 		runtime.GC()
 	}
-	instanceStats := &runtime.MemStats{}
-	runtime.ReadMemStats(instanceStats)
+	instanceStats := memory.ForceReadMemStats()
 	heapInUse = instanceStats.HeapInuse
 	trackedMem = uint64(h.memTracker.BytesConsumed())
 	return

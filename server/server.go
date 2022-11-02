@@ -51,10 +51,14 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/extension"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/session/txninfo"
@@ -499,8 +503,34 @@ func (s *Server) Close() {
 
 // onConn runs in its own goroutine, handles queries from this connection.
 func (s *Server) onConn(conn *clientConn) {
+	// init the connInfo
+	_, _, err := conn.PeerHost("")
+	if err != nil {
+		logutil.BgLogger().With(zap.Uint64("conn", conn.connectionID)).
+			Error("get peer host failed", zap.Error(err))
+		terror.Log(conn.Close())
+		return
+	}
+
+	extensions, err := extension.GetExtensions()
+	if err != nil {
+		logutil.BgLogger().With(zap.Uint64("conn", conn.connectionID)).
+			Error("error in get extensions", zap.Error(err))
+		terror.Log(conn.Close())
+		return
+	}
+
+	if sessExtensions := extensions.NewSessionExtensions(); sessExtensions != nil {
+		conn.extensions = sessExtensions
+		conn.onExtensionConnEvent(extension.ConnConnected, nil)
+		defer func() {
+			conn.onExtensionConnEvent(extension.ConnDisconnected, nil)
+		}()
+	}
+
 	ctx := logutil.WithConnID(context.Background(), conn.connectionID)
 	if err := conn.handshake(ctx); err != nil {
+		conn.onExtensionConnEvent(extension.ConnHandshakeRejected, err)
 		if plugin.IsEnable(plugin.Audit) && conn.getCtx() != nil {
 			conn.getCtx().GetSessionVars().ConnectionInfo = conn.connectInfo()
 			err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
@@ -548,7 +578,8 @@ func (s *Server) onConn(conn *clientConn) {
 
 	sessionVars := conn.ctx.GetSessionVars()
 	sessionVars.ConnectionInfo = conn.connectInfo()
-	err := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
+	conn.onExtensionConnEvent(extension.ConnHandshakeAccepted, nil)
+	err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 		if authPlugin.OnConnectionEvent != nil {
 			return authPlugin.OnConnectionEvent(context.Background(), plugin.Connected, sessionVars.ConnectionInfo)
@@ -592,6 +623,7 @@ func (cc *clientConn) connectInfo() *variable.ConnectionInfo {
 		ClientIP:          cc.peerHost,
 		ClientPort:        cc.peerPort,
 		ServerID:          1,
+		ServerIP:          cc.serverHost,
 		ServerPort:        int(cc.server.cfg.Port),
 		User:              cc.user,
 		ServerOSLoginUser: osUser,
@@ -602,6 +634,32 @@ func (cc *clientConn) connectInfo() *variable.ConnectionInfo {
 		DB:                cc.dbname,
 	}
 	return connInfo
+}
+
+func (cc *clientConn) onExtensionConnEvent(tp extension.ConnEventTp, err error) {
+	if cc.extensions == nil {
+		return
+	}
+
+	var connInfo *variable.ConnectionInfo
+	var activeRoles []*auth.RoleIdentity
+	if ctx := cc.getCtx(); ctx != nil {
+		sessVars := ctx.GetSessionVars()
+		connInfo = sessVars.ConnectionInfo
+		activeRoles = sessVars.ActiveRoles
+	}
+
+	if connInfo == nil {
+		connInfo = cc.connectInfo()
+	}
+
+	info := &extension.ConnEventInfo{
+		ConnectionInfo: connInfo,
+		ActiveRoles:    activeRoles,
+		Error:          err,
+	}
+
+	cc.extensions.OnConnectionEvent(tp, info)
 }
 
 func (s *Server) checkConnectionCount() error {
@@ -879,6 +937,27 @@ func (s *Server) CheckOldRunningTxn(job2ver map[int64]int64, job2ids map[int64]s
 	for _, client := range s.clients {
 		if client.ctx.Session != nil {
 			session.RemoveLockDDLJobs(client.ctx.Session, job2ver, job2ids)
+		}
+	}
+}
+
+// KillNonFlashbackClusterConn implements SessionManager interface.
+func (s *Server) KillNonFlashbackClusterConn() {
+	s.rwlock.RLock()
+	defer s.rwlock.RUnlock()
+	for _, client := range s.clients {
+		if client.ctx.Session != nil {
+			processInfo := client.ctx.Session.ShowProcess()
+			ddl, ok := processInfo.StmtCtx.GetPlan().(*core.DDL)
+			if !ok {
+				s.Kill(client.connectionID, false)
+				continue
+			}
+			_, ok = ddl.Statement.(*ast.FlashBackToTimestampStmt)
+			if !ok {
+				s.Kill(client.connectionID, false)
+				continue
+			}
 		}
 	}
 }
