@@ -16,7 +16,6 @@ package domain
 
 import (
 	"errors"
-	"github.com/pingcap/tidb/config"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -25,6 +24,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
