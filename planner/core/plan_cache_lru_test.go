@@ -322,7 +322,9 @@ func TestIssue38244(t *testing.T) {
 
 func TestLRUPlanCacheMemoryUsage(t *testing.T) {
 	pTypes := []*types.FieldType{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeDouble)}
-	lru := NewLRUPlanCache(3, 0, 0, PickPlanFromBucket, MockContext())
+	ctx := MockContext()
+	ctx.GetSessionVars().PreparedPlanCacheMemoryMonitor = true
+	lru := NewLRUPlanCache(3, 0, 0, PickPlanFromBucket, ctx)
 	evict := make(map[kvcache.Key]kvcache.Value)
 	lru.onEvict = func(key kvcache.Key, value kvcache.Value) {
 		evict[key] = value
