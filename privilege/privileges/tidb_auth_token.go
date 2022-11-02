@@ -18,8 +18,9 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
-	"sync"
+	"sync/atomic"
 	"time"
+	"unsafe"
 
 	jwkRepo "github.com/lestrrat-go/jwx/v2/jwk"
 	jwsRepo "github.com/lestrrat-go/jwx/v2/jws"
@@ -31,30 +32,27 @@ import (
 
 // JWKSImpl contains a JSON Web Key Set (JWKS), and a filepath that stores the JWKS
 type JWKSImpl struct {
-	// contain one more JWKS for recover when failing to load the JWKS from the filepath.
-	cur, last jwkRepo.Set
-	m         sync.RWMutex
-	filepath  string
+	set      unsafe.Pointer // *jwkRepo.Set
+	filepath string
 }
 
 // GlobalJWKS is the global JWKS for tidb-server
 var GlobalJWKS JWKSImpl
 
 func (jwks *JWKSImpl) load() (err error) {
-	jwks.m.Lock()
-	defer jwks.m.Unlock()
-	jwks.last = jwks.cur
-	jwks.cur, err = jwkRepo.ReadFile(jwks.filepath)
-	if err != nil {
-		jwks.cur = jwks.last
+	cur, err := jwkRepo.ReadFile(jwks.filepath)
+	if err == nil {
+		atomic.StorePointer(&jwks.set, unsafe.Pointer(&cur))
 	}
 	return err
 }
 
 func (jwks *JWKSImpl) verify(tokenBytes []byte) (payload []byte, err error) {
-	jwks.m.RLock()
-	defer jwks.m.RUnlock()
-	return jwsRepo.Verify(tokenBytes, jwsRepo.WithKeySet(jwks.cur))
+	s := (*jwkRepo.Set)(atomic.LoadPointer(&jwks.set))
+	if s == nil {
+		return nil, errors.New("No valid JWKS yet")
+	}
+	return jwsRepo.Verify(tokenBytes, jwsRepo.WithKeySet(*s))
 }
 
 // LoadJWKS4AuthToken reload the jwks every auth-token-refresh-interval.
@@ -78,20 +76,18 @@ func (jwks *JWKSImpl) checkSigWithRetry(tokenString string, retryTime int) (map[
 		verifiedPayload []byte
 		err             error
 	)
+	parts := strings.Split(tokenString, ".")
+	if len(parts) != 3 {
+		err = errors.New("Invalid JWT")
+		return nil, err
+	}
 	for retryTime >= 0 {
 		retryTime--
-		parts := strings.Split(tokenString, ".")
-		if len(parts) != 3 {
-			err = errors.New("Invalid JWT")
-			continue
-		}
 
 		// verify signature
 		verifiedPayload, err = jwks.verify(([]byte)(tokenString))
 		if err != nil {
-			if e := jwks.load(); e != nil {
-				err = errors.New("Fail to verify the signature and reload the JWKS")
-			}
+			_ = jwks.load()
 			continue
 		}
 

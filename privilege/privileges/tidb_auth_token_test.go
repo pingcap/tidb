@@ -319,6 +319,10 @@ func TestAuthTokenClaims(t *testing.T) {
 	verifiedClaims[jwtRepo.IssuedAtKey] = now
 	err = checkAuthTokenClaims(verifiedClaims, record, time.Second)
 	require.ErrorContains(t, err, "the token has been out of its life time")
+	verifiedClaims[jwtRepo.IssuedAtKey] = now.Add(time.Hour)
+	err = checkAuthTokenClaims(verifiedClaims, record, defaultTokenLife)
+	require.ErrorContains(t, err, "the token is issued at a future time")
+	verifiedClaims[jwtRepo.IssuedAtKey] = now
 
 	// test 'exp'
 	delete(verifiedClaims, jwtRepo.ExpirationKey)
@@ -380,7 +384,7 @@ func TestJWKSImpl(t *testing.T) {
 	// Wrong signature, and fail to reload JWKS
 	jwksImpl.filepath = "wrong-path"
 	_, err = jwksImpl.checkSigWithRetry(signedTokenString+"A", 0)
-	require.ErrorContains(t, err, "Fail to verify the signature and reload the JWKS")
+	require.ErrorContains(t, err, "could not verify message using any of the signatures or keys")
 	jwksImpl.filepath = path[0]
 
 	require.NoError(t, jwksImpl.LoadJWKS4AuthToken(path[0], time.Hour, false), path[0])

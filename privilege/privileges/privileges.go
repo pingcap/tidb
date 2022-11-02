@@ -315,6 +315,8 @@ func checkAuthTokenClaims(claims map[string]interface{}, record *UserRecord, tok
 		if iat, ok := val.(time.Time); ok {
 			if now.After(iat.Add(tokenLife)) {
 				return errors.New("the token has been out of its life time")
+			} else if now.Before(iat) {
+				return errors.New("the token is issued at a future time")
 			}
 		} else {
 			return fmt.Errorf("iat: %v is not a value of time.Time", val)
@@ -382,6 +384,10 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 	}
 
 	if record.AuthPlugin == mysql.AuthTiDBAuthToken {
+		if len(authentication) == 0 {
+			logutil.BgLogger().Error("empty authentication")
+			return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+		}
 		tokenString := string(authentication[:len(authentication)-1])
 		var (
 			claims map[string]interface{}
