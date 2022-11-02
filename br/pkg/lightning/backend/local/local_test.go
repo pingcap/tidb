@@ -160,7 +160,7 @@ func TestRangeProperties(t *testing.T) {
 	for _, p := range cases {
 		v := make([]byte, p.vLen)
 		for i := 0; i < p.count; i++ {
-			_ = collector.Add(pebble.InternalKey{UserKey: p.key, Trailer: uint64(pebble.InternalKeyKindSet)}, v)
+			_ = collector.Add(pebble.InternalKey{UserKey: p.key, Trailer: pebble.InternalKeyKindSet}, v)
 		}
 	}
 
