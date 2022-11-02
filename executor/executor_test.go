@@ -6071,13 +6071,13 @@ func TestGlobalMemoryControl(t *testing.T) {
 	tk0.MustExec("set global tidb_server_memory_limit_sess_min_size = 128")
 
 	tk1 := testkit.NewTestKit(t, store)
-	tracker1 := tk1.Session().GetSessionVars().StmtCtx.MemTracker
+	tracker1 := tk1.Session().GetSessionVars().MemTracker
 
 	tk2 := testkit.NewTestKit(t, store)
-	tracker2 := tk2.Session().GetSessionVars().StmtCtx.MemTracker
+	tracker2 := tk2.Session().GetSessionVars().MemTracker
 
 	tk3 := testkit.NewTestKit(t, store)
-	tracker3 := tk3.Session().GetSessionVars().StmtCtx.MemTracker
+	tracker3 := tk3.Session().GetSessionVars().MemTracker
 
 	sm := &testkit.MockSessionManager{
 		PS: []*util.ProcessInfo{tk1.Session().ShowProcess(), tk2.Session().ShowProcess(), tk3.Session().ShowProcess()},
@@ -6156,7 +6156,7 @@ func TestGlobalMemoryControl2(t *testing.T) {
 	}()
 	sql := "select * from t t1 join t t2 join t t3 on t1.a=t2.a and t1.a=t3.a order by t1.a;" // Need 500MB
 	require.True(t, strings.Contains(tk0.QueryToErr(sql).Error(), "Out Of Memory Quota!"))
-	require.Equal(t, tk0.Session().GetSessionVars().StmtCtx.DiskTracker.MaxConsumed(), int64(0))
+	require.Equal(t, tk0.Session().GetSessionVars().DiskTracker.MaxConsumed(), int64(0))
 	wg.Wait()
 	test[0] = 0
 	runtime.GC()
