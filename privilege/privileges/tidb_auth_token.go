@@ -39,7 +39,7 @@ type JWKSImpl struct {
 // GlobalJWKS is the global JWKS for tidb-server
 var GlobalJWKS JWKSImpl
 
-func (jwks *JWKSImpl) load() (err error) {
+func (jwks *JWKSImpl) load() error {
 	cur, err := jwkRepo.ReadFile(jwks.filepath)
 	if err == nil {
 		atomic.StorePointer(&jwks.set, unsafe.Pointer(&cur))
