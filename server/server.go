@@ -311,17 +311,16 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		var (
 			timeInterval time.Duration
 			err          error
+			ctx          context.Context
 		)
 		if timeInterval, err = time.ParseDuration(s.cfg.Security.AuthTokenRefreshInterval); err != nil {
 			logutil.BgLogger().Error("Fail to parse security.auth-token-refresh-interval. Use default value",
 				zap.String("security.auth-token-refresh-interval", s.cfg.Security.AuthTokenRefreshInterval))
 			timeInterval = config.DefAuthTokenRefreshInterval
 		}
-		ctx, cancelFunc := context.WithCancel(context.Background())
+		ctx, s.authTokenCancelFunc = context.WithCancel(context.Background())
 		if err = privileges.GlobalJWKS.LoadJWKS4AuthToken(ctx, &s.wg, s.cfg.Security.AuthTokenJWKS, timeInterval); err != nil {
 			logutil.BgLogger().Error("Fail to load JWKS from the path", zap.String("jwks", s.cfg.Security.AuthTokenJWKS))
-		} else {
-			s.authTokenCancelFunc = cancelFunc
 		}
 	}
 
