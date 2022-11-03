@@ -14,10 +14,17 @@
 
 package extension
 
-import "github.com/pingcap/tidb/sessionctx/variable"
+import (
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/sessionctx/variable"
+)
 
 // ConnEventInfo is the connection info for the event
-type ConnEventInfo variable.ConnectionInfo
+type ConnEventInfo struct {
+	*variable.ConnectionInfo
+	ActiveRoles []*auth.RoleIdentity
+	Error       error
+}
 
 // ConnEventTp is the type of the connection event
 type ConnEventTp uint8
@@ -60,13 +67,12 @@ type SessionExtensions struct {
 }
 
 // OnConnectionEvent will be called when a connection event happens
-func (es *SessionExtensions) OnConnectionEvent(tp ConnEventTp, info *variable.ConnectionInfo) {
+func (es *SessionExtensions) OnConnectionEvent(tp ConnEventTp, event *ConnEventInfo) {
 	if es == nil {
 		return
 	}
 
-	eventInfo := ConnEventInfo(*info)
 	for _, fn := range es.connectionEventFuncs {
-		fn(tp, &eventInfo)
+		fn(tp, event)
 	}
 }

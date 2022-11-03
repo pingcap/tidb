@@ -69,6 +69,10 @@ func CreateMockStoreAndDomain(t testing.TB, opts ...mockstore.MockTiKVStoreOptio
 	dom := bootstrap(t, store, 500*time.Millisecond)
 	sm := MockSessionManager{}
 	dom.InfoSyncer().SetSessionManager(&sm)
+	t.Cleanup(func() {
+		view.Stop()
+		gctuner.GlobalMemoryLimitTuner.Stop()
+	})
 	return schematracker.UnwrapStorage(store), dom
 }
 

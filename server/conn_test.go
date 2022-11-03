@@ -1713,7 +1713,10 @@ func TestExtensionChangeUser(t *testing.T) {
 		outBuffer.Reset()
 	}
 
-	expectedConnInfo := extension.ConnEventInfo(*cc.connectInfo())
+	expectedConnInfo := extension.ConnEventInfo{
+		ConnectionInfo: cc.connectInfo(),
+		ActiveRoles:    []*auth.RoleIdentity{},
+	}
 	expectedConnInfo.User = "user1"
 	expectedConnInfo.DB = "db1"
 
@@ -1729,7 +1732,9 @@ func TestExtensionChangeUser(t *testing.T) {
 	})
 	require.True(t, logged)
 	require.Equal(t, extension.ConnReset, logTp)
-	require.Equal(t, expectedConnInfo, *logInfo)
+	require.Equal(t, expectedConnInfo.ActiveRoles, logInfo.ActiveRoles)
+	require.Equal(t, expectedConnInfo.Error, logInfo.Error)
+	require.Equal(t, *(expectedConnInfo.ConnectionInfo), *(logInfo.ConnectionInfo))
 
 	logged = false
 	logTp = 0
@@ -1747,7 +1752,9 @@ func TestExtensionChangeUser(t *testing.T) {
 	})
 	require.True(t, logged)
 	require.Equal(t, extension.ConnReset, logTp)
-	require.Equal(t, expectedConnInfo, *logInfo)
+	require.Equal(t, expectedConnInfo.ActiveRoles, logInfo.ActiveRoles)
+	require.Equal(t, expectedConnInfo.Error, logInfo.Error)
+	require.Equal(t, *(expectedConnInfo.ConnectionInfo), *(logInfo.ConnectionInfo))
 
 	logged = false
 	logTp = 0
@@ -1760,5 +1767,7 @@ func TestExtensionChangeUser(t *testing.T) {
 	})
 	require.True(t, logged)
 	require.Equal(t, extension.ConnReset, logTp)
-	require.Equal(t, expectedConnInfo, *logInfo)
+	require.Equal(t, expectedConnInfo.ActiveRoles, logInfo.ActiveRoles)
+	require.Equal(t, expectedConnInfo.Error, logInfo.Error)
+	require.Equal(t, *(expectedConnInfo.ConnectionInfo), *(logInfo.ConnectionInfo))
 }
