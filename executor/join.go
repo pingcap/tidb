@@ -159,6 +159,8 @@ func (e *HashJoinExec) Close() error {
 // Open implements the Executor Open interface.
 func (e *HashJoinExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
+		e.closeCh = nil
+		e.prepared = false
 		return err
 	}
 	e.prepared = false
