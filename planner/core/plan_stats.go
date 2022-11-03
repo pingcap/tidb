@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/zap"
@@ -32,7 +33,7 @@ import (
 
 type collectPredicateColumnsPoint struct{}
 
-func (collectPredicateColumnsPoint) optimize(_ context.Context, plan LogicalPlan, _ *logicalOptimizeOp) (LogicalPlan, error) {
+func (collectPredicateColumnsPoint) optimize(_ context.Context, plan LogicalPlan, _ *logicalOptimizeOp) (p LogicalPlan, err error) {
 	if plan.SCtx().GetSessionVars().InRestrictedSQL {
 		return plan, nil
 	}
@@ -43,11 +44,18 @@ func (collectPredicateColumnsPoint) optimize(_ context.Context, plan LogicalPlan
 	if len(predicateColumns) > 0 {
 		plan.SCtx().UpdateColStatsUsage(predicateColumns)
 	}
+	histNeededIndices := collectSyncIndices(plan.SCtx(), histNeededColumns)
+	histNeededItems := collectHistNeededItems(histNeededColumns, histNeededIndices)
+	histNeededTables := collectHistNeededTable(histNeededItems)
+	defer func() {
+		if err == nil && plan.SCtx().GetSessionVars().EnablePlanReplayerCapture {
+			recordTableRuntimeStatsJSON(plan.SCtx(), histNeededTables)
+		}
+	}()
+
 	if !histNeeded {
 		return plan, nil
 	}
-	histNeededIndices := collectSyncIndices(plan.SCtx(), histNeededColumns)
-	histNeededItems := collectHistNeededItems(histNeededColumns, histNeededIndices)
 	if histNeeded && len(histNeededItems) > 0 {
 		err := RequestLoadStats(plan.SCtx(), histNeededItems, syncWait)
 		return plan, err
@@ -169,4 +177,100 @@ func collectHistNeededItems(histNeededColumns []model.TableItemID, histNeededInd
 	}
 	histNeededItems = append(histNeededItems, histNeededColumns...)
 	return
+}
+
+func collectHistNeededTable(histNeededItems []model.TableItemID) map[int64]struct{} {
+	tables := make(map[int64]struct{})
+	for _, item := range histNeededItems {
+		tables[item.TableID] = struct{}{}
+	}
+	return tables
+}
+
+func recordTableRuntimeStatsJSON(sctx sessionctx.Context, tbls map[int64]struct{}) {
+	tblsJsonStats := sctx.GetSessionVars().StmtCtx.TableJsonStats
+	for tblID := range tbls {
+		tblJsonStats, err := recordSingleTableJsonStats(sctx, tblID)
+		if err != nil {
+			logutil.BgLogger().Warn("mock", zap.Error(err))
+		}
+		if tblJsonStats == nil {
+			logutil.BgLogger().Warn("mock")
+		}
+		tblsJsonStats[tblID] = tblJsonStats
+	}
+}
+
+func recordSingleTableJsonStats(sctx sessionctx.Context, tblID int64) (*handle.JSONTable, error) {
+	dom := domain.GetDomain(sctx)
+	is := dom.InfoSchema()
+	tbl, ok := is.TableByID(tblID)
+	if !ok {
+		return nil, nil
+	}
+	tableInfo := tbl.Meta()
+	pi := tableInfo.GetPartitionInfo()
+	if pi == nil {
+		return recordCommonTableJsonStats(sctx, tblID)
+	}
+	return recordPartitionTableJsonStats(sctx, tblID)
+}
+
+func recordCommonTableJsonStats(sctx sessionctx.Context, tblID int64) (*handle.JSONTable, error) {
+	dom := domain.GetDomain(sctx)
+	is := dom.InfoSchema()
+	statsHandle := dom.StatsHandle()
+	tbl, ok := is.TableByID(tblID)
+	if !ok {
+		return nil, nil
+	}
+	tblInfo := tbl.Meta()
+	schemaInfo, ok := is.SchemaByTable(tblInfo)
+	if !ok {
+		return nil, nil
+	}
+	stats := statsHandle.GetTableStats(tblInfo)
+	return handle.GenJSONTableFromStats(schemaInfo.Name.String(), tblInfo, stats)
+}
+
+func recordPartitionTableJsonStats(sctx sessionctx.Context, tblID int64) (*handle.JSONTable, error) {
+	dom := domain.GetDomain(sctx)
+	is := dom.InfoSchema()
+	tbl, ok := is.TableByID(tblID)
+	if !ok {
+		return nil, nil
+	}
+	tableInfo := tbl.Meta()
+	pi := tableInfo.GetPartitionInfo()
+	schemaInfo, ok := is.SchemaByTable(tableInfo)
+	if !ok {
+		return nil, nil
+	}
+	dbName := schemaInfo.Name.String()
+	jsonTbl := &handle.JSONTable{
+		DatabaseName: dbName,
+		TableName:    tableInfo.Name.L,
+		Partitions:   make(map[string]*handle.JSONTable, len(pi.Definitions)),
+	}
+	isDynamicMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load()) == variable.Dynamic
+	if !isDynamicMode {
+		for _, def := range pi.Definitions {
+			tbl, err := recordCommonTableJsonStats(sctx, def.ID)
+			if err != nil {
+				return nil, err
+			}
+			if tbl == nil {
+				continue
+			}
+			jsonTbl.Partitions[def.Name.L] = tbl
+		}
+	}
+	globalTbl, err := recordCommonTableJsonStats(sctx, tableInfo.ID)
+	if err != nil {
+		return nil, err
+	}
+	if globalTbl != nil {
+		jsonTbl.Partitions["global"] = globalTbl
+	}
+	return jsonTbl, nil
 }

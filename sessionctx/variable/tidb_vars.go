@@ -764,6 +764,9 @@ const (
 
 	// TiDBEnableExternalTSRead indicates whether to enable read through an external ts
 	TiDBEnableExternalTSRead = "tidb_enable_external_ts_read"
+
+	// TiDBEnablePlanReplayerCapture indicates whether to enable plan replayer capture
+	TiDBEnablePlanReplayerCapture = "tidb_enable_plan_replayer_capture"
 )
 
 // TiDB vars that have only global scope

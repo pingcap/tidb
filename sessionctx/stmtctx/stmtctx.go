@@ -339,6 +339,9 @@ type StatementContext struct {
 		SavepointName string
 		HasFKCascades bool
 	}
+
+	// TableJsonStats stores *handle.JSONTable by table id
+	TableJsonStats map[int64]interface{}
 }
 
 // StmtHints are SessionVars related sql hints.
