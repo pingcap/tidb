@@ -15,6 +15,7 @@
 package autoid
 
 import (
+	"fmt"
 	"context"
 	"strings"
 	"sync"
@@ -132,7 +133,11 @@ retry:
 			sp.mu.Unlock()
 			// Close grpc.ClientConn to release resource.
 			// See https://github.com/grpc/grpc-go/issues/5321
-			grpcConn.Close()
+			if grpcConn != nil {
+				err = grpcConn.Close()
+				fmt.Println("close grpc conn, err ===", err)
+			}
+			time.Sleep(200*time.Millisecond)
 			goto retry
 		}
 		return 0, 0, errors.Trace(err)
@@ -189,7 +194,11 @@ retry:
 			sp.mu.Unlock()
 			// Close grpc.ClientConn to release resource.
 			// See https://github.com/grpc/grpc-go/issues/5321
-			grpcConn.Close()
+			if grpcConn != nil {
+				err = grpcConn.Close()
+				fmt.Println("close grpc conn, err ===", err)
+			}
+			time.Sleep(200*time.Millisecond)
 			goto retry
 		}
 		return errors.Trace(err)
