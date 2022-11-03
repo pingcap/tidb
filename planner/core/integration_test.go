@@ -68,7 +68,7 @@ func TestShowSubquery(t *testing.T) {
 	))
 	tk.MustQuery("show columns from t where field in (select 'b') and false").Check(testkit.Rows())
 	tk.MustExec("insert into t values('c', 0, 0)")
-	tk.MustQuery("show columns from t where field < all (select a from t)").Check(testkit.Rows(
+	tk.MustQuery("show columns from t where field < all (select a from t)").Sort().Check(testkit.Rows(
 		"a varchar(10) YES  <nil> ",
 		"b int(11) YES  <nil> ",
 	))
