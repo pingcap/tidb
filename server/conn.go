@@ -1049,6 +1049,9 @@ func (cc *clientConn) initConnect(ctx context.Context) error {
 // This function returns and the connection is closed if there is an IO error or there is a panic.
 func (cc *clientConn) Run(ctx context.Context) {
 	defer func() {
+		if tracker := cc.ctx.GetSessionVars().MemTracker; tracker != nil {
+			tracker.Detach()
+		}
 		r := recover()
 		if r != nil {
 			logutil.Logger(ctx).Error("connection running loop panic",
