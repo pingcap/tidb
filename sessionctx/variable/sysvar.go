@@ -748,12 +748,20 @@ var defaultSysVars = []*SysVar{
 			}
 			return strconv.FormatFloat(floatValue, 'f', -1, 64), nil
 		},
-		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) (err error) {
 			factor := tidbOptFloat64(val, DefTiDBGOGCTunerThreshold)
 			GOGCTunerThreshold.Store(factor)
 			memTotal := memory.ServerMemoryLimit.Load()
-			threshold := float64(memTotal) * factor
-			gctuner.Tuning(uint64(threshold))
+			if memTotal == 0 {
+				memTotal, err = memory.MemTotal()
+				if err != nil {
+					return err
+				}
+			}
+			if factor > 0 {
+				threshold := float64(memTotal) * factor
+				gctuner.Tuning(uint64(threshold))
+			}
 			return nil
 		},
 	},
