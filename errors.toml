@@ -1191,7 +1191,7 @@ error = '''
 `%s` is unsupported on temporary tables.
 '''
 
-["ddl:8144"]
+["ddl:8148"]
 error = '''
 AUTO_INCREMENT has reached the maximum value limitation
 '''
