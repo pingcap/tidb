@@ -295,55 +295,42 @@ func (p *UserPrivileges) GetAuthWithoutVerification(user, host string) (success 
 }
 
 func checkAuthTokenClaims(claims map[string]interface{}, record *UserRecord, tokenLife time.Duration) error {
-	if sub, ok := claims[jwtRepo.SubjectKey]; ok {
-		if sub != record.User {
-			return fmt.Errorf("Wrong 'sub': %s", sub)
-		}
-	} else {
+	if sub, ok := claims[jwtRepo.SubjectKey]; !ok {
 		return errors.New("lack 'sub'")
+	} else if sub != record.User {
+		return fmt.Errorf("Wrong 'sub': %s", sub)
 	}
 
-	if email, ok := claims[openid.EmailKey]; ok {
-		if email != record.Email {
-			return fmt.Errorf("Wrong 'email': %s", email)
-		}
-	} else {
+	if email, ok := claims[openid.EmailKey]; !ok {
 		return errors.New("lack 'email'")
+	} else if email != record.Email {
+		return fmt.Errorf("Wrong 'email': %s", email)
 	}
 
 	now := time.Now()
-	if val, ok := claims[jwtRepo.IssuedAtKey]; ok {
-		if iat, ok := val.(time.Time); ok {
-			if now.After(iat.Add(tokenLife)) {
-				return errors.New("the token has been out of its life time")
-			} else if now.Before(iat) {
-				return errors.New("the token is issued at a future time")
-			}
-		} else {
-			return fmt.Errorf("iat: %v is not a value of time.Time", val)
-		}
-	} else {
+	val, ok := claims[jwtRepo.IssuedAtKey]
+	if !ok {
 		return errors.New("lack 'iat'")
+	} else if iat, ok := val.(time.Time); !ok {
+		return fmt.Errorf("iat: %v is not a value of time.Time", val)
+	} else if now.After(iat.Add(tokenLife)) {
+		return errors.New("the token has been out of its life time")
+	} else if now.Before(iat) {
+		return errors.New("the token is issued at a future time")
 	}
 
-	if val, ok := claims[jwtRepo.ExpirationKey]; ok {
-		if exp, ok := val.(time.Time); ok {
-			if now.After(exp) {
-				return errors.New("the token has been expired")
-			}
-		} else {
-			return fmt.Errorf("exp: %v is not a value of time.Time", val)
-		}
-	} else {
+	if val, ok = claims[jwtRepo.ExpirationKey]; !ok {
 		return errors.New("lack 'exp'")
+	} else if exp, ok := val.(time.Time); !ok {
+		return fmt.Errorf("exp: %v is not a value of time.Time", val)
+	} else if now.After(exp) {
+		return errors.New("the token has been expired")
 	}
 
-	// `iss` is not required if `token_issuer` is not set in `mysql.user`
-	if iss, ok := claims[jwtRepo.IssuerKey]; ok {
-		if iss != record.AuthTokenIssuer {
-			return fmt.Errorf("Wrong 'iss': %s", iss)
-		}
-	} else if len(record.AuthTokenIssuer) > 0 {
+	// `iss` is not required if `token_issuer` is empty in `mysql.user`
+	if iss, ok := claims[jwtRepo.IssuerKey]; ok && iss != record.AuthTokenIssuer {
+		return fmt.Errorf("Wrong 'iss': %s", iss)
+	} else if !ok && len(record.AuthTokenIssuer) > 0 {
 		return errors.New("lack 'iss'")
 	}
 
