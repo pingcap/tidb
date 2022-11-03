@@ -2112,7 +2112,8 @@ func TestSetEnableRateLimitAction(t *testing.T) {
 	result.Check(testkit.Rows("1"))
 	tk.MustExec("use test")
 	tk.MustExec("create table tmp123(id int)")
-	tk.MustQuery("select * from tmp123;")
+	rs, err := tk.Exec("select * from tmp123;")
+	require.NoError(t, err)
 	haveRateLimitAction := false
 	action := tk.Session().GetSessionVars().MemTracker.GetFallbackForTest(false)
 	for ; action != nil; action = action.GetFallback() {
@@ -2122,6 +2123,8 @@ func TestSetEnableRateLimitAction(t *testing.T) {
 		}
 	}
 	require.True(t, haveRateLimitAction)
+	err = rs.Close()
+	require.NoError(t, err)
 
 	// assert set sys variable
 	tk.MustExec("set global tidb_enable_rate_limit_action= '0';")

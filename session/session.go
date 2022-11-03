@@ -459,7 +459,7 @@ func (s *session) GetPlanCache(isGeneralPlanCache bool) sessionctx.PlanCache {
 		if s.generalPlanCache == nil { // lazy construction
 			s.generalPlanCache = plannercore.NewLRUPlanCache(uint(s.GetSessionVars().GeneralPlanCacheSize),
 				variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load(),
-				plannercore.PickPlanFromBucket)
+				plannercore.PickPlanFromBucket, s)
 		}
 		return s.generalPlanCache
 	}
@@ -471,7 +471,7 @@ func (s *session) GetPlanCache(isGeneralPlanCache bool) sessionctx.PlanCache {
 	if s.preparedPlanCache == nil { // lazy construction
 		s.preparedPlanCache = plannercore.NewLRUPlanCache(uint(s.GetSessionVars().PreparedPlanCacheSize),
 			variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load(),
-			plannercore.PickPlanFromBucket)
+			plannercore.PickPlanFromBucket, s)
 	}
 	return s.preparedPlanCache
 }
@@ -3480,7 +3480,8 @@ func (s *session) GetInfoSchema() sessionctx.InfoschemaMetaVersion {
 
 func (s *session) GetDomainInfoSchema() sessionctx.InfoschemaMetaVersion {
 	is := domain.GetDomain(s).InfoSchema()
-	return temptable.AttachLocalTemporaryTableInfoSchema(s, is)
+	extIs := &infoschema.SessionExtendedInfoSchema{InfoSchema: is}
+	return temptable.AttachLocalTemporaryTableInfoSchema(s, extIs)
 }
 
 func getSnapshotInfoSchema(s sessionctx.Context, snapshotTS uint64) (infoschema.InfoSchema, error) {
