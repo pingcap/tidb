@@ -758,8 +758,10 @@ var defaultSysVars = []*SysVar{
 					return err
 				}
 			}
-			threshold := float64(memTotal) * factor
-			gctuner.Tuning(uint64(threshold))
+			if factor > 0 {
+				threshold := float64(memTotal) * factor
+				gctuner.Tuning(uint64(threshold))
+			}
 			return nil
 		},
 	},
