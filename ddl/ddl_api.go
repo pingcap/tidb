@@ -666,6 +666,13 @@ func checkTooLongIndex(index model.CIStr) error {
 	return nil
 }
 
+func checkTooLongForeignKey(fk model.CIStr) error {
+	if utf8.RuneCountInString(fk.L) > mysql.MaxForeignKeyIdentifierLen {
+		return dbterror.ErrTooLongIdent.GenWithStackByArgs(fk)
+	}
+	return nil
+}
+
 func setColumnFlagWithConstraint(colMap map[string]*table.Column, v *ast.Constraint) {
 	switch v.Tp {
 	case ast.ConstraintPrimaryKey:
@@ -6164,6 +6171,9 @@ func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 func buildFKInfo(ctx sessionctx.Context, fkName model.CIStr, keys []*ast.IndexPartSpecification, refer *ast.ReferenceDef, cols []*table.Column) (*model.FKInfo, error) {
 	if len(keys) != len(refer.IndexPartSpecifications) {
 		return nil, infoschema.ErrForeignKeyNotMatch.GenWithStackByArgs(fkName, "Key reference and table reference don't match")
+	}
+	if err := checkTooLongForeignKey(fkName); err != nil {
+		return nil, err
 	}
 
 	// all base columns of stored generated columns
