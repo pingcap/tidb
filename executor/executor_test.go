@@ -6072,12 +6072,15 @@ func TestGlobalMemoryControl(t *testing.T) {
 
 	tk1 := testkit.NewTestKit(t, store)
 	tracker1 := tk1.Session().GetSessionVars().MemTracker
+	tracker1.FallbackOldAndSetNewAction(&memory.PanicOnExceed{})
 
 	tk2 := testkit.NewTestKit(t, store)
 	tracker2 := tk2.Session().GetSessionVars().MemTracker
+	tracker2.FallbackOldAndSetNewAction(&memory.PanicOnExceed{})
 
 	tk3 := testkit.NewTestKit(t, store)
 	tracker3 := tk3.Session().GetSessionVars().MemTracker
+	tracker3.FallbackOldAndSetNewAction(&memory.PanicOnExceed{})
 
 	sm := &testkit.MockSessionManager{
 		PS: []*util.ProcessInfo{tk1.Session().ShowProcess(), tk2.Session().ShowProcess(), tk3.Session().ShowProcess()},
