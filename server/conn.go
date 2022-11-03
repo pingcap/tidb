@@ -2468,7 +2468,7 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 		}
 		if cc.capability&mysql.ClientPluginAuth > 0 && len(data) > 0 {
 			pluginNameB, _ := parseNullTermString(data)
-			pluginName = string(pluginNameB)
+			pluginName = string(hack.String(pluginNameB))
 		}
 	}
 
