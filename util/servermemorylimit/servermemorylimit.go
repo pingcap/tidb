@@ -77,9 +77,10 @@ func (smqh *Handle) Run() {
 }
 
 type sessionToBeKilled struct {
-	isKilling    bool
-	sqlStartTime time.Time
-	sessionID    uint64
+	isKilling      bool
+	sqlStartTime   time.Time
+	sessionID      uint64
+	sessionTracker *memory.Tracker
 }
 
 func killSessIfNeeded(s *sessionToBeKilled, bt uint64, sm util.SessionManager) {
@@ -91,6 +92,7 @@ func killSessIfNeeded(s *sessionToBeKilled, bt uint64, sm util.SessionManager) {
 		}
 		s.isKilling = false
 		IsKilling.Store(false)
+		memory.MemUsageTop1Tracker.CompareAndSwap(s.sessionTracker, nil)
 		//nolint: all_revive,revive
 		runtime.GC()
 	}
@@ -109,6 +111,7 @@ func killSessIfNeeded(s *sessionToBeKilled, bt uint64, sm util.SessionManager) {
 				s.sessionID = t.SessionID
 				s.sqlStartTime = info.Time
 				s.isKilling = true
+				s.sessionTracker = t
 				t.NeedKill.Store(true)
 
 				killTime := time.Now()

@@ -306,6 +306,16 @@ func (t *Tracker) Detach() {
 		t.DetachFromGlobalTracker()
 		return
 	}
+	if parent.IsRootTrackerOfSess {
+		parent.actionMuForHardLimit.Lock()
+		parent.actionMuForHardLimit.actionOnExceed = nil
+		parent.actionMuForHardLimit.Unlock()
+
+		parent.actionMuForSoftLimit.Lock()
+		parent.actionMuForSoftLimit.actionOnExceed = nil
+		parent.actionMuForSoftLimit.Unlock()
+		parent.NeedKill.Store(false)
+	}
 	parent.remove(t)
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -553,6 +563,20 @@ func (t *Tracker) ResetMaxConsumed() {
 
 // SearchTrackerWithoutLock searches the specific tracker under this tracker without lock.
 func (t *Tracker) SearchTrackerWithoutLock(label int) *Tracker {
+	if t.label == label {
+		return t
+	}
+	children := t.mu.children[label]
+	if len(children) > 0 {
+		return children[0]
+	}
+	return nil
+}
+
+// SearchTrackerWithLock searches the specific tracker under this tracker with lock.
+func (t *Tracker) SearchTrackerWithLock(label int) *Tracker {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	if t.label == label {
 		return t
 	}
