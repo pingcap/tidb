@@ -2055,12 +2055,6 @@ func TestSetChunkReuseVariable(t *testing.T) {
 	tk.MustExec("set GLOBAL tidb_enable_reuse_chunk=OFF;")
 	tk.MustQuery("select @@global.tidb_enable_reuse_chunk").Check(testkit.Rows("0"))
 
-	// negative number
-	tk.MustExec("set @@tidb_max_reuse_chunk=-1;")
-	tk.MustQuery("select @@session.tidb_max_reuse_chunk").Check(testkit.Rows("1"))
-	tk.MustExec("set GLOBAL tidb_max_reuse_chunk=-1;")
-	tk.MustQuery("select @@global.tidb_max_reuse_chunk").Check(testkit.Rows("1"))
-
 	// error value
 	tk.MustGetErrCode("set @@tidb_enable_reuse_chunk=s;", errno.ErrWrongValueForVar)
 }
