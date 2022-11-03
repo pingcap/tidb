@@ -560,14 +560,17 @@ type StorageDDLInjector struct {
 
 var _ kv.EtcdBackend = StorageDDLInjector{}
 
+// EtcdAddrs implements the kv.EtcdBackend interface.
 func (s StorageDDLInjector) EtcdAddrs() ([]string, error) {
 	return s.EtcdBackend.EtcdAddrs()
 }
 
+// TLSConfig implements the kv.EtcdBackend interface.
 func (s StorageDDLInjector) TLSConfig() *tls.Config {
 	return s.EtcdBackend.TLSConfig()
 }
 
+// StartGCWorker implements the kv.EtcdBackend interface.
 func (s StorageDDLInjector) StartGCWorker() error {
 	return s.EtcdBackend.StartGCWorker()
 }
