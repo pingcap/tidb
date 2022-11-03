@@ -1491,6 +1491,14 @@ def go_deps():
         version = "v1.3.0",
     )
     go_repository(
+        name = "com_github_googleapis_enterprise_certificate_proxy",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/googleapis/enterprise-certificate-proxy",
+        sum = "h1:7MYGT2XEMam7Mtzv1yDUYXANedWvwk3HKkR3MyGowy8=",
+        version = "v0.0.0-20220520183353-fd19c99a87aa",
+    )
+
+    go_repository(
         name = "com_github_googleapis_gax_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/googleapis/gax-go/v2",
@@ -1504,6 +1512,14 @@ def go_deps():
         sum = "h1:l6N3VoaVzTncYYW+9yOz2LJJammFZGBO13sqgEhpy9g=",
         version = "v0.2.0",
     )
+    go_repository(
+        name = "com_github_googleapis_go_type_adapters",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/googleapis/go-type-adapters",
+        sum = "h1:9XdMn+d/G57qq1s8dNc5IesGCXHf6V2HZ2JwRxfA2tA=",
+        version = "v1.0.0",
+    )
+
     go_repository(
         name = "com_github_gophercloud_gophercloud",
         build_file_proto_mode = "disable",
@@ -2780,6 +2796,14 @@ def go_deps():
         version = "v2.6.1+incompatible",
     )
     go_repository(
+        name = "com_github_pierrec_lz4_v4",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/pierrec/lz4/v4",
+        sum = "h1:MO0/ucJhngq7299dKLwIMtgTfbkoSPF6AoMYDd8Q4q0=",
+        version = "v4.1.15",
+    )
+
+    go_repository(
         name = "com_github_pingcap_badger",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/badger",
@@ -2856,6 +2880,14 @@ def go_deps():
         sum = "h1:49lOXmGaUpV9Fz3gd7TFZY106KVlPVa5jcYD1gaQf98=",
         version = "v0.0.0-20180916011732-0a3d74bf9ce4",
     )
+    go_repository(
+        name = "com_github_pkg_diff",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/pkg/diff",
+        sum = "h1:aoZm08cpOy4WuID//EZDgcC4zIxODThtZNPirFr42+A=",
+        version = "v0.0.0-20210226163009-20ebb0f2a09e",
+    )
+
     go_repository(
         name = "com_github_pkg_errors",
         build_file_proto_mode = "disable_global",
@@ -3179,6 +3211,14 @@ def go_deps():
         sum = "h1:TKdv8HiTLgE5wdJuEML90aBgNWsokNbMijUGhmcoBJc=",
         version = "v2.1.4+incompatible",
     )
+    go_repository(
+        name = "com_github_shopify_toxiproxy_v2",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/Shopify/toxiproxy/v2",
+        sum = "h1:O1e4Jfvr/hefNTNu+8VtdEG5lSeamJRo4aKhMOKNM64=",
+        version = "v2.4.0",
+    )
+
     go_repository(
         name = "com_github_shopspring_decimal",
         build_file_proto_mode = "disable",
@@ -3539,6 +3579,13 @@ def go_deps():
         sum = "h1:hh+/cpIcopyMYbZNVov9iSxvJU3OYQg78Sfaqzi/CzI=",
         version = "v0.0.5",
     )
+    go_repository(
+        name = "com_github_urfave_cli_v2",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/urfave/cli/v2",
+        sum = "h1:qph92Y649prgesehzOrQjdWyxFOp/QVM+6imKHad91M=",
+        version = "v2.3.0",
+    )
 
     go_repository(
         name = "com_github_urfave_negroni",
@@ -3613,6 +3660,28 @@ def go_deps():
         sum = "h1:9DDCDwOyEy/gId+IEMrFHLuQ5R/WV0KNxWLler8X2OY=",
         version = "v0.0.0-20161129230411-ed8402a42d5f",
     )
+    go_repository(
+        name = "com_github_xdg_go_pbkdf2",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/xdg-go/pbkdf2",
+        sum = "h1:Su7DPu48wXMwC3bs7MCNG+z4FhcyEuz5dlvchbq0B0c=",
+        version = "v1.0.0",
+    )
+    go_repository(
+        name = "com_github_xdg_go_scram",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/xdg-go/scram",
+        sum = "h1:VOMT+81stJgXW3CpHyqHN3AXDYIMsx56mEFrB37Mb/E=",
+        version = "v1.1.1",
+    )
+    go_repository(
+        name = "com_github_xdg_go_stringprep",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/xdg-go/stringprep",
+        sum = "h1:kdwGpVNwPFtjs98xCGkHjQtGKh86rDcRZN17QEMCOIs=",
+        version = "v1.0.3",
+    )
+
     go_repository(
         name = "com_github_xdg_scram",
         build_file_proto_mode = "disable_global",

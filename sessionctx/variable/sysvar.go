@@ -757,27 +757,24 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
-	{Scope: ScopeGlobal, Name: TiDBServerMemoryLimit, Value: strconv.FormatUint(DefTiDBServerMemoryLimit, 10), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint64,
+	{Scope: ScopeGlobal, Name: TiDBServerMemoryLimit, Value: DefTiDBServerMemoryLimit, Type: TypeStr,
 		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
-			return memory.ServerMemoryLimit.String(), nil
+			return memory.ServerMemoryLimitOriginText.Load(), nil
 		},
 		Validation: func(s *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-			intVal, err := strconv.ParseUint(normalizedValue, 10, 64)
+			_, str, err := parseMemoryLimit(s, normalizedValue, originalValue)
 			if err != nil {
 				return "", err
 			}
-			if intVal > 0 && intVal < (512<<20) { // 512 MB
-				s.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(TiDBServerMemoryLimit, originalValue))
-				intVal = 512 << 20
-			}
-			return strconv.FormatUint(intVal, 10), nil
+			return str, nil
 		},
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-			intVal, err := strconv.ParseUint(val, 10, 64)
+			bt, str, err := parseMemoryLimit(s, val, val)
 			if err != nil {
 				return err
 			}
-			memory.ServerMemoryLimit.Store(intVal)
+			memory.ServerMemoryLimitOriginText.Store(str)
+			memory.ServerMemoryLimit.Store(bt)
 			gctuner.GlobalMemoryLimitTuner.UpdateMemoryLimit()
 			return nil
 		},
