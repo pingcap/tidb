@@ -2642,101 +2642,17 @@ func (s *testSuiteJoinSerial) TestIssue25902(c *C) {
 	tk.MustQuery("select * from tt1 where ts in (select ts from tt2);").Check(testkit.Rows())
 	tk.MustExec("set @@session.time_zone = @tmp;")
 }
-<<<<<<< HEAD
-=======
 
-func TestIssue30211(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1, t2;")
-	tk.MustExec("create table t1(a int, index(a));")
-	tk.MustExec("create table t2(a int, index(a));")
-	func() {
-		fpName := "github.com/pingcap/tidb/executor/TestIssue30211"
-		require.NoError(t, failpoint.Enable(fpName, `panic("TestIssue30211 IndexJoinPanic")`))
-		defer func() {
-			require.NoError(t, failpoint.Disable(fpName))
-		}()
-		err := tk.QueryToErr("select /*+ inl_join(t1) */ * from t1 join t2 on t1.a = t2.a;")
-		require.EqualError(t, err, "failpoint panic: TestIssue30211 IndexJoinPanic")
-
-		err = tk.QueryToErr("select /*+ inl_hash_join(t1) */ * from t1 join t2 on t1.a = t2.a;")
-		require.EqualError(t, err, "failpoint panic: TestIssue30211 IndexJoinPanic")
-	}()
-	tk.MustExec("insert into t1 values(1),(2);")
-	tk.MustExec("insert into t2 values(1),(1),(2),(2);")
-	tk.MustExec("set @@tidb_mem_quota_query=8000;")
-	tk.MustExec("set tidb_index_join_batch_size = 1;")
-	tk.MustExec("SET GLOBAL tidb_mem_oom_action = 'CANCEL'")
-	defer tk.MustExec("SET GLOBAL tidb_mem_oom_action='LOG'")
-	err := tk.QueryToErr("select /*+ inl_join(t1) */ * from t1 join t2 on t1.a = t2.a;").Error()
-	require.True(t, strings.Contains(err, "Out Of Memory Quota"))
-	err = tk.QueryToErr("select /*+ inl_hash_join(t1) */ * from t1 join t2 on t1.a = t2.a;").Error()
-	require.True(t, strings.Contains(err, "Out Of Memory Quota"))
-}
-
-func TestIssue31129(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_init_chunk_size=2")
-	tk.MustExec("set @@tidb_index_join_batch_size=10")
-	tk.MustExec("DROP TABLE IF EXISTS t, s")
-	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
-	tk.MustExec("create table t(pk int primary key, a int)")
-	for i := 0; i < 100; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t values(%d, %d)", i, i))
-	}
-	tk.MustExec("create table s(a int primary key)")
-	for i := 0; i < 100; i++ {
-		tk.MustExec(fmt.Sprintf("insert into s values(%d)", i))
-	}
-	tk.MustExec("analyze table t")
-	tk.MustExec("analyze table s")
-
-	// Test IndexNestedLoopHashJoin keepOrder.
-	fpName := "github.com/pingcap/tidb/executor/TestIssue31129"
-	require.NoError(t, failpoint.Enable(fpName, "return"))
-	err := tk.QueryToErr("select /*+ INL_HASH_JOIN(s) */ * from t left join s on t.a=s.a order by t.pk")
-	require.True(t, strings.Contains(err.Error(), "TestIssue31129"))
-	require.NoError(t, failpoint.Disable(fpName))
-
-	// Test IndexNestedLoopHashJoin build hash table panic.
-	fpName = "github.com/pingcap/tidb/executor/IndexHashJoinBuildHashTablePanic"
-	require.NoError(t, failpoint.Enable(fpName, `panic("IndexHashJoinBuildHashTablePanic")`))
-	err = tk.QueryToErr("select /*+ INL_HASH_JOIN(s) */ * from t left join s on t.a=s.a order by t.pk")
-	require.True(t, strings.Contains(err.Error(), "IndexHashJoinBuildHashTablePanic"))
-	require.NoError(t, failpoint.Disable(fpName))
-
-	// Test IndexNestedLoopHashJoin fetch inner fail.
-	fpName = "github.com/pingcap/tidb/executor/IndexHashJoinFetchInnerResultsErr"
-	require.NoError(t, failpoint.Enable(fpName, "return"))
-	err = tk.QueryToErr("select /*+ INL_HASH_JOIN(s) */ * from t left join s on t.a=s.a order by t.pk")
-	require.True(t, strings.Contains(err.Error(), "IndexHashJoinFetchInnerResultsErr"))
-	require.NoError(t, failpoint.Disable(fpName))
-
-	// Test IndexNestedLoopHashJoin build hash table panic and IndexNestedLoopHashJoin fetch inner fail at the same time.
-	fpName1, fpName2 := "github.com/pingcap/tidb/executor/IndexHashJoinBuildHashTablePanic", "github.com/pingcap/tidb/executor/IndexHashJoinFetchInnerResultsErr"
-	require.NoError(t, failpoint.Enable(fpName1, `panic("IndexHashJoinBuildHashTablePanic")`))
-	require.NoError(t, failpoint.Enable(fpName2, "return"))
-	err = tk.QueryToErr("select /*+ INL_HASH_JOIN(s) */ * from t left join s on t.a=s.a order by t.pk")
-	require.True(t, strings.Contains(err.Error(), "IndexHashJoinBuildHashTablePanic"))
-	require.NoError(t, failpoint.Disable(fpName1))
-	require.NoError(t, failpoint.Disable(fpName2))
-}
-
-func TestIssue37932(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk1 := testkit.NewTestKit(t, store)
-	tk2 := testkit.NewTestKit(t, store)
+func (s *testSuiteJoinSerial) TestIssue37932(c *C) {
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk2 := testkit.NewTestKit(c, s.store)
 	tk1.MustExec("use test")
 	tk2.MustExec("use test")
 	tk1.MustExec("create table tbl_1 ( col_1 set ( 'Alice','Bob','Charlie','David' )   not null default 'Alice' ,col_2 tinyint  unsigned ,col_3 decimal ( 34 , 3 )   not null default 79 ,col_4 bigint  unsigned not null ,col_5 bit ( 12 )   not null , unique key idx_1 ( col_2 ) ,unique key idx_2 ( col_2 ) ) charset utf8mb4 collate utf8mb4_bin ;")
 	tk1.MustExec("create table tbl_2 ( col_6 text ( 52 ) collate utf8_unicode_ci  not null ,col_7 int  unsigned not null ,col_8 blob ( 369 ) ,col_9 bit ( 51 ) ,col_10 decimal ( 38 , 16 ) , unique key idx_3 ( col_7 ) ,unique key idx_4 ( col_7 ) ) charset utf8 collate utf8_unicode_ci ;")
 	tk1.MustExec("create table tbl_3 ( col_11 set ( 'Alice','Bob','Charlie','David' )   not null ,col_12 bigint  unsigned not null default 1678891638492596595 ,col_13 text ( 18 ) ,col_14 set ( 'Alice','Bob','Charlie','David' )   not null default 'Alice' ,col_15 mediumint , key idx_5 ( col_12 ) ,unique key idx_6 ( col_12 ) ) charset utf8mb4 collate utf8mb4_general_ci ;")
 	tk1.MustExec("create table tbl_4 ( col_16 set ( 'Alice','Bob','Charlie','David' )   not null ,col_17 tinyint  unsigned ,col_18 int  unsigned not null default 4279145838 ,col_19 varbinary ( 210 )   not null ,col_20 timestamp , primary key  ( col_18 ) /*T![clustered_index] nonclustered */ ,key idx_8 ( col_19 ) ) charset utf8mb4 collate utf8mb4_unicode_ci ;")
-	tk1.MustExec("create table tbl_5 ( col_21 bigint ,col_22 set ( 'Alice','Bob','Charlie','David' ) ,col_23 blob ( 311 ) ,col_24 bigint  unsigned not null default 3415443099312152509 ,col_25 time , unique key idx_9 ( col_21 ) ,unique key idx_10 ( col_21 ) ) charset gbk collate gbk_bin ;")
+	tk1.MustExec("create table tbl_5 ( col_21 bigint ,col_22 set ( 'Alice','Bob','Charlie','David' ) ,col_23 blob ( 311 ) ,col_24 bigint  unsigned not null default 3415443099312152509 ,col_25 time , unique key idx_9 ( col_21 ) ,unique key idx_10 ( col_21 ) ) ;")
 	tk1.MustExec("insert into tbl_1 values ( 'Bob',null,0.04,2650749963804575036,4044 );")
 	tk1.MustExec("insert into tbl_1 values ( 'Alice',171,1838.2,6452757231340518222,1190 );")
 	tk1.MustExec("insert into tbl_1 values ( 'Bob',202,2.962,4304284252076747481,2112 );")
@@ -2797,57 +2713,12 @@ func TestIssue37932(t *testing.T) {
 	tk1.MustExec("delete from tbl_3 where tbl_3.col_11 in ( 'Alice' ,'Bob' ,'Alice' ) ;")
 	tk2.MustExec("insert  into tbl_3 set col_11 = 'Bob', col_12 = 5701982550256146475, col_13 = 'Hhl)yCsQ2K3cfc^', col_14 = 'Alice', col_15 = -3718868 on duplicate key update col_15 = 7210750, col_12 = 6133680876296985245, col_14 = 'Alice', col_11 = 'David', col_13 = 'F+RMGE!_2^Cfr3Fw';")
 	tk2.MustExec("insert ignore into tbl_5 set col_21 = 2439343116426563397, col_22 = 'Charlie', col_23 = '~Spa2YzRFFom16XD', col_24 = 5571575017340582365, col_25 = '13:24:38.00' ;")
-	// FIXME: https://github.com/pingcap/tidb/issues/38577
 	err := tk1.ExecToErr("update tbl_4 set tbl_4.col_20 = '2006-01-24' where tbl_4.col_18 in ( select col_11 from tbl_3 where IsNull( tbl_4.col_16 ) or not( tbl_4.col_19 in ( select col_3 from tbl_1 where tbl_4.col_16 between 'Alice' and 'David' and tbl_4.col_19 <= '%XgRou0#iKtn*' ) ) ) ;")
 	if err != nil {
 		print(err.Error())
-		if strings.Contains(err.Error(), "Truncated incorrect DOUBLE value") {
-			t.Log("Bug of truncated incorrect DOUBLE value has not been fixed, skipping")
+		if strings.Contains(err.Error(), "Truncated incorrect DOUBLE value") || strings.Contains(err.Error(), "Truncated incorrect FLOAT value") {
 			return
 		}
 	}
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 }
-
-func TestOuterJoin(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1, t2, t3, t4")
-	tk.MustExec("create table t1(a int, b int, c int)")
-	tk.MustExec("create table t2(a int, b int, c int)")
-	tk.MustExec("create table t3(a int, b int, c int)")
-	tk.MustExec("create table t4(a int, b int, c int)")
-	tk.MustExec("INSERT INTO t1 VALUES (1,3,0), (2,2,0), (3,2,0);")
-	tk.MustExec("INSERT INTO t2 VALUES (3,3,0), (4,2,0), (5,3,0);")
-	tk.MustExec("INSERT INTO t3 VALUES (1,2,0), (2,2,0);")
-	tk.MustExec("INSERT INTO t4 VALUES (3,2,0), (4,2,0);")
-	tk.MustQuery("SELECT t2.a,t2.b,t3.a,t3.b,t4.a,t4.b from (t3, t4) left join (t1, t2) on t3.a=1 AND t3.b=t2.b AND t2.b=t4.b order by 1, 2, 3, 4, 5;").Check(
-		testkit.Rows(
-			"<nil> <nil> 2 2 3 2",
-			"<nil> <nil> 2 2 4 2",
-			"4 2 1 2 3 2",
-			"4 2 1 2 3 2",
-			"4 2 1 2 3 2",
-			"4 2 1 2 4 2",
-			"4 2 1 2 4 2",
-			"4 2 1 2 4 2",
-		),
-	)
-
-	tk.MustExec("drop table if exists t1, t2, t3")
-	tk.MustExec("create table t1 (a1 int, a2 int);")
-	tk.MustExec("create table t2 (b1 int not null, b2 int);")
-	tk.MustExec("create table t3 (c1 int, c2 int);")
-	tk.MustExec("insert into t1 values (1,2), (2,2), (3,2);")
-	tk.MustExec("insert into t2 values (1,3), (2,3);")
-	tk.MustExec("insert into t3 values (2,4),        (3,4);")
-	tk.MustQuery("select * from t1 left join t2  on  b1 = a1 left join t3  on  c1 = a1  and  b1 is null order by 1, 2, 3, 4, 5, 6").Check(
-		testkit.Rows(
-			"1 2 1 3 <nil> <nil>",
-			"2 2 2 3 <nil> <nil>",
-			"3 2 <nil> <nil> 3 4",
-		),
-	)
-}
->>>>>>> e843278589 (executor: fix HashJoinExec panic of closed channel (#38576))
