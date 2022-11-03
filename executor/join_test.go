@@ -2729,7 +2729,7 @@ func (s *testSuiteJoinSerial) TestIssue31129(c *C) {
 	c.Assert(failpoint.Disable(fpName2), IsNil)
 }
 
-func (s *testSuiteJoinSerial) TestIssue37932(c C) {
+func (s *testSuiteJoinSerial) TestIssue37932(c *C) {
 	tk1 := testkit.NewTestKit(c, s.store)
 	tk2 := testkit.NewTestKit(c, s.store)
 	tk1.MustExec("use test")
