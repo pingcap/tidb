@@ -491,7 +491,7 @@ const SignalCheckpointForSort uint = 10240
 func (c *SortedRowContainer) keyColumnsLess(i, j int) bool {
 	if c.timesOfRowCompare == SignalCheckpointForSort {
 		// Trigger Consume for checking the NeedKill signal
-		c.memTracker.Consume(0)
+		c.memTracker.Consume(1)
 		c.timesOfRowCompare = 0
 	}
 	c.timesOfRowCompare++
