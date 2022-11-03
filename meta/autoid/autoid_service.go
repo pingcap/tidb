@@ -46,6 +46,8 @@ type clientDiscover struct {
 	mu struct {
 		sync.RWMutex
 		autoid.AutoIDAllocClient
+		// Release the client conn to avoid resource leak!
+		*grpc.ClientConn
 	}
 }
 
@@ -62,6 +64,12 @@ func (d *clientDiscover) GetClient(ctx context.Context) (autoid.AutoIDAllocClien
 	}
 	d.mu.RUnlock()
 
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.mu.AutoIDAllocClient != nil {
+		return d.mu.AutoIDAllocClient, nil
+	}
+
 	resp, err := d.etcdCli.Get(ctx, autoIDLeaderPath, clientv3.WithFirstCreate()...)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -77,9 +85,8 @@ func (d *clientDiscover) GetClient(ctx context.Context) (autoid.AutoIDAllocClien
 		return nil, errors.Trace(err)
 	}
 	cli = autoid.NewAutoIDAllocClient(grpcConn)
-	d.mu.Lock()
 	d.mu.AutoIDAllocClient = cli
-	d.mu.Unlock()
+	d.mu.ClientConn = grpcConn
 	return cli, nil
 }
 
@@ -117,9 +124,15 @@ retry:
 	})
 	if err != nil {
 		if strings.Contains(err.Error(), "rpc error") {
+			var grpcConn *grpc.ClientConn
 			sp.mu.Lock()
+			grpcConn = sp.mu.ClientConn
 			sp.mu.AutoIDAllocClient = nil
+			sp.mu.ClientConn = nil
 			sp.mu.Unlock()
+			// Close grpc.ClientConn to release resource.
+			// See https://github.com/grpc/grpc-go/issues/5321
+			grpcConn.Close()
 			goto retry
 		}
 		return 0, 0, errors.Trace(err)
@@ -154,6 +167,7 @@ func (sp *singlePointAlloc) Rebase(ctx context.Context, newBase int64, allocIDs 
 }
 
 func (sp *singlePointAlloc) rebase(ctx context.Context, newBase int64, allocIDs bool, force bool) error {
+retry:
 	cli, err := sp.GetClient(ctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -165,9 +179,22 @@ func (sp *singlePointAlloc) rebase(ctx context.Context, newBase int64, allocIDs 
 		Force:      force,
 		IsUnsigned: sp.isUnsigned,
 	})
-	if err == nil {
-		sp.lastAllocated = newBase
+	if err != nil {
+		if strings.Contains(err.Error(), "rpc error") {
+			var grpcConn *grpc.ClientConn
+			sp.mu.Lock()
+			grpcConn = sp.mu.ClientConn
+			sp.mu.AutoIDAllocClient = nil
+			sp.mu.ClientConn = nil
+			sp.mu.Unlock()
+			// Close grpc.ClientConn to release resource.
+			// See https://github.com/grpc/grpc-go/issues/5321
+			grpcConn.Close()
+			goto retry
+		}
+		return errors.Trace(err)
 	}
+	sp.lastAllocated = newBase
 	return err
 }
 
