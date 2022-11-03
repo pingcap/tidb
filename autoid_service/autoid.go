@@ -429,7 +429,10 @@ func (s *Service) Rebase(ctx context.Context, req *autoid.RebaseRequest) (*autoi
 
 	val := s.getAlloc(req.DbID, req.TblID, req.IsUnsigned)
 	if req.Force {
-		val.forceRebase(ctx, s.store, req.DbID, req.TblID, req.Base, req.IsUnsigned)
+		err := val.forceRebase(ctx, s.store, req.DbID, req.TblID, req.Base, req.IsUnsigned)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 
 	var err error
