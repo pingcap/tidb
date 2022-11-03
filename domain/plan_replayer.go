@@ -24,6 +24,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -39,7 +40,8 @@ type dumpFileGcChecker struct {
 // GetPlanReplayerDirName returns plan replayer directory path.
 // The path is related to the process id.
 func GetPlanReplayerDirName() string {
-	return filepath.Join(os.TempDir(), "replayer", strconv.Itoa(os.Getpid()))
+	tidbLogDir := filepath.Dir(config.GetGlobalConfig().Log.File.Filename)
+	return filepath.Join(tidbLogDir, "replayer")
 }
 
 func parseTime(s string) (time.Time, error) {
