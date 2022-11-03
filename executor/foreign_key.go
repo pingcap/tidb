@@ -533,8 +533,9 @@ func (fkc FKCheckExec) checkRows(ctx context.Context, sc *stmtctx.StatementConte
 			rows[i].ignored = true
 			sc.AppendWarning(fkc.FailedErr)
 			fkc.checkRowsCache[string(k)] = true
+		} else {
+			fkc.checkRowsCache[string(k)] = false
 		}
-		fkc.checkRowsCache[string(k)] = false
 		if fkc.stats != nil {
 			fkc.stats.Keys++
 		}
