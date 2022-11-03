@@ -4,6 +4,8 @@ go_library(
     name = "resourcemanage",
     srcs = [
         "rm.go",
+        "schedule.go",
+        "schedule_rule.go",
         "scheduler.go",
     ],
     importpath = "github.com/pingcap/tidb/resourcemanage",

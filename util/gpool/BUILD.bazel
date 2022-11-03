@@ -7,7 +7,9 @@ go_library(
         "gpool.go",
         "spinlock.go",
         "task.go",
+        "task_manage.go",
     ],
     importpath = "github.com/pingcap/tidb/util/gpool",
     visibility = ["//visibility:public"],
+    deps = ["@org_golang_x_sys//cpu"],
 )

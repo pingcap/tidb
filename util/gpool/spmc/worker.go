@@ -61,11 +61,11 @@ func (w *goWorker[T, U, C, CT, TF]) run() {
 				return
 			}
 			switch f.GetStatus() {
-			case PendingTask:
+			case pooltask.PendingTask:
 				f.SetStatus(pooltask.RunningTask)
-			case StopTask:
+			case pooltask.StopTask:
 				continue
-			case gpool.RunningTask:
+			case pooltask.RunningTask:
 				log.Error("worker got task running")
 				continue
 			}
