@@ -850,10 +850,6 @@ const (
 	TiDBGOGCTunerThreshold = "tidb_gogc_tuner_threshold"
 	// TiDBExternalTS is the ts to read through when the `TiDBEnableExternalTsRead` is on
 	TiDBExternalTS = "tidb_external_ts"
-	// TiDBMaxReuseChunk is Maximum number of chunks cached
-	TiDBMaxReuseChunk = "tidb_max_reuse_chunk"
-	//TiDBMaxReuseColumn is Maximum number of columns cached
-	TiDBMaxReuseColumn = "tidb_max_reuse_Column"
 )
 
 // TiDB intentional limits
