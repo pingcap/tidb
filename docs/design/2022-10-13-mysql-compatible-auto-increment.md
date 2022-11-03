@@ -13,7 +13,8 @@ This proposes an implementation of making the `AUTO_INCREMENT` behaviour compati
 MySQL deploys on a single-machine, and it provides the [`AUTO_INCREMENT`](https://dev.mysql.com/doc/refman/8.0/en/example-auto-increment.html) table attribute to generate a unique identity for new rows.
 
 In TiDB, we support generating `AUTO_INCREMENT` IDs that are **unique**, **monotone increasing**, but the IDs may **not be consecutive**.
-The current behaviour is not fully-compatible with MySQL.
+
+The current behaviour in TiDB is not fully-compatible with MySQL.
 
 TiDB is a distributed database, each TiDB instance caches a batch of IDs for local allocating. When it exhaust its local cached IDs, it ask for another batch. For example, TiDB instance A may get ID range [0-20000), and instance B takes away range [20000, 40000), the next batch for TiDB instance A could be [40000, 60000), that's why the IDs are not **consecutive**. The ID sequence from instance A might be ...19998, 19999, [a hole here], 40000, 40001...
 
