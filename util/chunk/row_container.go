@@ -485,6 +485,7 @@ func (c *SortedRowContainer) lessRow(rowI, rowJ Row) bool {
 	return false
 }
 
+// SignalCheckpointForSort indicates the times of row comparation that a signal detection will be triggered.
 const SignalCheckpointForSort uint = 10240
 
 // keyColumnsLess is the less function for key columns.
