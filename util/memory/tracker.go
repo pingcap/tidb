@@ -762,6 +762,11 @@ func (t *Tracker) setParent(parent *Tracker) {
 	t.parMu.parent = parent
 }
 
+// GetParentForTest return the parent of the Tracker. Only used by test.
+func (t *Tracker) GetParentForTest() *Tracker {
+	return t.getParent()
+}
+
 // CountAllChildrenMemUse return memory used tree for the tracker
 func (t *Tracker) CountAllChildrenMemUse() map[string]int64 {
 	trackerMemUseMap := make(map[string]int64, 1024)
