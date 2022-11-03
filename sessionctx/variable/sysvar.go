@@ -743,17 +743,20 @@ var defaultSysVars = []*SysVar{
 			if floatValue < 0 && floatValue > 0.9 {
 				return "", ErrWrongValueForVar.GenWithStackByArgs(TiDBGOGCTunerThreshold, normalizedValue)
 			}
-			if globalMemoryLimitTuner != 0 && globalMemoryLimitTuner < floatValue+0.05 {
+			if globalMemoryLimitTuner < floatValue+0.05 {
 				return "", errors.New("tidb_gogc_tuner_threshold should be less than tidb_server_memory_limit_gc_trigger - 0.05")
 			}
 			return strconv.FormatFloat(floatValue, 'f', -1, 64), nil
 		},
-		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) (err error) {
 			factor := tidbOptFloat64(val, DefTiDBGOGCTunerThreshold)
 			GOGCTunerThreshold.Store(factor)
-			memTotal, err := memory.MemTotal()
-			if err != nil {
-				return err
+			memTotal := memory.ServerMemoryLimit.Load()
+			if memTotal == 0 {
+				memTotal, err = memory.MemTotal()
+				if err != nil {
+					return err
+				}
 			}
 			threshold := float64(memTotal) * factor
 			gctuner.Tuning(uint64(threshold))
