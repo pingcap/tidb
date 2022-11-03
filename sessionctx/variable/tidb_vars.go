@@ -1011,7 +1011,7 @@ const (
 	DefTiDBTableCacheLease                         = 3 // 3s
 	DefTiDBPersistAnalyzeOptions                   = true
 	DefTiDBEnableColumnTracking                    = false
-	DefTiDBStatsLoadSyncWait                       = 0
+	DefTiDBStatsLoadSyncWait                       = 100
 	DefTiDBStatsLoadPseudoTimeout                  = true
 	DefSysdateIsNow                                = false
 	DefTiDBEnableMutationChecker                   = false
