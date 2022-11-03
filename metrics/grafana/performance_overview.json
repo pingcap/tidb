@@ -162,7 +162,7 @@
       "targets": [
         {
           "exemplar": true,
-          "expr": "sum(rate(tidb_server_handle_query_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", sql_type!=\"internal\"}[1m]))",
+          "expr": "sum(tidb_server_tokens{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"})",
           "hide": false,
           "interval": "",
           "legendFormat": "database time",
@@ -302,7 +302,7 @@
       "targets": [
         {
           "exemplar": true,
-          "expr": "sum(rate(tidb_server_handle_query_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", sql_type!=\"internal\"}[1m]))",
+          "expr": "sum(tidb_server_tokens{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"})",
           "hide": false,
           "interval": "",
           "legendFormat": "database time",
@@ -850,12 +850,23 @@
       "targets": [
         {
           "exemplar": true,
-          "expr": "sum(rate(tidb_server_plan_cache_total{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m])) by (type)",
+          "expr": "sum(rate(tidb_server_plan_cache_total{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m]))",
           "format": "time_series",
           "interval": "",
           "intervalFactor": 2,
-          "legendFormat": "avg",
+          "legendFormat": "avg-hit",
           "refId": "A",
+          "step": 30
+        },
+        {
+          "exemplar": true,
+          "expr": "sum(rate(tidb_server_plan_cache_miss_total{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m]))",
+          "format": "time_series",
+          "hide": false,
+          "interval": "",
+          "intervalFactor": 2,
+          "legendFormat": "avg-miss",
+          "refId": "B",
           "step": 30
         }
       ],
@@ -1109,11 +1120,19 @@
         },
         {
           "exemplar": true,
-          "expr": "sum(rate(tidb_server_handle_query_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", sql_type!=\"internal\"}[1m]))",
+          "expr": "sum(tidb_server_tokens{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"})",
           "hide": false,
           "interval": "",
           "legendFormat": "active connections",
-          "refId": "C"
+          "refId": "D"
+        },
+        {
+          "exemplar": true,
+          "expr": "sum(tidb_server_tokens{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}) by (instance)",
+          "hide": true,
+          "interval": "",
+          "legendFormat": "ac-{{instance}}",
+          "refId": "E"
         }
       ],
       "thresholds": [],
