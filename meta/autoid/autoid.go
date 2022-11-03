@@ -468,7 +468,6 @@ func (alloc *allocator) ForceRebase(requiredBase int64) error {
 	if requiredBase == -1 {
 		return ErrAutoincReadFailed.GenWithStack("Cannot force rebase the next global ID to '0'")
 	}
-
 	alloc.mu.Lock()
 	defer alloc.mu.Unlock()
 	startTime := time.Now()

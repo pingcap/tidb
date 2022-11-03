@@ -127,7 +127,7 @@ retry:
 	})
 	if err != nil {
 		if strings.Contains(err.Error(), "rpc error") {
-			time.Sleep(200 * time.Millisecond)
+			time.Sleep(backoffDuration)
 			sp.resetConn()
 			goto retry
 		}
@@ -139,6 +139,8 @@ retry:
 	sp.lastAllocated = resp.Min
 	return resp.Min, resp.Max, err
 }
+
+const backoffDuration = 200 * time.Millisecond
 
 func (sp *singlePointAlloc) resetConn() {
 	var grpcConn *grpc.ClientConn
@@ -189,7 +191,7 @@ retry:
 	})
 	if err != nil {
 		if strings.Contains(err.Error(), "rpc error") {
-			time.Sleep(200 * time.Millisecond)
+			time.Sleep(backoffDuration)
 			sp.resetConn()
 			goto retry
 		}
