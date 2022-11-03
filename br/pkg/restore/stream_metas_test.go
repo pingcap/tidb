@@ -16,7 +16,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
-	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -27,6 +26,21 @@ func fakeDataFiles(s storage.ExternalStorage, base, item int) (result []*backupp
 		path := fmt.Sprintf("%04d_to_%04d.log", i, i+2)
 		s.WriteFile(ctx, path, []byte("test"))
 		data := &backuppb.DataFileInfo{
+			Path:  path,
+			MinTs: uint64(i),
+			MaxTs: uint64(i + 2),
+		}
+		result = append(result, data)
+	}
+	return
+}
+
+func fakeDataFilesV2(s storage.ExternalStorage, base, item int) (result []*backuppb.DataFileGroup) {
+	ctx := context.Background()
+	for i := base; i < base+item; i++ {
+		path := fmt.Sprintf("%04d_to_%04d.log", i, i+2)
+		s.WriteFile(ctx, path, []byte("test"))
+		data := &backuppb.DataFileGroup{
 			Path:  path,
 			MinTs: uint64(i),
 			MaxTs: uint64(i + 2),
@@ -64,43 +78,10 @@ func fakeStreamBackupV2(s storage.ExternalStorage) error {
 	ctx := context.Background()
 	base := 0
 	for i := 0; i < 6; i++ {
-		dfs := fakeDataFiles(s, base, 4)
-		minTs1 := uint64(18446744073709551615)
-		maxTs1 := uint64(0)
-		for _, f := range dfs[0:2] {
-			f.Path = fmt.Sprintf("%d", i)
-			if minTs1 > f.MinTs {
-				minTs1 = f.MinTs
-			}
-			if maxTs1 < f.MaxTs {
-				maxTs1 = f.MaxTs
-			}
-		}
-		minTs2 := uint64(18446744073709551615)
-		maxTs2 := uint64(0)
-		for _, f := range dfs[2:] {
-			f.Path = fmt.Sprintf("%d", i)
-			if minTs2 > f.MinTs {
-				minTs2 = f.MinTs
-			}
-			if maxTs2 < f.MaxTs {
-				maxTs2 = f.MaxTs
-			}
-		}
+		dfs := fakeDataFilesV2(s, base, 4)
 		base += 4
 		meta := &backuppb.Metadata{
-			FileGroups: []*backuppb.DataFileGroup{
-				{
-					DataFilesInfo: dfs[0:2],
-					MinTs:         minTs1,
-					MaxTs:         maxTs1,
-				},
-				{
-					DataFilesInfo: dfs[2:],
-					MinTs:         minTs2,
-					MaxTs:         maxTs2,
-				},
-			},
+			FileGroups:  dfs,
 			StoreId:     int64(i%3 + 1),
 			MetaVersion: backuppb.MetaVersion_V2,
 		}
@@ -135,42 +116,52 @@ func TestTruncateLog(t *testing.T) {
 	}
 	require.NoError(t, s.LoadFrom(ctx, l))
 
-	fs := []*backuppb.DataFileGroup{}
-	s.IterateFilesFullyBefore(17, func(d *backuppb.DataFileGroup) (shouldBreak bool) {
+	fs := []*restore.FileGroupInfo{}
+	s.IterateFilesFullyBefore(17, func(d *restore.FileGroupInfo) (shouldBreak bool) {
 		fs = append(fs, d)
-		require.Less(t, d.MaxTs, uint64(17))
+		require.Less(t, d.MaxTS, uint64(17))
 		return false
 	})
 	require.Len(t, fs, 15)
 
-	s.RemoveDataBefore(17)
-	deletedFiles := []string{}
-	modifiedFiles := []string{}
-	s.BeforeDoWriteBack = func(path string, last, current *backuppb.Metadata) bool {
-		require.NotNil(t, last)
-		if len(current.GetFileGroups()) == 0 {
-			deletedFiles = append(deletedFiles, path)
-		} else if len(current.GetFileGroups()) != len(last.GetFileGroups()) {
-			modifiedFiles = append(modifiedFiles, path)
+	remainedFiles := []string{}
+	remainedDataFiles := []string{}
+	removedMetaFiles := []string{}
+	s.BeforeDoWriteBack = func(path string, replaced *backuppb.Metadata) bool {
+		require.NotNil(t, replaced)
+		if len(replaced.GetFileGroups()) > 0 {
+			remainedFiles = append(remainedFiles, path)
+			for _, ds := range replaced.FileGroups {
+				remainedDataFiles = append(remainedDataFiles, ds.Path)
+			}
+		} else {
+			removedMetaFiles = append(removedMetaFiles, path)
 		}
 		return false
 	}
-	require.NoError(t, s.DoWriteBack(ctx, l))
-	require.ElementsMatch(t, deletedFiles, []string{"v1/backupmeta/0000.meta", "v1/backupmeta/0001.meta", "v1/backupmeta/0002.meta"})
-	require.ElementsMatch(t, modifiedFiles, []string{"v1/backupmeta/0003.meta"})
+
+	var total int64 = 0
+	notDeleted, err := s.RemoveDataFilesAndUpdateMetadataInBatch(ctx, 17, l, func(num int64) { total += num })
+	require.NoError(t, err)
+	require.Equal(t, len(notDeleted), 0)
+	require.ElementsMatch(t, remainedFiles, []string{"v1/backupmeta/0003.meta"})
+	require.ElementsMatch(t, removedMetaFiles, []string{"v1/backupmeta/0000.meta", "v1/backupmeta/0001.meta", "v1/backupmeta/0002.meta"})
+	require.ElementsMatch(t, remainedDataFiles, []string{"0015_to_0017.log"})
+	require.Equal(t, total, int64(15))
 
 	require.NoError(t, s.LoadFrom(ctx, l))
-	s.IterateFilesFullyBefore(17, func(d *backuppb.DataFileGroup) (shouldBreak bool) {
+	s.IterateFilesFullyBefore(17, func(d *restore.FileGroupInfo) (shouldBreak bool) {
 		t.Errorf("some of log files still not truncated, it is %#v", d)
 		return true
 	})
 
-	l.WalkDir(ctx, &storage.WalkOption{
+	err = l.WalkDir(ctx, &storage.WalkOption{
 		SubDir: stream.GetStreamBackupMetaPrefix(),
 	}, func(s string, i int64) error {
-		require.NotContains(t, deletedFiles, s)
+		require.NotContains(t, removedMetaFiles, s)
 		return nil
 	})
+	require.NoError(t, err)
 }
 
 func TestTruncateLogV2(t *testing.T) {
@@ -190,42 +181,52 @@ func TestTruncateLogV2(t *testing.T) {
 	}
 	require.NoError(t, s.LoadFrom(ctx, l))
 
-	fs := []*backuppb.DataFileGroup{}
-	s.IterateFilesFullyBefore(17, func(d *backuppb.DataFileGroup) (shouldBreak bool) {
+	fs := []*restore.FileGroupInfo{}
+	s.IterateFilesFullyBefore(17, func(d *restore.FileGroupInfo) (shouldBreak bool) {
 		fs = append(fs, d)
-		require.Less(t, d.MaxTs, uint64(17))
+		require.Less(t, d.MaxTS, uint64(17))
 		return false
 	})
-	require.Len(t, fs, 7)
+	require.Len(t, fs, 15)
 
-	s.RemoveDataBefore(17)
-	deletedFiles := []string{}
-	modifiedFiles := []string{}
-	s.BeforeDoWriteBack = func(path string, last, current *backuppb.Metadata) bool {
-		require.NotNil(t, last)
-		if len(current.GetFileGroups()) == 0 {
-			deletedFiles = append(deletedFiles, path)
-		} else if len(current.GetFileGroups()) != len(last.GetFileGroups()) {
-			modifiedFiles = append(modifiedFiles, path)
+	remainedFiles := []string{}
+	remainedDataFiles := []string{}
+	removedMetaFiles := []string{}
+	s.BeforeDoWriteBack = func(path string, replaced *backuppb.Metadata) bool {
+		require.NotNil(t, replaced)
+		if len(replaced.GetFileGroups()) > 0 {
+			remainedFiles = append(remainedFiles, path)
+			for _, ds := range replaced.FileGroups {
+				remainedDataFiles = append(remainedDataFiles, ds.Path)
+			}
+		} else {
+			removedMetaFiles = append(removedMetaFiles, path)
 		}
 		return false
 	}
-	require.NoError(t, s.DoWriteBack(ctx, l))
-	require.ElementsMatch(t, deletedFiles, []string{"v1/backupmeta/0000.meta", "v1/backupmeta/0001.meta", "v1/backupmeta/0002.meta"})
-	require.ElementsMatch(t, modifiedFiles, []string{"v1/backupmeta/0003.meta"})
+
+	var total int64 = 0
+	notDeleted, err := s.RemoveDataFilesAndUpdateMetadataInBatch(ctx, 17, l, func(num int64) { total += num })
+	require.NoError(t, err)
+	require.Equal(t, len(notDeleted), 0)
+	require.ElementsMatch(t, remainedFiles, []string{"v1/backupmeta/0003.meta"})
+	require.ElementsMatch(t, removedMetaFiles, []string{"v1/backupmeta/0000.meta", "v1/backupmeta/0001.meta", "v1/backupmeta/0002.meta"})
+	require.ElementsMatch(t, remainedDataFiles, []string{"0015_to_0017.log"})
+	require.Equal(t, total, int64(15))
 
 	require.NoError(t, s.LoadFrom(ctx, l))
-	s.IterateFilesFullyBefore(17, func(d *backuppb.DataFileGroup) (shouldBreak bool) {
+	s.IterateFilesFullyBefore(17, func(d *restore.FileGroupInfo) (shouldBreak bool) {
 		t.Errorf("some of log files still not truncated, it is %#v", d)
 		return true
 	})
 
-	l.WalkDir(ctx, &storage.WalkOption{
+	err = l.WalkDir(ctx, &storage.WalkOption{
 		SubDir: stream.GetStreamBackupMetaPrefix(),
 	}, func(s string, i int64) error {
-		require.NotContains(t, deletedFiles, s)
+		require.NotContains(t, removedMetaFiles, s)
 		return nil
 	})
+	require.NoError(t, err)
 }
 
 func TestTruncateSafepoint(t *testing.T) {
@@ -423,54 +424,4 @@ func fakeMetaDataV2s(t *testing.T, helper *stream.MetadataHelper, cf string) []*
 		m2s = append(m2s, m2)
 	}
 	return m2s
-}
-
-func TestCalculateShiftTS(t *testing.T) {
-	var (
-		startTs   uint64 = 2900
-		restoreTS uint64 = 4500
-	)
-
-	helper := stream.NewMetadataHelper()
-	ms := fakeMetaDatas(t, helper, stream.WriteCF)
-	shiftTS, exist := restore.CalculateShiftTS(ms, startTs, restoreTS)
-	require.Equal(t, shiftTS, uint64(2000))
-	require.Equal(t, exist, true)
-
-	shiftTS, exist = restore.CalculateShiftTS(ms, startTs, mathutil.MaxUint)
-	require.Equal(t, shiftTS, uint64(1800))
-	require.Equal(t, exist, true)
-
-	shiftTS, exist = restore.CalculateShiftTS(ms, 1999, 3001)
-	require.Equal(t, shiftTS, uint64(800))
-	require.Equal(t, exist, true)
-
-	ms = fakeMetaDatas(t, helper, stream.DefaultCF)
-	_, exist = restore.CalculateShiftTS(ms, startTs, restoreTS)
-	require.Equal(t, exist, false)
-}
-
-func TestCalculateShiftTSV2(t *testing.T) {
-	var (
-		startTs   uint64 = 2900
-		restoreTS uint64 = 5100
-	)
-
-	helper := stream.NewMetadataHelper()
-	ms := fakeMetaDataV2s(t, helper, stream.WriteCF)
-	shiftTS, exist := restore.CalculateShiftTS(ms, startTs, restoreTS)
-	require.Equal(t, shiftTS, uint64(1800))
-	require.Equal(t, exist, true)
-
-	shiftTS, exist = restore.CalculateShiftTS(ms, startTs, mathutil.MaxUint)
-	require.Equal(t, shiftTS, uint64(1700))
-	require.Equal(t, exist, true)
-
-	shiftTS, exist = restore.CalculateShiftTS(ms, 1999, 3001)
-	require.Equal(t, shiftTS, uint64(800))
-	require.Equal(t, exist, true)
-
-	ms = fakeMetaDataV2s(t, helper, stream.DefaultCF)
-	_, exist = restore.CalculateShiftTS(ms, startTs, restoreTS)
-	require.Equal(t, exist, false)
 }
