@@ -26,6 +26,8 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type flushSimulator struct {
@@ -100,6 +102,10 @@ func (r *region) splitAt(newID uint64, k string) *region {
 
 func (r *region) flush() {
 	r.fsim.flushedEpoch.Store(r.epoch)
+}
+
+func (f *fakeStore) SubscribeFlushEvent(ctx context.Context, in *logbackup.SubscribeFlushEventRequest, opts ...grpc.CallOption) (logbackup.LogBackup_SubscribeFlushEventClient, error) {
+	return nil, status.Error(codes.Unimplemented, "meow?")
 }
 
 func (f *fakeStore) GetLastFlushTSOfRegion(ctx context.Context, in *logbackup.GetLastFlushTSOfRegionRequest, opts ...grpc.CallOption) (*logbackup.GetLastFlushTSOfRegionResponse, error) {
@@ -199,6 +205,15 @@ func (f *fakeCluster) GetLogBackupClient(ctx context.Context, storeID uint64) (l
 		f.testCtx.Fatalf("the store %d doesn't exist", storeID)
 	}
 	return cli, nil
+}
+
+// Stores returns the store metadata from the cluster.
+func (f *fakeCluster) Stores(ctx context.Context) ([]streamhelper.Store, error) {
+	r := make([]streamhelper.Store, 0, len(f.stores))
+	for id := range f.stores {
+		r = append(r, streamhelper.Store{ID: id})
+	}
+	return r, nil
 }
 
 func (f *fakeCluster) findRegionById(rid uint64) *region {

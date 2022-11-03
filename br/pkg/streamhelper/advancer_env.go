@@ -18,7 +18,7 @@ import (
 // Env is the interface required by the advancer.
 type Env interface {
 	// The region scanner provides the region information.
-	RegionScanner
+	TiKVClusterMeta
 	// LogBackupService connects to the TiKV, so we can collect the region checkpoints.
 	LogBackupService
 	// StreamMeta connects to the metadata service (normally PD).
@@ -46,6 +46,20 @@ func (c PDRegionScanner) RegionScan(ctx context.Context, key []byte, endKey []by
 		})
 	}
 	return rls, nil
+}
+
+func (c PDRegionScanner) Stores(ctx context.Context) ([]Store, error) {
+	res, err := c.Client.GetAllStores(ctx, pd.WithExcludeTombstone())
+	if err != nil {
+		return nil, err
+	}
+	r := make([]Store, 0, len(res))
+	for _, re := range res {
+		r = append(r, Store {
+			ID: re.GetId(),
+		})
+	}
+	return r, nil 
 }
 
 // clusterEnv is the environment for running in the real cluster.

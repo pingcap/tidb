@@ -30,6 +30,7 @@ func (c *CheckpointAdvancer) OnTick(ctx context.Context) (err error) {
 func (c *CheckpointAdvancer) OnStart(ctx context.Context) {
 	metrics.AdvancerOwner.Set(1.0)
 	c.StartTaskListener(ctx)
+	c.spawnSubscriptionHandler(ctx)
 	go func() {
 		<-ctx.Done()
 		c.onStop()

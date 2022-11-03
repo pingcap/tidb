@@ -207,6 +207,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(RegionCheckpointRequest)
 	prometheus.MustRegister(RegionCheckpointFailure)
 	prometheus.MustRegister(AutoIDReqDuration)
+	prometheus.MustRegister(RegionCheckpointSubscriptionEvent)
 	prometheus.MustRegister(RCCheckTSWriteConfilictCounter)
 
 	tikvmetrics.InitMetrics(TiDB, TiKVClient)

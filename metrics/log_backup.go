@@ -60,4 +60,10 @@ var (
 		Name:      "region_request_failure",
 		Help:      "The failure reasons of requesting region checkpoints.",
 	}, []string{"reason"})
+	RegionCheckpointSubscriptionEvent = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "tidb",
+		Subsystem: "log_backup",
+		Name:      "region_checkpoint_event",
+		Help:      "The region flush event count.",
+	}, []string{"store"})
 )

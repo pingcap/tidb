@@ -63,13 +63,16 @@ type CheckpointAdvancer struct {
 
 	checkpoints   *spans.ValueSortedFull
 	checkpointsMu sync.Mutex
+
+	subscriber *FlushSubscriber
 }
 
 // NewCheckpointAdvancer creates a checkpoint advancer with the env.
 func NewCheckpointAdvancer(env Env) *CheckpointAdvancer {
 	return &CheckpointAdvancer{
-		env: env,
-		cfg: config.Default(),
+		env:        env,
+		cfg:        config.Default(),
+		subscriber: NewSubscriber(env, env),
 	}
 }
 
@@ -166,7 +169,6 @@ func tsoBefore(n time.Duration) uint64 {
 	return oracle.ComposeTS(now.UnixMilli()-n.Milliseconds(), 0)
 }
 
-// CalculateGlobalCheckpointLight tries to advance the global checkpoint by the cache.
 func (c *CheckpointAdvancer) CalculateGlobalCheckpointLight(ctx context.Context) (uint64, error) {
 	var targets []spans.Valued
 	c.checkpoints.TraverseValuesLessThan(tsoBefore(config.DefaultTryAdvanceThreshold), func(v spans.Valued) bool {
@@ -174,7 +176,9 @@ func (c *CheckpointAdvancer) CalculateGlobalCheckpointLight(ctx context.Context)
 		return true
 	})
 	if len(targets) == 0 {
-		return 0, nil
+		c.checkpointsMu.Lock()
+		defer c.checkpointsMu.Unlock()
+		return c.checkpoints.MinValue(), nil
 	}
 	samples := targets
 	if len(targets) > 3 {
@@ -188,8 +192,9 @@ func (c *CheckpointAdvancer) CalculateGlobalCheckpointLight(ctx context.Context)
 	if err != nil {
 		return 0, err
 	}
+	c.checkpointsMu.Lock()
 	ts := c.checkpoints.MinValue()
-	spans.Debug(c.checkpoints)
+	c.checkpointsMu.Unlock()
 	return ts, nil
 }
 
@@ -324,6 +329,29 @@ func (c *CheckpointAdvancer) advanceCheckpointBy(ctx context.Context, getCheckpo
 	return nil
 }
 
+func (c *CheckpointAdvancer) spawnSubscriptionHandler(ctx context.Context) {
+	es := c.subscriber.Events()
+
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case event, ok := <-es:
+				if !ok {
+					return
+				}
+				c.checkpointsMu.Lock()
+				log.Debug("Accepting region flush event.",
+					zap.Stringer("range", logutil.StringifyRange(event.Key)),
+					zap.Uint64("checkpoint", event.Value))
+				c.checkpoints.Merge(event)
+				c.checkpointsMu.Unlock()
+			}
+		}
+	}()
+}
+
 func (c *CheckpointAdvancer) tick(ctx context.Context) error {
 	c.taskMu.Lock()
 	defer c.taskMu.Unlock()
@@ -331,6 +359,14 @@ func (c *CheckpointAdvancer) tick(ctx context.Context) error {
 		log.Debug("No tasks yet, skipping advancing.")
 		return nil
 	}
+
+	if err := c.subscriber.UpdateStoreTopology(ctx); err != nil {
+		log.Warn("[log backup advancer] Error when updating store topology.", logutil.ShortError(err))
+	}
+	if err := c.subscriber.HandleErrors(ctx); err != nil {
+		log.Warn("[log backup advancer] Error when handling subscription errors.", logutil.ShortError(err))
+	}
+
 	err := c.advanceCheckpointBy(ctx, c.CalculateGlobalCheckpointLight)
 	if err != nil {
 		return err
