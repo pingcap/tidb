@@ -134,14 +134,14 @@ retry:
 // AllocSeqCache allocs sequence batch value cached in table level（rather than in alloc), the returned range covering
 // the size of sequence cache with it's increment. The returned round indicates the sequence cycle times if it is with
 // cycle option.
-func (*singlePointAlloc) AllocSeqCache() (int64, int64, int64, error) {
+func (*singlePointAlloc) AllocSeqCache() (a int64, b int64, c int64, err error) {
 	return 0, 0, 0, errors.New("AllocSeqCache not implemented")
 }
 
 // Rebase rebases the autoID base for table with tableID and the new base value.
 // If allocIDs is true, it will allocate some IDs and save to the cache.
 // If allocIDs is false, it will not allocate IDs.
-func (sp *singlePointAlloc) Rebase(ctx context.Context, newBase int64, allocIDs bool) error {
+func (sp *singlePointAlloc) Rebase(ctx context.Context, newBase int64, _ bool) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("autoid.Rebase", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
