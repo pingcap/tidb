@@ -949,20 +949,24 @@ func (s *Server) CheckOldRunningTxn(job2ver map[int64]int64, job2ids map[int64]s
 // KillNonFlashbackClusterConn implements SessionManager interface.
 func (s *Server) KillNonFlashbackClusterConn() {
 	s.rwlock.RLock()
-	defer s.rwlock.RUnlock()
+	connIDs := make([]uint64, 0, len(s.clients))
 	for _, client := range s.clients {
 		if client.ctx.Session != nil {
 			processInfo := client.ctx.Session.ShowProcess()
 			ddl, ok := processInfo.StmtCtx.GetPlan().(*core.DDL)
 			if !ok {
-				s.Kill(client.connectionID, false)
+				connIDs = append(connIDs, client.connectionID)
 				continue
 			}
 			_, ok = ddl.Statement.(*ast.FlashBackToTimestampStmt)
 			if !ok {
-				s.Kill(client.connectionID, false)
+				connIDs = append(connIDs, client.connectionID)
 				continue
 			}
 		}
+	}
+	s.rwlock.RUnlock()
+	for _, id := range connIDs {
+		s.Kill(id, false)
 	}
 }
