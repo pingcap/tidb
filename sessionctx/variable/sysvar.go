@@ -1976,14 +1976,6 @@ var defaultSysVars = []*SysVar{
 			s.EnableReuseCheck = TiDBOptOn(val)
 			return nil
 		}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMaxReuseChunk, Value: strconv.Itoa(DefTiDBMaxReuseChunk), Type: TypeUnsigned, MinValue: 1, MaxValue: math.MaxInt32, SetSession: func(s *SessionVars, val string) error {
-		s.MaxReuseChunk = tidbOptPositiveInt32(val, DefTiDBMaxReuseChunk)
-		return nil
-	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMaxReuseColumn, Value: strconv.Itoa(DefTiDBMaxReuseColumn), Type: TypeUnsigned, MinValue: 1, MaxValue: math.MaxInt32, SetSession: func(s *SessionVars, val string) error {
-		s.MaxReuseColumn = tidbOptPositiveInt32(val, DefTiDBMaxReuseColumn)
-		return nil
-	}},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.

@@ -1359,9 +1359,6 @@ func (s *SessionVars) SetAlloc(alloc chunk.Allocator) {
 	if !s.EnableReuseCheck {
 		return
 	}
-	if alloc != nil {
-		alloc.SetLimit(s.MaxReuseChunk, s.MaxReuseColumn)
-	}
 	s.ChunkPool.Alloc = alloc
 }
 

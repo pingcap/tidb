@@ -24,8 +24,16 @@ import (
 // and Alloc() allocates from the pool.
 type Allocator interface {
 	Alloc(fields []*types.FieldType, capacity, maxChunkSize int) *Chunk
-	SetLimit(chunknum, columnnum int)
 	Reset()
+}
+
+var maxFreeChunks int = 64
+var maxFreeColumnsPerType int = 256
+
+// InitChunkAllocSize init the maximum cache size
+func InitChunkAllocSize(setMaxFreeChunks, setMaxFreeColumns int) {
+	maxFreeChunks = setMaxFreeChunks
+	maxFreeColumnsPerType = setMaxFreeColumns
 }
 
 // NewAllocator creates an Allocator.
@@ -67,11 +75,11 @@ func (cList *columnList) Len() int {
 	return len(cList.freeColumns) + len(cList.allocColumns)
 }
 
-// SetLimit limit reuse num
-func (a *allocator) SetLimit(chunknum, columnnum int) {
-	a.freeChunk = chunknum
-	a.columnAlloc.freeColumnsPerType = columnnum
-}
+// // SetLimit limit reuse num
+// func (a *allocator) SetLimit(chunknum, columnnum int) {
+// 	a.freeChunk = chunknum
+// 	a.columnAlloc.freeColumnsPerType = columnnum
+// }
 
 // Alloc implements the Allocator interface.
 func (a *allocator) Alloc(fields []*types.FieldType, capacity, maxChunkSize int) *Chunk {
@@ -100,10 +108,10 @@ func (a *allocator) Alloc(fields []*types.FieldType, capacity, maxChunkSize int)
 	return chk
 }
 
-const (
-	maxFreeChunks         = 64
-	maxFreeColumnsPerType = 256
-)
+// const (
+// 	maxFreeChunks         = 64
+// 	maxFreeColumnsPerType = 256
+// )
 
 // Reset implements the Allocator interface.
 func (a *allocator) Reset() {

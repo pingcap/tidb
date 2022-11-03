@@ -768,12 +768,6 @@ const (
 
 	// TiDBEnableReusechunk indicates whether to enable chunk alloc
 	TiDBEnableReusechunk = "tidb_enable_reuse_chunk"
-
-	// TiDBMaxReuseChunk indicates max cached chunk num
-	TiDBMaxReuseChunk = "tidb_max_reuse_chunk"
-
-	// TiDBMaxReuseColumn indicates max cached column num
-	TiDBMaxReuseColumn = "tidb_max_reuse_column"
 )
 
 // TiDB vars that have only global scope
@@ -1092,8 +1086,6 @@ const (
 	DefTiDBExternalTS                       = 0
 	DefTiDBEnableExternalTSRead             = false
 	DefTiDBEnableReusechunk                 = true
-	DefTiDBMaxReuseChunk                    = 64
-	DefTiDBMaxReuseColumn                   = 256
 	DefTiDBUseAlloc                         = false
 )
 

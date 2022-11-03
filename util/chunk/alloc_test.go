@@ -214,9 +214,9 @@ func TestColumnAllocatorLimit(t *testing.T) {
 		types.NewFieldTypeBuilder().SetType(mysql.TypeDatetime).BuildP(),
 	}
 
+	//set cache size
+	InitChunkAllocSize(10, 20)
 	alloc := NewAllocator()
-	//set capacity
-	alloc.SetLimit(10, 20)
 	for i := 0; i < maxFreeChunks+10; i++ {
 		alloc.Alloc(fieldTypes, 5, 10)
 	}
@@ -227,7 +227,8 @@ func TestColumnAllocatorLimit(t *testing.T) {
 	}
 
 	//Reduce capacity
-	alloc.SetLimit(5, 10)
+	InitChunkAllocSize(5, 10)
+	alloc = NewAllocator()
 	for i := 0; i < maxFreeChunks+10; i++ {
 		alloc.Alloc(fieldTypes, 5, 10)
 	}
@@ -238,7 +239,8 @@ func TestColumnAllocatorLimit(t *testing.T) {
 	}
 
 	//increase capacity
-	alloc.SetLimit(50, 100)
+	InitChunkAllocSize(50, 100)
+	alloc = NewAllocator()
 	for i := 0; i < maxFreeChunks+10; i++ {
 		alloc.Alloc(fieldTypes, 5, 10)
 	}

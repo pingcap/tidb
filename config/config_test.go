@@ -768,6 +768,8 @@ grpc-initial-window-size = 10240
 grpc-max-send-msg-size = 40960
 [instance]
 max_connections = 200
+tidb-max-reuse-chunk = 10
+tidb-max-reuse-column = 20
 `)
 
 	require.NoError(t, err)
@@ -798,6 +800,8 @@ max_connections = 200
 	require.True(t, conf.RepairMode)
 	require.Equal(t, uint64(16), conf.TiKVClient.ResolveLockLiteThreshold)
 	require.Equal(t, uint32(200), conf.Instance.MaxConnections)
+	require.Equal(t, int(10), conf.Instance.TiDBMaxReuseChunk)
+	require.Equal(t, int(20), conf.Instance.TiDBMaxReuseColumn)
 	require.Equal(t, []string{"tiflash"}, conf.IsolationRead.Engines)
 	require.Equal(t, 3080, conf.MaxIndexLength)
 	require.Equal(t, 70, conf.IndexLimit)
