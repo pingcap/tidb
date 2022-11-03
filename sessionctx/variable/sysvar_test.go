@@ -950,3 +950,19 @@ func TestTiDBServerMemoryLimit2(t *testing.T) {
 	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimit, "a700MB")
 	require.Error(t, err)
 }
+
+func TestSetAggPushDownGlobally(t *testing.T) {
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+
+	val, err := mock.GetGlobalSysVar(TiDBOptAggPushDown)
+	require.NoError(t, err)
+	require.Equal(t, "OFF", val)
+	err = mock.SetGlobalSysVar(context.Background(), TiDBOptAggPushDown, "ON")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBOptAggPushDown)
+	require.NoError(t, err)
+	require.Equal(t, "ON", val)
+}
