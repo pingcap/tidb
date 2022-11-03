@@ -1,3 +1,17 @@
+// Copyright 2022 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package autoid
 
 import (
@@ -20,7 +34,7 @@ import (
 )
 
 var (
-	ErrAutoincReadFailed = errors.New("auto increment action failed")
+	errAutoincReadFailed = errors.New("auto increment action failed")
 )
 
 const (
@@ -74,7 +88,7 @@ func (alloc *autoIDValue) alloc4Unsigned(ctx context.Context, store kv.Storage, 
 			tmpStep := int64(mathutil.Min(math.MaxUint64-uint64(newBase), uint64(nextStep)))
 			// The global rest is not enough for alloc.
 			if tmpStep < n1 {
-				return ErrAutoincReadFailed
+				return errAutoincReadFailed
 			}
 			newEnd, err1 = idAcc.Inc(tmpStep)
 			return err1
@@ -83,7 +97,7 @@ func (alloc *autoIDValue) alloc4Unsigned(ctx context.Context, store kv.Storage, 
 			return 0, 0, err
 		}
 		if uint64(newBase) == math.MaxUint64 {
-			return 0, 0, ErrAutoincReadFailed
+			return 0, 0, errAutoincReadFailed
 		}
 		alloc.base, alloc.end = newBase, newEnd
 	}
@@ -109,7 +123,7 @@ func (alloc *autoIDValue) alloc4Signed(ctx context.Context,
 
 	// Condition alloc.base+N1 > alloc.end will overflow when alloc.base + N1 > MaxInt64. So need this.
 	if math.MaxInt64-alloc.base <= n1 {
-		return 0, 0, ErrAutoincReadFailed
+		return 0, 0, errAutoincReadFailed
 	}
 
 	// The local rest is not enough for allocN, skip it.
@@ -135,7 +149,7 @@ func (alloc *autoIDValue) alloc4Signed(ctx context.Context,
 			tmpStep := mathutil.Min(math.MaxInt64-newBase, nextStep)
 			// The global rest is not enough for alloc.
 			if tmpStep < n1 {
-				return ErrAutoincReadFailed
+				return errAutoincReadFailed
 			}
 			newEnd, err1 = idAcc.Inc(tmpStep)
 			return err1
@@ -144,7 +158,7 @@ func (alloc *autoIDValue) alloc4Signed(ctx context.Context,
 			return 0, 0, err
 		}
 		if newBase == math.MaxInt64 {
-			return 0, 0, ErrAutoincReadFailed
+			return 0, 0, errAutoincReadFailed
 		}
 		alloc.base, alloc.end = newBase, newEnd
 	}
@@ -221,6 +235,7 @@ func (alloc *autoIDValue) rebase4Signed(ctx context.Context, store kv.Storage, d
 	return nil
 }
 
+// Service implement the grpc AutoIDAlloc service, defined in kvproto/pkg/autoid.
 type Service struct {
 	autoIDLock sync.Mutex
 	autoIDMap  map[autoIDKey]*autoIDValue
@@ -229,6 +244,7 @@ type Service struct {
 	store      kv.Storage
 }
 
+// New return a Service instance.
 func New(selfAddr string, etcdAddr []string, store kv.Storage) *Service {
 	cli, err := clientv3.New(clientv3.Config{
 		Endpoints:   etcdAddr,
@@ -265,6 +281,7 @@ func (m *mockClient) Rebase(ctx context.Context, in *autoid.RebaseRequest, opts 
 
 var global = make(map[string]*mockClient)
 
+// MockForTest is used for testing, the UT test and unistore use this.
 func MockForTest(store kv.Storage) *mockClient {
 	uuid := store.UUID()
 	ret, ok := global[uuid]
@@ -281,6 +298,7 @@ func MockForTest(store kv.Storage) *mockClient {
 	return ret
 }
 
+// Close closes the Service and clean up resource.
 func (s *Service) Close() {
 	if s.leaderShip != nil {
 		for k, v := range s.autoIDMap {
@@ -332,7 +350,7 @@ func calcNeededBatchSize(base, n, increment, offset int64, isUnsigned bool) int6
 
 const batch = 4000
 
-// AllocID implements gRPC PDServer.
+// AllocAutoID implements gRPC AutoIDAlloc interface.
 func (s *Service) AllocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*autoid.AutoIDResponse, error) {
 	var res *autoid.AutoIDResponse
 	for {
@@ -422,6 +440,8 @@ func (alloc *autoIDValue) forceRebase(ctx context.Context, store kv.Storage, dbI
 	return nil
 }
 
+// Rebase implements gRPC AutoIDAlloc interface.
+// req.N = 0 is handled specially, it is used to return the current auto ID value.
 func (s *Service) Rebase(ctx context.Context, req *autoid.RebaseRequest) (*autoid.RebaseResponse, error) {
 	if s.leaderShip != nil && !s.leaderShip.IsOwner() {
 		return nil, errors.New("not leader")
