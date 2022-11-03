@@ -2723,20 +2723,14 @@ func (s *testSuiteJoinSerial) TestIssue31129(c *C) {
 	c.Assert(failpoint.Enable(fpName1, `panic("IndexHashJoinBuildHashTablePanic")`), IsNil)
 	c.Assert(failpoint.Enable(fpName2, "return"), IsNil)
 	err = tk.QueryToErr("select /*+ INL_HASH_JOIN(s) */ * from t left join s on t.a=s.a order by t.pk")
-<<<<<<< HEAD
 	c.Assert(strings.Contains(err.Error(), "IndexHashJoinBuildHashTablePanic"), IsTrue)
 	c.Assert(failpoint.Disable(fpName1), IsNil)
 	c.Assert(failpoint.Disable(fpName2), IsNil)
-=======
-	require.True(t, strings.Contains(err.Error(), "IndexHashJoinBuildHashTablePanic"))
-	require.NoError(t, failpoint.Disable(fpName1))
-	require.NoError(t, failpoint.Disable(fpName2))
 }
 
-func TestIssue37932(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk1 := testkit.NewTestKit(t, store)
-	tk2 := testkit.NewTestKit(t, store)
+func (s *testSuiteJoinSerial) TestIssue37932(c *C) {
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk2 := testkit.NewTestKit(c, s.store)
 	tk1.MustExec("use test")
 	tk2.MustExec("use test")
 	tk1.MustExec("create table tbl_1 ( col_1 set ( 'Alice','Bob','Charlie','David' )   not null default 'Alice' ,col_2 tinyint  unsigned ,col_3 decimal ( 34 , 3 )   not null default 79 ,col_4 bigint  unsigned not null ,col_5 bit ( 12 )   not null , unique key idx_1 ( col_2 ) ,unique key idx_2 ( col_2 ) ) charset utf8mb4 collate utf8mb4_bin ;")
@@ -2809,52 +2803,8 @@ func TestIssue37932(t *testing.T) {
 	if err != nil {
 		print(err.Error())
 		if strings.Contains(err.Error(), "Truncated incorrect DOUBLE value") {
-			t.Log("Bug of truncated incorrect DOUBLE value has not been fixed, skipping")
 			return
 		}
 	}
-	require.NoError(t, err)
-}
-
-func TestOuterJoin(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1, t2, t3, t4")
-	tk.MustExec("create table t1(a int, b int, c int)")
-	tk.MustExec("create table t2(a int, b int, c int)")
-	tk.MustExec("create table t3(a int, b int, c int)")
-	tk.MustExec("create table t4(a int, b int, c int)")
-	tk.MustExec("INSERT INTO t1 VALUES (1,3,0), (2,2,0), (3,2,0);")
-	tk.MustExec("INSERT INTO t2 VALUES (3,3,0), (4,2,0), (5,3,0);")
-	tk.MustExec("INSERT INTO t3 VALUES (1,2,0), (2,2,0);")
-	tk.MustExec("INSERT INTO t4 VALUES (3,2,0), (4,2,0);")
-	tk.MustQuery("SELECT t2.a,t2.b,t3.a,t3.b,t4.a,t4.b from (t3, t4) left join (t1, t2) on t3.a=1 AND t3.b=t2.b AND t2.b=t4.b order by 1, 2, 3, 4, 5;").Check(
-		testkit.Rows(
-			"<nil> <nil> 2 2 3 2",
-			"<nil> <nil> 2 2 4 2",
-			"4 2 1 2 3 2",
-			"4 2 1 2 3 2",
-			"4 2 1 2 3 2",
-			"4 2 1 2 4 2",
-			"4 2 1 2 4 2",
-			"4 2 1 2 4 2",
-		),
-	)
-
-	tk.MustExec("drop table if exists t1, t2, t3")
-	tk.MustExec("create table t1 (a1 int, a2 int);")
-	tk.MustExec("create table t2 (b1 int not null, b2 int);")
-	tk.MustExec("create table t3 (c1 int, c2 int);")
-	tk.MustExec("insert into t1 values (1,2), (2,2), (3,2);")
-	tk.MustExec("insert into t2 values (1,3), (2,3);")
-	tk.MustExec("insert into t3 values (2,4),        (3,4);")
-	tk.MustQuery("select * from t1 left join t2  on  b1 = a1 left join t3  on  c1 = a1  and  b1 is null order by 1, 2, 3, 4, 5, 6").Check(
-		testkit.Rows(
-			"1 2 1 3 <nil> <nil>",
-			"2 2 2 3 <nil> <nil>",
-			"3 2 <nil> <nil> 3 4",
-		),
-	)
->>>>>>> e843278589 (executor: fix HashJoinExec panic of closed channel (#38576))
+	c.Assert(err, IsNil)
 }
