@@ -98,3 +98,47 @@ func (t *TaskBox[T, U, C, CT, TF]) SetStatus(s int32) {
 func (t *TaskBox[T, U, C, CT, TF]) Done() {
 	t.wg.Done()
 }
+
+// GPool is a goroutine pool.
+type GPool[T any, U any, C any, CT any, TF Context[CT]] interface {
+	Release()
+
+	Tune(size int)
+
+	DeleteTask(id uint64)
+}
+
+// TaskController is a controller that can control or watch the pool.
+type TaskController[T any, U any, C any, CT any, TF Context[CT]] struct {
+	pool   GPool[T, U, C, CT, TF]
+	close  chan struct{}
+	wg     *sync.WaitGroup
+	taskID uint64
+}
+
+// NewTaskController create a controller to deal with task's statue.
+func NewTaskController[T any, U any, C any, CT any, TF Context[CT]](p GPool[T, U, C, CT, TF], taskID uint64, closeCh chan struct{}, wg *sync.WaitGroup) TaskController[T, U, C, CT, TF] {
+	return TaskController[T, U, C, CT, TF]{
+		pool:   p,
+		taskID: taskID,
+		close:  closeCh,
+		wg:     wg,
+	}
+}
+
+// Wait is to wait the task to stop.
+func (t *TaskController[T, U, C, CT, TF]) Wait() {
+	<-t.close
+	t.wg.Wait()
+	t.pool.DeleteTask(t.taskID)
+}
+
+// IsProduceClose is to judge whether the producer is completed.
+func (t *TaskController[T, U, C, CT, TF]) IsProduceClose() bool {
+	select {
+	case <-t.close:
+		return true
+	default:
+	}
+	return false
+}

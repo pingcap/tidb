@@ -5,7 +5,6 @@ go_library(
     srcs = [
         "option.go",
         "spmcpool.go",
-        "task.go",
         "worker.go",
         "worker_loop_queue.go",
     ],

@@ -441,3 +441,8 @@ func (p *Pool[T, U, C, CT, TF]) revertWorker(worker *goWorker[T, U, C, CT, TF]) 
 	p.lock.Unlock()
 	return true
 }
+
+// DeleteTask is to delete task.
+func (p *Pool[T, U, C, CT, TF]) DeleteTask(id uint64) {
+	p.taskManager.DeleteTask(id)
+}
