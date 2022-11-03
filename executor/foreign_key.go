@@ -640,6 +640,8 @@ func (fkc *FKCascadeExec) buildExecutor(ctx context.Context) (Executor, error) {
 	return e, fkc.b.err
 }
 
+// maxHandleFKValueInOneCascade uses to limit the max handle fk value in one cascade executor,
+// this is to avoid performance issue, see: https://github.com/pingcap/tidb/issues/38631
 var maxHandleFKValueInOneCascade = 1024
 
 func (fkc *FKCascadeExec) buildFKCascadePlan(ctx context.Context) (plannercore.Plan, error) {
