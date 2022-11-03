@@ -1997,7 +1997,7 @@ func upgradeToVer99(s Session, ver int64) {
 		return
 	}
 	// Check if tidb_enable_metadata_lock exists in mysql.GLOBAL_VARIABLES.
-	// If not, insert "tidb_analyze_version | 1" since this is the old behavior before we introduce this variable.
+	// If not, insert "tidb_enable_metadata_lock | 0" since this is the old behavior before we introduce this variable.
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	rs, err := s.ExecuteInternal(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;",
 		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableMDL)
