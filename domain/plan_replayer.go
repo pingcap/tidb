@@ -40,7 +40,7 @@ type dumpFileGcChecker struct {
 // GetPlanReplayerDirName returns plan replayer directory path.
 // The path is related to the process id.
 func GetPlanReplayerDirName() string {
-	tidbLogDir, _ := filepath.Split(config.GetGlobalConfig().Log.File.Filename)
+	tidbLogDir := filepath.Dir(config.GetGlobalConfig().Log.File.Filename)
 	return filepath.Join(tidbLogDir, "replayer")
 }
 
