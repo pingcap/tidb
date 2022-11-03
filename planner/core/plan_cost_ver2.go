@@ -819,21 +819,21 @@ func (c costVer2Factors) tolist() (l []costVer2Factor) {
 }
 
 var defaultVer2Factors = costVer2Factors{
-	TiDBTemp:      costVer2Factor{"tidb_temp_table_factor", 0},
-	TiKVScan:      costVer2Factor{"tikv_scan_factor", 100},
-	TiKVDescScan:  costVer2Factor{"tikv_desc_scan_factor", 150},
-	TiFlashScan:   costVer2Factor{"tiflash_scan_factor", 5},
-	TiDBCPU:       costVer2Factor{"tidb_cpu_factor", 30},
-	TiKVCPU:       costVer2Factor{"tikv_cpu_factor", 30},
-	TiFlashCPU:    costVer2Factor{"tiflash_cpu_factor", 5},
-	TiDB2KVNet:    costVer2Factor{"tidb_kv_net_factor", 8},
-	TiDB2FlashNet: costVer2Factor{"tidb_flash_net_factor", 4},
-	TiFlashMPPNet: costVer2Factor{"tiflash_mpp_net_factor", 4},
-	TiDBMem:       costVer2Factor{"tidb_mem_factor", 1},
-	TiKVMem:       costVer2Factor{"tikv_mem_factor", 1},
-	TiFlashMem:    costVer2Factor{"tiflash_mem_factor", 1},
-	TiDBDisk:      costVer2Factor{"tidb_disk_factor", 1000},
-	TiDBRequest:   costVer2Factor{"tidb_request_factor", 9500000},
+	TiDBTemp:      costVer2Factor{"tidb_temp_table_factor", 0.00},
+	TiKVScan:      costVer2Factor{"tikv_scan_factor", 40.70},
+	TiKVDescScan:  costVer2Factor{"tikv_desc_scan_factor", 61.05},
+	TiFlashScan:   costVer2Factor{"tiflash_scan_factor", 11.60},
+	TiDBCPU:       costVer2Factor{"tidb_cpu_factor", 49.90},
+	TiKVCPU:       costVer2Factor{"tikv_cpu_factor", 49.90},
+	TiFlashCPU:    costVer2Factor{"tiflash_cpu_factor", 2.40},
+	TiDB2KVNet:    costVer2Factor{"tidb_kv_net_factor", 3.96},
+	TiDB2FlashNet: costVer2Factor{"tidb_flash_net_factor", 2.20},
+	TiFlashMPPNet: costVer2Factor{"tiflash_mpp_net_factor", 1.00},
+	TiDBMem:       costVer2Factor{"tidb_mem_factor", 0.20},
+	TiKVMem:       costVer2Factor{"tikv_mem_factor", 0.20},
+	TiFlashMem:    costVer2Factor{"tiflash_mem_factor", 0.05},
+	TiDBDisk:      costVer2Factor{"tidb_disk_factor", 200.00},
+	TiDBRequest:   costVer2Factor{"tidb_request_factor", 6000000.00},
 }
 
 func getTaskCPUFactorVer2(p PhysicalPlan, taskType property.TaskType) costVer2Factor {
