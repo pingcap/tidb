@@ -444,6 +444,10 @@ type SortedRowContainer struct {
 
 	actionSpill *SortAndSpillDiskAction
 	memTracker  *memory.Tracker
+
+	// Sort is a time-consuming operation, we need to set a checkpoint to detect
+	// the outside signal periodically.
+	timesOfRowCompare uint
 }
 
 // NewSortedRowContainer creates a new SortedRowContainer in memory.
@@ -481,8 +485,16 @@ func (c *SortedRowContainer) lessRow(rowI, rowJ Row) bool {
 	return false
 }
 
+const SignalCheckpointForSort uint = 10240
+
 // keyColumnsLess is the less function for key columns.
 func (c *SortedRowContainer) keyColumnsLess(i, j int) bool {
+	if c.timesOfRowCompare == SignalCheckpointForSort {
+		// Trigger Consume for checking the NeedKill signal
+		c.memTracker.Consume(0)
+		c.timesOfRowCompare = 0
+	}
+	c.timesOfRowCompare++
 	rowI := c.m.records.inMemory.GetRow(c.ptrM.rowPtrs[i])
 	rowJ := c.m.records.inMemory.GetRow(c.ptrM.rowPtrs[j])
 	return c.lessRow(rowI, rowJ)
