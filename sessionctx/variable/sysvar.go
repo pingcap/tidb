@@ -164,7 +164,7 @@ var defaultSysVars = []*SysVar{
 		s.AllowProjectionPushDown = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeSession, Name: TiDBOptAggPushDown, Value: BoolToOnOff(DefOptAggPushDown), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptAggPushDown, Value: BoolToOnOff(DefOptAggPushDown), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.AllowAggPushDown = TiDBOptOn(val)
 		return nil
 	}},
@@ -748,12 +748,20 @@ var defaultSysVars = []*SysVar{
 			}
 			return strconv.FormatFloat(floatValue, 'f', -1, 64), nil
 		},
-		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) (err error) {
 			factor := tidbOptFloat64(val, DefTiDBGOGCTunerThreshold)
 			GOGCTunerThreshold.Store(factor)
 			memTotal := memory.ServerMemoryLimit.Load()
-			threshold := float64(memTotal) * factor
-			gctuner.Tuning(uint64(threshold))
+			if memTotal == 0 {
+				memTotal, err = memory.MemTotal()
+				if err != nil {
+					return err
+				}
+			}
+			if factor > 0 {
+				threshold := float64(memTotal) * factor
+				gctuner.Tuning(uint64(threshold))
+			}
 			return nil
 		},
 	},
@@ -776,6 +784,16 @@ var defaultSysVars = []*SysVar{
 			memory.ServerMemoryLimitOriginText.Store(str)
 			memory.ServerMemoryLimit.Store(bt)
 			gctuner.GlobalMemoryLimitTuner.UpdateMemoryLimit()
+
+			if bt == 0 {
+				if config.GetGlobalConfig().Performance.ServerMemoryQuota < 1 {
+					memory.GlobalMemoryUsageTracker.SetBytesLimit(-1)
+				} else {
+					memory.GlobalMemoryUsageTracker.SetBytesLimit(int64(config.GetGlobalConfig().Performance.ServerMemoryQuota))
+				}
+			} else {
+				memory.GlobalMemoryUsageTracker.SetBytesLimit(-1)
+			}
 			return nil
 		},
 	},
