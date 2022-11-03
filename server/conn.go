@@ -2482,6 +2482,9 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 		return err
 	}
 	if pluginName != "" {
+		failpoint.Inject("ChangeUserAuthSwitch", func(val failpoint.Value) {
+			failpoint.Return(errors.Errorf("%v", val))
+		})
 		pass, err = cc.checkAuthPlugin(ctx, &handshakeResponse41{
 			Auth:       pass,
 			AuthPlugin: pluginName,
