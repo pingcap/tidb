@@ -666,6 +666,13 @@ func checkTooLongIndex(index model.CIStr) error {
 	return nil
 }
 
+func checkTooLongColumn(col model.CIStr) error {
+	if utf8.RuneCountInString(col.L) > mysql.MaxColumnNameLength {
+		return dbterror.ErrTooLongIdent.GenWithStackByArgs(col)
+	}
+	return nil
+}
+
 func checkTooLongForeignKey(fk model.CIStr) error {
 	if utf8.RuneCountInString(fk.L) > mysql.MaxForeignKeyIdentifierLen {
 		return dbterror.ErrTooLongIdent.GenWithStackByArgs(fk)
@@ -1603,11 +1610,10 @@ func checkGeneratedColumn(ctx sessionctx.Context, colDefs []*ast.ColumnDef) erro
 	return nil
 }
 
-func checkTooLongColumn(cols []*model.ColumnInfo) error {
+func checkTooLongColumns(cols []*model.ColumnInfo) error {
 	for _, col := range cols {
-		colName := col.Name.O
-		if utf8.RuneCountInString(colName) > mysql.MaxColumnNameLength {
-			return dbterror.ErrTooLongIdent.GenWithStackByArgs(colName)
+		if err := checkTooLongColumn(col.Name); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -2054,7 +2060,7 @@ func checkTableInfoValidExtra(tbInfo *model.TableInfo) error {
 	if err := checkDuplicateColumn(tbInfo.Columns); err != nil {
 		return err
 	}
-	if err := checkTooLongColumn(tbInfo.Columns); err != nil {
+	if err := checkTooLongColumns(tbInfo.Columns); err != nil {
 		return err
 	}
 	if err := checkTooManyColumns(tbInfo.Columns); err != nil {
@@ -6252,6 +6258,9 @@ func buildFKInfo(ctx sessionctx.Context, fkName model.CIStr, keys []*ast.IndexPa
 
 	fkInfo.RefCols = make([]model.CIStr, len(refer.IndexPartSpecifications))
 	for i, key := range refer.IndexPartSpecifications {
+		if err := checkTooLongColumn(key.Column.Name); err != nil {
+			return nil, err
+		}
 		fkInfo.RefCols[i] = key.Column.Name
 	}
 
