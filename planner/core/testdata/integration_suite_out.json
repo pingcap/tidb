@@ -6268,22 +6268,22 @@
       {
         "SQL": "desc format = 'brief' select * from t where a = 1 and b > 2 and b < 10 and d = 10 order by b,c limit 10",
         "Plan": [
-          "TopN 0.00 root  test.t.b, test.t.c, offset:0, count:10",
-          "└─IndexLookUp 0.00 root  ",
-          "  ├─IndexRangeScan(Build) 2.50 cop[tikv] table:t, index:idx(a, b, c) range:(1 2,1 10), keep order:false, stats:pseudo",
-          "  └─TopN(Probe) 0.00 cop[tikv]  test.t.b, test.t.c, offset:0, count:10",
-          "    └─Selection 0.00 cop[tikv]  eq(test.t.d, 10)",
+          "Limit 0.00 root  offset:0, count:10",
+          "└─Projection 0.00 root  test.t.a, test.t.b, test.t.c, test.t.d",
+          "  └─IndexLookUp 0.00 root  ",
+          "    ├─IndexRangeScan(Build) 2.50 cop[tikv] table:t, index:idx(a, b, c) range:(1 2,1 10), keep order:true, stats:pseudo",
+          "    └─Selection(Probe) 0.00 cop[tikv]  eq(test.t.d, 10)",
           "      └─TableRowIDScan 2.50 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "desc format = 'brief' select * from t where a = 1 and b > 2 and b < 10 and d = 10 order by b desc, c desc limit 10",
         "Plan": [
-          "TopN 0.00 root  test.t.b:desc, test.t.c:desc, offset:0, count:10",
-          "└─IndexLookUp 0.00 root  ",
-          "  ├─IndexRangeScan(Build) 2.50 cop[tikv] table:t, index:idx(a, b, c) range:(1 2,1 10), keep order:false, stats:pseudo",
-          "  └─TopN(Probe) 0.00 cop[tikv]  test.t.b:desc, test.t.c:desc, offset:0, count:10",
-          "    └─Selection 0.00 cop[tikv]  eq(test.t.d, 10)",
+          "Limit 0.00 root  offset:0, count:10",
+          "└─Projection 0.00 root  test.t.a, test.t.b, test.t.c, test.t.d",
+          "  └─IndexLookUp 0.00 root  ",
+          "    ├─IndexRangeScan(Build) 2.50 cop[tikv] table:t, index:idx(a, b, c) range:(1 2,1 10), keep order:true, desc, stats:pseudo",
+          "    └─Selection(Probe) 0.00 cop[tikv]  eq(test.t.d, 10)",
           "      └─TableRowIDScan 2.50 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       }
