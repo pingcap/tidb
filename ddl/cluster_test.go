@@ -27,10 +27,12 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
 )
 
@@ -40,7 +42,7 @@ func TestGetFlashbackKeyRanges(t *testing.T) {
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 
-	kvRanges, err := ddl.GetFlashbackKeyRanges(se)
+	kvRanges, err := ddl.GetFlashbackKeyRanges(se, tablecodec.EncodeTablePrefix(0))
 	require.NoError(t, err)
 	// The results are 6 key ranges
 	// 0: (stats_meta,stats_histograms,stats_buckets)
@@ -50,6 +52,26 @@ func TestGetFlashbackKeyRanges(t *testing.T) {
 	// 4: (stats_fm_sketch)
 	// 5: (stats_history, stats_meta_history)
 	require.Len(t, kvRanges, 6)
+	// tableID for mysql.stats_meta is 20
+	require.Equal(t, kvRanges[0].StartKey, tablecodec.EncodeTablePrefix(20))
+	// tableID for mysql.stats_feedback is 30
+	require.Equal(t, kvRanges[1].StartKey, tablecodec.EncodeTablePrefix(30))
+	// tableID for mysql.stats_meta_history is 62
+	require.Equal(t, kvRanges[5].EndKey, tablecodec.EncodeTablePrefix(62+1))
+
+	// The original table ID for range is [60, 63)
+	// startKey is 61, so return [61, 63)
+	kvRanges, err = ddl.GetFlashbackKeyRanges(se, tablecodec.EncodeTablePrefix(61))
+	require.NoError(t, err)
+	require.Len(t, kvRanges, 1)
+	require.Equal(t, kvRanges[0].StartKey, tablecodec.EncodeTablePrefix(61))
+
+	// The original ranges are [48, 49), [60, 63)
+	// startKey is 59, so return [60, 63)
+	kvRanges, err = ddl.GetFlashbackKeyRanges(se, tablecodec.EncodeTablePrefix(59))
+	require.NoError(t, err)
+	require.Len(t, kvRanges, 1)
+	require.Equal(t, kvRanges[0].StartKey, tablecodec.EncodeTablePrefix(60))
 
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE employees (" +
@@ -61,6 +83,13 @@ func TestGetFlashbackKeyRanges(t *testing.T) {
 		"    PARTITION p2 VALUES LESS THAN (16)," +
 		"    PARTITION p3 VALUES LESS THAN (21)" +
 		");")
+	kvRanges, err = ddl.GetFlashbackKeyRanges(se, tablecodec.EncodeTablePrefix(63))
+	require.NoError(t, err)
+	// start from table ID is 63, so only 1 kv range.
+	require.Len(t, kvRanges, 1)
+	// 1 tableID and 4 partitions.
+	require.Equal(t, tablecodec.DecodeTableID(kvRanges[0].EndKey)-tablecodec.DecodeTableID(kvRanges[0].StartKey), int64(5))
+
 	tk.MustExec("truncate table mysql.analyze_jobs")
 
 	// truncate all `stats_` tables, make table ID consecutive.
@@ -73,14 +102,55 @@ func TestGetFlashbackKeyRanges(t *testing.T) {
 	tk.MustExec("truncate table mysql.stats_fm_sketch")
 	tk.MustExec("truncate table mysql.stats_history")
 	tk.MustExec("truncate table mysql.stats_meta_history")
-	kvRanges, err = ddl.GetFlashbackKeyRanges(se)
+	kvRanges, err = ddl.GetFlashbackKeyRanges(se, tablecodec.EncodeTablePrefix(0))
 	require.NoError(t, err)
 	require.Len(t, kvRanges, 2)
 
 	tk.MustExec("truncate table test.employees")
-	kvRanges, err = ddl.GetFlashbackKeyRanges(se)
+	kvRanges, err = ddl.GetFlashbackKeyRanges(se, tablecodec.EncodeTablePrefix(0))
 	require.NoError(t, err)
 	require.Len(t, kvRanges, 1)
+
+	kvRanges, err = ddl.GetFlashbackKeyRanges(se, tablecodec.EncodeTablePrefix(0xffff))
+	require.NoError(t, err)
+	require.Len(t, kvRanges, 0)
+}
+
+func TestDoneTaskKeeper(t *testing.T) {
+	taskKeeper := ddl.NewDoneTaskKeeper(tablecodec.EncodeTablePrefix(0))
+
+	r := tikvstore.KeyRange{
+		StartKey: tablecodec.EncodeTablePrefix(2),
+		EndKey:   tablecodec.EncodeTablePrefix(5),
+	}
+
+	doneRegionCnt, nextKey := taskKeeper.UpdateNextKey(r, 100)
+	require.EqualValues(t, doneRegionCnt, 0)
+	require.Equal(t, nextKey, tablecodec.EncodeTablePrefix(0))
+
+	r = tikvstore.KeyRange{
+		StartKey: tablecodec.EncodeTablePrefix(0),
+		EndKey:   tablecodec.EncodeTablePrefix(1),
+	}
+	doneRegionCnt, nextKey = taskKeeper.UpdateNextKey(r, 10)
+	require.EqualValues(t, doneRegionCnt, 10)
+	require.Equal(t, nextKey, tablecodec.EncodeTablePrefix(1))
+
+	r = tikvstore.KeyRange{
+		StartKey: tablecodec.EncodeTablePrefix(5),
+		EndKey:   tablecodec.EncodeTablePrefix(7),
+	}
+	doneRegionCnt, nextKey = taskKeeper.UpdateNextKey(r, 100)
+	require.EqualValues(t, doneRegionCnt, 0)
+	require.Equal(t, nextKey, tablecodec.EncodeTablePrefix(1))
+
+	r = tikvstore.KeyRange{
+		StartKey: tablecodec.EncodeTablePrefix(1),
+		EndKey:   tablecodec.EncodeTablePrefix(2),
+	}
+	doneRegionCnt, nextKey = taskKeeper.UpdateNextKey(r, 200)
+	require.EqualValues(t, doneRegionCnt, 400)
+	require.Equal(t, nextKey, tablecodec.EncodeTablePrefix(7))
 }
 
 func TestFlashbackCloseAndResetPDSchedule(t *testing.T) {
