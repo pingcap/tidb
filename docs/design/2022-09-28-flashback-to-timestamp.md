@@ -18,7 +18,7 @@ Therefore, we propose to use a series of new SQL syntaxes to support this featur
 
 ### Implementation Overview
 
-In TiKV, a multi-version concurrency control (MVCC) mechanism is introduced to avoid the overhead of introducing locks when data is updated concurrently. Under this mechanism, when TiDB modified data, it doesn't directly operate on the original value, but writes a data with the latest timestamp to cover it. The GC Worker in the background of TiDB will periodically update `tikv_gc_safe_point` and delete the version older than this point. `Flashback To Timestamp` developmente based on this feature of TiKV. In order to improve execution efficiency and reduce data transmission overhead, TiKV has added two RPC interfaces called `PrepareFlashbackToVersion` and `FlashbackToVersion`. The protobuf related change shown below:
+In TiKV, a multi-version concurrency control (MVCC) mechanism is introduced to avoid the overhead of introducing locks when data is updated concurrently. Under this mechanism, when TiDB modified data, it doesn't directly operate on the original value, but writes a data with the latest timestamp to cover it. The GC Worker in the background of TiDB will periodically update `tikv_gc_safe_point` and delete the version older than this point. `Flashback To Timestamp` is developmented based on this feature of TiKV. In order to improve execution efficiency and reduce data transmission overhead, TiKV has added two RPC interfaces called `PrepareFlashbackToVersion` and `FlashbackToVersion`. The protobuf related change shown below:
 
 ```protobuf
 // Preparing the flashback for a region/key range will "lock" the region
