@@ -24,7 +24,9 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/autoid"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -46,6 +48,9 @@ type clientDiscover struct {
 	mu struct {
 		sync.RWMutex
 		autoid.AutoIDAllocClient
+		// Release the client conn to avoid resource leak!
+		// See https://github.com/grpc/grpc-go/issues/5321
+		*grpc.ClientConn
 	}
 }
 
@@ -62,6 +67,11 @@ func (d *clientDiscover) GetClient(ctx context.Context) (autoid.AutoIDAllocClien
 	}
 	d.mu.RUnlock()
 
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.mu.AutoIDAllocClient != nil {
+		return d.mu.AutoIDAllocClient, nil
+	}
 	resp, err := d.etcdCli.Get(ctx, autoIDLeaderPath, clientv3.WithFirstCreate()...)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -79,6 +89,7 @@ func (d *clientDiscover) GetClient(ctx context.Context) (autoid.AutoIDAllocClien
 	cli = autoid.NewAutoIDAllocClient(grpcConn)
 	d.mu.Lock()
 	d.mu.AutoIDAllocClient = cli
+	d.mu.ClientConn = grpcConn
 	d.mu.Unlock()
 	return cli, nil
 }
@@ -117,9 +128,8 @@ retry:
 	})
 	if err != nil {
 		if strings.Contains(err.Error(), "rpc error") {
-			sp.mu.Lock()
-			sp.mu.AutoIDAllocClient = nil
-			sp.mu.Unlock()
+			time.Sleep(200 * time.Millisecond)
+			sp.reConnect()
 			goto retry
 		}
 		return 0, 0, errors.Trace(err)
@@ -129,6 +139,20 @@ retry:
 	metrics.AutoIDReqDuration.Observe(du.Seconds())
 	sp.lastAllocated = resp.Min
 	return resp.Min, resp.Max, err
+}
+
+func (sp *singlePointAlloc) reConnect() {
+	var grpcConn *grpc.ClientConn
+	sp.mu.Lock()
+	grpcConn = sp.mu.ClientConn
+	sp.mu.AutoIDAllocClient = nil
+	sp.mu.ClientConn = nil
+	sp.mu.Unlock()
+	// Close grpc.ClientConn to release resource.
+	if grpcConn != nil {
+		err := grpcConn.Close()
+		logutil.BgLogger().Info("[autoid client] AllocAutoID grpc error, reconnect", zap.Error(err))
+	}
 }
 
 // AllocSeqCache allocs sequence batch value cached in table level（rather than in alloc), the returned range covering
@@ -152,6 +176,7 @@ func (sp *singlePointAlloc) Rebase(ctx context.Context, newBase int64, _ bool) e
 }
 
 func (sp *singlePointAlloc) rebase(ctx context.Context, newBase int64, force bool) error {
+retry:
 	cli, err := sp.GetClient(ctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -163,9 +188,15 @@ func (sp *singlePointAlloc) rebase(ctx context.Context, newBase int64, force boo
 		Force:      force,
 		IsUnsigned: sp.isUnsigned,
 	})
-	if err == nil {
-		sp.lastAllocated = newBase
+	if err != nil {
+		if strings.Contains(err.Error(), "rpc error") {
+			time.Sleep(200 * time.Millisecond)
+			sp.reConnect()
+			goto retry
+		}
+		return errors.Trace(err)
 	}
+	sp.lastAllocated = newBase
 	return err
 }
 
@@ -195,7 +226,6 @@ func (sp *singlePointAlloc) End() int64 {
 // NextGlobalAutoID returns the next global autoID.
 // Used by 'show create table', 'alter table auto_increment = xxx'
 func (sp *singlePointAlloc) NextGlobalAutoID() (int64, error) {
-	// return sp.lastAllocated + 1, nil
 	_, max, err := sp.Alloc(context.Background(), 0, 1, 1)
 	return max + 1, err
 }

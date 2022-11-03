@@ -559,7 +559,8 @@ func newSinglePointAlloc(store kv.Storage, dbID, tblID int64, isUnsigned bool) *
 			TLS:       ebd.TLSConfig(),
 		})
 		if err != nil {
-			panic(err)
+			logutil.BgLogger().Error("[autoid client] fail to connect etcd, fallback to default", zap.Error(err))
+			return nil
 		}
 		spa.clientDiscover = clientDiscover{etcdCli: etcdCli}
 	} else {
@@ -567,6 +568,7 @@ func newSinglePointAlloc(store kv.Storage, dbID, tblID int64, isUnsigned bool) *
 		spa.mu.AutoIDAllocClient = autoid.MockForTest(store)
 	}
 
+	// mockAutoIDChange failpoint is not implemented in this allocator, so fallback to use the default one.
 	failpoint.Inject("mockAutoIDChange", func(val failpoint.Value) {
 		if val.(bool) {
 			spa = nil
