@@ -146,8 +146,17 @@ func InferType4ControlFuncs(ctx sessionctx.Context, funcName string, lexp, rexp 
 				rhsFlen -= rhs.GetDecimal()
 			}
 			flen := maxlen(lhsFlen, rhsFlen) + resultFieldType.GetDecimal() + 1 // account for -1 len fields
+<<<<<<< HEAD
 			resultFieldType.SetFlen(mathutil.Min(flen, mysql.MaxDecimalWidth))  // make sure it doesn't overflow
 
+=======
+			resultFieldType.SetFlenUnderLimit(flen)
+		} else if evalType == types.ETString {
+			lhsLen, rhsLen := lhs.GetFlen(), rhs.GetFlen()
+			if lhsLen != types.UnspecifiedLength && rhsLen != types.UnspecifiedLength {
+				resultFieldType.SetFlen(mathutil.Max(lhsLen, rhsLen))
+			}
+>>>>>>> cacd3c8f4a (expression: unset the flen for string type builtin control (#38845))
 		} else {
 			resultFieldType.SetFlen(maxlen(lhs.GetFlen(), rhs.GetFlen()))
 		}
