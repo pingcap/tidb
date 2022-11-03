@@ -22,6 +22,9 @@ concurrency:
   group: ${{ github.ref }}-${{ github.workflow }}
   cancel-in-progress: true
 
+permissions:
+  contents: read  #  to fetch code (actions/checkout)
+
 jobs:
   check:
     runs-on: ubuntu-latest
