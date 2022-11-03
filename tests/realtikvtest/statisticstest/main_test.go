@@ -15,11 +15,19 @@
 package statisticstest
 
 import (
+	"go.uber.org/goleak"
 	"testing"
 
+	"github.com/pingcap/tidb/testkit/testsetup"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 )
 
 func TestMain(m *testing.M) {
+	opts := []goleak.Option{
+		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
+		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
+	}
+	testsetup.SetupForCommonTest()
+	goleak.VerifyTestMain(m, opts...)
 	realtikvtest.RunTestMain(m)
 }
