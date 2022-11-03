@@ -306,6 +306,16 @@ func (t *Tracker) Detach() {
 		t.DetachFromGlobalTracker()
 		return
 	}
+	if parent.IsRootTrackerOfSess {
+		parent.actionMuForHardLimit.Lock()
+		parent.actionMuForHardLimit.actionOnExceed = nil
+		parent.actionMuForHardLimit.Unlock()
+
+		parent.actionMuForSoftLimit.Lock()
+		parent.actionMuForSoftLimit.actionOnExceed = nil
+		parent.actionMuForSoftLimit.Unlock()
+		parent.NeedKill.Store(false)
+	}
 	parent.remove(t)
 	t.mu.Lock()
 	defer t.mu.Unlock()
