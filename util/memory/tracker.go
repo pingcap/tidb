@@ -314,6 +314,7 @@ func (t *Tracker) Detach() {
 		parent.actionMuForSoftLimit.Lock()
 		parent.actionMuForSoftLimit.actionOnExceed = nil
 		parent.actionMuForSoftLimit.Unlock()
+		parent.NeedKill.Store(false)
 	}
 	parent.remove(t)
 	t.mu.Lock()
