@@ -72,6 +72,7 @@ func (d *clientDiscover) GetClient(ctx context.Context) (autoid.AutoIDAllocClien
 	if d.mu.AutoIDAllocClient != nil {
 		return d.mu.AutoIDAllocClient, nil
 	}
+
 	resp, err := d.etcdCli.Get(ctx, autoIDLeaderPath, clientv3.WithFirstCreate()...)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -87,10 +88,8 @@ func (d *clientDiscover) GetClient(ctx context.Context) (autoid.AutoIDAllocClien
 		return nil, errors.Trace(err)
 	}
 	cli = autoid.NewAutoIDAllocClient(grpcConn)
-	d.mu.Lock()
 	d.mu.AutoIDAllocClient = cli
 	d.mu.ClientConn = grpcConn
-	d.mu.Unlock()
 	return cli, nil
 }
 
@@ -129,7 +128,7 @@ retry:
 	if err != nil {
 		if strings.Contains(err.Error(), "rpc error") {
 			time.Sleep(200 * time.Millisecond)
-			sp.reConnect()
+			sp.resetConn()
 			goto retry
 		}
 		return 0, 0, errors.Trace(err)
@@ -141,7 +140,7 @@ retry:
 	return resp.Min, resp.Max, err
 }
 
-func (sp *singlePointAlloc) reConnect() {
+func (sp *singlePointAlloc) resetConn() {
 	var grpcConn *grpc.ClientConn
 	sp.mu.Lock()
 	grpcConn = sp.mu.ClientConn
@@ -191,7 +190,7 @@ retry:
 	if err != nil {
 		if strings.Contains(err.Error(), "rpc error") {
 			time.Sleep(200 * time.Millisecond)
-			sp.reConnect()
+			sp.resetConn()
 			goto retry
 		}
 		return errors.Trace(err)
