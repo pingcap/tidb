@@ -802,6 +802,17 @@ func TestCreateTableWithForeignKeyError(t *testing.T) {
 			create: "create table t2 (id int key, constraint name5678901234567890123456789012345678901234567890123456789012345 foreign key (id) references t1(id));",
 			err:    "[ddl:1059]Identifier name 'name5678901234567890123456789012345678901234567890123456789012345' is too long",
 		},
+		{
+			create: "create table t2 (id int key, constraint fk foreign key (id) references name5678901234567890123456789012345678901234567890123456789012345.t1(id));",
+			err:    "[ddl:1059]Identifier name 'name5678901234567890123456789012345678901234567890123456789012345' is too long",
+		},
+		{
+			prepare: []string{
+				"set @@foreign_key_checks=0;",
+			},
+			create: "create table t2 (id int key, constraint fk foreign key (id) references name5678901234567890123456789012345678901234567890123456789012345(id));",
+			err:    "[ddl:1059]Identifier name 'name5678901234567890123456789012345678901234567890123456789012345' is too long",
+		},
 	}
 	for _, ca := range cases {
 		tk.MustExec("drop table if exists t2")

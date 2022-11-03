@@ -6175,6 +6175,12 @@ func buildFKInfo(ctx sessionctx.Context, fkName model.CIStr, keys []*ast.IndexPa
 	if err := checkTooLongForeignKey(fkName); err != nil {
 		return nil, err
 	}
+	if err := checkTooLongSchema(refer.Table.Schema); err != nil {
+		return nil, err
+	}
+	if err := checkTooLongTable(refer.Table.Name); err != nil {
+		return nil, err
+	}
 
 	// all base columns of stored generated columns
 	baseCols := make(map[string]struct{})
