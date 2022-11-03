@@ -730,6 +730,8 @@ enable-enum-length-limit = false
 stores-refresh-interval = 30
 enable-forwarding = true
 enable-global-kill = true
+tidb-max-reuse-chunk = 10
+tidb-max-reuse-column = 20
 [performance]
 txn-total-size-limit=2000
 tcp-no-delay = false
@@ -768,8 +770,6 @@ grpc-initial-window-size = 10240
 grpc-max-send-msg-size = 40960
 [instance]
 max_connections = 200
-tidb-max-reuse-chunk = 10
-tidb-max-reuse-column = 20
 `)
 
 	require.NoError(t, err)

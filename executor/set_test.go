@@ -2063,4 +2063,4 @@ func TestSetChunkReuseVariable(t *testing.T) {
 
 	// error value
 	tk.MustGetErrCode("set @@tidb_enable_reuse_chunk=s;", errno.ErrWrongValueForVar)
-  }
+}
