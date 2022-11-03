@@ -330,11 +330,11 @@ func (e *HashAggExec) initForUnparallelExec() {
 	e.executed, e.isChildDrained = false, false
 	e.listInDisk = chunk.NewListInDisk(retTypes(e.children[0]))
 	e.tmpChkForSpill = newFirstChunk(e.children[0])
-	if e.ctx.GetSessionVars().TrackAggregateMemoryUsage && variable.EnableTmpStorageOnOOM.Load() {
+	if vars := e.ctx.GetSessionVars(); vars.TrackAggregateMemoryUsage && variable.EnableTmpStorageOnOOM.Load() {
 		e.diskTracker = disk.NewTracker(e.id, -1)
-		e.diskTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.DiskTracker)
+		e.diskTracker.AttachTo(vars.StmtCtx.DiskTracker)
 		e.listInDisk.GetDiskTracker().AttachTo(e.diskTracker)
-		e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewActionForSoftLimit(e.ActionSpill())
+		vars.MemTracker.FallbackOldAndSetNewActionForSoftLimit(e.ActionSpill())
 	}
 }
 
@@ -1940,6 +1940,7 @@ func (a *AggSpillDiskAction) Action(t *memory.Tracker) {
 			zap.Int64("consumed", t.BytesConsumed()),
 			zap.Int64("quota", t.GetBytesLimit()))
 		atomic.StoreUint32(&a.e.inSpillMode, 1)
+		memory.QueryForceDisk.Add(1)
 		return
 	}
 	if fallback := a.GetFallback(); fallback != nil {
@@ -1951,6 +1952,3 @@ func (a *AggSpillDiskAction) Action(t *memory.Tracker) {
 func (*AggSpillDiskAction) GetPriority() int64 {
 	return memory.DefSpillPriority
 }
-
-// SetLogHook sets the hook, it does nothing just to form the memory.ActionOnExceed interface.
-func (*AggSpillDiskAction) SetLogHook(_ func(uint64)) {}

@@ -712,6 +712,29 @@ func TestUser(t *testing.T) {
 	dropUserSQL = `DROP USER IF EXISTS 'test1'@'localhost' ;`
 	tk.MustExec(dropUserSQL)
 
+	// Test create/alter user with `tidb_auth_token`
+	tk.MustExec(`CREATE USER token_user IDENTIFIED WITH 'tidb_auth_token' REQUIRE token_issuer 'issuer-abc'`)
+	tk.MustQuery(`SELECT plugin, token_issuer FROM mysql.user WHERE user = 'token_user'`).Check(testkit.Rows("tidb_auth_token issuer-abc"))
+	tk.MustExec(`ALTER USER token_user REQUIRE token_issuer 'issuer-123'`)
+	tk.MustQuery(`SELECT plugin, token_issuer FROM mysql.user WHERE user = 'token_user'`).Check(testkit.Rows("tidb_auth_token issuer-123"))
+	tk.MustExec(`ALTER USER token_user IDENTIFIED WITH 'tidb_auth_token'`)
+	tk.MustExec(`CREATE USER token_user1 IDENTIFIED WITH 'tidb_auth_token'`)
+	tk.MustQuery(`show warnings`).Check(testkit.RowsWithSep("|", "Warning|1105|TOKEN_ISSUER is needed for 'tidb_auth_token' user, please use 'alter user' to declare it"))
+	tk.MustExec(`CREATE USER temp_user IDENTIFIED WITH 'mysql_native_password' BY '1234' REQUIRE token_issuer 'issuer-abc'`)
+	tk.MustQuery(`show warnings`).Check(testkit.RowsWithSep("|", "Warning|1105|TOKEN_ISSUER is not needed for 'mysql_native_password' user"))
+	tk.MustExec(`ALTER USER temp_user IDENTIFIED WITH 'tidb_auth_token' REQUIRE token_issuer 'issuer-abc'`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+	tk.MustExec(`ALTER USER temp_user IDENTIFIED WITH 'mysql_native_password' REQUIRE token_issuer 'issuer-abc'`)
+	tk.MustQuery(`show warnings`).Check(testkit.RowsWithSep("|", "Warning|1105|TOKEN_ISSUER is not needed for the auth plugin"))
+	tk.MustExec(`ALTER USER temp_user IDENTIFIED WITH 'tidb_auth_token'`)
+	tk.MustQuery(`show warnings`).Check(testkit.RowsWithSep("|", "Warning|1105|Auth plugin 'tidb_auth_plugin' needs TOKEN_ISSUER"))
+	tk.MustExec(`ALTER USER token_user REQUIRE SSL`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+	tk.MustExec(`ALTER USER token_user IDENTIFIED WITH 'mysql_native_password' BY '1234'`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+	tk.MustExec(`ALTER USER token_user IDENTIFIED WITH 'tidb_auth_token' REQUIRE token_issuer 'issuer-abc'`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+
 	// Test alter user.
 	createUserSQL = `CREATE USER 'test1'@'localhost' IDENTIFIED BY '123', 'test2'@'localhost' IDENTIFIED BY '123', 'test3'@'localhost' IDENTIFIED BY '123', 'test4'@'localhost' IDENTIFIED BY '123';`
 	tk.MustExec(createUserSQL)

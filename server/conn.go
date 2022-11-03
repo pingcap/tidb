@@ -197,6 +197,7 @@ type clientConn struct {
 		*TiDBContext // an interface to execute sql statements.
 	}
 	attrs         map[string]string // attributes parsed from client handshake response, not used for now.
+	serverHost    string            // server host
 	peerHost      string            // peer host
 	peerPort      string            // peer port
 	status        int32             // dispatching/reading/shutdown/waitshutdown
@@ -680,6 +681,7 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	case mysql.AuthNativePassword:
 	case mysql.AuthSocket:
 	case mysql.AuthTiDBSessionToken:
+	case mysql.AuthTiDBAuthToken:
 	default:
 		return errors.New("Unknown auth plugin")
 	}
@@ -708,6 +710,7 @@ func (cc *clientConn) handleAuthPlugin(ctx context.Context, resp *handshakeRespo
 		case mysql.AuthNativePassword:
 		case mysql.AuthSocket:
 		case mysql.AuthTiDBSessionToken:
+		case mysql.AuthTiDBAuthToken:
 		default:
 			logutil.Logger(ctx).Warn("Unknown Auth Plugin", zap.String("plugin", resp.AuthPlugin))
 		}
@@ -947,6 +950,7 @@ func (cc *clientConn) PeerHost(hasPassword string) (host, port string, err error
 	host = variable.DefHostname
 	if cc.isUnixSocket {
 		cc.peerHost = host
+		cc.serverHost = host
 		return
 	}
 	addr := cc.bufReadConn.RemoteAddr().String()
@@ -957,6 +961,15 @@ func (cc *clientConn) PeerHost(hasPassword string) (host, port string, err error
 	}
 	cc.peerHost = host
 	cc.peerPort = port
+
+	serverAddr := cc.bufReadConn.LocalAddr().String()
+	serverHost, _, err := net.SplitHostPort(serverAddr)
+	if err != nil {
+		err = errAccessDenied.GenWithStackByArgs(cc.user, addr, hasPassword)
+		return
+	}
+	cc.serverHost = serverHost
+
 	return
 }
 
@@ -1337,11 +1350,6 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	}
 
 	switch cmd {
-	case mysql.ComSleep:
-		// TODO: According to mysql document, this command is supposed to be used only internally.
-		// So it's just a temp fix, not sure if it's done right.
-		// Investigate this command and write test case later.
-		return nil
 	case mysql.ComQuit:
 		return io.EOF
 	case mysql.ComInitDB:
@@ -2450,8 +2458,19 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 	}
 	pass := data[:passLen]
 	data = data[passLen:]
-	dbName, _ := parseNullTermString(data)
+	dbName, data := parseNullTermString(data)
 	cc.dbname = string(hack.String(dbName))
+	pluginName := ""
+	if len(data) > 0 {
+		// skip character set
+		if cc.capability&mysql.ClientProtocol41 > 0 && len(data) >= 2 {
+			data = data[2:]
+		}
+		if cc.capability&mysql.ClientPluginAuth > 0 && len(data) > 0 {
+			pluginNameB, _ := parseNullTermString(data)
+			pluginName = string(hack.String(pluginNameB))
+		}
+	}
 
 	if err := cc.ctx.Close(); err != nil {
 		logutil.Logger(ctx).Debug("close old context failed", zap.Error(err))
@@ -2461,6 +2480,19 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 	err := cc.openSession()
 	if err != nil {
 		return err
+	}
+	if pluginName != "" {
+		failpoint.Inject("ChangeUserAuthSwitch", func(val failpoint.Value) {
+			failpoint.Return(errors.Errorf("%v", val))
+		})
+		pass, err = cc.checkAuthPlugin(ctx, &handshakeResponse41{
+			Auth:       pass,
+			AuthPlugin: pluginName,
+			Capability: cc.capability,
+		})
+		if err != nil {
+			return err
+		}
 	}
 	if err := cc.openSessionAndDoAuth(pass, ""); err != nil {
 		return err
@@ -2502,8 +2534,7 @@ func (cc *clientConn) handleCommonConnectionReset(ctx context.Context) error {
 	connectionInfo := cc.connectInfo()
 	cc.ctx.GetSessionVars().ConnectionInfo = connectionInfo
 
-	cc.extensions.OnConnectionEvent(extension.ConnReset, connectionInfo)
-
+	cc.onExtensionConnEvent(extension.ConnReset, nil)
 	err := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 		if authPlugin.OnConnectionEvent != nil {
