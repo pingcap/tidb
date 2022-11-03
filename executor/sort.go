@@ -228,7 +228,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 	}
 	failpoint.Inject("SignalCheckpointForSort", func(val failpoint.Value) {
 		if val.(bool) {
-			if e.ctx.GetSessionVars().ConnectionID > 0 {
+			if e.ctx.GetSessionVars().ConnectionID == 123456 {
 				e.ctx.GetSessionVars().MemTracker.NeedKill.Store(true)
 			}
 		}
