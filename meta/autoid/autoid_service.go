@@ -89,7 +89,7 @@ func (d *clientDiscover) GetClient(ctx context.Context) (autoid.AutoIDAllocClien
 // The returned range is (min, max]:
 // case increment=1 & offset=1: you can derive the ids like min+1, min+2... max.
 // case increment=x & offset=y: you firstly need to seek to firstID by `SeekToFirstAutoIDXXX`, then derive the IDs like firstID, firstID + increment * 2... in the caller.
-func (sp *singlePointAlloc) Alloc(ctx context.Context, n uint64, increment, offset int64) (int64, int64, error) {
+func (sp *singlePointAlloc) Alloc(ctx context.Context, n uint64, increment, offset int64) (min int64, max int64, _ error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("autoid.Alloc", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -127,16 +127,14 @@ retry:
 
 	du := time.Since(start)
 	metrics.AutoIDReqDuration.Observe(du.Seconds())
-	if err == nil {
-		sp.lastAllocated = resp.Min
-	}
+	sp.lastAllocated = resp.Min
 	return resp.Min, resp.Max, err
 }
 
 // AllocSeqCache allocs sequence batch value cached in table level（rather than in alloc), the returned range covering
 // the size of sequence cache with it's increment. The returned round indicates the sequence cycle times if it is with
 // cycle option.
-func (sp *singlePointAlloc) AllocSeqCache() (min int64, max int64, round int64, err error) {
+func (*singlePointAlloc) AllocSeqCache() (int64, int64, int64, error) {
 	return 0, 0, 0, errors.New("AllocSeqCache not implemented")
 }
 
@@ -150,10 +148,10 @@ func (sp *singlePointAlloc) Rebase(ctx context.Context, newBase int64, allocIDs 
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	return sp.rebase(ctx, newBase, allocIDs, false)
+	return sp.rebase(ctx, newBase, false)
 }
 
-func (sp *singlePointAlloc) rebase(ctx context.Context, newBase int64, allocIDs bool, force bool) error {
+func (sp *singlePointAlloc) rebase(ctx context.Context, newBase int64, force bool) error {
 	cli, err := sp.GetClient(ctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -176,11 +174,11 @@ func (sp *singlePointAlloc) ForceRebase(newBase int64) error {
 	if newBase == -1 {
 		return ErrAutoincReadFailed.GenWithStack("Cannot force rebase the next global ID to '0'")
 	}
-	return sp.rebase(context.Background(), newBase, false, true)
+	return sp.rebase(context.Background(), newBase, true)
 }
 
 // RebaseSeq rebases the sequence value in number axis with tableID and the new base value.
-func (sp *singlePointAlloc) RebaseSeq(newBase int64) (int64, bool, error) {
+func (*singlePointAlloc) RebaseSeq(_ int64) (int64, bool, error) {
 	return 0, false, errors.New("RebaseSeq not implemented")
 }
 
@@ -202,6 +200,6 @@ func (sp *singlePointAlloc) NextGlobalAutoID() (int64, error) {
 	return max + 1, err
 }
 
-func (sp *singlePointAlloc) GetType() AllocatorType {
+func (*singlePointAlloc) GetType() AllocatorType {
 	return RowIDAllocType
 }
