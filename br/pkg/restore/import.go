@@ -425,8 +425,8 @@ func (importer *FileImporter) ImportKVFiles(
 	log.Debug("rewrite file keys",
 		logutil.Key("startKey", startKey), logutil.Key("endKey", endKey))
 
-	// This RetryState will retry 48 time, for 5 min - 6 min.
-	rs := utils.InitialRetryState(48, 100*time.Millisecond, 8*time.Second)
+	// This RetryState will retry 45 time, about 10 min.
+	rs := utils.InitialRetryState(45, 100*time.Millisecond, 15*time.Second)
 	ctl := OverRegionsInRange(startKey, endKey, importer.metaClient, &rs)
 	err = ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) RPCResult {
 		subfiles := make([]*backuppb.DataFileInfo, 0, len(files))
