@@ -493,9 +493,9 @@ type Instance struct {
 	TiDBEnableDDL     AtomicBool `toml:"tidb_enable_ddl" json:"tidb_enable_ddl"`
 	TiDBRCReadCheckTS bool       `toml:"tidb_rc_read_check_ts" json:"tidb_rc_read_check_ts"`
 	// TiDBMaxReuseChunk indicates max cached chunk num
-	TiDBMaxReuseChunk int `toml:"tidb-max-reuse-chunk" json:"tidb-max-reuse-chunk"`
+	TiDBMaxReuseChunk uint32 `toml:"tidb-max-reuse-chunk" json:"tidb-max-reuse-chunk"`
 	// TiDBMaxReuseColumn indicates max cached column num
-	TiDBMaxReuseColumn int `toml:"tidb-max-reuse-column" json:"tidb-max-reuse-column"`
+	TiDBMaxReuseColumn uint32 `toml:"tidb-max-reuse-column" json:"tidb-max-reuse-column"`
 }
 
 func (l *Log) getDisableTimestamp() bool {

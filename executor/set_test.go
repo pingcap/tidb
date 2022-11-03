@@ -2037,42 +2037,12 @@ func TestSetChunkReuseVariable(t *testing.T) {
 	tk.MustExec("set GLOBAL tidb_enable_reuse_chunk=OFF;")
 	tk.MustQuery("select @@global.tidb_enable_reuse_chunk").Check(testkit.Rows("0"))
 
-	tk.MustExec("set @@tidb_max_reuse_chunk=256;")
-	tk.MustQuery("select @@session.tidb_max_reuse_chunk").Check(testkit.Rows("256"))
-	tk.MustExec("set GLOBAL tidb_max_reuse_chunk=256;")
-	tk.MustQuery("select @@global.tidb_max_reuse_chunk").Check(testkit.Rows("256"))
-
-	tk.MustExec("set @@tidb_max_reuse_column=256;")
-	tk.MustQuery("select @@session.tidb_max_reuse_column").Check(testkit.Rows("256"))
-	tk.MustExec("set GLOBAL tidb_max_reuse_column=256;")
-	tk.MustQuery("select @@global.tidb_max_reuse_column").Check(testkit.Rows("256"))
-
-	// out of range
-	tk.MustExec("set @@tidb_max_reuse_chunk=100000000000;")
-	tk.MustQuery("select @@session.tidb_max_reuse_chunk").Check(testkit.Rows("2147483647"))
-	tk.MustExec("set GLOBAL tidb_max_reuse_chunk=100000000000;")
-	tk.MustQuery("select @@global.tidb_max_reuse_chunk").Check(testkit.Rows("2147483647"))
-
 	// negative number
 	tk.MustExec("set @@tidb_max_reuse_chunk=-1;")
 	tk.MustQuery("select @@session.tidb_max_reuse_chunk").Check(testkit.Rows("1"))
 	tk.MustExec("set GLOBAL tidb_max_reuse_chunk=-1;")
 	tk.MustQuery("select @@global.tidb_max_reuse_chunk").Check(testkit.Rows("1"))
 
-	// out of range
-	tk.MustExec("set @@tidb_max_reuse_column=100000000000;")
-	tk.MustQuery("select @@session.tidb_max_reuse_column").Check(testkit.Rows("2147483647"))
-	tk.MustExec("set GLOBAL tidb_max_reuse_column=100000000000;")
-	tk.MustQuery("select @@global.tidb_max_reuse_column").Check(testkit.Rows("2147483647"))
-
-	// negative number
-	tk.MustExec("set @@tidb_max_reuse_column=-1;")
-	tk.MustQuery("select @@session.tidb_max_reuse_column").Check(testkit.Rows("1"))
-	tk.MustExec("set GLOBAL tidb_max_reuse_column=-1;")
-	tk.MustQuery("select @@global.tidb_max_reuse_column").Check(testkit.Rows("1"))
-
 	// error value
-	tk.MustGetErrCode("set tidb_max_reuse_chunk = s", errno.ErrWrongTypeForVar)
-	tk.MustGetErrCode("set tidb_max_reuse_column = s", errno.ErrWrongTypeForVar)
 	tk.MustGetErrCode("set @@tidb_enable_reuse_chunk=s;", errno.ErrWrongValueForVar)
 }

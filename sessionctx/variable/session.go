@@ -1291,10 +1291,6 @@ type SessionVars struct {
 	// When set to true, `col is (not) null`(`col` is index prefix column) is regarded as index filter rather than table filter.
 	OptPrefixIndexSingleScan bool
 
-	// chunk alloc max cache chunk num
-	MaxReuseChunk int
-	// chunk alloc max cache column num
-	MaxReuseColumn int
 	// ChunkPool Several chunks and columns are cached
 	ChunkPool struct {
 		Lock  sync.Mutex
@@ -1317,7 +1313,7 @@ func (s *SessionVars) GetNewChunk(fields []*types.FieldType, capacity int) *chun
 	}
 	s.ChunkPool.Lock.Lock()
 	defer s.ChunkPool.Lock.Unlock()
-	if s.checkReuseAllocSize() && (!s.GetUseChunkAlloc()) {
+	if s.ChunkPool.Alloc.CheckReuseAllocSize() && (!s.GetUseChunkAlloc()) {
 		s.StmtCtx.SetUseChunkAlloc()
 	}
 	chk := s.ChunkPool.Alloc.Alloc(fields, capacity, capacity)
@@ -1332,16 +1328,11 @@ func (s *SessionVars) GetNewChunkWithCapacity(fields []*types.FieldType, capacit
 	}
 	s.ChunkPool.Lock.Lock()
 	defer s.ChunkPool.Lock.Unlock()
-	if s.checkReuseAllocSize() && (!s.GetUseChunkAlloc()) {
+	if s.ChunkPool.Alloc.CheckReuseAllocSize() && (!s.GetUseChunkAlloc()) {
 		s.StmtCtx.SetUseChunkAlloc()
 	}
 	chk := s.ChunkPool.Alloc.Alloc(fields, capacity, maxCachesize)
 	return chk
-}
-
-// checkReuseAllocSize indicates whether chunk alloc can be used
-func (s *SessionVars) checkReuseAllocSize() bool {
-	return s.MaxReuseChunk > 0 || s.MaxReuseColumn > 0
 }
 
 // ExchangeChunkStatus give the status to preUseChunkAlloc

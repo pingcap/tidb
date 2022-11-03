@@ -217,6 +217,7 @@ func TestColumnAllocatorLimit(t *testing.T) {
 	//set cache size
 	InitChunkAllocSize(10, 20)
 	alloc := NewAllocator()
+	require.True(t, alloc.CheckReuseAllocSize())
 	for i := 0; i < maxFreeChunks+10; i++ {
 		alloc.Alloc(fieldTypes, 5, 10)
 	}
@@ -264,4 +265,8 @@ func TestColumnAllocatorLimit(t *testing.T) {
 	for _, p := range alloc.columnAlloc.pool {
 		require.True(t, (p.Len() == 0))
 	}
+
+	InitChunkAllocSize(0, 0)
+	alloc = NewAllocator()
+	require.False(t, alloc.CheckReuseAllocSize())
 }

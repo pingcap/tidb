@@ -453,8 +453,6 @@ func TestGetReuseChunk(t *testing.T) {
 	columnReuseMap := make(map[*chunk.Column]struct{}, 14)
 
 	alloc := chunk.NewAllocator()
-	sessVars.MaxReuseChunk = 100
-	sessVars.MaxReuseColumn = 100
 	sessVars.EnableReuseCheck = true
 	sessVars.SetAlloc(alloc)
 	require.NotNil(t, sessVars.ChunkPool.Alloc)
@@ -492,28 +490,6 @@ func TestGetReuseChunk(t *testing.T) {
 		_, exist := columnReuseMap[chkres2.Column(i)]
 		require.True(t, exist)
 	}
-
-	//Test cache resizing works
-	sessVars.MaxReuseChunk = 0
-	sessVars.MaxReuseColumn = 0
-	sessVars.SetAlloc(alloc)
-	alloc.Reset()
-	chkres3 := sessVars.GetNewChunk(fieldTypes, 10)
-	_, exist = chunkReuseMap[chkres3]
-	require.False(t, exist)
-	for i := 0; i < chkres3.NumCols(); i++ {
-		_, exist := columnReuseMap[chkres3.Column(i)]
-		require.False(t, exist)
-	}
-	chkres4 := sessVars.GetNewChunkWithCapacity(fieldTypes, 10, 10)
-	require.NotNil(t, chkres4)
-	_, exist = chunkReuseMap[chkres4]
-	require.False(t, exist)
-	for i := 0; i < chkres4.NumCols(); i++ {
-		_, exist := columnReuseMap[chkres4.Column(i)]
-		require.False(t, exist)
-	}
-
 	sessVars.ClearAlloc()
 	require.Nil(t, sessVars.ChunkPool.Alloc)
 }

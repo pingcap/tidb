@@ -15,6 +15,8 @@
 package chunk
 
 import (
+	"math"
+
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mathutil"
 )
@@ -24,16 +26,23 @@ import (
 // and Alloc() allocates from the pool.
 type Allocator interface {
 	Alloc(fields []*types.FieldType, capacity, maxChunkSize int) *Chunk
+	CheckReuseAllocSize() bool
 	Reset()
 }
 
-var maxFreeChunks int = 64
-var maxFreeColumnsPerType int = 256
+var maxFreeChunks = 64
+var maxFreeColumnsPerType = 256
 
 // InitChunkAllocSize init the maximum cache size
-func InitChunkAllocSize(setMaxFreeChunks, setMaxFreeColumns int) {
-	maxFreeChunks = setMaxFreeChunks
-	maxFreeColumnsPerType = setMaxFreeColumns
+func InitChunkAllocSize(setMaxFreeChunks, setMaxFreeColumns uint32) {
+	if setMaxFreeChunks > math.MaxInt32 {
+		setMaxFreeChunks = math.MaxInt32
+	}
+	if setMaxFreeColumns > math.MaxInt32 {
+		setMaxFreeColumns = math.MaxInt32
+	}
+	maxFreeChunks = int(setMaxFreeChunks)
+	maxFreeColumnsPerType = int(setMaxFreeColumns)
 }
 
 // NewAllocator creates an Allocator.
@@ -75,11 +84,10 @@ func (cList *columnList) Len() int {
 	return len(cList.freeColumns) + len(cList.allocColumns)
 }
 
-// // SetLimit limit reuse num
-// func (a *allocator) SetLimit(chunknum, columnnum int) {
-// 	a.freeChunk = chunknum
-// 	a.columnAlloc.freeColumnsPerType = columnnum
-// }
+// CheckReuseAllocSize return whether the cache can cache objects
+func (a *allocator) CheckReuseAllocSize() bool {
+	return a.freeChunk > 0 || a.columnAlloc.freeColumnsPerType > 0
+}
 
 // Alloc implements the Allocator interface.
 func (a *allocator) Alloc(fields []*types.FieldType, capacity, maxChunkSize int) *Chunk {
@@ -108,11 +116,6 @@ func (a *allocator) Alloc(fields []*types.FieldType, capacity, maxChunkSize int)
 	return chk
 }
 
-// const (
-// 	maxFreeChunks         = 64
-// 	maxFreeColumnsPerType = 256
-// )
-
 // Reset implements the Allocator interface.
 func (a *allocator) Reset() {
 	for i, chk := range a.allocated {
@@ -127,11 +130,10 @@ func (a *allocator) Reset() {
 	//column objects and put them to the column allocator for reuse.
 	for _, pool := range a.columnAlloc.pool {
 		for _, col := range pool.allocColumns {
-			if (len(pool.freeColumns) < a.columnAlloc.freeColumnsPerType) && (!col.avoidReusing) {
+			if (len(pool.freeColumns) < a.columnAlloc.freeColumnsPerType) && (!col.avoidReusing) && (cap(col.data) < MaxCachedLen) {
 				col.reset()
-				if cap(col.data) < MaxCachedLen {
-					pool.freeColumns = append(pool.freeColumns, col)
-				}
+				pool.freeColumns = append(pool.freeColumns, col)
+
 			}
 		}
 		pool.allocColumns = pool.allocColumns[:0]
