@@ -90,7 +90,7 @@ FLASHBACK CLUSTER TO TIMESTAMP '2022-07-05 08:00:00';
 2. Flashback some databases to the specified timestamp.
 
 ```sql
-FLASHBACK DATABASE [db1], [db2] TO TIMESTAMP '2022-07-05 08:00:00';
+FLASHBACK DATABASE [db] TO TIMESTAMP '2022-07-05 08:00:00';
 ```
 
 3. Flashback some tables to the specified timestamp.
