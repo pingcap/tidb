@@ -614,7 +614,8 @@ func (a *ExecStmt) handleForeignKeyTrigger(ctx context.Context, e Executor, dept
 // handleForeignKeyCascade uses to execute foreign key cascade behaviour, the progress is:
 //  1. Build delete/update executor for foreign key on delete/update behaviour.
 //     a. Construct delete/update AST. We used to try generated SQL string first and then parse the SQL to get AST,
-//     but we need convert Datum to string, there may be some risks here, so we chose to construct AST directly.
+//     but we need convert Datum to string, there may be some risks here, since assert_eq(datum_a, parse(datum_a.toString())) may be broken.
+//     so we chose to construct AST directly.
 //     b. Build plan by the delete/update AST.
 //     c. Build executor by the delete/update plan.
 //  2. Execute the delete/update executor.
