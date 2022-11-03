@@ -69,10 +69,6 @@ func (ms *StreamMetadataSet) LoadUntilAndCalculateShiftTS(ctx context.Context, s
 			return err
 		}
 		metadataMap.Lock()
-		log.Info("metadata path", zap.String("path", path))
-		for _, group := range m.FileGroups {
-			log.Info("metadata file groups", zap.String("path", group.Path))
-		}
 		// If the meta file contains only files with ts grater than `until`, when the file is from
 		// `Default`: it should be kept, because its corresponding `write` must has commit ts grater than it, which should not be considered.
 		// `Write`: it should trivially not be considered.
