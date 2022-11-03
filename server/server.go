@@ -140,9 +140,11 @@ type Server struct {
 	grpcServer     *grpc.Server
 	inShutdownMode bool
 
-	sessionMapMutex  sync.Mutex
-	internalSessions map[interface{}]struct{}
-	autoIDService    *autoid.Service
+	sessionMapMutex     sync.Mutex
+	internalSessions    map[interface{}]struct{}
+	autoIDService       *autoid.Service
+	authTokenCancelFunc context.CancelFunc
+	wg                  sync.WaitGroup
 }
 
 // ConnectionCount gets current connection count.
@@ -315,8 +317,11 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 				zap.String("security.auth-token-refresh-interval", s.cfg.Security.AuthTokenRefreshInterval))
 			timeInterval = config.DefAuthTokenRefreshInterval
 		}
-		if err = privileges.GlobalJWKS.LoadJWKS4AuthToken(s.cfg.Security.AuthTokenJWKS, timeInterval, true); err != nil {
+		ctx, cancelFunc := context.WithCancel(context.Background())
+		if err = privileges.GlobalJWKS.LoadJWKS4AuthToken(ctx, &s.wg, s.cfg.Security.AuthTokenJWKS, timeInterval); err != nil {
 			logutil.BgLogger().Error("Fail to load JWKS from the path", zap.String("jwks", s.cfg.Security.AuthTokenJWKS))
+		} else {
+			s.authTokenCancelFunc = cancelFunc
 		}
 	}
 
@@ -520,6 +525,10 @@ func (s *Server) Close() {
 	if s.autoIDService != nil {
 		s.autoIDService.Close()
 	}
+	if s.authTokenCancelFunc != nil {
+		s.authTokenCancelFunc()
+	}
+	s.wg.Wait()
 	metrics.ServerEventCounter.WithLabelValues(metrics.EventClose).Inc()
 }
 

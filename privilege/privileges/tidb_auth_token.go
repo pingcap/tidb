@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 	"unsafe"
@@ -56,11 +57,19 @@ func (jwks *JWKSImpl) verify(tokenBytes []byte) (payload []byte, err error) {
 }
 
 // LoadJWKS4AuthToken reload the jwks every auth-token-refresh-interval.
-func (jwks *JWKSImpl) LoadJWKS4AuthToken(jwksPath string, interval time.Duration, reload bool) error {
+func (jwks *JWKSImpl) LoadJWKS4AuthToken(ctx context.Context, wg *sync.WaitGroup, jwksPath string, interval time.Duration) error {
 	jwks.filepath = jwksPath
-	if reload {
+	if ctx != nil && wg != nil {
 		go func() {
-			for range time.Tick(interval) {
+			ticker := time.Tick(interval)
+			wg.Add(1)
+			for {
+				select {
+				case <-ctx.Done():
+					wg.Done()
+					return
+				case <-ticker:
+				}
 				if err := jwks.load(); err != nil {
 					logutil.BgLogger().Error("Fail to load JWKS", zap.String("path", jwksPath), zap.Duration("interval", interval))
 				}
