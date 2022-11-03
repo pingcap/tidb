@@ -781,11 +781,10 @@ func genWhereConditionAst(cols []*model.ColumnInfo, fkValues [][]types.Datum) as
 	for _, fkVals := range fkValues {
 		v := &driver.ValueExpr{Datum: fkVals[0]}
 		v.Type = cols[0].FieldType
-		row := &ast.ParenthesesExpr{Expr: v}
-		valueList = append(valueList, row)
+		valueList = append(valueList, v)
 	}
 	return &ast.PatternInExpr{
-		Expr: &ast.ParenthesesExpr{Expr: &ast.ColumnNameExpr{Name: &ast.ColumnName{Name: cols[0].Name}}},
+		Expr: &ast.ColumnNameExpr{Name: &ast.ColumnName{Name: cols[0].Name}},
 		List: valueList,
 	}
 }
@@ -800,12 +799,9 @@ func genWhereConditionAstForMultiColumn(cols []*model.ColumnInfo, fkValues [][]t
 	for _, fkVals := range fkValues {
 		values := make([]ast.ExprNode, len(fkVals))
 		for i, v := range fkVals {
-			values[i] = &driver.ValueExpr{
-				TexprNode: ast.TexprNode{
-					Type: cols[i].FieldType,
-				},
-				Datum: v,
-			}
+			val := &driver.ValueExpr{Datum: v}
+			val.Type = cols[i].FieldType
+			values[i] = val
 		}
 		row := &ast.RowExpr{Values: values}
 		valueList = append(valueList, row)

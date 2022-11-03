@@ -1305,6 +1305,13 @@ func TestForeignKeyGenerateCascadeAST(t *testing.T) {
 	checkStmtFn(stmt, "update test.t2 set a = 10, name = 'aa' where (a,name) in ((1,'a'), (2,'b'))")
 	stmt = executor.GenCascadeUpdateAST(model.NewCIStr("test"), model.NewCIStr("t2"), model.NewCIStr("idx"), cols, couple)
 	checkStmtFn(stmt, "update test.t2 use index(idx) set a = 10, name = 'aa' where (a,name) in ((1,'a'), (2,'b'))")
+	// Test for 1 fk column.
+	fkValues = [][]types.Datum{{types.NewDatum(1)}, {types.NewDatum(2)}}
+	cols = []*model.ColumnInfo{{ID: 1, Name: model.NewCIStr("a"), FieldType: *types.NewFieldType(mysql.TypeLonglong)}}
+	stmt = executor.GenCascadeDeleteAST(model.NewCIStr("test"), model.NewCIStr("t2"), model.NewCIStr(""), cols, fkValues)
+	checkStmtFn(stmt, "delete from test.t2 where a in (1,2)")
+	stmt = executor.GenCascadeDeleteAST(model.NewCIStr("test"), model.NewCIStr("t2"), model.NewCIStr("idx"), cols, fkValues)
+	checkStmtFn(stmt, "delete from test.t2 use index(idx) where a in (1,2)")
 }
 
 func TestForeignKeyOnDeleteSetNull(t *testing.T) {
