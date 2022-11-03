@@ -67,7 +67,7 @@ When the Session Manager migrates a session, it needs to authenticate with the n
 
 It's unsafe to save user passwords in the Session Manager, so we use a token-based authentication:
 
-1. The administrator places a self-signed certificate on each TiDB server. The certificate and key paths are defined by global variables `tidb_auth_signing_cert` and `tidb_auth_signing_key`. The certificates on all the servers are the same so that a message encrypted by one server can be decrypted by another.
+1. The administrator places a self-signed certificate on each TiDB server. The certificate and key paths are defined by configurations `security.session-token-signing-cert` and `security.session-token-signing-key`. The certificates on all the servers are the same so that a message encrypted by one server can be decrypted by another.
 2. When the Session Manager is going to migrate a session from one TiDB instance to another, it queries the session token. The session token is composed by the username, token expiration time, and a signature. The signature is signed with the private key of the certificate.
 3. The Session Manager then authenticates with the new TiDB server with a new auth-plugin. The session token acts as the password. The new server checks the username, token expiration time, and the signature. The signature should be verified by the public key.
 

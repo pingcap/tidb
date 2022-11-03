@@ -32,6 +32,7 @@ go_library(
         "//errno",
         "//executor",
         "//expression",
+        "//extension",
         "//infoschema",
         "//kv",
         "//meta",
@@ -117,7 +118,7 @@ go_library(
 
 go_test(
     name = "server_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = [
         "column_test.go",
         "conn_stmt_test.go",
@@ -140,6 +141,7 @@ go_test(
     ],
     embed = [":server"],
     flaky = True,
+    race = "on",
     shard_count = 50,
     deps = [
         "//config",
@@ -150,6 +152,7 @@ go_test(
         "//errno",
         "//executor",
         "//expression",
+        "//extension",
         "//infoschema",
         "//kv",
         "//meta",
@@ -167,6 +170,7 @@ go_test(
         "//sessionctx/binloginfo",
         "//sessionctx/stmtctx",
         "//sessionctx/variable",
+        "//sessiontxn",
         "//statistics/handle",
         "//store/helper",
         "//store/mockstore",

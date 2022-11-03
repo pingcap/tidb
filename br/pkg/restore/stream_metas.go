@@ -28,6 +28,11 @@ type StreamMetadataSet struct {
 	BeforeDoWriteBack func(path string, last, current *backuppb.Metadata) (skip bool)
 }
 
+// MetaLen returns the length of read metadata.
+func (ms *StreamMetadataSet) MetaLen() int {
+	return len(ms.metadata)
+}
+
 // LoadUntil loads the metadata until the specified timestamp.
 // This would load all metadata files that *may* contain data from transaction committed before that TS.
 // Note: maybe record the timestamp and reject reading data files after this TS?
@@ -154,10 +159,15 @@ func (ms *StreamMetadataSet) doWriteBackForFile(ctx context.Context, s storage.E
 	return truncateAndWrite(ctx, s, path, bs)
 }
 
+// PendingMeta returns the length of metadata waiting for be written back.
+func (ms *StreamMetadataSet) PendingMeta() int {
+	return len(ms.writeback)
+}
+
 func (ms *StreamMetadataSet) DoWriteBack(ctx context.Context, s storage.ExternalStorage) error {
 	for path := range ms.writeback {
 		if ms.BeforeDoWriteBack != nil && ms.BeforeDoWriteBack(path, ms.metadata[path], ms.writeback[path]) {
-			return nil
+			continue
 		}
 		err := ms.doWriteBackForFile(ctx, s, path)
 		// NOTE: Maybe we'd better roll back all writebacks? (What will happen if roll back fails too?)
@@ -171,40 +181,11 @@ func (ms *StreamMetadataSet) DoWriteBack(ctx context.Context, s storage.External
 }
 
 func truncateAndWrite(ctx context.Context, s storage.ExternalStorage, path string, data []byte) error {
-	switch s.(type) {
-	// Performance hack: the `Write` implemention for S3 and local would truncate the file if it exists.
-	case *storage.S3Storage, *storage.LocalStorage:
-		if err := s.WriteFile(ctx, path, data); err != nil {
-			return errors.Annotatef(err, "failed to save the file %s to %s", path, s.URI())
-		}
-	default:
-		if err := swapAndOverrideFile(ctx, s, path, data); err != nil {
-			return errors.Annotatef(err, "failed during rewriting the file at %s in %s", path, s.URI())
-		}
+	// Performance hack: the `Write` implemention would truncate the file if it exists.
+	if err := s.WriteFile(ctx, path, data); err != nil {
+		return errors.Annotatef(err, "failed to save the file %s to %s", path, s.URI())
 	}
 	return nil
-}
-
-// swapAndOverrideFile is a slow but safe way for overriding a file in the external storage.
-// Because there isn't formal definition of `WriteFile` over a existing file, this should be safe in generic external storage.
-// It moves the origin file to a swap file and did the file write, finally remove the swap file.
-func swapAndOverrideFile(ctx context.Context, s storage.ExternalStorage, path string, data []byte) error {
-	ok, err := s.FileExists(ctx, path)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return errors.Annotate(berrors.ErrInvalidArgument, "the origin file doesn't exist")
-	}
-
-	backup := path + ".override_swap"
-	if err := s.Rename(ctx, path, backup); err != nil {
-		return err
-	}
-	if err := s.WriteFile(ctx, path, data); err != nil {
-		return err
-	}
-	return s.DeleteFile(ctx, backup)
 }
 
 const (

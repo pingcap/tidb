@@ -177,8 +177,10 @@ const (
 	AuthNativePassword      = "mysql_native_password" // #nosec G101
 	AuthCachingSha2Password = "caching_sha2_password" // #nosec G101
 	AuthTiDBSM3Password     = "tidb_sm3_password"     // #nosec G101
+	AuthMySQLClearPassword  = "mysql_clear_password"
 	AuthSocket              = "auth_socket"
 	AuthTiDBSessionToken    = "tidb_session_token"
+	AuthTiDBAuthToken       = "tidb_auth_token"
 )
 
 // MySQL database and tables.

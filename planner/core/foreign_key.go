@@ -15,6 +15,8 @@
 package core
 
 import (
+	"unsafe"
+
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -37,24 +39,196 @@ type FKCheck struct {
 	FailedErr  error
 }
 
-func (p *Insert) buildOnInsertFKChecks(ctx sessionctx.Context, is infoschema.InfoSchema, dbName string) ([]*FKCheck, error) {
+// FKCascade indicates the foreign key constraint cascade behaviour.
+type FKCascade struct {
+	Tp         FKCascadeType
+	ReferredFK *model.ReferredFKInfo
+	ChildTable table.Table
+	FK         *model.FKInfo
+}
+
+// FKCascadeType indicates in which (delete/update) statements.
+type FKCascadeType int8
+
+const (
+	// FKCascadeOnDelete indicates in delete statement.
+	FKCascadeOnDelete FKCascadeType = 1
+	// FKCascadeOnUpdate indicates in update statement.
+	FKCascadeOnUpdate FKCascadeType = 2
+
+	emptyFkCheckSize   = int64(unsafe.Sizeof(FKCheck{}))
+	emptyFkCascadeSize = int64(unsafe.Sizeof(FKCascade{}))
+)
+
+// MemoryUsage return the memory usage of FKCheck
+func (f *FKCheck) MemoryUsage() (sum int64) {
+	if f == nil {
+		return
+	}
+
+	sum = emptyFkCheckSize
+	for _, cis := range f.Cols {
+		sum += cis.MemoryUsage()
+	}
+	return
+}
+
+// MemoryUsage return the memory usage of FKCascade
+func (f *FKCascade) MemoryUsage() (sum int64) {
+	if f == nil {
+		return
+	}
+	sum = emptyFkCascadeSize
+	return
+}
+
+func (p *Insert) buildOnInsertFKTriggers(ctx sessionctx.Context, is infoschema.InfoSchema, dbName string) error {
 	if !ctx.GetSessionVars().ForeignKeyChecks {
-		return nil, nil
+		return nil
 	}
 	tblInfo := p.Table.Meta()
 	fkChecks := make([]*FKCheck, 0, len(tblInfo.ForeignKeys))
+	fkCascades := make([]*FKCascade, 0, len(tblInfo.ForeignKeys))
 	updateCols := p.buildOnDuplicateUpdateColumns()
 	if len(updateCols) > 0 {
-		referredFKChecks, err := buildOnUpdateReferredFKChecks(is, dbName, tblInfo, updateCols)
+		referredFKChecks, referredFKCascades, err := buildOnUpdateReferredFKTriggers(is, dbName, tblInfo, updateCols)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if len(referredFKChecks) > 0 {
 			fkChecks = append(fkChecks, referredFKChecks...)
 		}
+		if len(referredFKCascades) > 0 {
+			fkCascades = append(fkCascades, referredFKCascades...)
+		}
 	}
 	for _, fk := range tblInfo.ForeignKeys {
 		if fk.Version < 1 {
+			continue
+		}
+		failedErr := ErrNoReferencedRow2.FastGenByArgs(fk.String(dbName, tblInfo.Name.L))
+		fkCheck, err := buildFKCheckOnModifyChildTable(is, fk, failedErr)
+		if err != nil {
+			return err
+		}
+		if fkCheck != nil {
+			fkChecks = append(fkChecks, fkCheck)
+		}
+	}
+	p.FKChecks = fkChecks
+	p.FKCascades = fkCascades
+	return nil
+}
+
+func (p *Insert) buildOnDuplicateUpdateColumns() map[string]struct{} {
+	m := make(map[string]struct{})
+	for _, assign := range p.OnDuplicate {
+		m[assign.ColName.L] = struct{}{}
+	}
+	return m
+}
+
+func (updt *Update) buildOnUpdateFKTriggers(ctx sessionctx.Context, is infoschema.InfoSchema, tblID2table map[int64]table.Table) error {
+	if !ctx.GetSessionVars().ForeignKeyChecks {
+		return nil
+	}
+	tblID2UpdateColumns := updt.buildTbl2UpdateColumns()
+	fkChecks := make(map[int64][]*FKCheck)
+	fkCascades := make(map[int64][]*FKCascade)
+	for tid, tbl := range tblID2table {
+		tblInfo := tbl.Meta()
+		dbInfo, exist := is.SchemaByTable(tblInfo)
+		if !exist {
+			// Normally, it should never happen. Just check here to avoid panic here.
+			return infoschema.ErrDatabaseNotExists
+		}
+		updateCols := tblID2UpdateColumns[tid]
+		if len(updateCols) == 0 {
+			continue
+		}
+		referredFKChecks, referredFKCascades, err := buildOnUpdateReferredFKTriggers(is, dbInfo.Name.L, tblInfo, updateCols)
+		if err != nil {
+			return err
+		}
+		if len(referredFKChecks) > 0 {
+			fkChecks[tid] = append(fkChecks[tid], referredFKChecks...)
+		}
+		if len(referredFKCascades) > 0 {
+			fkCascades[tid] = append(fkCascades[tid], referredFKCascades...)
+		}
+		childFKChecks, err := buildOnUpdateChildFKChecks(is, dbInfo.Name.L, tblInfo, updateCols)
+		if err != nil {
+			return err
+		}
+		if len(childFKChecks) > 0 {
+			fkChecks[tid] = append(fkChecks[tid], childFKChecks...)
+		}
+	}
+	updt.FKChecks = fkChecks
+	updt.FKCascades = fkCascades
+	return nil
+}
+
+func (del *Delete) buildOnDeleteFKTriggers(ctx sessionctx.Context, is infoschema.InfoSchema, tblID2table map[int64]table.Table) error {
+	if !ctx.GetSessionVars().ForeignKeyChecks {
+		return nil
+	}
+	fkChecks := make(map[int64][]*FKCheck)
+	fkCascades := make(map[int64][]*FKCascade)
+	for tid, tbl := range tblID2table {
+		tblInfo := tbl.Meta()
+		dbInfo, exist := is.SchemaByTable(tblInfo)
+		if !exist {
+			return infoschema.ErrDatabaseNotExists
+		}
+		referredFKs := is.GetTableReferredForeignKeys(dbInfo.Name.L, tblInfo.Name.L)
+		for _, referredFK := range referredFKs {
+			fkCheck, fkCascade, err := buildOnDeleteOrUpdateFKTrigger(is, referredFK, FKCascadeOnDelete)
+			if err != nil {
+				return err
+			}
+			if fkCheck != nil {
+				fkChecks[tid] = append(fkChecks[tid], fkCheck)
+			}
+			if fkCascade != nil {
+				fkCascades[tid] = append(fkCascades[tid], fkCascade)
+			}
+		}
+	}
+	del.FKChecks = fkChecks
+	del.FKCascades = fkCascades
+	return nil
+}
+
+func buildOnUpdateReferredFKTriggers(is infoschema.InfoSchema, dbName string, tblInfo *model.TableInfo, updateCols map[string]struct{}) ([]*FKCheck, []*FKCascade, error) {
+	referredFKs := is.GetTableReferredForeignKeys(dbName, tblInfo.Name.L)
+	fkChecks := make([]*FKCheck, 0, len(referredFKs))
+	fkCascades := make([]*FKCascade, 0, len(referredFKs))
+	for _, referredFK := range referredFKs {
+		if !isMapContainAnyCols(updateCols, referredFK.Cols...) {
+			continue
+		}
+		fkCheck, fkCascade, err := buildOnDeleteOrUpdateFKTrigger(is, referredFK, FKCascadeOnUpdate)
+		if err != nil {
+			return nil, nil, err
+		}
+		if fkCheck != nil {
+			fkChecks = append(fkChecks, fkCheck)
+		}
+		if fkCascade != nil {
+			fkCascades = append(fkCascades, fkCascade)
+		}
+	}
+	return fkChecks, fkCascades, nil
+}
+
+func buildOnUpdateChildFKChecks(is infoschema.InfoSchema, dbName string, tblInfo *model.TableInfo, updateCols map[string]struct{}) ([]*FKCheck, error) {
+	fkChecks := make([]*FKCheck, 0, len(tblInfo.ForeignKeys))
+	for _, fk := range tblInfo.ForeignKeys {
+		if fk.Version < 1 {
+			continue
+		}
+		if !isMapContainAnyCols(updateCols, fk.Cols...) {
 			continue
 		}
 		failedErr := ErrNoReferencedRow2.FastGenByArgs(fk.String(dbName, tblInfo.Name.L))
@@ -69,30 +243,73 @@ func (p *Insert) buildOnInsertFKChecks(ctx sessionctx.Context, is infoschema.Inf
 	return fkChecks, nil
 }
 
-func (p *Insert) buildOnDuplicateUpdateColumns() map[string]struct{} {
-	m := make(map[string]struct{})
-	for _, assign := range p.OnDuplicate {
-		m[assign.ColName.L] = struct{}{}
+func (updt *Update) buildTbl2UpdateColumns() map[int64]map[string]struct{} {
+	colsInfo := GetUpdateColumnsInfo(updt.tblID2Table, updt.TblColPosInfos, len(updt.SelectPlan.Schema().Columns))
+	tblID2UpdateColumns := make(map[int64]map[string]struct{})
+	for _, assign := range updt.OrderedList {
+		col := colsInfo[assign.Col.Index]
+		for _, content := range updt.TblColPosInfos {
+			if assign.Col.Index >= content.Start && assign.Col.Index < content.End {
+				if _, ok := tblID2UpdateColumns[content.TblID]; !ok {
+					tblID2UpdateColumns[content.TblID] = make(map[string]struct{})
+				}
+				tblID2UpdateColumns[content.TblID][col.Name.L] = struct{}{}
+				break
+			}
+		}
 	}
-	return m
-}
-
-func buildOnUpdateReferredFKChecks(is infoschema.InfoSchema, dbName string, tblInfo *model.TableInfo, updateCols map[string]struct{}) ([]*FKCheck, error) {
-	referredFKs := is.GetTableReferredForeignKeys(dbName, tblInfo.Name.L)
-	fkChecks := make([]*FKCheck, 0, len(referredFKs))
-	for _, referredFK := range referredFKs {
-		if !isMapContainAnyCols(updateCols, referredFK.Cols...) {
+	for tid, tbl := range updt.tblID2Table {
+		updateCols := tblID2UpdateColumns[tid]
+		if len(updateCols) == 0 {
 			continue
 		}
-		fkCheck, err := buildFKCheckOnModifyReferTable(is, referredFK)
-		if err != nil {
-			return nil, err
-		}
-		if fkCheck != nil {
-			fkChecks = append(fkChecks, fkCheck)
+		for _, col := range tbl.WritableCols() {
+			if !col.IsGenerated() || !col.GeneratedStored {
+				continue
+			}
+			for depCol := range col.Dependences {
+				if _, ok := updateCols[depCol]; ok {
+					tblID2UpdateColumns[tid][col.Name.L] = struct{}{}
+				}
+			}
 		}
 	}
-	return fkChecks, nil
+	return tblID2UpdateColumns
+}
+
+func buildOnDeleteOrUpdateFKTrigger(is infoschema.InfoSchema, referredFK *model.ReferredFKInfo, tp FKCascadeType) (*FKCheck, *FKCascade, error) {
+	childTable, err := is.TableByName(referredFK.ChildSchema, referredFK.ChildTable)
+	if err != nil {
+		return nil, nil, nil
+	}
+	fk := model.FindFKInfoByName(childTable.Meta().ForeignKeys, referredFK.ChildFKName.L)
+	if fk == nil || fk.Version < 1 {
+		return nil, nil, nil
+	}
+	var fkReferOption model.ReferOptionType
+	if fk.State != model.StatePublic {
+		fkReferOption = model.ReferOptionRestrict
+	} else {
+		switch tp {
+		case FKCascadeOnDelete:
+			fkReferOption = model.ReferOptionType(fk.OnDelete)
+		case FKCascadeOnUpdate:
+			fkReferOption = model.ReferOptionType(fk.OnUpdate)
+		}
+	}
+	switch fkReferOption {
+	case model.ReferOptionCascade, model.ReferOptionSetNull:
+		fkCascade := &FKCascade{
+			Tp:         tp,
+			ReferredFK: referredFK,
+			ChildTable: childTable,
+			FK:         fk,
+		}
+		return nil, fkCascade, nil
+	default:
+		fkCheck, err := buildFKCheckForReferredFK(childTable, fk, referredFK)
+		return fkCheck, nil, err
+	}
 }
 
 func isMapContainAnyCols(colsMap map[string]struct{}, cols ...model.CIStr) bool {
@@ -128,6 +345,10 @@ func buildFKCheckOnModifyReferTable(is infoschema.InfoSchema, referredFK *model.
 	if fk == nil || fk.Version < 1 {
 		return nil, nil
 	}
+	return buildFKCheckForReferredFK(childTable, fk, referredFK)
+}
+
+func buildFKCheckForReferredFK(childTable table.Table, fk *model.FKInfo, referredFK *model.ReferredFKInfo) (*FKCheck, error) {
 	failedErr := ErrRowIsReferenced2.GenWithStackByArgs(fk.String(referredFK.ChildSchema.L, referredFK.ChildTable.L))
 	fkCheck, err := buildFKCheck(childTable, fk.Cols, failedErr)
 	if err != nil {

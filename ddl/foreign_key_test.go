@@ -15,6 +15,7 @@
 package ddl_test
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"strings"
@@ -29,10 +30,12 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/stretchr/testify/require"
 )
 
@@ -120,7 +123,7 @@ func TestForeignKey(t *testing.T) {
 	checkOK := false
 	var hookErr error
 	tc := &ddl.TestDDLCallback{}
-	tc.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if job.State != model.JobStateDone {
 			return
 		}
@@ -139,6 +142,7 @@ func TestForeignKey(t *testing.T) {
 		}
 		checkOK = true
 	}
+	tc.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	originalHook := d.GetHook()
 	defer d.SetHook(originalHook)
 	d.SetHook(tc)
@@ -161,7 +165,7 @@ func TestForeignKey(t *testing.T) {
 	mu.Unlock()
 	// fix data race pr/#9491
 	tc2 := &ddl.TestDDLCallback{}
-	tc2.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc2 := func(job *model.Job) {
 		if job.State != model.JobStateDone {
 			return
 		}
@@ -180,6 +184,7 @@ func TestForeignKey(t *testing.T) {
 		}
 		checkOK = true
 	}
+	tc2.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc2)
 	d.SetHook(tc2)
 
 	job = testDropForeignKey(t, ctx, d, dbInfo, tblInfo, "c1_fk")
@@ -1413,9 +1418,6 @@ func TestAddForeignKey(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (id int key, b int);")
 	tk.MustExec("create table t2 (id int key, b int);")
-	err := tk.ExecToErr("alter table t2 add foreign key (b) references t1(id);")
-	require.Error(t, err)
-	require.Equal(t, "Failed to add the foreign key constraint. Missing index for 'fk_1' foreign key columns in the table 't2'", err.Error())
 	tk.MustExec("alter table t2 add index(b)")
 	tk.MustExec("alter table t2 add foreign key (b) references t1(id);")
 	tbl2Info := getTableInfo(t, dom, "test", "t2")
@@ -1424,6 +1426,61 @@ func TestAddForeignKey(t *testing.T) {
 	tk.MustExec("alter table t1 add index(b)")
 	tk.MustExec("alter table t2 add foreign key (b) references t1(b);")
 	tk.MustGetDBError("alter table t2 add foreign key (b) references t2(b);", infoschema.ErrCannotAddForeign)
+	// Test auto-create index when create foreign key constraint.
+	tk.MustExec("drop table if exists t1,t2")
+	tk.MustExec("create table t1 (id int key, b int, index(b));")
+	tk.MustExec("create table t2 (id int key, b int);")
+	tk.MustExec("alter table t2 add constraint fk foreign key (b) references t1(b);")
+	tbl2Info = getTableInfo(t, dom, "test", "t2")
+	require.Equal(t, 1, len(tbl2Info.Indices))
+	require.Equal(t, "fk", tbl2Info.Indices[0].Name.L)
+	require.Equal(t, model.StatePublic, tbl2Info.Indices[0].State)
+	tk.MustQuery("select b from t2 use index(fk)").Check(testkit.Rows())
+	res := tk.MustQuery("explain select b from t2 use index(fk)")
+	plan := bytes.NewBuffer(nil)
+	rows := res.Rows()
+	for _, row := range rows {
+		for _, c := range row {
+			plan.WriteString(c.(string))
+			plan.WriteString(" ")
+		}
+	}
+	require.Regexp(t, ".*IndexReader.*index:fk.*", plan.String())
+
+	// Test add multiple foreign key constraint in one statement.
+	tk.MustExec("alter table t2 add column c int, add column d int, add column e int;")
+	tk.MustExec("alter table t2 add index idx_c(c, d, e)")
+	tk.MustExec("alter table t2 add constraint fk_c foreign key (c) references t1(b), " +
+		"add constraint fk_d foreign key (d) references t1(b)," +
+		"add constraint fk_e foreign key (e) references t1(b)")
+	tbl2Info = getTableInfo(t, dom, "test", "t2")
+	require.Equal(t, 4, len(tbl2Info.Indices))
+	names := []string{"fk", "idx_c", "fk_d", "fk_e"}
+	for i, idx := range tbl2Info.Indices {
+		require.Equal(t, names[i], idx.Name.L)
+		require.Equal(t, model.StatePublic, idx.State)
+	}
+	names = []string{"fk", "fk_c", "fk_d", "fk_e"}
+	for i, fkInfo := range tbl2Info.ForeignKeys {
+		require.Equal(t, names[i], fkInfo.Name.L)
+		require.Equal(t, model.StatePublic, fkInfo.State)
+	}
+	tk.MustGetDBError("insert into t2 (id, b) values (1,1)", plannercore.ErrNoReferencedRow2)
+	tk.MustGetDBError("insert into t2 (id, c) values (1,1)", plannercore.ErrNoReferencedRow2)
+	tk.MustGetDBError("insert into t2 (id, d) values (1,1)", plannercore.ErrNoReferencedRow2)
+	tk.MustGetDBError("insert into t2 (id, e) values (1,1)", plannercore.ErrNoReferencedRow2)
+
+	// Test add multiple foreign key constraint in one statement but failed.
+	tk.MustExec("alter table t2 drop foreign key fk")
+	tk.MustExec("alter table t2 drop foreign key fk_c")
+	tk.MustExec("alter table t2 drop foreign key fk_d")
+	tk.MustExec("alter table t2 drop foreign key fk_e")
+	tk.MustGetDBError("alter table t2 add constraint fk_c foreign key (c) references t1(b), "+
+		"add constraint fk_d foreign key (d) references t1(b),"+
+		"add constraint fk_e foreign key (e) references t1(unknown_col)", infoschema.ErrForeignKeyNoColumnInParent)
+	tbl2Info = getTableInfo(t, dom, "test", "t2")
+	require.Equal(t, 0, len(tbl2Info.ForeignKeys))
+	tk.MustGetDBError("alter table t2 drop index idx_c, add constraint fk_c foreign key (c) references t1(b)", dbterror.ErrDropIndexNeededInForeignKey)
 }
 
 func TestAddForeignKey2(t *testing.T) {
@@ -1460,6 +1517,53 @@ func TestAddForeignKey2(t *testing.T) {
 	wg.Wait()
 	require.Error(t, addErr)
 	require.Equal(t, "[ddl:-1]Failed to add the foreign key constraint. Missing index for 'fk_1' foreign key columns in the table 't2'", addErr.Error())
+}
+
+func TestAddForeignKey3(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
+	d := dom.DDL()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1;")
+	tk.MustExec("use test")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk2.MustExec("set @@foreign_key_checks=1;")
+	tk.MustExec("create table t1 (id int key, b int, index(b));")
+	tk.MustExec("create table t2 (id int, b int, index(id), index(b));")
+	tk.MustExec("insert into t1 values (1, 1), (2, 2), (3, 3)")
+	tk.MustExec("insert into t2 values (1, 1), (2, 2), (3, 3)")
+
+	var insertErrs []error
+	var deleteErrs []error
+	tc := &ddl.TestDDLCallback{}
+	tc.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.Type != model.ActionAddForeignKey {
+			return
+		}
+		if job.SchemaState == model.StateWriteOnly || job.SchemaState == model.StateWriteReorganization {
+			err := tk2.ExecToErr("insert into t2 values (10, 10)")
+			insertErrs = append(insertErrs, err)
+			err = tk2.ExecToErr("delete from t1 where id = 1")
+			deleteErrs = append(deleteErrs, err)
+		}
+	}
+	originalHook := d.GetHook()
+	defer d.SetHook(originalHook)
+	d.SetHook(tc)
+
+	tk.MustExec("alter table t2 add foreign key (id) references t1(id) on delete cascade")
+	require.Equal(t, 2, len(insertErrs))
+	for _, err := range insertErrs {
+		require.Error(t, err)
+		require.Equal(t, "[planner:1452]Cannot add or update a child row: a foreign key constraint fails (`test`.`t2`, CONSTRAINT `fk_1` FOREIGN KEY (`id`) REFERENCES `t1` (`id`) ON DELETE CASCADE)", err.Error())
+	}
+	for _, err := range deleteErrs {
+		require.Error(t, err)
+		require.Equal(t, "[planner:1451]Cannot delete or update a parent row: a foreign key constraint fails (`test`.`t2`, CONSTRAINT `fk_1` FOREIGN KEY (`id`) REFERENCES `t1` (`id`) ON DELETE CASCADE)", err.Error())
+	}
+	tk.MustQuery("select * from t1 order by id").Check(testkit.Rows("1 1", "2 2", "3 3"))
+	tk.MustQuery("select * from t2 order by id").Check(testkit.Rows("1 1", "2 2", "3 3"))
 }
 
 func TestAlterTableAddForeignKeyError(t *testing.T) {

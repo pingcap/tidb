@@ -22,6 +22,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testsetup"
@@ -148,6 +149,7 @@ func TestMemTracker4DeleteExec(t *testing.T) {
 	require.Equal(t, "", oom.GetTracker())
 	tk.MustExec("insert into MemTracker4DeleteExec1 values (1,1,1), (2,2,2), (3,3,3)")
 	tk.Session().GetSessionVars().MemQuotaQuery = 1
+	tk.Session().GetSessionVars().MemTracker.SetBytesLimit(1)
 	tk.MustExec("delete from MemTracker4DeleteExec1")
 	require.Equal(t, "expensive_query during bootstrap phase", oom.GetTracker())
 
@@ -165,6 +167,10 @@ func TestMemTracker4DeleteExec(t *testing.T) {
 
 	oom.SetTracker("")
 
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/copr/disableFixedRowCountHint", "return"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/copr/disableFixedRowCountHint"))
+	}()
 	tk.Session().GetSessionVars().EnabledRateLimitAction = true
 	tk.Session().GetSessionVars().MemQuotaQuery = 10000
 	tk.MustExec("delete MemTracker4DeleteExec1, MemTracker4DeleteExec2 from MemTracker4DeleteExec1 join MemTracker4DeleteExec2 on MemTracker4DeleteExec1.a=MemTracker4DeleteExec2.a")

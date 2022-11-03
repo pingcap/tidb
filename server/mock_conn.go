@@ -95,7 +95,7 @@ func CreateMockServer(t *testing.T, store kv.Storage) *Server {
 // CreateMockConn creates a mock connection together with a session.
 func CreateMockConn(t *testing.T, server *Server) MockConn {
 	connID := rand.Uint64()
-	tc, err := server.driver.OpenCtx(connID, 0, uint8(tmysql.DefaultCollationID), "", nil)
+	tc, err := server.driver.OpenCtx(connID, 0, uint8(tmysql.DefaultCollationID), "", nil, nil)
 	require.NoError(t, err)
 
 	cc := &clientConn{
