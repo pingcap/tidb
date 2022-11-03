@@ -3795,10 +3795,11 @@ func TestPreparePlanCacheOnCachedTable(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set tidb_enable_prepared_plan_cache=ON")
+	tk.Session()
 
 	var err error
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: plannercore.NewLRUPlanCache(100, 0.1, math.MaxUint64, plannercore.PickPlanFromBucket),
+		PreparedPlanCache: plannercore.NewLRUPlanCache(100, 0.1, math.MaxUint64, plannercore.PickPlanFromBucket, tk.Session()),
 	})
 	require.NoError(t, err)
 	tk.SetSession(se)
