@@ -301,7 +301,7 @@ func (record *memoryUsageAlarm) getTop10SqlInfo(cmp func(i, j *util.ProcessInfo)
 
 func (record *memoryUsageAlarm) getTop10SqlInfoByMemoryUsage(pinfo []*util.ProcessInfo) strings.Builder {
 	return record.getTop10SqlInfo(func(i, j *util.ProcessInfo) bool {
-		return i.StmtCtx.MemTracker.MaxConsumed() > j.StmtCtx.MemTracker.MaxConsumed()
+		return i.MemTracker.MaxConsumed() > j.MemTracker.MaxConsumed()
 	}, pinfo)
 }
 

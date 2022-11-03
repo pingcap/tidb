@@ -16,7 +16,9 @@ package executor
 
 import (
 	"context"
+	"sync/atomic"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
@@ -28,16 +30,19 @@ type analyzeSaveStatsWorker struct {
 	resultsCh <-chan *statistics.AnalyzeResults
 	sctx      sessionctx.Context
 	errCh     chan<- error
+	killed    *uint32
 }
 
 func newAnalyzeSaveStatsWorker(
 	resultsCh <-chan *statistics.AnalyzeResults,
 	sctx sessionctx.Context,
-	errCh chan<- error) *analyzeSaveStatsWorker {
+	errCh chan<- error,
+	killed *uint32) *analyzeSaveStatsWorker {
 	worker := &analyzeSaveStatsWorker{
 		resultsCh: resultsCh,
 		sctx:      sctx,
 		errCh:     errCh,
+		killed:    killed,
 	}
 	return worker
 }
@@ -50,6 +55,10 @@ func (worker *analyzeSaveStatsWorker) run(ctx context.Context, analyzeSnapshot b
 		}
 	}()
 	for results := range worker.resultsCh {
+		if atomic.LoadUint32(worker.killed) == 1 {
+			worker.errCh <- errors.Trace(ErrQueryInterrupted)
+			return
+		}
 		err := handle.SaveTableStatsToStorage(worker.sctx, results, analyzeSnapshot)
 		if err != nil {
 			logutil.Logger(ctx).Error("save table stats to storage failed", zap.Error(err))

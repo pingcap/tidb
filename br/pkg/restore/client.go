@@ -470,6 +470,35 @@ func (rc *Client) GetTS(ctx context.Context) (uint64, error) {
 	return restoreTS, nil
 }
 
+// GetTSWithRetry gets a new timestamp with retry from PD.
+func (rc *Client) GetTSWithRetry(ctx context.Context) (uint64, error) {
+	var (
+		startTS  uint64
+		getTSErr error
+		retry    uint
+	)
+
+	err := utils.WithRetry(ctx, func() error {
+		startTS, getTSErr = rc.GetTS(ctx)
+		failpoint.Inject("get-ts-error", func(val failpoint.Value) {
+			if val.(bool) && retry < 3 {
+				getTSErr = errors.Errorf("rpc error: code = Unknown desc = [PD:tso:ErrGenerateTimestamp]generate timestamp failed, requested pd is not leader of cluster")
+			}
+		})
+
+		retry++
+		if getTSErr != nil {
+			log.Warn("failed to get TS, retry it", zap.Uint("retry time", retry), logutil.ShortError(getTSErr))
+		}
+		return getTSErr
+	}, utils.NewPDReqBackoffer())
+
+	if err != nil {
+		log.Error("failed to get TS", zap.Error(err))
+	}
+	return startTS, errors.Trace(err)
+}
+
 // ResetTS resets the timestamp of PD to a bigger value.
 func (rc *Client) ResetTS(ctx context.Context, pdCtrl *pdutil.PdController) error {
 	restoreTS := rc.backupMeta.GetEndVersion()
@@ -1350,7 +1379,7 @@ func (rc *Client) execChecksum(
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	startTS, err := rc.GetTS(ctx)
+	startTS, err := rc.GetTSWithRetry(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
