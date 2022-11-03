@@ -676,8 +676,7 @@ func (fkc *FKCascadeExec) buildFKCascadePlan(ctx context.Context) (plannercore.P
 		return nil, errors.Errorf("generate foreign key cascade ast failed, %v", fkc.tp)
 	}
 	sctx := fkc.b.ctx
-	ret := &plannercore.PreprocessorReturn{}
-	err := plannercore.Preprocess(ctx, sctx, stmtNode, plannercore.WithPreprocessorReturn(ret), plannercore.InitTxnContextProvider)
+	err := plannercore.Preprocess(ctx, sctx, stmtNode)
 	if err != nil {
 		return nil, err
 	}
