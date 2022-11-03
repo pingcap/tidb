@@ -2737,7 +2737,7 @@ func (s *testSuiteJoinSerial) TestIssue37932(c *C) {
 	tk1.MustExec("create table tbl_2 ( col_6 text ( 52 ) collate utf8_unicode_ci  not null ,col_7 int  unsigned not null ,col_8 blob ( 369 ) ,col_9 bit ( 51 ) ,col_10 decimal ( 38 , 16 ) , unique key idx_3 ( col_7 ) ,unique key idx_4 ( col_7 ) ) charset utf8 collate utf8_unicode_ci ;")
 	tk1.MustExec("create table tbl_3 ( col_11 set ( 'Alice','Bob','Charlie','David' )   not null ,col_12 bigint  unsigned not null default 1678891638492596595 ,col_13 text ( 18 ) ,col_14 set ( 'Alice','Bob','Charlie','David' )   not null default 'Alice' ,col_15 mediumint , key idx_5 ( col_12 ) ,unique key idx_6 ( col_12 ) ) charset utf8mb4 collate utf8mb4_general_ci ;")
 	tk1.MustExec("create table tbl_4 ( col_16 set ( 'Alice','Bob','Charlie','David' )   not null ,col_17 tinyint  unsigned ,col_18 int  unsigned not null default 4279145838 ,col_19 varbinary ( 210 )   not null ,col_20 timestamp , primary key  ( col_18 ) /*T![clustered_index] nonclustered */ ,key idx_8 ( col_19 ) ) charset utf8mb4 collate utf8mb4_unicode_ci ;")
-	tk1.MustExec("create table tbl_5 ( col_21 bigint ,col_22 set ( 'Alice','Bob','Charlie','David' ) ,col_23 blob ( 311 ) ,col_24 bigint  unsigned not null default 3415443099312152509 ,col_25 time , unique key idx_9 ( col_21 ) ,unique key idx_10 ( col_21 ) ) charset gbk collate gbk_bin ;")
+	tk1.MustExec("create table tbl_5 ( col_21 bigint ,col_22 set ( 'Alice','Bob','Charlie','David' ) ,col_23 blob ( 311 ) ,col_24 bigint  unsigned not null default 3415443099312152509 ,col_25 time , unique key idx_9 ( col_21 ) ,unique key idx_10 ( col_21 ) ) ;")
 	tk1.MustExec("insert into tbl_1 values ( 'Bob',null,0.04,2650749963804575036,4044 );")
 	tk1.MustExec("insert into tbl_1 values ( 'Alice',171,1838.2,6452757231340518222,1190 );")
 	tk1.MustExec("insert into tbl_1 values ( 'Bob',202,2.962,4304284252076747481,2112 );")
@@ -2798,11 +2798,10 @@ func (s *testSuiteJoinSerial) TestIssue37932(c *C) {
 	tk1.MustExec("delete from tbl_3 where tbl_3.col_11 in ( 'Alice' ,'Bob' ,'Alice' ) ;")
 	tk2.MustExec("insert  into tbl_3 set col_11 = 'Bob', col_12 = 5701982550256146475, col_13 = 'Hhl)yCsQ2K3cfc^', col_14 = 'Alice', col_15 = -3718868 on duplicate key update col_15 = 7210750, col_12 = 6133680876296985245, col_14 = 'Alice', col_11 = 'David', col_13 = 'F+RMGE!_2^Cfr3Fw';")
 	tk2.MustExec("insert ignore into tbl_5 set col_21 = 2439343116426563397, col_22 = 'Charlie', col_23 = '~Spa2YzRFFom16XD', col_24 = 5571575017340582365, col_25 = '13:24:38.00' ;")
-	// FIXME: https://github.com/pingcap/tidb/issues/38577
 	err := tk1.ExecToErr("update tbl_4 set tbl_4.col_20 = '2006-01-24' where tbl_4.col_18 in ( select col_11 from tbl_3 where IsNull( tbl_4.col_16 ) or not( tbl_4.col_19 in ( select col_3 from tbl_1 where tbl_4.col_16 between 'Alice' and 'David' and tbl_4.col_19 <= '%XgRou0#iKtn*' ) ) ) ;")
 	if err != nil {
 		print(err.Error())
-		if strings.Contains(err.Error(), "Truncated incorrect DOUBLE value") {
+		if strings.Contains(err.Error(), "Truncated incorrect DOUBLE value") || strings.Contains(err.Error(), "Truncated incorrect FLOAT value") {
 			return
 		}
 	}
