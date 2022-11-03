@@ -7394,3 +7394,15 @@ func TestIssue31569(t *testing.T) {
 	tk.MustQuery("show warnings").Check([][]interface{}{})
 	tk.MustExec("drop table t")
 }
+
+func TestIfNullParamMarker(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (c1 varchar(100), c2 varchar(128));")
+	tk.MustExec(`prepare pr1 from "insert into t values(ifnull(?,' '),ifnull(?,' '))";`)
+	tk.MustExec(`set @a='1',@b=repeat('x', 80);`)
+	// Should not report 'Data too long for column' error.
+	tk.MustExec(`execute pr1 using @a,@b;`)
+}
