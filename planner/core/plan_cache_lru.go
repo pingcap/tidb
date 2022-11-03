@@ -265,12 +265,7 @@ func PickPlanFromBucket(bucket map[*list.Element]struct{}, paramTypes []*types.F
 // updateInstanceMetric update the memory usage and plan num for show in grafana
 func (l *LRUPlanCache) updateInstanceMetric(in, out *planCacheEntry) {
 	updateInstancePlanNum(in, out)
-	if l == nil {
-		return
-	}
-
-	if !l.sctx.GetSessionVars().EnablePreparedPlanCacheMemoryMonitor {
-		metrics.PlanCacheInstanceMemoryUsage.WithLabelValues("instance").Set(0)
+	if l == nil || !l.sctx.GetSessionVars().EnablePreparedPlanCacheMemoryMonitor {
 		return
 	}
 
