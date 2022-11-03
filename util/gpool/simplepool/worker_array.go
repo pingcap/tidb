@@ -12,13 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package spmc
+package simplepool
 
 import (
 	"errors"
 	"time"
-
-	"github.com/pingcap/tidb/util/gpool"
 )
 
 var (
@@ -29,12 +27,12 @@ var (
 	errQueueIsReleased = errors.New("the queue length is zero")
 )
 
-type workerArray[T any, U any, C any, CT any, TF gpool.Context[CT]] interface {
+type workerArray interface {
 	len() int
 	isEmpty() bool
-	insert(worker *goWorker[T, U, C, CT, TF]) error
-	detach() *goWorker[T, U, C, CT, TF]
-	retrieveExpiry(duration time.Duration) []*goWorker[T, U, C, CT, TF]
+	insert(worker *goWorker) error
+	detach() *goWorker
+	retrieveExpiry(duration time.Duration) []*goWorker
 	reset()
 }
 
@@ -45,13 +43,13 @@ const (
 	loopQueueType
 )
 
-func newWorkerArray[T any, U any, C any, CT any, TF gpool.Context[CT]](aType arrayType, size int) workerArray[T, U, C, CT, TF] {
+func newWorkerArray(aType arrayType, size int) workerArray {
 	switch aType {
 	case stackType:
-		return newWorkerStack[T, U, C, CT, TF](size)
+		return newWorkerStack(size)
 	case loopQueueType:
-		return newWorkerLoopQueue[T, U, C, CT, TF](size)
+		return newWorkerLoopQueue(size)
 	default:
-		return newWorkerStack[T, U, C, CT, TF](size)
+		return newWorkerStack(size)
 	}
 }

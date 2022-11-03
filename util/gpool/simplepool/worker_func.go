@@ -12,27 +12,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package spmc
+package simplepool
 
 import (
 	"time"
 
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/util/gpool"
 	"go.uber.org/zap"
 )
 
-// goWorker is the actual executor who runs the tasks,
+// goWorkerWithFunc is the actual executor who runs the tasks,
 // it starts a goroutine that accepts tasks and
 // performs function calls.
-type goWorker[T any, U any, C any, CT any, TF gpool.Context[CT]] struct {
+type goWorkerWithFunc struct {
 	// pool who owns this worker.
-	pool *Pool[T, U, C, CT, TF]
+	pool *PoolWithFunc
 
-	// taskBoxCh is a job should be done.
-	taskBoxCh chan *gpool.TaskBox[T, U, C, CT, TF]
-
-	exit chan struct{}
+	// args is a job should be done.
+	args chan interface{}
 
 	// recycleTime will be updated when putting a worker back into queue.
 	recycleTime time.Time
@@ -40,10 +37,9 @@ type goWorker[T any, U any, C any, CT any, TF gpool.Context[CT]] struct {
 
 // run starts a goroutine to repeat the process
 // that performs the function calls.
-func (w *goWorker[T, U, C, CT, TF]) run() {
+func (w *goWorkerWithFunc) run() {
 	w.pool.addRunning(1)
 	go func() {
-		//log.Info("worker start")
 		defer func() {
 			w.pool.addRunning(-1)
 			w.pool.workerCache.Put(w)
@@ -58,33 +54,12 @@ func (w *goWorker[T, U, C, CT, TF]) run() {
 			w.pool.cond.Signal()
 		}()
 
-		for f := range w.taskBoxCh {
-			if f == nil {
+		for args := range w.args {
+			if args == nil {
 				return
 			}
-			switch f.GetStatus() {
-			case gpool.PendingTask:
-				f.SetStatus(gpool.RunningTask)
-			case gpool.StopTask:
-				continue
-			case gpool.RunningTask:
-				log.Error("worker got task running")
-				continue
-			}
-			ctx := f.GetContextFunc().GetContext()
-			if f.GetResultCh() != nil {
-				for t := range f.GeTaskCh() {
-					f.GetResultCh() <- w.pool.consumerFunc(t, f.ConstArgs(), ctx)
-					f.Done()
-					if f.GetStatus() == gpool.PendingTask {
-						w.taskBoxCh <- f
-						break
-					}
-				}
-				f.SetStatus(gpool.StopTask)
-			}
+			w.pool.poolFunc(args)
 			if ok := w.pool.revertWorker(w); !ok {
-				//log.Info("exit here")
 				return
 			}
 		}

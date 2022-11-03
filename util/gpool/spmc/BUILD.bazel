@@ -4,9 +4,7 @@ go_library(
     name = "spmc",
     srcs = [
         "option.go",
-        "spmspool.go",
-        "task.go",
-        "task_manage.go",
+        "spmcpool.go",
         "worker.go",
         "worker_func.go",
         "worker_loop_queue.go",
@@ -17,7 +15,6 @@ go_library(
     deps = [
         "//util/gpool",
         "@com_github_pingcap_log//:log",
-        "@org_golang_x_sys//cpu",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -26,13 +23,14 @@ go_test(
     name = "spmc_test",
     srcs = [
         "main_test.go",
-        "spmspool_benchmark_test.go",
-        "spmspool_test.go",
+        "spmcpool_benchmark_test.go",
+        "spmcpool_test.go",
     ],
     embed = [":spmc"],
     deps = [
         "//testkit/testsetup",
         "//util",
+        "//util/gpool",
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",

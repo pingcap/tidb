@@ -25,17 +25,18 @@ import (
 )
 
 // Pool is a single producer, multiple consumer goroutine pool.
-type Pool[T any, U any, C any, CT any, TF Context[CT]] struct {
+type Pool[T any, U any, C any, CT any, TF gpool.Context[CT]] struct {
 	workerCache   sync.Pool
 	lock          sync.Locker
 	workers       workerArray[T, U, C, CT, TF]
-	taskCh        chan *taskBox[T, U, C, CT, TF]
+	taskCh        chan *gpool.TaskBox[T, U, C, CT, TF]
 	options       *Options
 	stopCh        chan struct{}
 	consumerFunc  func(T, C, CT) U
 	cond          *sync.Cond
-	taskManager   TaskManager[T, U, C, CT, TF]
-	generator     atomic.Uint64 // it is to generate task id.
+	name          string
+	taskManager   gpool.TaskManager[T, U, C, CT, TF]
+	generator     atomic.Uint64
 	capacity      atomic.Int32
 	running       atomic.Int32
 	state         atomic.Int32
@@ -44,16 +45,18 @@ type Pool[T any, U any, C any, CT any, TF Context[CT]] struct {
 }
 
 // NewSPMCPool create a single producer, multiple consumer goroutine pool.
-func NewSPMCPool[T any, U any, C any, CT any, TF Context[CT]](size int32, options ...Option) *Pool[T, U, C, CT, TF] {
+func NewSPMCPool[T any, U any, C any, CT any, TF gpool.Context[CT]](name string, size int32, options ...Option) (*Pool[T, U, C, CT, TF], error) {
 	opts := loadOptions(options...)
 	if expiry := opts.ExpiryDuration; expiry <= 0 {
 		opts.ExpiryDuration = gpool.DefaultCleanIntervalTime
 	}
+
 	result := &Pool[T, U, C, CT, TF]{
-		taskCh:      make(chan *taskBox[T, U, C, CT, TF], 128),
+		taskCh:      make(chan *gpool.TaskBox[T, U, C, CT, TF], 128),
 		stopCh:      make(chan struct{}),
 		lock:        gpool.NewSpinLock(),
-		taskManager: NewTaskManager[T, U, C, CT, TF](size),
+		name:        name,
+		taskManager: gpool.NewTaskManager[T, U, C, CT, TF](size),
 		options:     opts,
 	}
 	result.workerCache.New = func() interface{} {
@@ -69,9 +72,8 @@ func NewSPMCPool[T any, U any, C any, CT any, TF Context[CT]](size int32, option
 		result.workers = newWorkerArray[T, U, C, CT, TF](stackType, 0)
 	}
 	result.cond = sync.NewCond(result.lock)
-	// Start a goroutine to clean up expired workers periodically.
 	go result.purgePeriodically()
-	return result
+	return result, nil
 }
 
 // purgePeriodically clears expired workers periodically which runs in an individual goroutine, as a scavenger.
@@ -215,44 +217,18 @@ func (p *Pool[T, U, C, CT, TF]) addNewTask(taskid uint64) {
 	p.taskManager.CreatTask(taskid)
 }
 
-func (p *Pool[T, U, C, CT, TF]) addNewTaskMeta(taskid uint64, task *taskBox[T, U, C, CT, TF]) {
+func (p *Pool[T, U, C, CT, TF]) addNewTaskMeta(taskid uint64, task *gpool.TaskBox[T, U, C, CT, TF]) {
 	p.taskManager.AddTask(taskid, task)
 }
 
-// AddProduce is to add Produce.
-func (p *Pool[T, U, C, CT, TF]) AddProduce(task T, constArg C, contextFn TF) (<-chan U, TaskController[T, U, C, CT, TF]) {
-	taskID := p.generator.Add(1)
-	result := make(chan U)
-	var wg sync.WaitGroup
-	tc := TaskController[T, U, C, CT, TF]{
-		taskID: taskID,
-		wg:     &wg,
-	}
-	taskCh := make(chan T)
-	p.addNewTask(taskID)
-	taskBox := taskBox[T, U, C, CT, TF]{
-		taskID:      taskID,
-		task:        taskCh,
-		constArgs:   constArg,
-		contextFunc: contextFn,
-		wg:          &wg,
-		resultCh:    result,
-	}
-	p.addNewTaskMeta(taskID, &taskBox)
-	p.taskCh <- &taskBox
-	taskCh <- task
-	close(taskCh)
-	return result, tc
-}
-
 // AddProduceBySlice is to add Produce by a slice.
-func (p *Pool[T, U, C, CT, TF]) AddProduceBySlice(producer func() ([]T, error), constArg C, contextFn TF, options ...TaskOption) (<-chan U, TaskController[T, U, C, CT, TF]) {
+func (p *Pool[T, U, C, CT, TF]) AddProduceBySlice(producer func() ([]T, error), constArg C, contextFn TF, options ...TaskOption) (<-chan U, gpool.TaskController[T, U, C, CT, TF]) {
 	opt := loadTaskOptions(options...)
 	taskID := p.generator.Add(1)
 	var wg sync.WaitGroup
 	result := make(chan U, opt.ResultChanLen)
 	closeCh := make(chan struct{})
-	tc := NewTaskController[T, U, C, CT, TF](p, taskID, closeCh, &wg)
+	tc := gpool.NewTaskController[T, U, C, CT, TF](p, taskID, closeCh, &wg)
 	p.addNewTask(taskID)
 	taskCh := make(chan T, opt.TaskChanLen)
 	for i := 0; i < opt.Concurrency; i++ {
@@ -260,14 +236,7 @@ func (p *Pool[T, U, C, CT, TF]) AddProduceBySlice(producer func() ([]T, error), 
 		if err == gpool.ErrPoolClosed {
 			break
 		}
-		taskBox := taskBox[T, U, C, CT, TF]{
-			taskID:      taskID,
-			constArgs:   constArg,
-			contextFunc: contextFn,
-			wg:          &wg,
-			task:        taskCh,
-			resultCh:    result,
-		}
+		taskBox := gpool.NewTaskBox[T, U, C, CT, TF](constArg, contextFn, &wg, taskCh, result, taskID)
 		p.addNewTaskMeta(taskID, &taskBox)
 		p.taskCh <- &taskBox
 	}
@@ -291,28 +260,21 @@ func (p *Pool[T, U, C, CT, TF]) AddProduceBySlice(producer func() ([]T, error), 
 }
 
 // AddProducer is to add producer.
-func (p *Pool[T, U, C, CT, TF]) AddProducer(producer func() (T, error), constArg C, contextFn TF, options ...TaskOption) (<-chan U, TaskController[T, U, C, CT, TF]) {
+func (p *Pool[T, U, C, CT, TF]) AddProducer(producer func() (T, error), constArg C, contextFn TF, options ...TaskOption) (<-chan U, gpool.TaskController[T, U, C, CT, TF]) {
 	opt := loadTaskOptions(options...)
 	taskID := p.generator.Add(1)
 	var wg sync.WaitGroup
 	result := make(chan U, opt.ResultChanLen)
 	closeCh := make(chan struct{})
 	p.addNewTask(taskID)
-	tc := NewTaskController[T, U, C, CT, TF](p, taskID, closeCh, &wg)
+	tc := gpool.NewTaskController[T, U, C, CT, TF](p, taskID, closeCh, &wg)
 	taskCh := make(chan T, opt.TaskChanLen)
 	for i := 0; i < opt.Concurrency; i++ {
 		err := p.run()
 		if err == gpool.ErrPoolClosed {
 			break
 		}
-		taskBox := taskBox[T, U, C, CT, TF]{
-			taskID:      taskID,
-			constArgs:   constArg,
-			contextFunc: contextFn,
-			wg:          &wg,
-			task:        taskCh,
-			resultCh:    result,
-		}
+		taskBox := gpool.NewTaskBox[T, U, C, CT, TF](constArg, contextFn, &wg, taskCh, result, taskID)
 		p.addNewTaskMeta(taskID, &taskBox)
 		p.taskCh <- &taskBox
 	}
@@ -425,4 +387,9 @@ func (p *Pool[T, U, C, CT, TF]) revertWorker(worker *goWorker[T, U, C, CT, TF]) 
 	p.cond.Signal()
 	p.lock.Unlock()
 	return true
+}
+
+// DeleteTask is to delete task.
+func (p *Pool[T, U, C, CT, TF]) DeleteTask(id uint64) {
+	p.taskManager.DeleteTask(id)
 }

@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/gpool"
 	"github.com/stretchr/testify/require"
 )
 
@@ -31,7 +32,8 @@ func TestPool(t *testing.T) {
 	myArgs := ConstArgs{a: 10}
 	// init the pool
 	// input type， output type, constArgs type
-	pool := NewSPMCPool[int, int, ConstArgs, any, NilContext](10)
+	pool, err := NewSPMCPool[int, int, ConstArgs, any, gpool.NilContext]("test", 10)
+	require.NoError(t, err)
 	pool.SetConsumerFunc(func(task int, constArgs ConstArgs, ctx any) int {
 		return task + constArgs.a
 	})
@@ -48,7 +50,7 @@ func TestPool(t *testing.T) {
 		}
 	}
 	// add new task
-	resultCh, control := pool.AddProducer(pfunc, myArgs, NilContext{}, WithConcurrency(4))
+	resultCh, control := pool.AddProducer(pfunc, myArgs, gpool.NilContext{}, WithConcurrency(4))
 
 	var count atomic.Uint32
 	var wg sync.WaitGroup
@@ -78,7 +80,8 @@ func TestPool(t *testing.T) {
 
 func TestPoolWithEnoughCapa(t *testing.T) {
 	const RunTimes = 1000
-	p := NewSPMCPool[struct{}, struct{}, int, any, NilContext](30, WithExpiryDuration(DefaultExpiredTime))
+	p, err := NewSPMCPool[struct{}, struct{}, int, any, gpool.NilContext]("test", 30, WithExpiryDuration(DefaultExpiredTime))
+	require.NoError(t, err)
 	defer p.ReleaseAndWait()
 	p.SetConsumerFunc(func(a struct{}, b int, c any) struct{} {
 		return struct{}{}
@@ -109,7 +112,7 @@ func TestPoolWithEnoughCapa(t *testing.T) {
 					}
 				}
 			}
-			resultCh, ctl := p.AddProducer(producerFunc, RunTimes, NilContext{}, WithConcurrency(6))
+			resultCh, ctl := p.AddProducer(producerFunc, RunTimes, gpool.NilContext{}, WithConcurrency(6))
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
@@ -132,7 +135,8 @@ func TestPoolWithEnoughCapa(t *testing.T) {
 
 func TestPoolWithoutEnoughCapa(t *testing.T) {
 	const RunTimes = 1000
-	p := NewSPMCPool[struct{}, struct{}, int, any, NilContext](30, WithExpiryDuration(DefaultExpiredTime))
+	p, err := NewSPMCPool[struct{}, struct{}, int, any, gpool.NilContext]("test", 30, WithExpiryDuration(DefaultExpiredTime))
+	require.NoError(t, err)
 	defer p.ReleaseAndWait()
 	p.SetConsumerFunc(func(a struct{}, b int, c any) struct{} {
 		return struct{}{}
@@ -163,7 +167,7 @@ func TestPoolWithoutEnoughCapa(t *testing.T) {
 					}
 				}
 			}
-			resultCh, ctl := p.AddProducer(producerFunc, RunTimes, NilContext{}, WithConcurrency(6))
+			resultCh, ctl := p.AddProducer(producerFunc, RunTimes, gpool.NilContext{}, WithConcurrency(6))
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
@@ -185,7 +189,8 @@ func TestPoolWithoutEnoughCapa(t *testing.T) {
 }
 
 func TestBenchPool(t *testing.T) {
-	p := NewSPMCPool[struct{}, struct{}, int, any, NilContext](10, WithExpiryDuration(DefaultExpiredTime))
+	p, err := NewSPMCPool[struct{}, struct{}, int, any, gpool.NilContext]("test", 10, WithExpiryDuration(DefaultExpiredTime))
+	require.NoError(t, err)
 	defer p.ReleaseAndWait()
 	p.SetConsumerFunc(func(a struct{}, b int, c any) struct{} {
 		return struct{}{}
@@ -215,7 +220,7 @@ func TestBenchPool(t *testing.T) {
 				}
 			}
 		}
-		resultCh, ctl := p.AddProducer(producerFunc, RunTimes, NilContext{}, WithConcurrency(6))
+		resultCh, ctl := p.AddProducer(producerFunc, RunTimes, gpool.NilContext{}, WithConcurrency(6))
 		exitCh2 := make(chan struct{})
 		wg.Add(1)
 		go func() {

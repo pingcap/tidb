@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/gpool"
 )
 
 const (
@@ -28,7 +29,10 @@ const (
 )
 
 func BenchmarkGPool(b *testing.B) {
-	p := NewSPMCPool[struct{}, struct{}, int, any, NilContext](10)
+	p, err := NewSPMCPool[struct{}, struct{}, int, any, gpool.NilContext]("test", 10)
+	if err != nil {
+		b.Fatal(err)
+	}
 	defer p.ReleaseAndWait()
 	p.SetConsumerFunc(func(a struct{}, b int, c any) struct{} {
 		return struct{}{}
@@ -50,7 +54,7 @@ func BenchmarkGPool(b *testing.B) {
 			}
 			return struct{}{}, errors.New("not job")
 		}
-		resultCh, ctl := p.AddProducer(producerFunc, RunTimes, NilContext{}, WithConcurrency(6), WithResultChanLen(10))
+		resultCh, ctl := p.AddProducer(producerFunc, RunTimes, gpool.NilContext{}, WithConcurrency(6), WithResultChanLen(10))
 		exitCh := make(chan struct{})
 		wg.Run(func() {
 			for {

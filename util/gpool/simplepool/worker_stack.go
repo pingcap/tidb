@@ -12,39 +12,35 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package spmc
+package simplepool
 
-import (
-	"time"
+import "time"
 
-	"github.com/pingcap/tidb/util/gpool"
-)
-
-type workerStack[T any, U any, C any, CT any, TF gpool.Context[CT]] struct {
-	items  []*goWorker[T, U, C, CT, TF]
-	expiry []*goWorker[T, U, C, CT, TF]
+type workerStack struct {
+	items  []*goWorker
+	expiry []*goWorker
 }
 
-func newWorkerStack[T any, U any, C any, CT any, TF gpool.Context[CT]](size int) *workerStack[T, U, C, CT, TF] {
-	return &workerStack[T, U, C, CT, TF]{
-		items: make([]*goWorker[T, U, C, CT, TF], 0, size),
+func newWorkerStack(size int) *workerStack {
+	return &workerStack{
+		items: make([]*goWorker, 0, size),
 	}
 }
 
-func (wq *workerStack[T, U, C, CT, TF]) len() int {
+func (wq *workerStack) len() int {
 	return len(wq.items)
 }
 
-func (wq *workerStack[T, U, C, CT, TF]) isEmpty() bool {
+func (wq *workerStack) isEmpty() bool {
 	return len(wq.items) == 0
 }
 
-func (wq *workerStack[T, U, C, CT, TF]) insert(worker *goWorker[T, U, C, CT, TF]) error {
+func (wq *workerStack) insert(worker *goWorker) error {
 	wq.items = append(wq.items, worker)
 	return nil
 }
 
-func (wq *workerStack[T, U, C, CT, TF]) detach() *goWorker[T, U, C, CT, TF] {
+func (wq *workerStack) detach() *goWorker {
 	l := wq.len()
 	if l == 0 {
 		return nil
@@ -57,7 +53,7 @@ func (wq *workerStack[T, U, C, CT, TF]) detach() *goWorker[T, U, C, CT, TF] {
 	return w
 }
 
-func (wq *workerStack[T, U, C, CT, TF]) retrieveExpiry(duration time.Duration) []*goWorker[T, U, C, CT, TF] {
+func (wq *workerStack) retrieveExpiry(duration time.Duration) []*goWorker {
 	n := wq.len()
 	if n == 0 {
 		return nil
@@ -78,7 +74,7 @@ func (wq *workerStack[T, U, C, CT, TF]) retrieveExpiry(duration time.Duration) [
 	return wq.expiry
 }
 
-func (wq *workerStack[T, U, C, CT, TF]) binarySearch(l, r int, expiryTime time.Time) int {
+func (wq *workerStack) binarySearch(l, r int, expiryTime time.Time) int {
 	var mid int
 	for l <= r {
 		mid = (l + r) / 2
@@ -91,9 +87,9 @@ func (wq *workerStack[T, U, C, CT, TF]) binarySearch(l, r int, expiryTime time.T
 	return r
 }
 
-func (wq *workerStack[T, U, C, CT, TF]) reset() {
+func (wq *workerStack) reset() {
 	for i := 0; i < wq.len(); i++ {
-		wq.items[i].taskBoxCh <- nil
+		wq.items[i].task <- nil
 		wq.items[i] = nil
 	}
 	wq.items = wq.items[:0]

@@ -12,11 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package spmc
+package simplepool
 
-import (
-	"time"
-)
+import "time"
 
 // Option represents the optional function.
 type Option func(opts *Options)
@@ -29,7 +27,7 @@ func loadOptions(options ...Option) *Options {
 	return opts
 }
 
-// Options contains all options which will be applied when instantiating an pool.
+// Options contains all options which will be applied when instantiating an ants pool.
 type Options struct {
 	// PanicHandler is used to handle panics from each worker goroutine.
 	// if nil, panics will be thrown out again from worker goroutines.
@@ -92,53 +90,5 @@ func WithNonblocking(nonblocking bool) Option {
 func WithPanicHandler(panicHandler func(interface{})) Option {
 	return func(opts *Options) {
 		opts.PanicHandler = panicHandler
-	}
-}
-
-// TaskOption represents the optional function.
-type TaskOption func(opts *TaskOptions)
-
-func loadTaskOptions(options ...TaskOption) *TaskOptions {
-	opts := new(TaskOptions)
-	for _, option := range options {
-		option(opts)
-	}
-	if opts.Concurrency == 0 {
-		opts.Concurrency = 1
-	}
-	if opts.ResultChanLen == 0 {
-		opts.ResultChanLen = uint64(opts.Concurrency)
-	}
-	if opts.ResultChanLen == 0 {
-		opts.ResultChanLen = uint64(opts.Concurrency)
-	}
-	return opts
-}
-
-// TaskOptions contains all options
-type TaskOptions struct {
-	Concurrency   int
-	ResultChanLen uint64
-	TaskChanLen   uint64
-}
-
-// WithResultChanLen is to set the length of result channel.
-func WithResultChanLen(resultChanLen uint64) TaskOption {
-	return func(opts *TaskOptions) {
-		opts.ResultChanLen = resultChanLen
-	}
-}
-
-// WithTaskChanLen is to set the length of task channel.
-func WithTaskChanLen(taskChanLen uint64) TaskOption {
-	return func(opts *TaskOptions) {
-		opts.TaskChanLen = taskChanLen
-	}
-}
-
-// WithConcurrency is to set the concurrency of task.
-func WithConcurrency(c int) TaskOption {
-	return func(opts *TaskOptions) {
-		opts.Concurrency = c
 	}
 }

@@ -12,31 +12,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package spmc
+package simplepool
 
-import (
-	"time"
+import "time"
 
-	"github.com/pingcap/tidb/util/gpool"
-)
-
-type loopQueue[T any, U any, C any, CT any, TF gpool.Context[CT]] struct {
-	items  []*goWorker[T, U, C, CT, TF]
-	expiry []*goWorker[T, U, C, CT, TF]
+type loopQueue struct {
+	items  []*goWorker
+	expiry []*goWorker
 	head   int
 	tail   int
 	size   int
 	isFull bool
 }
 
-func newWorkerLoopQueue[T any, U any, C any, CT any, TF gpool.Context[CT]](size int) *loopQueue[T, U, C, CT, TF] {
-	return &loopQueue[T, U, C, CT, TF]{
-		items: make([]*goWorker[T, U, C, CT, TF], size),
+func newWorkerLoopQueue(size int) *loopQueue {
+	return &loopQueue{
+		items: make([]*goWorker, size),
 		size:  size,
 	}
 }
 
-func (wq *loopQueue[T, U, C, CT, TF]) len() int {
+func (wq *loopQueue) len() int {
 	if wq.size == 0 {
 		return 0
 	}
@@ -55,11 +51,11 @@ func (wq *loopQueue[T, U, C, CT, TF]) len() int {
 	return wq.size - wq.head + wq.tail
 }
 
-func (wq *loopQueue[T, U, C, CT, TF]) isEmpty() bool {
+func (wq *loopQueue) isEmpty() bool {
 	return wq.head == wq.tail && !wq.isFull
 }
 
-func (wq *loopQueue[T, U, C, CT, TF]) insert(worker *goWorker[T, U, C, CT, TF]) error {
+func (wq *loopQueue) insert(worker *goWorker) error {
 	if wq.size == 0 {
 		return errQueueIsReleased
 	}
@@ -80,7 +76,7 @@ func (wq *loopQueue[T, U, C, CT, TF]) insert(worker *goWorker[T, U, C, CT, TF]) 
 	return nil
 }
 
-func (wq *loopQueue[T, U, C, CT, TF]) detach() *goWorker[T, U, C, CT, TF] {
+func (wq *loopQueue) detach() *goWorker {
 	if wq.isEmpty() {
 		return nil
 	}
@@ -96,7 +92,7 @@ func (wq *loopQueue[T, U, C, CT, TF]) detach() *goWorker[T, U, C, CT, TF] {
 	return w
 }
 
-func (wq *loopQueue[T, U, C, CT, TF]) retrieveExpiry(duration time.Duration) []*goWorker[T, U, C, CT, TF] {
+func (wq *loopQueue) retrieveExpiry(duration time.Duration) []*goWorker {
 	expiryTime := time.Now().Add(-duration)
 	index := wq.binarySearch(expiryTime)
 	if index == -1 {
@@ -128,7 +124,7 @@ func (wq *loopQueue[T, U, C, CT, TF]) retrieveExpiry(duration time.Duration) []*
 	return wq.expiry
 }
 
-func (wq *loopQueue[T, U, C, CT, TF]) binarySearch(expiryTime time.Time) int {
+func (wq *loopQueue) binarySearch(expiryTime time.Time) int {
 	var mid, nlen, basel, tmid int
 	nlen = len(wq.items)
 
@@ -165,14 +161,14 @@ func (wq *loopQueue[T, U, C, CT, TF]) binarySearch(expiryTime time.Time) int {
 	return (r + basel + nlen) % nlen
 }
 
-func (wq *loopQueue[T, U, C, CT, TF]) reset() {
+func (wq *loopQueue) reset() {
 	if wq.isEmpty() {
 		return
 	}
 
 Releasing:
 	if w := wq.detach(); w != nil {
-		w.taskBoxCh <- nil
+		w.task <- nil
 		goto Releasing
 	}
 	wq.items = wq.items[:0]
