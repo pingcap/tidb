@@ -15,7 +15,8 @@
 package domain
 
 import (
-	"errors"
+	"context"
+	"fmt"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -24,7 +25,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 )
 
@@ -34,12 +41,17 @@ type dumpFileGcChecker struct {
 	sync.Mutex
 	gcLease time.Duration
 	paths   []string
+	ctx     sessionctx.Context
 }
 
 // GetPlanReplayerDirName returns plan replayer directory path.
 // The path is related to the process id.
 func GetPlanReplayerDirName() string {
 	return filepath.Join(os.TempDir(), "replayer", strconv.Itoa(os.Getpid()))
+}
+
+func parseType(s string) string {
+	return strings.Split(s, "_")[0]
 }
 
 func parseTime(s string) (time.Time, error) {
@@ -56,6 +68,10 @@ func parseTime(s string) (time.Time, error) {
 		return time.Time{}, errors.New("failed to parse the file :" + s)
 	}
 	return time.Unix(0, i), nil
+}
+
+func (p *dumpFileGcChecker) setupSctx(ctx sessionctx.Context) {
+	p.ctx = ctx
 }
 
 func (p *dumpFileGcChecker) gcDumpFiles(t time.Duration) {
@@ -82,6 +98,7 @@ func (p *dumpFileGcChecker) gcDumpFilesByPath(path string, t time.Duration) {
 			logutil.BgLogger().Error("[dumpFileGcChecker] parseTime failed", zap.Error(err), zap.String("filename", fileName))
 			continue
 		}
+		isPlanReplayer := parseType(fileName) == "replayer"
 		if !createTime.After(gcTime) {
 			err := os.Remove(filepath.Join(path, f.Name()))
 			if err != nil {
@@ -89,6 +106,88 @@ func (p *dumpFileGcChecker) gcDumpFilesByPath(path string, t time.Duration) {
 				continue
 			}
 			logutil.BgLogger().Info("dumpFileGcChecker successful", zap.String("filename", fileName))
+			if isPlanReplayer {
+				DeletePlanReplayerStatus(context.Background(), p.ctx, fileName)
+			}
 		}
+	}
+}
+
+// DeletePlanReplayerStatus delete  mysql.plan_replayer_status record
+func DeletePlanReplayerStatus(ctx context.Context, sctx sessionctx.Context, token string) {
+	exec := sctx.(sqlexec.SQLExecutor)
+	r, err := exec.ExecuteInternal(ctx, fmt.Sprintf("delete from mysql.plan_replayer_status where token = %v", token))
+	if err != nil {
+		logutil.BgLogger().Warn("delete mysql.plan_replayer_status record failed", zap.String("token", token), zap.Error(err))
+	}
+	r.Close()
+}
+
+// InsertPlanReplayerStatus insert mysql.plan_replayer_status record
+func InsertPlanReplayerStatus(ctx context.Context, sctx sessionctx.Context, sqlDigest, planDigest, token string, err error) {
+	var instance string
+	serverInfo, err := infosync.GetServerInfo()
+	if err != nil {
+		logutil.BgLogger().Error("failed to get server info", zap.Error(err))
+		instance = "unknown"
+	} else {
+		instance = fmt.Sprintf("%s:%d", serverInfo.IP, serverInfo.Port)
+	}
+	exec := sctx.(sqlexec.SQLExecutor)
+	if err != nil {
+		_, err := exec.ExecuteInternal(ctx, fmt.Sprintf(
+			"insert into mysql.plan_replayer_Status (sql_digest, plan_digest, fail_reason, instance) values (%s,%s,%s,%s)",
+			sqlDigest, planDigest, err.Error(), instance))
+		if err != nil {
+			logutil.BgLogger().Error("insert mysql.plan_replayer_status record failed",
+				zap.String("token", token),
+				zap.Error(err))
+		}
+	} else {
+		_, err := exec.ExecuteInternal(ctx, fmt.Sprintf(
+			"insert into mysql.plan_replayer_Status (sql_digest, plan_digest, token, instance) values (%s,%s,%s,%s)",
+			sqlDigest, planDigest, token, instance))
+		if err != nil {
+			logutil.BgLogger().Error("insert mysql.plan_replayer_status record failed",
+				zap.String("token", token),
+				zap.Error(err))
+		}
+	}
+}
+
+func GetAllPlanReplayerTask(ctx context.Context, sctx sessionctx.Context) ([]PlanReplayerKey, error) {
+	exec := sctx.(sqlexec.SQLExecutor)
+	rs, err := exec.ExecuteInternal(ctx, "select sql_digest, plan_digest from mysql.plan_replayer_task")
+	if err != nil {
+		return nil, err
+	}
+	if rs == nil {
+		return nil, nil
+	}
+	var rows []chunk.Row
+	defer terror.Call(rs.Close)
+	if rows, err = sqlexec.DrainRecordSet(ctx, rs, 8); err != nil {
+		return nil, errors.Trace(err)
+	}
+	keys := make([]PlanReplayerKey, 0, len(rows))
+	for _, row := range rows {
+		sqlDigest, planDigest := row.GetString(0), row.GetString(1)
+		keys = append(keys, PlanReplayerKey{
+			sqlDigest:  sqlDigest,
+			planDigest: planDigest,
+		})
+	}
+	return keys, nil
+}
+
+type PlanReplayerKey struct {
+	sqlDigest  string
+	planDigest string
+}
+
+type PlanReplayerHandle struct {
+	mu struct {
+		sync.RWMutex
+		planReplayerCapture map[PlanReplayerKey]struct{}
 	}
 }

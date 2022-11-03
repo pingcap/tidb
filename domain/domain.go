@@ -1530,6 +1530,11 @@ func (do *Domain) TelemetryRotateSubWindowLoop(ctx sessionctx.Context) {
 	}()
 }
 
+// SetupDumpFileGcCheckerSCTX setup sctx for dumpFileGcChecker
+func (do *Domain) SetupDumpFileGcCheckerSCTX(ctx sessionctx.Context) {
+	do.dumpFileGcChecker.setupSctx(ctx)
+}
+
 // DumpFileGcCheckerLoop creates a goroutine that handles `exit` and `gc`.
 func (do *Domain) DumpFileGcCheckerLoop() {
 	do.wg.Add(1)

@@ -430,6 +430,23 @@ const (
 	CreateMDLView = `CREATE OR REPLACE VIEW mysql.tidb_mdl_view as (
 	select JOB_ID, DB_NAME, TABLE_NAME, QUERY, SESSION_ID, TxnStart, TIDB_DECODE_SQL_DIGESTS(ALL_SQL_DIGESTS, 4096) AS SQL_DIGESTS from information_schema.ddl_jobs, information_schema.CLUSTER_TIDB_TRX, information_schema.CLUSTER_PROCESSLIST where ddl_jobs.STATE = 'running' and find_in_set(ddl_jobs.table_id, CLUSTER_TIDB_TRX.RELATED_TABLE_IDS) and CLUSTER_TIDB_TRX.SESSION_ID=CLUSTER_PROCESSLIST.ID
 	);`
+
+	CreatePlanReplayerTaskTable = `CREATE TABLE IF NOT EXISTS mysql.plan_replayer_task (
+		sql_digest VARCHAR(128) NOT NULL,
+		plan_digest VARCHAR(128) NOT NULL,
+		update_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+		PRIMARY KEY (sql_digest,plan_digest));`
+
+	// CreatePlanReplayerStatusTable is a table about plan replayer status
+	CreatePlanReplayerStatusTable = `CREATE TABLE IF NOT EXISTS mysql.plan_replayer_status (
+		id BIGINT(64) UNSIGNED NOT NULL AUTO_INCREMENT,
+		sql_digest VARCHAR(128) NOT NULL,
+		plan_digest VARCHAR(128) NOT NULL,
+		token VARCHAR(128),
+		update_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+		fail_reason TEXT,
+		instance VARCHAR(512) NOT NULL comment 'address of the TiDB instance executing the plan replayer job',,
+		PRIMARY KEY (id));`
 )
 
 // bootstrap initiates system DB for a store.
@@ -643,11 +660,13 @@ const (
 	version97 = 97
 	// version98 add a column `Token_issuer` to `mysql.user`
 	version98 = 98
+	// version 99 add a table mysql.plan_replayer_status
+	version99 = 99
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version98
+var currentBootstrapVersion int64 = version99
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -751,6 +770,7 @@ var (
 		upgradeToVer96,
 		upgradeToVer97,
 		upgradeToVer98,
+		upgradeToVer99,
 	}
 )
 
@@ -1989,6 +2009,14 @@ func upgradeToVer98(s Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `Token_issuer` varchar(255)")
 }
 
+func upgradeToVer99(s Session, ver int64) {
+	if ver >= version99 {
+		return
+	}
+	doReentrantDDL(s, CreatePlanReplayerTaskTable)
+	doReentrantDDL(s, CreatePlanReplayerStatusTable)
+}
+
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -2085,6 +2113,10 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateAdvisoryLocks)
 	// Create mdl view.
 	mustExecute(s, CreateMDLView)
+	// Create plan_replayer_task table
+	mustExecute(s, CreatePlanReplayerTaskTable)
+	//  Create plan_replayer_status table
+	mustExecute(s, CreatePlanReplayerStatusTable)
 }
 
 // inTestSuite checks if we are bootstrapping in the context of tests.
