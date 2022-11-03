@@ -41,6 +41,9 @@ var (
 	TriggerMemoryLimitGC = atomicutil.NewBool(false)
 	MemoryLimitGCLast    = atomicutil.NewTime(time.Time{})
 	MemoryLimitGCTotal   = atomicutil.NewInt64(0)
+
+	// GlobalMemoryUsageTracker is the ancestor of all the Executors' memory tracker and GlobalMemory Tracker
+	GlobalMemoryUsageTracker *Tracker
 )
 
 // Tracker is used to track the memory usage during query execution.
