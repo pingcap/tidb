@@ -15,11 +15,11 @@
 package statisticstest
 
 import (
-	"go.uber.org/goleak"
 	"testing"
 
 	"github.com/pingcap/tidb/testkit/testsetup"
 	"github.com/pingcap/tidb/tests/realtikvtest"
+	"go.uber.org/goleak"
 )
 
 func TestMain(m *testing.M) {
