@@ -25,6 +25,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/server",
     visibility = ["//visibility:public"],
     deps = [
+        "//autoid_service",
         "//config",
         "//ddl",
         "//domain",
@@ -56,6 +57,7 @@ go_library(
         "//sessionctx/stmtctx",
         "//sessionctx/variable",
         "//sessiontxn",
+        "//store",
         "//store/driver/error",
         "//store/gcworker",
         "//store/helper",
@@ -92,6 +94,7 @@ go_library(
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_fn//:fn",
+        "@com_github_pingcap_kvproto//pkg/autoid",
         "@com_github_pingcap_kvproto//pkg/coprocessor",
         "@com_github_pingcap_kvproto//pkg/diagnosticspb",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",

@@ -164,7 +164,7 @@ var defaultSysVars = []*SysVar{
 		s.AllowProjectionPushDown = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeSession, Name: TiDBOptAggPushDown, Value: BoolToOnOff(DefOptAggPushDown), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptAggPushDown, Value: BoolToOnOff(DefOptAggPushDown), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.AllowAggPushDown = TiDBOptOn(val)
 		return nil
 	}},
@@ -748,12 +748,20 @@ var defaultSysVars = []*SysVar{
 			}
 			return strconv.FormatFloat(floatValue, 'f', -1, 64), nil
 		},
-		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) (err error) {
 			factor := tidbOptFloat64(val, DefTiDBGOGCTunerThreshold)
 			GOGCTunerThreshold.Store(factor)
 			memTotal := memory.ServerMemoryLimit.Load()
-			threshold := float64(memTotal) * factor
-			gctuner.Tuning(uint64(threshold))
+			if memTotal == 0 {
+				memTotal, err = memory.MemTotal()
+				if err != nil {
+					return err
+				}
+			}
+			if factor > 0 {
+				threshold := float64(memTotal) * factor
+				gctuner.Tuning(uint64(threshold))
+			}
 			return nil
 		},
 	},
@@ -928,6 +936,10 @@ var defaultSysVars = []*SysVar{
 			s.PreparedPlanCacheSize = uVal
 		}
 		return err
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePrepPlanCacheMemoryMonitor, Value: BoolToOnOff(DefTiDBEnablePrepPlanCacheMemoryMonitor), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnablePreparedPlanCacheMemoryMonitor = TiDBOptOn(val)
+		return nil
 	}},
 	{Scope: ScopeGlobal, Name: TiDBPrepPlanCacheMemoryGuardRatio, Value: strconv.FormatFloat(DefTiDBPrepPlanCacheMemoryGuardRatio, 'f', -1, 64), Type: TypeFloat, MinValue: 0.0, MaxValue: 1.0, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		f, err := strconv.ParseFloat(val, 64)
