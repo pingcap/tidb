@@ -16,6 +16,7 @@ package variable
 
 import (
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/tikv/client-go/v2/oracle"
 	"golang.org/x/exp/slices"
@@ -380,6 +382,66 @@ func parseTimeZone(s string) (*time.Location, error) {
 	}
 
 	return nil, ErrUnknownTimeZone.GenWithStackByArgs(s)
+}
+
+func parseMemoryLimit(s *SessionVars, normalizedValue string, originalValue string) (byteSize uint64, normalizedStr string, err error) {
+	defer func() {
+		if err == nil && byteSize > 0 && byteSize < (512<<20) {
+			s.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(TiDBServerMemoryLimit, originalValue))
+			byteSize = 512 << 20
+			normalizedStr = "512MB"
+		}
+	}()
+
+	// 1. Try parse percentage format: x%
+	if total := memory.GetMemTotalIgnoreErr(); total != 0 {
+		perc, str := parsePercentage(normalizedValue)
+		if perc != 0 {
+			intVal := total / 100 * perc
+			return intVal, str, nil
+		}
+	}
+
+	// 2. Try parse byteSize format: xKB/MB/GB/TB or byte number
+	bt, str := parseByteSize(normalizedValue)
+	if str != "" {
+		return bt, str, nil
+	}
+
+	return 0, "", ErrTruncatedWrongValue.GenWithStackByArgs(TiDBServerMemoryLimit, originalValue)
+}
+
+func parsePercentage(s string) (percentage uint64, normalizedStr string) {
+	defer func() {
+		if percentage == 0 || percentage >= 100 {
+			percentage, normalizedStr = 0, ""
+		}
+	}()
+	var endString string
+	if n, err := fmt.Sscanf(s, "%d%%%s", &percentage, &endString); n == 1 && err == io.EOF {
+		return percentage, fmt.Sprintf("%d%%", percentage)
+	}
+	return 0, ""
+}
+
+func parseByteSize(s string) (byteSize uint64, normalizedStr string) {
+	var endString string
+	if n, err := fmt.Sscanf(s, "%d%s", &byteSize, &endString); n == 1 && err == io.EOF {
+		return byteSize, fmt.Sprintf("%d", byteSize)
+	}
+	if n, err := fmt.Sscanf(s, "%dKB%s", &byteSize, &endString); n == 1 && err == io.EOF {
+		return byteSize << 10, fmt.Sprintf("%dKB", byteSize)
+	}
+	if n, err := fmt.Sscanf(s, "%dMB%s", &byteSize, &endString); n == 1 && err == io.EOF {
+		return byteSize << 20, fmt.Sprintf("%dMB", byteSize)
+	}
+	if n, err := fmt.Sscanf(s, "%dGB%s", &byteSize, &endString); n == 1 && err == io.EOF {
+		return byteSize << 30, fmt.Sprintf("%dGB", byteSize)
+	}
+	if n, err := fmt.Sscanf(s, "%dTB%s", &byteSize, &endString); n == 1 && err == io.EOF {
+		return byteSize << 40, fmt.Sprintf("%dTB", byteSize)
+	}
+	return 0, ""
 }
 
 func setSnapshotTS(s *SessionVars, sVal string) error {
