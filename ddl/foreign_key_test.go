@@ -792,6 +792,34 @@ func TestCreateTableWithForeignKeyError(t *testing.T) {
 			create: "create table t2 (a int, b int, index fk_1(a), foreign key (b) references t1(b));",
 			err:    "[ddl:1061]duplicate key name fk_1",
 		},
+		{
+			refer:  "create table t1 (id int key);",
+			create: "create table t2 (id int key, foreign key name5678901234567890123456789012345678901234567890123456789012345(id) references t1(id));",
+			err:    "[ddl:1059]Identifier name 'name5678901234567890123456789012345678901234567890123456789012345' is too long",
+		},
+		{
+			refer:  "create table t1 (id int key);",
+			create: "create table t2 (id int key, constraint name5678901234567890123456789012345678901234567890123456789012345 foreign key (id) references t1(id));",
+			err:    "[ddl:1059]Identifier name 'name5678901234567890123456789012345678901234567890123456789012345' is too long",
+		},
+		{
+			create: "create table t2 (id int key, constraint fk foreign key (id) references name5678901234567890123456789012345678901234567890123456789012345.t1(id));",
+			err:    "[ddl:1059]Identifier name 'name5678901234567890123456789012345678901234567890123456789012345' is too long",
+		},
+		{
+			prepare: []string{
+				"set @@foreign_key_checks=0;",
+			},
+			create: "create table t2 (id int key, constraint fk foreign key (id) references name5678901234567890123456789012345678901234567890123456789012345(id));",
+			err:    "[ddl:1059]Identifier name 'name5678901234567890123456789012345678901234567890123456789012345' is too long",
+		},
+		{
+			prepare: []string{
+				"set @@foreign_key_checks=0;",
+			},
+			create: "create table t2 (id int key, constraint fk foreign key (id) references t1(name5678901234567890123456789012345678901234567890123456789012345));",
+			err:    "[ddl:1059]Identifier name 'name5678901234567890123456789012345678901234567890123456789012345' is too long",
+		},
 	}
 	for _, ca := range cases {
 		tk.MustExec("drop table if exists t2")
@@ -839,6 +867,10 @@ func TestCreateTableWithForeignKeyError(t *testing.T) {
 		{
 			"create table t1 (a int key, b int, index(b))",
 			"create table t2 (a int, b int, foreign key (a) references t1(a), foreign key (b) references t1(b));",
+		},
+		{
+			"create table t1 (id int key);",
+			"create table t2 (id int key, foreign key name567890123456789012345678901234567890123456789012345678901234(id) references t1(id));",
 		},
 	}
 	for _, ca := range passCases {
@@ -1707,6 +1739,22 @@ func TestAlterTableAddForeignKeyError(t *testing.T) {
 			alter: "alter table t2 add foreign key fk_b(a, b) references t1(a, b)",
 			err:   "[ddl:1452]Cannot add or update a child row: a foreign key constraint fails (`test`.`t2`, CONSTRAINT `fk_b` FOREIGN KEY (`a`, `b`) REFERENCES `t1` (`a`, `b`))",
 		},
+		{
+			prepares: []string{
+				"create table t1 (id int key);",
+				"create table t2 (a int, b int unique);",
+			},
+			alter: "alter  table t2 add foreign key name5678901234567890123456789012345678901234567890123456789012345(b) references t1(id)",
+			err:   "[ddl:1059]Identifier name 'name5678901234567890123456789012345678901234567890123456789012345' is too long",
+		},
+		{
+			prepares: []string{
+				"create table t1 (id int key);",
+				"create table t2 (a int, b int unique);",
+			},
+			alter: "alter  table t2 add constraint name5678901234567890123456789012345678901234567890123456789012345 foreign key (b) references t1(id)",
+			err:   "[ddl:1059]Identifier name 'name5678901234567890123456789012345678901234567890123456789012345' is too long",
+		},
 	}
 	for i, ca := range cases {
 		tk.MustExec("drop table if exists t2")
@@ -1769,6 +1817,11 @@ func TestAlterTableAddForeignKeyError(t *testing.T) {
 			"create table t2 (a int, b int, index(b));",
 			"alter table t2 add foreign key fk_b(b) references t_unknown(a)",
 			"set @@foreign_key_checks=1;",
+		},
+		{
+			"create table t1 (id int key);",
+			"create table t2 (a int, b int unique);",
+			"alter  table t2 add foreign key name567890123456789012345678901234567890123456789012345678901234(b) references t1(id)",
 		},
 	}
 	for _, ca := range passCases {
