@@ -38,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/format"
@@ -4212,7 +4211,7 @@ func checkIsDroppableColumn(ctx sessionctx.Context, is infoschema.InfoSchema, sc
 	if err = isDroppableColumn(tblInfo, colName); err != nil {
 		return false, errors.Trace(err)
 	}
-	if err = checkDropColumnWithPartitionConstraint(ctx, t.Meta().Clone(), col.ColumnInfo.Clone()); err != nil {
+	if err = checkDropColumnWithPartitionConstraint(t, colName); err != nil {
 		return false, errors.Trace(err)
 	}
 	// Check the column with foreign key.
@@ -4231,45 +4230,20 @@ func checkIsDroppableColumn(ctx sessionctx.Context, is infoschema.InfoSchema, sc
 }
 
 // checkDropColumnWithPartitionConstraint is used to check the partition constraint of the drop column.
-func checkDropColumnWithPartitionConstraint(sctx sessionctx.Context, tbInfo *model.TableInfo, col *model.ColumnInfo) error {
-	pi := tbInfo.GetPartitionInfo()
-	if pi == nil {
+func checkDropColumnWithPartitionConstraint(t table.Table, colName model.CIStr) error {
+	if t.Meta().Partition == nil {
 		return nil
 	}
-
-	if len(tbInfo.Partition.Columns) > 0 {
-		for _, partitionCol := range tbInfo.Partition.Columns {
-			if partitionCol.L == col.Name.L {
-				return errors.Trace(dbterror.ErrDependentByPartitionFunctional.GenWithStackByArgs(col.Name.L))
-			}
+	pt, ok := t.(table.PartitionedTable)
+	if !ok {
+		// Should never happen!
+		return errors.Trace(dbterror.ErrDependentByPartitionFunctional.GenWithStackByArgs(colName.L))
+	}
+	for _, name := range pt.GetPartitionColumnNames() {
+		if strings.EqualFold(name.L, colName.L) {
+			return errors.Trace(dbterror.ErrDependentByPartitionFunctional.GenWithStackByArgs(colName.L))
 		}
-		return nil
 	}
-
-	tbInfo.MoveColumnInfo(col.Offset, len(tbInfo.Columns)-1)
-	tbInfo.Columns = tbInfo.Columns[:len(tbInfo.Columns)-1]
-
-	exprStr := "select " + pi.Expr
-	var stmts []ast.StmtNode
-	var err error
-	if p, ok := sctx.(interface {
-		ParseSQL(context.Context, string, ...parser.ParseParam) ([]ast.StmtNode, []error, error)
-	}); ok {
-		stmts, _, err = p.ParseSQL(context.Background(), exprStr)
-	} else {
-		stmts, _, err = parser.New().ParseSQL(exprStr)
-	}
-
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	expr := stmts[0].(*ast.SelectStmt).Fields.Fields[0].Expr
-	_, err = expression.RewriteSimpleExprWithTableInfo(sctx, tbInfo, expr)
-	if err != nil {
-		return errors.Trace(dbterror.ErrDependentByPartitionFunctional.GenWithStackByArgs(col.Name.L))
-	}
-
 	return nil
 }
 
