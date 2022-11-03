@@ -167,6 +167,7 @@ func TestEstimation(t *testing.T) {
 	statistics.RatioOfPseudoEstimate.Store(10.0)
 	defer statistics.RatioOfPseudoEstimate.Store(0.7)
 	testKit.MustExec("use test")
+	testKit.MustExec("set tidb_cost_model_version=2")
 	testKit.MustExec("create table t (a int)")
 	testKit.MustExec("insert into t values (1), (2), (3), (4), (5), (6), (7), (8), (9), (10)")
 	testKit.MustExec("insert into t select * from t")
@@ -211,6 +212,7 @@ func constructInsertSQL(i, n int) string {
 func TestIndexRead(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("set tidb_cost_model_version=2")
 	testKit.MustExec("set @@session.tidb_executor_concurrency = 4;")
 	testKit.MustExec("set @@session.tidb_hash_join_concurrency = 5;")
 	testKit.MustExec("set @@session.tidb_distsql_scan_concurrency = 15;")
@@ -662,6 +664,7 @@ func TestLimitCrossEstimation(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("set @@session.tidb_executor_concurrency = 4;")
 	tk.MustExec("set @@session.tidb_hash_join_concurrency = 5;")
 	tk.MustExec("set @@session.tidb_distsql_scan_concurrency = 15;")
@@ -796,6 +799,7 @@ func TestLimitIndexEstimation(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, key idx_a(a), key idx_b(b))")
 	tk.MustExec("set session tidb_enable_extended_stats = on")
