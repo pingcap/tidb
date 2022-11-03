@@ -716,7 +716,7 @@ func setGlobalVars() {
 	deadlockhistory.GlobalDeadlockHistory.Resize(cfg.PessimisticTxn.DeadlockHistoryCapacity)
 	txninfo.Recorder.ResizeSummaries(cfg.TrxSummary.TransactionSummaryCapacity)
 	txninfo.Recorder.SetMinDuration(time.Duration(cfg.TrxSummary.TransactionIDDigestMinDuration) * time.Millisecond)
-	chunk.InitChunkAllocSize(cfg.Instance.TiDBMaxReuseChunk, cfg.Instance.TiDBMaxReuseColumn)
+	chunk.InitChunkAllocSize(cfg.TiDBMaxReuseChunk, cfg.TiDBMaxReuseColumn)
 }
 
 func setupLog() {
