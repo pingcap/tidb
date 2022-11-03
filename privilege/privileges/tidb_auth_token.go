@@ -39,7 +39,7 @@ type JWKSImpl struct {
 // GlobalJWKS is the global JWKS for tidb-server
 var GlobalJWKS JWKSImpl
 
-func (jwks *JWKSImpl) load() (err error) {
+func (jwks *JWKSImpl) load() error {
 	cur, err := jwkRepo.ReadFile(jwks.filepath)
 	if err == nil {
 		atomic.StorePointer(&jwks.set, unsafe.Pointer(&cur))
@@ -87,7 +87,9 @@ func (jwks *JWKSImpl) checkSigWithRetry(tokenString string, retryTime int) (map[
 		// verify signature
 		verifiedPayload, err = jwks.verify(([]byte)(tokenString))
 		if err != nil {
-			_ = jwks.load()
+			if err1 := jwks.load(); err1 != nil {
+				return nil, err1
+			}
 			continue
 		}
 

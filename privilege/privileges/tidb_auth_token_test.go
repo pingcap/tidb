@@ -385,7 +385,7 @@ func TestJWKSImpl(t *testing.T) {
 	// Wrong signature, and fail to reload JWKS
 	jwksImpl.filepath = "wrong-path"
 	_, err = jwksImpl.checkSigWithRetry(signedTokenString+"A", 0)
-	require.ErrorContains(t, err, "could not verify message using any of the signatures or keys")
+	require.ErrorContains(t, err, "open wrong-path: no such file or directory")
 	jwksImpl.filepath = path[0]
 
 	require.NoError(t, jwksImpl.LoadJWKS4AuthToken(path[0], time.Hour, false), path[0])
