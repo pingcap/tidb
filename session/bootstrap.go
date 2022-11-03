@@ -832,10 +832,12 @@ func upgrade(s Session) {
 		}
 	}
 	// Do upgrade works then update bootstrap version.
-	upgradeToVer99(s, ver)
-
+	needEnableMdl := upgradeToVer99Before(s, ver)
 	for _, upgrade := range bootstrapVersion {
 		upgrade(s, ver)
+	}
+	if needEnableMdl {
+		upgradeToVer99After(s, ver)
 	}
 
 	variable.DDLForce2Queue.Store(false)
@@ -1992,9 +1994,9 @@ func upgradeToVer98(s Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `Token_issuer` varchar(255)")
 }
 
-func upgradeToVer99(s Session, ver int64) {
+func upgradeToVer99Before(s Session, ver int64) bool {
 	if ver >= version99 {
-		return
+		return false
 	}
 	// Check if tidb_enable_metadata_lock exists in mysql.GLOBAL_VARIABLES.
 	// If not, insert "tidb_enable_metadata_lock | 0" since this is the old behavior before we introduce this variable.
@@ -2006,11 +2008,23 @@ func upgradeToVer99(s Session, ver int64) {
 	err = rs.Next(ctx, req)
 	terror.MustNil(err)
 	if req.NumRows() != 0 {
-		return
+		return false
 	}
 
 	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
 		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableMDL, 0)
+	return true
+}
+
+func upgradeToVer99After(s Session, ver int64) {
+	if ver >= version99 {
+		return
+	}
+	// Check if tidb_enable_metadata_lock exists in mysql.GLOBAL_VARIABLES.
+	// If not, insert "tidb_enable_metadata_lock | 0" since this is the old behavior before we introduce this variable.
+	sql := fmt.Sprintf("UPDATE HIGH_PRIORITY %[1]s.%[2]s SET VARIABLE_VALUE = %[4]d WHERE VARIABLE_NAME = '%[3]s'",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableMDL, 1)
+	mustExecute(s, sql)
 }
 
 func writeOOMAction(s Session) {
