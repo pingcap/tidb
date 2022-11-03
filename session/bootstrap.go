@@ -636,8 +636,6 @@ const (
 	version94 = 94
 	// version95 add a column `User_attributes` to `mysql.user`
 	version95 = 95
-	// version96 converts server-memory-quota to a sysvar
-	version96 = 96
 	// version97 sets tidb_opt_range_max_size to 0 when a cluster upgrades from some version lower than v6.4.0 to v6.4.0+.
 	// It promises the compatibility of building ranges behavior.
 	version97 = 97
@@ -748,7 +746,6 @@ var (
 		upgradeToVer93,
 		upgradeToVer94,
 		upgradeToVer95,
-		upgradeToVer96,
 		upgradeToVer97,
 		upgradeToVer98,
 	}
@@ -1951,14 +1948,6 @@ func upgradeToVer95(s Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `User_attributes` JSON")
-}
-
-func upgradeToVer96(s Session, ver int64) {
-	if ver >= version96 {
-		return
-	}
-	valStr := strconv.Itoa(int(config.GetGlobalConfig().Performance.ServerMemoryQuota))
-	importConfigOption(s, "performance.server-memory-quota", variable.TiDBServerMemoryLimit, valStr)
 }
 
 func upgradeToVer97(s Session, ver int64) {
