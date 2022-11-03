@@ -85,5 +85,52 @@
       "explain select a from t where t.a>1 or t.a not in (select a from t); -- now it's supported -- 8. anti left outer semi join",
       "explain select a from t where t.a not in (select a from s where t.a<1); -- 9. non left join has left conditions"
     ]
+  },
+  {
+    "name": "TestMPP2PhaseAggPushDown",
+    "cases": [
+      "set @@tidb_allow_mpp=1;set @@tidb_enforce_mpp=1;set @@tidb_opt_agg_push_down=1;",
+      "EXPLAIN select count(*) from c, o where c.c_id=o.c_id; -- 1. test agg push down, scalar aggregate",
+      "EXPLAIN select o.o_id, count(*) from c, o where c.c_id=o.c_id group by o.o_id; -- 2. test agg push down, group by non-join column",
+      "EXPLAIN select o.c_id, count(*) from c, o where c.c_id=o.c_id group by o.c_id; -- 3. test agg push down, group by join column"
+    ]
+  },
+  {
+    "name": "TestMPPSkewedGroupDistinctRewrite",
+    "cases": [
+      "set @@tidb_allow_mpp=1;set @@tidb_enforce_mpp=1;set @@tidb_opt_skew_distinct_agg=1;",
+      "EXPLAIN select count(distinct c) from t group by d;",
+      "EXPLAIN select count(distinct c), count(a) from t group by d;",
+      "EXPLAIN select count(distinct c) from t group by b+d;",
+      "EXPLAIN select count(distinct c) from t group by b+d, a+b;",
+      "EXPLAIN select count(distinct c), count(*) from t group by date_format(d,'%Y');",
+      "EXPLAIN select date_format(d,'%Y') as df, sum(a), count(b), count(distinct c) from t group by date_format(d,'%Y');",
+      "EXPLAIN select d, count(distinct c), sum(a), max(b), count(*) from t group by d;",
+      "EXPLAIN select date_format(d,'%Y') as df, count(distinct c) from t group by date_format(d,'%Y');",
+      "EXPLAIN select date_format(d,'%Y') as df, a, count(b), count(distinct c) from t group by date_format(d,'%Y'), a;",
+      "EXPLAIN select date_format(d,'%Y') as df, a, count(b), avg(distinct c) from t group by date_format(d,'%Y'), a;",
+      "EXPLAIN select d,e, min(b), count(distinct c), bit_or(a) from t group by e,d; -- bit agg func can't be pushed to TiFlash",
+      "EXPLAIN select a, count(b), avg(distinct c), count(distinct c) from t group by a; -- multi distinct funcs, bail out",
+      "EXPLAIN select count(b), count(distinct c) from t; -- single distinct func but no group key, bail out"
+    ]
+  },
+  {
+    "name": "TestMPPSingleDistinct3Stage",
+    "cases": [
+      "set @@tidb_allow_mpp=1;set @@tidb_enforce_mpp=1;",
+      "EXPLAIN select count(distinct b) from t;",
+      "EXPLAIN select count(distinct c) from t;",
+      "EXPLAIN select count(distinct e) from t;",
+      "EXPLAIN select count(distinct a,b,c,e) from t;",
+      "EXPLAIN select count(distinct c), count(a), count(*) from t;",
+      "EXPLAIN select sum(b), count(a), count(*), count(distinct c) from t;",
+      "EXPLAIN select sum(b+a), count(*), count(distinct c), count(a) from t having count(distinct c) > 2;",
+      "EXPLAIN select sum(b+a), count(*), count(a) from t having count(distinct c) > 2;",
+      "EXPLAIN select sum(b+a), max(b), count(distinct c), count(*) from t having count(a) > 2;",
+      "EXPLAIN select sum(b), count(distinct a, b, e), count(a+b) from t;",
+      "EXPLAIN select count(distinct b), json_objectagg(d,c) from t;",
+      "EXPLAIN select count(distinct c+a), count(a) from t;",
+      "EXPLAIN select sum(b), count(distinct c+a, b, e), count(a+b) from t;"
+    ]
   }
 ]

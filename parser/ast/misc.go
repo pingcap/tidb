@@ -22,7 +22,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/auth"
-	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -46,6 +45,7 @@ var (
 	_ StmtNode = &SetRoleStmt{}
 	_ StmtNode = &SetDefaultRoleStmt{}
 	_ StmtNode = &SetStmt{}
+	_ StmtNode = &SetSessionStatesStmt{}
 	_ StmtNode = &UseStmt{}
 	_ StmtNode = &FlushStmt{}
 	_ StmtNode = &KillStmt{}
@@ -265,7 +265,10 @@ type PlanReplayerStmt struct {
 	Stmt    StmtNode
 	Analyze bool
 	Load    bool
-	File    string
+	// File is used to store 2 cases:
+	// 1. plan replayer load 'file';
+	// 2. plan replayer dump explain <analyze> 'file'
+	File string
 	// Where is the where clause in select statement.
 	Where ExprNode
 	// OrderBy is the ordering expression list.
@@ -286,6 +289,10 @@ func (n *PlanReplayerStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("ANALYZE ")
 	}
 	if n.Stmt == nil {
+		if len(n.File) > 0 {
+			ctx.WriteString(n.File)
+			return nil
+		}
 		ctx.WriteKeyWord("SLOW QUERY")
 		if n.Where != nil {
 			ctx.WriteKeyWord(" WHERE ")
@@ -364,6 +371,9 @@ func (n *PlanReplayerStmt) Accept(v Visitor) (Node, bool) {
 type CompactReplicaKind string
 
 const (
+	// CompactReplicaKindAll means compacting both TiKV and TiFlash replicas.
+	CompactReplicaKindAll = "ALL"
+
 	// CompactReplicaKindTiFlash means compacting TiFlash replicas.
 	CompactReplicaKindTiFlash = "TIFLASH"
 
@@ -375,21 +385,32 @@ const (
 type CompactTableStmt struct {
 	stmtNode
 
-	Table       *TableName
-	ReplicaKind CompactReplicaKind
+	Table          *TableName
+	PartitionNames []model.CIStr
+	ReplicaKind    CompactReplicaKind
 }
 
 // Restore implements Node interface.
 func (n *CompactTableStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("ALTER TABLE ")
-	if err := n.Table.Restore(ctx); err != nil {
-		return errors.Annotate(err, "An error occurred while add table")
-	}
+	n.Table.restoreName(ctx)
 
-	// Note: There is only TiFlash replica available now. TiKV will be added later.
-	ctx.WriteKeyWord(" COMPACT ")
-	ctx.WriteKeyWord(string(n.ReplicaKind))
-	ctx.WriteKeyWord(" REPLICA")
+	ctx.WriteKeyWord(" COMPACT")
+	if len(n.PartitionNames) != 0 {
+		ctx.WriteKeyWord(" PARTITION ")
+		for i, partition := range n.PartitionNames {
+			if i != 0 {
+				ctx.WritePlain(",")
+			}
+			ctx.WriteName(partition.O)
+		}
+	}
+	if n.ReplicaKind != CompactReplicaKindAll {
+		ctx.WriteKeyWord(" ")
+		// Note: There is only TiFlash replica available now. TiKV will be added later.
+		ctx.WriteKeyWord(string(n.ReplicaKind))
+		ctx.WriteKeyWord(" REPLICA")
+	}
 	return nil
 }
 
@@ -498,8 +519,12 @@ type ExecuteStmt struct {
 	Name       string
 	UsingVars  []ExprNode
 	BinaryArgs interface{}
-	ExecID     uint32
+	PrepStmt   interface{} // the corresponding prepared statement
 	IdxInMulti int
+
+	// FromGeneralStmt indicates whether this execute-stmt is converted from a general query.
+	// e.g. select * from t where a>2 --> execute 'select * from t where a>?' using 2
+	FromGeneralStmt bool
 }
 
 // Restore implements Node interface.
@@ -618,7 +643,6 @@ const (
 func (n CompletionType) Restore(ctx *format.RestoreCtx) error {
 	switch n {
 	case CompletionTypeDefault:
-		break
 	case CompletionTypeChain:
 		ctx.WriteKeyWord(" AND CHAIN")
 	case CompletionTypeRelease:
@@ -660,11 +684,17 @@ type RollbackStmt struct {
 	stmtNode
 	// CompletionType overwrites system variable `completion_type` within transaction
 	CompletionType CompletionType
+	// SavepointName is the savepoint name.
+	SavepointName string
 }
 
 // Restore implements Node interface.
 func (n *RollbackStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("ROLLBACK")
+	if n.SavepointName != "" {
+		ctx.WritePlain(" TO ")
+		ctx.WritePlain(n.SavepointName)
+	}
 	if err := n.CompletionType.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred while restore RollbackStmt.CompletionType")
 	}
@@ -907,6 +937,8 @@ type KillStmt struct {
 	// So, "KILL TIDB" grammar is introduced, and it REQUIRES DIRECT client -> TiDB TOPOLOGY.
 	// TODO: The standard KILL grammar will be supported once we have global connectionID.
 	TiDBExtension bool
+
+	Expr ExprNode
 }
 
 // Restore implements Node interface.
@@ -918,7 +950,14 @@ func (n *KillStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.Query {
 		ctx.WriteKeyWord(" QUERY")
 	}
-	ctx.WritePlainf(" %d", n.ConnectionID)
+	if n.Expr != nil {
+		ctx.WriteKeyWord(" ")
+		if err := n.Expr.Restore(ctx); err != nil {
+			return errors.Trace(err)
+		}
+	} else {
+		ctx.WritePlainf(" %d", n.ConnectionID)
+	}
 	return nil
 }
 
@@ -929,6 +968,48 @@ func (n *KillStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*KillStmt)
+	return v.Leave(n)
+}
+
+// SavepointStmt is the statement of SAVEPOINT.
+type SavepointStmt struct {
+	stmtNode
+	// Name is the savepoint name.
+	Name string
+}
+
+// Restore implements Node interface.
+func (n *SavepointStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("SAVEPOINT ")
+	ctx.WritePlain(n.Name)
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *SavepointStmt) Accept(v Visitor) (Node, bool) {
+	newNode, _ := v.Enter(n)
+	n = newNode.(*SavepointStmt)
+	return v.Leave(n)
+}
+
+// ReleaseSavepointStmt is the statement of RELEASE SAVEPOINT.
+type ReleaseSavepointStmt struct {
+	stmtNode
+	// Name is the savepoint name.
+	Name string
+}
+
+// Restore implements Node interface.
+func (n *ReleaseSavepointStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("RELEASE SAVEPOINT ")
+	ctx.WritePlain(n.Name)
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *ReleaseSavepointStmt) Accept(v Visitor) (Node, bool) {
+	newNode, _ := v.Enter(n)
+	n = newNode.(*ReleaseSavepointStmt)
 	return v.Leave(n)
 }
 
@@ -999,11 +1080,33 @@ func (n *SetConfigStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*SetConfigStmt)
-	if node, ok := n.Value.Accept(v); !ok {
+	node, ok := n.Value.Accept(v)
+	if !ok {
 		return n, false
-	} else {
-		n.Value = node.(ExprNode)
 	}
+	n.Value = node.(ExprNode)
+	return v.Leave(n)
+}
+
+// SetSessionStatesStmt is a statement to restore session states.
+type SetSessionStatesStmt struct {
+	stmtNode
+
+	SessionStates string
+}
+
+func (n *SetSessionStatesStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("SET SESSION_STATES ")
+	ctx.WriteString(n.SessionStates)
+	return nil
+}
+
+func (n *SetSessionStatesStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*SetSessionStatesStmt)
 	return v.Leave(n)
 }
 
@@ -1251,8 +1354,8 @@ func (n *UserSpec) EncodedPassword() (string, bool) {
 	opt := n.AuthOpt
 	if opt.ByAuthString {
 		switch opt.AuthPlugin {
-		case mysql.AuthCachingSha2Password:
-			return auth.NewSha2Password(opt.AuthString), true
+		case mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:
+			return auth.NewHashPassword(opt.AuthString, opt.AuthPlugin), true
 		case mysql.AuthSocket:
 			return "", true
 		default:
@@ -1271,6 +1374,10 @@ func (n *UserSpec) EncodedPassword() (string, bool) {
 		if len(opt.HashString) != mysql.SHAPWDHashLen {
 			return "", false
 		}
+	case mysql.AuthTiDBSM3Password:
+		if len(opt.HashString) != mysql.SM3PWDHashLen {
+			return "", false
+		}
 	case "", mysql.AuthNativePassword:
 		if len(opt.HashString) != (mysql.PWDHashLen+1) || !strings.HasPrefix(opt.HashString, "*") {
 			return "", false
@@ -1282,22 +1389,12 @@ func (n *UserSpec) EncodedPassword() (string, bool) {
 	return opt.HashString, true
 }
 
-const (
-	TlsNone = iota
-	Ssl
-	X509
-	Cipher
-	Issuer
-	Subject
-	SAN
-)
-
-type TLSOption struct {
-	Type  int
+type AuthTokenOrTLSOption struct {
+	Type  AuthTokenOrTLSOptionType
 	Value string
 }
 
-func (t *TLSOption) Restore(ctx *format.RestoreCtx) error {
+func (t *AuthTokenOrTLSOption) Restore(ctx *format.RestoreCtx) error {
 	switch t.Type {
 	case TlsNone:
 		ctx.WriteKeyWord("NONE")
@@ -1317,10 +1414,49 @@ func (t *TLSOption) Restore(ctx *format.RestoreCtx) error {
 	case SAN:
 		ctx.WriteKeyWord("SAN ")
 		ctx.WriteString(t.Value)
+	case TokenIssuer:
+		ctx.WriteKeyWord("TOKEN_ISSUER ")
+		ctx.WriteString(t.Value)
 	default:
-		return errors.Errorf("Unsupported TLSOption.Type %d", t.Type)
+		return errors.Errorf("Unsupported AuthTokenOrTLSOption.Type %d", t.Type)
 	}
 	return nil
+}
+
+type AuthTokenOrTLSOptionType int
+
+const (
+	TlsNone AuthTokenOrTLSOptionType = iota
+	Ssl
+	X509
+	Cipher
+	Issuer
+	Subject
+	SAN
+	TokenIssuer
+)
+
+func (t AuthTokenOrTLSOptionType) String() string {
+	switch t {
+	case TlsNone:
+		return "NONE"
+	case Ssl:
+		return "SSL"
+	case X509:
+		return "X509"
+	case Cipher:
+		return "CIPHER"
+	case Issuer:
+		return "ISSUER"
+	case Subject:
+		return "SUBJECT"
+	case SAN:
+		return "SAN"
+	case TokenIssuer:
+		return "TOKEN_ISSUER"
+	default:
+		return "UNKNOWN"
+	}
 }
 
 const (
@@ -1359,6 +1495,9 @@ const (
 	PasswordExpireInterval
 	Lock
 	Unlock
+
+	UserCommentType
+	UserAttributeType
 )
 
 type PasswordOrLockOption struct {
@@ -1388,17 +1527,34 @@ func (p *PasswordOrLockOption) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
+type CommentOrAttributeOption struct {
+	Type  int
+	Value string
+}
+
+func (c *CommentOrAttributeOption) Restore(ctx *format.RestoreCtx) error {
+	if c.Type == UserCommentType {
+		ctx.WriteKeyWord(" COMMENT ")
+		ctx.WriteString(c.Value)
+	} else if c.Type == UserAttributeType {
+		ctx.WriteKeyWord(" ATTRIBUTE ")
+		ctx.WriteString(c.Value)
+	}
+	return nil
+}
+
 // CreateUserStmt creates user account.
-// See https://dev.mysql.com/doc/refman/5.7/en/create-user.html
+// See https://dev.mysql.com/doc/refman/8.0/en/create-user.html
 type CreateUserStmt struct {
 	stmtNode
 
-	IsCreateRole          bool
-	IfNotExists           bool
-	Specs                 []*UserSpec
-	TLSOptions            []*TLSOption
-	ResourceOptions       []*ResourceOption
-	PasswordOrLockOptions []*PasswordOrLockOption
+	IsCreateRole             bool
+	IfNotExists              bool
+	Specs                    []*UserSpec
+	AuthTokenOrTLSOptions    []*AuthTokenOrTLSOption
+	ResourceOptions          []*ResourceOption
+	PasswordOrLockOptions    []*PasswordOrLockOption
+	CommentOrAttributeOption *CommentOrAttributeOption
 }
 
 // Restore implements Node interface.
@@ -1420,16 +1576,16 @@ func (n *CreateUserStmt) Restore(ctx *format.RestoreCtx) error {
 		}
 	}
 
-	if len(n.TLSOptions) != 0 {
+	if len(n.AuthTokenOrTLSOptions) != 0 {
 		ctx.WriteKeyWord(" REQUIRE ")
 	}
 
-	for i, option := range n.TLSOptions {
+	for i, option := range n.AuthTokenOrTLSOptions {
 		if i != 0 {
 			ctx.WriteKeyWord(" AND ")
 		}
 		if err := option.Restore(ctx); err != nil {
-			return errors.Annotatef(err, "An error occurred while restore CreateUserStmt.TLSOptions[%d]", i)
+			return errors.Annotatef(err, "An error occurred while restore CreateUserStmt.AuthTokenOrTLSOptions[%d]", i)
 		}
 	}
 
@@ -1450,6 +1606,13 @@ func (n *CreateUserStmt) Restore(ctx *format.RestoreCtx) error {
 			return errors.Annotatef(err, "An error occurred while restore CreateUserStmt.PasswordOrLockOptions[%d]", i)
 		}
 	}
+
+	if n.CommentOrAttributeOption != nil {
+		if err := n.CommentOrAttributeOption.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore CreateUserStmt.CommentOrAttributeOption")
+		}
+	}
+
 	return nil
 }
 
@@ -1475,16 +1638,17 @@ func (n *CreateUserStmt) SecureText() string {
 }
 
 // AlterUserStmt modifies user account.
-// See https://dev.mysql.com/doc/refman/5.7/en/alter-user.html
+// See https://dev.mysql.com/doc/refman/8.0/en/alter-user.html
 type AlterUserStmt struct {
 	stmtNode
 
-	IfExists              bool
-	CurrentAuth           *AuthOption
-	Specs                 []*UserSpec
-	TLSOptions            []*TLSOption
-	ResourceOptions       []*ResourceOption
-	PasswordOrLockOptions []*PasswordOrLockOption
+	IfExists                 bool
+	CurrentAuth              *AuthOption
+	Specs                    []*UserSpec
+	AuthTokenOrTLSOptions    []*AuthTokenOrTLSOption
+	ResourceOptions          []*ResourceOption
+	PasswordOrLockOptions    []*PasswordOrLockOption
+	CommentOrAttributeOption *CommentOrAttributeOption
 }
 
 // Restore implements Node interface.
@@ -1509,16 +1673,16 @@ func (n *AlterUserStmt) Restore(ctx *format.RestoreCtx) error {
 		}
 	}
 
-	if len(n.TLSOptions) != 0 {
+	if len(n.AuthTokenOrTLSOptions) != 0 {
 		ctx.WriteKeyWord(" REQUIRE ")
 	}
 
-	for i, option := range n.TLSOptions {
+	for i, option := range n.AuthTokenOrTLSOptions {
 		if i != 0 {
 			ctx.WriteKeyWord(" AND ")
 		}
 		if err := option.Restore(ctx); err != nil {
-			return errors.Annotatef(err, "An error occurred while restore AlterUserStmt.TLSOptions[%d]", i)
+			return errors.Annotatef(err, "An error occurred while restore AlterUserStmt.AuthTokenOrTLSOptions[%d]", i)
 		}
 	}
 
@@ -1539,6 +1703,13 @@ func (n *AlterUserStmt) Restore(ctx *format.RestoreCtx) error {
 			return errors.Annotatef(err, "An error occurred while restore AlterUserStmt.PasswordOrLockOptions[%d]", i)
 		}
 	}
+
+	if n.CommentOrAttributeOption != nil {
+		if err := n.CommentOrAttributeOption.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore AlterUserStmt.CommentOrAttributeOption")
+		}
+	}
+
 	return nil
 }
 
@@ -1808,9 +1979,10 @@ type StatisticsSpec struct {
 
 // CreateStatisticsStmt is a statement to create extended statistics.
 // Examples:
-//   CREATE STATISTICS stats1 (cardinality) ON t(a, b, c);
-//   CREATE STATISTICS stats2 (dependency) ON t(a, b);
-//   CREATE STATISTICS stats3 (correlation) ON t(a, b);
+//
+//	CREATE STATISTICS stats1 (cardinality) ON t(a, b, c);
+//	CREATE STATISTICS stats2 (dependency) ON t(a, b);
+//	CREATE STATISTICS stats3 (correlation) ON t(a, b);
 type CreateStatisticsStmt struct {
 	stmtNode
 
@@ -1878,7 +2050,8 @@ func (n *CreateStatisticsStmt) Accept(v Visitor) (Node, bool) {
 
 // DropStatisticsStmt is a statement to drop extended statistics.
 // Examples:
-//   DROP STATISTICS stats1;
+//
+//	DROP STATISTICS stats1;
 type DropStatisticsStmt struct {
 	stmtNode
 
@@ -1954,6 +2127,7 @@ const (
 	AdminCleanupIndex
 	AdminCheckIndexRange
 	AdminShowDDLJobQueries
+	AdminShowDDLJobQueriesWithRange
 	AdminChecksumTable
 	AdminShowSlow
 	AdminShowNextRowID
@@ -2009,6 +2183,7 @@ const (
 )
 
 // ShowSlow is used for the following command:
+//
 //	admin show slow top [ internal | all] N
 //	admin show slow recent N
 type ShowSlow struct {
@@ -2041,6 +2216,12 @@ func (n *ShowSlow) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
+// LimitSimple is the struct for Admin statement limit option.
+type LimitSimple struct {
+	Count  uint64
+	Offset uint64
+}
+
 // AdminStmt is the struct for Admin statement.
 type AdminStmt struct {
 	stmtNode
@@ -2056,6 +2237,7 @@ type AdminStmt struct {
 	Plugins        []string
 	Where          ExprNode
 	StatementScope StatementScope
+	LimitSimple    LimitSimple
 }
 
 // Restore implements Node interface.
@@ -2150,6 +2332,9 @@ func (n *AdminStmt) Restore(ctx *format.RestoreCtx) error {
 	case AdminShowDDLJobQueries:
 		ctx.WriteKeyWord("SHOW DDL JOB QUERIES ")
 		restoreJobIDs()
+	case AdminShowDDLJobQueriesWithRange:
+		ctx.WriteKeyWord("SHOW DDL JOB QUERIES LIMIT ")
+		ctx.WritePlainf("%d, %d", n.LimitSimple.Offset, n.LimitSimple.Count)
 	case AdminShowSlow:
 		ctx.WriteKeyWord("SHOW SLOW ")
 		if err := n.ShowSlow.Restore(ctx); err != nil {
@@ -2280,11 +2465,10 @@ func (n *PrivElem) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord(n.Name)
 	} else {
 		str, ok := mysql.Priv2Str[n.Priv]
-		if ok {
-			ctx.WriteKeyWord(str)
-		} else {
+		if !ok {
 			return errors.New("Undefined privilege type")
 		}
+		ctx.WriteKeyWord(str)
 	}
 	if n.Cols != nil {
 		ctx.WritePlain(" (")
@@ -2497,12 +2681,12 @@ func (n *RevokeRoleStmt) Accept(v Visitor) (Node, bool) {
 type GrantStmt struct {
 	stmtNode
 
-	Privs      []*PrivElem
-	ObjectType ObjectTypeType
-	Level      *GrantLevel
-	Users      []*UserSpec
-	TLSOptions []*TLSOption
-	WithGrant  bool
+	Privs                 []*PrivElem
+	ObjectType            ObjectTypeType
+	Level                 *GrantLevel
+	Users                 []*UserSpec
+	AuthTokenOrTLSOptions []*AuthTokenOrTLSOption
+	WithGrant             bool
 }
 
 // Restore implements Node interface.
@@ -2537,16 +2721,16 @@ func (n *GrantStmt) Restore(ctx *format.RestoreCtx) error {
 			return errors.Annotatef(err, "An error occurred while restore GrantStmt.Users[%d]", i)
 		}
 	}
-	if n.TLSOptions != nil {
-		if len(n.TLSOptions) != 0 {
+	if n.AuthTokenOrTLSOptions != nil {
+		if len(n.AuthTokenOrTLSOptions) != 0 {
 			ctx.WriteKeyWord(" REQUIRE ")
 		}
-		for i, option := range n.TLSOptions {
+		for i, option := range n.AuthTokenOrTLSOptions {
 			if i != 0 {
 				ctx.WriteKeyWord(" AND ")
 			}
 			if err := option.Restore(ctx); err != nil {
-				return errors.Annotatef(err, "An error occurred while restore GrantStmt.TLSOptions[%d]", i)
+				return errors.Annotatef(err, "An error occurred while restore GrantStmt.AuthTokenOrTLSOptions[%d]", i)
 			}
 		}
 	}
@@ -3466,7 +3650,7 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 	}
 	// Hints without args except query block.
 	switch n.HintName.L {
-	case "hash_agg", "stream_agg", "agg_to_cop", "read_consistent_replica", "no_index_merge", "qb_name", "ignore_plan_cache", "limit_to_cop", "straight_join":
+	case "mpp_1phase_agg", "mpp_2phase_agg", "hash_agg", "stream_agg", "agg_to_cop", "read_consistent_replica", "no_index_merge", "qb_name", "ignore_plan_cache", "limit_to_cop", "straight_join", "merge", "no_decorrelate":
 		ctx.WritePlain(")")
 		return nil
 	}
@@ -3479,7 +3663,7 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlainf("%d", n.HintData.(uint64))
 	case "nth_plan":
 		ctx.WritePlainf("%d", n.HintData.(int64))
-	case "tidb_hj", "tidb_smj", "tidb_inlj", "hash_join", "merge_join", "inl_join", "broadcast_join", "inl_hash_join", "inl_merge_join", "leading":
+	case "tidb_hj", "tidb_smj", "tidb_inlj", "hash_join", "hash_join_build", "hash_join_probe", "merge_join", "inl_join", "broadcast_join", "shuffle_join", "inl_hash_join", "inl_merge_join", "leading":
 		for i, table := range n.Tables {
 			if i != 0 {
 				ctx.WritePlain(", ")
@@ -3547,27 +3731,6 @@ func (n *TableOptimizerHint) Accept(v Visitor) (Node, bool) {
 type TextString struct {
 	Value           string
 	IsBinaryLiteral bool
-}
-
-// TransformTextStrings converts a slice of TextString to strings.
-// This is only used by enum/set strings.
-func TransformTextStrings(ts []*TextString, _ string) []string {
-	// The UTF-8 encoding rather than other encoding is used
-	// because parser is not possible to determine the "real"
-	// charset that a binary literal string should be converted to.
-	enc := charset.EncodingUTF8Impl
-	ret := make([]string, 0, len(ts))
-	for _, t := range ts {
-		if !t.IsBinaryLiteral {
-			ret = append(ret, t.Value)
-		} else {
-			// Validate the binary literal string.
-			// See https://github.com/pingcap/tidb/issues/30740.
-			r, _ := enc.Transform(nil, charset.HackSlice(t.Value), charset.OpDecodeNoErr)
-			ret = append(ret, charset.HackString(r))
-		}
-	}
-	return ret
 }
 
 type BinaryLiteral interface {

@@ -1,0 +1,19 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "noop",
+    srcs = ["noop.go"],
+    importpath = "github.com/pingcap/tidb/br/pkg/lightning/backend/noop",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//br/pkg/lightning/backend",
+        "//br/pkg/lightning/backend/kv",
+        "//br/pkg/lightning/config",
+        "//br/pkg/lightning/log",
+        "//br/pkg/lightning/verification",
+        "//parser/model",
+        "//table",
+        "//types",
+        "@com_github_google_uuid//:uuid",
+    ],
+)

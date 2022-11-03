@@ -44,7 +44,7 @@ func populateCache(tsr *RemoteTopSQLReporter, begin, end int, timestamp uint64) 
 	for i := begin; i < end; i++ {
 		key := []byte("planDigest" + strconv.Itoa(i+1))
 		value := "planNormalized" + strconv.Itoa(i+1)
-		tsr.RegisterPlan(key, value)
+		tsr.RegisterPlan(key, value, false)
 	}
 	// collect
 	var records []collector.SQLCPUTimeRecord
@@ -63,12 +63,16 @@ func reportCache(tsr *RemoteTopSQLReporter) {
 	tsr.doReport(&ReportData{
 		DataRecords: tsr.collecting.take().getReportRecords().toProto(),
 		SQLMetas:    tsr.normalizedSQLMap.take().toProto(),
-		PlanMetas:   tsr.normalizedPlanMap.take().toProto(tsr.decodePlan),
+		PlanMetas:   tsr.normalizedPlanMap.take().toProto(tsr.decodePlan, tsr.compressPlan),
 	})
 }
 
 func mockPlanBinaryDecoderFunc(plan string) (string, error) {
 	return plan, nil
+}
+
+func mockPlanBinaryCompressFunc(plan []byte) string {
+	return string(plan)
 }
 
 type mockDataSink struct {
@@ -94,7 +98,7 @@ func setupRemoteTopSQLReporter(maxStatementsNum, interval int) (*RemoteTopSQLRep
 	topsqlstate.GlobalState.MaxCollect.Store(10000)
 	topsqlstate.GlobalState.ReportIntervalSeconds.Store(int64(interval))
 	topsqlstate.EnableTopSQL()
-	ts := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
+	ts := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc, mockPlanBinaryCompressFunc)
 	ds := newMockDataSink2()
 	if err := ts.Register(ds); err != nil {
 		panic(err)
@@ -194,7 +198,7 @@ func newSQLCPUTimeRecord(tsr *RemoteTopSQLReporter, sqlID int, cpuTimeMs uint32)
 
 	key = []byte("planDigest" + strconv.Itoa(sqlID))
 	value = "planNormalized" + strconv.Itoa(sqlID)
-	tsr.RegisterPlan(key, value)
+	tsr.RegisterPlan(key, value, false)
 
 	return collector.SQLCPUTimeRecord{
 		SQLDigest:  []byte("sqlDigest" + strconv.Itoa(sqlID)),
@@ -317,7 +321,7 @@ func TestCollectCapacity(t *testing.T) {
 		for i := 0; i < n; i++ {
 			key := []byte("planDigest" + strconv.Itoa(i))
 			value := "planNormalized" + strconv.Itoa(i)
-			tsr.RegisterPlan(key, value)
+			tsr.RegisterPlan(key, value, false)
 		}
 	}
 	genRecord := func(n int) []collector.SQLCPUTimeRecord {
@@ -391,7 +395,7 @@ func TestMultipleDataSinks(t *testing.T) {
 	topsqlstate.GlobalState.ReportIntervalSeconds.Store(1)
 	topsqlstate.EnableTopSQL()
 
-	tsr := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
+	tsr := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc, mockPlanBinaryCompressFunc)
 
 	var chs []chan *ReportData
 	for i := 0; i < 7; i++ {
@@ -477,7 +481,7 @@ func TestMultipleDataSinks(t *testing.T) {
 func TestReporterWorker(t *testing.T) {
 	topsqlstate.GlobalState.ReportIntervalSeconds.Store(3)
 
-	r := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
+	r := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc, mockPlanBinaryCompressFunc)
 	r.Start()
 	defer r.Close()
 

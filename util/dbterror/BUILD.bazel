@@ -1,0 +1,34 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "dbterror",
+    srcs = [
+        "ddl_terror.go",
+        "terror.go",
+    ],
+    importpath = "github.com/pingcap/tidb/util/dbterror",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//errno",
+        "//parser/mysql",
+        "//parser/terror",
+    ],
+)
+
+go_test(
+    name = "dbterror_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "terror_test.go",
+    ],
+    embed = [":dbterror"],
+    flaky = True,
+    deps = [
+        "//errno",
+        "//testkit/testsetup",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

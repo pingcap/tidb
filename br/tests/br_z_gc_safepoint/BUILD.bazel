@@ -1,0 +1,20 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "br_z_gc_safepoint_lib",
+    srcs = ["gc.go"],
+    importpath = "github.com/pingcap/tidb/br/tests/br_z_gc_safepoint",
+    visibility = ["//visibility:private"],
+    deps = [
+        "@com_github_pingcap_log//:log",
+        "@com_github_tikv_client_go_v2//oracle",
+        "@com_github_tikv_pd_client//:client",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_binary(
+    name = "br_z_gc_safepoint",
+    embed = [":br_z_gc_safepoint_lib"],
+    visibility = ["//visibility:public"],
+)

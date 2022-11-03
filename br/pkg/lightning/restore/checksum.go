@@ -32,9 +32,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
-	tidbcfg "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/oracle"
@@ -68,7 +66,7 @@ type ChecksumManager interface {
 	Checksum(ctx context.Context, tableInfo *checkpoints.TidbTableInfo) (*RemoteChecksum, error)
 }
 
-func newChecksumManager(ctx context.Context, rc *Controller) (ChecksumManager, error) {
+func newChecksumManager(ctx context.Context, rc *Controller, store kv.Storage) (ChecksumManager, error) {
 	// if we don't need checksum, just return nil
 	if rc.cfg.TikvImporter.Backend == config.BackendTiDB || rc.cfg.PostRestore.Checksum == config.OpLevelOff {
 		return nil, nil
@@ -85,19 +83,6 @@ func newChecksumManager(ctx context.Context, rc *Controller) (ChecksumManager, e
 	if pdVersion.Major >= 4 {
 		tlsOpt := rc.tls.ToPDSecurityOption()
 		pdCli, err := pd.NewClientWithContext(ctx, []string{pdAddr}, tlsOpt)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-
-		// TODO: make tikv.Driver{}.Open use arguments instead of global variables
-		if tlsOpt.CAPath != "" {
-			conf := tidbcfg.GetGlobalConfig()
-			conf.Security.ClusterSSLCA = tlsOpt.CAPath
-			conf.Security.ClusterSSLCert = tlsOpt.CertPath
-			conf.Security.ClusterSSLKey = tlsOpt.KeyPath
-			tidbcfg.StoreGlobalConfig(conf)
-		}
-		store, err := driver.TiKVDriver{}.Open(fmt.Sprintf("tikv://%s?disableGC=true", pdAddr))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -138,7 +123,7 @@ func (e *tidbChecksumExecutor) Checksum(ctx context.Context, tableInfo *checkpoi
 
 	tableName := common.UniqueTable(tableInfo.DB, tableInfo.Name)
 
-	task := log.With(zap.String("table", tableName)).Begin(zap.InfoLevel, "remote checksum")
+	task := log.FromContext(ctx).With(zap.String("table", tableName)).Begin(zap.InfoLevel, "remote checksum")
 
 	// ADMIN CHECKSUM TABLE <table>,<table>  example.
 	// 	mysql> admin checksum table test.t;
@@ -153,7 +138,9 @@ func (e *tidbChecksumExecutor) Checksum(ctx context.Context, tableInfo *checkpoi
 		"ADMIN CHECKSUM TABLE "+tableName, &cs.Schema, &cs.Table, &cs.Checksum, &cs.TotalKVs, &cs.TotalBytes,
 	)
 	dur := task.End(zap.ErrorLevel, err)
-	metric.ChecksumSecondsHistogram.Observe(dur.Seconds())
+	if m, ok := metric.FromContext(ctx); ok {
+		m.ChecksumSecondsHistogram.Observe(dur.Seconds())
+	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -169,11 +156,13 @@ func DoChecksum(ctx context.Context, table *checkpoints.TidbTableInfo) (*RemoteC
 		return nil, errors.New("No gcLifeTimeManager found in context, check context initialization")
 	}
 
-	task := log.With(zap.String("table", table.Name)).Begin(zap.InfoLevel, "remote checksum")
+	task := log.FromContext(ctx).With(zap.String("table", table.Name)).Begin(zap.InfoLevel, "remote checksum")
 
 	cs, err := manager.Checksum(ctx, table)
 	dur := task.End(zap.ErrorLevel, err)
-	metric.ChecksumSecondsHistogram.Observe(dur.Seconds())
+	if m, ok := metric.FromContext(ctx); ok {
+		m.ChecksumSecondsHistogram.Observe(dur.Seconds())
+	}
 
 	return cs, err
 }
@@ -228,7 +217,7 @@ func (m *gcLifeTimeManager) removeOneJob(ctx context.Context, db *sql.DB) {
 				"UPDATE mysql.tidb SET VARIABLE_VALUE = '%s' WHERE VARIABLE_NAME = 'tikv_gc_life_time'",
 				m.oriGCLifeTime,
 			)
-			log.L().Warn("revert GC lifetime failed, please reset the GC lifetime manually after Lightning completed",
+			log.FromContext(ctx).Warn("revert GC lifetime failed, please reset the GC lifetime manually after Lightning completed",
 				zap.String("query", query),
 				log.ShortError(err),
 			)
@@ -305,7 +294,7 @@ func (e *tikvChecksumManager) checksumDB(ctx context.Context, tableInfo *checkpo
 			}, nil
 		}
 
-		log.L().Warn("remote checksum failed", zap.String("db", tableInfo.DB),
+		log.FromContext(ctx).Warn("remote checksum failed", zap.String("db", tableInfo.DB),
 			zap.String("table", tableInfo.Name), zap.Error(err),
 			zap.Int("concurrency", distSQLScanConcurrency), zap.Int("retry", i))
 
@@ -438,7 +427,7 @@ func (m *gcTTLManager) updateGCTTL(ctx context.Context) error {
 }
 
 func (m *gcTTLManager) doUpdateGCTTL(ctx context.Context, ts uint64) error {
-	log.L().Debug("update PD safePoint limit with TTL",
+	log.FromContext(ctx).Debug("update PD safePoint limit with TTL",
 		zap.Uint64("currnet_ts", ts))
 	var err error
 	if ts > 0 {
@@ -456,7 +445,7 @@ func (m *gcTTLManager) start(ctx context.Context) {
 
 	updateGCTTL := func() {
 		if err := m.updateGCTTL(ctx); err != nil {
-			log.L().Warn("failed to update service safe point, checksum may fail if gc triggered", zap.Error(err))
+			log.FromContext(ctx).Warn("failed to update service safe point, checksum may fail if gc triggered", zap.Error(err))
 		}
 	}
 
@@ -467,7 +456,7 @@ func (m *gcTTLManager) start(ctx context.Context) {
 		for {
 			select {
 			case <-ctx.Done():
-				log.L().Info("service safe point keeper exited")
+				log.FromContext(ctx).Info("service safe point keeper exited")
 				return
 			case <-updateTick.C:
 				updateGCTTL()

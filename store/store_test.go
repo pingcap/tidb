@@ -653,7 +653,8 @@ func TestIsolationInc(t *testing.T) {
 			defer wg.Done()
 			for j := 0; j < 100; j++ {
 				var id int64
-				err := kv.RunInNewTxn(context.Background(), store, true, func(ctx context.Context, txn kv.Transaction) error {
+				ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
+				err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
 					var err1 error
 					id, err1 = kv.IncInt64(txn, []byte("key"), 1)
 					return err1
@@ -698,12 +699,13 @@ func TestIsolationMultiInc(t *testing.T) {
 
 	var wg sync.WaitGroup
 
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
 	wg.Add(threadCnt)
 	for i := 0; i < threadCnt; i++ {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < incCnt; j++ {
-				err := kv.RunInNewTxn(context.Background(), store, true, func(ctx context.Context, txn kv.Transaction) error {
+				err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
 					for _, key := range keys {
 						_, err1 := kv.IncInt64(txn, key, 1)
 						if err1 != nil {
@@ -720,7 +722,7 @@ func TestIsolationMultiInc(t *testing.T) {
 
 	wg.Wait()
 
-	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		for _, key := range keys {
 			id, err1 := kv.GetInt64(context.TODO(), txn, key)
 			if err1 != nil {

@@ -58,7 +58,11 @@ func (g *gbkBinCollator) Compare(a, b string) int {
 
 // Key implement Collator interface.
 func (g *gbkBinCollator) Key(str string) []byte {
-	str = truncateTailingSpace(str)
+	return g.KeyWithoutTrimRightSpace(truncateTailingSpace(str))
+}
+
+// KeyWithoutTrimRightSpace implement Collator interface.
+func (g *gbkBinCollator) KeyWithoutTrimRightSpace(str string) []byte {
 	buf := make([]byte, 0, len(str))
 	for len(str) > 0 {
 		l := runeLen(str[0])
@@ -75,7 +79,7 @@ func (g *gbkBinCollator) Key(str string) []byte {
 }
 
 // Pattern implements Collator interface.
-func (g *gbkBinCollator) Pattern() WildcardPattern {
+func (*gbkBinCollator) Pattern() WildcardPattern {
 	return &gbkBinPattern{}
 }
 

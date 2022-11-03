@@ -18,7 +18,6 @@ import (
 	"context"
 	gjson "encoding/json"
 	"fmt"
-	"sort"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain/infosync"
@@ -30,16 +29,17 @@ import (
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"golang.org/x/exp/slices"
 )
 
 type showPlacementLabelsResultBuilder struct {
 	labelKey2values map[string]interface{}
 }
 
-func (b *showPlacementLabelsResultBuilder) AppendStoreLabels(bj json.BinaryJSON) error {
+func (b *showPlacementLabelsResultBuilder) AppendStoreLabels(bj types.BinaryJSON) error {
 	if b.labelKey2values == nil {
 		b.labelKey2values = make(map[string]interface{})
 	}
@@ -53,7 +53,7 @@ func (b *showPlacementLabelsResultBuilder) AppendStoreLabels(bj json.BinaryJSON)
 		return nil
 	}
 
-	if bj.TypeCode != json.TypeCodeArray {
+	if bj.TypeCode != types.JSONTypeCodeArray {
 		return errors.New("only array or null type is allowed")
 	}
 
@@ -83,7 +83,7 @@ func (b *showPlacementLabelsResultBuilder) BuildRows() ([][]interface{}, error) 
 			return nil, errors.Trace(err)
 		}
 
-		valuesJSON := json.BinaryJSON{}
+		valuesJSON := types.BinaryJSON{}
 		err = valuesJSON.UnmarshalJSON(d)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -101,7 +101,7 @@ func (b *showPlacementLabelsResultBuilder) sortMapKeys(m map[string]interface{})
 		sorted = append(sorted, key)
 	}
 
-	sort.Strings(sorted)
+	slices.Sort(sorted)
 	return sorted
 }
 
@@ -251,7 +251,7 @@ func (e *ShowExec) fetchShowPlacement(ctx context.Context) error {
 
 func (e *ShowExec) fetchAllPlacementPolicies() error {
 	policies := e.is.AllPlacementPolicies()
-	sort.Slice(policies, func(i, j int) bool { return policies[i].Name.O < policies[j].Name.O })
+	slices.SortFunc(policies, func(i, j *model.PolicyInfo) bool { return i.Name.O < j.Name.O })
 	for _, policy := range policies {
 		name := policy.Name
 		settings := policy.PlacementSettings
@@ -266,7 +266,7 @@ func (e *ShowExec) fetchAllDBPlacements(ctx context.Context, scheduleState map[i
 	activeRoles := e.ctx.GetSessionVars().ActiveRoles
 
 	dbs := e.is.AllSchemas()
-	sort.Slice(dbs, func(i, j int) bool { return dbs[i].Name.O < dbs[j].Name.O })
+	slices.SortFunc(dbs, func(i, j *model.DBInfo) bool { return i.Name.O < j.Name.O })
 
 	for _, dbInfo := range dbs {
 		if e.ctx.GetSessionVars().User != nil && checker != nil && !checker.DBIsVisible(activeRoles, dbInfo.Name.O) {
@@ -290,18 +290,20 @@ func (e *ShowExec) fetchAllDBPlacements(ctx context.Context, scheduleState map[i
 	return nil
 }
 
+type tableRowSet struct {
+	name string
+	rows [][]interface{}
+}
+
 func (e *ShowExec) fetchAllTablePlacements(ctx context.Context, scheduleState map[int64]infosync.PlacementScheduleState) error {
 	checker := privilege.GetPrivilegeManager(e.ctx)
 	activeRoles := e.ctx.GetSessionVars().ActiveRoles
 
 	dbs := e.is.AllSchemas()
-	sort.Slice(dbs, func(i, j int) bool { return dbs[i].Name.O < dbs[j].Name.O })
+	slices.SortFunc(dbs, func(i, j *model.DBInfo) bool { return i.Name.O < j.Name.O })
 
 	for _, dbInfo := range dbs {
-		tableRowSets := make([]struct {
-			name string
-			rows [][]interface{}
-		}, 0)
+		tableRowSets := make([]tableRowSet, 0)
 
 		for _, tbl := range e.is.SchemaTables(dbInfo.Name) {
 			tblInfo := tbl.Meta()
@@ -357,7 +359,7 @@ func (e *ShowExec) fetchAllTablePlacements(ctx context.Context, scheduleState ma
 			}
 		}
 
-		sort.Slice(tableRowSets, func(i, j int) bool { return tableRowSets[i].name < tableRowSets[j].name })
+		slices.SortFunc(tableRowSets, func(i, j tableRowSet) bool { return i.name < j.name })
 		for _, rowSet := range tableRowSets {
 			for _, row := range rowSet.rows {
 				e.appendRow(row)

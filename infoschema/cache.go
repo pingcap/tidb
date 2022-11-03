@@ -67,7 +67,26 @@ func (h *InfoCache) GetByVersion(version int64) InfoSchema {
 	i := sort.Search(len(h.cache), func(i int) bool {
 		return h.cache[i].SchemaMetaVersion() <= version
 	})
-	if i < len(h.cache) && h.cache[i].SchemaMetaVersion() == version {
+
+	// `GetByVersion` is allowed to load the latest schema that is less than argument `version`.
+	// Consider cache has values [10, 9, _, _, 6, 5, 4, 3, 2, 1], version 8 and 7 is empty because of the diff is empty.
+	// If we want to get version 8, we can return version 6 because v7 and v8 do not change anything, they are totally the same,
+	// in this case the `i` will not be 0.
+	// If i == 0, it means the argument version is `10`, or greater than `10`, if `version` is 10
+	// `h.cache[i].SchemaMetaVersion() == version` will be true, so we can return the latest schema, return nil if not.
+	// The following code is equivalent to:
+	// ```
+	//		if h.GetLatest().SchemaMetaVersion() < version {
+	//			return nil
+	//		}
+	//
+	//		if i < len(h.cache) {
+	//			hitVersionCounter.Inc()
+	//			return h.cache[i]
+	//		}
+	// ```
+
+	if i < len(h.cache) && (i != 0 || h.cache[i].SchemaMetaVersion() == version) {
 		hitVersionCounter.Inc()
 		return h.cache[i]
 	}

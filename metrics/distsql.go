@@ -53,12 +53,26 @@ var (
 			Help:      "number of partial results for each query.",
 		},
 	)
-	DistSQLCoprCacheHistogram = prometheus.NewHistogramVec(
-		prometheus.HistogramOpts{
+	DistSQLCoprCacheCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "distsql",
 			Name:      "copr_cache",
 			Help:      "coprocessor cache hit, evict and miss number",
-			Buckets:   prometheus.ExponentialBuckets(1, 2, 16),
 		}, []string{LblType})
+	DistSQLCoprClosestReadCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "distsql",
+			Name:      "copr_closest_read",
+			Help:      "counter of total copr read local read hit.",
+		}, []string{LblType})
+	DistSQLCoprRespBodySize = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "distsql",
+			Name:      "copr_resp_size",
+			Help:      "copr task response data size in bytes.",
+			Buckets:   prometheus.ExponentialBuckets(1024, 2, 20),
+		}, []string{LblStore})
 )

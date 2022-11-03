@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/types"
@@ -53,7 +54,7 @@ func TestParquetParser(t *testing.T) {
 	verifyRow := func(i int) {
 		require.Equal(t, int64(i+1), reader.lastRow.RowID)
 		require.Len(t, reader.lastRow.Row, 2)
-		require.Equal(t, types.NewCollationStringDatum(strconv.Itoa(i), ""), reader.lastRow.Row[0])
+		require.Equal(t, types.NewCollationStringDatum(strconv.Itoa(i), "utf8mb4_bin"), reader.lastRow.Row[0])
 		require.Equal(t, types.NewIntDatum(int64(i)), reader.lastRow.Row[1])
 	}
 
@@ -162,7 +163,8 @@ func TestParquetVariousTypes(t *testing.T) {
 	writer, err = writer2.NewParquetWriter(pf, td, 2)
 	require.NoError(t, err)
 	for i, testCase := range cases {
-		val := testCase[0].(int32)
+		val, ok := testCase[0].(int32)
+		require.True(t, ok)
 		td.Decimal1 = val
 		if i%2 == 0 {
 			td.DecimalRef = &val
@@ -182,7 +184,9 @@ func TestParquetVariousTypes(t *testing.T) {
 
 	for i, testCase := range cases {
 		assert.NoError(t, reader.ReadRow())
-		vals := []types.Datum{types.NewCollationStringDatum(testCase[1].(string), "")}
+		strDatum, ok := testCase[1].(string)
+		require.True(t, ok)
+		vals := []types.Datum{types.NewCollationStringDatum(strDatum, "")}
 		if i%2 == 0 {
 			vals = append(vals, vals[0])
 		} else {
@@ -196,6 +200,36 @@ func TestParquetVariousTypes(t *testing.T) {
 			assert.Equal(t, val.GetValue(), reader.lastRow.Row[i].GetValue())
 		}
 	}
+
+	type TestBool struct {
+		BoolVal bool `parquet:"name=bool_val, type=BOOLEAN"`
+	}
+
+	fileName = "test.bool.parquet"
+	testPath = filepath.Join(dir, fileName)
+	pf, err = local.NewLocalFileWriter(testPath)
+	require.NoError(t, err)
+	writer, err = writer2.NewParquetWriter(pf, new(TestBool), 2)
+	require.NoError(t, err)
+	require.NoError(t, writer.Write(&TestBool{false}))
+	require.NoError(t, writer.Write(&TestBool{true}))
+	require.NoError(t, writer.WriteStop())
+	require.NoError(t, pf.Close())
+
+	r, err = store.Open(context.TODO(), fileName)
+	require.NoError(t, err)
+	reader, err = NewParquetParser(context.TODO(), store, r, fileName)
+	require.NoError(t, err)
+	defer reader.Close()
+
+	// because we always reuse the datums in reader.lastRow.Row, so we can't directly
+	// compare will `DeepEqual` here
+	assert.NoError(t, reader.ReadRow())
+	assert.Equal(t, types.KindUint64, reader.lastRow.Row[0].Kind())
+	assert.Equal(t, uint64(0), reader.lastRow.Row[0].GetValue())
+	assert.NoError(t, reader.ReadRow())
+	assert.Equal(t, types.KindUint64, reader.lastRow.Row[0].Kind())
+	assert.Equal(t, uint64(1), reader.lastRow.Row[0].GetValue())
 }
 
 func TestParquetAurora(t *testing.T) {
@@ -253,4 +287,43 @@ func TestParquetAurora(t *testing.T) {
 	}
 
 	require.ErrorIs(t, parser.ReadRow(), io.EOF)
+}
+
+func TestHiveParquetParser(t *testing.T) {
+	name := "000000_0.parquet"
+	dir := "./parquet/"
+	store, err := storage.NewLocalStorage(dir)
+	require.NoError(t, err)
+	r, err := store.Open(context.TODO(), name)
+	require.NoError(t, err)
+	reader, err := NewParquetParser(context.TODO(), store, r, name)
+	require.NoError(t, err)
+	defer reader.Close()
+	// UTC+0:00
+	results := []time.Time{
+		time.Date(2022, 9, 10, 9, 9, 0, 0, time.UTC),
+		time.Date(1997, 8, 11, 2, 1, 10, 0, time.UTC),
+		time.Date(1995, 12, 31, 23, 0, 1, 0, time.UTC),
+		time.Date(2020, 2, 29, 23, 0, 0, 0, time.UTC),
+		time.Date(2038, 1, 19, 0, 0, 0, 0, time.UTC),
+	}
+
+	for i := 0; i < 5; i++ {
+		err = reader.ReadRow()
+		require.NoError(t, err)
+		lastRow := reader.LastRow()
+		require.Equal(t, 2, len(lastRow.Row))
+		require.Equal(t, types.KindString, lastRow.Row[1].Kind())
+		ts, err := time.Parse(utcTimeLayout, lastRow.Row[1].GetString())
+		require.NoError(t, err)
+		require.Equal(t, results[i], ts)
+	}
+}
+
+func TestNsecOutSideRange(t *testing.T) {
+	a := time.Date(2022, 9, 10, 9, 9, 0, 0, time.Now().Local().Location())
+	b := time.Unix(a.Unix(), 1000000000)
+	// For nano sec out of 999999999, time will automatically execute a
+	// carry operation. i.e. 1000000000 nsec => 1 sec
+	require.Equal(t, a.Add(1*time.Second), b)
 }

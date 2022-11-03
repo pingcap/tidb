@@ -244,8 +244,8 @@ func BenchmarkDoMatchNegative(b *testing.B) {
 
 func BenchmarkBuildStringFromLabels(b *testing.B) {
 	cases := []struct {
-		name   string
 		labels map[string]string
+		name   string
 	}{
 		{
 			name: "normal case",

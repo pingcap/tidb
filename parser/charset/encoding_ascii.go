@@ -33,17 +33,17 @@ type encodingASCII struct {
 }
 
 // Name implements Encoding interface.
-func (e *encodingASCII) Name() string {
+func (*encodingASCII) Name() string {
 	return CharsetASCII
 }
 
 // Tp implements Encoding interface.
-func (e *encodingASCII) Tp() EncodingTp {
+func (*encodingASCII) Tp() EncodingTp {
 	return EncodingTpASCII
 }
 
 // Peek implements Encoding interface.
-func (e *encodingASCII) Peek(src []byte) []byte {
+func (*encodingASCII) Peek(src []byte) []byte {
 	if len(src) == 0 {
 		return src
 	}
@@ -51,7 +51,7 @@ func (e *encodingASCII) Peek(src []byte) []byte {
 }
 
 // IsValid implements Encoding interface.
-func (e *encodingASCII) IsValid(src []byte) bool {
+func (*encodingASCII) IsValid(src []byte) bool {
 	srcLen := len(src)
 	for i := 0; i < srcLen; i++ {
 		if src[i] > go_unicode.MaxASCII {
@@ -61,6 +61,7 @@ func (e *encodingASCII) IsValid(src []byte) bool {
 	return true
 }
 
+// Transform implements Encoding interface.
 func (e *encodingASCII) Transform(dest *bytes.Buffer, src []byte, op Op) ([]byte, error) {
 	if e.IsValid(src) {
 		return src, nil
@@ -68,7 +69,8 @@ func (e *encodingASCII) Transform(dest *bytes.Buffer, src []byte, op Op) ([]byte
 	return e.encodingBase.Transform(dest, src, op)
 }
 
-func (e *encodingASCII) Foreach(src []byte, op Op, fn func(from, to []byte, ok bool) bool) {
+// Foreach implements Encoding interface.
+func (*encodingASCII) Foreach(src []byte, _ Op, fn func(from, to []byte, ok bool) bool) {
 	for i, w := 0, 0; i < len(src); i += w {
 		w = 1
 		ok := true

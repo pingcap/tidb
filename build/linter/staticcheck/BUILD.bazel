@@ -1,0 +1,26 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("//build/linter/staticcheck:def.bzl", "ANALYZERS")
+
+[
+    go_library(
+        name = analyzer,
+        srcs = [
+            "analyzer.go",
+            "util.go",
+        ],
+        importpath = "github.com/pingcap/tidb/build/linter/staticcheck/" + analyzer,
+        visibility = ["//visibility:public"],
+        x_defs = {"name": analyzer},
+        deps = [
+            "//build/linter/util",
+            "@co_honnef_go_tools//analysis/lint",
+            "@co_honnef_go_tools//quickfix",
+            "@co_honnef_go_tools//simple",
+            "@co_honnef_go_tools//staticcheck",
+            "@co_honnef_go_tools//stylecheck",
+            "@co_honnef_go_tools//unused",
+            "@org_golang_x_tools//go/analysis",
+        ],
+    )
+    for analyzer in ANALYZERS
+]

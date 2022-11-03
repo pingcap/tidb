@@ -1,0 +1,52 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "plugin",
+    srcs = [
+        "audit.go",
+        "const.go",
+        "errors.go",
+        "helper.go",
+        "plugin.go",
+        "spi.go",
+    ],
+    importpath = "github.com/pingcap/tidb/plugin",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//domain",
+        "//errno",
+        "//sessionctx/variable",
+        "//util",
+        "//util/dbterror",
+        "//util/logutil",
+        "@com_github_pingcap_errors//:errors",
+        "@io_etcd_go_etcd_client_v3//:client",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "plugin_test",
+    timeout = "short",
+    srcs = [
+        "const_test.go",
+        "helper_test.go",
+        "integration_test.go",
+        "main_test.go",
+        "plugin_test.go",
+        "spi_test.go",
+    ],
+    embed = [":plugin"],
+    flaky = True,
+    deps = [
+        "//kv",
+        "//parser/mysql",
+        "//server",
+        "//session",
+        "//sessionctx/variable",
+        "//testkit",
+        "//testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

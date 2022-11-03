@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -135,6 +136,14 @@ type ExternalStorageOptions struct {
 	// CheckPermissions check the given permission in New() function.
 	// make sure we can access the storage correctly before execute tasks.
 	CheckPermissions []Permission
+
+	// S3Retryer is the retryer for create s3 storage, if it is nil,
+	// defaultS3Retryer() will be used.
+	S3Retryer request.Retryer
+
+	// CheckObjectLockOptions check the s3 bucket has enabled the ObjectLock.
+	// if enabled. it will send the options to tikv.
+	CheckS3ObjectLockOptions bool
 }
 
 // Create creates ExternalStorage.

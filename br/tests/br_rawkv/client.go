@@ -141,7 +141,6 @@ func randGen(client *rawkv.Client, startKey, endKey []byte, maxLen int, concurre
 						errCh <- errors.Trace(err)
 					}
 				}
-
 			}
 		}()
 	}

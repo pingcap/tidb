@@ -1,0 +1,32 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "node",
+    srcs = [
+        "node.go",
+        "registry.go",
+    ],
+    importpath = "github.com/pingcap/tidb/tidb-binlog/node",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//util",
+        "//util/etcd",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_log//:log",
+        "@io_etcd_go_etcd_client_v3//:client",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "node_test",
+    timeout = "short",
+    srcs = ["registry_test.go"],
+    embed = [":node"],
+    flaky = True,
+    deps = [
+        "//util/etcd",
+        "@com_github_stretchr_testify//require",
+        "@io_etcd_go_etcd_tests_v3//integration",
+    ],
+)

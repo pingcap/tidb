@@ -1,0 +1,41 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "structure",
+    srcs = [
+        "hash.go",
+        "list.go",
+        "string.go",
+        "structure.go",
+        "type.go",
+    ],
+    importpath = "github.com/pingcap/tidb/structure",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//errno",
+        "//kv",
+        "//util/codec",
+        "//util/dbterror",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "structure_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "structure_test.go",
+    ],
+    embed = [":structure"],
+    flaky = True,
+    deps = [
+        "//kv",
+        "//parser/mysql",
+        "//parser/terror",
+        "//testkit",
+        "//testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

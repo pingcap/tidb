@@ -44,11 +44,12 @@ func (i *implicitDatabase) Enter(in ast.Node) (out ast.Node, skipChildren bool) 
 			i.hasImplicit = true
 		}
 		return in, true
+	default:
+		return in, i.hasImplicit
 	}
-	return in, i.hasImplicit
 }
 
-func (i *implicitDatabase) Leave(in ast.Node) (out ast.Node, ok bool) {
+func (*implicitDatabase) Leave(in ast.Node) (out ast.Node, ok bool) {
 	return in, true
 }
 

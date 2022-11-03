@@ -36,8 +36,7 @@ import (
 	"io"
 	"math/rand"
 	"net"
-	"net/http"
-
+	"net/http" //nolint:goimports
 	// For pprof
 	_ "net/http/pprof" // #nosec G108
 	"os"
@@ -49,13 +48,18 @@ import (
 
 	"github.com/blacktear23/go-proxyprotocol"
 	"github.com/pingcap/errors"
+	autoid "github.com/pingcap/tidb/autoid_service"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/extension"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/session/txninfo"
@@ -113,7 +117,7 @@ const defaultCapability = mysql.ClientLongPassword | mysql.ClientLongFlag |
 	mysql.ClientConnectWithDB | mysql.ClientProtocol41 |
 	mysql.ClientTransactions | mysql.ClientSecureConnection | mysql.ClientFoundRows |
 	mysql.ClientMultiStatements | mysql.ClientMultiResults | mysql.ClientLocalFiles |
-	mysql.ClientConnectAtts | mysql.ClientPluginAuth | mysql.ClientInteractive
+	mysql.ClientConnectAtts | mysql.ClientPluginAuth | mysql.ClientInteractive | mysql.ClientDeprecateEOF
 
 // Server is the MySQL protocol server
 type Server struct {
@@ -137,6 +141,7 @@ type Server struct {
 
 	sessionMapMutex  sync.Mutex
 	internalSessions map[interface{}]struct{}
+	autoIDService    *autoid.Service
 }
 
 // ConnectionCount gets current connection count.
@@ -277,7 +282,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		if proxyTarget == nil {
 			proxyTarget = s.socket
 		}
-		ppListener, err := proxyprotocol.NewListener(proxyTarget, s.cfg.ProxyProtocol.Networks,
+		ppListener, err := proxyprotocol.NewLazyListener(proxyTarget, s.cfg.ProxyProtocol.Networks,
 			int(s.cfg.ProxyProtocol.HeaderTimeout))
 		if err != nil {
 			logutil.BgLogger().Error("ProxyProtocol networks parameter invalid")
@@ -352,7 +357,7 @@ func setTxnScope() {
 // Export config-related metrics
 func (s *Server) reportConfig() {
 	metrics.ConfigStatus.WithLabelValues("token-limit").Set(float64(s.cfg.TokenLimit))
-	metrics.ConfigStatus.WithLabelValues("max-server-connections").Set(float64(s.cfg.MaxServerConnections))
+	metrics.ConfigStatus.WithLabelValues("max_connections").Set(float64(s.cfg.Instance.MaxConnections))
 }
 
 // Run runs the server.
@@ -495,13 +500,42 @@ func (s *Server) Close() {
 		s.grpcServer.Stop()
 		s.grpcServer = nil
 	}
+	if s.autoIDService != nil {
+		s.autoIDService.Close()
+	}
 	metrics.ServerEventCounter.WithLabelValues(metrics.EventClose).Inc()
 }
 
 // onConn runs in its own goroutine, handles queries from this connection.
 func (s *Server) onConn(conn *clientConn) {
+	// init the connInfo
+	_, _, err := conn.PeerHost("")
+	if err != nil {
+		logutil.BgLogger().With(zap.Uint64("conn", conn.connectionID)).
+			Error("get peer host failed", zap.Error(err))
+		terror.Log(conn.Close())
+		return
+	}
+
+	extensions, err := extension.GetExtensions()
+	if err != nil {
+		logutil.BgLogger().With(zap.Uint64("conn", conn.connectionID)).
+			Error("error in get extensions", zap.Error(err))
+		terror.Log(conn.Close())
+		return
+	}
+
+	if sessExtensions := extensions.NewSessionExtensions(); sessExtensions != nil {
+		conn.extensions = sessExtensions
+		conn.onExtensionConnEvent(extension.ConnConnected, nil)
+		defer func() {
+			conn.onExtensionConnEvent(extension.ConnDisconnected, nil)
+		}()
+	}
+
 	ctx := logutil.WithConnID(context.Background(), conn.connectionID)
 	if err := conn.handshake(ctx); err != nil {
+		conn.onExtensionConnEvent(extension.ConnHandshakeRejected, err)
 		if plugin.IsEnable(plugin.Audit) && conn.getCtx() != nil {
 			conn.getCtx().GetSessionVars().ConnectionInfo = conn.connectInfo()
 			err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
@@ -514,11 +548,18 @@ func (s *Server) onConn(conn *clientConn) {
 			})
 			terror.Log(err)
 		}
-		if errors.Cause(err) == io.EOF {
+		switch errors.Cause(err) {
+		case io.EOF:
 			// `EOF` means the connection is closed normally, we do not treat it as a noticeable error and log it in 'DEBUG' level.
 			logutil.BgLogger().With(zap.Uint64("conn", conn.connectionID)).
 				Debug("EOF", zap.String("remote addr", conn.bufReadConn.RemoteAddr().String()))
-		} else {
+		case errConCount:
+			if err := conn.writeError(ctx, err); err != nil {
+				logutil.BgLogger().With(zap.Uint64("conn", conn.connectionID)).
+					Warn("error in writing errConCount", zap.Error(err),
+						zap.String("remote addr", conn.bufReadConn.RemoteAddr().String()))
+			}
+		default:
 			metrics.HandShakeErrorCounter.Inc()
 			logutil.BgLogger().With(zap.Uint64("conn", conn.connectionID)).
 				Warn("Server.onConn handshake", zap.Error(err),
@@ -541,10 +582,9 @@ func (s *Server) onConn(conn *clientConn) {
 	metrics.ConnGauge.Set(float64(connections))
 
 	sessionVars := conn.ctx.GetSessionVars()
-	if plugin.IsEnable(plugin.Audit) {
-		sessionVars.ConnectionInfo = conn.connectInfo()
-	}
-	err := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
+	sessionVars.ConnectionInfo = conn.connectInfo()
+	conn.onExtensionConnEvent(extension.ConnHandshakeAccepted, nil)
+	err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 		if authPlugin.OnConnectionEvent != nil {
 			return authPlugin.OnConnectionEvent(context.Background(), plugin.Connected, sessionVars.ConnectionInfo)
@@ -559,10 +599,6 @@ func (s *Server) onConn(conn *clientConn) {
 	conn.Run(ctx)
 
 	err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
-		// Audit plugin may be disabled before a conn is created, leading no connectionInfo in sessionVars.
-		if sessionVars.ConnectionInfo == nil {
-			sessionVars.ConnectionInfo = conn.connectInfo()
-		}
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 		if authPlugin.OnConnectionEvent != nil {
 			sessionVars.ConnectionInfo.Duration = float64(time.Since(connectedTime)) / float64(time.Millisecond)
@@ -579,11 +615,11 @@ func (s *Server) onConn(conn *clientConn) {
 }
 
 func (cc *clientConn) connectInfo() *variable.ConnectionInfo {
-	connType := "Socket"
+	connType := variable.ConnTypeSocket
 	if cc.isUnixSocket {
-		connType = "UnixSocket"
+		connType = variable.ConnTypeUnixSocket
 	} else if cc.tlsConn != nil {
-		connType = "SSL/TLS"
+		connType = variable.ConnTypeTLS
 	}
 	connInfo := &variable.ConnectionInfo{
 		ConnectionID:      cc.connectionID,
@@ -592,6 +628,7 @@ func (cc *clientConn) connectInfo() *variable.ConnectionInfo {
 		ClientIP:          cc.peerHost,
 		ClientPort:        cc.peerPort,
 		ServerID:          1,
+		ServerIP:          cc.serverHost,
 		ServerPort:        int(cc.server.cfg.Port),
 		User:              cc.user,
 		ServerOSLoginUser: osUser,
@@ -604,9 +641,35 @@ func (cc *clientConn) connectInfo() *variable.ConnectionInfo {
 	return connInfo
 }
 
+func (cc *clientConn) onExtensionConnEvent(tp extension.ConnEventTp, err error) {
+	if cc.extensions == nil {
+		return
+	}
+
+	var connInfo *variable.ConnectionInfo
+	var activeRoles []*auth.RoleIdentity
+	if ctx := cc.getCtx(); ctx != nil {
+		sessVars := ctx.GetSessionVars()
+		connInfo = sessVars.ConnectionInfo
+		activeRoles = sessVars.ActiveRoles
+	}
+
+	if connInfo == nil {
+		connInfo = cc.connectInfo()
+	}
+
+	info := &extension.ConnEventInfo{
+		ConnectionInfo: connInfo,
+		ActiveRoles:    activeRoles,
+		Error:          err,
+	}
+
+	cc.extensions.OnConnectionEvent(tp, info)
+}
+
 func (s *Server) checkConnectionCount() error {
-	// When the value of MaxServerConnections is 0, the number of connections is unlimited.
-	if int(s.cfg.MaxServerConnections) == 0 {
+	// When the value of Instance.MaxConnections is 0, the number of connections is unlimited.
+	if int(s.cfg.Instance.MaxConnections) == 0 {
 		return nil
 	}
 
@@ -614,9 +677,9 @@ func (s *Server) checkConnectionCount() error {
 	conns := len(s.clients)
 	s.rwlock.RUnlock()
 
-	if conns >= int(s.cfg.MaxServerConnections) {
+	if conns >= int(s.cfg.Instance.MaxConnections) {
 		logutil.BgLogger().Error("too many connections",
-			zap.Uint32("max connections", s.cfg.MaxServerConnections), zap.Error(errConCount))
+			zap.Uint32("max connections", s.cfg.Instance.MaxConnections), zap.Error(errConCount))
 		return errConCount
 	}
 	return nil
@@ -711,6 +774,7 @@ func killConn(conn *clientConn) {
 	conn.mu.RLock()
 	cancelFunc := conn.mu.cancelFunc
 	conn.mu.RUnlock()
+
 	if cancelFunc != nil {
 		cancelFunc()
 	}
@@ -833,8 +897,12 @@ func (s *Server) GetInternalSessionStartTSList() []uint64 {
 	s.sessionMapMutex.Lock()
 	defer s.sessionMapMutex.Unlock()
 	tsList := make([]uint64, 0, len(s.internalSessions))
+	analyzeProcID := util.GetAutoAnalyzeProcID(s.ServerID)
 	for se := range s.internalSessions {
-		if ts := session.GetStartTSFromSession(se); ts != 0 {
+		if ts, processInfoID := session.GetStartTSFromSession(se); ts != 0 {
+			if processInfoID == analyzeProcID {
+				continue
+			}
 			tsList = append(tsList, ts)
 		}
 	}
@@ -865,4 +933,40 @@ func setSystemTimeZoneVariable() {
 		}
 		variable.SetSysVar("system_time_zone", tz)
 	})
+}
+
+// CheckOldRunningTxn implements SessionManager interface.
+func (s *Server) CheckOldRunningTxn(job2ver map[int64]int64, job2ids map[int64]string) {
+	s.rwlock.RLock()
+	defer s.rwlock.RUnlock()
+	for _, client := range s.clients {
+		if client.ctx.Session != nil {
+			session.RemoveLockDDLJobs(client.ctx.Session, job2ver, job2ids)
+		}
+	}
+}
+
+// KillNonFlashbackClusterConn implements SessionManager interface.
+func (s *Server) KillNonFlashbackClusterConn() {
+	s.rwlock.RLock()
+	connIDs := make([]uint64, 0, len(s.clients))
+	for _, client := range s.clients {
+		if client.ctx.Session != nil {
+			processInfo := client.ctx.Session.ShowProcess()
+			ddl, ok := processInfo.StmtCtx.GetPlan().(*core.DDL)
+			if !ok {
+				connIDs = append(connIDs, client.connectionID)
+				continue
+			}
+			_, ok = ddl.Statement.(*ast.FlashBackToTimestampStmt)
+			if !ok {
+				connIDs = append(connIDs, client.connectionID)
+				continue
+			}
+		}
+	}
+	s.rwlock.RUnlock()
+	for _, id := range connIDs {
+		s.Kill(id, false)
+	}
 }

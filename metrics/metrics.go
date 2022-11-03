@@ -15,8 +15,13 @@
 package metrics
 
 import (
+	"sync"
+
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 	tikvmetrics "github.com/tikv/client-go/v2/metrics"
+	"go.uber.org/zap"
 )
 
 var (
@@ -36,7 +41,7 @@ var (
 			Subsystem: "server",
 			Name:      "memory_usage",
 			Help:      "Memory Usage",
-		}, []string{LblType})
+		}, []string{LblModule, LblType})
 )
 
 // metrics labels.
@@ -75,6 +80,10 @@ func RetLabel(err error) string {
 
 // RegisterMetrics registers the metrics which are ONLY used in TiDB server.
 func RegisterMetrics() {
+	// use new go collector
+	prometheus.DefaultRegisterer.Unregister(prometheus.NewGoCollector())
+	prometheus.MustRegister(collectors.NewGoCollector(collectors.WithGoCollections(collectors.GoRuntimeMetricsCollection | collectors.GoRuntimeMemStatsCollection)))
+
 	prometheus.MustRegister(AutoAnalyzeCounter)
 	prometheus.MustRegister(AutoAnalyzeHistogram)
 	prometheus.MustRegister(AutoIDHistogram)
@@ -91,9 +100,13 @@ func RegisterMetrics() {
 	prometheus.MustRegister(BackfillTotalCounter)
 	prometheus.MustRegister(BackfillProgressGauge)
 	prometheus.MustRegister(DDLWorkerHistogram)
+	prometheus.MustRegister(DDLJobTableDuration)
+	prometheus.MustRegister(DDLRunningJobCount)
 	prometheus.MustRegister(DeploySyncerHistogram)
 	prometheus.MustRegister(DistSQLPartialCountHistogram)
-	prometheus.MustRegister(DistSQLCoprCacheHistogram)
+	prometheus.MustRegister(DistSQLCoprCacheCounter)
+	prometheus.MustRegister(DistSQLCoprClosestReadCounter)
+	prometheus.MustRegister(DistSQLCoprRespBodySize)
 	prometheus.MustRegister(DistSQLQueryHistogram)
 	prometheus.MustRegister(DistSQLScanKeysHistogram)
 	prometheus.MustRegister(DistSQLScanKeysPartialHistogram)
@@ -121,10 +134,13 @@ func RegisterMetrics() {
 	prometheus.MustRegister(PanicCounter)
 	prometheus.MustRegister(PlanCacheCounter)
 	prometheus.MustRegister(PlanCacheMissCounter)
+	prometheus.MustRegister(PlanCacheInstanceMemoryUsage)
+	prometheus.MustRegister(PlanCacheInstancePlanNumCounter)
 	prometheus.MustRegister(PseudoEstimation)
 	prometheus.MustRegister(PacketIOCounter)
 	prometheus.MustRegister(QueryDurationHistogram)
 	prometheus.MustRegister(QueryTotalCounter)
+	prometheus.MustRegister(AffectedRowsCounter)
 	prometheus.MustRegister(SchemaLeaseErrorCounter)
 	prometheus.MustRegister(ServerEventCounter)
 	prometheus.MustRegister(SessionExecuteCompileDuration)
@@ -137,6 +153,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(StatsInaccuracyRate)
 	prometheus.MustRegister(StmtNodeCounter)
 	prometheus.MustRegister(DbStmtNodeCounter)
+	prometheus.MustRegister(ExecPhaseDuration)
 	prometheus.MustRegister(StoreQueryFeedbackCounter)
 	prometheus.MustRegister(TimeJumpBackCounter)
 	prometheus.MustRegister(TransactionDuration)
@@ -180,8 +197,67 @@ func RegisterMetrics() {
 	prometheus.MustRegister(StatsCacheLRUCounter)
 	prometheus.MustRegister(StatsCacheLRUGauge)
 	prometheus.MustRegister(StatsHealthyGauge)
+	prometheus.MustRegister(TxnStatusEnteringCounter)
+	prometheus.MustRegister(TxnDurationHistogram)
+	prometheus.MustRegister(LastCheckpoint)
+	prometheus.MustRegister(AdvancerOwner)
+	prometheus.MustRegister(AdvancerTickDuration)
+	prometheus.MustRegister(GetCheckpointBatchSize)
+	prometheus.MustRegister(RegionCheckpointRequest)
+	prometheus.MustRegister(RegionCheckpointFailure)
+	prometheus.MustRegister(RCCheckTSWriteConfilictCounter)
 
 	tikvmetrics.InitMetrics(TiDB, TiKVClient)
 	tikvmetrics.RegisterMetrics()
 	tikvmetrics.TiKVPanicCounter = PanicCounter // reset tidb metrics for tikv metrics
+}
+
+var mode struct {
+	sync.Mutex
+	isSimplified bool
+}
+
+// ToggleSimplifiedMode is used to register/unregister the metrics that unused by grafana.
+func ToggleSimplifiedMode(simplified bool) {
+	var unusedMetricsByGrafana = []prometheus.Collector{
+		StatementDeadlockDetectDuration,
+		ValidateReadTSFromPDCount,
+		LoadTableCacheDurationHistogram,
+		TxnWriteThroughput,
+		SmallTxnWriteDuration,
+		InfoCacheCounters,
+		ReadFromTableCacheCounter,
+		TiFlashQueryTotalCounter,
+		CampaignOwnerCounter,
+		NonTransactionalDeleteCount,
+		MemoryUsage,
+		TokenGauge,
+		tikvmetrics.TiKVRawkvSizeHistogram,
+		tikvmetrics.TiKVRawkvCmdHistogram,
+		tikvmetrics.TiKVReadThroughput,
+		tikvmetrics.TiKVSmallReadDuration,
+		tikvmetrics.TiKVBatchWaitOverLoad,
+		tikvmetrics.TiKVBatchClientRecycle,
+		tikvmetrics.TiKVRequestRetryTimesHistogram,
+		tikvmetrics.TiKVStatusDuration,
+	}
+	mode.Lock()
+	defer mode.Unlock()
+	if mode.isSimplified == simplified {
+		return
+	}
+	mode.isSimplified = simplified
+	if simplified {
+		for _, m := range unusedMetricsByGrafana {
+			prometheus.Unregister(m)
+		}
+	} else {
+		for _, m := range unusedMetricsByGrafana {
+			err := prometheus.Register(m)
+			if err != nil {
+				logutil.BgLogger().Error("cannot register metrics", zap.Error(err))
+				break
+			}
+		}
+	}
 }

@@ -1,0 +1,29 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "localpool",
+    srcs = [
+        "localpool.go",
+        "localpool_norace.go",
+        "localpool_race.go",
+    ],
+    importpath = "github.com/pingcap/tidb/util/localpool",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "localpool_test",
+    timeout = "short",
+    srcs = [
+        "localpool_test.go",
+        "main_test.go",
+    ],
+    embed = [":localpool"],
+    flaky = True,
+    deps = [
+        "//testkit/testsetup",
+        "//util",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

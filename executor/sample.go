@@ -16,7 +16,6 @@ package executor
 
 import (
 	"context"
-	"sort"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
@@ -30,11 +29,10 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/tikv/client-go/v2/tikv"
+	"golang.org/x/exp/slices"
 )
 
 var _ Executor = &TableSampleExecutor{}
-
-const sampleMethodRegionConcurrency = 5
 
 // TableSampleExecutor fetches a few rows through kv.Scan
 // according to the specific sample method.
@@ -230,8 +228,8 @@ func splitIntoMultiRanges(store kv.Storage, startKey, endKey kv.Key) ([]kv.KeyRa
 }
 
 func sortRanges(ranges []kv.KeyRange, isDesc bool) {
-	sort.Slice(ranges, func(i, j int) bool {
-		ir, jr := ranges[i].StartKey, ranges[j].StartKey
+	slices.SortFunc(ranges, func(i, j kv.KeyRange) bool {
+		ir, jr := i.StartKey, j.StartKey
 		if !isDesc {
 			return ir.Cmp(jr) < 0
 		}
@@ -285,7 +283,7 @@ func (s *tableRegionSampler) scanFirstKVForEachRange(ranges []kv.KeyRange,
 	ver := kv.Version{Ver: s.startTS}
 	snap := s.ctx.GetStore().GetSnapshot(ver)
 	setOptionForTopSQL(s.ctx.GetSessionVars().StmtCtx, snap)
-	concurrency := sampleMethodRegionConcurrency
+	concurrency := s.ctx.GetSessionVars().ExecutorConcurrency
 	if len(ranges) < concurrency {
 		concurrency = len(ranges)
 	}

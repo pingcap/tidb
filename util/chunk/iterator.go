@@ -14,20 +14,22 @@
 
 package chunk
 
+import "golang.org/x/sys/cpu"
+
 var (
 	_ Iterator = (*Iterator4Chunk)(nil)
 	_ Iterator = (*iterator4RowPtr)(nil)
 	_ Iterator = (*iterator4List)(nil)
-	_ Iterator = (*iterator4Slice)(nil)
+	_ Iterator = (*Iterator4Slice)(nil)
 	_ Iterator = (*iterator4RowContainer)(nil)
 	_ Iterator = (*multiIterator)(nil)
 )
 
 // Iterator is used to iterate a number of rows.
 //
-// for row := it.Begin(); row != it.End(); row = it.Next() {
-//     ...
-// }
+//	for row := it.Begin(); row != it.End(); row = it.Next() {
+//	    ...
+//	}
 type Iterator interface {
 	// Begin resets the cursor of the iterator and returns the first Row.
 	Begin() Row
@@ -53,16 +55,19 @@ type Iterator interface {
 
 // NewIterator4Slice returns a Iterator for Row slice.
 func NewIterator4Slice(rows []Row) Iterator {
-	return &iterator4Slice{rows: rows}
+	return &Iterator4Slice{rows: rows}
 }
 
-type iterator4Slice struct {
+// Iterator4Slice is used to iterate rows inside a slice.
+type Iterator4Slice struct {
+	_      cpu.CacheLinePad
 	rows   []Row
 	cursor int
+	_      cpu.CacheLinePad
 }
 
 // Begin implements the Iterator interface.
-func (it *iterator4Slice) Begin() Row {
+func (it *Iterator4Slice) Begin() Row {
 	if it.Len() == 0 {
 		return it.End()
 	}
@@ -71,7 +76,7 @@ func (it *iterator4Slice) Begin() Row {
 }
 
 // Next implements the Iterator interface.
-func (it *iterator4Slice) Next() Row {
+func (it *Iterator4Slice) Next() Row {
 	if l := it.Len(); it.cursor >= l {
 		it.cursor = l + 1
 		return it.End()
@@ -82,7 +87,7 @@ func (it *iterator4Slice) Next() Row {
 }
 
 // Current implements the Iterator interface.
-func (it *iterator4Slice) Current() Row {
+func (it *Iterator4Slice) Current() Row {
 	if it.cursor == 0 || it.cursor > it.Len() {
 		return it.End()
 	}
@@ -90,22 +95,28 @@ func (it *iterator4Slice) Current() Row {
 }
 
 // End implements the Iterator interface.
-func (it *iterator4Slice) End() Row {
+func (*Iterator4Slice) End() Row {
 	return Row{}
 }
 
 // ReachEnd implements the Iterator interface.
-func (it *iterator4Slice) ReachEnd() {
+func (it *Iterator4Slice) ReachEnd() {
 	it.cursor = it.Len() + 1
 }
 
 // Len implements the Iterator interface.
-func (it *iterator4Slice) Len() int {
+func (it *Iterator4Slice) Len() int {
 	return len(it.rows)
 }
 
+// Reset iterator.rows and cursor.
+func (it *Iterator4Slice) Reset(rows []Row) {
+	it.rows = rows
+	it.cursor = 0
+}
+
 // Error returns none-nil error if anything wrong happens during the iteration.
-func (it *iterator4Slice) Error() error {
+func (*Iterator4Slice) Error() error {
 	return nil
 }
 
@@ -151,7 +162,7 @@ func (it *Iterator4Chunk) Current() Row {
 }
 
 // End implements the Iterator interface.
-func (it *Iterator4Chunk) End() Row {
+func (*Iterator4Chunk) End() Row {
 	return Row{}
 }
 
@@ -171,7 +182,7 @@ func (it *Iterator4Chunk) GetChunk() *Chunk {
 }
 
 // Error returns none-nil error if anything wrong happens during the iteration.
-func (it *Iterator4Chunk) Error() error {
+func (*Iterator4Chunk) Error() error {
 	return nil
 }
 
@@ -233,7 +244,7 @@ func (it *iterator4List) Current() Row {
 }
 
 // End implements the Iterator interface.
-func (it *iterator4List) End() Row {
+func (*iterator4List) End() Row {
 	return Row{}
 }
 
@@ -248,7 +259,7 @@ func (it *iterator4List) Len() int {
 }
 
 // Error returns none-nil error if anything wrong happens during the iteration.
-func (it *iterator4List) Error() error {
+func (*iterator4List) Error() error {
 	return nil
 }
 
@@ -292,7 +303,7 @@ func (it *iterator4RowPtr) Current() Row {
 }
 
 // End implements the Iterator interface.
-func (it *iterator4RowPtr) End() Row {
+func (*iterator4RowPtr) End() Row {
 	return Row{}
 }
 
@@ -307,7 +318,7 @@ func (it *iterator4RowPtr) Len() int {
 }
 
 // Error returns none-nil error if anything wrong happens during the iteration.
-func (it *iterator4RowPtr) Error() error {
+func (*iterator4RowPtr) Error() error {
 	return nil
 }
 
@@ -367,7 +378,7 @@ func (it *iterator4RowContainer) Current() Row {
 }
 
 // End implements the Iterator interface.
-func (it *iterator4RowContainer) End() Row {
+func (*iterator4RowContainer) End() Row {
 	return Row{}
 }
 
@@ -454,7 +465,7 @@ func (it *multiIterator) Current() Row {
 }
 
 // End implements the Iterator interface.
-func (it *multiIterator) End() Row {
+func (*multiIterator) End() Row {
 	return Row{}
 }
 

@@ -1,0 +1,54 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "codec",
+    srcs = [
+        "bytes.go",
+        "codec.go",
+        "decimal.go",
+        "float.go",
+        "number.go",
+    ],
+    importpath = "github.com/pingcap/tidb/util/codec",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//parser/mysql",
+        "//parser/terror",
+        "//sessionctx/stmtctx",
+        "//types",
+        "//util/chunk",
+        "//util/collate",
+        "//util/hack",
+        "//util/logutil",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "codec_test",
+    timeout = "short",
+    srcs = [
+        "bench_test.go",
+        "bytes_test.go",
+        "codec_test.go",
+        "collation_test.go",
+        "decimal_test.go",
+        "main_test.go",
+    ],
+    embed = [":codec"],
+    flaky = True,
+    deps = [
+        "//parser/mysql",
+        "//parser/terror",
+        "//sessionctx/stmtctx",
+        "//testkit/testsetup",
+        "//types",
+        "//util/benchdaily",
+        "//util/chunk",
+        "//util/collate",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

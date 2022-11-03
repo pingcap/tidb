@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/ast"
@@ -96,6 +97,9 @@ type InsertValues struct {
 	// We use mutex to protect routine from using invalid txn.
 	isLoadData bool
 	txnInUse   sync.Mutex
+	// fkChecks contains the foreign key checkers.
+	fkChecks   []*FKCheckExec
+	fkCascades []*FKCascadeExec
 }
 
 type defaultVal struct {
@@ -186,7 +190,7 @@ func (e *InsertValues) initEvalBuffer() {
 	}
 	e.evalBufferTypes = make([]*types.FieldType, numCols)
 	for i, col := range e.Table.Cols() {
-		e.evalBufferTypes[i] = &col.FieldType
+		e.evalBufferTypes[i] = &(col.FieldType)
 	}
 	if e.hasExtraHandle {
 		e.evalBufferTypes[len(e.evalBufferTypes)-1] = types.NewFieldType(mysql.TypeLonglong)
@@ -287,12 +291,7 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 	return nil
 }
 
-func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int, err error) error {
-	if err == nil {
-		return nil
-	}
-
-	// Convert the error with full messages.
+func completeInsertErr(col *model.ColumnInfo, val *types.Datum, rowIdx int, err error) error {
 	var (
 		colTp   byte
 		colName string
@@ -323,6 +322,20 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 	} else if types.ErrWarnDataOutOfRange.Equal(err) {
 		err = types.ErrWarnDataOutOfRange.GenWithStackByArgs(colName, rowIdx+1)
 	}
+	return err
+}
+
+func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int, err error) error {
+	if err == nil {
+		return nil
+	}
+
+	// Convert the error with full messages.
+	var c *model.ColumnInfo
+	if col != nil {
+		c = col.ColumnInfo
+	}
+	err = completeInsertErr(c, val, rowIdx, err)
 
 	if !e.ctx.GetSessionVars().StmtCtx.DupKeyAsWarning {
 		return err
@@ -350,6 +363,8 @@ func (e *InsertValues) evalRow(ctx context.Context, list []expression.Expression
 	}
 
 	e.evalBuffer.SetDatums(row...)
+	sc := e.ctx.GetSessionVars().StmtCtx
+	warnCnt := int(sc.WarningCount())
 	for i, expr := range list {
 		val, err := expr.Eval(e.evalBuffer.ToRow())
 		if err != nil {
@@ -358,6 +373,13 @@ func (e *InsertValues) evalRow(ctx context.Context, list []expression.Expression
 		val1, err := table.CastValue(e.ctx, val, e.insertColumns[i].ToInfo(), false, false)
 		if err = e.handleErr(e.insertColumns[i], &val, rowIdx, err); err != nil {
 			return nil, err
+		}
+		if newWarnings := sc.TruncateWarnings(warnCnt); len(newWarnings) > 0 {
+			for k := range newWarnings {
+				newWarnings[k].Err = completeInsertErr(e.insertColumns[i].ColumnInfo, &val, rowIdx, newWarnings[k].Err)
+			}
+			sc.AppendWarnings(newWarnings)
+			warnCnt += len(newWarnings)
 		}
 
 		offset := e.insertColumns[i].Offset
@@ -378,6 +400,8 @@ func (e *InsertValues) fastEvalRow(ctx context.Context, list []expression.Expres
 	}
 	row := make([]types.Datum, rowLen)
 	hasValue := make([]bool, rowLen)
+	sc := e.ctx.GetSessionVars().StmtCtx
+	warnCnt := int(sc.WarningCount())
 	for i, expr := range list {
 		con := expr.(*expression.Constant)
 		val, err := con.Eval(emptyRow)
@@ -388,6 +412,13 @@ func (e *InsertValues) fastEvalRow(ctx context.Context, list []expression.Expres
 		if err = e.handleErr(e.insertColumns[i], &val, rowIdx, err); err != nil {
 			return nil, err
 		}
+		if newWarnings := sc.TruncateWarnings(warnCnt); len(newWarnings) > 0 {
+			for k := range newWarnings {
+				newWarnings[k].Err = completeInsertErr(e.insertColumns[i].ColumnInfo, &val, rowIdx, newWarnings[k].Err)
+			}
+			sc.AppendWarnings(newWarnings)
+			warnCnt += len(newWarnings)
+		}
 		offset := e.insertColumns[i].Offset
 		row[offset], hasValue[offset] = val1, true
 	}
@@ -396,11 +427,11 @@ func (e *InsertValues) fastEvalRow(ctx context.Context, list []expression.Expres
 
 // setValueForRefColumn set some default values for the row to eval the row value with other columns,
 // it follows these rules:
-//     1. for nullable and no default value column, use NULL.
-//     2. for nullable and have default value column, use it's default value.
-//     3. for not null column, use zero value even in strict mode.
-//     4. for auto_increment column, use zero value.
-//     5. for generated column, use NULL.
+//  1. for nullable and no default value column, use NULL.
+//  2. for nullable and have default value column, use it's default value.
+//  3. for not null column, use zero value even in strict mode.
+//  4. for auto_increment column, use zero value.
+//  5. for generated column, use NULL.
 func (e *InsertValues) setValueForRefColumn(row []types.Datum, hasValue []bool) error {
 	for i, c := range e.Table.Cols() {
 		d, err := e.getColDefaultValue(i, c)
@@ -561,6 +592,16 @@ func (e *InsertValues) getColDefaultValue(idx int, col *table.Column) (d types.D
 func (e *InsertValues) fillColValue(ctx context.Context, datum types.Datum, idx int, column *table.Column, hasValue bool) (types.Datum,
 	error) {
 	if mysql.HasAutoIncrementFlag(column.GetFlag()) {
+		if !hasValue && mysql.HasNoDefaultValueFlag(column.ToInfo().GetFlag()) {
+			vars := e.ctx.GetSessionVars()
+			sc := vars.StmtCtx
+			if !vars.StrictSQLMode {
+				sc.AppendWarning(table.ErrNoDefaultValue.FastGenByArgs(column.ToInfo().Name))
+			} else {
+				return datum, table.ErrNoDefaultValue.FastGenByArgs(column.ToInfo().Name)
+			}
+		}
+
 		if e.lazyFillAutoID {
 			// Handle hasValue info in autoIncrement column previously for lazy handle.
 			if !hasValue {
@@ -630,6 +671,23 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 					return nil, err
 				}
 			}
+		}
+	}
+	tbl := e.Table.Meta()
+	// Handle exchange partition
+	if tbl.ExchangePartitionInfo != nil && tbl.ExchangePartitionInfo.ExchangePartitionFlag {
+		is := e.ctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+		pt, tableFound := is.TableByID(tbl.ExchangePartitionInfo.ExchangePartitionID)
+		if !tableFound {
+			return nil, errors.Errorf("exchange partition process table by id failed")
+		}
+		p, ok := pt.(table.PartitionedTable)
+		if !ok {
+			return nil, errors.Errorf("exchange partition process assert table partition failed")
+		}
+		err := p.CheckForExchangePartition(e.ctx, pt.Meta().Partition, row, tbl.ExchangePartitionInfo.ExchangePartitionDefID)
+		if err != nil {
+			return nil, err
 		}
 	}
 	for i, gCol := range gCols {
@@ -937,8 +995,8 @@ func (e *InsertValues) allocAutoRandomID(ctx context.Context, fieldType *types.F
 	if err != nil {
 		return 0, err
 	}
-	layout := autoid.NewShardIDLayout(fieldType, tableInfo.AutoRandomBits)
-	if tables.OverflowShardBits(autoRandomID, tableInfo.AutoRandomBits, layout.TypeBitsLength, layout.HasSignBit) {
+	shardFmt := autoid.NewShardIDFormat(fieldType, tableInfo.AutoRandomBits, tableInfo.AutoRandomRangeBits)
+	if shardFmt.IncrementalMask()&autoRandomID != autoRandomID {
 		return 0, autoid.ErrAutoRandReadFailed
 	}
 	if e.isLoadData {
@@ -949,9 +1007,8 @@ func (e *InsertValues) allocAutoRandomID(ctx context.Context, fieldType *types.F
 	if err != nil {
 		return 0, err
 	}
-	shard := e.ctx.GetSessionVars().TxnCtx.GetShard(tableInfo.AutoRandomBits, layout.TypeBitsLength, layout.HasSignBit, 1)
-	autoRandomID |= shard
-	return autoRandomID, nil
+	currentShard := e.ctx.GetSessionVars().TxnCtx.GetCurrentShard(1)
+	return shardFmt.Compose(currentShard, autoRandomID), nil
 }
 
 func (e *InsertValues) rebaseAutoRandomID(ctx context.Context, recordID int64, fieldType *types.FieldType) error {
@@ -961,8 +1018,8 @@ func (e *InsertValues) rebaseAutoRandomID(ctx context.Context, recordID int64, f
 	alloc := e.Table.Allocators(e.ctx).Get(autoid.AutoRandomType)
 	tableInfo := e.Table.Meta()
 
-	layout := autoid.NewShardIDLayout(fieldType, tableInfo.AutoRandomBits)
-	autoRandomID := layout.IncrementalMask() & recordID
+	shardFmt := autoid.NewShardIDFormat(fieldType, tableInfo.AutoRandomBits, tableInfo.AutoRandomRangeBits)
+	autoRandomID := shardFmt.IncrementalMask() & recordID
 
 	return alloc.Rebase(ctx, autoRandomID, true)
 }
@@ -1015,8 +1072,8 @@ func (e *InsertValues) rebaseImplicitRowID(ctx context.Context, recordID int64) 
 	alloc := e.Table.Allocators(e.ctx).Get(autoid.RowIDAllocType)
 	tableInfo := e.Table.Meta()
 
-	layout := autoid.NewShardIDLayout(types.NewFieldType(mysql.TypeLonglong), tableInfo.ShardRowIDBits)
-	newTiDBRowIDBase := layout.IncrementalMask() & recordID
+	shardFmt := autoid.NewShardIDFormat(types.NewFieldType(mysql.TypeLonglong), tableInfo.ShardRowIDBits, autoid.RowIDBitLength)
+	newTiDBRowIDBase := shardFmt.IncrementalMask() & recordID
 
 	return alloc.Rebase(ctx, newTiDBRowIDBase, true)
 }
@@ -1034,6 +1091,10 @@ func (e *InsertValues) collectRuntimeStatsEnabled() bool {
 				BasicRuntimeStats:     e.runtimeStats,
 				SnapshotRuntimeStats:  snapshotStats,
 				AllocatorRuntimeStats: autoid.NewAllocatorRuntimeStats(),
+				FKCheckStats:          &FKCheckRuntimeStats{},
+			}
+			for _, fkc := range e.fkChecks {
+				fkc.stats = e.stats.FKCheckStats
 			}
 			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 		}
@@ -1072,6 +1133,13 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 			defer snapshot.SetOption(kv.CollectRuntimeStats, nil)
 		}
 	}
+	sc := e.ctx.GetSessionVars().StmtCtx
+	for _, fkc := range e.fkChecks {
+		err = fkc.checkRows(ctx, sc, txn, toBeCheckedRows)
+		if err != nil {
+			return err
+		}
+	}
 	prefetchStart := time.Now()
 	// Fill cache using BatchGet, the following Get requests don't need to visit TiKV.
 	// Temporary table need not to do prefetch because its all data are stored in the memory.
@@ -1082,6 +1150,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 	}
 
 	if e.stats != nil {
+		e.stats.FKCheckTime += prefetchStart.Sub(start)
 		e.stats.Prefetch += time.Since(prefetchStart)
 	}
 
@@ -1211,6 +1280,14 @@ func (e *InsertValues) addRecordWithAutoIDHint(ctx context.Context, row []types.
 	if e.lastInsertID != 0 {
 		vars.SetLastInsertID(e.lastInsertID)
 	}
+	if !vars.StmtCtx.BatchCheck {
+		for _, fkc := range e.fkChecks {
+			err = fkc.insertRowNeedToCheck(vars.StmtCtx, row)
+			if err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
 
@@ -1221,6 +1298,8 @@ type InsertRuntimeStat struct {
 	*autoid.AllocatorRuntimeStats
 	CheckInsertTime time.Duration
 	Prefetch        time.Duration
+	FKCheckTime     time.Duration
+	FKCheckStats    *FKCheckRuntimeStats
 }
 
 func (e *InsertRuntimeStat) String() string {
@@ -1243,9 +1322,8 @@ func (e *InsertRuntimeStat) String() string {
 			buf.WriteString(", rpc: {")
 			buf.WriteString(e.SnapshotRuntimeStats.String())
 			buf.WriteString("}")
-			return buf.String()
 		}
-		return ""
+		return buf.String()
 	}
 	if allocatorStatsStr != "" {
 		buf.WriteString("prepare: {total: ")
@@ -1263,6 +1341,11 @@ func (e *InsertRuntimeStat) String() string {
 			execdetails.FormatDuration(e.CheckInsertTime),
 			execdetails.FormatDuration(e.CheckInsertTime-e.Prefetch),
 			execdetails.FormatDuration(e.Prefetch)))
+		if e.FKCheckStats != nil && e.FKCheckStats.Keys > 0 {
+			buf.WriteString(fmt.Sprintf(", fk_check: %v, fk_num: %v",
+				execdetails.FormatDuration(e.FKCheckTime),
+				e.FKCheckStats.Keys))
+		}
 		if e.SnapshotRuntimeStats != nil {
 			if rpc := e.SnapshotRuntimeStats.String(); len(rpc) > 0 {
 				buf.WriteString(fmt.Sprintf(", rpc:{%s}", rpc))
@@ -1280,6 +1363,7 @@ func (e *InsertRuntimeStat) Clone() execdetails.RuntimeStats {
 	newRs := &InsertRuntimeStat{
 		CheckInsertTime: e.CheckInsertTime,
 		Prefetch:        e.Prefetch,
+		FKCheckTime:     e.FKCheckTime,
 	}
 	if e.SnapshotRuntimeStats != nil {
 		snapshotStats := e.SnapshotRuntimeStats.Clone()
@@ -1291,6 +1375,10 @@ func (e *InsertRuntimeStat) Clone() execdetails.RuntimeStats {
 	}
 	if e.AllocatorRuntimeStats != nil {
 		newRs.AllocatorRuntimeStats = e.AllocatorRuntimeStats.Clone()
+	}
+	if e.FKCheckStats != nil {
+		fkCheckStats := *e.FKCheckStats
+		newRs.FKCheckStats = &fkCheckStats
 	}
 	return newRs
 }
@@ -1325,6 +1413,7 @@ func (e *InsertRuntimeStat) Merge(other execdetails.RuntimeStats) {
 		}
 	}
 	e.Prefetch += tmp.Prefetch
+	e.FKCheckTime += tmp.FKCheckTime
 	e.CheckInsertTime += tmp.CheckInsertTime
 }
 

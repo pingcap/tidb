@@ -35,19 +35,18 @@ func TestIntegrationCopCache(t *testing.T) {
 	config.StoreGlobalConfig(config.NewConfig())
 	defer config.StoreGlobalConfig(originConfig)
 
-	cli := &regionProperityClient{}
+	cli := &testkit.RegionProperityClient{}
 	hijackClient := func(c tikv.Client) tikv.Client {
 		cli.Client = c
 		return cli
 	}
 	var cluster testutils.Cluster
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t,
+	store, dom := testkit.CreateMockStoreAndDomain(t,
 		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockstore.BootstrapWithSingleStore(c)
 			cluster = c
 		}),
 		mockstore.WithClientHijacker(hijackClient))
-	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

@@ -68,19 +68,28 @@ func TestPlanIDChanged(t *testing.T) {
 		{typeDataSourceID, 40},
 		{typeLoadDataID, 41},
 		{typeTableSampleID, 42},
-		{typeTableFullScan, 43},
-		{typeTableRangeScan, 44},
-		{typeTableRowIDScan, 45},
-		{typeIndexFullScan, 46},
-		{typeIndexRangeScan, 47},
-		{typeExchangeReceiver, 48},
-		{typeExchangeSender, 49},
-		{typeCTE, 50},
-		{typeCTEDefinition, 51},
-		{typeCTETable, 52},
+		{typeTableFullScanID, 43},
+		{typeTableRangeScanID, 44},
+		{typeTableRowIDScanID, 45},
+		{typeIndexFullScanID, 46},
+		{typeIndexRangeScanID, 47},
+		{typeExchangeReceiverID, 48},
+		{typeExchangeSenderID, 49},
+		{typeCTEID, 50},
+		{typeCTEDefinitionID, 51},
+		{typeCTETableID, 52},
+		{typePartitionUnionID, 53},
+		{typeShuffleID, 54},
+		{typeShuffleReceiverID, 55},
 	}
 
 	for _, testcase := range testCases {
 		require.Equal(t, testcase.Expected, testcase.Value)
+	}
+}
+
+func TestReverse(t *testing.T) {
+	for i := 1; i <= 55; i++ {
+		require.Equal(t, TypeStringToPhysicalID(PhysicalIDToTypeString(i)), i)
 	}
 }

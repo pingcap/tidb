@@ -19,11 +19,8 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
@@ -33,8 +30,7 @@ import (
 
 // TestCancelJobMeetError is used to test canceling ddl job failure when convert ddl job to a rolling back job.
 func TestCancelAddIndexJobError(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk1 := testkit.NewTestKit(t, store)
@@ -60,7 +56,7 @@ func TestCancelAddIndexJobError(t *testing.T) {
 		jobID    int64
 		res      sqlexec.RecordSet
 	)
-	hook.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if job.TableID != tbl.Meta().ID {
 			return
 		}
@@ -81,6 +77,7 @@ func TestCancelAddIndexJobError(t *testing.T) {
 			}
 		}
 	}
+	hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	d.SetHook(hook)
 
 	// This will hang on stateDeleteOnly, and the job will be canceled.
@@ -89,13 +86,7 @@ func TestCancelAddIndexJobError(t *testing.T) {
 	require.EqualError(t, err, "[ddl:-1]rollback DDL job error count exceed the limit 3, cancelled it now")
 
 	// Verification of the history job state.
-	var job *model.Job
-	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
-		var err1 error
-		job, err1 = m.GetHistoryDDLJob(jobID)
-		return errors.Trace(err1)
-	})
+	job, err := ddl.GetHistoryJobByID(tk.Session(), jobID)
 	require.NoError(t, err)
 	require.Equal(t, int64(4), job.ErrorCount)
 	require.EqualError(t, job.Error, "[ddl:-1]rollback DDL job error count exceed the limit 3, cancelled it now")

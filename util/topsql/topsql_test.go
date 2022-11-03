@@ -86,6 +86,10 @@ func mockPlanBinaryDecoderFunc(plan string) (string, error) {
 	return plan, nil
 }
 
+func mockPlanBinaryCompressFunc(plan []byte) string {
+	return string(plan)
+}
+
 func TestTopSQLReporter(t *testing.T) {
 	err := cpuprofile.StartCPUProfiler()
 	require.NoError(t, err)
@@ -100,7 +104,7 @@ func TestTopSQLReporter(t *testing.T) {
 	})
 
 	topsqlstate.EnableTopSQL()
-	report := reporter.NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
+	report := reporter.NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc, mockPlanBinaryCompressFunc)
 	report.Start()
 	ds := reporter.NewSingleTargetDataSink(report)
 	ds.Start()
@@ -222,7 +226,7 @@ func TestTopSQLPubSub(t *testing.T) {
 	topsqlstate.GlobalState.ReportIntervalSeconds.Store(1)
 
 	topsqlstate.EnableTopSQL()
-	report := reporter.NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
+	report := reporter.NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc, mockPlanBinaryCompressFunc)
 	report.Start()
 	defer report.Close()
 	topsql.SetupTopSQLForTest(report)
@@ -341,7 +345,7 @@ func TestTopSQLPubSub(t *testing.T) {
 
 func TestPubSubWhenReporterIsStopped(t *testing.T) {
 	topsqlstate.EnableTopSQL()
-	report := reporter.NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
+	report := reporter.NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc, mockPlanBinaryCompressFunc)
 	report.Start()
 
 	server, err := mockServer.NewMockPubSubServer()

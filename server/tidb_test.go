@@ -16,6 +16,8 @@
 package server
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
@@ -41,15 +43,21 @@ import (
 	"github.com/pingcap/tidb/config"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/extension"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/auth"
 	tmysql "github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/arena"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/cpuprofile"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
@@ -60,6 +68,7 @@ import (
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	"go.opencensus.io/stats/view"
 )
 
 type tidbTestSuite struct {
@@ -70,7 +79,7 @@ type tidbTestSuite struct {
 	store   kv.Storage
 }
 
-func createTidbTestSuite(t *testing.T) (*tidbTestSuite, func()) {
+func createTidbTestSuite(t *testing.T) *tidbTestSuite {
 	ts := &tidbTestSuite{testServerClient: newTestServerClient()}
 
 	// setup tidbTestSuite
@@ -101,7 +110,7 @@ func createTidbTestSuite(t *testing.T) (*tidbTestSuite, func()) {
 	}()
 	ts.waitUntilServerOnline()
 
-	cleanup := func() {
+	t.Cleanup(func() {
 		if ts.domain != nil {
 			ts.domain.Close()
 		}
@@ -111,17 +120,18 @@ func createTidbTestSuite(t *testing.T) (*tidbTestSuite, func()) {
 		if ts.store != nil {
 			require.NoError(t, ts.store.Close())
 		}
-	}
+		view.Stop()
+	})
 
-	return ts, cleanup
+	return ts
 }
 
 type tidbTestTopSQLSuite struct {
 	*tidbTestSuite
 }
 
-func createTidbTestTopSQLSuite(t *testing.T) (*tidbTestTopSQLSuite, func()) {
-	base, cleanup := createTidbTestSuite(t)
+func createTidbTestTopSQLSuite(t *testing.T) *tidbTestTopSQLSuite {
+	base := createTidbTestSuite(t)
 
 	ts := &tidbTestTopSQLSuite{base}
 
@@ -139,76 +149,66 @@ func createTidbTestTopSQLSuite(t *testing.T) (*tidbTestTopSQLSuite, func()) {
 	dbt.MustExec("set @@global.tidb_top_sql_max_time_series_count=5;")
 
 	require.NoError(t, cpuprofile.StartCPUProfiler())
-	cleanFn := func() {
-		cleanup()
+	t.Cleanup(func() {
 		cpuprofile.StopCPUProfiler()
 		topsqlstate.GlobalState.PrecisionSeconds.Store(topsqlstate.DefTiDBTopSQLPrecisionSeconds)
 		topsqlstate.GlobalState.ReportIntervalSeconds.Store(topsqlstate.DefTiDBTopSQLReportIntervalSeconds)
-	}
-	return ts, cleanFn
+		view.Stop()
+	})
+	return ts
 }
 
 func TestRegression(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 	if regression {
 		ts.runTestRegression(t, nil, "Regression")
 	}
 }
 
 func TestUint64(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
-
+	ts := createTidbTestSuite(t)
 	ts.runTestPrepareResultFieldType(t)
 }
 
 func TestSpecialType(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
-
+	ts := createTidbTestSuite(t)
 	ts.runTestSpecialType(t)
 }
 
 func TestPreparedString(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
 	ts.runTestPreparedString(t)
 }
 
 func TestPreparedTimestamp(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
 	ts.runTestPreparedTimestamp(t)
 }
 
 func TestConcurrentUpdate(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
 	ts.runTestConcurrentUpdate(t)
 }
 
 func TestErrorCode(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
 	ts.runTestErrorCode(t)
 }
 
 func TestAuth(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
 	ts.runTestAuth(t)
 	ts.runTestIssue3682(t)
+	ts.runTestAccountLock(t)
 }
 
 func TestIssues(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
 	ts.runTestIssue3662(t)
 	ts.runTestIssue3680(t)
@@ -216,28 +216,24 @@ func TestIssues(t *testing.T) {
 }
 
 func TestDBNameEscape(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 	ts.runTestDBNameEscape(t)
 }
 
 func TestResultFieldTableIsNull(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
 	ts.runTestResultFieldTableIsNull(t)
 }
 
 func TestStatusAPI(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
 	ts.runTestStatusAPI(t)
 }
 
 func TestStatusPort(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
 	cfg := newTestConfig()
 	cfg.Port = 0
@@ -251,8 +247,7 @@ func TestStatusPort(t *testing.T) {
 }
 
 func TestStatusAPIWithTLS(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
 	dir := t.TempDir()
 
@@ -288,15 +283,15 @@ func TestStatusAPIWithTLS(t *testing.T) {
 
 	// but plain http connection should fail.
 	cli.statusScheme = "http"
-	_, err = cli.fetchStatus("/status") // nolint: bodyclose
+	//nolint:bodyclose
+	_, err = cli.fetchStatus("/status")
 	require.Error(t, err)
 
 	server.Close()
 }
 
 func TestStatusAPIWithTLSCNCheck(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
 	dir := t.TempDir()
 
@@ -346,7 +341,8 @@ func TestStatusAPIWithTLSCNCheck(t *testing.T) {
 		client1CertPath,
 		client1KeyPath,
 	)
-	_, err = hc.Get(cli.statusURL("/status")) // nolint: bodyclose
+	//nolint:bodyclose
+	_, err = hc.Get(cli.statusURL("/status"))
 	require.Error(t, err)
 
 	hc = newTLSHttpClient(t, caPath,
@@ -375,8 +371,7 @@ func newTLSHttpClient(t *testing.T, caFile, certFile, keyFile string) *http.Clie
 }
 
 func TestMultiStatements(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
 	ts.runFailedTestMultiStatements(t)
 	ts.runTestMultiStatements(t)
@@ -386,8 +381,7 @@ func TestSocketForwarding(t *testing.T) {
 	tempDir := t.TempDir()
 	socketFile := tempDir + "/tidbtest.sock" // Unix Socket does not work on Windows, so '/' should be OK
 
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
 	cli := newTestServerClient()
 	cfg := newTestConfig()
@@ -426,8 +420,7 @@ func TestSocket(t *testing.T) {
 	cfg.Host = ""
 	cfg.Status.ReportStatus = false
 
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
@@ -461,8 +454,7 @@ func TestSocketAndIp(t *testing.T) {
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
 
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
@@ -613,7 +605,6 @@ func TestSocketAndIp(t *testing.T) {
 			cli.checkRows(t, rows, "GRANT USAGE ON *.* TO 'user1'@'localhost'\nGRANT SELECT,INSERT,UPDATE,DELETE ON test.* TO 'user1'@'localhost'")
 			require.NoError(t, rows.Close())
 		})
-
 }
 
 // TestOnlySocket for server configuration without network interface for mysql clients
@@ -627,8 +618,7 @@ func TestOnlySocket(t *testing.T) {
 	cfg.Host = "" // No network interface listening for mysql traffic
 	cfg.Status.ReportStatus = false
 
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
@@ -769,7 +759,6 @@ func TestOnlySocket(t *testing.T) {
 			cli.checkRows(t, rows, "GRANT USAGE ON *.* TO 'user1'@'localhost'\nGRANT SELECT,INSERT,UPDATE,DELETE ON test.* TO 'user1'@'localhost'")
 			require.NoError(t, rows.Close())
 		})
-
 }
 
 // generateCert generates a private key and a certificate in PEM format based on parameters.
@@ -876,8 +865,7 @@ func registerTLSConfig(configName string, caCertPath string, clientCertPath stri
 }
 
 func TestSystemTimeZone(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
 	tk := testkit.NewTestKit(t, ts.store)
 	cfg := newTestConfig()
@@ -892,10 +880,12 @@ func TestSystemTimeZone(t *testing.T) {
 }
 
 func TestInternalSessionTxnStartTS(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
 	se, err := session.CreateSession4Test(ts.store)
+	require.NoError(t, err)
+
+	_, err = se.Execute(context.Background(), "set global tidb_enable_metadata_lock=0")
 	require.NoError(t, err)
 
 	count := 10
@@ -926,18 +916,16 @@ func TestInternalSessionTxnStartTS(t *testing.T) {
 }
 
 func TestClientWithCollation(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
 	ts.runTestClientWithCollation(t)
 }
 
 func TestCreateTableFlen(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
 	// issue #4540
-	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
+	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil, nil)
 	require.NoError(t, err)
 	_, err = Execute(context.Background(), qctx, "use test;")
 	require.NoError(t, err)
@@ -992,6 +980,7 @@ func TestCreateTableFlen(t *testing.T) {
 	require.Len(t, cols, 2)
 	require.Equal(t, 21, int(cols[0].ColumnLength))
 	require.Equal(t, 22, int(cols[1].ColumnLength))
+	rs.Close()
 }
 
 func Execute(ctx context.Context, qc *TiDBContext, sql string) (ResultSet, error) {
@@ -1006,10 +995,9 @@ func Execute(ctx context.Context, qc *TiDBContext, sql string) (ResultSet, error
 }
 
 func TestShowTablesFlen(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
-	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
+	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil, nil)
 	require.NoError(t, err)
 	ctx := context.Background()
 	_, err = Execute(ctx, qctx, "use test;")
@@ -1037,10 +1025,9 @@ func checkColNames(t *testing.T, columns []*ColumnInfo, names ...string) {
 }
 
 func TestFieldList(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
-	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
+	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil, nil)
 	require.NoError(t, err)
 	_, err = Execute(context.Background(), qctx, "use test;")
 	require.NoError(t, err)
@@ -1110,37 +1097,35 @@ func TestFieldList(t *testing.T) {
 	cols := rs.Columns()
 	require.Equal(t, tooLongColumnAsName, cols[0].OrgName)
 	require.Equal(t, columnAsName, cols[0].Name)
+	rs.Close()
 
 	rs, err = Execute(ctx, qctx, "select c_bit as '"+tooLongColumnAsName+"' from t")
 	require.NoError(t, err)
 	cols = rs.Columns()
 	require.Equal(t, "c_bit", cols[0].OrgName)
 	require.Equal(t, columnAsName, cols[0].Name)
+	rs.Close()
 }
 
 func TestClientErrors(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 	ts.runTestInfoschemaClientErrors(t)
 }
 
 func TestInitConnect(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 	ts.runTestInitConnect(t)
 }
 
 func TestSumAvg(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 	ts.runTestSumAvg(t)
 }
 
 func TestNullFlag(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
-	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
+	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil, nil)
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -1152,6 +1137,7 @@ func TestNullFlag(t *testing.T) {
 		require.Len(t, cols, 1)
 		expectFlag := uint16(tmysql.NotNullFlag | tmysql.BinaryFlag)
 		require.Equal(t, expectFlag, dumpFlag(cols[0].Type, cols[0].Flag))
+		rs.Close()
 	}
 
 	{
@@ -1162,6 +1148,7 @@ func TestNullFlag(t *testing.T) {
 		require.Len(t, cols, 1)
 		expectFlag := uint16(tmysql.BinaryFlag)
 		require.Equal(t, expectFlag, dumpFlag(cols[0].Type, cols[0].Flag))
+		rs.Close()
 	}
 
 	{
@@ -1176,15 +1163,17 @@ func TestNullFlag(t *testing.T) {
 		require.Len(t, cols, 1)
 		expectFlag := uint16(tmysql.BinaryFlag)
 		require.Equal(t, expectFlag, dumpFlag(cols[0].Type, cols[0].Flag))
+		rs.Close()
 	}
-	{
 
+	{
 		rs, err := Execute(ctx, qctx, "select if(1, null, 1) ;")
 		require.NoError(t, err)
 		cols := rs.Columns()
 		require.Len(t, cols, 1)
 		expectFlag := uint16(tmysql.BinaryFlag)
 		require.Equal(t, expectFlag, dumpFlag(cols[0].Type, cols[0].Flag))
+		rs.Close()
 	}
 	{
 		rs, err := Execute(ctx, qctx, "select CASE 1 WHEN 2 THEN 1 END ;")
@@ -1193,6 +1182,7 @@ func TestNullFlag(t *testing.T) {
 		require.Len(t, cols, 1)
 		expectFlag := uint16(tmysql.BinaryFlag)
 		require.Equal(t, expectFlag, dumpFlag(cols[0].Type, cols[0].Flag))
+		rs.Close()
 	}
 	{
 		rs, err := Execute(ctx, qctx, "select NULL;")
@@ -1201,15 +1191,15 @@ func TestNullFlag(t *testing.T) {
 		require.Len(t, cols, 1)
 		expectFlag := uint16(tmysql.BinaryFlag)
 		require.Equal(t, expectFlag, dumpFlag(cols[0].Type, cols[0].Flag))
+		rs.Close()
 	}
 }
 
 func TestNO_DEFAULT_VALUEFlag(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
 	// issue #21465
-	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
+	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil, nil)
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -1221,6 +1211,7 @@ func TestNO_DEFAULT_VALUEFlag(t *testing.T) {
 	require.NoError(t, err)
 	rs, err := Execute(ctx, qctx, "select c1 from t;")
 	require.NoError(t, err)
+	defer rs.Close()
 	cols := rs.Columns()
 	require.Len(t, cols, 1)
 	expectFlag := uint16(tmysql.NotNullFlag | tmysql.PriKeyFlag | tmysql.NoDefaultValueFlag)
@@ -1228,8 +1219,7 @@ func TestNO_DEFAULT_VALUEFlag(t *testing.T) {
 }
 
 func TestGracefulShutdown(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
 	cli := newTestServerClient()
 	cfg := newTestConfig()
@@ -1262,17 +1252,16 @@ func TestGracefulShutdown(t *testing.T) {
 
 	time.Sleep(time.Second * 2)
 
-	// nolint: bodyclose
+	//nolint:bodyclose
 	_, err = cli.fetchStatus("/status") // status is gone
 	require.Error(t, err)
 	require.Regexp(t, "connect: connection refused$", err.Error())
 }
 
 func TestPessimisticInsertSelectForUpdate(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
-	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
+	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil, nil)
 	require.NoError(t, err)
 	defer qctx.Close()
 	ctx := context.Background()
@@ -1294,8 +1283,7 @@ func TestPessimisticInsertSelectForUpdate(t *testing.T) {
 }
 
 func TestTopSQLCatchRunningSQL(t *testing.T) {
-	ts, cleanup := createTidbTestTopSQLSuite(t)
-	defer cleanup()
+	ts := createTidbTestTopSQLSuite(t)
 
 	db, err := sql.Open("mysql", ts.getDSN())
 	require.NoError(t, err)
@@ -1365,8 +1353,7 @@ func TestTopSQLCatchRunningSQL(t *testing.T) {
 }
 
 func TestTopSQLCPUProfile(t *testing.T) {
-	ts, cleanup := createTidbTestTopSQLSuite(t)
-	defer cleanup()
+	ts := createTidbTestTopSQLSuite(t)
 
 	db, err := sql.Open("mysql", ts.getDSN())
 	require.NoError(t, err)
@@ -1401,10 +1388,7 @@ func TestTopSQLCPUProfile(t *testing.T) {
 	dbt.MustExec("create table t2 (a int auto_increment, b int, unique index idx(a));")
 	dbt.MustExec("set @@global.tidb_txn_mode = 'pessimistic'")
 
-	timeoutCtx, cancel := context.WithTimeout(context.Background(), time.Second*20)
-	defer cancel()
 	checkFn := func(sql, planRegexp string) {
-		require.NoError(t, timeoutCtx.Err())
 		stats := mc.GetSQLStatsBySQLWithRetry(sql, len(planRegexp) > 0)
 		// since 1 sql may has many plan, check `len(stats) > 0` instead of `len(stats) == 1`.
 		require.Greaterf(t, len(stats), 0, "sql: "+sql)
@@ -1753,8 +1737,7 @@ func waitCollected(ch chan struct{}) {
 }
 
 func TestTopSQLStatementStats(t *testing.T) {
-	ts, total, tagChecker, collectedNotifyCh, cleanFn := setupForTestTopSQLStatementStats(t)
-	defer cleanFn()
+	ts, total, tagChecker, collectedNotifyCh := setupForTestTopSQLStatementStats(t)
 
 	const ExecCountPerSQL = 2
 	// Test for CRUD.
@@ -2036,7 +2019,7 @@ func (c *resourceTagChecker) checkReqExist(t *testing.T, digest stmtstats.Binary
 	}
 }
 
-func setupForTestTopSQLStatementStats(t *testing.T) (*tidbTestSuite, stmtstats.StatementStatsMap, *resourceTagChecker, chan struct{}, func()) {
+func setupForTestTopSQLStatementStats(t *testing.T) (*tidbTestSuite, stmtstats.StatementStatsMap, *resourceTagChecker, chan struct{}) {
 	// Prepare stmt stats.
 	stmtstats.SetupAggregator()
 
@@ -2055,7 +2038,7 @@ func setupForTestTopSQLStatementStats(t *testing.T) (*tidbTestSuite, stmtstats.S
 	})
 	stmtstats.RegisterCollector(mockCollector)
 
-	ts, cleanup := createTidbTestSuite(t)
+	ts := createTidbTestSuite(t)
 
 	db, err := sql.Open("mysql", ts.getDSN())
 	require.NoError(t, err)
@@ -2103,22 +2086,21 @@ func setupForTestTopSQLStatementStats(t *testing.T) (*tidbTestSuite, stmtstats.S
 		tagChecker.sqlDigest2Reqs[stmtstats.BinaryDigest(sqlDigest)] = reqMap
 	}
 
-	cleanFn := func() {
+	t.Cleanup(func() {
 		stmtstats.UnregisterCollector(mockCollector)
-		cleanup()
 		err = failpoint.Disable("github.com/pingcap/tidb/domain/skipLoadSysVarCacheLoop")
 		require.NoError(t, err)
 		err = failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/unistoreRPCClientSendHook")
 		require.NoError(t, err)
 		stmtstats.CloseAggregator()
+		view.Stop()
+	})
 
-	}
-	return ts, total, tagChecker, collectedNotifyCh, cleanFn
+	return ts, total, tagChecker, collectedNotifyCh
 }
 
 func TestTopSQLStatementStats2(t *testing.T) {
-	ts, total, tagChecker, collectedNotifyCh, cleanFn := setupForTestTopSQLStatementStats(t)
-	defer cleanFn()
+	ts, total, tagChecker, collectedNotifyCh := setupForTestTopSQLStatementStats(t)
 
 	const ExecCountPerSQL = 3
 	sqlDigests := map[stmtstats.BinaryDigest]string{}
@@ -2236,8 +2218,7 @@ func TestTopSQLStatementStats2(t *testing.T) {
 }
 
 func TestTopSQLStatementStats3(t *testing.T) {
-	ts, total, tagChecker, collectedNotifyCh, cleanFn := setupForTestTopSQLStatementStats(t)
-	defer cleanFn()
+	ts, total, tagChecker, collectedNotifyCh := setupForTestTopSQLStatementStats(t)
 
 	err := failpoint.Enable("github.com/pingcap/tidb/executor/mockSleepInTableReaderNext", "return(2000)")
 	require.NoError(t, err)
@@ -2304,8 +2285,7 @@ func TestTopSQLStatementStats3(t *testing.T) {
 }
 
 func TestTopSQLStatementStats4(t *testing.T) {
-	ts, total, tagChecker, collectedNotifyCh, cleanFn := setupForTestTopSQLStatementStats(t)
-	defer cleanFn()
+	ts, total, tagChecker, collectedNotifyCh := setupForTestTopSQLStatementStats(t)
 
 	err := failpoint.Enable("github.com/pingcap/tidb/executor/mockSleepInTableReaderNext", "return(2000)")
 	require.NoError(t, err)
@@ -2382,10 +2362,9 @@ func TestTopSQLStatementStats4(t *testing.T) {
 }
 
 func TestTopSQLResourceTag(t *testing.T) {
-	ts, _, tagChecker, _, cleanFn := setupForTestTopSQLStatementStats(t)
+	ts, _, tagChecker, _ := setupForTestTopSQLStatementStats(t)
 	defer func() {
 		topsqlstate.DisableTopSQL()
-		cleanFn()
 	}()
 
 	loadDataFile, err := os.CreateTemp("", "load_data_test0.csv")
@@ -2520,8 +2499,7 @@ func TestLocalhostClientMapping(t *testing.T) {
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
 
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
@@ -2612,9 +2590,113 @@ func TestLocalhostClientMapping(t *testing.T) {
 	require.Errorf(t, err, "Connection successful without matching host for unix domain socket!")
 }
 
+func TestRcReadCheckTSConflict(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	cc := &clientConn{
+		alloc:      arena.NewAllocator(1024),
+		chunkAlloc: chunk.NewAllocator(),
+		pkt: &packetIO{
+			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
+		},
+	}
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set global tidb_rc_read_check_ts = ON")
+	tk.RefreshSession()
+	cc.setCtx(&TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)})
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int not null primary key, b int not null)")
+	dml := "insert into t values"
+	for i := 0; i < 50; i++ {
+		dml += fmt.Sprintf("(%v, 0)", i)
+		if i != 49 {
+			dml += ","
+		}
+	}
+	tk.MustExec(dml)
+	tk.MustQuery("select count(*) from t").Check(testkit.Rows("50"))
+	require.Equal(t, "ON", tk.MustQuery("show variables like 'tidb_rc_read_check_ts'").Rows()[0][1])
+
+	ctx := context.Background()
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/fetchNextErr", "return(\"secondNextAndRetConflict\")"))
+	err := cc.handleQuery(ctx, "select * from t limit 20")
+	require.NoError(t, err)
+
+	err = cc.handleQuery(ctx, "select * from t t1 join t t2")
+	require.Equal(t, kv.ErrWriteConflict, err)
+
+	tk.MustExec("set session tidb_max_chunk_size = 4096")
+	require.Equal(t, "4096", tk.MustQuery("show variables like 'tidb_max_chunk_size'").Rows()[0][1])
+	err = cc.handleQuery(ctx, "select * from t t1 join t t2")
+	require.NoError(t, err)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/fetchNextErr"))
+
+	tk.MustExec("drop table t")
+}
+
+func TestRcReadCheckTSConflictExtra(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/sessiontxn/isolation/CallOnStmtRetry", "return"))
+	defer func() {
+		defer require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/sessiontxn/isolation/CallOnStmtRetry"))
+	}()
+	store := testkit.CreateMockStore(t)
+
+	ctx := context.Background()
+	cc := &clientConn{
+		alloc:      arena.NewAllocator(1024),
+		chunkAlloc: chunk.NewAllocator(),
+		pkt: &packetIO{
+			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
+		},
+	}
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set global tidb_rc_read_check_ts = ON")
+
+	se := tk.Session()
+	cc.setCtx(&TiDBContext{Session: se, stmts: make(map[int]*TiDBStatement)})
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(id1 int, id2 int, id3 int, PRIMARY KEY(id1), UNIQUE KEY udx_id2 (id2))")
+	tk.MustExec("insert into t1 values (1, 1, 1)")
+	tk.MustExec("insert into t1 values (10, 10, 10)")
+	require.Equal(t, "ON", tk.MustQuery("show variables like 'tidb_rc_read_check_ts'").Rows()[0][1])
+
+	tk.MustExec("set transaction_isolation = 'READ-COMMITTED'")
+	tk2.MustExec("set transaction_isolation = 'READ-COMMITTED'")
+
+	// Execute in text protocol
+	se.SetValue(sessiontxn.CallOnStmtRetryCount, 0)
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("update t1 set id3 = id3 + 1 where id1 = 1")
+	err := cc.handleQuery(ctx, "select * from t1 where id1 = 1")
+	require.NoError(t, err)
+	tk.MustExec("commit")
+	count, ok := se.Value(sessiontxn.CallOnStmtRetryCount).(int)
+	require.Equal(t, true, ok)
+	require.Equal(t, 1, count)
+
+	// Execute in prepare binary protocol
+	se.SetValue(sessiontxn.CallOnStmtRetryCount, 0)
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("update t1 set id3 = id3 + 1 where id1 = 1")
+	require.NoError(t, cc.handleStmtPrepare(ctx, "select * from t1 where id1 = 1"))
+	require.NoError(t, cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0}))
+	tk.MustExec("commit")
+	count, ok = se.Value(sessiontxn.CallOnStmtRetryCount).(int)
+	require.Equal(t, true, ok)
+	require.Equal(t, 1, count)
+
+	tk.MustExec("drop table t1")
+}
+
 func TestRcReadCheckTS(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
 	db, err := sql.Open("mysql", ts.getDSN())
 	require.NoError(t, err)
@@ -2671,4 +2753,164 @@ func TestRcReadCheckTS(t *testing.T) {
 	// Test retry caused by ongoing prewrite lock.
 	// As the `defaultLockTTL` is 3s and it's difficult to change it here, the lock
 	// test is implemented in the uft test cases.
+}
+
+type connEventLogs struct {
+	sync.Mutex
+	types []extension.ConnEventTp
+	infos []extension.ConnEventInfo
+}
+
+func (l *connEventLogs) add(tp extension.ConnEventTp, info *extension.ConnEventInfo) {
+	l.Lock()
+	defer l.Unlock()
+	l.types = append(l.types, tp)
+	l.infos = append(l.infos, *info)
+}
+
+func (l *connEventLogs) reset() {
+	l.Lock()
+	defer l.Unlock()
+	l.types = l.types[:0]
+	l.infos = l.infos[:0]
+}
+
+func (l *connEventLogs) check(fn func()) {
+	l.Lock()
+	defer l.Unlock()
+	fn()
+}
+
+func (l *connEventLogs) waitConnDisconnected() error {
+	totalSleep := 0
+	for {
+		l.Lock()
+		if l.types[len(l.types)-1] == extension.ConnDisconnected {
+			l.Unlock()
+			return nil
+		}
+		l.Unlock()
+		if totalSleep >= 10000 {
+			break
+		}
+		time.Sleep(time.Millisecond * 100)
+		totalSleep += 100
+	}
+	return errors.New("timeout")
+}
+
+func TestExtensionConnEvent(t *testing.T) {
+	defer extension.Reset()
+	extension.Reset()
+
+	logs := &connEventLogs{}
+	require.NoError(t, extension.Register("test", extension.WithSessionHandlerFactory(func() *extension.SessionHandler {
+		return &extension.SessionHandler{
+			OnConnectionEvent: logs.add,
+		}
+	})))
+	require.NoError(t, extension.Setup())
+
+	ts := createTidbTestSuite(t)
+
+	// test for login success
+	logs.reset()
+	db, err := sql.Open("mysql", ts.getDSN())
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
+	conn, err := db.Conn(context.Background())
+	require.NoError(t, err)
+	defer func() {
+		_ = conn.Close()
+	}()
+
+	var expectedConn2 variable.ConnectionInfo
+	logs.check(func() {
+		require.Equal(t, []extension.ConnEventTp{
+			extension.ConnConnected,
+			extension.ConnHandshakeAccepted,
+		}, logs.types)
+		conn1 := logs.infos[0]
+		require.Equal(t, "127.0.0.1", conn1.ClientIP)
+		require.Equal(t, "127.0.0.1", conn1.ServerIP)
+		require.Empty(t, conn1.User)
+		require.Empty(t, conn1.DB)
+		require.Equal(t, int(ts.port), conn1.ServerPort)
+		require.NotEqual(t, conn1.ServerPort, conn1.ClientPort)
+		require.NotEmpty(t, conn1.ConnectionID)
+		require.Nil(t, conn1.ActiveRoles)
+		require.NoError(t, conn1.Error)
+
+		expectedConn2 = *(conn1.ConnectionInfo)
+		expectedConn2.User = "root"
+		expectedConn2.DB = "test"
+		require.Equal(t, []*auth.RoleIdentity{}, logs.infos[1].ActiveRoles)
+		require.Nil(t, logs.infos[1].Error)
+		require.Equal(t, expectedConn2, *(logs.infos[1].ConnectionInfo))
+	})
+
+	_, err = conn.ExecContext(context.TODO(), "create role r1@'%'")
+	require.NoError(t, err)
+	_, err = conn.ExecContext(context.TODO(), "grant r1 TO root")
+	require.NoError(t, err)
+	_, err = conn.ExecContext(context.TODO(), "set role all")
+	require.NoError(t, err)
+
+	require.NoError(t, conn.Close())
+	require.NoError(t, db.Close())
+	require.NoError(t, logs.waitConnDisconnected())
+	logs.check(func() {
+		require.Equal(t, 3, len(logs.infos))
+		require.Equal(t, 1, len(logs.infos[2].ActiveRoles))
+		require.Equal(t, auth.RoleIdentity{
+			Username: "r1",
+			Hostname: "%",
+		}, *logs.infos[2].ActiveRoles[0])
+		require.Nil(t, logs.infos[2].Error)
+		require.Equal(t, expectedConn2, *(logs.infos[2].ConnectionInfo))
+	})
+
+	// test for login failed
+	logs.reset()
+	cfg := mysql.NewConfig()
+	cfg.User = "noexist"
+	cfg.Net = "tcp"
+	cfg.Addr = fmt.Sprintf("127.0.0.1:%d", ts.port)
+	cfg.DBName = "test"
+
+	db, err = sql.Open("mysql", cfg.FormatDSN())
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
+	_, err = db.Conn(context.Background())
+	require.Error(t, err)
+	logs.check(func() {
+		require.Equal(t, []extension.ConnEventTp{
+			extension.ConnConnected,
+			extension.ConnHandshakeRejected,
+			extension.ConnDisconnected,
+		}, logs.types)
+		conn1 := logs.infos[0]
+		require.Equal(t, "127.0.0.1", conn1.ClientIP)
+		require.Equal(t, "127.0.0.1", conn1.ServerIP)
+		require.Empty(t, conn1.User)
+		require.Empty(t, conn1.DB)
+		require.Equal(t, int(ts.port), conn1.ServerPort)
+		require.NotEqual(t, conn1.ServerPort, conn1.ClientPort)
+		require.NotEmpty(t, conn1.ConnectionID)
+		require.Nil(t, conn1.ActiveRoles)
+		require.NoError(t, conn1.Error)
+
+		expectedConn2 = *(conn1.ConnectionInfo)
+		expectedConn2.User = "noexist"
+		expectedConn2.DB = "test"
+		require.Equal(t, []*auth.RoleIdentity{}, logs.infos[1].ActiveRoles)
+		require.EqualError(t, logs.infos[1].Error, "[server:1045]Access denied for user 'noexist'@'127.0.0.1' (using password: NO)")
+		require.Equal(t, expectedConn2, *(logs.infos[1].ConnectionInfo))
+	})
 }

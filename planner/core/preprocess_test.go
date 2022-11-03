@@ -15,6 +15,7 @@
 package core_test
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -45,7 +46,7 @@ func runSQL(t *testing.T, ctx sessionctx.Context, is infoschema.InfoSchema, sql 
 	if inPrepare {
 		opts = append(opts, core.InPrepare)
 	}
-	err = core.Preprocess(ctx, stmt, append(opts, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))...)
+	err = core.Preprocess(context.Background(), ctx, stmt, append(opts, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))...)
 	require.Truef(t, terror.ErrorEqual(err, terr), "sql: %s, err:%v", sql, err)
 }
 
@@ -267,6 +268,10 @@ func TestValidator(t *testing.T) {
 		{"select CONVERT( 2, DECIMAL(30,65) )", true, types.ErrMBiggerThanD.GenWithStackByArgs("2")},
 		{"select CONVERT( 2, DECIMAL(66,99) )", true, types.ErrMBiggerThanD.GenWithStackByArgs("2")},
 
+		// issue 34713
+		{"SELECT CAST(1 AS DATETIME(7));", true, types.ErrTooBigPrecision.GenWithStackByArgs(7, "CAST", types.MaxFsp)},
+		{"SELECT CAST(1 AS DATETIME(31));", true, types.ErrTooBigPrecision.GenWithStackByArgs(31, "CAST", types.MaxFsp)},
+
 		// TABLESAMPLE
 		{"select * from t tablesample bernoulli();", false, expression.ErrInvalidTableSample},
 		{"select * from t tablesample bernoulli(10 rows);", false, expression.ErrInvalidTableSample},
@@ -274,8 +279,7 @@ func TestValidator(t *testing.T) {
 		{"select * from t tablesample system() repeatable (10);", false, expression.ErrInvalidTableSample},
 	}
 
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -286,8 +290,7 @@ func TestValidator(t *testing.T) {
 }
 
 func TestForeignKey(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create table test.t1(a int, b int, c int)")
 	tk.MustExec("create table test.t2(d int)")
@@ -303,8 +306,7 @@ func TestForeignKey(t *testing.T) {
 }
 
 func TestDropGlobalTempTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -329,8 +331,7 @@ func TestDropGlobalTempTable(t *testing.T) {
 }
 
 func TestErrKeyPart0(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database TestErrKeyPart")
 	tk.MustExec("use TestErrKeyPart")
@@ -346,8 +347,7 @@ func TestErrKeyPart0(t *testing.T) {
 
 // For issue #30328
 func TestLargeVarcharAutoConv(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -368,8 +368,7 @@ func TestLargeVarcharAutoConv(t *testing.T) {
 }
 
 func TestPreprocessCTE(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t, t1, t2;")
@@ -417,7 +416,7 @@ func TestPreprocessCTE(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, stmts, 1)
 
-		err = core.Preprocess(tk.Session(), stmts[0])
+		err = core.Preprocess(context.Background(), tk.Session(), stmts[0])
 		require.NoError(t, err)
 
 		var rs strings.Builder

@@ -40,7 +40,7 @@ func TestNewHistogramBySelectivity(t *testing.T) {
 	intCol := &Column{}
 	intCol.Histogram = *NewHistogram(1, 30, 30, 0, types.NewFieldType(mysql.TypeLonglong), chunk.InitialCapacity, 0)
 	intCol.IsHandle = true
-	intCol.Loaded = true
+	intCol.StatsLoadedStatus = NewStatsFullLoadStatus()
 	for i := 0; i < 10; i++ {
 		intCol.Bounds.AppendInt64(0, int64(i*3))
 		intCol.Bounds.AppendInt64(0, int64(i*3+2))
@@ -62,7 +62,7 @@ num: 1 lower_bound: 12 upper_bound: 14 repeats: 0 ndv: 0
 num: 30 lower_bound: 27 upper_bound: 29 repeats: 0 ndv: 0`
 
 	stringCol := &Column{}
-	stringCol.Loaded = true
+	stringCol.StatsLoadedStatus = NewStatsFullLoadStatus()
 	stringCol.Histogram = *NewHistogram(2, 15, 30, 0, types.NewFieldType(mysql.TypeString), chunk.InitialCapacity, 0)
 	stringCol.Bounds.AppendString(0, "a")
 	stringCol.Bounds.AppendString(0, "aaaabbbb")
@@ -468,4 +468,24 @@ func TestMergeBucketNDV(t *testing.T) {
 		require.Equal(t, res.NDV, tt.result.NDV)
 		require.Equal(t, res.disjointNDV, tt.result.disjointNDV)
 	}
+}
+
+func TestIndexQueryBytes(t *testing.T) {
+	ctx := mock.NewContext()
+	sc := ctx.GetSessionVars().StmtCtx
+	idx := &Index{Info: &model.IndexInfo{Columns: []*model.IndexColumn{{Name: model.NewCIStr("a"), Offset: 0}}}}
+	idx.Histogram = *NewHistogram(0, 15, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0)
+	low, err1 := codec.EncodeKey(sc, nil, types.NewBytesDatum([]byte("0")))
+	require.NoError(t, err1)
+	high, err2 := codec.EncodeKey(sc, nil, types.NewBytesDatum([]byte("3")))
+	require.NoError(t, err2)
+	idx.Bounds.AppendBytes(0, low)
+	idx.Bounds.AppendBytes(0, high)
+	idx.Buckets = append(idx.Buckets, Bucket{Repeat: 10, Count: 20, NDV: 20})
+	idx.PreCalculateScalar()
+	idx.CMSketch = nil
+	// Count / NDV
+	require.Equal(t, idx.QueryBytes(low), uint64(1))
+	// Repeat
+	require.Equal(t, idx.QueryBytes(high), uint64(10))
 }

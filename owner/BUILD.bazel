@@ -1,0 +1,53 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "owner",
+    srcs = [
+        "manager.go",
+        "mock.go",
+    ],
+    importpath = "github.com/pingcap/tidb/owner",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//metrics",
+        "//parser/terror",
+        "//util",
+        "//util/logutil",
+        "@com_github_pingcap_errors//:errors",
+        "@io_etcd_go_etcd_api_v3//mvccpb",
+        "@io_etcd_go_etcd_api_v3//v3rpc/rpctypes",
+        "@io_etcd_go_etcd_client_v3//:client",
+        "@io_etcd_go_etcd_client_v3//concurrency",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "owner_test",
+    timeout = "short",
+    srcs = [
+        "fail_test.go",
+        "main_test.go",
+        "manager_test.go",
+    ],
+    embed = [":owner"],
+    flaky = True,
+    deps = [
+        "//ddl",
+        "//infoschema",
+        "//parser/terror",
+        "//store/mockstore",
+        "//testkit/testsetup",
+        "//util",
+        "//util/logutil",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@io_etcd_go_etcd_client_v3//:client",
+        "@io_etcd_go_etcd_client_v3//concurrency",
+        "@io_etcd_go_etcd_tests_v3//integration",
+        "@org_golang_google_grpc//:grpc",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

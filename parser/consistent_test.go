@@ -73,6 +73,7 @@ func extractMiddle(str, startMarker, endMarker string) string {
 }
 
 func extractQuotedWords(strs []string) []string {
+	//nolint: prealloc
 	var words []string
 	for _, str := range strs {
 		word := extractMiddle(str, "\"", "\"")

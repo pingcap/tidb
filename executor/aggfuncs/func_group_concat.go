@@ -248,6 +248,7 @@ func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsI
 			continue
 		}
 		memDelta += p.valSet.Insert(joinedVal)
+		memDelta += int64(len(joinedVal))
 		// write separator
 		if p.buffer == nil {
 			p.buffer = &bytes.Buffer{}
@@ -352,16 +353,17 @@ func (h *topNRows) tryToAdd(row sortRow) (truncated bool, memDelta int64) {
 
 	for h.currSize > h.limitSize {
 		debt := h.currSize - h.limitSize
-		if uint64(h.rows[0].buffer.Len()) > debt {
+		heapPopRow := heap.Pop(h).(sortRow)
+		if uint64(heapPopRow.buffer.Len()) > debt {
 			h.currSize -= debt
-			h.rows[0].buffer.Truncate(h.rows[0].buffer.Len() - int(debt))
+			heapPopRow.buffer.Truncate(heapPopRow.buffer.Len() - int(debt))
+			heap.Push(h, heapPopRow)
 		} else {
-			h.currSize -= uint64(h.rows[0].buffer.Len()) + h.sepSize
-			memDelta -= int64(h.rows[0].buffer.Cap())
-			for _, dt := range h.rows[0].byItems {
+			h.currSize -= uint64(heapPopRow.buffer.Len()) + h.sepSize
+			memDelta -= int64(heapPopRow.buffer.Cap())
+			for _, dt := range heapPopRow.byItems {
 				memDelta -= GetDatumMemSize(dt)
 			}
-			heap.Pop(h)
 			h.isSepTruncated = true
 		}
 	}
@@ -577,6 +579,7 @@ func (e *groupConcatDistinctOrder) UpdatePartialResult(sctx sessionctx.Context, 
 			continue
 		}
 		memDelta += p.valSet.Insert(joinedVal)
+		memDelta += int64(len(joinedVal))
 		sortRow := sortRow{
 			buffer:  buffer,
 			byItems: make([]*types.Datum, 0, len(e.byItems)),

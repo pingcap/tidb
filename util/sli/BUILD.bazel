@@ -1,0 +1,12 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "sli",
+    srcs = ["sli.go"],
+    importpath = "github.com/pingcap/tidb/util/sli",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//metrics",
+        "@com_github_pingcap_failpoint//:failpoint",
+    ],
+)

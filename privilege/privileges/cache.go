@@ -20,12 +20,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
-	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 var (
@@ -65,7 +66,7 @@ const (
 	References_priv,Alter_priv,Execute_priv,Index_priv,Create_view_priv,Show_view_priv,
 	Create_role_priv,Drop_role_priv,Create_tmp_table_priv,Lock_tables_priv,Create_routine_priv,
 	Alter_routine_priv,Event_priv,Shutdown_priv,Reload_priv,File_priv,Config_priv,Repl_client_priv,Repl_slave_priv,
-	account_locked,plugin FROM mysql.user`
+	account_locked,plugin,token_issuer FROM mysql.user`
 	sqlLoadGlobalGrantsTable = `SELECT HIGH_PRIORITY Host,User,Priv,With_Grant_Option FROM mysql.global_grants`
 )
 
@@ -99,6 +100,7 @@ type UserRecord struct {
 	Privileges           mysql.PrivilegeType
 	AccountLocked        bool // A role record when this field is true
 	AuthPlugin           string
+	AuthTokenIssuer      string
 }
 
 // NewUserRecord return a UserRecord, only use for unit test.
@@ -301,7 +303,7 @@ func (p *MySQLPrivilege) FindAllRole(activeRoles []*auth.RoleIdentity) []*auth.R
 				}
 			}
 		}
-		head += 1
+		head++
 	}
 	return ret
 }
@@ -427,16 +429,7 @@ func (p *MySQLPrivilege) buildUserMap() {
 	p.UserMap = userMap
 }
 
-type sortedUserRecord []UserRecord
-
-func (s sortedUserRecord) Len() int {
-	return len(s)
-}
-
-func (s sortedUserRecord) Less(i, j int) bool {
-	x := s[i]
-	y := s[j]
-
+func compareBaseRecord(x, y *baseRecord) bool {
 	// Compare two item by user's host first.
 	c1 := compareHost(x.Host, y.Host)
 	if c1 < 0 {
@@ -448,6 +441,10 @@ func (s sortedUserRecord) Less(i, j int) bool {
 
 	// Then, compare item by user's name value.
 	return x.User < y.User
+}
+
+func compareUserRecord(x, y UserRecord) bool {
+	return compareBaseRecord(&x.baseRecord, &y.baseRecord)
 }
 
 // compareHost compares two host string using some special rules, return value 1, 0, -1 means > = <.
@@ -499,13 +496,9 @@ func compareHost(x, y string) int {
 	return 0
 }
 
-func (s sortedUserRecord) Swap(i, j int) {
-	s[i], s[j] = s[j], s[i]
-}
-
 // SortUserTable sorts p.User in the MySQLPrivilege struct.
 func (p MySQLPrivilege) SortUserTable() {
-	sort.Sort(sortedUserRecord(p.User))
+	slices.SortFunc(p.User, compareUserRecord)
 }
 
 // LoadGlobalPrivTable loads the mysql.global_priv table from database.
@@ -528,10 +521,19 @@ func (p *MySQLPrivilege) LoadDBTable(ctx sessionctx.Context) error {
 	return nil
 }
 
+func compareDBRecord(x, y dbRecord) bool {
+	return compareBaseRecord(&x.baseRecord, &y.baseRecord)
+}
+
 func (p *MySQLPrivilege) buildDBMap() {
 	dbMap := make(map[string][]dbRecord, len(p.DB))
 	for _, record := range p.DB {
 		dbMap[record.User] = append(dbMap[record.User], record)
+	}
+
+	// Sort the records to make the matching rule work.
+	for _, records := range dbMap {
+		slices.SortFunc(records, compareDBRecord)
 	}
 	p.DBMap = dbMap
 }
@@ -566,7 +568,7 @@ func (p *MySQLPrivilege) LoadDefaultRoles(ctx sessionctx.Context) error {
 
 func (p *MySQLPrivilege) loadTable(sctx sessionctx.Context, sql string,
 	decodeTableRow func(chunk.Row, []*ast.ResultField) error) error {
-	ctx := context.Background()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 	rs, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql)
 	if err != nil {
 		return errors.Trace(err)
@@ -662,6 +664,8 @@ func (p *MySQLPrivilege) decodeUserTableRow(row chunk.Row, fs []*ast.ResultField
 				return errInvalidPrivilegeType.GenWithStack(f.ColumnAsName.O)
 			}
 			value.Privileges |= priv
+		case f.ColumnAsName.L == "token_issuer":
+			value.AuthTokenIssuer = row.GetString(i)
 		default:
 			value.assignUserOrHost(row, i, f)
 		}
@@ -1168,7 +1172,7 @@ func (p *MySQLPrivilege) DBIsVisible(user, host, db string) bool {
 }
 
 func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentity) []string {
-	var gs []string // nolint: prealloc
+	var gs []string //nolint: prealloc
 	var sortFromIdx int
 	var hasGlobalGrant = false
 	// Some privileges may granted from role inheritance.
@@ -1210,7 +1214,6 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 			s = fmt.Sprintf(`GRANT %s ON *.* TO '%s'@'%s' WITH GRANT OPTION`, g, user, host)
 		} else {
 			s = fmt.Sprintf(`GRANT %s ON *.* TO '%s'@'%s'`, g, user, host)
-
 		}
 		gs = append(gs, s)
 	}
@@ -1257,7 +1260,7 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 			gs = append(gs, s)
 		}
 	}
-	sort.Strings(gs[sortFromIdx:])
+	slices.Sort(gs[sortFromIdx:])
 
 	// Show table scope grants.
 	sortFromIdx = len(gs)
@@ -1291,7 +1294,7 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 			gs = append(gs, s)
 		}
 	}
-	sort.Strings(gs[sortFromIdx:])
+	slices.Sort(gs[sortFromIdx:])
 
 	// Show column scope grants, column and table are combined.
 	// A map of "DB.Table" => Priv(col1, col2 ...)
@@ -1310,7 +1313,7 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 		s := fmt.Sprintf(`GRANT %s ON %s TO '%s'@'%s'`, privCols, k, user, host)
 		gs = append(gs, s)
 	}
-	sort.Strings(gs[sortFromIdx:])
+	slices.Sort(gs[sortFromIdx:])
 
 	// Show role grants.
 	graphKey := user + "@" + host
@@ -1324,7 +1327,7 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 			tmp := fmt.Sprintf("'%s'@'%s'", roleName, roleHost)
 			sortedRes = append(sortedRes, tmp)
 		}
-		sort.Strings(sortedRes)
+		slices.Sort(sortedRes)
 		for i, r := range sortedRes {
 			g += r
 			if i != len(sortedRes)-1 {
@@ -1370,12 +1373,12 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 
 	// Merge the DYNAMIC privs into a line for non-grantable and then grantable.
 	if len(dynamicPrivs) > 0 {
-		sort.Strings(dynamicPrivs)
+		slices.Sort(dynamicPrivs)
 		s := fmt.Sprintf("GRANT %s ON *.* TO '%s'@'%s'", strings.Join(dynamicPrivs, ","), user, host)
 		gs = append(gs, s)
 	}
 	if len(grantableDynamicPrivs) > 0 {
-		sort.Strings(grantableDynamicPrivs)
+		slices.Sort(grantableDynamicPrivs)
 		s := fmt.Sprintf("GRANT %s ON *.* TO '%s'@'%s' WITH GRANT OPTION", strings.Join(grantableDynamicPrivs, ","), user, host)
 		gs = append(gs, s)
 	}

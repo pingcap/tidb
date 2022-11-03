@@ -206,7 +206,7 @@ GetIndexMergePartialPath(IndexInfos, indexAccessPaths) {
 //    condition : a < 1 or a > 2 or b < 1 or b > 10 
 //    imPaths will be [a<1,a>2,b<1,b>10] and we can merge it and get [a<1 or a >2 , b < 1 or b > 10] 
 // (2)IndexMergePath.tableFilters: 
-//    <1> Remove a condition from PushdownConditions and the rest will be added to tableFitler.
+//    <1> Remove a condition from PushdownConditions and the rest will be added to tableFilter.
 //    <2> After the merge operation, if any indexPath's tableFilter is not nil, we should add it into tableFilters
 	
 CreateIndexMergeUnionPath(imPaths,PushdownConditions,cond,IndexInfos) {
@@ -227,7 +227,7 @@ GetIndexMergeIntersectionPaths(pushDownConditions, usedConditionsInOr, indexInfo
 	for cond in newConsiderConditions {
 		indexPaths = buildAccessPath([]{cond}, indexInfos)
 		if indexPaths == nil {
-			tableFiltes = append(tableFilters,cond)
+			tableFilters = append(tableFilters,cond)
 			continue
 		}
 		indexPath := GetIndexMergePartialPath(indexPaths,indexInfos)
@@ -260,7 +260,7 @@ The graph below illustrates an execution of IndexMerge scan.
 
 <img alt="Execution Model" src="./imgs/execution_model.png" width="500pt"/>
 
-Every index plan in `PhysicalIndexMergeLookUpReader` will start an `IndexWorker` to execute the IndexScan plan and send handles to AndOrWorker. AndOrWorker is responsible for performing set operations (and, or) to getting final handles. Then `AndOrWoker` sends final handles to `TableWokers` to get rows from TiKV.
+Every index plan in `PhysicalIndexMergeLookUpReader` will start an `IndexWorker` to execute the IndexScan plan and send handles to AndOrWorker. AndOrWorker is responsible for performing set operations (and, or) to getting final handles. Then `AndOrWoker` sends final handles to `TableWorkers` to get rows from TiKV.
 
 Here are some designs for index plans in pipeline mode to be executed without considering the order.
 

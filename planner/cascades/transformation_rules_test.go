@@ -80,7 +80,7 @@ func TestAggPushDownGather(t *testing.T) {
 		SQL    string
 		Result []string
 	}
-	transformationRulesSuiteData.GetTestCases(t, &input, &output)
+	transformationRulesSuiteData.LoadTestCases(t, &input, &output)
 
 	p := parser.New()
 	ctx := plannercore.MockContext()
@@ -150,7 +150,7 @@ func TestPredicatePushDown(t *testing.T) {
 		SQL    string
 		Result []string
 	}
-	transformationRulesSuiteData.GetTestCases(t, &input, &output)
+	transformationRulesSuiteData.LoadTestCases(t, &input, &output)
 	testGroupToString(t, input, output, optimizer)
 }
 
@@ -189,7 +189,7 @@ func TestTopNRules(t *testing.T) {
 		SQL    string
 		Result []string
 	}
-	transformationRulesSuiteData.GetTestCases(t, &input, &output)
+	transformationRulesSuiteData.LoadTestCases(t, &input, &output)
 	testGroupToString(t, input, output, optimizer)
 }
 
@@ -209,7 +209,7 @@ func TestProjectionElimination(t *testing.T) {
 		SQL    string
 		Result []string
 	}
-	transformationRulesSuiteData.GetTestCases(t, &input, &output)
+	transformationRulesSuiteData.LoadTestCases(t, &input, &output)
 	testGroupToString(t, input, output, optimizer)
 }
 
@@ -228,7 +228,7 @@ func TestEliminateMaxMin(t *testing.T) {
 		SQL    string
 		Result []string
 	}
-	transformationRulesSuiteData.GetTestCases(t, &input, &output)
+	transformationRulesSuiteData.LoadTestCases(t, &input, &output)
 	testGroupToString(t, input, output, optimizer)
 }
 
@@ -247,7 +247,7 @@ func TestMergeAggregationProjection(t *testing.T) {
 		SQL    string
 		Result []string
 	}
-	transformationRulesSuiteData.GetTestCases(t, &input, &output)
+	transformationRulesSuiteData.LoadTestCases(t, &input, &output)
 	testGroupToString(t, input, output, optimizer)
 }
 
@@ -273,7 +273,7 @@ func TestMergeAdjacentTopN(t *testing.T) {
 		SQL    string
 		Result []string
 	}
-	transformationRulesSuiteData.GetTestCases(t, &input, &output)
+	transformationRulesSuiteData.LoadTestCases(t, &input, &output)
 	testGroupToString(t, input, output, optimizer)
 }
 
@@ -293,7 +293,7 @@ func TestMergeAdjacentLimit(t *testing.T) {
 		SQL    string
 		Result []string
 	}
-	transformationRulesSuiteData.GetTestCases(t, &input, &output)
+	transformationRulesSuiteData.LoadTestCases(t, &input, &output)
 	testGroupToString(t, input, output, optimizer)
 }
 
@@ -312,7 +312,7 @@ func TestTransformLimitToTableDual(t *testing.T) {
 		SQL    string
 		Result []string
 	}
-	transformationRulesSuiteData.GetTestCases(t, &input, &output)
+	transformationRulesSuiteData.LoadTestCases(t, &input, &output)
 	testGroupToString(t, input, output, optimizer)
 }
 
@@ -331,7 +331,7 @@ func TestPostTransformationRules(t *testing.T) {
 		SQL    string
 		Result []string
 	}
-	transformationRulesSuiteData.GetTestCases(t, &input, &output)
+	transformationRulesSuiteData.LoadTestCases(t, &input, &output)
 	testGroupToString(t, input, output, optimizer)
 }
 
@@ -356,7 +356,7 @@ func TestPushLimitDownTiKVSingleGather(t *testing.T) {
 		SQL    string
 		Result []string
 	}
-	transformationRulesSuiteData.GetTestCases(t, &input, &output)
+	transformationRulesSuiteData.LoadTestCases(t, &input, &output)
 	testGroupToString(t, input, output, optimizer)
 }
 
@@ -378,7 +378,7 @@ func TestEliminateOuterJoin(t *testing.T) {
 		SQL    string
 		Result []string
 	}
-	transformationRulesSuiteData.GetTestCases(t, &input, &output)
+	transformationRulesSuiteData.LoadTestCases(t, &input, &output)
 	testGroupToString(t, input, output, optimizer)
 }
 
@@ -397,7 +397,7 @@ func TestTransformAggregateCaseToSelection(t *testing.T) {
 		SQL    string
 		Result []string
 	}
-	transformationRulesSuiteData.GetTestCases(t, &input, &output)
+	transformationRulesSuiteData.LoadTestCases(t, &input, &output)
 	testGroupToString(t, input, output, optimizer)
 }
 
@@ -419,7 +419,7 @@ func TestTransformAggToProj(t *testing.T) {
 		SQL    string
 		Result []string
 	}
-	transformationRulesSuiteData.GetTestCases(t, &input, &output)
+	transformationRulesSuiteData.LoadTestCases(t, &input, &output)
 	testGroupToString(t, input, output, optimizer)
 }
 
@@ -439,7 +439,7 @@ func TestDecorrelate(t *testing.T) {
 		SQL    string
 		Result []string
 	}
-	transformationRulesSuiteData.GetTestCases(t, &input, &output)
+	transformationRulesSuiteData.LoadTestCases(t, &input, &output)
 	testGroupToString(t, input, output, optimizer)
 }
 
@@ -465,7 +465,7 @@ func TestInjectProj(t *testing.T) {
 		SQL    string
 		Result []string
 	}
-	transformationRulesSuiteData.GetTestCases(t, &input, &output)
+	transformationRulesSuiteData.LoadTestCases(t, &input, &output)
 	testGroupToString(t, input, output, optimizer)
 }
 
@@ -488,6 +488,6 @@ func TestMergeAdjacentWindow(t *testing.T) {
 		SQL    string
 		Result []string
 	}
-	transformationRulesSuiteData.GetTestCases(t, &input, &output)
+	transformationRulesSuiteData.LoadTestCases(t, &input, &output)
 	testGroupToString(t, input, output, optimizer)
 }

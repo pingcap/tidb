@@ -1,0 +1,13 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "kverrors",
+    srcs = ["errors.go"],
+    importpath = "github.com/pingcap/tidb/store/mockstore/unistore/tikv/kverrors",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//store/mockstore/unistore/tikv/mvcc",
+        "@com_github_pingcap_kvproto//pkg/deadlock",
+        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
+    ],
+)

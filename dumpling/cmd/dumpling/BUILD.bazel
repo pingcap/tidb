@@ -1,0 +1,22 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "dumpling_lib",
+    srcs = ["main.go"],
+    importpath = "github.com/pingcap/tidb/dumpling/cmd/dumpling",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//dumpling/cli",
+        "//dumpling/export",
+        "@com_github_prometheus_client_golang//prometheus",
+        "@com_github_prometheus_client_golang//prometheus/collectors",
+        "@com_github_spf13_pflag//:pflag",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_binary(
+    name = "dumpling",
+    embed = [":dumpling_lib"],
+    visibility = ["//visibility:public"],
+)

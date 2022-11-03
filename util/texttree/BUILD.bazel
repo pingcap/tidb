@@ -1,0 +1,24 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "texttree",
+    srcs = ["texttree.go"],
+    importpath = "github.com/pingcap/tidb/util/texttree",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "texttree_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "texttree_test.go",
+    ],
+    embed = [":texttree"],
+    flaky = True,
+    deps = [
+        "//testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

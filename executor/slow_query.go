@@ -23,7 +23,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -50,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/plancodec"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 // ParseSlowLogBatchSize is the batch size of slow-log lines for a worker to parse, exported for testing.
@@ -740,6 +740,14 @@ func getColumnValueFactoryByName(sctx sessionctx.Context, colName string, column
 			row[columnIdx] = types.NewStringDatum(plan)
 			return true, nil
 		}, nil
+	case variable.SlowLogBinaryPlan:
+		return func(row []types.Datum, value string, tz *time.Location, checker *slowLogChecker) (bool, error) {
+			if strings.HasPrefix(value, variable.SlowLogBinaryPlanPrefix) {
+				value = value[len(variable.SlowLogBinaryPlanPrefix) : len(value)-len(variable.SlowLogPlanSuffix)]
+			}
+			row[columnIdx] = types.NewStringDatum(value)
+			return true, nil
+		}, nil
 	case variable.SlowLogConnIDStr, variable.SlowLogExecRetryCount, variable.SlowLogPreprocSubQueriesStr,
 		execdetails.WriteKeysStr, execdetails.WriteSizeStr, execdetails.PrewriteRegionStr, execdetails.TxnRetryStr,
 		execdetails.RequestCountStr, execdetails.TotalKeysStr, execdetails.ProcessKeysStr,
@@ -855,6 +863,7 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 	}
 	if e.extractor == nil || !e.extractor.Enable {
 		totalFileNum = 1
+		//nolint: gosec
 		file, err := os.Open(logFilePath)
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -953,8 +962,8 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 		}
 	}
 	// Sort by start time
-	sort.Slice(logFiles, func(i, j int) bool {
-		return logFiles[i].start.Before(logFiles[j].start)
+	slices.SortFunc(logFiles, func(i, j logFile) bool {
+		return i.start.Before(j.start)
 	})
 	return logFiles, err
 }

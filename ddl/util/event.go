@@ -22,11 +22,11 @@ import (
 
 // Event is an event that a ddl operation happened.
 type Event struct {
-	Tp          model.ActionType
 	TableInfo   *model.TableInfo
 	PartInfo    *model.PartitionInfo
-	ColumnInfos []*model.ColumnInfo
 	IndexInfo   *model.IndexInfo
+	ColumnInfos []*model.ColumnInfo
+	Tp          model.ActionType
 }
 
 // String implements fmt.Stringer interface.

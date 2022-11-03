@@ -1,0 +1,34 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "generatedexpr",
+    srcs = ["generated_expr.go"],
+    importpath = "github.com/pingcap/tidb/util/generatedexpr",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//parser",
+        "//parser/ast",
+        "//parser/charset",
+        "//parser/model",
+        "//util",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "generatedexpr_test",
+    timeout = "short",
+    srcs = [
+        "gen_expr_test.go",
+        "main_test.go",
+    ],
+    embed = [":generatedexpr"],
+    flaky = True,
+    deps = [
+        "//parser/ast",
+        "//testkit/testsetup",
+        "//types/parser_driver",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

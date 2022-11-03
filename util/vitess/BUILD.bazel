@@ -1,0 +1,25 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "vitess",
+    srcs = ["vitess_hash.go"],
+    importpath = "github.com/pingcap/tidb/util/vitess",
+    visibility = ["//visibility:public"],
+    deps = ["@com_github_pingcap_errors//:errors"],
+)
+
+go_test(
+    name = "vitess_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "vitess_hash_test.go",
+    ],
+    embed = [":vitess"],
+    flaky = True,
+    deps = [
+        "//testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

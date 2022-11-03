@@ -1,0 +1,32 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "error",
+    srcs = ["error.go"],
+    importpath = "github.com/pingcap/tidb/store/driver/error",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//errno",
+        "//kv",
+        "//parser/terror",
+        "//util/dbterror",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_tikv_client_go_v2//error",
+    ],
+)
+
+go_test(
+    name = "error_test",
+    timeout = "short",
+    srcs = ["error_test.go"],
+    embed = [":error"],
+    flaky = True,
+    deps = [
+        "//parser/terror",
+        "//testkit/testsetup",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_tikv_client_go_v2//error",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

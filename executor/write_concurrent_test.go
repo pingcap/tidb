@@ -23,8 +23,7 @@ import (
 )
 
 func TestBatchInsertWithOnDuplicate(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewAsyncTestKit(t, store)
 	// prepare schema.

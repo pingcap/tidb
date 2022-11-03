@@ -146,7 +146,8 @@ func (c *cachedTable) loadDataFromOriginalTable(store kv.Storage) (kv.MemBuffer,
 	}
 	var startTS uint64
 	totalSize := int64(0)
-	err = kv.RunInNewTxn(context.Background(), store, true, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnCacheTable)
+	err = kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
 		prefix := tablecodec.GenTablePrefix(c.tableID)
 		if err != nil {
 			return errors.Trace(err)
@@ -289,8 +290,11 @@ func (c *cachedTable) renewLease(handle StateRemote, ts uint64, data *cacheData,
 	tid := c.Meta().ID
 	lease := leaseFromTS(ts, leaseDuration)
 	newLease, err := handle.RenewReadLease(context.Background(), tid, data.Lease, lease)
-	if err != nil && !kv.IsTxnRetryableError(err) {
-		log.Warn("Renew read lease error", zap.Error(err))
+	if err != nil {
+		if !kv.IsTxnRetryableError(err) {
+			log.Warn("Renew read lease error", zap.Error(err))
+		}
+		return
 	}
 	if newLease > 0 {
 		c.cacheData.Store(&cacheData{
@@ -316,7 +320,7 @@ func (c *cachedTable) WriteLockAndKeepAlive(ctx context.Context, exit chan struc
 		return
 	}
 
-	t := time.NewTicker(cacheTableWriteLease)
+	t := time.NewTicker(cacheTableWriteLease / 2)
 	defer t.Stop()
 	for {
 		select {

@@ -23,9 +23,9 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -159,10 +159,7 @@ func (tk *AsyncTestKit) Exec(ctx context.Context, sql string, args ...interface{
 		return nil, err
 	}
 
-	params := make([]types.Datum, len(args))
-	for i := 0; i < len(params); i++ {
-		params[i] = types.NewDatum(args[i])
-	}
+	params := expression.Args2Expressions4Test(args...)
 
 	rs, err := se.ExecutePreparedStmt(ctx, stmtID, params)
 	if err != nil {

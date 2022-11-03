@@ -1,0 +1,57 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "perfschema",
+    srcs = [
+        "const.go",
+        "init.go",
+        "tables.go",
+    ],
+    importpath = "github.com/pingcap/tidb/infoschema/perfschema",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//ddl",
+        "//expression",
+        "//infoschema",
+        "//kv",
+        "//meta/autoid",
+        "//parser",
+        "//parser/ast",
+        "//parser/model",
+        "//parser/mysql",
+        "//parser/terror",
+        "//sessionctx",
+        "//table",
+        "//table/tables",
+        "//types",
+        "//util",
+        "//util/profile",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@org_golang_x_exp//slices",
+    ],
+)
+
+go_test(
+    name = "perfschema_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "tables_test.go",
+    ],
+    data = glob(["testdata/**"]),
+    embed = [":perfschema"],
+    flaky = True,
+    deps = [
+        "//kv",
+        "//parser/terror",
+        "//session",
+        "//store/mockstore",
+        "//testkit",
+        "//testkit/testsetup",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+        "@io_opencensus_go//stats/view",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

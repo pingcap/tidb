@@ -15,7 +15,6 @@
 package ddl_test
 
 import (
-	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -23,10 +22,9 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/ddl"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
@@ -43,8 +41,7 @@ func TestModifyColumnTypeArgs(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockUpdateVersionAndTableInfoErr"))
 	}()
 
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -64,15 +61,7 @@ func TestModifyColumnTypeArgs(t *testing.T) {
 
 	id, err := strconv.Atoi(jobID)
 	require.NoError(t, err)
-	var historyJob *model.Job
-	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		historyJob, err = t.GetHistoryDDLJob(int64(id))
-		if err != nil {
-			return err
-		}
-		return nil
-	})
+	historyJob, err := ddl.GetHistoryJobByID(tk.Session(), int64(id))
 	require.NoError(t, err)
 	require.NotNil(t, historyJob)
 
@@ -97,8 +86,7 @@ func TestParallelUpdateTableReplica(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount"))
 	}()
 
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
@@ -150,8 +138,7 @@ func TestParallelFlashbackTable(t *testing.T) {
 			       ON DUPLICATE KEY
 			       UPDATE variable_value = '%[1]s'`
 
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 
 	// clear GC variables first.

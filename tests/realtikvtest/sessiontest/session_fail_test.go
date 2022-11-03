@@ -28,8 +28,7 @@ import (
 )
 
 func TestFailStatementCommitInRetry(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -51,8 +50,7 @@ func TestFailStatementCommitInRetry(t *testing.T) {
 }
 
 func TestGetTSFailDirtyState(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -83,8 +81,7 @@ func TestGetTSFailDirtyStateInretry(t *testing.T) {
 		require.NoError(t, failpoint.Disable("tikvclient/mockGetTSErrorInRetry"))
 	}()
 
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -103,8 +100,7 @@ func TestGetTSFailDirtyStateInretry(t *testing.T) {
 func TestKillFlagInBackoff(t *testing.T) {
 	// This test checks the `killed` flag is passed down to the backoffer through
 	// session.KVVars.
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -120,11 +116,11 @@ func TestKillFlagInBackoff(t *testing.T) {
 	_, err = session.ResultSetToStringSlice(context.TODO(), tk.Session(), rs)
 	// `interrupted` is returned when `Killed` is set.
 	require.Regexp(t, ".*Query execution was interrupted.*", err.Error())
+	rs.Close()
 }
 
 func TestClusterTableSendError(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -137,8 +133,7 @@ func TestClusterTableSendError(t *testing.T) {
 }
 
 func TestAutoCommitNeedNotLinearizability(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -201,4 +196,11 @@ func TestAutoCommitNeedNotLinearizability(t *testing.T) {
 		}()
 		tk.MustExec("COMMIT")
 	}()
+}
+
+func TestKill(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("kill connection_id();")
 }

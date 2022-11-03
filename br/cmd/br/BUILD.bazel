@@ -1,0 +1,60 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
+
+go_library(
+    name = "br_lib",
+    srcs = [
+        "backup.go",
+        "cmd.go",
+        "debug.go",
+        "main.go",
+        "restore.go",
+        "stream.go",
+    ],
+    importpath = "github.com/pingcap/tidb/br/cmd/br",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//br/pkg/conn",
+        "//br/pkg/errors",
+        "//br/pkg/gluetidb",
+        "//br/pkg/gluetikv",
+        "//br/pkg/logutil",
+        "//br/pkg/metautil",
+        "//br/pkg/mock/mockid",
+        "//br/pkg/redact",
+        "//br/pkg/restore",
+        "//br/pkg/rtree",
+        "//br/pkg/streamhelper/config",
+        "//br/pkg/summary",
+        "//br/pkg/task",
+        "//br/pkg/trace",
+        "//br/pkg/utils",
+        "//br/pkg/version/build",
+        "//config",
+        "//parser/model",
+        "//session",
+        "//util",
+        "//util/logutil",
+        "@com_github_gogo_protobuf//proto",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/brpb",
+        "@com_github_pingcap_kvproto//pkg/import_sstpb",
+        "@com_github_pingcap_log//:log",
+        "@com_github_spf13_cobra//:cobra",
+        "@com_sourcegraph_sourcegraph_appdash//:appdash",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_binary(
+    name = "br",
+    embed = [":br_lib"],
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "br_test",
+    timeout = "short",
+    srcs = ["main_test.go"],
+    embed = [":br_lib"],
+    flaky = True,
+)

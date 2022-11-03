@@ -52,7 +52,6 @@ const newLine = "\n"
 
 const builtinCompareImports = `import (
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 )
 `
@@ -89,7 +88,7 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEvalInt(in
 			continue
 		}
 {{- if eq .type.ETName "Json" }}
-		val := json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i))
+		val := types.CompareBinaryJSON(buf0.GetJSON(i), buf1.GetJSON(i))
 {{- else if eq .type.ETName "Real" }}
 		val := types.CompareFloat64(arg0[i], arg1[i])
 {{- else if eq .type.ETName "String" }}
@@ -146,7 +145,7 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEvalInt(in
 		case isNull0 != isNull1:
 			i64s[i] = 0
 {{- if eq .type.ETName "Json" }}
-		case json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i)) == 0:
+		case types.CompareBinaryJSON(buf0.GetJSON(i), buf1.GetJSON(i)) == 0:
 {{- else if eq .type.ETName "Real" }}
 		case types.CompareFloat64(arg0[i], arg1[i]) == 0:
 {{- else if eq .type.ETName "String" }}
@@ -224,6 +223,9 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEval{{ .ty
 	beforeWarns := sc.WarningCount()
 	for j := 0; j < len(b.args); j++{
 		err := b.args[j].VecEval{{ .type.TypeName }}(b.ctx, input, buf1)
+        {{- if eq .type.TypeName "Time" }}
+        fsp := b.tp.GetDecimal()
+        {{- end }}
 		afterWarns := sc.WarningCount()
 		if err != nil || afterWarns > beforeWarns {
 			if afterWarns > beforeWarns {
@@ -235,6 +237,9 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEval{{ .ty
 		for i := 0; i < n; i++ {
 			if !buf1.IsNull(i) && result.IsNull(i) {
 				i64s[i] = args[i]
+                {{- if eq .type.TypeName "Time" }}
+                i64s[i].SetFsp(fsp)
+                {{- end }}
 				result.SetNull(i, false)
 			}
 		}

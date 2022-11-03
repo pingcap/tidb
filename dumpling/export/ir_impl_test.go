@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/pingcap/tidb/util/promutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -98,7 +99,8 @@ func TestChunkRowIter(t *testing.T) {
 	sqlRowIter := newRowIter(rows, 2)
 
 	res := newSimpleRowReceiver(2)
-	wp := newWriterPipe(nil, testFileSize, testStatementSize, nil)
+	metrics := newMetrics(promutil.NewDefaultFactory(), nil)
+	wp := newWriterPipe(nil, testFileSize, testStatementSize, metrics, nil)
 
 	var resSize [][]uint64
 	for sqlRowIter.HasNext() {

@@ -19,7 +19,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"net/url"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -63,17 +63,12 @@ var (
 
 // DBConfig is database configuration.
 type DBConfig struct {
-	Host string `toml:"host" json:"host"`
-
-	Port int `toml:"port" json:"port"`
-
-	User string `toml:"user" json:"user"`
-
-	Password string `toml:"password" json:"-"` // omit it for privacy
-
-	Schema string `toml:"schema" json:"schema"`
-
+	Host     string `toml:"host" json:"host"`
+	User     string `toml:"user" json:"user"`
+	Password string `toml:"password" json:"-"`
+	Schema   string `toml:"schema" json:"schema"`
 	Snapshot string `toml:"snapshot" json:"snapshot"`
+	Port     int    `toml:"port" json:"port"`
 }
 
 // String returns native format of database configuration
@@ -112,26 +107,31 @@ func GetDBConfigFromEnv(schema string) DBConfig {
 
 // OpenDB opens a mysql connection FD
 func OpenDB(cfg DBConfig, vars map[string]string) (*sql.DB, error) {
-	var dbDSN string
+	driverCfg := mysql.NewConfig()
+	driverCfg.Params = make(map[string]string)
+	driverCfg.User = cfg.User
+	driverCfg.Passwd = cfg.Password
+	driverCfg.Net = "tcp"
+	driverCfg.Addr = net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port))
+	driverCfg.Params["charset"] = "utf8mb4"
+
 	if len(cfg.Snapshot) != 0 {
 		log.Info("create connection with snapshot", zap.String("snapshot", cfg.Snapshot))
-		dbDSN = fmt.Sprintf("%s:%s@tcp(%s:%d)/?charset=utf8mb4&tidb_snapshot=%s", cfg.User, cfg.Password, cfg.Host, cfg.Port, cfg.Snapshot)
-	} else {
-		dbDSN = fmt.Sprintf("%s:%s@tcp(%s:%d)/?charset=utf8mb4", cfg.User, cfg.Password, cfg.Host, cfg.Port)
+		driverCfg.Params["tidb_snapshot"] = cfg.Snapshot
 	}
 
 	for key, val := range vars {
 		// key='val'. add single quote for better compatibility.
-		dbDSN += fmt.Sprintf("&%s=%%27%s%%27", key, url.QueryEscape(val))
+		driverCfg.Params[key] = fmt.Sprintf("'%s'", val)
 	}
 
-	dbConn, err := sql.Open("mysql", dbDSN)
+	c, err := mysql.NewConnector(driverCfg)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
-	err = dbConn.Ping()
-	return dbConn, errors.Trace(err)
+	db := sql.OpenDB(c)
+	err = db.Ping()
+	return db, errors.Trace(err)
 }
 
 // CloseDB closes the mysql fd
@@ -250,7 +250,7 @@ func GetRandomValues(ctx context.Context, db QueryExecutor, schemaName, table, c
 }
 
 // GetMinMaxValue return min and max value of given column by specified limitRange condition.
-func GetMinMaxValue(ctx context.Context, db QueryExecutor, schema, table, column string, limitRange string, limitArgs []interface{}, collation string) (string, string, error) {
+func GetMinMaxValue(ctx context.Context, db QueryExecutor, schema, table, column string, limitRange string, limitArgs []interface{}, collation string) (minStr string, maxStr string, err error) {
 	/*
 		example:
 		mysql> SELECT MIN(`id`) as MIN, MAX(`id`) as MAX FROM `test`.`testa` WHERE id > 0 AND id < 10;
@@ -319,7 +319,7 @@ func GetTimeZoneOffset(ctx context.Context, db QueryExecutor) (time.Duration, er
 	}
 
 	hour, minute, second := t.Clock()
-	// nolint:durationcheck
+	//nolint:durationcheck
 	return time.Duration(hour*3600+minute*60+second) * time.Second * factor, nil
 }
 
@@ -334,7 +334,6 @@ func FormatTimeZoneOffset(offset time.Duration) string {
 	minutes := (offset % time.Hour) / time.Minute
 
 	return fmt.Sprintf("%s%02d:%02d", prefix, hours, minutes)
-
 }
 
 func queryTables(ctx context.Context, db QueryExecutor, q string) (tables []string, err error) {
@@ -458,9 +457,9 @@ func GetCRC32Checksum(ctx context.Context, db QueryExecutor, schemaName, tableNa
 
 // Bucket saves the bucket information from TiDB.
 type Bucket struct {
-	Count      int64
 	LowerBound string
 	UpperBound string
+	Count      int64
 }
 
 // GetBucketsInfo SHOW STATS_BUCKETS in TiDB.
@@ -686,13 +685,12 @@ func GetSessionVariable(ctx context.Context, db QueryExecutor, variable string) 
 	*/
 
 	for rows.Next() {
-		err = rows.Scan(&variable, &value)
-		if err != nil {
+		if err = rows.Scan(&variable, &value); err != nil {
 			return "", errors.Trace(err)
 		}
 	}
 
-	if rows.Err() != nil {
+	if err := rows.Err(); err != nil {
 		return "", errors.Trace(err)
 	}
 

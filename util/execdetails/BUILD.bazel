@@ -1,0 +1,32 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "execdetails",
+    srcs = ["execdetails.go"],
+    importpath = "github.com/pingcap/tidb/util/execdetails",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@com_github_pingcap_tipb//go-tipb",
+        "@com_github_tikv_client_go_v2//util",
+        "@org_golang_x_exp//slices",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "execdetails_test",
+    timeout = "short",
+    srcs = [
+        "execdetails_test.go",
+        "main_test.go",
+    ],
+    embed = [":execdetails"],
+    flaky = True,
+    deps = [
+        "//testkit/testsetup",
+        "@com_github_pingcap_tipb//go-tipb",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//util",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

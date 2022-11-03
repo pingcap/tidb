@@ -71,7 +71,8 @@ func connectTiDB(port int) (db *sql.DB, err error) {
 	dsn := fmt.Sprintf("root@(%s)/test", addr)
 	sleepTime := 250 * time.Millisecond
 	startTime := time.Now()
-	for i := 0; i < 5; i++ {
+	maxRetry := 10
+	for i := 0; i < maxRetry; i++ {
 		db, err = sql.Open("mysql", dsn)
 		if err != nil {
 			log.Warn("open addr failed",
@@ -91,9 +92,9 @@ func connectTiDB(port int) (db *sql.DB, err error) {
 			zap.Error(err),
 		)
 
-		err = db.Close()
-		if err != nil {
-			log.Warn("close db failed", zap.Int("retry count", i), zap.Error(err))
+		err1 := db.Close()
+		if err1 != nil {
+			log.Warn("close db failed", zap.Int("retry count", i), zap.Error(err1))
 			break
 		}
 		time.Sleep(sleepTime)

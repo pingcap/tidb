@@ -1,0 +1,47 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "memory",
+    srcs = [
+        "action.go",
+        "meminfo.go",
+        "memstats.go",
+        "tracker.go",
+    ],
+    importpath = "github.com/pingcap/tidb/util/memory",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//errno",
+        "//metrics",
+        "//parser/terror",
+        "//util/cgroup",
+        "//util/dbterror",
+        "//util/logutil",
+        "//util/mathutil",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_shirou_gopsutil_v3//mem",
+        "@org_golang_x_exp//slices",
+        "@org_uber_go_atomic//:atomic",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "memory_test",
+    timeout = "short",
+    srcs = [
+        "bench_test.go",
+        "main_test.go",
+        "tracker_test.go",
+    ],
+    embed = [":memory"],
+    flaky = True,
+    deps = [
+        "//errno",
+        "//parser/terror",
+        "//testkit/testsetup",
+        "//util/mathutil",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

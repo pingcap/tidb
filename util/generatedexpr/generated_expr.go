@@ -33,12 +33,13 @@ type nameResolver struct {
 }
 
 // Enter implements ast.Visitor interface.
-func (nr *nameResolver) Enter(inNode ast.Node) (ast.Node, bool) {
+func (*nameResolver) Enter(inNode ast.Node) (ast.Node, bool) {
 	return inNode, false
 }
 
 // Leave implements ast.Visitor interface.
 func (nr *nameResolver) Leave(inNode ast.Node) (node ast.Node, ok bool) {
+	//nolint: revive,all_revive
 	switch v := inNode.(type) {
 	case *ast.ColumnNameExpr:
 		for _, col := range nr.tableInfo.Columns {

@@ -44,6 +44,10 @@ type DeleteExec struct {
 	// the columns ordinals is present in ordinal range format, @see plannercore.TblColPosInfos
 	tblColPosInfos plannercore.TblColPosInfoSlice
 	memTracker     *memory.Tracker
+	// fkChecks contains the foreign key checkers. the map is tableID -> []*FKCheckExec
+	fkChecks map[int64][]*FKCheckExec
+	// fkCascades contains the foreign key cascade. the map is tableID -> []*FKCascadeExec
+	fkCascades map[int64][]*FKCascadeExec
 }
 
 // Next implements the Executor Next interface.
@@ -158,20 +162,26 @@ func (e *DeleteExec) doBatchDelete(ctx context.Context) error {
 }
 
 func (e *DeleteExec) composeTblRowMap(tblRowMap tableRowMapType, colPosInfos []plannercore.TblColPosInfo, joinedRow []types.Datum) error {
-	// iterate all the joined tables, and got the copresonding rows in joinedRow.
+	// iterate all the joined tables, and got the corresponding rows in joinedRow.
 	for _, info := range colPosInfos {
 		if unmatchedOuterRow(info, joinedRow) {
 			continue
 		}
 		if tblRowMap[info.TblID] == nil {
-			tblRowMap[info.TblID] = kv.NewHandleMap()
+			tblRowMap[info.TblID] = kv.NewMemAwareHandleMap[[]types.Datum]()
 		}
 		handle, err := info.HandleCols.BuildHandleByDatums(joinedRow)
 		if err != nil {
 			return err
 		}
 		// tblRowMap[info.TblID][handle] hold the row datas binding to this table and this handle.
-		tblRowMap[info.TblID].Set(handle, joinedRow[info.Start:info.End])
+		_, exist := tblRowMap[info.TblID].Get(handle)
+		memDelta := tblRowMap[info.TblID].Set(handle, joinedRow[info.Start:info.End])
+		if !exist {
+			memDelta += types.EstimatedMemUsage(joinedRow, 1)
+			memDelta += int64(handle.ExtraMemSize())
+		}
+		e.memTracker.Consume(memDelta)
 	}
 	return nil
 }
@@ -233,13 +243,37 @@ func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h kv.Handl
 	if err != nil {
 		return err
 	}
+	err = e.onRemoveRowForFK(ctx, t, data)
+	if err != nil {
+		return err
+	}
 	e.memTracker.Consume(int64(txnState.Size() - memUsageOfTxnState))
 	ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 	return nil
 }
 
+func (e *DeleteExec) onRemoveRowForFK(ctx sessionctx.Context, t table.Table, data []types.Datum) error {
+	fkChecks := e.fkChecks[t.Meta().ID]
+	sc := ctx.GetSessionVars().StmtCtx
+	for _, fkc := range fkChecks {
+		err := fkc.deleteRowNeedToCheck(sc, data)
+		if err != nil {
+			return err
+		}
+	}
+	fkCascades := e.fkCascades[t.Meta().ID]
+	for _, fkc := range fkCascades {
+		err := fkc.onDeleteRow(sc, data)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Close implements the Executor Close interface.
 func (e *DeleteExec) Close() error {
+	defer e.memTracker.ReplaceBytesUsed(0)
 	return e.children[0].Close()
 }
 
@@ -251,7 +285,30 @@ func (e *DeleteExec) Open(ctx context.Context) error {
 	return e.children[0].Open(ctx)
 }
 
+// GetFKChecks implements WithForeignKeyTrigger interface.
+func (e *DeleteExec) GetFKChecks() []*FKCheckExec {
+	fkChecks := []*FKCheckExec{}
+	for _, fkcs := range e.fkChecks {
+		fkChecks = append(fkChecks, fkcs...)
+	}
+	return fkChecks
+}
+
+// GetFKCascades implements WithForeignKeyTrigger interface.
+func (e *DeleteExec) GetFKCascades() []*FKCascadeExec {
+	fkCascades := []*FKCascadeExec{}
+	for _, fkcs := range e.fkCascades {
+		fkCascades = append(fkCascades, fkcs...)
+	}
+	return fkCascades
+}
+
+// HasFKCascades implements WithForeignKeyTrigger interface.
+func (e *DeleteExec) HasFKCascades() bool {
+	return len(e.fkCascades) > 0
+}
+
 // tableRowMapType is a map for unique (Table, Row) pair. key is the tableID.
 // the key in map[int64]Row is the joined table handle, which represent a unique reference row.
 // the value in map[int64]Row is the deleting row.
-type tableRowMapType map[int64]*kv.HandleMap
+type tableRowMapType map[int64]*kv.MemAwareHandleMap[[]types.Datum]

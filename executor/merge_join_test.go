@@ -239,17 +239,11 @@ func checkPlanAndRun(tk *testkit.TestKit, t *testing.T, plan string, sql string)
 }
 
 func TestShuffleMergeJoinInDisk(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.OOMUseTmpStorage = true
-	})
-
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testMergeJoinRowContainerSpill", "return(true)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testMergeJoinRowContainerSpill"))
 	}()
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -270,10 +264,10 @@ func TestShuffleMergeJoinInDisk(t *testing.T) {
 
 	result := checkMergeAndRun(tk, t, "select /*+ TIDB_SMJ(t) */ * from t1 left outer join t on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
 	result.Check(testkit.Rows("1 3 1 1"))
-	require.Equal(t, int64(0), tk.Session().GetSessionVars().StmtCtx.MemTracker.BytesConsumed())
-	require.Greater(t, tk.Session().GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), int64(0))
-	require.Equal(t, int64(0), tk.Session().GetSessionVars().StmtCtx.DiskTracker.BytesConsumed())
-	require.Greater(t, tk.Session().GetSessionVars().StmtCtx.DiskTracker.MaxConsumed(), int64(0))
+	require.Equal(t, int64(0), tk.Session().GetSessionVars().MemTracker.BytesConsumed())
+	require.Greater(t, tk.Session().GetSessionVars().MemTracker.MaxConsumed(), int64(0))
+	require.Equal(t, int64(0), tk.Session().GetSessionVars().DiskTracker.BytesConsumed())
+	require.GreaterOrEqual(t, tk.Session().GetSessionVars().DiskTracker.MaxConsumed(), int64(0))
 }
 
 func TestMergeJoinInDisk(t *testing.T) {
@@ -281,7 +275,6 @@ func TestMergeJoinInDisk(t *testing.T) {
 	restore := config.RestoreFunc()
 	defer restore()
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.OOMUseTmpStorage = true
 		conf.TempStoragePath = t.TempDir()
 	})
 
@@ -289,8 +282,7 @@ func TestMergeJoinInDisk(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testMergeJoinRowContainerSpill"))
 	}()
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	defer tk.MustExec("SET GLOBAL tidb_mem_oom_action = DEFAULT")
 	tk.MustExec("SET GLOBAL tidb_mem_oom_action='LOG'")
@@ -319,8 +311,7 @@ func TestMergeJoinInDisk(t *testing.T) {
 }
 
 func TestMergeJoin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -481,8 +472,7 @@ func TestMergeJoin(t *testing.T) {
 }
 
 func TestShuffleMergeJoin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_merge_join_concurrency = 4;")
@@ -644,8 +634,7 @@ func TestShuffleMergeJoin(t *testing.T) {
 }
 
 func Test3WaysMergeJoin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -671,8 +660,7 @@ func Test3WaysMergeJoin(t *testing.T) {
 }
 
 func Test3WaysShuffleMergeJoin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_merge_join_concurrency = 4;")
@@ -699,8 +687,7 @@ func Test3WaysShuffleMergeJoin(t *testing.T) {
 }
 
 func TestMergeJoinDifferentTypes(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@session.tidb_executor_concurrency = 4;")
 	tk.MustExec("set @@session.tidb_hash_join_concurrency = 5;")
@@ -738,10 +725,10 @@ func TestMergeJoinDifferentTypes(t *testing.T) {
 }
 
 // TestVectorizedMergeJoin is used to test vectorized merge join with some corner cases.
+//
 //nolint:gosimple // generates false positive fmt.Sprintf warnings which keep aligned
 func TestVectorizedMergeJoin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	existTableMap := make(map[string]struct{})
@@ -784,11 +771,11 @@ func TestVectorizedMergeJoin(t *testing.T) {
 		)).Check(testkit.Rows(
 			fmt.Sprintf(`MergeJoin 4150.01 root  inner join, left key:test.%s.a, right key:test.%s.a`, t1, t2),
 			fmt.Sprintf(`├─Sort(Build) 3320.01 root  test.%s.a`, t2),
-			fmt.Sprintf(`│ └─TableReader 3320.01 root  data:Selection`),
+			`│ └─TableReader 3320.01 root  data:Selection`,
 			fmt.Sprintf(`│   └─Selection 3320.01 cop[tikv]  lt(test.%s.b, 5), not(isnull(test.%s.a))`, t2, t2),
 			fmt.Sprintf(`│     └─TableFullScan 10000.00 cop[tikv] table:%s keep order:false, stats:pseudo`, t2),
 			fmt.Sprintf(`└─Sort(Probe) 3330.00 root  test.%s.a`, t1),
-			fmt.Sprintf(`  └─TableReader 3330.00 root  data:Selection`),
+			`  └─TableReader 3330.00 root  data:Selection`,
 			fmt.Sprintf(`    └─Selection 3330.00 cop[tikv]  gt(test.%s.b, 5), not(isnull(test.%s.a))`, t1, t1),
 			fmt.Sprintf(`      └─TableFullScan 10000.00 cop[tikv] table:%s keep order:false, stats:pseudo`, t1),
 		))
@@ -796,10 +783,10 @@ func TestVectorizedMergeJoin(t *testing.T) {
 			t1, t2, t1, t2, t1, t2, t1, t2,
 		)).Check(testkit.Rows(
 			fmt.Sprintf(`HashJoin 4150.01 root  inner join, equal:[eq(test.%s.a, test.%s.a)]`, t1, t2),
-			fmt.Sprintf(`├─TableReader(Build) 3320.01 root  data:Selection`),
+			`├─TableReader(Build) 3320.01 root  data:Selection`,
 			fmt.Sprintf(`│ └─Selection 3320.01 cop[tikv]  lt(test.%s.b, 5), not(isnull(test.%s.a))`, t2, t2),
 			fmt.Sprintf(`│   └─TableFullScan 10000.00 cop[tikv] table:%s keep order:false, stats:pseudo`, t2),
-			fmt.Sprintf(`└─TableReader(Probe) 3330.00 root  data:Selection`),
+			`└─TableReader(Probe) 3330.00 root  data:Selection`,
 			fmt.Sprintf(`  └─Selection 3330.00 cop[tikv]  gt(test.%s.b, 5), not(isnull(test.%s.a))`, t1, t1),
 			fmt.Sprintf(`    └─TableFullScan 10000.00 cop[tikv] table:%s keep order:false, stats:pseudo`, t1),
 		))
@@ -856,10 +843,10 @@ func TestVectorizedMergeJoin(t *testing.T) {
 }
 
 // TestVectorizedShuffleMergeJoin is used to test vectorized shuffle merge join with some corner cases.
+//
 //nolint:gosimple // generates false positive fmt.Sprintf warnings which keep aligned
 func TestVectorizedShuffleMergeJoin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@session.tidb_merge_join_concurrency = 4;")
 	tk.MustExec("use test")
@@ -901,14 +888,14 @@ func TestVectorizedShuffleMergeJoin(t *testing.T) {
 		tk.MustQuery(fmt.Sprintf("explain format = 'brief' select /*+ TIDB_SMJ(%s, %s) */ * from %s, %s where %s.a=%s.a and %s.b>5 and %s.b<5",
 			t1, t2, t1, t2, t1, t2, t1, t2,
 		)).Check(testkit.Rows(
-			fmt.Sprintf(`Shuffle 4150.01 root  execution info: concurrency:4, data sources:[TableReader TableReader]`),
+			`Shuffle 4150.01 root  execution info: concurrency:4, data sources:[TableReader TableReader]`,
 			fmt.Sprintf(`└─MergeJoin 4150.01 root  inner join, left key:test.%s.a, right key:test.%s.a`, t1, t2),
 			fmt.Sprintf(`  ├─Sort(Build) 3320.01 root  test.%s.a`, t2),
-			fmt.Sprintf(`  │ └─TableReader 3320.01 root  data:Selection`),
+			`  │ └─TableReader 3320.01 root  data:Selection`,
 			fmt.Sprintf(`  │   └─Selection 3320.01 cop[tikv]  lt(test.%s.b, 5), not(isnull(test.%s.a))`, t2, t2),
 			fmt.Sprintf(`  │     └─TableFullScan 10000.00 cop[tikv] table:%s keep order:false, stats:pseudo`, t2),
 			fmt.Sprintf(`  └─Sort(Probe) 3330.00 root  test.%s.a`, t1),
-			fmt.Sprintf(`    └─TableReader 3330.00 root  data:Selection`),
+			`    └─TableReader 3330.00 root  data:Selection`,
 			fmt.Sprintf(`      └─Selection 3330.00 cop[tikv]  gt(test.%s.b, 5), not(isnull(test.%s.a))`, t1, t1),
 			fmt.Sprintf(`        └─TableFullScan 10000.00 cop[tikv] table:%s keep order:false, stats:pseudo`, t1),
 		))
@@ -916,10 +903,10 @@ func TestVectorizedShuffleMergeJoin(t *testing.T) {
 			t1, t2, t1, t2, t1, t2, t1, t2,
 		)).Check(testkit.Rows(
 			fmt.Sprintf(`HashJoin 4150.01 root  inner join, equal:[eq(test.%s.a, test.%s.a)]`, t1, t2),
-			fmt.Sprintf(`├─TableReader(Build) 3320.01 root  data:Selection`),
+			`├─TableReader(Build) 3320.01 root  data:Selection`,
 			fmt.Sprintf(`│ └─Selection 3320.01 cop[tikv]  lt(test.%s.b, 5), not(isnull(test.%s.a))`, t2, t2),
 			fmt.Sprintf(`│   └─TableFullScan 10000.00 cop[tikv] table:%s keep order:false, stats:pseudo`, t2),
-			fmt.Sprintf(`└─TableReader(Probe) 3330.00 root  data:Selection`),
+			`└─TableReader(Probe) 3330.00 root  data:Selection`,
 			fmt.Sprintf(`  └─Selection 3330.00 cop[tikv]  gt(test.%s.b, 5), not(isnull(test.%s.a))`, t1, t1),
 			fmt.Sprintf(`    └─TableFullScan 10000.00 cop[tikv] table:%s keep order:false, stats:pseudo`, t1),
 		))
@@ -973,8 +960,7 @@ func TestVectorizedShuffleMergeJoin(t *testing.T) {
 
 func TestMergeJoinWithOtherConditions(t *testing.T) {
 	// more than one inner tuple should be filtered on other conditions
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists R;`)
@@ -992,8 +978,7 @@ func TestMergeJoinWithOtherConditions(t *testing.T) {
 
 func TestShuffleMergeJoinWithOtherConditions(t *testing.T) {
 	// more than one inner tuple should be filtered on other conditions
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec("set @@session.tidb_merge_join_concurrency = 4;")

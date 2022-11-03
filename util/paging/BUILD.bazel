@@ -1,0 +1,24 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "paging",
+    srcs = ["paging.go"],
+    importpath = "github.com/pingcap/tidb/util/paging",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "paging_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "paging_test.go",
+    ],
+    embed = [":paging"],
+    flaky = True,
+    deps = [
+        "//testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

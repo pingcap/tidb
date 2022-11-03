@@ -1,0 +1,23 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "property",
+    srcs = [
+        "logical_property.go",
+        "physical_property.go",
+        "stats_info.go",
+        "task_type.go",
+    ],
+    importpath = "github.com/pingcap/tidb/planner/property",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//expression",
+        "//sessionctx/stmtctx",
+        "//statistics",
+        "//util/codec",
+        "//util/collate",
+        "//util/size",
+        "@com_github_pingcap_log//:log",
+        "@com_github_pingcap_tipb//go-tipb",
+    ],
+)
