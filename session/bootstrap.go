@@ -643,11 +643,12 @@ const (
 	version97 = 97
 	// version98 add a column `Token_issuer` to `mysql.user`
 	version98 = 98
+	version99 = 99
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version98
+var currentBootstrapVersion int64 = version99
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -831,6 +832,8 @@ func upgrade(s Session) {
 		}
 	}
 	// Do upgrade works then update bootstrap version.
+	upgradeToVer99(s, ver)
+
 	for _, upgrade := range bootstrapVersion {
 		upgrade(s, ver)
 	}
@@ -1987,6 +1990,27 @@ func upgradeToVer98(s Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `Token_issuer` varchar(255)")
+}
+
+func upgradeToVer99(s Session, ver int64) {
+	if ver >= version99 {
+		return
+	}
+	// Check if tidb_enable_metadata_lock exists in mysql.GLOBAL_VARIABLES.
+	// If not, insert "tidb_analyze_version | 1" since this is the old behavior before we introduce this variable.
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rs, err := s.ExecuteInternal(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableMDL)
+	terror.MustNil(err)
+	req := rs.NewChunk(nil)
+	err = rs.Next(ctx, req)
+	terror.MustNil(err)
+	if req.NumRows() != 0 {
+		return
+	}
+
+	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableMDL, 0)
 }
 
 func writeOOMAction(s Session) {
