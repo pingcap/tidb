@@ -2458,8 +2458,19 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 	}
 	pass := data[:passLen]
 	data = data[passLen:]
-	dbName, _ := parseNullTermString(data)
+	dbName, data := parseNullTermString(data)
 	cc.dbname = string(hack.String(dbName))
+	pluginName := ""
+	if len(data) > 0 {
+		// skip character set
+		if cc.capability&mysql.ClientProtocol41 > 0 && len(data) >= 2 {
+			data = data[2:]
+		}
+		if cc.capability&mysql.ClientPluginAuth > 0 && len(data) > 0 {
+			pluginNameB, _ := parseNullTermString(data)
+			pluginName = string(hack.String(pluginNameB))
+		}
+	}
 
 	if err := cc.ctx.Close(); err != nil {
 		logutil.Logger(ctx).Debug("close old context failed", zap.Error(err))
@@ -2469,6 +2480,19 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 	err := cc.openSession()
 	if err != nil {
 		return err
+	}
+	if pluginName != "" {
+		failpoint.Inject("ChangeUserAuthSwitch", func(val failpoint.Value) {
+			failpoint.Return(errors.Errorf("%v", val))
+		})
+		pass, err = cc.checkAuthPlugin(ctx, &handshakeResponse41{
+			Auth:       pass,
+			AuthPlugin: pluginName,
+			Capability: cc.capability,
+		})
+		if err != nil {
+			return err
+		}
 	}
 	if err := cc.openSessionAndDoAuth(pass, ""); err != nil {
 		return err

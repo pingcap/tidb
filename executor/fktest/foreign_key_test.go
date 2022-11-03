@@ -486,14 +486,22 @@ func TestForeignKeyOnInsertIgnore(t *testing.T) {
 	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk.MustExec("set @@foreign_key_checks=1")
 	tk.MustExec("use test")
-
+	// Test for foreign key index is primary key.
 	tk.MustExec("CREATE TABLE t1 (i INT PRIMARY KEY);")
 	tk.MustExec("CREATE TABLE t2 (i INT, FOREIGN KEY (i) REFERENCES t1 (i));")
 	tk.MustExec("INSERT INTO t1 VALUES (1),(3);")
-	tk.MustExec("INSERT IGNORE INTO t2 VALUES (1),(2),(3),(4);")
+	tk.MustExec("INSERT IGNORE INTO t2 VALUES (1), (null), (1), (2),(3),(4);")
 	warning := "Warning 1452 Cannot add or update a child row: a foreign key constraint fails (`test`.`t2`, CONSTRAINT `fk_1` FOREIGN KEY (`i`) REFERENCES `t1` (`i`))"
 	tk.MustQuery("show warnings;").Check(testkit.Rows(warning, warning))
-	tk.MustQuery("select * from t2").Check(testkit.Rows("1", "3"))
+	tk.MustQuery("select * from t2 order by i").Check(testkit.Rows("<nil>", "1", "1", "3"))
+	// Test for foreign key index is non-unique key.
+	tk.MustExec("drop table t1,t2")
+	tk.MustExec("CREATE TABLE t1 (i INT, index(i));")
+	tk.MustExec("CREATE TABLE t2 (i INT, FOREIGN KEY (i) REFERENCES t1 (i));")
+	tk.MustExec("INSERT INTO t1 VALUES (1),(3);")
+	tk.MustExec("INSERT IGNORE INTO t2 VALUES (1), (null), (1), (2), (3), (2);")
+	tk.MustQuery("show warnings;").Check(testkit.Rows(warning, warning))
+	tk.MustQuery("select * from t2 order by i").Check(testkit.Rows("<nil>", "1", "1", "3"))
 }
 
 func TestForeignKeyOnInsertOnDuplicateParentTableCheck(t *testing.T) {
