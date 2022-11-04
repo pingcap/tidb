@@ -48,7 +48,6 @@ type FileGroupInfo struct {
 // keep these meta-information for statistics and filtering
 type MetadataInfo struct {
 	MinTS          uint64
-	MaxTS          uint64
 	FileGroupInfos []*FileGroupInfo
 }
 
@@ -59,10 +58,10 @@ func (ms *StreamMetadataSet) LoadUntilAndCalculateShiftTS(ctx context.Context, s
 		sync.Mutex
 		metas        map[string]*MetadataInfo
 		shiftUntilTS uint64
-		isExist      bool
 	}{}
 	metadataMap.metas = make(map[string]*MetadataInfo)
-	metadataMap.isExist = false
+	// `shiftUntilTS` must be less than `until`
+	metadataMap.shiftUntilTS = until
 	err := stream.FastUnmarshalMetaData(ctx, s, func(path string, raw []byte) error {
 		m, err := ms.Helper.ParseToMetadataHard(raw)
 		if err != nil {
@@ -88,16 +87,14 @@ func (ms *StreamMetadataSet) LoadUntilAndCalculateShiftTS(ctx context.Context, s
 			}
 			metadataMap.metas[path] = &MetadataInfo{
 				MinTS:          m.MinTs,
-				MaxTS:          m.MaxTs,
 				FileGroupInfos: fileGroupInfos,
 			}
 		}
 		// filter out the metadatas whose ts-range is overlap with [until, +inf)
 		// and calculate their minimum begin-default-ts
 		ts, ok := UpdateShiftTS(m, until, mathutil.MaxUint)
-		if ok && (!metadataMap.isExist || ts < metadataMap.shiftUntilTS) {
+		if ok && ts < metadataMap.shiftUntilTS {
 			metadataMap.shiftUntilTS = ts
-			metadataMap.isExist = true
 		}
 		metadataMap.Unlock()
 		return nil
@@ -106,9 +103,7 @@ func (ms *StreamMetadataSet) LoadUntilAndCalculateShiftTS(ctx context.Context, s
 		return 0, errors.Trace(err)
 	}
 	ms.metadataInfos = metadataMap.metas
-	if !metadataMap.isExist {
-		metadataMap.shiftUntilTS = until
-	} else {
+	if metadataMap.shiftUntilTS != until {
 		log.Warn("calculate shift-ts", zap.Uint64("start-ts", until), zap.Uint64("shift-ts", metadataMap.shiftUntilTS))
 	}
 	return metadataMap.shiftUntilTS, nil
@@ -157,9 +152,16 @@ func (ms *StreamMetadataSet) RemoveDataFilesAndUpdateMetadataInBatch(ctx context
 	}
 	worker := utils.NewWorkerPool(128, "delete files")
 	eg, cx := errgroup.WithContext(ctx)
-	for path := range ms.metadataInfos {
+	for path, metaInfo := range ms.metadataInfos {
 		path := path
-
+		minTS := metaInfo.MinTS
+		// It's safety to remove the item within a range loop
+		delete(ms.metadataInfos, path)
+		if minTS >= from {
+			// That means all the datafiles wouldn't be removed,
+			// so that the metadata is skipped.
+			continue
+		}
 		worker.ApplyOnErrorGroup(eg, func() error {
 			if cx.Err() != nil {
 				return cx.Err()
@@ -187,9 +189,6 @@ func (ms *StreamMetadataSet) RemoveDataFilesAndUpdateMetadataInBatch(ctx context
 			notDeleted.Unlock()
 			return nil
 		})
-
-		// It's safety to remove the item within a range loop
-		delete(ms.metadataInfos, path)
 	}
 
 	if err := eg.Wait(); err != nil {
@@ -201,11 +200,6 @@ func (ms *StreamMetadataSet) RemoveDataFilesAndUpdateMetadataInBatch(ctx context
 
 // removeDataFilesAndUpdateMetadata removes some datafilegroups of the metadata, if their max-ts is less than `from`
 func (ms *StreamMetadataSet) removeDataFilesAndUpdateMetadata(ctx context.Context, storage storage.ExternalStorage, from uint64, meta *backuppb.Metadata, metaPath string) (num int64, notDeleted []string, err error) {
-	if meta.MinTs >= from {
-		// That means all the datafiles wouldn't be removed,
-		// so that the metadata is skipped.
-		return 0, nil, nil
-	}
 	removed := make([]*backuppb.DataFileGroup, 0)
 	remainedDataFiles := make([]*backuppb.DataFileGroup, 0)
 	notDeleted = make([]string, 0)
@@ -246,8 +240,8 @@ func (ms *StreamMetadataSet) removeDataFilesAndUpdateMetadata(ctx context.Contex
 			zap.Int("data-file-before", len(meta.FileGroups)),
 			zap.Int("data-file-after", len(remainedDataFiles)))
 
-		// replace the origin metadata
-		meta.FileGroups = remainedDataFiles
+		// replace the filegroups and update the ts of the replaced metadata
+		ReplaceMetadata(meta, remainedDataFiles)
 
 		if ms.BeforeDoWriteBack != nil && ms.BeforeDoWriteBack(metaPath, meta) {
 			return num, notDeleted, nil
@@ -354,4 +348,32 @@ func UpdateShiftTS(m *backuppb.Metadata, startTS uint64, restoreTS uint64) (uint
 		}
 	}
 	return minBeginTS, isExist
+}
+
+// replace the filegroups and update the ts of the replaced metadata
+func ReplaceMetadata(meta *backuppb.Metadata, filegroups []*backuppb.DataFileGroup) {
+	// replace the origin metadata
+	meta.FileGroups = filegroups
+
+	if len(meta.FileGroups) == 0 {
+		meta.MinTs = 0
+		meta.MaxTs = 0
+		meta.ResolvedTs = 0
+		return
+	}
+
+	meta.MinTs = meta.FileGroups[0].MinTs
+	meta.MaxTs = meta.FileGroups[0].MaxTs
+	meta.ResolvedTs = meta.FileGroups[0].MinResolvedTs
+	for _, group := range meta.FileGroups {
+		if group.MinTs < meta.MinTs {
+			meta.MinTs = group.MinTs
+		}
+		if group.MaxTs > meta.MaxTs {
+			meta.MaxTs = group.MaxTs
+		}
+		if group.MinResolvedTs < meta.ResolvedTs {
+			meta.ResolvedTs = group.MinResolvedTs
+		}
+	}
 }
