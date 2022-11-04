@@ -68,7 +68,7 @@ The WKB format is defined in "OpenGIS Implementation Specification for Geographi
 
 This format (`<srid><wkb`) is often refered to EWKB, but there is no official standard for this. This is chosen as this is what MySQL uses.
 
-Besides these data types [Simple Feature Access - Part 2: SQL Option] lists more types like, `POINTZ` and other types with a Z-suffix, these are 3D points with three coordinates instead of two. There are a few 2D types that are also not on the list with types we should implement like `CURVE` and `SURFACE`. MySQL doesn't include these types and they are not needed for compatibility and can be implemented later if needed.
+Besides these data types [Simple Feature Access - Part 2: SQL Option](https://www.ogc.org/standards/sfs) lists more types like, `POINTZ` and other types with a Z-suffix, these are 3D points with three coordinates instead of two. There are a few 2D types that are also not on the list with types we should implement like `CURVE` and `SURFACE`. MySQL doesn't include these types and they are not needed for compatibility and can be implemented later if needed.
 
 Both TiDB and TiKV already have some notion of a `GEOMETRY` type, but this is incomplete. There is a implementation of the `GEOMETRY` type in  [pingcap/tidb#38611](https://github.com/pingcap/tidb/pull/38611) and [tikv/tikv#13652](https://github.com/tikv/tikv/pull/13652).
 
@@ -267,41 +267,24 @@ Geospatial support is not expected to impact security. The `ST_GEOMETRY_COLUMNS`
 
 ## Test Design
 
-A brief description of how the implementation will be tested. Both the integration test and the unit test should be considered.
-
 ### Functional Tests
 
-It's used to ensure the basic feature function works as expected. Both the integration test and the unit test should be considered.
+MySQL has a [GIS testsuite](https://github.com/mysql/mysql-server/tree/8.0/mysql-test/suite/gis). This can be used with [mysql-tester](https://github.com/pingcap/mysql-tester) to test functionality and compatibility with MySQL.
 
-### Scenario Tests
-
-It's used to ensure this feature works as expected in some common scenarios.
+When testing the functions special care should be taken to correctly test if it is correctly using the bounding box or the actual shape.
 
 ### Compatibility Tests
 
-A checklist to test compatibility:
-- Compatibility with other features, like partition table, security & privilege, charset & collation, clustered index, async commit, etc.
-- Compatibility with other internal components, like parser, DDL, planner, statistics, executor, etc.
-- Compatibility with other external components, like PD, TiKV, TiFlash, BR, TiCDC, Dumpling, TiUP, K8s, etc.
-- Upgrade compatibility
-- Downgrade compatibility
+Compatibility with Dumpling, Lightning, TiCDC and sync-diff-inspector has to be explicitly tested.
 
-### Benchmark Tests
-
-The following two parts need to be measured:
-- The performance of this feature under different parameters
-- The performance influence on the online workload
+Downgrading without geospatial columns should work and should be tested.
 
 ## Impacts & Risks
 
-Describe the potential impacts & risks of the design on overall performance, security, k8s, and other aspects. List all the risks or unknowns by far.
+This adds a new dependency: [github.com/twpayne/go-geom](https://pkg.go.dev/github.com/twpayne/go-geom). The BSD-2-Clause license should be fine. The basic geometric types in this package are ok, but the features that do things like comparing features, calculating distances etc. are not (yet) on the same level as [Boost.Geometry](https://github.com/boostorg/geometry). This means that we may have to add more dependencies and/or implement some missing features ourselves.
 
-Please describe impacts and risks in two sections: Impacts could be positive or negative, and intentional. Risks are usually negative, unintentional, and may or may not happen. E.g., for performance, we might expect a new feature to improve latency by 10% (expected impact), there is a risk that latency in scenarios X and Y could degrade by 50%.
+## Client support
 
-## Investigation & Alternatives
+Working with geospatial data is possible with MySQL Client or mycli. However a GUI tool makes many things much easier. MySQL Workbench has [a spatial viewer](https://dev.mysql.com/blog-archive/mysql-workbench-6-2-spatial-data/) since version 6.2. This works with minimal geospatial support in TiDB. However [DBeaver](https://github.com/dbeaver/dbeaver) has a much more advanced [geospatial viewer](https://dbeaver.com/docs/wiki/Working-with-Spatial-GIS-data/).
 
-How do other systems solve this issue? What other designs have been considered and what is the rationale for not choosing them?
-
-## Unresolved Questions
-
-What parts of the design are still to be determined?
+Tools like [QGIS](https://qgis.org/en/site/) might be harder to support as they require a specific set of geospatial functions to work. It might be needed to extend/update QGIS to make sure it uses new standards compilant functions instead of (older) MySQL specific (compatibility) functions to limit the number of MySQL specific features we have to implement in TiDB.
