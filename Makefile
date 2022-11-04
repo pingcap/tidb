@@ -415,7 +415,7 @@ bazel_coverage_test: failpoint-enable bazel_ci_prepare
 
 bazel_build: bazel_ci_prepare
 	mkdir -p bin
-	bazel $(BAZEL_GLOBAL_CONFIG) build --remote_download_minimal $(BAZEL_CMD_CONFIG) \
+	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
 		//... --//build:with_nogo_flag=true
 	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
 		//cmd/importer:importer //tidb-server:tidb-server //tidb-server:tidb-server-check --//build:with_nogo_flag=true

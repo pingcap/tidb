@@ -6180,6 +6180,32 @@ func TestCompileOutOfMemoryQuota(t *testing.T) {
 	require.Contains(t, err.Error(), "Out Of Memory Quota!")
 }
 
+func TestSignalCheckpointForSort(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/SignalCheckpointForSort", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/SignalCheckpointForSort"))
+	}()
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/util/chunk/SignalCheckpointForSort", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/chunk/SignalCheckpointForSort"))
+	}()
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	defer tk.MustExec("set global tidb_mem_oom_action = DEFAULT")
+	tk.MustExec("set global tidb_mem_oom_action='CANCEL'")
+	tk.MustExec("set tidb_mem_quota_query = 100000000")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+	for i := 0; i < 20; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values(%d)", i))
+	}
+	tk.Session().GetSessionVars().ConnectionID = 123456
+
+	err := tk.QueryToErr("select * from t order by a")
+	require.Contains(t, err.Error(), "Out Of Memory Quota!")
+}
+
 func TestSessionRootTrackerDetach(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -6198,4 +6224,22 @@ func TestSessionRootTrackerDetach(t *testing.T) {
 	err = rs.Close()
 	require.NoError(t, err)
 	require.Nil(t, tk.Session().GetSessionVars().MemTracker.GetFallbackForTest(false))
+}
+
+func TestServerMemoryQuota(t *testing.T) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.ServerMemoryQuota = 123456789000
+	})
+	defer config.RestoreFunc()()
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	require.Equal(t, memory.GlobalMemoryUsageTracker.GetBytesLimit(), int64(123456789000))
+	tk.MustExec("set global tidb_server_memory_limit = 3 << 30")
+	require.Equal(t, memory.GlobalMemoryUsageTracker.GetBytesLimit(), int64(-1))
+	tk.MustExec("set global tidb_server_memory_limit = 0")
+	require.Equal(t, memory.GlobalMemoryUsageTracker.GetBytesLimit(), int64(123456789000))
+	require.Equal(t, tk.Session().GetSessionVars().MemTracker.GetParentForTest(), memory.GlobalMemoryUsageTracker)
+	tk.Session().Close()
+	require.Nil(t, tk.Session().GetSessionVars().MemTracker.GetParentForTest())
 }
