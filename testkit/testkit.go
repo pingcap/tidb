@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -48,6 +49,7 @@ type TestKit struct {
 	t       testing.TB
 	store   kv.Storage
 	session session.Session
+	alloc   chunk.Allocator
 }
 
 // NewTestKit returns a new *TestKit.
@@ -57,6 +59,7 @@ func NewTestKit(t testing.TB, store kv.Storage) *TestKit {
 		assert:  assert.New(t),
 		t:       t,
 		store:   store,
+		alloc:   chunk.NewAllocator(),
 	}
 	tk.RefreshSession()
 
@@ -86,6 +89,7 @@ func NewTestKitWithSession(t testing.TB, store kv.Storage, se session.Session) *
 		t:       t,
 		store:   store,
 		session: se,
+		alloc:   chunk.NewAllocator(),
 	}
 }
 
@@ -110,6 +114,12 @@ func (tk *TestKit) Session() session.Session {
 
 // MustExec executes a sql statement and asserts nil error.
 func (tk *TestKit) MustExec(sql string, args ...interface{}) {
+	defer func() {
+		tk.Session().GetSessionVars().ClearAlloc()
+		if tk.alloc != nil {
+			tk.alloc.Reset()
+		}
+	}()
 	tk.MustExecWithContext(context.Background(), sql, args...)
 }
 
@@ -127,6 +137,12 @@ func (tk *TestKit) MustExecWithContext(ctx context.Context, sql string, args ...
 // MustQuery query the statements and returns result rows.
 // If expected result is set it asserts the query result equals expected result.
 func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
+	defer func() {
+		tk.Session().GetSessionVars().ClearAlloc()
+		if tk.alloc != nil {
+			tk.alloc.Reset()
+		}
+	}()
 	return tk.MustQueryWithContext(context.Background(), sql, args...)
 }
 
@@ -269,6 +285,7 @@ func (tk *TestKit) ExecWithContext(ctx context.Context, sql string, args ...inte
 		}
 		warns := sc.GetWarnings()
 		parserWarns := warns[len(prevWarns):]
+		tk.Session().GetSessionVars().SetAlloc(tk.alloc)
 		var rs0 sqlexec.RecordSet
 		for i, stmt := range stmts {
 			var rs sqlexec.RecordSet
@@ -297,6 +314,7 @@ func (tk *TestKit) ExecWithContext(ctx context.Context, sql string, args ...inte
 		return nil, errors.Trace(err)
 	}
 	params := expression.Args2Expressions4Test(args...)
+	tk.Session().GetSessionVars().SetAlloc(tk.alloc)
 	rs, err := tk.session.ExecutePreparedStmt(ctx, stmtID, params)
 	if err != nil {
 		return rs, errors.Trace(err)
