@@ -226,6 +226,13 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 			}
 		}
 	}
+	failpoint.Inject("SignalCheckpointForSort", func(val failpoint.Value) {
+		if val.(bool) {
+			if e.ctx.GetSessionVars().ConnectionID == 123456 {
+				e.ctx.GetSessionVars().MemTracker.NeedKill.Store(true)
+			}
+		}
+	})
 	if e.rowChunks.NumRow() > 0 {
 		e.rowChunks.Sort()
 		e.partitionList = append(e.partitionList, e.rowChunks)
