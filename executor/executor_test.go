@@ -6226,21 +6226,3 @@ func TestSessionRootTrackerDetach(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, tk.Session().GetSessionVars().MemTracker.GetFallbackForTest(false))
 }
-
-func TestServerMemoryQuota(t *testing.T) {
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Performance.ServerMemoryQuota = 123456789000
-	})
-	defer config.RestoreFunc()()
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	require.Equal(t, memory.GlobalMemoryUsageTracker.GetBytesLimit(), int64(123456789000))
-	tk.MustExec("set global tidb_server_memory_limit = 3 << 30")
-	require.Equal(t, memory.GlobalMemoryUsageTracker.GetBytesLimit(), int64(-1))
-	tk.MustExec("set global tidb_server_memory_limit = 0")
-	require.Equal(t, memory.GlobalMemoryUsageTracker.GetBytesLimit(), int64(123456789000))
-	require.Equal(t, tk.Session().GetSessionVars().MemTracker.GetParentForTest(), memory.GlobalMemoryUsageTracker)
-	tk.Session().Close()
-	require.Nil(t, tk.Session().GetSessionVars().MemTracker.GetParentForTest())
-}

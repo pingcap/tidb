@@ -3039,6 +3039,12 @@ func TestAmendForColumnChange(t *testing.T) {
 		}
 
 		// Start a pessimistic transaction for partition table, the amend should fail.
+		if i == 5 {
+			// alter table t_part modify column c_int bigint(20) default 100
+			// Unsupported modify column: can't change the partitioning column, since it would require reorganize all partitions
+			// Skip this case
+			continue
+		}
 		tk.MustExec("begin pessimistic")
 		tk.MustExec(`insert into t_part values(5, "555", "2000-01-05", "2020-01-05", "5.5", "555.555", 5.5)`)
 		tk2.MustExec(colChangeFunc(true, i))
