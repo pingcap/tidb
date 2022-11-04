@@ -1293,6 +1293,72 @@ type SessionVars struct {
 	// OptPrefixIndexSingleScan indicates whether to do some optimizations to avoid double scan for prefix index.
 	// When set to true, `col is (not) null`(`col` is index prefix column) is regarded as index filter rather than table filter.
 	OptPrefixIndexSingleScan bool
+
+	// ChunkPool Several chunks and columns are cached
+	ChunkPool struct {
+		Lock  sync.Mutex
+		Alloc chunk.Allocator
+	}
+	// EnableReuseCheck indicates  request chunk whether use chunk alloc
+	EnableReuseCheck bool
+
+	// preuseChunkAlloc indicates whether pre statement use chunk alloc
+	// like select @@last_sql_use_alloc
+	preUseChunkAlloc bool
+}
+
+// GetNewChunk Attempt to request memory from the chunk pool
+// thread safety
+func (s *SessionVars) GetNewChunk(fields []*types.FieldType, capacity int) *chunk.Chunk {
+	//Chunk memory pool is not set
+	if s.ChunkPool.Alloc == nil {
+		return chunk.NewChunkWithCapacity(fields, capacity)
+	}
+	s.ChunkPool.Lock.Lock()
+	defer s.ChunkPool.Lock.Unlock()
+	if s.ChunkPool.Alloc.CheckReuseAllocSize() && (!s.GetUseChunkAlloc()) {
+		s.StmtCtx.SetUseChunkAlloc()
+	}
+	chk := s.ChunkPool.Alloc.Alloc(fields, capacity, capacity)
+	return chk
+}
+
+// GetNewChunkWithCapacity Attempt to request memory from the chunk pool
+// thread safety
+func (s *SessionVars) GetNewChunkWithCapacity(fields []*types.FieldType, capacity int, maxCachesize int) *chunk.Chunk {
+	if s.ChunkPool.Alloc == nil {
+		return chunk.New(fields, capacity, maxCachesize)
+	}
+	s.ChunkPool.Lock.Lock()
+	defer s.ChunkPool.Lock.Unlock()
+	if s.ChunkPool.Alloc.CheckReuseAllocSize() && (!s.GetUseChunkAlloc()) {
+		s.StmtCtx.SetUseChunkAlloc()
+	}
+	chk := s.ChunkPool.Alloc.Alloc(fields, capacity, maxCachesize)
+	return chk
+}
+
+// ExchangeChunkStatus give the status to preUseChunkAlloc
+func (s *SessionVars) ExchangeChunkStatus() {
+	s.preUseChunkAlloc = s.GetUseChunkAlloc()
+}
+
+// GetUseChunkAlloc return useChunkAlloc status
+func (s *SessionVars) GetUseChunkAlloc() bool {
+	return s.StmtCtx.GetUseChunkAllocStatus()
+}
+
+// SetAlloc Attempt to set the buffer pool address
+func (s *SessionVars) SetAlloc(alloc chunk.Allocator) {
+	if !s.EnableReuseCheck {
+		return
+	}
+	s.ChunkPool.Alloc = alloc
+}
+
+// ClearAlloc indicates stop reuse chunk
+func (s *SessionVars) ClearAlloc() {
+	s.ChunkPool.Alloc = nil
 }
 
 // GetPreparedStmtByName returns the prepared statement specified by stmtName.
@@ -1587,6 +1653,13 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableTiFlashReadForWriteStmt: DefTiDBEnableTiFlashReadForWriteStmt,
 		ForeignKeyChecks:              DefTiDBForeignKeyChecks,
 		HookContext:                   hctx,
+		EnableReuseCheck:              DefTiDBEnableReusechunk,
+		//useChunkAlloc:                 DefTiDBUseAlloc,
+		preUseChunkAlloc: DefTiDBUseAlloc,
+		ChunkPool: struct {
+			Lock  sync.Mutex
+			Alloc chunk.Allocator
+		}{Alloc: nil},
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{

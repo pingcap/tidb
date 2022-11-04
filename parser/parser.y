@@ -13850,6 +13850,7 @@ NonTransactionalDMLStmt:
 ShardableStmt:
 	DeleteFromStmt
 |	UpdateStmt
+|	InsertIntoStmt
 
 DryRunOptions:
 	{

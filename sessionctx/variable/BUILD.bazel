@@ -97,6 +97,7 @@ go_test(
         "//testkit",
         "//testkit/testsetup",
         "//types",
+        "//util/chunk",
         "//util/execdetails",
         "//util/memory",
         "//util/mock",
