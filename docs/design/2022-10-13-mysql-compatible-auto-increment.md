@@ -50,7 +50,9 @@ This is the core part of the implementation. There will be a single-point proces
 
 For every `AUTO_INCREMENT` ID allocation, TiDB send a request to this process. The process will `+1` internally, so the ID is **unique**, **monotone increasing**, and **consecutive**.
 
-Grpc is used for the communication protocol. This part is relatively easy so I would not go to much details in this document.
+Here `+1` is conceptual, one request can allocate more than 1 IDs. Multiple auto_increment IDs within one statement correspond to a `+n` operation. For example, `INSERT INTO t VALUES (null),(null),(null)` requests 3 new values within one request.
+
+gRPC is used for the communication protocol. This part is relatively easy so I would not go to much details in this document.
 
 ```
 message AutoIDRequest {
@@ -71,6 +73,8 @@ service AutoIDAlloc {
 }
 ```
 
+`increment` / `offset` have no special meaning here, they are just used to make the behaviour compatible with MySQL after setting  `@@auto_increment_increment` / `@@auto_increment_offset`. I personally do not think people will use two TiDB cluster and set up master-master (bidirectional) replication via this. See also https://github.com/pingcap/tidb/issues/14245
+
 ### HA of the service
 
 To overcome the SPOF(single-point-of-failure) issue, the centralized auto ID allocating service should have at least a primary and a backup process. [Etcd](https://etcd.io/) is used for that.
@@ -79,7 +83,11 @@ Both the primary and backup regist themself in the etcd, the elected primay proc
 
 When the switch happen, the current max allocated ID information is required so as to guarantee the uniqueness. The new primary process allocate IDs begin from the max allocated ID plus one.
 
-We can persist the max allocated ID every time, but that's costly. Another choice is persisting it periodically, it's safe to allocate IDs in range `[base, max persisted)`. When the primary process crash abnormally, the backup process gets the max persisted ID as its base. Etcd is also used as the storage for the max persisted ID. This optimization could still make the ID not be consecutive, but it's not so common (and I believe MySQL may also crash and facing such problem?), so this is not a big issue.
+We can persist the max allocated ID every time, but that's costly. Another choice is persisting it periodically, it's safe to allocate IDs in range `[base, max persisted)`. When the primary process crash abnormally, the backup process gets the max persisted ID as its base. Etcd is also used as the storage for the max persisted ID. This optimization could still make the ID not be consecutive, but it's not so common ~~(and I believe MySQL may also crash and facing such problem?)~~, so this is not a big issue.
+
+MySQL 8.0 can survive crash recovery, that's really impressive! https://dev.mysql.com/doc/refman/8.0/en/innodb-auto-increment-handling.html
+
+> In MySQL 8.0, this behavior is changed. The current maximum auto-increment counter value is written to the redo log each time it changes and saved to the data dictionary on each checkpoint. These changes make the current maximum auto-increment counter value persistent across server restarts.
 
 ### Client side
 
