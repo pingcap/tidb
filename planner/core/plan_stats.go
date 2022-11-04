@@ -179,14 +179,14 @@ func recordTableRuntimeStatsJSON(sctx sessionctx.Context, tbls map[int64]struct{
 		tblsJSONStats = map[int64]interface{}{}
 	}
 	for tblID := range tbls {
-		tblJsonStats, err := recordSingleTableJSONStats(sctx, tblID)
+		tblJSONStats, err := recordSingleTableJSONStats(sctx, tblID)
 		if err != nil {
 			logutil.BgLogger().Warn("record table json stats failed", zap.Int64("tblID", tblID), zap.Error(err))
 		}
-		if tblJsonStats == nil {
+		if tblJSONStats == nil {
 			logutil.BgLogger().Warn("record table json stats failed due to empty", zap.Int64("tblID", tblID))
 		}
-		tblsJSONStats[tblID] = tblJsonStats
+		tblsJSONStats[tblID] = tblJSONStats
 	}
 	sctx.GetSessionVars().StmtCtx.TableJSONStats = tblsJSONStats
 }
