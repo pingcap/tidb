@@ -342,6 +342,8 @@ type StatementContext struct {
 
 	// TableJSONStats stores *handle.JSONTable by table id
 	TableJSONStats map[int64]interface{}
+	// useChunkAlloc indicates whether statement use chunk alloc
+	useChunkAlloc bool
 }
 
 // StmtHints are SessionVars related sql hints.
@@ -503,6 +505,21 @@ func (sc *StatementContext) GetResourceGroupTagger() tikvrpc.ResourceGroupTagger
 		req.ResourceGroupTag = resourcegrouptag.EncodeResourceGroupTag(digest, planDigest,
 			resourcegrouptag.GetResourceGroupLabelByKey(resourcegrouptag.GetFirstKeyFromRequest(req)))
 	}
+}
+
+// SetUseChunkAlloc set use chunk alloc status
+func (sc *StatementContext) SetUseChunkAlloc() {
+	sc.useChunkAlloc = true
+}
+
+// ClearUseChunkAlloc clear useChunkAlloc status
+func (sc *StatementContext) ClearUseChunkAlloc() {
+	sc.useChunkAlloc = false
+}
+
+// GetUseChunkAllocStatus returns useChunkAlloc status
+func (sc *StatementContext) GetUseChunkAllocStatus() bool {
+	return sc.useChunkAlloc
 }
 
 // SetPlanDigest sets the normalized plan and plan digest.

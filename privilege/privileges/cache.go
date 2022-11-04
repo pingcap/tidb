@@ -66,7 +66,7 @@ const (
 	References_priv,Alter_priv,Execute_priv,Index_priv,Create_view_priv,Show_view_priv,
 	Create_role_priv,Drop_role_priv,Create_tmp_table_priv,Lock_tables_priv,Create_routine_priv,
 	Alter_routine_priv,Event_priv,Shutdown_priv,Reload_priv,File_priv,Config_priv,Repl_client_priv,Repl_slave_priv,
-	account_locked,plugin,token_issuer FROM mysql.user`
+	Account_locked,Plugin,Token_issuer,User_attributes FROM mysql.user`
 	sqlLoadGlobalGrantsTable = `SELECT HIGH_PRIORITY Host,User,Priv,With_Grant_Option FROM mysql.global_grants`
 )
 
@@ -101,6 +101,7 @@ type UserRecord struct {
 	AccountLocked        bool // A role record when this field is true
 	AuthPlugin           string
 	AuthTokenIssuer      string
+	Email                string
 }
 
 // NewUserRecord return a UserRecord, only use for unit test.
@@ -666,6 +667,22 @@ func (p *MySQLPrivilege) decodeUserTableRow(row chunk.Row, fs []*ast.ResultField
 			value.Privileges |= priv
 		case f.ColumnAsName.L == "token_issuer":
 			value.AuthTokenIssuer = row.GetString(i)
+		case f.ColumnAsName.L == "user_attributes":
+			if row.IsNull(i) {
+				continue
+			}
+			bj := row.GetJSON(i)
+			pathExpr, err := types.ParseJSONPathExpr("$.metadata.email")
+			if err != nil {
+				return err
+			}
+			if emailBJ, found := bj.Extract([]types.JSONPathExpression{pathExpr}); found {
+				email, err := emailBJ.Unquote()
+				if err != nil {
+					return err
+				}
+				value.Email = email
+			}
 		default:
 			value.assignUserOrHost(row, i, f)
 		}

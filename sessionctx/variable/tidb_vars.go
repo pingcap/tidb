@@ -252,6 +252,9 @@ const (
 
 	// TiDBEnableTiFlashReadForWriteStmt indicates whether to enable TiFlash to read for write statements.
 	TiDBEnableTiFlashReadForWriteStmt = "tidb_enable_tiflash_read_for_write_stmt"
+
+	// TiDBUseAlloc indicates whether the last statement used chunk alloc
+	TiDBUseAlloc = "last_sql_use_alloc"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -767,6 +770,8 @@ const (
 
 	// TiDBEnablePlanReplayerCapture indicates whether to enable plan replayer capture
 	TiDBEnablePlanReplayerCapture = "tidb_enable_plan_replayer_capture"
+	// TiDBEnableReusechunk indicates whether to enable chunk alloc
+	TiDBEnableReusechunk = "tidb_enable_reuse_chunk"
 )
 
 // TiDB vars that have only global scope
@@ -1085,6 +1090,8 @@ const (
 	DefTiDBOptPrefixIndexSingleScan          = true
 	DefTiDBExternalTS                        = 0
 	DefTiDBEnableExternalTSRead              = false
+	DefTiDBEnableReusechunk                  = true
+	DefTiDBUseAlloc                          = false
 	DefTiDBEnablePlanReplayerCapture         = false
 )
 
@@ -1142,7 +1149,7 @@ var (
 
 	// DefTiDBServerMemoryLimit indicates the default value of TiDBServerMemoryLimit(TotalMem * 80%).
 	// It should be a const and shouldn't be modified after tidb is started.
-	DefTiDBServerMemoryLimit  = serverMemoryLimitDefaultValue()
+	DefTiDBServerMemoryLimit  = "0"
 	GOGCTunerThreshold        = atomic.NewFloat64(DefTiDBGOGCTunerThreshold)
 	EnablePlanReplayerCapture = atomic.NewBool(DefTiDBEnablePlanReplayerCapture)
 )

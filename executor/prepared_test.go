@@ -860,7 +860,7 @@ func TestIssue29101(t *testing.T) {
 	  c_last varchar(16) DEFAULT NULL,
 	  c_credit char(2) DEFAULT NULL,
 	  c_discount decimal(4,4) DEFAULT NULL,
-	  PRIMARY KEY (c_w_id,c_d_id,c_id),
+	  PRIMARY KEY (c_w_id,c_d_id,c_id) NONCLUSTERED,
 	  KEY idx_customer (c_w_id,c_d_id,c_last,c_first)
 	)`)
 	tk.MustExec(`CREATE TABLE warehouse (
@@ -890,12 +890,12 @@ func TestIssue29101(t *testing.T) {
 	  ol_w_id int(11) NOT NULL,
 	  ol_number int(11) NOT NULL,
 	  ol_i_id int(11) NOT NULL,
-	  PRIMARY KEY (ol_w_id,ol_d_id,ol_o_id,ol_number))`)
+	  PRIMARY KEY (ol_w_id,ol_d_id,ol_o_id,ol_number) NONCLUSTERED)`)
 	tk.MustExec(`CREATE TABLE stock (
 	  s_i_id int(11) NOT NULL,
 	  s_w_id int(11) NOT NULL,
 	  s_quantity int(11) DEFAULT NULL,
-	  PRIMARY KEY (s_w_id,s_i_id))`)
+	  PRIMARY KEY (s_w_id,s_i_id) NONCLUSTERED)`)
 	tk.MustExec(`prepare s1 from 'SELECT /*+ TIDB_INLJ(order_line,stock) */ COUNT(DISTINCT (s_i_id)) stock_count FROM order_line, stock  WHERE ol_w_id = ? AND ol_d_id = ? AND ol_o_id < ? AND ol_o_id >= ? - 20 AND s_w_id = ? AND s_i_id = ol_i_id AND s_quantity < ?'`)
 	tk.MustExec(`set @a=391,@b=1,@c=3058,@d=18`)
 	tk.MustExec(`execute s1 using @a,@b,@c,@c,@a,@d`)
