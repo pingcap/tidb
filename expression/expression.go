@@ -1095,11 +1095,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		}
 	case ast.DateSub, ast.SubDate:
 		switch function.Function.PbCode() {
-<<<<<<< HEAD
-		case tipb.ScalarFuncSig_SubDateDatetimeInt, tipb.ScalarFuncSig_SubDateStringInt:
-=======
 		case tipb.ScalarFuncSig_SubDateDatetimeInt, tipb.ScalarFuncSig_SubDateStringInt, tipb.ScalarFuncSig_SubDateStringReal:
->>>>>>> 5ea64e6e23 (expression: change date add function return type (#28133))
 			return true
 		}
 	case ast.UnixTimestamp:
