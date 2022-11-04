@@ -6071,13 +6071,16 @@ func TestGlobalMemoryControl(t *testing.T) {
 	tk0.MustExec("set global tidb_server_memory_limit_sess_min_size = 128")
 
 	tk1 := testkit.NewTestKit(t, store)
-	tracker1 := tk1.Session().GetSessionVars().StmtCtx.MemTracker
+	tracker1 := tk1.Session().GetSessionVars().MemTracker
+	tracker1.FallbackOldAndSetNewAction(&memory.PanicOnExceed{})
 
 	tk2 := testkit.NewTestKit(t, store)
-	tracker2 := tk2.Session().GetSessionVars().StmtCtx.MemTracker
+	tracker2 := tk2.Session().GetSessionVars().MemTracker
+	tracker2.FallbackOldAndSetNewAction(&memory.PanicOnExceed{})
 
 	tk3 := testkit.NewTestKit(t, store)
-	tracker3 := tk3.Session().GetSessionVars().StmtCtx.MemTracker
+	tracker3 := tk3.Session().GetSessionVars().MemTracker
+	tracker3.FallbackOldAndSetNewAction(&memory.PanicOnExceed{})
 
 	sm := &testkit.MockSessionManager{
 		PS: []*util.ProcessInfo{tk1.Session().ShowProcess(), tk2.Session().ShowProcess(), tk3.Session().ShowProcess()},
@@ -6156,7 +6159,7 @@ func TestGlobalMemoryControl2(t *testing.T) {
 	}()
 	sql := "select * from t t1 join t t2 join t t3 on t1.a=t2.a and t1.a=t3.a order by t1.a;" // Need 500MB
 	require.True(t, strings.Contains(tk0.QueryToErr(sql).Error(), "Out Of Memory Quota!"))
-	require.Equal(t, tk0.Session().GetSessionVars().StmtCtx.DiskTracker.MaxConsumed(), int64(0))
+	require.Equal(t, tk0.Session().GetSessionVars().DiskTracker.MaxConsumed(), int64(0))
 	wg.Wait()
 	test[0] = 0
 	runtime.GC()
@@ -6175,4 +6178,42 @@ func TestCompileOutOfMemoryQuota(t *testing.T) {
 	tk.MustExec("set tidb_mem_quota_query=10")
 	err := tk.ExecToErr("select t.a, t1.a from t use index(idx), t1 use index(idx) where t.a = t1.a")
 	require.Contains(t, err.Error(), "Out Of Memory Quota!")
+}
+
+func TestSessionRootTrackerDetach(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("set global tidb_mem_oom_action = DEFAULT")
+	tk.MustExec("set global tidb_mem_oom_action='CANCEL'")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, index idx(a))")
+	tk.MustExec("create table t1(a int, c int, index idx(a))")
+	tk.MustExec("set tidb_mem_quota_query=10")
+	err := tk.ExecToErr("select /*+hash_join(t1)*/ t.a, t1.a from t use index(idx), t1 use index(idx) where t.a = t1.a")
+	require.Contains(t, err.Error(), "Out Of Memory Quota!")
+	tk.MustExec("set tidb_mem_quota_query=1000")
+	rs, err := tk.Exec("select /*+hash_join(t1)*/ t.a, t1.a from t use index(idx), t1 use index(idx) where t.a = t1.a")
+	require.NoError(t, err)
+	require.NotNil(t, tk.Session().GetSessionVars().MemTracker.GetFallbackForTest(false))
+	err = rs.Close()
+	require.NoError(t, err)
+	require.Nil(t, tk.Session().GetSessionVars().MemTracker.GetFallbackForTest(false))
+}
+
+func TestServerMemoryQuota(t *testing.T) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.ServerMemoryQuota = 123456789000
+	})
+	defer config.RestoreFunc()()
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	require.Equal(t, memory.GlobalMemoryUsageTracker.GetBytesLimit(), int64(123456789000))
+	tk.MustExec("set global tidb_server_memory_limit = 3 << 30")
+	require.Equal(t, memory.GlobalMemoryUsageTracker.GetBytesLimit(), int64(-1))
+	tk.MustExec("set global tidb_server_memory_limit = 0")
+	require.Equal(t, memory.GlobalMemoryUsageTracker.GetBytesLimit(), int64(123456789000))
+	require.Equal(t, tk.Session().GetSessionVars().MemTracker.GetParentForTest(), memory.GlobalMemoryUsageTracker)
+	tk.Session().Close()
+	require.Nil(t, tk.Session().GetSessionVars().MemTracker.GetParentForTest())
 }
