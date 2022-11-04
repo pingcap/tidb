@@ -81,6 +81,7 @@ type memoryUsageAlarm struct {
 	memoryUsageAlarmKeepRecordNum int64
 	serverMemoryLimit             uint64
 	isServerMemoryLimitSet        bool
+	isServerMemoryQuotaSet        bool
 	initialized                   bool
 }
 
@@ -93,6 +94,9 @@ func (record *memoryUsageAlarm) updateVariable() {
 	record.serverMemoryLimit = memory.ServerMemoryLimit.Load()
 	if record.serverMemoryLimit != 0 {
 		record.isServerMemoryLimitSet = true
+	} else if quota := config.GetGlobalConfig().Performance.ServerMemoryQuota; quota != 0 {
+		record.serverMemoryLimit = quota
+		record.isServerMemoryQuotaSet = true
 	} else {
 		record.serverMemoryLimit, record.err = memory.MemTotal()
 		if record.err != nil {
@@ -144,7 +148,7 @@ func (record *memoryUsageAlarm) alarm4ExcessiveMemUsage(sm util.SessionManager) 
 	}
 	var memoryUsage uint64
 	instanceStats := memory.ReadMemStats()
-	if record.isServerMemoryLimitSet {
+	if record.isServerMemoryLimitSet || record.isServerMemoryQuotaSet {
 		memoryUsage = instanceStats.HeapAlloc
 	} else {
 		memoryUsage, record.err = memory.MemUsed()
@@ -201,8 +205,12 @@ func (record *memoryUsageAlarm) needRecord(memoryUsage uint64) (bool, AlarmReaso
 func (record *memoryUsageAlarm) doRecord(memUsage uint64, instanceMemoryUsage uint64, sm util.SessionManager, alarmReason AlarmReason) {
 	fields := make([]zap.Field, 0, 6)
 	fields = append(fields, zap.Bool("is tidb_server_memory_limit set", record.isServerMemoryLimitSet))
+	fields = append(fields, zap.Bool("is server-memory-quota set", record.isServerMemoryQuotaSet))
 	if record.isServerMemoryLimitSet {
 		fields = append(fields, zap.Any("tidb_server_memory_limit", record.serverMemoryLimit))
+		fields = append(fields, zap.Any("tidb-server memory usage", memUsage))
+	} else if record.isServerMemoryQuotaSet {
+		fields = append(fields, zap.Any("server-memory-quota", record.serverMemoryLimit))
 		fields = append(fields, zap.Any("tidb-server memory usage", memUsage))
 	} else {
 		fields = append(fields, zap.Any("system memory total", record.serverMemoryLimit))
