@@ -425,6 +425,10 @@ func (p *PhysicalHashAgg) getPlanCostVer2(taskType property.TaskType, option *Pl
 	memFactor := getTaskMemFactorVer2(p, taskType)
 	concurrency := float64(p.ctx.GetSessionVars().HashAggFinalConcurrency())
 
+	if inputRows < 2000 { // prefer to use StreamAgg if no much data to process
+		inputRows = 2000
+	}
+
 	aggCost := aggCostVer2(option, inputRows, p.AggFuncs, cpuFactor)
 	groupCost := groupCostVer2(option, inputRows, p.GroupByItems, cpuFactor)
 	hashBuildCost := hashBuildCostVer2(option, outputRows, outputRowSize, p.GroupByItems, cpuFactor, memFactor)
