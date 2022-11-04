@@ -68,7 +68,7 @@ func TestShowSubquery(t *testing.T) {
 	))
 	tk.MustQuery("show columns from t where field in (select 'b') and false").Check(testkit.Rows())
 	tk.MustExec("insert into t values('c', 0, 0)")
-	tk.MustQuery("show columns from t where field < all (select a from t)").Check(testkit.Rows(
+	tk.MustQuery("show columns from t where field < all (select a from t)").Sort().Check(testkit.Rows(
 		"a varchar(10) YES  <nil> ",
 		"b int(11) YES  <nil> ",
 	))
@@ -471,6 +471,7 @@ func TestVerboseExplain(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec(`set tidb_opt_limit_push_down_threshold=0`)
 	tk.MustExec("drop table if exists t1, t2, t3")
 	tk.MustExec("create table t1(a int, b int)")
