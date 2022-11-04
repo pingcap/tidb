@@ -502,3 +502,22 @@ func TestAddIndexAccelerationAndMDL(t *testing.T) {
 	require.Equal(t, int64(1), usage.DDLUsageCounter.AddIndexIngestUsed)
 	require.Equal(t, true, usage.DDLUsageCounter.MetadataLockUsed)
 }
+
+func TestGlobalMemoryControl(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	usage, err := telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.True(t, usage.EnableGlobalMemoryControl == (variable.DefTiDBServerMemoryLimit != "0"))
+
+	tk.MustExec("set global tidb_server_memory_limit = 5 << 30")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.True(t, usage.EnableGlobalMemoryControl)
+
+	tk.MustExec("set global tidb_server_memory_limit = 0")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.False(t, usage.EnableGlobalMemoryControl)
+}
