@@ -4429,14 +4429,17 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 				// TODO: need to check whether this will happen(maybe in the recursion)
 				continue
 			}
+			viewSelectOffset := b.getSelectOffset()
+
+			var viewHintSelectOffset int
 			// TODO: can not handle the different DB.
 			if viewQBNameHintTable[0].QBName.L == "" {
-				// TODO: need to check if we do not explicit set the qbName. Is it empty or use the 'sel_1' as the default value.
-				continue
+				// If we do not explicit set the qbName, we will improve the empty qb name to @sel_1.
+				viewHintSelectOffset = 1
+			} else {
+				viewHintSelectOffset = b.hintProcessor.GetHintOffset(viewQBNameHintTable[0].QBName, viewSelectOffset)
 			}
-			viewSelectOffset := b.getSelectOffset()
-			viewHintSelectOffset := b.hintProcessor.GetHintOffset(viewQBNameHintTable[0].QBName, viewSelectOffset)
-			if viewQBNameHintTable[0].TableName.L == tableInfo.Name.L && viewHintSelectOffset == viewSelectOffset {
+			if viewQBNameHintTable[0].TableName.L == tblName.L && viewHintSelectOffset == viewSelectOffset {
 				currentQBNameMap4View[qbName] = viewQBNameHintTable
 				currentViewHints[qbName] = b.hintProcessor.QbHints4View[qbName]
 				delete(b.hintProcessor.QbNameMap4View, qbName)
