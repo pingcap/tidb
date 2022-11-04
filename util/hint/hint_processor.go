@@ -363,9 +363,15 @@ func (p *BlockHintProcessor) checkQueryBlockHints(hints []*ast.TableOptimizerHin
 		if hint.HintName.L != hintQBName {
 			continue
 		}
+		if offset > 1 && len(hint.Tables) > 0 {
+			if p.Ctx != nil {
+				p.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("The qb_name hint for view only supports to be defined in the first query block"))
+			}
+			continue
+		}
 		if qbName != "" {
 			if p.Ctx != nil {
-				p.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("There are more than two query names in same query block,, using the first one %s", qbName))
+				p.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("There are more than two query names in same query block, using the first one %s", qbName))
 			}
 		} else {
 			qbName = hint.QBName.L
@@ -421,13 +427,16 @@ func (p *BlockHintProcessor) handleViewHints(hints []*ast.TableOptimizerHint) (l
 		ok := false
 		qbName := hint.QBName.L
 		if qbName != "" {
-			// xx_agg(@qb_name)
 			_, ok = p.QbNameMap4View[qbName]
 		} else {
 			if len(hint.Tables) == 1 {
 				// TODO: only support one table in view hints. Need to check what happened if there are more table name appear in one hint
 				qbName = hint.Tables[0].QBName.L
 				_, ok = p.QbNameMap4View[qbName]
+			} else {
+				if p.Ctx != nil {
+					p.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("Only support to define one table in one view hint"))
+				}
 			}
 		}
 
