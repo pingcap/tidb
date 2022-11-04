@@ -1105,6 +1105,8 @@ func (b *executorBuilder) setTelemetryInfo(v *plannercore.DDL) {
 				}
 			}
 		}
+	case *ast.FlashBackToTimestampStmt:
+		b.Ti.UseFlashbackToCluster = true
 	}
 }
 
