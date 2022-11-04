@@ -2041,3 +2041,20 @@ func TestSetPlanCacheMemoryMonitor(t *testing.T) {
 	tk.MustExec("set @@global.tidb_enable_prepared_plan_cache_memory_monitor=off;")
 	tk.MustQuery("select @@global.tidb_enable_prepared_plan_cache_memory_monitor").Check(testkit.Rows("0"))
 }
+
+func TestSetChunkReuseVariable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_enable_reuse_chunk=ON;")
+	tk.MustQuery("select @@session.tidb_enable_reuse_chunk").Check(testkit.Rows("1"))
+	tk.MustExec("set GLOBAL tidb_enable_reuse_chunk=ON;")
+	tk.MustQuery("select @@global.tidb_enable_reuse_chunk").Check(testkit.Rows("1"))
+
+	tk.MustExec("set @@tidb_enable_reuse_chunk=OFF;")
+	tk.MustQuery("select @@session.tidb_enable_reuse_chunk").Check(testkit.Rows("0"))
+	tk.MustExec("set GLOBAL tidb_enable_reuse_chunk=OFF;")
+	tk.MustQuery("select @@global.tidb_enable_reuse_chunk").Check(testkit.Rows("0"))
+
+	// error value
+	tk.MustGetErrCode("set @@tidb_enable_reuse_chunk=s;", errno.ErrWrongValueForVar)
+}

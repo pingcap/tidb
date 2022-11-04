@@ -27,6 +27,7 @@ func TestOuterJoinPropConst(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t1, t2;")
 	tk.MustExec("create table t1(id bigint primary key, a int, b int);")
 	tk.MustExec("create table t2(id bigint primary key, a int, b int);")
