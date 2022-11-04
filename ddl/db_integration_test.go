@@ -2909,8 +2909,7 @@ func TestAutoIncrementTableOption(t *testing.T) {
 
 func TestAutoIncrementOverflow(t *testing.T) {
 	// https://github.com/pingcap/tidb/issues/34142
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists auto_inc_overflow;")
 	tk.MustExec("create database auto_inc_overflow;")
