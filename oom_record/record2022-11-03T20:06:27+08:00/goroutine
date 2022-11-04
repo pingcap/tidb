@@ -1,0 +1,613 @@
+goroutine 2090 [running]:
+runtime/pprof.writeGoroutineStacks({0x105c9fdc0, 0x1401208cae0})
+	/Users/bba/.gvm/gos/go1.19/src/runtime/pprof/pprof.go:692 +0x6c
+runtime/pprof.writeGoroutine({0x105c9fdc0?, 0x1401208cae0?}, 0x2a8ffd3?)
+	/Users/bba/.gvm/gos/go1.19/src/runtime/pprof/pprof.go:681 +0x2c
+runtime/pprof.(*Profile).WriteTo(0x104cea570?, {0x105c9fdc0?, 0x1401208cae0?}, 0x102ad5360?)
+	/Users/bba/.gvm/gos/go1.19/src/runtime/pprof/pprof.go:330 +0x150
+github.com/pingcap/tidb/util/memoryusagealarm.write({{0x104cea570?, 0x0?}, 0x0?}, {0x14000b1e6c0?, 0x1400f8de540?})
+	/Users/bba/pc/tidb/util/memoryusagealarm/memoryusagealarm.go:364 +0x1f0
+github.com/pingcap/tidb/util/memoryusagealarm.(*memoryUsageAlarm).recordProfile(0x10560d320, {0x14000b1e6c0, 0x2a})
+	/Users/bba/pc/tidb/util/memoryusagealarm/memoryusagealarm.go:349 +0xac
+github.com/pingcap/tidb/util/memoryusagealarm.(*memoryUsageAlarm).doRecord(0x1400fceff10, 0x59a05c000?, 0x2?, {0x105ce7b60, 0x14000ddfb20}, 0x1)
+	/Users/bba/pc/tidb/util/memoryusagealarm/memoryusagealarm.go:223 +0x8e8
+github.com/pingcap/tidb/util/memoryusagealarm.(*memoryUsageAlarm).alarm4ExcessiveMemUsage(0x1400fceff10, {0x105ce7b60, 0x14000ddfb20})
+	/Users/bba/pc/tidb/util/memoryusagealarm/memoryusagealarm.go:161 +0x16c
+github.com/pingcap/tidb/util/memoryusagealarm.(*Handle).Run(0x140112e4138)
+	/Users/bba/pc/tidb/util/memoryusagealarm/memoryusagealarm.go:66 +0xe4
+created by main.createServer
+	/Users/bba/pc/tidb/tidb-server/main.go:759 +0x414
+
+goroutine 1 [chan receive]:
+github.com/pingcap/tidb/server.(*Server).Run(0x14000ddfb20)
+	/Users/bba/pc/tidb/server/server.go:375 +0x20c
+main.main()
+	/Users/bba/pc/tidb/tidb-server/main.go:226 +0x36c
+
+goroutine 265 [select]:
+github.com/pingcap/tidb/util/cpuprofile.(*parallelCPUProfiler).profilingLoop(0x140006a9320)
+	/Users/bba/pc/tidb/util/cpuprofile/cpuprofile.go:164 +0xcc
+github.com/pingcap/tidb/util.WithRecovery(0x0?, 0x14000d5ed80?)
+	/Users/bba/pc/tidb/util/misc.go:96 +0x50
+created by github.com/pingcap/tidb/util/cpuprofile.(*parallelCPUProfiler).start
+	/Users/bba/pc/tidb/util/cpuprofile/cpuprofile.go:111 +0x258
+
+goroutine 12 [select]:
+go.opencensus.io/stats/view.(*worker).start(0x14000285e80)
+	/Users/bba/.gvm/pkgsets/go1.19/global/pkg/mod/go.opencensus.io@v0.23.1-0.20220331163232-052120675fac/stats/view/worker.go:292 +0x88
+created by go.opencensus.io/stats/view.init.0
+	/Users/bba/.gvm/pkgsets/go1.19/global/pkg/mod/go.opencensus.io@v0.23.1-0.20220331163232-052120675fac/stats/view/worker.go:34 +0xa4
+
+goroutine 13 [chan receive]:
+github.com/golang/glog.(*loggingT).flushDaemon(0x0?)
+	/Users/bba/.gvm/pkgsets/go1.19/global/pkg/mod/github.com/golang/glog@v1.0.0/glog.go:882 +0x5c
+created by github.com/golang/glog.init.0
+	/Users/bba/.gvm/pkgsets/go1.19/global/pkg/mod/github.com/golang/glog@v1.0.0/glog.go:410 +0x1f0
+
+goroutine 149 [select]:
+github.com/pingcap/badger.(*blobGCHandler).run(0x1400098c000, 0x140006a2000)
+	/Users/bba/.gvm/pkgsets/go1.19/global/pkg/mod/github.com/pingcap/badger@v1.5.1-0.20220314162537-ab58fbf40580/blob.go:468 +0xa0
+created by github.com/pingcap/badger.(*blobManager).Open
+	/Users/bba/.gvm/pkgsets/go1.19/global/pkg/mod/github.com/pingcap/badger@v1.5.1-0.20220314162537-ab58fbf40580/blob.go:292 +0x4e4
+
+goroutine 266 [chan receive]:
+github.com/pingcap/tidb/util/systimemon.StartMonitor(0x105c897c0, 0x105c88d68, 0x14000d5cb10)
+	/Users/bba/pc/tidb/util/systimemon/systime_mon.go:32 +0xe4
+created by main.setupMetrics
+	/Users/bba/pc/tidb/tidb-server/main.go:781 +0x12c
+
+goroutine 267 [select]:
+github.com/pingcap/badger.(*DB).updateSize(0x0?, 0x14000d66af8)
+	/Users/bba/.gvm/pkgsets/go1.19/global/pkg/mod/github.com/pingcap/badger@v1.5.1-0.20220314162537-ab58fbf40580/db.go:1039 +0xd4
+created by github.com/pingcap/badger.Open
+	/Users/bba/.gvm/pkgsets/go1.19/global/pkg/mod/github.com/pingcap/badger@v1.5.1-0.20220314162537-ab58fbf40580/db.go:328 +0xb3c
+
+goroutine 268 [select]:
+github.com/pingcap/badger/epoch.(*ResourceManager).collectLoop(0x0?, 0x14000d66b28)
+	/Users/bba/.gvm/pkgsets/go1.19/global/pkg/mod/github.com/pingcap/badger@v1.5.1-0.20220314162537-ab58fbf40580/epoch/manager.go:101 +0xa8
+created by github.com/pingcap/badger/epoch.NewResourceManager
+	/Users/bba/.gvm/pkgsets/go1.19/global/pkg/mod/github.com/pingcap/badger@v1.5.1-0.20220314162537-ab58fbf40580/epoch/manager.go:79 +0xe0
+
+goroutine 269 [select]:
+github.com/pingcap/badger.Open.func4()
+	/Users/bba/.gvm/pkgsets/go1.19/global/pkg/mod/github.com/pingcap/badger@v1.5.1-0.20220314162537-ab58fbf40580/db.go:342 +0x148
+created by github.com/pingcap/badger.Open
+	/Users/bba/.gvm/pkgsets/go1.19/global/pkg/mod/github.com/pingcap/badger@v1.5.1-0.20220314162537-ab58fbf40580/db.go:339 +0xddc
+
+goroutine 274 [select]:
+github.com/pingcap/badger.(*levelsController).runWorker(0x14000c10380, 0x1400016e000, 0x0)
+	/Users/bba/.gvm/pkgsets/go1.19/global/pkg/mod/github.com/pingcap/badger@v1.5.1-0.20220314162537-ab58fbf40580/levels.go:212 +0x184
+created by github.com/pingcap/badger.(*levelsController).startCompact
+	/Users/bba/.gvm/pkgsets/go1.19/global/pkg/mod/github.com/pingcap/badger@v1.5.1-0.20220314162537-ab58fbf40580/levels.go:180 +0x64
+
+goroutine 275 [select]:
+github.com/pingcap/badger.(*levelsController).runWorker(0x14000c10380, 0x1400016e000, 0x0)
+	/Users/bba/.gvm/pkgsets/go1.19/global/pkg/mod/github.com/pingcap/badger@v1.5.1-0.20220314162537-ab58fbf40580/levels.go:212 +0x184
+created by github.com/pingcap/badger.(*levelsController).startCompact
+	/Users/bba/.gvm/pkgsets/go1.19/global/pkg/mod/github.com/pingcap/badger@v1.5.1-0.20220314162537-ab58fbf40580/levels.go:180 +0x64
+
+goroutine 276 [select]:
+github.com/pingcap/badger.(*levelsController).runWorker(0x14000c10380, 0x1400016e000, 0x1)
+	/Users/bba/.gvm/pkgsets/go1.19/global/pkg/mod/github.com/pingcap/badger@v1.5.1-0.20220314162537-ab58fbf40580/levels.go:212 +0x184
+created by github.com/pingcap/badger.(*levelsController).startCompact
+	/Users/bba/.gvm/pkgsets/go1.19/global/pkg/mod/github.com/pingcap/badger@v1.5.1-0.20220314162537-ab58fbf40580/levels.go:180 +0x64
+
+goroutine 277 [chan receive]:
+github.com/pingcap/badger.(*DB).runFlushMemTable(0x14000d75b00, 0x0?)
+	/Users/bba/.gvm/pkgsets/go1.19/global/pkg/mod/github.com/pingcap/badger@v1.5.1-0.20220314162537-ab58fbf40580/db.go:920 +0x9c
+created by github.com/pingcap/badger.Open
+	/Users/bba/.gvm/pkgsets/go1.19/global/pkg/mod/github.com/pingcap/badger@v1.5.1-0.20220314162537-ab58fbf40580/db.go:361 +0x10f0
+
+goroutine 290 [select]:
+github.com/pingcap/badger.(*writeWorker).runWriteVLog(0x14000da20e0, 0x14000d66030)
+	/Users/bba/.gvm/pkgsets/go1.19/global/pkg/mod/github.com/pingcap/badger@v1.5.1-0.20220314162537-ab58fbf40580/writer.go:94 +0xc0
+created by github.com/pingcap/badger.startWriteWorker
+	/Users/bba/.gvm/pkgsets/go1.19/global/pkg/mod/github.com/pingcap/badger@v1.5.1-0.20220314162537-ab58fbf40580/writer.go:64 +0x20c
+
+goroutine 291 [chan receive, locked to thread]:
+github.com/pingcap/badger.(*writeWorker).runWriteLSM(0x14000da20e0, 0x0?)
+	/Users/bba/.gvm/pkgsets/go1.19/global/pkg/mod/github.com/pingcap/badger@v1.5.1-0.20220314162537-ab58fbf40580/writer.go:141 +0x110
+created by github.com/pingcap/badger.startWriteWorker
+	/Users/bba/.gvm/pkgsets/go1.19/global/pkg/mod/github.com/pingcap/badger@v1.5.1-0.20220314162537-ab58fbf40580/writer.go:65 +0x264
+
+goroutine 292 [chan receive]:
+github.com/pingcap/badger.(*writeWorker).runMergeLSM(0x0?, 0x0?)
+	/Users/bba/.gvm/pkgsets/go1.19/global/pkg/mod/github.com/pingcap/badger@v1.5.1-0.20220314162537-ab58fbf40580/writer.go:154 +0x88
+created by github.com/pingcap/badger.startWriteWorker
+	/Users/bba/.gvm/pkgsets/go1.19/global/pkg/mod/github.com/pingcap/badger@v1.5.1-0.20220314162537-ab58fbf40580/writer.go:66 +0x2bc
+
+goroutine 293 [select]:
+github.com/pingcap/tidb/store/mockstore/unistore/tikv.writeDBWorker.run({0x14000cc18c0?, 0x14000349c00?})
+	/Users/bba/pc/tidb/store/mockstore/unistore/tikv/write.go:96 +0xe0
+created by github.com/pingcap/tidb/store/mockstore/unistore/tikv.(*dbWriter).Open
+	/Users/bba/pc/tidb/store/mockstore/unistore/tikv/write.go:199 +0xcc
+
+goroutine 294 [select]:
+github.com/pingcap/tidb/store/mockstore/unistore/tikv.writeLockWorker.run({0x14000cc1920?, 0x14000349c00?})
+	/Users/bba/pc/tidb/store/mockstore/unistore/tikv/write.go:148 +0xf4
+created by github.com/pingcap/tidb/store/mockstore/unistore/tikv.(*dbWriter).Open
+	/Users/bba/pc/tidb/store/mockstore/unistore/tikv/write.go:206 +0x164
+
+goroutine 295 [select]:
+github.com/pingcap/tidb/store/mockstore/unistore/tikv.(*MVCCStore).runUpdateSafePointLoop(0x14000c79000)
+	/Users/bba/pc/tidb/store/mockstore/unistore/tikv/mvcc.go:1742 +0x1a8
+created by github.com/pingcap/tidb/store/mockstore/unistore/tikv.NewMVCCStore
+	/Users/bba/pc/tidb/store/mockstore/unistore/tikv/mvcc.go:87 +0x338
+
+goroutine 296 [select]:
+github.com/pingcap/tidb/store/mockstore/unistore/tikv.(*MVCCStore).StartDeadlockDetection.func1()
+	/Users/bba/pc/tidb/store/mockstore/unistore/tikv/mvcc.go:1415 +0x6c
+created by github.com/pingcap/tidb/store/mockstore/unistore/tikv.(*MVCCStore).StartDeadlockDetection
+	/Users/bba/pc/tidb/store/mockstore/unistore/tikv/mvcc.go:1413 +0xbc
+
+goroutine 297 [select]:
+github.com/tikv/client-go/v2/oracle/oracles.(*pdOracle).updateTS(0x1400042a3f0, {0x105cc2ae0, 0x140000580b0}, 0x0?)
+	/Users/bba/.gvm/pkgsets/go1.19/global/pkg/mod/github.com/tikv/client-go/v2@v2.0.1-0.20221026083454-6c9c7c7c5815/oracle/oracles/pd.go:229 +0xd8
+created by github.com/tikv/client-go/v2/oracle/oracles.NewPdOracle
+	/Users/bba/.gvm/pkgsets/go1.19/global/pkg/mod/github.com/tikv/client-go/v2@v2.0.1-0.20221026083454-6c9c7c7c5815/oracle/oracles/pd.go:77 +0x124
+
+goroutine 298 [select]:
+github.com/tikv/client-go/v2/internal/locate.(*RegionCache).asyncCheckAndResolveLoop(0x14000c1d2b0, 0x0?)
+	/Users/bba/.gvm/pkgsets/go1.19/global/pkg/mod/github.com/tikv/client-go/v2@v2.0.1-0.20221026083454-6c9c7c7c5815/internal/locate/region_cache.go:448 +0xb0
+created by github.com/tikv/client-go/v2/internal/locate.NewRegionCache
+	/Users/bba/.gvm/pkgsets/go1.19/global/pkg/mod/github.com/tikv/client-go/v2@v2.0.1-0.20221026083454-6c9c7c7c5815/internal/locate/region_cache.go:419 +0x31c
+
+goroutine 299 [select]:
+github.com/tikv/client-go/v2/tikv.(*KVStore).runSafePointChecker(0x140007f2000)
+	/Users/bba/.gvm/pkgsets/go1.19/global/pkg/mod/github.com/tikv/client-go/v2@v2.0.1-0.20221026083454-6c9c7c7c5815/tikv/kv.go:234 +0xd0
+created by github.com/tikv/client-go/v2/tikv.NewKVStore
+	/Users/bba/.gvm/pkgsets/go1.19/global/pkg/mod/github.com/tikv/client-go/v2@v2.0.1-0.20221026083454-6c9c7c7c5815/tikv/kv.go:189 +0x3d0
+
+goroutine 300 [select]:
+github.com/tikv/client-go/v2/tikv.(*KVStore).safeTSUpdater(0x140007f2000)
+	/Users/bba/.gvm/pkgsets/go1.19/global/pkg/mod/github.com/tikv/client-go/v2@v2.0.1-0.20221026083454-6c9c7c7c5815/tikv/kv.go:530 +0x188
+created by github.com/tikv/client-go/v2/tikv.NewKVStore
+	/Users/bba/.gvm/pkgsets/go1.19/global/pkg/mod/github.com/tikv/client-go/v2@v2.0.1-0.20221026083454-6c9c7c7c5815/tikv/kv.go:190 +0x414
+
+goroutine 301 [select]:
+github.com/dgraph-io/ristretto.(*lfuPolicy).processItems(0x14000349ec0)
+	/Users/bba/.gvm/pkgsets/go1.19/global/pkg/mod/github.com/dgraph-io/ristretto@v0.1.1-0.20220403145359-8e850b710d6d/policy.go:67 +0x64
+created by github.com/dgraph-io/ristretto.newPolicy
+	/Users/bba/.gvm/pkgsets/go1.19/global/pkg/mod/github.com/dgraph-io/ristretto@v0.1.1-0.20220403145359-8e850b710d6d/policy.go:51 +0x150
+
+goroutine 302 [select]:
+github.com/dgraph-io/ristretto.(*Cache).processItems(0x1400042a4d0)
+	/Users/bba/.gvm/pkgsets/go1.19/global/pkg/mod/github.com/dgraph-io/ristretto@v0.1.1-0.20220403145359-8e850b710d6d/cache.go:476 +0xf8
+created by github.com/dgraph-io/ristretto.NewCache
+	/Users/bba/.gvm/pkgsets/go1.19/global/pkg/mod/github.com/dgraph-io/ristretto@v0.1.1-0.20220403145359-8e850b710d6d/cache.go:213 +0x750
+
+goroutine 1561 [select]:
+github.com/pingcap/tidb/ddl.(*worker).start(0x140112e6880, 0x1400ffb5200)
+	/Users/bba/pc/tidb/ddl/ddl_worker.go:194 +0x26c
+created by github.com/pingcap/tidb/ddl.(*ddl).prepareWorkers4legacyDDL
+	/Users/bba/pc/tidb/ddl/ddl.go:689 +0x204
+
+goroutine 1562 [select]:
+github.com/pingcap/tidb/ddl.(*worker).start(0x140112e6900, 0x1400ffb5200)
+	/Users/bba/pc/tidb/ddl/ddl_worker.go:194 +0x26c
+created by github.com/pingcap/tidb/ddl.(*ddl).prepareWorkers4legacyDDL
+	/Users/bba/pc/tidb/ddl/ddl.go:689 +0x204
+
+goroutine 1750 [chan receive]:
+github.com/pingcap/tidb/util/signal.SetupSignalHandler.func1()
+	/Users/bba/pc/tidb/util/signal/signal_posix.go:37 +0x4c
+created by github.com/pingcap/tidb/util/signal.SetupSignalHandler
+	/Users/bba/pc/tidb/util/signal/signal_posix.go:34 +0xa8
+
+goroutine 1752 [select]:
+github.com/pingcap/tidb/util/topsql/collector.(*SQLCPUCollector).collectSQLCPULoop(0x1400098c800)
+	/Users/bba/pc/tidb/util/topsql/collector/cpu.go:120 +0x174
+created by github.com/pingcap/tidb/util/topsql/collector.(*SQLCPUCollector).Start
+	/Users/bba/pc/tidb/util/topsql/collector/cpu.go:82 +0xe0
+
+goroutine 1971 [select]:
+github.com/pingcap/tidb/domain.(*Domain).handleEvolvePlanTasksLoop.func1()
+	/Users/bba/pc/tidb/domain/domain.go:1460 +0xc8
+created by github.com/pingcap/tidb/domain.(*Domain).handleEvolvePlanTasksLoop
+	/Users/bba/pc/tidb/domain/domain.go:1453 +0xf4
+
+goroutine 1753 [select]:
+github.com/pingcap/tidb/util/topsql/reporter.(*RemoteTopSQLReporter).collectWorker(0x14000c2c6c0)
+	/Users/bba/pc/tidb/util/topsql/reporter/reporter.go:175 +0x124
+created by github.com/pingcap/tidb/util/topsql/reporter.(*RemoteTopSQLReporter).Start
+	/Users/bba/pc/tidb/util/topsql/reporter/reporter.go:110 +0x6c
+
+goroutine 1754 [select]:
+github.com/pingcap/tidb/util/topsql/reporter.(*RemoteTopSQLReporter).reportWorker(0x14000c2c6c0)
+	/Users/bba/pc/tidb/util/topsql/reporter/reporter.go:261 +0xb0
+created by github.com/pingcap/tidb/util/topsql/reporter.(*RemoteTopSQLReporter).Start
+	/Users/bba/pc/tidb/util/topsql/reporter/reporter.go:111 +0xb0
+
+goroutine 1558 [select]:
+github.com/pingcap/tidb/ddl.(*ddl).limitDDLJobs(0x140112e6200)
+	/Users/bba/pc/tidb/ddl/ddl_worker.go:278 +0xe0
+github.com/pingcap/tidb/util.(*WaitGroupWrapper).Run.func1()
+	/Users/bba/pc/tidb/util/wait_group_wrapper.go:33 +0x58
+created by github.com/pingcap/tidb/util.(*WaitGroupWrapper).Run
+	/Users/bba/pc/tidb/util/wait_group_wrapper.go:31 +0x84
+
+goroutine 1559 [select]:
+github.com/pingcap/tidb/ddl.(*delRange).startEmulator(0x1400fc69320)
+	/Users/bba/pc/tidb/ddl/delete_range.go:160 +0xac
+created by github.com/pingcap/tidb/ddl.(*delRange).start
+	/Users/bba/pc/tidb/ddl/delete_range.go:142 +0x78
+
+goroutine 1560 [select]:
+github.com/pingcap/tidb/ddl.(*ddl).startDispatchLoop(0x140112e6200)
+	/Users/bba/pc/tidb/ddl/job_table.go:181 +0x370
+github.com/pingcap/tidb/util.(*WaitGroupWrapper).Run.func1()
+	/Users/bba/pc/tidb/util/wait_group_wrapper.go:33 +0x58
+created by github.com/pingcap/tidb/util.(*WaitGroupWrapper).Run
+	/Users/bba/pc/tidb/util/wait_group_wrapper.go:31 +0x84
+
+goroutine 2084 [select]:
+github.com/pingcap/tidb/statistics/handle.(*Handle).drainColTask(0x14012115560, 0x1400fb2db00)
+	/Users/bba/pc/tidb/statistics/handle/handle_hist.go:393 +0x88
+github.com/pingcap/tidb/statistics/handle.(*Handle).HandleOneTask(0x1400fbde708?, 0x102a7e1ac?, 0x649a11f4ebf1?, {0x130bb5f58, 0x14011abd900}, 0x1400fbde6b8?)
+	/Users/bba/pc/tidb/statistics/handle/handle_hist.go:203 +0x84
+github.com/pingcap/tidb/statistics/handle.(*Handle).SubLoadWorker(0x14012115560, {0x105d2b008?, 0x14011abd900}, 0x105d2b008?, 0x14000992500?)
+	/Users/bba/pc/tidb/statistics/handle/handle_hist.go:179 +0xc4
+created by github.com/pingcap/tidb/domain.(*Domain).StartLoadStatsSubWorkers
+	/Users/bba/pc/tidb/domain/domain.go:1669 +0x194
+
+goroutine 1756 [select]:
+github.com/pingcap/tidb/util/topsql/stmtstats.(*aggregator).run(0x14000668120)
+	/Users/bba/pc/tidb/util/topsql/stmtstats/aggregator.go:67 +0xbc
+created by github.com/pingcap/tidb/util/topsql/stmtstats.(*aggregator).start
+	/Users/bba/pc/tidb/util/topsql/stmtstats/aggregator.go:56 +0xec
+
+goroutine 1755 [select]:
+github.com/pingcap/tidb/util/topsql/reporter.(*SingleTargetDataSink).run(0x14000166320)
+	/Users/bba/pc/tidb/util/topsql/reporter/single_target.go:114 +0xd0
+github.com/pingcap/tidb/util/topsql/reporter.(*SingleTargetDataSink).recoverRun(0x14000166320)
+	/Users/bba/pc/tidb/util/topsql/reporter/single_target.go:95 +0x54
+created by github.com/pingcap/tidb/util/topsql/reporter.(*SingleTargetDataSink).Start
+	/Users/bba/pc/tidb/util/topsql/reporter/single_target.go:80 +0x210
+
+goroutine 630 [chan receive]:
+gopkg.in/natefinch/lumberjack%2ev2.(*Logger).millRun(0x14000d5eea0)
+	/Users/bba/.gvm/pkgsets/go1.19/global/pkg/mod/gopkg.in/natefinch/lumberjack.v2@v2.0.0/lumberjack.go:379 +0x44
+created by gopkg.in/natefinch/lumberjack%2ev2.(*Logger).mill.func1
+	/Users/bba/.gvm/pkgsets/go1.19/global/pkg/mod/gopkg.in/natefinch/lumberjack.v2@v2.0.0/lumberjack.go:390 +0xa4
+
+goroutine 4153 [IO wait]:
+internal/poll.runtime_pollWait(0x130e21718, 0x72)
+	/Users/bba/.gvm/gos/go1.19/src/runtime/netpoll.go:305 +0xa0
+internal/poll.(*pollDesc).wait(0x14013298700?, 0x1401331e000?, 0x0)
+	/Users/bba/.gvm/gos/go1.19/src/internal/poll/fd_poll_runtime.go:84 +0x28
+internal/poll.(*pollDesc).waitRead(...)
+	/Users/bba/.gvm/gos/go1.19/src/internal/poll/fd_poll_runtime.go:89
+internal/poll.(*FD).Read(0x14013298700, {0x1401331e000, 0x4000, 0x4000})
+	/Users/bba/.gvm/gos/go1.19/src/internal/poll/fd_unix.go:167 +0x1e0
+net.(*netFD).Read(0x14013298700, {0x1401331e000?, 0x14012a59168?, 0x102aca230?})
+	/Users/bba/.gvm/gos/go1.19/src/net/fd_posix.go:55 +0x28
+net.(*conn).Read(0x14012643578, {0x1401331e000?, 0x14012a591c8?, 0x72?})
+	/Users/bba/.gvm/gos/go1.19/src/net/net.go:183 +0x34
+bufio.(*Reader).Read(0x14013374ae0, {0x14010019f68, 0x4, 0x14012a591b8?})
+	/Users/bba/.gvm/gos/go1.19/src/bufio/bufio.go:237 +0x1e0
+github.com/pingcap/tidb/server.bufferedReadConn.Read(...)
+	/Users/bba/pc/tidb/server/buffered_read_conn.go:31
+io.ReadAtLeast({0x105c9bb60, 0x14013147b48}, {0x14010019f68, 0x4, 0x4}, 0x4)
+	/Users/bba/.gvm/gos/go1.19/src/io/io.go:332 +0xa0
+io.ReadFull(...)
+	/Users/bba/.gvm/gos/go1.19/src/io/io.go:351
+github.com/pingcap/tidb/server.(*packetIO).readOnePacket(0x140131eb080)
+	/Users/bba/pc/tidb/server/packetio.go:93 +0xb4
+github.com/pingcap/tidb/server.(*packetIO).readPacket(0x140131eb080)
+	/Users/bba/pc/tidb/server/packetio.go:135 +0x58
+github.com/pingcap/tidb/server.(*clientConn).readPacket(0x14013027800)
+	/Users/bba/pc/tidb/server/conn.go:433 +0x60
+github.com/pingcap/tidb/server.(*clientConn).Run(0x14013027800, {0x105cc2b50, 0x140131eb0e0})
+	/Users/bba/pc/tidb/server/conn.go:1083 +0x170
+github.com/pingcap/tidb/server.(*Server).onConn(0x14000ddfb20, 0x14013027800)
+	/Users/bba/pc/tidb/server/server.go:594 +0x90c
+created by github.com/pingcap/tidb/server.(*Server).startNetworkListener
+	/Users/bba/pc/tidb/server/server.go:458 +0x478
+
+goroutine 1569 [select]:
+github.com/pingcap/tidb/domain.(*Domain).topologySyncerKeeper(0x1400ffb5080)
+	/Users/bba/pc/tidb/domain/domain.go:611 +0x108
+created by github.com/pingcap/tidb/domain.(*Domain).Init
+	/Users/bba/pc/tidb/domain/domain.go:1046 +0xdbc
+
+goroutine 2082 [select]:
+github.com/pingcap/tidb/statistics/handle.(*Handle).drainColTask(0x14012115560, 0x1400fb2db00)
+	/Users/bba/pc/tidb/statistics/handle/handle_hist.go:393 +0x88
+github.com/pingcap/tidb/statistics/handle.(*Handle).HandleOneTask(0x2?, 0x1401126c4d8?, 0x140005527a8?, {0x130bb5f58, 0x14011abd400}, 0x14000552740?)
+	/Users/bba/pc/tidb/statistics/handle/handle_hist.go:203 +0x84
+github.com/pingcap/tidb/statistics/handle.(*Handle).SubLoadWorker(0x14012115560, {0x105d2b008?, 0x14011abd400}, 0x102a59e94?, 0x1401143a230?)
+	/Users/bba/pc/tidb/statistics/handle/handle_hist.go:179 +0xc4
+created by github.com/pingcap/tidb/domain.(*Domain).StartLoadStatsSubWorkers
+	/Users/bba/pc/tidb/domain/domain.go:1669 +0x194
+
+goroutine 2086 [select]:
+github.com/pingcap/tidb/statistics/handle.(*Handle).drainColTask(0x14012115560, 0x1400fb2db00)
+	/Users/bba/pc/tidb/statistics/handle/handle_hist.go:393 +0x88
+github.com/pingcap/tidb/statistics/handle.(*Handle).HandleOneTask(0x1400fbd9708?, 0x102a7e1ac?, 0x649a1133dee2?, {0x130bb5f58, 0x14011db6000}, 0x1400fbd96b8?)
+	/Users/bba/pc/tidb/statistics/handle/handle_hist.go:203 +0x84
+github.com/pingcap/tidb/statistics/handle.(*Handle).SubLoadWorker(0x14012115560, {0x105d2b008?, 0x14011db6000}, 0x14011362240?, 0x3?)
+	/Users/bba/pc/tidb/statistics/handle/handle_hist.go:179 +0xc4
+created by github.com/pingcap/tidb/domain.(*Domain).StartLoadStatsSubWorkers
+	/Users/bba/pc/tidb/domain/domain.go:1669 +0x194
+
+goroutine 1749 [syscall]:
+os/signal.signal_recv()
+	/Users/bba/.gvm/gos/go1.19/src/runtime/sigqueue.go:149 +0x2c
+os/signal.loop()
+	/Users/bba/.gvm/gos/go1.19/src/os/signal/signal_unix.go:23 +0x1c
+created by os/signal.Notify.func1.1
+	/Users/bba/.gvm/gos/go1.19/src/os/signal/signal.go:151 +0x2c
+
+goroutine 1970 [select]:
+github.com/pingcap/tidb/domain.(*Domain).globalBindHandleWorkerLoop.func1()
+	/Users/bba/pc/tidb/domain/domain.go:1422 +0x11c
+created by github.com/pingcap/tidb/domain.(*Domain).globalBindHandleWorkerLoop
+	/Users/bba/pc/tidb/domain/domain.go:1409 +0xb4
+
+goroutine 1565 [select]:
+github.com/pingcap/tidb/domain.(*Domain).mdlCheckLoop(0x1400ffb5080)
+	/Users/bba/pc/tidb/domain/domain.go:664 +0xb0
+github.com/pingcap/tidb/util.(*WaitGroupWrapper).Run.func1()
+	/Users/bba/pc/tidb/util/wait_group_wrapper.go:33 +0x58
+created by github.com/pingcap/tidb/util.(*WaitGroupWrapper).Run
+	/Users/bba/pc/tidb/util/wait_group_wrapper.go:31 +0x84
+
+goroutine 1954 [select]:
+github.com/pingcap/tidb/domain.(*Domain).closestReplicaReadCheckLoop(0x1400ffb5080, {0x105cc2aa8, 0x14011289fc0}, {0x105cf85e8, 0x14000da8160})
+	/Users/bba/pc/tidb/domain/domain.go:1097 +0x1cc
+created by github.com/pingcap/tidb/domain.(*Domain).Init
+	/Users/bba/pc/tidb/domain/domain.go:1050 +0xe84
+
+goroutine 2087 [select]:
+github.com/pingcap/tidb/domain.(*Domain).DumpFileGcCheckerLoop.func1()
+	/Users/bba/pc/tidb/domain/domain.go:1545 +0xc4
+created by github.com/pingcap/tidb/domain.(*Domain).DumpFileGcCheckerLoop
+	/Users/bba/pc/tidb/domain/domain.go:1536 +0x74
+
+goroutine 1758 [IO wait]:
+internal/poll.runtime_pollWait(0x130e21ad8, 0x72)
+	/Users/bba/.gvm/gos/go1.19/src/runtime/netpoll.go:305 +0xa0
+internal/poll.(*pollDesc).wait(0x1401110b800?, 0x0?, 0x0)
+	/Users/bba/.gvm/gos/go1.19/src/internal/poll/fd_poll_runtime.go:84 +0x28
+internal/poll.(*pollDesc).waitRead(...)
+	/Users/bba/.gvm/gos/go1.19/src/internal/poll/fd_poll_runtime.go:89
+internal/poll.(*FD).Accept(0x1401110b800)
+	/Users/bba/.gvm/gos/go1.19/src/internal/poll/fd_unix.go:614 +0x1d0
+net.(*netFD).accept(0x1401110b800)
+	/Users/bba/.gvm/gos/go1.19/src/net/fd_unix.go:172 +0x28
+net.(*TCPListener).accept(0x14011937410)
+	/Users/bba/.gvm/gos/go1.19/src/net/tcpsock_posix.go:142 +0x28
+net.(*TCPListener).Accept(0x14011937410)
+	/Users/bba/.gvm/gos/go1.19/src/net/tcpsock.go:288 +0x2c
+github.com/pingcap/tidb/server.(*Server).startNetworkListener(0x14000ddfb20, {0x105cbf850, 0x14011937410}, 0x0, 0x14000992500?)
+	/Users/bba/pc/tidb/server/server.go:388 +0x78
+created by github.com/pingcap/tidb/server.(*Server).Run
+	/Users/bba/pc/tidb/server/server.go:373 +0x168
+
+goroutine 2091 [select]:
+github.com/pingcap/tidb/util/servermemorylimit.(*Handle).Run(0x140112e4150)
+	/Users/bba/pc/tidb/util/servermemorylimit/servermemorylimit.go:70 +0x124
+created by main.createServer
+	/Users/bba/pc/tidb/tidb-server/main.go:760 +0x484
+
+goroutine 1757 [IO wait]:
+internal/poll.runtime_pollWait(0x130e218f8, 0x72)
+	/Users/bba/.gvm/gos/go1.19/src/runtime/netpoll.go:305 +0xa0
+internal/poll.(*pollDesc).wait(0x1401110ba00?, 0x104be9aac?, 0x0)
+	/Users/bba/.gvm/gos/go1.19/src/internal/poll/fd_poll_runtime.go:84 +0x28
+internal/poll.(*pollDesc).waitRead(...)
+	/Users/bba/.gvm/gos/go1.19/src/internal/poll/fd_poll_runtime.go:89
+internal/poll.(*FD).Accept(0x1401110ba00)
+	/Users/bba/.gvm/gos/go1.19/src/internal/poll/fd_unix.go:614 +0x1d0
+net.(*netFD).accept(0x1401110ba00)
+	/Users/bba/.gvm/gos/go1.19/src/net/fd_unix.go:172 +0x28
+net.(*TCPListener).accept(0x14011937428)
+	/Users/bba/.gvm/gos/go1.19/src/net/tcpsock_posix.go:142 +0x28
+net.(*TCPListener).Accept(0x14011937428)
+	/Users/bba/.gvm/gos/go1.19/src/net/tcpsock.go:288 +0x2c
+github.com/soheilhy/cmux.(*cMux).Serve(0x1401223ebe0)
+	/Users/bba/.gvm/pkgsets/go1.19/global/pkg/mod/github.com/soheilhy/cmux@v0.1.5/cmux.go:170 +0x84
+github.com/pingcap/tidb/server.(*Server).startStatusServerAndRPCServer(0x14000ddfb20, 0x14012248580)
+	/Users/bba/pc/tidb/server/http_status.go:474 +0x498
+github.com/pingcap/tidb/server.(*Server).startHTTPServer(0x14000ddfb20)
+	/Users/bba/pc/tidb/server/http_status.go:447 +0x1200
+created by github.com/pingcap/tidb/server.(*Server).startStatusHTTP
+	/Users/bba/pc/tidb/server/http_status.go:62 +0x60
+
+goroutine 2047 [select]:
+github.com/pingcap/tidb/domain.(*Domain).updateStatsWorker(0x1400ffb5080, {0x105d2b008?, 0x14011abd180?}, {0x105ce1ae0, 0x14012118570})
+	/Users/bba/pc/tidb/domain/domain.go:1780 +0x1e8
+github.com/pingcap/tidb/domain.(*Domain).UpdateTableStatsLoop.func1()
+	/Users/bba/pc/tidb/domain/domain.go:1657 +0x30
+github.com/pingcap/tidb/util.(*WaitGroupWrapper).Run.func1()
+	/Users/bba/pc/tidb/util/wait_group_wrapper.go:33 +0x58
+created by github.com/pingcap/tidb/util.(*WaitGroupWrapper).Run
+	/Users/bba/pc/tidb/util/wait_group_wrapper.go:31 +0x84
+
+goroutine 2089 [select]:
+github.com/pingcap/tidb/util/expensivequery.(*Handle).Run(0x140112e4120)
+	/Users/bba/pc/tidb/util/expensivequery/expensivequery.go:56 +0x128
+created by main.createServer
+	/Users/bba/pc/tidb/tidb-server/main.go:758 +0x3a4
+
+goroutine 1564 [select]:
+github.com/pingcap/tidb/domain.(*Domain).loadSchemaInLoop(0x1400ffb5080, {0x105cc2aa8, 0x14011289fc0}, 0x140009adce0?)
+	/Users/bba/pc/tidb/domain/domain.go:747 +0x148
+created by github.com/pingcap/tidb/domain.(*Domain).Init
+	/Users/bba/pc/tidb/domain/domain.go:1037 +0xc28
+
+goroutine 1751 [chan receive]:
+github.com/pingcap/tidb/util/signal.SetupSignalHandler.func2()
+	/Users/bba/pc/tidb/util/signal/signal_posix.go:53 +0x34
+created by github.com/pingcap/tidb/util/signal.SetupSignalHandler
+	/Users/bba/pc/tidb/util/signal/signal_posix.go:52 +0x17c
+
+goroutine 1568 [select]:
+github.com/pingcap/tidb/domain.(*Domain).globalConfigSyncerKeeper(0x1400ffb5080)
+	/Users/bba/pc/tidb/domain/domain.go:588 +0xa4
+created by github.com/pingcap/tidb/domain.(*Domain).Init
+	/Users/bba/pc/tidb/domain/domain.go:1043 +0xd60
+
+goroutine 2049 [select]:
+github.com/pingcap/tidb/domain.(*Domain).gcAnalyzeHistory(0x1400ffb5080, {0x105ce1ae0, 0x14012118570})
+	/Users/bba/pc/tidb/domain/domain.go:1861 +0xd8
+github.com/pingcap/tidb/domain.(*Domain).UpdateTableStatsLoop.func3()
+	/Users/bba/pc/tidb/domain/domain.go:1659 +0x28
+github.com/pingcap/tidb/util.(*WaitGroupWrapper).Run.func1()
+	/Users/bba/pc/tidb/util/wait_group_wrapper.go:33 +0x58
+created by github.com/pingcap/tidb/util.(*WaitGroupWrapper).Run
+	/Users/bba/pc/tidb/util/wait_group_wrapper.go:31 +0x84
+
+goroutine 2088 [select]:
+github.com/pingcap/tidb/domain.(*Domain).LoadSigningCertLoop.func1()
+	/Users/bba/pc/tidb/domain/domain.go:1958 +0xac
+created by github.com/pingcap/tidb/domain.(*Domain).LoadSigningCertLoop
+	/Users/bba/pc/tidb/domain/domain.go:1951 +0xa4
+
+goroutine 2085 [select]:
+github.com/pingcap/tidb/statistics/handle.(*Handle).drainColTask(0x14012115560, 0x1400fb2db00)
+	/Users/bba/pc/tidb/statistics/handle/handle_hist.go:393 +0x88
+github.com/pingcap/tidb/statistics/handle.(*Handle).HandleOneTask(0x14010942708?, 0x102a7e1ac?, 0x649a11f4f50f?, {0x130bb5f58, 0x14011abdb80}, 0x140109426b8?)
+	/Users/bba/pc/tidb/statistics/handle/handle_hist.go:203 +0x84
+github.com/pingcap/tidb/statistics/handle.(*Handle).SubLoadWorker(0x14012115560, {0x105d2b008?, 0x14011abdb80}, 0x105d2b008?, 0x14000992500?)
+	/Users/bba/pc/tidb/statistics/handle/handle_hist.go:179 +0xc4
+created by github.com/pingcap/tidb/domain.(*Domain).StartLoadStatsSubWorkers
+	/Users/bba/pc/tidb/domain/domain.go:1669 +0x194
+
+goroutine 1965 [select]:
+github.com/pingcap/tidb/domain.(*Domain).LoadSysVarCacheLoop.func1()
+	/Users/bba/pc/tidb/domain/domain.go:1337 +0xe4
+created by github.com/pingcap/tidb/domain.(*Domain).LoadSysVarCacheLoop
+	/Users/bba/pc/tidb/domain/domain.go:1328 +0x178
+
+goroutine 1567 [select]:
+github.com/pingcap/tidb/domain.(*Domain).infoSyncerKeeper(0x1400ffb5080)
+	/Users/bba/pc/tidb/domain/domain.go:565 +0x10c
+created by github.com/pingcap/tidb/domain.(*Domain).Init
+	/Users/bba/pc/tidb/domain/domain.go:1042 +0xd1c
+
+goroutine 2032 [select]:
+github.com/pingcap/tidb/domain.(*Domain).LoadPrivilegeLoop.func1()
+	/Users/bba/pc/tidb/domain/domain.go:1287 +0xe4
+created by github.com/pingcap/tidb/domain.(*Domain).LoadPrivilegeLoop
+	/Users/bba/pc/tidb/domain/domain.go:1278 +0x254
+
+goroutine 1759 [IO wait]:
+internal/poll.runtime_pollWait(0x130e219e8, 0x72)
+	/Users/bba/.gvm/gos/go1.19/src/runtime/netpoll.go:305 +0xa0
+internal/poll.(*pollDesc).wait(0x1401110b880?, 0x1?, 0x0)
+	/Users/bba/.gvm/gos/go1.19/src/internal/poll/fd_poll_runtime.go:84 +0x28
+internal/poll.(*pollDesc).waitRead(...)
+	/Users/bba/.gvm/gos/go1.19/src/internal/poll/fd_poll_runtime.go:89
+internal/poll.(*FD).Accept(0x1401110b880)
+	/Users/bba/.gvm/gos/go1.19/src/internal/poll/fd_unix.go:614 +0x1d0
+net.(*netFD).accept(0x1401110b880)
+	/Users/bba/.gvm/gos/go1.19/src/net/fd_unix.go:172 +0x28
+net.(*UnixListener).accept(0x1400fbe45d8?)
+	/Users/bba/.gvm/gos/go1.19/src/net/unixsock_posix.go:166 +0x20
+net.(*UnixListener).Accept(0x14012118810)
+	/Users/bba/.gvm/gos/go1.19/src/net/unixsock.go:260 +0x2c
+github.com/pingcap/tidb/server.(*Server).startNetworkListener(0x14000ddfb20, {0x105cbf880, 0x14012118810}, 0x1, 0x5?)
+	/Users/bba/pc/tidb/server/server.go:388 +0x78
+created by github.com/pingcap/tidb/server.(*Server).Run
+	/Users/bba/pc/tidb/server/server.go:374 +0x1fc
+
+goroutine 2048 [select]:
+github.com/pingcap/tidb/domain.(*Domain).autoAnalyzeWorker(0x1400ffb5080, {0x105ce1ae0, 0x14012118570})
+	/Users/bba/pc/tidb/domain/domain.go:1840 +0xd0
+github.com/pingcap/tidb/domain.(*Domain).UpdateTableStatsLoop.func2()
+	/Users/bba/pc/tidb/domain/domain.go:1658 +0x28
+github.com/pingcap/tidb/util.(*WaitGroupWrapper).Run.func1()
+	/Users/bba/pc/tidb/util/wait_group_wrapper.go:33 +0x58
+created by github.com/pingcap/tidb/util.(*WaitGroupWrapper).Run
+	/Users/bba/pc/tidb/util/wait_group_wrapper.go:31 +0x84
+
+goroutine 2046 [select]:
+github.com/pingcap/tidb/domain.(*Domain).loadStatsWorker(0x1400ffb5080)
+	/Users/bba/pc/tidb/domain/domain.go:1709 +0x2d8
+github.com/pingcap/tidb/util.(*WaitGroupWrapper).Run.func1()
+	/Users/bba/pc/tidb/util/wait_group_wrapper.go:33 +0x58
+created by github.com/pingcap/tidb/util.(*WaitGroupWrapper).Run
+	/Users/bba/pc/tidb/util/wait_group_wrapper.go:31 +0x84
+
+goroutine 2130 [select]:
+github.com/soheilhy/cmux.muxListener.Accept(...)
+	/Users/bba/.gvm/pkgsets/go1.19/global/pkg/mod/github.com/soheilhy/cmux@v0.1.5/cmux.go:262
+net/http.(*Server).Serve(0x140121c24b0, {0x105cc0c00, 0x14012268080})
+	/Users/bba/.gvm/gos/go1.19/src/net/http/server.go:3070 +0x30c
+github.com/pingcap/tidb/server.(*Server).startStatusServerAndRPCServer.func2()
+	/Users/bba/pc/tidb/server/http_status.go:470 +0x2c
+github.com/pingcap/tidb/util.WithRecovery(0x140112e4120?, 0x1400fbe6fb0?)
+	/Users/bba/pc/tidb/util/misc.go:96 +0x50
+created by github.com/pingcap/tidb/server.(*Server).startStatusServerAndRPCServer
+	/Users/bba/pc/tidb/server/http_status.go:469 +0x490
+
+goroutine 2083 [select]:
+github.com/pingcap/tidb/statistics/handle.(*Handle).drainColTask(0x14012115560, 0x1400fb2db00)
+	/Users/bba/pc/tidb/statistics/handle/handle_hist.go:393 +0x88
+github.com/pingcap/tidb/statistics/handle.(*Handle).HandleOneTask(0x1400fa92708?, 0x102a7e1ac?, 0x649a11f4fa1a?, {0x130bb5f58, 0x14011abd680}, 0x1400fa926b8?)
+	/Users/bba/pc/tidb/statistics/handle/handle_hist.go:203 +0x84
+github.com/pingcap/tidb/statistics/handle.(*Handle).SubLoadWorker(0x14012115560, {0x105d2b008?, 0x14011abd680}, 0x105d2b008?, 0x14000992500?)
+	/Users/bba/pc/tidb/statistics/handle/handle_hist.go:179 +0xc4
+created by github.com/pingcap/tidb/domain.(*Domain).StartLoadStatsSubWorkers
+	/Users/bba/pc/tidb/domain/domain.go:1669 +0x194
+
+goroutine 2081 [select]:
+github.com/soheilhy/cmux.muxListener.Accept(...)
+	/Users/bba/.gvm/pkgsets/go1.19/global/pkg/mod/github.com/soheilhy/cmux@v0.1.5/cmux.go:262
+google.golang.org/grpc.(*Server).Serve(0x1401227a000, {0x105cc0c00, 0x140122680a0})
+	/Users/bba/.gvm/pkgsets/go1.19/global/pkg/mod/google.golang.org/grpc@v1.45.0/server.go:779 +0x3c0
+github.com/pingcap/tidb/server.(*Server).startStatusServerAndRPCServer.func1()
+	/Users/bba/pc/tidb/server/http_status.go:465 +0x2c
+github.com/pingcap/tidb/util.WithRecovery(0x14000ddfb20?, 0x140121e1440?)
+	/Users/bba/pc/tidb/util/misc.go:96 +0x50
+created by github.com/pingcap/tidb/server.(*Server).startStatusServerAndRPCServer
+	/Users/bba/pc/tidb/server/http_status.go:464 +0x3e0
+
+goroutine 1566 [select]:
+github.com/pingcap/tidb/domain.(*Domain).topNSlowQueryLoop(0x1400ffb5080)
+	/Users/bba/pc/tidb/domain/domain.go:533 +0x104
+created by github.com/pingcap/tidb/domain.(*Domain).Init
+	/Users/bba/pc/tidb/domain/domain.go:1041 +0xcd8
+
+goroutine 1563 [select]:
+github.com/pingcap/tidb/ddl.(*ddl).PollTiFlashRoutine(0x140112e6200)
+	/Users/bba/pc/tidb/ddl/ddl_tiflash_api.go:656 +0x1c0
+github.com/pingcap/tidb/util.(*WaitGroupWrapper).Run.func1()
+	/Users/bba/pc/tidb/util/wait_group_wrapper.go:33 +0x58
+created by github.com/pingcap/tidb/util.(*WaitGroupWrapper).Run
+	/Users/bba/pc/tidb/util/wait_group_wrapper.go:31 +0x84
+
+goroutine 2427 [IO wait]:
+internal/poll.runtime_pollWait(0x130e21808, 0x72)
+	/Users/bba/.gvm/gos/go1.19/src/runtime/netpoll.go:305 +0xa0
+internal/poll.(*pollDesc).wait(0x1401264c080?, 0x140119fc000?, 0x0)
+	/Users/bba/.gvm/gos/go1.19/src/internal/poll/fd_poll_runtime.go:84 +0x28
+internal/poll.(*pollDesc).waitRead(...)
+	/Users/bba/.gvm/gos/go1.19/src/internal/poll/fd_poll_runtime.go:89
+internal/poll.(*FD).Read(0x1401264c080, {0x140119fc000, 0x4000, 0x4000})
+	/Users/bba/.gvm/gos/go1.19/src/internal/poll/fd_unix.go:167 +0x1e0
+net.(*netFD).Read(0x1401264c080, {0x140119fc000?, 0x1401185b168?, 0x102aca230?})
+	/Users/bba/.gvm/gos/go1.19/src/net/fd_posix.go:55 +0x28
+net.(*conn).Read(0x14012642020, {0x140119fc000?, 0x1401185b1c8?, 0x72?})
+	/Users/bba/.gvm/gos/go1.19/src/net/net.go:183 +0x34
+bufio.(*Reader).Read(0x14012a15c80, {0x1401309f3c0, 0x4, 0x1401185b1b8?})
+	/Users/bba/.gvm/gos/go1.19/src/bufio/bufio.go:237 +0x1e0
+github.com/pingcap/tidb/server.bufferedReadConn.Read(...)
+	/Users/bba/pc/tidb/server/buffered_read_conn.go:31
+io.ReadAtLeast({0x105c9bb60, 0x14012640be8}, {0x1401309f3c0, 0x4, 0x4}, 0x4)
+	/Users/bba/.gvm/gos/go1.19/src/io/io.go:332 +0xa0
+io.ReadFull(...)
+	/Users/bba/.gvm/gos/go1.19/src/io/io.go:351
+github.com/pingcap/tidb/server.(*packetIO).readOnePacket(0x14012a204e0)
+	/Users/bba/pc/tidb/server/packetio.go:93 +0xb4
+github.com/pingcap/tidb/server.(*packetIO).readPacket(0x14012a204e0)
+	/Users/bba/pc/tidb/server/packetio.go:135 +0x58
+github.com/pingcap/tidb/server.(*clientConn).readPacket(0x14012942a80)
+	/Users/bba/pc/tidb/server/conn.go:433 +0x60
+github.com/pingcap/tidb/server.(*clientConn).Run(0x14012942a80, {0x105cc2b50, 0x14012a20540})
+	/Users/bba/pc/tidb/server/conn.go:1083 +0x170
+github.com/pingcap/tidb/server.(*Server).onConn(0x14000ddfb20, 0x14012942a80)
+	/Users/bba/pc/tidb/server/server.go:594 +0x90c
+created by github.com/pingcap/tidb/server.(*Server).startNetworkListener
+	/Users/bba/pc/tidb/server/server.go:458 +0x478
