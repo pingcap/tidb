@@ -72,21 +72,22 @@ import (
 )
 
 const (
-	pDBName     = "db"
-	pHexKey     = "hexKey"
-	pIndexName  = "index"
-	pHandle     = "handle"
-	pRegionID   = "regionID"
-	pStartTS    = "startTS"
-	pTableName  = "table"
-	pTableID    = "tableID"
-	pColumnID   = "colID"
-	pColumnTp   = "colTp"
-	pColumnFlag = "colFlag"
-	pColumnLen  = "colLen"
-	pRowBin     = "rowBin"
-	pSnapshot   = "snapshot"
-	pFileName   = "filename"
+	pDBName             = "db"
+	pHexKey             = "hexKey"
+	pIndexName          = "index"
+	pHandle             = "handle"
+	pRegionID           = "regionID"
+	pStartTS            = "startTS"
+	pTableName          = "table"
+	pTableID            = "tableID"
+	pColumnID           = "colID"
+	pColumnTp           = "colTp"
+	pColumnFlag         = "colFlag"
+	pColumnLen          = "colLen"
+	pRowBin             = "rowBin"
+	pSnapshot           = "snapshot"
+	pFileName           = "filename"
+	pDumpPartitionStats = "dumpPartitionStats"
 )
 
 // For query string
@@ -971,10 +972,12 @@ func (h flashReplicaHandler) handleStatusReport(w http.ResponseWriter, req *http
 		writeError(w, err)
 	}
 	if available {
-		err = infosync.DeleteTiFlashTableSyncProgress(status.ID)
+		var tableInfo model.TableInfo
+		tableInfo.ID = status.ID
+		err = infosync.DeleteTiFlashTableSyncProgress(&tableInfo)
 	} else {
-		progress := types.TruncateFloatToString(float64(status.FlashRegionCount)/float64(status.RegionCount), 2)
-		err = infosync.UpdateTiFlashTableSyncProgress(context.Background(), status.ID, progress)
+		progress := float64(status.FlashRegionCount) / float64(status.RegionCount)
+		err = infosync.UpdateTiFlashProgressCache(status.ID, progress)
 	}
 	if err != nil {
 		writeError(w, err)

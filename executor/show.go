@@ -1139,6 +1139,9 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		if model.ReferOptionType(fk.OnUpdate) != 0 {
 			buf.WriteString(fmt.Sprintf(" ON UPDATE %s", model.ReferOptionType(fk.OnUpdate).String()))
 		}
+		if fk.Version < model.FKVersion1 {
+			buf.WriteString(" /*T![FOREIGN KEY] INVALID */")
+		}
 	}
 
 	buf.WriteString("\n")
@@ -1216,7 +1219,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	}
 
 	// add partition info here.
-	appendPartitionInfo(tableInfo.Partition, buf, sqlMode)
+	ddl.AppendPartitionInfo(tableInfo.Partition, buf, sqlMode)
 	return nil
 }
 
@@ -1349,52 +1352,6 @@ func fetchShowCreateTable4View(ctx sessionctx.Context, tb *model.TableInfo, buf 
 	fmt.Fprintf(buf, ") AS %s", tb.View.SelectStmt)
 }
 
-func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer, sqlMode mysql.SQLMode) {
-	if partitionInfo == nil {
-		return
-	}
-	// Since MySQL 5.1/5.5 is very old and TiDB aims for 5.7/8.0 compatibility, we will not
-	// include the /*!50100 or /*!50500 comments for TiDB.
-	// This also solves the issue with comments within comments that would happen for
-	// PLACEMENT POLICY options.
-	if partitionInfo.Type == model.PartitionTypeHash {
-		defaultPartitionDefinitions := true
-		for i, def := range partitionInfo.Definitions {
-			if def.Name.O != fmt.Sprintf("p%d", i) {
-				defaultPartitionDefinitions = false
-				break
-			}
-			if len(def.Comment) > 0 || def.PlacementPolicyRef != nil {
-				defaultPartitionDefinitions = false
-				break
-			}
-		}
-
-		if defaultPartitionDefinitions {
-			fmt.Fprintf(buf, "\nPARTITION BY HASH (%s) PARTITIONS %d", partitionInfo.Expr, partitionInfo.Num)
-			return
-		}
-	}
-	// this if statement takes care of lists/range columns case
-	if len(partitionInfo.Columns) > 0 {
-		// partitionInfo.Type == model.PartitionTypeRange || partitionInfo.Type == model.PartitionTypeList
-		// Notice that MySQL uses two spaces between LIST and COLUMNS...
-		fmt.Fprintf(buf, "\nPARTITION BY %s COLUMNS(", partitionInfo.Type.String())
-		for i, col := range partitionInfo.Columns {
-			buf.WriteString(stringutil.Escape(col.O, sqlMode))
-			if i < len(partitionInfo.Columns)-1 {
-				buf.WriteString(",")
-			}
-		}
-		buf.WriteString(")\n(")
-	} else {
-		fmt.Fprintf(buf, "\nPARTITION BY %s (%s)\n(", partitionInfo.Type.String(), partitionInfo.Expr)
-	}
-
-	ddl.AppendPartitionDefs(partitionInfo, buf, sqlMode)
-	buf.WriteString(")")
-}
-
 // ConstructResultOfShowCreateDatabase constructs the result for show create database.
 func ConstructResultOfShowCreateDatabase(ctx sessionctx.Context, dbInfo *model.DBInfo, ifNotExists bool, buf *bytes.Buffer) (err error) {
 	sqlMode := ctx.GetSessionVars().SQLMode
@@ -1504,7 +1461,7 @@ func (e *ShowExec) fetchShowCollation() error {
 	return nil
 }
 
-// fetchShowCreateUser composes show create create user result.
+// fetchShowCreateUser composes 'show create user' result.
 func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 	checker := privilege.GetPrivilegeManager(e.ctx)
 	if checker == nil {
@@ -1528,7 +1485,9 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 
-	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT plugin, Account_locked FROM %n.%n WHERE User=%? AND Host=%?`, mysql.SystemDB, mysql.UserTable, userName, strings.ToLower(hostName))
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT plugin, Account_locked, JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.metadata')), Token_issuer
+		FROM %n.%n WHERE User=%? AND Host=%?`,
+		mysql.SystemDB, mysql.UserTable, userName, strings.ToLower(hostName))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1548,6 +1507,16 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 	accountLocked := "LOCK"
 	if accountLockedRaw[len(accountLockedRaw)-1:] == "N" {
 		accountLocked = "UNLOCK"
+	}
+
+	userAttributes := rows[0].GetString(2)
+	if len(userAttributes) > 0 {
+		userAttributes = " ATTRIBUTE " + userAttributes
+	}
+
+	tokenIssuer := rows[0].GetString(3)
+	if len(tokenIssuer) > 0 {
+		tokenIssuer = " token_issuer " + tokenIssuer
 	}
 
 	rows, _, err = exec.ExecRestrictedSQL(ctx, nil, `SELECT Priv FROM %n.%n WHERE User=%? AND Host=%?`, mysql.SystemDB, mysql.GlobalPrivTable, userName, hostName)
@@ -1573,8 +1542,8 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 	}
 
 	// FIXME: the returned string is not escaped safely
-	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH '%s'%s REQUIRE %s PASSWORD EXPIRE DEFAULT ACCOUNT %s",
-		e.User.Username, e.User.Hostname, authplugin, authStr, require, accountLocked)
+	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH '%s'%s REQUIRE %s%s PASSWORD EXPIRE DEFAULT ACCOUNT %s%s",
+		e.User.Username, e.User.Hostname, authplugin, authStr, require, tokenIssuer, accountLocked, userAttributes)
 	e.appendRow([]interface{}{showStr})
 	return nil
 }
@@ -2016,10 +1985,8 @@ func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 	var token *sessionstates.SessionToken
 	// In testing, user may be nil.
 	if user := e.ctx.GetSessionVars().User; user != nil {
-		// The token may be leaked without secure transport, so we enforce secure transport (TLS or Unix Socket).
-		if !e.ctx.GetSessionVars().ConnectionInfo.IsSecureTransport() {
-			return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("the token must be queried with secure transport")
-		}
+		// The token may be leaked without secure transport, but the cloud can ensure security in some situations,
+		// so we don't enforce secure connections.
 		if token, err = sessionstates.CreateSessionToken(user.Username); err != nil {
 			return err
 		}

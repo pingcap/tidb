@@ -31,7 +31,7 @@ var (
 	_ DMLNode = &ShowStmt{}
 	_ DMLNode = &LoadDataStmt{}
 	_ DMLNode = &SplitRegionStmt{}
-	_ DMLNode = &NonTransactionalDeleteStmt{}
+	_ DMLNode = &NonTransactionalDMLStmt{}
 
 	_ Node = &Assignment{}
 	_ Node = &ByItem{}
@@ -1642,7 +1642,7 @@ func (n *SetOprStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.With != nil {
 		defer ctx.RestoreCTEFunc()() //nolint: all_revive
 		if err := n.With.Restore(ctx); err != nil {
-			return errors.Annotate(err, "An error occurred while restore UnionStmt.With")
+			return errors.Annotate(err, "An error occurred while restore SetOprStmt.With")
 		}
 	}
 	if n.IsInBraces {
@@ -2197,6 +2197,43 @@ func (n *InsertStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// WhereExpr implements ShardableDMLStmt interface.
+func (n *InsertStmt) WhereExpr() ExprNode {
+	if n.Select == nil {
+		return nil
+	}
+	s, ok := n.Select.(*SelectStmt)
+	if !ok {
+		return nil
+	}
+	return s.Where
+}
+
+// SetWhereExpr implements ShardableDMLStmt interface.
+func (n *InsertStmt) SetWhereExpr(e ExprNode) {
+	if n.Select == nil {
+		return
+	}
+	s, ok := n.Select.(*SelectStmt)
+	if !ok {
+		return
+	}
+	s.Where = e
+}
+
+// TableSource implements ShardableDMLStmt interface.
+func (n *InsertStmt) TableSource() (*TableSource, bool) {
+	if n.Select == nil {
+		return nil, false
+	}
+	s, ok := n.Select.(*SelectStmt)
+	if !ok {
+		return nil, false
+	}
+	table, ok := s.From.TableRefs.Left.(*TableSource)
+	return table, ok
+}
+
 // DeleteStmt is a statement to delete rows from table.
 // See https://dev.mysql.com/doc/refman/5.7/en/delete.html
 type DeleteStmt struct {
@@ -2363,23 +2400,51 @@ func (n *DeleteStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// WhereExpr implements ShardableDMLStmt interface.
+func (n *DeleteStmt) WhereExpr() ExprNode {
+	return n.Where
+}
+
+// SetWhereExpr implements ShardableDMLStmt interface.
+func (n *DeleteStmt) SetWhereExpr(e ExprNode) {
+	n.Where = e
+}
+
+// TableSource implements ShardableDMLStmt interface.
+func (n *DeleteStmt) TableSource() (*TableSource, bool) {
+	table, ok := n.TableRefs.TableRefs.Left.(*TableSource)
+	return table, ok
+}
+
 const (
 	NoDryRun = iota
 	DryRunQuery
 	DryRunSplitDml
 )
 
-type NonTransactionalDeleteStmt struct {
+type ShardableDMLStmt = interface {
+	StmtNode
+	WhereExpr() ExprNode
+	SetWhereExpr(ExprNode)
+	// TableSource returns the *only* target table source in the statement.
+	TableSource() (table *TableSource, ok bool)
+}
+
+var _ ShardableDMLStmt = &DeleteStmt{}
+var _ ShardableDMLStmt = &UpdateStmt{}
+var _ ShardableDMLStmt = &InsertStmt{}
+
+type NonTransactionalDMLStmt struct {
 	dmlNode
 
 	DryRun      int         // 0: no dry run, 1: dry run the query, 2: dry run split DMLs
 	ShardColumn *ColumnName // if it's nil, the handle column is automatically chosen for it
 	Limit       uint64
-	DeleteStmt  *DeleteStmt
+	DMLStmt     ShardableDMLStmt
 }
 
 // Restore implements Node interface.
-func (n *NonTransactionalDeleteStmt) Restore(ctx *format.RestoreCtx) error {
+func (n *NonTransactionalDMLStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("BATCH ")
 	if n.ShardColumn != nil {
 		ctx.WriteKeyWord("ON ")
@@ -2396,20 +2461,20 @@ func (n *NonTransactionalDeleteStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.DryRun == DryRunQuery {
 		ctx.WriteKeyWord("DRY RUN QUERY ")
 	}
-	if err := n.DeleteStmt.Restore(ctx); err != nil {
+	if err := n.DMLStmt.Restore(ctx); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
 }
 
 // Accept implements Node Accept interface.
-func (n *NonTransactionalDeleteStmt) Accept(v Visitor) (Node, bool) {
+func (n *NonTransactionalDMLStmt) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
 		return v.Leave(newNode)
 	}
 
-	n = newNode.(*NonTransactionalDeleteStmt)
+	n = newNode.(*NonTransactionalDMLStmt)
 	if n.ShardColumn != nil {
 		node, ok := n.ShardColumn.Accept(v)
 		if !ok {
@@ -2417,12 +2482,12 @@ func (n *NonTransactionalDeleteStmt) Accept(v Visitor) (Node, bool) {
 		}
 		n.ShardColumn = node.(*ColumnName)
 	}
-	if n.DeleteStmt != nil {
-		node, ok := n.DeleteStmt.Accept(v)
+	if n.DMLStmt != nil {
+		node, ok := n.DMLStmt.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.DeleteStmt = node.(*DeleteStmt)
+		n.DMLStmt = node.(ShardableDMLStmt)
 	}
 	return v.Leave(n)
 }
@@ -2572,6 +2637,22 @@ func (n *UpdateStmt) Accept(v Visitor) (Node, bool) {
 		n.Limit = node.(*Limit)
 	}
 	return v.Leave(n)
+}
+
+// WhereExpr implements ShardableDMLStmt interface.
+func (n *UpdateStmt) WhereExpr() ExprNode {
+	return n.Where
+}
+
+// SetWhereExpr implements ShardableDMLStmt interface.
+func (n *UpdateStmt) SetWhereExpr(e ExprNode) {
+	n.Where = e
+}
+
+// TableSource implements ShardableDMLStmt interface.
+func (n *UpdateStmt) TableSource() (*TableSource, bool) {
+	table, ok := n.TableRefs.TableRefs.Left.(*TableSource)
+	return table, ok
 }
 
 // Limit is the limit clause.

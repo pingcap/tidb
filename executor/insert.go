@@ -420,7 +420,7 @@ func (e *InsertExec) doDupRowUpdate(ctx context.Context, handle kv.Handle, oldRo
 	}
 
 	newData := e.row4Update[:len(oldRow)]
-	_, err := updateRecord(ctx, e.ctx, handle, oldRow, newData, assignFlag, e.Table, true, e.memTracker, e.fkChecks)
+	_, err := updateRecord(ctx, e.ctx, handle, oldRow, newData, assignFlag, e.Table, true, e.memTracker, e.fkChecks, e.fkCascades)
 	if err != nil {
 		return err
 	}
@@ -452,4 +452,14 @@ func (e *InsertExec) setMessage() {
 // GetFKChecks implements WithForeignKeyTrigger interface.
 func (e *InsertExec) GetFKChecks() []*FKCheckExec {
 	return e.fkChecks
+}
+
+// GetFKCascades implements WithForeignKeyTrigger interface.
+func (e *InsertExec) GetFKCascades() []*FKCascadeExec {
+	return e.fkCascades
+}
+
+// HasFKCascades implements WithForeignKeyTrigger interface.
+func (e *InsertExec) HasFKCascades() bool {
+	return len(e.fkCascades) > 0
 }

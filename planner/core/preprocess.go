@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
@@ -309,10 +310,20 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 			p.checkBindGrammar(node.OriginNode, node.HintedNode, p.sctx.GetSessionVars().CurrentDB)
 		}
 		return in, true
-	case *ast.RecoverTableStmt, *ast.FlashBackTableStmt:
+	case *ast.RecoverTableStmt:
 		// The specified table in recover table statement maybe already been dropped.
 		// So skip check table name here, otherwise, recover table [table_name] syntax will return
 		// table not exists error. But recover table statement is use to recover the dropped table. So skip children here.
+		return in, true
+	case *ast.FlashBackTableStmt:
+		if len(node.NewName) > 0 {
+			p.checkFlashbackTableGrammar(node)
+		}
+		return in, true
+	case *ast.FlashBackDatabaseStmt:
+		if len(node.NewName) > 0 {
+			p.checkFlashbackDatabaseGrammar(node)
+		}
 		return in, true
 	case *ast.RepairTableStmt:
 		p.stmtTp = TypeRepair
@@ -785,6 +796,18 @@ func (p *preprocessor) checkAlterDatabaseGrammar(stmt *ast.AlterDatabaseStmt) {
 func (p *preprocessor) checkDropDatabaseGrammar(stmt *ast.DropDatabaseStmt) {
 	if isIncorrectName(stmt.Name.L) {
 		p.err = dbterror.ErrWrongDBName.GenWithStackByArgs(stmt.Name)
+	}
+}
+
+func (p *preprocessor) checkFlashbackTableGrammar(stmt *ast.FlashBackTableStmt) {
+	if isIncorrectName(stmt.NewName) {
+		p.err = dbterror.ErrWrongTableName.GenWithStackByArgs(stmt.NewName)
+	}
+}
+
+func (p *preprocessor) checkFlashbackDatabaseGrammar(stmt *ast.FlashBackDatabaseStmt) {
+	if isIncorrectName(stmt.NewName) {
+		p.err = dbterror.ErrWrongDBName.GenWithStackByArgs(stmt.NewName)
 	}
 }
 
@@ -1781,10 +1804,7 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.
 	}
 	tableInfo := tbl.Meta()
 	if _, ok := sctx.GetSessionVars().GetRelatedTableForMDL().Load(tableInfo.ID); !ok {
-		if se, ok := is.(*infoschema.SessionExtendedInfoSchema); ok && skipLock {
-			if se.MdlTables == nil {
-				return tbl, nil
-			}
+		if se, ok := is.(*infoschema.SessionExtendedInfoSchema); ok && skipLock && se.MdlTables != nil {
 			if _, ok := se.MdlTables.TableByID(tableInfo.ID); ok {
 				// Already attach.
 				return tbl, nil
@@ -1857,14 +1877,20 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.
 
 		se, ok := is.(*infoschema.SessionExtendedInfoSchema)
 		if !ok {
-			se = infoschema.AttachMDLTableInfoSchema(is).(*infoschema.SessionExtendedInfoSchema)
-			sessiontxn.GetTxnManager(sctx).SetTxnInfoSchema(se)
-			sctx.GetSessionVars().TxnCtx.InfoSchema = se
+			logutil.BgLogger().Error("InfoSchema is not SessionExtendedInfoSchema", zap.Stack("stack"))
+			return nil, errors.New("InfoSchema is not SessionExtendedInfoSchema")
 		}
 		db, _ := domainSchema.SchemaByTable(tbl.Meta())
 		err = se.UpdateTableInfo(db, tbl)
 		if err != nil {
 			return nil, err
+		}
+		curTxn, err := sctx.Txn(false)
+		if err != nil {
+			return nil, err
+		}
+		if curTxn.Valid() {
+			curTxn.SetOption(kv.TableToColumnMaps, nil)
 		}
 		return tbl, nil
 	}
