@@ -251,7 +251,7 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.StringP(flagFilesize, "F", "", "The approximate size of output file")
 	flags.Uint64P(flagStatementSize, "s", DefaultStatementSize, "Attempted size of INSERT statement in bytes")
 	flags.StringP(flagOutput, "o", timestampDirName(), "Output directory")
-	flags.String(flagLoglevel, "debug", "Log level: {debug|info|warn|error|dpanic|panic|fatal}")
+	flags.String(flagLoglevel, "info", "Log level: {debug|info|warn|error|dpanic|panic|fatal}")
 	flags.StringP(flagLogfile, "L", "", "Log file `path`, leave empty to write to console")
 	flags.String(flagLogfmt, "text", "Log `format`: {text|json}")
 	flags.String(flagConsistency, ConsistencyTypeAuto, "Consistency level during dumping: {auto|none|flush|lock|snapshot}")
