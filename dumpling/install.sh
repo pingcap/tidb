@@ -19,4 +19,4 @@ chmod a+x bin/mc
 go get github.com/ma6174/snappy
 go install github.com/ma6174/snappy
 
-apt install zstd
+yum install zstd
