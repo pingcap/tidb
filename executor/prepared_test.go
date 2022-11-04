@@ -860,7 +860,7 @@ func TestIssue29101(t *testing.T) {
 	  c_last varchar(16) DEFAULT NULL,
 	  c_credit char(2) DEFAULT NULL,
 	  c_discount decimal(4,4) DEFAULT NULL,
-	  PRIMARY KEY (c_w_id,c_d_id,c_id),
+	  PRIMARY KEY (c_w_id,c_d_id,c_id) NONCLUSTERED,
 	  KEY idx_customer (c_w_id,c_d_id,c_last,c_first)
 	)`)
 	tk.MustExec(`CREATE TABLE warehouse (
@@ -890,12 +890,12 @@ func TestIssue29101(t *testing.T) {
 	  ol_w_id int(11) NOT NULL,
 	  ol_number int(11) NOT NULL,
 	  ol_i_id int(11) NOT NULL,
-	  PRIMARY KEY (ol_w_id,ol_d_id,ol_o_id,ol_number))`)
+	  PRIMARY KEY (ol_w_id,ol_d_id,ol_o_id,ol_number) NONCLUSTERED)`)
 	tk.MustExec(`CREATE TABLE stock (
 	  s_i_id int(11) NOT NULL,
 	  s_w_id int(11) NOT NULL,
 	  s_quantity int(11) DEFAULT NULL,
-	  PRIMARY KEY (s_w_id,s_i_id))`)
+	  PRIMARY KEY (s_w_id,s_i_id) NONCLUSTERED)`)
 	tk.MustExec(`prepare s1 from 'SELECT /*+ TIDB_INLJ(order_line,stock) */ COUNT(DISTINCT (s_i_id)) stock_count FROM order_line, stock  WHERE ol_w_id = ? AND ol_d_id = ? AND ol_o_id < ? AND ol_o_id >= ? - 20 AND s_w_id = ? AND s_i_id = ol_i_id AND s_quantity < ?'`)
 	tk.MustExec(`set @a=391,@b=1,@c=3058,@d=18`)
 	tk.MustExec(`execute s1 using @a,@b,@c,@c,@a,@d`)
@@ -909,10 +909,10 @@ func TestIssue29101(t *testing.T) {
 		`  │ └─IndexLookUp_29 0.03 root  `,
 		`  │   ├─IndexRangeScan_27(Build) 0.03 cop[tikv] table:order_line, index:PRIMARY(ol_w_id, ol_d_id, ol_o_id, ol_number) range:[391 1 3038,391 1 3058), keep order:false, stats:pseudo`,
 		`  │   └─TableRowIDScan_28(Probe) 0.03 cop[tikv] table:order_line keep order:false, stats:pseudo`,
-		`  └─IndexLookUp_13(Probe) 1.00 root  `,
-		`    ├─IndexRangeScan_10(Build) 1.00 cop[tikv] table:stock, index:PRIMARY(s_w_id, s_i_id) range: decided by [eq(test.stock.s_i_id, test.order_line.ol_i_id) eq(test.stock.s_w_id, 391)], keep order:false, stats:pseudo`,
-		`    └─Selection_12(Probe) 1.00 cop[tikv]  lt(test.stock.s_quantity, 18)`,
-		`      └─TableRowIDScan_11 1.00 cop[tikv] table:stock keep order:false, stats:pseudo`))
+		`  └─IndexLookUp_13(Probe) 0.03 root  `,
+		`    ├─IndexRangeScan_10(Build) 0.03 cop[tikv] table:stock, index:PRIMARY(s_w_id, s_i_id) range: decided by [eq(test.stock.s_i_id, test.order_line.ol_i_id) eq(test.stock.s_w_id, 391)], keep order:false, stats:pseudo`,
+		`    └─Selection_12(Probe) 0.03 cop[tikv]  lt(test.stock.s_quantity, 18)`,
+		`      └─TableRowIDScan_11 0.03 cop[tikv] table:stock keep order:false, stats:pseudo`))
 	tk.MustExec(`execute s1 using @a,@b,@c,@c,@a,@d`)
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1")) // can use the plan-cache
 }
@@ -1030,7 +1030,7 @@ func TestPreparePlanCache4Function(t *testing.T) {
 	tk.MustExec("set @a = 0, @b = 1, @c = 2, @d = null;")
 	tk.MustQuery("execute stmt using @a, @b;").Check(testkit.Rows("<nil> 2", "0 0", "1 1", "2 2"))
 	tk.MustQuery("execute stmt using @c, @d;").Check(testkit.Rows("<nil> 1", "0 2", "1 2", "2 0"))
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 }
 
 func TestPreparePlanCache4DifferentSystemVars(t *testing.T) {

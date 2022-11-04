@@ -86,6 +86,8 @@ const (
 	DefMemoryUsageAlarmRatio = 0.8
 	// DefTempDir is the default temporary directory path for TiDB.
 	DefTempDir = "/tmp/tidb"
+	// DefAuthTokenRefreshInterval is the default time interval to refresh tidb auth token.
+	DefAuthTokenRefreshInterval = time.Hour
 )
 
 // Valid config maps
@@ -485,9 +487,9 @@ type Instance struct {
 	ForcePriority         string     `toml:"tidb_force_priority" json:"tidb_force_priority"`
 	MemoryUsageAlarmRatio float64    `toml:"tidb_memory_usage_alarm_ratio" json:"tidb_memory_usage_alarm_ratio"`
 	// EnableCollectExecutionInfo enables the TiDB to collect execution info.
-	EnableCollectExecutionInfo bool   `toml:"tidb_enable_collect_execution_info" json:"tidb_enable_collect_execution_info"`
-	PluginDir                  string `toml:"plugin_dir" json:"plugin_dir"`
-	PluginLoad                 string `toml:"plugin_load" json:"plugin_load"`
+	EnableCollectExecutionInfo AtomicBool `toml:"tidb_enable_collect_execution_info" json:"tidb_enable_collect_execution_info"`
+	PluginDir                  string     `toml:"plugin_dir" json:"plugin_dir"`
+	PluginLoad                 string     `toml:"plugin_load" json:"plugin_load"`
 	// MaxConnections is the maximum permitted number of simultaneous client connections.
 	MaxConnections    uint32     `toml:"max_connections" json:"max_connections"`
 	TiDBEnableDDL     AtomicBool `toml:"tidb_enable_ddl" json:"tidb_enable_ddl"`
@@ -534,6 +536,9 @@ type Security struct {
 	ClusterSSLCert  string   `toml:"cluster-ssl-cert" json:"cluster-ssl-cert"`
 	ClusterSSLKey   string   `toml:"cluster-ssl-key" json:"cluster-ssl-key"`
 	ClusterVerifyCN []string `toml:"cluster-verify-cn" json:"cluster-verify-cn"`
+	// Used for auth plugin `tidb_session_token`.
+	SessionTokenSigningCert string `toml:"session-token-signing-cert" json:"session-token-signing-cert"`
+	SessionTokenSigningKey  string `toml:"session-token-signing-key" json:"session-token-signing-key"`
 	// If set to "plaintext", the spilled files will not be encrypted.
 	SpilledFileEncryptionMethod string `toml:"spilled-file-encryption-method" json:"spilled-file-encryption-method"`
 	// EnableSEM prevents SUPER users from having full access.
@@ -543,6 +548,10 @@ type Security struct {
 	MinTLSVersion   string `toml:"tls-version" json:"tls-version"`
 	RSAKeySize      int    `toml:"rsa-key-size" json:"rsa-key-size"`
 	SecureBootstrap bool   `toml:"secure-bootstrap" json:"secure-bootstrap"`
+	// The path of the JWKS for tidb_auth_token authentication
+	AuthTokenJWKS string `toml:"auth-token-jwks" json:"auth-token-jwks"`
+	// The refresh time interval of JWKS
+	AuthTokenRefreshInterval string `toml:"auth-token-refresh-interval" json:"auth-token-refresh-interval"`
 }
 
 // The ErrConfigValidationFailed error is used so that external callers can do a type assertion
@@ -640,14 +649,16 @@ type Performance struct {
 	ProjectionPushDown bool   `toml:"projection-push-down" json:"projection-push-down"`
 	MaxTxnTTL          uint64 `toml:"max-txn-ttl" json:"max-txn-ttl"`
 	// Deprecated
-	MemProfileInterval       string `toml:"-" json:"-"`
-	IndexUsageSyncLease      string `toml:"index-usage-sync-lease" json:"index-usage-sync-lease"`
-	PlanReplayerGCLease      string `toml:"plan-replayer-gc-lease" json:"plan-replayer-gc-lease"`
-	GOGC                     int    `toml:"gogc" json:"gogc"`
-	EnforceMPP               bool   `toml:"enforce-mpp" json:"enforce-mpp"`
-	StatsLoadConcurrency     uint   `toml:"stats-load-concurrency" json:"stats-load-concurrency"`
-	StatsLoadQueueSize       uint   `toml:"stats-load-queue-size" json:"stats-load-queue-size"`
-	EnableStatsCacheMemQuota bool   `toml:"enable-stats-cache-mem-quota" json:"enable-stats-cache-mem-quota"`
+	MemProfileInterval string `toml:"-" json:"-"`
+
+	IndexUsageSyncLease              string `toml:"index-usage-sync-lease" json:"index-usage-sync-lease"`
+	PlanReplayerGCLease              string `toml:"plan-replayer-gc-lease" json:"plan-replayer-gc-lease"`
+	GOGC                             int    `toml:"gogc" json:"gogc"`
+	EnforceMPP                       bool   `toml:"enforce-mpp" json:"enforce-mpp"`
+	StatsLoadConcurrency             uint   `toml:"stats-load-concurrency" json:"stats-load-concurrency"`
+	StatsLoadQueueSize               uint   `toml:"stats-load-queue-size" json:"stats-load-queue-size"`
+	AnalyzePartitionConcurrencyQuota uint   `toml:"analyze-partition-concurrency-quota" json:"analyze-partition-concurrency-quota"`
+	EnableStatsCacheMemQuota         bool   `toml:"enable-stats-cache-mem-quota" json:"enable-stats-cache-mem-quota"`
 	// The following items are deprecated. We need to keep them here temporarily
 	// to support the upgrade process. They can be removed in future.
 
@@ -864,7 +875,7 @@ var defaultConf = Config{
 		CheckMb4ValueInUTF8:         *NewAtomicBool(true),
 		ForcePriority:               "NO_PRIORITY",
 		MemoryUsageAlarmRatio:       DefMemoryUsageAlarmRatio,
-		EnableCollectExecutionInfo:  true,
+		EnableCollectExecutionInfo:  *NewAtomicBool(true),
 		PluginDir:                   "/data/deploy/plugin",
 		PluginLoad:                  "",
 		MaxConnections:              0,
@@ -902,15 +913,16 @@ var defaultConf = Config{
 		CommitterConcurrency:  defTiKVCfg.CommitterConcurrency,
 		MaxTxnTTL:             defTiKVCfg.MaxTxnTTL, // 1hour
 		// TODO: set indexUsageSyncLease to 60s.
-		IndexUsageSyncLease:      "0s",
-		GOGC:                     100,
-		EnforceMPP:               false,
-		PlanReplayerGCLease:      "10m",
-		StatsLoadConcurrency:     5,
-		StatsLoadQueueSize:       1000,
-		EnableStatsCacheMemQuota: false,
-		RunAutoAnalyze:           true,
-		EnableLoadFMSketch:       false,
+		IndexUsageSyncLease:              "0s",
+		GOGC:                             100,
+		EnforceMPP:                       false,
+		PlanReplayerGCLease:              "10m",
+		StatsLoadConcurrency:             5,
+		StatsLoadQueueSize:               1000,
+		AnalyzePartitionConcurrencyQuota: 16,
+		EnableStatsCacheMemQuota:         false,
+		RunAutoAnalyze:                   true,
+		EnableLoadFMSketch:               false,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
@@ -953,6 +965,8 @@ var defaultConf = Config{
 		EnableSEM:                   false,
 		AutoTLS:                     false,
 		RSAKeySize:                  4096,
+		AuthTokenJWKS:               "",
+		AuthTokenRefreshInterval:    DefAuthTokenRefreshInterval.String(),
 	},
 	DeprecateIntegerDisplayWidth:         false,
 	EnableEnumLengthLimit:                true,
@@ -1041,6 +1055,7 @@ var removedConfig = map[string]struct{}{
 	"oom-use-tmp-storage":                    {}, // use tidb_enable_tmp_storage_on_oom
 	"max-server-connections":                 {}, // use sysvar max_connections
 	"run-ddl":                                {}, // use sysvar tidb_enable_ddl
+	"instance.tidb_memory_usage_alarm_ratio": {}, // use sysvar tidb_memory_usage_alarm_ratio
 }
 
 // isAllRemovedConfigItems returns true if all the items that couldn't validate

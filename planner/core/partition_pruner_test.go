@@ -78,7 +78,7 @@ func TestRangeColumnPartitionPruningForIn(t *testing.T) {
 	tk.MustExec(`CREATE TABLE t1 (
 		id bigint(20)  NOT NULL AUTO_INCREMENT,
 		dt date,
-		PRIMARY KEY (id,dt))
+		PRIMARY KEY (id,dt) NONCLUSTERED)
 		PARTITION BY RANGE COLUMNS(dt) (
 		PARTITION p20201125 VALUES LESS THAN ("20201126"),
 		PARTITION p20201126 VALUES LESS THAN ("20201127"),

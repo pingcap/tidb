@@ -2825,7 +2825,7 @@ func TestInsertIntoGivenPartitionSet(t *testing.T) {
 	tk.MustExec("insert into t1 partition(p0, p1) values(3, 'c'), (4, 'd')")
 	tk.MustQuery("select * from t1 partition(p1)").Check(testkit.Rows())
 
-	tk.MustGetErrMsg("insert into t1 values(1, 'a')", "[kv:1062]Duplicate entry '1' for key 'idx_a'")
+	tk.MustGetErrMsg("insert into t1 values(1, 'a')", "[kv:1062]Duplicate entry '1' for key 't1.idx_a'")
 	tk.MustGetErrMsg("insert into t1 partition(p0, p_non_exist) values(1, 'a')", "[table:1735]Unknown partition 'p_non_exist' in table 't1'")
 	tk.MustGetErrMsg("insert into t1 partition(p0, p1) values(40, 'a')", "[table:1748]Found a row not matching the given partition set")
 
@@ -2856,7 +2856,7 @@ func TestInsertIntoGivenPartitionSet(t *testing.T) {
 	tk.MustQuery("select * from t1 partition(p1) order by a").Check(testkit.Rows())
 	tk.MustQuery("select * from t1 partition(p0) order by a").Check(testkit.Rows("1 a", "2 b", "3 c", "4 d"))
 
-	tk.MustGetErrMsg("insert into t1 select 1, 'a'", "[kv:1062]Duplicate entry '1' for key 'idx_a'")
+	tk.MustGetErrMsg("insert into t1 select 1, 'a'", "[kv:1062]Duplicate entry '1' for key 't1.idx_a'")
 	tk.MustGetErrMsg("insert into t1 partition(p0, p_non_exist) select 1, 'a'", "[table:1735]Unknown partition 'p_non_exist' in table 't1'")
 	tk.MustGetErrMsg("insert into t1 partition(p0, p1) select 40, 'a'", "[table:1748]Found a row not matching the given partition set")
 
@@ -3022,7 +3022,7 @@ func TestPrevStmtDesensitization(t *testing.T) {
 	tk.MustExec("begin")
 	tk.MustExec("insert into t values (1),(2)")
 	require.Equal(t, "insert into `t` values ( ? ) , ( ? )", tk.Session().GetSessionVars().PrevStmt.String())
-	tk.MustGetErrMsg("insert into t values (1)", `[kv:1062]Duplicate entry '?' for key 'a'`)
+	tk.MustGetErrMsg("insert into t values (1)", `[kv:1062]Duplicate entry '?' for key 't.a'`)
 }
 
 func TestIssue19372(t *testing.T) {
@@ -4931,7 +4931,7 @@ func TestIsPointGet(t *testing.T) {
 		stmtNode, err := s.ParseOneStmt(sqlStr, "", "")
 		require.NoError(t, err)
 		preprocessorReturn := &plannercore.PreprocessorReturn{}
-		err = plannercore.Preprocess(ctx, stmtNode, plannercore.WithPreprocessorReturn(preprocessorReturn))
+		err = plannercore.Preprocess(context.Background(), ctx, stmtNode, plannercore.WithPreprocessorReturn(preprocessorReturn))
 		require.NoError(t, err)
 		p, _, err := planner.Optimize(context.TODO(), ctx, stmtNode, preprocessorReturn.InfoSchema)
 		require.NoError(t, err)
@@ -4964,7 +4964,7 @@ func TestClusteredIndexIsPointGet(t *testing.T) {
 		stmtNode, err := s.ParseOneStmt(sqlStr, "", "")
 		require.NoError(t, err)
 		preprocessorReturn := &plannercore.PreprocessorReturn{}
-		err = plannercore.Preprocess(ctx, stmtNode, plannercore.WithPreprocessorReturn(preprocessorReturn))
+		err = plannercore.Preprocess(context.Background(), ctx, stmtNode, plannercore.WithPreprocessorReturn(preprocessorReturn))
 		require.NoError(t, err)
 		p, _, err := planner.Optimize(context.TODO(), ctx, stmtNode, preprocessorReturn.InfoSchema)
 		require.NoError(t, err)
@@ -5198,12 +5198,9 @@ func TestHistoryRead(t *testing.T) {
 	require.Greater(t, snapshotTS, curVer1.Ver)
 	require.Less(t, snapshotTS, curVer2.Ver)
 	tk.MustQuery("select * from history_read").Check(testkit.Rows("1"))
-	_, err = tk.Exec("insert history_read values (2)")
-	require.Error(t, err)
-	_, err = tk.Exec("update history_read set a = 3 where a = 1")
-	require.Error(t, err)
-	_, err = tk.Exec("delete from history_read where a = 1")
-	require.Error(t, err)
+	tk.MustExecToErr("insert history_read values (2)")
+	tk.MustExecToErr("update history_read set a = 3 where a = 1")
+	tk.MustExecToErr("delete from history_read where a = 1")
 	tk.MustExec("set @@tidb_snapshot = ''")
 	tk.MustQuery("select * from history_read").Check(testkit.Rows("1", "2"))
 	tk.MustExec("insert history_read values (3)")
@@ -6074,13 +6071,16 @@ func TestGlobalMemoryControl(t *testing.T) {
 	tk0.MustExec("set global tidb_server_memory_limit_sess_min_size = 128")
 
 	tk1 := testkit.NewTestKit(t, store)
-	tracker1 := tk1.Session().GetSessionVars().StmtCtx.MemTracker
+	tracker1 := tk1.Session().GetSessionVars().MemTracker
+	tracker1.FallbackOldAndSetNewAction(&memory.PanicOnExceed{})
 
 	tk2 := testkit.NewTestKit(t, store)
-	tracker2 := tk2.Session().GetSessionVars().StmtCtx.MemTracker
+	tracker2 := tk2.Session().GetSessionVars().MemTracker
+	tracker2.FallbackOldAndSetNewAction(&memory.PanicOnExceed{})
 
 	tk3 := testkit.NewTestKit(t, store)
-	tracker3 := tk3.Session().GetSessionVars().StmtCtx.MemTracker
+	tracker3 := tk3.Session().GetSessionVars().MemTracker
+	tracker3.FallbackOldAndSetNewAction(&memory.PanicOnExceed{})
 
 	sm := &testkit.MockSessionManager{
 		PS: []*util.ProcessInfo{tk1.Session().ShowProcess(), tk2.Session().ShowProcess(), tk3.Session().ShowProcess()},
@@ -6159,8 +6159,61 @@ func TestGlobalMemoryControl2(t *testing.T) {
 	}()
 	sql := "select * from t t1 join t t2 join t t3 on t1.a=t2.a and t1.a=t3.a order by t1.a;" // Need 500MB
 	require.True(t, strings.Contains(tk0.QueryToErr(sql).Error(), "Out Of Memory Quota!"))
-	require.Equal(t, tk0.Session().GetSessionVars().StmtCtx.DiskTracker.MaxConsumed(), int64(0))
+	require.Equal(t, tk0.Session().GetSessionVars().DiskTracker.MaxConsumed(), int64(0))
 	wg.Wait()
 	test[0] = 0
 	runtime.GC()
+}
+
+func TestCompileOutOfMemoryQuota(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	// Test for issue: https://github.com/pingcap/tidb/issues/38322
+	defer tk.MustExec("set global tidb_mem_oom_action = DEFAULT")
+	tk.MustExec("set global tidb_mem_oom_action='CANCEL'")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, index idx(a))")
+	tk.MustExec("create table t1(a int, c int, index idx(a))")
+	tk.MustExec("set tidb_mem_quota_query=10")
+	err := tk.ExecToErr("select t.a, t1.a from t use index(idx), t1 use index(idx) where t.a = t1.a")
+	require.Contains(t, err.Error(), "Out Of Memory Quota!")
+}
+
+func TestSessionRootTrackerDetach(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("set global tidb_mem_oom_action = DEFAULT")
+	tk.MustExec("set global tidb_mem_oom_action='CANCEL'")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, index idx(a))")
+	tk.MustExec("create table t1(a int, c int, index idx(a))")
+	tk.MustExec("set tidb_mem_quota_query=10")
+	err := tk.ExecToErr("select /*+hash_join(t1)*/ t.a, t1.a from t use index(idx), t1 use index(idx) where t.a = t1.a")
+	require.Contains(t, err.Error(), "Out Of Memory Quota!")
+	tk.MustExec("set tidb_mem_quota_query=1000")
+	rs, err := tk.Exec("select /*+hash_join(t1)*/ t.a, t1.a from t use index(idx), t1 use index(idx) where t.a = t1.a")
+	require.NoError(t, err)
+	require.NotNil(t, tk.Session().GetSessionVars().MemTracker.GetFallbackForTest(false))
+	err = rs.Close()
+	require.NoError(t, err)
+	require.Nil(t, tk.Session().GetSessionVars().MemTracker.GetFallbackForTest(false))
+}
+
+func TestServerMemoryQuota(t *testing.T) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.ServerMemoryQuota = 123456789000
+	})
+	defer config.RestoreFunc()()
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	require.Equal(t, memory.GlobalMemoryUsageTracker.GetBytesLimit(), int64(123456789000))
+	tk.MustExec("set global tidb_server_memory_limit = 3 << 30")
+	require.Equal(t, memory.GlobalMemoryUsageTracker.GetBytesLimit(), int64(-1))
+	tk.MustExec("set global tidb_server_memory_limit = 0")
+	require.Equal(t, memory.GlobalMemoryUsageTracker.GetBytesLimit(), int64(123456789000))
+	require.Equal(t, tk.Session().GetSessionVars().MemTracker.GetParentForTest(), memory.GlobalMemoryUsageTracker)
+	tk.Session().Close()
+	require.Nil(t, tk.Session().GetSessionVars().MemTracker.GetParentForTest())
 }

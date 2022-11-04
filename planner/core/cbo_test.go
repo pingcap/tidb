@@ -246,7 +246,7 @@ func TestIndexRead(t *testing.T) {
 		require.Len(t, stmts, 1)
 		stmt := stmts[0]
 		ret := &core.PreprocessorReturn{}
-		err = core.Preprocess(ctx, stmt, core.WithPreprocessorReturn(ret))
+		err = core.Preprocess(context.Background(), ctx, stmt, core.WithPreprocessorReturn(ret))
 		require.NoError(t, err)
 		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, ret.InfoSchema)
 		require.NoError(t, err)
@@ -276,7 +276,7 @@ func TestEmptyTable(t *testing.T) {
 		require.Len(t, stmts, 1)
 		stmt := stmts[0]
 		ret := &core.PreprocessorReturn{}
-		err = core.Preprocess(ctx, stmt, core.WithPreprocessorReturn(ret))
+		err = core.Preprocess(context.Background(), ctx, stmt, core.WithPreprocessorReturn(ret))
 		require.NoError(t, err)
 		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, ret.InfoSchema)
 		require.NoError(t, err)
@@ -343,7 +343,7 @@ func TestAnalyze(t *testing.T) {
 		err = executor.ResetContextOfStmt(ctx, stmt)
 		require.NoError(t, err)
 		ret := &core.PreprocessorReturn{}
-		err = core.Preprocess(ctx, stmt, core.WithPreprocessorReturn(ret))
+		err = core.Preprocess(context.Background(), ctx, stmt, core.WithPreprocessorReturn(ret))
 		require.NoError(t, err)
 		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, ret.InfoSchema)
 		require.NoError(t, err)
@@ -586,7 +586,7 @@ func BenchmarkOptimize(b *testing.B) {
 		require.Len(b, stmts, 1)
 		stmt := stmts[0]
 		ret := &core.PreprocessorReturn{}
-		err = core.Preprocess(ctx, stmt, core.WithPreprocessorReturn(ret))
+		err = core.Preprocess(context.Background(), ctx, stmt, core.WithPreprocessorReturn(ret))
 		require.NoError(b, err)
 
 		b.Run(tt.sql, func(b *testing.B) {
@@ -827,7 +827,7 @@ func TestBatchPointGetTablePartition(t *testing.T) {
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t1,t2,t3,t4,t5,t6")
 
-	testKit.MustExec("create table t1(a int, b int, primary key(a,b)) partition by hash(b) partitions 2")
+	testKit.MustExec("create table t1(a int, b int, primary key(a,b) nonclustered) partition by hash(b) partitions 2")
 	testKit.MustExec("insert into t1 values(1,1),(1,2),(2,1),(2,2)")
 	testKit.MustExec("set @@tidb_partition_prune_mode = 'static'")
 	testKit.MustQuery("explain format = 'brief' select * from t1 where a in (1,2) and b = 1").Check(testkit.Rows(
@@ -864,7 +864,7 @@ func TestBatchPointGetTablePartition(t *testing.T) {
 		"1 2",
 	))
 
-	testKit.MustExec("create table t2(a int, b int, primary key(a,b)) partition by range(b) (partition p0 values less than (2), partition p1 values less than maxvalue)")
+	testKit.MustExec("create table t2(a int, b int, primary key(a,b) nonclustered) partition by range(b) (partition p0 values less than (2), partition p1 values less than maxvalue)")
 	testKit.MustExec("insert into t2 values(1,1),(1,2),(2,1),(2,2)")
 	testKit.MustExec("set @@tidb_partition_prune_mode = 'static'")
 	testKit.MustQuery("explain format = 'brief' select * from t2 where a in (1,2) and b = 1").Check(testkit.Rows(
