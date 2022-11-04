@@ -1907,6 +1907,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		if err != nil {
 			return err
 		}
+		metrics.NumOfMultiQueryHistogram.Observe(float64(len(stmts)))
 	}
 	if len(pointPlans) > 0 {
 		defer cc.ctx.ClearValue(plannercore.PointPlanKey)
